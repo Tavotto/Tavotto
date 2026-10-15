@@ -7,7 +7,7 @@
  */
 import { formatMessage, literal } from '@/i18n'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { emptyProject, type TextObject } from '@/types/document'
+import { emptyProject, type FigureSnapshot, type PanelObject, type TextObject } from '@/types/document'
 import { readProjectFile, type ProjectFileBinding } from '@/lib/projectFile'
 import { setCurrentProjectId } from '@/lib/session'
 import { forgetLayoutRevisions, knownLayoutRevision } from '@/lib/layoutRevision'
@@ -15,6 +15,7 @@ import { runManualSave } from './actions'
 import {
   activeProjectFile,
   applyDerivedUpdate,
+  invalidateFigureSnapshots,
   setProjectFile,
   startAutosave,
   useDocumentStore,
@@ -43,6 +44,7 @@ let layoutGate: Promise<void> | null = null
 /** 同上，挂住本机自动保存的写盘（`saveNow()` 那一步） */
 let autosaveGate: Promise<void> | null = null
 let svgWarnings: string[] = []
+let layoutFigureSnapshots: Record<string, FigureSnapshot> | undefined
 
 globalThis.fetch = (async (url: unknown, init?: RequestInit) => {
   const u = new URL(String(url), 'http://x')
@@ -76,7 +78,7 @@ globalThis.fetch = (async (url: unknown, init?: RequestInit) => {
     projectFiles.set(name, String(init.body))
     written.push(String(init.body))
     return new Response(
-      JSON.stringify({ ok: true, revision: revisionOf(String(init.body)), name, file: `tavottofile/${name}.json`, svg_snapshot_warnings: svgWarnings }),
+      JSON.stringify({ ok: true, revision: revisionOf(String(init.body)), name, file: `tavottofile/${name}.json`, svg_snapshot_warnings: svgWarnings, figure_snapshots: layoutFigureSnapshots }),
     )
   }
   return new Response('{}', { status: 404 })
@@ -111,6 +113,7 @@ beforeEach(async () => {
   layoutGate = null
   autosaveGate = null
   svgWarnings = []
+  layoutFigureSnapshots = undefined
   forgetLayoutRevisions()
   setCurrentProjectId('pjA')
   useUiStore.setState({ layoutOpen: false, layoutConflict: null, layoutName: null, status: null })
@@ -663,5 +666,26 @@ describe('SVG snapshot warnings never turn a saved layout into a failure', () =>
     expect(statusText()).toContain('重新运行脚本')
     expect(useUiStore.getState().statusTone).toBe('info')
     expect(inProject ? written.length : autosave.size).toBe(1)
+  })
+})
+
+
+describe('project saves return immutable Figure references', () => {
+  it.each([false, true])('merges the saved ref only without an intervening successful rerun (%s)', async (rerun) => {
+    const snapshot: FigureSnapshot = {
+      version: 1, sourceId: 'source.pdf', patchHash: 'patch', receiptId: 'receipt', snapshotId: 'snapshot',
+    }
+    const panel: PanelObject = {
+      id: 'snapshot-panel', type: 'panel', fileId: 'source.pdf', fileKind: 'pdf', figureFrame: 1,
+      nativeW: 20, nativeH: 10, x: 0, y: 0, w: 20, h: 10, overrides: [],
+    }
+    s().commit(literal('panel'), (d) => { d.objects.push(panel) })
+    bind()
+    layoutFigureSnapshots = { 'snapshot-panel': snapshot }
+    if (rerun) beforeLayoutWrite = () => invalidateFigureSnapshots(['source.pdf'], 'pjA')
+    await runManualSave()
+    expect((s().doc.objects[0] as PanelObject).figureSnapshot).toEqual(rerun ? undefined : snapshot)
+    expect(s().projectFile?.dirty).toBe(false)
+    expect(written).toHaveLength(1)
   })
 })

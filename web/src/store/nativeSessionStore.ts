@@ -16,7 +16,9 @@ import {
 } from '@/lib/api'
 import { addRuntimePanelToCanvas } from '@/store/workspace'
 import { currentProjectId } from '@/lib/session'
+import { captureProjectEpoch } from '@/lib/projectEpoch'
 import { getRestoreGate, useDocumentStore, whenDocumentReady } from '@/store/documentStore'
+import { invalidateCapturedFigureSnapshots } from '@/store/figureSnapshotInvalidation'
 import { useFigurePickerStore } from '@/store/figurePickerStore'
 import { useRenderStore } from '@/store/renderStore'
 import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
@@ -95,6 +97,8 @@ interface NativeSessionStore {
   conflicts: Record<string, string[]>
   /** 已经为哪个 `sequence` build 过——同一个屏障不重复 build */
   builtSeq: Record<string, number>
+  /** A witnessed execution reached this barrier; initial/replayed barrier snapshots never enter here. */
+  executedBarrierSeq: Record<string, number>
 
   /** 收到一条交接 ID（落地 URL 的 `?native=` / `tavotto:open` 事件） */
   receive: (nativeId: string) => Promise<void>
@@ -226,6 +230,7 @@ export const useNativeSessionStore = create<NativeSessionStore>((set, get) => ({
   errors: {},
   conflicts: {},
   builtSeq: {},
+  executedBarrierSeq: {},
 
   receive: async (nativeId) => {
     if (!nativeId) return
@@ -311,7 +316,15 @@ export const useNativeSessionStore = create<NativeSessionStore>((set, get) => ({
     // 间没有次序保证；照单全收的表现是脚本已经退出了、卡片又变回"正在
     // 运行"。终态不回头是这条的推论（后端进终态之后 sequence 只会更大）。
     if (prev && session.sequence <= prev.sequence) return
-    set((s) => ({ sessions: { ...s.sessions, [session.session_id]: session } }))
+    const completedExecution = session.state === 'barrier' && prev &&
+      ['starting_python', 'running_script', 'waiting_for_figure', 'continuing'].includes(prev.state) &&
+      !session.script_error && !session.terminal_error && !session.cancelled
+    set((s) => ({
+      sessions: { ...s.sessions, [session.session_id]: session },
+      ...(completedExecution
+        ? { executedBarrierSeq: { ...s.executedBarrierSeq, [session.session_id]: session.sequence } }
+        : {}),
+    }))
     syncNativePendingInput(session)
     // 屏障是"可以编辑了"那一刻，图要在这时候进画布。**由界面显式发 build**
     // ——后端不在 reader 线程里自己发，那是自己等自己（ADR 0021 §5.2）。
@@ -327,20 +340,27 @@ export const useNativeSessionStore = create<NativeSessionStore>((set, get) => ({
     // 而那是一条会吓到用户的错误——它描述的是正常状态，不是故障。
     if (session.state !== 'barrier') return
     const epoch = get().epoch
+    const owner = captureProjectEpoch(() => get().epoch)
     const seq = session.sequence
+    const completedExecution = get().executedBarrierSeq[sessionId] === seq
     set((s) => ({
       busy: { ...s.busy, [sessionId]: true },
       builtSeq: { ...s.builtSeq, [sessionId]: seq },
     }))
     try {
       const res = await buildNativeSession(sessionId)
-      if (get().epoch !== epoch) return
+      if (!owner.still()) return
+      const invalidateSnapshots = completedExecution && !res.session.script_error &&
+        !res.session.terminal_error && !res.session.cancelled
       set((s) => ({
         sessions: { ...s.sessions, [sessionId]: res.session },
         errors: { ...s.errors, [sessionId]: null },
         conflicts: { ...s.conflicts, [sessionId]: res.conflicts?.stems ?? [] },
+        ...(invalidateSnapshots && s.executedBarrierSeq[sessionId] === seq
+          ? { executedBarrierSeq: { ...s.executedBarrierSeq, [sessionId]: -1 } }
+          : {}),
       }))
-      placeNativeFiguresWhenReady(res.descriptors, epoch)
+      placeNativeFiguresWhenReady(res.descriptors, epoch, invalidateSnapshots)
     } catch (e) {
       if (get().epoch !== epoch) return
       // build 失败不改变会话状态——那由 SSE 说了算。这里只记一条原因。
@@ -416,6 +436,7 @@ export const useNativeSessionStore = create<NativeSessionStore>((set, get) => ({
       errors: {},
       conflicts: {},
       builtSeq: {},
+      executedBarrierSeq: {},
     })),
 }))
 
@@ -464,12 +485,20 @@ function runAction(
  *
  * 清单与预览一并换代：这批图刚刚才被物化进 runtime cache。
  */
-function placeNativeFiguresWhenReady(descriptors: CapturedFigureDescriptor[], epoch: number): void {
+function placeNativeFiguresWhenReady(
+  descriptors: CapturedFigureDescriptor[],
+  epoch: number,
+  invalidateSnapshots = false,
+): void {
   if (!descriptors.length) return
   const pj = currentProjectId()
+  const place = () => {
+    if (invalidateSnapshots) invalidateCapturedFigureSnapshots(descriptors, pj)
+    placeNativeFigures(descriptors)
+  }
   const gate = getRestoreGate()
   if (gate.state === 'ready') {
-    if (gate.reason === 'initial' || gate.pj === pj) placeNativeFigures(descriptors)
+    if (gate.reason === 'initial' || gate.pj === pj) place()
     return
   }
   // build 已消费屏障序号；恢复待用户处理时，保留这批 descriptor，等文档真的可写后再放置。
@@ -479,7 +508,7 @@ function placeNativeFiguresWhenReady(descriptors: CapturedFigureDescriptor[], ep
       const verdict = await whenDocumentReady(pj)
       if (verdict === 'superseded') return
       if (verdict === 'ready') {
-        if (useNativeSessionStore.getState().epoch === epoch && currentProjectId() === pj) placeNativeFigures(descriptors)
+        if (useNativeSessionStore.getState().epoch === epoch && currentProjectId() === pj) place()
         return
       }
     }

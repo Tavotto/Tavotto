@@ -109,7 +109,9 @@ def _render(browser, path):
         return Image.open(target).convert("RGB")
     page = browser.new_page(viewport={"width": 400, "height": 300}, device_scale_factor=1)
     try:
-        page.set_content('<html><body style="margin:0">' + path.read_text() + "</body></html>")
+        page.set_content(
+            '<html><body style="margin:0">' + path.read_text(encoding="utf-8") + "</body></html>"
+        )
         return Image.open(io.BytesIO(page.locator("svg").first.screenshot())).convert("RGB")
     finally:
         page.close()

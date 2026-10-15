@@ -17,7 +17,7 @@
 - 自动捕获和导出用 `require_built`，只读已经运行并接纳的热 Figure 或经过核验的冻结对。
   worker 冷了、会话过期、配对缺失都不能借导出重新执行脚本。动态 draw 回调、自定义 draw
   或不能证明配对稳定的格式化器不授予 SVG 配对资格；自动捕获在触发 draw 前拒绝。
-- 静态 PDF 只有经接纳确认、绑定到该原件字节 hash 的同源 SVG 才可使用。
+- 静态 PDF 无 override 时，只有经接纳确认、绑定到**当前精确原件字节 hash** 的同源 SVG 才可独立授权。
   旁边有同名脚本 / SVG、存在预览或历史导出都不是证据。没有已验证表示时，SVG 逐格式
   失败并指出对应素材，PDF 等其他成功项仍交付；不丢面板、不用旧代替、不自动转位图。
 
@@ -46,18 +46,30 @@
 
 ## 3. 项目持久化与旧项目
 
-全质量配对产物由 `engine/svgstore.py` 保存到项目的 `tavottofile/figure_snapshots/`，
-是项目资产，不是预览缓存，也不是依赖原机器数据目录的临时结果。复制完整项目目录时
-一同携带；读取重新核对来源、patch、输入改指、当前执行代、回执与两份字节身份。
-新一次明确运行会推进当前代标记，旧 patch 变体不能冒充新一代 Figure。
+文档面板保存明确的 `figureSnapshot`，闭集为
+`{version, sourceId, patchHash, receiptId, snapshotId}`；导出请求通过 `figure_snapshot` 传同一引用。
+保存时先冻结精确源 / patch 变体，再把引用与正文单次原子写入。冻结失败就清除本次待保存正文的旧引用，
+返回来源 warning；不阻止布局保存、已成功的运行或正常 PDF 导出，也不触发脚本执行。
+前端明确新运行成功、patch 或 source 改变时清引用，纯几何编辑保留；晚到的保存响应不能恢复已失效引用。
 
-已有项目资产不按 TTL 到期，不为给新资产腾空间而自动驱逐；超出受控预算拒绝新增。
-保存布局时尽力冻结可用的精确编辑变体，缺表示不阻止用户保存布局，也不触发脚本执行。
-项目包打开仍只做检视，不能借打开包自动安装素材。
+当前回执未知时，磁盘 current marker 与预览 metadata 不能作为执行证据。冷态文档有明确引用，
+可以读取其保存版本，**即使只请求 PDF 也从该引用取同一版本**；当前进程已知新回执时，旧引用必须拒绝，
+不能因新捕获失败而回退。静态无 override 的精确字节 hash 配对是独立授权路径，同样服从已知回执核对。
+旧项目无引用时，执行源需要当前进程已经观察到的回执，或由用户明确再运行并通过接纳；不能猜造引用。
+
+只有显式 `storage_root` 才将 `engine/svgstore.py` 的配对保存为项目
+`tavottofile/figure_snapshots/` 资产，缺省数据目录存储仍有 TTL。项目身份可搬迁，复制完整项目目录时
+一同携带；不可变 archive 的内容寻址包含完整来源 identity、回执身份与 generation、PDF/SVG 两份 hash。
+新运行 `activate` 可以撤销旧 current lookup，但不会删历史 archive。项目资产无 TTL、不按容量驱逐；
+预算 256 条是 current 与 archive 元数据合计，首次变体通常占两条，总字节预算 512 MiB、相同 blob 去重。
+容量满只拒新增，保存过的 archive 与字节不动；保留历史版本不等于授权它冒充当前执行。
+项目包打开仍只检视，不能借打开包自动安装素材。
 持久化权威细则见 [layout-versions-and-documents.md](../../../rules/backend/layout-versions-and-documents.md)。
 
-旧项目只有布局 / PDF / 预览、没有已验证配对时，打开或点击导出不能凭空重建 SVG。
-用户须明确重新运行并通过 Figure 接纳与配对检查；在此之前该来源的 SVG 保持不可用。
+native 回执另以私有 `session_id` + 执行 / 屏障 epoch 区分执行实例，不改 wire generation，
+也不泄漏 argv。同一 barrier 内稳定，成功 continue / released 和新 barrier 推进 epoch；
+继续后直接结束也撤销旧 barrier 权威。实例与公开身份的区别见
+[preparation-and-receipts.md](../../../rules/backend/preparation-and-receipts.md)。
 
 ## 4. 验证与未覆盖范围
 
@@ -66,6 +78,8 @@
 ```sh
 .venv/bin/python -m pytest tests/test_rendercore_svgwriter.py tests/test_rendercore_svginspect.py tests/test_worker_svg_pair.py tests/test_svgstore.py tests/test_export_svg.py
 .venv/bin/python -m pytest tests/test_rendercore_ir.py tests/test_rendercore_sources.py tests/test_rendercore_writer.py tests/test_rendercore_placement.py tests/test_rendercore_model.py tests/test_retirement_scan.py
+.venv/bin/python -m pytest tests/test_export_request.py tests/test_execution_receipt.py tests/test_run_argv_e2e.py tests/test_foundation_facade_ledger.py
+cd web && pnpm exec vitest run src/store/figureSnapshot.test.ts src/store/figureSnapshotInvalidation.test.ts src/store/projectSave.test.ts src/lib/autosave/diskWriter.test.ts
 ```
 
 写入器测试有 Chromium 与 Inkscape 两条独立渲染路径，手算检查裁剪 / 旋转 / 翻转、
@@ -80,7 +94,7 @@
 
 ### 单格式原图与配对的区别
 
-`original` 且仅请求 SVG 时，已有、已接纳的热 Figure 直接调用一次原生 SVG 导出。
+`original` 且仅请求 SVG、未携带明确快照引用时，已有、已接纳的热 Figure 直接调用一次原生 SVG 导出。
 这一档不需要跨 PDF/SVG 后端配对，因此自定义 formatter / Artist 的正常 Matplotlib
 单次导出仍可用；同样不允许重新执行脚本，不把单份 SVG 写成已验证 PDF 配对。
 未编辑的静态 PDF 不因存在同名脚本或热 Figure 获得资格，仍须已有的 hash 绑定。

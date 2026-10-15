@@ -120,6 +120,15 @@ export interface RuntimePanelSource {
   runConfig?: string
 }
 
+/** Immutable, backend-verified Figure snapshot bound to one source execution and patch set. */
+export interface FigureSnapshot {
+  version: 1
+  sourceId: string
+  patchHash: string
+  receiptId: string
+  snapshotId: string
+}
+
 export interface PanelObject extends ObjectBase {
   type: 'panel'
   fileId: string
@@ -138,6 +147,7 @@ export interface PanelObject extends ObjectBase {
   /** 仅 fileKind === 'runtime'：捕获来源的持久化描述（见 RuntimePanelSource） */
   source?: RuntimePanelSource
   overrides: PanelOverride[]
+  figureSnapshot?: FigureSnapshot
   /** Nonsemantic source/frame guard. Never changes the meaning of overrides. */
   artifactValidation?: ArtifactValidation
   /**

@@ -13,6 +13,10 @@ The default store is a local, expiring cache. With an application-validated
 ``storage_root``, these are durable project assets: identities use project=".",
 whole-project moves preserve lookups, and valid exports never expire or lose
 their place to capacity eviction. Capacity refuses additions before mutation.
+Durable saves also publish immutable, content-addressed versions for explicit
+document references. Activation only changes current lookups, never these
+versions. The record budget counts current and archived metadata separately
+(normally at most 128 active variants); identical blobs share their byte cost.
 """
 
 from __future__ import annotations
@@ -113,7 +117,7 @@ def _directory(path: Path, *, create: bool = False) -> None:
         raise ValueError("unsafe Figure snapshot directory")
 
 
-def _root(*, create: bool, storage_root: Path | None = None) -> Path:
+def _root(*, create: bool, storage_root: Path | None = None, archived: bool = False) -> Path:
     # The configured data parent is trusted and may itself resolve through an OS
     # alias (e.g. /var on macOS). No symlinks inside our store are admitted.
     if storage_root is None:
@@ -130,8 +134,12 @@ def _root(*, create: bool, storage_root: Path | None = None) -> Path:
     if create:
         parent.mkdir(parents=True, exist_ok=True)
     _directory(root, create=create)
-    for name in ("entries", "blobs", "sources"):
+    for name in ("blobs", "snapshots") if archived else ("entries", "blobs", "sources"):
         _directory(root / name, create=create)
+    if storage_root is not None and not archived:
+        snapshots = root / "snapshots"
+        if create or snapshots.exists() or snapshots.is_symlink():
+            _directory(snapshots, create=create)
     return root
 
 
@@ -323,11 +331,73 @@ def _read_record(path: Path, *, expected: dict | None = None) -> dict:
     return payload
 
 
+def _snapshot_id(payload: dict) -> str:
+    return _digest(
+        _json(
+            {
+                "identity": payload["identity"],
+                "receipt": _receipt_key(payload["receipt"]),
+                "pdf": payload["pdf_artifact"]["bytes_sha256"],
+                "svg": payload["svg_artifact"]["bytes_sha256"],
+            }
+        )
+    )
+
+
+def _snapshot_reference(payload: dict) -> dict:
+    return {
+        "version": VERSION,
+        "sourceId": payload["identity"]["source_id"],
+        "patchHash": payload["identity"]["patch_hash"],
+        "receiptId": payload["receipt"]["receipt_id"],
+        "snapshotId": _snapshot_id(payload),
+    }
+
+
+def validate_reference(reference) -> dict:
+    """Validate the closed document/wire schema and detach it from its caller."""
+    if (
+        not isinstance(reference, dict)
+        or set(reference) != {"version", "sourceId", "patchHash", "receiptId", "snapshotId"}
+        or type(reference["version"]) is not int
+        or reference["version"] != VERSION
+        or not _text(reference["sourceId"])
+        or not _hash(reference["patchHash"], prefixed=True)
+        or not _hash(reference["receiptId"], prefixed=True)
+        or not _hash(reference["snapshotId"])
+    ):
+        raise ValueError("invalid Figure snapshot reference")
+    return dict(reference)
+
+
+def _read_snapshot(path: Path, *, expected: dict | None = None) -> dict:
+    record = json.loads(_read_file(path, MAX_METADATA_BYTES), object_pairs_hook=_unique_object)
+    payload = _validate_record(record, expected=expected)
+    if path.name != _snapshot_id(payload) + ".json":
+        raise ValueError("immutable Figure snapshot filename mismatch")
+    return payload
+
+
+def _existing_reference(root: Path, payload: dict) -> dict | None:
+    # Legacy current entries do not magically acquire document references.
+    try:
+        archived = _read_snapshot(
+            root / "snapshots" / (_snapshot_id(payload) + ".json"), expected=payload["identity"]
+        )
+        if any(archived[name] != payload[name] for name in ("pdf_artifact", "svg_artifact")):
+            raise ValueError("immutable Figure snapshot artifact mismatch")
+        return _snapshot_reference(archived)
+    except (OSError, ValueError, TypeError, RecursionError):
+        return None
+
+
 def _blob_path(root: Path, artifact: dict) -> Path:
     return root / "blobs" / (artifact["bytes_sha256"] + "." + artifact["kind"])
 
 
-def _result(root: Path, payload: dict, pdf: bytes, svg: bytes) -> dict:
+def _result(
+    root: Path, payload: dict, pdf: bytes, svg: bytes, *, reference: dict | None = None
+) -> dict:
     return {
         "pdf_path": _blob_path(root, payload["pdf_artifact"]),
         "svg_path": _blob_path(root, payload["svg_artifact"]),
@@ -336,6 +406,7 @@ def _result(root: Path, payload: dict, pdf: bytes, svg: bytes) -> dict:
         "receipt": payload["receipt"],
         "pdf": pdf,
         "svg": svg,
+        "snapshot_ref": reference,
     }
 
 
@@ -432,17 +503,21 @@ def _set_current(
     )
 
 
-def _durable_state(root: Path) -> tuple[dict, dict]:
+def _durable_state(root: Path) -> tuple[dict, dict, dict]:
     """Read established records without turning a read failure into deletion."""
     markers = {}
     records = {}
+    snapshots = {}
     for path in _entries(root / "sources"):
         if _METADATA.fullmatch(path.name):
             markers[path.stem] = (path, _read_current(path))
     for path in _entries(root / "entries"):
         if _METADATA.fullmatch(path.name):
             records[path.stem] = (path, _read_record(path))
-    return markers, records
+    for path in _entries(root / "snapshots"):
+        if _METADATA.fullmatch(path.name):
+            snapshots[path.stem] = (path, _read_snapshot(path))
+    return markers, records, snapshots
 
 
 def _durable_admission(
@@ -459,7 +534,7 @@ def _durable_admission(
     Valid records are never sacrificed for space. Only obsolete generations
     and blobs no longer referenced by the final state may be reclaimed.
     """
-    markers, records = _durable_state(root)
+    markers, records, snapshots = _durable_state(root)
     group = _key(_source_identity(identity))
     wanted = _receipt_key(receipt)
     previous = markers.get(group)
@@ -482,17 +557,17 @@ def _durable_admission(
             kept[key] = (path, record)
     if payload is not None:
         kept[_key(identity)] = (root / "entries" / (_key(identity) + ".json"), payload)
-    if len(markers) > MAX_SOURCES or len(kept) > MAX_SNAPSHOTS:
+        snapshot = _snapshot_id(payload)
+        snapshots.setdefault(snapshot, (root / "snapshots" / (snapshot + ".json"), payload))
+    if len(markers) > MAX_SOURCES or len(kept) + len(snapshots) > MAX_SNAPSHOTS:
         raise ValueError("durable Figure snapshot budget exceeded")
     total = sum(
         len(marker_bytes) if key == group else path.lstat().st_size
         for key, (path, _) in markers.items()
     )
     blobs = {}
-    for key, (path, record) in kept.items():
-        total += (
-            len(encoded) if payload is not None and key == _key(identity) else path.lstat().st_size
-        )
+    for path, record in (*kept.values(), *snapshots.values()):
+        total += len(encoded) if record is payload else path.lstat().st_size
         for name in ("pdf_artifact", "svg_artifact"):
             artifact = record[name]
             blob = _blob_path(root, artifact)
@@ -520,8 +595,12 @@ def _durable_admission(
 
 
 def _durable_cleanup(root: Path) -> None:
-    markers, records = _durable_state(root)
-    referenced = set()
+    markers, records, snapshots = _durable_state(root)
+    referenced = {
+        _blob_path(root, record[name]).name
+        for _, record in snapshots.values()
+        for name in ("pdf_artifact", "svg_artifact")
+    }
     for path, record in records.values():
         owner = markers.get(_key(_source_identity(record["identity"])))
         if owner is None:
@@ -537,7 +616,7 @@ def _durable_cleanup(root: Path) -> None:
     for path in _entries(root / "blobs"):
         if _BLOB.fullmatch(path.name) and path.name not in referenced:
             path.unlink(missing_ok=True)
-    for directory in (root / "entries", root / "blobs", root / "sources"):
+    for directory in (root / "entries", root / "blobs", root / "sources", root / "snapshots"):
         for path in _entries(directory):
             if _TEMP.fullmatch(path.name):
                 path.unlink(missing_ok=True)
@@ -638,8 +717,9 @@ def activate(
 ) -> None:
     """Admit an explicit new run before attempting its snapshot capture.
 
-    This revokes all older patch/static variants, including when new capture
-    fails. Ordinary late exports cannot reactivate a superseded generation.
+    This revokes all older current patch/static lookups, including when new
+    capture fails. Explicit immutable document references remain readable.
+    Ordinary late exports cannot reactivate a superseded generation.
     Generations are scoped to a worker, so comparison uses the whole receipt
     identity and never assumes generation numbers are globally monotonic.
     """
@@ -731,6 +811,14 @@ def save(
             for path in (target, _blob_path(root, pdf_artifact), _blob_path(root, svg_artifact))
         ):
             raise ValueError("unsafe Figure snapshot file")
+        snapshot_path = None
+        if storage_root is not None:
+            snapshot_path = root / "snapshots" / (_snapshot_id(payload) + ".json")
+            if snapshot_path.exists() or snapshot_path.is_symlink():
+                # Existing immutable bytes win, including their original
+                # timestamp/provenance. Never rewrite a previously issued ref.
+                payload = _read_snapshot(snapshot_path, expected=identity)
+                encoded = _json({"payload": payload, "sha256": _digest(_json(payload))})
         marker = (
             _durable_admission(
                 root,
@@ -759,6 +847,10 @@ def save(
                     raise ValueError("corrupt immutable Figure snapshot blob")
             else:
                 atomicio.write_bytes(path, data, mode=0o600)
+        if snapshot_path is not None and not snapshot_path.exists():
+            # The archive is independently committed only after both immutable
+            # blobs. A later current-entry failure cannot destroy this version.
+            atomicio.write_bytes(snapshot_path, encoded, mode=0o600)
         target = root / "entries" / (key + ".json")
         if target.is_symlink():
             raise ValueError("unsafe Figure snapshot metadata")
@@ -767,7 +859,13 @@ def save(
             _durable_cleanup(root)
         else:
             _prune(root, protected=key, protected_source=group)
-        return _result(root, payload, pdf, svg)
+        return _result(
+            root,
+            payload,
+            pdf,
+            svg,
+            reference=_snapshot_reference(payload) if storage_root is not None else None,
+        )
 
 
 def load(
@@ -816,6 +914,55 @@ def load(
                 if len(blob) != artifact["size_bytes"] or _digest(blob) != artifact["bytes_sha256"]:
                     return None
                 data.append(blob)
-            return _result(root, payload, *data)
+            return _result(
+                root,
+                payload,
+                *data,
+                reference=_existing_reference(root, payload) if storage_root is not None else None,
+            )
+    except (OSError, ValueError, TypeError, RecursionError):
+        return None
+
+
+def load_snapshot(
+    project_root,
+    reference,
+    *,
+    source_id: str,
+    patch_hash: str,
+    static_sha256: str | None = None,
+    remap_fingerprint: str = "",
+    storage_root: Path | None = None,
+) -> dict | None:
+    """Read an explicit immutable project version, independent of current runs.
+
+    Only durable project stores issue references. No mutable current marker,
+    cache TTL, file discovery or execution participates. Reads take no write
+    lock: archived metadata and its blobs are immutable and never evicted, so
+    bounded checked reads also work on an entirely read-only project copy.
+    """
+    if storage_root is None:
+        return None
+    try:
+        reference = validate_reference(reference)
+        if reference["sourceId"] != source_id or reference["patchHash"] != patch_hash:
+            return None
+        identity = _identity(
+            project_root, source_id, patch_hash, static_sha256, remap_fingerprint, portable=True
+        )
+        root = _root(create=False, storage_root=storage_root, archived=True)
+        payload = _read_snapshot(
+            root / "snapshots" / (reference["snapshotId"] + ".json"), expected=identity
+        )
+        if _snapshot_reference(payload) != reference:
+            return None
+        data = []
+        for name, limit in (("pdf_artifact", MAX_PDF_BYTES), ("svg_artifact", MAX_SVG_BYTES)):
+            artifact = payload[name]
+            blob = _read_file(_blob_path(root, artifact), limit)
+            if len(blob) != artifact["size_bytes"] or _digest(blob) != artifact["bytes_sha256"]:
+                return None
+            data.append(blob)
+        return _result(root, payload, *data, reference=reference)
     except (OSError, ValueError, TypeError, RecursionError):
         return None

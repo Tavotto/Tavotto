@@ -1,3 +1,4 @@
+import { figureSnapshotFor } from './figureSnapshot'
 import { artifactRequestFields, artifactValidationIssue, originalArtifactOverrides } from './artifactValidation'
 /**
  * 统一导出请求的构造 —— **全产品只有这一份**（ADR 0031）。
@@ -248,6 +249,9 @@ export function buildExportRequest(input: ExportRequestInput): BuiltRequest {
     const patches = input.panel ? originalArtifactOverrides(input.panel) : []
     request.original = {
       figure_id: input.figureId ?? '',
+      ...(input.panel && input.panel.fileId === input.figureId &&
+          JSON.stringify(patches) === JSON.stringify(input.panel.overrides) && figureSnapshotFor(input.panel)
+        ? { figure_snapshot: figureSnapshotFor(input.panel) } : {}),
       ...(input.panel ? artifactRequestFields(input.panel) : {}),
       overrides: patches.length ? patches : undefined,
       w_mm: spec?.widthMm ?? null,

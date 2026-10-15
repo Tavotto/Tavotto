@@ -839,3 +839,40 @@ class TestObservedInputsAndBinding:
             binding=binding,
         )
         assert big.binding_check()["matched"] is None
+
+
+def test_native_snapshot_receipt_is_bound_to_session_and_barrier(tmp_path):
+    from tavotto.engine import nativesession
+
+    def session(sid):
+        return nativesession.NativeSession(
+            session_id=sid,
+            descriptor={
+                "metadata": {
+                    "project_root": str(tmp_path),
+                    "cwd": str(tmp_path),
+                    "interpreter": sys.executable,
+                    "target_kind": "script",
+                },
+                "out_dir": str(tmp_path / sid),
+            },
+        )
+
+    first, second = session("first-terminal"), session("second-terminal")
+    barrier = {nativesession.EVENT_KEY: "barrier", "stems": ["F"]}
+    first._on_frame(barrier)
+    a = receipt.from_native_session(first, "plot.py")
+    assert first.generation == 1
+    assert receipt.from_native_session(first, "plot.py").receipt_id == a.receipt_id
+    first._on_frame(barrier)  # Duplicate observation of one barrier is stable.
+    assert receipt.from_native_session(first, "plot.py").receipt_id == a.receipt_id
+    first._on_frame({nativesession.EVENT_KEY: "released"})
+    assert receipt.from_native_session(first, "plot.py").receipt_id != a.receipt_id
+    first._on_frame(barrier)
+    b = receipt.from_native_session(first, "plot.py")
+    assert first.generation == 1  # Never change the wire protocol generation.
+    assert b.receipt_id != a.receipt_id
+    assert b.public_identity() == a.public_identity()
+    second._on_frame(barrier)
+    assert receipt.from_native_session(second, "plot.py").receipt_id != a.receipt_id
+    assert "first-terminal" not in json.dumps(b.public_facts())

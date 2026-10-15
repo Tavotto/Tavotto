@@ -6,6 +6,7 @@ import { useEnvStore } from './envStore'
 import { useScriptArgvStore } from './scriptArgvStore'
 import { useRenderStore } from './renderStore'
 import { useRuntimeAssetStore } from './runtimeAssetStore'
+import { invalidateCapturedFigureSnapshots } from './figureSnapshotInvalidation'
 import {
   isBusyPhase,
   isGatePhase,
@@ -14,6 +15,8 @@ import {
   useScriptRunStore,
   whenScriptIdle,
 } from './scriptRunStore'
+
+vi.mock('./figureSnapshotInvalidation', () => ({ invalidateCapturedFigureSnapshots: vi.fn() }))
 
 vi.mock('@/lib/api', () => ({
   // scriptRunStore 直接用的三样
@@ -97,6 +100,40 @@ beforeEach(() => {
   useRuntimeAssetStore.getState().clear()
   mockProbe.mockReset()
   mockCancel.mockClear()
+  vi.mocked(invalidateCapturedFigureSnapshots).mockClear()
+})
+
+describe('successful explicit probe retires Figure snapshots', () => {
+  it('invalidates captured sources only after success, using the initiating project', async () => {
+    setCurrentProjectId('probe-project')
+    const running = deferredProbe()
+    const run = useScriptRunStore.getState().run('fig.py')
+    expect(invalidateCapturedFigureSnapshots).not.toHaveBeenCalled()
+    running.resolve(ok([desc('a'), desc('b')]))
+    await run
+    expect(invalidateCapturedFigureSnapshots).toHaveBeenCalledExactlyOnceWith([desc('a'), desc('b')], 'probe-project')
+    setCurrentProjectId(null)
+  })
+
+  it.each(['script_probe_failed', 'execution_cancelled', 'execution_timeout', 'script_no_figure'])(
+    'keeps snapshots when the explicit probe ends with %s', async (code) => {
+      mockProbe.mockResolvedValueOnce(failed(code))
+      await useScriptRunStore.getState().run('fig.py')
+      expect(invalidateCapturedFigureSnapshots).not.toHaveBeenCalled()
+    },
+  )
+
+  it('does not invalidate after a project A → B → A round trip while the response was pending', async () => {
+    setCurrentProjectId('probe-project')
+    const running = deferredProbe()
+    const run = useScriptRunStore.getState().run('fig.py')
+    setCurrentProjectId('other-project')
+    setCurrentProjectId('probe-project')
+    running.resolve(ok([desc('a')]))
+    await run
+    expect(invalidateCapturedFigureSnapshots).not.toHaveBeenCalled()
+    setCurrentProjectId(null)
+  })
 })
 
 describe('scriptRunStore 状态机', () => {

@@ -1,7 +1,7 @@
 import { ArtifactValidationError, validationFromSource, type ArtifactRequestFields } from '@/lib/artifactValidation'
 import { apiUrl, apiUrlFor, currentProjectId, withProject, withProjectFor } from '@/lib/session'
 import { formatMessage, i18n, literal, msg, t, type UiMessage } from '@/i18n'
-import type { FigureDocument, ProjectDocument } from '@/types/document'
+import type { FigureDocument, FigureSnapshot, ProjectDocument } from '@/types/document'
 import type { ManifestFrame } from '@/lib/figureFrame'
 import type { PreviewMetadata } from '@/lib/previewBudget'
 import type { ScriptArgsSchema } from '@/lib/scriptArgsForm'
@@ -842,6 +842,8 @@ export async function fetchLayout(name: string): Promise<FetchedLayout> {
 export interface SavedLayout {
   /** Layout saved, but these exact source edits have no durable SVG snapshot. */
   svg_snapshot_warnings?: string[]
+  /** Complete verified snapshot map for candidate panel object IDs; absent means old backend. */
+  figure_snapshots?: Record<string, FigureSnapshot>
   ok: boolean
   revision: string | null
   /** 落盘的文件名（去掉 `.json`，经后端净化）；旧后端不给 */
@@ -913,6 +915,8 @@ export const REVISION_ABSENT = 'absent'
 export interface PutAutosaveResult {
   /** Nonblocking source snapshot warnings; the layout body was saved successfully. */
   svg_snapshot_warnings?: string[]
+  /** Complete verified snapshot map for candidate panel object IDs; absent means old backend. */
+  figure_snapshots?: Record<string, FigureSnapshot>
   ok: boolean
   saved_at: number
   revision: string | null
@@ -1660,6 +1664,7 @@ interface ExportBox {
 export type ExportObject =
   | (ExportBox & ArtifactRequestFields & {
       type: 'panel'
+      figure_snapshot?: FigureSnapshot
       id: string
       overrides?: { gid: string; prop: string; value: unknown }[]
       /** 0–1 归一化、top-origin，与 PanelObject.crop 同构，原样直传 */
@@ -1746,6 +1751,7 @@ export interface ExportRequest {
   /** `scope=original`：那一张图自己。**没有 x/y/w/h，也没有页面尺寸** */
   original?: ArtifactRequestFields & {
     figure_id: string
+    figure_snapshot?: FigureSnapshot
     overrides?: { gid: string; prop: string; value: unknown }[]
     w_mm?: number | null
     h_mm?: number | null

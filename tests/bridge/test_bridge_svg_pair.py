@@ -49,8 +49,8 @@ def test_native_pair_is_state_neutral_and_keeps_script_font_policy(tmp_path, bri
         with pymupdf.open(pdf) as doc:
             assert "Export title" in doc[0].get_text()
         assert Path(session.render_png(stem, 400)["path"]).read_bytes() == png_before
-        assert (tmp_path / "runs.txt").read_text() == "run\n"
+        assert (tmp_path / "runs.txt").read_text(encoding="utf-8") == "run\n"
         session.resume()
         session.wait_event("barrier")
-        after = json.loads((tmp_path / "after.json").read_text())
+        after = json.loads((tmp_path / "after.json").read_text(encoding="utf-8"))
         assert after == {"title": "Script title", "fonttype": "none"}

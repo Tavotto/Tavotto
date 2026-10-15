@@ -31,7 +31,7 @@ def project(tmp_path, monkeypatch):
     monkeypatch.setenv("MPLCONFIGDIR", str(tmp_path / "mpl"))
     root = tmp_path / "project"
     root.mkdir()
-    (root / "plot.py").write_text(SCRIPT)
+    (root / "plot.py").write_text(SCRIPT, encoding="utf-8")
     (root / "tavotto_registry.json").write_text(
         json.dumps(
             {
@@ -40,7 +40,8 @@ def project(tmp_path, monkeypatch):
                     "plot.py": {"entry": "main", "cost": "light", "notes": "", "stems": ["F"]}
                 },
             }
-        )
+        ),
+        encoding="utf-8",
     )
     m.open_project(str(root))
     exportjob.reset_for_tests()
@@ -51,7 +52,7 @@ def project(tmp_path, monkeypatch):
     exportjob.reset_for_tests()
 
 
-def spec(source, *, scope="canvas", formats=("svg",), patches=None, strict=False):
+def spec(source, *, scope="canvas", formats=("svg",), patches=None, strict=False, reference=None):
     common = {
         "scope": scope,
         "filename": "result",
@@ -102,6 +103,11 @@ def spec(source, *, scope="canvas", formats=("svg",), patches=None, strict=False
                 },
             ],
         }
+    if reference is not None:
+        if scope == "original":
+            common["original"]["figure_snapshot"] = reference
+        else:
+            common["canvas"]["objects"][0]["figure_snapshot"] = reference
     return common
 
 
@@ -132,19 +138,25 @@ def run_script(client):
 
 
 @pytest.mark.parametrize("scope", ["original", "canvas"])
-def test_first_script_run_without_edits_and_cold_reopen(project, monkeypatch, scope):
+def test_first_script_run_without_edits_and_saved_cold_reopen(project, monkeypatch, scope):
     client, root = project
     source = run_script(client)
-    # Initial run captured an export-grade pair before any export was requested.
+    body, outputs = output(client, spec(source, scope=scope, strict=True))
+    assert_svg(body, outputs["svg"])
+    saved = client.post("/api/layouts/first?target=project", json=document(source, []))
+    assert saved.status_code == 200, saved.get_json()
+    reference = saved.get_json()["figure_snapshots"]["panel"]
     pool.shutdown_all(figures_dir=str(root), wait=True)
     m.reset_projects()
     m.open_project(str(root))
     monkeypatch.setattr(pool, "get", lambda *a, **k: pytest.fail("SVG export reran the script"))
-    body, outputs = output(client, spec(source, scope=scope, formats=("svg", "pdf")))
+    body, outputs = output(
+        client, spec(source, scope=scope, formats=("svg", "pdf"), reference=reference)
+    )
     assert body["status"] == "done", body
     assert_svg(body, outputs["svg"])
     assert outputs["pdf"]["status"] == "done"
-    body, outputs = output(client, spec(source, scope=scope, strict=True))
+    body, outputs = output(client, spec(source, scope=scope, strict=True, reference=reference))
     assert_svg(body, outputs["svg"])
 
 
@@ -223,6 +235,10 @@ def test_edited_save_before_first_export_survives_project_move_and_cache_clear(
     assert response.status_code == 200, response.get_json()
     saved = client.post("/api/layouts/edited?target=project", json=document(source, patches))
     assert saved.status_code == 200, saved.get_json()
+    edited_ref = saved.get_json()["figure_snapshots"]["panel"]
+    saved_base = client.post("/api/layouts/base?target=project", json=document(source, []))
+    assert saved_base.status_code == 200, saved_base.get_json()
+    base_ref = saved_base.get_json()["figure_snapshots"]["panel"]
     pool.shutdown_all(figures_dir=str(root), wait=True)
     m.reset_projects()
     moved = root.with_name("moved-project")
@@ -230,11 +246,11 @@ def test_edited_save_before_first_export_survives_project_move_and_cache_clear(
     monkeypatch.setenv("TAVOTTO_DATA_DIR", str(root.parent / "fresh-data"))
     m.open_project(str(moved))
     monkeypatch.setattr(pool, "get", lambda *a, **k: pytest.fail("saved SVG reran script"))
-    body, outputs = output(client, spec(source, patches=patches, strict=True))
+    body, outputs = output(client, spec(source, patches=patches, strict=True, reference=edited_ref))
     assert_svg(body, outputs["svg"])
     assert body["status"] == "done", body
     # Also the unedited variant is export-grade, independent of the data cache.
-    body, outputs = output(client, spec(source, scope="original", strict=True))
+    body, outputs = output(client, spec(source, scope="original", strict=True, reference=base_ref))
     assert_svg(body, outputs["svg"])
 
 
@@ -291,7 +307,7 @@ def test_svg_with_eps_does_not_start_a_cold_worker(project, monkeypatch):
     assert outputs["eps"]["status"] == "failed"
 
 
-def test_project_package_contains_only_referenced_portable_snapshots(project):
+def test_project_package_contains_only_referenced_portable_snapshots(project, monkeypatch):
     import zipfile
 
     client, root = project
@@ -313,6 +329,33 @@ def test_project_package_contains_only_referenced_portable_snapshots(project):
         assert len(records) == 1
         assert records[0]["identity"]["project"] == "."
         assert records[0]["identity"]["source_id"] == source
+        packaged_doc = json.loads(archive.read("layout.json"))
+        reference = packaged_doc["canvases"][0]["objects"][0]["figureSnapshot"]
+        snapshot_name = prefix + "snapshots/" + reference["snapshotId"] + ".json"
+        assert snapshot_name in names
+        snapshot = json.loads(archive.read(snapshot_name))["payload"]
+        assert snapshot["receipt"]["receipt_id"] == reference["receiptId"]
+        assert snapshot["identity"]["source_id"] == reference["sourceId"] == source
+        moved = root.parent / "unpacked-project"
+        moved.mkdir()
+        for name in names:
+            if name.startswith("assets/") and not name.endswith("/"):
+                destination = moved / name.removeprefix("assets/")
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                destination.write_bytes(archive.read(name))
+
+    pool.shutdown_all(figures_dir=str(root), wait=True)
+    m.reset_projects()
+    monkeypatch.setenv("TAVOTTO_DATA_DIR", str(root.parent / "package-fresh-data"))
+    m.open_project(str(moved))
+    monkeypatch.setattr(pool, "get", lambda *a, **k: pytest.fail("package export ran script"))
+    for scope in ("original", "canvas"):
+        body, outputs = output(
+            client, spec(source, scope=scope, formats=("pdf", "svg"), reference=reference)
+        )
+        assert body["status"] == "done", body
+        assert_svg(body, outputs["svg"])
+        assert outputs["pdf"]["status"] == "done"
 
 
 def test_single_original_svg_supports_live_custom_formatter_without_pairing(project):
@@ -323,7 +366,8 @@ def test_single_original_svg_supports_live_custom_formatter_without_pairing(proj
             "    from matplotlib.ticker import FuncFormatter\n"
             '    ax.xaxis.set_major_formatter(FuncFormatter(lambda x, pos: f"{x:.1f} units"))\n'
             '    ax.set_title("Source title")',
-        )
+        ),
+        encoding="utf-8",
     )
     source = run_script(client)
     response = client.post("/api/engine/render", json={"id": source, "patches": []})
@@ -386,3 +430,211 @@ def test_cancel_after_svg_written_never_publishes_it(project, monkeypatch):
     target = Path(result["export_dir"])
     assert not list(target.glob("*.svg"))
     assert not list(target.glob(exportjob.TMP_PREFIX + "*"))
+
+
+@pytest.mark.parametrize("scope", ["original", "canvas"])
+def test_failed_generation_marker_never_authorizes_an_unknown_current_snapshot(
+    project, monkeypatch, scope
+):
+    import shutil
+
+    from tavotto.engine import svgstore
+
+    client, root = project
+    source = run_script(client)
+    saved = client.post("/api/layouts/old?target=project", json=document(source, []))
+    assert saved.status_code == 200, saved.get_json()
+    old_doc = json.loads((root / "tavottofile" / "old.json").read_text(encoding="utf-8"))
+    reference = old_doc["canvases"][0]["objects"][0]["figureSnapshot"]
+    assert reference == saved.get_json()["figure_snapshots"]["panel"]
+    pool.shutdown_all(figures_dir=str(root), wait=True)
+    (root / "plot.py").write_text(
+        SCRIPT.replace("Source title", "New execution title"), encoding="utf-8"
+    )
+    monkeypatch.setattr(
+        svgstore,
+        "activate",
+        lambda *a, **k: (_ for _ in ()).throw(PermissionError("read-only source marker")),
+    )
+    monkeypatch.setattr(m.engine_runtimeasset, "materialize", lambda *a, **k: None)
+    assert run_script(client) == source  # SVG storage failures never block running science.
+    rejected = client.post("/api/export", json=spec(source, scope=scope, reference=reference))
+    assert rejected.status_code >= 400, rejected.get_json()
+    assert rejected.get_json()["status"] == "failed", rejected.get_json()
+    # The established PDF-only path remains usable with no snapshot reference.
+    body, outputs = output(client, spec(source, scope=scope, formats=("pdf",)))
+    assert outputs["pdf"]["status"] == "done", body
+    failed_save = client.post("/api/layouts/new?target=project", json=old_doc)
+    assert failed_save.status_code == 200, failed_save.get_json()
+    assert failed_save.get_json()["svg_snapshot_warnings"] == [source]
+    assert failed_save.get_json()["figure_snapshots"] == {}
+    new_doc = json.loads((root / "tavottofile" / "new.json").read_text(encoding="utf-8"))
+    assert "figureSnapshot" not in new_doc["canvases"][0]["objects"][0]
+    assert json.loads((root / "tavottofile" / "old.json").read_text(encoding="utf-8")) == old_doc
+    pool.shutdown_all(figures_dir=str(root), wait=True)
+    m.reset_projects()
+    m.open_project(str(root))
+    with monkeypatch.context() as cold:
+        cold.setattr(pool, "get", lambda *a, **k: pytest.fail("same-machine cold export executed"))
+        rejected = client.post("/api/export", json=spec(source, scope=scope))
+        assert rejected.status_code >= 400, rejected.get_json()
+    m.reset_projects()
+    moved = root.with_name("moved-after-failure")
+    shutil.copytree(root, moved)
+    monkeypatch.setenv("TAVOTTO_DATA_DIR", str(root.parent / "fresh-after-failure"))
+    m.open_project(str(moved))
+    monkeypatch.setattr(pool, "get", lambda *a, **k: pytest.fail("cold snapshot executed code"))
+    rejected = client.post("/api/export", json=spec(source, scope=scope))
+    assert rejected.status_code >= 400, rejected.get_json()
+    # A user explicitly reopening the OLD saved document may export its immutable
+    # OLD Figure. It must not be promoted to the unknown latest execution.
+    body, outputs = output(
+        client, spec(source, scope=scope, formats=("pdf", "svg"), reference=reference)
+    )
+    assert body["status"] == "done", body
+    assert_svg(body, outputs["svg"])
+    # A single PDF also honors the same explicit saved identity without executing.
+    body, outputs = output(client, spec(source, scope=scope, formats=("pdf",), reference=reference))
+    assert outputs["pdf"]["status"] == "done", body
+    rejected = client.post(
+        "/api/export",
+        json=spec(
+            source,
+            scope=scope,
+            patches=[{"gid": "title", "prop": "text", "value": "changed"}],
+            reference=reference,
+        ),
+    )
+    assert rejected.status_code >= 400, rejected.get_json()
+
+
+def test_native_barrier_change_during_capture_never_publishes_a_mislabeled_pair(
+    project, monkeypatch
+):
+    from tavotto.engine import nativesession
+
+    _, root = project
+    session = nativesession.NativeSession(
+        session_id="native-capture-race",
+        descriptor={
+            "metadata": {
+                "project_root": str(root),
+                "cwd": str(root),
+                "interpreter": sys.executable,
+                "target_kind": "script",
+            },
+            "out_dir": str(root.parent / "native-out"),
+        },
+    )
+    session.built = True
+    session._on_frame({nativesession.EVENT_KEY: "barrier", "stems": ["F"]})
+
+    def changed(*args, **kwargs):
+        session._on_frame({nativesession.EVENT_KEY: "released"})
+        session._on_frame({nativesession.EVENT_KEY: "barrier", "stems": ["F"]})
+        return {"svg": {"path": kwargs["svg_path"]}}
+
+    monkeypatch.setattr(session, "export", changed)
+    monkeypatch.setattr(
+        m,
+        "_save_svg_snapshot",
+        lambda *a, **k: pytest.fail("published an old receipt for a new native barrier"),
+    )
+    desc = {
+        "asset_id": figcapture.runtime_asset_id("plot.py", "F"),
+        "stem": "F",
+        "script": "plot.py",
+    }
+    m._capture_svg_snapshot_best_effort(session, desc)
+    assert session.snapshot_epoch > 1
+
+
+def test_native_barrier_change_during_export_is_rejected_before_receipt_publication(
+    project, monkeypatch
+):
+    from tavotto.engine import exportreq, nativesession
+
+    _, root = project
+    source = figcapture.runtime_asset_id("plot.py", "F")
+    session = nativesession.NativeSession(
+        session_id="native-export-race",
+        descriptor={
+            "metadata": {
+                "project_root": str(root),
+                "cwd": str(root),
+                "interpreter": sys.executable,
+                "target_kind": "script",
+            },
+            "out_dir": str(root.parent / "native-export"),
+        },
+    )
+    session.built = True
+    session._on_frame({nativesession.EVENT_KEY: "barrier", "stems": ["F"]})
+
+    def changed(*args, **kwargs):
+        session._on_frame({nativesession.EVENT_KEY: "released"})
+        session._on_frame({nativesession.EVENT_KEY: "barrier", "stems": ["F"]})
+        return {}
+
+    monkeypatch.setattr(session, "export", changed)
+    monkeypatch.setattr(m, "_engine_worker", lambda *a, **k: (session, "F"))
+    with pytest.raises(exportreq.ExportRequestError, match="Figure changed"):
+        m._serialize_figure_with_worker(
+            source, [], "svg", 600, out_dir=root.parent / "out", existing_only=True
+        )
+
+
+@pytest.mark.parametrize(
+    "transition", ["released", "released_then_ended", "continue", "failed_continue"]
+)
+def test_native_execution_revokes_saved_reference_before_new_materialization(
+    project, monkeypatch, transition
+):
+    from tavotto.engine import nativesession
+
+    _, root = project
+    source = figcapture.runtime_asset_id("plot.py", "F")
+    session = nativesession.NativeSession(
+        session_id="native-reference-authority",
+        descriptor={
+            "metadata": {
+                "project_root": str(root),
+                "cwd": str(root),
+                "interpreter": sys.executable,
+                "target_kind": "script",
+            },
+            "out_dir": str(root.parent / "native-reference"),
+        },
+    )
+    session._on_frame({nativesession.EVENT_KEY: "barrier", "stems": ["F"]})
+    before = m._execution_receipt(session, "plot.py")
+    ctx = m._request_ctx()
+    ctx.svg_snapshot_receipts[source] = before.receipt_id
+    ctx.svg_snapshot_native_sources[source] = (session, "plot.py")
+    record = {"receipt": before.public_facts()}
+    assert m._svg_snapshot_matches_current(root, source, record, explicit=True)
+
+    if transition == "continue":
+        # Response is already successful but no released event has arrived.
+        monkeypatch.setattr(session, "_request", lambda *a, **k: {"ok": True})
+        session.resume()
+        assert session.state == nativesession.CONTINUING
+    elif transition == "failed_continue":
+
+        def failed(*a, **k):
+            raise pool.WorkerError("continue failed")
+
+        monkeypatch.setattr(session, "_request", failed)
+        with pytest.raises(pool.WorkerError, match="continue failed"):
+            session.resume()
+        assert session.state == nativesession.BARRIER
+    else:
+        session._on_frame({nativesession.EVENT_KEY: "released"})
+        if transition == "released_then_ended":
+            session._on_frame({nativesession.EVENT_KEY: "exit", "code": 0})
+
+    # No new capture/materialize updated the old context receipt.
+    assert ctx.svg_snapshot_receipts[source] == before.receipt_id
+    assert m._svg_snapshot_matches_current(root, source, record, explicit=True) is (
+        transition == "failed_continue"
+    )

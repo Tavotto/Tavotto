@@ -10,6 +10,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { literal } from '@/i18n'
 import type { EngineRenderOptions, PanelInfo } from '@/lib/api'
 import { setEngineTransport } from '@/lib/engineTransport'
+import { currentProjectId, setCurrentProjectId } from '@/lib/session'
 import {
   rebuildPanel,
   resetOverridesConfirmed,
@@ -18,7 +19,7 @@ import {
   triStateOf,
 } from '@/store/actions'
 import { useAssetStore } from '@/store/assetStore'
-import { useDocumentStore } from '@/store/documentStore'
+import { invalidateFigureSnapshots, useDocumentStore } from '@/store/documentStore'
 import { renderKeyOf, useRenderStore } from '@/store/renderStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
@@ -31,6 +32,10 @@ vi.mock('@/lib/api', async (importOriginal) => ({
   engineRender: (id: string, patches: unknown[], opts?: EngineRenderOptions) =>
     engineRender(id, patches, opts),
   engineInvalidate: (id: string) => engineInvalidate(id),
+}))
+vi.mock('@/store/documentStore', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/store/documentStore')>()),
+  invalidateFigureSnapshots: vi.fn(),
 }))
 
 const text = (id: string, over: Partial<TextObject> = {}): TextObject =>
@@ -90,6 +95,7 @@ const flush = () => new Promise((r) => setTimeout(r, 0))
 beforeEach(() => {
   engineRender.mockReset()
   engineInvalidate.mockReset()
+  vi.mocked(invalidateFigureSnapshots).mockClear()
   useRenderStore.getState().clear()
   useUiStore.setState({ status: null, confirm: null })
   useAssetStore.setState({ byId: {} })
@@ -98,6 +104,7 @@ beforeEach(() => {
 afterEach(() => {
   useSelectionStore.getState().clear()
   setEngineTransport(null)
+  setCurrentProjectId(null)
 })
 
 /* -------------------------------------------------------------------------- */
@@ -270,6 +277,7 @@ describe('rebuildPanel：作废热会话 + 按当前 overrides 重画', () => {
     expect(entry.status).toBe('ready')
     expect(entry.rev).toBe(2)
     expect(useUiStore.getState().status?.key).toBe('status.panelRebuilt')
+    expect(invalidateFigureSnapshots).toHaveBeenCalledExactlyOnceWith(['Fig1.pdf'], currentProjectId())
   })
 
   it('上一次渲染还在飞时点「重新构建」：等排队的那次真画完再判，不把 rendering 当 failed', async () => {
@@ -300,6 +308,7 @@ describe('rebuildPanel：作废热会话 + 按当前 overrides 重画', () => {
     // 在飞的结束了、排队的（作废后的那次）正在画：这时**不许**下结论
     expect(useRenderStore.getState().get(key).status).toBe('rendering')
     expect(settled).toBeNull()
+    expect(invalidateFigureSnapshots).not.toHaveBeenCalled()
     releaseSecond()
     await inFlight
     expect(await outcome).toBe('rebuilt')
@@ -307,6 +316,7 @@ describe('rebuildPanel：作废热会话 + 按当前 overrides 重画', () => {
     expect(useRenderStore.getState().get(key).rev).toBe(2)
     expect(engineRender).toHaveBeenCalledTimes(2)
     expect(useUiStore.getState().status?.key).toBe('status.panelRebuilt')
+    expect(invalidateFigureSnapshots).toHaveBeenCalledTimes(1)
   })
 
   it('作废先于渲染：渲染那一刻会话已经过期', async () => {
@@ -328,6 +338,7 @@ describe('rebuildPanel：作废热会话 + 按当前 overrides 重画', () => {
     expect(await rebuildPanel('p1')).toBe('rerendered')
     expect(engineRender).toHaveBeenCalledTimes(1)
     expect(useUiStore.getState().status?.key).toBe('status.panelRerenderedNoRerun')
+    expect(invalidateFigureSnapshots).not.toHaveBeenCalled()
   })
 
   it('作废请求失败：不渲染、报错不吞', async () => {
@@ -339,6 +350,7 @@ describe('rebuildPanel：作废热会话 + 按当前 overrides 重画', () => {
       values: { error: 'boom' },
     })
     expect(useUiStore.getState().statusTone).toBe('error')
+    expect(invalidateFigureSnapshots).not.toHaveBeenCalled()
   })
 
   it('渲染失败：错误落在该变体上（画布 / 属性页已显示），这里不叠 toast', async () => {
@@ -347,6 +359,7 @@ describe('rebuildPanel：作废热会话 + 按当前 overrides 重画', () => {
     const entry = useRenderStore.getState().get(renderKeyOf(byId<PanelObject>('p1')))
     expect(entry.status).toBe('error')
     expect(useUiStore.getState().status).toBeNull()
+    expect(invalidateFigureSnapshots).not.toHaveBeenCalled()
   })
 
   it('装了替代传输（内嵌画布 / playground）：没有作废通道，只重画并说明', async () => {
@@ -357,6 +370,7 @@ describe('rebuildPanel：作废热会话 + 按当前 overrides 重画', () => {
     })
     expect(await rebuildPanel('p1')).toBe('rerendered')
     expect(engineInvalidate).not.toHaveBeenCalled()
+    expect(invalidateFigureSnapshots).not.toHaveBeenCalled()
     expect(useUiStore.getState().status?.key).toBe('status.panelRerenderedNoRerun')
   })
 
@@ -377,5 +391,30 @@ describe('rebuildPanel：作废热会话 + 按当前 overrides 重画', () => {
     expect(other.stale).toBe(true)
     expect(other.lastPatches).toBeNull()
     expect(useRenderStore.getState().tracked['Fig1.pdf']).toBe(true)
+  })
+
+  it('switching projects while invalidation is pending never renders or clears snapshots in the new project', async () => {
+    setCurrentProjectId('rebuild-a')
+    let resolve!: (r: { invalidated: boolean }) => void
+    engineInvalidate.mockImplementationOnce(() => new Promise((r) => { resolve = r }))
+    const rebuild = rebuildPanel('p1')
+    setCurrentProjectId('rebuild-b')
+    resolve({ invalidated: true })
+    expect(await rebuild).toBe('skipped')
+    expect(engineRender).not.toHaveBeenCalled()
+    expect(invalidateFigureSnapshots).not.toHaveBeenCalled()
+  })
+
+  it('successful rendering after a project round trip cannot retire the current document snapshots', async () => {
+    setCurrentProjectId('rebuild-a')
+    let resolve!: (r: unknown) => void
+    engineRender.mockImplementationOnce(() => new Promise((r) => { resolve = r }))
+    const rebuild = rebuildPanel('p1')
+    await flush()
+    setCurrentProjectId('rebuild-b')
+    setCurrentProjectId('rebuild-a')
+    resolve({ rev: 2, manifest: { elements: [] }, warnings: [] })
+    expect(await rebuild).toBe('skipped')
+    expect(invalidateFigureSnapshots).not.toHaveBeenCalled()
   })
 })

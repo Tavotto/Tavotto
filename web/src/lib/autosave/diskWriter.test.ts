@@ -9,7 +9,8 @@
 import { describe, expect, it } from 'vitest'
 import { ApiError, REVISION_ABSENT } from '@/lib/api'
 import { emptyProject } from '@/types/document'
-import type { ProjectDocument } from '@/types/document'
+import type { FigureSnapshotSaveContext } from '@/lib/figureSnapshot'
+import type { FigureSnapshot, ProjectDocument } from '@/types/document'
 import {
   blocksDiskWrite,
   conflictIssue,
@@ -18,6 +19,7 @@ import {
   type DiskWriterPorts,
   type SaveIssue,
   type WrittenMetadata,
+  type WrittenInfo,
   type SaveOutcome,
   type SaveTrigger,
 } from './diskWriter'
@@ -49,7 +51,8 @@ function harness(opts: { current?: string; blocked?: () => boolean } = {}) {
   const dropped: string[] = []
   let putMode: 'ok' | 'stale' | 'external' | 'io' = 'ok'
   let putMetadata: WrittenMetadata = undefined
-  const written: { id: string; savedAt: number; pj: string | null; metadata: WrittenMetadata }[] = []
+  let putSnapshots: Record<string, FigureSnapshot> | undefined
+  const written: ({ id: string; savedAt: number } & WrittenInfo)[] = []
   let gate: (() => void) | null = null
   let onDisk: { revision: string | null } | null = null
   let fetchThrows = false
@@ -60,7 +63,7 @@ function harness(opts: { current?: string; blocked?: () => boolean } = {}) {
         puts.push({ id, updatedAt: pd.updatedAt, baseline, revision, pj })
         const settle = () => {
           if (putMode === 'ok') {
-            return Promise.resolve({ saved_at: 1000, revision: `r${pd.updatedAt}`, metadata: putMetadata })
+            return Promise.resolve({ saved_at: 1000, revision: `r${pd.updatedAt}`, metadata: putMetadata, figure_snapshots: putSnapshots })
           }
           if (putMode === 'io') return Promise.reject(new Error('boom'))
           return Promise.reject(
@@ -106,6 +109,7 @@ function harness(opts: { current?: string; blocked?: () => boolean } = {}) {
     outcomes,
     dropped,
     written,
+    setPutSnapshots: (refs: Record<string, FigureSnapshot> | undefined) => { putSnapshots = refs },
     setPutMetadata: (m: WrittenMetadata) => {
       putMetadata = m
     },
@@ -482,4 +486,25 @@ describe('onWritten 带出排队那一刻的写入上下文（A10 / A11 / A25）
     expect(h.written).toEqual([])
     expect(h.outcomes.map((o) => o[1])).toEqual(['failed', 'conflict'])
   })
+})
+
+
+it('retains each queued snapshot context and returns the complete backend map, including an empty map', async () => {
+  const h = harness()
+  const makeContext = (id: string, generation: number): FigureSnapshotSaveContext => ({
+    documentId: id, loadSeq: generation, pj: 'p1', document: doc(generation),
+    sourceGenerations: new Map([['source.pdf', generation]]),
+  })
+  const first = makeContext('A', 1)
+  const second = makeContext('B', 2)
+  h.setPutSnapshots({})
+  h.holdPuts()
+  h.writer.schedule('A', first.document, 'p1', first)
+  await tick()
+  h.writer.schedule('B', second.document, 'p1', second)
+  h.release()
+  await h.writer.whenIdle()
+  expect(h.written.map((w) => w.figureSnapshots)).toEqual([{}, {}])
+  expect(h.written[0].snapshotContext).toBe(first)
+  expect(h.written[1].snapshotContext).toBe(second)
 })

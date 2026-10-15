@@ -95,7 +95,7 @@ def _snapshot_project_files(proj: Path, source_ids: set[str]) -> set[str]:
         rel = path.relative_to(root).as_posix()
         assert not path.is_symlink(), path
         if path.is_dir():
-            assert rel in {"entries", "sources", "blobs"}, path
+            assert rel in {"entries", "sources", "blobs", "snapshots"}, path
         elif rel == ".lock":
             assert path.stat().st_size <= 1
         elif re.fullmatch(r"blobs/[0-9a-f]{64}\.(pdf|svg)", rel):
@@ -103,7 +103,7 @@ def _snapshot_project_files(proj: Path, source_ids: set[str]) -> set[str]:
             assert hashlib.sha256(data).hexdigest() == path.stem, path
             assert b"--scale" not in data and SECRET.encode() not in data, path
         else:
-            assert re.fullmatch(r"(entries|sources)/[0-9a-f]{64}\.json", rel), path
+            assert re.fullmatch(r"(entries|sources|snapshots)/[0-9a-f]{64}\.json", rel), path
             raw = path.read_text(encoding="utf-8")
             assert "--scale" not in raw and SECRET not in raw, path
 
@@ -149,10 +149,11 @@ def _snapshot_project_files(proj: Path, source_ids: set[str]) -> set[str]:
 
             assert envelope["sha256"] == digest(record), path
             identity = record["identity"]
-            assert path.stem == digest(identity), path
+            if path.parent.name != "snapshots":
+                assert path.stem == digest(identity), path
             assert identity["project"] == "."
             assert identity["source_id"] in source_ids
-            if path.parent.name == "entries":
+            if path.parent.name in {"entries", "snapshots"}:
                 assert set(record) == {
                     "version",
                     "identity",
@@ -182,14 +183,43 @@ def _snapshot_project_files(proj: Path, source_ids: set[str]) -> set[str]:
                     "binding",
                 }, path
                 found_sources.add(identity["source_id"])
-                assert svgstore.load(
-                    proj,
-                    identity["source_id"],
-                    identity["patch_hash"],
+                kwargs = dict(
                     static_sha256=identity["static_sha256"],
                     remap_fingerprint=identity["remap_fingerprint"],
                     storage_root=root,
-                ), path
+                )
+                if path.parent.name == "snapshots":
+                    current = record["receipt"]
+                    snapshot_id = digest(
+                        {
+                            "identity": identity,
+                            "receipt": {
+                                key: current[key]
+                                for key in ("receipt_id", "receipt_identity", "generation")
+                            },
+                            "pdf": record["pdf_artifact"]["bytes_sha256"],
+                            "svg": record["svg_artifact"]["bytes_sha256"],
+                        }
+                    )
+                    assert path.stem == snapshot_id, path
+                    reference = {
+                        "version": 1,
+                        "sourceId": identity["source_id"],
+                        "patchHash": identity["patch_hash"],
+                        "receiptId": current["receipt_id"],
+                        "snapshotId": snapshot_id,
+                    }
+                    assert svgstore.load_snapshot(
+                        proj,
+                        reference,
+                        source_id=identity["source_id"],
+                        patch_hash=identity["patch_hash"],
+                        **kwargs,
+                    ), path
+                else:
+                    assert svgstore.load(
+                        proj, identity["source_id"], identity["patch_hash"], **kwargs
+                    ), path
             else:
                 assert set(record) == {"version", "identity", "receipt", "updated_at"}, path
                 assert set(identity) == {"project", "source_id", "remap_fingerprint"}, path

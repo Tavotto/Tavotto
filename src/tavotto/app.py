@@ -355,6 +355,7 @@ class ProjectCtx:
         # Last observed Figure receipts also revoke stale fallback if persisting
         # the project-owned generation marker fails (e.g. a read-only volume).
         self.svg_snapshot_receipts: dict[str, str] = {}
+        self.svg_snapshot_native_sources: dict[str, tuple] = {}
 
     def __repr__(self) -> str:  # 日志用
         return f"<Project {self.id} {self.path}>"
@@ -1177,6 +1178,15 @@ def _serialize_figure(
     return rendered[0] if rendered is not None else None
 
 
+class _FigureSerialization(tuple):
+    """The existing three-value result plus the receipt frozen around export."""
+
+    def __new__(cls, path, worker, script, receipt):
+        result = super().__new__(cls, (path, worker, script))
+        result.receipt = receipt
+        return result
+
+
 def _serialize_figure_with_worker(
     rel_id: str,
     overrides: list,
@@ -1236,6 +1246,9 @@ def _serialize_figure_with_worker(
             )
     if existing_only:
         companion_args["require_built"] = True
+    native_receipt = (
+        _execution_receipt(worker, script) if engine_enginesession.is_native(worker) else None
+    )
     if artifact_source is None or include_svg or existing_only:
         resp = worker.export(stem, overrides, str(tmp), fmt, dpi, **companion_args)
     else:
@@ -1245,6 +1258,15 @@ def _serialize_figure_with_worker(
             stem,
             lambda wk, st: wk.export(st, overrides, str(tmp), fmt, dpi, **companion_args),
             artifact_source=artifact_source,
+        )
+    if (
+        native_receipt is not None
+        and _execution_receipt(worker, script).receipt_id != native_receipt.receipt_id
+    ):
+        raise engine_exportreq.ExportRequestError(
+            "export_render_failed",
+            f"{rel_id}: Figure changed during export",
+            {"id": rel_id, "reason": "Figure changed during export"},
         )
     if include_svg or existing_only:
         _assert_artifact_current(artifact_source)
@@ -1277,6 +1299,8 @@ def _serialize_figure_with_worker(
             msg = f"{rel_id}: {w}"
             if msg not in sink:
                 sink.append(msg)
+    if native_receipt is not None:
+        return _FigureSerialization(tmp, worker, script, native_receipt)
     return tmp, worker, script
 
 
@@ -1342,6 +1366,16 @@ def _execution_source(
 
     rel_id = str(obj.get("id", ""))
     overrides = obj.get("overrides") or []
+    reference = obj.get("figure_snapshot")
+    if reference is not None:
+        saved = _load_svg_snapshot(rel_id, overrides, out_dir, reference=reference)
+        if saved is None:
+            raise engine_exportreq.ExportRequestError(
+                "svg_source_unsupported",
+                f"{rel_id}: the saved Figure snapshot no longer matches this source or edit.",
+                {"id": rel_id},
+            )
+        return saved
     try:
         rendered = _serialize_figure_with_worker(
             rel_id,
@@ -1381,7 +1415,7 @@ def _execution_source(
             {"figure": rel_id},
         )
     path, worker, script = rendered
-    rcpt = _execution_receipt(worker, script)
+    rcpt = getattr(rendered, "receipt", None) or _execution_receipt(worker, script)
     art = engine_receipt.source_artifact_for(
         rcpt,
         path,
@@ -1419,7 +1453,7 @@ def _svg_storage_root(project_root) -> Path:
     return target
 
 
-def _save_svg_snapshot(frozen, *, static_sha256=None, project_root=None) -> None:
+def _save_svg_snapshot(frozen, *, static_sha256=None, project_root=None):
     """Persist a full-quality, verified pair separately from preview caches."""
     from .engine import svgstore
     from .rendercore.sources import read_frozen
@@ -1428,7 +1462,7 @@ def _save_svg_snapshot(frozen, *, static_sha256=None, project_root=None) -> None
     if companion is None:
         return
     root = project_root if project_root is not None else require_project()
-    svgstore.save(
+    return svgstore.save(
         root,
         frozen.artifact.source_id,
         frozen.artifact.patch_hash,
@@ -1442,31 +1476,63 @@ def _save_svg_snapshot(frozen, *, static_sha256=None, project_root=None) -> None
     )
 
 
-def _svg_snapshot_matches_current(root, source_id, record) -> bool:
+def _svg_expected_receipt(root, source_id):
+    ctx = _request_ctx()
+    # Persisted preview metadata can be stale after a failed new capture too.
+    # It never positively authorizes an unknown execution after restart.
+    if ctx is not None and ctx.path.resolve() == Path(root).resolve():
+        native = ctx.svg_snapshot_native_sources.get(source_id)
+        if native is not None:
+            session, script = native
+            # Continue/detach and this read share the native Figure lock. A
+            # saved reference cannot race past a successful release of user code.
+            with session._figure_lock:
+                return _execution_receipt(session, script).receipt_id
+        return ctx.svg_snapshot_receipts.get(source_id)
+    return None
+
+
+def _svg_snapshot_matches_current(root, source_id, record, *, explicit=False, static=False) -> bool:
     if record is None:
         return False
-    ctx = _request_ctx()
-    expected = ctx.svg_snapshot_receipts.get(source_id) if ctx is not None else None
-    metadata = engine_runtimeasset.load_metadata(root, source_id)
-    if expected is None and metadata is not None:
-        expected = (metadata.get("descriptor") or {}).get("svg_snapshot_receipt")
-    return expected is None or expected == record["receipt"].get("receipt_id")
+    expected = _svg_expected_receipt(root, source_id)
+    # A project source marker is not evidence of the latest execution: its
+    # replacement may have failed. Only a known receipt, an explicit immutable
+    # document reference, or independently validated current static bytes is.
+    if expected is None:
+        return explicit or static
+    return expected == record["receipt"].get("receipt_id")
 
 
-def _load_svg_snapshot(rel_id, overrides, out_dir, *, static_source=None):
+def _load_svg_snapshot(rel_id, overrides, out_dir, *, static_source=None, reference=None):
     from .engine import svgstore
     from .rendercore import sources as rc_sources
 
     root = require_project()
-    record = svgstore.load(
-        root,
-        rel_id,
-        engine_patchspec.patch_hash(overrides),
+    kwargs = dict(
         static_sha256=static_source.artifact.bytes_sha256 if static_source is not None else None,
         remap_fingerprint=engine_inputremap.fingerprint(root),
         storage_root=_svg_storage_root(root),
     )
-    if not _svg_snapshot_matches_current(root, rel_id, record):
+    if reference is not None:
+        record = svgstore.load_snapshot(
+            root,
+            reference,
+            source_id=rel_id,
+            patch_hash=engine_patchspec.patch_hash(overrides),
+            **kwargs,
+        )
+    else:
+        record = svgstore.load(root, rel_id, engine_patchspec.patch_hash(overrides), **kwargs)
+    if not _svg_snapshot_matches_current(
+        root,
+        rel_id,
+        record,
+        explicit=reference is not None,
+        static=static_source is not None
+        and not overrides
+        and not engine_runtimeasset.is_runtime_id(rel_id),
+    ):
         return None
     target = Path(out_dir)
     target.mkdir(parents=True, exist_ok=True)
@@ -1526,9 +1592,10 @@ def _capture_svg_snapshot_best_effort(worker, desc) -> None:
         for sid in (source_id, original):
             if sid:
                 ctx.svg_snapshot_receipts[sid] = rcpt.receipt_id
-    # This receipt is persisted with preview metadata solely as an invalidation
-    # hint; preview bytes never become an export source.
-    desc["svg_snapshot_receipt"] = rcpt.receipt_id
+                if engine_enginesession.is_native(worker):
+                    ctx.svg_snapshot_native_sources[sid] = (worker, str(desc.get("script", "")))
+                else:
+                    ctx.svg_snapshot_native_sources.pop(sid, None)
     saved = svgstore.load(
         root,
         source_id,
@@ -1562,6 +1629,11 @@ def _capture_svg_snapshot_best_effort(worker, desc) -> None:
                 require_built=True,
                 snapshot_only=True,
             )
+            if (
+                _execution_receipt(worker, str(desc.get("script", ""))).receipt_id
+                != rcpt.receipt_id
+            ):
+                return
             info = response.get("svg") or {}
             if info.get("path") != str(svg):
                 return
@@ -1604,24 +1676,34 @@ def _freeze_document_svg_sources(document: dict) -> list[str]:
         return _freeze_document_svg_sources_best_effort(document)
     except Exception:
         LOG.info("Cannot freeze saved document SVG sources", exc_info=True)
-        return sorted(
-            {
-                obj["fileId"]
-                for obj in _doc_objects(document)
-                if obj.get("type") == "panel"
-                and obj.get("fileId")
-                and (obj.get("overrides") or engine_runtimeasset.is_runtime_id(obj["fileId"]))
-            }
-        )
+        warnings = set()
+        for obj in _doc_objects(document):
+            if obj.get("type") != "panel" or not obj.get("fileId"):
+                continue
+            if (
+                obj.pop("figureSnapshot", None) is not None
+                or obj.get("overrides")
+                or engine_runtimeasset.is_runtime_id(obj["fileId"])
+            ):
+                warnings.add(obj["fileId"])
+        return sorted(warnings)
+
+
+def _document_svg_references(document: dict) -> dict:
+    return {
+        obj["id"]: obj["figureSnapshot"]
+        for obj in _doc_objects(document)
+        if obj.get("type") == "panel" and obj.get("id") and obj.get("figureSnapshot")
+    }
 
 
 def _freeze_document_svg_sources_best_effort(document: dict) -> list[str]:
-    """Before a successful save returns, preserve exact edited Figure variants.
+    """Bind the saved document to immutable export-grade Figure versions.
 
-    Only live, already-built sources or verified frozen pairs are used. This
-    never starts scientific code, and a missing/unsupported representation does
-    not jeopardize the user's document save. Full rendering is skipped for an
-    already frozen patch variant in the active source generation.
+    A cold, explicit reference may preserve the document's saved version. An
+    observed new execution wins over that reference, even if persistence fails;
+    the new document then has no reference and reports a warning. Never execute
+    user code, borrow an unknown current marker, or compromise document saving.
     """
     from .engine import svgstore
 
@@ -1629,34 +1711,46 @@ def _freeze_document_svg_sources_best_effort(document: dict) -> list[str]:
         root = require_project()
     except NoProjectError:
         return []
-    canvases = document.get("canvases") or [document]
-    seen, warnings = set(), set()
+    warnings = set()
     directory = engine_config.data_path("svg-snapshot-staging")
     directory.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="save-", dir=directory) as temporary:
-        for canvas in canvases:
-            for obj in canvas.get("objects", []):
-                if not isinstance(obj, dict) or obj.get("type") != "panel":
-                    continue
-                source_id = obj.get("fileId")
-                patches = obj.get("overrides") or []
-                if not source_id or (
-                    not patches and not engine_runtimeasset.is_runtime_id(source_id)
-                ):
-                    continue
-                key = (source_id, engine_patchspec.patch_hash(patches))
-                if key in seen:
-                    continue
-                seen.add(key)
-                try:
-                    saved = svgstore.load(
-                        root,
-                        *key,
-                        remap_fingerprint=engine_inputremap.fingerprint(root),
-                        storage_root=_svg_storage_root(root),
-                    )
-                    if _svg_snapshot_matches_current(root, source_id, saved):
+        for obj in _doc_objects(document):
+            if obj.get("type") != "panel" or not obj.get("fileId"):
+                continue
+            source_id = obj["fileId"]
+            patches = obj.get("overrides") or []
+            reference = obj.pop("figureSnapshot", None)
+            execution = bool(patches) or engine_runtimeasset.is_runtime_id(source_id)
+            try:
+                static_hash = None
+                if not execution:
+                    path = safe_resolve(source_id)
+                    if path.suffix.lower() != ".pdf":
                         continue
+                    static_hash = engine_figcapture.hash_file(path)[0]
+                kwargs = dict(
+                    static_sha256=static_hash,
+                    remap_fingerprint=engine_inputremap.fingerprint(root),
+                    storage_root=_svg_storage_root(root),
+                )
+                patch_hash = engine_patchspec.patch_hash(patches)
+                saved = None
+                if reference is not None:
+                    saved = svgstore.load_snapshot(
+                        root, reference, source_id=source_id, patch_hash=patch_hash, **kwargs
+                    )
+                    if not _svg_snapshot_matches_current(
+                        root, source_id, saved, explicit=True, static=not execution
+                    ):
+                        saved = None
+                if saved is None:
+                    saved = svgstore.load(root, source_id, patch_hash, **kwargs)
+                    if not _svg_snapshot_matches_current(
+                        root, source_id, saved, static=not execution
+                    ):
+                        saved = None
+                if saved is None and execution:
                     guard = obj.get("artifactValidation")
                     context = None
                     if guard is not None:
@@ -1678,19 +1772,19 @@ def _freeze_document_svg_sources_best_effort(document: dict) -> list[str]:
                         snapshot_only=True,
                         **_artifact_kwargs(context),
                     )
-                    persisted = svgstore.load(
-                        root,
-                        *key,
-                        remap_fingerprint=engine_inputremap.fingerprint(root),
-                        storage_root=_svg_storage_root(root),
-                    )
-                    if not _svg_snapshot_matches_current(root, source_id, persisted):
-                        warnings.add(source_id)
-                except Exception:
+                    saved = svgstore.load(root, source_id, patch_hash, **kwargs)
+                    if not _svg_snapshot_matches_current(root, source_id, saved):
+                        saved = None
+                if saved is not None and saved.get("snapshot_ref"):
+                    obj["figureSnapshot"] = saved["snapshot_ref"]
+                elif execution or reference is not None:
                     warnings.add(source_id)
-                    LOG.info(
-                        "Saved layout has no export-grade SVG snapshot for a source", exc_info=True
-                    )
+            except Exception:
+                if execution or reference is not None:
+                    warnings.add(source_id)
+                LOG.info(
+                    "Saved layout has no export-grade SVG snapshot for a source", exc_info=True
+                )
     return sorted(warnings)
 
 
@@ -1747,10 +1841,14 @@ def _export_produce_original(job, tmp_dir: Path, *, artifact_sources=None) -> li
     dpi = req.ppi or engine_exportreq.PPI_DEFAULT
     wants_eps = engine_exportreq.FORMAT_EPS in req.formats
     job.check_cancelled()
-    if req.formats == (engine_exportreq.FORMAT_SVG,) and (
-        engine_runtimeasset.is_runtime_id(src.figure_id)
-        or src.overrides
-        or (artifact_sources or {}).get(src.figure_id) is not None
+    if (
+        req.formats == (engine_exportreq.FORMAT_SVG,)
+        and src.figure_snapshot is None
+        and (
+            engine_runtimeasset.is_runtime_id(src.figure_id)
+            or src.overrides
+            or (artifact_sources or {}).get(src.figure_id) is not None
+        )
     ):
         # A single native SVG requires no cross-backend pairing. Stateful custom
         # formatters/artists remain supported on an already live Figure, just as
@@ -1772,7 +1870,7 @@ def _export_produce_original(job, tmp_dir: Path, *, artifact_sources=None) -> li
             rendered = None
         if rendered is not None:
             path, worker, script = rendered
-            rcpt = _execution_receipt(worker, script)
+            rcpt = getattr(rendered, "receipt", None) or _execution_receipt(worker, script)
             artifact = engine_receipt.source_artifact_for(
                 rcpt,
                 path,
@@ -1784,10 +1882,15 @@ def _export_produce_original(job, tmp_dir: Path, *, artifact_sources=None) -> li
     # 脚本运行；没有脚本的图退回磁盘文件，EPS 那一项下面自己报 `eps_needs_script`
     svg_source = None
     wants_svg = engine_exportreq.FORMAT_SVG in req.formats
+    wants_snapshot = wants_svg or src.figure_snapshot is not None
     execution_source = engine_runtimeasset.is_runtime_id(src.figure_id) or bool(src.overrides)
-    if wants_svg and execution_source:
+    if wants_snapshot and execution_source:
         frozen = _execution_source(
-            {"id": src.figure_id, "overrides": src.overrides},
+            {
+                "id": src.figure_id,
+                "overrides": src.overrides,
+                "figure_snapshot": src.figure_snapshot,
+            },
             dpi,
             job.warnings,
             tmp_dir,
@@ -1814,7 +1917,7 @@ def _export_produce_original(job, tmp_dir: Path, *, artifact_sources=None) -> li
             "source_missing", "这张图的源文件现在不可用", {"figure": src.figure_id}
         )
     if (
-        wants_svg
+        wants_snapshot
         and svg_source is None
         and not execution_source
         and source_path.suffix.lower() == ".pdf"
@@ -1824,9 +1927,17 @@ def _export_produce_original(job, tmp_dir: Path, *, artifact_sources=None) -> li
         static = rc_sources.FrozenSource(
             rc_sources.static_artifact(source_path, src.figure_id), source_path
         )
-        saved = _load_svg_snapshot(src.figure_id, [], tmp_dir, static_source=static)
+        saved = _load_svg_snapshot(
+            src.figure_id, [], tmp_dir, static_source=static, reference=src.figure_snapshot
+        )
         if saved is not None:
             svg_source = saved.svg_representation()
+        elif src.figure_snapshot is not None:
+            raise engine_exportreq.ExportRequestError(
+                "svg_source_unsupported",
+                "Saved Figure snapshot no longer matches the static source",
+                {"id": src.figure_id},
+            )
     raster_source = source_path.suffix.lower() != ".pdf"
     page_pt = _original_page_pt(source_path, src) if raster_source else None
     produced: list = []
@@ -2018,10 +2129,21 @@ def _export_produce_rendercore(job, tmp_dir: Path, *, artifact_sources=None) -> 
                     tiffprobe.check(fs.path)
                 except tiffprobe.UnsupportedTiff as exc:
                     raise _export_tiff_error(exc) from exc
-            if engine_exportreq.FORMAT_SVG in job.request.formats and fs.artifact.kind == "pdf":
-                saved = _load_svg_snapshot(obj["id"], [], tmp_dir, static_source=fs)
+            if (
+                engine_exportreq.FORMAT_SVG in job.request.formats
+                or obj.get("figure_snapshot") is not None
+            ) and fs.artifact.kind == "pdf":
+                saved = _load_svg_snapshot(
+                    obj["id"], [], tmp_dir, static_source=fs, reference=obj.get("figure_snapshot")
+                )
                 if saved is not None:
                     return saved
+                if obj.get("figure_snapshot") is not None:
+                    raise engine_exportreq.ExportRequestError(
+                        "svg_source_unsupported",
+                        "Saved Figure snapshot no longer matches the static source",
+                        {"id": obj["id"]},
+                    )
             return fs
 
     resolver = rc_sources.ExecutionSourceResolver(
@@ -2428,7 +2550,6 @@ def _package_svg_assets(doc, root, archive) -> int:
     """Bundle only referenced, verified project snapshots; never execute a script."""
     from .engine import svgstore
 
-    _freeze_document_svg_sources(doc)
     count, seen = 0, set()
     with tempfile.TemporaryDirectory(prefix="tavotto-svg-package-") as temporary:
         staging = Path(temporary) / "figure_snapshots"
@@ -2443,19 +2564,29 @@ def _package_svg_assets(doc, root, archive) -> int:
                 except Exception:
                     continue
             patch_hash = engine_patchspec.patch_hash(patches)
-            key = (source_id, patch_hash, static_hash)
+            reference = obj.get("figureSnapshot")
+            key = (source_id, patch_hash, static_hash, (reference or {}).get("snapshotId"))
             if key in seen:
                 continue
             seen.add(key)
-            record = svgstore.load(
-                root,
-                source_id,
-                patch_hash,
+            kwargs = dict(
                 static_sha256=static_hash,
                 remap_fingerprint=engine_inputremap.fingerprint(root),
                 storage_root=_svg_storage_root(root),
             )
-            if not _svg_snapshot_matches_current(root, source_id, record):
+            if reference is not None:
+                record = svgstore.load_snapshot(
+                    root, reference, source_id=source_id, patch_hash=patch_hash, **kwargs
+                )
+            else:
+                record = svgstore.load(root, source_id, patch_hash, **kwargs)
+            if not _svg_snapshot_matches_current(
+                root,
+                source_id,
+                record,
+                explicit=reference is not None,
+                static=static_hash is not None,
+            ):
                 continue
             svgstore.save(
                 root,
@@ -2548,14 +2679,17 @@ def api_package():
     out = out_dir / name
     import zipfile  # noqa: PLC0415 — 仅此端点用
 
+    snapshot_warnings = _freeze_document_svg_sources(doc)
+    if snapshot_warnings:
+        manifest["svg_snapshot_warnings"] = snapshot_warnings
     with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
-        z.writestr("layout.json", json.dumps(doc, ensure_ascii=False, indent=1))
         try:
             manifest["figure_snapshots"] = _package_svg_assets(doc, root, z)
         except Exception:
             LOG.info("Project package could not include SVG snapshots", exc_info=True)
             manifest["figure_snapshots"] = 0
             manifest["svg_snapshot_warning"] = True
+        z.writestr("layout.json", json.dumps(doc, ensure_ascii=False, indent=1))
         z.writestr("package_manifest.json", json.dumps(manifest, ensure_ascii=False, indent=1))
         for entry in assets:
             z.write(root / entry["id"], f"assets/{entry['id']}")
@@ -10034,6 +10168,7 @@ def api_layout_save(name):
                 return _revision_unreadable()
             if _revision_conflict(base_revision, current):
                 return _external_change(current, path)
+        snapshot_warnings = _freeze_document_svg_sources(body)
         try:
             engine_atomicio.write_json(path, body, indent=1)
         except engine_atomicio.AtomicWriteError as exc:
@@ -10043,8 +10178,12 @@ def api_layout_save(name):
         # **在锁里读**：放到锁外读的话，交回去的可能是另一个窗口刚写下的那份
         # 内容的 hash，于是下一次写会带着一个「不是我写的」基线过来。
         revision = engine_atomicio.content_revision(path)
-    snapshot_warnings = _freeze_document_svg_sources(body)
-    out = {"ok": True, "revision": revision, "name": path.stem}
+    out = {
+        "ok": True,
+        "revision": revision,
+        "name": path.stem,
+        "figure_snapshots": _document_svg_references(body),
+    }
     if snapshot_warnings:
         out["svg_snapshot_warnings"] = snapshot_warnings
     if ctx is not None:
@@ -10368,6 +10507,7 @@ def api_autosave_put(doc_id):
                         "theirs": theirs,
                     }
                 ), 409
+        snapshot_warnings = _freeze_document_svg_sources(body)
         engine_atomicio.write_json(p, body)
         # revision = 落盘后的内容 hash。外部修改检测拿它当下一次写入的基线：
         # 「我上次写的就是这一份」比「文件的 mtime 是多少」结实得多。
@@ -10383,10 +10523,10 @@ def api_autosave_put(doc_id):
         metadata = _commit_autosave_metadata(p.stem, revision)
     # 清理放在锁**外**：`_document_lock` 不可重入，而清理要去锁别的路径。
     _prune_autosave_slots(p)
-    snapshot_warnings = _freeze_document_svg_sources(body)
     return jsonify(
         {
             "ok": True,
+            "figure_snapshots": _document_svg_references(body),
             "saved_at": int(time.time() * 1000),
             "revision": revision,
             "metadata": metadata,

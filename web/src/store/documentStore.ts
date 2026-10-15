@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { sameFigureInputs, validFigureSnapshot, type FigureSnapshotSaveContext } from '@/lib/figureSnapshot'
 import { perfSpan } from '@/perf/core'
 import { enablePatches, produceWithPatches, type Patch } from 'immer'
 import * as history from '@/lib/history'
@@ -30,7 +31,7 @@ import { newId } from '@/lib/id'
 import { boundedCount, captureTelemetry, classifyEditKind } from '@/lib/telemetry'
 import { documentDigest, recordDiagnosticEvent } from '@/diagnostics'
 import { patchRefs } from '@/diagnostics/patches'
-import { defaultCanvasName, type CanvasData, type FigureDocument, type PanelObject, type ProjectDocument } from '@/types/document'
+import { defaultCanvasName, type CanvasData, type FigureDocument, type FigureSnapshot, type PanelObject, type ProjectDocument } from '@/types/document'
 import {
   SCHEMA_CURRENT,
   canvasToDoc,
@@ -146,10 +147,12 @@ function produceStamped(
   opts?: CommitOptions,
 ): [FigureDocument, Patch[], Patch[]] {
   const [next, patches, inverse] = produceWithPatches(base, recipe)
+  if (!patches.length) return [next, patches, inverse]
   const stamp = opts?.overrides === 'restored' ? null : overrideStamper
-  if (!patches.length || !stamp) return [next, patches, inverse]
-  const [stamped, more, moreInverse] = produceWithPatches(next, (d) => stamp(d, base, next))
-  if (!more.length) return [next, patches, inverse]
+  const [stamped, more, moreInverse] = produceWithPatches(next, (d) => {
+    stamp?.(d, base, next)
+    clearChangedFigureSnapshots(d, base)
+  })
   return [stamped, [...patches, ...more], [...moreInverse, ...inverse]]
 }
 
@@ -501,6 +504,8 @@ interface DocumentState {
    * 不吞）——那是"这次写成了没有"，用户必须看得见。
    */
   derivedSeq: number
+  /** Snapshot receipts changed without a user edit or another autosave. */
+  snapshotSeq: number
   /** 上次写入本机自动保存的时间戳 */
   lastPersisted: number | null
   /**
@@ -691,6 +696,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
   svgSnapshotWarnings: [],
   loadSeq: 0,
   derivedSeq: 0,
+  snapshotSeq: 0,
   lastPersisted: null,
   projectFile: null,
   recentDocs: [],
@@ -730,7 +736,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     if (writesBlocked(false)) return false
     const state = get()
     if (state.txn || state.past.at(-1) !== entry) return false
-    const [next, patches, inverse] = produceWithPatches(state.doc, recipe)
+    const [next, patches, inverse] = produceStamped(state.doc, recipe)
     if (!patches.length) return true
     // 撤销按 inverse 的顺序打回：后补的那笔先退，再退原来那条
     const merged: HistoryEntry = {
@@ -799,7 +805,9 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     txnAnchors.clear()
     if (opts?.discard || !txn.patches.length) {
       // 丢弃：把反向补丁打回去，恢复到事务开始前
-      set({ doc: history.rollback(doc, txn), txn: null })
+      const rolledBack = history.rollback(doc, txn)
+      const [clean] = produceWithPatches(rolledBack, (d) => clearChangedFigureSnapshots(d, doc))
+      set({ doc: clean, txn: null })
       recordDiagnosticEvent({
         type: 'transaction.cancel',
         label_key: txn.label.key,
@@ -853,7 +861,8 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     if (!step.ok && step.entry) console.error('撤销补丁应用失败，该条历史已丢弃')
     // 栈空时什么都不写：空撤销不该换掉 past / future 的引用去惊动订阅者
     // 打回来的 w/h 按条目之前的原生图幅量；图幅在历史之外变过的话换算到此刻的图幅
-    const doc = step.ok ? rebaseToCurrentNative(step.doc, step.entry?.sizeBasis, 'before') : step.doc
+    const candidate = step.ok ? rebaseToCurrentNative(step.doc, step.entry?.sizeBasis, 'before') : step.doc
+    const [doc] = produceWithPatches(candidate, (d) => clearChangedFigureSnapshots(d, get().doc))
     if (step.ok || step.entry) set({ doc, past: step.past, future: step.future })
     noteUndoRedo('undo.complete', step.ok, step.entry?.label ?? null, before, get())
     return step.ok && step.entry ? step.entry.label : null
@@ -871,7 +880,8 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     const before = documentDigest(state.doc)
     const step = history.redoStep(state.doc, state.past, state.future)
     if (!step.ok && step.entry) console.error('重做补丁应用失败，该条历史已丢弃')
-    const doc = step.ok ? rebaseToCurrentNative(step.doc, step.entry?.sizeBasis, 'after') : step.doc
+    const candidate = step.ok ? rebaseToCurrentNative(step.doc, step.entry?.sizeBasis, 'after') : step.doc
+    const [doc] = produceWithPatches(candidate, (d) => clearChangedFigureSnapshots(d, state.doc))
     if (step.ok || step.entry) set({ doc, past: step.past, future: step.future })
     noteUndoRedo('redo.complete', step.ok, step.entry?.label ?? null, before, get())
     return step.ok && step.entry ? step.entry.label : null
@@ -882,8 +892,10 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
 
   silent: (recipe) => {
     if (writesBlocked(false)) return
-    const [next, patches] = produceWithPatches(get().doc, recipe)
-    if (patches.length) set({ doc: next })
+    const base = get().doc
+    const [next, patches] = produceWithPatches(base, recipe)
+    const [clean] = produceWithPatches(next, (d) => clearChangedFigureSnapshots(d, base))
+    if (patches.length) set({ doc: clean })
   },
 
   /* ---------------- 画布（Canvas）操作 ---------------- */
@@ -1456,8 +1468,9 @@ const svgWarningKey = (id: string, pj: string | null) => JSON.stringify([id, pj]
 function afterWriteOk(
   id: string,
   savedAt: number,
-  meta?: { pj?: string | null; metadata?: PersistedMetadata; svgSnapshotWarnings?: string[] },
+  meta?: { pj?: string | null; metadata?: PersistedMetadata; svgSnapshotWarnings?: string[]; figureSnapshots?: Record<string, FigureSnapshot>; snapshotContext?: FigureSnapshotSaveContext },
 ): void {
+  if (meta?.snapshotContext) mergeSavedFigureSnapshots(meta.snapshotContext, meta.figureSnapshots)
   diskWrites.set(id, (diskWrites.get(id) ?? 0) + 1)
   const pj = meta?.pj ?? null
   const svgWarnings = meta?.svgSnapshotWarnings ?? []
@@ -1566,7 +1579,8 @@ function flushAutosaveNow(): FlushResult {
   }
   // 写盘记在**这份排版所属的项目**名下（后端按它记槽位归属）：切项目时离开那一下的冲刷发生在认领
   // 新项目之后，现问 `currentProjectId()` 会把旧项目的排版记成新项目的（#715 验收 P1）
-  disk.schedule(state.documentId, pd, projectOfDoc().id ?? currentProjectId())
+  const owner = projectOfDoc().id ?? currentProjectId()
+  disk.schedule(state.documentId, pd, owner, captureFigureSnapshotSave(pd, owner))
   if (!localOk) return 'error'
   const pj = projectOfDoc()
   const entry: RecentDoc = {
@@ -1982,7 +1996,8 @@ export function acceptProbe(p: ProbeResult, _pj: string | null, token?: RestoreT
     // 确认过磁盘上真的没有（404）：记成「缺席」档，并把本机那份推上去。记在这份排版**原本**属于的项目名下：
     // 只是打开（显式从「最近文档」打开别的项目的）不算带进当前项目
     disk.rememberRevision(id, null)
-    disk.schedule(id, p.doc, ownerProjectForWrite(id))
+    const owner = ownerProjectForWrite(id)
+    disk.schedule(id, p.doc, owner, { ...captureFigureSnapshotSave(p.doc, owner), documentId: id })
   } else {
     // 读盘失败（不可达 / 5xx / 磁盘上的字节坏了）：**不推**，也不伪造「缺席」——那时我们不知道磁盘上有什么，
     // 一次整份 PUT 就可能盖掉一份从没读过的文档。删掉条目 = 这份文档的磁盘状况我还没确认过，
@@ -2115,6 +2130,110 @@ function applyProject(pd: ProjectDocument, id: string, opts: { dirty: boolean })
   })
 }
 
+/** Source-run generations are runtime facts, scoped by project; never inferred from a render refresh. */
+const figureRunGenerations = new Map<string, number>()
+const figureRunKey = (pj: string | null, sourceId: string) => JSON.stringify([pj, sourceId])
+const figureRunGeneration = (pj: string | null, sourceId: string) => figureRunGenerations.get(figureRunKey(pj, sourceId)) ?? 0
+const invalidatedSnapshotReceipts = new Set<string>()
+let snapshotLoadSeq = -1
+const invalidatedSnapshotKey = (sourceId: string, receiptId: string) => {
+  const loadSeq = useDocumentStore.getState().loadSeq
+  if (snapshotLoadSeq !== loadSeq) {
+    invalidatedSnapshotReceipts.clear()
+    snapshotLoadSeq = loadSeq
+  }
+  return JSON.stringify([currentProjectId(), sourceId, receiptId])
+}
+
+/** Editing source/patches invalidates the association; page geometry and exact copies preserve it. */
+function clearChangedFigureSnapshots(next: FigureDocument, before: FigureDocument): void {
+  if (!next.objects.some((o) => o.type === 'panel' && o.figureSnapshot)) return
+  const previous = new Map(before.objects.filter((o) => o.type === 'panel').map((o) => [o.id, o]))
+  for (const panel of next.objects) {
+    if (panel.type !== 'panel' || !panel.figureSnapshot) continue
+    const old = previous.get(panel.id)
+    if (!validFigureSnapshot(panel.figureSnapshot, panel.fileId) ||
+        (old && !sameFigureInputs(old, panel)) ||
+        invalidatedSnapshotReceipts.has(invalidatedSnapshotKey(panel.fileId, panel.figureSnapshot.receiptId))) {
+      delete panel.figureSnapshot
+    }
+  }
+}
+
+export function captureFigureSnapshotSave(
+  document: ProjectDocument,
+  pj: string | null = currentProjectId(),
+): FigureSnapshotSaveContext {
+  const state = useDocumentStore.getState()
+  const panels = document.canvases.flatMap((c) => c.objects).filter((o) => o.type === 'panel')
+  return {
+    documentId: state.documentId, loadSeq: state.loadSeq, pj, document,
+    sourceGenerations: new Map(panels.map((p) => [p.fileId, figureRunGeneration(pj, p.fileId)])),
+  }
+}
+
+/** Merge only the exact sent panel version; a late reply cannot reattach an old execution. */
+export function mergeSavedFigureSnapshots(
+  context: FigureSnapshotSaveContext,
+  refs: Record<string, FigureSnapshot> | undefined,
+): void {
+  if (refs === undefined || writesBlocked(false)) return
+  const state = useDocumentStore.getState()
+  if (state.documentId !== context.documentId || state.loadSeq !== context.loadSeq ||
+      currentProjectId() !== context.pj || (projectOfDoc().id ?? currentProjectId()) !== context.pj) return
+  const sent = new Map(context.document.canvases.flatMap((c) => c.objects)
+    .filter((o) => o.type === 'panel').map((p) => [p.id, p]))
+  const merge = (objects: FigureDocument['objects']) => {
+    for (const panel of objects) {
+      if (panel.type !== 'panel') continue
+      const previous = sent.get(panel.id)
+      if (!previous || !sameFigureInputs(panel, previous) ||
+          figureRunGeneration(context.pj, panel.fileId) !== context.sourceGenerations.get(panel.fileId)) continue
+      const ref = refs[panel.id]
+      if (validFigureSnapshot(ref, panel.fileId)) {
+        if (JSON.stringify(panel.figureSnapshot) !== JSON.stringify(ref)) panel.figureSnapshot = { ...ref }
+      } else if (panel.figureSnapshot) delete panel.figureSnapshot
+    }
+  }
+  const [doc, docPatches] = produceWithPatches(state.doc, (d) => merge(d.objects))
+  const [canvases, canvasPatches] = produceWithPatches(state.canvases, (cs) => {
+    for (const canvas of cs) merge(canvas.objects)
+  })
+  if (docPatches.length || canvasPatches.length) {
+    useDocumentStore.setState({ doc, canvases, snapshotSeq: state.snapshotSeq + 1 })
+  }
+}
+
+/** Only explicit successful execution calls this; disk documents retain their immutable saved references. */
+export function invalidateFigureSnapshots(sourceIds: readonly string[], pj: string | null = currentProjectId()): void {
+  if (pj !== currentProjectId() || writesBlocked(false)) return
+  const ids = new Set(sourceIds)
+  if (!ids.size) return
+  for (const id of ids) figureRunGenerations.set(figureRunKey(pj, id), figureRunGeneration(pj, id) + 1)
+  const state = useDocumentStore.getState()
+  // Undo may later restore a removed object carrying a reference: remember those receipt IDs too.
+  const remember = (value: unknown): void => {
+    if (!value || typeof value !== 'object') return
+    const object = value as Record<string, unknown>
+    const ref = (object.figureSnapshot ?? (typeof object.sourceId === 'string' ? object : undefined)) as FigureSnapshot | undefined
+    if (ref && ids.has(ref.sourceId) && validFigureSnapshot(ref, ref.sourceId)) {
+      invalidatedSnapshotReceipts.add(invalidatedSnapshotKey(ref.sourceId, ref.receiptId))
+    }
+    for (const child of Object.values(object)) remember(child)
+  }
+  remember([state.doc, state.canvases, state.past, state.future, state.canvasSessions, state.txn])
+  const clear = (objects: FigureDocument['objects']) => {
+    for (const panel of objects) if (panel.type === 'panel' && ids.has(panel.fileId)) delete panel.figureSnapshot
+  }
+  const [doc, docPatches] = produceWithPatches(state.doc, (d) => clear(d.objects))
+  const [canvases, canvasPatches] = produceWithPatches(state.canvases, (cs) => {
+    for (const canvas of cs) clear(canvas.objects)
+  })
+  if (docPatches.length || canvasPatches.length) {
+    useDocumentStore.setState({ doc, canvases, snapshotSeq: state.snapshotSeq + 1 })
+  }
+}
+
 /**
  * 外部派生元数据的写入口（Prompt 06）。
  *
@@ -2135,11 +2254,16 @@ export function applyDerivedUpdate(next: {
   if (!next.doc && !next.canvases) return
   // 派生同步也要看门：占位文档上落一次派生更新会排队写盘（照样把占位写成了「用户的文档」）
   if (writesBlocked(false)) return
-  useDocumentStore.setState((s) => ({
-    ...(next.doc ? { doc: next.doc } : {}),
-    ...(next.canvases ? { canvases: next.canvases } : {}),
-    derivedSeq: s.derivedSeq + 1,
-  }))
+  useDocumentStore.setState((s) => {
+    const [doc] = produceWithPatches(next.doc ?? s.doc, (d) => clearChangedFigureSnapshots(d, s.doc))
+    const [canvases] = produceWithPatches(next.canvases ?? s.canvases, (cs) => {
+      for (const canvas of cs) {
+        const before = s.canvases.find((c) => c.id === canvas.id)
+        if (before) clearChangedFigureSnapshots(canvasToDoc(canvas), canvasToDoc(before))
+      }
+    })
+    return { doc, canvases, derivedSeq: s.derivedSeq + 1 }
+  })
 }
 
 /**
@@ -2311,7 +2435,7 @@ export function startAutosave(): () => void {
     // 整体换文档不是编辑：磁盘恢复根本不该回写（内容就是从那儿读的），
     // 载入 / 切项目那条自己已经显式 flush 过一次了（为了立刻进「最近文档」），
     // 再排一次防抖写只会多一个新的 updatedAt 去和别的标签页抢。
-    if (state.loadSeq !== prev.loadSeq) return
+    if (state.loadSeq !== prev.loadSeq || state.snapshotSeq !== prev.snapshotSeq) return
     if (state.doc === prev.doc && state.canvases === prev.canvases) return
     // 占位文档的变化不是编辑：写入口都看门，这里再守一道（绕过门的写入也不排队落盘）
     if (isDocumentPlaceholder()) return

@@ -1,6 +1,7 @@
 import { svgSnapshotWarning } from '@/lib/svgSnapshotWarning'
 import { artifactBackgroundOriginal, artifactRequestFields, artifactValidationIssue, ArtifactValidationError, FIGSIZE_SOURCE_POLICY, validationFromSource, beginArtifactEntry, artifactEntryCurrent, cancelArtifactEntry, deferArtifactEntry, refuseArtifactOperation, rememberArtifactEdit } from '@/lib/artifactValidation'
 import { currentProjectId } from '@/lib/session'
+import { captureProjectEpoch } from '@/lib/projectEpoch'
 import { requestRender, type RenderPolicy } from '@/store/renderScheduler'
 import { isJustBakedBaselineOf } from '@/lib/bakedBaseline'
 import { engineTransport } from '@/lib/engineTransport'
@@ -59,6 +60,7 @@ import type { ProjectFileBinding } from '@/lib/projectFile'
 import { useAssetStore } from './assetStore'
 import { useEnvStore } from './envStore'
 import {
+  invalidateFigureSnapshots,
   readAutosaveDoc,
   saveNowWithResult,
   setProjectFile,
@@ -1258,8 +1260,8 @@ async function settledRender(key: string): Promise<void> {
  * 它是用户明确触发的一次脚本执行（00_SHARED_RULES §4 允许的形态），做的事与
  * 「脚本文件变了」那条路**逐字相同**：后端 `pool.invalidate`（同一个原语）+
  * 前端 `markStale`（清掉该文件全部变体的权威，画布留着上一张不闪白）+ 一次
- * immediate 渲染。**不改源脚本、不写回原始文件、不清 override**——文档一个字节
- * 不动，所以它**不进历史**（撤销撤的是编辑，不是一次重画）。
+ * immediate 渲染。**不改源脚本、不写回原始文件、不清 override**，文档编辑不动，
+ * 所以它**不进历史**（撤销撤的是编辑，不是一次重画）。成功重跑只退役这份源的派生快照引用。
  *
  * 同一文件的多个实例共享一条会话：会话作废对它们一视同仁，其余实例由
  * `useEngineSync` 的跟踪位（`markStale` 置的）按各自 overrides 重画。
@@ -1276,11 +1278,13 @@ export async function rebuildPanel(panelId: string): Promise<RebuildOutcome> {
   // 字号还在安静计时里时点「重新构建」：先把那次编辑收进历史，重画的才是定稿的 overrides
   finishActiveGesture()
   const fileId = panel.fileId
+  const owner = captureProjectEpoch(() => useDocumentStore.getState().documentId)
   let invalidated = false
   if (!engineTransport()) {
     try {
       invalidated = (await engineInvalidate(fileId)).invalidated
     } catch (err) {
+      if (!owner.still()) return 'skipped'
       status(
         note('rebuildFailed', { error: err instanceof Error ? err.message : String(err) }),
         'error',
@@ -1289,8 +1293,9 @@ export async function rebuildPanel(panelId: string): Promise<RebuildOutcome> {
     }
   }
   // 等后端这一趟的时间里面板可能被删了：以此刻文档里的那份为准
+  if (!owner.still()) return 'skipped'
   const fresh = findObject(panelId)
-  if (fresh?.type !== 'panel') return 'skipped'
+  if (fresh?.type !== 'panel' || fresh.fileId !== fileId) return 'skipped'
   const store = useRenderStore.getState()
   store.markStale([fileId])
   // 登记 wantPatches、清掉挂着的防抖计时器；真正的发送在下一行，要等它的结果
@@ -1298,7 +1303,9 @@ export async function rebuildPanel(panelId: string): Promise<RebuildOutcome> {
   const key = renderKeyOf(fresh)
   await store.render(fileId, fresh.overrides, undefined, 'immediate', undefined, fresh.artifactValidation)
   await settledRender(key)
+  if (!owner.still()) return 'skipped'
   if (useRenderStore.getState().get(key).status !== 'ready') return 'failed'
+  if (invalidated) invalidateFigureSnapshots([fileId], owner.pj)
   status(note(invalidated ? 'panelRebuilt' : 'panelRerenderedNoRerun'), 'done')
   return invalidated ? 'rebuilt' : 'rerendered'
 }

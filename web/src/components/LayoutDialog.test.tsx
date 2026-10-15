@@ -39,7 +39,7 @@ import { readProjectFile } from '@/lib/projectFile'
 import { setCurrentProjectId } from '@/lib/session'
 import { formatMessage } from '@/i18n'
 import { setProjectFile, useDocumentStore } from '@/store/documentStore'
-import type { ProjectDocument } from '@/types/document'
+import type { FigureSnapshot, PanelObject, ProjectDocument } from '@/types/document'
 import { useProjectStore } from '@/store/projectStore'
 import { useUiStore } from '@/store/uiStore'
 
@@ -727,5 +727,29 @@ describe('SVG snapshots are a nonblocking save warning', () => {
     expect(message).toContain('source.pdf')
     expect(message).toContain('重新运行脚本')
     expect(knownLayoutRevision(mockSave.mock.calls[0][0])).toBe('rev-svg')
+  })
+})
+
+
+describe('Save As immutable Figure references', () => {
+  it('attaches returned panel snapshots to the live document without adding a user edit', async () => {
+    const snapshot: FigureSnapshot = {
+      version: 1, sourceId: 'source.pdf', patchHash: 'patch', receiptId: 'receipt', snapshotId: 'snapshot',
+    }
+    const panel: PanelObject = {
+      id: 'snapshot-panel', type: 'panel', fileId: 'source.pdf', fileKind: 'pdf', figureFrame: 1,
+      nativeW: 20, nativeH: 10, x: 0, y: 0, w: 20, h: 10, overrides: [],
+    }
+    const doc = structuredClone(LAYOUT) as ProjectDocument
+    doc.canvases[0].objects = [panel]
+    useUiStore.setState({ layoutConflict: null, layoutName: null })
+    await useDocumentStore.getState().switchDocument(doc, 'd_figure_snapshot_save')
+    mockSave.mockResolvedValueOnce({ ok: true, revision: 'ref-rev', figure_snapshots: { 'snapshot-panel': snapshot } })
+    await open()
+    const past = useDocumentStore.getState().past
+    await clickSave()
+    expect((useDocumentStore.getState().doc.objects[0] as PanelObject).figureSnapshot).toEqual(snapshot)
+    expect(useDocumentStore.getState().past).toBe(past)
+    expect(useUiStore.getState().layoutOpen).toBe(false)
   })
 })

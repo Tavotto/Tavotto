@@ -365,6 +365,10 @@ class NativeSession:
         self.events: collections.deque = collections.deque(maxlen=EVENT_LOG_MAX)
         self.transport: NativeTransport | None = None
         self.generation = 1
+        # Receipt identity advances when user code leaves or reaches a barrier.
+        # Wire generation remains unchanged; repeated build/render requests at
+        # the same barrier must keep a stable Figure snapshot identity.
+        self.snapshot_epoch = 0
         self.rev = 0
         #: 与 `pool.EngineWorker.built` **同名同义**——「脚本跑过了没有」。
         #: `app.py` 的渲染端点用 `not worker.built` 判冷启动（发 render.started
@@ -443,6 +447,9 @@ class NativeSession:
             return
         name = frame.get(EVENT_KEY)
         if name == "barrier":
+            with self._lock:
+                if self.state != BARRIER:
+                    self.snapshot_epoch += 1
             stems = frame.get("stems") or []
             facts = frame.get("figure_facts")
             if isinstance(facts, list):
@@ -456,6 +463,9 @@ class NativeSession:
                 script_error=frame.get("script_error") or None,
             )
         elif name == "released":
+            with self._lock:
+                if self.state == BARRIER:
+                    self.snapshot_epoch += 1
             self._set_state(RUNNING_SCRIPT, barrier_reason="")
         elif name == INPUT_REQUEST_EVENT:
             self._on_input_request(frame)
@@ -853,12 +863,19 @@ class NativeSession:
         """
         with self._figure_lock:
             self._require_consistent()
+            previous_epoch = self.snapshot_epoch
             try:
                 resp = self._request({"cmd": "continue"}, REQUEST_TIMEOUT)
             except pool.WorkerError as exc:
                 if getattr(exc, "code", "") == runcodes.NATIVE_FIGURE_INCONSISTENT:
                     raise RunError(runcodes.NATIVE_FIGURE_INCONSISTENT) from exc
                 raise
+            with self._lock:
+                # The released event may already have advanced it. Either way,
+                # successful continuation revokes the old Figure immediately,
+                # including when the script ends without another barrier.
+                if self.snapshot_epoch == previous_epoch:
+                    self.snapshot_epoch += 1
             self._set_state(then)
             return resp
 

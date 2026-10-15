@@ -1,3 +1,4 @@
+import { figureSnapshotFor } from './figureSnapshot'
 import { artifactRequestFields } from './artifactValidation'
 import type { ExportObject } from './api'
 import type { CanvasObject } from '@/types/document'
@@ -27,6 +28,7 @@ function toExportObject(o: CanvasObject): ExportObject {
         type: 'panel',
         ...artifactRequestFields(o),
         id: o.fileId,
+        ...(figureSnapshotFor(o) ? { figure_snapshot: figureSnapshotFor(o) } : {}),
         overrides: o.overrides.length ? o.overrides : undefined,
         crop: o.crop,
         rotation: rotation || undefined,

@@ -38,6 +38,9 @@ import {
 import { useEnvStore } from './envStore'
 import { useScriptArgvStore } from './scriptArgvStore'
 import { useUiStore } from './uiStore'
+import { invalidateCapturedFigureSnapshots } from './figureSnapshotInvalidation'
+
+vi.mock('./figureSnapshotInvalidation', () => ({ invalidateCapturedFigureSnapshots: vi.fn() }))
 
 const mockCreate = vi.mocked(createPreparationSession)
 const mockGet = vi.mocked(fetchPreparationSession)
@@ -84,6 +87,7 @@ beforeEach(() => {
   mockCreate.mockReset()
   mockGet.mockReset()
   mockAct.mockReset()
+  vi.mocked(invalidateCapturedFigureSnapshots).mockClear()
   __setPreparationTimingForTests({ requestTimeoutMs: 15_000, pollMs: [10_000] })
   useProjectPreparationStore.getState().clear()
   useScriptArgvStore.getState().clear()
@@ -94,6 +98,68 @@ beforeEach(() => {
 afterEach(() => {
   useProjectPreparationStore.getState().clear()
   setCurrentProjectId(null)
+})
+
+describe('only a newly completed explicit preparation attempt retires snapshots', () => {
+  const succeeded = (attempt = 'attempt-1', seq = 2): PreparationReport => prepReport({
+    phase: 'completed', outcome: { kind: 'succeeded' }, observation_seq: seq,
+    facts: { execution_finished: true, figure_captured: true },
+    provider: { plan_id: 'prep-plan', attempt_id: attempt, attempts: 1, dependency: null },
+    captured: [{ asset_id: 'runtime:plot.py#a' } as never],
+  })
+
+  it('explicit run success invalidates once; replay/recheck of the same attempt does not', async () => {
+    mockCreate.mockResolvedValueOnce(prepReport())
+    await useProjectPreparationStore.getState().open(scriptTarget('plot.py'))
+    mockAct.mockResolvedValueOnce({ claimed: true, report: succeeded() })
+    await useProjectPreparationStore.getState().act(KEY, 'run')
+    expect(invalidateCapturedFigureSnapshots).toHaveBeenCalledExactlyOnceWith(succeeded().captured, 'pj-a')
+    mockGet.mockResolvedValueOnce(succeeded('attempt-1', 3))
+    await useProjectPreparationStore.getState().refresh(KEY)
+    mockGet.mockResolvedValueOnce(prepReport({ observation_seq: 4 }))
+    await useProjectPreparationStore.getState().refresh(KEY)
+    mockGet.mockResolvedValueOnce(succeeded('attempt-1', 5))
+    await useProjectPreparationStore.getState().refresh(KEY)
+    expect(invalidateCapturedFigureSnapshots).toHaveBeenCalledTimes(1)
+    mockGet.mockResolvedValueOnce(succeeded('attempt-2', 6))
+    await useProjectPreparationStore.getState().refresh(KEY)
+    expect(invalidateCapturedFigureSnapshots).toHaveBeenCalledTimes(2)
+  })
+
+  it('initial completed-session replay is a baseline, including later read-only rechecks', async () => {
+    mockCreate.mockResolvedValueOnce(succeeded())
+    await useProjectPreparationStore.getState().open(scriptTarget('plot.py'))
+    mockGet.mockResolvedValueOnce(prepReport({ observation_seq: 3 }))
+    await useProjectPreparationStore.getState().refresh(KEY)
+    mockGet.mockResolvedValueOnce(succeeded('attempt-1', 4))
+    await useProjectPreparationStore.getState().refresh(KEY)
+    expect(invalidateCapturedFigureSnapshots).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    { outcome: { kind: 'failed' as const } },
+    { outcome: { kind: 'cancelled' as const } },
+    { facts: { execution_finished: null, figure_captured: null } },
+    { provider: { plan_id: 'prep-plan', attempt_id: null, attempts: 0, dependency: null } },
+  ])('failure/cancellation/missing execution evidence preserves snapshots: %j', async (over) => {
+    mockCreate.mockResolvedValueOnce(prepReport())
+    await useProjectPreparationStore.getState().open(scriptTarget('plot.py'))
+    mockGet.mockResolvedValueOnce({ ...succeeded(), ...over })
+    await useProjectPreparationStore.getState().refresh(KEY)
+    expect(invalidateCapturedFigureSnapshots).not.toHaveBeenCalled()
+  })
+
+  it('late successful response after switching projects cannot invalidate the new document', async () => {
+    mockCreate.mockResolvedValueOnce(prepReport())
+    await useProjectPreparationStore.getState().open(scriptTarget('plot.py'))
+    let resolve!: (r: PreparationReport) => void
+    mockGet.mockImplementationOnce(() => new Promise((r) => { resolve = r }))
+    const refreshing = useProjectPreparationStore.getState().refresh(KEY)
+    setCurrentProjectId('pj-b')
+    resolve(succeeded())
+    await refreshing
+    expect(invalidateCapturedFigureSnapshots).not.toHaveBeenCalled()
+  })
 })
 
 describe('打开：参数在这一刻冻结', () => {

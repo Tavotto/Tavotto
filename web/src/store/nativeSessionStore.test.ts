@@ -19,6 +19,7 @@ import { addRuntimePanelToCanvas } from '@/store/workspace'
 import { setCurrentProjectId } from '@/lib/session'
 import { beginRestore, resetRestoreGateForTests, settleRestore, useDocumentStore } from '@/store/documentStore'
 import { useFigurePickerStore } from '@/store/figurePickerStore'
+import { invalidateCapturedFigureSnapshots } from './figureSnapshotInvalidation'
 import { nativePanelState, sortSessions, useNativeSessionStore } from './nativeSessionStore'
 
 vi.mock('@/lib/api', async (orig) => {
@@ -41,6 +42,7 @@ vi.mock('@/lib/api', async (orig) => {
 })
 
 vi.mock('@/store/workspace', () => ({ addRuntimePanelToCanvas: vi.fn() }))
+vi.mock('./figureSnapshotInvalidation', () => ({ invalidateCapturedFigureSnapshots: vi.fn() }))
 
 const mockPending = vi.mocked(fetchNativePending)
 const mockApprove = vi.mocked(approveNativePending)
@@ -126,6 +128,7 @@ beforeEach(() => {
     errors: {},
     conflicts: {},
     builtSeq: {},
+    executedBarrierSeq: {},
   })
   useDocumentStore.setState((s) => ({ doc: { ...s.doc, objects: [] } }))
   useFigurePickerStore.getState().close()
@@ -330,6 +333,92 @@ describe('事件按 sequence 落地', () => {
 })
 
 describe('屏障 → build → 图进画布', () => {
+  it('witnessed execution followed by a successful capture invalidates once, but barrier replay does not', async () => {
+    const barrier = session({ state: 'barrier', sequence: 4 })
+    mockBuild.mockResolvedValue({ session: barrier, stems: {}, descriptors: [desc('Fig1')] })
+    store().applyEvent(session({ state: 'running_script', sequence: 3 }))
+    store().applyEvent(barrier)
+    await vi.waitFor(() => expect(invalidateCapturedFigureSnapshots).toHaveBeenCalledExactlyOnceWith([desc('Fig1')], 'p_a'))
+    store().applyEvent(barrier)
+    await store().build(`native-${ID}`)
+    expect(invalidateCapturedFigureSnapshots).toHaveBeenCalledTimes(1)
+  })
+
+  it('initial barrier replay and read-only session refresh keep saved snapshots', async () => {
+    const barrier = session({ state: 'barrier', sequence: 4 })
+    mockBuild.mockResolvedValue({ session: barrier, stems: {}, descriptors: [desc('Fig1')] })
+    mockList.mockResolvedValue({ sessions: [barrier] })
+    await store().refresh('/p/figures')
+    await store().build(`native-${ID}`)
+    expect(invalidateCapturedFigureSnapshots).not.toHaveBeenCalled()
+    store().clear()
+    store().applyEvent(barrier)
+    await vi.waitFor(() => expect(mockBuild).toHaveBeenCalledTimes(2))
+    expect(invalidateCapturedFigureSnapshots).not.toHaveBeenCalled()
+  })
+
+  it('failed execution or failed build keeps snapshots; a successful build retry invalidates', async () => {
+    const barrier = session({ state: 'barrier', sequence: 4 })
+    mockBuild.mockRejectedValueOnce(new Error('capture failed'))
+    store().applyEvent(session({ state: 'running_script', sequence: 3 }))
+    store().applyEvent(barrier)
+    await vi.waitFor(() => expect(store().errors[`native-${ID}`]).not.toBeNull())
+    expect(invalidateCapturedFigureSnapshots).not.toHaveBeenCalled()
+    mockBuild.mockResolvedValue({ session: barrier, stems: {}, descriptors: [desc('Fig1')] })
+    await store().build(`native-${ID}`)
+    expect(invalidateCapturedFigureSnapshots).toHaveBeenCalledTimes(1)
+    vi.mocked(invalidateCapturedFigureSnapshots).mockClear()
+    store().applyEvent(session({ state: 'running_script', sequence: 5 }))
+    const failed = session({ state: 'barrier', sequence: 6, script_error: { type: 'RuntimeError', message: 'failed' } })
+    mockBuild.mockResolvedValue({ session: failed, stems: {}, descriptors: [desc('Fig1')] })
+    store().applyEvent(failed)
+    await vi.waitFor(() => expect(mockBuild).toHaveBeenCalledTimes(3))
+    expect(invalidateCapturedFigureSnapshots).not.toHaveBeenCalled()
+  })
+
+  it('successful native capture waits for the restored document before invalidating its snapshots', async () => {
+    const token = beginRestore('p_a')
+    settleRestore(token, {
+      state: 'needs_user',
+      issue: { pj: 'p_a', gen: token.gen, kind: 'index_degraded', ref: null, alternatives: [] },
+    })
+    const barrier = session({ state: 'barrier', sequence: 4 })
+    mockBuild.mockResolvedValue({ session: barrier, stems: {}, descriptors: [desc('Fig1')] })
+    store().applyEvent(session({ state: 'running_script', sequence: 3 }))
+    store().applyEvent(barrier)
+    await vi.waitFor(() => expect(mockBuild).toHaveBeenCalledTimes(1))
+    expect(invalidateCapturedFigureSnapshots).not.toHaveBeenCalled()
+    settleRestore(beginRestore('p_a'), { state: 'ready', reason: 'empty' })
+    await vi.waitFor(() => expect(invalidateCapturedFigureSnapshots).toHaveBeenCalledExactlyOnceWith([desc('Fig1')], 'p_a'))
+  })
+
+  it('late native build success cannot clear snapshots after a project A → B → A round trip', async () => {
+    const barrier = session({ state: 'barrier', sequence: 4 })
+    let resolve!: (r: Awaited<ReturnType<typeof buildNativeSession>>) => void
+    mockBuild.mockImplementationOnce(() => new Promise((r) => { resolve = r }))
+    store().applyEvent(session({ state: 'running_script', sequence: 3 }))
+    store().applyEvent(barrier)
+    setCurrentProjectId('p_b')
+    setCurrentProjectId('p_a')
+    resolve({ session: barrier, stems: {}, descriptors: [desc('Fig1')] })
+    await Promise.resolve()
+    expect(invalidateCapturedFigureSnapshots).not.toHaveBeenCalled()
+    expect(mockAddPanel).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    { script_error: { type: 'RuntimeError', message: 'failed' } },
+    { terminal_error: { code: 'disconnected' } },
+    { cancelled: true },
+  ])('a failed/cancelled execution reported by build preserves snapshots: %j', async (failure) => {
+    const barrier = session({ state: 'barrier', sequence: 4 })
+    mockBuild.mockResolvedValue({ session: { ...barrier, ...failure }, stems: {}, descriptors: [desc('Fig1')] })
+    store().applyEvent(session({ state: 'running_script', sequence: 3 }))
+    store().applyEvent(barrier)
+    await vi.waitFor(() => expect(mockAddPanel).toHaveBeenCalledTimes(1))
+    expect(invalidateCapturedFigureSnapshots).not.toHaveBeenCalled()
+  })
+
   it('恢复待用户处理时保留原生交接，打开文档之后才放入一次', async () => {
     const token = beginRestore('p_a')
     settleRestore(token, {

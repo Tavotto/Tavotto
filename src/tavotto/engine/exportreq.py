@@ -288,6 +288,7 @@ class OriginalSource:
     ignored: tuple[str, ...] = ()
     source_policy: str | None = None
     expected_source: dict | None = None
+    figure_snapshot: dict | None = None
 
 
 @dataclass(frozen=True)
@@ -356,6 +357,11 @@ class ExportRequest:
             **(
                 {"source_policy": self.original.source_policy}
                 if self.original and self.original.source_policy is not None
+                else {}
+            ),
+            **(
+                {"figure_snapshot": self.original.figure_snapshot}
+                if self.original and self.original.figure_snapshot is not None
                 else {}
             ),
         }
@@ -538,6 +544,17 @@ def _source_basis(source, patches=()):
         ) from exc
 
 
+def _figure_snapshot(source):
+    if "figure_snapshot" not in source:
+        return None
+    from .svgstore import validate_reference
+
+    try:
+        return validate_reference(source["figure_snapshot"])
+    except ValueError as exc:
+        raise ExportRequestError("bad_request", "Invalid Figure snapshot reference", {}) from exc
+
+
 def normalize(spec: dict, *, allowed_formats: tuple[str, ...] = FORMATS) -> ExportRequest:
     """任意 JSON → `ExportRequest`。**缺省值只有这一处**。
 
@@ -618,6 +635,7 @@ def normalize(spec: dict, *, allowed_formats: tuple[str, ...] = FORMATS) -> Expo
         for obj in objects:
             if isinstance(obj, dict):
                 _source_basis(obj, obj.get("overrides"))
+                _figure_snapshot(obj)
         canvas = CanvasSource(
             page_w_mm=_float(source.get("page_w_mm"), "page_w_mm"),
             page_h_mm=_float(source.get("page_h_mm"), "page_h_mm"),
@@ -637,6 +655,7 @@ def normalize(spec: dict, *, allowed_formats: tuple[str, ...] = FORMATS) -> Expo
             figure_id=figure_id,
             source_policy=source.get("source_policy"),
             expected_source=_source_basis(source, overrides),
+            figure_snapshot=_figure_snapshot(source),
             overrides=[o for o in overrides if isinstance(o, dict)],
             w_mm=float(source["w_mm"]) if source.get("w_mm") else None,
             h_mm=float(source["h_mm"]) if source.get("h_mm") else None,

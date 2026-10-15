@@ -75,7 +75,7 @@ def _meta(store):
 
 def _mutate_metadata(store, mutate, *, resign=True):
     path = _meta(store)
-    record = json.loads(path.read_text())
+    record = json.loads(path.read_bytes())
     mutate(record["payload"])
     if resign:
         record["sha256"] = svgstore._digest(svgstore._json(record["payload"]))
@@ -93,6 +93,7 @@ def test_roundtrip_freezes_exact_pair_and_public_receipt(store):
     assert loaded["svg_artifact"]["bytes_sha256"] == hashlib.sha256(SVG).hexdigest()
     assert loaded["svg_artifact"]["kind"] == "svg"
     assert loaded["receipt"]["source_revision"] == "script-revision"
+    assert loaded["snapshot_ref"] is None  # Disposable cache never issues document refs.
     assert not list(store[0].iterdir())
 
 
@@ -432,10 +433,21 @@ def test_activation_scoped_to_project_source_and_remap(store):
     assert svgstore.load(another_project, SOURCE, PATCH)
 
 
-def test_marker_receipt_corruption_is_a_miss_and_not_ordinary_reactivation(store):
+@pytest.mark.parametrize("default_encoding", [None, "cp1252"])
+def test_marker_receipt_corruption_is_a_miss_and_not_ordinary_reactivation(
+    store, monkeypatch, default_encoding
+):
+    if default_encoding is not None:
+        read_text = Path.read_text
+
+        def legacy_default(path, encoding=None, errors=None, **kwargs):
+            return read_text(path, encoding=encoding or default_encoding, errors=errors, **kwargs)
+
+        monkeypatch.setattr(Path, "read_text", legacy_default)
     _save(store)
     marker = next((store[1] / "sources").glob("*.json"))
-    record = json.loads(marker.read_text())
+    record = json.loads(marker.read_bytes())
+    assert record["payload"]["identity"]["source_id"] == SOURCE
     record["payload"]["receipt"]["generation"] = 2
     record["sha256"] = svgstore._digest(svgstore._json(record["payload"]))
     marker.write_bytes(svgstore._json(record))
@@ -608,7 +620,7 @@ def test_durable_replacement_budget_counts_final_bytes_and_keeps_other_figures(
 ):
     _save(store, storage_root=durable)
     _save(store, source="other", storage_root=durable)
-    monkeypatch.setattr(svgstore, "MAX_SNAPSHOTS", 2)
+    monkeypatch.setattr(svgstore, "MAX_SNAPSHOTS", 4)
     before = sum(len(data) for name, data in _tree_bytes(durable).items() if name != ".lock")
     monkeypatch.setattr(svgstore, "MAX_TOTAL_BYTES", before + 100)
     _save(store, storage_root=durable)
@@ -616,7 +628,7 @@ def test_durable_replacement_budget_counts_final_bytes_and_keeps_other_figures(
     assert len(list((durable / "entries").glob("*.json"))) == 2
 
 
-def test_durable_activation_removes_only_superseded_generation_and_orphan_blobs(store, durable):
+def test_durable_activation_removes_current_lookup_but_retains_archived_generation(store, durable):
     old = _save(store, storage_root=durable)
     independent = _save(
         store,
@@ -626,7 +638,13 @@ def test_durable_activation_removes_only_superseded_generation_and_orphan_blobs(
     )
     svgstore.activate(store[0], SOURCE, _args(generation=2)["receipt"], storage_root=durable)
     assert svgstore.load(store[0], SOURCE, PATCH, storage_root=durable) is None
-    assert not old["pdf_path"].exists() and not old["svg_path"].exists()
+    assert old["pdf_path"].exists() and old["svg_path"].exists()
+    assert (
+        svgstore.load_snapshot(
+            store[0], old["snapshot_ref"], source_id=SOURCE, patch_hash=PATCH, storage_root=durable
+        )
+        == old
+    )
     assert svgstore.load(store[0], "other", PATCH, storage_root=durable) == independent
     with pytest.raises(ValueError, match="inactive execution"):
         _save(store, storage_root=durable)
@@ -676,3 +694,417 @@ def test_durable_root_rejects_path_traversal(store):
     with pytest.raises(ValueError, match="unsafe"):
         _save(store, storage_root=root)
     assert not (store[0] / "escape").exists()
+
+
+def _load_snapshot(store, durable, reference, **kwargs):
+    args = {"source_id": SOURCE, "patch_hash": PATCH, "storage_root": durable}
+    args.update(kwargs)
+    return svgstore.load_snapshot(store[0], reference, **args)
+
+
+def _expected_reference(args, *, source=SOURCE, patch=PATCH, static=None, remap=""):
+    # This is the published ID contract, independent of mutable timestamps.
+    identity = {
+        "project": ".",
+        "source_id": source,
+        "patch_hash": patch,
+        "static_sha256": static,
+        "remap_fingerprint": remap,
+    }
+    receipt = {
+        key: args["receipt"][key] for key in ("receipt_id", "receipt_identity", "generation")
+    }
+    data = {
+        "identity": identity,
+        "receipt": receipt,
+        "pdf": hashlib.sha256(args["pdf"]).hexdigest(),
+        "svg": hashlib.sha256(args["svg"]).hexdigest(),
+    }
+    return {
+        "version": 1,
+        "sourceId": source,
+        "patchHash": patch,
+        "receiptId": receipt["receipt_id"],
+        "snapshotId": hashlib.sha256(
+            json.dumps(data, sort_keys=True, ensure_ascii=False, separators=(",", ":")).encode()
+        ).hexdigest(),
+    }
+
+
+def test_durable_reference_content_address_and_immutable_repeat(store, durable, monkeypatch):
+    now = [1000.0]
+    monkeypatch.setattr(svgstore.time, "time", lambda: now[0])
+    saved = _save(store, storage_root=durable)
+    reference = saved["snapshot_ref"]
+    assert reference == _expected_reference(_args())
+    assert svgstore.load(store[0], SOURCE, PATCH, storage_root=durable)["snapshot_ref"] == reference
+    path = durable / "snapshots" / (reference["snapshotId"] + ".json")
+    established = path.read_bytes()
+    now[0] += 100
+    again = _save(store, storage_root=durable)
+    assert again == saved
+    assert path.read_bytes() == established
+    assert len(list((durable / "snapshots").glob("*.json"))) == 1
+    assert _load_snapshot(store, durable, reference) == saved
+    detached = svgstore.validate_reference(reference)
+    detached["sourceId"] = "changed"
+    assert reference["sourceId"] == SOURCE
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        lambda ref: ref.update(extra=True),
+        lambda ref: ref.pop("snapshotId"),
+        lambda ref: ref.update(version=True),
+        lambda ref: ref.update(version=2),
+        lambda ref: ref.update(sourceId=""),
+        lambda ref: ref.update(sourceId="bad\0source"),
+        lambda ref: ref.update(sourceId=[SOURCE]),
+        lambda ref: ref.update(sourceId="x" * 16385),
+        lambda ref: ref.update(patchHash="a" * 64),
+        lambda ref: ref.update(patchHash="sha256:" + "A" * 64),
+        lambda ref: ref.update(receiptId=None),
+        lambda ref: ref.update(receiptId="../receipt"),
+        lambda ref: ref.update(snapshotId="../outside"),
+        lambda ref: ref.update(snapshotId="sha256:" + "a" * 64),
+        lambda ref: ref.update(snapshotId="A" * 64),
+        lambda ref: ref.update(snapshotId="a" * 63),
+    ],
+)
+def test_reference_schema_is_closed_strict_and_non_mutating(store, durable, change):
+    reference = _save(store, storage_root=durable)["snapshot_ref"]
+    change(reference)
+    before = _tree_bytes(durable)
+    with pytest.raises(ValueError, match="reference"):
+        svgstore.validate_reference(reference)
+    assert _load_snapshot(store, durable, reference) is None
+    assert _tree_bytes(durable) == before
+
+
+@pytest.mark.parametrize("reference", [None, [], "id", True, 1])
+def test_reference_non_objects_are_rejected(reference):
+    with pytest.raises(ValueError, match="reference"):
+        svgstore.validate_reference(reference)
+
+
+def test_snapshot_reference_every_lookup_dimension_is_exact(store, durable):
+    reference = _save(
+        store, static_sha256="c" * 64, remap_fingerprint="mapped", storage_root=durable
+    )["snapshot_ref"]
+    assert _load_snapshot(
+        store, durable, reference, static_sha256="c" * 64, remap_fingerprint="mapped"
+    )
+    for options in (
+        {},
+        {"static_sha256": "c" * 64},
+        {"static_sha256": "d" * 64, "remap_fingerprint": "mapped"},
+        {"static_sha256": "c" * 64, "remap_fingerprint": "changed"},
+        {"static_sha256": "c" * 64, "remap_fingerprint": "mapped", "source_id": "other"},
+        {
+            "static_sha256": "c" * 64,
+            "remap_fingerprint": "mapped",
+            "patch_hash": "sha256:" + "f" * 64,
+        },
+    ):
+        assert _load_snapshot(store, durable, reference, **options) is None
+    for field, value in (
+        ("sourceId", "other"),
+        ("patchHash", "sha256:" + "c" * 64),
+        ("receiptId", "sha256:" + "c" * 64),
+        ("snapshotId", "c" * 64),
+    ):
+        assert (
+            _load_snapshot(
+                store,
+                durable,
+                {**reference, field: value},
+                static_sha256="c" * 64,
+                remap_fingerprint="mapped",
+            )
+            is None
+        )
+    assert _load_snapshot(store, None, reference) is None  # No default-cache fallback.
+
+
+def test_archived_pair_survives_new_generation_and_failed_new_capture(store, durable):
+    old = _save(store, storage_root=durable)
+    svgstore.activate(store[0], SOURCE, _args(generation=2)["receipt"], storage_root=durable)
+    assert svgstore.load(store[0], SOURCE, PATCH, storage_root=durable) is None
+    assert _load_snapshot(store, durable, old["snapshot_ref"]) == old
+    new = _save(
+        store, **_args(pdf=b"second PDF", svg=b"second SVG", generation=2), storage_root=durable
+    )
+    assert new["snapshot_ref"] != old["snapshot_ref"]
+    assert svgstore.load(store[0], SOURCE, PATCH, storage_root=durable) == new
+    svgstore.activate(store[0], SOURCE, _args(generation=3)["receipt"], storage_root=durable)
+    assert _load_snapshot(store, durable, old["snapshot_ref"]) == old
+    assert _load_snapshot(store, durable, new["snapshot_ref"]) == new
+    with pytest.raises(ValueError, match="inactive execution"):
+        _save(store, storage_root=durable)
+
+
+@pytest.mark.parametrize("changed", ["pdf", "svg", "both"])
+def test_same_receipt_and_patch_changed_bytes_never_rewrite_prior_version(store, durable, changed):
+    old = _save(store, storage_root=durable)
+    old_path = durable / "snapshots" / (old["snapshot_ref"]["snapshotId"] + ".json")
+    prior_metadata = old_path.read_bytes()
+    args = _args(
+        pdf=b"new PDF" if changed != "svg" else PDF, svg=b"new SVG" if changed != "pdf" else SVG
+    )
+    new = _save(store, **args, storage_root=durable)
+    assert new["snapshot_ref"] == _expected_reference(args)
+    assert new["snapshot_ref"]["snapshotId"] != old["snapshot_ref"]["snapshotId"]
+    assert new["snapshot_ref"]["receiptId"] == old["snapshot_ref"]["receiptId"]
+    assert old_path.read_bytes() == prior_metadata
+    assert _load_snapshot(store, durable, old["snapshot_ref"]) == old
+    assert _load_snapshot(store, durable, new["snapshot_ref"]) == new
+
+
+def test_legacy_current_record_gets_no_fabricated_reference_until_explicit_save(store, durable):
+    saved = _save(store, storage_root=durable)
+    shutil.rmtree(durable / "snapshots")  # Represents an earlier, current-only store.
+    assert svgstore.load(store[0], SOURCE, PATCH, storage_root=durable)["snapshot_ref"] is None
+    assert _load_snapshot(store, durable, saved["snapshot_ref"]) is None
+    again = _save(store, storage_root=durable)
+    assert again["snapshot_ref"] == saved["snapshot_ref"]
+    assert _load_snapshot(store, durable, again["snapshot_ref"]) == again
+
+
+def test_archived_reference_loads_readonly_moved_project_after_cache_and_markers_removed(
+    store, durable, tmp_path, monkeypatch
+):
+    old = _save(store, storage_root=durable)
+    svgstore.activate(store[0], SOURCE, _args(generation=2)["receipt"], storage_root=durable)
+    moved = tmp_path / "moved"
+    store[0].rename(moved)
+    relocated = moved / "tavottofile" / "figure_snapshots"
+    shutil.rmtree(relocated / "entries")
+    shutil.rmtree(relocated / "sources")
+    (relocated / ".lock").unlink()
+    monkeypatch.setenv("TAVOTTO_DATA_DIR", str(tmp_path / "empty-cache"))
+    monkeypatch.setattr(svgstore.time, "time", lambda: 1e11)
+    original = os.open
+
+    def readonly(path, flags, *args, **kwargs):
+        assert not flags & (os.O_CREAT | os.O_RDWR | os.O_WRONLY), "snapshot read attempted a write"
+        return original(path, flags, *args, **kwargs)
+
+    monkeypatch.setattr(svgstore.os, "open", readonly)
+    before = _tree_bytes(relocated)
+    result = svgstore.load_snapshot(
+        moved, old["snapshot_ref"], source_id=SOURCE, patch_hash=PATCH, storage_root=relocated
+    )
+    assert result["pdf"] == PDF and result["svg"] == SVG
+    assert result["snapshot_ref"] == old["snapshot_ref"]
+    assert _tree_bytes(relocated) == before
+    assert not (tmp_path / "empty-cache").exists()
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        lambda p: p.update(version=2),
+        lambda p: p.update(extra=True),
+        lambda p: p["identity"].update(source_id="other"),
+        lambda p: p["identity"].update(static_sha256="c" * 64),
+        lambda p: p["identity"].update(remap_fingerprint="other"),
+        lambda p: p["receipt"].update(generation=2),
+        lambda p: p["receipt"].update(receipt_id="sha256:" + "c" * 64),
+        lambda p: p["svg_artifact"].update(bytes_sha256="c" * 64),
+        lambda p: p["pdf_artifact"].update(size_bytes=1),
+    ],
+)
+def test_archive_resigned_metadata_tampering_never_matches_reference(store, durable, change):
+    reference = _save(store, storage_root=durable)["snapshot_ref"]
+    path = durable / "snapshots" / (reference["snapshotId"] + ".json")
+    record = json.loads(path.read_bytes())
+    change(record["payload"])
+    record["sha256"] = svgstore._digest(svgstore._json(record["payload"]))
+    path.write_bytes(svgstore._json(record))
+    assert _load_snapshot(store, durable, reference) is None
+
+
+@pytest.mark.parametrize("kind", ["pdf", "svg"])
+def test_archive_reads_recheck_both_blob_hashes(store, durable, kind):
+    saved = _save(store, storage_root=durable)
+    path = saved[kind + "_path"]
+    path.write_bytes(b"X" * path.stat().st_size)
+    assert _load_snapshot(store, durable, saved["snapshot_ref"]) is None
+
+
+def test_archive_filename_is_not_an_alias_for_another_version(store, durable):
+    saved = _save(store, storage_root=durable)
+    reference = saved["snapshot_ref"]
+    path = durable / "snapshots" / (reference["snapshotId"] + ".json")
+    alias = "c" * 64
+    path.rename(path.with_name(alias + ".json"))
+    assert _load_snapshot(store, durable, {**reference, "snapshotId": alias}) is None
+    # Publication must not adopt an alias as an established immutable record,
+    # even though the read API independently checks the reference content ID.
+    with pytest.raises(ValueError, match="filename"):
+        svgstore.activate(store[0], SOURCE, _args()["receipt"], storage_root=durable)
+
+
+@pytest.mark.parametrize("target", ["root", "snapshots", "blobs", "archive", "pdf", "svg"])
+def test_archive_load_rejects_symlinks(store, durable, tmp_path, target):
+    saved = _save(store, storage_root=durable)
+    paths = {
+        "root": durable,
+        "snapshots": durable / "snapshots",
+        "blobs": durable / "blobs",
+        "archive": durable / "snapshots" / (saved["snapshot_ref"]["snapshotId"] + ".json"),
+        "pdf": saved["pdf_path"],
+        "svg": saved["svg_path"],
+    }
+    path = paths[target]
+    outside = tmp_path / "outside"
+    path.rename(outside)
+    _symlink(path, outside, directory=outside.is_dir())
+    assert _load_snapshot(store, durable, saved["snapshot_ref"]) is None
+
+
+def test_archive_count_budget_includes_inactive_versions_and_current_metadata(
+    store, durable, monkeypatch
+):
+    first = _save(store, storage_root=durable)
+    monkeypatch.setattr(svgstore, "MAX_SNAPSHOTS", 3)
+    second = _save(store, **_args(pdf=b"second"), storage_root=durable)
+    assert len(list((durable / "snapshots").glob("*.json"))) == 2
+    assert len(list((durable / "entries").glob("*.json"))) == 1
+    before = _tree_bytes(durable)
+    with pytest.raises(ValueError, match="budget exceeded"):
+        _save(store, **_args(pdf=b"third"), storage_root=durable)
+    assert _tree_bytes(durable) == before
+    assert _load_snapshot(store, durable, first["snapshot_ref"]) == first
+    assert _load_snapshot(store, durable, second["snapshot_ref"]) == second
+    svgstore.activate(store[0], SOURCE, _args(generation=2)["receipt"], storage_root=durable)
+    assert len(list((durable / "snapshots").glob("*.json"))) == 2
+    # Clearing the mutable current slot does not make room for two new records.
+    before = _tree_bytes(durable)
+    with pytest.raises(ValueError, match="budget exceeded"):
+        _save(store, **_args(pdf=b"third", generation=2), storage_root=durable)
+    assert _tree_bytes(durable) == before
+
+
+def test_archive_byte_budget_counts_retained_metadata_and_deduplicates_blobs(
+    store, durable, monkeypatch
+):
+    now = [1000.0]
+    monkeypatch.setattr(svgstore.time, "time", lambda: now[0])
+    first = _save(store, storage_root=durable)
+    before = _tree_bytes(durable)
+    exact_size = sum(len(data) for name, data in before.items() if name != ".lock")
+    monkeypatch.setattr(svgstore, "MAX_TOTAL_BYTES", exact_size)
+    assert _save(store, storage_root=durable) == first  # No double-counting shared blobs.
+    # Existing archive whitespace still consumes physical bytes even on reuse.
+    path = durable / "snapshots" / (first["snapshot_ref"]["snapshotId"] + ".json")
+    path.write_bytes(path.read_bytes() + b"\n")
+    before = _tree_bytes(durable)
+    with pytest.raises(ValueError, match="budget exceeded"):
+        _save(store, storage_root=durable)
+    assert _tree_bytes(durable) == before
+
+
+@pytest.mark.parametrize("stage", ["svg", "snapshots", "entries"])
+def test_half_committed_durable_save_never_loses_prior_reference(
+    store, durable, monkeypatch, stage
+):
+    old = _save(store, storage_root=durable)
+    args = _args(pdf=b"new PDF", svg=b"new SVG")
+    new_ref = _expected_reference(args)
+    original = svgstore.atomicio.write_bytes
+
+    def fail(path, data, **kwargs):
+        if (stage == "svg" and path.suffix == ".svg") or path.parent.name == stage:
+            raise OSError("simulated interrupted publication")
+        return original(path, data, **kwargs)
+
+    monkeypatch.setattr(svgstore.atomicio, "write_bytes", fail)
+    with pytest.raises(OSError, match="interrupted"):
+        _save(store, **args, storage_root=durable)
+    assert _load_snapshot(store, durable, old["snapshot_ref"]) == old
+    assert svgstore.load(store[0], SOURCE, PATCH, storage_root=durable) == old
+    committed = _load_snapshot(store, durable, new_ref)
+    assert (committed is not None) == (stage == "entries")
+    monkeypatch.setattr(svgstore.atomicio, "write_bytes", original)
+    # Cleanup cannot erase an archive which committed before current publication failed.
+    svgstore.activate(store[0], SOURCE, _args()["receipt"], storage_root=durable)
+    assert _load_snapshot(store, durable, old["snapshot_ref"]) == old
+    assert (_load_snapshot(store, durable, new_ref) is not None) == (stage == "entries")
+    result = _save(store, **args, storage_root=durable)
+    assert result["snapshot_ref"] == new_ref
+    assert _load_snapshot(store, durable, new_ref) == result
+
+
+def test_archive_read_during_new_publication_is_complete_or_missing_without_write_lock(
+    store, durable, monkeypatch
+):
+    old = _save(store, storage_root=durable)
+    args = _args(pdf=b"new PDF", svg=b"new SVG")
+    new_ref = _expected_reference(args)
+    writing = threading.Event()
+    release = threading.Event()
+    original = svgstore.atomicio.write_bytes
+
+    def pause(path, data, **kwargs):
+        if path.parent.name == "snapshots":
+            writing.set()
+            assert release.wait(timeout=10)
+        return original(path, data, **kwargs)
+
+    monkeypatch.setattr(svgstore.atomicio, "write_bytes", pause)
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+        future = executor.submit(_save, store, **args, storage_root=durable)
+        try:
+            assert writing.wait(timeout=10)
+            assert _load_snapshot(store, durable, old["snapshot_ref"]) == old
+            assert _load_snapshot(store, durable, new_ref) is None
+        finally:
+            release.set()
+        result = future.result(timeout=10)
+    assert _load_snapshot(store, durable, new_ref) == result
+    assert _load_snapshot(store, durable, old["snapshot_ref"]) == old
+
+
+@pytest.mark.parametrize("constant", ["MAX_METADATA_BYTES", "MAX_PDF_BYTES", "MAX_SVG_BYTES"])
+def test_archive_reads_keep_size_bounds(store, durable, monkeypatch, constant):
+    saved = _save(store, storage_root=durable)
+    monkeypatch.setattr(svgstore, constant, 1)
+    assert _load_snapshot(store, durable, saved["snapshot_ref"]) is None
+
+
+def test_corrupt_archive_never_yields_a_usable_reference_or_eviction_permission(store, durable):
+    saved = _save(store, storage_root=durable)
+    path = durable / "snapshots" / (saved["snapshot_ref"]["snapshotId"] + ".json")
+    record = json.loads(path.read_bytes())
+    record["payload"]["pdf_artifact"]["size_bytes"] = 1
+    record["sha256"] = svgstore._digest(svgstore._json(record["payload"]))
+    path.write_bytes(svgstore._json(record))
+    assert svgstore.load(store[0], SOURCE, PATCH, storage_root=durable)["snapshot_ref"] is None
+    assert _load_snapshot(store, durable, saved["snapshot_ref"]) is None
+    before = _tree_bytes(durable)
+    with pytest.raises(ValueError):
+        _save(store, storage_root=durable)
+    assert _tree_bytes(durable) == before
+    record["payload"]["version"] = 999
+    record["sha256"] = svgstore._digest(svgstore._json(record["payload"]))
+    path.write_bytes(svgstore._json(record))
+    before = _tree_bytes(durable)
+    with pytest.raises(ValueError, match="version"):
+        svgstore.activate(store[0], SOURCE, _args(generation=2)["receipt"], storage_root=durable)
+    assert _tree_bytes(durable) == before
+
+
+def test_concurrent_durable_saves_keep_every_issued_reference(store, durable):
+    def publish(i):
+        data = str(i).encode()
+        return _save(store, **_args(pdf=b"PDF" + data, svg=b"SVG" + data), storage_root=durable)
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
+        saved = list(executor.map(publish, range(12)))
+    assert len({item["snapshot_ref"]["snapshotId"] for item in saved}) == 12
+    for item in saved:
+        assert _load_snapshot(store, durable, item["snapshot_ref"]) == item
+    assert len(list((durable / "entries").glob("*.json"))) == 1
+    assert len(list((durable / "snapshots").glob("*.json"))) == 12

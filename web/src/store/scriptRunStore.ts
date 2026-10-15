@@ -12,7 +12,9 @@ import {
   type WorkdirConfirmation,
 } from '@/lib/api'
 import { currentProjectId } from '@/lib/session'
+import { captureProjectEpoch } from '@/lib/projectEpoch'
 import { useAssetStore } from '@/store/assetStore'
+import { invalidateCapturedFigureSnapshots } from '@/store/figureSnapshotInvalidation'
 import { msg, t as translate } from '@/i18n'
 import { useEnvStore } from '@/store/envStore'
 import { useRenderStore } from '@/store/renderStore'
@@ -250,6 +252,7 @@ export const useScriptRunStore = create<ScriptRunStore>((set, get) => ({
     const prev = get().byScript[script]
     if (prev && isBusyPhase(prev.phase)) return // 同脚本防并发
     const epoch = get().epoch
+    const owner = captureProjectEpoch(() => get().epoch)
     const projectAtStart = currentProjectId()
     const gen = (prev?.gen ?? 0) + 1
     set((s) => ({
@@ -261,7 +264,7 @@ export const useScriptRunStore = create<ScriptRunStore>((set, get) => ({
 
     /** 迟到响应（换代 / 换项目）一律丢弃 */
     const stale = () =>
-      get().epoch !== epoch || get().byScript[script]?.gen !== gen
+      !owner.still() || get().epoch !== epoch || get().byScript[script]?.gen !== gen
     const settle = (patch: Partial<ScriptRunState>) => {
       if (stale()) return
       set((s) => ({
@@ -311,6 +314,8 @@ export const useScriptRunStore = create<ScriptRunStore>((set, get) => ({
         unlinkedStems: res.unlinked_stems ?? [],
         error: null,
       })
+      // Only this successful explicit execution retires the saved Figure. Passive re-renders do not.
+      invalidateCapturedFigureSnapshots(res.descriptors, projectAtStart)
       // 成功的副作用：素材库立即出现新东西。
       // - runtime 清单重取（RuntimeFigureAsset 卡片，含刚物化的描述符）；
       // - 面板列表重取（脚本这次也可能 savefig 出了真文件 / ⚡ 状态变化）；

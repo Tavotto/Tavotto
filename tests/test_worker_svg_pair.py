@@ -439,7 +439,7 @@ def test_real_safe_worker_exports_pair_without_running_script_again(tmp_path, le
         response = _rpc(proc, request)
         data = (tmp_path / "pair.svg").read_bytes()
         assert response["svg"]["sha256"] == hashlib.sha256(data).hexdigest()
-        assert (tmp_path / "sandbox" / "runs.txt").read_text() == "run\n"
+        assert (tmp_path / "sandbox" / "runs.txt").read_text(encoding="utf-8") == "run\n"
         assert not ET.fromstring(data).findall(".//{http://www.w3.org/2000/svg}text")
         with pymupdf.open(tmp_path / "pair.pdf") as pdf:
             assert "Paired worker" in pdf[0].get_text()

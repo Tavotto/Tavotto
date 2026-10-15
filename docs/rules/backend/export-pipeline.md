@@ -51,10 +51,17 @@
     执行回执与 generation；SVG 复用 PDF draw 已确定的布局，临时 `svg.fonttype=path` 和 Figure 状态在结束时还原。
     **自动捕获和导出要求 `require_built`**：只用已经运行并接纳的 Figure 或已验证的冻结对，冷 worker /
     过期会话 / 缺失表示不能触发脚本重跑。动态 draw 回调、自定义 draw 等无法保证配对稳定的 Figure
-    不授予 SVG 资格，自动捕获在 draw 之前拒绝。当前执行代不匹配的旧变体不作回退。
-    静态 PDF 只有经独立接纳且绑定到原件 hash 的配对才可使用；同名邻居文件、预览、任意旧导出不算。
+    不授予 SVG 资格，自动捕获在 draw 之前拒绝。**未知当前回执不是旧配对的许可**：磁盘 current marker
+    与预览 metadata 不能补造当前执行证据；没有文档引用时，执行源必须有当前进程实际观察到的回执。
+    文档面板的 `figureSnapshot` 经请求字段 `figure_snapshot` 传入，闭集结构与存储合同见
+    `layout-versions-and-documents.md`。冷态且当前回执未知时，明确引用可导出保存时的版本；
+    **仅导 PDF 也必须按该引用取同一版本**，不能换成当前文件或另一次执行。已知新回执与引用不符时拒绝旧引用，
+    即使新一代捕获 / 持久化失败也不回退。引用无效或对应资产缺失同样报错，不静默换来源。
+    无 override 的静态 PDF 可由独立接纳且绑定到**当前精确字节 hash** 的配对授权，不依赖未知的运行回执；
+    同名邻居文件、预览、任意旧导出不算，已知新回执仍须匹配。
     opaque PDF 的 SVG 逐格式失败并指出来源，其他成功格式照常交付，不整页转位图或少画面板。
-    首次明确运行后自动尽力捕获全质量对；保存布局时尽力冻结精确编辑变体，失败不妨碍布局保存。
+    首次明确运行后自动尽力捕获全质量对，捕获失败不把成功运行或正常 PDF 导出变成失败；
+    保存布局先冻结精确编辑变体再一次原子写正文，失败清除待保存正文的旧引用并返回来源 warning，布局仍可保存。
     持久化与旧项目恢复边界见 `layout-versions-and-documents.md`。
     看护：`tests/test_export_svg.py`、`tests/test_worker_svg_pair.py`、`tests/test_svgstore.py`。
   * **有限产物验证（U08，ADR 0068）**：`exportjob.run(inspect=…)` 在 `produce` 之后、提交点之前重新打开
@@ -75,6 +82,6 @@
 - 文件名规则严格同源对
 - EPS 只有 worker 写得出、不伪称矢量
 
-- X03 原图仅 SVG：runtime / 有修改或显式已接纳的 Figure 可单次原生序列化，
+- X03 原图仅 SVG：请求未带明确快照引用时，runtime / 有修改或显式已接纳的 Figure 可单次原生序列化，
   `require_built=True`，不需要 PDF 配对 guard。无修改静态文件仍须同源 hash 绑定；
   不把单份原生 SVG 写入配对存储，不启动或重建 worker。

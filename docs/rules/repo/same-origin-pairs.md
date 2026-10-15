@@ -73,6 +73,10 @@
   取消清临时文件）；PPI **只在有位图格式时是数字**，否则是 `null`。格式闭集
   `pdf / png / eps / tiff / svg`（ADR 0046、X03）：TIFF 与 PNG 同一次栅格化，EPS 只有 worker
   的 matplotlib 写得出——给不出的那一档如实逐项报失败，**不伪称矢量**。
+  Figure 版本引用在文档为 `panel.figureSnapshot`，导出 wire 为 `figure_snapshot`，
+  `engine/svgstore.validate_reference` 是闭集校验权威；前端 `types/document.ts` /
+  `lib/exportRequest.ts` 与后端 `engine/exportreq.py` 只传同一引用，不各自猜 current 版本。
+  完整字段、保存与冷态授权合同见 `docs/rules/backend/layout-versions-and-documents.md`。
   **用户自建的样式 / 规范**在用户数据目录
   `<data_dir>/profiles/`，磁盘入口只有 `engine/profilestore.py`；「任意 id →
   规范」只有 `profilestore.resolve_spec()`；项目里存的是**绑定 + 规则全文快照**

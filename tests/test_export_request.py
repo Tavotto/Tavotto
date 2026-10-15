@@ -261,3 +261,30 @@ def test_dedupe_numbering():
     taken = {"Fig 1.pdf", "Fig 1 (2).pdf"}
     assert exportreq.dedupe_name("Fig 1", "pdf", lambda n: n in taken) == "Fig 1 (3).pdf"
     assert exportreq.dedupe_name("Fig 1", "png", lambda n: n in taken) == "Fig 1.png"
+
+
+@pytest.mark.parametrize("scope", ["original", "canvas"])
+def test_saved_figure_reference_is_a_closed_request_field(scope):
+    reference = {
+        "version": 1,
+        "sourceId": "runtime:plot.py#F",
+        "patchHash": "sha256:" + "1" * 64,
+        "receiptId": "sha256:" + "2" * 64,
+        "snapshotId": "3" * 64,
+    }
+    spec = {"scope": scope, "filename": "saved", "formats": ["svg"]}
+    if scope == "original":
+        source = {"figure_id": reference["sourceId"], "figure_snapshot": reference}
+        spec["original"] = source
+    else:
+        source = {"type": "panel", "id": reference["sourceId"], "figure_snapshot": reference}
+        spec["canvas"] = {"page_w_mm": 100, "page_h_mm": 50, "objects": [source]}
+    req = exportreq.normalize(spec)
+    assert (
+        req.original.figure_snapshot
+        if scope == "original"
+        else req.canvas.objects[0]["figure_snapshot"]
+    ) == reference
+    source["figure_snapshot"] = {**reference, "argv": ["private"]}
+    with pytest.raises(exportreq.ExportRequestError, match="Invalid Figure snapshot"):
+        exportreq.normalize(spec)

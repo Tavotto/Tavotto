@@ -44,18 +44,32 @@
   override / 标注属性一次 commit 应用，绝不写回源文件。
 - **项目包**：`POST /api/package` 打 zip（layout+素材+脚本+sha1 清单）；
   `POST /api/package/open` 检视（缺失/sha1 漂移），素材永不自动写入图库。
-- **项目的全质量 Figure 配对资产（X03，2026-10-15）**：`engine/svgstore.py` 保存已验证的 PDF/SVG 对、
-  来源身份与公开执行回执，落在项目 `tavottofile/figure_snapshots/`。它们不是编辑预览或有期限的数据目录缓存；
-  复制完整项目目录时一起携带，读取不以旧机器的绝对项目路径作为必须相等的身份。源 / patch / 输入改指 /
-  当前执行代 / 回执 / 两份字节 hash 仍逐项核对，坏数据与身份不符都不能作成功命中。
-  **没有 TTL，也不自动驱逐已保存资产来接纳新资产**：字节数 / 条目数等预算先判，超限拒绝新增，
-  已保存配对保持原样。一次明确的新运行推进来源的当前代标记，旧代的所有 patch 变体不能冒充当前 Figure，
-  即使新一代的 SVG 捕获失败也不回退旧图。磁盘读写沿用锁、受限路径与 `atomicio` 的原子提交。
-  自动捕获 / 保存布局 / 导出只用已经运行的 Figure 或已核验配对，不暗中运行脚本（执行约束见 `export-pipeline.md`）；
-  保存布局时缺少配对只影响该来源后续 SVG 能力，不阻止保存布局。
-  旧项目没有已验证配对时，预览或同名 PDF 不足以重建；须用户明确重新运行并通过 Figure 接纳与配对检查。
-  项目包打开的只读检视合同不变，不自动安装这些资产。
-  看护：`tests/test_svgstore.py`、`tests/test_export_svg.py`、`tests/test_worker_svg_pair.py`。
+- **文档显式引用全质量 Figure 配对（X03，2026-10-15）**：面板 `figureSnapshot` 是版本 1 的闭集
+  `{version, sourceId, patchHash, receiptId, snapshotId}`，导出 wire 字段为 `figure_snapshot`。
+  后端 `svgstore.validate_reference` 核闭集、类型与 hash；引用必须与该面板的源和规范化 patch 匹配，
+  不从预览或磁盘 current marker 推造。引用指向保存时的 PDF/SVG **同一版本**，包括后来的 PDF-only 导出；
+  冷态无当前回执时可按明确引用读档，已知新回执则必须相符（授权边界见 `export-pipeline.md`）。
+  **保存先冻结、再单次原子写正文**：命名保存和自动保存都在文档锁内冻结，成功的引用随正文一起落盘，
+  不先写一份无引用正文再补写。某来源冻结失败时清掉**本次待保存正文**里的旧引用，返回
+  `svg_snapshot_warnings`，文档仍保存；成功响应的 `figure_snapshots` 是这次正文实际写下的引用表。
+  前端只把响应合回同一项目 / 文档加载轮次且源、patch 与执行代仍匹配的面板，不让晚到的保存响应复活旧引用。
+  明确新运行成功、源或 override 改变会清除相关引用（含非当前画布）；纯几何变化保留。
+- **项目配对存储与不可变 archive**：`engine/svgstore.py` 只有收到应用校验过的 `storage_root` 才使用
+  项目 `tavottofile/figure_snapshots/`；缺省仍是数据目录下带 TTL 的缓存，不能把二者混为永久项目资产。
+  项目身份可搬迁（不要求旧机器绝对路径相等），源 / patch / 静态原件 hash / 输入改指仍逐项核对。
+  `snapshots/` 的内容寻址 ID 覆盖完整来源 identity、执行回执身份及 generation、PDF/SVG 两份字节 hash；
+  归档与 blob 读回均核完整性。新运行 `activate` 只撤销旧代 current lookup，**不删除不可变 archive**，
+  历史文档的明确引用仍可在其授权条件下读到保存版本；archive 的保留不等于旧图获准冒充当前运行。
+  项目资产**没有 TTL，也不为新资产自动驱逐已有 archive**。容量先判再写，`MAX_SNAPSHOTS=256` 数的是
+  current 与 archive 元数据**合计**（首次保存一个变体通常占两条），并非 256 个都可同时激活的变体；
+  总预算 512 MiB，相同内容的 blob 共用字节成本。满额只拒新增，已有归档及其引用的字节保持原样。
+  磁盘写入沿用锁、受限路径与 `atomicio`，只读项目副本也可核验不可变引用，不因读档创建写锁文件。
+  自动捕获 / 保存 / 导出不暗中运行脚本。旧项目无明确引用时，执行源需当前进程已观察的回执，
+  否则由用户明确再运行并接纳，不能借 current marker 或 preview metadata 猜旧配对仍是当前版本。
+  无 override 静态源的精确 hash 配对授权另见 `export-pipeline.md`；项目包打开仍只检视、不自动安装资产。
+  看护：`tests/test_svgstore.py`、`tests/test_export_svg.py`、`tests/test_export_request.py`、
+  `web/src/store/figureSnapshot.test.ts`、`web/src/store/figureSnapshotInvalidation.test.ts`、
+  `web/src/store/projectSave.test.ts`、`web/src/lib/autosave/diskWriter.test.ts`。
 - **项目文件统一收纳在项目内的 `tavottofile/`（2026-08-17 定版）**：命名画布
   布局直接放 `tavottofile/`，导出默认 `tavottofile/export/`（settings.export_dir
   可覆盖；建不出来退回数据目录，测试读响应里的 export_dir 而不是猜路径），
