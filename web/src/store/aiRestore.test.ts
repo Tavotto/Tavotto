@@ -709,7 +709,7 @@ describe('取消之后与分页恢复（#1111 Codex P2）', () => {
   })
 
   it('分页进行中换项目：中止，旧项目的会话一个都不落', async () => {
-    history.pa = Array.from({ length: 120 }, (_, i) => row({ id: `s-${i}` }))
+    history.pa = Array.from({ length: 250 }, (_, i) => row({ id: `s-${i}` }))
     let open!: () => void
     pageGate = new Promise<void>((r) => (open = r)) // 第二页被扣住
     const p = useAiStore.getState().restoreRunning()
@@ -719,6 +719,7 @@ describe('取消之后与分页恢复（#1111 Codex P2）', () => {
     open()
     await p
     expect(sessions()).toEqual([])
+    expect(historyCalls).toHaveLength(2) // 换代之后不再取第三页（每页之间检查代次）
   })
 })
 
