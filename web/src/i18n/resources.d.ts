@@ -90,6 +90,7 @@ export default interface Resources {
       "checkUnreachable": "暂时联系不上后端，稍后再查询。",
       "cli": "CLI：{{version}}",
       "cliPath": "路径：{{path}}",
+      "draftLoading": "正在载入草稿…",
       "draftNotSaved": "没能先保存输入框里的草稿，所以没有发出。检查连接后重试。",
       "draftRestored": "已恢复上次没发出的草稿",
       "draftTooLong": "指令太长（超过 {{limit}} KB），请精简后再发送。",

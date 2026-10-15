@@ -275,6 +275,7 @@ function AssistantPanelBody() {
     project: claimedProject,
     ledgerState,
     retryLedger,
+    draftLoading,
   } = useAiDraft(panel)
   // 发送从「取草稿快照」到 start 返回是异步的：这一段里再点 / ⌘↵ 不许开第二次发送
   const sendInFlight = useRef(false)
@@ -790,9 +791,12 @@ function AssistantPanelBody() {
               value={prompt}
               rows={1}
               disabled={!panel || noAgent}
-              placeholder={panel ? ai('panel.placeholder') : undefined}
+              readOnly={draftLoading}
+              placeholder={panel ? (draftLoading ? ai('panel.draftLoading') : ai('panel.placeholder')) : undefined}
               aria-label={ai('panel.inputAria')}
-              onChange={(e) => setPrompt(e.target.value)}
+              onChange={(e) => {
+                if (!draftLoading) setPrompt(e.target.value) // 草稿还没载入：输入框只读，程序化的变更也不收（两层）
+              }}
               onKeyDown={(e) => {
                 e.stopPropagation()
                 if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {

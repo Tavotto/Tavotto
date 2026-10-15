@@ -109,6 +109,7 @@
     "notReceivedTitle": "The backend never received this request",
     "openAiSettings": "Open Figure assistant settings",
     "placeholder": "e.g. move the legend to the upper left",
+    "draftLoading": "Loading draft…",
     "placeholderNoPanel": "Select an editable figure first",
     "probing": "Detecting local CLIs…",
     "processSteps_one": "{{count}} step",

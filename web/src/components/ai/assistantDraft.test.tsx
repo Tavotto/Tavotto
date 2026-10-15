@@ -379,18 +379,59 @@ describe('同步状态机：单一 reconcile + 写入版本（#1098）', () => {
     expect(input().value).toBe('用户这次真实输入的内容')
   })
 
-  it('stale 规则「只有服务器当前版本本页已见过才可提升」——已见过（墙钟回拨：输入后、写入前对账读到了库里的戳）：本地是用户在已知最新状态上的编辑，换更大的戳重写，不采纳服务器旧值', async () => {
+  it('墙钟回拨 + 对账读还没回来就想输入：读完之前输入框只读（输入不被收），读完后输入，第一次写被判 stale 但库里的戳已见过 → 以本地为准重写，服务器最终是用户的内容', async () => {
     be.putStamped('pa', 'Fig1.pdf', '库里的旧稿', Date.now() * 1000 + 5_000_000_000)
     const release = be.holdReads() // 对账的读被扣住：本页还不知道服务器戳
     await mount()
-    await typeText('用户这次真实输入的内容') // 此刻分配的戳比库里的小
-    release() // 对账读回来：记下库里的戳为「已见」；本地有未落定写入，文本不覆盖
+    expect(input().readOnly).toBe(true) // 结构上：没读到服务器版本之前不许编辑
+    expect(input().placeholder).toBe('正在载入草稿…')
+    await typeText('读完之前打的字')
+    expect(input().value).toBe('') // 没被收下
+    release()
     await settle()
-    await act(async () => window.dispatchEvent(new Event('pagehide'))) // 第一次写：戳比库里的小 → stale（库里的戳已见过）→ 提升重写
+    expect(input().readOnly).toBe(false)
+    expect(input().placeholder).not.toBe('正在载入草稿…')
+    await typeText('用户这次真实输入的内容') // 此刻分配的戳比库里的小，但库里的戳已读到（已见）
+    await act(async () => window.dispatchEvent(new Event('pagehide'))) // 第一次写：stale（库里戳已见过）→ 提升重写
     await settle()
     expect(be.draft('pa', 'Fig1.pdf')).toBe('用户这次真实输入的内容') // 对照：旧实现采纳服务器旧值、盖掉输入
     expect(input().value).toBe('用户这次真实输入的内容')
-    expect(be.calls.filter((c) => c.method === 'PUT' && c.path === '/api/ai/drafts').length).toBeGreaterThanOrEqual(2)
+    // 读完才能输入 → 本页分配的戳已被读到的库里戳抬高 → 第一次写就被接受，没有 stale 窗口
+    expect(be.calls.filter((c) => c.method === 'PUT' && c.path === '/api/ai/drafts')).toHaveLength(1)
+  })
+
+  it('已见的服务器戳导致 stale（别的标签页的稿被本页对账读到过）：本版是用户在已知最新状态上的编辑，换更大的戳重写，本地为准', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    try {
+      await mount()
+      const releaseA = be.holdNextDraftPut()
+      await typeText('本页的稿')
+      await act(async () => void vi.advanceTimersByTime(WRITE_DEBOUNCE_MS + 50)) // PUT 在途
+      await settle()
+      be.putStamped('pa', 'Fig1.pdf', '别的标签页的稿', Date.now() * 1000 + 5_000_000_000)
+      await act(async () => window.dispatchEvent(new Event('focus'))) // 本页对账读到了它（已见）；本地有未落定写入，文本不覆盖
+      await settle()
+      releaseA() // 在途的 PUT 被判 stale，服务器戳已见过
+      await settle()
+      expect(be.draft('pa', 'Fig1.pdf')).toBe('本页的稿')
+      expect(input().value).toBe('本页的稿')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('首读失败（不知道服务器版本）：允许编辑；之后写被判 stale 按「已见」处理，以本地为准重写——用户的输入不丢', async () => {
+    be.putStamped('pa', 'Fig1.pdf', '库里的旧稿', Date.now() * 1000 + 5_000_000_000)
+    be.setDown(true) // 首读失败
+    await mount()
+    await settle()
+    expect(input().readOnly).toBe(false) // 读失败不锁输入框
+    await typeText('读不到服务器时打的字')
+    be.setDown(false) // 恢复，之后第一次写：戳比库里的小 → stale，库里的戳本页没见过，但基线未知 → 按已见
+    await act(async () => window.dispatchEvent(new Event('pagehide')))
+    await settle()
+    expect(be.draft('pa', 'Fig1.pdf')).toBe('读不到服务器时打的字')
+    expect(input().value).toBe('读不到服务器时打的字')
   })
 
   it('stale 的服务器戳本页没见过（别的标签页在我们不知情时写了更新的）：本版不提升、不重写，采纳服务器值——A 晚到不盖掉别处保存的 B', async () => {

@@ -107,6 +107,7 @@
     "notReceivedTitle": "后端没有收到这条指令",
     "openAiSettings": "打开改图助手设置",
     "placeholder": "例如：把图例移到左上角",
+    "draftLoading": "正在载入草稿…",
     "placeholderNoPanel": "先选中一张可编辑的图",
     "probing": "正在查找本机 CLI…",
     "processSteps_other": "{{count}} 步",

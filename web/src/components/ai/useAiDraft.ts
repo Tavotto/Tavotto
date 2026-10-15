@@ -18,6 +18,8 @@ import type { PanelObject } from '@/types/document'
 export const WRITE_DEBOUNCE_MS = 600
 /** 写失败（离线 / 后端暂时不可用）后多久重试：文本一直留在内存里，不丢 */
 export const RETRY_MS = 3000
+/** 第一次草稿读取最多等这么久；超时按读失败处理（输入框不能永远只读） */
+const DRAFT_LOAD_TIMEOUT_MS = 5000
 
 /**
  * 账本恢复状态（**与 `reconcile` 共用一个状态源**）：`unknown` = 还没成功读到过这张图的未结提交；`ok` = 至少成功对账过一次
@@ -63,6 +65,12 @@ export function useAiDraft(panel: PanelObject | null) {
   const [restored, setRestored] = useState(false)
   const [tooLarge, setTooLarge] = useState(false)
   const [ledgerState, setLedgerState] = useState<LedgerState>('unknown')
+  /**
+   * 第一次草稿读取的结局：`loading` 期间输入框只读（**结构上**消掉「在没见过服务器版本时输入」的窗口——
+   * 每一次本地编辑都一定基于本页「已见」的服务器版本，所以 stale 里「没见过」只可能是别的标签页写的）；
+   * 读失败（`failed`）= 不知道服务器上有没有更新的版本：允许编辑（用户的输入不能丢），见 `baselineUnknown`。
+   */
+  const [draftRead, setDraftRead] = useState<'loading' | 'ok' | 'failed'>('loading')
 
   const key = useRef<{ project: string | null; fileId: string | null; epoch: number }>({
     project: null,
@@ -93,6 +101,12 @@ export function useAiDraft(panel: PanelObject | null) {
    */
   const reconcileRef = useRef<((source: ReconcileSource) => Promise<void>) | null>(null)
   const seenStamps = useRef<Set<number>>(new Set())
+  /**
+   * 首读失败、之后也没读成功过：编辑是在**不知道服务器版本**的情况下做的。此时收到 stale 一律按「已见」处理，
+   * 即以本地为准换更大的戳重写——取舍：用户已经打出来的字不能丢，代价是极少数情况下（读不到又恰好别的标签页写过）
+   * 盖掉别处的更新稿。任何一次读成功就解除。
+   */
+  const baselineUnknown = useRef(false)
   /** 同一段本地内容连续被判 stale 的次数（墙钟回拨 / 并发写时有界重写，免得两端互相覆盖没完） */
   const staleRetries = useRef(0)
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
@@ -121,7 +135,7 @@ export function useAiDraft(panel: PanelObject | null) {
       if (key.current.epoch !== epoch) return // 目标已换：那一边的收尾由切目标时的冲刷负责，不动当前目标的版本
       inflight.current = null
       if (r === 'stale') {
-        const serverSeen = stamp === undefined || seenStamps.current.has(stamp)
+        const serverSeen = stamp === undefined || baselineUnknown.current || seenStamps.current.has(stamp)
         if (stamp !== undefined) seenStamps.current.add(stamp)
         if (seq.current === mySeq && !serverSeen) {
           // 别处写了本页没见过的更新版本：本版不提升、不重写——放弃这次未确认的写入，采纳服务器值
@@ -195,7 +209,16 @@ export function useAiDraft(panel: PanelObject | null) {
     const token = ++reconcileToken.current
     const seqAtStart = seq.current
     const [state, projectList] = await Promise.all([fetchDraftState(pj, f), loadProjectPendings(pj)])
-    if (state && key.current.epoch === epoch && state.stamp !== undefined) seenStamps.current.add(state.stamp)
+    if (key.current.epoch === epoch) {
+      if (state) {
+        if (state.stamp !== undefined) seenStamps.current.add(state.stamp)
+        baselineUnknown.current = false
+        setDraftRead('ok')
+      } else if (seenStamps.current.size === 0) {
+        baselineUnknown.current = true // 一次都没读成功过：服务器版本未知
+        setDraftRead('failed')
+      }
+    }
     // 本地非终态的会话也按后端快照收尾（`accept` 之后任务在 SSE 断线期间结束，事件流不重放）——和 pendings 一样，每个入口都做
     void useAiStore.getState().settleRunningSessions()
     // 过期：又有更新的一次对账、或目标已经换了——不动
@@ -262,13 +285,23 @@ export function useAiDraft(panel: PanelObject | null) {
     draftStamp.current = null
     staleRetries.current = 0
     seenStamps.current = new Set()
+    baselineUnknown.current = false
+    setDraftRead(project && fileId ? 'loading' : 'ok') // 没有可读的目标（无项目认领 / 无面板）= 没有要载入的草稿
     setPromptState('')
     setRestored(false)
     setTooLarge(false)
     setLedgerState('unknown') // 换目标 / 重挂：这张图的账本还没读过
     if (!project || !fileId) return
     void reconcile('mount')
+    // 读请求一直不回：别让输入框永远只读——到点按「读失败」处理（可以编辑，stale 以本地为准）
+    const loadGuard = setTimeout(() => {
+      if (seenStamps.current.size === 0) {
+        baselineUnknown.current = true
+        setDraftRead((cur) => (cur === 'loading' ? 'failed' : cur))
+      }
+    }, DRAFT_LOAD_TIMEOUT_MS)
     return () => {
+      clearTimeout(loadGuard)
       reconcileToken.current++
       persist(true)
       clearTimeout(retry.current)
@@ -355,5 +388,6 @@ export function useAiDraft(panel: PanelObject | null) {
     project,
     ledgerState,
     retryLedger,
+    draftLoading: draftRead === 'loading',
   }
 }

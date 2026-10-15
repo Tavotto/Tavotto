@@ -114,6 +114,7 @@ afterEach(async () => {
 describe('助手面板随项目代际重挂', () => {
   const typeDraft = async (text: string) => {
     const box = host.querySelector<HTMLTextAreaElement>('[data-ai-input]')!
+    await vi.waitFor(() => expect(box.readOnly).toBe(false), { timeout: 8000 }) // 草稿读取结束前输入框只读
     const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!
     await act(async () => {
       setter.call(box, text)
