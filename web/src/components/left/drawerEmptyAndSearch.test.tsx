@@ -11,8 +11,10 @@ import type { ProjectStatus, RecentProject } from '@/lib/api'
 import { TooltipProvider } from '@/components/ui/Tooltip'
 import { SEARCH_MIN_ITEMS } from '@/components/ui/searchThreshold'
 import { useDocumentStore } from '@/store/documentStore'
+import { useAssetStore } from '@/store/assetStore'
 import { useProjectStore } from '@/store/projectStore'
 import { emptyProject } from '@/types/document'
+import { AssetBrowser } from './AssetBrowser'
 import { CanvasList } from './CanvasList'
 import { WorkspaceList } from './WorkspaceList'
 
@@ -22,6 +24,12 @@ declare global {
 }
 globalThis.IS_REACT_ACT_ENVIRONMENT = true
 Element.prototype.scrollIntoView ??= function scrollIntoView() {}
+globalThis.ResizeObserver ??= class {
+  observe() {}
+  unobserve() {}
+  disconnect() {}
+} as unknown as typeof ResizeObserver
+
 globalThis.fetch = vi.fn(async () => new Response('{}', { status: 404 })) as typeof fetch
 
 let root: Root
@@ -120,11 +128,22 @@ describe('项目抽屉', () => {
     expect(host.textContent).not.toContain('项目是你的脚本文件夹')
   })
 
-  it('一个都没有：一行说明 + 「打开文件夹…」文字动作', async () => {
+  it('一个都没有（起步屏）：只有一行说明，没有按钮——起步屏只有画布中央那一个动作', async () => {
     seed(0)
     await mount(<WorkspaceList />)
     const line = host.querySelector<HTMLElement>('[data-empty-line]')!
     expect(line.textContent).toContain('打开过的项目会出现在这里')
-    expect(line.querySelector('button')!.textContent).toBe('打开文件夹…')
+    expect(line.querySelector('button')).toBeNull()
+  })
+})
+
+describe('素材抽屉', () => {
+  it('项目里一张图都没有（起步屏）：只有一行说明，没有按钮', async () => {
+    useAssetStore.setState({ panels: [], byId: {}, unsupported: [], loaded: true, loading: false, error: null })
+    await mount(<AssetBrowser />)
+    const line = host.querySelector<HTMLElement>('[data-asset-empty]')!
+    expect(line).toBeTruthy()
+    expect(line.textContent).toContain('项目里还没有图')
+    expect(line.querySelector('button')).toBeNull()
   })
 })

@@ -497,11 +497,7 @@ export function AssetBrowser() {
               </EmptyLine>
             ) : (
               /* 一句话 + 一个动作；「把文件放进目录」的说明在 title 里，不常驻 */
-              <EmptyLine
-                data-asset-empty
-                title={ab('emptyHint')}
-                action={{ label: ab('refresh'), onClick: refreshNow }}
-              >
+              <EmptyLine data-asset-empty title={ab('emptyHint')}>
                 {ab('emptyTitle')}
               </EmptyLine>
             )

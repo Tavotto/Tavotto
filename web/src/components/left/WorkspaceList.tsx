@@ -195,7 +195,9 @@ export function WorkspaceList() {
               {ws('noMatch')}
             </EmptyLine>
           ) : (
-            <EmptyLine action={{ label: ws('openFolder'), onClick: entry.startOpen }}>{ws('emptyRecent')}</EmptyLine>
+            // 起步屏只有画布中央那一个动作（canvas-objects-and-workspace.md「空状态」，审计 T03）：这里不配按钮，
+            // 打开文件夹在下面的页脚里
+            <EmptyLine>{ws('emptyRecent')}</EmptyLine>
           ))}
       </div>
 
