@@ -18,7 +18,7 @@
 | surface-app | `bg` | `#efefed` | 桌面：顶栏、左轨、停靠的抽屉坐在它上面；作品在白色工作面板里（2026-09-30 重设计，第二十五节；2026-10-07 降黄，第二十六节） |
 | surface-panel | `surface` | `#ffffff` | 面板 / 输入框 / 浮层 |
 | surface-subtle | `surface-2` | `#f7f7f5` | 只读值、徽章底、禁用框的底（数字框不再用它做静态底，S8） |
-| surface-hover | `surface-hover` | ink 5% | hover。三档里最弱 |
+| surface-hover | `surface-hover` | ink 4% | hover。三档里最弱 |
 | surface-active | `surface-active` | ink 8% | 按下、小 chip 的静态底 |
 | surface-selected | `selected` | ink 10% | 选中：hover 的两倍，白面板与纸底上都成立（2026-09-15 打磨批次 A，此前固定 #ebebe6 在纸底上只有 1.07:1）；配字重 / 对勾再说一遍 |
 | ink-1 | `ink` | `#1b1b18` | 主文字，不是纯黑 |
@@ -586,7 +586,7 @@ UI 正文 14 / 控件字最小 12、台阶 2px；强调至少高一档且配深�
 | T1 可编辑框的边 | `#8a8a82` 3.48:1 | ink 16%，hover 25%，聚焦 accent 环 |
 | T2 字阶 | title 14 | title 15（新 `--text-xl`）；控件字 12 已在 S8 后就位 |
 | T3 浮层 | 圆角 8 / 12 + 实色 border + `0 6px 20px 9%` | 圆角 10 / 14；`shadow-pop` = ring 8% + `0 2px 6px 6%`（接触阴影，2026-10-15）+ `0 8px 24px 8%`，`shadow-dialog` 更深一档；不画 border |
-| T4 交互面 | hover 4.5% / active 8% / selected `#ebebe6` | 5% / 8% / 10%，三档都是 ink 叠加 |
+| T4 交互面 | hover 4.5% / active 8% / selected `#ebebe6` | 4% / 8% / 12%（2026-10-15 G10 起；此前 5 / 8 / 10），三档都是 ink 叠加，selected = 3 × hover |
 | T5 底色 | `#f2f2ef`（白面板 1.12:1） | `#f7f6f3`（1.06:1） |
 | T6 分段选择器 | 白底外框、选中灰 tint | 灰容器、白 thumb + `shadow-thumb`、600 |
 | T7 Tooltip | 白底 + border + 投影 | ink 底白字，无边无影 |
@@ -1056,7 +1056,7 @@ reduced-motion 契约）；68/85 命中 `foundation.test`（533 处）；弹簧 
   判据范围是画界面的代码：components / canvas / playground / mcp / embedded / onboarding 与 App / main）。豁免按文件带个数、写明是哪一种：
   **文档数据**（属性缺省色 `#000000` / `#FFFFFF`、colormap 色标、样式样张）、**遮罩**（mask 里的黑白只是不透明度）、**第三方品牌色**。
   lib / store / types 里的颜色都是文档数据（覆盖值、预设、导出默认），不在判据里。
-- **公式类 token 两套共用**：hover 5% / active 8% / selected 10% / border 12% / group 3% = ink 的 N%；状态色 `-surface` / `-border` = 锚点混 surface；
+- **公式类 token 两套共用**：hover 4% / active 8% / selected 12% / border 12% / group 3% = ink 的 N%；状态色 `-surface` / `-border` = 锚点混 surface；
   glass = field 90%；handle-fill = surface；scrim = shadow 34%（暗色 50%）。暗色表只写锚点与底，公式自己跟着变。
 - **投影**：Tailwind 把 `--shadow-*` 的值内联进 `shadow-*` 工具类（只有里面的 `var()` 是活的），所以投影串不分主题，
   只读两种颜色：模糊层 `--color-shadow`、1px 环 `--color-shadow-edge`（浅色里 = shadow）。

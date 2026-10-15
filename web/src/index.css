@@ -71,7 +71,7 @@
   /* 交互面：hover < active < selected，三档都是 ink 的半透明叠加，白 surface 与
      灰 bg 上都成立。组件里不再手写 bg-ink/[.035]…[.09] 那串随机透明度
      （2026-09-11 收敛前全仓有 9 种）。 */
-  --color-surface-hover: color-mix(in srgb, var(--color-ink) 5%, transparent);
+  --color-surface-hover: color-mix(in srgb, var(--color-ink) 4%, transparent);
   --color-surface-active: color-mix(in srgb, var(--color-ink) 8%, transparent);
   /* 字段组（ui/FieldGroup）的底：ink 3%，比 hover 还淡一档——设置页的分组是一块「凹进去的托盘」，不是卡 */
   --color-group: color-mix(in srgb, var(--color-ink) 3%, transparent);
@@ -110,10 +110,11 @@
      选中 / 对齐 / 尺寸线。链接不是蓝字（ink-2 + 悬停下划线，第二十五节）。 */
   --color-accent: #2c73de;
   --color-accent-subtle: #ebf2fc;
-  /* 列表 / 分段 / 选项格的**选中态**：ink 10% 的半透明叠加（2026-09-15 打磨批次 A）——
-     hover 5% < active 8% < selected 10%，三档在白面板与灰底上都成立。selected 只是轻 tint，
+  /* 列表 / 分段 / 选项格的**选中态**：ink 12% 的半透明叠加（2026-09-15 打磨批次 A；2026-10-15 UI 2.0 G10 分档）——
+     hover 4% < active 8% < selected 12%，三档在白面板与灰底上都成立。此前 hover 5% / selected 10% 只差一倍、
+     并排时肉眼难分「鼠标在哪」与「选的是谁」；现在 selected 是 hover 的三倍。selected 只是轻 tint，
      选中态仍要靠字重 / 对勾再说一遍。 */
-  --color-selected: color-mix(in srgb, var(--color-ink) 10%, transparent);
+  --color-selected: color-mix(in srgb, var(--color-ink) 12%, transparent);
   /* 浮起的那一块（分段 / 选项格的选中 thumb、开关的钮、滑杆的钮，配 shadow-thumb）：浅色里就是白 surface；
      暗色里比面板亮一档——暗底上「浮起」靠更亮，不靠投影 */
   --color-thumb: var(--color-surface);
@@ -1060,7 +1061,7 @@
   --color-ink-2: var(--color-paper-ink-2);
   --color-ink-3: var(--color-paper-ink-3);
   --color-surface: var(--color-paper);
-  --color-surface-hover: color-mix(in srgb, var(--color-paper-ink) 5%, transparent);
+  --color-surface-hover: color-mix(in srgb, var(--color-paper-ink) 4%, transparent);
   --color-surface-active: color-mix(in srgb, var(--color-paper-ink) 8%, transparent);
-  --color-selected: color-mix(in srgb, var(--color-paper-ink) 10%, transparent);
+  --color-selected: color-mix(in srgb, var(--color-paper-ink) 12%, transparent);
 }

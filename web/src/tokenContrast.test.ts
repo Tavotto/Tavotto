@@ -9,7 +9,7 @@
  *   - 可编辑框静态没有边：是一块比面板深一级的底（field 对白 ≈1.14:1，2026-09-15 参考 Codex 设置页的输入框）——
  *     OpenAI apps-sdk-ui 静态 alpha-16、Claude 产品壳 10%、Codex「底 +1 级灰」都不到 3:1；
  *     3:1 由聚焦态（不透明 accent 边）承担。
- *   - selected 10% 在纸底上 ≈1.2:1——它只是「轻 tint」，选中态还要靠字重 / 对勾再说一遍（宪法第一节）。
+ *   - selected 12% 在纸底上 ≈1.2:1——它只是「轻 tint」，选中态还要靠字重 / 对勾再说一遍（宪法第一节）。
  *
  * **两套主题各量一遍**（2026-10-07 暗色主题，宪法第二十八节）：值表有两张——浅色是 `@theme` 里的值，暗色是
  * 文件末尾 `:root[data-theme='dark']` 那一段（媒体查询那一段与它逐字相同，这里也守着）。暗色表只写变了的那几项，
@@ -233,13 +233,13 @@ for (const theme of THEMES) {
       ).toBeGreaterThanOrEqual(1.5)
     })
 
-    it('交互面三档：hover < active < selected，都是 ink 的半透明叠加，selected 是 hover 的两倍', () => {
+    it('交互面三档：hover < active < selected，都是 ink 的半透明叠加，selected 是 hover 的三倍（G10：两倍时并排肉眼难分「鼠标在哪」与「选的是谁」）', () => {
       const h = alphaOfInk('surface-hover')
       const a = alphaOfInk('surface-active')
       const s = alphaOfInk('selected')
       expect(h).toBeLessThan(a)
       expect(a).toBeLessThan(s)
-      expect(s).toBeCloseTo(h * 2, 2)
+      expect(s).toBeCloseTo(h * 3, 2)
     })
 
     it('要读的字（ink / ink-2 / ink-3）对白 / 桌面 / surface-2 / 画布灰 ≥4.5:1；ink 与 ink-2 在合成后的 selected 上也 ≥4.5:1', () => {
