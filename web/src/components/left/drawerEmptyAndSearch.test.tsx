@@ -217,6 +217,43 @@ describe('素材抽屉的搜索框按「图 + 不支持的文件 + 脚本」合�
     expect(searchBox()).not.toBeNull()
   })
 
+  it('脚本清单还没加载（不知道 ≠ 0）：搜索框可见', async () => {
+    panels(2)
+    useScriptLibraryStore.setState({ loaded: false, loading: true, view: null })
+    await mount(<AssetBrowser />)
+    expect(searchBox()).not.toBeNull()
+  })
+
+  it('折叠脚本区后换项目（清单被清空）：抽屉自己把清单取回来，2 张图 + 10 个脚本时搜索框可见', async () => {
+    panels(2)
+    // 换项目：清单清空、脚本区折叠（ScriptLibrary 不挂载，不会替它取）
+    useScriptLibraryStore.setState({ loaded: false, loading: false, view: null })
+    const fetchMock = vi.fn(async (url: string) =>
+      String(url).includes('/api/scripts') || String(url).includes('registry')
+        ? new Response(
+            JSON.stringify({
+              source: null,
+              scripts: {},
+              candidates: [],
+              conflicts: {},
+              all_scripts: Array.from({ length: 10 }, (_, i) => ({ script: `s${i}.py`, registered: false, static_stems: [], entry_candidates: [], reason: 'ok', can_probe: true })),
+            }),
+            { status: 200 },
+          )
+        : new Response('{}', { status: 404 }),
+    )
+    globalThis.fetch = fetchMock as unknown as typeof fetch
+    const load = vi.spyOn(useScriptLibraryStore.getState(), 'load').mockImplementation(async () => {
+      scripts(10)
+      return null as never
+    })
+    await mount(<AssetBrowser />)
+    await act(async () => {})
+    expect(load).toHaveBeenCalled()
+    expect(searchBox()).not.toBeNull()
+    load.mockRestore()
+  })
+
   it('2 张图 + 2 个脚本：合计 4 个，隐藏', async () => {
     panels(2)
     scripts(2)
