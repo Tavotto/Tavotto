@@ -490,6 +490,52 @@ describe('画布上的两个快捷入口也按页面值进出', () => {
     expect(overrideOf('axes_0.legend', 'fontsize')).toBe(12.5)
     await act(async () => useQuickEdit.getState().close())
   })
+
+  const reduceMotion = (reduce: boolean) =>
+    vi.stubGlobal('matchMedia', (q: string) => ({
+      matches: reduce && q.includes('prefers-reduced-motion'),
+      media: q,
+      addEventListener() {},
+      removeEventListener() {},
+    }))
+  const popover = () => document.querySelector<HTMLElement>('[role="dialog"][aria-label]')
+
+  it('右键快捷编辑弹层有退场：关闭后先带 data-state=closed 挂满 exit 一档（不接键盘），再卸载', async () => {
+    reduceMotion(false)
+    await seed(0.6, manifest({ legend: true }))
+    await mountAlone(<QuickEdit />)
+    await act(async () => {
+      useQuickEdit.getState().open({ kind: 'element', panelId: 'p1', gid: 'axes_0.legend' }, 120, 80)
+    })
+    expect(popover()?.dataset.state).toBe('open')
+    expect(popover()?.className).toContain('data-[state=closed]:animate-pop-out')
+    await act(async () => useQuickEdit.getState().close())
+    // 退场中：还在 DOM，已切到 closed，不再吃点击 / 读屏看不到
+    expect(popover()?.dataset.state).toBe('closed')
+    expect(popover()?.getAttribute('aria-hidden')).toBe('true')
+    // 退场中按 Esc 不再被接管（监听已摘）
+    const esc = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })
+    window.dispatchEvent(esc)
+    expect(esc.defaultPrevented).toBe(false)
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 160))
+    })
+    expect(popover()).toBeNull()
+    vi.unstubAllGlobals()
+  })
+
+  it('reduced-motion：关闭即卸载，不留退场空档期', async () => {
+    reduceMotion(true)
+    await seed(0.6, manifest({ legend: true }))
+    await mountAlone(<QuickEdit />)
+    await act(async () => {
+      useQuickEdit.getState().open({ kind: 'element', panelId: 'p1', gid: 'axes_0.legend' }, 120, 80)
+    })
+    expect(popover()).not.toBeNull()
+    await act(async () => useQuickEdit.getState().close())
+    expect(popover()).toBeNull()
+    vi.unstubAllGlobals()
+  })
 })
 
 /**
