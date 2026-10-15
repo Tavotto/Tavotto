@@ -16,6 +16,7 @@ import type { NativeSessionInfo, NativeSessionState } from '@/lib/api'
 import { NativeSessionCards } from '@/components/NativeSessionCards'
 import { useNativeSessionStore } from '@/store/nativeSessionStore'
 import { useProjectPreparationStore } from '@/store/projectPreparationStore'
+import { useUiStore } from '@/store/uiStore'
 
 vi.mock('@/lib/api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/api')>()),
@@ -131,14 +132,17 @@ describe('NativeSessionCards 的动作按钮', () => {
 })
 
 // 准备条目只需要「当前尝试的计划号」这一个事实（与 `PreparationCard.useStopRun` 同一把尺子）
-const putPrepSurface = (attempt: string) =>
-  useProjectPreparationStore.setState({
-    entries: { 'script:fig.py': { key: 'script:fig.py', report: { provider: { attempt_id: attempt } } } as never },
-  })
+const prepEntry = (key: string, attempt: string) => ({ key, report: { provider: { attempt_id: attempt } } }) as never
+/** 准备界面此刻可见的那张卡 / 角标代表 `fig.py` 这个条目（聚焦 + 展开或角标） */
+const putPrepSurface = (attempt: string, mode: 'card' | 'pill' | 'closed' = 'card') => {
+  useProjectPreparationStore.setState({ entries: { 'script:fig.py': prepEntry('script:fig.py', attempt) }, focus: 'script:fig.py' })
+  useUiStore.setState({ guideCard: mode })
+}
 
 describe('桌面拥有的会话不出「tavotto run」式卡（V2 PR4 第二轮，D1）', () => {
   beforeEach(() => {
-    useProjectPreparationStore.setState({ entries: {} })
+    useProjectPreparationStore.setState({ entries: {}, focus: null })
+    useUiStore.setState({ guideCard: 'closed' })
     vi.mocked(cancelNativeSession).mockReset()
   })
 
@@ -161,6 +165,27 @@ describe('桌面拥有的会话不出「tavotto run」式卡（V2 PR4 第二轮�
     expect(document.body.textContent).not.toContain('放手')
     await act(async () => stop.click())
     expect(cancelNativeSession).toHaveBeenCalledWith('native-1')
+  })
+
+  // Codex #1044 r4280601857：准备界面只有一个焦点，隐藏判据看的是「此刻可见的面」，不是「有没有条目」
+  it('A 在跑时打开了 B 的卡（A 的条目还在 entries 里、但可见的面是 B）：A 的 native 卡可见且能停', async () => {
+    useProjectPreparationStore.setState({
+      entries: { 'script:a.py': prepEntry('script:a.py', 'plan-A'), 'script:b.py': prepEntry('script:b.py', 'plan-B') },
+      focus: 'script:b.py',
+    })
+    useUiStore.setState({ guideCard: 'card' })
+    put(session({ owner: 'desktop', launch_id: 'plan-A', state: 'running_script' }))
+    await render()
+    expect(document.body.querySelector('[data-native-stop-owned]')).not.toBeNull()
+  })
+
+  it('A 本身在前台：card / pill 都隐藏；收起（closed，没有可见的面）则显示', async () => {
+    put(session({ owner: 'desktop', launch_id: 'plan-1', state: 'running_script' }))
+    for (const [mode, shown] of [['card', false], ['pill', false], ['closed', true]] as const) {
+      putPrepSurface('plan-1', mode)
+      await render()
+      expect(!!document.body.querySelector('[data-native-stop-owned]'), mode).toBe(shown)
+    }
   })
 
   it('准备条目存在但计划号对不上（它的停止路径也找不到这个会话）：同样出卡', async () => {
