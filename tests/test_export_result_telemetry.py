@@ -127,6 +127,28 @@ def test_sync_failure_after_acceptance_is_reported(env, monkeypatch):
     assert _completed(box) == [], "失败的导出不记 export_completed"
 
 
+def test_image_publish_failure_is_not_blamed_on_the_report_that_follows(env, monkeypatch):
+    """图在落盘时坏了、后面的报告照常写成：坏在 publish，不是 report（Codex #1103 P2）。"""
+    client, box = env
+    real = exportjob.atomicio.publish_file
+
+    def refuse_png(tmp, dest):
+        if str(dest).endswith(".png"):
+            raise OSError("磁盘满了")
+        return real(tmp, dest)
+
+    monkeypatch.setattr(exportjob.atomicio, "publish_file", refuse_png)
+    body = client.post(
+        "/api/export",
+        json=_canvas(formats=["pdf", "png"], ppi=300, include_style_check_report=True),
+    ).get_json()
+    assert body["status"] == "partial"
+    (ev,) = _results(box)
+    assert ev["properties"]["with_report"] is True
+    assert ev["properties"]["stage"] == "publish"
+    assert ev["properties"]["error_class"] == "environment"
+
+
 def test_early_exit_of_run_still_counts(env, tmp_path, monkeypatch):
     """`run()` 在渲染前就早退（导出目录建不出来）：已受理，所以有终态。"""
     client, box = env
