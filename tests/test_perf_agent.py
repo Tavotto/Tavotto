@@ -1145,10 +1145,18 @@ def test_baseline_requested_drag_failure_finalizes_regression_status(
         raise AssertionError("unexpected subprocess")
 
     monkeypatch.setattr(A.subprocess, "run", execute)
-    rc = A.main([
-        "run", "--out", str(output), "--summary", str(summary),
-        "--baseline", str(baseline), "--include-drag",
-    ])
+    rc = A.main(
+        [
+            "run",
+            "--out",
+            str(output),
+            "--summary",
+            str(summary),
+            "--baseline",
+            str(baseline),
+            "--include-drag",
+        ]
+    )
     saved = json.loads(summary.read_text(encoding="utf-8"))
     assert rc == 2
     assert saved["status"] == "failed"
