@@ -150,17 +150,16 @@ impl Marker {
     }
 
     pub fn mark_running(&self) {
-        self.write("running");
+        let g = self.engine.lock().unwrap();
+        self.write_locked("running", g.1);
     }
 
     /// 引擎意外退出：状态仍是 `running`（壳还活着），只多一个类型；代次加一。
     pub fn mark_engine_exit(&self, kind: EngineExit) {
-        {
-            let mut g = self.engine.lock().unwrap();
-            g.0 += 1;
-            g.1 = Some(kind);
-        }
-        self.write("running");
+        let mut g = self.engine.lock().unwrap();
+        g.0 += 1;
+        g.1 = Some(kind);
+        self.write_locked("running", g.1);
     }
 
     /// 当前的引擎退出代次。重启开始时记下它（**不清除**）：重启期间用户正常退出，文件里仍带着旧类型，下次启动照样提示。
@@ -171,25 +170,25 @@ impl Marker {
     /// 重启成功之后：只有文件里的类型仍是 `generation` 那一代才清（立即重写，状态仍是 `running`）。
     /// 这期间新一代若又崩了（代次已变），它的类型保留。返回是否清了。
     pub fn clear_engine_exit_if(&self, generation: u64) -> bool {
-        {
-            let mut g = self.engine.lock().unwrap();
-            if g.0 != generation || g.1.is_none() {
-                return false;
-            }
-            g.1 = None;
+        let mut g = self.engine.lock().unwrap();
+        if g.0 != generation || g.1.is_none() {
+            return false;
         }
-        self.write("running");
+        g.1 = None;
+        self.write_locked("running", None);
         true
     }
 
     /// 正常退出（`engine_exit` 不清，见 [`judge`]）——也是所有绕过 `RunEvent::Exit` 的退出路径必须先调的那一句。幂等。
     pub fn mark_clean(&self) {
-        self.write("clean");
+        let g = self.engine.lock().unwrap();
+        self.write_locked("clean", g.1);
         self.closed.store(true, Ordering::SeqCst);
     }
 
-    fn write(&self, state: &str) {
-        let engine_exit = self.engine.lock().unwrap().1;
+    /// 只在**持有 `engine` 锁**时调用：改内存状态与落盘在同一把锁里完成，并发的两次写不会让旧内容
+    /// 后落盘、盖掉新内容（#1070 r4280411389）。`closed` 也在锁内读写，clean 之后不会再被 running 覆盖。
+    fn write_locked(&self, state: &str, engine_exit: Option<EngineExit>) {
         if self.closed.load(Ordering::SeqCst) {
             return;
         }
@@ -474,5 +473,62 @@ mod tests {
         m.mark_running();
         m.mark_clean();
         assert_eq!(m.read_previous(), None);
+    }
+
+    /// 改状态与落盘同锁（#1070 r4280411389）：并发的崩溃 / 按代次清 / running 写完之后，文件里的类型必须等于
+    /// 内存里最后的类型——不会有一次旧渲染后落盘、盖掉新内容。
+    #[test]
+    fn concurrent_writes_leave_the_file_matching_the_final_state() {
+        for round in 0..20 {
+            let dir = tmp_dir(&format!("race{round}"));
+            let m = Marker::new(Some(&dir), "1.0.0");
+            m.mark_running();
+            let workers: Vec<_> = (0..4)
+                .map(|t| {
+                    let m = m.clone();
+                    std::thread::spawn(move || {
+                        for i in 0..50 {
+                            match (t + i) % 3 {
+                                0 => m.mark_engine_exit(EngineExit::Signal),
+                                1 => {
+                                    let g = m.engine_exit_generation();
+                                    m.clear_engine_exit_if(g);
+                                }
+                                _ => m.mark_running(),
+                            }
+                        }
+                    })
+                })
+                .collect();
+            for w in workers {
+                w.join().unwrap();
+            }
+            let want = m.engine.lock().unwrap().1;
+            let v: serde_json::Value = serde_json::from_str(&read(&dir)).unwrap();
+            let got = v
+                .get("engine_exit")
+                .and_then(|x| x.as_str())
+                .map(str::to_owned);
+            assert_eq!(got.as_deref(), want.map(|k| k.as_str()), "round {round}");
+        }
+    }
+
+    /// 结构看护：`write_locked` 的每个调用点都在同一函数里先拿了 `self.engine.lock()`。
+    #[test]
+    fn every_write_happens_under_the_engine_lock() {
+        let src = include_str!("exit_marker.rs");
+        let prod = &src[..src.find("#[cfg(test)]").unwrap()];
+        let mut calls = 0;
+        for (at, _) in prod.match_indices("self.write_locked(") {
+            calls += 1;
+            let fn_start = prod[..at].rfind("fn ").unwrap();
+            let lock = prod[fn_start..at].find("self.engine.lock()");
+            assert!(
+                lock.is_some(),
+                "write_locked 调用点（偏移 {at}）之前没拿 engine 锁"
+            );
+        }
+        assert!(calls >= 4, "write_locked 调用点少于 4 处：{calls}");
+        assert!(!prod.contains("fn write("), "不许留不拿锁的 write");
     }
 }
