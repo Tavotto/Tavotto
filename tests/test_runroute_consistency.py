@@ -1,4 +1,4 @@
-"""V2 PR2：静态路由与运行期账本不分叉（同源对，ADR 0129）。
+"""V2 PR2：静态路由与运行期账本不分叉（同源对，ADR 0130）。
 
 `runroute` 说「高置信 native」的每个形状，真 safe worker 实跑必须以 `safe_file_operation_blocked` 收场（否则静态规则在
 把 safe 能跑对的脚本送去没有沙盒的 native）；`runroute` 说 safe 的几个形状（普通绘图、BytesIO 往返、沙盒内 replace、savefig 后只
@@ -77,7 +77,7 @@ CASES = [
         value = int(final.read_text())
         """,
         False,
-        "safe",  # 伤害闸门（ADR 0129）：含 os.replace 的脚本不直达 native；真 safe worker 仍拦下，由 0127 静默回退接手
+        "safe",  # 伤害闸门（ADR 0130）：含 os.replace 的脚本不直达 native；真 safe worker 仍拦下，由 0127 静默回退接手
         True,
     ),
     (
@@ -89,7 +89,7 @@ CASES = [
         value = int(open("cache.csv").read())
         """,
         True,
-        "safe",  # 伤害闸门（ADR 0129）：含 os.replace 的脚本不直达 native；真 safe worker 仍拦下，由 0127 静默回退接手
+        "safe",  # 伤害闸门（ADR 0130）：含 os.replace 的脚本不直达 native；真 safe worker 仍拦下，由 0127 静默回退接手
         True,
     ),
     (

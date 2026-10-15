@@ -1,4 +1,4 @@
-# ADR 0129：运行前路由——桌面用户发起的运行里，凭静态证据在 safe / native 之间先选一次
+# ADR 0130：运行前路由——桌面用户发起的运行里，凭静态证据在 safe / native 之间先选一次
 
 日期：2026-10-14 · 状态：**Accepted**（兼容性改造 V2 PR2；用户 2026-10-14 裁决 D1–D5；叠在 [0127](0127-execution-policy-and-unified-retry-guard.md) 之上）
 相关：[0127 执行策略与统一重试闸门](0127-execution-policy-and-unified-retry-guard.md)（本 ADR 兑现其 D2 里「路由器是后续 PR」）、

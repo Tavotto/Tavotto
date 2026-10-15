@@ -121,7 +121,7 @@ import matplotlib.pyplot as plt
 with open({log!r}, "a") as f:   # 执行次数：脚本每跑一遍写一个字符
     f.write("x")
 here = Path(__file__).resolve().parent
-name = os.environ.get("CACHE_NAME", "cache")  # 动态路径：运行前路由（ADR 0129）看不出读回，留给 safe 实跑 + 回退
+name = os.environ.get("CACHE_NAME", "cache")  # 动态路径：运行前路由（ADR 0130）看不出读回，留给 safe 实跑 + 回退
 tmp, final = here / (name + ".tmp"), here / (name + ".csv")
 tmp.write_text("2")
 os.replace(tmp, final)
@@ -198,7 +198,7 @@ def _native_sessions(app, root: Path) -> list[dict]:
 
 
 def _runs(log: Path) -> int:
-    return len(log.read_text()) if log.exists() else 0
+    return len(log.read_text(encoding="utf-8")) if log.exists() else 0
 
 
 def test_blocked_replace_falls_back_to_native_in_the_same_session_and_runs_twice(tmp_path):
@@ -213,7 +213,7 @@ def test_blocked_replace_falls_back_to_native_in_the_same_session_and_runs_twice
         assert final["facts"]["figure_captured"] is True
         assert _runs(log) == 2, "safe 一次（被拦）+ native 一次"
         # native 里 os.replace 真的发生了：safe 的守卫没拦它
-        assert (proj / "cache.csv").read_text() == "2"
+        assert (proj / "cache.csv").read_text(encoding="utf-8") == "2"
 
         safe, native = final["attempt_history"]
         assert (safe["profile"], safe["outcome"], safe["code"]) == (

@@ -1,4 +1,4 @@
-"""运行前路由（V2 PR2，ADR 0129）：用户在桌面「打开并运行」一份脚本时，**执行之前**凭静态证据挑 `safe` 还是 `native`。
+"""运行前路由（V2 PR2，ADR 0130）：用户在桌面「打开并运行」一份脚本时，**执行之前**凭静态证据挑 `safe` 还是 `native`。
 
 只回答一个问题：这份脚本第一次就该用保留文件语义的 native 跑吗？默认答案是 `safe`（普通绘图）。只有**高置信度**才直达
 native；其余一律 safe，由运行期账本（`BlockedFileOps`）观察，真被拦下再由 PR1 的同会话回退接手（`execpolicy`）。
@@ -52,7 +52,7 @@ REASON_PREVIOUS_SUCCESS = "previous_successful_profile"
 REASON_USER_EXPLICIT = "user_explicit_profile"
 #: 运维开关 `TAVOTTO_EXECUTION_FALLBACK=0` 关着：整个 V2 的自动选语义都停（直达 native 与回退同一个开关）
 REASON_OPERATOR_DISABLED = "operator_disabled"
-#: 伤害闸门：脚本里出现 safe 守卫会拦的文件操作形状，运行前不直达 native（ADR 0129「伤害闸门」）
+#: 伤害闸门：脚本里出现 safe 守卫会拦的文件操作形状，运行前不直达 native（ADR 0130「伤害闸门」）
 REASON_GUARDED_FILE_OPS = "guarded_file_ops_present"
 REASONS = (
     REASON_ORDINARY_PLOT,
@@ -680,7 +680,7 @@ class _Collector:
 
     def _walk(self, node: ast.AST, scope: _Scope, branches: tuple, top: bool = True) -> None:
         """`top`：这个节点是否在「会无条件执行」的位置（模块 / 函数体的顶层语句序列；不在任何条件分支、循环、try、with 体、
-        lambda / 推导式 / 三元里）。只有 `top` 的事件才够格升 high（ADR 0129「保守边界」）。"""
+        lambda / 推导式 / 三元里）。只有 `top` 的事件才够格升 high（ADR 0130「保守边界」）。"""
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
             inner = self.scopes.get(id(node), scope)
             for dec in node.decorator_list:
