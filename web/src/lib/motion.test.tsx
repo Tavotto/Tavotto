@@ -14,7 +14,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { existsSync, readFileSync } from 'node:fs'
-import { dirname, resolve } from 'node:path'
+import { resolve } from 'node:path'
 import {
   DURATION,
   EASE_POP,
@@ -106,16 +106,11 @@ describe('关键帧的形态约束', () => {
     expect(y2).toBe(1)
   })
 
-  it('指示物的滑动曲线：--ease-snap 与 EASE_SNAP 逐字节相同，不过冲（y1、y2 都 ≤ 1），Segmented / Tabs 都用它', () => {
+  it('指示物的滑动曲线：--ease-snap 与 EASE_SNAP 逐字节相同，不过冲（y1、y2 都 ≤ 1）（Segmented / Tabs 实际用它：见 keyboardPrimitives.test 渲染后的指示元素 class）', () => {
     expect(cssToken('ease-snap')).toBe(EASE_SNAP)
     const [, y1, , y2] = EASE_SNAP.match(/cubic-bezier\(([^)]+)\)/)![1].split(',').map(Number)
     expect(y1).toBeLessThanOrEqual(1)
     expect(y2).toBe(1)
-    for (const f of ['Segmented', 'Tabs']) {
-      const src = readFileSync(resolve(dirname(CSS_PATH), `components/ui/${f}.tsx`), 'utf8')
-      expect(src, f).toContain('duration-base ease-snap')
-      expect(src, f).not.toContain('duration-base ease-pop')
-    }
   })
 
   it('改图助手的三个动效：时长来自 token、落位用弹簧、亮带在 reduced-motion 下退回静止文字', () => {
