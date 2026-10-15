@@ -587,6 +587,29 @@ def test_diff_collected_runtime_reports_files_only_in_the_packed_tree(tmp_path):
     ]
 
 
+def test_is_under_treats_another_windows_drive_as_outside():
+    """Windows runner：仓库（runtime）在 D:，打包 Python 的 DLL 在 C:——commonpath 会抛 ValueError。"""
+    import ntpath
+
+    root = r"D:\a\Tavotto\Tavotto\runtime"
+    assert brt._is_under(r"C:\hostedtoolcache\Python\python313.dll", root, ntpath) is False
+    assert brt._is_under(r"d:\A\Tavotto\Tavotto\RUNTIME\Lib\x.pyd", root, ntpath) is True
+    assert brt._is_under(r"D:\a\Tavotto\Tavotto\runtime-other\x.dll", root, ntpath) is False
+
+
+def test_runtime_toc_problems_survives_sources_it_cannot_relate(tmp_path, monkeypatch):
+    """任一条目与 runtime 无公共前缀（跨盘符）时整张 TOC 照样判完，不抛。"""
+    rt = tmp_path / "runtime-src"
+    _fake_runtime(rt)
+
+    def boom(paths):
+        raise ValueError("Paths don't have the same drive")
+
+    monkeypatch.setattr(brt.os.path, "commonpath", boom)
+    toc = [("python313.dll", str(tmp_path / "host.dll"), "BINARY")]
+    assert brt.runtime_toc_problems(toc, rt) == []
+
+
 def test_runtime_toc_problems_flags_copies_outside_and_reclassified_entries(tmp_path):
     """v0.18.0 macOS 的 TOC 形状（PyInstaller 6.22.3 实测）：runtime 里 numpy/.dylibs 的库被依赖分析
     以 BINARY 复制到顶层；runtime 自己的扩展模块被改判成 BINARY。冻结层自己的同名库（来源不在

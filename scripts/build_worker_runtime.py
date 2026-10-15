@@ -376,6 +376,16 @@ def diff_collected_runtime(src: Path, dst: Path) -> list[str]:
     return sorted(bad)
 
 
+def _is_under(path: str, root: str, pathmod=os.path) -> bool:
+    """`path` 是否在 `root` 之下（含相等）。不同盘符（Windows runner：仓库在 D:，打包 Python 在 C:）
+    时 `commonpath` 抛 ValueError——那当然不在 root 之下，不能让它把整个 spec 打崩。大小写不必另外
+    normcase：`commonpath` 按平台规则比较，返回的是第一个参数（root）的原样拼写。"""
+    try:
+        return pathmod.commonpath([root, path]) == root
+    except ValueError:
+        return False
+
+
 def runtime_toc_problems(toc, runtime_root: Path, prefix: str = "runtime") -> list[str]:
     """PyInstaller 的 TOC 里，来源在 runtime 下的条目只许原样落进 `<prefix>/`、typecode=DATA。
 
@@ -391,7 +401,7 @@ def runtime_toc_problems(toc, runtime_root: Path, prefix: str = "runtime") -> li
         if typecode == "SYMLINK" or not src:
             continue
         real = os.path.realpath(src)
-        if os.path.commonpath([root, real]) != root:
+        if not _is_under(real, root):
             continue
         parts = Path(dest).parts
         if not parts or parts[0] != prefix:
