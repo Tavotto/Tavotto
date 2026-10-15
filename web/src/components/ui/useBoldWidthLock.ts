@@ -35,10 +35,19 @@ if (typeof document !== 'undefined') {
 let sharedRO: ResizeObserver | null = null
 // CSS 的 letter-spacing 加在每个排版字符单位之后——按字素簇数，不是码点数：
 // 「é」（e + 组合符）、ZWJ 家庭 emoji 是多个码点、一个单位，按码点除会少补，选中后截断点照样挪
-const graphemes = new Intl.Segmenter(undefined, { granularity: 'grapheme' })
+// 懒构造 + 特性检测（与 lib/streamMarkdown 同一写法）：没有 Intl.Segmenter 的 WebView 里模块顶层不能抛，
+// 退回按码点数——只对组合符 / ZWJ 序列少补，不影响导入
+let graphemes: Intl.Segmenter | null | undefined
 export function graphemeCount(text: string): number {
+  if (graphemes === undefined) {
+    graphemes =
+      typeof Intl !== 'undefined' && typeof Intl.Segmenter === 'function'
+        ? new Intl.Segmenter(undefined, { granularity: 'grapheme' })
+        : null
+  }
   let n = 0
-  for (const _ of graphemes.segment(text)) n++
+  if (graphemes) for (const _ of graphemes.segment(text)) n++
+  else for (const _ of text) n++
   return n
 }
 
