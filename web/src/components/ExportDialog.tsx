@@ -170,10 +170,10 @@ import { dirTail } from "@/lib/pathDisplay";
 /** 阻断问题的图标：与问题面板同一张表（`SEVERITY_ICON`），八角 */
 const BlockingIcon = SEVERITY_ICON.error;
 
-/** 本对话框的文案都在 `dialogs:export.*` 下 */
 /** 导出终局 toast 的主人：重开对话框 / 新一轮开始时撤掉 */
 const EXPORT_STATUS_OWNER = "export.result";
 
+/** 本对话框的文案都在 `dialogs:export.*` 下 */
 const ex = (key: string, values?: Record<string, unknown>) =>
   translate(`export.${key}`, { ns: "dialogs", ...(values ?? {}) });
 
