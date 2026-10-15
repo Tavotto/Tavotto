@@ -120,6 +120,12 @@ export interface RuntimePanelSource {
   runConfig?: string
 }
 
+/** Exact script/configuration ownership, derived and verified only by the backend. */
+export interface FigureExecutionOwner {
+  script: string
+  run_config: string | null
+}
+
 /** Immutable, backend-verified Figure snapshot bound to one source execution and patch set. */
 export interface FigureSnapshot {
   version: 1
@@ -127,6 +133,8 @@ export interface FigureSnapshot {
   patchHash: string
   receiptId: string
   snapshotId: string
+  /** Backend-verified archived execution ownership; absent in older snapshots, never inferred. */
+  executionOwner?: FigureExecutionOwner
 }
 
 export interface PanelObject extends ObjectBase {

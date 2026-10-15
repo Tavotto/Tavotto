@@ -124,6 +124,7 @@ from .engine import (
     scriptlock as engine_scriptlock,
     session_client as engine_session_client,
     specfix as engine_specfix,
+    svgexecution as engine_svgexecution,
     taskdiag as engine_taskdiag,
     telemetry as engine_telemetry,
     tutorial as engine_tutorial,
@@ -356,6 +357,8 @@ class ProjectCtx:
         # the project-owned generation marker fails (e.g. a read-only volume).
         self.svg_snapshot_receipts: dict[str, str] = {}
         self.svg_snapshot_native_sources: dict[str, tuple] = {}
+        self.svg_executions = engine_svgexecution.Ledger()
+        self.svg_execution_attempts: dict[str, dict] = {}
 
     def __repr__(self) -> str:  # 日志用
         return f"<Project {self.id} {self.path}>"
@@ -1325,6 +1328,11 @@ def _execution_receipt(worker, script: str):
     resp = {
         "descriptors": list(getattr(worker, "last_build_descriptors", None) or []),
         "runtime": getattr(worker, "last_build_runtime", None),
+        **(
+            {"execution_id": worker.last_build_execution_id}
+            if hasattr(worker, "last_build_execution_id")
+            else {}
+        ),
     }
     binding = None
     if script:
@@ -1437,7 +1445,7 @@ def _execution_source(
     )
     if companion is not None:
         try:
-            _save_svg_snapshot(frozen)
+            _save_svg_snapshot(frozen, execution_owner=_svg_worker_owner(worker, script))
         except (ValueError, OSError):
             LOG.info("Cannot persist export-grade SVG snapshot", exc_info=True)
     return frozen
@@ -1453,7 +1461,7 @@ def _svg_storage_root(project_root) -> Path:
     return target
 
 
-def _save_svg_snapshot(frozen, *, static_sha256=None, project_root=None):
+def _save_svg_snapshot(frozen, *, static_sha256=None, project_root=None, execution_owner=None):
     """Persist a full-quality, verified pair separately from preview caches."""
     from .engine import svgstore
     from .rendercore.sources import read_frozen
@@ -1471,9 +1479,119 @@ def _save_svg_snapshot(frozen, *, static_sha256=None, project_root=None):
         artifact=frozen.artifact.to_payload(),
         receipt=frozen.receipt,
         static_sha256=static_sha256,
+        execution_owner=execution_owner,
         remap_fingerprint=engine_inputremap.fingerprint(root),
         storage_root=_svg_storage_root(root),
     )
+
+
+def _svg_worker_owner(worker, script=None):
+    spec = getattr(worker, "spec", None)
+    if engine_enginesession.is_native(worker):
+        actual_script = getattr(worker, "execution_script", None)
+        if not actual_script or (script is not None and script != actual_script):
+            return None
+        script = actual_script
+        if getattr(worker, "owned", None) is None and getattr(worker, "arg_count", 0):
+            return None  # Terminal argv has no verified persistent config identity.
+    else:
+        script = script or getattr(spec, "target", "")
+    return engine_svgexecution.owner(script, getattr(spec, "run_config", None) or None)
+
+
+def _svg_worker_ctx(worker):
+    root = getattr(getattr(worker, "spec", None), "project_root", None) or getattr(
+        worker, "project_root", None
+    )
+    if not root:
+        return None
+    with _PROJECT_LOCK:
+        return PROJECTS.get(_project_id(Path(root)))
+
+
+def _svg_execution_observed(worker, execution_id):
+    """Actual user-code start, including errors/zero outputs and in-flight runs."""
+    from .engine import svgstore
+
+    if not getattr(worker, "execution_replaces_current", True):
+        return
+    ctx, identity = _svg_worker_ctx(worker), _svg_worker_owner(worker)
+    if ctx is None or identity is None:
+        return
+    state = ctx.svg_executions.observe(
+        identity, execution_id, engine_pool.execution_started_ns(execution_id), worker
+    )
+    if state is None:
+        return
+    # Publish the owner immediately: archive I/O can fail or take time, and must
+    # not leave an in-flight old Figure export authorized in either UI or API.
+    worker.figure_snapshot_invalidation = ctx.svg_executions.fact(state)
+    sse_publish(
+        "figure.snapshot_invalidated", {"pj": ctx.id, **worker.figure_snapshot_invalidation}
+    )
+    try:
+        rows = svgstore.source_records_for_owner(
+            ctx.path,
+            identity["script"],
+            identity["run_config"],
+            storage_root=_svg_storage_root(ctx.path),
+        )
+        with ctx.svg_executions.lock:
+            if ctx.svg_executions.get(identity) is not state:
+                return
+            for row in rows:
+                if row["receipt_id"] not in state["receipts"]:
+                    state["retired_receipts"].add(row["receipt_id"])
+            # Owner matching covers runtime and new static refs. Late archive
+            # evidence names old receipts, never globally revokes a source name
+            # which may already hold this execution's fresh saved reference.
+            worker.figure_snapshot_invalidation = ctx.svg_executions.fact(state)
+            sse_publish(
+                "figure.snapshot_invalidated", {"pj": ctx.id, **worker.figure_snapshot_invalidation}
+            )
+    except (OSError, ValueError):
+        LOG.info("Cannot enumerate retired Figure snapshots", exc_info=True)
+
+
+engine_pool.register_execution_observer(_svg_execution_observed)
+
+
+def _svg_execution_result(worker):
+    """Reconcile even workers which probe retired after an unsuccessful attempt."""
+    if worker is None or not getattr(worker, "execution_replaces_current", True):
+        return {}
+    if not engine_enginesession.is_native(worker):
+        execution_id = engine_pool.refresh_execution(worker)
+        ctx, identity = _svg_worker_ctx(worker), _svg_worker_owner(worker)
+        if ctx is not None and identity is not None and execution_id:
+            state = ctx.svg_executions.get(identity)
+            if (
+                state is None
+                or state["started_ns"] < engine_pool.execution_started_ns(execution_id)
+                or (
+                    state["execution_id"] == execution_id
+                    and not hasattr(worker, "figure_snapshot_invalidation")
+                )
+            ):
+                _svg_execution_observed(worker, execution_id)
+    if getattr(worker, "execution_observation_unknown", False):
+        ctx, identity = _svg_worker_ctx(worker), _svg_worker_owner(worker)
+        if ctx is not None and identity is not None:
+            ctx.svg_executions.uncertain(
+                identity, worker, getattr(worker, "execution_unknown_started_ns", 0)
+            )
+    fact = getattr(worker, "figure_snapshot_invalidation", None)
+    if fact is not None and fact.get("scope") == "owner":
+        ctx, identity = _svg_worker_ctx(worker), _svg_worker_owner(worker)
+        state = ctx.svg_executions.get(identity) if ctx is not None else None
+        if (
+            state is None
+            or state["unknown"]
+            or state["worker"] is not worker
+            or state["execution_id"] != fact["execution_id"]
+        ):
+            return {}
+    return {"figure_snapshot_invalidation": fact} if fact is not None else {}
 
 
 def _svg_expected_receipt(root, source_id):
@@ -1492,9 +1610,59 @@ def _svg_expected_receipt(root, source_id):
     return None
 
 
-def _svg_snapshot_matches_current(root, source_id, record, *, explicit=False, static=False) -> bool:
+def _svg_legacy_runtime_owner(root, source_id):
+    """Positive old-runtime provenance for revocation only, never cold authority."""
+    if not engine_runtimeasset.is_runtime_id(source_id):
+        return None
+    info = engine_runtimeasset.resolve(source_id, current_registry())
+    if info is None:
+        meta = engine_runtimeasset.load_metadata(root, source_id) or {}
+        desc = meta.get("descriptor")
+        if not isinstance(desc, dict):
+            return None
+        try:
+            if (
+                engine_figcapture.runtime_asset_id(
+                    desc.get("script"), desc.get("stem"), desc.get("run_config") or ""
+                )
+                != source_id
+            ):
+                return None
+        except (TypeError, ValueError):
+            return None
+        info = desc
+    return engine_svgexecution.owner(info.get("script"), info.get("run_config") or None)
+
+
+def _svg_snapshot_matches_current(
+    root, source_id, record, *, explicit=False, static=False, exporting=False
+) -> bool:
     if record is None:
         return False
+    ctx = _request_ctx()
+    archived_owner = record.get("execution_owner")
+    identity = archived_owner or _svg_legacy_runtime_owner(root, source_id)
+    if identity is not None:
+        for worker in engine_pool.refresh_owner_execution(
+            root, identity["script"], identity["run_config"]
+        ):
+            _svg_execution_result(worker)
+            if exporting and engine_pool.execution_inflight_unobserved(worker):
+                return False  # Temporarily busy, not a fabricated execution fact.
+    if ctx is not None and ctx.path.resolve() == Path(root).resolve() and identity is not None:
+        accepted = ctx.svg_executions.accepts(identity, record["receipt"].get("receipt_id"))
+        if accepted is not None:
+            if not accepted:
+                return False
+            if archived_owner is not None:
+                state = ctx.svg_executions.get(identity)
+                worker = state["worker"]
+                if engine_enginesession.is_native(worker):
+                    with worker._figure_lock:
+                        return _execution_receipt(worker, identity["script"]).receipt_id == record[
+                            "receipt"
+                        ].get("receipt_id")
+                return True
     expected = _svg_expected_receipt(root, source_id)
     # A project source marker is not evidence of the latest execution: its
     # replacement may have failed. Only a known receipt, an explicit immutable
@@ -1529,6 +1697,7 @@ def _load_svg_snapshot(rel_id, overrides, out_dir, *, static_source=None, refere
         rel_id,
         record,
         explicit=reference is not None,
+        exporting=True,
         static=static_source is not None
         and not overrides
         and not engine_runtimeasset.is_runtime_id(rel_id),
@@ -1587,7 +1756,24 @@ def _capture_svg_snapshot_best_effort(worker, desc) -> None:
         return
     rcpt = _execution_receipt(worker, str(desc.get("script", "")))
     original = desc.get("original_artifact")
+    identity = _svg_worker_owner(worker, str(desc.get("script", "")))
     ctx = _request_ctx()
+    if (
+        ctx is not None
+        and identity is not None
+        and not ctx.svg_executions.admit(
+            identity,
+            worker,
+            (
+                getattr(worker, "execution_id", None)
+                if engine_enginesession.is_native(worker)
+                else rcpt.instance
+            ),
+            rcpt.receipt_id,
+        )
+    ):
+        return
+
     if ctx is not None and Path(root).resolve() == ctx.path.resolve():
         for sid in (source_id, original):
             if sid:
@@ -1656,14 +1842,17 @@ def _capture_svg_snapshot_best_effort(worker, desc) -> None:
                     ),
                 )
 
-            _save_svg_snapshot(freeze(source_id), project_root=root)
+            _save_svg_snapshot(freeze(source_id), project_root=root, execution_owner=identity)
             original = desc.get("original_artifact")
             if original and str(original).lower().endswith(".pdf"):
                 path = safe_resolve(original)
                 context = engine_artifactcontext.create_context(path, original)
                 engine_artifactcontext.validate_candidate(path, pdf, context)
                 _save_svg_snapshot(
-                    freeze(original), static_sha256=context["bytes_sha256"], project_root=root
+                    freeze(original),
+                    static_sha256=context["bytes_sha256"],
+                    project_root=root,
+                    execution_owner=identity,
                 )
         except Exception:
             # An unsupported SVG or a non-matching static artifact does not
@@ -2596,6 +2785,7 @@ def _package_svg_assets(doc, root, archive) -> int:
                 svg=record["svg"],
                 artifact=record["pdf_artifact"],
                 receipt=record["receipt"],
+                execution_owner=record.get("execution_owner"),
                 static_sha256=static_hash,
                 remap_fingerprint=engine_inputremap.fingerprint(root),
                 storage_root=staging,
@@ -4653,7 +4843,10 @@ def api_registry_probe():
     attempt_id = f"run-{uuid.uuid4().hex}"
     started = time.monotonic()
 
+    acquired_workers = []
+
     def note_owner(worker, owned):
+        acquired_workers.append(worker)
         with _PROBES_LOCK:
             if _PROBES.get(key) is cancel_ev:
                 _PROBE_OWNERS[key] = (worker, owned)
@@ -4707,6 +4900,8 @@ def api_registry_probe():
             "error": {"code": failure_code or "internal_error"},
         }
     finally:
+        for acquired_worker in acquired_workers:
+            result.update(_svg_execution_result(acquired_worker))
         with _PROBES_LOCK:
             _PROBES.pop(key, None)
             _PROBE_RUNS.pop(key, None)
@@ -4734,7 +4929,15 @@ def api_registry_probe():
     if failure_response is not None:
         failure_body = failure_response.get_json(silent=True)
         if isinstance(failure_body, dict):
-            failure_response.set_data(app.json.dumps({**failure_body, "diagnostic": diagnostic}))
+            failure_response.set_data(
+                app.json.dumps(
+                    {
+                        **failure_body,
+                        **{k: v for k, v in result.items() if k == "figure_snapshot_invalidation"},
+                        "diagnostic": diagnostic,
+                    }
+                )
+            )
         else:
             # HTTPException / 自定义处理器的非对象响应保持原样，引用由响应头取回。
             failure_response.headers["X-Tavotto-Diagnostic-Ref"] = attempt_id
@@ -5155,6 +5358,58 @@ def _native_error(exc: "engine_runcodes.RunError"):
     return resp
 
 
+def _svg_native_execution_update(session):
+    execution_id = getattr(session, "execution_id", None)
+    script = getattr(session, "execution_script", "")
+    if not execution_id or not script:
+        return
+    ctx = _svg_worker_ctx(session)
+    if ctx is None:
+        return
+    identity = _svg_worker_owner(session, script)
+    if identity is not None:
+        if engine_nativesession.REGISTRY.script_route_conflict(
+            session.project_root, script, exclude_session_id=session.session_id
+        ):
+            return  # A concurrent terminal cannot take another accepted route.
+        state = ctx.svg_executions.get(identity)
+        if state is None or state["execution_id"] != execution_id:
+            _svg_execution_observed(session, execution_id)
+            state = ctx.svg_executions.get(identity)
+        if state is None or state["worker"] is not session:
+            return
+        with ctx.svg_executions.lock:
+            for sid, (holder, _) in list(ctx.svg_snapshot_native_sources.items()):
+                if holder is session:
+                    old = ctx.svg_snapshot_receipts.get(sid)
+                    if old and old != _execution_receipt(session, script).receipt_id:
+                        state["retired_receipts"].add(old)
+        fact = ctx.svg_executions.fact(state)
+    else:
+        previous = getattr(session, "figure_snapshot_invalidation", None) or {}
+        # A source name may be rebound before this event reaches the browser.
+        # Unknown configurations can revoke only their exact accepted receipts.
+        receipts = set(previous.get("receipt_ids") or [])
+        for sid, (holder, _) in list(ctx.svg_snapshot_native_sources.items()):
+            if holder is session:
+                old = ctx.svg_snapshot_receipts.get(sid)
+                if old and old != _execution_receipt(session, script).receipt_id:
+                    receipts.add(old)
+        fact = {
+            "scope": "sources",
+            "script": script,
+            "run_config": None,
+            "execution_id": execution_id,
+            "source_ids": [],
+            "receipt_ids": sorted(receipts),
+        }
+    if getattr(session, "figure_snapshot_invalidation", None) != fact:
+        session.figure_snapshot_invalidation = fact
+        sse_publish("figure.snapshot_invalidated", {"pj": ctx.id, **fact})
+    if getattr(session, "launch_id", None):
+        ctx.svg_execution_attempts[session.launch_id] = {"figure_snapshot_invalidation": fact}
+
+
 def _native_session_event(session, entry: dict) -> None:
     """会话状态变了 → SSE。**在 reader 线程里跑**，所以只 put 一条消息。
 
@@ -5162,6 +5417,10 @@ def _native_session_event(session, entry: dict) -> None:
     的事件丢掉，而迟到的事件要能按序号判出"这条比我手里的旧"（前端代际
     纪律，与 `panel.file_changed` 同一条）。
     """
+    try:
+        _svg_native_execution_update(session)
+    except Exception:
+        LOG.info("Cannot publish native Figure execution evidence", exc_info=True)
     try:
         pj = _project_id(Path(session.project_root))
     except (OSError, ValueError):
@@ -5287,6 +5546,8 @@ def api_native_session_build(session_id: str):
         # （issue #191），现在由 `test_native_api.py` 逐个端点钉着。
         return jsonify(_worker_error_payload(exc)), 500
     rejected = engine_nativesession.REGISTRY.bind_assets(session)
+    if not rejected:
+        _svg_native_execution_update(session)
     # 发布决定只有这一处,且全有或全无:任一张图的路由被另一条活会话占着,这一轮 build 的图一张都不物化、不回给前端、
     # 不绑路由——否则预览是这次运行的、编辑 / 导出却仍落在旧会话上（静默错图,ADR 0021 §9.2），而准备 runner 对同一结果
     # 判的是整体失败。准备 runner 的 native 分支问的是同一个 `bind_assets`
@@ -5623,8 +5884,14 @@ def _engine_attempt(
             _admit_artifact(worker, stem, artifact_source)
             result = action(worker, stem)
             _assert_artifact_current(artifact_source)
+            execution = _svg_execution_result(worker)
+            if isinstance(result, dict):
+                result.update(execution)
             return worker, stem, result
         except (engine_pool.WorkerError, engine_artifactcontext.ArtifactContextError) as exc:
+            fact = _svg_execution_result(worker)
+            if isinstance(exc, engine_pool.WorkerError):
+                exc.extra.update(fact)
             # Supersession removes only a queued request; this admitted worker
             # may still be serving another variant of the same selected source.
             if artifact_source is not None and not (
@@ -5868,7 +6135,13 @@ def api_engine_render():
         if exc.code in _RESYNC_RENDER_CODES:
             _resync_registration(current_ctx(), worker)
         sse_publish("render.failed", {"pj": pj, "id": rel_id, "error": str(exc)})
-        return jsonify(_worker_error_payload(exc)), 500
+        return jsonify(
+            {
+                **_worker_error_payload(exc),
+                **_svg_execution_result(worker),
+                **{k: v for k, v in exc.extra.items() if k == "figure_snapshot_invalidation"},
+            }
+        ), 500
     except Exception as exc:
         # 事件契约是「render.started 之后必有 done 或 failed」，与异常类型无关：
         # 前端文件级 building 表只由这两个事件清（#478）。重试路上的
@@ -5921,6 +6194,7 @@ def api_engine_render():
         "manifest": resp["manifest"],
         "warnings": resp.get("warnings", []),
         "timings": timings,
+        **_svg_execution_result(worker),
     }
     # 没要就不加这个字段（响应形状对老调用方一字不变）
     if inline_svg and "svg" in resp:
@@ -8203,19 +8477,32 @@ def _preparation_runner(pl, before_retry=None):
 
     取到会话那一刻把所有权报给 `PreparationService.note_owner`（T09）：明确取消据此当场只关本计划新建的会话，
     共享会话的等待者只停自己的等待。"""
-    return engine_pool.build_owned(
-        pl.script,
-        pl.project_root,
-        pl.entry,
-        before_retry=before_retry,
-        on_acquired=lambda worker, created: engine_preparation.SERVICE.note_owner(
-            pl.plan_id, worker, created
-        ),
-        # T03：计划冻结的运行配置；没有配置时调用形状与以前一致
-        **({"run": pl.run} if getattr(pl, "run", None) is not None else {}),
-        # 这份计划自己的解释器（路径 + 来源 + 环境代）：取会话只认它，不再对共享的项目记录重新决定
-        **({"pinned": _plan_pin(pl)} if _plan_pin(pl) is not None else {}),
-    )
+    acquired = []
+
+    def acquire(worker, created):
+        acquired.append(worker)
+        engine_preparation.SERVICE.note_owner(pl.plan_id, worker, created)
+
+    try:
+        return engine_pool.build_owned(
+            pl.script,
+            pl.project_root,
+            pl.entry,
+            before_retry=before_retry,
+            on_acquired=acquire,
+            # T03：计划冻结的运行配置；没有配置时调用形状与以前一致
+            **({"run": pl.run} if getattr(pl, "run", None) is not None else {}),
+            # 这份计划自己的解释器（路径 + 来源 + 环境代）：取会话只认它，不再对共享的项目记录重新决定
+            **({"pinned": _plan_pin(pl)} if _plan_pin(pl) is not None else {}),
+        )
+    finally:
+        for worker in acquired:
+            fact = _svg_execution_result(worker)
+            ctx = _svg_worker_ctx(worker)
+            if ctx is not None and fact:
+                ctx.svg_execution_attempts[pl.plan_id] = fact
+                while len(ctx.svg_execution_attempts) > 256:
+                    ctx.svg_execution_attempts.pop(next(iter(ctx.svg_execution_attempts)))
 
 
 def _native_preparation_runner(pl, before_retry=None):
@@ -8282,6 +8569,8 @@ def _native_preparation_runner(pl, before_retry=None):
         _end_native_session(session)
         return session, resp, True
     rejected = engine_nativesession.REGISTRY.bind_assets(session)
+    if not rejected:
+        _svg_native_execution_update(session)
     if rejected:
         # 这些图的活路由还被另一条活会话占着(例如用户终端里的 `tavotto run`):继续完成会让预览换成这次运行的、
         # 编辑 / 导出却仍落在旧会话上——静默错图。不发布被拒的描述符,结束这次运行,如实报冲突(ADR 0021 §9.2)
@@ -8342,7 +8631,12 @@ def _launch_preparation(ctx: "ProjectCtx", plan, on_done=None) -> None:
 
 
 def _preparation_payload(plan, result) -> dict:
-    return {"plan": plan.to_payload(), "result": result.to_payload()}
+    ctx = PROJECTS.get(plan.project_id)
+    return {
+        "plan": plan.to_payload(),
+        "result": result.to_payload(),
+        **(ctx.svg_execution_attempts.get(plan.plan_id, {}) if ctx is not None else {}),
+    }
 
 
 def _preparation_not_found(plan_id: str):
@@ -8528,9 +8822,13 @@ def _session_runtime_input(ctx: "ProjectCtx", sess) -> dict | None:
 
 def _session_report(ctx: "ProjectCtx", sess) -> dict:
     waiting = _session_runtime_input(ctx, sess)
-    return engine_prepsession.SESSIONS.report(
+    payload = engine_prepsession.SESSIONS.report(
         sess, awaiting_input=waiting is not None, runtime_input=waiting
     )
+    payload.update(
+        ctx.svg_execution_attempts.get((payload.get("provider") or {}).get("attempt_id"), {})
+    )
+    return payload
 
 
 def _finalize_script_attempt(ctx: "ProjectCtx", plan, result) -> dict:
@@ -8623,6 +8921,12 @@ def _finalize_script_attempt(ctx: "ProjectCtx", plan, result) -> dict:
 
 
 def _publish_preparation_session(payload: dict) -> None:
+    ctx = PROJECTS.get(payload["project_id"])
+    if ctx is not None:
+        payload = {
+            **payload,
+            **ctx.svg_execution_attempts.get((payload.get("provider") or {}).get("attempt_id"), {}),
+        }
     sse_publish("preparation.session", {"pj": payload["project_id"], **payload})
 
 

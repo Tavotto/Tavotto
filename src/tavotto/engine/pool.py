@@ -29,6 +29,7 @@ from . import (
     config,
     envlease,
     execspec,
+    executionfact,
     figcapture,
     inputbroker,
     inputremap,
@@ -1924,6 +1925,218 @@ def reset_worker_python() -> None:
     projectenv.reset_cache()
 
 
+_execution_observer: Callable | None = None
+_execution_state_lock = threading.Lock()
+_EXECUTING_COMMANDS = frozenset(
+    {"build", "render", "override", "export", "render_png", "preview_png"}
+)
+_BEFORE_EXECUTION_ERRORS = frozenset(
+    {
+        "unknown_session",
+        "queue_full",
+        "queue_superseded",
+        "spawn_failed",
+        "handshake_timeout",
+        "bad_request",
+    }
+)
+
+
+def register_execution_observer(callback: Callable | None) -> None:
+    """Observe actual safe-worker executions as callback(worker, opaque_id).
+
+    Calls may occur on a polling thread, before build finishes. Consumers must
+    order by execution_started_ns(opaque_id), not pool generation (workerd may reopen).
+    Observer failures never prevent the scientific execution itself.
+    """
+    global _execution_observer
+    _execution_observer = callback
+
+
+def execution_started_ns(execution_id: str) -> int:
+    """Order the exact callback fact, independent of a worker's later mutable state."""
+    return executionfact.started_ns(execution_id)
+
+
+def _execution_state(worker) -> None:
+    with _execution_state_lock:
+        if not hasattr(worker, "_execution_lock"):
+            worker._execution_lock = threading.RLock()
+            worker._execution_watches = {}
+            worker.execution_id = None
+            worker.execution_started_ns = 0
+            worker.execution_observation_unknown = False
+            worker.execution_unknown_started_ns = 0
+
+
+def _record_execution(worker, execution_id: str) -> None:
+    started = executionfact.started_ns(execution_id)
+    with worker._execution_lock:
+        if started <= worker.execution_started_ns:
+            return  # An older response must not overwrite a newer execution.
+        worker.execution_id = execution_id
+        worker.execution_started_ns = started
+        worker.execution_observation_unknown = worker.execution_unknown_started_ns > started
+    callback = _execution_observer
+    if callback is not None:
+        try:
+            callback(worker, execution_id)
+        except Exception:  # noqa: BLE001 — bookkeeping cannot block user code
+            LOG.warning("Execution observer failed", exc_info=True)
+
+
+def refresh_execution(worker) -> str | None:
+    """Reconcile live request markers, including a build currently being cancelled."""
+    _execution_state(worker)
+    with worker._execution_lock:
+        watches = list(worker._execution_watches.values())
+    for watch in watches:
+        watch.refresh()
+    return worker.execution_id
+
+
+def refresh_owner_execution(project_root, script, run_config=None) -> list:
+    """Refresh existing safe sessions for one owner without acquiring/building one.
+
+    Selected-artifact variants share the same owner. Inspect only trusted spec
+    identity fields; private argv and key reconstruction are unnecessary.
+    """
+    root = os.path.normcase(os.path.realpath(project_root))
+    with _lock:
+        workers = []
+        for worker in _workers.values():
+            spec = getattr(worker, "spec", None)
+            if (
+                getattr(worker, "execution_replaces_current", False)
+                and isinstance(spec, execspec.ExecutionSpec)
+                and spec.profile == execspec.PROFILE_SAFE
+                and spec.target_kind == execspec.TARGET_SCRIPT
+                and os.path.normcase(os.path.realpath(spec.project_root)) == root
+                and spec.target == script
+                and (spec.run_config or None) == (run_config or None)
+            ):
+                workers.append(worker)
+    for worker in workers:
+        refresh_execution(worker)
+    return workers
+
+
+def execution_inflight_unobserved(worker) -> bool:
+    """Temporary uncertainty only: a potentially executing dispatch lacks facts.
+
+    This neither asserts actual entry nor permanently retires an owner. A caller
+    can temporarily refuse old snapshots until a marker or reply resolves it.
+    """
+    _execution_state(worker)
+    with worker._execution_lock:
+        return any(
+            watch.can_start and watch.sent and not watch.acknowledged and not watch.observed
+            for watch in worker._execution_watches.values()
+        )
+
+
+def _stopped_execution(worker) -> None:
+    refresh_execution(worker)
+    with worker._execution_lock:
+        for watch in worker._execution_watches.values():
+            watch.mark_unknown()
+
+
+class _ExecutionWatch:
+    """Two independent facts: a reply, or a request-bound marker before user code.
+
+    With neither fact after an in-flight transport failure, absence is unknown,
+    not evidence that nothing ran. Rust's queued/in-flight `cancelled` shares one
+    code, so that case is likewise unknown unless a marker resolves it.
+    """
+
+    def __init__(self, worker, command):
+        _execution_state(worker)
+        self.worker = worker
+        # A live Python child cannot rebuild itself during a hot request; workerd
+        # can transparently replace a child even while the parent still says built.
+        self.can_start = not getattr(worker, "built", False) or isinstance(worker, WorkerdWorker)
+        self.key = (
+            uuid.uuid4().hex
+            if command in _EXECUTING_COMMANDS and getattr(worker, "out_dir", None) is not None
+            else None
+        )
+        self.sent = False
+        self.sent_ns = 0
+        self.acknowledged = False
+        self.observed = False
+        self.stop = threading.Event()
+        self.thread = None
+
+    def __enter__(self):
+        if self.key is not None:
+            with self.worker._execution_lock:
+                self.worker._execution_watches[self.key] = self
+            self.thread = threading.Thread(
+                target=self._poll, name="tavotto-execution-observe", daemon=True
+            )
+            try:
+                self.thread.start()
+            except RuntimeError:
+                # Thread exhaustion must not turn optional observation into a
+                # scientific-run failure. Reply/final synchronous refresh remain.
+                self.thread = None
+                LOG.warning("Execution observation polling could not start", exc_info=True)
+        return self
+
+    def _poll(self):
+        while not self.stop.wait(0.05):
+            self.refresh()
+
+    def refresh(self):
+        if self.key is None:
+            return
+        value = executionfact.read(self.worker.out_dir, self.key)
+        if value is not None:
+            self.observed = True
+            _record_execution(self.worker, value)
+
+    def acknowledge(self, data):
+        if not isinstance(data, dict) or "execution_id" not in data:
+            return
+        value = data["execution_id"]
+        if value is None or executionfact.valid_id(value):
+            self.acknowledged = True
+        if executionfact.valid_id(value):
+            self.observed = True
+            _record_execution(self.worker, value)
+
+    def mark_unknown(self):
+        if (
+            self.key is not None
+            and self.can_start
+            and self.sent
+            and not self.acknowledged
+            and not self.observed
+        ):
+            with self.worker._execution_lock:
+                if self.sent_ns > self.worker.execution_started_ns:
+                    self.worker.execution_unknown_started_ns = max(
+                        self.worker.execution_unknown_started_ns, self.sent_ns
+                    )
+                    self.worker.execution_observation_unknown = True
+
+    def __exit__(self, exc_type, exc, tb):
+        self.stop.set()
+        if self.thread is not None:
+            self.thread.join(timeout=1.0)
+        self.refresh()
+        if exc_type is None or getattr(exc, "code", "") not in _BEFORE_EXECUTION_ERRORS:
+            self.mark_unknown()
+        if self.key is not None:
+            with self.worker._execution_lock:
+                self.worker._execution_watches.pop(self.key, None)
+            try:
+                executionfact.marker_path(self.worker.out_dir, self.key).unlink(missing_ok=True)
+            except OSError:
+                pass  # Disposable IPC; normal cache pruning owns eventual cleanup.
+
+
 class EngineWorker:
     def __init__(
         self,
@@ -1943,6 +2156,8 @@ class EngineWorker:
         #: T03：这条会话冻结的运行配置（`execspec.RunSelection`；None = 没给参数，旧行为）。会话的整个生命周期
         #: 里它不变——冷重放（`one_shot`）、导出、写回重放都从这里取，不读"项目最新配置"。
         self.run = run
+        # Isolated one_shot/writeback verification must not retire the hot source.
+        self.execution_replaces_current = base_dir is None
         self.artifact_admission_lock = threading.Lock()
         # `base_dir` 只给一次性 worker（`one_shot()`）用：与热会话共用 out/
         # 会让重放的 manifest/SVG 盖掉用户正在看的那份。池里的会话永远走
@@ -1971,6 +2186,7 @@ class EngineWorker:
         self.last_patch_hash_by_stem: dict[str, str] = {}
         self.lock = threading.Lock()
         self.built = False
+        _execution_state(self)
         #: 上一次**跑完的** build 是失败的（`built=False` 分不出「还没 build / 正在 build」与「build 过但失败了」，
         #: 复用前的工作目录门只管后者——Codex #599 P2）。成功那一刻清掉。
         self.build_failed = False
@@ -1981,6 +2197,7 @@ class EngineWorker:
         #: 最近一次 build 响应里 worker 自报的运行时事实（`figsession.runtime_report`，
         #: ADR 0053）；老 worker 没带就是 None——回执据此标 partial，不补不猜。
         self.last_build_runtime: dict | None = None
+        self.last_build_execution_id: str | None = None
         self.last_used = time.time()
         # 这一代从日志的哪个字节开始（append 模式，目录跨代复用）
         self._log_offset = start_log_generation(self.log_path)
@@ -2308,6 +2525,12 @@ class EngineWorker:
         )
 
     def request(self, obj: dict, timeout: float | None = None) -> dict:
+        with _ExecutionWatch(self, obj.get("cmd")) as watch:
+            if watch.key is not None:
+                obj = {**obj, "execution_watch": watch.key}
+            return self._request_observed(obj, timeout, watch)
+
+    def _request_observed(self, obj: dict, timeout: float | None, watch: _ExecutionWatch) -> dict:
         obj = {**obj, **_run_payload(getattr(self, "run", None))}
         if getattr(self, "artifact_source", None) is not None:
             obj = {**obj, "artifact_source": self.artifact_source}
@@ -2332,6 +2555,10 @@ class EngineWorker:
             try:
                 alive = self.alive()
                 if alive:
+                    watch.sent_ns = time.monotonic_ns()
+                    # Once writing starts, an exception cannot prove that no
+                    # complete line reached the child (including flush errors).
+                    watch.sent = True
                     self.proc.stdin.write(json.dumps(env, ensure_ascii=False) + "\n")
                     self.proc.stdin.flush()
             except (OSError, ValueError):  # BrokenPipeError / 管道已关（ValueError: closed file）
@@ -2382,6 +2609,8 @@ class EngineWorker:
             raise err
         resp = self._parse_line(line)
         self._check_envelope(resp, rid)
+        watch.acknowledge(resp)
+        watch.acknowledge(resp.get("error"))
         if resp.get("hash_mismatch"):
             # 不影响本次结果（worker 照常执行了），但两侧的规范化实现已经分叉
             LOG.warning(
@@ -2417,6 +2646,7 @@ class EngineWorker:
             figcapture.clear_preview_poison(self.out_dir)
         self.last_build_descriptors = list(resp.get("descriptors") or [])
         self.last_build_runtime = _runtime_of(resp)
+        self.last_build_execution_id = resp.get("execution_id")
         self.last_build_artifact_probe = resp.get("artifact_probe")
         self.last_build_script_inputs = _script_inputs_of(resp)
         try:
@@ -2601,6 +2831,7 @@ class EngineWorker:
         `rmtree` 必然撞 sharing violation（run 32937999297）。
         """
         self._terminate_and_reap(graceful=True)
+        _stopped_execution(self)
 
     def force_kill(self) -> None:
         """兜底硬杀（`shutdown_all(wait=True)` 在优雅关停超时后调）——**同样等到收尸**。
@@ -2609,6 +2840,7 @@ class EngineWorker:
         python.exe 还在，Popen 没回收，句柄还占着目录。
         """
         self._terminate_and_reap(graceful=False)
+        _stopped_execution(self)
 
 
 # ============================================================================
@@ -2752,6 +2984,7 @@ class WorkerdWorker:
         self.entry = entry
         self.artifact_source = figcapture.selected_artifact_context(artifact_source)
         self.run = run  # 与 EngineWorker 同源（T03）
+        self.execution_replaces_current = base_dir is None
         self.artifact_admission_lock = threading.Lock()
         # 目录布局与 EngineWorker 完全一致：prune_engine_cache 按 base 走，
         # 换个控制面就换个落点的话，清理会把正在用的会话目录当成垃圾删掉。
@@ -2779,9 +3012,11 @@ class WorkerdWorker:
         # 「一个慢请求占死整条会话」重新绑回来。
         self.lock = threading.Lock()
         self.built = False
+        _execution_state(self)
         self.build_failed = False  # 与 EngineWorker 同一个判据
         self.last_build_descriptors: list = []
         self.last_build_runtime: dict | None = None
+        self.last_build_execution_id: str | None = None
         self.child_pid: int | None = None
         self.last_used = time.time()
         self._dead = False
@@ -2934,6 +3169,16 @@ class WorkerdWorker:
         payload: dict | None = None,
         idle_timeout: float | None = None,
     ) -> dict:
+        with _ExecutionWatch(self, op) as watch:
+            if watch.key is not None:
+                payload = {**(payload or {}), "execution_watch": watch.key}
+            return self._call_observed(
+                op, timeout, stem=stem, payload=payload, idle_timeout=idle_timeout, watch=watch
+            )
+
+    def _call_observed(
+        self, op, timeout, *, stem, payload, idle_timeout, watch: _ExecutionWatch
+    ) -> dict:
         from . import workerd_client
 
         payload = {**(payload or {}), **_run_payload(getattr(self, "run", None))}
@@ -2945,6 +3190,8 @@ class WorkerdWorker:
         for attempt in (0, 1):
             t_call = time.perf_counter()
             try:
+                watch.sent = True
+                watch.sent_ns = time.monotonic_ns()
                 resp = self._client.call(
                     op,
                     session_id=self._session_id,
@@ -2954,6 +3201,13 @@ class WorkerdWorker:
                     idle_timeout=idle_timeout,
                 )
             except workerd_client.WorkerdError as exc:
+                watch.acknowledge(exc.extra)
+                if exc.extra.get("request_sent") is False:
+                    watch.sent = False
+                if exc.code == "unknown_session":
+                    # This attempt did not reach a child. A failed reopen is not
+                    # an ambiguous user-code execution either.
+                    watch.sent = False
                 if exc.code == "unknown_session" and (
                     payload.get("require_built") or payload.get("snapshot_only")
                 ):
@@ -2979,6 +3233,7 @@ class WorkerdWorker:
                     self._open()
                     continue
                 raise self._to_worker_error(exc, is_build=op == "build") from exc
+            watch.acknowledge(resp)
             if resp.get("hash_mismatch"):
                 # 本次结果照常可用（worker 执行了），但两侧的规范化实现已经分叉
                 LOG.warning(
@@ -3036,6 +3291,7 @@ class WorkerdWorker:
             figcapture.clear_preview_poison(self.out_dir)
         self.last_build_descriptors = list(resp.get("descriptors") or [])
         self.last_build_runtime = _runtime_of(resp)
+        self.last_build_execution_id = resp.get("execution_id")
         self.last_build_artifact_probe = resp.get("artifact_probe")
         self.last_build_script_inputs = _script_inputs_of(resp)
         try:
@@ -3144,6 +3400,7 @@ class WorkerdWorker:
             pass
         finally:
             self._dead = True
+            _stopped_execution(self)
 
     def force_kill(self) -> bool:
         """硬关：workerd 当场杀掉 worker，不等在飞的活跑完。False 表示关停未确认，不能据此重跑。"""
@@ -3165,6 +3422,7 @@ class WorkerdWorker:
             return True
         finally:
             self._dead = True
+            _stopped_execution(self)
 
 
 class WorkerdUnavailable(RuntimeError):

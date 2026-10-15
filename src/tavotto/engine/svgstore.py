@@ -30,7 +30,7 @@ import re
 import stat
 import threading
 import time
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from . import atomicio, config, figcapture
 
@@ -110,6 +110,21 @@ def _key(identity: dict) -> str:
     return _digest(_json(identity))
 
 
+def _execution_owner(value) -> dict:
+    """The caller supplies provenance; opaque source IDs never imply ownership."""
+    if not isinstance(value, dict) or set(value) != {"script", "run_config"}:
+        raise ValueError("invalid Figure execution owner")
+    script = value["script"]
+    run_config = value["run_config"]
+    if not _text(script) or (run_config is not None and not _text(run_config)):
+        raise ValueError("invalid Figure execution owner")
+    normalized = figcapture.normalize_relative_script(script)
+    path = PurePosixPath(normalized)
+    if normalized != script or path.as_posix() != script or not path.parts or ".." in path.parts:
+        raise ValueError("Figure execution owner script must be a canonical project path")
+    return {"script": script, "run_config": run_config}
+
+
 def _directory(path: Path, *, create: bool = False) -> None:
     if create:
         path.mkdir(exist_ok=True)
@@ -117,7 +132,13 @@ def _directory(path: Path, *, create: bool = False) -> None:
         raise ValueError("unsafe Figure snapshot directory")
 
 
-def _root(*, create: bool, storage_root: Path | None = None, archived: bool = False) -> Path:
+def _root(
+    *,
+    create: bool,
+    storage_root: Path | None = None,
+    archived: bool = False,
+    metadata_only: bool = False,
+) -> Path:
     # The configured data parent is trusted and may itself resolve through an OS
     # alias (e.g. /var on macOS). No symlinks inside our store are admitted.
     if storage_root is None:
@@ -134,6 +155,12 @@ def _root(*, create: bool, storage_root: Path | None = None, archived: bool = Fa
     if create:
         parent.mkdir(parents=True, exist_ok=True)
     _directory(root, create=create)
+    if metadata_only:
+        for name in ("entries", "snapshots", "sources"):
+            directory = root / name
+            if directory.exists() or directory.is_symlink():
+                _directory(directory)
+        return root
     for name in ("blobs", "snapshots") if archived else ("entries", "blobs", "sources"):
         _directory(root / name, create=create)
     if storage_root is not None and not archived:
@@ -268,13 +295,15 @@ def _validate_record(record, *, expected: dict | None = None) -> dict:
     payload = record["payload"]
     if not isinstance(payload, dict) or record["sha256"] != _digest(_json(payload)):
         raise ValueError("Figure snapshot metadata checksum mismatch")
+    fields = {"version", "identity", "created_at", "pdf_artifact", "svg_artifact", "receipt"}
     if (
-        set(payload)
-        != {"version", "identity", "created_at", "pdf_artifact", "svg_artifact", "receipt"}
+        set(payload) not in (fields, fields | {"execution_owner"})
         or type(payload["version"]) is not int
         or payload["version"] != VERSION
     ):
         raise ValueError("unknown Figure snapshot metadata version")
+    if "execution_owner" in payload:
+        _execution_owner(payload["execution_owner"])
     identity = payload["identity"]
     if not isinstance(identity, dict) or set(identity) != {
         "project",
@@ -332,33 +361,38 @@ def _read_record(path: Path, *, expected: dict | None = None) -> dict:
 
 
 def _snapshot_id(payload: dict) -> str:
-    return _digest(
-        _json(
-            {
-                "identity": payload["identity"],
-                "receipt": _receipt_key(payload["receipt"]),
-                "pdf": payload["pdf_artifact"]["bytes_sha256"],
-                "svg": payload["svg_artifact"]["bytes_sha256"],
-            }
-        )
-    )
+    identity = {
+        "identity": payload["identity"],
+        "receipt": _receipt_key(payload["receipt"]),
+        "pdf": payload["pdf_artifact"]["bytes_sha256"],
+        "svg": payload["svg_artifact"]["bytes_sha256"],
+    }
+    # Omission preserves every pre-owner immutable reference verbatim. A new
+    # owner is bound to this exact receipt and pair, never attached retroactively.
+    if "execution_owner" in payload:
+        identity["execution_owner"] = _execution_owner(payload["execution_owner"])
+    return _digest(_json(identity))
 
 
 def _snapshot_reference(payload: dict) -> dict:
-    return {
+    reference = {
         "version": VERSION,
         "sourceId": payload["identity"]["source_id"],
         "patchHash": payload["identity"]["patch_hash"],
         "receiptId": payload["receipt"]["receipt_id"],
         "snapshotId": _snapshot_id(payload),
     }
+    if "execution_owner" in payload:
+        reference["executionOwner"] = _execution_owner(payload["execution_owner"])
+    return reference
 
 
 def validate_reference(reference) -> dict:
     """Validate the closed document/wire schema and detach it from its caller."""
+    fields = {"version", "sourceId", "patchHash", "receiptId", "snapshotId"}
     if (
         not isinstance(reference, dict)
-        or set(reference) != {"version", "sourceId", "patchHash", "receiptId", "snapshotId"}
+        or set(reference) not in (fields, fields | {"executionOwner"})
         or type(reference["version"]) is not int
         or reference["version"] != VERSION
         or not _text(reference["sourceId"])
@@ -367,7 +401,10 @@ def validate_reference(reference) -> dict:
         or not _hash(reference["snapshotId"])
     ):
         raise ValueError("invalid Figure snapshot reference")
-    return dict(reference)
+    detached = dict(reference)
+    if "executionOwner" in reference:
+        detached["executionOwner"] = _execution_owner(reference["executionOwner"])
+    return detached
 
 
 def _read_snapshot(path: Path, *, expected: dict | None = None) -> dict:
@@ -404,6 +441,7 @@ def _result(
         "pdf_artifact": payload["pdf_artifact"],
         "svg_artifact": payload["svg_artifact"],
         "receipt": payload["receipt"],
+        "execution_owner": payload.get("execution_owner"),
         "pdf": pdf,
         "svg": svg,
         "snapshot_ref": reference,
@@ -755,6 +793,7 @@ def save(
     svg: bytes,
     artifact: dict,
     receipt: dict,
+    execution_owner: dict | None = None,
     static_sha256: str | None = None,
     remap_fingerprint: str = "",
     activate: bool = False,
@@ -768,6 +807,8 @@ def save(
     is a project-contained directory validated by the application, never an
     arbitrary request path. Durable additions fail before changing established
     records when their final state would exceed the storage budget.
+    ``execution_owner`` is optional, explicit script/run-configuration provenance
+    bound to this receipt; it cannot include a launch spec or raw arguments.
     """
     identity = _identity(
         project_root,
@@ -797,6 +838,8 @@ def save(
         "svg_artifact": svg_artifact,
         "receipt": receipt,
     }
+    if execution_owner is not None:
+        payload["execution_owner"] = _execution_owner(execution_owner)
     encoded = _json({"payload": payload, "sha256": _digest(_json(payload))})
     if len(encoded) > MAX_METADATA_BYTES:
         raise ValueError("oversized Figure snapshot metadata")
@@ -954,7 +997,8 @@ def load_snapshot(
         payload = _read_snapshot(
             root / "snapshots" / (reference["snapshotId"] + ".json"), expected=identity
         )
-        if _snapshot_reference(payload) != reference:
+        expected_reference = _snapshot_reference(payload)
+        if any(value != expected_reference.get(key) for key, value in reference.items()):
             return None
         data = []
         for name, limit in (("pdf_artifact", MAX_PDF_BYTES), ("svg_artifact", MAX_SVG_BYTES)):
@@ -963,6 +1007,117 @@ def load_snapshot(
             if len(blob) != artifact["size_bytes"] or _digest(blob) != artifact["bytes_sha256"]:
                 return None
             data.append(blob)
-        return _result(root, payload, *data, reference=reference)
+        return _result(root, payload, *data, reference=expected_reference)
     except (OSError, ValueError, TypeError, RecursionError):
         return None
+
+
+def source_records_for_owner(
+    project_root,
+    script: str,
+    run_config: str | None,
+    *,
+    storage_root: Path | None = None,
+) -> list[dict]:
+    """List explicit historical ownership evidence, without loading any blobs.
+
+    This is not current execution authority. The caller observes a real new run
+    and decides which older receipts to revoke. Legacy ownerless records remain
+    readable by explicit reference, but are never attributed by parsing source
+    IDs or by guessing static filenames. Different run configurations are exact
+    separate owners, including when they once wrote the same static source ID.
+
+    ``current`` requires a matching owner in a current entry and its exact
+    source marker's full receipt key. Historical same-name files owned by
+    another execution are not promoted to current ownership.
+
+    Reads require no writable lock or source-marker/blob directory. A missing
+    store is empty; malformed, changed, unsafe or oversized metadata raises, so
+    callers cannot mistake an incomplete scan for proof of no previous outputs.
+    """
+    owner = _execution_owner({"script": script, "run_config": run_config})
+    project = _identity(
+        project_root,
+        "owner-scan",
+        "sha256:" + "0" * 64,
+        None,
+        "",
+        portable=storage_root is not None,
+    )["project"]
+    try:
+        root = _root(create=False, storage_root=storage_root, metadata_only=True)
+    except FileNotFoundError:
+        return []
+    paths = []
+    for directory, reader in (("entries", _read_record), ("snapshots", _read_snapshot)):
+        path = root / directory
+        try:
+            _directory(path)
+        except FileNotFoundError:
+            continue
+        paths.extend((item, reader) for item in _entries(path) if _METADATA.fullmatch(item.name))
+    if len(paths) > MAX_SNAPSHOTS:
+        raise ValueError("Figure ownership metadata budget exceeded")
+    total = 0
+    records = []
+    archives = set()
+    current_records = set()
+    for path, reader in paths:
+        record = reader(path)
+        records.append((path, record))
+        total += path.lstat().st_size
+        if total > MAX_TOTAL_BYTES:
+            raise ValueError("Figure ownership metadata budget exceeded")
+        if reader is _read_snapshot:
+            archives.add(_snapshot_id(record))
+        elif record.get("execution_owner") is not None:
+            current_records.add(_snapshot_id(record))
+    if storage_root is not None and not current_records.issubset(archives):
+        raise ValueError("Figure execution ownership archive is missing")
+    markers = {}
+    found = {}
+    now = time.time()
+    for path, record in records:
+        if record["identity"]["project"] != project or record.get("execution_owner") != owner:
+            continue
+        result = {"source_id": record["identity"]["source_id"], **_receipt_key(record["receipt"])}
+        key = _key(result)
+        result["current"] = False
+        if _snapshot_id(record) in current_records:
+            marker_path = _current_path(root, record["identity"])
+            if marker_path not in markers:
+                if len(markers) >= MAX_SOURCES:
+                    raise ValueError("Figure ownership source budget exceeded")
+                try:
+                    marker = _read_current(marker_path)
+                except FileNotFoundError:
+                    marker = None
+                if marker is not None:
+                    total += marker_path.lstat().st_size
+                    if total > MAX_TOTAL_BYTES:
+                        raise ValueError("Figure ownership metadata budget exceeded")
+                markers[marker_path] = marker
+            marker = markers[marker_path]
+            result["current"] = bool(
+                marker is not None
+                and marker["identity"] == _source_identity(record["identity"])
+                and marker["receipt"] == _receipt_key(record["receipt"])
+                and (
+                    storage_root is not None
+                    or (
+                        -60 <= now - record["created_at"] <= MAX_AGE_SECONDS
+                        and -60 <= now - marker["updated_at"] <= MAX_AGE_SECONDS
+                    )
+                )
+            )
+        if key not in found or result["current"]:
+            found[key] = result
+    return sorted(
+        found.values(),
+        key=lambda item: (
+            item["source_id"],
+            item["receipt_id"],
+            item["receipt_identity"],
+            item["generation"],
+        ),
+    )

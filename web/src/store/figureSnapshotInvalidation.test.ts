@@ -1,8 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import type { CapturedFigureDescriptor } from '@/lib/api'
 import { setCurrentProjectId } from '@/lib/session'
 import { invalidateFigureSnapshots, useDocumentStore } from './documentStore'
-import { invalidateCapturedFigureSnapshots } from './figureSnapshotInvalidation'
+import { invalidateFigureExecution } from './figureSnapshotInvalidation'
+import type { PanelObject } from '@/types/document'
+import { useRuntimeAssetStore } from './runtimeAssetStore'
 
 vi.mock('./documentStore', () => ({
   invalidateFigureSnapshots: vi.fn(),
@@ -13,44 +14,62 @@ vi.mock('./documentStore', () => ({
 beforeEach(() => {
   vi.clearAllMocks()
   setCurrentProjectId('project-a')
+  useRuntimeAssetStore.getState().clear()
 })
 
-describe('successful run invalidation covers the whole open document', () => {
-  it('maps sources from inactive canvases as well as the currently displayed one', () => {
-    vi.mocked(useDocumentStore.getState).mockReturnValue({
-      documentId: 'doc',
-      buildProject: () => ({ canvases: [
-        { objects: [{ type: 'panel', fileKind: 'pdf', fileId: 'Fig1.pdf', script: 'plot.py' }] },
-        { objects: [{ type: 'panel', fileKind: 'pdf', fileId: 'Fig2.pdf', script: 'plot.py' }] },
-      ] }),
-    } as never)
-    const descriptors = ['Fig1', 'Fig2'].map((stem) => ({
-      asset_id: `runtime:${stem}`, stem, script: 'plot.py', original_artifact: null,
-    })) as CapturedFigureDescriptor[]
-    invalidateCapturedFigureSnapshots(descriptors, 'project-a')
-    expect(invalidateFigureSnapshots).toHaveBeenCalledWith(
-      ['runtime:Fig1', 'runtime:Fig2', 'Fig1.pdf', 'Fig2.pdf'], 'project-a',
-    )
-  })
-
-  it('a completed run from another project does not even read the current document', () => {
-    invalidateCapturedFigureSnapshots([], 'project-b')
+describe('trusted execution invalidation covers the whole open document', () => {
+  it('an execution from another project does not read or modify the current document', () => {
+    invalidateFigureExecution({ scope: 'owner', script: 'plot.py', run_config: null,
+      source_ids: [], execution_id: 'foreign' }, 'project-b')
     expect(useDocumentStore.getState).not.toHaveBeenCalled()
     expect(invalidateFigureSnapshots).not.toHaveBeenCalled()
   })
 
-  it('also invalidates a removed disk panel retained only in another canvas undo history', () => {
+  it('same-token receipt deltas add exact retirements without replaying the owner', () => {
+    vi.mocked(useDocumentStore.getState).mockReturnValue({
+      documentId: 'doc', buildProject: () => ({ canvases: [{ objects: [] }] }),
+    } as never)
+    const fact = { scope: 'owner' as const, script: 'plot.py', run_config: 'A', source_ids: [], execution_id: 'delta' }
+    invalidateFigureExecution(fact, 'project-a')
+    invalidateFigureExecution({ ...fact, receipt_ids: ['retired-A'] }, 'project-a')
+    expect(invalidateFigureSnapshots).toHaveBeenLastCalledWith([], 'project-a', ['retired-A'])
+    invalidateFigureExecution({ ...fact, receipt_ids: ['retired-A'] }, 'project-a')
+    expect(invalidateFigureSnapshots).toHaveBeenCalledTimes(2)
+  })
+
+  it('retires the exact owner across inactive canvases/history, including omitted B; repeats are inert', () => {
+    const runtime = (fileId: string, runConfig = 'rc-one') => ({
+      type: 'panel', fileKind: 'runtime', fileId, overrides: [],
+      source: { script: 'plot.py', runConfig },
+    } as unknown as PanelObject)
     vi.mocked(useDocumentStore.getState).mockReturnValue({
       documentId: 'doc',
-      buildProject: () => ({ canvases: [{ objects: [] }] }),
-      past: [], future: [], txn: null,
-      canvasSessions: { old: { past: [{ inverse: [{ op: 'add', path: ['objects', 0], value: {
-        type: 'panel', fileId: 'Fig1.png', fileKind: 'raster', script: 'plot.py', overrides: [],
-      } }] }] } },
+      buildProject: () => ({ canvases: [
+        { objects: [runtime('runtime:A'), runtime('runtime:other-config', 'rc-two')] },
+        { objects: [runtime('runtime:B')] },
+      ] }),
+      past: [{ inverse: [{ value: runtime('runtime:removed-C') }] }],
     } as never)
-    invalidateCapturedFigureSnapshots([{
-      asset_id: 'runtime:Fig1', stem: 'Fig1', script: 'plot.py', original_artifact: 'Fig1.pdf',
-    }] as CapturedFigureDescriptor[], 'project-a')
-    expect(invalidateFigureSnapshots).toHaveBeenCalledWith(['runtime:Fig1', 'Fig1.pdf', 'Fig1.png'], 'project-a')
+    const execution = { scope: 'owner' as const, script: 'plot.py', run_config: 'rc-one', source_ids: [], execution_id: 'unit-owner-run-1' }
+    invalidateFigureExecution(execution, 'project-a')
+    expect(invalidateFigureSnapshots).toHaveBeenCalledExactlyOnceWith(['runtime:A', 'runtime:B', 'runtime:removed-C'], 'project-a', [], [{ script: 'plot.py', run_config: 'rc-one' }])
+    invalidateFigureExecution(execution, 'project-a')
+    expect(invalidateFigureSnapshots).toHaveBeenCalledTimes(1)
+    invalidateFigureExecution({ ...execution, execution_id: 'unit-owner-run-2' }, 'project-a')
+    expect(invalidateFigureSnapshots).toHaveBeenCalledTimes(2)
+  })
+
+  it('unknown-config native sources scope cannot retire the default owner', () => {
+    vi.mocked(useDocumentStore.getState).mockReturnValue({
+      documentId: 'doc', buildProject: () => ({ canvases: [{ objects: [
+        { type: 'panel', fileKind: 'runtime', fileId: 'runtime:default', source: { script: 'plot.py' } },
+        { type: 'panel', fileKind: 'pdf', fileId: String.raw`out\B.pdf`, script: 'plot.py' },
+      ] }] }),
+    } as never)
+    invalidateFigureExecution({ scope: 'sources', script: 'plot.py', run_config: null,
+      source_ids: ['runtime:native-old-B', 'out/B.pdf'], execution_id: 'unit-sources-run' }, 'project-a')
+    expect(invalidateFigureSnapshots).toHaveBeenCalledExactlyOnceWith(
+      ['runtime:native-old-B', 'out/B.pdf', String.raw`out\B.pdf`], 'project-a',
+    )
   })
 })

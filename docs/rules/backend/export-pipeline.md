@@ -56,14 +56,18 @@
     文档面板的 `figureSnapshot` 经请求字段 `figure_snapshot` 传入，闭集结构与存储合同见
     `layout-versions-and-documents.md`。冷态且当前回执未知时，明确引用可导出保存时的版本；
     **仅导 PDF 也必须按该引用取同一版本**，不能换成当前文件或另一次执行。已知新回执与引用不符时拒绝旧引用，
-    即使新一代捕获 / 持久化失败也不回退。引用无效或对应资产缺失同样报错，不静默换来源。
+    即使新一代捕获 / 持久化失败也不回退。旧无 owner 引用只可由注册表或缓存描述符正向重算
+    精确 runtime ID 的归属证据否决，不能借缓存授当前资格或猜静态来源。实际执行边界按 script + run_config 撤旧输出全集，不依赖新描述符非空；
+    执行中、零图、异常、部分捕获与开始后取消都不能借旧配对。safe 回执实例含真实 execution ID，workerd 透明重开也分代；
+    隔离写回 verify/one_shot 不替代当前执行。native 只用可信 target-start / 成功 release 的事实，不把 hello 当执行。
+    引用无效或对应资产缺失同样报错，不静默换来源；只读快照查询同步核在途执行事实。
     无 override 的静态 PDF 可由独立接纳且绑定到**当前精确字节 hash** 的配对授权，不依赖未知的运行回执；
     同名邻居文件、预览、任意旧导出不算，已知新回执仍须匹配。
     opaque PDF 的 SVG 逐格式失败并指出来源，其他成功格式照常交付，不整页转位图或少画面板。
     首次明确运行后自动尽力捕获全质量对，捕获失败不把成功运行或正常 PDF 导出变成失败；
     保存布局先冻结精确编辑变体再一次原子写正文，失败清除待保存正文的旧引用并返回来源 warning，布局仍可保存。
     持久化与旧项目恢复边界见 `layout-versions-and-documents.md`。
-    看护：`tests/test_export_svg.py`、`tests/test_worker_svg_pair.py`、`tests/test_svgstore.py`。
+    看护：`tests/test_export_svg.py`、`tests/test_svg_execution_lifecycle.py`、`tests/test_worker_svg_pair.py`、`tests/test_svgstore.py`。
   * **有限产物验证（U08，ADR 0068）**：`exportjob.run(inspect=…)` 在 `produce` 之后、提交点之前重新打开
     每个封口的临时文件（接线层 `engine/artifactinspect.py`，两个入口共用；检查器 `rendercore/inspector.py`），拒绝的那一项 `artifact_rejected` 不发布（partial 语义不变），合格的
     带 `Output.manifest`（`inspector.summary()` 投影，旧字段一个不动）。请求可带 `inspection: {mode: standard|strict,

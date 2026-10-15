@@ -1,7 +1,7 @@
 import { svgSnapshotWarning } from '@/lib/svgSnapshotWarning'
 import { artifactBackgroundOriginal, artifactRequestFields, artifactValidationIssue, ArtifactValidationError, FIGSIZE_SOURCE_POLICY, validationFromSource, beginArtifactEntry, artifactEntryCurrent, cancelArtifactEntry, deferArtifactEntry, refuseArtifactOperation, rememberArtifactEdit } from '@/lib/artifactValidation'
 import { currentProjectId } from '@/lib/session'
-import { invalidateExecutedFigureSnapshots } from '@/store/figureSnapshotInvalidation'
+import '@/store/figureSnapshotInvalidation'
 import { captureProjectEpoch } from '@/lib/projectEpoch'
 import { requestRender, type RenderPolicy } from '@/store/renderScheduler'
 import { isJustBakedBaselineOf } from '@/lib/bakedBaseline'
@@ -1280,7 +1280,6 @@ export async function rebuildPanel(panelId: string): Promise<RebuildOutcome> {
   finishActiveGesture()
   const fileId = panel.fileId
   const owner = captureProjectEpoch(() => useDocumentStore.getState().documentId)
-  const executionOwner = captureProjectEpoch()
   let invalidated = false
   if (!engineTransport()) {
     try {
@@ -1306,9 +1305,8 @@ export async function rebuildPanel(panelId: string): Promise<RebuildOutcome> {
   await store.render(fileId, fresh.overrides, undefined, 'immediate', undefined, fresh.artifactValidation)
   await settledRender(key)
   const succeeded = useRenderStore.getState().get(key).status === 'ready'
-  // A successful execution is a project fact even if the user changed documents during rendering.
-  // Only the original panel/UI result remains subject to the narrower document owner.
-  if (invalidated && succeeded && executionOwner.still()) invalidateExecutedFigureSnapshots([fileId], executionOwner.pj)
+  // renderStore consumes trusted execution evidence even for failed/zero-output runs.
+  // Render readiness and cache invalidation alone do not prove that user code executed.
   if (!owner.still()) return 'skipped'
   if (!succeeded) return 'failed'
   status(note(invalidated ? 'panelRebuilt' : 'panelRerenderedNoRerun'), 'done')

@@ -31,6 +31,10 @@ beforeEach(async () => {
   vi.stubGlobal('fetch', fetchMock)
   await s().switchDocument(emptyProject(), `snapshot-${Math.random()}`)
   s().commit(literal('panel'), (d) => { d.objects.push(panel()) })
+  // switchDocument flushes the previous fixture asynchronously. Finish that real disk queue before
+  // measuring this test's writes, including after cases that explicitly open another history doc.
+  await saveNow()
+  fetchMock.mockClear()
 })
 afterEach(async () => {
   stopAutosave?.()
@@ -84,6 +88,81 @@ function autosaveDisk() {
 }
 
 describe('immutable Figure snapshot association', () => {
+  it('verified snapshot owners isolate shared static sources and survive serialization', () => {
+    const ownerA = { script: 'plot.py', run_config: 'A' }
+    const ownerB = { script: 'plot.py', run_config: 'B' }
+    const a = { ...ref(), executionOwner: ownerA }
+    const b = { ...ref(), receiptId: 'receipt-B', executionOwner: ownerB }
+    s().commit(literal('shared'), (d) => { d.objects.push(panel('p2')) })
+    mergeSavedFigureSnapshots(saved(), { p1: a, p2: b })
+    expect(JSON.parse(JSON.stringify(s().buildProject())).canvases[0].objects[1].figureSnapshot.executionOwner).toEqual(ownerB)
+    invalidateFigureSnapshots(['one.pdf'], null, [], [ownerA])
+    expect(currentPanel().figureSnapshot).toBeUndefined()
+    expect((s().doc.objects[1] as PanelObject).figureSnapshot).toEqual(b)
+  })
+
+  it.each(['owner', 'receipt', 'native-receipt-fact'] as const)('corrects an actual late PUT retired by %s even with no live reference', async (kind) => {
+    const owner = { script: 'plot.py', run_config: 'A' }
+    const old = { ...ref(), executionOwner: owner }
+    const disk = autosaveDisk()
+    disk.snapshots({})
+    await saveNow()
+    stopAutosave = startAutosave()
+    disk.snapshots({ p1: old })
+    const release = disk.holdNext()
+    flushAutosave()
+    await vi.waitFor(() => expect(disk.puts).toHaveLength(2))
+    expect(currentPanel().figureSnapshot).toBeUndefined()
+    if (kind === 'owner') invalidateFigureSnapshots([], null, [], [owner])
+    else if (kind === 'receipt') invalidateFigureSnapshots([], null, ['receipt-one'])
+    else {
+      const { invalidateFigureExecution } = await import('./figureSnapshotInvalidation')
+      invalidateFigureExecution({
+        scope: 'sources', script: 'plot.py', run_config: null, source_ids: [],
+        receipt_ids: ['receipt-one'], execution_id: 'native-receipt-only-late-put',
+      }, null)
+    }
+    disk.snapshots({})
+    release()
+    await vi.waitFor(() => expect(disk.completed()).toBe(2))
+    expect(currentPanel().figureSnapshot).toBeUndefined()
+    expect(s().dirty).toBe(true)
+    await vi.waitFor(() => expect(disk.puts).toHaveLength(3), { timeout: 2200 })
+    await vi.waitFor(() => expect(s().saveState).toBe('saved'))
+    const reopened = await readAutosaveDoc(s().documentId)
+    expect((reopened.doc!.canvases[0].objects[0] as PanelObject).figureSnapshot).toBeUndefined()
+    await new Promise((resolve) => setTimeout(resolve, 1100))
+    expect(disk.puts).toHaveLength(3)
+  })
+
+  it('receipt retirement preserves another owner of the same static source and blocks late replies', () => {
+    const ownerB = { ...ref(), receiptId: 'receipt-owner-B', snapshotId: 'snapshot-owner-B' }
+    s().commit(literal('shared source'), (d) => { d.objects.push(panel('p2')) })
+    mergeSavedFigureSnapshots(saved(), { p1: ref(), p2: ownerB })
+    const beforeExecution = saved()
+    invalidateFigureSnapshots([], null, ['receipt-one'])
+    expect(currentPanel().figureSnapshot).toBeUndefined()
+    expect((s().doc.objects[1] as PanelObject).figureSnapshot).toEqual(ownerB)
+    mergeSavedFigureSnapshots(beforeExecution, { p1: ref(), p2: ownerB })
+    expect(currentPanel().figureSnapshot).toBeUndefined()
+    expect((s().doc.objects[1] as PanelObject).figureSnapshot).toEqual(ownerB)
+    mergeSavedFigureSnapshots(saved(), { p1: ownerB, p2: ownerB })
+    expect(currentPanel().figureSnapshot).toEqual(ownerB)
+  })
+
+  it('records a retired receipt even without any live ref, but does not replay into later history opens', async () => {
+    const context = saved()
+    invalidateFigureSnapshots([], null, ['receipt-one'])
+    mergeSavedFigureSnapshots(context, { p1: ref() })
+    expect(currentPanel().figureSnapshot).toBeUndefined()
+    const historical = structuredClone(s().buildProject())
+    ;(historical.canvases[0].objects[0] as PanelObject).figureSnapshot = ref()
+    await s().switchDocument(historical, 'explicit-historical')
+    expect(currentPanel().figureSnapshot).toEqual(ref())
+    s().commit(literal('move'), (d) => { d.objects[0].x += 1 })
+    expect(currentPanel().figureSnapshot).toEqual(ref())
+  })
+
   it('merges a verified save response without edits, history, dirty state or another autosave', async () => {
     stopAutosave = startAutosave()
     const before = s()

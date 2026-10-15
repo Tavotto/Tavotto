@@ -161,7 +161,14 @@ def _snapshot_project_files(proj: Path, source_ids: set[str]) -> set[str]:
                     "pdf_artifact",
                     "svg_artifact",
                     "receipt",
+                    "execution_owner",
                 }, path
+                assert set(record["execution_owner"]) == {"script", "run_config"}, path
+                assert record["execution_owner"]["script"] == "scaled.py", path
+                ref = record["execution_owner"]["run_config"]
+                assert ref is None or (
+                    isinstance(ref, str) and re.fullmatch(r"rc_[a-zA-Z0-9_-]+", ref)
+                ), path
                 assert set(record["receipt"]) == {
                     "receipt_identity",
                     "receipt_id",
@@ -199,6 +206,7 @@ def _snapshot_project_files(proj: Path, source_ids: set[str]) -> set[str]:
                             },
                             "pdf": record["pdf_artifact"]["bytes_sha256"],
                             "svg": record["svg_artifact"]["bytes_sha256"],
+                            "execution_owner": record["execution_owner"],
                         }
                     )
                     assert path.stem == snapshot_id, path
@@ -208,6 +216,7 @@ def _snapshot_project_files(proj: Path, source_ids: set[str]) -> set[str]:
                         "patchHash": identity["patch_hash"],
                         "receiptId": current["receipt_id"],
                         "snapshotId": snapshot_id,
+                        "executionOwner": record["execution_owner"],
                     }
                     assert svgstore.load_snapshot(
                         proj,

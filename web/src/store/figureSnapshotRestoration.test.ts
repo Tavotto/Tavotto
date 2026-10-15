@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createFakeBackend } from '@/test/fakeSessionBackend'
 import { emptyProject, type FigureSnapshot, type PanelObject, type ProjectDocument } from '@/types/document'
-import type { PreparationReport } from '@/lib/api'
+import type { FigureSnapshotInvalidation, PreparationReport } from '@/lib/api'
 
 vi.mock('@/lib/api', async (original) => ({
   ...(await original<typeof import('@/lib/api')>()),
@@ -21,7 +21,11 @@ const savedDocument = (): ProjectDocument => {
   pd.canvases[0].objects = [panel('p1', 'Fig1.png', 'plot.py'), panel('p2', 'Other.png', 'other.py')]
   return pd
 }
+const execution = (id = 'execution-one', sources = ['Fig1.png', 'Fig1.pdf']): FigureSnapshotInvalidation => ({
+  scope: 'owner', script: 'plot.py', run_config: null, source_ids: sources, execution_id: id,
+})
 const report = (completed = false): PreparationReport => ({
+  ...(completed ? { figure_snapshot_invalidation: execution() } : {}),
   session_version: 1, session_id: 'session-one', project_id: 'pj-a',
   target: { kind: 'script', script: 'plot.py', entry: '__main__', asset_id: null, stem: null },
   config_revision: 1, observation_seq: completed ? 2 : 1,
@@ -62,14 +66,15 @@ async function boot() {
   return { session, doc, prep, api, runs }
 }
 async function completeRun(app: Awaited<ReturnType<typeof boot>>, via: 'preparation' | 'script' = 'preparation') {
+  const completed = { ...report(true), figure_snapshot_invalidation: execution(`run-${Math.random()}`) }
   if (via === 'script') {
-    vi.mocked(app.api.probeScript).mockResolvedValueOnce({ descriptors: report(true).captured! } as never)
+    vi.mocked(app.api.probeScript).mockResolvedValueOnce({ descriptors: completed.captured!, figure_snapshot_invalidation: completed.figure_snapshot_invalidation } as never)
     await app.runs.useScriptRunStore.getState().run('plot.py', null)
     return
   }
   vi.mocked(app.api.createPreparationSession).mockResolvedValueOnce(report())
   await app.prep.useProjectPreparationStore.getState().open(app.prep.scriptTarget('plot.py'))
-  vi.mocked(app.api.actOnPreparationSession).mockResolvedValueOnce({ claimed: true, report: report(true) })
+  vi.mocked(app.api.actOnPreparationSession).mockResolvedValueOnce({ claimed: true, report: completed })
   await app.prep.useProjectPreparationStore.getState().act('script:plot.py', 'run')
 }
 
@@ -205,7 +210,7 @@ describe('successful executions survive document restoration', () => {
       const descriptor = { ...report(true).captured![0],
         asset_id: 'runtime:Fig1@rc1', run_config: 'rc1', stem: 'out/Fig1', original_artifact: artifact,
       }
-      vi.mocked(app.api.probeScript).mockResolvedValueOnce({ descriptors: [descriptor] } as never)
+      vi.mocked(app.api.probeScript).mockResolvedValueOnce({ descriptors: [descriptor], figure_snapshot_invalidation: { ...execution(artifact, [artifact]), run_config: 'rc1' } } as never)
       await app.runs.useScriptRunStore.getState().run('plot.py', 'rc1')
     }
     const restored = await app.doc.readAutosaveDoc('two-artifacts')

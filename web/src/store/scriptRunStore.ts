@@ -13,8 +13,9 @@ import {
 } from '@/lib/api'
 import { currentProjectId } from '@/lib/session'
 import { captureProjectEpoch } from '@/lib/projectEpoch'
+import { observeFigureExecution } from '@/lib/figureExecutionEvents'
 import { useAssetStore } from '@/store/assetStore'
-import { invalidateCapturedFigureSnapshots } from '@/store/figureSnapshotInvalidation'
+import '@/store/figureSnapshotInvalidation'
 import { msg, t as translate } from '@/i18n'
 import { useEnvStore } from '@/store/envStore'
 import { useRenderStore } from '@/store/renderStore'
@@ -281,6 +282,7 @@ export const useScriptRunStore = create<ScriptRunStore>((set, get) => ({
         ? probeWithDraft(probeScript, script)
         : probeScript(script, undefined, { run_config: runConfig }))
       if (stale()) return
+      observeFigureExecution(res.figure_snapshot_invalidation, projectAtStart)
       if (res.error?.code === INPUT_REMAP_CHANGED_CODE) {
         // 试运行途中改了指认，后端按代次丢弃了这次结果（ADR 0106 §五）：按新表重跑一次，不报失败
         set((s) => {
@@ -314,8 +316,6 @@ export const useScriptRunStore = create<ScriptRunStore>((set, get) => ({
         unlinkedStems: res.unlinked_stems ?? [],
         error: null,
       })
-      // Only this successful explicit execution retires the saved Figure. Passive re-renders do not.
-      invalidateCapturedFigureSnapshots(res.descriptors, projectAtStart)
       // 成功的副作用：素材库立即出现新东西。
       // - runtime 清单重取（RuntimeFigureAsset 卡片，含刚物化的描述符）；
       // - 面板列表重取（脚本这次也可能 savefig 出了真文件 / ⚡ 状态变化）；
@@ -336,6 +336,7 @@ export const useScriptRunStore = create<ScriptRunStore>((set, get) => ({
       }
     } catch (e) {
       if (stale()) return
+      if (e instanceof ApiError) observeFigureExecution(e.body.figure_snapshot_invalidation, projectAtStart)
       const error = probeErrorOf(e)
       settle({ phase: phaseOf(error), error, diagnostic: probeDiagnosticOf(e), descriptors: [] })
       handOffProbeGate(error, projectAtStart)

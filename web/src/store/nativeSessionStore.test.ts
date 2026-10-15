@@ -11,6 +11,7 @@ import {
   fetchRuntimeAssets,
   terminateNativeSession,
   type CapturedFigureDescriptor,
+  type FigureSnapshotInvalidation,
   type NativePending,
   type NativeSessionInfo,
   type NativeSessionState,
@@ -19,7 +20,7 @@ import { addRuntimePanelToCanvas } from '@/store/workspace'
 import { setCurrentProjectId } from '@/lib/session'
 import { beginRestore, resetRestoreGateForTests, settleRestore, useDocumentStore } from '@/store/documentStore'
 import { useFigurePickerStore } from '@/store/figurePickerStore'
-import { invalidateCapturedFigureSnapshots } from './figureSnapshotInvalidation'
+import { registerFigureExecutionConsumer } from '@/lib/figureExecutionEvents'
 import { nativePanelState, sortSessions, useNativeSessionStore } from './nativeSessionStore'
 
 vi.mock('@/lib/api', async (orig) => {
@@ -42,7 +43,9 @@ vi.mock('@/lib/api', async (orig) => {
 })
 
 vi.mock('@/store/workspace', () => ({ addRuntimePanelToCanvas: vi.fn() }))
-vi.mock('./figureSnapshotInvalidation', () => ({ invalidateCapturedFigureSnapshots: vi.fn() }))
+// These tests cover entry admission; replay deduplication belongs to the snapshot coordinator.
+vi.mock('./figureSnapshotInvalidation', () => ({}))
+const acceptedExecution = vi.fn()
 
 const mockPending = vi.mocked(fetchNativePending)
 const mockApprove = vi.mocked(approveNativePending)
@@ -118,6 +121,8 @@ const apiError = (code: string, status = 409, params?: Record<string, unknown>) 
 
 beforeEach(() => {
   vi.resetAllMocks()
+  store().clear()
+  registerFigureExecutionConsumer(acceptedExecution)
   resetRestoreGateForTests()
   setCurrentProjectId('p_a')
   useNativeSessionStore.setState({
@@ -332,93 +337,69 @@ describe('事件按 sequence 落地', () => {
   })
 })
 
+const executionFact = (over: Partial<FigureSnapshotInvalidation> = {}): FigureSnapshotInvalidation => ({
+  scope: 'sources', script: 'fig.py', run_config: null,
+  source_ids: ['runtime:fig.py#previous'], execution_id: 'native-execution-1',
+  ...over,
+})
+
 describe('屏障 → build → 图进画布', () => {
-  it('witnessed execution followed by a successful capture invalidates once, but barrier replay does not', async () => {
-    const barrier = session({ state: 'barrier', sequence: 4 })
-    mockBuild.mockResolvedValue({ session: barrier, stems: {}, descriptors: [desc('Fig1')] })
-    store().applyEvent(session({ state: 'running_script', sequence: 3 }))
-    store().applyEvent(barrier)
-    await vi.waitFor(() => expect(invalidateCapturedFigureSnapshots).toHaveBeenCalledExactlyOnceWith([desc('Fig1')], 'p_a'))
-    store().applyEvent(barrier)
-    await store().build(`native-${ID}`)
-    expect(invalidateCapturedFigureSnapshots).toHaveBeenCalledTimes(1)
+  it('a new native actual-start event is accepted even when the script fails without capture', () => {
+    store().applyEvent(session({ state: 'starting_python', sequence: 1 }))
+    const fact = executionFact()
+    store().applyEvent(session({
+      state: 'failed', sequence: 3, figure_snapshot_invalidation: fact,
+      script_error: { type: 'RuntimeError', message: 'failed' },
+    }))
+    expect(acceptedExecution).toHaveBeenCalledExactlyOnceWith(fact, 'p_a')
+    expect(mockBuild).not.toHaveBeenCalled()
   })
 
-  it('initial barrier replay and read-only session refresh keep saved snapshots', async () => {
-    const barrier = session({ state: 'barrier', sequence: 4 })
+  it('initial session facts stay passive baselines through later refreshes and builds', async () => {
+    const barrier = session({ state: 'barrier', sequence: 4, figure_snapshot_invalidation: executionFact() })
     mockBuild.mockResolvedValue({ session: barrier, stems: {}, descriptors: [desc('Fig1')] })
     mockList.mockResolvedValue({ sessions: [barrier] })
     await store().refresh('/p/figures')
     await store().build(`native-${ID}`)
-    expect(invalidateCapturedFigureSnapshots).not.toHaveBeenCalled()
+    expect(acceptedExecution).not.toHaveBeenCalled()
+    mockList.mockResolvedValue({ sessions: [{ ...barrier, sequence: 5 }] })
+    await store().refresh('/p/figures')
+    expect(acceptedExecution).not.toHaveBeenCalled()
     store().clear()
     store().applyEvent(barrier)
     await vi.waitFor(() => expect(mockBuild).toHaveBeenCalledTimes(2))
-    expect(invalidateCapturedFigureSnapshots).not.toHaveBeenCalled()
+    expect(acceptedExecution).not.toHaveBeenCalled()
   })
 
-  it('failed execution or failed build keeps snapshots; a successful build retry invalidates', async () => {
-    const barrier = session({ state: 'barrier', sequence: 4 })
-    mockBuild.mockRejectedValueOnce(new Error('capture failed'))
-    store().applyEvent(session({ state: 'running_script', sequence: 3 }))
-    store().applyEvent(barrier)
-    await vi.waitFor(() => expect(store().errors[`native-${ID}`]).not.toBeNull())
-    expect(invalidateCapturedFigureSnapshots).not.toHaveBeenCalled()
-    mockBuild.mockResolvedValue({ session: barrier, stems: {}, descriptors: [desc('Fig1')] })
-    await store().build(`native-${ID}`)
-    expect(invalidateCapturedFigureSnapshots).toHaveBeenCalledTimes(1)
-    vi.mocked(invalidateCapturedFigureSnapshots).mockClear()
-    store().applyEvent(session({ state: 'running_script', sequence: 5 }))
-    const failed = session({ state: 'barrier', sequence: 6, script_error: { type: 'RuntimeError', message: 'failed' } })
-    mockBuild.mockResolvedValue({ session: failed, stems: {}, descriptors: [desc('Fig1')] })
-    store().applyEvent(failed)
-    await vi.waitFor(() => expect(mockBuild).toHaveBeenCalledTimes(3))
-    expect(invalidateCapturedFigureSnapshots).not.toHaveBeenCalled()
+  it('a newer refresh admits a new token after the baseline even for a cancelled execution', async () => {
+    mockList.mockResolvedValueOnce({ sessions: [session({
+      state: 'running_script', sequence: 2, figure_snapshot_invalidation: executionFact(),
+    })] })
+    await store().refresh('/p/figures')
+    const nextFact = executionFact({ execution_id: 'native-execution-2' })
+    mockList.mockResolvedValueOnce({ sessions: [session({
+      state: 'ended', sequence: 5, cancelled: true, figure_snapshot_invalidation: nextFact,
+    })] })
+    await store().refresh('/p/figures')
+    expect(acceptedExecution).toHaveBeenCalledExactlyOnceWith(nextFact, 'p_a')
   })
 
-  it('successful native capture registers its fact once while placement waits for restoration', async () => {
-    const token = beginRestore('p_a')
-    settleRestore(token, {
-      state: 'needs_user',
-      issue: { pj: 'p_a', gen: token.gen, kind: 'index_degraded', ref: null, alternatives: [] },
-    })
+  it('running/barrier transitions and successful descriptors cannot replace a missing execution fact', async () => {
     const barrier = session({ state: 'barrier', sequence: 4 })
     mockBuild.mockResolvedValue({ session: barrier, stems: {}, descriptors: [desc('Fig1')] })
     store().applyEvent(session({ state: 'running_script', sequence: 3 }))
     store().applyEvent(barrier)
-    await vi.waitFor(() => expect(invalidateCapturedFigureSnapshots).toHaveBeenCalledExactlyOnceWith([desc('Fig1')], 'p_a'))
-    expect(mockAddPanel).not.toHaveBeenCalled()
-    settleRestore(beginRestore('p_a'), { state: 'ready', reason: 'empty' })
     await vi.waitFor(() => expect(mockAddPanel).toHaveBeenCalledTimes(1))
-    expect(invalidateCapturedFigureSnapshots).toHaveBeenCalledTimes(1)
+    expect(acceptedExecution).not.toHaveBeenCalled()
   })
 
-  it('accepted native capture remains registered but stale placement cannot revive after A → B → A', async () => {
-    beginRestore('p_a')
+  it('a build after an observed start accepts a trusted fact even with zero captured figures', async () => {
     const barrier = session({ state: 'barrier', sequence: 4 })
-    mockBuild.mockResolvedValue({ session: barrier, stems: {}, descriptors: [desc('Fig1')] })
+    const fact = executionFact({ source_ids: [], receipt_ids: ['receipt-old'] })
+    mockBuild.mockResolvedValue({ session: barrier, stems: {}, descriptors: [], figure_snapshot_invalidation: fact })
     store().applyEvent(session({ state: 'running_script', sequence: 3 }))
     store().applyEvent(barrier)
-    await vi.waitFor(() => expect(invalidateCapturedFigureSnapshots).toHaveBeenCalledTimes(1))
-    setCurrentProjectId('p_b')
-    setCurrentProjectId('p_a')
-    settleRestore(beginRestore('p_a'), { state: 'ready', reason: 'empty' })
-    await Promise.resolve()
-    expect(invalidateCapturedFigureSnapshots).toHaveBeenCalledTimes(1)
-    expect(mockAddPanel).not.toHaveBeenCalled()
-  })
-
-  it('late native build success cannot clear snapshots after a project A → B → A round trip', async () => {
-    const barrier = session({ state: 'barrier', sequence: 4 })
-    let resolve!: (r: Awaited<ReturnType<typeof buildNativeSession>>) => void
-    mockBuild.mockImplementationOnce(() => new Promise((r) => { resolve = r }))
-    store().applyEvent(session({ state: 'running_script', sequence: 3 }))
-    store().applyEvent(barrier)
-    setCurrentProjectId('p_b')
-    setCurrentProjectId('p_a')
-    resolve({ session: barrier, stems: {}, descriptors: [desc('Fig1')] })
-    await Promise.resolve()
-    expect(invalidateCapturedFigureSnapshots).not.toHaveBeenCalled()
+    await vi.waitFor(() => expect(acceptedExecution).toHaveBeenCalledExactlyOnceWith(fact, 'p_a'))
     expect(mockAddPanel).not.toHaveBeenCalled()
   })
 
@@ -426,13 +407,145 @@ describe('屏障 → build → 图进画布', () => {
     { script_error: { type: 'RuntimeError', message: 'failed' } },
     { terminal_error: { code: 'disconnected' } },
     { cancelled: true },
-  ])('a failed/cancelled execution reported by build preserves snapshots: %j', async (failure) => {
-    const barrier = session({ state: 'barrier', sequence: 4 })
-    mockBuild.mockResolvedValue({ session: { ...barrier, ...failure }, stems: {}, descriptors: [desc('Fig1')] })
+  ])('a trusted build fact is accepted after a failed/cancelled execution: %j', async (failure) => {
+    const barrier = session({ state: 'barrier', sequence: 4, ...failure })
+    const fact = executionFact()
+    mockBuild.mockResolvedValue({ session: barrier, stems: {}, descriptors: [], figure_snapshot_invalidation: fact })
     store().applyEvent(session({ state: 'running_script', sequence: 3 }))
     store().applyEvent(barrier)
+    await vi.waitFor(() => expect(store().busy[`native-${ID}`]).toBe(false))
+    expect(acceptedExecution).toHaveBeenCalledExactlyOnceWith(fact, 'p_a')
+  })
+
+  it('an HTTP build failure carries actual-start evidence independently of capture success', async () => {
+    const barrier = session({ state: 'barrier', sequence: 4 })
+    const fact = executionFact()
+    mockBuild.mockRejectedValueOnce(new ApiError('capture failed', 500, {
+      code: 'native_capture_failed', figure_snapshot_invalidation: fact,
+    }))
+    store().applyEvent(session({ state: 'running_script', sequence: 3 }))
+    store().applyEvent(barrier)
+    await vi.waitFor(() => expect(store().errors[`native-${ID}`]?.code).toBe('native_capture_failed'))
+    expect(acceptedExecution).toHaveBeenCalledExactlyOnceWith(fact, 'p_a')
+  })
+
+  it('a failed build without a trusted fact preserves snapshots', async () => {
+    mockBuild.mockRejectedValueOnce(new Error('capture failed'))
+    store().applyEvent(session({ state: 'running_script', sequence: 3 }))
+    store().applyEvent(session({ state: 'barrier', sequence: 4 }))
+    await vi.waitFor(() => expect(store().errors[`native-${ID}`]?.code).toBe('internal_error'))
+    expect(acceptedExecution).not.toHaveBeenCalled()
+  })
+
+  it.each(['success', 'failure'] as const)('a %s build response with a different execution token is rejected', async (outcome) => {
+    const expected = executionFact()
+    const wrong = executionFact({ execution_id: 'native-stale-execution', source_ids: ['runtime:other.py#wrong'] })
+    const barrier = session({ state: 'barrier', sequence: 4, figure_snapshot_invalidation: expected })
+    if (outcome === 'success') mockBuild.mockResolvedValueOnce({
+      session: barrier, stems: {}, descriptors: [], figure_snapshot_invalidation: wrong,
+    })
+    else mockBuild.mockRejectedValueOnce(new ApiError('capture failed', 500, {
+      code: 'native_capture_failed', figure_snapshot_invalidation: wrong,
+    }))
+    store().applyEvent(session({ state: 'running_script', sequence: 3 }))
+    store().applyEvent(barrier)
+    await vi.waitFor(() => expect(store().busy[`native-${ID}`]).toBe(false))
+    expect(acceptedExecution).toHaveBeenCalledExactlyOnceWith(expected, 'p_a')
+  })
+
+  it.each(['success', 'failure'] as const)('a late %s build cannot admit old receipt deltas after a newer session token', async (outcome) => {
+    const expected = executionFact()
+    const barrier = session({ state: 'barrier', sequence: 4, figure_snapshot_invalidation: expected })
+    let resolve!: (r: Awaited<ReturnType<typeof buildNativeSession>>) => void
+    let reject!: (e: unknown) => void
+    mockBuild.mockImplementationOnce(() => new Promise((yes, no) => { resolve = yes; reject = no }))
+    store().applyEvent(session({ state: 'running_script', sequence: 3 }))
+    store().applyEvent(barrier)
+    const next = executionFact({ execution_id: 'native-execution-2' })
+    store().applyEvent(session({ state: 'running_script', sequence: 5, figure_snapshot_invalidation: next }))
+    acceptedExecution.mockClear()
+    const late = { ...expected, receipt_ids: ['old-worker-late-receipt'] }
+    if (outcome === 'success') resolve({ session: barrier, stems: {}, descriptors: [], figure_snapshot_invalidation: late })
+    else reject(new ApiError('capture failed', 500, { figure_snapshot_invalidation: late }))
+    await vi.waitFor(() => expect(store().busy[`native-${ID}`]).toBe(false))
+    expect(acceptedExecution).not.toHaveBeenCalled()
+  })
+
+  it('a known current execution can add receipt evidence through a retry error after an earlier successful build', async () => {
+    const expected = executionFact()
+    const barrier = session({ state: 'barrier', sequence: 4, figure_snapshot_invalidation: expected })
+    mockBuild.mockResolvedValueOnce({ session: barrier, stems: {}, descriptors: [], figure_snapshot_invalidation: expected })
+    store().applyEvent(session({ state: 'running_script', sequence: 3 }))
+    store().applyEvent(barrier)
+    await vi.waitFor(() => expect(store().busy[`native-${ID}`]).toBe(false))
+    expect(store().executedBarrierSeq[`native-${ID}`]).toBe(-1)
+    acceptedExecution.mockClear()
+    const delta = { ...expected, receipt_ids: ['late-archive-receipt'] }
+    mockBuild.mockRejectedValueOnce(new ApiError('capture failed', 500, { figure_snapshot_invalidation: delta }))
+    await store().build(`native-${ID}`)
+    expect(acceptedExecution).toHaveBeenCalledExactlyOnceWith(delta, 'p_a')
+  })
+
+  it('unknown-config native execution keeps source scope and exact backend bindings', () => {
+    const fact = executionFact({ source_ids: ['runtime:fig.py#Fig1@variant-a'], receipt_ids: ['receipt-a'] })
+    store().applyEvent(session({ state: 'starting_python', sequence: 1 }))
+    store().applyEvent(session({ state: 'running_script', sequence: 2, figure_snapshot_invalidation: fact }))
+    expect(acceptedExecution).toHaveBeenCalledExactlyOnceWith(fact, 'p_a')
+    store().applyEvent(session({ state: 'running_script', sequence: 2, figure_snapshot_invalidation: fact }))
+    expect(acceptedExecution).toHaveBeenCalledTimes(1)
+    // The same execution can gain bindings later; deduplication belongs to the coordinator.
+    const enriched = { ...fact, source_ids: [...fact.source_ids, 'runtime:fig.py#Fig2@variant-a'] }
+    store().applyEvent(session({ state: 'running_script', sequence: 3, figure_snapshot_invalidation: enriched }))
+    expect(acceptedExecution).toHaveBeenLastCalledWith(enriched, 'p_a')
+  })
+
+  it('actual execution is admitted while placement waits for restoration', async () => {
+    const token = beginRestore('p_a')
+    settleRestore(token, {
+      state: 'needs_user',
+      issue: { pj: 'p_a', gen: token.gen, kind: 'index_degraded', ref: null, alternatives: [] },
+    })
+    const barrier = session({ state: 'barrier', sequence: 4 })
+    const fact = executionFact()
+    mockBuild.mockResolvedValue({ session: barrier, stems: {}, descriptors: [desc('Fig1')], figure_snapshot_invalidation: fact })
+    store().applyEvent(session({ state: 'running_script', sequence: 3 }))
+    store().applyEvent(barrier)
+    await vi.waitFor(() => expect(acceptedExecution).toHaveBeenCalledExactlyOnceWith(fact, 'p_a'))
+    expect(mockAddPanel).not.toHaveBeenCalled()
+    settleRestore(beginRestore('p_a'), { state: 'ready', reason: 'empty' })
     await vi.waitFor(() => expect(mockAddPanel).toHaveBeenCalledTimes(1))
-    expect(invalidateCapturedFigureSnapshots).not.toHaveBeenCalled()
+    expect(acceptedExecution).toHaveBeenCalledTimes(1)
+  })
+
+  it('an accepted fact remains registered but stale placement cannot revive after A → B → A', async () => {
+    beginRestore('p_a')
+    const barrier = session({ state: 'barrier', sequence: 4 })
+    mockBuild.mockResolvedValue({
+      session: barrier, stems: {}, descriptors: [desc('Fig1')], figure_snapshot_invalidation: executionFact(),
+    })
+    store().applyEvent(session({ state: 'running_script', sequence: 3 }))
+    store().applyEvent(barrier)
+    await vi.waitFor(() => expect(acceptedExecution).toHaveBeenCalledTimes(1))
+    setCurrentProjectId('p_b')
+    setCurrentProjectId('p_a')
+    settleRestore(beginRestore('p_a'), { state: 'ready', reason: 'empty' })
+    await Promise.resolve()
+    expect(acceptedExecution).toHaveBeenCalledTimes(1)
+    expect(mockAddPanel).not.toHaveBeenCalled()
+  })
+
+  it('late native build evidence is discarded after a project A → B → A round trip', async () => {
+    const barrier = session({ state: 'barrier', sequence: 4 })
+    let resolve!: (r: Awaited<ReturnType<typeof buildNativeSession>>) => void
+    mockBuild.mockImplementationOnce(() => new Promise((r) => { resolve = r }))
+    store().applyEvent(session({ state: 'running_script', sequence: 3 }))
+    store().applyEvent(barrier)
+    setCurrentProjectId('p_b')
+    setCurrentProjectId('p_a')
+    resolve({ session: barrier, stems: {}, descriptors: [desc('Fig1')], figure_snapshot_invalidation: executionFact() })
+    await Promise.resolve()
+    expect(acceptedExecution).not.toHaveBeenCalled()
+    expect(mockAddPanel).not.toHaveBeenCalled()
   })
 
   it('恢复待用户处理时保留原生交接，打开文档之后才放入一次', async () => {

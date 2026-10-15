@@ -54,7 +54,7 @@ import hashlib
 import json
 import os
 
-from . import execspec, figcapture
+from . import execspec, executionfact, figcapture
 
 #: 回执形态的版本。加可选字段不升；改语义 / 删字段才升。
 RECEIPT_VERSION = 1
@@ -197,7 +197,7 @@ class ExecutionReceipt:
     launcher: dict | None = None
     #: 起会话那一刻的环境事实（P09）：`{"generation": …, "env_state": …}`。成功记录用它而不是收口时的值。私有，不进公开投影。
     session_env: dict | None = None
-    #: 执行实例的私有键：native 会话 id + 屏障代次；safe 留空。
+    #: 执行实例的私有键：native 会话 id + 屏障代次；safe 实际执行 id（旧 worker 留空）。
     #: 两次启动或用户代码续跑后的不同 Figure 不能得到同一个 `receipt_id`。
     instance: str = ""
 
@@ -467,6 +467,12 @@ def from_worker(
         if isinstance(build_resp, dict)
         else ()
     )
+    # Supervisor child restarts and retries can reuse the pool generation.
+    execution_id = (
+        build_resp["execution_id"]
+        if isinstance(build_resp, dict) and "execution_id" in build_resp
+        else getattr(worker, "execution_id", None)
+    )
     return ExecutionReceipt(
         profile=spec.profile,
         control_plane=control_plane,
@@ -484,6 +490,7 @@ def from_worker(
         binding=dict(binding) if isinstance(binding, dict) else None,
         launcher=_launcher_public(worker),
         session_env=_session_env(worker),
+        instance=execution_id if executionfact.valid_id(execution_id) else "",
     )
 
 

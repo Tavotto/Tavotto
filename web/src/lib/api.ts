@@ -2423,6 +2423,7 @@ export interface Manifest {
 }
 
 export interface EngineRenderResponse {
+  figure_snapshot_invalidation?: FigureSnapshotInvalidation
   artifact_source?: unknown
   rev: number
   manifest: Manifest
@@ -2469,6 +2470,7 @@ export interface EngineRenderResponse {
 }
 
 export class EngineError extends Error {
+  figureSnapshotInvalidation?: FigureSnapshotInvalidation
   params?: Record<string, unknown>
   retryable?: boolean
   traceback: string
@@ -2520,6 +2522,7 @@ export class EngineError extends Error {
     projectEnv?: ProjectEnvFailure,
     dependencyRepair?: DependencyRepairOffer,
     extra?: {
+      figureSnapshotInvalidation?: FigureSnapshotInvalidation
       params?: Record<string, unknown>
       retryable?: boolean
       installRoute?: string
@@ -2530,6 +2533,7 @@ export class EngineError extends Error {
     },
   ) {
     super(message)
+    this.figureSnapshotInvalidation = extra?.figureSnapshotInvalidation
     this.params = extra?.params
     this.retryable = extra?.retryable
     this.installRoute = extra?.installRoute
@@ -2593,6 +2597,7 @@ export async function engineRender(
       body.project_env as ProjectEnvFailure | undefined,
       body.dependency_repair as DependencyRepairOffer | undefined,
       {
+        figureSnapshotInvalidation: body.figure_snapshot_invalidation as FigureSnapshotInvalidation | undefined,
         params: body.params as Record<string, unknown> | undefined,
         retryable: body.retryable as boolean | undefined,
         installRoute: body.install_route as string | undefined,
@@ -3216,6 +3221,7 @@ interface ProjectScoped {
 }
 
 export type ServerEvent =
+  | ({ kind: 'figure.snapshot_invalidated'; pj: string } & FigureSnapshotInvalidation)
   | ({ kind: 'render.preparing'; id: string } & ProjectScoped)
   | ({ kind: 'render.started'; id: string; cost?: string; cold?: boolean } & ProjectScoped)
   | ({ kind: 'render.done'; id: string; rev?: number } & ProjectScoped)
@@ -3346,6 +3352,7 @@ export interface AiRefreshOutcome {
 }
 
 const EVENT_KINDS = [
+  'figure.snapshot_invalidated',
   'render.preparing',
   'render.started',
   'render.done',
@@ -5149,6 +5156,16 @@ export const scanRegistry = () =>
     scripts: Record<string, RegistryEntry>
   }>('/api/registry/scan', { method: 'POST' })
 
+/** Backend-witnessed execution retires this owner's previous output set, even on partial failure. */
+export interface FigureSnapshotInvalidation {
+  scope: 'owner' | 'sources'
+  script: string
+  run_config: string | null
+  source_ids: string[]
+  receipt_ids?: string[]
+  execution_id: string
+}
+
 /** 一张捕获 Figure 的结构化描述（`engine/figcapture.py` 的唯一实现，原样透传） */
 export interface CapturedFigureDescriptor {
   asset_id: string
@@ -5214,6 +5231,7 @@ export interface ProbeError {
 }
 
 export interface ProbeResult {
+  figure_snapshot_invalidation?: FigureSnapshotInvalidation
   script: string
   entry: string | null
   stems: string[]
@@ -5488,6 +5506,7 @@ export interface PreparationAction {
 export type RasterLibrary = 'pillow' | 'opencv' | 'imageio' | 'skimage'
 
 export interface PreparationReport {
+  figure_snapshot_invalidation?: FigureSnapshotInvalidation
   session_version: number
   session_id: string
   project_id: string
@@ -5918,6 +5937,7 @@ export interface NativePending {
 
 /** 一条 native 会话对外的全部状态（`NativeSession.public_state()` 原样）。 */
 export interface NativeSessionInfo {
+  figure_snapshot_invalidation?: FigureSnapshotInvalidation
   session_id: string
   project_root: string
   interpreter: string
@@ -5963,6 +5983,7 @@ export interface NativePendingInput {
 
 /** 一次 build 的结果：stems + 描述符 + （如实报的）冲突。 */
 export interface NativeBuildResult {
+  figure_snapshot_invalidation?: FigureSnapshotInvalidation
   session: NativeSessionInfo
   stems: Record<string, unknown>
   descriptors: CapturedFigureDescriptor[]

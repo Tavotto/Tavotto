@@ -702,7 +702,7 @@ def _load_snapshot(store, durable, reference, **kwargs):
     return svgstore.load_snapshot(store[0], reference, **args)
 
 
-def _expected_reference(args, *, source=SOURCE, patch=PATCH, static=None, remap=""):
+def _expected_reference(args, *, source=SOURCE, patch=PATCH, static=None, remap="", owner=None):
     # This is the published ID contract, independent of mutable timestamps.
     identity = {
         "project": ".",
@@ -720,7 +720,9 @@ def _expected_reference(args, *, source=SOURCE, patch=PATCH, static=None, remap=
         "pdf": hashlib.sha256(args["pdf"]).hexdigest(),
         "svg": hashlib.sha256(args["svg"]).hexdigest(),
     }
-    return {
+    if owner is not None:
+        data["execution_owner"] = owner
+    reference = {
         "version": 1,
         "sourceId": source,
         "patchHash": patch,
@@ -729,6 +731,9 @@ def _expected_reference(args, *, source=SOURCE, patch=PATCH, static=None, remap=
             json.dumps(data, sort_keys=True, ensure_ascii=False, separators=(",", ":")).encode()
         ).hexdigest(),
     }
+    if owner is not None:
+        reference["executionOwner"] = owner
+    return reference
 
 
 def test_durable_reference_content_address_and_immutable_repeat(store, durable, monkeypatch):
@@ -1108,3 +1113,377 @@ def test_concurrent_durable_saves_keep_every_issued_reference(store, durable):
         assert _load_snapshot(store, durable, item["snapshot_ref"]) == item
     assert len(list((durable / "entries").glob("*.json"))) == 1
     assert len(list((durable / "snapshots").glob("*.json"))) == 12
+
+
+OWNER = {"script": "plots/#图~case.py", "run_config": None}
+
+
+def _owner_records(store, durable, owner=OWNER):
+    return svgstore.source_records_for_owner(
+        store[0], owner["script"], owner["run_config"], storage_root=durable
+    )
+
+
+def _source_receipt(source=SOURCE, generation=1, current=True):
+    return {
+        "source_id": source,
+        "receipt_id": RECEIPT_ID,
+        "receipt_identity": RECEIPT_IDENTITY,
+        "generation": generation,
+        "current": current,
+    }
+
+
+@pytest.mark.parametrize("persistent", [False, True])
+def test_explicit_owner_roundtrips_detached_and_is_bound_to_receipt(store, durable, persistent):
+    root = durable if persistent else None
+    owner = dict(OWNER)
+    saved = _save(store, execution_owner=owner, storage_root=root)
+    owner["script"] = "changed.py"
+    assert saved["execution_owner"] == OWNER
+    assert svgstore.load(store[0], SOURCE, PATCH, storage_root=root) == saved
+    assert _owner_records(store, root) == [_source_receipt()]
+    if persistent:
+        assert _load_snapshot(store, root, saved["snapshot_ref"]) == saved
+        assert saved["snapshot_ref"] == _expected_reference(_args(), owner=OWNER)
+        reference = saved["snapshot_ref"]
+        second_args = _args(generation=2)
+        second_args["artifact"]["receipt_id"] = "sha256:" + "d" * 64
+        second_args["receipt"]["receipt_id"] = "sha256:" + "d" * 64
+        second = _save(
+            store, **second_args, execution_owner=OWNER, storage_root=root, activate=True
+        )
+        assert second["snapshot_ref"] == _expected_reference(second_args, owner=OWNER)
+        assert second["snapshot_ref"] != reference
+        assert _load_snapshot(store, root, reference) == saved
+        assert _owner_records(store, root) == [
+            _source_receipt(current=False),
+            {**_source_receipt(generation=2), "receipt_id": "sha256:" + "d" * 64},
+        ]
+
+
+def test_ownerless_records_keep_original_id_and_never_gain_inferred_ownership(store, durable):
+    old = _save(store, storage_root=durable)
+    assert old["execution_owner"] is None
+    assert old["snapshot_ref"] == _expected_reference(_args())
+    assert _owner_records(store, durable, {"script": "图.py", "run_config": None}) == []
+    assert _owner_records(store, durable) == []
+    assert _load_snapshot(store, durable, old["snapshot_ref"]) == old
+    # Adding independently known provenance is a new immutable version, not a
+    # mutation of the legacy reference, despite matching bytes and receipt.
+    new = _save(store, storage_root=durable, execution_owner=OWNER)
+    assert new["snapshot_ref"] != old["snapshot_ref"]
+    assert _load_snapshot(store, durable, old["snapshot_ref"]) == old
+    assert _load_snapshot(store, durable, new["snapshot_ref"]) == new
+    assert _owner_records(store, durable) == [_source_receipt()]
+
+
+def test_owner_query_keeps_two_configs_scripts_and_exact_static_ids_separate(store, durable):
+    variants = [
+        (OWNER, "output/figure B.pdf"),
+        ({**OWNER, "run_config": "rc_alpha"}, "opaque:α#not-the-script~name"),
+        ({**OWNER, "run_config": "rc_beta"}, "opaque:β#same-prefix"),
+        ({"script": "different.py", "run_config": None}, "output/another.pdf"),
+    ]
+    for owner, source in variants:
+        _save(store, source=source, execution_owner=owner, storage_root=durable)
+    for owner, source in variants:
+        assert _owner_records(store, durable, owner) == [_source_receipt(source)]
+    assert _owner_records(store, durable, {**OWNER, "run_config": "rc_missing"}) == []
+    # A shared filename is evidence for both historical owners, not a reason to
+    # merge their receipt keys or infer the current owner from that filename.
+    _save(
+        store,
+        source="output/figure B.pdf",
+        **_args(source="output/figure B.pdf", generation=2),
+        execution_owner={**OWNER, "run_config": "rc_alpha"},
+        storage_root=durable,
+        activate=True,
+    )
+    assert _owner_records(store, durable) == [_source_receipt("output/figure B.pdf", current=False)]
+    assert _owner_records(store, durable, {**OWNER, "run_config": "rc_alpha"}) == [
+        _source_receipt("opaque:α#not-the-script~name"),
+        _source_receipt("output/figure B.pdf", generation=2),
+    ]
+
+
+def test_owner_query_reads_only_metadata_after_project_move_and_cache_clear(
+    store, durable, tmp_path, monkeypatch
+):
+    _save(store, source="output/B.pdf", execution_owner=OWNER, storage_root=durable)
+    svgstore.activate(
+        store[0], "output/B.pdf", _args(generation=2)["receipt"], storage_root=durable
+    )
+    moved = tmp_path / "moved"
+    store[0].rename(moved)
+    root = moved / "tavottofile" / "figure_snapshots"
+    shutil.rmtree(root / "sources")
+    shutil.rmtree(root / "blobs")
+    (root / ".lock").unlink()
+    monkeypatch.setenv("TAVOTTO_DATA_DIR", str(tmp_path / "cleared-cache"))
+    original = svgstore._read_file
+    opened = []
+
+    def only_metadata(path, limit):
+        assert path.parent.name in {"entries", "snapshots"}
+        opened.append(path)
+        return original(path, limit)
+
+    monkeypatch.setattr(svgstore, "_read_file", only_metadata)
+    before = _tree_bytes(root)
+    assert svgstore.source_records_for_owner(moved, OWNER["script"], None, storage_root=root) == [
+        _source_receipt("output/B.pdf", current=False)
+    ]
+    assert opened and _tree_bytes(root) == before
+    assert not (tmp_path / "cleared-cache").exists()
+    assert not (root / ".lock").exists()
+
+
+def test_owner_query_deduplicates_variants_and_isolates_default_cache_project(store, durable):
+    _save(store, execution_owner=OWNER)
+    _save(store, patch="sha256:" + "c" * 64, execution_owner=OWNER)
+    other = store[0] / "other-project"
+    svgstore.save(
+        other, "other-source", PATCH, **_args(source="other-source"), execution_owner=OWNER
+    )
+    assert _owner_records(store, None) == [_source_receipt()]
+    assert svgstore.source_records_for_owner(other, OWNER["script"], None) == [
+        _source_receipt("other-source")
+    ]
+    _save(store, execution_owner=OWNER, storage_root=durable)
+    _save(store, patch="sha256:" + "c" * 64, execution_owner=OWNER, storage_root=durable)
+    assert _owner_records(store, durable) == [_source_receipt()]
+
+
+@pytest.mark.parametrize(
+    "owner",
+    [
+        {},
+        {"script": "plot.py"},
+        {"script": "plot.py", "run_config": None, "argv": ["secret"]},
+        {"script": "plot.py", "run_config": None, "spec": {}},
+        {"script": "plot.py", "run_config": ["secret"]},
+        {"script": "plot.py", "run_config": {"argv": ["secret"]}},
+        {"script": "plot.py", "run_config": ""},
+        {"script": "plot.py", "run_config": "bad\0ref"},
+        {"script": "plot.py", "run_config": "x" * 16385},
+        {"script": "/private/plot.py", "run_config": None},
+        {"script": "C:\\private\\plot.py", "run_config": None},
+        {"script": "plots\\plot.py", "run_config": None},
+        {"script": "../plot.py", "run_config": None},
+        {"script": "plots/../plot.py", "run_config": None},
+        {"script": "./plot.py", "run_config": None},
+        {"script": "plots//plot.py", "run_config": None},
+        {"script": "plots/./plot.py", "run_config": None},
+        {"script": "plot.py/", "run_config": None},
+        {"script": ".", "run_config": None},
+        {"script": "", "run_config": None},
+        {"script": " ", "run_config": None},
+        {"script": "bad\0.py", "run_config": None},
+        {"script": "x" * 16385, "run_config": None},
+        {"script": [], "run_config": None},
+        [],
+        "plot.py",
+    ],
+)
+def test_execution_owner_closed_private_data_free_schema_rejected_before_write(
+    store, durable, owner
+):
+    with pytest.raises(ValueError):
+        _save(store, storage_root=durable, execution_owner=owner)
+    assert not durable.exists()
+
+
+@pytest.mark.parametrize("resign", [False, True])
+def test_owner_tampering_in_archive_is_detected_and_query_does_not_silently_skip(
+    store, durable, resign
+):
+    saved = _save(store, storage_root=durable, execution_owner=OWNER)
+    path = durable / "snapshots" / (saved["snapshot_ref"]["snapshotId"] + ".json")
+    record = json.loads(path.read_bytes())
+    record["payload"]["execution_owner"]["run_config"] = "rc_other"
+    if resign:
+        record["sha256"] = svgstore._digest(svgstore._json(record["payload"]))
+    path.write_bytes(svgstore._json(record))
+    assert _load_snapshot(store, durable, saved["snapshot_ref"]) is None
+    before = _tree_bytes(durable)
+    with pytest.raises(ValueError):
+        _owner_records(store, durable)
+    assert _tree_bytes(durable) == before
+
+
+@pytest.mark.parametrize("budget", ["MAX_SNAPSHOTS", "MAX_TOTAL_BYTES", "MAX_METADATA_BYTES"])
+def test_owner_query_budget_errors_are_not_reported_as_empty_history(
+    store, durable, monkeypatch, budget
+):
+    _save(store, execution_owner=OWNER, storage_root=durable)
+    monkeypatch.setattr(svgstore, budget, 1)
+    with pytest.raises(ValueError):
+        _owner_records(store, durable)
+
+
+def test_owner_query_missing_store_is_empty_without_side_effects(store, durable):
+    assert _owner_records(store, durable) == []
+    assert _owner_records(store, None) == []
+    assert not durable.exists() and not store[1].exists()
+
+
+@pytest.mark.parametrize("target", ["root", "entries", "snapshots", "metadata"])
+def test_owner_query_rejects_symlinks_and_does_not_mutate(store, durable, tmp_path, target):
+    saved = _save(store, execution_owner=OWNER, storage_root=durable)
+    path = {
+        "root": durable,
+        "entries": durable / "entries",
+        "snapshots": durable / "snapshots",
+        "metadata": durable / "snapshots" / (saved["snapshot_ref"]["snapshotId"] + ".json"),
+    }[target]
+    outside = tmp_path / "outside"
+    path.rename(outside)
+    _symlink(path, outside, directory=outside.is_dir())
+    before = _tree_bytes(outside) if outside.is_dir() else outside.read_bytes()
+    with pytest.raises(ValueError):
+        _owner_records(store, durable)
+    assert (_tree_bytes(outside) if outside.is_dir() else outside.read_bytes()) == before
+
+
+def test_current_owner_changes_cannot_rewrite_previously_issued_archive(store, durable):
+    first = _save(store, storage_root=durable, execution_owner=OWNER)
+    other_owner = {**OWNER, "run_config": "rc_other"}
+    second = _save(store, storage_root=durable, execution_owner=other_owner)
+    assert first["snapshot_ref"] != second["snapshot_ref"]
+    assert (
+        svgstore.load(store[0], SOURCE, PATCH, storage_root=durable)["execution_owner"]
+        == other_owner
+    )
+    assert _load_snapshot(store, durable, first["snapshot_ref"])["execution_owner"] == OWNER
+    assert _load_snapshot(store, durable, second["snapshot_ref"])["execution_owner"] == other_owner
+
+
+@pytest.mark.parametrize("field", ["receipt_id", "receipt_identity", "generation"])
+def test_owner_query_current_requires_entire_marker_receipt_key(store, durable, field):
+    _save(store, storage_root=durable, execution_owner=OWNER)
+    assert _owner_records(store, durable) == [_source_receipt()]
+    path = next((durable / "sources").glob("*.json"))
+    record = json.loads(path.read_bytes())
+    record["payload"]["receipt"][field] = 2 if field == "generation" else "sha256:" + "c" * 64
+    record["sha256"] = svgstore._digest(svgstore._json(record["payload"]))
+    path.write_bytes(svgstore._json(record))
+    assert _owner_records(store, durable) == [_source_receipt(current=False)]
+
+
+def test_owner_query_same_receipt_different_owner_marks_only_actual_current_entry(store, durable):
+    other_owner = {**OWNER, "run_config": "rc_other"}
+    _save(store, storage_root=durable, execution_owner=OWNER)
+    _save(store, storage_root=durable, execution_owner=other_owner)
+    assert _owner_records(store, durable) == [_source_receipt(current=False)]
+    assert _owner_records(store, durable, other_owner) == [_source_receipt()]
+
+
+def test_owner_query_marker_missing_is_history_and_corrupt_marker_raises(store, durable):
+    _save(store, storage_root=durable, execution_owner=OWNER)
+    path = next((durable / "sources").glob("*.json"))
+    original = path.read_bytes()
+    path.unlink()
+    assert _owner_records(store, durable) == [_source_receipt(current=False)]
+    path.write_bytes(b"not JSON")
+    before = _tree_bytes(durable)
+    with pytest.raises(ValueError):
+        _owner_records(store, durable)
+    assert _tree_bytes(durable) == before
+    path.write_bytes(original)
+    assert _owner_records(store, durable) == [_source_receipt()]
+
+
+def test_owner_query_reads_current_marker_without_touching_blobs_or_writable_lock(
+    store, durable, monkeypatch
+):
+    _save(store, storage_root=durable, execution_owner=OWNER)
+    shutil.rmtree(durable / "blobs")
+    (durable / ".lock").unlink()
+    original_read = svgstore._read_file
+    original_open = os.open
+    opened = []
+
+    def metadata(path, limit):
+        assert path.parent.name in {"entries", "snapshots", "sources"}
+        opened.append(path.parent.name)
+        return original_read(path, limit)
+
+    def readonly(path, flags, *args, **kwargs):
+        assert not flags & (os.O_CREAT | os.O_RDWR | os.O_WRONLY)
+        return original_open(path, flags, *args, **kwargs)
+
+    monkeypatch.setattr(svgstore, "_read_file", metadata)
+    monkeypatch.setattr(svgstore.os, "open", readonly)
+    before = _tree_bytes(durable)
+    assert _owner_records(store, durable) == [_source_receipt()]
+    assert set(opened) == {"entries", "snapshots", "sources"}
+    assert _tree_bytes(durable) == before
+
+
+def test_owned_current_record_without_matching_archive_is_not_ownership_proof(store, durable):
+    _save(store, storage_root=durable, execution_owner=OWNER)
+    shutil.rmtree(durable / "snapshots")
+    with pytest.raises(ValueError, match="ownership archive is missing"):
+        _owner_records(store, durable)
+
+
+def test_owner_query_current_flag_deduplicates_across_remap_groups(store, durable):
+    _save(store, storage_root=durable, execution_owner=OWNER)
+    _save(store, storage_root=durable, execution_owner=OWNER, remap_fingerprint="other-remap")
+    svgstore.activate(store[0], SOURCE, _args(generation=2)["receipt"], storage_root=durable)
+    assert _owner_records(store, durable) == [_source_receipt()]
+    svgstore.activate(
+        store[0],
+        SOURCE,
+        _args(generation=2)["receipt"],
+        storage_root=durable,
+        remap_fingerprint="other-remap",
+    )
+    assert _owner_records(store, durable) == [_source_receipt(current=False)]
+
+
+def test_reference_owner_is_derived_verified_and_deeply_detached(store, durable):
+    saved = _save(store, storage_root=durable, execution_owner=OWNER)
+    reference = saved["snapshot_ref"]
+    assert reference["executionOwner"] == OWNER
+    validated = svgstore.validate_reference(reference)
+    validated["executionOwner"]["run_config"] = "rc_other"
+    assert reference["executionOwner"] == OWNER
+    assert _load_snapshot(store, durable, validated) is None
+    assert _load_snapshot(store, durable, reference) == saved
+    # Older callers can omit the optional hint; server output restores only
+    # the independently validated metadata owner, not a client assertion.
+    without_hint = {key: value for key, value in reference.items() if key != "executionOwner"}
+    assert _load_snapshot(store, durable, without_hint) == saved
+
+
+def test_legacy_reference_cannot_be_promoted_by_client_execution_owner(store, durable):
+    saved = _save(store, storage_root=durable)
+    assert "executionOwner" not in saved["snapshot_ref"]
+    reference = {**saved["snapshot_ref"], "executionOwner": OWNER}
+    assert svgstore.validate_reference(reference) == reference
+    assert _load_snapshot(store, durable, reference) is None
+    assert _load_snapshot(store, durable, saved["snapshot_ref"]) == saved
+    assert _owner_records(store, durable) == []
+
+
+@pytest.mark.parametrize(
+    "owner",
+    [
+        None,
+        {},
+        {"script": "plot.py", "run_config": None, "argv": ["secret"]},
+        {"script": "plot.py", "run_config": None, "spec": {}},
+        {"script": "plot.py", "run_config": []},
+        {"script": "../plot.py", "run_config": None},
+        {"script": "/private/plot.py", "run_config": None},
+        {"script": "plot.py", "run_config": ""},
+    ],
+)
+def test_reference_optional_owner_uses_same_closed_privacy_schema(store, durable, owner):
+    saved = _save(store, storage_root=durable, execution_owner=OWNER)
+    reference = {**saved["snapshot_ref"], "executionOwner": owner}
+    with pytest.raises(ValueError):
+        svgstore.validate_reference(reference)
+    assert _load_snapshot(store, durable, reference) is None

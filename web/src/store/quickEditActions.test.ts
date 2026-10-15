@@ -8,7 +8,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { literal } from '@/i18n'
-import type { EngineRenderOptions, PanelInfo } from '@/lib/api'
+import { EngineError, type EngineRenderOptions, type PanelInfo } from '@/lib/api'
 import { setEngineTransport } from '@/lib/engineTransport'
 import { currentProjectId, setCurrentProjectId } from '@/lib/session'
 import {
@@ -250,6 +250,8 @@ describe('resetOverridesConfirmed：先问再清，同属性页的 resetOverride
 
 describe('rebuildPanel：作废热会话 + 按当前 overrides 重画', () => {
   const ov = [{ gid: 'axes_0.title', prop: 'text', value: 'A' }]
+  let executionSeq = 0
+  const execution = () => ({ scope: 'sources' as const, script: 'plot.py', run_config: null, source_ids: ['Fig1.pdf'], execution_id: `rebuild-${++executionSeq}` })
 
   beforeEach(async () => {
     await seed([panel('p1', { overrides: [...ov] })])
@@ -262,6 +264,7 @@ describe('rebuildPanel：作废热会话 + 按当前 overrides 重画', () => {
     // 先画好一版，证明重建之后旧的权威被清掉过（stale）而画面仍在
     await useRenderStore.getState().render('Fig1.pdf', ov)
     engineRender.mockClear()
+    engineRender.mockResolvedValueOnce({ rev: 2, manifest: { elements: [] }, warnings: [], figure_snapshot_invalidation: execution() })
 
     expect(await rebuildPanel('p1')).toBe('rebuilt')
 
@@ -284,14 +287,14 @@ describe('rebuildPanel：作废热会话 + 按当前 overrides 重画', () => {
     // 第一次渲染卡在半路（刚打开的图、慢机器）——重新构建的那次只能排队；
     // 排队的那次**也要走真实的时间**（Windows 桌面腿上 239 ms 的网络），mock 即时
     // 返回的话 jsdom 会因为多一个 microtask 而恒绿（TEST_MATRIX Session 23 评审回合 2）
-    type Res = { rev: number; manifest: { elements: never[] }; warnings: never[] }
+    type Res = { rev: number; manifest: { elements: never[] }; warnings: never[]; figure_snapshot_invalidation?: ReturnType<typeof execution> }
     let releaseFirst!: () => void
     let releaseSecond!: () => void
     const first = new Promise<Res>((r) => {
       releaseFirst = () => r({ rev: 1, manifest: { elements: [] }, warnings: [] })
     })
     const second = new Promise<Res>((r) => {
-      releaseSecond = () => r({ rev: 2, manifest: { elements: [] }, warnings: [] })
+      releaseSecond = () => r({ rev: 2, manifest: { elements: [] }, warnings: [], figure_snapshot_invalidation: execution() })
     })
     engineRender.mockReset()
     engineRender.mockReturnValueOnce(first).mockReturnValueOnce(second)
@@ -362,6 +365,14 @@ describe('rebuildPanel：作废热会话 + 按当前 overrides 重画', () => {
     expect(invalidateFigureSnapshots).not.toHaveBeenCalled()
   })
 
+  it('a failed render with trusted actual-start evidence still retires the previous output', async () => {
+    engineRender.mockRejectedValueOnce(new EngineError('failed after starting', '', 'script_error', '', undefined, undefined, {
+      figureSnapshotInvalidation: execution(),
+    }))
+    expect(await rebuildPanel('p1')).toBe('failed')
+    expect(invalidateFigureSnapshots).toHaveBeenCalledExactlyOnceWith(['Fig1.pdf'], currentProjectId())
+  })
+
   it('装了替代传输（内嵌画布 / playground）：没有作废通道，只重画并说明', async () => {
     setEngineTransport({
       render: async () => ({ rev: 9, manifest: { elements: [] }, warnings: [] }) as never,
@@ -414,7 +425,7 @@ describe('rebuildPanel：作废热会话 + 按当前 overrides 重画', () => {
     const next = emptyProject()
     next.canvases[0].objects = [panel('new-panel')]
     await useDocumentStore.getState().switchDocument(next, 'other-document')
-    resolve({ rev: 2, manifest: { elements: [] }, warnings: [] })
+    resolve({ rev: 2, manifest: { elements: [] }, warnings: [], figure_snapshot_invalidation: execution() })
     expect(await rebuild).toBe('skipped') // The old panel's UI result has no authority here.
     expect(invalidateFigureSnapshots).toHaveBeenCalledExactlyOnceWith(['Fig1.pdf'], 'rebuild-a')
   })
@@ -427,7 +438,7 @@ describe('rebuildPanel：作废热会话 + 按当前 overrides 重画', () => {
     await flush()
     setCurrentProjectId('rebuild-b')
     setCurrentProjectId('rebuild-a')
-    resolve({ rev: 2, manifest: { elements: [] }, warnings: [] })
+    resolve({ rev: 2, manifest: { elements: [] }, warnings: [], figure_snapshot_invalidation: execution() })
     expect(await rebuild).toBe('skipped')
     expect(invalidateFigureSnapshots).not.toHaveBeenCalled()
   })

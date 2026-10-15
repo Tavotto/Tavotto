@@ -223,3 +223,13 @@ native 另带 `figure_facts`（逐图 `state` / `generation` / `capabilities` / 
    （`clear_preview_poison`：作废之后没重新发布的指针摘掉再解除）。
 
 新增会改预览发布的失败路径时，别在某一级里加 `except OSError: pass`——先问「这一级失败后读方还有没有拦截」。
+
+## 实际执行事实（X03 快照资格）
+
+`executionfact` 的 48 位不透明 ID 只在 worker 即将进入用户代码的边界产生，v1 成功/错误响应与请求级短文件为独立通道；
+marker 不含脚本、路径、argv 或输出，读写失败不阻止科学运行。owner 由父进程可信 spec 的项目/script/run_config 提供，
+不是从描述符子集、HTTP 成功或 Figure 数量推断。正常轮询早通知；导出按 owner 同步刷新关闭轮询间隔。
+两条证据都丢失时以 dispatch 时序记 unknown，不能说没执行，也不伪造 started。执行中尚无事实时旧快照导出临时拒绝，
+confirmed pre-send/排队取消/依赖门不撤旧代；unknown 的迟到结果不能污染更新执行。单次验证 `one_shot` 不替代当前图。
+safe 回执的私有 instance 含实际 execution ID，透明重开不靠未变化的 worker generation 冒充同一次执行；公开语义身份不变。
+看护：`tests/test_execution_observation.py`、`tests/test_execution_receipt.py`、`tests/test_svg_execution_lifecycle.py`。

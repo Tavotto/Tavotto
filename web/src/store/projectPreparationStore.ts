@@ -36,7 +36,8 @@ import {
 import { currentProjectId } from '@/lib/session'
 import { captureProjectEpoch, type ProjectEpochGuard } from '@/lib/projectEpoch'
 import { useEnvStore } from '@/store/envStore'
-import { invalidateCapturedFigureSnapshots } from '@/store/figureSnapshotInvalidation'
+import '@/store/figureSnapshotInvalidation'
+import { observeFigureExecution } from '@/lib/figureExecutionEvents'
 import { useScriptArgvStore } from '@/store/scriptArgvStore'
 import { useUiStore } from '@/store/uiStore'
 
@@ -197,8 +198,8 @@ function newer(cur: PreparationReport | null, next: PreparationReport): boolean 
 
 /** 同一个 key 下「目标（参数）换过几次」：在途的检查 / 补拉 / 动作带着发起时的戳，参数换了就失去落地资格 */
 const targetGens = new Map<string, number>()
-/** Completed attempts already observed, including initial read-only replay. */
-const observedCompletedAttempts = new Set<string>()
+/** Whether an execution token was actively observed or only a passive initial baseline. */
+const observedFigureExecutions = new Map<string, boolean>()
 
 export const useProjectPreparationStore = create<PreparationState>((set, get) => {
   /** 回包资格戳 = 代（换项目）× 目标代（同 key 换参数）；两者任一变了，在途响应都不许落地 */
@@ -224,15 +225,6 @@ export const useProjectPreparationStore = create<PreparationState>((set, get) =>
     if (e.report && e.report.session_id !== report.session_id && !opts?.session) return
     if (!newer(e.report, report)) return
     const before = e.report
-    const attempt = report.provider.attempt_id
-    const completedAttempt = report.phase === 'completed' && report.outcome.kind === 'succeeded' &&
-      report.facts.execution_finished === true && attempt
-      ? `${report.session_id}:${attempt}`
-      : null
-    const completedNewRun = !!completedAttempt && !observedCompletedAttempts.has(completedAttempt) &&
-      before?.session_id === report.session_id
-    // First seeing a completed session establishes a baseline; opening/reconnecting is not a run.
-    if (completedAttempt) observedCompletedAttempts.add(completedAttempt)
     const advanced =
       !before ||
       before.session_id !== report.session_id ||
@@ -251,6 +243,14 @@ export const useProjectPreparationStore = create<PreparationState>((set, get) =>
       (report.provider.attempt_id ?? null) !== (before.provider.attempt_id ?? null)
     // 动态 import 之后项目 / 代可能已经换了：回调带着发起时的归属，落地前复核
     const owner = captureProjectEpoch(() => get().epoch)
+    const execution = report.figure_snapshot_invalidation
+    if (execution) {
+      const token = JSON.stringify([report.session_id, execution.execution_id])
+      // First reading an old session is a baseline. A later real execution in an already-observed
+      // session is accepted regardless of succeeded/failed/no-figure, with replay dedup downstream.
+      if (!observedFigureExecutions.has(token)) observedFigureExecutions.set(token, before?.session_id === report.session_id)
+      if (observedFigureExecutions.get(token) && owner.still()) observeFigureExecution(execution, owner.pj)
+    }
     // `rejection` 不在这里清：被拒之后重读到的新修订正是要配着那一句看的；下一次动作 / 重新打开才收起它
     patch(key, () => ({
       report,
@@ -262,7 +262,7 @@ export const useProjectPreparationStore = create<PreparationState>((set, get) =>
         : {}),
     }))
     if (report.phase === 'completed' && (before?.phase !== 'completed' || attemptChanged)) {
-      void onCompleted(report, owner, completedNewRun)
+      void onCompleted(report, owner)
     }
     // 同一会话里的依赖作业刚装完（T09b）：画布上因「要先准备依赖」停着的渲染与原授权框作答之后一样重排——同一份
     // 需求两个展示面，下游效果只有一种（重排的是渲染请求，不是脚本首跑；首跑仍由用户点报告里的 run）
@@ -439,6 +439,7 @@ export const useProjectPreparationStore = create<PreparationState>((set, get) =>
         accept(key, res.report)
       } catch (err) {
         if (!live(key, g)) return
+        if (kind === 'run' && err instanceof ApiError) observeFigureExecution(err.body.figure_snapshot_invalidation, pj)
         patch(key, () => ({ pending: null }))
         if (isRestarted(err)) {
           await check(key, e.target, true)
@@ -474,7 +475,7 @@ export const useProjectPreparationStore = create<PreparationState>((set, get) =>
     clear: () => {
       stopAllTimers()
       inflight.clear()
-      observedCompletedAttempts.clear()
+      observedFigureExecutions.clear()
       set((s) => ({ epoch: s.epoch + 1, entries: {}, focus: null }))
     },
   }
@@ -485,8 +486,7 @@ export const useProjectPreparationStore = create<PreparationState>((set, get) =>
  * **不执行**：已经在画布上的这些图按热会话重画，脚本不再跑。
  * 动态 import 回来之后，发起这次回调的项目 / 代还是当前的吗（`owner.still()`）？不是就整个丢掉（A 的素材 id 不许去动 B 的 store）。
  */
-async function onCompleted(report: PreparationReport, owner: ProjectEpochGuard, completedNewRun: boolean): Promise<void> {
-  if (completedNewRun && owner.still()) invalidateCapturedFigureSnapshots(report.captured ?? [], owner.pj)
+async function onCompleted(report: PreparationReport, owner: ProjectEpochGuard): Promise<void> {
   // 导入即扫描的快照随结果更新（零执行、后端单飞）：这个脚本现在连着可编辑的图了，「显示项目检查结果」不再说它待准备
   // 素材库脚本行的「已关联」同理（与 registry.changed 事件同一个出口，幂等去重）
   void Promise.all([import('@/store/projectScanStore'), import('@/store/scriptLibraryStore')])

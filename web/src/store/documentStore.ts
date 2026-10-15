@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import { sameFigureInputs, validFigureSnapshot, type FigureSnapshotSaveContext } from '@/lib/figureSnapshot'
+import { figureExecutionOwnerKey } from '@/lib/capturedFigureSources'
 import { perfSpan } from '@/perf/core'
 import { enablePatches, produceWithPatches, type Patch } from 'immer'
 import * as history from '@/lib/history'
@@ -31,7 +32,7 @@ import { newId } from '@/lib/id'
 import { boundedCount, captureTelemetry, classifyEditKind } from '@/lib/telemetry'
 import { documentDigest, recordDiagnosticEvent } from '@/diagnostics'
 import { patchRefs } from '@/diagnostics/patches'
-import { defaultCanvasName, type CanvasData, type FigureDocument, type FigureSnapshot, type PanelObject, type ProjectDocument } from '@/types/document'
+import { defaultCanvasName, type CanvasData, type FigureDocument, type FigureExecutionOwner, type FigureSnapshot, type PanelObject, type ProjectDocument } from '@/types/document'
 import {
   SCHEMA_CURRENT,
   canvasToDoc,
@@ -2132,17 +2133,31 @@ function applyProject(pd: ProjectDocument, id: string, opts: { dirty: boolean })
 
 /** Source-run generations are runtime facts, scoped by project; never inferred from a render refresh. */
 const figureRunGenerations = new Map<string, number>()
+const figureOwnerGenerations = new Map<string, number>()
+const figureOwnerRunKey = (pj: string | null, owner: FigureExecutionOwner) => JSON.stringify([pj, figureExecutionOwnerKey(owner)])
 const figureRunKey = (pj: string | null, sourceId: string) => JSON.stringify([pj, sourceId])
 const figureRunGeneration = (pj: string | null, sourceId: string) => figureRunGenerations.get(figureRunKey(pj, sourceId)) ?? 0
 const invalidatedSnapshotReceipts = new Set<string>()
+const invalidatedExecutionReceipts = new Set<string>()
+let figureReceiptGeneration = 0
 let snapshotLoadSeq = -1
-const invalidatedSnapshotKey = (sourceId: string, receiptId: string) => {
+const ensureSnapshotReceiptScope = () => {
   const loadSeq = useDocumentStore.getState().loadSeq
   if (snapshotLoadSeq !== loadSeq) {
     invalidatedSnapshotReceipts.clear()
+    invalidatedExecutionReceipts.clear()
+    figureReceiptGeneration = 0
     snapshotLoadSeq = loadSeq
   }
+}
+const invalidatedSnapshotKey = (sourceId: string, receiptId: string) => {
+  ensureSnapshotReceiptScope()
   return JSON.stringify([currentProjectId(), sourceId, receiptId])
+}
+const snapshotReceiptInvalidated = (ref: FigureSnapshot) => {
+  ensureSnapshotReceiptScope()
+  return invalidatedExecutionReceipts.has(ref.receiptId) ||
+    invalidatedSnapshotReceipts.has(invalidatedSnapshotKey(ref.sourceId, ref.receiptId))
 }
 
 /** Editing source/patches invalidates the association; page geometry and exact copies preserve it. */
@@ -2154,7 +2169,7 @@ function clearChangedFigureSnapshots(next: FigureDocument, before: FigureDocumen
     const old = previous.get(panel.id)
     if (!validFigureSnapshot(panel.figureSnapshot, panel.fileId) ||
         (old && !sameFigureInputs(old, panel)) ||
-        invalidatedSnapshotReceipts.has(invalidatedSnapshotKey(panel.fileId, panel.figureSnapshot.receiptId))) {
+        snapshotReceiptInvalidated(panel.figureSnapshot)) {
       delete panel.figureSnapshot
     }
   }
@@ -2165,10 +2180,13 @@ export function captureFigureSnapshotSave(
   pj: string | null = currentProjectId(),
 ): FigureSnapshotSaveContext {
   const state = useDocumentStore.getState()
+  ensureSnapshotReceiptScope()
   const panels = document.canvases.flatMap((c) => c.objects).filter((o) => o.type === 'panel')
   return {
     documentId: state.documentId, loadSeq: state.loadSeq, pj, document,
     sourceGenerations: new Map(panels.map((p) => [p.fileId, figureRunGeneration(pj, p.fileId)])),
+    ownerGenerations: new Map(figureOwnerGenerations),
+    receiptGeneration: figureReceiptGeneration,
   }
 }
 
@@ -2183,6 +2201,7 @@ export function mergeSavedFigureSnapshots(
       currentProjectId() !== context.pj || (projectOfDoc().id ?? currentProjectId()) !== context.pj) return
   const sent = new Map(context.document.canvases.flatMap((c) => c.objects)
     .filter((o) => o.type === 'panel').map((p) => [p.id, p]))
+  const corrective = new Set<string>()
   const merge = (objects: FigureDocument['objects']) => {
     for (const panel of objects) {
       if (panel.type !== 'panel') continue
@@ -2191,6 +2210,17 @@ export function mergeSavedFigureSnapshots(
           figureRunGeneration(context.pj, panel.fileId) !== context.sourceGenerations.get(panel.fileId)) continue
       const ref = refs[panel.id]
       if (validFigureSnapshot(ref, panel.fileId)) {
+        if (ref.executionOwner) {
+          const key = figureOwnerRunKey(context.pj, ref.executionOwner)
+          if ((figureOwnerGenerations.get(key) ?? 0) !== (context.ownerGenerations?.get(key) ?? 0)) {
+            corrective.add(panel.id)
+            continue
+          }
+        }
+        if (snapshotReceiptInvalidated(ref)) {
+          if ((context.receiptGeneration ?? 0) !== figureReceiptGeneration) corrective.add(panel.id)
+          continue
+        }
         if (JSON.stringify(panel.figureSnapshot) !== JSON.stringify(ref)) panel.figureSnapshot = { ...ref }
       } else if (panel.figureSnapshot) delete panel.figureSnapshot
     }
@@ -2202,30 +2232,61 @@ export function mergeSavedFigureSnapshots(
   if (docPatches.length || canvasPatches.length) {
     useDocumentStore.setState({ doc, canvases, snapshotSeq: state.snapshotSeq + 1 })
   }
+  if (corrective.size) {
+    // This reply just persisted an execution that was retired while the write was in flight.
+    // Keep any newer live ref, but schedule a corrective write through the normal dirty path.
+    // The next context carries the current generations, so rejection alone cannot form a loop.
+    const current = useDocumentStore.getState()
+    const touch = (objects: FigureDocument['objects']) => {
+      for (let i = 0; i < objects.length; i++) if (corrective.has(objects[i].id)) objects[i] = { ...objects[i] }
+    }
+    useDocumentStore.setState({
+      doc: produceWithPatches(current.doc, (d) => touch(d.objects))[0],
+      canvases: produceWithPatches(current.canvases, (cs) => { for (const c of cs) touch(c.objects) })[0],
+    })
+  }
 }
 
-/** Explicit successful execution changes the live document; separately saved disk documents retain their references. */
-export function invalidateFigureSnapshots(sourceIds: readonly string[], pj: string | null = currentProjectId()): void {
+/** Witnessed execution changes the live document; separately saved disk documents retain their references. */
+export function invalidateFigureSnapshots(
+  sourceIds: readonly string[],
+  pj: string | null = currentProjectId(),
+  receiptIds: readonly string[] = [],
+  owners: readonly FigureExecutionOwner[] = [],
+): void {
   if (pj !== currentProjectId() || writesBlocked(false)) return
   const ids = new Set(sourceIds)
-  if (!ids.size) return
+  const receipts = new Set(receiptIds)
+  if (!ids.size && !receipts.size && !owners.length) return
+  const ownerKeys = new Set(owners.map(figureExecutionOwnerKey))
+  for (const owner of owners) {
+    const key = figureOwnerRunKey(pj, owner)
+    figureOwnerGenerations.set(key, (figureOwnerGenerations.get(key) ?? 0) + 1)
+  }
+  ensureSnapshotReceiptScope()
+  figureReceiptGeneration += 1
   for (const id of ids) figureRunGenerations.set(figureRunKey(pj, id), figureRunGeneration(pj, id) + 1)
   const state = useDocumentStore.getState()
+  const matchesSource = (sourceId: string, ref?: FigureSnapshot): boolean => ids.has(sourceId) &&
+    (!ref?.executionOwner || !owners.length || ownerKeys.has(figureExecutionOwnerKey(ref.executionOwner)))
   // Undo may later restore a removed object carrying a reference: remember those receipt IDs too.
   const remember = (value: unknown): void => {
     if (!value || typeof value !== 'object') return
     const object = value as Record<string, unknown>
     const ref = (object.figureSnapshot ?? (typeof object.sourceId === 'string' ? object : undefined)) as FigureSnapshot | undefined
-    if (ref && ids.has(ref.sourceId) && validFigureSnapshot(ref, ref.sourceId)) {
-      invalidatedSnapshotReceipts.add(invalidatedSnapshotKey(ref.sourceId, ref.receiptId))
+    if (ref && validFigureSnapshot(ref, ref.sourceId)) {
+      if (matchesSource(ref.sourceId, ref)) invalidatedSnapshotReceipts.add(invalidatedSnapshotKey(ref.sourceId, ref.receiptId))
+      if (ref.executionOwner && ownerKeys.has(figureExecutionOwnerKey(ref.executionOwner))) receipts.add(ref.receiptId)
     }
     for (const child of Object.values(object)) remember(child)
   }
   remember([state.doc, state.canvases, state.past, state.future, state.canvasSessions, state.txn])
+  for (const receipt of receipts) invalidatedExecutionReceipts.add(receipt)
   const clear = (objects: FigureDocument['objects']) => {
     for (let i = 0; i < objects.length; i++) {
       const panel = objects[i]
-      if (panel.type !== 'panel' || !ids.has(panel.fileId)) continue
+      if (panel.type !== 'panel' || (!matchesSource(panel.fileId, panel.figureSnapshot) &&
+          !(panel.figureSnapshot && receipts.has(panel.figureSnapshot.receiptId)))) continue
       // Even without a live ref, an in-flight save may have captured the preceding run.
       // Publish a persistent change so a corrective save follows that stale write.
       objects[i] = { ...panel }

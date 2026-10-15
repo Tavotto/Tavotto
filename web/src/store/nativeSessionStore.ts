@@ -17,7 +17,8 @@ import {
 import { addRuntimePanelToCanvas } from '@/store/workspace'
 import { captureProjectEpoch, type ProjectEpochGuard } from '@/lib/projectEpoch'
 import { getRestoreGate, useDocumentStore, whenDocumentReady } from '@/store/documentStore'
-import { invalidateCapturedFigureSnapshots } from '@/store/figureSnapshotInvalidation'
+import '@/store/figureSnapshotInvalidation'
+import { observeFigureExecution } from '@/lib/figureExecutionEvents'
 import { useFigurePickerStore } from '@/store/figurePickerStore'
 import { useRenderStore } from '@/store/renderStore'
 import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
@@ -71,6 +72,16 @@ const toNativeError = (e: unknown): NativeError => {
     message: e instanceof Error ? e.message : String(e),
     params: body.params,
   }
+}
+
+const baselineExecutions = new Set<string>()
+const nativeExecutionKey = (sessionId: string, executionId: string) => JSON.stringify([sessionId, executionId])
+function observeNativeExecution(session: NativeSessionInfo, previous: NativeSessionInfo | undefined, pj: string | null): void {
+  const fact = session.figure_snapshot_invalidation
+  if (!fact) return
+  const key = nativeExecutionKey(session.session_id, fact.execution_id)
+  if (!previous) baselineExecutions.add(key)
+  if (!baselineExecutions.has(key)) observeFigureExecution(fact, pj)
 }
 
 export interface NativePendingState {
@@ -315,12 +326,12 @@ export const useNativeSessionStore = create<NativeSessionStore>((set, get) => ({
     // 间没有次序保证；照单全收的表现是脚本已经退出了、卡片又变回"正在
     // 运行"。终态不回头是这条的推论（后端进终态之后 sequence 只会更大）。
     if (prev && session.sequence <= prev.sequence) return
-    const completedExecution = session.state === 'barrier' && prev &&
-      ['starting_python', 'running_script', 'waiting_for_figure', 'continuing'].includes(prev.state) &&
-      !session.script_error && !session.terminal_error && !session.cancelled
+    observeNativeExecution(session, prev, captureProjectEpoch().pj)
+    const witnessedExecution = session.state === 'barrier' && prev &&
+      ['starting_python', 'running_script', 'waiting_for_figure', 'continuing'].includes(prev.state)
     set((s) => ({
       sessions: { ...s.sessions, [session.session_id]: session },
-      ...(completedExecution
+      ...(witnessedExecution
         ? { executedBarrierSeq: { ...s.executedBarrierSeq, [session.session_id]: session.sequence } }
         : {}),
     }))
@@ -341,7 +352,14 @@ export const useNativeSessionStore = create<NativeSessionStore>((set, get) => ({
     const epoch = get().epoch
     const owner = captureProjectEpoch(() => get().epoch)
     const seq = session.sequence
-    const completedExecution = get().executedBarrierSeq[sessionId] === seq
+    const witnessedExecution = get().executedBarrierSeq[sessionId] === seq
+    const executionId = session.figure_snapshot_invalidation?.execution_id
+    const acceptsExecution = (execution: NativeSessionInfo['figure_snapshot_invalidation']): boolean => {
+      if (!execution || baselineExecutions.has(nativeExecutionKey(sessionId, execution.execution_id))) return false
+      const currentId = get().sessions[sessionId]?.figure_snapshot_invalidation?.execution_id
+      if (currentId && currentId !== execution.execution_id) return false
+      return executionId ? execution.execution_id === executionId : witnessedExecution
+    }
     set((s) => ({
       busy: { ...s.busy, [sessionId]: true },
       builtSeq: { ...s.builtSeq, [sessionId]: seq },
@@ -349,22 +367,25 @@ export const useNativeSessionStore = create<NativeSessionStore>((set, get) => ({
     try {
       const res = await buildNativeSession(sessionId)
       if (!owner.still()) return
-      const invalidateSnapshots = completedExecution && !res.session.script_error &&
-        !res.session.terminal_error && !res.session.cancelled
+      const execution = res.figure_snapshot_invalidation ?? res.session.figure_snapshot_invalidation
+      const acceptedExecution = acceptsExecution(execution)
+      if (acceptedExecution) observeFigureExecution(execution, owner.pj)
       set((s) => ({
         sessions: { ...s.sessions, [sessionId]: res.session },
         errors: { ...s.errors, [sessionId]: null },
         conflicts: { ...s.conflicts, [sessionId]: res.conflicts?.stems ?? [] },
-        ...(invalidateSnapshots && s.executedBarrierSeq[sessionId] === seq
+        ...(acceptedExecution && s.executedBarrierSeq[sessionId] === seq
           ? { executedBarrierSeq: { ...s.executedBarrierSeq, [sessionId]: -1 } }
           : {}),
       }))
-      // Execution is already accepted even if placement must wait for restoration. Register it once;
-      // the snapshot coordinator retains it across project switches independently of this UI callback.
-      if (invalidateSnapshots) invalidateCapturedFigureSnapshots(res.descriptors, owner.pj)
+      // Placement waits independently; accepted execution evidence already reached the coordinator.
       placeNativeFiguresWhenReady(res.descriptors, owner)
     } catch (e) {
       if (get().epoch !== epoch) return
+      if (owner.still() && e instanceof ApiError) {
+        const execution = e.body.figure_snapshot_invalidation as NativeSessionInfo['figure_snapshot_invalidation']
+        if (acceptsExecution(execution)) observeFigureExecution(execution, owner.pj)
+      }
       // build 失败不改变会话状态——那由 SSE 说了算。这里只记一条原因。
       set((s) => ({
         errors: { ...s.errors, [sessionId]: toNativeError(e) },
@@ -376,25 +397,33 @@ export const useNativeSessionStore = create<NativeSessionStore>((set, get) => ({
     }
   },
 
-  resume: (sessionId) => runAction(sessionId, continueNativeSession, set, get),
+  resume: (sessionId) => runAction(sessionId, continueNativeSession, set, get, true),
   detach: (sessionId) => runAction(sessionId, detachNativeSession, set, get),
   terminate: (sessionId) => runAction(sessionId, terminateNativeSession, set, get),
 
   refresh: async (projectRoot) => {
     const epoch = get().epoch
+    const owner = captureProjectEpoch()
     try {
       const res = await fetchNativeSessions(projectRoot)
       if (get().epoch !== epoch) return
+      const executions: { session: NativeSessionInfo; previous: NativeSessionInfo | undefined }[] = []
       set((s) => {
         const sessions = { ...s.sessions }
         for (const one of res.sessions) {
           const prev = sessions[one.session_id]
           // 对账同样按 sequence：清单是"现在"的快照，但一次慢响应回来时
           // SSE 可能已经把更新的状态送到了
-          if (!prev || one.sequence > prev.sequence) sessions[one.session_id] = one
+          if (!prev || one.sequence > prev.sequence) {
+            executions.push({ session: one, previous: prev })
+            sessions[one.session_id] = one
+          }
         }
         return { sessions }
       })
+      if (owner.still()) for (const execution of executions) {
+        observeNativeExecution(execution.session, execution.previous, owner.pj)
+      }
       // 重连 / 刷新页面时把还在等的问接回来（断线期间发的那条事件收不到）
       // 只同步**合并后**的当前会话：被序号挡掉的旧快照不许复活已答 / 已结束的问
       const current = get().sessions
@@ -421,7 +450,8 @@ export const useNativeSessionStore = create<NativeSessionStore>((set, get) => ({
       return { sessions, errors, conflicts }
     }),
 
-  clear: () =>
+  clear: () => {
+    baselineExecutions.clear()
     set((s) => ({
       epoch: s.epoch + 1,
       // **`pendingQueue` 刻意不清。** 待确认的交接不属于任何一个界面项目：
@@ -439,7 +469,8 @@ export const useNativeSessionStore = create<NativeSessionStore>((set, get) => ({
       conflicts: {},
       builtSeq: {},
       executedBarrierSeq: {},
-    })),
+    }))
+  },
 }))
 
 type SetFn = (fn: (s: NativeSessionStore) => Partial<NativeSessionStore>) => void
@@ -451,12 +482,14 @@ function runAction(
   call: (id: string) => Promise<{ session: NativeSessionInfo }>,
   set: SetFn,
   get: GetFn,
+  mayExecute = false,
 ): Promise<void> {
   const session = get().sessions[sessionId]
   if (!session || get().busy[sessionId] || isNativeTerminal(session.state)) {
     return Promise.resolve()
   }
   const epoch = get().epoch
+  const owner = captureProjectEpoch(() => get().epoch)
   set((s) => ({ busy: { ...s.busy, [sessionId]: true }, errors: { ...s.errors, [sessionId]: null } }))
   return call(sessionId)
     .then((res) => {
@@ -464,11 +497,13 @@ function runAction(
       const prev = get().sessions[sessionId]
       // 响应里带的是这一刻的快照；SSE 可能已经送来更新的了
       if (!prev || res.session.sequence >= prev.sequence) {
+        if (mayExecute && owner.still()) observeNativeExecution(res.session, session, owner.pj)
         set((s) => ({ sessions: { ...s.sessions, [sessionId]: res.session } }))
       }
     })
     .catch((e) => {
       if (get().epoch !== epoch) return
+      if (mayExecute && owner.still() && e instanceof ApiError) observeFigureExecution(e.body.figure_snapshot_invalidation, owner.pj)
       set((s) => ({ errors: { ...s.errors, [sessionId]: toNativeError(e) } }))
     })
     .finally(() => {

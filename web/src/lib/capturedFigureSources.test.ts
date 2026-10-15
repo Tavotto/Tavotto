@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { CapturedFigureDescriptor } from '@/lib/api'
 import type { PanelObject } from '@/types/document'
-import { capturedFigureSources } from './capturedFigureSources'
+import { capturedFigureSources, executedFigureSources } from './capturedFigureSources'
 
 const captured = (over: Partial<CapturedFigureDescriptor> = {}): CapturedFigureDescriptor => ({
   asset_id: 'runtime:opaque', script: 'plot.py', entry: '__main__', stem: 'sub/Fig1',
@@ -45,5 +45,38 @@ describe('captured Figure source identities', () => {
     expect(capturedFigureSources([captured({ original_artifact: null })], [
       panel('sub\\Fig1.pdf'), panel('elsewhere/Fig1.pdf'), panel('sub/Fig1.pdf', { script: null }),
     ])).toEqual(['runtime:opaque', 'sub\\Fig1.pdf'])
+  })
+})
+
+describe('executed Figure output ownership', () => {
+  const runtime = (id: string, runConfig?: string, script = 'plot.py'): PanelObject => panel(id, {
+    fileKind: 'runtime', source: {
+      script, entry: '__main__', stem: 'same-stem', runConfig, captureSource: 'pyplot',
+      fingerprint: 'old', sizeMm: [80, 60],
+    },
+  })
+  it('retires omitted/renamed runtime outputs of exactly the executed owner, without interpreting IDs', () => {
+    expect(executedFigureSources({
+      script: 'plot.py', run_config: 'rc-one', source_ids: ['runtime:new-name'],
+    }, [
+      runtime('runtime:old-A', 'rc-one'), runtime('runtime:old-B', 'rc-one'),
+      runtime('runtime:same-stem-config-two', 'rc-two'), runtime('runtime:no-args'),
+      runtime('runtime:other-script', 'rc-one', 'other.py'),
+      panel('runtime:unknown-owner', { fileKind: 'runtime' }),
+      panel('same-stem.pdf'), panel('external.pdf', { script: null }),
+    ])).toEqual(['runtime:new-name', 'runtime:old-A', 'runtime:old-B'])
+  })
+  it('uses backend static bindings; old captures identify runtime IDs but cannot claim a rebound disk file', () => {
+    expect(executedFigureSources({
+      script: 'plot.py', run_config: 'rc-one', source_ids: ['out/old-B.pdf'],
+    }, [panel(String.raw`out\old-B.pdf`), panel('out/old-B.png'), panel('sub/Fig1.pdf'), panel('sub/Fig1.svg')], [
+      captured({ run_config: 'rc-one' }), captured({ asset_id: 'runtime:other', run_config: 'rc-two', original_artifact: 'other.pdf' }),
+    ])).toEqual(['out/old-B.pdf', 'runtime:opaque', String.raw`out\old-B.pdf`])
+  })
+  it('normalizes script paths while keeping no-argument and configured ownership separate', () => {
+    expect(executedFigureSources({
+      script: 'sub/plot.py', run_config: null, source_ids: [],
+    }, [runtime('runtime:old-B', undefined, String.raw`sub\plot.py`), runtime('runtime:configured', 'rc-one', 'sub/plot.py')]))
+      .toEqual(['runtime:old-B'])
   })
 })

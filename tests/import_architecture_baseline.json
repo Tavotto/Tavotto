@@ -38,6 +38,12 @@
   "extra_edges": [
     {
       "from": "tavotto/engine/bridge_runner.py",
+      "to": "tavotto/engine/executionfact.py",
+      "scope": "module",
+      "via": "bridgeboot.load_engine_modules(_HERE, _PHASE1)"
+    },
+    {
+      "from": "tavotto/engine/bridge_runner.py",
       "to": "tavotto/engine/figcapture.py",
       "scope": "module",
       "via": "bridgeboot.load_engine_modules(_HERE, _PHASE1)"
@@ -125,6 +131,12 @@
       "to": "tavotto/engine/wireproto.py",
       "scope": "function",
       "via": "bridgeboot.load_engine_modules(_HERE, _PHASE2)"
+    },
+    {
+      "from": "tavotto/engine/worker.py",
+      "to": "tavotto/engine/executionfact.py",
+      "scope": "module",
+      "via": "bridgeboot.load_engine_modules(str(HERE), _ENGINE_MODULES)"
     },
     {
       "from": "tavotto/engine/worker.py",

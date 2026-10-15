@@ -59,15 +59,16 @@ reader 线程**不碰 Figure**：Figure 只在用户进程的主线程里动（A
 from __future__ import annotations
 
 import collections
+import copy
 import hashlib
 import json
 import os
 import socket
 import threading
 import time
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
-from . import envlease, nativerelay, patchspec, pool, runcodes
+from . import envlease, executionfact, figcapture, nativerelay, patchspec, pool, runcodes
 from .runcodes import RunError
 
 #: 带外事件的键——**与 `bridge_runner.EVENT_KEY` 严格同源**。
@@ -122,6 +123,15 @@ EXPORT_TIMEOUT = pool.EXPORT_TIMEOUT
 #: 每条会话留多少条事件（给 UI 重连后补看）。有界——一个跑了两小时、
 #: `show()` 上千次的脚本不该把 sidecar 的内存吃光。
 EVENT_LOG_MAX = 200
+
+
+def _canonical_execution_script(value) -> str:
+    if not isinstance(value, str) or not value or len(value) > 16384 or "\0" in value:
+        raise ValueError("invalid native execution script")
+    path = PurePosixPath(figcapture.normalize_relative_script(value))
+    if path.as_posix() != value or not path.parts or ".." in path.parts:
+        raise ValueError("native execution script must be a canonical project path")
+    return value
 
 
 def interpreter_fingerprint(python: str) -> str:
@@ -369,6 +379,13 @@ class NativeSession:
         # Wire generation remains unchanged; repeated build/render requests at
         # the same barrier must keep a stable Figure snapshot identity.
         self.snapshot_epoch = 0
+        # Set only at the authenticated runner's compiled target exec boundary
+        # or successful barrier release; never hello, spawn or failed preflight.
+        self.execution_id: str | None = None
+        self.execution_script: str | None = None
+        self.execution_started_ns = 0
+        # Application-owned, public invalidation projection; no launch spec/argv.
+        self.figure_snapshot_invalidation: dict | None = None
         self.rev = 0
         #: 与 `pool.EngineWorker.built` **同名同义**——「脚本跑过了没有」。
         #: `app.py` 的渲染端点用 `not worker.built` 判冷启动（发 render.started
@@ -446,7 +463,30 @@ class NativeSession:
             self.note_hello(frame)
             return
         name = frame.get(EVENT_KEY)
-        if name == "barrier":
+        if name == "execution_started":
+            execution_id = frame.get("execution_id")
+            if not executionfact.valid_id(execution_id):
+                return
+            try:
+                script = (
+                    _canonical_execution_script(frame["script"])
+                    if frame.get("script") is not None
+                    else None
+                )
+            except ValueError:
+                return
+            with self._lock:
+                if self.execution_id is not None or self.state not in {
+                    STARTING_PYTHON,
+                    WAITING_FOR_FIGURE,
+                    RUNNING_SCRIPT,
+                }:
+                    return
+                self.execution_id = execution_id
+                self.execution_started_ns = executionfact.started_ns(execution_id)
+                self.execution_script = script
+            self._set_state(RUNNING_SCRIPT, execution_started=True)
+        elif name == "barrier":
             with self._lock:
                 if self.state != BARRIER:
                     self.snapshot_epoch += 1
@@ -464,6 +504,11 @@ class NativeSession:
             )
         elif name == "released":
             with self._lock:
+                if "execution_id" in frame:
+                    if self.state not in {BARRIER, CONTINUING} or not self._accept_release_fact(
+                        frame
+                    ):
+                        return
                 if self.state == BARRIER:
                     self.snapshot_epoch += 1
             self._set_state(RUNNING_SCRIPT, barrier_reason="")
@@ -479,6 +524,28 @@ class NativeSession:
         elif name == "shutdown":
             self._release_lease()
             self._set_state(ENDED)
+
+    def _accept_release_fact(self, frame: dict) -> bool:
+        """Accept one trusted release fact, under ``_lock``; both channels agree.
+
+        The runner generates the fact only after release_barrier succeeds.
+        HTTP success or a legacy response with no fact cannot create one here.
+        """
+        execution_id = frame.get("execution_id")
+        if (
+            not executionfact.valid_id(execution_id)
+            or self.execution_id is None
+            or frame.get("script") != self.execution_script
+        ):
+            return False
+        if execution_id == self.execution_id:
+            return True
+        started_ns = executionfact.started_ns(execution_id)
+        if started_ns <= self.execution_started_ns:
+            return False
+        self.execution_id = execution_id
+        self.execution_started_ns = started_ns
+        return True
 
     def _on_transport_closed(self, reason: dict | None) -> None:
         owned = self.owned
@@ -871,6 +938,8 @@ class NativeSession:
                     raise RunError(runcodes.NATIVE_FIGURE_INCONSISTENT) from exc
                 raise
             with self._lock:
+                if resp.get("released") is True:
+                    self._accept_release_fact(resp)
                 # The released event may already have advanced it. Either way,
                 # successful continuation revokes the old Figure immediately,
                 # including when the script ends without another barrier.
@@ -941,6 +1010,11 @@ class NativeSession:
             "sequence": self.sequence,
             "editable": self.state == BARRIER,
             "pending_input": self.pending_input,
+            **(
+                {"figure_snapshot_invalidation": copy.deepcopy(self.figure_snapshot_invalidation)}
+                if self.figure_snapshot_invalidation is not None
+                else {}
+            ),
         }
 
     def diagnostics(self) -> dict:
@@ -1280,6 +1354,25 @@ class NativeSessionRegistry:
         if session is None or not session.alive():
             return None
         return session
+
+    def script_route_conflict(
+        self, project_root: str, script: str, *, exclude_session_id: str = ""
+    ) -> bool:
+        """Whether another live session already owns any route for this script.
+
+        A second terminal invocation may execute, but must not use its start
+        fact to revoke the first invocation's established source ownership.
+        This is a read-only eligibility check, not a claim or route takeover.
+        """
+        wanted = self.route_key(project_root, _canonical_execution_script(script), "")[:2]
+        with self._lock:
+            return any(
+                key[:2] == wanted
+                and session_id != exclude_session_id
+                and (session := self._sessions.get(session_id)) is not None
+                and session.alive()
+                for key, session_id in self._routes.items()
+            )
 
     def _drop_routes(self, session_id: str) -> None:
         with self._lock:

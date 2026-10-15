@@ -23,6 +23,7 @@ from tavotto.engine import (
     config as engine_config,
     depresolve,
     execspec,
+    executionfact,
     exportreq,
     figcapture,
     receipt,
@@ -392,6 +393,37 @@ def _receipt(prefix="/envs/a", runtime=True, **over):
 
 
 class TestExecutionReceipt:
+    def test_actual_execution_distinguishes_same_generation_rebuilds(self):
+        worker = _FakeWorker(spec=_safe())
+        worker.execution_id = executionfact.new_id()
+        first = receipt.from_worker(worker, {}, control_plane="workerd", grant=None)
+        repeated = receipt.from_worker(worker, {}, control_plane="workerd", grant=None)
+        worker.execution_id = executionfact.new_id()
+        rebuilt = receipt.from_worker(worker, {}, control_plane="workerd", grant=None)
+        assert first.receipt_id == repeated.receipt_id
+        assert first.receipt_id != rebuilt.receipt_id
+        assert first.generation == rebuilt.generation
+        assert first.public_identity() == rebuilt.public_identity()
+        assert first.private_invalidation_key() == rebuilt.private_invalidation_key()
+        assert first.instance and rebuilt.instance
+
+    def test_response_execution_remains_bound_when_worker_has_advanced(self):
+        worker = _FakeWorker(spec=_safe())
+        old, new = executionfact.new_id(), executionfact.new_id()
+        worker.execution_id = new
+        late = receipt.from_worker(
+            worker, {"execution_id": old}, control_plane="workerd", grant=None
+        )
+        assert late.instance == old and late.instance != worker.execution_id
+
+    @pytest.mark.parametrize("fact", [None, "", "user-input", {"path": "secret"}])
+    def test_missing_or_invalid_execution_facts_keep_legacy_receipt(self, fact):
+        worker = _FakeWorker(spec=_safe())
+        legacy = receipt.from_worker(worker, {}, control_plane="python_pool", grant=None)
+        worker.execution_id = fact
+        current = receipt.from_worker(worker, {}, control_plane="python_pool", grant=None)
+        assert legacy.receipt_id == current.receipt_id and current.instance == ""
+
     def test_worker_report_makes_it_complete_and_its_absence_is_partial_not_zero(self):
         full = _receipt()
         assert full.completeness == receipt.COMPLETENESS_COMPLETE

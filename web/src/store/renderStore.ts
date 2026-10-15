@@ -22,6 +22,8 @@ import {
 import { engineTransport } from '@/lib/engineTransport'
 import { pngManifestOf, useMountedPngStore } from '@/store/mountedPngStore'
 import { currentProjectId } from '@/lib/session'
+import { captureProjectEpoch } from '@/lib/projectEpoch'
+import { observeFigureExecution } from '@/lib/figureExecutionEvents'
 import { resolvePreview, VECTOR_PREVIEW, type PreviewMetadata } from '@/lib/previewBudget'
 import { useAssetStore } from '@/store/assetStore'
 import { useEnvStore } from '@/store/envStore'
@@ -612,6 +614,7 @@ export const useRenderStore = create<RenderState>((set, get) => ({
     // 发请求那一刻的项目：失败回来时它决定「首开确认框」能不能弹（切了项目就不弹，
     // A 的问题不摆到 B 上）。同一条纪律：请求序号挡旧响应、发请求那一刻的 pj 挡串项目。
     const projectAtStart = currentProjectId()
+    const executionOwner = captureProjectEpoch()
 
     try {
       let current = patches
@@ -665,6 +668,7 @@ export const useRenderStore = create<RenderState>((set, get) => ({
           // 在途期间换过项目：这份图属于旧项目，一个字都不落进当前项目（STATE-06）。
           // 性能探针照记「回包到了」，`applied` 留空——它确实没上屏
           if (epochAtStart !== projectEpoch || ctrl.signal.aborted) return
+          if (executionOwner.still()) observeFigureExecution(res.figure_snapshot_invalidation, projectAtStart)
           if (res.environment_switched) {
             // 内置环境缺包，Tavotto 自己找到并换用了项目的 .venv（ADR 0018）。
             // 一条轻量 toast 就够——**不弹阻断式对话框**：用户点的是「渲染」，
@@ -775,6 +779,7 @@ export const useRenderStore = create<RenderState>((set, get) => ({
           })
           // 换过项目：旧项目的失败同样不落进当前项目（条目、确认框、排队的重试都不要）
           if (epochAtStart !== projectEpoch) return
+          if (err instanceof EngineError && executionOwner.still()) observeFigureExecution(err.figureSnapshotInvalidation, projectAtStart)
           // 后端说这一版是按旧改指表画的、表已经变了（ADR 0106 §五；别的窗口改的也算）：不是失败，
           // 不留错误块——标 stale，同步器按新表重排（本窗口自己改的表，`invalidateInflight` 通常已先丢掉它）
           if (err instanceof EngineError && err.code === INPUT_REMAP_CHANGED_CODE && slot.queued == null) {

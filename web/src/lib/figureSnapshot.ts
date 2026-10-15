@@ -7,6 +7,8 @@ export interface FigureSnapshotSaveContext {
   pj: string | null
   document: ProjectDocument
   sourceGenerations: ReadonlyMap<string, number>
+  ownerGenerations?: ReadonlyMap<string, number>
+  receiptGeneration?: number
 }
 
 /** Hash/receipt validity belongs to the backend; the frontend only checks the wire shape and owner. */
@@ -17,6 +19,12 @@ export function figureSnapshotFor(panel: PanelObject): FigureSnapshot | undefine
 export function validFigureSnapshot(value: unknown, sourceId: string): value is FigureSnapshot {
   if (!value || typeof value !== 'object') return false
   const ref = value as Record<string, unknown>
+  if (ref.executionOwner !== undefined) {
+    if (!ref.executionOwner || typeof ref.executionOwner !== 'object') return false
+    const owner = ref.executionOwner as Record<string, unknown>
+    if (typeof owner.script !== 'string' || !owner.script ||
+        (owner.run_config !== null && (typeof owner.run_config !== 'string' || !owner.run_config))) return false
+  }
   return ref.version === 1 && ref.sourceId === sourceId &&
     ['patchHash', 'receiptId', 'snapshotId'].every((key) => typeof ref[key] === 'string' && ref[key].length > 0)
 }
