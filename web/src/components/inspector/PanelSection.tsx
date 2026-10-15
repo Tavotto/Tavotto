@@ -122,6 +122,8 @@ export function PanelCapabilityNote({ panel }: { panel: PanelObject }) {
           data-capability-note
           className="mx-3 mb-1.5"
           title={statusLabel(cap.status)}
+          // 一行 +「详情 ›」：状态一句话在行上，原因折进详情
+          detail={reasonText(cap)}
           action={
             <Button
               size="sm"
@@ -130,9 +132,7 @@ export function PanelCapabilityNote({ panel }: { panel: PanelObject }) {
               {translate('readiness.openCenter', { ns: 'workspace' })}
             </Button>
           }
-        >
-          {reasonText(cap)}
-        </Notice>
+        />
       )}
     </NoticeReveal>
   )
@@ -158,6 +158,11 @@ export function PanelFrameNote({ panel }: { panel: PanelObject }) {
           data-frame-note
           className="mx-3 mb-1.5"
           title={pn('frameLegacyTitle')}
+          // 一行 +「详情 ›」：为什么与脚本保存的原图不同折进详情；换不过去的原因必须常显（按钮 aria-describedby 指它）
+          detail={pn('frameLegacyBody', {
+            w: round1(frame.savefig_mm[2]),
+            h: round1(frame.savefig_mm[3]),
+          })}
           action={
             <Button
               size="sm"
@@ -172,10 +177,6 @@ export function PanelFrameNote({ panel }: { panel: PanelObject }) {
             </Button>
           }
         >
-          {pn('frameLegacyBody', {
-            w: round1(frame.savefig_mm[2]),
-            h: round1(frame.savefig_mm[3]),
-          })}
           {blocked && (
             <span id={blockedId} data-frame-adopt-blocked className="block">
               {pn('frameLegacyAdoptBlocked')}

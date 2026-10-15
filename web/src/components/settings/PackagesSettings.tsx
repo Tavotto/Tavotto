@@ -691,11 +691,9 @@ function JobPanel({
       {/* 包管理器不报百分比：不确定态，来回扫（轨道 border 档） */}
       {running && <ProgressBar pct={null} label={pk('job.progressAria')} data-packages-progress />}
       {failure && (
-        <Notice tone="danger">
+        // 稳定码是技术信息：进「详情」（可复制），不再挤在那一句话后面
+        <Notice tone="danger" detail={errorText && repairCodeMessage(errorCode) ? errorCode : null}>
           {failure}
-          {errorText && repairCodeMessage(errorCode) && (
-            <span className="ml-1 font-mono text-xs">{errorCode}</span>
-          )}
         </Notice>
       )}
       {progress?.log && (

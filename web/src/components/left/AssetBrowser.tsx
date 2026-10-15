@@ -513,16 +513,22 @@ export function AssetBrowser() {
                 {splitNoticeText(error).inline}
               </Notice>
             ) : (
-              <EmptyState
-                icon={TriangleAlert}
+              // 首次读不出：同一条一行 Notice（一句话 + 重试），后端原文进「详情」，不再整屏空态里摆一段原始文本
+              <Notice
+                tone="danger"
+                data-asset-load-failed
                 title={ab('loadFailed')}
-                hint={error ?? undefined}
-                action={{
-                  label: ab('retry'),
-                  // 首次加载失败后的重试：**强制**另起一次，不复用可能同样
-                  // 失败的那个在途请求——用户点重试的原因正是"刚才没成"
-                  onClick: () => void useAssetStore.getState().load({ force: true }),
-                }}
+                detail={error}
+                action={
+                  <Button
+                    size="sm"
+                    // 首次加载失败后的重试：**强制**另起一次，不复用可能同样
+                    // 失败的那个在途请求——用户点重试的原因正是"刚才没成"
+                    onClick={() => void useAssetStore.getState().load({ force: true })}
+                  >
+                    {ab('retry')}
+                  </Button>
+                }
               />
             )}
           </div>
@@ -1165,8 +1171,10 @@ function RuntimeAssetCard({
         // option 里嵌一颗可 Tab 的按钮是 axe 的 nested-interactive（此前就嵌在这里）
         extra={
           staleKey ? (
-            <p data-runtime-stale className="truncate text-xs text-danger">
-              {translate(`panelBadge.${staleKey}`, { ns: 'workspace' })}
+            // 文字 ink-3，只有 14px 图标染色（UI 2.0：颜色只在图标上）
+            <p data-runtime-stale className="flex items-center gap-1 truncate text-xs text-ink-3">
+              <TriangleAlert size={ICON_SIZE.sm} aria-hidden className="shrink-0 text-danger" />
+              <span className="truncate">{translate(`panelBadge.${staleKey}`, { ns: 'workspace' })}</span>
             </p>
           ) : undefined
         }

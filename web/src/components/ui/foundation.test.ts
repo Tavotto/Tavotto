@@ -594,6 +594,12 @@ describe('说明条（Notice）不再用彩底 / 彩框', () => {
     expect(offenders, '彩色只属于 danger 档图标；底 / 框一律由原语给').toEqual([])
   })
 
+  it('StatusPill 同理：源码里唯一的语义色是字前 6px 圆点的 bg-<tone>，底与字都是中性', () => {
+    const src = stripComments(SOURCES['/src/components/ui/StatusPill.tsx'])
+    const hits = [...src.matchAll(SEMANTIC_COLOR)].map((m) => m[0])
+    expect(hits).toEqual(['bg-info', 'bg-ok', 'bg-warn', 'bg-danger'])
+  })
+
   it('自检：抓得住彩底彩框，放得过版面类与 ink 墨', () => {
     const bad = `<Notice tone="warn" className="mx-2 bg-warn-surface inset-ring inset-ring-warn-border text-danger-content" />`
     const good = `<Notice className="mx-2 mb-2 shrink-0 text-xs break-all" />`

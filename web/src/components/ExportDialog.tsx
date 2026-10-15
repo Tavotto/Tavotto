@@ -163,6 +163,7 @@ import { CountChip, type CountTone } from "./ui/CountChip";
 import { FieldGroup, FormSection } from "./ui/FormSection";
 import { listRowClass } from "./ui/listRow";
 import { Notice } from "./ui/Notice";
+import { splitNoticeText } from "@/lib/noticeText";
 import { ProgressBar } from "./ui/ProgressBar";
 import { dirTail } from "@/lib/pathDisplay";
 
@@ -171,6 +172,37 @@ import { dirTail } from "@/lib/pathDisplay";
 const EXPORT_STATUS_OWNER = "export.result";
 
 /** 本对话框的文案都在 `dialogs:export.*` 下 */
+/** 一条失败的原始材料：标题（一句人话）+ 后端原文 + 可选稳定码 */
+interface FailureRaw {
+  title: string;
+  text: string;
+  code?: string;
+}
+type FailureKind = "refusal" | "start-error" | "cancel-error" | "poll-error" | "reveal-error";
+
+/**
+ * 导出脚部状态区的失败条**同时最多一条**：几路错误各自在不同时刻出现，后来的替换前一条（按「由空变有 / 内容变了」
+ * 的先后盖戳，取戳最大的那路）。原文是一句读得懂的话就接在标题后面；裸的「HTTP 500」、过长或多行的整段进「详情」，
+ * 详情里再带上稳定码——不再只剩一个状态码。
+ */
+function useLatestFailure(raw: Record<FailureKind, FailureRaw | null>) {
+  const book = useRef({ n: 0, stamp: {} as Record<string, number>, last: {} as Record<string, string | null> });
+  const kinds = Object.keys(raw) as FailureKind[];
+  for (const k of kinds) {
+    const sig = raw[k] ? `${raw[k]!.title}\u0000${raw[k]!.text}` : null;
+    if (sig !== null && sig !== book.current.last[k]) book.current.stamp[k] = ++book.current.n;
+    book.current.last[k] = sig;
+  }
+  const live = kinds.filter((k) => raw[k]);
+  if (live.length === 0) return null;
+  const kind = live.reduce((a, b) => ((book.current.stamp[b] ?? 0) > (book.current.stamp[a] ?? 0) ? b : a));
+  const r = raw[kind]!;
+  const bare = /^HTTP \d{3}$/.test(r.text.trim());
+  const split = bare ? { inline: null, detail: r.text.trim() } : splitNoticeText(r.text);
+  const detail = [r.code, split.detail].filter(Boolean).join("\n") || null;
+  return { kind, title: r.title, inline: split.inline, detail };
+}
+
 const ex = (key: string, values?: Record<string, unknown>) =>
   translate(`export.${key}`, { ns: "dialogs", ...(values ?? {}) });
 
@@ -991,14 +1023,25 @@ export function ExportDialog() {
    * （`Dialog status`）。正文一长，末尾就在视口外——点了「开始导出」看不见进度，
    * 撞名时看不见那两条出路（设计审计 §10.2 P0）。各种回应一律是 `Notice`（一种说明条，不是七种方言）。
    */
+  // 五路失败里此刻要摆的**一条**：最近才出现的那条（见 `useLatestFailure`）
+  const failure = useLatestFailure({
+    "refusal": prepared.error ? { title: ex("failTitle"), text: formatMessage(engineErrorMsg(prepared.error)) } : null,
+    "start-error":
+      startError && !prepared.error
+        ? startError.code === "bad_filename"
+          ? { title: ex(`filenameError.${startError.message}`), text: "" }
+          : { title: ex("failTitle"), text: formatMessage(startError.message), code: startError.code }
+        : null,
+    "cancel-error": cancelError ? { title: ex("cancelFailed"), text: formatMessage(cancelError) } : null,
+    "poll-error": pollError ? { title: ex("statusFailed"), text: formatMessage(pollError) } : null,
+    "reveal-error": revealError ? { title: revealError, text: "" } : null,
+  });
+  /** 「在文件夹中显示」失败的标题里是完整路径，要能在任意处折行 */
+  const failureIsPath = failure?.kind === "reveal-error";
   const statusVisible =
     busy ||
     conflicts.length > 0 ||
-    !!prepared.error ||
-    !!startError ||
-    !!cancelError ||
-    !!pollError ||
-    !!revealError ||
+    !!failure ||
     (!!job && job.status !== "conflict");
   const statusBlock = statusVisible ? (
     <div data-export-status className="flex flex-col gap-2">
@@ -1009,48 +1052,34 @@ export function ExportDialog() {
           {ex("conflict", { files: conflicts.join("、") })}
         </Notice>
       )}
-      {prepared.error && (
-        <Notice tone="danger" data-export-refusal>
-          {formatMessage(engineErrorMsg(prepared.error))}
-        </Notice>
-      )}
-      {startError && !prepared.error && (
-        <Notice tone="danger" data-export-start-error>
-          {startError.code === "bad_filename"
-            ? ex(`filenameError.${startError.message}`)
-            : ex("operationFailed", { error: formatMessage(startError.message) })}
-        </Notice>
-      )}
-      {cancelError && (
-        <Notice tone="danger" data-export-cancel-error>
-          {ex("cancelFailed", { error: formatMessage(cancelError) })}
-        </Notice>
-      )}
-      {pollError && (
+      {/* 失败条同时**最多一条**：几路错误（拒绝 / 启动 / 取消 / 状态 / 在文件夹中显示）后来的替换前一条，不堆叠、不挤正文；
+          一句话 + 一个动作，状态码 / 后端 detail 在「详情」里 */}
+      {failure && (
         <Notice
           tone="danger"
-          data-export-poll-error
+          data-export-failure={failure.kind}
+          {...{ [`data-export-${failure.kind}`]: "" }}
+          title={failure.title}
+          detail={failure.detail}
+          className={failureIsPath ? "break-all" : undefined}
           action={
-            <Button
-              data-export-status-retry
-              size="sm"
-              disabled={refreshing}
-              onClick={() => void refreshExportStatus()}
-            >
-              {ex("retryStatus")}
-            </Button>
+            failure.kind === "poll-error" ? (
+              <Button
+                data-export-status-retry
+                size="sm"
+                disabled={refreshing}
+                onClick={() => void refreshExportStatus()}
+              >
+                {ex("retryStatus")}
+              </Button>
+            ) : undefined
           }
         >
-          {ex("statusFailed", { error: formatMessage(pollError) })}
+          {failure.inline}
         </Notice>
       )}
       {job && !busy && job.status !== "conflict" && (
         <ResultBlock job={job} edited={editedDuringExport} onRetry={() => void start("ask")} />
-      )}
-      {revealError && (
-        <Notice tone="danger" data-export-reveal-error className="break-all">
-          {revealError}
-        </Notice>
       )}
     </div>
   ) : null;

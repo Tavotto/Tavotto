@@ -2114,6 +2114,19 @@ describe('visible export recovery', () => {
     expect(useDocumentStore.getState().doc).toBe(doc)
   })
 
+  it('启动失败只有「HTTP 500」：标题是一句人话，状态码折进详情；状态区同时只有一条失败条', async () => {
+    initI18n('en-US')
+    await setup(9)
+    globalThis.fetch = vi.fn(async () => response({}, 500)) as typeof fetch
+    await act(async () => { await runExport(input()) })
+    const notice = document.querySelector('[data-export-start-error]')!
+    expect(notice.textContent).toContain('The export didn’t finish')
+    expect(notice.textContent).not.toContain('HTTP 500')
+    await act(async () => { (notice.querySelector('[data-notice-detail-toggle]') as HTMLButtonElement).click() })
+    expect(notice.querySelector('[data-notice-detail]')?.textContent).toContain('HTTP 500')
+    expect(document.querySelectorAll('[data-export-failure]')).toHaveLength(1)
+  })
+
   it('shows cancel and status failures, keeps dialog/job on dismissal, and retries status', async () => {
     initI18n('en-US')
     await setup(9)
@@ -2121,13 +2134,18 @@ describe('visible export recovery', () => {
     await act(async () => { await runExport(input()) })
     globalThis.fetch = vi.fn(async () => { throw new TypeError('Failed to fetch') }) as typeof fetch
     await act(async () => { await cancelCurrentExport(); await refreshExportStatus() })
-    expect(document.querySelector('[data-export-cancel-error]')?.textContent).toContain('not confirmed')
+    // 失败条同时最多一条：取消失败先出现、状态失败后出现 → 后来的替换前一条（不堆叠）
+    expect(document.querySelectorAll('[data-export-failure]')).toHaveLength(1)
+    expect(document.querySelector('[data-export-cancel-error]')).toBeNull()
     expect(document.querySelector('[data-export-poll-error]')?.textContent).toContain('job may still finish')
-    expect(document.querySelector('[data-export-poll-error]')?.textContent).toContain('Check the connection')
+    // 原文较长：折在「详情」里，展开才见
+    expect(document.querySelector('[data-export-poll-error]')?.textContent).not.toContain('Check the connection')
+    await act(async () => { (document.querySelector('[data-export-poll-error] [data-notice-detail-toggle]') as HTMLButtonElement).click() })
+    expect(document.querySelector('[data-export-poll-error] [data-notice-detail]')?.textContent).toContain('Check the connection')
     await act(async () => { useUiStore.getState().setExportOpen(false) })
     expect(useExportStore.getState().ownedJobId).toBe('feedback-job')
     await act(async () => { useUiStore.getState().setExportOpen(true) })
-    expect(document.querySelector('[data-export-cancel-error]')).toBeTruthy()
+    expect(document.querySelector('[data-export-poll-error]')).toBeTruthy()
     globalThis.fetch = vi.fn(async () => response({ ...runningJob, status: 'done' })) as typeof fetch
     await act(async () => { (document.querySelector('[data-export-status-retry]') as HTMLButtonElement).click() })
     expect(document.querySelector('[data-export-poll-error]')).toBeNull()
