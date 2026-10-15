@@ -12,7 +12,6 @@ import { cn } from '@/lib/utils'
 import type { ValidationIssue } from '@/lib/validation'
 import {
   issueAriaLabel,
-  expectationHead,
   issueDetailText,
   issueTitle,
   issueValues,
@@ -318,7 +317,7 @@ export function IssueRow({
                     {' → '}
                   </span>
                   {/* 行内只留要求本身（「大于 8 pt」）；「正好等于不算通过」这类补一句的整句在 title / ⓘ 里 */}
-                  <span className={current ? 'text-ink' : 'text-ink-2'}>{expectationHead(values.expected)}</span>
+                  <span className={current ? 'text-ink' : 'text-ink-2'}>{values.expectedHead ?? values.expected}</span>
                 </>
               )}
             </span>

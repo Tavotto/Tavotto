@@ -71,6 +71,13 @@ export const issueDetailText = (issue: ValidationIssue): string => formatMessage
 export interface IssueValues {
   current: string | null
   expected: string | null
+  /**
+   * 「要求」在**一行里**的写法：边界那几句（`…AtBoundary`）在要求后面补了一句解释（「，正好等于不算通过。」），
+   * 行内只留要求本身（`above` / `atLeast` / `atMost` 那条裸文案），整句留给 title / 技术详情。
+   * **由来源处的比较词模板直接算出**（`comparatorKey` 的裸档），不是对整句按标点截——规范值本身可以带逗号、分号
+   * （坐标轴标签格式「Surname, year」）。没有比较词的规则它就等于 `expected`。
+   */
+  expectedHead: string | null
 }
 
 /**
@@ -112,18 +119,9 @@ const VALUES: Record<
   'axis-label-format': { current: 'label', expected: 'want' },
 }
 
-/**
- * 「要求」那半句在**一行里**的写法：边界那几句（`…AtBoundary`）在要求后面补一句解释
- * （「大于 8 pt，正好等于不算通过。」/ “above 8 pt; exactly equal doesn’t pass”）——行内只留要求本身，
- * 整句留给 title / 技术详情。只在从句分隔符（全角逗号 / 分号，或半角逗号 / 分号加空格）处截，千分位的逗号不动。
- */
-export function expectationHead(expected: string): string {
-  return expected.split(/，|；|[,;]\s/)[0]
-}
-
 export function issueValues(issue: ValidationIssue): IssueValues {
   const spec = VALUES[issue.ruleCode]
-  if (!spec) return { current: null, expected: null }
+  if (!spec) return { current: null, expected: null, expectedHead: null }
   // 画布标注那两条用的是 `size` 而不是 `effective`（同一条规则、两种主语）
   const params = (issue.message.values ?? {}) as Record<string, unknown>
   const read = (key: string | undefined): string | null => {
@@ -144,6 +142,7 @@ export function issueValues(issue: ValidationIssue): IssueValues {
         : spec.cmp
           ? pr(`cmp.${comparatorKey(spec.cmp, currentRaw, expectedRaw)}`, { value: expected })
           : expected,
+    expectedHead: expected == null ? null : spec.cmp ? pr(`cmp.${spec.cmp}`, { value: expected }) : expected,
   }
 }
 

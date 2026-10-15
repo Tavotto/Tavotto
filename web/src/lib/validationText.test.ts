@@ -6,7 +6,7 @@
  */
 import { describe, expect, it, afterEach } from 'vitest'
 import { setLocale } from '@/i18n'
-import { SEVERITY_ICON, expectationHead, issueTitle, issueValues, ruleExpectation, severityLabel, subjectName, technicalDetailLines } from './validationText'
+import { SEVERITY_ICON, issueTitle, issueValues, ruleExpectation, severityLabel, subjectName, technicalDetailLines } from './validationText'
 import { SEVERITIES, loadProfile } from './profile'
 import { runSpec, type PreflightSpec } from './preflight'
 import type { ValidationIssue } from './validation'
@@ -63,7 +63,7 @@ describe('主语说人话', () => {
 
 describe('当前值 → 要求', () => {
   it('字号带单位，要求那一侧说清是「不低于」还是「大于」', () => {
-    expect(issueValues(issue())).toEqual({ current: '7.50 pt', expected: '≥ 8 pt' })
+    expect(issueValues(issue())).toEqual({ current: '7.50 pt', expected: '≥ 8 pt', expectedHead: '≥ 8 pt' })
     const floor = issue({
       ruleCode: 'font-below-absolute-floor',
       message: {
@@ -89,6 +89,7 @@ describe('当前值 → 要求', () => {
     expect(issueValues(issue({ ruleCode: 'overlap', message: { key: 'preflight.overlap', ns: 'errors' } }))).toEqual({
       current: null,
       expected: null,
+      expectedHead: null,
     })
   })
 })
@@ -251,12 +252,23 @@ describe('边界措辞与真实判据同步（审计 T41）', () => {
   })
 })
 
-describe('expectationHead：行内只留「要求」本身', () => {
-  it('边界句在从句处截断，千分位的逗号与没有从句的值原样', () => {
-    expect(expectationHead('大于 8 pt，正好等于不算通过。')).toBe('大于 8 pt')
-    expect(expectationHead('≥ 0.5 pt，当前值实际略低，显示已四舍五入。')).toBe('≥ 0.5 pt')
-    expect(expectationHead('above 8 pt; exactly equal doesn’t pass')).toBe('above 8 pt')
-    expect(expectationHead('≥ 1,000 pt')).toBe('≥ 1,000 pt')
-    expect(expectationHead('大于 8 pt')).toBe('大于 8 pt')
+describe('issueValues.expectedHead：行内只留「要求」本身，只剥比较词自己加的边界说明', () => {
+  const issue = (ruleCode: string, values: Record<string, unknown>): ValidationIssue =>
+    ({ ruleCode, message: { values } }) as unknown as ValidationIssue
+
+  it('边界句：expected 带补充说明，expectedHead 是裸的要求', () => {
+    const v = issueValues(issue('font-below-absolute-floor', { effective: '8.00', floor: 8 }))
+    expect(v.expected).toContain('正好等于不算通过')
+    expect(v.expectedHead).toBe('大于 8 pt')
+    const w = issueValues(issue('font-below-absolute-floor', { effective: '6.00', floor: 8 }))
+    expect(w.expectedHead).toBe(w.expected)
+  })
+
+  it('规范值本身带逗号 / 分号：原样保留，一个字不切', () => {
+    for (const want of ['Surname, year', 'a; b', '1,000; x, y']) {
+      const v = issueValues(issue('axis-label-format', { label: 'x', want }))
+      expect(v.expected).toBe(want)
+      expect(v.expectedHead).toBe(want)
+    }
   })
 })
