@@ -90,6 +90,8 @@
   5. **账本恢复状态 `LedgerState`（unknown / ok / failed，与 `reconcile` 共用一个状态源）**：只有成功对账过一次
      （草稿 + 项目级账本都读成功、pendings 已还原）才允许发送；还在读或读失败（一句话 + 重试）一律锁——读失败是「不知道」，
      不是空账本；成功过之后一次读失败不降级。
+     对账里的两个读（草稿 GET、项目账本 GET）**各自带 5 秒超时**（中止请求并不再等它）：半开连接上的读不会自己结束，
+     超时等同读失败（`ledgerState=failed`、重试提示可达，`draftRead` 的失败也由这个结局驱动，不另设计时）；迟到的旧响应按代次丢弃。
   **「首个 POST 不确定」引出的所有分支**（用户点查询、同 id 重发返回 `deduped:true`）都收在 `aiStore.settleFromSnapshot`：
   向后端要请求 + 会话快照（详情只在 `readSessionDetail` 一处读），按快照的真实状态收尾（终态走正常完成路径含 refresh
   警告，仍在跑才是 running，读不到保持未确认、绝不凭摘要或 deduped 响应建 running 会话）。看护
