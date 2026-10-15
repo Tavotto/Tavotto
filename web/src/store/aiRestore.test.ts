@@ -437,7 +437,7 @@ describe('「已被接受」不管从哪条路径进来，效果都一样（行�
 
   beforeEach(() => {
     removeAccepted.mockClear()
-    setAiSubmissionLedger({ markSubmitted: async () => true, clearSubmitted: async () => {}, removeAccepted })
+    setAiSubmissionLedger({ markSubmitted: async () => 'ok', removeAccepted })
   })
   afterEach(() => setAiSubmissionLedger(null))
 
