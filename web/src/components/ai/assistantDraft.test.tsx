@@ -264,6 +264,147 @@ describe('草稿存后端：落盘与恢复', () => {
   })
 })
 
+describe('同步状态机：单一 reconcile + 写入版本（#1098）', () => {
+  const OWN = { rid: 'rid-own-0000001', text: '本面板发出的话', sent: SENT, script: 'p1.py' }
+  const CROSS = { rid: 'rid-cross-000001', text: '同脚本别的面板发出的话', sent: SENT, script: 'p1.py' }
+  const ORPHAN = { rid: 'rid-orphan-00001', text: '已删面板发出的话', sent: SENT, script: 'p1.py' }
+  const OTHER = { rid: 'rid-other-000001', text: '别的脚本的话', sent: SENT, script: 'zzz.py' }
+  const seed = () => {
+    be.pendings.set('pa\u0000Fig1.pdf', [OWN])
+    be.pendings.set('pa\u0000Fig3.pdf', [CROSS])
+    be.pendings.set('pa\u0000Gone.pdf', [ORPHAN])
+    be.pendings.set('pa\u0000Fig2.pdf', [OTHER])
+    be.put('pa', 'Fig1.pdf', '服务器上的草稿')
+  }
+  const rids = () => Object.keys(useAiStore.getState().submissions).sort()
+
+  it('场景一：B 标签页先挂载、A 之后提交且丢了响应——B 聚焦时 pendings（含跨面板）被还原，发送被锁，重发不会换新 rid', async () => {
+    await mount() // 此刻后端什么都没有
+    expect(q('[data-ai-submission]')).toBeNull()
+    seed() // 标签页 A 发出了请求（本面板 + 同脚本别的面板 + 已删面板）
+    await act(async () => window.dispatchEvent(new Event('focus')))
+    await settle()
+    expect(rids()).toEqual(['rid-cross-000001', 'rid-orphan-00001', 'rid-own-0000001']) // 别的脚本的不混进来
+    expect(q('[data-ai-submission="unconfirmed"]')).toBeTruthy()
+    expect(q<HTMLButtonElement>('[data-ai-send]')!.disabled).toBe(true)
+    await typeText('在 B 上再说一遍')
+    await act(async () => {
+      input().dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', metaKey: true, bubbles: true }))
+    })
+    expect(aiRun).not.toHaveBeenCalled() // 没有用新的请求 id 再发一次
+  })
+
+  it('场景二：PUT 在途时聚焦触发的 GET 拿到旧值——不覆盖输入框；PUT 落地后界面仍是新的，下次按键写的是新文本', async () => {
+    await mount()
+    const release = be.holdDraftPuts()
+    await typeText('第一版')
+    await act(async () => window.dispatchEvent(new Event('pagehide'))) // 冲刷：PUT 在途，后端还没收到
+    await settle()
+    expect(be.draft('pa', 'Fig1.pdf')).toBeUndefined()
+    await act(async () => window.dispatchEvent(new Event('focus'))) // GET 读到的是旧值（空）
+    await settle()
+    expect(input().value).toBe('第一版') // 对照：旧实现在这里把输入框盖成了旧值
+    release()
+    await settle()
+    expect(be.draft('pa', 'Fig1.pdf')).toBe('第一版')
+    expect(input().value).toBe('第一版')
+    await typeText('第一版加字')
+    await act(async () => window.dispatchEvent(new Event('pagehide')))
+    await settle()
+    expect(be.draft('pa', 'Fig1.pdf')).toBe('第一版加字') // 没有把旧文本写回去
+  })
+
+  it('PUT 在途时本地又有更新的写入：落地后以本地为准再写一次', async () => {
+    await mount()
+    const release = be.holdDraftPuts()
+    await typeText('v1')
+    await act(async () => window.dispatchEvent(new Event('pagehide'))) // v1 在途
+    await settle()
+    await typeText('v1 又改成 v2') // 在途期间本地更新
+    release()
+    await settle()
+    await act(async () => window.dispatchEvent(new Event('pagehide'))) // 让补写的 v2 也走一次冲刷，免等防抖计时
+    await settle()
+    expect(be.draft('pa', 'Fig1.pdf')).toBe('v1 又改成 v2')
+    expect(input().value).toBe('v1 又改成 v2')
+  })
+
+  it('已被接受的文本，其草稿 PUT 若迟于确认才落地：落地后被条件删掉，不会作为草稿复活', async () => {
+    vi.mocked(aiRun).mockResolvedValue({ session: 's-1', script: 'p1.py' })
+    await mount()
+    const release = be.holdDraftPuts()
+    await typeText('要发出去的话')
+    await act(async () => window.dispatchEvent(new Event('pagehide'))) // 草稿 PUT 在途
+    await settle()
+    await click(q('[data-ai-send="send"]')) // 发出、被接受 → 清输入框
+    await settle()
+    expect(input().value).toBe('')
+    release() // 迟到的 PUT 现在才落地
+    await settle()
+    expect(be.draft('pa', 'Fig1.pdf')).toBeUndefined() // 没有复活成「已恢复的草稿」
+  })
+
+  it('没有未落定的本地写入时，对账读回的文本照常应用（另一个标签页的新稿进来）', async () => {
+    await mount()
+    be.put('pa', 'Fig1.pdf', '别的标签页写的')
+    await act(async () => window.dispatchEvent(new Event('focus')))
+    await settle()
+    expect(input().value).toBe('别的标签页写的')
+  })
+
+  it('读失败（后端暂时不可用）不是「服务器说空」：输入框不被清掉', async () => {
+    await mount()
+    await typeText('写到一半')
+    await act(async () => window.dispatchEvent(new Event('pagehide')))
+    await settle()
+    be.setDown(true)
+    await act(async () => window.dispatchEvent(new Event('focus')))
+    await settle()
+    expect(input().value).toBe('写到一半')
+  })
+
+  it('结构性：挂载 / 聚焦 / 可见 / SSE 重连四个入口走同一条路径——同样的服务器状态得到完全相同的还原结果', async () => {
+    const entries: Record<string, () => Promise<void>> = {
+      mount: async () => {},
+      focus: async () => {
+        await act(async () => window.dispatchEvent(new Event('focus')))
+      },
+      visible: async () => {
+        await act(async () => document.dispatchEvent(new Event('visibilitychange')))
+      },
+      reconnect: async () => {
+        await act(async () => window.dispatchEvent(new Event('mm:sse-open')))
+      },
+    }
+    const outcomes: Record<string, { rids: string[]; text: string }> = {}
+    for (const [name, trigger] of Object.entries(entries)) {
+      useAiStore.setState({ submissions: {}, sessions: [] })
+      if (root) await unmount()
+      be.pendings.clear()
+      be.drafts.clear()
+      if (name === 'mount') seed() // 挂载：状态在挂载前就在
+      await mount()
+      if (name !== 'mount') {
+        seed() // 其余入口：挂载之后状态才出现，靠各自的入口把它取回来
+        await trigger()
+      }
+      await settle()
+      outcomes[name] = { rids: rids(), text: input().value }
+    }
+    expect(outcomes.mount.rids).toEqual(['rid-cross-000001', 'rid-orphan-00001', 'rid-own-0000001'])
+    expect(outcomes.mount.text).toBe('服务器上的草稿')
+    for (const name of ['focus', 'visible', 'reconnect']) expect(outcomes[name], name).toEqual(outcomes.mount)
+  })
+
+  it('结构性（源码）：全部入口都调 reconcile，且服务器状态只在 reconcile 里读（没有只取文本的第二条路）', async () => {
+    const src = (await import('./useAiDraft.ts?raw')).default as string
+    expect(src.match(/fetchDraftState\(/g)).toHaveLength(1)
+    expect(src.match(/loadProjectPendings\(/g)).toHaveLength(1)
+    expect(src).not.toMatch(/\bloadDraft\(/)
+    for (const source of ['mount', 'focus', 'visible', 'reconnect']) expect(src).toContain(`reconcile('${source}')`)
+  })
+})
+
 describe('已发出未确认：不能盲目重发', () => {
   beforeEach(() => {
     vi.mocked(aiRun).mockRejectedValue(new TypeError('Failed to fetch'))

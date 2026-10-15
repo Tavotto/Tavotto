@@ -6,12 +6,14 @@
  */
 export interface DraftBackend {
   /** 命中草稿相关路由返回 Response，否则 null（调用方继续处理别的路径） */
-  handle: (url: string, init?: RequestInit) => Response | null
+  handle: (url: string, init?: RequestInit) => Response | Promise<Response> | null
   drafts: Map<string, string>
   pendings: Map<string, { rid: string; text: string; sent: unknown; script?: string | null }[]>
   calls: { method: string; path: string; keepalive: boolean; body: Record<string, unknown> }[]
   /** 让后端「不可用」（fetch 抛网络错误） */
   setDown: (down: boolean) => void
+  /** 扣住草稿的 PUT（请求「在途」：后端还没收到）；返回放行函数 */
+  holdDraftPuts: () => () => void
   /** 只让「写账本」失败（PUT pending 回 500），别的照常 */
   setPendingWriteFails: (fails: boolean) => void
   /** 直接读 / 写（模拟另一个标签页） */
@@ -29,11 +31,12 @@ export function createDraftBackend(): DraftBackend {
   const drafts = new Map<string, string>()
   const pendings = new Map<string, { rid: string; text: string; sent: unknown; script?: string | null }[]>()
   let pendingWriteFails = false
+  let hold: Promise<void> | null = null
   const calls: DraftBackend['calls'] = []
   let down = false
   const bytes = (t: string) => new TextEncoder().encode(t).length
 
-  const handle = (url: string, init?: RequestInit): Response | null => {
+  const handle = (url: string, init?: RequestInit): Response | Promise<Response> | null => {
     const u = new URL(url, 'http://x')
     if (!u.pathname.startsWith('/api/ai/drafts')) return null
     if (down) throw new TypeError('Failed to fetch')
@@ -87,11 +90,14 @@ export function createDraftBackend(): DraftBackend {
       }
       const file = String(body.file ?? '')
       if (method === 'PUT') {
-        const text = String(body.text)
-        if (text === '' || bytes(text) > MAX) drafts.delete(key(pj, file))
-        else drafts.set(key(pj, file), text)
-        if (bytes(text) > MAX) return json({ error: 'too large', code: 'ai_draft_too_large', params: { limit_kb: 20 } }, 413)
-        return json({ revision: 1 })
+        const apply = (): Response => {
+          const text = String(body.text)
+          if (text === '' || bytes(text) > MAX) drafts.delete(key(pj, file))
+          else drafts.set(key(pj, file), text)
+          if (bytes(text) > MAX) return json({ error: 'too large', code: 'ai_draft_too_large', params: { limit_kb: 20 } }, 413)
+          return json({ revision: 1 })
+        }
+        return hold ? hold.then(apply) : apply()
       }
       if (method === 'DELETE') {
         const del = drafts.get(key(pj, file)) === body.if_text
@@ -109,6 +115,16 @@ export function createDraftBackend(): DraftBackend {
     calls,
     setDown: (d) => {
       down = d
+    },
+    holdDraftPuts: () => {
+      let release!: () => void
+      hold = new Promise<void>((r) => {
+        release = () => {
+          hold = null
+          r()
+        }
+      })
+      return release
     },
     setPendingWriteFails: (f) => {
       pendingWriteFails = f
