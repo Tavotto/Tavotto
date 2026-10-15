@@ -857,10 +857,12 @@ function AssistantPanelBody() {
                   data-ai-send={runningHere ? 'stop' : 'send'}
                   className="relative h-[26px] w-[26px]"
                   // 运行中时按钮是「中止」：未确认的提交 / 账本恢复状态 / 指令超限都不该把中止也禁掉（任务就在跑，用户要能停它）
+                  // `noAgent`（最后一个可用 agent 被停用 / 可执行文件消失）只影响「发送」：任务还在跑时「中止」是唯一的停止入口，不能被它禁掉
                   disabled={
                     !panel ||
-                    noAgent ||
-                    (!runningHere && (!!submission || !prompt.trim() || ledgerState !== 'ok' || tooLarge))
+                    (runningHere
+                      ? false
+                      : noAgent || !!submission || !prompt.trim() || ledgerState !== 'ok' || tooLarge)
                   }
                   aria-busy={sending || runningHere || undefined}
                   onClick={runningHere ? stopRunning : () => send({ source: 'composer' })}

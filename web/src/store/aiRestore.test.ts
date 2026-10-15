@@ -26,6 +26,7 @@ let requestsDb: Record<string, Row> = {} // rid → `GET /api/ai/requests/<rid>`
 let holds: Record<string, Promise<void>> = {} // pj → 扣住该项目的历史请求（「恢复在途」）
 const historyCalls: string[] = [] // 发过历史请求的项目
 let detail: Record<string, Row> = {}
+let pageGate: Promise<void> | null = null // 扣住 offset>0 的历史分页请求
 let requestGate: Promise<void> | null = null // 扣住**下一个**请求快照查询（用一次即清）
 let detailGate: Promise<void> | null = null // 扣住**下一个**会话详情读取（用一次即清）
 const urls: string[] = []
@@ -39,7 +40,12 @@ globalThis.fetch = (async (url: unknown, init?: RequestInit) => {
     historyCalls.push(pj)
     const gate = holds[pj] as Promise<void> | undefined
     if (gate) await gate
-    return json({ total: 0, sessions: history[pj] ?? [] })
+    const all = history[pj] ?? []
+    const q = new URL(u, 'http://x').searchParams
+    const limit = Number(q.get('limit') ?? 20)
+    const offset = Number(q.get('offset') ?? 0)
+    if (offset > 0 && pageGate) await pageGate
+    return json({ total: all.length, sessions: all.slice(offset, offset + limit) })
   }
   const rq = /\/api\/ai\/requests\/([^/?]+)$/.exec(u.split('?')[0])
   if (rq && requestGate) {
@@ -71,6 +77,7 @@ beforeEach(() => {
   requestsDown = false
   requestGate = null
   detailGate = null
+  pageGate = null
   requestsDb = {}
   holds = {}
   historyCalls.length = 0
@@ -658,6 +665,60 @@ describe('错过 ai.done 这一族的结构性兜底：建完占位一律读详�
     open()
     await Promise.all([a, b])
     expect(detailReads() - before).toBe(1)
+  })
+})
+
+describe('取消之后与分页恢复（#1111 Codex P2）', () => {
+  const detailReads = () => urls.filter((u) => /\/api\/ai\/sessions\/[^/?]+(\?|$)/.test(u)).length
+  afterEach(() => vi.useRealTimers())
+
+  it('cancel 成功后本地是 cancelled 但未 finalized，仍算非终态：SSE 断开、后端随后写入 changed / diff，15 s 轮询拿到并 finalize', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })
+    history.pa = [row()]
+    detail['s-run'] = { agent: 'codex', status: 'running', changed: false, diff: '', transcript: [] }
+    await useAiStore.getState().restoreRunning()
+    await useAiStore.getState().cancel('s-run')
+    expect(sessions()[0]).toMatchObject({ status: 'cancelled' })
+    expect(sessions()[0].finalized).toBeFalsy() // 只是「中止请求被接受」，后端最终结局还没到
+    detail['s-run'] = { agent: 'codex', status: 'cancelled', changed: true, diff: 'PARTIAL', transcript: [] } // 此后后端写入了改动
+    await vi.advanceTimersByTimeAsync(SAFETY_NET_MS + 100)
+    await vi.waitFor(() => expect(sessions()[0]).toMatchObject({ status: 'cancelled', changed: true, diff: 'PARTIAL', finalized: true })) // 对照：旧判据只看 running，永远等不到
+    const reads = detailReads()
+    await vi.advanceTimersByTimeAsync(SAFETY_NET_MS * 3)
+    expect(detailReads()).toBe(reads) // finalize 之后不再轮询
+  })
+
+  it('cancel 之后后端仍说 running（中止还没生效）：继续对账，不提前 finalize', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })
+    history.pa = [row()]
+    detail['s-run'] = { agent: 'codex', status: 'running', changed: false, diff: '', transcript: [] }
+    await useAiStore.getState().restoreRunning()
+    await useAiStore.getState().cancel('s-run')
+    await vi.advanceTimersByTimeAsync(SAFETY_NET_MS + 100)
+    await vi.advanceTimersByTimeAsync(SAFETY_NET_MS)
+    expect(sessions()[0].finalized).toBeFalsy()
+    expect(detailReads()).toBeGreaterThanOrEqual(2) // 一直在对账
+  })
+
+  it('运行中历史超过一页（120 条 running）：按分页一直取到全部，都恢复成占位', async () => {
+    history.pa = Array.from({ length: 120 }, (_, i) => row({ id: `s-${i}`, script: `f${i}.py` }))
+    await useAiStore.getState().restoreRunning()
+    expect(sessions()).toHaveLength(120)
+    expect(new Set(sessions().map((x) => x.id)).size).toBe(120)
+    expect(historyCalls.length).toBeGreaterThanOrEqual(2) // 不止第一页
+  })
+
+  it('分页进行中换项目：中止，旧项目的会话一个都不落', async () => {
+    history.pa = Array.from({ length: 120 }, (_, i) => row({ id: `s-${i}` }))
+    let open!: () => void
+    pageGate = new Promise<void>((r) => (open = r)) // 第二页被扣住
+    const p = useAiStore.getState().restoreRunning()
+    await vi.waitFor(() => expect(historyCalls.length).toBe(2))
+    setCurrentProjectId('pb')
+    useAiStore.getState().clear() // 换项目（换代）
+    open()
+    await p
+    expect(sessions()).toEqual([])
   })
 })
 

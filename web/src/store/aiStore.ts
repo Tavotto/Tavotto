@@ -12,6 +12,7 @@ import {
   effectiveAgent,
   fetchAiCapabilities,
   fetchAiHistory,
+  type AiHistoryEntry,
   fetchAiRequest,
   fetchAiSession,
   isDefiniteRunFailure,
@@ -268,6 +269,15 @@ const queueSupersede = (key: string, rid: string): void => {
   set.add(rid)
   supersedeQueue.set(key, set)
 }
+/**
+ * **非终态会话的唯一谓词**：还没拿到后端确定的终态快照 / `ai.done`（`!finalized`）。
+ * 本地 `cancel` 成功后状态先标成 `cancelled`，但那只是「请求中止已被接受」，后端的最终结局（changed / diff / 是否真的停下）
+ * 还没到——所以 running 和「cancelled 但未 finalized」都要继续对账，直到后端给出确定的终态。
+ * `settleRunningSessions` 与安全网轮询都调它，不各写一份。
+ */
+export const isOpenSession = (x: Pick<AiSession, 'status' | 'finalized'>): boolean =>
+  !x.finalized && (x.status === 'running' || x.status === 'cancelled')
+
 /** `settleRunningSessions` 在途的会话（代次 + 项目 + id），同一个会话同一时刻只读一次详情 */
 const settling = new Set<string>()
 
@@ -773,20 +783,36 @@ function dropUnclaimedRestoreBuffer(): void {
   restoreBuffered.clear()
 }
 
+/** 恢复运行中会话时每页取多少（接口单页上限 100）/ 最多取几页（防失控；100×50 远超任何真实并发数） */
+const RESTORE_PAGE_SIZE = 100
+const RESTORE_MAX_PAGES = 50
+
 async function doRestore(): Promise<void> {
   const { get, set } = { get: useAiStore.getState, set: useAiStore.setState }
   const born = get().generation
   const pj = currentProjectId()
   restoringActive++
   try {
-    let list
-    try {
-      list = (await fetchAiHistory({ status: 'running', limit: 50 }, pj))?.sessions
-    } catch {
-      return // 联系不上 / 老后端：什么都不动，下一次重连再来
+    // 运行中清单按接口的分页（limit/offset，单页上限 100）**一直取到全部**：超过一页的并发任务也要恢复成占位并锁住脚本。
+    // 每页之间检查代次 / 项目，换了就中止（这些会话属于旧项目，不落）
+    const list: AiHistoryEntry[] = []
+    for (let page = 0; page < RESTORE_MAX_PAGES; page++) {
+      let res
+      try {
+        res = await fetchAiHistory({ status: 'running', limit: RESTORE_PAGE_SIZE, offset: list.length }, pj)
+      } catch {
+        if (page === 0) return // 联系不上 / 老后端：什么都不动，下一次重连再来
+        break // 中途失败：已取到的照常恢复，其余等下一次重连
+      }
+      if (born !== get().generation || pj !== currentProjectId()) return
+      if (!Array.isArray(res?.sessions)) {
+        if (page === 0) return
+        break
+      }
+      list.push(...res.sessions)
+      if (res.sessions.length < RESTORE_PAGE_SIZE || (typeof res.total === 'number' && list.length >= res.total)) break
     }
-    // 拉的过程中换了项目：这些会话属于旧项目，不落
-    if (born !== get().generation || pj !== currentProjectId() || !Array.isArray(list)) return
+    if (born !== get().generation || pj !== currentProjectId()) return
     const caps = get().caps
     for (const e of list) {
       if (e.status !== 'running') continue
@@ -1203,7 +1229,7 @@ export function isSessionOf(
  */
 export const SAFETY_NET_MS = 15_000
 let netTimer: ReturnType<typeof setInterval> | null = null
-const hasOpenSessions = (): boolean => useAiStore.getState().sessions.some((x) => x.status === 'running' && !x.finalized)
+const hasOpenSessions = (): boolean => useAiStore.getState().sessions.some(isOpenSession)
 const pageHidden = (): boolean => typeof document !== 'undefined' && document.visibilityState === 'hidden'
 function safetyNetTick(): void {
   if (pageHidden()) return

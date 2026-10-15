@@ -211,6 +211,19 @@ describe('发送 ↔ 中止同一颗按钮', () => {
     expect(sendButton().disabled).toBe(true)
   })
 
+  it('运行中最后一个可用 agent 被停用（noAgent）：「中止」仍可点、点了发出 cancel；没在跑时 noAgent 照样禁掉「发送」', async () => {
+    await mount([session()])
+    await act(async () => useAiStore.setState({ caps: capsOf([agentCaps({ usable: false })]) }))
+    const btn = sendButton()
+    expect(btn.dataset.aiSend).toBe('stop')
+    expect(btn.disabled).toBe(false) // 任务就在跑，这是唯一的停止入口
+    await act(async () => btn.click())
+    expect(aiCancel).toHaveBeenCalledWith('s1', null)
+    // 跑完之后回到「发送」：noAgent 只影响发送，这时被禁掉
+    expect(sendButton().dataset.aiSend).toBe('send')
+    expect(sendButton().disabled).toBe(true)
+  })
+
   it('没在跑：是「发送」，输入框空着时禁用', async () => {
     await mount([])
     expect(sendButton().dataset.aiSend).toBe('send')
