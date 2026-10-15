@@ -9387,17 +9387,33 @@ def api_ai_draft_delete():
     )
 
 
+@app.get("/api/ai/drafts/pending")
+def api_ai_pending_list():
+    """本项目全部未落定的提交（跨面板，带 `script`）：发起它的面板已不在 / 换图时前端也要找得回来、查得了。"""
+    project = str(require_project().resolve())
+    resp = jsonify({"pendings": engine_ai_history.list_pendings(project)})
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
 @app.put("/api/ai/drafts/pending/<rid>")
 def api_ai_pending_put(rid):
     if not _valid_client_request_id(rid):
         abort(400)
     body = request.get_json(force=True) or {}
     text, sent = body.get("text"), body.get("sent")
+    script = body.get("script")
     if not isinstance(text, str) or not isinstance(sent, dict):
+        abort(400)
+    if script is not None and (
+        not isinstance(script, str) or len(script) > 1024 or "\x00" in script
+    ):
         abort(400)
     project = str(require_project().resolve())
     try:
-        engine_ai_history.put_pending(project, _draft_file_id(body.get("file")), rid, text, sent)
+        engine_ai_history.put_pending(
+            project, _draft_file_id(body.get("file")), rid, text, sent, script=script
+        )
     except engine_ai_history.DraftTooLarge as exc:
         return _draft_too_large(exc)
     return jsonify({"ok": True})

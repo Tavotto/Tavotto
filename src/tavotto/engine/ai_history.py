@@ -66,6 +66,7 @@ CREATE TABLE IF NOT EXISTS ai_pending (
   rid TEXT NOT NULL,
   text TEXT NOT NULL,
   sent TEXT NOT NULL,
+  script TEXT,
   created_ms INTEGER NOT NULL,
   PRIMARY KEY (project, file_id, rid)
 );
@@ -126,6 +127,9 @@ def _migrate(con: sqlite3.Connection) -> None:
         if name not in have:
             con.execute(f"ALTER TABLE sessions ADD COLUMN {name} {kind}")
     con.execute(_REQUEST_INDEX)
+    # 待确认账本按**脚本**也要查得到（发起它的面板可能已被删 / 换图）：`script` 是后补的列
+    if "script" not in {row["name"] for row in con.execute("PRAGMA table_info(ai_pending)")}:
+        con.execute("ALTER TABLE ai_pending ADD COLUMN script TEXT")
     # 老库 / 本改动之前登记的会话：账本补齐（幂等）
     con.execute(
         "INSERT OR IGNORE INTO ai_requests (project, client_request_id, session, created_ms) "
@@ -412,8 +416,41 @@ def delete_draft_if(project: str, file_id: str, if_text: str, db_path: Path | No
         )
 
 
+def list_pendings(project: str, db_path: Path | None = None) -> list[dict]:
+    """本项目全部未落定的提交（跨面板，老 → 新），带 `file` 与 `script`：发起它的面板已不在时也找得回来。"""
+    with _connect(db_path) as con:
+        rows = con.execute(
+            "SELECT file_id, rid, text, sent, script, created_ms FROM ai_pending WHERE project=? "
+            "ORDER BY created_ms ASC",
+            (project,),
+        ).fetchall()
+    out = []
+    for r in rows:
+        try:
+            sent = json.loads(r["sent"])
+        except (ValueError, TypeError):
+            continue
+        out.append(
+            {
+                "file": r["file_id"],
+                "rid": r["rid"],
+                "text": r["text"],
+                "sent": sent,
+                "script": r["script"],
+                "created_ms": r["created_ms"],
+            }
+        )
+    return out
+
+
 def put_pending(
-    project: str, file_id: str, rid: str, text: str, sent: dict, db_path: Path | None = None
+    project: str,
+    file_id: str,
+    rid: str,
+    text: str,
+    sent: dict,
+    db_path: Path | None = None,
+    script: str | None = None,
 ) -> None:
     """记一条待确认提交（按 rid 一条）。每 (项目, 面板) 最多 8 条，超出丢最老的。"""
     if len(text.encode("utf-8")) > PENDING_MAX_BYTES:
@@ -421,8 +458,9 @@ def put_pending(
     now = _now_ms()
     with _connect(db_path) as con:
         con.execute(
-            "INSERT OR REPLACE INTO ai_pending (project, file_id, rid, text, sent, created_ms) VALUES (?,?,?,?,?,?)",
-            (project, file_id, rid, text, json.dumps(sent, ensure_ascii=False), now),
+            "INSERT OR REPLACE INTO ai_pending (project, file_id, rid, text, sent, script, created_ms) "
+            "VALUES (?,?,?,?,?,?,?)",
+            (project, file_id, rid, text, json.dumps(sent, ensure_ascii=False), script, now),
         )
         con.execute(
             "DELETE FROM ai_pending WHERE project=? AND file_id=? AND rid NOT IN "

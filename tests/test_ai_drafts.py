@@ -255,4 +255,57 @@ def test_tables_hold_only_the_documented_columns():
         d = [r[1] for r in raw.execute("PRAGMA table_info(ai_drafts)")]
         p = [r[1] for r in raw.execute("PRAGMA table_info(ai_pending)")]
     assert d == ["project", "file_id", "text", "revision", "updated_ms"]
-    assert p == ["project", "file_id", "rid", "text", "sent", "created_ms"]
+    assert p == ["project", "file_id", "rid", "text", "sent", "script", "created_ms"]
+
+
+def test_pendings_are_listed_by_project_across_panels_with_their_script(client, two):
+    """发起请求的面板可能已被删 / 换图：账本带 script，按项目跨面板列出，不依赖当前有哪些面板。"""
+    a, b = two
+    client.put(
+        f"/api/ai/drafts/pending/{RID}",
+        json={"file": "Gone.pdf", "text": "x", "sent": SENT, "script": "sub/fig1.py"},
+        headers=H(a),
+    )
+    client.put(
+        f"/api/ai/drafts/pending/{RID2}",
+        json={"file": "Other.pdf", "text": "y", "sent": SENT},
+        headers=H(a),
+    )
+    got = client.get("/api/ai/drafts/pending", headers=H(a)).get_json()["pendings"]
+    assert [(p["file"], p["rid"], p["script"]) for p in got] == [
+        ("Gone.pdf", RID, "sub/fig1.py"),
+        ("Other.pdf", RID2, None),
+    ]
+    assert client.get("/api/ai/drafts/pending", headers=H(b)).get_json() == {
+        "pendings": []
+    }  # 按项目隔离
+    # 被接受 / 拒绝之后不再列出
+    client.post(f"/api/ai/drafts/pending/{RID}/accept", json={"file": "Gone.pdf"}, headers=H(a))
+    assert [
+        p["rid"] for p in client.get("/api/ai/drafts/pending", headers=H(a)).get_json()["pendings"]
+    ] == [RID2]
+    assert (
+        client.put(
+            f"/api/ai/drafts/pending/{RID}",
+            json={"file": "F", "text": "t", "sent": SENT, "script": 5},
+            headers=H(a),
+        ).status_code
+        == 400
+    )
+
+
+def test_pending_table_without_script_column_is_migrated(tmp_path):
+    db = tmp_path / "old.sqlite3"
+    with sqlite3.connect(db) as raw:
+        raw.executescript(
+            "CREATE TABLE ai_pending (project TEXT NOT NULL, file_id TEXT NOT NULL, rid TEXT NOT NULL, "
+            "text TEXT NOT NULL, sent TEXT NOT NULL, created_ms INTEGER NOT NULL, PRIMARY KEY (project, file_id, rid));"
+            f"INSERT INTO ai_pending VALUES ('/p','F','rid-aaaaaaaa','t','{{}}',{ai_history._now_ms()});"
+        )
+    got = ai_history.list_pendings("/p", db_path=db)
+    assert got[0]["rid"] == "rid-aaaaaaaa" and got[0]["script"] is None
+    ai_history.put_pending("/p", "F", "rid-bbbbbbbb", "t", {}, db_path=db, script="a/plot.py")
+    assert {p["rid"]: p["script"] for p in ai_history.list_pendings("/p", db_path=db)} == {
+        "rid-aaaaaaaa": None,
+        "rid-bbbbbbbb": "a/plot.py",
+    }
