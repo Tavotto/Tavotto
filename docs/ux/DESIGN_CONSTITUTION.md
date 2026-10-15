@@ -47,7 +47,7 @@
 规矩：蓝色不做任何大块背景、不做按钮填色（主按钮是近黑 `bg-ink`、字是 `surface` 色）；持久表面里只有「真的是一张卡」的
 东西有投影（`shadow-card`，**只经 `ui/Card` 一处**：素材卡 / 诊断与修复卡，第二十二节、第二十六节；助手的会话卡与任务行 2026-10-07 撤了，见第十八节），分区 / 列表行 / 输入框仍是平的；
 浮层只有 `shadow-pop`（菜单 / popover / 浮条）与 `shadow-dialog`（对话框 / 命令面板）两种，都是
-「1px 半透明环 + 一层大模糊」，浮层**不再画实色 border**；Tooltip 是 ink 底白字；surface 之间靠极轻的
+「1px 半透明环 + 一层大模糊」（`shadow-pop` 另加一层贴边接触阴影），浮层**不再画实色 border**；Tooltip 是 ink 底白字；surface 之间靠极轻的
 明度差与半透明 hairline 分层，不靠框。
 
 ## 二、圆角
@@ -582,7 +582,7 @@ UI 正文 14 / 控件字最小 12、台阶 2px；强调至少高一档且配深�
 | --- | --- | --- |
 | T1 可编辑框的边 | `#8a8a82` 3.48:1 | ink 16%，hover 25%，聚焦 accent 环 |
 | T2 字阶 | title 14 | title 15（新 `--text-xl`）；控件字 12 已在 S8 后就位 |
-| T3 浮层 | 圆角 8 / 12 + 实色 border + `0 6px 20px 9%` | 圆角 10 / 14；`shadow-pop` = ring 8% + `0 8px 24px 8%`，`shadow-dialog` 更深一档；不画 border |
+| T3 浮层 | 圆角 8 / 12 + 实色 border + `0 6px 20px 9%` | 圆角 10 / 14；`shadow-pop` = ring 8% + `0 2px 6px 6%`（接触阴影，2026-10-15）+ `0 8px 24px 8%`，`shadow-dialog` 更深一档；不画 border |
 | T4 交互面 | hover 4.5% / active 8% / selected `#ebebe6` | 5% / 8% / 10%，三档都是 ink 叠加 |
 | T5 底色 | `#f2f2ef`（白面板 1.12:1） | `#f7f6f3`（1.06:1） |
 | T6 分段选择器 | 白底外框、选中灰 tint | 灰容器、白 thumb + `shadow-thumb`、600 |

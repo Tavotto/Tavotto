@@ -256,8 +256,8 @@ Dialog 页脚三槽——全文在 **宪法第二十六节**。
 
 ## Elevation & Depth
 
-**The Flat-By-Default Rule.** 持久表面不用投影——**只有「真的是一张卡」的东西例外**，而且只经 `ui/Card` 一处（`appearance="raised"`，门禁守着）：`--shadow-card`（环 6% + 0 1px 2px 4% + 0 4px 12px 4%）；分区、列表行、输入框、分段控件仍是平的。改图助手的输入框是浮在对话流上的玻璃（`--color-glass` field 90% + 16px 背景模糊 + `--shadow-composer`，参考 Codex）。浮层是「1px 半透明环 + 一层大模糊」，不画实色边；所有投影都写成 `color-mix(var(--color-shadow) N%)`（1px 环读 `--color-shadow-edge`，浅色里它就是 shadow），暗色只换这两种颜色（模糊层纯黑、环换白——Tailwind 把投影串内联进工具类，只有 `var()` 是活的；**宪法第二十八节**）：
-`--shadow-pop: 0 0 0 1px color-mix(in srgb, var(--color-shadow-edge) 8%, transparent), 0 8px 24px color-mix(in srgb, var(--color-shadow) 8%, transparent)`（菜单 / popover / 浮条），对话框与命令面板用更深一档的 `--shadow-dialog`；Tooltip 是 ink 底白字，不带投影。
+**The Flat-By-Default Rule.** 持久表面不用投影——**只有「真的是一张卡」的东西例外**，而且只经 `ui/Card` 一处（`appearance="raised"`，门禁守着）：`--shadow-card`（环 6% + 0 1px 2px 4% + 0 4px 12px 4%）；分区、列表行、输入框、分段控件仍是平的。改图助手的输入框是浮在对话流上的玻璃（`--color-glass` field 90% + 16px 背景模糊 + `--shadow-composer`，参考 Codex）。浮层是「1px 半透明环 + 贴边接触阴影 + 一层大模糊」，不画实色边；所有投影都写成 `color-mix(var(--color-shadow) N%)`（1px 环读 `--color-shadow-edge`，浅色里它就是 shadow），暗色只换这两种颜色（模糊层纯黑、环换白——Tailwind 把投影串内联进工具类，只有 `var()` 是活的；**宪法第二十八节**）：
+`--shadow-pop: 0 0 0 1px color-mix(in srgb, var(--color-shadow-edge) 8%, transparent), 0 2px 6px color-mix(in srgb, var(--color-shadow) 6%, transparent), 0 8px 24px color-mix(in srgb, var(--color-shadow) 8%, transparent)`（菜单 / popover / 浮条），对话框与命令面板用更深一档的 `--shadow-dialog`；Tooltip 是 ink 底白字，不带投影。
 
 ## Shapes
 

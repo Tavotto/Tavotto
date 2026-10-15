@@ -184,7 +184,7 @@
   /* 投影（2026-10-07 设计审计 §1：阶梯化 + 去 rgba 化）：全部写成 `color-mix(var(--color-shadow) N%)`，
      暗色只换 --color-shadow 一处。浮层是「1px 环 + 一层大模糊」，不画实色 border。
        card     真的是一张卡（ui/Card；门禁：只在 Card.tsx 里写）：环 6% + 0 1px 2px 4% + 0 4px 12px 4%
-       pop      菜单 / popover / 浮条：环 8% + 0 8px 24px 8%
+       pop      菜单 / popover / 浮条：环 8% + 0 2px 6px 6%（接触阴影）+ 0 8px 24px 8%
        dialog   对话框 / 命令面板：更深一档
        thumb    分段选择器的白色 thumb、开关的滑块
        composer 改图助手输入框（玻璃，参考 Codex 的三层）
@@ -196,7 +196,11 @@
     0 0 0 1px color-mix(in srgb, var(--color-shadow-edge) 6%, transparent),
     0 1px 2px color-mix(in srgb, var(--color-shadow) 4%, transparent),
     0 4px 12px color-mix(in srgb, var(--color-shadow) 4%, transparent);
-  --shadow-pop: 0 0 0 1px color-mix(in srgb, var(--color-shadow-edge) 8%, transparent), 0 8px 24px color-mix(in srgb, var(--color-shadow) 8%, transparent);
+  /* 浮层：1px 环 + 贴边的接触阴影（0 2px 6px 6%）+ 一层大模糊。只有大模糊时，浮层叠在白面板上边缘发飘（2026-10-15 UI 2.0 精修） */
+  --shadow-pop:
+    0 0 0 1px color-mix(in srgb, var(--color-shadow-edge) 8%, transparent),
+    0 2px 6px color-mix(in srgb, var(--color-shadow) 6%, transparent),
+    0 8px 24px color-mix(in srgb, var(--color-shadow) 8%, transparent);
   --shadow-dialog:
     0 0 0 1px color-mix(in srgb, var(--color-shadow-edge) 6%, transparent),
     0 24px 64px color-mix(in srgb, var(--color-shadow) 10%, transparent);
