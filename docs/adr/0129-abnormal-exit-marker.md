@@ -44,7 +44,7 @@
 | e2e 更新口 `process::exit(40/41/42)`、`handle.restart()` | **否** / 视线程 | `e2e_exit()` / `mark_clean_exit()` 先写 clean |
 | 崩溃 / 被 kill / 断电 | 否 | 标记停在 `running`——这正是要被检出的情形 |
 
-`main.rs` 的结构测试逐条钉住：生产代码里不许出现裸 `process::exit` / `.updater_builder()` / 额外的 `restart()`，`Exit` 里 clean 在 sidecar 收掉之后写。
+`src-tauri/src/exit_guard_tests.rs` 用 `syn` 解析 `src/` 下全部生产 `.rs`（跳过 `*_tests.rs` 与 `#[cfg(test)]`），按 AST 找真实出口表达式（解析到 `std::process::exit` 的路径含 `use` 别名与 glob、`.restart()` / `.exit()` / `.updater_builder()` 方法调用），只放行允许名单上的出口函数；`main.rs` 的结构测试钉出口函数内部先写 clean 的顺序，以及 `Exit` 里 clean 在 sidecar 收掉之后写。
 
 ### 四、下次启动提示
 

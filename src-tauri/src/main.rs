@@ -9,6 +9,8 @@ mod app_update_flow_tests;
 // 分派只有 macOS 的 native_drop 在用；别的平台上它只剩单测（分派规则各平台一样，照样跑）
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 mod drop_paths;
+#[cfg(test)]
+mod exit_guard_tests;
 mod exit_marker;
 mod i18n;
 #[cfg(target_os = "macos")]
@@ -1781,21 +1783,13 @@ fn main() {
 mod tests {
     use super::*;
 
-    /// 退出标记的看护（ADR 0129）：**绕过 `RunEvent::Exit` 的退出路径必须先写 `clean`**，否则
-    /// 每次升级 / e2e 更新之后都会误报「上次没有正常退出」。这里读源码结构而不是搜子串：
-    /// 生产代码里（测试模块之前）不许出现裸 `process::exit` / `.exit(` / `.restart()` /
-    /// `.updater_builder()`——只能经 `e2e_exit` / `mark_clean_exit` / `updater_builder` 三个出口。
+    /// 退出标记的看护（ADR 0129）：**绕过 `RunEvent::Exit` 的退出路径必须先写 `clean`**。
+    /// 「全部生产模块里只有允许名单上的出口」由 `exit_guard_tests.rs` 用 AST 扫描钉住；
+    /// 这里只钉 `main.rs` 里那几个出口函数**内部**的先后顺序。
     fn production_sources() -> Vec<(&'static str, String)> {
-        let cut = |s: &'static str| {
-            let end = s.find("#[cfg(test)]\nmod tests").unwrap_or(s.len());
-            s[..end].to_string()
-        };
-        vec![
-            ("main.rs", cut(include_str!("main.rs"))),
-            ("app_update.rs", cut(include_str!("app_update.rs"))),
-            ("remote.rs", cut(include_str!("remote.rs"))),
-            ("sidecar.rs", cut(include_str!("sidecar.rs"))),
-        ]
+        let s = include_str!("main.rs");
+        let end = s.find("#[cfg(test)]\nmod tests").unwrap_or(s.len());
+        vec![("main.rs", s[..end].to_string())]
     }
 
     fn body_of<'a>(src: &'a str, signature: &str) -> &'a str {
@@ -1809,29 +1803,7 @@ mod tests {
 
     #[test]
     fn every_exit_that_skips_run_event_exit_writes_clean_first() {
-        let srcs = production_sources();
-        let main = &srcs[0].1;
-        for (name, src) in &srcs {
-            let allowed = if *name == "main.rs" { 1 } else { 0 };
-            // 注释里提到不算：只数代码行
-            let code = |needle: &str| {
-                src.lines()
-                    .filter(|l| !l.trim_start().starts_with("//"))
-                    .filter(|l| l.contains(needle))
-                    .count()
-            };
-            assert_eq!(code("process::exit("), allowed, "{name}: 裸 process::exit");
-            assert_eq!(
-                code(".updater_builder()"),
-                allowed,
-                "{name}: 裸 updater_builder"
-            );
-            assert_eq!(
-                code("app_handle.exit(") + code("handle.exit(") + code("app.exit("),
-                0,
-                "{name}: 裸 exit"
-            );
-        }
+        let main = &production_sources()[0].1;
         // 唯一的 process::exit 在 e2e_exit 里，且先写 clean
         let e2e = body_of(main, "fn e2e_exit(");
         assert!(e2e.find("mark_clean_exit(").unwrap() < e2e.find("process::exit(").unwrap());
