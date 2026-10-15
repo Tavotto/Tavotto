@@ -166,6 +166,19 @@ describe('断线期间结束的会话收尾', () => {
     expect(sessions()[0].status).toBe('failed')
   })
 
+  it('详情读不出状态（空体 / 老后端）：不当成结束', async () => {
+    useAiStore.setState({
+      sessions: [{
+        id: 's-local', project: 'pa', agent: 'codex', agentLabel: 'Codex', prompt: 'p', script: 'fig1.py',
+        panelId: 'p1', fileId: 'Fig1.pdf', gid: null, scope: 'figure', target: '整张图', entries: [],
+        status: 'running', changed: false, diff: '', startedAt: 1,
+      }],
+    })
+    detail['s-local'] = {}
+    await useAiStore.getState().restoreRunning()
+    expect(sessions()[0].status).toBe('running')
+  })
+
   it('联系不上后端：本地会话一个字节不动（不把「查不到」当成结束）', async () => {
     useAiStore.setState({
       sessions: [{

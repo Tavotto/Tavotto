@@ -729,7 +729,7 @@ async function doRestore(): Promise<void> {
     for (const x of get().sessions) {
       if (x.status !== 'running' || x.finalized || live.has(x.id)) continue
       const d = await fetchAiSession(x.id, x.project).catch(() => null)
-      if (born !== get().generation || !d || d.status === 'running') continue
+      if (born !== get().generation || typeof d?.status !== 'string' || d.status === 'running') continue
       const done: DonePayload = {
         session: x.id,
         status: d.status,
