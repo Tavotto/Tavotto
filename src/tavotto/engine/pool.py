@@ -978,17 +978,30 @@ def engine_module_names() -> frozenset[str]:
     return frozenset()
 
 
+_FRAME_RE = re.compile(r'^\s*File "(?P<path>.*)", line \d+, in (?P<func>\S+)\s*$', re.M)
+
+
 def missing_engine_module(text: str) -> str:
     """worker 在**装载引擎模块**时缺了自家文件 → 回缺的模块名；不是回空串。
 
-    两个条件缺一不可：名字属于 `_ENGINE_MODULES`，并且 traceback 里有 `bridgeboot.load_engine_modules`
-    这一帧（异常出在装引擎的那一步）。只看名字不够——`overrides` / `manifest` / `runtime` 在 PyPI 上
-    都有同名包，用户脚本缺它们时仍是缺依赖。"""
+    两个条件缺一不可：名字属于 `_ENGINE_MODULES`，并且 `ModuleNotFoundError` 之前的调用链里有一帧
+    `File ".../bridgeboot.py", line N, in load_engine_modules`（文件名取 basename、两种路径分隔符都认；
+    不是子串匹配——用户脚本自己定义一个 `load_engine_modules` 函数不算）。只看名字不够：
+    `overrides` / `manifest` / `runtime` 在 PyPI 上都有同名包，用户脚本缺它们时仍是缺依赖。"""
     text = text or ""
-    if "load_engine_modules" not in text:
+    m = _MISSING_RE.search(text)
+    if m is None:
         return ""
     name = missing_module(text)
-    return name if name in engine_module_names() else ""
+    if name not in engine_module_names():
+        return ""
+    for frame in _FRAME_RE.finditer(text, 0, m.start()):
+        if (
+            re.split(r"[\\/]", frame.group("path"))[-1] == "bridgeboot.py"
+            and frame.group("func") == "load_engine_modules"
+        ):
+            return name
+    return ""
 
 
 def structured_missing_module(value) -> str:
@@ -2429,9 +2442,15 @@ class EngineWorker:
             # 参考实现，判据分叉就等于有两套语义：文案由 `session_dead_message`
             # 一处产出，退出码的解释表也只有 `describe_exit` 一份。
             tail = self._log_tail(FATAL_TAIL_LINES)
-            err = WorkerError(
-                session_dead_message(exit_info, tail, self.log_path), tail, code="session_dead"
-            )
+            # worker 在装引擎模块时就退出了（安装副本缺自家文件，#961）：来不及发错误信封，只有日志尾部
+            # 留着 traceback。与 workerd 路径（`_to_worker_error` → `_worker_error`）同一个分类入口
+            engine_mod = missing_engine_module(tail)
+            if engine_mod:
+                err = _engine_files_incomplete_error(engine_mod, tail)
+            else:
+                err = WorkerError(
+                    session_dead_message(exit_info, tail, self.log_path), tail, code="session_dead"
+                )
             err.extra = {"exit": exit_info} if exit_info is not None else {}
             if obj.get("cmd") != "shutdown":
                 # 起在这条解释器上的会话死了：它的体检结论不再担保（ENV-04-B1，见

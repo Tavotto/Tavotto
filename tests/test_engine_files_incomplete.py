@@ -145,3 +145,116 @@ def test_engine_error_message_has_no_traceback_paths_or_install_route():
     assert err.code == CODE
     assert "alice" not in str(err)
     assert "worker.log" not in str(err)
+
+
+# ---------------------------------------------------------------------------
+# P1（Codex #1085）：Python 池的启动期 EOF 也要分诊——真实 EngineWorker，不是手工喂日志
+# ---------------------------------------------------------------------------
+def _engine_copy_without(tmp_path: Path, missing: str) -> Path:
+    copy = tmp_path / "engine_copy"
+    copy.mkdir()
+    for src in ENGINE_DIR.glob("*.py"):
+        shutil.copy2(src, copy / src.name)
+    (copy / f"{missing}.py").unlink()
+    return copy / "worker.py"
+
+
+_FIG = "import matplotlib.pyplot as plt\nplt.plot([1, 2])\nplt.savefig('a.png')\n"
+
+
+def _build_with_broken_engine(tmp_path, monkeypatch, workerd: str | None):
+    """WORKER_PY 指向缺 figcapture.py 的副本，经公开的 `pool.build` 真起 worker 子进程。"""
+    from tavotto.engine import workerd_client
+
+    monkeypatch.setenv("TAVOTTO_WORKERD", workerd or "0")
+    workerd_client.reset_client()
+    monkeypatch.setattr(pool, "WORKER_PY", _engine_copy_without(tmp_path, "figcapture"))
+    figs = tmp_path / "figs"
+    figs.mkdir()
+    (figs / "fig.py").write_text(_FIG, encoding="utf-8")
+    try:
+        with pytest.raises(pool.WorkerError) as info:
+            pool.build("fig.py", str(figs), "__main__")
+        return info.value
+    finally:
+        pool.shutdown_all(str(figs), wait=True)
+        workerd_client.reset_client()
+
+
+@needs_worker
+def test_python_pool_startup_eof_is_classified_as_engine_files_incomplete(tmp_path, monkeypatch):
+    err = _build_with_broken_engine(tmp_path, monkeypatch, None)
+    assert err.code == CODE, (err.code, str(err))
+    assert err.engine_module == "figcapture"
+    assert err.module == "" and err.install_route == ""
+    assert str(tmp_path) not in str(err)
+    assert "worker.log" not in str(err)
+
+
+def _workerd_exe():
+    from tavotto.engine import workerd_client
+
+    return workerd_client.find_workerd()
+
+
+@needs_worker
+@pytest.mark.skipif(_workerd_exe() is None, reason="没有 tavotto-workerd 产物")
+def test_workerd_startup_death_is_classified_as_engine_files_incomplete(tmp_path, monkeypatch):
+    err = _build_with_broken_engine(tmp_path, monkeypatch, _workerd_exe())
+    assert err.code == CODE, (err.code, str(err))
+    assert err.engine_module == "figcapture"
+
+
+# ---------------------------------------------------------------------------
+# P2（Codex #1085）：认真正的 bridgeboot.py 帧，不是 "load_engine_modules" 子串
+# ---------------------------------------------------------------------------
+def _loader_traceback(path: str, name: str = "figcapture") -> str:
+    return (
+        "Traceback (most recent call last):\n"
+        f'  File "{path}worker.py", line 226, in <module>\n'
+        "    _PKG = bridgeboot.load_engine_modules(str(HERE), _ENGINE_MODULES)\n"
+        f'  File "{path}bridgeboot.py", line 199, in load_engine_modules\n'
+        "    loaded = {n: importlib.import_module(n) for n in todo}\n"
+        f"ModuleNotFoundError: No module named '{name}'\n"
+    )
+
+
+@pytest.mark.parametrize("name", ["manifest", "overrides", "runtime", "figcapture"])
+def test_user_defined_load_engine_modules_is_still_a_missing_dependency(name):
+    tb = (
+        "Traceback (most recent call last):\n"
+        '  File "/proj/fig.py", line 9, in <module>\n'
+        "    load_engine_modules()\n"
+        '  File "/proj/fig.py", line 5, in load_engine_modules\n'
+        f"    import {name}\n"
+        f"ModuleNotFoundError: No module named '{name}'\n"
+    )
+    err = pool._worker_error("脚本执行失败", "script_error", tb)
+    assert err.code == "missing_dependency", err.code
+    assert err.module == name
+
+
+def test_a_bridgeboot_look_alike_file_or_function_is_not_the_loader():
+    wrong_file = _loader_traceback("/proj/").replace("bridgeboot.py", "mybridgeboot.py")
+    wrong_func = _loader_traceback("/proj/").replace(
+        "line 199, in load_engine_modules", "line 199, in load_other"
+    )
+    for tb in (wrong_file, wrong_func):
+        assert pool._worker_error("x", "script_error", tb).code == "missing_dependency"
+
+
+@pytest.mark.parametrize(
+    "path", ["/opt/tavotto/engine/", "C:\\Users\\a\\AppData\\Local\\Packages\\X\\engine\\", "C:/x/"]
+)
+def test_loader_frame_with_posix_or_windows_paths_is_recognised(path):
+    err = pool._worker_error("x", "session_dead", _loader_traceback(path))
+    assert err.code == CODE and err.engine_module == "figcapture"
+
+
+def test_loader_frame_after_the_exception_line_does_not_count():
+    """帧必须在 ModuleNotFoundError 之前的调用链里（之后出现的不算，如日志里别处的残片）。"""
+    tb = (
+        _user_script_traceback("manifest")
+        + '  File "bridgeboot.py", line 199, in load_engine_modules\n'
+    )
+    assert pool._worker_error("x", "script_error", tb).code == "missing_dependency"
