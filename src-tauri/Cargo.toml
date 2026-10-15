@@ -29,8 +29,13 @@ iana-time-zone = "0.1"
 time = { version = "0.3", features = ["formatting"] }
 # 镜像来源的重定向只许留在镜像主机（Policy::custom）；版本与 updater 插件所用的同一份
 reqwest = { version = "0.13", default-features = false }
+# reqwest 走 `rustls-no-provider`：必须有人先装好加密提供者，否则 Client::build 直接 panic。updater 插件只在它自己建 client 时才装，
+# 所以壳最小诊断（shell_report.rs）发送前自己确保一次（ring，与 updater / tauri 所用同一份；树内已有，不引入新的 crate）
+rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# 壳最小诊断包的摘要（shell_report.rs）；已在依赖树里（tauri / updater），不引入新的 crate
+sha2 = "0.10"
 rand = "0.9"
 url = "2"
 percent-encoding = "2"

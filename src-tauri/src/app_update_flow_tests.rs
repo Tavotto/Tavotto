@@ -676,6 +676,40 @@ async fn run_check_and_run_install_guard_their_state() {
     assert_eq!(e.code, "busy");
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn an_install_that_names_another_version_than_the_candidate_is_refused_before_any_download() {
+    // 救援页（rescue.rs）：用户确认的是检查到的 9.9.9；句柄里若已是别的版本（期间又 check 过），
+    // 绝不能装成另一个。核对在下载之前、且不动句柄（用户可以重新确认）。从不走到 `apply`。
+    let rig = Rig::both_healthy().await;
+    let make = rig.make();
+    let ep = rig.endpoints();
+    let state = UpdateState::default();
+    let c = run_check(&make, &ep, &state, &CN, &limits())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(c.version, "9.9.9");
+    for wrong in ["9.9.8", "9.9.10", "", "9.9.9 "] {
+        let e = run_install_expecting(&make, &ep, &state, &limits(), Some(wrong), &|_| {})
+            .await
+            .err()
+            .unwrap_or_else(|| panic!("{wrong:?} 应被拒绝"));
+        assert_eq!(e.code, "candidate_changed", "{wrong:?}");
+    }
+    assert_eq!(rig.mirror.hits(PKG_PATH) + rig.github.hits(PKG_PATH), 0);
+    assert!(
+        state.pending.try_lock().unwrap().is_some(),
+        "拒绝不清句柄：用户可以对着同一个候选重新确认"
+    );
+    // 与旧入口共用同一把锁：有人持有时一样回 busy，而不是各自并发安装
+    let _held = state.pending.try_lock().unwrap();
+    let e = run_install_expecting(&make, &ep, &state, &limits(), Some("9.9.9"), &|_| {})
+        .await
+        .err()
+        .unwrap();
+    assert_eq!(e.code, "busy");
+}
+
 /* --------------------- infra 契约 §6.2（镜像清单的取舍） ------------------- */
 
 #[tokio::test(flavor = "multi_thread")]

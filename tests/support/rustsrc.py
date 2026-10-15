@@ -104,11 +104,21 @@ def _only(pattern: str, code: str, what: str) -> re.Match[str]:
 
 
 def tauri_commands(main_rs: str | None = None) -> list[str]:
-    """`main.rs` 里真正声明的 `#[tauri::command]` 函数名（注释里的不算）。"""
-    code = rust_code(main_rs if main_rs is not None else _read("src", "main.rs"))
-    names = re.findall(
-        r"#\s*\[\s*tauri\s*::\s*command\s*\]\s*(?:pub\s+)?(?:async\s+)?fn\s+(\w+)", code
-    )
+    """壳里真正声明的 `#[tauri::command]` 函数名（注释里的不算）。
+
+    不传参数时扫 `src/*.rs` 全部模块（命令可以写在 `main.rs`，也可以写在独立模块里，例如
+    `rescue.rs`；`generate_handler!` 里写成 `rescue::rescue_status`，`handler_commands` 取最后一段）。
+    传了 `main_rs` 就只读那一份文本（单元测试喂合成源码用）。"""
+    if main_rs is not None:
+        sources = [main_rs]
+    else:
+        sources = [p.read_text(encoding="utf-8") for p in sorted((TAURI / "src").glob("*.rs"))]
+    names: list[str] = []
+    for src in sources:
+        code = rust_code(src)
+        names += re.findall(
+            r"#\s*\[\s*tauri\s*::\s*command\s*\]\s*(?:pub\s+)?(?:async\s+)?fn\s+(\w+)", code
+        )
     assert names, "一个 #[tauri::command] 都没找到——文件结构变了，这道门禁已经空了"
     return names
 

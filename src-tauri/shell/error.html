@@ -10,7 +10,7 @@
     background: #F2F2EF; color: #1A1A18;
     font: 13px/1.6 -apple-system, "SF Pro Text", "Segoe UI", "Microsoft YaHei", sans-serif;
   }
-  main { width: 520px; max-width: calc(100vw - 48px); }
+  main { width: 520px; max-width: calc(100vw - 48px); max-height: 100vh; overflow: auto; padding: 24px 0; box-sizing: border-box; }
   h1 { font-size: 15px; font-weight: 600; margin: 0 0 8px; }
   p  { margin: 0 0 10px; font-size: 12.5px; color: #3D3D39; }
   .msg {
@@ -23,12 +23,32 @@
   .log code { font-family: ui-monospace, Menlo, Consolas, monospace;
               user-select: all; -webkit-user-select: all; }
   .hint { margin-top: 14px; font-size: 11.5px; color: #6E6E68; }
+  button {
+    font: inherit; font-size: 12.5px; padding: 6px 14px; border-radius: 6px; cursor: pointer;
+    border: 1px solid #CFCFC9; background: #FFFFFF; color: #1A1A18;
+  }
+  button.primary { background: #1A1A18; border-color: #1A1A18; color: #FFFFFF; }
+  button:disabled { opacity: 0.5; cursor: default; }
+  button:focus-visible, summary:focus-visible { outline: 2px solid #5A92E5; outline-offset: 2px; }
+  .row { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 10px; }
+  details { margin-top: 14px; }
+  summary { cursor: pointer; font-size: 12.5px; color: #3D3D39; }
+  details > .inner { margin-top: 10px; }
+  .status { min-height: 1.6em; margin: 0 0 10px; }
+  .preview {
+    background: #FFFFFF; border: 1px solid #E3E3DE; border-radius: 6px; padding: 8px 10px;
+    font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 11px; color: #3D3D39;
+    white-space: pre-wrap; max-height: 160px; overflow: auto; margin: 0 0 10px;
+  }
+  [hidden] { display: none !important; }
   /* 暗色外观（宪法第二十八节）：壳自带的页面不读 web/ 的 CSS，值抄 index.css 暗色表 */
   @media (prefers-color-scheme: dark) {
     body { background: #161615; color: #ECECEA; }
-    p, .msg { color: #C2C2BC; }
-    .msg { background: #222220; border-color: #3A3A37; }
+    p, .msg, summary, .preview { color: #C2C2BC; }
+    .msg, .preview { background: #222220; border-color: #3A3A37; }
     .log, .hint { color: #9B9B94; }
+    button { background: #222220; border-color: #3A3A37; color: #ECECEA; }
+    button.primary { background: #ECECEA; border-color: #ECECEA; color: #161615; }
   }
 </style>
 </head>
@@ -36,29 +56,126 @@
 <body data-tauri-drag-region>
   <main>
     <h1 id="title">Tavotto 启动失败</h1>
-    <p id="body">本机渲染服务没有启动成功。重新打开应用通常可以恢复；若反复出现，请重新安装。</p>
-    <div class="msg" id="msg">未知错误</div>
-    <p class="log"><span id="logLabel">日志文件（反馈问题时请附上）：</span><br /><code id="log"></code></p>
-    <p class="hint" id="hint">Tavotto 完全在本机运行，此页面不涉及任何网络请求。</p>
+    <p id="body">本机渲染服务没有启动成功，重新启动应用通常可以恢复。</p>
+
+    <!-- 默认只露一句话 + 一个主按钮；其余全部折叠在「其他选项」里（卡片规则）。
+         动作由壳（Rust）完成，页面只负责展示：能不能做、做了什么，都以 rescue_* 命令的回答为准。 -->
+    <div class="row" id="retryRow" hidden>
+      <button id="retry" class="primary" type="button">重新启动 Tavotto</button>
+    </div>
+    <p id="unsafe" hidden></p>
+    <p class="status" id="retryStatus" role="status" aria-live="polite"></p>
+
+    <details id="more" hidden>
+      <summary id="moreLabel">其他选项</summary>
+      <div class="inner">
+        <div class="row">
+          <button id="check" type="button">检查修复版本</button>
+          <button id="diag" type="button">发送启动诊断…</button>
+        </div>
+        <p class="status" id="updateStatus" role="status" aria-live="polite"></p>
+        <div class="row" id="installRow" hidden>
+          <button id="install" class="primary" type="button"></button>
+        </div>
+
+        <div id="diagPanel" hidden>
+          <p id="diagIntro"></p>
+          <pre class="preview" id="preview"></pre>
+          <div class="row">
+            <button id="send" class="primary" type="button">发送</button>
+            <button id="save" type="button">保存为文件</button>
+          </div>
+          <p class="status" id="diagStatus" role="status" aria-live="polite"></p>
+        </div>
+      </div>
+    </details>
+
+    <details id="tech">
+      <summary id="techLabel">技术详情</summary>
+      <div class="inner">
+        <div class="msg" id="msg">未知错误</div>
+        <p class="log"><span id="logLabel">日志文件（反馈问题时请附上）：</span><br /><code id="log"></code></p>
+      </div>
+    </details>
+    <p class="hint" id="hint">Tavotto 完全在本机运行；只有你点击“检查修复版本”或“发送”时，这个页面才会联网。</p>
   </main>
   <script>
     // 内联两份文案的理由见 splash.html：tauri:// 源下没有 i18next，也读不到
     // sidecar 那个源的 localStorage。**这张页面尤其不能只有中文**——用户看到
     // 它的时候正需要看懂上面写了什么。
+    // 占位符：%v = 版本号 / 报告编号 / 文件名，%c = 稳定错误码（不翻译，用户可以报给我们）。
     const STRINGS = {
       'zh-CN': {
         title: 'Tavotto 启动失败',
-        body: '本机渲染服务没有启动成功。重新打开应用通常可以恢复；若反复出现，请重新安装。',
+        body: '本机渲染服务没有启动成功，重新启动应用通常可以恢复。',
         unknown: '未知错误',
         logLabel: '日志文件（反馈问题时请附上）：',
-        hint: 'Tavotto 完全在本机运行，此页面不涉及任何网络请求。',
+        hint: 'Tavotto 完全在本机运行；只有你点击“检查修复版本”或“发送”时，这个页面才会联网。',
+        retry: '重新启动 Tavotto',
+        retrying: '正在重新启动…',
+        retryFailed: '无法自动重新启动（%c），请手动关闭并重新打开 Tavotto。',
+        unsafe: '为避免丢失可能未保存的内容，这里不提供自动修复；请关闭此窗口后重新打开 Tavotto。',
+        more: '其他选项',
+        tech: '技术详情',
+        check: '检查修复版本',
+        checking: '正在检查…',
+        latest: '已是最新版本，更新帮不上忙；可以发送启动诊断，帮助我们排查。',
+        checkFailed: '检查失败（%c），可稍后重试。',
+        found: '发现新版本 %v，可能修复此问题。',
+        install: '安装 %v 并重新启动',
+        installing: '正在下载并安装…',
+        installed: '安装完成，正在重新启动…',
+        installFailed: '没有完成安装（%c），可重试。',
+        candidateChanged: '可用的版本已变化，请重新检查。',
+        updateOff: '这个版本没有配置应用内更新，请下载最新安装包重新安装。',
+        busy: '另一项操作正在进行，请稍后再试。',
+        diag: '发送启动诊断…',
+        diagIntro: '以下是将要发送的全部内容，不含日志、路径、项目和个人信息。只有点击“发送”才会联网；也可以只保存到本地。',
+        send: '发送',
+        sending: '正在发送…',
+        sent: '已发送，报告编号：%v',
+        sendFailedRetry: '发送失败（%c），可重试。',
+        sendFailedFinal: '发送失败（%c），请改为保存到文件。',
+        uploadOff: '启动诊断的发送已被关闭，仍可保存为文件。',
+        save: '保存为文件',
+        saved: '已保存：%v',
+        saveFailed: '保存失败（%c）。',
       },
       'en-US': {
         title: 'Tavotto failed to start',
-        body: 'The local render service did not start. Reopening the app usually fixes it; if it keeps happening, reinstall.',
+        body: 'The local render service did not start. Restarting the app usually fixes it.',
         unknown: 'Unknown error',
         logLabel: 'Log file (please attach it when reporting the problem):',
-        hint: 'Tavotto runs entirely on this machine; this page makes no network requests.',
+        hint: 'Tavotto runs entirely on this machine; this page only goes online when you click Check for a fix or Send.',
+        retry: 'Restart Tavotto',
+        retrying: 'Restarting...',
+        retryFailed: 'Could not restart automatically (%c). Please close and reopen Tavotto yourself.',
+        unsafe: 'To avoid losing anything that may be unsaved, automatic repair is not offered here. Close this window and reopen Tavotto.',
+        more: 'More options',
+        tech: 'Technical details',
+        check: 'Check for a fix',
+        checking: 'Checking...',
+        latest: 'You already have the latest version, so an update will not help. You can send startup diagnostics to help us investigate.',
+        checkFailed: 'The check failed (%c). Try again later.',
+        found: 'Version %v is available and may fix this.',
+        install: 'Install %v and restart',
+        installing: 'Downloading and installing...',
+        installed: 'Installed. Restarting...',
+        installFailed: 'The installation did not finish (%c). You can try again.',
+        candidateChanged: 'The available version has changed. Please check again.',
+        updateOff: 'In-app updates are not configured in this build. Please download the latest installer and reinstall.',
+        busy: 'Another operation is in progress. Please try again shortly.',
+        diag: 'Send startup diagnostics...',
+        diagIntro: 'This is everything that would be sent. It contains no logs, paths, projects or personal information. Nothing goes online until you click Send; you can also just save it locally.',
+        send: 'Send',
+        sending: 'Sending...',
+        sent: 'Sent. Report ID: %v',
+        sendFailedRetry: 'Sending failed (%c). You can try again.',
+        sendFailedFinal: 'Sending failed (%c). Please save it to a file instead.',
+        uploadOff: 'Sending startup diagnostics has been turned off. You can still save it to a file.',
+        save: 'Save to file',
+        saved: 'Saved: %v',
+        saveFailed: 'Saving failed (%c).',
       },
     }
     // 与 web/src/i18n/locale.ts 的 normalizeLocale 同一条规则：只看主子标签
@@ -72,16 +189,163 @@
     const locale = pick(q.get('lang')) || pick(navigator.language) || 'zh-CN'
     const s = STRINGS[locale]
     document.documentElement.lang = locale
-    for (const id of ['title', 'body', 'logLabel', 'hint']) {
-      document.getElementById(id).textContent = s[id]
+    const $ = (id) => document.getElementById(id)
+    const fill = (text, v, c) => text.replace('%v', v == null ? '' : v).replace('%c', c == null ? '' : c)
+    const say = (id, text) => { $(id).textContent = text }
+    for (const [id, key] of [
+      ['title', 'title'], ['body', 'body'], ['logLabel', 'logLabel'], ['hint', 'hint'],
+      ['retry', 'retry'], ['moreLabel', 'more'], ['techLabel', 'tech'], ['check', 'check'],
+      ['diag', 'diag'], ['diagIntro', 'diagIntro'], ['send', 'send'], ['save', 'save'],
+    ]) {
+      say(id, s[key])
     }
 
     // msg 是壳给的真实报错（sidecar 的 stderr / 平台错误码），**原样显示、
-    // 不翻译**：它要贴进 issue 里，翻过一道就对不上日志了。
+    // 不翻译**：它要贴进 issue 里，翻过一道就对不上日志了。它只显示在这里，
+    // 不进启动诊断（诊断只含阶段 / 稳定错误码 / 退出码，见 shell_report.rs）。
     const msg = q.get('msg')
     const log = q.get('log')
     document.getElementById('msg').textContent = msg || s.unknown
     if (log) document.getElementById('log').textContent = log
+
+    // ---- 原生救援（rescue_* 命令，ADR 0130）----
+    // 壳只允许「主窗口 + 壳自带 error.html + 从未进入过应用页」调用它们；这里的显示逻辑不是安全边界。
+    const call = (cmd, args) => window.__TAURI_INTERNALS__.invoke(cmd, args)
+    const codeOf = (e) => (typeof e === 'string' ? e : (e && e.code) || 'unknown')
+    let status = null
+    let candidate = null
+    let sent = false
+    let busy = false
+
+    // 动作进行中整页按钮置灰（同一时刻只有一个动作）；结束后发送键按「已发过 / 发送被关闭」重算
+    const setBusy = (on) => {
+      busy = on
+      for (const id of ['retry', 'check', 'install', 'save', 'diag']) $(id).disabled = on
+      $('send').disabled = on || sent || !!(status && !status.upload)
+    }
+
+    async function init() {
+      try {
+        status = await call('rescue_status')
+      } catch (e) {
+        status = null
+      }
+      if (!status) return
+      if (!status.eligible) {
+        // 进过编辑态（或不是可信页面）：工作状态未知，不提供任何会结束进程 / 装包的动作
+        say('unsafe', s.unsafe)
+        $('unsafe').hidden = false
+        return
+      }
+      $('retryRow').hidden = false
+      $('more').hidden = false
+      if (!status.update) {
+        // 没配置的能力如实说，不放空按钮
+        $('check').hidden = true
+        say('updateStatus', s.updateOff)
+      }
+      if (!status.upload) say('diagStatus', s.uploadOff)
+    }
+
+    $('retry').addEventListener('click', async () => {
+      if (busy) return
+      setBusy(true)
+      say('retryStatus', s.retrying)
+      try {
+        await call('rescue_retry')
+      } catch (e) {
+        say('retryStatus', fill(s.retryFailed, null, codeOf(e)))
+        setBusy(false)
+      }
+    })
+
+    $('check').addEventListener('click', async () => {
+      if (busy) return
+      setBusy(true)
+      candidate = null
+      $('installRow').hidden = true
+      say('updateStatus', s.checking)
+      try {
+        // 只有「检查成功且没有更新」才说已是最新；任何失败（网络 / 清单 / 忙）都是「检查失败」
+        const found = await call('rescue_update_check', { uiLang: locale })
+        if (found) {
+          candidate = found.version
+          say('updateStatus', fill(s.found, candidate))
+          $('install').textContent = fill(s.install, candidate)
+          $('installRow').hidden = false
+        } else {
+          say('updateStatus', s.latest)
+        }
+      } catch (e) {
+        const c = codeOf(e)
+        say('updateStatus', c === 'busy' ? s.busy : fill(s.checkFailed, null, c))
+      }
+      setBusy(false)
+    })
+
+    $('install').addEventListener('click', async () => {
+      if (busy || !candidate) return
+      setBusy(true)
+      say('updateStatus', s.installing)
+      try {
+        // 装的必须是用户看到并确认的那一版：版本号随请求带给壳，壳核对候选句柄
+        await call('rescue_update_install', { expectedVersion: candidate })
+        say('updateStatus', s.installed)
+        await call('rescue_retry')
+      } catch (e) {
+        const c = codeOf(e)
+        say('updateStatus', c === 'candidate_changed' ? s.candidateChanged : c === 'busy' ? s.busy : fill(s.installFailed, null, c))
+        if (c === 'candidate_changed') {
+          candidate = null
+          $('installRow').hidden = true
+        }
+        setBusy(false)
+      }
+    })
+
+    $('diag').addEventListener('click', async () => {
+      if (busy) return
+      // 预览只在本机备包，不联网
+      try {
+        const p = await call('rescue_diag_preview')
+        $('preview').textContent = p.entries.map((x) => x.name + '  (' + x.bytes + ' B)').join('\n') + '\n\n' + p.report
+      } catch (e) {
+        say('diagStatus', fill(s.sendFailedFinal, null, codeOf(e)))
+      }
+      $('diagPanel').hidden = false
+      setBusy(false)
+    })
+
+    $('send').addEventListener('click', async () => {
+      // 这一下点击就是授权：发送只由它触发，且每次点击只发一次
+      if (busy || sent) return
+      setBusy(true)
+      say('diagStatus', s.sending)
+      try {
+        const r = await call('rescue_diag_send')
+        sent = true
+        say('diagStatus', fill(s.sent, r.report_id))
+      } catch (e) {
+        const c = codeOf(e)
+        const retry = !!e && typeof e === 'object' && e.retryable === true
+        say('diagStatus', c === 'busy' ? s.busy : fill(retry ? s.sendFailedRetry : s.sendFailedFinal, null, c))
+      }
+      setBusy(false)
+    })
+
+    $('save').addEventListener('click', async () => {
+      if (busy) return
+      setBusy(true)
+      try {
+        const name = await call('rescue_diag_save')
+        if (name) say('diagStatus', fill(s.saved, name))
+      } catch (e) {
+        say('diagStatus', fill(s.saveFailed, null, codeOf(e)))
+      }
+      setBusy(false)
+    })
+
+    init()
   </script>
 </body>
 </html>

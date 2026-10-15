@@ -14,6 +14,8 @@ mod i18n;
 #[cfg(target_os = "macos")]
 mod native_drop;
 mod remote;
+mod rescue;
+mod shell_report;
 mod sidecar;
 mod window_chrome;
 
@@ -1301,12 +1303,19 @@ fn boot_engine(app: &tauri::AppHandle, first: bool) -> bool {
                 chosen_locale.is_some().then(|| menu_locale.tag()),
             );
             let url = format!("http://127.0.0.1:{port}/{query}#dnonce={nonce}");
+            // 导航**之前**置位：主窗口一旦被指向应用页就可能进入编辑态，救援能力从此永久关闭（rescue.rs，
+            // 置位后不复位）。先置位再导航，不留「页面已在加载、旗标还没立」的窗口
+            app.state::<rescue::RescueState>().mark_entered();
             if win
                 .eval(format!("window.location.replace({})", js_string(&url)))
                 .is_err()
             {
                 show_error(
                     &win,
+                    rescue::FailureInfo::new(
+                        rescue::stage::NAVIGATE,
+                        rescue::code::WINDOW_INIT_FAILED,
+                    ),
                     i18n::text(menu_locale).window_init_failed,
                     &log_path.display().to_string(),
                     menu_locale,
@@ -1315,9 +1324,15 @@ fn boot_engine(app: &tauri::AppHandle, first: bool) -> bool {
             }
             true
         }
-        Err(msg) => {
+        Err(e) => {
             let log = log_dir.join("sidecar.log");
-            show_error(&win, &msg, &log.display().to_string(), menu_locale);
+            show_error(
+                &win,
+                e.info,
+                &e.message,
+                &log.display().to_string(),
+                menu_locale,
+            );
             false
         }
     }
@@ -1473,7 +1488,17 @@ fn js_string(s: &str) -> String {
 /// 启动失败页。**语言由壳带过去**：这张页面在 `tauri://` 源下，读不到
 /// sidecar 那个源的 localStorage，也没有 i18next——不带 lang 的话，选了英文
 /// 的用户在最需要看懂的时候看到的是中文。
-fn show_error(win: &tauri::WebviewWindow, msg: &str, log_path: &str, locale: i18n::Locale) {
+fn show_error(
+    win: &tauri::WebviewWindow,
+    info: rescue::FailureInfo,
+    msg: &str,
+    log_path: &str,
+    locale: i18n::Locale,
+) {
+    // 结构化事实（阶段 / 稳定码 / 退出码）存进壳的状态，shell 最小报告只读这里——不读下面的 query 原文
+    win.app_handle()
+        .state::<rescue::RescueState>()
+        .set_failure(info);
     let q = format!(
         "error.html?msg={}&log={}&lang={}",
         utf8_percent_encode(msg, NON_ALPHANUMERIC),
@@ -1560,24 +1585,56 @@ fn spawn_e2e_update_if_requested(handle: tauri::AppHandle) {
     });
 }
 
-/// 应用内更新·查（前端 `checkDesktopUpdate` 的唯一入口，ADR 0121）。来源顺序由本机时区 / 系统语言 /
-/// 界面语言决定（`app_update::source_order`）；第一个答上来的来源说了算。绝不静默下载。
-#[tauri::command]
-async fn desktop_update_check(
-    app: tauri::AppHandle,
-    state: tauri::State<'_, app_update::UpdateState>,
-    ui_lang: Option<String>,
+/// 应用内更新·查的实现（`desktop_update_check` 与救援页的 `rescue_update_check` 共用：同一个 `UpdateState`，
+/// 同一把 `try_lock`，同一个候选句柄）。
+async fn update_check(
+    app: &tauri::AppHandle,
+    state: &app_update::UpdateState,
+    ui_lang: Option<&str>,
 ) -> Result<Option<app_update::CheckedUpdate>, app_update::Failure> {
-    let endpoints = app_update::endpoints(&app)?;
-    let order = app_update::detect_order(ui_lang.as_deref());
+    let endpoints = app_update::endpoints(app)?;
+    let order = app_update::detect_order(ui_lang);
     app_update::run_check(
-        &|| updater_builder(&app),
+        &|| updater_builder(app),
         &endpoints,
-        &state,
+        state,
         &order,
         &app_update::Limits::default(),
     )
     .await
+}
+
+/// 应用内更新·装的实现（同上，两个入口共用）。`expect` 非空时核对候选身份（`candidate_changed`）。
+async fn update_install(
+    app: &tauri::AppHandle,
+    state: &app_update::UpdateState,
+    expect: Option<&str>,
+    emit: app_update::Emit<'_>,
+) -> Result<app_update::Source, app_update::Failure> {
+    let endpoints = app_update::endpoints(app)?;
+    app_update::run_install_expecting(
+        &|| updater_builder(app),
+        &endpoints,
+        state,
+        &app_update::Limits::default(),
+        expect,
+        emit,
+    )
+    .await
+}
+
+/// 应用内更新·查（前端 `checkDesktopUpdate` 的唯一入口，ADR 0121）。来源顺序由本机时区 / 系统语言 /
+/// 界面语言决定（`app_update::source_order`）；第一个答上来的来源说了算。绝不静默下载。
+/// 只许主窗口调（远程实例窗口的 capability 里本来就没有它，这里再查一道）。
+#[tauri::command]
+async fn desktop_update_check(
+    app: tauri::AppHandle,
+    window: tauri::WebviewWindow,
+    state: tauri::State<'_, app_update::UpdateState>,
+    ui_lang: Option<String>,
+) -> Result<Option<app_update::CheckedUpdate>, app_update::Failure> {
+    only_main_window(&window).map_err(|_| app_update::Failure::code("main_window_only"))?;
+    update_check(&app, &state, ui_lang.as_deref()).await
 }
 
 /// 应用内更新·下载并安装上一次查到的那一版（用户按下按钮的结果）。当前来源下载失败就换另一个
@@ -1585,19 +1642,14 @@ async fn desktop_update_check(
 #[tauri::command]
 async fn desktop_update_install(
     app: tauri::AppHandle,
+    window: tauri::WebviewWindow,
     state: tauri::State<'_, app_update::UpdateState>,
     on_event: tauri::ipc::Channel<app_update::DownloadEvent>,
 ) -> Result<app_update::Source, app_update::Failure> {
-    let endpoints = app_update::endpoints(&app)?;
-    app_update::run_install(
-        &|| updater_builder(&app),
-        &endpoints,
-        &state,
-        &app_update::Limits::default(),
-        &|ev| {
-            let _ = on_event.send(ev);
-        },
-    )
+    only_main_window(&window).map_err(|_| app_update::Failure::code("main_window_only"))?;
+    update_install(&app, &state, None, &|ev| {
+        let _ = on_event.send(ev);
+    })
     .await
 }
 
@@ -1645,6 +1697,7 @@ fn main() {
         .plugin(tauri_plugin_process::init())
         .manage(state)
         .manage(app_update::UpdateState::default())
+        .manage(rescue::RescueState::default())
         .invoke_handler(tauri::generate_handler![
             reveal_export,
             reveal_project_dir,
@@ -1660,7 +1713,14 @@ fn main() {
             set_titlebar_colors,
             take_previous_exit,
             current_engine_exit,
-            restart_engine
+            restart_engine,
+            rescue::rescue_status,
+            rescue::rescue_retry,
+            rescue::rescue_update_check,
+            rescue::rescue_update_install,
+            rescue::rescue_diag_preview,
+            rescue::rescue_diag_send,
+            rescue::rescue_diag_save
         ])
         .on_window_event(|window, event| {
             // 事件回调是全局的：只看有关窗询问闸的那两个窗口。
@@ -1794,6 +1854,8 @@ mod tests {
             ("main.rs", cut(include_str!("main.rs"))),
             ("app_update.rs", cut(include_str!("app_update.rs"))),
             ("remote.rs", cut(include_str!("remote.rs"))),
+            ("rescue.rs", cut(include_str!("rescue.rs"))),
+            ("shell_report.rs", cut(include_str!("shell_report.rs"))),
             ("sidecar.rs", cut(include_str!("sidecar.rs"))),
         ]
     }
@@ -1847,6 +1909,55 @@ mod tests {
         // 所有 UpdaterBuilder 都经助手
         assert!(!main.contains("|| handle.updater_builder()"));
         assert!(!main.contains("|| app.updater_builder()"));
+    }
+
+    /// 救援能力的闸（rescue.rs）：主窗口被指向应用页**之前**必须先置位 `entered`——先导航后置位会留下
+    /// 「页面已在加载、旗标还没立」的窗口；`window_init_failed` 与启动失败都经 `show_error` 登记结构化事实。
+    #[test]
+    fn boot_engine_marks_the_app_entered_before_navigating_to_it() {
+        let main = &production_sources()[0].1;
+        let body = body_of(main, "fn boot_engine(");
+        let mark = body
+            .find("mark_entered()")
+            .expect("boot_engine 没有置位 entered");
+        let nav = body.find("window.location.replace").expect("找不到导航");
+        assert!(mark < nav, "必须先置位再导航");
+        assert_eq!(body.matches("mark_entered()").count(), 1);
+        // 只有 boot_engine 能置位，别处不许（置位后永不复位，随手加一处就关掉了救援）
+        assert_eq!(main.matches("mark_entered()").count(), 1);
+        // 每条失败路径都经 show_error，show_error 先登记结构化事实再导航
+        let show = body_of(main, "fn show_error(");
+        assert!(show.find("set_failure(").unwrap() < show.find("window.location.replace").unwrap());
+        assert_eq!(
+            body.matches("show_error(").count(),
+            2,
+            "两条失败路径都要登记"
+        );
+    }
+
+    /// 旧的更新命令也只许主窗口调；救援命令与它们共用同一对实现函数（同一个协调器）。
+    #[test]
+    fn update_commands_share_one_implementation_and_only_the_main_window_may_call_them() {
+        let main = &production_sources()[0].1;
+        for cmd in [
+            "async fn desktop_update_check(",
+            "async fn desktop_update_install(",
+        ] {
+            let body = body_of(main, cmd);
+            assert!(body.contains("only_main_window(&window)"), "{cmd}");
+        }
+        assert!(body_of(main, "async fn desktop_update_check(").contains("update_check(&app"));
+        assert!(body_of(main, "async fn desktop_update_install(").contains("update_install(&app"));
+        let rescue = &production_sources()[3].1;
+        assert_eq!(production_sources()[3].0, "rescue.rs");
+        assert!(rescue.contains("crate::update_check(&app"));
+        assert!(rescue.contains("crate::update_install(&app"));
+        // 实现里只有一处 run_check / run_install_expecting：没有第二套协调
+        assert_eq!(main.matches("app_update::run_check(").count(), 2); // 实现 + e2e 触发口
+        assert_eq!(
+            main.matches("app_update::run_install_expecting(").count(),
+            1
+        );
     }
 
     #[test]
