@@ -220,7 +220,7 @@ let projectEpoch = 0
 export const INSTALL_PENDING_TIMEOUT_MS = 30_000
 const BOOTSTRAP_RANK = { idle: 0, running: 1, done: 2, failed: 2 } as const
 type BootstrapState = keyof typeof BOOTSTRAP_RANK
-let bootstrapKnown: { attempt: number; state: BootstrapState } = { attempt: 0, state: 'idle' }
+let bootstrapKnown: { boot?: string; attempt: number; state: BootstrapState } = { attempt: 0, state: 'idle' }
 /** 待定：点击那一刻已知的 attempt；null = 不在待定 */
 let pendingFloor: number | null = null
 let pendingTimer: ReturnType<typeof setTimeout> | null = null
@@ -242,7 +242,7 @@ export function resetBootstrapForTests(): void {
  * `installing` = 已知状态是 running，或仍在待定。
  */
 function applyBootstrap(
-  snap: { attempt?: number; state?: string; log?: string; error?: string | null },
+  snap: { boot?: string; attempt?: number; state?: string; log?: string; error?: string | null },
   set: (p: Partial<EnvState>) => void,
 ): { adopted: boolean; terminal: boolean } {
   const state = snap.state as BootstrapState | undefined
@@ -251,15 +251,21 @@ function applyBootstrap(
   const attempt = legacy ? bootstrapKnown.attempt : (snap.attempt as number)
   const known = bootstrapKnown
   let adopted = false
-  if (attempt > known.attempt) adopted = true
+  // 后端进程换了（引擎重启 / 端口复用）：attempt 从头计，与上一个进程的不可比——直接采用，待定一并作废
+  // （点击发出去的那个进程已经没了）。第一次见到 boot 只是「学会它」，不算换了
+  const newBoot = snap.boot !== undefined && known.boot !== undefined && snap.boot !== known.boot
+  if (newBoot) {
+    adopted = true
+    clearPending()
+  } else if (attempt > known.attempt) adopted = true
   else if (attempt === known.attempt) {
     const r = BOOTSTRAP_RANK[state]
     const k = BOOTSTRAP_RANK[known.state]
     adopted = r > k || (r === k && state === 'running') // 终态锁定；running 的重复只收日志
   }
   if (!adopted) return { adopted: false, terminal: false }
-  const wasTerminal = BOOTSTRAP_RANK[known.state] === 2 && attempt === known.attempt
-  bootstrapKnown = { attempt, state }
+  const wasTerminal = !newBoot && BOOTSTRAP_RANK[known.state] === 2 && attempt === known.attempt
+  bootstrapKnown = { boot: snap.boot ?? known.boot, attempt, state }
   if (pendingFloor !== null) {
     // 采用了比点击时更新的一次（老后端：看到 running / 终态）= 这次尝试已经被观察到
     if (legacy ? state !== 'idle' : attempt > pendingFloor) clearPending()

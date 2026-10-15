@@ -1156,6 +1156,27 @@ describe('SSE 断线后的对账（reconcile）：丢了终态事件，卡片不
       holding.clear()
     })
 
+    it('后端重启（boot 变了）：attempt 从头计也采用；同一个 boot 内更小的 attempt 照旧丢弃', () => {
+      sse(3, 'done', { boot: 'b1' })
+      sse(1, 'running', { boot: 'b2' }) // 新进程：(b2,1) 与 (b1,3) 不可比
+      expect(installing()).toBe(true)
+      sse(1, 'done', { boot: 'b2' })
+      expect(installing()).toBe(false)
+      sse(5, 'running', { boot: 'b1' })
+      sse(2, 'running', { boot: 'b2' })
+      sse(1, 'running', { boot: 'b2' }) // 同 boot 更旧 / 同序：丢弃
+      expect(installing()).toBe(true) // (b2,2) running 被采用，(b2,1) 没把它拉回去
+    })
+
+    it('后端重启也作废待定：点击发给了已经没有的进程', async () => {
+      sse(3, 'done', { boot: 'b1' })
+      const c = await clickInstall()
+      sse(1, 'failed', { boot: 'b2', error: '新进程' })
+      expect(installing()).toBe(false)
+      await c.respond(snap(1, 'failed', { boot: 'b2', error: '新进程' })) // 同一新进程的响应：重复，不变
+      expect(installing()).toBe(false)
+    })
+
     it('终态锁定：同一次的终态重复（带别的内容）不覆盖已采用的那份', () => {
       sse(5, 'failed', { error: '第一份' })
       sse(5, 'failed', { error: '第二份' })

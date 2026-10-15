@@ -267,6 +267,17 @@ def test_every_new_install_gets_the_next_attempt_and_events_carry_it(monkeypatch
     assert seen[0] and seen[1]
 
 
+def test_boot_identity_is_stable_within_the_process_and_carried_everywhere(monkeypatch):
+    monkeypatch.setattr(pool, "find_worker_python", lambda: "/usr/bin/python3")
+    monkeypatch.setattr(bootstrap, "matplotlib_version", lambda p, **_kw: "3.11.1")
+    boot = bootstrap.progress()["boot"]
+    assert boot and bootstrap.status()["boot"] == boot
+    events = []
+    monkeypatch.setattr(bootstrap, "find_base_python", lambda: None)
+    bootstrap.install(events.append)
+    assert events and {e["boot"] for e in events} == {boot}
+
+
 def test_a_second_install_request_while_running_keeps_the_current_attempt(monkeypatch):
     import threading
 

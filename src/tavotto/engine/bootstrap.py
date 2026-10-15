@@ -21,6 +21,7 @@
 from __future__ import annotations
 
 import os
+import secrets
 import shutil
 import subprocess
 import threading
@@ -38,6 +39,9 @@ _lock = threading.Lock()
 _progress: dict = {"state": "idle", "log": "", "error": None, "attempt": 0}
 #: 保护「判有没有在跑 + 置 running + attempt 加一」这一小段（install_async 与直接调 install 都经过）
 _attempt_lock = threading.Lock()
+#: 进程级身份（启动时随机生成）：`attempt` 是进程内计数，后端重启会从 0 重来；前端凭 `(boot, attempt)` 判身份，
+#: boot 变了就是另一个进程——它的 attempt 与上一个进程的不可比，直接采用而不是当成「更旧的」丢掉
+_BOOT_ID = secrets.token_hex(8)
 
 
 # ---------------------------------------------------------------------------
@@ -151,6 +155,7 @@ def status() -> dict:
             "control_plane": pool.control_plane(),
             "state": _progress["state"],
             "attempt": _progress["attempt"],
+            "boot": _BOOT_ID,
         }
     except pool.WorkerError as exc:
         code = exc.code
@@ -171,6 +176,7 @@ def status() -> dict:
         "base_python": base,
         "state": _progress["state"],
         "attempt": _progress["attempt"],
+        "boot": _BOOT_ID,
         "error": (runtime.repair_hint() if rt["expected"] else _progress["error"]),
     }
 
@@ -179,7 +185,7 @@ def status() -> dict:
 # 安装
 # ---------------------------------------------------------------------------
 def progress() -> dict:
-    return dict(_progress)
+    return {**_progress, "boot": _BOOT_ID}
 
 
 def _append(line: str) -> None:
