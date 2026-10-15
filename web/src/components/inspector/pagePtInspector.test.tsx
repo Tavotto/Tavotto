@@ -529,7 +529,7 @@ describe('画布上的两个快捷入口也按页面值进出', () => {
     await seed(0.6, manifest({ legend: true }))
     await mountAlone(
       <>
-        <button data-opener>opener</button>
+        <button data-opener type="button" />
         <QuickEdit />
       </>,
     )
