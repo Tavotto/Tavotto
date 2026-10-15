@@ -107,6 +107,12 @@
   取新模板重打补丁并同步 build_desktop.py / desktop-tauri.yml / nightly.yml
   （tests/test_nsis_template.py 看护四处版本一致与 BMP 形态）。
 
+- **调试符号与小型转储**：`[profile.release]` 的 `debug = "line-tables-only"` + `split-debuginfo = "packed"` 让 macOS 产出 .dSYM、
+  二进制仍剥光；MSVC 上 `strip` 会吞 PDB，Windows 腿由 `desktop-tauri.yml` 用 `CARGO_PROFILE_RELEASE_STRIP=none` 覆盖
+  （`workerd/Cargo.toml` 同）。符号另存为 `debug-symbols-*` artifact，**不进安装包、不进更新清单**（`docs/RELEASING.md`「调试符号」）。
+  安装器为三个 exe 名写 HKCU WER LocalDumps，`DumpFolder` 与诊断包 `crash_dirs()` 的 `%LOCALAPPDATA%\CrashDumps` 同源
+  （`tests/test_nsis_template.py` 看护）；只许 HKCU、只许这三个子键，不碰全局 LocalDumps。
+
 ## 壳内多语言
 
 **桌面壳自带一份文案**（`src-tauri/src/i18n.rs`）：原生菜单在 webview

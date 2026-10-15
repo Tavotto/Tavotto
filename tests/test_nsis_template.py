@@ -779,14 +779,18 @@ def test_minidump_folder_is_where_the_diagnostics_bundle_collects_from():
     diagdetail = importlib.import_module("tavotto.engine.diagdetail")
     assert '"DumpFolder" "%LOCALAPPDATA%\\CrashDumps"' in _local_dumps_macro_body()
     src = Path(diagdetail.__file__).read_text(encoding="utf-8")
-    assert 'Path(local) / "CrashDumps"' in src, "诊断包不再从 %LOCALAPPDATA%\\CrashDumps 收了——两侧要一起改"
+    assert 'Path(local) / "CrashDumps"' in src, (
+        "诊断包不再从 %LOCALAPPDATA%\\CrashDumps 收了——两侧要一起改"
+    )
     for exe in ("Tavotto.exe", "tavotto-cli.exe", "tavotto-workerd.exe"):
         # WER 的文件名是 <exe>.<pid>.dmp；diagdetail 取第一个点之前的部分判归属
         assert diagdetail._OWN_PROCESS.match(f"{exe}.1234.dmp".split(".", 1)[0]), exe
 
 
 def test_minidump_setup_never_aborts_the_install_and_leaves_global_key_alone():
-    block = SECTION_INSTALL.split("为 Tavotto 自己的进程开 WER 小型转储")[1].split("TAVOTTO PATCH END")[0]
+    block = SECTION_INSTALL.split("为 Tavotto 自己的进程开 WER 小型转储")[1].split(
+        "TAVOTTO PATCH END"
+    )[0]
     assert "Abort" not in block
     # 全局根键（不带子键）不许出现：这一键会让机器上所有程序都落转储。
     # 键字面量只在 define 里出现一次，其余引用必须紧跟 \${EXE} 子键
