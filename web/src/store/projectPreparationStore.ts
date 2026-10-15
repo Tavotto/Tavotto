@@ -88,6 +88,8 @@ export interface PrepEntry {
   armed: boolean
   /** 认领 `run_when_ready` 的响应丢了（连接失败）：服务端收没收到不知道——之后的报告里有意图就证实收到了（`armed`），仍有 `run_when_ready` 动作就是没收到 */
   armMaybe: boolean
+  /** 点击 `run_when_ready` 那一刻报告里已有的意图 id：`armMaybe` 下已跑完的报告只有带着另一个意图 id 才属于这次点击，不是更早的运行 */
+  armMaybeBaseline: string | null
   /** 这个条目是从明确的「打开并运行」入口打开的：卡片上的「继续 / 再试一次」（重新打开）沿用这份意图，不让用户为同一个目的点两次 */
   wantsRun: boolean
   /** 同一脚本换了参数（另一份运行配置）时，旧会话里还在等的运行意图：「打开并运行」带它去后端原子转移，不并存两份 */
@@ -293,7 +295,10 @@ export const useProjectPreparationStore = create<PreparationState>((set, get) =>
     // 而这个条目是从「打开并运行」入口打开的（刷新 / 切项目后重新打开）或认领响应丢了（`armMaybe`）——就是那次认领的延续，不依赖前端内存
     const cur = entry(key)
     const intentLive = report.intent?.status === 'active' || report.intent?.status === 'launched'
-    if (cur && !cur.armed && intentLive && report.phase !== 'completed' && (cur.wantsRun || cur.armMaybe)) {
+    // 已跑完的报告：只有 `armMaybe`（本窗口刚点过、响应丢了）且意图是点击之后才出现的（id 与点击时不同）才算这次点击的——
+    // 快脚本在第一次补拉前就跑完了；`wantsRun`（刷新后重新打开）读到的 completed 是旧运行，不重开自动编辑
+    const thisClick = !!cur?.armMaybe && report.intent?.id !== cur.armMaybeBaseline
+    if (cur && !cur.armed && intentLive && (report.phase !== 'completed' ? cur.wantsRun || cur.armMaybe : thisClick)) {
       patch(key, () => ({ armed: true, armMaybe: false }))
     } else if (cur?.armMaybe && report.actions.some((a) => a.kind === 'run_when_ready')) {
       patch(key, () => ({ armMaybe: false })) // 认领没落地：别留着
@@ -426,6 +431,7 @@ export const useProjectPreparationStore = create<PreparationState>((set, get) =>
             // 「打开并运行」的意图记号只属于明确点过它的这一次；同参数再打开不带过去，换参数时看旧会话里还有没有在等的意图
             armed: false,
             armMaybe: false,
+            armMaybeBaseline: null,
             wantsRun: !!opts?.run,
             transferFrom: sameTarget
               ? (prev?.transferFrom ?? null)
@@ -530,7 +536,7 @@ export const useProjectPreparationStore = create<PreparationState>((set, get) =>
         }
         if (isConnectionFailure(err)) {
           // 不知道后端收没收到：不重发（同一个动作 id 重发是幂等的，但「是否已认领」以报告为准），只补拉事实
-          patch(key, () => ({ connection: 'lost', ...(kind === 'run_when_ready' ? { armMaybe: true } : {}) }))
+          patch(key, () => ({ connection: 'lost', ...(kind === 'run_when_ready' ? { armMaybe: true, armMaybeBaseline: report.intent?.id ?? null } : {}) }))
         } else {
           // 修订变了 / 检查之后世界变了 / 影响变了 / 现在不能运行：零副作用的拒绝——说一句，重读报告
           const { code, params } = apiCode(err)
