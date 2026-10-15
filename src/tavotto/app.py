@@ -9236,7 +9236,32 @@ def _valid_client_request_id(value) -> bool:
 
 @app.post("/api/ai/run")
 def api_ai_run():
-    """启动 codex / claude 对某脚本面板的深度修改。"""
+    """启动 codex / claude 对某脚本面板的深度修改。
+
+    **明确拒绝**（任何 4xx / 5xx 响应或 abort）时，后端自己把这个 rid 的待确认行删掉——账本行的删除只发生在后端事务里，
+    客户端不单方面 DELETE（它的 DELETE 可能失败，旧行之后被还原成「未确认」，而新 rid 已经执行过）。"""
+    body = request.get_json(silent=True) or {}
+    rid = body.get("client_request_id") if isinstance(body, dict) else None
+    try:
+        resp = app.make_response(_ai_run_impl())
+    except HTTPException:
+        _drop_rejected_pending(rid)
+        raise
+    if resp.status_code >= 400:
+        _drop_rejected_pending(rid)
+    return resp
+
+
+def _drop_rejected_pending(rid) -> None:
+    if not isinstance(rid, str) or not _valid_client_request_id(rid):
+        return
+    try:
+        engine_ai_history.drop_rejected_pending(str(require_project().resolve()), rid)
+    except Exception:  # noqa: BLE001 — 清账本是尽力而为，不能把原来的拒绝响应变成别的错
+        LOG.warning("清除被拒绝请求的待确认行失败", exc_info=True)
+
+
+def _ai_run_impl():
     body = request.get_json(force=True)
     agent = body.get("agent", "codex")
     prompt = (body.get("prompt") or "").strip()
@@ -9427,6 +9452,13 @@ def api_ai_pending_put(rid):
         isinstance(draft_stamp, bool) or not isinstance(draft_stamp, int) or draft_stamp < 0
     ):
         abort(400)
+    supersedes = body.get("supersedes")
+    if supersedes is not None and (
+        not isinstance(supersedes, list)
+        or len(supersedes) > 16
+        or not all(isinstance(x, str) and _valid_client_request_id(x) for x in supersedes)
+    ):
+        abort(400)
     if not isinstance(text, str) or not isinstance(sent, dict):
         abort(400)
     if script is not None and (
@@ -9443,6 +9475,7 @@ def api_ai_pending_put(rid):
             sent,
             script=script,
             draft_stamp=draft_stamp,
+            supersedes=supersedes,
         )
     except engine_ai_history.DraftTooLarge as exc:
         return _draft_too_large(exc)

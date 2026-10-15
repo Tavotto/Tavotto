@@ -807,3 +807,20 @@ def test_every_key_of_a_live_session_is_classified_and_the_dto_is_serializable(t
     json.dumps(ai_bridge.get(sid))
     _wait_idle()
     engine_watch.stop()
+
+
+def test_a_failing_history_write_leaves_no_snapshot_files_behind(tmp_path, cli, monkeypatch):
+    """record_start 抛了（SQLite 锁住 / 磁盘满）：快照 / sidecar / 日志一并清掉，不留半成品去挤占 `_prune_snapshots` 的保留名额。"""
+    _, counter = cli
+    figs = _project(tmp_path)
+
+    def boom(*_a, **_k):
+        raise sqlite3.OperationalError("database is full")
+
+    monkeypatch.setattr(ai_history, "record_start", boom)
+    with pytest.raises(sqlite3.OperationalError):
+        ai_bridge.run("codex", "fig1.py", "p", str(figs), client_request_id=RID)
+    time.sleep(0.3)
+    assert _spawned(counter) == 0
+    snaps = list((tmp_path / "snapshots").glob("*")) if (tmp_path / "snapshots").exists() else []
+    assert snaps == [], snaps

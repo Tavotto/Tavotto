@@ -784,7 +784,10 @@ def run(
             _drop_attempt_files(sid, snap)
             raise AgentError("ai_script_busy", {"script": script}) from None
         except BaseException:
+            # record_start 抛了（SQLite 锁住 / 磁盘满）：什么都没登记、也不 spawn——为这次尝试备好的快照 / sidecar / 日志
+            # 一并清掉，不留半成品去挤占 `_prune_snapshots` 的保留名额
             stderr_log.close()
+            _drop_attempt_files(sid, snap)
             raise
         if isinstance(started, tuple) and not started[0]:
             # 别的调用者（可能是另一个共用数据目录的 Tavotto 进程）已经原子预留了这个 (项目, 请求 id)：

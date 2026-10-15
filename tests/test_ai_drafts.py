@@ -685,3 +685,82 @@ def test_concurrent_first_connections_to_a_new_database_do_not_race_on_alter(tmp
         [t.start() for t in ts]
         [t.join() for t in ts]
     assert errors == []
+
+
+# ---------------------------------------------------------------------------
+# 账本行的删除只发生在后端事务里（accept、run 明确拒绝、supersedes）——客户端不单方面 DELETE
+# ---------------------------------------------------------------------------
+def _put_pending(client, pj, rid, text="t", **extra):
+    return client.put(
+        f"/api/ai/drafts/pending/{rid}",
+        json={"file": "F", "text": text, "sent": SENT, **extra},
+        headers=H(pj),
+    )
+
+
+def test_supersedes_deletes_the_old_row_in_the_same_transaction_as_the_new_write(client, two):
+    a, _ = two
+    assert _put_pending(client, a, "rid-old-00000001", "旧").status_code == 200
+    assert (
+        _put_pending(
+            client, a, "rid-new-00000001", "新", supersedes=["rid-old-00000001"]
+        ).status_code
+        == 200
+    )
+    assert [p["rid"] for p in get(client, a, "F")["pendings"]] == [
+        "rid-new-00000001"
+    ]  # 旧行随新写入一起没了
+
+
+def test_a_failed_new_write_keeps_the_superseded_row(client, two):
+    """新 PUT 失败 = 整个事务回滚 = 旧行还在，状态仍然一致（旧行之后只能被查询 / 确认，不会凭空消失）。"""
+    a, _ = two
+    _put_pending(client, a, "rid-old-00000001", "旧")
+    big = "x" * (ai_history.INSTRUCTION_MAX_BYTES + 1)
+    r = _put_pending(client, a, "rid-new-00000001", big, supersedes=["rid-old-00000001"])
+    assert r.status_code == 413
+    assert [p["rid"] for p in get(client, a, "F")["pendings"]] == ["rid-old-00000001"]
+
+
+def test_supersedes_frees_a_slot_before_the_cap_is_counted(client, two):
+    a, _ = two
+    n = ai_history.PENDING_MAX_PER_FILE
+    for i in range(n):
+        assert _put_pending(client, a, f"rid-fill-{i:08d}").status_code == 200
+    assert _put_pending(client, a, "rid-over-00000001").status_code == 409  # 满了
+    r = _put_pending(client, a, "rid-over-00000001", supersedes=["rid-fill-00000000"])
+    assert r.status_code == 200
+    rids = [p["rid"] for p in get(client, a, "F")["pendings"]]
+    assert "rid-fill-00000000" not in rids and "rid-over-00000001" in rids and len(rids) == n
+
+
+def test_supersedes_is_validated(client, two):
+    a, _ = two
+    assert (
+        _put_pending(client, a, "rid-new-00000001", supersedes="rid-old-00000001").status_code
+        == 400
+    )
+    assert _put_pending(client, a, "rid-new-00000001", supersedes=["bad rid!"]).status_code == 400
+
+
+def test_a_rejected_run_deletes_its_pending_row_on_the_backend(client, two):
+    """/api/ai/run 明确拒绝（这里是未知 agent，4xx）：后端自己把这个 rid 的待确认行删掉。
+    客户端不再 DELETE——它的 DELETE 可能失败，旧行随后被还原成「未确认」，而新 rid 已经执行过。"""
+    a, _ = two
+    _put_pending(client, a, RID, "指令")
+    assert [p["rid"] for p in get(client, a, "F")["pendings"]] == [RID]
+    r = client.post(
+        "/api/ai/run",
+        json={"agent": "no-such-agent", "id": "F", "prompt": "p", "client_request_id": RID},
+        headers=H(a),
+    )
+    assert r.status_code >= 400
+    assert get(client, a, "F")["pendings"] == []
+    # 别的 rid 的行不受影响
+    _put_pending(client, a, RID2, "另一条")
+    client.post(
+        "/api/ai/run",
+        json={"agent": "no-such-agent", "id": "F", "prompt": "p", "client_request_id": RID},
+        headers=H(a),
+    )
+    assert [p["rid"] for p in get(client, a, "F")["pendings"]] == [RID2]

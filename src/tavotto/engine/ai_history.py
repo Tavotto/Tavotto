@@ -610,6 +610,7 @@ def put_pending(
     db_path: Path | None = None,
     script: str | None = None,
     draft_stamp: int | None = None,
+    supersedes: list[str] | None = None,
 ) -> None:
     """记一条待确认提交（按 rid 一条）。每 (项目, 面板) 最多 8 条未解决的；满了**拒绝新的**（`PendingLimit`），绝不淘汰旧的。
 
@@ -619,6 +620,14 @@ def put_pending(
         raise DraftTooLarge(PENDING_MAX_BYTES)
     now = _now_ms()
     with _immediate(db_path) as con:  # 数名额与写入同一个事务：并发提交不会同时挤过上限
+        # `supersedes`：用户放弃了旧的等待（「改写后再发」）、这条用新 rid 发。旧行**在写新行的同一个事务里**删——
+        # 客户端不单方面删（它对「这一行不存在 / 已不需要」的判断可能是错的：原请求可能正在路上）；新写入失败 = 整个事务回滚 = 旧行还在
+        for old in supersedes or []:
+            if old != rid:
+                con.execute(
+                    "DELETE FROM ai_pending WHERE project=? AND file_id=? AND rid=?",
+                    (project, file_id, old),
+                )
         # 同 rid 的重写（重试写账本）不占新名额；其它 rid 满了就拒绝
         exists = con.execute(
             "SELECT 1 FROM ai_pending WHERE project=? AND file_id=? AND rid=?",
@@ -655,6 +664,17 @@ def clear_pending(project: str, file_id: str, rid: str, db_path: Path | None = N
                 "DELETE FROM ai_pending WHERE project=? AND file_id=? AND rid=?",
                 (project, file_id, rid),
             ).rowcount
+            > 0
+        )
+
+
+def drop_rejected_pending(project: str, rid: str, db_path: Path | None = None) -> bool:
+    """`/api/ai/run` **明确拒绝**了这个 rid（一定没执行）：后端自己把它的待确认行删掉（项目内按 rid，一个事务）。
+    账本行的删除只发生在后端事务里，客户端不再自己 DELETE——它的删除可能失败，旧行随后被还原成「未确认」，
+    而新 rid 已经执行过，同一条指令就执行了两次。"""
+    with _immediate(db_path) as con:
+        return (
+            con.execute("DELETE FROM ai_pending WHERE project=? AND rid=?", (project, rid)).rowcount
             > 0
         )
 
