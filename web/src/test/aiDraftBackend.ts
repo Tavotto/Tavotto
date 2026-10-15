@@ -12,6 +12,8 @@ export interface DraftBackend {
   calls: { method: string; path: string; keepalive: boolean; body: Record<string, unknown> }[]
   /** 让后端「不可用」（fetch 抛网络错误） */
   setDown: (down: boolean) => void
+  /** 扣住草稿 / 账本的读（GET）：对账「还在读」的那一段；返回放行函数 */
+  holdReads: () => () => void
   /** 扣住草稿的 PUT（请求「在途」：后端还没收到）；返回放行函数 */
   holdDraftPuts: () => () => void
   /** 只让「写账本」失败（PUT pending 回 500），别的照常 */
@@ -32,6 +34,7 @@ export function createDraftBackend(): DraftBackend {
   const pendings = new Map<string, { rid: string; text: string; sent: unknown; script?: string | null }[]>()
   let pendingWriteFails = false
   let hold: Promise<void> | null = null
+  let readHold: Promise<void> | null = null
   const calls: DraftBackend['calls'] = []
   let down = false
   const bytes = (t: string) => new TextEncoder().encode(t).length
@@ -45,6 +48,13 @@ export function createDraftBackend(): DraftBackend {
     const method = (init?.method ?? 'GET').toUpperCase()
     const body = init?.body ? (JSON.parse(String(init.body)) as Record<string, unknown>) : {}
     calls.push({ method, path: u.pathname, keepalive: !!init?.keepalive, body })
+    if (method === 'GET' && readHold) {
+      // 读被扣住：放行后再走一遍（不重复记 calls）
+      return readHold.then(() => {
+        calls.pop()
+        return handle(url, init) as Response
+      })
+    }
     if (u.pathname === '/api/ai/drafts/pending' && method === 'GET') {
       const prefix = key(pj, '')
       const all = [...pendings.entries()]
@@ -115,6 +125,16 @@ export function createDraftBackend(): DraftBackend {
     calls,
     setDown: (d) => {
       down = d
+    },
+    holdReads: () => {
+      let release!: () => void
+      readHold = new Promise<void>((r) => {
+        release = () => {
+          readHold = null
+          r()
+        }
+      })
+      return release
     },
     holdDraftPuts: () => {
       let release!: () => void

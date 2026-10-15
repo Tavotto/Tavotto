@@ -350,6 +350,68 @@ describe('同步状态机：单一 reconcile + 写入版本（#1098）', () => {
     expect(be.draft('pa', 'Fig1.pdf')).toBeUndefined() // 没有复活成「已恢复的草稿」
   })
 
+  it('账本还在读的那一段不许发（原任务可能早已结束、后端忙碌守卫已失效）：读完、pendings 还原之后仍锁；读空才放开', async () => {
+    be.pendings.set('pa\u0000Fig1.pdf', [OWN])
+    const release = be.holdReads()
+    await mount() // 对账在读（被扣住）
+    expect(q<HTMLButtonElement>('[data-ai-send]')!.disabled).toBe(true) // 读着：不许发
+    await typeText('刷新后立刻粘贴的指令')
+    await act(async () => {
+      input().dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', metaKey: true, bubbles: true }))
+    })
+    expect(aiRun).not.toHaveBeenCalled() // 对照：旧实现这里 canSend 为真，会用新 rid 发出去
+    release()
+    await settle()
+    expect(q('[data-ai-submission="unconfirmed"]')).toBeTruthy() // 读完：账本里的未结提交还原，仍锁
+    await act(async () => {
+      input().dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', metaKey: true, bubbles: true }))
+    })
+    expect(aiRun).not.toHaveBeenCalled()
+  })
+
+  it('账本读完且确实为空：放开发送（对照）', async () => {
+    vi.mocked(aiRun).mockResolvedValue({ session: 's-1', script: 'p1.py' })
+    const release = be.holdReads()
+    await mount()
+    await typeText('正常的指令')
+    expect(q<HTMLButtonElement>('[data-ai-send]')!.disabled).toBe(true)
+    release()
+    await settle()
+    expect(q<HTMLButtonElement>('[data-ai-send]')!.disabled).toBe(false)
+    await click(q('[data-ai-send="send"]'))
+    await settle()
+    expect(aiRun).toHaveBeenCalledTimes(1)
+  })
+
+  it('账本读失败 = 不知道（不是空账本）：继续锁发送，一句话 + 重试；重试读成功才放开', async () => {
+    be.setDown(true)
+    await mount()
+    expect(q('[data-ai-ledger="failed"]')).toBeTruthy()
+    expect(q<HTMLButtonElement>('[data-ai-send]')!.disabled).toBe(true)
+    await typeText('读失败时想发的指令')
+    await act(async () => {
+      input().dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', metaKey: true, bubbles: true }))
+    })
+    expect(aiRun).not.toHaveBeenCalled()
+    be.setDown(false)
+    await click(q('[data-ai-ledger-retry]'))
+    await settle()
+    expect(q('[data-ai-ledger]')).toBeNull()
+    expect(q<HTMLButtonElement>('[data-ai-send]')!.disabled).toBe(false)
+  })
+
+  it('成功对账过之后，一次读失败不把账本状态降回去（不平白锁住发送）', async () => {
+    await mount()
+    expect(q<HTMLButtonElement>('[data-ai-send]')!.disabled).toBe(true) // 没文字
+    await typeText('x')
+    expect(q<HTMLButtonElement>('[data-ai-send]')!.disabled).toBe(false)
+    be.setDown(true)
+    await act(async () => window.dispatchEvent(new Event('focus')))
+    await settle()
+    expect(q('[data-ai-ledger]')).toBeNull()
+    expect(q<HTMLButtonElement>('[data-ai-send]')!.disabled).toBe(false)
+  })
+
   it('没有未落定的本地写入时，对账读回的文本照常应用（另一个标签页的新稿进来）', async () => {
     await mount()
     be.put('pa', 'Fig1.pdf', '别的标签页写的')

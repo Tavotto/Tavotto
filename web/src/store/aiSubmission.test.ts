@@ -521,3 +521,71 @@ describe('读会话详情暂时失败时不收尾（Codex #1098 P1）', () => {
     expect(useAiStore.getState().sessions[0]).toMatchObject({ id: 's-9', status: 'done', changed: true })
   })
 })
+
+describe('同 id 重发被去重（deduped）：拿快照、按真实状态收尾（Codex #1098 P2）', () => {
+  /** 首个 POST 不确定 → 查询得 404（not_received）→ 之后后端其实把它执行完了 → 同 id 重发拿到 deduped */
+  const toNotReceived = async () => {
+    handler = (url) => (url.includes('/api/ai/run') ? Promise.reject(new TypeError('down')) : json({}))
+    await send()
+    const rid = onlySub().rid
+    handler = (url) =>
+      url.includes('/api/ai/requests/') ? json({ error: 'x', code: 'ai_request_not_found' }, 404) : json({})
+    await useAiStore.getState().queryRequest(rid)
+    expect(onlySub().phase).toBe('not_received')
+    return rid
+  }
+  const dedupedHandler = (snapshot: Handler): Handler => (url, init) =>
+    url.includes('/api/ai/run') ? json({ session: 's-9', script: 'fig1.py', deduped: true }) : snapshot(url, init)
+
+  it('会话其实已经结束（SSE 又断着）：按快照收尾成终态，带 refresh 警告；不留 running 会话、不锁脚本', async () => {
+    const rid = await toNotReceived()
+    handler = dedupedHandler((url) => {
+      if (url.includes('/api/ai/requests/')) return json({ session: 's-9', status: 'done', changed: true, script: 'fig1.py' })
+      if (url.includes('/api/ai/sessions/s-9'))
+        return json({ agent: 'codex', status: 'done', changed: true, diff: 'D', transcript: [], refresh: { status: 'failed', code: 'scan_failed' } })
+      return json({})
+    })
+    await expect(useAiStore.getState().resend(rid)).resolves.toBe('accepted')
+    const [s] = useAiStore.getState().sessions
+    expect(s).toMatchObject({ id: 's-9', status: 'done', changed: true, finalized: true }) // 对照：旧实现是 running，永远等不到 ai.done
+    expect(useAiStore.getState().sessions.some((x) => x.status === 'running')).toBe(false)
+    expect(subs()).toEqual([])
+    expect(JSON.stringify(useUiStore.getState().status)).toContain('aiChangedRefreshFailed')
+  })
+
+  it('快照显示仍在运行：才进入 running，之后的 ai.done 照常收尾', async () => {
+    const rid = await toNotReceived()
+    handler = dedupedHandler((url) => {
+      if (url.includes('/api/ai/requests/')) return json({ session: 's-9', status: 'running', changed: false, script: 'fig1.py' })
+      if (url.includes('/api/ai/sessions/s-9')) return json({ agent: 'codex', status: 'running', changed: false, diff: '', transcript: [] })
+      return json({})
+    })
+    await useAiStore.getState().resend(rid)
+    expect(useAiStore.getState().sessions[0]).toMatchObject({ id: 's-9', status: 'running' })
+    useAiStore.getState().finish({ session: 's-9', status: 'done', changed: false, diff: '' })
+    expect(useAiStore.getState().sessions[0].status).toBe('done')
+  })
+
+  it('快照读不到：保持未确认（提交与账本都在），不凭 deduped 响应建会话', async () => {
+    const rid = await toNotReceived()
+    handler = dedupedHandler(() => Promise.reject(new TypeError('down')))
+    await expect(useAiStore.getState().resend(rid)).resolves.toBe('unconfirmed')
+    expect(useAiStore.getState().sessions).toEqual([])
+    expect(onlySub().phase).toBe('unconfirmed')
+    expect(pend()).toEqual([rid])
+  })
+
+  it('没有 deduped 的正常响应不受影响（对照）：仍是刚启动的 running 会话', async () => {
+    const rid = await toNotReceived()
+    handler = (url) => (url.includes('/api/ai/run') ? json({ session: 's-new', script: 'fig1.py' }) : json({}))
+    await useAiStore.getState().resend(rid)
+    expect(useAiStore.getState().sessions[0]).toMatchObject({ id: 's-new', status: 'running' })
+  })
+
+  it('结构性（源码）：向后端要请求 / 会话快照的地方只有 settleFromSnapshot 一处，查询与 deduped 都走它', async () => {
+    const src = (await import('./aiStore.ts?raw')).default as string
+    expect(src.match(/fetchAiRequest\(/g)).toHaveLength(1)
+    expect(src.match(/fetchAiSession\(/g)).toHaveLength(1)
+    expect(src.match(/settleFromSnapshot\(/g)!.length).toBeGreaterThanOrEqual(3) // 定义 + queryRequest + dispatch(deduped)
+  })
+})
