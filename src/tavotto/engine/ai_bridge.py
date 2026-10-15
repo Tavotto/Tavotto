@@ -1235,7 +1235,9 @@ def get(sid: str) -> dict | None:
         # `refresh` 结局，不回 404——404 会被前端当成「没有详情」，凭摘要收尾、丢掉「改成了但项目没刷新」的警告（Codex #1098）
         if hist is None:
             return None
-        return _session_dto({**hist, "final": _history_final(hist), "note": "改前快照已清理，记录来自历史库"})
+        return _session_dto(
+            {**hist, "final": _history_final(hist), "note": "改前快照已清理，记录来自历史库"}
+        )
     if hist is not None:
         return _session_dto(
             {
