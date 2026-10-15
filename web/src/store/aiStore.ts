@@ -419,59 +419,7 @@ export const useAiStore = create<AiState>((set, get) => ({
     return dispatch(rid, get().generation)
   },
 
-  queryRequest: async (rid) => {
-    const sub = get().submissions[rid]
-    if (!sub) return 'gone'
-    const born = get().generation
-    let found
-    try {
-      found = await fetchAiRequest(rid, sub.project)
-    } catch (e) {
-      if (born !== get().generation) return 'gone'
-      // 只有后端自己的「没登记过」是结论；404 来自别处（老后端没这个端点）、断网、5xx 都不是
-      if (e instanceof ApiError && e.status === 404 && e.body?.code === AI_REQUEST_NOT_FOUND) {
-        set((s) =>
-          s.submissions[rid] ? { submissions: { ...s.submissions, [rid]: { ...s.submissions[rid], phase: 'not_received' } } } : s,
-        )
-        return 'not_received'
-      }
-      return 'unreachable'
-    }
-    if (born !== get().generation) {
-      removeAccepted(sub.project, sub.fileId, rid)
-      return 'gone'
-    }
-    if (found.status === 'history_deleted') {
-      // 执行过、只是记录被删：没有会话可接，但**一定不能重发**。提交与草稿一并收掉
-      removeAccepted(sub.project, sub.fileId, rid)
-      set((s) => {
-        const { [rid]: _gone, ...rest } = s.submissions
-        return { submissions: rest }
-      })
-      return 'already_run'
-    }
-    // 补全转录 / diff / 执行器（刷新之后这些都在后端）；失败就用查询给的摘要
-    let detail: AiSessionDetail | null = null
-    try {
-      detail = await fetchAiSession(found.session, sub.project)
-    } catch (e) {
-      // 只有「后端明确说没有详情」（404）才凭摘要往下走；读详情**暂时失败**不收尾——摘要里没有 refresh 结局，
-      // 凭它把会话标成终态会把「改成了、项目没刷新」悄悄吞掉，且提交记录一删就再也查不回来。
-      // 保持「已发出未确认」，让用户再查一次
-      if (!(e instanceof ApiError && e.status === 404)) return 'unreachable'
-    }
-    if (born !== get().generation) {
-      removeAccepted(sub.project, sub.fileId, rid)
-      return 'gone'
-    }
-    accept(rid, found.session, found.script, {
-      kind: 'queried',
-      status: found.status,
-      changed: found.changed,
-      detail,
-    })
-    return 'accepted'
-  },
+  queryRequest: (rid) => settleFromSnapshot(rid),
 
   dismissSubmission: (rid) => {
     const sub = get().submissions[rid]
@@ -603,6 +551,71 @@ function bufferEarly(sid: string, rid: string | undefined, ev: EarlyEvent): void
   if (list.length < EARLY_MAX_EVENTS) list.push(ev)
 }
 
+/**
+ * **「首个 POST 不确定」引出的所有分支，都收成这一个函数：向后端要这条请求的快照，按快照的真实状态收尾。**
+ * 用户点「查询结果」、同 id 重发被去重（`deduped: true`）、……都走这里——各写各的，就会漏掉另一半
+ * （去重的响应被当成「刚启动」、永远等不到的 `ai.done` 把脚本锁死，#1098 的这一族问题）。
+ * 快照 = `GET /api/ai/requests/<rid>`（登记过吗 / 当前状态）+ `GET /api/ai/sessions/<sid>`（转录 / diff / refresh 结局）：
+ * - 没登记过（后端自己的 404）→ `not_received`，才允许同 rid 重发；
+ * - 登记过但历史被删 → `already_run`，一定不重发；
+ * - 读失败（含读详情暂时失败）→ `unreachable`，提交与账本都留着，可再查——**绝不凭摘要收尾**；
+ * - 否则按快照状态建会话：终态走正常的完成路径（含 refresh 警告），仍在跑才是 running。
+ */
+async function settleFromSnapshot(rid: string): Promise<QueryOutcome> {
+  const { get, set } = { get: useAiStore.getState, set: useAiStore.setState }
+    const sub = get().submissions[rid]
+    if (!sub) return 'gone'
+    const born = get().generation
+    let found
+    try {
+      found = await fetchAiRequest(rid, sub.project)
+    } catch (e) {
+      if (born !== get().generation) return 'gone'
+      // 只有后端自己的「没登记过」是结论；404 来自别处（老后端没这个端点）、断网、5xx 都不是
+      if (e instanceof ApiError && e.status === 404 && e.body?.code === AI_REQUEST_NOT_FOUND) {
+        set((s) =>
+          s.submissions[rid] ? { submissions: { ...s.submissions, [rid]: { ...s.submissions[rid], phase: 'not_received' } } } : s,
+        )
+        return 'not_received'
+      }
+      return 'unreachable'
+    }
+    if (born !== get().generation) {
+      removeAccepted(sub.project, sub.fileId, rid)
+      return 'gone'
+    }
+    if (found.status === 'history_deleted') {
+      // 执行过、只是记录被删：没有会话可接，但**一定不能重发**。提交与草稿一并收掉
+      removeAccepted(sub.project, sub.fileId, rid)
+      set((s) => {
+        const { [rid]: _gone, ...rest } = s.submissions
+        return { submissions: rest }
+      })
+      return 'already_run'
+    }
+    // 补全转录 / diff / 执行器（刷新之后这些都在后端）；失败就用查询给的摘要
+    let detail: AiSessionDetail | null = null
+    try {
+      detail = await fetchAiSession(found.session, sub.project)
+    } catch (e) {
+      // 只有「后端明确说没有详情」（404）才凭摘要往下走；读详情**暂时失败**不收尾——摘要里没有 refresh 结局，
+      // 凭它把会话标成终态会把「改成了、项目没刷新」悄悄吞掉，且提交记录一删就再也查不回来。
+      // 保持「已发出未确认」，让用户再查一次
+      if (!(e instanceof ApiError && e.status === 404)) return 'unreachable'
+    }
+    if (born !== get().generation) {
+      removeAccepted(sub.project, sub.fileId, rid)
+      return 'gone'
+    }
+    accept(rid, found.session, found.script, {
+      kind: 'queried',
+      status: found.status,
+      changed: found.changed,
+      detail,
+    })
+    return 'accepted'
+}
+
 /** 一次发送（新发或同 id 重发）：只回 `accepted` / `unconfirmed`，后端明确拒绝时抛 */
 async function dispatch(rid: string, born: number): Promise<SubmitOutcome> {
   const { get, set } = { get: useAiStore.getState, set: useAiStore.setState }
@@ -659,6 +672,21 @@ async function dispatch(rid: string, born: number): Promise<SubmitOutcome> {
   // 但它**已经被接受**了，A 的草稿该删
   if (born !== get().generation) {
     removeAccepted(sub.project, sub.fileId, rid)
+    return 'accepted'
+  }
+  if (res.deduped) {
+    // 去重的响应 = 这条请求**早就在后端了**（首个 POST 才是真正发起的那次），会话可能早已结束、SSE 又断着：
+    // 不能当成「刚启动」建 running 会话（再也等不到 ai.done，`runningHere` 永久锁死）——拿快照、按真实状态收尾
+    const out = await settleFromSnapshot(rid)
+    if (out === 'unreachable' || out === 'not_received') {
+      if (born === get().generation)
+        set((s) =>
+          s.submissions[rid]
+            ? { submissions: { ...s.submissions, [rid]: { ...s.submissions[rid], phase: 'unconfirmed' } } }
+            : s,
+        )
+      return 'unconfirmed'
+    }
     return 'accepted'
   }
   accept(rid, res.session, res.script, { kind: 'fresh', agent, agentLabel: agentDisplayName(caps, agent) })

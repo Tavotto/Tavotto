@@ -139,15 +139,18 @@ export async function markSubmitted(
   }
 }
 
-/** 本项目全部未落定的提交（跨面板，带 script）；读失败回空。发起它的面板已被删 / 换图时靠它找回 */
+/**
+ * 本项目全部未落定的提交（跨面板，带 script）；发起它的面板已被删 / 换图时靠它找回。
+ * **读失败 / 没有项目认领回 `null`（不知道），不是空数组（确认没有）**——调用方据此决定能不能放开发送。
+ */
 export async function loadProjectPendings(
   project: string | null,
-): Promise<{ file: string; rid: string; text: string; sent: DraftTarget; script: string | null }[]> {
-  if (!project) return []
+): Promise<{ file: string; rid: string; text: string; sent: DraftTarget; script: string | null }[] | null> {
+  if (!project) return null
   try {
     return (await fetchAiPendings(project)).pendings.map((p) => ({ ...p, sent: p.sent as DraftTarget }))
   } catch {
-    return []
+    return null
   }
 }
 

@@ -254,7 +254,8 @@ function AssistantPanelBody() {
   const { panel, element, axes } = useAssistantTarget()
   const caps = useAiStore((s) => s.caps)
   // 草稿绑定「项目 × 面板文件」，右栏切页签 / 刷新之后还在（ADR 0132；落盘只是缓存）
-  const { prompt, setPrompt, restored, tooLarge, clearIf, project: claimedProject } = useAiDraft(panel)
+  const { prompt, setPrompt, restored, tooLarge, clearIf, project: claimedProject, ledgerState, retryLedger } =
+    useAiDraft(panel)
   const [error, setError] = useState<{ text: string; prompt: string; target: SendTarget; panelId: string } | null>(null)
   // 已点发送、后端还没给会话 id 的提交活在 store 里：面板卸载重挂（切页签）它还在，
   // 「在路上 / 已发出未确认 / 后端没收到」三态都从它派生
@@ -329,7 +330,8 @@ function AssistantPanelBody() {
   // （caps 还是 null 时是「正在检测」，那时不该把输入区锁上）
   const noAgent = caps !== null && usableAgents(caps).length === 0
   // 有一条提交还没落定（在路上 / 未确认 / 没收到待重发）= 不许再发新的：未确认时后端可能已经在执行它
-  const canSend = !!panel && !noAgent && !submission && !runningHere
+  // 账本恢复没成功之前（读着 / 读失败）不许发：原任务可能已结束，放行会用新 id 把同一条修改再执行一遍
+  const canSend = !!panel && !noAgent && !submission && !runningHere && ledgerState === 'ok'
 
   // 原先每个 delta 都把视口拽回底部——往上翻看旧回答时等于不让人看。
   // 换了目标面板视作重新贴底。jsdom 里 scrollHeight 恒 0，gap 恒 0，一律贴底。
@@ -651,6 +653,21 @@ function AssistantPanelBody() {
               </button>
             </Notice>
           )}
+          {/* 读不到这张图有没有未结的发送记录：按「不知道」处理、继续锁住发送，一句话 + 重试（不当成空账本） */}
+          {panel && ledgerState === 'failed' && (
+            <Notice
+              tone="warn"
+              data-ai-ledger="failed"
+              className="mb-2"
+              action={
+                <Button data-ai-ledger-retry variant="secondary" size="sm" onClick={retryLedger}>
+                  {ai('panel.retry')}
+                </Button>
+              }
+            >
+              {ai('panel.ledgerUnreadable')}
+            </Notice>
+          )}
           {noAgent && (
             // 「没装 CLI」不是错误，用中性语气 + 一个可执行的下一步
             <Notice
@@ -727,7 +744,7 @@ function AssistantPanelBody() {
                   size="icon-sm"
                   data-ai-send={runningHere ? 'stop' : 'send'}
                   className="relative h-[26px] w-[26px]"
-                  disabled={!panel || noAgent || !!submission || (!runningHere && !prompt.trim())}
+                  disabled={!panel || noAgent || !!submission || (!runningHere && (!prompt.trim() || ledgerState !== 'ok'))}
                   aria-busy={sending || runningHere || undefined}
                   onClick={runningHere ? stopRunning : () => send()}
                   aria-label={runningHere ? ai('panel.abort') : ai('panel.sendAria')}

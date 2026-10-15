@@ -98,6 +98,7 @@
     "emptyTitle": "想怎么改这张图？",
     "inputAria": "描述要怎么改这张图",
     "ledgerFailed": "没能保存这条指令的发送记录，所以没有发出。检查连接后重试。",
+    "ledgerUnreadable": "暂时读不到这张图有没有未结的发送记录，所以先不能发送。",
     "noCli": "没有可用的改图助手。",
     "noPanelTitle": "选中一张可编辑的图",
     "none": "—",

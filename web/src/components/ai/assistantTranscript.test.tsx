@@ -27,6 +27,8 @@ import { useUiStore } from '@/store/uiStore'
 import { emptyProject, type PanelObject } from '@/types/document'
 import { AssistantPanel } from './AiPanel'
 import { COPIED_MS } from './CopyAction'
+import { createDraftBackend } from '@/test/aiDraftBackend'
+import { setCurrentProjectId } from '@/lib/session'
 import { Markdown } from './Markdown'
 import { formatDuration, parseUnifiedDiff, type LineRow } from './transcriptModel'
 
@@ -36,7 +38,10 @@ vi.mock('@/lib/api', async (importOriginal) => ({
   fetchAiHistory: vi.fn(async () => ({ sessions: [], total: 0 })),
 }))
 
-globalThis.fetch = (async () => new Response('{}', { status: 200 })) as typeof fetch
+// 草稿 / 账本存后端（ADR 0132）：助手面板挂载会对账一次，账本读成功才放开发送——这里换成同语义的替身后端
+const draftBackend = createDraftBackend()
+globalThis.fetch = (async (url: unknown, init?: RequestInit) =>
+  draftBackend.handle(String(url), init) ?? new Response('{}', { status: 200 })) as typeof fetch
 Element.prototype.scrollIntoView ??= function scrollIntoView() {}
 declare global {
   // eslint-disable-next-line no-var
@@ -108,6 +113,7 @@ async function mount(sessions: AiSession[]) {
       </TooltipProvider>,
     )
   })
+  for (let i = 0; i < 20; i++) await act(async () => Promise.resolve()) // 账本对账
 }
 
 const q = <T extends Element = HTMLElement>(sel: string) => host.querySelector<T>(sel)
@@ -116,6 +122,7 @@ const qa = <T extends Element = HTMLElement>(sel: string) => Array.from(host.que
 const realStart = useAiStore.getState().start
 beforeEach(() => {
   localStorage.clear()
+  setCurrentProjectId('pa')
   document.body.innerHTML = ''
   start.mockReset()
   start.mockImplementation(async () => {})

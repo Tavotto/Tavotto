@@ -100,6 +100,7 @@
     "emptyTitle": "How should this figure change?",
     "inputAria": "Describe how to change this figure",
     "ledgerFailed": "Couldn’t save a record of this request, so it wasn’t sent. Check the connection and retry.",
+    "ledgerUnreadable": "Can’t check this figure’s pending requests right now, so sending is paused.",
     "noCli": "No figure assistant available.",
     "noPanelTitle": "Select an editable figure",
     "none": "—",

@@ -18,6 +18,14 @@ export const WRITE_DEBOUNCE_MS = 600
 /** 写失败（离线 / 后端暂时不可用）后多久重试：文本一直留在内存里，不丢 */
 export const RETRY_MS = 3000
 
+/**
+ * 账本恢复状态（**与 `reconcile` 共用一个状态源**）：`unknown` = 还没成功读到过这张图的未结提交；`ok` = 至少成功对账过一次
+ * （草稿 + 项目级账本都读成功，且 pendings 已还原）；`failed` = 对账读失败。**只有 `ok` 才允许发送**——
+ * 刷新 / 重挂后账本还在异步读的那一小段，原任务可能早已结束、后端的忙碌守卫早已失效，这时放行发送会生成新的
+ * 请求 id、同一条修改执行两次；读失败是「不知道」，不是「空账本」。
+ */
+export type LedgerState = 'unknown' | 'ok' | 'failed'
+
 /** 对账的来源。**所有来源走同一个 `reconcile`**，不存在「只取文本」的分支 */
 export type ReconcileSource = 'mount' | 'focus' | 'visible' | 'reconnect'
 
@@ -51,6 +59,7 @@ export function useAiDraft(panel: PanelObject | null) {
   const [prompt, setPromptState] = useState('')
   const [restored, setRestored] = useState(false)
   const [tooLarge, setTooLarge] = useState(false)
+  const [ledgerState, setLedgerState] = useState<LedgerState>('unknown')
 
   const key = useRef<{ project: string | null; fileId: string | null; epoch: number }>({
     project: null,
@@ -132,8 +141,13 @@ export function useAiDraft(panel: PanelObject | null) {
     const token = ++reconcileToken.current
     const seqAtStart = seq.current
     const [state, projectList] = await Promise.all([fetchDraftState(pj, f), loadProjectPendings(pj)])
-    // 过期：又有更新的一次对账、或目标已经换了；读失败 = 不知道，不动
-    if (token !== reconcileToken.current || key.current.epoch !== epoch || !state) return
+    // 过期：又有更新的一次对账、或目标已经换了——不动
+    if (token !== reconcileToken.current || key.current.epoch !== epoch) return
+    // 读失败 = 不知道：账本状态没成功过就记 failed（继续锁发送、给重试），成功过的不降级；草稿 / pendings 一概不动
+    if (!state || !projectList) {
+      setLedgerState((cur) => (cur === 'ok' ? cur : 'failed'))
+      return
+    }
 
     const p = panelRef.current
     if (p) {
@@ -160,11 +174,12 @@ export function useAiDraft(panel: PanelObject | null) {
         })
       }
       for (const item of projectList) apply(item)
-      // 项目级列表读失败时，本文件自己的账本（随草稿一起回来）仍要还原
+      // 本文件自己的账本（随草稿一起回来）同样还原（项目级列表理论上已含，这里兜底、按 rid 去重）
       for (const own of state.pendings ?? [])
         apply({ file: f, rid: own.rid, text: own.text, sent: own.sent, script: p.script ?? null })
     }
 
+    setLedgerState('ok') // pendings 已还原：账本恢复完成，可以放开发送
     if (hasUnsettledWrite() || seq.current !== seqAtStart) return // 本地写入没落定：文本以本地为准，不覆盖
     if (state.text === text.current) return
     text.current = state.text
@@ -184,6 +199,7 @@ export function useAiDraft(panel: PanelObject | null) {
     setPromptState('')
     setRestored(false)
     setTooLarge(false)
+    setLedgerState('unknown') // 换目标 / 重挂：这张图的账本还没读过
     if (!project || !fileId) return
     void reconcile('mount')
     return () => {
@@ -230,5 +246,8 @@ export function useAiDraft(panel: PanelObject | null) {
     setTooLarge(false)
   }, [])
 
-  return { prompt, setPrompt, restored, tooLarge, clearIf, project }
+  /** 账本读失败后的「重试」：就是再对账一次（同一个入口） */
+  const retryLedger = useCallback(() => void reconcile('focus'), [reconcile])
+
+  return { prompt, setPrompt, restored, tooLarge, clearIf, project, ledgerState, retryLedger }
 }
