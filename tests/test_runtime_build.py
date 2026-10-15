@@ -612,6 +612,22 @@ def test_build_desktop_checks_the_packed_runtime_after_pyinstaller():
     assert pyinstaller < calls["diff_collected_runtime"] < tauri
 
 
+@pytest.mark.parametrize("job", ["windows-exe-smoke", "macos-app-smoke"])
+def test_ci_smoke_legs_check_the_packed_runtime_after_pyinstaller(job):
+    """CI 的两条冒烟腿直接调 pyinstaller、不经 build_desktop.py——同一道闸要在那里也接上。"""
+    text = (REPO / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    starts = [(m.group(1), m.start()) for m in re.finditer(r"(?m)^  ([\w-]+):\s*$", text)]
+    begin = next(i for i, (name, _) in enumerate(starts) if name == job)
+    end = starts[begin + 1][1] if begin + 1 < len(starts) else len(text)
+    block = text[starts[begin][1] : end]
+    freeze = block.index("run: pyinstaller packaging/tavotto.spec")
+    check = block.index(
+        'diff_collected_runtime(runtime_source_dir("."), "dist/Tavotto/_internal/runtime")'
+    )
+    assert freeze < check
+    assert "sys.exit(1)" in block[check : check + 400]
+
+
 # ---------------- 精简规则 ----------------------------------------------------
 def test_prune_never_touches_public_testing_apis():
     """`numpy.testing` / `pandas._testing` 是公开 API，用户脚本里
