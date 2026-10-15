@@ -1,5 +1,5 @@
 import { setAiSubmissionLedger } from '@/store/aiStore'
-import { AI_DRAFT_CHANGED_EVENT, clearSubmitted, markSubmitted, removeAccepted } from './aiDraft'
+import { AI_DRAFT_CHANGED_EVENT, markSubmitted, removeAccepted } from './aiDraft'
 
 /**
  * 把草稿存储（后端）注册成 aiStore 的提交账本（ADR 0132）。**只被助手面板 import**——有助手面板的宿主
@@ -8,7 +8,6 @@ import { AI_DRAFT_CHANGED_EVENT, clearSubmitted, markSubmitted, removeAccepted }
  */
 setAiSubmissionLedger({
   markSubmitted,
-  clearSubmitted,
   // 确认之后后端按「草稿戳没变」清了草稿（或没清）：通知助手面板对账一次，输入框以后端为准（`useAiDraft` 听这个事件）
   removeAccepted: async (...a) => {
     await removeAccepted(...a)

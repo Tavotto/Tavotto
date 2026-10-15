@@ -751,7 +751,10 @@ describe('同步状态机：单一 reconcile + 写入版本（#1098）', () => {
     it('run 回 409 后点重试：同样记草稿戳，被接受后草稿被清', async () => {
       let stampAtRun: unknown = null
       vi.mocked(aiRun)
-        .mockRejectedValueOnce(new ApiError('busy', 409, { code: 'ai_script_busy', params: { script: 'p1.py' } }))
+        .mockImplementationOnce(async (req) => {
+          be.dropRejectedPending((req as { client_request_id: string }).client_request_id) // 后端明确拒绝时自己删账本行
+          throw new ApiError('busy', 409, { code: 'ai_script_busy', params: { script: 'p1.py' } })
+        })
         .mockImplementation(async () => {
           stampAtRun = ledgerStamp()
           return { session: 's-1', script: 'p1.py' }
@@ -770,7 +773,10 @@ describe('同步状态机：单一 reconcile + 写入版本（#1098）', () => {
     it('失败后输入框被改过再点重试：按失败的那段原文发（history 来源），不碰草稿——用户新写的草稿不被当成「已发送」清掉', async () => {
       let stampAtRun: unknown = 'unset'
       vi.mocked(aiRun)
-        .mockRejectedValueOnce(new ApiError('busy', 409, { code: 'ai_script_busy', params: { script: 'p1.py' } }))
+        .mockImplementationOnce(async (req) => {
+          be.dropRejectedPending((req as { client_request_id: string }).client_request_id) // 后端明确拒绝时自己删账本行
+          throw new ApiError('busy', 409, { code: 'ai_script_busy', params: { script: 'p1.py' } })
+        })
         .mockImplementation(async () => {
           stampAtRun = ledgerStamp()
           return { session: 's-1', script: 'p1.py' }
@@ -1288,6 +1294,70 @@ describe('已发出未确认：不能盲目重发', () => {
     await settle()
     const rid2 = (vi.mocked(aiRun).mock.calls[1][0] as { client_request_id: string }).client_request_id
     expect(rid2).not.toBe(rid1)
+    // 客户端没有 DELETE：旧行由新行的 PUT 带 `supersedes`、在后端同一个事务里删
+    expect(be.calls.filter((c) => c.method === 'DELETE' && c.path.includes('/pending'))).toEqual([])
+    const putOfNew = be.calls.find((c) => c.method === 'PUT' && c.path.endsWith(`/pending/${rid2}`))
+    expect(putOfNew?.body.supersedes).toEqual([rid1])
+  })
+
+  it('放弃旧等待后新行的 PUT 失败：旧行还在（状态仍然一致），之后同一条指令重试成功才一起清掉旧行', async () => {
+    await mount()
+    await sendIt('旧指令')
+    const rid1 = (vi.mocked(aiRun).mock.calls[0][0] as { client_request_id: string }).client_request_id
+    vi.mocked(fetchAiRequest).mockRejectedValue(new ApiError('nf', 404, { code: 'ai_request_not_found' }))
+    await click(q('[data-ai-check]'))
+    await settle()
+    await click(q('[data-ai-edit-resend]'))
+    vi.mocked(aiRun).mockResolvedValue({ session: 's-3', script: 'fig1.py' })
+    await typeText('新指令')
+    be.setPendingWriteFails(true)
+    await click(q('[data-ai-send="send"]'))
+    await settle()
+    expect(aiRun).toHaveBeenCalledTimes(1) // 新行没写成：不发
+    expect(be.pendings.get('pa\u0000Fig1.pdf')?.map((x) => x.rid)).toEqual([rid1]) // 旧行还在
+    be.setPendingWriteFails(false)
+    await click(q('[data-ai-retry]'))
+    await settle()
+    const rid2 = (vi.mocked(aiRun).mock.calls[1][0] as { client_request_id: string }).client_request_id
+    const rows = be.pendings.get('pa\u0000Fig1.pdf')?.map((x) => x.rid) ?? []
+    expect(rows).not.toContain(rid1) // 这次新行的 PUT 仍带着 supersedes，旧行与新行的写入同事务消失
+    expect(rid2).not.toBe(rid1)
+  })
+
+  it('账本 PUT 已提交但响应丢了：不当成没写入——不发；点重试用的是**同一个 rid**（幂等重放），最终只执行一次', async () => {
+    vi.mocked(aiRun).mockResolvedValue({ session: 's-1', script: 'p1.py' })
+    await mount()
+    await typeText('把线条加粗一点')
+    be.losePendingResponses(1)
+    await click(q('[data-ai-send="send"]'))
+    await settle()
+    expect(aiRun).not.toHaveBeenCalled() // 不知道写没写：不发
+    expect(q('[data-ai-error="send"]')).toBeTruthy()
+    const written = be.pendings.get('pa\u0000Fig1.pdf')?.map((x) => x.rid) ?? []
+    expect(written).toHaveLength(1) // 后端其实已经写了
+    await click(q('[data-ai-retry]'))
+    await settle()
+    expect(aiRun).toHaveBeenCalledTimes(1)
+    const rid = (vi.mocked(aiRun).mock.calls[0][0] as { client_request_id: string }).client_request_id
+    expect(rid).toBe(written[0]) // 同一个 rid，不是换了新的
+    const puts = be.calls.filter((c) => c.method === 'PUT' && c.path.includes('/pending/'))
+    expect(new Set(puts.map((c) => c.path)).size).toBe(1) // 两次 PUT 都落在同一个 rid 上
+  })
+
+  it('账本 PUT 回 5xx 同样是「不知道」：恢复后重试沿用同一个 rid；明确的 4xx 才算确定没写', async () => {
+    vi.mocked(aiRun).mockResolvedValue({ session: 's-1', script: 'p1.py' })
+    await mount()
+    await typeText('指令一')
+    be.setPendingWriteFails(true)
+    await click(q('[data-ai-send="send"]'))
+    await settle()
+    expect(aiRun).not.toHaveBeenCalled()
+    be.setPendingWriteFails(false)
+    await click(q('[data-ai-retry]'))
+    await settle()
+    const puts = be.calls.filter((c) => c.method === 'PUT' && c.path.includes('/pending/'))
+    expect(puts).toHaveLength(2)
+    expect(puts[0].path).toBe(puts[1].path) // 同一个 rid
   })
 
   it('明确失败（409 busy）：是「没有发出去」+ 普通重试，不是未确认', async () => {

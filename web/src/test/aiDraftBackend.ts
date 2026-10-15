@@ -28,6 +28,10 @@ export interface DraftBackend {
   setPendingWriteFails: (fails: boolean) => void
   /** 模拟「这个面板未解决的提交已满」：新 rid 一律 409 `ai_pending_limit`（params.count = 传入的数）；null = 不限 */
   setPendingLimit: (limit: number | null) => void
+  /** 接下来 n 次写账本：**写入成功，但响应丢了**（客户端收到网络错误） */
+  losePendingResponses: (n: number) => void
+  /** 模拟后端 `/api/ai/run` 明确拒绝时的服务端清理：删掉这个 rid 的待确认行（客户端没有 DELETE） */
+  dropRejectedPending: (rid: string) => void
   /** 直接读 / 写（模拟另一个标签页） */
   draft: (pj: string, file: string) => string | undefined
   pending: (pj: string, file: string) => string[]
@@ -47,6 +51,7 @@ export function createDraftBackend(): DraftBackend {
   >()
   let pendingWriteFails = false
   let pendingLimit: number | null = null
+  let loseNextPendingResponses = 0
   let pendingListFails = false
   let draftPutFails = false
   let hold: Promise<void> | null = null
@@ -106,8 +111,10 @@ export function createDraftBackend(): DraftBackend {
         if (pendingWriteFails) return json({ error: 'boom', code: 'internal_error' }, 500)
         if (pendingLimit !== null && !list.some((x) => x.rid === rid))
           return json({ error: 'full', code: 'ai_pending_limit', params: { count: pendingLimit } }, 409)
+        // `supersedes`：与后端一致，在写新行的同一个「事务」里删旧行
+        const gone = new Set(Array.isArray(body.supersedes) ? (body.supersedes as string[]) : [])
         const next = [
-          ...list.filter((x) => x.rid !== rid),
+          ...list.filter((x) => x.rid !== rid && !gone.has(x.rid)),
           {
             rid,
             text: String(body.text),
@@ -117,6 +124,10 @@ export function createDraftBackend(): DraftBackend {
           },
         ]
         pendings.set(key(pj, file), next.slice(-8))
+        if (loseNextPendingResponses > 0) {
+          loseNextPendingResponses--
+          throw new TypeError('Failed to fetch') // 已经写入，只是响应丢了
+        }
         return json({ ok: true })
       }
       if (method === 'DELETE') {
@@ -220,6 +231,12 @@ export function createDraftBackend(): DraftBackend {
     },
     setPendingLimit: (n) => {
       pendingLimit = n
+    },
+    losePendingResponses: (n) => {
+      loseNextPendingResponses = n
+    },
+    dropRejectedPending: (rid) => {
+      for (const [k, list] of pendings) pendings.set(k, list.filter((x) => x.rid !== rid))
     },
     setPendingWriteFails: (f) => {
       pendingWriteFails = f

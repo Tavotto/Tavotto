@@ -21,7 +21,7 @@ import {
   type AiDeltaKind,
   type AiRefreshOutcome,
 } from '@/lib/api'
-import type { DraftTarget } from '@/lib/aiDraft'
+import type { DraftTarget, LedgerWrite } from '@/lib/aiDraft'
 
 export type AiStatus = 'running' | 'done' | 'failed' | 'timeout' | 'cancelled' | 'reverted'
 /** 改动作用范围：决定发给后端的上下文粒度（gid/label 怎么拼） */
@@ -212,6 +212,15 @@ const MAX_LINES = 600
 const EARLY_MAX_SIDS = 16
 const EARLY_MAX_EVENTS = 500
 const early = new Map<string, EarlyEvent[]>()
+/** 账本写入「不知道」写没写成的那条指令（按 项目×文件）：重试沿用同一个 rid */
+const ledgerUnknown = new Map<string, { rid: string; prompt: string; sentJson: string }>()
+/** 被放弃的旧等待（按 项目×文件）：下一次这个面板发新 rid 时，随新账本行的 PUT 带 `supersedes`，由后端在同一个事务里删 */
+const supersedeQueue = new Map<string, Set<string>>()
+const queueSupersede = (key: string, rid: string): void => {
+  const set = supersedeQueue.get(key) ?? new Set<string>()
+  set.add(rid)
+  supersedeQueue.set(key, set)
+}
 
 /**
  * 会话在「建好之后才到的 `ai.done`」那条路上也要有和直达路径一样的提示（状态栏）。副作用在
@@ -236,18 +245,18 @@ export interface SubmissionLedger {
     sent: DraftTarget,
     script: string | null,
     draftStamp: number | null,
-  ) => Promise<boolean>
-  clearSubmitted: (project: string | null, fileId: string, rid: string) => Promise<void>
+    supersedes: string[],
+  ) => Promise<LedgerWrite>
   removeAccepted: (project: string | null, fileId: string, rid: string) => Promise<void>
 }
 let ledger: SubmissionLedger | null = null
 export function setAiSubmissionLedger(l: SubmissionLedger | null): void {
   ledger = l
 }
-// 落盘都是请求后端：markSubmitted 在 spawn 之前**等它写成功**（start 里 await，失败不发）；其余是尽力而为、不挡界面
-const markSubmitted = (...a: Parameters<SubmissionLedger['markSubmitted']>): Promise<boolean> | undefined =>
+// 落盘都是请求后端：markSubmitted 在 spawn 之前**等它写成功**（start 里 await，失败不发）；`removeAccepted`（后端 accept 事务）尽力而为。
+// **账本行的删除只发生在后端事务里**（accept、`/api/ai/run` 明确拒绝时后端自己删、新 PUT 带 `supersedes`）——客户端没有 DELETE
+const markSubmitted = (...a: Parameters<SubmissionLedger['markSubmitted']>): Promise<LedgerWrite> | undefined =>
   ledger?.markSubmitted(...a)
-const clearSubmitted = (...a: Parameters<SubmissionLedger['clearSubmitted']>): void => void ledger?.clearSubmitted(...a)
 const removeAccepted = (...a: Parameters<SubmissionLedger['removeAccepted']>): void => void ledger?.removeAccepted(...a)
 
 /** 请求 id：安全上下文里用 `randomUUID`，否则用 `getRandomValues` 拼 v4（后端只要求 `[A-Za-z0-9_-]{8,64}`） */
@@ -392,8 +401,17 @@ export const useAiStore = create<AiState>((set, get) => ({
     // 界面已经锁了；这是 store 层的兜底（直接调、竞态都过不去）
     if (Object.values(get().submissions).some((x) => x.project === project && submissionBlocks(x, fileId, script)))
       throw new Error('submission-pending')
-    const rid = newRequestId()
     const sent: DraftTarget = { scope, gid, label, target }
+    // 上一次这条指令的账本写入「不知道」写没写成（响应丢了 / 5xx）：同一条指令保持**同一个 rid** 幂等重试（后端同 rid 重复 PUT
+    // 不占名额）。换了指令 / 目标就换新 rid，旧 rid 放进 `supersedes` 让后端在写新行的同一个事务里清掉
+    const ledgerKey = `${project ?? ''}\u0000${fileId}`
+    const sentJson = JSON.stringify(sent)
+    const prior = ledgerUnknown.get(ledgerKey)
+    const reuse = !!prior && prior.prompt === prompt && prior.sentJson === sentJson
+    const rid = reuse ? prior!.rid : newRequestId()
+    if (prior && !reuse) queueSupersede(ledgerKey, prior.rid)
+    ledgerUnknown.delete(ledgerKey)
+    const supersedes = [...(supersedeQueue.get(ledgerKey) ?? [])].filter((x) => x !== rid)
     const sub: AiSubmission = {
       rid,
       project,
@@ -413,17 +431,25 @@ export const useAiStore = create<AiState>((set, get) => ({
         const { [rid]: _gone, ...rest } = s.submissions
         return { submissions: rest }
       })
-    const marked = markSubmitted(project, fileId, prompt, rid, sent, script, draftStamp)
-    let recorded: boolean | undefined
+    const marked = markSubmitted(project, fileId, prompt, rid, sent, script, draftStamp, supersedes)
+    let recorded: LedgerWrite | undefined
     try {
       recorded = marked ? await marked : undefined
     } catch (e) {
       dropSub() // 后端明确拒绝记账（如未确认的提交已满，`ai_pending_limit`）：不发，原因原样交给界面
       throw e
     }
-    if (marked && !recorded) {
+    if (recorded === 'ok') {
+      for (const x of supersedes) supersedeQueue.get(ledgerKey)?.delete(x) // 后端已在同一事务里删掉它们
+    } else if (recorded) {
       // 账本没写成：**不发**。丢了响应之后没有 rid 可查，刷新就会放行同一条指令换新 id 再执行
       dropSub()
+      if (recorded === 'unknown') {
+        // 不知道后端写没写：保持同一个 rid，重试时幂等重放，**不换新 rid**
+        ledgerUnknown.set(ledgerKey, { rid, prompt, sentJson })
+      } else if (reuse) {
+        queueSupersede(ledgerKey, rid) // 明确拒绝，但上一次「不知道」的尝试可能已经写入：让之后的新写入顺手清掉它
+      }
       throw new AiLedgerError()
     }
     return dispatch(rid, get().generation)
@@ -468,7 +494,9 @@ export const useAiStore = create<AiState>((set, get) => ({
   dismissSubmission: (rid) => {
     const sub = get().submissions[rid]
     if (!sub) return
-    clearSubmitted(sub.project, sub.fileId, rid)
+    // 放弃这条等待（「改写后再发」）：**不 DELETE**。「后端没收到」的判断可能是错的（原请求可能还在路上），客户端单方面删了
+    // 账本行，之后它又被还原、新 rid 却已经执行过。记下这个 rid，下一次发这个面板时随新行的 PUT 带 `supersedes`，由后端在同一个事务里删
+    queueSupersede(`${sub.project ?? ''}\u0000${sub.fileId}`, rid)
     set((s) => {
       const { [rid]: _gone, ...rest } = s.submissions
       return { submissions: rest }
@@ -574,6 +602,8 @@ export const useAiStore = create<AiState>((set, get) => ({
   },
 
   clear: () => {
+    ledgerUnknown.clear()
+    supersedeQueue.clear()
     // 提交记录也属于旧项目：在途请求回来时代际对不上，不落会话（但接受了的仍会删草稿，见 `accept`）。
     // 草稿文件里的 rid 还在——切回 A 会还原成「已发出未确认」，由用户查询，而不是盲目重发
     early.clear()
@@ -704,8 +734,8 @@ async function dispatch(rid: string, born: number): Promise<SubmitOutcome> {
     )
   } catch (e) {
     if (isDefiniteRunFailure(e)) {
-      // 后端明确拒绝 = 一定没执行：提交记录作废（下一次发送换新 id），文本留给用户改
-      clearSubmitted(sub.project, sub.fileId, rid)
+      // 后端明确拒绝 = 一定没执行：提交记录作废（下一次发送换新 id），文本留给用户改。账本行由**后端**在这次拒绝里删掉
+      // （`/api/ai/run` 的拒绝路径），客户端不再 DELETE
       if (born === get().generation) {
         set((s) => {
           const { [rid]: _gone, ...rest } = s.submissions

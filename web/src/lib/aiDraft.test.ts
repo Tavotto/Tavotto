@@ -7,7 +7,6 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { createDraftBackend, type DraftBackend } from '@/test/aiDraftBackend'
 import {
-  clearSubmitted,
   deleteDraftIf,
   DRAFT_MAX_BYTES,
   isDraftTooLarge,
@@ -43,7 +42,7 @@ describe('存与读：按项目 × 面板文件', () => {
     expect(await saveDraft(null, 'F', 'x')).toBe('unavailable')
     expect(await saveDraft('pj', null, 'x')).toBe('unavailable')
     expect(await loadDraft(null, null)).toBeNull()
-    await expect(markSubmitted(null, 'F', 'x', 'rid-aaaaaaaa', T)).resolves.toBe(true) // 没有项目认领：无从记账
+    await expect(markSubmitted(null, 'F', 'x', 'rid-aaaaaaaa', T)).resolves.toBe('ok') // 没有项目认领：无从记账
     expect(be.calls).toEqual([])
   })
 
@@ -83,8 +82,7 @@ describe('失败时不抛、回枚举', () => {
     be.setDown(true)
     await expect(saveDraft('pj', 'F', 'x')).resolves.toBe('unavailable')
     await expect(loadDraft('pj', 'F')).resolves.toBeNull()
-    await expect(markSubmitted('pj', 'F', 'x', 'rid-aaaaaaaa', T)).resolves.toBe(false) // 没写成：调用方据此不发
-    await expect(clearSubmitted('pj', 'F', 'rid-aaaaaaaa')).resolves.toBeUndefined()
+    await expect(markSubmitted('pj', 'F', 'x', 'rid-aaaaaaaa', T)).resolves.toBe('unknown') // 不知道写没写：调用方据此不发、同 rid 重试
     await expect(removeAccepted('pj', 'F', 'rid-aaaaaaaa')).resolves.toBeUndefined()
     await expect(deleteDraftIf('pj', 'F', 'x')).resolves.toBe(false)
   })
@@ -192,12 +190,12 @@ describe('账本按 rid 一条，删除带条件（两个标签页）', () => {
     expect(d?.pendings).toEqual([{ rid: 'rid-aaaaaaaa', text: 'A 发出去的话', sent: T }]) // 待确认原文是另一份
   })
 
-  it('两个标签页各自的 rid 并存；一边被拒绝只清自己那条', async () => {
+  it('两个标签页各自的 rid 并存；supersedes 只清指名的那条（在写新行的同一个事务里）', async () => {
     await markSubmitted('pj', 'F', 'A 的话', 'rid-aaaaaaaa', T)
     await markSubmitted('pj', 'F', 'B 的话', 'rid-bbbbbbbb', T)
     expect((await loadDraft('pj', 'F'))?.pendings?.map((p) => p.rid)).toEqual(['rid-aaaaaaaa', 'rid-bbbbbbbb'])
-    await clearSubmitted('pj', 'F', 'rid-bbbbbbbb')
-    expect((await loadDraft('pj', 'F'))?.pendings?.map((p) => p.rid)).toEqual(['rid-aaaaaaaa'])
+    await markSubmitted('pj', 'F', 'C 的话', 'rid-cccccccc', T, null, null, ['rid-bbbbbbbb'])
+    expect((await loadDraft('pj', 'F'))?.pendings?.map((p) => p.rid)).toEqual(['rid-aaaaaaaa', 'rid-cccccccc'])
   })
 
   it('deleteDraftIf：文本对不上不删', async () => {

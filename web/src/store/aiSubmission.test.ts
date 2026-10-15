@@ -276,7 +276,8 @@ describe('明确失败才是失败；新的发送换新 rid', () => {
       expect(subs()).toEqual([])
       await flush()
       expect(draftText()).toBe('指令')
-      expect(pend()).toEqual([])
+      // 账本行的删除只发生在后端（`/api/ai/run` 明确拒绝时由后端删，pytest 钉住）：客户端一个 DELETE 都不发
+      expect(draftBe.calls.filter((c) => c.method === 'DELETE' && c.path.includes('/pending'))).toEqual([])
     }
   })
 

@@ -20,7 +20,6 @@
 import {
   acceptAiPending,
   ApiError,
-  clearAiPending,
   deleteAiDraftIf,
   fetchAiDraft,
   fetchAiPendings,
@@ -198,17 +197,26 @@ export async function markSubmitted(
   sent: DraftTarget,
   script: string | null = null,
   draftStamp: number | null = null,
-): Promise<boolean> {
-  if (!project || !fileId) return true
+  supersedes: string[] = [],
+): Promise<LedgerWrite> {
+  if (!project || !fileId) return 'ok'
   try {
-    await putAiPending(rid, fileId, text, sent, project, script, draftStamp)
-    return true
+    await putAiPending(rid, fileId, text, sent, project, script, draftStamp, supersedes)
+    return 'ok'
   } catch (e) {
-    // 这个面板已发出未确认的提交满了：这是**明确的拒绝原因**，抛出去让界面说一句话（不是「记账失败」）
-    if (e instanceof ApiError && e.status === 409 && e.body?.code === 'ai_pending_limit') throw e
-    return false
+    if (e instanceof ApiError && e.status < 500) {
+      // 这个面板已发出未确认的提交满了：这是**明确的拒绝原因**，抛出去让界面说一句话（不是「记账失败」）
+      if (e.status === 409 && e.body?.code === 'ai_pending_limit') throw e
+      return 'rejected' // 明确的 4xx（400 参数错 / 413 超限）：后端确定没写
+    }
+    // 网络错误 / 超时 / 5xx / 读不出响应：**不知道后端写没写**——可能已经写入、只是响应丢了。
+    // 不能当成「没有写入」（那会换新 rid 重发，旧行随后被还原、同一条指令执行两次）：由调用方保持同一个 rid 幂等重试
+    return 'unknown'
   }
 }
+
+/** 账本写入的结局：`ok` 写成了；`rejected` 后端明确拒绝（4xx，确定没写）；`unknown` 不知道（响应丢了 / 5xx，可能已经写入） */
+export type LedgerWrite = 'ok' | 'rejected' | 'unknown'
 
 /**
  * 本项目全部未落定的提交（跨面板，带 script）；发起它的面板已被删 / 换图时靠它找回。
@@ -223,16 +231,6 @@ export async function loadProjectPendings(
     return (await fetchAiPendings(project, signal)).pendings.map((p) => ({ ...p, sent: p.sent as DraftTarget }))
   } catch {
     return null
-  }
-}
-
-/** 后端明确拒绝：请求 id 作废，只清自己那条账本；文本留着让用户改 */
-export async function clearSubmitted(project: string | null, fileId: string | null, rid: string): Promise<void> {
-  if (!project || !fileId) return
-  try {
-    await clearAiPending(rid, fileId, project)
-  } catch {
-    /* 同上 */
   }
 }
 

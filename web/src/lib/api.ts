@@ -3209,10 +3209,16 @@ export const putAiPending = (
   pj: string | null,
   script: string | null = null,
   draftStamp: number | null = null,
+  supersedes: string[] = [],
 ) =>
   jsonFetch<{ ok: boolean }>(
     `/api/ai/drafts/pending/${encodeURIComponent(rid)}`,
-    { method: 'PUT', headers: JSON_HEADERS, body: JSON.stringify({ file, text, sent, script, draft_stamp: draftStamp }) },
+    {
+      method: 'PUT',
+      headers: JSON_HEADERS,
+      // `supersedes`：放弃的旧等待，后端在写这条的同一个事务里删它们（客户端不单方面 DELETE）
+      body: JSON.stringify({ file, text, sent, script, draft_stamp: draftStamp, ...(supersedes.length ? { supersedes } : {}) }),
+    },
     pj,
   )
 
@@ -3221,13 +3227,6 @@ export const fetchAiPendings = (pj: string | null, signal?: AbortSignal) =>
   jsonFetch<{
     pendings: { file: string; rid: string; text: string; sent: unknown; script: string | null; created_ms: number }[]
   }>('/api/ai/drafts/pending', signal ? { signal } : undefined, pj)
-
-export const clearAiPending = (rid: string, file: string, pj: string | null) =>
-  jsonFetch<{ cleared: boolean }>(
-    `/api/ai/drafts/pending/${encodeURIComponent(rid)}?file=${encodeURIComponent(file)}`,
-    { method: 'DELETE' },
-    pj,
-  )
 
 /** 请求已被接受：清这条账本；草稿文本仍等于提交时的原文才一并删（后端一个事务里判与删） */
 export const acceptAiPending = (rid: string, file: string, pj: string | null) =>
