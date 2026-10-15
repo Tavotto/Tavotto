@@ -1025,7 +1025,8 @@ export function ExportDialog() {
    */
   // 五路失败里此刻要摆的**一条**：最近才出现的那条（见 `useLatestFailure`）
   const failure = useLatestFailure({
-    "refusal": prepared.error ? { title: ex("failTitle"), text: formatMessage(engineErrorMsg(prepared.error)) } : null,
+    // 拒绝本来就是一句完整的人话（engineErrorMsg）：它自己就是标题
+    "refusal": prepared.error ? { title: formatMessage(engineErrorMsg(prepared.error)), text: "" } : null,
     "start-error":
       startError && !prepared.error
         ? startError.code === "bad_filename"
