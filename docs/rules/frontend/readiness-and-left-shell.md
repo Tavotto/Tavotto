@@ -264,6 +264,7 @@
   重新试运行」（T09b：接入中心先让开）都是 `projectPreparationStore.open(scriptTarget(script, { reuse: true }), { run: true })`（同时把卡展开）：
   打开 = 后端只读检查；检查完**只有这条路径**代用户认领报告里后端生成的 `run_when_ready`（`armIfReady`：报告有这个动作、且 `prepView` 算出来卡片会说「可以运行了」
   （`state === 'ready'`）、没有沿用到上次的参数；授权合同摘要由 `act` 回显）——此后准备、运行、（后端会话内的 safe→native 静默回退）、进入编辑一次点完。
+  目标已有跑完的会话（后端复用它，报告只有 `run`、没有 `run_when_ready`）时，同一入口在同样的门槛下认领 `run`，动作成功后才武装；旧的 completed 结果不触发自动进入，只认新一轮跑完。
   有要用户先答的事（运行目录 / 环境 / 数据 / 必填参数）、要装的组件（该先看见装什么、装到哪）、弹窗 / 来源不明的提醒、重启后重建的会话，都**停在各自的卡上**，
   由用户点那张卡的主按钮（有 `run_when_ready` 时它同样是「打开并运行」，认领即授权）。刷新 / 重连 / 重建会话 / `recheckIdle` / 普通 `open()` 都不认领；一个试运行请求都不发；**前端永远不发 `execution`**（回退是后端同一会话里的第二个 attempt，`scriptTarget` 不带它）；
   参数草稿在这一刻取拷贝（`scriptTarget`），之后再改草稿不动这份会话——草稿与会话冻结的不同（`draftDiffers`）时卡片说「参数已填好」、
