@@ -285,9 +285,13 @@ tag 与 `__version__` 对不上时 `build` job 直接失败，不会发出错版
   `CARGO_PROFILE_RELEASE_STRIP=none` 覆盖（MSVC 的 exe 本来就不内嵌调试段）。
 - PyInstaller sidecar 不存符号：Python 代码没有原生符号，bootloader 是上游预编译的，numpy 等原生库的符号
   归上游；Python 侧崩溃靠 traceback（已在诊断包里）。需要时再单独评估。
-- Windows 上用户机器的 `.dmp` 由安装器开的 WER LocalDumps 产生（`installer.nsi`，HKCU，
-  `Tavotto.exe` / `tavotto-cli.exe` / `tavotto-workerd.exe` 三个子键，落到 `%LOCALAPPDATA%\CrashDumps`），
-  诊断包勾选「崩溃报告」时收走；符号化时按发行 tag 取对应的 `debug-symbols-nsis`。
+- Windows 上用户机器的 `.dmp` 由**壳自己写**（`src-tauri/src/crash_dump.rs`）：`main()` 第一句装
+  `SetUnhandledExceptionFilter`，崩溃时 `MiniDumpWriteDump` 写 `%LOCALAPPDATA%\CrashDumps\Tavotto.exe.<pid>.dmp`
+  （诊断包 `crash_dirs()` 勾选「崩溃报告」时收走；启动时轮转，只留最近 5 份、只删这个名字模式）。
+  不用 WER LocalDumps 注册表键：文档只写了 HKLM（要管理员，与 currentUser 安装冲突），HKCU 是否生效没有权威说法。
+  覆盖面：壳进程的 SEH 异常；**不覆盖** Rust panic / abort、Python sidecar（Python 进程，崩溃信息靠 traceback 与
+  faulthandler）、`tavotto-workerd`（独立 crate，复制模块要给它引入 windows 依赖树，暂不做）。
+  符号化时按发行 tag 取对应的 `debug-symbols-nsis`。真崩一次的验证在 `nightly.yml` 的 windows-install。
 
 ## 网站 `/try`：同步与复核必须指名读的是哪棵树
 
