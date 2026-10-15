@@ -106,7 +106,7 @@ test('元素树：键位（Home/End/→进首子/←回父）、内凹焦点环�
     return (longest.closest('li') as HTMLElement).dataset.el!
   })
   // 抽屉收到下限（280），最长的名字才一定被截断——不截断的行本来就不需要锁
-  const handle = page.locator('[role="separator"][aria-valuemin="280"]')
+  const handle = page.locator('[data-resize-handle="left-drawer"]')
   await expect(handle).toHaveCount(1)
   await handle.focus()
   await page.keyboard.press('Home')
