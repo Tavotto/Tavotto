@@ -254,7 +254,7 @@ function AssistantPanelBody() {
   const storedScope = useAiStore((s) => s.scope)
   const { panel, element, axes } = useAssistantTarget()
   const caps = useAiStore((s) => s.caps)
-  // 草稿绑定「项目 × 面板文件」，右栏切页签 / 刷新之后还在（ADR 0131；落盘只是缓存）
+  // 草稿绑定「项目 × 面板文件」，右栏切页签 / 刷新之后还在（ADR 0132；落盘只是缓存）
   const { prompt, setPrompt, restored, tooLarge, clearIf } = useAiDraft(panel)
   const [error, setError] = useState<{ text: string; prompt: string; target: SendTarget; panelId: string } | null>(null)
   // 已点发送、后端还没给会话 id 的提交活在 store 里：面板卸载重挂（切页签）它还在，

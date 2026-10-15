@@ -1,5 +1,5 @@
 /**
- * 草稿全文与请求 id 不进日志、诊断追踪环、诊断包的 frontend-state（ADR 0131）。
+ * 草稿全文与请求 id 不进日志、诊断追踪环、诊断包的 frontend-state（ADR 0132）。
  * 跑一遍完整的「发出 → 未确认 → 查询 → 没收到 → 同 id 重发 → 被接受」，期间 console 的每一次调用、
  * 诊断追踪环与 frontend-state 快照里都搜不到提示词和 rid。后端那一半在
  * `tests/test_ai_idempotency.py::test_prompt_and_request_id_never_reach_the_log`。

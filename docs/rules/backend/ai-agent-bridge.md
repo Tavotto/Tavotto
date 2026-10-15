@@ -115,7 +115,7 @@
   旧的 `ai.codex_path` / `ai.claude_path` 由 `config._migrate_ai_agents()`
   一次性迁移并**立刻删掉旧键**（两份权威并存 = 一边改路径另一边不知道）；
   规则写成正则而不是列举两个名字。不认识的 agent id 原样留着。
-- **幂等与并发（ADR 0131）**：`POST /api/ai/run` 可带前端点发送时生成的 `client_request_id`（UUID，
+- **幂等与并发（ADR 0132）**：`POST /api/ai/run` 可带前端点发送时生成的 `client_request_id`（UUID，
   `[A-Za-z0-9_-]{8,64}`，格式不对 400，不静默当没带）。`run()` 在 `script_guard` + `_REQUEST_LOCK` 里先按
   **(项目, id)** 查内存会话与历史库（`ai_history` 的 `client_request_id` 列 + 部分唯一索引），命中抛
   `DuplicateRequest`、app 层返回既有 `{session, script, deduped: true}`，**不 spawn、不重复记遥测**；

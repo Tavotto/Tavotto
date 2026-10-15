@@ -5,7 +5,7 @@ import type { Page } from '@playwright/test'
 import { expect, test, waitForFigureEdit, type RunningApp } from './fixtures'
 
 /**
- * 助手草稿与提交可靠性的黄金路径（ADR 0131，真浏览器 + 真后端）。
+ * 助手草稿与提交可靠性的黄金路径（ADR 0132，真浏览器 + 真后端）。
  *
  * 两条用例：
  *   1. 打字 → 切页签 → 切回 → 刷新，草稿都在（右栏切页签会卸载助手面板）；

@@ -96,7 +96,7 @@ export default defineConfig({
         'inspector-overflow.spec.ts',
         // 同步修改 → 标准写回窗口（ADR 0037 末节）：语言无关写法，两种语言各走一遍
         'sync-overrides.spec.ts',
-        // 助手草稿与提交可靠性（ADR 0131）：状态说明是中英两套文案，定位走 data-*，两种语言各走一遍
+        // 助手草稿与提交可靠性（ADR 0132）：状态说明是中英两套文案，定位走 data-*，两种语言各走一遍
         'ai-draft.spec.ts',
       ],
     },

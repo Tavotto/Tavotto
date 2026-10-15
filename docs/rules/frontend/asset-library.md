@@ -39,7 +39,7 @@
   为 key 重挂，任务历史视图钉在打开它的项目上。**后端任务不取消**——照样改完、记进 A 的历史（按项目存），
   切回 A 在历史里看得到；首选 Agent / 作用范围 / 模型 / `caps` 是本机偏好，不清。看护
   `store/projectSwitchAi.test.ts`、`components/ai/assistantProjectScope.test.tsx`。
-  **提交可靠性与草稿（ADR 0131）**：不变式是「同一条 AI 修改不得被无意执行两次」。`start()` 生成请求 id
+  **提交可靠性与草稿（ADR 0132）**：不变式是「同一条 AI 修改不得被无意执行两次」。`start()` 生成请求 id
   （`client_request_id`）进 `submissions`：`aiRun` 有 30 s 超时，**超时 / 断网 / 无 code 的 5xx / 读不出响应都是
   「已发出未确认」不是失败**——此态禁用一切发送与重试，只能 `queryRequest(rid)`（`GET /api/ai/requests/<id>`）；
   只有后端自己的 404 `ai_request_not_found` 才放开 `resend`，且复用**同一个** rid（后端按 rid 去重兜底）；明确的

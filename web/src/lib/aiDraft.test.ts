@@ -1,5 +1,5 @@
 /**
- * 助手草稿的存取规则（ADR 0131）。尺子：每条规则先有一个「规则不存在时会怎样」的对照，
+ * 助手草稿的存取规则（ADR 0132）。尺子：每条规则先有一个「规则不存在时会怎样」的对照，
  * 再看规则把它挡住。localStorage 只是缓存——任何失败都静默，永远不抛。
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
