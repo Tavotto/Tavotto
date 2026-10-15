@@ -212,7 +212,7 @@ interface AiState {
    * 没有这一步会话会永远停在 running、把脚本锁死）。`useAiDraft.reconcile` 的每个入口（挂载 / 焦点 / 可见 / SSE 重连）
    * 都会调它；读失败 = 不知道，不动。
    */
-  settleRunningSessions: () => Promise<void>
+  settleRunningSessions: (live?: ReadonlySet<string>) => Promise<void>
   /** 后端明确说没收到之后，用**同一个**请求 id 重发 */
   resend: (rid: string) => Promise<SubmitOutcome>
   /** 放弃等待这条提交（用户改写后重新发）：之后的发送换新 id。仅 `not_received` 时由界面提供 */
@@ -522,11 +522,12 @@ export const useAiStore = create<AiState>((set, get) => ({
 
   queryRequest: (rid) => settleFromSnapshot(rid),
 
-  settleRunningSessions: async () => {
+  settleRunningSessions: async (live) => {
     const born = get().generation
     const pj = currentProjectId()
     for (const x of get().sessions) {
       if (!isOpenSession(x) || x.project !== pj) continue
+      if (x.status !== 'running' || x.finalized || x.project !== pj || live?.has(x.id)) continue
       const snap = await readSessionDetail(x.id, x.project)
       const d = snap.ok ? snap.detail : null
       if (born !== get().generation || typeof d?.status !== 'string' || !snapshotIsFinal(d, d.status)) continue
@@ -683,27 +684,11 @@ export const useAiStore = create<AiState>((set, get) => ({
 /**
  * 一条未落定的提交遇到了带同一个请求 id 的运行中会话（占位）= 这条请求**已被后端接受**，仍在运行。
  * 判断「已被接受」只有 `accept` 一处：这里不另写一套，只是把占位当作「请求快照说 running」交给它——
- * 它清账本（草稿按「仍等于提交原文才删」）、把提交的归属并到已有的同 id 会话上、去掉未确认状态。
+ * 它清账本（草稿按「草稿戳没变」才删，不比文本）、把提交的归属并到已有的同 id 会话上、去掉未确认状态。
  * 两个入口（`restoreRunning` 与 `reconcile`→`restoreSubmission`）谁先到都走这里。
  */
 function acceptRunning(rid: string, session: AiSession): void {
   accept(rid, session.id, session.script, { kind: 'queried', status: 'running', changed: false, detail: null })
-}
-
-/**
- * 读一个会话的详情快照（**全文件只有这一处调 `fetchAiSession`**，`settleFromSnapshot` 与断线收尾共用）：
- * `{ ok: true, detail }`；后端明确说没有详情（404）→ `{ ok: true, detail: null }`；其余失败 = 不知道 → `{ ok: false }`。
- */
-async function readSessionDetail(
-  sid: string,
-  project: string | null,
-): Promise<{ ok: true; detail: AiSessionDetail | null } | { ok: false }> {
-  try {
-    return { ok: true, detail: await fetchAiSession(sid, project) }
-  } catch (e) {
-    if (e instanceof ApiError && e.status === 404) return { ok: true, detail: null }
-    return { ok: false }
-  }
 }
 
 let restoring: Promise<void> | null = null
@@ -762,29 +747,9 @@ async function doRestore(): Promise<void> {
       const sub = rid ? get().submissions[rid] : undefined
       if (rid && sub) acceptRunning(rid, get().sessions.find((x) => x.id === e.id) as AiSession)
     }
-    // 本地还当它在跑、后端的运行中清单里却没有：它在断线期间结束了，`ai.done` 没收到——以后端为准收尾
-    for (const x of get().sessions) {
-      if (x.status !== 'running' || x.finalized || live.has(x.id)) continue
-      const snap = await readSessionDetail(x.id, x.project)
-      const d = snap.ok ? snap.detail : null
-      if (born !== get().generation || typeof d?.status !== 'string' || d.status === 'running') continue
-      const done: DonePayload = {
-        session: x.id,
-        status: d.status,
-        changed: !!d.changed,
-        diff: d.diff ?? '',
-        // 与「查询请求」那条路同一口径：持久化的 refresh 结局要带上，「改成了、项目没刷新」才说得出口
-        ...(d.refresh ? { refresh: d.refresh } : {}),
-      }
-      if (x.entries.length === 0 && d.transcript?.length) {
-        set((s) => ({
-          sessions: s.sessions.map((y) =>
-            y.id === x.id ? { ...y, entries: d.transcript.map((t) => ({ kind: t.kind as AiDeltaKind, text: t.text })) } : y,
-          ),
-        }))
-      }
-      if (get().finish(done)) settledNotifier?.(done)
-    }
+    // 本地还当它在跑、后端的运行中清单里却没有：它在断线期间结束了，`ai.done` 没收到——以后端为准收尾。
+    // 与 `reconcile` 各入口走的是**同一个** `settleRunningSessions`，不再留第二条收尾路径（`live` 里的已知仍在跑，跳过）
+    await get().settleRunningSessions(live)
   } finally {
     restoringActive--
   }

@@ -307,7 +307,9 @@ describe('占位与「已发出未确认」「按脚本的发送锁」并存（P
     const src = (await import('./aiStore.ts?raw')).default as string
     expect(src).not.toContain('adoptRunningSession')
     expect(src.match(/fetchAiSession\(/g)).toHaveLength(1) // 快照的详情只在 readSessionDetail 一处读（restore 收尾与 settleFromSnapshot 共用）
-    expect(src.match(/readSessionDetail\(/g)!.length).toBeGreaterThanOrEqual(3) // 定义 + settleFromSnapshot + 断线收尾
+    // 定义 + settleFromSnapshot + settleRunningSessions：断线收尾只有 settleRunningSessions 这一条路径（restoreRunning 调它，不自带第二份）
+    expect(src.match(/readSessionDetail\(/g)).toHaveLength(3)
+    expect(src).toMatch(/await get\(\)\.settleRunningSessions\(live\)/)
     // acceptRunning 只是把占位当「请求快照说 running」交给 accept
     expect(src).toMatch(/function acceptRunning[\s\S]{0,200}accept\(rid, session\.id/)
   })
