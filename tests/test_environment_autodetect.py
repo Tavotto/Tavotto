@@ -1953,6 +1953,84 @@ def test_an_unrelated_pythonpath_does_not_hide_a_genuine_missing_module(tmp_path
     assert not health.get("deferred_env") and health["new_imports"] == []
 
 
+@pytest.mark.parametrize("unsupported", [False, True], ids=["supported", "unsupported"])
+@pytest.mark.parametrize("provider", ["requested-only", "matplotlib", "startup-hook"])
+def test_pythonpath_module_uncertainty_does_not_hide_definite_environment_health(
+    tmp_path, monkeypatch, unsupported, provider
+):
+    """#1019 复审：只提供脚本依赖不代表能提供 matplotlib；Python 硬边界更不依赖启动路径。"""
+    venv = tmp_path / "external-venv"
+    subprocess.run(
+        [sys.executable, "-I", "-m", "venv", "--without-pip", str(venv)],
+        check=True,
+        capture_output=True,
+        timeout=30,
+    )
+    py = str(envworld.venv_python(venv))
+    external = tmp_path / "shared"
+    external.mkdir()
+    marker = tmp_path / "EXECUTED"
+    payload = f"from pathlib import Path\nPath({str(marker)!r}).touch()\n"
+    (external / "pythonpath_only_pkg.py").write_text(payload, "utf-8")
+    if provider != "requested-only":
+        name = "matplotlib" if provider == "matplotlib" else "sitecustomize"
+        (external / f"{name}.py").write_text(payload, "utf-8")
+    monkeypatch.setenv("PYTHONPATH", str(external))
+    if unsupported:
+        # 用真实 venv 的版本跨过可控的支持边界，不伪造子进程的版本 / 体检返回值。
+        monkeypatch.setattr(projectenv, "PYTHON_MAX_EXCLUSIVE", sys.version_info[:2])
+    root = str(tmp_path / "proj")
+    health = projectenv.probe_environment(
+        py, modules=("pythonpath_only_pkg",), import_mode="spec", project_root=root
+    )
+    assert health["matplotlib_version"] is None  # 真空 venv，没有宿主的 dist-info / 科学栈
+    assert health["modules_ok"] == {"pythonpath_only_pkg": None}
+    assert health["new_imports"] == [] and not marker.exists()
+    candidate = {"python": py, "source": userenvs.SOURCE_CONDA, "label": "empty"}
+    verdict = userenvs.evaluate([candidate], [], ["pythonpath_only_pkg"], root=root)[0]
+    if unsupported or provider == "requested-only":
+        code = (
+            projectenv.ERROR_UNSUPPORTED_PYTHON if unsupported else projectenv.ERROR_NO_MATPLOTLIB
+        )
+        assert health["ok"] is False and health["code"] == code, health
+        assert not health.get("deferred_env"), health
+        assert verdict["checked"] and verdict["satisfies"] is False, verdict
+        assert verdict["code"] == code and not verdict.get("deferred"), verdict
+    else:
+        # matplotlib 自己 / 启动钩子能改变绘图环境是否可用；只有这时保留整个候选的延后判断。
+        assert health["ok"] and health.get("deferred_env"), health
+        assert verdict.get("deferred") and verdict["satisfies"] is None, verdict
+    assert not marker.exists()
+
+
+@pytest.mark.parametrize("unsupported", [False, True], ids=["supported", "unsupported"])
+def test_an_empty_venv_without_pythonpath_keeps_its_definite_health_error(
+    tmp_path, monkeypatch, unsupported
+):
+    venv = tmp_path / "empty-venv"
+    subprocess.run(
+        [sys.executable, "-I", "-m", "venv", "--without-pip", str(venv)],
+        check=True,
+        capture_output=True,
+        timeout=30,
+    )
+    monkeypatch.delenv("PYTHONPATH", raising=False)
+    if unsupported:
+        monkeypatch.setattr(projectenv, "PYTHON_MAX_EXCLUSIVE", sys.version_info[:2])
+    health = projectenv.probe_environment(
+        str(envworld.venv_python(venv)),
+        modules=("really_missing_pkg",),
+        import_mode="spec",
+        project_root=str(tmp_path / "proj"),
+    )
+    code = projectenv.ERROR_UNSUPPORTED_PYTHON if unsupported else projectenv.ERROR_NO_MATPLOTLIB
+    assert not health["ok"] and health["code"] == code, health
+    if unsupported:
+        assert health["support"] == projectenv.SUPPORT_UNSUPPORTED
+    assert health["modules_ok"] == {"really_missing_pkg": False}
+    assert not health.get("deferred_env") and health["new_imports"] == []
+
+
 @needs_worker
 @pytest.mark.parametrize("spec", [False, True], ids=["import-mode", "spec-mode"])
 def test_changing_pythonpath_invalidates_a_cached_negative(tmp_path, monkeypatch, spec):

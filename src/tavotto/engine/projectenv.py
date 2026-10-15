@@ -690,7 +690,6 @@ def _spec_state(name):
     if spec is not None and spec.origin in ("built-in", "frozen"):
         return True  # 这两种提供者先于 PYTHONPATH；同名文件不会遮蔽它们
     if isolated and _pythonpath_might_provide(top):
-        out["pythonpath_deferred"] = True
         return None
     if top in _editable_provided:
         return True  # 项目外的可编辑安装 finder 的 MAPPING 提供它（finder 不执行，所以 find_spec 看不到）
@@ -745,9 +744,7 @@ for name in extra:
     out["modules_ok"][name] = _STATE_OF_DETAIL.get(detail, False)
 if isolated:
     if _spec_state("matplotlib") is None:
-        out["deferred_env"] = True  # matplotlib 本身解析进了项目
-    if out.get("pythonpath_deferred"):
-        out["deferred_env"] = True
+        out["deferred_env"] = True  # matplotlib 本身或启动路径不透明；脚本依赖的不确定不掩盖健康错误
     if _skipped_import_pth and (
         not out["matplotlib_version"]
         or out.get("requested_module_ok") is False
@@ -995,13 +992,15 @@ def _probe_environment(
 
     info["python"] = python
     info["execution"] = execution_note(**shape, info=info if isinstance(info, dict) else None)
-    if info.get("deferred_env"):
-        # 环境的 site-packages 里有指向项目的 .pth / finder（可编辑安装）：运行之前什么都不 import，整个候选延后
-        info.update(ok=True, code="", deferred_env=True)
-        return info
     version = tuple(info.get("version_info") or ())[:2]
     if not version or not (PYTHON_MIN <= version < PYTHON_MAX_EXCLUSIVE):
         info.update(ok=False, code=ERROR_UNSUPPORTED_PYTHON, support=SUPPORT_UNSUPPORTED)
+        # 版本硬边界不依赖包 / 启动路径，消费者不能把确定不支持当成待确认。
+        info.pop("deferred_env", None)
+        return info
+    if info.get("deferred_env"):
+        # 环境的 site-packages 里有指向项目的 .pth / finder（可编辑安装）：运行之前什么都不 import，整个候选延后
+        info.update(ok=True, code="", deferred_env=True)
         return info
     if not info.get("matplotlib_version"):
         # matplotlib 起不来 = 它不是一个绘图环境
