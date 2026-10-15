@@ -158,11 +158,25 @@ impl Marker {
         self.write("running");
     }
 
-    /// 引擎重启成功：这次崩溃已经"处理"掉了，持久化的类型一并清掉并立即重写（状态仍是 `running`）。
-    /// 否则之后正常退出写 `clean` 时还带着它，下次启动又弹一次「上次引擎退出」。
-    /// 重启后再崩一次，[`Marker::mark_engine_exit`] 照样粘住新的类型。
-    pub fn clear_engine_exit(&self) {
-        *self.engine.lock().unwrap() = None;
+    /// 重启引擎**之前**取走并清掉持久化的类型（立即重写文件，状态仍是 `running`）。
+    /// 必须在新 sidecar 与新监视线程起来之前做：之后新一代若立刻崩了，它写进来的类型就不会被"成功分支"误清。
+    /// 返回被清的旧类型，重启失败时用 [`Marker::restore_engine_exit`] 写回。
+    pub fn take_engine_exit(&self) -> Option<EngineExit> {
+        let old = self.engine.lock().unwrap().take();
+        self.write("running");
+        old
+    }
+
+    /// 重启失败：把 [`Marker::take_engine_exit`] 取走的旧类型写回，保证下次启动仍会提示。
+    /// 已经有更新的类型（新一代在失败前崩了）就不动它。
+    pub fn restore_engine_exit(&self, old: EngineExit) {
+        {
+            let mut g = self.engine.lock().unwrap();
+            if g.is_some() {
+                return;
+            }
+            *g = Some(old);
+        }
         self.write("running");
     }
 
@@ -322,19 +336,68 @@ mod tests {
     }
 
     #[test]
-    fn a_successful_restart_clears_the_sticky_engine_exit() {
+    fn a_successful_restart_leaves_no_sticky_engine_exit() {
         let dir = tmp_dir("restart");
         let m = Marker::new(Some(&dir), "1.0.0");
         m.mark_running();
         m.mark_engine_exit(EngineExit::Nonzero);
-        m.clear_engine_exit();
+        // 重启前取走；成功分支不再动文件
+        assert_eq!(m.take_engine_exit(), Some(EngineExit::Nonzero));
         assert!(
             !read(&dir).contains("engine_exit"),
-            "重启成功后文件里不再带类型"
+            "取走后文件里不再带类型"
         );
         // 崩 → 重启成功 → 正常退出：下次启动无提示
         m.mark_clean();
         assert_eq!(Marker::new(Some(&dir), "1.0.1").read_previous(), None);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_new_generation_crash_before_the_success_branch_survives_clean() {
+        let dir = tmp_dir("newgen");
+        let m = Marker::new(Some(&dir), "1.0.0");
+        m.mark_running();
+        m.mark_engine_exit(EngineExit::Nonzero);
+        let _old = m.take_engine_exit(); // 重启开始
+        m.mark_engine_exit(EngineExit::Signal); // 新 sidecar / 新监视线程已起，成功分支还没跑完时就崩了
+                                                // 成功分支什么都不再清；用户之后正常退出：仍提示
+        m.mark_clean();
+        assert!(read(&dir).contains(r#""engine_exit":"signal""#));
+        assert_eq!(
+            Marker::new(Some(&dir), "1.0.1").read_previous(),
+            Some(Previous::EngineExited)
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_failed_restart_restores_the_old_kind() {
+        let dir = tmp_dir("failed");
+        let m = Marker::new(Some(&dir), "1.0.0");
+        m.mark_running();
+        m.mark_engine_exit(EngineExit::Nonzero);
+        let old = m.take_engine_exit().unwrap();
+        m.restore_engine_exit(old);
+        assert!(read(&dir).contains(r#""engine_exit":"nonzero""#));
+        m.mark_clean();
+        assert_eq!(
+            Marker::new(Some(&dir), "1.0.1").read_previous(),
+            Some(Previous::EngineExited)
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn restoring_never_overwrites_a_newer_kind() {
+        let dir = tmp_dir("restore-newer");
+        let m = Marker::new(Some(&dir), "1.0.0");
+        m.mark_running();
+        m.mark_engine_exit(EngineExit::Nonzero);
+        let old = m.take_engine_exit().unwrap();
+        m.mark_engine_exit(EngineExit::Signal);
+        m.restore_engine_exit(old);
+        assert!(read(&dir).contains(r#""engine_exit":"signal""#));
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -358,7 +421,7 @@ mod tests {
         let m = Marker::new(Some(&dir), "1.0.0");
         m.mark_running();
         m.mark_engine_exit(EngineExit::Nonzero);
-        m.clear_engine_exit();
+        let _ = m.take_engine_exit();
         m.mark_engine_exit(EngineExit::Signal);
         assert!(read(&dir).contains(r#""engine_exit":"signal""#));
         m.mark_clean();

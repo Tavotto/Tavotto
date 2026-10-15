@@ -1438,14 +1438,15 @@ fn restart_engine_blocking(app: &tauri::AppHandle) -> bool {
     if let Some(sc) = old {
         sc.shutdown();
     }
+    // 持久化的旧类型在新 sidecar / 新监视线程**起来之前**取走（ADR 0129）：之后新一代若在成功分支跑完前就崩了，
+    // 它写进来的类型不会被误清；重启失败再把旧类型写回，下次启动仍提示。
+    // 内存里的 previous_exit 不动——它正是「先重启再发」的那张卡，由新页面取走
+    let stale = state.marker.get().and_then(|m| m.take_engine_exit());
     let ok = boot_engine(app, false);
     if ok {
         *state.engine_exit.lock().unwrap() = None;
-        // 持久化的类型一并清掉（ADR 0129）：否则之后正常退出写 clean 仍带着它，下次启动重复提示。
-        // 内存里的 previous_exit 不动——它正是「先重启再发」的那张卡，由新页面取走
-        if let Some(m) = state.marker.get() {
-            m.clear_engine_exit();
-        }
+    } else if let (Some(m), Some(kind)) = (state.marker.get(), stale) {
+        m.restore_engine_exit(kind);
     }
     ok
 }
@@ -1828,13 +1829,19 @@ mod tests {
     }
 
     #[test]
-    fn a_successful_engine_restart_clears_the_persisted_engine_exit() {
+    fn engine_restart_takes_the_persisted_kind_before_booting_and_restores_it_on_failure() {
         let main = &production_sources()[0].1;
         let body = body_of(main, "fn restart_engine_blocking(");
-        let ok = body.find("if ok {").expect("重启成功分支");
+        let take = body
+            .find("take_engine_exit()")
+            .expect("重启前要取走持久化类型");
+        let boot = body.find("boot_engine(").expect("boot_engine");
+        assert!(take < boot, "取走必须在新 sidecar / 监视线程起来之前");
+        let after = &body[boot..];
+        assert!(after.contains("restore_engine_exit("), "失败要写回旧类型");
         assert!(
-            body[ok..].contains("clear_engine_exit()"),
-            "重启成功要清持久化类型"
+            !body.contains("clear_engine_exit"),
+            "成功分支不能再无条件清：会误清新一代刚写进去的崩溃"
         );
     }
 
