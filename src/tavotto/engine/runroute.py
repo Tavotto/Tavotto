@@ -611,7 +611,7 @@ class _Collector:
                 new = (
                     posixpath.join(base, tail)
                     if name == "with_name"
-                    else (root if tail else recv.text) + tail
+                    else root + tail  # `with_suffix("")` 去掉后缀（pathlib 语义），不是保留原名
                 )
                 return PathVal(recv.base, _norm(new), True)
         return None

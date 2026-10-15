@@ -1634,3 +1634,24 @@ def test_an_undecodable_script_is_not_routed(tmp_path):
         script, cwd_mode="project", project_root=tmp_path, script="fig.py"
     )
     assert route.execution == "safe", route
+
+
+# ---- `with_suffix("")` 去掉后缀（Codex #1034 r4283716227）
+def test_with_suffix_empty_removes_the_suffix():
+    src = (
+        MPL
+        + 'from pathlib import Path\np = Path("x.png").with_suffix("")\n'
+        + 'plt.savefig(p, format="png")\nopen("x.png", "rb").read()\n'
+    )
+    route = _route(src)
+    assert route.execution == "safe", route
+
+
+def test_with_suffix_replacement_still_folds():
+    src = (
+        MPL
+        + 'from pathlib import Path\np = Path("x.jpg").with_suffix(".png")\n'
+        + 'plt.savefig(p)\nopen("x.png", "rb").read()\n'
+    )
+    route = _route(src)
+    assert route.execution == "native" and route.reason == runroute.REASON_SAVEFIG_READBACK, route
