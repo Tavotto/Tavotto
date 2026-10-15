@@ -38,6 +38,7 @@ export function Notice({
   action,
   icon,
   detail,
+  detailKey,
   className,
   children,
   ...rest
@@ -51,11 +52,24 @@ export function Notice({
   icon?: IconComponent | false
   /** 技术细节：默认折叠，「详情 ›」展开，带「复制」（复制的是它渲染出来的文字） */
   detail?: ReactNode
+  /**
+   * 详情的身份：同一个槽位换成另一条提示时，展开 / 「已复制」状态不许沿用上一条。默认取 `title` + `detail`（都是字符串时）；
+   * 它们是节点、又会被复用时由调用方传一个稳定标识。身份一变，原语自己把详情收起并清掉复制回执。
+   */
+  detailKey?: string
   children?: ReactNode
 }) {
   const { t } = useTranslation('common')
   const Icon = icon === false ? null : (icon ?? ICON[tone])
   const [open, setOpen] = useState(false)
+  const identity =
+    detailKey ?? (typeof detail === 'string' ? `${typeof title === 'string' ? title : ''}\u0000${detail}` : null)
+  const [seen, setSeen] = useState(identity)
+  if (seen !== identity) {
+    // 渲染期派生重置（React 推荐写法）：换了一条，新的一条默认收起
+    setSeen(identity)
+    setOpen(false)
+  }
   const hasDetail = detail != null && detail !== false && detail !== ''
   return (
     <div
@@ -110,7 +124,7 @@ export function Notice({
       </div>
       {hasDetail && (
         <Reveal open={open}>
-          <NoticeDetail>{detail}</NoticeDetail>
+          <NoticeDetail key={identity}>{detail}</NoticeDetail>
         </Reveal>
       )}
     </div>

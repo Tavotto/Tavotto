@@ -143,3 +143,30 @@ describe('NoticeReveal：退场保活期间旧子树不可交互', () => {
     expect(q('[data-reveal]')!.hasAttribute('inert')).toBe(false)
   })
 })
+
+describe('Notice：同一槽位换成另一条，详情状态不沿用', () => {
+  it('展开并复制过一条后换成另一条：新的一条默认收起、没有「已复制」；换回来的字符串身份也算新的', async () => {
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText: () => Promise.resolve() }, configurable: true })
+    const view = (title: string, detail: string) => <Notice title={title} detail={detail} />
+    await render(view('first', 'detail one'))
+    await act(async () => q<HTMLButtonElement>('[data-notice-detail-toggle]')!.click())
+    await act(async () => q<HTMLButtonElement>('[data-notice-copy]')!.click())
+    expect(q('[data-notice-copy]')!.textContent).toBe('已复制')
+    await render(view('second', 'detail two'))
+    expect(q('[data-notice-detail-toggle]')!.getAttribute('aria-expanded')).toBe('false')
+    // 收起动画还在播时旧节点仍挂着（inert），所以认「收起态」而不是「不在 DOM」
+    expect(q('[data-reveal]')?.getAttribute('data-state') ?? 'closed').toBe('closed')
+    await act(async () => q<HTMLButtonElement>('[data-notice-detail-toggle]')!.click())
+    expect(q('[data-notice-copy]')!.textContent).not.toBe('已复制')
+  })
+
+  it('节点型 detail 靠 detailKey 区分', async () => {
+    const view = (k: string) => <Notice title={T} detailKey={k} detail={<b>{k}</b>} />
+    await render(view('a'))
+    await act(async () => q<HTMLButtonElement>('[data-notice-detail-toggle]')!.click())
+    expect(q('[data-notice-detail]')).not.toBeNull()
+    await render(view('b'))
+    expect(q('[data-notice-detail-toggle]')!.getAttribute('aria-expanded')).toBe('false')
+    expect(q('[data-reveal]')?.getAttribute('data-state') ?? 'closed').toBe('closed')
+  })
+})

@@ -1061,6 +1061,7 @@ export function ExportDialog() {
           data-export-failure={failure.kind}
           {...{ [`data-export-${failure.kind}`]: "" }}
           title={failure.title}
+          detailKey={`${failure.kind}\u0000${failure.title}\u0000${failure.detail ?? ""}`}
           detail={failure.detail}
           className={failureIsPath ? "break-all" : undefined}
           action={
