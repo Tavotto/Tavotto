@@ -648,14 +648,27 @@ def _git(*args: str) -> str:
 
 
 def commit_facts() -> dict:
-    porcelain = _git("status", "--porcelain", "--untracked-files=no")
+    # 未跟踪文件也算：没 add 的新用例 / 新模块同样会被 pytest 收集、被 import，
+    # 报告验的就不是 sha 那棵树（.gitignore 掉的构建产物不在 porcelain 里）
+    lines = _git("status", "--porcelain", "--untracked-files=normal").splitlines()
+    untracked = sum(1 for ln in lines if ln.startswith("??"))
     return {
         "sha": _git("rev-parse", "HEAD") or None,
         "branch": _git("rev-parse", "--abbrev-ref", "HEAD") or None,
         # 有未提交改动时，报告验的不是 sha 那棵树——审查者必须知道。
-        "dirty": bool(porcelain),
-        "dirty_files": len(porcelain.splitlines()) if porcelain else 0,
+        "dirty": bool(lines),
+        "dirty_files": len(lines) - untracked,
+        "untracked_files": untracked,
     }
+
+
+def _same_dir(a: str, b: Path) -> bool:
+    if not a:
+        return False
+    try:
+        return Path(a).resolve() == b.resolve()
+    except OSError:
+        return False
 
 
 def environment_facts(python: str) -> dict:
@@ -677,7 +690,8 @@ def environment_facts(python: str) -> dict:
     except (OSError, subprocess.TimeoutExpired):
         version, prefix = "", ""
     env["target_python"] = version or None
-    env["target_python_in_repo_venv"] = bool(prefix) and Path(prefix).name == ".venv"
+    # 只认**这个仓库根**下的 .venv：别处同名的 .venv（主工作区、别的项目）装的依赖不是这棵树声明的
+    env["target_python_in_repo_venv"] = _same_dir(prefix, ROOT / ".venv")
     env["fonts_present"] = check_precondition("fonts", python)["ok"]
     env["platform"] = sys.platform
     return env

@@ -340,3 +340,28 @@ def test_precondition_raw_output_goes_to_local_evidence_not_report(tmp_path, mon
     assert "t.rawpre/evidence/preconditions.log" in {
         e["path"] for e in report["scenarios"][0]["evidence"]
     }
+
+
+# --------------------------------------------------------------------------
+# commit / 环境事实（#1085 Codex 第二轮 P2）
+# --------------------------------------------------------------------------
+def test_untracked_file_makes_the_tree_dirty(monkeypatch):
+    monkeypatch.setattr(
+        AV, "_git", lambda *a: "?? tests/test_new_thing.py" if a[0] == "status" else "x"
+    )
+    facts = AV.commit_facts()
+    assert facts["dirty"] is True and facts["untracked_files"] == 1 and facts["dirty_files"] == 0
+
+
+def test_clean_tree_is_not_dirty(monkeypatch):
+    monkeypatch.setattr(AV, "_git", lambda *a: "" if a[0] == "status" else "x")
+    facts = AV.commit_facts()
+    assert facts["dirty"] is False and facts["untracked_files"] == 0
+
+
+def test_venv_elsewhere_is_not_this_repos_venv(tmp_path):
+    other = tmp_path / ".venv"
+    other.mkdir()
+    assert AV._same_dir(str(other), AV.ROOT / ".venv") is False
+    assert AV._same_dir("", AV.ROOT / ".venv") is False
+    assert AV._same_dir(str(AV.ROOT / ".venv"), AV.ROOT / ".venv") is True
