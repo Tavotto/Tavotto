@@ -94,13 +94,13 @@ export default defineConfig({
       testMatch: [
         'a11y.spec.ts',
         'error-recovery-en.spec.ts',
+        // 树与列表精修（UI 2.0 PR7）：英文标签更长（截断 / 字宽锁最容易出事），选择器全是稳定 data-*，两种语言各量一遍
+        'tree-list-refine.spec.ts',
         // 准备引导卡（T13b）：英文文案同样一句话、一个主按钮，可达名与布局在英文下照样成立
         'preparation-card-en.spec.ts',
         'inspector-overflow.spec.ts',
         // 同步修改 → 标准写回窗口（ADR 0037 末节）：语言无关写法，两种语言各走一遍
         'sync-overrides.spec.ts',
-        // 树与列表精修（UI 2.0 PR7）：英文标签更长（截断 / 字宽锁最容易出事），选择器全是稳定 data-*，两种语言各量一遍
-        'tree-list-refine.spec.ts',
       ],
     },
   ],
