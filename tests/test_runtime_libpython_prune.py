@@ -80,14 +80,32 @@ def test_dylib_dependencies_unions_fat_slices_and_ignores_non_macho(tmp_path):
 @pytest.mark.skipif(
     sys.platform != "darwin" or not shutil.which("otool"), reason="要 macOS 的 otool 对拍"
 )
-def test_dylib_dependencies_agrees_with_otool_on_a_real_binary():
-    exe = Path(sys.executable).resolve()
+@pytest.mark.parametrize(
+    "binary",
+    [
+        pytest.param(lambda: Path(sys.executable).resolve(), id="current-python"),
+        # 系统自带的 fat 文件（x86_64 + arm64e）：CI 上 python.org 的 universal2 解释器就是这种形态
+        pytest.param(lambda: Path("/usr/bin/true"), id="fat-system-binary"),
+    ],
+)
+def test_dylib_dependencies_agrees_with_otool_on_a_real_binary(binary):
+    exe = binary()
+    # -arch all：fat 文件每一片都列（不带它只列本机那一片），与 dylib_dependencies 取各片并集同一口径
     out = subprocess.run(
-        ["otool", "-L", str(exe)], capture_output=True, text=True, encoding="utf-8", check=True
+        ["otool", "-arch", "all", "-L", str(exe)],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=True,
     ).stdout
-    want = {line.strip().split(" (")[0] for line in out.splitlines()[1:] if line.strip()}
+    # 每一片前有一行「<路径> (architecture …):」/「<路径>:」表头，不是依赖
+    want = {
+        line.strip().split(" (")[0]
+        for line in out.splitlines()
+        if line.strip() and not line.rstrip().endswith(":")
+    }
     got = cs.dylib_dependencies(exe)
-    assert got  # 真解释器至少链接 libSystem
+    assert got  # 真二进制至少链接 libSystem
     # otool -L 对 dylib 会把自己的 install name 也列出来；可执行文件没有，两边应完全一致
     assert got == want
 
