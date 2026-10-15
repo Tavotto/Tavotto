@@ -289,8 +289,14 @@ mod tests {
     fn dump_dir_is_the_one_the_diagnostics_bundle_collects() {
         let py = include_str!("../../src/tavotto/engine/diagdetail.py");
         assert!(py.contains(r#"Path(local) / "CrashDumps""#));
+        // 只看生产代码的非注释行：测试模块和注释里自己也写着这个字面量，不切掉就是自证
         let me = include_str!("crash_dump.rs");
-        assert!(me.contains(r#".join("CrashDumps")"#));
+        let prod = me.split("#[cfg(test)]").next().unwrap();
+        let code: Vec<&str> = prod
+            .lines()
+            .filter(|l| !l.trim_start().starts_with("//"))
+            .collect();
+        assert!(code.iter().any(|l| l.contains(r#".join("CrashDumps")"#)));
     }
 
     /// `main()` 的第一句必须是装过滤器：晚装一步，启动早期的崩溃就没有转储。
