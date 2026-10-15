@@ -1424,13 +1424,14 @@ fn current_engine_exit(
 #[tauri::command]
 fn current_fullscreen(window: tauri::WebviewWindow) -> Result<bool, String> {
     only_main_window(&window)?;
-    let now = cfg!(target_os = "macos") && window.is_fullscreen().unwrap_or(false);
-    // 页面拿到的就是这个值：去重的底账也记成它。否则窗口状态插件直接恢复成全屏时底账还是默认
-    // false，第一次退出全屏的 will / did-exit 报 false 会被当成「没变」吞掉，顶栏卡在全屏态。
-    if let Some(state) = window.app_handle().try_state::<AppState>() {
-        state.fullscreen.update(now);
-    }
-    Ok(now)
+    // 回读的是去重底账（按阶段算：观察者在位时 did-enter 才置 true），**不是** `is_fullscreen()`——
+    // 后者在进入动画期间就已是切换目标 true，那时红绿灯还在屏上，收回占位会压上去。底账与事件
+    // 同一出处，页面拿到的初值与之后的事件也就不会对不上（否则第一次退出的 false 会被当「没变」吞掉）。
+    Ok(cfg!(target_os = "macos")
+        && window
+            .app_handle()
+            .try_state::<AppState>()
+            .is_some_and(|state| state.fullscreen.get()))
 }
 
 /// 告诉主窗口的页面全屏状态；`FullscreenTracker` 去重，真变了才发 `tavotto:fullscreen`。
@@ -1883,12 +1884,15 @@ fn main() {
                 if let Ok(ns_window) = win.ns_window() {
                     fullscreen_observer::install(ns_window, handle.clone());
                 }
-                // 窗口状态插件可能已把它直接恢复成全屏（发生在 build() 里、观察者装上之前）：
-                // 底账按此刻的真实状态起步，不发事件（页面的初值靠 `current_fullscreen` 回读）
-                if let Some(state) = handle.try_state::<AppState>() {
-                    state
-                        .fullscreen
-                        .update(win.is_fullscreen().unwrap_or(false));
+                // 观察者没装上时，底账由 `Resized` 兜底维护：按此刻的真实状态起步（窗口状态插件可能已把它
+                // 恢复成全屏）。观察者在位时**不**按 `is_fullscreen()` 起步——那可能是进入动画中的切换目标，
+                // 红绿灯还在；宁可等 did-enter（最坏是全屏里多留 88px 空位，不会压住红绿灯）。
+                if !fullscreen_observer::installed() {
+                    if let Some(state) = handle.try_state::<AppState>() {
+                        state
+                            .fullscreen
+                            .update(win.is_fullscreen().unwrap_or(false));
+                    }
                 }
             }
             let _ = win.set_focus();

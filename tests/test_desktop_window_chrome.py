@@ -166,12 +166,15 @@ def test_fullscreen_event_command_and_acl_are_one_contract():
         assert f"NSWindow{name}FullScreenNotification" in obs, name
     assert "fullscreen_observer::remove()" in code
     assert "fullscreen_observer::install(" in code
-    # 去重底账要与页面拿到的初值一致：窗口被直接恢复成全屏时底账若还是默认 false，第一次退出全屏的
-    # false 会被当成「没变」吞掉，顶栏卡在全屏态。回读命令与启动时都把底账记成真实状态。
+    # 回读与事件同一出处（去重底账，按阶段算）：回读若读 `is_fullscreen()`，进入动画期间它已是切换目标
+    # true，红绿灯还在就收回占位；底账与页面初值对不上时，第一次退出的 false 还会被当「没变」吞掉。
     head = code.index("fn current_fullscreen(")
     cur = _bracket_body(code, code.index("{", code.index(")", head)))
-    assert re.search(r"fullscreen\s*\.update\(", cur), "current_fullscreen 回读的值要同步进去重底账"
+    assert re.search(r"fullscreen\s*\.get\(\)", cur), "current_fullscreen 回读去重底账"
+    assert "is_fullscreen" not in cur, "回读不许读 tao 的切换目标"
+    # 启动时按真实状态起步只在观察者没装上时做（观察者在位时等 did-enter）
     install_at = code.index("fullscreen_observer::install(")
-    assert re.search(r"fullscreen\s*\.update\(", code[install_at : install_at + 600]), (
-        "启动时按真实全屏状态给底账起步"
-    )
+    seed = code[install_at : install_at + 900]
+    assert re.search(
+        r"if\s*!\s*fullscreen_observer::installed\(\)\s*\{[^}]*fullscreen\s*\.update\(", seed
+    ), seed

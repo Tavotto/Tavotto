@@ -36,6 +36,12 @@ impl FullscreenTracker {
     pub fn update(&self, now: bool) -> bool {
         self.0.swap(now, std::sync::atomic::Ordering::SeqCst) != now
     }
+
+    /// 页面此刻该当作的全屏状态（**按阶段算的**，不是 tao 的切换目标）：原生观察者在位时只有
+    /// did-enter 才会把它置 true，进入动画期间仍是 false。
+    pub fn get(&self) -> bool {
+        self.0.load(std::sync::atomic::Ordering::SeqCst)
+    }
 }
 
 /// `NSWindow` 的全屏通知（`fullscreen_observer.rs`）。
@@ -165,6 +171,16 @@ mod tests {
         } else {
             assert!(script.contains(CHROME_MENU_BUTTON));
         }
+    }
+
+    #[test]
+    fn fullscreen_tracker_get_is_what_was_last_recorded() {
+        let t = FullscreenTracker::default();
+        assert!(!t.get());
+        t.update(true);
+        assert!(t.get());
+        t.update(false);
+        assert!(!t.get());
     }
 
     #[test]
