@@ -846,6 +846,12 @@ class _Collector:
         # `dictConfig`——safe 里落沙箱、native 里截断真实文件
         if any(t.endswith("FileHandler") or t in ("fileConfig", "dictConfig") for t in tails):
             return True
+        # 写出器对象（Codex #1034 r4286515577）：名字里带 writer 的构造 / 工厂（`pd.ExcelWriter`、`imageio.get_writer`、
+        # `cv2.VideoWriter`、`csv.writer`……）与建档即落盘的容器（`pd.HDFStore`、`PdfPages`）——按形态认，不逐个列名
+        if (node.args or node.keywords) and any(
+            "writer" in t.lower() or t in ("HDFStore", "PdfPages") for t in tails
+        ):
+            return True
         if any(k.arg in ("filename", "filemode") for k in node.keywords) and (
             (q or "").startswith("logging") or "basicConfig" in tails
         ):
@@ -908,7 +914,10 @@ class _Collector:
 
     def _writer_tail(self, attr: str) -> bool:
         return (
-            attr in self._WRITER_TAILS
+            "writer" in attr.lower()
+            or attr in ("HDFStore", "PdfPages")
+            or attr.endswith("FileHandler")
+            or attr in self._WRITER_TAILS
             or attr in self._GUARDED_TAILS
             or (attr.startswith("to_") and attr not in self._CONVERT_TAILS)
             or attr.startswith("write_")

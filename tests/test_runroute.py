@@ -1464,6 +1464,18 @@ GATED = [
         + TAIL,
     ),
     ("logging_dict_config", MPL + "import logging.config\nlogging.config.dictConfig({})\n" + TAIL),
+    # Codex r4286515577：写出器对象 / 建档即落盘的容器
+    (
+        "pandas_excel_writer",
+        MPL + "import pandas as pd\nw = pd.ExcelWriter('victim.xlsx')\n" + TAIL,
+    ),
+    ("imageio_get_writer", MPL + "import imageio\nimageio.get_writer('v.mp4')\n" + TAIL),
+    ("pandas_hdfstore", MPL + "import pandas as pd\npd.HDFStore('v.h5')\n" + TAIL),
+    (
+        "pdfpages",
+        MPL + "from matplotlib.backends.backend_pdf import PdfPages\nPdfPages('v.pdf')\n" + TAIL,
+    ),
+    ("excel_writer_alias", MPL + "import pandas as pd\nW = pd.ExcelWriter\nW('v.xlsx')\n" + TAIL),
     ("numpy_save_alias", MPL + "import numpy as np\nsv = np.save\nsv('v.npy', [1])\n" + TAIL),
 ]
 
