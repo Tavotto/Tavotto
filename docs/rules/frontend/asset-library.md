@@ -4,7 +4,7 @@
 > 这里是这一主题规则的**唯一全文**；`web/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
 
 素材面板分「图」（FileAsset + RuntimeFigureAsset 同一个 listbox，runtime
-卡带「运行时图」badge、cache 预览、stale 角标；重跑是选中页脚 `SelectedAssetActions` 的「重新运行」，不嵌在卡里）与「脚本」
+卡带「运行时图」badge、cache 预览、stale 角标；重跑在卡片的右键 / ⇧F10 / ContextMenu 键菜单里的「重新运行」，不嵌在卡里；素材抽屉没有页脚，UI 2.0 第二轮 08）与「脚本」
 （`ScriptLibrary`，项目内每个合理 .py 一行）两个区。普通路径必须在这里
 完成；RegistryDialog 只留冲突裁决 / 手工 stem / 高级诊断。
 
@@ -164,9 +164,10 @@
   role 承诺了一件它并没有做的事。区先在、内容后变，由
   `fastEditStage.test.tsx`「播报区常驻」那条钉着。「添加到画布」（Shift+Enter / 就近入口 / 看大图弹窗）一律走
   `addFigureToLayout`（文件与 runtime 同一条路，已在文档里只聚焦）——加图分层链的第 1 层；
-  哪个入口走哪一层以 `canvas-objects-and-workspace.md` 的「加图是一条分层链」为准。列表下方
-  `SelectedAssetActions` 给一对 listbox 之外的真按钮——option 里不许嵌可 Tab
-  控件。**不许再用一个中性的「打开」承载加入文档。**
+  哪个入口走哪一层以 `canvas-objects-and-workspace.md` 的「加图是一条分层链」为准。抽屉标题行的
+  工具区给一对 listbox 之外的真按钮（`IconButton`「编辑原图」「添加到画布」，`data-asset-open` /
+  `data-asset-add`，作用于当前选中的卡，没选中时置灰）——位置固定，选中不同卡时抽屉几何不变；
+  option 里不许嵌可 Tab 控件，卡片右上角的「＋」只是指针的快捷入口（不可聚焦）。**不许再用一个中性的「打开」承载加入文档。**
   搜索词与筛选在 `store/assetBrowseStore`（组件会被卸载；换项目 `clear()`，
   不落 localStorage）。同脚本 + 同 stem 的 runtime 条目紧跟它的磁盘图并写
   「同源：X.pdf」（`runtimeSiblingOf`）；`assets.changed` 时 runtime 清单也
