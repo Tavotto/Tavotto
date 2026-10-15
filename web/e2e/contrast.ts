@@ -328,8 +328,8 @@ export async function lowContrastNodes(page: Page, root = 'body'): Promise<strin
  * 可编辑框的**底**对它所在的面：不许分不出（A7，2026-10-15 UI 2.0 精修）。
  *
  * 浅色里 `--color-field`（#f2f2f0）对灰桌面（#efefed）只有 ≈1.04:1，框直接坐在桌面上等于没有框；
- * 桌面子树（左抽屉 / 嵌入头）因此把 field 重定向成白面。这把尺子在真页面上量「谁的底色**解析后**等于 field /
- * field-hover、它背后第一个不透明祖先是什么」，对比不到 `min` 的返回一行描述。
+ * 桌面子树（左抽屉 / 嵌入头）因此把 field 重定向成白面。这把尺子在真页面上量「每个框原语（`bg-field`）的底、它背后第一个
+ * 不透明祖先是什么」，对比不到 `min` 的返回一行描述。
  * 只量静态：hover 态不在这里（框的 hover 底在重定向后是 surface-2，由 tokenContrast.test 守着不比所在面更暗）。
  */
 export async function indistinctFieldBoxes(page: Page, min = 1.1): Promise<string[]> {
@@ -351,25 +351,15 @@ export async function indistinctFieldBoxes(page: Page, min = 1.1): Promise<strin
       const y = lum(b)
       return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05)
     }
-    // 解析 field / field-hover 在**某个元素上**的实际值（桌面子树里它们被重定向，所以要问那个元素）
-    const tokenAt = (el: Element, name: string): number[] => {
-      const t = document.createElement('i')
-      t.style.cssText = `position:absolute;visibility:hidden;background:var(${name})`
-      el.appendChild(t)
-      const c = parse(getComputedStyle(t).backgroundColor)
-      t.remove()
-      return c
-    }
     const out: string[] = []
-    for (const el of Array.from(document.querySelectorAll<HTMLElement>('body *'))) {
+    let measured = 0
+    // 主语是**框原语本身**（FIELD_BOX 的 `bg-field` 类，`ui/fieldBox.ts` 是全站唯一出处），不是「底色恰好等于
+    // field 的元素」——按颜色认框，最坏的回归（field 解析成与所在面同色、框完全消失）恰好会被跳过。
+    for (const el of Array.from(document.querySelectorAll<HTMLElement>('[class~="bg-field"]'))) {
       const r = el.getBoundingClientRect()
       if (r.width < 8 || r.height < 8) continue
       const own = parse(getComputedStyle(el).backgroundColor)
       if (own[3] < 0.99) continue
-      const isField = [tokenAt(el, '--color-field'), tokenAt(el, '--color-field-hover')].some(
-        (f) => f[0] === own[0] && f[1] === own[1] && f[2] === own[2],
-      )
-      if (!isField) continue
       let p = el.parentElement
       let under: number[] | null = null
       while (p) {
@@ -381,13 +371,14 @@ export async function indistinctFieldBoxes(page: Page, min = 1.1): Promise<strin
         p = p.parentElement
       }
       if (!under) continue
-      // 元素自己的底与祖先底逐字相同：这不是一个「框」（例如 bg-bg 的容器恰与 field-hover 同值）
-      if (under[0] === own[0] && under[1] === own[1] && under[2] === own[2]) continue
+      measured++
       const q = ratio(own, under)
       if (q < minRatio) {
         out.push(`${el.tagName}[${el.getAttribute('data-testid') ?? el.className.toString().slice(0, 40)}] ${q.toFixed(2)}:1 < ${minRatio}`)
       }
     }
+    // 一个框都没量到 = 尺子没落到东西上（选择器漂了 / 页面没到那一屏），不能当「全部合格」
+    if (measured === 0) out.push('没有量到任何可编辑框（[class~="bg-field"]）')
     return out
   }, min)
 }
