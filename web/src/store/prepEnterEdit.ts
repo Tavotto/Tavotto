@@ -93,7 +93,8 @@ export async function enterEdit(host: EnterEditHost, d: CapturedFigureDescriptor
     // 以这个入口**自己的结局**为准（`ran`）：恢复被同项目里显式打开的别的排版取代时，入口被丢掉；
     // 那份排版里恰好有同一张图也不能当成这次进入编辑成了
     void takeDeferredEntryOutcome()?.then((result) => {
-      if (result === 'ran' && guard.still() && findFigurePanel(d.asset_id)) landed()
+      // 自动进入：排队的入口已经跑了（撤不回），但恢复期间用户可能已离开这张卡——不替他收卡片 / 记编辑
+      if (result === 'ran' && guard.still() && findFigurePanel(d.asset_id) && (!host.stillWanted || host.stillWanted())) landed()
     })
     return 'deferred'
   }

@@ -20,6 +20,10 @@ vi.mock('@/lib/api', async (importOriginal) => ({
   fetchRuntimeAssets: vi.fn().mockResolvedValue({ assets: [] }),
   fetchPanels: vi.fn().mockResolvedValue({ figures_dir: '', panels: [] }),
 }))
+vi.mock('@/store/documentRestore', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/store/documentRestore')>()),
+  takeDeferredEntryOutcome: vi.fn(() => null),
+}))
 vi.mock('@/store/workspace', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/store/workspace')>()),
   addRuntimePanelToCanvas: vi.fn(),
@@ -38,6 +42,7 @@ import {
 } from '@/lib/api'
 import { setCurrentProjectId } from '@/lib/session'
 import { useDocumentStore } from '@/store/documentStore'
+import { takeDeferredEntryOutcome } from '@/store/documentRestore'
 import {
   __setPreparationTimingForTests,
   draftDiffers,
@@ -305,6 +310,30 @@ describe('一次点击：检查 → 认领 run_when_ready（回显授权摘要�
     await flush()
     await flush()
     expect(openFastEdit).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    ['仍在看这张卡', true],
+    ['已切去别的卡', false],
+  ] as const)('排版恢复中入口排队（deferred）：落地时 %s（仅仍在看才收卡片 / 记编辑）', async (_n, stays) => {
+    mockCreate.mockResolvedValueOnce(report())
+    claimed(running())
+    await open()
+    let finish: (r: 'ran') => void = () => {}
+    vi.mocked(openFastEdit).mockImplementation((id: string) => {
+      putPanel(id)
+      return 'deferred'
+    })
+    vi.mocked(takeDeferredEntryOutcome).mockReturnValueOnce(new Promise((r) => (finish = r as never)) as never)
+    mockGet.mockResolvedValueOnce(done(['a']))
+    await store().refresh(KEY)
+    await vi.waitFor(() => expect(openFastEdit).toHaveBeenCalledTimes(1))
+    if (!stays) store().blur()
+    finish('ran')
+    await flush()
+    await flush()
+    expect(useUiStore.getState().guideCard).toBe(stays ? 'closed' : 'card')
+    expect(entry().editing.length).toBe(stays ? 1 : 0)
   })
 
   it('用户切去看了别的脚本的卡（聚焦不在这个条目）：同样不自动进入', async () => {
