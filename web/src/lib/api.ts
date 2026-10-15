@@ -3170,7 +3170,9 @@ export const AI_REQUEST_NOT_FOUND = 'ai_request_not_found'
 /* ------------------- 助手草稿与待确认账本（ADR 0132：存后端，不存浏览器） ------------------- */
 
 export interface AiDraftDoc {
-  draft: { text: string; revision: number; updated_ms: number } | null
+  draft: { text: string; revision: number; updated_ms: number; stamp: number } | null
+  /** 这一行（含墓碑）的写入戳：读到就抬高本页的戳下限 */
+  stamp?: number
   /** 未落定的提交（按 rid 一条，由老到新） */
   pendings: { rid: string; text: string; sent: unknown; created_ms: number }[]
 }
@@ -3206,10 +3208,11 @@ export const putAiPending = (
   sent: unknown,
   pj: string | null,
   script: string | null = null,
+  draftStamp: number | null = null,
 ) =>
   jsonFetch<{ ok: boolean }>(
     `/api/ai/drafts/pending/${encodeURIComponent(rid)}`,
-    { method: 'PUT', headers: JSON_HEADERS, body: JSON.stringify({ file, text, sent, script }) },
+    { method: 'PUT', headers: JSON_HEADERS, body: JSON.stringify({ file, text, sent, script, draft_stamp: draftStamp }) },
     pj,
   )
 

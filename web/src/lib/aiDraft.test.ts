@@ -17,6 +17,7 @@ import {
   observeStamp,
   removeAccepted,
   saveDraft,
+  saveDraftStamped,
   type DraftTarget,
 } from './aiDraft'
 
@@ -138,19 +139,27 @@ describe('写入戳', () => {
 
 describe('账本按 rid 一条，删除带条件（两个标签页）', () => {
   it('A 记下待确认 → B 改了文本 → A 收到会话：B 的新稿还在，账本清掉', async () => {
-    await saveDraft('pj', 'F', 'A 发出去的话')
-    await markSubmitted('pj', 'F', 'A 发出去的话', 'rid-aaaaaaaa', T) // 标签页 A：点发送
-    await saveDraft('pj', 'F', 'B 后来写的话') // 标签页 B：防抖保存
+    const a = await saveDraftStamped('pj', 'F', 'A 发出去的话')
+    await markSubmitted('pj', 'F', 'A 发出去的话', 'rid-aaaaaaaa', T, null, a.stamp ?? null) // 标签页 A：点发送（记下草稿戳）
+    await saveDraft('pj', 'F', 'B 后来写的话') // 标签页 B：防抖保存（戳更新）
     await removeAccepted('pj', 'F', 'rid-aaaaaaaa') // 标签页 A：后端接受
     expect(be.draft('pj', 'F')).toBe('B 后来写的话')
     expect(be.pending('pj', 'F')).toEqual([])
   })
 
-  it('对照：文本没被动过，确认之后草稿一并删掉', async () => {
-    await saveDraft('pj', 'F', '同一句话')
-    await markSubmitted('pj', 'F', '同一句话', 'rid-aaaaaaaa', T)
+  it('对照：草稿自提交后没被改过，确认之后草稿一并删掉；提交文本与草稿文本不同（trim）也照删——比的是戳不是文本', async () => {
+    const a = await saveDraftStamped('pj', 'F', '  同一句话\n') // 草稿原样（带空白）
+    await markSubmitted('pj', 'F', '同一句话', 'rid-aaaaaaaa', T, null, a.stamp ?? null) // 账本里是 trim 过的
     await removeAccepted('pj', 'F', 'rid-aaaaaaaa')
     expect(await loadDraft('pj', 'F')).toBeNull()
+  })
+
+  it('账本没记草稿戳（发送时草稿没写成）：确认只清账本，不动草稿', async () => {
+    await saveDraft('pj', 'F', '不知道是不是同一份')
+    await markSubmitted('pj', 'F', 'x', 'rid-aaaaaaaa', T)
+    await removeAccepted('pj', 'F', 'rid-aaaaaaaa')
+    expect(be.draft('pj', 'F')).toBe('不知道是不是同一份')
+    expect(be.pending('pj', 'F')).toEqual([])
   })
 
   it('草稿文本与待确认原文是两份独立状态：读回来各是各的（待确认重发用的是账本里那一份）', async () => {

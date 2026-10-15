@@ -174,9 +174,17 @@ interface AiState {
     overrides: unknown[]
     canvas?: string | null
     script?: string | null
+    /** 提交时草稿的写入戳（发送前已把草稿写成功拿到的）；确认后后端按「草稿戳没变」清草稿，不比文本 */
+    draftStamp?: number | null
   }) => Promise<SubmitOutcome>
   /** 问后端「这个请求 id 你登记过吗」：只读，不会让任何东西被执行 */
   queryRequest: (rid: string) => Promise<QueryOutcome>
+  /**
+   * 对本地所有**非终态**的会话各读一次后端快照、按快照收尾（`accept` 之后任务在 SSE 断线期间结束，事件流不重放，
+   * 没有这一步会话会永远停在 running、把脚本锁死）。`useAiDraft.reconcile` 的每个入口（挂载 / 焦点 / 可见 / SSE 重连）
+   * 都会调它；读失败 = 不知道，不动。
+   */
+  settleRunningSessions: () => Promise<void>
   /** 后端明确说没收到之后，用**同一个**请求 id 重发 */
   resend: (rid: string) => Promise<SubmitOutcome>
   /** 放弃等待这条提交（用户改写后重新发）：之后的发送换新 id。仅 `not_received` 时由界面提供 */
@@ -227,6 +235,7 @@ export interface SubmissionLedger {
     rid: string,
     sent: DraftTarget,
     script: string | null,
+    draftStamp: number | null,
   ) => Promise<boolean>
   clearSubmitted: (project: string | null, fileId: string, rid: string) => Promise<void>
   removeAccepted: (project: string | null, fileId: string, rid: string) => Promise<void>
@@ -375,7 +384,7 @@ export const useAiStore = create<AiState>((set, get) => ({
 
   submissions: {},
 
-  start: async ({ prompt, fileId, panelId, gid, label, scope, target, overrides, canvas, script = null }) => {
+  start: async ({ prompt, fileId, panelId, gid, label, scope, target, overrides, canvas, script = null, draftStamp = null }) => {
     // 发任务前再确认一次：首选那个可能刚被关掉 / 刚被检测成不可用
     if (!effectiveAgent(get().agent, get().caps)) throw new Error('no-usable-agent')
     const project = currentProjectId()
@@ -399,7 +408,7 @@ export const useAiStore = create<AiState>((set, get) => ({
     }
     set((s) => ({ submissions: { ...s.submissions, [rid]: sub } }))
     // spawn 之前先把账本写进后端（原文 + 目标）：刷新 / 崩溃 / 换端口之后还认得「这条发出过」
-    const marked = markSubmitted(project, fileId, prompt, rid, sent, script)
+    const marked = markSubmitted(project, fileId, prompt, rid, sent, script, draftStamp)
     if (marked && !(await marked)) {
       // 账本没写成：**不发**。丢了响应之后没有 rid 可查，刷新就会放行同一条指令换新 id 再执行
       set((s) => {
@@ -420,6 +429,32 @@ export const useAiStore = create<AiState>((set, get) => ({
   },
 
   queryRequest: (rid) => settleFromSnapshot(rid),
+
+  settleRunningSessions: async () => {
+    const born = get().generation
+    const pj = currentProjectId()
+    for (const x of get().sessions) {
+      if (x.status !== 'running' || x.finalized || x.project !== pj) continue
+      const snap = await readSessionDetail(x.id, x.project)
+      const d = snap.ok ? snap.detail : null
+      if (born !== get().generation || typeof d?.status !== 'string' || d.status === 'running') continue
+      const done: DonePayload = {
+        session: x.id,
+        status: d.status,
+        changed: !!d.changed,
+        diff: d.diff ?? '',
+        ...(d.refresh ? { refresh: d.refresh } : {}),
+      }
+      if (x.entries.length === 0 && d.transcript?.length) {
+        set((s) => ({
+          sessions: s.sessions.map((y) =>
+            y.id === x.id ? { ...y, entries: d.transcript.map((t) => ({ kind: t.kind as AiDeltaKind, text: t.text })) } : y,
+          ),
+        }))
+      }
+      if (get().finish(done)) settledNotifier?.(done)
+    }
+  },
 
   dismissSubmission: (rid) => {
     const sub = get().submissions[rid]
@@ -552,6 +587,22 @@ function bufferEarly(sid: string, rid: string | undefined, ev: EarlyEvent): void
 }
 
 /**
+ * 读一个会话的详情快照（**全文件只有这一处调 `fetchAiSession`**，`settleFromSnapshot` 与 `settleRunningSessions` 共用）：
+ * `{ ok: true, detail }`；后端明确说没有详情（404）→ `{ ok: true, detail: null }`；其余失败 = 不知道 → `{ ok: false }`。
+ */
+async function readSessionDetail(
+  sid: string,
+  project: string | null,
+): Promise<{ ok: true; detail: AiSessionDetail | null } | { ok: false }> {
+  try {
+    return { ok: true, detail: await fetchAiSession(sid, project) }
+  } catch (e) {
+    if (e instanceof ApiError && e.status === 404) return { ok: true, detail: null }
+    return { ok: false }
+  }
+}
+
+/**
  * **「首个 POST 不确定」引出的所有分支，都收成这一个函数：向后端要这条请求的快照，按快照的真实状态收尾。**
  * 用户点「查询结果」、同 id 重发被去重（`deduped: true`）、……都走这里——各写各的，就会漏掉另一半
  * （去重的响应被当成「刚启动」、永远等不到的 `ai.done` 把脚本锁死，#1098 的这一族问题）。
@@ -593,16 +644,12 @@ async function settleFromSnapshot(rid: string): Promise<QueryOutcome> {
       })
       return 'already_run'
     }
-    // 补全转录 / diff / 执行器（刷新之后这些都在后端）；失败就用查询给的摘要
-    let detail: AiSessionDetail | null = null
-    try {
-      detail = await fetchAiSession(found.session, sub.project)
-    } catch (e) {
-      // 只有「后端明确说没有详情」（404）才凭摘要往下走；读详情**暂时失败**不收尾——摘要里没有 refresh 结局，
-      // 凭它把会话标成终态会把「改成了、项目没刷新」悄悄吞掉，且提交记录一删就再也查不回来。
-      // 保持「已发出未确认」，让用户再查一次
-      if (!(e instanceof ApiError && e.status === 404)) return 'unreachable'
-    }
+    // 补全转录 / diff / 执行器 / refresh 结局（刷新之后这些都在后端）。只有「后端明确说没有详情」（404）才凭摘要往下走；
+    // 读详情**暂时失败**不收尾——摘要里没有 refresh 结局，凭它把会话标成终态会把「改成了、项目没刷新」悄悄吞掉，
+    // 且提交记录一删就再也查不回来。保持「已发出未确认」，让用户再查一次
+    const snap = await readSessionDetail(found.session, sub.project)
+    if (!snap.ok) return 'unreachable'
+    const detail = snap.detail
     if (born !== get().generation) {
       removeAccepted(sub.project, sub.fileId, rid)
       return 'gone'

@@ -254,8 +254,19 @@ function AssistantPanelBody() {
   const { panel, element, axes } = useAssistantTarget()
   const caps = useAiStore((s) => s.caps)
   // 草稿绑定「项目 × 面板文件」，右栏切页签 / 刷新之后还在（ADR 0132；落盘只是缓存）
-  const { prompt, setPrompt, restored, tooLarge, clearIf, project: claimedProject, ledgerState, retryLedger } =
-    useAiDraft(panel)
+  const {
+    prompt,
+    setPrompt,
+    restored,
+    tooLarge,
+    clearIfUnchanged,
+    draftSnapshot,
+    project: claimedProject,
+    ledgerState,
+    retryLedger,
+  } = useAiDraft(panel)
+  // 发送从「取草稿快照」到 start 返回是异步的：这一段里再点 / ⌘↵ 不许开第二次发送
+  const sendInFlight = useRef(false)
   const [error, setError] = useState<{ text: string; prompt: string; target: SendTarget; panelId: string } | null>(null)
   // 已点发送、后端还没给会话 id 的提交活在 store 里：面板卸载重挂（切页签）它还在，
   // 「在路上 / 已发出未确认 / 后端没收到」三态都从它派生
@@ -391,7 +402,12 @@ function AssistantPanelBody() {
         : scope === 'axes' && axes
           ? { scope, gid: axes.gid, label: axes.label, target: axes.label }
           : { scope, gid: null, label: null, target: ai('scope.figure') })
+    if (sendInFlight.current) return
+    sendInFlight.current = true
     try {
+      // 发的是输入框里的草稿（不是气泡 / 重试带来的原话）：先把草稿写成功、拿到服务器的写入戳，记进账本——
+      // 确认之后后端按「草稿戳没变」清草稿，不比文本（提交文本是 trim 过的，草稿是原样）
+      const snap = override == null ? await draftSnapshot() : { seq: 0, stamp: null }
       const outcome = await useAiStore.getState().start({
         prompt: text,
         fileId: panel.fileId,
@@ -403,9 +419,11 @@ function AssistantPanelBody() {
         overrides: panel.overrides,
         canvas: useDocumentStore.getState().activeCanvasId,
         script: panel.script ?? null,
+        draftStamp: snap.stamp,
       })
-      // 只有后端给出会话 id 才算送达、才清输入框；`unconfirmed` 时文本原样留着（面板进「已发出未确认」）
-      if (outcome === 'accepted' && override == null) clearIf(text)
+      // 只有后端给出会话 id 才算送达；本地没再动过（`seq` 不变）才清输入框，**不比文本**。
+      // 没拿到草稿戳（后端不可用）时后端不会动草稿，这里也不清；`unconfirmed` 时原样留着（面板进「已发出未确认」）
+      if (outcome === 'accepted' && override == null && snap.stamp !== null) clearIfUnchanged(snap.seq)
     } catch (e) {
       // 发送记录没写进后端 = 没有发：一句话 + 重试（不是「尽力写、照样发」）
       setError({
@@ -414,6 +432,8 @@ function AssistantPanelBody() {
         target: ctx,
         panelId: panel.id,
       })
+    } finally {
+      sendInFlight.current = false
     }
   }
 
@@ -421,12 +441,10 @@ function AssistantPanelBody() {
   const checkResult = async () => {
     if (!submission) return
     setCheckNote(null)
-    const text = submission.prompt
     const out = await useAiStore.getState().queryRequest(submission.rid)
-    if (out === 'accepted') clearIf(text)
-    else if (out === 'already_run') {
-      // 后端登记过、任务记录被删：已执行过，不再发。说一句，输入框收掉（草稿已由 store 删）
-      clearIf(text)
+    // 接受之后输入框怎么变，由后端清草稿的结果经 `mm:ai-draft-changed` 的对账带回（不在这里比文本清）
+    if (out === 'already_run') {
+      // 后端登记过、任务记录被删：已执行过，不再发，说一句
       useUiStore.getState().setStatus(msg('status.aiAlreadyRan', undefined, 'ai'), 'info')
     } else if (out === 'unreachable') setCheckNote('unreachable')
   }
@@ -435,8 +453,7 @@ function AssistantPanelBody() {
     if (!submission) return
     const text = submission.prompt
     try {
-      const out = await useAiStore.getState().resend(submission.rid)
-      if (out === 'accepted') clearIf(text)
+      await useAiStore.getState().resend(submission.rid)
     } catch (e) {
       setError({ text: backendErrorText(e), prompt: text, target: submission.target, panelId: submission.panelId })
     }

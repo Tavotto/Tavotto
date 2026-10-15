@@ -8,7 +8,7 @@ export interface DraftBackend {
   /** 命中草稿相关路由返回 Response，否则 null（调用方继续处理别的路径） */
   handle: (url: string, init?: RequestInit) => Response | Promise<Response> | null
   drafts: Map<string, string>
-  pendings: Map<string, { rid: string; text: string; sent: unknown; script?: string | null }[]>
+  pendings: Map<string, { rid: string; text: string; sent: unknown; script?: string | null; draftStamp?: number | null }[]>
   calls: { method: string; path: string; keepalive: boolean; body: Record<string, unknown> }[]
   /** 让后端「不可用」（fetch 抛网络错误） */
   setDown: (down: boolean) => void
@@ -37,7 +37,10 @@ const key = (pj: string, f: string) => `${pj}\u0000${f}`
 
 export function createDraftBackend(): DraftBackend {
   const drafts = new Map<string, string>()
-  const pendings = new Map<string, { rid: string; text: string; sent: unknown; script?: string | null }[]>()
+  const pendings = new Map<
+    string,
+    { rid: string; text: string; sent: unknown; script?: string | null; draftStamp?: number | null }[]
+  >()
   let pendingWriteFails = false
   let pendingListFails = false
   let hold: Promise<void> | null = null
@@ -56,11 +59,12 @@ export function createDraftBackend(): DraftBackend {
     const pj = hdr['X-Tavotto-Project'] ?? u.searchParams.get('pj') ?? ''
     const method = (init?.method ?? 'GET').toUpperCase()
     const body = init?.body ? (JSON.parse(String(init.body)) as Record<string, unknown>) : {}
-    calls.push({ method, path: u.pathname, keepalive: !!init?.keepalive, body })
+    const entry = { method, path: u.pathname, keepalive: !!init?.keepalive, body }
+    calls.push(entry)
     if (method === 'GET' && readHold) {
       // 读被扣住：放行后再走一遍（不重复记 calls）
       return readHold.then(() => {
-        calls.pop()
+        calls.splice(calls.indexOf(entry), 1) // 放行后会重走一遍 handle（再记一次），这里去掉被扣住时记的那条
         return handle(url, init) as Response
       })
     }
@@ -81,7 +85,9 @@ export function createDraftBackend(): DraftBackend {
         const p = list.find((x) => x.rid === rid)
         if (!p) return json({ cleared: false, draft_deleted: false })
         pendings.set(key(pj, file), list.filter((x) => x.rid !== rid))
-        const del = drafts.get(key(pj, file)) === p.text
+        // 与后端 `accept_pending` 同语义：只有账本记了提交时的草稿戳、且草稿当前的戳仍等于它（自提交后没被改过）才删，不比文本
+        const del =
+          p.draftStamp != null && drafts.has(key(pj, file)) && stamps.get(key(pj, file)) === p.draftStamp
         if (del) {
           drafts.delete(key(pj, file))
           stamps.set(key(pj, file), Math.max((stamps.get(key(pj, file)) ?? 0) + 1, Date.now() * 1000))
@@ -92,7 +98,13 @@ export function createDraftBackend(): DraftBackend {
         if (pendingWriteFails) return json({ error: 'boom', code: 'internal_error' }, 500)
         const next = [
           ...list.filter((x) => x.rid !== rid),
-          { rid, text: String(body.text), sent: body.sent, script: (body.script as string | null) ?? null },
+          {
+            rid,
+            text: String(body.text),
+            sent: body.sent,
+            script: (body.script as string | null) ?? null,
+            draftStamp: typeof body.draft_stamp === 'number' ? body.draft_stamp : null,
+          },
         ]
         pendings.set(key(pj, file), next.slice(-8))
         return json({ ok: true })
@@ -107,7 +119,8 @@ export function createDraftBackend(): DraftBackend {
         const file = u.searchParams.get('file') ?? ''
         const text = drafts.get(key(pj, file))
         return json({
-          draft: text === undefined ? null : { text, revision: 1, updated_ms: 1 },
+          stamp: stamps.get(key(pj, file)) ?? 0,
+          draft: text === undefined ? null : { text, revision: 1, updated_ms: 1, stamp: stamps.get(key(pj, file)) ?? 0 },
           pendings: (pendings.get(key(pj, file)) ?? []).map((p) => ({ ...p, created_ms: 1 })),
         })
       }

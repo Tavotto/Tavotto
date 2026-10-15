@@ -45,8 +45,9 @@ globalThis.fetch = (async (url: unknown, init?: RequestInit) => {
   return handler(u, init)
 }) as typeof fetch
 
-const send = (prompt = '把图例移到左上角') =>
+const send = (prompt = '把图例移到左上角', draftStamp: number | null = null) =>
   useAiStore.getState().start({
+    draftStamp,
     prompt,
     fileId: 'Fig1.pdf',
     panelId: 'p1',
@@ -292,8 +293,8 @@ describe('接受之后才删草稿', () => {
     let release: (r: Response) => void = () => {}
     handler = (url) =>
       url.includes('/api/ai/run') ? new Promise<Response>((r) => (release = r)) : json({})
-    draftBe.put('pa', 'Fig1.pdf', '指令')
-    const p = send('指令')
+    draftBe.putStamped('pa', 'Fig1.pdf', '指令', 1_000) // 输入框发送前已把草稿写成功（hook 的 draftSnapshot），戳 1000 记进账本
+    const p = send('指令', 1_000)
     await flush()
     expect(draftText()).toBe('指令')
     expect(pend()).toEqual([onlySub().rid])

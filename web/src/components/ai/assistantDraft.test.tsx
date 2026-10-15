@@ -10,8 +10,9 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import '@/hooks/useServerEvents' // 注册会话收尾提示（setAiSettledNotifier）
 import { aiRun, ApiError, fetchAiRequest, fetchAiSession } from '@/lib/api'
-import { DRAFT_MAX_BYTES } from '@/lib/aiDraft'
+import { __resetWriteStampForTests, DRAFT_MAX_BYTES } from '@/lib/aiDraft'
 import { createDraftBackend } from '@/test/aiDraftBackend'
 import { RETRY_MS, WRITE_DEBOUNCE_MS } from './useAiDraft'
 import { setCurrentProjectId } from '@/lib/session'
@@ -100,6 +101,7 @@ let be: ReturnType<typeof createDraftBackend>
 const SENT = { scope: 'figure', gid: null, label: null, target: '整张图' }
 
 beforeEach(async () => {
+  __resetWriteStampForTests() // 每条用例都是「新开的页面」：写入戳下限从 0 起步
   be = createDraftBackend()
   globalThis.fetch = (async (url: unknown, init?: RequestInit) =>
     be.handle(String(url), init) ?? new Response('{}')) as typeof fetch
@@ -361,18 +363,29 @@ describe('同步状态机：单一 reconcile + 写入版本（#1098）', () => {
     }
   })
 
-  it('跨标签页以写入戳最新者为准：本地最新内容被别的标签页更新的写入压过 → 放弃这次写入、采纳服务器的值；之后的写入照常被接受', async () => {
+  it('墙钟回拨 / 新开页面（lastStamp 从 0 起步）：挂载读到的服务器戳抬高下限，用户的输入第一次写就被接受，不丢', async () => {
+    be.putStamped('pa', 'Fig1.pdf', '库里的旧稿', Date.now() * 1000 + 5_000_000_000) // 库里的戳比本机墙钟大（回拨）
+    await mount() // 对账的 GET 读到这个戳 → 抬高本页下限
+    await typeText('用户这次真实输入的内容')
+    await act(async () => window.dispatchEvent(new Event('pagehide')))
+    await settle()
+    expect(be.draft('pa', 'Fig1.pdf')).toBe('用户这次真实输入的内容')
+    expect(be.calls.filter((c) => c.method === 'PUT' && c.path === '/api/ai/drafts')).toHaveLength(1) // 一次就被接受，没经过 stale
+    expect(input().value).toBe('用户这次真实输入的内容')
+  })
+
+  it('对账还没读回来就输入、第一次写被判 stale（墙钟回拨）：本地是用户真实输入的，以本地为准用更大的戳重写，不采纳服务器的旧值', async () => {
+    be.putStamped('pa', 'Fig1.pdf', '库里的旧稿', Date.now() * 1000 + 5_000_000_000)
+    const release = be.holdReads() // 对账的读被扣住：本页还不知道服务器戳
     await mount()
-    be.putStamped('pa', 'Fig1.pdf', '别的标签页更新的稿', Date.now() * 1000 + 5_000_000_000) // 戳在「未来」：比本页任何写入都新
-    await typeText('我本地的稿')
-    await act(async () => window.dispatchEvent(new Event('pagehide')))
+    await typeText('用户这次真实输入的内容')
+    await act(async () => window.dispatchEvent(new Event('pagehide'))) // 第一次写：戳比库里的小 → stale → 抬高下限 → 重写
     await settle()
-    expect(be.draft('pa', 'Fig1.pdf')).toBe('别的标签页更新的稿') // 没被旧戳覆盖
-    expect(input().value).toBe('别的标签页更新的稿') // 采纳服务器的值
-    await typeText('别的标签页更新的稿 + 我接着写') // 之后的写入戳已抬高到服务器戳之上
-    await act(async () => window.dispatchEvent(new Event('pagehide')))
+    expect(be.draft('pa', 'Fig1.pdf')).toBe('用户这次真实输入的内容') // 对照：旧实现采纳服务器旧值、盖掉输入
+    release()
     await settle()
-    expect(be.draft('pa', 'Fig1.pdf')).toBe('别的标签页更新的稿 + 我接着写')
+    expect(input().value).toBe('用户这次真实输入的内容')
+    expect(be.calls.filter((c) => c.method === 'PUT' && c.path === '/api/ai/drafts').length).toBeGreaterThanOrEqual(2)
   })
 
   it('被判 stale 时本地之后又有更新的内容：再写一次（新戳大于服务器的），以本地为准', async () => {
@@ -396,92 +409,87 @@ describe('同步状态机：单一 reconcile + 写入版本（#1098）', () => {
     }
   })
 
-  it('已被接受的文本，其草稿 PUT 若迟于确认才落地：落地后被条件删掉，不会作为草稿复活', async () => {
-    vi.mocked(aiRun).mockResolvedValue({ session: 's-1', script: 'p1.py' })
+  it('发送前先把草稿写成功并把草稿戳记进账本：run 发出那一刻后端已有这份草稿，账本带着它的戳', async () => {
+    let seenAtRun: { draft?: string; stamp: number | null | undefined } | null = null
+    vi.mocked(aiRun).mockImplementation(async () => {
+      seenAtRun = { draft: be.draft('pa', 'Fig1.pdf'), stamp: be.pendings.get('pa\u0000Fig1.pdf')?.[0]?.draftStamp }
+      return { session: 's-1', script: 'p1.py' }
+    })
     await mount()
-    const release = be.holdDraftPuts()
-    await typeText('要发出去的话')
-    await act(async () => window.dispatchEvent(new Event('pagehide'))) // 草稿 PUT 在途
+    await typeText('刚打完就发')
+    await click(q('[data-ai-send="send"]')) // 防抖还没到点就点发送
     await settle()
-    await click(q('[data-ai-send="send"]')) // 发出、被接受 → 清输入框
-    await settle()
-    expect(input().value).toBe('')
-    release() // 迟到的 PUT 现在才落地
-    await settle()
-    expect(be.draft('pa', 'Fig1.pdf')).toBeUndefined() // 没有复活成「已恢复的草稿」
+    expect(seenAtRun).toMatchObject({ draft: '刚打完就发' })
+    expect(typeof seenAtRun!.stamp).toBe('number') // 账本里记了草稿戳
   })
 
-  it('账本还在读的那一段不许发（原任务可能早已结束、后端忙碌守卫已失效）：读完、pendings 还原之后仍锁；读空才放开', async () => {
-    be.pendings.set('pa\u0000Fig1.pdf', [OWN])
-    const release = be.holdReads()
-    await mount() // 对账在读（被扣住）
-    expect(q<HTMLButtonElement>('[data-ai-send]')!.disabled).toBe(true) // 读着：不许发
-    await typeText('刷新后立刻粘贴的指令')
-    await act(async () => {
-      input().dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', metaKey: true, bubbles: true }))
-    })
-    expect(aiRun).not.toHaveBeenCalled() // 对照：旧实现这里 canSend 为真，会用新 rid 发出去
-    release()
-    await settle()
-    expect(q('[data-ai-submission="unconfirmed"]')).toBeTruthy() // 读完：账本里的未结提交还原，仍锁
-    await act(async () => {
-      input().dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', metaKey: true, bubbles: true }))
-    })
-    expect(aiRun).not.toHaveBeenCalled()
-  })
-
-  it('账本读完且确实为空：放开发送（对照）', async () => {
+  it('提交文本是 trim 过的、草稿是原样（前后带空白 / 换行）：被接受后输入框清空、后端草稿也清掉——比的是戳，不是文本', async () => {
     vi.mocked(aiRun).mockResolvedValue({ session: 's-1', script: 'p1.py' })
-    const release = be.holdReads()
     await mount()
-    await typeText('正常的指令')
-    expect(q<HTMLButtonElement>('[data-ai-send]')!.disabled).toBe(true)
-    release()
-    await settle()
-    expect(q<HTMLButtonElement>('[data-ai-send]')!.disabled).toBe(false)
+    await typeText('  把线条加粗一点\n\n')
     await click(q('[data-ai-send="send"]'))
     await settle()
-    expect(aiRun).toHaveBeenCalledTimes(1)
+    expect((vi.mocked(aiRun).mock.calls[0][0] as { prompt: string }).prompt).toBe('把线条加粗一点') // 发的是 trim 后的
+    expect(input().value).toBe('') // 对照：旧实现按文本比，原样草稿对不上，已被接受的指令留在输入框里
+    expect(be.draft('pa', 'Fig1.pdf')).toBeUndefined()
+    expect(be.pending('pa', 'Fig1.pdf')).toEqual([])
   })
 
-  it('账本读失败 = 不知道（不是空账本）：继续锁发送，一句话 + 重试；重试读成功才放开', async () => {
-    be.setDown(true)
+  it('提交之后、被接受之前用户又改了草稿：确认只清账本，新写的留着（输入框与后端都是新的）', async () => {
+    let resolveRun!: (v: { session: string; script: string }) => void
+    vi.mocked(aiRun).mockImplementation(() => new Promise((r) => (resolveRun = r)))
     await mount()
-    expect(q('[data-ai-ledger="failed"]')).toBeTruthy()
-    expect(q<HTMLButtonElement>('[data-ai-send]')!.disabled).toBe(true)
-    await typeText('读失败时想发的指令')
-    await act(async () => {
-      input().dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', metaKey: true, bubbles: true }))
+    await typeText('要发的话')
+    await click(q('[data-ai-send="send"]'))
+    await settle() // 账本已写、run 在路上
+    await typeText('要发的话，等待期间又补了一句') // 等待里继续写（输入框可编辑）
+    resolveRun({ session: 's-1', script: 'p1.py' })
+    await settle()
+    await act(async () => window.dispatchEvent(new Event('pagehide')))
+    await settle()
+    expect(input().value).toBe('要发的话，等待期间又补了一句')
+    expect(be.draft('pa', 'Fig1.pdf')).toBe('要发的话，等待期间又补了一句')
+  })
+
+  it.each([
+    ['SSE 重连', () => window.dispatchEvent(new Event('mm:sse-open'))],
+    ['窗口重新获得焦点', () => window.dispatchEvent(new Event('focus'))],
+    ['页面回到前台', () => document.dispatchEvent(new Event('visibilitychange'))],
+  ])('accept 之后任务在 SSE 断线期间结束：%s 的对账按快照把本地 running 会话收尾成终态，带 refresh 警告，发送解锁', async (_name, trigger) => {
+    vi.mocked(aiRun).mockResolvedValue({ session: 's-1', script: 'p1.py' })
+    await mount()
+    await typeText('把线条加粗一点')
+    await click(q('[data-ai-send="send"]'))
+    await settle()
+    expect(q('[data-ai-session="running"]')).toBeTruthy() // accept 之后是 running，账本已清
+    expect(q('[data-ai-send="stop"]')).toBeTruthy()
+    // SSE 断开期间任务结束了（事件流不重放）；后端的会话详情已是终态
+    vi.mocked(fetchAiSession).mockResolvedValue({
+      agent: 'codex', status: 'done', changed: true, diff: 'D', transcript: [], refresh: { status: 'failed', code: 'scan_failed' },
     })
-    expect(aiRun).not.toHaveBeenCalled()
-    be.setDown(false)
-    await click(q('[data-ai-ledger-retry]'))
+    await act(async () => trigger())
     await settle()
-    expect(q('[data-ai-ledger]')).toBeNull()
-    expect(q<HTMLButtonElement>('[data-ai-send]')!.disabled).toBe(false)
+    expect(q('[data-ai-session="running"]')).toBeNull() // 对照：旧实现只重读 pendings，会话永远停在 running
+    expect(q('[data-ai-session="done"]')).toBeTruthy()
+    expect(JSON.stringify(useUiStore.getState().status)).toContain('aiChangedRefreshFailed')
+    await typeText('再来一条')
+    expect(q<HTMLButtonElement>('[data-ai-send]')!.disabled).toBe(false) // 发送解锁
   })
 
-  it('只有项目级账本列表读失败（草稿读成功）：同样是「不知道」，不当成空列表放行', async () => {
-    be.setPendingListFails(true)
+  it('读不到快照 / 快照仍是 running：本地会话不动（不把「查不到」当结束）', async () => {
+    vi.mocked(aiRun).mockResolvedValue({ session: 's-1', script: 'p1.py' })
     await mount()
-    expect(q('[data-ai-ledger="failed"]')).toBeTruthy()
-    expect(q<HTMLButtonElement>('[data-ai-send]')!.disabled).toBe(true)
-    be.setPendingListFails(false)
-    await click(q('[data-ai-ledger-retry]'))
+    await typeText('把线条加粗一点')
+    await click(q('[data-ai-send="send"]'))
     await settle()
-    expect(q('[data-ai-ledger]')).toBeNull()
-  })
-
-  it('成功对账过之后，一次读失败不把账本状态降回去（不平白锁住发送）', async () => {
-    await mount()
-    expect(q<HTMLButtonElement>('[data-ai-send]')!.disabled).toBe(true) // 没文字
-    await typeText('x')
-    expect(q<HTMLButtonElement>('[data-ai-send]')!.disabled).toBe(false)
-    be.setDown(true)
-    await act(async () => window.dispatchEvent(new Event('focus')))
+    vi.mocked(fetchAiSession).mockRejectedValue(new TypeError('down'))
+    await act(async () => window.dispatchEvent(new Event('mm:sse-open')))
     await settle()
-    expect(q('[data-ai-ledger]')).toBeNull()
-    expect(q<HTMLButtonElement>('[data-ai-send]')!.disabled).toBe(false)
+    expect(q('[data-ai-session="running"]')).toBeTruthy()
+    vi.mocked(fetchAiSession).mockResolvedValue({ status: 'running', changed: false, diff: '', transcript: [] })
+    await act(async () => window.dispatchEvent(new Event('mm:sse-open')))
+    await settle()
+    expect(q('[data-ai-session="running"]')).toBeTruthy()
   })
 
   it('没有未落定的本地写入时，对账读回的文本照常应用（另一个标签页的新稿进来）', async () => {

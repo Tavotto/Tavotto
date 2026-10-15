@@ -28,6 +28,9 @@ import {
   putAiPending,
 } from '@/lib/api'
 
+/** 账本 accept / 草稿被服务端清掉之后广播，`useAiDraft` 听到就对账一次（输入框以后端为准） */
+export const AI_DRAFT_CHANGED_EVENT = 'mm:ai-draft-changed'
+
 /** 单稿上限（UTF-8 字节），与后端 `ai_history.DRAFT_MAX_BYTES` 同值：前端据此先给「过长」的答案，后端是权威 */
 export const DRAFT_MAX_BYTES = 20 * 1024
 
@@ -48,6 +51,8 @@ export interface Draft {
    * 也不能让提交被确认时的清理动到草稿（Codex #1098）。没有草稿时为空串。
    */
   text: string
+  /** 服务器上这一行（含墓碑）的写入戳；`fetchDraftState` 读回来时有 */
+  stamp?: number
   /** 全部未落定的提交（原文 + 目标）；每条各自还原成「已发出未确认」行，可查询，不进输入框 */
   pendings?: { rid: string; text: string; sent: DraftTarget }[]
 }
@@ -65,6 +70,10 @@ let lastStamp = 0
 export function nextWriteStamp(): number {
   lastStamp = Math.max(lastStamp + 1, Date.now() * 1000)
   return lastStamp
+}
+/** 仅测试：写入戳下限是模块级状态（等于「新开一个页面」），用例之间要能回到从 0 起步 */
+export const __resetWriteStampForTests = (): void => {
+  lastStamp = 0
 }
 export function observeStamp(serverStamp: unknown): void {
   if (typeof serverStamp === 'number' && Number.isFinite(serverStamp) && serverStamp > lastStamp) lastStamp = serverStamp
@@ -95,7 +104,15 @@ export async function fetchDraftState(project: string | null, fileId: string | n
     return null
   }
   const pendings = (doc.pendings ?? []).map((p) => ({ rid: p.rid, text: p.text, sent: p.sent as DraftTarget }))
-  return { project, fileId, text: doc.draft?.text ?? '', ...(pendings.length ? { pendings } : {}) }
+  // 读到的戳（含墓碑的）立刻抬高本页的下限：墙钟回拨 / 新开页面从 0 起步，之后发出的写入也一定比库里的新
+  observeStamp(doc.stamp)
+  return {
+    project,
+    fileId,
+    text: doc.draft?.text ?? '',
+    stamp: doc.stamp ?? 0,
+    ...(pendings.length ? { pendings } : {}),
+  }
 }
 
 /** `fetchDraftState` 的简化形：什么都没有 / 读失败都回 null（只关心「有没有东西」的调用方用） */
@@ -111,16 +128,26 @@ export async function saveDraft(
   text: string,
   keepalive = false,
 ): Promise<SaveResult> {
-  if (!project || !fileId) return 'unavailable'
+  return (await saveDraftStamped(project, fileId, text, keepalive)).result
+}
+
+/** 同 `saveDraft`，另回这次写入被服务端接受时的写入戳（`stamp`；没被接受时无）——发送前要拿它记进账本 */
+export async function saveDraftStamped(
+  project: string | null,
+  fileId: string | null,
+  text: string,
+  keepalive = false,
+): Promise<{ result: SaveResult; stamp?: number }> {
+  if (!project || !fileId) return { result: 'unavailable' }
   try {
     // 每次写入在**发出那一刻**取一个新的写入戳；服务端只接受比已存戳更新的写入，旧写入不管何时落地都不会覆盖新的
     const res = await putAiDraft(fileId, text, project, keepalive && byteLength(text) < 60 * 1024, nextWriteStamp())
     observeStamp(res.stamp)
-    if (res.stale) return 'stale'
-    return text === '' ? 'removed' : 'saved'
+    if (res.stale) return { result: 'stale' }
+    return { result: text === '' ? 'removed' : 'saved', stamp: res.stamp }
   } catch (e) {
-    if (e instanceof ApiError && e.status === 413) return 'too_large'
-    return 'unavailable'
+    if (e instanceof ApiError && e.status === 413) return { result: 'too_large' }
+    return { result: 'unavailable' }
   }
 }
 
@@ -135,7 +162,8 @@ export async function deleteDraftIf(project: string | null, fileId: string | nul
 }
 
 /**
- * 点发送：在 spawn 之前把这条提交（原文 + 目标 + 脚本）记进后端账本。**回是否写成功**：
+ * 点发送：在 spawn 之前把这条提交（原文 + 目标 + 脚本 + 提交时草稿的写入戳 `draftStamp`）记进后端账本。
+ * `draftStamp` 让确认之后的清理按「草稿自提交后没被改过」判（后端 `accept`），不比文本。**回是否写成功**：
  * 没写成（网络 / 后端错 / 超限）就不该发——账本是「响应丢了之后还能查到这条」的唯一线索，
  * 「尽力写、照样发」会让丢响应后的刷新没有 rid 可查、同一条指令换新 id 再执行一遍（Codex #1098）。
  * 没有项目认领时无从记账，回 true 由调用方照旧处理（那时本来也发不出去）。
@@ -147,10 +175,11 @@ export async function markSubmitted(
   rid: string,
   sent: DraftTarget,
   script: string | null = null,
+  draftStamp: number | null = null,
 ): Promise<boolean> {
   if (!project || !fileId) return true
   try {
-    await putAiPending(rid, fileId, text, sent, project, script)
+    await putAiPending(rid, fileId, text, sent, project, script, draftStamp)
     return true
   } catch {
     return false

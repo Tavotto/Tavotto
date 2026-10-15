@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import '@/lib/aiDraftLedger'
 import {
-  deleteDraftIf,
+  AI_DRAFT_CHANGED_EVENT,
   fetchDraftState,
   isDraftTooLarge,
   loadProjectPendings,
-  saveDraft,
+  saveDraftStamped,
   type DraftTarget,
 } from '@/lib/aiDraft'
 import { currentProjectId, onCurrentProjectChange } from '@/lib/session'
@@ -27,7 +27,7 @@ export const RETRY_MS = 3000
 export type LedgerState = 'unknown' | 'ok' | 'failed'
 
 /** 对账的来源。**所有来源走同一个 `reconcile`**，不存在「只取文本」的分支 */
-export type ReconcileSource = 'mount' | 'focus' | 'visible' | 'reconnect'
+export type ReconcileSource = 'mount' | 'focus' | 'visible' | 'reconnect' | 'accepted'
 
 /**
  * 助手输入框的草稿（ADR 0132）：绑定 **项目 × 面板文件**，**存后端**（不碰 localStorage）。
@@ -46,9 +46,11 @@ export type ReconcileSource = 'mount' | 'focus' | 'visible' | 'reconnect'
  *    写入，**以本地为准**再写一次——后端是最后写入为准，所以这就是收敛。
  * 写：防抖 600 ms；`pagehide` / 转入后台 / 卸载 / 切目标时 `keepalive` 立刻冲刷；失败（`unavailable`）时文本留在内存、
  * 3 秒后重试。
- * 删：**不在这里**——只有后端给出会话 id（请求被接受）之后，store 经账本 `accept` 条件删除。这里的 `clearIf`
- * 只在输入框文本仍等于提交原文时才清，并且若这段文本的 PUT 还在途，PUT 落地后再条件删一次（防止已被接受的
- * 文本被迟到的 PUT 写回来）。
+ * 删：**不在这里**——只有后端给出会话 id（请求被接受）之后，store 经账本 `accept` 删，条件是「草稿戳自提交后没变」
+ *   （发送前 `draftSnapshot` 先把草稿写成功、拿到戳记进账本；**不比文本**）；之后经 `mm:ai-draft-changed` 对账，
+ *   输入框回到后端的状态。
+ * 戳的下限：每次读到服务器的戳（对账的 GET、PUT 的响应、stale 的响应）都抬高本页下限，所以墙钟回拨 / 新开页面
+ * 从 0 起步，后面发出的戳也一定比库里的大；被判 stale 时本地是用户真实输入的，就以本地为准用更大的戳重写（有界）。
  */
 export function useAiDraft(panel: PanelObject | null) {
   const fileId = panel?.fileId ?? null
@@ -71,8 +73,12 @@ export function useAiDraft(panel: PanelObject | null) {
   const seq = useRef(0)
   const acked = useRef(0)
   const inflight = useRef<number | null>(null)
-  /** 在途 PUT 落地后要条件删掉的文本（`clearIf` 清输入框时它还在途） */
-  const deleteAfterFlight = useRef<string | null>(null)
+  /** 最近一次启动的 PUT（`draftSnapshot` 等它落地） */
+  const inflightP = useRef<Promise<void> | null>(null)
+  /** 服务器上**与本地文本一致**的那一行的写入戳（PUT 被接受 / 对账读到时更新）；发送前拿它记进账本 */
+  const draftStamp = useRef<number | null>(null)
+  /** 同一段本地内容连续被判 stale 的次数（墙钟回拨 / 并发写时有界重写，免得两端互相覆盖没完） */
+  const staleRetries = useRef(0)
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   const retry = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   const reconcileToken = useRef(0)
@@ -84,31 +90,31 @@ export function useAiDraft(panel: PanelObject | null) {
   const hasUnsettledWrite = () => seq.current > acked.current
 
   /** 把当前文本写到后端。`keepalive`：页面正在关。同一时刻只有一个普通 PUT 在途，落地后若本地又有更新的写入就再写一次 */
-  const persist = useCallback((keepalive: boolean) => {
+  const persist = useCallback((keepalive: boolean): Promise<void> => {
     clearTimeout(timer.current)
     timer.current = undefined
-    if (seq.current === acked.current) return
-    if (inflight.current !== null && !keepalive) return // 在途的落地时会检查并补写
+    if (seq.current === acked.current) return Promise.resolve()
+    if (inflight.current !== null && !keepalive) return inflightP.current ?? Promise.resolve() // 在途的落地时会检查并补写
     const mySeq = seq.current
     const { project: pj, fileId: f, epoch } = key.current
     const body = text.current
     inflight.current = mySeq
-    void saveDraft(pj, f, body, keepalive).then(async (r) => {
+    const p = saveDraftStamped(pj, f, body, keepalive).then(async ({ result: r, stamp }) => {
       if (key.current.epoch !== epoch) return // 目标已换：那一边的收尾由切目标时的冲刷负责，不动当前目标的版本
       inflight.current = null
-      const pendingDelete = deleteAfterFlight.current
-      deleteAfterFlight.current = null
       if (r === 'stale') {
-        // 服务端说：它那里有比这次写入**更新的戳**，这次的内容不是最新的，没有被采纳
-        if (seq.current > mySeq) {
-          // 本地之后又有更新的内容（同页内的并发写：B 先落地、A 后落地）：它自己的写入会推进 acked；
-          // 没推进就再写一次（新戳一定比服务端的大，`saveDraft` 已抬高下限）
-          if (seq.current > acked.current) persist(false)
-          return
+        // 服务端说：它那里有比这次写入**更新的戳**，这次没被采纳（`saveDraft` 已按服务端回的戳抬高了本页下限，
+        // 再写一次的戳一定更大）。两种成因：同页内并发写（B 先落地、A 后落地——B 的写入会自己推进 acked）、
+        // 或墙钟回拨 / 另一个标签页的戳更新。本地内容是用户在本页**真实输入**的，所以以本地为准：还没被确认就重写
+        if (seq.current > acked.current) {
+          if (++staleRetries.current > 5) {
+            // 有界：两端互相压戳时别没完没了，隔一会儿再试
+            clearTimeout(retry.current)
+            retry.current = setTimeout(() => persist(false), RETRY_MS)
+            return
+          }
+          await persist(false)
         }
-        // 这就是本地最新的内容，却被另一个标签页**更新的写入**压过：以写入戳最新者为准——放弃这次写入、采纳服务器的值
-        acked.current = Math.max(acked.current, mySeq)
-        void reconcile('focus')
         return
       }
       if (r === 'unavailable') {
@@ -117,13 +123,16 @@ export function useAiDraft(panel: PanelObject | null) {
         retry.current = setTimeout(() => persist(false), RETRY_MS)
         return
       }
+      staleRetries.current = 0
       acked.current = Math.max(acked.current, mySeq)
       if (r === 'too_large') setTooLarge(true)
-      // 刚被 `clearIf` 清掉的那段文本的 PUT 才落地：服务器上又有了它，条件删掉（等于它才删，别的新稿不动）
-      if (pendingDelete !== null && pendingDelete === body) await deleteDraftIf(pj, f, pendingDelete)
+      // 服务器上这一行现在就是本地这一版：记下它的戳（只有「本地没有更新的写入」时才算与本地一致）
+      if (seq.current === mySeq && stamp !== undefined) draftStamp.current = stamp
       // 落地的这段确认之前，本地又有更新的写入：以本地为准再写一次
-      if (seq.current > acked.current) persist(false)
+      if (seq.current > acked.current) await persist(false)
     })
+    inflightP.current = p
+    return p
   }, [])
 
   const setPrompt = useCallback(
@@ -154,6 +163,8 @@ export function useAiDraft(panel: PanelObject | null) {
     const token = ++reconcileToken.current
     const seqAtStart = seq.current
     const [state, projectList] = await Promise.all([fetchDraftState(pj, f), loadProjectPendings(pj)])
+    // 本地非终态的会话也按后端快照收尾（`accept` 之后任务在 SSE 断线期间结束，事件流不重放）——和 pendings 一样，每个入口都做
+    void useAiStore.getState().settleRunningSessions()
     // 过期：又有更新的一次对账、或目标已经换了——不动
     if (token !== reconcileToken.current || key.current.epoch !== epoch) return
     // 读失败 = 不知道：账本状态没成功过就记 failed（继续锁发送、给重试），成功过的不降级；草稿 / pendings 一概不动
@@ -194,8 +205,12 @@ export function useAiDraft(panel: PanelObject | null) {
 
     setLedgerState('ok') // pendings 已还原：账本恢复完成，可以放开发送
     if (hasUnsettledWrite() || seq.current !== seqAtStart) return // 本地写入没落定：文本以本地为准，不覆盖
-    if (state.text === text.current) return
+    if (state.text === text.current) {
+      draftStamp.current = state.stamp ?? null // 服务器这一行与本地一致：记下它的戳
+      return
+    }
     text.current = state.text
+    draftStamp.current = state.stamp ?? null
     setPromptState(state.text)
     setTooLarge(false)
     setRestored(source === 'mount' && state.text !== '')
@@ -208,7 +223,9 @@ export function useAiDraft(panel: PanelObject | null) {
     seq.current = 0
     acked.current = 0
     inflight.current = null
-    deleteAfterFlight.current = null
+    inflightP.current = null
+    draftStamp.current = null
+    staleRetries.current = 0
     setPromptState('')
     setRestored(false)
     setTooLarge(false)
@@ -232,29 +249,46 @@ export function useAiDraft(panel: PanelObject | null) {
       if (document.visibilityState !== 'hidden') void reconcile('focus')
     }
     const onReconnect = () => void reconcile('reconnect')
+    // 确认之后后端按「草稿戳没变」清了草稿（或没清）：对账一次，输入框以后端为准
+    const onAccepted = () => void reconcile('accepted')
     const flush = () => persist(true)
     window.addEventListener('pagehide', flush)
     window.addEventListener('focus', onFocus)
     window.addEventListener('mm:sse-open', onReconnect)
+    window.addEventListener(AI_DRAFT_CHANGED_EVENT, onAccepted)
     document.addEventListener('visibilitychange', onVisibility)
     return () => {
       window.removeEventListener('pagehide', flush)
       window.removeEventListener('focus', onFocus)
       window.removeEventListener('mm:sse-open', onReconnect)
+      window.removeEventListener(AI_DRAFT_CHANGED_EVENT, onAccepted)
       document.removeEventListener('visibilitychange', onVisibility)
     }
   }, [persist, reconcile])
 
-  /** 确认已被后端接受之后清空输入框（草稿由 store 经账本条件删除）。文本已被改过就不动——那是新的草稿 */
-  const clearIf = useCallback((sentText: string) => {
-    if (text.current !== sentText) return
+  /**
+   * **发送前的草稿快照**：把没写出去的文本先写成功（拿到服务器接受的写入戳），再回 `{ seq, stamp }`。
+   * `stamp` 记进账本，确认之后后端按「草稿自提交后没被改过（戳没变）」清草稿——**不比文本**（提交文本是 trim 过的、
+   * 草稿是原样，文本比较对不上，已被接受的指令会留在输入框里再被发一次）。没写成（后端不可用）`stamp` 为 null =
+   * 不知道，确认时不动草稿。
+   */
+  const draftSnapshot = useCallback(async (): Promise<{ seq: number; stamp: number | null }> => {
+    clearTimeout(timer.current)
+    for (let i = 0; i < 4 && seq.current > acked.current; i++) await persist(false)
+    const settled = seq.current === acked.current
+    return { seq: seq.current, stamp: settled ? draftStamp.current : null }
+  }, [persist])
+
+  /**
+   * 提交被接受之后清输入框：**只看本地有没有再动过（`seq` 没变），不比文本**。仅在发送时拿到了草稿戳
+   * （后端会据此删草稿）才调用；之后后端的清理结果经 `mm:ai-draft-changed` 的对账回到输入框。
+   */
+  const clearIfUnchanged = useCallback((seqAtSubmit: number) => {
+    if (seq.current !== seqAtSubmit) return
     text.current = ''
-    // 这段文本没发出 / 在途的写入都作废：序号对齐，防抖与重试取消
-    acked.current = seq.current
+    draftStamp.current = null
     clearTimeout(timer.current)
     clearTimeout(retry.current)
-    // 它的 PUT 若还在途，落地后服务器上会又有这段已被接受的文本：落地后条件删掉
-    if (inflight.current !== null) deleteAfterFlight.current = sentText
     setPromptState('')
     setTooLarge(false)
   }, [])
@@ -262,5 +296,5 @@ export function useAiDraft(panel: PanelObject | null) {
   /** 账本读失败后的「重试」：就是再对账一次（同一个入口） */
   const retryLedger = useCallback(() => void reconcile('focus'), [reconcile])
 
-  return { prompt, setPrompt, restored, tooLarge, clearIf, project, ledgerState, retryLedger }
+  return { prompt, setPrompt, restored, tooLarge, clearIfUnchanged, draftSnapshot, project, ledgerState, retryLedger }
 }
