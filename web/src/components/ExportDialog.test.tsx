@@ -26,7 +26,7 @@ vi.mock('@/lib/api', async (importOriginal) => ({
 const tauriInvoke = vi.hoisted(() => vi.fn(async (..._args: unknown[]) => undefined as unknown))
 vi.mock('@tauri-apps/api/core', () => ({ invoke: tauriInvoke }))
 
-import { ExportDialog, joinExportPath } from '@/components/ExportDialog'
+import { ExportDialog, isAbsoluteExportDir, joinExportPath } from '@/components/ExportDialog'
 import { pixelPreview } from '@/lib/exportRequest'
 import { hydrateExportDefaults, readExportDefaults, writeExportDefaults } from '@/lib/exportDefaults'
 import { fetchExportDefaultsRemote, postTelemetryEvent } from '@/lib/api'
@@ -2257,6 +2257,13 @@ describe('预览信息完善（PR3）：结果块', () => {
     expect(joinExportPath('/', 'a.pdf')).toBe('/a.pdf')
     expect(joinExportPath('/out/', 'a.pdf')).toBe('/out/a.pdf')
     expect(joinExportPath('C:\\', 'a.pdf')).toBe('C:\\a.pdf')
+  })
+
+  it('完整路径：只认绝对目录（相对目录拼不出完整路径，不给复制）', () => {
+    for (const d of ['/out', '/', 'C:\\out', 'C:/out', 'c:\\', '\\\\srv\\share'])
+      expect(isAbsoluteExportDir(d), d).toBe(true)
+    for (const d of ['', 'exports', './exports', 'exports/sub', '~/out', 'C:out'])
+      expect(isAbsoluteExportDir(d), d).toBe(false)
   })
 
   it('全部成功：没有汇总句', async () => {

@@ -2224,6 +2224,14 @@ export const joinExportPath = (dir: string, name: string) =>
     ? `${dir}${name}`
     : `${dir}${dir.includes("\\") && !dir.includes("/") ? "\\" : "/"}${name}`;
 
+/**
+ * 目录是绝对路径（POSIX `/…`、Windows 盘符 `C:\` / `C:/`、UNC `\\server\…`）。项目设置
+ * 接受相对目录且原样保存，相对路径的基准是后端进程而不是看的人——那时拼出来的不是
+ * 「完整路径」，干脆不给复制。
+ */
+export const isAbsoluteExportDir = (dir: string) =>
+  dir.startsWith("/") || /^[A-Za-z]:[\\/]/.test(dir) || dir.startsWith("\\\\");
+
 function OutputRow({ out, dir }: { out: ExportOutput; dir: string }) {
   useTranslation(["dialogs", "errors"]);
   const [revealError, setRevealError] = useState<string | null>(null);
@@ -2295,8 +2303,9 @@ function OutputRow({ out, dir }: { out: ExportOutput; dir: string }) {
         {out.replaced && (
           <span className="shrink-0 text-xs text-ink-3">{ex("replaced")}</span>
         )}
-        {/* 只在后端确认了目录与文件名之后才给：路径是 `export_dir`（后端回的）+ 已写出的文件名，不推测 */}
-        {dir && (
+        {/* 只在后端确认了目录与文件名之后才给：路径是 `export_dir`（后端回的）+ 已写出的文件名，不推测；
+            目录不是绝对路径时拼不出「完整路径」，不给 */}
+        {isAbsoluteExportDir(dir) && (
           <CopyButton
             appearance="icon"
             text={joinExportPath(dir, out.name)}
