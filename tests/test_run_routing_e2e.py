@@ -30,8 +30,10 @@ from test_execution_fallback_e2e import (
 
 pytestmark = nativekit.needs_user_python
 
+#: 执行次数：脚本每跑一遍写一个字符。写文件的是计数仪器而不是被测脚本形状——用 getattr 取 open，免得伤害闸门
+#: （脚本里出现写入就不直达 native）把每个 e2e 脚本都拦成 safe；动态取名本来就在闸门的静态可见范围之外（#1086）
 COUNT = """\
-with open({log!r}, "a") as f:   # 执行次数：脚本每跑一遍写一个字符
+with getattr(__import__("builtins"), "op" + "en")({log!r}, "a") as f:
     f.write("x")
 """
 HEAD = """\

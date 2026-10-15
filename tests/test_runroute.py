@@ -1382,13 +1382,7 @@ GATED = [
         + 'if len(__import__("sys").argv) > 1:\n    p = "x.png"\nelse:\n    raise SystemExit\n'
         + "plt.savefig(p)\nopen(p).read()\n",
     ),
-    # Codex r4282091166：改写 __name__ 之后 __main__ 守卫的 body 走不到
-    (
-        "main_guard_after_name_rebind",
-        MPL
-        + 'import os\nos.remove("victim")\n__name__ = "disabled"\n'
-        + 'if __name__ == "__main__":\n    plt.savefig("x.png")\n    open("x.png").read()\n',
-    ),
+    ("plain_write_then_readback", MPL + 'open("victim", "w").write("x")\n' + TAIL),
     ("path_unlink_in_a_dead_function", MPL + "def f(p):\n    p.unlink()\n" + TAIL),
     (
         "path_unlink_attribute",
@@ -1400,6 +1394,7 @@ GATED = [
     ("shutil_rmtree", MPL + 'import shutil\nshutil.rmtree("d")\n' + TAIL),
     ("shutil_move_from_import", MPL + 'from shutil import move\nmove("a", "b")\n' + TAIL),
     ("path_replace_one_arg", MPL + 'from pathlib import Path\nPath("a").replace("b")\n' + TAIL),
+    ("path_write_bytes", MPL + 'from pathlib import Path\nPath("a").write_bytes(b"")\n' + TAIL),
     ("path_write_text", MPL + 'from pathlib import Path\nPath("a").write_text("x")\n' + TAIL),
     ("rebound_os_head", MPL + 'import os\nos = os\nos.remove("a")\n' + TAIL),
     ("inside_lambda", MPL + 'import os\ncb = lambda: os.remove("a")\n' + TAIL),
@@ -1419,10 +1414,6 @@ UNGATED = [
     ("str_replace_two_args", MPL + 'name = "a.b".replace(".", "_")\n' + TAIL),
     ("list_remove", MPL + "xs = [1]\nxs.remove(1)\n" + TAIL),
     ("read_only_pathlib", MPL + 'from pathlib import Path\nPath("a").read_text()\n' + TAIL),
-    (
-        "write_bytes_is_not_in_the_guard_table",
-        MPL + 'from pathlib import Path\nPath("a").write_bytes(b"")\n' + TAIL,
-    ),
 ]
 
 
@@ -1463,3 +1454,100 @@ def test_the_r3_rule_still_reports_its_evidence_when_the_gate_holds_it_back():
         """
     route = _route(src, cwd=runroute.CWD_PROJECT, gate=True)
     assert route.execution == "safe" and "R3" in _rules(route), route
+
+
+# ---- 写入也是闸门的一部分；`__main__` 守卫例外要求 `__name__` 从没被绑定
+WRITES = [
+    ("open_w", 'open("a", "w")'),
+    ("open_a", 'open("a", mode="a")'),
+    ("open_x", 'open("a", "x")'),
+    ("open_rplus", 'open("a", "r+")'),
+    ("open_wb", 'open("a", "wb")'),
+    ("open_mode_variable", 'M = input()\nopen("a", M)'),
+    ("open_star_args", 'open(*["a", "w"])'),
+    ("open_kwargs", 'open("a", **{"mode": "w"})'),
+    ("io_open", 'import io\nio.open("a", "w")'),
+    ("path_open_w", 'from pathlib import Path\nPath("a").open("w")'),
+    ("path_open_mode_kw", 'from pathlib import Path\nPath("a").open(mode="a")'),
+    ("path_open_mode_variable", 'from pathlib import Path\nM = input()\nPath("a").open(M)'),
+    ("os_open_creat", 'import os\nos.open("a", os.O_WRONLY | os.O_CREAT)'),
+    ("os_makedirs", 'import os\nos.makedirs("d")'),
+    ("os_mkdir", 'import os\nos.mkdir("d")'),
+    ("path_mkdir", 'from pathlib import Path\nPath("d").mkdir()'),
+    ("path_touch", 'from pathlib import Path\nPath("d").touch()'),
+    ("shutil_copy", 'import shutil\nshutil.copy("a", "b")'),
+    ("shutil_copyfile", 'import shutil\nshutil.copyfile("a", "b")'),
+    ("shutil_copytree", 'from shutil import copytree\ncopytree("a", "b")'),
+]
+
+
+@pytest.mark.parametrize("name,call", WRITES, ids=[c[0] for c in WRITES])
+def test_any_write_in_the_script_keeps_the_route_in_safe(name, call):
+    route = _route(MPL + call + "\n" + TAIL, gate=True)
+    assert route.execution == "safe" and route.reason == runroute.REASON_GUARDED_FILE_OPS, route
+
+
+READS = [
+    ("open_default", 'open("a")'),
+    ("open_r", 'open("a", "r")'),
+    ("open_rb", 'open("a", mode="rb")'),
+    ("image_open_variable", "from PIL import Image\nP = input()\nImage.open(P)"),
+    ("image_open_literal", 'from PIL import Image\nImage.open("a.png")'),
+    ("path_open_read", 'from pathlib import Path\nPath("a").open("rb")'),
+    ("os_open_rdonly", 'import os\nos.open("a", os.O_RDONLY)'),
+]
+
+
+@pytest.mark.parametrize("name,call", READS, ids=[c[0] for c in READS])
+def test_read_only_opens_do_not_trip_the_gate(name, call):
+    route = _route(MPL + call + "\n" + TAIL, gate=True)
+    assert route.execution == "native" and route.reason == runroute.REASON_SAVEFIG_READBACK, route
+
+
+REBINDS = [
+    ("assign", '__name__ = "disabled"'),
+    ("augassign", '__name__ += "x"'),
+    ("annassign", '__name__: str = "x"'),
+    ("walrus", '(__name__ := "x")'),
+    ("delete", "del __name__"),
+    ("for_target", 'for __name__ in ["x"]:\n    pass'),
+    ("with_target", "import io\nwith io.StringIO() as __name__:\n    pass"),
+    ("import_as", "import os as __name__"),
+    ("from_import_as", "from os import path as __name__"),
+    ("global_stmt", 'def f():\n    global __name__\n    __name__ = "x"'),
+    ("def_name", "def __name__():\n    pass"),
+    ("param", "def f(__name__):\n    pass"),
+    ("globals_call", 'globals()["__name__"] = "x"'),
+    ("except_target", "try:\n    pass\nexcept Exception as __name__:\n    pass"),
+]
+
+
+@pytest.mark.parametrize("name,stmt", REBINDS, ids=[c[0] for c in REBINDS])
+def test_a_main_guard_body_is_not_unconditional_when_name_is_rebound_anywhere(name, stmt):
+    src = (
+        MPL
+        + stmt
+        + '\nif __name__ == "__main__":\n    plt.savefig("x.png")\n    open("x.png").read()\n'
+    )
+    route = _route(src, gate=True)
+    assert route.execution == "safe" and "R1" not in _rules(route), route
+
+
+def test_an_untouched_name_keeps_the_main_guard_exception():
+    route = _route(
+        MPL + 'if __name__ == "__main__":\n    plt.savefig("x.png")\n    open("x.png").read()\n',
+        gate=True,
+    )
+    assert route.execution == "native"
+
+
+def test_a_plain_write_followed_by_a_dead_main_guard_pair_stays_in_safe():
+    """Codex r4283063681：写入 + 改写 `__name__` + 走不到的守卫体；守卫例外不成立，R1 不出，且写入本身也触发闸门。"""
+    src = (
+        MPL
+        + 'open("victim", "w").write("x")\n__name__ = "disabled"\n'
+        + 'if __name__ == "__main__":\n    plt.savefig("x.png")\n    open("x.png").read()\n'
+    )
+    route = _route(src, gate=True)
+    assert route.execution == "safe" and "R1" not in _rules(route), route
+    assert runroute.facts_of(src).guarded_ops

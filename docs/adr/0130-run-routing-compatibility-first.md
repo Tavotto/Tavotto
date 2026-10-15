@@ -60,6 +60,7 @@
 * **终止的外延**（#1034 第五轮续）：常量真分支（`if True:` / `if 1:`）的 body 以无条件终止结尾，视为外层序列的终止；`try` / `with` 块内（含 handler / `else` / `finally`）出现任何无条件终止，其后外层语句也不算——这类终止可能被吞掉，证明不了，按「宁可漏判」处理。本模块唯一绑定、无装饰器、非生成器的 `def f()`，函数体顶层序列在任何 `return` 之前无条件 `raise` / 已解析的 exit 族（可经同样的 `def` 链递推），则顶层 `f()` 调用视为终止（无条件 `return` 不算）；类体在定义时执行，其中的终止让后续模块语句不再算无条件。不做跨模块、数据流推导。
 * **同一份内容**（#1034 第六轮）：`plan_for` 里路由分析的字节与计划的 `script_revision` 必须是同一份——路由读一次字节、记下 sha256，计划末尾算出 revision 后核对其字节摘要；不一致（分析之后脚本被改写）则 native 降回 safe，`declined: script_changed`。
 * **`async def` / 生成器**（#1034 第六轮）：裸调用 `f()` 只造出协程 / 生成器对象，不执行函数体；`async def` 与体内（不含嵌套 def / lambda / 类）有 `yield` / `yield from` 的函数，体内证据不算可达（`R1_unproven`、R3 降 `R3_partial`），其调用也不算终止；不推导 await / 迭代是否发生。
+* **`__main__` 守卫的前提**（#1034 第八轮）：`if __name__ == "__main__":` 的 body 按无条件处理，只在 `__name__` 在模块**任何位置**从没被绑定时成立（赋值 / augassign / 注解赋值 / walrus / `del` / `for`·`with`·`except` 目标 / 形参 / `def`·`class` / `import as` / `global`·`nonlocal` / `match` 捕获，或出现 `globals()` / `vars()`——宁宽）。否则守卫体不算无条件。
 * **Windows 根路径**：`C:\`、`C:/`、`C:foo`、`\\server\share`、单分隔符根 `\foo` 一律按「不在项目内」，用 `ntpath` 判，不依赖当前平台。
 * **native 启动记录**与运行默认值走 `runconfig.commit_success` 同一次写入，不分两步。
 * **收口原则**：静态规则还会被找出新的边角。**漏判**（该升 high 没升）退化为 safe + 0127 回退，无副作用，记 issue 收口、不在评审轮里逐个追；只有**误判升 high**（不该直达 native 却直达了）才继续修。新增规则一律往保守方向走。
@@ -70,6 +71,7 @@
 
 * **闸门**：脚本源码全文件（任何位置——函数体 / 条件 / 类体 / lambda，不做可达性推导）只要出现 safe 守卫会拦的操作形状，`auto` 路由一律不出 native 高置信：回 safe，reason `guarded_file_ops_present`，置信度 medium，R1 / R3 证据照实带出。靠 0127 的静默回退兜底——真需要 native 的脚本多一次 safe 白跑，但守卫拦住了，无副作用。
 * **守卫表同源**：形状清单取自 `figcapture.BlockedFileOps.OPS`（safe worker 守卫记账的同一张表）去掉 `savefig`；`runroute` 导入它（唯一允许的非标准库导入，`test_runroute_boundary` 钉），不另抄。匹配宁宽勿窄：限定名（`os.remove|unlink|rmdir|rename|replace`、`shutil.rmtree|move`，按 import 绑定解析，头名被重绑也按字面名算）；方法名 `.unlink` / `.rmdir` / `.rename` / `.rmtree` / `.write_text`；单实参的 `.replace(x)`（`Path.replace`；`str.replace` 至少两个实参）。`list.remove` / 泛名 `.move` 只认限定名。表里没有的（`write_bytes`、`open("w")`）以守卫表为准，不算。
+* **写入同属闸门**（#1034 第八轮）：safe 模式下普通写入落到沙箱、native 落到真实目录，二者的差异本身就是伤害面（`open("victim", "w").write(...)` 在 native 里会截断用户真实的 `victim`）。所以写打开也算守卫操作：`open` / `io.open` / `Path.open` 的 mode 为字面量且含 `w` / `a` / `x` / `+`，mode 不是字面量或实参带 `*` / `**`（判不了，宁宽），`os.open` 的 flags 不是 `os.O_RDONLY`；另有 `write_bytes` / `mkdir` / `touch` / `os.mkdir` / `os.makedirs` / `shutil.copy*`。只读打开（默认 mode、`r` / `rb`、`PIL.Image.open`）不算；`savefig` 本身不算（它是证据）。
 * **后果**：R3 的链（写 → `os.replace` / `rename` / `move` → 读）本身含守卫操作，所以 R3 在生产路径上不再直达 native（规则与证据仍计算、仍进 `Route.evidence`）；R1（`savefig` → 读回）不含守卫操作的脚本照旧直达。不含守卫操作的脚本误判的后果与终端直接运行相同，没有伤害。
 * **不在静态可见范围**：动态混淆（`getattr(os, "re" + "move")`、`__import__`、`exec`、`subprocess` 搬文件）看不见，记 #1086。
 

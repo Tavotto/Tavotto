@@ -29,6 +29,7 @@ import dataclasses
 import ntpath
 import os
 import posixpath
+import re
 import threading
 import time
 from collections import OrderedDict
@@ -622,6 +623,47 @@ class _Collector:
     _GENERIC_TAILS = frozenset({"remove", "replace", "move"})
     _GUARDED_TAILS = frozenset(op.rsplit(".", 1)[1] for op in _GUARDED) - _GENERIC_TAILS
 
+    _MODE_LIKE = re.compile(r"[rwxabtU+]+")
+    _READONLY_OPEN_ROOTS = ("PIL.",)
+
+    @staticmethod
+    def _mode_writes(arg: ast.expr | None) -> bool:
+        """mode 实参是否可能写：字面量含 `w` / `a` / `x` / `+`；不是字面量（判不了）按「可能写」算。"""
+        if arg is None:
+            return False
+        if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
+            return any(c in arg.value for c in "wax+")
+        return True
+
+    def _write_open(self, node: ast.Call, q: str | None) -> bool:
+        func = node.func
+        if any(isinstance(a, ast.Starred) for a in node.args) or any(
+            k.arg is None for k in node.keywords
+        ):
+            return (
+                (isinstance(func, ast.Attribute) and func.attr == "open")
+                or (isinstance(func, ast.Name) and func.id == "open")
+                or q in _BUILTIN_OPEN
+                or q == "os.open"
+            )
+        kw = {k.arg: k.value for k in node.keywords}
+        if q == "os.open":
+            flags = node.args[1] if len(node.args) > 1 else kw.get("flags")
+            return not (isinstance(flags, ast.Attribute) and flags.attr == "O_RDONLY")
+        if q in _BUILTIN_OPEN or (isinstance(func, ast.Name) and func.id == "open"):
+            return self._mode_writes(node.args[1] if len(node.args) > 1 else kw.get("mode"))
+        if isinstance(func, ast.Attribute) and func.attr == "open":
+            if q is not None and q.startswith(self._READONLY_OPEN_ROOTS):
+                return False  # Image.open 只读
+            if "mode" in kw:
+                return self._mode_writes(kw["mode"])
+            if node.args:  # Path.open(mode) / obj.open(path)：首个实参是 mode 样的字面量才按 mode 判，路径样字面量是只读
+                first = node.args[0]
+                if isinstance(first, ast.Constant) and isinstance(first.value, str):
+                    return bool(self._MODE_LIKE.fullmatch(first.value)) and self._mode_writes(first)
+                return True
+        return False
+
     def _guarded_call(self, node: ast.Call) -> bool:
         func = node.func
         names = {self.qual(func)}
@@ -633,6 +675,16 @@ class _Collector:
         if isinstance(cur, ast.Name):
             names.add(".".join([cur.id, *reversed(parts)]))  # 头名被重绑（qual 不认）也按字面名算
         if names & self._GUARDED_QUALIFIED:
+            return True
+        # 写入：safe 模式落到沙箱、native 落到真实目录，这个差异本身就是伤害面（ADR 0130「伤害闸门」）；savefig 不算（它是证据）
+        q = self.qual(func)
+        if names & {"os.mkdir", "os.makedirs"} or any(
+            n.startswith("shutil.copy") for n in names if n
+        ):
+            return True
+        if isinstance(func, ast.Attribute) and func.attr in ("write_bytes", "mkdir", "touch"):
+            return True
+        if self._write_open(node, q):
             return True
         if isinstance(func, ast.Attribute):
             if func.attr in self._GUARDED_TAILS:
@@ -664,9 +716,48 @@ class _Collector:
         ast.GeneratorExp,
     )
 
-    @staticmethod
-    def _main_guard(test: ast.expr) -> bool:
-        """`if __name__ == "__main__":`——作为脚本运行时恒真，它的 body 按无条件处理（几乎所有脚本都这么写入口）。"""
+    def _name_rebound(self) -> bool:
+        """模块任何位置对 `__name__` 有绑定（赋值 / augassign / del / walrus / for·with·except 目标 / 形参 / def·class /
+        import as / global·nonlocal / match 捕获），或碰了 `globals()`（可写 `__name__`）：宁宽。"""
+        cached = getattr(self, "_name_rebound_cache", None)
+        if cached is not None:
+            return cached
+        hit = False
+        for n in ast.walk(self.tree):
+            if isinstance(n, ast.Name) and (
+                (n.id == "__name__" and not isinstance(n.ctx, ast.Load))
+                or n.id in ("globals", "vars")
+            ):
+                hit = True
+            elif isinstance(n, (ast.Global, ast.Nonlocal)) and "__name__" in n.names:
+                hit = True
+            elif isinstance(n, ast.arg) and n.arg == "__name__":
+                hit = True
+            elif isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)) and (
+                n.name == "__name__"
+            ):
+                hit = True
+            elif isinstance(n, ast.ExceptHandler) and n.name == "__name__":
+                hit = True
+            elif isinstance(n, ast.alias) and (n.asname or n.name.split(".")[0]) == "__name__":
+                hit = True
+            elif (
+                isinstance(n, (ast.MatchAs, ast.MatchStar))
+                and getattr(n, "name", None) == "__name__"
+            ):
+                hit = True
+            elif isinstance(n, ast.MatchMapping) and n.rest == "__name__":
+                hit = True
+            if hit:
+                break
+        self._name_rebound_cache = hit
+        return hit
+
+    def _main_guard(self, test: ast.expr) -> bool:
+        """`if __name__ == "__main__":`——作为脚本运行时恒真，它的 body 按无条件处理（几乎所有脚本都这么写入口）。
+        前提是 `__name__` 在模块里从没被绑定过（改写之后守卫体可能永远走不到，不再给例外）。"""
+        if self._name_rebound():
+            return False
         return (
             isinstance(test, ast.Compare)
             and isinstance(test.left, ast.Name)
