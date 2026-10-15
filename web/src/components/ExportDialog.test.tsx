@@ -26,7 +26,7 @@ vi.mock('@/lib/api', async (importOriginal) => ({
 const tauriInvoke = vi.hoisted(() => vi.fn(async (..._args: unknown[]) => undefined as unknown))
 vi.mock('@tauri-apps/api/core', () => ({ invoke: tauriInvoke }))
 
-import { ExportDialog } from '@/components/ExportDialog'
+import { ExportDialog, joinExportPath } from '@/components/ExportDialog'
 import { pixelPreview } from '@/lib/exportRequest'
 import { hydrateExportDefaults, readExportDefaults, writeExportDefaults } from '@/lib/exportDefaults'
 import { fetchExportDefaultsRemote, postTelemetryEvent } from '@/lib/api'
@@ -2249,6 +2249,14 @@ describe('预览信息完善（PR3）：结果块', () => {
     expect(copies, '失败行没有路径可复制').toHaveLength(2)
     await click(copies[0])
     expect(writeText).toHaveBeenCalledWith('/out/a.pdf')
+  })
+
+  it('完整路径：沿用目录的分隔符，目录已以分隔符结尾时不再补', () => {
+    expect(joinExportPath('/out', 'a.pdf')).toBe('/out/a.pdf')
+    expect(joinExportPath('C:\\out', 'a.pdf')).toBe('C:\\out\\a.pdf')
+    expect(joinExportPath('/', 'a.pdf')).toBe('/a.pdf')
+    expect(joinExportPath('/out/', 'a.pdf')).toBe('/out/a.pdf')
+    expect(joinExportPath('C:\\', 'a.pdf')).toBe('C:\\a.pdf')
   })
 
   it('全部成功：没有汇总句', async () => {

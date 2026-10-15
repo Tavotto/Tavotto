@@ -2215,9 +2215,14 @@ export function ResultBlock({
 /** 这一件产物已被后端确认写出（`OutputRow` 画成功行的同一条判据） */
 const outputSaved = (o: ExportOutput) => o.status !== "failed" && !!o.name;
 
-/** 目录 + 文件名拼成完整路径；沿用目录自带的分隔符（Windows 的 `C:\out` 不掺 `/`） */
-const joinExportPath = (dir: string, name: string) =>
-  `${dir}${dir.includes("\\") && !dir.includes("/") ? "\\" : "/"}${name}`;
+/**
+ * 目录 + 文件名拼成完整路径；沿用目录自带的分隔符（Windows 的 `C:\out` 不掺 `/`）。
+ * 目录已以分隔符结尾（根目录 `/`、`C:\`）就不再补一个。
+ */
+export const joinExportPath = (dir: string, name: string) =>
+  /[\\/]$/.test(dir)
+    ? `${dir}${name}`
+    : `${dir}${dir.includes("\\") && !dir.includes("/") ? "\\" : "/"}${name}`;
 
 function OutputRow({ out, dir }: { out: ExportOutput; dir: string }) {
   useTranslation(["dialogs", "errors"]);
