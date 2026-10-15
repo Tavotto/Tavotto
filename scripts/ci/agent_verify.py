@@ -216,7 +216,8 @@ SCENARIOS: dict[str, Scenario] = {
             id="regression.961.engine_files_incomplete",
             summary="#961：引擎自家模块缺失不被误判成用户缺包（模拟缺件的 engine 目录）",
             kind="regression",
-            steps=(_pytest("tests/test_engine_files_incomplete.py"),),
+            # workerd（Rust）那一条单独成场景：本机多半没有产物，混在这里会让整场景恒为 skipped
+            steps=(_pytest("tests/test_engine_files_incomplete.py", "-k", "not workerd"),),
             timeout_s=600,
             preconditions=("python_module:pytest", "file:tests/test_engine_files_incomplete.py"),
             claim=(
@@ -228,6 +229,22 @@ SCENARIOS: dict[str, Scenario] = {
                 "交接是否确认目标 Figure 渲染成功（launch / render / verified 三态，见 ADR 0131 后续）",
                 "NSIS 安装 → 升级后的真实文件集",
             ),
+            owner_doc="docs/adr/0131-agent-verification-entry.md",
+            issue="#961",
+        ),
+        Scenario(
+            id="regression.961.engine_files_incomplete.workerd",
+            summary="#961：workerd（Rust supervisor）路径下 worker 启动期缺件同样分诊成引擎文件不完整",
+            kind="regression",
+            steps=(_pytest("tests/test_engine_files_incomplete.py", "-k", "workerd"),),
+            timeout_s=600,
+            preconditions=(
+                "python_module:pytest",
+                "workerd_binary",
+                "file:tests/test_engine_files_incomplete.py",
+            ),
+            claim="passed = 经 tavotto-workerd 起的 worker 在装引擎模块时缺 figcapture.py，分诊为 engine_files_incomplete",
+            unverified=("只验本机构建的 workerd；Windows 真机与打包产物里的 workerd 未验",),
             owner_doc="docs/adr/0131-agent-verification-entry.md",
             issue="#961",
         ),
@@ -283,6 +300,33 @@ def check_precondition(spec: str, python: str) -> dict:
             else f"approved_fonts_incomplete:{len(problems)}（先跑 python scripts/fetch_fonts.py）"
         )
         return {"check": spec, "ok": ok, "detail": detail, "raw": "\n".join(problems)}
+    if kind == "workerd_binary":
+        # 与产品同一个判据（workerd_client.find_workerd），在目标解释器里问，不在这里另抄候选路径
+        try:
+            proc = subprocess.run(
+                [
+                    python,
+                    "-c",
+                    "import sys; from tavotto.engine.workerd_client import find_workerd; "
+                    "sys.exit(0 if find_workerd() else 1)",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=60,
+                env=_base_env(),
+            )
+            ok = proc.returncode == 0
+            detail, raw = (
+                (
+                    "ok"
+                    if ok
+                    else "workerd_binary_missing（cargo build --manifest-path workerd/Cargo.toml）"
+                ),
+                proc.stderr,
+            )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            ok, detail, raw = False, f"interpreter_unavailable:{type(exc).__name__}", str(exc)
+        return {"check": spec, "ok": ok, "detail": detail, "raw": raw}
     if kind == "file":
         ok = (ROOT / arg).is_file()
         return {"check": spec, "ok": ok, "detail": "ok" if ok else "file_missing", "raw": ""}

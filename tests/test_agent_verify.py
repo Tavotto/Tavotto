@@ -158,7 +158,7 @@ def test_registry_argv_is_argument_vector_not_shell():
 def test_registry_preconditions_are_known_kinds(tmp_path):
     for s in AV.SCENARIOS.values():
         for c in s.preconditions:
-            assert c.split(":", 1)[0] in {"fonts", "file", "python_module"}, c
+            assert c.split(":", 1)[0] in {"fonts", "file", "python_module", "workerd_binary"}, c
 
 
 # --------------------------------------------------------------------------

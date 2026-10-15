@@ -1063,6 +1063,7 @@ jobs:
       # `tavotto-workerd` 产物的机器上 skip，而 CI 里唯一有 `target/debug/tavotto-workerd` 的地方就是
       # 这里（`cargo test` 刚建的）——两条冒烟腿验的是「产物自带的 workerd 能渲染」，验不了
       # 「三路逐字节等价」。所以在这个 job 里装上科学栈对着刚建的二进制真跑一次。
+      # 同一步也带上 #961 的 workerd 启动期缺件分诊（test_engine_files_incomplete.py 里带 workerd 的那条）。
       # `-k workerd` 选的就是那 12 条（用例名里都带 workerd）；`-rs` 把仍 skip 的理由打出来——
       # 这一步的判据是「它们真跑了」，全 skip 也算失败（同一步末尾按 junit 核对）。
       - uses: actions/setup-python@v6
@@ -1090,6 +1091,7 @@ jobs:
           python scripts/fetch_fonts.py && python scripts/fetch_fonts.py --check
           test -x workerd/target/debug/tavotto-workerd
           python -m pytest tests/test_equivalence_matrix.py tests/test_worker_roundtrip.py \
+            tests/test_engine_files_incomplete.py \
             -k workerd -p no:cacheprovider -q -rs --junitxml "${{ runner.temp }}/workerd-pytest.xml"
           python - <<'PY'
           import xml.etree.ElementTree as ET, os

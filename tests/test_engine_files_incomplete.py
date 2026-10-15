@@ -12,6 +12,7 @@ Windows 上 sidecar 从一份不完整的副本启动（缺 `figcapture.py`）�
 
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -192,15 +193,27 @@ def test_python_pool_startup_eof_is_classified_as_engine_files_incomplete(tmp_pa
 
 
 def _workerd_exe():
-    from tavotto.engine import workerd_client
+    """忽略 conftest 的默认禁用开关（`TAVOTTO_WORKERD=0`），只看 cargo 产物在不在——
+    与 test_worker_roundtrip.py 的 `_workerd_binary` 同一借法；不撤开关的话这里恒为 None、用例恒 skip。"""
+    saved = os.environ.pop("TAVOTTO_WORKERD", None)
+    try:
+        from tavotto.engine import workerd_client
 
-    return workerd_client.find_workerd()
+        return workerd_client.find_workerd()
+    finally:
+        if saved is not None:
+            os.environ["TAVOTTO_WORKERD"] = saved
+
+
+WORKERD_EXE = _workerd_exe()
 
 
 @needs_worker
-@pytest.mark.skipif(_workerd_exe() is None, reason="没有 tavotto-workerd 产物")
+@pytest.mark.skipif(
+    WORKERD_EXE is None, reason="没有 tavotto-workerd 产物（先在 workerd/ 里 cargo build）"
+)
 def test_workerd_startup_death_is_classified_as_engine_files_incomplete(tmp_path, monkeypatch):
-    err = _build_with_broken_engine(tmp_path, monkeypatch, _workerd_exe())
+    err = _build_with_broken_engine(tmp_path, monkeypatch, WORKERD_EXE)
     assert err.code == CODE, (err.code, str(err))
     assert err.engine_module == "figcapture"
 
