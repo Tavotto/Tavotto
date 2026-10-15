@@ -371,10 +371,15 @@ address in that notification is used **once**, to send a single thank-you mail
 (through the website's mail provider) with a link for choosing how to appear on
 the supporters wall. The notification also carries the supporter's Ko-fi display
 name; it is only checked to recognise Ko-fi's own test notification and is then
-discarded. The address and that name are not stored, and neither are the amount
-or the message. What is kept is the Ko-fi transaction id, the month, whether it was
-a one-off payment or a membership (and the tier name), and, only if the
-supporter fills in the form, the display name and optional avatar they chose. A
+discarded. The address and that name are not stored, and neither are a payment's
+amount or the message. What is kept is the Ko-fi transaction id, the month, whether
+it was a one-off payment or a membership (and the tier name), and, only if the
+supporter fills in the form, the display name and optional avatar they chose.
+So that payments from the same person can add up to an avatar and a membership can
+be shown while it is paid up, the website also keeps, under a keyed hash of the
+lowercased email address (never the address itself): a running total of that
+person's US-dollar payments, capped at the avatar threshold, and the date their
+membership is paid up to. A
 name or avatar appears on the page only after the supporter submitted it and the
 maintainer approved it; a supporter who stays anonymous is counted but never
 named.
@@ -382,7 +387,9 @@ named.
 爱发电 sends no email address. When it reports an order, the website looks the
 order up through 爱发电's API to confirm it was paid, and keeps the order number,
 the month and whether the amount allows an avatar; the supporter's 爱发电 user id
-is kept only as a keyed hash, so that one person is counted once. To appear on
+is kept only as a keyed hash, so that one person is counted once; under the same
+hash it keeps a running total of that person's orders, capped at the avatar
+threshold, and the date a monthly plan is paid up to. To appear on
 the wall, the supporter enters the order number on the support page and gets the
 same form; the rest is as for Ko-fi above. Next to the order number the supporter
 may type an email address; it is used **once**, to send a single thank-you mail
