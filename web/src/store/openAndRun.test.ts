@@ -570,6 +570,21 @@ describe('状态丢失后以后端报告为准（Codex #1044 r4271063082 / r4271
     expect(openFastEdit).not.toHaveBeenCalled()
   })
 
+  it('卡上点击、补拉赢了 POST 的提交竞态（报告还是点击前的样子）：保留 armMaybe，之后的 running / completed 照样武装', async () => {
+    mockCreate.mockResolvedValueOnce(report())
+    await open(false)
+    mockAct.mockRejectedValueOnce(new TypeError('network'))
+    mockGet.mockResolvedValueOnce(report()) // 观察序号没越过点击前
+    await store().act(KEY, 'run_when_ready')
+    expect(entry().armMaybe).toBe(true)
+    mockGet.mockResolvedValueOnce(live({ observation_seq: 2 }))
+    await store().refresh(KEY)
+    expect(entry().armed).toBe(true)
+    mockGet.mockResolvedValueOnce(done(['a'], 'att-1', 3))
+    await store().refresh(KEY)
+    await vi.waitFor(() => expect(openFastEdit).toHaveBeenCalledTimes(1))
+  })
+
   it('普通打开（不是「打开并运行」入口）遇到别处武装的意图：不替它武装', async () => {
     mockCreate.mockResolvedValueOnce(live())
     await open(false)

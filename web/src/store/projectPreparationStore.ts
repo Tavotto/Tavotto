@@ -90,6 +90,8 @@ export interface PrepEntry {
   armMaybe: boolean
   /** 点击 `run_when_ready` 那一刻报告里已有的意图 id：`armMaybe` 下已跑完的报告只有带着另一个意图 id 才属于这次点击，不是更早的运行 */
   armMaybeBaseline: string | null
+  /** 点击那一刻的报告坐标：补拉到的报告还没越过它（同会话、同修订、观察序号没前进）就说明服务端可能还没提交认领，不能凭「仍有 `run_when_ready`」断定没收到 */
+  armMaybeFrom: { session_id: string; config_revision: number; observation_seq: number } | null
   /** 这个条目是从明确的「打开并运行」入口打开的：卡片上的「继续 / 再试一次」（重新打开）沿用这份意图，不让用户为同一个目的点两次 */
   wantsRun: boolean
   /** 同一脚本换了参数（另一份运行配置）时，旧会话里还在等的运行意图：「打开并运行」带它去后端原子转移，不并存两份 */
@@ -301,7 +303,14 @@ export const useProjectPreparationStore = create<PreparationState>((set, get) =>
     if (cur && !cur.armed && intentLive && (report.phase !== 'completed' ? cur.wantsRun || cur.armMaybe : thisClick)) {
       patch(key, () => ({ armed: true, armMaybe: false }))
     } else if (cur?.armMaybe && report.actions.some((a) => a.kind === 'run_when_ready')) {
-      patch(key, () => ({ armMaybe: false })) // 认领没落地：别留着
+      // 认领没落地：别留着——但补拉赢了 POST 的提交竞态时报告还是点击前的样子：观察越过点击前那份才算数，否则继续不确定
+      const from = cur.armMaybeFrom
+      const passed =
+        !from ||
+        report.session_id !== from.session_id ||
+        report.config_revision > from.config_revision ||
+        report.observation_seq > from.observation_seq
+      if (passed) patch(key, () => ({ armMaybe: false, armMaybeFrom: null }))
     }
     if (report.phase === 'completed' && (before?.phase !== 'completed' || attemptChanged)) {
       void onCompleted(report, owner)
@@ -432,6 +441,7 @@ export const useProjectPreparationStore = create<PreparationState>((set, get) =>
             armed: false,
             armMaybe: false,
             armMaybeBaseline: null,
+            armMaybeFrom: null,
             wantsRun: !!opts?.run,
             transferFrom: sameTarget
               ? (prev?.transferFrom ?? null)
@@ -536,7 +546,10 @@ export const useProjectPreparationStore = create<PreparationState>((set, get) =>
         }
         if (isConnectionFailure(err)) {
           // 不知道后端收没收到：不重发（同一个动作 id 重发是幂等的，但「是否已认领」以报告为准），只补拉事实
-          patch(key, () => ({ connection: 'lost', ...(kind === 'run_when_ready' ? { armMaybe: true, armMaybeBaseline: report.intent?.id ?? null } : {}) }))
+          patch(key, () => ({ connection: 'lost', ...(kind === 'run_when_ready' ? { armMaybe: true,
+                armMaybeBaseline: report.intent?.id ?? null,
+                armMaybeFrom: { session_id: report.session_id, config_revision: report.config_revision, observation_seq: report.observation_seq },
+              } : {}) }))
         } else {
           // 修订变了 / 检查之后世界变了 / 影响变了 / 现在不能运行：零副作用的拒绝——说一句，重读报告
           const { code, params } = apiCode(err)
