@@ -1107,10 +1107,14 @@ def get(sid: str) -> dict | None:
     if sess is not None:
         return {k: v for k, v in sess.items() if k not in ("proc",)}
     side = _load_sidecar(sid)
-    if side is None:
-        return None
     # 后端已重启：以 SQLite 历史为准（启动时 running 已被标为 interrupted）
     hist = ai_history.get(sid)
+    if side is None:
+        # 改前快照（sidecar）已被 `_prune_snapshots()` 按份数清掉、历史库那一行还在：照样回历史里的终态与
+        # `refresh` 结局，不回 404——404 会被前端当成「没有详情」，凭摘要收尾、丢掉「改成了但项目没刷新」的警告（Codex #1098）
+        if hist is None:
+            return None
+        return {**hist, "note": "改前快照已清理，记录来自历史库"}
     if hist is not None:
         return {
             **side,
