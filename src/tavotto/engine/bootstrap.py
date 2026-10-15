@@ -138,6 +138,8 @@ def status() -> dict:
     from . import pool
 
     rt = _runtime_block()
+    # {attempt, state, error} 一次取成一致的快照：不在两次读之间看到「新 attempt + 上一次的终态」
+    snap = _snapshot()
     try:
         python = pool.find_worker_python()
         source = pool.source_of(python)
@@ -153,8 +155,8 @@ def status() -> dict:
             # 冒烟脚本靠它断言「产物里真带了 workerd 且渲染真走了它」——
             # 回退是静默的，不报出来就只能靠「怎么有点慢」去猜。
             "control_plane": pool.control_plane(),
-            "state": _progress["state"],
-            "attempt": _progress["attempt"],
+            "state": snap["state"],
+            "attempt": snap["attempt"],
             "boot": _BOOT_ID,
         }
     except pool.WorkerError as exc:
@@ -174,18 +176,24 @@ def status() -> dict:
         "code": code,
         "can_install": base is not None and not rt["expected"],
         "base_python": base,
-        "state": _progress["state"],
-        "attempt": _progress["attempt"],
+        "state": snap["state"],
+        "attempt": snap["attempt"],
         "boot": _BOOT_ID,
-        "error": (runtime.repair_hint() if rt["expected"] else _progress["error"]),
+        "error": (runtime.repair_hint() if rt["expected"] else snap["error"]),
     }
 
 
 # ---------------------------------------------------------------------------
 # 安装
 # ---------------------------------------------------------------------------
+def _snapshot() -> dict:
+    """`_progress` 的一致快照：与「置 running + attempt 加一」同一把锁，读不到半新半旧的组合。"""
+    with _attempt_lock:
+        return dict(_progress)
+
+
 def progress() -> dict:
-    return {**_progress, "boot": _BOOT_ID}
+    return {**_snapshot(), "boot": _BOOT_ID}
 
 
 def _append(line: str) -> None:
@@ -202,9 +210,9 @@ def install(on_event=None) -> dict:
     try:
         with _attempt_lock:
             # 经 `install_async` 来的已经在调用线程里同步置过 running 并加过 attempt；直接调用的（脚本 / 测试）在这里开始新一次
-            if _progress["state"] != "running":
-                _progress["attempt"] += 1
-            _progress.update(state="running", log="", error=None)
+            # attempt 与 state 一次写进去（同一把锁内、一次 update），读方经 `_snapshot` 取同一把锁
+            nxt = _progress["attempt"] + (1 if _progress["state"] != "running" else 0)
+            _progress.update(attempt=nxt, state="running", log="", error=None)
         _emit(on_event)
 
         # 桌面版该有内置 runtime。走到这里说明它缺了或坏了——那时该做的是重装，
@@ -309,6 +317,5 @@ def install_async(on_event=None) -> None:
     # 而不是等线程调度起来才变。已有安装在跑时不动（别把它的日志清掉）
     with _attempt_lock:
         if not _lock.locked() and _progress["state"] != "running":
-            _progress["attempt"] += 1
-            _progress.update(state="running", log="", error=None)
+            _progress.update(attempt=_progress["attempt"] + 1, state="running", log="", error=None)
     threading.Thread(target=lambda: install(on_event), daemon=True, name="mm-bootstrap").start()

@@ -293,3 +293,16 @@ def test_a_second_install_request_while_running_keeps_the_current_attempt(monkey
         assert bootstrap.progress()["state"] == "running"
     finally:
         gate.set()
+
+
+def test_status_and_progress_read_one_consistent_snapshot(monkeypatch):
+    """环境 GET 与事件都经同一把锁取 `{attempt, state, error}` 的快照：不在两次读之间看到「新 attempt +
+    上一次的终态」——那个组合会被前端当成「这一次已结束」，真正的 running 反而被丢掉（#1097 评审）。"""
+    snap = {"state": "running", "log": "", "error": None, "attempt": 7}
+    monkeypatch.setattr(bootstrap, "_snapshot", lambda: dict(snap))
+    monkeypatch.setattr(pool, "find_worker_python", lambda: "/usr/bin/python3")
+    monkeypatch.setattr(bootstrap, "matplotlib_version", lambda p, **_kw: "3.11.1")
+    st = bootstrap.status()
+    assert (st["state"], st["attempt"]) == ("running", 7)
+    pr = bootstrap.progress()
+    assert (pr["state"], pr["attempt"]) == ("running", 7)
