@@ -64,7 +64,8 @@ def get(client, pj, file):
 # ---------------------------------------------------------------------------
 def test_roundtrip_overwrite_and_revision(client, two):
     a, _ = two
-    assert get(client, a, "Fig1.pdf") == {"draft": None, "pendings": []}
+    got = get(client, a, "Fig1.pdf")
+    assert got["draft"] is None and got["pendings"] == []
     r1 = put(client, a, "Fig1.pdf", "第一版").get_json()
     r2 = put(client, a, "Fig1.pdf", "第二版").get_json()  # 全文覆盖，最后写入为准
     assert r2["revision"] == r1["revision"] + 1
@@ -134,25 +135,87 @@ def test_pending_ledger_is_per_rid_and_accept_deletes_draft_only_if_text_unchang
         f"/api/ai/drafts/pending/{RID2}", query_string={"file": "F"}, headers=H(a)
     ).get_json() == {"cleared": True}
     assert [p["rid"] for p in get(client, a, "F")["pendings"]] == [RID]
-    # 草稿文本在这期间被另一个标签页改了：A 被接受只清账本、保留新稿
-    put(client, a, "F", "另一个标签页写的新稿")
+    # 提交时记下草稿的写入戳；之后另一个标签页改了草稿（戳变了）：A 被接受只清账本、保留新稿
+    r = put_s(client, a, "F", "提交时的草稿", 10_000)
+    client.put(
+        f"/api/ai/drafts/pending/{RID}",
+        json={"file": "F", "text": "提交时的草稿", "sent": SENT, "draft_stamp": r["stamp"]},
+        headers=H(a),
+    )
+    put_s(client, a, "F", "另一个标签页写的新稿", 20_000)
     acc = client.post(
         f"/api/ai/drafts/pending/{RID}/accept", json={"file": "F"}, headers=H(a)
     ).get_json()
     assert acc == {"cleared": True, "draft_deleted": False}
     assert get(client, a, "F")["draft"]["text"] == "另一个标签页写的新稿"
-    # 对照：文本没动 → 一并删
-    put(client, a, "F", "同一句话")
+    # 对照：草稿自提交后没被改过（戳没变）→ 一并删
+    r = put_s(client, a, "F", "同一句话", 30_000)
     client.put(
         f"/api/ai/drafts/pending/{RID}",
-        json={"file": "F", "text": "同一句话", "sent": SENT},
+        json={"file": "F", "text": "同一句话", "sent": SENT, "draft_stamp": r["stamp"]},
         headers=H(a),
     )
     acc = client.post(
         f"/api/ai/drafts/pending/{RID}/accept", json={"file": "F"}, headers=H(a)
     ).get_json()
     assert acc == {"cleared": True, "draft_deleted": True}
-    assert get(client, a, "F") == {"draft": None, "pendings": []}
+    final = get(client, a, "F")
+    assert final["draft"] is None and final["pendings"] == []
+
+
+def test_accept_compares_the_draft_stamp_not_the_text(client, two):
+    """账本里是 trim 过的提交文本、草稿是原样（前后带空白 / 换行）：按文本比永远对不上，已被接受的指令会留在输入框里。
+    按草稿戳比：草稿自提交后没被改过 → 删，不管文本差异。"""
+    a, _ = two
+    r = put_s(client, a, "F", "  把线条加粗一点\n", 10_000)  # 草稿原样
+    client.put(
+        f"/api/ai/drafts/pending/{RID}",
+        json={
+            "file": "F",
+            "text": "把线条加粗一点",
+            "sent": SENT,
+            "draft_stamp": r["stamp"],
+        },  # 提交文本 trim 过
+        headers=H(a),
+    )
+    acc = client.post(
+        f"/api/ai/drafts/pending/{RID}/accept", json={"file": "F"}, headers=H(a)
+    ).get_json()
+    assert acc == {"cleared": True, "draft_deleted": True}
+    assert get(client, a, "F")["draft"] is None
+
+
+def test_accept_without_a_recorded_draft_stamp_leaves_the_draft_alone(client, two):
+    """账本没记戳 = 不知道草稿此刻是不是提交时那一份：只清账本，不动草稿。"""
+    a, _ = two
+    put_s(client, a, "F", "不知道是不是同一份", 10_000)
+    client.put(
+        f"/api/ai/drafts/pending/{RID}", json={"file": "F", "text": "x", "sent": SENT}, headers=H(a)
+    )
+    acc = client.post(
+        f"/api/ai/drafts/pending/{RID}/accept", json={"file": "F"}, headers=H(a)
+    ).get_json()
+    assert acc == {"cleared": True, "draft_deleted": False}
+    assert get(client, a, "F")["draft"]["text"] == "不知道是不是同一份"
+    assert (
+        client.put(
+            f"/api/ai/drafts/pending/{RID}",
+            json={"file": "F", "text": "x", "sent": SENT, "draft_stamp": -1},
+            headers=H(a),
+        ).status_code
+        == 400
+    )
+
+
+def test_get_reports_the_row_stamp_even_for_a_tombstone(client, two):
+    """读回的 stamp 让客户端抬高自己的戳下限（墙钟回拨 / 新开页面从 0 起步也不会被判 stale）；墓碑也带。"""
+    a, _ = two
+    assert get(client, a, "F")["stamp"] == 0
+    put_s(client, a, "F", "稿", 7_000)
+    assert get(client, a, "F")["stamp"] == 7_000 and get(client, a, "F")["draft"]["stamp"] == 7_000
+    put_s(client, a, "F", "", 8_000)  # 清空 = 墓碑
+    g = get(client, a, "F")
+    assert g["draft"] is None and g["stamp"] == 8_000
 
 
 def test_pending_cap_per_file_and_rid_validation(client, two):
@@ -255,7 +318,7 @@ def test_tables_hold_only_the_documented_columns():
         d = [r[1] for r in raw.execute("PRAGMA table_info(ai_drafts)")]
         p = [r[1] for r in raw.execute("PRAGMA table_info(ai_pending)")]
     assert d == ["project", "file_id", "text", "revision", "updated_ms", "stamp"]
-    assert p == ["project", "file_id", "rid", "text", "sent", "script", "created_ms"]
+    assert p == ["project", "file_id", "rid", "text", "sent", "script", "draft_stamp", "created_ms"]
 
 
 def test_pendings_are_listed_by_project_across_panels_with_their_script(client, two):
@@ -354,10 +417,10 @@ def test_server_side_deletes_advance_the_stamp_so_earlier_writes_are_rejected(cl
     """条件删除 / accept 清掉草稿后，在那之前发出的旧写入（戳更小）随后落地也被拒。"""
     a, _ = two
     now_stamp = ai_history._now_stamp()
-    put_s(client, a, "F", "已被接受的话", now_stamp - 5_000_000)
+    r = put_s(client, a, "F", "已被接受的话", now_stamp - 5_000_000)
     client.put(
         f"/api/ai/drafts/pending/{RID}",
-        json={"file": "F", "text": "已被接受的话", "sent": SENT},
+        json={"file": "F", "text": "已被接受的话", "sent": SENT, "draft_stamp": r["stamp"]},
         headers=H(a),
     )
     acc = client.post(

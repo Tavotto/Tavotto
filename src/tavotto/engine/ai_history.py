@@ -68,6 +68,7 @@ CREATE TABLE IF NOT EXISTS ai_pending (
   text TEXT NOT NULL,
   sent TEXT NOT NULL,
   script TEXT,
+  draft_stamp INTEGER,
   created_ms INTEGER NOT NULL,
   PRIMARY KEY (project, file_id, rid)
 );
@@ -132,8 +133,12 @@ def _migrate(con: sqlite3.Connection) -> None:
     if "stamp" not in {row["name"] for row in con.execute("PRAGMA table_info(ai_drafts)")}:
         con.execute("ALTER TABLE ai_drafts ADD COLUMN stamp INTEGER NOT NULL DEFAULT 0")
     # 待确认账本按**脚本**也要查得到（发起它的面板可能已被删 / 换图）：`script` 是后补的列
-    if "script" not in {row["name"] for row in con.execute("PRAGMA table_info(ai_pending)")}:
+    pend_cols = {row["name"] for row in con.execute("PRAGMA table_info(ai_pending)")}
+    if "script" not in pend_cols:
         con.execute("ALTER TABLE ai_pending ADD COLUMN script TEXT")
+    # 提交时草稿的写入戳：确认之后「草稿在提交之后没被改过」按它判，不按文本比（trim / 规范化的差异无关）
+    if "draft_stamp" not in pend_cols:
+        con.execute("ALTER TABLE ai_pending ADD COLUMN draft_stamp INTEGER")
     # 老库 / 本改动之前登记的会话：账本补齐（幂等）
     con.execute(
         "INSERT OR IGNORE INTO ai_requests (project, client_request_id, session, created_ms) "
@@ -364,7 +369,7 @@ def get_draft(project: str, file_id: str, db_path: Path | None = None) -> dict:
     """`{draft: {text, revision, updated_ms} | None, pendings: [{rid, text, sent, created_ms}]}`（老 → 新）。"""
     with _connect(db_path) as con:
         row = con.execute(
-            "SELECT text, revision, updated_ms FROM ai_drafts WHERE project=? AND file_id=? AND text != ''",
+            "SELECT text, revision, updated_ms, stamp FROM ai_drafts WHERE project=? AND file_id=?",
             (project, file_id),
         ).fetchone()
         pend = con.execute(
@@ -381,7 +386,10 @@ def get_draft(project: str, file_id: str, db_path: Path | None = None) -> dict:
         pendings.append(
             {"rid": r["rid"], "text": r["text"], "sent": sent, "created_ms": r["created_ms"]}
         )
-    return {"draft": dict(row) if row else None, "pendings": pendings}
+    # `stamp`：这一行（含墓碑）的写入戳——客户端读到就抬高自己的戳下限，之后发出的写入一定比它新
+    # （墙钟回拨、新开页面时本页戳从 0 起步也不会被判 stale）
+    draft = dict(row) if row and row["text"] != "" else None
+    return {"draft": draft, "pendings": pendings, "stamp": row["stamp"] if row else 0}
 
 
 def _now_stamp() -> int:
@@ -477,16 +485,29 @@ def put_pending(
     sent: dict,
     db_path: Path | None = None,
     script: str | None = None,
+    draft_stamp: int | None = None,
 ) -> None:
-    """记一条待确认提交（按 rid 一条）。每 (项目, 面板) 最多 8 条，超出丢最老的。"""
+    """记一条待确认提交（按 rid 一条）。每 (项目, 面板) 最多 8 条，超出丢最老的。
+
+    `draft_stamp`：提交那一刻草稿的写入戳（前端发送前先把草稿写成功、拿到它）。`accept_pending` 据此判
+    「草稿在提交之后有没有被改过」；没有（None）= 不知道，确认时不动草稿。"""
     if len(text.encode("utf-8")) > PENDING_MAX_BYTES:
         raise DraftTooLarge(PENDING_MAX_BYTES)
     now = _now_ms()
     with _connect(db_path) as con:
         con.execute(
-            "INSERT OR REPLACE INTO ai_pending (project, file_id, rid, text, sent, script, created_ms) "
-            "VALUES (?,?,?,?,?,?,?)",
-            (project, file_id, rid, text, json.dumps(sent, ensure_ascii=False), script, now),
+            "INSERT OR REPLACE INTO ai_pending (project, file_id, rid, text, sent, script, draft_stamp, created_ms) "
+            "VALUES (?,?,?,?,?,?,?,?)",
+            (
+                project,
+                file_id,
+                rid,
+                text,
+                json.dumps(sent, ensure_ascii=False),
+                script,
+                draft_stamp,
+                now,
+            ),
         )
         con.execute(
             "DELETE FROM ai_pending WHERE project=? AND file_id=? AND rid NOT IN "
@@ -509,11 +530,12 @@ def clear_pending(project: str, file_id: str, rid: str, db_path: Path | None = N
 
 
 def accept_pending(project: str, file_id: str, rid: str, db_path: Path | None = None) -> dict:
-    """请求已被后端接受：清这条账本；草稿文本**仍等于提交时的原文**才一并删（一个事务里判与删）。
-    返回 `{cleared, draft_deleted}`。"""
+    """请求已被后端接受：清这条账本；**草稿自提交之后没被改过**（草稿当前的写入戳等于提交时记下的 `draft_stamp`）
+    才一并删（一个事务里判与删）。**不比文本**：提交文本是 trim 过的、草稿是原样，文本比较会让已被接受的指令
+    留在输入框里再被发一次。账本没记戳 = 不知道，不动草稿。返回 `{cleared, draft_deleted}`。"""
     with _connect(db_path) as con:
         pend = con.execute(
-            "SELECT text FROM ai_pending WHERE project=? AND file_id=? AND rid=?",
+            "SELECT draft_stamp FROM ai_pending WHERE project=? AND file_id=? AND rid=?",
             (project, file_id, rid),
         ).fetchone()
         if pend is None:
@@ -522,9 +544,11 @@ def accept_pending(project: str, file_id: str, rid: str, db_path: Path | None = 
             "DELETE FROM ai_pending WHERE project=? AND file_id=? AND rid=?",
             (project, file_id, rid),
         )
-        n = con.execute(
-            "UPDATE ai_drafts SET text='', revision=revision+1, updated_ms=?, stamp=MAX(stamp+1, ?) "
-            "WHERE project=? AND file_id=? AND text=? AND text != ''",
-            (_now_ms(), _now_stamp(), project, file_id, pend["text"]),
-        ).rowcount
+        n = 0
+        if pend["draft_stamp"] is not None:
+            n = con.execute(
+                "UPDATE ai_drafts SET text='', revision=revision+1, updated_ms=?, stamp=MAX(stamp+1, ?) "
+                "WHERE project=? AND file_id=? AND stamp=? AND text != ''",
+                (_now_ms(), _now_stamp(), project, file_id, pend["draft_stamp"]),
+            ).rowcount
     return {"cleared": True, "draft_deleted": n > 0}

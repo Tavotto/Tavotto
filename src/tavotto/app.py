@@ -9411,6 +9411,11 @@ def api_ai_pending_put(rid):
     body = request.get_json(force=True) or {}
     text, sent = body.get("text"), body.get("sent")
     script = body.get("script")
+    draft_stamp = body.get("draft_stamp")
+    if draft_stamp is not None and (
+        isinstance(draft_stamp, bool) or not isinstance(draft_stamp, int) or draft_stamp < 0
+    ):
+        abort(400)
     if not isinstance(text, str) or not isinstance(sent, dict):
         abort(400)
     if script is not None and (
@@ -9420,7 +9425,13 @@ def api_ai_pending_put(rid):
     project = str(require_project().resolve())
     try:
         engine_ai_history.put_pending(
-            project, _draft_file_id(body.get("file")), rid, text, sent, script=script
+            project,
+            _draft_file_id(body.get("file")),
+            rid,
+            text,
+            sent,
+            script=script,
+            draft_stamp=draft_stamp,
         )
     except engine_ai_history.DraftTooLarge as exc:
         return _draft_too_large(exc)
