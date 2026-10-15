@@ -35,10 +35,11 @@ import { useFlip } from '@/lib/motion'
 import { renameObject, reorderObject, toggleHidden, toggleLocked } from '@/store/actions'
 import { useDocumentStore } from '@/store/documentStore'
 import { useSelectionStore } from '@/store/selectionStore'
+import { useUiStore } from '@/store/uiStore'
 import { objectLabel, type CanvasObject, type LayoutGroup } from '@/types/document'
 import { layoutKindLabel } from '@/store/actions'
 import { Badge } from '../ui/Badge'
-import { EmptyState } from '../ui/EmptyState'
+import { EmptyLine } from '../ui/EmptyLine'
 import { MenuItem, MenuSeparator } from '../ui/Menu'
 import { RowMenu } from '../ui/RowMenu'
 import { useRowMenu } from '../ui/useRowMenu'
@@ -116,7 +117,13 @@ export function LayerTree() {
 
   // 轻量占位：起步的那个主要行动（「添加图」）只在画布中央出现一次（审计 T03），
   // 侧栏不再各配一颗按钮
-  if (!zOrder.length) return <EmptyState icon={Layers} title={lt('emptyTitle')} />
+  if (!zOrder.length) {
+    return (
+      <EmptyLine action={{ label: lt('emptyAction'), onClick: () => useUiStore.getState().setLeftTab('assets') }}>
+        {lt('emptyTitle')}
+      </EmptyLine>
+    )
+  }
 
   // 成组的对象折进组标题下（在最上层成员的位置出现一次）。树的语义（2026-10-07 设计审计 §10.3：
   // listbox → tree）：顶层是对象与组标题，组成员是第二层；每行报自己在同层里的位置与个数

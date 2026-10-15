@@ -12,7 +12,6 @@ import {
   Lock,
   LockOpen,
   Ruler,
-  SearchX,
   Shapes,
   TriangleAlert,
   Type,
@@ -22,7 +21,6 @@ import {
 import { structuralParent } from '@/components/inspector/roles/hierarchy'
 import { roleIcon } from '@/components/inspector/roles/roleIcons'
 import { ICON_SIZE } from '@/components/ui/Icon'
-import { EditableFigureIcon } from '@/components/ui/semanticIcons'
 import type { Manifest, ManifestElement, ManifestGroup } from '@/lib/api'
 import { isElementHidden } from '@/canvas/interactions'
 import { cn, isMac } from '@/lib/utils'
@@ -47,7 +45,7 @@ import type { PanelObject } from '@/types/document'
 import { untruncatedLabel } from '../inspector/identityCrumbs'
 import { engineLabel, groupName, roleName, unsupportedOf } from '../inspector/roles/registry'
 import { IconButton } from '../ui/Button'
-import { EmptyState } from '../ui/EmptyState'
+import { EmptyLine } from '../ui/EmptyLine'
 import { BackgroundChoice } from '../inspector/ElementInspector'
 import { MenuItem } from '../ui/Menu'
 import { RowMenu } from '../ui/RowMenu'
@@ -287,24 +285,24 @@ export function ElementTree({ chrome = 'drawer' }: { chrome?: 'drawer' | 'bare' 
     const editable = objects.filter((o): o is PanelObject => o.type === 'panel' && !!o.script)
     if (editable.length === 0) {
       return (
-        <EmptyState
-          icon={EditableFigureIcon}
-          title={et('noEditableTitle')}
-          hint={et('noEditableHint')}
+        <EmptyLine
+          title={et('noEditableHint')}
           action={{ label: et('openAssets'), onClick: () => useUiStore.getState().setLeftTab('assets') }}
-        />
+        >
+          {et('noEditableTitle')}
+        </EmptyLine>
       )
     }
     return (
-      <EmptyState
-        icon={EditableFigureIcon}
-        title={et('noPanelTitle')}
+      <EmptyLine
         action={{
           label: et('locateEditable'),
           // 选中即够：这棵树的目标面板就是「选中的那张可编辑的图」，不必先进编辑态
           onClick: () => useSelectionStore.getState().set([editable[0].id]),
         }}
-      />
+      >
+        {et('noPanelTitle')}
+      </EmptyLine>
     )
   }
 
@@ -312,7 +310,7 @@ export function ElementTree({ chrome = 'drawer' }: { chrome?: 'drawer' | 'bare' 
     return <BackgroundChoice key={`${panel.id} ${renderKeyOf(panel)}`} panel={panel} />
   }
 
-  // 「需要渲染一次」也是一种空态：全站只有 EmptyState 一种形态（宪法第五节；左栏审计 L34）。
+  // 「需要渲染一次」也是一种空态：抽屉里的空态只有 `EmptyLine` 一种形态（列表顶部一行灰字 + 一个文字动作，UI 2.0 第二轮 09）。
   // 渲染中把动作换成一句现状
   if (!manifest) {
     return <UnbuiltTree panel={panel} rendering={rendering} />
@@ -324,13 +322,15 @@ export function ElementTree({ chrome = 'drawer' }: { chrome?: 'drawer' | 'bare' 
 /** 计时只更新空态叶子；已经有元素的树不订阅进度或每秒重画。 */
 function UnbuiltTree({ panel, rendering }: { panel: PanelObject; rendering: boolean }) {
   const progress = useRenderProgress(panel.fileId, rendering, et('building'))
-  return <EmptyState
-    data-render-progress={progress.active ? progress.phase : undefined}
-    icon={EditableFigureIcon}
-    title={et('needRender', { name: panel.name ?? panel.fileId })}
-    hint={progress.active ? progress.text : undefined}
-    action={progress.active ? undefined : { label: et('load'), onClick: () => enterElementEdit(panel.id) }}
-  />
+  return (
+    <EmptyLine
+      data-render-progress={progress.active ? progress.phase : undefined}
+      action={progress.active ? undefined : { label: et('load'), onClick: () => enterElementEdit(panel.id) }}
+    >
+      {et('needRender', { name: panel.name ?? panel.fileId })}
+      {progress.active && ` ${progress.text}`}
+    </EmptyLine>
+  )
 }
 
 function TreeView({
@@ -345,6 +345,10 @@ function TreeView({
   useTranslation('workspace')
   const selectedGids = useUiStore((s) => s.selectedGids)
   const [query, setQuery] = useState('')
+  // 条目少于 6 个时不显示搜索框（UI 2.0 第二轮 09）；输入过就一直留着，免得删到空的那一下框自己消失
+  const [searched, setSearched] = useState(false)
+  if (query !== '' && !searched) setSearched(true)
+  const showSearch = manifest.elements.length >= 6 || query !== '' || searched
   const [isolated, setIsolated] = useState<string | null>(null)
   const [open, setOpen] = useState<Record<string, boolean>>({})
   const listRef = useRef<HTMLUListElement>(null)
@@ -600,7 +604,9 @@ function TreeView({
     <div className="flex min-h-0 flex-1 flex-col">
       {/* 搜索框下留白与素材页 / 画布页同一档 8px（左栏审计 L36）。「只看这一支」是搜索行里的一枚 chip，
           不再是搜索框下面另起的一条横幅（2026-10-07 设计审计 §10.3）：它与搜索一样是「看哪些行」的筛选 */}
+      {(showSearch || isolated) && (
       <div className={cn('flex shrink-0 items-center gap-1.5', chrome === 'bare' ? 'p-2' : 'px-3 pb-2')}>
+        {showSearch && (
         <SearchInput
           value={query}
           onValueChange={setQuery}
@@ -613,6 +619,7 @@ function TreeView({
           placeholder={et('search')}
           aria-label={et('searchAria')}
         />
+        )}
         {isolated && (
           <span
             data-element-isolate
@@ -626,6 +633,7 @@ function TreeView({
           </span>
         )}
       </div>
+      )}
 
       <ul
         ref={listRef}
@@ -637,7 +645,7 @@ function TreeView({
       >
         {rows.length === 0 && (
           <li>
-            <EmptyState icon={SearchX} title={et('noMatch')} />
+            <EmptyLine>{et('noMatch')}</EmptyLine>
           </li>
         )}
         {renderTree(0, 0).out}

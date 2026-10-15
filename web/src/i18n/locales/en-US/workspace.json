@@ -361,6 +361,7 @@
   },
   "layerTree": {
     "collapseGroup": "Collapse group",
+    "emptyAction": "Add from assets",
     "emptyTitle": "No objects on the canvas yet",
     "expandGroup": "Expand group",
     "groupAriaWithLayout_one": "Group ({{count}} object), {{layout}}",

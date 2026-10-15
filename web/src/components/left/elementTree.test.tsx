@@ -432,3 +432,64 @@ describe('树的语义、行菜单与「只看这一支」（2026-10-07 设计�
     expect(rowGids()).toContain('axes_0.xlabel')
   })
 })
+
+describe('空态与搜索框（UI 2.0 第二轮 09）', () => {
+  const emptyLine = () => host.querySelector<HTMLElement>('[data-empty-line]')
+
+  it('条目少于 6 个：不显示搜索框；够 6 个：显示', async () => {
+    seedExactRender(panel, { ...manifest, elements: manifest.elements.slice(0, 3) } as never)
+    await mount()
+    expect(host.querySelector('[data-tree="elements"]')).not.toBeNull()
+    expect(search()).toBeNull()
+    await act(async () => root.unmount())
+    host.remove()
+    seedExactRender(panel, manifest as never)
+    await mount()
+    expect(search()).not.toBeNull()
+  })
+
+  it('搜索词在就保留搜索框；输入过之后删空也不消失', async () => {
+    await mount()
+    await type('曲线')
+    expect(search().value).toBe('曲线')
+    await type('')
+    expect(search()).not.toBeNull()
+  })
+
+  it('画布上没有可编辑的图：列表顶部一行灰字 + 一个文字动作，没有大图标与标题；动作打开素材', async () => {
+    await act(async () => {
+      useDocumentStore.getState().commit(literal('去掉脚本'), (d) => {
+        d.objects = [{ ...panel, script: undefined } as unknown as CanvasObject]
+      })
+    })
+    useUiStore.getState().setElementPanel(null)
+    useSelectionStore.getState().set([])
+    await mount()
+    const line = emptyLine()!
+    expect(line.textContent).toContain(t('elementTree.noEditableTitle', { ns: 'workspace' }))
+    expect(host.querySelector('[data-empty-state]')).toBeNull()
+    expect(line.querySelector('svg')).toBeNull()
+    const btn = line.querySelector('button')!
+    expect(btn.textContent).toBe(t('elementTree.openAssets', { ns: 'workspace' }))
+    useUiStore.getState().setLeftTab('elements')
+    await act(async () => btn.click())
+    expect(useUiStore.getState().leftTab).toBe('assets')
+  })
+
+  it('有可编辑的图但没选中：一行灰字 + 「选中一张可编辑的图」', async () => {
+    useUiStore.getState().setElementPanel(null)
+    useSelectionStore.getState().set([])
+    await mount()
+    const line = emptyLine()!
+    expect(line.textContent).toContain(t('elementTree.noPanelTitle', { ns: 'workspace' }))
+    await act(async () => line.querySelector('button')!.click())
+    expect(useSelectionStore.getState().ids).toEqual(['p1'])
+  })
+
+  it('搜索无结果：一行灰字，不是大图标空态', async () => {
+    await mount()
+    await type('绝对不存在的名字zzz')
+    expect(emptyLine()!.textContent).toBe(t('elementTree.noMatch', { ns: 'workspace' }))
+    expect(host.querySelector('[data-empty-state]')).toBeNull()
+  })
+})

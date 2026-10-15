@@ -4959,6 +4959,7 @@ export default interface Resources {
       "count_other": "{{count}} 个对象",
       "editableBadge": "可编辑",
       "editableState": "可编辑",
+      "emptyAction": "从素材添加",
       "emptyTitle": "画布上还没有对象",
       "expandGroup": "展开组",
       "groupAriaWithLayout_other": "组（{{count}} 个对象），{{layout}}",
