@@ -29,7 +29,7 @@ function Label({ text, selected, editing = false }: { text: string; selected: bo
 const ro = {
   instances: 0,
   observed: new Set<Element>(),
-  fire: (el: Element) => {},
+  fire: (_el: Element) => {},
 }
 globalThis.ResizeObserver = class {
   cb: (entries: { target: Element }[]) => void
