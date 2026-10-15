@@ -836,7 +836,9 @@ async function doRestore(): Promise<void> {
     // 仍在运行的）。`limit` 只是给不认这个约定的老后端的兜底。
     let list: AiHistoryEntry[]
     try {
-      const res = await fetchAiHistory({ status: 'running', limit: 100 }, pj)
+      // `open` = 还没结束：running，或已取消但后端 `_pump` 还没收尾（status 是 cancelled、ended_ms 为空）——后者没有占位、没有轮询，
+      // 之后到的 `ai.done` 会被丢掉
+      const res = await fetchAiHistory({ status: 'open', limit: 100 }, pj)
       if (!Array.isArray(res?.sessions)) return
       list = res.sessions
     } catch {
@@ -846,7 +848,7 @@ async function doRestore(): Promise<void> {
     if (born !== get().generation || pj !== currentProjectId()) return
     const caps = get().caps
     for (const e of list) {
-      if (e.status !== 'running') continue
+      if (e.status !== 'running' && e.status !== 'cancelled') continue
       if (get().sessions.some((x) => x.id === e.id)) continue
       const session: AiSession = {
         id: e.id,
@@ -861,7 +863,7 @@ async function doRestore(): Promise<void> {
         scope: (['element', 'axes', 'figure'].includes(e.scope ?? '') ? e.scope : 'figure') as AiScope,
         target: e.target ?? '',
         entries: [],
-        status: 'running',
+        status: e.status === 'cancelled' ? 'cancelled' : 'running',
         changed: false,
         diff: '',
         startedAt: e.started_ms,

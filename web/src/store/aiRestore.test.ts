@@ -20,7 +20,7 @@ const row = (over: Row = {}): Row => ({
   error: null, started_ms: 1000, ended_ms: null, pinned: false, revert_available: true, transcript: [],
   ...over,
 })
-let history: Record<string, Row[]> = {} // pj → 运行中清单
+let history: Record<string, Row[]> = {} // pj → 「还没结束」清单（running + 已取消未收尾）
 let requestsDown = false // `GET /api/ai/requests/<rid>` 回 500（读不到）
 let requestsDb: Record<string, Row> = {} // rid → `GET /api/ai/requests/<rid>` 的回答（没有 = 后端没登记过）
 let holds: Record<string, Promise<void>> = {} // pj → 扣住该项目的历史请求（「恢复在途」）
@@ -35,7 +35,7 @@ globalThis.fetch = (async (url: unknown, init?: RequestInit) => {
   urls.push(u)
   const pj = ((init?.headers ?? {}) as Record<string, string>)['X-Tavotto-Project'] ?? new URL(u, 'http://x').searchParams.get('pj') ?? ''
   if (u.includes('/api/ai/history')) {
-    expect(u).toContain('status=running')
+    expect(u).toContain('status=open') // 还没结束的：running + 已取消但后端还没收尾
     historyCalls.push(pj)
     const gate = holds[pj] as Promise<void> | undefined
     if (gate) await gate
@@ -660,6 +660,29 @@ describe('错过 ai.done 这一族的结构性兜底：建完占位一律读详�
     open()
     await Promise.all([a, b])
     expect(detailReads() - before).toBe(1)
+  })
+})
+
+describe('取消后刷新：cancelled 且后端还没收尾的会话也要恢复（#1111 Codex P2 r4289299050）', () => {
+  afterEach(() => vi.useRealTimers())
+
+  it('用户先取消再刷新，_pump 还没写完最终结果（历史行 cancelled、ended_ms 为空）：恢复出占位，轮询到 final 后收尾并带上 diff', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })
+    history.pa = [row({ status: 'cancelled', ended_ms: null })]
+    detail['s-run'] = { agent: 'codex', status: 'cancelled', final: false, changed: false, diff: '', transcript: [] }
+    await useAiStore.getState().restoreRunning()
+    expect(sessions()).toHaveLength(1) // 对照：只查 running 时这里是空的，没有占位、没有轮询
+    expect(sessions()[0]).toMatchObject({ id: 's-run', status: 'cancelled', restored: true })
+    expect(sessions()[0].finalized).toBeFalsy()
+    detail['s-run'] = { agent: 'codex', status: 'cancelled', final: true, changed: true, diff: 'LATE-DIFF', transcript: [] }
+    await vi.advanceTimersByTimeAsync(SAFETY_NET_MS + 100)
+    await vi.waitFor(() => expect(sessions()[0]).toMatchObject({ status: 'cancelled', finalized: true, changed: true, diff: 'LATE-DIFF' }))
+  })
+
+  it('历史里已收尾的 cancelled（ended_ms 已写）不在「还没结束」清单里：后端过滤，前端也不会把非 running/cancelled 的行恢复成占位', async () => {
+    history.pa = [row({ status: 'done', ended_ms: 5 })]
+    await useAiStore.getState().restoreRunning()
+    expect(sessions()).toEqual([])
   })
 })
 

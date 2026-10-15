@@ -430,7 +430,11 @@ def list_sessions(
     if query:
         where.append("(prompt LIKE ? OR target LIKE ?)")
         args += [f"%{query}%", f"%{query}%"]
-    if status:
+    if status == "open":
+        # 「还没结束」：running，或已取消但 `_pump` 还没收尾（`cancel` 只改 status、不写 ended_ms，此时 changed / diff / refresh
+        # 还没算出来）。恢复占位要的是这一集合，只查 running 会漏掉后者——它没有占位、没有轮询，之后到的 `ai.done` 被丢掉
+        where.append("(status = 'running' OR (status = 'cancelled' AND ended_ms IS NULL))")
+    elif status:
         where.append("status = ?")
         args.append(status)
     if pinned_only:

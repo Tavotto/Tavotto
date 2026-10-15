@@ -856,3 +856,36 @@ def test_history_other_queries_keep_paging(client, two, tmp_path):
     # 带搜索词的 running 查询仍是分页（那是用户在翻历史，不是恢复）
     searched = _history(client, a, status="running", q="p", limit=3)
     assert len(searched["sessions"]) == 3 and searched["total"] == 4
+
+
+def test_history_open_is_running_plus_cancelled_without_ended_ms(client, two, tmp_path):
+    """`status=open`：还没结束的——running，或已取消但 `_pump` 还没收尾（status=cancelled、ended_ms 为空）。恢复占位要这一集合。"""
+    a, _ = two
+    project = str((tmp_path / "a").resolve())
+
+    def start(sid):
+        ai_history.record_start(
+            {
+                "id": sid,
+                "project": project,
+                "provider": "codex",
+                "prompt": sid,
+                "script": f"{sid}.py",
+            }
+        )
+
+    start("run-1")
+    start("cancel-unended")
+    ai_history.update_status("cancel-unended", "cancelled")  # cancel 只改 status
+    start("cancel-ended")
+    ai_history.update_status("cancel-ended", "cancelled")
+    ai_history.record_end("cancel-ended", "cancelled")  # pump 已收尾：写了 ended_ms
+    start("done-1")
+    ai_history.record_end("done-1", "done")
+    got = _history(
+        client, a, status="open", limit=1, offset=5
+    )  # 同 running：一次取全，忽略翻页参数
+    assert {r["id"] for r in got["sessions"]} == {"run-1", "cancel-unended"}
+    assert got["total"] == 2 and got["truncated"] is False
+    # 对照：status=running 仍然只有 running
+    assert {r["id"] for r in _history(client, a, status="running")["sessions"]} == {"run-1"}
