@@ -863,6 +863,8 @@ def test_a_rejected_run_deletes_its_pending_row_for_every_kind_of_rejection(
     assert r.status_code == 400
     assert rid2 not in _pending_rids(client)
     # 3) 成功的请求不删（只有 accept 删）
+    _wait_idle()
+    state["delay"] = 0.1
     rid3 = "rid-okreq-00000001"
     put_pending(rid3)
     assert _post(client, rid=rid3).status_code == 200
