@@ -4,13 +4,13 @@
 //! `#[cfg(test)]` 的项 / 模块），用 `syn` 解析成 AST。**不做 `use` 别名 / 作用域解析**
 //! （同一文件里不同作用域可以把同一个名字绑到不同东西，解析永远有漏）——改从结构上消掉问题面：
 //!
-//! - `use` 树里出现 `std` / `core` 的 `process` 段、或导入 `exit` / `restart` / `updater_builder` 的，
-//!   一律算一次 hit（`use process`，每条 `use` 至多一次）；别名、glob、`self as p` 都过不了这一关；
+//! - `use` 树按**叶子**逐个判：路径在 `std` / `core` 下含 `process` 段、或导入 `exit` / `restart` / `updater_builder` 的叶子，
+//!   各算一次 hit，写法带原名与别名（如 `use std::process::exit as quit`）；别名、glob、`self as p` 都过不了这一关；
 //! - 任何末段是 `exit` 的路径（不论前缀）、末段是 `restart` 的路径、带前缀的 `updater_builder` 路径，
 //!   以及 `.exit()` / `.restart()` / `.updater_builder()` 方法调用，都算 hit；
 //! - 宏体 syn 不解析：遍历 TokenTree，跳过 Literal、递归进 Group，只看 Ident。
 //!
-//! 只数 AST 节点，注释与字符串字面量不会误报。允许名单只列确实存在的那几处，且每一项都必须真的命中。
+//! 只数 AST 节点，注释与字符串字面量不会误报。允许名单列到具体叶子，与实际命中按**多重集**精确相等：多一项、少一项、计数不同都失败。
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -19,7 +19,7 @@ use proc_macro2::{TokenStream, TokenTree};
 use syn::visit::Visit;
 
 /// (文件相对 src 的路径, 外层函数名, 出口种类)
-pub type Hit = (String, String, &'static str);
+pub type Hit = (String, String, String);
 
 #[derive(Default)]
 struct Scan {
@@ -43,31 +43,60 @@ fn is_cfg_test(attrs: &[syn::Attribute]) -> bool {
     })
 }
 
-/// 这条 `use` 树里有没有 `std` / `core` 的 `process` 段，或导入了 `exit` / `restart` / `updater_builder`。
-fn use_is_suspect(tree: &syn::UseTree, path: &mut Vec<String>) -> bool {
-    let leaf_check = |path: &[String], leaf: &str| {
-        matches!(leaf, "exit" | "restart" | "updater_builder")
-            || (matches!(path.first().map(String::as_str), Some("std" | "core"))
-                && (path.iter().any(|s| s == "process") || leaf == "process"))
+/// 把 `use` 树展开成叶子：(完整路径含叶子, 展示写法)。`self` 叶子的路径就是父路径加 `self`。
+fn use_leaves(tree: &syn::UseTree, path: &mut Vec<String>, out: &mut Vec<(Vec<String>, String)>) {
+    let show = |full: &[String], rename: Option<String>| {
+        let base = full.join("::");
+        match rename {
+            Some(r) => format!("use {base} as {r}"),
+            None => format!("use {base}"),
+        }
     };
     match tree {
         syn::UseTree::Path(p) => {
             path.push(p.ident.to_string());
-            let r = use_is_suspect(&p.tree, path);
+            use_leaves(&p.tree, path, out);
             path.pop();
-            r
         }
-        syn::UseTree::Name(n) => leaf_check(path, &n.ident.to_string()),
-        syn::UseTree::Rename(r) => leaf_check(path, &r.ident.to_string()),
-        syn::UseTree::Glob(_) => leaf_check(path, "*"),
-        syn::UseTree::Group(g) => g.items.iter().any(|t| use_is_suspect(t, path)),
+        syn::UseTree::Name(n) => {
+            let mut full = path.clone();
+            full.push(n.ident.to_string());
+            let d = show(&full, None);
+            out.push((full, d));
+        }
+        syn::UseTree::Rename(r) => {
+            let mut full = path.clone();
+            full.push(r.ident.to_string());
+            let d = show(&full, Some(r.rename.to_string()));
+            out.push((full, d));
+        }
+        syn::UseTree::Glob(_) => {
+            let mut full = path.clone();
+            full.push("*".into());
+            let d = show(&full, None);
+            out.push((full, d));
+        }
+        syn::UseTree::Group(g) => {
+            for t in &g.items {
+                use_leaves(t, path, out);
+            }
+        }
     }
 }
 
+/// 叶子可疑：路径在 `std` / `core` 下且含 `process` 段，或导入的原名是 `exit` / `restart` / `updater_builder`。
+fn leaf_is_suspect(full: &[String]) -> bool {
+    matches!(
+        full.last().map(String::as_str),
+        Some("exit" | "restart" | "updater_builder")
+    ) || (matches!(full.first().map(String::as_str), Some("std" | "core"))
+        && full.iter().any(|s| s == "process"))
+}
+
 impl Scan {
-    fn hit(&mut self, kind: &'static str) {
+    fn hit(&mut self, kind: &str) {
         let f = self.fns.last().cloned().unwrap_or_default();
-        self.hits.push((self.file.clone(), f, kind));
+        self.hits.push((self.file.clone(), f, kind.to_string()));
     }
 
     /// 宏体 syn 不解析：遍历 TokenTree，跳过字面量，递归进分组，只看标识符。
@@ -107,8 +136,13 @@ impl<'ast> Visit<'ast> for Scan {
     }
 
     fn visit_item_use(&mut self, u: &'ast syn::ItemUse) {
-        if use_is_suspect(&u.tree, &mut Vec::new()) {
-            self.hit("use process");
+        // 逐叶子产生 hit，带叶子的原名与别名：允许名单精确到叶子，往放行的组里再塞一个 `exit as quit` 会多出一项
+        let mut leaves = Vec::new();
+        use_leaves(&u.tree, &mut Vec::new(), &mut leaves);
+        for (full, shown) in leaves {
+            if leaf_is_suspect(&full) {
+                self.hit(&shown);
+            }
         }
     }
 
@@ -213,39 +247,82 @@ pub fn production_hits() -> Vec<Hit> {
     hits
 }
 
-#[test]
-fn only_the_whitelisted_exit_functions_leave_the_process() {
-    let hits = production_hits();
-    // 允许名单：先写 clean 的出口函数本身（顺序由 main.rs 的结构测试另行钉住），
-    // 以及 sidecar.rs 为 spawn 子进程导入的 `std::process::{Child, ..}`（它不含 exit）
-    let allowed: [Hit; 6] = [
-        ("main.rs".into(), "e2e_exit".into(), "process::exit"),
-        (
-            "main.rs".into(),
-            "updater_builder".into(),
-            "updater_builder",
-        ),
-        (
-            "main.rs".into(),
-            "spawn_e2e_update_if_requested".into(),
-            "restart",
-        ),
-        ("sidecar.rs".into(), String::new(), "use process"),
-        // Windows 上给 Command 加 CREATE_NO_WINDOW 的 `std::os::windows::process::CommandExt`（不含 exit）
-        ("sidecar.rs".into(), "start".into(), "use process"),
-        ("main.rs".into(), "codex_integration".into(), "use process"),
-    ];
-    let rogue: Vec<_> = hits.iter().filter(|h| !allowed.contains(h)).collect();
-    assert!(
-        rogue.is_empty(),
-        "出现了不在允许名单里的退出路径（先 mark_clean 再加看护）: {rogue:?}"
-    );
-    for a in &allowed {
-        assert!(
-            hits.contains(a),
-            "允许名单里的 {a:?} 不见了：看护失效或出口已改道"
-        );
+/// 实际命中与允许名单的多重集差：(多出来的, 缺失的)。
+fn multiset_diff(actual: &[Hit], allowed: &[Hit]) -> (Vec<Hit>, Vec<Hit>) {
+    let mut rest: Vec<Hit> = allowed.to_vec();
+    let mut extra = Vec::new();
+    for h in actual {
+        match rest.iter().position(|a| a == h) {
+            Some(i) => {
+                rest.swap_remove(i);
+            }
+            None => extra.push(h.clone()),
+        }
     }
+    (extra, rest)
+}
+
+fn allowed_hits() -> Vec<Hit> {
+    let h = |f: &str, func: &str, k: &str| -> Hit { (f.into(), func.into(), k.into()) };
+    vec![
+        // 先写 clean 的出口函数本身（顺序由 main.rs 的结构测试另行钉住）
+        h("main.rs", "e2e_exit", "process::exit"),
+        h("main.rs", "updater_builder", "updater_builder"),
+        h("main.rs", "spawn_e2e_update_if_requested", "restart"),
+        // sidecar.rs 为 spawn 子进程导入的类型（不含 exit）
+        h("sidecar.rs", "", "use std::process::Child"),
+        h("sidecar.rs", "", "use std::process::ChildStdin"),
+        h("sidecar.rs", "", "use std::process::Command"),
+        h("sidecar.rs", "", "use std::process::Stdio"),
+        // Windows 上给 Command 加 CREATE_NO_WINDOW
+        h(
+            "sidecar.rs",
+            "start",
+            "use std::os::windows::process::CommandExt",
+        ),
+        h(
+            "main.rs",
+            "codex_integration",
+            "use std::os::windows::process::CommandExt",
+        ),
+    ]
+}
+
+#[test]
+fn production_exits_equal_the_whitelist_exactly() {
+    let (extra, missing) = multiset_diff(&production_hits(), &allowed_hits());
+    assert!(
+        extra.is_empty(),
+        "出现了不在允许名单里的退出路径（先 mark_clean 再加看护）: {extra:?}"
+    );
+    assert!(
+        missing.is_empty(),
+        "允许名单里的项没有命中（看护失效或出口已改道）: {missing:?}"
+    );
+}
+
+/// Codex #1070 r4280114950 之前一轮的样例：往已放行的 `std::process::{Child, ..}` 组里再加 `exit as quit` 并调用，
+/// 旧的 (文件, 函数, 类型) 粒度不变、测试仍绿；叶子粒度 + 多重集必须红。
+#[test]
+fn adding_exit_to_an_allowed_use_group_is_caught() {
+    let sneaky = "use std::process::{Child, ChildStdin, Command, Stdio, exit as quit};\n\
+                  fn start() { use std::os::windows::process::CommandExt; quit(1) }";
+    let hits = scan_source("sidecar.rs", sneaky);
+    let sidecar_allowed: Vec<Hit> = allowed_hits()
+        .into_iter()
+        .filter(|h| h.0 == "sidecar.rs")
+        .collect();
+    let (extra, _) = multiset_diff(&hits, &sidecar_allowed);
+    assert!(
+        extra
+            .iter()
+            .any(|h| h.2 == "use std::process::exit as quit"),
+        "漏报: {extra:?}"
+    );
+    // 同一叶子重复出现（计数不同）也不行
+    let doubled = [sidecar_allowed.clone(), vec![sidecar_allowed[0].clone()]].concat();
+    let (_, missing) = multiset_diff(&sidecar_allowed, &doubled);
+    assert_eq!(missing.len(), 1);
 }
 
 /// 每种写法单独一条：同一条里混两种写法，一个被认出就会掩盖另一个漏报。
@@ -253,8 +330,12 @@ macro_rules! catches {
     ($name:ident, $kind:expr, $src:expr) => {
         #[test]
         fn $name() {
-            let kinds: Vec<&str> = scan_source("x.rs", $src).into_iter().map(|h| h.2).collect();
-            assert!(kinds.contains(&$kind), "漏报: {}", $src);
+            let kinds: Vec<String> = scan_source("x.rs", $src).into_iter().map(|h| h.2).collect();
+            assert!(
+                kinds.iter().any(|k| k == $kind),
+                "漏报: {} -> {kinds:?}",
+                $src
+            );
         }
     };
 }
@@ -280,7 +361,7 @@ catches!(
 );
 catches!(
     use_module,
-    "use process",
+    "use std::process",
     "use std::process; fn f() { process::exit(1) }"
 );
 catches!(
@@ -290,12 +371,12 @@ catches!(
 );
 catches!(
     use_rename_exit,
-    "use process",
+    "use std::process::exit as quit",
     "use std::process::exit as quit; fn f() { quit(1) }"
 );
 catches!(
     use_glob,
-    "use process",
+    "use std::process::*",
     "use std::process::*; fn f() { exit(1) }"
 );
 catches!(
@@ -310,28 +391,32 @@ catches!(
 );
 catches!(
     use_self_as,
-    "use process",
+    "use std::process::self as p",
     "use std::process::{self as p}; fn f() { p::exit(1) }"
 );
 catches!(
     use_self,
-    "use process",
+    "use std::process::self",
     "use std::process::{self}; fn f() { process::exit(1) }"
 );
 catches!(
     use_nested_self_as,
-    "use process",
+    "use std::process::self as p",
     "use std::{process::{self as p}}; fn f() { p::exit(1) }"
 );
 catches!(
     use_group_exit,
-    "use process",
+    "use std::process::exit as q",
     "use std::process::{exit as q}; fn f() { q(2) }"
 );
-catches!(use_core, "use process", "use core::process; fn f() {}");
+catches!(
+    use_core,
+    "use core::process",
+    "use core::process; fn f() {}"
+);
 catches!(
     use_in_fn_body,
-    "use process",
+    "use std::process as p",
     "fn f() { use std::process as p; p::exit(1) }"
 );
 catches!(
@@ -354,7 +439,7 @@ catches!(
 catches!(method_restart, "restart", "fn f(h: H) { h.restart() }");
 catches!(
     use_restart,
-    "use process",
+    "use tauri::process::restart",
     "use tauri::process::restart; fn f() { restart(&e) }"
 );
 catches!(
@@ -385,7 +470,7 @@ catches!(
 );
 catches!(
     same_alias_two_scopes_use_second,
-    "use process",
+    "use std::process as p",
     "mod a { use other::p; pub fn f() { p::go(); } } mod b { use std::process as p; pub fn g() { p::exit(1) } }"
 );
 catches!(
