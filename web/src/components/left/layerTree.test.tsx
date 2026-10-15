@@ -361,4 +361,28 @@ describe('被拖行淡化（G11）', () => {
     await act(async () => rows()[0].dispatchEvent(ev('dragend')))
     expect(rows()[0].className).not.toMatch(/opacity-dragging/)
   })
+
+  it('选中项在折叠的组里：滚到组标题行', async () => {
+    const calls: string[] = []
+    const orig = Element.prototype.scrollIntoView
+    Element.prototype.scrollIntoView = function (this: Element) {
+      calls.push((this as HTMLElement).dataset.layer ?? '')
+    }
+    try {
+      await mount([
+        panel('p1', 'A'),
+        { ...panel('p2', 'B'), groupId: 'g1' } as CanvasObject,
+        { ...panel('p3', 'C'), groupId: 'g1' } as CanvasObject,
+      ])
+      // 先折叠组（点箭头），成员行不再渲染
+      const toggle = rows().find((r) => r.dataset.layer === 'g:g1')!.querySelector('button')!
+      await act(async () => toggle.click())
+      expect(rows().some((r) => r.dataset.layer === 'p2')).toBe(false)
+      calls.length = 0
+      await act(async () => useSelectionStore.getState().set(['p2']))
+      expect(calls.at(-1)).toBe('g:g1')
+    } finally {
+      Element.prototype.scrollIntoView = orig
+    }
+  })
 })

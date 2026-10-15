@@ -88,7 +88,12 @@ export function LayerTree() {
   useEffect(() => {
     const list = listRef.current
     if (!primaryId || !list || list.contains(document.activeElement)) return
-    list.querySelector(`[data-layer="${CSS.escape(primaryId)}"]`)?.scrollIntoView({ block: 'nearest' })
+    const at = (key: string) => list.querySelector(`[data-layer="${CSS.escape(key)}"]`)
+    // 选中项藏在折叠的组里（行没渲染）：滚到它最近的可见祖先——组标题行
+    const groupId = objects.find((o) => o.id === primaryId)?.groupId
+    const target = at(primaryId) ?? (groupId ? at(`g:${groupId}`) : null)
+    target?.scrollIntoView({ block: 'nearest' })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [primaryId, collapsed])
 
   // 顶层在最上面，与画布的视觉层级一致
