@@ -620,33 +620,48 @@ def test_put_draft_read_check_write_is_one_transaction(tmp_path, monkeypatch):
 
 
 def test_pending_cap_holds_under_concurrent_writers(tmp_path, monkeypatch):
-    """数名额与写入在同一个写事务里：十几个连接同时往同一面板提交，恰好 PENDING_MAX_PER_FILE 条成功，其余被拒（不超发）。"""
+    """数名额与写入在同一个写事务里：只剩最后一个名额时两个连接同时提交，恰好一个成功、一个被拒（不超发）。
+    让先到的那个在「数完、写之前」卡一下，放大窗口。"""
     import threading
+    import time as _time
 
     db = tmp_path / "hist.sqlite3"
-    n = ai_history.PENDING_MAX_PER_FILE + 6
-    barrier = threading.Barrier(n)
-    results: list[str] = []
-    lock = threading.Lock()
+    cap = ai_history.PENDING_MAX_PER_FILE
+    for i in range(cap - 1):
+        ai_history.put_pending("/p", "F", f"rid-fill-{i:08d}", "t", SENT, db_path=db)
+    real_connect = ai_history._connect
+    first_counted = threading.Event()
 
-    def submit(i):
-        barrier.wait()
+    def slow_connect(db_path=None):
+        con = real_connect(db_path)
+
+        def trace(stmt):
+            if "INSERT OR REPLACE INTO ai_pending" in stmt and "rid-slow-00000001" in stmt:
+                first_counted.set()  # 已经数过名额，马上要写
+                _time.sleep(0.5)
+
+        con.set_trace_callback(trace)
+        return con
+
+    monkeypatch.setattr(ai_history, "_connect", slow_connect)
+    results: dict[str, str] = {}
+
+    def submit(rid):
         try:
-            ai_history.put_pending("/p", "F", f"rid-cap-{i:08d}", "t", SENT, db_path=db)
-            out = "ok"
+            ai_history.put_pending("/p", "F", rid, "t", SENT, db_path=db)
+            results[rid] = "ok"
         except ai_history.PendingLimit:
-            out = "full"
-        with lock:
-            results.append(out)
+            results[rid] = "full"
 
-    ts = [threading.Thread(target=submit, args=(i,)) for i in range(n)]
-    [t.start() for t in ts]
-    [t.join() for t in ts]
-    assert results.count("ok") == ai_history.PENDING_MAX_PER_FILE and results.count("full") == 6
-    assert (
-        len(ai_history.get_draft("/p", "F", db_path=db)["pendings"])
-        == ai_history.PENDING_MAX_PER_FILE
-    )
+    a = threading.Thread(target=submit, args=("rid-slow-00000001",))
+    a.start()
+    assert first_counted.wait(5)
+    b = threading.Thread(target=submit, args=("rid-fast-00000001",))
+    b.start()
+    a.join()
+    b.join()
+    assert sorted(results.values()) == ["full", "ok"], results
+    assert len(ai_history.get_draft("/p", "F", db_path=db)["pendings"]) == cap
 
 
 def test_concurrent_first_connections_to_a_new_database_do_not_race_on_alter(tmp_path):
