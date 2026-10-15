@@ -14,6 +14,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { aiRevert, fetchAiHistory, type AiHistoryEntry } from '@/lib/api'
 import { setCurrentProjectId } from '@/lib/session'
+import { createDraftBackend } from '@/test/aiDraftBackend'
 import { TooltipProvider } from '@/components/ui/Tooltip'
 import { agentCaps, capsOf } from '@/components/settings/testCaps'
 import { useAiStore, type AiSession } from '@/store/aiStore'
@@ -41,6 +42,10 @@ globalThis.IS_REACT_ACT_ENVIRONMENT = true
 
 let root: Root | null = null
 let host: HTMLDivElement
+
+const settle = async () => {
+  for (let i = 0; i < 20; i++) await act(async () => Promise.resolve())
+}
 
 const render = async (node: React.ReactNode) => {
   host = document.createElement('div')
@@ -118,7 +123,10 @@ describe('助手面板随项目代际重挂', () => {
   const draft = () => host.querySelector<HTMLTextAreaElement>('[data-ai-input]')!.value
 
   beforeEach(async () => {
-    localStorage.clear()
+    // 草稿存后端（ADR 0132）：这里换成同语义的替身后端
+    const be = createDraftBackend()
+    globalThis.fetch = (async (url: unknown, init?: RequestInit) =>
+      be.handle(String(url), init) ?? new Response('{}')) as typeof fetch
     setCurrentProjectId(null)
     await useDocumentStore.getState().switchDocument(emptyProject(), 'd_ai_scope')
     const panel = {
@@ -144,10 +152,12 @@ describe('助手面板随项目代际重挂', () => {
     // 切到 B：项目认领先换，再 clear（projectStore 的顺序）
     setCurrentProjectId('pjB')
     await act(async () => useAiStore.getState().clear())
+    await settle()
     expect(draft()).toBe('')
     // 切回 A：同一份草稿还在
     setCurrentProjectId('pjA')
     await act(async () => useAiStore.getState().clear())
+    await settle()
     expect(draft()).toBe('A 项目里写了一半')
   })
 })

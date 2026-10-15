@@ -3167,6 +3167,60 @@ export const fetchAiRequest = (requestId: string, pj: string | null) =>
 
 export const AI_REQUEST_NOT_FOUND = 'ai_request_not_found'
 
+/* ------------------- 助手草稿与待确认账本（ADR 0132：存后端，不存浏览器） ------------------- */
+
+export interface AiDraftDoc {
+  draft: { text: string; revision: number; updated_ms: number } | null
+  /** 未落定的提交（按 rid 一条，由老到新） */
+  pendings: { rid: string; text: string; sent: unknown; created_ms: number }[]
+}
+
+const JSON_HEADERS = { 'Content-Type': 'application/json' }
+
+export const fetchAiDraft = (file: string, pj: string | null) =>
+  jsonFetch<AiDraftDoc>(`/api/ai/drafts?file=${encodeURIComponent(file)}`, undefined, pj)
+
+/**
+ * 全文覆盖（最后写入为准）；空文本 = 删。`keepalive`：页面正在关 / 刷新（pagehide）时用，浏览器会在
+ * 页面销毁后继续把这个请求发完（正文有 64 KB 的 keepalive 上限，草稿 ≤ 20 KB 够用）。
+ */
+export const putAiDraft = (file: string, text: string, pj: string | null, keepalive = false) =>
+  jsonFetch<{ revision: number }>(
+    '/api/ai/drafts',
+    { method: 'PUT', headers: JSON_HEADERS, body: JSON.stringify({ file, text }), keepalive },
+    pj,
+  )
+
+/** 条件删除：只有后端的文本仍等于 `ifText` 才删（不删另一个标签页的新稿） */
+export const deleteAiDraftIf = (file: string, ifText: string, pj: string | null) =>
+  jsonFetch<{ deleted: boolean }>(
+    '/api/ai/drafts',
+    { method: 'DELETE', headers: JSON_HEADERS, body: JSON.stringify({ file, if_text: ifText }) },
+    pj,
+  )
+
+export const putAiPending = (rid: string, file: string, text: string, sent: unknown, pj: string | null) =>
+  jsonFetch<{ ok: boolean }>(
+    `/api/ai/drafts/pending/${encodeURIComponent(rid)}`,
+    { method: 'PUT', headers: JSON_HEADERS, body: JSON.stringify({ file, text, sent }) },
+    pj,
+  )
+
+export const clearAiPending = (rid: string, file: string, pj: string | null) =>
+  jsonFetch<{ cleared: boolean }>(
+    `/api/ai/drafts/pending/${encodeURIComponent(rid)}?file=${encodeURIComponent(file)}`,
+    { method: 'DELETE' },
+    pj,
+  )
+
+/** 请求已被接受：清这条账本；草稿文本仍等于提交时的原文才一并删（后端一个事务里判与删） */
+export const acceptAiPending = (rid: string, file: string, pj: string | null) =>
+  jsonFetch<{ cleared: boolean; draft_deleted: boolean }>(
+    `/api/ai/drafts/pending/${encodeURIComponent(rid)}/accept`,
+    { method: 'POST', headers: JSON_HEADERS, body: JSON.stringify({ file }) },
+    pj,
+  )
+
 /** 会话详情（转录 + diff）；查询到已登记的会话后补全界面用 */
 export interface AiSessionDetail {
   agent?: string

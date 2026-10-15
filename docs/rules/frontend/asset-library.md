@@ -45,11 +45,13 @@
   只有后端自己的 404 `ai_request_not_found` 才放开 `resend`，且复用**同一个** rid（后端按 rid 去重兜底）；明确的
   4xx / 带稳定 code 的 5xx 才算失败，下一次发送换新 rid。会话终态只认第一条 `ai.done`（`finalized`），早于
   `aiRun` 响应的 `ai.delta` / `ai.done` 按 rid 暂存、会话建好后回放；`cancel` 回 `ok:false` 不标 cancelled。
-  失败会话 `changed=true` 的「重试」先 `askConfirm`。草稿 `lib/aiDraft.ts`（键 `tavotto.ai.draft.v1.<项目>.<fileId>`，
-  **只是缓存**：桌面端口变化会丢，已知降级；20 KB / 30 份 / 30 天；只在后端给出会话 id 之后、且 rid 对得上才删）。
+  失败会话 `changed=true` 的「重试」先 `askConfirm`。草稿与待确认账本**存后端**（`lib/aiDraft.ts` 只是
+  `/api/ai/drafts*` 的客户端，**不碰任何浏览器存储**；ADR 0132）：主语 (项目, fileId[, rid])，防抖 600 ms，
+  pagehide / 卸载 `keepalive` 冲刷，写失败在内存里留着 3 s 后重试，焦点回来再读一次；账本按 rid 一条
+  （两个标签页的 rid 并存），删除一律带条件（`accept` 仅当草稿文本仍等于提交原文才删）。
   aiStore 经 `setAiSubmissionLedger` 注入落盘（Codex 内嵌画布与 playground 的包里带着 aiStore 但不得带草稿模块）。
   草稿与 rid 不进日志 / 追踪环 / frontend-state。看护 `store/aiSubmission.test.ts`、`lib/aiDraft.test.ts`、
-  `lib/aiDraft.hosts.test.ts`、`lib/aiDraft.privacy.test.ts`、`components/ai/assistantDraft.test.tsx`、`e2e/ai-draft.spec.ts`。
+  `lib/aiDraft.hosts.test.ts`、`lib/aiDraft.privacy.test.ts`、`components/ai/assistantDraft.test.tsx`、`e2e/ai-draft.spec.ts`、后端 `tests/test_ai_drafts.py`。
 - **`assetStore` 的清单纪律**（`/api/panels`：面板、`unsupported`、目录；本条是全文，
   `project-document-and-autosave.md` 只引用）：**请求序号**挡旧响应覆盖新响应（不是"谁最后返回"）；
   **发请求那一刻的 pj** 挡串项目（`null` 与具体 id 是两个取值）；**项目代际**——`resetForNewProject()`

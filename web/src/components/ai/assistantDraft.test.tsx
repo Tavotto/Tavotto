@@ -11,7 +11,9 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { aiRun, ApiError, fetchAiRequest, fetchAiSession } from '@/lib/api'
-import { DRAFT_MAX_BYTES, DRAFT_PREFIX, loadDraft, markSubmitted, saveDraft } from '@/lib/aiDraft'
+import { DRAFT_MAX_BYTES } from '@/lib/aiDraft'
+import { createDraftBackend } from '@/test/aiDraftBackend'
+import { RETRY_MS, WRITE_DEBOUNCE_MS } from './useAiDraft'
 import { setCurrentProjectId } from '@/lib/session'
 import { TooltipProvider } from '@/components/ui/Tooltip'
 import { agentCaps, capsOf } from '@/components/settings/testCaps'
@@ -21,7 +23,6 @@ import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
 import { emptyProject, type PanelObject } from '@/types/document'
 import { AssistantPanel } from './AiPanel'
-import { __resetDraftSweepForTests } from './useAiDraft'
 
 vi.mock('@/lib/api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/api')>()),
@@ -51,6 +52,7 @@ const mount = async () => {
       </TooltipProvider>,
     )
   })
+  await settle() // 草稿是异步从后端读回来的
 }
 /** 右栏切页签 = 卸载助手面板 */
 const unmount = async () => {
@@ -73,7 +75,7 @@ const click = async (el: Element | null) => {
   await act(async () => (el as HTMLElement).click())
 }
 const settle = async () => {
-  for (let i = 0; i < 5; i++) await act(async () => Promise.resolve())
+  for (let i = 0; i < 20; i++) await act(async () => Promise.resolve())
 }
 
 const panelOf = (fileId: string, id: string): PanelObject =>
@@ -94,7 +96,13 @@ const failedSession = (over: Partial<AiSession> = {}): AiSession => ({
   finishedAt: 2, finalized: true, ...over,
 })
 
+let be: ReturnType<typeof createDraftBackend>
+const SENT = { scope: 'figure', gid: null, label: null, target: '整张图' }
+
 beforeEach(async () => {
+  be = createDraftBackend()
+  globalThis.fetch = (async (url: unknown, init?: RequestInit) =>
+    be.handle(String(url), init) ?? new Response('{}')) as typeof fetch
   localStorage.clear()
   setCurrentProjectId('pa')
   vi.mocked(aiRun).mockReset()
@@ -116,12 +124,13 @@ afterEach(async () => {
   document.body.innerHTML = ''
 })
 
-describe('草稿落盘与恢复', () => {
+describe('草稿存后端：落盘与恢复', () => {
   it('打字 → 切页签（卸载）→ 切回（重挂）：草稿还在，并说一句「已恢复」', async () => {
     await mount()
     await typeText('把图例移到左上角')
-    await unmount() // 卸载时 flush
-    expect(loadDraft('pa', 'Fig1.pdf')?.text).toBe('把图例移到左上角')
+    await unmount() // 卸载时 keepalive 冲刷
+    await settle()
+    expect(be.draft('pa', 'Fig1.pdf')).toBe('把图例移到左上角')
     await mount()
     expect(input().value).toBe('把图例移到左上角')
     expect(q('[data-ai-draft-note="restored"]')).toBeTruthy()
@@ -129,23 +138,78 @@ describe('草稿落盘与恢复', () => {
     expect(q('[data-ai-draft-note]')).toBeNull() // 一动手就收
   })
 
-  it('防抖：停手前不写盘；pagehide（刷新 / 关窗）立刻写盘', async () => {
+  it('换端口（换 origin）也不丢：浏览器存储清空后重挂，草稿仍从后端读回', async () => {
     await mount()
-    await typeText('还没停手')
-    expect(loadDraft('pa', 'Fig1.pdf')).toBeNull() // 对照：防抖期内没写
-    await act(async () => window.dispatchEvent(new Event('pagehide')))
-    expect(loadDraft('pa', 'Fig1.pdf')?.text).toBe('还没停手')
+    await typeText('写了一半的指令')
+    await unmount()
+    await settle()
+    localStorage.clear()
+    sessionStorage.clear() // 端口一变，这些全是空的新 origin
+    await mount()
+    expect(input().value).toBe('写了一半的指令')
+    // 整个过程没往浏览器存储里写过任何东西
+    expect(localStorage.length).toBe(0)
+  })
+
+  it('防抖 600 ms：停手前不发请求；到点只发一次 PUT；pagehide 立刻 keepalive 冲刷', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    try {
+      await mount()
+      const puts = () => be.calls.filter((c) => c.method === 'PUT' && c.path === '/api/ai/drafts')
+      await typeText('第一')
+      await typeText('第一句')
+      await act(async () => void vi.advanceTimersByTime(WRITE_DEBOUNCE_MS - 50))
+      expect(puts()).toHaveLength(0) // 对照：防抖期内没写
+      await act(async () => void vi.advanceTimersByTime(100))
+      await settle()
+      expect(puts()).toHaveLength(1) // 两次输入合并成一次
+      expect(be.draft('pa', 'Fig1.pdf')).toBe('第一句')
+      expect(puts()[0].keepalive).toBe(false)
+      await typeText('第二句')
+      await act(async () => window.dispatchEvent(new Event('pagehide')))
+      await settle()
+      expect(puts()).toHaveLength(2)
+      expect(puts()[1].keepalive).toBe(true) // 页面正在关：keepalive
+      expect(be.draft('pa', 'Fig1.pdf')).toBe('第二句')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('后端暂时不可用：文本留在内存里，3 秒后重试，恢复后写成；期间不丢', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    try {
+      await mount()
+      be.setDown(true)
+      await typeText('断网时写的话')
+      await act(async () => void vi.advanceTimersByTime(WRITE_DEBOUNCE_MS + 10))
+      await settle()
+      expect(be.draft('pa', 'Fig1.pdf')).toBeUndefined() // 没写成
+      expect(input().value).toBe('断网时写的话') // 内存里还在
+      await act(async () => void vi.advanceTimersByTime(RETRY_MS + 10))
+      await settle()
+      expect(be.draft('pa', 'Fig1.pdf')).toBeUndefined() // 重试仍失败，不抛、继续留着
+      be.setDown(false)
+      await act(async () => void vi.advanceTimersByTime(RETRY_MS + 10))
+      await settle()
+      expect(be.draft('pa', 'Fig1.pdf')).toBe('断网时写的话')
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('切面板：旧面板的稿存下、新面板读它自己的；切回来找得到，不串稿', async () => {
     await mount()
     await typeText('给 Fig1 的话')
     await select('p2')
+    await settle()
     expect(input().value).toBe('') // Fig2 没有稿
     await typeText('给 Fig2 的话')
     await select('p1')
+    await settle()
     expect(input().value).toBe('给 Fig1 的话')
     await select('p2')
+    await settle()
     expect(input().value).toBe('给 Fig2 的话')
   })
 
@@ -154,31 +218,49 @@ describe('草稿落盘与恢复', () => {
     await typeText('A 项目的话')
     setCurrentProjectId('pb')
     await act(async () => useAiStore.getState().clear()) // 面板按代际重挂
+    await settle()
     expect(input().value).toBe('')
-    expect(loadDraft('pb', 'Fig1.pdf')).toBeNull()
+    expect(be.draft('pb', 'Fig1.pdf')).toBeUndefined()
     setCurrentProjectId('pa')
     await act(async () => useAiStore.getState().clear())
+    await settle()
     expect(input().value).toBe('A 项目的话')
   })
 
-  it('刷新后文档还没恢复完（面板列表为空）时挂载：草稿不会被当成「目标已删」清掉，面板到了就恢复', async () => {
-    saveDraft('pa', 'Fig1.pdf', '上次没发出的话')
-    __resetDraftSweepForTests() // 让「首次挂载清扫」在这条用例里真的发生
-    useDocumentStore.setState((s) => ({ doc: { ...s.doc, objects: [] } }) as never)
-    useSelectionStore.setState({ ids: [] } as never)
+  it('刷新后挂载那一刻项目认领还没到（null）：不读不写，认领到了才读', async () => {
+    be.put('pa', 'Fig1.pdf', '上次没发出的话')
+    setCurrentProjectId(null)
     await mount()
-    expect(loadDraft('pa', 'Fig1.pdf')?.text).toBe('上次没发出的话') // 对照：空面板列表那一刻没把它清掉
-    useDocumentStore.setState((s) => ({ doc: { ...s.doc, objects: [panelOf('Fig1.pdf', 'p1')] } }) as never)
-    await select('p1')
+    expect(input().value).toBe('')
+    expect(be.calls).toEqual([]) // 没认领 = 一个请求都不发（不会落进后端的默认项目）
+    setCurrentProjectId('pa')
+    await settle()
     expect(input().value).toBe('上次没发出的话')
   })
 
-  it('超过 20 KB：不落盘、不截断，并说「过长」', async () => {
+  it('多标签页：窗口重新获得焦点时以后端为准再读一次；本地有没写出去的改动时不覆盖', async () => {
+    await mount()
+    await typeText('这个标签页的话')
+    await act(async () => window.dispatchEvent(new Event('pagehide')))
+    await settle()
+    be.put('pa', 'Fig1.pdf', '另一个标签页后来写的话') // 另一个标签页改了
+    await act(async () => window.dispatchEvent(new Event('focus')))
+    await settle()
+    expect(input().value).toBe('另一个标签页后来写的话') // 对照：没有本地改动时后端为准
+    await typeText('我又接着写') // 本地有 dirty
+    be.put('pa', 'Fig1.pdf', '另一个标签页又写了')
+    await act(async () => window.dispatchEvent(new Event('focus')))
+    await settle()
+    expect(input().value).toBe('我又接着写') // 最后写入为准：不被覆盖
+  })
+
+  it('超过 20 KB：给「过长」提示；后端 413 后不存、不截断', async () => {
     await mount()
     await typeText('图'.repeat(Math.ceil(DRAFT_MAX_BYTES / 3) + 1))
     expect(q('[data-ai-draft-note="too-large"]')).toBeTruthy()
     await act(async () => window.dispatchEvent(new Event('pagehide')))
-    expect(Object.keys(localStorage).filter((k) => k.startsWith(DRAFT_PREFIX))).toEqual([])
+    await settle()
+    expect(be.draft('pa', 'Fig1.pdf')).toBeUndefined()
   })
 })
 
@@ -212,7 +294,7 @@ describe('已发出未确认：不能盲目重发', () => {
   })
 
   it('刷新后（草稿里的 rid）恢复成未确认，不是一条可以普通重发的草稿', async () => {
-    markSubmitted('pa', 'Fig1.pdf', '加粗线条', 'rid-restore-0001', { scope: 'figure', gid: null, label: null, target: '整张图' })
+    be.pendings.set('pa\u0000Fig1.pdf', [{ rid: 'rid-restore-0001', text: '加粗线条', sent: SENT }])
     await mount()
     expect(q('[data-ai-submission="unconfirmed"]')).toBeTruthy()
     expect(input().value).toBe('加粗线条')
@@ -234,7 +316,8 @@ describe('已发出未确认：不能盲目重发', () => {
     expect(aiRun).toHaveBeenCalledTimes(2)
     expect((vi.mocked(aiRun).mock.calls[1][0] as { client_request_id: string }).client_request_id).toBe(rid)
     expect(input().value).toBe('')
-    expect(loadDraft('pa', 'Fig1.pdf')).toBeNull()
+    expect(be.draft('pa', 'Fig1.pdf')).toBeUndefined()
+    expect(be.pending('pa', 'Fig1.pdf')).toEqual([])
     expect(useAiStore.getState().sessions.map((s) => s.id)).toEqual(['s-9'])
   })
 

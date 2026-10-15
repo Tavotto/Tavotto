@@ -1,30 +1,34 @@
 /**
- * 改图助手的**未发送草稿**（ADR 0132）：按「项目 × 面板文件」存在 `localStorage`。
+ * 改图助手的**未发送草稿**与**待确认提交账本**（ADR 0132）：存**后端**（`data_dir` 里的 ai_history 库，
+ * 与会话历史同一边界），不存浏览器。
  *
- * **这是缓存，不是账本**（与 ADR 0108 一致）：
- * - 桌面端口被占会换 origin，`localStorage` 随之清空——草稿会丢。这是**已知并接受的降级**，
- *   界面与文档都不宣称「一定恢复」。
- * - 任何存储失败（隐私模式、配额、被禁）都静默退回纯内存；永远不抛。
- * - 「这条指令有没有被执行」的权威在后端（`client_request_id` + `GET /api/ai/requests/<id>`），
- *   草稿记录里的 `rid` 只是让刷新后还能回到「已发出未确认」，不是判据。
+ * 为什么不是 localStorage：桌面端口被占会换 origin，localStorage 随之整个清空——用户写了一半的指令不该
+ * 因此消失（用户裁决 2026-10-15：不得以 localStorage 的便利代替持久化设计）。这个模块**不碰任何浏览器存储**。
  *
- * **只在桌面 / 浏览器模式用**：Codex 内嵌画布与 playground 没有助手面板，不 import 本模块
- * （`aiDraft.hosts.test.ts` 用 import 图钉住）。
+ * 语义（后端为准，前端只是它的客户端）：
+ * - 主语 (项目, 面板 fileId[, 请求 id])；项目取调用方传入的认领 pj，null 一律不读不写。
+ * - 草稿全文覆盖、最后写入为准；**删除必须带条件**（`deleteDraftIf` 的原文 / `removeAccepted` 的账本原文）：
+ *   另一个标签页后写的新稿不会被这一边的确认抹掉。
+ * - 账本按 rid 一条：两个标签页同时发时各自的 rid 都在；确认 / 拒绝只清自己那条。
+ * - 单稿 ≤ 20 KB（后端 413 `ai_draft_too_large`，不截断）、每项目 30 份、30 天过期——都在后端执行。
+ * - 所有请求失败都**不抛**：回结果枚举，调用方（`useAiDraft`）在内存里保留并重试。
  *
- * **隐私**：草稿全文与请求 id 只在 `localStorage` 与助手面板内存里，不进日志、遥测、
- * 诊断包的 frontend-state、interaction trace（`aiDraft.privacy.test.ts`）。
- *
- * 键 `tavotto.ai.draft.v1.<项目>.<面板 fileId>`；项目与 fileId 同时写进值里，键只用于寻址，
- * 清扫时不靠切键名。
+ * 只在桌面 / 浏览器模式用：Codex 内嵌画布与 playground 没有助手面板，不 import 本模块
+ * （`aiDraft.hosts.test.ts`）。**隐私**：草稿全文与请求 id 不进日志、遥测、诊断包 frontend-state、
+ * interaction trace（`aiDraft.privacy.test.ts` + 后端 `tests/test_ai_drafts.py`）。
  */
+import {
+  acceptAiPending,
+  ApiError,
+  clearAiPending,
+  deleteAiDraftIf,
+  fetchAiDraft,
+  putAiDraft,
+  putAiPending,
+} from '@/lib/api'
 
-export const DRAFT_PREFIX = 'tavotto.ai.draft.v1.'
-/** 单份草稿上限（UTF-8 字节）：超出不持久化、不截断（截断会让恢复出来的是一句被砍掉的指令） */
+/** 单稿上限（UTF-8 字节），与后端 `ai_history.DRAFT_MAX_BYTES` 同值：前端据此先给「过长」的答案，后端是权威 */
 export const DRAFT_MAX_BYTES = 20 * 1024
-/** 全局最多保留几份：超出按最近写入 / 读取时间淘汰最老的 */
-export const DRAFT_MAX_COUNT = 30
-/** 过期：30 天没写也没读过 */
-export const DRAFT_TTL_MS = 30 * 24 * 60 * 60 * 1000
 
 /** 点发送时钉住的目标（与 `AiPanel` 的 `SendTarget` 同形；这里不 import 组件） */
 export interface DraftTarget {
@@ -38,30 +42,15 @@ export interface Draft {
   project: string
   fileId: string
   text: string
-  /** 最近一次写入或读取（ms）：过期与 LRU 都看它 */
-  at: number
-  /**
-   * 已经发出、但后端还没确认接受时的请求 id；后端给出会话 id 之后随草稿一起删。
-   * 有它的草稿在刷新后恢复成「已发出未确认」，普通重试被禁用（不得静默重发）。
-   */
+  /** 最老那条未落定提交的 rid / 目标（文本也取它提交时的原文）；没有未落定提交时缺省 */
   rid?: string
-  /** 全部未落定的提交（`rid` / `sent` 是其中最老的一条）；每条各自还原成「已发出未确认」 */
-  pendings?: { rid: string; text: string; sent: DraftTarget }[]
-  /** 与 `rid` 一起存：重发要钉在**发出那一刻**的目标上，不跟着此刻的选择走 */
   sent?: DraftTarget
+  /** 全部未落定的提交；每条各自还原成「已发出未确认」 */
+  pendings?: { rid: string; text: string; sent: DraftTarget }[]
 }
 
+/** `saved` 已存；`removed` 空文本 = 已删；`too_large` 后端 413（旧稿也已删）；`unavailable` 没存成（网络 / 后端错），调用方重试 */
 export type SaveResult = 'saved' | 'removed' | 'too_large' | 'unavailable'
-
-const keyOf = (project: string, fileId: string) => `${DRAFT_PREFIX}${project}.${fileId}`
-
-const store = (): Storage | null => {
-  try {
-    return globalThis.localStorage ?? null
-  } catch {
-    return null
-  }
-}
 
 const byteLength = (text: string): number => {
   try {
@@ -71,334 +60,84 @@ const byteLength = (text: string): number => {
   }
 }
 
-function parse(raw: string | null, project: string, fileId: string): Draft | null {
-  if (!raw) return null
+/** 现在就能判：写之前先给界面一个「过长」的答案，不等防抖与往返 */
+export const isDraftTooLarge = (text: string): boolean => byteLength(text) > DRAFT_MAX_BYTES
+
+/** 读：有未落定提交时文本是它提交时的原文（界面据此还原「已发出未确认」）；读不到 / 失败回 null */
+export async function loadDraft(project: string | null, fileId: string | null): Promise<Draft | null> {
+  if (!project || !fileId) return null
+  let doc
   try {
-    const v = JSON.parse(raw) as Partial<Draft> | null
-    if (
-      !v ||
-      typeof v.text !== 'string' ||
-      typeof v.at !== 'number' ||
-      v.project !== project ||
-      v.fileId !== fileId
-    ) {
-      return null
-    }
-    const out: Draft = { project, fileId, text: v.text, at: v.at }
-    if (typeof v.rid === 'string' && v.rid && v.sent && typeof v.sent === 'object') {
-      out.rid = v.rid
-      out.sent = v.sent as DraftTarget
-    }
-    return out
+    doc = await fetchAiDraft(fileId, project)
   } catch {
     return null
   }
+  const pendings = (doc.pendings ?? []).map((p) => ({ rid: p.rid, text: p.text, sent: p.sent as DraftTarget }))
+  if (pendings.length > 0) {
+    return { project, fileId, text: pendings[0].text, rid: pendings[0].rid, sent: pendings[0].sent, pendings }
+  }
+  return doc.draft ? { project, fileId, text: doc.draft.text } : null
 }
 
-function write(ls: Storage, d: Draft): boolean {
+/** 写草稿**文本**（全文覆盖）。`keepalive`：pagehide / 卸载时的冲刷 */
+export async function saveDraft(
+  project: string | null,
+  fileId: string | null,
+  text: string,
+  keepalive = false,
+): Promise<SaveResult> {
+  if (!project || !fileId) return 'unavailable'
   try {
-    ls.setItem(keyOf(d.project, d.fileId), JSON.stringify(d))
-    return true
+    await putAiDraft(fileId, text, project, keepalive && byteLength(text) < 60 * 1024)
+    return text === '' ? 'removed' : 'saved'
+  } catch (e) {
+    if (e instanceof ApiError && e.status === 413) return 'too_large'
+    return 'unavailable'
+  }
+}
+
+/** 条件删除：后端的文本仍等于 `ifText` 才删。回是否删了 */
+export async function deleteDraftIf(project: string | null, fileId: string | null, ifText: string): Promise<boolean> {
+  if (!project || !fileId) return false
+  try {
+    return (await deleteAiDraftIf(fileId, ifText, project)).deleted
   } catch {
     return false
   }
 }
 
-function drop(ls: Storage, project: string, fileId: string): void {
-  try {
-    ls.removeItem(keyOf(project, fileId))
-  } catch {
-    /* 同上：缓存而已 */
-  }
-}
-
-/**
- * 「已发出、等后端确认」的账本：**独立键、独立于草稿文本**（`tavotto.ai.pending.v1.<项目>.<fileId>.<rid>`）。
-按 rid 一条一键：两个标签页同时发（同项目同面板）时各自的 rid 都在，一边被拒绝清自己那条不会带走另一边的。
- * 草稿文本是别的标签页也会写的（同项目同面板，localStorage 共享）；账本若并在它里面，
- * 一个标签页的防抖保存会带着另一个标签页的 rid 把文本覆盖掉，确认到达时按 rid 删整条又会把
- * 后写的那份未发送草稿一起丢掉。账本里记下提交时的**原文**：确认之后只有「草稿文本仍等于这份原文」
- * 才删草稿，否则只清账本、保留文本（Codex #1098 P1）。
- */
-export const PENDING_PREFIX = 'tavotto.ai.pending.v1.'
-const pendingKey = (project: string, fileId: string, rid: string) => `${PENDING_PREFIX}${project}.${fileId}.${rid}`
-/** 同一个 (项目, fileId) 下最多保留几条未落定的提交：超出丢最老的（极端情形，正常 1–2 条） */
-export const PENDING_MAX_PER_FILE = 8
-
-interface Pending {
-  project: string
-  fileId: string
-  rid: string
-  sent: DraftTarget
-  text: string
-  at: number
-}
-
-function parsePending(raw: string | null, project: string, fileId: string): Pending | null {
-  try {
-    const v = JSON.parse(raw ?? 'null') as Partial<Pending> | null
-    if (
-      !v ||
-      v.project !== project ||
-      v.fileId !== fileId ||
-      typeof v.rid !== 'string' ||
-      !v.rid ||
-      typeof v.text !== 'string' ||
-      typeof v.at !== 'number' ||
-      !v.sent ||
-      typeof v.sent !== 'object'
-    ) {
-      return null
-    }
-    return v as Pending
-  } catch {
-    return null
-  }
-}
-
-function readPending(ls: Storage, project: string, fileId: string, rid: string): Pending | null {
-  return parsePending(safeGet(ls, pendingKey(project, fileId, rid)), project, fileId)
-}
-
-/** 这个 (项目, fileId) 下所有未落定的提交，由老到新；过期的当场清掉 */
-function readPendings(ls: Storage, project: string, fileId: string, now: number): Pending[] {
-  const prefix = `${PENDING_PREFIX}${project}.${fileId}.`
-  const out: Pending[] = []
-  for (const key of pendingKeys(ls)) {
-    if (!key.startsWith(prefix)) continue
-    const p = parsePending(safeGet(ls, key), project, fileId)
-    if (!p || now - p.at > DRAFT_TTL_MS) {
-      try {
-        ls.removeItem(key)
-      } catch {
-        /* 缓存而已 */
-      }
-      continue
-    }
-    out.push(p)
-  }
-  return out.sort((x, y) => x.at - y.at)
-}
-
-function dropPending(ls: Storage, project: string, fileId: string, rid: string): void {
-  try {
-    ls.removeItem(pendingKey(project, fileId, rid))
-  } catch {
-    /* 缓存而已 */
-  }
-}
-
-/**
- * 读一份草稿。过期 / 损坏的当场删掉并回 null；读到的算一次「用过」（刷新 LRU 时间）。
- * 有未落定的提交账本时，返回的是**提交时的原文**连同 `rid` / `sent`（界面据此还原「已发出未确认」）。
- */
-export function loadDraft(project: string | null, fileId: string | null, now = Date.now()): Draft | null {
-  if (!project || !fileId) return null
-  const ls = store()
-  if (!ls) return null
-  let raw: string | null = null
-  try {
-    raw = ls.getItem(keyOf(project, fileId))
-  } catch {
-    return null
-  }
-  let d = parse(raw, project, fileId)
-  if (!d || now - d.at > DRAFT_TTL_MS) {
-    if (raw) drop(ls, project, fileId)
-    d = null
-  }
-  const pends = readPendings(ls, project, fileId, now)
-  if (pends.length > 0) {
-    // 未落定的提交优先：文本取最老那条提交时的原文（界面据此逐条还原「已发出未确认」）
-    const first = pends[0]
-    return {
-      project,
-      fileId,
-      text: first.text,
-      at: now,
-      rid: first.rid,
-      sent: first.sent,
-      pendings: pends.map((p) => ({ rid: p.rid, text: p.text, sent: p.sent })),
-    }
-  }
-  if (!d) return null
-  write(ls, { ...d, at: now })
-  return d
-}
-
-/** 写（或删）一份草稿的**文本**。不碰提交账本。空文本 = 删键；超限 = 不存也不截断 */
-export function saveDraft(
-  project: string | null,
-  fileId: string | null,
-  text: string,
-  now = Date.now(),
-): SaveResult {
-  if (!project || !fileId) return 'unavailable'
-  const ls = store()
-  if (!ls) return 'unavailable'
-  if (text === '') {
-    drop(ls, project, fileId)
-    return 'removed'
-  }
-  if (byteLength(text) > DRAFT_MAX_BYTES) {
-    // 旧的较短版本也删：留着它，刷新后恢复出来的会是一句过期的话
-    drop(ls, project, fileId)
-    return 'too_large'
-  }
-  if (!write(ls, { project, fileId, text, at: now })) return 'unavailable'
-  evictOverflow(ls, `${project}\u0000${fileId}`)
-  return 'saved'
-}
-
-/** 点发送：同步落一条提交账本（刷新也认得「这条发出过」），原文一并记下；文本也作为草稿留着直到确认 */
-export function markSubmitted(
+/** 点发送：在 spawn 之前把这条提交（原文 + 目标）记进后端账本；失败不挡发送（只是少一份刷新后的线索） */
+export async function markSubmitted(
   project: string | null,
   fileId: string | null,
   text: string,
   rid: string,
   sent: DraftTarget,
-  now = Date.now(),
-): void {
+): Promise<void> {
   if (!project || !fileId) return
-  const ls = store()
-  if (!ls) return
   try {
-    ls.setItem(pendingKey(project, fileId, rid), JSON.stringify({ project, fileId, rid, sent, text, at: now } satisfies Pending))
+    await putAiPending(rid, fileId, text, sent, project)
   } catch {
     /* 同上 */
   }
-  if (byteLength(text) <= DRAFT_MAX_BYTES) write(ls, { project, fileId, text, at: now })
-  const all = readPendings(ls, project, fileId, now)
-  for (const old of all.slice(0, Math.max(0, all.length - PENDING_MAX_PER_FILE))) dropPending(ls, project, fileId, old.rid)
 }
 
-/** 后端明确拒绝：请求 id 作废（只清账本），文本留着让用户改。`rid` 对不上就不动——那是另一次发送的记录 */
-export function clearSubmitted(project: string | null, fileId: string | null, rid: string): void {
+/** 后端明确拒绝：请求 id 作废，只清自己那条账本；文本留着让用户改 */
+export async function clearSubmitted(project: string | null, fileId: string | null, rid: string): Promise<void> {
   if (!project || !fileId) return
-  const ls = store()
-  if (!ls) return
-  dropPending(ls, project, fileId, rid)
+  try {
+    await clearAiPending(rid, fileId, project)
+  } catch {
+    /* 同上 */
+  }
 }
 
-/**
- * **只在后端给出会话 id（请求已被接受）之后**调用。账本 `rid` 对不上什么都不动；对上了清账本，
- * 且**只有草稿文本仍等于提交时的原文才删草稿**——另一个标签页在这之间写的新稿不能被这条的确认抹掉。
- */
-export function removeAccepted(project: string | null, fileId: string | null, rid: string): void {
+/** **只在后端给出会话 id（请求已被接受）之后**调用：清这条账本；草稿文本仍等于提交时的原文才一并删 */
+export async function removeAccepted(project: string | null, fileId: string | null, rid: string): Promise<void> {
   if (!project || !fileId) return
-  const ls = store()
-  if (!ls) return
-  const pend = readPending(ls, project, fileId, rid)
-  if (!pend) return
-  dropPending(ls, project, fileId, rid)
-  const cur = parse(safeGet(ls, keyOf(project, fileId)), project, fileId)
-  if (cur && cur.text === pend.text) drop(ls, project, fileId)
-}
-
-const safeGet = (ls: Storage, key: string): string | null => {
   try {
-    return ls.getItem(key)
+    await acceptAiPending(rid, fileId, project)
   } catch {
-    return null
+    /* 同上 */
   }
 }
-
-function allDrafts(ls: Storage): { key: string; d: Draft | null; raw: string | null }[] {
-  const keys: string[] = []
-  try {
-    for (let i = 0; i < ls.length; i++) {
-      const k = ls.key(i)
-      if (k && k.startsWith(DRAFT_PREFIX)) keys.push(k)
-    }
-  } catch {
-    return []
-  }
-  return keys.map((key) => {
-    const raw = safeGet(ls, key)
-    let d: Draft | null = null
-    try {
-      const v = JSON.parse(raw ?? 'null') as Partial<Draft> | null
-      if (v && typeof v.project === 'string' && typeof v.fileId === 'string') d = parse(raw, v.project, v.fileId)
-    } catch {
-      /* 损坏的当垃圾清掉 */
-    }
-    return { key, d, raw }
-  })
-}
-
-function evictOverflow(ls: Storage, keepId: string): void {
-  const live = allDrafts(ls).filter((x) => x.d)
-  if (live.length <= DRAFT_MAX_COUNT) return
-  live.sort((a, b) => (a.d as Draft).at - (b.d as Draft).at)
-  for (const x of live.slice(0, live.length - DRAFT_MAX_COUNT)) {
-    const d = x.d as Draft
-    if (`${d.project}\u0000${d.fileId}` === keepId) continue
-    try {
-      ls.removeItem(x.key)
-    } catch {
-      /* 同上 */
-    }
-  }
-}
-
-/**
- * 清扫：过期的、损坏的、超出份数的，以及（给了 `exists` 时）目标面板已经不存在的。
- * 有未落定提交账本的草稿**不因目标消失而删**——请求可能已被后端接受，那条记录是用户
- * 找回「到底发出去没有」的唯一线索，留给过期去收。
- */
-export function sweepDrafts(
-  opts: { now?: number; exists?: (project: string, fileId: string) => boolean } = {},
-): number {
-  const ls = store()
-  if (!ls) return 0
-  const now = opts.now ?? Date.now()
-  let removed = 0
-  for (const { key, d } of allDrafts(ls)) {
-    const dead = !d || now - d.at > DRAFT_TTL_MS || (opts.exists && readPendings(ls, d.project, d.fileId, now).length === 0 && !opts.exists(d.project, d.fileId))
-    if (!dead) continue
-    try {
-      ls.removeItem(key)
-      removed++
-    } catch {
-      /* 同上 */
-    }
-  }
-  // 账本：只按过期 / 损坏清（有账本的草稿不因目标消失而删，见上）
-  for (const key of pendingKeys(ls)) {
-    const v = safeParse(safeGet(ls, key)) as Partial<Pending> | null
-    if (!v || typeof v.at !== 'number' || now - v.at > DRAFT_TTL_MS) {
-      try {
-        ls.removeItem(key)
-        removed++
-      } catch {
-        /* 同上 */
-      }
-    }
-  }
-  evictOverflow(ls, '')
-  return removed
-}
-
-const safeParse = (raw: string | null): unknown => {
-  try {
-    return JSON.parse(raw ?? 'null')
-  } catch {
-    return null
-  }
-}
-
-function pendingKeys(ls: Storage): string[] {
-  const keys: string[] = []
-  try {
-    for (let i = 0; i < ls.length; i++) {
-      const k = ls.key(i)
-      if (k && k.startsWith(PENDING_PREFIX)) keys.push(k)
-    }
-  } catch {
-    return []
-  }
-  return keys
-}
-
-/** 现在就能判：写盘之前先给界面一个「过长」的答案，不等防抖 */
-export const isDraftTooLarge = (text: string): boolean => byteLength(text) > DRAFT_MAX_BYTES

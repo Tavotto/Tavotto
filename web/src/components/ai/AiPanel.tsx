@@ -31,7 +31,6 @@ import {
 import { cn, modKey } from '@/lib/utils'
 import { msg, t as translate } from '@/i18n'
 import { DURATION, usePresence } from '@/lib/motion'
-import { currentProjectId } from '@/lib/session'
 import { engineLabel } from '@/components/inspector/roles/registry'
 import { isSessionOf, useAiStore, type AiScope, type AiSession } from '@/store/aiStore'
 import { useDocumentStore } from '@/store/documentStore'
@@ -255,13 +254,13 @@ function AssistantPanelBody() {
   const { panel, element, axes } = useAssistantTarget()
   const caps = useAiStore((s) => s.caps)
   // 草稿绑定「项目 × 面板文件」，右栏切页签 / 刷新之后还在（ADR 0132；落盘只是缓存）
-  const { prompt, setPrompt, restored, tooLarge, clearIf } = useAiDraft(panel)
+  const { prompt, setPrompt, restored, tooLarge, clearIf, project: claimedProject } = useAiDraft(panel)
   const [error, setError] = useState<{ text: string; prompt: string; target: SendTarget; panelId: string } | null>(null)
   // 已点发送、后端还没给会话 id 的提交活在 store 里：面板卸载重挂（切页签）它还在，
   // 「在路上 / 已发出未确认 / 后端没收到」三态都从它派生
   const submissions = useAiStore((s) => s.submissions)
   const submission = panel
-    ? Object.values(submissions).find((x) => x.fileId === panel.fileId && x.project === currentProjectId())
+    ? Object.values(submissions).find((x) => x.fileId === panel.fileId && x.project === claimedProject)
     : undefined
   const sending = submission?.phase === 'sending'
   const [checkNote, setCheckNote] = useState<'unreachable' | null>(null)

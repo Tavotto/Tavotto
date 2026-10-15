@@ -77,6 +77,36 @@ test('草稿：打字后切页签、刷新都还在', async ({ app, page }) => {
   await expect(page.locator('[data-ai-draft-note="restored"]')).toBeVisible()
 })
 
+test('草稿存后端：换 origin（等价于桌面端口变化）后草稿仍在，且浏览器存储里没有草稿', async ({ app, page, browser }) => {
+  const a = await startWithAgent(app)
+  await openAssistant(page, a.baseURL)
+  await page.locator('[data-ai-input]').fill('换端口也不能丢的指令')
+  // 切走页签（面板卸载 → keepalive 冲刷）；等后端真的存上
+  await page.locator('[data-inspector-tab="properties"]').click()
+  await expect
+    .poll(async () =>
+      page.evaluate(async () => {
+        const r = await fetch('/api/ai/drafts?file=' + encodeURIComponent('Fig1_kinetics.pdf'))
+        return (await r.json()).draft?.text ?? null
+      }),
+    )
+    .toBe('换端口也不能丢的指令')
+  // 草稿不在任何浏览器存储里（存储是按 origin 的，端口一变就是空的——这条路径不能依赖它）
+  const stored = await page.evaluate(() => JSON.stringify({ ...localStorage }) + JSON.stringify({ ...sessionStorage }))
+  expect(stored).not.toContain('换端口也不能丢的指令')
+
+  // 另一个 origin（localhost ≠ 127.0.0.1）打开同一个后端：全新的浏览器存储
+  const ctx2 = await browser.newContext()
+  try {
+    const p2 = await ctx2.newPage()
+    await openAssistant(p2, `http://localhost:${a.port}`)
+    await expect(p2.locator('[data-ai-input]')).toHaveValue('换端口也不能丢的指令')
+    await expect(p2.locator('[data-ai-draft-note="restored"]')).toBeVisible()
+  } finally {
+    await ctx2.close()
+  }
+})
+
 test('未确认：请求没到后端 → 只有「查询结果」；查到没收到才用同一个 id 重发，后端恰好一条', async ({ app, page }) => {
   const a = await startWithAgent(app)
   const prompt = '把线条加粗一点'

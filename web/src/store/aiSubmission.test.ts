@@ -9,7 +9,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { handleServerEvent } from '@/hooks/useServerEvents'
 import { AI_RUN_TIMEOUT_MS } from '@/lib/api'
-import { loadDraft } from '@/lib/aiDraft'
+import { createDraftBackend } from '@/test/aiDraftBackend'
 import '@/lib/aiDraftLedger'
 import { setCurrentProjectId } from '@/lib/session'
 import { useAiStore } from './aiStore'
@@ -35,8 +35,12 @@ const hang = (init?: RequestInit) =>
     init?.signal?.addEventListener('abort', () => rej(new DOMException('aborted', 'AbortError')))
   })
 
+const draftBe = createDraftBackend()
+
 globalThis.fetch = (async (url: unknown, init?: RequestInit) => {
   const u = String(url)
+  const drafted = draftBe.handle(u, init)
+  if (drafted) return drafted
   if (u.includes('/api/ai/run') && init?.body) runBodies.push(JSON.parse(String(init.body)))
   return handler(u, init)
 }) as typeof fetch
@@ -58,6 +62,12 @@ const onlySub = () => {
   expect(subs()).toHaveLength(1)
   return subs()[0]
 }
+const pend = () => draftBe.pending('pa', 'Fig1.pdf')
+const draftText = () => draftBe.draft('pa', 'Fig1.pdf')
+const gone = () => {
+  expect(draftText()).toBeUndefined()
+  expect(pend()).toEqual([])
+}
 const flush = async () => {
   for (let i = 0; i < 20; i++) await Promise.resolve()
 }
@@ -65,7 +75,9 @@ const flush = async () => {
 beforeEach(() => {
   runBodies.length = 0
   handler = defaultHandler
-  localStorage.clear()
+  draftBe.drafts.clear()
+  draftBe.pendings.clear()
+  draftBe.calls.length = 0
   setCurrentProjectId('pa')
   useAiStore.setState({
     sessions: [],
@@ -87,7 +99,8 @@ describe('超时 → 「已发出未确认」，不是失败', () => {
     expect(useAiStore.getState().sessions).toEqual([])
     const sub = onlySub()
     expect(sub.phase).toBe('unconfirmed')
-    expect(loadDraft('pa', 'Fig1.pdf')?.rid).toBe(sub.rid)
+    await flush()
+    expect(pend()).toEqual([sub.rid])
   })
 
   it('29 s 时还在 sending（对照：超时尺子量得到）', async () => {
@@ -144,7 +157,7 @@ describe('未确认时不能盲目重发', () => {
 
   it('查询到后端已登记 → 直接进会话（不重发）、草稿删掉、转录与 diff 从后端补全', async () => {
     const rid = onlySub().rid
-    expect(loadDraft('pa', 'Fig1.pdf')?.rid).toBe(rid)
+    expect(pend()).toEqual([rid])
     handler = (url) => {
       if (url.includes('/api/ai/requests/')) return json({ session: 's-5', status: 'done', changed: true, script: 'fig1.py' })
       if (url.includes('/api/ai/sessions/s-5'))
@@ -158,7 +171,8 @@ describe('未确认时不能盲目重发', () => {
     expect(s).toMatchObject({ id: 's-5', status: 'done', changed: true, diff: '--- a\n+++ b', finalized: true })
     expect(s.entries[0].text).toBe('好了')
     expect(subs()).toEqual([])
-    expect(loadDraft('pa', 'Fig1.pdf')).toBeNull()
+    await flush()
+    gone()
   })
 
   it('后端登记过但任务历史被用户删了（history_deleted）：不放开重发、不建会话、提交与草稿收掉', async () => {
@@ -172,7 +186,8 @@ describe('未确认时不能盲目重发', () => {
     expect(runCalls()).toBe(before)
     expect(subs()).toEqual([])
     expect(useAiStore.getState().sessions).toEqual([])
-    expect(loadDraft('pa', 'Fig1.pdf')).toBeNull()
+    await flush()
+    gone()
     // 提交记录没了，resend 也是空操作
     await expect(useAiStore.getState().resend(rid)).resolves.toBe('unconfirmed')
     expect(runCalls()).toBe(before)
@@ -213,12 +228,13 @@ describe('明确失败才是失败；新的发送换新 rid', () => {
       [500, 'ai_start_failed'],
     ] as const) {
       useAiStore.setState({ submissions: {} })
+      draftBe.put('pa', 'Fig1.pdf', '指令') // 输入框的防抖早已把这段文字存进后端（hook 的事）
       handler = (url) => (url.includes('/api/ai/run') ? json({ error: 'no', code }, status) : json({}))
       await expect(send('指令')).rejects.toMatchObject({ status })
       expect(subs()).toEqual([])
-      const d = loadDraft('pa', 'Fig1.pdf')
-      expect(d?.text).toBe('指令')
-      expect(d?.rid).toBeUndefined()
+      await flush()
+      expect(draftText()).toBe('指令')
+      expect(pend()).toEqual([])
     }
   })
 
@@ -238,12 +254,15 @@ describe('接受之后才删草稿', () => {
     let release: (r: Response) => void = () => {}
     handler = (url) =>
       url.includes('/api/ai/run') ? new Promise<Response>((r) => (release = r)) : json({})
+    draftBe.put('pa', 'Fig1.pdf', '指令')
     const p = send('指令')
     await flush()
-    expect(loadDraft('pa', 'Fig1.pdf')).toMatchObject({ text: '指令', rid: onlySub().rid })
+    expect(draftText()).toBe('指令')
+    expect(pend()).toEqual([onlySub().rid])
     release(json({ session: 's-2', script: 'fig1.py' }))
     await p
-    expect(loadDraft('pa', 'Fig1.pdf')).toBeNull()
+    await flush()
+    gone()
   })
 
   it('发出后切走项目：会话不落到新项目，但这条已被接受，A 的草稿删掉', async () => {
@@ -257,7 +276,8 @@ describe('接受之后才删草稿', () => {
     release(json({ session: 's-2', script: 'fig1.py' }))
     await p
     expect(useAiStore.getState().sessions).toEqual([])
-    expect(loadDraft('pa', 'Fig1.pdf')).toBeNull()
+    await flush()
+    gone()
   })
 
   it('发出后切走项目且请求没有答复：A 的草稿留着 rid，切回来是未确认（不是可普通重发的草稿）', async () => {
@@ -265,7 +285,8 @@ describe('接受之后才删草稿', () => {
     const p = send('指令')
     useAiStore.getState().clear()
     await p
-    expect(loadDraft('pa', 'Fig1.pdf')?.rid).toBeTruthy()
+    await flush()
+    expect(pend()).toHaveLength(1)
     expect(subs()).toEqual([])
   })
 })

@@ -207,17 +207,19 @@ export function setAiSettledNotifier(fn: ((p: DonePayload) => void) | null): voi
  * （`lib/aiDraft.hosts.test.ts` 用 import 图钉住）。桌面 / 浏览器宿主在 `lib/aiDraftLedger.ts` 里注册。
  */
 export interface SubmissionLedger {
-  markSubmitted: (project: string | null, fileId: string, text: string, rid: string, sent: DraftTarget) => void
-  clearSubmitted: (project: string | null, fileId: string, rid: string) => void
-  removeAccepted: (project: string | null, fileId: string, rid: string) => void
+  markSubmitted: (project: string | null, fileId: string, text: string, rid: string, sent: DraftTarget) => Promise<void>
+  clearSubmitted: (project: string | null, fileId: string, rid: string) => Promise<void>
+  removeAccepted: (project: string | null, fileId: string, rid: string) => Promise<void>
 }
 let ledger: SubmissionLedger | null = null
 export function setAiSubmissionLedger(l: SubmissionLedger | null): void {
   ledger = l
 }
-const markSubmitted: SubmissionLedger['markSubmitted'] = (...a) => ledger?.markSubmitted(...a)
-const clearSubmitted: SubmissionLedger['clearSubmitted'] = (...a) => ledger?.clearSubmitted(...a)
-const removeAccepted: SubmissionLedger['removeAccepted'] = (...a) => ledger?.removeAccepted(...a)
+// 落盘都是请求后端：markSubmitted 在 spawn 之前**等它写完**（start 里 await）；其余是尽力而为、不挡界面
+const markSubmitted = (...a: Parameters<SubmissionLedger['markSubmitted']>): Promise<void> | undefined =>
+  ledger?.markSubmitted(...a)
+const clearSubmitted = (...a: Parameters<SubmissionLedger['clearSubmitted']>): void => void ledger?.clearSubmitted(...a)
+const removeAccepted = (...a: Parameters<SubmissionLedger['removeAccepted']>): void => void ledger?.removeAccepted(...a)
 
 /** 请求 id：安全上下文里用 `randomUUID`，否则用 `getRandomValues` 拼 v4（后端只要求 `[A-Za-z0-9_-]{8,64}`） */
 export function newRequestId(): string {
@@ -371,8 +373,9 @@ export const useAiStore = create<AiState>((set, get) => ({
       phase: 'sending',
     }
     set((s) => ({ submissions: { ...s.submissions, [rid]: sub } }))
-    // 同步落盘：刷新 / 崩溃之后还认得「这条发出过」
-    markSubmitted(project, fileId, prompt, rid, sent)
+    // spawn 之前先把账本写进后端（原文 + 目标）：刷新 / 崩溃 / 换端口之后还认得「这条发出过」
+    const marked = markSubmitted(project, fileId, prompt, rid, sent)
+    if (marked) await marked
     return dispatch(rid, get().generation)
   },
 
