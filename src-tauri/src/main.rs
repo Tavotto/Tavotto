@@ -54,6 +54,8 @@ struct AppState {
     engine_gen: AtomicU64,
     /// `restart_engine` 正在进行（重复点击幂等）。
     restarting: AtomicBool,
+    /// 主窗口上一次告诉页面的全屏状态（macOS，见 `window_chrome::FULLSCREEN_EVENT`）。
+    fullscreen: window_chrome::FullscreenTracker,
     /// 本次启动带进来的交接请求（`Tavotto --open <目录> [--stem <s>]`）。
     /// 首启走这条：项目交给 sidecar 的 `--figures`，stem 拼进落地 URL 的
     /// `?open=`。**第二次启动不走这里**——单实例插件会把 argv 转发给已经在
@@ -1415,6 +1417,30 @@ fn current_engine_exit(
     Ok(kind.map(exit_marker::EngineExit::as_str))
 }
 
+/// 主窗口此刻是否全屏（回读，防事件早于前端监听）。只有 macOS 有意义——别处恒 `false`，
+/// 因为只有 macOS 的红绿灯会随全屏收起、页面才需要知道。
+#[tauri::command]
+fn current_fullscreen(window: tauri::WebviewWindow) -> Result<bool, String> {
+    only_main_window(&window)?;
+    Ok(cfg!(target_os = "macos") && window.is_fullscreen().unwrap_or(false))
+}
+
+/// 全屏状态真变了才发 `tavotto:fullscreen`（只发给主窗口）。
+#[cfg(target_os = "macos")]
+fn notify_fullscreen(window: &tauri::Window) {
+    let now = window.is_fullscreen().unwrap_or(false);
+    let Some(state) = window.app_handle().try_state::<AppState>() else {
+        return;
+    };
+    if state.fullscreen.update(now) {
+        let _ = window.app_handle().emit_to(
+            MAIN_WINDOW,
+            window_chrome::FULLSCREEN_EVENT,
+            serde_json::json!({ "fullscreen": now }),
+        );
+    }
+}
+
 /// 重新启动本机引擎：关旧句柄 → 重新 `Sidecar::start`（端口记忆）→ 新 nonce → 导航。
 /// 只在引擎确已意外退出时才动手；重复点击 / 正在重启时直接返回 `false`（幂等）。
 #[tauri::command]
@@ -1666,6 +1692,7 @@ fn main() {
         engine_exit: Mutex::new(None),
         engine_gen: AtomicU64::new(0),
         restarting: AtomicBool::new(false),
+        fullscreen: window_chrome::FullscreenTracker::default(),
         open: parse_open_args(&std::env::args().skip(1).collect::<Vec<_>>()),
         // 真正的初值在 build_menu 里按配置目录读；这里先摆默认档，
         // 免得 set_menu_locale 把「和现在一样」误判成需要重建。
@@ -1716,6 +1743,7 @@ fn main() {
             set_titlebar_colors,
             take_previous_exit,
             current_engine_exit,
+            current_fullscreen,
             restart_engine,
             rescue::rescue_status,
             rescue::rescue_retry,
@@ -1726,6 +1754,11 @@ fn main() {
             rescue::rescue_diag_save
         ])
         .on_window_event(|window, event| {
+            // macOS 进 / 出全屏必伴随一次 Resized：变了才通知页面收放红绿灯那段空位。
+            #[cfg(target_os = "macos")]
+            if window.label() == MAIN_WINDOW && matches!(event, tauri::WindowEvent::Resized(_)) {
+                notify_fullscreen(window);
+            }
             // 事件回调是全局的：只看有关窗询问闸的那两个窗口。
             if !guarded_window(window.label()) {
                 return;

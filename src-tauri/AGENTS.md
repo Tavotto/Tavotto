@@ -51,6 +51,10 @@
   ④ **重新尝试 = 重启整个应用**（收 sidecar → 写 clean → `restart()`），不做同进程重试。shell 报告只含闭集字段（`STAGES` / `CODES`），不收 `msg` / 日志路径 / 环境变量；
   **只有 `rescue_diag_send` 联网**，由用户单独点击触发；端点是编译期常量，环境变量只能关。协议常量、失败码、上传地址向量、包内容以
   `tests/golden/diag_shell_report.json` 为唯一出处（Rust 与 `tests/test_diag_shell_contract.py` 各读）。发行边界：只能救援已带此功能且壳能运行的客户端。
+- **macOS 全屏收起顶栏让位**（`window_chrome.rs`）：主窗口 `Resized` 时 `FullscreenTracker` 判变化，才向主窗口发
+  `tavotto:fullscreen`（`{fullscreen}`）；`current_fullscreen` 回读防事件早于监听（仅主窗口，ACL 三处同步）。
+  前端 `useWindowFullscreen`（非 `overlay` 窗框恒 false）让 TopBar 撤掉 `TRAFFIC_LIGHTS_INSET`。
+  事件名 / 命令 / ACL 由 `tests/test_desktop_window_chrome.py` 看护。
 - **主页拖放拿真实路径**（ADR 0092）：`disable_drag_drop_handler()` 必须留着（装上 Tauri 的处理器
   页面 HTML5 拖放整片失效）；macOS 上 `native_drop.rs` 只旁听 `performDragOperation:` 读路径、发
   `tavotto:file-drop`、再调原实现。路径分派只在 `drop_paths::classify`（绝对 + canonicalize，Rust 单测），

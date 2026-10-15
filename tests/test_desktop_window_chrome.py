@@ -116,3 +116,39 @@ def test_traffic_lights_fit_inside_the_inset_the_topbar_leaves():
     inset = re.search(r"export const TRAFFIC_LIGHTS_INSET = (\d+)", ts)
     assert inset, "TRAFFIC_LIGHTS_INSET 不见了"
     assert x + 2 * 23 + 14 + 8 <= int(inset.group(1)), (x, inset.group(1))
+
+
+@needs_shell
+def test_fullscreen_event_command_and_acl_are_one_contract():
+    """macOS 全屏时红绿灯收起，顶栏收回让位的宽度：壳发 `tavotto:fullscreen`（载荷 `{fullscreen}`），
+    页面订阅同名事件并可回读 `current_fullscreen`。事件名漂了 = 全屏后顶栏左边永远空着 88px；
+    命令少了 ACL / 注册 = 回读被静默拒绝，启动时已在全屏的窗口不知道。"""
+    rs = CHROME_RS.read_text(encoding="utf-8")
+    event = _rust_const(rs, "FULLSCREEN_EVENT")
+    ts = DESKTOP_TS.read_text(encoding="utf-8")
+    m = re.search(r"export const FULLSCREEN_EVENT = '([^']+)'", ts)
+    assert m and m.group(1) == event == "tavotto:fullscreen", (m, event)
+    # 载荷字段名两侧一致
+    main = rust_code(MAIN_RS.read_text(encoding="utf-8"), keep_strings=True)
+    assert 'serde_json::json!({ "fullscreen": now })' in main
+    assert "e.payload?.fullscreen" in ts
+    # 命令：三处齐全（build.rs / main.json / generate_handler），且只给主窗口
+    assert '"current_fullscreen"' in (TAURI / "build.rs").read_text(encoding="utf-8")
+    assert (
+        "allow-current-fullscreen"
+        in json.loads((CAPS / "main.json").read_text(encoding="utf-8"))["permissions"]
+    )
+    assert "current_fullscreen," in main
+    assert "invoke('current_fullscreen')" in ts
+    for p in sorted(CAPS.glob("*.json")):
+        if p.name != "main.json":
+            assert (
+                "allow-current-fullscreen"
+                not in json.loads(p.read_text(encoding="utf-8"))["permissions"]
+            ), p.name
+    # 只在 macOS 的主窗口发（别的平台没有随全屏收起的红绿灯）
+    fn = main[main.index("fn notify_fullscreen(") :]
+    assert (
+        main[: main.index("fn notify_fullscreen(")].rstrip().endswith('#[cfg(target_os = "macos")]')
+    )
+    assert "MAIN_WINDOW" in fn

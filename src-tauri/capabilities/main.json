@@ -23,6 +23,7 @@
     "allow-desktop-update-install",
     "allow-take-previous-exit",
     "allow-current-engine-exit",
+    "allow-current-fullscreen",
     "allow-restart-engine",
     "process:allow-restart",
     "allow-native-file-drop",

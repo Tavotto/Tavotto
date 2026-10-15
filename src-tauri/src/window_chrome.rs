@@ -22,6 +22,22 @@ pub const CHROME_OVERLAY: &str = "overlay";
 /// Windows：菜单栏藏起来，页面顶栏给一个「菜单」按钮。
 pub const CHROME_MENU_BUTTON: &str = "menu-button";
 
+/// 主窗口进 / 出全屏时壳发给页面的事件，载荷 `{fullscreen: bool}`。**事件名与
+/// `web/src/lib/desktop.ts` 的 `FULLSCREEN_EVENT` 严格同源**（`tests/test_desktop_window_chrome.py`）。
+/// 只有 macOS 发：全屏时红绿灯随系统标题栏一起收起，页面顶栏左侧让给它们的那段就不该再留着。
+pub const FULLSCREEN_EVENT: &str = "tavotto:fullscreen";
+
+/// 记住上一次告诉页面的全屏状态：`Resized` 一天到晚在发（拖边框、缩放），只有真变了才通知。
+#[derive(Debug, Default)]
+pub struct FullscreenTracker(std::sync::atomic::AtomicBool);
+
+impl FullscreenTracker {
+    /// 记下当前状态；与上次不同返回 `true`（该发事件了）。
+    pub fn update(&self, now: bool) -> bool {
+        self.0.swap(now, std::sync::atomic::Ordering::SeqCst) != now
+    }
+}
+
 /// 这个平台主窗口的窗框形态。
 pub const fn chrome() -> &'static str {
     if cfg!(target_os = "macos") {
@@ -124,6 +140,15 @@ mod tests {
         } else {
             assert!(script.contains(CHROME_MENU_BUTTON));
         }
+    }
+
+    #[test]
+    fn fullscreen_tracker_reports_only_changes() {
+        let t = FullscreenTracker::default();
+        assert!(!t.update(false), "初值是非全屏：第一次报 false 不算变化");
+        assert!(t.update(true));
+        assert!(!t.update(true), "Resized 连发：同一状态不重复通知");
+        assert!(t.update(false));
     }
 
     #[test]
