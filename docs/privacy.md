@@ -366,29 +366,42 @@ or Stripe's own policies. 爱发电 likewise shows the maintainer the supporter'
 爱发电 account and order. What follows is what the website itself receives and
 keeps.
 
-When a Ko-fi payment completes, Ko-fi notifies the website. The supporter's email
-address in that notification is used **once**, to send a single thank-you mail
+When a Ko-fi payment completes, Ko-fi notifies the website. The website sends
+one thank-you mail to the supporter's email address in that notification
 (through the website's mail provider) with a link for choosing how to appear on
 the supporters wall. The notification also carries the supporter's Ko-fi display
 name; it is only checked to recognise Ko-fi's own test notification and is then
-discarded. The address and that name are not stored, and neither are the amount
-or the message. What is kept is the Ko-fi transaction id, the month, whether it was
-a one-off payment or a membership (and the tier name), and, only if the
-supporter fills in the form, the display name and optional avatar they chose. A
-name or avatar appears on the page only after the supporter submitted it and the
-maintainer approved it; a supporter who stays anonymous is counted but never
-named.
+discarded, and the message is never kept.
+
+What is kept, for each payment: the Ko-fi transaction id, the month and time,
+whether it was a one-off payment or a membership (and the tier name), and the
+amount and currency. For each supporter: their email address and the list of
+their payments with the totals. The address and the amounts are kept so that
+payments from the same person can add up to an avatar on the wall, so that a
+membership can be shown while it is paid up, and so that the maintainer can
+later contact supporters about supporter benefits, such as a discount on a
+future Pro edition. They are never shown on the website and never shared with
+anyone, except that the address is handed to the website's mail provider to
+deliver these mails and both are held by its database provider. Only if the
+supporter fills in the form are the display name and optional avatar they
+chose kept. A name or avatar appears on the page only after the supporter
+submitted it and the maintainer approved it; a supporter who stays anonymous is
+counted but never named.
 
 爱发电 sends no email address. When it reports an order, the website looks the
 order up through 爱发电's API to confirm it was paid, and keeps the order number,
-the month and whether the amount allows an avatar; the supporter's 爱发电 user id
-is kept only as a keyed hash, so that one person is counted once. To appear on
-the wall, the supporter enters the order number on the support page and gets the
-same form; the rest is as for Ko-fi above. Next to the order number the supporter
-may type an email address; it is used **once**, to send a single thank-you mail
-carrying the same form link (at most one per order), and is not stored.
+the month and time, the amount, and whether it allows an avatar; the supporter's
+爱发电 user id is kept only as a keyed hash, under which the website also keeps
+the list of that person's orders and their total. To appear on the wall, the
+supporter enters an order number on the support page and gets the same form;
+the rest is as for Ko-fi above. Registering asks for an email address, next to
+the order number (or on the form itself when the support page opened it
+directly): it receives a thank-you mail carrying the same form link (at most
+one per order), and a mail when their orders first add up to an avatar, and it
+is kept with their orders for the purposes above.
 
-To change or remove an entry, write to <hello@tavotto.com>.
+To change or remove an entry, or to have your email address and payment
+records deleted, write to <hello@tavotto.com>.
 
 ## Changes and contact
 

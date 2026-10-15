@@ -439,6 +439,8 @@ fn allowed_hits() -> Vec<Hit> {
         h("main.rs", "e2e_exit", "process::exit"),
         h("main.rs", "updater_builder", "updater_builder"),
         h("main.rs", "spawn_e2e_update_if_requested", "restart"),
+        // 原生救援页「重新尝试」（ADR 0130）：mark_clean_exit 在 restart 之前，由 main.rs 的结构测试钉住
+        h("rescue.rs", "rescue_retry", "restart"),
         // sidecar.rs 为 spawn 子进程导入的类型（不含 exit）
         h("sidecar.rs", "", "use std::process::Child"),
         h("sidecar.rs", "", "use std::process::ChildStdin"),

@@ -1,0 +1,432 @@
+{
+  "contract": 1,
+  "_doc": "壳最小诊断（src-tauri/src/shell_report.rs）与引擎诊断发送（src/tavotto/engine/diagsend.py）共用的跨语言契约样例。Rust 测试与 tests/test_diag_shell_contract.py 各读一遍；改任何一侧的外层协议、闭集或包内容，必须同步改这里，两侧测试才同时变绿。",
+  "endpoint": "https://tavotto.cn",
+  "schema_version": 8,
+  "category": "install_update",
+  "distribution": "desktop",
+  "api_major": 1,
+  "api_version_header": "Tavotto-Diagnostics-Api",
+  "off_switch": {
+    "hard_off_env": "TAVOTTO_NO_DIAG_UPLOAD",
+    "enable_env": "TAVOTTO_DIAG_UPLOAD"
+  },
+  "stages": [
+    "locate",
+    "launch",
+    "handshake",
+    "navigate",
+    "unknown"
+  ],
+  "codes": [
+    "sidecar_not_found",
+    "sidecar_log_unavailable",
+    "sidecar_spawn_failed",
+    "sidecar_stdin_failed",
+    "sidecar_handshake_failed",
+    "sidecar_exited",
+    "sidecar_timeout",
+    "window_init_failed",
+    "unknown"
+  ],
+  "input": {
+    "version": "0.18.1",
+    "debug_build": false,
+    "os": "macos",
+    "arch": "arm64",
+    "stage": "handshake",
+    "code": "sidecar_exited",
+    "exit_code": 1,
+    "created_at": "2026-10-15T08:00:00Z"
+  },
+  "entries": [
+    "manifest.json",
+    "report.json"
+  ],
+  "manifest": {
+    "schema_version": 8,
+    "created_at": "2026-10-15T08:00:00Z",
+    "tavotto_version": "0.18.1",
+    "source": "shell",
+    "partial": true,
+    "privacy_mode": "shell-minimal",
+    "contains_frontend_state": false,
+    "contains_interaction_trace": false,
+    "contains_detail": false,
+    "entries": [
+      "manifest.json",
+      "report.json"
+    ]
+  },
+  "report": {
+    "source": "shell",
+    "partial": true,
+    "report_version": 1,
+    "tavotto": {
+      "version": "0.18.1",
+      "build": "release"
+    },
+    "platform": {
+      "os": "macos",
+      "arch": "arm64",
+      "distribution": "desktop"
+    },
+    "failure": {
+      "stage": "handshake",
+      "code": "sidecar_exited",
+      "exit_code": 1
+    }
+  },
+  "zip_base64": "UEsDBBQAAAAAAAAAIQCLkXFmTQEAAE0BAAANAAAAbWFuaWZlc3QuanNvbnsKICAiY29udGFpbnNfZGV0YWlsIjogZmFsc2UsCiAgImNvbnRhaW5zX2Zyb250ZW5kX3N0YXRlIjogZmFsc2UsCiAgImNvbnRhaW5zX2ludGVyYWN0aW9uX3RyYWNlIjogZmFsc2UsCiAgImNyZWF0ZWRfYXQiOiAiMjAyNi0xMC0xNVQwODowMDowMFoiLAogICJlbnRyaWVzIjogWwogICAgIm1hbmlmZXN0Lmpzb24iLAogICAgInJlcG9ydC5qc29uIgogIF0sCiAgInBhcnRpYWwiOiB0cnVlLAogICJwcml2YWN5X21vZGUiOiAic2hlbGwtbWluaW1hbCIsCiAgInNjaGVtYV92ZXJzaW9uIjogOCwKICAic291cmNlIjogInNoZWxsIiwKICAidGF2b3R0b192ZXJzaW9uIjogIjAuMTguMSIKfVBLAwQUAAAAAAAAACEAbl3GJT8BAAA/AQAACwAAAHJlcG9ydC5qc29uewogICJmYWlsdXJlIjogewogICAgImNvZGUiOiAic2lkZWNhcl9leGl0ZWQiLAogICAgImV4aXRfY29kZSI6IDEsCiAgICAic3RhZ2UiOiAiaGFuZHNoYWtlIgogIH0sCiAgInBhcnRpYWwiOiB0cnVlLAogICJwbGF0Zm9ybSI6IHsKICAgICJhcmNoIjogImFybTY0IiwKICAgICJkaXN0cmlidXRpb24iOiAiZGVza3RvcCIsCiAgICAib3MiOiAibWFjb3MiCiAgfSwKICAicmVwb3J0X3ZlcnNpb24iOiAxLAogICJzb3VyY2UiOiAic2hlbGwiLAogICJ0YXZvdHRvIjogewogICAgImJ1aWxkIjogInJlbGVhc2UiLAogICAgInZlcnNpb24iOiAiMC4xOC4xIgogIH0KfVBLAQIUABQAAAAAAAAAIQCLkXFmTQEAAE0BAAANAAAAAAAAAAAAAAAAAAAAAABtYW5pZmVzdC5qc29uUEsBAhQAFAAAAAAAAAAhAG5dxiU/AQAAPwEAAAsAAAAAAAAAAAAAAAAAeAEAAHJlcG9ydC5qc29uUEsFBgAAAAACAAIAdAAAAOACAAAAAA==",
+  "init_keys": [
+    "arch",
+    "bundle_schema",
+    "category",
+    "client_request_id",
+    "distribution",
+    "os",
+    "sha256",
+    "size",
+    "tavotto_version"
+  ],
+  "forbidden_init_keys": [
+    "note",
+    "install_id",
+    "distinct_id",
+    "anonymous_id",
+    "user_id",
+    "email"
+  ],
+  "forbidden_keys": [
+    "msg",
+    "message",
+    "log",
+    "log_path",
+    "logs",
+    "stderr",
+    "stdout",
+    "nonce",
+    "token",
+    "env",
+    "environment",
+    "stack",
+    "traceback",
+    "path",
+    "paths",
+    "query",
+    "project",
+    "url",
+    "user",
+    "home",
+    "hostname",
+    "username"
+  ],
+  "failure_codes": [
+    "network",
+    "timeout",
+    "tls",
+    "bad_response",
+    "api_incompatible",
+    "rate_limited",
+    "daily_quota_exceeded",
+    "uploads_disabled",
+    "storage_unavailable",
+    "too_large",
+    "expired",
+    "session_closed",
+    "notes_disabled",
+    "rejected",
+    "client_error",
+    "not_found",
+    "upload_denied",
+    "upload_rejected",
+    "upload_unavailable",
+    "upload_missing",
+    "upload_url_rejected",
+    "redirect_blocked",
+    "digest_mismatch",
+    "unexpected_response",
+    "internal"
+  ],
+  "retryable": {
+    "network": true,
+    "timeout": true,
+    "tls": true,
+    "bad_response": true,
+    "api_incompatible": false,
+    "rate_limited": true,
+    "daily_quota_exceeded": true,
+    "uploads_disabled": true,
+    "storage_unavailable": true,
+    "too_large": false,
+    "expired": true,
+    "session_closed": true,
+    "notes_disabled": true,
+    "rejected": false,
+    "client_error": false,
+    "not_found": true,
+    "upload_denied": true,
+    "upload_rejected": false,
+    "upload_unavailable": true,
+    "upload_missing": true,
+    "upload_url_rejected": false,
+    "redirect_blocked": false,
+    "digest_mismatch": false,
+    "unexpected_response": true,
+    "internal": false
+  },
+  "classify_vectors": [
+    {
+      "status": 429,
+      "server_code": "rate_limited",
+      "client_code": "rate_limited"
+    },
+    {
+      "status": 429,
+      "server_code": "daily_quota_exceeded",
+      "client_code": "daily_quota_exceeded"
+    },
+    {
+      "status": 429,
+      "server_code": "",
+      "client_code": "rate_limited"
+    },
+    {
+      "status": 503,
+      "server_code": "uploads_disabled",
+      "client_code": "uploads_disabled"
+    },
+    {
+      "status": 503,
+      "server_code": "storage_unavailable",
+      "client_code": "storage_unavailable"
+    },
+    {
+      "status": 503,
+      "server_code": "busy",
+      "client_code": "storage_unavailable"
+    },
+    {
+      "status": 503,
+      "server_code": "",
+      "client_code": "storage_unavailable"
+    },
+    {
+      "status": 413,
+      "server_code": "too_large",
+      "client_code": "too_large"
+    },
+    {
+      "status": 413,
+      "server_code": "payload_too_large",
+      "client_code": "too_large"
+    },
+    {
+      "status": 410,
+      "server_code": "expired",
+      "client_code": "expired"
+    },
+    {
+      "status": 404,
+      "server_code": "not_found",
+      "client_code": "not_found"
+    },
+    {
+      "status": 409,
+      "server_code": "upload_missing",
+      "client_code": "upload_missing"
+    },
+    {
+      "status": 409,
+      "server_code": "idempotency_conflict",
+      "client_code": "session_closed"
+    },
+    {
+      "status": 409,
+      "server_code": "session_closed",
+      "client_code": "session_closed"
+    },
+    {
+      "status": 409,
+      "server_code": "cancelled",
+      "client_code": "session_closed"
+    },
+    {
+      "status": 409,
+      "server_code": "in_progress",
+      "client_code": "unexpected_response"
+    },
+    {
+      "status": 409,
+      "server_code": "already_complete",
+      "client_code": "unexpected_response"
+    },
+    {
+      "status": 409,
+      "server_code": "",
+      "client_code": "unexpected_response"
+    },
+    {
+      "status": 422,
+      "server_code": "notes_disabled",
+      "client_code": "notes_disabled"
+    },
+    {
+      "status": 422,
+      "server_code": "rejected",
+      "client_code": "rejected"
+    },
+    {
+      "status": 422,
+      "server_code": "bad_request",
+      "client_code": "client_error"
+    },
+    {
+      "status": 422,
+      "server_code": "identity_field_forbidden",
+      "client_code": "client_error"
+    },
+    {
+      "status": 400,
+      "server_code": "bad_json",
+      "client_code": "client_error"
+    },
+    {
+      "status": 415,
+      "server_code": "bad_content_type",
+      "client_code": "client_error"
+    },
+    {
+      "status": 301,
+      "server_code": "",
+      "client_code": "redirect_blocked"
+    },
+    {
+      "status": 307,
+      "server_code": "",
+      "client_code": "redirect_blocked"
+    },
+    {
+      "status": 308,
+      "server_code": "",
+      "client_code": "redirect_blocked"
+    },
+    {
+      "status": 500,
+      "server_code": "",
+      "client_code": "unexpected_response"
+    },
+    {
+      "status": 418,
+      "server_code": "",
+      "client_code": "unexpected_response"
+    },
+    {
+      "status": 401,
+      "server_code": "",
+      "client_code": "unexpected_response"
+    }
+  ],
+  "upload_url_vectors": [
+    {
+      "url": "https://tavotto-diag-1250000000.cos.ap-shanghai.myqcloud.com/",
+      "normalized": "https://tavotto-diag-1250000000.cos.ap-shanghai.myqcloud.com/"
+    },
+    {
+      "url": "https://tavotto-diag-1250000000.cos.ap-shanghai.myqcloud.com",
+      "normalized": "https://tavotto-diag-1250000000.cos.ap-shanghai.myqcloud.com/"
+    },
+    {
+      "url": "https://tavotto-diag-1250000000.cos.ap-shanghai.myqcloud.com:443/",
+      "normalized": "https://tavotto-diag-1250000000.cos.ap-shanghai.myqcloud.com/"
+    },
+    {
+      "url": "https://TAVOTTO-DIAG-1250000000.COS.AP-SHANGHAI.MYQCLOUD.COM/",
+      "normalized": "https://tavotto-diag-1250000000.cos.ap-shanghai.myqcloud.com/"
+    },
+    {
+      "url": "http://tavotto-diag-1250000000.cos.ap-shanghai.myqcloud.com/",
+      "normalized": null
+    },
+    {
+      "url": "https://tavotto-diag-1250000000.cos.ap-shanghai.myqcloud.com:8443/",
+      "normalized": null
+    },
+    {
+      "url": "https://user@tavotto-diag-1250000000.cos.ap-shanghai.myqcloud.com/",
+      "normalized": null
+    },
+    {
+      "url": "https://user:pw@tavotto-diag-1250000000.cos.ap-shanghai.myqcloud.com/",
+      "normalized": null
+    },
+    {
+      "url": "https://tavotto-diag-1250000000.cos.ap-shanghai.myqcloud.com/?x=1",
+      "normalized": null
+    },
+    {
+      "url": "https://tavotto-diag-1250000000.cos.ap-shanghai.myqcloud.com/#frag",
+      "normalized": null
+    },
+    {
+      "url": "https://tavotto-diag-1250000000.cos.ap-shanghai.myqcloud.com/path",
+      "normalized": null
+    },
+    {
+      "url": "https://tavotto-diag-1250000000.cos.ap-shanghai.myqcloud.com/%2e",
+      "normalized": null
+    },
+    {
+      "url": "https://tavotto-diag-1250000000.cos.ap-shanghai.myqcloud.com.evil.com/",
+      "normalized": null
+    },
+    {
+      "url": "https://evil.com/tavotto-diag-1250000000.cos.ap-shanghai.myqcloud.com/",
+      "normalized": null
+    },
+    {
+      "url": "https://evil-1250000000.cos.ap-shanghai.myqcloud.com@evil.com/",
+      "normalized": null
+    },
+    {
+      "url": "https://tavotto.cn/v1/local-upload",
+      "normalized": null
+    },
+    {
+      "url": "https://127.0.0.1/",
+      "normalized": null
+    },
+    {
+      "url": "https://[::1]/",
+      "normalized": null
+    },
+    {
+      "url": "https://tavotto-diag-12.cos.ap-shanghai.myqcloud.com/",
+      "normalized": null
+    },
+    {
+      "url": "https://-bad-1250000000.cos.ap-shanghai.myqcloud.com/",
+      "normalized": null
+    },
+    {
+      "url": "https://tavotto-diag-1250000000.cos.ap.myqcloud.com/",
+      "normalized": null
+    },
+    {
+      "url": "https://tavotto-diag-1250000000.cos.ap-shanghai.myqcloud.com.cn/",
+      "normalized": null
+    },
+    {
+      "url": "https://tavotto%2ddiag-1250000000.cos.ap-shanghai.myqcloud.com/",
+      "normalized": null
+    },
+    {
+      "url": "https://tavotto-diag-1250000000.cos.ap-shanghai.myqcloud.com/\\x",
+      "normalized": null
+    },
+    {
+      "url": "",
+      "normalized": null
+    }
+  ]
+}

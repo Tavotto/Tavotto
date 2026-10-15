@@ -64,6 +64,8 @@ ADR 0116 把「准备」与「执行」拆成两次用户确认：依赖装好�
 意图**不**创建第二次执行：脚本停在 `input()` 上时，报告 `awaiting_runtime_input` 复用同一个 inputbroker `Pending`（0099），与意图无关。执行已经发生之后才发现缺包
 （EX13）仍是 0116 的合同——`needs_dependencies` + 补齐后的**新一次尝试**要用户另行点；意图已 `launched`，不会因补齐而复活（真实外部计数夹具钉住：计数不变成 2）。
 
+> **被 [0127](0127-execution-policy-and-unified-retry-guard.md) 修订（2026-10-14）**：「恰一次」指意图名下的**首次执行**。safe 尝试以 `safe_file_operation_blocked` 收场且策略允许时，同一会话可再有至多一次 native 回退尝试；它不计入 `RUN_INTENT_MAX_STEPS`，记在 `intent.attempts`；缺包（EX13）从不触发回退。
+
 ## 后果
 
 * 0116 §一 的「任何入口都不在答完之后自动认领 `run`」改为：**没有有效意图的入口仍不**；有效意图只放行用户代码首次执行之前的前置推进。

@@ -11,7 +11,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { MATPLOTLIB_SVG } from '@/lib/__fixtures__/matplotlibSvg'
 import type { EngineRenderOptions, Manifest, ManifestElement } from '@/lib/api'
-import { alignEntries } from '@/lib/elementGeom'
+import { alignEntries, panelFullRect } from '@/lib/elementGeom'
 import { useDocumentStore } from '@/store/documentStore'
 import { useInteractionStore } from '@/store/interactionStore'
 import { renderKeyOf, useRenderStore } from '@/store/renderStore'
@@ -124,7 +124,7 @@ const fire = (
   type: 'pointermove' | 'pointerup',
   clientX: number,
   clientY: number,
-  mods: { metaKey?: boolean } = {},
+  mods: { metaKey?: boolean; ctrlKey?: boolean; shiftKey?: boolean } = {},
 ) => window.dispatchEvent(new MouseEvent(type, { clientX, clientY, bubbles: true, ...mods }))
 
 function dragTo(x: number, y: number, mods: { metaKey?: boolean } = {}, steps = 10) {
@@ -618,5 +618,91 @@ describe('吸附反馈：自身所属框与跨图目标框', () => {
     near(x.target!.x + x.target!.w, rightMm)
     // 不动的上下沿不出反馈
     expect(fb.some((f) => f.axis === 'y')).toBe(false)
+  })
+})
+
+/* ===================== 带裁剪的面板：按可见范围过滤（补评审 P2-2） ===================== */
+
+describe('图内子图平移：参考线按面板可见（裁剪后）范围过滤', () => {
+  it('裁掉右半的面板：落在整图矩形内、可见窗外的竖直参考线不参选，吸上的是可见窗右缘', async () => {
+    await setup()
+    useDocumentStore.getState().commit(literal('裁剪'), (d) => {
+      const p = d.objects.find((o) => o.id === 'p1') as PanelObject
+      p.crop = { x: 0, y: 0, w: 0.5, h: 1 }
+    })
+    const full = panelFullRect(livePanel())
+    const visibleRight = livePanel().x + livePanel().w
+    // 整图宽是可见窗的两倍；参考线在可见窗外 0.3 mm、整图矩形内
+    expect(full.w).toBeGreaterThan(livePanel().w * 1.9)
+    const guideX = visibleRight + 0.3
+    useDocumentStore.getState().commit(literal('加参考线'), (d) => {
+      d.guides.push({ axis: 'x', pos: guideX })
+    })
+    // 子图右缘拖到参考线外 0.2 mm：未过滤时参考线（距 0.2）比可见窗右缘（距 0.7）近，
+    // 吸上后因钳在可见窗内够不着，整个吸附落空；按可见窗过滤后吸上的是右缘
+    const right = full.x + 0.45 * full.w
+    startAxesDrag(down(), livePanel(), axes0, { width: mmToWorld(full.w), height: mmToWorld(full.h) }, 'move')
+    const dx = (guideX + 0.2 - right) / MM_PER_PX
+    // 一步到位：逐步走过去会先吸住可见窗右缘（吸住后保持），盖掉「候选里有没有那条参考线」的差别
+    fire('pointermove', dx, 0)
+    flushPreviewFrame()
+    expect(useInteractionStore.getState().snapXs).toEqual([visibleRight])
+    fire('pointerup', dx, 0)
+  })
+})
+
+/* ============ 图内拖动：吸上后手不动、改变 ⌘ / Ctrl（补评审 P2-3） ============ */
+
+describe('图内拖动：修饰键变化重算吸附', () => {
+  const unsnapped = 0.72 + 2 * PX_Y
+  const key = (type: 'keydown' | 'keyup', k: 'Control' | 'Meta') =>
+    window.dispatchEvent(new KeyboardEvent(type, { key: k, ctrlKey: type === 'keydown' && k === 'Control' }))
+  const snapUp = async () => {
+    await setup({ p2: manifestOf({ ...legendAt(0.725), gid: 'axes_0.legend' }) })
+    startElementDrag(down(), livePanel(), legendP1, layout)
+    for (let i = 1; i <= 10; i++) {
+      fire('pointermove', 0, (2 * i) / 10)
+      flushPreviewFrame()
+    }
+    expect(useInteractionStore.getState().snapYs.length).toBeGreaterThan(0)
+  }
+
+  it('跨图吸上后不动指针、按住 Ctrl 再松手：提交的是未吸附位移', async () => {
+    await snapUp()
+    key('keydown', 'Control')
+    expect(useInteractionStore.getState().snapYs).toHaveLength(0)
+    fire('pointerup', 0, 2, { ctrlKey: true })
+    expect(overrideOf('axes_0.legend', 'loc_frac')![1]).toBeCloseTo(unsnapped, 3)
+  })
+
+  it('按住 Ctrl 后又松开再松手：恢复吸附，提交吸附位置', async () => {
+    await snapUp()
+    key('keydown', 'Control')
+    key('keyup', 'Control')
+    expect(useInteractionStore.getState().snapYs.length).toBeGreaterThan(0)
+    fire('pointerup', 0, 2)
+    expect(overrideOf('axes_0.legend', 'loc_frac')![1]).toBeCloseTo(0.725, 3)
+  })
+
+  it('⇧ 锁向拖动、松手前先松 ⇧：松手不放开被锁的那一轴（沿用最后一次移动的 ⇧，Codex #1069）', async () => {
+    await setup()
+    // 竖直参考线在图例左边右侧 2 px：不锁向时 x 会吸过去；⇧ 锁成竖直拖动时 x 不动
+    useDocumentStore.getState().commit(literal('加参考线'), (d) => {
+      d.guides.push({ axis: 'x', pos: livePanel().x + 0.6 * W + 2 * MM_PER_PX })
+    })
+    startElementDrag(down(), livePanel(), legendP1, layout)
+    for (let i = 1; i <= 10; i++) {
+      fire('pointermove', (0.5 * i) / 10, (20 * i) / 10, { shiftKey: true })
+      flushPreviewFrame()
+    }
+    expect(useInteractionStore.getState().snapXs).toHaveLength(0)
+    fire('pointerup', 0.5, 20)
+    expect(overrideOf('axes_0.legend', 'loc_frac')![0]).toBeCloseTo(0.6, 3)
+  })
+
+  it('松手事件带 Ctrl（中间没收到按键事件）：同样提交未吸附位移', async () => {
+    await snapUp()
+    fire('pointerup', 0, 2, { ctrlKey: true })
+    expect(overrideOf('axes_0.legend', 'loc_frac')![1]).toBeCloseTo(unsnapped, 3)
   })
 })

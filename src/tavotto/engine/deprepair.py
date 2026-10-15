@@ -1496,9 +1496,14 @@ def _run_install(plan: RepairPlan, env_key: str, on_event, cancel_ev: threading.
     if cancel_ev.is_set():
         return _finish_cancelled(plan, on_event, python)
     # 回执要「凭什么装它」：缺了在任何副作用（pip）之前拒绝，不留下「装上了、任务却报失败」
-    _require_record_sources(
-        ({"distribution": req.distribution, "resolution_source": req.resolution_source},)
+    record = (
+        {
+            "import_name": req.import_name,
+            "distribution": req.distribution,
+            "resolution_source": req.resolution_source,
+        },
     )
+    _require_record_sources(record)
 
     # ---- pip 在不在 -------------------------------------------------------
     # **不静默 ensurepip**：那是往用户环境里再加一样东西，而用户确认的是「装 lmfit」。
@@ -1552,6 +1557,14 @@ def _run_install(plan: RepairPlan, env_key: str, on_event, cancel_ev: threading.
             health.get("detail") or health.get("error") or "",
             health=health,
         )
+    # 单包原地装与联合安装用同一份 provider 核验：wrapper 的传递依赖可导入，
+    # 也不代表 wrapper 提供了该 import；用户指定的包读不出元数据同样不放行（#970）。
+    provided = _verify_distributions(
+        python,
+        record,
+        (in_place_requirement,),
+        user_specified=record if req.resolution_source == depresolve.SOURCE_USER_SPECIFIED else (),
+    )
     selftest = worker_self_test(python)
     if not selftest.get("ok"):
         raise _selftest_error(selftest)
@@ -1582,16 +1595,10 @@ def _run_install(plan: RepairPlan, env_key: str, on_event, cancel_ev: threading.
         "distribution": req.distribution,
         "import_name": req.import_name,
         "target_kind": plan.target_kind,
-        # 用户 venv 原地装：没有代；装后没有重新读元数据，`provenance` 如实留空
+        # 用户 venv 原地装没有代；provider / 来源只用装后重新核验的元数据。
         "providers": _provider_receipt(
-            (
-                {
-                    "import_name": req.import_name,
-                    "distribution": req.distribution,
-                    "resolution_source": req.resolution_source,
-                },
-            ),
-            [],
+            record,
+            provided,
             {depresolve.normalize_distribution(req.distribution): version},
             "",
         ),

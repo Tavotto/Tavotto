@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-rescue-status"
+description = "Enables the rescue_status command without any pre-configured scope."
+commands.allow = ["rescue_status"]
+
+[[permission]]
+identifier = "deny-rescue-status"
+description = "Denies the rescue_status command without any pre-configured scope."
+commands.deny = ["rescue_status"]

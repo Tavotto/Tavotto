@@ -3,8 +3,15 @@
 Windows 上按下 ⌃Z 时，先截走它的是**菜单加速键表**（`TranslateAcceleratorW`），翻成一条
 `WM_COMMAND`（`HIWORD(wParam) == 1`）投给壳，壳经 `tavotto:menu` 转给前端——webview 的
 keydown 反而在后面（`src-tauri/src/main.rs::menu_spec` 的注释）。这里驱动的正是那条
-`WM_COMMAND`：菜单项的命令 id 从**真菜单栏**上读（`GetMenu`），按显示出来的加速键认项
-（muda 把加速键文字追加在菜单文案的 `\\t` 之后），不写死 id、不认文案。
+`WM_COMMAND`：菜单项的命令 id 从**真菜单**上读，按显示出来的加速键认项（muda 把加速键文字
+追加在菜单文案的 `\\t` 之后），不写死 id、不认文案。
+
+**菜单栏是藏起来的**（#994：`hide_menu` 在 Windows 上是 `SetMenu(hwnd, NULL)`，所以 `GetMenu`
+恒为空——这是预期，不是故障）。加速键表不依赖 HMENU 挂在窗口上：Tauri 的消息钩子
+（`tauri-2.11.5/src/app.rs` 的 `msg_hook`）对已登记的菜单逐个 `TranslateAcceleratorW`，muda 的
+子类过程（`menu_subclass_proc`）按命令 id 找项，二者都与菜单栏可见与否无关。所以命令 id 改从
+**顶栏「菜单」按钮弹出的那份菜单**读（`show_app_menu` → muda 的 `hpopupmenu`，项与 id 同一份），
+读完关掉，再投 `WM_COMMAND`。
 
 只投**自定义项**：muda 在 Windows 上把预定义的剪切 / 复制 / 粘贴 / 全选实现成 `SendInput`
 （向前台注入按键），那是全局输入，这里一概不发。
@@ -33,15 +40,31 @@ def _by_accel(items, accel: str):
     return hit[0]
 
 
-def _menu(desktop_app, win32):
-    items = win32.menu_items(desktop_app.hwnd())
-    assert items, "壳的主窗口没有菜单栏（GetMenu 为空）"
+def _menu(desktop_app, win32, d):
+    """点顶栏「菜单」按钮弹出应用菜单，读出全部叶子项，再把菜单关掉。
+
+    顺带钉住「菜单栏确实被藏起来了」：`GetMenu` 不空说明 `hide_menu` 没生效（又占回一行）。
+    """
+    hwnd = desktop_app.hwnd()
+    assert not win32.menu_items(hwnd), "主窗口的菜单栏没被藏起来（GetMenu 不为空）——窗框回退了？"
+    pid = desktop_app.proc.pid
+    assert not win32.popup_menu_windows(pid), "点按钮之前就已经有弹出菜单了"
+    d.click(d.find("[data-app-menu-button]"))
+    deadline = time.monotonic() + 15
+    while not (pops := win32.popup_menu_windows(pid)):
+        assert time.monotonic() < deadline, "点了顶栏「菜单」按钮 15s 还没弹出菜单"
+        time.sleep(0.1)
+    try:
+        items = win32.popup_menu_items(pops[0].hwnd)
+    finally:
+        win32.dismiss_popup_menu(pid, hwnd)
+    assert items, "弹出菜单里一个叶子项都读不到"
     return items
 
 
-def test_menu_bar_shows_the_wired_accelerators(desktop_app, project_dir, win32):
-    desktop_app.launch("--open", str(project_dir))
-    items = _menu(desktop_app, win32)
+def test_app_menu_shows_the_wired_accelerators(desktop_app, project_dir, win32):
+    d = desktop_app.launch("--open", str(project_dir))
+    items = _menu(desktop_app, win32, d)
     for accel in WIRED:
         _by_accel(items, accel)
 
@@ -49,7 +72,7 @@ def test_menu_bar_shows_the_wired_accelerators(desktop_app, project_dir, win32):
 def test_menu_undo_redo_reach_the_canvas(desktop_app, project_dir, win32):
     """⌃Z / ⌃⇧Z 以加速键翻出来的那条 WM_COMMAND 到达壳 → 转给前端 → 画布撤销 / 重做。"""
     d = desktop_app.launch("--open", str(project_dir))
-    items = _menu(desktop_app, win32)
+    items = _menu(desktop_app, win32, d)
     undo, redo = _by_accel(items, "Ctrl+Z"), _by_accel(items, "Ctrl+Shift+Z")
     oid = place_figure(d, "Fig2_yield.pdf")
     assert object_ids(d) == [oid]
@@ -72,7 +95,7 @@ def test_menu_undo_redo_reach_the_canvas(desktop_app, project_dir, win32):
 def test_menu_duplicate_yields_to_a_focused_text_field(desktop_app, project_dir, win32):
     """加速键先于 keydown 截走按键：输入框聚焦时 ⌃D 不许被菜单劫持成「复制对象」。"""
     d = desktop_app.launch("--open", str(project_dir))
-    dup = _by_accel(_menu(desktop_app, win32), "Ctrl+D")
+    dup = _by_accel(_menu(desktop_app, win32, d), "Ctrl+D")
     oid = place_figure(d, "Fig2_yield.pdf")
     r = rect(d, oid)
     d.click_at(r["x"] + r["w"] / 2, r["y"] + r["h"] / 2)  # 选中它：⌃D 在画布上有东西可复制
@@ -98,7 +121,7 @@ def test_menu_duplicate_yields_to_a_focused_text_field(desktop_app, project_dir,
 
 def test_menu_settings_opens_and_escape_gives_focus_back(desktop_app, project_dir, win32):
     d = desktop_app.launch("--open", str(project_dir))
-    settings = _by_accel(_menu(desktop_app, win32), "Ctrl+,")
+    settings = _by_accel(_menu(desktop_app, win32, d), "Ctrl+,")
     win32.post_menu_command(desktop_app.hwnd(), settings.command_id, from_accelerator=False)
     d.wait_js(
         "const s = document.querySelector('[data-settings-shell]');"

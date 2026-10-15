@@ -72,7 +72,7 @@ runner 发 `input_request` 事件（`request_id` / `kind` / `prompt` / `ordinal`
 
 * **没有真桌面窗口验证**：Tauri 壳、WebView、Windows / macOS 真机（含 Job 路径）归 P10；本轮的「真」是真服务子进程 + 真用户 Python + HTTP。
 * 前端只做到把 `pending_input` 镜像进**同一个**答题队列（`scriptInputStore`）、作答 / 停止走 native 接口；**没有新增「native 运行」按钮或设置**——
-  何时发 `execution: "native"`（默认？仅用户 Python？）是产品决定，本轮留给调用方。
+  何时发 `execution: "native"`（默认？仅用户 Python？）是产品决定，本轮留给调用方。**（已由 [0127](0127-execution-policy-and-unified-retry-guard.md) 关闭：发 native 的唯一调用方是执行回退策略，前端不发 `execution`。）**
 * **成功答案的上下文记忆**（`scriptanswers`）与菜单 / 读取方式 / argv 变化失效：未接到 native 路径（本轮每个提问都问）。
 * **`reuse_last_success`（#982）**：依赖 P09 / #975，本轮不做。接口点：打开脚本动作发 `execution` 的那一处。
 * 缺依赖、凭据、外部软件的「一句话原因 + 一个动作」（AC-21）沿用 safe 路径的映射，native 的 `script_error` 暂以原文呈现。
