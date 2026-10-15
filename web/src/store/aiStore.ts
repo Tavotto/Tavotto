@@ -278,6 +278,50 @@ const queueSupersede = (key: string, rid: string): void => {
 export const isOpenSession = (x: Pick<AiSession, 'status' | 'finalized'>): boolean =>
   !x.finalized && (x.status === 'running' || x.status === 'cancelled')
 
+/**
+ * 一份会话快照是不是**终态**：只认后端明确给的 `final === true`（`_pump` 收尾、changed / diff / refresh 都确定之后）。
+ * 老后端没有 `final` 字段（`undefined`）或根本没有详情时，退回按 `status !== 'running'` 判（旧行为）。
+ * `cancel` 之后后端内存里的 status 立刻是 `cancelled`、但结果还没算出来——那不是终态，过早收尾会把之后真正的 `ai.done` 当重复丢掉。
+ */
+export function snapshotIsFinal(
+  d: Pick<AiSessionDetail, 'status' | 'final'> | null | undefined,
+  fallbackStatus: string,
+): boolean {
+  if (typeof d?.final === 'boolean') return d.final
+  const status = typeof d?.status === 'string' && d.status ? d.status : fallbackStatus
+  return status !== 'running'
+}
+
+/**
+ * 终态快照是转录的**权威来源**：用快照的条目替换本地 entries（断线期间丢掉的补回来，按顺序对齐、不重复）。
+ * 本地有快照里没有的条目（不在流式中、也不是快照某条的前缀）保留，按它在本地的相对位置插回。
+ */
+export function mergeTranscript(local: AiEntry[], snapshot: { kind: string; text: string }[]): AiEntry[] {
+  const snap: AiEntry[] = snapshot.map((t) => ({ kind: t.kind as AiDeltaKind, text: t.text }))
+  const out: AiEntry[] = []
+  let sp = 0
+  for (const l of local) {
+    let k = -1
+    for (let i = sp; i < snap.length; i++) {
+      if (snap[i].kind === l.kind && snap[i].text === l.text) {
+        k = i
+        break
+      }
+    }
+    if (k >= 0) {
+      for (let i = sp; i < k; i++) out.push({ ...snap[i], at: l.at })
+      out.push({ ...snap[k], ...(l.at !== undefined ? { at: l.at } : {}) }) // 本地已有的那条保留它到达的时刻
+      sp = k + 1
+      continue
+    }
+    // 没对上：流式中的半截气泡 / 快照里某条的前缀会被快照里的完整条目取代；其余是本地独有，保留
+    const superseded = l.streaming || snap.some((s) => s.kind === l.kind && s.text.startsWith(l.text))
+    if (!superseded) out.push({ ...l, streaming: false })
+  }
+  for (let i = sp; i < snap.length; i++) out.push(snap[i])
+  return out
+}
+
 /** `settleRunningSessions` 在途的会话（代次 + 项目 + id），同一个会话同一时刻只读一次详情 */
 const settling = new Set<string>()
 
@@ -289,11 +333,10 @@ function settleSessionTo(sid: string, done: DonePayload, transcript: AiSessionDe
   const { get, set } = { get: useAiStore.getState, set: useAiStore.setState }
   const cur = get().sessions.find((y) => y.id === sid)
   if (!cur || cur.finalized) return
-  if (cur.entries.length === 0 && transcript?.length) {
+  if (transcript?.length) {
+    // 终态快照是权威：替换本地 entries（断线期间丢的补回来），不是只在本地为空时才应用
     set((s) => ({
-      sessions: s.sessions.map((y) =>
-        y.id === sid ? { ...y, entries: transcript.map((t) => ({ kind: t.kind as AiDeltaKind, text: t.text })) } : y,
-      ),
+      sessions: s.sessions.map((y) => (y.id === sid ? { ...y, entries: mergeTranscript(y.entries, transcript) } : y)),
     }))
   }
   if (get().finish(done)) settledNotifier?.(done)
@@ -1048,7 +1091,7 @@ function accept(
     if (how.kind === 'queried') {
       const d = how.detail
       const st = typeof d?.status === 'string' && d.status ? d.status : how.status
-      if (st !== 'running')
+      if (snapshotIsFinal(d, st))
         settleSessionTo(
           sid,
           {
@@ -1114,7 +1157,11 @@ function accept(
                 target: session.target,
                 prompt: session.prompt,
                 restored: false,
-                entries: x.entries.length ? x.entries : session.entries,
+                entries: settled && detail?.transcript?.length
+                  ? mergeTranscript(x.entries, detail.transcript)
+                  : x.entries.length
+                    ? x.entries
+                    : session.entries,
                 ...(x.finalized
                   ? {}
                   : {

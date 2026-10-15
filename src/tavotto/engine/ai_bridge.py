@@ -864,6 +864,8 @@ def run(
             "exited": threading.Event(),
             "started": time.time(),
             "client_request_id": client_request_id,
+            #: `_pump` 收尾（changed / diff / refresh 都确定、已落库）之后才为 True；会话详情据此告诉前端「这是不是终态快照」
+            "final": False,
         }
         SESSIONS[sid] = sess
     emit = on_event or (lambda *_: None)
@@ -926,6 +928,8 @@ def run(
             # 结束时刻：会话详情据此告诉前端「这是不是终态快照」——`cancel` 之后 status 立刻是 cancelled，但 changed / diff / refresh
             # 要等 pump 收尾才算出来；没有 ended_ms 的 cancelled 快照不是终态
             sess["ended_ms"] = int(time.time() * 1000)
+            # changed / diff / refresh 此刻才全部确定：`final` 之前的快照（包括 cancel 之后立刻变成 cancelled 的）不是终态
+            sess["final"] = True
             emit(
                 "ai.done",
                 {
@@ -950,6 +954,7 @@ def run(
                 refresh=sess["refresh"],
             )
             sess["ended_ms"] = int(time.time() * 1000)
+            sess["final"] = True
             emit(
                 "ai.done",
                 {
@@ -1164,6 +1169,7 @@ SESSION_DTO_KEYS: tuple[str, ...] = (
     "script",
     "prompt",
     "status",
+    "final",
     "changed",
     "diff",
     "transcript",
@@ -1200,6 +1206,12 @@ SESSION_INTERNAL_KEYS: frozenset[str] = frozenset(
 )
 
 
+def _history_final(hist: dict) -> bool:
+    """历史库里这一行是不是终态：写了 `ended_ms`（`record_end` / 启动清理才写）。`cancel` 只改 status、不写 ended_ms——
+    那一刻 changed / diff / refresh 还没算出来；若这行属于另一个仍活着的服务进程，它的 `_pump` 之后才会收尾。"""
+    return hist.get("ended_ms") is not None
+
+
 def _session_dto(raw: dict) -> dict:
     """把会话 dict（内存里的 / sidecar 合并历史的 / 历史行）收成可序列化的对外形状：只取白名单里有的键。"""
     out = {k: raw[k] for k in SESSION_DTO_KEYS if k in raw}
@@ -1223,13 +1235,19 @@ def get(sid: str) -> dict | None:
         # `refresh` 结局，不回 404——404 会被前端当成「没有详情」，凭摘要收尾、丢掉「改成了但项目没刷新」的警告（Codex #1098）
         if hist is None:
             return None
-        return _session_dto({**hist, "note": "改前快照已清理，记录来自历史库"})
+        return _session_dto({**hist, "final": _history_final(hist), "note": "改前快照已清理，记录来自历史库"})
     if hist is not None:
         return _session_dto(
             {
                 **side,
                 # 终态字段**整体**以历史库为准（同一份清单，不逐个抄——逐个抄漏过 `error`：失败的会话 final 为 true 却没有原因）
                 **{k: hist.get(k) for k in SESSION_TERMINAL_FIELDS if k in hist},
+                "status": hist["status"],
+                "transcript": hist["transcript"],
+                "diff": hist["diff"],
+                "changed": hist["changed"],
+                "refresh": hist.get("refresh"),
+                "final": _history_final(hist),
                 "revert_available": hist.get("revert_available"),
                 "note": "后端已重启，记录来自历史库",
             }
@@ -1241,6 +1259,7 @@ def get(sid: str) -> dict | None:
             "transcript": [],
             "diff": "",
             "changed": None,
+            "final": True,  # 后端已重启，没有进程会再产出结果了
             "note": "后端已重启，仅可回滚",
         }
     )

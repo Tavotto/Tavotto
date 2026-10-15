@@ -1300,3 +1300,71 @@ def _ended(db):
     with _sq.connect(db) as raw:
         raw.row_factory = _sq.Row
         return list(raw.execute("SELECT id, status, ended_ms FROM sessions"))
+
+
+# 会话详情的 `final`：cancel 之后 status 立刻是 cancelled，但 changed / diff / refresh 要等 _pump 收尾才算出来
+# ---------------------------------------------------------------------------
+def test_session_detail_is_not_final_until_the_pump_finishes(tmp_path, cli):
+    state, _ = cli
+    state["delay"] = 2.0
+    figs = _project(tmp_path)
+    sid = ai_bridge.run("codex", "fig1.py", "p", str(figs))
+    assert ai_bridge.get(sid)["final"] is False  # 刚起：不是终态
+    assert ai_bridge.cancel(sid) is True
+    detail = ai_bridge.get(sid)
+    assert (
+        detail["status"] == "cancelled" and detail["final"] is False
+    )  # cancel 之后、pump 结束之前
+    _wait_idle()
+    deadline = time.time() + 15
+    while time.time() < deadline and not ai_bridge.SESSIONS[sid].get("final"):
+        time.sleep(0.05)
+    done = ai_bridge.get(sid)
+    assert done["final"] is True and done["status"] in ("cancelled", "done", "failed")
+    engine_watch.stop()
+
+
+def test_detail_from_history_is_final_only_when_the_row_was_ended(tmp_path, cli):
+    figs = _project(tmp_path)
+    project_key = str(figs.resolve())
+
+    def start(sid, rid):
+        ai_history.record_start(
+            {
+                "id": sid,
+                "project": project_key,
+                "provider": "codex",
+                "script": "fig1.py",
+                "client_request_id": rid,
+                "owner_pid": 0,
+            }
+        )
+
+    start("histdone0001", "rid-hist-000001")
+    ai_history.record_end("histdone0001", "done", diff="D", changed=True)
+    assert ai_bridge.get("histdone0001")["final"] is True  # 历史库里的终态行
+    start("histcancel01", "rid-hist-000002")
+    ai_history.update_status(
+        "histcancel01", "cancelled"
+    )  # cancel 只改 status、不写 ended_ms（别的进程的 pump 还没收尾）
+    assert ai_bridge.get("histcancel01")["final"] is False
+    assert ai_history.mark_interrupted_running() >= 0
+    # 属主已死（owner_pid=0 → 未知）的 cancelled 行启动清理补上 ended_ms，之后是终态，前端不会永远轮询
+    assert ai_bridge.get("histcancel01")["final"] is True
+
+
+def test_session_detail_endpoint_carries_final(client, tmp_path, cli):
+    figs = _project(tmp_path)
+    _open(client, figs)
+    ai_history.record_start(
+        {
+            "id": "endpoint0001",
+            "project": str(figs.resolve()),
+            "provider": "codex",
+            "script": "fig1.py",
+            "owner_pid": 0,
+        }
+    )
+    ai_history.record_end("endpoint0001", "done")
+    body = client.get("/api/ai/sessions/endpoint0001").get_json()
+    assert body["final"] is True

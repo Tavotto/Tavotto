@@ -3246,6 +3246,12 @@ export interface AiSessionDetail {
   status: string
   /** 后端写下的结束时刻（`_pump` 收尾之后）；`cancelled` 但没有它 = 取消已被接受、结果还没算出来，不是终态快照 */
   ended_ms?: number | null
+  /**
+   * 后端明确说这是不是终态快照：`_pump` 收尾（changed / diff / refresh 都确定）之后才为 true。
+   * `cancel` 之后 status 立刻是 `cancelled`，但 changed / diff / refresh 还没算出来——**不是 final**。
+   * 老后端没有这个字段（`undefined`）：退回按 `status !== 'running'` 判。
+   */
+  final?: boolean
   changed: boolean | null
   diff: string
   transcript: { kind: string; text: string }[]

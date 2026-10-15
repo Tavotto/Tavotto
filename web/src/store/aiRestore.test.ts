@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { handleServerEvent } from '@/hooks/useServerEvents'
 import { setCurrentProjectId } from '@/lib/session'
-import { isSessionOf, SAFETY_NET_MS, setAiSubmissionLedger, submissionBlocks, useAiStore } from './aiStore'
+import { isSessionOf, mergeTranscript, SAFETY_NET_MS, setAiSubmissionLedger, submissionBlocks, useAiStore } from './aiStore'
 import { useUiStore } from './uiStore'
 
 const json = (b: unknown, status = 200) =>
@@ -701,6 +701,63 @@ describe('取消之后与分页恢复（#1111 Codex P2）', () => {
     expect(sessions()).toHaveLength(120)
     expect(new Set(sessions().map((x) => x.id)).size).toBe(120)
     expect(historyCalls).toHaveLength(1) // 对照：旧实现按 offset 翻页，翻页期间集合变化会漏掉仍在运行的
+  })
+})
+
+describe('终态要后端明确说 final；终态转录以快照为准（#1111 Codex P2）', () => {
+  afterEach(() => vi.useRealTimers())
+
+  it('cancel 之后快照 status 是 cancelled 但 final:false（changed / diff 还没算出来）：不 finalize；轮询直到 final:true 才收尾，并带上 changed / diff', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })
+    history.pa = [row()]
+    detail['s-run'] = { agent: 'codex', status: 'running', changed: false, diff: '', transcript: [] }
+    await useAiStore.getState().restoreRunning()
+    await useAiStore.getState().cancel('s-run')
+    detail['s-run'] = { agent: 'codex', status: 'cancelled', final: false, changed: false, diff: '', transcript: [] }
+    await vi.advanceTimersByTimeAsync(SAFETY_NET_MS + 100)
+    await vi.advanceTimersByTimeAsync(SAFETY_NET_MS)
+    expect(sessions()[0].finalized).toBeFalsy() // 对照：旧实现把 status !== 'running' 当终态，这里已经 finalize 成「没有改动」
+    expect(sessions()[0].changed).toBe(false)
+    detail['s-run'] = { agent: 'codex', status: 'cancelled', final: true, changed: true, diff: 'REAL', transcript: [] }
+    await vi.advanceTimersByTimeAsync(SAFETY_NET_MS + 100)
+    await vi.waitFor(() => expect(sessions()[0]).toMatchObject({ status: 'cancelled', finalized: true, changed: true, diff: 'REAL' }))
+  })
+
+  it('老后端没有 final 字段：退回按 status 判（非 running 即终态）', async () => {
+    history.pa = [row()]
+    detail['s-run'] = { agent: 'codex', status: 'done', changed: true, diff: 'D', transcript: [] } // 没有 final
+    await useAiStore.getState().restoreRunning()
+    expect(sessions()[0]).toMatchObject({ status: 'done', finalized: true, changed: true })
+  })
+
+  it('终态快照的转录是权威：本地 2 条，断线期间后端又产生 3 条，快照 5 条 → 收尾后显示 5 条，不重复', async () => {
+    history.pa = [row()]
+    detail['s-run'] = { agent: 'codex', status: 'running', changed: false, diff: '', transcript: [] }
+    await useAiStore.getState().restoreRunning()
+    handleServerEvent({ kind: 'ai.delta', pj: 'pa', session: 's-run', text: '第一条', kindOf: 'message' })
+    handleServerEvent({ kind: 'ai.delta', pj: 'pa', session: 's-run', text: '第二条', kindOf: 'action' })
+    expect(sessions()[0].entries.map((e) => e.text)).toEqual(['第一条', '第二条'])
+    const full = ['第一条', '第二条', '第三条', '第四条', '第五条'].map((text, i) => ({ kind: i === 1 ? 'action' : 'message', text }))
+    detail['s-run'] = { agent: 'codex', status: 'done', final: true, changed: true, diff: 'D', transcript: full }
+    await useAiStore.getState().settleRunningSessions()
+    expect(sessions()[0]).toMatchObject({ status: 'done', finalized: true })
+    expect(sessions()[0].entries.map((e) => e.text)).toEqual(['第一条', '第二条', '第三条', '第四条', '第五条'])
+  })
+
+  it('mergeTranscript：本地独有的条目保留（按相对位置插回），流式半截被快照里的完整条目取代', () => {
+    const local = [
+      { kind: 'message' as const, text: 'A', at: 1 },
+      { kind: 'action' as const, text: '只在前端的提示', at: 2 },
+      { kind: 'message' as const, text: '半截…', streaming: true, at: 3 },
+    ]
+    const out = mergeTranscript(local, [
+      { kind: 'message', text: 'A' },
+      { kind: 'message', text: 'B' },
+      { kind: 'message', text: '半截…完整了' },
+    ])
+    expect(out.map((e) => e.text)).toEqual(['A', '只在前端的提示', 'B', '半截…完整了'])
+    expect(out.some((e) => e.streaming)).toBe(false)
+    expect(out[0].at).toBe(1) // 本地已有的那条保留到达时刻
   })
 })
 
