@@ -17,6 +17,7 @@
     "title": "渲染环境"
   },
   "export": {
+    "copyPath": "复制完整路径",
     "exportAgain": "再次导出",
     "showInFolder": "在文件夹中显示",
     "finish": "完成",
@@ -74,6 +75,7 @@
     "openProblems": "在问题面板中查看",
     "operationFailed": "无法完成：{{error}}",
     "outputFailed": "无法导出 {{format}}：{{reason}}",
+    "partialSummary": "已保存 {{ok}} 个，{{failed}} 个失败",
     "pdfHint": "矢量",
     "phase": {
       "cancelled": "已取消",

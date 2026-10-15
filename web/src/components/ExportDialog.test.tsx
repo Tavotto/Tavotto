@@ -89,7 +89,7 @@ let root: Root
 let exportBodies: Record<string, unknown>[]
 
 /** 后端把作业**一次跑完**就回终局：用例不必等轮询 */
-let jobStatus: 'done' | 'conflict' = 'done'
+let jobStatus: 'done' | 'partial' | 'conflict' = 'done'
 /** 终局回执里的 outputs（不设 = 一件没有 manifest 的 PDF） */
 let jobOutputs: Record<string, unknown>[] | null = null
 
@@ -104,7 +104,7 @@ function stubFetch() {
           job_id: 'j1',
           status: jobStatus,
           outputs:
-            jobStatus === 'done'
+            jobStatus === 'done' || jobStatus === 'partial'
               ? (jobOutputs ?? [
                   {
                     format: 'pdf',
@@ -2216,5 +2216,45 @@ describe('预览信息完善（PR3）：缩略图说真话', () => {
     // 外框仍是 60×40
     expect(box.parentElement!.className).toContain('h-10')
     expect(box.parentElement!.className).toContain('w-[60px]')
+  })
+})
+
+describe('预览信息完善（PR3）：结果块', () => {
+  const q = (sel: string) => document.body.querySelector<HTMLElement>(sel)
+  const out = (format: string, name: string | null, status: 'done' | 'failed') => ({
+    format,
+    name,
+    url: name ? `/exports/${name}` : null,
+    bytes: name ? 10 : null,
+    dimensions: { px: null, mm: [80, 60] },
+    vector: format === 'pdf',
+    status,
+    replaced: false,
+    error: status === 'failed' ? { code: 'format_failed', params: {} } : null,
+  })
+
+  it('partial：一句汇总的数字取自后端 outputs；逐行不变；复制路径只给已写出的行', async () => {
+    const writeText = vi.fn(async () => {})
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true })
+    jobStatus = 'partial'
+    jobOutputs = [
+      out('pdf', 'a.pdf', 'done'),
+      out('png', 'a.png', 'done'),
+      out('tiff', null, 'failed'),
+    ]
+    await setup(9)
+    await click(q('[data-export-start]')!)
+    expect(q('[data-export-partial-summary]')?.textContent).toBe('已保存 2 个，1 个失败')
+    const copies = [...document.body.querySelectorAll<HTMLElement>('[data-export-result] [aria-label="复制完整路径"]')]
+    expect(copies, '失败行没有路径可复制').toHaveLength(2)
+    await click(copies[0])
+    expect(writeText).toHaveBeenCalledWith('/out/a.pdf')
+  })
+
+  it('全部成功：没有汇总句', async () => {
+    await setup(9)
+    await click(q('[data-export-start]')!)
+    expect(q('[data-export-result]')).toBeTruthy()
+    expect(q('[data-export-partial-summary]')).toBeNull()
   })
 })

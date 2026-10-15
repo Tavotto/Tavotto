@@ -53,6 +53,7 @@ import {
 } from "@/components/ui/icons";
 import { ICON_SIZE } from "@/components/ui/Icon";
 import { CanvasThumb } from "./CanvasThumb";
+import { CopyButton } from "./settings/CopyButton";
 import { Checkbox } from "./ui/Checkbox";
 import { Segmented } from "./ui/Segmented";
 import { Details, Summary } from "@/components/ui/Details";
@@ -2172,6 +2173,15 @@ export function ResultBlock({
             "exports/",
         })}
       </p>
+      {/* 部分失败：先一句汇总（数字就是下面逐行的计数，来自后端回执的 outputs，不另算） */}
+      {job.status === "partial" && (
+        <p data-export-partial-summary className="text-sm font-medium text-ink">
+          {ex("partialSummary", {
+            ok: job.outputs.filter(outputSaved).length,
+            failed: job.outputs.filter((o) => !outputSaved(o)).length,
+          })}
+        </p>
+      )}
       {job.outputs.map((o) => (
         <OutputRow
           key={`${o.format}-${o.name ?? "x"}`}
@@ -2201,6 +2211,13 @@ export function ResultBlock({
     </Card>
   );
 }
+
+/** 这一件产物已被后端确认写出（`OutputRow` 画成功行的同一条判据） */
+const outputSaved = (o: ExportOutput) => o.status !== "failed" && !!o.name;
+
+/** 目录 + 文件名拼成完整路径；沿用目录自带的分隔符（Windows 的 `C:\out` 不掺 `/`） */
+const joinExportPath = (dir: string, name: string) =>
+  `${dir}${dir.includes("\\") && !dir.includes("/") ? "\\" : "/"}${name}`;
 
 function OutputRow({ out, dir }: { out: ExportOutput; dir: string }) {
   useTranslation(["dialogs", "errors"]);
@@ -2272,6 +2289,15 @@ function OutputRow({ out, dir }: { out: ExportOutput; dir: string }) {
         <span className="shrink-0 text-xs tabular-nums text-ink-3">{dims}</span>
         {out.replaced && (
           <span className="shrink-0 text-xs text-ink-3">{ex("replaced")}</span>
+        )}
+        {/* 只在后端确认了目录与文件名之后才给：路径是 `export_dir`（后端回的）+ 已写出的文件名，不推测 */}
+        {dir && (
+          <CopyButton
+            appearance="icon"
+            text={joinExportPath(dir, out.name)}
+            label={ex("copyPath")}
+            className="ml-auto -my-1 shrink-0"
+          />
         )}
       </div>
       <InspectionLine manifest={out.manifest} />

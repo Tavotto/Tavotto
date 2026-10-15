@@ -17,6 +17,7 @@
     "title": "Rendering environment"
   },
   "export": {
+    "copyPath": "Copy full path",
     "exportAgain": "Export again",
     "showInFolder": "Show in folder",
     "finish": "Done",
@@ -76,6 +77,7 @@
     "openProblems": "Open problems panel",
     "operationFailed": "Couldn’t finish: {{error}}",
     "outputFailed": "{{format}} couldn’t be produced: {{reason}}",
+    "partialSummary": "{{ok}} saved, {{failed}} failed",
     "pdfHint": "Vector",
     "phase": {
       "cancelled": "Cancelled",

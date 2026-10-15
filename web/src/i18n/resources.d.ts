@@ -249,6 +249,7 @@ export default interface Resources {
       "conflictRename": "另存一份",
       "conflictReplace": "覆盖",
       "connectionFailed": "无法连接导出服务。请检查连接并确认 {{app}} 正在运行，再重试。重新导出前请先检查输出文件夹。",
+      "copyPath": "复制完整路径",
       "editedDuringExport": "导出期间排版又改了。文件里是点「导出」时的内容。",
       "epsHint": "矢量 · 不支持透明度",
       "epsUnavailable": {
@@ -310,6 +311,7 @@ export default interface Resources {
       "openProblems": "在问题面板中查看",
       "operationFailed": "无法完成：{{error}}",
       "outputFailed": "无法导出 {{format}}：{{reason}}",
+      "partialSummary": "已保存 {{ok}} 个，{{failed}} 个失败",
       "pdfHint": "矢量",
       "phase": {
         "cancelled": "已取消",
