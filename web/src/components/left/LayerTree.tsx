@@ -28,6 +28,7 @@ import { ALT, cn, combo, isMac } from '@/lib/utils'
 import { dropLineClass, listRowClass } from '@/components/ui/listRow'
 import { isTreeNavKey, treeKeyAction } from '@/components/ui/treeKeys'
 import { TreeChevron, TreeIcon, treeIndent } from '@/components/ui/TreeRow'
+import { useBoldTrackingLock } from '@/components/ui/useBoldWidthLock'
 import { useRenameFocusReturn } from '@/components/ui/useRenameFocusReturn'
 import { useFlip } from '@/lib/motion'
 import { renameObject, reorderObject, toggleHidden, toggleLocked } from '@/store/actions'
@@ -240,6 +241,8 @@ function GroupRow({
 }) {
   useTranslation('workspace')
   const selectAllMembers = () => useSelectionStore.getState().set(members.map((m) => m.id))
+  const labelRef = useRef<HTMLSpanElement>(null)
+  useBoldTrackingLock(labelRef, allSelected)
   return (
     <li
       role="treeitem"
@@ -283,7 +286,7 @@ function GroupRow({
         label={lt(collapsed ? 'expandGroup' : 'collapseGroup')}
       />
       <TreeIcon icon={Layers} selected={allSelected} />
-      <span className="min-w-0 flex-1 truncate">
+      <span ref={labelRef} className="min-w-0 flex-1 truncate">
         {lt('groupLabel', { count: members.length })}
       </span>
       {layout && <Badge>{layoutKindLabel(layout.kind)}</Badge>}
@@ -334,6 +337,8 @@ function LayerRow({
   const Icon = iconFor(obj)
   const isScript = obj.type === 'panel' && !!obj.script
   const pointerFocusing = useRef(false)
+  const labelRef = useRef<HTMLSpanElement>(null)
+  useBoldTrackingLock(labelRef, selected)
   // 可编辑（能进图内编辑）与隐藏 / 锁定一样进可达名：角标只是视觉记号
   const stateLabel = [
     isScript && lt('editableState'),
@@ -456,7 +461,7 @@ function LayerRow({
           className={cn('h-7 min-w-0 flex-1 px-1.5 outline-none', FIELD_BOX, FIELD_FOCUS)}
         />
       ) : (
-        <span className="min-w-0 flex-1 truncate">{objectLabel(obj)}</span>
+        <span ref={labelRef} className="min-w-0 flex-1 truncate">{objectLabel(obj)}</span>
       )}
       {/* 「可编辑的图」角标与素材卡同源（`ui/semanticIcons`），尺寸与色也同源：xs / ink-3——
           角标不该比行首 14px 的类型图标更响（左栏审计 L28）；行首的 Braces 是大括号形状的

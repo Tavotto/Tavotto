@@ -21,3 +21,36 @@ export function useBoldWidthLock(ref: RefObject<HTMLElement | null>) {
     if (w > 0) el.style.minWidth = `${Math.ceil(w)}px`
   })
 }
+
+/**
+ * 树 / 列表行标签的**截断位置**锁（2026-10 UI 审计 G3）：选中行是 600，同一段字比 400 宽 2–3%，
+ * 被 `truncate` 切断的长名字在选中那一下多吃一两个字，随选择跳动。`useBoldWidthLock` 管不了这件事
+ * （那是给不截断的页签留 `min-width`；给截断的标签加 `min-width` 只会把行撑出去）。
+ *
+ * 做法：`active`（选中）时量同一段文字 400 与 600 的排版宽度之差，用等量的负字距吃掉——选中的字
+ * 仍是 600，但整段宽度与 400 时一样，截断点不动、行尾的邻居也不动。字距只有零点几 px，看不出。
+ * 量宽用 Range（不受 `overflow:hidden` 剪裁影响）。jsdom 里量出来是 0，等于没设。
+ */
+export function useBoldTrackingLock(ref: RefObject<HTMLElement | null>, active: boolean) {
+  useLayoutEffect(() => {
+    const el = ref.current
+    if (!el) return
+    el.style.letterSpacing = ''
+    if (!active) return
+    const text = el.textContent ?? ''
+    const chars = [...text].length
+    if (!chars) return
+    const range = document.createRange()
+    // jsdom 的 Range 没有 getBoundingClientRect：等于没设
+    if (typeof range.getBoundingClientRect !== 'function') return
+    range.selectNodeContents(el)
+    const prev = el.style.fontWeight
+    el.style.fontWeight = '400'
+    const w400 = range.getBoundingClientRect().width
+    el.style.fontWeight = '600'
+    const w600 = range.getBoundingClientRect().width
+    el.style.fontWeight = prev
+    const delta = w600 - w400
+    if (delta > 0.05) el.style.letterSpacing = `${-delta / chars}px`
+  })
+}
