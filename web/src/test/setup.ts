@@ -18,6 +18,7 @@
  */
 import { afterEach, beforeEach } from 'vitest'
 import { DEFAULT_LOCALE, i18n, initI18n } from '@/i18n'
+import { __resetOutboxForTests } from '@/lib/aiDraftOutbox'
 import { cancelFocusRescues } from '@/lib/focusRescue'
 import { forgetProjectFilesInSession } from '@/lib/projectFile'
 import { useInspectorPrefs } from '@/store/inspectorPrefs'
@@ -55,4 +56,10 @@ beforeEach(async () => {
 // 所以这里一刀切：每条用例结束都停掉，谁也活不过它的用例
 afterEach(() => {
   cancelFocusRescues()
+})
+
+// 草稿发件箱（`lib/aiDraftOutbox.ts`）是模块级的：它的防抖 / 重试定时器与未落定的版本不属于任何组件，会活过用例——
+// 上一条用例没写成的版本不该在下一条用例里被重试到它的替身后端上
+afterEach(() => {
+  __resetOutboxForTests()
 })

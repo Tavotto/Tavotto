@@ -434,6 +434,83 @@ describe('同步状态机：单一 reconcile + 写入版本（#1098）', () => {
     expect(input().value).toBe('读不到服务器时打的字')
   })
 
+  // —— 发件箱：未落定的写入由模块级发件箱持有，与 hook 实例 / 挂载的目标无关 ——
+  const putsOf = () => be.calls.filter((c) => c.method === 'PUT' && c.path === '/api/ai/drafts')
+
+  it('发件箱：防抖未到就卸载、keepalive 写失败——退役实例之后，发件箱自己重试到成功，重开显示新文本', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    try {
+      await mount()
+      be.setDraftPutFails(true)
+      await typeText('防抖没到就切走的新文本')
+      await unmount() // 卸载：冲刷一次（失败）；本实例到此为止
+      await settle()
+      expect(be.draft('pa', 'Fig1.pdf')).toBeUndefined()
+      be.setDraftPutFails(false)
+      await act(async () => void vi.advanceTimersByTime(RETRY_MS + 50)) // 没有任何实例在了：发件箱自己重试
+      await settle()
+      expect(be.draft('pa', 'Fig1.pdf')).toBe('防抖没到就切走的新文本') // 对照：旧实现重试只存在于已退役的实例里，这里永远是旧值
+      await mount()
+      expect(input().value).toBe('防抖没到就切走的新文本')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('发件箱：切走后马上切回，输入框显示发件箱里的版本（不是服务器上的旧值），对账也不覆盖它', async () => {
+    be.putStamped('pa', 'Fig1.pdf', '服务器上的旧值', 1)
+    await mount()
+    expect(input().value).toBe('服务器上的旧值')
+    be.setDraftPutFails(true)
+    await typeText('刚打的新版本')
+    await unmount()
+    await settle()
+    await mount() // 立即切回：PUT 仍在失败
+    expect(input().value).toBe('刚打的新版本')
+    await act(async () => window.dispatchEvent(new Event('focus'))) // 再对账一次也不许覆盖
+    await settle()
+    expect(input().value).toBe('刚打的新版本')
+    expect(be.draft('pa', 'Fig1.pdf')).toBe('服务器上的旧值')
+  })
+
+  it('发件箱：同一目标的新版本取代旧版本，旧版本不再重试（恢复后只写最新的）', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    try {
+      await mount()
+      be.setDraftPutFails(true)
+      await typeText('v1 旧版本')
+      await unmount() // v1 冲刷失败，留在发件箱
+      await settle()
+      await mount()
+      await typeText('v2 新版本') // 取代 v1
+      be.setDraftPutFails(false)
+      const before = putsOf().length
+      await act(async () => void vi.advanceTimersByTime(RETRY_MS * 3))
+      await settle()
+      expect(be.draft('pa', 'Fig1.pdf')).toBe('v2 新版本')
+      expect(putsOf().slice(before).map((c) => c.body.text)).not.toContain('v1 旧版本') // 恢复之后没有一次是 v1
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('发件箱：页面离开（pagehide）对所有未落定的槽发 keepalive，包括没有实例挂载的目标', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    try {
+      await mount()
+      be.setDraftPutFails(true)
+      await typeText('关页面时还没写成的稿')
+      await unmount()
+      await settle()
+      be.setDraftPutFails(false)
+      await act(async () => window.dispatchEvent(new Event('pagehide'))) // 没有任何实例挂载
+      await settle()
+      expect(be.draft('pa', 'Fig1.pdf')).toBe('关页面时还没写成的稿') // 不用等 3 s 重试
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('stale 的服务器戳本页没见过（别的标签页在我们不知情时写了更新的）：本版不提升、不重写，采纳服务器值——A 晚到不盖掉别处保存的 B', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
     try {
@@ -794,9 +871,8 @@ describe('同步状态机：单一 reconcile + 写入版本（#1098）', () => {
     }
   })
 
-  // 退役实例只有一处守卫：`persist` 入口对非 keepalive 调用直接返回（卸载后任何迟到的重试 / 重写 / 落地补写都经过它）。
-  // 曾另有两处（卸载清定时器、写入回调里 retired 直接返回）被它完全覆盖——单删任何一处用例都不红——已删除。
-  // 删掉这唯一的守卫，本用例红（变异 G2）。
+  // 退役实例不发任何写入：写入全在发件箱里（hook 只 `post` 版本、订阅结果）。卸载时那次 keepalive 失败后，
+  // 重试由发件箱接手；重新挂载并保存新文本后，旧版本已被取代、不会再写（即使发件箱重试，发的也是最新版本）。
   it('卸载时的 keepalive 写入失败：退役实例不再重试；重新挂载并保存新文本后，旧实例之后不再写（即使旧版本重试，服务器也拒）', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
     try {

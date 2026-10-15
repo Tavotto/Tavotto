@@ -5,19 +5,25 @@ import {
   fetchDraftState,
   isDraftTooLarge,
   loadProjectPendings,
-  nextWriteStamp,
-  saveDraftStamped,
   type DraftTarget,
 } from '@/lib/aiDraft'
+import {
+  flush as outboxFlush,
+  has as outboxHas,
+  hasSeen as outboxHasSeen,
+  markUnknown as outboxMarkUnknown,
+  observe as outboxObserve,
+  peek as outboxPeek,
+  post as outboxPost,
+  subscribe as outboxSubscribe,
+} from '@/lib/aiDraftOutbox'
 import { currentProjectId, onCurrentProjectChange } from '@/lib/session'
 import { sameScript, useAiStore } from '@/store/aiStore'
 import { useDocumentStore } from '@/store/documentStore'
 import type { PanelObject } from '@/types/document'
 
-/** 打字停多久才写后端：每个键都发请求没必要，丢的也只是最后半秒（pagehide 会冲刷） */
-export const WRITE_DEBOUNCE_MS = 600
-/** 写失败（离线 / 后端暂时不可用）后多久重试：文本一直留在内存里，不丢 */
-export const RETRY_MS = 3000
+/** 写后端的防抖 / 失败重试间隔由发件箱持有（`lib/aiDraftOutbox`）；这里转出口，测试与面板从这里取 */
+export { RETRY_MS, WRITE_DEBOUNCE_MS } from '@/lib/aiDraftOutbox'
 /** 第一次草稿读取最多等这么久；超时按读失败处理（输入框不能永远只读） */
 const DRAFT_LOAD_TIMEOUT_MS = 5000
 
@@ -43,12 +49,12 @@ export type ReconcileSource = 'mount' | 'focus' | 'visible' | 'reconnect' | 'acc
  *    服务器给的两份状态——待确认提交（`pendings`，含同脚本其它面板、发起面板已不在的，走与挂载时**完全相同**的
  *    还原路径，永远应用）与草稿文本（**有条件**应用，见 2）。不存在只取 `text` 的分支：入口各写各的，就会漏掉
  *    另一半（#1098 一再出的就是这一类）。
- * 2. **写入带版本**：本地每次改动 `seq++`；`acked` = 已被后端确认的最新序号；`inflight` = 正在途中的 PUT 的序号。
- *    只要 `seq > acked`（有没发出的、在途的、失败待重试的本地写入），对账读回来的**文本一律不覆盖输入框**
- *    （只更新 pendings）；对账请求发出之后本地又改过（`seq` 变了）同样不覆盖。一次 PUT 确认时若本地又有更新的
- *    写入，**以本地为准**再写一次——后端是最后写入为准，所以这就是收敛。
- * 写：防抖 600 ms；`pagehide` / 转入后台 / 卸载 / 切目标时 `keepalive` 立刻冲刷；失败（`unavailable`）时文本留在内存、
- * 3 秒后重试。
+ * 2. **写入由发件箱持有**（`lib/aiDraftOutbox.ts`）：本地每次改动 `seq++` 并把这一版 `post` 给发件箱，它按 (项目, 文件) 分槽，
+ *    只留最新版本，负责防抖、PUT、重试、stale 处置，**与本 hook 实例的寿命无关**（切目标 / 卸载后没写成的版本照样重试到成功）。
+ *    只要发件箱里还留着这个目标的版本（没发出 / 在途 / 失败待重试），对账读回来的**文本一律不覆盖输入框**（只更新 pendings）；
+ *    对账请求发出之后本地又改过（`seq` 变了）同样不覆盖。重新挂载同一目标时先显示发件箱里的版本。
+ * 写：防抖 600 ms；`pagehide` / 转入后台由发件箱对所有未落定的槽 `keepalive` 冲刷；卸载 / 切目标时冲刷一次；失败（`unavailable`）时
+ * 文本留在发件箱、3 秒后重试。
  * 删：**不在这里**——只有后端给出会话 id（请求被接受）之后，store 经账本 `accept` 删，条件是「草稿戳自提交后没变」
  *   （发送前 `draftSnapshot` 先把草稿写成功、拿到戳记进账本；**不比文本**）；之后经 `mm:ai-draft-changed` 对账，
  *   输入框回到后端的状态。
@@ -68,7 +74,7 @@ export function useAiDraft(panel: PanelObject | null) {
   /**
    * 第一次草稿读取的结局：`loading` 期间输入框只读（**结构上**消掉「在没见过服务器版本时输入」的窗口——
    * 每一次本地编辑都一定基于本页「已见」的服务器版本，所以 stale 里「没见过」只可能是别的标签页写的）；
-   * 读失败（`failed`）= 不知道服务器上有没有更新的版本：允许编辑（用户的输入不能丢），见 `baselineUnknown`。
+   * 读失败（`failed`）= 不知道服务器上有没有更新的版本：允许编辑（用户的输入不能丢），见发件箱的「基线未知」。
    */
   const [draftRead, setDraftRead] = useState<'loading' | 'ok' | 'failed'>('loading')
 
@@ -78,123 +84,33 @@ export function useAiDraft(panel: PanelObject | null) {
     epoch: 0,
   })
   const text = useRef('')
-  /** 写入版本：本地改动序号 / 已确认序号 / 在途序号（null = 没有在途的 PUT） */
+  /** 本地改动序号（失败的发送记下它；`clearIfUnchanged` / 对账期间「本地又改过」都靠它）。**写入的落定不在这里**：见发件箱 */
   const seq = useRef(0)
-  const acked = useRef(0)
-  const inflight = useRef<number | null>(null)
-  /** 最近一次启动的 PUT（`draftSnapshot` 等它落地） */
-  const inflightP = useRef<Promise<void> | null>(null)
-  /** 服务器上**与本地文本一致**的那一行的写入戳（PUT 被接受 / 对账读到时更新）；发送前拿它记进账本 */
+  /** 服务器上**与本地文本一致**的那一行的写入戳（发件箱接受 / 对账读到时更新）；发送前拿它记进账本 */
   const draftStamp = useRef<number | null>(null)
-  /**
-   * 当前本地版本的写入戳：**每次本地编辑（`seq++`）时分配**，这一版的所有 PUT / 重试 / keepalive 都带它，发送时不重新取。
-   * 所以旧版本无论什么时候重试，戳都比新版本小，服务器一定拒绝；只有「本页用户真实输入的最新版本」被判 stale 时才给它换更大的戳。
-   */
-  const versionStamp = useRef<number>(0)
-  /** 本实例已退役（卸载）：退役后的回调不再安排任何重试 / 重写，免得拿着旧文本去覆盖重新挂载后保存的新草稿 */
-  const retired = useRef(false)
-  /**
-   * **已见过的服务器戳**（本目标）：每次 GET 读到的、自己 PUT 被接受的、stale 回的服务器戳都记进来。
-   * stale 的处置只看这一条：服务器当前那一行的戳**本页已见过** = 没有别处在我们不知情时写过，本地这一版是用户在已知最新状态上的
-   * 编辑，可以换更大的戳重写（墙钟回拨属于这种）；**没见过** = 别的标签页写了我们不知道的更新版本，本版不提升、不重写，
-   * 采纳服务器值（本地若还有更新的编辑，由那一版按自己的戳去写）。
-   */
   const reconcileRef = useRef<((source: ReconcileSource) => Promise<void>) | null>(null)
-  const seenStamps = useRef<Set<number>>(new Set())
-  /**
-   * 首读失败、之后也没读成功过：编辑是在**不知道服务器版本**的情况下做的。此时收到 stale 一律按「已见」处理，
-   * 即以本地为准换更大的戳重写——取舍：用户已经打出来的字不能丢，代价是极少数情况下（读不到又恰好别的标签页写过）
-   * 盖掉别处的更新稿。任何一次读成功就解除。
-   */
-  const baselineUnknown = useRef(false)
-  /** 同一段本地内容连续被判 stale 的次数（墙钟回拨 / 并发写时有界重写，免得两端互相覆盖没完） */
-  const staleRetries = useRef(0)
-  const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
-  const retry = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   const reconcileToken = useRef(0)
   /** 最新的 panel：`reconcile` 里读（不把它放进依赖，免得每次渲染都重建各个入口） */
   const panelRef = useRef(panel)
   panelRef.current = panel
 
-  /** 有没落定的本地写入（没发出 / 在途 / 失败待重试）：此刻对账读回的文本不许覆盖输入框 */
-  const hasUnsettledWrite = () => seq.current > acked.current
+  /** 有没落定的本地写入（发件箱里还留着这个目标的版本：没发出 / 在途 / 失败待重试）：此刻对账读回的文本不许覆盖输入框 */
+  const hasUnsettledWrite = () => {
+    const { project: pj, fileId: f } = key.current
+    return !!pj && !!f && outboxHas(pj, f)
+  }
 
-  /** 把当前文本写到后端。`keepalive`：页面正在关。同一时刻只有一个普通 PUT 在途，落地后若本地又有更新的写入就再写一次 */
-  const persist = useCallback((keepalive: boolean): Promise<void> => {
-    clearTimeout(timer.current)
-    timer.current = undefined
-    if (seq.current === acked.current) return Promise.resolve()
-    if (retired.current && !keepalive) return Promise.resolve() // 退役实例不再发起任何写入
-    if (inflight.current !== null && !keepalive) return inflightP.current ?? Promise.resolve() // 在途的落地时会检查并补写
-    const mySeq = seq.current
-    const { project: pj, fileId: f, epoch } = key.current
-    const body = text.current
-    const myStamp = versionStamp.current // 这一版的戳（编辑时分配）：重试、keepalive 都用它
-    inflight.current = mySeq
-    const p = saveDraftStamped(pj, f, body, keepalive, myStamp).then(async ({ result: r, stamp }) => {
-      if (key.current.epoch !== epoch) return // 目标已换：那一边的收尾由切目标时的冲刷负责，不动当前目标的版本
-      inflight.current = null
-      if (r === 'stale') {
-        const serverSeen = stamp === undefined || baselineUnknown.current || seenStamps.current.has(stamp)
-        if (stamp !== undefined) seenStamps.current.add(stamp)
-        if (seq.current === mySeq && !serverSeen) {
-          // 别处写了本页没见过的更新版本：本版不提升、不重写——放弃这次未确认的写入，采纳服务器值
-          acked.current = Math.max(acked.current, mySeq)
-          staleRetries.current = 0
-          await reconcileRef.current?.('conflict')
-          return
-        }
-        // 服务端说：它那里有比这次写入**更新的戳**，这次没被采纳（`saveDraft` 已按服务端回的戳抬高了本页下限，
-        // 再写一次的戳一定更大）。两种成因：同页内并发写（B 先落地、A 后落地——B 的写入会自己推进 acked）、
-        // 或墙钟回拨 / 另一个标签页的戳更新。本地内容是用户在本页**真实输入**的，所以以本地为准：还没被确认就重写
-        if (seq.current > acked.current) {
-          if (++staleRetries.current > 5) {
-            // 有界：两端互相压戳时别没完没了，隔一会儿再试
-            clearTimeout(retry.current)
-            retry.current = setTimeout(() => persist(false), RETRY_MS)
-            return
-          }
-          // 被拒的这一版**仍是本页最新的内容**才给它换一个更大的戳（`saveDraftStamped` 已按服务端回的戳抬高了下限）；
-          // 已经有更新的版本时，那一版带着自己的戳，旧版本不换戳、不重写——旧版本的戳永远小
-          if (seq.current === mySeq) versionStamp.current = nextWriteStamp()
-          await persist(false)
-        }
-        return
-      }
-      if (r === 'unavailable') {
-        // 没写成：文本还在内存里，序号没确认——3 秒后重试（用户又改了就走新的防抖）
-        clearTimeout(retry.current)
-        retry.current = setTimeout(() => persist(false), RETRY_MS)
-        return
-      }
-      staleRetries.current = 0
-      acked.current = Math.max(acked.current, mySeq)
-      if (r === 'too_large') setTooLarge(true)
-      // 服务器上这一行现在就是本地这一版：记下它的戳（只有「本地没有更新的写入」时才算与本地一致）
-      if (stamp !== undefined) seenStamps.current.add(stamp)
-      if (seq.current === mySeq && stamp !== undefined) draftStamp.current = stamp
-      // 落地的这段确认之前，本地又有更新的写入：以本地为准再写一次
-      if (seq.current > acked.current) await persist(false)
-    })
-    inflightP.current = p
-    return p
+  const setPrompt = useCallback((next: string | ((prev: string) => string)) => {
+    const value = typeof next === 'function' ? next(text.current) : next
+    text.current = value
+    seq.current++
+    setPromptState(value)
+    setRestored(false)
+    setTooLarge(isDraftTooLarge(value))
+    // 投递给发件箱：它负责防抖、PUT、重试、stale 处置，与本实例的寿命无关
+    const { project: pj, fileId: f } = key.current
+    if (pj && f) outboxPost(pj, f, value)
   }, [])
-
-  const setPrompt = useCallback(
-    (next: string | ((prev: string) => string)) => {
-      const value = typeof next === 'function' ? next(text.current) : next
-      text.current = value
-      seq.current++
-      versionStamp.current = nextWriteStamp() // 这一版内容的戳：编辑发生的时刻
-      setPromptState(value)
-      setRestored(false)
-      setTooLarge(isDraftTooLarge(value))
-      clearTimeout(retry.current)
-      clearTimeout(timer.current)
-      timer.current = setTimeout(() => persist(false), WRITE_DEBOUNCE_MS)
-    },
-    [persist],
-  )
 
   /**
    * **唯一的对账入口**：把服务器此刻的状态应用到本地。
@@ -211,11 +127,10 @@ export function useAiDraft(panel: PanelObject | null) {
     const [state, projectList] = await Promise.all([fetchDraftState(pj, f), loadProjectPendings(pj)])
     if (key.current.epoch === epoch) {
       if (state) {
-        if (state.stamp !== undefined) seenStamps.current.add(state.stamp)
-        baselineUnknown.current = false
+        outboxObserve(pj, f, state.stamp) // 记下读到的服务器戳（已见），基线已知
         setDraftRead('ok')
-      } else if (seenStamps.current.size === 0) {
-        baselineUnknown.current = true // 一次都没读成功过：服务器版本未知
+      } else if (!outboxHasSeen(pj, f)) {
+        outboxMarkUnknown(pj, f) // 一次都没读成功过：服务器版本未知，stale 按「已见」处理（用户的输入不能丢）
         setDraftRead('failed')
       }
     }
@@ -279,40 +194,48 @@ export function useAiDraft(panel: PanelObject | null) {
     key.current = { project, fileId, epoch: key.current.epoch + 1 }
     text.current = ''
     seq.current = 0
-    acked.current = 0
-    inflight.current = null
-    inflightP.current = null
     draftStamp.current = null
-    staleRetries.current = 0
-    seenStamps.current = new Set()
-    baselineUnknown.current = false
     setDraftRead(project && fileId ? 'loading' : 'ok') // 没有可读的目标（无项目认领 / 无面板）= 没有要载入的草稿
-    setPromptState('')
+    // 发件箱里还留着这个目标没落定的版本（上一个实例退役时没写成）：先显示它，不是服务器上的旧值；对账也不会覆盖它
+    const held = project && fileId ? outboxPeek(project, fileId) : null
+    text.current = held ?? ''
+    setPromptState(held ?? '')
     setRestored(false)
-    setTooLarge(false)
+    setTooLarge(held !== null && isDraftTooLarge(held))
     setLedgerState('unknown') // 换目标 / 重挂：这张图的账本还没读过
     if (!project || !fileId) return
+    const off = outboxSubscribe(project, fileId, (e) => {
+      if (e.kind === 'abandoned') {
+        // 服务器上有本页没见过的更新版本（别的标签页写的）：本版已放弃，对账采纳服务器值
+        void reconcileRef.current?.('conflict')
+        return
+      }
+      // 服务器上这一行现在就是本地最新的这一版（槽里没有更新的了）：记下它的戳
+      if (e.stamp !== undefined) draftStamp.current = e.stamp
+      if (e.result === 'too_large') setTooLarge(true)
+    })
     void reconcile('mount')
     // 读请求一直不回：别让输入框永远只读——到点按「读失败」处理（可以编辑，stale 以本地为准）
     const loadGuard = setTimeout(() => {
-      if (seenStamps.current.size === 0) {
-        baselineUnknown.current = true
+      if (!outboxHasSeen(project, fileId)) {
+        outboxMarkUnknown(project, fileId)
         setDraftRead((cur) => (cur === 'loading' ? 'failed' : cur))
       }
     }, DRAFT_LOAD_TIMEOUT_MS)
     return () => {
       clearTimeout(loadGuard)
+      off()
       reconcileToken.current++
-      persist(true)
-      clearTimeout(retry.current)
+      // 切目标 / 卸载：把没落定的版本冲刷一次（keepalive）。没写成也不会丢——它留在发件箱里由发件箱重试，本实例到此为止
+      void outboxFlush(project, fileId, true)
     }
-  }, [project, fileId, persist, reconcile])
+  }, [project, fileId, reconcile])
 
   // 页面离开 / 转入后台：keepalive 冲刷；回到前台 / 重新获得焦点 / SSE 重连：对账（多标签页以后端为准）
   useEffect(() => {
+    // 离开页面 / 转入后台的 keepalive 冲刷由发件箱在模块级做（与任何实例的寿命无关），这里只管回到前台的对账
     const onVisibility = () => {
-      if (document.visibilityState === 'hidden') persist(true)
-      else void reconcile('visible')
+      if (document.visibilityState !== 'hidden') void reconcile('visible')
     }
     const onFocus = () => {
       if (document.visibilityState !== 'hidden') void reconcile('focus')
@@ -320,20 +243,17 @@ export function useAiDraft(panel: PanelObject | null) {
     const onReconnect = () => void reconcile('reconnect')
     // 确认之后后端按「草稿戳没变」清了草稿（或没清）：对账一次，输入框以后端为准
     const onAccepted = () => void reconcile('accepted')
-    const flush = () => persist(true)
-    window.addEventListener('pagehide', flush)
     window.addEventListener('focus', onFocus)
     window.addEventListener('mm:sse-open', onReconnect)
     window.addEventListener(AI_DRAFT_CHANGED_EVENT, onAccepted)
     document.addEventListener('visibilitychange', onVisibility)
     return () => {
-      window.removeEventListener('pagehide', flush)
       window.removeEventListener('focus', onFocus)
       window.removeEventListener('mm:sse-open', onReconnect)
       window.removeEventListener(AI_DRAFT_CHANGED_EVENT, onAccepted)
       document.removeEventListener('visibilitychange', onVisibility)
     }
-  }, [persist, reconcile])
+  }, [reconcile])
 
   /**
    * **发送前的草稿快照**：把没写出去的文本先写成功（拿到服务器接受的写入戳），再回 `{ seq, stamp }`。
@@ -342,11 +262,11 @@ export function useAiDraft(panel: PanelObject | null) {
    * 不知道，确认时不动草稿。
    */
   const draftSnapshot = useCallback(async (): Promise<{ seq: number; stamp: number | null }> => {
-    clearTimeout(timer.current)
-    for (let i = 0; i < 4 && seq.current > acked.current; i++) await persist(false)
-    const settled = seq.current === acked.current
+    const { project: pj, fileId: f } = key.current
+    if (pj && f) await outboxFlush(pj, f, false) // 发件箱把没写出去的版本写成功（落地事件先于这里的 await 返回，已更新 draftStamp）
+    const settled = !pj || !f || !outboxHas(pj, f)
     return { seq: seq.current, stamp: settled ? draftStamp.current : null }
-  }, [persist])
+  }, [])
 
   /**
    * 提交被接受之后清输入框：**只看本地有没有再动过（`seq` 没变），不比文本**。仅在发送时拿到了草稿戳
@@ -356,19 +276,8 @@ export function useAiDraft(panel: PanelObject | null) {
     if (seq.current !== seqAtSubmit) return
     text.current = ''
     draftStamp.current = null
-    clearTimeout(timer.current)
-    clearTimeout(retry.current)
     setPromptState('')
     setTooLarge(false)
-  }, [])
-
-  // 卸载 = 本实例退役：之后任何迟到的回调（keepalive 失败的回调、重试定时器）都不得再写。声明在其他 effect 之后，
-  // 所以卸载时它们的 cleanup（含最后一次 keepalive 冲刷）先跑、这个标志最后才置位
-  useEffect(() => {
-    retired.current = false
-    return () => {
-      retired.current = true
-    }
   }, [])
 
   /** 账本读失败后的「重试」：就是再对账一次（同一个入口） */
