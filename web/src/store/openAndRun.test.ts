@@ -280,12 +280,14 @@ describe('一次点击：检查 → 认领 run_when_ready（回显授权摘要�
     mockCreate.mockResolvedValueOnce(report())
     claimed(running())
     await open()
-    let release: () => void = () => {}
-    const loadAssets = vi.fn(() => new Promise<void>((r) => (release = r)))
+    // loadAssets 有两个调用方：onCompleted 的刷新（不 await）和 enterEdit 的 await——都挂住，等两个都到了再切走，最后一起放行
+    const waiting: Array<() => void> = []
+    const release = () => waiting.forEach((r) => r())
+    const loadAssets = vi.fn(() => new Promise<void>((r) => waiting.push(r)))
     useRuntimeAssetStore.setState({ loadAssets })
     mockGet.mockResolvedValueOnce(done(['a']))
     await store().refresh(KEY)
-    await vi.waitFor(() => expect(loadAssets).toHaveBeenCalled()) // 已挂在素材清单的 await 上
+    await vi.waitFor(() => expect(loadAssets).toHaveBeenCalledTimes(2)) // enterEdit 已挂在素材清单的 await 上
     useUiStore.setState({ guideCard: mode })
     release()
     await flush()
@@ -299,12 +301,14 @@ describe('一次点击：检查 → 认领 run_when_ready（回显授权摘要�
     mockCreate.mockResolvedValueOnce(report())
     claimed(running())
     await open()
-    let release: () => void = () => {}
-    const loadAssets = vi.fn(() => new Promise<void>((r) => (release = r)))
+    // loadAssets 有两个调用方：onCompleted 的刷新（不 await）和 enterEdit 的 await——都挂住，等两个都到了再切走，最后一起放行
+    const waiting: Array<() => void> = []
+    const release = () => waiting.forEach((r) => r())
+    const loadAssets = vi.fn(() => new Promise<void>((r) => waiting.push(r)))
     useRuntimeAssetStore.setState({ loadAssets })
     mockGet.mockResolvedValueOnce(done(['a']))
     await store().refresh(KEY)
-    await vi.waitFor(() => expect(loadAssets).toHaveBeenCalled()) // 已挂在素材清单的 await 上
+    await vi.waitFor(() => expect(loadAssets).toHaveBeenCalledTimes(2)) // enterEdit 已挂在素材清单的 await 上
     store().blur()
     release()
     await flush()
