@@ -106,6 +106,31 @@ describe('Card', () => {
     expect(q('[data-c="p"]')!.className).not.toMatch(/bg-surface-active/)
   })
 
+  it('lift 是登记豁免：只许整数 px 的 translateY（≤2px）、无 scale / 光晕 / will-change；没开 lift 的卡仍不位移', async () => {
+    await render(
+      <>
+        <Card data-c="n" interactive>{T}</Card>
+        <Card data-c="l" interactive lift>{T}</Card>
+        <Card data-c="ld" interactive lift disabled>{T}</Card>
+        <Card data-c="ls" interactive lift selected>{T}</Card>
+      </>,
+    )
+    // 非 lift：沿用「几何永不变化」——类名里没有任何位移 / 缩放 / 升档阴影
+    expect(q('[data-c="n"]')!.className).not.toMatch(/translate|scale|shadow-lift/)
+    const lift = q('[data-c="l"]')!.className
+    const moves = lift.match(/(?:^|[\s:\]])-?translate-[a-z-]*[^\s]*/g)!.map((m) => m.trim().replace(/^.*[:\]]/, ''))
+    expect(moves.length).toBeGreaterThan(0)
+    // 每一个位移都是 Y 轴的 -px（1px）/ -0.5（2px）/ 0（回落）：整数像素、上限 2px
+    for (const m of moves) expect(m, m).toMatch(/^(-translate-y-(px|0\.5)|translate-y-0)$/)
+    expect(lift).toMatch(/motion-safe:hover:-translate-y-px/) // reduced-motion 下不位移
+    expect(lift).toMatch(/hover:shadow-lift/)
+    expect(lift).toMatch(/has-\[:focus-visible\]:-translate-y-px/) // 键盘聚焦同样浮起
+    expect(lift).toMatch(/has-\[>button:active:not\(:disabled\)\]:translate-y-0/) // 按下回落
+    expect(lift).not.toMatch(/scale|rotate|skew|will-change|blur|filter|glow|gradient/)
+    // 禁用 / 选中的卡不浮起
+    for (const sel of ['ld', 'ls']) expect(q(`[data-c="${sel}"]`)!.className.replace(/transition-\[[^\]]*\]/, ''), sel).not.toMatch(/translate|shadow-lift/)
+  })
+
   it('disabled：写 data-disabled，不亮 hover / press / 焦点环；interactive 标记仍在', async () => {
     await render(
       <>

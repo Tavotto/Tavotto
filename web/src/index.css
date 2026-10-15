@@ -203,6 +203,12 @@
     0 0 0 1px color-mix(in srgb, var(--color-shadow-edge) 6%, transparent),
     0 1px 2px color-mix(in srgb, var(--color-shadow) 4%, transparent),
     0 4px 12px color-mix(in srgb, var(--color-shadow) 4%, transparent);
+  /* 浮起的卡（ui/Card 的 lift 变体：只有首页最近项目卡）：比 shadow-card 升一档——同一圈 1px 环 + 更近更实的一层 + 更大更淡的一层。
+     与 hover 时 translateY(-1px) 配用（宪法第二十五节「lift 登记豁免」），名字刻意不含 `shadow-card`（那条门禁只许 Card 手写它） */
+  --shadow-lift:
+    0 0 0 1px color-mix(in srgb, var(--color-shadow-edge) 8%, transparent),
+    0 2px 4px color-mix(in srgb, var(--color-shadow) 6%, transparent),
+    0 8px 20px color-mix(in srgb, var(--color-shadow) 8%, transparent);
   /* 浮层：1px 环 + 贴边的接触阴影（0 2px 6px 6%）+ 一层大模糊。只有大模糊时，浮层叠在白面板上边缘发飘（2026-10-15 UI 2.0 精修） */
   --shadow-pop:
     0 0 0 1px color-mix(in srgb, var(--color-shadow-edge) 8%, transparent),

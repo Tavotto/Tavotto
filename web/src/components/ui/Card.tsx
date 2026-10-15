@@ -28,18 +28,25 @@ export interface CardProps extends HTMLAttributes<HTMLDivElement> {
    * 只管卡的外观；`aria-disabled` / `disabled` 由卡里的真按钮自己负责，这里不重复
    */
   disabled?: boolean
+  /**
+   * 克制浮起（登记豁免，宪法第二十五节「Card lift」）：hover / 键盘聚焦时整卡 translateY(-1px) + 阴影升一档，
+   * 按下回落到 0。只在「品牌特色位置」开（首页最近项目卡），不全局开；无缩放、无光晕、无 will-change、整数像素。
+   * reduced-motion 下不位移只换阴影；disabled 不浮起。只对 raised 卡有意义（阴影就是浮起的那一块）
+   */
+  lift?: boolean
 }
 
 /**
- * 卡片原语（2026-10-07 设计审计 §5，宪法第二节 / 第二十六节）。圆角 lg 12；外层圆角 = 内层圆角 + 内边距，
+ * 卡片原语（2026-10-07 设计审计 §5，宪法第二节 / 第二十六节）。**几何默认不变**（只画 outline，不缩放不位移）；
+ * `lift` 变体是登记过的唯一豁免（只许首页最近项目卡，translateY 整数 px、上限 2px、无 scale，见 ui-visual-discipline.md）。圆角 lg 12；外层圆角 = 内层圆角 + 内边距，
  * 卡里的封面 / 内块用 md 8（+ padding sm）。交互态全部走 outline：
  *   hover    outline 透明 → border（offset -1，画在卡内侧，不挤邻居）
  *   selected outline border-strong + bg-selected
- *   press    卡的直接子按钮被按下（且没禁用）→ 底换 surface-active；只换底色，不缩放不位移
+ *   press    卡的直接子按钮被按下（且没禁用）→ 底换 surface-active（lift 变体另回落到 0 位移）
  *   focus    卡本身 focus-visible，或卡里任何控件 :focus-visible → 2px accent 环（ring 与 shadow-card 叠加，不互相顶掉）
  */
 export const Card = forwardRef<HTMLDivElement, CardProps>(function Card(
-  { appearance = 'raised', padding = 'md', interactive = false, selected = false, disabled = false, className, children, ...rest },
+  { appearance = 'raised', padding = 'md', interactive = false, selected = false, disabled = false, lift = false, className, children, ...rest },
   ref,
 ) {
   // 交互外观（hover / press / 焦点环）只给「可交互且没禁用」的卡
@@ -56,10 +63,23 @@ export const Card = forwardRef<HTMLDivElement, CardProps>(function Card(
         APPEARANCE[appearance],
         PADDING[padding],
         (interactive || selected) &&
-          'outline-1 -outline-offset-1 outline-transparent transition-[outline-color,background-color] duration-fast',
+          'outline-1 -outline-offset-1 outline-transparent duration-fast',
+        // lift 变体多过渡位移与阴影（`translate` 是 Tailwind v4 translate 工具类写的独立属性）
+        (interactive || selected) &&
+          (lift ? 'transition-[outline-color,background-color,translate,box-shadow]' : 'transition-[outline-color,background-color]'),
         live && 'hover:outline-border',
         // 选中的卡底色另有主人（bg-selected），按压不去抢；直接子按钮 = 整卡大小的主控件（⋯ 菜单钮等深层控件不算）
         live && !selected && 'has-[>button:active:not(:disabled)]:bg-surface-active',
+        // lift：hover / 键盘聚焦 → 上浮 1px + 阴影升一档；按下回落（位移 0、阴影回 card 档）。位移只在 motion-safe 下有
+        live &&
+          lift &&
+          !selected &&
+          appearance === 'raised' &&
+          cn(
+            'hover:shadow-lift has-[:focus-visible]:shadow-lift',
+            'motion-safe:hover:-translate-y-px motion-safe:has-[:focus-visible]:-translate-y-px',
+            'has-[>button:active:not(:disabled)]:translate-y-0 has-[>button:active:not(:disabled)]:shadow-card',
+          ),
         selected && 'bg-selected outline-border-strong hover:outline-border-strong',
         // 焦点环只给可交互的卡：静态卡里的按钮自己有焦点环，外面再套一圈就成了两道
         live &&
