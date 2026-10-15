@@ -1,6 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import '@/lib/aiDraftLedger'
-import { isDraftTooLarge, loadDraft, loadProjectPendings, saveDraft } from '@/lib/aiDraft'
+import {
+  deleteDraftIf,
+  fetchDraftState,
+  isDraftTooLarge,
+  loadProjectPendings,
+  saveDraft,
+  type DraftTarget,
+} from '@/lib/aiDraft'
 import { currentProjectId, onCurrentProjectChange } from '@/lib/session'
 import { sameScript, useAiStore } from '@/store/aiStore'
 import { useDocumentStore } from '@/store/documentStore'
@@ -11,18 +18,29 @@ export const WRITE_DEBOUNCE_MS = 600
 /** 写失败（离线 / 后端暂时不可用）后多久重试：文本一直留在内存里，不丢 */
 export const RETRY_MS = 3000
 
+/** 对账的来源。**所有来源走同一个 `reconcile`**，不存在「只取文本」的分支 */
+export type ReconcileSource = 'mount' | 'focus' | 'visible' | 'reconnect'
+
 /**
  * 助手输入框的草稿（ADR 0132）：绑定 **项目 × 面板文件**，**存后端**（不碰 localStorage）。
  *
  * 为什么要持久化：右栏切页签 / 收起会把 `AssistantPanel` 整个卸载（`Inspector` 条件挂载），刷新、关窗、
  * 桌面端口变化（换 origin）更不用说——这些都不该让写了一半的指令消失。
  *
- * 写：防抖 600 ms；`pagehide` / 页面转入后台 / 组件卸载 / 切目标时用 `keepalive` 立刻冲刷；失败（`unavailable`）
- * 时文本留在内存、3 秒后重试，直到写成或用户继续改。
- * 读：挂载 / 换目标时读一次；**窗口重新获得焦点 / 页面回到前台时再读一次**（多标签页以后端为准）——
- * 但本地有没写出去的改动（dirty）时不覆盖，最后写入为准。
- * 删：**不在这里**——只有后端给出会话 id（请求被接受）之后，store 经账本 `accept` 条件删除。
- * 这里只负责「文本变了就存」，清空输入框（`clearIf`）只在调用方确认已被接受之后调用。
+ * **同步状态机（两条规则，所有入口共用）**
+ * 1. **对账只有一个函数 `reconcile()`**：挂载、窗口重新获得焦点、页面回到前台、SSE 重连都只调它。它一次性应用
+ *    服务器给的两份状态——待确认提交（`pendings`，含同脚本其它面板、发起面板已不在的，走与挂载时**完全相同**的
+ *    还原路径，永远应用）与草稿文本（**有条件**应用，见 2）。不存在只取 `text` 的分支：入口各写各的，就会漏掉
+ *    另一半（#1098 一再出的就是这一类）。
+ * 2. **写入带版本**：本地每次改动 `seq++`；`acked` = 已被后端确认的最新序号；`inflight` = 正在途中的 PUT 的序号。
+ *    只要 `seq > acked`（有没发出的、在途的、失败待重试的本地写入），对账读回来的**文本一律不覆盖输入框**
+ *    （只更新 pendings）；对账请求发出之后本地又改过（`seq` 变了）同样不覆盖。一次 PUT 确认时若本地又有更新的
+ *    写入，**以本地为准**再写一次——后端是最后写入为准，所以这就是收敛。
+ * 写：防抖 600 ms；`pagehide` / 转入后台 / 卸载 / 切目标时 `keepalive` 立刻冲刷；失败（`unavailable`）时文本留在内存、
+ * 3 秒后重试。
+ * 删：**不在这里**——只有后端给出会话 id（请求被接受）之后，store 经账本 `accept` 条件删除。这里的 `clearIf`
+ * 只在输入框文本仍等于提交原文时才清，并且若这段文本的 PUT 还在途，PUT 落地后再条件删一次（防止已被接受的
+ * 文本被迟到的 PUT 写回来）。
  */
 export function useAiDraft(panel: PanelObject | null) {
   const fileId = panel?.fileId ?? null
@@ -33,47 +51,67 @@ export function useAiDraft(panel: PanelObject | null) {
   const [prompt, setPromptState] = useState('')
   const [restored, setRestored] = useState(false)
   const [tooLarge, setTooLarge] = useState(false)
-  const latest = useRef<{ project: string | null; fileId: string | null; text: string; dirty: boolean }>({
+
+  const key = useRef<{ project: string | null; fileId: string | null; epoch: number }>({
     project: null,
     fileId: null,
-    text: '',
-    dirty: false,
+    epoch: 0,
   })
+  const text = useRef('')
+  /** 写入版本：本地改动序号 / 已确认序号 / 在途序号（null = 没有在途的 PUT） */
+  const seq = useRef(0)
+  const acked = useRef(0)
+  const inflight = useRef<number | null>(null)
+  /** 在途 PUT 落地后要条件删掉的文本（`clearIf` 清输入框时它还在途） */
+  const deleteAfterFlight = useRef<string | null>(null)
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   const retry = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
-  const loadToken = useRef(0)
+  const reconcileToken = useRef(0)
+  /** 最新的 panel：`reconcile` 里读（不把它放进依赖，免得每次渲染都重建各个入口） */
+  const panelRef = useRef(panel)
+  panelRef.current = panel
 
-  /** 把当前文本写到后端。`keepalive`：页面正在关 */
+  /** 有没落定的本地写入（没发出 / 在途 / 失败待重试）：此刻对账读回的文本不许覆盖输入框 */
+  const hasUnsettledWrite = () => seq.current > acked.current
+
+  /** 把当前文本写到后端。`keepalive`：页面正在关。同一时刻只有一个普通 PUT 在途，落地后若本地又有更新的写入就再写一次 */
   const persist = useCallback((keepalive: boolean) => {
     clearTimeout(timer.current)
     timer.current = undefined
-    const cur = latest.current
-    if (!cur.dirty) return
-    cur.dirty = false
-    const { project: pj, fileId: f, text } = cur
-    void saveDraft(pj, f, text, keepalive).then((r) => {
-      if (r === 'too_large') {
-        setTooLarge(true)
+    if (seq.current === acked.current) return
+    if (inflight.current !== null && !keepalive) return // 在途的落地时会检查并补写
+    const mySeq = seq.current
+    const { project: pj, fileId: f, epoch } = key.current
+    const body = text.current
+    inflight.current = mySeq
+    void saveDraft(pj, f, body, keepalive).then(async (r) => {
+      if (key.current.epoch !== epoch) return // 目标已换：那一边的收尾由切目标时的冲刷负责，不动当前目标的版本
+      inflight.current = null
+      const pendingDelete = deleteAfterFlight.current
+      deleteAfterFlight.current = null
+      if (r === 'unavailable') {
+        // 没写成：文本还在内存里，序号没确认——3 秒后重试（用户又改了就走新的防抖）
+        clearTimeout(retry.current)
+        retry.current = setTimeout(() => persist(false), RETRY_MS)
         return
       }
-      if (r !== 'unavailable') return
-      // 没写成：文本还在内存里。只有这一版仍是最新、且目标没换才重试（用户又改了就走新的防抖）
-      const now = latest.current
-      if (now.project !== pj || now.fileId !== f || now.text !== text) return
-      now.dirty = true
-      clearTimeout(retry.current)
-      retry.current = setTimeout(() => persist(false), RETRY_MS)
+      acked.current = Math.max(acked.current, mySeq)
+      if (r === 'too_large') setTooLarge(true)
+      // 刚被 `clearIf` 清掉的那段文本的 PUT 才落地：服务器上又有了它，条件删掉（等于它才删，别的新稿不动）
+      if (pendingDelete !== null && pendingDelete === body) await deleteDraftIf(pj, f, pendingDelete)
+      // 落地的这段确认之前，本地又有更新的写入：以本地为准再写一次
+      if (seq.current > acked.current) persist(false)
     })
   }, [])
 
   const setPrompt = useCallback(
     (next: string | ((prev: string) => string)) => {
-      const text = typeof next === 'function' ? next(latest.current.text) : next
-      latest.current.text = text
-      latest.current.dirty = true
-      setPromptState(text)
+      const value = typeof next === 'function' ? next(text.current) : next
+      text.current = value
+      seq.current++
+      setPromptState(value)
       setRestored(false)
-      setTooLarge(isDraftTooLarge(text))
+      setTooLarge(isDraftTooLarge(value))
       clearTimeout(retry.current)
       clearTimeout(timer.current)
       timer.current = setTimeout(() => persist(false), WRITE_DEBOUNCE_MS)
@@ -81,111 +119,113 @@ export function useAiDraft(panel: PanelObject | null) {
     [persist],
   )
 
-  // 目标（项目 × 面板文件）变了：旧的在 cleanup 里冲刷，新的从后端读
+  /**
+   * **唯一的对账入口**：把服务器此刻的状态应用到本地。
+   * - 待确认提交（`pendings`）：**永远**应用，走同一条还原路径——本面板这个文件的、同一份脚本其它面板的、
+   *   发起面板已不在的（项目级列表按 script 匹配），一条不落；
+   * - 草稿文本：只有在没有任何未落定的本地写入、且对账期间本地没再改过时才应用（挂载来源额外亮「已恢复」提示）。
+   * 读失败（`null`）= 不知道，什么都不动。
+   */
+  const reconcile = useCallback(async (source: ReconcileSource) => {
+    const { project: pj, fileId: f, epoch } = key.current
+    if (!pj || !f) return
+    const token = ++reconcileToken.current
+    const seqAtStart = seq.current
+    const [state, projectList] = await Promise.all([fetchDraftState(pj, f), loadProjectPendings(pj)])
+    // 过期：又有更新的一次对账、或目标已经换了；读失败 = 不知道，不动
+    if (token !== reconcileToken.current || key.current.epoch !== epoch || !state) return
+
+    const p = panelRef.current
+    if (p) {
+      const objects = useDocumentStore.getState().doc.objects
+      const seen = new Set<string>()
+      const apply = (item: { file: string; rid: string; text: string; sent: DraftTarget; script: string | null }) => {
+        if (seen.has(item.rid)) return
+        seen.add(item.rid)
+        const sameFile = item.file === p.fileId
+        if (!sameFile && !(p.script && item.script && sameScript(item.script, p.script))) return
+        const sourcePanel = objects.find((o) => o.type === 'panel' && (o as PanelObject).fileId === item.file) as
+          | PanelObject
+          | undefined
+        useAiStore.getState().restoreSubmission({
+          rid: item.rid,
+          project: pj,
+          fileId: item.file,
+          panelId: sourcePanel?.id ?? '',
+          script: item.script ?? (sameFile ? (p.script ?? null) : null),
+          prompt: item.text,
+          target: item.sent,
+          canvas: useDocumentStore.getState().activeCanvasId,
+          overrides: sameFile ? p.overrides : (sourcePanel?.overrides ?? []),
+        })
+      }
+      for (const item of projectList) apply(item)
+      // 项目级列表读失败时，本文件自己的账本（随草稿一起回来）仍要还原
+      for (const own of state.pendings ?? [])
+        apply({ file: f, rid: own.rid, text: own.text, sent: own.sent, script: p.script ?? null })
+    }
+
+    if (hasUnsettledWrite() || seq.current !== seqAtStart) return // 本地写入没落定：文本以本地为准，不覆盖
+    if (state.text === text.current) return
+    text.current = state.text
+    setPromptState(state.text)
+    setTooLarge(false)
+    setRestored(source === 'mount' && state.text !== '')
+  }, [])
+
+  // 目标（项目 × 面板文件）变了：旧的在 cleanup 里冲刷，新的对账一次
   useEffect(() => {
-    latest.current = { project, fileId, text: '', dirty: false }
+    key.current = { project, fileId, epoch: key.current.epoch + 1 }
+    text.current = ''
+    seq.current = 0
+    acked.current = 0
+    inflight.current = null
+    deleteAfterFlight.current = null
     setPromptState('')
     setRestored(false)
     setTooLarge(false)
     if (!project || !fileId) return
-    const token = ++loadToken.current
-    void loadDraft(project, fileId).then((d) => {
-      if (token !== loadToken.current || !d) return
-      // 读的途中用户已经开始打字：以用户这一版为准（最后写入为准），不把读回来的盖上去
-      if (!latest.current.dirty) {
-        latest.current.text = d.text
-        setPromptState(d.text)
-        setRestored(d.text !== '')
-      }
-      if (panel) {
-        // 刷新 / 换端口 / 重挂之前发出去、后端还没确认的每一条（两个标签页同时发时不止一条）：
-        // 各自还原成「已发出未确认」
-        for (const p of d.pendings ?? []) {
-          useAiStore.getState().restoreSubmission({
-            rid: p.rid,
-            project,
-            fileId: panel.fileId,
-            panelId: panel.id,
-            script: panel.script ?? null,
-            prompt: p.text,
-            target: p.sent,
-            canvas: useDocumentStore.getState().activeCanvasId,
-            overrides: panel.overrides,
-          })
-        }
-      }
-    })
-    if (panel) {
-      // 这个项目里**所有**未落定的提交（跨面板，带 script）：同一份脚本的别的面板上发出的要还原（发送锁按脚本判）；
-      // 发起它的面板已被删 / 换图时也找得回来——不依赖「文档里现在有哪些面板」（Codex #1098）
-      void loadProjectPendings(project).then((list) => {
-        if (token !== loadToken.current) return
-        const objects = useDocumentStore.getState().doc.objects
-        for (const p of list) {
-          const sameFile = p.file === panel.fileId
-          if (!sameFile && !(panel.script && p.script && sameScript(p.script, panel.script))) continue
-          const source = objects.find((o) => o.type === 'panel' && (o as PanelObject).fileId === p.file) as PanelObject | undefined
-          useAiStore.getState().restoreSubmission({
-            rid: p.rid,
-            project,
-            fileId: p.file,
-            panelId: source?.id ?? '',
-            script: p.script ?? (sameFile ? (panel.script ?? null) : null),
-            prompt: p.text,
-            target: p.sent,
-            canvas: useDocumentStore.getState().activeCanvasId,
-            overrides: sameFile ? panel.overrides : (source?.overrides ?? []),
-          })
-        }
-      })
-    }
+    void reconcile('mount')
     return () => {
-      loadToken.current++
+      reconcileToken.current++
       persist(true)
       clearTimeout(retry.current)
     }
-    // panel 的其余字段（overrides 等）变化不该触发重读草稿
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [project, fileId, persist])
+  }, [project, fileId, persist, reconcile])
 
-  // 页面离开 / 转入后台：keepalive 冲刷；回到前台 / 重新获得焦点：从后端再读一次（多标签页以后端为准）
+  // 页面离开 / 转入后台：keepalive 冲刷；回到前台 / 重新获得焦点 / SSE 重连：对账（多标签页以后端为准）
   useEffect(() => {
-    const onHide = () => {
+    const onVisibility = () => {
       if (document.visibilityState === 'hidden') persist(true)
+      else void reconcile('visible')
     }
-    const pull = () => {
-      if (document.visibilityState === 'hidden') return
-      const cur = latest.current
-      if (cur.dirty || !cur.project || !cur.fileId) return
-      const token = ++loadToken.current
-      void loadDraft(cur.project, cur.fileId).then((d) => {
-        if (token !== loadToken.current || latest.current.dirty) return
-        const text = d?.text ?? ''
-        if (text === latest.current.text) return
-        latest.current.text = text
-        setPromptState(text)
-        setRestored(false)
-      })
+    const onFocus = () => {
+      if (document.visibilityState !== 'hidden') void reconcile('focus')
     }
+    const onReconnect = () => void reconcile('reconnect')
     const flush = () => persist(true)
     window.addEventListener('pagehide', flush)
-    window.addEventListener('focus', pull)
-    document.addEventListener('visibilitychange', onHide)
-    document.addEventListener('visibilitychange', pull)
+    window.addEventListener('focus', onFocus)
+    window.addEventListener('mm:sse-open', onReconnect)
+    document.addEventListener('visibilitychange', onVisibility)
     return () => {
       window.removeEventListener('pagehide', flush)
-      window.removeEventListener('focus', pull)
-      document.removeEventListener('visibilitychange', onHide)
-      document.removeEventListener('visibilitychange', pull)
+      window.removeEventListener('focus', onFocus)
+      window.removeEventListener('mm:sse-open', onReconnect)
+      document.removeEventListener('visibilitychange', onVisibility)
     }
-  }, [persist])
+  }, [persist, reconcile])
 
   /** 确认已被后端接受之后清空输入框（草稿由 store 经账本条件删除）。文本已被改过就不动——那是新的草稿 */
   const clearIf = useCallback((sentText: string) => {
-    if (latest.current.text !== sentText) return
-    latest.current = { ...latest.current, text: '', dirty: false }
+    if (text.current !== sentText) return
+    text.current = ''
+    // 这段文本没发出 / 在途的写入都作废：序号对齐，防抖与重试取消
+    acked.current = seq.current
     clearTimeout(timer.current)
     clearTimeout(retry.current)
+    // 它的 PUT 若还在途，落地后服务器上会又有这段已被接受的文本：落地后条件删掉
+    if (inflight.current !== null) deleteAfterFlight.current = sentText
     setPromptState('')
     setTooLarge(false)
   }, [])

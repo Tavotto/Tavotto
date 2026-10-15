@@ -66,8 +66,12 @@ const byteLength = (text: string): number => {
 /** 现在就能判：写之前先给界面一个「过长」的答案，不等防抖与往返 */
 export const isDraftTooLarge = (text: string): boolean => byteLength(text) > DRAFT_MAX_BYTES
 
-/** 读：草稿文本与未落定的提交是**两份独立的状态**，各自原样回来；两样都没有 / 失败回 null */
-export async function loadDraft(project: string | null, fileId: string | null): Promise<Draft | null> {
+/**
+ * 读后端此刻的状态：草稿文本与未落定的提交是**两份独立的状态**，各自原样回来。
+ * **没有草稿也没有提交 = `{ text: '' }`（成功）；读失败 / 没有项目认领 = `null`（不知道）**——
+ * 调用方（`useAiDraft.reconcile`）靠这个区分「服务器说空」与「没读到」，后者绝不能当成空去清输入框。
+ */
+export async function fetchDraftState(project: string | null, fileId: string | null): Promise<Draft | null> {
   if (!project || !fileId) return null
   let doc
   try {
@@ -76,8 +80,13 @@ export async function loadDraft(project: string | null, fileId: string | null): 
     return null
   }
   const pendings = (doc.pendings ?? []).map((p) => ({ rid: p.rid, text: p.text, sent: p.sent as DraftTarget }))
-  if (!doc.draft && pendings.length === 0) return null
   return { project, fileId, text: doc.draft?.text ?? '', ...(pendings.length ? { pendings } : {}) }
+}
+
+/** `fetchDraftState` 的简化形：什么都没有 / 读失败都回 null（只关心「有没有东西」的调用方用） */
+export async function loadDraft(project: string | null, fileId: string | null): Promise<Draft | null> {
+  const d = await fetchDraftState(project, fileId)
+  return d && (d.text !== '' || d.pendings?.length) ? d : null
 }
 
 /** 写草稿**文本**（全文覆盖）。`keepalive`：pagehide / 卸载时的冲刷 */
