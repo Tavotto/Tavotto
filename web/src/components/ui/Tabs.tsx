@@ -63,7 +63,7 @@ export function TabList({
           data-tab-indicator
           className={cn(
             'pointer-events-none absolute bottom-0 left-0 h-0.5 rounded-full bg-ink',
-            indicator.animate && 'transition-[transform,width] duration-base ease-pop',
+            indicator.animate && 'transition-[transform,width] duration-base ease-snap',
           )}
           style={indicator.style}
         />

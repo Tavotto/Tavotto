@@ -268,6 +268,10 @@
      对话块 / diff 卡的 settle-in、发送 ↔ 中止的图标——4px 位移上的回弹是 0.2px，是手感不是
      动作；退场、hover、跟随输入的东西不用它。JS 侧同一份在 lib/motion.ts 的 EASE_SPRING。 */
   --ease-spring: cubic-bezier(0.34, 1.4, 0.64, 1);
+  /* 吸附（2026-10-15 UI 2.0 精修）：跟随选中项滑动的指示物（分段选择器的 thumb、页签下划线）——
+     起步更猛、末段收得更长，位置「咬」到目标上，不像 --ease-pop 那样在中段还在漂。终点 y=1，不过冲。
+     JS 侧同一份在 lib/motion.ts 的 EASE_SNAP。 */
+  --ease-snap: cubic-bezier(0.32, 0.72, 0, 1);
 
   /* 浮层：菜单 / popover / select / tooltip / dialog 主体 */
   --animate-pop-in: pop-in var(--duration-fast) var(--ease-pop);
