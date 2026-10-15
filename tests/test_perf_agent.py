@@ -677,8 +677,13 @@ def test_new_run_clears_stale_derived_reports_even_when_not_requested(tmp_path, 
         tmp_path / "drag-findings.json",
         tmp_path / "run.comparison.json",
     ]
-    for path in derived:
-        path.write_text(json.dumps({"status": "pass"}), encoding="utf-8")
+    owned = [
+        {"schema": "tavotto-perf-probe/1"},
+        [{k: 0 for k in ("report", "machine", "grades", "headroom", "findings", "segments")}],
+        {"schema": A.COMPARE_SCHEMA},
+    ]
+    for path, content in zip(derived, owned, strict=True):
+        path.write_text(json.dumps(content), encoding="utf-8")
     baseline = tmp_path / "baseline.json"
     baseline.write_text(json.dumps(report()), encoding="utf-8")
     monkeypatch.setattr(A.subprocess, "run", lambda *a, **k: SimpleNamespace(returncode=1))
@@ -687,7 +692,7 @@ def test_new_run_clears_stale_derived_reports_even_when_not_requested(tmp_path, 
     assert [p.exists() for p in derived] == [False, False, False]
     # 给了 baseline 时基线本身是只读证据，绝不能被当作派生物删掉。
     stale = tmp_path / "run.comparison.json"
-    stale.write_text("{}", encoding="utf-8")
+    stale.write_text(json.dumps({"schema": A.COMPARE_SCHEMA}), encoding="utf-8")
     assert A.main(["run", "--out", str(out), "--baseline", str(baseline)]) == 2
     assert not stale.exists()
     assert baseline.is_file()
@@ -706,6 +711,68 @@ def test_new_run_clearing_derived_reports_spares_baseline_and_summary(tmp_path, 
     )
     assert json.loads(baseline.read_text(encoding="utf-8"))["schema"] == A.SCHEMA
     assert json.loads(summary.read_text(encoding="utf-8"))["status"] == "failed"
+
+
+def test_new_run_keeps_unrelated_sibling_files_with_tool_like_names(tmp_path, monkeypatch):
+    """能证明是本工具产物才清；用户恰好叫 drag.json 等的无关文件原样保留。"""
+    out = tmp_path / "run.json"
+    mine = {
+        "drag.json": b'{"mine":1}',
+        "drag-findings.json": b"plain text, not json",
+        "run.comparison.json": json.dumps({"schema": "someone-else/1"}).encode(),
+    }
+    for name, data in mine.items():
+        (tmp_path / name).write_bytes(data)
+    monkeypatch.setattr(A.subprocess, "run", lambda *a, **k: SimpleNamespace(returncode=1))
+    assert A.main(["run", "--out", str(out)]) == 2
+    for name, data in mine.items():
+        assert (tmp_path / name).read_bytes() == data
+    # 列表形态但不是 perf_report 的 findings 结构，同样不是本工具产物。
+    (tmp_path / "drag-findings.json").write_text('[{"a": 1}]', encoding="utf-8")
+    assert A.main(["run", "--out", str(out)]) == 2
+    assert (tmp_path / "drag-findings.json").read_text(encoding="utf-8") == '[{"a": 1}]'
+
+
+def test_new_run_clears_owned_probe_and_findings_but_not_aliased_baseline(tmp_path, monkeypatch):
+    """本工具的 drag / findings 旧产物被清；与 baseline 同路径的本工具文件不动。"""
+    out = tmp_path / "run.json"
+    (tmp_path / "drag.json").write_text(json.dumps({"schema": "tavotto-perf-probe/1"}), "utf-8")
+    finding = {k: 0 for k in ("report", "machine", "grades", "headroom", "findings", "segments")}
+    (tmp_path / "drag-findings.json").write_text(json.dumps([finding]), encoding="utf-8")
+    comparison = tmp_path / "run.comparison.json"
+    comparison.write_text(json.dumps({"schema": A.COMPARE_SCHEMA}), encoding="utf-8")
+    monkeypatch.setattr(A.subprocess, "run", lambda *a, **k: SimpleNamespace(returncode=1))
+    assert A.main(["run", "--out", str(out)]) == 2
+    assert not (tmp_path / "drag.json").exists()
+    assert not (tmp_path / "drag-findings.json").exists()
+    assert not comparison.exists()
+    # 同路径的 baseline 即使 schema 是本工具的也不删。
+    comparison.write_text(json.dumps({"schema": A.COMPARE_SCHEMA}), encoding="utf-8")
+    before = comparison.read_bytes()
+    assert A.main(["run", "--out", str(out), "--baseline", str(comparison)]) == 2
+    assert comparison.read_bytes() == before
+
+
+@pytest.mark.parametrize("pnpm_missing", [True, False])
+def test_baseline_request_has_failed_verdict_on_early_launch_failure(
+    tmp_path, monkeypatch, pnpm_missing
+):
+    """请求了 baseline 的 run 在启动期失败，终态摘要必须带 regression_status=failed。"""
+    out, summary = tmp_path / "run.json", tmp_path / "summary.json"
+    baseline = tmp_path / "baseline.json"
+    baseline.write_text(json.dumps(report()), encoding="utf-8")
+    if pnpm_missing:
+        monkeypatch.setattr(A.shutil, "which", lambda _: None)
+    else:
+        monkeypatch.setattr(A.subprocess, "run", lambda *a, **k: SimpleNamespace(returncode=1))
+    args = ["run", "--out", str(out), "--baseline", str(baseline), "--summary", str(summary)]
+    assert A.main(args) == 2
+    data = json.loads(summary.read_text(encoding="utf-8"))
+    assert data["status"] == "failed"
+    assert data["regression_status"] == "failed"
+    # 没请求 baseline 时不应凭空出现比较裁决。
+    assert A.main(["run", "--out", str(out), "--summary", str(summary)]) == 2
+    assert "regression_status" not in json.loads(summary.read_text(encoding="utf-8"))
 
 
 def test_perf_playwright_cleanup_cannot_erase_agent_pending_summary():

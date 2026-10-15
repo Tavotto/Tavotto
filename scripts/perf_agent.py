@@ -349,6 +349,27 @@ def _protected_parse_positionals(argv: list[str]) -> list[Path]:
     return protected
 
 
+_FINDINGS_KEYS = {"report", "machine", "grades", "headroom", "findings", "segments"}
+
+
+def _is_tool_artifact(path: Path, kind: str) -> bool:
+    """只有能证明是本工具产物才允许清理；读不出来 / 不认识的一律当用户数据。"""
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    if kind == "drag":
+        return isinstance(data, dict) and data.get("schema") == "tavotto-perf-probe/1"
+    if kind == "comparison":
+        return isinstance(data, dict) and data.get("schema") == COMPARE_SCHEMA
+    # perf_report.py --json 写出的是无 schema 的列表，按其固定键集判断。
+    return (
+        isinstance(data, list)
+        and bool(data)
+        and all(isinstance(row, dict) and _FINDINGS_KEYS <= row.keys() for row in data)
+    )
+
+
 def _run_io_collision(
     output: Path, summary: Path | None, baseline: Path | None, include_drag: bool
 ) -> bool:
@@ -534,6 +555,9 @@ def main(argv: list[str] | None = None) -> int:
                 print("error: output_or_sidecar_aliases_readonly_data", file=sys.stderr)
                 return 2
             result["status"] = "pending"
+            if args.baseline is not None:
+                # 请求了比较就必须有裁决：启动期的任何终态都要把它收成 failed。
+                result["regression_status"] = "pending"
             # 先作废上次的成功摘要；启动失败/超时也必须交出本次任务的明确结论。
             save_suite_summary()
             # 即使参数是合法浮点/整型、但超出允许区间，也必须先作废旧原始报告。
@@ -549,22 +573,25 @@ def main(argv: list[str] | None = None) -> int:
             # 复用输出目录时，上次的派生报告（拖动 / 拖动分析 / 基线比较）同样会被
             # 当成本次证据读走，而本次可能没请求它们或在其生成前就失败。一并作废；
             # 只跳过与基线或摘要同一文件的路径，它们不是本次的派生物。
-            for stale in (
-                output.with_name("drag.json"),
-                output.with_name("drag-findings.json"),
-                output.with_suffix(".comparison.json"),
+            for stale, kind in (
+                (output.with_name("drag.json"), "drag"),
+                (output.with_name("drag-findings.json"), "findings"),
+                (output.with_suffix(".comparison.json"), "comparison"),
             ):
                 if (args.baseline is not None and _same_report_path(stale, args.baseline)) or (
                     args.summary is not None and _same_report_path(stale, args.summary)
                 ):
                     continue
-                stale.unlink(missing_ok=True)
+                if stale.is_file() and _is_tool_artifact(stale, kind):
+                    stale.unlink(missing_ok=True)
             if not 3 <= args.repeat <= 60 or not 1 <= args.regression_pct <= 200:
                 raise ValueError("invalid_run_parameters")
             output.parent.mkdir(parents=True, exist_ok=True)
             pnpm = shutil.which("pnpm")
             if pnpm is None:
                 result["status"] = "failed"
+                if args.baseline is not None:
+                    result["regression_status"] = "failed"
                 save_suite_summary()
                 print("error: perf_agent_pnpm_unavailable", file=sys.stderr)
                 return 2
@@ -595,6 +622,8 @@ def main(argv: list[str] | None = None) -> int:
             )
             if proc.returncode != 0 or not output.is_file():
                 result["status"] = "failed"
+                if args.baseline is not None:
+                    result["regression_status"] = "failed"
                 save_suite_summary()
                 print("error: perf_agent_browser_run_failed", file=sys.stderr)
                 return 2
