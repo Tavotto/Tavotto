@@ -16,6 +16,8 @@ export interface DraftBackend {
   holdReads: () => () => void
   /** 扣住草稿的 PUT（请求「在途」：后端还没收到）；返回放行函数 */
   holdDraftPuts: () => () => void
+  /** 只让「读项目级账本列表」失败（草稿的读照常成功） */
+  setPendingListFails: (fails: boolean) => void
   /** 只让「写账本」失败（PUT pending 回 500），别的照常 */
   setPendingWriteFails: (fails: boolean) => void
   /** 直接读 / 写（模拟另一个标签页） */
@@ -33,6 +35,7 @@ export function createDraftBackend(): DraftBackend {
   const drafts = new Map<string, string>()
   const pendings = new Map<string, { rid: string; text: string; sent: unknown; script?: string | null }[]>()
   let pendingWriteFails = false
+  let pendingListFails = false
   let hold: Promise<void> | null = null
   let readHold: Promise<void> | null = null
   const calls: DraftBackend['calls'] = []
@@ -56,6 +59,7 @@ export function createDraftBackend(): DraftBackend {
       })
     }
     if (u.pathname === '/api/ai/drafts/pending' && method === 'GET') {
+      if (pendingListFails) return json({ error: 'boom', code: 'internal_error' }, 500)
       const prefix = key(pj, '')
       const all = [...pendings.entries()]
         .filter(([k]) => k.startsWith(prefix))
@@ -145,6 +149,9 @@ export function createDraftBackend(): DraftBackend {
         }
       })
       return release
+    },
+    setPendingListFails: (f) => {
+      pendingListFails = f
     },
     setPendingWriteFails: (f) => {
       pendingWriteFails = f

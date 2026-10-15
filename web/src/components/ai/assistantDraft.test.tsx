@@ -400,6 +400,17 @@ describe('同步状态机：单一 reconcile + 写入版本（#1098）', () => {
     expect(q<HTMLButtonElement>('[data-ai-send]')!.disabled).toBe(false)
   })
 
+  it('只有项目级账本列表读失败（草稿读成功）：同样是「不知道」，不当成空列表放行', async () => {
+    be.setPendingListFails(true)
+    await mount()
+    expect(q('[data-ai-ledger="failed"]')).toBeTruthy()
+    expect(q<HTMLButtonElement>('[data-ai-send]')!.disabled).toBe(true)
+    be.setPendingListFails(false)
+    await click(q('[data-ai-ledger-retry]'))
+    await settle()
+    expect(q('[data-ai-ledger]')).toBeNull()
+  })
+
   it('成功对账过之后，一次读失败不把账本状态降回去（不平白锁住发送）', async () => {
     await mount()
     expect(q<HTMLButtonElement>('[data-ai-send]')!.disabled).toBe(true) // 没文字
