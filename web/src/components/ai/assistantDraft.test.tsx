@@ -1423,6 +1423,19 @@ describe('已发出未确认：不能盲目重发', () => {
     expect(input().value).toBe('新指令') // 草稿还在，用户可以等一等再发
   })
 
+  it('同脚本有运行中的会话（含接回的占位）又有未确认的提交：按钮是「中止」且可点，不被未确认禁掉', async () => {
+    useAiStore.setState({
+      sessions: [failedSession({ id: 's-run', status: 'running', finalized: false, restored: true, finishedAt: undefined, panelId: null, fileId: null, changed: false })],
+    })
+    be.pendings.set('pa\u0000Fig1.pdf', [{ rid: 'rid-both-00001', text: '加粗线条', sent: SENT }])
+    await mount()
+    expect(q('[data-ai-submission="unconfirmed"]')).toBeTruthy()
+    const stop = q<HTMLButtonElement>('[data-ai-send="stop"]')
+    expect(stop).toBeTruthy()
+    expect(stop!.disabled).toBe(false) // 任务就在跑，用户要能停它
+    expect(aiRun).not.toHaveBeenCalled()
+  })
+
   it('「改写后再发」：放弃这条等待、输入框可改，下一次发送是新 rid', async () => {
     await mount()
     await sendIt('旧指令')

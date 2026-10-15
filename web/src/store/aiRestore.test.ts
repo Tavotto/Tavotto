@@ -7,7 +7,7 @@ import { beforeEach, describe, expect, it } from 'vitest'
 
 import { handleServerEvent } from '@/hooks/useServerEvents'
 import { setCurrentProjectId } from '@/lib/session'
-import { isSessionOf, useAiStore } from './aiStore'
+import { isSessionOf, submissionBlocks, useAiStore } from './aiStore'
 import { useUiStore } from './uiStore'
 
 const json = (b: unknown, status = 200) =>
@@ -195,5 +195,57 @@ describe('断线期间结束的会话收尾', () => {
       globalThis.fetch = real
     }
     expect(sessions()[0].status).toBe('running')
+  })
+})
+
+describe('占位与「已发出未确认」「按脚本的发送锁」并存（PR4 × PR4b）', () => {
+  const unconfirmedFor = async (fileId: string, script: string) => {
+    const g = globalThis.fetch
+    globalThis.fetch = (async (url: unknown, init?: RequestInit) =>
+      String(url).includes('/api/ai/run') ? Promise.reject(new TypeError('down')) : g(url as string, init)) as typeof fetch
+    try {
+      await useAiStore.getState().start({
+        prompt: '把线条加粗', fileId, panelId: 'p-' + fileId, gid: null, label: null, scope: 'figure',
+        target: '整张图', overrides: [], script,
+      })
+    } finally {
+      globalThis.fetch = g
+    }
+  }
+
+  it('同脚本既有接回的运行中占位、又有未确认的提交：查询后只有一个会话（不重复），归属并到面板上，锁还在', async () => {
+    history.pa = [row({ id: 's-run', script: 'fig1.py' })]
+    await unconfirmedFor('Fig1.pdf', 'fig1.py')
+    await useAiStore.getState().restoreRunning() // 刷新后：占位先到
+    expect(sessions().map((s) => s.id)).toEqual(['s-run'])
+    handleServerEvent({ kind: 'ai.delta', pj: 'pa', session: 's-run', text: '已经在改了', kindOf: 'message' })
+    const rid = Object.keys(useAiStore.getState().submissions)[0]
+    // 查询：后端说这条就是 s-run
+    const g = globalThis.fetch
+    globalThis.fetch = (async (url: unknown, init?: RequestInit) =>
+      String(url).includes('/api/ai/requests/')
+        ? json({ session: 's-run', status: 'running', changed: false, script: 'fig1.py' })
+        : g(url as string, init)) as typeof fetch
+    try {
+      await useAiStore.getState().queryRequest(rid)
+    } finally {
+      globalThis.fetch = g
+    }
+    expect(sessions()).toHaveLength(1) // 对照：旧实现会 push 第二份同 id 会话
+    expect(sessions()[0]).toMatchObject({ id: 's-run', status: 'running', restored: false, fileId: 'Fig1.pdf', panelId: 'p-Fig1.pdf' })
+    expect(sessions()[0].entries.map((e) => e.text)).toEqual(['已经在改了']) // 占位上累积的输出还在
+    expect(Object.keys(useAiStore.getState().submissions)).toEqual([])
+    expect(isSessionOf(sessions()[0], { id: 'p3', fileId: 'Fig3.pdf', script: 'fig1.py' })).toBe(true) // 同脚本的兄弟面板仍被锁
+    handleServerEvent({ kind: 'ai.done', pj: 'pa', session: 's-run', status: 'done', changed: true, diff: 'D', script: 'fig1.py' })
+    expect(sessions()[0]).toMatchObject({ status: 'done', changed: true, finalized: true })
+  })
+
+  it('未确认的提交在兄弟面板上、占位在另一个面板上：两个锁各自成立，互不吞掉', async () => {
+    history.pa = [row({ id: 's-run', script: 'fig1.py' })]
+    await unconfirmedFor('Fig2.pdf', 'fig1.py')
+    await useAiStore.getState().restoreRunning()
+    expect(Object.keys(useAiStore.getState().submissions)).toHaveLength(1)
+    expect(sessions()).toHaveLength(1)
+    expect(submissionBlocks(Object.values(useAiStore.getState().submissions)[0], 'Fig9.pdf', 'sub/fig1.py')).toBe(true)
   })
 })

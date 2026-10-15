@@ -974,6 +974,37 @@ function accept(
   }
   set((s) => {
     const { [rid]: _gone, ...rest } = s.submissions
+    // 同一个会话 id 已经作为「接回的占位」（刷新后 `restoreRunning`）在列表里：不能再 push 一份（两份同 id 会让
+    // 列表重复、事件只认第一份）。把提交带来的归属（面板 / 目标 / 原文）并上去，保留占位已累积的过程输出与状态
+    const prev = s.sessions.find((x) => x.id === sid)
+    if (prev) {
+      return {
+        submissions: rest,
+        sessions: s.sessions.map((x) =>
+          x.id === sid
+            ? {
+                ...x,
+                panelId: session.panelId,
+                fileId: session.fileId,
+                gid: session.gid,
+                scope: session.scope,
+                target: session.target,
+                prompt: session.prompt,
+                restored: false,
+                entries: x.entries.length ? x.entries : session.entries,
+                ...(x.finalized
+                  ? {}
+                  : {
+                      status: session.status,
+                      changed: session.changed || x.changed,
+                      diff: session.diff || x.diff,
+                      ...(session.finalized ? { finalized: true, finishedAt: session.finishedAt } : {}),
+                    }),
+              }
+            : x,
+        ),
+      }
+    }
     return { submissions: rest, sessions: [...s.sessions, session] }
   })
   const pending = early.get(sid)

@@ -856,8 +856,11 @@ function AssistantPanelBody() {
                   size="icon-sm"
                   data-ai-send={runningHere ? 'stop' : 'send'}
                   className="relative h-[26px] w-[26px]"
+                  // 运行中时按钮是「中止」：未确认的提交 / 账本恢复状态 / 指令超限都不该把中止也禁掉（任务就在跑，用户要能停它）
                   disabled={
-                    !panel || noAgent || !!submission || (!runningHere && (!prompt.trim() || ledgerState !== 'ok' || tooLarge))
+                    !panel ||
+                    noAgent ||
+                    (!runningHere && (!!submission || !prompt.trim() || ledgerState !== 'ok' || tooLarge))
                   }
                   aria-busy={sending || runningHere || undefined}
                   onClick={runningHere ? stopRunning : () => send({ source: 'composer' })}
