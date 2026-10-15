@@ -1336,31 +1336,33 @@ def test_session_detail_is_not_final_until_the_pump_finishes(tmp_path, cli, monk
 
 
 def test_concurrent_first_connections_to_an_old_database_do_not_race_on_alter(tmp_path):
-    """两个服务进程（或线程）同时打开同一个旧库：「先查列有没有再 ALTER」不是原子的，后到的撞 `duplicate column name`。"""
-    db = tmp_path / "old.sqlite3"
-    raw = sqlite3.connect(db)
-    raw.execute(
-        "CREATE TABLE sessions (id TEXT PRIMARY KEY, project TEXT NOT NULL, canvas TEXT, panel TEXT, element TEXT,"
-        " provider TEXT NOT NULL, model TEXT, effort TEXT, scope TEXT, target TEXT, script TEXT, prompt TEXT NOT NULL,"
-        " status TEXT NOT NULL, diff TEXT NOT NULL DEFAULT '', changed INTEGER NOT NULL DEFAULT 0, error TEXT,"
-        " transcript TEXT NOT NULL DEFAULT '[]', started_ms INTEGER NOT NULL, ended_ms INTEGER, snapshot_path TEXT,"
-        " pinned INTEGER NOT NULL DEFAULT 0)"
-    )
-    raw.commit()
-    raw.close()
+    """两个服务进程（或线程）同时打开同一个旧库：「先查列有没有再 ALTER」不是原子的，后到的撞 `duplicate column name`。
+    竞态窗口很窄，所以多轮、每轮一个全新的旧库、多个线程同时进。"""
     errors: list[BaseException] = []
-    barrier = threading.Barrier(8)
+    for rnd in range(40):
+        db = tmp_path / f"old{rnd}.sqlite3"
+        raw = sqlite3.connect(db)
+        raw.execute(
+            "CREATE TABLE sessions (id TEXT PRIMARY KEY, project TEXT NOT NULL, canvas TEXT, panel TEXT, element TEXT,"
+            " provider TEXT NOT NULL, model TEXT, effort TEXT, scope TEXT, target TEXT, script TEXT, prompt TEXT NOT NULL,"
+            " status TEXT NOT NULL, diff TEXT NOT NULL DEFAULT '', changed INTEGER NOT NULL DEFAULT 0, error TEXT,"
+            " transcript TEXT NOT NULL DEFAULT '[]', started_ms INTEGER NOT NULL, ended_ms INTEGER, snapshot_path TEXT,"
+            " pinned INTEGER NOT NULL DEFAULT 0)"
+        )
+        raw.commit()
+        raw.close()
+        barrier = threading.Barrier(6)
 
-    def open_it():
-        barrier.wait()
-        try:
-            ai_history.find_by_request("/p", "rid-x", db_path=db)
-        except BaseException as exc:  # noqa: BLE001
-            errors.append(exc)
+        def open_it(db=db):
+            barrier.wait()
+            try:
+                ai_history.find_by_request("/p", "rid-x", db_path=db)
+            except BaseException as exc:  # noqa: BLE001
+                errors.append(exc)
 
-    ts = [threading.Thread(target=open_it) for _ in range(8)]
-    [t.start() for t in ts]
-    [t.join() for t in ts]
+        ts = [threading.Thread(target=open_it) for _ in range(6)]
+        [t.start() for t in ts]
+        [t.join() for t in ts]
     assert errors == []
 
 
