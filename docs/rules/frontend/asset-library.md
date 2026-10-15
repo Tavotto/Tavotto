@@ -49,6 +49,9 @@
   `/api/ai/drafts*` 的客户端，**不碰任何浏览器存储**；ADR 0132）：主语 (项目, fileId[, rid])，防抖 600 ms，
   pagehide / 卸载 `keepalive` 冲刷，写失败在内存里留着 3 s 后重试，焦点回来再读一次；账本按 rid 一条
   （两个标签页的 rid 并存），删除一律带条件（`accept` 仅当草稿文本仍等于提交原文才删）。
+  **草稿文本与待确认提交原文是两份独立状态**：输入框永远显示草稿（`loadDraft().text`），待确认原文在
+  `pendings[].text`、只在「已发出未确认」那一行里展示（`data-ai-submission-text`），确认只清待确认、不碰草稿——
+  否则 A 标签页的待确认会盖掉 B 标签页更新的草稿，A 确认后本地清空、B 又被下一次按键覆盖掉（#1098）。
   aiStore 经 `setAiSubmissionLedger` 注入落盘（Codex 内嵌画布与 playground 的包里带着 aiStore 但不得带草稿模块）。
   草稿与 rid 不进日志 / 追踪环 / frontend-state。看护 `store/aiSubmission.test.ts`、`lib/aiDraft.test.ts`、
   `lib/aiDraft.hosts.test.ts`、`lib/aiDraft.privacy.test.ts`、`components/ai/assistantDraft.test.tsx`、`e2e/ai-draft.spec.ts`、后端 `tests/test_ai_drafts.py`。
