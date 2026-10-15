@@ -45,11 +45,16 @@ export function useBoldTrackingLock(ref: RefObject<HTMLElement | null>, active: 
     if (typeof range.getBoundingClientRect !== 'function') return
     range.selectNodeContents(el)
     const prev = el.style.fontWeight
+    // 量的时候关掉过渡：prefers-reduced-motion 下全局给所有属性一个 0.01ms 的过渡（index.css），
+    // 改字重后同一帧里量到的还是起点值，400 与 600 量成一样宽，锁就悄悄失效了
+    const prevTransition = el.style.transition
+    el.style.transition = 'none'
     el.style.fontWeight = '400'
     const w400 = range.getBoundingClientRect().width
     el.style.fontWeight = '600'
     const w600 = range.getBoundingClientRect().width
     el.style.fontWeight = prev
+    el.style.transition = prevTransition
     const delta = w600 - w400
     if (delta > 0.05) el.style.letterSpacing = `${-delta / chars}px`
   })

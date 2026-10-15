@@ -108,15 +108,23 @@ test('元素树：键位（Home/End/→进首子/←回父）、内凹焦点环�
       r.selectNodeContents(span)
       return r.getBoundingClientRect().width
     }, target)
-  // 先取消选中再量
-  await page.keyboard.press('Escape')
-  await page.mouse.move(5, 5)
-  const before = await textWidth()
-  await page.locator(`[data-el="${target}"]`).click()
-  await expect(page.locator(`[data-el="${target}"]`)).toHaveAttribute('aria-selected', 'true')
-  await page.mouse.move(5, 5)
-  const after = await textWidth()
-  expect(Math.abs(after - before), `选中前 ${before}px / 选中后 ${after}px`).toBeLessThanOrEqual(0.6)
+  // 先取消选中再量；默认动效与 prefers-reduced-motion 各量一遍（后者全局给所有属性 0.01ms 过渡，
+  // 同一帧里改字重量到的是起点值——锁一度因此悄悄失效）
+  for (const reducedMotion of ['no-preference', 'reduce'] as const) {
+    await page.emulateMedia({ reducedMotion })
+    await page.locator(`[data-el="${target}"]`).focus()
+    await page.keyboard.press('Escape')
+    await expect(page.locator(`[data-el="${target}"]`)).toHaveAttribute('aria-selected', 'false')
+    await page.mouse.move(5, 5)
+    await page.waitForTimeout(300)
+    const before = await textWidth()
+    await page.locator(`[data-el="${target}"]`).click()
+    await expect(page.locator(`[data-el="${target}"]`)).toHaveAttribute('aria-selected', 'true')
+    await page.mouse.move(5, 5)
+    await page.waitForTimeout(300)
+    const after = await textWidth()
+    expect(Math.abs(after - before), `${reducedMotion}：选中前 ${before}px / 选中后 ${after}px`).toBeLessThanOrEqual(0.6)
+  }
 
   // G5：图层树的列间距与元素树相同
   const gapElement = await rows(page).first().evaluate((el) => getComputedStyle(el).columnGap)
