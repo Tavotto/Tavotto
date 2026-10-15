@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import * as outbox from './aiDraftOutbox'
 
 const puts: { text: string; stamp: number }[] = []
-let next: { stale: boolean; stamp: number }[] = []
+let next: { stale: boolean; stamp: number; tooLarge?: boolean }[] = []
 const realFetch = globalThis.fetch
 
 beforeEach(() => {
@@ -16,6 +16,13 @@ beforeEach(() => {
       const body = JSON.parse(String(init.body)) as { text: string; stamp: number }
       puts.push({ text: body.text, stamp: body.stamp })
       const r = next.shift() ?? { stale: false, stamp: body.stamp }
+      if (r.tooLarge) {
+        // 与后端一致：超限写入留了墓碑，413 带回那一行的戳
+        return new Response(
+          JSON.stringify({ error: 'x', code: 'ai_draft_too_large', params: { limit_kb: 20 }, stamp: r.stamp }),
+          { status: 413, headers: { 'Content-Type': 'application/json' } },
+        )
+      }
       return new Response(JSON.stringify({ revision: 1, stamp: r.stamp, ...(r.stale ? { stale: true } : {}) }), {
         status: 200,
         headers: { 'Content-Type': 'application/json' },
@@ -64,6 +71,21 @@ describe('aiDraftOutbox · 基线未知模式', () => {
     outbox.post('p', 'f', 'v2')
     await outbox.flush('p', 'f')
     expect(puts.map((x) => x.text)).toEqual(['', 'v2'])
+    expect(events.at(-1)).toBe('abandoned')
+  })
+
+  it('首读失败后第一次写超限（413 带墓碑的戳）：带戳即退出基线未知，之后没见过的戳放弃，不换戳重写', async () => {
+    const events: string[] = []
+    outbox.subscribe('p', 'f', (e) => events.push(e.kind === 'accepted' ? `accepted:${e.result}` : e.kind))
+    outbox.markUnknown('p', 'f')
+    next = [{ stale: false, stamp: 5e15, tooLarge: true }]
+    outbox.post('p', 'f', 'x'.repeat(100))
+    await outbox.flush('p', 'f')
+    expect(events).toContain('accepted:too_large')
+    next = [{ stale: true, stamp: 9e15 }]
+    outbox.post('p', 'f', 'v2')
+    await outbox.flush('p', 'f')
+    expect(puts.map((x) => x.text)).toEqual(['x'.repeat(100), 'v2']) // v2 只发了一次
     expect(events.at(-1)).toBe('abandoned')
   })
 

@@ -99,9 +99,11 @@ class PendingLimit(ValueError):
 class DraftTooLarge(ValueError):
     """文本超过上限：调用方回 413 `ai_draft_too_large`，**不截断**（截断会让恢复出来的是一句被砍掉的指令）。"""
 
-    def __init__(self, limit: int):
+    def __init__(self, limit: int, stamp: int | None = None):
         super().__init__(limit)
         self.limit = limit
+        #: 超限写入在服务端留了墓碑（带戳）时，那一行现在的戳；调用方原样带回，客户端据此退出「基线未知」
+        self.stamp = stamp
 
 
 #: 幂等账本的保留期；超龄才清（会话那时早已终态：启动时 running 一律转 interrupted）
@@ -489,7 +491,7 @@ def put_draft(
         )
         _prune_drafts(con, project, now)
     if too_large:
-        raise DraftTooLarge(DRAFT_MAX_BYTES)
+        raise DraftTooLarge(DRAFT_MAX_BYTES, stamp=stamp)
     return {"revision": rev, "stamp": stamp}
 
 

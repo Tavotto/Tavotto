@@ -160,7 +160,15 @@ export async function saveDraftStamped(
     if (res.stale) return { result: 'stale', stamp: res.stamp } // stale 时回的是服务器当前那一行的戳
     return { result: text === '' ? 'removed' : 'saved', stamp: res.stamp }
   } catch (e) {
-    if (e instanceof ApiError && e.status === 413) return { result: 'too_large' }
+    if (e instanceof ApiError && e.status === 413) {
+      // 超限写入服务端也留了墓碑（带戳）：把戳读出来，客户端据此抬高下限、发件箱退出「基线未知」
+      const st = (e.body as { stamp?: unknown } | undefined)?.stamp
+      if (typeof st === 'number' && Number.isFinite(st)) {
+        observeStamp(st)
+        return { result: 'too_large', stamp: st }
+      }
+      return { result: 'too_large' }
+    }
     return { result: 'unavailable' }
   }
 }

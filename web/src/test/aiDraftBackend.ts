@@ -146,7 +146,7 @@ export function createDraftBackend(): DraftBackend {
           stamps.set(key(pj, file), stamp)
           if (text === '' || bytes(text) > MAX) drafts.delete(key(pj, file))
           else drafts.set(key(pj, file), text)
-          if (bytes(text) > MAX) return json({ error: 'too large', code: 'ai_draft_too_large', params: { limit_kb: 20 } }, 413)
+          if (bytes(text) > MAX) return json({ error: 'too large', code: 'ai_draft_too_large', params: { limit_kb: 20 }, stamp }, 413)
           return json({ revision: 1, stamp })
         }
         if (holdNext) {

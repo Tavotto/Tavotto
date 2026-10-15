@@ -106,6 +106,24 @@ def test_size_limit_is_413_with_a_stable_code_and_never_truncates(client, two):
     assert put(client, a, "F", "图" * 7000).status_code == 413
 
 
+def test_413_carries_the_tombstone_stamp(client, two):
+    """超限写入服务端留了墓碑（带戳）：413 响应把这个戳带回，客户端靠它抬高下限、退出「基线未知」。"""
+    a, _ = two
+    r = client.put(
+        "/api/ai/drafts",
+        json={"file": "F", "text": "a" * (ai_history.DRAFT_MAX_BYTES + 1), "stamp": 123_456},
+        headers=H(a),
+    )
+    assert r.status_code == 413 and r.get_json()["code"] == "ai_draft_too_large"
+    assert r.get_json()["stamp"] == 123_456
+    assert get(client, a, "F")["stamp"] == 123_456  # 与墓碑上的戳是同一个
+    # 不带戳（老前端）时带回服务端取的戳
+    r2 = put(client, a, "F", "b" * (ai_history.DRAFT_MAX_BYTES + 1))
+    assert (
+        r2.status_code == 413 and r2.get_json()["stamp"] == get(client, a, "F")["stamp"] > 123_456
+    )
+
+
 def test_conditional_delete_never_removes_a_newer_draft(client, two):
     a, _ = two
     put(client, a, "F", "旧的话")

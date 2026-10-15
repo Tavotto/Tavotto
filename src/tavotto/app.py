@@ -9339,13 +9339,15 @@ def _draft_file_id(value) -> str:
 
 
 def _draft_too_large(exc: "engine_ai_history.DraftTooLarge"):
-    return jsonify(
-        {
-            "error": "指令过长，没有保存",
-            "code": "ai_draft_too_large",
-            "params": {"limit_kb": exc.limit // 1024},
-        }
-    ), 413
+    body = {
+        "error": "指令过长，没有保存",
+        "code": "ai_draft_too_large",
+        "params": {"limit_kb": exc.limit // 1024},
+    }
+    if exc.stamp is not None:
+        # 超限写入在服务端留了墓碑（旧稿也清了）：带回那一行的戳，客户端靠它抬高下限、退出「基线未知」
+        body["stamp"] = exc.stamp
+    return jsonify(body), 413
 
 
 @app.get("/api/ai/drafts")
