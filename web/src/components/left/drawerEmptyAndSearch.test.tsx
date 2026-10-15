@@ -12,6 +12,8 @@ import { TooltipProvider } from '@/components/ui/Tooltip'
 import { SEARCH_MIN_ITEMS } from '@/components/ui/searchThreshold'
 import { useDocumentStore } from '@/store/documentStore'
 import { useAssetStore } from '@/store/assetStore'
+import { useAssetBrowseStore } from '@/store/assetBrowseStore'
+import { useScriptLibraryStore } from '@/store/scriptLibraryStore'
 import { useProjectStore } from '@/store/projectStore'
 import { emptyProject } from '@/types/document'
 import { AssetBrowser } from './AssetBrowser'
@@ -145,5 +147,49 @@ describe('素材抽屉', () => {
     expect(line).toBeTruthy()
     expect(line.textContent).toContain('项目里还没有图')
     expect(line.querySelector('button')).toBeNull()
+  })
+})
+
+describe('素材抽屉的搜索框按「图 + 不支持的文件 + 脚本」合计算', () => {
+  const scripts = (n: number) =>
+    useScriptLibraryStore.setState({
+      loaded: true,
+      loading: false,
+      error: null,
+      view: {
+        source: null,
+        scripts: {},
+        candidates: [],
+        conflicts: {},
+        all_scripts: Array.from({ length: n }, (_, i) => ({ script: `s${i}.py` })),
+      } as never,
+    })
+  const panels = (n: number) => {
+    const list = Array.from({ length: n }, (_, i) => ({ id: `F${i}.pdf`, name: `F${i}`, kind: 'pdf', folder: '' }))
+    useAssetStore.setState({
+      panels: list as never,
+      byId: Object.fromEntries(list.map((p) => [p.id, p])) as never,
+      unsupported: [],
+      loaded: true,
+      loading: false,
+      error: null,
+    })
+  }
+  // 脚本区收起：这里量的是搜索框，不是脚本行（有搜索词时才强制展开）
+  beforeEach(() => useAssetBrowseStore.getState().setScriptsOpen(false))
+  const searchBox = () => host.querySelector('input[aria-label="搜索图"]')
+
+  it('0 张图 + 10 个脚本：搜索框可见（它过滤下面的脚本区）', async () => {
+    panels(0)
+    scripts(10)
+    await mount(<AssetBrowser />)
+    expect(searchBox()).not.toBeNull()
+  })
+
+  it('2 张图 + 2 个脚本：合计 4 个，隐藏', async () => {
+    panels(2)
+    scripts(2)
+    await mount(<AssetBrowser />)
+    expect(searchBox()).toBeNull()
   })
 })

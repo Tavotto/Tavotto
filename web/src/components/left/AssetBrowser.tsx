@@ -44,6 +44,7 @@ import { useDocumentStore } from '@/store/documentStore'
 import { refreshProjectNow } from '@/store/liveSync'
 import { useProjectReadinessStore } from '@/store/projectReadinessStore'
 import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
+import { useScriptLibraryStore } from '@/store/scriptLibraryStore'
 import { isBusyPhase, useScriptRunStore } from '@/store/scriptRunStore'
 import { useUiStore } from '@/store/uiStore'
 import { Button, IconButton } from '../ui/Button'
@@ -153,6 +154,7 @@ export function AssetBrowser() {
   const recentlyUsed = useAssetStore((s) => s.recentlyUsed)
   const runtimeAssets = useRuntimeAssetStore((s) => s.assets)
   const objects = useDocumentStore((s) => s.doc.objects)
+  const scriptCount = useScriptLibraryStore((s) => s.view?.all_scripts.length ?? 0)
 
   // 搜索词与筛选住在组件外（`store/assetBrowseStore`）：切左轨页签 / 收起抽屉
   // 会把这个组件整个卸掉，放在组件 state 里的输入就跟着没了
@@ -383,8 +385,9 @@ export function AssetBrowser() {
         </IconButton>
       </DrawerHeaderActions>
       <div className="flex flex-col gap-1.5 px-3 pb-2">
-        {/* 条目少于 6 个时不显示搜索框（有搜索词时保留） */}
-        {(total + unsupported.length >= SEARCH_MIN_ITEMS || query !== '') && (
+        {/* 条目少于 6 个时不显示搜索框（有搜索词时保留）。这个框同时过滤图、用不了的文件和下面的脚本区，
+            所以阈值按三者合计算——图少脚本多的项目里它是长脚本列表唯一的搜索入口（Codex #1110 P2） */}
+        {(total + unsupported.length + scriptCount >= SEARCH_MIN_ITEMS || query !== '') && (
           <SearchInput
             value={query}
             onValueChange={setQuery}
