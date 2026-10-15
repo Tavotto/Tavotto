@@ -19,7 +19,7 @@ import '@/hooks/useServerEvents' // 注册会话收尾提示（setAiSettledNotif
 import { aiRun, ApiError, fetchAiRequest, fetchAiSession } from '@/lib/api'
 import { __resetWriteStampForTests, DRAFT_MAX_BYTES, INSTRUCTION_MAX_BYTES } from '@/lib/aiDraft'
 import { createDraftBackend } from '@/test/aiDraftBackend'
-import { RETRY_MS, WRITE_DEBOUNCE_MS } from './useAiDraft'
+import { DRAFT_LOAD_TIMEOUT_MS, RETRY_MS, WRITE_DEBOUNCE_MS } from './useAiDraft'
 import { setCurrentProjectId } from '@/lib/session'
 import { TooltipProvider } from '@/components/ui/Tooltip'
 import { agentCaps, capsOf } from '@/components/settings/testCaps'
@@ -492,6 +492,39 @@ describe('同步状态机：单一 reconcile + 写入版本（#1098）', () => {
     } finally {
       vi.useRealTimers()
     }
+  })
+
+  describe.each([
+    ['草稿 GET 和账本 GET 都挂住', 'all'],
+    ['只有草稿 GET 挂住', 'draft'],
+    ['只有账本 GET 挂住', 'list'],
+  ] as const)('对账读取超时（半开连接）：%s', (_name, scope) => {
+    it('5 秒后按读失败处理：ledgerState 变 failed、重试提示出现、发送仍锁；点重试成功后解锁；迟到的旧响应被丢弃', async () => {
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+      try {
+        const release = be.holdReads(scope)
+        await mount() // 挂载时发起对账，读被扣住
+        expect(q('[data-ai-ledger="failed"]')).toBeNull() // 才开始读：还没到点
+        await act(async () => void vi.advanceTimersByTime(DRAFT_LOAD_TIMEOUT_MS - 100))
+        await settle()
+        expect(q('[data-ai-ledger="failed"]')).toBeNull()
+        await act(async () => void vi.advanceTimersByTime(200)) // 超时
+        await settle()
+        expect(q('[data-ai-ledger="failed"]')).toBeTruthy() // 对照：旧实现 Promise.all 永远挂着，这里永远不出现
+        expect(q<HTMLButtonElement>('[data-ai-send]')!.disabled).toBe(true)
+        expect(input().readOnly).toBe(false) // 首读失败：输入框不锁
+        release() // 挂住的旧读现在才返回：按代次丢弃，不改任何状态
+        await settle()
+        expect(q('[data-ai-ledger="failed"]')).toBeTruthy()
+        await click(q('[data-ai-ledger-retry]')) // 重试：读成功
+        await settle()
+        expect(q('[data-ai-ledger="failed"]')).toBeNull()
+        await typeText('可以发了')
+        expect(q<HTMLButtonElement>('[data-ai-send]')!.disabled).toBe(false) // 解锁
+      } finally {
+        vi.useRealTimers()
+      }
+    })
   })
 
   it('发件箱不因时间放弃：后端断开 15 分钟后恢复，编辑不丢（超过任何「重试 N 次就放弃」的上限）；退避有上限（≤ 30 s 一次），不是 3 s 死磕', async () => {

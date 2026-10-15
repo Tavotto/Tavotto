@@ -13,7 +13,7 @@ export interface DraftBackend {
   /** 让后端「不可用」（fetch 抛网络错误） */
   setDown: (down: boolean) => void
   /** 扣住草稿 / 账本的读（GET）：对账「还在读」的那一段；返回放行函数 */
-  holdReads: () => () => void
+  holdReads: (scope?: 'all' | 'draft' | 'list') => () => void
   /** 扣住草稿的 PUT（请求「在途」：后端还没收到）；返回放行函数 */
   holdDraftPuts: () => () => void
   /** 只扣住**下一个**草稿 PUT（之后的照常落地）：模拟「A 在途、B 先落地」；返回放行函数 */
@@ -53,6 +53,7 @@ export function createDraftBackend(): DraftBackend {
   let holdNext: Promise<void> | null = null
   const stamps = new Map<string, number>()
   let readHold: Promise<void> | null = null
+  let readHoldScope: 'all' | 'draft' | 'list' = 'all'
   const calls: DraftBackend['calls'] = []
   let down = false
   const bytes = (t: string) => new TextEncoder().encode(t).length
@@ -67,7 +68,8 @@ export function createDraftBackend(): DraftBackend {
     const body = init?.body ? (JSON.parse(String(init.body)) as Record<string, unknown>) : {}
     const entry = { method, path: u.pathname, keepalive: !!init?.keepalive, body }
     calls.push(entry)
-    if (method === 'GET' && readHold) {
+    const isList = u.pathname === '/api/ai/drafts/pending'
+    if (method === 'GET' && readHold && (readHoldScope === 'all' || (readHoldScope === 'list') === isList)) {
       // 读被扣住：放行后再走一遍（不重复记 calls）
       return readHold.then(() => {
         calls.splice(calls.indexOf(entry), 1) // 放行后会重走一遍 handle（再记一次），这里去掉被扣住时记的那条
@@ -174,7 +176,8 @@ export function createDraftBackend(): DraftBackend {
     setDown: (d) => {
       down = d
     },
-    holdReads: () => {
+    holdReads: (scope = 'all') => {
+      readHoldScope = scope
       let release!: () => void
       readHold = new Promise<void>((r) => {
         release = () => {

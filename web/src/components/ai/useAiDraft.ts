@@ -25,8 +25,24 @@ import type { PanelObject } from '@/types/document'
 
 /** 写后端的防抖 / 失败重试间隔由发件箱持有（`lib/aiDraftOutbox`）；这里转出口，测试与面板从这里取 */
 export { RETRY_MS, WRITE_DEBOUNCE_MS } from '@/lib/aiDraftOutbox'
-/** 第一次草稿读取最多等这么久；超时按读失败处理（输入框不能永远只读） */
-const DRAFT_LOAD_TIMEOUT_MS = 5000
+/**
+ * 对账里的每一次读（草稿 GET、项目账本 GET）最多等这么久；超时 = 读失败（`null`）。半开连接上的读永远不会自己结束，
+ * 不设限的话 `ledgerState` 永远是 `unknown`、发送一直锁着、重试提示也不出现。`draftRead` 的「读失败」也由这同一个结局驱动，不另设计时。
+ */
+export const DRAFT_LOAD_TIMEOUT_MS = 5000
+
+/** 带超时的读：超时先中止请求（`AbortController`），并不再等它——即使宿主的请求不响应中止也会结束；迟到的结果直接丢弃 */
+function readWithTimeout<T>(run: (signal: AbortSignal) => Promise<T | null>): Promise<T | null> {
+  const ctl = new AbortController()
+  let t: ReturnType<typeof setTimeout> | undefined
+  const timeout = new Promise<null>((resolve) => {
+    t = setTimeout(() => {
+      ctl.abort()
+      resolve(null)
+    }, DRAFT_LOAD_TIMEOUT_MS)
+  })
+  return Promise.race([run(ctl.signal), timeout]).finally(() => clearTimeout(t))
+}
 
 /**
  * 账本恢复状态（**与 `reconcile` 共用一个状态源**）：`unknown` = 还没成功读到过这张图的未结提交；`ok` = 至少成功对账过一次
@@ -127,7 +143,10 @@ export function useAiDraft(panel: PanelObject | null) {
     if (!pj || !f) return
     const token = ++reconcileToken.current
     const seqAtStart = seq.current
-    const [state, projectList] = await Promise.all([fetchDraftState(pj, f), loadProjectPendings(pj)])
+    const [state, projectList] = await Promise.all([
+      readWithTimeout((signal) => fetchDraftState(pj, f, signal)),
+      readWithTimeout((signal) => loadProjectPendings(pj, signal)),
+    ])
     if (key.current.epoch === epoch) {
       if (state) {
         outboxObserve(pj, f, state.stamp) // 记下读到的服务器戳（已见），基线已知
@@ -223,15 +242,7 @@ export function useAiDraft(panel: PanelObject | null) {
       if (e.result === 'too_large') setTooLarge(true)
     })
     void reconcile('mount')
-    // 读请求一直不回：别让输入框永远只读——到点按「读失败」处理（可以编辑，stale 以本地为准）
-    const loadGuard = setTimeout(() => {
-      if (!outboxHasSeen(project, fileId)) {
-        outboxMarkUnknown(project, fileId)
-        setDraftRead((cur) => (cur === 'loading' ? 'failed' : cur))
-      }
-    }, DRAFT_LOAD_TIMEOUT_MS)
     return () => {
-      clearTimeout(loadGuard)
       off()
       reconcileToken.current++
       // 切目标 / 卸载：把没落定的版本冲刷一次（keepalive）。没写成也不会丢——它留在发件箱里由发件箱重试，本实例到此为止

@@ -3179,8 +3179,8 @@ export interface AiDraftDoc {
 
 const JSON_HEADERS = { 'Content-Type': 'application/json' }
 
-export const fetchAiDraft = (file: string, pj: string | null) =>
-  jsonFetch<AiDraftDoc>(`/api/ai/drafts?file=${encodeURIComponent(file)}`, undefined, pj)
+export const fetchAiDraft = (file: string, pj: string | null, signal?: AbortSignal) =>
+  jsonFetch<AiDraftDoc>(`/api/ai/drafts?file=${encodeURIComponent(file)}`, signal ? { signal } : undefined, pj)
 
 /**
  * 全文覆盖（最后写入为准）；空文本 = 删。`keepalive`：页面正在关 / 刷新（pagehide）时用，浏览器会在
@@ -3217,10 +3217,10 @@ export const putAiPending = (
   )
 
 /** 本项目全部未落定的提交（跨面板，带 script）：发起它的面板已不在时也找得回来 */
-export const fetchAiPendings = (pj: string | null) =>
+export const fetchAiPendings = (pj: string | null, signal?: AbortSignal) =>
   jsonFetch<{
     pendings: { file: string; rid: string; text: string; sent: unknown; script: string | null; created_ms: number }[]
-  }>('/api/ai/drafts/pending', undefined, pj)
+  }>('/api/ai/drafts/pending', signal ? { signal } : undefined, pj)
 
 export const clearAiPending = (rid: string, file: string, pj: string | null) =>
   jsonFetch<{ cleared: boolean }>(

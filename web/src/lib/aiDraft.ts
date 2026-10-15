@@ -100,11 +100,15 @@ export const isDraftTooLarge = (text: string): boolean => byteLength(text) > DRA
  * **没有草稿也没有提交 = `{ text: '' }`（成功）；读失败 / 没有项目认领 = `null`（不知道）**——
  * 调用方（`useAiDraft.reconcile`）靠这个区分「服务器说空」与「没读到」，后者绝不能当成空去清输入框。
  */
-export async function fetchDraftState(project: string | null, fileId: string | null): Promise<Draft | null> {
+export async function fetchDraftState(
+  project: string | null,
+  fileId: string | null,
+  signal?: AbortSignal,
+): Promise<Draft | null> {
   if (!project || !fileId) return null
   let doc
   try {
-    doc = await fetchAiDraft(fileId, project)
+    doc = await fetchAiDraft(fileId, project, signal)
   } catch {
     return null
   }
@@ -204,10 +208,11 @@ export async function markSubmitted(
  */
 export async function loadProjectPendings(
   project: string | null,
+  signal?: AbortSignal,
 ): Promise<{ file: string; rid: string; text: string; sent: DraftTarget; script: string | null }[] | null> {
   if (!project) return null
   try {
-    return (await fetchAiPendings(project)).pendings.map((p) => ({ ...p, sent: p.sent as DraftTarget }))
+    return (await fetchAiPendings(project, signal)).pendings.map((p) => ({ ...p, sent: p.sent as DraftTarget }))
   } catch {
     return null
   }
