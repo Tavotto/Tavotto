@@ -1342,11 +1342,12 @@ fn spawn_engine_monitor(app: tauri::AppHandle) {
         if state.engine_gen.load(Ordering::SeqCst) != generation {
             return;
         }
-        let exit = match state.sidecar.lock().unwrap().as_ref() {
+        // 变量名不叫 `exit`：退出看护（exit_guard_tests）把任何末段是 exit 的路径都当出口
+        let polled = match state.sidecar.lock().unwrap().as_ref() {
             Some(sc) => sc.poll_exit(),
             None => return,
         };
-        if let Some(kind) = exit {
+        if let Some(kind) = polled {
             on_engine_exited(&app, kind);
             return;
         }

@@ -4186,6 +4186,7 @@ dependencies = [
  "minisign",
  "objc2",
  "percent-encoding",
+ "proc-macro2",
  "rand",
  "reqwest",
  "serde",

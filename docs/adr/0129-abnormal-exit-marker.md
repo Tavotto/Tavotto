@@ -44,7 +44,7 @@
 | e2e 更新口 `process::exit(40/41/42)`、`handle.restart()` | **否** / 视线程 | `e2e_exit()` / `mark_clean_exit()` 先写 clean |
 | 崩溃 / 被 kill / 断电 | 否 | 标记停在 `running`——这正是要被检出的情形 |
 
-`src-tauri/src/exit_guard_tests.rs` 用 `syn` 解析 `src/` 下全部生产 `.rs`（跳过 `*_tests.rs` 与 `#[cfg(test)]`），按 AST 找真实出口表达式（解析到 `std::process::exit` 的路径含 `use` 别名与 glob、`.restart()` / `.exit()` / `.updater_builder()` 方法调用），只放行允许名单上的出口函数；`main.rs` 的结构测试钉出口函数内部先写 clean 的顺序，以及 `Exit` 里 clean 在 sidecar 收掉之后写。
+`src-tauri/src/exit_guard_tests.rs` 用 `syn` 解析 `src/` 下全部生产 `.rs`（跳过 `*_tests.rs` 与 `#[cfg(test)]`），按 AST 找真实出口表达式（不做别名解析，从结构上消掉作用域歧义：`use` 里出现 std 的 `process` 段或导入 `exit` 即 hit、任何末段是 `exit` 的路径即 hit、`.restart()` / `.exit()` / `.updater_builder()` 方法调用；宏体遍历 TokenTree 只看 Ident），只放行允许名单上的出口函数；`main.rs` 的结构测试钉出口函数内部先写 clean 的顺序，以及 `Exit` 里 clean 在 sidecar 收掉之后写。
 
 ### 四、下次启动提示
 

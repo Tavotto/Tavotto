@@ -42,7 +42,7 @@
   意外退出写标记、发 `tavotto:engine-exited`、`current_engine_exit` 回读；`restart_engine`（仅主窗口，远程窗口**无**）与首启共用 `boot_engine`
   （新 nonce，`AppState.port` 可变）。`app_config_dir()/session-state.json` 只含版本 / 时间 / running|clean / 退出类型闭集，不上传；
   `take_previous_exit` 取走即清空。**绕过 `RunEvent::Exit` 的退出路径必须先写 clean**：`std::process::exit` 只许经 `e2e_exit`，
-  `UpdaterBuilder` 只许经 `updater_builder()`（`on_before_exit`）——`exit_guard_tests.rs` 用 syn 扫 `src/` 全部生产 `.rs` 的 AST（别名 / glob / 全限定写法都认；允许名单只有那几个出口函数），`main.rs` 的结构测试钉出口函数内部先写 clean 的顺序；新增退出路径先加看护。
+  `UpdaterBuilder` 只许经 `updater_builder()`（`on_before_exit`）——`exit_guard_tests.rs` 用 syn 扫 `src/` 全部生产 `.rs` 的 AST（不做 `use` 别名解析：`use` 里出现 std 的 process 段或导入 exit 即 hit，任何末段是 exit 的路径也是 hit；宏体遍历 TokenTree 只看 Ident；允许名单只列确实存在的几处且每项必须命中），`main.rs` 的结构测试钉出口函数内部先写 clean 的顺序；新增退出路径先加看护。
 - **主页拖放拿真实路径**（ADR 0092）：`disable_drag_drop_handler()` 必须留着（装上 Tauri 的处理器
   页面 HTML5 拖放整片失效）；macOS 上 `native_drop.rs` 只旁听 `performDragOperation:` 读路径、发
   `tavotto:file-drop`、再调原实现。路径分派只在 `drop_paths::classify`（绝对 + canonicalize，Rust 单测），
