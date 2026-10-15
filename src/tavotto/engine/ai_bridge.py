@@ -751,7 +751,7 @@ def run(
         # 被拒绝而换新 id 重试——同一条修改执行两次（Codex #1098）。
         ctx = context or {}
         try:
-            ai_history.record_start(
+            started = ai_history.record_start(
                 {
                     "id": sid,
                     "project": project_key,
@@ -772,6 +772,16 @@ def run(
         except BaseException:
             stderr_log.close()
             raise
+        if isinstance(started, tuple) and not started[0]:
+            # 别的调用者（可能是另一个共用数据目录的 Tavotto 进程）已经原子预留了这个 (项目, 请求 id)：
+            # 不 spawn，清掉这次为它准备的快照 / sidecar / 日志，按去重语义回既有会话
+            stderr_log.close()
+            for leftover in (snap, SNAP_DIR / f"{sid}.json", SNAP_DIR / f"{sid}.stderr.log"):
+                try:
+                    leftover.unlink()
+                except OSError:
+                    pass
+            raise DuplicateRequest(started[1])
         try:
             proc = subprocess.Popen(
                 cmd,

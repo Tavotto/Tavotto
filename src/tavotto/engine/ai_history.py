@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import sqlite3
 import time
@@ -160,10 +161,63 @@ def _migrate(con: sqlite3.Connection) -> None:
     )
 
 
-def record_start(sess: dict, db_path: Path | None = None) -> None:
-    with _connect(db_path) as con:
+@contextlib.contextmanager
+def _immediate(db_path: Path | None = None):
+    """`BEGIN IMMEDIATE` 事务：开始就拿库的写锁，**跨进程**互斥（两个 Tavotto 服务进程共用同一个数据目录时，
+    进程内的锁管不到对方）。正常退出提交，异常回滚。"""
+    con = _connect(db_path)
+    con.isolation_level = None  # 手动事务
+    try:
+        con.execute("BEGIN IMMEDIATE")
+        try:
+            yield con
+        except BaseException:
+            con.execute("ROLLBACK")
+            raise
+        else:
+            con.execute("COMMIT")
+    finally:
+        con.close()
+
+
+def _reserve(con: sqlite3.Connection, project: str, rid: str, sid: str) -> tuple[bool, str]:
+    """在已开的事务里预留 (项目, 请求 id)：**普通 INSERT**（不加 OR IGNORE / OR REPLACE），唯一约束冲突 = 别人已预留，
+    读出既有会话 id。回 `(是否是本次预留的, 会话 id)`。"""
+    try:
         con.execute(
-            """INSERT OR REPLACE INTO sessions
+            "INSERT INTO ai_requests (project, client_request_id, session, created_ms) VALUES (?,?,?,?)",
+            (project, rid, sid, int(time.time() * 1000)),
+        )
+    except sqlite3.IntegrityError:
+        row = con.execute(
+            "SELECT session FROM ai_requests WHERE project=? AND client_request_id=?",
+            (project, rid),
+        ).fetchone()
+        return False, row["session"]
+    return True, sid
+
+
+def reserve_request(
+    project: str, client_request_id: str, sid: str, db_path: Path | None = None
+) -> tuple[bool, str]:
+    """**跨进程原子**地预留请求：恰好一个调用者拿到 `(True, sid)`，其余拿到 `(False, 既有会话 id)`。
+    必须在启动 CLI **之前**完成（`record_start` 在同一个事务里先预留再写会话行，就是这一步）。"""
+    with _immediate(db_path) as con:
+        return _reserve(con, project, client_request_id, sid)
+
+
+def record_start(sess: dict, db_path: Path | None = None) -> tuple[bool, str]:
+    """登记一个新会话。带请求 id 时先**原子预留**（见 `reserve_request`）：已被别的调用者（含另一个进程）预留 →
+    **不写会话行**，回 `(False, 既有会话 id)`，调用方不得 spawn。预留与会话行在同一个事务里，崩溃不会留下
+    「账本有、会话无」的半条记录。会话行用普通 INSERT（sid 唯一），不再顶替同请求 id 的行。"""
+    rid = sess.get("client_request_id")
+    with _immediate(db_path) as con:
+        if rid:
+            reserved, existing = _reserve(con, sess.get("project", ""), rid, sess["id"])
+            if not reserved:
+                return False, existing
+        con.execute(
+            """INSERT INTO sessions
                (id, project, canvas, panel, element, provider, model, effort,
                 scope, target, script, prompt, status, started_ms, snapshot_path,
                 client_request_id)
@@ -187,17 +241,7 @@ def record_start(sess: dict, db_path: Path | None = None) -> None:
                 sess.get("client_request_id"),
             ),
         )
-        if sess.get("client_request_id"):
-            con.execute(
-                "INSERT OR IGNORE INTO ai_requests (project, client_request_id, session, created_ms) "
-                "VALUES (?,?,?,?)",
-                (
-                    sess.get("project", ""),
-                    sess["client_request_id"],
-                    sess["id"],
-                    int(time.time() * 1000),
-                ),
-            )
+    return True, sess["id"]
 
 
 def record_end(

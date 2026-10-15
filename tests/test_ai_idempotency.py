@@ -475,3 +475,85 @@ def test_a_failed_spawn_leaves_a_failed_record_not_a_missing_one(tmp_path, cli, 
     assert not ai_bridge.SESSIONS or all(
         s["id"] != found["session"] for s in ai_bridge.SESSIONS.values()
     )
+
+
+# ---------------------------------------------------------------------------
+# 跨进程原子预留（Codex #1098 P1）：两个 Tavotto 服务进程共用同一个数据目录
+# ---------------------------------------------------------------------------
+def test_reserve_request_is_atomic_across_connections(tmp_path):
+    """每个调用各自 `_connect`（= 各自一条 sqlite 连接，等价于两个进程）同时预留同一个 rid：恰好一个成功，
+    另一个拿到成功者的会话 id——不是各自成功。"""
+    import threading
+
+    db = tmp_path / "hist.sqlite3"
+    for i in range(20):
+        rid = f"rid-race-{i:04d}"
+        barrier = threading.Barrier(2)
+        out: dict[str, tuple[bool, str]] = {}
+
+        def reserve(who: str, rid=rid):
+            barrier.wait()
+            out[who] = ai_history.reserve_request("/p", rid, f"sid-{who}", db_path=db)
+
+        ts = [threading.Thread(target=reserve, args=(w,)) for w in ("a", "b")]
+        [t.start() for t in ts]
+        [t.join() for t in ts]
+        winners = [w for w, (ok, _sid) in out.items() if ok]
+        assert len(winners) == 1, out
+        assert out["a"][1] == out["b"][1] == f"sid-{winners[0]}"
+
+
+def test_record_start_does_not_replace_a_reserved_request(tmp_path):
+    db = tmp_path / "hist.sqlite3"
+
+    def sess(sid):
+        return {"id": sid, "project": "/p", "provider": "codex", "client_request_id": RID}
+
+    assert ai_history.record_start(sess("first"), db_path=db) == (True, "first")
+    assert ai_history.record_start(sess("second"), db_path=db) == (False, "first")
+    found = ai_history.find_by_request("/p", RID, db_path=db)
+    assert found is not None and found["id"] == "first"  # 后来者没有顶替前者
+
+
+def test_run_on_a_request_reserved_by_another_process_never_spawns(tmp_path, cli):
+    """另一个进程已经预留了 (项目, rid)（会话行还没落到本进程能看到的内存里）：本进程的 run() 不 spawn，
+    回去重语义，并清掉为这次尝试准备的快照 / sidecar。"""
+    _, counter = cli
+    figs = _project(tmp_path)
+    project_key = str(figs.resolve())
+    assert ai_history.reserve_request(project_key, RID, "otherproc001") == (True, "otherproc001")
+    before = set(ai_bridge.SESSIONS)
+    with pytest.raises(ai_bridge.DuplicateRequest) as ei:
+        ai_bridge.run("codex", "fig1.py", "p", str(figs), client_request_id=RID)
+    assert ei.value.sid == "otherproc001"
+    time.sleep(0.5)
+    assert _spawned(counter) == 0
+    assert set(ai_bridge.SESSIONS) == before
+    snaps = list((tmp_path / "snapshots").glob("*")) if (tmp_path / "snapshots").exists() else []
+    assert snaps == [], snaps  # 没有留下半成品
+    engine_watch.stop()
+
+
+def test_a_failed_spawn_keeps_the_failed_record_and_a_new_id_can_run(tmp_path, cli, monkeypatch):
+    """spawn 失败（明确没执行）：记录标成 failed 留着（查询查得到、明确没执行）；同 rid 不会再 spawn（去重到这条 failed），
+    前端按「明确失败」换新 id 重发则正常执行——不会被永久挡住。"""
+    _, counter = cli
+    figs = _project(tmp_path)
+    real_popen = ai_bridge.subprocess.Popen
+
+    def no_such_cli(*_a, **_k):
+        raise FileNotFoundError("codex")
+
+    monkeypatch.setattr(ai_bridge.subprocess, "Popen", no_such_cli)
+    with pytest.raises(FileNotFoundError):
+        ai_bridge.run("codex", "fig1.py", "p", str(figs), client_request_id=RID)
+    monkeypatch.setattr(ai_bridge.subprocess, "Popen", real_popen)
+    with pytest.raises(ai_bridge.DuplicateRequest):  # 同 rid：去重到那条 failed 记录，不 spawn
+        ai_bridge.run("codex", "fig1.py", "p", str(figs), client_request_id=RID)
+    assert _spawned(counter) == 0
+    ai_bridge.run(
+        "codex", "fig1.py", "p", str(figs), client_request_id="rid-fresh-00000001"
+    )  # 新 id 正常
+    _wait_idle()
+    assert _spawned(counter) == 1
+    engine_watch.stop()
