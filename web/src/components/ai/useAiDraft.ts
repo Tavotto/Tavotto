@@ -28,7 +28,7 @@ export const RETRY_MS = 3000
 export type LedgerState = 'unknown' | 'ok' | 'failed'
 
 /** 对账的来源。**所有来源走同一个 `reconcile`**，不存在「只取文本」的分支 */
-export type ReconcileSource = 'mount' | 'focus' | 'visible' | 'reconnect' | 'accepted'
+export type ReconcileSource = 'mount' | 'focus' | 'visible' | 'reconnect' | 'accepted' | 'conflict'
 
 /**
  * 助手输入框的草稿（ADR 0132）：绑定 **项目 × 面板文件**，**存后端**（不碰 localStorage）。
@@ -85,6 +85,14 @@ export function useAiDraft(panel: PanelObject | null) {
   const versionStamp = useRef<number>(0)
   /** 本实例已退役（卸载）：退役后的回调不再安排任何重试 / 重写，免得拿着旧文本去覆盖重新挂载后保存的新草稿 */
   const retired = useRef(false)
+  /**
+   * **已见过的服务器戳**（本目标）：每次 GET 读到的、自己 PUT 被接受的、stale 回的服务器戳都记进来。
+   * stale 的处置只看这一条：服务器当前那一行的戳**本页已见过** = 没有别处在我们不知情时写过，本地这一版是用户在已知最新状态上的
+   * 编辑，可以换更大的戳重写（墙钟回拨属于这种）；**没见过** = 别的标签页写了我们不知道的更新版本，本版不提升、不重写，
+   * 采纳服务器值（本地若还有更新的编辑，由那一版按自己的戳去写）。
+   */
+  const reconcileRef = useRef<((source: ReconcileSource) => Promise<void>) | null>(null)
+  const seenStamps = useRef<Set<number>>(new Set())
   /** 同一段本地内容连续被判 stale 的次数（墙钟回拨 / 并发写时有界重写，免得两端互相覆盖没完） */
   const staleRetries = useRef(0)
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
@@ -113,6 +121,15 @@ export function useAiDraft(panel: PanelObject | null) {
       if (key.current.epoch !== epoch) return // 目标已换：那一边的收尾由切目标时的冲刷负责，不动当前目标的版本
       inflight.current = null
       if (r === 'stale') {
+        const serverSeen = stamp === undefined || seenStamps.current.has(stamp)
+        if (stamp !== undefined) seenStamps.current.add(stamp)
+        if (seq.current === mySeq && !serverSeen) {
+          // 别处写了本页没见过的更新版本：本版不提升、不重写——放弃这次未确认的写入，采纳服务器值
+          acked.current = Math.max(acked.current, mySeq)
+          staleRetries.current = 0
+          await reconcileRef.current?.('conflict')
+          return
+        }
         // 服务端说：它那里有比这次写入**更新的戳**，这次没被采纳（`saveDraft` 已按服务端回的戳抬高了本页下限，
         // 再写一次的戳一定更大）。两种成因：同页内并发写（B 先落地、A 后落地——B 的写入会自己推进 acked）、
         // 或墙钟回拨 / 另一个标签页的戳更新。本地内容是用户在本页**真实输入**的，所以以本地为准：还没被确认就重写
@@ -140,6 +157,7 @@ export function useAiDraft(panel: PanelObject | null) {
       acked.current = Math.max(acked.current, mySeq)
       if (r === 'too_large') setTooLarge(true)
       // 服务器上这一行现在就是本地这一版：记下它的戳（只有「本地没有更新的写入」时才算与本地一致）
+      if (stamp !== undefined) seenStamps.current.add(stamp)
       if (seq.current === mySeq && stamp !== undefined) draftStamp.current = stamp
       // 落地的这段确认之前，本地又有更新的写入：以本地为准再写一次
       if (seq.current > acked.current) await persist(false)
@@ -177,6 +195,7 @@ export function useAiDraft(panel: PanelObject | null) {
     const token = ++reconcileToken.current
     const seqAtStart = seq.current
     const [state, projectList] = await Promise.all([fetchDraftState(pj, f), loadProjectPendings(pj)])
+    if (state && key.current.epoch === epoch && state.stamp !== undefined) seenStamps.current.add(state.stamp)
     // 本地非终态的会话也按后端快照收尾（`accept` 之后任务在 SSE 断线期间结束，事件流不重放）——和 pendings 一样，每个入口都做
     void useAiStore.getState().settleRunningSessions()
     // 过期：又有更新的一次对账、或目标已经换了——不动
@@ -230,6 +249,8 @@ export function useAiDraft(panel: PanelObject | null) {
     setRestored(source === 'mount' && state.text !== '')
   }, [])
 
+  reconcileRef.current = reconcile
+
   // 目标（项目 × 面板文件）变了：旧的在 cleanup 里冲刷，新的对账一次
   useEffect(() => {
     key.current = { project, fileId, epoch: key.current.epoch + 1 }
@@ -240,6 +261,7 @@ export function useAiDraft(panel: PanelObject | null) {
     inflightP.current = null
     draftStamp.current = null
     staleRetries.current = 0
+    seenStamps.current = new Set()
     setPromptState('')
     setRestored(false)
     setTooLarge(false)

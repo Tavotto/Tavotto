@@ -153,7 +153,7 @@ export async function saveDraftStamped(
     // 服务端只接受比已存戳更新的写入，旧版本不管何时落地都不会覆盖新的
     const res = await putAiDraft(fileId, text, project, keepalive && byteLength(text) < 60 * 1024, stamp)
     observeStamp(res.stamp)
-    if (res.stale) return { result: 'stale' }
+    if (res.stale) return { result: 'stale', stamp: res.stamp } // stale 时回的是服务器当前那一行的戳
     return { result: text === '' ? 'removed' : 'saved', stamp: res.stamp }
   } catch (e) {
     if (e instanceof ApiError && e.status === 413) return { result: 'too_large' }

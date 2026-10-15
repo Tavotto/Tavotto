@@ -379,18 +379,40 @@ describe('同步状态机：单一 reconcile + 写入版本（#1098）', () => {
     expect(input().value).toBe('用户这次真实输入的内容')
   })
 
-  it('对账还没读回来就输入、第一次写被判 stale（墙钟回拨）：本地是用户真实输入的，以本地为准用更大的戳重写，不采纳服务器的旧值', async () => {
+  it('stale 规则「只有服务器当前版本本页已见过才可提升」——已见过（墙钟回拨：输入后、写入前对账读到了库里的戳）：本地是用户在已知最新状态上的编辑，换更大的戳重写，不采纳服务器旧值', async () => {
     be.putStamped('pa', 'Fig1.pdf', '库里的旧稿', Date.now() * 1000 + 5_000_000_000)
     const release = be.holdReads() // 对账的读被扣住：本页还不知道服务器戳
     await mount()
-    await typeText('用户这次真实输入的内容')
-    await act(async () => window.dispatchEvent(new Event('pagehide'))) // 第一次写：戳比库里的小 → stale → 抬高下限 → 重写
+    await typeText('用户这次真实输入的内容') // 此刻分配的戳比库里的小
+    release() // 对账读回来：记下库里的戳为「已见」；本地有未落定写入，文本不覆盖
+    await settle()
+    await act(async () => window.dispatchEvent(new Event('pagehide'))) // 第一次写：戳比库里的小 → stale（库里的戳已见过）→ 提升重写
     await settle()
     expect(be.draft('pa', 'Fig1.pdf')).toBe('用户这次真实输入的内容') // 对照：旧实现采纳服务器旧值、盖掉输入
-    release()
-    await settle()
     expect(input().value).toBe('用户这次真实输入的内容')
     expect(be.calls.filter((c) => c.method === 'PUT' && c.path === '/api/ai/drafts').length).toBeGreaterThanOrEqual(2)
+  })
+
+  it('stale 的服务器戳本页没见过（别的标签页在我们不知情时写了更新的）：本版不提升、不重写，采纳服务器值——A 晚到不盖掉别处保存的 B', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    try {
+      await mount()
+      const releaseA = be.holdNextDraftPut()
+      await typeText('A 版（本页先编辑，PUT 晚到）')
+      await act(async () => void vi.advanceTimersByTime(WRITE_DEBOUNCE_MS + 50)) // PUT A 在途
+      await settle()
+      be.putStamped('pa', 'Fig1.pdf', 'B 版（别的标签页之后保存的）', Date.now() * 1000 + 5_000_000_000) // 本页不知道
+      releaseA() // A 晚到：stale，服务器戳本页没见过
+      await settle()
+      await act(async () => void vi.advanceTimersByTime(RETRY_MS * 3 + WRITE_DEBOUNCE_MS))
+      await settle()
+      const puts = be.calls.filter((c) => c.method === 'PUT' && c.path === '/api/ai/drafts')
+      expect(puts).toHaveLength(1) // A 没有换戳重写
+      expect(be.draft('pa', 'Fig1.pdf')).toBe('B 版（别的标签页之后保存的）') // B 被保留
+      expect(input().value).toBe('B 版（别的标签页之后保存的）') // 本页采纳服务器值
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('被判 stale 时本地之后又有更新的内容：再写一次（新戳大于服务器的），以本地为准', async () => {
