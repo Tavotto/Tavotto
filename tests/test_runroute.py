@@ -1420,6 +1420,14 @@ GATED = [
     ("sqlite_connect", MPL + "import sqlite3\nsqlite3.connect('v.db')\n" + TAIL),
     ("os_symlink", MPL + "import os\nos.symlink('a', 'b')\n" + TAIL),
     ("path_rename_one_arg", MPL + "from pathlib import Path\nPath('a').rename('b')\n" + TAIL),
+    # Codex r4286232612：`to_*` / `write_*` 写出族按形态收口，不逐个列名
+    ("pandas_to_xml", MPL + "import pandas as pd\npd.DataFrame().to_xml('victim.xml')\n" + TAIL),
+    ("pandas_to_latex", MPL + "import pandas as pd\npd.DataFrame().to_latex(buf='v.tex')\n" + TAIL),
+    ("polars_write_csv", MPL + "import polars as pl\npl.DataFrame().write_csv('v.csv')\n" + TAIL),
+    (
+        "astropy_writeto",
+        MPL + "from astropy.io import fits\nfits.PrimaryHDU().writeto('v.fits')\n" + TAIL,
+    ),
 ]
 
 
@@ -1434,6 +1442,12 @@ UNGATED = [
     ("plain_readback", MPL + TAIL),
     ("str_replace_two_args", MPL + 'name = "a.b".replace(".", "_")\n' + TAIL),
     ("list_remove", MPL + "xs = [1]\nxs.remove(1)\n" + TAIL),
+    (
+        "conversions_are_not_writes",
+        MPL
+        + "import matplotlib.colors as mc\nc = mc.to_rgba('r')\nimport pandas as pd\nd = pd.DataFrame().to_dict('list')\n"
+        + TAIL,
+    ),
     ("read_only_pathlib", MPL + 'from pathlib import Path\nPath("a").read_text()\n' + TAIL),
     (
         "pandas_rename_columns",

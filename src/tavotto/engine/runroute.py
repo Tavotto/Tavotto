@@ -695,6 +695,46 @@ class _Collector:
         }
     )
     _WRITER_PREFIXES = ("shutil.copy", "shutil.make_archive", "shutil.unpack_archive")
+    #: `to_*` / `write_*` 这一族（pandas `to_xml` / `to_latex` / `to_markdown`、polars `write_csv`、xarray `to_netcdf`……）按**形态**
+    #: 收口而不是逐个列名（Codex #1034 r4286232612）：带了实参就算写出；只排除常见的、从不写文件的转换方法。多判只会回 safe
+    _CONVERT_TAILS = frozenset(
+        {
+            "to_numpy",
+            "to_dict",
+            "to_list",
+            "to_frame",
+            "to_series",
+            "to_datetime",
+            "to_numeric",
+            "to_timedelta",
+            "to_period",
+            "to_timestamp",
+            "to_records",
+            "to_dense",
+            "to_flat_index",
+            "to_pydatetime",
+            "to_offset",
+            "to_rgba",
+            "to_rgba_array",
+            "to_rgb",
+            "to_hex",
+            "to_tuple",
+            "to_coo",
+            "to_array",
+            "to_dataset",
+            "to_dataframe",
+            "to_pandas",
+            "to_xarray",
+            "to_masked_array",
+            "to_device",
+            "to_bytes",
+            "to_value",
+            "to_unit",
+            "to_polygons",
+            "to_path",
+            "to_mask",
+        }
+    )
     #: 第二个实参是 mode 时这些字符串方法会撞形（`s.replace("x", "a")`），不按 mode 判
     _STR_METHODS = frozenset(
         {
@@ -799,6 +839,13 @@ class _Collector:
         if last:
             tails.add(last)
         if tails & self._WRITER_TAILS:
+            return True
+        if (node.args or node.keywords) and any(
+            (t.startswith("to_") and t not in self._CONVERT_TAILS)
+            or t.startswith("write_")
+            or t == "writeto"
+            for t in tails
+        ):
             return True
         if names & self._WRITER_QUALIFIED or any(
             n.startswith(self._WRITER_PREFIXES) for n in names if n
