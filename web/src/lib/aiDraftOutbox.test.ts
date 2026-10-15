@@ -53,6 +53,20 @@ describe('aiDraftOutbox · 基线未知模式', () => {
     expect(outbox.peek('p', 'f')).toBeNull()
   })
 
+  it('首读失败后第一次被接受的写入是删除（空文本留墓碑）：同样退出基线未知，之后没见过的戳按跨标签页规则放弃', async () => {
+    const events: string[] = []
+    outbox.subscribe('p', 'f', (e) => events.push(e.kind))
+    outbox.markUnknown('p', 'f')
+    outbox.post('p', 'f', '')
+    await outbox.flush('p', 'f')
+    expect(events).toContain('accepted')
+    next = [{ stale: true, stamp: 9e15 }]
+    outbox.post('p', 'f', 'v2')
+    await outbox.flush('p', 'f')
+    expect(puts.map((x) => x.text)).toEqual(['', 'v2'])
+    expect(events.at(-1)).toBe('abandoned')
+  })
+
   it('对照：一次都没写成功（仍是基线未知）时，没见过的戳按「已见」处理，以本地为准换戳重写', async () => {
     outbox.markUnknown('p', 'f')
     next = [{ stale: true, stamp: 9e15 }]

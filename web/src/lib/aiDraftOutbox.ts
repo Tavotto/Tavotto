@@ -241,9 +241,10 @@ async function land(
 
   // saved / removed / too_large：服务器处理了这一版
   if (serverStamp !== undefined) slot.seen.add(serverStamp)
-  // 写成功过一次 = 基线已知（服务器那一行就是我们刚写的这一版）：退出「首读失败按已见」的模式，
-  // 之后再遇到没见过的戳就按跨标签页冲突规则放弃，不再以本地为准盖掉别处更新的稿
-  if (result === 'saved') slot.unknown = false
+  // 服务器处理过一次写入并回了它那一行的戳（保存、或空文本留下的墓碑）= 基线已知：退出「首读失败按已见」的模式，
+  // 之后再遇到没见过的戳就按跨标签页冲突规则放弃，不再以本地为准盖掉别处更新的稿。
+  // 超限（413）服务器什么都没存、也没回戳，基线仍未知
+  if (serverStamp !== undefined) slot.unknown = false
   if (entry && latest) {
     clearTimers(entry)
     slot.entry = null
