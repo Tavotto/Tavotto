@@ -435,6 +435,104 @@ describe('同步状态机：单一 reconcile + 写入版本（#1098）', () => {
     expect(be.pending('pa', 'Fig1.pdf')).toEqual([])
   })
 
+  describe('发送来源显式标明：失败后的重试仍走草稿快照（#1098）', () => {
+    const ledgerStamp = () => be.pendings.get('pa\u0000Fig1.pdf')?.[0]?.draftStamp
+    const expectAcceptedAndDraftCleared = async (stampAtRun: unknown) => {
+      expect(typeof stampAtRun).toBe('number') // 账本记的是草稿戳，不是 null
+      expect(input().value).toBe('') // 被接受后草稿清掉（旧实现 stamp 为 null → 草稿清不掉，已执行的指令还能再发）
+      expect(be.draft('pa', 'Fig1.pdf')).toBeUndefined()
+      expect(be.pending('pa', 'Fig1.pdf')).toEqual([])
+    }
+
+    it('账本写失败后点重试：账本里记的是草稿戳，被接受后草稿被清', async () => {
+      let stampAtRun: unknown = null
+      vi.mocked(aiRun).mockImplementation(async () => {
+        stampAtRun = ledgerStamp()
+        return { session: 's-1', script: 'p1.py' }
+      })
+      await mount()
+      be.setPendingWriteFails(true)
+      await typeText('把线条加粗一点')
+      await click(q('[data-ai-send="send"]'))
+      await settle()
+      expect(aiRun).not.toHaveBeenCalled()
+      expect(q('[data-ai-error="send"]')).toBeTruthy()
+      be.setPendingWriteFails(false)
+      await click(q('[data-ai-retry]'))
+      await settle()
+      expect(aiRun).toHaveBeenCalledTimes(1)
+      await expectAcceptedAndDraftCleared(stampAtRun)
+    })
+
+    it('run 回 409 后点重试：同样记草稿戳，被接受后草稿被清', async () => {
+      let stampAtRun: unknown = null
+      vi.mocked(aiRun)
+        .mockRejectedValueOnce(new ApiError('busy', 409, { code: 'ai_script_busy', params: { script: 'p1.py' } }))
+        .mockImplementation(async () => {
+          stampAtRun = ledgerStamp()
+          return { session: 's-1', script: 'p1.py' }
+        })
+      await mount()
+      await typeText('把线条加粗一点')
+      await click(q('[data-ai-send="send"]'))
+      await settle()
+      expect(q('[data-ai-error="send"]')).toBeTruthy()
+      await click(q('[data-ai-retry]'))
+      await settle()
+      expect(aiRun).toHaveBeenCalledTimes(2)
+      await expectAcceptedAndDraftCleared(stampAtRun)
+    })
+
+    it('失败后输入框被改过再点重试：按失败的那段原文发（history 来源），不碰草稿——用户新写的草稿不被当成「已发送」清掉', async () => {
+      let stampAtRun: unknown = 'unset'
+      vi.mocked(aiRun)
+        .mockRejectedValueOnce(new ApiError('busy', 409, { code: 'ai_script_busy', params: { script: 'p1.py' } }))
+        .mockImplementation(async () => {
+          stampAtRun = ledgerStamp()
+          return { session: 's-1', script: 'p1.py' }
+        })
+      await mount()
+      await typeText('第一版指令')
+      await click(q('[data-ai-send="send"]'))
+      await settle()
+      await typeText('失败之后我又写了新的草稿')
+      await click(q('[data-ai-retry]'))
+      await settle()
+      expect((vi.mocked(aiRun).mock.calls[1][0] as { prompt: string }).prompt).toBe('第一版指令') // 重试的是失败的那一条
+      expect(stampAtRun).toBeNull() // history 来源：不带草稿戳
+      expect(input().value).toBe('失败之后我又写了新的草稿')
+      await act(async () => window.dispatchEvent(new Event('pagehide')))
+      await settle()
+      expect(be.draft('pa', 'Fig1.pdf')).toBe('失败之后我又写了新的草稿')
+    })
+
+    it('从历史会话重发（气泡「重新发送」）：不碰草稿，账本不带草稿戳', async () => {
+      let stampAtRun: unknown = 'unset'
+      vi.mocked(aiRun).mockImplementation(async () => {
+        stampAtRun = ledgerStamp()
+        return { session: 's-2', script: 'p1.py' }
+      })
+      useAiStore.setState({ sessions: [failedSession({ id: 's-old', prompt: '历史里的旧指令', status: 'done' })] })
+      await mount()
+      await typeText('我正在输入框里写的草稿')
+      await click(q('[data-ai-resend]'))
+      await settle()
+      expect((vi.mocked(aiRun).mock.calls[0][0] as { prompt: string }).prompt).toBe('历史里的旧指令')
+      expect(stampAtRun).toBeNull()
+      expect(input().value).toBe('我正在输入框里写的草稿') // 草稿原封不动
+      await act(async () => window.dispatchEvent(new Event('pagehide')))
+      await settle()
+      expect(be.draft('pa', 'Fig1.pdf')).toBe('我正在输入框里写的草稿')
+    })
+
+    it('结构性（源码）：发送的每个调用点都显式标明来源，没有无参 / 裸文本调用', async () => {
+      const src = (await import('./AiPanel.tsx?raw')).default as string
+      const calls = src.match(/\bsend\(\s*[^)]*\)/g)!.filter((c) => !c.includes('req: SendRequest'))
+      expect(calls.length).toBeGreaterThanOrEqual(5)
+      for (const c of calls) expect(c, c).toMatch(/source:\s*'(composer|history)'/)
+    })
+  })
+
   it('提交之后、被接受之前用户又改了草稿：确认只清账本，新写的留着（输入框与后端都是新的）', async () => {
     let resolveRun!: (v: { session: string; script: string }) => void
     vi.mocked(aiRun).mockImplementation(() => new Promise((r) => (resolveRun = r)))

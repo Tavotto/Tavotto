@@ -296,5 +296,19 @@ export function useAiDraft(panel: PanelObject | null) {
   /** 账本读失败后的「重试」：就是再对账一次（同一个入口） */
   const retryLedger = useCallback(() => void reconcile('focus'), [reconcile])
 
-  return { prompt, setPrompt, restored, tooLarge, clearIfUnchanged, draftSnapshot, project, ledgerState, retryLedger }
+  /** 输入框当前的本地版本号（失败的发送记下它；重试时据此判「输入框自那以后没改过」） */
+  const draftSeq = useCallback(() => seq.current, [])
+
+  return {
+    prompt,
+    setPrompt,
+    restored,
+    tooLarge,
+    clearIfUnchanged,
+    draftSnapshot,
+    draftSeq,
+    project,
+    ledgerState,
+    retryLedger,
+  }
 }

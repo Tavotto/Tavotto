@@ -68,6 +68,15 @@ const ai = (key: string, values?: Record<string, unknown>) =>
  */
 const STICK_SLACK = 24
 
+/**
+ * 一次发送的来源：`composer` = 输入框里的草稿（发之前要先把草稿写成功、记戳；被接受后草稿才清得掉）；
+ * `history` = 历史会话里的原话（气泡「重新发送」/ 失败会话的「重试」），**不碰草稿**。
+ */
+type SendSource = 'composer' | 'history'
+type SendRequest =
+  | { source: 'composer'; pinned?: SendTarget }
+  | { source: 'history'; text: string; pinned?: SendTarget }
+
 /** 一次发送钉住的目标：作用范围 + 元素上下文（整张图时 gid / label 为空） */
 type SendTarget = { scope: AiScope; gid: string | null; label: string | null; target: string }
 
@@ -261,13 +270,23 @@ function AssistantPanelBody() {
     tooLarge,
     clearIfUnchanged,
     draftSnapshot,
+    draftSeq,
     project: claimedProject,
     ledgerState,
     retryLedger,
   } = useAiDraft(panel)
   // 发送从「取草稿快照」到 start 返回是异步的：这一段里再点 / ⌘↵ 不许开第二次发送
   const sendInFlight = useRef(false)
-  const [error, setError] = useState<{ text: string; prompt: string; target: SendTarget; panelId: string } | null>(null)
+  const [error, setError] = useState<{
+    text: string
+    prompt: string
+    target: SendTarget
+    panelId: string
+    /** 失败的那次发送的**来源**（重试要知道原始来源，不能靠「有没有 override」猜） */
+    source: SendSource
+    /** 失败时输入框的本地版本号：重试时没变 = 输入框自那以后没改过 */
+    draftSeq: number
+  } | null>(null)
   // 已点发送、后端还没给会话 id 的提交活在 store 里：面板卸载重挂（切页签）它还在，
   // 「在路上 / 已发出未确认 / 后端没收到」三态都从它派生
   const submissions = useAiStore((s) => s.submissions)
@@ -386,8 +405,10 @@ function AssistantPanelBody() {
    * 「重试」再带上**那一次的目标**（`pinned`）：失败之后用户可能已经选了别的元素 / 换了范围，
    * 重试必须改原来那处，不能悄悄改到此刻选中的东西上（Codex #827 P1）
    */
-  const send = async (override?: string, pinned?: SendTarget) => {
-    const text = (override ?? prompt).trim()
+  const send = async (req: SendRequest = { source: 'composer' }) => {
+    const source = req.source
+    const pinned = req.pinned
+    const text = (req.source === 'history' ? req.text : prompt).trim()
     if (!text || !canSend || !panel) return
     setError(null)
     setCheckNote(null)
@@ -407,7 +428,9 @@ function AssistantPanelBody() {
     try {
       // 发的是输入框里的草稿（不是气泡 / 重试带来的原话）：先把草稿写成功、拿到服务器的写入戳，记进账本——
       // 确认之后后端按「草稿戳没变」清草稿，不比文本（提交文本是 trim 过的，草稿是原样）
-      const snap = override == null ? await draftSnapshot() : { seq: 0, stamp: null }
+      // **来源是显式标明的，不靠「有没有 override」猜**：输入框来的（含失败后的重试）一律先把草稿写成功、拿戳记进账本；
+      // 只有从历史会话重发（气泡「重新发送」/ 失败会话的「重试」）才跳过快照——那条路的文本不是输入框里的草稿
+      const snap = source === 'composer' ? await draftSnapshot() : { seq: 0, stamp: null }
       const outcome = await useAiStore.getState().start({
         prompt: text,
         fileId: panel.fileId,
@@ -423,7 +446,7 @@ function AssistantPanelBody() {
       })
       // 只有后端给出会话 id 才算送达；本地没再动过（`seq` 不变）才清输入框，**不比文本**。
       // 没拿到草稿戳（后端不可用）时后端不会动草稿，这里也不清；`unconfirmed` 时原样留着（面板进「已发出未确认」）
-      if (outcome === 'accepted' && override == null && snap.stamp !== null) clearIfUnchanged(snap.seq)
+      if (outcome === 'accepted' && source === 'composer' && snap.stamp !== null) clearIfUnchanged(snap.seq)
     } catch (e) {
       // 发送记录没写进后端 = 没有发：一句话 + 重试（不是「尽力写、照样发」）
       setError({
@@ -431,6 +454,8 @@ function AssistantPanelBody() {
         prompt: text,
         target: ctx,
         panelId: panel.id,
+        source,
+        draftSeq: draftSeq(),
       })
     } finally {
       sendInFlight.current = false
@@ -455,7 +480,14 @@ function AssistantPanelBody() {
     try {
       await useAiStore.getState().resend(submission.rid)
     } catch (e) {
-      setError({ text: backendErrorText(e), prompt: text, target: submission.target, panelId: submission.panelId })
+      setError({
+        text: backendErrorText(e),
+        prompt: text,
+        target: submission.target,
+        panelId: submission.panelId,
+        source: 'history', // 同 rid 重发用的是账本里那一份原文，与输入框草稿无关
+        draftSeq: draftSeq(),
+      })
     }
   }
   /** 失败会话的「重试」：原任务已经改过脚本（`changed`）时先让用户点头——静默重跑会在改过的脚本上再改一遍 */
@@ -469,7 +501,18 @@ function AssistantPanelBody() {
       })
       if (!ok) return
     }
-    void send(t.prompt, targetOf(t))
+    void send({ source: 'history', text: t.prompt, pinned: targetOf(t) })
+  }
+
+  /**
+   * 失败后的「重试」按失败时的**来源**走：来自输入框、且输入框自那以后没改过 → 仍按输入框发（重新取草稿快照、记戳，
+   * 被接受后草稿才清得掉）；输入框已被改过 / 原本就来自历史会话 → 按失败的那段原文走 history 来源（不碰草稿，
+   * 免得把用户新写的草稿当成「已发送」清掉）。
+   */
+  const retryFailed = () => {
+    if (!error) return
+    if (error.source === 'composer' && draftSeq() === error.draftSeq) void send({ source: 'composer', pinned: error.target })
+    else void send({ source: 'history', text: error.prompt, pinned: error.target })
   }
 
   // 发送 ↔ 中止同一颗按钮、同一个位置（ChatGPT / Claude 的约定）：正在跑的时候它就是「中止」
@@ -529,7 +572,7 @@ function AssistantPanelBody() {
                 <Turn
                   key={s.id}
                   session={s}
-                  onResend={(text) => void send(text)}
+                  onResend={(text) => void send({ source: 'history', text })}
                   onRetry={(t) => void retrySession(t)}
                   canResend={canSend}
                   canRetry={canSend && s.panelId === panel?.id}
@@ -614,7 +657,7 @@ function AssistantPanelBody() {
               className="mb-2"
               title={ai('panel.sendFailed')}
               action={
-                <Button data-ai-retry variant="secondary" size="sm" disabled={!canSend} onClick={() => send(error.prompt, error.target)}>
+                <Button data-ai-retry variant="secondary" size="sm" disabled={!canSend} onClick={retryFailed}>
                   {ai('panel.retry')}
                 </Button>
               }
@@ -738,7 +781,7 @@ function AssistantPanelBody() {
                 e.stopPropagation()
                 if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
                   e.preventDefault()
-                  void send()
+                  void send({ source: 'composer' })
                 }
               }}
               className={cn(
@@ -763,7 +806,7 @@ function AssistantPanelBody() {
                   className="relative h-[26px] w-[26px]"
                   disabled={!panel || noAgent || !!submission || (!runningHere && (!prompt.trim() || ledgerState !== 'ok'))}
                   aria-busy={sending || runningHere || undefined}
-                  onClick={runningHere ? stopRunning : () => send()}
+                  onClick={runningHere ? stopRunning : () => send({ source: 'composer' })}
                   aria-label={runningHere ? ai('panel.abort') : ai('panel.sendAria')}
                 >
                   <SendStopGlyph stop={runningHere} busy={sending || runningHere} />
