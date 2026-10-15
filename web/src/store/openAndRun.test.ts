@@ -472,6 +472,22 @@ describe('已跑完的会话只给 run（没有 run_when_ready）：显式「打
     await vi.waitFor(() => expect(openFastEdit).toHaveBeenCalledTimes(1))
   })
 
+  it('上一轮已经自动进入过编辑（本地 editing 非空）：再点同一脚本的 ▶ 照样认领 run 重跑，不只是重开旧结果（Codex #1044 r4285899694）', async () => {
+    mockCreate.mockResolvedValueOnce(finished())
+    mockAct.mockResolvedValueOnce({ claimed: true, report: running(4, { provider: { plan_id: 'prep-plan', attempt_id: 'att-2', attempts: 2, dependency: null } }) })
+    await open()
+    mockGet.mockResolvedValueOnce(done(['a'], 'att-2', 5, { actions: [action('run'), action('recheck')] }))
+    await store().refresh(KEY)
+    await vi.waitFor(() => expect(openFastEdit).toHaveBeenCalledTimes(1))
+    expect(entry().editing.length).toBeGreaterThan(0)
+
+    mockCreate.mockResolvedValueOnce(done(['a'], 'att-2', 6, { actions: [action('run'), action('recheck')] }))
+    mockAct.mockResolvedValueOnce({ claimed: true, report: running(7, { provider: { plan_id: 'prep-plan', attempt_id: 'att-3', attempts: 3, dependency: null } }) })
+    await open()
+    expect(mockAct).toHaveBeenCalledTimes(2)
+    expect(mockAct.mock.calls[1][1]).toMatchObject({ action_id: 'act-run' })
+  })
+
   it('认领 run 的响应里报告还是旧的 completed：武装了也不进入旧结果，等新尝试', async () => {
     mockCreate.mockResolvedValueOnce(finished())
     mockAct.mockResolvedValueOnce({ claimed: true, report: finished() })

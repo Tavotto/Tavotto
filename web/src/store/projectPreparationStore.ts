@@ -56,7 +56,14 @@ const ENDED_PHASES: ReadonlySet<PreparationPhase> = new Set(['completed', 'parti
  * 有要用户先答的事（参数 / 目录 / 依赖 / 数据 / 环境 / 弹窗提醒…）时主按钮不是 run，停在各自的卡上，不代认领
  */
 function rerunnableView(v: ReturnType<typeof prepView>): boolean {
-  if (['completed', 'completed_unlinked', 'no_figure', 'no_figure_raster', 'not_registered'].includes(v.state)) return true
+  // `edit_opening` / `edit_ready` 是已完成会话叠上「本地已进入过编辑」的视图：后端那边同样是可重跑的 completed，
+  // 本地编辑记录不能把再点一次 ▶ 变成只重开旧结果（Codex #1044 r4285899694）
+  if (
+    ['completed', 'completed_unlinked', 'no_figure', 'no_figure_raster', 'not_registered', 'edit_opening', 'edit_ready'].includes(
+      v.state,
+    )
+  )
+    return true
   return v.primary?.kind === 'action' && v.primary.action === 'run'
 }
 
