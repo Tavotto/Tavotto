@@ -296,7 +296,9 @@ def _patched_savefig(self, fname, *args, **kwargs):
         except Exception:  # noqa: BLE001
             supported = None
         BLOCKED_OPS.blocked_savefig(
-            figcapture.savefig_effective_names(fname, kwargs), kwargs.get("format"), supported
+            figcapture.savefig_effective_names(fname, kwargs, getattr(self, "canvas", None)),
+            kwargs.get("format"),
+            supported,
         )
     stem = _SAVE_AS or figcapture.savefig_stem(fname)  # 不是路径时 savefig_stem 是空串
     if SESSION is not None:

@@ -784,6 +784,9 @@ def test_p1_default_sandbox_ledger_sees_the_requested_path_not_the_fallback_rewr
 @pytest.mark.parametrize(
     ("call", "readback"),
     [
+        ('fig.savefig("stage")', '"stage.png"'),
+        ('fig.savefig(Path("stage"))', '"stage.png"'),
+        ('fig.savefig("stage.")', '"stage.png"'),
         ('fig.savefig(Path("stage.png"))', '"stage.png"'),
         ('fig.savefig("stage.png")', 'Path("stage.png")'),
         ('fig.savefig("stage.png")', '"./stage.png"'),
@@ -798,25 +801,13 @@ def test_p1_savefig_target_forms_all_meet_the_readback(figs, project_mode, call,
 
 
 @needs_worker
-@pytest.mark.parametrize("project_mode", [False, True], ids=["sandbox", "project"])
-@pytest.mark.parametrize(
-    "call", ['fig.savefig("stage")', 'fig.savefig(Path("stage"))', 'fig.savefig("stage.")']
-)
-def test_extensionless_savefig_readback_is_an_accepted_miss(figs, project_mode, call):
-    """已接受的漏判（#1076 一族，记 #1029）：无后缀且无显式 format 的 savefig，补出来的名字是推测
-    （canvas 默认格式不推断），不进账本；读那个名字不会被发现。证明不了就不归因。"""
-    _build(
-        figs, "forms_miss.py", _savefig_then_read(call, '"stage.png"'), project_mode=project_mode
-    )
-
-
-@needs_worker
-def test_extensionless_savefig_with_rcparams_format_is_an_accepted_miss(figs):
+def test_p1_default_format_comes_from_rcparams(figs):
     (figs / "stage.svg").write_text("<svg/>", encoding="utf-8")
     src = _savefig_then_read(
         'fig.savefig("stage")', '"stage.svg"', pre='plt.rcParams["savefig.format"] = "svg"'
     ).replace("Image.open(", "open(")
-    _build(figs, "rcfmt.py", src, project_mode=False)
+    e = _blocked(figs, "rcfmt.py", src, project_mode=False)
+    assert e.code == CODE, (e.code, str(e))
 
 
 @needs_worker
@@ -875,19 +866,11 @@ def test_savefig_effective_names_cover_what_matplotlib_really_writes(
     try:
         with matplotlib.rc_context({"savefig.format": rc_format} if rc_format else {}):
             fig.savefig(kind(target), **kwargs)
-            names = figcapture.savefig_effective_names(kind(target), kwargs)
+            names = figcapture.savefig_effective_names(kind(target), kwargs, fig.canvas)
     finally:
         plt.close(fig)
     written = {p.relative_to(tmp_path).as_posix() for p in tmp_path.rglob("*") if p.is_file()}
     assert len(written) == 1
-    if (
-        kwargs.get("format") is None
-        and not Path(str(target)).suffix.lstrip(".")
-        or target == "stage."
-    ):
-        # 无后缀且无显式 format：补出来的名字是推测（canvas 默认格式不推断），一个都不记——接受为漏判（#1076）
-        assert names == [], names
-        return
     assert {Path(n).as_posix() for n in names} >= written, (names, written)
 
 
@@ -896,6 +879,7 @@ def test_savefig_effective_names_ignore_file_objects_and_keep_bytes_literal():
 
     assert figcapture.savefig_effective_names(io.BytesIO(), {}) == []
     assert figcapture.savefig_effective_names(b"stage", {}) == [b"stage"]
+    assert figcapture.savefig_effective_names("stage", {}) == []  # 拿不到 canvas：一个候选都不记
 
 
 # ====================================================== #952 第四轮
@@ -1076,17 +1060,17 @@ def test_p2_extensionless_savefig_does_not_taint_an_unrelated_file_of_that_name(
     (figs / "stage").write_text("unrelated", encoding="utf-8")
     src = _PLOT + 'fig.savefig("stage")\nwith open("stage") as f:\n    data = f.read()\n'
     _build(figs, "noext_ok.py", src, project_mode=False)
-    # 补出来的 stage.png 是推测（canvas 默认格式不推断），不进账本：读它不归因。这是接受的漏判（#1076 一族）；
-    # 同一个 savefig 写成显式 `stage.png` 就归因（见 test_ex02_*）
+    # 补出来的后缀名仍然算：读 stage.png 才是读到了被拦的那份
     src2 = _PLOT + 'fig.savefig("stage")\nwith open("stage.png", "rb") as f:\n    data = f.read()\n'
-    _build(figs, "noext_leak.py", src2, project_mode=False)
+    e = _blocked(figs, "noext_bad.py", src2, project_mode=False)
+    assert e.code == CODE, (e.code, str(e))
 
 
 SVG_DEFAULT_PLOT = _PLOT + "matplotlib.rcParams['savefig.format'] = 'svg'\n"
 
 
 @needs_worker
-def test_retro_open_of_a_speculative_name_is_not_blamed(figs):
+def test_retro_open_of_the_non_default_png_name_is_not_blamed(figs):
     """#1076 Codex P2：SVG 默认下 `savefig('out'); open('out.png','rb')` 直接运行同样 FileNotFoundError，不能归因。"""
     src = (
         SVG_DEFAULT_PLOT
@@ -1106,12 +1090,43 @@ def test_retro_ambiguous_png_candidate_is_not_blamed_when_the_default_format_is_
 
 
 @needs_worker
-def test_retro_rc_derived_candidate_is_not_blamed_either_canvas_default_is_unverified(figs):
-    """#1076 Codex P2：自定义 canvas 的默认格式可以与 rcParams 不同，无后缀时 rc 推出的名字也只是推测。"""
+def test_retro_default_canvas_follows_rc_so_reading_the_rc_format_is_blamed(figs):
     src = SVG_DEFAULT_PLOT + 'fig.savefig("out")\nimport os\nos.path.getsize("out.svg")\n'
+    e = _blocked(figs, "rc_svg.py", src, project_mode=False)
+    assert e.code == CODE, (e.code, str(e))
+
+
+CUSTOM_CANVAS_PNG = (
+    SVG_DEFAULT_PLOT
+    + "from matplotlib.backends.backend_agg import FigureCanvasAgg\n"
+    + "class C(FigureCanvasAgg):\n"
+    + "    def get_default_filetype(self):\n"
+    + '        return "png"\n'
+    + "C(fig)\n"
+    + 'fig.savefig("out")\n'
+    + "import os\n"
+)
+
+
+@needs_worker
+def test_retro_custom_canvas_default_png_with_rc_svg_reading_svg_is_not_blamed(figs):
+    """#1076 Codex P2：自定义 canvas 的缺省格式（png）≠ rcParams（svg）：直接运行写的是 out.png。"""
     with pytest.raises(engine_pool.WorkerError) as err:
-        _build(figs, "amb_svg.py", src, project_mode=False)
+        _build(
+            figs,
+            "cc_svg.py",
+            CUSTOM_CANVAS_PNG + 'os.path.getsize("out.svg")\n',
+            project_mode=False,
+        )
     assert err.value.code != CODE, (err.value.code, str(err.value))
+
+
+@needs_worker
+def test_retro_custom_canvas_default_png_with_rc_svg_reading_png_is_blamed(figs):
+    e = _blocked(
+        figs, "cc_png.py", CUSTOM_CANVAS_PNG + 'os.path.getsize("out.png")\n', project_mode=False
+    )
+    assert e.code == CODE, (e.code, str(e))
 
 
 @needs_worker
@@ -1190,10 +1205,26 @@ def test_retro_rename_of_a_definitive_savefig_target_is_still_blamed(figs):
 
 
 def test_savefig_effective_names_skip_the_literal_name_when_matplotlib_appends_a_suffix():
-    assert figcapture.savefig_effective_names("stage", {}) == []
-    assert figcapture.savefig_effective_names("stage.", {}) == []
-    assert "stage" in figcapture.savefig_effective_names("stage", {"format": "png"})
-    assert figcapture.savefig_effective_names("stage.png", {}) == ["stage.png"]
+    class Canvas:
+        def get_default_filetype(self):
+            return "png"
+
+    class Broken:
+        def get_default_filetype(self):
+            raise RuntimeError("boom")
+
+    class NotText:
+        def get_default_filetype(self):
+            return None
+
+    c = Canvas()
+    assert "stage" not in figcapture.savefig_effective_names("stage", {}, c)
+    assert "stage" not in figcapture.savefig_effective_names("stage.", {}, c)
+    assert "stage" in figcapture.savefig_effective_names("stage", {"format": "png"}, c)
+    assert figcapture.savefig_effective_names("stage", {}, c) == ["stage.png"]
+    assert figcapture.savefig_effective_names("stage.", {}, c) == ["stage.png"]
+    for bad in (None, Broken(), NotText()):
+        assert figcapture.savefig_effective_names("stage", {}, bad) == []
 
 
 RMTREE_RECREATE = """\
