@@ -7543,7 +7543,7 @@ def _native_preparation_runner(pl, before_retry=None):
                 launch_id=pl.plan_id,
                 project_epoch=pl.project_epoch,
                 launch_order=pl.launch_order,
-                cancelled=lambda: engine_preparation.SERVICE.is_cancelled(pl.plan_id),
+                cancelled=lambda: engine_preparation.SERVICE.launch_blocked(pl.plan_id),
             )
         )
     except engine_runcodes.RunError as exc:

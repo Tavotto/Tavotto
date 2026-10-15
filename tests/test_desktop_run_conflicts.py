@@ -629,3 +629,57 @@ def test_registration_order_matches_launch_order_when_registrations_interleave(
     assert ids == by_order, "入表顺序与 launch_order 不一致：较老的计划会把较新的当成更早的结束掉"
     for pid in ids:
         preparation.SERVICE.cancel(pid, "pj-interleave")
+
+
+def test_a_newer_registration_without_its_cancel_still_blocks_the_older_native_launch(tmp_path):
+    """Codex #1028 P1：更新的重跑已登记、却还没轮到自己的 `cancel_project(keep=)`——旧计划（含 safe 失败后的 native 回退计划）
+    走真实 runner 到起进程闸门，必须因「已被更晚登记的同脚本计划取代」被拒，一行用户代码都不跑。"""
+    from tavotto import app as m
+
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    script = "open('spawned.txt', 'w').write('x')\n"
+    (proj / "fig.py").write_text(script, encoding="utf-8")
+    older, newer = _native_plan(proj, "pj-sup"), _native_plan(proj, "pj-sup")
+    preparation.SERVICE.register(older)
+    preparation.SERVICE.register(newer)  # 只登记，不调它的 cancel_project
+    plan_older = preparation.SERVICE._entry(older.plan_id).plan  # noqa: SLF001
+    launch = dk.launch_for(tmp_path, script, name="fig.py")
+    plan_older = dataclasses.replace(plan_older, native_spec=launch.spec)
+    assert not preparation.SERVICE.is_cancelled(older.plan_id)
+    with pytest.raises(pool.WorkerError):
+        m._native_preparation_runner(plan_older)
+    assert not _spawn_witness(tmp_path).exists(), "被更新登记取代的旧计划仍然起了进程"
+    assert nativesession.REGISTRY.list(str(proj)) == []
+
+
+@pytest.mark.parametrize("where", ["begin_start", "check_start"])
+def test_a_registration_landing_inside_the_launch_gate_window_is_caught(
+    tmp_path, monkeypatch, where
+):
+    """更新的重跑恰好在闸门前一刻登记（且不调用它的 cancel_project）：同一处判定在它之后的检查点看得见，没有进程。"""
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    script = "open('spawned.txt', 'w').write('x')\n"
+    plan = _native_plan(proj, "pj-win")
+    preparation.SERVICE.register(plan)
+    plan = preparation.SERVICE._entry(plan.plan_id).plan  # noqa: SLF001
+    launch = dk.launch_for(tmp_path, script, name="fig.py", launch_id=plan.plan_id)
+    launch = dataclasses.replace(
+        launch,
+        project_epoch=plan.project_epoch,
+        launch_order=plan.launch_order,
+        cancelled=lambda: preparation.SERVICE.launch_blocked(plan.plan_id),
+    )
+    real = getattr(nativesession.REGISTRY, where)
+
+    def register_newer_then(*a, **k):
+        preparation.SERVICE.register(_native_plan(proj, "pj-win"))
+        return real(*a, **k)
+
+    monkeypatch.setattr(nativesession.REGISTRY, where, register_newer_then)
+    with pytest.raises(runcodes.RunError) as err:
+        dk.desktopproc.start(launch)
+    assert err.value.code == runcodes.NATIVE_REGISTRY_CLOSING
+    assert not _spawn_witness(tmp_path).exists()
+    assert nativesession.REGISTRY.list(str(proj)) == []
