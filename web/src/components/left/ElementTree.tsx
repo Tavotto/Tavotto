@@ -27,6 +27,7 @@ import type { Manifest, ManifestElement, ManifestGroup } from '@/lib/api'
 import { isElementHidden } from '@/canvas/interactions'
 import { cn, isMac } from '@/lib/utils'
 import { listRowClass } from '@/components/ui/listRow'
+import { splitTypePrefix } from './rowName'
 import { useBoldTrackingLock } from '@/components/ui/useBoldWidthLock'
 import { isTreeNavKey, treeKeyAction, type TreeNavRow } from '@/components/ui/treeKeys'
 import { SearchInput } from '@/components/ui/SearchInput'
@@ -747,6 +748,7 @@ const ElementRow = memo(function ElementRow({
   // ⋯ / 右键 / ⇧F10 同一份菜单（`ui/RowMenu`）；行有焦点时 ⋯ 进 Tab 顺序（此前 tabIndex=-1，键盘够不着）
   const menu = useRowMenu()
   const labelRef = useBoldTrackingLock<HTMLSpanElement>(selected, name)
+  const { prefix, name: rest } = splitTypePrefix(name)
 
   return (
     <li
@@ -815,7 +817,8 @@ const ElementRow = memo(function ElementRow({
       <TreeIcon icon={roleIcon(role)} />
 
       <span ref={labelRef} data-tree-label className="min-w-0 flex-1 truncate" title={`${shown} · ${roleName(role)} · ${gid}`}>
-        {name}
+        {prefix && <span className={cn('font-normal', selected ? 'text-ink-2' : 'text-ink-3')}>{prefix}</span>}
+        {rest}
       </span>
 
       {unsupported && (
