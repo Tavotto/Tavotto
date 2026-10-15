@@ -1085,6 +1085,62 @@ def test_retro_definitive_candidate_is_still_blamed_when_the_default_format_is_s
     assert e.code == CODE, (e.code, str(e))
 
 
+_OVERFLOW_PREFIX = (
+    "import os, sys\n"
+    "for i in range(260):\n"
+    '    with open(f"q{i}.tmp", "w") as f:\n'
+    "        f.write(str(i))\n"
+    '    os.replace(f"q{i}.tmp", f"q{i}.csv")\n'
+)
+
+
+@needs_worker
+@pytest.mark.parametrize("overflow", [False, True], ids=["inline", "after_overflow"])
+def test_retro_speculative_png_is_not_blamed_for_a_failed_getsize(figs, overflow):
+    """#1076 Codex P2：溢出 MAX_EVENTS 之后合并进溢出集合的事件，同样不能把推测候选归给守卫。"""
+    head = (_OVERFLOW_PREFIX if overflow else "import os, sys\n") + SVG_DEFAULT_PLOT
+    src = head + 'fig.savefig("out")\nos.path.getsize("out.png")\n'
+    with pytest.raises(engine_pool.WorkerError) as err:
+        _build(figs, "amb_all.py", src, project_mode=True)
+    assert err.value.code != CODE, (err.value.code, str(err.value))
+
+
+@needs_worker
+def test_retro_definitive_candidate_is_still_blamed_after_overflow(figs):
+    src = _OVERFLOW_PREFIX + SVG_DEFAULT_PLOT + 'fig.savefig("out")\nos.path.getsize("out.svg")\n'
+    e = _blocked(figs, "def_ovf.py", src, project_mode=True)
+    assert e.code == CODE, (e.code, str(e))
+
+
+@pytest.mark.parametrize("overflow", [False, True], ids=["inline", "after_overflow"])
+def test_retro_exit_and_missing_probe_attribution_skips_speculative_candidates(tmp_path, overflow):
+    """探测落空 + 退出归因（note_missing_path / explain_exit）与 FileNotFoundError 解释共用同一个判据。
+    静态闸门（exit_controlled_by_probe）要求探测对象与 savefig 目标同源，所以这里直接在账本层断言。"""
+
+    def ledger():
+        led = figcapture.BlockedFileOps()
+        if overflow:
+            for i in range(led.MAX_EVENTS):
+                led.blocked("os.remove", led.KIND_DELETE, str(tmp_path / f"f{i}"))
+        led.blocked(
+            "savefig",
+            led.KIND_SAVEFIG,
+            str(tmp_path / "out.svg"),
+            str(tmp_path / "out.png"),
+            weak=[str(tmp_path / "out.png")],
+        )
+        led._seq = 3
+        return led
+
+    weak = ledger()
+    weak.note_missing_path(str(tmp_path / "out.png"))
+    assert weak.explain_exit(controlled=True) is False
+    assert weak.material() == []
+    strong = ledger()
+    strong.note_missing_path(str(tmp_path / "out.svg"))
+    assert strong.explain_exit(controlled=True) is True
+
+
 def test_savefig_effective_names_skip_the_literal_name_when_matplotlib_appends_a_suffix():
     assert "stage" not in figcapture.savefig_effective_names("stage", {})
     assert "stage" not in figcapture.savefig_effective_names("stage.", {})

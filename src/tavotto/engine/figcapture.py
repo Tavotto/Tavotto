@@ -2404,7 +2404,13 @@ class BlockedFileOps:
                     r for r in self._rewritten if not any(self._covers(p, r) for p in affected)
                 }
             if len(self._events) >= self.MAX_EVENTS:
-                self._spill_paths(op, kind, affected, dest_set)
+                strong = [p for p in affected if p not in weak_set]
+                if strong:
+                    self._spill_paths(op, kind, strong, dest_set)
+                if len(strong) != len(affected):  # 推测路径单独溢出，归因判据照样跳过它
+                    self._spill_paths(
+                        op, kind, [p for p in affected if p in weak_set], frozenset(), weak=True
+                    )
                 return
             self._events.append(
                 {
@@ -2435,12 +2441,21 @@ class BlockedFileOps:
         self._signals[key] = min(self._signals.get(key, 0) + 1, self.MAX_COUNT)
 
     def _spill_paths(
-        self, op: str, kind: str, affected: list[str], dest_set: frozenset | set = frozenset()
+        self,
+        op: str,
+        kind: str,
+        affected: list[str],
+        dest_set: frozenset | set = frozenset(),
+        *,
+        weak: bool = False,
     ) -> None:
-        """超过 `MAX_EVENTS` 的操作不丢：影响的路径并进该 (op, kind) 的溢出集合，终局仍能判回读。"""
-        ev = self._spill.get((op, kind))
+        """超过 `MAX_EVENTS` 的操作不丢：影响的路径并进该 (op, kind) 的溢出集合，终局仍能判回读。
+        推测路径（`weak`）进单独的溢出集合，`_attributes` 整个跳过它。"""
+        key = (op, kind, "weak") if weak else (op, kind)
+        ev = self._spill.get(key)
         if ev is None:
-            ev = self._spill[(op, kind)] = {
+            ev = self._spill[key] = {
+                "weak_only": weak,
                 "op": op,
                 "kind": kind,
                 "paths": set(),
@@ -2462,6 +2477,16 @@ class BlockedFileOps:
                 ev["paths"] = {os.path.dirname(p) or p for p in ev["paths"]}
                 if len(ev["paths"]) > self.MAX_SPILL_PATHS:
                     ev["lost"], ev["paths"] = True, set()
+
+    def _attributes(self, ev: dict, real: str) -> bool:
+        """归因判据（唯一）：这个事件能不能用来解释「`real` 不存在 / 探测落空」。推测候选（`weak`）不能——
+        直接运行里它同样不存在。FileNotFoundError 解释、探测落空、退出归因都走这里。"""
+        if isinstance(ev["paths"], list):
+            weak = ev.get("weak") or ()
+            return any(self._covers(p, real) for p in ev["paths"] if p not in weak)
+        if ev.get("weak_only"):
+            return False
+        return self._spill_hit(ev, real)
 
     @staticmethod
     def _spill_hit(ev: dict, real: str) -> bool:
@@ -2752,11 +2777,7 @@ class BlockedFileOps:
         for ev in (*self._events, *self._spill.values()):
             if ev["kind"] not in (self.KIND_SAVEFIG, self.KIND_RENAME):
                 continue
-            if isinstance(ev["paths"], list):
-                weak = ev.get("weak") or ()
-                if any(self._covers(p, r) for p in ev["paths"] if p not in weak for r in reals):
-                    hits.append(ev)
-            elif any(self._spill_hit(ev, r) for r in reals):
+            if any(self._attributes(ev, r) for r in reals):
                 hits.append(ev)
         return hits
 
@@ -2823,12 +2844,7 @@ class BlockedFileOps:
             for ev in (*self._events, *self._spill.values()):
                 if ev["kind"] != self.KIND_SAVEFIG:
                     continue
-                hit = (
-                    any(self._covers(p, real) for p in ev["paths"])
-                    if isinstance(ev["paths"], list)
-                    else self._spill_hit(ev, real)
-                )
-                if hit:
+                if self._attributes(ev, real):
                     ev["miss_seq"] = self._seq
         except Exception:  # noqa: BLE001
             return
