@@ -83,7 +83,7 @@ void bootstrapDesktopSession().then((r) => {
   }
   createRoot(rootEl).render(
     <StrictMode>
-      <ErrorBoundary>
+      <ErrorBoundary diagnostics>
         {/* 图标默认档在根上给（Icon.tsx）：不写 size 的图标拿到 14px / 1.75 描边 */}
         <IconProvider>
           <App />

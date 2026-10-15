@@ -41,10 +41,13 @@ class SendHostBoundary extends Component<{ children: ReactNode }, { failed: bool
  * `SendHostBoundary` 里。除 `diagSendStore` 与对话框外这里仍然什么 store 都不碰；「发送问题反馈」关着
  * （`capability === null`）时两样都渲染为空，崩溃页与改动前逐元素一致。
  *
+ * **只有主应用入口传 `diagnostics`**（`main.tsx`）：playground / mcp 复用这个边界，但那里没有 Flask 诊断 API，
+ * 默认（不传）既不取 `/api/diagnostics/send` 的能力说明、也不渲染入口与对话框——崩溃页与接入发送功能之前一致。
+ *
  * 同样刻意**不用 useTranslation**：这是 class 组件，而且它渲染的时候
  * 界面已经崩了，能少一层订阅就少一层。直接取当前语言的文本。
  */
-export class ErrorBoundary extends Component<{ children: ReactNode }, State> {
+export class ErrorBoundary extends Component<{ children: ReactNode; diagnostics?: boolean }, State> {
   state: State = { error: null }
 
   static getDerivedStateFromError(error: Error): State {
@@ -57,7 +60,7 @@ export class ErrorBoundary extends Component<{ children: ReactNode }, State> {
     // 记 `ui.unexpected_error`（source=boundary）并把栈 + componentStack 补进未捕获错误环；永不抛
     reportUnexpectedError({ source: 'boundary', error, componentStack: info.componentStack ?? undefined })
     // 首次渲染就崩时 App 的 effect 没跑过、能力说明从没取过：崩溃页自己取一次（本机请求、失败即关），否则永远没有发送入口
-    if (useDiagSendStore.getState().capability === null) void useDiagSendStore.getState().load()
+    if (this.props.diagnostics && useDiagSendStore.getState().capability === null) void useDiagSendStore.getState().load()
   }
 
   render() {
@@ -85,7 +88,7 @@ export class ErrorBoundary extends Component<{ children: ReactNode }, State> {
               >
                 {t('actions.copy')}
               </Button>
-              <SendReportButton />
+              {this.props.diagnostics && <SendReportButton />}
             </div>
           </Details>
           {/* 页脚：主动作是「重新加载」（文档有自动保存兜底）；「从空白开始」会丢掉恢复的那份，
@@ -108,11 +111,13 @@ export class ErrorBoundary extends Component<{ children: ReactNode }, State> {
             </Button>
           </div>
         </div>
-        <TooltipProvider>
-          <SendHostBoundary>
-            <DiagnosticsSendHost />
-          </SendHostBoundary>
-        </TooltipProvider>
+        {this.props.diagnostics && (
+          <TooltipProvider>
+            <SendHostBoundary>
+              <DiagnosticsSendHost />
+            </SendHostBoundary>
+          </TooltipProvider>
+        )}
       </div>
     )
   }
