@@ -578,44 +578,39 @@ def test_pending_text_over_the_shared_limit_is_413_like_a_draft(client, two):
 # ---------------------------------------------------------------------------
 def test_put_draft_read_check_write_is_one_transaction(tmp_path, monkeypatch):
     """两个独立连接：旧戳的写入先读完旧状态、卡在「写」之前；新戳的写入此时进来。读-判-写不在同一个写事务里时，
-    旧的会带着过期的视图覆盖回去（或撞库锁）；在 `BEGIN IMMEDIATE` 里，旧的持锁期间新的等着，之后按真实戳判——结果恒为新的。"""
+    旧的会带着过期的视图覆盖回去；在 `BEGIN IMMEDIATE` 里，旧的持锁期间新的等着，之后按真实戳判——结果恒为新的。"""
     import threading
     import time as _time
 
     db = tmp_path / "hist.sqlite3"
+    ai_history.get_draft("/p", "F", db_path=db)  # 先把库建好、迁移完：下面只量读-判-写的窗口
     real_connect = ai_history._connect
+    old_reached_write = threading.Event()
 
     def slow_connect(db_path=None):
         con = real_connect(db_path)
-        # 在 INSERT 真正执行前卡一下（此时旧戳的写入已经读完 prev）：放大「读完到写之间」的窗口
-        con.set_trace_callback(
-            lambda stmt: (
-                _time.sleep(0.4)
-                if "INSERT OR REPLACE INTO ai_drafts" in stmt and "旧戳的稿" in stmt
-                else None
-            )
-        )
+
+        def trace(stmt):
+            if "INSERT OR REPLACE INTO ai_drafts" in stmt and "旧戳的稿" in stmt:
+                old_reached_write.set()  # 旧戳的写入已读完 prev、马上要写
+                _time.sleep(0.5)  # 放大「读完到写之间」的窗口
+
+        con.set_trace_callback(trace)
         return con
 
     monkeypatch.setattr(ai_history, "_connect", slow_connect)
     errors: list[BaseException] = []
 
-    def put_old():
+    def put(text, stamp):
         try:
-            ai_history.put_draft("/p", "F", "旧戳的稿", db_path=db, stamp=100)
+            ai_history.put_draft("/p", "F", text, db_path=db, stamp=stamp)
         except BaseException as exc:  # noqa: BLE001
             errors.append(exc)
 
-    def put_new():
-        try:
-            ai_history.put_draft("/p", "F", "新戳的稿", db_path=db, stamp=200)
-        except BaseException as exc:  # noqa: BLE001
-            errors.append(exc)
-
-    t_old = threading.Thread(target=put_old)
+    t_old = threading.Thread(target=put, args=("旧戳的稿", 100))
     t_old.start()
-    _time.sleep(0.1)  # 旧的已经读完 prev、卡在写之前
-    t_new = threading.Thread(target=put_new)
+    assert old_reached_write.wait(5)
+    t_new = threading.Thread(target=put, args=("新戳的稿", 200))
     t_new.start()
     t_old.join()
     t_new.join()

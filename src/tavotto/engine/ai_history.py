@@ -142,6 +142,9 @@ def _connect(db_path: Path | None = None) -> sqlite3.Connection:
     con.row_factory = sqlite3.Row
     con.executescript(_SCHEMA)
     _migrate(con)
+    # 迁移里的回填是个写语句：不提交的话这条连接从一打开就占着写锁（所有 `with _connect()` 写入者因此被**碰巧**串行化，
+    # 而读-判-写的原子性不该靠这种巧合）。提交掉，需要原子性的写入者自己用 `_immediate`
+    con.commit()
     return con
 
 
@@ -331,7 +334,9 @@ def mark_interrupted_running(db_path: Path | None = None) -> int:
     另一个服务进程里仍在跑的会话不能被这次启动标掉（否则它的脚本被当成空闲、再被另一个进程改写）。
     属主未知（老行）/ 就是本进程的旧实例 / pid 已死 / 行太老 → 标。"""
     now = int(time.time() * 1000)
-    with _connect(db_path) as con:
+    with (
+        _immediate(db_path) as con
+    ):  # 读出死的 → 逐个标：同一个事务，期间别的进程把某行 record_end 了也不会被我们改回 interrupted
         dead = [
             r["id"]
             for r in con.execute(
