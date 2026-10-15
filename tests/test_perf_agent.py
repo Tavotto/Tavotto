@@ -843,6 +843,32 @@ def test_parse_error_cleanup_only_removes_tool_artifacts(tmp_path):
     assert theirs.read_text(encoding="utf-8") == '{"mine": 1}'
 
 
+def _completed_summary(path: Path, data: dict) -> bytes:
+    summary = A.compose_run_summary(A.summarize(data), "not_requested")
+    path.write_text(json.dumps(summary), encoding="utf-8")
+    return path.read_bytes()
+
+
+def test_compare_summary_must_come_from_the_current_run(tmp_path):
+    """别的 run 的摘要不能被写入本次 current 对基线的裁决。"""
+    current, other, baseline = (tmp_path / n for n in ("a.json", "b.json", "base.json"))
+    current.write_text(json.dumps(report(value=20)), encoding="utf-8")
+    baseline.write_text(json.dumps(report(value=20)), encoding="utf-8")
+    summary = tmp_path / "summary-b.json"
+    before = _completed_summary(summary, report(value=35))
+    out = tmp_path / "cmp.json"
+    argv = ["compare", str(current), str(baseline), "--summary", str(summary), "--json", str(out)]
+    assert A.main(argv) == 2
+    assert summary.read_bytes() == before
+    assert json.loads(out.read_text(encoding="utf-8"))["status"] != "pass"
+    # 对照：同一次 run 的摘要照常更新。
+    _completed_summary(summary, report(value=20))
+    assert A.main(argv) == 0
+    updated = json.loads(summary.read_text(encoding="utf-8"))
+    assert updated["regression_status"] == "pass" and updated["status"] == "ok"
+    assert other.exists() is False
+
+
 def test_perf_playwright_cleanup_cannot_erase_agent_pending_summary():
     """独立 outputDir 的主语是 Playwright 真正会清理的目录，而非报告文件名。"""
     root = Path(__file__).resolve().parents[1]

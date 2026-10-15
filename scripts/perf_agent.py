@@ -811,6 +811,17 @@ def main(argv: list[str] | None = None) -> int:
             ):
                 raise ValueError("cannot_update_incomplete_summary")
             comparison_summary = previous
+            # 摘要必须来自 current 这一次 run：环境与各场景统计逐项一致才允许写入比较裁决，
+            # 否则 A 对基线的结论会被嵌进 B 的测量，一份文档混着两次 run。
+            # current 读不出来仍按既有约定作废摘要；而「摘要属于别的 run」时那份摘要
+            # 并非本次调用的产物，必须原样不动，所以先放弃对它的写入再拒绝。
+            current_summary = summarize(load(args.current))
+            if (
+                previous.get("environment") != current_summary["environment"]
+                or previous.get("scenarios") != current_summary["scenarios"]
+            ):
+                comparison_summary = None
+                raise ValueError("summary_not_from_current_run")
         # current/baseline 是只读历史证据。输出名无论是同路径、软链接
         # 还是硬链接同 inode，都绝不能先被 _write 替换。
         if _same_report_path(args.current, args.baseline):
