@@ -494,24 +494,24 @@ describe('同步状态机：单一 reconcile + 写入版本（#1098）', () => {
     }
   })
 
-  it('发件箱不因时间放弃：后端断开 5 分钟后恢复，编辑不丢；退避有上限（≤ 30 s 一次），不是 3 s 死磕', async () => {
+  it('发件箱不因时间放弃：后端断开 15 分钟后恢复，编辑不丢（超过任何「重试 N 次就放弃」的上限）；退避有上限（≤ 30 s 一次），不是 3 s 死磕', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
     try {
       await mount()
       be.setDraftPutFails(true)
-      await typeText('断网五分钟也不能丢的稿')
-      for (let i = 0; i < 30; i++) {
-        await act(async () => void vi.advanceTimersByTime(10_000)) // 共 5 分钟
+      await typeText('断网十五分钟也不能丢的稿')
+      for (let i = 0; i < 90; i++) {
+        await act(async () => void vi.advanceTimersByTime(10_000)) // 共 15 分钟
         await settle()
       }
       const attempts = putsOf().length
-      expect(attempts).toBeGreaterThanOrEqual(10) // 一直在试：最长间隔 30 s，5 分钟至少 10 次
-      expect(attempts).toBeLessThan(25) // 退避：不是每 3 s 一次（那会有 100 次）
+      expect(attempts).toBeGreaterThanOrEqual(28) // 一直在试：最长间隔 30 s，15 分钟约 34 次——没有「试 N 次就放弃」
+      expect(attempts).toBeLessThan(45) // 退避：不是每 3 s 一次（那会有 300 次）
       expect(be.draft('pa', 'Fig1.pdf')).toBeUndefined()
       be.setDraftPutFails(false)
       await act(async () => void vi.advanceTimersByTime(30_000 + 50)) // 退避上限之内一定再试
       await settle()
-      expect(be.draft('pa', 'Fig1.pdf')).toBe('断网五分钟也不能丢的稿') // 对照：旧实现约 1 分钟就放弃，这里永远是 undefined
+      expect(be.draft('pa', 'Fig1.pdf')).toBe('断网十五分钟也不能丢的稿') // 对照：旧实现约 1 分钟就放弃，这里永远是 undefined
     } finally {
       vi.useRealTimers()
     }
