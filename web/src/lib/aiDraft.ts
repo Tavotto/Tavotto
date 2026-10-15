@@ -31,8 +31,13 @@ import {
 /** 账本 accept / 草稿被服务端清掉之后广播，`useAiDraft` 听到就对账一次（输入框以后端为准） */
 export const AI_DRAFT_CHANGED_EVENT = 'mm:ai-draft-changed'
 
-/** 单稿上限（UTF-8 字节），与后端 `ai_history.DRAFT_MAX_BYTES` 同值：前端据此先给「过长」的答案，后端是权威 */
-export const DRAFT_MAX_BYTES = 20 * 1024
+/**
+ * **指令最大长度（UTF-8 字节）：草稿与待确认账本用同一个上限，发送也受它约束**。↔ 后端 `ai_history.INSTRUCTION_MAX_BYTES`
+ * 严格同源（`tests/test_ai_drafts.py` 结构性读这一行对拍）。两个上限不一致正是「快照写草稿 413、发送却照样继续、
+ * 草稿清不掉」的根。前端据此在输入框超限时直接提示并禁用发送，后端是权威。必须是十进制整数字面量（同源对读它）。
+ */
+export const INSTRUCTION_MAX_BYTES = 20_480
+export const DRAFT_MAX_BYTES = INSTRUCTION_MAX_BYTES
 
 /** 点发送时钉住的目标（与 `AiPanel` 的 `SendTarget` 同形；这里不 import 组件） */
 export interface DraftTarget {

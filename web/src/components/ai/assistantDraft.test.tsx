@@ -12,7 +12,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import '@/hooks/useServerEvents' // 注册会话收尾提示（setAiSettledNotifier）
 import { aiRun, ApiError, fetchAiRequest, fetchAiSession } from '@/lib/api'
-import { __resetWriteStampForTests, DRAFT_MAX_BYTES } from '@/lib/aiDraft'
+import { __resetWriteStampForTests, DRAFT_MAX_BYTES, INSTRUCTION_MAX_BYTES } from '@/lib/aiDraft'
 import { createDraftBackend } from '@/test/aiDraftBackend'
 import { RETRY_MS, WRITE_DEBOUNCE_MS } from './useAiDraft'
 import { setCurrentProjectId } from '@/lib/session'
@@ -523,6 +523,47 @@ describe('同步状态机：单一 reconcile + 写入版本（#1098）', () => {
       await act(async () => window.dispatchEvent(new Event('pagehide')))
       await settle()
       expect(be.draft('pa', 'Fig1.pdf')).toBe('我正在输入框里写的草稿')
+    })
+
+    it('快照拿不到戳（草稿 PUT 5xx）：composer 发送中止——不发 run、不写账本，一句话 + 重试，输入框原样；恢复后重试才发', async () => {
+      vi.mocked(aiRun).mockResolvedValue({ session: 's-1', script: 'p1.py' })
+      await mount()
+      await typeText('把线条加粗一点')
+      be.setDraftPutFails(true)
+      await click(q('[data-ai-send="send"]'))
+      await settle()
+      expect(aiRun).not.toHaveBeenCalled() // 对照：旧实现 stamp 为 null 仍继续 start()，被接受后草稿清不掉、同一条指令还能再发
+      expect(be.pendings.get('pa\u0000Fig1.pdf') ?? []).toEqual([]) // 账本也没写
+      expect(q('[data-ai-error="send"]')?.textContent).toContain('没有发出')
+      expect(q('[data-ai-submission]')).toBeNull()
+      expect(input().value).toBe('把线条加粗一点')
+      be.setDraftPutFails(false)
+      await click(q('[data-ai-retry]'))
+      await settle()
+      expect(aiRun).toHaveBeenCalledTimes(1)
+      expect(input().value).toBe('')
+      expect(be.draft('pa', 'Fig1.pdf')).toBeUndefined()
+    })
+
+    it('指令超过上限：输入时就提示并禁用发送（不等发送时才失败）；恰好等于上限可以发', async () => {
+      vi.mocked(aiRun).mockResolvedValue({ session: 's-1', script: 'p1.py' })
+      await mount()
+      await typeText('a'.repeat(INSTRUCTION_MAX_BYTES + 1))
+      expect(q('[data-ai-draft-note="too-large"]')?.textContent).toContain('指令太长')
+      expect(q<HTMLButtonElement>('[data-ai-send]')!.disabled).toBe(true)
+      await act(async () => {
+        input().dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', metaKey: true, bubbles: true }))
+      })
+      await settle()
+      expect(aiRun).not.toHaveBeenCalled()
+      expect(be.pendings.get('pa\u0000Fig1.pdf') ?? []).toEqual([])
+      // 对照：恰好等于上限
+      await typeText('a'.repeat(INSTRUCTION_MAX_BYTES))
+      expect(q('[data-ai-draft-note="too-large"]')).toBeNull()
+      expect(q<HTMLButtonElement>('[data-ai-send]')!.disabled).toBe(false)
+      await click(q('[data-ai-send="send"]'))
+      await settle()
+      expect(aiRun).toHaveBeenCalledTimes(1)
     })
 
     it('结构性（源码）：发送的每个调用点都显式标明来源，没有无参 / 裸文本调用', async () => {

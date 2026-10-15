@@ -486,3 +486,38 @@ def test_old_drafts_table_without_stamp_is_migrated(tmp_path):
     )  # 老行戳为 0，新戳更大被接受
     assert ai_history.put_draft("/p", "F", "更旧", db_path=db, stamp=5)["stale"] is True
     assert ai_history.get_draft("/p", "F", db_path=db)["draft"]["text"] == "新稿"
+
+
+def test_instruction_limit_is_one_number_on_both_sides():
+    """草稿与账本共用一个「指令最大长度」，且与前端常量同源（上限不一致 = 草稿存不下、指令却发得出去、草稿清不掉）。"""
+    from pathlib import Path
+
+    from support.tsconst import exported_number
+
+    ts = Path(__file__).resolve().parents[1] / "web" / "src" / "lib" / "aiDraft.ts"
+    assert (
+        exported_number(ts.read_text(encoding="utf-8"), "INSTRUCTION_MAX_BYTES")
+        == ai_history.INSTRUCTION_MAX_BYTES
+    )
+    assert (
+        ai_history.DRAFT_MAX_BYTES
+        == ai_history.PENDING_MAX_BYTES
+        == ai_history.INSTRUCTION_MAX_BYTES
+    )
+
+
+def test_pending_text_over_the_shared_limit_is_413_like_a_draft(client, two):
+    a, _ = two
+    over = "a" * (ai_history.INSTRUCTION_MAX_BYTES + 1)
+    r = client.put(
+        f"/api/ai/drafts/pending/{RID}",
+        json={"file": "F", "text": over, "sent": SENT},
+        headers=H(a),
+    )
+    assert r.status_code == 413 and r.get_json()["code"] == "ai_draft_too_large"
+    ok = client.put(
+        f"/api/ai/drafts/pending/{RID}",
+        json={"file": "F", "text": "a" * ai_history.INSTRUCTION_MAX_BYTES, "sent": SENT},
+        headers=H(a),
+    )
+    assert ok.status_code == 200

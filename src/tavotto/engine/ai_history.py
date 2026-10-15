@@ -75,8 +75,12 @@ CREATE TABLE IF NOT EXISTS ai_pending (
 """
 
 #: 草稿 / 待确认账本：单稿上限（UTF-8 字节）、每项目份数上限、保留期
-DRAFT_MAX_BYTES = 20 * 1024
-PENDING_MAX_BYTES = 256 * 1024
+#: **指令（草稿 / 待确认提交的原文）的最大长度（UTF-8 字节），草稿与账本用同一个上限**——两个上限不一致是
+#: 「快照写草稿 413、发送却照样继续」的根：账本能收的比草稿多，发出去的指令草稿却存不下、清不掉。
+#: ↔ `web/src/lib/aiDraft.ts` 的同名常量严格同源（`tests/test_ai_drafts.py::test_instruction_limit_is_one_number_on_both_sides`）。
+INSTRUCTION_MAX_BYTES = 20 * 1024
+DRAFT_MAX_BYTES = INSTRUCTION_MAX_BYTES
+PENDING_MAX_BYTES = INSTRUCTION_MAX_BYTES
 DRAFT_MAX_PER_PROJECT = 30
 PENDING_MAX_PER_FILE = 8
 DRAFT_KEEP_DAYS = 30

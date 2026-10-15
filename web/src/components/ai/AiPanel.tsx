@@ -49,6 +49,7 @@ import { Select } from '../ui/Select'
 import { StepSlider } from '../ui/StepSlider'
 import { Tip } from '../ui/Tooltip'
 import { TaskHistory } from './TaskHistory'
+import { INSTRUCTION_MAX_BYTES } from '@/lib/aiDraft'
 import { useAiDraft } from './useAiDraft'
 import { Turn } from './Transcript'
 
@@ -423,6 +424,8 @@ function AssistantPanelBody() {
         : scope === 'axes' && axes
           ? { scope, gid: axes.gid, label: axes.label, target: axes.label }
           : { scope, gid: null, label: null, target: ai('scope.figure') })
+    // 输入框里的指令超过上限：直接不发（界面也已禁用 + 提示），不等发送时才失败
+    if (source === 'composer' && tooLarge) return
     if (sendInFlight.current) return
     sendInFlight.current = true
     try {
@@ -431,6 +434,19 @@ function AssistantPanelBody() {
       // **来源是显式标明的，不靠「有没有 override」猜**：输入框来的（含失败后的重试）一律先把草稿写成功、拿戳记进账本；
       // 只有从历史会话重发（气泡「重新发送」/ 失败会话的「重试」）才跳过快照——那条路的文本不是输入框里的草稿
       const snap = source === 'composer' ? await draftSnapshot() : { seq: 0, stamp: null }
+      if (source === 'composer' && snap.stamp === null) {
+        // 草稿没写成（PUT 暂时失败 / 后端不可用）：没有草稿戳，被接受后草稿清不掉、同一条指令还能再发——**不发**：
+        // 不发 run、不写账本，一句话 + 重试，输入框保持原样（与「账本写不成就不发」同一种处理）
+        setError({
+          text: ai('panel.draftNotSaved'),
+          prompt: text,
+          target: ctx,
+          panelId: panel.id,
+          source,
+          draftSeq: draftSeq(),
+        })
+        return
+      }
       const outcome = await useAiStore.getState().start({
         prompt: text,
         fileId: panel.fileId,
@@ -657,7 +673,7 @@ function AssistantPanelBody() {
               className="mb-2"
               title={ai('panel.sendFailed')}
               action={
-                <Button data-ai-retry variant="secondary" size="sm" disabled={!canSend} onClick={retryFailed}>
+                <Button data-ai-retry variant="secondary" size="sm" disabled={!canSend || (error.source === 'composer' && tooLarge)} onClick={retryFailed}>
                   {ai('panel.retry')}
                 </Button>
               }
@@ -746,7 +762,7 @@ function AssistantPanelBody() {
           {/* 草稿提示：安静的一行字，不是横条——不挤页面，打字或发送即消失 */}
           {panel && (tooLarge || (restored && prompt !== '')) && (
             <p data-ai-draft-note={tooLarge ? 'too-large' : 'restored'} className="mb-1.5 px-1 text-xs text-ink-3">
-              {tooLarge ? ai('panel.draftTooLong') : ai('panel.draftRestored')}
+              {tooLarge ? ai('panel.draftTooLong', { limit: INSTRUCTION_MAX_BYTES / 1024 }) : ai('panel.draftRestored')}
             </p>
           )}
           {panel && (
@@ -804,7 +820,9 @@ function AssistantPanelBody() {
                   size="icon-sm"
                   data-ai-send={runningHere ? 'stop' : 'send'}
                   className="relative h-[26px] w-[26px]"
-                  disabled={!panel || noAgent || !!submission || (!runningHere && (!prompt.trim() || ledgerState !== 'ok'))}
+                  disabled={
+                    !panel || noAgent || !!submission || (!runningHere && (!prompt.trim() || ledgerState !== 'ok' || tooLarge))
+                  }
                   aria-busy={sending || runningHere || undefined}
                   onClick={runningHere ? stopRunning : () => send({ source: 'composer' })}
                   aria-label={runningHere ? ai('panel.abort') : ai('panel.sendAria')}

@@ -20,6 +20,8 @@ export interface DraftBackend {
   holdNextDraftPut: () => () => void
   /** 另一个标签页以指定写入戳写草稿（走与 PUT 相同的接受 / 拒绝规则）；回是否被接受 */
   putStamped: (pj: string, file: string, text: string, stamp: number) => boolean
+  /** 只让草稿的 PUT 失败（回 500）；别的照常 */
+  setDraftPutFails: (fails: boolean) => void
   /** 只让「读项目级账本列表」失败（草稿的读照常成功） */
   setPendingListFails: (fails: boolean) => void
   /** 只让「写账本」失败（PUT pending 回 500），别的照常 */
@@ -43,6 +45,7 @@ export function createDraftBackend(): DraftBackend {
   >()
   let pendingWriteFails = false
   let pendingListFails = false
+  let draftPutFails = false
   let hold: Promise<void> | null = null
   let holdNext: Promise<void> | null = null
   const stamps = new Map<string, number>()
@@ -126,6 +129,7 @@ export function createDraftBackend(): DraftBackend {
       }
       const file = String(body.file ?? '')
       if (method === 'PUT') {
+        if (draftPutFails) return json({ error: 'boom', code: 'internal_error' }, 500)
         // 与后端 `put_draft` 同语义：带戳的写入只有比已存戳更新才接受；空文本 / 超限 = 删但留墓碑（戳还在）
         const apply = (): Response => {
           const text = String(body.text)
@@ -199,6 +203,9 @@ export function createDraftBackend(): DraftBackend {
         }
       })
       return release
+    },
+    setDraftPutFails: (f) => {
+      draftPutFails = f
     },
     setPendingListFails: (f) => {
       pendingListFails = f
