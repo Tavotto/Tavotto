@@ -244,6 +244,12 @@ mod imp {
 
 #[cfg(test)]
 mod tests {
+    /// `include_str!` 读到的是检出时的字节：Windows 上 git 可能把换行转成 CRLF，结构测试按 `\n` 找会落空
+    /// （nightly 38701813732：「找不到 fn main」）。一律先归一成 LF。
+    fn lf(s: &str) -> String {
+        s.replace("\r\n", "\n")
+    }
+
     use super::*;
 
     fn touch(dir: &Path, name: &str, age_s: u64) {
@@ -289,7 +295,7 @@ mod tests {
     /// （这段只有 Windows 能真跑，所以钉结构；只读生产代码的非注释行。）
     #[test]
     fn writer_never_overwrites_and_cleans_up_a_failed_dump() {
-        let me = include_str!("crash_dump.rs");
+        let me = &lf(include_str!("crash_dump.rs"));
         let prod = me.split("#[cfg(test)]\nmod tests").next().unwrap();
         let code: String = prod
             .lines()
@@ -338,7 +344,7 @@ mod tests {
     /// 启动时轮转留满 MAX_DUMPS 份（不预先给下一次崩溃腾位置），#1068 r4280472040。
     #[test]
     fn startup_rotation_keeps_all_max_dumps() {
-        let src = include_str!("crash_dump.rs");
+        let src = &lf(include_str!("crash_dump.rs"));
         let prod = &src[..src.find("#[cfg(test)]\nmod tests").unwrap_or(src.len())];
         let calls: Vec<&str> = prod
             .lines()
@@ -391,7 +397,7 @@ mod tests {
     #[test]
     fn dump_exe_name_matches_main_binary_name() {
         let conf: serde_json::Value =
-            serde_json::from_str(include_str!("../tauri.conf.json")).unwrap();
+            serde_json::from_str(&lf(include_str!("../tauri.conf.json"))).unwrap();
         let name = conf["mainBinaryName"].as_str().unwrap();
         assert_eq!(DUMP_EXE, format!("{name}.exe"));
         assert!(DUMP_EXE.to_ascii_lowercase().starts_with("tavotto"));
@@ -400,10 +406,10 @@ mod tests {
     /// 诊断包收转储的目录与本模块同源：`crash_dirs()` 里 Windows 的 `CrashDumps`。
     #[test]
     fn dump_dir_is_the_one_the_diagnostics_bundle_collects() {
-        let py = include_str!("../../src/tavotto/engine/diagdetail.py");
+        let py = &lf(include_str!("../../src/tavotto/engine/diagdetail.py"));
         assert!(py.contains(r#"Path(local) / "CrashDumps""#));
         // 只看生产代码的非注释行：测试模块和注释里自己也写着这个字面量，不切掉就是自证
-        let me = include_str!("crash_dump.rs");
+        let me = &lf(include_str!("crash_dump.rs"));
         let prod = me.split("#[cfg(test)]").next().unwrap();
         let code: Vec<&str> = prod
             .lines()
@@ -415,7 +421,7 @@ mod tests {
     /// `main()` 的第一句必须是装过滤器：晚装一步，启动早期的崩溃就没有转储。
     #[test]
     fn main_installs_the_filter_as_its_first_statement() {
-        let src = include_str!("main.rs");
+        let src = &lf(include_str!("main.rs"));
         let at = src.find("\nfn main() {\n").expect("找不到 fn main");
         let first = src[at + "\nfn main() {\n".len()..]
             .lines()
