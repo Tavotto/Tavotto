@@ -267,3 +267,69 @@ describe('平移候选不变', () => {
     expect(xs).toEqual([])
   })
 })
+
+describe('吸附反馈（ADR 0128 §四）', () => {
+  const fbOf = () => useInteractionStore.getState().snapFeedback
+  const rectClose = (r: { x: number; y: number; w: number; h: number }, e: [number, number, number, number]) =>
+    [r.x, r.y, r.w, r.h].forEach((v, i) => expect(v).toBeCloseTo(e[i], 6))
+
+  it('子图锚点靠上别的图的子图边：self 是缩放后的子图框（不是外框），target 是对方子图框', () => {
+    startResizeDrag(down(0, 0), 'pa', 'se')
+    fire('pointermove', [16, 0])
+    const fb = fbOf()
+    fire('pointerup', [16, 0])
+    expect(fb).toHaveLength(1)
+    expect(fb[0].axis).toBe('x')
+    expect(fb[0].v).toBe(70)
+    const s = 70 / 60
+    // A 子图：x 10..60、y 15..60（页面 mm），绕左上角 (0,0) 放大 s
+    rectClose(fb[0].self, [10 * s, 15 * s, 50 * s, 45 * s])
+    // B 子图：x 20..70、y 100+15..100+60
+    rectClose(fb[0].target!, [20, 115, 50, 45])
+  })
+
+  it('外框锚点靠上参考线：self 是吸附后的外框，没有 target', () => {
+    useDocumentStore.getState().commit(literal('加形状'), (d) => {
+      d.objects.push({
+        id: 'sh', type: 'shape', shape: 'rect', x: 10, y: 10, w: 40, h: 20,
+        strokePt: 1, color: '#111111', fill: null,
+      } as ShapeObject)
+      d.guides.push({ id: 'g', axis: 'x', pos: 70 } as never)
+    })
+    startResizeDrag(down(0, 0), 'sh', 'se')
+    fire('pointermove', [20.4, 0], { shiftKey: true })
+    const fb = fbOf()
+    fire('pointerup', [20.4, 0], { shiftKey: true })
+    expect(fb).toHaveLength(1)
+    rectClose(fb[0].self, [10, 10, 60, 30])
+    expect(fb[0].target).toBeUndefined()
+  })
+
+  it('松手后反馈消失；⌘ 时没有反馈', () => {
+    startResizeDrag(down(0, 0), 'pa', 'se')
+    fire('pointermove', [16, 0])
+    expect(fbOf()).toHaveLength(1)
+    fire('pointermove', [16, 0], { metaKey: true })
+    expect(fbOf()).toHaveLength(0)
+    fire('pointermove', [16, 0])
+    fire('pointerup', [16, 0])
+    expect(fbOf()).toHaveLength(0)
+  })
+
+  it('画布对象平移吸附：有吸附线，没有反馈', () => {
+    useDocumentStore.getState().commit(literal('加形状'), (d) => {
+      d.objects.push({
+        id: 'sh', type: 'shape', shape: 'rect', x: 10, y: 10, w: 40, h: 20,
+        strokePt: 1, color: '#111111', fill: null,
+      } as ShapeObject)
+      d.guides.push({ id: 'g', axis: 'x', pos: 80 } as never)
+    })
+    useSelectionStore.getState().set(['sh'])
+    startMoveDrag(down(0, 0), 'sh')
+    fire('pointermove', [15, 0])
+    fire('pointermove', [30.2, 0]) // 右边 80.2 → 吸参考线 80
+    expect(useInteractionStore.getState().snapXs).toEqual([80])
+    expect(fbOf()).toHaveLength(0)
+    fire('pointerup', [30.2, 0])
+  })
+})

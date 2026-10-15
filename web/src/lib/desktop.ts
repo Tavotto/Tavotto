@@ -261,6 +261,79 @@ export async function resolveDesktopCloseRequest(decision: CloseDecision): Promi
   }
 }
 
+/* -------------------------------------------------------------------------- */
+/*  引擎意外退出与「上次没有正常退出」（ADR 0129）                              */
+/* -------------------------------------------------------------------------- */
+
+/** 引擎意外退出的类型（闭集，与 `src-tauri/src/exit_marker.rs` 的 `EngineExit` 同源；不带 status 文本与日志）。 */
+export const ENGINE_EXIT_KINDS = ['signal', 'nonzero', 'zero'] as const
+export type EngineExitKind = (typeof ENGINE_EXIT_KINDS)[number]
+/** 上次会话的不正常结局（闭集，与 `exit_marker.rs` 的 `Previous` 同源）。 */
+export const PREVIOUS_EXITS = ['app_unclean', 'engine_exited'] as const
+export type PreviousExit = (typeof PREVIOUS_EXITS)[number]
+/** 壳在引擎意外退出时发给主窗口的事件（`main.rs` 的 `ENGINE_EXITED_EVENT`，两侧严格同源）。 */
+export const ENGINE_EXITED_EVENT = 'tavotto:engine-exited'
+
+const asEngineExit = (v: unknown): EngineExitKind | null =>
+  (ENGINE_EXIT_KINDS as readonly unknown[]).includes(v) ? (v as EngineExitKind) : null
+
+/**
+ * 订阅「引擎意外退出」。只有本机引擎的主窗口有这条事件（远程实例窗口的引擎不是壳拉起的）；
+ * 浏览器模式 / 远程窗口返回空的取消函数。类型认不出一律忽略。
+ */
+export async function onEngineExited(cb: (kind: EngineExitKind) => void): Promise<() => void> {
+  if (!isDesktop()) return () => {}
+  try {
+    const { listen } = await import('@tauri-apps/api/event')
+    return await listen<{ kind?: unknown }>(ENGINE_EXITED_EVENT, (e) => {
+      const kind = asEngineExit(e.payload?.kind)
+      if (kind) cb(kind)
+    })
+  } catch {
+    return () => {}
+  }
+}
+
+/** 回读「本次会话里引擎是否已意外退出」（防事件早于监听）。非桌面 / 老壳 / 出错一律 null。 */
+export async function getEngineExited(): Promise<EngineExitKind | null> {
+  if (!isDesktop()) return null
+  try {
+    const { invoke } = await import('@tauri-apps/api/core')
+    return asEngineExit(await invoke('current_engine_exit'))
+  } catch {
+    return null
+  }
+}
+
+/**
+ * 取走「上次没有正常退出」的结局：读一次即清空（页面重载不重复提示）。
+ * 非桌面 / 远程窗口 / 老壳 / 出错一律 null——没有这条信息就当上次正常。
+ */
+export async function takePreviousExit(): Promise<PreviousExit | null> {
+  if (!isDesktop()) return null
+  try {
+    const { invoke } = await import('@tauri-apps/api/core')
+    const v = await invoke('take_previous_exit')
+    return (PREVIOUS_EXITS as readonly unknown[]).includes(v) ? (v as PreviousExit) : null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * 重新启动本机引擎（壳关旧句柄、重新起、换 nonce、导航）。成功时页面随即被换掉。
+ * 返回壳是否动了手：重复点击 / 正在重启 / 引擎并没退出 = false；非桌面 / 出错 = false（不抛）。
+ */
+export async function restartEngine(): Promise<boolean> {
+  if (!isDesktop()) return false
+  try {
+    const { invoke } = await import('@tauri-apps/api/core')
+    return (await invoke('restart_engine')) === true
+  } catch {
+    return false
+  }
+}
+
 /**
  * 原生目录选择器（「打开项目」用）。用户取消返回 null——取消不是错误。
  * 浏览器模式返回 null，调用方回退到服务器端目录浏览器。

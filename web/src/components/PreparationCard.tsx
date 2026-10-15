@@ -43,6 +43,7 @@ import { useAssetStore } from '@/store/assetStore'
 import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
 import { useDepRepairStore } from '@/store/depRepairStore'
 import { useEnvStore } from '@/store/envStore'
+import { useExitNoticeStore } from '@/store/exitNoticeStore'
 import { useOnboardingStore } from '@/store/onboardingStore'
 import { useProjectReadinessStore } from '@/store/projectReadinessStore'
 import { useProjectScanStore } from '@/store/projectScanStore'
@@ -167,6 +168,8 @@ export function PreparationCard() {
   const drafts = useScriptArgvStore((s) => s.drafts)
   const editReady = useEditReady(entry?.editRenders ?? {})
   const hidden = tutorialProject || onboardingActive
+  // 壳确认引擎退出了：断线那一句不再说「正在重连」（没人在重连），见 PrepContext.engineExited
+  const engineExited = useExitNoticeStore((s) => s.engineExit !== null)
   const scanned = !entry && !hidden ? scanCard(scan, { slow, forced }) : null
 
   let view: PrepView | null = null
@@ -176,7 +179,12 @@ export function PreparationCard() {
     const tokens = script ? (drafts[script]?.tokens ?? []) : []
     // 单一入口：表单关着时 missingRequirements 自己只认读得准的必填项，并照旧拦必选子命令
     const missingArgs = !schema ? null : missingRequirements(schema, readTokens(schema, tokens), tokens).count
-    view = prepView(entry, { argsChanged: draftDiffers(entry.target), editReady, missingArgs })
+    view = prepView(entry, {
+      argsChanged: draftDiffers(entry.target),
+      editReady,
+      missingArgs,
+      engineExited,
+    })
   }
 
   // 每个项目自动弹一次：只看扫描（不建会话）；扫描中 / 没看全只出角标；什么都没有就收起

@@ -112,3 +112,8 @@
 - **防递归**：诊断 / 发送流程自身抛的错（发送对话框开着、或栈指回 `diagnostics/` / `DiagnosticsSendDialog` / `diagSend`）照记 trace 与环，**不触发提示**。
 - **卡片**在通知轨（`NotificationRail`，绝不进 `BannerStack`）：error 语气、一句固定的话 + 主动作「发送问题反馈」+ ×，不带错误原文；点主动作只是 `diagSendStore.setOpen(true)`（打开 = 本机备包，沿用既有确认框，不新增 prepare / start 以外的路径）。最多两条的仲裁：低于「刚为编辑加入」、高于全部提示类（已改用环境 / 已用上次的答案 / 操作提示）。
 - **崩溃页**：主按钮仍是「重新加载」；「发送问题反馈」放进折叠的「详情」（secondary）。App 树已崩，崩溃页自己渲染一份 `DiagnosticsSendHost`（外套 `TooltipProvider` 与内层 `SendHostBoundary`——对话框出错时退回空，崩溃页不二次崩）。这是对「崩溃页只依赖最朴素原语」的**有意放宽，范围仅限 `diagSendStore` 与发送对话框**。ErrorBoundary 来源不登记通知轨卡片（轨已随 App 树消失），只记 trace 与环。
+
+## 补充（2026-10-14）：异常退出标记
+
+[ADR 0129](0129-abnormal-exit-marker.md)：壳在本机写一个只含版本 / 时间 / 退出类型闭集、**不上传**、启动时读一次的 `session-state.json`，用来在「上次没有正常退出」的下次启动提示一张卡。
+它不违背本 ADR「状态只在内存」的本意——没有自动补发、没有跨启动待发队列、不记用户活动；卡片只打开既有确认框，点之前不 prepare。引擎会话中意外退出的修复卡不受发送开关控制，也不含发送入口。

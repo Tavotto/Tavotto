@@ -22,6 +22,8 @@ import { panelRotation } from '@/types/document'
 export interface ScaleAnchor {
   v: number
   frame: boolean
+  /** 锚点所属元素在 s = 1（起手）时的页面 mm 框；外框锚点 = 起手外框（吸附反馈用） */
+  rect: Rect
 }
 
 export interface ScaleAnchors {
@@ -91,13 +93,17 @@ export function snapScaleNearest(p: ScaleSnapParams): ScalePick | null {
     if (Math.abs(off) < FLOOR_EPS) return null
     const s = (line.v - a.f) / off
     if (!Number.isFinite(s) || s * size.w < minW || s * size.h < minH) return null
-    return { s, dist: Math.abs(a.f + off * s0 - line.v), anchor, line }
+    // 手柄跳变：这次吸附让框尺寸变化多少 mm（≈ 被拖手柄的位移）；锚点贴近固定点时
+    // 小误差会被放大成巨大缩放，跳变超过容差的对不吸
+    const jump = Math.abs(s - s0) * Math.max(size.w, size.h)
+    return { s, dist: Math.abs(a.f + off * s0 - line.v), jump, anchor, line }
   }
 
   const held = hold?.held
   if (held) {
     const r = evalPair(held.axis, held.ai, held.li)
-    if (r && r.dist < tol * HOLD_FACTOR) return { s: r.s, axis: held.axis, anchor: r.anchor, line: r.line }
+    if (r && r.dist < tol * HOLD_FACTOR && r.jump < tol * HOLD_FACTOR)
+      return { s: r.s, axis: held.axis, anchor: r.anchor, line: r.line }
   }
 
   let best: { tier: number; dist: number; axis: 'x' | 'y'; ai: number; li: number; s: number } | null = null
@@ -105,7 +111,7 @@ export function snapScaleNearest(p: ScaleSnapParams): ScalePick | null {
     for (let ai = 0; ai < as.length; ai++) {
       for (let li = 0; li < ls.length; li++) {
         const r = evalPair(axis, ai, li)
-        if (!r || r.dist >= tol) continue
+        if (!r || r.dist >= tol || r.jump >= tol) continue
         const tier = scaleTier(as[ai].frame, ls[li])
         if (!best || tier < best.tier || (tier === best.tier && r.dist < best.dist))
           best = { tier, dist: r.dist, axis, ai, li, s: r.s }
@@ -146,7 +152,11 @@ const threeY = (r: Rect) => [r.y, r.y + r.h / 2, r.y + r.h]
 
 /** 外框的三条线（不动的那条由 snapScaleNearest 按「相对 F 偏移为 0」自然略过） */
 export function frameAnchors(r: Rect): ScaleAnchor[][] {
-  return [threeX(r).map((v) => ({ v, frame: true })), threeY(r).map((v) => ({ v, frame: true }))]
+  const rect = { x: r.x, y: r.y, w: r.w, h: r.h }
+  return [
+    threeX(r).map((v) => ({ v, frame: true, rect })),
+    threeY(r).map((v) => ({ v, frame: true, rect })),
+  ]
 }
 
 /** 面板可当「内容」参与缩放吸附：未旋转、未翻转 */
@@ -186,9 +196,9 @@ export function scaleAnchorsFor(
   if (!objects || target.type !== 'panel' || !manifest || !plainPanel(target)) return anchors
   for (const { rect } of contentBoxes(target, manifest)) {
     for (const v of threeX(rect))
-      if (within(v, target.x, target.x + target.w)) anchors.xs.push({ v, frame: false })
+      if (within(v, target.x, target.x + target.w)) anchors.xs.push({ v, frame: false, rect })
     for (const v of threeY(rect))
-      if (within(v, target.y, target.y + target.h)) anchors.ys.push({ v, frame: false })
+      if (within(v, target.y, target.y + target.h)) anchors.ys.push({ v, frame: false, rect })
   }
   return anchors
 }
@@ -256,4 +266,10 @@ export function scaleSnapCandidates(i: ScaleCandidateInput): SnapLineCandidates 
     }
   }
   return { xs, ys }
+}
+
+/** 吸附后的反馈框：锚点所属框绕固定点 F 按倍数 s 缩放（面板缩放是显示缩放，框随 s 线性变） */
+export function scaledAnchorRect(anchor: ScaleAnchor, fixed: { x: number; y: number }, s: number): Rect {
+  const r = anchor.rect
+  return { x: fixed.x + (r.x - fixed.x) * s, y: fixed.y + (r.y - fixed.y) * s, w: r.w * s, h: r.h * s }
 }

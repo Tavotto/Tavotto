@@ -682,6 +682,7 @@ PR1–PR6 的规则分散在上面各节（PR1 / PR2 在「联合依赖准备」
 - 互斥 provider 的 `resolution_source`：声明仲裁替掉表里的名字时是 `project_declared`（`depplan._source_of`）。
 - 切换 provider 的作用域：`deprepair._scope_conflicts` 的 `via: "provider"`——别的作用域仍记着互斥 provider 时 `dependency_scope_conflict`（出路同 D04），同一作用域改声明是正常换，无归属老账不参与。
 - 成功回执 `result.providers`：`{import_name, distribution, version, source, provenance, generation}`，`provenance` 来自装后重读的静态索引（`_verify_distributions` 的返回值），读不出留空。
-  **每条成功安装的对外终态都带它**（托管联合 / 托管单包修复 / 首次装包 / 项目 venv 联合 / 项目 venv 单包 / 包管理原地装·升；卸载不带）：代事务路径原样转交其 `providers`；原地装没有「代」故 `generation` 为空，单包与包管理原地装没有重读元数据故 `provenance` 为空。`source` 缺失一律在 pip / 换代之前拒（`_require_record_sources`）。
+  **每条成功安装的对外终态都带它**（托管联合 / 托管单包修复 / 首次装包 / 项目 venv 联合 / 项目 venv 单包 / 包管理原地装·升；卸载不带）：代事务路径原样转交其 `providers`；原地装没有「代」故 `generation` 为空。项目 venv 单包与联合安装同经 `_verify_distributions`，用户指定的包无可读提供者证据仍失败关闭；包管理原地装没有重读提供者元数据故 `provenance` 为空。`source` 缺失一律在 pip / 换代之前拒（`_require_record_sources`）。
+  hash 锁的 `provider_decisions` 与已扫描 import 的 `install_only` 按同一份实际安装集合 `installing`（整份选中锁）生成，不拿 active 环境里另一种 provider 的满足状态抵消本次安装记录（#970）；不因此增加锁外需求或改变仅声明依赖的记账规则。
 - 看护：`tests/test_dependency_origin_install.py`（计划层，四 provider × 声明 / 观察、editable / 本地 wheel / VCS、本地 helper / namespace、显式选择）、
   `tests/test_dependency_provider_scopes.py`（真 generation + 离线 pip：安装集合 = 脚本实际 provider = 回执；跨作用域切换；失败不动旧 active）。

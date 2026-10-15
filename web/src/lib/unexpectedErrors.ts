@@ -6,7 +6,11 @@
  * message 的 hash）→ 补未捕获错误环（原文与栈，只随发送包走）→ 只有「发送问题反馈」开着（`diagSendStore.capability !== null`）
  * 才可能登记通知轨卡片。卡片只是一句话 + 打开现有确认框；**上传必须等用户在确认框点「发送」**。
  */
-import { setEngine500Handler } from '@/lib/api'
+import { ApiError, EngineError, setEngine500Handler } from '@/lib/api'
+import { ArtifactValidationError } from '@/lib/artifactValidation'
+import { PendingConflict } from '@/lib/autosave/diskWriter'
+import { CodexShellError } from '@/lib/codexInstall'
+import { DesktopUpdateError } from '@/lib/desktop'
 import { errorMessageHash, recordDiagnosticEvent } from '@/diagnostics'
 import { onUncaughtError, recordUncaughtDetail } from '@/diagnostics/detail'
 import {
@@ -39,17 +43,22 @@ export type UnexpectedErrorOutcome = 'ignored' | 'recorded' | 'prompted'
 
 const BUILTIN_NAMES = new Set<string>(UNEXPECTED_ERROR_NAMES)
 
-/** 内建错误类的原型表：原型不在表里 = 业务自己的错误类（`ApiError` / `EngineError` / `PendingConflict` …）= 结构化失败，各有各的卡 */
-function builtinPrototypes(): object[] {
-  const out: object[] = [Error.prototype]
-  for (const C of [TypeError, RangeError, ReferenceError, SyntaxError, EvalError, URIError]) out.push(C.prototype)
-  if (typeof DOMException !== 'undefined') out.push(DOMException.prototype)
-  return out
-}
+/**
+ * 已知的业务错误类 = 结构化失败（各有各的卡 / 失败呈现，不经这里）。**白名单，不是「不在内建表里就算业务」**：
+ * 那样 `AggregateError`（`Promise.any` 被拒）这类没列进表的内建运行时错误会被当成「应用已处理」静默丢掉。
+ * 白名单之外的一切 Error（含未知内建类与以后新增的业务类）都按意外处理——新增业务错误类要在这里登记。
+ */
+const STRUCTURED_FAILURES: readonly (abstract new (...args: never[]) => Error)[] = [
+  ApiError,
+  EngineError,
+  PendingConflict,
+  ArtifactValidationError,
+  CodexShellError,
+  DesktopUpdateError,
+]
 
 function isStructuredFailure(e: unknown): boolean {
-  if (!(e instanceof Error) && !(typeof DOMException !== 'undefined' && e instanceof DOMException)) return false
-  return !builtinPrototypes().includes(Object.getPrototypeOf(e))
+  return STRUCTURED_FAILURES.some((C) => e instanceof C)
 }
 
 const IGNORED_MESSAGE = /^(ResizeObserver loop|Script error\.?$)/

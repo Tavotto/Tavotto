@@ -843,6 +843,68 @@ class TestEndToEndManaged:
 
 @needs_worker
 class TestEndToEndProjectVenv:
+    def test_a_single_package_wrapper_is_not_reported_as_the_import_provider(self, tmp_path, house):
+        """#970：单包入口也须核验 provider，而不止是 wrapper 的传递依赖能 import。"""
+        project = _project(tmp_path, LAB[1])
+        real_venv(project)
+        _adopt(project)
+        python = projectenv.interpreter_of(project / ".venv")
+        plan = deprepair.create_plan(
+            project,
+            "figure.py",
+            LAB[1],
+            target_kind=deprepair.TARGET_PROJECT_VENV,
+            user_distribution=WRAP[0],
+        )
+        assert plan.impact["rollback"] == deprepair.ROLLBACK_NONE
+        with pytest.raises(deprepair.RepairError) as err:
+            deprepair.install(plan.plan_id, confirmed_impact=plan.impact_digest)
+        assert err.value.code == deprepair.ERROR_IMPORT_STILL_FAILED
+        assert err.value.extra["imports"] == {LAB[1]: deprepair.DIST_DOES_NOT_PROVIDE}
+        assert _importable(python, LAB[1]) and _importable(python, WRAP[1])
+        assert projectenv.remembered_record(project)["trigger"] == projectenv.TRIGGER_RECOMMENDED
+
+    def test_a_single_package_receipt_uses_the_verified_provider(self, tmp_path, house):
+        project = _project(tmp_path, LAB[1])
+        real_venv(project)
+        plan = deprepair.create_plan(
+            project,
+            "figure.py",
+            LAB[1],
+            target_kind=deprepair.TARGET_PROJECT_VENV,
+            user_distribution=f"{LAB[0]}>=1",
+        )
+        result = deprepair.install(plan.plan_id, confirmed_impact=plan.impact_digest)
+        assert result["providers"] == [
+            {
+                "import_name": LAB[1],
+                "distribution": LAB[0],
+                "version": "1.0",
+                "source": depresolve.SOURCE_USER_SPECIFIED,
+                "provenance": "index",
+                "generation": "",
+            }
+        ]
+
+    def test_a_single_user_specified_package_requires_readable_provider_metadata(
+        self, tmp_path, house, monkeypatch
+    ):
+        project = _project(tmp_path, LAB[1])
+        real_venv(project)
+        plan = deprepair.create_plan(
+            project,
+            "figure.py",
+            LAB[1],
+            target_kind=deprepair.TARGET_PROJECT_VENV,
+            user_distribution=LAB[0],
+        )
+        # 已授权装包且 import 成功仍不能自证「用户指定的发行包确实提供它」。
+        monkeypatch.setattr(depplan, "target_facts", lambda *a, **k: None)
+        with pytest.raises(deprepair.RepairError) as err:
+            deprepair.install(plan.plan_id, confirmed_impact=plan.impact_digest)
+        assert err.value.code == deprepair.ERROR_IMPORT_STILL_FAILED
+        assert err.value.extra["imports"] == {LAB[1]: deprepair.DIST_UNVERIFIABLE}
+
     def test_in_place_user_specified_install_verifies_and_discloses_no_full_rollback(
         self, tmp_path, house
     ):

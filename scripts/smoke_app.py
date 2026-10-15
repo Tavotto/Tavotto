@@ -720,6 +720,30 @@ def main(argv: list[str] | None = None) -> int:
         print(f"找不到可执行文件: {args.exe}", file=sys.stderr)
         return 2
 
+    if args.exe:
+        # 先单独验一次「冻结产物里 ssl 能加载」（#1051）：不然 app 在 import 阶段就崩，下面只会看到一句
+        # 「受控退出失败」，真因（DLL 不配套）被埋在 traceback 里。
+        try:
+            probe = subprocess.run(
+                [args.exe, "--ssl-selftest"],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=120,
+            )
+        except (OSError, subprocess.SubprocessError) as exc:
+            print(f"::error::ssl 自检没能运行: {exc}", file=sys.stderr)
+            return 1
+        if probe.returncode != 0:
+            print(
+                f"::error::冻结产物 ssl 自检失败（退出码 {probe.returncode}）: "
+                f"{(probe.stderr or probe.stdout or '').strip()[-600:]}",
+                file=sys.stderr,
+            )
+            return 1
+        print(f"· ssl 自检通过: {(probe.stdout or '').strip()}")
+
     figures = Path(args.figures).resolve()
     if not figures.is_dir():
         print(f"示例项目目录不存在: {figures}", file=sys.stderr)

@@ -107,3 +107,12 @@
 - **卡片**：`NotificationRail` 的 `data-unexpected-error-card` 槽位（`Toast tone="error" plain`），一句话 + 「发送问题反馈」+ ×；主动作只 `setOpen(true)`（并收起这张卡），prepare / start 调用次数为 0（`notificationRail.test.tsx`）。仲裁：低于「刚为编辑加入」、高于全部提示类；提示类的让位判据数的是「更高档在场条数」。**绝不往 `BannerStack` 加条。**
 - **ErrorBoundary 崩溃页**：「重新加载」仍是唯一主按钮；`SendReportButton`（secondary）在折叠「详情」里；崩溃页自己渲染 `DiagnosticsSendHost`（`TooltipProvider` + 内层 `SendHostBoundary`，对话框出错退回空）。**放宽的边界仅限 `diagSendStore` 与发送对话框**；关着时元素序列与改动前一致（`errorBoundary.test.tsx` 锚定）。
 - 看护：`lib/unexpectedErrors.test.ts`、`store/unexpectedErrorStore.test.ts`、`diagnostics/privacy.test.ts`（新事件一组）、`components/notificationRail.test.tsx`、`components/errorBoundary.test.tsx`、`tests/test_diagnostics_bundle.py`。
+
+## 退出相关入口（PR B，ADR 0129）
+
+- **两张通知轨卡，纯内存 store** `store/exitNoticeStore.ts`，接线只在 `lib/exitNotices.ts`（`App` 挂载时 `initExitNotices(diagSendStore.load() 的 promise)`）。**绝不往 `BannerStack` 加条。**
+- **修复卡**（`data-engine-exited-card`）：壳事件 `tavotto:engine-exited` / 回读 `getEngineExited()` 驱动；一句话「渲染服务意外退出了」+ 主按钮「重新启动」（`restartEngineFromCard()`：转圈期间幂等，壳没动手就把按钮还回去），折叠的一句「重启后可以发送问题反馈」只放在 `title`。**不受发送开关控制、不含发送入口**；在通知轨里从不让位。
+- **「上次没有正常退出」卡**（`data-previous-exit-card`）：`diagSendStore.load()` 完成后、且 `capability !== null` 才 `takePreviousExit()`（取走即清空，关着时不取）；取到才登记。一句话 + 主按钮「发送问题反馈」+ ×，主动作只 `setOpen(true)` 并收起这张卡，prepare / start 调用次数为 0。仲裁：与意外错误卡同档、排在其后。
+- **假重连**：`PrepContext.engineExited`（`exitNoticeStore.engineExit !== null`）为真时，准备卡断线一句用 `prep.line.engineStopped`（「渲染服务已停止」）而不是「连接断了，正在重连…」；其它原因断线保持原样。
+- **`lib/desktop.ts` 是唯一桌面感知点**：`onEngineExited` / `getEngineExited` / `takePreviousExit` / `restartEngine`；浏览器 / 远程窗口 / try 一律 null / false / 空取消函数。事件名与两个闭集与 `src-tauri/src/{main,exit_marker}.rs` 严格同源（`tests/test_desktop_engine_exit.py`）。
+- 看护：`store/exitNoticeStore.test.ts`、`lib/desktop.test.ts`、`lib/preparationText.test.ts`、`components/notificationRail.test.tsx`（「引擎退出两张卡」一组）。
