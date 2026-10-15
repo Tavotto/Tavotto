@@ -892,7 +892,63 @@ class _Collector:
         return False
 
     def has_guarded_ops(self) -> bool:
-        return any(isinstance(n, ast.Call) and self._guarded_call(n) for n in ast.walk(self.tree))
+        if any(isinstance(n, ast.Call) and self._guarded_call(n) for n in ast.walk(self.tree)):
+            return True
+        return self._writer_escapes()
+
+    def _writer_tail(self, attr: str) -> bool:
+        return (
+            attr in self._WRITER_TAILS
+            or attr in self._GUARDED_TAILS
+            or (attr.startswith("to_") and attr not in self._CONVERT_TAILS)
+            or attr.startswith("write_")
+            or attr == "writeto"
+        )
+
+    def _writer_escapes(self) -> bool:
+        """已知写出器 / 守卫操作**不经直接调用**地出现：绑定成别名（`w = Path("v").write_text; w("x")`、`rm = os.remove`、
+        `from os import remove` 之后把 `remove` 传走）或按字面名取属性（`getattr(p, "write_text")`）。调用点看不出是谁，
+        所以只要它在脚本里被引用就宁宽：按含守卫操作处理（Codex #1034 r4286291290）。"""
+        called = {id(n.func) for n in ast.walk(self.tree) if isinstance(n, ast.Call)}
+        qualified = self._GUARDED_QUALIFIED | self._WRITER_QUALIFIED
+        for n in ast.walk(self.tree):
+            if (
+                isinstance(n, ast.Call)
+                and (
+                    n.func.id
+                    if isinstance(n.func, ast.Name)
+                    else n.func.attr
+                    if isinstance(n.func, ast.Attribute)
+                    else None
+                )
+                in ("getattr", "methodcaller", "attrgetter")
+                and any(
+                    isinstance(a, ast.Constant)
+                    and isinstance(a.value, str)
+                    and (self._writer_tail(a.value) or a.value in self._GENERIC_TAILS)
+                    for a in n.args
+                )
+            ):
+                return True
+            if id(n) in called:
+                continue
+            if isinstance(n, ast.Attribute):
+                q = self.qual(n) or ""
+                if (
+                    self._writer_tail(n.attr)
+                    or q in qualified
+                    or q.startswith(self._WRITER_PREFIXES)
+                ):
+                    return True
+            elif isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load):
+                q = self.qual(n) or ""
+                if q and (
+                    q in qualified
+                    or q.startswith(self._WRITER_PREFIXES)
+                    or ("." in q and self._writer_tail(q.rsplit(".", 1)[1]))
+                ):
+                    return True
+        return False
 
     # ---- 第二遍：事件
     def collect(self) -> None:

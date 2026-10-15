@@ -1428,6 +1428,30 @@ GATED = [
         "astropy_writeto",
         MPL + "from astropy.io import fits\nfits.PrimaryHDU().writeto('v.fits')\n" + TAIL,
     ),
+    # Codex r4286291290：写出器 / 守卫操作不经直接调用地出现（别名、按字面名取属性）
+    (
+        "bound_write_text_alias",
+        MPL
+        + 'from pathlib import Path\nwriter = Path("victim").write_text\nwriter("destroyed")\n'
+        + 'if len(__import__("sys").argv) > 1:\n    p = "x.png"\nelse:\n    raise SystemExit\n'
+        + "plt.savefig(p)\nopen(p).read()\n",
+    ),
+    ("os_remove_alias", MPL + "import os\nrm = os.remove\nrm('a')\n" + TAIL),
+    (
+        "imported_remove_passed_on",
+        MPL + "from os import remove\nfs = [remove]\nfs[0]('a')\n" + TAIL,
+    ),
+    (
+        "getattr_literal_writer",
+        MPL + "from pathlib import Path\ngetattr(Path('a'), 'unlink')()\n" + TAIL,
+    ),
+    (
+        "operator_methodcaller",
+        MPL
+        + "import operator\noperator.methodcaller('unlink')(__import__('pathlib').Path('a'))\n"
+        + TAIL,
+    ),
+    ("numpy_save_alias", MPL + "import numpy as np\nsv = np.save\nsv('v.npy', [1])\n" + TAIL),
 ]
 
 
