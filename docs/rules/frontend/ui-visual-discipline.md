@@ -167,6 +167,12 @@ strokeWidth；开关 / 激活态写 `filled`（29 个有实心孪生，其余忽
   - 一次性消息 → 通知轨（见上）。预留不了、必须就地展开的（左栏刷新失败、问题面板「保留上一轮结果」、属性栏 `capability-note` /
     `frame-note`）→ 包 `NoticeReveal`（`Reveal` 的 0fr → 1fr + 淡入，退场期间留着最后一份内容），它长出来时下面的内容是顺着滑下去的。
   - 失败不能只靠 toast：错误类 toast 常驻到用户关（`STATUS_AUTO_DISMISS_MS` 只管非错误）。
+- **同一原则的其它落点**（第二轮盘点）：`ui/StatusPill` 中性底、文字 ink，语义色只在字前 6px 圆点（门禁在 `foundation.test`）；素材页 runtime 卡 stale
+  行文字 ink-3、只有 14px 图标染 danger；素材首次读不出是一行 Notice（原文进详情，不再整屏空态里摆原始文本）；导出脚部状态区的失败条
+  **同时最多一条**（拒绝 / 启动 / 取消 / 状态 / 在文件夹中显示五路，后来的替换前一条，`ExportDialog` 的 `useLatestFailure`），标题是一句人话
+  （「导出没有完成」），裸的「HTTP 500」、过长或多行的原文连同稳定码进详情；接入状态对话框的过期 / 错误条包 `NoticeReveal`、多条只留第一条在行上、
+  其余折进详情；属性栏 `capability-note` / `frame-note` 是「一句话 + 详情 › + 入口」（换不过去的原因常显，按钮 `aria-describedby` 指它）；属性栏空选态
+  「本排版」是一行 Notice（事实用 · 连起来 +「画布设置 ›」，起步提示折进详情）。
 - **时长**：只用现有 motion token（详情展开 `Reveal` 180ms；通知轨入场 180 / 退场 120 = base / fast，规格的 200 / 130 落到最近一档）；位移 ≤ 4px 的
   纪律保留（规格写的 6px 没采，`motion.test` 的 ≤4px 门禁在）；reduced-motion 由 index.css 全局兜底直接切换。
 
