@@ -358,8 +358,7 @@ export async function indistinctFieldBoxes(page: Page, min = 1.1): Promise<strin
     for (const el of Array.from(document.querySelectorAll<HTMLElement>('[class~="bg-field"]'))) {
       const r = el.getBoundingClientRect()
       if (r.width < 8 || r.height < 8) continue
-      const own = parse(getComputedStyle(el).backgroundColor)
-      if (own[3] < 0.99) continue
+      const raw = parse(getComputedStyle(el).backgroundColor)
       let p = el.parentElement
       let under: number[] | null = null
       while (p) {
@@ -372,6 +371,9 @@ export async function indistinctFieldBoxes(page: Page, min = 1.1): Promise<strin
       }
       if (!under) continue
       measured++
+      // 半透明 / 全透明的框按 alpha 合成到它背后的面上再比——跳过它们等于放过「框透明到看不见」这种最坏的回归
+      const a = raw[3]
+      const own = [0, 1, 2].map((i) => raw[i] * a + under[i] * (1 - a))
       const q = ratio(own, under)
       if (q < minRatio) {
         out.push(`${el.tagName}[${el.getAttribute('data-testid') ?? el.className.toString().slice(0, 40)}] ${q.toFixed(2)}:1 < ${minRatio}`)

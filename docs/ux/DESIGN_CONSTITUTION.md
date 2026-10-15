@@ -20,7 +20,7 @@
 | surface-subtle | `surface-2` | `#f7f7f5` | 只读值、徽章底、禁用框的底（数字框不再用它做静态底，S8） |
 | surface-hover | `surface-hover` | ink 4% | hover。三档里最弱 |
 | surface-active | `surface-active` | ink 8% | 按下、小 chip 的静态底 |
-| surface-selected | `selected` | ink 10% | 选中：hover 的两倍，白面板与纸底上都成立（2026-09-15 打磨批次 A，此前固定 #ebebe6 在纸底上只有 1.07:1）；配字重 / 对勾再说一遍 |
+| surface-selected | `selected` | ink 12% | 选中：hover 的三倍（2026-10-15 G10 起；此前 10%、两倍），白面板与纸底上都成立（2026-09-15 打磨批次 A，此前固定 #ebebe6 在纸底上只有 1.07:1）；配字重 / 对勾再说一遍 |
 | ink-1 | `ink` | `#1b1b18` | 主文字，不是纯黑 |
 | ink-2 | `ink-2` | `#4a4a45` | 次级文字、标签（2026-10-07 拉深：此前与 ink-3 几乎同色） |
 | ink-3 | `ink-3` | `#6c6c66` | 元数据、单位、占位、说明（type-caption / type-meta）。所有底色上 ≥4.5:1（画布灰 4.84） |
@@ -578,7 +578,7 @@ B02 / B09 / B25 / B31 / B45 / B52「像同一套产品」：
 调研 OpenAI `@openai/apps-sdk-ui`（ChatGPT 组件库，25 档灰 / 18 档 alpha / 9 档控件全部一手）与
 claude.com 产品壳、anthropic.com 的 CSS token 之后（全文 `docs/ux/POLISH_2026-09-15.md`），两家的精致
 来自五个可填进 token 的数：分层靠 ink 的 4%～16% 半透明叠加而不是实色线；浮层是 1px 环 + 一层大模糊；
-UI 正文 14 / 控件字最小 12、台阶 2px；强调至少高一档且配深色；selected 是 hover 的两倍、分段控件是白色
+UI 正文 14 / 控件字最小 12、台阶 2px；强调至少高一档且配深色；selected 是 hover 的三倍、分段控件是白色
 浮起的 thumb。本批次把这五个数落进 `index.css` 与五个原语，页面零改动即受益：
 
 | 项 | 改前 | 改后 |
@@ -684,7 +684,7 @@ UI 正文 14 / 控件字最小 12、台阶 2px；强调至少高一档且配深�
   键盘打开先落在框里、↓ / Tab 回到菜单项、Enter 提交后焦点留在框里、Esc 关菜单还焦点给触发器；指针一侧悬停不抢焦点（Codex #833）。
 - 通知轨最多两条：状态来了先顶掉操作提示（提示稍后重播），「已加入」优先级最高；toast 无实边、只 shadow-pop、12 号 ink、底距 16、一种高度；
   HUD 读数盒 `rounded-md shadow-pop` 无边。两种横幅合成一种（贴边、surface-2、border-b、min-h 32）。
-- 命令面板 520 宽、行 32 / 12（2026-10-07 起 32 / 13，见第二十七节·外壳）、选中 `selected` 10%、遮罩与 Dialog 同一串、右上不写「Esc」；快捷键帮助用 `SearchInput`、说明 12、组头 type-section、页脚不重复关闭。
+- 命令面板 520 宽、行 32 / 12（2026-10-07 起 32 / 13，见第二十七节·外壳）、选中 `selected` 12%、遮罩与 Dialog 同一串、右上不写「Esc」；快捷键帮助用 `SearchInput`、说明 12、组头 type-section、页脚不重复关闭。
 - 引导卡：标题 type-title、关闭钮 20 档、箭头无描边、按钮 md、间距只有 8 / 12。
 - 文案：「导出项目包（.tavotto）」去掉括号后缀；「可参数化脚本」改「已关联脚本」。
 
