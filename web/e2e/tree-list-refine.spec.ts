@@ -105,14 +105,21 @@ test('元素树：键位（Home/End/→进首子/←回父）、内凹焦点环�
     const longest = spans.sort((x, y) => (y.textContent?.length ?? 0) - (x.textContent?.length ?? 0))[0]
     return (longest.closest('li') as HTMLElement).dataset.el!
   })
+  // 抽屉收到下限（280），最长的名字才一定被截断——不截断的行本来就不需要锁
+  const handle = page.locator('[role="separator"][aria-valuemin="280"]')
+  await expect(handle).toHaveCount(1)
+  await handle.focus()
+  await page.keyboard.press('Home')
+  await expect(handle).toHaveAttribute('aria-valuenow', '280')
+  await page.waitForTimeout(400)
   const textWidth = () =>
     page.evaluate((gid) => {
-      const spans = document.querySelectorAll(`[data-el="${CSS.escape(gid)}"] [data-tree-label]`)
+      const spans = document.querySelectorAll<HTMLElement>(`[data-el="${CSS.escape(gid)}"] [data-tree-label]`)
       if (spans.length !== 1) throw new Error(`标签钩子应恰好 1 个，实际 ${spans.length}`)
       const span = spans[0]
       const r = document.createRange()
       r.selectNodeContents(span)
-      return r.getBoundingClientRect().width
+      return { w: r.getBoundingClientRect().width, clipped: span.scrollWidth > span.clientWidth }
     }, target)
   // 先取消选中再量；默认动效与 prefers-reduced-motion 各量一遍（后者全局给所有属性 0.01ms 过渡，
   // 同一帧里改字重量到的是起点值——锁一度因此悄悄失效）
@@ -124,12 +131,14 @@ test('元素树：键位（Home/End/→进首子/←回父）、内凹焦点环�
     await page.mouse.move(5, 5)
     await page.waitForTimeout(300)
     const before = await textWidth()
+    expect(before.clipped, '抽屉收到下限后最长的名字应当被截断，否则这条量不到东西').toBe(true)
     await page.locator(`[data-el="${target}"]`).click()
     await expect(page.locator(`[data-el="${target}"]`)).toHaveAttribute('aria-selected', 'true')
     await page.mouse.move(5, 5)
     await page.waitForTimeout(300)
     const after = await textWidth()
-    expect(Math.abs(after - before), `${reducedMotion}：选中前 ${before}px / 选中后 ${after}px`).toBeLessThanOrEqual(0.6)
+    expect(after.clipped).toBe(true)
+    expect(Math.abs(after.w - before.w), `${reducedMotion}：选中前 ${before.w}px / 选中后 ${after.w}px`).toBeLessThanOrEqual(0.6)
   }
 
   // G5：图层树的列间距与元素树相同
@@ -245,4 +254,59 @@ test('拖分栏手柄时按 Esc：宽度复原，且选中对象的上下文栏�
   await expect(handle).toHaveAttribute('aria-valuenow', '300')
   // 这一下 Esc 只属于拖动：选区还在，上下文栏仍可见
   await expect(bar).toBeVisible()
+
+test('展开 / 折叠：子树高度过渡（收起期间 inert、播完卸载）；reduced-motion 直接切', async ({ app, page }) => {
+  const a = await app()
+  await openFigureTree(page, a.baseURL)
+  const row = page.locator('[data-tree="elements"] [data-el="axes_0"]')
+  await expect(row).toHaveCount(1)
+  await expect(row).toHaveAttribute('aria-expanded', 'true')
+  const branch = row.locator('xpath=following-sibling::li[@data-tree-branch][1]')
+  await expect(branch).toHaveCount(1)
+  const full = (await branch.boundingBox())!.height
+  expect(full).toBeGreaterThan(60)
+
+  // 对 branch 逐帧采样：高度、状态、是否 inert
+  const sample = (ms: number) =>
+    page.evaluate(
+      (ms) =>
+        new Promise<{ h: number; state: string | null; inert: boolean }[]>((resolve) => {
+          const row = document.querySelector('[data-tree="elements"] [data-el="axes_0"]')!
+          const out: { h: number; state: string | null; inert: boolean }[] = []
+          const t0 = performance.now()
+          const tick = () => {
+            const b = row.nextElementSibling as HTMLElement | null
+            const live = b && b.hasAttribute('data-tree-branch') ? b : null
+            out.push({ h: live ? live.getBoundingClientRect().height : 0, state: live?.getAttribute('data-tree-branch') ?? null, inert: !!live?.hasAttribute('inert') })
+            if (performance.now() - t0 < ms) requestAnimationFrame(tick)
+            else resolve(out)
+          }
+          requestAnimationFrame(tick)
+        }),
+      ms,
+    )
+
+  await page.emulateMedia({ reducedMotion: 'no-preference' })
+  await row.focus()
+  const collapsing = sample(500)
+  await page.keyboard.press('ArrowLeft')
+  const down = await collapsing
+  expect(down.some((s) => s.state === 'closed' && s.inert), '收起期间容器 inert').toBe(true)
+  expect(down.some((s) => s.h > 0 && s.h < full), `收起要有中间高度（full=${full}）：${JSON.stringify(down.map((s) => Math.round(s.h)))}`).toBe(true)
+  expect(down.at(-1)!.state, '播完卸载').toBeNull()
+
+  const expanding = sample(600)
+  await page.keyboard.press('ArrowRight')
+  const up = await expanding
+  expect(up.some((s) => s.h > 0 && s.h < full * 0.98), `展开要有中间高度：${JSON.stringify(up.map((s) => Math.round(s.h)))}`).toBe(true)
+  expect(Math.abs(up.at(-1)!.h - full)).toBeLessThanOrEqual(1)
+  await expect(branch).not.toHaveAttribute('inert', /.*/)
+
+  // reduced-motion：直接切，不留退场帧
+  await page.emulateMedia({ reducedMotion: 'reduce' })
+  await row.focus()
+  const reduced = sample(200)
+  await page.keyboard.press('ArrowLeft')
+  const r = await reduced
+  expect(r.slice(3).every((s) => s.state === null), `reduce 下不留退场：${JSON.stringify(r.map((s) => s.state))}`).toBe(true)
 })
