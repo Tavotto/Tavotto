@@ -21,6 +21,7 @@ import path from 'node:path'
 import { expect, openElementsTab, test, waitForFigureEdit, writeRuntimeNamedProject } from './fixtures'
 import { indistinctFieldBoxes, lowContrastNodes } from './contrast'
 import { resolveScanned, type ScannedNode } from './scannedNodes'
+import { chooseTheme, openGeneralSettings } from './theme'
 
 /**
  * **axe 的 `incomplete` 不是「通过」，是「axe 查不了」**（issue #130）。
@@ -257,6 +258,43 @@ test('工作台（项目已开、画布有面板）：axe 无违规、无未定�
   await page.locator('[data-left-drawer] input').first().hover()
   await page.waitForTimeout(300) // 底色过渡（duration-fast）走完
   expect(await indistinctFieldBoxes(page), 'hover 中的输入框底对所在的面不足 1.1:1').toEqual([])
+})
+
+/**
+ * 暗色主题下的可访问性（2026-10-07 暗色主题，宪法第二十八节）：此前整个 a11y 门禁只跑浅色，
+ * 暗色值表（index.css 末尾）只有 vitest 级的 token 配对（tokenContrast.test）看护，真页面上的
+ * 叠色 / 透明度 / 选中底从没在暗色里量过。这两条在稳定态扫：axeReport 先关动效，进出场动画不会让取样撞上过渡态。
+ */
+const darkApplied = async (page: Page) => {
+  expect(await page.evaluate(() => document.documentElement.getAttribute('data-theme'))).toBe('dark')
+  // 不是「扫了个浅色页」：body 的计算底色确实是暗色桌面（#161615），否则这两条是恒真的
+  expect(await page.locator('body').evaluate((el) => getComputedStyle(el).backgroundColor)).toBe('rgb(22, 22, 21)')
+}
+
+test('暗色主题 · 主页：axe 无违规、无未定性的「查不了」、自算对比度达标', async ({ app, page }) => {
+  // 偏好在本机（tavotto.ui.theme），挂载之前就落到 <html>——与用户选了深色再启动同一条路
+  await page.addInitScript(() => window.localStorage.setItem('tavotto.ui', JSON.stringify({ theme: 'dark' })))
+  const a = await app({ noProject: true })
+  await page.goto(a.baseURL)
+  await expect(page.locator('main[data-home-variant="newcomer"]')).toBeVisible()
+  await expect(page.locator('[data-onboarding-anchor="tutorial-entry"]')).toBeEnabled()
+  await darkApplied(page)
+  await expectAccessible(page, { allow: [contrastCoveredByOurOwnRuler] })
+})
+
+test('暗色主题 · 打开的设置对话框：axe 无违规、无未定性的「查不了」、自算对比度达标', async ({ app, page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 })
+  const a = await app()
+  await page.goto(a.baseURL)
+  await expect(page.locator('[data-page-sheet]')).toBeVisible({ timeout: 30_000 })
+  // 走设置里的外观分段控件切（用户真实路径），对话框开着就扫——对话框本体、遮罩、分段控件选中态都在暗色里
+  const { dialog, group } = await openGeneralSettings(page)
+  await chooseTheme(group, page, 'dark')
+  await expect(dialog).toBeVisible()
+  await darkApplied(page)
+  await expectAccessible(page, {
+    allow: [dialogBackgroundIsInert, contrastCoveredByOurOwnRuler, headingOrderCheckedByOurselves],
+  })
 })
 
 test('图内编辑的属性栏：展开每一个折叠区之后 axe 仍然干净', async ({ app, page }) => {
