@@ -128,24 +128,30 @@ def apply(state, values):
     calls.append(values)
     return real_apply(state, values)
 
-def savefig(path, **kw):
-    if windows_newlines and kw["format"] == "svg":
-        assert isinstance(path, io.TextIOBase) and not path.closed
-        assert path.encoding.lower().replace("-", "") == "utf8"
-    saves.append({"format": kw["format"], "title": title.get_text(), "dpi": kw["dpi"],
-                  "frame": list(kw["bbox_inches"].bounds), "fonttype": matplotlib.rcParams["svg.fonttype"],
-                  "pdf_fonttype": matplotlib.rcParams["pdf.fonttype"]})
-    real_savefig(path, **kw)
-    saves[-1]["axes_after"] = list(ax.get_position().bounds)
-    if mode == "failure" and kw["format"] == "svg":
-        raise RuntimeError("companion save failed")
+def observe_savefig(frame, event, value):
+    # Observe the real serializer without replacing the method pair eligibility checks.
+    if frame.f_code is not real_savefig.__func__.__code__:
+        return
+    kw = frame.f_locals["kwargs"]
+    if event == "call":
+        path = frame.f_locals["fname"]
+        if windows_newlines and kw["format"] == "svg":
+            assert isinstance(path, io.TextIOBase) and not path.closed
+            assert path.encoding.lower().replace("-", "") == "utf8"
+        saves.append({"format": kw["format"], "title": title.get_text(), "dpi": kw["dpi"],
+                      "frame": list(kw["bbox_inches"].bounds), "fonttype": matplotlib.rcParams["svg.fonttype"],
+                      "pdf_fonttype": matplotlib.rcParams["pdf.fonttype"]})
+    elif event == "return":
+        saves[-1]["axes_after"] = list(ax.get_position().bounds)
+        if mode == "failure" and kw["format"] == "svg":
+            raise RuntimeError("companion save failed")
 
 def forbid_preview(*args, **kw):
     raise AssertionError("full-quality export used preview_hybrid")
 
 pkg.overrides.apply = apply
 pkg.preview_hybrid.save_preview_svg = forbid_preview
-fig.savefig = savefig
+sys.setprofile(observe_savefig)
 pdf, svg = out / "pair.pdf", out / "pair.svg"
 svg_opens = []
 if windows_newlines:

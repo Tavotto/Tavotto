@@ -44,6 +44,7 @@ import base64
 import functools
 import hashlib
 import importlib.metadata
+import inspect
 import io
 import json
 import math
@@ -52,11 +53,18 @@ import platform
 import sys
 import threading
 import time
-from contextlib import nullcontext
+from contextlib import contextmanager, nullcontext
 from pathlib import Path
 
 import matplotlib
-from matplotlib import _tight_bbox, artist as martist, figure as mfigure, ticker, transforms
+from matplotlib import (
+    _tight_bbox,
+    artist as martist,
+    backend_bases,
+    figure as mfigure,
+    ticker,
+    transforms,
+)
 from matplotlib.axes import Axes
 from matplotlib.axis import Axis, XAxis, XTick, YAxis, YTick
 from matplotlib.backend_bases import FigureCanvasBase
@@ -514,12 +522,113 @@ def _svg_pair_standard_transform(transform, seen) -> bool:
     return True
 
 
+def _svg_pair_native_canvas_method(method) -> bool:
+    if isinstance(method, (functools.partial, functools.partialmethod)):
+        return not method.keywords and _svg_pair_native_canvas_method(method.func)
+    method = getattr(method, "__func__", method)
+    code = getattr(method, "__code__", None)
+    if code is None:
+        return _svg_pair_standard_method(method)
+    if code is contextmanager(lambda: None).__code__:
+        # contextmanager copies the decorated function's module. Its actual closure,
+        # unlike arbitrary __wrapped__ metadata, tells us what this native helper calls.
+        captured = dict(zip(code.co_freevars, method.__closure__ or ()))
+        cell = captured.get("func")
+        return cell is not None and _svg_pair_native_canvas_method(cell.cell_contents)
+    namespace = method.__globals__
+    module_name = namespace.get("__name__", "")
+    module = sys.modules.get(module_name)
+    # wraps(native) only copies metadata; its code and globals still belong to the user.
+    # Module-relative filenames also work for bytecode/frozen installations, where the
+    # original build root and the module's installed absolute path need not coincide.
+    source = code.co_filename.replace("\\", "/")
+    return (
+        module_name.startswith("matplotlib.")
+        and module is not None
+        and namespace is vars(module)
+        and ("/" + source).endswith("/" + module_name.replace(".", "/") + ".py")
+    )
+
+
+def _svg_pair_native_savefig(method) -> bool:
+    return (
+        getattr(method, "__module__", None) == mfigure.__name__
+        and getattr(method, "__qualname__", None) == "Figure.savefig"
+        and getattr(method, "__globals__", None) is vars(mfigure)
+        and _svg_pair_native_canvas_method(method)
+    )
+
+
+def _svg_pair_standard_savefig(fig) -> bool:
+    if "savefig" in vars(fig):
+        return False
+    method = inspect.getattr_static(fig, "savefig", None)
+    method = getattr(method, "__func__", method)
+    if _svg_pair_native_savefig(method):
+        return True
+    # Both execution entries keep their capture wrapper installed during real_output.
+    # Trust only those owned implementations, and still verify their actual delegate.
+    wrappers = {
+        "_patched_savefig": "worker.py",
+        "_install_savefig_hook.<locals>._patched_savefig": "bridge_runner.py",
+    }
+    source = wrappers.get(getattr(method, "__qualname__", None))
+    code = getattr(method, "__code__", None)
+    return (
+        source is not None
+        and code is not None
+        and Path(code.co_filename).resolve() == Path(__file__).with_name(source).resolve()
+        and _svg_pair_native_savefig(method.__globals__.get("_REAL_SAVEFIG"))
+    )
+
+
+def _svg_pair_standard_canvas(canvas, *, canvas_class=False) -> bool:
+    cls = canvas if canvas_class else type(canvas)
+    if not isinstance(cls, type) or not cls.__module__.startswith("matplotlib."):
+        return False
+    names = (*_CANVAS_METHODS, "_switch_canvas_and_return_print_method", "print_pdf", "print_svg")
+    if canvas_class:
+        names = (*names, "__new__", "__init__")
+    elif any(name in vars(canvas) for name in names):
+        # Even wraps(native) is a custom instance hook; its copied module is not evidence.
+        return False
+    return all(
+        method is None
+        or (canvas_class and name == "__new__" and method is object.__new__)
+        or _svg_pair_native_canvas_method(method)
+        for name in names
+        for method in (inspect.getattr_static(canvas, name, None),)
+    )
+
+
+def _svg_pair_canvas_blocker(canvas) -> str | None:
+    if not _svg_pair_standard_canvas(canvas):
+        return "SVG pairing is unavailable for custom canvas drawing or printing implementations."
+    for fmt in ("pdf", "svg"):
+        if inspect.getattr_static(canvas, f"print_{fmt}", None) is not None:
+            continue
+        # Match Matplotlib's actual serializer selection without constructing a canvas
+        # or importing a user-registered backend during automatic snapshot eligibility.
+        registered = backend_bases._default_backends.get(fmt)
+        if isinstance(registered, str) and not registered.startswith("matplotlib.backends."):
+            return "SVG pairing is unavailable for custom export backends."
+        target = backend_bases.get_registered_canvas_class(fmt)
+        if not _svg_pair_standard_canvas(target, canvas_class=True):
+            return "SVG pairing is unavailable for custom export backends."
+    return None
+
+
 def _svg_pair_blocker(fig) -> str | None:
     """Known draw-time code can change the scene between two serializers.
 
     Never label a second draw as a frozen companion when user callbacks or custom
     draw implementations can mutate it. The primary PDF retains its existing behavior.
     """
+    if not _svg_pair_standard_savefig(fig):
+        return "SVG pairing is unavailable for custom Figure saving methods."
+    canvas_blocker = _svg_pair_canvas_blocker(fig.canvas)
+    if canvas_blocker is not None:
+        return canvas_blocker
     if fig.canvas.callbacks.callbacks.get("draw_event"):
         return "SVG pairing is unavailable for figures with draw-event callbacks."
     pending, seen, seen_transforms = [fig], set(), set()
