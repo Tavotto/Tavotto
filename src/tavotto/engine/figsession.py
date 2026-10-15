@@ -52,6 +52,7 @@ import platform
 import sys
 import threading
 import time
+from contextlib import nullcontext
 from pathlib import Path
 
 import matplotlib
@@ -1534,13 +1535,20 @@ class LiveFigureSession:
                 # Automatic capture witnesses the script's original output policy;
                 # forcing PDF Type 42 here would change a saved Type 3 source's pixels.
                 with _NULL_CTX if snapshot_only else export_font_context(fmt):
-                    state.fig.savefig(
-                        out,
-                        format=fmt,
-                        dpi=int(dpi),
-                        **export_format_kwargs(fmt),
-                        **pathgeom.output_kwargs(state.fig),
-                    )
+                    # Matplotlib opens SVG paths in text mode with platform newline
+                    # translation. Own the UTF-8 stream so Windows writes the same bytes.
+                    with (
+                        out.open("w", encoding="utf-8", newline="")
+                        if str(fmt).lower() == "svg"
+                        else nullcontext(out)
+                    ) as fh:
+                        state.fig.savefig(
+                            fh,
+                            format=fmt,
+                            dpi=int(dpi),
+                            **export_format_kwargs(fmt),
+                            **pathgeom.output_kwargs(state.fig),
+                        )
             if companion is not None:
                 try:
                     if blocker is not None:
@@ -1555,9 +1563,14 @@ class LiveFigureSession:
                         if state.fig.get_layout_engine() is not None
                         else _NULL_CTX
                     )
-                    with self.real_output(), export_font_context("svg"), layout_context:
+                    with (
+                        self.real_output(),
+                        export_font_context("svg"),
+                        layout_context,
+                        companion.open("w", encoding="utf-8", newline="") as fh,
+                    ):
                         state.fig.savefig(
-                            companion,
+                            fh,
                             format="svg",
                             dpi=int(dpi),
                             **pathgeom.output_kwargs(state.fig),

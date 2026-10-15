@@ -79,6 +79,9 @@ PROBE = r"""
 import hashlib, importlib.util, json, sys
 from pathlib import Path
 engine, directory, mode = sys.argv[1:]
+windows_newlines = mode.endswith("_newlines")
+if windows_newlines:
+    mode = mode.removesuffix("_newlines")
 spec = importlib.util.spec_from_file_location("boot", Path(engine) / "bridgeboot.py")
 boot = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(boot)
@@ -122,6 +125,9 @@ def apply(state, values):
     return real_apply(state, values)
 
 def savefig(path, **kw):
+    if windows_newlines and kw["format"] == "svg":
+        assert isinstance(path, io.TextIOBase) and not path.closed
+        assert path.encoding.lower().replace("-", "") == "utf8"
     saves.append({"format": kw["format"], "title": title.get_text(), "dpi": kw["dpi"],
                   "frame": list(kw["bbox_inches"].bounds), "fonttype": matplotlib.rcParams["svg.fonttype"],
                   "pdf_fonttype": matplotlib.rcParams["pdf.fonttype"]})
@@ -137,6 +143,23 @@ pkg.overrides.apply = apply
 pkg.preview_hybrid.save_preview_svg = forbid_preview
 fig.savefig = savefig
 pdf, svg = out / "pair.pdf", out / "pair.svg"
+svg_opens = []
+if windows_newlines:
+    import builtins, io, os
+    def windows_open(original):
+        def open_file(file, mode="r", buffering=-1, encoding=None, errors=None, newline=None, closefd=True, opener=None):
+            if isinstance(file, (str, os.PathLike)) and Path(file) == svg and "w" in mode and "b" not in mode:
+                svg_opens.append({"encoding": encoding, "newline": newline})
+                if newline is None:
+                    newline = "\r\n"
+            return original(file, mode, buffering, encoding, errors, newline, closefd, opener)
+        return open_file
+    builtins.open = windows_open(builtins.open)
+    io.open = windows_open(io.open)
+    # Python 3.10's pathlib accessor captures io.open before these patches.
+    def path_open(self, mode="r", buffering=-1, encoding=None, errors=None, newline=None):
+        return io.open(self, mode, buffering, encoding, errors, newline)
+    Path.open = path_open
 if mode in {"callback", "snapshot_callback"}:
     def change_after_draw(event):
         title.set_text("Draw mutation")
@@ -256,7 +279,7 @@ assert dict(matplotlib.rcParams) == before_rc
 assert fig.dpi == before_dpi and list(fig.get_size_inches()) == before_size
 assert list(pkg.pathgeom.frame_bbox(fig).bounds) == before_frame
 assert fig.get_layout_engine() is before_layout
-print(json.dumps({"result": result, "saves": saves}))
+print(json.dumps({"result": result, "saves": saves, "svg_opens": svg_opens}))
 """
 
 
@@ -357,6 +380,22 @@ def test_standalone_svg_accepts_custom_draw_once_and_restores_state(tmp_path, mo
     assert root.findall(".//{http://www.w3.org/2000/svg}path")
     if mode == "standalone_artist":
         assert b"#ff00ff" in data
+
+
+@needs_user_python
+@pytest.mark.parametrize("mode", ["pair", "standalone"])
+def test_export_svg_bytes_do_not_translate_newlines(tmp_path, mode):
+    """Emulate Windows text defaults in the child so missing newline='' also fails on POSIX."""
+    result = _probe(tmp_path, f"{mode}_newlines")
+    data = (tmp_path / "pair.svg").read_bytes()
+    assert b"\n" in data and b"\r\n" not in data
+    assert result["svg_opens"] == [{"encoding": "utf-8", "newline": ""}]
+    assert [save["format"] for save in result["saves"]] == (
+        ["pdf", "svg"] if mode == "pair" else ["svg"]
+    )
+    if mode == "pair":
+        assert result["result"]["svg"]["size_bytes"] == len(data)
+        assert result["result"]["svg"]["sha256"] == hashlib.sha256(data).hexdigest()
 
 
 @needs_user_python
