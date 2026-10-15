@@ -1451,6 +1451,19 @@ GATED = [
         + "import operator\noperator.methodcaller('unlink')(__import__('pathlib').Path('a'))\n"
         + TAIL,
     ),
+    # Codex r4286453690：日志写文件
+    (
+        "logging_basicconfig_filename",
+        MPL + "import logging\nlogging.basicConfig(filename='victim.log', filemode='w')\n" + TAIL,
+    ),
+    ("logging_file_handler", MPL + "import logging\nlogging.FileHandler('v.log')\n" + TAIL),
+    (
+        "logging_rotating_handler",
+        MPL
+        + "from logging.handlers import RotatingFileHandler\nRotatingFileHandler('v.log')\n"
+        + TAIL,
+    ),
+    ("logging_dict_config", MPL + "import logging.config\nlogging.config.dictConfig({})\n" + TAIL),
     ("numpy_save_alias", MPL + "import numpy as np\nsv = np.save\nsv('v.npy', [1])\n" + TAIL),
 ]
 
@@ -1763,3 +1776,13 @@ def test_a_foreign_flavor_pure_path_is_not_comparable_on_posix():
     )
     route = _route(src)
     assert route.execution == "safe", route
+
+
+def test_repeated_savefig_readback_pairs_yield_one_proof_per_path_and_stay_bounded():
+    """Codex #1034 r4286453702：重复的同一对 savefig / 读回不按 n² 产证据。"""
+    pair = 'plt.savefig("x.png")\nopen("x.png", "rb").read()\n'
+    route = _route(MPL + pair * 300)
+    assert route.execution == "native"
+    assert len([e for e in route.evidence if e["rule"] == "R1"]) == 1
+    huge = _route(MPL + pair * 1000)  # 超出配对预算：不给高置信，回 safe
+    assert huge.execution == "safe" and len(huge.evidence) < 10

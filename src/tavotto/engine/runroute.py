@@ -112,6 +112,8 @@ BLIND_TOO_LARGE = "too_large"
 MAX_SOURCE_BYTES = 1 << 20
 CACHE_SIZE = 64
 _MAX_DEPTH = 8  # 名字追踪 / 表达式折叠的递归深度
+#: 规则配对的比较预算：超出 = 不给高置信（回 safe），不为病态的生成脚本付 n² 的代价
+_PAIR_BUDGET = 200_000
 
 
 # ---------------------------------------------------------------- 调用表（限定名 = import 绑定解析之后的点号名）
@@ -839,6 +841,14 @@ class _Collector:
         if last:
             tails.add(last)
         if tails & self._WRITER_TAILS:
+            return True
+        # 日志写文件（Codex #1034 r4286453690）：`logging.basicConfig(filename=…)`、`*FileHandler(…)`、按配置建处理器的 `fileConfig` /
+        # `dictConfig`——safe 里落沙箱、native 里截断真实文件
+        if any(t.endswith("FileHandler") or t in ("fileConfig", "dictConfig") for t in tails):
+            return True
+        if any(k.arg in ("filename", "filemode") for k in node.keywords) and (
+            (q or "").startswith("logging") or "basicConfig" in tails
+        ):
             return True
         if (node.args or node.keywords) and any(
             (t.startswith("to_") and t not in self._CONVERT_TAILS)
@@ -1638,13 +1648,19 @@ def _static(facts: ScriptFacts, w: _Where) -> tuple[list[dict], int, bool, bool]
             item["read_line"] = other
         evidence.append(item)
 
+    # 每个（规则, 规范路径）只出一条证据；配对比较有总预算，超了就不再给高置信（回 safe，Codex #1034 r4286453702）——
+    # 生成出来的脚本重复成千上万次同一对 savefig / 读回时，证据与耗时都不随 n² 增长
     seen: set[tuple] = set()
+    budget = _PAIR_BUDGET
 
     for s, sk in keyed:
         if s.kind != _E_SAVEFIG or sk is None:
             continue
         # R1 / R2：同一规范路径、之后出现的读 / 探
         for r, rk in keyed:
+            budget -= 1
+            if budget < 0:
+                return evidence, dynamic, False, False
             if rk != sk or r.kind not in (_E_READ, _E_STAT) or not _after(r, s):
                 continue
             same_scope = r.scope == s.scope
@@ -1659,8 +1675,8 @@ def _static(facts: ScriptFacts, w: _Where) -> tuple[list[dict], int, bool, bool]
                     rule = RULE_R1_UNPROVEN
             else:
                 rule = RULE_R2
-            if (rule, s.line, r.line) not in seen:
-                seen.add((rule, s.line, r.line))
+            if (rule, sk) not in seen:
+                seen.add((rule, sk))
                 ev(rule, KIND_SAVEFIG, "savefig", s.line, r.line)
         # 不同作用域里的读回也在上面按 R1_cross_scope 记了（_after 只看行序）；这里不再重复
 
@@ -1672,6 +1688,9 @@ def _static(facts: ScriptFacts, w: _Where) -> tuple[list[dict], int, bool, bool]
         inside = mk[0] == "root" and _really_inside(w, mk[1])
         if not inside:
             continue
+        budget -= 2 * len(keyed)
+        if budget < 0:
+            return evidence, dynamic, False, False
         wrote = any(
             wk == mk
             and x.kind in (_E_WRITE, _E_SAVEFIG)
@@ -1693,11 +1712,15 @@ def _static(facts: ScriptFacts, w: _Where) -> tuple[list[dict], int, bool, bool]
                 ):
                     read_line = r.line
                     break
-        if wrote and read_line is not None and m.top and m.scope in facts.live_scopes:
-            ev(RULE_R3, KIND_RENAME, m.op, m.line, read_line)
-            high_r3 = True
-        else:
-            ev(RULE_R3_PARTIAL, KIND_RENAME, m.op, m.line, read_line)
+        rule = (
+            RULE_R3
+            if wrote and read_line is not None and m.top and m.scope in facts.live_scopes
+            else RULE_R3_PARTIAL
+        )
+        high_r3 = high_r3 or rule == RULE_R3
+        if (rule, mk) not in seen:
+            seen.add((rule, mk))
+            ev(rule, KIND_RENAME, m.op, m.line, read_line)
     if dynamic:
         evidence.append(
             {
