@@ -832,6 +832,8 @@ export function ExportDialog() {
    * 定位一条阻断项。先定位再让开：定位失败（对象已删 / 进不了图内编辑）时
    * 对话框留在原地并说出原因，不把用户扔到一个什么都没发生的画布上。
    */
+  /** 点芯片 / 「在问题面板中查看」要带过去的目标：摘要是按它算的，面板就得看同一份（Codex #1106 P2） */
+  const problemsTarget = { canvasId: checkCanvasId, figureId: targetObjectId ?? null };
   const locateBlocking = (issue: ValidationIssue) => {
     const outcome = focusIssue(issue);
     const ui = useUiStore.getState();
@@ -1400,7 +1402,7 @@ export function ExportDialog() {
                   scopeHint={ex(scope === "original" && panel ? "checkScopeFigure" : "checkScopeCanvas")}
                   onOpenPanel={(severities) => {
                     park();
-                    openProblems(severities ? { severities } : undefined);
+                    openProblems({ severities, target: problemsTarget });
                   }}
                 />
               </FormRow>
@@ -1416,7 +1418,7 @@ export function ExportDialog() {
                         onLocate={locateBlocking}
                         onMore={() => {
                           park();
-                          openProblems({ severities: ["error"] });
+                          openProblems({ severities: ["error"], target: problemsTarget });
                         }}
                       />
                     )}

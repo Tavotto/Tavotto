@@ -40,6 +40,7 @@ import { runValidation, useValidationStore } from '@/store/validationStore'
 import { bindingFor } from '@/lib/specBinding'
 import { toCatalog, useProfileStore } from '@/store/profileStore'
 import { applyExportJob, cancelCurrentExport, refreshExportStatus, resetExportState, runExport, useExportStore } from '@/store/exportStore'
+import { currentFigureOf } from '@/lib/problemContext'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useWorkspaceStore } from '@/store/workspace'
 import { emptyProject, type PanelObject } from '@/types/document'
@@ -1686,6 +1687,66 @@ describe('T35 · 设置压在导出之上：一次只显示一个主对话框', 
 
 const originalRadio = () => document.body.querySelector('[role="radio"]') as HTMLButtonElement
 const figureOptions = () => [...document.body.querySelectorAll('[role="option"]')] as HTMLElement[]
+
+describe('检查芯片 / 「在问题面板中查看」带着导出目标去（#1106 P2）', () => {
+  /** 面板此刻会当作「当前图」的那张（与 `useCurrentFigure` 同一个判据） */
+  const panelCurrentFigure = () =>
+    currentFigureOf(
+      [useWorkspaceStore.getState().activePanelId, useUiStore.getState().elementPanelId, useSelectionStore.getState().ids.at(-1) ?? null],
+      useDocumentStore.getState().doc.objects,
+    ).id
+
+  async function twoWithErrorOnP2() {
+    await setupTwo({ select: ['p1'] })
+    // Fig2 上 5 组 8 pt 刻度（多于先露的 3 条）：p2 有阻断项、p1 干净
+    const k2 = renderKey('Fig2.pdf', [])
+    await act(async () => {
+      const cur = useRenderStore.getState().byKey[k2]
+      useRenderStore.setState({
+        byKey: { ...useRenderStore.getState().byKey, [k2]: { ...cur, manifest: manifestWithTicks(5, 8, [65, 50]) } },
+      } as never)
+      runValidation()
+    })
+    await click(originalRadio())
+    await click(figureOptions()[1]) // 导出目标 = p2；画布上选中的仍是 p1
+    expect(useSelectionStore.getState().ids).toEqual(['p1'])
+    expect(panelCurrentFigure()).toBe('p1')
+  }
+  const danger = () => document.body.querySelector<HTMLElement>('[data-count-chip="danger"]')
+
+  it('点「要改」芯片：面板的当前图 = 导出的那张，范围「当前图」，筛选只留阻断', async () => {
+    await twoWithErrorOnP2()
+    expect(danger(), 'p2 有阻断项，应有芯片').not.toBeNull()
+    await click(danger()!)
+    expect(panelCurrentFigure(), '芯片只带了等级，面板仍看工作区原来的图').toBe('p2')
+    expect(useUiStore.getState().problemScope).toBe('figure')
+    expect(useUiStore.getState().problemFilter).toEqual(['error'])
+  })
+
+  it('「在问题面板中查看」与「还有 N 项」同样带目标', async () => {
+    await twoWithErrorOnP2()
+    await click(button('在问题面板中查看')!)
+    expect(panelCurrentFigure()).toBe('p2')
+    expect(useUiStore.getState().problemScope).toBe('figure')
+    // 回到导出，工作区当前图又换回 p1：「还有 N 项」同样把面板对准导出的那张
+    await act(async () => {
+      useUiStore.getState().setExportOpen(true)
+    })
+    await act(async () => {
+      useSelectionStore.getState().set(['p1'])
+      useUiStore.getState().setProblemScope('document')
+    })
+    expect(panelCurrentFigure()).toBe('p1')
+    await click(originalRadio()) // 重新打开不带上一次点的那张：再点一次 p2
+    await click(figureOptions()[1])
+    const more = [...document.body.querySelectorAll('button')].find((b) => /^还有 \d+ 项/.test(b.textContent ?? ''))!
+    expect(more, '5 组阻断多于先露的 3 条').toBeTruthy()
+    await click(more)
+    expect(panelCurrentFigure()).toBe('p2')
+    expect(useUiStore.getState().problemScope).toBe('figure')
+    expect(useUiStore.getState().problemFilter).toEqual(['error'])
+  })
+})
 
 describe('画布模式下选中的图就是要导的那张（用户反馈 06）', () => {
   it('画布上选中了一个面板：原图尺寸可用，导的就是它', async () => {
