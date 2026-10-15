@@ -210,6 +210,8 @@ export interface AdoptedEnvironment {
 let projectEpoch = 0
 /** 安装代际：每开始一次安装（本地点击或 SSE 报告 running）加一；refresh 带回的快照只在代际没变时才许收掉 installing */
 let installGen = 0
+/** 本地刚点了安装、服务端还没确认（POST 没回）：这段时间任何 refresh 回包都不许清 `installing` */
+let installPending = false
 
 /**
  * 后端刚关掉本项目的会话、且变的东西说不清影响哪些面板（换环境、改指表增 / 换 / 删）：
@@ -450,6 +452,7 @@ export const useEnvStore = create<EnvState>((set, get) => ({
   refresh: async () => {
     const epoch = projectEpoch
     const installAtStart = installGen
+    const pendingAtStart = installPending
     // 读取在路上时 env 被别的回包写过（确认运行目录 / 采用环境 / 另一次读取）：这份快照可能是那次写**之前**的，
     // 整份写进来就把刚确认的事实盖回去（T12：装载期那次读取比紧接着的确认晚回来）。不盖，按此刻再读一次；
     // 再读的那份在路上又被写过就不落地——store 里已经是更晚到的事实
@@ -466,7 +469,7 @@ export const useEnvStore = create<EnvState>((set, get) => ({
         // 安装进度只靠 SSE：断线期间丢了终态事件，`installing` 会永久为真。后端说不在跑了就收尾
         // 只认**发请求那一刻**的安装代际：这份快照若产生在服务端切到 running 之前（refresh 在飞时才开始安装），
         // 它说的 idle / done 是上一轮的，不能清掉这一轮的 `installing`
-        if (get().installing && env.state !== 'running' && installAtStart === installGen) {
+        if (get().installing && env.state !== 'running' && !installPending && !pendingAtStart && installAtStart === installGen) {
           set({ installing: false, ...(env.state === 'failed' && env.error ? { log: env.error } : {}) })
         }
         // 改指表的代次（ADR 0106 §五）：重连 / 页面恢复的补拉就是这一次刷新
@@ -482,11 +485,15 @@ export const useEnvStore = create<EnvState>((set, get) => ({
 
   install: async () => {
     if (get().installing) return
-    installGen += 1
+    installPending = true
     set({ installing: true, log: '' })
     try {
       await installEngineEnvironment()
+      // 服务端确认收到了（POST 成功）：此后发起的 refresh 才有资格说「已经结束了」
+      installPending = false
+      installGen += 1
     } catch (e) {
+      installPending = false
       set({
         installing: false,
         log: e instanceof Error ? e.message : t('engine.installFailed', { ns: 'errors' }),
@@ -677,6 +684,7 @@ export const useEnvStore = create<EnvState>((set, get) => ({
       set({ installing: false })
       void get().refresh()
     } else if (p.state === 'running') {
+      installPending = false
       installGen += 1
       set({ installing: true })
     }

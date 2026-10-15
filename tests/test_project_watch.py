@@ -1188,6 +1188,49 @@ class TestEndToEnd:
         w.poll()
         assert not [1 for ev, _ in sse_spy if ev == "project.error"]
 
+    def test_recovery_is_only_announced_after_the_failed_refresh_really_succeeds(
+        self, client, tmp_path, sse_spy, monkeypatch
+    ):
+        """失败的原因不一定是注册表（脚本读不了等）：把注册表**原样重写**看起来没变，但那不能证明恢复了。
+        `_errored` 时遇到注册表变化即使被判为自写也要真刷新一次，成功才报；仍失败就保持错误态。"""
+        figs = _project(tmp_path)
+        _script(figs, "fig1.py", "Fig1")
+        _pdf(figs / "Fig1.pdf")
+        body = client.post("/api/projects/open", json={"path": str(figs)}).get_json()
+        ctx = m.PROJECTS[body["id"]]
+        engine_watch.stop()
+        m.refresh_project(ctx, reason="manual")
+        reg = figs / "tavotto_registry.json"
+        good = reg.read_text(encoding="utf-8")
+        w = engine_watch.ProjectWatcher(ctx, sink=m._watch_sink(ctx), interval=0.01, debounce=0.0)
+        w.prime()
+
+        real = m.refresh_project
+        broken = {"on": True}
+
+        def flaky(c, **kw):
+            if broken["on"]:
+                raise engine_refresh.RefreshError("scan_failed", "脚本读不了", {"reason": "x"})
+            return real(c, **kw)
+
+        monkeypatch.setattr(m, "refresh_project", flaky)
+        _script(figs, "fig2.py", "Fig2")  # 一次真实变化触发失败的刷新
+        w.poll()
+        assert [d for ev, d in sse_spy if ev == "project.error" and d.get("code") == "scan_failed"]
+        sse_spy.clear()
+
+        reg.write_text(good + " ", encoding="utf-8")  # 内容变了又改回原样
+        reg.write_text(good, encoding="utf-8")
+        w.poll()
+        assert not [1 for ev, d in sse_spy if ev == "project.error" and d.get("recovered")], sse_spy
+
+        broken["on"] = False
+        sse_spy.clear()
+        _script(figs, "fig3.py", "Fig3")
+        w.poll()
+        rec = [d for ev, d in sse_spy if ev == "project.error" and d.get("recovered")]
+        assert len(rec) == 1, sse_spy
+
     def test_a_live_watcher_picks_up_a_new_script(self, client, tmp_path, sse_spy):
         """真线程跑一遍：打开项目 → 在编辑器里新建一个脚本 → 无须点刷新。
 

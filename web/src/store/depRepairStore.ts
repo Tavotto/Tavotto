@@ -976,8 +976,8 @@ export const useDepRepairStore = create<DepRepairState>((set, get) => ({
         // 等回包期间 SSE 已经把它推到终态：这份快照是更早的，不能把终局盖回去
         const { progress, parked } = get()
         const known = progress?.plan_id === id ? progress : Object.values(parked).find((q) => q.plan_id === id)
-        // 进度已经动过（SSE 先到了）：这份快照产生在它之前，不用它倒回去
-        if (!known || TERMINAL.includes(known.state) || known.state !== pending.get(id)?.state) return
+        // 单调：只接受比当前**更靠后**的状态（终态一律比非终态靠后）；同序 / 更早的是缓冲里的旧快照，不倒退
+        if (!known || TERMINAL.includes(known.state) || STATE_ORDER[actual.state] <= STATE_ORDER[known.state]) return
         get().onProgress(actual)
       }),
     )
@@ -1098,6 +1098,21 @@ function adoptActualRebuild(owner: string | null, actual: DependencyProgress): v
   if (TERMINAL.includes(actual.state)) useDepRepairStore.getState().onProgress(actual)
 }
 const TERMINAL: readonly DependencyProgress['state'][] = ['done', 'failed', 'cancelled']
+/**
+ * 作业状态的先后（`reconcile` 判「这份回包是不是比我已知的旧」的唯一出处；与 `RepairProgressLine` 的步骤表同序，
+ * 但那张表按阶段分组、不区分 verifying，所以这里单列）。终态同序：互相之间不比。
+ */
+const STATE_ORDER: Record<DependencyProgress['state'], number> = {
+  idle: 0,
+  preparing: 1,
+  downloading_python: 2,
+  creating_env: 3,
+  installing: 4,
+  verifying: 5,
+  done: 6,
+  failed: 6,
+  cancelled: 6,
+}
 
 /**
  * 切项目之后才失败的那次执行请求（install / prepare 的 POST 被拒）：作业没起来，它所属项目那格要说出

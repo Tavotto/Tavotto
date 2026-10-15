@@ -391,12 +391,12 @@ class ProjectWatcher:
                 pool.invalidate(rel, str(self.root))
 
         paths = self._refreshable_paths(batch)
+        if not paths and self._errored and batch.registry:
+            # 上次刷新失败着：注册表变化即使与内存里那份一致（被当成自己写的）也要真刷新一次——失败的原因不一定是注册表
+            # （脚本读不了等），恢复只能由**重试成功**来证明，不能由「内容看起来没变」推出来
+            paths = batch.paths()
         if paths:
             self._refresh(paths)
-        elif self._errored and batch.registry:
-            # 注册表被改坏后又改回了**内存里那份的原样**：内容修订号与上次装载的一致，被当成自己写的而不触发
-            # 刷新——但磁盘与内存已经重新一致，那条错误提示不成立了
-            self._announce_recovery()
 
         # `panel.file_changed` 只发给**还在磁盘上**的已登记脚本：删掉的那些
         # 让前端去重渲染只会得到一个错误，「源文件不见了」是 readiness 的
