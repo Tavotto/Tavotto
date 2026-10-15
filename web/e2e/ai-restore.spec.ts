@@ -3,7 +3,7 @@ import { existsSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import type { Page } from '@playwright/test'
-import { selectCanvasFigure, expect, test, waitForFigureEdit } from './fixtures'
+import { expect, selectCanvasFigure, test, waitForFigureEdit } from './fixtures'
 
 /**
  * 运行中会话的恢复（PR4b）：发起一个跑着的会话 → 刷新 → 占位在、发送锁成「中止」→ 会话结束后转成终态、锁解开。
