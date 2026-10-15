@@ -1321,9 +1321,10 @@ def savefig_effective_names(fname, kwargs: dict) -> list:
 def savefig_name_candidates(fname, kwargs: dict) -> tuple[list, list]:
     """`savefig_effective_names` 加上其中**只是推测**的那几个：`(names, speculative)`。
 
-    没有后缀也没有显式 `format=` 时，确定的候选是 `rcParams["savefig.format"]` 补出的名字；`png`（canvas 默认格式
-    可被用户重载）只是兜底推测。推测候选照样记账（读它算回读），但**不能**拿它去解释一次 FileNotFoundError：
-    默认格式不是 png 时，读 `out.png` 直接运行同样失败，归给守卫就是误归因（#1065 Codex P2）。"""
+    没有后缀也没有显式 `format=` 时，matplotlib 补哪个后缀由 canvas 的 `get_default_filetype()` 决定（可被自定义
+    canvas 重载，不一定等于 `rcParams["savefig.format"]`），我们不去推断它：**这时所有补出来的候选一律是推测**——
+    照样记账（读它算回读），但不拿它去解释任何失败（FileNotFoundError、探测落空、退出）。只有显式后缀 / 显式
+    `format=` / `bytes` 的目标才是确定候选（#1065 / #1076 Codex P2：证明不了就不归因）。"""
     if not savefig_targets_path(fname):
         return [], []
     name = os.fsdecode(fname)
@@ -1339,9 +1340,7 @@ def savefig_name_candidates(fname, kwargs: dict) -> tuple[list, list]:
     # 否则同名的无关旧文件被读时会被误判成回读被拦下的 savefig（#952 Codex P2）
     cands = [f for f in dict.fromkeys(f for f in fmts if isinstance(f, str) and f)]
     out = [name.rstrip(".") + "." + fmt for fmt in cands]
-    configured = fmts[0] if isinstance(fmts[0], str) and fmts[0] else None
-    # 配置的格式不是 png：png 只是推测；配置缺失 / 不是字符串时 png 是唯一候选，照旧当确定的
-    spec = [name.rstrip(".") + ".png"] if configured and configured.lower() != "png" else []
+    spec = list(out)
     return out, spec
 
 

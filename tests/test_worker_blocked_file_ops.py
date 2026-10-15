@@ -1079,9 +1079,25 @@ def test_retro_ambiguous_png_candidate_is_not_blamed_when_the_default_format_is_
 
 
 @needs_worker
-def test_retro_definitive_candidate_is_still_blamed_when_the_default_format_is_svg(figs):
+def test_retro_rc_derived_candidate_is_not_blamed_either_canvas_default_is_unverified(figs):
+    """#1076 Codex P2：自定义 canvas 的默认格式可以与 rcParams 不同，无后缀时 rc 推出的名字也只是推测。"""
     src = SVG_DEFAULT_PLOT + 'fig.savefig("out")\nimport os\nos.path.getsize("out.svg")\n'
+    with pytest.raises(engine_pool.WorkerError) as err:
+        _build(figs, "amb_svg.py", src, project_mode=False)
+    assert err.value.code != CODE, (err.value.code, str(err.value))
+
+
+@needs_worker
+def test_retro_explicit_suffix_target_is_still_blamed(figs):
+    src = SVG_DEFAULT_PLOT + 'fig.savefig("out.svg")\nimport os\nos.path.getsize("out.svg")\n'
     e = _blocked(figs, "def_svg.py", src, project_mode=False)
+    assert e.code == CODE, (e.code, str(e))
+
+
+@needs_worker
+def test_retro_explicit_format_target_is_still_blamed(figs):
+    src = _PLOT + 'fig.savefig("out", format="png")\nimport os\nos.path.getsize("out")\n'
+    e = _blocked(figs, "def_fmt.py", src, project_mode=False)
     assert e.code == CODE, (e.code, str(e))
 
 
@@ -1107,7 +1123,9 @@ def test_retro_speculative_png_is_not_blamed_for_a_failed_getsize(figs, overflow
 
 @needs_worker
 def test_retro_definitive_candidate_is_still_blamed_after_overflow(figs):
-    src = _OVERFLOW_PREFIX + SVG_DEFAULT_PLOT + 'fig.savefig("out")\nos.path.getsize("out.svg")\n'
+    src = (
+        _OVERFLOW_PREFIX + SVG_DEFAULT_PLOT + 'fig.savefig("out.svg")\nos.path.getsize("out.svg")\n'
+    )
     e = _blocked(figs, "def_ovf.py", src, project_mode=True)
     assert e.code == CODE, (e.code, str(e))
 
@@ -1117,7 +1135,7 @@ def test_retro_exit_and_missing_probe_attribution_skips_speculative_candidates(t
     """探测落空 + 退出归因（note_missing_path / explain_exit）与 FileNotFoundError 解释共用同一个判据。
     静态闸门（exit_controlled_by_probe）要求探测对象与 savefig 目标同源，所以这里直接在账本层断言。"""
 
-    def ledger():
+    def ledger(*, speculative=True):
         led = figcapture.BlockedFileOps()
         if overflow:
             for i in range(led.MAX_EVENTS):
@@ -1127,7 +1145,7 @@ def test_retro_exit_and_missing_probe_attribution_skips_speculative_candidates(t
             led.KIND_SAVEFIG,
             str(tmp_path / "out.svg"),
             str(tmp_path / "out.png"),
-            weak=[str(tmp_path / "out.png")],
+            weak=[str(tmp_path / "out.svg"), str(tmp_path / "out.png")] if speculative else (),
         )
         led._seq = 3
         return led
@@ -1136,9 +1154,19 @@ def test_retro_exit_and_missing_probe_attribution_skips_speculative_candidates(t
     weak.note_missing_path(str(tmp_path / "out.png"))
     assert weak.explain_exit(controlled=True) is False
     assert weak.material() == []
-    strong = ledger()
+    weak_svg = ledger()
+    weak_svg.note_missing_path(str(tmp_path / "out.svg"))
+    assert weak_svg.explain_exit(controlled=True) is False
+    strong = ledger(speculative=False)  # 显式后缀 / format= 的目标：确定候选
     strong.note_missing_path(str(tmp_path / "out.svg"))
     assert strong.explain_exit(controlled=True) is True
+
+
+def test_retro_every_extensionless_candidate_is_speculative_and_explicit_ones_are_not():
+    names, spec = figcapture.savefig_name_candidates("out", {})
+    assert names and sorted(spec) == sorted(names)
+    assert figcapture.savefig_name_candidates("out.svg", {}) == (["out.svg"], [])
+    assert figcapture.savefig_name_candidates("out", {"format": "png"}) == (["out"], [])
 
 
 def test_savefig_effective_names_skip_the_literal_name_when_matplotlib_appends_a_suffix():
