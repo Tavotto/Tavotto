@@ -1335,22 +1335,12 @@ def test_session_detail_is_not_final_until_the_pump_finishes(tmp_path, cli, monk
     engine_watch.stop()
 
 
-def test_concurrent_first_connections_to_an_old_database_do_not_race_on_alter(tmp_path):
-    """两个服务进程（或线程）同时打开同一个旧库：「先查列有没有再 ALTER」不是原子的，后到的撞 `duplicate column name`。
-    竞态窗口很窄，所以多轮、每轮一个全新的旧库、多个线程同时进。"""
+def test_concurrent_first_connections_to_a_new_database_do_not_race_on_alter(tmp_path):
+    """两个服务进程（或线程）同时打开同一个还没迁移过的库：「先查列有没有再 ALTER」不是原子的，后到的撞
+    `duplicate column name`（`refresh` 等列是建表之后补的，全新库同样要走）。窗口很窄，所以多轮、每轮一个全新的库。"""
     errors: list[BaseException] = []
-    for rnd in range(40):
-        db = tmp_path / f"old{rnd}.sqlite3"
-        raw = sqlite3.connect(db)
-        raw.execute(
-            "CREATE TABLE sessions (id TEXT PRIMARY KEY, project TEXT NOT NULL, canvas TEXT, panel TEXT, element TEXT,"
-            " provider TEXT NOT NULL, model TEXT, effort TEXT, scope TEXT, target TEXT, script TEXT, prompt TEXT NOT NULL,"
-            " status TEXT NOT NULL, diff TEXT NOT NULL DEFAULT '', changed INTEGER NOT NULL DEFAULT 0, error TEXT,"
-            " transcript TEXT NOT NULL DEFAULT '[]', started_ms INTEGER NOT NULL, ended_ms INTEGER, snapshot_path TEXT,"
-            " pinned INTEGER NOT NULL DEFAULT 0)"
-        )
-        raw.commit()
-        raw.close()
+    for rnd in range(150):
+        db = tmp_path / f"new{rnd}.sqlite3"
         barrier = threading.Barrier(6)
 
         def open_it(db=db):
