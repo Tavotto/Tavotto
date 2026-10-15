@@ -172,8 +172,16 @@ def _is_abs_text(text: str) -> bool:
 
 
 def _norm(text: str) -> str:
-    out = posixpath.normpath(text.replace("\\", "/")) if text else "."
-    return out
+    """规范化路径文本。证明不了文件系统语义的一律变成 `<mixed>`（比较时 = 不可比，不升格；Codex #1034 r4283860490）：
+    POSIX 上反斜杠是文件名字符而不是分隔符；任何 `..` 段经符号链接可能指向别处，不能按字面折叠。"""
+    if not text:
+        return "."
+    if "\\" in text and os.sep != "\\":  # 只有 Windows 的分隔符是反斜杠
+        return "<mixed>"
+    t = text.replace("\\", "/")
+    if ".." in t.split("/"):
+        return "<mixed>"
+    return posixpath.normpath(t)
 
 
 def _from_text(text: str, *, pathobj: bool = False) -> PathVal | None:
@@ -202,7 +210,11 @@ def _parent(v: PathVal) -> PathVal | None:
     if v.base == "abs":
         parent = posixpath.dirname(v.text) or v.text
         return PathVal("abs", parent, v.pathobj)
-    return PathVal(v.base, _norm(posixpath.join(v.text, "..")), v.pathobj)
+    # 字面取上级（`Path.parent` 的语义），不经 `..` 段：`_norm` 把含 `..` 的路径视为证明不了
+    parent = posixpath.dirname(v.text.rstrip("/"))
+    if v.text in (".", ""):
+        return PathVal(v.base, "<mixed>", v.pathobj)
+    return PathVal(v.base, parent or ".", v.pathobj)
 
 
 # ---------------------------------------------------------------- 事实
@@ -237,6 +249,8 @@ class ScriptFacts:
     live_scopes: frozenset[int] = frozenset()
     #: 全文件任何位置（含函数体 / 条件 / 类体 / lambda，不做可达性推导）出现 safe 守卫会拦的文件操作调用形状
     guarded_ops: bool = False
+    #: 脚本里任何位置改了当前目录（`os.chdir` / `os.fchdir` / `contextlib.chdir`…）：cwd 相对的证据前后可能不是同一个目录
+    cwd_changes: bool = False
 
 
 _EMPTY = ScriptFacts(parsed=False)
@@ -810,6 +824,24 @@ class _Collector:
                 return True
         return False
 
+    def has_cwd_changes(self) -> bool:
+        """宁宽：任何名为 `chdir` / `fchdir` 的调用（方法名、限定名末段或裸名）都算改了当前目录（Codex #1034 r4283860478）。"""
+        for n in ast.walk(self.tree):
+            if not isinstance(n, ast.Call):
+                continue
+            f = n.func
+            name = (
+                f.attr
+                if isinstance(f, ast.Attribute)
+                else f.id
+                if isinstance(f, ast.Name)
+                else None
+            )
+            q = self.qual(f) or ""
+            if name in ("chdir", "fchdir") or q.rsplit(".", 1)[-1] in ("chdir", "fchdir"):
+                return True
+        return False
+
     def has_guarded_ops(self) -> bool:
         return any(isinstance(n, ast.Call) and self._guarded_call(n) for n in ast.walk(self.tree))
 
@@ -1316,6 +1348,7 @@ def _collect(source: str) -> ScriptFacts:
         events=tuple(sorted(col.events, key=lambda e: (e.line, e.col))),
         live_scopes=col.live_scopes(),
         guarded_ops=col.has_guarded_ops(),
+        cwd_changes=col.has_cwd_changes(),
         parse_ms=(time.perf_counter() - started) * 1000.0,
     )
 
@@ -1608,6 +1641,11 @@ def decide(
             tuple(evidence),
             dynamic,
             blind,
+        )
+    if (high_r1 or high_r3) and facts.cwd_changes:
+        # 脚本改了当前目录：cwd 相对的「存」与「读」可能不在同一个目录，证明不了是同一个文件——不直达，走 safe + 回退
+        return Route(
+            EXECUTION_SAFE, REASON_ORDINARY_PLOT, CONFIDENCE_MEDIUM, tuple(evidence), dynamic, blind
         )
     if high_r1:
         return Route(

@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import dataclasses
+import os
 import textwrap
 
 import pytest
@@ -1652,6 +1653,44 @@ def test_with_suffix_replacement_still_folds():
         MPL
         + 'from pathlib import Path\np = Path("x.jpg").with_suffix(".png")\n'
         + 'plt.savefig(p)\nopen("x.png", "rb").read()\n'
+    )
+    route = _route(src)
+    assert route.execution == "native" and route.reason == runroute.REASON_SAVEFIG_READBACK, route
+
+
+# ---- 改当前目录（Codex #1034 r4283860478）：cwd 相对的存与读可能不在同一目录
+@pytest.mark.parametrize(
+    "mid",
+    [
+        'import os\nos.chdir("sub")\n',
+        "from os import chdir\nchdir('sub')\n",
+        "import contextlib\nwith contextlib.chdir('sub'):\n    pass\n",
+    ],
+    ids=["os_chdir", "from_import", "contextlib_chdir"],
+)
+def test_a_cwd_change_keeps_cwd_relative_readbacks_out_of_native(mid):
+    src = MPL + 'plt.savefig("x.png")\n' + mid + 'open("x.png", "rb").read()\n'
+    route = _route(src)
+    assert route.execution == "safe" and route.confidence == runroute.CONFIDENCE_MEDIUM, route
+
+
+# ---- 路径规范化保留文件系统语义（Codex #1034 r4283860490）
+@pytest.mark.skipif(os.name == "nt", reason="Windows 上反斜杠就是分隔符")
+def test_a_backslash_is_a_filename_character_on_posix():
+    route = _route(MPL + 'plt.savefig(r"a\\b.png")\nopen("a/b.png", "rb").read()\n')
+    assert route.execution == "safe", route
+
+
+def test_a_dotdot_component_is_not_folded_through_a_possible_symlink():
+    route = _route(MPL + 'plt.savefig("link/../x.png")\nopen("x.png", "rb").read()\n')
+    assert route.execution == "safe", route
+
+
+def test_path_parent_still_folds():
+    src = (
+        MPL
+        + 'from pathlib import Path\np = Path("out/sub/x.png")\n'
+        + 'plt.savefig(p.parent / "y.png")\nopen("out/sub/y.png", "rb").read()\n'
     )
     route = _route(src)
     assert route.execution == "native" and route.reason == runroute.REASON_SAVEFIG_READBACK, route
