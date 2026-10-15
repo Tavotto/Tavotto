@@ -236,6 +236,37 @@ describe('素材抽屉的搜索框按「图 + 不支持的文件 + 脚本」合�
     load.mockRestore()
   })
 
+  it('脚本清单加载中：已知的图有 8 张直接显示；只有 2 张仍等待', async () => {
+    useScriptLibraryStore.setState({ loaded: false, loading: true, error: null, view: null })
+    const load = vi.spyOn(useScriptLibraryStore.getState(), 'load').mockImplementation(async () => null as never)
+    panels(8)
+    await mount(<AssetBrowser />)
+    expect(searchBox(), '8 张图、清单加载中').not.toBeNull()
+    await act(async () => root.unmount())
+    host.remove()
+    panels(2)
+    await mount(<AssetBrowser />)
+    expect(searchBox(), '2 张图、清单加载中').toBeNull()
+    load.mockRestore()
+  })
+
+  it('项目 A 的清单取失败后切到 B：load 会再被调用一次（effect 依赖项目代际）', async () => {
+    panels(2)
+    useScriptLibraryStore.setState({ loaded: false, loading: false, error: null, view: null })
+    const load = vi.spyOn(useScriptLibraryStore.getState(), 'load').mockImplementation(async () => {
+      useScriptLibraryStore.setState({ error: 'boom' }) // A：失败，loaded 仍是 false
+      return null as never
+    })
+    await mount(<AssetBrowser />)
+    await act(async () => {})
+    expect(load).toHaveBeenCalledTimes(1)
+    // 切到 B：store 清空（loaded 前后都是 false）
+    await act(async () => useScriptLibraryStore.getState().clear())
+    await act(async () => {})
+    expect(load).toHaveBeenCalledTimes(2)
+    load.mockRestore()
+  })
+
   it('整个加载过程中搜索框不会先出现再消失（小项目：从头到尾都不出现）', async () => {
     panels(2)
     useScriptLibraryStore.setState({ loaded: false, loading: false, error: null, view: null })

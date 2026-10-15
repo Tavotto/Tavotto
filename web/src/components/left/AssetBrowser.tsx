@@ -156,6 +156,7 @@ export function AssetBrowser() {
   const objects = useDocumentStore((s) => s.doc.objects)
   const scriptCount = useScriptLibraryStore((s) => s.view?.all_scripts?.length ?? 0)
   const scriptsLoaded = useScriptLibraryStore((s) => s.loaded)
+  const scriptsGeneration = useScriptLibraryStore((s) => s.generation)
   // 取失败（load 结束、没有清单）：脚本数是「不知道」，宁可摆搜索框。还没取到（含刚挂载、已触发未返回）则先不摆——
   // 先出现再收回会把页面推来推去；取得很快，不必为这一小段预留位置
   const scriptsFailed = useScriptLibraryStore((s) => !s.loaded && !s.loading && s.error !== null)
@@ -196,7 +197,8 @@ export function AssetBrowser() {
   // 换项目又会清空清单——不取的话 scriptCount 会一直是 0，把长脚本列表唯一的搜索入口藏掉（Codex #1110 P2）
   useEffect(() => {
     if (!scriptsLoaded) void useScriptLibraryStore.getState().load()
-  }, [scriptsLoaded])
+    // 代际进依赖：A 项目取失败后切到 B，`loaded` 前后都是 false，只靠它 effect 不会重跑
+  }, [scriptsLoaded, scriptsGeneration])
 
   // runtime 素材清单（只读端点）：面板挂载时取一次，之后靠 SSE 与 probe
   // 成功的副作用刷新
@@ -424,7 +426,9 @@ export function AssetBrowser() {
         {/* 条目少于 6 个时不显示搜索框（有搜索词时保留）。这个框同时过滤图、用不了的文件和下面的脚本区，
             所以阈值按三者合计算——图少脚本多的项目里它是长脚本列表唯一的搜索入口（Codex #1110 P2） */}
         {/* 脚本清单：加载中先不摆（结果出来再定，不先出现再收回）；取失败是「不知道」不是 0，摆出来，不藏掉唯一的入口 */}
-        {(scriptsFailed ||
+        {/* 已知的图 + 不支持的文件自己就 ≥ 6：不必等脚本清单（/api/registry 慢或挂住时也不藏） */}
+        {(total + unsupported.length >= SEARCH_MIN_ITEMS ||
+          scriptsFailed ||
           (scriptsLoaded && total + unsupported.length + scriptCount >= SEARCH_MIN_ITEMS) ||
           query !== '') && (
           <SearchInput
