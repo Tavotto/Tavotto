@@ -25,6 +25,7 @@ pub const CHROME_MENU_BUTTON: &str = "menu-button";
 /// 主窗口进 / 出全屏时壳发给页面的事件，载荷 `{fullscreen: bool}`。**事件名与
 /// `web/src/lib/desktop.ts` 的 `FULLSCREEN_EVENT` 严格同源**（`tests/test_desktop_window_chrome.py`）。
 /// 只有 macOS 发：全屏时红绿灯随系统标题栏一起收起，页面顶栏左侧让给它们的那段就不该再留着。
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 pub const FULLSCREEN_EVENT: &str = "tavotto:fullscreen";
 
 /// 记住上一次告诉页面的全屏状态：`Resized` 一天到晚在发（拖边框、缩放），只有真变了才通知。
@@ -33,6 +34,7 @@ pub struct FullscreenTracker(std::sync::atomic::AtomicBool);
 
 impl FullscreenTracker {
     /// 记下当前状态；与上次不同返回 `true`（该发事件了）。
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     pub fn update(&self, now: bool) -> bool {
         self.0.swap(now, std::sync::atomic::Ordering::SeqCst) != now
     }
@@ -45,6 +47,7 @@ impl FullscreenTracker {
 }
 
 /// `NSWindow` 的全屏通知（`fullscreen_observer.rs`）。
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FullscreenPhase {
     WillEnter,
@@ -55,6 +58,7 @@ pub enum FullscreenPhase {
 
 /// 每条通知该告诉页面什么。判据：**红绿灯在屏上时，绝不收回让位的那段**——
 /// 进入动画期间红绿灯还在（不发，等 did-enter 再收）；退出一开始红绿灯就要回来（立刻恢复）。
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 pub const fn phase_verdict(phase: FullscreenPhase) -> Option<bool> {
     match phase {
         FullscreenPhase::WillEnter => None,
@@ -65,6 +69,7 @@ pub const fn phase_verdict(phase: FullscreenPhase) -> Option<bool> {
 
 /// `Resized` + `is_fullscreen()` 这条兜底能不能报这个状态。原生观察者在位时只许报 `false`：
 /// tao 退出动画期间仍说「在全屏」，让它报 `true` 会把 will-exit 发出的 `false` 顶回去。
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 pub const fn resize_may_report(observer_live: bool, fullscreen: bool) -> bool {
     !observer_live || !fullscreen
 }
