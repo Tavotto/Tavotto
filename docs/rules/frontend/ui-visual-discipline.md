@@ -94,9 +94,10 @@ Document 字体（Times）与 UI 字体严格分离。
 
 公共 primitive 只在 `components/ui/`：Button / IconButton（长得像按钮的 `<a href>` 用 `ui/buttonClass` 取同一份外观，不手写按钮类名）、TextInput（框内 `suffix`）、
 NumberField（框内 `unit`）、Select、Checkbox、Radio、Toggle、Badge、Kbd、Tabs（视图）、`listRowClass`、
-TreeRow（`treeIndent` / `TreeChevron` / `TreeIcon` / `TreeCount`；键位只有 `ui/treeKeys` 一份，焦点环内凹 `focus-ring-inset`）、`ResizeHandle`（抽屉 / 栏宽度把手：双击复位、拖动中 Esc 回滚、键盘步进 + Home/End）、SearchInput、Notice、StatusPill、Card、
+TreeRow（`treeIndent` / `TreeChevron` / `TreeIcon` / `TreeCount`）、SearchInput、Notice、StatusPill、Card、
 FormSection / FieldGroup、RowMenu、Section / Disclosure / Details、Dialog、Popover、Menu、Tooltip、Segmented（取值）、StepSlider、
 EmptyState。**同类控件出现第二套实现先删第二套，不给新写法开豁免。**
+树的键位只有 `ui/treeKeys` 一份、列表行焦点环内凹 `focus-ring-inset`；抽屉 / 栏的宽度把手只有 `ui/ResizeHandle`（双击复位、拖动中 Esc 回滚、键盘步进 + Home/End）。
 跨区域的语义图标在 `ui/semanticIcons.ts`（「可编辑的图」= `EditableFigureIcon`，左轨 / 图层
 角标 / 素材卡 / 元素树空态从同一处取）；角色图标在 `inspector/roles/roleIcons.ts`。
 图内元素的**归属**（谁挂在谁下面、面包屑里子图与元素之间那一级）只有
