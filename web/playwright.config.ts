@@ -94,10 +94,10 @@ export default defineConfig({
         // 准备引导卡（T13b）：英文文案同样一句话、一个主按钮，可达名与布局在英文下照样成立
         'preparation-card-en.spec.ts',
         'inspector-overflow.spec.ts',
-        // 同步修改 → 标准写回窗口（ADR 0037 末节）：语言无关写法，两种语言各走一遍
-        'sync-overrides.spec.ts',
         // 导出检查的计数芯片与逐条清单（2026-10-16 精修 03）：语言无关写法，英文标签更长，两种语言各量一遍
         'export-checks.spec.ts',
+        // 同步修改 → 标准写回窗口（ADR 0037 末节）：语言无关写法，两种语言各走一遍
+        'sync-overrides.spec.ts',
       ],
     },
   ],
