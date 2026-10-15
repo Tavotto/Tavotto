@@ -171,6 +171,9 @@ import { dirTail } from "@/lib/pathDisplay";
 const BlockingIcon = SEVERITY_ICON.error;
 
 /** 本对话框的文案都在 `dialogs:export.*` 下 */
+/** 导出终局 toast 的主人：重开对话框 / 新一轮开始时撤掉 */
+const EXPORT_STATUS_OWNER = "export.result";
+
 const ex = (key: string, values?: Record<string, unknown>) =>
   translate(`export.${key}`, { ns: "dialogs", ...(values ?? {}) });
 
@@ -886,30 +889,57 @@ export function ExportDialog() {
    */
   const originalSelectable = figures.length > 0;
 
-  /** 导出完成时报一次状态。**只在终局报一次**，不在每次进度推送上报 */
+  /**
+   * 导出终局报一次状态。**只在终局报一次**（作业 + 终态为键，重复快照不再报），不在每次进度推送上报。
+   * 对话框开着（没被设置 / 样式压住）时结果就在眼前的结果块里，不再弹第二份；关着的时候才走通知轨——
+   * 失败 / 部分完成 / 等你决定 / 作业丢失带「查看」，点了重开对话框看结果，不自己消失（导出关窗不取消作业，
+   * 否则用户以为已经导出了）。
+   */
   const announced = useRef<string | null>(null);
+  const resultVisible = open && !covered;
   useEffect(() => {
-    if (!job || running) return;
-    if (announced.current === job.job_id) return;
-    announced.current = job.job_id;
+    if (!job) return;
+    if (running) {
+      useUiStore.getState().clearStatusOwnedBy(EXPORT_STATUS_OWNER);
+      return;
+    }
+    const key = `${job.job_id}:${job.status}`;
+    if (announced.current === key) return;
+    announced.current = key;
+    if (resultVisible) return;
+    const ui = useUiStore.getState();
+    const view = {
+      label: msg("export.viewResult", undefined, "dialogs"),
+      run: () => {
+        useUiStore.getState().clearStatusOwnedBy(EXPORT_STATUS_OWNER);
+        useUiStore.getState().setExportOpen(true);
+      },
+    };
+    const owner = { owner: EXPORT_STATUS_OWNER, action: view };
     const done = job.outputs.filter((o) => o.status === "done" && o.name);
     if (job.status === "done" && done.length) {
-      useUiStore
-        .getState()
-        .setStatus(
-          msg(
-            "export.exported",
-            { files: done.map((o) => o.name).join("、") },
-            "dialogs",
-          ),
-          "done",
-        );
+      ui.setStatus(
+        msg("export.exported", { files: done.map((o) => o.name).join("、") }, "dialogs"),
+        "done",
+        { owner: EXPORT_STATUS_OWNER },
+      );
     } else if (job.status === "cancelled") {
-      useUiStore
-        .getState()
-        .setStatus(msg("export.cancelled", undefined, "dialogs"), "info");
+      ui.setStatus(msg("export.cancelled", undefined, "dialogs"), "info", { owner: EXPORT_STATUS_OWNER });
+    } else if (job.status === "failed") {
+      ui.setStatus(msg("export.toast.failed", undefined, "dialogs"), "error", owner);
+    } else if (job.status === "partial") {
+      ui.setStatus(msg("export.toast.partial", undefined, "dialogs"), "error", owner);
+    } else if (job.status === "conflict") {
+      ui.setStatus(msg("export.toast.conflict", undefined, "dialogs"), "info", owner);
+    } else if (job.status === "unknown") {
+      ui.setStatus(msg("export.toast.unknown", undefined, "dialogs"), "error", owner);
     }
-  }, [job, running]);
+  }, [job, running, resultVisible]);
+
+  // 重新打开对话框 = 用户已经看到结果：撤掉关窗期间挂着的那条
+  useEffect(() => {
+    if (resultVisible) useUiStore.getState().clearStatusOwnedBy(EXPORT_STATUS_OWNER);
+  }, [resultVisible]);
 
   const conflicts = job?.status === "conflict" ? job.conflicts : [];
   const busy = running;

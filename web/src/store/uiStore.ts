@@ -243,6 +243,12 @@ function readPersisted(): Persisted {
  */
 export type StatusTone = 'info' | 'progress' | 'done' | 'error'
 
+/** toast 上的一个动作：标签是描述符（跟着语言走），`run` 由挂提示的那一处给 */
+export interface StatusAction {
+  label: UiMessage
+  run: () => void
+}
+
 export interface ConfirmRequest {
   title: UiMessage
   body: UiMessage
@@ -279,6 +285,11 @@ interface UiState extends Persisted {
    * （`clearStatusOwnedBy`），别的图、别的类别的提示碰不到它。
    */
   statusOwner: string | null
+  /**
+   * 这条 toast 的一个动作（可选，`setStatus` 的 `action`）：通知轨里的「查看」。带动作的 toast 是要用户回头处理的
+   * 一句话（导出关窗后失败 / 等你决定），所以**不自己消失**，和错误一样挂到用户点 × 或主人撤掉。
+   */
+  statusAction: StatusAction | null
   /** 正在双击编辑的文字对象 */
   editingTextId: string | null
   /** 进入裁剪模式的面板 */
@@ -443,7 +454,7 @@ interface UiState extends Persisted {
   setStatus: (
     msg: UiMessage | null,
     tone?: StatusTone,
-    opts?: { passive?: boolean; owner?: string },
+    opts?: { passive?: boolean; owner?: string; action?: StatusAction },
   ) => void
   /**
    * 撤掉**这个主人**挂上的 toast；此刻挂着的不是它的（换成了别的图 / 别的类别的提示、或已被关掉）
@@ -555,6 +566,7 @@ export const useUiStore = create<UiState>((set, get) => ({
   statusTone: 'info',
   statusPassive: false,
   statusOwner: null,
+  statusAction: null,
   editingTextId: null,
   cropTargetId: null,
   cropBaseline: null,
@@ -734,12 +746,13 @@ export const useUiStore = create<UiState>((set, get) => ({
       statusTone,
       statusPassive: passive,
       statusOwner: status ? (opts?.owner ?? null) : null,
+      statusAction: status ? (opts?.action ?? null) : null,
     })
     statusDismissTimer.cancel()
-    // 普通状态短暂即逝；错误保留到用户处理（toast 上有关闭键）
-    if (status && statusTone !== 'error') {
+    // 普通状态短暂即逝；错误与带动作的保留到用户处理（toast 上有关闭键）
+    if (status && statusTone !== 'error' && !opts?.action) {
       statusDismissTimer.start(STATUS_AUTO_DISMISS_MS, () =>
-        set({ status: null, statusTone: 'info', statusPassive: false, statusOwner: null }),
+        set({ status: null, statusTone: 'info', statusPassive: false, statusOwner: null, statusAction: null }),
       )
     }
   },
@@ -747,7 +760,7 @@ export const useUiStore = create<UiState>((set, get) => ({
   clearStatusOwnedBy: (owner) => {
     if (!get().status || get().statusOwner !== owner) return
     statusDismissTimer.cancel()
-    set({ status: null, statusTone: 'info', statusPassive: false, statusOwner: null })
+    set({ status: null, statusTone: 'info', statusPassive: false, statusOwner: null, statusAction: null })
   },
 
   // 不按值短路：值相同的新对象也要换上，否则后来者拿不到主人身份，`releaseIssueHover` 会认错人

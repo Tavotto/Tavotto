@@ -369,8 +369,15 @@ export default interface Resources {
       "targetNoFigure": "当前没有图",
       "tiffHint": "位图 · 无损压缩",
       "title": "导出",
+      "toast": {
+        "conflict": "导出停在这里，等你决定同名文件怎么处理。",
+        "failed": "导出失败，没有写出文件。",
+        "partial": "导出只完成了一部分，有文件没能写出。",
+        "unknown": "找不到这次导出的作业，文件可能已写出。"
+      },
       "transparent": "透明背景（仅 PNG / TIFF）",
       "transparentNotForRaster": "这张图是照原样导出的，背景由它自己决定。",
+      "viewResult": "查看",
       "warningsIntro": "以下修改未能应用到重渲染的图上，成图可能与画布不一致："
     },
     "layout": {

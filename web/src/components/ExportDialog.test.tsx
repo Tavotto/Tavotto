@@ -2016,6 +2016,91 @@ describe('visible export recovery', () => {
 })
 
 
+describe('导出终局通知：关窗期间的结果不能无声', () => {
+  afterEach(() => { resetExportState(); initI18n('zh-CN'); useUiStore.getState().setStatus(null) })
+  const input = () => ({ scope: 'canvas' as const, formats: ['pdf', 'png'], filename: 'Keep name', ppi: 600, documentId: 'd_export', doc: useDocumentStore.getState().doc })
+  const response = (body: unknown) => new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' } })
+  const base = { job_id: 'job-1', warnings: [], conflicts: [] as string[], error: null }
+  const failedOut = { format: 'png', name: null, url: null, bytes: null, dimensions: null, vector: false, status: 'failed', replaced: false, error: { code: 'format_failed', params: {}, recoverable: true } }
+  const doneOut = { format: 'pdf', name: 'a.pdf', url: '/exports/a.pdf', bytes: 1, dimensions: { px: null, mm: null }, vector: true, status: 'done', replaced: false, error: null }
+  const status = () => useUiStore.getState()
+
+  async function startThenClose(closeFirst = true) {
+    await setup(9)
+    globalThis.fetch = vi.fn(async () => response({ ...base, status: 'running', outputs: [] })) as typeof fetch
+    await act(async () => { await runExport(input()) })
+    if (closeFirst) await act(async () => { useUiStore.getState().setExportOpen(false) })
+  }
+  const finish = (job: Record<string, unknown>) => act(async () => { applyExportJob({ ...base, outputs: [], ...job } as never) })
+
+  it.each([
+    ['failed', { status: 'failed', outputs: [failedOut], error: { code: 'format_failed', params: {}, recoverable: true } }, 'error'],
+    ['partial', { status: 'partial', outputs: [doneOut, failedOut] }, 'error'],
+    ['conflict', { status: 'conflict', conflicts: ['a.pdf'] }, 'info'],
+    ['unknown', { status: 'unknown' }, 'error'],
+  ])('关着对话框时 %s：出一条带「查看」的通知，且不自己消失', async (_n, job, tone) => {
+    await startThenClose()
+    await finish(job)
+    const s = status()
+    expect(s.status).not.toBeNull()
+    expect(s.statusTone).toBe(tone)
+    expect(JSON.stringify(s.status)).toContain('export.toast.')
+    expect(s.statusAction).not.toBeNull()
+    expect(s.statusOwner).toBe('export.result')
+  })
+
+  it('「查看」重新打开对话框并撤掉这条通知', async () => {
+    await startThenClose()
+    await finish({ status: 'failed', outputs: [failedOut], error: { code: 'format_failed', params: {}, recoverable: true } })
+    await act(async () => { status().statusAction!.run() })
+    expect(status().exportOpen).toBe(true)
+    expect(status().status).toBeNull()
+  })
+
+  it('对话框开着时不再弹第二份（结果就在结果块里）', async () => {
+    await startThenClose(false)
+    expect(status().exportOpen).toBe(true)
+    await finish({ status: 'failed', outputs: [failedOut], error: { code: 'format_failed', params: {}, recoverable: true } })
+    expect(status().status).toBeNull()
+    // 成功也一样：开着就不弹
+    resetExportState()
+    await startThenClose(false)
+    await finish({ job_id: 'job-1', status: 'done', outputs: [doneOut] })
+    expect(status().status).toBeNull()
+  })
+
+  it('对照：关着对话框时成功 / 取消仍有一句话（不带动作、自己消失）', async () => {
+    await startThenClose()
+    await finish({ status: 'done', outputs: [doneOut] })
+    expect(JSON.stringify(status().status)).toContain('export.exported')
+    expect(status().statusAction).toBeNull()
+  })
+
+  it('重复的终态快照只通知一次：用户关掉后同一结果不会再冒出来', async () => {
+    await startThenClose()
+    const job = { status: 'failed', outputs: [failedOut], error: { code: 'format_failed', params: {}, recoverable: true } }
+    await finish(job)
+    expect(status().status).not.toBeNull()
+    await act(async () => { useUiStore.getState().setStatus(null) })
+    await finish(job)
+    await act(async () => { await refreshExportStatus() })
+    expect(status().status).toBeNull()
+    // 开了又关一次对话框（可见性变化会让通知逻辑重跑）：同一个结果仍然不再冒出来
+    await act(async () => { useUiStore.getState().setExportOpen(true) })
+    await act(async () => { useUiStore.getState().setExportOpen(false) })
+    expect(status().status).toBeNull()
+  })
+
+  it('重新打开对话框也撤掉关窗期间挂着的通知', async () => {
+    await startThenClose()
+    await finish({ status: 'conflict', conflicts: ['a.pdf'] })
+    expect(status().status).not.toBeNull()
+    await act(async () => { useUiStore.getState().setExportOpen(true) })
+    expect(status().status).toBeNull()
+  })
+})
+
+
 /**
  * 设计审计 §10.2 P0：进度 / 冲突 / 结果在可滚正文的最末尾（正文一长就在视口外），
  * 导完之后脚部还挂着「开始导出」——再点一下就撞上自己刚写出的同名文件。

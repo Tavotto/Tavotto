@@ -164,7 +164,14 @@
     "groupChecks": "Checks",
     "locationLabel": "Location",
     "locationDefault": "Project export folder",
-    "locationChange": "Change…"
+    "locationChange": "Change…",
+    "toast": {
+      "conflict": "Export is waiting for you to decide what to do with same-name files.",
+      "failed": "Export failed. No files were written.",
+      "partial": "Export finished only in part. Some files could not be written.",
+      "unknown": "Couldn't find this export job. Files may have been written."
+    },
+    "viewResult": "View"
   },
   "layout": {
     "conflict": "A layout named “{{name}}” already exists on disk, written by another window or tool.",

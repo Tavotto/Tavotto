@@ -162,7 +162,14 @@
     "groupChecks": "检查",
     "locationLabel": "位置",
     "locationDefault": "项目的导出目录",
-    "locationChange": "更改…"
+    "locationChange": "更改…",
+    "toast": {
+      "conflict": "导出停在这里，等你决定同名文件怎么处理。",
+      "failed": "导出失败，没有写出文件。",
+      "partial": "导出只完成了一部分，有文件没能写出。",
+      "unknown": "找不到这次导出的作业，文件可能已写出。"
+    },
+    "viewResult": "查看"
   },
   "layout": {
     "conflict": "磁盘上已存在名为「{{name}}」的排版，由其他窗口或外部工具写入。",
