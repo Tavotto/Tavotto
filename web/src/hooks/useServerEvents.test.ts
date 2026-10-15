@@ -48,6 +48,7 @@ import { renderKey, settleRenderFailureToast, useRenderStore } from '@/store/ren
 import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
+import { literal } from '@/i18n'
 import { useDepRepairStore } from '@/store/depRepairStore'
 import { handleServerEvent, reconcileInstalls } from './useServerEvents'
 
@@ -816,5 +817,32 @@ describe('reconcileInstalls（SSE 重连 / 页面恢复）', () => {
     reconcileInstalls()
     expect(refresh).toHaveBeenCalledTimes(1)
     useEnvStore.setState({ installing: false })
+  })
+})
+
+describe('project.error 的撤销', () => {
+  beforeEach(() => {
+    mockPanels.mockResolvedValue(panels([]))
+  })
+  it('后台刷新失败挂常驻提示（有主人）；registry.changed / assets.changed 说明恢复了就撤', () => {
+    useUiStore.getState().setStatus(null)
+    handleServerEvent(ev({ kind: 'project.error', pj: 'p1', code: 'no_such_code_xyz' }))
+    expect(useUiStore.getState().status).not.toBeNull()
+    expect(useUiStore.getState().statusOwner).toBe('project.error:p1')
+    handleServerEvent(ev({ kind: 'registry.changed', pj: 'p1', scripts: [] }))
+    expect(useUiStore.getState().status).toBeNull()
+
+    handleServerEvent(ev({ kind: 'project.error', pj: 'p1', code: 'no_such_code_xyz' }))
+    handleServerEvent(
+      ev({ kind: 'assets.changed', pj: 'p1', ids: [], added: [], removed: [], changed: [] }),
+    )
+    expect(useUiStore.getState().status).toBeNull()
+  })
+
+  it('对照：别的主人的 toast 不被恢复事件撤掉', () => {
+    useUiStore.getState().setStatus(literal('别的'), 'error', { owner: 'render.failed:p1:x' })
+    handleServerEvent(ev({ kind: 'registry.changed', pj: 'p1', scripts: [] }))
+    expect(useUiStore.getState().status).not.toBeNull()
+    useUiStore.getState().setStatus(null)
   })
 })

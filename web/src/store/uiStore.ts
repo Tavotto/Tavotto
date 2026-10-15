@@ -461,6 +461,11 @@ interface UiState extends Persisted {
    * 就什么都不做。主人是 `setStatus` 的 `owner`，由挂提示的那一处自己定（如 `renderFailureOwner`）。
    */
   clearStatusOwnedBy: (owner: string) => void
+  /**
+   * 撤掉主人以 `prefix` 开头的 toast（换项目时：`render.failed:` / `project.error:` 这些说的都是**旧项目**的事，
+   * 没人会再撤它们——事件按 pj 过滤，新项目收不到旧项目的 `render.done`）。
+   */
+  clearStatusOwnedByPrefix: (prefix: string) => void
   setEditingText: (id: string | null) => void
   setIssueHighlight: (v: { objectId: string | null; gid: string | null } | null) => void
   setIssueHover: (v: IssueHover | null) => void
@@ -759,6 +764,13 @@ export const useUiStore = create<UiState>((set, get) => ({
 
   clearStatusOwnedBy: (owner) => {
     if (!get().status || get().statusOwner !== owner) return
+    statusDismissTimer.cancel()
+    set({ status: null, statusTone: 'info', statusPassive: false, statusOwner: null, statusAction: null })
+  },
+
+  clearStatusOwnedByPrefix: (prefix) => {
+    const owner = get().statusOwner
+    if (!get().status || owner === null || !owner.startsWith(prefix)) return
     statusDismissTimer.cancel()
     set({ status: null, statusTone: 'info', statusPassive: false, statusOwner: null, statusAction: null })
   },

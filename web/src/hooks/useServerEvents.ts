@@ -42,6 +42,9 @@ const costHint = (cost: string): string =>
 
 export { renderFailureOwner }
 
+/** 「后台刷新失败」那条常驻提示的主人：按项目；刷新恢复（`registry.changed` / `assets.changed`）时撤 */
+export const projectErrorOwner = (pj: string | null | undefined) => `project.error:${pj ?? ''}`
+
 /**
  * 单条事件的处理。**导出是为了让用例驱动同一份判断**——与 `useEngineSync`
  * 导出 `syncEngine` 同一条纪律：经 `EventSource` 去测的话，测的是 jsdom 的
@@ -204,6 +207,8 @@ export function handleServerEvent(ev: ServerEvent) {
     }
 
     case 'assets.changed': {
+      // 后台刷新又成功了：先前「刷新失败」的常驻提示说的事不成立了
+      useUiStore.getState().clearStatusOwnedBy(projectErrorOwner(ev.pj))
       // 素材本身变了（脚本重新产出了 PDF / 用户在外面换了张图 / 删了一张）。
       // 刷新之后：`mtime` 换代 → 静态图片 URL 跟着换（`panelSrc` 带 `m=`），
       // 浏览器不会继续吃旧缓存；派生元数据（位图像素尺寸、cost）原地同步。
@@ -232,6 +237,8 @@ export function handleServerEvent(ev: ServerEvent) {
           ? msg(`backend.${ev.code}`, ev.params ?? {}, 'errors')
           : msg('status.projectBackgroundError', undefined, 'workspace'),
         'error',
+        // 有主人才能在恢复后撤（见 `registry.changed` / `assets.changed`）；同一项目的新错误照旧顶掉旧的
+        { owner: projectErrorOwner(ev.pj) },
       )
       break
     }
@@ -249,6 +256,7 @@ export function handleServerEvent(ev: ServerEvent) {
       break
 
     case 'registry.changed': {
+      useUiStore.getState().clearStatusOwnedBy(projectErrorOwner(ev.pj))
       // 注册表变了（本标签页 probe 成功 / 另一标签页登记 / 手工裁决 /
       // 外部编辑器新增或删除脚本）：脚本清单与 runtime 素材清单都要重取
       // ——但只重取**已经取过的**，没打开过素材面板的标签页不必为别人的
