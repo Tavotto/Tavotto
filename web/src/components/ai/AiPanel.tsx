@@ -29,13 +29,15 @@ import {
   type ManifestElement,
 } from '@/lib/api'
 import { cn, modKey } from '@/lib/utils'
-import { t as translate } from '@/i18n'
+import { msg, t as translate } from '@/i18n'
+import { DURATION, usePresence } from '@/lib/motion'
+import { currentProjectId } from '@/lib/session'
 import { engineLabel } from '@/components/inspector/roles/registry'
 import { isSessionOf, useAiStore, type AiScope, type AiSession } from '@/store/aiStore'
 import { useDocumentStore } from '@/store/documentStore'
 import { usePanelDisplayManifest } from '@/store/renderStore'
 import { useSelectionStore } from '@/store/selectionStore'
-import { useUiStore } from '@/store/uiStore'
+import { askConfirm, useUiStore } from '@/store/uiStore'
 import type { PanelObject } from '@/types/document'
 import { Button, IconButton } from '../ui/Button'
 import { EmptyState } from '../ui/EmptyState'
@@ -48,6 +50,7 @@ import { Select } from '../ui/Select'
 import { StepSlider } from '../ui/StepSlider'
 import { Tip } from '../ui/Tooltip'
 import { TaskHistory } from './TaskHistory'
+import { useAiDraft } from './useAiDraft'
 import { Turn } from './Transcript'
 
 export { TaskHistory }
@@ -251,9 +254,17 @@ function AssistantPanelBody() {
   const storedScope = useAiStore((s) => s.scope)
   const { panel, element, axes } = useAssistantTarget()
   const caps = useAiStore((s) => s.caps)
-  const [prompt, setPrompt] = useState('')
+  // 草稿绑定「项目 × 面板文件」，右栏切页签 / 刷新之后还在（ADR 0131；落盘只是缓存）
+  const { prompt, setPrompt, restored, tooLarge, clearIf } = useAiDraft(panel)
   const [error, setError] = useState<{ text: string; prompt: string; target: SendTarget; panelId: string } | null>(null)
-  const [sending, setSending] = useState(false)
+  // 已点发送、后端还没给会话 id 的提交活在 store 里：面板卸载重挂（切页签）它还在，
+  // 「在路上 / 已发出未确认 / 后端没收到」三态都从它派生
+  const submissions = useAiStore((s) => s.submissions)
+  const submission = panel
+    ? Object.values(submissions).find((x) => x.fileId === panel.fileId && x.project === currentProjectId())
+    : undefined
+  const sending = submission?.phase === 'sending'
+  const [checkNote, setCheckNote] = useState<'unreachable' | null>(null)
   const [historyOpen, setHistoryOpen] = useState(false)
   const scrollRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
@@ -312,7 +323,8 @@ function AssistantPanelBody() {
   // 一个可用的编码 Agent 都没有：**探测出结果之后**才这么说
   // （caps 还是 null 时是「正在检测」，那时不该把输入区锁上）
   const noAgent = caps !== null && usableAgents(caps).length === 0
-  const canSend = !!panel && !noAgent && !sending && !runningHere
+  // 有一条提交还没落定（在路上 / 未确认 / 没收到待重发）= 不许再发新的：未确认时后端可能已经在执行它
+  const canSend = !!panel && !noAgent && !submission && !runningHere
 
   // 原先每个 delta 都把视口拽回底部——往上翻看旧回答时等于不让人看。
   // 换了目标面板视作重新贴底。jsdom 里 scrollHeight 恒 0，gap 恒 0，一律贴底。
@@ -324,6 +336,8 @@ function AssistantPanelBody() {
     stick.current = near
     setDetached(!near)
   }
+  // 「回到底部」只有进场没有退场会在到底的那一帧硬消失：走 usePresence，退场播完再卸载
+  const scrollBtn = usePresence(detached && runningHere, DURATION.exit)
   const jumpToBottom = () => {
     const el = scrollRef.current
     if (el) el.scrollTop = el.scrollHeight
@@ -357,8 +371,8 @@ function AssistantPanelBody() {
   const send = async (override?: string, pinned?: SendTarget) => {
     const text = (override ?? prompt).trim()
     if (!text || !canSend || !panel) return
-    setSending(true)
     setError(null)
+    setCheckNote(null)
     // 自己发的消息一定要看见：不管刚才翻到哪，发出去就回到底部
     jumpToBottom()
     // 作用范围直接决定发给后端的元素上下文：整张图不带 gid，
@@ -371,7 +385,7 @@ function AssistantPanelBody() {
           ? { scope, gid: axes.gid, label: axes.label, target: axes.label }
           : { scope, gid: null, label: null, target: ai('scope.figure') })
     try {
-      await useAiStore.getState().start({
+      const outcome = await useAiStore.getState().start({
         prompt: text,
         fileId: panel.fileId,
         panelId: panel.id,
@@ -382,12 +396,45 @@ function AssistantPanelBody() {
         overrides: panel.overrides,
         canvas: useDocumentStore.getState().activeCanvasId,
       })
-      if (override == null) setPrompt('')
+      // 只有后端给出会话 id 才算送达、才清输入框；`unconfirmed` 时文本原样留着（面板进「已发出未确认」）
+      if (outcome === 'accepted' && override == null) clearIf(text)
     } catch (e) {
       setError({ text: backendErrorText(e), prompt: text, target: ctx, panelId: panel.id })
-    } finally {
-      setSending(false)
     }
+  }
+
+  /** 「已发出，尚未收到确认」时唯一的动作：问后端。只读，不会让任何东西被执行 */
+  const checkResult = async () => {
+    if (!submission) return
+    setCheckNote(null)
+    const text = submission.prompt
+    const out = await useAiStore.getState().queryRequest(submission.rid)
+    if (out === 'accepted') clearIf(text)
+    else if (out === 'unreachable') setCheckNote('unreachable')
+  }
+  /** 后端明确说没收到之后，用**同一个**请求 id 重发（后端按 id 去重，与迟到的原请求赛跑也不会双跑） */
+  const resendSame = async () => {
+    if (!submission) return
+    const text = submission.prompt
+    try {
+      const out = await useAiStore.getState().resend(submission.rid)
+      if (out === 'accepted') clearIf(text)
+    } catch (e) {
+      setError({ text: backendErrorText(e), prompt: text, target: submission.target, panelId: submission.panelId })
+    }
+  }
+  /** 失败会话的「重试」：原任务已经改过脚本（`changed`）时先让用户点头——静默重跑会在改过的脚本上再改一遍 */
+  const retrySession = async (t: AiSession) => {
+    if (t.changed) {
+      const ok = await askConfirm({
+        title: msg('panel.retryChangedTitle', undefined, 'ai'),
+        body: msg('panel.retryChangedBody', undefined, 'ai'),
+        confirmLabel: msg('panel.retryChangedConfirm', undefined, 'ai'),
+        danger: true,
+      })
+      if (!ok) return
+    }
+    void send(t.prompt, targetOf(t))
   }
 
   // 发送 ↔ 中止同一颗按钮、同一个位置（ChatGPT / Claude 的约定）：正在跑的时候它就是「中止」
@@ -448,7 +495,7 @@ function AssistantPanelBody() {
                   key={s.id}
                   session={s}
                   onResend={(text) => void send(text)}
-                  onRetry={(t) => void send(t.prompt, targetOf(t))}
+                  onRetry={(t) => void retrySession(t)}
                   canResend={canSend}
                   canRetry={canSend && s.panelId === panel?.id}
                 />
@@ -482,17 +529,18 @@ function AssistantPanelBody() {
           )}
         </div>
         {/* 往上翻着看、而新内容还在来：给一颗回到底部的钮（34px 毛玻璃圆）；到底了它自己消失 */}
-        {detached && runningHere && (
+        {scrollBtn.mounted && (
           <div
             className="pointer-events-none absolute inset-x-0 flex justify-center"
             style={{ bottom: 'calc(var(--composer-h, 0px) + 8px)' }}
           >
             <IconButton
               data-ai-scroll-bottom
+              data-state={scrollBtn.state}
               label={ai('panel.scrollToBottom')}
               iconSize="sm"
               side="top"
-              className="pointer-events-auto h-[34px] w-[34px] animate-pop-in bg-glass text-ink-2 shadow-pop backdrop-blur-lg hover:bg-glass hover:text-ink"
+              className="pointer-events-auto h-[34px] w-[34px] bg-glass text-ink-2 shadow-pop backdrop-blur-lg hover:bg-glass hover:text-ink data-[state=closed]:animate-pop-out data-[state=open]:animate-pop-in"
               onClick={jumpToBottom}
             >
               <ArrowDown size={ICON_SIZE.md} />
@@ -539,6 +587,46 @@ function AssistantPanelBody() {
               {error.text}
             </Notice>
           )}
+          {/* 已发出、后端还没确认：这条指令可能已经在改脚本。普通发送 / 重试一律禁用，只给「查询结果」 */}
+          {submission?.phase === 'unconfirmed' && (
+            <Notice
+              tone="warn"
+              data-ai-submission="unconfirmed"
+              className="mb-2"
+              title={ai('panel.unconfirmedTitle')}
+              action={
+                <Button data-ai-check variant="secondary" size="sm" onClick={() => void checkResult()}>
+                  {ai('panel.checkResult')}
+                </Button>
+              }
+            >
+              {checkNote === 'unreachable' ? ai('panel.checkUnreachable') : ai('panel.unconfirmedBody')}
+            </Notice>
+          )}
+          {/* 查过了，后端明确说没收到：这时才允许重发，而且用同一个请求 id */}
+          {submission?.phase === 'not_received' && (
+            <Notice
+              tone="neutral"
+              data-ai-submission="not_received"
+              className="mb-2"
+              title={ai('panel.notReceivedTitle')}
+              action={
+                <Button data-ai-resend-same variant="secondary" size="sm" onClick={() => void resendSame()}>
+                  {ai('panel.resendSame')}
+                </Button>
+              }
+            >
+              <span>{ai('panel.notReceivedBody')}</span>{' '}
+              <button
+                type="button"
+                data-ai-edit-resend
+                className="text-ink-2 underline underline-offset-2 outline-none hover:text-ink focus-visible:focus-ring"
+                onClick={() => useAiStore.getState().dismissSubmission(submission.rid)}
+              >
+                {ai('panel.editAndResend')}
+              </button>
+            </Notice>
+          )}
           {noAgent && (
             // 「没装 CLI」不是错误，用中性语气 + 一个可执行的下一步
             <Notice
@@ -553,6 +641,12 @@ function AssistantPanelBody() {
             >
               {ai('panel.noCli')}
             </Notice>
+          )}
+          {/* 草稿提示：安静的一行字，不是横条——不挤页面，打字或发送即消失 */}
+          {panel && (tooLarge || (restored && prompt !== '')) && (
+            <p data-ai-draft-note={tooLarge ? 'too-large' : 'restored'} className="mb-1.5 px-1 text-xs text-ink-3">
+              {tooLarge ? ai('panel.draftTooLong') : ai('panel.draftRestored')}
+            </p>
           )}
           {panel && (
             <ContextBand panel={panel} element={element} axes={axes} scope={scope} scopes={scopes} />
@@ -579,6 +673,8 @@ function AssistantPanelBody() {
               value={prompt}
               rows={1}
               disabled={!panel || noAgent}
+              // 提交还没落定时文字冻结：重发 / 查询用的就是发出去的那一份，不能在等待里被改成别的
+              readOnly={!!submission}
               placeholder={panel ? ai('panel.placeholder') : undefined}
               aria-label={ai('panel.inputAria')}
               onChange={(e) => setPrompt(e.target.value)}
@@ -609,7 +705,7 @@ function AssistantPanelBody() {
                   size="icon-sm"
                   data-ai-send={runningHere ? 'stop' : 'send'}
                   className="relative h-[26px] w-[26px]"
-                  disabled={!panel || noAgent || sending || (!runningHere && !prompt.trim())}
+                  disabled={!panel || noAgent || !!submission || (!runningHere && !prompt.trim())}
                   aria-busy={sending || runningHere || undefined}
                   onClick={runningHere ? stopRunning : () => send()}
                   aria-label={runningHere ? ai('panel.abort') : ai('panel.sendAria')}

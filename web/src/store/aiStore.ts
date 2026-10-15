@@ -21,7 +21,7 @@ import {
   type AiDeltaKind,
   type AiRefreshOutcome,
 } from '@/lib/api'
-import { clearSubmitted, markSubmitted, removeAccepted, type DraftTarget } from '@/lib/aiDraft'
+import type { DraftTarget } from '@/lib/aiDraft'
 
 export type AiStatus = 'running' | 'done' | 'failed' | 'timeout' | 'cancelled' | 'reverted'
 /** 改动作用范围：决定发给后端的上下文粒度（gid/label 怎么拼） */
@@ -199,6 +199,24 @@ let settledNotifier: ((p: DonePayload) => void) | null = null
 export function setAiSettledNotifier(fn: ((p: DonePayload) => void) | null): void {
   settledNotifier = fn
 }
+
+/**
+ * 提交账本的落盘（草稿记录里的 rid）。**注入而不是 import**：本 store 在 Codex 内嵌画布与 playground 的包里
+ * 也会被带进来（`projectStore` 切项目要 `clear()`），而那两个宿主没有助手面板，不得带上草稿模块
+ * （`lib/aiDraft.hosts.test.ts` 用 import 图钉住）。桌面 / 浏览器宿主在 `lib/aiDraftLedger.ts` 里注册。
+ */
+export interface SubmissionLedger {
+  markSubmitted: (project: string | null, fileId: string, text: string, rid: string, sent: DraftTarget) => void
+  clearSubmitted: (project: string | null, fileId: string, rid: string) => void
+  removeAccepted: (project: string | null, fileId: string, rid: string) => void
+}
+let ledger: SubmissionLedger | null = null
+export function setAiSubmissionLedger(l: SubmissionLedger | null): void {
+  ledger = l
+}
+const markSubmitted: SubmissionLedger['markSubmitted'] = (...a) => ledger?.markSubmitted(...a)
+const clearSubmitted: SubmissionLedger['clearSubmitted'] = (...a) => ledger?.clearSubmitted(...a)
+const removeAccepted: SubmissionLedger['removeAccepted'] = (...a) => ledger?.removeAccepted(...a)
 
 /** 请求 id：安全上下文里用 `randomUUID`，否则用 `getRandomValues` 拼 v4（后端只要求 `[A-Za-z0-9_-]{8,64}`） */
 export function newRequestId(): string {
