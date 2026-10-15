@@ -715,7 +715,9 @@ function autoSettleRestored(rid: string): void {
   if (n >= AUTO_SETTLE_MAX) return
   autoSettle.attempts.set(rid, n + 1)
   autoSettle.inflight.add(rid)
-  void settleFromSnapshot(rid).finally(() => autoSettle.inflight.delete(rid))
+  settleFromSnapshot(rid)
+    .catch(() => undefined) // 自动的后台收尾：任何意外都只是留在「未确认」，手动按钮兜底，不抛未处理的拒绝
+    .finally(() => autoSettle.inflight.delete(rid))
 }
 
 /**

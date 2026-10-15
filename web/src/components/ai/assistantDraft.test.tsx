@@ -114,6 +114,7 @@ beforeEach(async () => {
   setCurrentProjectId('pa')
   vi.mocked(aiRun).mockReset()
   vi.mocked(fetchAiRequest).mockReset()
+  vi.mocked(fetchAiRequest).mockRejectedValue(new TypeError('down')) // 默认读不到：还原出的未确认提交自动收尾时保持未确认（各用例按需改写）
   vi.mocked(fetchAiSession).mockReset()
   vi.mocked(fetchAiSession).mockRejectedValue(new ApiError('nf', 404, {})) // 后端明确没有详情：凭摘要往下走
   useUiStore.setState({ status: null, confirm: null, elementPanelId: null, selectedGids: [] } as never)
