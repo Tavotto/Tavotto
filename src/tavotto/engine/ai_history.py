@@ -167,22 +167,32 @@ _REQUEST_INDEX = (
 )
 
 
+def _add_column(con: sqlite3.Connection, ddl: str) -> None:
+    """补列。两个连接（两个服务进程，或同一进程的两个线程）同时迁移同一个库时，「先查有没有再 ALTER」不是原子的：
+    后到的那个会撞上 `duplicate column name`——列已经被对方补上了，这正是我们要的结果，吞掉；别的错照抛。"""
+    try:
+        con.execute(ddl)
+    except sqlite3.OperationalError as exc:
+        if "duplicate column name" not in str(exc):
+            raise
+
+
 def _migrate(con: sqlite3.Connection) -> None:
     have = {row["name"] for row in con.execute("PRAGMA table_info(sessions)")}
     for name, kind in _ADDED_COLUMNS.items():
         if name not in have:
-            con.execute(f"ALTER TABLE sessions ADD COLUMN {name} {kind}")
+            _add_column(con, f"ALTER TABLE sessions ADD COLUMN {name} {kind}")
     con.execute(_REQUEST_INDEX)
     # 草稿写入戳：旧表没有，补列（见 `put_draft` 的「旧戳不覆盖新戳」）
     if "stamp" not in {row["name"] for row in con.execute("PRAGMA table_info(ai_drafts)")}:
-        con.execute("ALTER TABLE ai_drafts ADD COLUMN stamp INTEGER NOT NULL DEFAULT 0")
+        _add_column(con, "ALTER TABLE ai_drafts ADD COLUMN stamp INTEGER NOT NULL DEFAULT 0")
     # 待确认账本按**脚本**也要查得到（发起它的面板可能已被删 / 换图）：`script` 是后补的列
     pend_cols = {row["name"] for row in con.execute("PRAGMA table_info(ai_pending)")}
     if "script" not in pend_cols:
-        con.execute("ALTER TABLE ai_pending ADD COLUMN script TEXT")
+        _add_column(con, "ALTER TABLE ai_pending ADD COLUMN script TEXT")
     # 提交时草稿的写入戳：确认之后「草稿在提交之后没被改过」按它判，不按文本比（trim / 规范化的差异无关）
     if "draft_stamp" not in pend_cols:
-        con.execute("ALTER TABLE ai_pending ADD COLUMN draft_stamp INTEGER")
+        _add_column(con, "ALTER TABLE ai_pending ADD COLUMN draft_stamp INTEGER")
     # 老库 / 本改动之前登记的会话：账本补齐（幂等）
     con.execute(
         "INSERT OR IGNORE INTO ai_requests (project, client_request_id, session, created_ms) "

@@ -571,3 +571,26 @@ def test_pending_text_over_the_shared_limit_is_413_like_a_draft(client, two):
         headers=H(a),
     )
     assert ok.status_code == 200
+
+
+def test_concurrent_first_connections_to_a_new_database_do_not_race_on_alter(tmp_path):
+    """两个服务进程（或线程）同时打开同一个还没迁移过的库：「先查列有没有再 ALTER」不是原子的，后到的撞
+    `duplicate column name`。窗口很窄，所以多轮、每轮一个全新的库。"""
+    import threading
+
+    errors: list[BaseException] = []
+    for rnd in range(150):
+        db = tmp_path / f"new{rnd}.sqlite3"
+        barrier = threading.Barrier(6)
+
+        def open_it(db=db):
+            barrier.wait()
+            try:
+                ai_history.get_draft("/p", "F", db_path=db)
+            except BaseException as exc:  # noqa: BLE001
+                errors.append(exc)
+
+        ts = [threading.Thread(target=open_it) for _ in range(6)]
+        [t.start() for t in ts]
+        [t.join() for t in ts]
+    assert errors == []
