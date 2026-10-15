@@ -604,8 +604,6 @@
     font-size: var(--text-sm);
     -webkit-font-smoothing: antialiased;
     text-rendering: optimizeLegibility;
-    /* 中西文之间自动留 1/8 em 空隙（CJK 与拉丁 / 数字相邻处）：中英混排的按钮、页签、说明不再字贴字 */
-    text-autospace: normal;
     overscroll-behavior: none;
   }
 
@@ -814,7 +812,12 @@
      type-meta     元数据 / 路径 / 计数    11px ink-3
      type-number   数值（输入框的值、只读读数）12px，系统字体 + 等宽数字（定义在文件末尾）
    --------------------------------------------------------------------------- */
+/* 中西文自动留 1/8 em 空隙（text-autospace）只给**散文与标签**的角色类开：display / heading / title / reading / section / body / caption。
+   不挂在 body 上——输入框、代码、脚本名 / 路径是字面数据，显示的字符数与复制出来的必须一致（「图A.py」不能显示成「图 A.py」），
+   也不能改变截断位置。control / number / meta 不开（控件值、读数、元数据常夹着单位与文件名）。
+   字面数据的兜底在文件末尾：无层规则压过任何工具类（`type-body font-mono` 也不会被带上）。 */
 @utility type-display {
+  text-autospace: normal;
   font-size: 24px;
   line-height: 30px;
   font-weight: 600;
@@ -822,6 +825,7 @@
   color: var(--color-ink);
 }
 @utility type-heading {
+  text-autospace: normal;
   font-size: 17px;
   line-height: 24px;
   font-weight: 600;
@@ -829,12 +833,14 @@
   color: var(--color-ink);
 }
 @utility type-title {
+  text-autospace: normal;
   font-size: var(--text-xl);
   line-height: var(--text-xl--line-height);
   font-weight: 600;
   color: var(--color-ink);
 }
 @utility type-reading {
+  text-autospace: normal;
   font-size: var(--text-base);
   line-height: 1.6;
   color: var(--color-ink);
@@ -842,12 +848,14 @@
   text-wrap: pretty;
 }
 @utility type-section {
+  text-autospace: normal;
   font-size: var(--text-sm);
   line-height: var(--text-sm--line-height);
   font-weight: 500;
   color: var(--color-ink);
 }
 @utility type-body {
+  text-autospace: normal;
   font-size: var(--text-sm);
   line-height: var(--text-sm--line-height);
   color: var(--color-ink);
@@ -860,6 +868,7 @@
 /* 说明文字：12 / 1.5 / ink-3（2026-10-07 设计审计 §2：11 → 12，ink-2 → ink-3——ink-2 拉深之后它留给标签，
    说明与 meta 同一档颜色、靠字号分开） */
 @utility type-caption {
+  text-autospace: normal;
   font-size: var(--text-sm);
   line-height: 1.5;
   color: var(--color-ink-3);
@@ -1070,4 +1079,17 @@
   --color-surface-hover: color-mix(in srgb, var(--color-paper-ink) 4%, transparent);
   --color-surface-active: color-mix(in srgb, var(--color-paper-ink) 8%, transparent);
   --color-selected: color-mix(in srgb, var(--color-paper-ink) 12%, transparent);
+}
+
+/* 字面数据不做中西文自动留白：输入框 / 代码 / 等宽（脚本名、路径、matplotlib 取值代号）。
+   写在所有 @layer 之外——无层声明压过 utilities 层的 `text-autospace: normal`，祖先上再开也不会传进来。 */
+input,
+textarea,
+[contenteditable='true'],
+pre,
+code,
+kbd,
+samp,
+.font-mono {
+  text-autospace: no-autospace;
 }
