@@ -154,7 +154,7 @@ export function AssetBrowser() {
   const recentlyUsed = useAssetStore((s) => s.recentlyUsed)
   const runtimeAssets = useRuntimeAssetStore((s) => s.assets)
   const objects = useDocumentStore((s) => s.doc.objects)
-  const scriptCount = useScriptLibraryStore((s) => s.view?.all_scripts.length ?? 0)
+  const scriptCount = useScriptLibraryStore((s) => s.view?.all_scripts?.length ?? 0)
 
   // 搜索词与筛选住在组件外（`store/assetBrowseStore`）：切左轨页签 / 收起抽屉
   // 会把这个组件整个卸掉，放在组件 state 里的输入就跟着没了
