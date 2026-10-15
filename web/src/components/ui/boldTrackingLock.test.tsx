@@ -6,7 +6,7 @@
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { useBoldTrackingLock } from './useBoldWidthLock'
+import { graphemeCount, useBoldTrackingLock } from './useBoldWidthLock'
 
 declare global {
   // eslint-disable-next-line no-var
@@ -64,7 +64,8 @@ beforeEach(() => {
     function (this: Range) {
       rangeCalls++
       const el = this.commonAncestorContainer as HTMLElement
-      const n = [...(el.textContent ?? '')].length
+      // 与浏览器一致：宽度与字距都按字素簇计
+      const n = graphemeCount(el.textContent ?? '')
       const perChar = el.style.fontWeight === '600' ? 6.2 : 6
       return { width: n * perChar + n * parseFloat(el.style.letterSpacing || '0') } as DOMRect
     }
@@ -75,6 +76,7 @@ afterEach(async () => {
   ;(Range.prototype as unknown as { getBoundingClientRect: unknown }).getBoundingClientRect = original
 })
 
+const n600 = (g: number) => g * 6.2
 const label = () => host.querySelector<HTMLElement>('[data-label]')!
 const render = (selected: boolean, text = '曲线 “Catalyst (k = 0.125 min⁻¹)”') =>
   act(async () => root.render(<Label text={text} selected={selected} />))
@@ -93,6 +95,15 @@ describe('useBoldTrackingLock', () => {
     expect(ls).toBeLessThan(0)
     // 600 的总宽 + 字距 × 字数 = 400 的总宽
     expect(n * 6.2 + n * ls).toBeCloseTo(n * 6, 5)
+  })
+
+  it('组合符 / ZWJ emoji：按字素簇数补偿，不按码点数（否则少补、截断点仍会挪）', async () => {
+    const text = '图例项 “Re\u0301sume\u0301 👨\u200d👩\u200d👧 data”'
+    expect([...text].length).toBeGreaterThan(graphemeCount(text))
+    await render(true, text)
+    const g = graphemeCount(text)
+    const ls = parseFloat(label().style.letterSpacing)
+    expect(n600(g) + g * ls).toBeCloseTo(g * 6, 5)
   })
 
   it('选中 → 取消选中：字距还原；换字后重新量', async () => {

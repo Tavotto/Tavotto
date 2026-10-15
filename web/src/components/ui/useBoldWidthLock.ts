@@ -33,6 +33,15 @@ if (typeof document !== 'undefined') {
  * 选中期间拖窄 / 拉宽抽屉会改变「放不放得下」，回调里只用缓存的 w400 / w600 对新的 clientWidth 重判，不重新量 Range。
  */
 let sharedRO: ResizeObserver | null = null
+// CSS 的 letter-spacing 加在每个排版字符单位之后——按字素簇数，不是码点数：
+// 「é」（e + 组合符）、ZWJ 家庭 emoji 是多个码点、一个单位，按码点除会少补，选中后截断点照样挪
+const graphemes = new Intl.Segmenter(undefined, { granularity: 'grapheme' })
+export function graphemeCount(text: string): number {
+  let n = 0
+  for (const _ of graphemes.segment(text)) n++
+  return n
+}
+
 const roCallbacks = new WeakMap<Element, () => void>()
 function watchSize(el: HTMLElement, recheck: () => void) {
   if (typeof ResizeObserver === 'undefined') return
@@ -72,7 +81,7 @@ export function useBoldTrackingLock<T extends HTMLElement>(active: boolean, text
     el.style.letterSpacing = ''
     // 每次都先撤掉上一次装的观察回调：它捕获的是旧文字的宽度，改名后留着，之后调抽屉宽会把旧字距套到新标签上
     unwatchSize(el)
-    const chars = [...text].length
+    const chars = graphemeCount(text)
     if (!active || !chars) return
     const cs = getComputedStyle(el)
     const key = `${cs.fontFamily}|${cs.fontSize}|${text}`
