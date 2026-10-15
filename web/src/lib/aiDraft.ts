@@ -42,11 +42,13 @@ export interface DraftTarget {
 export interface Draft {
   project: string
   fileId: string
+  /**
+   * **草稿文本，永远只是草稿**（输入框显示的就是它）。待确认提交的原文在 `pendings[].text` 里，是另一份状态：
+   * 两个标签页（A 发出待确认、B 之后存了更新的草稿）时，不能让提交原文冒充草稿盖掉输入框，
+   * 也不能让提交被确认时的清理动到草稿（Codex #1098）。没有草稿时为空串。
+   */
   text: string
-  /** 最老那条未落定提交的 rid / 目标（文本也取它提交时的原文）；没有未落定提交时缺省 */
-  rid?: string
-  sent?: DraftTarget
-  /** 全部未落定的提交；每条各自还原成「已发出未确认」 */
+  /** 全部未落定的提交（原文 + 目标）；每条各自还原成「已发出未确认」行，可查询，不进输入框 */
   pendings?: { rid: string; text: string; sent: DraftTarget }[]
 }
 
@@ -64,7 +66,7 @@ const byteLength = (text: string): number => {
 /** 现在就能判：写之前先给界面一个「过长」的答案，不等防抖与往返 */
 export const isDraftTooLarge = (text: string): boolean => byteLength(text) > DRAFT_MAX_BYTES
 
-/** 读：有未落定提交时文本是它提交时的原文（界面据此还原「已发出未确认」）；读不到 / 失败回 null */
+/** 读：草稿文本与未落定的提交是**两份独立的状态**，各自原样回来；两样都没有 / 失败回 null */
 export async function loadDraft(project: string | null, fileId: string | null): Promise<Draft | null> {
   if (!project || !fileId) return null
   let doc
@@ -74,10 +76,8 @@ export async function loadDraft(project: string | null, fileId: string | null): 
     return null
   }
   const pendings = (doc.pendings ?? []).map((p) => ({ rid: p.rid, text: p.text, sent: p.sent as DraftTarget }))
-  if (pendings.length > 0) {
-    return { project, fileId, text: pendings[0].text, rid: pendings[0].rid, sent: pendings[0].sent, pendings }
-  }
-  return doc.draft ? { project, fileId, text: doc.draft.text } : null
+  if (!doc.draft && pendings.length === 0) return null
+  return { project, fileId, text: doc.draft?.text ?? '', ...(pendings.length ? { pendings } : {}) }
 }
 
 /** 写草稿**文本**（全文覆盖）。`keepalive`：pagehide / 卸载时的冲刷 */

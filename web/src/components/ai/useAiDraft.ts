@@ -161,8 +161,7 @@ export function useAiDraft(panel: PanelObject | null) {
       void loadDraft(cur.project, cur.fileId).then((d) => {
         if (token !== loadToken.current || latest.current.dirty) return
         const text = d?.text ?? ''
-        // 已有未落定的提交时文本是冻结的，不被另一个标签页的新稿换掉
-        if (d?.pendings?.length || text === latest.current.text) return
+        if (text === latest.current.text) return
         latest.current.text = text
         setPromptState(text)
         setRestored(false)

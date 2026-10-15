@@ -116,10 +116,12 @@ describe('账本按 rid 一条，删除带条件（两个标签页）', () => {
     expect(await loadDraft('pj', 'F')).toBeNull()
   })
 
-  it('有账本时读到的是提交时的原文 + rid，不是 B 的新稿（未确认态重发的就是那一份）', async () => {
+  it('草稿文本与待确认原文是两份独立状态：读回来各是各的（待确认重发用的是账本里那一份）', async () => {
     await markSubmitted('pj', 'F', 'A 发出去的话', 'rid-aaaaaaaa', T)
     await saveDraft('pj', 'F', 'B 后来写的话')
-    expect(await loadDraft('pj', 'F')).toMatchObject({ text: 'A 发出去的话', rid: 'rid-aaaaaaaa', sent: T })
+    const d = await loadDraft('pj', 'F')
+    expect(d?.text).toBe('B 后来写的话') // 草稿文本永远是草稿
+    expect(d?.pendings).toEqual([{ rid: 'rid-aaaaaaaa', text: 'A 发出去的话', sent: T }]) // 待确认原文是另一份
   })
 
   it('两个标签页各自的 rid 并存；一边被拒绝只清自己那条', async () => {

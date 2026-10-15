@@ -621,6 +621,10 @@ function AssistantPanelBody() {
                 : sourceGone
                   ? ai('panel.unconfirmedGoneBody')
                   : ai('panel.unconfirmedBody')}
+              {/* 待确认的那条原文在这一行里展示（不进输入框——输入框永远是草稿）：重发 / 查询用的就是它 */}
+              <span data-ai-submission-text className="mt-0.5 line-clamp-2 block break-words text-ink-3">
+                {submission.prompt}
+              </span>
             </Notice>
           )}
           {/* 查过了，后端明确说没收到：这时才允许重发，而且用同一个请求 id */}
@@ -693,8 +697,6 @@ function AssistantPanelBody() {
               value={prompt}
               rows={1}
               disabled={!panel || noAgent}
-              // 提交还没落定时文字冻结：重发 / 查询用的就是发出去的那一份，不能在等待里被改成别的
-              readOnly={!!submission}
               placeholder={panel ? ai('panel.placeholder') : undefined}
               aria-label={ai('panel.inputAria')}
               onChange={(e) => setPrompt(e.target.value)}

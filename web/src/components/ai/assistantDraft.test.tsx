@@ -275,7 +275,7 @@ describe('已发出未确认：不能盲目重发', () => {
     await settle()
   }
 
-  it('超时/断网后：出「查询结果」，没有普通重试；发送钮禁用、输入框只读、草稿保留', async () => {
+  it('超时/断网后：出「查询结果」，没有普通重试；发送钮禁用；待确认的原文在那一行里、输入框仍是草稿', async () => {
     await mount()
     await sendIt()
     expect(q('[data-ai-submission="unconfirmed"]')).toBeTruthy()
@@ -283,8 +283,8 @@ describe('已发出未确认：不能盲目重发', () => {
     expect(q('[data-ai-retry]')).toBeNull()
     expect(q('[data-ai-error="send"]')).toBeNull() // 不是「发送失败」
     expect(q<HTMLButtonElement>('[data-ai-send]')!.disabled).toBe(true)
-    expect(input().readOnly).toBe(true)
-    expect(input().value).toBe('把图例移到左上角')
+    expect(q('[data-ai-submission-text]')?.textContent).toBe('把图例移到左上角') // 待确认的那条在行里展示
+    expect(input().value).toBe('把图例移到左上角') // 草稿还在（它是另一份状态）
     expect(aiRun).toHaveBeenCalledTimes(1)
     // ⌘↵ 也发不出去
     await act(async () => {
@@ -297,8 +297,41 @@ describe('已发出未确认：不能盲目重发', () => {
     be.pendings.set('pa\u0000Fig1.pdf', [{ rid: 'rid-restore-0001', text: '加粗线条', sent: SENT }])
     await mount()
     expect(q('[data-ai-submission="unconfirmed"]')).toBeTruthy()
-    expect(input().value).toBe('加粗线条')
+    expect(q('[data-ai-submission-text]')?.textContent).toBe('加粗线条') // 待确认原文在行里
+    expect(input().value).toBe('') // 没有草稿 = 输入框是空的（待确认原文不冒充草稿）
     expect(q<HTMLButtonElement>('[data-ai-send]')!.disabled).toBe(true)
+  })
+
+  it('两个标签页：A 待确认、B 之后存了更新的草稿——重载后输入框是 B；A 被确认后仍是 B；再按键保存的是 B + 新字符', async () => {
+    // 标签页 A：点发送（账本里是 A 的原文）；标签页 B：随后存了更新的未发草稿
+    be.pendings.set('pa\u0000Fig1.pdf', [{ rid: 'rid-two-tabs-001', text: 'A 发出去的话', sent: SENT, script: 'p1.py' }])
+    be.put('pa', 'Fig1.pdf', 'B 之后写的新草稿')
+    await mount()
+    expect(input().value).toBe('B 之后写的新草稿') // 对照：旧实现在这里用 A 覆盖了输入框
+    expect(q('[data-ai-submission-text]')?.textContent).toBe('A 发出去的话')
+    // A 被查询到、已被后端接受
+    vi.mocked(fetchAiRequest).mockResolvedValue({ session: 's-5', status: 'running', changed: false, script: 'p1.py' })
+    await click(q('[data-ai-check]'))
+    await settle()
+    expect(q('[data-ai-submission]')).toBeNull()
+    expect(input().value).toBe('B 之后写的新草稿') // 确认只清待确认，不碰草稿
+    expect(be.draft('pa', 'Fig1.pdf')).toBe('B 之后写的新草稿') // 后端也保留了 B
+    // 再按一个键：保存的是 B + 新字符，不是被覆盖的空 / A
+    await typeText('B 之后写的新草稿！')
+    await act(async () => window.dispatchEvent(new Event('pagehide')))
+    await settle()
+    expect(be.draft('pa', 'Fig1.pdf')).toBe('B 之后写的新草稿！')
+  })
+
+  it('待确认期间输入框可编辑（草稿是草稿）；确认后只有「仍等于提交原文」才清输入框', async () => {
+    await mount()
+    await sendIt('同一句话')
+    expect(input().readOnly).toBe(false)
+    await typeText('同一句话，又补了几个字') // 用户在等待里继续写
+    vi.mocked(fetchAiRequest).mockResolvedValue({ session: 's-6', status: 'running', changed: false, script: 'p1.py' })
+    await click(q('[data-ai-check]'))
+    await settle()
+    expect(input().value).toBe('同一句话，又补了几个字') // 对照：旧的 clearIf 只比本地文本，这里不等所以不清
   })
 
   it('查询：后端没收到 → 出「重新发送」，用【同一个】rid；成功后清输入框与草稿', async () => {

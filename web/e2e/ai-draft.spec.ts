@@ -123,14 +123,14 @@ test('未确认：请求没到后端 → 只有「查询结果」；查到没收
   await page.locator('[data-ai-input]').fill(prompt)
   await page.locator('[data-ai-send="send"]').click()
 
-  // 已发出未确认：不是「发送失败」，没有普通重试，发送钮禁用，输入框只读
+  // 已发出未确认：不是「发送失败」，没有普通重试，发送钮禁用；待确认原文在那一行里
   const unconfirmed = page.locator('[data-ai-submission="unconfirmed"]')
   await expect(unconfirmed).toBeVisible()
   await expect(page.locator('[data-ai-check]')).toBeVisible()
   await expect(page.locator('[data-ai-retry]')).toHaveCount(0)
   await expect(page.locator('[data-ai-error="send"]')).toHaveCount(0)
   await expect(page.locator('[data-ai-send]')).toBeDisabled()
-  await expect(page.locator('[data-ai-input]')).toHaveAttribute('readonly', '')
+  await expect(page.locator('[data-ai-submission-text]')).toHaveText(prompt)
   expect(runRids).toHaveLength(1)
 
   // 刷新之后仍是「已发出未确认」，不会变回一条可以普通重发的草稿
