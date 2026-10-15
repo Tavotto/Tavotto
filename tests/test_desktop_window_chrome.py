@@ -166,3 +166,12 @@ def test_fullscreen_event_command_and_acl_are_one_contract():
         assert f"NSWindow{name}FullScreenNotification" in obs, name
     assert "fullscreen_observer::remove()" in code
     assert "fullscreen_observer::install(" in code
+    # 去重底账要与页面拿到的初值一致：窗口被直接恢复成全屏时底账若还是默认 false，第一次退出全屏的
+    # false 会被当成「没变」吞掉，顶栏卡在全屏态。回读命令与启动时都把底账记成真实状态。
+    head = code.index("fn current_fullscreen(")
+    cur = _bracket_body(code, code.index("{", code.index(")", head)))
+    assert re.search(r"fullscreen\s*\.update\(", cur), "current_fullscreen 回读的值要同步进去重底账"
+    install_at = code.index("fullscreen_observer::install(")
+    assert re.search(r"fullscreen\s*\.update\(", code[install_at : install_at + 600]), (
+        "启动时按真实全屏状态给底账起步"
+    )

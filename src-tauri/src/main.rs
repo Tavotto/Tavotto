@@ -1424,7 +1424,13 @@ fn current_engine_exit(
 #[tauri::command]
 fn current_fullscreen(window: tauri::WebviewWindow) -> Result<bool, String> {
     only_main_window(&window)?;
-    Ok(cfg!(target_os = "macos") && window.is_fullscreen().unwrap_or(false))
+    let now = cfg!(target_os = "macos") && window.is_fullscreen().unwrap_or(false);
+    // 页面拿到的就是这个值：去重的底账也记成它。否则窗口状态插件直接恢复成全屏时底账还是默认
+    // false，第一次退出全屏的 will / did-exit 报 false 会被当成「没变」吞掉，顶栏卡在全屏态。
+    if let Some(state) = window.app_handle().try_state::<AppState>() {
+        state.fullscreen.update(now);
+    }
+    Ok(now)
 }
 
 /// 告诉主窗口的页面全屏状态；`FullscreenTracker` 去重，真变了才发 `tavotto:fullscreen`。
@@ -1876,6 +1882,13 @@ fn main() {
                 // 全屏的原生信号（红绿灯回来之前就要恢复占位）；装不上则 Resized 兜底全权负责
                 if let Ok(ns_window) = win.ns_window() {
                     fullscreen_observer::install(ns_window, handle.clone());
+                }
+                // 窗口状态插件可能已把它直接恢复成全屏（发生在 build() 里、观察者装上之前）：
+                // 底账按此刻的真实状态起步，不发事件（页面的初值靠 `current_fullscreen` 回读）
+                if let Some(state) = handle.try_state::<AppState>() {
+                    state
+                        .fullscreen
+                        .update(win.is_fullscreen().unwrap_or(false));
                 }
             }
             let _ = win.set_focus();
