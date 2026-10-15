@@ -578,7 +578,9 @@ def test_api_ai_run_wires_the_backend_refresh(client, tmp_path, monkeypatch, fak
     不看 agent 是否真的装着（那是另一批用例的事）。"""
     import inspect
 
-    src = inspect.getsource(m.api_ai_run)
+    src = inspect.getsource(
+        m._ai_run_impl
+    )  # 路由函数只是包了一层「拒绝时后端删账本行」，真身在 _ai_run_impl
     assert "on_changed=" in src and "_after_ai_change(ctx, script)" in src
     # 老的 `str(require_project())` 换成了 ctx.path：同一个 ctx 既给 run 也给刷新
     assert "str(ctx.path)" in src
