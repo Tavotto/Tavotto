@@ -305,6 +305,33 @@ def _option_path(argv: list[str], flag: str) -> Path | None:
     return None
 
 
+_PATH_OPTIONS = ("--out", "--summary", "--baseline", "--json")
+
+
+def _path_options_ambiguous(argv: list[str]) -> bool:
+    """路径类选项出现超过一次（含 --opt=val 与 --opt val 混用）即视为有歧义。
+
+    手写扫描取第一次出现，argparse 取最后一次；重复时二者会指向不同文件。
+    只数 `--` 之前的 token，与 _option_path 的终止符语义一致。
+    """
+    head = argv[: argv.index("--")] if "--" in argv else argv
+    for flag in _PATH_OPTIONS:
+        hits = sum(1 for t in head if t == flag or t.startswith(flag + "="))
+        if hits > 1:
+            return True
+    return False
+
+
+class _SingleUse(argparse.Action):
+    """路径类选项只允许出现一次，正常解析与失败后的恢复扫描语义一致。"""
+
+    def __call__(self, parser, namespace, values, option_string=None):
+        if getattr(namespace, f"_seen_{self.dest}", False):
+            parser.error(f"{option_string} may be given only once")
+        setattr(namespace, f"_seen_{self.dest}", True)
+        setattr(namespace, self.dest, values)
+
+
 def _same_report_path(a: Path, b: Path) -> bool:
     """正规化路径 + 硬链接同 inode：两者不能作为独立的输入和输出。"""
     x, y = a.resolve(), b.resolve()
@@ -358,6 +385,8 @@ def _is_tool_artifact(path: Path, kind: str) -> bool:
         data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return False
+    if kind == "run":
+        return isinstance(data, dict) and data.get("schema") == SCHEMA
     if kind == "drag":
         return isinstance(data, dict) and data.get("schema") == "tavotto-perf-probe/1"
     if kind == "comparison":
@@ -370,10 +399,20 @@ def _is_tool_artifact(path: Path, kind: str) -> bool:
     )
 
 
-def _clear_run_outputs(output: Path, summary: Path | None, baseline: Path | None) -> None:
-    """清理本工具的旧派生证据；run 与参数解析失败共用同一规则。"""
+def _clear_run_outputs(
+    output: Path,
+    summary: Path | None,
+    baseline: Path | None,
+    owned_output_only: bool = False,
+) -> None:
+    """清理本工具的旧派生证据；run 与参数解析失败共用同一规则。
+
+    owned_output_only：解析失败路径下 --out 不一定是本次要写的文件，
+    只有它自己是本工具产物才删（本工具产物的判定唯一出处是 _is_tool_artifact）。
+    """
     output = output.resolve()
-    output.unlink(missing_ok=True)
+    if not owned_output_only or (output.is_file() and _is_tool_artifact(output, "run")):
+        output.unlink(missing_ok=True)
     for stale, kind in (
         (output.with_name("drag.json"), "drag"),
         (output.with_name("drag-findings.json"), "findings"),
@@ -406,12 +445,21 @@ def _run_io_collision(
     return False
 
 
+def _flag_before_terminator(argv: list[str], flag: str) -> bool:
+    """与 argparse 一致：`--` 之后全是位置数据，不再当作选项。"""
+    head = argv[: argv.index("--")] if "--" in argv else argv
+    return flag in head
+
+
 def _invalidate_parse_error(argv: list[str]) -> None:
     """argparse 先于运行态抛 SystemExit 时，也必须作废指定位置的旧成功结论。
 
     主语是 Agent 交付的文件，而不是命令行的错误退出码；没有参数时不写默认路径。
     """
     if not argv:
+        return
+    if _path_options_ambiguous(argv):
+        # 恢复扫描与 argparse 对重复选项的取值不同：无法证明删的是哪个文件，就都不动。
         return
     command = argv[0]
     json_path = _option_path(argv, "--json")
@@ -425,23 +473,24 @@ def _invalidate_parse_error(argv: list[str]) -> None:
             # 在解析失败时也要遵守基线只读原则；之前直接 unlink 会把
             # --out 与 --baseline 同一路径的历史采样永久删除。
             collision = output is not None and _run_io_collision(
-                output, summary_path, baseline, "--include-drag" in argv
+                output, summary_path, baseline, _flag_before_terminator(argv, "--include-drag")
             )
             if output is not None and not collision:
-                _clear_run_outputs(output, summary_path, baseline)
+                # 解析失败时 --out 的内容没人确认过：连主报告也只清本工具产物。
+                _clear_run_outputs(output, summary_path, baseline, owned_output_only=True)
             if summary_path is not None and not (
                 baseline is not None and _same_report_path(summary_path, baseline)
             ):
                 # summary 与主报告/派生文件撞名时，也禁止在解析失败后误写数据。
                 outputs = [output] if output is not None else []
-                if output is not None and "--include-drag" in argv:
+                if output is not None and _flag_before_terminator(argv, "--include-drag"):
                     outputs.extend(
                         [output.with_name("drag.json"), output.with_name("drag-findings.json")]
                     )
                 if output is not None and baseline is not None:
                     outputs.append(output.with_suffix(".comparison.json"))
                 if all(not _same_report_path(summary_path, candidate) for candidate in outputs):
-                    failure = failed_run_summary("--include-drag" in argv)
+                    failure = failed_run_summary(_flag_before_terminator(argv, "--include-drag"))
                     if baseline is not None:
                         failure["regression_status"] = "failed"
                     _write(summary_path, failure)
@@ -503,21 +552,28 @@ def main(argv: list[str] | None = None) -> int:
     )
     run.add_argument("--browser", choices=("chromium", "webkit"), default="chromium")
     run.add_argument("--repeat", type=int, default=16)
-    run.add_argument("--out", type=Path, default=Path("web/test-results/perf-agent/run.json"))
-    run.add_argument("--baseline", type=Path)
+    run.add_argument(
+        "--out", action=_SingleUse, type=Path, default=Path("web/test-results/perf-agent/run.json")
+    )
+    run.add_argument("--baseline", action=_SingleUse, type=Path)
     run.add_argument(
         "--include-drag", action="store_true", help="also capture the existing ADR 0075 drag probe"
     )
-    run.add_argument("--summary", type=Path)
+    run.add_argument("--summary", action=_SingleUse, type=Path)
     run.add_argument("--regression-pct", type=float, default=DEFAULT_REGRESSION_PCT)
     report = commands.add_parser("summarize", allow_abbrev=False)
     report.add_argument("report", type=Path)
-    report.add_argument("--json", type=Path)
+    report.add_argument("--json", action=_SingleUse, type=Path)
     comp = commands.add_parser("compare", allow_abbrev=False)
     comp.add_argument("current", type=Path)
     comp.add_argument("baseline", type=Path)
-    comp.add_argument("--json", type=Path)
-    comp.add_argument("--summary", type=Path, help="update the completed run summary with verdict")
+    comp.add_argument("--json", action=_SingleUse, type=Path)
+    comp.add_argument(
+        "--summary",
+        action=_SingleUse,
+        type=Path,
+        help="update the completed run summary with verdict",
+    )
     comp.add_argument("--regression-pct", type=float, default=DEFAULT_REGRESSION_PCT)
     raw_argv = list(sys.argv[1:] if argv is None else argv)
     try:
@@ -757,6 +813,9 @@ def main(argv: list[str] | None = None) -> int:
             comparison_summary = previous
         # current/baseline 是只读历史证据。输出名无论是同路径、软链接
         # 还是硬链接同 inode，都绝不能先被 _write 替换。
+        if _same_report_path(args.current, args.baseline):
+            # 自己跟自己比必然 pass，是空门禁；与 run 路径同一判据（resolve + samefile）。
+            raise ValueError("comparison_inputs_alias")
         if args.json is not None and (
             _same_report_path(args.json, args.current)
             or _same_report_path(args.json, args.baseline)

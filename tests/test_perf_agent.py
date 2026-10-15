@@ -775,6 +775,74 @@ def test_baseline_request_has_failed_verdict_on_early_launch_failure(
     assert "regression_status" not in json.loads(summary.read_text(encoding="utf-8"))
 
 
+@pytest.mark.parametrize("alias", ["same", "hardlink", "symlink"])
+def test_compare_rejects_aliased_current_and_baseline(tmp_path, alias):
+    """自己跟自己比必然 pass，是空门禁；任何别名写法都必须失败而不是 pass。"""
+    current = tmp_path / "run.json"
+    current.write_text(json.dumps(report()), encoding="utf-8")
+    other = tmp_path / "base.json"
+    if alias == "hardlink":
+        other.hardlink_to(current)
+    elif alias == "symlink":
+        other.symlink_to(current)
+    else:
+        other = current
+    out = tmp_path / "cmp.json"
+    assert A.main(["compare", str(current), str(other), "--json", str(out)]) == 2
+    assert json.loads(out.read_text(encoding="utf-8"))["status"] == "failed"
+    assert json.loads(current.read_text(encoding="utf-8"))["schema"] == A.SCHEMA
+
+
+def _owned_run(path: Path) -> bytes:
+    path.write_text(json.dumps(report()), encoding="utf-8")
+    return path.read_bytes()
+
+
+def test_repeated_baseline_option_cannot_make_cleanup_delete_history(tmp_path):
+    """argparse 取最后一次出现的值；清理不能取第一次而删掉真正的历史基线。"""
+    base, safe = tmp_path / "base.json", tmp_path / "safe.json"
+    before = _owned_run(base)
+    _owned_run(safe)
+    argv = ["run", "--out", str(base), "--baseline", str(safe), "--baseline", str(base)]
+    assert A.main([*argv, "--repeat", "bad"]) == 2
+    assert base.read_bytes() == before
+
+
+@pytest.mark.parametrize(
+    "build",
+    [
+        lambda out, other: ["run", f"--out={out}", "--out", str(other), "--repeat", "bad"],
+        lambda out, other: ["run", "--out", str(out), "--out", str(other), "--repeat", "bad"],
+        lambda out, other: [
+            "run",
+            "--out",
+            str(other),
+            f"--baseline={out}",
+            "--baseline",
+            str(other),
+            "--repeat",
+            "bad",
+        ],
+    ],
+)
+def test_repeated_or_mixed_path_options_delete_nothing(tmp_path, build):
+    first, second = tmp_path / "a.json", tmp_path / "b.json"
+    before = (_owned_run(first), _owned_run(second))
+    assert A.main(build(first, second)) == 2
+    assert (first.read_bytes(), second.read_bytes()) == before
+
+
+def test_parse_error_cleanup_only_removes_tool_artifacts(tmp_path):
+    """单次选项 + 坏 --repeat：本工具的旧产物仍被作废，用户文件不动。"""
+    mine, theirs = tmp_path / "mine.json", tmp_path / "theirs.json"
+    _owned_run(mine)
+    theirs.write_text('{"mine": 1}', encoding="utf-8")
+    assert A.main(["run", "--out", str(mine), "--repeat", "bad"]) == 2
+    assert not mine.exists()
+    assert A.main(["run", "--out", str(theirs), "--repeat", "bad"]) == 2
+    assert theirs.read_text(encoding="utf-8") == '{"mine": 1}'
+
+
 def test_perf_playwright_cleanup_cannot_erase_agent_pending_summary():
     """独立 outputDir 的主语是 Playwright 真正会清理的目录，而非报告文件名。"""
     root = Path(__file__).resolve().parents[1]
@@ -1386,8 +1454,10 @@ def test_unrequested_sidecar_can_be_the_run_summary(tmp_path, monkeypatch, parse
     """An explicit summary in an unrequested slot survives cleanup as this run's verdict."""
     output = tmp_path / "run.json"
     summary = tmp_path / name
+    # 上次本工具的产物（带 schema）才会被恢复清理作废；无 schema 的当用户文件保留。
+    stale = {"schema": A.SCHEMA, "status": "pass", "canary": "previous-run"}
     for path in (output, summary):
-        path.write_text(json.dumps({"status": "pass", "canary": "previous-run"}), encoding="utf-8")
+        path.write_text(json.dumps(stale), encoding="utf-8")
     calls = []
 
     def run(*args, **kwargs):
