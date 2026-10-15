@@ -48,6 +48,7 @@
 from __future__ import annotations
 
 import argparse
+import filecmp
 import hashlib
 import json
 import os
@@ -314,6 +315,39 @@ def check_runtime_dir(
             "再把 packaging/runtime-lock.json 里该目标改成 shipped=true。"
         )
     return info
+
+
+def runtime_source_dir(repo_root: Path) -> Path:
+    """这次打包收的是哪一份 runtime：`TAVOTTO_RUNTIME_SRC` 覆盖，否则仓库根的 `runtime/`。
+
+    packaging/tavotto.spec（收进包）与 scripts/build_desktop.py（打包后逐字节核对）共用这一处——
+    两边各解析一次的话，覆盖了却核对了另一份，闸就空转了。
+    """
+    return Path(os.environ.get("TAVOTTO_RUNTIME_SRC") or (Path(repo_root) / "runtime"))
+
+
+def diff_collected_runtime(src: Path, dst: Path) -> list[str]:
+    """打包后的 runtime（`dst`）与构建时冒烟过的那一份（`src`）逐字节比，返回不一致的相对路径。
+
+    判据的主语是**发出去的字节**：spec 那一侧写对了不算数，要看 PyInstaller 真产出了什么——
+    哪天打包器又在别处改判 / 改写 / 重签，这里以「某个文件字节变了」直接报出来。
+    """
+    src, dst = Path(src), Path(dst)
+    bad: list[str] = []
+    for dirpath, dirnames, filenames in os.walk(src):
+        for name in dirnames + filenames:
+            s = os.path.join(dirpath, name)
+            rel = os.path.relpath(s, src)
+            d = os.path.join(dst, rel)
+            if os.path.islink(s):
+                if not os.path.lexists(d):
+                    bad.append(f"{rel}（缺）")
+            elif name in filenames:
+                if not os.path.isfile(d):
+                    bad.append(f"{rel}（缺）")
+                elif not filecmp.cmp(s, d, shallow=False):
+                    bad.append(f"{rel}（字节不同）")
+    return sorted(bad)
 
 
 def pth_lines(stdlib_zip: str) -> list[str]:

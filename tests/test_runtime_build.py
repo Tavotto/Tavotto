@@ -10,6 +10,7 @@ macos-x86_64）。分层的意义只有一条：一个平台的 wheel 绝不能�
 下面每条针对单个目标的用例都对**所有目标**跑一遍，免得新增目标时漏掉看护。
 """
 
+import ast
 import json
 import os
 import re
@@ -527,6 +528,88 @@ def test_spec_and_build_script_share_one_judgement():
     desktop = (REPO / "scripts" / "build_desktop.py").read_text(encoding="utf-8")
     assert "check_runtime_dir" in spec
     assert "check_runtime_dir" in desktop
+
+
+# ---------------- 打包后 runtime 原样（PyInstaller 改判 / 改写看护）------------------
+def test_runtime_source_dir_honours_the_override(tmp_path, monkeypatch):
+    """spec 收的与 build_desktop 核对的必须是同一份；覆盖了却核对了另一份，闸就空转。"""
+    monkeypatch.delenv("TAVOTTO_RUNTIME_SRC", raising=False)
+    assert brt.runtime_source_dir(tmp_path) == tmp_path / "runtime"
+    monkeypatch.setenv("TAVOTTO_RUNTIME_SRC", str(tmp_path / "elsewhere"))
+    assert brt.runtime_source_dir(tmp_path) == tmp_path / "elsewhere"
+    spec = (REPO / "packaging" / "tavotto.spec").read_text(encoding="utf-8")
+    assert "RUNTIME = runtime_source_dir(ROOT)" in spec
+
+
+def _fake_runtime(root: Path) -> None:
+    so = root / "lib" / "site-packages" / "numpy" / "_core" / "_multiarray_umath.so"
+    so.parent.mkdir(parents=True)
+    so.write_bytes(b"\xcf\xfa\xed\xfe@loader_path/../.dylibs/libscipy_openblas64_.dylib")
+    blas = root / "lib" / "site-packages" / "numpy" / ".dylibs" / "libscipy_openblas64_.dylib"
+    blas.parent.mkdir(parents=True)
+    blas.write_bytes(b"\xcf\xfa\xed\xfe" + b"\0" * 64)
+    (root / "runtime-manifest.json").write_text("{}", encoding="utf-8")
+
+
+def test_diff_collected_runtime_accepts_a_byte_identical_copy(tmp_path):
+    src, dst = tmp_path / "src", tmp_path / "dst"
+    _fake_runtime(src)
+    shutil.copytree(src, dst)
+    assert brt.diff_collected_runtime(src, dst) == []
+
+
+def test_diff_collected_runtime_reports_rewritten_and_missing_files(tmp_path):
+    """v0.18.0 macOS 的形状：扩展模块被改写成 @rpath（等长，只比 size 会漏），另有文件没进包。"""
+    src, dst = tmp_path / "src", tmp_path / "dst"
+    _fake_runtime(src)
+    shutil.copytree(src, dst)
+    so = dst / "lib" / "site-packages" / "numpy" / "_core" / "_multiarray_umath.so"
+    original = so.read_bytes()
+    rewritten = b"\xcf\xfa\xed\xfe@rpath/libscipy_openblas64_.dylib".ljust(len(original), b"\0")
+    assert len(rewritten) == len(original)
+    so.write_bytes(rewritten)
+    (dst / "runtime-manifest.json").unlink()
+    assert brt.diff_collected_runtime(src, dst) == [
+        os.path.join("lib", "site-packages", "numpy", "_core", "_multiarray_umath.so")
+        + "（字节不同）",
+        "runtime-manifest.json（缺）",
+    ]
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="建符号链接要特权")
+def test_diff_collected_runtime_accepts_a_flattened_symlink(tmp_path):
+    """Tree 与 Tauri 都会把符号链接拍平成真文件；那不是改写。"""
+    src, dst = tmp_path / "src", tmp_path / "dst"
+    _fake_runtime(src)
+    (src / "bin").mkdir()
+    (src / "bin" / "pydoc3.13").write_text("#!/bin/sh\n", encoding="utf-8")
+    (src / "bin" / "pydoc3").symlink_to("pydoc3.13")
+    shutil.copytree(src, dst, symlinks=False)
+    assert not (dst / "bin" / "pydoc3").is_symlink()
+    assert brt.diff_collected_runtime(src, dst) == []
+
+
+def test_build_desktop_checks_the_packed_runtime_after_pyinstaller():
+    """闸要接在 PyInstaller 之后、Tauri 之前，且用与 spec 同一个来源目录。"""
+    text = (REPO / "scripts" / "build_desktop.py").read_text(encoding="utf-8")
+    main = next(
+        n for n in ast.parse(text).body if isinstance(n, ast.FunctionDef) and n.name == "main"
+    )
+    calls = {
+        n.func.id: n.lineno
+        for n in ast.walk(main)
+        if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
+    }
+    assert "runtime_source_dir" in calls and "diff_collected_runtime" in calls
+    pyinstaller = next(
+        n.lineno for n in ast.walk(main) if isinstance(n, ast.Constant) and n.value == "PyInstaller"
+    )
+    tauri = next(
+        n.lineno
+        for n in ast.walk(main)
+        if isinstance(n, ast.Constant) and isinstance(n.value, str) and "@tauri-apps/cli" in n.value
+    )
+    assert pyinstaller < calls["diff_collected_runtime"] < tauri
 
 
 # ---------------- 精简规则 ----------------------------------------------------
