@@ -18,6 +18,7 @@ import pytest
 
 from tavotto.engine import (
     discover,
+    execspec,
     executionfact,
     inputbroker,
     pool,
@@ -661,4 +662,274 @@ def test_async_shutdown_force_does_not_block_other_project_hot_acquire(retiremen
         allow_force.set()
         assert finished.wait(5)
     assert supervisor.forces == [old._session_id]
+    assert pool._pending_retirements == {}
+
+
+def _explicit_rerun(harness, monkeypatch, **kwargs):
+    # Explicit rerun already owns the pool lock until its first bounded close
+    # finishes. The ordinary acquisition retry must still pass the model's
+    # outside-lock check, so relax this assertion only for this existing path.
+    with monkeypatch.context() as patch:
+        patch.setattr(harness.supervisor, "_check_close_locks", lambda: None)
+        pool.invalidate("fig.py", str(harness.root), force=True, **kwargs)
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        {"ok": True, "closed": False},
+        {"ok": True},
+        workerd_client.WorkerdError("close timed out", code="worker_timeout"),
+        "supervisor disconnected",
+        RuntimeError("unexpected force failure"),
+    ],
+    ids=["closed-false", "ambiguous-success", "timeout", "disconnected", "unexpected-error"],
+)
+def test_failed_explicit_rerun_fences_the_next_ordinary_acquire(retirement, monkeypatch, failure):
+    old, _ = _acquire(retirement)
+    execution = old.ensure_built()["execution_id"]
+    supervisor = retirement.supervisor
+    supervisor.force_failure = failure
+    supervisor.grace_failure = {"ok": True, "closed": False}
+    key = pool._worker_key(str(retirement.root), "fig.py")
+    error_type = RuntimeError if type(failure) is RuntimeError else pool.WorkerError
+
+    for _ in range(2):
+        with pytest.raises(error_type) as rerun:
+            _explicit_rerun(retirement, monkeypatch)
+        if error_type is pool.WorkerError:
+            assert rerun.value.code == "session_dead"
+        assert not old.alive()
+        assert pool._workers[key] is old
+    try:
+        reopened, _ = _acquire(retirement)
+    except error_type as caught:
+        if error_type is pool.WorkerError:
+            assert caught.code == "session_dead"
+    else:
+        actual = reopened.ensure_built()["execution_id"]
+        pytest.fail(
+            f"unconfirmed rerun reopened session {old._session_id} as {reopened._session_id} "
+            f"and execution {execution} as {actual}"
+        )
+    assert len(supervisor.opens) == 1
+    assert supervisor.forces == [old._session_id] * 3
+    assert pool._pending_retirements[key] == [old]
+    assert old._session_id in supervisor.sessions
+
+    supervisor.force_failure = None
+    new, created = _acquire(retirement)
+    assert created and new is not old
+    assert new._session_id != old._session_id
+    assert new.ensure_built()["execution_id"] != execution
+    assert old._session_id not in supervisor.sessions
+    assert pool._workers[key] is new
+    assert key not in pool._pending_retirements
+    assert supervisor.opens[0]["payload"] == supervisor.opens[-1]["payload"]
+    assert _acquire(retirement) == (new, False)
+    assert supervisor.forces == [old._session_id] * 4
+
+
+@pytest.mark.parametrize("already_closed", [False, True], ids=["closed", "known-false"])
+def test_confirmed_explicit_rerun_has_no_pending_fence(retirement, monkeypatch, already_closed):
+    old, _ = _acquire(retirement)
+    execution = old.ensure_built()["execution_id"]
+    supervisor = retirement.supervisor
+    if already_closed:
+        supervisor.sessions.clear()
+        supervisor.by_spec.clear()
+
+    _explicit_rerun(retirement, monkeypatch)
+
+    key = pool._worker_key(str(retirement.root), "fig.py")
+    assert key not in pool._workers
+    assert key not in pool._pending_retirements
+    assert supervisor.forces == [old._session_id]
+    expected = {"ok": True, "closed": True}
+    if already_closed:
+        expected = {"ok": True, "known": False, "closed": False}
+    assert supervisor.close_responses[-1] == (old._session_id, True, expected)
+    new, created = _acquire(retirement)
+    assert created and new._session_id != old._session_id
+    assert new.ensure_built()["execution_id"] != execution
+    assert supervisor.opens[0]["payload"] == supervisor.opens[-1]["payload"]
+
+
+@pytest.mark.parametrize("already_closed", [False, True], ids=["closed", "known-false"])
+def test_confirmed_explicit_retry_clears_its_previously_failed_fence(
+    retirement, monkeypatch, already_closed
+):
+    old, _ = _acquire(retirement)
+    execution = old.ensure_built()["execution_id"]
+    supervisor = retirement.supervisor
+    supervisor.force_failure = {"ok": True, "closed": False}
+    with pytest.raises(pool.WorkerError):
+        _explicit_rerun(retirement, monkeypatch)
+    key = pool._worker_key(str(retirement.root), "fig.py")
+    assert pool._pending_retirements[key] == [old]
+    if already_closed:
+        supervisor.sessions.clear()
+        supervisor.by_spec.clear()
+    supervisor.force_failure = None
+
+    _explicit_rerun(retirement, monkeypatch)
+
+    assert old._session_id not in supervisor.sessions
+    assert key not in pool._workers
+    assert key not in pool._pending_retirements
+    # A later close-channel failure cannot revoke the confirmation we already
+    # have, or block a fresh open behind an unnecessary third close attempt.
+    supervisor.force_failure = "unexpected third close"
+    new, created = _acquire(retirement)
+    assert created and new._session_id != old._session_id
+    assert new.ensure_built()["execution_id"] != execution
+    assert supervisor.forces == [old._session_id] * 2
+
+
+def test_confirmed_explicit_retry_keeps_other_pending_handles_at_the_same_key(
+    retirement, monkeypatch
+):
+    old, _ = _acquire(retirement)
+    supervisor = retirement.supervisor
+    supervisor.force_failure = {"ok": True, "closed": False}
+    with pytest.raises(pool.WorkerError):
+        _explicit_rerun(retirement, monkeypatch)
+    # A different entry can occupy the same logical pool key while its previous
+    # supervisor session still has an outstanding retirement handle.
+    other = pool.WorkerdWorker("fig.py", str(retirement.root), "other_entry", client=supervisor)
+    key = pool._worker_key(str(retirement.root), "fig.py")
+    with pool._lock:
+        pool._remember_retirements([(key, other)])
+    assert pool._pending_retirements[key] == [old, other]
+    assert other._session_id != old._session_id
+    supervisor.force_failure = None
+
+    _explicit_rerun(retirement, monkeypatch)
+
+    assert key not in pool._workers
+    assert old._session_id not in supervisor.sessions
+    assert other._session_id in supervisor.sessions
+    assert pool._pending_retirements[key] == [other]
+
+
+def test_multiconfig_rerun_keeps_only_the_unconfirmed_retirements(retirement, monkeypatch):
+    runs = [execspec.RunSelection("rc_a", ("1",)), execspec.RunSelection("rc_b", ("2",))]
+    workers = [pool.acquire("fig.py", str(retirement.root), "main", run=run)[0] for run in runs]
+    first, second = workers
+    execution = first.ensure_built()["execution_id"]
+    keys = [pool._worker_key(str(retirement.root), "fig.py", run=run) for run in runs]
+    supervisor = retirement.supervisor
+    supervisor.force_failure = {"ok": True, "closed": False}
+    for run in runs:
+        with pytest.raises(pool.WorkerError):
+            _explicit_rerun(retirement, monkeypatch, run=run)
+    assert pool._pending_retirements == dict(zip(keys, ([first], [second])))
+    supervisor.force_failure = None
+    call = supervisor.call
+
+    def second_still_fails(op, **kwargs):
+        if (
+            op == "close_session"
+            and kwargs.get("payload", {}).get("force")
+            and kwargs["session_id"] == second._session_id
+        ):
+            raise workerd_client.WorkerdError("second close timed out", code="worker_timeout")
+        return call(op, **kwargs)
+
+    monkeypatch.setattr(supervisor, "call", second_still_fails)
+    with pytest.raises(pool.WorkerError):
+        _explicit_rerun(retirement, monkeypatch)
+
+    assert first._session_id not in supervisor.sessions
+    assert second._session_id in supervisor.sessions
+    assert keys[0] not in pool._workers
+    assert pool._workers[keys[1]] is second
+    assert pool._pending_retirements == {keys[1]: [second]}
+    new, created = pool.acquire("fig.py", str(retirement.root), "main", run=runs[0])
+    assert created and new._session_id != first._session_id
+    assert new.ensure_built()["execution_id"] != execution
+
+
+def test_failed_rerun_fence_does_not_block_another_hot_worker(retirement, monkeypatch):
+    old, _ = _acquire(retirement)
+    hot, _ = _acquire(retirement, "other.py")
+    hot.ensure_built()
+    supervisor = retirement.supervisor
+    supervisor.force_failure = {"ok": True, "closed": False}
+    with pytest.raises(pool.WorkerError):
+        _explicit_rerun(retirement, monkeypatch)
+    # The dead old handle exists in _workers as well as the retirement table.
+    # It must count only once toward cold capacity, never prevent hot reuse.
+    with pytest.raises(pool.WorkerError):
+        _explicit_rerun(retirement, monkeypatch)
+    assert sum(map(len, pool._pending_retirements.values())) == 1
+    assert [worker for worker in pool._workers.values() if worker.alive()] == [hot]
+    monkeypatch.setattr(pool, "MAX_ALIVE", 1)
+    assert _acquire_without_waiting_for_close(retirement, "other.py") == (hot, False)
+    with pytest.raises(pool.WorkerError) as cold:
+        _acquire(retirement, "fresh.py")
+    assert cold.value.code == "session_dead"
+    assert len(supervisor.opens) == 2
+    assert supervisor.forces == [old._session_id] * 2
+
+
+def test_late_close_after_failed_rerun_preserves_the_replacements_fence(retirement, monkeypatch):
+    old, _ = _acquire(retirement)
+    execution = old.ensure_built()["execution_id"]
+    supervisor = retirement.supervisor
+    supervisor.force_failure = {"ok": True, "closed": False}
+    with pytest.raises(pool.WorkerError):
+        _explicit_rerun(retirement, monkeypatch)
+    supervisor.blocked_session = old._session_id
+    pool.invalidate("fig.py", str(retirement.root))
+    assert supervisor.close_started.wait(5)
+    key = pool._worker_key(str(retirement.root), "fig.py")
+    assert pool._pending_retirements[key] == [old]
+
+    supervisor.force_failure = None
+    new, created = _acquire(retirement)
+    assert created and new._session_id != old._session_id
+    assert new.ensure_built()["execution_id"] != execution
+    supervisor.grace_failure = {"ok": True, "closed": False}
+    pool.invalidate("fig.py", str(retirement.root))
+    for thread in supervisor.close_threads[1:]:
+        thread.join(5)
+        assert not thread.is_alive()
+    assert pool._pending_retirements[key] == [new]
+
+    supervisor.finish_closes()
+
+    assert supervisor.close_responses[-1] == (
+        old._session_id,
+        False,
+        {"ok": True, "known": False, "closed": False},
+    )
+    assert new._session_id in supervisor.sessions
+    assert pool._pending_retirements[key] == [new]
+
+
+@pytest.mark.parametrize("outcome", [None, False, RuntimeError("close failed")])
+def test_explicit_rerun_preserves_non_workerd_close_contract(retirement, monkeypatch, outcome):
+    calls = []
+
+    def force():
+        calls.append(True)
+        if isinstance(outcome, Exception):
+            raise outcome
+        return outcome
+
+    # The Python worker's successful force_kill returns None. It has no remote
+    # spawn cache, so it must not gain a supervisor-retirement fence.
+    worker = SimpleNamespace(force_kill=force)
+    key = pool._worker_key(str(retirement.root), "fig.py")
+    pool._workers[key] = worker
+    if outcome is None:
+        _explicit_rerun(retirement, monkeypatch)
+        assert key not in pool._workers
+    else:
+        expected = type(outcome) if isinstance(outcome, Exception) else pool.WorkerError
+        with pytest.raises(expected):
+            _explicit_rerun(retirement, monkeypatch)
+        assert pool._workers[key] is worker
+    assert calls == [True]
     assert pool._pending_retirements == {}

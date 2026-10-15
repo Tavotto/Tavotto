@@ -4557,12 +4557,17 @@ def _remember_retirements(victims) -> None:
 
 def _forget_retirement(key, worker) -> None:
     with _lock:
-        pending = _pending_retirements.get(key, ())
-        kept = [old for old in pending if old is not worker]
-        if kept:
-            _pending_retirements[key] = kept
-        else:
-            _pending_retirements.pop(key, None)
+        _forget_retirement_locked(key, worker)
+
+
+def _forget_retirement_locked(key, worker) -> None:
+    """Remove only this confirmed handle while the caller owns _lock."""
+    pending = _pending_retirements.get(key, ())
+    kept = [old for old in pending if old is not worker]
+    if kept:
+        _pending_retirements[key] = kept
+    else:
+        _pending_retirements.pop(key, None)
 
 
 def _shutdown_retired(key, worker) -> None:
@@ -4662,8 +4667,15 @@ def invalidate(
                 worker = _workers[key]
                 # force_kill bypasses the worker request lock and is bounded.
                 # Keep acquisition fenced until workerd has removed by_hash.
-                if worker.force_kill() is False:
-                    raise WorkerError("无法确认旧渲染会话已关闭，请重试", code="session_dead")
+                try:
+                    if worker.force_kill() is False:
+                        raise WorkerError("无法确认旧渲染会话已关闭，请重试", code="session_dead")
+                except Exception:
+                    # The adapter is already marked dead. Keep ordinary acquire
+                    # from reopening its unconfirmed supervisor spawn as well.
+                    _remember_retirements([(key, worker)])
+                    raise
+                _forget_retirement_locked(key, worker)
                 _workers.pop(key, None)
             return
         victims = [(key, _workers.pop(key)) for key in keys]

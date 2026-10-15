@@ -638,6 +638,7 @@ def test_explicit_invalidation_fences_acquisition_until_workerd_force_close(monk
 
 
 def test_explicit_invalidation_refuses_an_unconfirmed_supervisor_close(monkeypatch, tmp_path):
+    monkeypatch.setattr(pool, "_pending_retirements", {})
     worker, _client = _worker(
         monkeypatch,
         tmp_path,
@@ -652,3 +653,4 @@ def test_explicit_invalidation_refuses_an_unconfirmed_supervisor_close(monkeypat
         pool.invalidate("fig.py", str(tmp_path), force=True)
     assert caught.value.code == "session_dead"
     assert pool._workers[key] is worker  # Retry must still be able to retire the old session.
+    assert pool._pending_retirements[key] == [worker]

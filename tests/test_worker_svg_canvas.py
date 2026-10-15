@@ -3,6 +3,7 @@
 import json
 import subprocess
 import xml.etree.ElementTree as ET
+from pathlib import Path
 
 import pymupdf
 import pytest
@@ -24,19 +25,42 @@ pkg = boot.load_engine_modules(engine, ("figcapture", "patchspec", "pathgeom", "
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
-from matplotlib import backend_bases
+from matplotlib import _path, backend_bases
 from matplotlib.backends.backend_agg import FigureCanvasAgg
 from matplotlib.backends.backend_pdf import FigureCanvasPdf
 from matplotlib.backends.backend_svg import FigureCanvasSVG
+from matplotlib.font_manager import FontProperties
+from matplotlib.path import Path as MplPath
+from matplotlib.textpath import TextToPath
 
 out = Path(directory)
 fig, ax = plt.subplots(figsize=(3, 2), dpi=100)
 ax.plot([0, 1], [0, 1])
-title = ax.set_title("Export title")
+font = FontProperties(fname=Path(matplotlib.get_data_path()) / "fonts/ttf/DejaVuSans.ttf")
+title = ax.set_title("Export title", fontproperties=font, color="black")
 session = pkg.figsession.LiveFigureSession(out / "preview")
 session.add_figure("F", fig, pkg.figcapture.SOURCE_PYPLOT)
 session.instrument_all()
 patches = [{"gid": title.get_gid(), "prop": "text", "value": "Export title"}]
+# Derive expected outlines from literal labels and a fixed font before installing
+# hooks. SVG glyph IDs changed from code points to glyph indices in Matplotlib
+# 3.11; neither IDs nor the writer's text comments establish rendered content.
+runtime = {"python": sys.executable, "python_version": sys.version,
+           "matplotlib": matplotlib.__version__}
+text_to_path = TextToPath()
+font_face = text_to_path._get_font(font)
+labels = {}
+for label in ("Canvas PDF", "Canvas SVG", "Export title"):
+    glyphs, outlines, _ = text_to_path.get_glyphs_with_font(font_face, label)
+    paths = {}
+    for glyph, (vertices, codes) in outlines.items():
+        paths[glyph] = _path.convert_to_string(
+            MplPath(vertices * 64, codes), None, None, False, None, 6,
+            [b"M", b"L", b"Q", b"C", b"z"], False).decode("ascii")
+    labels[label] = [paths[glyph] for glyph, *_ in glyphs]
+(out / "font-oracle.json").write_text(json.dumps({
+    "gid": title.get_gid(), "labels": labels, "runtime": runtime,
+}), encoding="utf-8")
 calls, saves = [], []
 real_savefig = fig.savefig
 
@@ -192,7 +216,7 @@ assert fig.canvas is canvas
 if mode != "native":
     assert title.get_text() == "Export title"
     assert session.snapshot("F") == []
-print(json.dumps({"result": result, "calls": calls, "saves": saves}))
+print(json.dumps({"result": result, "calls": calls, "saves": saves, "runtime": runtime}))
 """
 
 
@@ -207,7 +231,9 @@ def _canvas_probe(tmp_path, mode, hook):
         timeout=120,
     )
     assert completed.returncode == 0, completed.stdout + completed.stderr
-    return json.loads(completed.stdout.splitlines()[-1])
+    report = json.loads(completed.stdout.splitlines()[-1])
+    assert Path(report["runtime"]["python"]).resolve() == Path(USER_PYTHON).resolve(), report
+    return report
 
 
 CUSTOM_CANVASES = [
@@ -233,22 +259,49 @@ def _pdf_title(path):
     return next(label for label in ("Canvas PDF", "Canvas SVG", "Export title") if label in text)
 
 
+SVG = "{http://www.w3.org/2000/svg}"
+HREF = "{http://www.w3.org/1999/xlink}href"
+
+
 def _svg_title(path):
-    data = path.read_text(encoding="utf-8")
-    root = ET.fromstring(data)
-    assert root.findall(".//{http://www.w3.org/2000/svg}path")
-    assert not root.findall(".//{http://www.w3.org/2000/svg}text")
-    # Inspect referenced glyph outlines, not the writer's informational text comments.
-    path_ids = {path.get("id") for path in root.findall(".//{http://www.w3.org/2000/svg}path")}
-    characters = []
-    for use in root.findall(".//{http://www.w3.org/2000/svg}use"):
-        glyph = use.get("{http://www.w3.org/1999/xlink}href", "").removeprefix("#")
-        _, separator, character = glyph.rpartition("-")
-        if separator and character and all(c in "0123456789abcdef" for c in character):
-            assert glyph in path_ids
-            characters.append(chr(int(character, 16)))
-    text = "".join(characters)
-    return next(label for label in ("Canvas PDF", "Canvas SVG", "Export title") if label in text)
+    oracle = json.loads((path.parent / "font-oracle.json").read_text(encoding="utf-8"))
+    root = ET.fromstring(path.read_text(encoding="utf-8"))
+    assert not root.findall(f".//{SVG}text"), oracle["runtime"]
+    titles = [node for node in root.iter(f"{SVG}g") if node.get("id") == oracle["gid"]]
+    assert len(titles) == 1, oracle["runtime"]
+    title = titles[0]
+    definitions = {node.get("id"): node for node in root.iter(f"{SVG}path")}
+    parents = {child: parent for parent in root.iter() for child in parent}
+    outlines = []
+    for use in title.iter(f"{SVG}use"):
+        reference = use.get(HREF, "")
+        assert reference.startswith("#") and reference[1:] in definitions, oracle["runtime"]
+        glyph = definitions[reference[1:]]
+        assert glyph.get("transform") == "scale(0.015625)", oracle["runtime"]
+        # This fixture renders black text. Check actual inherited/use/path paint,
+        # so valid glyph references cannot disguise differently colored content.
+        for start in (use, glyph):
+            node = start
+            while node is not None:
+                style = dict(
+                    item.strip().split(":", 1)
+                    for item in node.get("style", "").split(";")
+                    if ":" in item
+                )
+                fill = style.get("fill", node.get("fill", "black")).strip()
+                assert fill in {"black", "#000000"}, (fill, oracle["runtime"])
+                node = parents.get(node)
+        outlines.append(" ".join(glyph.get("d", "").split()))
+    # Resolve every referenced path and compare the complete ordered outlines.
+    # Missing/reordered uses or corrupted paths must fail even if IDs/comments
+    # still claim the expected title. Empty paths represent the space glyph.
+    matches = [
+        label
+        for label, expected in oracle["labels"].items()
+        if outlines == [" ".join(data.split()) for data in expected]
+    ]
+    assert len(matches) == 1, ("title outlines differ", oracle["runtime"])
+    return matches[0]
 
 
 @needs_user_python
@@ -311,3 +364,35 @@ def test_standard_canvases_still_export_verified_pairs(tmp_path, mode, hook):
     assert "svg_error" not in result["result"]
     assert result["saves"] == ["pdf", "svg"]
     assert _pdf_title(tmp_path / "pair.pdf") == _svg_title(tmp_path / "pair.svg") == "Export title"
+
+
+@needs_user_python
+@pytest.mark.parametrize("mutation", ["title", "outline", "missing_path", "missing_use", "color"])
+def test_svg_title_oracle_rejects_changed_rendered_content(tmp_path, mutation):
+    _canvas_probe(tmp_path, "pair", "native_agg")
+    path = tmp_path / "pair.svg"
+    assert _svg_title(path) == _pdf_title(tmp_path / "pair.pdf") == "Export title"
+    oracle = json.loads((tmp_path / "font-oracle.json").read_text(encoding="utf-8"))
+    tree = ET.parse(path)
+    root = tree.getroot()
+    title = next(node for node in root.iter(f"{SVG}g") if node.get("id") == oracle["gid"])
+    uses = list(title.iter(f"{SVG}use"))
+    glyph = next(
+        node for node in root.iter(f"{SVG}path") if node.get("id") == uses[0].get(HREF)[1:]
+    )
+    parents = {child: parent for parent in root.iter() for child in parent}
+    if mutation == "title":
+        assert uses[0].get(HREF) != uses[1].get(HREF)
+        uses[0].set(HREF, uses[1].get(HREF))
+    elif mutation == "outline":
+        assert glyph.get("d")
+        glyph.set("d", glyph.get("d") + " M 0 0 L 1 1")
+    elif mutation == "missing_path":
+        parents[glyph].remove(glyph)
+    elif mutation == "missing_use":
+        parents[uses[0]].remove(uses[0])
+    else:
+        title.set("fill", "#ff0000")
+    tree.write(path, encoding="utf-8")
+    with pytest.raises(AssertionError):
+        assert _svg_title(path) == "Export title"
