@@ -28,6 +28,8 @@ function fakeRunningCodex(): { PATH: string; release: string } {
 async function openAssistant(page: Page, baseURL: string, reloaded = false) {
   if (reloaded) {
     // 刷新后工作区把图恢复在画布上但没选中；选中会把右栏切到「属性」，所以先选图、再切助手页签
+    // 刷新后取景在补间（图在动，点击会一直等「element is not stable」）：等取景落定再点
+    await expect(page.locator('[data-view-tweening]')).toHaveCount(0, { timeout: 30_000 })
     await page.getByRole('img', { name: 'Fig1_kinetics' }).first().click({ timeout: 30_000 })
     await page.locator('[data-inspector-tab="assistant"]').click()
   } else {
