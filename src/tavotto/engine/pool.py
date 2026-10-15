@@ -4566,7 +4566,12 @@ def _forget_retirement(key, worker) -> None:
 
 
 def _shutdown_retired(key, worker) -> None:
-    if worker.shutdown() is True:
+    try:
+        confirmed = worker.shutdown() is True
+    except Exception:  # noqa: BLE001 — retain the fence when cleanup itself fails
+        LOG.warning("worker 优雅关停失败，保留会话退役屏障: %s", worker.script_name)
+        return
+    if confirmed:
         _forget_retirement(key, worker)
 
 
@@ -4754,25 +4759,33 @@ def shutdown_all(figures_dir: str | None = None, wait: bool = False) -> None:
     必须硬杀一次兜底。
     （LRU 淘汰路径不动：那里 worker 还可能是正常在跑的慢脚本。）
     """
+    target = _norm_dir(figures_dir) if figures_dir is not None else None
     with _lock:
-        if figures_dir is None:
-            victims = list(_workers.values())
-            _workers.clear()
-        else:
-            target = _norm_dir(figures_dir)
-            keys = [k for k in _workers if k[0] == target]
-            victims = [_workers.pop(k) for k in keys]
-    threads = [threading.Thread(target=w.shutdown, daemon=True) for w in victims]
-    for t in threads:
-        t.start()
+        # Pending watcher closes belong to the project even after detachment.
+        # Do not release another reference with a duplicate graceful close.
+        pending = [
+            (key, worker, None)
+            for key, workers in _pending_retirements.items()
+            if target is None or key[0] == target
+            for worker in workers
+        ]
+        keys = [key for key in _workers if target is None or key[0] == target]
+        victims = [(key, _workers.pop(key)) for key in keys]
+        _remember_retirements(victims)
+    closing = [
+        (key, worker, threading.Thread(target=_shutdown_retired, args=(key, worker), daemon=True))
+        for key, worker in victims
+    ]
+    for _, _, thread in closing:
+        thread.start()
     if wait:
-        for t, w in zip(threads, victims):
-            t.join(timeout=_SHUTDOWN_JOIN_TIMEOUT)
-            if t.is_alive():
-                LOG.warning("worker 关停超时（可能卡在死循环脚本里），强制 kill: %s", w.script_name)
-                # `force_kill()` 两条控制面都有：Python 池是 `proc.kill()`，
-                # workerd 是「当场关掉会话、不等在飞的活」。
-                w.force_kill()
+        _finish_shutdown(pending + closing)
+    else:
+        # A project close/settings change must also eventually reclaim workerd
+        # slots. Keep the existing nonblocking Python-worker shutdown behavior.
+        workerd_closing = pending + [item for item in closing if isinstance(item[1], WorkerdWorker)]
+        if workerd_closing:
+            threading.Thread(target=_finish_shutdown, args=(workerd_closing,), daemon=True).start()
     if wait and figures_dir is None:
         # 「本进程即将退出」这条路径顺手把 supervisor 也收掉。不收也不会留孤儿
         # （父进程一走它的 stdin 就 EOF，workerd 自己会退），但那要等到父进程真的
@@ -4783,3 +4796,27 @@ def shutdown_all(figures_dir: str | None = None, wait: bool = False) -> None:
             workerd_client.reset_client()
         except Exception:  # noqa: BLE001 — 退出路径不许因为收尾动作抛出而中断
             pass
+
+
+def _finish_shutdown(closing) -> None:
+    """Bounded cleanup outside pool/watch locks; unknown sessions stay fenced."""
+    for key, worker, thread in closing:
+        if thread is not None:
+            thread.join(timeout=_SHUTDOWN_JOIN_TIMEOUT)
+        if isinstance(worker, WorkerdWorker):
+            with _lock:
+                unconfirmed = any(old is worker for old in _pending_retirements.get(key, ()))
+        else:
+            unconfirmed = thread is not None and thread.is_alive()
+        if not unconfirmed:
+            continue
+        LOG.warning("worker 关停未确认，强制 kill: %s", worker.script_name)
+        try:
+            result = worker.force_kill()
+            confirmed = result is True if isinstance(worker, WorkerdWorker) else result is not False
+        except Exception:  # noqa: BLE001 — one failed close must not skip the other victims
+            confirmed = False
+        if confirmed:
+            _forget_retirement(key, worker)
+        else:
+            LOG.warning("worker 强制关停未确认，保留会话退役屏障: %s", worker.script_name)
