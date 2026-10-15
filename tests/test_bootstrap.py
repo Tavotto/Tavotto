@@ -273,8 +273,10 @@ def test_a_second_install_request_while_running_keeps_the_current_attempt(monkey
     gate = threading.Event()
     monkeypatch.setattr(bootstrap, "install", lambda on_event=None: gate.wait(5))
     try:
+        before = bootstrap.progress()["attempt"]
         bootstrap.install_async()
         first = bootstrap.progress()["attempt"]
+        assert first == before + 1  # 新安装：POST 响应与之后的事件 / GET 带的就是这个新身份
         bootstrap.install_async()
         assert bootstrap.progress()["attempt"] == first
         assert bootstrap.progress()["state"] == "running"

@@ -1156,6 +1156,12 @@ describe('SSE 断线后的对账（reconcile）：丢了终态事件，卡片不
       holding.clear()
     })
 
+    it('终态锁定：同一次的终态重复（带别的内容）不覆盖已采用的那份', () => {
+      sse(5, 'failed', { error: '第一份' })
+      sse(5, 'failed', { error: '第二份' })
+      expect(useEnvStore.getState().log).toBe('第一份')
+    })
+
     it('POST 失败：待定解除，installing 收掉、日志是错误；之后旧快照照常按 attempt 判', async () => {
       sse(3, 'done')
       await new Promise((r) => setTimeout(r, 30))
