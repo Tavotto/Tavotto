@@ -308,6 +308,29 @@ describe('一次点击：检查 → 认领 run_when_ready（回显授权摘要�
     expect(addRuntimePanelToCanvas).toHaveBeenCalledTimes(1)
   })
 
+  it('重跑已缓存的图、合并进来的旧清单带的是上一次的非空描述符：以这次报告的描述符插入（Codex #1044 r4285970263）', async () => {
+    mockCreate.mockResolvedValueOnce(report())
+    claimed(running())
+    await open()
+    useRuntimeAssetStore.setState({ assets: [{ id: 'runtime:plot.py#a', descriptor: { ...fig('a'), execution_profile: 'native' } } as never] })
+    mockGet.mockResolvedValueOnce(done(['a']))
+    await store().refresh(KEY)
+    await vi.waitFor(() => expect(openFastEdit).toHaveBeenCalledTimes(1))
+    expect(addRuntimePanelToCanvas).toHaveBeenCalledTimes(1)
+    expect(vi.mocked(addRuntimePanelToCanvas).mock.calls[0][0]).toEqual(fig('a'))
+  })
+
+  it('清单里已有与这次一致的描述符：不重复插入', async () => {
+    mockCreate.mockResolvedValueOnce(report())
+    claimed(running())
+    await open()
+    useRuntimeAssetStore.setState({ assets: [{ id: 'runtime:plot.py#a', descriptor: fig('a') } as never] })
+    mockGet.mockResolvedValueOnce(done(['a']))
+    await store().refresh(KEY)
+    await vi.waitFor(() => expect(openFastEdit).toHaveBeenCalledTimes(1))
+    expect(addRuntimePanelToCanvas).not.toHaveBeenCalled()
+  })
+
   it.each(['missing', 'layout_only'] as const)('openFastEdit 回 %s（没真的进入编辑）：不收卡、不记编辑，卡上保留手动「进入编辑」', async (outcome) => {
     mockCreate.mockResolvedValueOnce(report())
     claimed(running())

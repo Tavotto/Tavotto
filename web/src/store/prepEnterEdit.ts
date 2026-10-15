@@ -73,8 +73,12 @@ export async function enterEdit(host: EnterEditHost, d: CapturedFigureDescriptor
   // 清单里没有、文档里也还没有这张图才加：清单请求在途时连点两下，两个续延都看到「清单里没有」，
   // 只有文档才是已经加过一次的权威（补审 #914 r4236701619）。这两步之间没有 await，第二个续延必然看到第一个加的面板
   // 只认带描述符的条目：开始于跑完之前的清单请求被 `loadAssets()` 合并时，缓存里这张图的条目可能还是 `descriptor: null`，
-  // 这时 `openFastEdit` 找不到可用来源——用报告里这次捕获的描述符 `d` 补上
-  const known = (useRuntimeAssetStore.getState().assets ?? []).some((a) => a.id === d.asset_id && !!a.descriptor)
+  // 这时 `openFastEdit` 找不到可用来源——用报告里这次捕获的描述符 `d` 补上。重跑一张已缓存的图时，合并进来的旧清单里
+  // 条目可能是**上一次**的非空描述符（尺寸 / 来源已变）：只有与这次的 `d` 一致才算已知，否则同样以 `d` 为准（Codex #1044 r4285970263）
+  const fresh = JSON.stringify(d)
+  const known = (useRuntimeAssetStore.getState().assets ?? []).some(
+    (a) => a.id === d.asset_id && !!a.descriptor && JSON.stringify(a.descriptor) === fresh,
+  )
   if (!known && !findFigurePanel(d.asset_id)) {
     // 与下面的 `openFastEdit` 同一个守卫：恢复期间两者都是排队的副作用（插入面板 + 取景 / 进入编辑 / 收卡片），切走后一个都不许执行
     if (host.stillWanted) addRuntimePanelToCanvas(d, undefined, undefined, { guard: host.stillWanted })
