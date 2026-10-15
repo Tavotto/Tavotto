@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import { DURATION, usePresence } from '@/lib/motion'
 import { cn } from '@/lib/utils'
 
@@ -28,12 +28,30 @@ export function findVisibleRow(root: ParentNode, attr: string, key: string): Ele
  * - 裁切（overflow-hidden）只在动画期间生效，播完撤掉，免得贴边的内凹焦点环被切。
  * - `prefers-reduced-motion` 由 index.css 的全局兜底把动画压到 0.01ms。
  */
-export function TreeBranch({ open, children }: { open: boolean; children: ReactNode }) {
+export function TreeBranch({
+  open,
+  children,
+  onSettled,
+}: {
+  open: boolean
+  children: ReactNode
+  /** 展开 / 收起的过渡走完了（展开：动画结束；收起：保活期过去、子树卸载；reduced-motion 下立即）。
+   *  图层树用它让 `useFlip` 重新量基准（过渡期间别的提交只记了半路位置） */
+  onSettled?: () => void
+}) {
   const last = useRef(children)
   if (open) last.current = children
   const { mounted, state } = usePresence(open, DURATION.exit)
   const [animate, setAnimate] = useState(false)
   const first = useRef(true)
+  const settled = useRef(onSettled)
+  settled.current = onSettled
+  // 收起：保活期过去、子树真的卸载那一刻 = 过渡结束
+  const wasMounted = useRef(mounted)
+  useEffect(() => {
+    if (wasMounted.current && !mounted && !open) settled.current?.()
+    wasMounted.current = mounted
+  }, [mounted, open])
   useLayoutEffect(() => {
     if (first.current) {
       first.current = false
@@ -55,7 +73,10 @@ export function TreeBranch({ open, children }: { open: boolean; children: ReactN
         animate && 'data-[tree-branch=open]:animate-reveal-in data-[tree-branch=closed]:animate-reveal-out',
       )}
       onAnimationEnd={(e) => {
-        if (e.target === e.currentTarget && open) setAnimate(false)
+        if (e.target === e.currentTarget && open) {
+          setAnimate(false)
+          settled.current?.()
+        }
       }}
     >
       <div className={cn('min-h-0', animate && 'overflow-hidden')}>

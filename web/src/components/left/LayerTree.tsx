@@ -86,7 +86,7 @@ export function LayerTree() {
     .filter((k) => collapsed[k])
     .sort()
     .join(',')
-  useFlip(listRef, 'data-layer', collapsedKey)
+  const { rebase } = useFlip(listRef, 'data-layer', collapsedKey)
 
   // 画布 / 其他面板上改选的图层可能在长列表的视口之外：一律滚到恰好看得见（与图内元素树同一写法；
   // 不平滑，所以 reduced-motion 下也是即时的）——哪怕树此刻还持有焦点。只有**用户在树里**用键盘 / 点击
@@ -249,7 +249,7 @@ export function LayerTree() {
         kids.push(renderRow(rows[++i]))
       }
       out.push(
-        <TreeBranch key={`branch:${r.gid}`} open={!collapsed[r.gid]}>
+        <TreeBranch key={`branch:${r.gid}`} open={!collapsed[r.gid]} onSettled={rebase}>
           {kids}
         </TreeBranch>,
       )

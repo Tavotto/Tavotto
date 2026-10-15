@@ -422,8 +422,8 @@ describe('空态（UI 2.0 第二轮 09）', () => {
 })
 
 describe('展开 / 折叠组时不走 FLIP（TreeBranch 的 grid 过渡单独负责），重排照旧', () => {
-  it('折叠 / 展开组的那次提交里，下面的行位移不播 FLIP；之后别的原因造成的位移照播', async () => {
-    const anims: string[] = []
+  it('折叠组期间的位移不播；过渡结束后基准重量，之后的位移按真实值播（不从半路多滑）', async () => {
+    const anims: Array<{ id: string; dy: number }> = []
     let shift = 0
     const protoRect = HTMLElement.prototype.getBoundingClientRect
     const protoAnimate = (Element.prototype as { animate?: unknown }).animate
@@ -432,8 +432,9 @@ describe('展开 / 折叠组时不走 FLIP（TreeBranch 的 grid 过渡单独负
       const top = id === 'p4' ? 100 + shift : id ? 10 : 0
       return { left: 0, top, width: 100, height: 20, right: 100, bottom: top + 20, x: 0, y: top } as DOMRect
     }
-    ;(Element.prototype as { animate?: unknown }).animate = function (this: Element) {
-      anims.push((this as HTMLElement).dataset.layer ?? '')
+    ;(Element.prototype as { animate?: unknown }).animate = function (this: Element, frames: Keyframe[]) {
+      const m = String((frames[0] as { transform?: string }).transform).match(/(-?[\d.]+)px[ ,]+\s*(-?[\d.]+)px/)
+      anims.push({ id: (this as HTMLElement).dataset.layer ?? '', dy: m ? Number(m[2]) : NaN })
       return { finished: Promise.resolve(), cancel() {} } as unknown as Animation
     }
     try {
@@ -444,15 +445,24 @@ describe('展开 / 折叠组时不走 FLIP（TreeBranch 的 grid 过渡单独负
         panel('p4', 'D'),
       ])
       anims.length = 0
-      // 折叠组：p4 随之上移 40，同一次提交——不播
-      shift = -40
+      // 折叠组：p4 随之上移（终点 −40），同一次提交——不播
+      shift = -10 // 过渡半路
       const toggle = rows().find((r) => r.dataset.layer === 'g:g1')!.querySelector('button')!
       await act(async () => toggle.click())
-      expect(anims).not.toContain('p4')
-      // 之后因别的原因（重排）位移：照播
-      shift = 20
+      expect(anims.filter((a) => a.id === 'p4')).toEqual([])
+      // 过渡进行中夹进一次改选提交（p4 在半路）：让位期内，只记位置、不播
+      await act(async () => useSelectionStore.getState().set(['p1']))
+      expect(anims.filter((a) => a.id === 'p4')).toEqual([])
+      // 过渡结束（保活期过去、子树卸载 → onSettled → rebase）：p4 到了终点
+      shift = -40
+      await act(async () => {
+        await new Promise((r) => setTimeout(r, 200))
+      })
+      expect(anims.filter((a) => a.id === 'p4')).toEqual([])
+      // 之后别的原因造成的位移：p4 从 −40 → −16，位移是真实的 24（从半路 −10 起算会是 6）
+      shift = -16
       await act(async () => useSelectionStore.getState().set(['p4']))
-      expect(anims).toContain('p4')
+      expect(anims.filter((a) => a.id === 'p4')).toEqual([{ id: 'p4', dy: -24 }])
     } finally {
       HTMLElement.prototype.getBoundingClientRect = protoRect
       ;(Element.prototype as { animate?: unknown }).animate = protoAnimate

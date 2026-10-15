@@ -78,9 +78,10 @@ function stubGeometry() {
   })
 }
 
+let handle: { rebase: () => void } | null = null
 function List({ ids, skipKey }: { ids: string[]; skipKey?: string }) {
   const ref = useRef<HTMLDivElement>(null)
-  useFlip(ref, 'data-flip-id', skipKey)
+  handle = useFlip(ref, 'data-flip-id', skipKey)
   return (
     <div ref={ref}>
       {ids.map((id) => (
@@ -139,21 +140,43 @@ describe('useFlip', () => {
     expect(calls.every((c) => c.dx === 0)).toBe(true)
   })
 
-  it('skipKey 变了的那一次提交只记位置、不播（别的动画在管这批位移）；之后的重排照常播', () => {
+  it('skipKey 变了进入让位期：期间的提交只记位置、不播；rebase() 重量基准并结束让位；之后的重排按真实位移播', () => {
     place(['a', 'b', 'c'])
     act(() => root.render(<List ids={['a', 'b', 'c']} skipKey="" />))
     // 展开 / 折叠：下面的行位移了，skipKey 同时变——不播
-    place(['a', 'b', 'c'])
-    layout.set('b', { left: 0, top: 80 })
-    layout.set('c', { left: 0, top: 104 })
+    layout.set('c', { left: 0, top: 70 })
     calls = []
     act(() => root.render(<List ids={['a', 'b', 'c']} skipKey="g1" />))
     expect(calls, 'skipKey 变了：FLIP 不叠加子树自己的高度过渡').toHaveLength(0)
-    // 基准已更新：同一 skipKey 下再重排，照常播
-    place(['c', 'b', 'a'])
-    calls = []
-    act(() => root.render(<List ids={['c', 'b', 'a']} skipKey="g1" />))
-    expect(calls.length).toBeGreaterThan(0)
+    // 过渡进行中夹进来的别的提交：c 还在半路（70 → 终点 96），同样只记位置、不播
+    layout.set('c', { left: 0, top: 80 })
+    act(() => root.render(<List ids={['a', 'b', 'c']} skipKey="g1" />))
+    expect(calls, '让位期内的提交不播').toHaveLength(0)
+    // 过渡结束：c 到了终点 96；rebase 重量基准，不播
+    layout.set('c', { left: 0, top: 96 })
+    act(() => handle!.rebase())
+    expect(calls).toHaveLength(0)
+    // 之后的重排：c 从 96 → 120，位移就是真实的 24（不是从半路 80 起算的 40）
+    layout.set('c', { left: 0, top: 120 })
+    act(() => root.render(<List ids={['a', 'b', 'c']} skipKey="g1" />))
+    expect(calls).toHaveLength(1)
+    expect(calls[0]).toMatchObject({ id: 'c', dy: -24 })
+  })
+
+  it('没人调 rebase 时让位期自己到期（兜底），FLIP 不会永久静音', async () => {
+    vi.useFakeTimers()
+    try {
+      place(['a', 'b'])
+      act(() => root.render(<List ids={['a', 'b']} skipKey="" />))
+      act(() => root.render(<List ids={['a', 'b']} skipKey="g1" />))
+      vi.advanceTimersByTime(500)
+      place(['b', 'a'])
+      calls = []
+      act(() => root.render(<List ids={['b', 'a']} skipKey="g1" />))
+      expect(calls.length).toBeGreaterThan(0)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('位置没变的项一个都不播', () => {
