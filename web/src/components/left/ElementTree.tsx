@@ -679,7 +679,7 @@ const ClusterRow = memo(function ClusterRow({
       onPointerDown={(e) => {
         if (e.button === 0) onToggle(rowKey, expanded)
       }}
-      className={cn(listRowClass({ muted: true }), 'pr-2')}
+      className={cn(listRowClass({ muted: true }), 'pr-0.5')}
     >
       <TreeChevron expanded={expanded} />
       <TreeIcon icon={icon} />
