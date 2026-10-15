@@ -13,7 +13,9 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import sqlite3
+import subprocess
 import sys
 import threading
 import time
@@ -560,3 +562,174 @@ def test_a_failed_spawn_keeps_the_failed_record_and_a_new_id_can_run(tmp_path, c
     _wait_idle()
     assert _spawned(counter) == 1
     engine_watch.stop()
+
+
+# ---------------------------------------------------------------------------
+# 跨进程的「同一脚本忙」（Codex #1098 P1 r4289060059）：属主进程还活着的 running 会话挡住别的进程
+# ---------------------------------------------------------------------------
+def _dead_pid() -> int:
+    """一个确定已经结束的进程的 pid。"""
+    proc = subprocess.run(
+        [sys.executable, "-c", "import os; print(os.getpid())"], capture_output=True, text=True
+    )
+    return int(proc.stdout)
+
+
+def _live_other_pid() -> int:
+    """另一个确定还活着的进程（pytest 的父进程）；不是本进程。"""
+    return os.getppid()
+
+
+def _sess(sid, rid, script="fig1.py", owner_pid=None, **kw):
+    d = {
+        "id": sid,
+        "project": "/p",
+        "provider": "codex",
+        "script": script,
+        "client_request_id": rid,
+        **kw,
+    }
+    if owner_pid is not None:
+        d["owner_pid"] = owner_pid
+    return d
+
+
+def test_two_processes_with_different_rids_cannot_both_claim_one_script(tmp_path):
+    """两个独立连接（各自 `_connect`，等价两个服务进程）用不同 rid 同时认领同一脚本：恰好一个成功，另一个 busy。"""
+    import threading
+
+    db = tmp_path / "hist.sqlite3"
+    live = _live_other_pid()
+    for i in range(20):
+        script = f"fig{i}.py"
+        barrier = threading.Barrier(2)
+        out: dict[str, str] = {}
+
+        def claim(who, i=i, script=script):
+            barrier.wait()
+            try:
+                ai_history.record_start(
+                    _sess(f"sid-{who}-{i}", f"rid-{who}-{i:08d}", script, owner_pid=live),
+                    db_path=db,
+                )
+                out[who] = "ok"
+            except ai_history.ScriptBusy:
+                out[who] = "busy"
+
+        ts = [threading.Thread(target=claim, args=(w,)) for w in ("a", "b")]
+        [t.start() for t in ts]
+        [t.join() for t in ts]
+        assert sorted(out.values()) == ["busy", "ok"], out
+        loser = next(w for w, v in out.items() if v == "busy")
+        # 被拒的那一边连请求预留一起回滚：这个 rid 没被消耗，可以在脚本空闲后重发
+        assert ai_history.find_request_record("/p", f"rid-{loser}-{i:08d}", db_path=db) is None
+
+
+def test_a_running_row_whose_owner_is_dead_does_not_block(tmp_path):
+    db = tmp_path / "hist.sqlite3"
+    ai_history.record_start(_sess("zombie", "rid-zombie-0001", owner_pid=_dead_pid()), db_path=db)
+    assert ai_history.record_start(
+        _sess("fresh", "rid-fresh-00001", owner_pid=_live_other_pid()), db_path=db
+    ) == (
+        True,
+        "fresh",
+    )
+    # 属主未知（老行 NULL）/ 就是本进程的旧实例也不挡
+    ai_history.record_end("fresh", "done", db_path=db)
+    ai_history.record_start(_sess("oldrow", "rid-oldrow-0001", owner_pid=0), db_path=db)
+    assert ai_history.record_start(_sess("next", "rid-next-000001"), db_path=db)[0] is True
+
+
+def test_a_very_old_running_row_does_not_block_even_if_the_pid_looks_alive(tmp_path):
+    """pid 会被复用：一条 running 行太老（超过上限）就当属主已死，不让僵尸行永久锁住脚本。"""
+    db = tmp_path / "hist.sqlite3"
+    ai_history.record_start(
+        _sess("ancient", "rid-ancient-001", owner_pid=_live_other_pid()), db_path=db
+    )
+    import sqlite3 as _sq
+
+    with _sq.connect(db) as raw:
+        raw.execute(
+            "UPDATE sessions SET started_ms = started_ms - ?",
+            (ai_history.RUNNING_OWNER_MAX_AGE_MS + 1000,),
+        )
+    assert ai_history.record_start(
+        _sess("fresh2", "rid-fresh-00002", owner_pid=_live_other_pid()), db_path=db
+    )[0]
+
+
+def test_startup_cleanup_only_marks_rows_whose_owner_is_dead(tmp_path):
+    """启动清理不碰另一个仍活着的服务进程里的会话。"""
+    db = tmp_path / "hist.sqlite3"
+    ai_history.record_start(
+        _sess("alive-other", "rid-aaaaaaaa01", "a.py", owner_pid=_live_other_pid()), db_path=db
+    )
+    ai_history.record_start(
+        _sess("dead-other", "rid-bbbbbbbb01", "b.py", owner_pid=_dead_pid()), db_path=db
+    )
+    ai_history.record_start(
+        _sess("own-old", "rid-cccccccc01", "c.py", owner_pid=os.getpid()), db_path=db
+    )
+    ai_history.record_start(_sess("unknown", "rid-dddddddd01", "d.py", owner_pid=0), db_path=db)
+    import sqlite3 as _sq
+
+    with _sq.connect(db) as raw:
+        raw.execute("UPDATE sessions SET owner_pid=NULL WHERE id='unknown'")
+    assert ai_history.mark_interrupted_running(db_path=db) == 3
+    status = {r["id"]: r["status"] for r in _rows(db)}
+    assert status == {
+        "alive-other": "running",  # 另一个活着的进程里的会话没被标掉
+        "dead-other": "interrupted",
+        "own-old": "interrupted",
+        "unknown": "interrupted",
+    }
+
+
+def _rows(db):
+    import sqlite3 as _sq
+
+    with _sq.connect(db) as raw:
+        raw.row_factory = _sq.Row
+        return list(raw.execute("SELECT id, status FROM sessions"))
+
+
+def test_run_is_busy_when_another_process_owns_the_script(tmp_path, cli):
+    """进程内看不见对方：另一个服务进程里同一脚本有活着的 running 会话 → 本进程 run() 回 ai_script_busy，
+    不 spawn、不留半成品，请求 id 也没被消耗。"""
+    _, counter = cli
+    figs = _project(tmp_path)
+    project_key = str(figs.resolve())
+    ai_history.record_start(
+        {
+            "id": "othersess001",
+            "project": project_key,
+            "provider": "codex",
+            "script": "fig1.py",
+            "client_request_id": "rid-other-00001",
+            "owner_pid": _live_other_pid(),
+        }
+    )
+    before = set(ai_bridge.SESSIONS)
+    with pytest.raises(ai_bridge.AgentError) as ei:
+        ai_bridge.run("codex", "fig1.py", "p", str(figs), client_request_id=RID)
+    assert ei.value.code == "ai_script_busy"
+    time.sleep(0.4)
+    assert _spawned(counter) == 0
+    assert set(ai_bridge.SESSIONS) == before
+    assert ai_history.find_request_record(project_key, RID) is None  # rid 没被消耗
+    snaps = list((tmp_path / "snapshots").glob("*")) if (tmp_path / "snapshots").exists() else []
+    assert snaps == [], snaps
+    # 对方结束之后，同一个 rid 可以正常执行
+    ai_history.record_end("othersess001", "done")
+    ai_bridge.run("codex", "fig1.py", "p", str(figs), client_request_id=RID)
+    _wait_idle()
+    assert _spawned(counter) == 1
+    engine_watch.stop()
+
+
+def test_pid_alive_tells_a_finished_process_from_a_live_one():
+    from tavotto.engine.procalive import pid_alive
+
+    assert pid_alive(os.getpid()) is True
+    assert pid_alive(_dead_pid()) is False
+    assert pid_alive(0) is False

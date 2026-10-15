@@ -11,11 +11,13 @@ from __future__ import annotations
 
 import contextlib
 import json
+import os
 import sqlite3
 import time
 from pathlib import Path
 
 from . import config
+from .procalive import pid_alive
 
 DB_PATH = config.data_dir() / "cache" / "ai_history.sqlite3"
 
@@ -106,6 +108,29 @@ class DraftTooLarge(ValueError):
         self.stamp = stamp
 
 
+#: running 行超过这么久还没结束就当属主已死（pid 会被复用，不能只信 pid 存活）：绝不让一条僵尸行永久锁住脚本
+RUNNING_OWNER_MAX_AGE_MS = 24 * 3600 * 1000
+
+
+class ScriptBusy(Exception):
+    """同一 (项目, 脚本) 上已有一个**属主进程还活着**的 running 会话（可能在另一个 Tavotto 服务进程里）。"""
+
+    def __init__(self, script: str):
+        super().__init__(script)
+        self.script = script
+
+
+def owner_alive(owner_pid: int | None, started_ms: int | None, now_ms: int | None = None) -> bool:
+    """这条 running 行的属主还活着吗。属主未知（NULL）/ 就是本进程（它在内存里另有判据，磁盘上的是上一实例留下的）/
+    pid 已死 / 行太老 → False；量不了 → 保守当活着（宁可多挡一次，不让两个进程同时改同一个脚本）。"""
+    if owner_pid is None or owner_pid == os.getpid():
+        return False
+    now_ms = int(time.time() * 1000) if now_ms is None else now_ms
+    if started_ms is not None and now_ms - started_ms > RUNNING_OWNER_MAX_AGE_MS:
+        return False
+    return pid_alive(owner_pid) is not False
+
+
 #: 幂等账本的保留期；超龄才清（会话那时早已终态：启动时 running 一律转 interrupted）
 REQUEST_KEEP_DAYS = 30
 
@@ -129,6 +154,9 @@ _ADDED_COLUMNS = {
     # 前端点「发送」时生成的请求 id（UUID）：同一条 AI 修改被无意重发时据此去重。
     # 老库、老前端（不带 id）为 NULL，不参与唯一约束。
     "client_request_id": "TEXT",
+    # 登记这个会话的**服务进程**的 pid：两个 Tavotto 进程共用同一数据目录时，靠它判「同一脚本上的 running 会话属主是否还活着」
+    # （进程内的 SESSIONS / 脚本锁管不到对方）。老行为 NULL = 属主未知，不算忙。
+    "owner_pid": "INTEGER",
 }
 
 #: (project, client_request_id) 唯一：部分索引，NULL 不算。建在 `_migrate` 里（列补上之后），
@@ -218,12 +246,21 @@ def record_start(sess: dict, db_path: Path | None = None) -> tuple[bool, str]:
             reserved, existing = _reserve(con, sess.get("project", ""), rid, sess["id"])
             if not reserved:
                 return False, existing
+        # **同一事务里**认领脚本：别的进程里属主还活着的 running 会话在同一 (项目, 脚本) 上 → 拒绝（回滚，连同上面的预留）。
+        # 不能只靠进程内的脚本锁：两个服务进程用不同 rid 改同一个用户脚本时它管不到对方
+        if sess.get("script"):
+            for other in con.execute(
+                "SELECT owner_pid, started_ms FROM sessions WHERE project=? AND script=? AND status='running'",
+                (sess.get("project", ""), sess["script"]),
+            ):
+                if owner_alive(other["owner_pid"], other["started_ms"]):
+                    raise ScriptBusy(sess["script"])
         con.execute(
             """INSERT INTO sessions
                (id, project, canvas, panel, element, provider, model, effort,
                 scope, target, script, prompt, status, started_ms, snapshot_path,
-                client_request_id)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                client_request_id, owner_pid)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (
                 sess["id"],
                 sess.get("project", ""),
@@ -241,6 +278,7 @@ def record_start(sess: dict, db_path: Path | None = None) -> tuple[bool, str]:
                 int(time.time() * 1000),
                 sess.get("snapshot_path"),
                 sess.get("client_request_id"),
+                sess.get("owner_pid", os.getpid()),
             ),
         )
     return True, sess["id"]
@@ -279,13 +317,23 @@ def update_status(sid: str, status: str, db_path: Path | None = None) -> None:
 
 
 def mark_interrupted_running(db_path: Path | None = None) -> int:
-    """启动时调用：上个进程留下的 running 一律转为 interrupted。"""
+    """启动时调用：上个进程留下的 running 转为 interrupted。**只标属主已死的**（`owner_alive`）：共用同一数据目录的
+    另一个服务进程里仍在跑的会话不能被这次启动标掉（否则它的脚本被当成空闲、再被另一个进程改写）。
+    属主未知（老行）/ 就是本进程的旧实例 / pid 已死 / 行太老 → 标。"""
+    now = int(time.time() * 1000)
     with _connect(db_path) as con:
-        cur = con.execute(
-            "UPDATE sessions SET status='interrupted', ended_ms=? WHERE status='running'",
-            (int(time.time() * 1000),),
-        )
-        return cur.rowcount
+        dead = [
+            r["id"]
+            for r in con.execute(
+                "SELECT id, owner_pid, started_ms FROM sessions WHERE status='running'"
+            )
+            if not owner_alive(r["owner_pid"], r["started_ms"], now)
+        ]
+        for sid in dead:
+            con.execute(
+                "UPDATE sessions SET status='interrupted', ended_ms=? WHERE id=?", (now, sid)
+            )
+        return len(dead)
 
 
 def set_pinned(sid: str, pinned: bool, db_path: Path | None = None) -> bool:

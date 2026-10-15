@@ -82,6 +82,15 @@ class DuplicateRequest(Exception):
         self.sid = sid
 
 
+def _drop_attempt_files(sid: str, snap: Path) -> None:
+    """这次尝试没有真正起任务（被拒绝）：清掉为它备好的快照 / sidecar / 日志，不留半成品。"""
+    for leftover in (snap, SNAP_DIR / f"{sid}.json", SNAP_DIR / f"{sid}.stderr.log"):
+        try:
+            leftover.unlink()
+        except OSError:
+            pass
+
+
 def find_request(project: str, client_request_id: str) -> dict | None:
     """这个项目里这个请求 id 对应的会话摘要 `{session, status, changed, script}`，没有返回 None。
 
@@ -769,6 +778,11 @@ def run(
                     "client_request_id": client_request_id,
                 }
             )
+        except ai_history.ScriptBusy:
+            # 另一个服务进程里同一脚本上有属主还活着的 running 会话（进程内的 `script_busy` 看不到它）
+            stderr_log.close()
+            _drop_attempt_files(sid, snap)
+            raise AgentError("ai_script_busy", {"script": script}) from None
         except BaseException:
             stderr_log.close()
             raise
@@ -776,11 +790,7 @@ def run(
             # 别的调用者（可能是另一个共用数据目录的 Tavotto 进程）已经原子预留了这个 (项目, 请求 id)：
             # 不 spawn，清掉这次为它准备的快照 / sidecar / 日志，按去重语义回既有会话
             stderr_log.close()
-            for leftover in (snap, SNAP_DIR / f"{sid}.json", SNAP_DIR / f"{sid}.stderr.log"):
-                try:
-                    leftover.unlink()
-                except OSError:
-                    pass
+            _drop_attempt_files(sid, snap)
             raise DuplicateRequest(started[1])
         try:
             proc = subprocess.Popen(
