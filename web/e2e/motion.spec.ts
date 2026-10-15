@@ -1,4 +1,4 @@
-import { expect, test, waitForDocumentReady } from './fixtures'
+import { expect, test, waitForDocumentReady, waitForFigureEdit } from './fixtures'
 
 /**
  * 动效：**真浏览器里**确认它们真的在播。
@@ -413,4 +413,96 @@ test('画布标签重排：每个标签从原位滑到新位', async ({ app, pag
   expect(flips.length, '两个标签都该从原位滑过来').toBeGreaterThanOrEqual(2)
   // 标签是横排：位移必须发生在 x 上
   expect(flips.every((f) => Math.abs(f.dx) > 1)).toBe(true)
+})
+
+/**
+ * 右键快捷编辑弹层（图内元素）的退场。它是自己写的条件渲染（没有 Radix 的 Presence），
+ * 退场靠 `usePresence` 保活 `--duration-exit` 那一档播 `pop-out`：
+ *   - 开着动效：关闭那一刻弹层还在、已切到 `data-state=closed` 并挂着 pop-out（有效时长 90），播完才卸载；
+ *     退场期间不吃点击（pointer-events:none）；
+ *   - reduced-motion：退场动画的有效时长被压到 0（主判据排在最前，不被前置断言截断），
+ *     且不留保活期（≤5 帧；阈值落在缝里的理由见上一条用例）。
+ */
+test('右键快捷编辑弹层：开着动效退场播 pop-out 再卸载；reduced-motion 下退场被压到 0、不留保活期', async ({ app, page }) => {
+  test.setTimeout(240_000)
+  await page.setViewportSize({ width: 1440, height: 900 })
+  const a = await app()
+  await page.goto(a.baseURL)
+  await page.getByText('Fig1_kinetics.pdf').dblclick({ timeout: 30_000 })
+  await waitForFigureEdit(page)
+
+  // 图内一个有体积的元素（轴标题 / 曲线 / 图例之一）：右键它开元素弹层
+  const target = await page.evaluate(() => {
+    const els = [...document.querySelectorAll<SVGGraphicsElement>('[data-element-svg] svg [id^="axes_"]')]
+    for (const el of els) {
+      const r = el.getBoundingClientRect()
+      if (r.width > 12 && r.height > 12) return { x: r.x + r.width / 2, y: r.y + r.height / 2, id: el.id }
+    }
+    return null
+  })
+  expect(target, '快速编辑里找不到可右键的图内元素').not.toBeNull()
+  const popover = page.locator('[data-quick-popover]')
+
+  const openPopover = async () => {
+    await page.mouse.click(target!.x, target!.y, { button: 'right' })
+    await expect(popover).toHaveCount(1)
+    await expect(popover).toHaveAttribute('data-state', 'open')
+    // 进场动画播完再往下：只关心退场
+    await expect.poll(() => popover.evaluate((el) => el.getAnimations().length)).toBe(0)
+  }
+  /** 关闭那一刻取样：只让出微任务、不跨帧（同 prefers-reduced-motion 那条用例的取样法） */
+  const closeAndSample = async () => {
+    return page.evaluate(async () => {
+      const q = () => document.querySelector<HTMLElement>('[data-quick-popover]')
+      const seen = new Map<string, number>()
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
+      let state: string | null = null
+      let pointerEvents = ''
+      for (let i = 0; i < 20; i++) {
+        await Promise.resolve()
+        const el = q()
+        if (!el) break
+        state = el.getAttribute('data-state')
+        pointerEvents = getComputedStyle(el).pointerEvents
+        for (const anim of el.getAnimations()) {
+          seen.set(
+            (anim as unknown as { animationName?: string }).animationName ?? '',
+            Number(anim.effect?.getComputedTiming().activeDuration ?? NaN),
+          )
+        }
+      }
+      let frames = 0
+      for (let i = 0; i < 30; i++) {
+        await new Promise((r) => requestAnimationFrame(r))
+        if (q()) frames++
+      }
+      return { state, pointerEvents, anims: [...seen].map(([name, activeDuration]) => ({ name, activeDuration })), frames }
+    })
+  }
+
+  // ---- 开着动效：先 closed + pop-out（90ms），播完才卸载
+  await openPopover()
+  const live = await closeAndSample()
+  console.log(`[动效] 快捷编辑弹层退场（开着动效）：${JSON.stringify(live)}`)
+  expect(live.state, '关闭那一刻弹层应当还在并切到 closed').toBe('closed')
+  expect(live.anims.map((x) => x.name)).toContain('pop-out')
+  expect(Math.max(...live.anims.map((x) => x.activeDuration))).toBeGreaterThan(50)
+  expect(live.pointerEvents, '退场期间不吃点击').toBe('none')
+  expect(live.frames, '保活期结束后弹层必须卸载（不能永远挂着）').toBeLessThan(30)
+  await expect(popover).toHaveCount(0)
+
+  // ---- reduced-motion：主判据排最前
+  await page.emulateMedia({ reducedMotion: 'reduce' })
+  await openPopover()
+  const reduced = await closeAndSample()
+  console.log(`[动效] 快捷编辑弹层退场（reduced-motion）：${JSON.stringify(reduced)}`)
+  // 弹层在微任务内就被卸载时 anims 为空：此时 frames 必为 0，也算「没有可感知的退场」
+  if (reduced.anims.length > 0) {
+    expect(
+      Math.max(...reduced.anims.map((x) => x.activeDuration)),
+      `退场动画的有效时长应当被压到 0（实得 ${JSON.stringify(reduced.anims)}）`,
+    ).toBeLessThan(1)
+  }
+  expect(reduced.frames, '关掉动效后不该还有可感知的保活期').toBeLessThanOrEqual(5)
+  await expect(popover).toHaveCount(0)
 })

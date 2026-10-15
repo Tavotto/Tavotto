@@ -168,6 +168,7 @@ function ElementPopover({
       // 含输入控件，按对话框宣告更诚实（纯菜单那份在 ObjectContextMenu）
       role="dialog"
       aria-label={qe('aria')}
+      data-quick-popover
       data-state={state}
       aria-hidden={state === 'closed' || undefined}
       onContextMenu={(e) => e.preventDefault()}
