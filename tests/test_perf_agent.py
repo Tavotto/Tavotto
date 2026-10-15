@@ -1120,3 +1120,37 @@ def test_failed_run_argparse_does_not_erase_derived_comparison_baseline(tmp_path
     )
     assert baseline.read_bytes() == before
     assert json.loads(summary.read_text(encoding="utf-8"))["regression_status"] == "failed"
+
+
+@pytest.mark.parametrize("drag_failure", ["timeout", "nonzero"])
+def test_baseline_requested_drag_failure_finalizes_regression_status(
+    tmp_path, monkeypatch, drag_failure
+):
+    """一旦拖动终止失败，比较就不可能继续 pending。"""
+    output = tmp_path / "run.json"
+    summary = tmp_path / "summary.json"
+    baseline = tmp_path / "baseline.json"
+    baseline.write_text(json.dumps(report()), encoding="utf-8")
+    monkeypatch.setattr(A.shutil, "which", lambda _: "pnpm")
+    monkeypatch.delenv("GITHUB_STEP_SUMMARY", raising=False)
+
+    def execute(argv, **kwargs):
+        if "playwright.perf.config.ts" in argv:
+            output.write_text(json.dumps(report()), encoding="utf-8")
+            return SimpleNamespace(returncode=0)
+        if "playwright.config.ts" in argv:
+            if drag_failure == "timeout":
+                raise subprocess.TimeoutExpired(argv, kwargs["timeout"])
+            return SimpleNamespace(returncode=1)
+        raise AssertionError("unexpected subprocess")
+
+    monkeypatch.setattr(A.subprocess, "run", execute)
+    rc = A.main([
+        "run", "--out", str(output), "--summary", str(summary),
+        "--baseline", str(baseline), "--include-drag",
+    ])
+    saved = json.loads(summary.read_text(encoding="utf-8"))
+    assert rc == 2
+    assert saved["status"] == "failed"
+    assert saved["suites"] == {"symbol_ui": "ok", "canvas_drag": "failed"}
+    assert saved["regression_status"] == "failed"

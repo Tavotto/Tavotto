@@ -633,11 +633,15 @@ def main(argv: list[str] | None = None) -> int:
                     )
                 except subprocess.TimeoutExpired:
                     drag_status = "failed"
+                    if args.baseline is not None:
+                        result["regression_status"] = "failed"
                     save_suite_summary()
                     print("error: perf_agent_drag_probe_timeout", file=sys.stderr)
                     return 2
                 if drag_run.returncode != 0 or not drag_path.is_file():
                     drag_status = "failed"
+                    if args.baseline is not None:
+                        result["regression_status"] = "failed"
                     save_suite_summary()
                     print("error: perf_agent_drag_probe_failed", file=sys.stderr)
                     return 2
@@ -657,11 +661,15 @@ def main(argv: list[str] | None = None) -> int:
                     )
                 except subprocess.TimeoutExpired:
                     drag_status = "failed"
+                    if args.baseline is not None:
+                        result["regression_status"] = "failed"
                     save_suite_summary()
                     print("error: perf_agent_drag_analysis_timeout", file=sys.stderr)
                     return 2
                 if analysis.returncode != 0 or not findings_path.is_file():
                     drag_status = "failed"
+                    if args.baseline is not None:
+                        result["regression_status"] = "failed"
                     save_suite_summary()
                     print("error: perf_agent_drag_analysis_failed", file=sys.stderr)
                     return 2
