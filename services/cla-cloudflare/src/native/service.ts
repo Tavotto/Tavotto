@@ -108,7 +108,7 @@ export class LiveService {
     if (!row) throw new Rejected('evidence_unavailable'); return this.evidenceRecord(p,row);
   }
   async document(token:string,packet?:string):Promise<unknown> {
-    if(!packet)return this.github.agreement('individual');
+    if(!packet)throw new Rejected('public_agreement_asset_required');
     const p=await this.packetFor(await this.session(token),packet),d=await this.store.document(p.digest);
     if(!d || d.version!==p.version || d.kind!==p.kind || await sha256(d.content)!==p.digest)throw new Rejected('agreement_unavailable');return d;
   }

@@ -38,7 +38,7 @@ This is not a D1 migration command or authorization to read production evidence.
 
 ## Validation boundary
 
-The offline regression covers 110 Node cases, 3 SQLite migration cases and 8 isolated mutation checks, including wrong/invalid encryption keys, tampered evidence, expired intents, role/order checks, exact deadline boundaries, completed qualification after eight days and subject-wide holds. Re-run the commands above for the checkout under review. Local passes do not establish legal sufficiency or live GitHub/Cloudflare behavior.
+The offline regression covers 134 Node cases, 3 SQLite migration cases and 10 isolated mutation checks, including wrong/invalid encryption keys, tampered evidence, expired intents, role/order checks, exact deadline boundaries, completed qualification after eight days and subject-wide holds. Re-run the commands above for the checkout under review. Local passes do not establish legal sufficiency or live GitHub/Cloudflare behavior.
 
 
 The dedicated path-filtered PR workflow uses a GitHub-hosted Ubuntu runner, Node 24 and Python 3.12, with contents:read only, no secrets, no deployment and no dependency cache. It runs npm ci --ignore-scripts and npm run check. It adds no required context and does not change the existing aggregate gates. Local and CI passes do not establish live free-tier acceptance.
@@ -58,3 +58,56 @@ Refresh is limited to the same head and an existing, exactly identified owned ch
 Resource limits remain 20 work SQL statements / 40 total and 35 work external calls / 40 total per invocation. Dispatch needs 12 + 2N work SQL statements, where N is the number of non-exempt contributors. Confirmation needs 14 + 2N, plus two reserved reads if withdrawal becomes necessary. Consequently this initial automatic refresh path admits at most two non-exempt contributors. More contributors or complex remote reads can exhaust the unchanged budget: no fresh publication is sent, retries are bounded to three with 60-second backoff, then manual review is required. This is a resource/capability boundary, not a negative legal or eligibility determination. There is no automatic clearing of manual states.
 
 Dynamic success-publication-across-expiry integration validation is not part of this candidate's passing evidence. New tests are restricted to offline rejection, budget, durable deduplication and uncertainty handling with failed proposals; they do not establish successful end-to-end refresh behavior. Live GitHub/Cloudflare acceptance and the excluded integration scenario remain activation gates.
+
+### Public endpoints: abuse limits and pinned agreement asset
+
+OAuth remains off by default. Before enabling it, supply the `CLA_OAUTH_LIMITER`
+Workers Rate Limiting binding. The worker uses a fixed `oauth-start` key before
+reading a body, importing the evidence key, or accessing D1. Missing/failed
+bindings fail closed with 503; a denied request returns 429. A suggested binding
+setting is 20 requests per 60 seconds, using a distinct operator-selected
+namespace. The [official binding documentation](https://developers.cloudflare.com/workers/runtime-apis/bindings/rate-limit/)
+explains that these counters are permissive, eventually consistent and local to
+each Cloudflare location. This is not a global accounting or complete DoS defense.
+No IP address is collected or used as an authentication signal. Availability and
+account-plan costs must be verified before a separately approved deployment;
+this PR creates no binding or paid resource.
+
+A separate atomic D1 rule allows at most 10 unexpired OAuth states globally in
+a rolling 300-second interval, including consumed states. It allows a small
+concurrent burst instead of serializing logins. Busy callers receive 429 with a
+300-second retry hint. Each admission transaction prunes at most 20 expired rows
+and inserts only if both the active limit and total-row limit of 100 permit it.
+Unused, unexpired states are never pruned. Existing oversized snapshots are not
+silently discarded: bounded expiry cleanup may need multiple requests before
+admission resumes. Failed admissions can still prune expired rows. Normal
+steady-state admission is approximately 2,880 states/day, but this is not a D1
+billing guarantee: cleanup backlog, index maintenance, callbacks, reads and other
+service operations also consume quota. An attacker can occupy the shared slots;
+the service deliberately favors bounded cost and fail-closed behavior over an
+unconditional login-availability promise. Callback single-use state/browser/PKCE
+binding is unchanged. `oauth_expiry` is included in new snapshot schemas; existing
+v2 deployments require a separately reviewed schema update before activation.
+
+Public `GET /agreement` no longer calls GitHub or imports the evidence key. It
+requires a `CLA_PUBLIC_AGREEMENT` Workers Static Assets binding containing exactly
+`/CLA_INDIVIDUAL.md`. Before deployment, export the exact approved document bytes
+from a fixed reviewed commit, verify SHA-256 against the deployed policy's
+individual-agreement digest, and stage them as that asset. This is an operator
+preparation step, not a contributor-signing prerequisite. Do not alter legal text
+to make a digest match. Set the asset's Content-Type explicitly to `text/plain`
+or `text/markdown` (for example using the asset `_headers` file); an octet-stream
+fallback is rejected. Configure `assets.run_worker_first = true` so requests are
+routed through this worker, and do not expose the asset directory through another
+unvalidated route. The worker has no direct asset pass-through route.
+
+The fixed asset fetch rejects redirects and non-200/error responses, bounds the
+stream to 128 KiB, verifies the original bytes against the current configured
+digest, and then requires valid UTF-8. A missing binding, bad hash, bad type or
+unavailable asset returns 503 with no GitHub fallback. There is no persistent
+in-memory cache and no fabricated source commit in the response. This public
+text is not evidence that upstream policy is still current: authenticated packet
+creation, signing and eligibility retain their existing policy/identity checks.
+Requests containing `packet` still require the appropriate session and return
+that packet's immutable historical document. This PR supplies only synthetic
+asset fixtures, no real agreement asset upload or deployment configuration.

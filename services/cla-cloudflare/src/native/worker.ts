@@ -1,6 +1,6 @@
 import type { D1Database } from '../core/types.ts';
 import { Rejected } from '../core/types.ts';
-import { importAes, unbase64 } from '../core/crypto.ts';
+import { importAes, unbase64, sha256 } from '../core/crypto.ts';
 import type { LiveConfig, Secrets } from './config.ts';
 import { validateLive } from './config.ts';
 import { GitHub } from './github.ts';
@@ -12,6 +12,8 @@ import { verification } from './verification.ts';
 import { InvocationBudget } from './budget.ts';
 
 export interface Env {
+  CLA_OAUTH_LIMITER?:{limit(input:{key:string}):Promise<{success:boolean}>};
+  CLA_PUBLIC_AGREEMENT?:{fetch(request:Request):Promise<Response>};
   DB:D1Database; CLA_CONFIG?:string; CLA_EVIDENCE_KEY?:string; CLA_CLIENT_SECRET?:string; CLA_APP_PKCS8?:string;
   CLA_GITHUB_ENABLED?:string; CLA_OAUTH_ENABLED?:string; CLA_SIGNING_ENABLED?:string; CLA_CHECK_PUBLISHING_ENABLED?:string;
   CLA_UI_ENABLED?:string; CLA_BACKGROUND_ENABLED?:string;
@@ -38,6 +40,24 @@ async function body(req:Request,keys:string[]):Promise<Record<string,any>> {
   let data;try{data=JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(all));}catch{throw new Rejected('form_rejected');}
   if(!data || typeof data!=='object' || Array.isArray(data) || Object.keys(data).sort().join(',')!==keys.sort().join(','))
     throw new Rejected('form_rejected');return data;
+}
+async function publicAgreement(env:Env,c:LiveConfig):Promise<Response> {
+  if(!env.CLA_PUBLIC_AGREEMENT)return json({error:'agreement_configuration_required'},503);
+  try {
+    // This fixed asset path is never derived from caller input and never falls back to GitHub.
+    const response=await env.CLA_PUBLIC_AGREEMENT.fetch(new Request('https://cla-assets.invalid/CLA_INDIVIDUAL.md',{redirect:'manual'}));
+    if(response.status!==200 || response.redirected || !response.body ||
+      !['text/plain','text/markdown'].includes(response.headers.get('content-type')?.split(';')[0]?.trim() ?? ''))
+      throw new Rejected('agreement_asset_unavailable');
+    const reader=response.body.getReader(),chunks:Uint8Array[]=[];let size=0;
+    for(;;){const {done,value}=await reader.read();if(done)break;size+=value.length;
+      if(size>131072){await reader.cancel();throw new Rejected('agreement_asset_too_large');}chunks.push(value);}
+    const data=new Uint8Array(size);let at=0;for(const chunk of chunks){data.set(chunk,at);at+=chunk.length;}
+    const a=c.policy.agreements.individual;
+    if(await sha256(data)!==a.sha256)throw new Rejected('agreement_digest_mismatch');
+    const content=new TextDecoder('utf-8',{fatal:true,ignoreBOM:true}).decode(data);
+    return json({digest:a.sha256,kind:'individual',version:a.version,content});
+  }catch(error){return json({error:error instanceof Rejected?error.code:'agreement_asset_unavailable'},503);}
 }
 export function config(env:Env):LiveConfig {
   let c:LiveConfig;try{c=JSON.parse(env.CLA_CONFIG ?? '');}catch{throw new Rejected('configuration_required');}
@@ -74,11 +94,22 @@ export default {async scheduled(_controller:unknown,env:Env):Promise<void> {
         !/^[1-9][0-9]*$/.test(url.searchParams.get('run') ?? ''))throw new Rejected('verification_invalid');
       return json(await verification(await service(env),Number(url.searchParams.get('pr')),url.searchParams.get('head')!,Number(url.searchParams.get('run')),url.searchParams.get('attempt')!));
     }
-    const s=await service(env),jar=cookies(req),token=jar.get('__Host-cla-session') ?? '',csrf=req.headers.get('x-csrf-token') ?? '';
+    if(req.method==='GET' && url.pathname==='/agreement' && !url.search)return publicAgreement(env,c);
     if(req.method==='POST' && url.pathname==='/oauth/start' && !url.search) {
-      await body(req,[]);const flow=await s.startOAuth(req.headers.get('origin'));
+      if(req.headers.get('origin')!==c.origin)throw new Rejected('origin_rejected');
+      if(req.headers.get('content-type')?.split(';')[0]!=='application/json')throw new Rejected('form_rejected');
+      if(!c.oauthEnabled)throw new Rejected('oauth_disabled');
+      // A deployment-supplied edge binding must admit the request BEFORE body, key import, or D1.
+      if(!env.CLA_OAUTH_LIMITER)return json({error:'oauth_abuse_control_required'},503);
+      let admitted=false;
+      try{admitted=(await env.CLA_OAUTH_LIMITER.limit({key:'oauth-start'})).success===true;}
+      catch{return json({error:'oauth_abuse_control_unavailable'},503);}
+      if(!admitted)return json({error:'oauth_busy'},429,{'retry-after':'60'});
+      await body(req,[]);
+      const flow=await (await service(env)).startOAuth(req.headers.get('origin'));
       return json({authorizationURL:flow.url},200,{'set-cookie':cookie('__Host-cla-oauth',flow.browser,300)});
     }
+    const s=await service(env),jar=cookies(req),token=jar.get('__Host-cla-session') ?? '',csrf=req.headers.get('x-csrf-token') ?? '';
     if(req.method==='GET' && url.pathname==='/oauth/callback') {
       const query=[...url.searchParams.keys()];if(query.length!==2 || !query.includes('state') || !query.includes('code')) throw new Rejected('oauth_rejected');
       const login=await s.completeOAuth(url.searchParams.get('state')!,jar.get('__Host-cla-oauth') ?? '',url.searchParams.get('code')!);
@@ -112,6 +143,7 @@ export default {async scheduled(_controller:unknown,env:Env):Promise<void> {
     return json({error:'route_unavailable'},404);
   } catch(error) {
     // Never log upstream responses, OAuth URLs/codes, request data, cookies, evidence or secrets.
+    if(error instanceof Rejected && error.code==='oauth_busy')return json({error:error.code},429,{'retry-after':'300'});
     return json({error:error instanceof Rejected ? error.code : 'request_unavailable'},error instanceof Rejected ? 403 : 503);
   }
 }};

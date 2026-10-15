@@ -5,7 +5,7 @@ import { Store } from '../core/store.ts';
 import { BudgetDeferred, FREE_BUDGET, InvocationBudget, meterDatabase } from './budget.ts';
 
 export const PREFIX = 'cla_native_v2_';
-const objects = ['packets_subject_digest','authority','agreements','state','sessions','oauth_states','packets','intents','signatures',
+const objects = ['oauth_expiry','packets_subject_digest','authority','agreements','state','sessions','oauth_states','packets','intents','signatures',
   'eligibility_blocks','audit','targets','outbox','outbox_due','deliveries','published_checks','_guards',
   'revision_outbox','delivery_outbox','agreements_update','agreements_delete','packets_update','packets_delete',
   'signatures_update','signatures_delete','blocks_update','blocks_delete','audit_update','audit_delete',
@@ -241,6 +241,21 @@ export class LiveStore extends Store {
         AND (?!='confirmed' OR (revision=(SELECT revision FROM state WHERE id=1) AND expires>${DB_NOW}))`,phase,run,id,phase),
       ...this.guard('changes()=1'),
     ]);
+  }
+  override async addOAuth(hash:string,browser:string,cipher:string,_expires:number):Promise<void> {
+    // A global rolling burst bound, independent of the edge's per-location limit.
+    // Consumed rows retain their slot until expiry; callback success cannot reset it.
+    const results=await this.db.batch<{state_hash:string}>([
+      this.stmt(`DELETE FROM oauth_states WHERE state_hash IN
+        (SELECT state_hash FROM oauth_states WHERE expires<=${DB_NOW} ORDER BY expires,state_hash LIMIT 20)`),
+      this.stmt(`INSERT INTO oauth_states(state_hash,browser_hash,verifier_cipher,expires)
+        SELECT ?,?,?,${DB_NOW}+300 WHERE
+        (SELECT COUNT(*) FROM (SELECT 1 FROM oauth_states WHERE expires>${DB_NOW} LIMIT 10))<10
+        AND (SELECT COUNT(*) FROM (SELECT 1 FROM oauth_states LIMIT 100))<100
+        ON CONFLICT(state_hash) DO NOTHING RETURNING state_hash`,hash,browser,cipher),
+    ]);
+    if(results.some(r=>!r.success))throw new Rejected('transaction_rejected');
+    if(!results[1]?.results[0])throw new Rejected('oauth_busy');
   }
   override async consumeOAuth(hash:string,browser:string,_now:number):Promise<string> {
     const result = await this.db.batch<{verifier_cipher:string}>([this.stmt(`UPDATE oauth_states SET used=1

@@ -28,3 +28,6 @@ CREATE TABLE agreement_documents (
 );
 CREATE TRIGGER documents_update BEFORE UPDATE ON agreement_documents BEGIN SELECT RAISE(ABORT,'immutable'); END;
 CREATE TRIGGER documents_delete BEFORE DELETE ON agreement_documents BEGIN SELECT RAISE(ABORT,'immutable'); END;
+
+-- Bounded OAuth admission and expiry pruning use this index.
+CREATE INDEX oauth_expiry ON oauth_states(expires,state_hash);
