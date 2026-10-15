@@ -605,6 +605,9 @@
     -webkit-font-smoothing: antialiased;
     text-rendering: optimizeLegibility;
     overscroll-behavior: none;
+    /* CSS Text 4 里 text-autospace 的初始值是 normal（继承）：先在根上关掉，再由散文 / 标签角色类显式打开。
+       否则没挂角色类的普通 span（如画布页签里的用户画布名「图A」）也会被加空隙 */
+    text-autospace: no-autospace;
   }
 
   /* 工具类软件不该有到处可选中的文字 */
@@ -813,7 +816,7 @@
      type-number   数值（输入框的值、只读读数）12px，系统字体 + 等宽数字（定义在文件末尾）
    --------------------------------------------------------------------------- */
 /* 中西文自动留 1/8 em 空隙（text-autospace）只给**散文与标签**的角色类开：display / heading / title / reading / section / body / caption。
-   不挂在 body 上——输入框、代码、脚本名 / 路径是字面数据，显示的字符数与复制出来的必须一致（「图A.py」不能显示成「图 A.py」），
+   body 上显式 no-autospace（初始值是 normal），再由这些角色类打开——输入框、代码、脚本名 / 路径是字面数据，显示的字符数与复制出来的必须一致（「图A.py」不能显示成「图 A.py」），
    也不能改变截断位置。control / number / meta 不开（控件值、读数、元数据常夹着单位与文件名）。
    字面数据的兜底在文件末尾：无层规则压过任何工具类（`type-body font-mono` 也不会被带上）。 */
 @utility type-display {

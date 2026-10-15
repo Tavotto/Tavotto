@@ -278,7 +278,7 @@ disabled 统一 `opacity-40 + cursor-not-allowed`。光标一律箭头（可拖�
 图标只有自绘的一套（`web/src/components/ui/icons/`，ADR 0052；说明书 `docs/ux/ICONOGRAPHY.md`）。
 
 动效：**宪法第七节**。时长只来自 token（fast 120 / base 180 / slow 240 / exit 90），
-进场 `--ease-pop`、退场 `--ease-exit`、落位收尾 `--ease-spring`、其余 `--ease-standard`；没写时长的
+进场 `--ease-pop`、退场 `--ease-exit`、落位收尾 `--ease-spring`、跟随选中项滑动的指示物（Segmented thumb / Tabs 下划线）`--ease-snap`、其余 `--ease-standard`；没写时长的
 `transition-*` 默认就是 fast + standard（`--default-transition-*`）；`prefers-reduced-motion` 是硬约束。
 加载只有四种写法：不定进度 `animate-sweep`、静态骨架、进行中的字 `text-shimmer`、转圈；Tailwind 的呼吸动画被门禁禁了。
 改图助手对话区（流式逐词淡入 / 亮带状态 / 发送 ↔ 中止同钮 / 贴底跟随）见 **宪法第十八节**；转录的形态（用户气泡 / 无卡回答 / 环境行与显著卡 /
