@@ -1059,6 +1059,17 @@ describe('SSE 断线后的对账（reconcile）：丢了终态事件，卡片不
     expect(useDepRepairStore.getState().progress?.state).toBe('done')
   })
 
+  it('depRepair：已到终态后，终态的重复 / 另一个终态都不再派发副作用（对账回包与 SSE 同时带来 done）', async () => {
+    await startInstallOnA()
+    const retry = vi.fn()
+    useRenderStore.setState({ retryEnvironmentFailures: retry })
+    useDepRepairStore.getState().onProgress(progress('done'))
+    useDepRepairStore.getState().onProgress(progress('done'))
+    useDepRepairStore.getState().onProgress(progress('failed', { code: 'x', error: 'late' }))
+    expect(retry).toHaveBeenCalledTimes(1)
+    expect(useDepRepairStore.getState().progress?.state).toBe('done')
+  })
+
   it('depRepair：缓冲里先到的 verifying 之后，在飞的 done 回包仍然被接受（更靠后的终态）', async () => {
     await startInstallOnA()
     holding.add('/api/engine/dependency/state')
