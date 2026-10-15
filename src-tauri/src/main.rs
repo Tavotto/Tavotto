@@ -11,6 +11,8 @@ mod crash_dump;
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 mod drop_paths;
 mod exit_marker;
+#[cfg(target_os = "macos")]
+mod fullscreen_observer;
 mod i18n;
 #[cfg(target_os = "macos")]
 mod native_drop;
@@ -1425,19 +1427,35 @@ fn current_fullscreen(window: tauri::WebviewWindow) -> Result<bool, String> {
     Ok(cfg!(target_os = "macos") && window.is_fullscreen().unwrap_or(false))
 }
 
-/// 全屏状态真变了才发 `tavotto:fullscreen`（只发给主窗口）。
+/// 告诉主窗口的页面全屏状态；`FullscreenTracker` 去重，真变了才发 `tavotto:fullscreen`。
 #[cfg(target_os = "macos")]
-fn notify_fullscreen(window: &tauri::Window) {
-    let now = window.is_fullscreen().unwrap_or(false);
-    let Some(state) = window.app_handle().try_state::<AppState>() else {
+fn announce_fullscreen(app: &tauri::AppHandle, now: bool) {
+    let Some(state) = app.try_state::<AppState>() else {
         return;
     };
     if state.fullscreen.update(now) {
-        let _ = window.app_handle().emit_to(
+        let _ = app.emit_to(
             MAIN_WINDOW,
             window_chrome::FULLSCREEN_EVENT,
             serde_json::json!({ "fullscreen": now }),
         );
+    }
+}
+
+/// 原生全屏通知（`fullscreen_observer`）到了：按 `phase_verdict` 该发就发。
+#[cfg(target_os = "macos")]
+pub(crate) fn on_fullscreen_phase(app: &tauri::AppHandle, phase: window_chrome::FullscreenPhase) {
+    if let Some(now) = window_chrome::phase_verdict(phase) {
+        announce_fullscreen(app, now);
+    }
+}
+
+/// `Resized` 兜底：与 `is_fullscreen()` 对账（观察者在位时只许报 false，见 `resize_may_report`）。
+#[cfg(target_os = "macos")]
+fn reconcile_fullscreen(window: &tauri::Window) {
+    let now = window.is_fullscreen().unwrap_or(false);
+    if window_chrome::resize_may_report(fullscreen_observer::installed(), now) {
+        announce_fullscreen(window.app_handle(), now);
     }
 }
 
@@ -1754,10 +1772,15 @@ fn main() {
             rescue::rescue_diag_save
         ])
         .on_window_event(|window, event| {
-            // macOS 进 / 出全屏必伴随一次 Resized：变了才通知页面收放红绿灯那段空位。
+            // macOS 全屏：主信号是原生的 will / did 通知（`fullscreen_observer`），这里只做对账兜底；
+            // 主窗口没了就摘掉观察者。
             #[cfg(target_os = "macos")]
-            if window.label() == MAIN_WINDOW && matches!(event, tauri::WindowEvent::Resized(_)) {
-                notify_fullscreen(window);
+            if window.label() == MAIN_WINDOW {
+                match event {
+                    tauri::WindowEvent::Resized(_) => reconcile_fullscreen(window),
+                    tauri::WindowEvent::Destroyed => fullscreen_observer::remove(),
+                    _ => {}
+                }
             }
             // 事件回调是全局的：只看有关窗询问闸的那两个窗口。
             if !guarded_window(window.label()) {
@@ -1850,6 +1873,10 @@ fn main() {
             {
                 let drop_handle = handle.clone();
                 let _ = win.with_webview(move |pw| native_drop::install(pw.inner(), drop_handle));
+                // 全屏的原生信号（红绿灯回来之前就要恢复占位）；装不上则 Resized 兜底全权负责
+                if let Ok(ns_window) = win.ns_window() {
+                    fullscreen_observer::install(ns_window, handle.clone());
+                }
             }
             let _ = win.set_focus();
             spawn_e2e_update_if_requested(handle.clone());

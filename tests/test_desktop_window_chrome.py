@@ -21,7 +21,7 @@ from pathlib import Path
 
 import pytest
 
-from tests.support.rustsrc import chain_methods, rust_code, window_builders
+from tests.support.rustsrc import _bracket_body, chain_methods, rust_code, window_builders
 
 ROOT = Path(__file__).resolve().parent.parent
 TAURI = ROOT / "src-tauri"
@@ -146,9 +146,23 @@ def test_fullscreen_event_command_and_acl_are_one_contract():
                 "allow-current-fullscreen"
                 not in json.loads(p.read_text(encoding="utf-8"))["permissions"]
             ), p.name
-    # 只在 macOS 的主窗口发（别的平台没有随全屏收起的红绿灯）
-    fn = main[main.index("fn notify_fullscreen(") :]
-    assert (
-        main[: main.index("fn notify_fullscreen(")].rstrip().endswith('#[cfg(target_os = "macos")]')
+    # 只在 macOS 发、只发给主窗口：取函数体（大括号配对），不是切到文件尾
+    code = rust_code(MAIN_RS.read_text(encoding="utf-8"))
+    head = code.index("fn announce_fullscreen(")
+    assert re.search(r"#\[cfg\(target_os =\s*\)\]\s*$", code[:head]), (
+        "announce_fullscreen 必须 cfg(macos)"
     )
-    assert "MAIN_WINDOW" in fn
+    assert 'target_os = "macos"' in MAIN_RS.read_text(encoding="utf-8")
+    body = _bracket_body(code, code.index("{", code.index(")", head)))
+    assert re.search(r"emit_to\(\s*MAIN_WINDOW\s*,\s*window_chrome::FULLSCREEN_EVENT\b", body), body
+    assert ".emit(" not in body, "全屏事件不许全局广播"
+    assert "REMOTE_WINDOW" not in body
+    # 原生通知观察者：四条通知都听、主窗口销毁时摘掉
+    obs = rust_code(
+        (TAURI / "src" / "fullscreen_observer.rs").read_text(encoding="utf-8"),
+        keep_strings=True,
+    )
+    for name in ("WillEnter", "DidEnter", "WillExit", "DidExit"):
+        assert f"NSWindow{name}FullScreenNotification" in obs, name
+    assert "fullscreen_observer::remove()" in code
+    assert "fullscreen_observer::install(" in code

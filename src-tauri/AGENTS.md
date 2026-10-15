@@ -51,7 +51,7 @@
   ④ **重新尝试 = 重启整个应用**（收 sidecar → 写 clean → `restart()`），不做同进程重试。shell 报告只含闭集字段（`STAGES` / `CODES`），不收 `msg` / 日志路径 / 环境变量；
   **只有 `rescue_diag_send` 联网**，由用户单独点击触发；端点是编译期常量，环境变量只能关。协议常量、失败码、上传地址向量、包内容以
   `tests/golden/diag_shell_report.json` 为唯一出处（Rust 与 `tests/test_diag_shell_contract.py` 各读）。发行边界：只能救援已带此功能且壳能运行的客户端。
-- **macOS 全屏收起顶栏让位**（`window_chrome.rs`）：主窗口 `Resized` 时 `FullscreenTracker` 判变化，才向主窗口发
+- **macOS 全屏收起顶栏让位**（`window_chrome.rs`）：主信号是 `fullscreen_observer.rs` 听的 NSWindow will/did 全屏通知（will-exit 立刻发 false、did-enter 才发 true：红绿灯在屏上时绝不收回占位；`Resized` 只作兜底且观察者在位时只许报 false）；`FullscreenTracker` 去重，真变了才向主窗口发
   `tavotto:fullscreen`（`{fullscreen}`）；`current_fullscreen` 回读防事件早于监听（仅主窗口，ACL 三处同步）。
   前端 `useWindowFullscreen`（非 `overlay` 窗框恒 false）让 TopBar 撤掉 `TRAFFIC_LIGHTS_INSET`。
   事件名 / 命令 / ACL 由 `tests/test_desktop_window_chrome.py` 看护。

@@ -38,6 +38,31 @@ impl FullscreenTracker {
     }
 }
 
+/// `NSWindow` 的全屏通知（`fullscreen_observer.rs`）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FullscreenPhase {
+    WillEnter,
+    DidEnter,
+    WillExit,
+    DidExit,
+}
+
+/// 每条通知该告诉页面什么。判据：**红绿灯在屏上时，绝不收回让位的那段**——
+/// 进入动画期间红绿灯还在（不发，等 did-enter 再收）；退出一开始红绿灯就要回来（立刻恢复）。
+pub const fn phase_verdict(phase: FullscreenPhase) -> Option<bool> {
+    match phase {
+        FullscreenPhase::WillEnter => None,
+        FullscreenPhase::DidEnter => Some(true),
+        FullscreenPhase::WillExit | FullscreenPhase::DidExit => Some(false),
+    }
+}
+
+/// `Resized` + `is_fullscreen()` 这条兜底能不能报这个状态。原生观察者在位时只许报 `false`：
+/// tao 退出动画期间仍说「在全屏」，让它报 `true` 会把 will-exit 发出的 `false` 顶回去。
+pub const fn resize_may_report(observer_live: bool, fullscreen: bool) -> bool {
+    !observer_live || !fullscreen
+}
+
 /// 这个平台主窗口的窗框形态。
 pub const fn chrome() -> &'static str {
     if cfg!(target_os = "macos") {
@@ -149,6 +174,23 @@ mod tests {
         assert!(t.update(true));
         assert!(!t.update(true), "Resized 连发：同一状态不重复通知");
         assert!(t.update(false));
+    }
+
+    #[test]
+    fn exit_restores_the_inset_at_once_and_enter_waits_for_the_traffic_lights_to_go() {
+        use FullscreenPhase::*;
+        assert_eq!(phase_verdict(WillEnter), None);
+        assert_eq!(phase_verdict(DidEnter), Some(true));
+        assert_eq!(phase_verdict(WillExit), Some(false));
+        assert_eq!(phase_verdict(DidExit), Some(false));
+    }
+
+    #[test]
+    fn resize_fallback_never_reports_true_while_the_observer_is_live() {
+        assert!(resize_may_report(false, true), "没有观察者：兜底全权负责");
+        assert!(resize_may_report(false, false));
+        assert!(!resize_may_report(true, true));
+        assert!(resize_may_report(true, false));
     }
 
     #[test]

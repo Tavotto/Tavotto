@@ -76,6 +76,18 @@ describe('顶栏左侧让位随 macOS 全屏收放', () => {
     expect(bar().style.paddingLeft).toBe(`${TRAFFIC_LIGHTS_INSET}px`)
   })
 
+  it('过渡只在进入方向：退出（false）时没有 padding 过渡类，占位立即恢复', async () => {
+    w.__TAURI_INTERNALS__ = {}
+    w.__TAVOTTO_WINDOW_CHROME__ = 'overlay'
+    await mountTopBar()
+    expect(bar().className).not.toContain('transition-[padding-left]')
+    await act(async () => tauri.handler!({ payload: { fullscreen: true } }))
+    expect(bar().className).toContain('transition-[padding-left]')
+    await act(async () => tauri.handler!({ payload: { fullscreen: false } }))
+    expect(bar().className).not.toContain('transition-[padding-left]')
+    expect(bar().style.paddingLeft).toBe(`${TRAFFIC_LIGHTS_INSET}px`)
+  })
+
   it('overlay：挂载时已在全屏（回读为真）也不让位', async () => {
     w.__TAURI_INTERNALS__ = {}
     w.__TAVOTTO_WINDOW_CHROME__ = 'overlay'
