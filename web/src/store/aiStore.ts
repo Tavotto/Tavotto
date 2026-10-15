@@ -641,7 +641,14 @@ function accept(
   const caps = get().caps
   const detail = how.kind === 'queried' ? how.detail : null
   const agent: AiAgentId = how.kind === 'fresh' ? how.agent : (detail?.agent ?? effectiveAgent(get().agent, caps) ?? '')
-  const status = how.kind === 'queried' ? how.status : 'running'
+  // 详情是比「请求状态」更晚的快照：请求状态说 running、详情已经 done（任务在两次 GET 之间结束了），
+  // 又恰好错过了 SSE 的 ai.done——以详情为准，否则会话永远停在 running，`runningHere` 把这个脚本锁死
+  const status =
+    how.kind === 'queried'
+      ? typeof detail?.status === 'string' && detail.status
+        ? detail.status
+        : how.status
+      : 'running'
   const settled = how.kind === 'queried' && status !== 'running'
   const session: AiSession = {
     id: sid,

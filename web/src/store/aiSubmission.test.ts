@@ -178,6 +178,17 @@ describe('未确认时不能盲目重发', () => {
     expect(runCalls()).toBe(before)
   })
 
+  it('请求状态说 running、会话详情已是终态（两次 GET 之间结束、SSE 又丢了）：以详情为准，不留一个永远 running 的会话', async () => {
+    const rid = onlySub().rid
+    handler = (url) => {
+      if (url.includes('/api/ai/requests/')) return json({ session: 's-6', status: 'running', changed: false, script: 'fig1.py' })
+      if (url.includes('/api/ai/sessions/s-6')) return json({ agent: 'codex', status: 'done', changed: true, diff: 'D', transcript: [] })
+      return json({})
+    }
+    await useAiStore.getState().queryRequest(rid)
+    expect(useAiStore.getState().sessions[0]).toMatchObject({ status: 'done', changed: true, diff: 'D', finalized: true })
+  })
+
   it('查询本身失败（断网 / 5xx / 老后端没有这个端点的普通 404）都不是结论：仍是 unconfirmed，不放开重发', async () => {
     const rid = onlySub().rid
     for (const h of [
