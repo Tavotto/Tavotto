@@ -840,6 +840,8 @@ export async function fetchLayout(name: string): Promise<FetchedLayout> {
 }
 
 export interface SavedLayout {
+  /** Layout saved, but these exact source edits have no durable SVG snapshot. */
+  svg_snapshot_warnings?: string[]
   ok: boolean
   revision: string | null
   /** 落盘的文件名（去掉 `.json`，经后端净化）；旧后端不给 */
@@ -909,6 +911,8 @@ export const REVISION_ABSENT = 'absent'
  * `owner_unknown` = 这次请求的项目身份已失效，归属没记。旧后端不发 = `undefined`（不知道，不当 `ok`）。
  */
 export interface PutAutosaveResult {
+  /** Nonblocking source snapshot warnings; the layout body was saved successfully. */
+  svg_snapshot_warnings?: string[]
   ok: boolean
   saved_at: number
   revision: string | null

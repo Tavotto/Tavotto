@@ -239,12 +239,10 @@ const button = (label: string) =>
 
 /** 格式复选框（组件工作台批次把 aria-pressed 的按钮改成了普通复选框，`FormatCheck`） */
 const formatBox = (title: string) =>
-  [...document.body.querySelectorAll('label')]
-    .find((l) => l.textContent?.trim() === title)
-    ?.querySelector('input[type="checkbox"]') as HTMLInputElement
+  document.body.querySelector<HTMLInputElement>(`[data-export-formats] [data-export-format="${title.toLowerCase()}"] input[type="checkbox"]`)!
 /** 位图分辨率下拉：只在选了位图格式时出现（工作台批次起它坐在文件名那一行右侧，没有「分辨率」文字标签） */
 const ppiSelect = () => document.body.querySelector('[role="combobox"][aria-label="位图分辨率"]')
-/** 知情确认框：格式那四颗复选框排在它前面，**不能拿页面里的第一颗**——认产品给的锚点 */
+/** 知情确认框：格式那五颗复选框排在它前面，**不能拿页面里的第一颗**——认产品给的锚点 */
 const confirmBox = () =>
   document.body.querySelector<HTMLInputElement>('input[data-export-confirm]')
 
@@ -599,6 +597,43 @@ describe('统一 ExportRequest', () => {
     expect(ppiSelect()).toBeTruthy()
     await click(button('开始导出')!)
     expect(exportBodies[0].ppi).toBe(600)
+  })
+})
+
+describe('SVG 导出（X03）', () => {
+  it('SVG follows the existing formats, discloses text outlines, and sends no PPI', async () => {
+    await setup(9)
+    expect([...document.body.querySelectorAll('[data-export-formats] [data-export-format]')].map((el) => el.getAttribute('data-export-format'))).toEqual(['pdf', 'png', 'eps', 'tiff', 'svg'])
+    expect(formatBox('SVG').checked).toBe(false)
+    expect(document.body.querySelector('[data-export-svg-note]')).toBeNull()
+    await click(formatBox('SVG'))
+    await click(formatBox('PDF'))
+    await click(formatBox('PNG'))
+    const note = document.body.querySelector('[data-export-svg-note]')!
+    expect(note.textContent).toContain('文字转为轮廓')
+    expect(note.textContent).toContain('Office')
+    expect(formatBox('SVG').getAttribute('aria-describedby')).toBe(note.id)
+    expect(ppiSelect()).toBeNull()
+    await click(button('开始导出')!)
+    expect(exportBodies[0].formats).toEqual(['svg'])
+    expect(exportBodies[0].ppi).toBeNull()
+    expect(readExportDefaults().formats).toEqual(['svg'])
+  })
+
+  it('restores SVG-only defaults from the backend for the next opening', async () => {
+    await setup(9)
+    await act(async () => { useUiStore.getState().setExportOpen(false) })
+    vi.mocked(fetchExportDefaultsRemote).mockResolvedValueOnce({
+      defaults: { dpi: '1200', formats: ['svg'], withProof: false, strictInspection: false },
+    })
+    await act(async () => { await hydrateExportDefaults() })
+    await act(async () => { useUiStore.getState().setExportOpen(true) })
+    expect(formatBox('SVG').checked).toBe(true)
+    expect(formatBox('PDF').checked).toBe(false)
+    expect(ppiSelect()).toBeNull()
+    await click(button('开始导出')!)
+    expect(exportBodies[0].formats).toEqual(['svg'])
+    expect(exportBodies[0].ppi).toBeNull()
   })
 })
 

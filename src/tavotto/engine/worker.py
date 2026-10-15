@@ -1224,6 +1224,13 @@ class Worker(wireproto.V1Handler):
             }
         if cmd == "build":
             return {"ok": True, **self.build()}
+        if cmd == "export" and (req.get("require_built") or req.get("snapshot_only")):
+            if not self.built or req.get("stem") not in self.session.states:
+                return {
+                    "ok": False,
+                    "code": "svg_source_unavailable",
+                    "error": "An already built Figure session is required for SVG capture.",
+                }
         if not self.built:
             self.build()
 
@@ -1264,6 +1271,8 @@ class Worker(wireproto.V1Handler):
                     req["path"],
                     req.get("format", "pdf"),
                     int(req.get("dpi", 600)),
+                    **({"svg_path": req["svg_path"]} if req.get("svg_path") is not None else {}),
+                    **({"snapshot_only": True} if req.get("snapshot_only") else {}),
                 ),
             }
 

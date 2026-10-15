@@ -749,7 +749,18 @@ class NativeSession:
         if self.inconsistent if stem is None else stem in self.inconsistent:
             raise RunError(runcodes.NATIVE_FIGURE_INCONSISTENT)
 
-    def export(self, stem: str, patches: list, path: str, fmt: str = "pdf", dpi: int = 600) -> dict:
+    def export(
+        self,
+        stem: str,
+        patches: list,
+        path: str,
+        fmt: str = "pdf",
+        dpi: int = 600,
+        *,
+        svg_path: str | None = None,
+        require_built: bool = False,
+        snapshot_only: bool = False,
+    ) -> dict:
         with self._figure_lock:
             self._require_consistent(stem)
             resp = self._request(
@@ -760,6 +771,9 @@ class NativeSession:
                     "path": path,
                     "format": fmt,
                     "dpi": dpi,
+                    **({"svg_path": svg_path} if svg_path is not None else {}),
+                    **({"require_built": True} if require_built else {}),
+                    **({"snapshot_only": True} if snapshot_only else {}),
                 },
                 EXPORT_TIMEOUT,
             )

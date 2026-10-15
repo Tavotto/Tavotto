@@ -34,7 +34,7 @@
   * 文件名规则是**严格同源对**（`web/src/lib/exportName.ts`），
     `tests/golden/filename_vectors.json` 两侧各跑一遍；**首尾空白的字符集
     写死一份**，不许退回 `str.strip()`/`String.trim()`（两者认的集合不同）。
-  * **EPS 与 TIFF（ADR 0046，2026-09-06）**：`FORMATS = (pdf, png, eps, tiff)`，
+  * **EPS 与 TIFF（ADR 0046，2026-09-06）**：格式顺序最初为 `(pdf, png, eps, tiff)`，
     新格式追加在后。TIFF 与 PNG 出自**同一次栅格化**（`Canvas.save_tiff` /
     `pdfbackend.original_tiff`），编码器是纯标准库的 `tavotto/tiffwrite.py`
     （Deflate 无损；父进程没有 Pillow，**别为它引进 Pillow**；条带经 `tavotto/deflate.py` 并行压、产物逐字节同串行，ADR 0077）；位图源的分辨率
@@ -44,6 +44,19 @@
     也让 worker 现画（`_resolve_panel_source(rerender=True)`），四个格式出自同一次
     脚本运行。**不许**用 `Pixmap.save(…, "ps")` 之类把位图裹成 PS 冒充矢量。
     「谁来渲染」在导出路上的唯一调用点是 `_serialize_figure()`。
+  * **SVG（X03，2026-10-15）**：追加为 `FORMATS = (pdf, png, eps, tiff, svg)`，前后端请求闭集同步；
+    `original` 与 `canvas` 都走既有作业，不另开发布通道。SVG 是矢量格式，PPI 规则不变，文字明确转轮廓；
+    画布写入与有限产物验证见 `rendercore.md`，不承诺可编辑文本或已通过真实 Office 验证。
+    Figure 的 PDF/SVG 必须在一个 owner-thread 命令里、一次 overrides 应用下生成，沿用同一页面框、
+    执行回执与 generation；SVG 复用 PDF draw 已确定的布局，临时 `svg.fonttype=path` 和 Figure 状态在结束时还原。
+    **自动捕获和导出要求 `require_built`**：只用已经运行并接纳的 Figure 或已验证的冻结对，冷 worker /
+    过期会话 / 缺失表示不能触发脚本重跑。动态 draw 回调、自定义 draw 等无法保证配对稳定的 Figure
+    不授予 SVG 资格，自动捕获在 draw 之前拒绝。当前执行代不匹配的旧变体不作回退。
+    静态 PDF 只有经独立接纳且绑定到原件 hash 的配对才可使用；同名邻居文件、预览、任意旧导出不算。
+    opaque PDF 的 SVG 逐格式失败并指出来源，其他成功格式照常交付，不整页转位图或少画面板。
+    首次明确运行后自动尽力捕获全质量对；保存布局时尽力冻结精确编辑变体，失败不妨碍布局保存。
+    持久化与旧项目恢复边界见 `layout-versions-and-documents.md`。
+    看护：`tests/test_export_svg.py`、`tests/test_worker_svg_pair.py`、`tests/test_svgstore.py`。
   * **有限产物验证（U08，ADR 0068）**：`exportjob.run(inspect=…)` 在 `produce` 之后、提交点之前重新打开
     每个封口的临时文件（接线层 `engine/artifactinspect.py`，两个入口共用；检查器 `rendercore/inspector.py`），拒绝的那一项 `artifact_rejected` 不发布（partial 语义不变），合格的
     带 `Output.manifest`（`inspector.summary()` 投影，旧字段一个不动）。请求可带 `inspection: {mode: standard|strict,
@@ -61,3 +74,7 @@
 - 终局字段先于 `status` 可见
 - 文件名规则严格同源对
 - EPS 只有 worker 写得出、不伪称矢量
+
+- X03 原图仅 SVG：runtime / 有修改或显式已接纳的 Figure 可单次原生序列化，
+  `require_built=True`，不需要 PDF 配对 guard。无修改静态文件仍须同源 hash 绑定；
+  不把单份原生 SVG 写入配对存储，不启动或重建 worker。

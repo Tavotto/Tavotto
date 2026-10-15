@@ -42,6 +42,7 @@ let beforeLayoutWrite: (() => void) | null = null
 let layoutGate: Promise<void> | null = null
 /** 同上，挂住本机自动保存的写盘（`saveNow()` 那一步） */
 let autosaveGate: Promise<void> | null = null
+let svgWarnings: string[] = []
 
 globalThis.fetch = (async (url: unknown, init?: RequestInit) => {
   const u = new URL(String(url), 'http://x')
@@ -51,7 +52,7 @@ globalThis.fetch = (async (url: unknown, init?: RequestInit) => {
     if (init?.method === 'PUT') {
       if (autosaveGate) await autosaveGate
       autosave.set(id, String(init.body))
-      return new Response(JSON.stringify({ ok: true, saved_at: 1, revision: revisionOf(String(init.body)) }))
+      return new Response(JSON.stringify({ ok: true, saved_at: 1, revision: revisionOf(String(init.body)), svg_snapshot_warnings: svgWarnings }))
     }
     if (init?.method === 'DELETE') return new Response('{"ok":true}')
     const v = autosave.get(id)
@@ -75,7 +76,7 @@ globalThis.fetch = (async (url: unknown, init?: RequestInit) => {
     projectFiles.set(name, String(init.body))
     written.push(String(init.body))
     return new Response(
-      JSON.stringify({ ok: true, revision: revisionOf(String(init.body)), name, file: `tavottofile/${name}.json` }),
+      JSON.stringify({ ok: true, revision: revisionOf(String(init.body)), name, file: `tavottofile/${name}.json`, svg_snapshot_warnings: svgWarnings }),
     )
   }
   return new Response('{}', { status: 404 })
@@ -109,6 +110,7 @@ beforeEach(async () => {
   beforeLayoutWrite = null
   layoutGate = null
   autosaveGate = null
+  svgWarnings = []
   forgetLayoutRevisions()
   setCurrentProjectId('pjA')
   useUiStore.setState({ layoutOpen: false, layoutConflict: null, layoutName: null, status: null })
@@ -643,5 +645,23 @@ describe('localStorage 写失败', () => {
     expect(s().projectFile).toMatchObject({ dirty: false, revision: revisionOf(written[1]) })
     // 持久副本停在 bind 那一刻（之后的写全失败了）：上面的修订号推进只能来自会话层
     expect(JSON.parse(localStorage.getItem('tavotto.projectFile.d_save')!)).toMatchObject({ revision: null })
+  })
+})
+
+
+describe('SVG snapshot warnings never turn a saved layout into a failure', () => {
+  it.each([true, false])('explicit save reports missing SVG snapshots (project=%s)', async (inProject) => {
+    if (inProject) bind()
+    else setCurrentProjectId(null)
+    svgWarnings = ['figures/source.pdf']
+    edit('t-svg')
+    await runManualSave()
+    expect(s().saveState).toBe('saved')
+    expect(s().svgSnapshotWarnings).toEqual(['figures/source.pdf'])
+    expect(statusText()).toContain('排版已保存')
+    expect(statusText()).toContain('figures/source.pdf')
+    expect(statusText()).toContain('重新运行脚本')
+    expect(useUiStore.getState().statusTone).toBe('info')
+    expect(inProject ? written.length : autosave.size).toBe(1)
   })
 })

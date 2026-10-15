@@ -711,3 +711,21 @@ describe('冲突岔口「仍然覆盖」', () => {
     expect(dialog().querySelector('[data-layout-save]')).not.toBeNull()
   })
 })
+
+
+describe('SVG snapshots are a nonblocking save warning', () => {
+  it('Save As closes successfully and explains which sources may require an explicit rerun', async () => {
+    useUiStore.setState({ layoutConflict: null, layoutName: null })
+    await useDocumentStore.getState().switchDocument(LAYOUT as ProjectDocument, 'd_svg_save')
+    mockSave.mockResolvedValueOnce({ ok: true, revision: 'rev-svg', svg_snapshot_warnings: ['source.pdf'] })
+    await open()
+    await clickSave()
+    expect(useUiStore.getState().layoutOpen).toBe(false)
+    expect(useUiStore.getState().statusTone).toBe('info')
+    const message = formatMessage(useUiStore.getState().status)
+    expect(message).toContain('排版已保存')
+    expect(message).toContain('source.pdf')
+    expect(message).toContain('重新运行脚本')
+    expect(knownLayoutRevision(mockSave.mock.calls[0][0])).toBe('rev-svg')
+  })
+})

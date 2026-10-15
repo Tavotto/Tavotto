@@ -89,6 +89,7 @@ export interface WrittenInfo {
   /** 这份正文是替哪个项目写的（排队时的项目，不是回包时碰巧是哪个） */
   pj: string | null
   metadata: WrittenMetadata
+  svgSnapshotWarnings?: string[]
 }
 
 /** 协调器要用到的那几条磁盘 API（形状与 `@/lib/api` 同名函数一致，便于直接递真的进来）。 */
@@ -99,7 +100,7 @@ export interface DiskApi {
     baseline: number | undefined,
     revision: string | undefined,
     pj: string | null,
-  ) => Promise<{ saved_at?: number; revision?: string | null; metadata?: WrittenMetadata }>
+  ) => Promise<{ saved_at?: number; revision?: string | null; metadata?: WrittenMetadata; svg_snapshot_warnings?: string[] }>
   fetch: (id: string, pj: string | null) => Promise<{ revision: string | null } | null>
   fetchSummary: (id: string, pj: string | null) => Promise<DiskDocumentSummary | null>
 }
@@ -291,7 +292,11 @@ export function createDiskWriter(ports: DiskWriterPorts): DiskWriter {
         diskBaseline.set(id, pd.updatedAt)
         if (res.revision) diskRevision.set(id, res.revision)
         ports.dropLocalCopy(id, pd)
-        ports.onWritten(id, res.saved_at ?? Date.now(), { pj, metadata: res.metadata })
+        ports.onWritten(id, res.saved_at ?? Date.now(), {
+          pj,
+          metadata: res.metadata,
+          ...(res.svg_snapshot_warnings !== undefined ? { svgSnapshotWarnings: res.svg_snapshot_warnings } : {}),
+        })
         ports.outcome(trigger, 'ok')
       })
       .catch((err: unknown) => {

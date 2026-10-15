@@ -224,7 +224,7 @@ function useHeldFor(on: boolean, ms: number): boolean {
  * 全都只在这里（2026-10 设计审计第二轮）：冲突 / 保存失败此前**另外**在工作面板顶上常驻一条，把画布往下推；
  * 现在它们进入时说明块自动展开一次（`URGENT_ISSUES`）、读屏 assertive 播报，胶囊一直留到事情解决。
  */
-type DocIssue = 'conflict' | 'save_error' | 'restore' | 'recovery' | 'last_doc' | 'too_new' | 'restore_meta'
+type DocIssue = 'conflict' | 'save_error' | 'restore' | 'recovery' | 'last_doc' | 'too_new' | 'restore_meta' | 'svg_snapshot'
 
 /** 会丢编辑、要用户裁决的两件：进入时说明块自动展开一次，读屏按 assertive 播报 */
 const URGENT_ISSUES: ReadonlySet<DocIssue> = new Set(['conflict', 'save_error'])
@@ -237,6 +237,7 @@ const ISSUE_TONE: Record<DocIssue, StatusTone> = {
   last_doc: 'neutral',
   too_new: 'neutral',
   restore_meta: 'neutral',
+  svg_snapshot: 'warn',
 }
 
 const ISSUE_ICON: Record<DocIssue, typeof Info> = {
@@ -247,6 +248,7 @@ const ISSUE_ICON: Record<DocIssue, typeof Info> = {
   last_doc: Info,
   too_new: Lock,
   restore_meta: Info,
+  svg_snapshot: Info,
 }
 
 /** 锚点色胶囊（24 高）：底 / 字 / 环都从状态锚点派生，与 `ui/StatusPill` 同一份配色，但它是一颗按钮 */
@@ -265,6 +267,7 @@ function useDocIssue(): DocIssue | null {
   // 恢复问题与保存进度是两根轴：`saved → clean` 清不掉它，只有恢复成功 / 用户选了出口才清
   const restore = useDocumentStore((s) => s.restoreIssue !== null)
   const metaIssue = useDocumentStore((s) => s.restoreMetaIssue?.docId === s.documentId)
+  const svgWarnings = useDocumentStore((s) => s.svgSnapshotWarnings.length > 0)
   if (saveState === 'conflict') return 'conflict'
   if (saveState === 'save_error') return 'save_error'
   if (restore) return 'restore'
@@ -275,6 +278,7 @@ function useDocIssue(): DocIssue | null {
   if (notice === 'schema_too_new') return 'too_new'
   if (lastDoc) return 'last_doc'
   if (metaIssue) return 'restore_meta'
+  if (svgWarnings) return 'svg_snapshot'
   return null
 }
 
@@ -440,6 +444,8 @@ function issueLabel(issue: DocIssue, restoreKind: string | null): string {
         default:
           return msgText('restore.pill.unavailable')
       }
+    case 'svg_snapshot':
+      return msgText('save.svgSnapshotPill')
     case 'restore_meta':
       return msgText('restore.meta.pill')
     case 'recovery':
@@ -522,6 +528,8 @@ function IssueBody({ issue, close }: { issue: DocIssue; close: () => void }) {
   const saveIssue = useDocumentStore((s) => s.saveIssue)
   const lastDoc = useProjectStore((s) => s.lastDocumentIssue)
   const restoreIssue = useDocumentStore((s) => s.restoreIssue)
+  const svgSources = useDocumentStore((s) => s.svgSnapshotWarnings)
+  const layoutName = useDocumentStore((s) => s.projectMeta.name)
   const done = (fn: () => unknown) => () => {
     close()
     void fn()
@@ -559,6 +567,10 @@ function IssueBody({ issue, close }: { issue: DocIssue; close: () => void }) {
   }
   if (issue === 'restore' && restoreIssue) return <RestoreIssueBody issue={restoreIssue} close={close} />
   if (issue === 'restore_meta') return <RestoreMetaBody close={close} />
+  if (issue === 'svg_snapshot') return head(
+    t('save.svgSnapshotPill'),
+    t('save.svgSnapshotWarning', { name: layoutName, sources: svgSources.join(', ') }),
+  )
   if (issue === 'recovery' && notice?.kind === 'recovery') {
     const s = notice.summary
     return (

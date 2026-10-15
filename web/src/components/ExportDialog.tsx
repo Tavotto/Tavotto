@@ -112,6 +112,7 @@ import {
   pixelPreview,
   PPI_DEFAULT,
   hasRaster,
+  type ExportFormat,
   type ExportScope,
   type ExportRequestInput,
 } from "@/lib/exportRequest";
@@ -1252,28 +1253,28 @@ export function ExportDialog() {
 
         <FormSection title={ex("groupFormat")} data-export-group="format">
           <FieldGroup>
-            {/* 格式 —— 四颗复选框均分一行（balanced），顺序与 `FORMATS` 同源 */}
+            {/* 格式 —— 五颗复选框均分一行（balanced），顺序与 `FORMATS` 同源 */}
             <section className="flex flex-col gap-1.5">
               <fieldset aria-label={ex("formatLabel")} className="m-0 min-w-0 border-0 p-0">
                 <FormRow label={ex("formatLabel")}>
-                  <div className="grid flex-1 grid-cols-4 items-center gap-2" data-export-formats>
+                  <div className="grid flex-1 grid-cols-5 items-center gap-2" data-export-formats>
                     <FormatCheck
                       checked={formats.includes("pdf")}
                       onChange={() => toggleFormat("pdf")}
-                      title="PDF"
+                      format="pdf"
                       hint={ex("pdfHint")}
                     />
                     <FormatCheck
                       checked={formats.includes("png")}
                       onChange={() => toggleFormat("png")}
-                      title="PNG"
+                      format="png"
                       hint={ex("pngHint")}
                     />
                     {/* EPS 只在「原图 + 有脚本」时给得出：不可用就禁用并说原因，不藏 */}
                     <FormatCheck
                       checked={formats.includes("eps") && eps.ok}
                       onChange={() => toggleFormat("eps")}
-                      title="EPS"
+                      format="eps"
                       hint={eps.ok ? ex("epsHint") : ex(`epsUnavailable.${eps.reason}`)}
                       disabled={!eps.ok}
                       describedBy={formats.includes("eps") && !eps.ok ? "export-eps-reason" : undefined}
@@ -1281,12 +1282,26 @@ export function ExportDialog() {
                     <FormatCheck
                       checked={formats.includes("tiff")}
                       onChange={() => toggleFormat("tiff")}
-                      title="TIFF"
+                      format="tiff"
                       hint={ex("tiffHint")}
+                    />
+                    <FormatCheck
+                      checked={formats.includes("svg")}
+                      onChange={() => toggleFormat("svg")}
+                      format="svg"
+                      hint={ex("svgHint")}
+                      describedBy={formats.includes("svg") ? "export-svg-note" : undefined}
                     />
                   </div>
                 </FormRow>
               </fieldset>
+              {formats.includes("svg") && (
+                <FormRow>
+                  <p id="export-svg-note" data-export-svg-note className="type-caption">
+                    {ex("svgNote")}
+                  </p>
+                </FormRow>
+              )}
               {/* 勾着 EPS 却给不出（切回了画布 / 这张图没有脚本）：原因摆成可见的一行，
                   不只藏在灰掉的复选框的 title 里——一个灰掉的复选框解释不了自己 */}
               {formats.includes("eps") && !eps.ok && (
@@ -2285,14 +2300,14 @@ function InspectionLine({
 function FormatCheck({
   checked,
   onChange,
-  title,
+  format,
   hint,
   disabled = false,
   describedBy,
 }: {
   checked: boolean;
   onChange: () => void;
-  title: string;
+  format: ExportFormat;
   hint: string;
   disabled?: boolean;
   /** 禁用原因那段可见文字的 id */
@@ -2300,6 +2315,7 @@ function FormatCheck({
 }) {
   return (
     <label
+      data-export-format={format}
       title={hint}
       aria-disabled={disabled || undefined}
       className={cn(
@@ -2313,7 +2329,7 @@ function FormatCheck({
         disabled={disabled}
         aria-describedby={describedBy}
       />
-      <span>{title}</span>
+      <span>{format.toUpperCase()}</span>
     </label>
   );
 }

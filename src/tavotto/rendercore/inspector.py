@@ -37,8 +37,10 @@ import math
 import re
 import struct
 import zlib
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
+
+from .svgcheck import SVG_NS, SVGBudget, SVGError, parse_svg
 
 MANIFEST_VERSION = 1
 
@@ -72,11 +74,17 @@ CHECKS_PDF = (
     "clipping",
 )
 CHECKS_RASTER = ("integrity", "size", "dpi_tag", "raster_density")
+CHECKS_SVG = ("integrity", "size", "structure", "carrier", "fonts_embedded", "text_layer")
 REQUIRED = {
-    POLICY_STANDARD: {"pdf": ("integrity", "size"), "raster": ("integrity", "size")},
+    POLICY_STANDARD: {
+        "pdf": ("integrity", "size"),
+        "raster": ("integrity", "size"),
+        "svg": ("integrity", "size", "structure", "carrier"),
+    },
     POLICY_STRICT: {
         "pdf": ("integrity", "size", "carrier", "fonts_embedded", "text_layer", "image_ppi"),
         "raster": ("integrity", "size", "raster_density"),
+        "svg": ("integrity", "size", "structure", "carrier"),
     },
 }
 
@@ -664,6 +672,130 @@ def observe_pdf(path: Path, *, budget: Budget | None = None) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# SVG (static XML boundary; physical-size authority remains artifactcheck)
+# ---------------------------------------------------------------------------
+def observe_svg(path: Path, *, budget: SVGBudget | None = None) -> dict:
+    """Read the sealed SVG bytes, reject active/external content, and count static artwork.
+
+    Glyph paths remain paths: neither embedded fonts nor searchable text is inferred
+    from their names, comments, metadata, or the producer's expected text.
+    """
+    from tavotto.engine.artifactcheck import check_svg
+
+    path = Path(path)
+    budget = budget or SVGBudget()
+    out: dict = {"format": "svg", "bytes": path.stat().st_size, "integrity": FAILED, "problems": []}
+    if out["bytes"] > budget.max_bytes:
+        out["problems"].append("svg_resource_limit")
+        return out
+    try:
+        with path.open("rb") as stream:
+            data = stream.read(budget.max_bytes + 1)
+        root = parse_svg(data, budget=budget)
+    except SVGError as exc:
+        out["problems"].append(exc.code)
+        return out
+    dimensions = check_svg(path, expect_mm=None, font_family=None, root=root)
+    size_mm = dimensions["size_mm"]
+    out.update(
+        integrity=VERIFIED,
+        size_mm=size_mm,
+        size_pt=[value / 25.4 * 72.0 for value in size_mm] if size_mm else None,
+        structure=FAILED if dimensions.get("viewbox_ok") is False else VERIFIED,
+        viewbox_ok=dimensions.get("viewbox_ok"),
+        fonts_used=[],
+    )
+    if out["structure"] == FAILED:
+        out["problems"].append("svg_invalid_viewbox")
+    ids = {node.get("id"): node for node in root.iter() if node.get("id")}
+    census = {"paths": 0, "text": 0, "images": 0}
+    text_lines: list[str] = []
+    stack = [root]
+    paths = {"path", "rect", "circle", "ellipse", "line", "polyline", "polygon"}
+    while stack:
+        node = stack.pop()
+        tag = node.tag.removeprefix(f"{{{SVG_NS}}}")
+        if tag in paths:
+            census["paths"] += 1
+        elif tag == "image":
+            census["images"] += 1
+        elif tag == "text":
+            census["text"] += 1
+            text_lines.append("".join(node.itertext()))
+        elif tag == "use":
+            href = node.get("href") or node.get("{http://www.w3.org/1999/xlink}href")
+            stack.append(ids[href[1:]])
+        elif tag in ("svg", "g", "symbol"):
+            stack.extend(reversed(list(node)))
+    vector = census["paths"] or census["text"]
+    out["census"] = census
+    out["carrier"] = (
+        CARRIER_MIXED
+        if vector and census["images"]
+        else CARRIER_VECTOR
+        if vector
+        else CARRIER_RASTER
+        if census["images"]
+        else CARRIER_EMPTY
+    )
+    out["text_lines"] = text_lines
+    out["text_mode"] = "text" if census["text"] else "outlines_or_absent"
+    return out
+
+
+def _check_svg(observed: dict, plan: dict) -> tuple[dict, list[str]]:
+    checks = {"integrity": observed["integrity"]}
+    notes: list[str] = []
+    if observed["integrity"] != VERIFIED:
+        checks.update({key: UNKNOWN for key in CHECKS_SVG[1:]})
+        notes.append("SVG 结构损坏、包含不安全内容或超过读取预算，其余项无从检查")
+        return checks, notes
+    got, want = observed.get("size_pt"), plan.get("page_pt")
+    if got is None:
+        checks["size"] = FAILED
+        notes.append("SVG 缺少有限、正值的物理宽高")
+    elif want is None:
+        checks["size"] = UNKNOWN
+        notes.append("计划里没有页面尺寸，尺寸无从比对")
+    else:
+        checks["size"] = (
+            VERIFIED if all(abs(got[i] - float(want[i])) <= SIZE_TOL_PT for i in (0, 1)) else FAILED
+        )
+    checks["structure"] = observed["structure"]
+    carrier, vector = observed["carrier"], plan.get("vector")
+    if vector is None:
+        checks["carrier"] = UNKNOWN
+    else:
+        allowed = (
+            (CARRIER_VECTOR, CARRIER_MIXED, CARRIER_EMPTY)
+            if vector
+            else (CARRIER_RASTER, CARRIER_MIXED, CARRIER_EMPTY)
+        )
+        checks["carrier"] = VERIFIED if carrier in allowed else FAILED
+    if observed["text_mode"] == "outlines_or_absent":
+        checks["fonts_embedded"] = NOT_APPLICABLE
+        checks["text_layer"] = NOT_APPLICABLE
+        notes.append("SVG 没有可检索的文字对象；文字若存在则为轮廓，不声称字体嵌入或文字可检索")
+    else:
+        checks["fonts_embedded"] = UNKNOWN
+        notes.append("SVG 文字对象存在，但字体嵌入与跨设备字形呈现未核验")
+        expected = plan.get("text")
+        if expected is None:
+            checks["text_layer"] = UNKNOWN
+        elif not expected:
+            checks["text_layer"] = NOT_APPLICABLE
+        else:
+            extracted = _norm(" ".join(observed["text_lines"]))
+            checks["text_layer"] = (
+                VERIFIED
+                if all(_norm(line) in extracted for line in expected if _norm(line))
+                else FAILED
+            )
+    notes.append("SVG 载体按静态图形结构判；复杂裁剪、隐藏样式、位图有效密度与实际视觉呈现未核验")
+    return checks, notes
+
+
+# ---------------------------------------------------------------------------
 # 政策与 manifest
 # ---------------------------------------------------------------------------
 def _norm(s: str) -> str:
@@ -845,6 +977,7 @@ def inspect(
     budget: Budget | None = None,
     probe=None,
     run_id: str | None = None,
+    svg_budget: SVGBudget | None = None,
 ) -> dict:
     """封口产物 → ArtifactManifest（plan / observed / checks / policy 分开；`artifact.sha256` 是文件字节）。
 
@@ -855,11 +988,27 @@ def inspect(
         raise ValueError(f"policy 非法: {policy!r}")
     fmt = str(fmt).lower()
     path = Path(path)
-    data = path.read_bytes()
+    if fmt == "svg":
+        # XML size limits must not be preceded by an unbounded read of the same file.
+        digest = hashlib.sha256()
+        byte_count = 0
+        with path.open("rb") as stream:
+            while chunk := stream.read(1024 * 1024):
+                digest.update(chunk)
+                byte_count += len(chunk)
+        sha256 = digest.hexdigest()
+    else:
+        data = path.read_bytes()
+        byte_count = len(data)
+        sha256 = hashlib.sha256(data).hexdigest()
     if fmt == "pdf":
         observed = observe_pdf_any(path, probe=probe, budget=budget)
         checks, notes = _check_pdf(observed, plan, profile)
         kind = "pdf"
+    elif fmt == "svg":
+        observed = observe_svg(path, budget=svg_budget)
+        checks, notes = _check_svg(observed, plan)
+        kind = "svg"
     elif fmt == "png":
         observed = observe_png(path)
         checks, notes = _check_raster(observed, plan, profile)
@@ -884,11 +1033,10 @@ def inspect(
         verdict = REJECTED if failed or unknown else ACCEPTED
     else:
         verdict = REJECTED if failed else ACCEPTED
-    sha256 = hashlib.sha256(data).hexdigest()
     return {
         "manifest_version": MANIFEST_VERSION,
         "format": fmt,
-        "artifact": {"sha256": sha256, "bytes": len(data)},
+        "artifact": {"sha256": sha256, "bytes": byte_count},
         "identity": _identity_block(plan, sha256, run_id),
         "provenance": _provenance_block(plan),
         "plan": dict(plan),
@@ -906,12 +1054,19 @@ def inspect(
         },
         "notes": notes,
         "scope": {
-            "budget": {
+            "budget": asdict(svg_budget or SVGBudget())
+            if fmt == "svg"
+            else {
                 "max_depth": (budget or Budget()).max_depth,
                 "max_forms": (budget or Budget()).max_forms,
                 "max_ops": (budget or Budget()).max_ops,
             },
             "limits": [
+                "SVG 只检查静态结构，不证明视觉呈现、复杂裁剪或位图有效密度",
+                "字形轮廓不代表字体嵌入或可检索文字",
+            ]
+            if fmt == "svg"
+            else [
                 "Type 3 字体的嵌入记 unknown",
                 "外来页内部与复杂裁剪 / 透明组不分析",
                 "裁切只对计划里的对象判",
@@ -929,13 +1084,18 @@ def uninspected(
     reason: str = "",
     run_id: str | None = None,
 ) -> dict:
-    """检查器自己炸了：所有项 unknown、按政策裁决（standard 交付并说明；strict 阻断）。不是通过。"""
+    """检查器异常：所有项 unknown；strict 阻断，standard 说明。SVG 安全边界未完成则一律阻断。"""
     data = Path(path).read_bytes()
-    kind = "pdf" if fmt == "pdf" else ("raster" if fmt in ("png", "tif", "tiff") else "other")
-    names = CHECKS_PDF if kind == "pdf" else (CHECKS_RASTER if kind == "raster" else ("integrity",))
+    kind = (
+        fmt if fmt in ("pdf", "svg") else ("raster" if fmt in ("png", "tif", "tiff") else "other")
+    )
+    names = {"pdf": CHECKS_PDF, "raster": CHECKS_RASTER, "svg": CHECKS_SVG}.get(
+        kind, ("integrity",)
+    )
     checks = {k: UNKNOWN for k in names}
     required = list(REQUIRED[policy].get(kind, ("integrity",)))
-    verdict = REJECTED if policy == POLICY_STRICT else ACCEPTED
+    # SVG is active web content unless the static-content boundary has completed.
+    verdict = REJECTED if policy == POLICY_STRICT or kind == "svg" else ACCEPTED
     sha256 = hashlib.sha256(data).hexdigest()
     return {
         "manifest_version": MANIFEST_VERSION,
@@ -1085,6 +1245,7 @@ __all__ = [
     "Budget",
     "CHECKS_PDF",
     "CHECKS_RASTER",
+    "CHECKS_SVG",
     "FAILED",
     "MANIFEST_VERSION",
     "NOT_APPLICABLE",
@@ -1101,6 +1262,7 @@ __all__ = [
     "observe_pdf_any",
     "observe_pdf_basic",
     "observe_png",
+    "observe_svg",
     "observe_tiff",
     "parse_tounicode",
     "public_projection",

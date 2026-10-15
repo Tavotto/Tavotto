@@ -28,8 +28,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from ..engine import exportjob, exportreq
-from . import BACKEND_NAME, banded, identity, ir, pdfwriter, plan, raster
+from ..engine import artifactinspect, exportjob, exportreq
+from . import BACKEND_NAME, banded, identity, ir, pdfwriter, plan, raster, svgwriter
 from .hbshaper import HbFaceProvider
 from .renderhost import RenderChildError, RenderHost
 from .sources import SourceError, SourceResolver, read_frozen
@@ -80,7 +80,13 @@ def produce(
             job.warnings.append(msg)
     # 冻结源在写入之前逐个读进内存并核 hash（RC-014）：写入器用的就是这一份字节，不再碰文件。
     # 读之前先按冻结时记下的大小判总预算——超过的作业一个字节不读、结构化失败
-    sizes = [int(fs.artifact.size_bytes) for fs in rp.sources.values()]
+    frozen_sources = [
+        source
+        for fs in rp.sources.values()
+        for source in (fs, fs.svg_representation())
+        if source is not None
+    ]
+    sizes = [int(fs.artifact.size_bytes) for fs in frozen_sources]
     total_bytes = sum(sizes)
     peak_bytes = total_bytes + (max(sizes) if sizes else 0)  # 读最大那份时的瞬时双份
     if peak_bytes > SOURCE_BYTES_BUDGET:
@@ -96,10 +102,14 @@ def produce(
             },
         )
     files: dict[str, bytes] = {}
+    imported_svgs: dict[str, bytes] = {}
     for key, fs in rp.sources.items():
         job.check_cancelled()
         try:
             files[key] = read_frozen(fs)
+            companion = fs.svg_representation()
+            if companion is not None:
+                imported_svgs[key] = read_frozen(companion)
         except SourceError as exc:
             raise exportreq.ExportRequestError(
                 "export_render_failed",
@@ -243,6 +253,40 @@ def produce(
                         },
                     )
                 )
+            continue
+        if fmt == exportreq.FORMAT_SVG:
+            gaps = rp.unsupported.get(fmt) or []
+            if gaps:
+                failed(fmt, _gap_text(gaps), unsupported=gaps)
+                continue
+            tmp = tmp_dir / "out.svg"
+            try:
+                svg_facts = svgwriter.write_svg(
+                    rp.page, tmp, provider, files, imported_svgs=imported_svgs
+                )
+                svg_vector = artifactinspect.svg_vector(tmp)
+            except (svgwriter.WriterError, OSError, ValueError) as exc:
+                failed(fmt, str(exc), svg_code=getattr(exc, "code", ""))
+                continue
+            produced.append(
+                exportjob.Produced(
+                    format=fmt,
+                    tmp_path=tmp,
+                    width_mm=width_mm,
+                    height_mm=height_mm,
+                    vector=svg_vector,
+                    manifest={
+                        "plan": {
+                            **plan_half,
+                            "vector": svg_vector,
+                            "px": None,
+                            "text_policy": "outlines",
+                            "render_identity": vector_render_identity,
+                            "sha256": svg_facts.sha256,
+                        }
+                    },
+                )
+            )
             continue
         if fmt in exportreq.RASTER_FORMATS:
             gaps = rp.unsupported.get(fmt) or []
@@ -401,6 +445,7 @@ def plan_facts(rp: plan.RenderPlan) -> dict:
             "bytes_sha256": fs.artifact.bytes_sha256,
             "receipt_identity": fs.artifact.receipt_identity,
             "patch_hash": fs.artifact.patch_hash,
+            **({"svg_sha256": fs.svg.artifact.bytes_sha256} if fs.svg else {}),
         }
         for fs in rp.sources.values()
     ]
@@ -426,7 +471,10 @@ def _raster_gaps(rp: plan.RenderPlan) -> list[dict]:
 
 
 def _gap_text(gaps: list[dict]) -> str:
-    return "; ".join(f"{g['operation']}: {g['reason']}" for g in gaps)
+    return "; ".join(
+        f"{g['object_id'] + ': ' if g.get('object_id') else ''}{g['operation']}: {g['reason']}"
+        for g in gaps
+    )
 
 
 def _renderer_version(host: RenderHost) -> str | None:

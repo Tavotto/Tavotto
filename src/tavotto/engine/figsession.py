@@ -41,6 +41,8 @@ safe worker 本来就是单线程串行读 stdin，这条断言对它恒真（�
 from __future__ import annotations
 
 import base64
+import functools
+import hashlib
 import importlib.metadata
 import io
 import json
@@ -55,16 +57,16 @@ from pathlib import Path
 import matplotlib
 from matplotlib import _tight_bbox, artist as martist, figure as mfigure, ticker, transforms
 from matplotlib.axes import Axes
-from matplotlib.axis import XAxis, XTick, YAxis, YTick
+from matplotlib.axis import Axis, XAxis, XTick, YAxis, YTick
 from matplotlib.backend_bases import FigureCanvasBase
 from matplotlib.backends.backend_agg import FigureCanvasAgg
 from matplotlib.figure import Figure
 from matplotlib.layout_engine import PlaceHolderLayoutEngine
 from matplotlib.lines import Line2D
 from matplotlib.patches import Rectangle
-from matplotlib.scale import LinearScale
+from matplotlib.scale import FuncTransform, LinearScale
 from matplotlib.spines import Spine
-from matplotlib.text import Text
+from matplotlib.text import Annotation, Text
 from matplotlib.ticker import ScalarFormatter
 
 import figcapture
@@ -79,6 +81,12 @@ from axestraversal import ordered_axes
 class ArtifactSourceUnavailable(figcapture.ArtifactContextError):
     def __init__(self, reason):
         super().__init__(reason, "The selected file cannot be verified against the current figure.")
+
+
+class SvgSnapshotUnavailable(RuntimeError):
+    """Automatic SVG capture cannot safely serialize this live figure."""
+
+    protocol_code = "svg_source_unavailable"
 
 
 _ARTIST_METHODS = (
@@ -432,15 +440,17 @@ EXPORT_FONTTYPE = 42
 
 
 def export_font_context(fmt: str):
-    """`savefig` 的 rc 上下文：PDF / PS / EPS 用 fonttype 42，其它格式什么都不改。
+    """临时导出字体策略：PDF / PS / EPS 嵌入字体，SVG 用自包含字形路径。
 
     EPS 走 matplotlib 的 PostScript 后端：**它不支持透明度**（半透明元素按不透明
     画，matplotlib 自己会打一条日志），文字按 Type 42 嵌入。ADR 0046。"""
     import contextlib
 
-    if str(fmt).lower() not in ("pdf", "ps", "eps"):
+    fmt = str(fmt).lower()
+    if fmt == "svg":
+        return matplotlib.rc_context({"svg.fonttype": "path", "svg.image_inline": True})
+    if fmt not in ("pdf", "ps", "eps"):
         return contextlib.nullcontext()
-    import matplotlib
 
     return matplotlib.rc_context({"pdf.fonttype": EXPORT_FONTTYPE, "ps.fonttype": EXPORT_FONTTYPE})
 
@@ -457,6 +467,121 @@ def export_format_kwargs(fmt: str) -> dict:
     if str(fmt).lower() in ("tif", "tiff"):
         return {"pil_kwargs": dict(TIFF_PIL_KWARGS)}
     return {}
+
+
+def _svg_pair_standard_method(method) -> bool:
+    if isinstance(method, functools.partial):
+        return _svg_pair_standard_method(method.func)
+    module = getattr(method, "__module__", "")
+    if module.startswith(("matplotlib.", "mpl_toolkits.")):
+        return True
+    # Owned wrappers only group/place the underlying artist. Inspect their captured
+    # native method as well, so wrapping a user's custom draw never certifies it.
+    wrappers = {
+        (manifest_mod.__name__, "_svg_group.<locals>.draw"): "native",
+        (
+            overrides_mod.__name__,
+            "_install_patch_resize_draw_hook.<locals>.resized_draw",
+        ): "native_draw",
+    }
+    freevar = wrappers.get((module, getattr(method, "__qualname__", "")))
+    if freevar is None:
+        return False
+    captured = dict(zip(method.__code__.co_freevars, method.__closure__ or ()))
+    cell = captured.get(freevar)
+    return cell is not None and _svg_pair_standard_method(cell.cell_contents)
+
+
+def _svg_pair_standard_transform(transform, seen) -> bool:
+    pending = [transform]
+    while pending:
+        item = pending.pop()
+        if item is None or id(item) in seen:
+            continue
+        seen.add(id(item))
+        if not type(item).__module__.startswith(("matplotlib.", "mpl_toolkits.")):
+            return False
+        if isinstance(item, FuncTransform) and not all(
+            _svg_pair_standard_method(func) for func in (item._forward, item._inverse)
+        ):
+            return False
+        for name in _TRANSFORM_METHODS:
+            method = getattr(item, name, None)
+            if method is not None and not _svg_pair_standard_method(method):
+                return False
+        pending.extend(v for v in vars(item).values() if isinstance(v, transforms.TransformNode))
+    return True
+
+
+def _svg_pair_blocker(fig) -> str | None:
+    """Known draw-time code can change the scene between two serializers.
+
+    Never label a second draw as a frozen companion when user callbacks or custom
+    draw implementations can mutate it. The primary PDF retains its existing behavior.
+    """
+    if fig.canvas.callbacks.callbacks.get("draw_event"):
+        return "SVG pairing is unavailable for figures with draw-event callbacks."
+    pending, seen, seen_transforms = [fig], set(), set()
+    while pending:
+        artist = pending.pop()
+        if id(artist) in seen:
+            continue
+        seen.add(id(artist))
+        # Built-in artist families remain supported; a custom Artist may draw different
+        # content each time even without leaving any inspectable state on the Figure.
+        if not type(artist).__module__.startswith(("matplotlib.", "mpl_toolkits.")):
+            return "SVG pairing is unavailable for custom artist implementations."
+        for name in _ARTIST_METHODS:
+            if not _svg_pair_standard_method(getattr(artist, name)):
+                return "SVG pairing is unavailable for custom artist drawing methods."
+        if not all(
+            _svg_pair_standard_transform(transform, seen_transforms)
+            for transform in (artist.get_transform(), artist.get_clip_box(), artist.get_clip_path())
+        ):
+            return "SVG pairing is unavailable for user transform callbacks."
+        if isinstance(artist, Axis):
+            scale = artist._scale
+            if not type(scale).__module__.startswith(("matplotlib.", "mpl_toolkits.")) or not (
+                _svg_pair_standard_method(scale.get_transform)
+                and _svg_pair_standard_transform(scale.get_transform(), seen_transforms)
+            ):
+                return "SVG pairing is unavailable for user scale callbacks."
+            for component in (
+                artist.get_major_formatter(),
+                artist.get_minor_formatter(),
+                artist.get_major_locator(),
+                artist.get_minor_locator(),
+            ):
+                if not type(component).__module__.startswith(("matplotlib.", "mpl_toolkits.")):
+                    return "SVG pairing is unavailable for custom tick formatters or locators."
+                if not _svg_pair_standard_method(component.__call__):
+                    return "SVG pairing is unavailable for custom tick drawing methods."
+                if isinstance(component, ticker.FuncFormatter) and not _svg_pair_standard_method(
+                    component.func
+                ):
+                    return "SVG pairing is unavailable for user tick-formatting callbacks."
+        if isinstance(artist, Axes):
+            locator = artist.get_axes_locator()
+            if locator is not None and not _svg_pair_standard_method(locator):
+                return "SVG pairing is unavailable for user axes-location callbacks."
+        agg_filter = artist.get_agg_filter()
+        if agg_filter is not None and not _svg_pair_standard_method(agg_filter):
+            return "SVG pairing is unavailable for user image-filter callbacks."
+        if isinstance(artist, Annotation):
+            coordinates = [artist.xycoords, artist.get_anncoords()]
+            while coordinates:
+                coord = coordinates.pop()
+                if isinstance(coord, tuple):
+                    coordinates.extend(coord)
+                elif callable(coord) and not _svg_pair_standard_method(coord):
+                    return "SVG pairing is unavailable for annotation coordinate callbacks."
+        for effect in artist.get_path_effects():
+            if not type(effect).__module__.startswith(("matplotlib.", "mpl_toolkits.")) or not (
+                _svg_pair_standard_method(effect.draw_path)
+            ):
+                return "SVG pairing is unavailable for custom path-effect callbacks."
+        pending.extend(artist.get_children())
+    return None
 
 
 #: 一代预览发布时在完成记录里声明的能力：SVG 与 manifest 都完整落盘（`preview`），且图在本会话里是活对象、
@@ -1358,6 +1483,9 @@ class LiveFigureSession:
         fmt: str = "pdf",
         dpi: int = 600,
         timings: dict | None = None,
+        *,
+        svg_path: str | None = None,
+        snapshot_only: bool = False,
     ) -> dict:
         """全质量导出（供画布合成 / 按原图导出）。
 
@@ -1368,10 +1496,21 @@ class LiveFigureSession:
         会拿着错的 applied 表去做还原。
         """
         self._own()
+        if snapshot_only and svg_path is None:
+            raise ValueError("snapshot_only requires an SVG companion path")
+        if svg_path is not None:
+            if not isinstance(svg_path, str) or not svg_path:
+                raise ValueError("svg_path must be a nonempty string")
+            if str(fmt).lower() != "pdf":
+                raise ValueError("svg_path is only supported for PDF exports")
+            if Path(svg_path).resolve() == Path(path).resolve():
+                raise ValueError("PDF and SVG export paths must be different")
         self._require_background_choice(stem, patches)
         state = self.states[stem]
         prev = self.snapshot(stem)
         out = Path(path)
+        companion = Path(svg_path) if svg_path is not None else None
+        result = {"path": str(out)}
         # `try` 从 apply 之前起（见 do_preview_png 的同款说明）：apply 与
         # mkdir 都会抛——目标目录不可写、路径过长、Windows 上被占用——而它们
         # 恰恰是最需要还原的那两步。画布合成导出用的是**热会话**，一次没还原
@@ -1381,14 +1520,68 @@ class LiveFigureSession:
             warnings = overrides_mod.apply(state, patches)
             t1 = time.perf_counter()
             out.parent.mkdir(parents=True, exist_ok=True)
-            with self.real_output(), export_font_context(fmt):
-                state.fig.savefig(
-                    out,
-                    format=fmt,
-                    dpi=int(dpi),
-                    **export_format_kwargs(fmt),
-                    **pathgeom.output_kwargs(state.fig),
-                )
+            blocker = None
+            if companion is not None:
+                try:
+                    blocker = _svg_pair_blocker(state.fig)
+                except Exception as exc:  # noqa: BLE001 — a companion check cannot block the PDF
+                    blocker = f"SVG pairing state could not be verified: {type(exc).__name__}"
+                if snapshot_only and blocker is not None:
+                    raise SvgSnapshotUnavailable(blocker)
+            # 两份产物共用一次 override 应用和同一个 owner-thread 命令；不走编辑预览，
+            # 也不在两次独立请求之间重新应用 patches / 运行脚本。发布与失败清理由导出事务负责。
+            with self.real_output():
+                # Automatic capture witnesses the script's original output policy;
+                # forcing PDF Type 42 here would change a saved Type 3 source's pixels.
+                with _NULL_CTX if snapshot_only else export_font_context(fmt):
+                    state.fig.savefig(
+                        out,
+                        format=fmt,
+                        dpi=int(dpi),
+                        **export_format_kwargs(fmt),
+                        **pathgeom.output_kwargs(state.fig),
+                    )
+            if companion is not None:
+                try:
+                    if blocker is not None:
+                        raise ValueError(blocker)
+                    companion.parent.mkdir(parents=True, exist_ok=True)
+                    # The PDF draw has already established the layout. Re-running
+                    # tight/constrained layout with SVG font metrics would move axes
+                    # between the paired artifacts. Restore the script's engine after
+                    # this save, including failure; normal draw caches remain native.
+                    layout_context = (
+                        state.fig._cm_set(layout_engine="none")
+                        if state.fig.get_layout_engine() is not None
+                        else _NULL_CTX
+                    )
+                    with self.real_output(), export_font_context("svg"), layout_context:
+                        state.fig.savefig(
+                            companion,
+                            format="svg",
+                            dpi=int(dpi),
+                            **pathgeom.output_kwargs(state.fig),
+                        )
+                    digest = hashlib.sha256()
+                    size_bytes = 0
+                    with companion.open("rb") as stream:
+                        for block in iter(lambda: stream.read(1024 * 1024), b""):
+                            digest.update(block)
+                            size_bytes += len(block)
+                    result["svg"] = {
+                        "path": str(companion),
+                        "sha256": digest.hexdigest(),
+                        "size_bytes": size_bytes,
+                    }
+                except Exception as exc:  # noqa: BLE001 — companion failure must not discard the PDF
+                    result["svg_error"] = {"code": "svg_export_failed", "message": str(exc)}
+                    # No SVG acknowledgement means the export transaction must never publish
+                    # this path, including when its own eventual cleanup has to retry.
+                    if blocker is None:
+                        try:
+                            companion.unlink(missing_ok=True)
+                        except OSError:
+                            result["svg_error"]["cleanup_failed"] = True
             if timings is not None:
                 timings["patch_apply_ms"] = round((t1 - t0) * 1000.0, 3)
                 # 还原那一次的耗时**不算进 export_ms**：它是状态中立这条纪律的
@@ -1398,7 +1591,7 @@ class LiveFigureSession:
             # 还原那次的 warnings 丢弃：报给调用方的必须是「这组 patches
             # 有没有写不进去的」，混进还原噪音会让写回自检误判。
             overrides_mod.apply(state, prev)
-        return {"path": str(out), "warnings": warnings}
+        return {**result, "warnings": warnings}
 
 
 class _NullCtx:

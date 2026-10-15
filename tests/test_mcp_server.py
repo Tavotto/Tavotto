@@ -110,8 +110,14 @@ class FakeWorker:
             data = artifactbytes.solid_png(
                 int(round(w_mm / 25.4 * dpi)), int(round(h_mm / 25.4 * dpi)), dpi=dpi
             )
+        elif fmt == "svg":
+            data = (
+                f'<svg xmlns="http://www.w3.org/2000/svg" width="{w_mm}mm" '
+                f'height="{h_mm}mm" viewBox="0 0 {w_mm} {h_mm}">'
+                '<path d="M0 0L1 1"/></svg>'
+            ).encode()
         else:
-            data = b"fake"  # SVG / EPS / TIFF：本模块没有读取器，检查器如实记 unknown
+            data = b"fake"  # EPS has no reader; unsupported fixtures stay explicitly unknown.
         Path(path).write_bytes(data)
         return {"path": path, "warnings": []}
 

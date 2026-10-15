@@ -2580,6 +2580,26 @@ def export(
             for w in resp.get("warnings") or []:
                 if w not in job.warnings:
                     job.warnings.append(w)
+            vector = fmt in engine_exportreq.VECTOR_FORMATS
+            if fmt == "svg":
+                # New engines share HTTP's static-SVG producer boundary; older
+                # supported engines retain their own inspector without a new import.
+                normalize_svg = getattr(engine_artifactinspect, "normalize_worker_svg", None)
+                if normalize_svg is not None:
+                    try:
+                        normalize_svg(tmp)
+                        svg_vector = getattr(engine_artifactinspect, "svg_vector", None)
+                        if svg_vector is not None:
+                            vector = svg_vector(tmp)
+                    except (ValueError, OSError):
+                        produced.append(
+                            engine_exportjob.Produced(
+                                format=fmt,
+                                error_code="artifact_rejected",
+                                error_params={"failed": "integrity", "policy": "standard"},
+                            )
+                        )
+                        continue
             if acceptance is not None:
                 # **验的是临时目录里那个文件本身**（不是 figsize、不是预览）：
                 # 不过就不发布，回执里那一项带 `acceptance_failed`
@@ -2629,8 +2649,8 @@ def export(
                     # 文件里的像素数，不给的话 `size` 那一维只能 unknown
                     width_px=int(round(size_mm[0] / 25.4 * dpi)) if raster else None,
                     height_px=int(round(size_mm[1] / 25.4 * dpi)) if raster else None,
-                    # PDF/SVG/EPS 是 matplotlib 直接序列化的真矢量；PNG/TIFF 才吃 dpi
-                    vector=fmt in engine_exportreq.VECTOR_FORMATS,
+                    # SVG reports its actual static carrier, including image-only originals.
+                    vector=vector,
                     manifest={"provenance": provenance} if provenance else None,
                 )
             )

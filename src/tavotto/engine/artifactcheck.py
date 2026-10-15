@@ -18,6 +18,7 @@
 
 from __future__ import annotations
 
+import math
 import re
 from pathlib import Path
 from xml.etree import ElementTree
@@ -64,14 +65,18 @@ def _svg_length(value: str | None) -> float | None:
     """`"425.196852pt"` → mm；没有单位按 px（SVG 的用户单位）。"""
     if not value:
         return None
-    m = re.fullmatch(r"\s*([0-9.]+(?:e-?[0-9]+)?)\s*([a-z%]*)\s*", str(value))
+    m = re.fullmatch(
+        r"\s*([+]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?)\s*([a-z%]*)\s*",
+        str(value),
+    )
     if not m:
         return None
     num, unit = float(m.group(1)), m.group(2) or "px"
     per_mm = _SVG_UNITS_PER_MM.get(unit)
-    if per_mm is None:
+    if per_mm is None or not math.isfinite(num) or num <= 0:
         return None
-    return num / per_mm
+    mm = num / per_mm
+    return mm if math.isfinite(mm) else None
 
 
 def check_pdf(path: Path, *, expect_mm: list[float] | None, font_family: str | None) -> dict:
@@ -90,9 +95,17 @@ def check_pdf(path: Path, *, expect_mm: list[float] | None, font_family: str | N
     }
 
 
-def check_svg(path: Path, *, expect_mm: list[float] | None, font_family: str | None) -> dict:
+def check_svg(
+    path: Path,
+    *,
+    expect_mm: list[float] | None,
+    font_family: str | None,
+    root: ElementTree.Element | None = None,
+) -> dict:
+    """Measure SVG dimensions; an already validated root avoids reparsing at secure boundaries."""
     try:
-        root = ElementTree.parse(path).getroot()
+        if root is None:
+            root = ElementTree.parse(path).getroot()
     except ElementTree.ParseError as exc:
         return {
             "format": "svg",
@@ -104,15 +117,20 @@ def check_svg(path: Path, *, expect_mm: list[float] | None, font_family: str | N
     size = [w, h] if w is not None and h is not None else None
     vb = root.get("viewBox")
     viewbox_ok: bool | None = None
-    if vb and size is not None:
+    if vb is not None:
         parts = vb.replace(",", " ").split()
+        viewbox_ok = False
         if len(parts) == 4:
             try:
-                vw, vh = float(parts[2]), float(parts[3])
-                # width/height 与 viewBox 必须同一个纵横比，否则渲染器会拉伸
-                viewbox_ok = abs(vw / vh - size[0] / size[1]) < 1e-3 if vh and size[1] else False
+                values = [float(part) for part in parts]
+                vw, vh = values[2:]
+                if all(math.isfinite(v) for v in values) and vw > 0 and vh > 0:
+                    # width/height 与 viewBox 必须同一个纵横比，否则渲染器会拉伸
+                    viewbox_ok = (
+                        abs(vw / vh - size[0] / size[1]) < 1e-3 if size is not None else None
+                    )
             except ValueError:
-                viewbox_ok = False
+                pass
     # 文字有没有留成 <text>：matplotlib 默认 svg.fonttype="path"，那时字体查不了
     ns = "{http://www.w3.org/2000/svg}"
     texts = list(root.iter(f"{ns}text")) + list(root.iter("text"))

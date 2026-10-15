@@ -442,14 +442,14 @@ def _runtime_of(resp: dict) -> dict | None:
     return dict(rt) if isinstance(rt, dict) else None
 
 
-def peek(script_name: str, figures_dir: str | Path, run=None):
+def peek(script_name: str, figures_dir: str | Path, run=None, *, artifact_source=None):
     """池里**现在**有没有这个脚本的活会话——只读，不建、不复用判定、不淘汰。
 
     `get()` 的副作用（重建 / LRU）在这里一个都不发生；回来的可能是没 build 的
     会话（正在冷启动）。给准备接口回答「现有 runtime 正在运行」（ADR 0053）用：
     它要的是事实，不是一条新会话。
     """
-    key = _worker_key(figures_dir, script_name, None, run)
+    key = _worker_key(figures_dir, script_name, artifact_source, run)
     with _lock:
         w = _workers.get(key)
         return w if w is not None and w.alive() else None
@@ -2447,7 +2447,23 @@ class EngineWorker:
         self.last_patch_hash_by_stem[stem] = self.last_patch_hash
         return _fold_build_timings(resp, build)
 
-    def export(self, stem: str, patches: list, path: str, fmt: str = "pdf", dpi: int = 600) -> dict:
+    def export(
+        self,
+        stem: str,
+        patches: list,
+        path: str,
+        fmt: str = "pdf",
+        dpi: int = 600,
+        *,
+        svg_path: str | None = None,
+        require_built: bool = False,
+        snapshot_only: bool = False,
+    ) -> dict:
+        if (require_built or snapshot_only) and not self.built:
+            raise WorkerError(
+                "An already built Figure session is required for SVG capture.",
+                code="svg_source_unavailable",
+            )
         build = self.ensure_built().get("timings") if not self.built else None
         resp = self.request(
             {
@@ -2457,6 +2473,9 @@ class EngineWorker:
                 "path": path,
                 "format": fmt,
                 "dpi": dpi,
+                **({"svg_path": svg_path} if svg_path is not None else {}),
+                **({"require_built": True} if require_built else {}),
+                **({"snapshot_only": True} if snapshot_only else {}),
             },
             EXPORT_TIMEOUT,
         )
@@ -2935,6 +2954,14 @@ class WorkerdWorker:
                     idle_timeout=idle_timeout,
                 )
             except workerd_client.WorkerdError as exc:
+                if exc.code == "unknown_session" and (
+                    payload.get("require_built") or payload.get("snapshot_only")
+                ):
+                    self._dead = True
+                    raise WorkerError(
+                        "The existing Figure session expired; SVG capture cannot rerun it.",
+                        code="svg_source_unavailable",
+                    ) from exc
                 # workerd 重启过 → session_id 作废。这条**透明重开一次**：
                 # 对上层来说这只是一次稍慢的渲染，没有任何语义变化。
                 if exc.code == "unknown_session" and self.artifact_source is not None:
@@ -3038,13 +3065,37 @@ class WorkerdWorker:
         self.last_patch_hash_by_stem[stem] = self.last_patch_hash
         return _fold_build_timings(resp, build)
 
-    def export(self, stem: str, patches: list, path: str, fmt: str = "pdf", dpi: int = 600) -> dict:
+    def export(
+        self,
+        stem: str,
+        patches: list,
+        path: str,
+        fmt: str = "pdf",
+        dpi: int = 600,
+        *,
+        svg_path: str | None = None,
+        require_built: bool = False,
+        snapshot_only: bool = False,
+    ) -> dict:
+        if (require_built or snapshot_only) and not self.built:
+            raise WorkerError(
+                "An already built Figure session is required for SVG capture.",
+                code="svg_source_unavailable",
+            )
         build = self.ensure_built().get("timings") if not self.built else None
         resp = self._call(
             "export",
             EXPORT_TIMEOUT,
             stem=stem,
-            payload={"patches": patches, "path": path, "format": fmt, "dpi": dpi},
+            payload={
+                "patches": patches,
+                "path": path,
+                "format": fmt,
+                "dpi": dpi,
+                **({"svg_path": svg_path} if svg_path is not None else {}),
+                **({"require_built": True} if require_built else {}),
+                **({"snapshot_only": True} if snapshot_only else {}),
+            },
         )
         return _fold_build_timings(resp, build)
 

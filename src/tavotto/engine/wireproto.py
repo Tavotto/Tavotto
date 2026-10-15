@@ -28,6 +28,7 @@ from __future__ import annotations
 import collections
 import sys
 import traceback
+from pathlib import Path
 
 import figcapture
 import patchspec
@@ -260,6 +261,10 @@ class V1Handler:
         patches = payload.get("patches", [])
         if cmd in PATCH_COMMANDS and not isinstance(patches, list):
             raise ProtocolError("bad_request", "payload.patches 必须是数组")
+        require_built = payload.get("require_built", False) if cmd == "export" else False
+        snapshot_only = payload.get("snapshot_only", False) if cmd == "export" else False
+        if not isinstance(require_built, bool) or not isinstance(snapshot_only, bool):
+            raise ProtocolError("bad_request", "require_built 与 snapshot_only 必须是布尔值")
 
         # 阶段计时（毫秒）。**只在 v1 出现**，legacy 信封的形状一字不改。
         timings: dict[str, float] = {}
@@ -278,7 +283,14 @@ class V1Handler:
                 )
             except figcapture.ArtifactContextError as exc:
                 raise ProtocolError(exc.code, str(exc), extra={"reason": exc.reason}) from exc
-        self.ensure_built(timings)
+        if cmd == "export" and (require_built or snapshot_only):
+            if not getattr(self, "built", True) or req.get("stem") not in self.session.states:
+                raise ProtocolError(
+                    "svg_source_unavailable",
+                    "An already built Figure session is required for SVG capture.",
+                )
+        else:
+            self.ensure_built(timings)
         if cmd == "build":
             return {**self.build_result(timings), "timings": timings}
         if cmd not in V1_COMMANDS:
@@ -310,6 +322,16 @@ class V1Handler:
             path = payload.get("path")
             if not isinstance(path, str) or not path:
                 raise ProtocolError("bad_request", "payload.path 必须是非空字符串")
+            svg_path = payload.get("svg_path")
+            if snapshot_only and svg_path is None:
+                raise ProtocolError("bad_request", "snapshot_only 需要 SVG companion 路径")
+            if svg_path is not None:
+                if not isinstance(svg_path, str) or not svg_path:
+                    raise ProtocolError("bad_request", "payload.svg_path 必须是非空字符串")
+                if str(payload.get("format", "pdf")).lower() != "pdf":
+                    raise ProtocolError("bad_request", "payload.svg_path 只支持 PDF 导出")
+                if Path(svg_path).resolve() == Path(path).resolve():
+                    raise ProtocolError("bad_request", "PDF 与 SVG 导出路径必须不同")
         width = int_arg(payload, "width", 800 if cmd == "render_png" else 400)
         dpi = int_arg(payload, "dpi", 600)
         # 可选：这一次预览 SVG 用的 dpi（缺省 = 会话的 preview_dpi）。
@@ -345,7 +367,14 @@ class V1Handler:
                 )
             elif cmd == "export":
                 result = fig.do_export(
-                    stem, patches, payload["path"], str(payload.get("format", "pdf")), dpi, timings
+                    stem,
+                    patches,
+                    payload["path"],
+                    str(payload.get("format", "pdf")),
+                    dpi,
+                    timings,
+                    **({"svg_path": svg_path} if svg_path is not None else {}),
+                    **({"snapshot_only": True} if snapshot_only else {}),
                 )
         except ProtocolError:
             raise
