@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import importlib.util
 import json
 import os
 import shutil
@@ -244,17 +245,47 @@ def _fonts_dir() -> Path:
     return Path(override) if override else ROOT / "src" / "tavotto" / "resources" / "fonts"
 
 
+def _approved_fonts_problems(d: Path) -> list[str]:
+    """批准字体集合齐不齐——直接用 `scripts/fetch_fonts.py` 的 `check()`（allowlist 每张脸与
+    许可证全文逐个核 sha256），不另写一份判据：只看「有没有一个字体文件」会把中断下载留下的
+    半套字体当成就绪，之后的字体失败就被误报成产品失败。"""
+    spec = importlib.util.spec_from_file_location(
+        "_tavotto_fetch_fonts", ROOT / "scripts" / "fetch_fonts.py"
+    )
+    if spec is None or spec.loader is None:
+        return ["fetch_fonts_unloadable"]
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return list(mod.check(d))
+
+
+def _import_failure_category(stderr: str) -> str:
+    """import 失败只留异常类名（`ModuleNotFoundError` …）进报告；stderr 末行可能带本机绝对路径。"""
+    last = (stderr.strip().splitlines() or [""])[-1]
+    head = last.split(":", 1)[0].strip()
+    return f"import_failed:{head}" if head.isidentifier() else "import_failed"
+
+
 def check_precondition(spec: str, python: str) -> dict:
-    """一条前置条件 → `{check, ok, detail}`。判不出也算不满足，并写明为什么。"""
+    """一条前置条件 → `{check, ok, detail, raw}`。判不出也算不满足。
+
+    `detail` 进 report.json，只许是不含路径的类别；`raw` 是原始输出，由调用方写进本机证据后丢掉。"""
     kind, _, arg = spec.partition(":")
     if kind == "fonts":
-        d = _fonts_dir()
-        has_files = d.is_dir() and any(p.is_file() for p in d.rglob("*") if p.suffix)
-        detail = "ok" if has_files else "字体目录为空或不存在；先跑 python scripts/fetch_fonts.py"
-        return {"check": spec, "ok": has_files, "detail": detail}
+        try:
+            problems = _approved_fonts_problems(_fonts_dir())
+        except Exception as exc:  # 判不出也算不满足
+            problems = [f"check_failed:{type(exc).__name__}"]
+        ok = not problems
+        detail = (
+            "ok"
+            if ok
+            else f"approved_fonts_incomplete:{len(problems)}（先跑 python scripts/fetch_fonts.py）"
+        )
+        return {"check": spec, "ok": ok, "detail": detail, "raw": "\n".join(problems)}
     if kind == "file":
         ok = (ROOT / arg).is_file()
-        return {"check": spec, "ok": ok, "detail": "ok" if ok else "文件不存在"}
+        return {"check": spec, "ok": ok, "detail": "ok" if ok else "file_missing", "raw": ""}
     if kind == "python_module":
         try:
             proc = subprocess.run(
@@ -265,10 +296,11 @@ def check_precondition(spec: str, python: str) -> dict:
                 env=_base_env(),
             )
             ok = proc.returncode == 0
-            detail = "ok" if ok else (proc.stderr.strip().splitlines() or ["import 失败"])[-1]
+            detail = "ok" if ok else _import_failure_category(proc.stderr)
+            raw = proc.stderr
         except (OSError, subprocess.TimeoutExpired) as exc:
-            ok, detail = False, f"无法运行目标解释器：{type(exc).__name__}"
-        return {"check": spec, "ok": ok, "detail": detail}
+            ok, detail, raw = False, f"interpreter_unavailable:{type(exc).__name__}", str(exc)
+        return {"check": spec, "ok": ok, "detail": detail, "raw": raw}
     raise ValueError(f"unknown precondition {spec!r}")
 
 
@@ -498,6 +530,12 @@ def run_scenario(scenario: Scenario, out: Path, python: str) -> dict:
         return rec
 
     checks = [check_precondition(c, python) for c in scenario.preconditions]
+    raw_lines = [f"## {c['check']}\n{c['raw']}" for c in checks if c.get("raw")]
+    if raw_lines:
+        # 原始输出（可能含本机路径）只留在本机证据里；report.json 里只有类别
+        (evidence / "preconditions.log").write_text("\n\n".join(raw_lines) + "\n", encoding="utf-8")
+    for c in checks:
+        c.pop("raw", None)
     rec["preconditions"] = checks
     missing = [c for c in checks if not c["ok"]]
     if missing:
@@ -505,6 +543,8 @@ def run_scenario(scenario: Scenario, out: Path, python: str) -> dict:
         only_files = all(c["check"].startswith("file:tests/") for c in missing)
         rec["result"] = "not_run" if only_files else "environment_unavailable"
         rec["reason"] = "; ".join(f"{c['check']}: {c['detail']}" for c in missing)
+        shutil.rmtree(sdir / "work", ignore_errors=True)
+        rec["evidence"] = _evidence_list(sdir, out)
         return rec
 
     env = scenario_env(sdir, scenario)

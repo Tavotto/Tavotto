@@ -280,3 +280,63 @@ def test_mixed_run_exit_code_reflects_worst(tmp_path, monkeypatch):
     rc = AV.main(["run", "t.ok2", "t.env3", "--out", str(out), "--python", sys.executable])
     assert rc == AV.EXIT_ENV
     assert json.loads((out / "report.json").read_text())["overall"] == "environment_unavailable"
+
+
+# --------------------------------------------------------------------------
+# 前置条件：批准字体要整套核对；失败原因进报告前去路径（#1085 Codex P2）
+# --------------------------------------------------------------------------
+def test_partial_font_set_is_not_ready(tmp_path, monkeypatch):
+    (tmp_path / "liberation").mkdir()
+    (tmp_path / "liberation" / "LiberationSans-Regular.ttf").write_bytes(b"not really a font")
+    monkeypatch.setenv("TAVOTTO_FONTS_DIR", str(tmp_path))
+    rec = AV.check_precondition("fonts", sys.executable)
+    assert rec["ok"] is False
+    assert rec["detail"].startswith("approved_fonts_incomplete:")
+    assert str(tmp_path) not in rec["detail"]
+
+
+def test_font_check_uses_the_fetch_fonts_authority(tmp_path, monkeypatch):
+    """判据只有一个出处：fetch_fonts.check() 说齐了才算齐。"""
+    seen = []
+    monkeypatch.setattr(AV, "_approved_fonts_problems", lambda d: seen.append(d) or [])
+    monkeypatch.setenv("TAVOTTO_FONTS_DIR", str(tmp_path))
+    assert AV.check_precondition("fonts", sys.executable)["ok"] is True
+    assert seen == [tmp_path]
+
+
+@pytest.mark.parametrize(
+    "stderr, expected",
+    [
+        (
+            "Traceback...\nModuleNotFoundError: No module named 'matplotlib'\n",
+            "import_failed:ModuleNotFoundError",
+        ),
+        (
+            "ImportError: dlopen(/Users/someone/venv/lib/_c.so, 2): no suitable image\n",
+            "import_failed:ImportError",
+        ),
+        ("/opt/weird/site.py: line 3: syntax error\n", "import_failed"),
+        ("", "import_failed"),
+    ],
+)
+def test_import_failure_detail_is_a_path_free_category(stderr, expected):
+    detail = AV._import_failure_category(stderr)
+    assert detail == expected
+    assert "/" not in detail and "\\" not in detail
+
+
+def test_precondition_raw_output_goes_to_local_evidence_not_report(tmp_path, monkeypatch):
+    fake = _fake("t.rawpre", "pass", preconditions=("python_module:definitely_not_a_module_xyz",))
+    monkeypatch.setitem(AV.SCENARIOS, fake.id, fake)
+    out = tmp_path / "out"
+    assert (
+        AV.main(["run", "t.rawpre", "--out", str(out), "--python", sys.executable]) == AV.EXIT_ENV
+    )
+    report = json.loads((out / "report.json").read_text(encoding="utf-8"))
+    pre = report["scenarios"][0]["preconditions"][0]
+    assert pre["detail"] == "import_failed:ModuleNotFoundError" and "raw" not in pre
+    log = out / "t.rawpre" / "evidence" / "preconditions.log"
+    assert "definitely_not_a_module_xyz" in log.read_text(encoding="utf-8")
+    assert "t.rawpre/evidence/preconditions.log" in {
+        e["path"] for e in report["scenarios"][0]["evidence"]
+    }
