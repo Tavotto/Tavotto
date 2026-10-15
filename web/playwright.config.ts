@@ -80,6 +80,9 @@ export default defineConfig({
         'timeline-row-actions.spec.ts',
         // 顶栏窄宽度下两两不重叠：量的是字宽，WebKit 的字体度量与 chromium 不同
         'topbar-narrow.spec.ts',
+        // 树行键位与分栏手柄（UI 2.0 PR7）：Esc 回滚 / 双击复位靠 pointer capture 与 WebKit 的事件序列，
+        // 选中加粗的字宽锁量的是 WKWebView 自己的字体度量
+        'tree-list-refine.spec.ts',
       ],
     },
     // 英文 locale（审计 P1-02/P1-03）：a11y spec 是语言无关写法；
