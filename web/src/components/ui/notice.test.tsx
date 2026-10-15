@@ -160,6 +160,15 @@ describe('Notice：同一槽位换成另一条，详情状态不沿用', () => {
     expect(q('[data-notice-copy]')!.textContent).not.toBe('已复制')
   })
 
+  it('detailKey 不变时，标题 / 详情的译文换了（切语言）展开状态保持', async () => {
+    const view = (title: string, detail: string) => <Notice title={title} detailKey="same" detail={detail} />
+    await render(view('Cancel failed', 'long english detail'))
+    await act(async () => q<HTMLButtonElement>('[data-notice-detail-toggle]')!.click())
+    await render(view('取消失败', '很长的中文详情'))
+    expect(q('[data-notice-detail-toggle]')!.getAttribute('aria-expanded')).toBe('true')
+    expect(q('[data-notice-detail]')!.textContent).toContain('很长的中文详情')
+  })
+
   it('节点型 detail 靠 detailKey 区分', async () => {
     const view = (k: string) => <Notice title={T} detailKey={k} detail={<b>{k}</b>} />
     await render(view('a'))

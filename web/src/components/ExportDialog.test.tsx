@@ -9,7 +9,7 @@
  * 4. **PPI 只在位图输出时出现**；文件名非法时就地报错并挡住导出。
  */
 import { act } from 'react'
-import { initI18n, literal } from '@/i18n'
+import { i18n, initI18n, literal } from '@/i18n'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -2124,6 +2124,26 @@ describe('visible export recovery', () => {
     expect(notice.textContent).not.toContain('HTTP 500')
     await act(async () => { (notice.querySelector('[data-notice-detail-toggle]') as HTMLButtonElement).click() })
     expect(notice.querySelector('[data-notice-detail]')?.textContent).toContain('HTTP 500')
+    expect(document.querySelectorAll('[data-export-failure]')).toHaveLength(1)
+  })
+
+  it('失败条的先后与详情展开不依赖译文：先状态失败、再取消失败，切换界面语言后仍是取消那条', async () => {
+    initI18n('en-US')
+    await setup(9)
+    globalThis.fetch = vi.fn(async () => response(runningJob)) as typeof fetch
+    await act(async () => { await runExport(input()) })
+    globalThis.fetch = vi.fn(async () => { throw new TypeError('Failed to fetch') }) as typeof fetch
+    await act(async () => { await refreshExportStatus() })
+    expect(document.querySelector('[data-export-poll-error]')).not.toBeNull()
+    // 取消失败带一段较长的原文 → 有「详情」可展开
+    globalThis.fetch = vi.fn(async () => { throw new TypeError(`Failed to fetch ${'upstream '.repeat(15)}`) }) as typeof fetch
+    await act(async () => { await cancelCurrentExport() })
+    expect(document.querySelectorAll('[data-export-failure]')).toHaveLength(1)
+    expect(document.querySelector('[data-export-cancel-error]')).not.toBeNull()
+    await act(async () => { await i18n.changeLanguage('zh-CN') })
+    // 签名只认稳定的失败身份：换语言后所有译文都变了，也不会按固定键序重新盖戳把旧的状态失败顶上来
+    expect(document.querySelector('[data-export-poll-error]')).toBeNull()
+    expect(document.querySelector('[data-export-cancel-error]')).not.toBeNull()
     expect(document.querySelectorAll('[data-export-failure]')).toHaveLength(1)
   })
 

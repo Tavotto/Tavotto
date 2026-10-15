@@ -174,6 +174,8 @@ const EXPORT_STATUS_OWNER = "export.result";
 /** 本对话框的文案都在 `dialogs:export.*` 下 */
 /** 一条失败的原始材料：标题（一句人话）+ 后端原文 + 可选稳定码 */
 interface FailureRaw {
+  /** 失败事件的稳定身份（原始错误描述符 / 稳定码，**不是**翻译后的文字）：排先后、重置详情都认它，切语言不改变它 */
+  id: string;
   title: string;
   text: string;
   code?: string;
@@ -189,7 +191,7 @@ function useLatestFailure(raw: Record<FailureKind, FailureRaw | null>) {
   const book = useRef({ n: 0, stamp: {} as Record<string, number>, last: {} as Record<string, string | null> });
   const kinds = Object.keys(raw) as FailureKind[];
   for (const k of kinds) {
-    const sig = raw[k] ? `${raw[k]!.title}\u0000${raw[k]!.text}` : null;
+    const sig = raw[k] ? raw[k]!.id : null;
     if (sig !== null && sig !== book.current.last[k]) book.current.stamp[k] = ++book.current.n;
     book.current.last[k] = sig;
   }
@@ -200,7 +202,7 @@ function useLatestFailure(raw: Record<FailureKind, FailureRaw | null>) {
   const bare = /^HTTP \d{3}$/.test(r.text.trim());
   const split = bare ? { inline: null, detail: r.text.trim() } : splitNoticeText(r.text);
   const detail = [r.code, split.detail].filter(Boolean).join("\n") || null;
-  return { kind, title: r.title, inline: split.inline, detail };
+  return { kind, id: r.id, title: r.title, inline: split.inline, detail };
 }
 
 const ex = (key: string, values?: Record<string, unknown>) =>
@@ -1026,16 +1028,27 @@ export function ExportDialog() {
   // 五路失败里此刻要摆的**一条**：最近才出现的那条（见 `useLatestFailure`）
   const failure = useLatestFailure({
     // 拒绝本来就是一句完整的人话（engineErrorMsg）：它自己就是标题
-    "refusal": prepared.error ? { title: formatMessage(engineErrorMsg(prepared.error)), text: "" } : null,
+    "refusal": prepared.error
+      ? { id: String(prepared.error.reason), title: formatMessage(engineErrorMsg(prepared.error)), text: "" }
+      : null,
     "start-error":
       startError && !prepared.error
         ? startError.code === "bad_filename"
-          ? { title: ex(`filenameError.${startError.message}`), text: "" }
-          : { title: ex("failTitle"), text: formatMessage(startError.message), code: startError.code }
+          ? { id: `bad_filename:${startError.message}`, title: ex(`filenameError.${startError.message}`), text: "" }
+          : {
+              id: `${startError.code}:${JSON.stringify(startError.message)}`,
+              title: ex("failTitle"),
+              text: formatMessage(startError.message),
+              code: startError.code,
+            }
         : null,
-    "cancel-error": cancelError ? { title: ex("cancelFailed"), text: formatMessage(cancelError) } : null,
-    "poll-error": pollError ? { title: ex("statusFailed"), text: formatMessage(pollError) } : null,
-    "reveal-error": revealError ? { title: revealError, text: "" } : null,
+    "cancel-error": cancelError
+      ? { id: JSON.stringify(cancelError), title: ex("cancelFailed"), text: formatMessage(cancelError) }
+      : null,
+    "poll-error": pollError
+      ? { id: JSON.stringify(pollError), title: ex("statusFailed"), text: formatMessage(pollError) }
+      : null,
+    "reveal-error": revealError ? { id: revealError, title: revealError, text: "" } : null,
   });
   /** 「在文件夹中显示」失败的标题里是完整路径，要能在任意处折行 */
   const failureIsPath = failure?.kind === "reveal-error";
@@ -1061,7 +1074,7 @@ export function ExportDialog() {
           data-export-failure={failure.kind}
           {...{ [`data-export-${failure.kind}`]: "" }}
           title={failure.title}
-          detailKey={`${failure.kind}\u0000${failure.title}\u0000${failure.detail ?? ""}`}
+          detailKey={`${failure.kind}\u0000${failure.id}`}
           detail={failure.detail}
           className={failureIsPath ? "break-all" : undefined}
           action={
