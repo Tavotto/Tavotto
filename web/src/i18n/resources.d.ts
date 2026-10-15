@@ -5441,6 +5441,7 @@ export default interface Resources {
         "cancelled": "已取消检查",
         "choose_target_other": "发现 {{count}} 个绘图脚本",
         "failed": "检查没有完成",
+        "lost": "没能读到检查进度",
         "nothing_found": "项目里还没有图和脚本",
         "scanning": "正在检查项目…",
         "static_source": "没有发现脚本，图可以直接排版",

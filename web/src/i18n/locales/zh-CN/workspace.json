@@ -532,7 +532,8 @@
       "nothing_found": "项目里还没有图和脚本",
       "unchecked": "项目没能检查完",
       "cancelled": "已取消检查",
-      "failed": "检查没有完成"
+      "failed": "检查没有完成",
+      "lost": "没能读到检查进度"
     },
     "issue": {
       "unreadable_dir": "没能读取目录 {{path}}。",

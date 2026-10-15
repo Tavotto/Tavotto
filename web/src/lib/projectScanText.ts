@@ -30,12 +30,14 @@ export type ScanCardKind = 'discover' | 'choose' | 'scanning' | 'stuck' | 'quiet
 
 export function scanCard(
   scan: ProjectScan | null,
-  s: { forced: boolean; slow: boolean },
+  s: { forced: boolean; slow: boolean; lost?: boolean },
 ): { kind: ScanCardKind; key: string; values: Record<string, unknown> } | null {
   if (!scan) return null
   const found = scan.found ?? { scripts: scan.budget.scripts, assets: scan.budget.assets }
   const targets = scan.targets?.filter((t) => t.role !== 'auxiliary').length ?? 0
   const values = { script: scan.default_target ?? '', count: targets, scripts: found.scripts, assets: found.assets }
+  // 还在跑却连着读不到它的进度：和「没检查完」同一个出口（角标 + 重新检查），不永远转着
+  if (scan.state === 'running' && s.lost) return { kind: 'stuck', key: 'lost', values }
   if (scan.state === 'running') return s.slow || s.forced ? { kind: 'scanning', key: 'scanning', values } : null
   if (scan.state === 'failed' || scan.state === 'cancelled') return { kind: 'stuck', key: scan.state, values }
   const kind = scan.outcome.kind

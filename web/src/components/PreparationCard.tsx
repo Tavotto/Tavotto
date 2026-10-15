@@ -161,6 +161,7 @@ export function PreparationCard() {
   const scan = useProjectScanStore((s) => s.scan)
   const slow = useProjectScanStore((s) => s.slow)
   const forced = useProjectScanStore((s) => s.forced)
+  const lost = useProjectScanStore((s) => s.pollLost)
   const tutorialProject = useProjectStore((s) => s.project?.tutorial === true)
   const onboardingActive = useOnboardingStore((s) => s.status === 'active')
   const toolbarUp = useCanvasToolbarVisible()
@@ -170,7 +171,7 @@ export function PreparationCard() {
   const hidden = tutorialProject || onboardingActive
   // 壳确认引擎退出了：断线那一句不再说「正在重连」（没人在重连），见 PrepContext.engineExited
   const engineExited = useExitNoticeStore((s) => s.engineExit !== null)
-  const scanned = !entry && !hidden ? scanCard(scan, { slow, forced }) : null
+  const scanned = !entry && !hidden ? scanCard(scan, { slow, forced, lost }) : null
 
   let view: PrepView | null = null
   if (entry && !hidden) {
