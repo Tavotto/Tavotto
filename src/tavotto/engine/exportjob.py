@@ -727,6 +727,11 @@ def run(
 
         job.outputs = outputs
         guard.close()
+        # 图的失败在进报告那一步**之前**记：不然轨迹的当前步已是 `report`，图没落盘会被记成
+        # 报告坏了（Codex #1103 P2）。生产者早先记过的不盖掉（`failed_phase` 只认第一次）
+        failed_outputs = [o for o in outputs if o.status != STATUS_DONE]
+        if failed_outputs and job.trace.failed_phase is None:
+            job.trace.fail(_last_phase(job), failed_outputs[0].error_code or "partial")
 
         if req.include_report:
             job.phase = "report"
