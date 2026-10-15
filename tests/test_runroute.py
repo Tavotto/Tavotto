@@ -1694,3 +1694,31 @@ def test_path_parent_still_folds():
     )
     route = _route(src)
     assert route.execution == "native" and route.reason == runroute.REASON_SAVEFIG_READBACK, route
+
+
+# ---- f-string 转换与异风格纯路径（Codex #1034 r4284099930 / r4284099949）
+@pytest.mark.parametrize("conv", ["!r", "!a"])
+def test_an_fstring_conversion_is_not_folded_as_the_raw_value(conv):
+    src = (
+        MPL
+        + f'p = "x.png"\nplt.savefig(f"{{p{conv}}}", format="png")\nopen("x.png", "rb").read()\n'
+    )
+    route = _route(src)
+    assert route.execution == "safe", route
+
+
+def test_an_fstring_str_conversion_still_folds():
+    src = MPL + 'p = "x.png"\nplt.savefig(f"{p!s}")\nopen("x.png", "rb").read()\n'
+    route = _route(src)
+    assert route.execution == "native" and route.reason == runroute.REASON_SAVEFIG_READBACK, route
+
+
+@pytest.mark.skipif(os.sep == "\\", reason="Windows 上 PureWindowsPath 就是本机风格")
+def test_a_foreign_flavor_pure_path_is_not_comparable_on_posix():
+    src = (
+        MPL
+        + 'from pathlib import PureWindowsPath\nplt.savefig(PureWindowsPath("a/b.png"))\n'
+        + 'open("a/b.png", "rb").read()\n'
+    )
+    route = _route(src)
+    assert route.execution == "safe", route

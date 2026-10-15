@@ -133,15 +133,12 @@ _NUMPY_WRITE = frozenset({"save", "savez", "savez_compressed", "savetxt"})
 _DATA_WRITE_TAILS = frozenset(
     {"to_csv", "to_excel", "to_parquet", "to_json", "to_pickle", "to_hdf", "to_feather", "tofile"}
 )
-_PATH_CTORS = frozenset(
-    {
-        "pathlib.Path",
-        "pathlib.PurePath",
-        "pathlib.PosixPath",
-        "pathlib.WindowsPath",
-        "pathlib.PurePosixPath",
-        "pathlib.PureWindowsPath",
-    }
+#: 只认与本机路径语义一致的构造器：另一种风格的纯路径（POSIX 上的 `PureWindowsPath` 序列化成 `a\\b.png`）
+#: 与按字面折叠的文本不是同一个文件，不认（Codex #1034 r4284099949）
+_PATH_CTORS = frozenset({"pathlib.Path", "pathlib.PurePath"}) | (
+    frozenset({"pathlib.WindowsPath", "pathlib.PureWindowsPath"})
+    if os.sep == "\\"
+    else frozenset({"pathlib.PosixPath", "pathlib.PurePosixPath"})
 )
 _FILE_LIKE_CTORS = frozenset({"io.BytesIO", "io.StringIO"})
 _STR_PASS = frozenset(
@@ -480,7 +477,12 @@ class _Collector:
             for part in node.values:
                 if isinstance(part, ast.Constant) and isinstance(part.value, str):
                     out.append(part.value)
-                elif isinstance(part, ast.FormattedValue) and part.format_spec is None:
+                elif (
+                    isinstance(part, ast.FormattedValue)
+                    and part.format_spec is None
+                    and part.conversion
+                    in (-1, ord("s"))  # `!r` / `!a` 会加引号 / 转义，不按原值折叠
+                ):
                     got = self.string(part.value, scope, depth + 1)
                     if got is None:
                         got = self._text_of(part.value, scope, depth + 1)
