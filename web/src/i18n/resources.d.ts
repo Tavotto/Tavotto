@@ -5082,6 +5082,8 @@ export default interface Resources {
         "errorTruncated": "太长，只保留了最后一部分。",
         "installTo": "装到",
         "installs": "将安装",
+        "nativeFallback": "安全模式拦下了脚本的文件操作，已自动换成按真实文件运行。",
+        "nativeFallbackNoWriteback": "安全模式拦下了脚本的文件操作，已自动换成按真实文件运行。这样出的图，改动不会写回脚本。",
         "noFigureWhy": "没有调用 savefig，也没留下 Figure。",
         "parseKind": "参数问题",
         "parseKinds": {

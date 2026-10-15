@@ -1101,7 +1101,9 @@
       "errorFull": "Full error output",
       "errorTruncated": "Too long; only the last part is kept.",
       "noFigureWhy": "It never called savefig and left no Figure open.",
-      "unlinked": "{{names}}, made earlier with other arguments, is no longer linked. Run again with those arguments to restore it."
+      "unlinked": "{{names}}, made earlier with other arguments, is no longer linked. Run again with those arguments to restore it.",
+      "nativeFallback": "Safe mode blocked the script's file operations, so it was run on your real files instead.",
+      "nativeFallbackNoWriteback": "Safe mode blocked the script's file operations, so it was run on your real files instead. Changes to a figure made this way aren't written back to the script."
     },
     "fact": {
       "finished": "The script finished",

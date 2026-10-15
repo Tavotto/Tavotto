@@ -32,7 +32,7 @@ import { listJoin } from '@/i18n/format'
 import { markAutoShown, wasAutoShown } from '@/lib/guideCardSeen'
 import { preparationPanelEnabled } from '@/lib/preparationFlag'
 import { originFactsOf, originViewOfCard } from '@/lib/importOrigin'
-import { dialogKinds, prepRowKey, prepView, targetName, type PrepPrimary, type PrepTone, type PrepView } from '@/lib/preparationText'
+import { dialogKinds, nativeFallbackNote, prepRowKey, prepView, targetName, type PrepPrimary, type PrepTone, type PrepView } from '@/lib/preparationText'
 import { dependenciesLine, issueLine, roleLabel, scanCard, scanLine, type ScanCardKind } from '@/lib/projectScanText'
 import { missingRequirements, readTokens, type ScriptArgsSchema } from '@/lib/scriptArgsForm'
 import { cn } from '@/lib/utils'
@@ -1139,6 +1139,7 @@ function SessionDetails({ entry, view }: { entry: PrepEntry; view: PrepView }) {
   const attempt = report?.provider.attempt_id
   const dep = report?.provider.dependency
   const originFacts = originFactsOf(report)
+  const fallbackNote = nativeFallbackNote(report ?? null)
   const env = report?.environment
   const primaryAction = view.primary?.kind === 'action' ? view.primary.action : null
   const recheck = primaryAction !== 'recheck' && report?.actions.some((a) => a.kind === 'recheck')
@@ -1231,6 +1232,11 @@ function SessionDetails({ entry, view }: { entry: PrepEntry; view: PrepView }) {
       )}
       {prepare?.impact.private_python?.origin === 'download' && (
         <p>{pt('install.download', { mb: Math.max(1, Math.round(prepare.impact.private_python.download_bytes / 1048576)) })}</p>
+      )}
+      {fallbackNote && (
+        <p data-prep-native-fallback>
+          {pt(fallbackNote.noWriteback ? 'detail.nativeFallbackNoWriteback' : 'detail.nativeFallback')}
+        </p>
       )}
       {report?.facts && <Facts report={report} />}
       {entry.rejection && (

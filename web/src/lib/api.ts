@@ -5473,10 +5473,29 @@ export interface PreparationAction {
   impact: PreparationImpact
 }
 
-/** 会话报告（`SessionService.report`）：前端只保存这份投影，不另算「能不能跑」 */
 /** `rasterhint.LIBRARIES`：界面按它查库名（`workspace:prep.rasterHint.library.*`） */
 export type RasterLibrary = 'pillow' | 'opencv' | 'imageio' | 'skimage'
 
+/**
+ * 会话里一次真实执行尝试的账本条目（`engine/execpolicy.AttemptRecord.public()`，ADR 0127）：执行语义 · 解释器摘要 ·
+ * 启动上下文摘要 · 触发原因码 · 与上次相比变了哪几维（`profile` / `interpreter` / `launch_context`）· 结局。
+ * 只有摘要与闭集码，没有路径 / argv / 环境值。老后端没有 `attempt_history`。
+ */
+export interface PreparationAttemptRecord {
+  run: number
+  seq: number
+  attempt_id: string
+  profile: 'safe' | 'native'
+  interpreter: string
+  launch: string
+  cause: string
+  changed: string[]
+  outcome: 'pending' | 'succeeded' | 'failed' | 'blocked' | 'cancelled'
+  code: string
+  declined: string
+}
+
+/** 会话报告（`SessionService.report`）：前端只保存这份投影，不另算「能不能跑」 */
 export interface PreparationReport {
   session_version: number
   session_id: string
@@ -5517,6 +5536,8 @@ export interface PreparationReport {
     } | null
   }
   dependency_delta?: Record<string, unknown> | null
+  /** 这个会话里每次真实执行尝试的账本（ADR 0127）；界面只在「safe → native 回退成功」时据此在详情里补一行，不据此判任何事 */
+  attempt_history?: PreparationAttemptRecord[]
   /** 运行意图（P05b）；老后端没有这个键 */
   intent?: PreparationRunIntent | null
   /** 环境：只是一个可展示的事实（ADR 0114 §六），不要求用户动作；老后端没有 */
