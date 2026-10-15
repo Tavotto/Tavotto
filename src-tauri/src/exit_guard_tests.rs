@@ -12,7 +12,6 @@
 //!
 //! 只数 AST 节点，注释与字符串字面量不会误报。允许名单列到具体叶子，与实际命中按**多重集**精确相等：多一项、少一项、计数不同都失败。
 
-use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use proc_macro2::{TokenStream, TokenTree};
@@ -211,26 +210,15 @@ fn rs_files(dir: &Path, out: &mut Vec<PathBuf>) {
     }
 }
 
-/// 全部生产 `.rs` 里的出口命中：跳过 `*_tests.rs`，以及被 `#[cfg(test)] mod x;` 声明的文件模块。
+/// 全部生产 `.rs` 里的出口命中：**只**跳过文件名以 `_tests.rs` 结尾的文件（它们必须且只能在 `#[cfg(test)]` 下被声明，
+/// 由 [`test_files_are_exactly_the_cfg_test_mod_targets`] 钉住）。不根据 `mod` 声明按文件名去跳——同名的生产文件会被误跳。
 pub fn production_hits() -> Vec<Hit> {
     let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
     let mut files = Vec::new();
     rs_files(&src, &mut files);
-    let mut test_mods: BTreeSet<String> = BTreeSet::new();
-    for f in &files {
-        let ast = syn::parse_file(&std::fs::read_to_string(f).unwrap()).unwrap();
-        for item in &ast.items {
-            if let syn::Item::Mod(m) = item {
-                if is_cfg_test(&m.attrs) && m.content.is_none() {
-                    test_mods.insert(m.ident.to_string());
-                }
-            }
-        }
-    }
     let mut hits = Vec::new();
     for f in files {
-        let stem = f.file_stem().unwrap().to_string_lossy().into_owned();
-        if stem.ends_with("_tests") || test_mods.contains(&stem) {
+        if is_tests_file(&f) {
             continue;
         }
         let rel = f
@@ -241,6 +229,191 @@ pub fn production_hits() -> Vec<Hit> {
         hits.extend(scan_source(&rel, &std::fs::read_to_string(&f).unwrap()));
     }
     hits
+}
+
+fn is_tests_file(f: &Path) -> bool {
+    f.file_name()
+        .is_some_and(|n| n.to_string_lossy().ends_with("_tests.rs"))
+}
+
+/// 一条文件模块声明 `mod x;`：解析到的文件（存在才有）、是否整串 `#[cfg(test)]`。
+#[derive(Debug)]
+struct ModDecl {
+    target: Option<PathBuf>,
+    cfg_test: bool,
+    name: String,
+}
+
+fn path_attr(attrs: &[syn::Attribute]) -> Option<String> {
+    attrs.iter().find_map(|a| match &a.meta {
+        syn::Meta::NameValue(nv) if nv.path.is_ident("path") => match &nv.value {
+            syn::Expr::Lit(syn::ExprLit {
+                lit: syn::Lit::Str(s),
+                ..
+            }) => Some(s.value()),
+            _ => None,
+        },
+        _ => None,
+    })
+}
+
+/// 按 Rust 的模块路径规则解析 `file` 里全部 `mod x;`（含内联 `mod a { mod x; }` 的嵌套）：
+/// `main.rs` / `lib.rs` / `mod.rs` 的子模块在同目录，其余文件 `foo.rs` 的在 `foo/`；
+/// `x` → `<dir>/x.rs` 或 `<dir>/x/mod.rs`；`#[path = "p"]` 相对声明所在文件的目录。
+fn resolve_mod_decls(file: &Path) -> Vec<ModDecl> {
+    fn walk(items: &[syn::Item], file_dir: &Path, mod_dir: &Path, out: &mut Vec<ModDecl>) {
+        for item in items {
+            let syn::Item::Mod(m) = item else { continue };
+            let name = m.ident.to_string();
+            match &m.content {
+                Some((_, inner)) => {
+                    let sub = match path_attr(&m.attrs) {
+                        Some(p) => file_dir.join(p),
+                        None => mod_dir.join(&name),
+                    };
+                    walk(inner, file_dir, &sub, out);
+                }
+                None => {
+                    let target = match path_attr(&m.attrs) {
+                        Some(p) => Some(file_dir.join(p)).filter(|f| f.is_file()),
+                        None => [
+                            mod_dir.join(format!("{name}.rs")),
+                            mod_dir.join(&name).join("mod.rs"),
+                        ]
+                        .into_iter()
+                        .find(|f| f.is_file()),
+                    };
+                    out.push(ModDecl {
+                        target,
+                        cfg_test: is_cfg_test(&m.attrs),
+                        name,
+                    });
+                }
+            }
+        }
+    }
+    let ast = syn::parse_file(&std::fs::read_to_string(file).unwrap()).unwrap();
+    let dir = file.parent().unwrap();
+    let stem = file.file_stem().unwrap().to_string_lossy().into_owned();
+    let mod_dir = if matches!(stem.as_str(), "main" | "lib" | "mod") {
+        dir.to_path_buf()
+    } else {
+        dir.join(&stem)
+    };
+    let mut out = Vec::new();
+    walk(&ast.items, dir, &mod_dir, &mut out);
+    out
+}
+
+/// 两个方向钉住「被跳过的文件」集合：
+/// (a) 每个 `#[cfg(test)] mod x;` 指向的文件都叫 `*_tests.rs`（否则它在生产扫描里不会被跳过也无妨，但命名约定要守住）；
+/// (b) 每个 `*_tests.rs` 都只在 `#[cfg(test)]` 下被声明，且至少被声明一次（没人声明 = 死文件，也可能是路径规则没读对）。
+/// 于是扫描器跳过的文件与 cfg(test) 模块目标一一对应，不存在「被跳过的生产文件」。
+fn check_test_file_pairing(src: &Path) -> Vec<String> {
+    let mut files = Vec::new();
+    rs_files(src, &mut files);
+    let mut decls: Vec<(PathBuf, ModDecl)> = Vec::new();
+    for f in &files {
+        for d in resolve_mod_decls(f) {
+            decls.push((f.clone(), d));
+        }
+    }
+    let mut problems = Vec::new();
+    for (from, d) in &decls {
+        if d.cfg_test {
+            if let Some(t) = &d.target {
+                if !is_tests_file(t) {
+                    problems.push(format!(
+                        "{} 里 #[cfg(test)] mod {}; 指向 {}，文件名必须以 _tests.rs 结尾",
+                        from.display(),
+                        d.name,
+                        t.display()
+                    ));
+                }
+            }
+        }
+    }
+    for f in files.iter().filter(|f| is_tests_file(f)) {
+        let declared: Vec<&(PathBuf, ModDecl)> = decls
+            .iter()
+            .filter(|(_, d)| d.target.as_deref() == Some(f.as_path()))
+            .collect();
+        if declared.is_empty() {
+            problems.push(format!("{} 没有被任何 mod 声明", f.display()));
+        }
+        for (from, d) in declared {
+            if !d.cfg_test {
+                problems.push(format!(
+                    "{} 在 {} 里被声明为 mod {}，但没有 #[cfg(test)]：生产扫描会跳过它",
+                    f.display(),
+                    from.display(),
+                    d.name
+                ));
+            }
+        }
+    }
+    problems
+}
+
+#[test]
+fn test_files_are_exactly_the_cfg_test_mod_targets() {
+    let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let problems = check_test_file_pairing(&src);
+    assert!(problems.is_empty(), "{problems:#?}");
+}
+
+/// 模块路径规则的自测：在隔离临时目录里造树，覆盖同目录、`x/mod.rs`、子模块目录、`#[path]`、内联嵌套。
+#[test]
+fn the_pairing_check_follows_rust_module_path_rules() {
+    let root = std::env::temp_dir().join(format!(
+        "tavotto-exit-guard-{}-{:016x}",
+        std::process::id(),
+        rand::random::<u64>()
+    ));
+    let w = |rel: &str, body: &str| {
+        let p = root.join(rel);
+        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+        std::fs::write(p, body).unwrap();
+    };
+    // 干净的树：flat、子目录、#[path]
+    w("main.rs", "#[cfg(test)]\nmod a_tests;\nmod b;\n");
+    w("a_tests.rs", "");
+    w(
+        "b.rs",
+        "#[cfg(test)]\nmod c_tests;\n#[cfg(test)]\n#[path = \"d_tests.rs\"]\nmod dd;\n",
+    );
+    w("b/c_tests.rs", "");
+    w("d_tests.rs", "");
+    assert!(check_test_file_pairing(&root).is_empty());
+    // (a) cfg(test) 指向非 _tests.rs
+    w("b.rs", "#[cfg(test)]\nmod c;\n");
+    w("b/c.rs", "");
+    w("b/c_tests.rs", "");
+    w("d_tests.rs", "");
+    let p = check_test_file_pairing(&root);
+    assert!(
+        p.iter().any(|s| s.contains("必须以 _tests.rs 结尾")),
+        "{p:?}"
+    );
+    // (b) *_tests.rs 被无 cfg(test) 地声明 / 没人声明
+    w("b.rs", "mod c_tests;\n");
+    w("b/c.rs", "");
+    let p = check_test_file_pairing(&root);
+    assert!(p.iter().any(|s| s.contains("没有 #[cfg(test)]")), "{p:?}");
+    assert!(
+        p.iter()
+            .any(|s| s.contains("d_tests.rs 没有被任何 mod 声明")),
+        "{p:?}"
+    );
+    // 同名生产文件在别的目录里：不再按 stem 误判
+    std::fs::remove_dir_all(&root).unwrap();
+    w("main.rs", "mod x;\nmod sub;\n#[cfg(test)]\nmod y_tests;\n");
+    w("x.rs", "");
+    w("y_tests.rs", "");
+    w("sub/mod.rs", "mod x;\n");
+    w("sub/x.rs", "");
+    assert!(check_test_file_pairing(&root).is_empty());
+    let _ = std::fs::remove_dir_all(&root);
 }
 
 /// 实际命中与允许名单的多重集差：(多出来的, 缺失的)。
