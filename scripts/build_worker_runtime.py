@@ -335,32 +335,44 @@ def diff_collected_runtime(src: Path, dst: Path) -> list[str]:
 
     盲点：这里只看 `dst` 这棵树；runtime 的依赖被复制到它**外面**（`_internal/` 顶层）这一种，
     由 spec 里的 `runtime_toc_problems()` 按 TOC 的来源路径拦。
+
+    符号链接三种落地形态都按内容判：保留为链接 → 目标字符串相同；拍平成文件（Tree / Tauri）→
+    与链接解析到的源文件逐字节相同；指向目录的链接被拍平成目录 → 下面每个文件逐字节比、也计入成员。
     """
     src, dst = Path(src), Path(dst)
-    bad: list[str] = []
-    expected: set[str] = set()
-    linked: list[str] = []
-    for dirpath, dirnames, filenames in os.walk(src):
+    bad: set[str] = set()
+    files: dict[str, str] = {}  # 相对路径 → 源文件（经链接解析后读的就是它的字节）
+    links: dict[str, str] = {}  # 相对路径 → 源链接的目标字符串
+    # followlinks=True：按「拍平之后」的样子枚举——与 Tree 跟随目录链接的行为一致
+    for dirpath, dirnames, filenames in os.walk(src, followlinks=True):
         for name in dirnames + filenames:
             s = os.path.join(dirpath, name)
             rel = os.path.relpath(s, src)
-            d = os.path.join(dst, rel)
             if os.path.islink(s):
-                expected.add(rel)
-                linked.append(rel + os.sep)  # 指向目录的链接被拍平后，下面的文件都算它的
-                if not os.path.lexists(d):
-                    bad.append(f"{rel}（缺）")
-            elif name in filenames:
-                expected.add(rel)
-                if not os.path.isfile(d):
-                    bad.append(f"{rel}（缺）")
-                elif not filecmp.cmp(s, d, shallow=False):
-                    bad.append(f"{rel}（字节不同）")
-    for dirpath, _dirnames, filenames in os.walk(dst):
-        for name in filenames:
-            rel = os.path.relpath(os.path.join(dirpath, name), dst)
-            if rel not in expected and not any(rel.startswith(p) for p in linked):
-                bad.append(f"{rel}（多出）")
+                links[rel] = os.readlink(s)
+            if name in filenames and os.path.isfile(s):
+                files[rel] = s
+    for rel, target in links.items():
+        d = os.path.join(dst, rel)
+        if not os.path.lexists(d):
+            bad.add(f"{rel}（缺）")
+        elif os.path.islink(d) and os.readlink(d) != target:
+            bad.add(f"{rel}（链接目标不同）")
+    for rel, s in files.items():
+        d = os.path.join(dst, rel)
+        if not os.path.isfile(d):
+            bad.add(f"{rel}（缺）")
+        elif not filecmp.cmp(s, d, shallow=False):
+            bad.add(f"{rel}（字节不同）")
+    for dirpath, dirnames, filenames in os.walk(dst):
+        for name in dirnames + filenames:
+            d = os.path.join(dirpath, name)
+            rel = os.path.relpath(d, dst)
+            if os.path.islink(d):
+                if rel not in links:
+                    bad.add(f"{rel}（多出）")
+            elif name in filenames and rel not in files:
+                bad.add(f"{rel}（多出）")
     return sorted(bad)
 
 

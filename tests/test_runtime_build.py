@@ -643,6 +643,51 @@ def test_diff_collected_runtime_accepts_a_flattened_symlink(tmp_path):
     assert brt.diff_collected_runtime(src, dst) == []
 
 
+def _linked_runtime(tmp_path: Path) -> tuple[Path, Path]:
+    src = tmp_path / "src"
+    _fake_runtime(src)
+    (src / "bin").mkdir()
+    (src / "bin" / "python3.13").write_bytes(b"\xcf\xfa\xed\xfe interpreter")
+    (src / "bin" / "python3").symlink_to("python3.13")
+    (src / "lib" / "real-dir").mkdir()
+    (src / "lib" / "real-dir" / "data.txt").write_text("v1", encoding="utf-8")
+    (src / "lib" / "dir-link").symlink_to("real-dir", target_is_directory=True)
+    return src, tmp_path / "dst"
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="建符号链接要特权")
+def test_diff_collected_runtime_checks_flattened_link_contents(tmp_path):
+    """拍平后的链接要与它解析到的源逐字节相同；拍平的目录链接下面的文件也逐个比、计入成员。"""
+    src, dst = _linked_runtime(tmp_path)
+    shutil.copytree(src, dst, symlinks=False)
+    assert brt.diff_collected_runtime(src, dst) == []
+
+    (dst / "bin" / "python3").write_bytes(b"\xcf\xfa\xed\xfe tampered!!")
+    (dst / "lib" / "dir-link" / "data.txt").write_text("v2", encoding="utf-8")
+    (dst / "lib" / "dir-link" / "extra.dylib").write_bytes(b"x")
+    assert brt.diff_collected_runtime(src, dst) == [
+        os.path.join("bin", "python3") + "（字节不同）",
+        os.path.join("lib", "dir-link", "data.txt") + "（字节不同）",
+        os.path.join("lib", "dir-link", "extra.dylib") + "（多出）",
+    ]
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="建符号链接要特权")
+def test_diff_collected_runtime_checks_preserved_link_targets(tmp_path):
+    """保留为链接时比目标字符串：被改指到别处的链接（哪怕两边文件字节一样）也算不一致。"""
+    src, dst = _linked_runtime(tmp_path)
+    shutil.copytree(src, dst, symlinks=True)
+    assert brt.diff_collected_runtime(src, dst) == []
+
+    (dst / "bin" / "python3-copy").write_bytes((dst / "bin" / "python3.13").read_bytes())
+    (dst / "bin" / "python3").unlink()
+    (dst / "bin" / "python3").symlink_to("python3-copy")
+    assert brt.diff_collected_runtime(src, dst) == [
+        os.path.join("bin", "python3-copy") + "（多出）",
+        os.path.join("bin", "python3") + "（链接目标不同）",
+    ]
+
+
 def test_build_desktop_checks_the_packed_runtime_after_pyinstaller():
     """闸要接在 PyInstaller 之后、Tauri 之前，且用与 spec 同一个来源目录。"""
     text = (REPO / "scripts" / "build_desktop.py").read_text(encoding="utf-8")
