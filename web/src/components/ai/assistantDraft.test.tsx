@@ -414,6 +414,34 @@ describe('同步状态机：单一 reconcile + 写入版本（#1098）', () => {
     }
   })
 
+  it('旧版本 v1 在途被判 stale、此时本地已有更新的 v2：v1 的内容永不再写、v2 用自己编辑时的戳（不换戳）去写；被拒后才为 v2 换更大的戳，v2 最终被接受', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    try {
+      await mount()
+      const releaseA = be.holdNextDraftPut()
+      await typeText('v1 版')
+      await act(async () => void vi.advanceTimersByTime(WRITE_DEBOUNCE_MS + 50)) // PUT v1 在途
+      await settle()
+      const HIGH = Date.now() * 1000 + 5_000_000_000
+      be.putStamped('pa', 'Fig1.pdf', '别的标签页的稿', HIGH) // v1 落地前，别处写入了更大的戳
+      await typeText('v2 版（v1 在途时又改的）') // v2：编辑时分配的戳 > v1 的、< HIGH
+      releaseA() // v1 回来：stale。此时本地已有 v2
+      await settle()
+      await act(async () => void vi.advanceTimersByTime(WRITE_DEBOUNCE_MS + 50))
+      await settle()
+      const puts = be.calls.filter((c) => c.method === 'PUT' && c.path === '/api/ai/drafts')
+      const stamps = puts.map((c) => c.body.stamp as number)
+      expect(puts.map((c) => c.body.text)).toEqual(['v1 版', 'v2 版（v1 在途时又改的）', 'v2 版（v1 在途时又改的）']) // v1 的内容只发过那一次
+      expect(stamps[1]).toBeGreaterThan(stamps[0]) // v2 的戳是它编辑时分配的，比 v1 大
+      expect(stamps[1]).toBeLessThan(HIGH) // 没有因为 v1 被拒就给 v2 换戳：它带着自己的戳去试，因此再被拒一次
+      expect(stamps[2]).toBeGreaterThan(HIGH) // v2 是本页最新的真实输入：被拒后才换更大的戳
+      expect(be.draft('pa', 'Fig1.pdf')).toBe('v2 版（v1 在途时又改的）') // v2 最终被接受
+      expect(input().value).toBe('v2 版（v1 在途时又改的）')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('发送前先把草稿写成功并把草稿戳记进账本：run 发出那一刻后端已有这份草稿，账本带着它的戳', async () => {
     let seenAtRun: { draft?: string; stamp: number | null | undefined } | null = null
     vi.mocked(aiRun).mockImplementation(async () => {
@@ -703,6 +731,12 @@ describe('同步状态机：单一 reconcile + 写入版本（#1098）', () => {
     }
   })
 
+  // 退役实例有三处守卫，各自独立生效（单删任何一处，这条用例都不红——这是有意的纵深防御，不是漏测）：
+  //   (1) 卸载 cleanup 清 retry / timer 定时器——挡住「已经排上的」重试；
+  //   (2) persist 入口对非 keepalive 直接返回——挡住「卸载后仍被调用」的写入（如迟到的 stale 重写、落地后补写）；
+  //   (3) 写入回调里 retired 直接返回——挡住「卸载时已在途的 keepalive 失败后」安排的新重试（本用例的主路径）。
+  // 它们的覆盖在逻辑上并不重叠：(3) 之前的回调若不拦，会走到 setTimeout(persist)，此时由 (2) 兜底；(2) 不拦的
+  // keepalive 调用由 (3) 兜底。三处同时删除时本用例才红（变异 M2'）。
   it('卸载时的 keepalive 写入失败：退役实例不再重试；重新挂载并保存新文本后，旧实例之后不再写（即使旧版本重试，服务器也拒）', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
     try {
