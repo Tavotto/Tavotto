@@ -314,3 +314,11 @@ describe('图层树的树键位（WAI-ARIA tree，与元素树同一份 ui/treeK
     expect(document.activeElement).toBe(top)
   })
 })
+
+describe('树行的列间距（G5）', () => {
+  it('图层行 / 组标题行不再自己写 gap：图标到文字与元素树同为 listRowClass 的 4px', async () => {
+    await mount([panel('p1', 'A'), { ...panel('p2', 'B'), groupId: 'g1' } as CanvasObject])
+    for (const r of rows()) expect(r.className).not.toMatch(/\bgap-(?!1\b)\S+/)
+    expect(rows()[0].className).toMatch(/\bgap-1\b/)
+  })
+})

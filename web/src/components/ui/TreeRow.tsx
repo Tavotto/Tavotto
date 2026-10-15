@@ -10,7 +10,8 @@ import { ICON_SIZE } from './Icon'
  *   [缩进 8 + 14 × depth][chevron 16][类型图标 16] 标签 …… [计数，右对齐]
  *
  * 层级只靠缩进与 chevron 表达，不靠行间留白；叶子行留一个空的 chevron 列，
- * 同一层的图标与文字才对得齐。
+ * 同一层的图标与文字才对得齐。列与列之间的间距只有一个值：`listRowClass` 的 `gap-1`（4px）——
+ * 树行不要再自己写 `gap-*`（图层树此前是 gap-1.5，同一抽屉里切元素树 ↔ 图层树，图标到文字差 2px，2026-10 UI 审计 G5）。
  */
 export const TREE_INDENT = 14
 
