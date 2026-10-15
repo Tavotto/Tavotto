@@ -108,7 +108,7 @@ describe('Card', () => {
     expect(q('[data-c="p"]')!.className).not.toMatch(/bg-surface-active/)
   })
 
-  it('lift 是登记豁免（用户 2026-10-15 裁决）：位移只许整数 px 的 translateY ≤2px、缩放 ≤1.02、无光晕以外的发光 / will-change / filter；没开 lift 的卡仍不位移不缩放', async () => {
+  it('lift 是登记豁免（用户 2026-10-15 裁决）：位移只许整数 px 的 translateY ≤2px、缩放 ≤1.02、光晕只许 1px 品牌蓝描边（无外发光）/ will-change / filter；没开 lift 的卡仍不位移不缩放', async () => {
     await render(
       <>
         <Card data-c="n" interactive>{T}</Card>
@@ -134,23 +134,24 @@ describe('Card', () => {
     const v = Number(css.match(/--card-lift-scale:\s*([\d.]+)\s*;/)?.[1])
     expect(v, '--card-lift-scale').toBeGreaterThan(1)
     expect(v, '--card-lift-scale 上限 1.02').toBeLessThanOrEqual(1.02)
-    // 位移与缩放只在 motion-safe 下有（reduced-motion 只换阴影 / 光晕）
+    // 描边：--lift-halo 是 accent 20% 的 1px 环（零模糊），不是外发光（用户 2026-10-16 选定方案 B）
+    expect(css.match(/--lift-halo:\s*([^;]+);/)?.[1].replace(/\s+/g, ' ')).toBe(
+      '0 0 0 1px color-mix(in srgb, var(--color-accent) 20%, transparent)',
+    )
+    // 位移与缩放只在 motion-safe 下有（reduced-motion 只换阴影 / 描边）
     for (const t of tokens) if (/(hover|focus-visible):.*(translate|scale)-/.test(t)) expect(t, t).toMatch(/^motion-safe:/)
-    expect(lift).toMatch(/hover:before:shadow-lift/)
+    expect(lift).toMatch(/hover:shadow-lift/)
     expect(lift).toMatch(/motion-safe:has-\[:focus-visible\]:-translate-y-0\.5/) // 键盘聚焦同样浮起
-    // 缩放只落在背景层（::before），卡本身与文字不缩放：任何 scale 都必须带 before:
-    for (const t of tokens) if (/(^|:)scale-/.test(t)) expect(t, t).toMatch(/(^|:)before:scale-/)
-    expect(q('[data-c="l"]')!.dataset.lift).toBe('true')
-    // 静止态恒等变换（不是 none：none ↔ 非 none 会让每次 hover 重排一次）：根 translate-y-0、背景层 scale-100
+    // 静止态恒等变换（不是 none：none ↔ 非 none 会让每次 hover 重排一次）
     expect(tokens).toContain('translate-y-0')
-    expect(tokens).toContain('before:scale-100')
+    expect(tokens).toContain('scale-100')
     // 按下回落：位移 0、缩放 1
     expect(lift).toMatch(/has-\[>button:active:not\(:disabled\)\]:translate-y-0/)
-    expect(lift).toMatch(/has-\[>button:active:not\(:disabled\)\]:before:scale-100/)
+    expect(lift).toMatch(/has-\[>button:active:not\(:disabled\)\]:scale-100/)
     expect(lift).not.toMatch(/rotate|skew|will-change|blur|filter|gradient/)
-    // 禁用 / 选中的卡不浮起（禁用的分层卡静止态仍有 before:scale-100 与 before:shadow-card，但没有任何 hover / focus / active 变体）
+    // 禁用 / 选中的卡不浮起
     for (const sel of ['ld', 'ls'])
-      expect(q(`[data-c="${sel}"]`)!.className.replace(/transition-\[[^\]]*\]/g, ''), sel).not.toMatch(/(hover|focus-visible|has-\[[^\]]*\]):[^\s]*(translate|scale|shadow-lift)/)
+      expect(q(`[data-c="${sel}"]`)!.className.replace(/transition-\[[^\]]*\]/, ''), sel).not.toMatch(/translate|scale|shadow-lift/)
   })
 
   it('disabled：写 data-disabled，不亮 hover / press / 焦点环；interactive 标记仍在', async () => {

@@ -590,13 +590,13 @@ describe('2026-10-07 设计审计 §4.2：叙事句 / 卡片网格 / 拖放接�
     expect(cards().length).toBeGreaterThan(0)
     for (const c of cards()) {
       expect(c.dataset.disabled).toBeUndefined()
-      expect(c.className).toContain('hover:before:shadow-lift')
+      expect(c.className).toContain('hover:outline-border')
     }
     await act(async () => useProjectStore.setState({ switching: true }))
     for (const c of cards()) {
       expect(c.dataset.disabled).toBe('true')
-      expect(c.className).not.toContain('hover:before')
-      expect(c.className).not.toContain('before:bg-surface-active')
+      expect(c.className).not.toContain('hover:outline-border')
+      expect(c.className).not.toContain('bg-surface-active')
     }
     await act(async () => useProjectStore.setState({ switching: false }))
     for (const c of cards()) expect(c.dataset.disabled).toBeUndefined()

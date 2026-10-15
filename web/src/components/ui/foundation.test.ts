@@ -115,7 +115,7 @@ const RULES: Rule[] = [
     catches: '<div className="rounded-md bg-surface p-3 shadow-card" />',
     spares: '<Card padding="md" className="shadow-pop" />',
     exempt: {
-      '/src/components/ui/Card.tsx': { count: 3, why: '它就是那一处实现（raised）+ lift 分层卡的背景层 ::before 静止 / 按下时的 card 档阴影' },
+      '/src/components/ui/Card.tsx': { count: 2, why: '它就是那一处实现（raised）+ lift 变体按下时阴影回落到 card 档' },
       '/src/App.tsx': {
         count: 1,
         why: '工作面板（data-work-panel，宪法第二十五节）不是卡，是一块面板；它的抬升与卡同一档是拍板过的，常驻豁免',
@@ -125,12 +125,12 @@ const RULES: Rule[] = [
   {
     // 「几何永不变化」的唯一登记豁免是 ui/Card 的 lift 变体（ui-visual-discipline.md「Card lift」）：别处不许在交互态上写位移 / 缩放
     name: '交互态不位移不缩放：hover: / active: / focus-visible: 之后没有 scale-* / translate-*（唯一豁免 ui/Card 的 lift：translateY ≤2px 整数 + scale ≤1.02，用户 2026-10-15 裁决）',
-    pattern: /\b(hover|active|focus-visible|group-hover|has-\[[^\]]*\]):(motion-safe:)?(before:|after:)?-?(scale|translate)-/,
+    pattern: /\b(hover|active|focus-visible|group-hover|has-\[[^\]]*\]):(motion-safe:)?-?(scale|translate)-/,
     fix: '用 outline / 背景色 / 阴影表达交互态；要浮起走 <Card lift>（只首页最近项目卡）',
     catches: '<div className="hover:scale-105" />',
     spares: '<div className="hover:bg-surface-hover" />',
     exempt: {
-      '/src/components/ui/Card.tsx': { count: 6, why: 'lift 变体（用户 2026-10-15 裁决）：hover / 聚焦时根 -translate-y-0.5、背景层 ::before scale-(--card-lift-scale)（≤2px、≤1.02，读 index.css 变量，foundationPrimitives.test 钉上限）、按下回落 translate-y-0 / scale-100' },
+      '/src/components/ui/Card.tsx': { count: 6, why: 'lift 变体（用户 2026-10-15 裁决）：hover / 聚焦各 -translate-y-0.5 + scale-(--card-lift-scale)（≤2px、≤1.02，读 index.css 变量，foundationPrimitives.test 钉上限）、按下 translate-y-0 / scale-100' },
     },
   },
   {
@@ -263,12 +263,6 @@ const RULES: Rule[] = [
     fix: 'index.css 的 --z-* 表里挑一档；新的一层先在那张表里加 token',
     catches: '<div className="fixed z-50" /> <div className="z-[59]" />',
     spares: '<div className="fixed z-dialog sticky z-sticky" />',
-    exempt: {
-      '/src/components/ui/Card.tsx': {
-        count: 1,
-        why: 'lift 分层卡的 ::before 背景层垫在内容之下：isolate 根里的 -z-10，只在这张卡内部分层，不进全局层级体系',
-      },
-    },
   },
   {
     name: '内联样式的 zIndex 也只来自 token',
