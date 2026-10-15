@@ -3,7 +3,7 @@
  * 锁的做法是把 600 与 400 的宽度差用负字距吃掉。jsdom 不排版，Range 的宽度在这里按字重桩出来
  * （每字 6px，600 时每字 6.2px），量的是「选中时字距是不是刚好抵掉差值」。
  */
-import { act, useRef } from 'react'
+import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { useBoldTrackingLock } from './useBoldWidthLock'
@@ -14,9 +14,10 @@ declare global {
 }
 globalThis.IS_REACT_ACT_ENVIRONMENT = true
 
-function Label({ text, selected }: { text: string; selected: boolean }) {
-  const ref = useRef<HTMLSpanElement>(null)
-  useBoldTrackingLock(ref, selected, text)
+function Label({ text, selected, editing = false }: { text: string; selected: boolean; editing?: boolean }) {
+  const ref = useBoldTrackingLock<HTMLSpanElement>(selected, text)
+  // 行内改名：输入框顶替标签，关掉后标签重新挂载（与 LayerRow 同形状）
+  if (editing) return <input data-input defaultValue={text} />
   return (
     <span ref={ref} data-label className="truncate">
       {text}
@@ -127,5 +128,18 @@ describe('useBoldTrackingLock', () => {
     expect([...spaced].every((el) => el.style.letterSpacing !== '')).toBe(true)
     await act(async () => root.render(<Many />))
     expect(rangeCalls).toBe(2)
+  })
+
+  it('选中长名 → 进入改名（标签被输入框顶替）→ 取消：重新挂载的标签上字距仍在', async () => {
+    const text = '改名取消专用的一段很长的名字 rename rename rename'
+    const at = (editing: boolean) =>
+      act(async () => root.render(<Label text={text} selected editing={editing} />))
+    await at(false)
+    const locked = label().style.letterSpacing
+    expect(locked).not.toBe('')
+    await at(true)
+    expect(host.querySelector('[data-label]')).toBeNull()
+    await at(false)
+    expect(label().style.letterSpacing).toBe(locked)
   })
 })

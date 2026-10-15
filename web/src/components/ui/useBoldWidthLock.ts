@@ -1,4 +1,4 @@
-import { useLayoutEffect, type RefObject } from 'react'
+import { useCallback, useLayoutEffect, useRef, type RefObject } from 'react'
 
 /**
  * 「选中态加粗不挪邻居」的量宽钩子：布局前把元素临时加到 600 量一次宽度，写成自己的
@@ -39,13 +39,16 @@ if (typeof document !== 'undefined') {
  *
  * 成本：只在 `[active, text]` 变化时跑；量值按（字体，文字）缓存，同名不重复量，缓存命中时不写样式、
  * 不强制布局（只读一次 clientWidth）。元素树全选几百行、拖动画布时树跟着重渲染，不会变成 N×2 次同步布局。
- * `text` 由调用方传入名字字符串（不在 effect 里读 textContent 当依赖）。jsdom 里量出来是 0，等于没设。
+ * `text` 由调用方传入名字字符串（不在 effect 里读 textContent 当依赖）；返回 callback ref，挂在标签元素上。jsdom 里量出来是 0，等于没设。
  * 局限：标签盒在选中期间被拖窄（改抽屉宽）时不重量，下一次选中 / 改名才重算。
  */
-export function useBoldTrackingLock(ref: RefObject<HTMLElement | null>, active: boolean, text: string) {
-  useLayoutEffect(() => {
-    const el = ref.current
-    if (!el) return
+export function useBoldTrackingLock<T extends HTMLElement>(active: boolean, text: string) {
+  const elRef = useRef<T | null>(null)
+  const latest = useRef({ active, text })
+  latest.current = { active, text }
+
+  const apply = useCallback((el: HTMLElement) => {
+    const { active, text } = latest.current
     el.style.letterSpacing = ''
     const chars = [...text].length
     if (!active || !chars) return
@@ -73,7 +76,21 @@ export function useBoldTrackingLock(ref: RefObject<HTMLElement | null>, active: 
       boldWidthCache.set(key, hit)
     }
     const delta = hit.w600 - hit.w400
-    // 不截断（600 的宽度放得下）：不需要锁
+    // 不截断（600 的宽度放得下标签盒）：不需要锁
     if (delta > 0.05 && hit.w600 > el.clientWidth) el.style.letterSpacing = `${-delta / chars}px`
-  }, [ref, active, text])
+  }, [])
+
+  // 标签元素被换掉（行内改名：输入框顶替标签、关掉后标签重新挂载）时，[active, text] 都没变，
+  // effect 不会重跑，新元素上就没有字距——所以挂载本身也要量（callback ref，提交阶段调用）
+  const labelRef = useCallback(
+    (el: T | null) => {
+      elRef.current = el
+      if (el) apply(el)
+    },
+    [apply],
+  )
+  useLayoutEffect(() => {
+    if (elRef.current) apply(elRef.current)
+  }, [active, text, apply])
+  return labelRef
 }
