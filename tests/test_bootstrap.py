@@ -306,3 +306,30 @@ def test_status_and_progress_read_one_consistent_snapshot(monkeypatch):
     assert (st["state"], st["attempt"]) == ("running", 7)
     pr = bootstrap.progress()
     assert (pr["state"], pr["attempt"]) == ("running", 7)
+
+
+@pytest.mark.parametrize("ok", [True, False])
+def test_status_snapshots_after_slow_probing(monkeypatch, ok):
+    """安装在环境探测期间走到终态：GET 要报终态，不是探测前的 running。丢了终态 SSE 的重连对账
+    只能靠这次 GET 收尾，报旧 running 界面就一直卡在安装中（#1097 评审）。"""
+    monkeypatch.setattr(
+        bootstrap, "_progress", {"state": "running", "log": "", "error": None, "attempt": 3}
+    )
+
+    def finish(*_a, **_kw):
+        with bootstrap._attempt_lock:
+            bootstrap._progress.update(state="done")
+        return "3.11.1" if ok else None
+
+    if ok:
+        monkeypatch.setattr(pool, "find_worker_python", lambda: "/usr/bin/python3")
+        monkeypatch.setattr(bootstrap, "matplotlib_version", finish)
+    else:
+
+        def missing():
+            raise pool.WorkerError("no", code="no_worker_python")
+
+        monkeypatch.setattr(pool, "find_worker_python", missing)
+        monkeypatch.setattr(bootstrap, "find_base_python", finish)
+    st = bootstrap.status()
+    assert (st["state"], st["attempt"]) == ("done", 3)

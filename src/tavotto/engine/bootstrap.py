@@ -138,16 +138,18 @@ def status() -> dict:
     from . import pool
 
     rt = _runtime_block()
-    # {attempt, state, error} 一次取成一致的快照：不在两次读之间看到「新 attempt + 上一次的终态」
-    snap = _snapshot()
     try:
         python = pool.find_worker_python()
         source = pool.source_of(python)
+        mpl = matplotlib_version(python, bundled=source == pool.SOURCE_BUNDLED)
+        # {attempt, state, error} 一次取成一致的快照，且放在探测之后、组装响应之前：
+        # 探测期间安装若已走到终态，GET 要报这个终态——丢了终态 SSE 的重连对账全靠它
+        snap = _snapshot()
         return {
             "ok": True,
             "python": python,
             "source": source,
-            "matplotlib": matplotlib_version(python, bundled=source == pool.SOURCE_BUNDLED),
+            "matplotlib": mpl,
             "managed": Path(python) == venv_python(),
             "bundled": source == pool.SOURCE_BUNDLED,
             "runtime": rt,
@@ -162,6 +164,7 @@ def status() -> dict:
     except pool.WorkerError as exc:
         code = exc.code
     base = find_base_python()
+    snap = _snapshot()  # 同上：在可能很慢的 find_base_python 之后再取
     return {
         "ok": False,
         "python": None,
