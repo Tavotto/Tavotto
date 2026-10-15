@@ -75,6 +75,36 @@ test('素材卡：选中不同的卡，抽屉里其它东西的位置不动，�
   }
 })
 
+test('素材卡的两个动作有可聚焦的真按钮：Tab 序列里到得了，标签正确，点击与快捷键同效', async ({ app, page }) => {
+  const a = await app()
+  await openAssets(page, a.baseURL)
+  const add = page.locator('[data-asset-add]')
+  const open = page.locator('[data-asset-open]')
+  await expect(add).toBeDisabled()
+  await expect(open).toBeDisabled()
+  const card = page.locator('li[data-card]').first()
+  await card.focus() // 焦点落在卡上 = 选中它
+  await expect(add).toBeEnabled()
+  // 从卡片往回 Shift+Tab，应当能走到这两颗钮（它们在 listbox 之前的标题行里）
+  const reached = new Set<string>()
+  for (let i = 0; i < 12 && reached.size < 2; i++) {
+    await page.keyboard.press('Shift+Tab')
+    const hit = await page.evaluate(() => {
+      const el = document.activeElement as HTMLElement | null
+      if (el?.hasAttribute('data-asset-add')) return 'add'
+      if (el?.hasAttribute('data-asset-open')) return 'open'
+      return null
+    })
+    if (hit) reached.add(hit)
+  }
+  expect([...reached].sort()).toEqual(['add', 'open'])
+  await expect(add).toHaveAttribute('aria-label', /./)
+  expect(await add.getAttribute('aria-label')).not.toBe(await open.getAttribute('aria-label'))
+  // 点击 = Shift+Enter 的效果：这张图进了排版
+  await add.click()
+  await expect(page.locator('[data-object-id]')).toHaveCount(1, { timeout: 30_000 })
+})
+
 test('素材卡：右键菜单有全部动作，双击 = 编辑原图', async ({ app, page }) => {
   const a = await app()
   await openAssets(page, a.baseURL)
@@ -131,10 +161,10 @@ test('属性栏：层级带值、「换一张图」在 ⋯ 里、「改图里的
 
 })
 
-test('抽屉里条目少于 6 个时没有搜索框', async ({ app, page }) => {
+test('素材抽屉的搜索框按图 + 脚本合计算：示例库 3 张图 + 3 个脚本 = 6，显示', async ({ app, page }) => {
   const a = await app()
   await openAssets(page, a.baseURL)
-  const n = await page.locator('li[data-card]').count()
-  test.skip(n >= 6, '示例库已有 6 张以上，本条只在少于 6 张时有意义')
-  await expect(page.locator('[data-left-drawer] input')).toHaveCount(0)
+  // 同一个框过滤图与脚本两个区；合计 ≥ 6 才摆出来（阈值的少于 6 隐藏在 vitest 里钉）
+  expect(await page.locator('li[data-card]').count()).toBe(3)
+  await expect(page.locator('[data-left-drawer] input')).toHaveCount(1)
 })

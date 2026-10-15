@@ -242,6 +242,40 @@ describe('文件卡：两个动作', () => {
     expect(menuItems()).toEqual(['编辑原图', '添加到画布'])
   })
 
+  it('标题行有两颗真按钮（可聚焦、带标签、listbox 之外）：没选中置灰，选中后落到与快捷键同一对动作', async () => {
+    const open = () => host.querySelector<HTMLButtonElement>('[data-asset-open]')!
+    const add = () => host.querySelector<HTMLButtonElement>('[data-asset-add]')!
+    expect(open().tagName).toBe('BUTTON')
+    expect(open().getAttribute('aria-label')).toBe('编辑原图')
+    expect(add().getAttribute('aria-label')).toBe('添加到画布')
+    expect(host.querySelector('[role="listbox"]')!.contains(open())).toBe(false)
+    // 没选中：置灰（不可聚焦，不作用于一个看不见的目标）
+    expect(open().disabled).toBe(true)
+    expect(add().disabled).toBe(true)
+    await act(async () => cardOf('Fig1.pdf').click())
+    expect(open().disabled).toBe(false)
+    expect(add().disabled).toBe(false)
+    open().focus()
+    expect(document.activeElement).toBe(open())
+    await act(async () => open().click())
+    expect(mockOpen).toHaveBeenCalledWith('Fig1.pdf')
+    await act(async () => add().click())
+    expect(mockAdd).toHaveBeenCalledWith('Fig1.pdf')
+  })
+
+  it('没有描述符的运行时图选中后两颗钮仍置灰（没有可编辑 / 可添加的东西）', async () => {
+    await act(async () => root?.unmount())
+    host.remove()
+    seedPanels([])
+    useRuntimeAssetStore.setState({
+      assets: [runtime('show', { cached: false, descriptor: null, size_mm: null, status: 'needs_rerun' })],
+    })
+    await mount()
+    await act(async () => cardOf('runtime:fig.py#show').click())
+    expect(host.querySelector<HTMLButtonElement>('[data-asset-open]')!.disabled).toBe(true)
+    expect(host.querySelector<HTMLButtonElement>('[data-asset-add]')!.disabled).toBe(true)
+  })
+
   it('文件名后的「可编辑」小图标有可达名', () => {
     const marker = cardOf('Fig1.pdf').querySelector<HTMLElement>('[role="img"]')
     expect(marker?.getAttribute('aria-label')).toBe('可编辑')

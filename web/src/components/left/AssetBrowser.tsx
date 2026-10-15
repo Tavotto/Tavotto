@@ -329,6 +329,11 @@ export function AssetBrowser() {
     if (next) focusCard(itemId(next))
   }
 
+  // 标题行两颗动作钮的对象：选中的那张卡；没有描述符的运行时图没有可编辑 / 可添加的东西
+  const activeItem = items.find((it) => itemId(it) === activeId)
+  const activeActionable = !!activeItem && (activeItem.kind === 'file' || !!activeItem.asset.descriptor)
+  const activeName = activeItem ? (activeItem.kind === 'file' ? fileName(activeItem.panel.id) : activeItem.asset.stem) : ''
+
   const focusId = items.some((it) => itemId(it) === activeId)
     ? activeId
     : items[0]
@@ -364,6 +369,27 @@ export function AssetBrowser() {
           「只看可编辑」从这里的图标钮换成了搜索框下那排胶囊——藏在图标里没人找得到。都是 IconButton：28px、透明底、hover 才浮出，名字与气泡同一份；
           图标走默认的 16px——与面板头的钉、画布页的「+」同一档（左栏审计 L13） */}
       <DrawerHeaderActions>
+        {/* 选中那张卡的两个动作：listbox 之外、可聚焦、带明确标签的真按钮（asset-library.md「素材卡的两个动作」）。
+            住在标题行已有的工具区里——位置固定、不占新高度、不是常驻页脚；没选中卡 / 选中的没有可编辑内容时置灰。
+            可见的 ＋ 与快捷键（Enter / Shift+Enter）落到同一对 action 上 */}
+        <IconButton
+          label={ab('openFigure')}
+          tip={activeActionable ? ab('openAria', { name: activeName }) : ab('openFigure')}
+          disabled={!activeActionable}
+          data-asset-open
+          onClick={() => void openFastEdit(activeId!)}
+        >
+          <Pencil size={ICON_SIZE.md} className="text-ink-2" />
+        </IconButton>
+        <IconButton
+          label={ab('addToCanvas')}
+          tip={activeActionable ? ab('addAria', { name: activeName }) : ab('addToCanvas')}
+          disabled={!activeActionable}
+          data-asset-add
+          onClick={() => void addFigureToLayout(activeId!)}
+        >
+          <Plus size={ICON_SIZE.md} className="text-ink-2" />
+        </IconButton>
         <FilterButton
           filters={filters}
           folders={folders}
