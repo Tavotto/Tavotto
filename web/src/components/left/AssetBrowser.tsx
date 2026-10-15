@@ -3,13 +3,12 @@ import { useTranslation } from 'react-i18next'
 import { formatMessage, t as translate } from '@/i18n'
 import {
   ChevronRight,
-  ImageOff,
+  Info,
   ListFilter,
   Pencil,
   Play,
   Plus,
   RefreshCw,
-  SearchX,
   TriangleAlert,
   X,
   Zap,
@@ -49,7 +48,8 @@ import { isBusyPhase, useScriptRunStore } from '@/store/scriptRunStore'
 import { useUiStore } from '@/store/uiStore'
 import { Button, IconButton } from '../ui/Button'
 import { Card } from '../ui/Card'
-import { EmptyState } from '../ui/EmptyState'
+import { EmptyLine, EmptyState, SEARCH_MIN_ITEMS } from '../ui/EmptyState'
+import { MenuItem, PointMenu } from '../ui/Menu'
 import { Notice } from '../ui/Notice'
 import { Dialog } from '../ui/Dialog'
 import { Popover } from '../ui/Popover'
@@ -168,6 +168,18 @@ export function AssetBrowser() {
   const [zoomed, setZoomed] = useState<LibraryItem | null>(null)
   /** 后端刷新与素材重取合起来才是用户眼里的「正在刷新」 */
   const busy = refreshing || loading
+  /** 卡片右键 / ⇧F10 菜单：打开时的屏幕位置与它说的那一张卡 */
+  const [cardMenu, setCardMenu] = useState<{ id: string; x: number; y: number } | null>(null)
+  // 走**统一刷新**（后端一次完整的一轮），不是自己再扫一遍：
+  // 「哪些文件是素材」「脚本怎么合进注册表」只有一份判据，事件与手动刷新共用它。
+  const refreshNow = () => {
+    setRefreshing(true)
+    void refreshProjectNow()
+      .catch((e: unknown) => useUiStore.getState().setStatus(backendErrorMsg(e), 'error'))
+      .finally(() => setRefreshing(false))
+    // runtime 图清单是另一个资源（不在 /api/panels 里），顺带取一次
+    void useRuntimeAssetStore.getState().loadAssets()
+  }
 
   const gridRef = useRef<HTMLDivElement>(null)
   const [columns, setColumns] = useState(1)
@@ -361,17 +373,7 @@ export function AssetBrowser() {
           disabled={refreshing}
           aria-busy={busy || undefined}
           data-asset-refresh
-          onClick={() => {
-            // 走**统一刷新**（后端一次完整的一轮），不是自己再扫一遍：
-            // 「哪些文件是素材」「脚本怎么合进注册表」只有一份判据，
-            // 事件与手动刷新共用它。
-            setRefreshing(true)
-            void refreshProjectNow()
-              .catch((e: unknown) => useUiStore.getState().setStatus(backendErrorMsg(e), 'error'))
-              .finally(() => setRefreshing(false))
-            // runtime 图清单是另一个资源（不在 /api/panels 里），顺带取一次
-            void useRuntimeAssetStore.getState().loadAssets()
-          }}
+          onClick={refreshNow}
         >
           {/* 自旋的是这个图标本身：Button 自带的 loading 会再插一个
               LoaderCircle，28px 的图标按钮里挤两个图标就是布局跳变 */}
@@ -379,12 +381,15 @@ export function AssetBrowser() {
         </IconButton>
       </DrawerHeaderActions>
       <div className="flex flex-col gap-1.5 px-3 pb-2">
-        <SearchInput
-          value={query}
-          onValueChange={setQuery}
-          placeholder={ab('search')}
-          aria-label={ab('searchAria')}
-        />
+        {/* 条目少于 6 个时不显示搜索框（有搜索词时保留） */}
+        {(total + unsupported.length >= SEARCH_MIN_ITEMS || query !== '') && (
+          <SearchInput
+            value={query}
+            onValueChange={setQuery}
+            placeholder={ab('search')}
+            aria-label={ab('searchAria')}
+          />
+        )}
 
         {/* 能不能编辑：一排常驻的胶囊（全部 / 可编辑 / [待连接] / 仅版面）。可编辑与仅排版的图在网格里
             混在一起时，靠卡上那个小角标一张张认太累。它是一眼可见的取值，所以不再进下面那排
@@ -476,12 +481,24 @@ export function AssetBrowser() {
               只搜中了它也不是「没有匹配」——空态与下面那张清单不同时出现 */}
           {loaded && !error && items.length === 0 && unsupportedShown.length === 0 && (
             query || chips.length || editability !== 'all' ? (
-              <EmptyState icon={SearchX} title={ab('noMatch')} />
+              <EmptyLine
+                data-asset-no-match
+                text={ab('noMatch')}
+                action={{
+                  label: translate('actions.clearSearch'),
+                  onClick: () => {
+                    setQuery('')
+                    setFilters(DEFAULT_FILTERS)
+                  },
+                }}
+              />
             ) : (
-              <EmptyState
-                icon={ImageOff}
-                title={ab('emptyTitle')}
-                hint={ab('emptyHint')}
+              /* 一句话 + 一个动作；「把文件放进目录」的说明在 title 里，不常驻 */
+              <EmptyLine
+                data-asset-empty
+                text={ab('emptyTitle')}
+                title={ab('emptyHint')}
+                action={{ label: ab('refresh'), onClick: refreshNow }}
               />
             )
           )}
@@ -506,6 +523,7 @@ export function AssetBrowser() {
                     onAdd={() => addFigureToLayout(it.panel.id)}
                     onZoom={() => setZoomed(it)}
                     onMove={(d) => move(it.panel.id, d)}
+                    onMenu={(at) => setCardMenu({ id: it.panel.id, ...at })}
                     columns={columns}
                   />
                 ) : (
@@ -520,6 +538,7 @@ export function AssetBrowser() {
                     onAdd={() => addFigureToLayout(it.asset.id)}
                     onZoom={() => setZoomed(it)}
                     onMove={(d) => move(it.asset.id, d)}
+                    onMenu={(at) => setCardMenu({ id: it.asset.id, ...at })}
                     columns={columns}
                   />
                 ),
@@ -548,13 +567,19 @@ export function AssetBrowser() {
         )}
       </div>
 
-      {/* 选中卡片的两个动作（真按钮）与接入说明。**都在 listbox 之外**：option
-          里不许再嵌可 Tab 的控件（axe nested-interactive，serious），而键盘 /
-          读屏用户必须到得了「编辑原图」与「添加到画布」这两个不同的动作。
-          目录路径不再单独占一行页脚：它是排查用信息，住在筛选弹层的最底一行 */}
-      {/* 选中一张卡之后的页脚只有一条（2026-10-07 设计审计 §10.3：此前「动作条」与「接入说明」是两条
-          叠着的页脚）：上面一行是名字 + 动作，需要说话时下面跟一段接入说明 */}
-      <AssetFooter item={items.find((it) => itemId(it) === activeId)} panel={panels.find((p) => p.id === activeId)} />
+      {/* 卡片的全部动作在右键 / ⇧F10 菜单里（2026-10-16：页脚那条常驻动作栏去掉了——同一对动作在卡片上有
+          就近入口、键盘有 Enter / Shift+Enter，页脚是第三处）。菜单挂在 listbox 之外，option 里不嵌交互控件 */}
+      {cardMenu && (
+        <AssetCardMenu
+          item={items.find((it) => itemId(it) === cardMenu.id)}
+          panel={panels.find((p) => p.id === cardMenu.id)}
+          at={cardMenu}
+          onClose={() => {
+            setCardMenu(null)
+            focusCard(cardMenu.id)
+          }}
+        />
+      )}
 
       <Dialog
         open={!!zoomed}
@@ -780,6 +805,7 @@ function AssetCard({
   onAdd,
   onZoom,
   onMove,
+  onMenu,
   columns,
 }: {
   panel: PanelInfo
@@ -791,6 +817,8 @@ function AssetCard({
   onAdd: () => void
   onZoom: () => void
   onMove: (delta: number) => void
+  /** 右键 / ⇧F10：在这个屏幕位置打开这张卡的菜单 */
+  onMenu: (at: { x: number; y: number }) => void
   columns: number
 }) {
   useTranslation('workspace')
@@ -803,6 +831,8 @@ function AssetCard({
     // 遍历之间新出现的那一档），不是 `layout_only`——那时照旧只说老那句
     // 「可参数化」，绝不替后端补一个默认状态。
     cap ? statusLabel(cap.status) : panel.script ? ab('cardParameterizable') : null,
+    // 需要说话的接入状态把原因也带进可达名（页脚里那段常驻说明去掉后，读屏的出处就在这里）
+    cap && cap.status !== 'editable' ? reasonText(cap) : null,
     ab('cardSize', {
       w: formatCm(panel.native_w_mm),
       h: formatCm(panel.native_h_mm),
@@ -828,6 +858,11 @@ function AssetCard({
       onClick={onSelect}
       onDoubleClick={onOpen}
       onFocus={onSelect}
+      onContextMenu={(e) => {
+        e.preventDefault()
+        onSelect()
+        onMenu({ x: e.clientX, y: e.clientY })
+      }}
       onKeyDown={(e) => {
         const step: Record<string, number> = {
           ArrowRight: 1,
@@ -843,6 +878,10 @@ function AssetCard({
         } else if (e.key === ' ') {
           e.preventDefault()
           onZoom()
+        } else if (e.key === 'ContextMenu' || (e.shiftKey && e.key === 'F10')) {
+          e.preventDefault()
+          const r = e.currentTarget.getBoundingClientRect()
+          onMenu({ x: r.left + 16, y: r.top + 16 })
         } else if (step[e.key] !== undefined) {
           e.preventDefault()
           onMove(step[e.key])
@@ -866,10 +905,7 @@ function AssetCard({
             serious）——哪怕 tabIndex=-1 也算。这两个只是鼠标用户的就近入口；
             键盘 / 读屏用户在 option 上按 Enter / Shift+Enter 走同一对动作，
             列表下方 `SelectedAssetActions` 里还有一对真按钮。 */}
-        <CardActions>
-          <CardAction icon={Pencil} label={ab('openFigure')} title={ab('openAria', { name })} onClick={onOpen} />
-          <CardAction icon={Plus} label={ab('addToCanvas')} title={ab('addAria', { name })} onClick={onAdd} />
-        </CardActions>
+        <CardAdd icon={Plus} label={ab('addToCanvas')} title={ab('addAria', { name })} onClick={onAdd} />
       </CardPreview>
 
       {/* 文字区：文件名一行、元数据一行。格式 / 尺寸 / 接入状态 / 使用次数都在
@@ -883,6 +919,8 @@ function AssetCard({
         marker={
           panel.script ? (
             <span
+              role="img"
+              aria-label={ab('scriptBadgeTitle')}
               className="flex h-4 w-4 shrink-0 items-center justify-center text-ink-3"
               title={ab('scriptBadgeTitle')}
             >
@@ -927,6 +965,7 @@ function RuntimeAssetCard({
   onAdd,
   onZoom,
   onMove,
+  onMenu,
   columns,
 }: {
   asset: RuntimeAssetInfo
@@ -938,6 +977,7 @@ function RuntimeAssetCard({
   onAdd: () => void
   onZoom: () => void
   onMove: (delta: number) => void
+  onMenu: (at: { x: number; y: number }) => void
   columns: number
 }) {
   useTranslation('workspace')
@@ -982,6 +1022,11 @@ function RuntimeAssetCard({
       onClick={onSelect}
       onDoubleClick={primary}
       onFocus={onSelect}
+      onContextMenu={(e) => {
+        e.preventDefault()
+        onSelect()
+        onMenu({ x: e.clientX, y: e.clientY })
+      }}
       onKeyDown={(e) => {
         const step: Record<string, number> = {
           ArrowRight: 1,
@@ -996,6 +1041,10 @@ function RuntimeAssetCard({
         } else if (e.key === ' ') {
           e.preventDefault()
           onZoom()
+        } else if (e.key === 'ContextMenu' || (e.shiftKey && e.key === 'F10')) {
+          e.preventDefault()
+          const r = e.currentTarget.getBoundingClientRect()
+          onMenu({ x: r.left + 16, y: r.top + 16 })
         } else if (step[e.key] !== undefined) {
           e.preventDefault()
           onMove(step[e.key])
@@ -1024,31 +1073,16 @@ function RuntimeAssetCard({
 
         {/* 就近入口（与文件卡同款，非嵌套控件）：有描述符 = 编辑原图 + 添加到
             画布；没有 = 只有「运行并发现图」 */}
-        <CardActions>
-          {asset.descriptor ? (
-            <>
-              <CardAction
-                icon={Pencil}
-                label={ab('openFigure')}
-                title={ab('openAria', { name: asset.stem })}
-                onClick={primary}
-              />
-              <CardAction
-                icon={Plus}
-                label={ab('addToCanvas')}
-                title={ab('addAria', { name: asset.stem })}
-                onClick={add}
-              />
-            </>
-          ) : (
-            <CardAction
-              icon={Play}
-              label={translate(busy ? 'scripts.running' : 'scripts.run', { ns: 'workspace' })}
-              title={ab('runtimeRunAria', { script: asset.script })}
-              onClick={primary}
-            />
-          )}
-        </CardActions>
+        {asset.descriptor ? (
+          <CardAdd icon={Plus} label={ab('addToCanvas')} title={ab('addAria', { name: asset.stem })} onClick={add} />
+        ) : (
+          <CardAdd
+            icon={Play}
+            label={translate(busy ? 'scripts.running' : 'scripts.run', { ns: 'workspace' })}
+            title={ab('runtimeRunAria', { script: asset.script })}
+            onClick={primary}
+          />
+        )}
       </CardPreview>
 
       {/* 第二行：「运行时图」是它的格式名；之后有同源磁盘图先说关系（脚本路径在
@@ -1191,33 +1225,13 @@ function CardMeta({
 const CARD_KEYSHORTCUTS = 'Enter Shift+Enter Space'
 
 /**
- * 卡片右下角的就近入口容器：只在悬停 / 键盘聚焦时出现。选中时不常驻——底部操作条
- * 已经写着同一对「编辑原图 / 添加到画布」，同一对动作两处同时可见就是重复
- * （2026-09-15 左栏审计 L08）。
+ * 卡片唯一的就近入口（2026-10-16，UI 2.0 §08）：缩略图**右上角**一枚 24px 的圆「＋ 添加到画布」，悬停 / 键盘焦点
+ * 落在卡上才出现——不压图里的文字（此前在右下角，正好盖住图例与坐标轴）。编辑原图 = 双击卡片 / Enter；
+ * 其余动作在右键 / ⇧F10 菜单里。
+ * 不是 <button>——option 里不许再嵌交互控件（axe nested-interactive），键盘走 Shift+Enter。
+ * 外观是分段选择器那块白色 thumb 的做法（`shadow-thumb`），不用浮层的大模糊（左栏审计 L09）。
  */
-function CardActions({ children }: { children: ReactNode }) {
-  return (
-    <span
-      data-card-actions
-      className={cn(
-        'absolute bottom-1.5 right-1.5 flex items-center gap-1',
-        'opacity-0 transition-opacity duration-fast select-none',
-        'group-hover:opacity-100 group-focus-visible:opacity-100',
-      )}
-    >
-      {children}
-    </span>
-  )
-}
-
-/**
- * 一个就近入口：24px 的图标小片，名字在 title（气泡）与读屏文本里——双列时预览
- * 只有 ~80px 高，两个带文字的片会把图整个盖住。
- * 不是 <button>——option 里不许再嵌交互控件（axe nested-interactive）。
- * 外观是分段选择器那块白色 thumb 的做法（`shadow-thumb`：6% 环 + 1px 小影），不画实边、
- * 不用浮层的大模糊——24px 大模糊落在 88px 的预览上是双描边（左栏审计 L09）。
- */
-function CardAction({
+function CardAdd({
   icon: Icon,
   label,
   title,
@@ -1230,6 +1244,7 @@ function CardAction({
 }) {
   return (
     <span
+      data-card-add
       title={title}
       onClick={(e) => {
         e.stopPropagation()
@@ -1237,9 +1252,9 @@ function CardAction({
       }}
       // 光标一律箭头（宪法第二十六节）：卡片本身可拖（抓手），就近入口不是拖拽把手
       className={cn(
-        'flex h-6 w-6 cursor-default items-center justify-center rounded-full',
-        'bg-thumb text-ink shadow-thumb',
-        'transition-colors duration-fast hover:bg-surface-2',
+        'absolute right-1.5 top-1.5 flex h-6 w-6 cursor-default select-none items-center justify-center rounded-full',
+        'bg-thumb text-ink opacity-0 shadow-thumb transition-[opacity,background-color] duration-fast',
+        'hover:bg-surface-2 group-hover:opacity-100 group-focus-visible:opacity-100',
       )}
     >
       <Icon size={ICON_SIZE.sm} />
@@ -1273,17 +1288,22 @@ function UnsupportedAssets({ items }: { items: UnsupportedAsset[] }) {
 }
 
 /**
- * 选中一张卡之后的页脚：**一条**（2026-10-07 设计审计 §10.3，此前是两条叠着的页脚）。
- *
- * * 上一行：选中的名字 + 两个动作（**真按钮**，住在 listbox 外面：option 里不许再嵌可 Tab 的控件——
- *   axe nested-interactive，serious）。鼠标用户有卡片上的就近入口，键盘用户有 Enter / Shift+Enter；
- *   这一行是读屏与"只想点按钮"的人的入口，三条路落到同一对 action 上。没跑过的 runtime 图只有
- *   「运行并发现图」——没有描述符就没有能编辑、能添加的东西。
- * * 需要说话时下面跟一段接入说明（`data-capability-notice`）：`editable` 不说（那一档没有需要说的话），
- *   `capability` 缺席也不说——「这一轮还不知道」不是一种状态，编一句出来就是替后端撒谎。
- *   「查看接入状态」那个真按钮同样在 listbox 外面。
+ * 一张卡的右键 / ⇧F10 菜单：这张卡的**全部**动作（2026-10-16 取代原来的选中页脚）。
+ * 编辑原图 / 添加到画布；跑过但可能过期的运行时图多一项「重新运行」，没跑过的只有「运行并发现图」
+ * （没有描述符就没有能编辑、能添加的东西）；接入状态需要说话的图多一项「查看接入状态」，原因写在项的第二行。
+ * 菜单在 listbox 之外：option 里不许再嵌可 Tab 的控件。
  */
-function AssetFooter({ item, panel }: { item: LibraryItem | undefined; panel?: PanelInfo }) {
+function AssetCardMenu({
+  item,
+  panel,
+  at,
+  onClose,
+}: {
+  item: LibraryItem | undefined
+  panel?: PanelInfo
+  at: { x: number; y: number }
+  onClose: () => void
+}) {
   useTranslation('workspace')
   const run = useScriptRunStore((s) =>
     item?.kind === 'runtime' ? s.byScript[item.asset.script] : undefined,
@@ -1292,7 +1312,6 @@ function AssetFooter({ item, panel }: { item: LibraryItem | undefined; panel?: P
   const name = item.kind === 'file' ? fileName(item.panel.id) : item.asset.stem
   const actionable = item.kind === 'file' || !!item.asset.descriptor
   const busy = !!run && isBusyPhase(run.phase)
-  // 跑过但可能过期的 runtime 图：编辑 / 添加照旧，旁边多一颗「重新运行」（原来嵌在卡片里）
   const stale = item.kind === 'runtime' && actionable && !!runtimeStaleKey(item.asset)
   const runScript = () => {
     if (item.kind === 'runtime' && !busy) void useScriptRunStore.getState().run(item.asset.script)
@@ -1300,60 +1319,44 @@ function AssetFooter({ item, panel }: { item: LibraryItem | undefined; panel?: P
   const cap = panel?.capability
   const showCap = !!panel && !!cap && cap.status !== 'editable'
   return (
-    // 左栏页脚只有一种语法：`border-t px-1.5 py-1` + 28px 控件，底是抽屉底（`--drawer-bg`）
-    <div
-      data-asset-footer
-      className="shrink-0 border-t border-border bg-[var(--drawer-bg,var(--color-surface))] px-1.5 py-1"
+    <PointMenu
+      open
+      onOpenChange={(o) => !o && onClose()}
+      at={at}
+      width={220}
+      ariaLabel={ab('selectedActionsAria', { name })}
+      data-asset-card-menu=""
     >
-      <div
-        role="group"
-        aria-label={ab('selectedActionsAria', { name })}
-        data-selected-asset-actions
-        className="flex items-center gap-1"
-      >
-        <span className="min-w-0 flex-1 truncate pl-1.5 text-xs text-ink-2" title={name}>
-          {name}
-        </span>
-        {actionable ? (
-          <>
-            <Button size="sm" variant="secondary" onClick={() => void openFastEdit(itemId(item))}>
-              <Pencil size={ICON_SIZE.xs} />
-              {ab('openFigure')}
-            </Button>
-            <Button size="sm" variant="secondary" onClick={() => void addFigureToLayout(itemId(item))}>
-              <Plus size={ICON_SIZE.xs} />
-              {ab('addToCanvas')}
-            </Button>
-            {stale && (
-              <Button size="sm" variant="secondary" disabled={busy} data-selected-asset-rerun onClick={runScript}>
-                <RefreshCw size={ICON_SIZE.xs} />
-                {translate(busy ? 'scripts.running' : 'scripts.rerun', { ns: 'workspace' })}
-              </Button>
-            )}
-          </>
-        ) : (
-          <Button size="sm" variant="secondary" disabled={busy} onClick={runScript}>
-            <Play size={ICON_SIZE.xs} />
-            {translate(busy ? 'scripts.running' : 'scripts.run', { ns: 'workspace' })}
-          </Button>
-        )}
-      </div>
-      {showCap && (
-        <div role="status" data-capability-notice className="mt-1 border-t border-border pt-1">
-          <p className="truncate px-1.5 text-xs text-ink" title={panel.id}>
-            {ab('capabilityHeading', { name: fileName(panel.id), status: statusLabel(cap.status) })}
-          </p>
-          <p className="mt-0.5 px-1.5 text-xs leading-relaxed text-ink-2">{reasonText(cap)}</p>
-          <Button
-            size="sm"
-            className="-ml-0.5 mt-0.5"
-            onClick={() => useProjectReadinessStore.getState().focusPanel(panel.id, 'panel')}
-          >
-            {translate('readiness.openCenter', { ns: 'workspace' })}
-          </Button>
-        </div>
+      {actionable ? (
+        <>
+          <MenuItem icon={Pencil} onSelect={() => void openFastEdit(itemId(item))}>
+            {ab('openFigure')}
+          </MenuItem>
+          <MenuItem icon={Plus} onSelect={() => void addFigureToLayout(itemId(item))}>
+            {ab('addToCanvas')}
+          </MenuItem>
+          {stale && (
+            <MenuItem icon={RefreshCw} disabled={busy} data-asset-rerun onSelect={runScript}>
+              {translate(busy ? 'scripts.running' : 'scripts.rerun', { ns: 'workspace' })}
+            </MenuItem>
+          )}
+        </>
+      ) : (
+        <MenuItem icon={Play} disabled={busy} onSelect={runScript}>
+          {translate(busy ? 'scripts.running' : 'scripts.run', { ns: 'workspace' })}
+        </MenuItem>
       )}
-    </div>
+      {showCap && (
+        <MenuItem
+          icon={Info}
+          data-asset-capability
+          reason={reasonText(cap)}
+          onSelect={() => useProjectReadinessStore.getState().focusPanel(panel.id, 'panel')}
+        >
+          {translate('readiness.openCenter', { ns: 'workspace' })}
+        </MenuItem>
+      )}
+    </PointMenu>
   )
 }
 

@@ -11,7 +11,6 @@ import {
   Minimize2,
   Pencil,
   Ratio,
-  Replace,
   RotateCcw,
   Scaling,
   Unlink2,
@@ -333,8 +332,6 @@ function PanelMoreSection({ objs }: { objs: PanelObject[] }) {
   useTranslation('inspector')
   const open = useInspectorPrefs((s) => s.moreOpen['panel'] ?? false)
   const setOpen = useInspectorPrefs((s) => s.setMoreOpen)
-  const one = objs.length === 1 ? objs[0] : null
-  const [replacing, setReplacing] = useState(false)
   const ids = objs.map((o) => o.id)
   const rot = sharedPanel(objs, panelRotation)
   const opacity = sharedPanel(objs, (o) => Math.round((o.opacity ?? 1) * 100))
@@ -351,10 +348,6 @@ function PanelMoreSection({ objs }: { objs: PanelObject[] }) {
     opacity === undefined ? pn('opacityMixed') : opacity < 100 ? `${opacity}%` : pn('opaque'),
     flipped ? pn('flipped') : null,
   ].filter(Boolean)
-  const replaceKey = 'panel:replace'
-  const replaceOpen = useInspectorPrefs((s) => s.foldOpen[replaceKey] ?? false)
-  const setFoldOpen = useInspectorPrefs((s) => s.setFoldOpen)
-
   return (
     <>
       <SummaryRow
@@ -440,21 +433,7 @@ function PanelMoreSection({ objs }: { objs: PanelObject[] }) {
         </div>
       </SummaryRow>
 
-      {/* 替换素材单独一行（设计稿 A1「换一张图」）：设置行里的一个动作，不是整行 CTA */}
-      <SummaryRow
-        data-fold="replace"
-        open={replaceOpen}
-        onToggle={() => setFoldOpen(replaceKey, !replaceOpen)}
-        label={pn('replacePicture')}
-      >
-        <Row label={pn('replace')} labelWidth={INSPECTOR_LABEL_W}>
-          <Button variant="secondary" size="sm" disabled={!one} onClick={() => setReplacing(true)}>
-            <Replace size={ICON_SIZE.sm} className="text-ink-2" />
-            {pn('replaceAction')}
-          </Button>
-        </Row>
-      </SummaryRow>
-      {one && <ReplaceAssetDialog panel={one} open={replacing} onOpenChange={setReplacing} />}
+      {/* 「换一张图」是动作不是设置：移进标题行的 ⋯ 菜单（IdentityHeader，2026-10-16 UI 2.0 §07） */}
     </>
   )
 }
@@ -600,7 +579,7 @@ function PanelQuality({ objs }: { objs: PanelObject[] }) {
 /*  替换素材                                                                   */
 /* -------------------------------------------------------------------------- */
 
-function ReplaceAssetDialog({
+export function ReplaceAssetDialog({
   panel,
   open,
   onOpenChange,
@@ -754,7 +733,9 @@ function ElementEditEntry({ panel }: { panel: PanelObject }) {
           脚本已变三条叠在同一格里，同一时刻只显示一条（构建中优先——它正在把「脚本已变」刷新掉），
           隐藏只改可见性：足迹常驻、按最长那条译文定高，首次渲染在 pointerdown / up 之间完成时
           不会把翻转 / 数值框等控件上移（原生 click 随之丢失） */}
-      <div data-panel-engine-status className="mt-1.5 grid">
+      {/* 足迹为 0（2026-10-16）：三条提示叠在按钮下方、浮在节的下内边距里，不再给「改图里的内容」按钮下面留一条
+          常驻的死空白（原先 mt-1.5 + 20px ≈ 26px）；仍然只改可见性、不插拔节点，所以首次渲染完成时控件不挪位 */}
+      <div data-panel-engine-status className="relative grid h-0">
         {(['cold', 'building', 'stale'] as const).map((kind) => {
           const progress = !editing && building
           const shown = kind === 'stale' ? !!render?.stale && !progress : progress && (kind === 'cold' ? cold : !cold)
@@ -766,7 +747,7 @@ function ElementEditEntry({ panel }: { panel: PanelObject }) {
               data-render-progress={shown && kind !== 'stale' ? engineProgress.phase : undefined}
               aria-hidden={!shown}
               className={cn(
-                'col-start-1 row-start-1 flex min-h-5 items-center gap-1.5 text-xs',
+                'pointer-events-none col-start-1 row-start-1 flex h-4 items-center gap-1.5 text-xs',
                 kind === 'stale' ? 'text-danger-content' : 'text-ink-2',
                 !shown && 'invisible',
               )}
@@ -802,11 +783,21 @@ export function SourceSection({
   const overrides = panel?.overrides.length ?? 0
   const runtime = panel?.fileKind === 'runtime'
   if (!panel?.script && !objs.length) return null
+  // 收起时右边写当前值：脚本文件名（mono、ink-3；被截断时 title 给完整路径）——「属性 = 值」的一张表，
+  // 不再是一行光秃秃的 ›（2026-10-16 UI 2.0 §07）
+  const script = panel ? (panel.source?.script ?? panel.script ?? '') : ''
   return (
     <SummaryRow
       label={pn('sourceAdvanced')}
       open={open}
       onToggle={() => setOpen('panel', !open)}
+      value={
+        script ? (
+          <span data-source-script title={script} className="font-mono text-xs">
+            {script.split(/[\\/]/).pop()}
+          </span>
+        ) : undefined
+      }
     >
       {panel?.script && runtime && <RuntimeSourceArea panel={panel} />}
       {panel?.script && !runtime && (

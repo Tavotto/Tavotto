@@ -109,6 +109,8 @@ export default defineConfig({
         'sync-overrides.spec.ts',
         // 导出对象头的「示意」标注与透明背景棋盘格（PR3）：英文标注更长，撑破对象头的话先在这里红
         'export-preview.spec.ts',
+        // 素材卡 / 属性栏底部：英文文案更长，量盒子位置两种语言各一遍
+        'inspector-assets.spec.ts',
       ],
     },
   ],

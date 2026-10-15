@@ -148,7 +148,7 @@ describe('RuntimeAssetCard', () => {
     expect(mockProbe).toHaveBeenCalledWith('show.py')
   })
 
-  it('stale 素材：卡片里只写状态，「重新运行」是列表外选中页脚的真按钮', async () => {
+  it('stale 素材：卡片里只写状态，「重新运行」在列表外的右键 / ⇧F10 菜单里', async () => {
     useRuntimeAssetStore.setState({ assets: [asset({ status: 'possibly_stale' })] })
     mockProbe.mockImplementation(() => new Promise(() => {}))
     await mount()
@@ -156,28 +156,39 @@ describe('RuntimeAssetCard', () => {
     expect(card.querySelector('[data-runtime-stale]')?.textContent).toContain('可能有变')
     // option 里不嵌可 Tab 控件（axe nested-interactive）
     expect(card.querySelector('button, input, select, textarea, a[href]')).toBeNull()
-    expect(host.querySelector('[data-selected-asset-rerun]')).toBeNull()
-    await act(async () => card.click())
-    const rerun = host.querySelector<HTMLButtonElement>('[data-selected-asset-rerun]')!
-    expect(rerun.closest('[data-selected-asset-actions]')).toBeTruthy()
+    expect(document.querySelector('[data-asset-rerun]')).toBeNull()
+    const open = () =>
+      act(async () => {
+        card.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 30, clientY: 30 }))
+      })
+    await open()
+    const rerun = document.querySelector<HTMLElement>('[data-asset-rerun]')!
     expect(rerun.closest('[role="option"]')).toBeNull()
     expect(rerun.textContent).toContain('重新运行')
-    await act(async () => rerun.click())
+    await act(async () => {
+      rerun.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }))
+      rerun.click()
+    })
     expect(mockProbe).toHaveBeenCalledWith('show.py')
-    // 跑着的时候按钮置灰、文案换成「运行中」，不重复发
-    const busy = host.querySelector<HTMLButtonElement>('[data-selected-asset-rerun]')!
-    expect(busy.disabled).toBe(true)
+    // 跑着的时候菜单项置灰、文案换成「运行中」，不重复发
+    await open()
+    const busy = document.querySelector<HTMLElement>('[data-asset-rerun]')!
+    expect(busy.hasAttribute('data-disabled')).toBe(true)
     await act(async () => busy.click())
     expect(mockProbe).toHaveBeenCalledTimes(1)
   })
 
-  it('fresh 素材的选中页脚没有「重新运行」', async () => {
+  it('fresh 素材的菜单里没有「重新运行」；也没有选中页脚', async () => {
     useRuntimeAssetStore.setState({ assets: [asset()] })
     await mount()
     const card = host.querySelector<HTMLElement>('[data-card="runtime:show.py#show"]')!
     await act(async () => card.click())
-    expect(host.querySelector('[data-selected-asset-actions]')).toBeTruthy()
-    expect(host.querySelector('[data-selected-asset-rerun]')).toBeNull()
+    expect(host.querySelector('[data-asset-footer]')).toBeNull()
+    await act(async () => {
+      card.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 30, clientY: 30 }))
+    })
+    expect(document.querySelector('[data-asset-card-menu]')).toBeTruthy()
+    expect(document.querySelector('[data-asset-rerun]')).toBeNull()
     expect(card.querySelector('[data-runtime-stale]')).toBeNull()
   })
 })
