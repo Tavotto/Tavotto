@@ -660,7 +660,7 @@ PR1–PR6 的规则分散在上面各节（PR1 / PR2 在「联合依赖准备」
   `try: import cv2 / except ImportError`、`TYPE_CHECKING` 或条件下的 `import cv2` 不触发冲突；`try` / 条件 / `TYPE_CHECKING` 里的 `importlib.import_module(name)` 不让声明变相关。
   扫描器为此在 named / relative import 的内部 `enclosing` 保留完整外围保护，别名字面量沿本地闭包（包括包内相对导入）继承；
   `_join_enclosing` 让任何层的条件 / 可选 / 类型检查优先于函数体的延后，不能拿公开 `CONTEXTS` 的旧聚合排序合并保护。
-  非字面量动态导入的外围记录与跟进保持原合同。
+  非字面量动态导入同用完整外围与本地闭包传播，缓存重访也重放其上下文、源码仍只读一次；公开 `dynamic` 字段形状不变。
   分类的 `ImportClass.enclosing_contexts` 保留同名各处的外围集合，由 `_is_binding` 判有没有绑定来源（`conditional` 与 `deferred` 不能只按枚举强弱合一）；
   普通 named import 的内部外围只为到达别名时保留来路；分类只在含 dynamic 候选时消费该集合。两字段均不进 `to_payload`，公开 `context` / `needed` 原样。
   仲裁出的 provider（`cv2` 的 headless 等）只在脚本确实 import 那个模块时相关——未 import 就不相关，连「有未解释 import」也不让它变相关。
@@ -668,6 +668,7 @@ PR1–PR6 的规则分散在上面各节（PR1 / PR2 在「联合依赖准备」
 - 差集（`JointPlan.declared_gaps`）≠ 安装集合：前者相对**此刻跑脚本的环境**，后者相对**目标**。相关差集 + 跑脚本的环境归 Tavotto（`deprepair._run_env_ours`）才让计划 `ready`；来源标签与计划共用 `managedenv.is_managed_python`，归属按**路径身份、不 realpath**（叶子 `interpreterpath.same_python`，`pool.same_python` 同一实现，比登记的各代 `bin/python`）——托管 venv 的 `bin/python` 常是指向基础解释器的软链接，realpath 会把用户当前用的系统 python 判成「我们的」；
   用户的系统 / 本进程解释器只记录偏差（`action=recorded`），不静默升降包。`declared_gaps` 是可选字段，`plan_version` 不升。
 - 没有 import 名的 root 照样进账与装后核验（`install_only` 里 `import_name=""`）；`needed_imports` 一律滤掉空名，别拿空串去 probe。
+  hash 模式同样登记实际安装集合里的相关声明 root（沿用 `_relevant_declarations`），以便换回非 hash 后按账重建；不把无关锁条目一律登记为 roots，锁的安装集合与 hash 输入不变。
 - 互斥 provider 只有一张表 `depresolve.ALTERNATIVE_DISTRIBUTIONS`：声明点名一个 = 它胜出；点名两个 = `dependency_conflict`；没点名 = curated（观察到的不是授权）。
   冲突与「能否 ready」都按**本计划实际安装集合**判，不看「是否 roots 模式」这个全局开关：点名的两个 provider 只在脚本 import 了那个模块、或它们真会被装（受管环境按声明装的 roots；hash 模式整份锁）时才冲突，无关脚本不被拦；hash 模式下相关缺口同样让计划 `ready`（`_arbitrate_providers(installing)` / `declared_install`）。
   账本合并（`generation_requirements`）与记账（`forget_install`）同源，不把被替掉的 provider 带回。
