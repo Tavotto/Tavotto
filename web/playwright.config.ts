@@ -96,6 +96,8 @@ export default defineConfig({
         'inspector-overflow.spec.ts',
         // 同步修改 → 标准写回窗口（ADR 0037 末节）：语言无关写法，两种语言各走一遍
         'sync-overrides.spec.ts',
+        // 改图助手输入框：英文胶囊 / 菜单说明更长，量弹层盒子在两种语言下都不被裁
+        'ai-composer.spec.ts',
       ],
     },
   ],

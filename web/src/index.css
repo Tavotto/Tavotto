@@ -266,6 +266,8 @@
   /* 浮层：菜单 / popover / select / tooltip / dialog 主体 */
   --animate-pop-in: pop-in var(--duration-fast) var(--ease-pop);
   --animate-pop-out: pop-out var(--duration-exit) var(--ease-exit);
+  /* 向上展开的浮层（输入框底栏的菜单）：位移朝向与展开方向一致 */
+  --animate-pop-in-up: pop-in-up var(--duration-fast) var(--ease-pop);
   /* 遮罩、角标这类只需要「在与不在」的 */
   --animate-fade-in: fade-in var(--duration-fast) var(--ease-pop);
   --animate-fade-out: fade-out var(--duration-exit) var(--ease-exit);
@@ -361,6 +363,17 @@
   from {
     opacity: 0;
     transform: scale(0.97) translateY(-2px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes pop-in-up {
+  from {
+    opacity: 0;
+    transform: scale(0.97) translateY(4px);
   }
   to {
     opacity: 1;

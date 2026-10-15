@@ -37,6 +37,14 @@
     "minutes": "{{m}}m {{s}}s",
     "seconds": "{{value}}s"
   },
+  "effortDesc": {
+    "high": "多步修改、需要推敲的布局",
+    "low": "简单调整，几秒出结果",
+    "max": "最仔细，耗时与额度明显更多",
+    "medium": "平衡速度与质量",
+    "minimal": "只做最直接的改动，最快",
+    "xhigh": "比「高」更深入，耗时与额度更多"
+  },
   "effortLabel": {
     "high": "高",
     "low": "低",
@@ -87,6 +95,7 @@
     "cli": "CLI：{{version}}",
     "cliPath": "路径：{{path}}",
     "effort": "推理强度",
+    "effortDefault": "默认",
     "effortPill": "推理 {{effort}}",
     "effortRaw": "强度原始值：{{value}}",
     "emptyHint": "助手会直接修改脚本，改动可回滚。",
