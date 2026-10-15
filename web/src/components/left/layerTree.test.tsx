@@ -86,7 +86,9 @@ afterEach(async () => {
 })
 
 /** 第 n 行（顶层在最上面 = z 序倒序） */
-const rows = () => Array.from(document.querySelectorAll<HTMLElement>('li[data-layer]'))
+// 收起的组成员保活一个退场时长（高度过渡），期间整棵 inert：不算「在树里」
+const rows = () =>
+  Array.from(document.querySelectorAll<HTMLElement>('li[data-layer]')).filter((r) => !r.closest('[inert]'))
 const rowButtons = (i: number) => Array.from(rows()[i].querySelectorAll('button'))
 
 /**

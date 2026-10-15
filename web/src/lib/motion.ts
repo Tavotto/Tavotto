@@ -129,6 +129,8 @@ export function usePresence(
 ): { mounted: boolean; state: 'open' | 'closed' } {
   const [mounted, setMounted] = useState(open)
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+  const mountedRef = useRef(mounted)
+  mountedRef.current = mounted
 
   useEffect(() => {
     clearTimeout(timer.current)
@@ -136,7 +138,9 @@ export function usePresence(
       setMounted(true)
       return
     }
-    // 已经卸载了就别再排一次定时器（否则每次 open=false 的重渲染都排一个）
+    // 已经卸载了就别再排一次定时器：一开始就是收起的（树里每个折叠节点一个）排了也只是 90ms 后
+    // 白白重渲染一次自己，量提交次数的用例会被这一下随机撞红
+    if (!mountedRef.current) return
     if (prefersReducedMotion() || exitMs <= 0) {
       setMounted(false)
       return

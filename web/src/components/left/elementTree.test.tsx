@@ -108,8 +108,9 @@ async function mount() {
   await act(async () => {})
 }
 
-const rowGids = () =>
-  [...host.querySelectorAll('[data-el]')].map((n) => (n as HTMLElement).dataset.el)
+// 收起的子树要保活一个退场时长（高度过渡）：那段时间行还在 DOM 里，但整棵是 inert——不算「在树里」
+const liveRows = () => [...host.querySelectorAll('[data-el]')].filter((n) => !n.closest('[inert]'))
+const rowGids = () => liveRows().map((n) => (n as HTMLElement).dataset.el)
 const search = () => host.querySelector('input') as HTMLInputElement
 const heading = () => host.querySelector('h2')?.parentElement?.textContent ?? ''
 
@@ -317,7 +318,7 @@ describe('键盘', () => {
     await mount()
     // 聚类行的 key 是「父 key#聚类名」，不是 gid。聚类默认是**展开**的（审计 B44：
     // 文字 / 数据系列 / 图例 / 坐标轴的成员一进来就看得见），所以先 ← 再 →
-    const cluster = [...host.querySelectorAll('[data-el]')].find((n) =>
+    const cluster = liveRows().find((n) =>
       (n as HTMLElement).dataset.el!.includes('#'),
     ) as HTMLElement
     expect(cluster).toBeTruthy()

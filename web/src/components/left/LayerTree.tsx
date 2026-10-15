@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { t as translate } from '@/i18n'
 import {
@@ -27,6 +27,7 @@ import { EditableFigureIcon } from '@/components/ui/semanticIcons'
 import { ALT, cn, combo, isMac } from '@/lib/utils'
 import { dropLineClass, listRowClass } from '@/components/ui/listRow'
 import { isTreeNavKey, treeKeyAction } from '@/components/ui/treeKeys'
+import { TreeBranch } from '@/components/ui/TreeBranch'
 import { TreeChevron, TreeIcon, treeIndent } from '@/components/ui/TreeRow'
 import { useBoldTrackingLock } from '@/components/ui/useBoldWidthLock'
 import { useRenameFocusReturn } from '@/components/ui/useRenameFocusReturn'
@@ -98,7 +99,11 @@ export function LayerTree() {
       return
     }
     if (!primaryId || !list) return
-    const at = (key: string) => list.querySelector(`[data-layer="${CSS.escape(key)}"]`)
+    // 收起中的组成员还保活着（退场动画，整棵 inert）：那不算「可见」，当它不存在
+    const at = (key: string) => {
+      const el = list.querySelector(`[data-layer="${CSS.escape(key)}"]`)
+      return el && !el.closest('[inert]') ? el : null
+    }
     // 选中项藏在折叠的组里（行没渲染）：滚到它最近的可见祖先——组标题行
     const groupId = objects.find((o) => o.id === primaryId)?.groupId
     const target = at(primaryId) ?? (groupId ? at(`g:${groupId}`) : null)
@@ -184,20 +189,7 @@ export function LayerTree() {
       ? selectedIds.at(-1)!
       : keyOf(rows[0])
 
-  return (
-    <ul
-      ref={listRef}
-      role="tree"
-      data-tree="layers"
-      onKeyDownCapture={markTreeDriven}
-      onPointerDownCapture={markTreeDriven}
-      aria-label={lt('listLabel')}
-      aria-multiselectable
-      className="min-h-0 flex-1 scroll-py-1 overflow-y-auto py-1"
-      onDragLeave={() => setDropHint(null)}
-      onDrop={() => setDropHint(null)}
-    >
-      {rows.map((r) => {
+  const renderRow = (r: TreeRow) => {
         if (r.kind === 'group') {
           return (
             <GroupRow
@@ -237,7 +229,42 @@ export function LayerTree() {
             onReorder={(d) => reorder(o.id, d)}
           />
         )
-      })}
+      }
+
+  // 组成员收进 `TreeBranch`（折叠 / 展开的高度过渡）；行本身与键位仍按扁平序列
+  const renderTree = (): ReactNode[] => {
+    const out: ReactNode[] = []
+    for (let i = 0; i < rows.length; i++) {
+      const r = rows[i]
+      out.push(renderRow(r))
+      if (r.kind !== 'group') continue
+      const kids: ReactNode[] = []
+      while (i + 1 < rows.length && rows[i + 1].kind === 'object' && (rows[i + 1] as { depth: number }).depth === 1) {
+        kids.push(renderRow(rows[++i]))
+      }
+      out.push(
+        <TreeBranch key={`branch:${r.gid}`} open={!collapsed[r.gid]}>
+          {kids}
+        </TreeBranch>,
+      )
+    }
+    return out
+  }
+
+  return (
+    <ul
+      ref={listRef}
+      role="tree"
+      data-tree="layers"
+      onKeyDownCapture={markTreeDriven}
+      onPointerDownCapture={markTreeDriven}
+      aria-label={lt('listLabel')}
+      aria-multiselectable
+      className="min-h-0 flex-1 scroll-py-1 overflow-y-auto py-1"
+      onDragLeave={() => setDropHint(null)}
+      onDrop={() => setDropHint(null)}
+    >
+      {renderTree()}
     </ul>
   )
 }

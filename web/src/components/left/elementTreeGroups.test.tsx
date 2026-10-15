@@ -153,8 +153,11 @@ async function mount(m: Manifest) {
   await act(async () => {})
 }
 
+// 收起的子树保活一个退场时长，期间整棵是 inert：不算「在树里」
 const rowGids = () =>
-  [...host.querySelectorAll('[role="tree"] [data-el]')].map((n) => (n as HTMLElement).dataset.el!)
+  [...host.querySelectorAll('[role="tree"] [data-el]')]
+    .filter((n) => !n.closest('[inert]'))
+    .map((n) => (n as HTMLElement).dataset.el!)
 const row = (key: string) => host.querySelector(`[data-el="${CSS.escape(key)}"]`) as HTMLElement | null
 /** 行的缩进档：treeIndent = 8 + depth × TREE_INDENT */
 const depthOf = (key: string) => (parseFloat(row(key)!.style.paddingLeft) - 8) / TREE_INDENT

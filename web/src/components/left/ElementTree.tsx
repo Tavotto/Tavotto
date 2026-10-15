@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { memo, useCallback, type ReactNode, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useLocale } from '@/i18n/react'
 import { useRenderProgress } from '@/hooks/useRenderProgress'
@@ -27,6 +27,7 @@ import type { Manifest, ManifestElement, ManifestGroup } from '@/lib/api'
 import { isElementHidden } from '@/canvas/interactions'
 import { cn, isMac } from '@/lib/utils'
 import { listRowClass } from '@/components/ui/listRow'
+import { TreeBranch } from '@/components/ui/TreeBranch'
 import { splitTypePrefix } from './rowName'
 import { useBoldTrackingLock } from '@/components/ui/useBoldWidthLock'
 import { isTreeNavKey, treeKeyAction, type TreeNavRow } from '@/components/ui/treeKeys'
@@ -490,51 +491,7 @@ function TreeView({
     (primaryGid !== undefined ? rows.find((r) => nodeGid(r.node) === primaryGid)?.key : undefined) ??
     rows[0]?.key
 
-  return (
-    <div className="flex min-h-0 flex-1 flex-col">
-      {/* 搜索框下留白与素材页 / 画布页同一档 8px（左栏审计 L36）。「只看这一支」是搜索行里的一枚 chip，
-          不再是搜索框下面另起的一条横幅（2026-10-07 设计审计 §10.3）：它与搜索一样是「看哪些行」的筛选 */}
-      <div className={cn('flex shrink-0 items-center gap-1.5', chrome === 'bare' ? 'p-2' : 'px-3 pb-2')}>
-        <SearchInput
-          value={query}
-          onValueChange={setQuery}
-          onKeyDown={(e) => {
-            if (e.key === 'ArrowDown' && rows.length) {
-              e.preventDefault()
-              focusRow(rows[0].key)
-            }
-          }}
-          placeholder={et('search')}
-          aria-label={et('searchAria')}
-        />
-        {isolated && (
-          <span
-            data-element-isolate
-            className="flex h-7 min-w-0 max-w-[50%] shrink items-center gap-1 rounded-full bg-surface-hover pl-2 pr-0.5 text-xs text-ink"
-          >
-            <Crosshair size={ICON_SIZE.xs} aria-hidden className="shrink-0 text-ink-3" />
-            <span className="min-w-0 truncate">{isolatedLabel}</span>
-            <IconButton iconSize="xs" label={et('exitIsolate')} data-element-isolate-exit onClick={() => setIsolated(null)}>
-              <X size={ICON_SIZE.xs} />
-            </IconButton>
-          </span>
-        )}
-      </div>
-
-      <ul
-        ref={listRef}
-        role="tree"
-        data-tree="elements"
-        aria-label={et('listLabel')}
-        aria-multiselectable
-        className="min-h-0 flex-1 scroll-py-1 overflow-y-auto py-1"
-      >
-        {rows.length === 0 && (
-          <li>
-            <EmptyState icon={SearchX} title={et('noMatch')} />
-          </li>
-        )}
-        {rows.map(({ node, depth, key, pos, size }) => {
+  const renderRow = ({ node, depth, key, pos, size }: Row) => {
           if (node.cluster) {
             return (
               <ClusterRow
@@ -609,7 +566,81 @@ function TreeView({
               onNavKey={navKey}
             />
           )
-        })}
+        }
+
+  /**
+   * 扁平行 → 带子树容器的渲染：紧跟在父行后面、更深一级的那一段行收进 `TreeBranch`
+   * （展开 / 收起的高度过渡）；行本身与键位仍按扁平序列。有子节点的行恒有一个 branch（收起时空着、
+   * 缓存上次的行供退场用）。
+   */
+  const renderTree = (from: number, depth: number): { out: ReactNode[]; next: number } => {
+    const out: ReactNode[] = []
+    let i = from
+    while (i < rows.length && rows[i].depth === depth) {
+      const r = rows[i++]
+      out.push(renderRow(r))
+      let kids: ReactNode[] = []
+      if (i < rows.length && rows[i].depth > depth) {
+        const sub = renderTree(i, depth + 1)
+        kids = sub.out
+        i = sub.next
+      }
+      if (r.node.children.length) {
+        out.push(
+          <TreeBranch key={`branch:${r.key}`} open={isOpen(r.node, r.key)}>
+            {kids}
+          </TreeBranch>,
+        )
+      }
+    }
+    return { out, next: i }
+  }
+
+  return (
+    <div className="flex min-h-0 flex-1 flex-col">
+      {/* 搜索框下留白与素材页 / 画布页同一档 8px（左栏审计 L36）。「只看这一支」是搜索行里的一枚 chip，
+          不再是搜索框下面另起的一条横幅（2026-10-07 设计审计 §10.3）：它与搜索一样是「看哪些行」的筛选 */}
+      <div className={cn('flex shrink-0 items-center gap-1.5', chrome === 'bare' ? 'p-2' : 'px-3 pb-2')}>
+        <SearchInput
+          value={query}
+          onValueChange={setQuery}
+          onKeyDown={(e) => {
+            if (e.key === 'ArrowDown' && rows.length) {
+              e.preventDefault()
+              focusRow(rows[0].key)
+            }
+          }}
+          placeholder={et('search')}
+          aria-label={et('searchAria')}
+        />
+        {isolated && (
+          <span
+            data-element-isolate
+            className="flex h-7 min-w-0 max-w-[50%] shrink items-center gap-1 rounded-full bg-surface-hover pl-2 pr-0.5 text-xs text-ink"
+          >
+            <Crosshair size={ICON_SIZE.xs} aria-hidden className="shrink-0 text-ink-3" />
+            <span className="min-w-0 truncate">{isolatedLabel}</span>
+            <IconButton iconSize="xs" label={et('exitIsolate')} data-element-isolate-exit onClick={() => setIsolated(null)}>
+              <X size={ICON_SIZE.xs} />
+            </IconButton>
+          </span>
+        )}
+      </div>
+
+      <ul
+        ref={listRef}
+        role="tree"
+        data-tree="elements"
+        aria-label={et('listLabel')}
+        aria-multiselectable
+        className="min-h-0 flex-1 scroll-py-1 overflow-y-auto py-1"
+      >
+        {rows.length === 0 && (
+          <li>
+            <EmptyState icon={SearchX} title={et('noMatch')} />
+          </li>
+        )}
+        {renderTree(0, 0).out}
       </ul>
     </div>
   )
