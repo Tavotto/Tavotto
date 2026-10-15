@@ -298,7 +298,10 @@ describe('用户级入口在恢复中排队（素材卡双击 / 加入排版 / �
   it('自动进入编辑（enterEdit）在恢复中排队、图还不在文档里：落定前切走 → 不插入面板、不取景、不进编辑；仍在看则照常插入并进入', async () => {
     const app = await setAssets(await boot())
     const { enterEdit } = await import('@/store/prepEnterEdit')
-    const desc = { ...fig1Info, asset_id: 'runtime:s.py#a', script: 's.py', stem: 'a' } as never
+    const desc = {
+      asset_id: 'runtime:s.py#a', script: 's.py', entry: '__main__', stem: 'a', capture_source: 'savefig', execution_profile: 'safe',
+      original_artifact: null, size_mm: [80, 60], source_fingerprint: 'fp', can_writeback_artifact: false, can_writeback_source: false,
+    } as never
     const hold = gate()
     be.state.hold.session = hold.promise
     const restoring = app.doc.restoreSession()
