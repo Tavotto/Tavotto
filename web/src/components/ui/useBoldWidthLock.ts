@@ -22,40 +22,58 @@ export function useBoldWidthLock(ref: RefObject<HTMLElement | null>) {
   })
 }
 
+/** (字体 + 文字) → 400 与 600 的排版宽度。同名反复量只量一次；字体加载完成后整表作废 */
+const boldWidthCache = new Map<string, { w400: number; w600: number }>()
+if (typeof document !== 'undefined') {
+  document.fonts?.addEventListener?.('loadingdone', () => boldWidthCache.clear())
+}
+
 /**
  * 树 / 列表行标签的**截断位置**锁（2026-10 UI 审计 G3）：选中行是 600，同一段字比 400 宽 2–3%，
  * 被 `truncate` 切断的长名字在选中那一下多吃一两个字，随选择跳动。`useBoldWidthLock` 管不了这件事
  * （那是给不截断的页签留 `min-width`；给截断的标签加 `min-width` 只会把行撑出去）。
  *
- * 做法：`active`（选中）时量同一段文字 400 与 600 的排版宽度之差，用等量的负字距吃掉——选中的字
- * 仍是 600，但整段宽度与 400 时一样，截断点不动、行尾的邻居也不动。字距只有零点几 px，看不出。
- * 量宽用 Range（不受 `overflow:hidden` 剪裁影响）。jsdom 里量出来是 0，等于没设。
+ * 做法：选中且**会被截断**（600 的宽度超出标签盒）时，用等量的负字距吃掉 600 比 400 多出的宽度——
+ * 字仍是 600，整段宽度与 400 时一样，截断点不动。不截断的行什么都不做（加粗本来就不该被压窄）。
+ * 量宽用 Range（不受 `overflow:hidden` 剪裁影响）。
+ *
+ * 成本：只在 `[active, text]` 变化时跑；量值按（字体，文字）缓存，同名不重复量，缓存命中时不写样式、
+ * 不强制布局（只读一次 clientWidth）。元素树全选几百行、拖动画布时树跟着重渲染，不会变成 N×2 次同步布局。
+ * `text` 由调用方传入名字字符串（不在 effect 里读 textContent 当依赖）。jsdom 里量出来是 0，等于没设。
+ * 局限：标签盒在选中期间被拖窄（改抽屉宽）时不重量，下一次选中 / 改名才重算。
  */
-export function useBoldTrackingLock(ref: RefObject<HTMLElement | null>, active: boolean) {
+export function useBoldTrackingLock(ref: RefObject<HTMLElement | null>, active: boolean, text: string) {
   useLayoutEffect(() => {
     const el = ref.current
     if (!el) return
     el.style.letterSpacing = ''
-    if (!active) return
-    const text = el.textContent ?? ''
     const chars = [...text].length
-    if (!chars) return
-    const range = document.createRange()
-    // jsdom 的 Range 没有 getBoundingClientRect：等于没设
-    if (typeof range.getBoundingClientRect !== 'function') return
-    range.selectNodeContents(el)
-    const prev = el.style.fontWeight
-    // 量的时候关掉过渡：prefers-reduced-motion 下全局给所有属性一个 0.01ms 的过渡（index.css），
-    // 改字重后同一帧里量到的还是起点值，400 与 600 量成一样宽，锁就悄悄失效了
-    const prevTransition = el.style.transition
-    el.style.transition = 'none'
-    el.style.fontWeight = '400'
-    const w400 = range.getBoundingClientRect().width
-    el.style.fontWeight = '600'
-    const w600 = range.getBoundingClientRect().width
-    el.style.fontWeight = prev
-    el.style.transition = prevTransition
-    const delta = w600 - w400
-    if (delta > 0.05) el.style.letterSpacing = `${-delta / chars}px`
-  })
+    if (!active || !chars) return
+    const cs = getComputedStyle(el)
+    const key = `${cs.fontFamily}|${cs.fontSize}|${text}`
+    let hit = boldWidthCache.get(key)
+    if (!hit) {
+      const range = document.createRange()
+      // jsdom 的 Range 没有 getBoundingClientRect：等于没设
+      if (typeof range.getBoundingClientRect !== 'function') return
+      range.selectNodeContents(el)
+      const prev = el.style.fontWeight
+      // 量的时候关掉过渡：prefers-reduced-motion 下全局给所有属性一个 0.01ms 的过渡（index.css），
+      // 改字重后同一帧里量到的还是起点值，400 与 600 量成一样宽，锁就悄悄失效了
+      const prevTransition = el.style.transition
+      el.style.transition = 'none'
+      el.style.fontWeight = '400'
+      const w400 = range.getBoundingClientRect().width
+      el.style.fontWeight = '600'
+      const w600 = range.getBoundingClientRect().width
+      el.style.fontWeight = prev
+      el.style.transition = prevTransition
+      hit = { w400, w600 }
+      if (boldWidthCache.size > 500) boldWidthCache.clear()
+      boldWidthCache.set(key, hit)
+    }
+    const delta = hit.w600 - hit.w400
+    // 不截断（600 的宽度放得下）：不需要锁
+    if (delta > 0.05 && hit.w600 > el.clientWidth) el.style.letterSpacing = `${-delta / chars}px`
+  }, [ref, active, text])
 }

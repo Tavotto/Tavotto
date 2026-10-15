@@ -746,7 +746,7 @@ const ElementRow = memo(function ElementRow({
   // ⋯ / 右键 / ⇧F10 同一份菜单（`ui/RowMenu`）；行有焦点时 ⋯ 进 Tab 顺序（此前 tabIndex=-1，键盘够不着）
   const menu = useRowMenu()
   const labelRef = useRef<HTMLSpanElement>(null)
-  useBoldTrackingLock(labelRef, selected)
+  useBoldTrackingLock(labelRef, selected, name)
 
   return (
     <li

@@ -252,7 +252,7 @@ function GroupRow({
   useTranslation('workspace')
   const selectAllMembers = () => useSelectionStore.getState().set(members.map((m) => m.id))
   const labelRef = useRef<HTMLSpanElement>(null)
-  useBoldTrackingLock(labelRef, allSelected)
+  useBoldTrackingLock(labelRef, allSelected, lt('groupLabel', { count: members.length }))
   return (
     <li
       role="treeitem"
@@ -349,7 +349,7 @@ function LayerRow({
   const pointerFocusing = useRef(false)
   const [dragging, setDragging] = useState(false)
   const labelRef = useRef<HTMLSpanElement>(null)
-  useBoldTrackingLock(labelRef, selected)
+  useBoldTrackingLock(labelRef, selected, objectLabel(obj))
   // 可编辑（能进图内编辑）与隐藏 / 锁定一样进可达名：角标只是视觉记号
   const stateLabel = [
     isScript && lt('editableState'),

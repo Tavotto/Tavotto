@@ -16,7 +16,7 @@ globalThis.IS_REACT_ACT_ENVIRONMENT = true
 
 function Label({ text, selected }: { text: string; selected: boolean }) {
   const ref = useRef<HTMLSpanElement>(null)
-  useBoldTrackingLock(ref, selected)
+  useBoldTrackingLock(ref, selected, text)
   return (
     <span ref={ref} data-label className="truncate">
       {text}
@@ -26,14 +26,20 @@ function Label({ text, selected }: { text: string; selected: boolean }) {
 
 let root: Root
 let host: HTMLDivElement
+let rangeCalls = 0
+let boxWidth = 100 // 标签盒宽；jsdom 不排版，clientWidth 按它桩
 const original = (Range.prototype as { getBoundingClientRect?: unknown }).getBoundingClientRect
 
 beforeEach(() => {
+  rangeCalls = 0
+  boxWidth = 100
+  Object.defineProperty(HTMLElement.prototype, 'clientWidth', { configurable: true, get: () => boxWidth })
   host = document.createElement('div')
   document.body.appendChild(host)
   root = createRoot(host)
   ;(Range.prototype as unknown as { getBoundingClientRect: () => DOMRect }).getBoundingClientRect =
     function (this: Range) {
+      rangeCalls++
       const el = this.commonAncestorContainer as HTMLElement
       const n = [...(el.textContent ?? '')].length
       const perChar = el.style.fontWeight === '600' ? 6.2 : 6
@@ -71,6 +77,7 @@ describe('useBoldTrackingLock', () => {
     expect(label().style.letterSpacing).not.toBe('')
     await render(false)
     expect(label().style.letterSpacing).toBe('')
+    boxWidth = 3
     await render(true, '短')
     expect(parseFloat(label().style.letterSpacing)).toBeCloseTo(-0.2, 5)
   })
@@ -78,7 +85,43 @@ describe('useBoldTrackingLock', () => {
   it('量出来是 0（jsdom / 字体未就绪）：什么都不设', async () => {
     ;(Range.prototype as unknown as { getBoundingClientRect: () => DOMRect }).getBoundingClientRect = () =>
       ({ width: 0 }) as DOMRect
-    await render(true)
+    await render(true, '零宽专用的另一段名字 zero')
     expect(label().style.letterSpacing).toBe('')
+  })
+
+  it('不截断（600 的宽度放得下标签盒）：不加字距', async () => {
+    boxWidth = 10_000
+    await render(true, '不截断的短名 fits')
+    expect(label().style.letterSpacing).toBe('')
+  })
+
+  it('只在 [selected, text] 变化时量：同样的 props 重渲染 / 同名多行，Range 不再被量', async () => {
+    const text = '计数专用的一段很长的名字 counting counting'
+    await render(true, text)
+    const first = rangeCalls
+    expect(first).toBe(2) // 400 与 600 各一次
+    for (let i = 0; i < 5; i++) await render(true, text) // 同 props 重渲染：effect 不再触发
+    expect(rangeCalls).toBe(first)
+    // 取消再选中（同名）：命中缓存，不再量
+    await render(false, text)
+    await render(true, text)
+    expect(rangeCalls).toBe(first)
+  })
+
+  it('多选 200 行同名：只量一次（2 次 Range 读），重渲染 0 次', async () => {
+    const text = '二百行共用的一段很长的名字 shared shared shared'
+    const Many = () => (
+      <>
+        {Array.from({ length: 200 }, (_, i) => (
+          <Label key={i} text={text} selected />
+        ))}
+      </>
+    )
+    await act(async () => root.render(<Many />))
+    expect(rangeCalls).toBe(2)
+    const spaced = host.querySelectorAll<HTMLElement>('[data-label]')
+    expect([...spaced].every((el) => el.style.letterSpacing !== '')).toBe(true)
+    await act(async () => root.render(<Many />))
+    expect(rangeCalls).toBe(2)
   })
 })
