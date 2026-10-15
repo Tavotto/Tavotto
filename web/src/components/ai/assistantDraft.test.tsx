@@ -379,7 +379,7 @@ describe('同步状态机：单一 reconcile + 写入版本（#1098）', () => {
     expect(input().value).toBe('用户这次真实输入的内容')
   })
 
-  it('墙钟回拨 + 对账读还没回来就想输入：读完之前输入框只读（输入不被收），读完后输入，第一次写被判 stale 但库里的戳已见过 → 以本地为准重写，服务器最终是用户的内容', async () => {
+  it('墙钟回拨 + 对账读还没回来就想输入：读完之前输入框只读（输入不被收），读完后输入，戳已被读到的库里戳抬高 → 第一次写就被接受，服务器最终是用户的内容', async () => {
     be.putStamped('pa', 'Fig1.pdf', '库里的旧稿', Date.now() * 1000 + 5_000_000_000)
     const release = be.holdReads() // 对账的读被扣住：本页还不知道服务器戳
     await mount()
@@ -391,8 +391,8 @@ describe('同步状态机：单一 reconcile + 写入版本（#1098）', () => {
     await settle()
     expect(input().readOnly).toBe(false)
     expect(input().placeholder).not.toBe('正在载入草稿…')
-    await typeText('用户这次真实输入的内容') // 此刻分配的戳比库里的小，但库里的戳已读到（已见）
-    await act(async () => window.dispatchEvent(new Event('pagehide'))) // 第一次写：stale（库里戳已见过）→ 提升重写
+    await typeText('用户这次真实输入的内容') // 读到的库里戳已抬高本页下限
+    await act(async () => window.dispatchEvent(new Event('pagehide')))
     await settle()
     expect(be.draft('pa', 'Fig1.pdf')).toBe('用户这次真实输入的内容') // 对照：旧实现采纳服务器旧值、盖掉输入
     expect(input().value).toBe('用户这次真实输入的内容')
