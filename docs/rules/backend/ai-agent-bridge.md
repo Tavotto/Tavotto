@@ -140,6 +140,10 @@
   **`GET /api/ai/history?status=running`（无搜索 / 固定筛选）一次返回全部运行中的行，不分页**（运行中的会话天然有上限；
   翻页期间集合会变，offset 翻页会漏掉仍在运行的），硬上限 2000，超过时响应带 `truncated: true` 并记一条日志（实际不会发生）；
   其余查询的分页行为不变。前端 `doRestore` 因此一次请求取全。
+  **会话详情 `GET /api/ai/sessions/<sid>` 带 `final`**：只有 `_pump` 收尾（changed / diff / refresh 都确定、已落库）之后才为 true。
+  `cancel` 之后 status 立刻是 `cancelled`，但结果还没算出来——那份快照 `final: false`，前端不得当终态。历史库里的行以 `ended_ms`
+  是否已写判（`cancel` 只改 status、不写 ended_ms），重启后的 sidecar 回退路径恒为 true；启动清理给死掉的 cancelled 行补 `ended_ms`。
+  迁移补列吞掉 `duplicate column name`（两个连接同时迁移同一个库时后到的会撞上）。
   **请求预留是跨进程原子的**：进程内的查找只是快速路径（两个 Tavotto 进程共用同一数据目录时管不到对方）。真正的闸门是
   `ai_history.record_start`——`BEGIN IMMEDIATE` 事务里对 `ai_requests` 做**普通 INSERT**（不加 OR IGNORE / OR REPLACE），
   唯一约束冲突 = 别人已预留，回 `(False, 既有会话 id)`，`run()` 清掉为这次尝试备好的快照 / sidecar、不 spawn、按去重回既有会话；

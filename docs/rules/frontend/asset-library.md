@@ -142,6 +142,8 @@
      所以只要本地还有非终态会话（running 或接回的占位），`aiStore` 每 15 s（`SAFETY_NET_MS`）对它们走一次
      `settleRunningSessions`（只读快照）：错过的 `ai.done` 最多 15 s 后被收尾、发送锁解开。没有非终态会话不轮询、页面不可见暂停
      （恢复可见立即跑一次）、换项目会话清空后自然停；详情读取按「代次 + 项目 + 会话 id」在途去重。
+     **快照只有 `final === true` 才算终态**（`snapshotIsFinal`；`cancel` 之后 status 是 cancelled 但 changed / diff 还没算出来，不是终态；
+     老后端没有该字段时退回按 status 判），终态快照的转录是权威来源——收尾时按顺序与本地 entries 合并（补回断线期间丢的、不重复、本地独有的保留）。
   **「首个 POST 不确定」引出的所有分支**（用户点查询、同 id 重发返回 `deduped:true`）都收在 `aiStore.settleFromSnapshot`：
   向后端要请求 + 会话快照（详情只在 `readSessionDetail` 一处读），按快照的真实状态收尾（终态走正常完成路径含 refresh
   警告，仍在跑才是 running，读不到保持未确认、绝不凭摘要或 deduped 响应建 running 会话）。看护
