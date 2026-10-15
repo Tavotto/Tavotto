@@ -335,7 +335,7 @@ def _kill_tree(proc: subprocess.Popen) -> None:
                 ["taskkill", "/F", "/T", "/PID", str(proc.pid)], capture_output=True, timeout=30
             )
         else:
-            os.killpg(proc.pid, signal.SIGKILL)
+            os.killpg(proc.pid, getattr(signal, "SIGKILL", signal.SIGTERM))
     except (OSError, subprocess.TimeoutExpired):
         proc.kill()
 
