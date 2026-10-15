@@ -9363,9 +9363,17 @@ def api_ai_draft_put():
     text = body.get("text")
     if not isinstance(text, str):
         abort(400)
+    # 写入戳（单调；跨标签页可比）：旧戳的写入被拒（200 + stale），不覆盖。老前端不带 = 视为最新
+    stamp = body.get("stamp")
+    if stamp is not None and (isinstance(stamp, bool) or not isinstance(stamp, int) or stamp < 0):
+        abort(400)
     project = str(require_project().resolve())
     try:
-        return jsonify(engine_ai_history.put_draft(project, _draft_file_id(body.get("file")), text))
+        return jsonify(
+            engine_ai_history.put_draft(
+                project, _draft_file_id(body.get("file")), text, stamp=stamp
+            )
+        )
     except engine_ai_history.DraftTooLarge as exc:
         return _draft_too_large(exc)
 

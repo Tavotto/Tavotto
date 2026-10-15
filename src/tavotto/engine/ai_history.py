@@ -58,6 +58,7 @@ CREATE TABLE IF NOT EXISTS ai_drafts (
   text TEXT NOT NULL,
   revision INTEGER NOT NULL,
   updated_ms INTEGER NOT NULL,
+  stamp INTEGER NOT NULL DEFAULT 0,
   PRIMARY KEY (project, file_id)
 );
 CREATE TABLE IF NOT EXISTS ai_pending (
@@ -127,6 +128,9 @@ def _migrate(con: sqlite3.Connection) -> None:
         if name not in have:
             con.execute(f"ALTER TABLE sessions ADD COLUMN {name} {kind}")
     con.execute(_REQUEST_INDEX)
+    # 草稿写入戳：旧表没有，补列（见 `put_draft` 的「旧戳不覆盖新戳」）
+    if "stamp" not in {row["name"] for row in con.execute("PRAGMA table_info(ai_drafts)")}:
+        con.execute("ALTER TABLE ai_drafts ADD COLUMN stamp INTEGER NOT NULL DEFAULT 0")
     # 待确认账本按**脚本**也要查得到（发起它的面板可能已被删 / 换图）：`script` 是后补的列
     if "script" not in {row["name"] for row in con.execute("PRAGMA table_info(ai_pending)")}:
         con.execute("ALTER TABLE ai_pending ADD COLUMN script TEXT")
@@ -360,7 +364,7 @@ def get_draft(project: str, file_id: str, db_path: Path | None = None) -> dict:
     """`{draft: {text, revision, updated_ms} | None, pendings: [{rid, text, sent, created_ms}]}`（老 → 新）。"""
     with _connect(db_path) as con:
         row = con.execute(
-            "SELECT text, revision, updated_ms FROM ai_drafts WHERE project=? AND file_id=?",
+            "SELECT text, revision, updated_ms FROM ai_drafts WHERE project=? AND file_id=? AND text != ''",
             (project, file_id),
         ).fetchone()
         pend = con.execute(
@@ -380,37 +384,59 @@ def get_draft(project: str, file_id: str, db_path: Path | None = None) -> dict:
     return {"draft": dict(row) if row else None, "pendings": pendings}
 
 
-def put_draft(project: str, file_id: str, text: str, db_path: Path | None = None) -> dict:
-    """全文覆盖（最后写入为准）。空文本 = 删。超限抛 `DraftTooLarge`，旧稿也删（不留一句过期的话）。返回 `{revision}`。"""
+def _now_stamp() -> int:
+    """服务端自己产生的写入戳（微秒量级的墙钟）：删除类写入用它，保证「删除之前发出的旧写入」排在它后面被拒。"""
+    return _now_ms() * 1000
+
+
+def put_draft(
+    project: str,
+    file_id: str,
+    text: str,
+    db_path: Path | None = None,
+    stamp: int | None = None,
+) -> dict:
+    """全文覆盖。**每次写入带一个单调的写入戳（客户端墙钟微秒 + 本标签页内单调自增），服务端只接受比已存最新戳更新的写入**——
+    旧写入（PUT A 在途时用户又写了 B，keepalive 的 B 先落地、A 后落地）一定被拒（`stale: True`，不覆盖），
+    「旧请求赢」在服务器端就不可能发生；前端的排队救不了 pagehide 的 keepalive（拿不到响应）。
+    跨标签页同理：写入戳最新者为准。不带戳（老前端）= 视为最新（戳取「现在」与已存戳+1 的较大者）。
+
+    空文本 = 删，但**留一条墓碑**（空文本 + 戳）：否则删除之后迟到的旧写入会因为「没有已存戳」而复活。
+    超限抛 `DraftTooLarge`，旧稿也删（同样留墓碑）。返回 `{revision, stamp}` 或 `{stale: True, revision, stamp}`。"""
     now = _now_ms()
     too_large = len(text.encode("utf-8")) > DRAFT_MAX_BYTES
     rev = 0
     with _connect(db_path) as con:
-        if text == "" or too_large:
-            # 删在事务里提交掉，再在 `with` 之外抛——事务里抛会把这次删除一起回滚
-            con.execute("DELETE FROM ai_drafts WHERE project=? AND file_id=?", (project, file_id))
-        else:
-            prev = con.execute(
-                "SELECT revision FROM ai_drafts WHERE project=? AND file_id=?", (project, file_id)
-            ).fetchone()
-            rev = (prev["revision"] if prev else 0) + 1
-            con.execute(
-                "INSERT OR REPLACE INTO ai_drafts (project, file_id, text, revision, updated_ms) VALUES (?,?,?,?,?)",
-                (project, file_id, text, rev, now),
-            )
-            _prune_drafts(con, project, now)
+        prev = con.execute(
+            "SELECT revision, stamp FROM ai_drafts WHERE project=? AND file_id=?",
+            (project, file_id),
+        ).fetchone()
+        prev_stamp = prev["stamp"] if prev else -1
+        if stamp is None:
+            stamp = max(_now_stamp(), prev_stamp + 1)
+        elif stamp <= prev_stamp:
+            return {"stale": True, "revision": prev["revision"], "stamp": prev_stamp}
+        rev = (prev["revision"] if prev else 0) + 1
+        body = "" if (text == "" or too_large) else text
+        con.execute(
+            "INSERT OR REPLACE INTO ai_drafts (project, file_id, text, revision, updated_ms, stamp) VALUES (?,?,?,?,?,?)",
+            (project, file_id, body, rev, now, stamp),
+        )
+        _prune_drafts(con, project, now)
     if too_large:
         raise DraftTooLarge(DRAFT_MAX_BYTES)
-    return {"revision": rev}
+    return {"revision": rev, "stamp": stamp}
 
 
 def delete_draft_if(project: str, file_id: str, if_text: str, db_path: Path | None = None) -> bool:
-    """**条件删除**：只有库里的文本仍等于 `if_text` 才删——另一个标签页后写的新稿不能被这次删除抹掉。"""
+    """**条件删除**：只有库里的文本仍等于 `if_text` 才删——另一个标签页后写的新稿不能被这次删除抹掉。
+    删 = 清空文本、推进戳（墓碑），所以此前发出的旧写入随后落地也会被拒。"""
     with _connect(db_path) as con:
         return (
             con.execute(
-                "DELETE FROM ai_drafts WHERE project=? AND file_id=? AND text=?",
-                (project, file_id, if_text),
+                "UPDATE ai_drafts SET text='', revision=revision+1, updated_ms=?, stamp=MAX(stamp+1, ?) "
+                "WHERE project=? AND file_id=? AND text=? AND text != ''",
+                (_now_ms(), _now_stamp(), project, file_id, if_text),
             ).rowcount
             > 0
         )
@@ -497,7 +523,8 @@ def accept_pending(project: str, file_id: str, rid: str, db_path: Path | None = 
             (project, file_id, rid),
         )
         n = con.execute(
-            "DELETE FROM ai_drafts WHERE project=? AND file_id=? AND text=?",
-            (project, file_id, pend["text"]),
+            "UPDATE ai_drafts SET text='', revision=revision+1, updated_ms=?, stamp=MAX(stamp+1, ?) "
+            "WHERE project=? AND file_id=? AND text=? AND text != ''",
+            (_now_ms(), _now_stamp(), project, file_id, pend["text"]),
         ).rowcount
     return {"cleared": True, "draft_deleted": n > 0}

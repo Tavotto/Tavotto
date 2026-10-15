@@ -254,7 +254,7 @@ def test_tables_hold_only_the_documented_columns():
         raw.executescript(ai_history._SCHEMA)
         d = [r[1] for r in raw.execute("PRAGMA table_info(ai_drafts)")]
         p = [r[1] for r in raw.execute("PRAGMA table_info(ai_pending)")]
-    assert d == ["project", "file_id", "text", "revision", "updated_ms"]
+    assert d == ["project", "file_id", "text", "revision", "updated_ms", "stamp"]
     assert p == ["project", "file_id", "rid", "text", "sent", "script", "created_ms"]
 
 
@@ -309,3 +309,117 @@ def test_pending_table_without_script_column_is_migrated(tmp_path):
         "rid-aaaaaaaa": None,
         "rid-bbbbbbbb": "a/plot.py",
     }
+
+
+# ---------------------------------------------------------------------------
+# 写入戳：旧请求赢在服务器端就不可能发生
+# ---------------------------------------------------------------------------
+def put_s(client, pj, file, text, stamp):
+    return client.put(
+        "/api/ai/drafts", json={"file": file, "text": text, "stamp": stamp}, headers=H(pj)
+    ).get_json()
+
+
+def test_a_write_with_an_older_stamp_is_rejected_and_never_overwrites(client, two):
+    """PUT A 在途时用户又写了 B：B（keepalive）先落地、A 后落地——A 的戳更旧，必须被拒，服务器最终留着 B。"""
+    a, _ = two
+    assert put_s(client, a, "F", "B（新）", 2_000)["revision"] >= 1  # 新戳先到
+    late = put_s(client, a, "F", "A（旧）", 1_000)  # 旧戳后到
+    assert late["stale"] is True and late["stamp"] == 2_000
+    assert get(client, a, "F")["draft"]["text"] == "B（新）"
+    # 对照：更新的戳被接受
+    ok = put_s(client, a, "F", "C（更新）", 3_000)
+    assert "stale" not in ok and ok["stamp"] == 3_000
+    assert get(client, a, "F")["draft"]["text"] == "C（更新）"
+
+
+def test_an_equal_stamp_is_not_newer_and_is_rejected(client, two):
+    a, _ = two
+    put_s(client, a, "F", "先到", 5_000)
+    assert put_s(client, a, "F", "同戳后到", 5_000)["stale"] is True
+    assert get(client, a, "F")["draft"]["text"] == "先到"
+
+
+def test_a_late_old_write_cannot_resurrect_a_deleted_draft(client, two):
+    """空文本 = 删，但留墓碑（戳还在）：删除之后迟到的旧写入同样被拒，不会复活。"""
+    a, _ = two
+    put_s(client, a, "F", "旧稿", 1_000)
+    put_s(client, a, "F", "", 2_000)  # 用户清空（删）
+    assert get(client, a, "F")["draft"] is None
+    assert put_s(client, a, "F", "迟到的旧稿", 1_500)["stale"] is True
+    assert get(client, a, "F")["draft"] is None
+
+
+def test_server_side_deletes_advance_the_stamp_so_earlier_writes_are_rejected(client, two):
+    """条件删除 / accept 清掉草稿后，在那之前发出的旧写入（戳更小）随后落地也被拒。"""
+    a, _ = two
+    now_stamp = ai_history._now_stamp()
+    put_s(client, a, "F", "已被接受的话", now_stamp - 5_000_000)
+    client.put(
+        f"/api/ai/drafts/pending/{RID}",
+        json={"file": "F", "text": "已被接受的话", "sent": SENT},
+        headers=H(a),
+    )
+    acc = client.post(
+        f"/api/ai/drafts/pending/{RID}/accept", json={"file": "F"}, headers=H(a)
+    ).get_json()
+    assert acc["draft_deleted"] is True
+    assert (
+        put_s(client, a, "F", "已被接受的话", now_stamp - 1_000_000)["stale"] is True
+    )  # 迟到的 PUT 复活不了
+    assert get(client, a, "F")["draft"] is None
+    # 之后用户新写的（戳更新）照常接受
+    assert "stale" not in put_s(client, a, "F", "新写的", ai_history._now_stamp() + 10_000_000)
+
+
+def test_stamps_are_per_project_and_per_file(client, two):
+    a, b = two
+    put_s(client, a, "F", "A 项目", 9_000)
+    assert "stale" not in put_s(client, b, "F", "B 项目戳更小也不受影响", 1_000)
+    assert "stale" not in put_s(client, a, "G", "别的面板", 1_000)
+
+
+def test_unstamped_legacy_writes_are_treated_as_newest(client, two):
+    a, _ = two
+    put_s(client, a, "F", "带戳的", ai_history._now_stamp() + 50_000_000)
+    r = client.put(
+        "/api/ai/drafts", json={"file": "F", "text": "老前端不带戳"}, headers=H(a)
+    ).get_json()
+    assert "stale" not in r
+    assert get(client, a, "F")["draft"]["text"] == "老前端不带戳"
+    assert (
+        client.put(
+            "/api/ai/drafts", json={"file": "F", "text": "x", "stamp": -1}, headers=H(a)
+        ).status_code
+        == 400
+    )
+    assert (
+        client.put(
+            "/api/ai/drafts", json={"file": "F", "text": "x", "stamp": "9"}, headers=H(a)
+        ).status_code
+        == 400
+    )
+    assert (
+        client.put(
+            "/api/ai/drafts", json={"file": "F", "text": "x", "stamp": True}, headers=H(a)
+        ).status_code
+        == 400
+    )
+
+
+def test_old_drafts_table_without_stamp_is_migrated(tmp_path):
+    db = tmp_path / "old.sqlite3"
+    with sqlite3.connect(db) as raw:
+        raw.executescript(
+            "CREATE TABLE ai_drafts (project TEXT NOT NULL, file_id TEXT NOT NULL, text TEXT NOT NULL, "
+            "revision INTEGER NOT NULL, updated_ms INTEGER NOT NULL, PRIMARY KEY (project, file_id));"
+            f"INSERT INTO ai_drafts VALUES ('/p','F','旧稿',1,{ai_history._now_ms()});"
+        )
+    assert (
+        ai_history.get_draft("/p", "F", db_path=db)["draft"]["text"] == "旧稿"
+    )  # 迁移补列后老行仍在
+    assert (
+        ai_history.put_draft("/p", "F", "新稿", db_path=db, stamp=10)["stamp"] == 10
+    )  # 老行戳为 0，新戳更大被接受
+    assert ai_history.put_draft("/p", "F", "更旧", db_path=db, stamp=5)["stale"] is True
+    assert ai_history.get_draft("/p", "F", db_path=db)["draft"]["text"] == "新稿"
