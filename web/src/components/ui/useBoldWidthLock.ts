@@ -70,11 +70,10 @@ export function useBoldTrackingLock<T extends HTMLElement>(active: boolean, text
   const apply = useCallback((el: HTMLElement) => {
     const { active, text } = latest.current
     el.style.letterSpacing = ''
+    // 每次都先撤掉上一次装的观察回调：它捕获的是旧文字的宽度，改名后留着，之后调抽屉宽会把旧字距套到新标签上
+    unwatchSize(el)
     const chars = [...text].length
-    if (!active || !chars) {
-      unwatchSize(el)
-      return
-    }
+    if (!active || !chars) return
     const cs = getComputedStyle(el)
     const key = `${cs.fontFamily}|${cs.fontSize}|${text}`
     let hit = boldWidthCache.get(key)

@@ -203,4 +203,25 @@ describe('useBoldTrackingLock', () => {
     expect(again.some((el) => ro.observed.has(el))).toBe(false)
     root = createRoot(host)
   })
+
+  it('有宽差的标签原地改成无宽差的文字：之后 resize 回调不会把旧字距套上去', async () => {
+    const wide = '改名换字专用的一段很长的名字 latin latin latin latin'
+    boxWidth = 50
+    await render(true, wide)
+    expect(label().style.letterSpacing).not.toBe('')
+    expect(ro.observed.has(label())).toBe(true)
+    // 改成「定宽」文字：400 与 600 一样宽（桩里按字数线性，这里让 600 的单字宽等于 400 的）
+    const orig = (Range.prototype as unknown as { getBoundingClientRect: () => DOMRect }).getBoundingClientRect
+    ;(Range.prototype as unknown as { getBoundingClientRect: () => DOMRect }).getBoundingClientRect = function (this: Range) {
+      const el = this.commonAncestorContainer as HTMLElement
+      return { width: [...(el.textContent ?? '')].length * 6 } as DOMRect
+    }
+    await render(true, '定宽的另一段文字不再有宽差 cjk cjk cjk cjk')
+    expect(label().style.letterSpacing).toBe('')
+    expect(ro.observed.has(label())).toBe(false)
+    boxWidth = 10
+    await act(async () => ro.fire(label()))
+    expect(label().style.letterSpacing).toBe('')
+    ;(Range.prototype as unknown as { getBoundingClientRect: () => DOMRect }).getBoundingClientRect = orig
+  })
 })

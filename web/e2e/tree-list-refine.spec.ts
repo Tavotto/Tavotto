@@ -148,7 +148,8 @@ test('分栏手柄：双击复位、拖动中 Esc 回滚、键盘步进与 Home/
   // 左抽屉：随便开一个页签
   const rail = page.locator('[data-rail="assets"]')
   if ((await rail.getAttribute('aria-expanded')) !== 'true') await rail.click()
-  const handle = page.locator('[role="separator"][aria-valuemin="280"]')
+  const handle = page.locator('[data-resize-handle="left-drawer"]')
+  await expect(handle).toHaveCount(1)
   await expect(handle).toBeVisible()
   const drawer = page.locator('[data-left-drawer]')
   const widthOf = async () => Math.round((await drawer.boundingBox())!.width)

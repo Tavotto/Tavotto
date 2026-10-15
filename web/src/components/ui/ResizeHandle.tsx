@@ -14,9 +14,10 @@ import { cn } from '@/lib/utils'
  *   看得见的只有贴边的一根发丝线：hover 1px border-strong，键盘聚焦 / 拖拽 2px accent（蓝色不做大块背景）。
  *
  * 宽度本身不在这里存：`value` 进、`onChange(px)` 出，调用方（uiStore 的 `setLeftWidth` / `setRightWidth`）
- * 负责夹值与持久化。`data-drawer-resize-line` 是发丝线的稳定钩子。
+ * 负责夹值与持久化。`data-resize-handle` 是把手本身、`data-drawer-resize-line` 是发丝线的稳定钩子。
  */
 export function ResizeHandle({
+  name,
   side,
   value,
   min,
@@ -26,6 +27,8 @@ export function ResizeHandle({
   label,
   step = 16,
 }: {
+  /** 稳定钩子 `data-resize-handle`（`left-drawer` / `inspector`）：e2e 按它找，不按 role + aria-value* */
+  name: string
   /** 把手贴在容器的哪一边：右缘（左抽屉，向右拖 = 变宽）或左缘（属性栏，向左拖 = 变宽） */
   side: 'left' | 'right'
   value: number
@@ -107,6 +110,7 @@ export function ResizeHandle({
     <div
       ref={ref}
       role="separator"
+      data-resize-handle={name}
       aria-orientation="vertical"
       aria-label={label}
       aria-valuenow={Math.round(value)}

@@ -189,6 +189,7 @@ function WidthHandle() {
   const width = useUiStore((s) => s.rightWidth)
   return (
     <ResizeHandle
+      name="inspector"
       side="left"
       value={width}
       min={RIGHT_MIN}

@@ -36,6 +36,7 @@ function Harness({ side, start = 300 }: { side: 'left' | 'right'; start?: number
           setV(c)
         }}
         label="调整宽度"
+        name="test-handle"
       />
     </div>
   )
@@ -75,6 +76,7 @@ describe('ResizeHandle', () => {
     expect(el.getAttribute('aria-valuemax')).toBe('360')
     expect(el.getAttribute('aria-label')).toBe('调整宽度')
     expect(el.tabIndex).toBe(0)
+    expect(el.dataset.resizeHandle).toBe('test-handle')
   })
 
   it('双击复位到默认宽度', async () => {

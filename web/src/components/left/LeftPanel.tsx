@@ -144,6 +144,7 @@ function WidthHandle() {
   const width = useUiStore((s) => s.leftWidth)
   return (
     <ResizeHandle
+      name="left-drawer"
       side="right"
       value={width}
       min={LEFT_MIN}
