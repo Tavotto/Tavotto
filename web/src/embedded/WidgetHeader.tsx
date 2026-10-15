@@ -16,7 +16,7 @@ import { cn } from '@/lib/utils'
  * 是个框）——与桌面版 LeftPanel 停靠态同一组 token 改写，fieldBox 原语不动。
  */
 export const DESK_DRAWER =
-  'bg-bg [--drawer-bg:var(--color-bg)] [--color-field-hover:var(--color-surface-2)] [--color-field:var(--color-surface)]'
+  'bg-bg [--drawer-bg:var(--color-bg)] [--color-field-hover:var(--color-field-hover-desk)] [--color-field:var(--color-surface)]'
 
 /** 白色工作面板里的侧栏（属性页）：`--drawer-bg` = surface，不画分隔线 */
 export const PANEL_DRAWER = 'bg-surface [--drawer-bg:var(--color-surface)]'

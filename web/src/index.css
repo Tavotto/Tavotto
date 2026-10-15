@@ -91,6 +91,12 @@
      ink-3 落在 field 上 4.71:1、hover 底 4.55:1（tokenContrast.test 守着 ≥4.5），占位 / 单位 / 前缀都还能读。 */
   --color-field: #f2f2f0;
   --color-field-hover: #eeeeec;
+  /* 桌面子树里框的 hover 底（LeftPanel / WidgetHeader 把 --color-field-hover 重定向到它；静态底重定向成 surface）：
+     浅色里 field-hover（#eeeeec）比灰桌面（#efefed）还深，surface-2（#f7f7f5）对桌面只有 ≈1.07:1，都低于「框看得见」的 1.1:1 线。
+     白面（surface）已经是浅色的天花板，hover 只能在它与桌面之间往下走一小步：surface 混 ink 2% = #fafafa，
+     对桌面 1.103:1（≥1.1）、对静态白框 1.044:1（仍有可感差异）；暗色里同一公式落在 surface 之上一点（#262624），对桌面 1.19:1。
+     tokenContrast.test 守着两套主题下静态与 hover 对桌面都 ≥1.1:1。 */
+  --color-field-hover-desk: color-mix(in srgb, var(--color-ink) 2%, var(--color-surface));
 
   /* 墨阶（2026-10-07 设计审计 §1.1，用户拍板 ink-2 #4a4a45 / ink-3 #74746e）：此前 ink-2 #5c5c55 与 ink-3 #6b6b64
      几乎同色，次级与元信息分不开。ink-2 压深到 8.9:1（白）；ink-3 的拍板值 #74746e 在桌面上只有 4.08:1、

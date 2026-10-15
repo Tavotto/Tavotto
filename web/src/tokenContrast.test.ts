@@ -205,17 +205,24 @@ for (const theme of THEMES) {
       }
     })
 
-    it('桌面（bg）上的可编辑框：field 本身对桌面分不出（<1.1），所以桌面子树把 field 重定向成白面；重定向后看得见、hover 不比所在面更暗', () => {
+    it('桌面（bg）上的可编辑框：field 本身对桌面分不出（<1.1），桌面子树把 field 重定向成白面、hover 重定向成 field-hover-desk；两档对桌面都 ≥1.1:1，hover 不比静态面更暗', () => {
       const bg = token('bg')
       // 这是重定向存在的理由：浅色里不重定向，框直接坐在桌面上就「消失」（field 对桌面约 1.04:1）；暗色本来就分得开，重定向无害
       if (theme === 'light') expect(contrast(token('field'), bg)).toBeLessThan(1.1)
-      // 重定向（LeftPanel 的 `[--color-field:var(--color-surface)]`、`[--color-field-hover:var(--color-surface-2)]`）之后：
-      expect(contrast(token('surface'), bg), '静态框对桌面').toBeGreaterThanOrEqual(1.1)
-      // hover 的 surface-2 不得比所在的桌面更暗（浅色里是更亮的一格，暗色里更亮一级）
-      expect(luminance(token('surface-2'))).toBeGreaterThan(luminance(bg))
+      // 静态：surface（`[--color-field:var(--color-surface)]`）
+      const staticBox = token('surface')
+      // hover：field-hover-desk = surface 混 ink N%（`[--color-field-hover:var(--color-field-hover-desk)]`）
+      const m = VARS[theme]['color-field-hover-desk']?.match(/^color-mix\(in srgb, var\(--color-ink\) ([\d.]+)%, var\(--color-surface\)\)$/)
+      expect(m, `${theme} 表里 --color-field-hover-desk 不是「surface 混 ink N%」`).toBeTruthy()
+      const hoverBox = over(Number(m![1]) / 100, staticBox, theme)
+      expect(contrast(staticBox, bg), '静态框对桌面').toBeGreaterThanOrEqual(1.1)
+      expect(contrast(hoverBox, bg), 'hover 框对桌面').toBeGreaterThanOrEqual(1.1)
+      // hover 与静态仍有可感差异（> 1.02:1），且不比所在的桌面更暗
+      expect(contrast(hoverBox, staticBox), 'hover 对静态框').toBeGreaterThan(1.02)
+      expect(luminance(hoverBox)).toBeGreaterThan(luminance(bg))
       for (const f of [readFileSync(path.resolve(HERE, 'components/left/LeftPanel.tsx'), 'utf8'), readFileSync(path.resolve(HERE, 'embedded/WidgetHeader.tsx'), 'utf8')]) {
         expect(f).toContain('[--color-field:var(--color-surface)]')
-        expect(f).toContain('[--color-field-hover:var(--color-surface-2)]')
+        expect(f).toContain('[--color-field-hover:var(--color-field-hover-desk)]')
       }
     })
 

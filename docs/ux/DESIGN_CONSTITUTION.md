@@ -850,7 +850,8 @@ reduced-motion 契约）；68/85 命中 `foundation.test`（533 处）；弹簧 
   画布标签行 + 画布 + 属性栏。画布灰 `canvas` `#f3f2ee` 铺到面板边缘、由面板圆角裁切，不留一圈白边。
   画布标签行与属性栏页签条同高 44，底边 hairline 连成一条。
 - **抽屉在桌面上**：停靠的抽屉底色就是桌面；里面的可编辑框换成白底（抽屉子树里把 `field` / `field-hover`
-  两个 token 改成 surface / surface-2，`fieldBox` 原语不动）。覆盖式抽屉仍是白色浮层。
+  两个 token 改成 surface / `field-hover-desk`（= surface 混 ink 2%，浅色 #fafafa），`fieldBox` 原语不动；2026-10-15 起 hover 不再用 surface-2——
+  它对桌面只有 ≈1.07:1，低于 1.1:1 线，tokenContrast.test 守着静态与 hover 对桌面都 ≥1.1:1）。覆盖式抽屉仍是白色浮层。
 - **左轨写字**：轨宽 64，轨钮图标下面一个短名（`rail.short.*`，两个字 / 一个英文词，aria-hidden；可达名仍是全名）；
   选中 = 白底 + `shadow-card` + 实心图标。
 - **品牌蓝 #5A92E5**：对白只有 3.14:1，不能直接当焦点环或蓝字。同色相压深两档：`accent` `#2c73de`（焦点环 /
