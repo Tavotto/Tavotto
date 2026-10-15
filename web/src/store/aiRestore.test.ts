@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { handleServerEvent } from '@/hooks/useServerEvents'
 import { setCurrentProjectId } from '@/lib/session'
-import { isSessionOf, setAiSubmissionLedger, submissionBlocks, useAiStore } from './aiStore'
+import { isSessionOf, SAFETY_NET_MS, setAiSubmissionLedger, submissionBlocks, useAiStore } from './aiStore'
 import { useUiStore } from './uiStore'
 
 const json = (b: unknown, status = 200) =>
@@ -50,12 +50,15 @@ globalThis.fetch = (async (url: unknown, init?: RequestInit) => {
   if (rq && requestsDown) return json({ error: 'boom', code: 'internal_error' }, 500)
   if (rq) return requestsDb[rq[1]] ? json(requestsDb[rq[1]]) : json({ error: 'x', code: 'ai_request_not_found' }, 404)
   const m = /\/api\/ai\/sessions\/([^/?]+)$/.exec(u.split('?')[0])
-  if (m && detailGate) {
-    const g = detailGate
-    detailGate = null
-    await g
+  if (m) {
+    const snapshot = detail[m[1]] // 读的是**请求发出那一刻**的详情（门闩放行得再晚，答复也是当时的）
+    if (detailGate) {
+      const g = detailGate
+      detailGate = null
+      await g
+    }
+    return snapshot ? json(snapshot) : json({ error: 'nf' }, 404)
   }
-  if (m) return detail[m[1]] ? json(detail[m[1]]) : json({ error: 'nf' }, 404)
   if (u.includes('/cancel')) return json({ ok: true })
   return json({})
 }) as typeof fetch
@@ -567,6 +570,7 @@ describe('还原出的未确认提交自动按快照收尾，不等用户点「�
     useAiStore.getState().restoreSubmission(SUB) // 自动收尾：请求快照已回（done），详情在途
     await vi.waitFor(() => expect(urls.some((u) => u.includes('/api/ai/sessions/s-run'))).toBe(true))
     history.pa = [row({ id: 's-run', script: 'fig1.py', client_request_id: SUB.rid })] // 此刻历史里它还是 running
+    detail['s-run'] = { agent: 'codex', status: 'running', changed: false, diff: '', transcript: [] } // 恢复里的那次详情读取看到的还在跑
     await useAiStore.getState().restoreRunning() // 占位被建起并认领这条提交（提交被删）
     expect(Object.keys(useAiStore.getState().submissions)).toEqual([])
     expect(sessions()[0]).toMatchObject({ id: 's-run', status: 'running' })
@@ -577,3 +581,83 @@ describe('还原出的未确认提交自动按快照收尾，不等用户点「�
     expect(JSON.stringify(useUiStore.getState().status)).not.toBe('null') // 收尾提示
   })
 })
+
+describe('错过 ai.done 这一族的结构性兜底：建完占位一律读详情 + 低频安全网轮询（#1111 Codex P2）', () => {
+  const detailReads = () => urls.filter((u) => /\/api\/ai\/sessions\/[^/?]+(\?|$)/.test(u)).length
+  const setVisibility = (v: 'visible' | 'hidden') => {
+    Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => v })
+    document.dispatchEvent(new Event('visibilitychange'))
+  }
+  afterEach(() => {
+    vi.useRealTimers()
+    setVisibility('visible')
+  })
+
+  it('挂载时恢复先于事件流：历史返回 running、任务随后（事件流就绪前）已结束——建完占位就读详情收尾，没有 focus / 重连也行', async () => {
+    history.pa = [row()]
+    detail['s-run'] = { agent: 'codex', status: 'done', changed: true, diff: 'D', transcript: [] } // 历史之后、事件流之前结束了
+    await useAiStore.getState().restoreRunning()
+    expect(sessions()).toHaveLength(1)
+    expect(sessions()[0]).toMatchObject({ id: 's-run', status: 'done', changed: true, finalized: true }) // 对照：旧实现 live 里的跳过读取，永远停在 running
+    expect(sessions().some((x) => x.status === 'running')).toBe(false) // 发送解锁
+  })
+
+  it('安全网：还有非终态会话时每 15 s 读一次快照；任务在两次对账之间结束、ai.done 也错过 → 最多 15 s 后收尾、锁解开、有提示', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })
+    history.pa = [row()]
+    detail['s-run'] = { agent: 'codex', status: 'running', changed: false, diff: '', transcript: [] }
+    await useAiStore.getState().restoreRunning()
+    expect(sessions()[0]).toMatchObject({ status: 'running' })
+    const before = detailReads()
+    detail['s-run'] = { agent: 'codex', status: 'done', changed: true, diff: 'D', transcript: [] } // 此后任务结束，事件没收到
+    await vi.advanceTimersByTimeAsync(SAFETY_NET_MS - 1)
+    expect(sessions()[0]).toMatchObject({ status: 'running' }) // 还没到点
+    await vi.advanceTimersByTimeAsync(2)
+    await vi.waitFor(() => expect(sessions()[0]).toMatchObject({ status: 'done', changed: true, finalized: true }))
+    expect(detailReads()).toBeGreaterThan(before)
+    expect(useUiStore.getState().status).not.toBeNull() // 收尾提示
+  })
+
+  it('没有非终态会话时不轮询；会话收尾后轮询停止', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })
+    await vi.advanceTimersByTimeAsync(SAFETY_NET_MS * 4)
+    expect(detailReads()).toBe(0) // 空闲：一个请求都没有
+    history.pa = [row()]
+    detail['s-run'] = { agent: 'codex', status: 'running', changed: false, diff: '', transcript: [] }
+    await useAiStore.getState().restoreRunning()
+    handleServerEvent({ kind: 'ai.done', pj: 'pa', session: 's-run', status: 'done', changed: false, diff: '', script: 'fig1.py' })
+    const after = detailReads()
+    await vi.advanceTimersByTimeAsync(SAFETY_NET_MS * 4)
+    expect(detailReads()).toBe(after) // 已无非终态会话：不再轮询
+  })
+
+  it('页面不可见时暂停；恢复可见时立即跑一次', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })
+    history.pa = [row()]
+    detail['s-run'] = { agent: 'codex', status: 'running', changed: false, diff: '', transcript: [] }
+    await useAiStore.getState().restoreRunning()
+    const before = detailReads()
+    setVisibility('hidden')
+    detail['s-run'] = { agent: 'codex', status: 'done', changed: false, diff: '', transcript: [] }
+    await vi.advanceTimersByTimeAsync(SAFETY_NET_MS * 3)
+    expect(detailReads()).toBe(before) // 不可见：暂停
+    expect(sessions()[0]).toMatchObject({ status: 'running' })
+    setVisibility('visible') // 恢复可见：立即跑，不等下一个 15 s
+    await vi.waitFor(() => expect(sessions()[0]).toMatchObject({ status: 'done', finalized: true }))
+  })
+
+  it('同一会话的详情读取在途时，对账与轮询同时到只读一次（按代次 + 项目 + id 去重）', async () => {
+    history.pa = [row()]
+    detail['s-run'] = { agent: 'codex', status: 'running', changed: false, diff: '', transcript: [] }
+    await useAiStore.getState().restoreRunning()
+    const before = detailReads()
+    let open!: () => void
+    detailGate = new Promise<void>((r) => (open = r))
+    const a = useAiStore.getState().settleRunningSessions()
+    const b = useAiStore.getState().settleRunningSessions()
+    open()
+    await Promise.all([a, b])
+    expect(detailReads() - before).toBe(1)
+  })
+})
+

@@ -212,7 +212,7 @@ interface AiState {
    * 没有这一步会话会永远停在 running、把脚本锁死）。`useAiDraft.reconcile` 的每个入口（挂载 / 焦点 / 可见 / SSE 重连）
    * 都会调它；读失败 = 不知道，不动。
    */
-  settleRunningSessions: (live?: ReadonlySet<string>) => Promise<void>
+  settleRunningSessions: () => Promise<void>
   /** 后端明确说没收到之后，用**同一个**请求 id 重发 */
   resend: (rid: string) => Promise<SubmitOutcome>
   /** 放弃等待这条提交（用户改写后重新发）：之后的发送换新 id。仅 `not_received` 时由界面提供 */
@@ -268,6 +268,8 @@ const queueSupersede = (key: string, rid: string): void => {
   set.add(rid)
   supersedeQueue.set(key, set)
 }
+/** `settleRunningSessions` 在途的会话（代次 + 项目 + id），同一个会话同一时刻只读一次详情 */
+const settling = new Set<string>()
 
 /**
  * 把一个**已存在**的会话按后端的终态快照收尾（补转录、`finish`、收尾提示）。按会话 id 工作，不依赖提交是否还在：
@@ -540,13 +542,24 @@ export const useAiStore = create<AiState>((set, get) => ({
 
   queryRequest: (rid) => settleFromSnapshot(rid),
 
-  settleRunningSessions: async (live) => {
+  settleRunningSessions: async () => {
     const born = get().generation
     const pj = currentProjectId()
     for (const x of get().sessions) {
       if (!isOpenSession(x) || x.project !== pj) continue
       if (x.status !== 'running' || x.finalized || x.project !== pj || live?.has(x.id)) continue
       const snap = await readSessionDetail(x.id, x.project)
+      if (x.status !== 'running' || x.finalized || x.project !== pj) continue
+      // 在途去重：同一代次 + 项目 + 会话只读一次详情（对账入口与安全网轮询可能同时到）
+      const key = `${born}\u0000${x.project ?? ''}\u0000${x.id}`
+      if (settling.has(key)) continue
+      settling.add(key)
+      let snap
+      try {
+        snap = await readSessionDetail(x.id, x.project)
+      } finally {
+        settling.delete(key)
+      }
       const d = snap.ok ? snap.detail : null
       if (born !== get().generation || typeof d?.status !== 'string' || !snapshotIsFinal(d, d.status)) continue
       const done: DonePayload = {
@@ -775,12 +788,8 @@ async function doRestore(): Promise<void> {
     // 拉的过程中换了项目：这些会话属于旧项目，不落
     if (born !== get().generation || pj !== currentProjectId() || !Array.isArray(list)) return
     const caps = get().caps
-    const live = new Set<string>()
     for (const e of list) {
       if (e.status !== 'running') continue
-      // 暂存里已经有这个会话的终态事件（历史快照比事件旧）：它不再算 live——占位建好后回放会把它收尾
-      const finishedMeanwhile = early.get(e.id)?.some((ev) => ev.t === 'done') ?? false
-      if (!finishedMeanwhile) live.add(e.id)
       if (get().sessions.some((x) => x.id === e.id)) continue
       const session: AiSession = {
         id: e.id,
@@ -815,8 +824,9 @@ async function doRestore(): Promise<void> {
       if (rid && sub) acceptRunning(rid, get().sessions.find((x) => x.id === e.id) as AiSession)
     }
     // 本地还当它在跑、后端的运行中清单里却没有：它在断线期间结束了，`ai.done` 没收到——以后端为准收尾。
-    // 与 `reconcile` 各入口走的是**同一个** `settleRunningSessions`，不再留第二条收尾路径（`live` 里的已知仍在跑，跳过）
-    await get().settleRunningSessions(live)
+    // 与 `reconcile` 各入口走的是**同一个** `settleRunningSessions`，不再留第二条收尾路径。
+    // **不跳过刚建的占位**：历史是个比事件流早的快照，任务可能在事件流就绪之前就结束了——建完一律读一次详情按快照收尾（多一次请求）
+    await get().settleRunningSessions()
   } finally {
     restoringActive--
     if (restoringActive === 0) dropUnclaimedRestoreBuffer()
@@ -1182,4 +1192,34 @@ export function isSessionOf(
 ): boolean {
   if (s.panelId === panel.id || s.fileId === panel.fileId) return true
   return !!panel.script && sameScript(s.script, panel.script)
+}
+
+/**
+ * **安全网轮询**：终态的来源有三个——事件（`ai.done`）、对账入口（挂载 / 焦点 / 可见 / 重连 / 接受）、本轮询；任何一个都足以收尾。
+ * 事件和对账都可能错过（SSE 还没连上任务就结束了、断线期间结束……），逐个补时序只会越补越多——所以只要本地还有
+ * 非终态会话（running 或接回的占位），就每 15 s 走一次 `settleRunningSessions`（只读快照）：任何错过的 `ai.done`
+ * 最多 15 s 后被收尾、发送锁随之解开。没有非终态会话时不轮询；页面不可见时暂停，恢复可见时立即跑一次；
+ * 换项目（`clear()`）后会话清空，轮询自然停。
+ */
+export const SAFETY_NET_MS = 15_000
+let netTimer: ReturnType<typeof setInterval> | null = null
+const hasOpenSessions = (): boolean => useAiStore.getState().sessions.some((x) => x.status === 'running' && !x.finalized)
+const pageHidden = (): boolean => typeof document !== 'undefined' && document.visibilityState === 'hidden'
+function safetyNetTick(): void {
+  if (pageHidden()) return
+  void useAiStore.getState().settleRunningSessions()
+}
+function syncSafetyNet(): void {
+  const need = hasOpenSessions()
+  if (need && netTimer === null) netTimer = setInterval(safetyNetTick, SAFETY_NET_MS)
+  else if (!need && netTimer !== null) {
+    clearInterval(netTimer)
+    netTimer = null
+  }
+}
+useAiStore.subscribe(syncSafetyNet)
+if (typeof document !== 'undefined') {
+  document.addEventListener('visibilitychange', () => {
+    if (!pageHidden() && hasOpenSessions()) safetyNetTick()
+  })
 }
