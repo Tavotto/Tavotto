@@ -17,6 +17,10 @@
   幂等去重）、`runtimeAssetStore.assets`（`GET /api/runtime/assets`，只读
   清单 + `previewNonce` 预览换代）、`scriptRunStore`（运行状态机）。
   三者都在 `registry.changed` SSE 时重取**已经取过的**，项目切换全清。
+- **SSE 断线对账**：依赖安装 / 引擎 bootstrap 的进度只走 SSE（`/api/events` 无重放，队列满会丢），丢了终态事件卡片会永停「正在安装」。
+  SSE 重连与页面恢复（`visibilitychange`）时 `reconcileInstalls()`：`depRepairStore.reconcile()` 对本标签页起过、还没见到终态的作业
+  （当前卡片 + 切走项目收着的）按 `plan_id` 问一次 `fetchDependencyState`，结果走 `onProgress` 同一条规则（所属项目分格、终态副作用只在所属项目开着时派发）；
+  `idle`（后端不认识）或问不到都不改任何东西，等回包期间 SSE 已推到终态则丢弃较早的快照；`envStore` 只在还显示 `installing` 时刷环境、后端说不在跑就收尾。
   **三个 store 都有项目代际（epoch）**（清单本身的 `assetStore` 同样有，见下一条）：模块级 in-flight 请求活得比一次
   Zustand reset 长，`clear()` 必须换代 + 清 inflight，A 项目的响应绝不
   落进 B（Session 6 评审修复；vitest 各有作废用例看护）。`packageStore`
