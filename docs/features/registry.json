@@ -80,6 +80,29 @@
       ]
     },
     {
+      "id": "assets.editability-filter",
+      "status": "active",
+      "platform": "both",
+      "summary": {
+        "zh-CN": "素材库按能不能编辑筛图：全部 / 可编辑 / 待连接 / 仅版面",
+        "en-US": "Filter the asset library by editability: all / editable / to connect / layout only"
+      },
+      "entry": "左栏「素材」→ 搜索框下的胶囊「全部 / 可编辑 / 仅版面」（有待连接的图时多一档「待连接」）",
+      "e2e": [
+        {
+          "spec": "asset-library.spec.ts",
+          "title": "能不能编辑的胶囊：可编辑 / 仅版面一点就分开，回到全部恢复"
+        },
+        {
+          "spec": "asset-library.spec.ts",
+          "title": "能不能编辑的胶囊：英文四档在 280px 最窄抽屉里不溢出"
+        }
+      ],
+      "desktop_manual": [
+        "左栏「素材」→ 点「可编辑」只剩有脚本的图、点「仅版面」只剩没有脚本的图，点「全部」恢复"
+      ]
+    },
+    {
       "id": "assets.dependency-one-click-repair",
       "status": "active",
       "platform": "both",
@@ -179,6 +202,22 @@
         {
           "spec": "features.spec.ts",
           "title": "功能：素材放上画布渲染出真图；点选出单选浮动栏；拖动真的移动；撤销 / 重做回到对应位置"
+        }
+      ]
+    },
+    {
+      "id": "canvas.proportional-scale-snap",
+      "status": "active",
+      "platform": "both",
+      "summary": {
+        "zh-CN": "锁比例缩放图时，图里的子图边吸到别的图的子图边（智能对齐）",
+        "en-US": "Proportional resize snaps a figure's subplot edges to other figures' subplot edges (smart alignment)"
+      },
+      "entry": "画布 → 选中图 → 拖角柄（默认锁比例）",
+      "e2e": [
+        {
+          "spec": "proportional-scale-snap.spec.ts",
+          "title": "功能：锁比例角柄缩放时，面板的子图边吸到别的图的子图边，松手后对齐、宽高比不变"
         }
       ]
     },
@@ -987,6 +1026,22 @@
         "远程窗口里点「浏览目录…」：出现网页里的目录浏览器（列的是服务器的目录），不是系统的文件夹选择框",
         "粘 `http://localhost:5189/…`、一个没人监听的端口、以及 0.17.0 服务器的地址：分别说清「要写 127.0.0.1」「连不上」「服务器上的 Tavotto 太旧」，窗口留在连接页",
         "远程窗口有未保存修改时点红灯：先问再关；主窗口不弹框"
+      ]
+    },
+    {
+      "id": "figure.cross-figure-align",
+      "status": "active",
+      "platform": "both",
+      "summary": {
+        "zh-CN": "图内编辑时，拖元素 / 子图缩放手柄会吸到别的图里的同类元素和页面参考线上",
+        "en-US": "While editing inside a figure, dragging an element or an axes resize handle snaps to the same kind of element in other figures and to page guides"
+      },
+      "entry": "画布 → 双击进图内编辑 → 拖图例 / 轴标题 / 子图（旁边有另一张图时）",
+      "e2e": [
+        {
+          "spec": "cross-figure-align.spec.ts",
+          "title": "图内编辑拖图例靠近另一张图的图例：左边与对方图例左边对齐（页面 mm 误差 < 0.1）"
+        }
       ]
     }
   ]

@@ -35,7 +35,7 @@ import time
 from pathlib import Path
 from typing import Callable, Iterable
 
-from . import pool, projectenv, projscan, runtime, userenvs
+from . import launcher, pool, projectenv, projscan, runtime, userenvs
 
 REC_VERSION = 1
 
@@ -144,8 +144,10 @@ ROLE_USER = "user"
 ROLE_TARGET = "target"
 
 _lock = threading.Lock()
-#: 检查留下的结论：(解释器路径键, 环境代) → 体检摘要。键里带环境代：同一路径被重建，旧结论自然对不上。
-_verdicts: dict[tuple[str, str], dict] = {}
+#: 检查留下的结论：(解释器路径键, 环境代, 启动上下文) → 体检摘要。键里带环境代：同一路径被重建，旧结论自然对不上；
+#: 带启动上下文（`launcher.context_key`：直接启动 / Conda 激活 + 环境版本）：conda install、改 activate.d 不改环境代，
+#: 但激活后看到的东西变了，旧结论同样不能复用（P09）
+_verdicts: dict[tuple[str, str, str], dict] = {}
 
 
 def reset_cache() -> None:
@@ -296,12 +298,13 @@ def candidate_python(root: str | Path, script: str | None, candidate_id: str) ->
     return None
 
 
-def _verdict(python: str, generation: str) -> dict | None:
+def _verdict(python: str, generation: str, context: str | None = None) -> dict | None:
+    ctx = launcher.context_key(python) if context is None else context
     with _lock:
-        return _verdicts.get((projectenv._executable_key(python), generation))
+        return _verdicts.get((projectenv._executable_key(python), generation, ctx))
 
 
-def _store_verdict(python: str, generation: str, health: dict) -> dict:
+def _store_verdict(python: str, generation: str, health: dict, context: str | None = None) -> dict:
     summary = {
         "ok": bool(health.get("ok")),
         "code": str(health.get("code") or ""),
@@ -310,8 +313,9 @@ def _store_verdict(python: str, generation: str, health: dict) -> dict:
         "matplotlib_version": str(health.get("matplotlib_version") or ""),
         "checked_at": time.time(),
     }
+    ctx = launcher.context_key(python) if context is None else context
     with _lock:
-        _verdicts[(projectenv._executable_key(python), generation)] = summary
+        _verdicts[(projectenv._executable_key(python), generation, ctx)] = summary
     return summary
 
 
@@ -863,6 +867,8 @@ def _check(
             continue
         python = row["_python"]
         generation = projectenv.environment_generation(python)
+        # 启动上下文与环境代在体检**之前**同一刻取：体检途中环境被改了，结论就记在旧上下文名下、对不上现在
+        context = launcher.context_key(python)
         remaining = deadline_s - (clock() - started)
         # 不带 modules 时调用形状与以前逐字相同（自定义探测函数不必认识新参数）
         health = probe_fn(
@@ -870,10 +876,11 @@ def _check(
             timeout=min(projectenv.PROBE_TIMEOUT_S, remaining),
             **({"modules": mods} if mods else {}),
         )
-        _store_verdict(python, generation, health)
+        if not launcher.is_unavailable(health):  # 激活取环境失败是瞬时的：不记结论
+            _store_verdict(python, generation, health, context)
         notes.append(_execution_of(health, mods))
         # 覆盖度的唯一一份缓存在 userenvs（路径 + 环境代 + import 集合）；这里只往里写，不另存
-        userenvs.remember_probe(python, mods, health, generation=generation)
+        userenvs.remember_probe(python, mods, health, generation=generation, context=context)
         checked.append(row["id"])
     out = {
         "checked": checked,

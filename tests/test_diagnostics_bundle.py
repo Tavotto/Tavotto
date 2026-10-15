@@ -151,7 +151,7 @@ def test_get_bundle_still_works_and_keeps_the_old_three_files(client):
 def test_manifest_declares_its_own_schema(client):
     z = open_bundle(client.get("/api/diagnostics/bundle").data)
     manifest = json.loads(z.read("manifest.json"))
-    assert manifest["schema_version"] == 7
+    assert manifest["schema_version"] == 8
     assert manifest["frontend_snapshot_schema"] == 1
     assert manifest["trace_schema"] == 1
     assert manifest["privacy_mode"] == "safe-default"
@@ -574,6 +574,47 @@ def test_event_fields_match_frontend_schema():
     assert set(table) == set(dfe.EVENT_FIELDS), "事件类型集合两边不一致"
     for name, fields in sorted(table.items()):
         assert set(fields) == set(dfe.EVENT_FIELDS[name]), name
+
+
+def test_unexpected_error_enums_match_frontend():
+    """`ui.unexpected_error` 的来源与内建错误名是闭集：前端 types.ts 的常量数组 == 后端 `_ENUM_FIELDS`。"""
+    import re
+
+    ts = (REPO_ROOT / "web/src/diagnostics/types.ts").read_text(encoding="utf-8")
+
+    def values(const: str) -> set[str]:
+        m = re.search(rf"export const {const} = \[(.*?)\] as const", ts, re.S)
+        assert m, const
+        return set(re.findall(r"'([A-Za-z_0-9]+)'", m.group(1)))
+
+    assert values("UNEXPECTED_ERROR_SOURCES") == set(dfe._ENUM_FIELDS["source"])
+    assert values("UNEXPECTED_ERROR_NAMES") == set(dfe._ENUM_FIELDS["error_name"])
+
+
+def test_unexpected_error_event_keeps_only_closed_fields():
+    ok = {
+        "seq": 1,
+        "ts": 1_756_000_000_001,
+        "t_ms": 10,
+        "type": "ui.unexpected_error",
+        "source": "window_error",
+        "error_name": "TypeError",
+        "message_hash": "err:0123456789ab",
+    }
+    out = dfe.sanitize_event(ok, _redact)
+    assert (
+        out is not None
+        and out["source"] == "window_error"
+        and out["message_hash"] == "err:0123456789ab"
+    )
+    # message / stack 原文、开集错误名、未知来源：整条丢
+    for bad in (
+        {"message": SECRET_TITLE},
+        {"stack": FAKE_HOME + "x.js"},
+        {"error_name": SECRET_TITLE},
+        {"source": "user_script"},
+    ):
+        assert dfe.sanitize_event({**ok, **bad}, _redact) is None, bad
 
 
 # ---------------------------------------------------------------------------
@@ -1431,7 +1472,7 @@ def test_custom_endpoint_url_keeps_only_its_origin_in_export_and_sent_bundle(cli
         assert (
             json.loads(z.read("manifest.json"))["schema_version"]
             == engine_diagnostics.BUNDLE_SCHEMA_VERSION
-            == 7
+            == 8
         )
     for rec in ai_providers.list_providers():
         ai_providers.delete(rec["id"])

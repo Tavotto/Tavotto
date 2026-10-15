@@ -68,6 +68,8 @@ from .engine import (
     databinding as engine_databinding,
     depplan as engine_depplan,
     deprepair as engine_deprepair,
+    desktopproc as engine_desktopproc,
+    diagdetail as engine_diagdetail,
     diagnostics as engine_diagnostics,
     diagnostics_frontend as engine_diagnostics_frontend,
     diagsend as engine_diagsend,
@@ -77,6 +79,7 @@ from .engine import (
     envadvice as engine_envadvice,
     envlease as engine_envlease,
     epsfile as engine_epsfile,
+    execspec as engine_execspec,
     exportjob as engine_exportjob,
     exportreq as engine_exportreq,
     figcapture as engine_figcapture,
@@ -84,6 +87,8 @@ from .engine import (
     inputbroker as engine_inputbroker,
     inputremap as engine_inputremap,
     inputtranscript as engine_inputtranscript,
+    launchctx as engine_launchctx,
+    launcher as engine_launcher,
     layoutsession as engine_layoutsession,
     locate as engine_locate,
     logsafe as engine_logsafe,
@@ -444,6 +449,41 @@ def safe_resolve(rel_id: str) -> Path:
     if p.suffix.lower() in TIFF_EXT:
         tiffprobe.check(p)
     return p
+
+
+# ---- 最近的后端请求记录（发送问题反馈的 detail-requests.json，ADR 0118 修订 2026-10-13）----
+# 进程内定长环、不写盘。每条只有 方法 / Flask 路由**规则** / 状态码 / 耗时 / 错误码（失败响应 JSON 的 `code`），
+# 不含请求体、查询串与实参。**任何异常都吞掉**——记录请求不许影响请求。
+_DIAG_REQUEST_SKIP_PREFIX = "/api/diagnostics/send"  # 对话框轮询会把环刷满，且对排障没信息
+
+
+@app.before_request
+def _diag_request_start():
+    g._diag_t0 = time.perf_counter()
+
+
+@app.after_request
+def _diag_request_end(resp):
+    try:
+        rule = request.url_rule.rule if request.url_rule is not None else "<unmatched>"
+        if rule.startswith(_DIAG_REQUEST_SKIP_PREFIX):
+            return resp
+        t0 = getattr(g, "_diag_t0", None)
+        ms = int((time.perf_counter() - t0) * 1000) if t0 is not None else None
+        code = None
+        if (
+            resp.status_code >= 400
+            and resp.mimetype == "application/json"
+            and not resp.is_streamed
+            and not resp.direct_passthrough
+            and (resp.content_length or 0) <= 65536
+        ):
+            body = json.loads(resp.get_data())
+            code = body.get("code") if isinstance(body, dict) else None
+        engine_diagdetail.REQUESTS.record(request.method, rule, resp.status_code, ms, code)
+    except Exception:  # noqa: BLE001 — 诊断记录自己出错不许伤到请求
+        pass
+    return resp
 
 
 @app.errorhandler(tiffprobe.UnsupportedTiff)
@@ -2251,6 +2291,7 @@ def open_project(path_str: str, make_default: bool = True) -> dict:
     失败（目录不存在 / 注册表损坏）抛 RuntimeError，已打开的项目不受影响。
     """
     path = Path(path_str).expanduser().resolve()
+    engine_nativesession.REGISTRY.reopen_project(str(path))  # 关过又打开:桌面拥有的运行可以再启动
     with _tutorial_operation(path):
         return _open_project(path, make_default)
 
@@ -2352,6 +2393,13 @@ def close_project(pid: str, wait: bool = False) -> bool:
         return False
     # 导入即扫描：取消在跑的扫描并忘掉它的账（只此一件——没有执行 / 安装归它所有）
     engine_projscan.SCANS.drop(pid)
+    # 桌面拥有的 native 会话是 sidecar 自己起的进程：关项目 = 真终止（含进程组 / Job），不留孤儿占着环境
+    # （终端拥有的不碰，ADR 0021 §8.1）。顺序是契约,且**先于**可能阻塞数秒的 `pool.shutdown_all`:
+    # ① 标记项目已关闭（此后 `reserve` / `begin_start` 当场拒绝）→ ② 取消这个项目的准备（执行线程在 spawn 之前也会收工）
+    # → ③ 结束已登记的会话与在途启动。关闭之前还没走到登记的准备线程因此再也起不了进程
+    engine_nativesession.REGISTRY.mark_project_closed(str(ctx.path))
+    engine_preparation.SERVICE.cancel_project(pid)
+    engine_nativesession.REGISTRY.close_project(str(ctx.path))
     engine_pool.shutdown_all(str(ctx.path), wait=wait)
     LOG.info("项目已关闭: %s", ctx.path)
     return True
@@ -2807,7 +2855,9 @@ def _read_body_capped(limit: int) -> bytes:
     return b"".join(chunks)
 
 
-def _read_frontend_payload() -> tuple[dict | None, bool]:
+def _read_frontend_payload(
+    limit: int = engine_diagnostics_frontend.MAX_REQUEST_BYTES,
+) -> tuple[dict | None, bool]:
     """请求体 → (载荷, 是不是被整份丢掉了)。**不抛异常**。
 
     **上限卡在读取本身，不卡 `Content-Length`**：chunked transfer encoding 的
@@ -2816,7 +2866,6 @@ def _read_frontend_payload() -> tuple[dict | None, bool]:
     所以这里自己按上限 +1 读流：多出来的那一个字节就是「超了」的判据，
     而且无论有没有 Content-Length 都成立。
     """
-    limit = engine_diagnostics_frontend.MAX_REQUEST_BYTES
     try:
         raw = _read_body_capped(limit)
     except Exception:  # noqa: BLE001 — 读流失败不该 500
@@ -2934,12 +2983,16 @@ def _diagnostics_project_status() -> dict:
 
 
 def _build_diagnostics_bundle(
-    frontend: dict | None = None, frontend_dropped: bool = False
+    frontend: dict | None = None,
+    frontend_dropped: bool = False,
+    detail: "engine_diagdetail.DetailRequest | None" = None,
 ) -> bytes:
-    """诊断包字节（导出到本地与「发送问题反馈」共用这一处，包的内容与脱敏只此一份）。"""
+    """诊断包字节。导出到本地走 `detail=None`（严格脱敏的老包）；「发送问题反馈」的 prepare 传 `detail`，
+    多出扁平的 `detail-…` / `optional-…` 条目（`engine/diagdetail.py`），其余部分共用这一处。"""
     status = _diagnostics_project_status()
-    pid = getattr(_request_ctx(), "id", None)
-    return engine_diagnostics.build_bundle(
+    ctx = _request_ctx()
+    pid = getattr(ctx, "id", None)
+    common = dict(
         project=status,
         port=request.host.rsplit(":", 1)[-1],
         frontend=frontend,
@@ -2947,6 +3000,35 @@ def _build_diagnostics_bundle(
         # 本项目最近几次任务的冻结快照（失败在前）；只读登记表，不采集（T04）
         task_snapshots=engine_taskdiag.bundle_section(engine_taskdiag.STORE, pid) if pid else None,
     )
+    if detail is None:
+        return engine_diagnostics.build_bundle(**common)
+    src = engine_diagdetail.Sources(
+        project=status,
+        scripts=ctx.registry.all_scripts() if ctx is not None else [],
+        baked=load_baked(ctx) if ctx is not None else None,
+        task_section=(
+            engine_taskdiag.bundle_section(engine_taskdiag.STORE, pid, limit=24) if pid else None
+        ),
+        frontend=detail.frontend,
+        registry=ctx.registry if ctx is not None else None,
+    )
+    items = engine_diagdetail.collect(src, detail.options)
+    # report.json 只算一次：超限时 `fit` 会按优先级截断重建几次 ZIP，不该每次都重新探测渲染环境
+    report = engine_diagnostics.build_report(status, common["port"])
+
+    def build(kept: list, truncated: list) -> bytes:
+        # 声明从**最终保留下来的条目**推导：附件被 `fit` 整类丢掉了，就是没附上（options 为 false，`truncated` 里有它）
+        payload = engine_diagnostics.DetailPayload(
+            engine_diagdetail.entries(kept), engine_diagdetail.options_of(kept), truncated
+        )
+        built = engine_diagnostics.build_bundle(**common, detail=payload, report=report)
+        # 服务端拒收压缩比 > 200 的条目：改存的增量也要算进 `fit` 的体积里
+        return engine_diagdetail.ratio_safe(built)
+
+    data, _kept, _truncated = engine_diagdetail.fit(
+        items, build, engine_diagsend.MAX_BYTES - engine_diagdetail.FIT_SLACK
+    )
+    return data
 
 
 def _diagnostics_bundle_response(frontend: dict | None = None, frontend_dropped: bool = False):
@@ -3000,6 +3082,14 @@ def api_diagnostics_send_capability():
     return _diag_send_json(engine_diagsend.capability())
 
 
+@app.post("/api/diagnostics/send/seq")
+def api_diagnostics_send_seq():
+    """发一个备包序号（引擎单调计数，不依赖墙钟）。本机、不联网；备包请求带着它来排先后。"""
+    if not engine_diagsend.enabled():
+        return _diag_send_error(engine_diagsend.SendError("send_disabled", 404))
+    return _diag_send_json({"seq": engine_diagsend.issue_prepare_seq(_diag_send_scope())})
+
+
 @app.post("/api/diagnostics/send/prepare")
 def api_diagnostics_send_prepare():
     """在本机备好一份诊断包并交出「会发送什么」。**零网络**：用户看过、点了发送之前不会有任何远程请求。
@@ -3008,10 +3098,30 @@ def api_diagnostics_send_prepare():
     包超过上限时不保管、回 `too_large: true`：界面让用户把包导出到本地。"""
     if not engine_diagsend.enabled():
         return _diag_send_error(engine_diagsend.SendError("send_disabled", 404))
-    frontend, dropped = _read_frontend_payload()
+    # 前端每次备包带单调的 `seq`：比已收到的更旧的（关了再开 / 切走再回时晚到的）直接 409，不再建包
     try:
-        data = _build_diagnostics_bundle(frontend, dropped)
-        return _diag_send_json(engine_diagsend.prepare(data, scope=_diag_send_scope()))
+        seq = int(request.args["seq"]) if "seq" in request.args else None
+    except ValueError:
+        seq = None
+    try:
+        engine_diagsend.begin_prepare(_diag_send_scope(), seq)
+    except engine_diagsend.SendError as exc:
+        return _diag_send_error(exc)
+    frontend, dropped = _read_frontend_payload(engine_diagnostics_frontend.MAX_SEND_REQUEST_BYTES)
+    # 勾选项只认字面 true（默认全 false）；`detail` 子对象只按类型 / 长度限界，脱敏在 diagdetail.Scrubber
+    detail = engine_diagdetail.DetailRequest(
+        # 勾选项走查询串 `?options=source,crash_reports`：载荷超限被整份丢弃（frontend=None）时它仍在，
+        # 勾着的框不会悄悄变成没勾；查询串没给才看请求体里的 `detail_options`（老客户端）
+        options=engine_diagdetail.parse_options(
+            engine_diagdetail.options_from_query(request.args.get("options"))
+            if request.args.get("options") is not None
+            else (frontend or {}).get("detail_options")
+        ),
+        frontend=engine_diagnostics_frontend.sanitize_detail((frontend or {}).get("detail")),
+    )
+    try:
+        data = _build_diagnostics_bundle(frontend, dropped, detail)
+        return _diag_send_json(engine_diagsend.prepare(data, scope=_diag_send_scope(), seq=seq))
     except engine_diagsend.SendError as exc:
         return _diag_send_error(exc)
 
@@ -3883,8 +3993,14 @@ def api_registry_probe():
                 run=run,
             )
             # 磁盘面板重跑该用哪份配置：这次明确运行用的（无参数 = 清掉旧的）
-            engine_runconfig.set_default(
-                ctx.path, script, run.config_id if run is not None else None
+            # 同一事务里清掉该脚本旧的启动记录（这条旧路径没有回执，不产生新记录）：否则 A 先经准备会话成功、
+            # B 再经这里成功，旧记录 A 会冒充「最近成功」
+            engine_runconfig.commit_success(
+                ctx.path,
+                script,
+                None,
+                default_config_id=run.config_id if run is not None else None,
+                update_default=True,
             )
             # probe 已经把结果写进注册表了（`probe.probe_and_register` → `discover.register`），
             # 这里只要重装 + 发事件：再跑一遍静态扫描既慢，又会把刚刚按**真实产出**
@@ -4332,6 +4448,9 @@ _NATIVE_STATUS = {
     engine_runcodes.NATIVE_SESSION_NOT_AT_BARRIER: 409,
     engine_runcodes.NATIVE_SESSION_OFFLINE: 409,
     engine_runcodes.NATIVE_FIGURE_INCONSISTENT: 409,
+    engine_runcodes.NATIVE_INPUT_NOT_PENDING: 409,
+    engine_runcodes.NATIVE_INPUT_INVALID: 400,
+    engine_runcodes.NATIVE_PROCESS_NOT_OWNED: 409,
     engine_runcodes.NATIVE_SESSION_ENDED: 409,
     engine_runcodes.NATIVE_SESSION_DISCONNECTED: 409,
     engine_runcodes.NATIVE_AUTH_FAILED: 403,
@@ -4478,12 +4597,16 @@ def api_native_session_build(session_id: str):
         # （issue #191），现在由 `test_native_api.py` 逐个端点钉着。
         return jsonify(_worker_error_payload(exc)), 500
     rejected = engine_nativesession.REGISTRY.bind_assets(session)
-    _materialize_native(session)
+    # 发布决定只有这一处,且全有或全无:任一张图的路由被另一条活会话占着,这一轮 build 的图一张都不物化、不回给前端、
+    # 不绑路由——否则预览是这次运行的、编辑 / 导出却仍落在旧会话上（静默错图,ADR 0021 §9.2），而准备 runner 对同一结果
+    # 判的是整体失败。准备 runner 的 native 分支问的是同一个 `bind_assets`
+    if not rejected:
+        _materialize_native(session)
     out = {
         "ok": True,
         "session": session.public_state(),
-        "stems": resp.get("stems", {}),
-        "descriptors": session.descriptors,
+        "stems": {} if rejected else (resp.get("stems") or {}),
+        "descriptors": [] if rejected else list(session.descriptors),
     }
     if rejected:
         # **如实说**：这些 stem 已经被另一条还活着的会话占着（用户在两个终端
@@ -4516,6 +4639,56 @@ def api_native_continue(session_id: str):
     return _native_action(session_id, "resume")
 
 
+@app.post("/api/native/sessions/<session_id>/input")
+def api_native_session_input(session_id: str):
+    """回答桌面拥有的脚本此刻停在的那一次提问（`input` / `readline` / `read` / `getpass`，P07，ADR 0126）。
+
+    `{request_id, text}` 或 `{request_id, eof: true}`：脚本在**同一个进程里续跑**（不重跑、对象还在）。先到先得——
+    别的窗口先答了 / 提问已过 / 终端拥有的会话，一律 409 `native_input_not_pending`。口令的值不进日志、不进响应。
+    """
+    body = request.get_json(silent=True)
+    if not isinstance(body, dict) or not isinstance(body.get("request_id"), str):
+        return jsonify(
+            {"ok": False, "code": "bad_request", "error": "需要 request_id", "params": {}}
+        ), 400
+    eof = body.get("eof") is True
+    text = body.get("text")
+    if not eof and not isinstance(text, str):
+        return jsonify(
+            {"ok": False, "code": "bad_request", "error": "需要 text 或 eof", "params": {}}
+        ), 400
+    try:
+        session = engine_nativesession.REGISTRY.get(session_id)
+        result = session.answer_input(body["request_id"], text=None if eof else text, eof=eof)
+    except engine_runcodes.RunError as exc:
+        return _native_error(exc)
+    return jsonify({"ok": True, "result": result, "session": session.public_state()})
+
+
+@app.post("/api/native/sessions/<session_id>/cancel")
+def api_native_session_cancel(session_id: str):
+    """结束**桌面拥有的**脚本进程（运行中、停在提问上、停在屏障上都行）。终端拥有的 409 `native_process_not_owned`。
+
+    这是真终止（进程组 / Job），确认退出后才放环境租约；`confirmed: false` = 到期还没确认（租约继续持有）。
+    """
+    try:
+        session = engine_nativesession.REGISTRY.get(session_id)
+        # 这条会话属于某个准备计划（`launch_id` 就是计划号）：先让计划进入「取消」，进程随后被结束时执行线程按取消收场，
+        # 而不是把「被取消」记成失败
+        if session.launch_id:
+            engine_preparation.SERVICE.cancel_plan(session.launch_id)
+        result = session.cancel_owned()
+    except engine_runcodes.RunError as exc:
+        return _native_error(exc)
+    return jsonify(
+        {
+            "ok": True,
+            "confirmed": bool(getattr(result, "confirmed", False)),
+            "session": session.public_state(),
+        }
+    )
+
+
 @app.post("/api/native/sessions/<session_id>/detach")
 def api_native_detach(session_id: str):
     """放手：脚本继续正常跑完，Tavotto 不再控制它。**不杀进程。**"""
@@ -4546,7 +4719,7 @@ def api_native_forget_permission():
     return jsonify({"ok": True, "removed": removed})
 
 
-def _materialize_native(session) -> None:
+def _materialize_native(session, skip=()) -> None:
     """把 native 会话这一轮的预览物化进 runtime cache（**last known preview**）。
 
     它不是 live Figure，也不是原始产物：会话结束之后这份 cache 仍然看得见，
@@ -4558,7 +4731,7 @@ def _materialize_native(session) -> None:
         if not isinstance(desc, dict):
             continue
         stem = desc.get("stem")
-        if not stem:
+        if not stem or stem in skip:
             continue
         engine_runtimeasset.materialize(root, desc, session.svg_path(stem))
 
@@ -4953,16 +5126,22 @@ def api_engine_render():
         ), 400
     t0 = time.time()
     t_get = time.perf_counter()
-    worker, stem = _engine_worker(rel_id, **_artifact_kwargs(artifact_source))
-    # 取会话可能当场 spawn 一个解释器并 import matplotlib——冷启动的大头常常
-    # 在这里，而它**既不在 worker 的 timings 里也不在 build 里**。不单独量出来，
-    # 用户等的那十几秒在数据里就凭空消失了（第一版计时管道就是这么骗了自己）。
-    get_ms = round((time.perf_counter() - t_get) * 1000, 3)
-    info = current_registry().for_stem(Path(stem).stem) or {}
-    cold = not worker.built
-    # 三个事件都得带 pj：前端 renderStore 按 fileId 索引且不分项目，不带的话
-    # 另一个标签页里同名的面板（到处都是的 Fig1.pdf）会跟着显示「正在构建…」
+    # 取会话会起解释器 / 准备环境，必须在这段静默等待之前给界面进度。
+    # 此时还不知道 worker.built，不把「准备中」谎报成冷启动。
     pj = current_ctx().id
+    sse_publish("render.preparing", {"pj": pj, "id": rel_id})
+    try:
+        worker, stem = _engine_worker(rel_id, **_artifact_kwargs(artifact_source))
+        # 取会话的时间不在 worker 的 timings/build 里，单独保留原有计时。
+        get_ms = round((time.perf_counter() - t_get) * 1000, 3)
+        info = current_registry().for_stem(Path(stem).stem) or {}
+        cold = not worker.built
+    except Exception as exc:
+        # 准备态同样须有终局；原异常留给原有 Flask handler，HTTP/code 不变。
+        sse_publish("render.failed", {"pj": pj, "id": rel_id, "error": str(exc)})
+        raise
+    # 进度与终局事件都得带 pj：前端 renderStore 按 fileId 索引且不分项目，不带的话
+    # 另一个标签页里同名的面板（到处都是的 Fig1.pdf）会跟着显示「正在构建…」
     sse_publish(
         "render.started", {"pj": pj, "id": rel_id, "cost": info.get("cost", ""), "cold": cold}
     )
@@ -6705,9 +6884,17 @@ def api_engine_environment():
             else None
         )
         py = st.get("python")
-        st["imports"] = (
-            engine_runtime.probe_packages(py, names, bundled=bool(st.get("bundled"))) if py else {}
-        )
+        try:
+            st["imports"] = (
+                engine_runtime.probe_packages(
+                    py, names, bundled=bool(st.get("bundled")), env_for=engine_launcher.activate_env
+                )
+                if py
+                else {}
+            )
+        except engine_runtime.ActivationUnavailable as exc:  # 含 `launcher.LauncherUnavailable`
+            # Conda 激活取环境失败：瞬时，不是“包都 import 不到”——不给 `imports`，给稳定码
+            st["imports_error"] = {"code": exc.code, "detail": str(exc)[:400]}
     st["project"] = _project_environment_state()
     resp = jsonify(st)
     resp.headers["Cache-Control"] = "no-store"
@@ -7304,6 +7491,7 @@ def _plan_pin(pl):
         python=pl.interpreter,
         source=str(env.get("source") or ""),
         generation=str(env.get("generation") or ""),
+        launch_context=str(getattr(pl, "environment_state", "") or ""),
     )
 
 
@@ -7328,14 +7516,162 @@ def _preparation_runner(pl, before_retry=None):
     )
 
 
+def _native_preparation_runner(pl, before_retry=None):
+    """桌面拥有的 native 这一支的「真的把 runtime 起起来」（P07，ADR 0126）：与 `_preparation_runner` 同一个
+    调用约定 `(worker, build 响应, 是否新建)`，`NativeSession` 就是 Worker-like 的那个 worker。
+
+    顺序：结束同一脚本上一次还活着的桌面运行（重新运行 = 旧的活图让位）→ `desktopproc.start`（取租约、spawn、
+    握手）→ 把所有权报给 `PreparationService`（取消据此真终止）→ 等脚本跑到屏障或结束（等的过程中脚本的
+    `input()` 由界面经 `/api/native/sessions/<id>/input` 作答，这里不看）→ build 一次 → 绑活图路由。
+    不重试、不换环境（`before_retry` 不用）：原环境的缺包 / 激活问题是上层准备的输入，适配器不猜包。
+    """
+    spec = getattr(pl, "native_spec", None)
+    if spec is None:
+        raise engine_pool.WorkerError(
+            "这份计划没有桌面拥有的启动身份", code=engine_runcodes.DESKTOP_RUN_LAUNCH_INVALID
+        )
+    # 重新运行：同一脚本更早的准备、在途启动、已登记的活图都让位（它们占着 live route 与环境租约）。
+    # 顺序与关项目一致:先计划、再会话 / 票据
+    engine_preparation.SERVICE.cancel_project(pl.project_id, script=pl.script, keep=pl.plan_id)
+    engine_nativesession.REGISTRY.cancel_project(
+        pl.project_root, script=spec.target, older_than=pl.launch_order
+    )
+    try:
+        session = engine_desktopproc.start(
+            engine_desktopproc.OwnedLaunch(
+                spec,
+                launch_id=pl.plan_id,
+                project_epoch=pl.project_epoch,
+                launch_order=pl.launch_order,
+                cancelled=lambda: engine_preparation.SERVICE.launch_blocked(pl.plan_id),
+            )
+        )
+    except engine_runcodes.RunError as exc:
+        raise engine_pool.WorkerError(str(exc), code=exc.code) from exc
+    engine_preparation.SERVICE.note_owner(pl.plan_id, session, True)
+    state = session.state
+    while (
+        state not in engine_nativesession.TERMINAL_STATES and state != engine_nativesession.BARRIER
+    ):
+        state = session.wait_for_state((engine_nativesession.BARRIER,), 3600.0)
+    if state != engine_nativesession.BARRIER:
+        raise _native_run_error(session)
+    if session.script_error:
+        # 脚本自己炸了：不吞（AC-21）。让进程把退出走完（它在 script_end 屏障上），再按真实异常收场
+        error = dict(session.script_error)
+        _end_native_session(session)
+        raise engine_pool.WorkerError(
+            str(error.get("message") or "脚本运行出错"),
+            traceback_text=str(error.get("traceback") or ""),
+            code=engine_pool.SCRIPT_ERROR_CODE,
+        )
+    try:
+        resp = session.ensure_built()
+    except engine_runcodes.RunError as exc:
+        # 取消 / 断线恰好发生在 build 期间：会话已不可用。变成 `WorkerError`，让执行线程按 `entry.cancel` 认取消
+        _end_native_session(session)
+        raise engine_pool.WorkerError(str(exc), code=exc.code) from exc
+    except engine_pool.WorkerError:
+        _end_native_session(session)
+        raise
+    if not resp.get("stems"):
+        # 脚本停在屏障上却没有任何可编辑的图:准备以「没有图」收场,但进程还活在屏障上占着环境租约、也不在池里,
+        # 没有谁会替它清理——这里收掉
+        _end_native_session(session)
+        return session, resp, True
+    rejected = engine_nativesession.REGISTRY.bind_assets(session)
+    if rejected:
+        # 这些图的活路由还被另一条活会话占着(例如用户终端里的 `tavotto run`):继续完成会让预览换成这次运行的、
+        # 编辑 / 导出却仍落在旧会话上——静默错图。不发布被拒的描述符,结束这次运行,如实报冲突(ADR 0021 §9.2)
+        _end_native_session(session)
+        raise engine_pool.WorkerError(
+            str(engine_runcodes.RunError(engine_runcodes.NATIVE_ASSET_CONFLICT)),
+            code=engine_runcodes.NATIVE_ASSET_CONFLICT,
+        )
+    return session, resp, True
+
+
+def _end_native_session(session) -> None:
+    """让一条停在屏障上的桌面会话结束：先放行（脚本跑完、恢复原样），放不了就真终止。"""
+    try:
+        session.resume()
+        if session.owned is not None and session.owned.wait(15):
+            return
+    except Exception:  # noqa: BLE001 — 收尾路径：放行失败就走终止
+        pass
+    with contextlib.suppress(Exception):
+        session.cancel_owned()
+
+
+def _native_run_error(session):
+    """会话没到屏障就结束了：把真实原因变成 `WorkerError`（取消由调用方按 `entry.cancel` 认，这里只说事实）。"""
+    err = session.terminal_error or {}
+    if session.cancelled:
+        return engine_pool.WorkerError("运行已取消", code="cancelled")
+    if err:
+        return engine_pool.WorkerError(
+            str(err.get("detail") or "运行没有正常结束"),
+            code=str(err.get("code") or engine_runcodes.BRIDGE_CHILD_EXITED),
+        )
+    tail = ""
+    owned = session.owned
+    if owned is not None:
+        tail = owned.stderr.text()
+    return engine_pool.WorkerError(
+        f"脚本退出（退出码 {session.exit_code}），没有留下可编辑的图",
+        traceback_text=tail,
+        code=engine_pool.SCRIPT_ERROR_CODE if session.exit_code else "no_figure_captured",
+    )
+
+
 def _launch_preparation(ctx: "ProjectCtx", plan, on_done=None) -> None:
     """把一份已登记的计划交给执行线程（旧的 `/api/engine/preparation` 与准备会话共用这一处）。"""
     engine_preparation.SERVICE.start(
         plan.plan_id,
-        runner=_preparation_runner,
+        # 同一份计划、同一个执行线程与状态机：只有「怎么把 runtime 起起来」按计划选定的执行语义换（P07，ADR 0126）
+        runner=(
+            _native_preparation_runner
+            if plan.execution == engine_execspec.PROFILE_NATIVE
+            else _preparation_runner
+        ),
         bind=lambda: bound_project(ctx),
         on_done=on_done,
     )
+
+
+def _desktop_initiated() -> bool:
+    """这个请求是不是**桌面用户主动发起**的（ADR 0127 D1 的授权边界）。服务端可验证，不信请求体里任何自报字段：
+
+    * 进程是 `--desktop-sidecar`（`TAVOTTO_DESKTOP_MODE` 只由 `SidecarServer` 设置）；
+    * 没有磁盘本机凭据（`api_secret is None`——桌面模式不存在能被 MCP / Agent / 脚本拿走的凭据）；
+    * 请求带着由启动 nonce 兑换的会话 cookie（只有 Tauri 壳里的窗口兑换得到）。
+
+    没有会话状态（测试 / `--insecure-no-auth`）、浏览器模式、带本机凭据头的 API 客户端一律 False（fail closed）。"""
+    if not app.config.get("TAVOTTO_DESKTOP_MODE"):
+        return False
+    state = app.config.get(security.STATE_KEY)
+    if state is None or state.api_secret:
+        return False
+    return state.valid_cookie(request.cookies.get(security.COOKIE_NAME))
+
+
+def _launch_session_attempt(ctx: "ProjectCtx", plan, on_done=None) -> None:
+    """会话 `run` 认领出来的尝试交给执行线程。safe 尝试开始前，同一脚本上一次桌面 native 会话 / 计划票据先让位
+    （P2）：回退成功后 native 进程停在屏障上占着环境租约，用户重跑 safe 不让位就会一直 `environment_in_use_by_native_session`。
+    复用 #1022 重跑入口的同两个机制（`cancel_project(script=, keep=)` 与 `REGISTRY.cancel_project(script=, older_than=)`）；
+    native 尝试由 `_native_preparation_runner` 自己做同样的事。旧的素材准备端点不走这里（面板展示不该结束正在编辑的活图）。"""
+    found = engine_preparation.SERVICE.get(plan.plan_id, plan.project_id)
+    order = found[0].launch_order if found is not None else None
+    if plan.execution != engine_execspec.PROFILE_NATIVE and plan.script and order is not None:
+        # 与 `_native_preparation_runner` 同一套让位语义：只结束登记序号**比自己小**的（`older_than=`）。被更新的重跑取代的
+        # 旧动作因此结束不了新一次（可能已回退到 native）的会话 / 票据（Codex #1028 r4268029512）
+        engine_preparation.SERVICE.cancel_project(
+            plan.project_id, script=plan.script, keep=plan.plan_id
+        )
+        engine_nativesession.REGISTRY.cancel_project(
+            plan.project_root, script=plan.script, older_than=order
+        )
+    _launch_preparation(ctx, plan, on_done)
 
 
 def _preparation_payload(plan, result) -> dict:
@@ -7459,6 +7795,18 @@ def _session_target(ctx: "ProjectCtx", body: dict):
     script, rejected = _resolve_project_script(ctx, str(body.get("script") or "").strip())
     if rejected is not None:
         return None, rejected
+    execution = body.get("execution")
+    if execution not in (None, engine_execspec.PROFILE_SAFE, engine_execspec.PROFILE_NATIVE):
+        return None, (
+            jsonify(
+                {
+                    "error": "execution 只能是 safe 或 native",
+                    "code": "bad_request",
+                    "params": {"fields": ["execution"]},
+                }
+            ),
+            400,
+        )
     entry = body.get("entry")
     if entry is None:
         registered = current_registry().entries().get(script) or {}
@@ -7488,6 +7836,8 @@ def _session_target(ctx: "ProjectCtx", body: dict):
         "original_artifact": None,
         "original_path": None,
         **({"run": run} if run is not None else {}),
+        # P07：桌面拥有的 native（保留真文件语义、输入由界面作答）。省略 = safe，会话与计划逐字节不变
+        **({"execution": execution} if execution == engine_execspec.PROFILE_NATIVE else {}),
     }, None
 
 
@@ -7547,21 +7897,48 @@ def _finalize_script_attempt(ctx: "ProjectCtx", plan, result) -> dict:
         },
     )
     if not registered.get("registered"):
+        if getattr(plan, "execution", None) == engine_execspec.PROFILE_NATIVE:
+            # 登记被拒(多脚本同名 stem 等):准备以失败收场,但桌面拥有的进程还停在屏障上占着租约与路由——收掉
+            for sess in engine_nativesession.REGISTRY.list(str(ctx.path)):
+                if sess.launch_id == plan.plan_id and sess.owned is not None:
+                    _end_native_session(sess)
         return {
             "registered": False,
             "code": (registered.get("error") or {}).get("code") or "registration_failed",
         }
     # 物化在刷新之前：刷新会发 `registry.changed`，前端收到就去取 runtime 清单与预览
     run = getattr(plan, "run", None)
-    _materialize_runtime(
+    if getattr(plan, "execution", None) == engine_execspec.PROFILE_NATIVE:
+        # 桌面拥有的 native：预览从那条活会话的产物目录来（不是 safe 池里的热 worker）；活图路由已在 runner 里绑好
+        native = next(
+            (
+                sess
+                for sess in engine_nativesession.REGISTRY.list(str(ctx.path))
+                if sess.launch_id == plan.plan_id
+            ),
+            None,
+        )
+        if native is not None:
+            _materialize_native(native)
+    else:
+        _materialize_runtime(
+            plan.script,
+            plan.entry,
+            descriptors,
+            remap_generation=captured.get("remap_generation"),
+            run=run,
+            pinned=_plan_pin(plan),
+        )
+    # 磁盘面板默认配置与 P09 的可验证启动上下文在同一个登记事务里一起落地（失败走不到这里，部分结果见下；
+    # 依据不全则清掉旧记录，见 `runconfig.commit_success`）。记录的消费端（再次打开时沿用）见 #982
+    # 有图失败（partial）不是一次完整的成功：启动上下文记录按“依据不全”处理（清掉旧记录、不写新记录），默认配置照常更新
+    engine_launchctx.record_success(
+        ctx.path,
         plan.script,
-        plan.entry,
-        descriptors,
-        remap_generation=captured.get("remap_generation"),
+        None if captured.get("failed_figures") else getattr(result, "receipt", None),
         run=run,
-        pinned=_plan_pin(plan),
+        update_default=True,
     )
-    engine_runconfig.set_default(ctx.path, plan.script, run.config_id if run is not None else None)
     refresh_project(ctx, reason="probe", allow_static_merge=False)
     # 无参数运行整条替换掉的旧图名（T09b）：报告里如实说，界面给「用原参数再运行」的可恢复提示
     unlinked = list(registered.get("unlinked_stems") or [])
@@ -7693,8 +8070,9 @@ def api_engine_preparation_session_action(session_id: str):
             ctx.id,
             body["action_id"],
             revision,
-            launch=lambda plan, on_done: _launch_preparation(ctx, plan, on_done),
+            launch=lambda plan, on_done: _launch_session_attempt(ctx, plan, on_done),
             finalize=lambda plan, result: _finalize_script_attempt(ctx, plan, result),
+            desktop_initiated=_desktop_initiated(),
             impact_digest=echoed,
             prepare=_session_dependency_starter(ctx),
             transfer_from=transfer_from,
@@ -11274,6 +11652,8 @@ def main():
     threading.Thread(
         target=engine_pool.prune_engine_cache, daemon=True, name="mm-engine-cache-prune"
     ).start()
+    # Conda 激活捕获的结果文件含完整环境变量（可能有许可证串 / 令牌）：清上个进程崩溃留下的，并登记退出清理
+    engine_launcher.startup()
     # runtime 素材的 materialized cache（可删除可重建的派生物）同一治理
     threading.Thread(
         target=engine_runtimeasset.prune_cache, daemon=True, name="mm-runtime-cache-prune"

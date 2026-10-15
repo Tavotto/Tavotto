@@ -66,7 +66,7 @@ test('打开后：确认之前零连接，点发送才连；失败说人话并�
     await expect(dialog.locator('[data-diag-send-confirm]')).toBeEnabled({ timeout: 60_000 })
     // 详情默认收起；展开才看得到将发送的内容类别
     await expect(dialog.locator('[data-diag-kind="environment"]')).toBeHidden()
-    await dialog.locator('[data-diag-send-details] summary').click()
+    await dialog.locator('[data-diag-send-details] > summary').click()
     await expect(dialog.locator('[data-diag-kind="environment"]')).toBeVisible()
     expect(connections).toBe(0)
 
@@ -87,7 +87,7 @@ test('打开后：确认之前零连接，点发送才连；失败说人话并�
 
     // 写说明、选类型，点发送：这才出现第一条连接，失败有人话与重试
     const d2 = page.locator('[data-dialog="diagnostics-send"]')
-    await d2.locator('[data-diag-send-details] summary').click()
+    await d2.locator('[data-diag-send-details] > summary').click()
     await d2.locator('[data-diag-send-note]').fill('e2e: nothing private here')
     await d2.locator('[data-diag-send-confirm]').click()
     await expect(d2.locator('[data-diag-send-failure]')).toBeVisible({ timeout: 60_000 })
@@ -166,10 +166,10 @@ test('故障卡 → 打开 → 发送：脚本运行失败卡里入口在折叠�
     expect(compact!.height).toBeLessThan(230)
     if (SHOTS) {
       await page.screenshot({ path: `${SHOTS}/send-dialog-collapsed.png` })
-      await dialog.locator('[data-diag-send-details] summary').click()
+      await dialog.locator('[data-diag-send-details] > summary').click()
       await page.waitForTimeout(600)
       await page.screenshot({ path: `${SHOTS}/send-dialog-expanded.png` })
-      await dialog.locator('[data-diag-send-details] summary').click()
+      await dialog.locator('[data-diag-send-details] > summary').click()
     }
     await page.waitForTimeout(600) // 等折叠与对话框重新居中落定再量
 

@@ -145,6 +145,13 @@ def _leaky_manifest() -> dict:
                 "python_version": "3.11.14",
                 "packages": {"h5py": "3.16.0"},
                 "observation": "partial",
+                "fidelity": {
+                    "level": "suspect",
+                    "blocked": [],
+                    "intercepted": [{"op": "savefig", "kind": "savefig", "count": 1}],
+                    "signals": [{"kind": "savefig", "via": "stat", "count": 1}],
+                    "unobserved": ["subprocess"],
+                },
                 "binding": {
                     "revision": "sha256:66",
                     "matched": True,
@@ -195,6 +202,8 @@ def test_the_public_projection_carries_identities_and_verdicts_but_no_needles():
     assert "source_id" not in public["sources"][0] and "path" not in public["sources"][0]
     assert public["receipts"][0]["python_version"] == "3.11.14"
     assert public["receipts"][0]["binding"]["matched"] is True
+    # V2 PR3a：safe 的执行保真度随回执公开事实进导出检视，不在这条白名单里丢掉
+    assert public["receipts"][0]["fidelity"]["level"] == "suspect"
     assert set(public["receipts"][0]) <= set(inspector._PUBLIC_RECEIPT_KEYS)
     assert public["nodes"][0] == {
         "kind": "imported_page",

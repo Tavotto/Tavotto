@@ -69,7 +69,7 @@
 - **故障卡入口与轻确认框（用户 10-10 要求）。** 对话框全应用只挂一处（`components/DiagnosticsSendHost.tsx`，状态 `diagSendStore.open`）；设置页入口行与故障卡的 `components/SendReportButton.tsx` 都只是 `setOpen(true)`
   （打开 = 本机备包，不发送），开关判据同一个（`diagSendStore.capability`，关着完全不渲染）。覆盖的故障卡（都经 `TaskDiagnostic` 或点名处理）：导出失败卡（`ExportDialog.ResultBlock`：可重试时在折叠的「本次问题的诊断」里；
   不可恢复、没有任何修复动作时**就是主按钮**）、导出部分失败（折叠详情）、准备卡失败态（`PreparationCard`：有主按钮时在详情里；失败且没有任何可执行动作时是主按钮）、脚本行「详情」里的运行失败、依赖准备失败。
-  **不带故障上下文进对话框**（note 只由用户自己写；没有现成的闭集字段可带）。确认框默认只露一句话「将发送诊断包，不含你的数据和脚本内容。」+「发送」+「关闭」，其余
+  **不带故障上下文进对话框**（note 只由用户自己写；没有现成的闭集字段可带）。确认框默认只露一句话（「将发送诊断包，含报错详情和日志（日志里可能有脚本打印出的内容），不附带你的脚本文件和数据文件。」——必须如实提醒日志里可能有脚本输出，#1012 4，文案测试钉住）+「发送」+「关闭」，其余
   （内容类别、保存 ZIP、类型、说明、保存期、隐私政策链接、「脱敏尽力而为」）全在默认收起的「查看详情」里；用户在说明框写的字会原样附上，框旁写明。那句承诺由
   `tests/test_diagnostics_bundle.py` / `test_diagnostics_log_privacy.py` 的金丝雀全文搜索撑着（源码行略去、异常 message 不出门、路径哈希化）；这两处任何一处放松，那句话就得先改。
 - **项目代次与引擎丢会话（Codex #923）。** 备包流程绑定当前项目：`DiagnosticsSendDialog` 订阅 `onCurrentProjectChange`，对话框开着时项目一换（外部 `tavotto open`、切项目）就让备包重来——
@@ -78,5 +78,41 @@
   **备包只在切换完成之后做**（Codex #923 复核 P1）：`projectStore.adoptSteps` 先 `setCurrentProjectId(B)`、之后才 await 加载并 `resetForNewProject`，认领那一刻内存里仍是 A 的文档与轨迹。所以对话框以 `projectStore.switching`（`runSwitch` 排队到执行完一直亮着，既有机制，不另造代次）为「项目已完全加载」的信号：switching 亮起 → 旧包作废、置「正在准备」、发送禁用、不备包；落下 → 才备新包（`DiagnosticsSendDialog.test.tsx`「真实的切换顺序」，反证：去掉等待则红）。
 - **迟到 start 的 409 不是失败（#928，Codex #923）。** 取消先被引擎处理时，引擎正确拒绝迟到的 start（409 `diag_stale_action` / `diag_session_cancelled`）。`DiagnosticsSendDialog` 的 `send()` catch 把这两个 code 当作取消流程的一部分：置 `cancelling`（不覆盖成不可重试的 `failed`），轮询继续到 `cancelled` 后自动重新备包（`DiagnosticsSendDialog.test.tsx`「迟到的 start」两组）。
 - **清理显式带备包时的项目（Codex #955）。** 引擎会话按项目分键，而切项目时全局当前项目先于 effect 清理变成 B；`discardDiagSend(id, pj)` 因此由对话框传 `packagePj`（备包那一刻的项目；迟到的 prepare 响应用闭包里捕获的 `pj`），请求以 `?pj=` + 头显式指向 A。不传则按 B 找不到 A 的 id、静默 `{ok:true}`，A 的上传继续。后端 `?pj=` 本就先于请求头（`app._request_ctx` / `_diag_send_scope`），`test_diag_send_api.py::test_explicit_pj_query_wins_over_a_conflicting_header` 钉住。
+- **联系维护者（企业微信，仅中文界面）。** 两个地址只在 `lib/contact.ts`（获客链接 `WECOM_CONTACT_URL`、名片码地址 `WECOM_CARD_URL`），二维码图 `assets/wecom-contact-qr.png` 必须解码为后者（`tests/test_wecom_contact_qr.py`，无 `cv2` 则跳过）。
+  组件 `settings/WeComContact.tsx`：**判据是界面语言 `currentLocale() === 'zh-CN'`，不看系统区域**；英文界面不渲染元素（不是隐藏）。位置：发送问题反馈确认框的 done / unknown / failed 三态（ready / preparing 不出现），
+  与设置页「诊断报告」组里发送行之前的「联系维护者」行（发送功能关闭也在，联系方式不依赖上传通道）；确认框里链接与「显示二维码」同占一行，其余阶段该行**占位不显示**（`invisible` + `inert`，#797 的发送按钮不跳位；英文界面连占位也不渲染）；二维码默认折叠、展开才挂 `<img>`；链接是 `target=_blank` 外链。不收集、不上传任何联系方式，不进诊断包；/try 不加（`WeComContact.test.tsx`）。
 - **异步回调一律认代号**：`DiagnosticsSendDialog` 里 prepare / startDiagSend / 保存 / 状态轮询的 then·catch 都捕获发起时的 `gen`（轮询用 `stop`），代号变了（项目切换、重新备包、关窗）就忽略——A 的迟到失败不许改 B 的对话框（`DiagnosticsSendDialog.test.tsx`「A 的 start 挂起 → 切到 B」，含 404）。
 
+## 发送包的 detail 载荷与勾选项（bundle schema 8，ADR 0118 修订 2026-10-13，`diagnostics/detail.ts`）
+
+- **只走发送路径。** `buildSendPayload(options)` = `buildDiagnosticPayload()`（老载荷）+ `detail_options` + `detail`；导出路径仍用 `buildDiagnosticPayload()`，一个 detail 字段都没有（`detail.test.ts` 钉）。引擎导出端点也不读这些键。
+- **两个定长全局环**（纯内存、不写盘、不进 telemetry、**切项目不清**——console 输出不属于某个项目，包里 `frontend-console.json` 注明 `scope: global`）：console.error/warn 40 条（原文 + Error 自带栈，字符串消息记调用点栈）、未捕获错误 / unhandledrejection 30 条。
+- **console 实参只记原始值与 Error，其余对象写 `[object]`**（#1012 2）：判断「是不是纯数据」（取原型 / 读描述符 / `for...in`）本身就会触发 Proxy（immer draft）的 trap，所以不判；业务侧确实要记一棵纯数据时用 `markPlainData(tree)` 声明（调用方保证无 Proxy / 副作用 accessor）。Error 判定走 `Error.isError`（不触发 trap），老 WebView 退回 `instanceof`。看护 `detail.test.ts` 的 trap 计数用例。
+- **焦点面板的顺序**（#1012 1）：没有正在编辑的面板时，`overrides[0]` 必须是主选（最后选中的面板），其余按文档顺序——引擎拿它当焦点面板去探环境。
+  `main.tsx` 里 `installConsoleCapture()` 越早装越好；包装函数**吞掉自身所有异常**且一定调用原方法，幂等、可卸载。
+- **detail 里还有**：显示环境（缩放 / 窗口 / 屏幕 / 语言 / 主题）、壳信息（Tauri `getVersion` / `getTauriVersion`、UA 里的 WebView 版本；`lib/desktop.ts` 的 `getUpdateOutcome()` 记本窗口会话内最近一次检查 / 安装的结果：来源 mirror/github、稳定码、attempts，没发生过 = 引擎写 unknown）、正在编辑（没有就取选中）面板的 overrides 热态至多 3 张。
+- **三个复选框**（`DiagnosticsSendDialog`，在折叠的「查看详情」里）：**默认不勾、不记忆**——每次打开（以及切项目）从全不勾开始；勾选变化 = 内容变了 = 推进 epoch 重新备包（旧包 `discardDiagSend`，新包换新 `client_request_id`），用 `keepForm` 让这次重备不清掉已填的类型与说明；备包中 / 发送中复选框 disabled。
+  折叠里还有「包内文件（N 个）」逐项清单（路径 + 大小）与一句「因体积被截短」说明；默认可见仍只有一句话 + 发送 + 关闭。
+- 文案键 `settings.diagnostics.send.{kind.detail_*, extra.*, extraHint.*, short.*, filesTitle, truncated}`；`short.*` 的键集 = `diagdetail.PRIORITY`，`extra.*` = `OPTION_KEYS`（`DiagnosticsSendDialog.test.tsx` 读 Python 源码对拍）。
+- 看护：`diagnostics/detail.test.ts`、`DiagnosticsSendDialog.test.tsx`「诊断包扩充」一组。
+
+
+## 意外错误入口（PR A，ADR 0118 补充 2026-10-14）
+
+- **唯一汇聚点** `lib/unexpectedErrors.ts` + 纯内存 `store/unexpectedErrorStore.ts`。来源：`diagnostics/detail.ts` 的 `onUncaughtError`（window error / unhandledrejection 全应用只有那一份监听，**不得再装第二个**）、`ErrorBoundary.componentDidCatch`、`lib/api.ts` 的 `setEngine500Handler`（`status >= 500` 且 `code === 'internal_error'`，只认兜底码；回调注册制避免 api ↔ store 成环）。`main.tsx` 调 `installUnexpectedErrorCapture()`。
+- **事件闭集**：`ui.unexpected_error { source, error_name, message_hash }`。`source` ∈ `UNEXPECTED_ERROR_SOURCES`，`error_name` ∈ `UNEXPECTED_ERROR_NAMES`（`types.ts`；后端 `_ENUM_FIELDS["source" / "error_name"]` 严格同源，`test_unexpected_error_enums_match_frontend` 对拍；字段名由 `test_event_fields_match_frontend_schema` 对拍）。**trace 里没有 message / stack 原文**，原文只在未捕获错误环（`recordUncaughtDetail('boundary' | 'engine_500', …)` 或 detail.ts 自己的 window 记录）随发送包走。
+- **顺序固定**：分类（忽略的不记任何东西）→ 先 `recordDiagnosticEvent`（吞异常）→ 补环 → 仅当 `capability !== null` 且非 boundary 来源、发送对话框没开、栈不指回诊断模块，才进去重 / 上界 / 登记卡片。
+- **分类按结构**：`ApiError`、原型不是内建错误原型的业务错误类、AbortError、`ResizeObserver loop…`、`Script error.`、pyodide / worker 来源、非 Error 的拒绝 → 忽略。**不准凭消息关键词判严重度**；要新增一类忽略，加结构判据与一条看护。
+- **上界**：`MAX_FINGERPRINTS`（64，LRU）、`MAX_PROMPTS_PER_SESSION`（5）、轨上同时 1 张；指纹同一会话只提示一次，关掉后不再提示。
+- **卡片**：`NotificationRail` 的 `data-unexpected-error-card` 槽位（`Toast tone="error" plain`），一句话 + 「发送问题反馈」+ ×；主动作只 `setOpen(true)`（并收起这张卡），prepare / start 调用次数为 0（`notificationRail.test.tsx`）。仲裁：低于「刚为编辑加入」、高于全部提示类；提示类的让位判据数的是「更高档在场条数」。**绝不往 `BannerStack` 加条。**
+- **ErrorBoundary 崩溃页**：「重新加载」仍是唯一主按钮；`SendReportButton`（secondary）在折叠「详情」里；崩溃页自己渲染 `DiagnosticsSendHost`（`TooltipProvider` + 内层 `SendHostBoundary`，对话框出错退回空）。**放宽的边界仅限 `diagSendStore` 与发送对话框**；关着时元素序列与改动前一致（`errorBoundary.test.tsx` 锚定）。
+- 看护：`lib/unexpectedErrors.test.ts`、`store/unexpectedErrorStore.test.ts`、`diagnostics/privacy.test.ts`（新事件一组）、`components/notificationRail.test.tsx`、`components/errorBoundary.test.tsx`、`tests/test_diagnostics_bundle.py`。
+
+## 退出相关入口（PR B，ADR 0129）
+
+- **两张通知轨卡，纯内存 store** `store/exitNoticeStore.ts`，接线只在 `lib/exitNotices.ts`（`App` 挂载时 `initExitNotices(diagSendStore.load() 的 promise)`）。**绝不往 `BannerStack` 加条。**
+- **修复卡**（`data-engine-exited-card`）：壳事件 `tavotto:engine-exited` / 回读 `getEngineExited()` 驱动；一句话「渲染服务意外退出了」+ 主按钮「重新启动」（`restartEngineFromCard()`：转圈期间幂等，壳没动手就把按钮还回去），折叠的一句「重启后可以发送问题反馈」只放在 `title`。**不受发送开关控制、不含发送入口**；在通知轨里从不让位。
+- **「上次没有正常退出」卡**（`data-previous-exit-card`）：`diagSendStore.load()` 完成后、且 `capability !== null` 才 `takePreviousExit()`（取走即清空，关着时不取）；取到才登记。一句话 + 主按钮「发送问题反馈」+ ×，主动作只 `setOpen(true)` 并收起这张卡，prepare / start 调用次数为 0。仲裁：与意外错误卡同档、排在其后。
+- **假重连**：`PrepContext.engineExited`（`exitNoticeStore.engineExit !== null`）为真时，准备卡断线一句用 `prep.line.engineStopped`（「渲染服务已停止」）而不是「连接断了，正在重连…」；其它原因断线保持原样。
+- **`lib/desktop.ts` 是唯一桌面感知点**：`onEngineExited` / `getEngineExited` / `takePreviousExit` / `restartEngine`；浏览器 / 远程窗口 / try 一律 null / false / 空取消函数。事件名与两个闭集与 `src-tauri/src/{main,exit_marker}.rs` 严格同源（`tests/test_desktop_engine_exit.py`）。
+- 看护：`store/exitNoticeStore.test.ts`、`lib/desktop.test.ts`、`lib/preparationText.test.ts`、`components/notificationRail.test.tsx`（「引擎退出两张卡」一组）。

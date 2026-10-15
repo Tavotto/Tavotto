@@ -20,6 +20,7 @@ import { getRestoreGate, useDocumentStore, whenDocumentReady } from '@/store/doc
 import { useFigurePickerStore } from '@/store/figurePickerStore'
 import { useRenderStore } from '@/store/renderStore'
 import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
+import { useScriptInputStore } from '@/store/scriptInputStore'
 import { useSelectionStore } from '@/store/selectionStore'
 
 /**
@@ -188,6 +189,35 @@ export const sortSessions = (all: NativeSessionInfo[]): NativeSessionInfo[] =>
     return at !== bt ? at - bt : b.started_at - a.started_at
   })
 
+/**
+ * 桌面拥有的脚本停在 `input()` / `getpass()` 等上（P07，ADR 0126）：把后端的 Pending 接进**同一个**答题队列
+ * （`scriptInputStore`，同一个对话框 / 准备面板展示面），不另做一套。Pending 的事实在后端——这里只是镜像：
+ * 会话状态里有就入队，没有（已答 / 已过 / 会话结束）就收起这条会话留在队里的旧问。
+ * 提示是用户脚本的文字，只当纯文本渲染；口令不经过这里（只有「有一个口令问」这个事实）。
+ */
+export function syncNativePendingInput(session: NativeSessionInfo): void {
+  const input = useScriptInputStore.getState()
+  const pending = session.pending_input ?? null
+  for (const q of input.queue) {
+    if (q.native?.session_id === session.session_id && q.native.request_id !== pending?.request_id) {
+      input.onClosed(q.id)
+    }
+  }
+  if (!pending) return
+  input.onRequested({
+    id: `native:${session.session_id}:${pending.request_id}`,
+    script: session.target_display,
+    index: pending.ordinal,
+    input_kind: pending.kind,
+    prompt: pending.prompt,
+    stdout_tail: '',
+    secret: pending.masked,
+    suggestion: null,
+    recheck: null,
+    native: { session_id: session.session_id, request_id: pending.request_id },
+  })
+}
+
 export const useNativeSessionStore = create<NativeSessionStore>((set, get) => ({
   epoch: 0,
   pendingQueue: [],
@@ -282,6 +312,7 @@ export const useNativeSessionStore = create<NativeSessionStore>((set, get) => ({
     // 运行"。终态不回头是这条的推论（后端进终态之后 sequence 只会更大）。
     if (prev && session.sequence <= prev.sequence) return
     set((s) => ({ sessions: { ...s.sessions, [session.session_id]: session } }))
+    syncNativePendingInput(session)
     // 屏障是"可以编辑了"那一刻，图要在这时候进画布。**由界面显式发 build**
     // ——后端不在 reader 线程里自己发，那是自己等自己（ADR 0021 §5.2）。
     if (session.state === 'barrier' && get().builtSeq[session.session_id] !== session.sequence) {
@@ -342,6 +373,13 @@ export const useNativeSessionStore = create<NativeSessionStore>((set, get) => ({
         }
         return { sessions }
       })
+      // 重连 / 刷新页面时把还在等的问接回来（断线期间发的那条事件收不到）
+      // 只同步**合并后**的当前会话：被序号挡掉的旧快照不许复活已答 / 已结束的问
+      const current = get().sessions
+      for (const one of res.sessions) {
+        const cur = current[one.session_id]
+        if (cur) syncNativePendingInput(cur)
+      }
     } catch {
       /* 清单取不到不清空已知会话：SSE 仍在，下一条事件会补上 */
     }

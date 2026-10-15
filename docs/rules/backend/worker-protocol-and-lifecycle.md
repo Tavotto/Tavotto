@@ -92,8 +92,20 @@
   的目录之后才会退化成「之后任何观察都算」，这是宁可误报不假成功的取舍。**状态查询入口**：除 `os.stat` 外，
   `os.path.exists`/`lexists`/`isfile`/`isdir`/`islink` 逐个包装——Windows 3.12+ 它们是 C 实现、不经 `os.stat`，
   不包就观察不到（CI Windows 腿抓到的 `os.remove` 后 `os.path.exists` 假成功）；被拦截的 savefig 目标仍只认读内容。
-  盲区写在明处：C 扩展直接 `fopen`、`os.open`、`listdir`/`glob`/`scandir`、`os.access` 等未包装的状态查询观察不到，
-  账本不宣称它们干净。pool 的镜像常量 `FILE_OPERATION_BLOCKED_CODE` 与
+  盲区写在明处：C 扩展直接 `fopen`、子进程、`os.access` 等未包装的状态查询观察不到，
+  账本不宣称它们干净。
+  **三档保真度与 savefig 衍生的失败（V2 PR3a，用户 2026-10-14 裁决 D1–D5 的执行侧证据）**：账本在 `material()`（确定偏差）之外
+  多记一档弱信号（`suspects()`，只有 (kind, via) 计数）：savefig 目标被 stat（`exists` 校验打印；`via=stat`）、stat / `os.open` /
+  守卫放行的改名删除在受影响路径上 `FileNotFoundError`（`probe_failed` / `move_failed`，可能被脚本 `except OSError` 吞掉）、
+  `listdir` / `scandir`（`glob` / `os.walk` 经它）列了含受影响路径的目录（`listing`）、被守卫静默跳过的改名其源就是 savefig 目标（`rename_src`）。
+  `exists()` / `isfile` / `Path.exists` 这类探路本来靠 stat 落空作答，不算 `probe_failed`。弱信号**不阻断**：build 成功，
+  `runtime.fidelity.level=suspect`；没有任何信号是 `none_observed`（只表示这些通道没看到，`unobserved` 列着盲区）；`deviated` 才对应失败。
+  **savefig 目标衍生的 `FileNotFoundError` 是守卫造成的**：直接运行时 `savefig(p)` 之后 `p` 必然存在，所以终局异常链里指向被拦截
+  savefig 目标（或被拦改名路径）的 `FileNotFoundError`（`getsize` / `Path.stat` / `os.replace(p, q)` / `os.open(p)`）由 `explains(exc)` 升为确定偏差，
+  非零 `sys.exit` 之前查过 savefig 目标状态的由 `explain_exit()` 升级——一律走 `safe_file_operation_blocked`，**排在 `missing_input_of` / `enoent_fact` 之前**，
+  不再弹 `missing_input` 让用户去指认脚本自己的输出。`fidelity` 段（`level` / `blocked` / `intercepted` / `signals` / `unobserved`，闭集枚举 + 计数，无路径）
+  随成功的 `runtime` 进回执（`ExecutionReceipt.fidelity`，不进公开语义身份），随失败的 `error.extra.fidelity` 进诊断；worker.log 留一行 `[fidelity]`。
+  `adapter_available` 仍为 false：它的意思是"这个失败之后桌面是否已会自动换到按真实文件运行的路径"，没接通之前不承诺；终端 `tavotto run` 一直可用。pool 的镜像常量 `FILE_OPERATION_BLOCKED_CODE` 与
   `file_operation_blocked_params`、HTTP `_worker_error_payload`、probe 透传同一份载荷。看护
   `tests/test_worker_blocked_file_ops.py`。`SystemExit`
   的载荷若不是整数（`sys.exit("…")`）不进 message——那是用户的文字，message 会进 app.log

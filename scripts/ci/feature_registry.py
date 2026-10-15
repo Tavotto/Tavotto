@@ -348,6 +348,74 @@ def check(
     return problems
 
 
+def verify_posix_selection_covers_all_active(
+    feats: list[Feature], selected: dict[Ref, Listed]
+) -> list[str]:
+    """整个 POSIX 所选 project 必须覆盖每条 active 引用，而不只覆盖分片交集。
+
+    静态 check 查看全部三个浏览器；如果一个 registered 测试只在 WebKit 中
+    存在，缩小到 Chromium 的真跑验证会悄悄绕过它，因此必须在执行前挡住。
+    """
+    problems = []
+    for feature in feats:
+        if feature.status != "active":
+            continue
+        for ref in feature.e2e:
+            row = selected.get(ref)
+            if row is None:
+                problems.append(
+                    f"{feature.id}：{ref.show()} 没有被 POSIX 选中的浏览器收集"
+                    "——只能在其他浏览器中出现不等于已真跑"
+                )
+            elif not any(
+                row.expected.get(name) == "passed" for name in ("chromium", "chromium-en")
+            ):
+                problems.append(
+                    f"{feature.id}：{ref.show()} 在 POSIX 选中的项目里全都 skipped/缺席"
+                )
+    return problems
+
+
+def verify_run_shard(
+    feats: list[Feature], planned: dict[Ref, Listed], actual: dict[Ref, Listed]
+) -> tuple[list[str], int]:
+    """核对本 shard 计划执行的每个 active 用例/project，不要求其他 shard 的用例。
+
+    未分片的 frontend 静态门禁核实 active 引用全部存在；Playwright --shard
+    负责覆盖所有 project/case。每个 shard 只对自己计划中的 active 用例作真跑核验。
+    """
+    problems: list[str] = []
+    counted = 0
+    for feature in feats:
+        if feature.status != "active":
+            continue
+        for ref in feature.e2e:
+            expectation = planned.get(ref)
+            if expectation is None:
+                continue
+            observed = actual.get(ref)
+            for project in sorted(expectation.projects):
+                if expectation.expected.get(project) != "passed":
+                    problems.append(f"{feature.id}：{ref.show()} 的 {project} 声明期被跳过")
+                    continue
+                statuses = (
+                    []
+                    if observed is None
+                    else [status for name, status in observed.outcomes if name == project]
+                )
+                if not statuses:
+                    problems.append(
+                        f"{feature.id}：本 shard 应执行 {ref.show()} ({project}) 却没有结果——没跑不是绿"
+                    )
+                elif any(status not in RAN_OK for status in statuses):
+                    problems.append(
+                        f"{feature.id}：本 shard {ref.show()} ({project}) 的结果 {statuses} 不通过"
+                    )
+                else:
+                    counted += 1
+    return problems, counted
+
+
 def verify_run(feats: list[Feature], report: dict[Ref, Listed]) -> tuple[list[str], int]:
     problems: list[str] = []
     counted = 0
@@ -492,6 +560,10 @@ def main(argv: list[str] | None = None) -> int:
     c.add_argument("--scan-json", type=Path, help="离线：已存好的 e2e-skip-scan 输出")
     v = sub.add_parser("verify-run", help="合并态真跑的报告：登记的用例都真的执行且通过")
     v.add_argument("report", type=Path)
+    v.add_argument("--expected-list", type=Path, help="本 shard 的 Playwright --list JSON")
+    v.add_argument(
+        "--all-planned-list", type=Path, help="POSIX 两个 project 的完整未分片 --list JSON"
+    )
     t = sub.add_parser("transitions", help="与 base 比：条目不许消失，下线 / 降级要标签")
     t.add_argument("--base", required=True, help="base 提交 SHA")
     t.add_argument(
@@ -532,6 +604,39 @@ def main(argv: list[str] | None = None) -> int:
             report = parse_playwright_json(
                 json.loads(args.report.read_text(encoding="utf-8")), str(args.report)
             )
+            if args.expected_list is not None:
+                if args.all_planned_list is None:
+                    raise InputError(
+                        "POSIX 分片必须提供完整的 --all-planned-list，防止漏跑非 Chromium 用例"
+                    )
+                planned = parse_playwright_json(
+                    json.loads(args.expected_list.read_text(encoding="utf-8")),
+                    str(args.expected_list),
+                )
+                selected = parse_playwright_json(
+                    json.loads(args.all_planned_list.read_text(encoding="utf-8")),
+                    str(args.all_planned_list),
+                )
+                selection_problems = verify_posix_selection_covers_all_active(feats, selected)
+                # 防止分片意外计划了未被选中全量清单里的 registered 用例；
+                # 当前 shard 的 planned subset 还必须与全量 project 清单同源。
+                for ref, rec in planned.items():
+                    expected = selected.get(ref)
+                    if expected is None or not rec.projects <= expected.projects:
+                        selection_problems.append(
+                            f"本 shard 的 {ref.show()} 计划不属于完整 POSIX 选择集"
+                        )
+                problems, counted = verify_run_shard(feats, planned, report)
+                if counted == 0 and not problems:
+                    # 不代表漏测：可能本 shard 刚好没有注册用例，另两片负责。
+                    # 但必须已核过上述全量选择集；不能在该分支跳过 selection gate。
+                    pass
+                return _report(
+                    shape + selection_problems + problems,
+                    f"功能登记表：完整 POSIX 选择集已核对，本 shard 的 {counted} 条 active 用例/project 实际通过",
+                )
+            if args.all_planned_list is not None:
+                raise InputError("--all-planned-list 只能与 --expected-list 一起使用")
             problems, counted = verify_run(feats, report)
             if not problems and counted == 0:
                 raise InputError("一条登记的用例都没数到——登记表是空的还是报告不对？")

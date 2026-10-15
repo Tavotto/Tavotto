@@ -189,6 +189,23 @@ def _isolated_system_pythons(monkeypatch):
     monkeypatch.setattr(pool, "system_python_candidates", lambda **_: [])
 
 
+@pytest.fixture(autouse=True)
+def _stub_diag_detail_probes(monkeypatch):
+    """发送包 `detail/` 里两处会碰外部世界的采集默认换成桩：对渲染解释器起子进程（import matplotlib，秒级）与
+    对 tavotto.cn / github.com 的系统名字解析。`prepare` 在很多用例里都会走，不该每次都真探测一遍、
+    更不该在测试进程里发 DNS。需要真探测的用例（tests/test_diag_send_detail.py）自己取回原函数。"""
+    from tavotto.engine import diagdetail
+
+    monkeypatch.setattr(
+        diagdetail,
+        "_probe_subprocess",
+        lambda python, bundled, cwd=None, env_extra=None: {"status": "stubbed"},
+        raising=True,
+    )
+    monkeypatch.setattr(diagdetail, "_resolve", lambda host: ["203.0.113.7"], raising=True)
+    yield
+
+
 _WATCH_THREAD_PREFIX = "tavotto-project-watch-"
 
 

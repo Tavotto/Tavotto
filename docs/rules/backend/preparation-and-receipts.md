@@ -75,6 +75,11 @@
   `sys.modules` 里落在项目根内的模块。**解释器自己的目录不算**（QA 2026-09-24 PATH-B2）：项目根里的 `.venv`（ADR 0057 首开第 4 条）
   的 prefix / site-packages 严格落在项目根内时，底下的库文件既不记成数据输入、也不占预算、也不算本地模块
   （`figcapture.interpreter_dirs_within`，主语是跑脚本的那个进程的 `sys.prefix` 等）；前缀等于或包含项目根时不排除。build 那一刻定格，之后进程里再读什么都不是它的输入。
+- **执行保真度（V2 PR3a，`runtime.fidelity` → `ExecutionReceipt.fidelity`）**：safe worker 的 `BlockedFileOps.summary()`——`level` 三档
+  `deviated`（确定偏差，build 以 `safe_file_operation_blocked` 失败）/ `suspect`（弱信号，成功但标注）/ `none_observed`（没看到，盲区在 `unobserved`），
+  外加拦下的操作类别与次数、弱信号 (kind, via) 计数。worker 自报是不可信输入：回执只收闭集枚举与有界整数，其余丢弃（`to_payload` 的 `runtime`
+  也换成过滤后的段）；`public_facts()` / `to_payload()` 带 `fidelity`，**不进 `public_identity`**（疑似偏差不是另一次执行）；native 回执为 None。
+  失败的 build 没有回执，证据在 `error.extra.fidelity`。读它的下游（准备会话 `derive`、启动上下文记录）见各自文档。
 - **数据绑定与旧计划失效（U09，ADR 0071 / FO30）**：`databinding.binding_for(script, root, mode)` 按 cwd 档记「会读哪些
   文件、内容 sha256、修订」进 `PreparationPlan.binding`；执行线程起会话之前把授权 / 解释器决策 / 数据绑定三样与此刻各比
   一次，不一致就 `preparation_plan_stale` + `reason ∈ {grant_changed, environment_changed, data_binding_changed}` +
@@ -294,6 +299,22 @@ input 协议，前端也没有 readiness 计算器。端点 `POST /api/engine/pr
 - 已执行之后才缺包（EX13）仍是 `needs_dependencies` + 新一次尝试，意图不复活；运行时 `input()` 复用原 `Pending`。
 - 看护：`tests/test_preparation_run_intent.py`（假 pool：被动 0 次、一次、目录回答后继续、取消 / 外部变化 / 预算 / 重启、argv 转移与竞态；`held`：授权范围内安装、超出授权、影响扩大、
   取消后迟到 done；真 worker：装好后恰一次执行、**外部计数夹具**写一次后缺包，修复不把计数变 2）。
+
+## 执行回退与统一重试闸门（V2 PR1，ADR 0127）
+
+桌面用户发起的运行里，safe 尝试以 `safe_file_operation_blocked` 收场且策略允许 → **同一准备会话**接上第二个 attempt（`execution=native`，#1022 的 `_native_preparation_runner`）。
+裁决处只有 `engine/execpolicy.py`（纯逻辑）；会话侧接线在 `prepsession.SessionService._done_callback` / `_plan_fallback` / `_start_fallback`。要点：
+
+- **根因不另造枚举**：就是已有稳定错误码；`execpolicy.cause_of` 归类，`may_fall_back` **只对 `blocked` 为真**。缺包 / 参数 / 路径 / 脚本异常 / 超时 / 崩溃 / 无图一律不回退。
+- **策略**：项目设置键 `execution_policy`（`compatible` 缺省 / `safe_only`），坏值按缺省；运维开关 `TAVOTTO_EXECUTION_FALLBACK=0`（环境变量优先，其次全局 `worker.execution_fallback`）。
+- **闸门**：`decide_fallback` 固定优先级 开关 → 策略 → 取消 → 过期 → 原因 → `RetryGuard`（native 之后不回 safe、一次 run 至多一次、同执行身份同根因不重复）。回退在锁外规划（只读）、**在锁内最后一刻再核**取消标记 / 闸门，再接第二个 attempt；取消动作落在最新一次尝试上。
+- **只在桌面用户发起的运行里**：`app._desktop_initiated()` = `--desktop-sidecar` 进程 + 无本机凭据 + 窗口 cookie，服务端验证；`SESSIONS.act(desktop_initiated=)` 默认 False，意图创建时记下。`decide_fallback` 默认拒（`not_desktop_initiated`）。会话 safe 尝试开始前上一次桌面 native 会话让位（`_launch_session_attempt`）。
+- **只在会话 `run` / `run_when_ready` 认领之后**：CLI（`runcli`）与 MCP 不 import `execpolicy` / `prepsession`（`tests/test_execution_policy.py` 钉）；旧 `/api/engine/preparation` 不回退；前端永不发 `execution`。
+- **解释器沿用 safe 当时那一个**；native 计划算出的解释器 / 源码修订 / 检查项与 safe 当时不一致 → 不回退，闭集理由进 `attempt_history[].declined`。
+- **账本**：`Session.ledger`（有界 16、线程安全、按 run 分组，新的用户运行重算预算）；`attempt_history` 每条 = run · seq · attempt_id · profile · interpreter / launch 摘要 · cause · changed ∈ {profile, interpreter, launch_context} · outcome · code · declined。**无路径 / argv / env 值**。回退不是意图步数（`intent.attempts` 记名下全部尝试）。
+- **诊断**：native 尝试的任务诊断快照多 `retry:{of, cause, changed, execution}`（`PreparationPlan.retry_*`，全是闭集码 / plan id）。
+- 看护：`tests/test_execution_policy.py`（策略 / 开关 / 闸门 / 账本 / CLI·MCP 边界）、`tests/test_execution_fallback.py`（假 pool + 假 native runner：同会话两个 attempt、native 失败不回 safe、非 blocked 不回退、safe_only、kill switch、取消窗口 ×3、重跑重算预算、意图步数不变）、
+  `tests/test_execution_fallback_e2e.py`（真服务子进程 + 真用户 Python + 脚本自写的执行计数：`os.replace` 脚本 safe 被拦 → 同会话 native 成功、执行 2 次；除零 / 缺包只执行 1 次；safe_only / kill switch 不回退；运行中取消不起 native）。
 
 ## 终局诊断快照（T04）
 

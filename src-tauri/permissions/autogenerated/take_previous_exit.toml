@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-take-previous-exit"
+description = "Enables the take_previous_exit command without any pre-configured scope."
+commands.allow = ["take_previous_exit"]
+
+[[permission]]
+identifier = "deny-take-previous-exit"
+description = "Denies the take_previous_exit command without any pre-configured scope."
+commands.deny = ["take_previous_exit"]

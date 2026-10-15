@@ -1,3 +1,4 @@
+import { perfAction, perfActionPhase } from '@/perf/core'
 import { newId } from '@/lib/id'
 import { msg, t, type UiMessage } from '@/i18n'
 import { modKey } from '@/lib/utils'
@@ -34,13 +35,17 @@ function dropPoint(): { x: number; y: number } {
  */
 function place(objs: CanvasObject[], label: UiMessage, name: string): void {
   if (!objs.length) return
-  useDocumentStore.getState().commit(label, (d) => {
-    d.objects.push(...objs)
-  })
-  useSelectionStore.getState().set(objs.map((o) => o.id))
-  useUiStore
-    .getState()
-    .setStatus(msg('status.inserted', { name, undo: modKey('Z') }, 'workspace'), 'done')
+  perfActionPhase('document.commit', () =>
+    useDocumentStore.getState().commit(label, (d) => {
+      d.objects.push(...objs)
+    }),
+  )
+  perfActionPhase('selection.update', () =>
+    useSelectionStore.getState().set(objs.map((o) => o.id)),
+  )
+  perfActionPhase('ui.status', () =>
+    useUiStore.getState().setStatus(msg('status.inserted', { name, undo: modKey('Z') }, 'workspace'), 'done'),
+  )
 }
 
 const baseArrow = (x: number, y: number, w: number, h: number): ArrowObject => ({
@@ -123,9 +128,11 @@ export const SYMBOLS = [
 ]
 
 export function insertSymbol(sym: string): void {
-  const c = dropPoint()
-  const obj = baseText(c.x - 5, c.y - 3, 10, sym)
-  place([obj], msg('history.insertSymbol', { symbol: sym }, 'workspace'), sym)
+  perfAction('symbol.insert', () => {
+    const c = dropPoint()
+    const obj = baseText(c.x - 5, c.y - 3, 10, sym)
+    place([obj], msg('history.insertSymbol', { symbol: sym }, 'workspace'), sym)
+  })
 }
 
 /**
@@ -230,6 +237,8 @@ export function buildPreset(id: PresetId, c: { x: number; y: number }): CanvasOb
 }
 
 export function insertPreset(id: PresetId): void {
-  const name = presetLabel(id)
-  place(buildPreset(id, dropPoint()), msg('history.insertPreset', { name }, 'workspace'), name)
+  perfAction('preset.insert', () => {
+    const name = presetLabel(id)
+    place(buildPreset(id, dropPoint()), msg('history.insertPreset', { name }, 'workspace'), name)
+  })
 }

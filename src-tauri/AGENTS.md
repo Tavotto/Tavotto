@@ -38,6 +38,11 @@
   **必须留看门狗**（没有它 = 一个关不掉的窗口；拦的唯一入口是 `hold_window()`，
   行为有 Rust 单测钉住，别退回「在源码里搜 token」那种空门禁）。
   ⌘Q 与系统注销不走这条路。两侧同源由 `tests/test_desktop_close_guard.py` 看护。
+- **引擎监视、重启与退出标记**（ADR 0129）：握手后监视线程约 1 s `Sidecar::poll_exit()`（shutdown 取走 child 后回 `None` = 正常关闭）；
+  意外退出写标记、发 `tavotto:engine-exited`、`current_engine_exit` 回读；`restart_engine`（仅主窗口，远程窗口**无**）与首启共用 `boot_engine`
+  （新 nonce，`AppState.port` 可变）。`app_config_dir()/session-state.json` 只含版本 / 时间 / running|clean / 退出类型闭集，不上传；
+  `take_previous_exit` 取走即清空。**绕过 `RunEvent::Exit` 的退出路径必须先写 clean**：`std::process::exit` 只许经 `e2e_exit`，
+  `UpdaterBuilder` 只许经 `updater_builder()`（`on_before_exit`）——`main.rs` 的结构测试钉着，新增退出路径先加看护。
 - **主页拖放拿真实路径**（ADR 0092）：`disable_drag_drop_handler()` 必须留着（装上 Tauri 的处理器
   页面 HTML5 拖放整片失效）；macOS 上 `native_drop.rs` 只旁听 `performDragOperation:` 读路径、发
   `tavotto:file-drop`、再调原实现。路径分派只在 `drop_paths::classify`（绝对 + canonicalize，Rust 单测），

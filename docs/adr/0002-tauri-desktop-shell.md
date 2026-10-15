@@ -276,3 +276,9 @@ Tauri bundler）。
 - **「本机崩溃恢复副本下次启动恢复」的前提是 origin 稳定。** 副本（`tavotto.autosave.<id>` / `tavotto.recovery.<id>`）
   在 localStorage 里，按 origin 隔离；改造前每次启动换端口，这句在桌面版上并不成立。现在它在「端口拿到了」的
   那些启动上成立；端口被占的那一次仍读不到——「上次打开的排版」等关键状态因此另由后端记（ADR 0108 §三，PR-B）。
+
+## 修订（2026-10-14，[ADR 0129](0129-abnormal-exit-marker.md)）：引擎监视、重启与退出标记
+
+- **监视线程。** 握手成功后每约 1 s `Sidecar::poll_exit()`（`try_wait`；`shutdown` 会 take 掉 child，之后回 `None` = 正常关闭，不是崩溃）。壳没让它退而它退了：写标记（闭集 `signal`/`nonzero`/`zero`）、向主窗口发 `tavotto:engine-exited`、可经 `current_engine_exit` 回读。
+- **`restart_engine`。** 关旧句柄 → `Sidecar::start`（端口记忆）→ 新 nonce → 导航，与首启共用 `boot_engine`；`AppState.port` 随之可变（不再是 `OnceLock`）。仅主窗口；远程实例窗口无此权限。
+- **`session-state.json`**（`app_config_dir()`）：`running` / `clean` + 版本 / 启动时刻（+ 引擎退出类型），setup 读旧值后写 `running`，`RunEvent::Exit`（sidecar 收掉之后）写 `clean`；`take_previous_exit` 取走即清空。绕过 `Exit` 的退出路径（Windows 更新器装包前的 `process::exit(0)` 经 `on_before_exit`、e2e 更新口）先写 `clean`。上文「退出（正常）」「退出（壳崩溃/被 kill）」两条不变。

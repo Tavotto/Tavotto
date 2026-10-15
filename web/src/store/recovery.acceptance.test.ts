@@ -889,7 +889,7 @@ describe('A19 未选中的候选：探测零副作用', () => {
     be.owners.set('d_b', 'p_a')
     be.setLast('p_a', 'd_b', 'Draft B')
     // A 的本机副本比磁盘更新：一旦被当「已打开」读取，就会被挪进恢复槽位
-    const newer = { ...savedA, updatedAt: 200 }
+    const newer = { ...savedA, updatedAt: 200, project: { ...savedA.project, name: 'Unsaved candidate edit' } }
     localStorage.setItem('tavotto.autosave.d_a', JSON.stringify(newer))
     seedLocal({
       currentDoc: 'd_a',
@@ -1204,7 +1204,9 @@ describe('修复后新增状态', () => {
 
   it('probeDocument 零副作用：本机更新副本只标待裁决，不挪键、不写盘', async (ctx) => {
     const savedA = seedSaved('d_a', 'p_a', { last: false })
-    localStorage.setItem('tavotto.autosave.d_a', JSON.stringify({ ...savedA, updatedAt: 200 }))
+    localStorage.setItem('tavotto.autosave.d_a', JSON.stringify({
+      ...savedA, updatedAt: 200, project: { ...savedA.project, name: 'Unsaved edit' },
+    }))
     const app = await boot()
     const probe = (app.doc as unknown as {
       probeDocument?: (id: string, pj: string | null) => Promise<{ kind: string; pendingRecovery: string | null }>

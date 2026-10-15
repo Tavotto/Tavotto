@@ -48,3 +48,14 @@ descriptor 文件读。
   送到的更新状态）。
 - 看护：`nativeSessionStore.test.ts` / `NativeConfirmDialog.test.tsx` /
   `openRequest.test.ts` / `runtimeAssetStore.test.ts`。
+
+## 桌面拥有的脚本停在 `input()` 上（P07，ADR 0126）
+
+`NativeSessionInfo.pending_input` 是后端的事实（不属于任何窗口）。`nativeSessionStore` 在 `applyEvent` / `refresh` 里经 `syncNativePendingInput`
+把它镜像进**同一个**答题队列 `scriptInputStore`（`ScriptInputRequest.native = {session_id, request_id}`），不另做对话框 / 队列：
+
+- 作答走 `answerNativeInput`（`null` = 「没有输入」→ EOF），**不走** `/api/script_input/*`；409 `native_input_not_pending`（别的窗口先答了）
+  与 404 一样收起，不报错；其它失败留框并显示原因。「停止脚本」走 `cancelNativeSession`（真终止进程）。
+- 会话状态里 Pending 没了（已答 / 已过 / 会话结束）就收起队里这条会话的旧问；重连 / 刷新靠 `refresh` 对账接回来。
+- 口令（`masked`）用密码框，答案不进任何 store（看护 `store/nativeInput.test.ts` 对两个 store 做序列化扫描）。
+- 老后端 / 终端拥有的会话没有 `pending_input` 字段：什么都不入队。

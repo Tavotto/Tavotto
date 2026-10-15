@@ -18,6 +18,17 @@
   与常量 for 循环展开。递归扫子目录（剪掉 .venv/__pycache__/node_modules…）。
   手动生成/合并：`python -m tavotto.engine.discover <figures_dir> --write`
   （现有条目永远优先，冲突 stem 只报告不裁决）。
+  * **通配输出名的磁盘比对有界（#684）**：每份 `discover()` 报告共用一份惰性输出索引，
+    每个目录只列一次，宿主解析的所有脚本 / 模式 / 输出格式共用（目标解析器子进程各自受限）；
+    复用 `scanbudget` 的目录项、墙钟与取消预算，
+    剪掉 `PRUNE_DIRS` 与隐藏项、不跟随链接 / Windows 路径替身，层级沿用素材预算。
+    默认墙钟从第一次实际通配查找才开始，前面的枚举 / AST 不扣它；显式给的预算保留原期限。
+    预算耗尽 / 读不全时所有通配模式留在 `unresolved`，`unresolved_reasons` 给出闭集原因，
+    冲突判定前撤下整份共享索引的通配认领（含先前匹配成功的脚本），不把局部命中当完整认领；
+    各脚本自己的字面量 stem 照常可用，包括与通配结果重叠的那一个。
+    文件名与扩展名统一沿用 pathlib glob 的平台语义（Windows Unicode `IGNORECASE`、POSIX 区分大小写），
+    不是 `.lower()` / `normcase`。T02 的 `glob_disk=False` 仍然不列磁盘。
+    看护 `tests/test_discover_output_budget.py`（真目录 / 真链接、预算 / 取消 / 超时与报告原因）。
   * **读不动 / 解析不了与「确认非绘图」分开（U03，ADR 0057 §五）**：`read_source` 按 PEP 263
     声明 / BOM 解码（`tokenize.detect_encoding`），`inspect_script` 回 `{info, problem, parser,
     entry_candidates}`，problem ∈ {io_error, decode_error, syntax_error}；报告多 `problems` 表，

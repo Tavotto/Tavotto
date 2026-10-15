@@ -17,6 +17,9 @@ import {
   flushAutosave,
   hasUnsavedWork,
   overwriteDisk,
+  onDocumentPersisted,
+  probeDocument,
+  acceptProbe,
   readAutosaveDoc,
   recoverLocalCopy,
   reloadFromDisk,
@@ -59,6 +62,9 @@ let putMode: 'ok' | 'external' | 'stale' | 'io' = 'ok'
 /** PUT 的门：非空时 PUT 挂起，releasePuts() 放行 */
 let gatePuts = false
 const gates: (() => void)[] = []
+const gateWaiters: (() => void)[] = []
+let responseMicrotasks = 0
+const nextHeldPut = () => new Promise<void>((resolve) => gateWaiters.push(resolve))
 const puts: { id: string; rev: string | null; base: string | null }[] = []
 
 const fakeFetch = (async (url: unknown, init?: RequestInit) => {
@@ -85,7 +91,11 @@ const fakeFetch = (async (url: unknown, init?: RequestInit) => {
   if (init?.method === 'PUT') {
     const body = String(init.body)
     puts.push({ id, rev: q.get('base_revision'), base: q.get('base') })
-    if (gatePuts) await new Promise<void>((r) => gates.push(r))
+    if (gatePuts) await new Promise<void>((r) => {
+      gates.push(r)
+      gateWaiters.shift()?.()
+    })
+    for (let i = 0; i < responseMicrotasks; i++) await Promise.resolve()
     if (putMode === 'io') return new Response('{"error":"disk full"}', { status: 500 })
     // `stale_write` 比的是 updatedAt，**body 里没有磁盘修订号也没有摘要**
     if (putMode === 'stale') {
@@ -146,6 +156,8 @@ beforeEach(async () => {
   disk.clear()
   puts.length = 0
   gates.length = 0
+  gateWaiters.length = 0
+  responseMicrotasks = 0
   gatePuts = false
   putMode = 'ok'
   localStorage.clear()
@@ -170,6 +182,60 @@ afterEach(async () => {
 })
 
 describe('保存状态机', () => {
+  it.each([10001, 10000, 9999])(
+    '旧 PUT 完成时保留更新内容的本机副本（新副本时间戳 %s，#646）',
+    async (nextTimestamp) => {
+      await s().switchDocument(seeded(1), 'd_copy_race')
+      await saveNow()
+      const clock = vi.spyOn(Date, 'now').mockReturnValue(10000)
+      try {
+        gatePuts = true
+        responseMicrotasks = 200 // HTTP 收尾可以经过任意多个异步任务，不能猜微任务轮数。
+        const firstHeld = nextHeldPut()
+        s().commit(literal('第一笔'), (d) => {
+          d.objects.push(text('n1', 'A'))
+        })
+        flushAutosave()
+        await firstHeld
+        expect(gates).toHaveLength(1)
+        const firstCopy = localStorage.getItem(slotKey('d_copy_race'))!
+
+        clock.mockReturnValue(nextTimestamp)
+        s().commit(literal('第二笔'), (d) => {
+          d.objects.push(text('n2', 'B'))
+        })
+        flushAutosave()
+        const nextCopy = localStorage.getItem(slotKey('d_copy_race'))!
+        expect(nextCopy).not.toBe(firstCopy)
+
+        // 只放行旧 PUT：更新的一版仍由第二道 gate 扣住，不依赖计时器。
+        const secondHeld = nextHeldPut()
+        gates.shift()!()
+        await secondHeld
+        expect(disk.get('d_copy_race')).toBe(firstCopy)
+        expect(gates).toHaveLength(1)
+        expect(localStorage.getItem(slotKey('d_copy_race'))).toBe(nextCopy)
+        expect(puts.at(-1)?.base).toBe('10000')
+        expect(puts.at(-1)?.rev).toBe(revOf(firstCopy))
+
+        const written = new Promise<void>((resolve) => {
+          const stop = onDocumentPersisted((id) => {
+            if (id !== 'd_copy_race') return
+            stop()
+            resolve()
+          })
+        })
+        gates.shift()!()
+        await written
+        expect(disk.get('d_copy_race')).toBe(nextCopy)
+        expect(localStorage.getItem(slotKey('d_copy_race'))).toBeNull()
+      } finally {
+        responseMicrotasks = 0
+        clock.mockRestore()
+      }
+    },
+  )
+
   it('编辑 → dirty → saving → saved → clean（saved 是短暂反馈态）', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
     await s().switchDocument(seeded(1), 'd_sm')
@@ -469,6 +535,211 @@ describe('外部修改冲突（R-08）', () => {
 })
 
 describe('崩溃恢复', () => {
+  it('legacy schema2 comparison: identical stored bytes are redundant before migration', async () => {
+    const legacy = { schema: 2, name: 'Legacy Figure', page: { w: 80, h: 60 }, objects: [text('legacy_t', 'same')], guides: [], updatedAt: 100 }
+    const bytes = JSON.stringify(legacy)
+    disk.set('d_legacy_same', bytes)
+    localStorage.setItem(slotKey('d_legacy_same'), bytes)
+    const probe = await probeDocument('d_legacy_same', null)
+    expect(probe).toMatchObject({ from: 'disk', pendingRecovery: null })
+    expect(probe.doc?.schema).toBe(3)
+    expect(localStorage.getItem(slotKey('d_legacy_same'))).toBe(bytes)
+    expect(acceptProbe(probe, null)).toBeNull()
+    expect(localStorage.getItem(slotKey('d_legacy_same'))).toBeNull()
+    expect(localStorage.getItem(recoveryKey('d_legacy_same'))).toBeNull()
+    expect(disk.get('d_legacy_same')).toBe(bytes)
+    expect(puts).toHaveLength(0)
+  })
+
+  it('legacy schema2 comparison: timestamp and recursive key order do not create an edit', async () => {
+    const legacy = { schema: 2, name: 'Legacy Figure', page: { w: 80, h: 60 }, objects: [text('legacy_t', 'same')], guides: [], updatedAt: 100 }
+    const bytes = JSON.stringify(legacy)
+    const localBytes = JSON.stringify({ ...legacy, updatedAt: 99 }, (_key, value) => {
+      if (!value || typeof value !== 'object' || Array.isArray(value)) return value
+      return Object.fromEntries(Object.entries(value).reverse())
+    })
+    disk.set('d_legacy_keys', bytes)
+    localStorage.setItem(slotKey('d_legacy_keys'), localBytes)
+    const probe = await probeDocument('d_legacy_keys', null)
+    expect(probe.pendingRecovery).toBeNull()
+    expect(acceptProbe(probe, null)).toBeNull()
+    expect(localStorage.getItem(slotKey('d_legacy_keys'))).toBeNull()
+    expect(localStorage.getItem(recoveryKey('d_legacy_keys'))).toBeNull()
+    expect(disk.get('d_legacy_keys')).toBe(bytes)
+    expect(puts).toHaveLength(0)
+  })
+
+  it('legacy schema2 comparison: different legacy content remains a user recovery candidate', async () => {
+    const legacy = { schema: 2, name: 'Legacy Figure', page: { w: 80, h: 60 }, objects: [text('legacy_t', 'same')], guides: [], updatedAt: 100 }
+    const local = { ...legacy, updatedAt: 99, objects: [text('legacy_t', 'unsaved legacy edit')] }
+    const bytes = JSON.stringify(legacy)
+    disk.set('d_legacy_edit', bytes)
+    localStorage.setItem(slotKey('d_legacy_edit'), JSON.stringify(local))
+    const probe = await probeDocument('d_legacy_edit', null)
+    expect(probe.from).toBe('disk')
+    expect(probe.pendingRecovery).not.toBeNull()
+    expect((probe.doc!.canvases[0].objects[0] as TextObject).text).toBe('same')
+    expect(acceptProbe(probe, null)).toMatchObject({ kind: 'recovery' })
+    const kept = JSON.parse(localStorage.getItem(recoveryKey('d_legacy_edit'))!)
+    expect(kept.canvases[0].objects[0].text).toBe('unsaved legacy edit')
+    expect(disk.get('d_legacy_edit')).toBe(bytes)
+    expect(puts).toHaveLength(0)
+  })
+
+  it('legacy schema2 comparison: accept rereads a distinct legacy draft that arrived after probe', async () => {
+    const legacy = { schema: 2, name: 'Legacy Figure', page: { w: 80, h: 60 }, objects: [text('legacy_t', 'same')], guides: [], updatedAt: 100 }
+    const bytes = JSON.stringify(legacy)
+    disk.set('d_legacy_late', bytes)
+    localStorage.setItem(slotKey('d_legacy_late'), bytes)
+    const probe = await probeDocument('d_legacy_late', null)
+    expect(probe.pendingRecovery).toBeNull()
+    localStorage.setItem(slotKey('d_legacy_late'), JSON.stringify({
+      ...legacy, updatedAt: 99, objects: [text('legacy_t', 'late legacy edit')],
+    }))
+    expect(acceptProbe(probe, null)).toMatchObject({ kind: 'recovery' })
+    const kept = JSON.parse(localStorage.getItem(recoveryKey('d_legacy_late'))!)
+    expect(kept.canvases[0].objects[0].text).toBe('late legacy edit')
+    expect(disk.get('d_legacy_late')).toBe(bytes)
+    expect(puts).toHaveLength(0)
+  })
+
+  it.each(['legacy disk', 'legacy local'] as const)('legacy schema2 comparison: mixed schemas retain modern identity (%s)', async (side) => {
+    const legacy = { schema: 2, name: 'Legacy Figure', page: { w: 80, h: 60 }, objects: [text('legacy_t', 'same')], guides: [], updatedAt: 100 }
+    const modern = {
+      ...seeded(100, legacy.name, 1),
+      project: { id: 'p_existing', name: legacy.name },
+      canvases: [{ id: 'c_existing', name: legacy.name, page: legacy.page, objects: legacy.objects, guides: [] }],
+      activeCanvasId: 'c_existing',
+      createdAt: 1,
+    }
+    const diskBytes = JSON.stringify(side === 'legacy disk' ? legacy : modern)
+    const localBytes = JSON.stringify(side === 'legacy local' ? legacy : modern)
+    disk.set('d_mixed_identity', diskBytes)
+    localStorage.setItem(slotKey('d_mixed_identity'), localBytes)
+    const probe = await probeDocument('d_mixed_identity', null)
+    expect(probe.from).toBe('disk')
+    expect(probe.pendingRecovery).not.toBeNull()
+    expect(acceptProbe(probe, null)).toMatchObject({ kind: 'recovery' })
+    expect(localStorage.getItem(recoveryKey('d_mixed_identity'))).not.toBeNull()
+    if (side === 'legacy disk') {
+      const kept = JSON.parse(localStorage.getItem(recoveryKey('d_mixed_identity'))!)
+      expect(kept.project.id).toBe('p_existing')
+      expect(kept.canvases[0].id).toBe('c_existing')
+    }
+    expect(disk.get('d_mixed_identity')).toBe(diskBytes)
+    expect(puts).toHaveLength(0)
+  })
+
+  it.each(['project', 'canvas'] as const)('legacy schema2 comparison: modern %s identity remains meaningful', async (identity) => {
+    const main = seeded(100, 'main', 1)
+    const local = structuredClone(main)
+    if (identity === 'project') local.project.id = 'p_other'
+    else {
+      local.canvases[0].id = 'c_other'
+      local.activeCanvasId = 'c_other'
+    }
+    const bytes = JSON.stringify(main)
+    disk.set('d_modern_identity', bytes)
+    localStorage.setItem(slotKey('d_modern_identity'), JSON.stringify(local))
+    const probe = await probeDocument('d_modern_identity', null)
+    expect(probe.pendingRecovery).not.toBeNull()
+    expect(acceptProbe(probe, null)).toMatchObject({ kind: 'recovery' })
+    expect(localStorage.getItem(recoveryKey('d_modern_identity'))).not.toBeNull()
+    expect(disk.get('d_modern_identity')).toBe(bytes)
+    expect(puts).toHaveLength(0)
+  })
+
+  it.each([100, 99])('重启时保留时间戳 %s 的不同稿，明确恢复并保存前不覆盖磁盘', async (updatedAt) => {
+    const main = seeded(100, 'main', 1)
+    const local = { ...main, updatedAt, project: { ...main.project, name: 'unsaved edit' } }
+    const mainBytes = JSON.stringify(main)
+    disk.set('d_clock_restart', mainBytes)
+    localStorage.setItem(slotKey('d_clock_restart'), JSON.stringify(local))
+    localStorage.setItem('tavotto.currentDoc', 'd_clock_restart')
+
+    expect(await restoreSession()).toBe(true)
+    expect(s().projectMeta.name).toBe('main')
+    expect(s().docNotice).toMatchObject({ kind: 'recovery', docId: 'd_clock_restart' })
+    expect(JSON.parse(localStorage.getItem(recoveryKey('d_clock_restart'))!).project.name).toBe('unsaved edit')
+    expect(disk.get('d_clock_restart')).toBe(mainBytes)
+    expect(puts).toHaveLength(0)
+
+    expect(recoverLocalCopy()).toBe(true)
+    expect(s().projectMeta.name).toBe('unsaved edit')
+    expect(s().saveState).toBe('dirty')
+    expect(disk.get('d_clock_restart')).toBe(mainBytes)
+    expect(puts).toHaveLength(0)
+    expect(await saveNow()).toBe('saved')
+    expect(JSON.parse(disk.get('d_clock_restart')!).project.name).toBe('unsaved edit')
+  })
+
+  it('非活动画布的不同内容也保留为恢复候选，不只比较当前画布', async () => {
+    const main = seeded(100, 'main', 1)
+    main.canvases.push({ ...main.canvases[0], id: 'c_inactive', name: 'Other canvas', objects: [text('other', 'before')] })
+    const local = structuredClone(main)
+    local.updatedAt = 99
+    ;(local.canvases[1].objects[0] as TextObject).text = 'unsaved inactive edit'
+    disk.set('d_inactive', JSON.stringify(main))
+    localStorage.setItem(slotKey('d_inactive'), JSON.stringify(local))
+    const { doc, notice } = await readAutosaveDoc('d_inactive')
+    expect(notice).toMatchObject({ kind: 'recovery' })
+    expect((doc!.canvases[1].objects[0] as TextObject).text).toBe('before')
+    const kept = JSON.parse(localStorage.getItem(recoveryKey('d_inactive'))!)
+    expect(kept.canvases[1].objects[0].text).toBe('unsaved inactive edit')
+    expect(puts).toHaveLength(0)
+  })
+
+  it.each([100, 99])('不同内容的副本在相同或回拨时间戳 %s 下仍可恢复，主文档保持磁盘版', async (updatedAt) => {
+    const main = seeded(100, 'main', 1)
+    const local = { ...main, updatedAt, project: { ...main.project, name: 'unsaved edit' } }
+    const mainBytes = JSON.stringify(main)
+    const localBytes = JSON.stringify(local)
+    disk.set('d_clock', mainBytes)
+    localStorage.setItem(slotKey('d_clock'), localBytes)
+
+    const probe = await probeDocument('d_clock', null)
+    expect(probe).toMatchObject({ from: 'disk', pendingRecovery: 'local_distinct' })
+    expect(probe.doc?.project.name).toBe('main')
+    expect(localStorage.getItem(slotKey('d_clock'))).toBe(localBytes)
+    expect(localStorage.getItem(recoveryKey('d_clock'))).toBeNull()
+    expect(puts).toHaveLength(0)
+
+    const notice = acceptProbe(probe, null)
+    expect(notice).toMatchObject({ kind: 'recovery', docId: 'd_clock', summary: { name: 'unsaved edit' } })
+    expect(JSON.parse(localStorage.getItem(recoveryKey('d_clock'))!).project.name).toBe('unsaved edit')
+    expect(disk.get('d_clock')).toBe(mainBytes)
+    expect(puts).toHaveLength(0)
+  })
+
+  it('探测后出现的同时间戳不同副本，接受时重新判定并保留', async () => {
+    const main = seeded(100, 'main', 1)
+    disk.set('d_late_copy', JSON.stringify(main))
+    localStorage.setItem(slotKey('d_late_copy'), JSON.stringify(main))
+    const probe = await probeDocument('d_late_copy', null)
+    expect(probe.pendingRecovery).toBeNull()
+    localStorage.setItem(slotKey('d_late_copy'), JSON.stringify({
+      ...main, project: { ...main.project, name: 'late unsaved edit' },
+    }))
+    expect(acceptProbe(probe, null)).toMatchObject({ kind: 'recovery' })
+    expect(JSON.parse(localStorage.getItem(recoveryKey('d_late_copy'))!).project.name).toBe('late unsaved edit')
+    expect(puts).toHaveLength(0)
+  })
+
+  it.each([99, 100, 101])('只有更新时间戳 %s 或 JSON 键序不同，没有恢复内容', async (updatedAt) => {
+    const main = seeded(100, 'main', 1)
+    disk.set('d_same_copy', JSON.stringify(main))
+    localStorage.setItem(slotKey('d_same_copy'), JSON.stringify({ ...main, updatedAt }, (_key, value) => {
+      if (!value || typeof value !== 'object' || Array.isArray(value)) return value
+      return Object.fromEntries(Object.entries(value).reverse())
+    }))
+    const probe = await probeDocument('d_same_copy', null)
+    expect(probe.pendingRecovery).toBeNull()
+    expect(acceptProbe(probe, null)).toBeNull()
+    expect(localStorage.getItem(slotKey('d_same_copy'))).toBeNull()
+    expect(localStorage.getItem(recoveryKey('d_same_copy'))).toBeNull()
+    expect(puts).toHaveLength(0)
+  })
+
   it('本机副本比磁盘新 → 打开主文档 + 提供恢复；主文档一个字节不动', async () => {
     disk.set('d_rec', JSON.stringify(seeded(100, 'main', 2)))
     localStorage.setItem(slotKey('d_rec'), JSON.stringify(seeded(500, 'crashed', 5)))

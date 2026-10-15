@@ -342,7 +342,12 @@ REPORT_ORIGIN_BUILD = "build"
 REPORT_ORIGINS = (REPORT_ORIGIN_BUILD,)
 
 
-def runtime_report(*, origin: str = REPORT_ORIGIN_BUILD, inputs: dict | None = None) -> dict:
+def runtime_report(
+    *,
+    origin: str = REPORT_ORIGIN_BUILD,
+    inputs: dict | None = None,
+    fidelity: dict | None = None,
+) -> dict:
     """执行侧**自报**的运行时事实（ExecutionReceipt 的 worker 半边，ADR 0053）。
 
     每个字段都是**这个进程此刻**量到的：`sys.executable` / `sys.prefix` /
@@ -355,6 +360,10 @@ def runtime_report(*, origin: str = REPORT_ORIGIN_BUILD, inputs: dict | None = N
     U09（ADR 0070）再加三样：`report_origin`（这份事实从哪来）、`pid`（哪个进程量的——父进程拿它与自己
     起的那个子进程对，体检 / 探针的结果冒充不了 build 回执）、`inputs`（`figcapture.InputObserver.report()`：
     已观察的数据文件与本地模块，`observation=partial` 如实写着没看到的通道）。
+
+    `fidelity`（V2 PR3a，`figcapture.BlockedFileOps.summary()`）：safe 守卫造成的语义偏差证据——`level`
+    （`deviated` / `suspect` / `none_observed`）、拦下的操作类别与次数、弱信号计数；全是闭集枚举，没有路径。
+    native 进程没有这本账，不报。
     """
     if origin not in REPORT_ORIGINS:
         raise ValueError(f"report origin 非法: {origin!r}")
@@ -386,6 +395,7 @@ def runtime_report(*, origin: str = REPORT_ORIGIN_BUILD, inputs: dict | None = N
         # 控制面核 pid 时两个都要看（receipt.accept_runtime）
         "ppid": os.getppid(),
         "inputs": dict(inputs) if isinstance(inputs, dict) else None,
+        "fidelity": dict(fidelity) if isinstance(fidelity, dict) else None,
     }
 
 
@@ -1065,7 +1075,7 @@ class LiveFigureSession:
         state = self.states[stem]
         self.out_dir.mkdir(parents=True, exist_ok=True)
         t0 = time.perf_counter()
-        man = manifest_mod.build_manifest(state, stem)
+        man = manifest_mod.build_manifest(state, stem, timings=timings)
         t1 = time.perf_counter()
         # **传文件对象、且 `newline=""`，不许传路径。** matplotlib 拿到路径时走
         # `cbook.to_filehandle` → `open(fname, "w", encoding=…)`——**没有
@@ -1114,7 +1124,13 @@ class LiveFigureSession:
             self._discard_parts(svg_part, man_part)
             raise
         if timings is not None:
-            timings["manifest_ms"] = round((t1 - t0 + time.perf_counter() - t2) * 1000.0, 3)
+            # 保留 manifest_ms 的既有语义（准备 + 最终 SVG 几何，包括作用域退出）；
+            # 新键只增加诊断，不改变协议版本或图形/布局的任何流程。
+            final_geometry_ms = (time.perf_counter() - t2) * 1000.0
+            prepare_ms = (t1 - t0) * 1000.0
+            timings["manifest_prepare_ms"] = round(prepare_ms, 3)
+            timings["manifest_final_geometry_ms"] = round(final_geometry_ms, 3)
+            timings["manifest_ms"] = round(prepare_ms + final_geometry_ms, 3)
         if preview is not None:
             mode, reason = previewbudget.resolve_mode(
                 svg_bytes=svg_bytes,

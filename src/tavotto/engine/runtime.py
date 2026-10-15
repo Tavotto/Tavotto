@@ -28,6 +28,7 @@ import platform
 import subprocess
 import sys
 import threading
+import time
 
 RUNTIME_DIR_NAME = "runtime"
 MANIFEST_NAME = "runtime-manifest.json"
@@ -469,8 +470,15 @@ def repair_hint() -> str:
 # ---------------------------------------------------------------------------
 # 实测
 # ---------------------------------------------------------------------------
+class ActivationUnavailable(RuntimeError):
+    """激活取环境失败（瞬时，不是对环境的结论）的基类。`launcher.LauncherUnavailable` 继承它——本模块被 launcher
+    依赖，不能反过来 import 它，又要在注入的激活用完预算时抛同一类错误。"""
+
+    code = "conda_launcher_unavailable"
+
+
 def probe_packages(
-    python: str, names: list[str] | None = None, *, bundled: bool = False
+    python: str, names: list[str] | None = None, *, bundled: bool = False, env_for=None
 ) -> dict[str, str | None]:
     """在指定解释器里 import 一遍并报版本；import 不到的回 None。
 
@@ -493,6 +501,16 @@ def probe_packages(
         "        out[n] = None\n"
         "sys.stdout.write(json.dumps(out))\n"
     )
+    # `env_for`（`launcher.activate_env`）由调用方注入：launcher 依赖本模块，本模块不能反过来 import 它。
+    # 激活捕获与探测子进程共用一个预算；捕获把它用完就是瞬时的激活不可用（调用方报稳定码），不是“包都 import 不到”
+    deadline = time.monotonic() + PROBE_TIMEOUT_S
+    if env_for:
+        env = env_for(python, probe_env(python, bundled=bundled), timeout=PROBE_TIMEOUT_S)
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise ActivationUnavailable("经 Conda 激活取环境用完了版本盘点的时间预算；请稍后再试")
+    else:
+        env, remaining = probe_env(python, bundled=bundled), PROBE_TIMEOUT_S
     try:
         proc = subprocess.run(
             [python, *probe_args(bundled=bundled), "-c", expr],
@@ -500,11 +518,13 @@ def probe_packages(
             text=True,
             encoding="utf-8",
             errors="replace",
-            timeout=PROBE_TIMEOUT_S,
+            timeout=remaining,
             stdin=subprocess.DEVNULL,
-            env=probe_env(python, bundled=bundled),
+            env=env,
             creationflags=CREATE_NO_WINDOW,
         )
+    # 注入的 `env_for` 激活取环境失败（`launcher.LauncherUnavailable`）**原样抛出**：那是瞬时的启动方式问题，
+    # 不能折成“这些包都 import 不到”，调用方报稳定码
     except (OSError, subprocess.SubprocessError):
         return {n: None for n in names}
     if proc.returncode != 0:

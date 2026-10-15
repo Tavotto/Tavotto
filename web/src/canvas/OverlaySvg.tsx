@@ -9,7 +9,7 @@ import { arrowEndpointsOf, geomTarget, panelFullRect, resolveGroup } from '@/lib
 import { patchBoundsOf } from '@/lib/patchResize'
 import { ALL_DIRS, boundsOf, dirsFor, type ResizeDir } from '@/lib/geometry'
 import { useDocumentStore } from '@/store/documentStore'
-import { useInteractionStore } from '@/store/interactionStore'
+import { useInteractionStore, type SnapFeedback } from '@/store/interactionStore'
 import {
   discardPanelPreview,
   previewPanelIds,
@@ -140,6 +140,7 @@ export function OverlaySvg() {
   const draft = useInteractionStore((s) => s.draft)
   const snapXs = useInteractionStore((s) => s.snapXs)
   const snapYs = useInteractionStore((s) => s.snapYs)
+  const snapFeedback = useInteractionStore((s) => s.snapFeedback)
   const hoverId = useInteractionStore((s) => s.hoverId)
   const pendingGuide = useInteractionStore((s) => s.pendingGuide)
   const dragKind = useInteractionStore((s) => s.kind)
@@ -338,6 +339,10 @@ export function OverlaySvg() {
           b={{ x: pageBox.x + pageBox.w + 24, y: mmToViewY(y, t) + 0.5 }}
         />
       ))}
+
+      {/* 吸附反馈（ADR 0128 §四）：自身所属框虚线 + 吸上的那条边加粗；目标在别的图时对方元素也虚线框出 */}
+      {/* 图内编辑态的反馈画在 ElementBoxes 里（选中框之上、手柄之下，否则同坐标的选中实线会盖住虚线框） */}
+      {!elementPanel && snapFeedback.map((f, i) => <SnapFeedbackMark key={`sf-${i}`} f={f} t={t} />)}
 
       {/* 框选：实线框 + 极淡的底（它不是选中，是「正在圈」的范围；虚线只给暂定的东西） */}
       {marquee && (
@@ -786,6 +791,7 @@ function ElementBoxes({ panel, t }: { panel: PanelObject; t: ViewTransform }) {
   const gidDrag = useInteractionStore((s) => s.gidDrag)
   const preview = useInteractionStore((s) => s.elementPreview)
   const arrowPreview = useInteractionStore((s) => s.arrowPreview)
+  const snapFeedback = useInteractionStore((s) => s.snapFeedback)
   const selectedGids = useUiStore((s) => s.selectedGids)
   const selectedGid = selectedGids.at(-1) ?? null
   if (!manifest) return null
@@ -957,6 +963,11 @@ function ElementBoxes({ panel, t }: { panel: PanelObject; t: ViewTransform }) {
             />
           ),
         )}
+
+        {/* 吸附反馈：在选中框之上、手柄之下 */}
+        {snapFeedback.map((f, i) => (
+          <SnapFeedbackMark key={`sf-${i}`} f={f} t={t} />
+        ))}
 
         {memberBoxes.map((r) => (
           <rect
@@ -1228,6 +1239,34 @@ function EdgeStrips({
         />
       ))}
     </>
+  )
+}
+
+/**
+ * 吸附反馈：线宽恒为屏幕像素（与吸附线同一换算，不随画布倍率变）。自身那条边只画 `self` 的跨度，不贯穿整页；
+ * 虚线只用 `--sel-dash` 那一种（吸附是拖动中的暂定状态）。
+ */
+function SnapFeedbackMark({ f, t }: { f: SnapFeedback; t: ViewTransform }) {
+  const self = toScreen(f.self, t)
+  const edge =
+    f.axis === 'x'
+      ? { x1: mmToViewX(f.v, t) + 0.5, y1: self.y, x2: mmToViewX(f.v, t) + 0.5, y2: self.y + self.h }
+      : { x1: self.x, y1: mmToViewY(f.v, t) + 0.5, x2: self.x + self.w, y2: mmToViewY(f.v, t) + 0.5 }
+  return (
+    <g data-snap-feedback={f.axis} style={{ pointerEvents: 'none' }}>
+      <rect data-snap-self {...rectAttrs(self)} fill="none" stroke={SEL} strokeWidth={1} style={DASH} />
+      {f.target && (
+        <rect
+          data-snap-target
+          {...rectAttrs(toScreen(f.target, t))}
+          fill="none"
+          stroke={SEL}
+          strokeWidth={1}
+          style={DASH}
+        />
+      )}
+      <line data-snap-self-edge {...edge} stroke={SEL} strokeWidth={2} style={{ shapeRendering: 'crispEdges' }} />
+    </g>
   )
 }
 

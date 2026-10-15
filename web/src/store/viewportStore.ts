@@ -428,5 +428,31 @@ export function clientToMm(clientX: number, clientY: number, t = getTransform())
   }
 }
 
+/**
+ * 视口此刻在页面 mm 里的可见矩形（纯函数，由 transform 与视口尺寸算出）。
+ * 视口尺寸未知（还没上报，0 × 0）回 null = 「不知道」，调用方别拿它当「什么都看不见」。
+ */
+export function visibleRectMm(
+  t: Pick<ViewTransform, 'zoom' | 'panX' | 'panY'>,
+  viewW: number,
+  viewH: number,
+): { x: number; y: number; w: number; h: number } | null {
+  if (!(viewW > 0) || !(viewH > 0) || !(t.zoom > 0)) return null
+  const x0 = worldToMm((0 - t.panX) / t.zoom)
+  const y0 = worldToMm((0 - t.panY) / t.zoom)
+  return {
+    x: x0,
+    y: y0,
+    w: worldToMm(viewW / t.zoom),
+    h: worldToMm(viewH / t.zoom),
+  }
+}
+
+/** 此刻的视口可见矩形（mm） */
+export const currentVisibleRectMm = () => {
+  const { viewW, viewH } = useViewportStore.getState()
+  return visibleRectMm(getTransform(), viewW, viewH)
+}
+
 /** 屏幕 6px 的吸附容差换算成当前缩放下的 mm */
 export const snapTolMm = (t: ViewTransform, px = 6) => pxToMm(px, t)

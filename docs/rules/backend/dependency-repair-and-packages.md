@@ -658,10 +658,14 @@ PR1–PR6 的规则分散在上面各节（PR1 / PR2 在「联合依赖准备」
   「相关」只有 `depplan._relevant_declarations` 一处：能指到它的 import（无条件 / 函数体内 / 别名动态）或归不到发行包的 import / 非字面量动态导入；可选 / 条件 / `TYPE_CHECKING` 不算。
   「算不算」的绑定上下文只有 `depplan._is_binding`（import 分类）与 `_binding_dynamic`（非字面量动态导入）两个入口，互斥 provider 的冲突触发（`_arbitrate_providers`）同用它们：
   `try: import cv2 / except ImportError`、`TYPE_CHECKING` 或条件下的 `import cv2` 不触发冲突；`try` / 条件 / `TYPE_CHECKING` 里的 `importlib.import_module(name)` 不让声明变相关。
-  扫描器为此在 `ImportUse.enclosing` 里保留非字面量动态导入的外围上下文（只加字段，不进 `to_payload`，`context` 仍恒为 `dynamic`）。
+  扫描器为此在 named / relative import 的内部 `enclosing` 保留完整外围保护，别名字面量沿本地闭包（包括包内相对导入）继承；
+  `_join_enclosing` 让任何层的条件 / 可选 / 类型检查优先于函数体的延后，不能拿公开 `CONTEXTS` 的旧聚合排序合并保护。
+  非字面量动态导入的外围记录与跟进保持原合同。
+  分类的 `ImportClass.enclosing_contexts` 保留同名各处的外围集合，由 `_is_binding` 判有没有绑定来源（`conditional` 与 `deferred` 不能只按枚举强弱合一）；
+  普通 named import 的内部外围只为到达别名时保留来路；分类只在含 dynamic 候选时消费该集合。两字段均不进 `to_payload`，公开 `context` / `needed` 原样。
   仲裁出的 provider（`cv2` 的 headless 等）只在脚本确实 import 那个模块时相关——未 import 就不相关，连「有未解释 import」也不让它变相关。
   `declared_gaps` 对外截到 `MAX_DECLARED_GAPS`（超出时带 `declared_gaps_total`），但 `root_trigger` / 状态一律用完整集合判：先判定、后截断。
-- 差集（`JointPlan.declared_gaps`）≠ 安装集合：前者相对**此刻跑脚本的环境**，后者相对**目标**。相关差集 + 跑脚本的环境归 Tavotto（`deprepair._run_env_ours`）才让计划 `ready`；归属按**路径身份、不 realpath**（`pool.same_python` 比登记的各代 `bin/python`）——托管 venv 的 `bin/python` 常是指向基础解释器的软链接，realpath 会把用户当前用的系统 python 判成「我们的」；
+- 差集（`JointPlan.declared_gaps`）≠ 安装集合：前者相对**此刻跑脚本的环境**，后者相对**目标**。相关差集 + 跑脚本的环境归 Tavotto（`deprepair._run_env_ours`）才让计划 `ready`；来源标签与计划共用 `managedenv.is_managed_python`，归属按**路径身份、不 realpath**（叶子 `interpreterpath.same_python`，`pool.same_python` 同一实现，比登记的各代 `bin/python`）——托管 venv 的 `bin/python` 常是指向基础解释器的软链接，realpath 会把用户当前用的系统 python 判成「我们的」；
   用户的系统 / 本进程解释器只记录偏差（`action=recorded`），不静默升降包。`declared_gaps` 是可选字段，`plan_version` 不升。
 - 没有 import 名的 root 照样进账与装后核验（`install_only` 里 `import_name=""`）；`needed_imports` 一律滤掉空名，别拿空串去 probe。
 - 互斥 provider 只有一张表 `depresolve.ALTERNATIVE_DISTRIBUTIONS`：声明点名一个 = 它胜出；点名两个 = `dependency_conflict`；没点名 = curated（观察到的不是授权）。
@@ -678,6 +682,7 @@ PR1–PR6 的规则分散在上面各节（PR1 / PR2 在「联合依赖准备」
 - 互斥 provider 的 `resolution_source`：声明仲裁替掉表里的名字时是 `project_declared`（`depplan._source_of`）。
 - 切换 provider 的作用域：`deprepair._scope_conflicts` 的 `via: "provider"`——别的作用域仍记着互斥 provider 时 `dependency_scope_conflict`（出路同 D04），同一作用域改声明是正常换，无归属老账不参与。
 - 成功回执 `result.providers`：`{import_name, distribution, version, source, provenance, generation}`，`provenance` 来自装后重读的静态索引（`_verify_distributions` 的返回值），读不出留空。
-  **每条成功安装的对外终态都带它**（托管联合 / 托管单包修复 / 首次装包 / 项目 venv 联合 / 项目 venv 单包 / 包管理原地装·升；卸载不带）：代事务路径原样转交其 `providers`；原地装没有「代」故 `generation` 为空，单包与包管理原地装没有重读元数据故 `provenance` 为空。`source` 缺失一律在 pip / 换代之前拒（`_require_record_sources`）。
+  **每条成功安装的对外终态都带它**（托管联合 / 托管单包修复 / 首次装包 / 项目 venv 联合 / 项目 venv 单包 / 包管理原地装·升；卸载不带）：代事务路径原样转交其 `providers`；原地装没有「代」故 `generation` 为空。项目 venv 单包与联合安装同经 `_verify_distributions`，用户指定的包无可读提供者证据仍失败关闭；包管理原地装没有重读提供者元数据故 `provenance` 为空。`source` 缺失一律在 pip / 换代之前拒（`_require_record_sources`）。
+  hash 锁的 `provider_decisions` 与已扫描 import 的 `install_only` 按同一份实际安装集合 `installing`（整份选中锁）生成，不拿 active 环境里另一种 provider 的满足状态抵消本次安装记录（#970）；不因此增加锁外需求或改变仅声明依赖的记账规则。
 - 看护：`tests/test_dependency_origin_install.py`（计划层，四 provider × 声明 / 观察、editable / 本地 wheel / VCS、本地 helper / namespace、显式选择）、
   `tests/test_dependency_provider_scopes.py`（真 generation + 离线 pip：安装集合 = 脚本实际 provider = 回执；跨作用域切换；失败不动旧 active）。

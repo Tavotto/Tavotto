@@ -20,6 +20,29 @@ export interface ElementPreview {
   resizingGid?: string
 }
 
+/** 一个吸上的轴：`v` 是线（页面 mm），`self` 是自身所属框，`target` 是别的图里被吸上的元素框 */
+export interface SnapFeedback {
+  axis: 'x' | 'y'
+  v: number
+  self: Rect
+  target?: Rect
+}
+
+const NO_FEEDBACK: SnapFeedback[] = []
+
+const sameRect = (a: Rect | undefined, b: Rect | undefined) =>
+  a === b || (!!a && !!b && a.x === b.x && a.y === b.y && a.w === b.w && a.h === b.h)
+
+const sameFeedback = (a: SnapFeedback[], b: SnapFeedback[]) =>
+  a.length === b.length &&
+  a.every(
+    (f, i) =>
+      f.axis === b[i].axis &&
+      f.v === b[i].v &&
+      sameRect(f.self, b[i].self) &&
+      sameRect(f.target, b[i].target),
+  )
+
 interface InteractionState {
   kind: DragKind
   /** 框选矩形（mm） */
@@ -33,6 +56,11 @@ interface InteractionState {
   /** 命中的吸附参考线（mm） */
   snapXs: number[]
   snapYs: number[]
+  /**
+   * 吸附反馈（ADR 0128 §四）：每个吸上的轴一项——自身所属框（边加粗 + 虚线框）与，目标是别的图的
+   * 元素时，对方的框。与 `snapXs/snapYs` 同一生命周期；不带反馈的吸附（画布对象平移等）为空。
+   */
+  snapFeedback: SnapFeedback[]
   hoverId: string | null
   /** 图内元素编辑：hover 中的 gid */
   hoverGid: string | null
@@ -60,7 +88,7 @@ interface InteractionState {
   end: () => void
   setMarquee: (r: Rect | null) => void
   setDraft: (d: DraftPreview | null) => void
-  setSnap: (xs: number[], ys: number[]) => void
+  setSnap: (xs: number[], ys: number[], feedback?: SnapFeedback[]) => void
   setHover: (id: string | null) => void
   setHoverGid: (gid: string | null) => void
   setGidDrag: (d: { gid: string; dfx: number; dfy: number } | null) => void
@@ -77,6 +105,7 @@ export const useInteractionStore = create<InteractionState>((set) => ({
   draft: null,
   snapXs: [],
   snapYs: [],
+  snapFeedback: [],
   hoverId: null,
   hoverGid: null,
   gidDrag: null,
@@ -99,6 +128,7 @@ export const useInteractionStore = create<InteractionState>((set) => ({
       draft: null,
       snapXs: [],
       snapYs: [],
+      snapFeedback: [],
       pendingGuide: null,
       gidDrag: null,
       arrowPreview: null,
@@ -107,14 +137,15 @@ export const useInteractionStore = create<InteractionState>((set) => ({
   },
   setMarquee: (marquee) => set({ marquee }),
   setDraft: (draft) => set({ draft }),
-  setSnap: (snapXs, snapYs) =>
+  setSnap: (snapXs, snapYs, snapFeedback = NO_FEEDBACK) =>
     set((s) =>
       s.snapXs.length === snapXs.length &&
       s.snapYs.length === snapYs.length &&
       s.snapXs.every((v, i) => v === snapXs[i]) &&
-      s.snapYs.every((v, i) => v === snapYs[i])
+      s.snapYs.every((v, i) => v === snapYs[i]) &&
+      sameFeedback(s.snapFeedback, snapFeedback)
         ? s
-        : { snapXs, snapYs },
+        : { snapXs, snapYs, snapFeedback },
     ),
   setHover: (hoverId) => set((s) => (s.hoverId === hoverId ? s : { hoverId })),
   setHoverGid: (hoverGid) => set((s) => (s.hoverGid === hoverGid ? s : { hoverGid })),

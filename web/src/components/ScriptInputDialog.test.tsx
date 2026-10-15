@@ -88,6 +88,20 @@ afterEach(() => {
 })
 
 describe('ScriptInputDialog', () => {
+  it('native 的问不暗示「会记住答案」（native 路径不写答案记忆）；safe 的问照旧提示', () => {
+    useScriptInputStore.getState().onRequested(req({ id: 'safe1' }))
+    render()
+    const rememberClaim = () => /记住|remember/i.test(dialog()?.textContent ?? '')
+    expect(rememberClaim()).toBe(true) // 正对照:safe 的提示还在
+    act(() => useScriptInputStore.getState().clear())
+    useScriptInputStore
+      .getState()
+      .onRequested(req({ id: 'n1', native: { session_id: 's', request_id: 'r' } }))
+    render()
+    expect(dialog()).not.toBeNull()
+    expect(rememberClaim()).toBe(false)
+  })
+
   it('没有在等的问时什么都不渲染', () => {
     render()
     expect(dialog()).toBeNull()

@@ -14,6 +14,11 @@
     "cardSize": "{{w}} × {{h}} 厘米",
     "cardTitle": "{{id}}",
     "cardUsed_other": "当前排版已用 {{count}} 次",
+    "editabilityAll": "全部",
+    "editabilityAria": "按能否编辑筛选",
+    "editabilityEditable": "可编辑",
+    "editabilityLayout": "仅版面",
+    "editabilityPending": "待连接",
     "emptyHint": "把 PDF/PNG 放进项目目录即可出现在这里。",
     "emptyTitle": "项目里还没有图",
     "filterActiveAria_other": "筛选（{{count}} 项生效）",
@@ -42,7 +47,6 @@
     "runtimeRunAria": "运行 {{script}} 并发现图",
     "runtimeSiblingOf": "同源：{{name}}",
     "scriptBadgeTitle": "可编辑",
-    "scriptOnly": "只看可编辑的图",
     "search": "搜索图…",
     "searchAria": "搜索图",
     "sectionFigures": "图",
@@ -61,7 +65,6 @@
     "typeAria": "类型筛选",
     "typeRaster": "图片",
     "typeRuntime": "运行时图",
-    "typeScript": "可编辑",
     "unsupportedTitle": "以下文件无法使用",
     "usedChip": "已使用",
     "usedOnly": "已使用",
@@ -132,6 +135,19 @@
     "selectedCount_other": "已选 {{count}} 个",
     "sizeMenu": "尺寸",
     "textMenu": "文字"
+  },
+  "unexpectedError": {
+    "text": "Tavotto 出了点意外，可以把诊断发给我们"
+  },
+  "exitNotice": {
+    "engine": {
+      "text": "渲染服务意外退出了",
+      "restart": "重新启动",
+      "note": "重启后可以发送问题反馈"
+    },
+    "previous": {
+      "text": "上次 Tavotto 没有正常退出"
+    }
   },
   "crash": {
     "blank": "打开空白排版",
@@ -687,7 +703,7 @@
     "clipboardWriteDenied": "无法访问剪贴板。浏览器未授权。",
     "coldHint": {
       "heavy": "冷启动可能需要几分钟",
-      "medium": "冷启动约十几秒"
+      "medium": "首次运行可能需要更久"
     },
     "dismissError": "关闭错误提示",
     "documentLoaded_other": "已载入：{{name}}（{{count}} 张画布）",
@@ -863,6 +879,7 @@
     "line": {
       "checking": "正在检查…",
       "offline": "连接断了，正在重连…",
+      "engineStopped": "渲染服务已停止",
       "checkFailed": "没能开始检查",
       "argsMissing_other": "还差 {{count}} 个参数",
       "argsReady": "参数已填好",
@@ -894,6 +911,7 @@
       "depsUnknown": "Tavotto 装不了 {{module}}，请选一个装了它的 Python 环境",
       "depsStdlib": "Tavotto 自带的环境里没有 {{module}}",
       "depsStdlibOther": "当前用的 Python 里没有 {{module}}",
+      "depsPlatform": "{{module}} 是其他系统专用模块，这个脚本无法在当前系统运行",
       "depsRuntime": "运行时缺 {{module}}",
       "install": "要先安装缺少的组件",
       "needsArgs": "脚本要运行参数",
@@ -1148,5 +1166,9 @@
       "tooNew": "上次的排版“{{name}}”来自更新版本的 Tavotto，这个版本打不开。",
       "unavailable": "上次的排版暂时没打开。"
     }
+  },
+  "renderProgress": {
+    "preparing": "正在准备图表…",
+    "elapsed": "{{message}} · 已用时 {{seconds}} 秒"
   }
 }
