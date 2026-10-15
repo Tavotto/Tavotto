@@ -17,7 +17,6 @@
     "title": "Rendering environment"
   },
   "export": {
-    "copyPath": "Copy full path",
     "exportAgain": "Export again",
     "showInFolder": "Show in folder",
     "finish": "Done",

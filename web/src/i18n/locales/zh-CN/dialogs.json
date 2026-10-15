@@ -17,7 +17,6 @@
     "title": "渲染环境"
   },
   "export": {
-    "copyPath": "复制完整路径",
     "exportAgain": "再次导出",
     "showInFolder": "在文件夹中显示",
     "finish": "完成",

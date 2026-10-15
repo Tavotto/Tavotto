@@ -53,7 +53,6 @@ import {
 } from "@/components/ui/icons";
 import { ICON_SIZE } from "@/components/ui/Icon";
 import { CanvasThumb } from "./CanvasThumb";
-import { CopyButton } from "./settings/CopyButton";
 import { Checkbox } from "./ui/Checkbox";
 import { Segmented } from "./ui/Segmented";
 import { Details, Summary } from "@/components/ui/Details";
@@ -2215,23 +2214,6 @@ export function ResultBlock({
 /** 这一件产物已被后端确认写出（`OutputRow` 画成功行的同一条判据） */
 const outputSaved = (o: ExportOutput) => o.status !== "failed" && !!o.name;
 
-/**
- * 目录 + 文件名拼成完整路径；沿用目录自带的分隔符（Windows 的 `C:\out` 不掺 `/`）。
- * 目录已以分隔符结尾（根目录 `/`、`C:\`）就不再补一个。
- */
-export const joinExportPath = (dir: string, name: string) =>
-  /[\\/]$/.test(dir)
-    ? `${dir}${name}`
-    : `${dir}${dir.includes("\\") && !dir.includes("/") ? "\\" : "/"}${name}`;
-
-/**
- * 目录是绝对路径（POSIX `/…`、Windows 盘符 `C:\` / `C:/`、UNC `\\server\…`）。项目设置
- * 接受相对目录且原样保存，相对路径的基准是后端进程而不是看的人——那时拼出来的不是
- * 「完整路径」，干脆不给复制。
- */
-export const isAbsoluteExportDir = (dir: string) =>
-  dir.startsWith("/") || /^[A-Za-z]:[\\/]/.test(dir) || dir.startsWith("\\\\");
-
 function OutputRow({ out, dir }: { out: ExportOutput; dir: string }) {
   useTranslation(["dialogs", "errors"]);
   const [revealError, setRevealError] = useState<string | null>(null);
@@ -2302,16 +2284,6 @@ function OutputRow({ out, dir }: { out: ExportOutput; dir: string }) {
         <span className="shrink-0 text-xs tabular-nums text-ink-3">{dims}</span>
         {out.replaced && (
           <span className="shrink-0 text-xs text-ink-3">{ex("replaced")}</span>
-        )}
-        {/* 只在后端确认了目录与文件名之后才给：路径是 `export_dir`（后端回的）+ 已写出的文件名，不推测；
-            目录不是绝对路径时拼不出「完整路径」，不给 */}
-        {isAbsoluteExportDir(dir) && (
-          <CopyButton
-            appearance="icon"
-            text={joinExportPath(dir, out.name)}
-            label={ex("copyPath")}
-            className="ml-auto -my-1 shrink-0"
-          />
         )}
       </div>
       <InspectionLine manifest={out.manifest} />

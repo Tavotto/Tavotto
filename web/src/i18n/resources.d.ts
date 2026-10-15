@@ -249,7 +249,6 @@ export default interface Resources {
       "conflictRename": "另存一份",
       "conflictReplace": "覆盖",
       "connectionFailed": "无法连接导出服务。请检查连接并确认 {{app}} 正在运行，再重试。重新导出前请先检查输出文件夹。",
-      "copyPath": "复制完整路径",
       "editedDuringExport": "导出期间排版又改了。文件里是点「导出」时的内容。",
       "epsHint": "矢量 · 不支持透明度",
       "epsUnavailable": {
