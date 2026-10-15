@@ -289,4 +289,8 @@ def _emit(on_event) -> None:
 
 
 def install_async(on_event=None) -> None:
+    # 同步把状态置为 running 再返回：调用方（POST 接口）拿到的响应与随后的任何读取都已经看得见这次尝试，
+    # 而不是等线程调度起来才变。已有安装在跑时不动（别把它的日志清掉）
+    if not _lock.locked():
+        _progress.update(state="running", log="", error=None)
     threading.Thread(target=lambda: install(on_event), daemon=True, name="mm-bootstrap").start()

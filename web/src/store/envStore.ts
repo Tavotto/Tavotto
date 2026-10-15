@@ -219,6 +219,22 @@ let installPending = false
  * （`terminalSeq` 比对）。取舍：别的标签页在我们见到终态之后另起的安装，要等下一次对账读到 running 才跟上。
  */
 let bootstrapLocked = false
+/** 待定的兜底：POST 回来了却一直没观察到这次尝试（既没 running 也没终态）——超时后用一次读取收尾，不永远「正在安装」 */
+export const INSTALL_PENDING_TIMEOUT_MS = 30_000
+let postReturned = false
+let pendingTimer: ReturnType<typeof setTimeout> | null = null
+/**
+ * 解除「待定」：**只在观察到这次尝试时**调（SSE `engine.bootstrap` running / 终态、POST 响应本身带 running / 终态、
+ * POST 之后发起的读取读到 running / 终态）。POST 成功本身不算——后端的线程要稍后才把状态置为 running（老后端），
+ * 那之前读到的 idle 说的是上一轮。
+ */
+function releaseInstallPending(): void {
+  installPending = false
+  postReturned = false
+  installGen += 1
+  if (pendingTimer) clearTimeout(pendingTimer)
+  pendingTimer = null
+}
 let terminalSeq = 0
 
 /**
@@ -462,6 +478,7 @@ export const useEnvStore = create<EnvState>((set, get) => ({
     const installAtStart = installGen
     const pendingAtStart = installPending
     const terminalAtStart = terminalSeq
+    const postReturnedAtStart = postReturned
     // 读取在路上时 env 被别的回包写过（确认运行目录 / 采用环境 / 另一次读取）：这份快照可能是那次写**之前**的，
     // 整份写进来就把刚确认的事实盖回去（T12：装载期那次读取比紧接着的确认晚回来）。不盖，按此刻再读一次；
     // 再读的那份在路上又被写过就不落地——store 里已经是更晚到的事实
@@ -478,6 +495,13 @@ export const useEnvStore = create<EnvState>((set, get) => ({
         // 安装进度只靠 SSE：断线期间丢了终态事件，`installing` 会永久为真。后端说不在跑了就收尾
         // 只认**发请求那一刻**的安装代际：这份快照若产生在服务端切到 running 之前（refresh 在飞时才开始安装），
         // 它说的 idle / done 是上一轮的，不能清掉这一轮的 `installing`
+        const observed = env.state === 'running' || env.state === 'done' || env.state === 'failed'
+        if (installPending && postReturnedAtStart && observed) {
+          // POST 之后发起的读取看见了这次尝试（在跑 / 已经有了结局）：待定解除；结局就地收尾
+          releaseInstallPending()
+          if (env.state !== 'running')
+            set({ installing: false, ...(env.state === 'failed' && env.error ? { log: env.error } : {}) })
+        }
         if (env.state === 'done' || env.state === 'failed') {
           bootstrapLocked = true
           terminalSeq += 1
@@ -503,15 +527,31 @@ export const useEnvStore = create<EnvState>((set, get) => ({
   install: async () => {
     if (get().installing) return
     installPending = true
+    postReturned = false
     bootstrapLocked = false
     set({ installing: true, log: '' })
     try {
-      await installEngineEnvironment()
-      // 服务端确认收到了（POST 成功）：此后发起的 refresh 才有资格说「已经结束了」
-      installPending = false
-      installGen += 1
+      const res = await installEngineEnvironment()
+      if (res.state === 'running' || res.state === 'done' || res.state === 'failed') {
+        // 响应本身就带着这次尝试的状态（后端同步置 running 再返回）：已经观察到
+        if (installPending) releaseInstallPending()
+      } else if (installPending) {
+        // 老后端：线程稍后才置 running。POST 成功不算观察到——之后发起的读取读到 running / 终态才解除，
+        // 超时兜底
+        postReturned = true
+        pendingTimer = setTimeout(() => {
+          pendingTimer = null
+          if (!installPending) return
+          if (import.meta.env.DEV) console.warn('[envStore] 安装已提交但 30s 内没观察到 running / 终态，用一次读取收尾')
+          releaseInstallPending()
+          void get().refresh()
+        }, INSTALL_PENDING_TIMEOUT_MS)
+      }
     } catch (e) {
       installPending = false
+      postReturned = false
+      if (pendingTimer) clearTimeout(pendingTimer)
+      pendingTimer = null
       set({
         installing: false,
         log: e instanceof Error ? e.message : t('engine.installFailed', { ns: 'errors' }),
@@ -701,11 +741,11 @@ export const useEnvStore = create<EnvState>((set, get) => ({
     if (p.state === 'done' || p.state === 'failed') {
       bootstrapLocked = true
       terminalSeq += 1
-      installPending = false
+      if (installPending) releaseInstallPending()
       set({ installing: false })
       void get().refresh()
     } else if (p.state === 'running' && !bootstrapLocked) {
-      installPending = false
+      if (installPending) releaseInstallPending()
       set({ installing: true })
     }
   },

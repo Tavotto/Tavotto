@@ -234,3 +234,17 @@ def test_render_failure_carries_machine_readable_code(client, monkeypatch, tmp_p
     resp = client.post("/api/engine/render", json={"id": "p1.pdf", "patches": []})
     assert resp.status_code == 500
     assert resp.get_json()["code"] == "no_worker_python"
+
+
+def test_install_async_marks_running_before_returning(monkeypatch):
+    """POST 接口调完 `install_async` 就返回：状态必须已经是 running（不等线程被调度起来），
+    否则紧随其后的读取读到上一轮的 idle，前端会以为安装已经结束。"""
+    import threading
+
+    gate = threading.Event()
+    monkeypatch.setattr(bootstrap, "install", lambda on_event=None: gate.wait(5))
+    try:
+        bootstrap.install_async()
+        assert bootstrap.progress()["state"] == "running"
+    finally:
+        gate.set()
