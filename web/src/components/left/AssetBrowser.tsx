@@ -156,6 +156,9 @@ export function AssetBrowser() {
   const objects = useDocumentStore((s) => s.doc.objects)
   const scriptCount = useScriptLibraryStore((s) => s.view?.all_scripts?.length ?? 0)
   const scriptsLoaded = useScriptLibraryStore((s) => s.loaded)
+  // 取失败（load 结束、没有清单）：脚本数是「不知道」，宁可摆搜索框。还没取到（含刚挂载、已触发未返回）则先不摆——
+  // 先出现再收回会把页面推来推去；取得很快，不必为这一小段预留位置
+  const scriptsFailed = useScriptLibraryStore((s) => !s.loaded && !s.loading && s.error !== null)
 
   // 搜索词与筛选住在组件外（`store/assetBrowseStore`）：切左轨页签 / 收起抽屉
   // 会把这个组件整个卸掉，放在组件 state 里的输入就跟着没了
@@ -420,8 +423,10 @@ export function AssetBrowser() {
       <div className="flex flex-col gap-1.5 px-3 pb-2">
         {/* 条目少于 6 个时不显示搜索框（有搜索词时保留）。这个框同时过滤图、用不了的文件和下面的脚本区，
             所以阈值按三者合计算——图少脚本多的项目里它是长脚本列表唯一的搜索入口（Codex #1110 P2） */}
-        {/* 脚本清单还没取到（或取失败）是「不知道」不是 0：宁可多摆一个搜索框，也不藏掉唯一的入口 */}
-        {(!scriptsLoaded || total + unsupported.length + scriptCount >= SEARCH_MIN_ITEMS || query !== '') && (
+        {/* 脚本清单：加载中先不摆（结果出来再定，不先出现再收回）；取失败是「不知道」不是 0，摆出来，不藏掉唯一的入口 */}
+        {(scriptsFailed ||
+          (scriptsLoaded && total + unsupported.length + scriptCount >= SEARCH_MIN_ITEMS) ||
+          query !== '') && (
           <SearchInput
             value={query}
             onValueChange={setQuery}

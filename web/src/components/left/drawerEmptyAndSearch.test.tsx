@@ -217,11 +217,45 @@ describe('素材抽屉的搜索框按「图 + 不支持的文件 + 脚本」合�
     expect(searchBox()).not.toBeNull()
   })
 
-  it('脚本清单还没加载（不知道 ≠ 0）：搜索框可见', async () => {
+  it('加载中不显示；失败时显示；加载完成后按总数定', async () => {
     panels(2)
-    useScriptLibraryStore.setState({ loaded: false, loading: true, view: null })
+    useScriptLibraryStore.setState({ loaded: false, loading: true, error: null, view: null })
+    const load = vi.spyOn(useScriptLibraryStore.getState(), 'load').mockImplementation(async () => null as never)
     await mount(<AssetBrowser />)
-    expect(searchBox()).not.toBeNull()
+    expect(searchBox(), '加载中').toBeNull()
+    await act(async () => useScriptLibraryStore.setState({ loading: false, error: 'boom' }))
+    expect(searchBox(), '失败').not.toBeNull()
+    await act(async () => {
+      scripts(2)
+    })
+    expect(searchBox(), '加载完成、合计 4').toBeNull()
+    await act(async () => {
+      scripts(10)
+    })
+    expect(searchBox(), '加载完成、合计 12').not.toBeNull()
+    load.mockRestore()
+  })
+
+  it('整个加载过程中搜索框不会先出现再消失（小项目：从头到尾都不出现）', async () => {
+    panels(2)
+    useScriptLibraryStore.setState({ loaded: false, loading: false, error: null, view: null })
+    const seen: boolean[] = []
+    const record = () => seen.push(searchBox() !== null)
+    // 触发加载的 effect 之前、加载中、加载完成：每一步都记一次
+    const load = vi.spyOn(useScriptLibraryStore.getState(), 'load').mockImplementation(async () => {
+      useScriptLibraryStore.setState({ loading: true })
+      return null as never
+    })
+    await mount(<AssetBrowser />)
+    record()
+    await act(async () => {})
+    record()
+    await act(async () => scripts(2))
+    record()
+    expect(seen).toEqual([false, false, false])
+    // 通则：序列里不允许出现 true → false
+    for (let i = 1; i < seen.length; i++) expect(seen[i - 1] && !seen[i]).toBe(false)
+    load.mockRestore()
   })
 
   it('折叠脚本区后换项目（清单被清空）：抽屉自己把清单取回来，2 张图 + 10 个脚本时搜索框可见', async () => {
