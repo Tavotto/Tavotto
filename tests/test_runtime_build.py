@@ -537,6 +537,10 @@ def test_runtime_source_dir_honours_the_override(tmp_path, monkeypatch):
     assert brt.runtime_source_dir(tmp_path) == tmp_path / "runtime"
     monkeypatch.setenv("TAVOTTO_RUNTIME_SRC", str(tmp_path / "elsewhere"))
     assert brt.runtime_source_dir(tmp_path) == tmp_path / "elsewhere"
+    # 相对覆盖锚定到仓库根，不随调用方的 cwd 漂移（build_desktop 从别处起时核对的仍是被打包的那份）
+    monkeypatch.setenv("TAVOTTO_RUNTIME_SRC", os.path.join("build", "rt"))
+    monkeypatch.chdir(tmp_path.parent)
+    assert brt.runtime_source_dir(tmp_path) == tmp_path / "build" / "rt"
     spec = (REPO / "packaging" / "tavotto.spec").read_text(encoding="utf-8")
     assert "RUNTIME = runtime_source_dir(ROOT)" in spec
 

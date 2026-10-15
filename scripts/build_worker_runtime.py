@@ -321,9 +321,14 @@ def runtime_source_dir(repo_root: Path) -> Path:
     """这次打包收的是哪一份 runtime：`TAVOTTO_RUNTIME_SRC` 覆盖，否则仓库根的 `runtime/`。
 
     packaging/tavotto.spec（收进包）与 scripts/build_desktop.py（打包后逐字节核对）共用这一处——
-    两边各解析一次的话，覆盖了却核对了另一份，闸就空转了。
+    两边各解析一次的话，覆盖了却核对了另一份，闸就空转了。相对路径的覆盖一律锚定到 `repo_root`
+    （而不是调用方此刻的 cwd）：PyInstaller 子进程在仓库根下跑，核对那一侧在哪儿起都得指向同一份。
     """
-    return Path(os.environ.get("TAVOTTO_RUNTIME_SRC") or (Path(repo_root) / "runtime"))
+    override = os.environ.get("TAVOTTO_RUNTIME_SRC")
+    if not override:
+        return Path(repo_root) / "runtime"
+    p = Path(override)
+    return p if p.is_absolute() else Path(repo_root) / p
 
 
 def diff_collected_runtime(src: Path, dst: Path) -> list[str]:
