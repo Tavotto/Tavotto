@@ -10,8 +10,11 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 // vitest 在 web/ 下跑（cwd = web/）；jsdom 环境里 import.meta.url 不是 file: 地址
 const SHELL = resolve(process.cwd(), '../src-tauri')
 const HTML = readFileSync(resolve(SHELL, 'shell/error.html'), 'utf-8')
-const SCRIPT = /<script>([\s\S]*?)<\/script>/.exec(HTML)![1]
-const BODY = /<body[^>]*>([\s\S]*?)<script>/.exec(HTML)![1]
+// 用 HTML 解析器取，不用正则：页面只有一个内联 <script>，body 里其余节点就是页面骨架
+const PARSED = new DOMParser().parseFromString(HTML, 'text/html')
+const SCRIPT = PARSED.querySelector('script')!.textContent!
+PARSED.querySelectorAll('script').forEach((el) => el.remove())
+const BODY = PARSED.body.innerHTML
 
 type Call = { cmd: string; args?: Record<string, unknown> }
 type Handler = (args?: Record<string, unknown>) => unknown

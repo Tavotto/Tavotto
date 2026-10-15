@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import re
+from html.parser import HTMLParser
 from pathlib import Path
 
 import pytest
@@ -85,9 +86,37 @@ def test_remote_instance_windows_get_no_update_file_report_or_process_control():
             assert not p.startswith(banned), f"{name} 放行了 {p}"
 
 
+def _inline_script(html: str) -> str:
+    """页面里唯一的内联 <script> 正文（用 HTML 解析器取，不用正则匹配标签）。"""
+
+    class _P(HTMLParser):
+        def __init__(self) -> None:
+            super().__init__(convert_charrefs=False)
+            self.depth = 0
+            self.parts: list[str] = []
+
+        def handle_starttag(self, tag, attrs):
+            if tag == "script":
+                self.depth += 1
+
+        def handle_endtag(self, tag):
+            if tag == "script":
+                self.depth -= 1
+
+        def handle_data(self, data):
+            if self.depth:
+                self.parts.append(data)
+
+    p = _P()
+    p.feed(html)
+    p.close()
+    assert p.parts, "error.html 里没有内联脚本"
+    return "".join(p.parts)
+
+
 def test_error_page_uses_only_strings_both_languages_define():
     text = ERROR_HTML.read_text(encoding="utf-8")
-    script = re.search(r"<script>([\s\S]*?)</script>", text).group(1)
+    script = _inline_script(text)
 
     def block(tag: str) -> set[str]:
         start = script.index(f"'{tag}': {{")
@@ -103,7 +132,7 @@ def test_error_page_uses_only_strings_both_languages_define():
 
 def test_error_page_never_sends_the_raw_error_text_anywhere():
     """`msg` / `log` 只显示，不进任何 invoke 参数（报告的字段由壳按闭集自己填）。"""
-    script = re.search(r"<script>([\s\S]*?)</script>", ERROR_HTML.read_text("utf-8")).group(1)
+    script = _inline_script(ERROR_HTML.read_text("utf-8"))
     for m in re.finditer(r"call\('(\w+)'(?:,\s*(\{[^}]*\}))?", script):
         args = m.group(2) or ""
         assert "msg" not in args and "log" not in args, m.group(0)
