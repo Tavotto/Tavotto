@@ -76,7 +76,7 @@ test('导出检查：计数芯片只在圆点上有色，阻断项每条一行�
     return { radius: cs.borderTopLeftRadius, dotW: dot.getBoundingClientRect().width, dotBg: d.backgroundColor, ink: cs.color, bg: cs.backgroundColor }
   })
   expect(parseFloat(styles.radius)).toBeGreaterThanOrEqual(13)
-  expect(styles.dotW).toBe(6)
+  expect(styles.dotW).toBeCloseTo(6, 0) // 6px 圆点；dialog 进场缩放动画的亚像素误差
   expect(styles.dotBg, '圆点是 danger 色，不是灰').not.toBe(styles.ink)
 
   // 清单：每条一行（li 的高度不随文案折行）、先露至多 3 条、每条一个定位
