@@ -523,6 +523,7 @@ function TreeView({
       <ul
         ref={listRef}
         role="tree"
+        data-tree="elements"
         aria-label={et('listLabel')}
         aria-multiselectable
         className="min-h-0 flex-1 scroll-py-1 overflow-y-auto py-1"
@@ -813,7 +814,7 @@ const ElementRow = memo(function ElementRow({
       />
       <TreeIcon icon={roleIcon(role)} selected={selected} />
 
-      <span ref={labelRef} className="min-w-0 flex-1 truncate" title={`${shown} · ${roleName(role)} · ${gid}`}>
+      <span ref={labelRef} data-tree-label className="min-w-0 flex-1 truncate" title={`${shown} · ${roleName(role)} · ${gid}`}>
         {name}
       </span>
 

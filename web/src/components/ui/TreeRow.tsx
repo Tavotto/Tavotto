@@ -81,6 +81,7 @@ export function TreeCount({ children, title }: { children: ReactNode; title?: st
     <span
       className="ml-auto flex w-7 shrink-0 items-center justify-center type-meta tabular-nums"
       title={title}
+      data-tree-count
     >
       {children}
     </span>

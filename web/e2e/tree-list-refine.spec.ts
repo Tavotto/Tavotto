@@ -21,10 +21,12 @@ async function openFigureTree(page: Page, baseURL: string) {
   await page.locator(CARD).dblclick({ timeout: 30_000 })
   await expect(page.locator('[data-element-svg] > svg')).toBeVisible({ timeout: 120_000 })
   await openElementsTab(page)
-  await expect(page.locator('[role=tree] > li[data-el]').first()).toBeVisible()
+  await expect(page.locator('[data-tree="elements"]')).toHaveCount(1)
+  await expect(page.locator('[data-tree="elements"] [data-el]').first()).toBeVisible()
 }
 
-const rows = (page: Page) => page.locator('[role=tree] > li[data-el]')
+/** 稳定钩子：`data-tree`（树）· `data-el` / `data-layer`（行）· `data-tree-label`（名字）· `data-tree-count`（计数槽）· `data-row-menu-trigger`（⋯） */
+const rows = (page: Page) => page.locator('[data-tree="elements"] [data-el]')
 const active = (page: Page) => page.evaluate(() => (document.activeElement as HTMLElement | null)?.dataset.el ?? null)
 
 test('元素树：键位（Home/End/→进首子/←回父）、内凹焦点环、列间距、计数与 ⋯ 对齐', async ({ app, page }) => {
@@ -81,29 +83,33 @@ test('元素树：键位（Home/End/→进首子/←回父）、内凹焦点环�
   expect(ring.offset, '焦点环必须内凹（offset < 0），不能外扩去盖邻行').toBeLessThan(0)
 
   // G4：聚类行计数（TreeCount 的 28px 槽）与元素行 ⋯ 同一条中心线
-  const centers = await page.evaluate(() => {
-    const mid = (el: Element) => {
+  // 每条量值前先断言目标恰好一个：选择器漂了要红在这里，不能量错对象或空转
+  const clusterRow = page.locator('[data-tree="elements"] [data-el*="#"]').first()
+  const countSlot = clusterRow.locator('[data-tree-count]')
+  await expect(countSlot).toHaveCount(1)
+  const moreBtn = page.locator('[data-tree="elements"] [data-el]:not([data-el*="#"])').first().locator('[data-row-menu-trigger]')
+  await expect(moreBtn).toHaveCount(1)
+  const mid = (loc: typeof countSlot) =>
+    loc.evaluate((el) => {
       const r = el.getBoundingClientRect()
       return { x: r.x + r.width / 2, w: r.width }
-    }
-    const cluster = [...document.querySelectorAll('[role=tree] > li[data-el]')].find((l) => (l as HTMLElement).dataset.el!.includes('#'))
-    const count = cluster?.querySelector('span.ml-auto')
-    const more = document.querySelector('[role=tree] > li[data-el]:not([data-el*="#"]) [data-row-menu-trigger]')
-    return { count: count ? mid(count) : null, more: more ? mid(more) : null }
-  })
+    })
+  const centers = { count: await mid(countSlot), more: await mid(moreBtn) }
   expect(centers.count && centers.more).toBeTruthy()
   expect(centers.count!.w).toBeCloseTo(28, 0)
   expect(Math.abs(centers.count!.x - centers.more!.x), '计数与 ⋯ 的中心线应重合').toBeLessThanOrEqual(1)
 
   // G3：选中加粗不改变文本排版宽度（取最长的那行名字）
   const target = await page.evaluate(() => {
-    const spans = [...document.querySelectorAll<HTMLElement>('[role=tree] > li[data-el] > span.truncate')]
+    const spans = [...document.querySelectorAll<HTMLElement>('[data-tree="elements"] [data-el] [data-tree-label]')]
     const longest = spans.sort((x, y) => (y.textContent?.length ?? 0) - (x.textContent?.length ?? 0))[0]
     return (longest.closest('li') as HTMLElement).dataset.el!
   })
   const textWidth = () =>
     page.evaluate((gid) => {
-      const span = document.querySelector(`[data-el="${CSS.escape(gid)}"] > span.truncate`)!
+      const spans = document.querySelectorAll(`[data-el="${CSS.escape(gid)}"] [data-tree-label]`)
+      if (spans.length !== 1) throw new Error(`标签钩子应恰好 1 个，实际 ${spans.length}`)
+      const span = spans[0]
       const r = document.createRange()
       r.selectNodeContents(span)
       return r.getBoundingClientRect().width
@@ -129,8 +135,10 @@ test('元素树：键位（Home/End/→进首子/←回父）、内凹焦点环�
   // G5：图层树的列间距与元素树相同
   const gapElement = await rows(page).first().evaluate((el) => getComputedStyle(el).columnGap)
   await page.locator('[data-rail="layers"]').click()
-  await expect(page.locator('[role=tree] > li[data-layer]').first()).toBeVisible()
-  const gapLayer = await page.locator('[role=tree] > li[data-layer]').first().evaluate((el) => getComputedStyle(el).columnGap)
+  const layerRows = page.locator('[data-tree="layers"] [data-layer]')
+  await expect(page.locator('[data-tree="layers"]')).toHaveCount(1)
+  await expect(layerRows.first()).toBeVisible()
+  const gapLayer = await layerRows.first().evaluate((el) => getComputedStyle(el).columnGap)
   expect(gapLayer).toBe(gapElement)
 })
 

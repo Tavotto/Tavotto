@@ -178,6 +178,7 @@ export function LayerTree() {
     <ul
       ref={listRef}
       role="tree"
+      data-tree="layers"
       aria-label={lt('listLabel')}
       aria-multiselectable
       className="min-h-0 flex-1 scroll-py-1 overflow-y-auto py-1"
@@ -300,7 +301,7 @@ function GroupRow({
         label={lt(collapsed ? 'expandGroup' : 'collapseGroup')}
       />
       <TreeIcon icon={Layers} selected={allSelected} />
-      <span ref={labelRef} className="min-w-0 flex-1 truncate">
+      <span ref={labelRef} data-tree-label className="min-w-0 flex-1 truncate">
         {lt('groupLabel', { count: members.length })}
       </span>
       {layout && <Badge>{layoutKindLabel(layout.kind)}</Badge>}
@@ -478,7 +479,7 @@ function LayerRow({
           className={cn('h-7 min-w-0 flex-1 px-1.5 outline-none', FIELD_BOX, FIELD_FOCUS)}
         />
       ) : (
-        <span ref={labelRef} className="min-w-0 flex-1 truncate">{objectLabel(obj)}</span>
+        <span ref={labelRef} data-tree-label className="min-w-0 flex-1 truncate">{objectLabel(obj)}</span>
       )}
       {/* 「可编辑的图」角标与素材卡同源（`ui/semanticIcons`），尺寸与色也同源：xs / ink-3——
           角标不该比行首 14px 的类型图标更响（左栏审计 L28）；行首的 Braces 是大括号形状的
