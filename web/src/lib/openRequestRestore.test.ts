@@ -278,7 +278,7 @@ describe('用户级入口在恢复中排队（素材卡双击 / 加入排版 / �
     expect(panelsOf(app)).toHaveLength(1)
   })
 
-  it('自动进入编辑传的守卫：恢复期间排队，落定时守卫不满足 → 入口不执行（不放图、不进编辑）；满足才执行', async () => {
+  it('自动进入编辑传的守卫：恢复期间排队，落定时守卫不满足 → 入口不执行（不放图、不进编辑）', async () => {
     const app = await setAssets(await boot())
     const ws = await import('@/store/workspace')
     const hold = gate()
