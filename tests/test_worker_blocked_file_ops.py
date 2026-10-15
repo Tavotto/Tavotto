@@ -1169,6 +1169,44 @@ def test_retro_every_extensionless_candidate_is_speculative_and_explicit_ones_ar
     assert figcapture.savefig_name_candidates("out", {"format": "png"}) == (["out"], [])
 
 
+RENAME_SPECULATIVE_SRC = (
+    "import os\n"
+    + SVG_DEFAULT_PLOT
+    + 'fig.savefig("out")\n'
+    + "try:\n"
+    + '    os.rename("out.png", "moved.png")\n'
+    + "except FileNotFoundError:\n"
+    + "    pass\n"
+    + "try:\n"
+    + '    open("moved.png").close()\n'
+    + "except FileNotFoundError:\n"
+    + "    pass\n"
+)
+
+
+@needs_worker
+def test_retro_rename_of_a_speculative_savefig_target_is_not_propagated_into_a_blocked_event(figs):
+    """#1076 Codex P2：推测的 savefig 候选当改名的源时，不能升成强的改名事件（随后访问目的地就归因守卫）。"""
+    _build(figs, "ren_weak.py", RENAME_SPECULATIVE_SRC, project_mode=True)
+
+
+@needs_worker
+def test_retro_rename_of_a_definitive_savefig_target_is_still_blamed(figs):
+    src = RENAME_SPECULATIVE_SRC.replace('fig.savefig("out")', 'fig.savefig("out.png")')
+    e = _blocked(figs, "ren_def.py", src, project_mode=True)
+    assert e.code == CODE, (e.code, str(e))
+
+
+def test_retro_consumer_audit_only_attribution_sites_use_the_shared_predicate():
+    """savefig 事件 paths 的消费方清单（记账 / 回读不归因，其余必须走 `_attributes`）：
+    `_failure_events`、`note_missing_path`、`_savefig_covers`（改名源传播）。"""
+    import inspect
+
+    for name in ("_failure_events", "note_missing_path", "_savefig_covers"):
+        src = inspect.getsource(getattr(figcapture.BlockedFileOps, name))
+        assert "_attributes" in src, name
+
+
 def test_savefig_effective_names_skip_the_literal_name_when_matplotlib_appends_a_suffix():
     assert "stage" not in figcapture.savefig_effective_names("stage", {})
     assert "stage" not in figcapture.savefig_effective_names("stage.", {})

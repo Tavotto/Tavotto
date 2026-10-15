@@ -2393,9 +2393,13 @@ class BlockedFileOps:
                 return
             key = (op, kind)
             self._counts[key] = min(self._counts.get(key, 0) + 1, self.MAX_COUNT)
-            if kind == self.KIND_RENAME and self._savefig_covers(affected[0]):
-                # 直接运行时这次改名必然成功（源刚被 savefig 写出）；这里被守卫静默跳过，目的地永远不会出现
-                self._signal(kind, self.VIA_RENAME_SRC)
+            if kind == self.KIND_RENAME:
+                if self._savefig_covers(affected[0]):
+                    # 直接运行时这次改名必然成功（源刚被 savefig 写出）；这里被守卫静默跳过，目的地永远不会出现
+                    self._signal(kind, self.VIA_RENAME_SRC)
+                elif self._savefig_covers(affected[0], speculative=True):
+                    # 源只是推测的 savefig 候选：直接运行里这次改名可能本来就失败，不把这个猜测升成强的改名事件
+                    return
             dest_set = {p for p in (self._norm(x) for x in dests) if p}
             weak_set = {p for p in (self._norm(x) for x in weak) if p}
             if self._rewritten:  # 新的阻断重新盖住这些路径：之前的「已重写」不再作数
@@ -2424,11 +2428,15 @@ class BlockedFileOps:
         except Exception:  # noqa: BLE001 —— 记账失败就少一条，不影响脚本
             return
 
-    def _savefig_covers(self, real: str) -> bool:
+    def _savefig_covers(self, real: str, *, speculative: bool = False) -> bool:
+        """`real` 是不是某个被拦 savefig 的目标。默认只认确定候选（走 `_attributes`）；`speculative=True` 连推测候选也算。"""
         for ev in (*self._events, *self._spill.values()):
             if ev["kind"] != self.KIND_SAVEFIG:
                 continue
-            if isinstance(ev["paths"], list):
+            if not speculative:
+                if self._attributes(ev, real):
+                    return True
+            elif isinstance(ev["paths"], list):
                 if any(self._covers(p, real) for p in ev["paths"]):
                     return True
             elif self._spill_hit(ev, real):
@@ -2479,7 +2487,13 @@ class BlockedFileOps:
 
     def _attributes(self, ev: dict, real: str) -> bool:
         """归因判据（唯一）：这个事件能不能用来解释「`real` 不存在 / 探测落空」。推测候选（`weak`）不能——
-        直接运行里它同样不存在。FileNotFoundError 解释、探测落空、退出归因都走这里。"""
+        直接运行里它同样不存在。FileNotFoundError 解释、探测落空、退出归因都走这里。
+
+        savefig 事件 `paths` 的消费方清单（#1076 扫过一遍）：归因类必须走本判据——`_failure_events`（含
+        `note_missing_stat` / `note_failed_call` / `explains`）、`note_missing_path`（→ `explain_exit`）、
+        `_savefig_covers`（改名源传播，推测源不升成强的改名事件）；只记账 / 算回读、不归因的照旧认全部候选——
+        `_mark`（读 / stat 的回读与弱信号）、`observe_listing`（目录弱信号）、`opened`（脚本自写清嫌疑）、
+        溢出合并（推测路径进 weak_only 集合）。"""
         if isinstance(ev["paths"], list):
             weak = ev.get("weak") or ()
             return any(self._covers(p, real) for p in ev["paths"] if p not in weak)
