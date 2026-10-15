@@ -181,6 +181,15 @@ export function missingArgsOf(report: PreparationReport | null, tokens: readonly
   return schema ? missingRequirements(schema, readTokens(schema, [...tokens]), [...tokens]).count : null
 }
 
+/**
+ * 本地「必填参数没填齐」闸门的唯一入口（卡片与「打开并运行」同一把尺子）：后端核验过本会话沿用了上次成功的配置（`reusedArgCount` > 0，
+ * 值不回前端、草稿为空）时，必填项由那份配置满足，不判缺；用户草稿非空时仍按草稿判，后端没沿用而草稿也空的真缺参照旧判。
+ */
+export function missingArgsFor(entry: PrepEntry, tokens: readonly string[]): number | null {
+  if (tokens.length === 0 && reusedArgCount(entry) > 0) return 0
+  return missingArgsOf(entry.report, tokens)
+}
+
 /** 成功的报告里这次尝试真正捕获到的图（老后端没有这个字段 → 空） */
 export const capturedOf = (report: PreparationReport | null): CapturedFigureDescriptor[] =>
   report?.phase === 'completed' && report.outcome.kind === 'succeeded' ? (report.captured ?? []) : []
@@ -395,7 +404,7 @@ export const useProjectPreparationStore = create<PreparationState>((set, get) =>
     if (!report.actions.some((a) => a.kind === 'run_when_ready')) return
     // 只在卡片会说「可以运行了」（`ready`，没有要用户先看的事）时代认领：要先答的事（运行目录 / 环境 / 数据 / 必填参数）、要装的组件（用户该先看见
     // 装什么、装到哪）、弹窗 / 来源不明的提醒、重启后重建的会话都停在各自的卡上，由用户点那张卡的主按钮（它同样是 run_when_ready）
-    const missing = missingArgsOf(report, e.target.argv ?? [])
+    const missing = missingArgsFor(e, e.target.argv ?? [])
     if (prepView(e, { argsChanged: draftDiffers(e.target), editReady: false, missingArgs: missing }).state !== 'ready') return
     // 沿用了上次成功的参数：一键运行之前让用户看一眼「将沿用 N 个参数」（卡上有清除），所以这一次不代认领
     if (reusedArgCount(e) > 0) return

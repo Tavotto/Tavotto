@@ -152,7 +152,7 @@ export function PreparationCard() {
     const schema = argsSchemaOf(entry.report)
     const tokens = script ? (drafts[script]?.tokens ?? []) : []
     // 单一入口：表单关着时 missingRequirements 自己只认读得准的必填项，并照旧拦必选子命令
-    const missingArgs = !schema ? null : missingRequirements(schema, readTokens(schema, tokens), tokens).count
+    const missingArgs = !schema ? null : tokens.length === 0 && reusedArgCount(entry) > 0 ? 0 : missingRequirements(schema, readTokens(schema, tokens), tokens).count
     view = prepView(entry, { argsChanged: draftDiffers(entry.target), editReady, missingArgs })
   }
 

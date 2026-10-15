@@ -846,6 +846,31 @@ describe('必填参数没填齐时任何卡都不说「可以运行」', () => {
     expect(panel().dataset.prepState).toBe('ready')
   })
 
+  // Codex #1044 r4280135232：沿用上次成功的配置时必填项由那份配置满足，草稿为空不是缺参
+  it('后端核验沿用了上次成功的配置（argv_count > 0、草稿空）：不出禁用的参数卡；用户草稿非空仍按草稿判；没沿用且草稿空照旧缺参', async () => {
+    const reusedWith = { ...withSchema, target: { kind: 'script' as const, script: 'plot.py', entry: '__main__', asset_id: null, stem: null, argv_count: 2 }, actions: [action('run'), action('recheck')] }
+    await mount()
+    mockCreate.mockResolvedValueOnce(report(reusedWith as Partial<PreparationReport>))
+    await act(async () => {
+      await useProjectPreparationStore.getState().open({ script: 'plot.py', reuse_last_success: true })
+    })
+    expect(panel().dataset.prepState).not.toBe('args')
+    expect(primary()?.disabled).toBe(false)
+    // 用户在草稿里敲了一半：按草稿判
+    await act(async () => useScriptArgvStore.getState().setTokens('plot.py', ['--scale', '1.5']))
+    expect(panel().dataset.prepState).toBe('args')
+  })
+
+  it('没沿用（报告里 argv_count 为 0）且草稿空：仍是缺参的参数卡', async () => {
+    await mount()
+    mockCreate.mockResolvedValueOnce(report(withSchema))
+    await act(async () => {
+      await useProjectPreparationStore.getState().open({ script: 'plot.py', reuse_last_success: true })
+    })
+    expect(panel().dataset.prepState).toBe('args')
+    expect(primary()?.disabled).toBe(true)
+  })
+
   // Codex 安全 #820：项目自带的环境要运行时才体检——首查以「运行」为主，不推去安装
   it('依赖检查项标了 deferred=project_environment：主按钮是运行、句子说明项目环境运行时检查', async () => {
     const rep = report({
