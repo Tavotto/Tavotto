@@ -314,19 +314,25 @@ describe('同步状态机：单一 reconcile + 写入版本（#1098）', () => {
     expect(be.draft('pa', 'Fig1.pdf')).toBe('第一版加字') // 没有把旧文本写回去
   })
 
-  it('PUT 在途时本地又有更新的写入：落地后以本地为准再写一次', async () => {
-    await mount()
-    const release = be.holdDraftPuts()
-    await typeText('v1')
-    await act(async () => window.dispatchEvent(new Event('pagehide'))) // v1 在途
-    await settle()
-    await typeText('v1 又改成 v2') // 在途期间本地更新
-    release()
-    await settle()
-    await act(async () => window.dispatchEvent(new Event('pagehide'))) // 让补写的 v2 也走一次冲刷，免等防抖计时
-    await settle()
-    expect(be.draft('pa', 'Fig1.pdf')).toBe('v1 又改成 v2')
-    expect(input().value).toBe('v1 又改成 v2')
+  it('PUT 在途时本地又有更新的写入：防抖到点时因为在途而被跳过，落地后以本地为准补写一次（不靠再来一次防抖）', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    try {
+      await mount()
+      const release = be.holdDraftPuts()
+      await typeText('v1')
+      await act(async () => window.dispatchEvent(new Event('pagehide'))) // v1 在途
+      await settle()
+      await typeText('v1 又改成 v2') // 在途期间本地更新，防抖开始计时
+      await act(async () => void vi.advanceTimersByTime(WRITE_DEBOUNCE_MS + 50)) // 到点：在途中，跳过
+      await settle()
+      expect(be.draft('pa', 'Fig1.pdf')).toBeUndefined()
+      release() // 落地之后不会再有任何计时器——v2 只能靠「落地时发现本地更新、补写」
+      await settle()
+      expect(be.draft('pa', 'Fig1.pdf')).toBe('v1 又改成 v2')
+      expect(input().value).toBe('v1 又改成 v2')
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('已被接受的文本，其草稿 PUT 若迟于确认才落地：落地后被条件删掉，不会作为草稿复活', async () => {
