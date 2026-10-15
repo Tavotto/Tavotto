@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { t as translate } from '@/i18n'
 import {
@@ -80,6 +80,16 @@ export function LayerTree() {
   // 重排是 drop 那一刻整列换位的（拖动中只有一条落点提示线）；折叠/展开组
   // 也会让下面所有行整体位移。不给动效的话行「啪」地跳，看不出是哪一行动了
   useFlip(listRef, 'data-layer')
+
+  // 画布上点选的图层可能在长列表的视口之外：滚到恰好看得见（与图内元素树同一写法；不平滑，所以
+  // reduced-motion 下也是即时的）。焦点已在树里（键盘在走）时不滚——roving 的 focus() 自己会带进视野，
+  // 再滚一次会和它抢
+  const primaryId = selectedIds.at(-1)
+  useEffect(() => {
+    const list = listRef.current
+    if (!primaryId || !list || list.contains(document.activeElement)) return
+    list.querySelector(`[data-layer="${CSS.escape(primaryId)}"]`)?.scrollIntoView({ block: 'nearest' })
+  }, [primaryId, collapsed])
 
   // 顶层在最上面，与画布的视觉层级一致
   const zOrder = [...objects].reverse()
@@ -165,7 +175,7 @@ export function LayerTree() {
       role="tree"
       aria-label={lt('listLabel')}
       aria-multiselectable
-      className="min-h-0 flex-1 overflow-y-auto py-1"
+      className="min-h-0 flex-1 scroll-py-1 overflow-y-auto py-1"
       onDragLeave={() => setDropHint(null)}
       onDrop={() => setDropHint(null)}
     >

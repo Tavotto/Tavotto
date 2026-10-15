@@ -322,3 +322,25 @@ describe('树行的列间距（G5）', () => {
     expect(rows()[0].className).toMatch(/\bgap-1\b/)
   })
 })
+
+describe('选中图层滚入视野（G6）', () => {
+  it('从画布选中某个图层：那一行 scrollIntoView({ block: nearest })，焦点已在树里时不滚', async () => {
+    const calls: Array<{ id: string; arg: unknown }> = []
+    const orig = Element.prototype.scrollIntoView
+    Element.prototype.scrollIntoView = function (this: Element, arg?: unknown) {
+      calls.push({ id: (this as HTMLElement).dataset.layer ?? '', arg })
+    }
+    try {
+      await mount([panel('p1', 'A'), panel('p2', 'B'), panel('p3', 'C')])
+      await act(async () => useSelectionStore.getState().set(['p2']))
+      expect(calls.at(-1)).toEqual({ id: 'p2', arg: { block: 'nearest' } })
+      // 键盘在树里走：选区变了也不再滚（focus() 已经带进视野）
+      const before = calls.length
+      await act(async () => rows().find((r) => r.dataset.layer === 'p2')!.focus())
+      await act(async () => useSelectionStore.getState().set(['p3']))
+      expect(calls.length).toBe(before)
+    } finally {
+      Element.prototype.scrollIntoView = orig
+    }
+  })
+})

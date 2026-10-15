@@ -525,7 +525,7 @@ function TreeView({
         role="tree"
         aria-label={et('listLabel')}
         aria-multiselectable
-        className="min-h-0 flex-1 overflow-y-auto py-1"
+        className="min-h-0 flex-1 scroll-py-1 overflow-y-auto py-1"
       >
         {rows.length === 0 && (
           <li>
