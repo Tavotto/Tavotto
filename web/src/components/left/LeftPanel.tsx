@@ -10,6 +10,7 @@ import { usePanelDisplayManifest } from '@/store/renderStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import { LEFT_MAX, LEFT_MIN, RAIL_W, useUiStore } from '@/store/uiStore'
 import { IconButton } from '../ui/Button'
+import { DESK_FIELD_SCOPE } from '../ui/fieldBox'
 import { AssetBrowser } from './AssetBrowser'
 import { CanvasList } from './CanvasList'
 import { DrawerCount } from './DrawerCount'
@@ -64,7 +65,7 @@ export function LeftPanel({
         // 「必须与抽屉同色才不露缝」的子元素读（问题面板的组头），不另造设计 token
         overlay
           ? 'absolute inset-y-0 z-drawer bg-surface shadow-pop [--drawer-bg:var(--color-surface)]'
-          : 'bg-bg [--drawer-bg:var(--color-bg)] [--color-field-hover:var(--color-field-hover-desk)] [--color-field:var(--color-surface)]',
+          : `bg-bg [--drawer-bg:var(--color-bg)] ${DESK_FIELD_SCOPE}`,
         motion.className,
       )}
     >

@@ -21,6 +21,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import { PIN_COLORS } from './canvas/issuePinColors'
+import { DESK_FIELD_SCOPE } from './components/ui/fieldBox'
 import { canvasSelectionFor, PAPER_INK_RGB, PAPER_RGB, SEL_RGB, SELECTION_RGB } from './lib/canvasSelection'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
@@ -220,10 +221,11 @@ for (const theme of THEMES) {
       // hover 与静态仍有可感差异（> 1.02:1），且不比所在的桌面更暗
       expect(contrast(hoverBox, staticBox), 'hover 对静态框').toBeGreaterThan(1.02)
       expect(luminance(hoverBox)).toBeGreaterThan(luminance(bg))
-      for (const f of [readFileSync(path.resolve(HERE, 'components/left/LeftPanel.tsx'), 'utf8'), readFileSync(path.resolve(HERE, 'embedded/WidgetHeader.tsx'), 'utf8')]) {
-        expect(f).toContain('[--color-field:var(--color-surface)]')
-        expect(f).toContain('[--color-field-hover:var(--color-field-hover-desk)]')
-      }
+      // 重定向串本身与「它真的挂在 DOM 根上」由 components/ui/deskFieldScope.test.tsx 渲染后判；这里只钉串的内容
+      expect(DESK_FIELD_SCOPE.split(' ').sort()).toEqual([
+        '[--color-field-hover:var(--color-field-hover-desk)]',
+        '[--color-field:var(--color-surface)]',
+      ])
     })
 
     it('field 底上要读的字（值 ink、占位 / 单位 / 前缀 ink-3）≥4.5:1；hover 底上也是', () => {
