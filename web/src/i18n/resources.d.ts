@@ -1297,6 +1297,7 @@ export default interface Resources {
             "context_bar_multi_used": "多选浮动栏：按钮类型与选中数量档位。",
             "document_saved": "排版保存：手动还是自动、结果如何。",
             "export_completed": "导出完成：格式、是否带报告、图的数量。",
+            "export_result": "导出结果：成功、部分成功、失败或取消，请求的格式、写成几个文件、停在哪一步与错误的大类；不含文件名、路径与错误原文。",
             "figure_edit_completed": "完成编辑：改动类别与数量。",
             "figure_opened": "打开图内编辑：PDF 还是位图、是否可编辑。",
             "package_action": "包操作：类型与结果，不含包名。",
