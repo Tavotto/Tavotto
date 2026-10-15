@@ -479,6 +479,27 @@ describe('已跑完的会话只给 run（没有 run_when_ready）：显式「打
     expect(entry().armed).toBe(true)
   })
 
+  it('A 的迟到刷新收尾不删 B 的在途刷新（inflight 只删自己）：B 再刷新仍复用同一个请求', async () => {
+    mockCreate.mockResolvedValueOnce(running())
+    await open(false)
+    const a = defer<PreparationReport>()
+    mockGet.mockReturnValueOnce(a.promise as never)
+    const refreshA = store().refresh(KEY)
+    store().clear()
+    setCurrentProjectId('pj-b')
+    mockCreate.mockResolvedValueOnce(running())
+    await open(false)
+    const b = defer<PreparationReport>()
+    mockGet.mockReturnValueOnce(b.promise as never)
+    const refreshB = store().refresh(KEY)
+    a.resolve(running(9))
+    await refreshA
+    void store().refresh(KEY) // 若 A 的收尾顶掉了 B 的登记，这里会再发一个请求
+    expect(mockGet).toHaveBeenCalledTimes(2)
+    b.resolve(running(9))
+    await refreshB
+  })
+
   it('非显式打开（只是查看）：不认领 run、不跑', async () => {
     mockCreate.mockResolvedValueOnce(finished())
     await open(false)
