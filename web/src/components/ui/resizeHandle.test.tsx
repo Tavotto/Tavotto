@@ -49,8 +49,9 @@ const line = () => host.querySelector<HTMLElement>('[data-drawer-resize-line]')!
 
 function pointer(el: Element, type: string, clientX: number, extra: Record<string, unknown> = {}) {
   const e = new MouseEvent(type, { bubbles: true, cancelable: true, clientX, button: 0 })
-  Object.defineProperty(e, 'pointerId', { value: 1 })
-  for (const [k, v] of Object.entries(extra)) Object.defineProperty(e, k, { value: v })
+  const { pointerId = 1, ...rest } = extra
+  Object.defineProperty(e, 'pointerId', { value: pointerId })
+  for (const [k, v] of Object.entries(rest)) Object.defineProperty(e, k, { value: v })
   return act(async () => void el.dispatchEvent(e))
 }
 const key = (el: Element, k: string, init: KeyboardEventInit = {}) =>
@@ -145,6 +146,25 @@ describe('ResizeHandle', () => {
     await key(sep(), 'Escape')
     expect(seen).toBe(true)
     window.removeEventListener('keydown', spy)
+  })
+
+  it('第二根手指：拖动中的另一支指针按下 / 抬起 / 打断都不接管、不结束；Esc 仍回滚到第一支按下时的宽度', async () => {
+    await mount('right', 300)
+    await pointer(sep(), 'pointerdown', 100, { pointerId: 1 })
+    await pointer(sep(), 'pointermove', 130, { pointerId: 1 })
+    expect(width).toBe(330)
+    await pointer(sep(), 'pointerdown', 200, { pointerId: 2 })
+    await pointer(sep(), 'pointermove', 250, { pointerId: 2 })
+    expect(width).toBe(330)
+    await pointer(sep(), 'pointerup', 250, { pointerId: 2 })
+    await pointer(sep(), 'pointercancel', 250, { pointerId: 2 })
+    expect(sep().dataset.dragging).toBe('true')
+    expect(hasActivePointerGesture()).toBe(true)
+    await pointer(sep(), 'pointermove', 140, { pointerId: 1 })
+    expect(width).toBe(340)
+    await act(async () => void expect(cancelActivePointerGesture()).toBe(true))
+    expect(width).toBe(300)
+    expect(sep().dataset.dragging).toBeUndefined()
   })
 
   it('pointercancel（系统打断）同样回滚', async () => {

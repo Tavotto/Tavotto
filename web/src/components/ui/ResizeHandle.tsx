@@ -70,6 +70,12 @@ export function ResizeHandle({
     if (rollback) onChangeRef.current(d.from)
   }
 
+  // 松手 / 打断只认发起这次拖动的那支指针；别的指针的 up / cancel 不结束它
+  const finishFor = (e: PointerEvent, rollback: boolean) => {
+    if (drag.current && e.pointerId !== drag.current.id) return
+    finish(rollback)
+  }
+
   // 卸载时若还在拖，只清掉本地状态（宽度保持当前值）
   useEffect(
     () => () => {
@@ -83,6 +89,8 @@ export function ResizeHandle({
   const onPointerDown = (e: PointerEvent) => {
     if (e.button !== 0) return
     e.preventDefault()
+    // 已经在拖：第二根手指 / 第二支笔不接管（否则会覆盖起点、注销第一支的 Esc 回滚出口）
+    if (drag.current) return
     drag.current = { id: e.pointerId, x0: e.clientX, from: value }
     // Esc 的归属走仓库现成的指针手势协议：登记取消出口，`useKeyboard` 在 Esc 时先 `cancelActivePointerGesture()`
     // 并吞掉这一下——不自己在 window 上再挂一个 Esc 监听（那挡不住 ContextBar 等其它捕获监听，Codex #1102）
@@ -127,9 +135,9 @@ export function ResizeHandle({
       data-dragging={dragging || undefined}
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
-      onPointerUp={() => finish(false)}
-      onPointerCancel={() => finish(true)}
-      onLostPointerCapture={() => finish(false)}
+      onPointerUp={(e) => finishFor(e, false)}
+      onPointerCancel={(e) => finishFor(e, true)}
+      onLostPointerCapture={(e) => finishFor(e, false)}
       onDoubleClick={() => onChange(defaultValue)}
       onKeyDown={onKeyDown}
       className={cn(
