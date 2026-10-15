@@ -9,11 +9,10 @@ import {
 } from '@/lib/api'
 import { msg, t as translate, type UiMessage } from '@/i18n'
 import { useFormatMessage } from '@/i18n/react'
-import { askConfirm, useUiStore } from '@/store/uiStore'
+import { askConfirm } from '@/store/uiStore'
 import { sortSessions, useNativeSessionStore } from '@/store/nativeSessionStore'
-import { useOnboardingStore } from '@/store/onboardingStore'
+import { usePrepSurface } from '@/hooks/usePrepSurface'
 import { useProjectPreparationStore } from '@/store/projectPreparationStore'
-import { useProjectStore } from '@/store/projectStore'
 import { InlineWarning } from './settings/SettingRow'
 import { Button } from './ui/Button'
 import { cn } from '@/lib/utils'
@@ -41,17 +40,15 @@ export function NativeSessionCards() {
   useTranslation('workspace')
   const sessions = useNativeSessionStore((s) => s.sessions)
   // 此刻**可见**的那张准备卡 / 角标代表的条目：准备界面只有一个焦点（`focus`），展开或角标才可见（收起 = 没有），教程 / 引导中整个隐藏
-  const surfaceEntry = useProjectPreparationStore((s) => (s.focus ? s.entries[s.focus] : undefined))
-  const guideCard = useUiStore((s) => s.guideCard)
-  const hiddenSurface = useProjectStore((s) => s.project?.tutorial === true) || useOnboardingStore((s) => s.status === 'active')
+  const { surface } = usePrepSurface()
+  const surfaceEntry = useProjectPreparationStore((s) => (surface ? s.entries[surface.key] : undefined))
   // 桌面拥有的会话由准备会话管（owner === 'desktop' 只来自准备会话的回退 / 路由，ADR 0125）：用户不感知运行层切换，不出「tavotto run」式卡；
   // 停止走准备卡 / 角标上的「停止运行」。**只在存在对应的准备卡片 / 角标时才让位**（`launch_id` 对得上某个条目当前尝试的计划号，
   // 与 `PreparationCard.useStopRun` 同一把尺子）：刷新 / A→B→A 之后准备 store 是空的、没人重建它的卡，这时仍在跑的桌面会话由这里照常显示并给「停止运行」，
   // 否则用户既看不到进度也没有停止入口。终端拥有的照旧
   // 「存在对应条目」不够：A 在跑时用户打开了 B 的卡，A 的条目还在 `entries` 里但没有可见的面——只有当前可见面代表的那个条目才让位
-  const surfaceVisible = !!surfaceEntry && guideCard !== 'closed' && !hiddenSurface
   const surfaced = (s: NativeSessionInfo) =>
-    surfaceVisible && !!s.launch_id && surfaceEntry?.report?.provider.attempt_id === s.launch_id
+    !!surfaceEntry && !!s.launch_id && surfaceEntry?.report?.provider.attempt_id === s.launch_id
   const list = sortSessions(
     Object.values(sessions).filter((s) => s.owner !== 'desktop' || (!isNativeTerminal(s.state) && !surfaced(s))),
   )

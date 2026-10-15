@@ -35,6 +35,7 @@ import {
   type PreparationTarget,
 } from '@/lib/api'
 import { currentAttempt, prepView } from '@/lib/preparationText'
+import { visiblePrepSurface } from '@/lib/prepSurface'
 import { currentProjectId } from '@/lib/session'
 import { captureProjectEpoch, type ProjectEpochGuard } from '@/lib/projectEpoch'
 import { missingRequirements, readTokens, type ScriptArgsSchema } from '@/lib/scriptArgsForm'
@@ -708,7 +709,15 @@ async function autoEnterEdit(
           if (sameResult()) store().noteEditing(key, id, render)
         },
         // 素材清单的 await 期间用户可能已把卡放到后台 / 收起 / 切去别的卡 / 换参数重开：落地前复核，别抢他的工作区
-        stillWanted: () => sameResult() && store().focus === key && useUiStore.getState().guideCard === 'card',
+        stillWanted: () => {
+          const surface = visiblePrepSurface({
+            focus: store().focus,
+            entries: store().entries,
+            guideCard: useUiStore.getState().guideCard,
+            hidden: false, // 教程 / 引导不会替用户收起一张展开的卡；守卫只关心「展开且聚焦」
+          })
+          return sameResult() && surface?.key === key && surface.mode === 'card'
+        },
       },
       figure,
     )

@@ -44,10 +44,9 @@ import { useAssetStore } from '@/store/assetStore'
 import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
 import { useDepRepairStore } from '@/store/depRepairStore'
 import { useEnvStore } from '@/store/envStore'
-import { useOnboardingStore } from '@/store/onboardingStore'
 import { useProjectReadinessStore } from '@/store/projectReadinessStore'
 import { useProjectScanStore } from '@/store/projectScanStore'
-import { useProjectStore } from '@/store/projectStore'
+import { usePrepSurface } from '@/hooks/usePrepSurface'
 import {
   argsSchemaOf,
   draftDiffers,
@@ -136,13 +135,11 @@ export function PreparationCard() {
   const scan = useProjectScanStore((s) => s.scan)
   const slow = useProjectScanStore((s) => s.slow)
   const forced = useProjectScanStore((s) => s.forced)
-  const tutorialProject = useProjectStore((s) => s.project?.tutorial === true)
-  const onboardingActive = useOnboardingStore((s) => s.status === 'active')
+  const { hidden } = usePrepSurface()
   const toolbarUp = useCanvasToolbarVisible()
   // 草稿变了要重新渲染（参数改了 → 「继续」）
   const drafts = useScriptArgvStore((s) => s.drafts)
   const editReady = useEditReady(entry?.editRenders ?? {})
-  const hidden = tutorialProject || onboardingActive
   const scanned = !entry && !hidden ? scanCard(scan, { slow, forced }) : null
 
   let view: PrepView | null = null
