@@ -237,7 +237,7 @@ interface AiState {
 const MAX_LINES = 600
 
 /** 早到事件缓冲的上限：只为「事件比 HTTP 响应先到」的那几十毫秒，不是日志 */
-const EARLY_MAX_SIDS = 16
+const EARLY_MAX_SIDS = 32
 const EARLY_MAX_EVENTS = 500
 const early = new Map<string, EarlyEvent[]>()
 
@@ -664,11 +664,20 @@ export const useAiStore = create<AiState>((set, get) => ({
   },
 
   restoreRunning: async () => {
-    if (restoring) return restoring
-    restoring = doRestore().finally(() => {
-      restoring = null
-    })
-    return restoring
+    // 在途的恢复按**项目代次 + 项目 id** 分键：A 的请求还在途时切到 B，B 要发起自己的请求，不能拿到 A 的 promise
+    // （A 的结果按代次丢弃后，B 就再也不会恢复了）
+    const gen = get().generation
+    const pj = currentProjectId()
+    if (restoring && restoring.gen === gen && restoring.pj === pj) return restoring.p
+    const mine: { gen: number; pj: string | null; p: Promise<void> } = {
+      gen,
+      pj,
+      p: doRestore().finally(() => {
+        if (restoring === mine) restoring = null
+      }),
+    }
+    restoring = mine
+    return mine.p
   },
 
   clear: () => {
@@ -677,6 +686,7 @@ export const useAiStore = create<AiState>((set, get) => ({
     // 提交记录也属于旧项目：在途请求回来时代际对不上，不落会话（但接受了的仍会删草稿，见 `accept`）。
     // 草稿文件里的 rid 还在——切回 A 会还原成「已发出未确认」，由用户查询，而不是盲目重发
     early.clear()
+    restoring = null // 旧代次的在途恢复作废（它回来时代次对不上、结果会被丢弃）；新项目挂载时发起自己的
     set((s) => ({ sessions: [], submissions: {}, generation: s.generation + 1 }))
   },
 }))
@@ -691,9 +701,21 @@ function acceptRunning(rid: string, session: AiSession): void {
   accept(rid, session.id, session.script, { kind: 'queried', status: 'running', changed: false, detail: null })
 }
 
-let restoring: Promise<void> | null = null
+let restoring: { gen: number; pj: string | null; p: Promise<void> } | null = null
+/** 恢复进行中暂存过的 session id → 它带的 request id：恢复结束时没被任何会话认领的要清掉（有未落定提交关心的除外） */
+const restoreBuffered = new Map<string, string | undefined>()
 /** 正在拉历史的那一小段里到的事件也要留着：占位还没建，它们不是「别人的」 */
 let restoringActive = 0
+
+/** 恢复结束：暂存了却没被任何会话认领的事件清掉（只留有未落定提交关心的，那是 accept 的回放用的） */
+function dropUnclaimedRestoreBuffer(): void {
+  const subs = useAiStore.getState().submissions
+  for (const [sid, rid] of restoreBuffered) {
+    const wanted = rid ? !!subs[rid] : Object.keys(subs).length > 0
+    if (!wanted) early.delete(sid)
+  }
+  restoreBuffered.clear()
+}
 
 async function doRestore(): Promise<void> {
   const { get, set } = { get: useAiStore.getState, set: useAiStore.setState }
@@ -713,7 +735,9 @@ async function doRestore(): Promise<void> {
     const live = new Set<string>()
     for (const e of list) {
       if (e.status !== 'running') continue
-      live.add(e.id)
+      // 暂存里已经有这个会话的终态事件（历史快照比事件旧）：它不再算 live——占位建好后回放会把它收尾
+      const finishedMeanwhile = early.get(e.id)?.some((ev) => ev.t === 'done') ?? false
+      if (!finishedMeanwhile) live.add(e.id)
       if (get().sessions.some((x) => x.id === e.id)) continue
       const session: AiSession = {
         id: e.id,
@@ -752,14 +776,21 @@ async function doRestore(): Promise<void> {
     await get().settleRunningSessions(live)
   } finally {
     restoringActive--
+    if (restoringActive === 0) dropUnclaimedRestoreBuffer()
   }
 }
 
 function bufferEarly(sid: string, rid: string | undefined, ev: EarlyEvent): void {
   const subs = useAiStore.getState().submissions
-  const pending = Object.keys(subs).length > 0 || restoringActive > 0
-  // 没有任何在途提交 = 这是别人的 / 已经丢弃的会话的事件，不留；带了 rid 的必须对得上一条提交
-  if (!pending || (rid && !subs[rid])) return
+  if (restoringActive > 0) {
+    // 恢复进行中（历史请求在途）：账本可能还没加载，带 request id 但此刻对不上任何提交的事件**也要留着**——
+    // 之后历史响应里若还有这条 running 记录，要回放给它（否则 ai.done 被丢、界面永远停在运行中、脚本被锁）。
+    // 恢复完成后只回放与返回会话匹配的，其余清掉（`dropUnclaimedRestoreBuffer`）
+    restoreBuffered.set(sid, rid)
+  } else {
+    // 没有任何在途提交 = 这是别人的 / 已经丢弃的会话的事件，不留；带了 rid 的必须对得上一条提交
+    if (Object.keys(subs).length === 0 || (rid && !subs[rid])) return
+  }
   let list = early.get(sid)
   if (!list) {
     if (early.size >= EARLY_MAX_SIDS) early.delete(early.keys().next().value as string)

@@ -21,6 +21,8 @@ const row = (over: Row = {}): Row => ({
   ...over,
 })
 let history: Record<string, Row[]> = {} // pj → 运行中清单
+let holds: Record<string, Promise<void>> = {} // pj → 扣住该项目的历史请求（「恢复在途」）
+const historyCalls: string[] = [] // 发过历史请求的项目
 let detail: Record<string, Row> = {}
 const urls: string[] = []
 
@@ -30,6 +32,9 @@ globalThis.fetch = (async (url: unknown, init?: RequestInit) => {
   const pj = ((init?.headers ?? {}) as Record<string, string>)['X-Tavotto-Project'] ?? new URL(u, 'http://x').searchParams.get('pj') ?? ''
   if (u.includes('/api/ai/history')) {
     expect(u).toContain('status=running')
+    historyCalls.push(pj)
+    const gate = holds[pj] as Promise<void> | undefined
+    if (gate) await gate
     return json({ total: 0, sessions: history[pj] ?? [] })
   }
   const m = /\/api\/ai\/sessions\/([^/?]+)$/.exec(u.split('?')[0])
@@ -43,6 +48,8 @@ const sessions = () => useAiStore.getState().sessions
 
 beforeEach(() => {
   history = {}
+  holds = {}
+  historyCalls.length = 0
   detail = {}
   urls.length = 0
   setCurrentProjectId('pa')
@@ -312,5 +319,81 @@ describe('占位与「已发出未确认」「按脚本的发送锁」并存（P
     expect(src).toMatch(/await get\(\)\.settleRunningSessions\(live\)/)
     // acceptRunning 只是把占位当「请求快照说 running」交给 accept
     expect(src).toMatch(/function acceptRunning[\s\S]{0,200}accept\(rid, session\.id/)
+  })
+})
+
+describe('恢复进行中到达的事件 / 并发恢复按项目分键（#1111 Codex P2）', () => {
+  const hold = (pj: string) => {
+    let release!: () => void
+    holds[pj] = new Promise<void>((r) => (release = r))
+    return () => {
+      delete holds[pj]
+      release()
+    }
+  }
+
+  it('恢复在途（历史请求被扣住）时到达的 ai.done，带的 request id 此刻对不上任何提交（账本还没加载）——也要暂存；历史响应里仍是 running 记录时回放，收尾成终态，不卡 running', async () => {
+    history.pa = [row({ id: 's-run', client_request_id: 'rid-not-loaded-yet' })]
+    const release = hold('pa')
+    const p = useAiStore.getState().restoreRunning()
+    handleServerEvent({
+      kind: 'ai.done', pj: 'pa', session: 's-run', client_request_id: 'rid-not-loaded-yet',
+      status: 'done', changed: true, diff: 'D', script: 'fig1.py',
+    })
+    release()
+    await p
+    expect(sessions()).toHaveLength(1)
+    expect(sessions()[0]).toMatchObject({ id: 's-run', status: 'done', changed: true, finalized: true }) // 对照：旧实现把它丢了，会话永远 running
+    expect(sessions().some((x) => x.status === 'running')).toBe(false) // 不锁脚本
+    expect(useUiStore.getState().status).not.toBeNull()
+  })
+
+  it('同样适用于 ai.delta：恢复期间的过程输出也被回放到接回的占位上', async () => {
+    history.pa = [row({ id: 's-run', client_request_id: 'rid-x' })]
+    const release = hold('pa')
+    const p = useAiStore.getState().restoreRunning()
+    handleServerEvent({ kind: 'ai.delta', pj: 'pa', session: 's-run', client_request_id: 'rid-x', text: '恢复期间的输出', kindOf: 'message' })
+    release()
+    await p
+    expect(sessions()[0].entries.map((e) => e.text)).toEqual(['恢复期间的输出'])
+    expect(sessions()[0].status).toBe('running')
+  })
+
+  it('没被任何返回会话认领的暂存事件在恢复结束后清掉：之后另一次恢复接回同名会话时不会误回放旧事件', async () => {
+    const release = hold('pa')
+    history.pa = [] // 这次恢复没有返回任何会话
+    const p = useAiStore.getState().restoreRunning()
+    handleServerEvent({ kind: 'ai.done', pj: 'pa', session: 's-run', client_request_id: 'rid-y', status: 'failed', changed: false, diff: '', script: 'fig1.py' })
+    release()
+    await p
+    history.pa = [row({ id: 's-run' })] // 之后这个 id 又作为运行中记录出现
+    await useAiStore.getState().restoreRunning()
+    expect(sessions()[0]).toMatchObject({ id: 's-run', status: 'running' }) // 旧的 failed 没被回放
+  })
+
+  it('A 的恢复还在途时切到 B：B 发起自己的请求并接回 B 的会话；A 的结果按代次丢弃，B 不受影响', async () => {
+    history.pa = [row({ id: 's-a' })]
+    history.pb = [row({ id: 's-b', script: 'figb.py' })]
+    const releaseA = hold('pa')
+    const pA = useAiStore.getState().restoreRunning() // A 在途
+    setCurrentProjectId('pb')
+    useAiStore.getState().clear() // 切到 B：代次前进
+    await useAiStore.getState().restoreRunning() // B 自己的请求——不能拿到 A 的 promise
+    expect(historyCalls).toEqual(['pa', 'pb']) // 对照：旧实现 B 复用 A 的 promise，historyCalls 里没有 pb
+    expect(sessions().map((x) => x.id)).toEqual(['s-b'])
+    releaseA()
+    await pA
+    expect(sessions().map((x) => x.id)).toEqual(['s-b']) // A 的结果被丢弃
+  })
+
+  it('同一项目同一代次内并发调用仍共用一次请求（挂载 + 重连）', async () => {
+    history.pa = [row({ id: 's-a' })]
+    const release = hold('pa')
+    const p1 = useAiStore.getState().restoreRunning()
+    const p2 = useAiStore.getState().restoreRunning()
+    release()
+    await Promise.all([p1, p2])
+    expect(historyCalls).toEqual(['pa'])
+    expect(sessions()).toHaveLength(1)
   })
 })
