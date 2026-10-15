@@ -324,24 +324,69 @@ describe('树行的列间距（G5）', () => {
 })
 
 describe('选中图层滚入视野（G6）', () => {
-  it('从画布选中某个图层：那一行 scrollIntoView({ block: nearest })，焦点已在树里时不滚', async () => {
-    const calls: Array<{ id: string; arg: unknown }> = []
+  const withScrollSpy = async (fn: (calls: string[]) => Promise<void>) => {
+    const calls: string[] = []
     const orig = Element.prototype.scrollIntoView
     Element.prototype.scrollIntoView = function (this: Element, arg?: unknown) {
-      calls.push({ id: (this as HTMLElement).dataset.layer ?? '', arg })
+      expect(arg).toEqual({ block: 'nearest' })
+      calls.push((this as HTMLElement).dataset.layer ?? '')
     }
     try {
-      await mount([panel('p1', 'A'), panel('p2', 'B'), panel('p3', 'C')])
-      await act(async () => useSelectionStore.getState().set(['p2']))
-      expect(calls.at(-1)).toEqual({ id: 'p2', arg: { block: 'nearest' } })
-      // 键盘在树里走：选区变了也不再滚（focus() 已经带进视野）
-      const before = calls.length
-      await act(async () => rows().find((r) => r.dataset.layer === 'p2')!.focus())
-      await act(async () => useSelectionStore.getState().set(['p3']))
-      expect(calls.length).toBe(before)
+      await fn(calls)
     } finally {
       Element.prototype.scrollIntoView = orig
     }
+  }
+
+  it('从画布选中某个图层：那一行 scrollIntoView({ block: nearest })——树仍持有焦点时也滚', async () => {
+    await withScrollSpy(async (calls) => {
+      await mount([panel('p1', 'A'), panel('p2', 'B'), panel('p3', 'C')])
+      await act(async () => useSelectionStore.getState().set(['p2']))
+      expect(calls.at(-1)).toBe('p2')
+      // 树持有焦点（用户刚在树里点过 / 走过），随后画布上改选：照样滚
+      await act(async () => rows().find((r) => r.dataset.layer === 'p2')!.focus())
+      await new Promise((r) => setTimeout(r, 5)) // 树里那次操作的「来源」标记已过期
+      calls.length = 0
+      await act(async () => useSelectionStore.getState().set(['p3']))
+      expect(calls).toEqual(['p3'])
+    })
+  })
+
+  it('用户在树里按键 / 点击造成的选择变化：不额外滚（键盘移动的 focus() 自己带进视野）', async () => {
+    await withScrollSpy(async (calls) => {
+      await mount([panel('p1', 'A'), panel('p2', 'B'), panel('p3', 'C')])
+      const first = rows()[0]
+      await act(async () => first.focus())
+      await new Promise((r) => setTimeout(r, 5))
+      calls.length = 0
+      await act(async () => {
+        first.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, cancelable: true }))
+      })
+      expect(useSelectionStore.getState().ids).toEqual([rows()[1].dataset.layer])
+      expect(calls).toEqual([])
+      await new Promise((r) => setTimeout(r, 5))
+      await act(async () => {
+        rows()[2].dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, cancelable: true, button: 0 }))
+      })
+      expect(useSelectionStore.getState().ids).toEqual([rows()[2].dataset.layer])
+      expect(calls).toEqual([])
+    })
+  })
+
+  it('选中项在折叠的组里：滚到组标题行', async () => {
+    await withScrollSpy(async (calls) => {
+      await mount([
+        panel('p1', 'A'),
+        { ...panel('p2', 'B'), groupId: 'g1' } as CanvasObject,
+        { ...panel('p3', 'C'), groupId: 'g1' } as CanvasObject,
+      ])
+      const toggle = rows().find((r) => r.dataset.layer === 'g:g1')!.querySelector('button')!
+      await act(async () => toggle.click())
+      expect(rows().some((r) => r.dataset.layer === 'p2')).toBe(false)
+      calls.length = 0
+      await act(async () => useSelectionStore.getState().set(['p2']))
+      expect(calls.at(-1)).toBe('g:g1')
+    })
   })
 })
 
@@ -360,29 +405,5 @@ describe('被拖行淡化（G11）', () => {
     expect(rows()[0].dataset.dragging).toBe('true')
     await act(async () => rows()[0].dispatchEvent(ev('dragend')))
     expect(rows()[0].className).not.toMatch(/opacity-dragging/)
-  })
-
-  it('选中项在折叠的组里：滚到组标题行', async () => {
-    const calls: string[] = []
-    const orig = Element.prototype.scrollIntoView
-    Element.prototype.scrollIntoView = function (this: Element) {
-      calls.push((this as HTMLElement).dataset.layer ?? '')
-    }
-    try {
-      await mount([
-        panel('p1', 'A'),
-        { ...panel('p2', 'B'), groupId: 'g1' } as CanvasObject,
-        { ...panel('p3', 'C'), groupId: 'g1' } as CanvasObject,
-      ])
-      // 先折叠组（点箭头），成员行不再渲染
-      const toggle = rows().find((r) => r.dataset.layer === 'g:g1')!.querySelector('button')!
-      await act(async () => toggle.click())
-      expect(rows().some((r) => r.dataset.layer === 'p2')).toBe(false)
-      calls.length = 0
-      await act(async () => useSelectionStore.getState().set(['p2']))
-      expect(calls.at(-1)).toBe('g:g1')
-    } finally {
-      Element.prototype.scrollIntoView = orig
-    }
   })
 })

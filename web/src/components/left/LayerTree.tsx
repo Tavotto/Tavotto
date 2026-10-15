@@ -81,13 +81,23 @@ export function LayerTree() {
   // 也会让下面所有行整体位移。不给动效的话行「啪」地跳，看不出是哪一行动了
   useFlip(listRef, 'data-layer')
 
-  // 画布上点选的图层可能在长列表的视口之外：滚到恰好看得见（与图内元素树同一写法；不平滑，所以
-  // reduced-motion 下也是即时的）。焦点已在树里（键盘在走）时不滚——roving 的 focus() 自己会带进视野，
-  // 再滚一次会和它抢
+  // 画布 / 其他面板上改选的图层可能在长列表的视口之外：一律滚到恰好看得见（与图内元素树同一写法；
+  // 不平滑，所以 reduced-motion 下也是即时的）——哪怕树此刻还持有焦点。只有**用户在树里**用键盘 / 点击
+  // 造成的选择变化不额外滚：键盘移动的 focus() 自己会带进视野，再滚一次会和它抢。来源靠树上的捕获
+  // 阶段记一笔（按键 / 按下发生在选择变化之前，同一轮事件处理里就会被 effect 消费）
+  const treeDriven = useRef(false)
+  const markTreeDriven = () => {
+    treeDriven.current = true
+    setTimeout(() => (treeDriven.current = false), 0)
+  }
   const primaryId = selectedIds.at(-1)
   useEffect(() => {
     const list = listRef.current
-    if (!primaryId || !list || list.contains(document.activeElement)) return
+    if (treeDriven.current) {
+      treeDriven.current = false
+      return
+    }
+    if (!primaryId || !list) return
     const at = (key: string) => list.querySelector(`[data-layer="${CSS.escape(key)}"]`)
     // 选中项藏在折叠的组里（行没渲染）：滚到它最近的可见祖先——组标题行
     const groupId = objects.find((o) => o.id === primaryId)?.groupId
@@ -179,6 +189,8 @@ export function LayerTree() {
       ref={listRef}
       role="tree"
       data-tree="layers"
+      onKeyDownCapture={markTreeDriven}
+      onPointerDownCapture={markTreeDriven}
       aria-label={lt('listLabel')}
       aria-multiselectable
       className="min-h-0 flex-1 scroll-py-1 overflow-y-auto py-1"
