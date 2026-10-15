@@ -228,6 +228,11 @@ export function handleServerEvent(ev: ServerEvent) {
     }
 
     case 'project.error': {
+      if (ev.recovered) {
+        // 后台刷新又成功了（含「文件改回原样、没有语义差异」那种不发 registry.changed 的）：撤掉先前那条
+        useUiStore.getState().clearStatusOwnedBy(projectErrorOwner(ev.pj))
+        break
+      }
       // 后台刷新失败，**可恢复**：内存里的注册表原封不动，watcher 继续跑，
       // 文件修好之后下一轮自动重试。所以它是一条常驻的状态提示，不是模态框
       // ——没有需要用户当场做的决定。

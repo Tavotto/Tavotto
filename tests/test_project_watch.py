@@ -1156,6 +1156,38 @@ class TestEndToEnd:
         assert errors[0]["code"] == "scan_failed"
         assert isinstance(errors[0]["params"], dict)
 
+    def test_recovery_after_a_failure_is_announced_even_without_a_diff(
+        self, client, tmp_path, sse_spy
+    ):
+        """注册表被改坏 → `project.error`；改回**原样**：刷新成功但没有语义差异，`registry.changed` 一条都不发，
+        前端那条常驻错误提示就没有撤的信号。所以恢复要在同一个事件名里带 `recovered`（不新增事件名）。"""
+        figs = _project(tmp_path)
+        _script(figs, "fig1.py", "Fig1")
+        _pdf(figs / "Fig1.pdf")
+        body = client.post("/api/projects/open", json={"path": str(figs)}).get_json()
+        ctx = m.PROJECTS[body["id"]]
+        engine_watch.stop()
+        m.refresh_project(ctx, reason="manual")
+        reg = figs / "tavotto_registry.json"
+        good = reg.read_text(encoding="utf-8")
+
+        w = engine_watch.ProjectWatcher(ctx, sink=m._watch_sink(ctx), interval=0.01, debounce=0.0)
+        w.prime()
+        reg.write_text("{ 这不是 JSON", encoding="utf-8")
+        w.poll()
+        sse_spy.clear()
+        reg.write_text(good, encoding="utf-8")
+        w.poll()
+
+        kinds = [ev for ev, _ in sse_spy]
+        assert "registry.changed" not in kinds and "assets.changed" not in kinds, sse_spy
+        rec = [d for ev, d in sse_spy if ev == "project.error"]
+        assert len(rec) == 1 and rec[0]["recovered"] is True and rec[0]["pj"] == ctx.id, sse_spy
+        # 之后再无事发生：不重复报
+        sse_spy.clear()
+        w.poll()
+        assert not [1 for ev, _ in sse_spy if ev == "project.error"]
+
     def test_a_live_watcher_picks_up_a_new_script(self, client, tmp_path, sse_spy):
         """真线程跑一遍：打开项目 → 在编辑器里新建一个脚本 → 无须点刷新。
 

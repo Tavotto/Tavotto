@@ -3283,6 +3283,8 @@ export type ServerEvent =
       reason?: RefreshReason
       code: string
       params?: Record<string, string>
+      /** 上一次后台刷新失败之后又成功了一次（成功但无差异时 `registry.changed` 不发）：撤掉那条错误提示，`code` 为空 */
+      recovered?: boolean
     } & ProjectScoped)
   | ({ kind: 'probe.started'; script: string } & ProjectScoped)
   | ({

@@ -2461,6 +2461,12 @@ def _watch_sink(ctx: "ProjectCtx") -> engine_watch.WatchSink:
             "project.error",
             {"pj": ctx.id, "reason": "watcher", "code": code, "params": params},
         ),
+        # 失败之后的下一次成功刷新（哪怕没有语义差异、`registry.changed` 一条都不发）：
+        # 同一个事件名带 `recovered`，前端据此撤掉那条常驻错误；没有新增事件名
+        recovered=lambda: sse_publish(
+            "project.error",
+            {"pj": ctx.id, "reason": "watcher", "code": "", "params": {}, "recovered": True},
+        ),
     )
 
 

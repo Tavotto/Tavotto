@@ -839,6 +839,21 @@ describe('project.error 的撤销', () => {
     expect(useUiStore.getState().status).toBeNull()
   })
 
+  it('刷新恢复但没有语义差异（不发 registry.changed）：project.error 带 recovered 也撤', () => {
+    useUiStore.getState().setStatus(null)
+    handleServerEvent(ev({ kind: 'project.error', pj: 'p1', code: 'no_such_code_xyz' }))
+    expect(useUiStore.getState().status).not.toBeNull()
+    handleServerEvent(ev({ kind: 'project.error', pj: 'p1', code: '', recovered: true }))
+    expect(useUiStore.getState().status).toBeNull()
+  })
+
+  it('对照：recovered 不顶出新的错误 toast，也撤不掉别的主人的', () => {
+    useUiStore.getState().setStatus(literal('别的'), 'error', { owner: 'render.failed:p1:x' })
+    handleServerEvent(ev({ kind: 'project.error', pj: 'p1', code: '', recovered: true }))
+    expect(useUiStore.getState().statusOwner).toBe('render.failed:p1:x')
+    useUiStore.getState().setStatus(null)
+  })
+
   it('对照：别的主人的 toast 不被恢复事件撤掉', () => {
     useUiStore.getState().setStatus(literal('别的'), 'error', { owner: 'render.failed:p1:x' })
     handleServerEvent(ev({ kind: 'registry.changed', pj: 'p1', scripts: [] }))

@@ -230,6 +230,9 @@ class WatchSink:
     script_changed: Callable[[list[str]], None] | None = None
     #: 后台刷新失败（→ 项目级可恢复错误）。参数是稳定 code 与它的 params。
     error: Callable[[str, dict], None] | None = None
+    #: 上一次后台刷新失败之后，又有一次刷新成功了（→ 前端撤掉那条常驻错误）。
+    #: 刷新成功但没有语义差异时统一刷新什么都不发，所以「恢复」要有自己的出口。
+    recovered: Callable[[], None] | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -266,6 +269,8 @@ class ProjectWatcher:
 
         self._snapshot: Snapshot | None = None
         self._pending = Delta()
+        #: 最近一次后台刷新是以失败收场的（让下一次成功的刷新能说一声「恢复了」）
+        self._errored = False
         self._first_seen: float | None = None
         self._last_seen: float | None = None
         self._missing = False  # 目录当前不可用（只为日志去重）
@@ -388,6 +393,10 @@ class ProjectWatcher:
         paths = self._refreshable_paths(batch)
         if paths:
             self._refresh(paths)
+        elif self._errored and batch.registry:
+            # 注册表被改坏后又改回了**内存里那份的原样**：内容修订号与上次装载的一致，被当成自己写的而不触发
+            # 刷新——但磁盘与内存已经重新一致，那条错误提示不成立了
+            self._announce_recovery()
 
         # `panel.file_changed` 只发给**还在磁盘上**的已登记脚本：删掉的那些
         # 让前端去重渲染只会得到一个错误，「源文件不见了」是 readiness 的
@@ -424,16 +433,29 @@ class ProjectWatcher:
                 LOG.debug("注册表变化来自本次刷新自己的写入，不再触发第二轮")
         return keep.paths()
 
+    def _announce_recovery(self) -> None:
+        """上次后台刷新失败过、这次已经好了：说一声（只说一次）。"""
+        if not self._errored:
+            return
+        self._errored = False
+        if self.sink.recovered is not None:
+            try:
+                self.sink.recovered()
+            except Exception:  # noqa: BLE001
+                LOG.exception("watcher 恢复回调抛出，已忽略")
+
     def _refresh(self, paths: list[str]) -> None:
         if self.sink.refresh is None:
             return
         try:
             self.sink.refresh(paths)
+            self._announce_recovery()
         except project_refresh.RefreshError as exc:
             # 刷新失败是**可恢复**的：内存里的注册表原封不动（ADR 0025），
             # watcher 线程继续。注册表被改成非法 JSON 走的正是这条路——
             # 修好之后的那次写入会被下一轮 diff 看到，自动重试。
             LOG.warning("watcher 触发的刷新失败（%s），保留上一次的状态", exc.code)
+            self._errored = True
             if self.sink.error is not None:
                 try:
                     self.sink.error(exc.code, exc.params)

@@ -982,6 +982,30 @@ describe('SSE 断线后的对账（reconcile）：丢了终态事件，卡片不
     expect(useDepRepairStore.getState().parked['p1']?.state).toBe('done')
   })
 
+  it('envStore：refresh 在飞时才开始安装，晚到的旧快照（idle）不能清掉这一轮的 installing', async () => {
+    useEnvStore.setState({ installing: false })
+    holding.add('/api/engine/environment')
+    const pending = useEnvStore.getState().refresh() // 发出时服务端还没开始安装
+    await vi.waitFor(() => expect(held.has('/api/engine/environment')).toBe(true))
+    useEnvStore.getState().onProgress({ state: 'running', log: '', error: null } as never) // 安装开始（SSE）
+    expect(useEnvStore.getState().installing).toBe(true)
+    held.get('/api/engine/environment')?.({ ok: false, state: 'idle', project: { open: true } })
+    await pending
+    expect(useEnvStore.getState().installing).toBe(true)
+    holding.delete('/api/engine/environment')
+  })
+
+  it('depRepair：回包前 SSE 已把进度推到下一步，较早的快照不倒回去', async () => {
+    await startInstallOnA()
+    holding.add('/api/engine/dependency/state')
+    const pending = useDepRepairStore.getState().reconcile()
+    await vi.waitFor(() => expect(held.has('/api/engine/dependency/state')).toBe(true))
+    useDepRepairStore.getState().onProgress(progress('verifying'))
+    held.get('/api/engine/dependency/state')?.(progress('installing'))
+    await pending
+    expect(useDepRepairStore.getState().progress?.state).toBe('verifying')
+  })
+
   it('envStore：丢了 engine.bootstrap 终态，重连后的环境读取收掉「安装中」', async () => {
     useEnvStore.setState({ installing: true, log: '' })
     await useEnvStore.getState().refresh() // 此处环境应答没有 state=running

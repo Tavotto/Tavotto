@@ -976,7 +976,8 @@ export const useDepRepairStore = create<DepRepairState>((set, get) => ({
         // 等回包期间 SSE 已经把它推到终态：这份快照是更早的，不能把终局盖回去
         const { progress, parked } = get()
         const known = progress?.plan_id === id ? progress : Object.values(parked).find((q) => q.plan_id === id)
-        if (!known || TERMINAL.includes(known.state)) return
+        // 进度已经动过（SSE 先到了）：这份快照产生在它之前，不用它倒回去
+        if (!known || TERMINAL.includes(known.state) || known.state !== pending.get(id)?.state) return
         get().onProgress(actual)
       }),
     )
