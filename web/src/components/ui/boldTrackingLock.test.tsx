@@ -25,6 +25,28 @@ function Label({ text, selected, editing = false }: { text: string; selected: bo
   )
 }
 
+// 共用的 ResizeObserver 是模块级懒建单例：桩必须在第一次渲染前就位，并记下建了几个、观察着谁
+const ro = {
+  instances: 0,
+  observed: new Set<Element>(),
+  fire: (el: Element) => {},
+}
+globalThis.ResizeObserver = class {
+  cb: (entries: { target: Element }[]) => void
+  constructor(cb: (entries: { target: Element }[]) => void) {
+    ro.instances++
+    this.cb = cb
+    ro.fire = (el) => this.cb([{ target: el }])
+  }
+  observe(el: Element) {
+    ro.observed.add(el)
+  }
+  unobserve(el: Element) {
+    ro.observed.delete(el)
+  }
+  disconnect() {}
+} as unknown as typeof ResizeObserver
+
 let root: Root
 let host: HTMLDivElement
 let rangeCalls = 0
@@ -141,5 +163,44 @@ describe('useBoldTrackingLock', () => {
     expect(host.querySelector('[data-label]')).toBeNull()
     await at(false)
     expect(label().style.letterSpacing).toBe(locked)
+  })
+
+  it('选中期间标签盒变窄 / 变宽：截断状态切换时字距跟着加 / 撤（只用缓存宽度，不再量 Range）', async () => {
+    const text = '尺寸变化专用的一段很长的名字 resize resize resize'
+    boxWidth = 10_000 // 放得下：不锁
+    await render(true, text)
+    expect(label().style.letterSpacing).toBe('')
+    const calls = rangeCalls
+    boxWidth = 50 // 抽屉拖窄：放不下了
+    await act(async () => ro.fire(label()))
+    expect(parseFloat(label().style.letterSpacing)).toBeLessThan(0)
+    boxWidth = 10_000 // 拉宽：又放得下
+    await act(async () => ro.fire(label()))
+    expect(label().style.letterSpacing).toBe('')
+    expect(rangeCalls).toBe(calls)
+  })
+
+  it('取消选中 / 卸载即断开观察；200 行多选只有一个 observer', async () => {
+    const text = '观察者专用的一段很长的名字 observer observer observer'
+    const before = ro.instances
+    const Many = ({ selected }: { selected: boolean }) => (
+      <>
+        {Array.from({ length: 200 }, (_, i) => (
+          <Label key={i} text={text} selected={selected} />
+        ))}
+      </>
+    )
+    await act(async () => root.render(<Many selected />))
+    expect(ro.instances - before).toBeLessThanOrEqual(1) // 单例：最多在本文件第一次用到时建一个
+    expect(ro.instances).toBe(1)
+    const labels = [...host.querySelectorAll('[data-label]')]
+    expect(labels.every((el) => ro.observed.has(el))).toBe(true)
+    await act(async () => root.render(<Many selected={false} />))
+    expect(labels.some((el) => ro.observed.has(el))).toBe(false)
+    await act(async () => root.render(<Many selected />))
+    const again = [...host.querySelectorAll('[data-label]')]
+    await act(async () => root.unmount())
+    expect(again.some((el) => ro.observed.has(el))).toBe(false)
+    root = createRoot(host)
   })
 })

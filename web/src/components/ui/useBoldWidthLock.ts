@@ -29,6 +29,26 @@ if (typeof document !== 'undefined') {
 }
 
 /**
+ * 选中行标签的尺寸观察：整个应用共用**一个** ResizeObserver（懒建），按元素登记回调。
+ * 选中期间拖窄 / 拉宽抽屉会改变「放不放得下」，回调里只用缓存的 w400 / w600 对新的 clientWidth 重判，不重新量 Range。
+ */
+let sharedRO: ResizeObserver | null = null
+const roCallbacks = new WeakMap<Element, () => void>()
+function watchSize(el: HTMLElement, recheck: () => void) {
+  if (typeof ResizeObserver === 'undefined') return
+  sharedRO ??= new ResizeObserver((entries) => {
+    for (const e of entries) roCallbacks.get(e.target)?.()
+  })
+  roCallbacks.set(el, recheck)
+  sharedRO.observe(el)
+}
+function unwatchSize(el: HTMLElement) {
+  if (!roCallbacks.has(el)) return
+  roCallbacks.delete(el)
+  sharedRO?.unobserve(el)
+}
+
+/**
  * 树 / 列表行标签的**截断位置**锁（2026-10 UI 审计 G3）：选中行是 600，同一段字比 400 宽 2–3%，
  * 被 `truncate` 切断的长名字在选中那一下多吃一两个字，随选择跳动。`useBoldWidthLock` 管不了这件事
  * （那是给不截断的页签留 `min-width`；给截断的标签加 `min-width` 只会把行撑出去）。
@@ -40,7 +60,7 @@ if (typeof document !== 'undefined') {
  * 成本：只在 `[active, text]` 变化时跑；量值按（字体，文字）缓存，同名不重复量，缓存命中时不写样式、
  * 不强制布局（只读一次 clientWidth）。元素树全选几百行、拖动画布时树跟着重渲染，不会变成 N×2 次同步布局。
  * `text` 由调用方传入名字字符串（不在 effect 里读 textContent 当依赖）；返回 callback ref，挂在标签元素上。jsdom 里量出来是 0，等于没设。
- * 局限：标签盒在选中期间被拖窄（改抽屉宽）时不重量，下一次选中 / 改名才重算。
+ * 标签盒尺寸变了（改抽屉宽）时由共用的 ResizeObserver 重判，只对选中行观察，取消选中 / 卸载即断开。
  */
 export function useBoldTrackingLock<T extends HTMLElement>(active: boolean, text: string) {
   const elRef = useRef<T | null>(null)
@@ -51,7 +71,10 @@ export function useBoldTrackingLock<T extends HTMLElement>(active: boolean, text
     const { active, text } = latest.current
     el.style.letterSpacing = ''
     const chars = [...text].length
-    if (!active || !chars) return
+    if (!active || !chars) {
+      unwatchSize(el)
+      return
+    }
     const cs = getComputedStyle(el)
     const key = `${cs.fontFamily}|${cs.fontSize}|${text}`
     let hit = boldWidthCache.get(key)
@@ -75,15 +98,22 @@ export function useBoldTrackingLock<T extends HTMLElement>(active: boolean, text
       if (boldWidthCache.size > 500) boldWidthCache.clear()
       boldWidthCache.set(key, hit)
     }
-    const delta = hit.w600 - hit.w400
-    // 不截断（600 的宽度放得下标签盒）：不需要锁
-    if (delta > 0.05 && hit.w600 > el.clientWidth) el.style.letterSpacing = `${-delta / chars}px`
+    const { w400, w600 } = hit
+    const decide = () => {
+      const delta = w600 - w400
+      // 不截断（600 的宽度放得下标签盒）：不需要锁
+      el.style.letterSpacing = delta > 0.05 && w600 > el.clientWidth ? `${-delta / chars}px` : ''
+    }
+    decide()
+    if (w600 - w400 > 0.05) watchSize(el, decide)
   }, [])
 
   // 标签元素被换掉（行内改名：输入框顶替标签、关掉后标签重新挂载）时，[active, text] 都没变，
   // effect 不会重跑，新元素上就没有字距——所以挂载本身也要量（callback ref，提交阶段调用）
   const labelRef = useCallback(
     (el: T | null) => {
+      const prev = elRef.current
+      if (prev && prev !== el) unwatchSize(prev)
       elRef.current = el
       if (el) apply(el)
     },
