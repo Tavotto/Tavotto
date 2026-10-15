@@ -37,8 +37,11 @@ const hang = (init?: RequestInit) =>
 
 const draftBe = createDraftBackend()
 
+const fetchLog: string[] = [] // 发往后端的请求（只数草稿以外的，用来验「一次收尾只读一次快照」）
+
 globalThis.fetch = (async (url: unknown, init?: RequestInit) => {
   const u = String(url)
+  if (!u.includes('/api/ai/drafts')) fetchLog.push(u)
   const drafted = draftBe.handle(u, init)
   if (drafted) return drafted
   if (u.includes('/api/ai/run') && init?.body) runBodies.push(JSON.parse(String(init.body)))
@@ -582,11 +585,70 @@ describe('同 id 重发被去重（deduped）：拿快照、按真实状态收�
     await useAiStore.getState().resend(rid)
     expect(useAiStore.getState().sessions[0]).toMatchObject({ id: 's-new', status: 'running' })
   })
+})
 
-  it('结构性（源码）：向后端要请求 / 会话快照的地方只有 settleFromSnapshot 一处，查询与 deduped 都走它', async () => {
-    const src = (await import('./aiStore.ts?raw')).default as string
-    expect(src.match(/fetchAiRequest\(/g)).toHaveLength(1)
-    expect(src.match(/fetchAiSession\(/g)).toHaveLength(1)
-    expect(src.match(/settleFromSnapshot\(/g)!.length).toBeGreaterThanOrEqual(3) // 定义 + queryRequest + dispatch(deduped)
+describe('一次收尾只读一次快照：各条收尾路径，同样的服务器状态得到同样的结果（行为，不数源码）', () => {
+  const requestUrl = (u: string) => u.includes('/api/ai/requests/')
+  const detailUrl = (u: string) => u.includes('/api/ai/sessions/s-9')
+  const snapshotServer: Handler = (url) => {
+    if (requestUrl(url)) return json({ session: 's-9', status: 'done', changed: true, script: 'fig1.py' })
+    if (detailUrl(url))
+      return json({ agent: 'codex', status: 'done', changed: true, diff: 'D', transcript: [], refresh: { status: 'failed', code: 'scan_failed' } })
+    return json({})
+  }
+  const toNotReceived = async () => {
+    handler = (url) => (url.includes('/api/ai/run') ? Promise.reject(new TypeError('down')) : json({}))
+    await send()
+    const rid = onlySub().rid
+    handler = (url) => (requestUrl(url) ? json({ error: 'x', code: 'ai_request_not_found' }, 404) : json({}))
+    await useAiStore.getState().queryRequest(rid)
+    return rid
+  }
+
+  const paths: Record<string, { run: () => Promise<void>; requestReads: number }> = {
+    用户点查询: {
+      requestReads: 1,
+      run: async () => {
+        handler = (url) => (url.includes('/api/ai/run') ? Promise.reject(new TypeError('down')) : json({}))
+        await send()
+        const rid = onlySub().rid
+        handler = snapshotServer
+        fetchLog.length = 0
+        await useAiStore.getState().queryRequest(rid)
+      },
+    },
+    同id重发被去重: {
+      requestReads: 1,
+      run: async () => {
+        const rid = await toNotReceived()
+        handler = (url, init) =>
+          url.includes('/api/ai/run') ? json({ session: 's-9', script: 'fig1.py', deduped: true }) : snapshotServer(url, init)
+        fetchLog.length = 0
+        await useAiStore.getState().resend(rid)
+      },
+    },
+    本地running会话的对账收尾: {
+      requestReads: 0,
+      run: async () => {
+        handler = (url) => (url.includes('/api/ai/run') ? json({ session: 's-9', script: 'fig1.py' }) : json({}))
+        await send()
+        expect(useAiStore.getState().sessions[0]).toMatchObject({ id: 's-9', status: 'running' })
+        handler = snapshotServer
+        fetchLog.length = 0
+        await useAiStore.getState().settleRunningSessions()
+      },
+    },
+  }
+
+  it.each(Object.keys(paths))('%s：快照各读一次（会话详情恰好一次），收尾结果与其余路径相同', async (name) => {
+    await paths[name].run()
+    const reads = (pred: (u: string) => boolean) => fetchLog.filter(pred).length
+    expect(reads(detailUrl)).toBe(1) // 一次收尾只读一次会话详情——任何路径重复读 / 绕开共用读法都会改变这个数
+    expect(reads(requestUrl)).toBe(paths[name].requestReads)
+    expect(useAiStore.getState().sessions).toHaveLength(1)
+    expect(useAiStore.getState().sessions[0]).toMatchObject({ id: 's-9', status: 'done', changed: true, diff: 'D', finalized: true })
+    expect(JSON.stringify(useUiStore.getState().status)).toContain('aiChangedRefreshFailed') // 终态走同一条完成路径，refresh 警告都在
+    expect(useAiStore.getState().sessions.some((x) => x.status === 'running')).toBe(false)
+    expect(subs()).toEqual([])
   })
 })

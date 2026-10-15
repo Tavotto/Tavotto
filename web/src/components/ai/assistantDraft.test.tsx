@@ -5,6 +5,11 @@
  *   * 草稿按「项目 × 面板文件」分键：切项目 / 切面板不串稿；
  *   * 「已发出未确认」：普通发送 / 重试一律禁用，只给「查询结果」；查到没收到才给「重新发送」（同一个 rid）；
  *   * 失败会话的「重试」遇到 `changed` 先二次确认。
+ *
+ * **结构性不变式一律用行为验，不数源码**（仓库纪律：判源码结构用 AST，判不出就别判）：入口同路径 = 五个入口的
+ * 还原结果与向后端发的请求集合逐项相同；发送来源 = 四个触发各自的账本戳 / 草稿去向。
+ * 盲点（写在明处）：新增第六个对账入口若不加进上面的入口矩阵，这里测不到它是否绕开 `reconcile`；
+ * 新增第五个发送触发同理。
  */
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
@@ -566,11 +571,51 @@ describe('同步状态机：单一 reconcile + 写入版本（#1098）', () => {
       expect(aiRun).toHaveBeenCalledTimes(1)
     })
 
-    it('结构性（源码）：发送的每个调用点都显式标明来源，没有无参 / 裸文本调用', async () => {
-      const src = (await import('./AiPanel.tsx?raw')).default as string
-      const calls = src.match(/\bsend\(\s*[^)]*\)/g)!.filter((c) => !c.includes('req: SendRequest'))
-      expect(calls.length).toBeGreaterThanOrEqual(5)
-      for (const c of calls) expect(c, c).toMatch(/source:\s*'(composer|history)'/)
+    // 来源逐个入口验（行为，不数源码）：输入框的两个触发（发送钮 / ⌘↵）都取草稿快照、账本记草稿戳；
+    // 历史会话的两个触发（气泡「重新发送」/ 失败会话的「重试」）都不碰草稿、账本不带戳。
+    it.each([
+      ['发送钮', async () => click(q('[data-ai-send="send"]'))],
+      [
+        '⌘↵',
+        async () => {
+          await act(async () => {
+            input().dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', metaKey: true, bubbles: true }))
+          })
+        },
+      ],
+    ])('输入框来源（%s）：run 发出那一刻账本里是草稿戳，被接受后草稿被清', async (_name, trigger) => {
+      let stampAtRun: unknown = null
+      vi.mocked(aiRun).mockImplementation(async () => {
+        stampAtRun = ledgerStamp()
+        return { session: 's-1', script: 'p1.py' }
+      })
+      await mount()
+      await typeText('把线条加粗一点')
+      await trigger()
+      await settle()
+      await expectAcceptedAndDraftCleared(stampAtRun)
+    })
+
+    it.each([
+      ['气泡「重新发送」', async () => click(q('[data-ai-resend]'))],
+      ['失败会话的「重试」', async () => click(q('[data-ai-error="session"] [data-ai-retry]'))],
+    ])('历史会话来源（%s）：不碰草稿，账本不带草稿戳', async (_name, trigger) => {
+      let stampAtRun: unknown = 'unset'
+      vi.mocked(aiRun).mockImplementation(async () => {
+        stampAtRun = ledgerStamp()
+        return { session: 's-2', script: 'p1.py' }
+      })
+      useAiStore.setState({ sessions: [failedSession({ id: 's-old', prompt: '历史里的旧指令', status: 'failed', changed: false })] })
+      await mount()
+      await typeText('我正在输入框里写的草稿')
+      await trigger()
+      await settle()
+      expect((vi.mocked(aiRun).mock.calls[0][0] as { prompt: string }).prompt).toBe('历史里的旧指令')
+      expect(stampAtRun).toBeNull()
+      expect(input().value).toBe('我正在输入框里写的草稿')
+      await act(async () => window.dispatchEvent(new Event('pagehide')))
+      await settle()
+      expect(be.draft('pa', 'Fig1.pdf')).toBe('我正在输入框里写的草稿')
     })
   })
 
@@ -650,7 +695,7 @@ describe('同步状态机：单一 reconcile + 写入版本（#1098）', () => {
     expect(input().value).toBe('写到一半')
   })
 
-  it('结构性：挂载 / 聚焦 / 可见 / SSE 重连四个入口走同一条路径——同样的服务器状态得到完全相同的还原结果', async () => {
+  it('入口矩阵（行为）：挂载 / 聚焦 / 可见 / SSE 重连 / 提交确认五个入口——同样的服务器状态得到完全相同的还原结果，且向后端发的请求集合一模一样', async () => {
     const entries: Record<string, () => Promise<void>> = {
       mount: async () => {},
       focus: async () => {
@@ -662,33 +707,36 @@ describe('同步状态机：单一 reconcile + 写入版本（#1098）', () => {
       reconnect: async () => {
         await act(async () => window.dispatchEvent(new Event('mm:sse-open')))
       },
+      accepted: async () => {
+        await act(async () => window.dispatchEvent(new Event('mm:ai-draft-changed')))
+      },
     }
-    const outcomes: Record<string, { rids: string[]; text: string }> = {}
+    const outcomes: Record<string, { rids: string[]; text: string; requests: string[] }> = {}
     for (const [name, trigger] of Object.entries(entries)) {
       useAiStore.setState({ submissions: {}, sessions: [] })
       if (root) await unmount()
       be.pendings.clear()
       be.drafts.clear()
       if (name === 'mount') seed() // 挂载：状态在挂载前就在
+      let from = be.calls.length
       await mount()
       if (name !== 'mount') {
         seed() // 其余入口：挂载之后状态才出现，靠各自的入口把它取回来
+        from = be.calls.length // 只数入口自己发的请求
         await trigger()
       }
       await settle()
-      outcomes[name] = { rids: rids(), text: input().value }
+      outcomes[name] = {
+        rids: rids(),
+        text: input().value,
+        requests: be.calls.slice(from).map((c) => `${c.method} ${c.path}`).sort(),
+      }
     }
     expect(outcomes.mount.rids).toEqual(['rid-cross-000001', 'rid-orphan-00001', 'rid-own-0000001'])
     expect(outcomes.mount.text).toBe('服务器上的草稿')
-    for (const name of ['focus', 'visible', 'reconnect']) expect(outcomes[name], name).toEqual(outcomes.mount)
-  })
-
-  it('结构性（源码）：全部入口都调 reconcile，且服务器状态只在 reconcile 里读（没有只取文本的第二条路）', async () => {
-    const src = (await import('./useAiDraft.ts?raw')).default as string
-    expect(src.match(/fetchDraftState\(/g)).toHaveLength(1)
-    expect(src.match(/loadProjectPendings\(/g)).toHaveLength(1)
-    expect(src).not.toMatch(/\bloadDraft\(/)
-    for (const source of ['mount', 'focus', 'visible', 'reconnect']) expect(src).toContain(`reconcile('${source}')`)
+    // 请求集合一致 = 每个入口都读全了同样的东西（草稿 + 项目级账本），没有「只取文本」的入口
+    expect(outcomes.mount.requests).toEqual(['GET /api/ai/drafts', 'GET /api/ai/drafts/pending'])
+    for (const name of ['focus', 'visible', 'reconnect', 'accepted']) expect(outcomes[name], name).toEqual(outcomes.mount)
   })
 })
 
