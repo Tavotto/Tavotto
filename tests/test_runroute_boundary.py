@@ -88,7 +88,9 @@ def test_routing_a_hostile_script_executes_nothing_and_touches_no_process_or_imp
 
     assert calls == []
     assert list(sentinel.iterdir()) == []
-    assert route.execution == "native"  # 它确实读懂了这份脚本，只是没执行它
+    # 它确实读懂了这份脚本（R1 证据在），只是没执行它；脚本里有守卫操作（Path.write_text），伤害闸门把路由留在 safe
+    assert "R1" in {e["rule"] for e in route.evidence}
+    assert route.execution == "safe" and route.reason == runroute.REASON_GUARDED_FILE_OPS
 
 
 def test_runroute_imports_only_the_standard_library():
@@ -99,6 +101,8 @@ def test_runroute_imports_only_the_standard_library():
             mods |= {a.name.split(".")[0] for a in node.names}
         elif isinstance(node, ast.ImportFrom):
             assert node.level == 0, "runroute 不 import 兄弟模块（纯标准库、不进 import 环）"
+            if node.module == "tavotto.engine" and [a.name for a in node.names] == ["figcapture"]:
+                continue  # 唯一例外：守卫操作表 `BlockedFileOps.OPS` 的出处（figcapture 自己只依赖标准库，不会成环）
             mods.add((node.module or "").split(".")[0])
     stdlib = set(sys.stdlib_module_names)
     assert mods <= stdlib, mods - stdlib

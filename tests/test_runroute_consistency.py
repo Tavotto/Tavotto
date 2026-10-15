@@ -77,7 +77,7 @@ CASES = [
         value = int(final.read_text())
         """,
         False,
-        "native",
+        "safe",  # 伤害闸门（ADR 0129）：含 os.replace 的脚本不直达 native；真 safe worker 仍拦下，由 0127 静默回退接手
         True,
     ),
     (
@@ -89,7 +89,7 @@ CASES = [
         value = int(open("cache.csv").read())
         """,
         True,
-        "native",
+        "safe",  # 伤害闸门（ADR 0129）：含 os.replace 的脚本不直达 native；真 safe worker 仍拦下，由 0127 静默回退接手
         True,
     ),
     (

@@ -64,6 +64,15 @@
 * **native 启动记录**与运行默认值走 `runconfig.commit_success` 同一次写入，不分两步。
 * **收口原则**：静态规则还会被找出新的边角。**漏判**（该升 high 没升）退化为 safe + 0127 回退，无副作用，记 issue 收口、不在评审轮里逐个追；只有**误判升 high**（不该直达 native 却直达了）才继续修。新增规则一律往保守方向走。
 
+### 伤害闸门（#1034 第七轮起，取代「逐个证明可达」）
+
+前几轮不断补「这条证据走不走得到」（常量假分支、终止语句、`async` / 生成器、`__name__` 改写、条件绑定的路径……），评审每轮都能再找出一种写法。这一族是**静态可达性证明**，补不完；而它们的**伤害**始终是同一个：路由成 native 后，safe 守卫本会拦下的文件操作（删除 / 改名 / `write_text`）真实执行了。所以改为结构性收口：
+
+* **闸门**：脚本源码全文件（任何位置——函数体 / 条件 / 类体 / lambda，不做可达性推导）只要出现 safe 守卫会拦的操作形状，`auto` 路由一律不出 native 高置信：回 safe，reason `guarded_file_ops_present`，置信度 medium，R1 / R3 证据照实带出。靠 0127 的静默回退兜底——真需要 native 的脚本多一次 safe 白跑，但守卫拦住了，无副作用。
+* **守卫表同源**：形状清单取自 `figcapture.BlockedFileOps.OPS`（safe worker 守卫记账的同一张表）去掉 `savefig`；`runroute` 导入它（唯一允许的非标准库导入，`test_runroute_boundary` 钉），不另抄。匹配宁宽勿窄：限定名（`os.remove|unlink|rmdir|rename|replace`、`shutil.rmtree|move`，按 import 绑定解析，头名被重绑也按字面名算）；方法名 `.unlink` / `.rmdir` / `.rename` / `.rmtree` / `.write_text`；单实参的 `.replace(x)`（`Path.replace`；`str.replace` 至少两个实参）。`list.remove` / 泛名 `.move` 只认限定名。表里没有的（`write_bytes`、`open("w")`）以守卫表为准，不算。
+* **后果**：R3 的链（写 → `os.replace` / `rename` / `move` → 读）本身含守卫操作，所以 R3 在生产路径上不再直达 native（规则与证据仍计算、仍进 `Route.evidence`）；R1（`savefig` → 读回）不含守卫操作的脚本照旧直达。不含守卫操作的脚本误判的后果与终端直接运行相同，没有伤害。
+* **不在静态可见范围**：动态混淆（`getattr(os, "re" + "move")`、`__import__`、`exec`、`subprocess` 搬文件）看不见，记 #1086。
+
 ## 后果
 
 * 对 `savefig → 读回` / `tmp → replace → 读回` 的脚本，执行次数 2 → 1。静态判错（把 safe 能跑对的脚本送去 native）会丢掉沙盒守卫——所以只有 high 才直达，并有同源对看护：`tests/test_runroute_consistency.py` 对每个高置信形状用真 safe worker 实跑核对「确实被拦」，对几个 safe 形状核对「确实成功」。

@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import textwrap
 
 import pytest
@@ -16,8 +17,17 @@ ROOT = "/proj"
 SCRIPT = "figs/fig.py"
 
 
-def _route(src, *, cwd=runroute.CWD_SANDBOX, **kw):
+def _ungated(src):
+    """规则引擎向量用：抹掉伤害闸门的事实（见 `_route`）。"""
+    return dataclasses.replace(runroute.facts_of(src), guarded_ops=False)
+
+
+def _route(src, *, cwd=runroute.CWD_SANDBOX, gate=False, **kw):
+    """`gate=False`：这些向量测的是 R1–R4 **规则引擎**本身，所以抹掉伤害闸门的事实（ADR 0129「伤害闸门」）；
+    闸门自己的用例显式 `gate=True`。生产路径永远带闸门：含守卫操作的脚本（R3 的 `os.replace` 就是）一律不直达 native。"""
     facts = runroute.facts_of(textwrap.dedent(src))
+    if not gate:
+        facts = dataclasses.replace(facts, guarded_ops=False)
     return runroute.decide(facts, cwd_mode=cwd, project_root=ROOT, script=SCRIPT, **kw)
 
 
@@ -963,7 +973,7 @@ os.replace("out/t", "out/f")
 open("out/f").read()
 """
     route = runroute.decide(
-        runroute.facts_of(textwrap.dedent(src)),
+        _ungated(textwrap.dedent(src)),
         cwd_mode="project_root",
         project_root=proj,
         script="fig.py",
@@ -1030,7 +1040,7 @@ open({final!r}).read()
 
 def _win_route(src, cwd=runroute.CWD_PROJECT_ROOT):
     return runroute.decide(
-        runroute.facts_of(src), cwd_mode=cwd, project_root=r"C:\proj", script=r"figs\fig.py"
+        _ungated(src), cwd_mode=cwd, project_root=r"C:\proj", script=r"figs\fig.py"
     )
 
 
@@ -1360,3 +1370,96 @@ def test_a_call_to_an_async_or_generator_function_is_not_a_terminator():
     ):
         route = _route(MPL + kind + "die()\n" + TAIL)
         assert route.execution == "native", kind
+
+
+# ---- 伤害闸门（#1034 第七轮）：存在 safe 守卫会拦的文件操作，运行前一律不直达 native
+GATED = [
+    # Codex r4282091155：条件绑定路径 + 被守卫的 unlink
+    (
+        "conditional_path_binding",
+        MPL
+        + 'from pathlib import Path\nPath("victim").unlink()\n'
+        + 'if len(__import__("sys").argv) > 1:\n    p = "x.png"\nelse:\n    raise SystemExit\n'
+        + "plt.savefig(p)\nopen(p).read()\n",
+    ),
+    # Codex r4282091166：改写 __name__ 之后 __main__ 守卫的 body 走不到
+    (
+        "main_guard_after_name_rebind",
+        MPL
+        + 'import os\nos.remove("victim")\n__name__ = "disabled"\n'
+        + 'if __name__ == "__main__":\n    plt.savefig("x.png")\n    open("x.png").read()\n',
+    ),
+    ("path_unlink_in_a_dead_function", MPL + "def f(p):\n    p.unlink()\n" + TAIL),
+    (
+        "path_unlink_attribute",
+        MPL + 'from pathlib import Path\nPath("v").unlink(missing_ok=True)\n' + TAIL,
+    ),
+    ("os_rename", MPL + 'import os\nos.rename("a", "b")\n' + TAIL),
+    ("os_unlink_from_import", MPL + "from os import unlink as rm\nrm('a')\n" + TAIL),
+    ("os_rmdir", MPL + 'import os\nos.rmdir("d")\n' + TAIL),
+    ("shutil_rmtree", MPL + 'import shutil\nshutil.rmtree("d")\n' + TAIL),
+    ("shutil_move_from_import", MPL + 'from shutil import move\nmove("a", "b")\n' + TAIL),
+    ("path_replace_one_arg", MPL + 'from pathlib import Path\nPath("a").replace("b")\n' + TAIL),
+    ("path_write_text", MPL + 'from pathlib import Path\nPath("a").write_text("x")\n' + TAIL),
+    ("rebound_os_head", MPL + 'import os\nos = os\nos.remove("a")\n' + TAIL),
+    ("inside_lambda", MPL + 'import os\ncb = lambda: os.remove("a")\n' + TAIL),
+    ("inside_class_body", MPL + 'import os\nclass K:\n    os.remove("a")\n' + TAIL),
+]
+
+
+@pytest.mark.parametrize("name,src", GATED, ids=[c[0] for c in GATED])
+def test_any_guarded_file_operation_in_the_script_keeps_the_route_in_safe(name, src):
+    route = _route(src, gate=True)
+    assert route.execution == "safe" and route.reason == runroute.REASON_GUARDED_FILE_OPS, route
+    assert route.confidence == runroute.CONFIDENCE_MEDIUM
+
+
+UNGATED = [
+    ("plain_readback", MPL + TAIL),
+    ("str_replace_two_args", MPL + 'name = "a.b".replace(".", "_")\n' + TAIL),
+    ("list_remove", MPL + "xs = [1]\nxs.remove(1)\n" + TAIL),
+    ("read_only_pathlib", MPL + 'from pathlib import Path\nPath("a").read_text()\n' + TAIL),
+    (
+        "write_bytes_is_not_in_the_guard_table",
+        MPL + 'from pathlib import Path\nPath("a").write_bytes(b"")\n' + TAIL,
+    ),
+]
+
+
+@pytest.mark.parametrize("name,src", UNGATED, ids=[c[0] for c in UNGATED])
+def test_scripts_without_guarded_operations_keep_the_rule_engine_verdict(name, src):
+    route = _route(src, gate=True)
+    assert route.execution == "native" and route.reason == runroute.REASON_SAVEFIG_READBACK, route
+
+
+def test_the_gate_table_is_the_safe_guard_table():
+    from tavotto.engine import figcapture
+
+    ops = {o for o in figcapture.BlockedFileOps.OPS if o != "savefig"}
+    assert ops == {
+        "Path.unlink", "Path.write_text", "os.remove", "os.unlink", "os.rmdir",
+        "os.rename", "os.replace", "shutil.rmtree", "shutil.move",
+    }  # fmt: skip
+    for op in sorted(ops):
+        mod, _, fn = op.rpartition(".")
+        src = (
+            MPL
+            + (
+                f"import {mod}\n{mod}.{fn}('a')\n"
+                if mod in ("os", "shutil")
+                else f"from pathlib import Path\nPath('a').{fn}('a')\n"
+            )
+            + TAIL
+        )
+        assert _route(src, gate=True).reason == runroute.REASON_GUARDED_FILE_OPS, op
+
+
+def test_the_r3_rule_still_reports_its_evidence_when_the_gate_holds_it_back():
+    src = """
+        import os
+        open("c.tmp", "w").write("1")
+        os.replace("c.tmp", "c.csv")
+        open("c.csv").read()
+        """
+    route = _route(src, cwd=runroute.CWD_PROJECT, gate=True)
+    assert route.execution == "safe" and "R3" in _rules(route), route

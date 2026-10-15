@@ -34,6 +34,10 @@ import time
 from collections import OrderedDict
 from pathlib import Path
 
+from tavotto.engine import (
+    figcapture,
+)  # 守卫操作表的唯一出处（BlockedFileOps.OPS），见 _guarded_call
+
 # ---------------------------------------------------------------- 词汇（闭集）
 EXECUTION_SAFE = "safe"
 EXECUTION_NATIVE = "native"
@@ -48,6 +52,8 @@ REASON_PREVIOUS_SUCCESS = "previous_successful_profile"
 REASON_USER_EXPLICIT = "user_explicit_profile"
 #: 运维开关 `TAVOTTO_EXECUTION_FALLBACK=0` 关着：整个 V2 的自动选语义都停（直达 native 与回退同一个开关）
 REASON_OPERATOR_DISABLED = "operator_disabled"
+#: 伤害闸门：脚本里出现 safe 守卫会拦的文件操作形状，运行前不直达 native（ADR 0129「伤害闸门」）
+REASON_GUARDED_FILE_OPS = "guarded_file_ops_present"
 REASONS = (
     REASON_ORDINARY_PLOT,
     REASON_SAVEFIG_READBACK,
@@ -55,6 +61,7 @@ REASONS = (
     REASON_PREVIOUS_SUCCESS,
     REASON_USER_EXPLICIT,
     REASON_OPERATOR_DISABLED,
+    REASON_GUARDED_FILE_OPS,
 )
 
 CONFIDENCE_HIGH = "high"
@@ -225,6 +232,8 @@ class ScriptFacts:
     parse_ms: float = 0.0
     #: 模块执行时会真走到的作用域（模块顶层、类体，以及被可达代码按名字调用到的函数体）。其余作用域里的证据不够直达 native
     live_scopes: frozenset[int] = frozenset()
+    #: 全文件任何位置（含函数体 / 条件 / 类体 / lambda，不做可达性推导）出现 safe 守卫会拦的文件操作调用形状
+    guarded_ops: bool = False
 
 
 _EMPTY = ScriptFacts(parsed=False)
@@ -603,6 +612,42 @@ class _Collector:
                 )
                 return PathVal(recv.base, _norm(new), True)
         return None
+
+    # ---- 伤害闸门
+    #: 守卫表同源：`BlockedFileOps.OPS` 减去 savefig（safe worker 守卫记账的操作名）
+    _GUARDED = tuple(op for op in figcapture.BlockedFileOps.OPS if op != "savefig")
+    #: 带模块前缀的限定名（`os.remove` / `shutil.rmtree`…）
+    _GUARDED_QUALIFIED = frozenset(op for op in _GUARDED if op.split(".")[0] in ("os", "shutil"))
+    #: 方法名太泛（`list.remove` / `str.replace` / `obj.move`）的，只认限定名（`replace` 另按单实参判）
+    _GENERIC_TAILS = frozenset({"remove", "replace", "move"})
+    _GUARDED_TAILS = frozenset(op.rsplit(".", 1)[1] for op in _GUARDED) - _GENERIC_TAILS
+
+    def _guarded_call(self, node: ast.Call) -> bool:
+        func = node.func
+        names = {self.qual(func)}
+        parts: list[str] = []
+        cur = func
+        while isinstance(cur, ast.Attribute):
+            parts.append(cur.attr)
+            cur = cur.value
+        if isinstance(cur, ast.Name):
+            names.add(".".join([cur.id, *reversed(parts)]))  # 头名被重绑（qual 不认）也按字面名算
+        if names & self._GUARDED_QUALIFIED:
+            return True
+        if isinstance(func, ast.Attribute):
+            if func.attr in self._GUARDED_TAILS:
+                return True
+            # `Path.replace(target)`：恰一个实参；`str.replace(a, b)` 至少两个
+            if (
+                func.attr == "replace"
+                and "os.replace" in self._GUARDED_QUALIFIED
+                and len(node.args) + len(node.keywords) == 1
+            ):
+                return True
+        return False
+
+    def has_guarded_ops(self) -> bool:
+        return any(isinstance(n, ast.Call) and self._guarded_call(n) for n in ast.walk(self.tree))
 
     # ---- 第二遍：事件
     def collect(self) -> None:
@@ -1056,6 +1101,7 @@ def _collect(source: str) -> ScriptFacts:
         parsed=True,
         events=tuple(sorted(col.events, key=lambda e: (e.line, e.col))),
         live_scopes=col.live_scopes(),
+        guarded_ops=col.has_guarded_ops(),
         parse_ms=(time.perf_counter() - started) * 1000.0,
     )
 
@@ -1334,6 +1380,17 @@ def decide(
         return Route(EXECUTION_SAFE, REASON_ORDINARY_PLOT, CONFIDENCE_LOW, blind_spots=(blind,))
     evidence, dynamic, high_r1, high_r3 = _static(facts, _where(project_root, script, cwd_mode))
     blind = BLIND_SPOTS
+    if (high_r1 or high_r3) and facts.guarded_ops:
+        # 伤害闸门：存在 safe 守卫会拦的操作时，不为「可达性证明」赌——直达 native 会让它们真实执行。
+        # 静默回退（ADR 0127）兜住真需要 native 的脚本；证据照实带出
+        return Route(
+            EXECUTION_SAFE,
+            REASON_GUARDED_FILE_OPS,
+            CONFIDENCE_MEDIUM,
+            tuple(evidence),
+            dynamic,
+            blind,
+        )
     if high_r1:
         return Route(
             EXECUTION_NATIVE,
