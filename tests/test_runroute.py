@@ -466,13 +466,16 @@ def test_savefig_readback_does_not_depend_on_the_cwd_mode():
 
 
 def test_absolute_literal_paths_are_in_the_library_only_under_the_project_root():
+    # 字面路径用本平台上项目根的真实绝对形式：Windows 上 `/proj` 会被补成 `D:\\proj`，而脚本里不带盘符的 `/proj/...`
+    # 指向运行时当前盘的根，静态证明不了在项目里（判 safe 是对的）
+    root = os.path.abspath(ROOT)
     inside = f"""
         import os
-        open({ROOT + "/a.tmp"!r}, "w").write("1")
-        os.replace({ROOT + "/a.tmp"!r}, {ROOT + "/a.dat"!r})
-        open({ROOT + "/a.dat"!r}).read()
+        open({root + "/a.tmp"!r}, "w").write("1")
+        os.replace({root + "/a.tmp"!r}, {root + "/a.dat"!r})
+        open({root + "/a.dat"!r}).read()
         """
-    outside = inside.replace(ROOT, "/elsewhere")
+    outside = inside.replace(repr(root)[1:-1], "/elsewhere")
     assert _route(inside, cwd=runroute.CWD_SANDBOX).execution == "native"
     assert _route(outside, cwd=runroute.CWD_SANDBOX).execution == "safe"
 
