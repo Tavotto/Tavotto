@@ -92,6 +92,8 @@ let exportBodies: Record<string, unknown>[]
 let jobStatus: 'done' | 'partial' | 'conflict' = 'done'
 /** 终局回执里的 outputs（不设 = 一件没有 manifest 的 PDF） */
 let jobOutputs: Record<string, unknown>[] | null = null
+/** 终局回执里的 export_dir（项目设置可以是相对目录） */
+let jobExportDir = '/out'
 
 function stubFetch() {
   exportBodies = []
@@ -121,7 +123,7 @@ function stubFetch() {
               : [],
           warnings: [],
           conflicts: jobStatus === 'conflict' ? ['a.pdf'] : [],
-          export_dir: '/out',
+          export_dir: jobExportDir,
           error: null,
         }),
         { status: 200, headers: { 'Content-Type': 'application/json' } },
@@ -259,6 +261,7 @@ beforeEach(() => {
   localStorage.clear()
   jobStatus = 'done'
   jobOutputs = null
+  jobExportDir = '/out'
   resetExportState()
   useWorkspaceStore.setState({ mode: 'layout', activePanelId: null })
   useSelectionStore.getState().clear()
@@ -2264,6 +2267,14 @@ describe('预览信息完善（PR3）：结果块', () => {
       expect(isAbsoluteExportDir(d), d).toBe(true)
     for (const d of ['', 'exports', './exports', 'exports/sub', '~/out', 'C:out'])
       expect(isAbsoluteExportDir(d), d).toBe(false)
+  })
+
+  it('导出目录是相对路径：不给复制完整路径', async () => {
+    jobExportDir = 'exports'
+    await setup(9)
+    await click(q('[data-export-start]')!)
+    expect(q('[data-export-result]')).toBeTruthy()
+    expect(document.body.querySelectorAll('[data-export-result] [aria-label="复制完整路径"]')).toHaveLength(0)
   })
 
   it('全部成功：没有汇总句', async () => {
