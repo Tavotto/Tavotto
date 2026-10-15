@@ -50,3 +50,17 @@ python scripts/perf_macos_window.py compare idle.json drag.json --json window-di
 `window-diagnostic.json` 的 `status` 只可能是 `diagnostic_only` 或 `incomparable`，**绝无 `pass`**。相同 macOS 版本、架构、每组至少 5 个资源样本时，附上家族 CPU、RSS 求和与系统全局 WindowServer CPU 的 P95 差额；否则拒绝对照。该数据仅帮助 Agent 分流是否应获取 Instruments / Web Inspector 证据，不代表屏幕呈现延迟或 GPU 拖影测量。
 
 原生完整自动点击/移动窗口需要具备 Accessibility 权限、实际图形会话和可验证的显示输出，当前采样器没有伪造这项能力。
+
+## compare 的可比条件清单
+
+全部集中在 `scripts/perf_macos_window.py` 的 `failed_conditions()` 一张表；任一条不满足即 `incomparable`，`--json` 输出的 `failed_conditions` 列出未满足的条件名。加条件只改这张表并同步本清单。
+
+| 条件名 | 含义 |
+|---|---|
+| `stages_idle_vs_active` | 第一份必须是 idle，第二份是 drag / resize / complex |
+| `same_arch` | 两份 CPU 架构相同且非空 |
+| `same_macos_version` | 两份 macOS 版本相同且非空 |
+| `same_sample_interval` | 两份 `sample_interval_seconds` 都有效且相等（区间 CPU 的平滑程度取决于采样间隔） |
+| `at_least_5_samples_each` | 每份至少 5 个样本 |
+| `at_least_5_valid_cpu_samples_each` | 每份至少 5 个有效（非 null）家族 CPU 样本 |
+| `single_tavotto_family_throughout` | 每个样本都正好一棵顶层 Tavotto 进程树（打包的 sidecar 也叫 Tavotto，但它是主进程后代，不算第二棵；同时开两个实例或有孤儿 Tavotto 进程则 `record` 直接拒绝） |

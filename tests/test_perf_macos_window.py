@@ -72,6 +72,7 @@ def test_native_resource_delta_is_not_mislabeled_as_presentation_pass():
         "stage": "idle",
         "macos_version": "26.1",
         "arch": "arm64",
+        "sample_interval_seconds": 0.25,
         "samples": [
             {"family_cpu_pct": 2.0, "family_rss_sum_mib": 120.0, "windowserver_global_cpu_pct": 8.0}
             for _ in range(8)
@@ -102,6 +103,7 @@ def test_native_resource_delta_rejects_cross_os_samples():
         "stage": "idle",
         "macos_version": "26.1",
         "arch": "arm64",
+        "sample_interval_seconds": 0.25,
         "samples": [{"family_cpu_pct": 1.0, "family_rss_sum_mib": 100.0} for _ in range(8)],
     }
     active = {**report, "stage": "drag", "macos_version": "25.4"}
@@ -193,6 +195,7 @@ def test_compare_marks_reports_with_missing_app_samples_incomparable():
             "stage": stage,
             "macos_version": "26.1",
             "arch": "arm64",
+            "sample_interval_seconds": 0.25,
             "samples": [
                 {"root_count": n, "family_cpu_pct": 1.0, "family_rss_sum_mib": 10.0}
                 for n in root_counts
@@ -246,6 +249,7 @@ def test_compare_needs_five_valid_cpu_samples_per_side():
             "stage": stage,
             "macos_version": "26.1",
             "arch": "arm64",
+            "sample_interval_seconds": 0.25,
             "samples": [
                 {"root_count": 1, "family_cpu_pct": c, "family_rss_sum_mib": 10.0} for c in cpus
             ],
@@ -255,3 +259,70 @@ def test_compare_needs_five_valid_cpu_samples_per_side():
     sparse = rep("drag", [None, 1.0, None, 1.0, None, 1.0])
     assert P.compare_reports(full, sparse)["status"] == "incomparable"
     assert P.compare_reports(full, rep("drag", [None] + [1.0] * 5))["status"] == "diagnostic_only"
+
+
+def _cmp_report(stage, **over):
+    base = {
+        "schema": P.SCHEMA,
+        "stage": stage,
+        "macos_version": "26.1",
+        "arch": "arm64",
+        "sample_interval_seconds": 0.25,
+        "samples": [
+            {"root_count": 1, "family_cpu_pct": 1.0, "family_rss_sum_mib": 10.0} for _ in range(6)
+        ],
+    }
+    return {**base, **over}
+
+
+def test_compare_rejects_different_sampling_intervals():
+    idle = _cmp_report("idle", sample_interval_seconds=0.1)
+    drag = _cmp_report("drag", sample_interval_seconds=2.0)
+    result = P.compare_reports(idle, drag)
+    assert result["status"] == "incomparable"
+    assert "same_sample_interval" in result["failed_conditions"]
+    assert P.compare_reports(_cmp_report("idle"), _cmp_report("drag"))["status"] == (
+        "diagnostic_only"
+    )
+    missing = _cmp_report("drag")
+    del missing["sample_interval_seconds"]
+    assert P.compare_reports(_cmp_report("idle"), missing)["status"] == "incomparable"
+
+
+def test_compare_rejects_samples_with_more_than_one_top_level_family():
+    two = _cmp_report("drag")
+    two["samples"][2]["root_count"] = 2
+    result = P.compare_reports(_cmp_report("idle"), two)
+    assert result["status"] == "incomparable"
+    assert "single_tavotto_family_throughout" in result["failed_conditions"]
+
+
+def test_bundled_sidecar_named_tavotto_is_not_a_second_root():
+    rows = P.parse_ps(
+        f"100 1 0:01.00 1024 {APP}\n101 100 0:01.00 512 /x/Contents/Resources/Tavotto\n"
+    )
+    m = P.classify(rows)
+    assert m["root_count"] == 1
+    assert m["family_processes"] == 2
+
+
+def test_orphan_second_tavotto_tree_counts_as_a_second_root():
+    rows = P.parse_ps(f"100 1 0:01.00 1024 {APP}\n500 1 0:01.00 512 {APP}\n")
+    assert P.classify(rows)["root_count"] == 2
+
+
+def test_record_rejects_two_tavotto_trees(monkeypatch):
+    two = f"100 1 0:00.00 1024 {APP}\n500 1 0:00.00 1024 {APP}\n"
+    _fake_record_env(monkeypatch, [two] * 4)
+    try:
+        P.record("drag", 2, 0.5)
+    except ValueError as exc:
+        assert "exactly one" in str(exc) and "no report was saved" in str(exc)
+    else:
+        raise AssertionError("ambiguous process families must not produce a report")
+
+
+def test_record_stores_sample_interval(monkeypatch):
+    one = f"100 1 0:00.00 1024 {APP}\n"
+    _fake_record_env(monkeypatch, [one] * 4)
+    assert P.record("idle", 2, 0.5)["sample_interval_seconds"] == 0.5

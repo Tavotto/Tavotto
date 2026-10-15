@@ -30,6 +30,7 @@ for _stream in (sys.stdout, sys.stderr):
 SCHEMA = "tavotto-macos-window-probe/1"
 COMPARE_SCHEMA = "tavotto-macos-window-comparison/1"
 STAGES = ("idle", "drag", "resize", "complex")
+ACTIVE_STAGES = ("drag", "resize", "complex")
 
 
 @dataclass(frozen=True)
@@ -82,7 +83,10 @@ def parse_ps(stdout: str) -> list[Process]:
 def classify(processes: list[Process]) -> dict:
     """仅以 Tavotto 二进制的精确 basename 找 root；不关联其他应用的 WebKit。"""
     by_pid = {p.pid: p for p in processes}
-    roots = {p.pid for p in processes if Path(p.command).name == "Tavotto"}
+    named = {p.pid for p in processes if Path(p.command).name == "Tavotto"}
+    # 打包的 sidecar 也叫 Tavotto，但它是主进程的后代；只有父进程不是 Tavotto 的
+    # 才算顶层根。孤儿 sidecar 或第二个实例各自是一棵独立的树，root_count 会 > 1。
+    roots = {p.pid for p in processes if p.pid in named and p.ppid not in named}
     family = set(roots)
     changed = True
     while changed:
@@ -169,30 +173,53 @@ def summarize(report: dict) -> dict:
     return out
 
 
-def _app_present_throughout(report: dict) -> bool:
-    """任一样本明确记录 root_count 为 0（进程丢失）就不可比。"""
-    return all(not isinstance(s, dict) or s.get("root_count", 1) != 0 for s in report["samples"])
+def _valid_interval(report: dict) -> float | None:
+    value = report.get("sample_interval_seconds")
+    ok = isinstance(value, (int, float)) and not isinstance(value, bool) and value > 0
+    return float(value) if ok else None
+
+
+def _single_family_throughout(report: dict) -> bool:
+    """每个样本都必须正好一棵顶层 Tavotto 树：0 = 进程丢失，>1 = 多实例/孤儿。"""
+    return all(not isinstance(s, dict) or s.get("root_count", 1) == 1 for s in report["samples"])
+
+
+def failed_conditions(idle: dict, drag: dict, a: dict, b: dict) -> list[str]:
+    """compare 的全部可比条件集中在这一张表；加条件只改这里（并同步 docs 清单）。"""
+    conditions = (
+        ("stages_idle_vs_active", a["stage"] == "idle" and b["stage"] in ACTIVE_STAGES),
+        ("same_arch", _nonempty_str(idle.get("arch")) and idle.get("arch") == drag.get("arch")),
+        (
+            "same_macos_version",
+            _nonempty_str(idle.get("macos_version"))
+            and idle.get("macos_version") == drag.get("macos_version"),
+        ),
+        (
+            "same_sample_interval",
+            _valid_interval(idle) is not None and _valid_interval(idle) == _valid_interval(drag),
+        ),
+        ("at_least_5_samples_each", a["count"] >= 5 and b["count"] >= 5),
+        (
+            "at_least_5_valid_cpu_samples_each",
+            a["valid_family_cpu_samples"] >= 5 and b["valid_family_cpu_samples"] >= 5,
+        ),
+        (
+            "single_tavotto_family_throughout",
+            _single_family_throughout(idle) and _single_family_throughout(drag),
+        ),
+    )
+    return [name for name, ok in conditions if not ok]
+
+
+def _nonempty_str(value: object) -> bool:
+    return isinstance(value, str) and bool(value)
 
 
 def compare_reports(idle: dict, drag: dict) -> dict:
     """Agent 机器可读诊断：仅资源代理，无 GPU/frame 呈现证据，绝不返回 pass。"""
     a, b = summarize(idle), summarize(drag)
-    comparable = (
-        a["stage"] == "idle"
-        and b["stage"] in ("drag", "resize", "complex")
-        and idle.get("arch") == drag.get("arch")
-        and idle.get("macos_version") == drag.get("macos_version")
-        and isinstance(idle.get("arch"), str)
-        and bool(idle["arch"])
-        and isinstance(idle.get("macos_version"), str)
-        and bool(idle["macos_version"])
-        and a["count"] >= 5
-        and b["count"] >= 5
-        and a["valid_family_cpu_samples"] >= 5
-        and b["valid_family_cpu_samples"] >= 5
-        and _app_present_throughout(idle)
-        and _app_present_throughout(drag)
-    )
+    failed = failed_conditions(idle, drag, a, b)
+    comparable = not failed
     deltas: dict[str, float | None] = {}
     if comparable:
         for key in ("family_cpu_pct", "family_rss_sum_mib", "windowserver_global_cpu_pct"):
@@ -205,6 +232,7 @@ def compare_reports(idle: dict, drag: dict) -> dict:
         "evidence": "process_resource_proxies_not_frame_or_gpu_presentation",
         "idle": a,
         "active": b,
+        "failed_conditions": failed,
         "delta_p95": deltas,
         "not_covered": ["actual_window_drag_latency", "gpu_compositor", "display_ghosting"],
     }
@@ -225,7 +253,12 @@ def record(stage: str, seconds: float, interval: float) -> dict:
         now = time.monotonic()
         if first_roots is None:
             first_roots = row["_roots"]
-        if not first_roots or row["_roots"] != first_roots:
+        if row["root_count"] != 1:
+            raise ValueError(
+                f"need exactly one top-level Tavotto process tree, found {row['root_count']}; "
+                "no report was saved"
+            )
+        if row["_roots"] != first_roots:
             raise ValueError(
                 "Tavotto process missing or restarted during capture; no report was saved"
             )
