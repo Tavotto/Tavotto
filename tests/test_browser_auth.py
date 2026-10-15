@@ -101,6 +101,7 @@ def test_api_default_deny_without_session(served):
         "/api/events",
         "/api/ai/capabilities",
         "/api/ai/requests/11111111-2222-4333-8444-555555555555",
+        "/api/ai/drafts?file=Fig1.pdf",
         "/api/update/check",
         "/api/render?id=x&w=400",
         "/exports/whatever.pdf",
@@ -116,6 +117,7 @@ def test_write_endpoints_default_deny(served):
     for path in (
         "/api/projects/open",
         "/api/ai/run",
+        "/api/ai/drafts/pending/11111111-2222-4333-8444-555555555555/accept",
         "/api/update/apply",
         "/api/engine/update_source",
         "/api/export",

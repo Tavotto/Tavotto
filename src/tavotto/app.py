@@ -9329,6 +9329,103 @@ def api_ai_request(request_id):
     return resp
 
 
+# --- 助手草稿与待确认账本（ADR 0132）：存后端（data_dir 的 ai_history 库），不存浏览器 -----------------
+# 主语是 (当前项目, fileId[, rid])；全部过会话认证（ADR 0008）与 `require_project` 隔离。
+# 文本是用户的指令原文：**不写日志、不发遥测、不进诊断包**——这些端点的 LOG 里只有项目无关的计数，没有文本。
+def _draft_file_id(value) -> str:
+    if not isinstance(value, str) or not value or len(value) > 1024 or "\x00" in value:
+        abort(400)
+    return value
+
+
+def _draft_too_large(exc: "engine_ai_history.DraftTooLarge"):
+    return jsonify(
+        {
+            "error": "指令过长，没有保存",
+            "code": "ai_draft_too_large",
+            "params": {"limit_kb": exc.limit // 1024},
+        }
+    ), 413
+
+
+@app.get("/api/ai/drafts")
+def api_ai_draft_get():
+    project = str(require_project().resolve())
+    resp = jsonify(engine_ai_history.get_draft(project, _draft_file_id(request.args.get("file"))))
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+@app.put("/api/ai/drafts")
+def api_ai_draft_put():
+    """全文覆盖（最后写入为准）；空文本 = 删；超过 20 KB → 413 `ai_draft_too_large`。"""
+    body = request.get_json(force=True) or {}
+    text = body.get("text")
+    if not isinstance(text, str):
+        abort(400)
+    project = str(require_project().resolve())
+    try:
+        return jsonify(engine_ai_history.put_draft(project, _draft_file_id(body.get("file")), text))
+    except engine_ai_history.DraftTooLarge as exc:
+        return _draft_too_large(exc)
+
+
+@app.delete("/api/ai/drafts")
+def api_ai_draft_delete():
+    """条件删除：只有库里的文本仍等于 `if_text` 才删（不删另一个标签页的新稿）。"""
+    body = request.get_json(force=True) or {}
+    if_text = body.get("if_text")
+    if not isinstance(if_text, str):
+        abort(400)
+    project = str(require_project().resolve())
+    return jsonify(
+        {
+            "deleted": engine_ai_history.delete_draft_if(
+                project, _draft_file_id(body.get("file")), if_text
+            )
+        }
+    )
+
+
+@app.put("/api/ai/drafts/pending/<rid>")
+def api_ai_pending_put(rid):
+    if not _valid_client_request_id(rid):
+        abort(400)
+    body = request.get_json(force=True) or {}
+    text, sent = body.get("text"), body.get("sent")
+    if not isinstance(text, str) or not isinstance(sent, dict):
+        abort(400)
+    project = str(require_project().resolve())
+    try:
+        engine_ai_history.put_pending(project, _draft_file_id(body.get("file")), rid, text, sent)
+    except engine_ai_history.DraftTooLarge as exc:
+        return _draft_too_large(exc)
+    return jsonify({"ok": True})
+
+
+@app.delete("/api/ai/drafts/pending/<rid>")
+def api_ai_pending_clear(rid):
+    if not _valid_client_request_id(rid):
+        abort(400)
+    project = str(require_project().resolve())
+    return jsonify(
+        {
+            "cleared": engine_ai_history.clear_pending(
+                project, _draft_file_id(request.args.get("file")), rid
+            )
+        }
+    )
+
+
+@app.post("/api/ai/drafts/pending/<rid>/accept")
+def api_ai_pending_accept(rid):
+    if not _valid_client_request_id(rid):
+        abort(400)
+    body = request.get_json(force=True) or {}
+    project = str(require_project().resolve())
+    return jsonify(engine_ai_history.accept_pending(project, _draft_file_id(body.get("file")), rid))
+
+
 @app.get("/api/ai/history")
 def api_ai_history():
     """当前项目的 AI 会话历史：分页 / 搜索 / 状态筛选 / 只看固定。"""
@@ -11702,6 +11799,7 @@ def main():
         LOG.info("上次运行遗留的 %d 个 AI 会话已标记为中断", n)
     engine_ai_history.purge(keep_days=180)
     engine_ai_history.purge_requests()
+    engine_ai_history.purge_drafts()
     # 选中的 PDF 后端在起服务前装载好（契约层是惰性装载的）：第一次 probe 不再多付一次
     # import 的延迟；选了装不上的后端在这里就报出来，不静默回退（ADR 0067 / 0072）
     LOG.info("PDF 后端: %s", engine_logsafe.known(pdfbackend.warm(), pdfbackend.BACKENDS))

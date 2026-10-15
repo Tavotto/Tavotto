@@ -261,6 +261,8 @@ USER_VISIBLE_CODES = {
     # PR4：同一脚本上已有 AI 任务在跑（后端并发保护）/ 前端按请求 id 查询时后端没登记过
     "ai_script_busy": {"script"},
     "ai_request_not_found": set(),
+    # ADR 0132：助手草稿单稿超过 20 KB（413，不截断）
+    "ai_draft_too_large": {"limit_kb"},
     # --- 编码 Agent 注册表（ADR 0013）：全部经 AgentError 抛出、
     #     由 app.py 的 _agent_error 一个漏斗转成 JSON ---
     "ai_agent_unknown": {"agent"},

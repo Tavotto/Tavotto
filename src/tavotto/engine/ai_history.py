@@ -48,7 +48,44 @@ CREATE TABLE IF NOT EXISTS ai_requests (
   created_ms INTEGER NOT NULL,
   PRIMARY KEY (project, client_request_id)
 );
+
+-- 助手输入框的**未发送草稿**与**待确认提交**（ADR 0132）：存后端，不存浏览器——桌面端口一变 origin 就换、
+-- localStorage 整个清空，用户写了一半的指令不该因此消失。主语是 (项目, fileId[, rid])，按项目隔离。
+-- 与 ai_history 同库同边界：用户本机 data_dir 下，不进项目目录、不进诊断包 / 遥测 / 日志。
+CREATE TABLE IF NOT EXISTS ai_drafts (
+  project TEXT NOT NULL,
+  file_id TEXT NOT NULL,
+  text TEXT NOT NULL,
+  revision INTEGER NOT NULL,
+  updated_ms INTEGER NOT NULL,
+  PRIMARY KEY (project, file_id)
+);
+CREATE TABLE IF NOT EXISTS ai_pending (
+  project TEXT NOT NULL,
+  file_id TEXT NOT NULL,
+  rid TEXT NOT NULL,
+  text TEXT NOT NULL,
+  sent TEXT NOT NULL,
+  created_ms INTEGER NOT NULL,
+  PRIMARY KEY (project, file_id, rid)
+);
 """
+
+#: 草稿 / 待确认账本：单稿上限（UTF-8 字节）、每项目份数上限、保留期
+DRAFT_MAX_BYTES = 20 * 1024
+PENDING_MAX_BYTES = 256 * 1024
+DRAFT_MAX_PER_PROJECT = 30
+PENDING_MAX_PER_FILE = 8
+DRAFT_KEEP_DAYS = 30
+
+
+class DraftTooLarge(ValueError):
+    """文本超过上限：调用方回 413 `ai_draft_too_large`，**不截断**（截断会让恢复出来的是一句被砍掉的指令）。"""
+
+    def __init__(self, limit: int):
+        super().__init__(limit)
+        self.limit = limit
+
 
 #: 幂等账本的保留期；超龄才清（会话那时早已终态：启动时 running 一律转 interrupted）
 REQUEST_KEEP_DAYS = 30
@@ -285,3 +322,144 @@ def get(sid: str, db_path: Path | None = None) -> dict | None:
     with _connect(db_path) as con:
         row = con.execute("SELECT * FROM sessions WHERE id=?", (sid,)).fetchone()
     return _row_to_dict(row) if row else None
+
+
+# ---------------------------------------------------------------------------
+# 草稿与待确认账本（ADR 0132）
+# ---------------------------------------------------------------------------
+def _now_ms() -> int:
+    return int(time.time() * 1000)
+
+
+def _prune_drafts(con: sqlite3.Connection, project: str, now: int) -> None:
+    """写入时的有界清理：过期的（30 天）与超出每项目份数的最老的。"""
+    cutoff = now - DRAFT_KEEP_DAYS * 86400 * 1000
+    con.execute("DELETE FROM ai_drafts WHERE updated_ms < ?", (cutoff,))
+    con.execute("DELETE FROM ai_pending WHERE created_ms < ?", (cutoff,))
+    con.execute(
+        "DELETE FROM ai_drafts WHERE project=? AND file_id NOT IN "
+        "(SELECT file_id FROM ai_drafts WHERE project=? ORDER BY updated_ms DESC LIMIT ?)",
+        (project, project, DRAFT_MAX_PER_PROJECT),
+    )
+
+
+def purge_drafts(db_path: Path | None = None) -> int:
+    """启动时：清掉过期的草稿与账本。"""
+    cutoff = _now_ms() - DRAFT_KEEP_DAYS * 86400 * 1000
+    with _connect(db_path) as con:
+        n = con.execute("DELETE FROM ai_drafts WHERE updated_ms < ?", (cutoff,)).rowcount
+        n += con.execute("DELETE FROM ai_pending WHERE created_ms < ?", (cutoff,)).rowcount
+        return n
+
+
+def get_draft(project: str, file_id: str, db_path: Path | None = None) -> dict:
+    """`{draft: {text, revision, updated_ms} | None, pendings: [{rid, text, sent, created_ms}]}`（老 → 新）。"""
+    with _connect(db_path) as con:
+        row = con.execute(
+            "SELECT text, revision, updated_ms FROM ai_drafts WHERE project=? AND file_id=?",
+            (project, file_id),
+        ).fetchone()
+        pend = con.execute(
+            "SELECT rid, text, sent, created_ms FROM ai_pending WHERE project=? AND file_id=? "
+            "ORDER BY created_ms ASC",
+            (project, file_id),
+        ).fetchall()
+    pendings = []
+    for r in pend:
+        try:
+            sent = json.loads(r["sent"])
+        except (ValueError, TypeError):
+            continue
+        pendings.append(
+            {"rid": r["rid"], "text": r["text"], "sent": sent, "created_ms": r["created_ms"]}
+        )
+    return {"draft": dict(row) if row else None, "pendings": pendings}
+
+
+def put_draft(project: str, file_id: str, text: str, db_path: Path | None = None) -> dict:
+    """全文覆盖（最后写入为准）。空文本 = 删。超限抛 `DraftTooLarge`，旧稿也删（不留一句过期的话）。返回 `{revision}`。"""
+    now = _now_ms()
+    too_large = len(text.encode("utf-8")) > DRAFT_MAX_BYTES
+    rev = 0
+    with _connect(db_path) as con:
+        if text == "" or too_large:
+            # 删在事务里提交掉，再在 `with` 之外抛——事务里抛会把这次删除一起回滚
+            con.execute("DELETE FROM ai_drafts WHERE project=? AND file_id=?", (project, file_id))
+        else:
+            prev = con.execute(
+                "SELECT revision FROM ai_drafts WHERE project=? AND file_id=?", (project, file_id)
+            ).fetchone()
+            rev = (prev["revision"] if prev else 0) + 1
+            con.execute(
+                "INSERT OR REPLACE INTO ai_drafts (project, file_id, text, revision, updated_ms) VALUES (?,?,?,?,?)",
+                (project, file_id, text, rev, now),
+            )
+            _prune_drafts(con, project, now)
+    if too_large:
+        raise DraftTooLarge(DRAFT_MAX_BYTES)
+    return {"revision": rev}
+
+
+def delete_draft_if(project: str, file_id: str, if_text: str, db_path: Path | None = None) -> bool:
+    """**条件删除**：只有库里的文本仍等于 `if_text` 才删——另一个标签页后写的新稿不能被这次删除抹掉。"""
+    with _connect(db_path) as con:
+        return (
+            con.execute(
+                "DELETE FROM ai_drafts WHERE project=? AND file_id=? AND text=?",
+                (project, file_id, if_text),
+            ).rowcount
+            > 0
+        )
+
+
+def put_pending(
+    project: str, file_id: str, rid: str, text: str, sent: dict, db_path: Path | None = None
+) -> None:
+    """记一条待确认提交（按 rid 一条）。每 (项目, 面板) 最多 8 条，超出丢最老的。"""
+    if len(text.encode("utf-8")) > PENDING_MAX_BYTES:
+        raise DraftTooLarge(PENDING_MAX_BYTES)
+    now = _now_ms()
+    with _connect(db_path) as con:
+        con.execute(
+            "INSERT OR REPLACE INTO ai_pending (project, file_id, rid, text, sent, created_ms) VALUES (?,?,?,?,?,?)",
+            (project, file_id, rid, text, json.dumps(sent, ensure_ascii=False), now),
+        )
+        con.execute(
+            "DELETE FROM ai_pending WHERE project=? AND file_id=? AND rid NOT IN "
+            "(SELECT rid FROM ai_pending WHERE project=? AND file_id=? ORDER BY created_ms DESC LIMIT ?)",
+            (project, file_id, project, file_id, PENDING_MAX_PER_FILE),
+        )
+        _prune_drafts(con, project, now)
+
+
+def clear_pending(project: str, file_id: str, rid: str, db_path: Path | None = None) -> bool:
+    """明确被拒绝：只清自己那条（别的 rid 不动）。"""
+    with _connect(db_path) as con:
+        return (
+            con.execute(
+                "DELETE FROM ai_pending WHERE project=? AND file_id=? AND rid=?",
+                (project, file_id, rid),
+            ).rowcount
+            > 0
+        )
+
+
+def accept_pending(project: str, file_id: str, rid: str, db_path: Path | None = None) -> dict:
+    """请求已被后端接受：清这条账本；草稿文本**仍等于提交时的原文**才一并删（一个事务里判与删）。
+    返回 `{cleared, draft_deleted}`。"""
+    with _connect(db_path) as con:
+        pend = con.execute(
+            "SELECT text FROM ai_pending WHERE project=? AND file_id=? AND rid=?",
+            (project, file_id, rid),
+        ).fetchone()
+        if pend is None:
+            return {"cleared": False, "draft_deleted": False}
+        con.execute(
+            "DELETE FROM ai_pending WHERE project=? AND file_id=? AND rid=?",
+            (project, file_id, rid),
+        )
+        n = con.execute(
+            "DELETE FROM ai_drafts WHERE project=? AND file_id=? AND text=?",
+            (project, file_id, pend["text"]),
+        ).rowcount
+    return {"cleared": True, "draft_deleted": n > 0}
