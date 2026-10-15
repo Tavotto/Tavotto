@@ -404,8 +404,8 @@ export function ProblemPanel() {
           <span className="flex-1" />
           {fixableHere.length > 0 && (
             <Button
-              size="lg"
-              variant="primary"
+              size="md"
+              variant="ghost"
               data-problem-autofix
               className="shrink-0 tabular-nums"
               disabled={fixing}
@@ -701,7 +701,7 @@ function SeverityToggle({ severity, count, active }: { severity: Severity; count
         count={count}
         label={label}
         hideLabel
-        className="px-2"
+        size="sm"
       />
     </Tip>
   )

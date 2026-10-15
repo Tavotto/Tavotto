@@ -740,8 +740,7 @@
     "summary": {
       "editable": "可编辑",
       "layoutOnly": "仅版面",
-      "pending": "待连接",
-      "total": "总计"
+      "pending": "待连接"
     },
     "title": "项目接入状态",
     "useScript": "用 {{script}}",

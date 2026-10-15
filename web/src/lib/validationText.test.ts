@@ -6,7 +6,7 @@
  */
 import { describe, expect, it, afterEach } from 'vitest'
 import { setLocale } from '@/i18n'
-import { SEVERITY_ICON, issueTitle, issueValues, ruleExpectation, severityLabel, subjectName, technicalDetailLines } from './validationText'
+import { SEVERITY_ICON, expectationHead, issueTitle, issueValues, ruleExpectation, severityLabel, subjectName, technicalDetailLines } from './validationText'
 import { SEVERITIES, loadProfile } from './profile'
 import { runSpec, type PreflightSpec } from './preflight'
 import type { ValidationIssue } from './validation'
@@ -248,5 +248,15 @@ describe('边界措辞与真实判据同步（审计 T41）', () => {
     expect(ruleExpectation('min_raster_dpi-not-a-rule', 8)).toBeNull()
     // 没登记比较词的规则不硬造一句
     expect(ruleExpectation('page-width', 80)).toBeNull()
+  })
+})
+
+describe('expectationHead：行内只留「要求」本身', () => {
+  it('边界句在从句处截断，千分位的逗号与没有从句的值原样', () => {
+    expect(expectationHead('大于 8 pt，正好等于不算通过。')).toBe('大于 8 pt')
+    expect(expectationHead('≥ 0.5 pt，当前值实际略低，显示已四舍五入。')).toBe('≥ 0.5 pt')
+    expect(expectationHead('above 8 pt; exactly equal doesn’t pass')).toBe('above 8 pt')
+    expect(expectationHead('≥ 1,000 pt')).toBe('≥ 1,000 pt')
+    expect(expectationHead('大于 8 pt')).toBe('大于 8 pt')
   })
 })

@@ -1158,8 +1158,7 @@ export default interface Resources {
       "summary": {
         "editable": "可编辑",
         "layoutOnly": "仅版面",
-        "pending": "待连接",
-        "total": "总计"
+        "pending": "待连接"
       },
       "title": "项目接入状态",
       "useScript": "用 {{script}}",
@@ -3773,7 +3772,7 @@ export default interface Resources {
       "transformCase": "转换大小写"
     },
     "identity": {
-      "problems_other": "{{count}} 个问题"
+      "problemsLabel_other": "个问题"
     },
     "kindSwitch": {
       "aria": "类型：{{name}}，点击更改",

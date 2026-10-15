@@ -1,4 +1,4 @@
-import type { ButtonHTMLAttributes, ReactNode } from 'react'
+import type { ButtonHTMLAttributes, HTMLAttributes, ReactNode } from 'react'
 import { cn } from '@/lib/utils'
 
 /** 圆点的色：只有「要改」「留意」带颜色，其余（建议 / 无法核验）永远是灰 */
@@ -16,7 +16,7 @@ const DOT: Record<CountTone, string> = {
  * 26 高、全圆角、`surface-hover` 底；**颜色只在 6px 圆点上**（`danger` / `warn`；`quiet` 灰），字永远是 ink，
  * 数字 tabular-nums。「建议」永不染色（用 `quiet`）。导出对话框的检查摘要与问题面板的等级开关是同一件东西，
  * 共用这一个：有 `onClick` 就是按钮（`pressed` 给可切换的那种，`aria-pressed`），没有就是只读的 span。
- * `lead` 换掉圆点（问题面板用等级记号，形状也说出等级）；`hideLabel` 把文字收进读屏（窄抽屉里只露记号 + 数）。
+ * `size="sm"`（24 高、11px）给窄处（抽屉摘要条、属性栏标题行）。`lead` 换掉圆点（问题面板用等级记号，形状也说出等级）；`hideLabel` 把文字收进读屏（窄抽屉里只露记号 + 数）。
  */
 export function CountChip({
   tone = 'quiet',
@@ -24,6 +24,7 @@ export function CountChip({
   label,
   lead,
   hideLabel,
+  size = 'md',
   pressed,
   onClick,
   className,
@@ -34,6 +35,7 @@ export function CountChip({
   label: string
   lead?: ReactNode
   hideLabel?: boolean
+  size?: 'md' | 'sm'
   pressed?: boolean
 }) {
   const body = (
@@ -46,12 +48,13 @@ export function CountChip({
     </>
   )
   const box = cn(
-    'inline-flex h-6.5 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full bg-surface-hover px-2.5 text-sm',
+    'inline-flex shrink-0 items-center whitespace-nowrap rounded-full bg-surface-hover',
+    size === 'md' ? 'h-6.5 gap-1.5 px-2.5 text-sm' : 'h-6 gap-1 px-2 text-xs',
     className,
   )
   if (!onClick) {
     return (
-      <span data-count-chip={tone} className={box}>
+      <span {...(rest as HTMLAttributes<HTMLSpanElement>)} data-count-chip={tone} className={box}>
         {body}
       </span>
     )

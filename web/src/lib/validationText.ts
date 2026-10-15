@@ -112,6 +112,15 @@ const VALUES: Record<
   'axis-label-format': { current: 'label', expected: 'want' },
 }
 
+/**
+ * 「要求」那半句在**一行里**的写法：边界那几句（`…AtBoundary`）在要求后面补一句解释
+ * （「大于 8 pt，正好等于不算通过。」/ “above 8 pt; exactly equal doesn’t pass”）——行内只留要求本身，
+ * 整句留给 title / 技术详情。只在从句分隔符（全角逗号 / 分号，或半角逗号 / 分号加空格）处截，千分位的逗号不动。
+ */
+export function expectationHead(expected: string): string {
+  return expected.split(/，|；|[,;]\s/)[0]
+}
+
 export function issueValues(issue: ValidationIssue): IssueValues {
   const spec = VALUES[issue.ruleCode]
   if (!spec) return { current: null, expected: null }

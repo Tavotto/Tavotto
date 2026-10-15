@@ -303,6 +303,19 @@ describe('普通界面不出现内部标识', () => {
     expect(text()).toContain('字号低于绝对下限')
     // 当前值 → 要求：两个数字都摆出来，用户不必点开才知道差多少
     expect(text()).toMatch(/6\.00 pt\s*→\s*大于 8 pt/)
+    // 行内只留要求本身：「正好等于不算通过」这类补一句的整句不在行里（在 title / ⓘ），否则 112px 的尾随格又要截断
+    const values = container.querySelector<HTMLElement>('[data-issue-values]')!
+    expect(values.className, '值用等宽数字').toContain('font-mono')
+  })
+
+  it('组头只有一颗 6px 圆点带色，图标与数字不染红 / 琥珀；等级字留给读屏', async () => {
+    await seed()
+    await mount(<ProblemPanel />)
+    const head = container.querySelector<HTMLElement>('[data-issue-group-head]')!
+    expect(head.querySelector('svg.text-danger, svg.text-warn, .text-danger, .text-warn')).toBeNull()
+    const dot = head.querySelector<HTMLElement>('span.size-1\\.5')!
+    expect(dot.className).toMatch(/bg-(danger|warn|ink-faint)/)
+    expect(head.querySelector('.sr-only')!.textContent).toMatch(/阻断|警告|建议|无法核验/)
   })
 })
 
@@ -404,6 +417,9 @@ describe('空态、筛选与「查不了」', () => {
     await seed()
     await mount(<ProblemPanel />)
     const chip = buttons().find((b) => b.getAttribute('aria-pressed') != null)!
+    // 与导出检查同一个计数芯片（ui/CountChip），底中性：不再给阻断整块染 danger 底
+    expect(chip.hasAttribute('data-count-chip')).toBe(true)
+    expect(chip.className).not.toMatch(/bg-danger|text-danger/)
     expect(chip.getAttribute('aria-pressed')).toBe('false')
     await click(chip)
     expect(chip.getAttribute('aria-pressed')).toBe('true')
@@ -482,8 +498,8 @@ describe('安全修复', () => {
     })
     const all = container.querySelector<HTMLButtonElement>('button[data-problem-autofix]')!
     expect(all.textContent).toBe('全部修复 2')
-    // 一颗填色主动作（32px lg）
-    expect(all.dataset.variant).toBe('primary')
+    // 不再是黑色实心胶囊（2026-10-16 精修 03）：ghost 钮，摘要条里的焦点留给计数芯片
+    expect(all.dataset.variant).toBe('ghost')
     await click(all)
     expect(all.disabled).toBe(true)
     expect(all.textContent).toBe('正在修复…')

@@ -1939,7 +1939,8 @@ function CheckRow({
   ];
   return (
     <div className="flex items-center justify-between gap-3">
-      <span className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">
+      {/* 范围（整个画布 / 仅此图）不再是一段内联灰字：悬停说明，读屏照读 */}
+      <span title={scopeHint} className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">
         {CHIPS.filter((c) => summary.counts[c.sev] > 0).map((c) => (
           <CountChip
             key={c.sev}
@@ -1949,7 +1950,7 @@ function CheckRow({
             onClick={() => onOpenPanel([c.sev])}
           />
         ))}
-        <span className="text-xs text-ink-3">{`· ${scopeHint}`}</span>
+        <span className="sr-only">{scopeHint}</span>
       </span>
       <OpenProblems onClick={() => onOpenPanel()} />
     </div>

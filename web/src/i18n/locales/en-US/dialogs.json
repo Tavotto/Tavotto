@@ -751,8 +751,7 @@
     "summary": {
       "editable": "Editable",
       "layoutOnly": "Layout only",
-      "pending": "Waiting",
-      "total": "Total"
+      "pending": "Waiting"
     },
     "title": "Project readiness",
     "useScript": "Use {{script}}",
