@@ -1058,7 +1058,7 @@ describe('检查摘要只给数量，完整清单在问题面板', () => {
   it('摘要里有计数与入口，不列第二套清单', async () => {
     // 80×40 的页面 + 同尺寸面板：只有 page-aspect 这一条 warn
     await setup(9, { w: 80, h: 40 }, 40)
-    expect(text()).toContain('1 警告')
+    expect(text()).toContain('1 项留意')
     expect(text()).not.toContain('页面比例')   // 明细归问题面板
     const open = button('在问题面板中查看')!
     await click(open)
@@ -1449,8 +1449,8 @@ describe('T33 · 检查摘要按导出目标取范围', () => {
     expect(button('开始导出')!.hasAttribute('disabled')).toBe(false)
 
     await click(radios()[1])
-    expect(text()).toMatch(/\d+ 阻断/)
-    expect(text()).toContain('1 警告')
+    expect(text()).toMatch(/\d+ 项要改/)
+    expect(text()).toContain('1 项留意')
     expect(text()).toContain('整个画布')
     expect(button('开始导出')!.hasAttribute('disabled')).toBe(true)
   })
@@ -1470,8 +1470,8 @@ describe('T33 · 检查摘要按导出目标取范围', () => {
         .issues.filter((i) => i.severity === 'error' && i.objectRef.objectId === id).length
     expect(errorsOn('p1')).toBeGreaterThan(0)
     expect(errorsOn('p2'), '夹具里另一张图也得有阻断项，否则这条什么都没证明').toBeGreaterThan(0)
-    expect(text()).toContain(`${errorsOn('p1')} 阻断`)
-    expect(text()).not.toContain(`${errorsOn('p1') + errorsOn('p2')} 阻断`)
+    expect(text()).toContain(`${errorsOn('p1')} 项要改`)
+    expect(text()).not.toContain(`${errorsOn('p1') + errorsOn('p2')} 项要改`)
     expect(button('开始导出')!.hasAttribute('disabled')).toBe(true)
     const check = confirmBox()!
     await act(async () => {
@@ -1506,27 +1506,68 @@ describe('T33 · 阻断项逐条列出，紧挨着知情确认，每条可定位
     expect(rows()).toHaveLength(errors.length)
     const row = rows().find((r) => r.getAttribute('data-blocking-issue') === 'font-below-absolute-floor')!
     expect(row, '每一行带着稳定的规则码').toBeTruthy()
-    // 规则名在组头只说一遍（2026-09-14 审计 B4），行里是主语与数值
-    expect(row.closest('[data-blocking-group]')!.textContent).toContain('字号低于绝对下限')
-    expect(row.textContent).not.toContain('字号低于绝对下限')
+    // 每条一行（2026-10-16 精修 03）：「对象 · 属性（规则名）· 当前值 → 要求」，不再有规则组头
+    expect(row.closest('[data-blocking-group]')).toBeNull()
+    expect(row.textContent).toContain('字号低于绝对下限')
     expect(row.textContent).toContain('x 刻度 1')
     expect(row.textContent).toContain('8.00 pt')
     expect(locateButtons()).toHaveLength(errors.length)
     // 列表紧挨着确认框：确认框是它的下一个兄弟
     expect(list()!.nextElementSibling?.querySelector('input[type="checkbox"]')).toBeTruthy()
     // 警告（page-aspect）不逐条列
-    expect(text()).toContain('1 警告')
+    expect(text()).toContain('1 项留意')
     expect(text()).not.toContain('页面比例')
   })
 
-  it('超过 5 条只列 5 条，其余交给问题面板', async () => {
+  it('超过 3 条只列 3 条，其余「还有 N 项 · 在问题面板中查看全部」', async () => {
     await stage({ panels: [panel], renders: { 'Fig1.pdf': manifestWithTicks(7, 8) } })
     await mountDialogs()
     await openDialog()
     const errors = useValidationStore.getState().issues.filter((i) => i.severity === 'error').length
-    expect(errors).toBeGreaterThan(5)
-    expect(rows()).toHaveLength(5)
-    expect(text()).toContain(`还有 ${errors - 5} 条`)
+    expect(errors).toBeGreaterThan(3)
+    expect(rows()).toHaveLength(3)
+    expect(text()).toContain(`还有 ${errors - 3} 项`)
+    await click(button(`还有 ${errors - 3} 项 · 在问题面板中查看全部`)!)
+    expect(useUiStore.getState().leftTab).toBe('problems')
+    expect(useUiStore.getState().problemFilter).toEqual(['error'])
+  })
+
+  it('计数芯片来自真实检查结果：要改 / 留意带色点，建议与无法核验永远是灰；点芯片带着这一档去问题面板', async () => {
+    await stage({
+      panels: [panel],
+      renders: { 'Fig1.pdf': manifestWithTicks(1, 8) },
+      page: { w: 80, h: 40 },
+    })
+    await mountDialogs()
+    await openDialog()
+    const counts = useValidationStore.getState().issues.reduce<Record<string, number>>((m, i) => {
+      m[i.severity] = (m[i.severity] ?? 0) + 1
+      return m
+    }, {})
+    const chip = (tone: string) => document.body.querySelector<HTMLElement>(`[data-count-chip="${tone}"]`)
+    expect(chip('danger')!.textContent).toBe(`${counts.error} 项要改`)
+    expect(chip('warn')!.textContent).toBe(`${counts.warn} 项留意`)
+    // 建议 / 无法核验只会出现在 quiet 档（有才出现），数字与检查结果一致
+    for (const el of document.body.querySelectorAll<HTMLElement>('[data-count-chip="quiet"]')) {
+      const n = Number(el.textContent!.match(/\d+/)![0])
+      expect([counts.suggestion, counts.not_verifiable]).toContain(n)
+    }
+    expect(document.body.querySelectorAll('[data-count-chip="danger"]')).toHaveLength(1)
+    // 每颗芯片的档由它的名字决定：只有「项要改」是 danger、「项留意」是 warn，其余（建议 / 无法核验）一律 quiet
+    const toneOf: Record<string, string> = { 项要改: 'danger', 项留意: 'warn', 条建议: 'quiet', 项无法核验: 'quiet' }
+    const all = [...document.body.querySelectorAll<HTMLElement>('[data-count-chip]')]
+    expect(all.length).toBeGreaterThanOrEqual(2)
+    for (const el of all) {
+      const word = Object.keys(toneOf).find((w) => el.textContent!.includes(w))!
+      expect(word, el.textContent!).toBeTruthy()
+      expect(el.getAttribute('data-count-chip'), el.textContent!).toBe(toneOf[word])
+    }
+    // 圆点之外芯片不染色：没有任何 danger / warn 的字或底
+    expect(chip('danger')!.className).not.toMatch(/text-danger|bg-danger|text-warn|bg-warn/)
+    await click(chip('warn')!)
+    expect(useUiStore.getState().leftTab).toBe('problems')
+    expect(useUiStore.getState().problemFilter).toEqual(['warn'])
+    expect(useUiStore.getState().exportOpen).toBe(false)
   })
 
   it('进不了图内编辑（没有源脚本）：对话框留在原地并说出原因', async () => {

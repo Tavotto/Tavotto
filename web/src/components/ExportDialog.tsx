@@ -89,6 +89,7 @@ import {
   openProblems,
 } from "@/lib/issueFocus";
 import { stemOf } from "@/lib/openRequest";
+import type { Severity } from "@/lib/profile";
 import type { OriginalOutputSpec } from "@/lib/originalSpec";
 import {
   exportContextIssues,
@@ -101,8 +102,6 @@ import {
 import {
   issueTitle,
   issueValues,
-  SEVERITY_ICON,
-  severityLabel,
   subjectName,
 } from "@/lib/validationText";
 import { buildProofPayload } from "@/lib/preflight";
@@ -161,14 +160,13 @@ import { SendReportButton } from "./SendReportButton";
 import { Select } from "./ui/Select";
 import { Toggle } from "./ui/Toggle";
 import { Card } from "./ui/Card";
+import { CountChip, type CountTone } from "./ui/CountChip";
 import { FieldGroup, FormSection } from "./ui/FormSection";
 import { listRowClass } from "./ui/listRow";
 import { Notice } from "./ui/Notice";
 import { ProgressBar } from "./ui/ProgressBar";
 import { dirTail } from "@/lib/pathDisplay";
 
-/** 阻断问题的图标：与问题面板同一张表（`SEVERITY_ICON`），八角 */
-const BlockingIcon = SEVERITY_ICON.error;
 
 /** 本对话框的文案都在 `dialogs:export.*` 下 */
 const ex = (key: string, values?: Record<string, unknown>) =>
@@ -178,7 +176,7 @@ const ex = (key: string, values?: Record<string, unknown>) =>
 const PPI_VALUES = ["300", "600", "900", "1200"] as const;
 
 /** 知情确认框上方逐条列出的阻断项上限；再多的进问题面板 */
-const BLOCKING_SHOWN = 5;
+const BLOCKING_SHOWN = 3;
 
 /**
  * 默认文件名**跟着导出对象走**（审计 T33）：按原图 = 那张图的名字（面板名，
@@ -1400,9 +1398,9 @@ export function ExportDialog() {
                 <CheckRow
                   summary={summary}
                   scopeHint={ex(scope === "original" && panel ? "checkScopeFigure" : "checkScopeCanvas")}
-                  onOpenPanel={() => {
+                  onOpenPanel={(severities) => {
                     park();
-                    openProblems();
+                    openProblems(severities ? { severities } : undefined);
                   }}
                 />
               </FormRow>
@@ -1812,11 +1810,10 @@ function TargetHeader({
 }
 
 /**
- * 阻断项清单（审计 T33）：**按规则分组**——规则名只在组头说一遍，组内每行是
- * 主语 · 当前值 → 要求 + 一个「定位」（2026-09-14 审计 B4：此前五行「字号低于绝对下限 ·
- * 图例 / · 图例项 / · X 轴刻度…」把同一句规则名重复了五遍，问题面板早已按规则分组）。
- * 只列阻断级、只列前几条、不筛选、不修复——那些都在左侧问题面板。
- * 等级不只靠颜色：图标 + 「阻断」标签 + 颜色三重表达。
+ * 阻断项清单（审计 T33；2026-10-16 UI 2.0 精修 03：每条一行）：「对象 · 属性 · 当前值 → 要求」，
+ * 值用等宽数字，行尾一个「定位」；**先露 3 条**，其余「还有 N 项 · 在问题面板中查看全部」。
+ * 规则名不再占一行组头——它就是行里的「属性」，整句要求进 tooltip。只列阻断级、不筛选、不修复——
+ * 那些都在左侧问题面板。等级不只靠颜色：圆点在摘要芯片里、这里每行是「要改」的那一档，由芯片说。
  */
 function BlockingList({
   issues,
@@ -1830,90 +1827,54 @@ function BlockingList({
   useTranslation(["dialogs", "errors"]);
   const shown = issues.slice(0, BLOCKING_SHOWN);
   const rest = issues.length - shown.length;
-  // 保持首次出现的顺序：先按规则聚合，组内保留原顺序
-  const groups: {
-    ruleCode: string;
-    title: string;
-    items: ValidationIssue[];
-  }[] = [];
-  for (const issue of shown) {
-    const g = groups.find((x) => x.ruleCode === issue.ruleCode);
-    if (g) g.items.push(issue);
-    else
-      groups.push({
-        ruleCode: issue.ruleCode,
-        title: issueTitle(issue),
-        items: [issue],
-      });
-  }
   return (
-    <ul aria-label={ex("blockingListLabel")} className="flex flex-col gap-1">
-      {groups.map((g) => (
-        <li
-          key={g.ruleCode}
-          data-blocking-group={g.ruleCode}
-          className="py-0.5 text-sm"
-        >
-          <div className="flex items-center gap-2 leading-relaxed">
-            {/* 阻断的形状与问题面板同一张表（八角），不在这里另画一个三角 */}
-            <BlockingIcon
-              size={ICON_SIZE.xs}
-              className="shrink-0 text-danger"
-              aria-hidden
-            />
-            <span className="text-ink">{g.title}</span>
-            {g.items.length > 1 && (
-              <span className="type-meta tabular-nums">
-                {ex("blockingGroupCount", { count: g.items.length })}
-              </span>
-            )}
-          </div>
-          <ul className="mt-0.5 flex flex-col gap-0.5 pl-5">
-            {g.items.map((issue) => {
-              const values = issueValues(issue);
-              const subject = subjectName(issue);
-              return (
-                <li
-                  key={issue.issueId}
-                  data-blocking-issue={issue.ruleCode}
-                  className="flex items-start gap-2 py-0.5"
-                >
-                  <span className="min-w-0 flex-1 leading-relaxed">
-                    <span className="text-ink-2">{subject}</span>
-                    {values.current && (
-                      <span className="ml-1.5 text-xs tabular-nums text-ink-3">
-                        {values.expected
-                          ? translate("problems.valueArrow", {
-                              ns: "errors",
-                              current: values.current,
-                              expected: values.expected,
-                            })
-                          : values.current}
-                      </span>
-                    )}
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => onLocate(issue)}
-                    aria-label={ex("locateAria", { subject, title: g.title })}
-                    className="shrink-0 rounded-md text-sm text-ink-2 outline-none hover:underline focus-visible:focus-ring"
-                  >
-                    {ex("locate")}
-                  </button>
-                </li>
-              );
-            })}
-          </ul>
-        </li>
-      ))}
+    <ul aria-label={ex("blockingListLabel")} className="flex flex-col">
+      {shown.map((issue) => {
+        const values = issueValues(issue);
+        const subject = subjectName(issue);
+        const title = issueTitle(issue);
+        const arrow = values.current
+          ? values.expected
+            ? translate("problems.valueArrow", {
+                ns: "errors",
+                current: values.current,
+                expected: values.expected,
+              })
+            : values.current
+          : null;
+        return (
+          <li
+            key={issue.issueId}
+            data-blocking-issue={issue.ruleCode}
+            title={[subject, title, arrow].filter(Boolean).join(" · ")}
+            className="flex min-h-7 items-center gap-2"
+          >
+            <span className="min-w-0 flex-1 truncate text-sm">
+              <span className="text-ink">{subject}</span>
+              <span className="text-ink-3">{` · ${title}`}</span>
+              {arrow && (
+                <span className="ml-2 font-mono text-xs tabular-nums text-ink-2">{arrow}</span>
+              )}
+            </span>
+            <button
+              type="button"
+              onClick={() => onLocate(issue)}
+              aria-label={ex("locateAria", { subject, title })}
+              className="shrink-0 rounded-md px-1.5 text-sm text-ink-2 outline-none hover:bg-surface-hover hover:text-ink focus-visible:focus-ring"
+            >
+              {ex("locate")}
+            </button>
+          </li>
+        );
+      })}
       {rest > 0 && (
-        <li className="py-1 pl-5">
+        <li className="py-1">
           <button
             type="button"
             onClick={onMore}
-            className="rounded-md text-sm text-ink-2 outline-none hover:underline focus-visible:focus-ring"
+            className="rounded-md text-sm text-ink-3 outline-none hover:text-ink hover:underline focus-visible:focus-ring"
           >
-            {ex("blockingMore", { count: rest })}
+            {ex("checksMore", { count: rest })}
           </button>
         </li>
       )}
@@ -1935,7 +1896,7 @@ function CheckRow({
   summary: ValidationSummary;
   /** 这份摘要算的是哪个范围（只算这张图 / 整个画布） */
   scopeHint: string;
-  onOpenPanel: () => void;
+  onOpenPanel: (severities?: Severity[]) => void;
 }) {
   useTranslation(["dialogs", "errors"]);
   // 「查不了」与「没问题」是两个答案。压成一个 = 用户带着一屏静悄悄的绿投稿
@@ -1966,43 +1927,31 @@ function CheckRow({
       </div>
     );
   }
-  // 有问题：一行只给**数量**（阻断 / 警告 / 无法核验 / 建议）+ 这份摘要算的是哪个范围
-  // + 问题面板入口。阻断项由下方的清单逐条列出，完整清单归左侧问题面板（§四）——
-  // 数量这一行不能省：只有警告时没有它，用户看到的就是一片空白，既不知道有警告、
-  // 也没有去问题面板的路
-  const parts = (
-    [
-      "error",
-      "warn",
-      "not_verifiable",
-      "suggestion",
-    ] as (keyof ValidationSummary["counts"])[]
-  )
-    .filter((s) => summary.counts[s] > 0)
-    .map((s) =>
-      ex("severityCount", {
-        count: summary.counts[s],
-        label: severityLabel(s),
-      }),
-    );
+  // 有问题：三个（至多四个）计数芯片 + 这份摘要算的是哪个范围 + 问题面板入口。
+  // 阻断项由下方的清单逐条列出，完整清单归左侧问题面板（§四）——数量这一行不能省：
+  // 只有警告时没有它，用户看到的就是一片空白，既不知道有警告、也没有去问题面板的路。
+  // 颜色只在圆点上：要改 = danger、留意 = warn，建议 / 无法核验永远是灰。点芯片 = 带着这一档去问题面板。
+  const CHIPS: { sev: Severity; tone: CountTone; key: string }[] = [
+    { sev: "error", tone: "danger", key: "chipError" },
+    { sev: "warn", tone: "warn", key: "chipWarn" },
+    { sev: "not_verifiable", tone: "quiet", key: "chipNotVerifiable" },
+    { sev: "suggestion", tone: "quiet", key: "chipSuggestion" },
+  ];
   return (
     <div className="flex items-center justify-between gap-3">
-      <span
-        className={cn(
-          "flex min-w-0 flex-1 flex-wrap items-center gap-x-2 text-sm",
-          summary.blocking ? "text-danger" : "text-ink",
-        )}
-      >
-        {/* 有阻断就是八角，只有警告 / 建议才是三角——与清单、问题面板同一套形状 */}
-        {summary.blocking ? (
-          <BlockingIcon size={ICON_SIZE.sm} className="shrink-0" aria-hidden />
-        ) : (
-          <TriangleAlert size={ICON_SIZE.sm} className="shrink-0" aria-hidden />
-        )}
-        <span className="tabular-nums">{parts.join(" · ")}</span>
+      <span className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">
+        {CHIPS.filter((c) => summary.counts[c.sev] > 0).map((c) => (
+          <CountChip
+            key={c.sev}
+            tone={c.tone}
+            count={summary.counts[c.sev]}
+            label={ex(c.key, { count: summary.counts[c.sev] })}
+            onClick={() => onOpenPanel([c.sev])}
+          />
+        ))}
         <span className="text-xs text-ink-3">{`· ${scopeHint}`}</span>
       </span>
-      <OpenProblems onClick={onOpenPanel} />
+      <OpenProblems onClick={() => onOpenPanel()} />
     </div>
   );
 }

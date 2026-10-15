@@ -49,6 +49,7 @@ import { useProjectReadinessStore } from '@/store/projectReadinessStore'
 import { useUiStore } from '@/store/uiStore'
 import { schedule, useValidationStore } from '@/store/validationStore'
 import { Button, IconButton } from '../ui/Button'
+import { CountChip } from '../ui/CountChip'
 import { EmptyState } from '../ui/EmptyState'
 import {
   Menu,
@@ -679,8 +680,8 @@ function PanelMenu({ view }: { view: ProblemView }) {
 /* ------------------------------- 摘要条 ----------------------------------- */
 
 /**
- * 等级开关：记号 + 数，可切换（aria-pressed）。**只有阻断着色**（danger 浅底 + content 字）——
- * 警告 / 建议不打扰，形状与名字照样说出等级（名字在可达名里）。
+ * 等级开关：记号 + 数，可切换（aria-pressed）。与导出对话框的检查摘要同一个小组件（`ui/CountChip`）：
+ * 底一律中性，不再给阻断整块染色——等级由记号的形状与颜色说，名字在可达名里。
  */
 function SeverityToggle({ severity, count, active }: { severity: Severity; count: number; active: boolean }) {
   const label = severityLabel(severity)
@@ -689,28 +690,19 @@ function SeverityToggle({ severity, count, active }: { severity: Severity; count
     const next = cur.includes(severity) ? cur.filter((s) => s !== severity) : [...cur, severity]
     useUiStore.getState().setProblemFilter(next.length ? next : null)
   }
-  const tinted = severity === 'error'
   return (
     <Tip label={pr('filterAria', { label, count })} side="bottom">
-      <button
-        type="button"
+      <CountChip
         onClick={toggle}
         data-problem-severity={severity}
-        aria-pressed={active}
+        pressed={active}
         aria-label={pr('filterAria', { label, count })}
-        className={cn(
-          'flex h-6 shrink-0 items-center gap-1 rounded-full px-2 text-xs tabular-nums outline-none',
-          'outline-1 -outline-offset-1 transition-colors duration-fast focus-visible:focus-ring',
-          tinted
-            ? 'bg-danger-surface text-danger-content hover:bg-danger-surface'
-            : 'text-ink-2 hover:bg-surface-hover hover:text-ink',
-          active ? (tinted ? 'font-medium outline-danger-border' : 'bg-selected font-medium text-ink outline-border-strong') : 'outline-transparent',
-        )}
-      >
-        <SeverityGlyph severity={severity} size="sm" />
-        <span>{count}</span>
-        <span className="sr-only">{label}</span>
-      </button>
+        lead={<SeverityGlyph severity={severity} size="sm" />}
+        count={count}
+        label={label}
+        hideLabel
+        className="px-2"
+      />
     </Tip>
   )
 }
