@@ -160,6 +160,11 @@ describe('listRowClass / rowMetaClass / dropLineClass', () => {
     for (const size of ['sm', 'md', 'lg'] as const) expect(listRowClass({ size })).toMatch(/\brounded-md\b/)
     expect(listRowClass({ selected: true })).toMatch(/\bbg-selected\b.*\bfont-semibold\b|\bfont-semibold\b.*\bbg-selected\b/)
     expect(listRowClass()).not.toMatch(/font-semibold/)
+    // 焦点环内凹：密排的行不许用外扩的 focus-ring（会盖邻行、触抽屉边）
+    for (const size of ['sm', 'md', 'lg'] as const) {
+      expect(listRowClass({ size })).toMatch(/\bfocus-visible:focus-ring-inset\b/)
+      expect(listRowClass({ size })).not.toMatch(/focus-visible:focus-ring(?!-inset)/)
+    }
   })
 
   it('meta：常态 ink-3，选中升 ink-2，字重恒 400', () => {

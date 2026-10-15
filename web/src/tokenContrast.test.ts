@@ -189,6 +189,12 @@ for (const theme of THEMES) {
       expect(ring).not.toContain('color-mix')
     })
 
+    it('focus-ring-inset 与 focus-ring 同一根 2px 不透明 accent，只是 offset 为负（内凹）', () => {
+      const ring = CSS.match(/@utility focus-ring-inset \{([\s\S]*?)\}/)?.[1] ?? ''
+      expect(ring).toContain('2px solid var(--color-accent)')
+      expect(ring).toMatch(/outline-offset:\s*-2px/)
+    })
+
     it('控件边界（border-control：复选框 / 单选 / 关态开关）对白 / 纸 / surface-2 ≥3:1', () => {
       for (const g of GROUNDS) {
         expect(contrast(token('border-control'), token(g)), `border-control on ${g}`).toBeGreaterThanOrEqual(3)
