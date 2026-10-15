@@ -12,7 +12,10 @@ import {
 } from '@/diagnostics/detail'
 import { readDiagnosticTrace } from '@/diagnostics'
 import { __resetDiagnosticsForTests } from '@/diagnostics/store'
-import { ApiError } from '@/lib/api'
+import { ApiError, EngineError } from '@/lib/api'
+import { ArtifactValidationError } from '@/lib/artifactValidation'
+import { PendingConflict } from '@/lib/autosave/diskWriter'
+import { CodexShellError } from '@/lib/codexInstall'
 import {
   MAX_FINGERPRINTS,
   MAX_PROMPTS_PER_SESSION,
@@ -70,13 +73,10 @@ describe('分类过滤：不是意外的一律不记、不弹', () => {
     ['跨域 Script error.', () => throwWindow(undefined, { message: 'Script error.' })],
     ['AbortError（DOMException）', () => reject(new DOMException('aborted', 'AbortError'))],
     ['ApiError（结构化失败，已有卡）', () => reject(new ApiError('boom', 400, { code: 'bad' }))],
-    [
-      '业务自己的错误类',
-      () => {
-        class PendingConflict extends Error {}
-        reject(new PendingConflict('conflict'))
-      },
-    ],
+    ['EngineError（业务错误类）', () => reject(new EngineError('boom', 'x' as never))],
+    ['PendingConflict（业务错误类）', () => reject(new PendingConflict({ kind: 'x' } as never))],
+    ['ArtifactValidationError（业务错误类）', () => reject(new ArtifactValidationError('bad'))],
+    ['CodexShellError（业务错误类）', () => reject(new CodexShellError('x'))],
     ['pyodide / worker 的 onerror', () => throwWindow(new TypeError('x'), { filename: 'http://h/assets/pyodide.worker-abc.js' })],
     ['非 Error 的拒绝（取消令牌）', () => reject('cancelled')],
     ['空拒绝', () => reject(undefined)],
@@ -88,6 +88,19 @@ describe('分类过滤：不是意外的一律不记、不弹', () => {
       expect(card()).toBeNull()
     })
   }
+
+  it('内建的 AggregateError（Promise.any 被拒）不被当成「业务已处理」：记 trace、弹卡', () => {
+    reject(new AggregateError([new Error('a')], 'all promises were rejected'))
+    expect(events()).toHaveLength(1)
+    expect(events()[0]).toMatchObject({ source: 'unhandled_rejection', error_name: 'other' })
+    expect(card()).not.toBeNull()
+  })
+
+  it('未登记的自定义 Error 子类同样按意外处理（白名单之外一律不吞）', () => {
+    class Unlisted extends Error {}
+    reject(new Unlisted('x'))
+    expect(events()).toHaveLength(1)
+  })
 
   it('对照：同一管线里一个真 TypeError 会弹（上面不是因为管线坏了才全空）', () => {
     throwWindow(new TypeError('cannot read x'))

@@ -29,6 +29,7 @@ ADR 0126 把「何时发 `execution:"native"`」留给调用方。结果是用�
 * **重跑让位**：会话里 safe 尝试开始前，同脚本上一次桌面 native 会话与更早的计划票据先让位（复用 #1022 的 `REGISTRY.cancel_project(script=)` 与 `PreparationService.cancel_project(script=, keep=)`），否则回退成功后停在屏障上的 native 进程会一直占着环境租约。
 * **取消与过期**：取消落在回退之前（含锁外规划与锁内交接之间的窗口）不再起 native；检查之后源码 / 解释器 / 授权变了（`preparation_plan_stale`）不回退。取消动作落在**最新**的那次尝试上，不是动作当初指着的那次。
 * **被取代**：回退计划登记之后再核一次是否已有更新的同脚本**运行计划**（登记顺序）；只数脚本目标，旧端点按素材做准备（资产目标）不算替代运行。不成立就取消刚登记的回退计划、记 `superseded`（或 `cancelled`）。
+* **启动认领与被取代判定同锁**：native 起进程闸门（`reserve` / `begin_start` / `check_start`，回退与普通桌面 native 运行共用）问的是 `PreparationService.launch_blocked`——与 `register` 同一把锁里判「已取消，或已有登记更晚的同脚本脚本目标计划」。更新的重跑「已登记、还没轮到自己的 `cancel_project(keep=)`」时旧计划起不了进程；闸门放行之后才登记的重跑走 `cancel_project(keep=)` 的真终止路径。
 * **不弹确认框**：见下「授权来源」。
 * **外部副作用（场景 17）**：safe 档在被拦之前可能已产生外部副作用（网络、计数文件）；接受回退时这些副作用**重复一次**。这是用户裁决，不是疏漏——见「后果」。
 

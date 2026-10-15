@@ -26,6 +26,8 @@ import { userEnvironmentName } from '@/lib/userEnvironmentText'
 import { useWorkspaceStore } from '@/store/workspace'
 import { useDiagSendStore } from '@/store/diagSendStore'
 import { useUnexpectedErrorStore } from '@/store/unexpectedErrorStore'
+import { useExitNoticeStore } from '@/store/exitNoticeStore'
+import { restartEngineFromCard } from '@/lib/exitNotices'
 
 /**
  * 底部不再有常驻状态栏。这里是两块按需出现的浮层：
@@ -94,12 +96,13 @@ function Toast({
   timer,
   order,
   plain,
+  note,
   ...rest
 }: {
   tone: 'info' | 'error' | 'hint'
   icon: ReactNode
   text: string
-  action?: { label: string; onClick: () => void }
+  action?: { label: string; onClick: () => void; loading?: boolean }
   onClose?: () => void
   closeLabel?: string
   state: 'open' | 'closed'
@@ -109,6 +112,8 @@ function Toast({
   order: number
   /** error 语气但正文是一句固定的话（没有「这一步没有完成：原因」，没有复制详情）——意外错误卡用 */
   plain?: boolean
+  /** 折叠的补充一句：默认不占位，悬停（title）与读屏可得——卡片默认只露一句话 + 一个主按钮 */
+  note?: string
 } & Record<`data-${string}`, string | undefined>) {
   const held = useRef(new Set<string>())
   const grip = (reason: string) => {
@@ -135,6 +140,7 @@ function Toast({
       data-state={state}
       data-toast-layout="pill"
       data-toast-tone={tone}
+      title={note}
       onPointerEnter={() => grip('pointer')}
       onPointerLeave={() => drop('pointer')}
       onFocus={() => grip('focus')}
@@ -157,7 +163,13 @@ function Toast({
         <SwapText className="min-w-0 flex-1" text={text} />
       )}
       {action && (
-        <Button variant="ghost" size="sm" className="shrink-0 text-ink" onClick={action.onClick}>
+        <Button
+          variant="ghost"
+          size="sm"
+          className="shrink-0 text-ink"
+          onClick={action.onClick}
+          loading={action.loading}
+        >
           {action.label}
         </Button>
       )}
@@ -252,7 +264,12 @@ function useArrivalOrder() {
  * aria-live 的契约不变：状态区 `data-status-live`（e2e 认它，不认 role=status）、错误 assertive；
  * 提示区只有 aria-live 没有 role（`role=status` 全产品只留状态区那一个）。
  */
-export function NotificationRail() {
+/**
+ * `announceRole`：两个 assertive 播报区默认带 `role="alert"`（工作区里一直如此）。项目选择页另挂一份（引擎退出 /
+ * 上次没正常退出的卡片不能等打开项目才看得见），那里传 `null`：只留 `aria-live="assertive"`（读屏照样立刻播报），
+ * 不再算作 alert——选择页自己的报错是页面上唯一的 alert（e2e 与读屏的「当前错误」都按它认）。
+ */
+export function NotificationRail({ announceRole = 'alert' }: { announceRole?: 'alert' | null } = {}) {
   const { t } = useTranslation('workspace')
   const fmt = useFormatMessage()
   const status = useUiStore((s) => s.status)
@@ -309,10 +326,32 @@ export function NotificationRail() {
   const lastUnexpected = useRef<{ token: number } | null>(null)
   if (unexpected) lastUnexpected.current = unexpected
   const diagEnabled = useDiagSendStore((s) => s.capability !== null)
-  const unexpectedHasSlot = diagEnabled && !(justAdded && !!status)
+  // 引擎意外退出的修复卡（ADR 0129）：引擎没了，这是唯一能做的事，所以与状态一样从不让位；
+  // 不受发送开关控制（只有「重新启动」，没有发送入口）
+  const engineExit = useExitNoticeStore((s) => s.engineExit)
+  const restarting = useExitNoticeStore((s) => s.restarting)
+  const enginePresence = usePresence(!!engineExit, DURATION.exit)
+  const lastEngineExit = useRef(engineExit)
+  if (engineExit) lastEngineExit.current = engineExit
+  const unexpectedHasSlot = diagEnabled && [!!engineExit, justAdded, !!status].filter(Boolean).length < 2
   const unexpectedPresence = usePresence(!!unexpected && unexpectedHasSlot, DURATION.exit)
   const unexpectedShown = unexpected ?? lastUnexpected.current
-  const higherThanNotices = [justAdded, !!status, !!unexpected && unexpectedHasSlot].filter(Boolean).length
+  // 「上次 Tavotto 没有正常退出」卡（ADR 0129）：与意外错误卡同档、排在它后面；只在发送入口可用时登记
+  const previous = useExitNoticeStore((s) => s.previous)
+  const lastPrevious = useRef<{ kind: string; token: number } | null>(null)
+  if (previous) lastPrevious.current = previous
+  const previousHasSlot =
+    diagEnabled &&
+    [!!engineExit, justAdded, !!status, !!unexpected && unexpectedHasSlot].filter(Boolean).length < 2
+  const previousPresence = usePresence(!!previous && previousHasSlot, DURATION.exit)
+  const previousShown = previous ?? lastPrevious.current
+  const higherThanNotices = [
+    !!engineExit,
+    justAdded,
+    !!status,
+    !!unexpected && unexpectedHasSlot,
+    !!previous && previousHasSlot,
+  ].filter(Boolean).length
   const adoptedHasSlot = higherThanNotices < 2
   const adoptedPresence = usePresence(!!adopted && adoptedHasSlot, DURATION.exit)
   const adoptedShown = adopted ?? lastAdopted.current
@@ -363,8 +402,13 @@ export function NotificationRail() {
     useUnexpectedErrorStore.getState().dismiss()
     useDiagSendStore.getState().setOpen(true)
   }
+  const openSendFromPreviousCard = () => {
+    useExitNoticeStore.getState().dismissPrevious()
+    useDiagSendStore.getState().setOpen(true)
+  }
 
-  const hintHasSlot = [justAdded, !!adopted || !!autofilled, !!status, !!unexpected && unexpectedHasSlot].filter(Boolean).length < 2
+  const hintHasSlot =
+    [!!engineExit, justAdded, !!adopted || !!autofilled, !!status, !!unexpected && unexpectedHasSlot, !!previous && previousHasSlot].filter(Boolean).length < 2
   const hintPresence = usePresence(!!hint && hintHasSlot, DURATION.exit)
 
   // 出现的先后：最新的一条最靠近底边（见 useArrivalOrder）
@@ -373,6 +417,8 @@ export function NotificationRail() {
   const adoptedOrder = arrival('adopted', adoptedPresence.mounted && adoptedShown?.token)
   const autofillOrder = arrival('autofill', autofillPresence.mounted && autofillShown?.token)
   const unexpectedOrder = arrival('unexpected', unexpectedPresence.mounted && unexpectedShown?.token)
+  const engineOrder = arrival('engine', enginePresence.mounted && lastEngineExit.current)
+  const previousOrder = arrival('previous', previousPresence.mounted && previousShown?.token)
   const hintOrder = arrival('hint', hintPresence.mounted && hint && hintToken)
   const statusOrder = arrival('status', statusPresence.mounted && shown.status)
 
@@ -399,7 +445,7 @@ export function NotificationRail() {
       >
         {tone !== 'error' ? liveText : ''}
       </div>
-      <div aria-live="assertive" role="alert" className="sr-only">
+      <div aria-live="assertive" role={announceRole ?? undefined} className="sr-only">
         {tone === 'error' ? liveText : ''}
       </div>
       <div aria-live="polite" className="sr-only">
@@ -413,6 +459,12 @@ export function NotificationRail() {
       </div>
       <div aria-live="polite" className="sr-only">
         {unexpected && unexpectedHasSlot ? translate('unexpectedError.text', { ns: 'workspace' }) : ''}
+      </div>
+      <div aria-live="assertive" role={announceRole ?? undefined} className="sr-only">
+        {engineExit ? translate('exitNotice.engine.text', { ns: 'workspace' }) : ''}
+      </div>
+      <div aria-live="polite" className="sr-only">
+        {previous && previousHasSlot ? translate('exitNotice.previous.text', { ns: 'workspace' }) : ''}
       </div>
       {/* 显示顺序 = 出现的先后（`order`），最新的最靠近底边；DOM 顺序固定 */}
       {addedPresence.mounted && (
@@ -470,6 +522,39 @@ export function NotificationRail() {
           action={{ label: translate('settings.diagnostics.send.cardButton', { ns: 'dialogs' }), onClick: openSendFromCard }}
           onClose={() => useUnexpectedErrorStore.getState().dismiss()}
           closeLabel={translate('actions.close')}
+        />
+      )}
+      {previousPresence.mounted && previousShown && (
+        <Toast
+          key={`previous-exit-${previousShown.token}`}
+          order={previousOrder}
+          tone="error"
+          state={previousPresence.state}
+          plain
+          data-previous-exit-card={previousShown.kind}
+          icon={<StatusIcon tone="error" />}
+          text={translate('exitNotice.previous.text', { ns: 'workspace' })}
+          // 只打开现有的确认框（本机备包）；上传要等用户在框里点「发送」
+          action={{ label: translate('settings.diagnostics.send.cardButton', { ns: 'dialogs' }), onClick: openSendFromPreviousCard }}
+          onClose={() => useExitNoticeStore.getState().dismissPrevious()}
+          closeLabel={translate('actions.close')}
+        />
+      )}
+      {enginePresence.mounted && (
+        <Toast
+          order={engineOrder}
+          tone="error"
+          state={enginePresence.state}
+          plain
+          data-engine-exited-card={lastEngineExit.current ?? undefined}
+          icon={<StatusIcon tone="error" />}
+          text={translate('exitNotice.engine.text', { ns: 'workspace' })}
+          note={translate('exitNotice.engine.note', { ns: 'workspace' })}
+          action={{
+            label: translate('exitNotice.engine.restart', { ns: 'workspace' }),
+            onClick: () => void restartEngineFromCard(),
+            loading: restarting,
+          }}
         />
       )}
       {hintPresence.mounted && hint && (

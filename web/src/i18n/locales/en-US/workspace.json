@@ -148,6 +148,16 @@
   "unexpectedError": {
     "text": "Something unexpected happened. You can send us the diagnostics."
   },
+  "exitNotice": {
+    "engine": {
+      "text": "The rendering service stopped unexpectedly",
+      "restart": "Restart",
+      "note": "After restarting you can send a problem report"
+    },
+    "previous": {
+      "text": "Tavotto did not exit normally last time"
+    }
+  },
   "crash": {
     "blank": "Open a blank layout",
     "body": "Your layout is saved on this computer; reload to resume from the last snapshot. If it fails again, choose “Open a blank layout” — nothing is deleted.",
@@ -921,6 +931,7 @@
     "line": {
       "checking": "Checking…",
       "offline": "Connection lost, reconnecting…",
+      "engineStopped": "The rendering service has stopped",
       "checkFailed": "Couldn't start checking",
       "argsMissing_one": "1 argument missing",
       "argsMissing_other": "{{count}} arguments missing",

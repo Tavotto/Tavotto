@@ -130,12 +130,20 @@ _MANIFEST = RUNTIME / "runtime-manifest.json"
 # 另一边拦住，而放行的那一边才是发出去的。
 from build_worker_runtime import BuildError, check_runtime_dir  # noqa: E402
 
+_RUNTIME_AFTER_ANALYSIS = None
 if _MANIFEST.is_file():
     try:
         _info = check_runtime_dir(_MANIFEST, require_smoke=_require)
     except BuildError as exc:
         raise SystemExit(f"[tavotto.spec] {exc}")
-    datas.append((str(RUNTIME), "runtime"))
+    if sys.platform == "win32":
+        # Windows：runtime 在 Analysis **之后**以 DATA 加入（见下面 `_RUNTIME_AFTER_ANALYSIS`）。放进 `datas` 的话
+        # PyInstaller 会把里面的 PE 文件重新归类为二进制并做依赖分析，runtime 自带的 `libcrypto-3.dll` / `libssl-3.dll`
+        # 作为依赖落到 `_internal/` 顶层、先到先得压掉打包 Python 自己那一份——两边 Python 小版本不同（OpenSSL 不同）时
+        # 新的 `_ssl.pyd` 就导入失败（#1051）。runtime 是独立进程用的，原样复制即可。
+        _RUNTIME_AFTER_ANALYSIS = RUNTIME
+    else:
+        datas.append((str(RUNTIME), "runtime"))
     print(f"[tavotto.spec] 内置 runtime: {RUNTIME} "
           f"（{_info['platform']['os']}/{_info['platform']['arch']}，"
           f"Python {_info['python']['version']}，冒烟 {_info['build']['smoke']}）")
@@ -259,6 +267,16 @@ a = Analysis(
               "pytest", "setuptools", "pip", "pymupdf", "fitz"],
     noarchive=False,
 )
+if _RUNTIME_AFTER_ANALYSIS is not None:
+    a.datas += Tree(str(_RUNTIME_AFTER_ANALYSIS), prefix="runtime")  # noqa: F821 — spec 作用域里的 PyInstaller 内置
+
+# 构建期闸门（#1051）：顶层的 libcrypto / libssl 必须与 `_ssl.pyd` 同源，否则宁可这里就失败，
+# 不要打出一个一启动就 `DLL load failed while importing _ssl` 的包（只在 Windows 上存在这种同名 DLL 竞争）。
+if sys.platform == "win32":
+    from frozen_ssl_gate import assert_ssl_dlls_consistent  # noqa: E402
+
+    assert_ssl_dlls_consistent([*a.binaries, *a.datas])
+
 pyz = PYZ(a.pure)
 
 ICON = str(ROOT / "assets" / "icon" /

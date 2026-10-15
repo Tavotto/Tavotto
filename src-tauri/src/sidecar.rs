@@ -306,6 +306,20 @@ impl Sidecar {
         ))
     }
 
+    /// 引擎有没有自己（意外）退出了。非阻塞。
+    ///
+    /// - 还在跑 / 已被 [`Sidecar::shutdown`] 收走（`child` 被 take）→ `None`：
+    ///   **shutdown 之后的 `None` 是正常关闭，不是崩溃**；
+    /// - 已退出 → 回收子进程（置空，之后 `shutdown` 是空操作）并返回闭集类型，
+    ///   不带 status 文本与日志（退出标记的内容见 `exit_marker`）。
+    pub fn poll_exit(&self) -> Option<crate::exit_marker::EngineExit> {
+        let mut guard = self.child.lock().unwrap();
+        let status = guard.as_mut()?.try_wait().ok().flatten()?;
+        guard.take();
+        drop(self.stdin.lock().unwrap().take());
+        Some(crate::exit_marker::EngineExit::classify(status.code()))
+    }
+
     /// 优雅退出：关 stdin（EOF → sidecar 自行收 worker/AI 并退出），
     /// 限时等不到再 kill。幂等。
     pub fn shutdown(&self) {
@@ -327,5 +341,82 @@ impl Sidecar {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::exit_marker::EngineExit;
+
+    fn fake(args: &[&str]) -> Sidecar {
+        #[cfg(unix)]
+        let mut cmd = Command::new("sh");
+        #[cfg(unix)]
+        cmd.arg("-c");
+        #[cfg(windows)]
+        let mut cmd = Command::new("cmd");
+        #[cfg(windows)]
+        cmd.arg("/C");
+        cmd.args(args).stdin(Stdio::piped());
+        let mut child = cmd.spawn().unwrap();
+        let stdin = child.stdin.take();
+        Sidecar {
+            child: Mutex::new(Some(child)),
+            stdin: Mutex::new(stdin),
+            log_path: PathBuf::new(),
+        }
+    }
+
+    fn wait_exit(sc: &Sidecar) -> Option<EngineExit> {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while Instant::now() < deadline {
+            if let Some(k) = sc.poll_exit() {
+                return Some(k);
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        None
+    }
+
+    #[test]
+    fn poll_exit_reports_a_nonzero_exit_once() {
+        let sc = fake(&["exit 3"]);
+        assert_eq!(wait_exit(&sc), Some(EngineExit::Nonzero));
+        assert_eq!(sc.poll_exit(), None, "reported once");
+        sc.shutdown(); // 之后的 shutdown 是空操作
+    }
+
+    #[test]
+    fn poll_exit_reports_a_zero_exit() {
+        let sc = fake(&["exit 0"]);
+        assert_eq!(wait_exit(&sc), Some(EngineExit::Zero));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn poll_exit_reports_a_signal_death() {
+        let sc = fake(&["kill -9 $$"]);
+        assert_eq!(wait_exit(&sc), Some(EngineExit::Signal));
+    }
+
+    #[test]
+    fn a_running_engine_is_not_an_exit() {
+        #[cfg(unix)]
+        let sc = fake(&["cat >/dev/null"]); // 读 stdin 直到 EOF
+        #[cfg(windows)]
+        let sc = fake(&["more >nul"]);
+        assert_eq!(sc.poll_exit(), None);
+        sc.shutdown();
+    }
+
+    #[test]
+    fn poll_exit_after_shutdown_is_none_not_a_crash() {
+        #[cfg(unix)]
+        let sc = fake(&["cat >/dev/null"]);
+        #[cfg(windows)]
+        let sc = fake(&["more >nul"]);
+        sc.shutdown(); // 正常关闭：EOF → 子进程以 0 退出
+        assert_eq!(sc.poll_exit(), None);
     }
 }

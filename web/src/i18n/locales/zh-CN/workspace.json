@@ -139,6 +139,16 @@
   "unexpectedError": {
     "text": "Tavotto 出了点意外，可以把诊断发给我们"
   },
+  "exitNotice": {
+    "engine": {
+      "text": "渲染服务意外退出了",
+      "restart": "重新启动",
+      "note": "重启后可以发送问题反馈"
+    },
+    "previous": {
+      "text": "上次 Tavotto 没有正常退出"
+    }
+  },
   "crash": {
     "blank": "打开空白排版",
     "body": "排版已自动保存在本机，刷新后从最后一次快照继续。仍然出错可选「打开空白排版」，原排版不会删除。",
@@ -869,6 +879,7 @@
     "line": {
       "checking": "正在检查…",
       "offline": "连接断了，正在重连…",
+      "engineStopped": "渲染服务已停止",
       "checkFailed": "没能开始检查",
       "argsMissing_other": "还差 {{count}} 个参数",
       "argsReady": "参数已填好",

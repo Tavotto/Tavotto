@@ -16,7 +16,14 @@ vi.mock('@/lib/api', async (importOriginal) => ({
   startDiagSend: vi.fn(),
 }))
 
+vi.mock('@/lib/desktop', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/desktop')>()),
+  restartEngine: vi.fn(async () => true),
+}))
+
 import { NotificationRail } from '@/components/StatusBar'
+import { restartEngine } from '@/lib/desktop'
+import { useExitNoticeStore } from '@/store/exitNoticeStore'
 import { literal, t } from '@/i18n'
 import { prepareDiagSend, setProjectEnvironment, startDiagSend } from '@/lib/api'
 import { useDiagSendStore } from '@/store/diagSendStore'
@@ -359,5 +366,93 @@ describe('「出了点意外」卡（PR A）', () => {
     showCard()
     const statusEl = container.querySelector<HTMLElement>('[data-status-tone]')!
     expect(Number(unexpectedCard()!.style.order)).toBeGreaterThan(Number(statusEl.style.order))
+  })
+})
+
+describe('引擎退出两张卡（ADR 0129）', () => {
+  const engineCard = () => container.querySelector<HTMLElement>('[data-engine-exited-card]')
+  const previousCard = () => container.querySelector<HTMLElement>('[data-previous-exit-card]')
+  const toasts = () => container.querySelectorAll('[data-toast-layout]')
+
+  beforeEach(() => {
+    useDiagSendStore.setState({ capability: { enabled: true }, open: false })
+    useExitNoticeStore.setState({ engineExit: null, restarting: false, previous: null })
+    vi.mocked(prepareDiagSend).mockClear()
+    vi.mocked(startDiagSend).mockClear()
+    vi.mocked(restartEngine).mockClear()
+  })
+  afterEach(() => {
+    act(() => useExitNoticeStore.setState({ engineExit: null, restarting: false, previous: null }))
+    useDiagSendStore.setState({ capability: null, open: false })
+  })
+
+  it('修复卡：一句话 + 一个主按钮「重新启动」；折叠的一句只在 title；没有发送入口', () => {
+    act(() => useExitNoticeStore.getState().setEngineExit('nonzero'))
+    const el = engineCard()!
+    expect(el.textContent).toContain(t('exitNotice.engine.text', { ns: 'workspace' }))
+    const buttons = el.querySelectorAll('button')
+    expect(buttons).toHaveLength(1)
+    expect(buttons[0].textContent).toBe(t('exitNotice.engine.restart', { ns: 'workspace' }))
+    expect(el.title).toBe(t('exitNotice.engine.note', { ns: 'workspace' }))
+    expect(el.textContent).not.toContain(t('settings.diagnostics.send.cardButton', { ns: 'dialogs' }))
+  })
+
+  it('不受发送开关控制：开关 null 时修复卡照出，下次启动卡不出', () => {
+    useDiagSendStore.setState({ capability: null })
+    act(() => {
+      useExitNoticeStore.getState().setEngineExit('signal')
+      useExitNoticeStore.getState().showPrevious('app_unclean')
+    })
+    expect(engineCard()).not.toBeNull()
+    expect(previousCard()).toBeNull()
+  })
+
+  it('点「重新启动」调 restartEngine，且转圈期间重复点击无效', async () => {
+    let finish!: (v: boolean) => void
+    vi.mocked(restartEngine).mockReturnValueOnce(new Promise<boolean>((r) => (finish = r)))
+    act(() => useExitNoticeStore.getState().setEngineExit('zero'))
+    await act(async () => engineCard()!.querySelector('button')!.click())
+    await act(async () => engineCard()!.querySelector('button')!.click())
+    expect(restartEngine).toHaveBeenCalledTimes(1)
+    expect(useExitNoticeStore.getState().restarting).toBe(true)
+    await act(async () => finish(false)) // 壳没动手：按钮还给用户
+    expect(useExitNoticeStore.getState().restarting).toBe(false)
+    expect(prepareDiagSend).not.toHaveBeenCalled()
+    expect(startDiagSend).not.toHaveBeenCalled()
+  })
+
+  it('下次启动卡：一句话 + 「发送问题反馈」+ ×；点主动作只 setOpen(true)，prepare / start 为 0', () => {
+    act(() => useExitNoticeStore.getState().showPrevious('engine_exited'))
+    const el = previousCard()!
+    expect(el.textContent).toContain(t('exitNotice.previous.text', { ns: 'workspace' }))
+    const buttons = el.querySelectorAll('button')
+    expect(buttons).toHaveLength(2)
+    expect(buttons[0].textContent).toBe(t('settings.diagnostics.send.cardButton', { ns: 'dialogs' }))
+    act(() => buttons[0].click())
+    expect(useDiagSendStore.getState().open).toBe(true)
+    expect(useExitNoticeStore.getState().previous).toBeNull()
+    expect(prepareDiagSend).not.toHaveBeenCalled()
+    expect(startDiagSend).not.toHaveBeenCalled()
+  })
+
+  it('previous 为空时没有卡；× 关掉只清 store', () => {
+    expect(previousCard()).toBeNull()
+    act(() => useExitNoticeStore.getState().showPrevious('app_unclean'))
+    act(() => previousCard()!.querySelectorAll('button')[1].click())
+    expect(useExitNoticeStore.getState().previous).toBeNull()
+    expect(useDiagSendStore.getState().open).toBe(false)
+  })
+
+  it('仲裁：修复卡从不让位——它 + 状态占满两条时，下次启动卡与提示让位', () => {
+    act(() => {
+      useExitNoticeStore.getState().showPrevious('app_unclean')
+      useExitNoticeStore.getState().setEngineExit('nonzero')
+    })
+    expect(previousCard(), '修复卡 + 下次启动卡 = 两条').not.toBeNull()
+    act(() => useUiStore.getState().setStatus(literal('正在构建')))
+    tick(200)
+    expect(engineCard()).not.toBeNull()
+    expect(previousCard(), '修复卡 + 状态已满两条').toBeNull()
+    expect(toasts()).toHaveLength(2)
   })
 })
