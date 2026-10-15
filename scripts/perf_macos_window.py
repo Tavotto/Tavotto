@@ -36,13 +36,32 @@ STAGES = ("idle", "drag", "resize", "complex")
 class Process:
     pid: int
     ppid: int
-    cpu: float
+    cpu_seconds: float
     rss_kib: int
     command: str
 
 
+def parse_cpu_time(text: str) -> float:
+    """ps 的累计 CPU 时间 [dd-][hh:]mm:ss[.cc] -> 秒；无法解析抛 ValueError。"""
+    days = 0
+    if "-" in text:
+        day_text, text = text.split("-", 1)
+        days = int(day_text)
+    parts = text.replace(",", ".").split(":")
+    if not 1 <= len(parts) <= 3:
+        raise ValueError(text)
+    seconds = 0.0
+    for part in parts:
+        seconds = seconds * 60 + float(part)
+    return days * 86400 + seconds
+
+
 def parse_ps(stdout: str) -> list[Process]:
-    """PS 的 comm 可能有空格；只在内存里解析，不把命令名放进报告。"""
+    """PS 的 comm 可能有空格；只在内存里解析，不把命令名放进报告。
+
+    第三列是累计 CPU 时间而不是 %cpu：macOS 的 %cpu 是带衰减的长窗口均值，
+    不是本次采样区间的占用，区间占用由相邻两次累计时间的差分得到。
+    """
     result: list[Process] = []
     for line in stdout.splitlines():
         fields = line.strip().split(None, 4)
@@ -50,7 +69,7 @@ def parse_ps(stdout: str) -> list[Process]:
             continue
         try:
             pid, ppid = int(fields[0]), int(fields[1])
-            cpu = float(fields[2].replace(",", "."))
+            cpu = parse_cpu_time(fields[2])
             rss = int(fields[3])
         except (ValueError, OverflowError):
             continue
@@ -60,7 +79,7 @@ def parse_ps(stdout: str) -> list[Process]:
     return result
 
 
-def classify(processes: list[Process]) -> dict[str, float | int | None]:
+def classify(processes: list[Process]) -> dict:
     """仅以 Tavotto 二进制的精确 basename 找 root；不关联其他应用的 WebKit。"""
     by_pid = {p.pid: p for p in processes}
     roots = {p.pid for p in processes if Path(p.command).name == "Tavotto"}
@@ -73,27 +92,42 @@ def classify(processes: list[Process]) -> dict[str, float | int | None]:
                 family.add(p.pid)
                 changed = True
     members = [by_pid[pid] for pid in family]
-    servers = [p.cpu for p in processes if Path(p.command).name == "WindowServer"]
+    servers = [p for p in processes if Path(p.command).name == "WindowServer"]
     return {
         "root_count": len(roots),
         "family_processes": len(members),
-        "family_cpu_pct": round(sum(p.cpu for p in members), 2),
+        # 下面两个以 pid 为键的累计 CPU 时间只在内存里用于差分，record 不写进报告。
+        "_roots": frozenset(roots),
+        "_family_cpu_s": {p.pid: p.cpu_seconds for p in members},
+        "_windowserver_cpu_s": {
+            p.pid: p.cpu_seconds for p in processes if Path(p.command).name == "WindowServer"
+        },
         # 按进程相加的 RSS 可能重复计算共享页，不是物理占用的真实总和。
         "family_rss_sum_mib": round(sum(p.rss_kib for p in members) / 1024, 2),
         # WindowServer 为系统全局值，不可归因于 Tavotto。
-        "windowserver_global_cpu_pct": round(sum(servers), 2) if servers else None,
+        "windowserver_present": bool(servers),
     }
 
 
-def sample_ps() -> dict[str, float | int | None]:
+def sample_ps() -> dict:
     output = subprocess.run(
-        ["ps", "-axo", "pid=,ppid=,pcpu=,rss=,comm="],
+        ["ps", "-axo", "pid=,ppid=,time=,rss=,comm="],
         capture_output=True,
         text=True,
         timeout=5,
         check=True,
     )
     return classify(parse_ps(output.stdout))
+
+
+def interval_cpu_pct(
+    previous: dict[int, float], current: dict[int, float], wall_seconds: float
+) -> float | None:
+    """相邻两次累计 CPU 时间之差 / 墙钟间隔；新出现的 pid 取其全部累计时间。"""
+    if wall_seconds <= 0:
+        return None
+    used = sum(max(0.0, t - previous.get(pid, 0.0)) for pid, t in current.items())
+    return round(used / wall_seconds * 100, 2)
 
 
 def quantile(xs: list[float], q: float) -> float | None:
@@ -123,6 +157,11 @@ def summarize(report: dict) -> dict:
     return out
 
 
+def _app_present_throughout(report: dict) -> bool:
+    """任一样本明确记录 root_count 为 0（进程丢失）就不可比。"""
+    return all(not isinstance(s, dict) or s.get("root_count", 1) != 0 for s in report["samples"])
+
+
 def compare_reports(idle: dict, drag: dict) -> dict:
     """Agent 机器可读诊断：仅资源代理，无 GPU/frame 呈现证据，绝不返回 pass。"""
     a, b = summarize(idle), summarize(drag)
@@ -137,6 +176,8 @@ def compare_reports(idle: dict, drag: dict) -> dict:
         and bool(idle["macos_version"])
         and a["count"] >= 5
         and b["count"] >= 5
+        and _app_present_throughout(idle)
+        and _app_present_throughout(drag)
     )
     deltas: dict[str, float | None] = {}
     if comparable:
@@ -162,13 +203,40 @@ def record(stage: str, seconds: float, interval: float) -> dict:
         raise ValueError("require 2 <= seconds <= 120 and 0.1 <= interval <= 2")
     start = time.monotonic()
     samples = []
+    first_roots: frozenset[int] | None = None
+    previous: dict | None = None
+    previous_at = start
     while time.monotonic() - start < seconds:
         row = sample_ps()
-        row["elapsed_ms"] = round((time.monotonic() - start) * 1000, 1)
-        samples.append(row)
+        now = time.monotonic()
+        if first_roots is None:
+            first_roots = row["_roots"]
+        if not first_roots or row["_roots"] != first_roots:
+            raise ValueError(
+                "Tavotto process missing or restarted during capture; no report was saved"
+            )
+        cpu_pct = windowserver_pct = None
+        if previous is not None:
+            wall = now - previous_at
+            cpu_pct = interval_cpu_pct(previous["_family_cpu_s"], row["_family_cpu_s"], wall)
+            if row["windowserver_present"]:
+                windowserver_pct = interval_cpu_pct(
+                    previous["_windowserver_cpu_s"], row["_windowserver_cpu_s"], wall
+                )
+        samples.append(
+            {
+                "root_count": row["root_count"],
+                "family_processes": row["family_processes"],
+                "family_cpu_pct": cpu_pct,
+                "family_rss_sum_mib": row["family_rss_sum_mib"],
+                "windowserver_global_cpu_pct": windowserver_pct,
+                "elapsed_ms": round((now - start) * 1000, 1),
+            }
+        )
+        previous, previous_at = row, now
         time.sleep(interval)
-    if not any(row["root_count"] > 0 for row in samples):
-        raise ValueError("Tavotto process not found; no report was saved")
+    if not samples:
+        raise ValueError("no samples collected; no report was saved")
     return {
         "schema": SCHEMA,
         "stage": stage,
@@ -182,6 +250,7 @@ def record(stage: str, seconds: float, interval: float) -> dict:
             "windowserver_is_system_wide_not_app_attribution",
             "webkit_webcontent_may_not_be_descendant",
             "no_frame_or_gpu_presentation_measurement",
+            "cpu_is_cputime_delta_between_polls_10ms_resolution",
         ],
     }
 

@@ -23,7 +23,7 @@ python scripts/perf_macos_window.py record --stage drag --seconds 12 --output dr
 python scripts/perf_macos_window.py compare idle.json drag.json
 ```
 
-输出只含枚举、版本、数字样本；不包含 PID、用户名称、应用路径、图内数据。但 **RSS 求和可能重复算共享页；WindowServer CPU 是全局值，不能归因于 Tavotto；WKWebView/WebContent 进程可能不是 Tavotto 子进程，可能不在家族统计里**。无 Tavotto 进程时拒绝写报告。
+输出只含枚举、版本、数字样本；不包含 PID、用户名称、应用路径、图内数据。但 **RSS 求和可能重复算共享页；WindowServer CPU 是全局值，不能归因于 Tavotto；WKWebView/WebContent 进程可能不是 Tavotto 子进程，可能不在家族统计里**。无 Tavotto 进程时拒绝写报告。录制中 Tavotto 进程消失或换了 pid（崩溃/重启）同样拒绝写报告；CPU 取相邻两次 `ps` 累计 CPU 时间之差除以墙钟间隔（`ps` 的 %cpu 是带衰减的长窗口均值，不用），分辨率约 10 ms，第一个样本没有 CPU 值。
 
 ## 真正能回答「拖影在哪里」的取证
 

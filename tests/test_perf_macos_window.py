@@ -10,25 +10,25 @@ import perf_macos_window as P  # noqa: E402
 
 def test_process_family_excludes_unrelated_webkit_and_counts_descendants():
     rows = P.parse_ps(
-        "100 1 5.2 102400 /Applications/Tavotto.app/Contents/MacOS/Tavotto\n"
-        "101 100 2.5 20480 /Library/Frameworks/Python Framework/Python\n"
-        "102 101 1.0 10240 /somewhere/workerd\n"
-        "200 1 25.0 40960 /System/Library/Frameworks/WebKit.WebContent\n"
-        "300 1 9.0 40000 /System/Library/PrivateFrameworks/SkyLight.framework/WindowServer\n"
+        "100 1 0:05.20 102400 /Applications/Tavotto.app/Contents/MacOS/Tavotto\n"
+        "101 100 0:02.50 20480 /Library/Frameworks/Python Framework/Python\n"
+        "102 101 0:01.00 10240 /somewhere/workerd\n"
+        "200 1 0:25.00 40960 /System/Library/Frameworks/WebKit.WebContent\n"
+        "300 1 0:09.00 40000 /System/Library/PrivateFrameworks/SkyLight.framework/WindowServer\n"
     )
     m = P.classify(rows)
     assert m["root_count"] == 1
     assert m["family_processes"] == 3
-    assert m["family_cpu_pct"] == 8.7
+    assert sum(m["_family_cpu_s"].values()) == 8.7
     assert m["family_rss_sum_mib"] == 130.0
-    assert m["windowserver_global_cpu_pct"] == 9.0
+    assert m["_windowserver_cpu_s"] == {300: 9.0}
 
 
 def test_no_app_is_not_silently_assumed_running():
-    data = P.classify(P.parse_ps("200 1 25.0 40960 WebKit.WebContent\n"))
+    data = P.classify(P.parse_ps("200 1 0:25.00 40960 WebKit.WebContent\n"))
     assert data["root_count"] == 0
     assert data["family_processes"] == 0
-    assert data["windowserver_global_cpu_pct"] is None
+    assert data["windowserver_present"] is False
 
 
 def test_report_has_numerical_evidence_only_and_cannot_claim_gpu_measurement():
@@ -106,3 +106,100 @@ def test_native_resource_delta_rejects_cross_os_samples():
     }
     active = {**report, "stage": "drag", "macos_version": "25.4"}
     assert P.compare_reports(report, active)["status"] == "incomparable"
+
+
+def test_parse_cpu_time_formats():
+    assert P.parse_cpu_time("0:00.01") == 0.01
+    assert P.parse_cpu_time("1:02.50") == 62.5
+    assert P.parse_cpu_time("1:02:03.00") == 3723.0
+    assert P.parse_cpu_time("2-01:00:00.00") == 2 * 86400 + 3600
+
+
+def _fake_record_env(monkeypatch, ps_outputs):
+    """按顺序回放 ps 输出，假时钟每次 sleep 前进 interval（墙钟 0.5 s/次）。"""
+    clock = {"t": 0.0}
+    outputs = iter(ps_outputs)
+
+    class Done:
+        def __init__(self, stdout):
+            self.stdout = stdout
+
+    monkeypatch.setattr(P.sys, "platform", "darwin")
+    monkeypatch.setattr(P.subprocess, "run", lambda *a, **k: Done(next(outputs)))
+    monkeypatch.setattr(P.time, "monotonic", lambda: clock["t"])
+    monkeypatch.setattr(P.time, "sleep", lambda s: clock.__setitem__("t", clock["t"] + s))
+
+
+APP = "/Applications/Tavotto.app/Contents/MacOS/Tavotto"
+WS = "/System/Library/PrivateFrameworks/SkyLight.framework/WindowServer"
+
+
+def test_record_cpu_is_cputime_delta_over_the_poll_interval(monkeypatch):
+    # 累计 CPU 0.00 -> 0.10 -> 0.10 -> 0.10 s，墙钟间隔各 0.5 s：区间占用 20% 然后 0%。
+    _fake_record_env(
+        monkeypatch,
+        [
+            f"100 1 0:00.00 1024 {APP}\n300 1 1:00.00 500 {WS}\n",
+            f"100 1 0:00.10 1024 {APP}\n300 1 1:00.25 500 {WS}\n",
+            f"100 1 0:00.10 1024 {APP}\n300 1 1:00.25 500 {WS}\n",
+            f"100 1 0:00.10 1024 {APP}\n300 1 1:00.25 500 {WS}\n",
+            f"100 1 0:00.10 1024 {APP}\n300 1 1:00.25 500 {WS}\n",
+        ],
+    )
+    report = P.record("drag", 2, 0.5)
+    cpu = [s["family_cpu_pct"] for s in report["samples"]]
+    assert cpu == [None, 20.0, 0.0, 0.0]
+    ws = [s["windowserver_global_cpu_pct"] for s in report["samples"]]
+    assert ws == [None, 50.0, 0.0, 0.0]
+    assert "pid" not in json.dumps(report).lower().replace("pids", "")
+    assert "_family_cpu_s" not in json.dumps(report)
+
+
+def test_record_rejects_capture_that_loses_the_app(monkeypatch):
+    _fake_record_env(
+        monkeypatch,
+        [
+            f"100 1 0:00.00 1024 {APP}\n",
+            f"100 1 0:00.10 1024 {APP}\n",
+            "300 1 1:00.00 500 " + WS + "\n",
+            "300 1 1:00.00 500 " + WS + "\n",
+        ],
+    )
+    try:
+        P.record("drag", 2, 0.5)
+    except ValueError as exc:
+        assert "no report was saved" in str(exc)
+    else:
+        raise AssertionError("app disappearing mid-capture must not produce a report")
+
+
+def test_record_rejects_capture_when_app_restarts_with_new_pid(monkeypatch):
+    _fake_record_env(
+        monkeypatch,
+        [f"100 1 0:09.00 1024 {APP}\n", f"200 1 0:00.05 1024 {APP}\n"] * 2,
+    )
+    try:
+        P.record("drag", 2, 0.5)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("a restarted app must not be stitched into one capture")
+
+
+def test_compare_marks_reports_with_missing_app_samples_incomparable():
+    def rep(stage, root_counts):
+        return {
+            "schema": P.SCHEMA,
+            "stage": stage,
+            "macos_version": "26.1",
+            "arch": "arm64",
+            "samples": [
+                {"root_count": n, "family_cpu_pct": 1.0, "family_rss_sum_mib": 10.0}
+                for n in root_counts
+            ],
+        }
+
+    ok = rep("idle", [1] * 6)
+    lost = rep("drag", [1, 1, 0, 0, 0, 0])
+    assert P.compare_reports(ok, lost)["status"] == "incomparable"
+    assert P.compare_reports(ok, rep("drag", [1] * 6))["status"] == "diagnostic_only"
