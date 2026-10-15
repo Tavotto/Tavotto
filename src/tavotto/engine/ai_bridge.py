@@ -1122,10 +1122,55 @@ def _refuse_stale_revert(sess: dict, script_path: Path, snapshot: bytes) -> None
     raise AgentError("ai_revert_conflict", {"script": sess["script"]})
 
 
+#: 会话详情（`GET /api/ai/sessions/<sid>`）对外给的字段——**显式白名单**，每个值都必须能 `json.dumps`。
+#: 内存里的会话 dict 带着不可序列化的内部对象（`proc` 子进程、`exited` 的 `threading.Event`），用黑名单排除会在下一次有人
+#: 往会话里加字段时再炸一次（曾经只排除了 `proc`，`exited` 让本进程正在运行的会话详情一律 500）。
+SESSION_DTO_KEYS: tuple[str, ...] = (
+    "id",
+    "agent",
+    "provider",
+    "script",
+    "prompt",
+    "status",
+    "changed",
+    "diff",
+    "transcript",
+    "refresh",
+    "model",
+    "effort",
+    "scope",
+    "target",
+    "started",
+    "started_ms",
+    "ended_ms",
+    "error",
+    "client_request_id",
+    "revert_available",
+    "pinned",
+    "note",
+)
+#: 会话 dict 里**有意不对外**的内部字段（含不可序列化的）。`tests/test_ai_idempotency.py` 钉住：会话 dict 的每个键
+#: 必须落在 DTO 白名单或这里——新加字段时必须表态，不会悄悄漏进响应、也不会悄悄让详情 500。
+SESSION_INTERNAL_KEYS: frozenset[str] = frozenset(
+    {"proc", "exited", "script_path", "snapshot", "project", "context", "owner_pid"}
+)
+
+
+def _session_dto(raw: dict) -> dict:
+    """把会话 dict（内存里的 / sidecar 合并历史的 / 历史行）收成可序列化的对外形状：只取白名单里有的键。"""
+    out = {k: raw[k] for k in SESSION_DTO_KEYS if k in raw}
+    if isinstance(out.get("transcript"), list):
+        out["transcript"] = [dict(t) for t in out["transcript"]]  # 拷一份：pump 线程还在往里追加
+    return out
+
+
 def get(sid: str) -> dict | None:
     sess = SESSIONS.get(sid)
     if sess is not None:
-        return {k: v for k, v in sess.items() if k not in ("proc",)}
+        live = dict(sess)  # 先浅拷：pump 线程随时在改
+        snap = live.get("snapshot")
+        live["revert_available"] = bool(snap) and Path(snap).is_file()
+        return _session_dto(live)
     side = _load_sidecar(sid)
     # 后端已重启：以 SQLite 历史为准（启动时 running 已被标为 interrupted）
     hist = ai_history.get(sid)
@@ -1134,25 +1179,30 @@ def get(sid: str) -> dict | None:
         # `refresh` 结局，不回 404——404 会被前端当成「没有详情」，凭摘要收尾、丢掉「改成了但项目没刷新」的警告（Codex #1098）
         if hist is None:
             return None
-        return {**hist, "note": "改前快照已清理，记录来自历史库"}
+        return _session_dto({**hist, "note": "改前快照已清理，记录来自历史库"})
     if hist is not None:
-        return {
+        return _session_dto(
+            {
+                **side,
+                "status": hist["status"],
+                "transcript": hist["transcript"],
+                "diff": hist["diff"],
+                "changed": hist["changed"],
+                "refresh": hist.get("refresh"),
+                "revert_available": hist.get("revert_available"),
+                "note": "后端已重启，记录来自历史库",
+            }
+        )
+    return _session_dto(
+        {
             **side,
-            "status": hist["status"],
-            "transcript": hist["transcript"],
-            "diff": hist["diff"],
-            "changed": hist["changed"],
-            "refresh": hist.get("refresh"),
-            "note": "后端已重启，记录来自历史库",
+            "status": "interrupted",
+            "transcript": [],
+            "diff": "",
+            "changed": None,
+            "note": "后端已重启，仅可回滚",
         }
-    return {
-        **side,
-        "status": "interrupted",
-        "transcript": [],
-        "diff": "",
-        "changed": None,
-        "note": "后端已重启，仅可回滚",
-    }
+    )
 
 
 def cancel(sid: str) -> bool:

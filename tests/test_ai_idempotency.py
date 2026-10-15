@@ -764,3 +764,46 @@ def test_resend_is_deduped_before_the_panel_and_registry_are_revalidated(
     fresh = _post(client, rid="rid-fresh-00000002")  # 新 id 仍然要过校验
     assert fresh.status_code == 404 and fresh.get_json()["code"] == "not_parameterizable"
     assert _spawned(counter) == 1
+
+
+# ---------------------------------------------------------------------------
+# 会话详情只给显式白名单的、可序列化的字段（本进程正在运行的会话曾因 `exited` 的 Event 一律 500）
+# ---------------------------------------------------------------------------
+def test_detail_of_a_session_running_in_this_process_is_200_and_valid_json(
+    client, tmp_path, cli, monkeypatch
+):
+    state, _ = cli
+    state["delay"] = 1.5
+    _open(client, _project(tmp_path))
+    monkeypatch.setattr(m, "sse_publish", lambda *a: None)
+    sid = _post(client).get_json()["session"]
+    r = client.get(f"/api/ai/sessions/{sid}")  # 任务还在跑
+    assert r.status_code == 200, r.data
+    body = json.loads(r.data)  # 合法 JSON
+    assert body["id"] == sid and body["status"] == "running"
+    assert (
+        "proc" not in body
+        and "exited" not in body
+        and "script_path" not in body
+        and "snapshot" not in body
+    )
+    _wait_idle()
+    assert client.get(f"/api/ai/sessions/{sid}").status_code == 200
+
+
+def test_every_key_of_a_live_session_is_classified_and_the_dto_is_serializable(tmp_path, cli):
+    """结构性保护：会话 dict 的每个键要么在对外白名单、要么在「有意不对外」清单里。以后往会话里加字段必须表态——
+    不会悄悄漏进响应，也不会悄悄把详情变成 500；白名单里的每个值都必须能 `json.dumps`。"""
+    state, _ = cli
+    state["delay"] = 1.0
+    figs = _project(tmp_path)
+    sid = ai_bridge.run("codex", "fig1.py", "p", str(figs))
+    live = dict(ai_bridge.SESSIONS[sid])
+    unclassified = set(live) - set(ai_bridge.SESSION_DTO_KEYS) - ai_bridge.SESSION_INTERNAL_KEYS
+    assert unclassified == set(), f"会话里有没表态的新字段: {sorted(unclassified)}"
+    for key in ai_bridge.SESSION_DTO_KEYS:
+        if key in live:
+            json.dumps(live[key])  # 白名单里的值必须可序列化
+    json.dumps(ai_bridge.get(sid))
+    _wait_idle()
+    engine_watch.stop()
