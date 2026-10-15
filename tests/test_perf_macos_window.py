@@ -2,7 +2,7 @@
 
 import json
 import sys
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 import perf_macos_window as P  # noqa: E402
@@ -483,3 +483,16 @@ def test_collect_environment_marks_failures_unknown(monkeypatch):
         "displays": None,
         "tavotto_version": None,
     }
+
+
+def test_info_plist_is_found_from_the_executable_path_without_relying_on_separators():
+    posix = PurePosixPath("/Applications/Tavotto.app/Contents/MacOS/Tavotto")
+    assert P.info_plist_for_executable(posix) == PurePosixPath(
+        "/Applications/Tavotto.app/Contents/Info.plist"
+    )
+    windows = PureWindowsPath("C:\\x\\Tavotto.app\\Contents\\MacOS\\Tavotto")
+    assert P.info_plist_for_executable(windows) == PureWindowsPath(
+        "C:\\x\\Tavotto.app\\Contents\\Info.plist"
+    )
+    assert P.info_plist_for_executable(PurePosixPath("/usr/bin/Tavotto")) is None
+    assert P.info_plist_for_executable(PurePosixPath("/a/Contents/Other/Tavotto")) is None

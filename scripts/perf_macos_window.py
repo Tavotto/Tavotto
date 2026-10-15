@@ -22,7 +22,7 @@ import subprocess
 import sys
 import time
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePath
 
 # Windows 被重定向的子进程按本地代码页编码中文，必须同时固定 stdout / stderr。
 for _stream in (sys.stdout, sys.stderr):
@@ -150,6 +150,15 @@ def _run_text(cmd: list[str], timeout: float = 10) -> str | None:
     return done.stdout if isinstance(done.stdout, str) else None
 
 
+def info_plist_for_executable(exe: PurePath) -> PurePath | None:
+    """<x>.app/Contents/MacOS/<exe> -> <x>.app/Contents/Info.plist；按父目录名找，不依赖分隔符。"""
+    macos = exe.parent
+    contents = macos.parent
+    if macos.name == "MacOS" and contents.name == "Contents":
+        return contents / "Info.plist"
+    return None
+
+
 def collect_environment(root_command: str | None) -> dict:
     """采集会影响可比性的非标识性环境事实；取不到的字段为 None（compare 视为不满足）。
 
@@ -184,11 +193,10 @@ def collect_environment(root_command: str | None) -> dict:
         except (ValueError, AttributeError, TypeError):
             displays = None
     version = None
-    marker = "/Contents/MacOS/"
-    if root_command and marker in root_command:
-        plist = Path(root_command.split(marker)[0] + "/Contents/Info.plist")
+    plist = info_plist_for_executable(Path(root_command)) if root_command else None
+    if plist is not None:
         try:
-            value = plistlib.loads(plist.read_bytes()).get("CFBundleShortVersionString")
+            value = plistlib.loads(Path(plist).read_bytes()).get("CFBundleShortVersionString")
             version = value if isinstance(value, str) and value else None
         except (OSError, ValueError, plistlib.InvalidFileException):
             version = None

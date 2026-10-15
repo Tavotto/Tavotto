@@ -3760,3 +3760,15 @@ def test_perf_agent_resolves_cli_shim_and_passes_its_backend_python(
         assert argv[:4] == [shim, "exec", "playwright", "test"]
         assert env["TAVOTTO_PYTHON"] == (override or current_python)
     assert calls[2][0][0] == current_python
+
+
+def test_perf_probe_finds_the_app_bundle_plist_with_windows_separators(monkeypatch):
+    """#1001 合并组 Windows 腿：按 "/Contents/MacOS/" 字符串切路径，反斜杠下版本恒为 None。"""
+    scripts = str(Path(__file__).resolve().parents[1] / "scripts")
+    monkeypatch.syspath_prepend(scripts)
+    import perf_macos_window as mod
+
+    exe = PureWindowsPath("C:\\x\\Tavotto.app\\Contents\\MacOS\\Tavotto")
+    assert mod.info_plist_for_executable(exe) == PureWindowsPath(
+        "C:\\x\\Tavotto.app\\Contents\\Info.plist"
+    )
