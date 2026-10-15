@@ -5,7 +5,7 @@
  */
 import { act, useRef } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { useBoldTrackingLock } from './useBoldWidthLock'
 
 declare global {
@@ -100,7 +100,11 @@ describe('useBoldTrackingLock', () => {
     await render(true, text)
     const first = rangeCalls
     expect(first).toBe(2) // 400 与 600 各一次
-    for (let i = 0; i < 5; i++) await render(true, text) // 同 props 重渲染：effect 不再触发
+    // 同 props 重渲染：effect 根本不触发（命中缓存也不算——连样式都不该读）
+    const styleReads = vi.spyOn(window, 'getComputedStyle')
+    for (let i = 0; i < 5; i++) await render(true, text)
+    expect(styleReads).not.toHaveBeenCalled()
+    styleReads.mockRestore()
     expect(rangeCalls).toBe(first)
     // 取消再选中（同名）：命中缓存，不再量
     await render(false, text)
