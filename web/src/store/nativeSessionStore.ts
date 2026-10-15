@@ -4,6 +4,7 @@ import {
   approveNativePending,
   buildNativeSession,
   cancelNativePending,
+  cancelNativeSession,
   continueNativeSession,
   detachNativeSession,
   fetchNativePending,
@@ -127,6 +128,8 @@ interface NativeSessionStore {
   resume: (sessionId: string) => Promise<void>
   detach: (sessionId: string) => Promise<void>
   terminate: (sessionId: string) => Promise<void>
+  /** 结束桌面拥有的会话（没有对应的准备卡时，native 卡上的「停止运行」）：与上面三个同一套互斥闸 / 记错 */
+  cancelOwned: (sessionId: string) => Promise<void>
   /** 重新拉一次清单（重开界面 / SSE 重连之后的对账） */
   refresh: (projectRoot?: string) => Promise<void>
   /** 收起一条终态会话的卡片 */
@@ -364,6 +367,7 @@ export const useNativeSessionStore = create<NativeSessionStore>((set, get) => ({
   resume: (sessionId) => runAction(sessionId, continueNativeSession, set, get),
   detach: (sessionId) => runAction(sessionId, detachNativeSession, set, get),
   terminate: (sessionId) => runAction(sessionId, terminateNativeSession, set, get),
+  cancelOwned: (sessionId) => runAction(sessionId, cancelNativeSession, set, get),
 
   refresh: async (projectRoot) => {
     const epoch = get().epoch

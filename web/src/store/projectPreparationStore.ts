@@ -47,6 +47,18 @@ let REQUEST_TIMEOUT_MS = 15_000
 /** 补拉的退避节奏：有活动的会话按它轮询（SSE 提示之外的兜底），失联时同样按它重试 */
 let POLL_MS: readonly number[] = [500, 1000, 2000, 4000]
 
+/** 已经有过尝试、已结束的阶段：后端复用这样的会话时只给 `run`（没有 `run_when_ready`） */
+const ENDED_PHASES: ReadonlySet<PreparationPhase> = new Set(['completed', 'partial', 'action_required', 'cancelled'])
+
+/**
+ * 已结束的会话上卡片「可以直接再跑」吗：结果卡（跑完 / 没出图 / 没登记——用户点的就是再跑一次）或主按钮本身就是报告里的 `run`（失败后的再试一次、取消后的再运行）。
+ * 有要用户先答的事（参数 / 目录 / 依赖 / 数据 / 环境 / 弹窗提醒…）时主按钮不是 run，停在各自的卡上，不代认领
+ */
+function rerunnableView(v: ReturnType<typeof prepView>): boolean {
+  if (['completed', 'completed_unlinked', 'no_figure', 'no_figure_raster', 'not_registered'].includes(v.state)) return true
+  return v.primary?.kind === 'action' && v.primary.action === 'run'
+}
+
 /** 后端还在推进、值得补拉的 phase（其余是等用户 / 终局） */
 const LIVE_PHASES: ReadonlySet<PreparationPhase> = new Set([
   'running',
@@ -412,13 +424,14 @@ export const useProjectPreparationStore = create<PreparationState>((set, get) =>
     const rerun =
       !report.actions.some((a) => a.kind === 'run_when_ready') &&
       report.actions.some((a) => a.kind === 'run') &&
-      report.phase === 'completed'
+      ENDED_PHASES.has(report.phase)
     if (!rerun && !report.actions.some((a) => a.kind === 'run_when_ready')) return
     // 只在卡片会说「可以运行了」（`ready`，没有要用户先看的事）时代认领：要先答的事（运行目录 / 环境 / 数据 / 必填参数）、要装的组件（用户该先看见
     // 装什么、装到哪）、弹窗 / 来源不明的提醒、重启后重建的会话都停在各自的卡上，由用户点那张卡的主按钮（它同样是 run_when_ready）
     const missing = missingArgsFor(e, e.target.argv ?? [])
-    const state = prepView(e, { argsChanged: draftDiffers(e.target), editReady: false, missingArgs: missing }).state
-    if (rerun ? state !== 'completed' && state !== 'completed_unlinked' : state !== 'ready') return
+    const view = prepView(e, { argsChanged: draftDiffers(e.target), editReady: false, missingArgs: missing })
+    const state = view.state
+    if (rerun ? !rerunnableView(view) : state !== 'ready') return
     // 沿用了上次成功的参数：一键运行之前让用户看一眼「将沿用 N 个参数」（卡上有清除），所以这一次不代认领
     if (reusedArgCount(e) > 0) return
     if (!rerun) {

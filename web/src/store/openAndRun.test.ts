@@ -500,6 +500,32 @@ describe('已跑完的会话只给 run（没有 run_when_ready）：显式「打
     await refreshB
   })
 
+  const withRun = (r: PreparationReport) => ({ ...r, actions: [action('run'), action('recheck')] })
+
+  it.each([
+    ['partial（没出图）', () => withRun(report({ phase: 'partial', outcome: { kind: 'execution_finished_no_figure' }, observation_seq: 3 }))],
+    ['action_required（上次失败）', () => withRun(report({ phase: 'action_required', outcome: { kind: 'failed', code: 'script_error' }, observation_seq: 3 }))],
+  ])('上次 %s 后一键：认领 run；新一轮成功一张图 → 进入编辑', async (_n, make) => {
+    mockCreate.mockResolvedValueOnce(make())
+    mockAct.mockResolvedValueOnce({ claimed: true, report: running(4, { provider: { plan_id: 'prep-plan', attempt_id: 'att-2', attempts: 2, dependency: null } }) })
+    await open()
+    expect(mockAct).toHaveBeenCalledTimes(1)
+    expect(mockAct.mock.calls[0][1]).toMatchObject({ action_id: 'act-run' })
+    expect(entry().armed).toBe(true)
+    mockGet.mockResolvedValueOnce(done(['a'], 'att-2', 5, { actions: [action('recheck')] }))
+    await store().refresh(KEY)
+    await vi.waitFor(() => expect(openFastEdit).toHaveBeenCalledTimes(1))
+  })
+
+  it('上次失败且需要用户先答（脚本要参数）：不代认领，停在卡上', async () => {
+    mockCreate.mockResolvedValueOnce(
+      withRun(report({ phase: 'action_required', outcome: { kind: 'failed', code: 'script_needs_arguments' }, observation_seq: 3 })),
+    )
+    await open()
+    expect(mockAct).not.toHaveBeenCalled()
+    expect(entry().armed).toBe(false)
+  })
+
   it('非显式打开（只是查看）：不认领 run、不跑', async () => {
     mockCreate.mockResolvedValueOnce(finished())
     await open(false)
