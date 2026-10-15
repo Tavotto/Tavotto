@@ -250,6 +250,9 @@ export function engineErrorMsg(err: unknown): UiMessage {
   if (err instanceof ArtifactValidationError || (err instanceof EngineError && err.code === 'artifact_source_unavailable')) {
     return artifactErrorMsg(err instanceof ArtifactValidationError ? err.reason : err.params?.reason)
   }
+  if (err instanceof EngineError && err.installRoute === 'unsupported_platform') {
+    return msg('prep.line.depsPlatform', { module: err.module }, 'workspace')
+  }
   if (err instanceof EngineError && err.code && i18n.exists(`backend.${err.code}`, { ns: 'errors' })) {
     const detail = err.traceback.trim().split('\n').at(-1)?.trim() ?? ''
     // 文案要 {{error}} 却拿不到 traceback（老 server / 精简错误体）时退回
@@ -339,6 +342,24 @@ function noteProjectGone(status: number, body: Record<string, unknown>): void {
   }
 }
 
+/**
+ * 引擎兜底 500（`code === 'internal_error'`）的汇聚出口——「意外错误卡」的来源之一（PR A）。
+ * **只认这个兜底码**：具体业务码各有各的卡。回调注册制（同上，避免 api ↔ store 成环）；只带方法与路由，
+ * 不带 params / 响应体。回调里的异常吞掉，绝不改变本次请求往上抛的错误。
+ */
+let engine500Handler: ((n: { method: string; url: string }) => void) | null = null
+export function setEngine500Handler(fn: ((n: { method: string; url: string }) => void) | null): void {
+  engine500Handler = fn
+}
+function noteEngine500(status: number, body: Record<string, unknown>, method: string | undefined, url: string): void {
+  if (status < 500 || body?.code !== 'internal_error' || !engine500Handler) return
+  try {
+    engine500Handler({ method: (method ?? 'GET').toUpperCase(), url })
+  } catch {
+    /* 同上 */
+  }
+}
+
 /** 失败响应的 JSON 错误体（非 JSON 时给空对象）；只在 !res.ok 时调用 */
 const errorBody = (res: Response): Promise<Record<string, unknown>> =>
   res
@@ -365,6 +386,7 @@ async function jsonFetch<T>(url: string, init?: RequestInit, pj?: string | null)
       /* 非 JSON 错误体，保留状态码 */
     }
     noteProjectGone(res.status, body)
+    noteEngine500(res.status, body, init?.method, url)
     throw new ApiError(detail, res.status, body, res.headers?.get('X-Tavotto-Diagnostic-Ref') || null)
   }
   return res.json() as Promise<T>
@@ -1811,6 +1833,14 @@ export interface ArtifactReceiptFacts {
   packages: Record<string, string>
   cwd_origin: string | null
   observation: string | null
+  /** safe 档的执行保真度（V2 PR3a，`receipt.project_fidelity`）：闭集枚举 + 计数，没有路径；native / 老 worker 没有 */
+  fidelity?: {
+    level: 'deviated' | 'suspect' | 'none_observed'
+    blocked: { op: string; kind: string; count: number }[]
+    intercepted: { op: string; kind: string; count: number }[]
+    signals: { kind: string; via: string; count: number }[]
+    unobserved: string[]
+  } | null
   binding: { revision: string | null; matched: boolean | null; changed: number; unobserved: number }
 }
 
@@ -2442,6 +2472,8 @@ export class EngineError extends Error {
   code: string
   /** code === 'missing_dependency' 时缺的那个包名 */
   module: string
+  /** 缺依赖的后端分类；平台限制不能通过更换本机 Python 补齐 */
+  installRoute?: string
   /**
    * `missing_dependency` 且**项目环境自动接手也没成**时的结构化原因
    * （ADR 0018）。有它才能把「这个项目附近没有虚拟环境」和「找到了但它
@@ -2480,6 +2512,7 @@ export class EngineError extends Error {
     extra?: {
       params?: Record<string, unknown>
       retryable?: boolean
+      installRoute?: string
       confirmation?: WorkdirConfirmation
       explicit?: ExplicitInterpreterFailure
       dependencyPreparation?: DependencyPreparationOffer
@@ -2489,6 +2522,7 @@ export class EngineError extends Error {
     super(message)
     this.params = extra?.params
     this.retryable = extra?.retryable
+    this.installRoute = extra?.installRoute
     this.traceback = traceback
     this.code = code
     this.module = module
@@ -2551,6 +2585,7 @@ export async function engineRender(
       {
         params: body.params as Record<string, unknown> | undefined,
         retryable: body.retryable as boolean | undefined,
+        installRoute: body.install_route as string | undefined,
         confirmation: body.confirmation as WorkdirConfirmation | undefined,
         explicit: body.explicit as ExplicitInterpreterFailure | undefined,
         dependencyPreparation: body.dependency_preparation as
@@ -2719,7 +2754,7 @@ async function previewPngResponse(
       (body.module as string) || '',
       body.project_env as ProjectEnvFailure | undefined,
       body.dependency_repair as DependencyRepairOffer | undefined,
-      { params: body.params as Record<string, unknown> | undefined, retryable: body.retryable as boolean | undefined },
+      { params: body.params as Record<string, unknown> | undefined, retryable: body.retryable as boolean | undefined, installRoute: body.install_route as string | undefined },
     )
   }
   return res
@@ -3171,6 +3206,7 @@ interface ProjectScoped {
 }
 
 export type ServerEvent =
+  | ({ kind: 'render.preparing'; id: string } & ProjectScoped)
   | ({ kind: 'render.started'; id: string; cost?: string; cold?: boolean } & ProjectScoped)
   | ({ kind: 'render.done'; id: string; rev?: number } & ProjectScoped)
   | ({ kind: 'render.failed'; id: string; error?: string } & ProjectScoped)
@@ -3300,6 +3336,7 @@ export interface AiRefreshOutcome {
 }
 
 const EVENT_KINDS = [
+  'render.preparing',
   'render.started',
   'render.done',
   'render.failed',
@@ -3932,6 +3969,8 @@ export interface EngineEnvironment {
   error?: string | null
   /** ?probe= 时才有：各包实测 import 到的版本，null = import 不到 */
   imports?: Record<string, string | null>
+  /** ?probe= 时 Conda 激活取环境失败（瞬时）：没有 `imports`，`code` 为 `conda_launcher_unavailable` */
+  imports_error?: { code: string; detail: string }
   /** 当前项目那一份（没打开项目时是 `{ open: false }`） */
   project?: ProjectEnvironment
 }
@@ -4941,7 +4980,12 @@ export interface DiagSendPrepared {
   schema: number
   max_bytes: number
   too_large: boolean
-  entries: { name: string; kind: string }[]
+  /** 包内文件：名字、内容类别（闭集 id）、解压后的字节数 */
+  entries: { name: string; kind: string; bytes?: number }[]
+  /** 三个勾选项在这份包里的实际取值（引擎白名单校验后的；老引擎没有这个键 = 全 false） */
+  options?: { source: boolean; crash_reports: boolean; corrupt_sessions: boolean }
+  /** 因体积上限被截短的类别（按优先级从低往高截；核心文件不截） */
+  truncated?: { kind: string; original_bytes: number; kept_bytes: number }[]
 }
 
 export type DiagSendState = 'prepared' | 'sending' | 'cancelling' | 'done' | 'failed' | 'cancelled' | 'unknown'
@@ -4968,13 +5012,36 @@ export interface DiagSendStatus {
 
 export const fetchDiagSendCapability = () => jsonFetch<DiagSendCapability>('/api/diagnostics/send')
 
+/** 备包序号由引擎发放（单调计数、不看墙钟）：引擎只认最新的，晚到的旧请求回 409 `diag_stale_prepare`。 */
+const fetchDiagSendSeq = (pj?: string | null) =>
+  jsonFetch<{ seq: number }>('/api/diagnostics/send/seq', { method: 'POST' }, pj)
+/** 备包被更新的请求取代（引擎 409 `stale_prepare`）：不是失败，静默忽略。 */
+export const isStalePrepare = (e: unknown) =>
+  e instanceof ApiError && e.status === 409 && e.body?.code === 'diag_stale_prepare'
+
 /** 在本机备好一份包（零网络）。载荷与导出诊断包相同。 */
-export const prepareDiagSend = (payload: unknown) =>
-  jsonFetch<DiagSendPrepared>('/api/diagnostics/send/prepare', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
-  })
+export const prepareDiagSend = async (
+  payload: unknown,
+  options?: { source?: boolean; crash_reports?: boolean; corrupt_sessions?: boolean },
+  /** 显式的项目：备包绑定调用方当时采载荷的那个项目，不跟着全局当前项目走 */
+  pj?: string | null,
+) => {
+  // 勾选项同时走查询串：载荷超过引擎的请求体上限会被整份丢弃，勾选项不能跟着消失（引擎以查询串为准）
+  const picked = Object.entries(options ?? {})
+    .filter(([, v]) => v === true)
+    .map(([k]) => k)
+  const { seq } = await fetchDiagSendSeq(pj)
+  const q = `?seq=${seq}${options ? `&options=${picked.join(',')}` : ''}`
+  return jsonFetch<DiagSendPrepared>(
+    `/api/diagnostics/send/prepare${q}`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    },
+    pj,
+  )
+}
 
 /** 用户要保存的**同一份字节**（就是点发送时会上传的那份）。 */
 export async function fetchDiagSendBundle(id: string): Promise<Blob> {
@@ -5113,6 +5180,8 @@ export interface SavefigCall {
 /** 试运行失败的结构化错误：稳定 code + params；traceback 只是诊断详情 */
 export interface ProbeError {
   code: string
+  /** 缺依赖的后端分类（与渲染端点同源） */
+  install_route?: string
   /** 后端中文原文（回退）；界面先按 code 查 `errors:backend.*` */
   message: string
   params?: Record<string, unknown>
@@ -5609,6 +5678,8 @@ export interface ScriptInputRequest {
   suggestion?: string | null
   /** 为什么要重新确认：`context_changed` / `config_changed` / `legacy_answer` */
   recheck?: string | null
+  /** 这一问来自桌面拥有的 native 会话（P07）：作答 / 停止走 `/api/native/sessions/*`，不走 `/api/script_input/*` */
+  native?: { session_id: string; request_id: string }
 }
 
 export interface RememberedAnswer {
@@ -5861,6 +5932,23 @@ export interface NativeSessionInfo {
   sequence: number
   /** 此刻能不能做对象级编辑（= 停在屏障上）。后端说了算，前端不自己推 */
   editable: boolean
+  /** 谁拥有这个脚本进程：`desktop` = Tavotto 自己起的（可取消、脚本的 input 由界面作答）；`terminal` = 用户的终端 */
+  owner?: 'desktop' | 'terminal'
+  /** 桌面拥有的脚本此刻停在的那一次提问（事实在后端，不属于某个窗口）；没有在等的 = null */
+  pending_input?: NativePendingInput | null
+  /** 被所有者取消结束的（与脚本自己退出 / 崩溃分开） */
+  cancelled?: boolean
+}
+
+/** 桌面拥有的脚本里 `input` / `readline` / `read` / `getpass` 停住的那一问（P07，ADR 0126）。 */
+export interface NativePendingInput {
+  request_id: string
+  kind: 'input' | 'readline' | 'read' | 'getpass'
+  prompt: string
+  /** 口令：密码框作答、不记住、不预填；后端由 `kind` 推出，不信脚本自报 */
+  masked: boolean
+  ordinal: number
+  at: number
 }
 
 /** 一次 build 的结果：stems + 描述符 + （如实报的）冲突。 */
@@ -5946,6 +6034,29 @@ export const detachNativeSession = (sessionId: string) =>
 /** 结束用户脚本——**明确的危险操作**，退出码固定 5，不伪装成 continue。 */
 export const terminateNativeSession = (sessionId: string) =>
   nativeAction(sessionId, 'terminate')
+
+/**
+ * 回答桌面拥有的脚本此刻停在的那一问（`eof` = 「没有输入」，脚本得到 EOF）。脚本在**同一个进程里续跑**；
+ * 别的窗口先答了 / 提问已过 → 409 `native_input_not_pending`。口令只经这一个请求，不进任何 store / 日志。
+ */
+export const answerNativeInput = (sessionId: string, requestId: string, answer: string | null) =>
+  jsonFetch<{ session: NativeSessionInfo }>(
+    `/api/native/sessions/${encodeURIComponent(sessionId)}/input`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(
+        answer === null ? { request_id: requestId, eof: true } : { request_id: requestId, text: answer },
+      ),
+    },
+  )
+
+/** 结束桌面拥有的脚本进程（运行中 / 停在提问上 / 停在屏障上都行）；真终止，不是放手。 */
+export const cancelNativeSession = (sessionId: string) =>
+  jsonFetch<{ confirmed: boolean; session: NativeSessionInfo }>(
+    `/api/native/sessions/${encodeURIComponent(sessionId)}/cancel`,
+    { method: 'POST' },
+  )
 
 export const fetchNativePermissions = (projectRoot?: string) =>
   jsonFetch<{ permissions: NativePermission[] }>(

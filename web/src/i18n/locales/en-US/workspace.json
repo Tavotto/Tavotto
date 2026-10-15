@@ -15,6 +15,11 @@
     "cardTitle": "{{id}}",
     "cardUsed_one": "used {{count}} time in this layout",
     "cardUsed_other": "used {{count}} times in this layout",
+    "editabilityAll": "All",
+    "editabilityAria": "Filter by editability",
+    "editabilityEditable": "Editable",
+    "editabilityLayout": "Layout",
+    "editabilityPending": "Pending",
     "emptyHint": "Put PDF/PNG files in the project folder and they show up here.",
     "emptyTitle": "No figures in this project yet",
     "filterActiveAria_one": "Filter ({{count}} active)",
@@ -44,7 +49,6 @@
     "runtimeRunAria": "Run {{script}} and discover figures",
     "runtimeSiblingOf": "Same source as {{name}}",
     "scriptBadgeTitle": "Editable",
-    "scriptOnly": "Only editable figures",
     "search": "Search figures…",
     "searchAria": "Search figures",
     "sectionFigures": "Figures",
@@ -63,7 +67,6 @@
     "typeAria": "Filter by type",
     "typeRaster": "Images",
     "typeRuntime": "Runtime figure",
-    "typeScript": "Editable",
     "unsupportedTitle": "These files can’t be used",
     "usedChip": "Used",
     "usedOnly": "Used",
@@ -141,6 +144,19 @@
     "selectedCount_other": "{{count}} selected",
     "sizeMenu": "Size",
     "textMenu": "Text"
+  },
+  "unexpectedError": {
+    "text": "Something unexpected happened. You can send us the diagnostics."
+  },
+  "exitNotice": {
+    "engine": {
+      "text": "The rendering service stopped unexpectedly",
+      "restart": "Restart",
+      "note": "After restarting you can send a problem report"
+    },
+    "previous": {
+      "text": "Tavotto did not exit normally last time"
+    }
   },
   "crash": {
     "blank": "Open a blank layout",
@@ -722,7 +738,7 @@
     "clipboardWriteDenied": "Can’t access the clipboard. The browser denied permission.",
     "coldHint": {
       "heavy": "a cold start can take a few minutes",
-      "medium": "a cold start takes about ten seconds"
+      "medium": "the first run may take longer"
     },
     "dismissError": "Dismiss error",
     "documentLoaded_one": "Loaded {{name}} ({{count}} canvas)",
@@ -915,6 +931,7 @@
     "line": {
       "checking": "Checking…",
       "offline": "Connection lost, reconnecting…",
+      "engineStopped": "The rendering service has stopped",
       "checkFailed": "Couldn't start checking",
       "argsMissing_one": "1 argument missing",
       "argsMissing_other": "{{count}} arguments missing",
@@ -948,6 +965,7 @@
       "depsUnknown": "Tavotto can't install {{module}}. Pick a Python environment that has it",
       "depsStdlib": "Tavotto's built-in environment doesn't include {{module}}",
       "depsStdlibOther": "The Python in use doesn't include {{module}}",
+      "depsPlatform": "{{module}} is specific to another operating system; this script can't run on this system",
       "depsRuntime": "{{module}} is missing",
       "install": "Install missing components first",
       "needsArgs": "The script needs arguments",
@@ -1213,5 +1231,9 @@
       "tooNew": "The last layout “{{name}}” is from a newer Tavotto and can’t be opened by this version.",
       "unavailable": "Your last layout isn’t open yet."
     }
+  },
+  "renderProgress": {
+    "preparing": "Preparing the figure…",
+    "elapsed": "{{message}} · {{seconds}} s elapsed"
   }
 }

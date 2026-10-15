@@ -57,6 +57,17 @@ def client():
     project_watch.stop()
 
 
+def test_missing_posix_stdlib_on_windows_does_not_recommend_changing_python(monkeypatch):
+    from types import SimpleNamespace
+
+    monkeypatch.setattr(pool, "os", SimpleNamespace(name="nt"))
+    err = pool._worker_error(
+        "脚本执行失败", "script_error", "ModuleNotFoundError: No module named 'pwd'"
+    )
+    assert err.install_route == "unsupported_platform"
+    assert pool.should_try_project_env(err) is False
+
+
 def _figs(tmp_path, name="figs"):
     figs = tmp_path / name
     figs.mkdir(parents=True, exist_ok=True)

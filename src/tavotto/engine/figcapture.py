@@ -2035,6 +2035,195 @@ def _readonly_mode(mode) -> bool:
     return "r" in mode and not any(c in mode for c in "+wxa")
 
 
+#: 退出归因认的探路调用：**savefig 成功写出文件之后必然为真 / 不抛**的那些，且必须**解析到**标准库的这些 API
+#: （看 import 别名与属性链，不是只比名字）。`isdir` / `islink` / `is_dir` / `is_symlink` / `ismount` 在真实文件语义下
+#: savefig 之后同样是 False——退出不是守卫造成的，故意不在表里；用户自己的同名函数 / 类方法一律不认（证明不了就不归因）。
+_PROBE_FUNCS = frozenset(
+    {
+        "os.path.exists", "os.path.lexists", "os.path.isfile", "os.path.getsize",
+        "os.path.getmtime", "os.path.getctime", "os.path.getatime", "os.stat", "os.lstat",
+    }
+)  # fmt: skip
+#: `pathlib.Path(...)` 对象上的探路方法
+_PROBE_PATH_METHODS = frozenset({"exists", "is_file", "stat", "lstat"})
+_PATH_CLASSES = frozenset(
+    {"pathlib.Path", "pathlib.PurePath", "pathlib.PosixPath", "pathlib.WindowsPath"}
+)
+
+
+def exit_controlled_by_probe(source: str, exit_line: int | None) -> bool:
+    """`exit_line` 那一行的退出，是不是由"落空的 savefig 目标探测"决定的。纯函数，永不抛。
+
+    只在能证明时成立：该行位于某个 `if` / `while` / 三元 / `and`-`or` 链的分支之下，且**对分支而言必要**的条件
+    就是对 savefig 目标的探测——
+    * `if not P: <退出>`、`while not P:`、`if A and not P: …`（合取里有 `not P`：P 为真则分支不进）；
+    * `if P: … else: <退出>`（else 侧：只有条件整体就是 `P` 才必要）；
+    * `P or <退出>`（先于退出的任一操作数是 `P`）、`not P and <退出>`；
+    * 三元同 if。
+    `P` 是对 `_PROBE_CALL_NAMES` 的调用，且被探测的对象与脚本里某次 `savefig(…)` 的目标**是同一个**（同一常量路径、
+    或同一个表达式 / 变量；`Path(x)` / `str(x)` / `os.fspath(x)` 视同 `x`）。
+    不成立：无条件退出；`not P or 别的`（别的独立为真也进分支）；`or` 的非必要析取；探测的是别的文件；
+    探测结果先存进变量再判断；源码里没有 savefig 目标；语法错。判不出一律 False——保留原分类，宁可不归因。"""
+    if not isinstance(source, str) or not isinstance(exit_line, int):
+        return False
+    try:
+        import ast  # noqa: PLC0415
+
+        tree = ast.parse(source)
+    except (SyntaxError, ValueError, RecursionError):
+        return False
+
+    wrappers = {"Path", "PurePath", "PosixPath", "WindowsPath", "str", "fspath"}
+
+    # 只被赋值过一次的常量字符串变量按常量算：`o = 'o.png'; savefig(o); exists('o.png')` 是同一个目标
+    assigned: dict[str, list] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign):
+            for t in node.targets:
+                if isinstance(t, ast.Name):
+                    assigned.setdefault(t.id, []).append(node.value)
+        elif isinstance(node, (ast.AugAssign, ast.AnnAssign, ast.NamedExpr)):
+            t = node.target
+            if isinstance(t, ast.Name):
+                assigned.setdefault(t.id, []).append(None)
+    constants = {
+        name: values[0].value
+        for name, values in assigned.items()
+        if len(values) == 1
+        and isinstance(values[0], ast.Constant)
+        and isinstance(values[0].value, str)
+    }
+
+    def target_key(node):
+        while (
+            isinstance(node, ast.Call) and node.args and len(node.args) == 1 and not node.keywords
+        ):
+            fn = node.func
+            name = fn.attr if isinstance(fn, ast.Attribute) else getattr(fn, "id", None)
+            if name not in wrappers:
+                break
+            node = node.args[0]
+        if isinstance(node, ast.Name) and node.id in constants:
+            return ("c", os.path.normpath(constants[node.id]))
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            return ("c", os.path.normpath(node.value))
+        return ("d", ast.dump(node))
+
+    savefig_keys = set()
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "savefig"
+        ):
+            arg = node.args[0] if node.args else None
+            for kw in node.keywords:
+                if kw.arg in ("fname", "path"):
+                    arg = kw.value
+            if arg is not None:
+                savefig_keys.add(target_key(arg))
+    if not savefig_keys:
+        return False
+
+    # import 别名：只认 `import os` / `import os.path as osp` / `from os import path` / `from os.path import exists`
+    # 这类绝对导入；被用户自己定义 / 赋值 / 当参数的名字一律不解析（它不再指向标准库）
+    imports: dict[str, str] = {}
+    shadowed: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for al in node.names:
+                if al.asname:
+                    imports[al.asname] = al.name
+                else:
+                    imports[al.name.split(".")[0]] = al.name.split(".")[0]
+        elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
+            for al in node.names:
+                imports[al.asname or al.name] = f"{node.module}.{al.name}"
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            shadowed.add(node.name)
+            if not isinstance(node, ast.ClassDef):
+                shadowed.update(a.arg for a in ast.walk(node.args) if isinstance(a, ast.arg))
+        elif isinstance(node, ast.Name) and isinstance(node.ctx, (ast.Store, ast.Del)):
+            shadowed.add(node.id)
+
+    def dotted(node) -> str | None:
+        if isinstance(node, ast.Name):
+            return None if node.id in shadowed else imports.get(node.id)
+        if isinstance(node, ast.Attribute):
+            base = dotted(node.value)
+            return f"{base}.{node.attr}" if base else None
+        return None
+
+    def is_path_object(node) -> bool:
+        """`node` 是 `pathlib.Path(...)` 的实例：直接构造，或只赋值过一次、值就是这样一次构造的变量。"""
+        if isinstance(node, ast.Name) and len(assigned.get(node.id, ())) == 1:
+            node = assigned[node.id][0]
+        return isinstance(node, ast.Call) and dotted(node.func) in _PATH_CLASSES
+
+    def is_probe(node) -> bool:
+        """`node` 就是一次对 savefig 目标的探路调用，且 callee 解析到标准库的 os.path / os.stat / pathlib.Path。"""
+        if not isinstance(node, ast.Call):
+            return False
+        fn = node.func
+        if dotted(fn) in _PROBE_FUNCS and node.args:  # os.path.exists(o) / os.stat(o)
+            return target_key(node.args[0]) in savefig_keys
+        if (
+            isinstance(fn, ast.Attribute)
+            and fn.attr in _PROBE_PATH_METHODS
+            and not node.args
+            and is_path_object(fn.value)
+        ):  # Path(o).exists() / out.exists()
+            return target_key(fn.value) in savefig_keys
+        return False
+
+    def negated_probe(node) -> bool:
+        return (
+            isinstance(node, ast.UnaryOp)
+            and isinstance(node.op, ast.Not)
+            and is_probe(node.operand)
+        )
+
+    def needs_probe_false(test) -> bool:
+        """条件为真 ⇒ 探测落空（探测落空是进入 body 的必要条件）。"""
+        if negated_probe(test):
+            return True
+        if isinstance(test, ast.BoolOp) and isinstance(test.op, ast.And):
+            return any(needs_probe_false(v) for v in test.values)
+        return False
+
+    def contains(node, line: int) -> bool:
+        return getattr(node, "lineno", 0) <= line <= getattr(node, "end_lineno", 0)
+
+    def walk(node, line: int) -> bool:
+        for child in ast.iter_child_nodes(node):
+            if not contains(child, line):
+                continue
+            if isinstance(node, (ast.If, ast.While, ast.IfExp)) and not contains(node.test, line):
+                in_orelse = child in getattr(node, "orelse", []) or child is getattr(
+                    node, "orelse", None
+                )
+                if in_orelse:
+                    if is_probe(node.test):  # 条件整体是 P：走 else ⇒ P 为假
+                        return True
+                elif needs_probe_false(node.test):
+                    return True
+            if isinstance(node, ast.BoolOp) and child in node.values:
+                idx = node.values.index(child)
+                before = node.values[:idx]
+                if isinstance(node.op, ast.Or) and any(is_probe(v) for v in before):
+                    return True  # 走到后面的操作数 ⇒ 前面的 P 为假
+                if isinstance(node.op, ast.And) and any(negated_probe(v) for v in before):
+                    return True  # 走到后面 ⇒ `not P` 为真 ⇒ P 落空
+            if walk(child, line):
+                return True
+        return False
+
+    try:
+        return walk(tree, exit_line)
+    except RecursionError:
+        return False
+
+
 class BlockedFileOps:
     """safe worker 的守卫**确实拦下**了哪些关键文件操作，以及脚本随后有没有去看被它们影响的路径（P01a）。
 
@@ -2051,11 +2240,18 @@ class BlockedFileOps:
       （去重、有上限，再超则粗化为父目录，最后记「丢失」＝此后任何观察都算命中）；回读第 201+ 个被拦路径
       同样判失败，拦下几百次但从不回读照旧成功。
     * **事实在带外账本里，不在异常里**：脚本 `except Exception: pass` 吞掉什么都洗不掉它。
-    * **盲区写在明处（判不出就别判）**：C 扩展直接 `fopen`、`os.open`、`os.scandir` / `listdir` / `glob`、
-      `os.access`、`os.path.samefile` 等不在包装清单里的状态查询观察不到——这些不会产生 `material()`，
-      也就**不宣称**它们干净；账本只回答「观察到了」，不回答「没观察到所以没事」。被拦截的 `savefig`
-      目标只认**读内容**（open），不认 `exists` / `getsize` 这类 stat：`savefig(p); print(os.path.exists(p))`
+    * **盲区写在明处（判不出就别判）**：C 扩展直接 `fopen`、子进程、`os.access`、`os.path.samefile` 等
+      不在包装清单里的状态查询观察不到——这些不会产生 `material()`，也就**不宣称**它们干净；
+      账本只回答「观察到了」，不回答「没观察到所以没事」。被拦截的 `savefig`
+      目标的 `exists` / `getsize` 这类 stat 不进 `material()`：`savefig(p); print(os.path.exists(p))`
       是常见的校验打印，据此判失败会把原本能出图的脚本变成失败。
+    * **三档（V2 PR3a）**：`material()` 非空 = 确定偏差（`deviated`，build 失败）；没有确定偏差、但记过弱信号
+      （`suspects()`：savefig 目标被 stat、stat / `os.open` / 改名落空、`listdir` / `scandir`（`glob` 经它）计数受影响、
+      改名的源就是被拦截的 savefig 目标）= 疑似（`suspect`，build 照常成功、回执标注）；都没有 = `none_observed`
+      （只表示这些通道没看到，盲区仍在）。弱信号只存 (kind, via) 的计数。
+    * **savefig 目标衍生的 `FileNotFoundError` 是守卫造成的**：直接运行时 `savefig(p)` 之后 `p` 必然存在，
+      所以异常链里指向被拦截 savefig 目标（或被拦改名的路径）的 `FileNotFoundError` 一旦到达终局，
+      `explains(exc)` 把它升为确定偏差——脚本自己吞掉的那些落在弱信号档。
     * 记账只存**操作类别与次数**，路径只在进程内用来比对，不出进程、不进 message / 诊断。
 
     `install()` 装的 open / `os.stat` / `os.path.exists` 系包装在没有任何阻断记录时是一次属性读取就返回；`stop()`
@@ -2075,6 +2271,41 @@ class BlockedFileOps:
     KIND_WRITE = "write"
     KIND_SAVEFIG = "savefig"
 
+    #: 账本里 `op` 的闭集：守卫记账时用的名字（worker 的 `_guard_delete` / `Path.unlink` / `write_text` / `savefig`）。
+    #: 回执只收这些，开放字符串（路径）一律丢弃；加守卫入口时同步（`tests/test_worker_fidelity.py` 对照 worker 源码）。
+    OPS = (
+        "Path.unlink",
+        "Path.write_text",
+        "os.remove",
+        "os.unlink",
+        "os.rmdir",
+        "os.rename",
+        "os.replace",
+        "shutil.rmtree",
+        "shutil.move",
+        "savefig",
+    )
+
+    #: 弱信号（`suspects()`）的 `via` 闭集：只有这些字符串会出现在回执 / 诊断里。
+    VIA_STAT = "stat"  # 脚本查了被拦截 savefig 目标的状态（`exists` / `getsize` / `Path.stat`…）
+    VIA_PROBE_FAILED = (
+        "probe_failed"  # stat / `os.open` 落在受影响路径上 FileNotFoundError（可能被脚本吞了）
+    )
+    VIA_LISTING = (
+        "listing"  # `listdir` / `scandir`（`glob` / `os.walk` 经它）列了受影响路径所在的目录
+    )
+    VIA_MOVE_FAILED = "move_failed"  # 删除 / 改名 / 移动落在受影响路径上 FileNotFoundError
+    VIA_RENAME_SRC = "rename_src"  # 被守卫拦下的改名，源就是被拦截的 savefig 目标
+    SIGNAL_VIAS = (VIA_STAT, VIA_PROBE_FAILED, VIA_LISTING, VIA_MOVE_FAILED, VIA_RENAME_SRC)
+
+    #: `summary()["level"]` 的闭集。
+    LEVEL_DEVIATED = "deviated"
+    LEVEL_SUSPECT = "suspect"
+    LEVEL_NONE_OBSERVED = "none_observed"
+    LEVELS = (LEVEL_DEVIATED, LEVEL_SUSPECT, LEVEL_NONE_OBSERVED)
+
+    MAX_COUNT = 9999
+
     def __init__(self) -> None:
         self._events: list[dict] = []
         self._spill: dict[tuple[str, str], dict] = {}
@@ -2085,6 +2316,13 @@ class BlockedFileOps:
         self._rewritten: set[str] = set()
         #: 只读相对路径回退的解析函数（worker 装回退后挂上）：脚本交出的路径 → 回退实际会去读的路径。
         self.read_redirect = None
+        #: 弱信号计数 {(kind, via): n}；拦下的操作计数 {(op, kind): n}（含没被回读的，只存次数）
+        self._signals: dict[tuple[str, str], int] = {}
+        self._counts: dict[tuple[str, str], int] = {}
+        #: 正在执行的「探路」调用（`exists` / `isfile` / `Path.exists`…）深度：它们本来就靠 stat 落空作答，不算 stat 失败
+        self._check_depth = 0
+        #: 观察序号：每次脚本的 open / stat / 列目录 +1。`explain_exit` 要求"落空的 savefig 目标探测"是退出前最后一次观察。
+        self._seq = 0
 
     # ---- 记账 ----
     @staticmethod
@@ -2108,6 +2346,30 @@ class BlockedFileOps:
         except (OSError, ValueError):
             return None
 
+    def blocked_savefig(self, names, fmt, supported) -> None:
+        """被拦截的 `savefig` 记账——**只在保存本身在真实语义下能成功时**才记。目标目录不存在、格式不支持（或确认不了）时，
+        直接运行里 `savefig` 自己就会失败：之后的 `FileNotFoundError` 不是守卫造成的，不能算到它头上。
+        `names` 是 `savefig_effective_names`，`fmt` 是显式 `format=`，`supported` 是 matplotlib 认的格式集合（None = 确认不了）。
+        检查本身不是脚本的观察，期间置 busy。永不抛。"""
+        was, self._busy = self._busy, True
+        try:
+            if not names or not self._active:
+                return
+            for name in names:
+                path = os.fsdecode(name)
+                parent = os.path.dirname(os.path.abspath(path))
+                if not os.path.isdir(parent):
+                    return
+                ext = os.path.splitext(path)[1][1:]
+                chosen = str(fmt or ext or "").lower()
+                if supported is None or chosen not in supported:
+                    return
+        except Exception:  # noqa: BLE001 —— 确认不了就不记（不归因）
+            return
+        finally:
+            self._busy = was
+        self.blocked("savefig", self.KIND_SAVEFIG, *names)
+
     def blocked(self, op: str, kind: str, *paths, dests=()) -> None:
         """守卫拦下了 `op`（`os.replace` / `Path.unlink` / `savefig`…）：记它影响的路径。永不抛。
 
@@ -2118,6 +2380,11 @@ class BlockedFileOps:
             affected = [p for p in (self._norm(x) for x in paths) if p]
             if not affected:
                 return
+            key = (op, kind)
+            self._counts[key] = min(self._counts.get(key, 0) + 1, self.MAX_COUNT)
+            if kind == self.KIND_RENAME and self._savefig_covers(affected[0]):
+                # 直接运行时这次改名必然成功（源刚被 savefig 写出）；这里被守卫静默跳过，目的地永远不会出现
+                self._signal(kind, self.VIA_RENAME_SRC)
             dest_set = {p for p in (self._norm(x) for x in dests) if p}
             if self._rewritten:  # 新的阻断重新盖住这些路径：之前的「已重写」不再作数
                 self._rewritten = {
@@ -2131,6 +2398,21 @@ class BlockedFileOps:
             )
         except Exception:  # noqa: BLE001 —— 记账失败就少一条，不影响脚本
             return
+
+    def _savefig_covers(self, real: str) -> bool:
+        for ev in (*self._events, *self._spill.values()):
+            if ev["kind"] != self.KIND_SAVEFIG:
+                continue
+            if isinstance(ev["paths"], list):
+                if any(self._covers(p, real) for p in ev["paths"]):
+                    return True
+            elif self._spill_hit(ev, real):
+                return True
+        return False
+
+    def _signal(self, kind: str, via: str) -> None:
+        key = (kind, via)
+        self._signals[key] = min(self._signals.get(key, 0) + 1, self.MAX_COUNT)
 
     def _spill_paths(
         self, op: str, kind: str, affected: list[str], dest_set: frozenset | set = frozenset()
@@ -2185,6 +2467,7 @@ class BlockedFileOps:
             return
         self._busy = True
         try:
+            self._seq += 1
             if not isinstance(mode, str):
                 return
             real = self._norm(path)
@@ -2362,6 +2645,7 @@ class BlockedFileOps:
             return
         self._busy = True
         try:
+            self._seq += 1
             real = self._norm(path)
             if real is not None:
                 self._mark(real, via_stat=True)
@@ -2375,16 +2659,178 @@ class BlockedFileOps:
             return  # 读到的是脚本自己写的（阻断在其后会撤销这条）
         for ev in self._events:
             # 被拦截的 savefig 目标：`exists` / `getsize` 多是「存好了」的校验打印，不据此判分叉；
-            # 读内容（open）才算——`Image.open` / `imread` / `open('rb')` 读到的才是错的数据
+            # 读内容（open）才算——`Image.open` / `imread` / `open('rb')` 读到的才是错的数据。
+            # 但它是弱信号（V2 PR3a）：回执标 `suspect`；脚本随后以非零退出时 `explain_exit` 才升级
             if via_stat and ev["kind"] == self.KIND_SAVEFIG:
+                if any(self._covers(p, real) for p in ev["paths"]):
+                    ev["stat_seen"] = True
+                    self._signal(self.KIND_SAVEFIG, self.VIA_STAT)
                 continue
             if not ev["observed"] and any(self._covers(p, real) for p in ev["paths"]):
                 ev["observed"] = True
         for ev in self._spill.values():
             if via_stat and ev["kind"] == self.KIND_SAVEFIG:
+                if self._spill_hit(ev, real):
+                    ev["stat_seen"] = True
+                    self._signal(self.KIND_SAVEFIG, self.VIA_STAT)
                 continue
             if not ev["observed"] and self._spill_hit(ev, real):
                 ev["observed"] = True
+
+    # ---- 弱信号 / 异常归因（V2 PR3a） ----
+    def observe_listing(self, path) -> None:
+        """脚本列了目录 `path`（`listdir` / `scandir`）。目录里有受影响路径时，条目数与直接运行不同：弱信号。永不抛。"""
+        if not (self._events or self._spill) or not self._active or self._busy:
+            return
+        self._busy = True
+        try:
+            self._seq += 1
+            real = self._norm(path if path is not None else ".")
+            if real is None:
+                return
+            prefix = real.rstrip(os.sep) + os.sep
+            for ev in (*self._events, *self._spill.values()):
+                # 受影响路径在被列目录之内、就是它、或者它在受影响目录之内（被拦的 rmtree 留下的目录仍在）
+                if ev.get("lost") or any(
+                    p.startswith(prefix) or self._covers(p, real) for p in ev["paths"]
+                ):
+                    self._signal(ev["kind"], self.VIA_LISTING)
+                    return
+        except Exception:  # noqa: BLE001
+            return
+        finally:
+            self._busy = False
+
+    @staticmethod
+    def uses_dir_fd(kwargs) -> bool:
+        """调用带了非空的 `*dir_fd`：异常里的相对 `filename` 相对的是那个 fd，不是 cwd，解析不了就别解析。"""
+        return any(k.endswith("dir_fd") and v is not None for k, v in kwargs.items())
+
+    @staticmethod
+    def tag_unresolvable(exc: BaseException) -> None:
+        """给这次 dir_fd 调用抛出的异常打标：之后 `explains` / 弱信号不拿它的 `filename` 去对 cwd 相对的账。永不抛。"""
+        try:
+            exc._tavotto_unresolvable = True  # type: ignore[attr-defined]
+        except Exception:  # noqa: BLE001
+            pass
+
+    def _failure_events(self, exc: BaseException | None) -> list[dict]:
+        """异常链里的「文件不存在」指向的路径，落在被拦截 savefig 目标或被拦改名的路径上的那些事件。"""
+        fnf = _file_not_found_in(exc)
+        if fnf is None or getattr(fnf, "_tavotto_unresolvable", False):
+            return []
+        # 只对账 `filename`（失败的那条路径）。改名类调用还带 `filename2`（目的地）：失败的若是源，才可能是守卫
+        # 没把它写出来；目的地目录不存在 / 不可用时直接运行同样失败，保留原分类
+        real = self._norm(getattr(fnf, "filename", None))
+        if real is None or real in self._rewritten:
+            return []
+        dest = getattr(fnf, "filename2", None)
+        if dest is not None and not self._destination_usable(dest):
+            return []
+        reals = [real]
+        hits = []
+        for ev in (*self._events, *self._spill.values()):
+            if ev["kind"] not in (self.KIND_SAVEFIG, self.KIND_RENAME):
+                continue
+            if isinstance(ev["paths"], list):
+                if any(self._covers(p, r) for p in ev["paths"] for r in reals):
+                    hits.append(ev)
+            elif any(self._spill_hit(ev, r) for r in reals):
+                hits.append(ev)
+        return hits
+
+    def _destination_usable(self, dest) -> bool:
+        """改名 / 移动的目的地的父目录此刻是个存在的目录（直接运行里这次改名才不会因目的地失败）。
+        判断不是脚本的观察：临时置 busy，不记账。"""
+        was, self._busy = self._busy, True
+        try:
+            real = self._norm(dest)
+            return real is not None and os.path.isdir(os.path.dirname(real) or real)
+        finally:
+            self._busy = was
+
+    def note_failed_call(self, exc: BaseException, via: str) -> None:
+        """某个被包装的调用（stat / `os.open` / 守卫放行的改名删除）抛了文件不存在，且指向受影响路径：弱信号
+        （脚本可能 `except OSError` 吞掉）。异常若一路到达终局，`explains` 再升级。永不抛。"""
+        if not (self._events or self._spill) or not self._active or self._busy:
+            return
+        self._busy = True
+        try:
+            for ev in self._failure_events(exc)[:1]:
+                self._signal(ev["kind"], via)
+        except Exception:  # noqa: BLE001
+            return
+        finally:
+            self._busy = False
+
+    def explains(self, exc: BaseException) -> bool:
+        """终局的异常是不是守卫造成的：它的 `FileNotFoundError` 指向被拦截的 savefig 目标（直接运行时它必然存在）
+        或被拦改名的路径。是 → 那些事件记为已观察（确定偏差），`material()` 随之非空。永不抛。"""
+        try:
+            events = self._failure_events(exc)
+            for ev in events:
+                ev["observed"] = True
+            return bool(events)
+        except Exception:  # noqa: BLE001
+            return False
+
+    def note_missing_stat(self, exc: BaseException) -> None:
+        """被拦截的 savefig 目标上的 stat 落空了（任何探路都算）：记下此刻的观察序号，供 `explain_exit` 判"退出由它控制"。永不抛。"""
+        if not (self._events or self._spill) or not self._active or self._busy:
+            return
+        self._busy = True
+        try:
+            for ev in self._failure_events(exc):
+                if ev["kind"] == self.KIND_SAVEFIG:
+                    ev["miss_seq"] = self._seq
+        except Exception:  # noqa: BLE001
+            return
+        finally:
+            self._busy = False
+
+    def note_missing_path(self, path) -> None:
+        """探路调用（`exists` / `isfile` / `Path.exists`…）对被拦截的 savefig 目标**返回了假**：记下此刻的观察序号。
+        POSIX 上落空本来经 `os.stat` 抛 `FileNotFoundError` 被 `note_missing_stat` 记下；Windows 3.12+ 的这些探路是 C 实现、
+        不碰 `os.stat`，只能从返回值认。两条路径记同一个序号，重复无害。永不抛。"""
+        if not (self._events or self._spill) or not self._active or self._busy:
+            return
+        self._busy = True
+        try:
+            real = self._norm(path)
+            if real is None or real in self._rewritten:
+                return
+            for ev in (*self._events, *self._spill.values()):
+                if ev["kind"] != self.KIND_SAVEFIG:
+                    continue
+                hit = (
+                    any(self._covers(p, real) for p in ev["paths"])
+                    if isinstance(ev["paths"], list)
+                    else self._spill_hit(ev, real)
+                )
+                if hit:
+                    ev["miss_seq"] = self._seq
+        except Exception:  # noqa: BLE001
+            return
+        finally:
+            self._busy = False
+
+    def explain_exit(self, *, controlled: bool) -> bool:
+        """脚本以非零状态退出：退出是守卫造成的吗？必须同时成立（缺一保留原分类）：
+        1. 退出前**最后一次**观察就是被拦截 savefig 目标的落空探测（`miss_seq == _seq`）；
+        2. `controlled`：这次退出在脚本源码里位于由探测函数控制的分支之下（`exit_controlled_by_probe`）。
+           只"最后一次探测"不够——`os.path.exists(o); sys.exit(7)` 直接运行也是 7。
+        参数解析库自己的退出由调用方排除。满足时把这些 savefig 事件记为已观察。永不抛。"""
+        if not controlled:
+            return False
+        try:
+            hit = False
+            for ev in (*self._events, *self._spill.values()):
+                if ev["kind"] == self.KIND_SAVEFIG and ev.get("miss_seq") == self._seq:
+                    ev["observed"] = True
+                    hit = True
+            return hit
+        except Exception:  # noqa: BLE001
+            return False
 
     # ---- 终局 ----
     def material(self) -> list[dict]:
@@ -2395,6 +2841,37 @@ class BlockedFileOps:
                 key = (ev["op"], ev["kind"])
                 counts[key] = counts.get(key, 0) + 1
         return [{"op": op, "kind": kind, "count": n} for (op, kind), n in sorted(counts.items())]
+
+    def suspects(self) -> list[dict]:
+        """弱信号（疑似偏差）：`[{kind, via, count}]`，只有闭集枚举与计数，没有路径。"""
+        return [
+            {"kind": kind, "via": via, "count": n}
+            for (kind, via), n in sorted(self._signals.items())
+            if via in self.SIGNAL_VIAS
+        ]
+
+    def summary(self) -> dict:
+        """回执 / 失败诊断的 `fidelity` 段：`level`（三档）、确定偏差的操作、拦下的操作类别与次数、弱信号、盲区。
+        全是闭集枚举与计数——没有路径、argv、stem。"""
+        material = self.material()
+        signals = self.suspects()
+        level = (
+            self.LEVEL_DEVIATED
+            if material
+            else self.LEVEL_SUSPECT
+            if signals
+            else self.LEVEL_NONE_OBSERVED
+        )
+        return {
+            "level": level,
+            "blocked": material,
+            "intercepted": [
+                {"op": op, "kind": kind, "count": n}
+                for (op, kind), n in sorted(self._counts.items())
+            ],
+            "signals": signals,
+            "unobserved": list(INPUT_OBSERVER_UNOBSERVED),
+        }
 
     def stop(self) -> None:
         """脚本跑完：之后一切观察都不算（引擎自己的读写不是脚本的）。"""
@@ -2419,7 +2896,9 @@ class BlockedFileOps:
         mk_ctx: list[tuple[bool, bool]] = []
 
         def _open_through(original, file, mode, args, kwargs):
-            ledger.observe(file, mode)
+            # 自带 `opener`（常见用法是 `os.open(p, f, dir_fd=fd)`）：路径怎么解析由 opener 说了算，不当 cwd 相对路径记账
+            if kwargs.get("opener") is None:
+                ledger.observe(file, mode)
             if not ledger.is_write_mode(mode):
                 return original(file, mode, *args, **kwargs)
             try:
@@ -2443,8 +2922,62 @@ class BlockedFileOps:
             )
 
         def watched_stat(path, *args, **kwargs):
-            ledger.observe_stat(path)
-            return real_stat(path, *args, **kwargs)
+            # 带 dir_fd：路径相对那个 fd，不能当 cwd 相对路径记账 / 归因（直接传 fd 的 `_norm` 本来就是 None）
+            via_fd = ledger.uses_dir_fd(kwargs)
+            if (
+                not ledger._check_depth and not via_fd
+            ):  # 探路包装已经观察过这一次（POSIX 上 exists 内部再走 os.stat）：只算一次
+                ledger.observe_stat(path)
+            try:
+                return real_stat(path, *args, **kwargs)
+            except FileNotFoundError as exc:
+                if via_fd:
+                    ledger.tag_unresolvable(exc)
+                    raise
+                ledger.note_missing_stat(exc)
+                if (
+                    not ledger._check_depth
+                ):  # `exists()` 一类探路本来就靠落空作答；`getsize` / `stat()` 的落空才是信号
+                    ledger.note_failed_call(exc, ledger.VIA_PROBE_FAILED)
+                raise
+
+        real_os_open = os.open
+        real_listdir, real_scandir = os.listdir, os.scandir
+
+        def watched_os_open(path, *args, **kwargs):
+            try:
+                return real_os_open(path, *args, **kwargs)
+            except FileNotFoundError as exc:
+                if ledger.uses_dir_fd(kwargs):
+                    ledger.tag_unresolvable(exc)
+                else:
+                    ledger.note_failed_call(exc, ledger.VIA_PROBE_FAILED)
+                raise
+
+        def watched_listdir(path=None):
+            ledger.observe_listing(path)
+            return real_listdir() if path is None else real_listdir(path)
+
+        def watched_scandir(path=None):
+            ledger.observe_listing(path)
+            return real_scandir() if path is None else real_scandir(path)
+
+        def _counting(original):
+            def counted(*args, **kwargs):
+                # `Path.mkdir(exist_ok=True)` 内部自己会 `is_dir()`（3.10 / 3.11 在撞上旧目录之后、
+                # 豁免记账之前）：那是 mkdir 的实现，不是脚本的观察
+                if not ledger._check_depth and not mk_ctx and args:
+                    ledger.observe_stat(args[0])
+                ledger._check_depth += 1
+                try:
+                    result = original(*args, **kwargs)
+                finally:
+                    ledger._check_depth -= 1
+                if args and not result and not mk_ctx:
+                    ledger.note_missing_path(args[0])
+                return result
+
+            return counted
 
         # Windows 3.12+ 的 `os.path.exists` / `isfile` / `isdir` / `islink` / `lexists` 是 C 实现，
         # 不经 `os.stat`：逐个包上（POSIX 上它们本来经 `os.stat`，重复观察是幂等的）
@@ -2452,8 +2985,16 @@ class BlockedFileOps:
 
         def _wrap_check(original):
             def watched_check(path, *args, **kwargs):
-                ledger.observe_stat(path)
-                return original(path, *args, **kwargs)
+                if not ledger._check_depth:
+                    ledger.observe_stat(path)
+                ledger._check_depth += 1
+                try:
+                    result = original(path, *args, **kwargs)
+                finally:
+                    ledger._check_depth -= 1
+                if not result:
+                    ledger.note_missing_path(path)
+                return result
 
             return watched_check
 
@@ -2463,10 +3004,21 @@ class BlockedFileOps:
                 real_path_checks[name] = fn
                 setattr(os.path, name, _wrap_check(fn))
 
+        # `Path.exists` / `is_file` / `is_dir` / `is_symlink` 也是探路（3.12+ 里它们不一定经 `os.path.*`）
+        real_path_checks_methods: dict[str, object] = {}
+        for name in ("exists", "is_file", "is_dir", "is_symlink"):
+            fn = getattr(pathlib.Path, name, None)
+            if fn is not None:
+                real_path_checks_methods[name] = fn
+                setattr(pathlib.Path, name, _counting(fn))
+
         builtins.open = _wrap(real_open)
         io.open = _wrap(real_io_open)
         pathlib.Path.open = watched_path_open
         os.stat = watched_stat
+        os.open = watched_os_open
+        os.listdir = watched_listdir
+        os.scandir = watched_scandir
 
         def watched_mkdir(path, *args, **kwargs):
             tolerant, parents = mk_ctx[-1] if mk_ctx else (False, False)
@@ -2516,8 +3068,13 @@ class BlockedFileOps:
             io.open = real_io_open
             pathlib.Path.open = real_path_open
             os.stat = real_stat
+            os.open = real_os_open
+            os.listdir = real_listdir
+            os.scandir = real_scandir
             for name, fn in real_path_checks.items():
                 setattr(os.path, name, fn)
+            for name, fn in real_path_checks_methods.items():
+                setattr(pathlib.Path, name, fn)
 
         self._uninstall = uninstall
         return uninstall

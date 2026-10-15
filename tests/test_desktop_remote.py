@@ -117,6 +117,10 @@ def test_local_file_capabilities_are_gated_on_the_local_engine():
         "runCodexIntegration",
         "checkDesktopUpdate",
         "onDesktopOpen",
+        "onEngineExited",
+        "getEngineExited",
+        "takePreviousExit",
+        "restartEngine",
     ]
     shell = [
         "onDesktopMenu",

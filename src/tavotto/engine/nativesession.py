@@ -72,6 +72,14 @@ from .runcodes import RunError
 
 #: 带外事件的键——**与 `bridge_runner.EVENT_KEY` 严格同源**。
 EVENT_KEY = "bridge_event"
+#: 桌面拥有的进程里脚本发起一次提问 / 桌面把答复交回去——**与 `bridge_runner` 严格同源**（P07，ADR 0126）。
+INPUT_REQUEST_EVENT = "input_request"
+INPUT_REPLY_KEY = "input_reply"
+#: 提问的闭集种类（未知种类按 `input` 处理，不信对端）；`getpass` 是口令，答复永不留存
+INPUT_KINDS = ("input", "readline", "read", "getpass")
+INPUT_PROMPT_LIMIT = 1000
+#: 一次答复的字节上限（`read` 可能是整份数据；超限当场拒绝，脚本继续等）
+INPUT_ANSWER_LIMIT = 4 * 1024 * 1024
 
 # ---------------------------------------------------------------------------
 # 状态闭集（ADR 0021 §5.1）。**不用多个互相矛盾的 boolean**：
@@ -103,6 +111,8 @@ STATES = (
 )
 #: 终态：进了就不再出来（`detached` 也是——Tavotto 已经放手了）。
 TERMINAL_STATES = frozenset({ENDED, DETACHED, FAILED})
+#: 进入这些状态时，脚本不可能还停在一次提问上（到了屏障 / 放行 / 终态）。
+_INPUT_CLEARING_STATES = frozenset({BARRIER, CONTINUING, ENDED, DETACHED, FAILED})
 
 #: 单条请求的上限（与 `pool.REQUEST_TIMEOUT` 同口径）。
 REQUEST_TIMEOUT = pool.REQUEST_TIMEOUT
@@ -132,6 +142,8 @@ class NativeTransport:
         self._on_event = on_event
         self._on_close = on_close
         self._lock = threading.Lock()
+        #: 发送串行化：请求 / 单向命令 / 输入答复各自从不同线程发，一行 JSON 不许被另一行劈开
+        self._send_lock = threading.Lock()
         self._waiters: dict[str, dict] = {}
         self._reader: threading.Thread | None = None
         self._closed = False
@@ -243,7 +255,8 @@ class NativeTransport:
         with self._lock:
             self._waiters[rid] = slot
         try:
-            self.sock.sendall((json.dumps(env, ensure_ascii=False) + "\n").encode("utf-8"))
+            with self._send_lock:
+                self.sock.sendall((json.dumps(env, ensure_ascii=False) + "\n").encode("utf-8"))
         except OSError as exc:
             with self._lock:
                 self._waiters.pop(rid, None)
@@ -283,11 +296,25 @@ class NativeTransport:
         """发一条不等响应的请求（`shutdown` 那一条——对端会直接走掉）。"""
         env = pool.build_envelope(obj, generation=generation, revision=revision)
         with _suppress():
-            self.sock.sendall((json.dumps(env, ensure_ascii=False) + "\n").encode("utf-8"))
+            with self._send_lock:
+                self.sock.sendall((json.dumps(env, ensure_ascii=False) + "\n").encode("utf-8"))
+
+    def send_line(self, obj: dict) -> None:
+        """发一行**不是请求**的控制帧（输入答复）。发不出去抛 `NATIVE_SESSION_DISCONNECTED`。"""
+        if self._closed:
+            raise RunError(runcodes.NATIVE_SESSION_DISCONNECTED)
+        try:
+            with self._send_lock:
+                self.sock.sendall((json.dumps(obj, ensure_ascii=False) + "\n").encode("utf-8"))
+        except OSError as exc:
+            raise RunError(runcodes.NATIVE_SESSION_DISCONNECTED) from exc
 
 
 class NativeSession:
     """一条 native 会话。**Worker-like**——上层不该知道自己拿的是哪一种。"""
+
+    #: 回执 / 准备路径按它认控制面（`pool.control_plane_of` 读这个属性；值与 `receipt.CONTROL_PLANE_NATIVE` 同）
+    control_plane = "native"
 
     def __init__(self, *, session_id: str, descriptor: dict):
         meta = descriptor.get("metadata") or {}
@@ -315,6 +342,11 @@ class NativeSession:
         self.launch_id = str(meta.get("launch_id") or "")
         #: 这条会话是被所有者取消结束的（与脚本自己退出、崩溃分开记）
         self.cancelled = False
+        #: 所属计划的登记序号（桌面拥有的会话由 `desktopproc.start` 盖；终端拥有的恒 None）
+        self.launch_order: int | None = None
+        #: 脚本此刻正停在的那一次提问（桌面拥有的才有；事实在后端，不属于某个窗口）。键：`request_id` / `kind` /
+        #: `prompt` / `masked` / `ordinal` / `at`。**答复从不存在这里**。
+        self._pending_input: dict | None = None
 
         self.state = PENDING_CONFIRMATION
         self.barrier_reason = ""
@@ -373,6 +405,9 @@ class NativeSession:
                 # 迟到的事件又显示成"正在运行"。
                 return
             self.state = state
+            if state in _INPUT_CLEARING_STATES:
+                # 脚本已经到了屏障 / 结束：不可能还停在提问上（取消 / 退出 / 断线都走这里）
+                self._pending_input = None
             self.sequence += 1
             self.last_event_at = time.time()
             for k, v in fields.items():
@@ -422,6 +457,8 @@ class NativeSession:
             )
         elif name == "released":
             self._set_state(RUNNING_SCRIPT, barrier_reason="")
+        elif name == INPUT_REQUEST_EVENT:
+            self._on_input_request(frame)
         elif name == "exit":
             self._release_lease()
             self._set_state(
@@ -450,6 +487,88 @@ class NativeSession:
     def note_hello(self, hello: dict) -> None:
         """收到 Bridge Runner 转发过来的握手帧——用户的 Python 起来了。"""
         self._set_state(WAITING_FOR_FIGURE, process_pid=_as_int(hello.get("pid")))
+
+    # ------------------------------------------------------------------
+    # 脚本的提问（P07，ADR 0126）：桌面拥有的进程里 input / stdin / getpass
+    # ------------------------------------------------------------------
+    @property
+    def pending_input(self) -> dict | None:
+        """脚本此刻停在的那一次提问的公开形状（拷贝）；没有在等的 = None。"""
+        with self._lock:
+            return dict(self._pending_input) if self._pending_input else None
+
+    def _publish(self, **fields) -> None:
+        """状态不变、但对界面有意义的变化（提问出现 / 被答 / 被取消）：序号 +1、记事件、推变更。
+
+        事件里只有 `input` 与 `request_id` / `input_kind`——**没有提示词与答案**（SSE 是给所有窗口的）。"""
+        with self._changed:
+            self.sequence += 1
+            self.last_event_at = time.time()
+            entry = {"seq": self.sequence, "state": self.state, "at": self.last_event_at, **fields}
+            self.events.append(entry)
+            self._changed.notify_all()
+        if self._on_change is not None:
+            self._on_change(self, entry)
+
+    def _on_input_request(self, frame: dict) -> None:
+        """reader 线程里跑。终端拥有的会话从不装输入桥，收到也不信（没有人能答）。"""
+        if self.owned is None:
+            return
+        rid = frame.get("request_id")
+        if not isinstance(rid, str) or not rid or len(rid) > 128:
+            return
+        kind = frame.get("kind")
+        kind = kind if kind in INPUT_KINDS else "input"
+        prompt = frame.get("prompt")
+        pending = {
+            "request_id": rid,
+            "kind": kind,
+            "prompt": prompt[:INPUT_PROMPT_LIMIT] if isinstance(prompt, str) else "",
+            "masked": kind == "getpass",  # 由种类推出，不信对端自报
+            "ordinal": _as_int(frame.get("ordinal")) or 0,
+            "at": time.time(),
+        }
+        with self._lock:
+            # 终态判定与装 pending 在同一把锁里:`_set_state` 进终态也持这把锁（并清 pending）,所以终态之后才到的
+            # 提问一律丢弃,不会在已结束的会话上复活一个答不了的框
+            if self.state in TERMINAL_STATES:
+                return
+            self._pending_input = pending
+        self._publish(input="requested", request_id=rid, input_kind=kind)
+
+    def answer_input(self, request_id: str, *, text: str | None = None, eof: bool = False) -> dict:
+        """把用户的答复交给停在提问上的脚本——**同一个进程、同一批对象续跑**。
+
+        先到先得：答复先校验（类型 / 长度 / 能否编码）、认领（清掉 pending）是**最后一步校验**，之后才发；第二个窗口的答复、旧提问的答复、
+        没有提问时的答复一律 `native_input_not_pending`，不排队、不喂给之后的提问。`eof=True` =
+        「没有输入」（`input` 抛 `EOFError`、读回空串；之后同一个进程里 stdin 家族不再提问）。
+        口令的值只经这条通道发一次，不进事件 / 日志 / 状态。
+        """
+        if not eof:
+            if not isinstance(text, str):
+                raise RunError(runcodes.NATIVE_INPUT_INVALID, reason="答复必须是文本")
+            try:
+                size = len(
+                    text.encode("utf-8")
+                )  # 严格编码:控制通道两侧钉 UTF-8,编不出来的答复到不了脚本
+            except UnicodeEncodeError:
+                raise RunError(
+                    runcodes.NATIVE_INPUT_INVALID, reason="答复含有无法编码的字符"
+                ) from None
+            if size > INPUT_ANSWER_LIMIT:
+                raise RunError(runcodes.NATIVE_INPUT_INVALID, reason="答复太长")
+        with self._lock:
+            pending = self._pending_input
+            if self.owned is None or pending is None or pending["request_id"] != request_id:
+                raise RunError(runcodes.NATIVE_INPUT_NOT_PENDING)
+            transport = self.transport
+            self._pending_input = None  # 认领：此后的任何答复都会被拒
+        if transport is None or transport.closed:
+            raise RunError(runcodes.NATIVE_SESSION_DISCONNECTED)
+        reply = {"request_id": request_id, **({"eof": True} if eof else {"text": text})}
+        transport.send_line({INPUT_REPLY_KEY: reply})
+        self._publish(input="answered", request_id=request_id, input_kind=pending["kind"])
+        return {"answered": True, "request_id": request_id}
 
     def _release_lease(self) -> None:
         owned = self.owned
@@ -790,6 +909,7 @@ class NativeSession:
             "last_event_at": self.last_event_at,
             "sequence": self.sequence,
             "editable": self.state == BARRIER,
+            "pending_input": self.pending_input,
         }
 
     def diagnostics(self) -> dict:
@@ -824,10 +944,30 @@ class StartTicket:
     `shutdown_all` 的快照里要么看得到它（并标 `cancelled`，之后挂所有者的一步会被拒），要么注册表已 closing
     根本领不到——两者之间没有「进程已起、谁也看不见」的窗口。"""
 
-    __slots__ = ("launch_id", "owner", "cancelled", "done")
+    __slots__ = (
+        "launch_id",
+        "project_root",
+        "script",
+        "order",
+        "cancel_check",
+        "owner",
+        "cancelled",
+        "done",
+    )
 
-    def __init__(self, launch_id: str):
+    def __init__(
+        self, launch_id: str, project_root: str = "", script: str = "", order: int | None = None
+    ):
         self.launch_id = launch_id
+        #: 这次启动属于哪个项目(项目关闭据此取消在途启动);空 = 不属于任何项目
+        self.project_root = project_root
+        #: 启动的脚本(`spec.target`,项目相对);同一脚本的重新运行据此取消在途启动
+        self.script = script
+        #: 所属计划的登记序号（`PreparationPlan.launch_order`）；None = 未知
+        self.order = order
+        #: 启动方的「我是不是已被取消 / 取代」判定（`PreparationService.is_cancelled`）；None = 不核。`check_start`
+        #: 在 Popen 之前最后再问一次，与 `reserve` / `begin_start` 是同一个判定
+        self.cancel_check = None
         self.owner = None
         self.cancelled = False
         #: 启动线程走完（成功或失败收尾都做完）时置位：关停据此等「在途的启动线程」，哪怕它还没 Popen
@@ -844,6 +984,11 @@ class NativeSessionRegistry:
         #: （ADR 0021 §9）：会话结束即失效，绝不进文档。
         self._routes: dict[tuple, str] = {}
         self._reserved: set[str] = set()
+        #: 已关闭的项目(realpath):其后任何新启动在 `reserve` / `begin_start` 当场被拒,直到项目重新打开
+        self._closed_projects: set[str] = set()
+        #: 项目的「关闭代次」:每次关闭 +1。启动方带着自己登记时看到的代次来:代次对不上 = 它是关闭**之前**的旧准备,
+        #: 项目即使已重新打开也不许起进程（重新打开只清「已关闭」标记,不让旧计划借新状态复活）
+        self._project_epoch: dict[str, int] = {}
         #: launch_id → 已 spawn、还在握手 / 登记中的所有者。不在 `_sessions` 里，但进程已经在跑：
         #: `shutdown_all` 必须看得见它，否则 sidecar 关停时漏掉成孤儿。
         self._starting: dict[str, StartTicket] = {}
@@ -893,15 +1038,43 @@ class NativeSessionRegistry:
             self._sessions[session_id] = session
         return session
 
-    def reserve(self, launch_id: str) -> None:
+    def project_epoch(self, project_root: str) -> int:
+        """这个项目当前的关闭代次（登记计划时取一份带着走）。"""
+        with self._lock:
+            return self._project_epoch.get(os.path.realpath(project_root), 0)
+
+    def _refuse_if_closed(
+        self, project_root: str, epoch: int | None = None, cancelled=None
+    ) -> None:
+        """调用方持锁。注册表 closing、这个项目已关闭、或启动方的代次已过期 → 当场拒绝(一行用户代码都没跑)。"""
+        if self._closing:
+            raise RunError(runcodes.NATIVE_REGISTRY_CLOSING)
+        if cancelled is not None and cancelled():
+            # 启动方的计划已被取消 / 被更新的同脚本计划取代：一行用户代码都不跑（取消落在「还没领票据」的窗口里，
+            # 重跑的 `cancel_project` 看不见它）
+            raise RunError(runcodes.NATIVE_REGISTRY_CLOSING)
+        if not project_root:
+            return
+        root = os.path.realpath(project_root)
+        if root in self._closed_projects or (
+            epoch is not None and epoch != self._project_epoch.get(root, 0)
+        ):
+            raise RunError(runcodes.NATIVE_REGISTRY_CLOSING)
+
+    def reserve(
+        self,
+        launch_id: str,
+        project_root: str = "",
+        epoch: int | None = None,
+        cancelled=None,
+    ) -> None:
         """原子占住一个桌面拥有的 launch_id（取租约 / spawn 之前）；已被占、或同 id 的上一任还没被所有者确认
         结束（`owned.finished`）就抛冲突。检查与占位在同一把锁里。
 
         占位由所有者的完成回调释放（`desktopproc.start`）——握手 / 登记失败后清组超时（取消未确认）也不例外。
         租约键另有一层保险：每次启动的会话 id 都带唯一后缀，不同所有者互相删不掉对方的租约。"""
         with self._lock:
-            if self._closing:
-                raise RunError(runcodes.NATIVE_REGISTRY_CLOSING)
+            self._refuse_if_closed(project_root, epoch, cancelled)
             busy = any(
                 s.launch_id == launch_id
                 and (s.alive() or (s.owned is not None and not s.owned.finished))
@@ -911,12 +1084,22 @@ class NativeSessionRegistry:
                 raise RunError(runcodes.NATIVE_SESSION_CONFLICT)
             self._reserved.add(launch_id)
 
-    def begin_start(self, launch_id: str) -> StartTicket:
+    def begin_start(
+        self,
+        launch_id: str,
+        project_root: str = "",
+        script: str = "",
+        epoch: int | None = None,
+        order: int | None = None,
+        cancelled=None,
+    ) -> StartTicket:
         """spawn **之前**领在途登记；closing 时拒绝（一行用户代码都没跑）。"""
         with self._lock:
-            if self._closing:
-                raise RunError(runcodes.NATIVE_REGISTRY_CLOSING)
-            ticket = StartTicket(launch_id)
+            self._refuse_if_closed(project_root, epoch, cancelled)
+            ticket = StartTicket(
+                launch_id, os.path.realpath(project_root) if project_root else "", script, order
+            )
+            ticket.cancel_check = cancelled
             self._starting[launch_id] = ticket
             return ticket
 
@@ -930,7 +1113,11 @@ class NativeSessionRegistry:
     def check_start(self, ticket: StartTicket) -> None:
         """Popen 之前的检查点：关停已开始就拒绝，**不再 spawn**。"""
         with self._lock:
-            if self._closing or ticket.cancelled:
+            if (
+                self._closing
+                or ticket.cancelled
+                or (ticket.cancel_check is not None and ticket.cancel_check())
+            ):
                 raise RunError(runcodes.NATIVE_REGISTRY_CLOSING)
 
     def end_start(self, ticket: StartTicket) -> None:
@@ -944,6 +1131,26 @@ class NativeSessionRegistry:
         """清 closing（仅测试隔离 / 同进程重启用）。"""
         with self._lock:
             self._closing = False
+            self._closed_projects.clear()
+            self._project_epoch.clear()
+
+    def close_project(self, project_root: str) -> int:
+        """项目关闭:**先**标记(此后这个项目的新启动在 `reserve` / `begin_start` 当场被拒,覆盖「准备线程还没走到
+        登记」的所有窗口),**再**结束已登记的会话与在途票据。返回结束的数量。项目重新打开时 `reopen_project`。"""
+        self.mark_project_closed(project_root)
+        return self.cancel_project(project_root)
+
+    def mark_project_closed(self, project_root: str) -> None:
+        """只做标记(此后这个项目的新启动当场被拒)。关项目分步做时先标记、再取消准备、再 `close_project` 结束会话。"""
+        root = os.path.realpath(project_root)
+        with self._lock:
+            if root not in self._closed_projects:  # 已在关闭中（分步关项目会标记两次）不重复升代次
+                self._closed_projects.add(root)
+                self._project_epoch[root] = self._project_epoch.get(root, 0) + 1
+
+    def reopen_project(self, project_root: str) -> None:
+        with self._lock:
+            self._closed_projects.discard(os.path.realpath(project_root))
 
     def unreserve(self, launch_id: str) -> None:
         with self._lock:
@@ -965,6 +1172,12 @@ class NativeSessionRegistry:
                 raise RunError(runcodes.NATIVE_SESSION_CONFLICT)
             session._on_change = self._changed  # noqa: SLF001 — 注册表持有会话
             self._sessions[session.session_id] = session
+        # 传输 reader 在登记之前就已经在跑:脚本一起来就 `input()` / 到屏障时,那条事件发出时回调还没装上,
+        # 会被丢掉而界面再也收不到(准备一直等着)。登记完成后把当前最新一条补发出去(序号单调,重复无害)
+        with session._lock:  # noqa: SLF001
+            last = session.events[-1] if session.events else None
+        if last is not None:
+            self._changed(session, last)
 
     def _changed(self, session: NativeSession, entry: dict) -> None:
         if session.state in TERMINAL_STATES:
@@ -1002,6 +1215,7 @@ class NativeSessionRegistry:
         现有面板。
         """
         rejected: list[str] = []
+        claims: list[tuple] = []
         with self._lock:
             for desc in session.descriptors:
                 if not isinstance(desc, dict):
@@ -1015,7 +1229,12 @@ class NativeSessionRegistry:
                     if other is not None and other.alive():
                         rejected.append(str(desc.get("stem", "")))
                         continue
-                self._routes[key] = session.session_id
+                claims.append(key)
+            # 全有或全无:任一张被占着,这一轮 build 的图一张都不绑——否则界面 / 缓存里留着一张「没有活路由」的图,
+            # 而 runner 对同一结果判的是失败（`/build` 端点与准备 runner 共用这一个判定）
+            if not rejected:
+                for key in claims:
+                    self._routes[key] = session.session_id
         return rejected
 
     def route_for(self, project_root: str, script: str, stem: str) -> NativeSession | None:
@@ -1063,6 +1282,46 @@ class NativeSessionRegistry:
             self._drop_routes(s.session_id)
         return len(victims)
 
+    def cancel_project(
+        self, project_root: str, *, script: str = "", older_than: int | None = None
+    ) -> int:
+        """结束这个项目里**桌面拥有的**还活着的会话（项目关闭 / 同一脚本重新运行）；返回结束了几条。
+
+        终端拥有的一条不碰（用户的进程，关项目不该带走它，ADR 0021 §8.1）。`script` 非空 = 只结束这个脚本的
+        （`spec.target` 是项目相对 POSIX 路径）。每条走 `cancel_owned()`：等到所有者确认进程组 / Job 空、租约放掉。"""
+        # 还没登记的在途启动(`begin_start` 与 `adopt` 之间):标 cancelled,挂所有者 / 登记的下一步会被拒;
+        # 已挂所有者的当场同步结束(与 `shutdown_all` 同一套)。重新运行(`script` 非空)只取消**同一脚本**的在途启动:
+        # 调用方自己的启动此刻还没领票据,所以不会误伤;两条重叠的重跑,后来的取消先来的(旧的先于新的起进程之前收掉)
+        root = os.path.realpath(project_root)
+        with self._lock:
+            flying = [
+                t
+                for t in self._starting.values()
+                if t.project_root == root
+                and (not script or t.script == script)
+                and _is_older(t.order, older_than)
+            ]
+            for t in flying:
+                t.cancelled = True
+        stoppers = [t.owner.terminate_sync for t in flying if t.owner is not None]
+        victims = [
+            s
+            for s in self.list(project_root)
+            if s.owned is not None
+            and not s.owned.finished
+            and (not script or (s.spec is not None and s.spec.target == script))
+            and _is_older(s.launch_order, older_than)
+        ]
+        threads = [
+            threading.Thread(target=_run_quiet, args=(fn,), daemon=True)
+            for fn in [*stoppers, *(s.cancel_owned for s in victims)]
+        ]
+        for th in threads:
+            th.start()
+        for th in threads:
+            th.join(60)
+        return len(victims) + len(flying)
+
     def shutdown_all(self) -> int:
         """sidecar 退出：终端拥有的**只放手，不杀**（ADR 0021 §8.1 / §10.2）。
 
@@ -1097,6 +1356,12 @@ class NativeSessionRegistry:
         for t in tickets:
             t.done.wait(max(0.0, deadline - time.monotonic()))
         return len(sessions) + len(tickets)
+
+
+def _is_older(order: int | None, older_than: int | None) -> bool:
+    """重跑的先后判定:没给 `older_than`（关项目等）全部命中；给了就只命中**序号更小**的，序号未知的（终端拥有的、
+    不经准备计划的）不碰——顺序的唯一出处是 `PreparationService` 的登记序号。"""
+    return older_than is None or (order is not None and order < older_than)
 
 
 def _run_quiet(fn) -> None:

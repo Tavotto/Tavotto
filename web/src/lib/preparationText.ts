@@ -85,6 +85,11 @@ export interface PrepContext {
    * `null` = 没有可用的表单（没有 argparse 证据 / 表单关闭），不判
    */
   missingArgs: number | null
+  /**
+   * 壳已确认本机引擎退出了（`exitNoticeStore.engineExit`）：此时「连接断了，正在重连…」是假话——没有谁在重连，
+   * 要用户点通知轨上的「重新启动」。其它原因的断线（网络暂断）这一位是 false，提示保持原样。
+   */
+  engineExited?: boolean
 }
 
 const has = (report: PreparationReport, kind: PreparationActionKind) =>
@@ -152,10 +157,10 @@ export function prepView(entry: PrepEntry, ctx: PrepContext): PrepView {
   if (entry.failure) return view('check_failed', 'checkFailed', v, { kind: 'reopen', label: 'retry' }, { tone: 'bad' })
   const report = entry.report
   if (!report) {
-    if (entry.connection === 'lost') return offline(v)
+    if (entry.connection === 'lost') return offline(v, ctx.engineExited)
     return view('checking', 'checking', v, null, { tone: 'busy', slot: 'progress' })
   }
-  if (entry.connection === 'lost') return offline(v)
+  if (entry.connection === 'lost') return offline(v, ctx.engineExited)
   let base = fromReport(report, entry, ctx, script)
   if (entry.rejection) base = { ...base, state: 'rejected', sentence: { key: 'rejected', values: v } }
   else if (entry.restarted && report.phase === 'ready_to_run') {
@@ -181,8 +186,8 @@ export function prepView(entry: PrepEntry, ctx: PrepContext): PrepView {
 const projectEnvDeferred = (report: PreparationReport): boolean =>
   report.checks.some((c) => c.id === 'dependencies' && c.detail?.deferred === 'project_environment')
 
-const offline = (v: Record<string, unknown>) =>
-  view('offline', 'offline', v, null, { tone: 'mute', slot: 'progress', step: 1 })
+const offline = (v: Record<string, unknown>, engineExited?: boolean) =>
+  view('offline', engineExited ? 'engineStopped' : 'offline', v, null, { tone: 'mute', slot: 'progress', step: 1 })
 
 function fromReport(report: PreparationReport, entry: PrepEntry, ctx: PrepContext, script: string): PrepView {
   const v = { script }
@@ -318,9 +323,11 @@ function needsSomething(report: PreparationReport, script: string): PrepView {
     if (deps.origin === 'runtime_missing') {
       const p = (deps.payload ?? {}) as { module?: string; installable?: boolean; route?: string }
       if (!p.installable) {
-        // 三类缺依赖的另外两类（按后端的稳定字段 `route`，不看文案）：标准库缺了（内置环境没带，如 Windows 上的 tkinter）/ 映射不到安装包（如 ROOT）。
-        // pip 都装不了——主按钮只有一个：换用自己的 Python，且直接落在选环境那一步
+        // 按后端去向翻译，不根据模块名再判平台；平台限制无法通过换 Python 补齐。
         const values = { script, module: p.module ?? '' }
+        if (p.route === 'unsupported_platform') {
+          return view('deps_platform', 'depsPlatform', values, null, { tone: 'bad' })
+        }
         const pick: PrepPrimary = { kind: 'pick_environment' }
         if (p.route === 'stdlib_missing') {
           const builtin = report.environment?.kind === 'builtin'
@@ -342,7 +349,7 @@ function needsSomething(report: PreparationReport, script: string): PrepView {
       : view('needs_args', 'needsArgs', v, { kind: 'reopen', label: 'continue' }, { slot: 'args', argsOpen: true })
   }
   // safe 守卫拦下了脚本的文件操作、脚本随后又读了它（P01a）：重试得到同样的结果，没有「再试一次」；
-  // 当前桌面没有保留文件语义的执行路径，所以也没有主按钮——如实说，不替用户换环境重跑
+  // 自动换成"按真实文件运行"的路径还没接通（adapter_available=false），所以没有主按钮——如实说，不替用户换环境重跑
   if (report.outcome.kind === 'failed' && code === 'safe_file_operation_blocked') {
     return view('file_ops_blocked', 'fileOpsBlocked', v, null, { tone: 'bad', step: 1 })
   }

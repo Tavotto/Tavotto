@@ -98,3 +98,27 @@ describe('不认识的形状不做深序列化', () => {
     expect(JSON.stringify(readDiagnosticTrace())).not.toContain('用户正文')
   })
 })
+
+describe('ui.unexpected_error：只有闭集枚举与 hash', () => {
+  const ok = { type: 'ui.unexpected_error', source: 'window_error', error_name: 'TypeError', message_hash: 'err:0123456789ab' } as const
+
+  it('合法事件按字段表序列化', () => {
+    expect(serializeEvent(ok as unknown as DiagnosticEvent)).toMatchObject({
+      type: 'ui.unexpected_error',
+      source: 'window_error',
+      error_name: 'TypeError',
+      message_hash: 'err:0123456789ab',
+    })
+  })
+
+  it('message / stack 原文、开集错误名、未知来源都进不去（类型被 as 掉之后运行期仍挡住）', () => {
+    const out = serializeEvent({ ...ok, message: 'SECRET_TITLE', stack: 'at C:\\Users\\x\\a.js' } as unknown as DiagnosticEvent)
+    expect(JSON.stringify(out)).not.toContain('SECRET_TITLE')
+    expect(JSON.stringify(out)).not.toContain('Users')
+    for (const bad of [{ error_name: 'SECRET_TITLE' }, { source: 'user_script' }, { message_hash: 'SECRET_TITLE' }]) {
+      const o = serializeEvent({ ...ok, ...bad } as unknown as DiagnosticEvent) as Record<string, unknown> | null
+      expect(JSON.stringify(o ?? {})).not.toContain('SECRET_TITLE')
+      expect(o?.source === 'user_script').toBe(false)
+    }
+  })
+})

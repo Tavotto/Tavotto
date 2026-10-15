@@ -477,9 +477,11 @@ function ManagedEnvironmentRow() {
 export function MissingDependencyCard({
   module,
   projectEnv,
+  installRoute,
 }: {
   module: string
   projectEnv?: ProjectEnvFailure
+  installRoute?: string
 }) {
   useTranslation('errors')
   const { env, setPython, setProjectPython, adoptCandidate } = useEnvStore()
@@ -536,6 +538,14 @@ export function MissingDependencyCard({
       ? adoptCandidate(boundCandidate, recommendation?.script || undefined, module || undefined)
       : setProjectPython(rel)))
     setBusy(false)
+  }
+
+  if (installRoute === 'unsupported_platform') {
+    return (
+      <Card>
+        <p className="type-caption">{translate('prep.line.depsPlatform', { ns: 'workspace', module })}</p>
+      </Card>
+    )
   }
 
   return (

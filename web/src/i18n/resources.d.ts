@@ -1260,6 +1260,7 @@ export default interface Resources {
         "privacySend": "诊断包只有在你于“发送问题反馈”里逐次确认后才会上传到 Tavotto 维护者的服务；导出诊断包只会保存在本机。",
         "privacyTitle": "隐私与数据",
         "source": "获取源代码",
+        "support": "支持 {{product}}",
         "tagline": "论文图排版与参数化图表编辑",
         "telemetry": {
           "autoProps": "每条记录只带应用版本、操作系统、CPU 架构和安装渠道。",
@@ -1545,12 +1546,32 @@ export default interface Resources {
           },
           "categoryLabel": "问题类型",
           "close": "关闭",
+          "contact": {
+            "hint": "想直接沟通？发消息时附上报告编号：",
+            "hintNoId": "想直接沟通？",
+            "link": "加企业微信联系我们",
+            "qrAlt": "Tavotto 维护者的企业微信二维码，用手机微信扫码添加",
+            "row": "联系维护者",
+            "rowHint": "想直接沟通，可以加企业微信。",
+            "showQr": "显示二维码"
+          },
           "copyId": "复制报告编号",
           "details": "查看详情",
           "done": "完成",
           "doneAfterCancel": "取消时报告已经送达，这次发送算成功",
           "doneBody": "在 GitHub Issues 或群里提到这个编号，维护者就能找到这份诊断。",
           "doneTitle": "已发送",
+          "extra": {
+            "corrupt_sessions": "会话损坏副本的内容",
+            "crash_reports": "系统崩溃报告",
+            "source": "脚本源码"
+          },
+          "extraHint": {
+            "corrupt_sessions": "默认只有损坏副本的名字和大小；勾选后附上内容。",
+            "crash_reports": "最近 7 天属于 Tavotto 的系统崩溃报告。Windows 崩溃转储是程序内存快照，可能含正在打开的文件内容与路径，无法脱敏。",
+            "source": "脚本会原样附上，我们会尽量抹掉能认出的密钥，但不能保证；脚本里有密钥请不要勾。"
+          },
+          "extrasTitle": "额外内容（默认不发送）",
           "failure": {
             "api_incompatible": "诊断服务的版本与这个 Tavotto 不兼容。请更新 Tavotto 后再试。",
             "bad_response": "诊断服务返回了无法识别的内容，没有发送。",
@@ -1579,8 +1600,24 @@ export default interface Resources {
             "uploads_disabled": "诊断服务暂时关闭了接收。"
           },
           "failureHint": "你也可以先保存诊断包，自行发给维护者。",
+          "filesTitle": "包内文件（{{count}} 个）",
           "includedTitle": "将发送的内容",
           "kind": {
+            "detail_console": "界面控制台的最近报错与警告",
+            "detail_corrupt_sessions": "会话损坏副本的内容（你勾选了）",
+            "detail_crash_reports": "系统崩溃报告（你勾选了）",
+            "detail_display": "显示环境（缩放、窗口、语言、主题）",
+            "detail_errors": "报错原文与完整调用栈（引擎、渲染进程、界面）",
+            "detail_logs": "应用 / sidecar / 渲染进程日志的末尾（原文）",
+            "detail_network": "网络概况（代理、解析结果、时区）",
+            "detail_overrides": "正在编辑的图的样式改动",
+            "detail_render_env": "渲染环境（Python、matplotlib、已装包、字体）",
+            "detail_requests": "最近的后端请求记录（只有方法、路由、状态码、耗时、错误码）",
+            "detail_runs": "最近的渲染、导出、脚本试运行记录",
+            "detail_shell": "桌面壳与安装信息（版本、系统、架构、更新结果）",
+            "detail_source": "脚本源码（你勾选了）",
+            "detail_state": "会话状态文件（含损坏副本清单）",
+            "detail_storage": "存储环境（剩余空间、可写、是否在同步目录）",
             "environment": "运行环境与版本信息（用户名、路径已脱敏）",
             "log": "应用日志（只留事件类型与数字，不含报错原文、脚本名、路径）",
             "manifest": "包的版本说明",
@@ -1591,12 +1628,14 @@ export default interface Resources {
             "ui_state": "界面状态快照（不含图内文字与文件名）",
             "ui_trace": "最近的界面操作轨迹（只有操作类型）"
           },
-          "notIncluded": "不包含：你的脚本、图和数据文件，也不含匿名统计用的标识。",
+          "listSeparator": "、",
+          "notIncluded": "默认不含：你的脚本文件、数据文件，也不含匿名统计用的标识。报错原文、日志里可能出现项目文件夹名、文件名和脚本打印出的内容。",
           "noteAttached": "你在这里写的说明会原样随诊断包一起发送。",
           "noteCount": "{{count}} / {{max}}",
           "noteHint": "请不要填写姓名、邮箱、路径或数据内容。",
           "noteLabel": "补充说明（可选）",
           "open": "发送…",
+          "optionsLost": "附加内容太大，这次没能附上。",
           "packageGone": "这份诊断包已经不在引擎里了（应用可能重启过）。请重新准备后再发送；也可以用设置里的「导出诊断包」保存到本地。",
           "policy": "隐私政策",
           "prepareFailed": "没能生成诊断包。可以关闭后重试，或改用「导出诊断包」保存到本地。",
@@ -1619,10 +1658,34 @@ export default interface Resources {
           "saveFailed": "没能保存",
           "saved": "已保存",
           "send": "发送",
-          "sentence": "将发送诊断包，不含你的数据和脚本内容。",
+          "sentence": "将发送诊断包，含报错详情和日志（日志里可能有脚本打印出的内容），不附带你的脚本文件和数据文件。",
+          "sentenceExtras": "将发送诊断包，含报错详情和日志（日志里可能有脚本打印出的内容），并附带你勾选的：{{items}}。",
+          "sentenceItem": {
+            "corrupt_sessions": "会话损坏副本的内容",
+            "crash_reports": "系统崩溃报告（可能含打开着的文件的内容）",
+            "source": "脚本源码"
+          },
+          "short": {
+            "console": "控制台",
+            "corrupt_sessions": "损坏副本",
+            "crash_reports": "崩溃报告",
+            "display": "显示环境",
+            "errors": "报错原文",
+            "logs": "日志",
+            "network": "网络概况",
+            "overrides": "样式改动",
+            "render_env": "渲染环境",
+            "requests": "请求记录",
+            "runs": "运行记录",
+            "shell": "桌面壳信息",
+            "source": "脚本源码",
+            "state": "会话状态",
+            "storage": "存储环境"
+          },
           "size": "大小 {{size}}",
           "title": "发送问题反馈",
-          "tooLarge": "这份诊断包有 {{size}}，超过在线发送的上限 {{max}}。不会截取内容——请保存到本地，再另行发给维护者。",
+          "tooLarge": "这份诊断包有 {{size}}，超过在线发送的上限 {{max}}（附加内容已尽量截短）。请保存到本地，再另行发给维护者。",
+          "truncated": "体积超过上限，已按优先级截短：{{kinds}}。",
           "unknownOutcome": "无法确认报告是否已送达；如需删除，可在 GitHub Issues 里只附上报告编号"
         },
         "summaryFailing": "{{count}} 项异常",
@@ -1813,6 +1876,7 @@ export default interface Resources {
         "kw": {
           "agents": "助手 codex claude agent 默认",
           "canvas": "画布 网格 吸附 标尺 参考线",
+          "contact": "企业微信 微信 联系我们 联系维护者 反馈",
           "diagnostics": "诊断 报告 日志 导出 问题",
           "formats": "格式 pdf png svg tiff eps",
           "language": "语言 中文 英文 locale",
@@ -1823,6 +1887,7 @@ export default interface Resources {
           "scripts": "脚本 来源 注册",
           "shortcuts": "快捷键 键盘 速查表",
           "spec": "规范 期刊 检查 字号 栏宽",
+          "support": "支持 捐赠 赞助 爱发电 ko-fi",
           "telemetry": "隐私 统计 遥测 数据",
           "theme": "主题 深色 浅色 暗色 夜间 外观 模式 颜色",
           "tutorial": "教程 新手 提示 引导",
@@ -2193,6 +2258,7 @@ export default interface Resources {
       "bad_request": "导出请求格式有误，请刷新页面后重试。",
       "bad_scope": "无法识别导出范围：{{value}}。",
       "bad_validation": "检查设置格式有误，请刷新页面后重试。",
+      "conda_launcher_unavailable": "Conda 环境激活失败（取不到激活后的环境变量），这次没有运行任何东西。通常是暂时的：稍后再试；如果一直这样，请检查这个环境的 conda 安装和 activate.d 脚本。",
       "dependency_preparation_required": "脚本开跑就需要的包渲染环境里没有，要先准备依赖",
       "desktop_updater_disabled": "桌面版不支持 pip 自升级，请更新桌面应用。",
       "dir_fsync_failed": "内容已写入，但系统无法确认已落盘。关闭前请再保存一次：{{reason}}",
@@ -2263,6 +2329,9 @@ export default interface Resources {
       "native_handoff_consumed": "该 Tavotto Run 交接请求已被处理。",
       "native_handoff_expired": "该 Tavotto Run 交接请求已过期。请重新运行原命令。",
       "native_handoff_invalid": "该 Tavotto Run 交接请求无效。",
+      "native_input_invalid": "这个回答不能交给脚本：{{reason}}",
+      "native_input_not_pending": "脚本现在没有在等这个输入（可能已在别的窗口回答，或脚本已经结束）。",
+      "native_process_not_owned": "这个脚本是你在终端里启动的，Tavotto 不会替你结束它；请在那个终端里按 Ctrl+C。",
       "native_relay_failed": "Tavotto Run 的控制通道断了。",
       "native_session_conflict": "该项目已有一个 Tavotto Run 会话在进行。",
       "native_session_disconnected": "与 Tavotto Run 会话的连接已断开。你的脚本仍会继续运行。",
@@ -2336,7 +2405,7 @@ export default interface Resources {
       "runtime_asset_unknown": "运行时素材没有记录：{{id}}。重新运行该脚本即可重新建立关联；若它来自带参数的运行，请用原参数重新运行。",
       "runtime_cache_missing": "该运行时素材尚未生成预览。运行脚本后会自动生成。",
       "runtime_source_writeback_unsupported": "暂不支持把修改写回脚本源码。运行时素材的编辑只保存在排版中。",
-      "safe_file_operation_blocked": "脚本改了项目里的文件又去读它；安全运行不会真改文件，读到的会和直接运行不同，所以这次没有出图，桌面版暂时没有按真实文件运行的方式（终端里可用「tavotto run」）。",
+      "safe_file_operation_blocked": "脚本改了项目里的文件或读了刚存的图，而安全运行不会真改文件、读到的会和直接运行不同，所以这次没有出图；这类脚本需要按真实文件运行（终端里的「tavotto run」就是这样跑的）。",
       "scan_failed": "扫描失败：{{reason}}",
       "script_backup_failed": "备份写不进去，脚本没有被修改：{{script}}。请检查磁盘空间和目录权限。",
       "script_backup_unknown": "找不到这份备份：{{id}}",
@@ -4521,6 +4590,11 @@ export default interface Resources {
       "cardSize": "{{w}} × {{h}} 厘米",
       "cardTitle": "{{id}}",
       "cardUsed_other": "当前排版已用 {{count}} 次",
+      "editabilityAll": "全部",
+      "editabilityAria": "按能否编辑筛选",
+      "editabilityEditable": "可编辑",
+      "editabilityLayout": "仅版面",
+      "editabilityPending": "待连接",
       "emptyHint": "把 PDF/PNG 放进项目目录即可出现在这里。",
       "emptyTitle": "项目里还没有图",
       "filterActiveAria_other": "筛选（{{count}} 项生效）",
@@ -4549,7 +4623,6 @@ export default interface Resources {
       "runtimeRunAria": "运行 {{script}} 并发现图",
       "runtimeSiblingOf": "同源：{{name}}",
       "scriptBadgeTitle": "可编辑",
-      "scriptOnly": "只看可编辑的图",
       "search": "搜索图…",
       "searchAria": "搜索图",
       "sectionFigures": "图",
@@ -4568,7 +4641,6 @@ export default interface Resources {
       "typeAria": "类型筛选",
       "typeRaster": "图片",
       "typeRuntime": "运行时图",
-      "typeScript": "可编辑",
       "unsupportedTitle": "以下文件无法使用",
       "usedChip": "已使用",
       "usedOnly": "已使用",
@@ -4724,6 +4796,16 @@ export default interface Resources {
       "unhide": "恢复显示",
       "unlock": "解锁",
       "unsupportedTip": "{{title}}暂不支持：{{reason}}"
+    },
+    "exitNotice": {
+      "engine": {
+        "note": "重启后可以发送问题反馈",
+        "restart": "重新启动",
+        "text": "渲染服务意外退出了"
+      },
+      "previous": {
+        "text": "上次 Tavotto 没有正常退出"
+      }
     },
     "fastEdit": {
       "addToCanvas": "添加到画布",
@@ -5048,6 +5130,7 @@ export default interface Resources {
         "completed_other": "画好了 {{count}} 张图",
         "depsCancelled": "安装已停止",
         "depsFailed": "没装好，原有文件没动",
+        "depsPlatform": "{{module}} 是其他系统专用模块，这个脚本无法在当前系统运行",
         "depsRuntime": "运行时缺 {{module}}",
         "depsScope": "组件版本冲突",
         "depsStdlib": "Tavotto 自带的环境里没有 {{module}}",
@@ -5058,6 +5141,7 @@ export default interface Resources {
         "dialogFile": "脚本会弹窗选文件，这里弹不出来，请把文件路径写进脚本",
         "editOpening": "正在打开编辑…",
         "editReady": "已进入编辑",
+        "engineStopped": "渲染服务已停止",
         "envChoice": "用项目里自带的那套运行？",
         "envChoiceOpen": "要先选用哪一套运行",
         "envLocked": "设置里固定的 Python 缺组件",
@@ -5272,6 +5356,10 @@ export default interface Resources {
       },
       "whyNotEditable": "为什么不能编辑？"
     },
+    "renderProgress": {
+      "elapsed": "{{message}} · 已用时 {{seconds}} 秒",
+      "preparing": "正在准备图表…"
+    },
     "restore": {
       "autoAdopted": "已打开本机找到的排版“{{name}}”",
       "blockedWrite": "上次的排版还没打开。",
@@ -5444,7 +5532,7 @@ export default interface Resources {
       "clipboardWriteDenied": "无法访问剪贴板。浏览器未授权。",
       "coldHint": {
         "heavy": "冷启动可能需要几分钟",
-        "medium": "冷启动约十几秒"
+        "medium": "首次运行可能需要更久"
       },
       "copiedDetails": "已复制",
       "copyDetails": "复制详情",
@@ -5651,6 +5739,9 @@ export default interface Resources {
       "zoomSelection": "缩放到选中对象",
       "zoomValue": "缩放 {{percent}}%",
       "zoomValueInput": "缩放比例（%）"
+    },
+    "unexpectedError": {
+      "text": "Tavotto 出了点意外，可以把诊断发给我们"
     },
     "update": {
       "banner": "工具已更新，刷新后使用新版本",

@@ -5,6 +5,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   DesktopUpdateError,
+  ENGINE_EXITED_EVENT,
   __resetDesktopUpdate,
   bootstrapDesktopSession,
   canRevealInFileManager,
@@ -29,6 +30,10 @@ import {
   setDesktopTitlebarColors,
   showDesktopAppMenu,
   windowChrome,
+  getEngineExited,
+  onEngineExited,
+  restartEngine,
+  takePreviousExit,
 } from './desktop'
 
 // 远程实例窗口那一组用：壳在，但本机文件类能力一条都不许碰
@@ -437,5 +442,79 @@ describe('Codex 集成的浏览器回退', () => {
       name: 'CodexShellError',
       code: 'not_desktop',
     })
+  })
+})
+
+describe('引擎退出与上次退出（ADR 0129）：回退契约', () => {
+  const w = window as unknown as Record<string, unknown>
+  afterEach(() => {
+    delete w.__TAURI_INTERNALS__
+    delete w.__TAVOTTO_REMOTE_ENGINE__
+    vi.clearAllMocks()
+  })
+
+  it('浏览器里一律 null / false / 空取消函数，不碰任何 @tauri-apps', async () => {
+    expect(await takePreviousExit()).toBeNull()
+    expect(await getEngineExited()).toBeNull()
+    expect(await restartEngine()).toBe(false)
+    const off = await onEngineExited(() => {})
+    expect(typeof off).toBe('function')
+    expect(tauri.invoke).not.toHaveBeenCalled()
+    expect(tauri.listen).not.toHaveBeenCalled()
+  })
+
+  it('远程实例窗口：壳在也不发 IPC（ACL 本来就不给这三条命令）', async () => {
+    w.__TAURI_INTERNALS__ = {}
+    w.__TAVOTTO_REMOTE_ENGINE__ = true
+    expect(await takePreviousExit()).toBeNull()
+    expect(await getEngineExited()).toBeNull()
+    expect(await restartEngine()).toBe(false)
+    await onEngineExited(() => {})
+    expect(tauri.invoke).not.toHaveBeenCalled()
+    expect(tauri.listen).not.toHaveBeenCalled()
+  })
+
+  it('本机主窗口：命令名与事件名与壳同源；闭集之外的取值一律当 null', async () => {
+    w.__TAURI_INTERNALS__ = {}
+    tauri.invoke.mockResolvedValueOnce('engine_exited')
+    expect(await takePreviousExit()).toBe('engine_exited')
+    expect(tauri.invoke).toHaveBeenLastCalledWith('take_previous_exit')
+    tauri.invoke.mockResolvedValueOnce('something_else')
+    expect(await takePreviousExit()).toBeNull()
+    tauri.invoke.mockResolvedValueOnce('signal')
+    expect(await getEngineExited()).toBe('signal')
+    expect(tauri.invoke).toHaveBeenLastCalledWith('current_engine_exit')
+    tauri.invoke.mockResolvedValueOnce(true)
+    expect(await restartEngine()).toBe(true)
+    expect(tauri.invoke).toHaveBeenLastCalledWith('restart_engine')
+    tauri.invoke.mockResolvedValueOnce(false)
+    expect(await restartEngine()).toBe(false)
+  })
+
+  it('命令出错（老壳 / ACL 拒绝）不抛，退回「没有这条信息」', async () => {
+    w.__TAURI_INTERNALS__ = {}
+    tauri.invoke.mockRejectedValue(new Error('denied'))
+    expect(await takePreviousExit()).toBeNull()
+    expect(await getEngineExited()).toBeNull()
+    expect(await restartEngine()).toBe(false)
+    tauri.invoke.mockReset()
+    tauri.invoke.mockImplementation(async () => undefined)
+  })
+
+  it('事件：只把闭集内的 kind 交给回调', async () => {
+    w.__TAURI_INTERNALS__ = {}
+    let handler: ((e: { payload: unknown }) => void) | undefined
+    tauri.listen.mockImplementationOnce(((name: string, cb: (e: { payload: unknown }) => void) => {
+      expect(name).toBe(ENGINE_EXITED_EVENT)
+      handler = cb
+      return Promise.resolve(() => {})
+    }) as never)
+    const seen: string[] = []
+    await onEngineExited((k) => seen.push(k))
+    handler!({ payload: { kind: 'nonzero' } })
+    handler!({ payload: { kind: 'exit status: 1' } })
+    handler!({ payload: null })
+    handler!({ payload: { kind: 'signal' } })
+    expect(seen).toEqual(['nonzero', 'signal'])
   })
 })

@@ -678,6 +678,7 @@ def test_render_events_carry_pj(client, tmp_path, monkeypatch, sse_spy):
     )
     assert resp.status_code == 200
     sent = dict(sse_spy)
+    assert sent["render.preparing"]["pj"] == idb
     assert sent["render.started"]["pj"] == idb
     assert sent["render.done"]["pj"] == idb
     # 认领的是请求指名的项目，不是默认项目
@@ -711,6 +712,7 @@ def test_render_rejects_a_bogus_preview_dpi(client, tmp_path, monkeypatch, sse_s
             "/api/engine/render", json={"id": "p1.pdf", "patches": [], "preview_dpi": bad}
         )
         assert resp.status_code == 400, (bad, resp.get_json())
+    assert not any(kind.startswith("render.") for kind, _ in sse_spy)
     assert (
         client.post(
             "/api/engine/render", json={"id": "p1.pdf", "patches": [], "preview_dpi": 96}
@@ -731,6 +733,80 @@ def test_render_failed_event_carries_pj(client, tmp_path, monkeypatch, sse_spy):
     assert sent["render.started"]["pj"] == pid
     assert sent["render.failed"]["pj"] == pid
     assert "render.done" not in sent
+
+
+def test_render_preparing_is_visible_before_worker_resolution(
+    client, tmp_path, monkeypatch, sse_spy
+):
+    """#479：真正会卡十几秒的取会话入口，执行前已经发出项目级准备信号。"""
+    figs = _make_figs(tmp_path, "early_progress")
+    pid = client.post("/api/projects/open", json={"path": str(figs)}).get_json()["id"]
+    worker = _FakeWorker()
+    _stub_engine(monkeypatch, worker)
+
+    def resolve(*args, **kwargs):
+        assert ("render.preparing", {"pj": pid, "id": "p1.pdf"}) in sse_spy
+        assert not any(kind == "render.started" for kind, _ in sse_spy)
+        return worker
+
+    monkeypatch.setattr(m.engine_pool, "get", resolve)
+    response = client.post("/api/engine/render", json={"id": "p1.pdf", "patches": []})
+    assert response.status_code == 200
+    assert [kind for kind, _ in sse_spy if kind.startswith("render.")] == [
+        "render.preparing",
+        "render.started",
+        "render.done",
+    ]
+
+
+@pytest.mark.parametrize(
+    ("exc", "status"),
+    [
+        (engine_pool.WorkerError("环境未就绪", code="worker_unavailable"), 500),
+        (OSError("解释器启动失败"), 500),
+        (NotFound("面板不在注册表里"), 404),
+    ],
+)
+def test_render_preparing_is_settled_when_worker_resolution_fails(
+    client, tmp_path, monkeypatch, sse_spy, exc, status
+):
+    """取会话本身失败也必须收掉准备态，原 HTTP 错误码不变。"""
+    figs = _make_figs(tmp_path, "early_failure")
+    pid = client.post("/api/projects/open", json={"path": str(figs)}).get_json()["id"]
+    _stub_engine(monkeypatch, _FakeWorker())
+    monkeypatch.setitem(m.app.config, "PROPAGATE_EXCEPTIONS", False)
+
+    def fail(*args, **kwargs):
+        raise exc
+
+    monkeypatch.setattr(m.engine_pool, "get", fail)
+    response = client.post("/api/engine/render", json={"id": "p1.pdf", "patches": []})
+    assert response.status_code == status
+    assert [(kind, data) for kind, data in sse_spy if kind.startswith("render.")] == [
+        ("render.preparing", {"pj": pid, "id": "p1.pdf"}),
+        ("render.failed", {"pj": pid, "id": "p1.pdf", "error": str(exc)}),
+    ]
+
+
+def test_render_preparing_is_settled_when_prepared_metadata_fails(
+    client, tmp_path, monkeypatch, sse_spy
+):
+    """取到 worker 后、发 started 前的准备信息异常也不能遗留准备态。"""
+    figs = _make_figs(tmp_path, "prepared_metadata_failure")
+    pid = client.post("/api/projects/open", json={"path": str(figs)}).get_json()["id"]
+    monkeypatch.setattr(m, "_engine_worker", lambda *a, **kw: (_FakeWorker(), "p1"))
+    monkeypatch.setitem(m.app.config, "PROPAGATE_EXCEPTIONS", False)
+
+    def fail(*args, **kwargs):
+        raise RuntimeError("登记信息读取失败")
+
+    monkeypatch.setattr(m.engine_registry.Registry, "for_stem", fail)
+    response = client.post("/api/engine/render", json={"id": "p1.pdf", "patches": []})
+    assert response.status_code == 500
+    assert [(kind, data) for kind, data in sse_spy if kind.startswith("render.")] == [
+        ("render.preparing", {"pj": pid, "id": "p1.pdf"}),
+        ("render.failed", {"pj": pid, "id": "p1.pdf", "error": "登记信息读取失败"}),
+    ]
 
 
 @pytest.mark.parametrize(

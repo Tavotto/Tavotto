@@ -9,6 +9,7 @@ mod app_update_flow_tests;
 // 分派只有 macOS 的 native_drop 在用；别的平台上它只剩单测（分派规则各平台一样，照样跑）
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 mod drop_paths;
+mod exit_marker;
 mod i18n;
 #[cfg(target_os = "macos")]
 mod native_drop;
@@ -19,6 +20,7 @@ mod window_chrome;
 use std::collections::HashMap;
 use std::fmt::Write as _;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
@@ -35,8 +37,20 @@ struct AppState {
     /// 原生菜单当前用的语言。前端 i18n 就绪 / 用户切语言时经
     /// `set_menu_locale` 报上来，Rust 据此重建菜单并记住给下次启动。
     menu_locale: Mutex<i18n::Locale>,
-    port: Arc<OnceLock<u16>>,
-    nonce: String,
+    /// 当前引擎的端口。重启引擎（`restart_engine`）后可能换一个，所以不是 `OnceLock`。
+    port: Arc<Mutex<Option<u16>>>,
+    /// 当前引擎的一次性 nonce；每次（重新）启动引擎都换一个新的。
+    nonce: Mutex<String>,
+    /// 退出标记写手（ADR 0129）。`setup` 里拿到配置目录后才建，所以是 `OnceLock`。
+    marker: OnceLock<exit_marker::Marker>,
+    /// 上次会话的结局（`setup` 里读一次，前端经 `take_previous_exit` 取走即清空）。
+    previous_exit: Mutex<Option<exit_marker::Previous>>,
+    /// 本次会话里引擎已意外退出（直到重启成功）。前端事件可能早于监听，所以另存一份供回读。
+    engine_exit: Mutex<Option<exit_marker::EngineExit>>,
+    /// 引擎监视线程的代次：重启引擎时 +1，旧线程醒来发现对不上号就自己退出。
+    engine_gen: AtomicU64,
+    /// `restart_engine` 正在进行（重复点击幂等）。
+    restarting: AtomicBool,
     /// 本次启动带进来的交接请求（`Tavotto --open <目录> [--stem <s>]`）。
     /// 首启走这条：项目交给 sidecar 的 `--figures`，stem 拼进落地 URL 的
     /// `?open=`。**第二次启动不走这里**——单实例插件会把 argv 转发给已经在
@@ -797,7 +811,7 @@ async fn connect_remote(
     let login = remote::parse_login_url(&url).map_err(|e| e.code().to_string())?;
     let state = app.state::<AppState>();
     // 粘成了壳自己那个 sidecar 的地址：那是本机引擎，用主窗口就好
-    if state.port.get() == Some(&login.port) {
+    if *state.port.lock().unwrap() == Some(login.port) {
         return Err(remote::ConnectError::IsLocalEngine.code().into());
     }
     let generation = state.remote.lock().unwrap().generation();
@@ -1215,11 +1229,29 @@ fn set_titlebar_colors(
     Ok(())
 }
 
+/// 引擎意外退出时发给主窗口的事件（载荷 `{kind}`，闭集 signal / nonzero / zero）。
+/// 与 `web/src/lib/desktop.ts` 的 `ENGINE_EXITED_EVENT` 严格同源（`tests/test_desktop_engine_exit.py`）。
+const ENGINE_EXITED_EVENT: &str = "tavotto:engine-exited";
+/// 引擎监视线程的轮询间隔。
+const ENGINE_POLL: Duration = Duration::from_secs(1);
+
 fn spawn_sidecar_and_navigate(app: tauri::AppHandle) {
+    std::thread::spawn(move || {
+        boot_engine(&app, true);
+    });
+}
+
+/// 启动（或重启）本机引擎并把主窗口导向它；成功后挂上监视线程。**同步阻塞**（握手最长 60 s），
+/// 只在后台线程里调。返回是否成功。启动与重启走这同一份，没有第二份导航。
+///
+/// `first`：只有进程首次启动才带交接请求（`--open` 的项目与落地 `?open=`）；重启引擎时页面
+/// 回到主页，不把一次性的交接再放一遍。每次都换新的 nonce。
+fn boot_engine(app: &tauri::AppHandle, first: bool) -> bool {
     let state = app.state::<AppState>();
-    let nonce = state.nonce.clone();
+    let nonce = random_nonce();
+    *state.nonce.lock().unwrap() = nonce.clone();
     let port_cell = state.port.clone();
-    let open = state.open.clone();
+    let open = if first { state.open.clone() } else { None };
     // 起 sidecar 这段跑在前端加载之前，语言只能取记下来的那个偏好
     let menu_locale = *state.menu_locale.lock().unwrap();
     // 记下来的那份是不是「用户亲手选的」——只有它才该盖过前端的系统语言探测
@@ -1227,66 +1259,211 @@ fn spawn_sidecar_and_navigate(app: tauri::AppHandle) {
         .filter(|s| s.explicit)
         .map(|s| s.locale);
 
-    std::thread::spawn(move || {
-        let resource_dir = app.path().resource_dir().ok();
-        let log_dir = app
-            .path()
-            .app_log_dir()
-            .unwrap_or_else(|_| std::env::temp_dir().join("tavotto-logs"));
+    let resource_dir = app.path().resource_dir().ok();
+    let log_dir = app
+        .path()
+        .app_log_dir()
+        .unwrap_or_else(|_| std::env::temp_dir().join("tavotto-logs"));
 
-        let project = open.as_ref().map(|o| o.project.as_str());
-        let config_dir = app.path().app_config_dir().ok();
-        let result = sidecar::Sidecar::start(
-            resource_dir,
-            &log_dir,
-            &nonce,
-            project,
-            config_dir.as_deref(),
-            menu_locale,
-        );
-        let Some(win) = app.get_webview_window("main") else {
-            if let Ok((sc, _)) = result {
-                sc.shutdown();
-            }
-            return;
-        };
-        match result {
-            Ok((sc, port)) => {
-                let log_path = sc.log_path.clone();
-                *app.state::<AppState>().sidecar.lock().unwrap() = Some(sc);
-                let _ = port_cell.set(port);
-                // fragment 携带一次性 nonce：不进 HTTP 请求行，也就不进任何访问日志。
-                // `?open=<stem>` 是首启交接的落点（前端 lib/openRequest.ts 消费），
-                // 与浏览器模式共用同一份语义——桌面首启不必再多发一次事件。
-                // `lang=` 只在用户**亲手选过**语言时带（见 `set_menu_locale`
-                // 的 explicit 参数）。桌面模式下 sidecar 优先绑上次记住的端口
-                // （ADR 0108），但被占时本次会换一个，而端口是 Web Storage origin
-                // 的一部分——那一次前端存在 localStorage 的语言偏好就读不到，`detectLocale()`
-                // 会退回系统语言，再把那个退回值报给壳，把用户真正的选择
-                // **覆盖掉**。壳记的这份不随 origin 走，所以由它带过去。
-                let query = landing_query(
-                    open.as_ref(),
-                    chosen_locale.is_some().then(|| menu_locale.tag()),
+    let project = open.as_ref().map(|o| o.project.as_str());
+    let config_dir = app.path().app_config_dir().ok();
+    let result = sidecar::Sidecar::start(
+        resource_dir,
+        &log_dir,
+        &nonce,
+        project,
+        config_dir.as_deref(),
+        menu_locale,
+    );
+    let Some(win) = app.get_webview_window("main") else {
+        if let Ok((sc, _)) = result {
+            sc.shutdown();
+        }
+        return false;
+    };
+    match result {
+        Ok((sc, port)) => {
+            let log_path = sc.log_path.clone();
+            *state.sidecar.lock().unwrap() = Some(sc);
+            *port_cell.lock().unwrap() = Some(port);
+            spawn_engine_monitor(app.clone());
+            // fragment 携带一次性 nonce：不进 HTTP 请求行，也就不进任何访问日志。
+            // `?open=<stem>` 是首启交接的落点（前端 lib/openRequest.ts 消费），
+            // 与浏览器模式共用同一份语义——桌面首启不必再多发一次事件。
+            // `lang=` 只在用户**亲手选过**语言时带（见 `set_menu_locale`
+            // 的 explicit 参数）。桌面模式下 sidecar 优先绑上次记住的端口
+            // （ADR 0108），但被占时本次会换一个，而端口是 Web Storage origin
+            // 的一部分——那一次前端存在 localStorage 的语言偏好就读不到，`detectLocale()`
+            // 会退回系统语言，再把那个退回值报给壳，把用户真正的选择
+            // **覆盖掉**。壳记的这份不随 origin 走，所以由它带过去。
+            let query = landing_query(
+                open.as_ref(),
+                chosen_locale.is_some().then(|| menu_locale.tag()),
+            );
+            let url = format!("http://127.0.0.1:{port}/{query}#dnonce={nonce}");
+            if win
+                .eval(format!("window.location.replace({})", js_string(&url)))
+                .is_err()
+            {
+                show_error(
+                    &win,
+                    i18n::text(menu_locale).window_init_failed,
+                    &log_path.display().to_string(),
+                    menu_locale,
                 );
-                let url = format!("http://127.0.0.1:{port}/{query}#dnonce={nonce}");
-                if win
-                    .eval(format!("window.location.replace({})", js_string(&url)))
-                    .is_err()
-                {
-                    show_error(
-                        &win,
-                        i18n::text(menu_locale).window_init_failed,
-                        &log_path.display().to_string(),
-                        menu_locale,
-                    );
-                }
+                return false;
             }
-            Err(msg) => {
-                let log = log_dir.join("sidecar.log");
-                show_error(&win, &msg, &log.display().to_string(), menu_locale);
-            }
+            true
+        }
+        Err(msg) => {
+            let log = log_dir.join("sidecar.log");
+            show_error(&win, &msg, &log.display().to_string(), menu_locale);
+            false
+        }
+    }
+}
+
+/// 引擎监视线程：握手成功后每 [`ENGINE_POLL`] 看一次引擎还在不在。
+///
+/// 只认「壳没让它退、它自己退了」——`shutdown` / 重启都先把句柄从 `AppState` 里取走，
+/// 之后这里看到的是 `None`（线程退出），不会把正常关闭当崩溃。发现意外退出：写退出标记
+/// （闭集类型）、记在内存里供前端回读、向主窗口发事件，然后线程结束；重启引擎会挂新的一条。
+fn spawn_engine_monitor(app: tauri::AppHandle) {
+    let generation = app
+        .state::<AppState>()
+        .engine_gen
+        .fetch_add(1, Ordering::SeqCst)
+        + 1;
+    std::thread::spawn(move || loop {
+        std::thread::sleep(ENGINE_POLL);
+        let state = app.state::<AppState>();
+        if state.engine_gen.load(Ordering::SeqCst) != generation {
+            return;
+        }
+        let exit = match state.sidecar.lock().unwrap().as_ref() {
+            Some(sc) => sc.poll_exit(),
+            None => return,
+        };
+        if let Some(kind) = exit {
+            on_engine_exited(&app, kind);
+            return;
         }
     });
+}
+
+fn on_engine_exited(app: &tauri::AppHandle, kind: exit_marker::EngineExit) {
+    let state = app.state::<AppState>();
+    if let Some(m) = state.marker.get() {
+        m.mark_engine_exit(kind);
+    }
+    *state.engine_exit.lock().unwrap() = Some(kind);
+    // 引擎重启、页面重载之后，新页面经 `take_previous_exit` 取到它 → 「发送问题反馈」卡
+    *state.previous_exit.lock().unwrap() = Some(exit_marker::Previous::EngineExited);
+    let _ = app.emit_to(
+        MAIN_WINDOW,
+        ENGINE_EXITED_EVENT,
+        serde_json::json!({ "kind": kind.as_str() }),
+    );
+}
+
+fn only_main_window(window: &tauri::WebviewWindow) -> Result<(), String> {
+    if window.label() == MAIN_WINDOW {
+        Ok(())
+    } else {
+        Err("main_window_only".into())
+    }
+}
+
+/// 取走「上次没有正常退出」的结局（`app_unclean` / `engine_exited`）：读一次即清空，
+/// 页面重载不会重复提示。`None` = 上次正常，或本次已取过。
+#[tauri::command]
+fn take_previous_exit(
+    app: tauri::AppHandle,
+    window: tauri::WebviewWindow,
+) -> Result<Option<&'static str>, String> {
+    only_main_window(&window)?;
+    let state = app.state::<AppState>();
+    let taken = state.previous_exit.lock().unwrap().take();
+    Ok(taken.map(exit_marker::Previous::as_str))
+}
+
+/// 本次会话里引擎是否已意外退出（回读，防事件早于前端监听）。重启成功后复位。
+#[tauri::command]
+fn current_engine_exit(
+    app: tauri::AppHandle,
+    window: tauri::WebviewWindow,
+) -> Result<Option<&'static str>, String> {
+    only_main_window(&window)?;
+    let state = app.state::<AppState>();
+    let kind = *state.engine_exit.lock().unwrap();
+    Ok(kind.map(exit_marker::EngineExit::as_str))
+}
+
+/// 重新启动本机引擎：关旧句柄 → 重新 `Sidecar::start`（端口记忆）→ 新 nonce → 导航。
+/// 只在引擎确已意外退出时才动手；重复点击 / 正在重启时直接返回 `false`（幂等）。
+#[tauri::command]
+async fn restart_engine(
+    app: tauri::AppHandle,
+    window: tauri::WebviewWindow,
+) -> Result<bool, String> {
+    only_main_window(&window)?;
+    let state = app.state::<AppState>();
+    if state.engine_exit.lock().unwrap().is_none() {
+        return Ok(false);
+    }
+    if state.restarting.swap(true, Ordering::SeqCst) {
+        return Ok(false);
+    }
+    let worker = app.clone();
+    let joined = tauri::async_runtime::spawn_blocking(move || {
+        let ok = restart_engine_blocking(&worker);
+        worker
+            .state::<AppState>()
+            .restarting
+            .store(false, Ordering::SeqCst);
+        ok
+    })
+    .await;
+    joined.map_err(|e| e.to_string())
+}
+
+fn restart_engine_blocking(app: &tauri::AppHandle) -> bool {
+    let state = app.state::<AppState>();
+    // 先让旧监视线程失效，再取走旧句柄（取走之后监视线程看到 None 也会退出）
+    state.engine_gen.fetch_add(1, Ordering::SeqCst);
+    let old = state.sidecar.lock().unwrap().take();
+    if let Some(sc) = old {
+        sc.shutdown();
+    }
+    let ok = boot_engine(app, false);
+    if ok {
+        *state.engine_exit.lock().unwrap() = None;
+    }
+    ok
+}
+
+/// 所有应用内更新的 `UpdaterBuilder` 都从这里拿。Windows 上插件装包前会 `std::process::exit(0)`，
+/// 不走 `RunEvent::Exit`——`on_before_exit` 是它留的唯一钩子，在这里写 `clean`（ADR 0129）。
+fn updater_builder(app: &tauri::AppHandle) -> tauri_plugin_updater::UpdaterBuilder {
+    use tauri_plugin_updater::UpdaterExt;
+    let builder = app.updater_builder();
+    match app.state::<AppState>().marker.get().cloned() {
+        Some(marker) => builder.on_before_exit(move || marker.mark_clean()),
+        None => builder,
+    }
+}
+
+/// 绕过 `RunEvent::Exit` 的退出之前必须先写 `clean`；这一句就是那个「先」。
+fn mark_clean_exit(app: &tauri::AppHandle) {
+    if let Some(m) = app.state::<AppState>().marker.get() {
+        m.mark_clean();
+    }
+}
+
+/// e2e 更新口的失败退出（`std::process::exit` 不走 `RunEvent::Exit`）：先写 `clean` 再退。
+fn e2e_exit(app: &tauri::AppHandle, code: i32) -> ! {
+    mark_clean_exit(app);
+    std::process::exit(code)
 }
 
 fn js_string(s: &str) -> String {
@@ -1332,12 +1509,11 @@ fn spawn_e2e_update_if_requested(handle: tauri::AppHandle) {
         "[e2e-update] ⚠ TAVOTTO_E2E_RUN_UPDATE=1：启动即执行应用内更新（仅测试用，勿在生产设置）"
     );
     tauri::async_runtime::spawn(async move {
-        use tauri_plugin_updater::UpdaterExt;
         let endpoints = match app_update::endpoints(&handle) {
             Ok(e) => e,
             Err(e) => {
                 eprintln!("[e2e-update] updater 不可用: {}", e.code);
-                std::process::exit(40);
+                e2e_exit(&handle, 40);
             }
         };
         let order = match std::env::var("TAVOTTO_E2E_UPDATE_SOURCE")
@@ -1351,7 +1527,7 @@ fn spawn_e2e_update_if_requested(handle: tauri::AppHandle) {
             None => app_update::detect_order(None),
         };
         let limits = app_update::Limits::default();
-        let make = || handle.updater_builder();
+        let make = || updater_builder(&handle);
         let state = app_update::UpdateState::default();
         match app_update::run_check(&make, &endpoints, &state, &order, &limits).await {
             Ok(Some(found)) => {
@@ -1364,11 +1540,12 @@ fn spawn_e2e_update_if_requested(handle: tauri::AppHandle) {
                         // Windows 上装到这里进程通常已被插件替换/退出；
                         // 其余平台显式重启到新版本。
                         eprintln!("[e2e-update] 安装完成（来源 {used:?}），重启到新版本");
+                        mark_clean_exit(&handle);
                         handle.restart();
                     }
                     Err(e) => {
                         eprintln!("[e2e-update] 下载/安装失败: {} {:?}", e.code, e.attempts);
-                        std::process::exit(42);
+                        e2e_exit(&handle, 42);
                     }
                 }
             }
@@ -1377,7 +1554,7 @@ fn spawn_e2e_update_if_requested(handle: tauri::AppHandle) {
             }
             Err(e) => {
                 eprintln!("[e2e-update] 检查更新失败: {} {:?}", e.code, e.attempts);
-                std::process::exit(41);
+                e2e_exit(&handle, 41);
             }
         }
     });
@@ -1391,11 +1568,10 @@ async fn desktop_update_check(
     state: tauri::State<'_, app_update::UpdateState>,
     ui_lang: Option<String>,
 ) -> Result<Option<app_update::CheckedUpdate>, app_update::Failure> {
-    use tauri_plugin_updater::UpdaterExt;
     let endpoints = app_update::endpoints(&app)?;
     let order = app_update::detect_order(ui_lang.as_deref());
     app_update::run_check(
-        &|| app.updater_builder(),
+        &|| updater_builder(&app),
         &endpoints,
         &state,
         &order,
@@ -1412,10 +1588,9 @@ async fn desktop_update_install(
     state: tauri::State<'_, app_update::UpdateState>,
     on_event: tauri::ipc::Channel<app_update::DownloadEvent>,
 ) -> Result<app_update::Source, app_update::Failure> {
-    use tauri_plugin_updater::UpdaterExt;
     let endpoints = app_update::endpoints(&app)?;
     app_update::run_install(
-        &|| app.updater_builder(),
+        &|| updater_builder(&app),
         &endpoints,
         &state,
         &app_update::Limits::default(),
@@ -1429,8 +1604,13 @@ async fn desktop_update_install(
 fn main() {
     let state = AppState {
         sidecar: Mutex::new(None),
-        port: Arc::new(OnceLock::new()),
-        nonce: random_nonce(),
+        port: Arc::new(Mutex::new(None)),
+        nonce: Mutex::new(String::new()),
+        marker: OnceLock::new(),
+        previous_exit: Mutex::new(None),
+        engine_exit: Mutex::new(None),
+        engine_gen: AtomicU64::new(0),
+        restarting: AtomicBool::new(false),
         open: parse_open_args(&std::env::args().skip(1).collect::<Vec<_>>()),
         // 真正的初值在 build_menu 里按配置目录读；这里先摆默认档，
         // 免得 set_menu_locale 把「和现在一样」误判成需要重建。
@@ -1477,7 +1657,10 @@ fn main() {
             desktop_update_check,
             desktop_update_install,
             show_app_menu,
-            set_titlebar_colors
+            set_titlebar_colors,
+            take_previous_exit,
+            current_engine_exit,
+            restart_engine
         ])
         .on_window_event(|window, event| {
             // 事件回调是全局的：只看有关窗询问闸的那两个窗口。
@@ -1523,6 +1706,18 @@ fn main() {
                     Err(e) => eprintln!("rebuild menu for {}: {e}", boot_locale.tag()),
                 }
             }
+            // 退出标记（ADR 0129）：先读上次的结局存进内存，再立刻写本次的 running。
+            // 单实例插件在更早注册——第二个实例到不了这里，不会冲掉第一个实例的标记。
+            {
+                let state = app.state::<AppState>();
+                let marker = exit_marker::Marker::new(
+                    handle.path().app_config_dir().ok().as_deref(),
+                    &app.package_info().version.to_string(),
+                );
+                *state.previous_exit.lock().unwrap() = marker.read_previous();
+                marker.mark_running();
+                let _ = state.marker.set(marker);
+            }
             let win = tauri::WebviewWindowBuilder::new(
                 app,
                 MAIN_WINDOW,
@@ -1542,7 +1737,7 @@ fn main() {
             // 只旁听 performDragOperation 拿（ADR 0092），页面的 HTML5 拖放一个字节不变。
             .disable_drag_drop_handler()
             .on_navigation(
-                move |url| match navigation_allowed(url, port_cell.get().copied()) {
+                move |url| match navigation_allowed(url, *port_cell.lock().unwrap()) {
                     NavDecision::Allow => true,
                     NavDecision::Deny => false,
                     NavDecision::OpenExternal => {
@@ -1573,6 +1768,10 @@ fn main() {
             // 无论怎么退出（关窗、⌘Q、系统注销）都同步收掉 sidecar 与其子进程
             if let Some(state) = app_handle.try_state::<AppState>() {
                 state.shutdown_sidecar();
+                // sidecar 收掉之后才写 clean：中途被杀就该下次提示
+                if let Some(m) = state.marker.get() {
+                    m.mark_clean();
+                }
             }
         }
     });
@@ -1581,6 +1780,106 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 退出标记的看护（ADR 0129）：**绕过 `RunEvent::Exit` 的退出路径必须先写 `clean`**，否则
+    /// 每次升级 / e2e 更新之后都会误报「上次没有正常退出」。这里读源码结构而不是搜子串：
+    /// 生产代码里（测试模块之前）不许出现裸 `process::exit` / `.exit(` / `.restart()` /
+    /// `.updater_builder()`——只能经 `e2e_exit` / `mark_clean_exit` / `updater_builder` 三个出口。
+    fn production_sources() -> Vec<(&'static str, String)> {
+        let cut = |s: &'static str| {
+            let end = s.find("#[cfg(test)]\nmod tests").unwrap_or(s.len());
+            s[..end].to_string()
+        };
+        vec![
+            ("main.rs", cut(include_str!("main.rs"))),
+            ("app_update.rs", cut(include_str!("app_update.rs"))),
+            ("remote.rs", cut(include_str!("remote.rs"))),
+            ("sidecar.rs", cut(include_str!("sidecar.rs"))),
+        ]
+    }
+
+    fn body_of<'a>(src: &'a str, signature: &str) -> &'a str {
+        let at = src
+            .find(signature)
+            .unwrap_or_else(|| panic!("找不到 {signature}"));
+        let rest = &src[at..];
+        // 函数体到下一个顶格 `}` 为止
+        &rest[..rest.find("\n}\n").expect("函数没有收尾")]
+    }
+
+    #[test]
+    fn every_exit_that_skips_run_event_exit_writes_clean_first() {
+        let srcs = production_sources();
+        let main = &srcs[0].1;
+        for (name, src) in &srcs {
+            let allowed = if *name == "main.rs" { 1 } else { 0 };
+            // 注释里提到不算：只数代码行
+            let code = |needle: &str| {
+                src.lines()
+                    .filter(|l| !l.trim_start().starts_with("//"))
+                    .filter(|l| l.contains(needle))
+                    .count()
+            };
+            assert_eq!(code("process::exit("), allowed, "{name}: 裸 process::exit");
+            assert_eq!(
+                code(".updater_builder()"),
+                allowed,
+                "{name}: 裸 updater_builder"
+            );
+            assert_eq!(
+                code("app_handle.exit(") + code("handle.exit(") + code("app.exit("),
+                0,
+                "{name}: 裸 exit"
+            );
+        }
+        // 唯一的 process::exit 在 e2e_exit 里，且先写 clean
+        let e2e = body_of(main, "fn e2e_exit(");
+        assert!(e2e.find("mark_clean_exit(").unwrap() < e2e.find("process::exit(").unwrap());
+        // 唯一的 updater_builder() 在助手里，并挂了 on_before_exit → mark_clean
+        let helper = body_of(main, "fn updater_builder(");
+        assert!(helper.contains(".updater_builder()"));
+        assert!(helper.contains("on_before_exit(") && helper.contains("mark_clean()"));
+        // 每个 handle.restart() 之前（同一函数里）都有 mark_clean_exit
+        let restart_sites = main.matches("handle.restart()").count();
+        assert_eq!(restart_sites, 1, "新增了 restart() 调用：先加看护再放行");
+        let at = main.find("handle.restart()").unwrap();
+        assert!(main[..at].rfind("mark_clean_exit(&handle)").unwrap() + 80 > at);
+        // 所有 UpdaterBuilder 都经助手
+        assert!(!main.contains("|| handle.updater_builder()"));
+        assert!(!main.contains("|| app.updater_builder()"));
+    }
+
+    #[test]
+    fn run_event_exit_writes_clean_after_the_sidecar_is_gone() {
+        let main = &production_sources()[0].1;
+        let at = main
+            .find("tauri::RunEvent::Exit = event")
+            .expect("Exit 分支");
+        let tail = &main[at..];
+        let shutdown = tail.find("shutdown_sidecar()").expect("先收 sidecar");
+        let clean = tail.find("mark_clean()").expect("再写 clean");
+        assert!(shutdown < clean, "clean 必须在 sidecar 收掉之后写");
+    }
+
+    #[test]
+    fn setup_reads_the_previous_marker_before_writing_running() {
+        let main = &production_sources()[0].1;
+        let read = main.find("marker.read_previous()").unwrap();
+        let running = main.find("marker.mark_running()").unwrap();
+        assert!(read < running, "先读旧的，再写 running");
+        // 单实例插件先于 setup 注册（第二实例到不了标记）
+        assert!(
+            main.find("tauri_plugin_single_instance::init").unwrap()
+                < main.find(".setup(|app|").unwrap()
+        );
+        // 更新器助手、e2e 触发口都在 setup 写完标记之后才可能被调用
+        assert!(
+            running
+                < main
+                    .find("spawn_e2e_update_if_requested(handle.clone());")
+                    .unwrap()
+        );
+    }
 
     fn args(v: &[&str]) -> Vec<String> {
         v.iter().map(|s| s.to_string()).collect()

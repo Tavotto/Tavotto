@@ -37,6 +37,7 @@ from tavotto.engine import (
     deprepair,
     envadvice,
     envlease,
+    launcher,
     managedenv,
     pool as engine_pool,
     preparation,
@@ -530,6 +531,8 @@ def _cache_worker(raced, generation):
     w = _Recorder("fig.py", str(raced["root"]), "__main__")
     w.python = raced["conda"]
     w.python_generation = generation
+    # 真会话起时记下启动上下文（P09）；钉下的决定带着它，会话没记就当对不上（与环境代同一条规则）
+    w.launch_context = launcher.context_key(raced["conda"])
     key = engine_pool._worker_key(str(raced["root"]), "fig.py", None, None)
     with engine_pool._lock:
         engine_pool._workers[key] = w

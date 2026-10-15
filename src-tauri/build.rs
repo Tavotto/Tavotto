@@ -51,6 +51,9 @@ fn main() {
             "desktop_update_install",
             "show_app_menu",
             "set_titlebar_colors",
+            "take_previous_exit",
+            "current_engine_exit",
+            "restart_engine",
         ]),
     ))
     .expect("failed to run tauri-build");

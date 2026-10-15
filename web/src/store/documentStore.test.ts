@@ -420,9 +420,9 @@ describe('多画布数据层', () => {
     expect(JSON.parse(diskSlots.get('d_x')!).updatedAt).toBe(100)
   })
 
-  it('本机副本不比磁盘新 = 陈旧残留，直接清掉，不打扰用户', async () => {
+  it('本机副本内容相同 = 冗余残留，直接清掉，不打扰用户', async () => {
     const disk = { ...emptyProject(), updatedAt: 300 }
-    const stale = { ...emptyProject(), updatedAt: 300 }
+    const stale = { ...disk, updatedAt: 300 }
     diskSlots.set('d_y', JSON.stringify(disk))
     localStorage.setItem('tavotto.autosave.d_y', JSON.stringify(stale))
     const { doc, notice } = await readAutosaveDoc('d_y')
@@ -694,11 +694,12 @@ describe('自动保存磁盘写入队列', () => {
 
     await releaseNext() // d_a 第一次写成功 → 推进到 d_a 的最新一份
     expect(putLog.map((e) => e.id)).toEqual(['d_a', 'd_a'])
-    expect(slot('d_a')).toBeNull() // 只清 d_a 自己的兜底副本
+    expect(slot('d_a')).not.toBeNull() // 最新一份还未落盘，旧成功不能删掉它（#646）
     expect(slot('d_b')).not.toBeNull()
 
     await releaseNext() // d_a 最新一份写成功 → 推进到 d_b
     expect(putLog.map((e) => e.id)).toEqual(['d_a', 'd_a', 'd_b'])
+    expect(slot('d_a')).toBeNull() // 与本机副本相同的快照落盘后才清
     expect(slot('d_b')).not.toBeNull() // d_b 还没写成功，兜底副本必须留着
 
     await releaseNext() // d_b 写成功

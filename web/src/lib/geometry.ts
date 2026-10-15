@@ -125,32 +125,138 @@ export function snapMove(rect: Rect, cands: SnapCandidates, tol: number): SnapRe
   return res
 }
 
+/* ---- 带元信息的候选线（ADR 0128 §一）：图内拖动用，画布对象层仍用上面的纯数字 ---- */
+
+/** 候选线的语义类型；PR2 的「只配同类同边」、PR4 的反馈都读它 */
+export type SnapKind =
+  | 'frame'
+  | 'axes'
+  | 'colorbar'
+  | 'legend'
+  | 'xlabel'
+  | 'ylabel'
+  | 'title'
+  | 'text'
+  | 'figure'
+  | 'page'
+  | 'guide'
+  | 'grid'
+  | 'other'
+
+/** 0/1/2 = 左中右（上中下）；整图 / 参考线这类没有「哪条边」的线是 null */
+export type SnapEdge = 0 | 1 | 2
+
+/** 一条候选线：`v` 是页面 mm 坐标，其余是它的出身（反馈与配对过滤用） */
+export interface SnapLine {
+  v: number
+  kind: SnapKind
+  edge: SnapEdge | null
+  /** 线所属的面板（别的图的元素跨图对齐时用来指认「对方是谁」） */
+  panelId?: string
+  gid?: string
+  /** 线所属元素在页面 mm 里的框（反馈用虚线框出它） */
+  rect?: Rect
+}
+
+export interface SnapLineCandidates {
+  xs: SnapLine[]
+  ys: SnapLine[]
+}
+
+/** 被拖框的哪条边 / 吸到了哪条线 */
+export interface SnapPick {
+  selfEdge: SnapEdge
+  line: SnapLine
+}
+
+/**
+ * 吸住后保持（ADR 0128 §一）：一次手势一份，每轴记（自身锚点, 目标线在**本次手势候选表**里的下标）。
+ * 用下标而不是浮点值：两条坐标相同的线是两条线。候选表在手势里必须是同一份数组。
+ */
+export interface SnapHold {
+  x: { selfEdge: SnapEdge; idx: number } | null
+  y: { selfEdge: SnapEdge; idx: number } | null
+}
+
+export function createSnapHold(): SnapHold {
+  return { x: null, y: null }
+}
+
+export interface SnapNearestOptions {
+  /** 档位，越小越优先；缺省全 0（只比距离） */
+  rank?: (selfEdge: SnapEdge, line: SnapLine) => number
+  /** 配对过滤：返回 false 的（自身边, 线）不参与 */
+  pair?: (selfEdge: SnapEdge, line: SnapLine) => boolean
+  /** 传了就吸住后保持，并被这次调用更新 */
+  hold?: SnapHold
+}
+
+export interface SnapNearestResult extends SnapResult {
+  /** 每轴胜出的一对；没吸上是 null */
+  x: SnapPick | null
+  y: SnapPick | null
+}
+
+/** 放开一对的距离 = 这个倍数 × 容差 */
+export const SNAP_HOLD_FACTOR = 2
+
 /**
  * 三线吸附的「就近」版：左/中/右（上/中/下）里**离候选线最近**的那条边胜出，
  * 而不是按顺序第一个进入容差的。图内元素挨得近（相邻两行字、刻度与轴标题），
  * 按顺序取会让左边先吸到一条不相干的线上，想对齐的中线反而永远吸不到。
+ *
+ * X / Y 各自独立。容差内先比档位（`rank`）、同档比距离，再并列取表里靠前的。
+ * 带 `hold` 时：上一帧吸着的那一对只要距离仍 < 2×容差就继续吸它，否则放开重挑。
  */
-export function snapMoveNearest(rect: Rect, cands: SnapCandidates, tol: number): SnapResult {
-  const res: SnapResult = { dx: 0, dy: 0, guideXs: [], guideYs: [] }
-  const pick = (start: number, size: number, lines: number[]) => {
-    let best: { d: number; line: number } | null = null
-    for (const edge of [0, size / 2, size]) {
-      for (const c of lines) {
-        const d = c - (start + edge)
-        if (Math.abs(d) < tol && (!best || Math.abs(d) < Math.abs(best.d))) best = { d, line: c }
+export function snapMoveNearest(
+  rect: Rect,
+  cands: SnapLineCandidates,
+  tol: number,
+  opts: SnapNearestOptions = {},
+): SnapNearestResult {
+  const { rank, pair, hold } = opts
+  const pick = (
+    start: number,
+    size: number,
+    lines: SnapLine[],
+    axis: 'x' | 'y',
+  ): { d: number; pick: SnapPick } | null => {
+    const offs = [0, size / 2, size]
+    const ok = (e: SnapEdge, l: SnapLine) => !pair || pair(e, l)
+    const held = hold?.[axis]
+    if (held) {
+      const line = lines[held.idx]
+      if (line && ok(held.selfEdge, line)) {
+        const d = line.v - (start + offs[held.selfEdge])
+        if (Math.abs(d) < tol * SNAP_HOLD_FACTOR) return { d, pick: { selfEdge: held.selfEdge, line } }
       }
     }
-    return best
+    let best: { d: number; r: number; idx: number; e: SnapEdge } | null = null
+    for (const e of [0, 1, 2] as const) {
+      for (let idx = 0; idx < lines.length; idx++) {
+        const line = lines[idx]
+        const d = line.v - (start + offs[e])
+        if (Math.abs(d) >= tol || !ok(e, line)) continue
+        const r = rank ? rank(e, line) : 0
+        if (!best || r < best.r || (r === best.r && Math.abs(d) < Math.abs(best.d)))
+          best = { d, r, idx, e }
+      }
+    }
+    if (hold) hold[axis] = best ? { selfEdge: best.e, idx: best.idx } : null
+    return best && { d: best.d, pick: { selfEdge: best.e, line: lines[best.idx] } }
   }
-  const bx = pick(rect.x, rect.w, cands.xs)
+  const res: SnapNearestResult = { dx: 0, dy: 0, guideXs: [], guideYs: [], x: null, y: null }
+  const bx = pick(rect.x, rect.w, cands.xs, 'x')
   if (bx) {
     res.dx = bx.d
-    res.guideXs.push(bx.line)
+    res.guideXs.push(bx.pick.line.v)
+    res.x = bx.pick
   }
-  const by = pick(rect.y, rect.h, cands.ys)
+  const by = pick(rect.y, rect.h, cands.ys, 'y')
   if (by) {
     res.dy = by.d
-    res.guideYs.push(by.line)
+    res.guideYs.push(by.pick.line.v)
+    res.y = by.pick
   }
   return res
 }

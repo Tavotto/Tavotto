@@ -13,6 +13,7 @@
  * `as any` 掉之后的一切（运行期）。两道防线各有判据，少一道都有用例红。
  */
 import { HASH_PATTERN, diagnosticHash } from './hash'
+import { UNEXPECTED_ERROR_NAMES, UNEXPECTED_ERROR_SOURCES } from './types'
 import type { DiagnosticEvent, DiagnosticEventType, RecordedEvent } from './types'
 
 /**
@@ -248,6 +249,11 @@ export const EVENT_SCHEMA: Record<DiagnosticEventType, Record<string, FieldKind>
     ...VARIANT_TRIPLE,
   },
   'diagnostics.export': { trace_count: INT, panel_count: INT },
+  'ui.unexpected_error': {
+    source: ENUM(...UNEXPECTED_ERROR_SOURCES),
+    error_name: ENUM(...UNEXPECTED_ERROR_NAMES),
+    message_hash: HASH,
+  },
 }
 
 function dragBegin(): Record<string, FieldKind> {

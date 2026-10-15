@@ -75,6 +75,11 @@
   `sys.modules` 里落在项目根内的模块。**解释器自己的目录不算**（QA 2026-09-24 PATH-B2）：项目根里的 `.venv`（ADR 0057 首开第 4 条）
   的 prefix / site-packages 严格落在项目根内时，底下的库文件既不记成数据输入、也不占预算、也不算本地模块
   （`figcapture.interpreter_dirs_within`，主语是跑脚本的那个进程的 `sys.prefix` 等）；前缀等于或包含项目根时不排除。build 那一刻定格，之后进程里再读什么都不是它的输入。
+- **执行保真度（V2 PR3a，`runtime.fidelity` → `ExecutionReceipt.fidelity`）**：safe worker 的 `BlockedFileOps.summary()`——`level` 三档
+  `deviated`（确定偏差，build 以 `safe_file_operation_blocked` 失败）/ `suspect`（弱信号，成功但标注）/ `none_observed`（没看到，盲区在 `unobserved`），
+  外加拦下的操作类别与次数、弱信号 (kind, via) 计数。worker 自报是不可信输入：回执只收闭集枚举与有界整数，其余丢弃（`to_payload` 的 `runtime`
+  也换成过滤后的段）；`public_facts()` / `to_payload()` 带 `fidelity`，**不进 `public_identity`**（疑似偏差不是另一次执行）；native 回执为 None。
+  失败的 build 没有回执，证据在 `error.extra.fidelity`。读它的下游（准备会话 `derive`、启动上下文记录）见各自文档。
 - **数据绑定与旧计划失效（U09，ADR 0071 / FO30）**：`databinding.binding_for(script, root, mode)` 按 cwd 档记「会读哪些
   文件、内容 sha256、修订」进 `PreparationPlan.binding`；执行线程起会话之前把授权 / 解释器决策 / 数据绑定三样与此刻各比
   一次，不一致就 `preparation_plan_stale` + `reason ∈ {grant_changed, environment_changed, data_binding_changed}` +

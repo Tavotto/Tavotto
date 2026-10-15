@@ -70,6 +70,12 @@ afterEach(async () => {
 })
 
 describe('项目改用的系统 Python：缘由按 automatic 分', () => {
+  it('系统专属模块不可用时不提供切换解释器', async () => {
+    useEnvStore.setState({ env: envWith(false) })
+    await render(<MissingDependencyCard module="winreg" installRoute="unsupported_platform" />)
+    expect(text()).toContain('winreg 是其他系统专用模块')
+    expect(host.querySelectorAll('button')).toHaveLength(0)
+  })
   it('自动采用的：说「已自动改用这台机器上装着它的 Python」，不说「你选择的」', async () => {
     useEnvStore.setState({ env: envWith(true) })
     await render(<EngineEnvironmentCard />)

@@ -83,6 +83,16 @@ CONTEXTS = (
     CONTEXT_TYPE_CHECKING,
     CONTEXT_DYNAMIC,
 )
+# 实际外围按「有没有保护」合并：函数体只表示延后，不会撤销任一层的条件 / 可选 / 类型检查。
+# 与旧的公开 context 排序分开，后者的聚合与 needed 语义保持不动。
+_ENCLOSING_CONTEXTS = (
+    CONTEXT_UNCONDITIONAL,
+    CONTEXT_DEFERRED,
+    CONTEXT_DYNAMIC,
+    CONTEXT_CONDITIONAL,
+    CONTEXT_OPTIONAL,
+    CONTEXT_TYPE_CHECKING,
+)
 
 # ---- 来源（Import Origin Resolver；只加字段，bucket 语义不变） ---------------------------------
 ORIGIN_BUILTIN = "built-in"
@@ -276,9 +286,9 @@ class ImportUse:
     `names` 是 `from X import a, b` 的名字（`a` 可能是 `X` 的子模块也可能是属性——是哪个由磁盘定，
     不假定）；不进 `to_payload`（协议形状不变）。
 
-    `enclosing` 只给非字面量的动态导入（`ScanResult.dynamic`）用：它所在位置的外围上下文（`optional` /
-    `conditional` / `type_checking` / `deferred` / `unconditional`）——`context` 对它恒为 `dynamic`，丢了外围；
-    依赖计划靠它区分「跑到这行才知道装什么」与「try/except ImportError 里、缺了脚本照样跑」。同样不进 `to_payload`。"""
+    `enclosing` 记录 named import 的实际外围保护，供别名字面量及其本地闭包判断相关性；普通 import 也保留它，
+    防止在到达别名之前丢掉外层条件。分类仅在有 dynamic 候选时消费这份内部上下文，公开 `context` / `needed` 不变。
+    非字面量动态导入照旧在 `ScanResult.dynamic` 内记录外围。同样不进 `to_payload`。"""
 
     module: str
     full: str
@@ -307,6 +317,7 @@ class RelativeImport:
     names: tuple[str, ...]
     context: str
     lineno: int
+    enclosing: str = ""  # 实际保护；公开 context 对函数体的旧优先级不适合沿别名闭包判断相关性。
 
 
 @dataclasses.dataclass(frozen=True)
@@ -346,6 +357,9 @@ class ImportClass:
     distribution_provenance: str = ""  # `distmeta.PROVENANCES`：index / editable / local_path / …
     distribution_status: str = ""  # `DISTRIBUTION_STATUSES`
     compatibility: tuple[str, ...] = ()  # `COMPATIBILITY_CODES`
+    #: 别名动态导入及其本地子依赖的实际外围上下文（含同名普通 import 的上下文）；仅供计划判相关性，
+    #: 不改变 `context` / `needed` 或 payload。不能用单个最强 context：conditional 与 deferred 的绑定语义不同。
+    enclosing_contexts: tuple[str, ...] = ()
 
     @property
     def needed(self) -> bool:
@@ -518,6 +532,10 @@ def _is_sys_path(node: ast.AST, al: _Aliases) -> bool:
     )
 
 
+def _join_enclosing(*contexts: str) -> str:
+    return max(contexts, key=_ENCLOSING_CONTEXTS.index)
+
+
 class _Visitor(ast.NodeVisitor):
     """收集一份模块里的 import 及其上下文。"""
 
@@ -541,6 +559,9 @@ class _Visitor(ast.NodeVisitor):
         if CONTEXT_CONDITIONAL in self._stack:
             return CONTEXT_CONDITIONAL
         return CONTEXT_UNCONDITIONAL
+
+    def _enclosing(self) -> str:
+        return _join_enclosing(CONTEXT_UNCONDITIONAL, *self._stack)
 
     def _push(self, ctx: str, body):
         self._stack.append(ctx)
@@ -611,21 +632,43 @@ class _Visitor(ast.NodeVisitor):
         ctx = self._context()
         for alias in node.names:
             self.uses.append(
-                ImportUse(alias.name.split(".", 1)[0], alias.name, ctx, node.lineno, self.via)
+                ImportUse(
+                    alias.name.split(".", 1)[0],
+                    alias.name,
+                    ctx,
+                    node.lineno,
+                    self.via,
+                    enclosing=self._enclosing(),
+                )
             )
 
     def visit_ImportFrom(self, node):
         names = tuple(a.name for a in node.names)
         if node.level:  # 相对 import：包内的事，不是依赖——按包上下文解析、只为跟进
             self.relatives.append(
-                RelativeImport(node.level, node.module or "", names, self._context(), node.lineno)
+                RelativeImport(
+                    node.level,
+                    node.module or "",
+                    names,
+                    self._context(),
+                    node.lineno,
+                    enclosing=self._enclosing(),
+                )
             )
             return
         mod = node.module or ""
         if not mod:
             return
         self.uses.append(
-            ImportUse(mod.split(".", 1)[0], mod, self._context(), node.lineno, self.via, names)
+            ImportUse(
+                mod.split(".", 1)[0],
+                mod,
+                self._context(),
+                node.lineno,
+                self.via,
+                names,
+                enclosing=self._enclosing(),
+            )
         )
 
     def visit_Call(self, node):
@@ -638,7 +681,14 @@ class _Visitor(ast.NodeVisitor):
                 # 不提为无条件依赖
                 ctx = self._context() if canonical else CONTEXT_DYNAMIC
                 self.uses.append(
-                    ImportUse(literal.split(".", 1)[0], literal, ctx, node.lineno, self.via)
+                    ImportUse(
+                        literal.split(".", 1)[0],
+                        literal,
+                        ctx,
+                        node.lineno,
+                        self.via,
+                        enclosing=self._enclosing(),
+                    )
                 )
             else:
                 self.dynamic.append(
@@ -1180,6 +1230,7 @@ class _Job:
     depth: int
     via: str  # 项目相对路径（脚本本身为空）
     pkg_dir: Path | None = None  # 是包的 `__init__` 时的包目录
+    enclosing: str = ""  # 实际外围保护；独立于公开的 ctx 排序。
 
 
 class _Scanner:
@@ -1236,7 +1287,7 @@ class _Scanner:
         self.truncated = False
         self.read_files: list[str] = []
         self.parsed: dict[str, _Parsed | None] = {}
-        self.file_ctx: dict[str, int] = {}
+        self.file_ctx: dict[str, set[tuple[str, str]]] = {}
         self.queue: list[_Job] = []
         self.origins: dict[str, _Top] = {}
         self._tops: dict[str, _Top] = {}
@@ -1557,20 +1608,25 @@ class _Scanner:
                 use = su
             else:
                 merged = max((job.ctx, su.context), key=CONTEXTS.index)
-                use = ImportUse(su.module, su.full, merged, su.lineno, job.via, su.names)
+                enclosing = (
+                    _join_enclosing(job.enclosing or job.ctx, su.enclosing or su.context)
+                    if job.enclosing or su.enclosing
+                    else ""
+                )
+                use = ImportUse(su.module, su.full, merged, su.lineno, job.via, su.names, enclosing)
             self.uses.append(use)
             self.handle_absolute(use, job)
         for rel in parsed.relatives:
-            merged = max((job.ctx, rel.context), key=CONTEXTS.index)
-            self.handle_relative(rel, merged, job)
+            self.handle_relative(rel, rel.context, job)
 
     def follow(self, job: _Job) -> None:
         key = os.path.normcase(str(job.path))
+        contexts = (job.ctx, job.enclosing)
         prior = self.file_ctx.get(key)
         if prior is not None:
-            # 已经扫过：只有这次来路的上下文更强（先在 try 里、后又无条件 import）才重放一遍它的 import
-            if CONTEXTS.index(job.ctx) < prior:
-                self.file_ctx[key] = CONTEXTS.index(job.ctx)
+            # 同一份源码只读一次；新的来路上下文重放，别名的 dynamic 候选身份与实际外围都不能丢。
+            if contexts not in prior:
+                prior.add(contexts)
                 cached = self.parsed.get(key)
                 if cached is not None:
                     self.process(job, cached)
@@ -1581,7 +1637,7 @@ class _Scanner:
         if self.budget.stop_reason() is not None:
             self.truncated = True
             return
-        self.file_ctx[key] = CONTEXTS.index(job.ctx)
+        self.file_ctx[key] = {contexts}
         self.read_files.append(job.via)
         parsed = self._load(job.path, job.via, job.via)
         self.parsed[key] = parsed
@@ -1613,7 +1669,7 @@ class _Scanner:
             return
         top = self.find_top(parts[0], job.path.parent)
         self.record(parts[0], top)
-        self.follow_chain(parts, use.names, use.context, top, job)
+        self.follow_chain(parts, use.names, use.context, top, job, enclosing=use.enclosing)
 
     def handle_relative(self, rel: RelativeImport, ctx: str, job: _Job) -> None:
         where = job.via or Path(self.script).as_posix()
@@ -1630,10 +1686,17 @@ class _Scanner:
             base = base[: len(base) - drop]
         parts = base + (rel.module.split(".") if rel.module else [])
         top = self.find_top(parts[0], job.path.parent)
-        self.follow_chain(parts, rel.names, ctx, top, job)
+        self.follow_chain(parts, rel.names, ctx, top, job, enclosing=rel.enclosing)
 
     def follow_chain(
-        self, parts: list[str], names: tuple[str, ...], ctx: str, top: _Top, job: _Job
+        self,
+        parts: list[str],
+        names: tuple[str, ...],
+        ctx: str,
+        top: _Top,
+        job: _Job,
+        *,
+        enclosing: str = "",
     ) -> None:
         if top.kind != "found" or top.found is None:
             return
@@ -1655,10 +1718,17 @@ class _Scanner:
                 if sub is not None:  # 是子模块；否则 n 是包里的属性——不假定
                     chain.append((f"{'.'.join(parts)}.{n}", sub))
         merged = max((job.ctx, ctx), key=CONTEXTS.index)
+        enclosing = (
+            _join_enclosing(job.enclosing or job.ctx, enclosing or ctx)
+            if job.enclosing or enclosing
+            else ""
+        )
         for dotted, found in chain:
-            self.enqueue(dotted, found, merged, job)
+            self.enqueue(dotted, found, merged, job, enclosing=enclosing)
 
-    def enqueue(self, dotted: str, found: _Found, ctx: str, job: _Job) -> None:
+    def enqueue(
+        self, dotted: str, found: _Found, ctx: str, job: _Job, *, enclosing: str = ""
+    ) -> None:
         hit = found.hit
         if found.kind == "namespace":
             return  # 命名空间目录自己不执行任何代码
@@ -1686,6 +1756,7 @@ class _Scanner:
                 job.depth + 1,
                 _rel(self.root, hit.path),
                 hit.path.parent if is_pkg else None,
+                enclosing,
             )
         )
 
@@ -1777,6 +1848,10 @@ class _Scanner:
         via = tuple(sorted({u.via for u in group if u.via}))
         top = self.origins.get(name) or self.find_top(name, None)
         base = {"module": name, "context": context, "lines": lines, "via": via}
+        if any(u.context == CONTEXT_DYNAMIC and u.enclosing for u in group):
+            base["enclosing_contexts"] = tuple(
+                sorted({u.enclosing or u.context for u in group}, key=CONTEXTS.index)
+            )
         evidence: list[str] = []
         warns: list[str] = []
 

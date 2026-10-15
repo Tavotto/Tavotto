@@ -69,8 +69,11 @@ export function MeasureChip() {
   const selectedGids = useUiStore((s) => s.selectedGids)
   const editedPanel = nudge && elementPanelId ? panelById(objects, elementPanelId) : null
   const manifest = useDisplayedExactManifest(editedPanel)
-  const gidDrag = useInteractionStore((s) => s.gidDrag)
-  const elementPreview = useInteractionStore((s) => s.elementPreview)
+  // 图内元素的鼠标拖动（kind=element）不显示本读数，直接返回 null。
+  // 过去仍订阅每个 pointermove 都更新的 gidDrag / elementPreview，导致
+  // MeasureChip 逐帧重渲染一个不可见的组件。仅方向键微调需要这两个字段。
+  const gidDrag = useInteractionStore((s) => (s.nudge ? s.gidDrag : null))
+  const elementPreview = useInteractionStore((s) => (s.nudge ? s.elementPreview : null))
 
   const mode: MeasureMode | null = nudge
     ? 'offset'
