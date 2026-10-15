@@ -485,24 +485,6 @@ jobs:
           if (-not (Test-Path $shell)) { throw "装完找不到壳: $shell" }
           Write-Host "安装位置: $inst"
 
-          # WER 小型转储：安装器（installer.nsi）为 Tavotto 自己的三个 exe 在 HKCU 开了 LocalDumps。
-          # 键、值与 DumpFolder 都核；REG_EXPAND_SZ 要读未展开的原文（Get-ItemProperty 会替你展开）。
-          $ldRoot = "HKCU:\Software\Microsoft\Windows\Windows Error Reporting\LocalDumps"
-          $dumpExes = @("Tavotto.exe", "tavotto-cli.exe", "tavotto-workerd.exe")
-          foreach ($exe in $dumpExes) {
-            $k = Join-Path $ldRoot $exe
-            if (-not (Test-Path $k)) { throw "安装后缺 WER LocalDumps 子键: $k" }
-            $item = Get-Item $k
-            if ($item.GetValue("DumpType") -ne 1) { throw "$exe 的 DumpType 不是 1: $($item.GetValue('DumpType'))" }
-            if ($item.GetValue("DumpCount") -ne 5) { throw "$exe 的 DumpCount 不是 5: $($item.GetValue('DumpCount'))" }
-            $folder = $item.GetValue("DumpFolder", $null, "DoNotExpandEnvironmentNames")
-            if ($folder -ne '%LOCALAPPDATA%\CrashDumps') { throw "$exe 的 DumpFolder 不对: $folder" }
-            if ($item.GetValueKind("DumpFolder") -ne "ExpandString") { throw "$exe 的 DumpFolder 不是 REG_EXPAND_SZ" }
-          }
-          if (-not (Test-Path "$env:LOCALAPPDATA\CrashDumps" -PathType Container)) {
-            throw "安装后缺 $env:LOCALAPPDATA\CrashDumps（WER 不替自定义目录建它）"
-          }
-
           # sidecar 的落点由 tauri.conf.json 的 bundle.resources 决定，这里
           # **不写死**：写死等于把同一份约定抄成第二处权威，改了映射只会在
           # 这儿报一个假故障。要看的是「安装器有没有把 sidecar 和它的内置
@@ -758,11 +740,6 @@ jobs:
           # 安装清单同理：留下一份指向已删文件的清单，外部程序会拿着不存在
           # 的路径去 spawn，报出来的是「执行不了」而不是「没装」
           if (Test-Path $manifest) { throw "卸载后安装清单仍在: $manifest" }
-          # 安装器开的 WER LocalDumps 子键要随卸载撤掉（只删自己三个，不碰 LocalDumps 根）
-          foreach ($exe in $dumpExes) {
-            $k = Join-Path $ldRoot $exe
-            if (Test-Path $k) { throw "卸载后 WER LocalDumps 子键仍在: $k" }
-          }
           if (Test-Path $inst) {
             $left = Get-ChildItem $inst -Recurse -File | Select-Object -First 20
             if ($left) {

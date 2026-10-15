@@ -646,19 +646,6 @@ Function .onInit
 FunctionEnd
 
 
-; TAVOTTO PATCH: WER 小型转储的子键读写（Install / Uninstall 两段共用，理由见 Install 段）。
-; 键路径是 WER 的公开约定：...\Windows Error Reporting\LocalDumps\<exe 文件名>。
-!define TAVOTTO_LOCALDUMPS_KEY "Software\Microsoft\Windows\Windows Error Reporting\LocalDumps"
-!macro TavottoLocalDumps EXE
-  WriteRegDWORD HKCU "${TAVOTTO_LOCALDUMPS_KEY}\${EXE}" "DumpType" 1
-  WriteRegDWORD HKCU "${TAVOTTO_LOCALDUMPS_KEY}\${EXE}" "DumpCount" 5
-  WriteRegExpandStr HKCU "${TAVOTTO_LOCALDUMPS_KEY}\${EXE}" "DumpFolder" "%LOCALAPPDATA%\CrashDumps"
-!macroend
-!macro TavottoLocalDumpsRemove EXE
-  DeleteRegKey HKCU "${TAVOTTO_LOCALDUMPS_KEY}\${EXE}"
-!macroend
-; TAVOTTO PATCH END ----------------------------------------------------
-
 Section EarlyChecks
   ; TAVOTTO PATCH: 状态行说实话——这一档在做降级判断，还没开始装
   DetailPrint "$(preparingTavotto)"
@@ -907,27 +894,6 @@ Section Install
   ${EndIf}
   ; TAVOTTO PATCH END ----------------------------------------------------
 
-  ; TAVOTTO PATCH: 为 Tavotto 自己的进程开 WER 小型转储 --------------------
-  ; 崩溃只留一份 .dmp 在用户机器上，诊断包「系统崩溃报告」才有东西可收
-  ; （engine/diagdetail.py 的 crash_dirs()：%LOCALAPPDATA%\CrashDumps，进程名
-  ; 以 tavotto / workerd 开头）。符号随发行构建另存（desktop-tauri.yml 的
-  ; debug-symbols-* artifact），不在安装包里。
-  ;
-  ; · **只写 HKCU、只写 Tavotto 自己三个 exe 的子键**：不碰系统级的全局
-  ;   LocalDumps（那一键会让机器上所有程序都落转储）。安装模式是 currentUser
-  ;   （见上面 RequestExecutionLevel），全程不需要管理员，这里不许改成 HKLM。
-  ; · Tavotto.exe 同时是壳与 sidecar 的 GUI 进程名（WER 只认 exe 文件名）；
-  ;   tavotto-cli.exe 是 console 版 sidecar，tavotto-workerd.exe 是 supervisor。
-  ; · DumpType=1 小型转储（不含整块堆）；DumpCount 5 封顶，WER 自己轮转。
-  ; · DumpFolder 与 WER 的默认值一致，显式写出来是为了让「诊断包去哪收」
-  ;   有一个看得见的出处；目录先建好——WER 不替自定义目录建它。
-  ; · 失败绝不中断安装（和上面的清单一样，这只是诊断加速）。
-  CreateDirectory "$LOCALAPPDATA\CrashDumps"
-  !insertmacro TavottoLocalDumps "${MAINBINARYNAME}.exe"
-  !insertmacro TavottoLocalDumps "tavotto-cli.exe"
-  !insertmacro TavottoLocalDumps "tavotto-workerd.exe"
-  ; TAVOTTO PATCH END ----------------------------------------------------
-
   !ifmacrodef NSIS_HOOK_POSTINSTALL
     !insertmacro NSIS_HOOK_POSTINSTALL
   !endif
@@ -989,15 +955,6 @@ Section Uninstall
     nsExec::ExecToStack /TIMEOUT=60000 '"$R8" doctor --json --remove-manifest'
     Pop $R9
     Pop $R7
-  ${EndIf}
-  ; TAVOTTO PATCH END ----------------------------------------------------
-
-  ; TAVOTTO PATCH: 撤掉安装时开的 WER 小型转储（只删自己那三个子键）。
-  ; 升级时卸载器先跑、安装段随后重写，保留即可；已落盘的 .dmp 不删（归用户）。
-  ${If} $UpdateMode <> 1
-    !insertmacro TavottoLocalDumpsRemove "${MAINBINARYNAME}.exe"
-    !insertmacro TavottoLocalDumpsRemove "tavotto-cli.exe"
-    !insertmacro TavottoLocalDumpsRemove "tavotto-workerd.exe"
   ${EndIf}
   ; TAVOTTO PATCH END ----------------------------------------------------
 
