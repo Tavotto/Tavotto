@@ -746,24 +746,56 @@ def run(
         )
         # cmd[0] 是 CLI 可执行（或 node），末尾是提示词——PATH 增强按 cmd[0] 算
         env = _spawn_env(cmd[0], extra_env)
-        proc = subprocess.Popen(
-            cmd,
-            cwd=figures_dir,
-            env=env,
-            stdin=subprocess.DEVNULL,  # 桌面 sidecar 的 stdin 是父进程死亡信号管道，不外传
-            stdout=subprocess.PIPE,
-            stderr=stderr_log,  # CLI 的 hook/统计噪音不进对话
-            text=True,
-            bufsize=1,
-            # 显式 UTF-8：Windows 上 text=True 跟随系统区域编码（cp936），
-            # CLI 回来的中文/JSON 一解码就炸，表现为「任务刚起就结束」
-            encoding="utf-8",
-            errors="replace",
-            creationflags=CREATE_NO_WINDOW,
-            # POSIX 上自成一个进程组：取消 / 超时时连它起的子进程一起收掉（`_terminate` / `_await_exit`）；
-            # Windows 的 `taskkill /T` 按 pid 找子树，不需要单独的组
-            start_new_session=os.name != "nt",
-        )
+        # **先把幂等记录写进库、再启动进程**：写库失败（SQLite 被锁 / 满 / 损坏）就根本不 spawn，
+        # 调用方拿到的是「明确没执行」。反过来先 spawn 再写库，写库一抛，CLI 已经在改脚本、前端却当它
+        # 被拒绝而换新 id 重试——同一条修改执行两次（Codex #1098）。
+        ctx = context or {}
+        try:
+            ai_history.record_start(
+                {
+                    "id": sid,
+                    "project": project_key,
+                    "canvas": ctx.get("canvas"),
+                    "panel": ctx.get("stem"),
+                    "element": ctx.get("gid"),
+                    "provider": agent,
+                    "model": model,
+                    "effort": effort,
+                    "scope": ctx.get("scope"),
+                    "target": ctx.get("target"),
+                    "script": script,
+                    "prompt": user_prompt,
+                    "snapshot_path": str(snap),
+                    "client_request_id": client_request_id,
+                }
+            )
+        except BaseException:
+            stderr_log.close()
+            raise
+        try:
+            proc = subprocess.Popen(
+                cmd,
+                cwd=figures_dir,
+                env=env,
+                stdin=subprocess.DEVNULL,  # 桌面 sidecar 的 stdin 是父进程死亡信号管道，不外传
+                stdout=subprocess.PIPE,
+                stderr=stderr_log,  # CLI 的 hook/统计噪音不进对话
+                text=True,
+                bufsize=1,
+                # 显式 UTF-8：Windows 上 text=True 跟随系统区域编码（cp936），
+                # CLI 回来的中文/JSON 一解码就炸，表现为「任务刚起就结束」
+                encoding="utf-8",
+                errors="replace",
+                creationflags=CREATE_NO_WINDOW,
+                # POSIX 上自成一个进程组：取消 / 超时时连它起的子进程一起收掉（`_terminate` / `_await_exit`）；
+                # Windows 的 `taskkill /T` 按 pid 找子树，不需要单独的组
+                start_new_session=os.name != "nt",
+            )
+        except BaseException as exc:
+            # 记录已落库而进程没起来：标成失败，不是删掉——「查询」要查得到它，且明确是没执行
+            stderr_log.close()
+            ai_history.record_end(sid, "failed", error=str(exc))
+            raise
         sess = {
             "id": sid,
             "agent": agent,
@@ -786,25 +818,6 @@ def run(
             "client_request_id": client_request_id,
         }
         SESSIONS[sid] = sess
-    ctx = context or {}
-    ai_history.record_start(
-        {
-            "id": sid,
-            "project": str(Path(figures_dir).resolve()),
-            "canvas": ctx.get("canvas"),
-            "panel": ctx.get("stem"),
-            "element": ctx.get("gid"),
-            "provider": agent,
-            "model": model,
-            "effort": effort,
-            "scope": ctx.get("scope"),
-            "target": ctx.get("target"),
-            "script": script,
-            "prompt": user_prompt,
-            "snapshot_path": str(snap),
-            "client_request_id": client_request_id,
-        }
-    )
     emit = on_event or (lambda *_: None)
 
     def _pump():

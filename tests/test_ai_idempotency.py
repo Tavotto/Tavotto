@@ -422,3 +422,56 @@ def test_ledger_is_backfilled_for_old_rows_and_purged_by_age(tmp_path):
     ai_history.delete("old", db_path=db)  # 历史行还在时迁移会把账本补回来；删了才看得出账本被清
     assert ai_history.purge_requests(30, db_path=db) == 1
     assert ai_history.find_request_record("/p", RID, db_path=db) is None
+
+
+# ---------------------------------------------------------------------------
+# 幂等记录先于 spawn 落库（Codex #1098 P1）
+# ---------------------------------------------------------------------------
+def test_a_failing_history_write_means_the_cli_is_never_started(tmp_path, cli, monkeypatch):
+    """写库抛了（SQLite 被锁 / 满 / 损坏）：一个进程都不起。先 spawn 再写库的话，CLI 已经在改脚本，
+    调用方却拿到「明确失败」、换新 id 重试——同一条修改执行两次。"""
+    _, counter = cli
+    figs = _project(tmp_path)
+
+    def boom(*_a, **_k):
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(ai_history, "record_start", boom)
+    before = set(ai_bridge.SESSIONS)
+    with pytest.raises(sqlite3.OperationalError):
+        ai_bridge.run("codex", "fig1.py", "p", str(figs), client_request_id=RID)
+    time.sleep(0.5)
+    assert _spawned(counter) == 0
+    assert set(ai_bridge.SESSIONS) == before  # 内存里也没留下半个会话
+
+
+def test_the_record_exists_before_the_process_starts(tmp_path, cli, monkeypatch):
+    """顺序本身：Popen 被调用的那一刻，(项目, rid) 已经能查到。"""
+    figs = _project(tmp_path)
+    seen: list[object] = []
+    real_popen = ai_bridge.subprocess.Popen
+
+    def spy(*a, **k):
+        seen.append(ai_history.find_by_request(str(figs.resolve()), RID))
+        return real_popen(*a, **k)
+
+    monkeypatch.setattr(ai_bridge.subprocess, "Popen", spy)
+    ai_bridge.run("codex", "fig1.py", "p", str(figs), client_request_id=RID)
+    _wait_idle()
+    assert seen and seen[0] is not None and seen[0]["status"] == "running"
+
+
+def test_a_failed_spawn_leaves_a_failed_record_not_a_missing_one(tmp_path, cli, monkeypatch):
+    figs = _project(tmp_path)
+
+    def no_such_cli(*_a, **_k):
+        raise FileNotFoundError("codex")
+
+    monkeypatch.setattr(ai_bridge.subprocess, "Popen", no_such_cli)
+    with pytest.raises(FileNotFoundError):
+        ai_bridge.run("codex", "fig1.py", "p", str(figs), client_request_id=RID)
+    found = ai_bridge.find_request(str(figs.resolve()), RID)
+    assert found is not None and found["status"] == "failed"
+    assert not ai_bridge.SESSIONS or all(
+        s["id"] != found["session"] for s in ai_bridge.SESSIONS.values()
+    )
