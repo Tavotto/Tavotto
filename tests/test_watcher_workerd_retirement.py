@@ -169,6 +169,7 @@ def retirement(monkeypatch, tmp_path):
     monkeypatch.setattr(workerd_client, "find_workerd", lambda: "fake-workerd")
     monkeypatch.setattr(workerd_client, "client", lambda: supervisor)
     monkeypatch.setattr(project_watch, "_watchers", {project_watch._key(root): watcher})
+    monkeypatch.setattr(pool, "COLD_ACQUIRE_OBSERVER", project_watch.before_acquire)
     monkeypatch.setattr(inputbroker, "serving", lambda _: contextlib.nullcontext())
     monkeypatch.setattr(inputbroker, "finished", lambda *_, **__: None)
     harness = SimpleNamespace(root=root, watcher=watcher, supervisor=supervisor)

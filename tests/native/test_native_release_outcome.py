@@ -9,6 +9,7 @@ from __future__ import annotations
 import concurrent.futures
 import errno
 import json
+import select
 import socket
 import sys
 import threading
@@ -53,17 +54,10 @@ def connected(tmp_path):
         yield session, peer
     finally:
         session.transport.close()
-        if peer.fileno() >= 0:
-            # The fixture owns both ends. On Windows, local shutdown need not
-            # release an already-blocked recv; its BufferedReader still owns
-            # the socket. Finish the peer's EOF handshake before joining or
-            # closing that reader, rather than waiting for TCP's timeout.
-            try:
-                while peer.recv(8192):
-                    pass
-                _close_peer(peer, eof_received=True)
-            finally:
-                peer.close()
+        # All peer reads/makefiles have finished before teardown. Close this
+        # fixture-owned endpoint directly: it releases a pending Windows recv
+        # without waiting for a reverse FIN that macOS need not have sent.
+        peer.close()
         session.transport.join_reader(3)
         assert not session.transport._reader.is_alive()
         session.transport._rfile.close()
@@ -188,13 +182,55 @@ def test_fixture_closes_peer_before_waiting_for_pending_receive(
     finally:
         # Also release the real receive if the ordering assertion fails.
         session.transport.close()
-        if peer.fileno() >= 0:
-            try:
-                while peer.recv(8192):
-                    pass
-                _close_peer(peer, eof_received=True)
-            finally:
-                peer.close()
+        peer.close()
+        session.transport.join_reader(3)
+        reader_file.close()
+
+
+def test_fixture_closes_peer_without_reverse_fin_after_reader_eof(tmp_path, monkeypatch):
+    socketpair = socket.socketpair
+    shutdown_attempts = []
+
+    class ReceivedEofSocket:
+        def __init__(self, sock):
+            self.sock = sock
+
+        def shutdown(self, how):
+            shutdown_attempts.append(how)
+            # macOS may reject shutdown after receiving the peer's EOF. The
+            # makefile still owns the descriptor, so close alone sends no FIN.
+            raise OSError(errno.ENOTCONN, "injected shutdown after reader EOF")
+
+        def __getattr__(self, name):
+            return getattr(self.sock, name)
+
+    def pair():
+        parent, peer = socketpair()
+        return ReceivedEofSocket(parent), peer
+
+    monkeypatch.setattr(socket, "socketpair", pair)
+    fixture = connected.__wrapped__(tmp_path)
+    session, peer = next(fixture)
+    reader_file = session.transport._rfile
+    epoch, old_receipt = session.snapshot_epoch, _receipt_id(session)
+    try:
+        peer.shutdown(socket.SHUT_WR)
+        session.transport.join_reader(3)
+        assert not session.transport._reader.is_alive()
+        assert session.transport.closed and session.transport.poison is None
+        assert session.snapshot_epoch == epoch + 1 and _receipt_id(session) != old_receipt
+        session.transport.close()
+        assert shutdown_attempts == [socket.SHUT_RDWR]
+        assert not reader_file.closed
+        assert select.select([peer], [], [], 0)[0] == []  # No reverse data or EOF exists.
+        with pytest.raises(StopIteration):
+            next(fixture)
+        assert shutdown_attempts == [socket.SHUT_RDWR, socket.SHUT_RDWR]
+        assert peer.fileno() == -1 and reader_file.closed
+        assert session.snapshot_epoch == epoch + 1 and _receipt_id(session) != old_receipt
+    finally:
+        peer.close()
+        session.transport.close()
         session.transport.join_reader(3)
         reader_file.close()
 

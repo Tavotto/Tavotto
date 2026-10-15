@@ -520,6 +520,7 @@ def start(
     with _lock:
         old = _watchers.get(key)
         _watchers[key] = watcher
+        pool.set_cold_acquire_observer(before_acquire)
     if old is not None:
         old.stop()  # 放在锁外：stop 只是 set 一个 Event，但别在锁里做任何等待
     threading.Thread(
@@ -537,6 +538,8 @@ def stop(figures_dir: str | Path | None = None) -> None:
         else:
             w = _watchers.pop(_key(figures_dir), None)
             victims = [w] if w is not None else []
+        if not _watchers:
+            pool.set_cold_acquire_observer(None)
     for w in victims:
         w.stop()
 

@@ -3478,6 +3478,16 @@ def register_spawn_gate(gate) -> None:
 #: import 时登记。它与 `SPAWN_GATES` 分开、且排在 `acquire()` 解析解释器与查租约**之前**：门跑在
 #: `_new_worker()` 里，那时 `is_mutating` 已经查过了——在门里换解释器，查的是旧的、起的是新的（Codex #522 P1）。
 ENVIRONMENT_DECIDERS: list = []
+# Project lifecycle owns this optional port; the pool must not import watchers.
+# No watcher is registered in standalone pool consumers, so their cold path is
+# unchanged. Invocations are outside _lock, and existing hot sessions skip it.
+COLD_ACQUIRE_OBSERVER: Callable[[str, str], None] | None = None
+
+
+def set_cold_acquire_observer(observer: Callable[[str, str], None] | None) -> None:
+    global COLD_ACQUIRE_OBSERVER
+    COLD_ACQUIRE_OBSERVER = observer
+
 
 #: 起会话时检测出的解释器与记录已不是同一个（别的脚本在两次解析之间换了共享的项目记录）。
 ENVIRONMENT_CHANGED = "environment_changed"
@@ -3992,6 +4002,10 @@ def acquire(
     watcher_synced = False
     needs_watch_sync = False
     retiring = ()
+    # One acquisition owns one immutable environment decision, including a
+    # caller's preparation pin. Watcher/retirement waits must not reselect from
+    # a shared project record another script may have changed meanwhile.
+    pin = pinned if pinned is not None and pinned.pinned else None
     while True:
         if retiring:
             _confirm_retirements(key, retiring)
@@ -3999,23 +4013,18 @@ def acquire(
         if needs_watch_sync:
             # Only a new/replacement execution boundary, never a hot render.
             # This must stay outside _lock (watcher -> refresh -> pool).
-            from . import project_watch
-
-            project_watch.before_acquire(figures_dir, script_name)
+            observer = COLD_ACQUIRE_OBSERVER
+            if observer is not None:
+                observer(figures_dir, script_name)
             watcher_synced = True
             needs_watch_sync = False
         # **在锁外**算这个项目现在该用哪个解释器：worker 构造函数自己也会调它，
         # 在 `_lock` 里再调一次就是自锁。缓存命中时这是一次字典查询。首开的发现 + 体检
         # （U03）也发生在这里——在起任何会话**之前**，脚本目录决定从哪层往上找 venv。
-        decided = not ENVIRONMENT_DECIDERS
-        pin: EnvironmentDecision | None = None
-        if pinned is not None and pinned.pinned:
-            # 调用方（准备的一次运行）已经带着自己的不可变决定：只认它——不再让决定者对共享的项目记录重新决定
-            # （另一个脚本在检查之后、取会话之前换了记录，这次运行不能悄悄跑在别的解释器里；Codex #820 r4234067402）
-            decided, pin = True, pinned
+        decided = not ENVIRONMENT_DECIDERS or pin is not None
         try:
             want_python = (
-                pinned.python
+                pin.python
                 if pin is not None
                 else resolve_worker_python(figures_dir, script=script_name)[0]
             )
@@ -4041,6 +4050,8 @@ def acquire(
                 pin.python if pin else resolve_worker_python(figures_dir, script=script_name)[0]
             )
             decided = True
+        if pin is not None and not pin.matches(pin.python):
+            raise _environment_changed()
         _refuse_if_mutating(want_python)
         if want_python:
             # 需要 Conda 激活的解释器：激活捕获（最长一个超时）在池锁**外**做完；锁内起会话只命中缓存

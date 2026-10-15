@@ -46,6 +46,7 @@ def subject(tmp_path, monkeypatch):
     watcher.prime()
     monkeypatch.setattr(pool, "_workers", {})
     monkeypatch.setattr(project_watch, "_watchers", {project_watch._key(tmp_path): watcher})
+    monkeypatch.setattr(pool, "COLD_ACQUIRE_OBSERVER", project_watch.before_acquire)
     return ctx, watcher, clock
 
 
@@ -214,7 +215,7 @@ def test_hot_acquisition_does_not_observe_or_flush_watcher(subject, monkeypatch)
     def forbidden(*args, **kwargs):
         pytest.fail("hot acquisition must not scan or flush filesystem notifications")
 
-    monkeypatch.setattr(project_watch, "before_acquire", forbidden)
+    monkeypatch.setattr(pool, "COLD_ACQUIRE_OBSERVER", forbidden)
     monkeypatch.setattr(project_watch, "take_snapshot", forbidden)
     assert pool.acquire("plot.py", str(ctx.path), "main") == (current, False)
 
