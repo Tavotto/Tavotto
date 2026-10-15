@@ -1444,8 +1444,16 @@ fn restart_engine_blocking(app: &tauri::AppHandle) -> bool {
     let generation = state.marker.get().map(|m| m.engine_exit_generation());
     // 内存里的退出状态属于刚收掉的旧引擎：在新引擎（与它的监视线程）起来**之前**清。成功后再清会把
     // boot_engine 返回前新引擎就报上来的退出一并抹掉，新页面读 current_engine_exit 拿到 None、没有修复卡
-    *state.engine_exit.lock().unwrap() = None;
+    let previous = state.engine_exit.lock().unwrap().take();
     let ok = boot_engine(app, false);
+    if !ok {
+        // 重启失败：旧页面还在、修复卡要能再点（restart_engine 以 engine_exit 非空为前提）——写回旧状态；
+        // 这期间新引擎若已报了自己的退出，以新的为准
+        let mut cur = state.engine_exit.lock().unwrap();
+        if cur.is_none() {
+            *cur = previous;
+        }
+    }
     if ok {
         if let (Some(m), Some(g)) = (state.marker.get(), generation) {
             m.clear_engine_exit_if(g);
@@ -1852,11 +1860,23 @@ mod tests {
             "成功后按代次清"
         );
         // 内存里旧引擎的退出状态：恰好一处、在 boot_engine 之前清（成功后再清会抹掉新引擎的退出，#1070 r4280305203）
-        let mem_clear = "*state.engine_exit.lock().unwrap() = None";
-        assert_eq!(body.matches(mem_clear).count(), 1, "内存退出状态只清一处");
+        let mem_take = "state.engine_exit.lock().unwrap().take()";
+        assert_eq!(body.matches(mem_take).count(), 1, "内存退出状态只取走一处");
         assert!(
-            body.find(mem_clear).unwrap() < boot,
-            "内存退出状态要在 boot_engine 之前清"
+            body.find(mem_take).unwrap() < boot,
+            "内存退出状态要在 boot_engine 之前取走"
+        );
+        assert!(
+            !body.contains("engine_exit.lock().unwrap() = None"),
+            "不许无条件清内存退出状态"
+        );
+        // 重启失败要写回（修复卡还得能再点，#1070 r4280349114），且不覆盖新引擎已报的退出
+        let fail = body.find("if !ok {").expect("失败分支");
+        assert!(fail > boot);
+        let fail_body = &body[fail..fail + body[fail..].find("\n    }\n").expect("失败分支结尾")];
+        assert!(
+            fail_body.contains("cur.is_none()") && fail_body.contains("*cur = previous"),
+            "失败分支写回旧退出状态"
         );
         for banned in [
             "take_engine_exit",
