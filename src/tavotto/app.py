@@ -11701,6 +11701,7 @@ def main():
     if n:
         LOG.info("上次运行遗留的 %d 个 AI 会话已标记为中断", n)
     engine_ai_history.purge(keep_days=180)
+    engine_ai_history.purge_requests()
     # 选中的 PDF 后端在起服务前装载好（契约层是惰性装载的）：第一次 probe 不再多付一次
     # import 的延迟；选了装不上的后端在这里就报出来，不静默回退（ADR 0067 / 0072）
     LOG.info("PDF 后端: %s", engine_logsafe.known(pdfbackend.warm(), pdfbackend.BACKENDS))

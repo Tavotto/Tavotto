@@ -256,6 +256,19 @@ describe('已发出未确认：不能盲目重发', () => {
     expect(input().value).toBe('')
   })
 
+  it('查询：后端说「已执行过、记录已删」→ 说一句、清输入框、不出现重新发送，也不再发', async () => {
+    await mount()
+    await sendIt()
+    vi.mocked(fetchAiRequest).mockResolvedValue({ session: 's-5', status: 'history_deleted', changed: false, script: null as never })
+    await click(q('[data-ai-check]'))
+    await settle()
+    expect(aiRun).toHaveBeenCalledTimes(1)
+    expect(q('[data-ai-submission]')).toBeNull()
+    expect(q('[data-ai-resend-same]')).toBeNull()
+    expect(input().value).toBe('')
+    expect(useUiStore.getState().status).not.toBeNull()
+  })
+
   it('「改写后再发」：放弃这条等待、输入框可改，下一次发送是新 rid', async () => {
     await mount()
     await sendIt('旧指令')

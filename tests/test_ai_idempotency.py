@@ -340,3 +340,85 @@ def test_prompt_and_request_id_never_reach_the_log(client, tmp_path, cli, monkey
         client.get(f"/api/ai/requests/{RID}")
     text = "\n".join(r.getMessage() for r in caplog.records)
     assert SECRET not in text and RID not in text
+
+
+# ---------------------------------------------------------------------------
+# 幂等账本独立于用户可删的历史（Codex #1098 P2）
+# ---------------------------------------------------------------------------
+def test_deleting_history_does_not_make_the_request_look_unseen(client, tmp_path, cli, monkeypatch):
+    """请求跨后端重启仍未确认时，用户在任务历史里删了那一行：查询不得 404、同 rid 再 POST 不得 spawn。"""
+    _, counter = cli
+    _open(client, _project(tmp_path))
+    monkeypatch.setattr(m, "sse_publish", lambda *a: None)
+    sid = _post(client).get_json()["session"]
+    _wait_idle()
+    ai_bridge.SESSIONS.pop(sid)  # 后端重启：内存会话没了
+    assert client.delete(f"/api/ai/history/{sid}").get_json() == {"ok": True}
+    assert ai_history.get(sid) is None  # 对照：历史行真的没了
+
+    found = client.get(f"/api/ai/requests/{RID}")
+    assert found.status_code == 200, "删了历史就 404 = 前端放开同 rid 重发 = 同一修改再执行一次"
+    assert found.get_json() == {
+        "session": sid,
+        "status": "history_deleted",
+        "changed": False,
+        "script": None,
+    }
+    again = _post(client)
+    assert again.status_code == 200 and again.get_json()["session"] == sid
+    assert again.get_json()["deduped"] is True
+    assert _spawned(counter) == 1
+
+
+def test_unknown_request_is_still_404_after_the_ledger_exists(client, tmp_path, cli, monkeypatch):
+    """对照：账本只认登记过的 (项目, rid)，别的 rid 照旧 404。"""
+    _open(client, _project(tmp_path))
+    monkeypatch.setattr(m, "sse_publish", lambda *a: None)
+    _post(client)
+    _wait_idle()
+    assert client.get(f"/api/ai/requests/{RID2}").status_code == 404
+
+
+def test_ledger_is_scoped_to_the_project_and_holds_no_prompt(tmp_path):
+    db = tmp_path / "led.sqlite3"
+    ai_history.record_start(
+        {
+            "id": "s1",
+            "project": "/p",
+            "provider": "codex",
+            "prompt": SECRET,
+            "client_request_id": RID,
+        },
+        db_path=db,
+    )
+    ai_history.delete("s1", db_path=db)
+    assert ai_history.find_request_record("/p", RID, db_path=db)["session"] == "s1"
+    assert ai_history.find_request_record("/q", RID, db_path=db) is None
+    with sqlite3.connect(db) as raw:
+        cols = [r[1] for r in raw.execute("PRAGMA table_info(ai_requests)")]
+        dump = repr(raw.execute("SELECT * FROM ai_requests").fetchall())
+    assert cols == ["project", "client_request_id", "session", "created_ms"]
+    assert SECRET not in dump
+
+
+def test_ledger_is_backfilled_for_old_rows_and_purged_by_age(tmp_path):
+    db = tmp_path / "led2.sqlite3"
+    ai_history.record_start(
+        {
+            "id": "old",
+            "project": "/p",
+            "provider": "codex",
+            "prompt": "p",
+            "client_request_id": RID,
+        },
+        db_path=db,
+    )
+    with sqlite3.connect(db) as raw:  # 模拟「账本表出现之前登记的会话」
+        raw.execute("DELETE FROM ai_requests")
+    assert ai_history.find_request_record("/p", RID, db_path=db)["session"] == "old"  # 迁移补齐
+    assert ai_history.purge_requests(30, db_path=db) == 0  # 对照：没超龄不清
+    with sqlite3.connect(db) as raw:
+        raw.execute("UPDATE ai_requests SET created_ms = 1")
+    ai_history.delete("old", db_path=db)  # 历史行还在时迁移会把账本补回来；删了才看得出账本被清
+    assert ai_history.purge_requests(30, db_path=db) == 1
+    assert ai_history.find_request_record("/p", RID, db_path=db) is None

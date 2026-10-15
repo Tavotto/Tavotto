@@ -115,7 +115,8 @@ export interface DonePayload {
 }
 
 export type SubmitOutcome = 'accepted' | 'unconfirmed'
-export type QueryOutcome = 'accepted' | 'not_received' | 'unreachable' | 'gone'
+/** `already_run`：后端登记过它、但任务历史被用户删了（结局不可知）——已执行过，绝不重发 */
+export type QueryOutcome = 'accepted' | 'already_run' | 'not_received' | 'unreachable' | 'gone'
 
 interface AiState {
   /**
@@ -404,6 +405,15 @@ export const useAiStore = create<AiState>((set, get) => ({
     if (born !== get().generation) {
       removeAccepted(sub.project, sub.fileId, rid)
       return 'gone'
+    }
+    if (found.status === 'history_deleted') {
+      // 执行过、只是记录被删：没有会话可接，但**一定不能重发**。提交与草稿一并收掉
+      removeAccepted(sub.project, sub.fileId, rid)
+      set((s) => {
+        const { [rid]: _gone, ...rest } = s.submissions
+        return { submissions: rest }
+      })
+      return 'already_run'
     }
     // 补全转录 / diff / 执行器（刷新之后这些都在后端）；失败就用查询给的摘要
     const detail = await fetchAiSession(found.session, sub.project).catch(() => null)

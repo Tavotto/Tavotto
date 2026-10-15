@@ -37,7 +37,21 @@ CREATE TABLE IF NOT EXISTS sessions (
   pinned INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_sessions_project ON sessions(project, started_ms DESC);
+
+-- 幂等账本：**独立于用户可删的历史**。用户在任务历史里删掉一行，不能让「这条请求已经执行过」
+-- 这个事实跟着消失——否则请求跨后端重启仍未确认时，查询得 404、前端放开同 id 重发、同一修改再执行一次。
+-- 只存 id / 会话 id / 时间：**不存提示词**，不存脚本名。
+CREATE TABLE IF NOT EXISTS ai_requests (
+  project TEXT NOT NULL,
+  client_request_id TEXT NOT NULL,
+  session TEXT NOT NULL,
+  created_ms INTEGER NOT NULL,
+  PRIMARY KEY (project, client_request_id)
+);
 """
+
+#: 幂等账本的保留期；超龄才清（会话那时早已终态：启动时 running 一律转 interrupted）
+REQUEST_KEEP_DAYS = 30
 
 
 def _connect(db_path: Path | None = None) -> sqlite3.Connection:
@@ -75,6 +89,12 @@ def _migrate(con: sqlite3.Connection) -> None:
         if name not in have:
             con.execute(f"ALTER TABLE sessions ADD COLUMN {name} {kind}")
     con.execute(_REQUEST_INDEX)
+    # 老库 / 本改动之前登记的会话：账本补齐（幂等）
+    con.execute(
+        "INSERT OR IGNORE INTO ai_requests (project, client_request_id, session, created_ms) "
+        "SELECT project, client_request_id, id, started_ms FROM sessions "
+        "WHERE client_request_id IS NOT NULL"
+    )
 
 
 def record_start(sess: dict, db_path: Path | None = None) -> None:
@@ -104,6 +124,17 @@ def record_start(sess: dict, db_path: Path | None = None) -> None:
                 sess.get("client_request_id"),
             ),
         )
+        if sess.get("client_request_id"):
+            con.execute(
+                "INSERT OR IGNORE INTO ai_requests (project, client_request_id, session, created_ms) "
+                "VALUES (?,?,?,?)",
+                (
+                    sess.get("project", ""),
+                    sess["client_request_id"],
+                    sess["id"],
+                    int(time.time() * 1000),
+                ),
+            )
 
 
 def record_end(
@@ -229,6 +260,25 @@ def find_by_request(
             (project, client_request_id),
         ).fetchone()
     return _row_to_dict(row) if row else None
+
+
+def find_request_record(
+    project: str, client_request_id: str, db_path: Path | None = None
+) -> dict | None:
+    """幂等账本里 (项目, 请求 id) 对应的 `{session, created_ms}`；历史行被用户删了也在。"""
+    with _connect(db_path) as con:
+        row = con.execute(
+            "SELECT session, created_ms FROM ai_requests WHERE project=? AND client_request_id=?",
+            (project, client_request_id),
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def purge_requests(keep_days: int = REQUEST_KEEP_DAYS, db_path: Path | None = None) -> int:
+    """账本的有界清理：只清超龄的。与 `purge`（历史，pinned 豁免）互不相干。"""
+    cutoff = int((time.time() - keep_days * 86400) * 1000)
+    with _connect(db_path) as con:
+        return con.execute("DELETE FROM ai_requests WHERE created_ms <= ?", (cutoff,)).rowcount
 
 
 def get(sid: str, db_path: Path | None = None) -> dict | None:

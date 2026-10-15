@@ -410,7 +410,11 @@ function AssistantPanelBody() {
     const text = submission.prompt
     const out = await useAiStore.getState().queryRequest(submission.rid)
     if (out === 'accepted') clearIf(text)
-    else if (out === 'unreachable') setCheckNote('unreachable')
+    else if (out === 'already_run') {
+      // 后端登记过、任务记录被删：已执行过，不再发。说一句，输入框收掉（草稿已由 store 删）
+      clearIf(text)
+      useUiStore.getState().setStatus(msg('status.aiAlreadyRan', undefined, 'ai'), 'info')
+    } else if (out === 'unreachable') setCheckNote('unreachable')
   }
   /** 后端明确说没收到之后，用**同一个**请求 id 重发（后端按 id 去重，与迟到的原请求赛跑也不会双跑） */
   const resendSame = async () => {

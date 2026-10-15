@@ -70,6 +70,10 @@ class AgentError(RuntimeError):
         self.params = params or {}
 
 
+#: `find_request` 的 status：请求登记过（已执行），但会话的历史记录被用户删掉了，结局不可知
+REQUEST_HISTORY_DELETED = "history_deleted"
+
+
 class DuplicateRequest(Exception):
     """同一个 `client_request_id` 已经登记过：不 spawn，调用方返回既有会话（幂等）。"""
 
@@ -94,7 +98,17 @@ def find_request(project: str, client_request_id: str) -> dict | None:
             }
     hist = ai_history.find_by_request(project, client_request_id)
     if hist is None:
-        return None
+        # 历史行没了（用户删了任务历史）不等于没执行过：幂等账本是独立的一份。
+        # 命中就明说「执行过、记录已删」——前端据此不再放开重发
+        rec = ai_history.find_request_record(project, client_request_id)
+        if rec is None:
+            return None
+        return {
+            "session": rec["session"],
+            "status": REQUEST_HISTORY_DELETED,
+            "changed": False,
+            "script": None,
+        }
     return {
         "session": hist["id"],
         "status": hist["status"],

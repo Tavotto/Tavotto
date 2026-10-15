@@ -161,6 +161,23 @@ describe('未确认时不能盲目重发', () => {
     expect(loadDraft('pa', 'Fig1.pdf')).toBeNull()
   })
 
+  it('后端登记过但任务历史被用户删了（history_deleted）：不放开重发、不建会话、提交与草稿收掉', async () => {
+    const rid = onlySub().rid
+    handler = (url) =>
+      url.includes('/api/ai/requests/')
+        ? json({ session: 's-5', status: 'history_deleted', changed: false, script: null })
+        : json({})
+    const before = runCalls()
+    await expect(useAiStore.getState().queryRequest(rid)).resolves.toBe('already_run')
+    expect(runCalls()).toBe(before)
+    expect(subs()).toEqual([])
+    expect(useAiStore.getState().sessions).toEqual([])
+    expect(loadDraft('pa', 'Fig1.pdf')).toBeNull()
+    // 提交记录没了，resend 也是空操作
+    await expect(useAiStore.getState().resend(rid)).resolves.toBe('unconfirmed')
+    expect(runCalls()).toBe(before)
+  })
+
   it('查询本身失败（断网 / 5xx / 老后端没有这个端点的普通 404）都不是结论：仍是 unconfirmed，不放开重发', async () => {
     const rid = onlySub().rid
     for (const h of [
