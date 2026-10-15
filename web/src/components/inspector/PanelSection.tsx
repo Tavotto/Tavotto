@@ -684,9 +684,16 @@ function ElementEditEntry({ panel }: { panel: PanelObject }) {
   // 「整张图改了几项」与两颗恢复按钮上的数字是同一件事（审计 T32）：
   // 各自 `panel.overrides.length` 一遍就是同一条判据的两份实现
   const overrides = overrideCounts(panel.overrides, null).figure
+  /** 三条提示各自此刻的文案（可见时 title 与正文同源；不可见的也要写真实译文，保住换行足迹） */
+  const engineMessageText = (kind: 'cold' | 'building' | 'stale') =>
+    kind === 'stale'
+      ? pn('staleScript')
+      : building && (kind === 'cold' ? cold : !cold) && !editing
+        ? engineProgress.text
+        : pn(kind === 'cold' ? 'coldBuilding' : 'building')
 
   return (
-    <Section>
+    <Section className="pb-4">
       <div className="flex items-center gap-1.5">
         {/*
           进图内编辑是导航动作，**不能**绑渲染状态：进去本来就不依赖上一次渲染
@@ -735,7 +742,9 @@ function ElementEditEntry({ panel }: { panel: PanelObject }) {
           不会把翻转 / 数值框等控件上移（原生 click 随之丢失） */}
       {/* 足迹为 0（2026-10-16）：三条提示叠在按钮下方、浮在节的下内边距里，不再给「改图里的内容」按钮下面留一条
           常驻的死空白（原先 mt-1.5 + 20px ≈ 26px）；仍然只改可见性、不插拔节点，所以首次渲染完成时控件不挪位 */}
-      <div data-panel-engine-status className="relative grid h-0">
+      {/* 一行、超出截断（完整文案在 title）：窄栏 / 英文 / 更长的构建时长文案折成两行会盖到下一节（Codex #1110 P2）。
+          这一节的下内边距放到 16，那一行（2 + 12）整个落在它里面，不越过下一节的顶边 */}
+      <div data-panel-engine-status className="relative grid h-0 grid-cols-[minmax(0,1fr)]">
         {(['cold', 'building', 'stale'] as const).map((kind) => {
           const progress = !editing && building
           const shown = kind === 'stale' ? !!render?.stale && !progress : progress && (kind === 'cold' ? cold : !cold)
@@ -746,8 +755,9 @@ function ElementEditEntry({ panel }: { panel: PanelObject }) {
               data-panel-engine-progress={kind === 'stale' ? undefined : true}
               data-render-progress={shown && kind !== 'stale' ? engineProgress.phase : undefined}
               aria-hidden={!shown}
+              title={shown ? engineMessageText(kind) : undefined}
               className={cn(
-                'pointer-events-none col-start-1 row-start-1 flex h-4 items-center gap-1.5 text-xs',
+                'col-start-1 row-start-1 mt-0.5 block h-3 truncate text-xs leading-3',
                 kind === 'stale' ? 'text-danger-content' : 'text-ink-2',
                 !shown && 'invisible',
               )}
@@ -756,7 +766,7 @@ function ElementEditEntry({ panel }: { panel: PanelObject }) {
                 pn('staleScript')
               ) : (
                 // 「进行中」的字是 text-shimmer（宪法第七节的加载方言之一），不配呼吸点
-                <span className="text-shimmer">{shown ? engineProgress.text : pn(kind === 'cold' ? 'coldBuilding' : 'building')}</span>
+                <span className="text-shimmer">{engineMessageText(kind)}</span>
               )}
             </p>
           )
