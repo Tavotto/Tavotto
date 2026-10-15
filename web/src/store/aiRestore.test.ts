@@ -265,4 +265,41 @@ describe('占位与「已发出未确认」「按脚本的发送锁」并存（P
     expect(isSessionOf(sessions()[0], { id: 'p9', fileId: 'Fig9.pdf', script: 'sub/fig1.py' })).toBe(true)
     expect(isSessionOf(sessions()[0], { id: 'p9', fileId: 'Fig9.pdf', script: 'other/fig1.py' })).toBe(false)
   })
+
+  it('占位先到、提交后到（reconcile 在 restoreRunning 之后）：请求 id 对上 = 已被接受，不再摆「未确认」，归属并到占位', async () => {
+    history.pa = [row({ id: 's-run', script: 'fig1.py', client_request_id: 'rid-adopt-00001' })]
+    await useAiStore.getState().restoreRunning()
+    useAiStore.getState().restoreSubmission({
+      rid: 'rid-adopt-00001', project: 'pa', fileId: 'Fig1.pdf', panelId: 'p1', script: 'fig1.py',
+      prompt: '把线条加粗', target: { scope: 'figure', gid: null, label: null, target: '整张图' },
+      canvas: null, overrides: [],
+    })
+    expect(Object.keys(useAiStore.getState().submissions)).toEqual([])
+    expect(sessions()).toHaveLength(1)
+    expect(sessions()[0]).toMatchObject({ id: 's-run', restored: false, fileId: 'Fig1.pdf', panelId: 'p1' })
+  })
+
+  it('提交先到、占位后到（restoreRunning 在 reconcile 之后）：同样直接并上去', async () => {
+    useAiStore.getState().restoreSubmission({
+      rid: 'rid-adopt-00002', project: 'pa', fileId: 'Fig1.pdf', panelId: 'p1', script: 'fig1.py',
+      prompt: '把线条加粗', target: { scope: 'figure', gid: null, label: null, target: '整张图' },
+      canvas: null, overrides: [],
+    })
+    expect(Object.keys(useAiStore.getState().submissions)).toHaveLength(1) // 对照：此刻还是未确认
+    history.pa = [row({ id: 's-run2', script: 'fig1.py', client_request_id: 'rid-adopt-00002' })]
+    await useAiStore.getState().restoreRunning()
+    expect(Object.keys(useAiStore.getState().submissions)).toEqual([])
+    expect(sessions()).toHaveLength(1)
+    expect(sessions()[0]).toMatchObject({ id: 's-run2', restored: false, fileId: 'Fig1.pdf' })
+  })
+
+  it('请求 id 对不上的提交不被误并：照旧是未确认', async () => {
+    history.pa = [row({ id: 's-run', client_request_id: 'rid-someone-else' })]
+    await useAiStore.getState().restoreRunning()
+    useAiStore.getState().restoreSubmission({
+      rid: 'rid-mine-0000001', project: 'pa', fileId: 'Fig1.pdf', panelId: 'p1', script: 'fig1.py',
+      prompt: 'x', target: { scope: 'figure', gid: null, label: null, target: '整张图' }, canvas: null, overrides: [],
+    })
+    expect(Object.keys(useAiStore.getState().submissions)).toEqual(['rid-mine-0000001'])
+  })
 })

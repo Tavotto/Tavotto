@@ -3045,6 +3045,8 @@ export const fetchAiInstallStatus = (agent: AiAgentId) =>
 
 export interface AiHistoryEntry {
   id: string
+  /** 发起它的请求 id（点发送时生成）；老记录 / 老前端发起的没有 */
+  client_request_id?: string | null
   provider: AiAgentId
   model: string | null
   effort: string | null
