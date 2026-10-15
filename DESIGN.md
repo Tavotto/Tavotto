@@ -269,7 +269,7 @@ lg 12（卡片、菜单 / popover 外壳、多行浮动面板）、panel 16（�
 
 全部原语在 `web/src/components/ui/`，形态与状态在 **宪法第五节**：Button 五档（primary / secondary / ghost / danger / danger-tinted，高 28 / 32）、IconButton（圆）、
 TextInput / NumberField（框内单位）、Select（全仓唯一的下拉）、Checkbox、Toggle（名字必填）、
-Badge、StatusPill、Notice、Card、Tabs（选中 600 + 2px 下划线）、Segmented（灰容器 + 白色浮起的 thumb，选中 600）、listRowClass（28 / 44 / 52，选中 600）/ rowMetaClass / dropLineClass / TreeRow、
+Badge、StatusPill、CountChip（计数芯片：26 / 24 高、ink 4% 底、颜色只在 6px 圆点上，「建议」永不染色；导出检查、问题面板等级开关、属性栏问题胶囊、接入状态摘要共用）、Notice、Card、Tabs（选中 600 + 2px 下划线）、Segmented（灰容器 + 白色浮起的 thumb，选中 600）、listRowClass（28 / 44 / 52，选中 600）/ rowMetaClass / dropLineClass / TreeRow、
 RowMenu（⋯ + 右键 + ⇧F10 同一份菜单）、dropZoneClass（拖放接收态：静态不画、拖入才是 accent 虚线 + 浅底 + 外发光）、SearchInput、Section / Disclosure、FormSection / FieldGroup、EmptyState（40px 图标底座 + 15 / 600 标题）、
 Dialog（sm 400 / md 480 / lg 560 / xl 760 / shell；标题 15 / 600、说明 13 / ink-2、正文 13；页脚 `{ start, secondary, primary }` 三槽、32px；
 栈底才画遮罩；Esc = 安全答案；回应一律 `Notice`，进行中页脚不撤——对话框页的细则在 **宪法第二十六节「对话框与引导」**）。
