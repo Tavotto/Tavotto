@@ -115,6 +115,15 @@
   旧的 `ai.codex_path` / `ai.claude_path` 由 `config._migrate_ai_agents()`
   一次性迁移并**立刻删掉旧键**（两份权威并存 = 一边改路径另一边不知道）；
   规则写成正则而不是列举两个名字。不认识的 agent id 原样留着。
+- **幂等与并发（ADR 0131）**：`POST /api/ai/run` 可带前端点发送时生成的 `client_request_id`（UUID，
+  `[A-Za-z0-9_-]{8,64}`，格式不对 400，不静默当没带）。`run()` 在 `script_guard` + `_REQUEST_LOCK` 里先按
+  **(项目, id)** 查内存会话与历史库（`ai_history` 的 `client_request_id` 列 + 部分唯一索引），命中抛
+  `DuplicateRequest`、app 层返回既有 `{session, script, deduped: true}`，**不 spawn、不重复记遥测**；
+  去重先于忙检查。同脚本上另一个请求还在跑（`script_busy`）→ 409 `ai_script_busy`——并发保护在后端，
+  不再只靠前端的 `runningHere`。`GET /api/ai/requests/<id>` 只读、按当前项目隔离，回
+  `{session,status,changed,script}` 或 404 `ai_request_not_found`（前端判「已发出未确认」要不要重发的唯一依据）。
+  `ai.*` 事件带 `client_request_id`。**请求 id 与提示词一样不进日志 / 遥测 / 诊断包**
+  （`tests/test_ai_idempotency.py::test_prompt_and_request_id_never_reach_the_log`）。
 - 会话历史在 `engine/ai_history.py`（SQLite `cache/ai_history.sqlite3`，
   按 project 列过滤）；启动时 running→interrupted + purge(180d，pinned 豁免)；
   历史 API：list（分页/搜索/筛选）/delete/pin。前端默认只显示人类可读目标，

@@ -100,6 +100,7 @@ def test_api_default_deny_without_session(served):
         "/api/projects/recent",
         "/api/events",
         "/api/ai/capabilities",
+        "/api/ai/requests/11111111-2222-4333-8444-555555555555",
         "/api/update/check",
         "/api/render?id=x&w=400",
         "/exports/whatever.pdf",

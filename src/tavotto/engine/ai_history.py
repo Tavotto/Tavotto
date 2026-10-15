@@ -56,7 +56,17 @@ _ADDED_COLUMNS = {
     # Session 22：AI 改完代码之后统一刷新的结局（JSON），与 `changed` 分开记：
     # 代码改成了、刷新没成，是两件事，不能合成一个「成功」。
     "refresh": "TEXT",
+    # 前端点「发送」时生成的请求 id（UUID）：同一条 AI 修改被无意重发时据此去重。
+    # 老库、老前端（不带 id）为 NULL，不参与唯一约束。
+    "client_request_id": "TEXT",
 }
+
+#: (project, client_request_id) 唯一：部分索引，NULL 不算。建在 `_migrate` 里（列补上之后），
+#: 老库同样走这条路——判据是「索引有没有」，不是版本号。
+_REQUEST_INDEX = (
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_sessions_request ON sessions(project, client_request_id) "
+    "WHERE client_request_id IS NOT NULL"
+)
 
 
 def _migrate(con: sqlite3.Connection) -> None:
@@ -64,6 +74,7 @@ def _migrate(con: sqlite3.Connection) -> None:
     for name, kind in _ADDED_COLUMNS.items():
         if name not in have:
             con.execute(f"ALTER TABLE sessions ADD COLUMN {name} {kind}")
+    con.execute(_REQUEST_INDEX)
 
 
 def record_start(sess: dict, db_path: Path | None = None) -> None:
@@ -71,8 +82,9 @@ def record_start(sess: dict, db_path: Path | None = None) -> None:
         con.execute(
             """INSERT OR REPLACE INTO sessions
                (id, project, canvas, panel, element, provider, model, effort,
-                scope, target, script, prompt, status, started_ms, snapshot_path)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                scope, target, script, prompt, status, started_ms, snapshot_path,
+                client_request_id)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (
                 sess["id"],
                 sess.get("project", ""),
@@ -89,6 +101,7 @@ def record_start(sess: dict, db_path: Path | None = None) -> None:
                 "running",
                 int(time.time() * 1000),
                 sess.get("snapshot_path"),
+                sess.get("client_request_id"),
             ),
         )
 
@@ -204,6 +217,18 @@ def list_sessions(
             [*args, limit, offset],
         ).fetchall()
     return {"total": total, "sessions": [_row_to_dict(r) for r in rows]}
+
+
+def find_by_request(
+    project: str, client_request_id: str, db_path: Path | None = None
+) -> dict | None:
+    """按 (项目, 请求 id) 找已登记的会话。只在**本项目**内找：别的项目用了同一个 id 也看不到。"""
+    with _connect(db_path) as con:
+        row = con.execute(
+            "SELECT * FROM sessions WHERE project=? AND client_request_id=?",
+            (project, client_request_id),
+        ).fetchone()
+    return _row_to_dict(row) if row else None
 
 
 def get(sid: str, db_path: Path | None = None) -> dict | None:

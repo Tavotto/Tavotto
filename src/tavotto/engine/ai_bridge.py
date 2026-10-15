@@ -70,6 +70,39 @@ class AgentError(RuntimeError):
         self.params = params or {}
 
 
+class DuplicateRequest(Exception):
+    """同一个 `client_request_id` 已经登记过：不 spawn，调用方返回既有会话（幂等）。"""
+
+    def __init__(self, sid: str):
+        super().__init__(sid)
+        self.sid = sid
+
+
+def find_request(project: str, client_request_id: str) -> dict | None:
+    """这个项目里这个请求 id 对应的会话摘要 `{session, status, changed, script}`，没有返回 None。
+
+    先看内存（刚起、还没落库的也在），再看历史库（后端重启后）。**按项目隔离**：主语是
+    (项目, 请求 id)，不是请求 id 本身。"""
+    project = str(Path(project).resolve())
+    for sess in list(SESSIONS.values()):
+        if sess.get("client_request_id") == client_request_id and sess.get("project") == project:
+            return {
+                "session": sess["id"],
+                "status": sess["status"],
+                "changed": bool(sess.get("changed")),
+                "script": sess["script"],
+            }
+    hist = ai_history.find_by_request(project, client_request_id)
+    if hist is None:
+        return None
+    return {
+        "session": hist["id"],
+        "status": hist["status"],
+        "changed": hist["changed"],
+        "script": hist["script"],
+    }
+
+
 def require_agent(agent_id: str) -> ai_agents.AgentDefinition:
     """按 id 取适配器；**未知 id 一律当场拒绝**，绝不继续往下传。
 
@@ -364,6 +397,10 @@ def install_status(agent_id: str) -> dict:
 #: 按脚本的锁（ADR 0110 §五）：持有者清单与唯一写入口在 `scriptlock`
 script_guard = scriptlock.script_guard
 
+#: 「查请求 id → 登记会话」要成为一步：两个同 id 的 POST 并发到达，后者必须看见前者。
+#: 锁序固定为 script_guard → _REQUEST_LOCK，别处不反过来取。
+_REQUEST_LOCK = threading.RLock()
+
 
 def _terminate(sess: dict) -> None:
     """杀掉会话的整个进程组（POSIX `killpg`；Windows `taskkill /T`，要趁组长还活着）。只是发出终止——
@@ -617,6 +654,7 @@ def run(
     effort: str | None = None,
     endpoint_id: str | None = None,
     on_changed=None,
+    client_request_id: str | None = None,
 ) -> str:
     """启动一次 AI 修改任务，返回 session id。事件经 on_event(name, data) 回调。
 
@@ -627,14 +665,26 @@ def run(
     （app 层接的是统一刷新，ADR 0025）。本模块不 import app、不知道刷新长什么
     样——注入而不是回头 import，边界与 `project_refresh.RefreshSink` 相同。
     它的结局进 `ai.done.refresh` 与历史库的 `refresh` 列，见 `refresh_outcome()`。
+
+    `client_request_id`：前端点发送时生成的 UUID。同 (项目, id) 已登记过就抛 `DuplicateRequest`、
+    **不 spawn**——「任何操作都不得让同一条 AI 修改被无意执行两次」。去重先于忙检查：
+    重发一条已经在跑的请求得到的是既有会话，不是 409。同脚本上另一个会话还在跑（不同请求）
+    则 409 `ai_script_busy`——后端不能只靠前端的 `runningHere` 挡并发。
     """
     require_usable(agent)
     script_path = Path(figures_dir) / script
+    project_key = str(Path(figures_dir).resolve())
     # 从「脚本在不在」到登记进 SESSIONS 整段持脚本锁：改写 / 复原的事务要么在这之前落地（这里快照的
     # 就是改后的脚本），要么在这之后看到 running 的会话而让路
-    with script_guard(script_path):
+    with script_guard(script_path), _REQUEST_LOCK:
+        if client_request_id:
+            known = find_request(project_key, client_request_id)
+            if known is not None:
+                raise DuplicateRequest(known["session"])
         if not script_path.is_file():
             raise RuntimeError(f"脚本不存在: {script}")
+        if script_busy(script_path):
+            raise AgentError("ai_script_busy", {"script": script})
         sid = uuid.uuid4().hex[:12]
         SNAP_DIR.mkdir(parents=True, exist_ok=True)
         _prune_snapshots()
@@ -719,6 +769,7 @@ def run(
             #: 观察到进程（连同进程组）确实退出之后才置位；之前 `script_busy` 一律算忙
             "exited": threading.Event(),
             "started": time.time(),
+            "client_request_id": client_request_id,
         }
         SESSIONS[sid] = sess
     ctx = context or {}
@@ -737,6 +788,7 @@ def run(
             "script": script,
             "prompt": user_prompt,
             "snapshot_path": str(snap),
+            "client_request_id": client_request_id,
         }
     )
     emit = on_event or (lambda *_: None)

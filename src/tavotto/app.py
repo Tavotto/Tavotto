@@ -9227,6 +9227,13 @@ def api_ai_endpoint_active():
     return jsonify(engine_ai.capabilities(refresh=True))
 
 
+_CLIENT_REQUEST_ID = re.compile(r"[A-Za-z0-9_-]{8,64}")
+
+
+def _valid_client_request_id(value) -> bool:
+    return isinstance(value, str) and _CLIENT_REQUEST_ID.fullmatch(value) is not None
+
+
 @app.post("/api/ai/run")
 def api_ai_run():
     """启动 codex / claude 对某脚本面板的深度修改。"""
@@ -9234,6 +9241,11 @@ def api_ai_run():
     agent = body.get("agent", "codex")
     prompt = (body.get("prompt") or "").strip()
     if not prompt:
+        abort(400)
+    # 前端点发送时生成的请求 id：同 (项目, id) 再 POST 返回既有会话、不再 spawn。
+    # 老前端不带 → None，行为不变。格式不对一律 400，不静默当作「没带」（那会让去重悄悄失效）。
+    request_id = body.get("client_request_id")
+    if request_id is not None and not _valid_client_request_id(request_id):
         abort(400)
     path = safe_resolve(body.get("id", ""))
     info = current_registry().for_stem(path.stem)
@@ -9259,13 +9271,22 @@ def api_ai_run():
             str(ctx.path),
             context=context,
             # 事件带上发起它的项目：SSE 是全进程一条流，切到 B 的标签页不许接 A 的任务的话（#589）
-            on_event=lambda event, data: sse_publish(event, {**data, "pj": ctx.id}),
+            # 带上请求 id：前端按它认领早于 HTTP 响应到达的事件
+            on_event=lambda event, data: sse_publish(
+                event,
+                {**data, "pj": ctx.id, **({"client_request_id": request_id} if request_id else {})},
+            ),
+            client_request_id=request_id,
             model=body.get("model") or None,
             effort=body.get("effort") or None,
             endpoint_id=body.get("endpoint"),
             # 文件变了就接统一刷新（reason=ai），在 ai.done 之前做完（ADR 0041）
             on_changed=lambda script: _after_ai_change(ctx, script),
         )
+    except engine_ai.DuplicateRequest as dup:
+        # 同一条请求已经登记过：返回既有会话，不 spawn、不重复记遥测
+        LOG.info("AI 任务请求重复，返回既有会话（session %s）", dup.sid)
+        return jsonify({"session": dup.sid, "script": info["script"], "deduped": True})
     except engine_ai.AgentError as exc:
         # 未知 / 未安装 / 被用户在 Tavotto 里关掉——前端本该已经过滤掉，
         # 但这个端点可以被直接调，判据只有一份、在后端
@@ -9289,6 +9310,23 @@ def api_ai_run():
         "ai_assistant_invoked", {"agent": agent if agent in allowed else "other"}
     )
     return jsonify({"session": sid, "script": info["script"]})
+
+
+@app.get("/api/ai/requests/<request_id>")
+def api_ai_request(request_id):
+    """按前端的请求 id 问「这条有没有被后端接受」：`{session, status, changed, script}` 或 404。
+
+    只读，按**当前项目**隔离（别的项目用同一个 id 也查不到）。前端在「已发出、未收到确认」时
+    靠它判断要不要重发——所以 404 是一个明确的结论（`ai_request_not_found`：后端没登记过），
+    不是「查不到就当没发过」的兜底。"""
+    if not _valid_client_request_id(request_id):
+        abort(400)
+    found = engine_ai.find_request(str(require_project().resolve()), request_id)
+    if found is None:
+        return jsonify({"error": "后端没有登记过这个请求", "code": "ai_request_not_found"}), 404
+    resp = jsonify(found)
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
 
 
 @app.get("/api/ai/history")
