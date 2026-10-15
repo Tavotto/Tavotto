@@ -214,3 +214,26 @@ def test_a_browser_mode_session_is_never_routed_to_native(tmp_path):
         assert _history(final) == [("safe", "blocked")]
         assert final["plan"]["route"]["declined"] == "not_desktop_initiated"
         assert _native_sessions(app, proj) == []
+
+
+#: #1034 第五轮：这两个脚本里的 savefig→读回都不能算高置信——前者名字取决于 rcParams，后者根本走不到
+EXTENSIONLESS_READBACK = COUNT + HEAD + FIG + 'fig.savefig("stage")\nopen("stage", "rb").read()\n'
+UNREACHABLE_READBACK = (
+    COUNT
+    + HEAD
+    + FIG
+    + 'Path("victim.txt").unlink()\nraise SystemExit\nfig.savefig("stage.png")\nImage.open("stage.png").load()\n'
+)
+
+
+def test_ambiguous_or_unreachable_readbacks_stay_in_safe_before_running(tmp_path):
+    for body in (EXTENSIONLESS_READBACK, UNREACHABLE_READBACK):
+        sub = tmp_path / str(abs(hash(body)))
+        sub.mkdir()
+        proj, _log = _project(sub, body)
+        (proj / "victim.txt").write_text("keep", encoding="utf-8")
+        with sidecar_app(proj, sub / "work", env_overrides=ENV) as app:
+            route = _create(app)["plan"]["route"]
+            assert route["execution"] == "safe", route
+            assert "R1" not in route["rules"], route
+        assert (proj / "victim.txt").read_text(encoding="utf-8") == "keep"

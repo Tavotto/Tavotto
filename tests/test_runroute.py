@@ -1195,3 +1195,79 @@ open("c.csv").read()
 def test_a_savefig_in_a_loop_then_read_is_only_medium():
     route = _route(MPL + f"for i in range(3):\n{_ind(SAVE)}\n{_ind(READ)}\n")
     assert route.execution == "safe" and route.confidence == runroute.CONFIDENCE_MEDIUM
+
+
+# ---- #1034 第五轮：无后缀 savefig 与无条件终止之后的语句
+EXTENSIONLESS = [
+    ("plt_no_suffix", 'plt.savefig("stage")\nopen("stage", "rb").read()\n'),
+    (
+        "fig_no_suffix_trailing_dot",
+        'fig = plt.figure()\nfig.savefig("stage.")\nopen("stage.", "rb").read()\n',
+    ),
+    ("format_none_literal", 'plt.savefig("stage", format=None)\nopen("stage", "rb").read()\n'),
+    (
+        "format_not_literal",
+        'F = input()\nplt.savefig("stage", format=F)\nopen("stage", "rb").read()\n',
+    ),
+    ("kwargs_may_carry_format", 'plt.savefig("stage", **{})\nopen("stage", "rb").read()\n'),
+]
+
+
+@pytest.mark.parametrize("name,body", EXTENSIONLESS, ids=[c[0] for c in EXTENSIONLESS])
+def test_a_savefig_whose_written_name_depends_on_rcparams_never_goes_native(name, body):
+    route = _route(MPL + body)
+    assert route.execution == "safe" and "R1" not in _rules(route), route.public()
+
+
+def test_a_literal_format_keeps_the_target_name_and_stays_high_confidence():
+    route = _route(MPL + 'plt.savefig("stage", format="svg")\nopen("stage", "rb").read()\n')
+    assert route.execution == "native" and "R1" in _rules(route)
+
+
+def test_an_extensionless_savefig_does_not_make_the_rename_source_certain():
+    route = _route(
+        MPL + 'import os\nplt.savefig("t")\nos.replace("t", "f.png")\nopen("f.png", "rb").read()\n',
+        cwd=runroute.CWD_PROJECT,
+    )
+    assert route.execution == "safe"
+
+
+UNREACHABLE = [
+    ("raise", "raise SystemExit\n"),
+    ("sys_exit", "import sys\nsys.exit(0)\n"),
+    ("os_exit", "import os\nos._exit(0)\n"),
+    ("exit_builtin", "exit()\n"),
+    ("quit_builtin", "quit()\n"),
+    ("assert_false", "assert False\n"),
+    ("while_true_no_break", "while True:\n    pass\n"),
+    ("main_guard_raise", 'if __name__ == "__main__":\n    raise SystemExit\n'),
+]
+
+
+@pytest.mark.parametrize("name,stop", UNREACHABLE, ids=[c[0] for c in UNREACHABLE])
+def test_evidence_after_an_unconditional_terminator_does_not_count(name, stop):
+    tail = 'plt.savefig("x.png")\nopen("x.png", "rb").read()\n'
+    route = _route(MPL + 'from pathlib import Path\nPath("victim").unlink()\n' + stop + tail)
+    assert route.execution == "safe" and "R1" not in _rules(route), route.public()
+
+
+def test_a_return_stops_the_function_body_and_not_the_module():
+    route = _route(
+        MPL
+        + 'def helper():\n    return\n    plt.savefig("x.png")\n    open("x.png", "rb").read()\n'
+        + "helper()\n"
+    )
+    assert route.execution == "safe"
+    route = _route(
+        MPL
+        + 'def helper():\n    return\nhelper()\nplt.savefig("x.png")\nopen("x.png", "rb").read()\n'
+    )
+    assert route.execution == "native"
+
+
+def test_a_conditional_terminator_does_not_hide_real_evidence():
+    tail = 'plt.savefig("x.png")\nopen("x.png", "rb").read()\n'
+    route = _route(MPL + 'if len(__import__("sys").argv) > 5:\n    raise SystemExit\n' + tail)
+    assert route.execution == "native"
+    route = _route(MPL + "while True:\n    break\n" + tail)
+    assert route.execution == "native"

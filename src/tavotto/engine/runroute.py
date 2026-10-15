@@ -642,8 +642,7 @@ class _Collector:
                 self._walk(dec, scope, branches, top)
             # 函数体是它自己的语句序列（能不能走到由可达性判）；类体在定义时执行，跟随外层
             body_top = True if not isinstance(node, ast.ClassDef) else top
-            for stmt in node.body:
-                self._walk(stmt, inner, branches, body_top)
+            self._walk_seq(node.body, inner, branches, body_top)
             return
         if isinstance(node, (ast.If, ast.While)) and self._constant_false(node.test):
             # 条件是常量 False 的 `if` / `while`：body 永远不执行，里面的调用与证据都不算（`else` 照常）
@@ -654,8 +653,7 @@ class _Collector:
         if isinstance(node, ast.If):
             self._walk(node.test, scope, branches, top)
             body_top = top and self._main_guard(node.test)
-            for stmt in node.body:
-                self._walk(stmt, scope, (*branches, (id(node), 0)), body_top)
+            self._walk_seq(node.body, scope, (*branches, (id(node), 0)), body_top)
             for stmt in node.orelse:
                 self._walk(stmt, scope, (*branches, (id(node), 1)), False)
             return
@@ -688,6 +686,9 @@ class _Collector:
                 for stmt in handler.body:
                     self._walk(stmt, scope, branches, False)
             return
+        if isinstance(node, ast.Module):
+            self._walk_seq(node.body, scope, branches, top)
+            return
         if isinstance(node, ast.Call):
             if top and isinstance(node.func, ast.Name):
                 self.calls.append((scope, node.func.id))
@@ -696,6 +697,44 @@ class _Collector:
         child_top = top and not isinstance(node, self._CONDITIONAL_EXPR)
         for child in ast.iter_child_nodes(node):
             self._walk(child, scope, branches, child_top)
+
+    def _walk_seq(self, stmts: list, scope: _Scope, branches: tuple, top: bool) -> bool:
+        """一段语句序列。遇到无条件终止（`return` / `raise` / `sys.exit()` 一类 / 无 `break` 的 `while True`）后，
+        同一序列里后面的语句永远走不到：照常走一遍（保留 medium 的线索），但不再算「无条件执行」，不升 high。
+        返回这段序列是否无条件终止（`__main__` 守卫的 body 终止，外层后面的语句同样走不到）。"""
+        dead = False
+        for stmt in stmts:
+            self._walk(stmt, scope, branches, top and not dead)
+            if not dead and self._terminates(stmt, scope):
+                dead = True
+        return dead
+
+    def _terminates(self, stmt: ast.stmt, scope: _Scope) -> bool:
+        if isinstance(stmt, (ast.Return, ast.Raise, ast.Continue, ast.Break)):
+            return True
+        if isinstance(stmt, ast.Assert):
+            return isinstance(stmt.test, ast.Constant) and not stmt.test.value
+        if isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Call):
+            func = stmt.value.func
+            if self.qual(func) in ("sys.exit", "os._exit", "os.abort"):
+                return True
+            return any(self._is_exit_builtin(func, n, scope) for n in ("exit", "quit"))
+        if isinstance(stmt, ast.If) and self._main_guard(stmt.test):
+            return any(self._terminates(s, scope) for s in stmt.body)
+        if isinstance(stmt, ast.While):
+            t = stmt.test
+            if isinstance(t, ast.Constant) and t.value and not stmt.orelse:
+                return not any(isinstance(n, ast.Break) for b in stmt.body for n in ast.walk(b))
+        return False
+
+    def _is_exit_builtin(self, func: ast.AST, name: str, scope: _Scope) -> bool:
+        return (
+            isinstance(func, ast.Name)
+            and func.id == name
+            and self.bind_total.get(name, 0) == 0
+            and (name not in self.aliases)
+            and self._is_builtin(func, name, scope)
+        )
 
     def live_scopes(self) -> frozenset[int]:
         """模块执行真会走到的作用域：模块、类体（定义时执行）、被可达作用域按名字调用到的函数。"""
@@ -817,6 +856,21 @@ class _Collector:
                 s = s.parent
         return False
 
+    def _savefig_name_literal(self, node: ast.Call, path: PathVal | None) -> bool:
+        """这次 `savefig` 写出的文件名就是字面目标本身，不依赖运行期的 `rcParams["savefig.format"]`。
+
+        matplotlib：显式 `format=`（非 None）时文件名原样；否则无后缀会补 `.<savefig.format>`（`figcapture.savefig_effective_names`
+        同一规则）。静态侧不复刻 rcParams，所以「无后缀且没有字面非 None 的 `format=`」一律不算确定（不升 high）。
+        """
+        if path is None or len(node.args) > 1:
+            return False
+        for kw in node.keywords:
+            if kw.arg is None:
+                return False  # **kwargs：可能带 format
+            if kw.arg == "format":
+                return isinstance(kw.value, ast.Constant) and isinstance(kw.value.value, str)
+        return bool(posixpath.splitext(path.text)[1][1:])
+
     def _savefig_is_matplotlib(self, func: ast.AST, scope: _Scope) -> bool:
         if self.qual(func) == "matplotlib.pyplot.savefig":
             return True
@@ -837,14 +891,16 @@ class _Collector:
         if tail == "savefig":
             target = self._arg(node, 0, "fname")
             if target is not None and not self._file_like(target, scope):
+                spath = self.value(target, scope)
                 self._add(
                     _E_SAVEFIG,
                     "savefig",
                     node,
                     scope,
                     branches,
-                    self.value(target, scope),
-                    certain=self._savefig_is_matplotlib(func, scope),
+                    spath,
+                    certain=self._savefig_is_matplotlib(func, scope)
+                    and self._savefig_name_literal(node, spath),
                 )
             return
         if q in _MOVE_FUNCS:
