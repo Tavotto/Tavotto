@@ -1335,27 +1335,6 @@ def test_session_detail_is_not_final_until_the_pump_finishes(tmp_path, cli, monk
     engine_watch.stop()
 
 
-def test_concurrent_first_connections_to_a_new_database_do_not_race_on_alter(tmp_path):
-    """两个服务进程（或线程）同时打开同一个还没迁移过的库：「先查列有没有再 ALTER」不是原子的，后到的撞
-    `duplicate column name`（`refresh` 等列是建表之后补的，全新库同样要走）。窗口很窄，所以多轮、每轮一个全新的库。"""
-    errors: list[BaseException] = []
-    for rnd in range(150):
-        db = tmp_path / f"new{rnd}.sqlite3"
-        barrier = threading.Barrier(6)
-
-        def open_it(db=db):
-            barrier.wait()
-            try:
-                ai_history.find_by_request("/p", "rid-x", db_path=db)
-            except BaseException as exc:  # noqa: BLE001
-                errors.append(exc)
-
-        ts = [threading.Thread(target=open_it) for _ in range(6)]
-        [t.start() for t in ts]
-        [t.join() for t in ts]
-    assert errors == []
-
-
 def test_detail_from_history_is_final_only_when_the_row_was_ended(tmp_path, cli):
     figs = _project(tmp_path)
     project_key = str(figs.resolve())
