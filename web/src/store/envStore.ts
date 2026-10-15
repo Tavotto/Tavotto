@@ -460,6 +460,10 @@ export const useEnvStore = create<EnvState>((set, get) => ({
           return
         }
         set({ env })
+        // 安装进度只靠 SSE：断线期间丢了终态事件，`installing` 会永久为真。后端说不在跑了就收尾
+        if (get().installing && env.state !== 'running') {
+          set({ installing: false, ...(env.state === 'failed' && env.error ? { log: env.error } : {}) })
+        }
         // 改指表的代次（ADR 0106 §五）：重连 / 页面恢复的补拉就是这一次刷新
         const g = env.project?.input_remap?.generation
         if (typeof g === 'number') get().noteInputRemapGeneration(g)

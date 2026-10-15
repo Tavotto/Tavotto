@@ -48,7 +48,8 @@ import { renderKey, settleRenderFailureToast, useRenderStore } from '@/store/ren
 import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
-import { handleServerEvent } from './useServerEvents'
+import { useDepRepairStore } from '@/store/depRepairStore'
+import { handleServerEvent, reconcileInstalls } from './useServerEvents'
 
 const mockPanels = vi.mocked(fetchPanels)
 const mockRefresh = vi.mocked(refreshProject)
@@ -799,5 +800,21 @@ describe('engine.environment_adopted', () => {
     handleServerEvent({ kind: 'engine.environment_adopted', pj: 'p1', id: 'x', source: 'conda', label: 'lab', python_version: '3.12.4' })
     expect(useEnvStore.getState().adoptedEnvironment).toMatchObject({ source: 'conda', label: 'lab', python_version: '3.12.4' })
     useEnvStore.getState().dismissAdoptedEnvironment()
+  })
+})
+
+describe('reconcileInstalls（SSE 重连 / 页面恢复）', () => {
+  it('依赖作业总是对账；引擎 bootstrap 只在还显示「安装中」时才刷环境', () => {
+    const reconcile = vi.fn().mockResolvedValue(undefined)
+    const refresh = vi.fn().mockResolvedValue(undefined)
+    useDepRepairStore.setState({ reconcile })
+    useEnvStore.setState({ refresh, installing: false })
+    reconcileInstalls()
+    expect(reconcile).toHaveBeenCalledTimes(1)
+    expect(refresh).not.toHaveBeenCalled()
+    useEnvStore.setState({ installing: true })
+    reconcileInstalls()
+    expect(refresh).toHaveBeenCalledTimes(1)
+    useEnvStore.setState({ installing: false })
   })
 })

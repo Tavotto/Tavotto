@@ -915,3 +915,89 @@ describe('A → B → A 在结果回来之前已切回：结果立即作用于 A
     expect(s.rebuildRunningFor('p1')).toBe(true)
   })
 })
+
+describe('SSE 断线后的对账（reconcile）：丢了终态事件，卡片不能永远停在「正在安装」', () => {
+  it('丢了 done：重连对账后以实况收尾，计划被消费', async () => {
+    await startInstallOnA()
+    expect(useDepRepairStore.getState().progress?.state).toBe('installing')
+    // 终态事件没收到；后端实况已经是 done
+    stateAnswer = progress('done')
+    await useDepRepairStore.getState().reconcile()
+    const s = useDepRepairStore.getState()
+    expect(s.progress?.state).toBe('done')
+    expect(s.plan).toBeNull()
+  })
+
+  it('丢了 failed：失败的结局与错误文案也接回来', async () => {
+    await startInstallOnA()
+    stateAnswer = progress('failed', { code: 'dependency_install_failed', error: 'pip 失败' })
+    await useDepRepairStore.getState().reconcile()
+    const s = useDepRepairStore.getState()
+    expect(s.progress?.state).toBe('failed')
+    expect(s.errorCode).toBe('dependency_install_failed')
+  })
+
+  it('对照：实况还在跑，就照实更新、不提前收尾', async () => {
+    await startInstallOnA()
+    stateAnswer = progress('verifying', { log: 'Verifying' })
+    await useDepRepairStore.getState().reconcile()
+    expect(useDepRepairStore.getState().progress?.state).toBe('verifying')
+    expect(useDepRepairStore.getState().plan).not.toBeNull()
+  })
+
+  it('后端不认识这个 id（idle）或问不到实况：什么都不改', async () => {
+    await startInstallOnA()
+    stateAnswer = { state: 'idle', plan_id: '', log: '', error: null, code: '' }
+    await useDepRepairStore.getState().reconcile()
+    expect(useDepRepairStore.getState().progress?.state).toBe('installing')
+    stateAnswer = 'network'
+    await useDepRepairStore.getState().reconcile()
+    expect(useDepRepairStore.getState().progress?.state).toBe('installing')
+  })
+
+  it('等回包期间 SSE 已推到终态：较早的实况快照不能把终局盖回去', async () => {
+    await startInstallOnA()
+    holding.add('/api/engine/dependency/state')
+    const pending = useDepRepairStore.getState().reconcile()
+    await vi.waitFor(() => expect(held.has('/api/engine/dependency/state')).toBe(true))
+    useDepRepairStore.getState().onProgress(progress('done'))
+    held.get('/api/engine/dependency/state')?.(progress('installing'))
+    await pending
+    expect(useDepRepairStore.getState().progress?.state).toBe('done')
+  })
+
+  it('不是本标签页起的作业不对账（没有登记的 plan_id 不发请求）', async () => {
+    useDepRepairStore.setState({ progress: progress('installing', { plan_id: 'someone-else' }) })
+    await useDepRepairStore.getState().reconcile()
+    expect(calls.some((c) => c.url.includes('/api/engine/dependency/state'))).toBe(false)
+  })
+
+  it('切走项目时收着的作业也对账：结局落进它那一格，B 的界面不动', async () => {
+    await startInstallOnA()
+    await switchTo('p2')
+    expect(useDepRepairStore.getState().progress).toBeNull()
+    stateAnswer = progress('done')
+    await useDepRepairStore.getState().reconcile()
+    expect(useDepRepairStore.getState().progress).toBeNull()
+    expect(useDepRepairStore.getState().parked['p1']?.state).toBe('done')
+  })
+
+  it('envStore：丢了 engine.bootstrap 终态，重连后的环境读取收掉「安装中」', async () => {
+    useEnvStore.setState({ installing: true, log: '' })
+    await useEnvStore.getState().refresh() // 此处环境应答没有 state=running
+    expect(useEnvStore.getState().installing).toBe(false)
+    // 对照：实况仍在跑，就保持
+    useEnvStore.setState({ installing: true })
+    const orig = globalThis.fetch
+    globalThis.fetch = (async (url: unknown, init?: RequestInit) =>
+      String(url).includes('/api/engine/environment')
+        ? respond({ ok: false, state: 'running', project: { open: true } })
+        : orig(url as never, init)) as typeof fetch
+    try {
+      await useEnvStore.getState().refresh()
+      expect(useEnvStore.getState().installing).toBe(true)
+    } finally {
+      globalThis.fetch = orig
+    }
+  })
+})

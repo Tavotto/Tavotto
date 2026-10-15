@@ -338,17 +338,28 @@ export function useServerEvents() {
         useProjectPreparationStore.getState().refreshAll()
         // 断线期间可能丢了 `input_remap_changed`：拉一次此刻的代次，落后就补一次作废（ADR 0106 §五）
         catchUpInputRemap()
+        // 依赖安装 / 引擎 bootstrap 的进度也只走 SSE：丢了终态事件就以实况为准收尾
+        reconcileInstalls()
       }),
     [],
   )
   // 页面恢复（切回标签页 / 唤醒）同理：休眠期间事件流可能断过而没触发重连
   useEffect(() => {
     const onVisible = () => {
-      if (document.visibilityState === 'visible') catchUpInputRemap()
+      if (document.visibilityState === 'visible') {
+        catchUpInputRemap()
+        reconcileInstalls()
+      }
     }
     document.addEventListener('visibilitychange', onVisible)
     return () => document.removeEventListener('visibilitychange', onVisible)
   }, [])
+}
+
+/** 安装类作业对账：依赖修复按 plan_id 问实况；引擎 bootstrap 只在还显示「安装中」时才刷一次环境 */
+export function reconcileInstalls(): void {
+  void useDepRepairStore.getState().reconcile()
+  if (useEnvStore.getState().installing) void useEnvStore.getState().refresh()
 }
 
 /** 补拉改指表代次：环境刷新里带着它，`envStore.refresh` 交给 `noteInputRemapGeneration` 去重 / 补作废 */

@@ -302,6 +302,12 @@ interface DepRepairState {
   cancel: () => Promise<void>
   rebuildManaged: () => Promise<void>
   onProgress: (p: DependencyProgress) => void
+  /**
+   * 对账（SSE 重连 / 页面恢复）：后端 `/api/events` 无重放，断线期间丢了终态事件，卡片就永远停在「正在安装」。
+   * 对本标签页起过的、还没看到终态的作业（当前卡片 + 切走项目收着的），按 plan_id 问一次实况，结果走 `onProgress`
+   * 同一条规则（所属项目分格、终态副作用只在所属项目开着时派发）。`idle` = 后端不认识这个 id，不据此改任何东西。
+   */
+  reconcile: () => Promise<void>
   /** 关掉确认卡片 / 换一个目标时回到干净状态 */
   reset: () => void
   /**
@@ -949,6 +955,31 @@ export const useDepRepairStore = create<DepRepairState>((set, get) => ({
       // 留着它，别的脚本行会因为「修复属于别人」一直不给卡片
       if (rerun) get().reset()
     }
+  },
+
+  reconcile: async () => {
+    const pending = new Map<string, DependencyProgress>()
+    const note = (p: DependencyProgress | null | undefined) => {
+      if (p && startedPlans.has(p.plan_id) && p.state !== 'idle' && !TERMINAL.includes(p.state)) pending.set(p.plan_id, p)
+    }
+    note(get().progress)
+    for (const p of Object.values(get().parked)) note(p)
+    await Promise.all(
+      [...pending.keys()].map(async (id) => {
+        let actual: DependencyProgress
+        try {
+          actual = await fetchDependencyState(id)
+        } catch {
+          return // 问不到实况不打扰：下一次重连 / 回到页面再对
+        }
+        if (actual.plan_id !== id || actual.state === 'idle') return
+        // 等回包期间 SSE 已经把它推到终态：这份快照是更早的，不能把终局盖回去
+        const { progress, parked } = get()
+        const known = progress?.plan_id === id ? progress : Object.values(parked).find((q) => q.plan_id === id)
+        if (!known || TERMINAL.includes(known.state)) return
+        get().onProgress(actual)
+      }),
+    )
   },
 
   reset: () =>
