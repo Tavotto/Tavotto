@@ -413,6 +413,26 @@ describe('空态、筛选与「查不了」', () => {
     expect(useUiStore.getState().problemFilter).toBeNull()
   })
 
+  it('「当前画布」那档：范围胶囊写出是哪一块画布，清单只剩这张画布的问题；菜单里有这一档', async () => {
+    await seed()
+    const first = useDocumentStore.getState().activeCanvasId
+    const name = useDocumentStore.getState().canvases.find((c) => c.id === first)!.name
+    useUiStore.getState().setProblemScope('canvas')
+    await mount(<ProblemPanel />)
+    const trigger = container.querySelector<HTMLElement>('[data-problem-scope-trigger]')!
+    expect(trigger.getAttribute('data-problem-scope-trigger')).toBe('canvas')
+    expect(trigger.textContent, '胶囊上要看得出是哪一块画布').toContain(name)
+    expect(trigger.title).toContain(name)
+    // 另一张画布上的问题不进清单：把一条问题搬到别的画布，列表里的数随之少一条
+    const before = container.querySelectorAll('[data-problem-card], [data-issue-row]').length
+    expect(before).toBeGreaterThan(0)
+    await act(async () => {
+      const cur = useValidationStore.getState().issues
+      useValidationStore.setState({ issues: cur.map((i) => ({ ...i, objectRef: { ...i.objectRef, canvasId: 'c_other' } })) })
+    })
+    expect(container.querySelectorAll('[data-issue-row]').length).toBe(0)
+  })
+
   it('等级筛选是可切换的开关，带 aria-pressed', async () => {
     await seed()
     await mount(<ProblemPanel />)

@@ -41,6 +41,7 @@ import { bindingFor } from '@/lib/specBinding'
 import { toCatalog, useProfileStore } from '@/store/profileStore'
 import { applyExportJob, cancelCurrentExport, refreshExportStatus, resetExportState, runExport, useExportStore } from '@/store/exportStore'
 import { currentFigureOf } from '@/lib/problemContext'
+import { effectiveScope, issuesInScope } from '@/lib/problemList'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useWorkspaceStore } from '@/store/workspace'
 import { emptyProject, type PanelObject } from '@/types/document'
@@ -1721,6 +1722,34 @@ describe('检查芯片 / 「在问题面板中查看」带着导出目标去（#
     expect(panelCurrentFigure(), '芯片只带了等级，面板仍看工作区原来的图').toBe('p2')
     expect(useUiStore.getState().problemScope).toBe('figure')
     expect(useUiStore.getState().problemFilter).toEqual(['error'])
+  })
+
+  it('按画布导出：从画布 A 的芯片进去只列 A 的问题，B 画布的不跟进来（#1106 P2）', async () => {
+    await stage({
+      panels: [panel, { ...panel, id: 'p2', fileId: 'Fig2.pdf', x: 0, y: 60, script: 'fig2.py' }],
+      renders: { 'Fig1.pdf': manifestWithTicks(1, 8), 'Fig2.pdf': manifestWithTicks(1, 9) },
+    })
+    await mountDialogs()
+    await openDialog()
+    const active = useDocumentStore.getState().activeCanvasId
+    expect(text()).toMatch(/\d+ 项要改/)
+    // 另一张画布上也有一条阻断项（克隆 A 的一条、换画布 id）：整份排版里是两张画布的问题
+    await act(async () => {
+      const cur = useValidationStore.getState().issues
+      const err = cur.find((i) => i.severity === 'error')!
+      useValidationStore.setState({
+        issues: [...cur, { ...err, issueId: 'other-canvas', objectRef: { ...err.objectRef, canvasId: 'c_other' } }],
+      })
+    })
+    await click(danger()!)
+    const all = useValidationStore.getState().issues
+    const scope = effectiveScope(useUiStore.getState().problemScope, null)
+    expect(scope, '导出整块画布落在「当前画布」那档，不是整份排版').toBe('canvas')
+    const listed = issuesInScope(all, scope, null, useDocumentStore.getState().activeCanvasId)
+    expect(listed.some((i) => i.issueId === 'other-canvas'), 'B 画布的问题不该列进来').toBe(false)
+    expect(listed.length).toBeGreaterThan(0)
+    expect(listed.every((i) => i.objectRef.canvasId === active)).toBe(true)
+    expect(all.length, '前提：整份排版里确实比 A 多').toBeGreaterThan(listed.length)
   })
 
   it('「在问题面板中查看」与「还有 N 项」同样带目标', async () => {

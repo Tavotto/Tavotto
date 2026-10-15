@@ -9,6 +9,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { literal } from '@/i18n'
 import { focusObject, HIGHLIGHT_MS, openProblems } from './issueFocus'
 import { currentFigureOf } from './problemContext'
+import { effectiveScope, issuesInScope } from './problemList'
 import type { ObjectRef } from './validation'
 import { useDocumentStore } from '@/store/documentStore'
 import { useSelectionStore } from '@/store/selectionStore'
@@ -247,11 +248,22 @@ describe('openProblems', () => {
     expect(useUiStore.getState().leftTab).toBe('problems')
   })
 
-  it('目标是画布（没有图）：范围切到整份排版；不带 target 时不动现有范围', async () => {
+  it('目标是画布（没有图）：范围切到「当前画布」（只列这张画布的问题，不是整份排版）；不带 target 时不动现有范围', async () => {
     await seed()
+    const first = useDocumentStore.getState().activeCanvasId
+    const second = useDocumentStore.getState().addCanvas('画布 2')
     useUiStore.setState({ problemScope: 'figure' })
-    openProblems({ target: { figureId: null } })
-    expect(useUiStore.getState().problemScope).toBe('document')
+    openProblems({ target: { canvasId: first, figureId: null } })
+    expect(useDocumentStore.getState().activeCanvasId).toBe(first)
+    expect(useUiStore.getState().problemScope).toBe('canvas')
+    // 面板用同一套函数裁清单：两张画布各一条问题，只剩 A 的那条
+    const mk = (canvasId: string): ValidationIssue =>
+      ({ issueId: `i-${canvasId}`, objectRef: { canvasId, objectId: 'p1', gid: null } }) as unknown as ValidationIssue
+    const all = [mk(first), mk(second)]
+    const scope = effectiveScope(useUiStore.getState().problemScope, null)
+    expect(scope).toBe('canvas')
+    expect(issuesInScope(all, scope, null, useDocumentStore.getState().activeCanvasId).map((i) => i.issueId)).toEqual([`i-${first}`])
+    useUiStore.setState({ problemScope: 'figure' })
     useUiStore.setState({ problemScope: 'figure' })
     openProblems()
     expect(useUiStore.getState().problemScope).toBe('figure')

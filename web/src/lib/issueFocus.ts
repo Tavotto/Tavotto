@@ -215,7 +215,7 @@ export interface ProblemsTarget {
 /**
  * 把「当前图」与范围落到目标上，**不进快速编辑、不动文档**：当前图的判据是
  * 快速编辑图 → 图内编辑图 → 选中的面板（`problemContext.currentFigureOf`），前两档清掉、
- * 第三档选中目标，面板的「当前图」就是它；没有图的目标（按画布导出）切到「整份排版」。
+ * 第三档选中目标，面板的「当前图」就是它；没有图的目标（按画布导出）切到「当前画布」（`ProblemScope` 的 canvas 档，只列这张画布的问题）。
  */
 function aimProblemsAt(target: ProblemsTarget): void {
   if (target.canvasId && target.canvasId !== useDocumentStore.getState().activeCanvasId) {
@@ -226,7 +226,8 @@ function aimProblemsAt(target: ProblemsTarget): void {
     ? useDocumentStore.getState().doc.objects.find((o) => o.id === target.figureId && o.type === 'panel')
     : null
   if (!figure) {
-    ui.setProblemScope('document')
+    // 按画布导出：只看这一张画布的问题（摘要就是按它算的），不是整份排版里别的画布的也列进来
+    ui.setProblemScope('canvas')
     return
   }
   useWorkspaceStore.getState().exitToLayout()
@@ -276,7 +277,7 @@ export function openProblemAt(
   // 面板里不再有「看到游标在卡片外就钻进去」的第二套机制。只有一张卡片的单图没有
   // 卡片层（`singleDrill`），那时不点开，面板直接列它的清单。游标按那张卡片的清单算——
   // 与面板里点一行时 `cursorFor(groups)` 的 groups 是同一份，修好之后「顶上来的那条」才找得对
-  const scoped = issuesInScope(all, scope, figureId)
+  const scoped = issuesInScope(all, scope, figureId, useDocumentStore.getState().activeCanvasId)
   const figures = bucketsByFigure(scoped)
   const single = singleDrill(ui.problemView, figures, scoped.filter(isUnverifiable).length)
   const drill = single && drillIssues(scoped, single).some((i) => i.issueId === issue.issueId)

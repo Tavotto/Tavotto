@@ -17,6 +17,7 @@ import {
   groupIssues,
   issuesInScope,
   isSplit,
+  problemContextKey,
   WHOLE,
 } from './problemList'
 import type { SubplotPart } from './subplotParts'
@@ -62,6 +63,18 @@ describe('范围', () => {
     expect(issuesInScope(all, 'figure', 'p1').map((i) => i.issueId)).toEqual(['a1', 'a2'])
     expect(issuesInScope(all, 'figure', 'p2').map((i) => i.issueId)).toEqual(['a3', 'b1'])
     expect(issuesInScope(all, 'document', 'p1')).toHaveLength(5)
+    // 「当前画布」：按激活画布裁；没有当前图时也能选（导出整块画布落在这一档）
+    expect(effectiveScope('canvas', null)).toBe('canvas')
+    expect(effectiveScope('canvas', 'p1')).toBe('canvas')
+    const inCanvas = [
+      { issueId: 'x1', objectRef: { canvasId: 'cA', objectId: 'p1', gid: null } },
+      { issueId: 'x2', objectRef: { canvasId: 'cB', objectId: 'p9', gid: null } },
+    ] as unknown as ValidationIssue[]
+    expect(issuesInScope(inCanvas, 'canvas', null, 'cA').map((i) => i.issueId)).toEqual(['x1'])
+    expect(issuesInScope(inCanvas, 'canvas', 'p1', 'cB').map((i) => i.issueId)).toEqual(['x2'])
+    // 现场键随激活画布变：换了画布，卡片与游标就过期
+    const k = (canvasId: string) => problemContextKey({ loadSeq: 1, scope: 'canvas', figureId: null, canvasId, view: 'figure' })
+    expect(k('cA')).not.toBe(k('cB'))
   })
 })
 

@@ -111,6 +111,7 @@ export function ProblemPanel() {
   const filter = useUiStore((s) => s.problemFilter)
   const view = useUiStore((s) => s.problemView)
   const activeCanvasId = useDocumentStore((s) => s.activeCanvasId)
+  const canvasName = useDocumentStore((s) => s.canvases.find((c) => c.id === s.activeCanvasId)?.name ?? '')
   // 点开的那一支与游标是**派生**的：写下它们的现场（排版 / 范围与当前图 / 切法）不是此刻就是
   // null——换项目、换当前图时没有人需要记得来清（2026-09-29 #690 评审）
   const { figureId, figureName, scope, issues, context, drill, cursor } = useScopedProblems()
@@ -368,6 +369,7 @@ export function ProblemPanel() {
 
   // 范围胶囊的两个数（审计 B55：两个数得同时看得见，用户才知道切过去会多出几条）
   const figureCount = figureId ? issuesInScope(all, 'figure', figureId).length : 0
+  const canvasCount = issuesInScope(all, 'canvas', figureId, activeCanvasId).length
   const documentCount = all.length
 
   return (
@@ -377,7 +379,9 @@ export function ProblemPanel() {
           figureId={figureId}
           figureName={figureName}
           scope={scope}
-          counts={ready ? { figure: figureCount, document: documentCount } : null}
+          canvasName={canvasName}
+          showCanvas={canvasCount !== documentCount || scope === 'canvas'}
+          counts={ready ? { figure: figureCount, canvas: canvasCount, document: documentCount } : null}
         />
         {rechecking && (
           <span data-problem-rechecking role="status" className="type-meta shrink-0 text-shimmer">
@@ -493,7 +497,7 @@ export function ProblemPanel() {
                 <ul>{tree.body(single, 0)}</ul>
               </li>
             ) : view === 'figure' ? (
-              <FigureCards figures={figures} withHeaders={scope === 'document' || figures.length > 1} />
+              <FigureCards figures={figures} withHeaders={scope !== 'figure' || figures.length > 1} />
             ) : (
               <CategoryCards categories={categories} />
             )}
@@ -583,16 +587,27 @@ function ScopePill({
   figureId,
   figureName,
   scope,
+  canvasName,
+  showCanvas,
   counts,
 }: {
   figureId: string | null
   figureName: string | null
   scope: ProblemScope
-  /** 两档各自的问题数；这一轮还没查完时是 null（挂着旧数字与骨架是两句打架的话） */
-  counts: { figure: number; document: number } | null
+  /** 激活画布的名字：「当前画布」那档的胶囊上写它，看得出是哪一块 */
+  canvasName: string
+  /** 只有一张画布（或别的画布没有问题）时「当前画布」与「整份排版」是同一份清单，不单列这一档 */
+  showCanvas: boolean
+  /** 三档各自的问题数；这一轮还没查完时是 null（挂着旧数字与骨架是两句打架的话） */
+  counts: { figure: number; canvas: number; document: number } | null
 }) {
-  const label = scope === 'figure' ? pr('scopeFigure') : pr('scopeDocument')
-  const n = counts ? (scope === 'figure' ? counts.figure : counts.document) : null
+  const label =
+    scope === 'figure'
+      ? pr('scopeFigure')
+      : scope === 'canvas'
+        ? pr('scopeCanvasNamed', { name: canvasName })
+        : pr('scopeDocument')
+  const n = counts ? counts[scope === 'figure' ? 'figure' : scope === 'canvas' ? 'canvas' : 'document'] : null
   return (
     <Menu
       width={220}
@@ -603,7 +618,13 @@ function ScopePill({
           aria-label={
             n != null ? pr('scopeCountAria', { label, count: n }) : label
           }
-          title={scope === 'figure' && figureName ? pr('scopeFigureTip', { name: figureName }) : undefined}
+          title={
+            scope === 'figure' && figureName
+              ? pr('scopeFigureTip', { name: figureName })
+              : scope === 'canvas'
+                ? pr('scopeCanvasTip', { name: canvasName })
+                : undefined
+          }
           className={cn(
             'flex h-6 min-w-0 items-center gap-1 rounded-full bg-surface-hover pl-2 pr-1.5 text-xs text-ink-2 outline-none',
             'transition-colors duration-fast hover:bg-surface-active hover:text-ink focus-visible:focus-ring data-[state=open]:bg-surface-active',
@@ -632,6 +653,16 @@ function ScopePill({
         >
           {pr('scopeFigure')}
         </MenuRadioItem>
+        {showCanvas && (
+          <MenuRadioItem
+            value="canvas"
+            data-problem-scope="canvas"
+            reason={canvasName}
+            shortcut={counts ? String(counts.canvas) : undefined}
+          >
+            {pr('scopeCanvas')}
+          </MenuRadioItem>
+        )}
         <MenuRadioItem
           value="document"
           data-problem-scope="document"
