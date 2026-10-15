@@ -7,15 +7,15 @@ import { ICON_SIZE } from './Icon'
  * 树行（图层树、图内元素树）的固定列。行本身仍由调用方拼（`listRowClass` 给外观，
  * role / 键盘 / 拖拽各处不同），这里只保证**列**在每棵树里落在同一条竖线上：
  *
- *   [缩进 8 + 14 × depth][chevron 16][类型图标 16] 标签 …… [计数，右对齐]
+ *   [缩进 8 + 12 × depth][chevron 16][类型图标 16] 标签 …… [计数，右对齐]
  *
  * 层级只靠缩进与 chevron 表达，不靠行间留白；叶子行留一个空的 chevron 列，
  * 同一层的图标与文字才对得齐。列与列之间的间距只有一个值：`listRowClass` 的 `gap-1`（4px）——
  * 树行不要再自己写 `gap-*`（图层树此前是 gap-1.5，同一抽屉里切元素树 ↔ 图层树，图标到文字差 2px，2026-10 UI 审计 G5）。
  */
-export const TREE_INDENT = 14
+export const TREE_INDENT = 12
 
-/** 行首内边距：基础 8px + 每层 14px。写成 style，Tailwind 生成不了按 depth 变的类名 */
+/** 行首内边距：基础 8px + 每层 12px。写成 style，Tailwind 生成不了按 depth 变的类名 */
 export const treeIndent = (depth: number, base = 8) => ({ paddingLeft: base + depth * TREE_INDENT })
 
 /**
@@ -61,11 +61,11 @@ export function TreeChevron({
   )
 }
 
-/** 类型图标列：14px 图标坐在 16px 格里；选中行用墨色，其余 ink-3 */
-export function TreeIcon({ icon: Icon, selected }: { icon: IconComponent; selected?: boolean }) {
+/** 类型图标列：14px 线性图标坐在 16px 格里，一律 ink-3（选中与否都不变色——选中靠底色与字重） */
+export function TreeIcon({ icon: Icon }: { icon: IconComponent }) {
   return (
     <span className="flex h-4 w-4 shrink-0 items-center justify-center" aria-hidden>
-      <Icon size={ICON_SIZE.sm} className={selected ? 'text-ink' : 'text-ink-3'} />
+      <Icon size={ICON_SIZE.sm} className="text-ink-3" />
     </span>
   )
 }

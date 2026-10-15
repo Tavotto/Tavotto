@@ -305,14 +305,14 @@ function GroupRow({
         }
       }}
       style={treeIndent(0)}
-      className={cn(listRowClass({ selected: allSelected, muted: true }), 'pr-2')}
+      className={cn(listRowClass({ tree: true, group: true, selected: allSelected }), 'pr-2')}
     >
       <TreeChevron
         expanded={!collapsed}
         onToggle={onToggle}
         label={lt(collapsed ? 'expandGroup' : 'collapseGroup')}
       />
-      <TreeIcon icon={Layers} selected={allSelected} />
+      <TreeIcon icon={Layers} />
       <span ref={labelRef} data-tree-label className="min-w-0 flex-1 truncate">
         {lt('groupLabel', { count: members.length })}
       </span>
@@ -461,13 +461,13 @@ function LayerRow({
       }}
       onDoubleClick={() => setEditing(true)}
       style={treeIndent(depth)}
-      className={cn(listRowClass({ selected, hidden: obj.hidden, dragging }), 'pr-0.5')}
+      className={cn(listRowClass({ tree: true, selected, hidden: obj.hidden, dragging }), 'pr-0.5')}
     >
       {/* 落点线：2px accent + 圆点（`dropLineClass`，此前是 1px 的内阴影线，几乎看不见） */}
       <span aria-hidden data-layer-drop={dropHint ?? undefined} className={dropLineClass(dropHint === 'above' ? 'before' : dropHint === 'below' ? 'after' : null)} />
       {/* 顶层对象没有折叠箭头，留一个空列：与组标题行的图标对齐 */}
       <TreeChevron />
-      <TreeIcon icon={Icon} selected={selected} />
+      <TreeIcon icon={Icon} />
       {editing ? (
         <input
           autoFocus

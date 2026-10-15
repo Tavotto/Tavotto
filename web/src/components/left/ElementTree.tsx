@@ -680,7 +680,7 @@ const ClusterRow = memo(function ClusterRow({
       onPointerDown={(e) => {
         if (e.button === 0) onToggle(rowKey, expanded)
       }}
-      className={cn(listRowClass({ muted: true }), 'pr-0.5')}
+      className={cn(listRowClass({ tree: true, group: true }), 'pr-0.5')}
     >
       <TreeChevron expanded={expanded} />
       <TreeIcon icon={icon} />
@@ -805,14 +805,14 @@ const ElementRow = memo(function ElementRow({
         if (isMac && e.ctrlKey) return
         onSelect(gid, e.shiftKey || e.ctrlKey || e.metaKey)
       }}
-      className={cn(listRowClass({ selected, hidden }), 'pr-0.5')}
+      className={cn(listRowClass({ tree: true, group: expanded !== undefined, selected, hidden }), 'pr-0.5')}
     >
       <TreeChevron
         expanded={expanded}
         onToggle={expanded === undefined ? undefined : () => onToggle(rowKey, expanded)}
         label={expanded === undefined ? undefined : et(expanded ? 'collapse' : 'expand')}
       />
-      <TreeIcon icon={roleIcon(role)} selected={selected} />
+      <TreeIcon icon={roleIcon(role)} />
 
       <span ref={labelRef} data-tree-label className="min-w-0 flex-1 truncate" title={`${shown} · ${roleName(role)} · ${gid}`}>
         {name}
