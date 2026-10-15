@@ -378,10 +378,15 @@ def test_mcp_unsafe_svg_fails_only_that_format_and_never_publishes(
 ):
     real_export = fake_pool.export
 
-    def worker_svg(stem, patches, path, fmt="pdf", dpi=600):
+    def worker_svg(stem, patches, path, fmt="pdf", dpi=600, *, svg_path=None):
         result = real_export(stem, patches, path, fmt, dpi)
-        if fmt == "svg":
-            Path(path).write_bytes(unsafe)
+        assert fmt == "pdf" and svg_path is not None
+        Path(svg_path).write_bytes(unsafe)
+        result["svg"] = {
+            "path": svg_path,
+            "sha256": hashlib.sha256(unsafe).hexdigest(),
+            "size_bytes": len(unsafe),
+        }
         return result
 
     fake_pool.export = worker_svg

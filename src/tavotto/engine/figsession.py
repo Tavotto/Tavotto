@@ -576,7 +576,9 @@ def _svg_pair_blocker(fig) -> str | None:
                     coordinates.extend(coord)
                 elif callable(coord) and not _svg_pair_standard_method(coord):
                     return "SVG pairing is unavailable for annotation coordinate callbacks."
-        for effect in artist.get_path_effects():
+        # Standard collections use None to mean no path effects.
+        effects = artist.get_path_effects()
+        for effect in () if effects is None else effects:
             if not type(effect).__module__.startswith(("matplotlib.", "mpl_toolkits.")) or not (
                 _svg_pair_standard_method(effect.draw_path)
             ):

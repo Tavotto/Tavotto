@@ -5,13 +5,7 @@ import { expect, openElementsTab, test, writeRuntimeNamedProject, type RunningAp
 import type { Page } from '@playwright/test'
 import { horizontalOffenders } from './overflow'
 
-interface SavedPanel {
-  id: string
-  type: string
-  fileId?: string
-  overrides: { gid: string; prop: string; value: unknown }[]
-}
-interface SavedProject { canvases: { objects: SavedPanel[] }[] }
+import { autosavePanelEvidence } from './autosaveEvidence'
 
 // 这一组钉的是**旧**的同步试运行路径（T09 起它只在本地开关关闭时走；默认的准备面板路径见
 // `preparation-card.spec.ts`）。开关是本机 localStorage 偏好，在页面脚本之前写好
@@ -198,20 +192,19 @@ test('完整链：保存 → 关闭 → 重开 → 重放 → 预检 → 导出 
   // undo/redo 一轮（结束时两条编辑都在）
   await page.getByRole('button', { name: '撤销' }).click()
   await expect(panel.getByText(/项已修改/)).toHaveCount(0)
-  const docId = await page.evaluate(() => localStorage.getItem('tavotto.currentDoc'))
-  expect(docId).toBeTruthy()
-  // 保存的是这份排版重做后的两条编辑；旧空版的 PUT 200 不能作为这次完成的证据。
-  // beforeunload 只同步兜底副本并排队，不能把 reload 当成已写完磁盘。
-  const savedEdits = page.waitForResponse((response) => {
-    if (response.request().method() !== 'PUT' || !response.ok() ||
-        new URL(response.url()).pathname !== `/api/autosave/${docId}`) return false
-    const body = response.request().postDataJSON() as SavedProject
-    const runtime = body.canvases.flatMap((c) => c.objects).find(
-      (o): o is SavedPanel => o.type === 'panel' && o.fileId === 'runtime:show_only.py#show_only',
-    )
-    return !!runtime?.overrides.some((o) => o.gid === 'axes_0.title' && o.prop === 'fontsize') &&
-      runtime.overrides.some((o) => o.prop === 'linewidth')
-  })
+  // 这份夹具只有一个面板。对象身份来自实际画布；首次防抖前恢复索引可能尚不存在，
+  // 也可能仍指向另一份排版，不能拿它猜当前文档的写盘槽位。
+  const currentObject = page.locator('[data-canvas-stage] [data-object-id]')
+  await expect(currentObject).toHaveCount(1)
+  await expect(currentObject).toBeVisible()
+  const panelId = await currentObject.getAttribute('data-object-id')
+  expect(panelId).toBeTruthy()
+  const saveTarget = {
+    panelId: panelId!, fileId: 'runtime:show_only.py#show_only',
+    requiredOverrides: [{ gid: 'axes_0.title', prop: 'fontsize' }, { prop: 'linewidth' }],
+  }
+  // 只认当前对象的两条最终编辑；文档 id 取这条真实 PUT 的路径，不读恢复索引。
+  const savedEdits = page.waitForResponse((response) => autosavePanelEvidence(response, saveTarget) !== null)
   await page.getByRole('button', { name: '重做' }).click()
   await expect(panel.getByText('1 项已修改')).toBeVisible()
   // 未绑定项目文件的排版：正式保存先等本机写队列排空，才打开命名框。
@@ -222,10 +215,9 @@ test('完整链：保存 → 关闭 → 重开 → 重放 → 预检 → 导出 
   expect(await written.finished()).toBeNull()
   await page.keyboard.press('Escape')
   await expect(page.locator('[data-layout-save]')).toBeHidden()
-  const writtenDoc = written.request().postDataJSON() as SavedProject
-  const writtenPanel = writtenDoc.canvases.flatMap((c) => c.objects).find(
-    (o): o is SavedPanel => o.type === 'panel' && o.fileId === 'runtime:show_only.py#show_only',
-  )!
+  const evidence = autosavePanelEvidence(written, saveTarget)
+  expect(evidence).not.toBeNull()
+  const { docId, panel: writtenPanel } = evidence!
 
   // 同实例恢复也必须等真实面板装好；空 root 同样没有「画布是空的」文案。
   await page.reload()

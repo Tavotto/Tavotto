@@ -97,6 +97,10 @@ out = Path(directory)
 fig, ax = plt.subplots(figsize=(3, 2), dpi=100, layout=mode if mode in {"tight", "constrained"} else None)
 ax.plot([0, 1, 2], [0, 1, 0])
 ax.imshow([[0., 1.], [1., 0.]], extent=(.2, .8, .2, .8))
+if mode == "collections":
+    ax.errorbar([0, 1], [0, 1], yerr=[.1, .2], capsize=2, label="Errors")
+    ax.legend()
+    assert any(artist.get_path_effects() is None for artist in fig.findobj())
 title = ax.set_title("Script title")
 pkg.pathgeom.set_frame(fig, Bbox.from_bounds(-.3, -.2, 4, 3))
 session = pkg.figsession.LiveFigureSession(out / "preview", preview_dpi=40)
@@ -298,7 +302,8 @@ def _probe(tmp_path, mode):
 
 @needs_user_python
 @pytest.mark.parametrize(
-    "mode", ["pair", "tight", "constrained", "fixed_labels", "annotations", "snapshot_ok"]
+    "mode",
+    ["pair", "tight", "constrained", "fixed_labels", "annotations", "collections", "snapshot_ok"],
 )
 def test_paired_export_keeps_frame_full_quality_and_state(tmp_path, mode):
     result = _probe(tmp_path, mode)

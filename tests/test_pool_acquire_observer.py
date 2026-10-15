@@ -107,6 +107,7 @@ def test_standalone_pool_cold_acquisition_does_not_load_application_or_watcher(t
         [sys.executable, "-I", "-c", script, str(root / "src"), str(tmp_path)],
         capture_output=True,
         text=True,
+        encoding="utf-8",
         timeout=20,
         check=False,
     )
