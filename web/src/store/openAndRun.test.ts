@@ -297,6 +297,28 @@ describe('一次点击：检查 → 认领 run_when_ready（回显授权摘要�
     expect(entry().report?.captured).toHaveLength(1)
   })
 
+  it('自动进入等素材清单期间换参数重开同一脚本（key / 焦点 / 展开都没变）：不打开旧配置跑出的图，也不记到新条目上', async () => {
+    mockCreate.mockResolvedValueOnce(report())
+    claimed(running())
+    await open()
+    const waiting: Array<() => void> = []
+    const loadAssets = vi.fn(() => new Promise<void>((r) => waiting.push(r)))
+    useRuntimeAssetStore.setState({ loadAssets })
+    mockGet.mockResolvedValueOnce(done(['a']))
+    await store().refresh(KEY)
+    await vi.waitFor(() => expect(loadAssets).toHaveBeenCalledTimes(2))
+    useScriptArgvStore.getState().setTokens('plot.py', ['--n', '2'])
+    mockCreate.mockResolvedValueOnce(report({ session_id: 'psess-2' }))
+    await open(false) // 同 key、同样聚焦展开，但目标（参数）换了
+    expect(useUiStore.getState().guideCard).toBe('card')
+    waiting.forEach((r) => r())
+    await flush()
+    await flush()
+    expect(openFastEdit).not.toHaveBeenCalled()
+    expect(addRuntimePanelToCanvas).not.toHaveBeenCalled()
+    expect(entry().editing).toEqual([])
+  })
+
   it('自动进入等素材清单期间用户切去别的卡（焦点换了）：同样放弃', async () => {
     mockCreate.mockResolvedValueOnce(report())
     claimed(running())

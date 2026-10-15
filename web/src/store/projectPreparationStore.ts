@@ -349,7 +349,7 @@ export const useProjectPreparationStore = create<PreparationState>((set, get) =>
         const figures = capturedOf(report)
         const watching = get().focus === key && useUiStore.getState().guideCard === 'card'
         if (watching && figures.length === 1 && (report.unlinked_stems ?? []).length === 0) {
-          void autoEnterEdit(key, figures[0], owner)
+          void autoEnterEdit(key, figures[0], owner, report)
         }
       }
     } else if (endedWithoutEdit(report)) {
@@ -682,17 +682,33 @@ function endedWithoutEdit(report: PreparationReport): boolean {
 }
 
 /** 自动进入编辑：动态 import（`prepEnterEdit` 反过来 import 本 store）；回来时项目 / 代已换了就整个丢掉 */
-async function autoEnterEdit(key: string, figure: CapturedFigureDescriptor, owner: ProjectEpochGuard): Promise<void> {
+async function autoEnterEdit(
+  key: string,
+  figure: CapturedFigureDescriptor,
+  owner: ProjectEpochGuard,
+  report: PreparationReport,
+): Promise<void> {
+  // 调度那一刻的身份：同一脚本换参数重开（`open()` 递增 `targetGens`、换会话 / 尝试）之后，旧配置跑出的图不许再被打开或记到新条目上
+  const gen = targetGens.get(key) ?? 0
+  const sid = report.session_id
+  const attempt = report.provider.attempt_id ?? null
   try {
     const { enterEdit } = await import('@/store/prepEnterEdit')
     if (!owner.still()) return
     const store = useProjectPreparationStore.getState
+    // 守卫 = 这份结果还是这个条目的当前结果（key + 目标代 + 会话 + 尝试）且用户还在看这张卡（聚焦 + 展开）
+    const sameResult = () => {
+      const cur = store().entries[key]?.report
+      return (targetGens.get(key) ?? 0) === gen && cur?.session_id === sid && (cur.provider.attempt_id ?? null) === attempt
+    }
     await enterEdit(
       {
         epoch: () => store().epoch,
-        note: (id, render) => store().noteEditing(key, id, render),
-        // 素材清单的 await 期间用户可能已把卡放到后台 / 收起 / 切去别的卡：落地前复核，别抢他的工作区
-        stillWanted: () => store().focus === key && useUiStore.getState().guideCard === 'card',
+        note: (id, render) => {
+          if (sameResult()) store().noteEditing(key, id, render)
+        },
+        // 素材清单的 await 期间用户可能已把卡放到后台 / 收起 / 切去别的卡 / 换参数重开：落地前复核，别抢他的工作区
+        stillWanted: () => sameResult() && store().focus === key && useUiStore.getState().guideCard === 'card',
       },
       figure,
     )
