@@ -1512,10 +1512,11 @@ jobs:
       # 发出去的 runtime 必须与构建时冒烟过的那一份逐字节一致：PyInstaller 6 会把 Analysis datas 里的
       # Mach-O / PE 改判成 BINARY 并改写、把依赖复制到 _internal/ 顶层（#1051；macOS ≈ 48 MB）。与
       # scripts/build_desktop.py 发行链那道闸同一个函数——主语是 dist/ 里真产出的字节。
-      - name: 内置 runtime 原样进包（逐字节）
+      - name: 校验：内置 runtime 原样进包（逐字节）
         shell: bash
+        # -X utf8：Windows runner 的控制台是 cp1252，打印中文结论会 UnicodeEncodeError（闸门已判完却被打红）
         run: |
-          python - <<'PY'
+          python -X utf8 - <<'PY'
           import sys
           sys.path.insert(0, "scripts")
           from build_worker_runtime import diff_collected_runtime, runtime_source_dir
@@ -1930,10 +1931,11 @@ jobs:
       # 发出去的 runtime 必须与构建时冒烟过的那一份逐字节一致：PyInstaller 6 会把 Analysis datas 里的
       # Mach-O / PE 改判成 BINARY 并改写、把依赖复制到 _internal/ 顶层（#1051；macOS ≈ 48 MB）。与
       # scripts/build_desktop.py 发行链那道闸同一个函数——主语是 dist/ 里真产出的字节。
-      - name: 内置 runtime 原样进包（逐字节）
+      - name: 校验：内置 runtime 原样进包（逐字节）
         shell: bash
+        # -X utf8：Windows runner 的控制台是 cp1252，打印中文结论会 UnicodeEncodeError（闸门已判完却被打红）
         run: |
-          python - <<'PY'
+          python -X utf8 - <<'PY'
           import sys
           sys.path.insert(0, "scripts")
           from build_worker_runtime import diff_collected_runtime, runtime_source_dir
