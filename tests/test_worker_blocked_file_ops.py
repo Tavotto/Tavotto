@@ -1191,6 +1191,16 @@ def test_retro_rename_of_a_speculative_savefig_target_is_not_propagated_into_a_b
 
 
 @needs_worker
+def test_retro_rename_of_an_independently_existing_source_keeps_the_ordinary_event(figs):
+    """#1076 Codex P2：项目里本来就有 out.png，SVG 默认的 savefig('out') 之后改名它——直接运行真的移走了文件，
+    守卫拦下后读 moved.png 就是分叉，普通改名事件不能因为源名恰是推测候选而丢掉。"""
+    (figs / "out.png").write_bytes(b"pre-existing")
+    e = _blocked(figs, "ren_exist.py", RENAME_SPECULATIVE_SRC, project_mode=True)
+    assert e.code == CODE, (e.code, str(e))
+    assert [o["op"] for o in e.extra["operations"]] == ["os.rename"]
+
+
+@needs_worker
 def test_retro_rename_of_a_definitive_savefig_target_is_still_blamed(figs):
     src = RENAME_SPECULATIVE_SRC.replace('fig.savefig("out")', 'fig.savefig("out.png")')
     e = _blocked(figs, "ren_def.py", src, project_mode=True)

@@ -2397,8 +2397,11 @@ class BlockedFileOps:
                 if self._savefig_covers(affected[0]):
                     # 直接运行时这次改名必然成功（源刚被 savefig 写出）；这里被守卫静默跳过，目的地永远不会出现
                     self._signal(kind, self.VIA_RENAME_SRC)
-                elif self._savefig_covers(affected[0], speculative=True):
-                    # 源只是推测的 savefig 候选：直接运行里这次改名可能本来就失败，不把这个猜测升成强的改名事件
+                elif self._savefig_covers(affected[0], speculative=True) and not self._exists(
+                    affected[0]
+                ):
+                    # 源只是推测的 savefig 候选、且此刻并不真实存在：直接运行里这次改名可能本来就失败，
+                    # 不把这个猜测升成强的改名事件。源真实存在（项目里本来就有那个文件）时照常记普通改名事件
                     return
             dest_set = {p for p in (self._norm(x) for x in dests) if p}
             weak_set = {p for p in (self._norm(x) for x in weak) if p}
@@ -2427,6 +2430,16 @@ class BlockedFileOps:
             )
         except Exception:  # noqa: BLE001 —— 记账失败就少一条，不影响脚本
             return
+
+    def _exists(self, real: str) -> bool:
+        """真实文件系统上 `real` 此刻存在（含断链）。判断不是脚本的观察：临时置 busy，不记账。"""
+        was, self._busy = self._busy, True
+        try:
+            return os.path.lexists(real)
+        except Exception:  # noqa: BLE001
+            return False
+        finally:
+            self._busy = was
 
     def _savefig_covers(self, real: str, *, speculative: bool = False) -> bool:
         """`real` 是不是某个被拦 savefig 的目标。默认只认确定候选（走 `_attributes`）；`speculative=True` 连推测候选也算。"""
