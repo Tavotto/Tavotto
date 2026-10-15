@@ -91,6 +91,11 @@ export interface AiSubmission {
   project: string | null
   fileId: string
   panelId: string
+  /**
+   * 面板对应的脚本。**发送锁按脚本判、不按面板**：同一份脚本可以产出多个面板文件，A 面板的请求没有答复时，
+   * 切到同一脚本的 B 面板重发同一条指令会把脚本改两遍（Codex #1098）。
+   */
+  script: string | null
   prompt: string
   /** 发出那一刻钉住的目标（重发不跟着此刻的选择走） */
   target: DraftTarget
@@ -161,6 +166,7 @@ interface AiState {
     target: string
     overrides: unknown[]
     canvas?: string | null
+    script?: string | null
   }) => Promise<SubmitOutcome>
   /** 问后端「这个请求 id 你登记过吗」：只读，不会让任何东西被执行 */
   queryRequest: (rid: string) => Promise<QueryOutcome>
@@ -355,10 +361,14 @@ export const useAiStore = create<AiState>((set, get) => ({
 
   submissions: {},
 
-  start: async ({ prompt, fileId, panelId, gid, label, scope, target, overrides, canvas }) => {
+  start: async ({ prompt, fileId, panelId, gid, label, scope, target, overrides, canvas, script = null }) => {
     // 发任务前再确认一次：首选那个可能刚被关掉 / 刚被检测成不可用
     if (!effectiveAgent(get().agent, get().caps)) throw new Error('no-usable-agent')
     const project = currentProjectId()
+    // 同一面板、或同一份脚本的别的面板上还有没落定的提交（在路上 / 未确认 / 待重发）：不许再发。
+    // 界面已经锁了；这是 store 层的兜底（直接调、竞态都过不去）
+    if (Object.values(get().submissions).some((x) => x.project === project && submissionBlocks(x, fileId, script)))
+      throw new Error('submission-pending')
     const rid = newRequestId()
     const sent: DraftTarget = { scope, gid, label, target }
     const sub: AiSubmission = {
@@ -366,6 +376,7 @@ export const useAiStore = create<AiState>((set, get) => ({
       project,
       fileId,
       panelId,
+      script,
       prompt,
       target: sent,
       canvas: canvas ?? null,
@@ -682,6 +693,17 @@ function accept(
     if (ev.t === 'delta') get().appendDelta(sid, ev.kind, ev.text)
     else if (get().finish(ev.p)) settledNotifier?.(ev.p)
   }
+  // 经「查询请求」接回来的已结束会话：`ai.done` 没收到，终态是读出来的——收尾提示（包括「改成了、项目没刷新」
+  // 的警告）要和直达路径同一份，不能只悄悄把它标成完成（Codex #1098）
+  if (settled) {
+    settledNotifier?.({
+      session: sid,
+      status: session.status,
+      changed: session.changed,
+      diff: session.diff,
+      ...(detail?.refresh ? { refresh: detail.refresh } : {}),
+    })
+  }
 }
 
 /** 会话标签：优先用当前 capabilities 的显示名，探测不可用时回退到快照。 */
@@ -696,6 +718,16 @@ export const hasUsableAgent = (caps: AiCapabilities | null): boolean =>
 
 /** 作用域名；是函数不是常量表——常量在模块求值时就把语言定死了 */
 export const scopeLabel = (scope: AiScope): string => t(`scope.${scope}`, { ns: 'ai' })
+
+/** 这条没落定的提交是否锁住 (fileId, script) 这个面板：同面板，或同一份脚本（按文件名比，同 `isSessionOf`） */
+export function submissionBlocks(
+  sub: Pick<AiSubmission, 'fileId' | 'script'>,
+  fileId: string,
+  script: string | null | undefined,
+): boolean {
+  if (sub.fileId === fileId) return true
+  return !!script && !!sub.script && scriptName(sub.script) === scriptName(script)
+}
 
 /** 路径取文件名：会话与面板可能一个存绝对路径一个存相对路径 */
 export const scriptName = (p: string) => p.split(/[\\/]/).pop() ?? p

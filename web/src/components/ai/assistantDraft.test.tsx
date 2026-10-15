@@ -115,7 +115,7 @@ beforeEach(async () => {
     caps: capsOf([agentCaps()]), agent: 'codex', models: {}, efforts: {},
   })
   await useDocumentStore.getState().switchDocument(emptyProject(), 'd_ai_draft')
-  useDocumentStore.setState((s) => ({ doc: { ...s.doc, objects: [panelOf('Fig1.pdf', 'p1'), panelOf('Fig2.pdf', 'p2')] } }) as never)
+  useDocumentStore.setState((s) => ({ doc: { ...s.doc, objects: [panelOf('Fig1.pdf', 'p1'), panelOf('Fig2.pdf', 'p2'), { ...panelOf('Fig3.pdf', 'p3'), script: 'p1.py' } as PanelObject] } }) as never)
   useSelectionStore.setState({ ids: ['p1'] } as never)
 })
 afterEach(async () => {
@@ -350,6 +350,33 @@ describe('已发出未确认：不能盲目重发', () => {
     expect(q('[data-ai-resend-same]')).toBeNull()
     expect(input().value).toBe('')
     expect(useUiStore.getState().status).not.toBeNull()
+  })
+
+  it('同一脚本的另一个面板：A 面板未确认时切到 B，提示还在、发送仍锁住（按脚本判）', async () => {
+    await mount()
+    await sendIt()
+    expect(aiRun).toHaveBeenCalledTimes(1)
+    await select('p3') // Fig3 与 Fig1 共用脚本 p1.py
+    await settle()
+    expect(q('[data-ai-submission="unconfirmed"]')).toBeTruthy()
+    expect(q<HTMLButtonElement>('[data-ai-send]')!.disabled).toBe(true)
+    await typeText('在 B 面板上再说一遍')
+    await act(async () => {
+      input().dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', metaKey: true, bubbles: true }))
+    })
+    expect(aiRun).toHaveBeenCalledTimes(1)
+    // 对照：别的脚本的面板（p2）不受影响
+    await select('p2')
+    await settle()
+    expect(q('[data-ai-submission]')).toBeNull()
+  })
+
+  it('刷新后在兄弟面板上挂载：A 面板的待确认账本也还原，发送仍锁住', async () => {
+    be.pendings.set('pa\u0000Fig1.pdf', [{ rid: 'rid-sibling-0001', text: 'A 面板发出的话', sent: SENT }])
+    useSelectionStore.setState({ ids: ['p3'] } as never)
+    await mount()
+    expect(q('[data-ai-submission="unconfirmed"]')).toBeTruthy()
+    expect(q<HTMLButtonElement>('[data-ai-send]')!.disabled).toBe(true)
   })
 
   it('「改写后再发」：放弃这条等待、输入框可改，下一次发送是新 rid', async () => {

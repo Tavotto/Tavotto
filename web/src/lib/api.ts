@@ -3224,6 +3224,8 @@ export const acceptAiPending = (rid: string, file: string, pj: string | null) =>
 /** 会话详情（转录 + diff）；查询到已登记的会话后补全界面用 */
 export interface AiSessionDetail {
   agent?: string
+  /** 文件变了之后项目刷新的结局（`changed:true` + `failed` = 改成了、项目没刷新） */
+  refresh?: AiRefreshOutcome | null
   status: string
   changed: boolean | null
   diff: string

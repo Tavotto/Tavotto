@@ -57,6 +57,19 @@ const send = (prompt = '把图例移到左上角') =>
     overrides: [],
   })
 
+const sendOn = (fileId: string, script: string | null) =>
+  useAiStore.getState().start({
+    prompt: '把图例移到左上角',
+    fileId,
+    panelId: 'p-' + fileId,
+    gid: null,
+    label: null,
+    scope: 'figure',
+    target: '整张图',
+    overrides: [],
+    script,
+  })
+
 const subs = () => Object.values(useAiStore.getState().submissions)
 const onlySub = () => {
   expect(subs()).toHaveLength(1)
@@ -202,6 +215,31 @@ describe('未确认时不能盲目重发', () => {
     }
     await useAiStore.getState().queryRequest(rid)
     expect(useAiStore.getState().sessions[0]).toMatchObject({ status: 'done', changed: true, diff: 'D', finalized: true })
+  })
+
+  it('查询到已结束的会话、且「改成了但项目没刷新」：和直达路径一样给警告，不悄悄标成功', async () => {
+    const rid = onlySub().rid
+    handler = (url) => {
+      if (url.includes('/api/ai/requests/')) return json({ session: 's-7', status: 'done', changed: true, script: 'fig1.py' })
+      if (url.includes('/api/ai/sessions/s-7'))
+        return json({ agent: 'codex', status: 'done', changed: true, diff: 'D', transcript: [], refresh: { status: 'failed', code: 'scan_failed' } })
+      return json({})
+    }
+    await useAiStore.getState().queryRequest(rid)
+    expect(JSON.stringify(useUiStore.getState().status)).toContain('aiChangedRefreshFailed')
+  })
+
+  it('查询到已结束的会话、刷新正常：给普通的完成提示（不再静默）', async () => {
+    const rid = onlySub().rid
+    handler = (url) => {
+      if (url.includes('/api/ai/requests/')) return json({ session: 's-8', status: 'done', changed: true, script: 'fig1.py' })
+      if (url.includes('/api/ai/sessions/s-8'))
+        return json({ agent: 'codex', status: 'done', changed: true, diff: 'D', transcript: [], refresh: { status: 'ok' } })
+      return json({})
+    }
+    await useAiStore.getState().queryRequest(rid)
+    expect(JSON.stringify(useUiStore.getState().status)).toContain('aiChanged')
+    expect(JSON.stringify(useUiStore.getState().status)).not.toContain('RefreshFailed')
   })
 
   it('查询本身失败（断网 / 5xx / 老后端没有这个端点的普通 404）都不是结论：仍是 unconfirmed，不放开重发', async () => {
@@ -361,5 +399,27 @@ describe('cancel', () => {
     expect(useAiStore.getState().sessions[0].status).toBe('running')
     useAiStore.getState().finish({ session: 's-1', status: 'done', changed: false, diff: '' })
     expect(useAiStore.getState().sessions[0].status).toBe('done')
+  })
+})
+
+describe('发送锁按脚本判，不按面板（Codex #1098 P1）', () => {
+  it('A 面板有未落定的提交：同一脚本的 B 面板 start 被拒、一个 run 都不发；别的脚本照常', async () => {
+    handler = (url) => (url.includes('/api/ai/run') ? Promise.reject(new TypeError('down')) : json({}))
+    await expect(sendOn('Fig1.pdf', 'sub/fig1.py')).resolves.toBe('unconfirmed')
+    const before = runCalls()
+    await expect(sendOn('Fig2.pdf', 'fig1.py')).rejects.toThrow('submission-pending') // 同脚本（按文件名比）
+    expect(runCalls()).toBe(before)
+    handler = defaultHandler
+    await expect(sendOn('Fig3.pdf', 'other.py')).resolves.toBe('accepted') // 对照：别的脚本不受影响
+    // 同一面板同样被锁
+    await expect(sendOn('Fig1.pdf', 'sub/fig1.py')).rejects.toThrow('submission-pending')
+  })
+
+  it('另一个项目的未落定提交不锁这个项目', async () => {
+    handler = (url) => (url.includes('/api/ai/run') ? Promise.reject(new TypeError('down')) : json({}))
+    await sendOn('Fig1.pdf', 'fig1.py')
+    handler = defaultHandler
+    setCurrentProjectId('pb')
+    await expect(sendOn('Fig2.pdf', 'fig1.py')).resolves.toBe('accepted')
   })
 })

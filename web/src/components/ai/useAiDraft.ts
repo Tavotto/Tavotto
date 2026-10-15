@@ -6,6 +6,8 @@ import { useAiStore } from '@/store/aiStore'
 import { useDocumentStore } from '@/store/documentStore'
 import type { PanelObject } from '@/types/document'
 
+const scriptBase = (p: string) => p.split(/[\\/]/).pop() ?? p
+
 /** 打字停多久才写后端：每个键都发请求没必要，丢的也只是最后半秒（pagehide 会冲刷） */
 export const WRITE_DEBOUNCE_MS = 600
 /** 写失败（离线 / 后端暂时不可用）后多久重试：文本一直留在内存里，不丢 */
@@ -106,6 +108,7 @@ export function useAiDraft(panel: PanelObject | null) {
             project,
             fileId: panel.fileId,
             panelId: panel.id,
+            script: panel.script ?? null,
             prompt: p.text,
             target: p.sent,
             canvas: useDocumentStore.getState().activeCanvasId,
@@ -114,6 +117,37 @@ export function useAiDraft(panel: PanelObject | null) {
         }
       }
     })
+    if (panel?.script) {
+      // 同一份脚本的**别的面板**上没落定的提交同样要还原：发送锁按脚本判（不然刷新后切到兄弟面板就绕过了）。
+      // 只取账本，不动那边的草稿文本
+      const mine = scriptBase(panel.script)
+      const siblings = useDocumentStore
+        .getState()
+        .doc.objects.filter(
+          (o): o is PanelObject => o.type === 'panel' && !!(o as PanelObject).script && (o as PanelObject).fileId !== panel.fileId && scriptBase((o as PanelObject).script as string) === mine,
+        )
+      const seen = new Set<string>()
+      for (const sib of siblings) {
+        if (seen.has(sib.fileId)) continue
+        seen.add(sib.fileId)
+        void loadDraft(project, sib.fileId).then((d) => {
+          if (token !== loadToken.current) return
+          for (const p of d?.pendings ?? []) {
+            useAiStore.getState().restoreSubmission({
+              rid: p.rid,
+              project,
+              fileId: sib.fileId,
+              panelId: sib.id,
+              script: sib.script ?? null,
+              prompt: p.text,
+              target: p.sent,
+              canvas: useDocumentStore.getState().activeCanvasId,
+              overrides: sib.overrides,
+            })
+          }
+        })
+      }
+    }
     return () => {
       loadToken.current++
       persist(true)

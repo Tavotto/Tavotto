@@ -32,7 +32,7 @@ import { cn, modKey } from '@/lib/utils'
 import { msg, t as translate } from '@/i18n'
 import { DURATION, usePresence } from '@/lib/motion'
 import { engineLabel } from '@/components/inspector/roles/registry'
-import { isSessionOf, useAiStore, type AiScope, type AiSession } from '@/store/aiStore'
+import { isSessionOf, submissionBlocks, useAiStore, type AiScope, type AiSession } from '@/store/aiStore'
 import { useDocumentStore } from '@/store/documentStore'
 import { usePanelDisplayManifest } from '@/store/renderStore'
 import { useSelectionStore } from '@/store/selectionStore'
@@ -260,7 +260,9 @@ function AssistantPanelBody() {
   // 「在路上 / 已发出未确认 / 后端没收到」三态都从它派生
   const submissions = useAiStore((s) => s.submissions)
   const submission = panel
-    ? Object.values(submissions).find((x) => x.fileId === panel.fileId && x.project === claimedProject)
+    ? Object.values(submissions).find(
+        (x) => x.project === claimedProject && submissionBlocks(x, panel.fileId, panel.script),
+      )
     : undefined
   const sending = submission?.phase === 'sending'
   const [checkNote, setCheckNote] = useState<'unreachable' | null>(null)
@@ -394,6 +396,7 @@ function AssistantPanelBody() {
         target: ctx.target,
         overrides: panel.overrides,
         canvas: useDocumentStore.getState().activeCanvasId,
+        script: panel.script ?? null,
       })
       // 只有后端给出会话 id 才算送达、才清输入框；`unconfirmed` 时文本原样留着（面板进「已发出未确认」）
       if (outcome === 'accepted' && override == null) clearIf(text)
