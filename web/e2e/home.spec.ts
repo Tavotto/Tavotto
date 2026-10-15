@@ -117,11 +117,11 @@ test('「全部项目」与返回主页', async ({ app, page }) => {
 
 /**
  * 首页最近项目卡的克制浮起（`<Card lift>`，宪法第二十五节登记豁免）：真浏览器里量——
- * hover / 键盘聚焦 = translateY 恰为 -2px（整数像素）+ scale 1.015 + 阴影升档，按下回落到 0，
+ * hover / 键盘聚焦 = 根 translateY 恰为 -2px（整数像素）、只有 ::before 背景层 scale 1.015（卡与文字不缩放）+ 阴影升档，按下回落到 0，
  * 兄弟卡与自己的布局盒一动不动（transform 不影响布局，这里量出来而不是信），
  * reduced-motion 下不位移只换阴影，切换项目中（置灰）不浮起。
  */
-test('最近项目卡 lift：hover/聚焦 -2px + scale 1.015 + 阴影升档、按下回落、兄弟零位移、reduced-motion 只换阴影、置灰不浮起', async ({
+test('最近项目卡 lift：hover/聚焦 根 -2px + 背景层 scale 1.015（文字不缩放）+ 阴影升档、按下回落、兄弟零位移、reduced-motion 只换阴影、置灰不浮起', async ({
   app,
   page,
   browserName,
@@ -148,8 +148,10 @@ test('最近项目卡 lift：hover/聚焦 -2px + scale 1.015 + 阴影升档、�
 
   const state = (i: number) =>
     cards.nth(i).evaluate((el) => {
+      // 缩放 / 阴影住在 ::before 背景层；根只位移
       const cs = getComputedStyle(el)
-      return { translate: cs.translate, scale: cs.scale, shadow: cs.boxShadow }
+      const bs = getComputedStyle(el, '::before')
+      return { translate: cs.translate, scale: bs.scale, shadow: bs.boxShadow, rootScale: cs.scale }
     })
   /** 每张卡自己所在 li 的布局盒（transform 不影响）与卡本身的 boundingBox（含 transform） */
   const layout = () =>
@@ -157,7 +159,8 @@ test('最近项目卡 lift：hover/聚焦 -2px + scale 1.015 + 阴影升档、�
       [...document.querySelectorAll<HTMLElement>('[data-home-recent]')].map((li) => {
         const r = li.getBoundingClientRect()
         const c = li.querySelector<HTMLElement>('[data-card]')!.getBoundingClientRect()
-        return { li: [r.x, r.y, r.width, r.height], card: [c.x, c.y, c.width, c.height] }
+        const t = li.querySelector<HTMLElement>('[data-card] button')!.getBoundingClientRect()
+        return { li: [r.x, r.y, r.width, r.height], card: [c.x, c.y, c.width, c.height], btn: [t.x, t.y, t.width, t.height] }
       }),
     )
   const rest = await layout()
@@ -171,23 +174,26 @@ test('最近项目卡 lift：hover/聚焦 -2px + scale 1.015 + 阴影升档、�
   await expect.poll(async () => Number((await state(1)).scale)).toBeCloseTo(1.015, 3)
   const hov = await state(1)
   expect(hov.shadow, '阴影应当升一档').not.toBe(restState.shadow)
+  expect((await state(1)).rootScale, '卡本身（含文字）不缩放').toBe('none')
   const lifted = await layout()
   rest.forEach((r, i) => {
     expect(lifted[i].li, `li ${i} 的布局盒`).toEqual(r.li)
-    // 缩放绕中心：上移 2px 之外，上下各多出 (scale-1)×高/2；横向各多出 (scale-1)×宽/2
     if (i === 1) {
+      // 根只整数上移 2px，宽高不变；文字所在的按钮同样只上移 2px、尺寸不变（文字没有被缩放 → 不会重新栅格化）
       const [x, y, w, h] = r.card
-      const k = 0.015
-      expect(lifted[i].card[0]).toBeCloseTo(x - (w * k) / 2, 0)
-      expect(lifted[i].card[1]).toBeCloseTo(y - 2 - (h * k) / 2, 0)
-      expect(lifted[i].card[2]).toBeCloseTo(w * (1 + k), 0)
+      expect(lifted[i].card).toEqual([x, y - 2, w, h])
+      const [bx, by, bw, bh] = r.btn
+      expect(lifted[i].btn).toEqual([bx, by - 2, bw, bh])
+    } else {
+      expect(lifted[i].card, `兄弟卡 ${i}`).toEqual(r.card)
+      expect(lifted[i].btn, `兄弟卡 ${i} 的文字层`).toEqual(r.btn)
     }
-    else expect(lifted[i].card, `兄弟卡 ${i}`).toEqual(r.card)
   })
-  // 放大溢出量小于卡间距：浮起的卡不盖住邻卡（横向相邻，右 / 左缘之间仍留空）
+  // 背景层绕卡中心放大 1.015：向两侧各多出 w×0.0075，仍小于卡间距，不盖住邻卡
   const [h0, h1, h2] = lifted.map((l) => l.card)
-  expect(h1[0], '与左邻卡的间隙').toBeGreaterThan(h0[0] + h0[2])
-  expect(h2[0], '与右邻卡的间隙').toBeGreaterThan(h1[0] + h1[2])
+  const grow = (h1[2] * (1.015 - 1)) / 2
+  expect(h1[0] - grow, '背景层与左邻卡的间隙').toBeGreaterThan(h0[0] + h0[2])
+  expect(h2[0], '背景层与右邻卡的间隙').toBeGreaterThan(h1[0] + h1[2] + grow)
 
   // ---- hover 不引发重排（chromium CDP）：translate 若在 none ↔ 非 none 间切换，Blink 每次 hover 重排一次（实测 +1 / hover）；
   // 静止态写恒等位移后只剩合成 / 绘制。10 次 hover 的 LayoutCount 增量必须 ≤2（排除偶发的字体 / 图像回流）
@@ -239,7 +245,7 @@ test('最近项目卡 lift：hover/聚焦 -2px + scale 1.015 + 阴影升档、�
   await cards.nth(0).locator('button').first().hover()
   await expect.poll(async () => (await state(0)).shadow).not.toBe(restState.shadow)
   expect((await state(0)).translate).toBe('0px')
-  expect((await state(0)).scale, 'reduced-motion 不缩放').toBe('1')
+  expect((await state(0)).scale, 'reduced-motion 背景层不缩放').toBe('1')
   await page.emulateMedia({ reducedMotion: 'no-preference' })
 
   // ---- 切换中（置灰）：hover 不浮起
@@ -248,6 +254,7 @@ test('最近项目卡 lift：hover/聚焦 -2px + scale 1.015 + 阴影升档、�
   await expect(cards.nth(0)).toHaveAttribute('data-disabled', 'true')
   await cards.nth(1).locator('button').first().hover({ force: true })
   await page.waitForTimeout(400)
-  expect((await state(1)).translate, '置灰的卡没有位移样式').toBe('none')
+  expect((await state(1)).translate, '置灰的卡不位移').toBe('0px')
+  expect((await state(1)).scale, '置灰的卡背景层不缩放').toBe('1')
   expect((await state(1)).shadow).toBe(restState.shadow)
 })

@@ -29,9 +29,10 @@ export interface CardProps extends HTMLAttributes<HTMLDivElement> {
    */
   disabled?: boolean
   /**
-   * 克制浮起（登记豁免，宪法第二十五节「Card lift」）：hover / 键盘聚焦时整卡 translateY(-1px) + 阴影升一档，
-   * 按下回落到 0。只在「品牌特色位置」开（首页最近项目卡），不全局开；无缩放、无光晕、无 will-change、整数像素。
-   * reduced-motion 下不位移只换阴影；disabled 不浮起。只对 raised 卡有意义（阴影就是浮起的那一块）
+   * 克制浮起（登记豁免，宪法第二十五节「Card lift」）：hover / 键盘聚焦时 translateY(-2px) + 背景层放大 + 阴影 / 光晕升档，
+   * 按下回落。**只缩放背景层**（`::before`：底色 + 阴影 + 光晕 + 轮廓 + 焦点环，scale ≤1.02），卡本身与文字不缩放、最多整数 px 上移，
+   * 所以文字不会重新栅格化。只在「品牌特色位置」开（首页最近项目卡），不全局开；无 will-change 常驻、无 translateZ。
+   * reduced-motion 下不位移不缩放、只换阴影 / 光晕；disabled / selected 不浮起。只对 raised 卡有意义（阴影就是浮起的那一块）
    */
   lift?: boolean
 }
@@ -51,6 +52,10 @@ export const Card = forwardRef<HTMLDivElement, CardProps>(function Card(
 ) {
   // 交互外观（hover / press / 焦点环）只给「可交互且没禁用」的卡
   const live = interactive && !disabled
+  // lift 的「分层」实现（推荐方案）：卡本身不缩放——底色 / 阴影 / 光晕 / 轮廓 / 焦点环都搬到 `::before` 这一层，
+  // hover 时只有这一层 scale（--card-lift-scale，≤1.02），文字与内容层保持原尺寸（最多整数 px 上移），所以缩放时文字不会重新栅格化。
+  // 只对 raised 且非 selected 的卡有意义（selected 的底色另有主人）
+  const layered = lift && appearance === 'raised' && !selected
   return (
     <div
       ref={ref}
@@ -58,37 +63,46 @@ export const Card = forwardRef<HTMLDivElement, CardProps>(function Card(
       data-interactive={interactive || undefined}
       data-selected={selected || undefined}
       data-disabled={(interactive && disabled) || undefined}
+      data-lift={layered || undefined}
       className={cn(
         'relative rounded-lg',
-        APPEARANCE[appearance],
+        layered ? 'isolate' : APPEARANCE[appearance],
         PADDING[padding],
-        (interactive || selected) &&
-          'outline-1 -outline-offset-1 outline-transparent',
-        (interactive || selected) && !lift && 'duration-fast',
-        // lift 变体多过渡位移与阴影（`translate` 是 Tailwind v4 translate 工具类写的独立属性）
-        (interactive || selected) &&
-          (lift ? 'transition-[outline-color,background-color,translate,scale,box-shadow] duration-base ease-[var(--ease-pop)]' : 'transition-[outline-color,background-color]'),
-        live && 'hover:outline-border',
+        // ---- 常规（非分层）卡：outline 画在卡自己身上 ----
+        (interactive || selected) && !layered && 'outline-1 -outline-offset-1 outline-transparent',
+        (interactive || selected) && !layered && 'transition-[outline-color,background-color] duration-fast',
+        live && !layered && 'hover:outline-border',
         // 选中的卡底色另有主人（bg-selected），按压不去抢；直接子按钮 = 整卡大小的主控件（⋯ 菜单钮等深层控件不算）
-        live && !selected && 'has-[>button:active:not(:disabled)]:bg-surface-active',
-        // lift：hover / 键盘聚焦 → 上浮 2px + 放大 --card-lift-scale（≤1.02）+ 阴影 / 光晕升档；按下回落（像被按下去：位移 0、缩放 1、阴影回 card 档）。
-        // 位移与缩放只在 motion-safe 下有，reduced-motion 只换阴影 / 光晕。
-        // 静止态就写 translate-y-0 scale-100（恒等变换，不是 none）：none ↔ 非 none 的切换会让 Blink 每次 hover 整页重排一次
-        // （LayoutCount +1 / hover，TaskDuration +50%）；一直带着恒等变换就只剩合成 / 绘制。不用 will-change 常驻
-        live &&
-          lift &&
-          !selected &&
-          appearance === 'raised' &&
-          cn(
-            'translate-y-0 scale-100 hover:shadow-lift has-[:focus-visible]:shadow-lift',
-            'motion-safe:hover:-translate-y-0.5 motion-safe:hover:scale-(--card-lift-scale)',
-            'motion-safe:has-[:focus-visible]:-translate-y-0.5 motion-safe:has-[:focus-visible]:scale-(--card-lift-scale)',
-            'has-[>button:active:not(:disabled)]:translate-y-0 has-[>button:active:not(:disabled)]:scale-100 has-[>button:active:not(:disabled)]:shadow-card',
-          ),
+        live && !selected && !layered && 'has-[>button:active:not(:disabled)]:bg-surface-active',
         selected && 'bg-selected outline-border-strong hover:outline-border-strong',
         // 焦点环只给可交互的卡：静态卡里的按钮自己有焦点环，外面再套一圈就成了两道
         live &&
+          !layered &&
           'focus-visible:ring-2 focus-visible:ring-accent has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-accent',
+        // ---- lift 分层卡 ----
+        // 根：只整数 px 上移（-2px）；静止态就写 translate-y-0（恒等位移，不是 none）：none ↔ 非 none 的切换会让 Blink 每次 hover 整页重排一次
+        // （LayoutCount +1 / hover，TaskDuration +50%）。不用 will-change 常驻，不用 translateZ(0)
+        layered && interactive && 'translate-y-0 transition-[translate] duration-base ease-[var(--ease-pop)]',
+        // ::before = 背景层：底色 + shadow-card，静止态 scale-100（同样是恒等变换）；负 z 落在 isolate 的根里，内容盖在它上面
+        layered &&
+          cn(
+            "before:pointer-events-none before:absolute before:inset-0 before:-z-10 before:rounded-lg before:bg-surface before:shadow-card before:content-['']",
+            'before:outline-1 before:-outline-offset-1 before:outline-transparent before:scale-100',
+            interactive &&
+              'before:transition-[outline-color,background-color,scale,box-shadow] before:duration-base before:ease-[var(--ease-pop)]',
+          ),
+        // 可交互且没禁用：hover / 键盘聚焦 → 根上浮 2px、背景层放大 + 阴影 / 光晕升档 + 轮廓；按下回落（像被按下去：位移 0、缩放 1、阴影回 card 档、底换 surface-active）。
+        // 位移与缩放只在 motion-safe 下有，reduced-motion 只换阴影 / 光晕 / 轮廓
+        layered &&
+          live &&
+          cn(
+            'hover:before:shadow-lift hover:before:outline-border has-[:focus-visible]:before:shadow-lift',
+            'motion-safe:hover:-translate-y-0.5 motion-safe:hover:before:scale-(--card-lift-scale)',
+            'motion-safe:has-[:focus-visible]:-translate-y-0.5 motion-safe:has-[:focus-visible]:before:scale-(--card-lift-scale)',
+            'has-[:focus-visible]:before:ring-2 has-[:focus-visible]:before:ring-accent focus-visible:before:ring-2 focus-visible:before:ring-accent',
+            'has-[>button:active:not(:disabled)]:translate-y-0 has-[>button:active:not(:disabled)]:before:scale-100',
+            'has-[>button:active:not(:disabled)]:before:shadow-card has-[>button:active:not(:disabled)]:before:bg-surface-active',
+          ),
         className,
       )}
       {...rest}

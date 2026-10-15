@@ -136,18 +136,21 @@ describe('Card', () => {
     expect(v, '--card-lift-scale 上限 1.02').toBeLessThanOrEqual(1.02)
     // 位移与缩放只在 motion-safe 下有（reduced-motion 只换阴影 / 光晕）
     for (const t of tokens) if (/(hover|focus-visible):.*(translate|scale)-/.test(t)) expect(t, t).toMatch(/^motion-safe:/)
-    expect(lift).toMatch(/hover:shadow-lift/)
+    expect(lift).toMatch(/hover:before:shadow-lift/)
     expect(lift).toMatch(/motion-safe:has-\[:focus-visible\]:-translate-y-0\.5/) // 键盘聚焦同样浮起
-    // 静止态恒等变换（不是 none：none ↔ 非 none 会让每次 hover 重排一次）
+    // 缩放只落在背景层（::before），卡本身与文字不缩放：任何 scale 都必须带 before:
+    for (const t of tokens) if (/(^|:)scale-/.test(t)) expect(t, t).toMatch(/(^|:)before:scale-/)
+    expect(q('[data-c="l"]')!.dataset.lift).toBe('true')
+    // 静止态恒等变换（不是 none：none ↔ 非 none 会让每次 hover 重排一次）：根 translate-y-0、背景层 scale-100
     expect(tokens).toContain('translate-y-0')
-    expect(tokens).toContain('scale-100')
+    expect(tokens).toContain('before:scale-100')
     // 按下回落：位移 0、缩放 1
     expect(lift).toMatch(/has-\[>button:active:not\(:disabled\)\]:translate-y-0/)
-    expect(lift).toMatch(/has-\[>button:active:not\(:disabled\)\]:scale-100/)
+    expect(lift).toMatch(/has-\[>button:active:not\(:disabled\)\]:before:scale-100/)
     expect(lift).not.toMatch(/rotate|skew|will-change|blur|filter|gradient/)
-    // 禁用 / 选中的卡不浮起
+    // 禁用 / 选中的卡不浮起（禁用的分层卡静止态仍有 before:scale-100 与 before:shadow-card，但没有任何 hover / focus / active 变体）
     for (const sel of ['ld', 'ls'])
-      expect(q(`[data-c="${sel}"]`)!.className.replace(/transition-\[[^\]]*\]/, ''), sel).not.toMatch(/translate|scale|shadow-lift/)
+      expect(q(`[data-c="${sel}"]`)!.className.replace(/transition-\[[^\]]*\]/g, ''), sel).not.toMatch(/(hover|focus-visible|has-\[[^\]]*\]):[^\s]*(translate|scale|shadow-lift)/)
   })
 
   it('disabled：写 data-disabled，不亮 hover / press / 焦点环；interactive 标记仍在', async () => {
