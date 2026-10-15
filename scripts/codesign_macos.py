@@ -247,6 +247,65 @@ def minos(path: Path, arch: str) -> tuple[int, int, int] | None:
         return None
 
 
+#: 让动态链接器去装载另一个库的加载命令：LC_LOAD_DYLIB / LC_LOAD_WEAK_DYLIB / LC_REEXPORT_DYLIB /
+#: LC_LAZY_LOAD_DYLIB / LC_LOAD_UPWARD_DYLIB。LC_ID_DYLIB（0xD，库自己的 install name）不在其中。
+_DYLIB_LOAD_CMDS = {0xC, 0x80000018, 0x8000001F, 0x20, 0x80000023}
+
+
+def _thin_dylib_deps(fh, offset: int) -> set[str]:
+    fh.seek(offset)
+    head = fh.read(32)
+    endian = _THIN_MAGIC_BYTES.get(head[:4])
+    if endian is None:
+        return set()
+    is64 = head[:4] in (b"\xfe\xed\xfa\xcf", b"\xcf\xfa\xed\xfe")
+    ncmds, sizeofcmds = struct.unpack(endian + "II", head[16:24])
+    fh.seek(offset + (32 if is64 else 28))
+    cmds = fh.read(sizeofcmds)
+    out: set[str] = set()
+    pos = 0
+    for _ in range(ncmds):
+        if pos + 12 > len(cmds):
+            break
+        cmd, size = struct.unpack(endian + "II", cmds[pos : pos + 8])
+        if cmd in _DYLIB_LOAD_CMDS and size > 12:
+            name_off = struct.unpack(endian + "I", cmds[pos + 8 : pos + 12])[0]
+            raw = cmds[pos + name_off : pos + size].split(b"\0", 1)[0]
+            out.add(raw.decode("utf-8", "replace"))
+        if size <= 0:
+            break
+        pos += size
+    return out
+
+
+def dylib_dependencies(path: Path) -> set[str] | None:
+    """`path` 装载时要链接的库（加载命令里的原样路径，含 `@rpath/` 等前缀），fat 文件取各片并集。
+
+    不是 Mach-O 回 None（与 `inspect` 同一口径：扫描要能跑完，不抛）。**看不见运行时 dlopen /
+    ctypes 按名字装载的库**——用它判「没人用」时，这个盲点要由真实冒烟兜底。
+    """
+    try:
+        with path.open("rb") as fh:
+            head = fh.read(8)
+            if len(head) < 8:
+                return None
+            if struct.unpack(">I", head[:4])[0] in _FAT:
+                nfat = struct.unpack(">I", head[4:8])[0]
+                if nfat > 64:
+                    return None
+                deps: set[str] = set()
+                for i in range(nfat):
+                    fh.seek(8 + i * 20)
+                    _cpu, _sub, off, _size, _align = struct.unpack(">IIIII", fh.read(20))
+                    deps |= _thin_dylib_deps(fh, off)
+                return deps
+            if head[:4] not in _THIN_MAGIC_BYTES:
+                return None
+            return _thin_dylib_deps(fh, 0)
+    except (OSError, struct.error):
+        return None
+
+
 def check_min_os(
     app: Path, items: list[MachO], expect_min_os: str | None, arch: str | None
 ) -> None:

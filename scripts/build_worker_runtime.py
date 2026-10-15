@@ -408,6 +408,52 @@ def prune_aliases(out: Path, target: dict) -> tuple[int, int]:
     return removed, freed
 
 
+def prune_unreferenced_libpython(out: Path, target: dict) -> tuple[int, int]:
+    """剪掉 macOS runtime 里**没有任何 Mach-O 链接它**的 `lib/libpython3*.dylib`（#1074，≈ 17 MiB）。
+
+    pbs 的 `bin/python3.13` 是静态链接的解释器，macOS 上扩展模块又用 `-undefined dynamic_lookup`，
+    不链接 libpython——这份共享库只给「把 Python 嵌进别的程序」用，内置 runtime 只跑 worker 与
+    用户脚本，用不到它（受管环境的 base 是私有 Python 归档，ADR 0111，不是这份）。
+
+    判据是**引用**不是名字：扫 runtime 里每个 Mach-O 的加载命令，只要有一个链接了任一
+    `libpython3*.dylib`（含别名链接的名字），就一个都不剪。加载命令看不见 dlopen / ctypes——
+    那个盲点由紧随其后的 import + 真绘图冒烟兜底（剪完再验，与 `prune_aliases` 同一顺序）。
+    """
+    if target["kind"] != KIND_MACOS:
+        return 0, 0
+    from codesign_macos import dylib_dependencies  # 同在 scripts/；Mach-O 解析只有这一处
+
+    lib = out / "lib"
+    candidates = sorted(lib.glob("libpython3*.dylib")) if lib.is_dir() else []
+    if not candidates:
+        return 0, 0
+    names = {p.name for p in candidates}
+    users: list[str] = []
+    for root, _dirs, files in os.walk(out):
+        for fname in files:
+            p = Path(root) / fname
+            if p.is_symlink() or (p.parent == lib and fname in names):
+                continue
+            deps = dylib_dependencies(p)
+            if deps and names & {d.rsplit("/", 1)[-1] for d in deps}:
+                users.append(str(p.relative_to(out)))
+    if users:
+        log(f"! libpython 被 {len(users)} 个 Mach-O 链接（如 {users[0]}）——保留不动")
+        return 0, 0
+    removed = freed = 0
+    # 先删链接再删实体：反过来的话中途失败会留下悬空链接
+    for p in sorted(candidates, key=lambda q: not q.is_symlink()):
+        try:
+            if not p.is_symlink():
+                freed += p.stat().st_size
+            p.unlink()
+            removed += 1
+        except OSError as exc:
+            log(f"! 删不掉 {p}: {exc}")
+    log(f"✓ 剪掉没人链接的 libpython（{removed} 个文件），省下 {freed / 1024 / 1024:.0f} MiB")
+    return removed, freed
+
+
 def manifest_dict(
     lock: dict, name: str, target: dict, build_id: str, built_at: str, lock_sha256: str, smoke: str
 ) -> dict:
@@ -1121,6 +1167,8 @@ def build(
     # 别名也要在冒烟**之前**剪掉——剪完的这份才是用户拿到的布局，
     # 冒烟要验的正是它（剪完再验，而不是验完再剪）
     aliases, alias_bytes = prune_aliases(out, target) if do_prune else (0, 0)
+    # 没人链接的 libpython（#1074）同理：剪完再冒烟，验的就是用户拿到的那份
+    libpy, _ = prune_unreferenced_libpython(out, target) if do_prune else (0, 0)
     compiled = precompile(out, target)
 
     smoke, versions = smoke_imports(out, target, lock.get("top_level") or [])
@@ -1141,6 +1189,7 @@ def build(
     info = manifest_dict(lock, name, target, build_id, built_at, lock_sha, smoke)
     info["build"]["pruned_dirs"] = pruned
     info["build"]["pruned_aliases"] = aliases
+    info["build"]["pruned_libpython"] = libpy
     info["build"]["precompiled"] = compiled
     info["build"]["interpreter"] = str(interpreter(out, target).relative_to(out))
     if versions:
