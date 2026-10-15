@@ -15,6 +15,7 @@
 use std::path::{Path, PathBuf};
 
 use proc_macro2::{TokenStream, TokenTree};
+use syn::ext::IdentExt;
 use syn::visit::Visit;
 
 /// (文件相对 src 的路径, 外层函数名, 出口种类)
@@ -49,20 +50,20 @@ fn use_leaves(tree: &syn::UseTree, path: &mut Vec<String>, out: &mut Vec<(Vec<St
     };
     match tree {
         syn::UseTree::Path(p) => {
-            path.push(p.ident.to_string());
+            path.push(p.ident.unraw().to_string());
             use_leaves(&p.tree, path, out);
             path.pop();
         }
         syn::UseTree::Name(n) => {
             let mut full = path.clone();
-            full.push(n.ident.to_string());
+            full.push(n.ident.unraw().to_string());
             let d = show(&full, None);
             out.push((full, d));
         }
         syn::UseTree::Rename(r) => {
             let mut full = path.clone();
-            full.push(r.ident.to_string());
-            let d = show(&full, Some(r.rename.to_string()));
+            full.push(r.ident.unraw().to_string());
+            let d = show(&full, Some(r.rename.unraw().to_string()));
             out.push((full, d));
         }
         syn::UseTree::Glob(_) => {
@@ -99,7 +100,7 @@ impl Scan {
         for tt in ts {
             match tt {
                 TokenTree::Group(g) => self.scan_tokens(g.stream()),
-                TokenTree::Ident(i) => match i.to_string().as_str() {
+                TokenTree::Ident(i) => match i.unraw().to_string().as_str() {
                     "exit" => self.hit("process::exit"),
                     "restart" => self.hit("restart"),
                     "updater_builder" => self.hit("updater_builder"),
@@ -142,7 +143,7 @@ impl<'ast> Visit<'ast> for Scan {
     }
 
     fn visit_item_fn(&mut self, f: &'ast syn::ItemFn) {
-        self.fns.push(f.sig.ident.to_string());
+        self.fns.push(f.sig.ident.unraw().to_string());
         syn::visit::visit_item_fn(self, f);
         self.fns.pop();
     }
@@ -151,14 +152,14 @@ impl<'ast> Visit<'ast> for Scan {
         if is_cfg_test(&f.attrs) {
             return;
         }
-        self.fns.push(f.sig.ident.to_string());
+        self.fns.push(f.sig.ident.unraw().to_string());
         syn::visit::visit_impl_item_fn(self, f);
         self.fns.pop();
     }
 
     fn visit_expr_path(&mut self, p: &'ast syn::ExprPath) {
         let n = p.path.segments.len();
-        match p.path.segments[n - 1].ident.to_string().as_str() {
+        match p.path.segments[n - 1].ident.unraw().to_string().as_str() {
             "exit" => self.hit("process::exit"),
             "restart" => self.hit("restart"),
             // 单段 `updater_builder(..)` 是 main.rs 自己的助手；带前缀的（`UpdaterExt::updater_builder(&a)`）才是绕过
@@ -169,7 +170,7 @@ impl<'ast> Visit<'ast> for Scan {
     }
 
     fn visit_expr_method_call(&mut self, m: &'ast syn::ExprMethodCall) {
-        match m.method.to_string().as_str() {
+        match m.method.unraw().to_string().as_str() {
             "restart" => self.hit("restart"),
             "exit" => self.hit("process::exit"),
             "updater_builder" => self.hit("updater_builder"),
@@ -264,7 +265,7 @@ fn resolve_mod_decls(file: &Path) -> Vec<ModDecl> {
     fn walk(items: &[syn::Item], file_dir: &Path, mod_dir: &Path, out: &mut Vec<ModDecl>) {
         for item in items {
             let syn::Item::Mod(m) = item else { continue };
-            let name = m.ident.to_string();
+            let name = m.ident.unraw().to_string();
             match &m.content {
                 Some((_, inner)) => {
                     let sub = match path_attr(&m.attrs) {
@@ -685,4 +686,26 @@ catches!(
     cfg_not_test_mod,
     "process::exit",
     "#[cfg(not(test))] mod m { fn f() { std::process::exit(1) } }"
+);
+
+// 原始标识符（r#exit / r#restart）与普通写法同名，按 unraw 后的名字判（#1070 r4280464772）
+catches!(
+    raw_ident_exit_path,
+    "process::exit",
+    "fn f() { std::process::r#exit(1) }"
+);
+catches!(
+    raw_ident_exit_method,
+    "process::exit",
+    "fn f(a: A) { a.r#exit(0) }"
+);
+catches!(
+    raw_ident_restart_method,
+    "restart",
+    "fn f(h: H) { h.r#restart() }"
+);
+catches!(
+    raw_ident_in_macro,
+    "process::exit",
+    "fn f() { m!(std::process::r#exit(1)) }"
 );
