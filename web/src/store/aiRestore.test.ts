@@ -386,6 +386,18 @@ describe('恢复进行中到达的事件 / 并发恢复按项目分键（#1111 C
     expect(sessions().map((x) => x.id)).toEqual(['s-b']) // A 的结果被丢弃
   })
 
+  it('项目认领已换成 B、clear 还没来得及调：B 的恢复也不复用 A 在途的 promise（键含项目 id，不只靠 clear 清）', async () => {
+    history.pa = [row({ id: 's-a' })]
+    history.pb = [row({ id: 's-b', script: 'figb.py' })]
+    const releaseA = hold('pa')
+    const pA = useAiStore.getState().restoreRunning()
+    setCurrentProjectId('pb') // 只换认领，不 clear
+    await useAiStore.getState().restoreRunning()
+    expect(historyCalls).toEqual(['pa', 'pb'])
+    releaseA()
+    await pA
+  })
+
   it('同一项目同一代次内并发调用仍共用一次请求（挂载 + 重连）', async () => {
     history.pa = [row({ id: 's-a' })]
     const release = hold('pa')
