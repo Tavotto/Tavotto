@@ -233,6 +233,7 @@
     "script_input_not_pending": "This question is no longer waiting for an answer (the script may have finished or been stopped).",
     "script_input_timeout": "The script waited 10 minutes for an answer to “{{prompt}}”, got none, and failed after being told the input had ended. Run it again and answer.",
     "script_needs_input": "The script is asking for input: “{{prompt}}”. Run it once in the Tavotto window and answer; the answer is remembered for this project.",
+    "engine_files_incomplete": "Tavotto’s program files are incomplete, so it can’t render. Please reinstall Tavotto.",
     "script_input_stream_gone": "The event stream disconnected; reconnecting.",
     "script_input_transcript_failed": "The script-input run record could not be read or written, so this action did not complete (nothing was changed or run). Please try again.",
     "missing_input": "The script's data file can't be found: {{error}}",

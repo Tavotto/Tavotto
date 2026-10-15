@@ -680,6 +680,10 @@ def _worker_error_payload(exc, stage: str = "") -> dict:
         body["params"] = engine_pool.file_operation_blocked_params(getattr(exc, "extra", None))
     if getattr(exc, "module", ""):
         body["module"] = exc.module
+    if exc.code == engine_pool.ENGINE_FILES_INCOMPLETE_CODE:
+        # Tavotto 自己的引擎文件缺了（#961）：不是缺依赖，不带 module / 安装去向 / 一键安装 offer；
+        # 缺的模块名是 Tavotto 自家的，可以给诊断与界面看
+        body["engine_module"] = getattr(exc, "engine_module", "")
     # 项目环境自动接手失败时的结构化原因（ADR 0018）：找不到 venv / venv 里
     # 也没这个包 / 那个环境没有 matplotlib / Python 版本不支持。前端据此给出
     # 各自不同的恢复引导——四种情况用户要做的事完全不同，混成一句话等于没说。

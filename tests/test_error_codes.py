@@ -167,6 +167,8 @@ USER_VISIBLE_CODES = {
     # 复核时联合计划算不出来：不知道脚本要什么，不拿空集合判「装齐」（Codex #562 P2）
     "user_environment_unverifiable": set(),
     # --- Compatibility Bridge Session 3：试运行路径校验的三种拒绝 ---
+    # #961：Tavotto 自己的引擎文件缺了（不是缺依赖）；缺的模块名走响应的 engine_module，不进文案
+    "engine_files_incomplete": set(),
     "script_not_found": {"script"},
     "script_path_outside_project": {"script"},
     "unsupported_script_type": {"script"},

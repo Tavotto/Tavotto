@@ -9,7 +9,9 @@
 
 from __future__ import annotations
 
+import ast
 import contextlib
+import functools
 import hashlib
 import json
 import logging
@@ -627,6 +629,8 @@ class WorkerError(RuntimeError):
         #: 缺依赖的去向（`INSTALL_ROUTE_*`），只在 `missing_dependency` 时有意义。这里（池层）认得出
         #: 「标准库缺了 / 不支持当前系统」；「装得了 / 装不了」要查可信解析，由 app 层 / 准备会话补上。空 = 池层不知道。
         self.install_route = ""
+        #: code == "engine_files_incomplete" 时缺的那个 Tavotto 引擎模块名（自家名字，不涉及隐私）。
+        self.engine_module = ""
 
 
 #: 「用户能据此做点什么」的两类 worker 错误码：脚本要输入而没人能答 / 等到超时（ADR 0099）；
@@ -952,6 +956,41 @@ def missing_module(text: str) -> str:
     return name
 
 
+@functools.lru_cache(maxsize=1)
+def engine_module_names() -> frozenset[str]:
+    """worker 装进私有包的引擎模块名——读 `worker.py` 里 `_ENGINE_MODULES` 字面量本身，不另抄一份。
+
+    Flask 进程不 import worker.py（它要 matplotlib），所以按 AST 读那个元组；读不到回空集
+    （= 退回旧判据，宁可漏判也不误判）。"""
+    try:
+        tree = ast.parse(WORKER_PY.read_text(encoding="utf-8"))
+    except (OSError, SyntaxError, ValueError):
+        return frozenset()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign) and any(
+            isinstance(t, ast.Name) and t.id == "_ENGINE_MODULES" for t in node.targets
+        ):
+            try:
+                names = ast.literal_eval(node.value)
+            except ValueError:
+                return frozenset()
+            return frozenset(n for n in names if isinstance(n, str))
+    return frozenset()
+
+
+def missing_engine_module(text: str) -> str:
+    """worker 在**装载引擎模块**时缺了自家文件 → 回缺的模块名；不是回空串。
+
+    两个条件缺一不可：名字属于 `_ENGINE_MODULES`，并且 traceback 里有 `bridgeboot.load_engine_modules`
+    这一帧（异常出在装引擎的那一步）。只看名字不够——`overrides` / `manifest` / `runtime` 在 PyPI 上
+    都有同名包，用户脚本缺它们时仍是缺依赖。"""
+    text = text or ""
+    if "load_engine_modules" not in text:
+        return ""
+    name = missing_module(text)
+    return name if name in engine_module_names() else ""
+
+
 def structured_missing_module(value) -> str:
     """worker 随错误带来的结构化缺包名（`error.missing_module`）。敏感运行的自由文本诊断被整段删掉，
     `missing_module()` 的文本识别无从下手，靠它保住「缺依赖」分类；非法形状一律当没有。"""
@@ -1035,6 +1074,17 @@ def missing_dependency_message(module: str, route: str = "") -> str:
         f"能装的话可以在这张图的提示里装上，也可以在设置 → 诊断 → 技术详情里改用你自己装了 {module} 的 "
         f"Python / Conda 环境。"
     )
+
+
+def _engine_files_incomplete_error(mod: str, traceback_text: str) -> "WorkerError":
+    # 文案只带 Tavotto 自家的模块名，不带路径（会话死亡的原文里有 worker.log 路径，这里不沿用）
+    err = WorkerError(
+        f"Tavotto 的程序文件不完整（缺少 {mod}），请重新安装。",
+        traceback_text,
+        code=ENGINE_FILES_INCOMPLETE_CODE,
+    )
+    err.engine_module = mod
+    return err
 
 
 def _missing_dependency_error(mod: str, traceback_text: str) -> "WorkerError":
@@ -1548,12 +1598,16 @@ def forget_python_verdict(python: str | None) -> None:
 _project_python_lock = threading.Lock()
 
 
+#: Tavotto 自己的引擎文件缺了（安装副本不完整，issue #961）：与 `missing_dependency` 分开——缺的不是用户的包，
+#: 一键装包、换环境都救不了，该提示重装 / 修复安装。
+ENGINE_FILES_INCOMPLETE_CODE = "engine_files_incomplete"
+
 #: 显式为**这个项目**挑的解释器失效时的稳定 code（U03，FO15 / FO16）。与
 #: `EXPLICIT_UNUSABLE_CODE` 分开：那条是全局设置 / 环境变量，这条是项目级（用户在依赖修复
 #: 面板采用的系统解释器、或为这个项目手填的那条）；界面要指到不同的设置项。
 PROJECT_PYTHON_UNUSABLE_CODE = "project_python_unusable"
 #: 给 `tests/test_error_codes.py` 门禁读的注册表（它按字面量扫源码，常量式的 code 看不见）。
-ERROR_CODES = (EXPLICIT_UNUSABLE_CODE, PROJECT_PYTHON_UNUSABLE_CODE)
+ERROR_CODES = (EXPLICIT_UNUSABLE_CODE, PROJECT_PYTHON_UNUSABLE_CODE, ENGINE_FILES_INCOMPLETE_CODE)
 
 #: 自动记住的项目解释器被判失效并作废的记录：项目键 → {python, reason, trigger}。给准备
 #: 计划读（`invalidated_decision`），让「为什么这次重新发现了」有据可查；`reset_worker_python()`
@@ -2272,6 +2326,11 @@ class EngineWorker:
             code = ""
         # missing_dependency 优先于协议 code：worker 那边它只是一个普通的
         # script_error，但对用户来说「缺包」是完全不同的一件事（有可执行出口）。
+        engine_mod = missing_engine_module(f"{msg}\n{tb}")
+        if engine_mod:
+            exc = _engine_files_incomplete_error(engine_mod, tb)
+            exc.script_name = self.script_name
+            return exc
         mod = missing_module(f"{msg}\n{tb}")
         structured, structured_mod = structured_missing_dependency(err)
         mod = mod or structured_mod
@@ -2688,6 +2747,9 @@ def _worker_error(
     （有可执行出口：换成自己的环境）。前端认的是这个 code，不能因为换了控制面
     就变成一段没人能用的通用错误。
     """
+    engine_mod = missing_engine_module(f"{message}\n{traceback_text}")
+    if engine_mod:
+        return _engine_files_incomplete_error(engine_mod, traceback_text)
     mod = missing_module(f"{message}\n{traceback_text}")
     structured, structured_mod = structured_missing_dependency(extra)
     mod = mod or structured_mod
