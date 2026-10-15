@@ -587,6 +587,8 @@
     font-size: var(--text-sm);
     -webkit-font-smoothing: antialiased;
     text-rendering: optimizeLegibility;
+    /* 中西文之间自动留 1/8 em 空隙（CJK 与拉丁 / 数字相邻处）：中英混排的按钮、页签、说明不再字贴字 */
+    text-autospace: normal;
     overscroll-behavior: none;
   }
 
