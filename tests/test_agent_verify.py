@@ -193,7 +193,9 @@ def test_nonzero_exit_is_failed_and_logs_are_evidence(tmp_path):
     assert rec["result"] == "failed" and rec["steps"][0]["exit_code"] == 3
     paths = {e["path"] for e in rec["evidence"]}
     assert "t.fail/evidence/01-probe.stdout.log" in paths
-    assert "hello-out" in (tmp_path / "t.fail/evidence/01-probe.stdout.log").read_text()
+    assert "hello-out" in (tmp_path / "t.fail/evidence/01-probe.stdout.log").read_text(
+        encoding="utf-8"
+    )
     assert all(len(e["sha256"]) == 64 for e in rec["evidence"])
 
 
@@ -202,7 +204,7 @@ def test_missing_environment_is_environment_unavailable_and_nothing_runs(tmp_pat
     rec = AV.run_scenario(
         _fake(
             "t.env",
-            f"open({str(marker)!r}, 'w').write('x')",
+            f"open({str(marker)!r}, 'w', encoding='utf-8').write('x')",
             preconditions=("python_module:definitely_not_a_module_xyz",),
         ),
         tmp_path,
@@ -231,7 +233,9 @@ def test_caller_environment_does_not_leak_and_isolation_is_set(tmp_path, monkeyp
     )
     rec = AV.run_scenario(_fake("t.env2", code), tmp_path, sys.executable)
     assert rec["result"] == "passed"
-    seen = json.loads((tmp_path / "t.env2/evidence/01-probe.stdout.log").read_text())
+    seen = json.loads(
+        (tmp_path / "t.env2/evidence/01-probe.stdout.log").read_text(encoding="utf-8")
+    )
     assert seen["AGENT_VERIFY_LEAK_PROBE"] is None
     assert seen["TAVOTTO_NO_TELEMETRY"] == "1"
     assert Path(seen["TAVOTTO_DATA_DIR"]).is_relative_to(tmp_path / "t.env2")
@@ -248,7 +252,7 @@ def test_unknown_scenario_is_usage_error(capsys):
 
 
 def test_non_empty_out_dir_is_refused(tmp_path):
-    (tmp_path / "stale.json").write_text("{}")
+    (tmp_path / "stale.json").write_text("{}", encoding="utf-8")
     sid = next(iter(AV.SCENARIOS))
     assert AV.main(["run", sid, "--out", str(tmp_path)]) == AV.EXIT_USAGE
 
@@ -279,7 +283,10 @@ def test_mixed_run_exit_code_reflects_worst(tmp_path, monkeypatch):
     out = tmp_path / "out"
     rc = AV.main(["run", "t.ok2", "t.env3", "--out", str(out), "--python", sys.executable])
     assert rc == AV.EXIT_ENV
-    assert json.loads((out / "report.json").read_text())["overall"] == "environment_unavailable"
+    assert (
+        json.loads((out / "report.json").read_text(encoding="utf-8"))["overall"]
+        == "environment_unavailable"
+    )
 
 
 # --------------------------------------------------------------------------

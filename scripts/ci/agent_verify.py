@@ -312,6 +312,8 @@ def check_precondition(spec: str, python: str) -> dict:
                 ],
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 timeout=60,
                 env=_base_env(),
             )
@@ -336,6 +338,8 @@ def check_precondition(spec: str, python: str) -> dict:
                 [python, "-c", f"import {arg}"],
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 timeout=60,
                 env=_base_env(),
             )
@@ -641,7 +645,13 @@ def run_scenario(scenario: Scenario, out: Path, python: str) -> dict:
 def _git(*args: str) -> str:
     try:
         return subprocess.run(
-            ["git", *args], cwd=ROOT, capture_output=True, text=True, timeout=30
+            ["git", *args],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=30,
         ).stdout.strip()
     except (OSError, subprocess.TimeoutExpired):
         return ""
@@ -684,6 +694,8 @@ def environment_facts(python: str) -> dict:
             ],
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=60,
         )
         version, prefix = (proc.stdout.splitlines() + ["", ""])[:2]
