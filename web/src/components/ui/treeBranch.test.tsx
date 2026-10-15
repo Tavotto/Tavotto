@@ -5,7 +5,7 @@
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { TreeBranch } from './TreeBranch'
+import { findVisibleRow, TreeBranch } from './TreeBranch'
 
 declare global {
   // eslint-disable-next-line no-var
@@ -85,5 +85,16 @@ describe('TreeBranch', () => {
     await wait(200)
     expect(branch()!.dataset.treeBranch).toBe('open')
     expect(host.querySelectorAll('[data-row]')).toHaveLength(3)
+  })
+
+  it('findVisibleRow：只认可见的行——收起保活期间（inert + aria-hidden）里的行当作不存在', async () => {
+    await render(true)
+    expect(findVisibleRow(host, 'data-row', 'a')?.textContent).toBe('a')
+    expect(findVisibleRow(host, 'data-row', 'zzz')).toBeNull()
+    await render(false, [])
+    expect(host.querySelector('[data-row="a"]')).not.toBeNull() // 还在 DOM 里
+    expect(findVisibleRow(host, 'data-row', 'a')).toBeNull()
+    await wait(200)
+    expect(findVisibleRow(host, 'data-row', 'a')).toBeNull()
   })
 })

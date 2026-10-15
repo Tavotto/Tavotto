@@ -25,7 +25,7 @@ import type { Manifest, ManifestElement, ManifestGroup } from '@/lib/api'
 import { isElementHidden } from '@/canvas/interactions'
 import { cn, isMac } from '@/lib/utils'
 import { listRowClass } from '@/components/ui/listRow'
-import { TreeBranch } from '@/components/ui/TreeBranch'
+import { findVisibleRow, TreeBranch } from '@/components/ui/TreeBranch'
 import { splitTypePrefix } from './rowName'
 import { useBoldTrackingLock } from '@/components/ui/useBoldWidthLock'
 import { isTreeNavKey, treeKeyAction, type TreeNavRow } from '@/components/ui/treeKeys'
@@ -394,11 +394,15 @@ function TreeView({
     })
   }, [primaryGid, tree])
   useEffect(() => {
-    if (!primaryGid) return
-    listRef.current
-      ?.querySelector(`[data-el="${CSS.escape(primaryGid)}"]`)
-      ?.scrollIntoView({ block: 'nearest' })
-  }, [primaryGid, rows])
+    const list = listRef.current
+    if (!primaryGid || !list) return
+    // 选中项自己的行不可见（祖先刚被折叠，子树在退场动画里保活）：滚到最近的可见祖先——折叠后的组头
+    const chain = ancestorKeys(tree, primaryGid) ?? []
+    const target =
+      findVisibleRow(list, 'data-el', primaryGid) ??
+      [...chain].reverse().map((k) => findVisibleRow(list, 'data-el', k)).find(Boolean)
+    target?.scrollIntoView({ block: 'nearest' })
+  }, [primaryGid, rows, tree])
 
   const focusRow = (key: string) =>
     listRef.current?.querySelector<HTMLElement>(`[data-el="${CSS.escape(key)}"]`)?.focus()

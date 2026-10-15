@@ -27,7 +27,7 @@ import { EditableFigureIcon } from '@/components/ui/semanticIcons'
 import { ALT, cn, combo, isMac } from '@/lib/utils'
 import { dropLineClass, listRowClass } from '@/components/ui/listRow'
 import { isTreeNavKey, treeKeyAction } from '@/components/ui/treeKeys'
-import { TreeBranch } from '@/components/ui/TreeBranch'
+import { findVisibleRow, TreeBranch } from '@/components/ui/TreeBranch'
 import { TreeChevron, TreeIcon, treeIndent } from '@/components/ui/TreeRow'
 import { useBoldTrackingLock } from '@/components/ui/useBoldWidthLock'
 import { useRenameFocusReturn } from '@/components/ui/useRenameFocusReturn'
@@ -99,11 +99,8 @@ export function LayerTree() {
       return
     }
     if (!primaryId || !list) return
-    // 收起中的组成员还保活着（退场动画，整棵 inert）：那不算「可见」，当它不存在
-    const at = (key: string) => {
-      const el = list.querySelector(`[data-layer="${CSS.escape(key)}"]`)
-      return el && !el.closest('[inert]') ? el : null
-    }
+    // 收起中的组成员还保活着（退场动画，整棵 inert）：那不算「可见」（`findVisibleRow`，与元素树同一出口）
+    const at = (key: string) => findVisibleRow(list, 'data-layer', key)
     // 选中项藏在折叠的组里（行没渲染）：滚到它最近的可见祖先——组标题行
     const groupId = objects.find((o) => o.id === primaryId)?.groupId
     const target = at(primaryId) ?? (groupId ? at(`g:${groupId}`) : null)

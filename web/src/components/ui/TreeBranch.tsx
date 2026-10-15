@@ -3,6 +3,16 @@ import { DURATION, usePresence } from '@/lib/motion'
 import { cn } from '@/lib/utils'
 
 /**
+ * 按 `data-*` 钩子找一行，**只认可见的**：收起中的子树还保活着（退场动画，整棵 inert + aria-hidden），
+ * 那里面的行不算存在。元素树 / 图层树的「选中项滚入视野」共用这一个出口——查到保活着的旧行就
+ * `scrollIntoView`，会把长树滚走，而该停在折叠后的组头上。
+ */
+export function findVisibleRow(root: ParentNode, attr: string, key: string): Element | null {
+  const el = root.querySelector(`[${attr}="${CSS.escape(key)}"]`)
+  return el && !el.closest('[inert], [aria-hidden="true"]') ? el : null
+}
+
+/**
  * 树里一个节点的子树容器：展开 / 收起时高度走 `grid-template-rows` 0fr ↔ 1fr + 淡入
  * （与 `ui/Field.Reveal` 同一对 keyframes：`animate-reveal-in` / `-out`，时长是 motion token，
  * 退场短一档），下面的行跟着长高 / 收拢，而不是瞬间跳出（2026-10-16 UI 2.0 第二轮 04）。
@@ -31,7 +41,9 @@ export function TreeBranch({ open, children }: { open: boolean; children: ReactN
     }
     setAnimate(true)
   }, [open])
-  if (!mounted) return null
+  // 展开的那一刻同一次提交里就把行画出来（`usePresence` 的 mounted 要晚一个 effect）：
+  // 选中项滚入视野的 effect 紧跟着这次提交跑，行得已经在 DOM 里
+  if (!open && !mounted) return null
   return (
     <li
       role="none"

@@ -487,3 +487,31 @@ describe('空态与搜索框（UI 2.0 第二轮 09）', () => {
     expect(host.querySelector('[data-empty-state]')).toBeNull()
   })
 })
+
+describe('选中项滚入视野与折叠中的子树', () => {
+  it('选中深层子项后折叠其祖先：scrollIntoView 停在组头，不是退场动画里保活着的那一行', async () => {
+    const calls: string[] = []
+    const orig = Element.prototype.scrollIntoView
+    Element.prototype.scrollIntoView = function (this: Element) {
+      calls.push((this as HTMLElement).dataset.el ?? '')
+    }
+    try {
+      await mount()
+      await act(async () => useUiStore.getState().setSelectedGid('axes_0.yticks.label_3'))
+      await act(async () => {})
+      expect(calls.at(-1)).toBe('axes_0.yticks.label_3')
+      calls.length = 0
+      const head = host.querySelector('[data-el="axes_0.yticks"]') as HTMLElement
+      await act(async () => {
+        head.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true, cancelable: true }))
+      })
+      await act(async () => {})
+      // 退场期间子行还在 DOM 里（inert），但 rows 变了、effect 重跑：目标必须是可见的组头
+      expect(host.querySelector('[data-el="axes_0.yticks.label_3"]')?.closest('[inert]')).not.toBeNull()
+      expect(calls.length).toBeGreaterThan(0)
+      expect(calls.every((c) => c === 'axes_0.yticks')).toBe(true)
+    } finally {
+      Element.prototype.scrollIntoView = orig
+    }
+  })
+})
