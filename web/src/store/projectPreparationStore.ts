@@ -500,7 +500,8 @@ export const useProjectPreparationStore = create<PreparationState>((set, get) =>
       }
       const g = guardOf(key)
       const pj = e.pj
-      const promise = (async () => {
+      let promise!: Promise<void> // 收尾要认出自己的登记
+      promise = (async () => {
         try {
           const report = await withWatchdog((signal) => fetchPreparationSession(sid, pj, signal))
           if (!live(key, g)) return
