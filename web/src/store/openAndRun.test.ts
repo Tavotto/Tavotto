@@ -654,6 +654,38 @@ describe('状态丢失后以后端报告为准（Codex #1044 r4271063082 / r4271
     await vi.waitFor(() => expect(openFastEdit).toHaveBeenCalledTimes(1))
   })
 
+  it.each(['armed（同窗口认领）', 'wantsRun（刷新后从入口重开）'])('失败退役这次意图（%s）：之后普通「重试」跑成一张图，不再自动进入', async (mode) => {
+    const failed = (seq: number) =>
+      report({
+        phase: 'action_required',
+        outcome: { kind: 'failed', code: 'script_error' },
+        observation_seq: seq,
+        actions: [action('recheck')],
+        intent: live().intent,
+      })
+    if (mode.startsWith('armed')) {
+      mockCreate.mockResolvedValueOnce(report())
+      claimed(running())
+      await open()
+    } else {
+      mockCreate.mockResolvedValueOnce(live())
+      await open()
+    }
+    expect(entry().armed).toBe(true)
+    mockGet.mockResolvedValueOnce(failed(3))
+    await store().refresh(KEY)
+    expect(entry().armed).toBe(false)
+    expect(entry().wantsRun).toBe(false)
+    mockGet.mockResolvedValueOnce(live({ observation_seq: 4 })) // 普通重试：后端意图仍是 launched
+    await store().refresh(KEY)
+    expect(entry().armed).toBe(false)
+    mockGet.mockResolvedValueOnce(done(['a'], 'att-2', 5, { intent: live().intent }))
+    await store().refresh(KEY)
+    await flush()
+    await flush()
+    expect(openFastEdit).not.toHaveBeenCalled()
+  })
+
   it('普通打开（不是「打开并运行」入口）遇到别处武装的意图：不替它武装', async () => {
     mockCreate.mockResolvedValueOnce(live())
     await open(false)

@@ -292,7 +292,7 @@
 - **自动进入编辑 + 只开一个标签页**（V2 PR4）：认领过「打开并运行」的条目带 `armed` 记号（只是这个窗口里的用户意图记号，不是后端事实）；会话
   `completed` 且恰好捕获一张图时由 `store/prepEnterEdit.enterEdit` 自动进入编辑（与卡片上「进入编辑」是同一份实现）；**只在用户正看着这张卡时**（聚焦且展开）——
   放到后台（角标）/ 收起 / 切去看别的卡之后他可能正在编辑别的图，不抢工作区，角标上仍有「进入编辑」；多张图要用户挑、这次替换掉了旧图名（`unlinked_stems`，恢复提示要看见）、
-  失败 / 取消 / 没出图撤掉记号不进入。回退产生新的 `attempt_id` 不撤记号（中途 `safe_file_operation_blocked` 且账本还没记「为什么没回退」时可能紧接着就是回退）。面板身份是资产 id，
+  失败 / 取消 / 没出图撤掉记号不进入——撤销即**退役**这次意图：`armed`、`wantsRun`、`armMaybe` 一并清，之后同一会话里普通的「重试」不再被恢复逻辑重新武装，要用户再点「打开并运行」。回退产生新的 `attempt_id` 不撤记号（中途 `safe_file_operation_blocked` 且账本还没记「为什么没回退」时可能紧接着就是回退）。面板身份是资产 id，
   回退后仍是同一块面板；桌面拥有的 native 会话不再被 `nativeSessionStore` 自动 build / 放置（见 `tavotto-run-desktop-side.md`）。argv 换了且旧会话里意图仍
   `active`：下一次认领带 `transfer_from`（旧会话 id），被拒（不可转移）就不再带；前端状态丢了（刷新 / 切项目）而服务端 409 `preparation_run_intent_conflict` 时，用它带回的 `params.session_id` 转移、只重试一次。
   **状态以后端报告为准恢复**：认领响应丢了（连接失败，`armMaybe`）或页面刷新后同一入口重新打开，只要报告里意图仍在（`active` / `launched`）且会话没跑完，就恢复「自动进入编辑」（`accept`）；报告里仍有 `run_when_ready` 动作 = 没收到，记号清掉。回退文案（`fellBack`）只看当前尝试所在的 `run`。

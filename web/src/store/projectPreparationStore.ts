@@ -325,8 +325,13 @@ export const useProjectPreparationStore = create<PreparationState>((set, get) =>
           void autoEnterEdit(key, figures[0], owner)
         }
       }
-    } else if (entry(key)?.armed && endedWithoutEdit(report)) {
-      patch(key, () => ({ armed: false }))
+    } else if (endedWithoutEdit(report)) {
+      // 失败 / 取消 / 没出图：这次「打开并运行」的意图到此退役——不论当时 armed 与否，连恢复用的 `wantsRun` / `armMaybe` 一起清，
+      // 否则之后卡上普通的「重试」跑出的 running 报告（后端意图仍是 launched）会把它重新武装、一次成功就抢工作区。用户再点「打开并运行」才重新武装
+      const e = entry(key)
+      if (e && (e.armed || e.wantsRun || e.armMaybe)) {
+        patch(key, () => ({ armed: false, wantsRun: false, armMaybe: false, armMaybeFrom: null, armMaybeBaseline: null }))
+      }
     }
     // 同一会话里的依赖作业刚装完（T09b）：画布上因「要先准备依赖」停着的渲染与原授权框作答之后一样重排——同一份
     // 需求两个展示面，下游效果只有一种（重排的是渲染请求，不是脚本首跑；首跑仍由用户点报告里的 run）
