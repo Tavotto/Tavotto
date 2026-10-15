@@ -120,6 +120,37 @@ describe('项目抽屉', () => {
     expect(search()).not.toBeNull()
   })
 
+  it('阈值按实际可搜的行算：当前项目不算；置顶同时出现在最近里只算一次', async () => {
+    // 当前项目 + 另外 5 个最近：只有 5 行可搜 → 隐藏（直接相加会算成 6）
+    useProjectStore.setState({
+      project,
+      phase: 'open',
+      pinned: [],
+      recent: [{ ...entryOf('/x/figs'), current: true }, ...Array.from({ length: 5 }, (_, i) => entryOf(`/w/p-${i}`))],
+      opened: [],
+    })
+    await mount(<WorkspaceList />)
+    expect(search()).toBeNull()
+    await act(async () => root.unmount())
+    host.remove()
+    // 3 个置顶，且都同时在最近里：只有 3 行（加 3 个别的最近 = 6 行 → 显示；少 1 个 = 5 行 → 隐藏）
+    const pins = ['/a/1', '/a/2', '/a/3'].map(entryOf)
+    useProjectStore.setState({
+      project,
+      phase: 'open',
+      pinned: pins,
+      recent: [...pins, ...['/w/a', '/w/b'].map(entryOf)],
+      opened: [],
+    })
+    await mount(<WorkspaceList />)
+    expect(search()).toBeNull() // 3 + 2 = 5 行（直接相加会是 8）
+    await act(async () => root.unmount())
+    host.remove()
+    useProjectStore.setState({ recent: [...pins, ...['/w/a', '/w/b', '/w/c'].map(entryOf)] })
+    await mount(<WorkspaceList />)
+    expect(search()).not.toBeNull() // 3 + 3 = 6 行
+  })
+
   it('名词说明不再常驻在列表下方，在标题行 ⓘ 的 tooltip 里', async () => {
     seed(2)
     await mount(<WorkspaceList />)

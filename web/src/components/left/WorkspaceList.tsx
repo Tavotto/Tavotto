@@ -86,7 +86,9 @@ export function WorkspaceList() {
     recent.filter((r) => !pinnedPaths.has(r.path) && r.path !== currentPath),
     query,
   )
-  const nothing = pinnedRows.length + available.length + missing.length === 0
+  // 实际渲染（也就是搜得到）的行数：已去重、已排除当前项目，空态与搜索框阈值共用这一个数
+  const searchableRows = pinnedRows.length + available.length + missing.length
+  const nothing = searchableRows === 0
   // 排序按**显示出来的**收藏算（Codex #832）：当前项目被收藏时它藏在顶上的卡里，下标、两端判据与
   // 「上移 / 下移」都只认可见的那几行——不然紧挨着它的那一行第一下是跟看不见的它换位，界面上没动静，
   // 可见的首尾行也还亮着上移 / 下移。不筛选时 `pinnedRows` 就是这份显示顺序
@@ -111,7 +113,7 @@ export function WorkspaceList() {
         </IconButton>
       </DrawerHeaderActions>
       {/* 搜索行只放搜索（审计 §10.3）；条目少于 6 个时不显示，有搜索词时保留 */}
-      {(pinned.length + recent.length >= SEARCH_MIN_ITEMS || query !== '') && (
+      {(searchableRows >= SEARCH_MIN_ITEMS || query !== '') && (
         <div className="flex shrink-0 items-center px-3 pb-2">
           <SearchInput value={query} onValueChange={setQuery} placeholder={ws('filter')} aria-label={ws('filterLabel')} />
         </div>
