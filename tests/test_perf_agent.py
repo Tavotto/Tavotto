@@ -1268,3 +1268,257 @@ def test_baseline_requested_drag_failure_finalizes_regression_status(
     assert saved["status"] == "failed"
     assert saved["suites"] == {"symbol_ui": "ok", "canvas_drag": "failed"}
     assert saved["regression_status"] == "failed"
+
+
+@pytest.mark.parametrize(
+    "outcome",
+    [
+        "no-drag-or-baseline",
+        "symbol-failure",
+        "symbol-timeout",
+        "missing-output",
+        "incomplete-symbol",
+        "pnpm-unavailable",
+        "invalid-repeat",
+        "parse-error",
+    ],
+)
+def test_reused_run_clears_old_sidecars_before_any_stage(tmp_path, monkeypatch, outcome):
+    """The next invocation owns these files even when it never reaches drag/comparison."""
+    output = tmp_path / "run.json"
+    summary = tmp_path / "summary.json"
+    sidecars = [
+        tmp_path / name for name in ("drag.json", "drag-findings.json", "run.comparison.json")
+    ]
+    for path in (output, summary):
+        path.write_text(json.dumps({"status": "pass", "canary": "previous-run"}), encoding="utf-8")
+    for path, data in zip(sidecars, _old_sidecar_reports().values(), strict=True):
+        path.write_text(json.dumps(data), encoding="utf-8")
+    baseline = tmp_path / "historical.json"
+    baseline.write_text(json.dumps(report()), encoding="utf-8")
+    source = tmp_path / "measurements.csv"
+    source.write_text("private input must survive\n", encoding="utf-8")
+    readonly = {path: path.read_bytes() for path in (baseline, source)}
+    calls = []
+
+    def run(argv, **kwargs):
+        calls.append(argv)
+        assert len(calls) == 1  # These cases never start drag or analysis.
+        assert all(not path.exists() for path in sidecars)
+        if outcome == "symbol-timeout":
+            raise subprocess.TimeoutExpired(argv, 1)
+        if outcome != "missing-output":
+            data = report()
+            if outcome == "incomplete-symbol":
+                data["scenarios"].pop()
+            Path(kwargs["env"]["TAVOTTO_PERF_AGENT_OUTPUT"]).write_text(
+                json.dumps(data),
+                encoding="utf-8",
+            )
+        return SimpleNamespace(returncode=1 if outcome == "symbol-failure" else 0)
+
+    monkeypatch.setattr(A.subprocess, "run", run)
+    argv = ["run", "--out", str(output), "--summary", str(summary)]
+    if outcome != "no-drag-or-baseline":
+        argv += ["--include-drag", "--baseline", str(baseline)]
+    if outcome in ("invalid-repeat", "parse-error"):
+        argv += ["--repeat", "2" if outcome == "invalid-repeat" else "not-a-number"]
+    if outcome == "pnpm-unavailable":
+        monkeypatch.setattr(A.shutil, "which", lambda _name: None)
+    assert A.main(argv) == (0 if outcome == "no-drag-or-baseline" else 2)
+    assert all(not path.exists() for path in sidecars)
+    assert {path: path.read_bytes() for path in readonly} == readonly
+    saved = json.loads(summary.read_text(encoding="utf-8"))
+    assert saved["suites"]["canvas_drag"] == (
+        "not_requested" if outcome == "no-drag-or-baseline" else "not_started"
+    )
+    assert len(calls) == (
+        0 if outcome in ("pnpm-unavailable", "invalid-repeat", "parse-error") else 1
+    )
+
+
+@pytest.mark.parametrize("parse_error", [False, True])
+@pytest.mark.parametrize("alias", ["path", "hardlink", "symlink"])
+@pytest.mark.parametrize("name", ["drag.json", "drag-findings.json"])
+def test_unrequested_sidecar_cleanup_protects_baseline_aliases(
+    tmp_path, monkeypatch, parse_error, alias, name
+):
+    """An unrequested sidecar may serve as readonly baseline without blocking the run."""
+    baseline = tmp_path / "historical.json"
+    # It is recognizable as an old tool artifact, so ownership alone cannot protect the input.
+    baseline.write_text(json.dumps(_old_sidecar_reports()[name]), encoding="utf-8")
+    sidecar = tmp_path / name
+    if alias == "path":
+        baseline.rename(sidecar)
+        baseline = sidecar
+    elif alias == "hardlink":
+        sidecar.hardlink_to(baseline)
+    else:
+        try:
+            sidecar.symlink_to(baseline)
+        except OSError:
+            pytest.skip("symlink creation unavailable")
+    before = baseline.read_bytes()
+    output = tmp_path / "run.json"
+    output.write_text(json.dumps(report(value=18)), encoding="utf-8")
+    summary = tmp_path / "summary.json"
+    calls = []
+
+    def run(*args, **kwargs):
+        calls.append(args)
+        assert baseline.read_bytes() == sidecar.read_bytes() == before
+        return SimpleNamespace(returncode=1)
+
+    monkeypatch.setattr(A.subprocess, "run", run)
+    argv = ["run", "--out", str(output), "--baseline", str(baseline), "--summary", str(summary)]
+    if parse_error:
+        argv += ["--repeat", "not-a-number"]
+    assert A.main(argv) == 2
+    assert baseline.read_bytes() == sidecar.read_bytes() == before
+    assert not output.exists()
+    assert len(calls) == (0 if parse_error else 1)
+    assert json.loads(summary.read_text(encoding="utf-8"))["status"] == "failed"
+
+
+@pytest.mark.parametrize("parse_error", [False, True])
+@pytest.mark.parametrize("name", ["drag.json", "drag-findings.json", "run.comparison.json"])
+def test_unrequested_sidecar_can_be_the_run_summary(tmp_path, monkeypatch, parse_error, name):
+    """An explicit summary in an unrequested slot survives cleanup as this run's verdict."""
+    output = tmp_path / "run.json"
+    summary = tmp_path / name
+    for path in (output, summary):
+        path.write_text(json.dumps({"status": "pass", "canary": "previous-run"}), encoding="utf-8")
+    calls = []
+
+    def run(*args, **kwargs):
+        calls.append(args)
+        assert summary.is_file()
+        assert json.loads(summary.read_text(encoding="utf-8"))["status"] == "pending"
+        return SimpleNamespace(returncode=1)
+
+    monkeypatch.setattr(A.subprocess, "run", run)
+    argv = ["run", "--out", str(output), "--summary", str(summary)]
+    if parse_error:
+        argv += ["--repeat", "not-a-number"]
+    assert A.main(argv) == 2
+    assert not output.exists()
+    assert len(calls) == (0 if parse_error else 1)
+    saved = json.loads(summary.read_text(encoding="utf-8"))
+    assert saved["status"] == "failed" and saved["schema"] == A.SCHEMA
+    assert "canary" not in saved
+
+
+@pytest.mark.parametrize("requested", ["drag", "baseline"])
+def test_reused_run_replaces_only_newly_requested_sidecars(tmp_path, monkeypatch, requested):
+    output = tmp_path / "run.json"
+    drag = tmp_path / "drag.json"
+    findings = tmp_path / "drag-findings.json"
+    comparison = tmp_path / "run.comparison.json"
+    for path, data in zip(
+        (drag, findings, comparison), _old_sidecar_reports().values(), strict=True
+    ):
+        path.write_text(json.dumps(data), encoding="utf-8")
+    baseline = tmp_path / "historical.json"
+    baseline.write_text(json.dumps(report()), encoding="utf-8")
+    readonly = baseline.read_bytes()
+    calls = []
+
+    def run(argv, **kwargs):
+        calls.append(argv)
+        if len(calls) == 1:
+            assert all(not path.exists() for path in (drag, findings, comparison))
+            output.write_text(json.dumps(report()), encoding="utf-8")
+        elif len(calls) == 2:
+            drag.write_text(json.dumps({"current_drag": True}), encoding="utf-8")
+        else:
+            assert len(calls) == 3
+            findings.write_text(json.dumps({"current_findings": True}), encoding="utf-8")
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(A.subprocess, "run", run)
+    argv = ["run", "--out", str(output)]
+    argv += ["--include-drag"] if requested == "drag" else ["--baseline", str(baseline)]
+    assert A.main(argv) == 0
+    assert baseline.read_bytes() == readonly
+    if requested == "drag":
+        assert len(calls) == 3 and not comparison.exists()
+        assert json.loads(drag.read_text(encoding="utf-8")) == {"current_drag": True}
+        assert json.loads(findings.read_text(encoding="utf-8")) == {"current_findings": True}
+    else:
+        assert len(calls) == 1 and not drag.exists() and not findings.exists()
+        assert json.loads(comparison.read_text(encoding="utf-8"))["status"] == "pass"
+
+
+def test_sidecar_guard_uses_the_resolved_symbol_output_directory(tmp_path, monkeypatch):
+    actual = tmp_path / "actual"
+    actual.mkdir()
+    output = actual / "run.json"
+    output.write_text(json.dumps(report(value=18)), encoding="utf-8")
+    alias = tmp_path / "run.json"
+    try:
+        alias.symlink_to(output)
+    except OSError:
+        pytest.skip("symlink creation unavailable")
+    baseline = actual / "drag.json"
+    baseline.write_text(json.dumps(report()), encoding="utf-8")
+    before = {path: path.read_bytes() for path in (output, baseline)}
+    monkeypatch.setattr(
+        A.subprocess, "run", lambda *a, **k: pytest.fail("Must reject before cleanup")
+    )
+    assert A.main(["run", "--include-drag", "--out", str(alias), "--baseline", str(baseline)]) == 2
+    assert {path: path.read_bytes() for path in before} == before
+
+
+def _old_sidecar_reports():
+    return {
+        "drag.json": {"schema": "tavotto-perf-probe/1", "canary": "previous-run"},
+        "drag-findings.json": [
+            {k: 0 for k in ("report", "machine", "grades", "headroom", "findings", "segments")}
+        ],
+        "run.comparison.json": {"schema": A.COMPARE_SCHEMA, "status": "pass"},
+    }
+
+
+@pytest.mark.parametrize(
+    ("foreign_name", "content"),
+    [
+        ("drag.json", b'{"mine": 1}'),
+        ("drag-findings.json", b"private notes, not JSON"),
+        ("run.comparison.json", b'{"schema": "someone-else/1"}'),
+    ],
+)
+def test_parse_error_cleans_owned_sidecars_and_preserves_foreign_siblings(
+    tmp_path, foreign_name, content
+):
+    output = tmp_path / "run.json"
+    output.write_text(json.dumps(report()), encoding="utf-8")
+    for name, data in _old_sidecar_reports().items():
+        (tmp_path / name).write_text(json.dumps(data), encoding="utf-8")
+    foreign = tmp_path / foreign_name
+    foreign.write_bytes(content)
+    baseline = tmp_path / "historical.json"
+    baseline.write_text(json.dumps(report()), encoding="utf-8")
+    before = baseline.read_bytes()
+    summary = tmp_path / "summary.json"
+    assert (
+        A.main(
+            [
+                "run",
+                "--repeat",
+                "not-a-number",
+                "--out",
+                str(output),
+                "--baseline",
+                str(baseline),
+                "--summary",
+                str(summary),
+            ]
+        )
+        == 2
+    )
+    assert not output.exists()
+    assert foreign.read_bytes() == content and baseline.read_bytes() == before
+    assert all(
+        not (tmp_path / name).exists() for name in _old_sidecar_reports() if name != foreign_name
+    )
+    assert json.loads(summary.read_text(encoding="utf-8"))["regression_status"] == "failed"

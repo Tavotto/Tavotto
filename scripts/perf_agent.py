@@ -370,6 +370,23 @@ def _is_tool_artifact(path: Path, kind: str) -> bool:
     )
 
 
+def _clear_run_outputs(output: Path, summary: Path | None, baseline: Path | None) -> None:
+    """清理本工具的旧派生证据；run 与参数解析失败共用同一规则。"""
+    output = output.resolve()
+    output.unlink(missing_ok=True)
+    for stale, kind in (
+        (output.with_name("drag.json"), "drag"),
+        (output.with_name("drag-findings.json"), "findings"),
+        (output.with_suffix(".comparison.json"), "comparison"),
+    ):
+        if (baseline is not None and _same_report_path(stale, baseline)) or (
+            summary is not None and _same_report_path(stale, summary)
+        ):
+            continue
+        if stale.is_file() and _is_tool_artifact(stale, kind):
+            stale.unlink(missing_ok=True)
+
+
 def _run_io_collision(
     output: Path, summary: Path | None, baseline: Path | None, include_drag: bool
 ) -> bool:
@@ -402,6 +419,8 @@ def _invalidate_parse_error(argv: list[str]) -> None:
     try:
         if command == "run":
             output = _option_path(argv, "--out")
+            if output is not None:
+                output = output.resolve()
             baseline = _option_path(argv, "--baseline")
             # 在解析失败时也要遵守基线只读原则；之前直接 unlink 会把
             # --out 与 --baseline 同一路径的历史采样永久删除。
@@ -409,7 +428,7 @@ def _invalidate_parse_error(argv: list[str]) -> None:
                 output, summary_path, baseline, "--include-drag" in argv
             )
             if output is not None and not collision:
-                output.unlink(missing_ok=True)
+                _clear_run_outputs(output, summary_path, baseline)
             if summary_path is not None and not (
                 baseline is not None and _same_report_path(summary_path, baseline)
             ):
@@ -529,17 +548,18 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if args.command == "run":
             result = failed_run_summary(args.include_drag)
+            output = args.out.resolve()
             # 所有派生 sidecar 和基线一起检查；尤其 out=drag.json 时不能先
             # 成功完成符号阶段又被后续的 drag_path.unlink() 错误清掉原结果。
-            if _run_io_collision(args.out, args.summary, args.baseline, args.include_drag):
-                write_targets = [args.out]
+            if _run_io_collision(output, args.summary, args.baseline, args.include_drag):
+                write_targets = [output]
                 if args.include_drag:
                     write_targets += [
-                        args.out.with_name("drag.json"),
-                        args.out.with_name("drag-findings.json"),
+                        output.with_name("drag.json"),
+                        output.with_name("drag-findings.json"),
                     ]
                 if args.baseline is not None:
-                    write_targets.append(args.out.with_suffix(".comparison.json"))
+                    write_targets.append(output.with_suffix(".comparison.json"))
                 summary_safe = (
                     args.summary is not None
                     and all(not _same_report_path(args.summary, path) for path in write_targets)
@@ -562,28 +582,13 @@ def main(argv: list[str] | None = None) -> int:
             save_suite_summary()
             # 即使参数是合法浮点/整型、但超出允许区间，也必须先作废旧原始报告。
             # 否则 --repeat 2 --out old-run.json 会留下上一轮成功采样。
-            output = args.out.resolve()
             # 性能基线是只读证据；即使通过符号链接/硬链接别名，
             # 也不许先 unlink 再将本次报告当成自己的历史基线，伪造 PASS。
             if args.baseline is not None and _same_report_path(output, args.baseline):
                 # 基线不可写，但本次请求比较失败必须给 Agent 明确 failed 裁决。
                 result["regression_status"] = "failed"
                 raise ValueError("baseline_aliases_run_output")
-            output.unlink(missing_ok=True)
-            # 复用输出目录时，上次的派生报告（拖动 / 拖动分析 / 基线比较）同样会被
-            # 当成本次证据读走，而本次可能没请求它们或在其生成前就失败。一并作废；
-            # 只跳过与基线或摘要同一文件的路径，它们不是本次的派生物。
-            for stale, kind in (
-                (output.with_name("drag.json"), "drag"),
-                (output.with_name("drag-findings.json"), "findings"),
-                (output.with_suffix(".comparison.json"), "comparison"),
-            ):
-                if (args.baseline is not None and _same_report_path(stale, args.baseline)) or (
-                    args.summary is not None and _same_report_path(stale, args.summary)
-                ):
-                    continue
-                if stale.is_file() and _is_tool_artifact(stale, kind):
-                    stale.unlink(missing_ok=True)
+            _clear_run_outputs(output, args.summary, args.baseline)
             if not 3 <= args.repeat <= 60 or not 1 <= args.regression_pct <= 200:
                 raise ValueError("invalid_run_parameters")
             output.parent.mkdir(parents=True, exist_ok=True)
