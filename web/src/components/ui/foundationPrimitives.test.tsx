@@ -82,6 +82,46 @@ describe('Card', () => {
     // 静态卡不画焦点环（里面的控件自己有）
     expect(q('[data-c="p"]')!.className).not.toMatch(/ring-2/)
   })
+
+  it('按压只换底色（几何永不变化）：interactive 卡带 press 类，类名里没有 scale / translate / 布局属性的 transition', async () => {
+    await render(
+      <>
+        <Card data-c="i" interactive>{T}</Card>
+        <Card data-c="s" interactive selected>{T}</Card>
+        <Card data-c="d" interactive disabled>{T}</Card>
+        <Card data-c="p">{T}</Card>
+      </>,
+    )
+    const i = q('[data-c="i"]')!
+    expect(i.className).toMatch(/has-\[>button:active:not\(:disabled\)\]:bg-surface-active/)
+    for (const sel of ['i', 's', 'd', 'p']) {
+      const cls = q(`[data-c="${sel}"]`)!.className
+      expect(cls, sel).not.toMatch(/scale|translate|rotate|-skew/)
+      // transition 只许是颜色类的属性；不得出现 width / height / padding / margin / transform / all
+      const tr = cls.match(/transition-\[([^\]]*)\]/)?.[1] ?? ''
+      expect(tr, sel).not.toMatch(/width|height|padding|margin|transform|inset|top|left|all/)
+    }
+    // 选中的卡底色另有主人，静态卡无交互
+    expect(q('[data-c="s"]')!.className).not.toMatch(/bg-surface-active/)
+    expect(q('[data-c="p"]')!.className).not.toMatch(/bg-surface-active/)
+  })
+
+  it('disabled：写 data-disabled，不亮 hover / press / 焦点环；interactive 标记仍在', async () => {
+    await render(
+      <>
+        <Card data-c="d" interactive disabled>{T}</Card>
+        <Card data-c="p" disabled>{T}</Card>
+      </>,
+    )
+    const d = q('[data-c="d"]')!
+    expect(d.dataset.disabled).toBe('true')
+    expect(d.dataset.interactive).toBe('true')
+    expect(d.className).not.toMatch(/hover:outline-border/)
+    expect(d.className).not.toMatch(/bg-surface-active/)
+    expect(d.className).not.toMatch(/ring-2/)
+    // 非 interactive 的卡没有可禁用的交互外观，不写 data-disabled
+    expect(q('[data-c="p"]')!.hasAttribute('data-disabled')).toBe(false)
+  })
 })
 
 describe('Notice / StatusPill', () => {

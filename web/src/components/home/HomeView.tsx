@@ -689,7 +689,7 @@ function RecentItem({
   ) : null
   return (
     <li data-home-recent={entry.path} className="min-w-0">
-      <Card interactive padding="none" className="group h-full">
+      <Card interactive disabled={busy || disabled} padding="none" className="group h-full">
         <button
           type="button"
           onClick={onOpen}
