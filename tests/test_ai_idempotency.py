@@ -515,13 +515,16 @@ def test_record_start_does_not_replace_a_reserved_request(tmp_path):
     assert found is not None and found["id"] == "first"  # 后来者没有顶替前者
 
 
-def test_run_on_a_request_reserved_by_another_process_never_spawns(tmp_path, cli):
+def test_run_on_a_request_reserved_by_another_process_never_spawns(tmp_path, cli, monkeypatch):
     """另一个进程已经预留了 (项目, rid)（会话行还没落到本进程能看到的内存里）：本进程的 run() 不 spawn，
     回去重语义，并清掉为这次尝试准备的快照 / sidecar。"""
     _, counter = cli
     figs = _project(tmp_path)
     project_key = str(figs.resolve())
     assert ai_history.reserve_request(project_key, RID, "otherproc001") == (True, "otherproc001")
+    # 进程内的快速路径（run() 开头的 find_request）在竞态里看不到对方：它检查之后、我们预留之前，另一个进程才预留。
+    # 这里让快速路径「看不见」，逼 run() 走到原子预留这一步
+    monkeypatch.setattr(ai_bridge, "find_request", lambda *_a, **_k: None)
     before = set(ai_bridge.SESSIONS)
     with pytest.raises(ai_bridge.DuplicateRequest) as ei:
         ai_bridge.run("codex", "fig1.py", "p", str(figs), client_request_id=RID)
