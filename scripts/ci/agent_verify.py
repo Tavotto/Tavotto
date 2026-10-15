@@ -697,13 +697,13 @@ def environment_facts(python: str) -> dict:
     return env
 
 
-def build_report(records: list[dict], python: str, out: Path) -> dict:
+def build_report(records: list[dict], python: str, out: Path, commit: dict | None = None) -> dict:
     overall = aggregate([r["result"] for r in records])
     return {
         "schema": SCHEMA,
         "kind": REPORT_KIND,
         "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-        "commit": commit_facts(),
+        "commit": commit if commit is not None else commit_facts(),
         "environment": environment_facts(python),
         "invocation": {"scenarios": [r["id"] for r in records]},
         "overall": overall,
@@ -782,8 +782,10 @@ def main(argv: list[str] | None = None) -> int:
             return _usage(f"--out 必须不存在或为空：{out}")
         out.mkdir(parents=True, exist_ok=True)
 
+    # 先拍 git 状态再跑：--out 若在仓库里，场景自己写出的证据不能反过来把树判成 dirty
+    commit = commit_facts()
     records = [run_scenario(SCENARIOS[s], out, args.python) for s in args.scenario]
-    report = build_report(records, args.python, out)
+    report = build_report(records, args.python, out, commit)
     _write_json(out / "report.json", report)
     if args.json:
         print(json.dumps(report, ensure_ascii=False, indent=2))

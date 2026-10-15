@@ -365,3 +365,15 @@ def test_venv_elsewhere_is_not_this_repos_venv(tmp_path):
     assert AV._same_dir(str(other), AV.ROOT / ".venv") is False
     assert AV._same_dir("", AV.ROOT / ".venv") is False
     assert AV._same_dir(str(AV.ROOT / ".venv"), AV.ROOT / ".venv") is True
+
+
+def test_git_state_is_snapshotted_before_scenarios_write_evidence(tmp_path, monkeypatch):
+    """--out 在仓库里时，场景写出的证据不能把树判成 dirty：commit 事实在跑场景之前取。"""
+    calls = []
+    fake = _fake("t.snap", "pass")
+    monkeypatch.setitem(AV.SCENARIOS, fake.id, fake)
+    monkeypatch.setattr(AV, "commit_facts", lambda: calls.append("commit") or {"dirty": False})
+    real_run = AV.run_scenario
+    monkeypatch.setattr(AV, "run_scenario", lambda *a: calls.append("run") or real_run(*a))
+    AV.main(["run", "t.snap", "--out", str(tmp_path / "out"), "--python", sys.executable])
+    assert calls[:2] == ["commit", "run"] and calls.count("commit") == 1
