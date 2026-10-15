@@ -153,6 +153,19 @@ describe('断线期间结束的会话收尾', () => {
     expect(useUiStore.getState().status).not.toBeNull()
   })
 
+  it('断线收尾读到「改成了但项目没刷新」：带上 refresh 给警告，不悄悄标成功', async () => {
+    useAiStore.setState({
+      sessions: [{
+        id: 's-local', project: 'pa', agent: 'codex', agentLabel: 'Codex', prompt: 'p', script: 'fig1.py',
+        panelId: 'p1', fileId: 'Fig1.pdf', gid: null, scope: 'figure', target: '整张图', entries: [],
+        status: 'running', changed: false, diff: '', startedAt: 1,
+      }],
+    })
+    detail['s-local'] = { status: 'done', changed: true, diff: 'D', transcript: [], refresh: { status: 'failed', code: 'scan_failed' } }
+    await useAiStore.getState().restoreRunning()
+    expect(JSON.stringify(useUiStore.getState().status)).toContain('aiChangedRefreshFailed')
+  })
+
   it('后端说 interrupted（重启被中断）：按失败收尾，不再当成在跑', async () => {
     useAiStore.setState({
       sessions: [{
@@ -241,11 +254,15 @@ describe('占位与「已发出未确认」「按脚本的发送锁」并存（P
   })
 
   it('未确认的提交在兄弟面板上、占位在另一个面板上：两个锁各自成立，互不吞掉', async () => {
-    history.pa = [row({ id: 's-run', script: 'fig1.py' })]
-    await unconfirmedFor('Fig2.pdf', 'fig1.py')
+    history.pa = [row({ id: 's-run', script: 'sub/fig1.py' })]
+    await unconfirmedFor('Fig2.pdf', 'sub/fig1.py')
     await useAiStore.getState().restoreRunning()
     expect(Object.keys(useAiStore.getState().submissions)).toHaveLength(1)
     expect(sessions()).toHaveLength(1)
-    expect(submissionBlocks(Object.values(useAiStore.getState().submissions)[0], 'Fig9.pdf', 'sub/fig1.py')).toBe(true)
+    const sub = Object.values(useAiStore.getState().submissions)[0]
+    expect(submissionBlocks(sub, 'Fig9.pdf', 'sub/fig1.py')).toBe(true)
+    expect(submissionBlocks(sub, 'Fig9.pdf', 'other/fig1.py')).toBe(false) // 完整路径比：同名不同目录的脚本不互锁
+    expect(isSessionOf(sessions()[0], { id: 'p9', fileId: 'Fig9.pdf', script: 'sub/fig1.py' })).toBe(true)
+    expect(isSessionOf(sessions()[0], { id: 'p9', fileId: 'Fig9.pdf', script: 'other/fig1.py' })).toBe(false)
   })
 })

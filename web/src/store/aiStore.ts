@@ -735,6 +735,8 @@ async function doRestore(): Promise<void> {
         status: d.status,
         changed: !!d.changed,
         diff: d.diff ?? '',
+        // 与「查询请求」那条路同一口径：持久化的 refresh 结局要带上，「改成了、项目没刷新」才说得出口
+        ...(d.refresh ? { refresh: d.refresh } : {}),
       }
       if (x.entries.length === 0 && d.transcript?.length) {
         set((s) => ({
