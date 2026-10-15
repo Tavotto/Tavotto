@@ -26,6 +26,8 @@ let requestsDb: Record<string, Row> = {} // rid → `GET /api/ai/requests/<rid>`
 let holds: Record<string, Promise<void>> = {} // pj → 扣住该项目的历史请求（「恢复在途」）
 const historyCalls: string[] = [] // 发过历史请求的项目
 let detail: Record<string, Row> = {}
+let requestGate: Promise<void> | null = null // 扣住**下一个**请求快照查询（用一次即清）
+let detailGate: Promise<void> | null = null // 扣住**下一个**会话详情读取（用一次即清）
 const urls: string[] = []
 
 globalThis.fetch = (async (url: unknown, init?: RequestInit) => {
@@ -40,9 +42,19 @@ globalThis.fetch = (async (url: unknown, init?: RequestInit) => {
     return json({ total: 0, sessions: history[pj] ?? [] })
   }
   const rq = /\/api\/ai\/requests\/([^/?]+)$/.exec(u.split('?')[0])
+  if (rq && requestGate) {
+    const g = requestGate
+    requestGate = null
+    await g
+  }
   if (rq && requestsDown) return json({ error: 'boom', code: 'internal_error' }, 500)
   if (rq) return requestsDb[rq[1]] ? json(requestsDb[rq[1]]) : json({ error: 'x', code: 'ai_request_not_found' }, 404)
   const m = /\/api\/ai\/sessions\/([^/?]+)$/.exec(u.split('?')[0])
+  if (m && detailGate) {
+    const g = detailGate
+    detailGate = null
+    await g
+  }
   if (m) return detail[m[1]] ? json(detail[m[1]]) : json({ error: 'nf' }, 404)
   if (u.includes('/cancel')) return json({ ok: true })
   return json({})
@@ -54,6 +66,8 @@ const sessions = () => useAiStore.getState().sessions
 beforeEach(() => {
   history = {}
   requestsDown = false
+  requestGate = null
+  detailGate = null
   requestsDb = {}
   holds = {}
   historyCalls.length = 0
@@ -525,5 +539,41 @@ describe('还原出的未确认提交自动按快照收尾，不等用户点「�
     await vi.waitFor(() => expect(useAiStore.getState().submissions[SUB.rid]?.phase).toBe('not_received'))
     expect(runPosts()).toBe(0)
     expect(sessions()).toEqual([])
+  })
+
+  it('A→B→A：上一代还在途的自动查询不挡新一代（去重键带项目代次 + 项目 id）——新一代的 A 照样发起查询并收尾', async () => {
+    let openGate!: () => void
+    requestGate = new Promise<void>((r) => (openGate = r)) // 上一代的查询一直在途
+    useAiStore.getState().restoreSubmission(SUB)
+    await vi.waitFor(() => expect(requestReads()).toBe(1))
+    useAiStore.getState().clear() // A→B（换代）
+    useAiStore.getState().clear() // B→A
+    requestsDb[SUB.rid] = { session: 's-end', status: 'done', changed: false, script: 'fig1.py' }
+    detail['s-end'] = { agent: 'codex', status: 'done', changed: false, diff: '', transcript: [] }
+    useAiStore.getState().restoreSubmission(SUB) // 新一代的 A 还原出同一条
+    await vi.waitFor(() => expect(sessions()).toHaveLength(1)) // 对照：旧实现被上一代的在途标记挡住，永远不查
+    expect(requestReads()).toBe(2)
+    expect(sessions()[0]).toMatchObject({ id: 's-end', status: 'done', finalized: true })
+    openGate() // 上一代的响应迟到：代次对不上，丢弃，不影响新一代
+    await new Promise((r) => setTimeout(r, 10))
+    expect(sessions()).toHaveLength(1)
+  })
+
+  it('快照查询在途期间占位认领了这条提交：终态快照回来时按会话 id 把终态应用到已有会话（不停在 running，发送解锁）', async () => {
+    requestsDb[SUB.rid] = { session: 's-run', status: 'done', changed: true, script: 'fig1.py' }
+    detail['s-run'] = { agent: 'codex', status: 'done', changed: true, diff: 'D', transcript: [{ kind: 'message', text: '改好了' }] }
+    let openDetail!: () => void
+    detailGate = new Promise<void>((r) => (openDetail = r)) // 快照里的会话详情读取被扣住
+    useAiStore.getState().restoreSubmission(SUB) // 自动收尾：请求快照已回（done），详情在途
+    await vi.waitFor(() => expect(urls.some((u) => u.includes('/api/ai/sessions/s-run'))).toBe(true))
+    history.pa = [row({ id: 's-run', script: 'fig1.py', client_request_id: SUB.rid })] // 此刻历史里它还是 running
+    await useAiStore.getState().restoreRunning() // 占位被建起并认领这条提交（提交被删）
+    expect(Object.keys(useAiStore.getState().submissions)).toEqual([])
+    expect(sessions()[0]).toMatchObject({ id: 's-run', status: 'running' })
+    openDetail() // 终态快照迟到
+    await vi.waitFor(() => expect(sessions()[0]).toMatchObject({ status: 'done', changed: true, finalized: true }))
+    expect(sessions()).toHaveLength(1)
+    expect(sessions().some((x) => x.status === 'running')).toBe(false) // 发送解锁
+    expect(JSON.stringify(useUiStore.getState().status)).not.toBe('null') // 收尾提示
   })
 })

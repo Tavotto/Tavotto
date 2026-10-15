@@ -270,6 +270,24 @@ const queueSupersede = (key: string, rid: string): void => {
 }
 
 /**
+ * 把一个**已存在**的会话按后端的终态快照收尾（补转录、`finish`、收尾提示）。按会话 id 工作，不依赖提交是否还在：
+ * `settleRunningSessions` 与「快照查询回来时提交已被占位认领删掉」（`accept` 找不到提交）共用这一处。
+ */
+function settleSessionTo(sid: string, done: DonePayload, transcript: AiSessionDetail['transcript'] | undefined): void {
+  const { get, set } = { get: useAiStore.getState, set: useAiStore.setState }
+  const cur = get().sessions.find((y) => y.id === sid)
+  if (!cur || cur.finalized) return
+  if (cur.entries.length === 0 && transcript?.length) {
+    set((s) => ({
+      sessions: s.sessions.map((y) =>
+        y.id === sid ? { ...y, entries: transcript.map((t) => ({ kind: t.kind as AiDeltaKind, text: t.text })) } : y,
+      ),
+    }))
+  }
+  if (get().finish(done)) settledNotifier?.(done)
+}
+
+/**
  * 会话在「建好之后才到的 `ai.done`」那条路上也要有和直达路径一样的提示（状态栏）。副作用在
  * `useServerEvents`，而它 import 本 store——回调注册制（同 `setEngine500Handler`）避免成环。
  */
@@ -538,14 +556,7 @@ export const useAiStore = create<AiState>((set, get) => ({
         diff: d.diff ?? '',
         ...(d.refresh ? { refresh: d.refresh } : {}),
       }
-      if (x.entries.length === 0 && d.transcript?.length) {
-        set((s) => ({
-          sessions: s.sessions.map((y) =>
-            y.id === x.id ? { ...y, entries: d.transcript.map((t) => ({ kind: t.kind as AiDeltaKind, text: t.text })) } : y,
-          ),
-        }))
-      }
-      if (get().finish(done)) settledNotifier?.(done)
+      settleSessionTo(x.id, done, d.transcript)
     }
   },
 
@@ -708,16 +719,19 @@ export const useAiStore = create<AiState>((set, get) => ({
 const AUTO_SETTLE_MAX = 5
 const autoSettle = { inflight: new Set<string>(), attempts: new Map<string, number>() }
 function autoSettleRestored(rid: string): void {
-  const sub = useAiStore.getState().submissions[rid]
+  const st = useAiStore.getState()
+  const sub = st.submissions[rid]
   if (!sub || sub.phase !== 'unconfirmed') return
-  if (autoSettle.inflight.has(rid)) return
-  const n = autoSettle.attempts.get(rid) ?? 0
+  // 去重 / 计数的键带上**项目代次 + 项目 id**（同 `restoring`）：A→B→A 之后新一代的 A 不被上一代还在途的标记挡住
+  const key = `${st.generation}\u0000${sub.project ?? ''}\u0000${rid}`
+  if (autoSettle.inflight.has(key)) return
+  const n = autoSettle.attempts.get(key) ?? 0
   if (n >= AUTO_SETTLE_MAX) return
-  autoSettle.attempts.set(rid, n + 1)
-  autoSettle.inflight.add(rid)
+  autoSettle.attempts.set(key, n + 1)
+  autoSettle.inflight.add(key)
   settleFromSnapshot(rid)
     .catch(() => undefined) // 自动的后台收尾：任何意外都只是留在「未确认」，手动按钮兜底，不抛未处理的拒绝
-    .finally(() => autoSettle.inflight.delete(rid))
+    .finally(() => autoSettle.inflight.delete(key))
 }
 
 /**
@@ -1004,7 +1018,27 @@ function accept(
 ): void {
   const { get, set } = { get: useAiStore.getState, set: useAiStore.setState }
   const sub = get().submissions[rid]
-  if (!sub) return
+  if (!sub) {
+    // 提交已经没了（快照查询在途期间，占位被认领、提交被删）：但这份快照可能是终态——会话还在列表里、没收尾的，
+    // 按会话 id 把终态应用上去，否则它永远停在 running、脚本被锁
+    if (how.kind === 'queried') {
+      const d = how.detail
+      const st = typeof d?.status === 'string' && d.status ? d.status : how.status
+      if (st !== 'running')
+        settleSessionTo(
+          sid,
+          {
+            session: sid,
+            status: st,
+            changed: !!(how.changed || d?.changed),
+            diff: d?.diff ?? '',
+            ...(d?.refresh ? { refresh: d.refresh } : {}),
+          },
+          d?.transcript,
+        )
+    }
+    return
+  }
   removeAccepted(sub.project, sub.fileId, rid)
   const caps = get().caps
   const detail = how.kind === 'queried' ? how.detail : null
