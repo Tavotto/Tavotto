@@ -203,3 +203,55 @@ def test_compare_marks_reports_with_missing_app_samples_incomparable():
     lost = rep("drag", [1, 1, 0, 0, 0, 0])
     assert P.compare_reports(ok, lost)["status"] == "incomparable"
     assert P.compare_reports(ok, rep("drag", [1] * 6))["status"] == "diagnostic_only"
+
+
+def test_record_marks_interval_unknown_when_a_child_exits(monkeypatch):
+    # 子进程 101 在第 3 个样本消失：它退出前用掉的 CPU ps 看不到，该区间记 None。
+    # 第 4 个样本有新子进程 102（出生在区间内，取其全部累计时间）。
+    _fake_record_env(
+        monkeypatch,
+        [
+            f"100 1 0:00.00 1024 {APP}\n101 100 0:00.00 512 /x/child\n",
+            f"100 1 0:00.10 1024 {APP}\n101 100 0:00.10 512 /x/child\n",
+            f"100 1 0:00.20 1024 {APP}\n",
+            f"100 1 0:00.30 1024 {APP}\n102 100 0:00.05 512 /x/child\n",
+        ],
+    )
+    report = P.record("drag", 2, 0.5)
+    samples = report["samples"]
+    assert [s["family_cpu_pct"] for s in samples] == [None, 40.0, None, 30.0]
+    assert [s["family_exited"] for s in samples] == [0, 0, 1, 0]
+    assert "cpu_unknown_when_a_descendant_exits_short_lived_children_invisible" in report["limits"]
+
+
+def test_record_marks_windowserver_unknown_when_its_pid_changes(monkeypatch):
+    ws2 = WS
+    _fake_record_env(
+        monkeypatch,
+        [
+            f"100 1 0:00.00 1024 {APP}\n300 1 1:00.00 500 {WS}\n",
+            f"100 1 0:00.10 1024 {APP}\n301 1 0:05.00 500 {ws2}\n",
+            f"100 1 0:00.20 1024 {APP}\n301 1 0:05.25 500 {ws2}\n",
+            f"100 1 0:00.30 1024 {APP}\n301 1 0:05.25 500 {ws2}\n",
+        ],
+    )
+    ws = [s["windowserver_global_cpu_pct"] for s in P.record("drag", 2, 0.5)["samples"]]
+    assert ws == [None, None, 50.0, 0.0]
+
+
+def test_compare_needs_five_valid_cpu_samples_per_side():
+    def rep(stage, cpus):
+        return {
+            "schema": P.SCHEMA,
+            "stage": stage,
+            "macos_version": "26.1",
+            "arch": "arm64",
+            "samples": [
+                {"root_count": 1, "family_cpu_pct": c, "family_rss_sum_mib": 10.0} for c in cpus
+            ],
+        }
+
+    full = rep("idle", [1.0] * 6)
+    sparse = rep("drag", [None, 1.0, None, 1.0, None, 1.0])
+    assert P.compare_reports(full, sparse)["status"] == "incomparable"
+    assert P.compare_reports(full, rep("drag", [None] + [1.0] * 5))["status"] == "diagnostic_only"

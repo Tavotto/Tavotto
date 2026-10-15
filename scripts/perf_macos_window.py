@@ -123,8 +123,13 @@ def sample_ps() -> dict:
 def interval_cpu_pct(
     previous: dict[int, float], current: dict[int, float], wall_seconds: float
 ) -> float | None:
-    """相邻两次累计 CPU 时间之差 / 墙钟间隔；新出现的 pid 取其全部累计时间。"""
-    if wall_seconds <= 0:
+    """相邻两次累计 CPU 时间之差 / 墙钟间隔。
+
+    ps 看不到已退出的进程，它退出前在本区间内用掉的 CPU 原理上补不回来，
+    所以上一样本有、这一样本没有的 pid 出现时，本区间记 None（未知），不记偏小的值。
+    新出现的 pid 取其全部累计时间：它出生在本区间内，累计时间就是区间内用掉的。
+    """
+    if wall_seconds <= 0 or any(pid not in current for pid in previous):
         return None
     used = sum(max(0.0, t - previous.get(pid, 0.0)) for pid, t in current.items())
     return round(used / wall_seconds * 100, 2)
@@ -145,6 +150,13 @@ def summarize(report: dict) -> dict:
     ):
         raise ValueError("invalid Tavotto macOS window probe report")
     out = {"stage": report.get("stage"), "count": len(report["samples"])}
+    out["valid_family_cpu_samples"] = sum(
+        1
+        for s in report["samples"]
+        if isinstance(s, dict)
+        and isinstance(s.get("family_cpu_pct"), (int, float))
+        and not isinstance(s["family_cpu_pct"], bool)
+    )
     for field in ("family_cpu_pct", "family_rss_sum_mib", "windowserver_global_cpu_pct"):
         vals = [
             float(s[field])
@@ -176,6 +188,8 @@ def compare_reports(idle: dict, drag: dict) -> dict:
         and bool(idle["macos_version"])
         and a["count"] >= 5
         and b["count"] >= 5
+        and a["valid_family_cpu_samples"] >= 5
+        and b["valid_family_cpu_samples"] >= 5
         and _app_present_throughout(idle)
         and _app_present_throughout(drag)
     )
@@ -216,7 +230,9 @@ def record(stage: str, seconds: float, interval: float) -> dict:
                 "Tavotto process missing or restarted during capture; no report was saved"
             )
         cpu_pct = windowserver_pct = None
+        exited = 0
         if previous is not None:
+            exited = len(set(previous["_family_cpu_s"]) - set(row["_family_cpu_s"]))
             wall = now - previous_at
             cpu_pct = interval_cpu_pct(previous["_family_cpu_s"], row["_family_cpu_s"], wall)
             if row["windowserver_present"]:
@@ -227,6 +243,7 @@ def record(stage: str, seconds: float, interval: float) -> dict:
             {
                 "root_count": row["root_count"],
                 "family_processes": row["family_processes"],
+                "family_exited": exited,
                 "family_cpu_pct": cpu_pct,
                 "family_rss_sum_mib": row["family_rss_sum_mib"],
                 "windowserver_global_cpu_pct": windowserver_pct,
@@ -251,6 +268,7 @@ def record(stage: str, seconds: float, interval: float) -> dict:
             "webkit_webcontent_may_not_be_descendant",
             "no_frame_or_gpu_presentation_measurement",
             "cpu_is_cputime_delta_between_polls_10ms_resolution",
+            "cpu_unknown_when_a_descendant_exits_short_lived_children_invisible",
         ],
     }
 
