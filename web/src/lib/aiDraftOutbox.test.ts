@@ -116,6 +116,31 @@ describe('aiDraftOutbox · inflight 只跟踪普通 PUT', () => {
     expect(outbox.has('p', 'f')).toBe(false)
   })
 
+  it('超时之后迟到的原请求成功了（它其实写成功了）：落地收尾，槽被清，不再重试', async () => {
+    outbox.advance('p', 'f', 1)
+    let n = 0
+    let resolveFirst!: (r: Response) => void
+    const real = globalThis.fetch
+    globalThis.fetch = (async (url: unknown, init?: RequestInit) => {
+      if (String(url).includes('/api/ai/drafts') && init?.method === 'PUT') {
+        const body = JSON.parse(String(init.body)) as { text: string; stamp: number }
+        puts.push({ text: body.text, stamp: body.stamp })
+        n++
+        if (n === 1) return new Promise<Response>((r) => (resolveFirst = r)) // 第一次一直挂，稍后才回
+        throw new TypeError('down') // 重试都失败
+      }
+      return real(url as RequestInfo, init)
+    }) as typeof fetch
+    outbox.post('p', 'f', 'v1')
+    await vi.advanceTimersByTimeAsync(outbox.WRITE_DEBOUNCE_MS + 10)
+    await vi.advanceTimersByTimeAsync(outbox.INFLIGHT_TIMEOUT_MS + 10) // 超时
+    await vi.advanceTimersByTimeAsync(outbox.RETRY_MS + 10) // 重试（失败）
+    expect(outbox.has('p', 'f')).toBe(true)
+    resolveFirst(jsonResp({ revision: 1, stamp: puts[0].stamp })) // 原请求迟到地成功了
+    await vi.advanceTimersByTimeAsync(10)
+    expect(outbox.has('p', 'f')).toBe(false) // 迟到的结果也要处理：对照——被丢弃时槽会一直重试到天荒地老
+  })
+
   it('普通请求挂住超过超时：按 unavailable 走正常重试，重试成功后槽被清', async () => {
     outbox.advance('p', 'f', 1)
     let n = 0
