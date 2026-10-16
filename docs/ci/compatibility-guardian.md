@@ -42,6 +42,11 @@ sessions. It checks the explicit IDEAL oracle and native titles, preserves the
 fixture's external execution log, and verifies it against module-exec events.
 Its edit/replay/export/fidelity stages remain `not_run`, so it cannot qualify a
 complete nine-stage pass. Historical baseline matches are not successes.
+The Safe API cannot establish desktop Native fallback: fixtures whose IDEAL
+requires Native must not be reported as desktop regressions. The current missing-
+dependency V2 precondition also rejects the runner's explicit worker override;
+those scenarios remain environment_unavailable until interpreter equivalence is
+verified by the existing harness.
 
 Native errors are classified before Tavotto attribution: missing dependencies
 are environment_unavailable, native script exceptions are invalid_fixture,
@@ -56,6 +61,18 @@ CG-00 findings and the acceptance ledger are in
 `docs/audit/compatibility-guardian-architecture.md`. No baseline is updated and no
 candidate is promoted automatically. Controlled fixtures are not a sample of
 real-user success rates.
+
+The existing hosted `compat-smoke` job runs two observation steps after its locked
+dependencies/fonts are prepared: engine OO/savefig, show-only and relative CSV;
+V2 plain and replace/readback through the authenticated Safe server. Each step
+retains the actual CLI exit and validates the terminal report against the exact
+checkout, then uploads the entire UUID report/evidence tree even on failure.
+`continue-on-error` does not change a report verdict: V2's four unrun stages still
+prevent complete qualification. These steps add no gate, runner or dependency
+manager. Only unchanged committed fixtures run; checkout credentials may still
+exist in Git configuration, so this job cannot execute external/generated scripts.
+Interrupted/negative adapters preserve any execution logs before temporary data
+is removed.
 
 ## First cloud run and limits (2026-10-16)
 

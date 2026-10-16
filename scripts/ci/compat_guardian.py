@@ -367,8 +367,6 @@ def _execute(request: dict) -> dict:
     if missing:
         row["status"] = "environment_unavailable"
         row["raw"] = {"missing_prerequisites": missing}
-        if native_counter.exists():
-            shutil.copy2(native_counter, evidence / "native-execs.jsonl")
         return row
     os.environ["CG_EXEC_LOG"] = str(work / "tavotto-execs.jsonl")
     if suite == "compat_engine":
@@ -476,9 +474,6 @@ def _execute(request: dict) -> dict:
             "V2 explicit scientific title/shape/count oracle AND native title comparison",
         )
         row["unverified"].append("V2 adapter does not claim edit/replay/export/fidelity")
-        log = case_work / "exec_log.jsonl"
-        if log.exists():
-            shutil.copy2(log, evidence / "fixture-execs.jsonl")
     row["environment_after"] = environment()
     launches = {}
     for role in ("native", "tavotto"):
@@ -498,15 +493,16 @@ def _execute(request: dict) -> dict:
     if suite == "compat_v2" and len(launches["tavotto"]) != row["executions"]["tavotto"]:
         row["comparable"] = False
     row["status"] = case_status(row)
-    for name in [
-        "native-execs.jsonl",
-        "tavotto-execs.jsonl",
-        *[p.name for p in work.glob("diagnostic-*-execs.jsonl")],
-    ]:
-        p = work / name
-        if p.exists():
-            shutil.copy2(p, evidence / name)
     return row
+
+
+def preserve_execution_logs(work: Path, evidence: Path) -> None:
+    """Retain partial/negative counters before the parent removes its workspace."""
+    for path in work.glob("*-execs.jsonl"):
+        shutil.copy2(path, evidence / path.name)
+    fixture_log = work / "v2" / "exec_log.jsonl"
+    if fixture_log.is_file():
+        shutil.copy2(fixture_log, evidence / "fixture-execs.jsonl")
 
 
 def evidence_refs(root: Path) -> list[dict]:
@@ -822,6 +818,8 @@ def run(args) -> int:
                     "raw": {"runner_error": str(exc)},
                     "unverified": ["adapter did not complete"],
                 }
+            finally:
+                preserve_execution_logs(work, dest)
             row["fixture"] = {
                 "files": fixtures[cid],
                 "source_sha256": canonical(

@@ -13,6 +13,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from argparse import Namespace
 from pathlib import Path
 from unittest import mock
 
@@ -224,6 +225,31 @@ class GuardianContract(unittest.TestCase):
         self.assertIn("started", (self.ev / "stdout.txt").read_text())
         if os.name != "nt":
             self.assertTrue(process["cleanup"]["group_gone"])
+
+    def test_partial_adapter_retains_counter_evidence(self):
+        raw = '{"contract_fixture":"partial native execution"}\n'
+
+        def interrupted(command, *, work, evidence, env, timeout):
+            (work / "native-execs.jsonl").write_text(raw)
+            raise cg.EvidenceError("simulated adapter interruption")
+
+        args = Namespace(
+            suite="compat_engine",
+            case=self.cid,
+            out=str(self.root / "runs"),
+            expected_sha=cg.git("rev-parse", "HEAD"),
+            timeout=1,
+        )
+        with mock.patch.object(cg, "launch_adapter", side_effect=interrupted):
+            self.assertEqual(cg.run(args), 3)
+        report_path = next((self.root / "runs").glob("*/reports/guardian.json"))
+        report = json.loads(report_path.read_text())
+        retained = report_path.parent.parent / "evidence" / self.cid / "native-execs.jsonl"
+        self.assertEqual(retained.read_text(), raw)
+        refs = {item["path"]: item for item in report["evidence"]}
+        self.assertEqual(
+            refs[f"{self.cid}/native-execs.jsonl"]["sha256"], cg.digest(raw.encode())
+        )
 
     def test_missing_data_digest_rejected(self):
         del self.row["fixture"]["data_sha256"]
