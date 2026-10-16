@@ -400,21 +400,24 @@ describe('同步状态机：单一 reconcile + 写入版本（#1098）', () => {
     expect(be.calls.filter((c) => c.method === 'PUT' && c.path === '/api/ai/drafts')).toHaveLength(1)
   })
 
-  it('已见的服务器戳导致 stale（别的标签页的稿被本页对账读到过）：本版是用户在已知最新状态上的编辑，换更大的戳重写，本地为准', async () => {
+  it('A 在途、别的标签页保存了更新的 B、本页对账读到了 B（界面没采纳）：A 的 stale 回来仍按 A 自己的基线判——放弃，B 保留，不被盖掉', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
     try {
       await mount()
       const releaseA = be.holdNextDraftPut()
-      await typeText('本页的稿')
-      await act(async () => void vi.advanceTimersByTime(WRITE_DEBOUNCE_MS + 50)) // PUT 在途
+      await typeText('本页的稿 A')
+      await act(async () => void vi.advanceTimersByTime(WRITE_DEBOUNCE_MS + 50)) // PUT A 在途
       await settle()
-      be.putStamped('pa', 'Fig1.pdf', '别的标签页的稿', Date.now() * 1000 + 5_000_000_000)
-      await act(async () => window.dispatchEvent(new Event('focus'))) // 本页对账读到了它（已见）；本地有未落定写入，文本不覆盖
+      be.putStamped('pa', 'Fig1.pdf', '别的标签页的稿 B', Date.now() * 1000 + 5_000_000_000)
+      await act(async () => window.dispatchEvent(new Event('focus'))) // 对账把 B 的戳读进来；本地有未落定写入，文本不覆盖
       await settle()
-      releaseA() // 在途的 PUT 被判 stale，服务器戳已见过
+      releaseA() // A 的 stale 回来：全局「见过 B 的戳」不再算数——A 编辑时不知道 B
       await settle()
-      expect(be.draft('pa', 'Fig1.pdf')).toBe('本页的稿')
-      expect(input().value).toBe('本页的稿')
+      await act(async () => void vi.advanceTimersByTime(RETRY_MS * 3))
+      await settle()
+      expect(putsOf()).toHaveLength(1) // A 没有被提升重写
+      expect(be.draft('pa', 'Fig1.pdf')).toBe('别的标签页的稿 B') // 对照：全局 seen 集合时这里被 A 盖掉
+      expect(input().value).toBe('别的标签页的稿 B')
     } finally {
       vi.useRealTimers()
     }
@@ -644,28 +647,7 @@ describe('同步状态机：单一 reconcile + 写入版本（#1098）', () => {
     }
   })
 
-  it('被判 stale 时本地之后又有更新的内容：再写一次（新戳大于服务器的），以本地为准', async () => {
-    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
-    try {
-      await mount()
-      const releaseA = be.holdNextDraftPut()
-      await typeText('A 版')
-      await act(async () => void vi.advanceTimersByTime(WRITE_DEBOUNCE_MS + 50)) // PUT A 在途
-      await settle()
-      be.putStamped('pa', 'Fig1.pdf', '别的标签页的稿', Date.now() * 1000 + 5_000_000_000) // A 落地前，别的标签页写了更新的戳
-      await typeText('B 版（A 之后本地又改的）')
-      releaseA() // A 被拒（stale）；本地有更新的内容 → 以本地为准再写一次
-      await settle()
-      await act(async () => void vi.advanceTimersByTime(WRITE_DEBOUNCE_MS + 50))
-      await settle()
-      expect(be.draft('pa', 'Fig1.pdf')).toBe('B 版（A 之后本地又改的）')
-      expect(input().value).toBe('B 版（A 之后本地又改的）')
-    } finally {
-      vi.useRealTimers()
-    }
-  })
-
-  it('旧版本 v1 在途被判 stale、此时本地已有更新的 v2：v1 的内容永不再写、v2 用自己编辑时的戳（不换戳）去写；被拒后才为 v2 换更大的戳，v2 最终被接受', async () => {
+  it('被判 stale 时本地之后又有更新的内容（编辑时都不知道别处的写入）：旧版本不换戳不重写；更新的版本按自己的基线判——服务器戳更新就放弃，别处的稿保留', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
     try {
       await mount()
@@ -674,20 +656,18 @@ describe('同步状态机：单一 reconcile + 写入版本（#1098）', () => {
       await act(async () => void vi.advanceTimersByTime(WRITE_DEBOUNCE_MS + 50)) // PUT v1 在途
       await settle()
       const HIGH = Date.now() * 1000 + 5_000_000_000
-      be.putStamped('pa', 'Fig1.pdf', '别的标签页的稿', HIGH) // v1 落地前，别处写入了更大的戳
-      await typeText('v2 版（v1 在途时又改的）') // v2：编辑时分配的戳 > v1 的、< HIGH
+      be.putStamped('pa', 'Fig1.pdf', '别的标签页的稿', HIGH) // v1 落地前，别处写入了更大的戳（本页不知道）
+      await typeText('v2 版（v1 在途时又改的）') // v2 编辑时同样不知道 HIGH：基线 < HIGH
       releaseA() // v1 回来：stale。此时本地已有 v2
       await settle()
       await act(async () => void vi.advanceTimersByTime(WRITE_DEBOUNCE_MS + 50))
       await settle()
-      const puts = be.calls.filter((c) => c.method === 'PUT' && c.path === '/api/ai/drafts')
-      const stamps = puts.map((c) => c.body.stamp as number)
-      expect(puts.map((c) => c.body.text)).toEqual(['v1 版', 'v2 版（v1 在途时又改的）', 'v2 版（v1 在途时又改的）']) // v1 的内容只发过那一次
-      expect(stamps[1]).toBeGreaterThan(stamps[0]) // v2 的戳是它编辑时分配的，比 v1 大
-      expect(stamps[1]).toBeLessThan(HIGH) // 没有因为 v1 被拒就给 v2 换戳：它带着自己的戳去试，因此再被拒一次
-      expect(stamps[2]).toBeGreaterThan(HIGH) // v2 是本页最新的真实输入：被拒后才换更大的戳
-      expect(be.draft('pa', 'Fig1.pdf')).toBe('v2 版（v1 在途时又改的）') // v2 最终被接受
-      expect(input().value).toBe('v2 版（v1 在途时又改的）')
+      const puts = putsOf()
+      expect(puts.map((c) => c.body.text)).toEqual(['v1 版', 'v2 版（v1 在途时又改的）']) // v1 的内容只发过那一次；v2 被拒后没有换戳重写
+      expect((puts[1].body.stamp as number)).toBeGreaterThan(puts[0].body.stamp as number) // v2 的戳是它编辑时分配的，比 v1 大
+      expect((puts[1].body.stamp as number)).toBeLessThan(HIGH)
+      expect(be.draft('pa', 'Fig1.pdf')).toBe('别的标签页的稿') // 别处比 v2 更新的稿保留（有我们编辑时不知道的写入 → 放弃，交给对账）
+      expect(input().value).toBe('别的标签页的稿')
     } finally {
       vi.useRealTimers()
     }

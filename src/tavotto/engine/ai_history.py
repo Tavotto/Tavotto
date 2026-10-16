@@ -575,13 +575,14 @@ def put_draft(
 
 def delete_draft_if(project: str, file_id: str, if_text: str, db_path: Path | None = None) -> bool:
     """**条件删除**：只有库里的文本仍等于 `if_text` 才删——另一个标签页后写的新稿不能被这次删除抹掉。
-    删 = 清空文本、推进戳（墓碑），所以此前发出的旧写入随后落地也会被拒。"""
+    删 = 清空文本、戳只推进 +1（墓碑）：它取代的恰好是被删的那一版——此前发出的旧写入落地会被拒，而用户**之后**的新编辑
+    （戳一定更大）不会被这个服务端清理当成「更新的写入」挡掉、白白丢掉。"""
     with _connect(db_path) as con:
         return (
             con.execute(
-                "UPDATE ai_drafts SET text='', revision=revision+1, updated_ms=?, stamp=MAX(stamp+1, ?) "
+                "UPDATE ai_drafts SET text='', revision=revision+1, updated_ms=?, stamp=stamp+1 "
                 "WHERE project=? AND file_id=? AND text=? AND text != ''",
-                (_now_ms(), _now_stamp(), project, file_id, if_text),
+                (_now_ms(), project, file_id, if_text),
             ).rowcount
             > 0
         )
@@ -726,8 +727,8 @@ def accept_pending(project: str, file_id: str, rid: str, db_path: Path | None = 
         n = 0
         if pend["draft_stamp"] is not None:
             n = con.execute(
-                "UPDATE ai_drafts SET text='', revision=revision+1, updated_ms=?, stamp=MAX(stamp+1, ?) "
+                "UPDATE ai_drafts SET text='', revision=revision+1, updated_ms=?, stamp=stamp+1 "
                 "WHERE project=? AND file_id=? AND stamp=? AND text != ''",
-                (_now_ms(), _now_stamp(), project, file_id, pend["draft_stamp"]),
+                (_now_ms(), project, file_id, pend["draft_stamp"]),
             ).rowcount
     return {"cleared": True, "draft_deleted": n > 0}

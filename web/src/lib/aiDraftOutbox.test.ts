@@ -3,7 +3,8 @@
  * 之后的 stale 若带着本页没见过的戳（别的标签页写了更新稿），按跨标签页规则放弃，不以本地为准重写（#1098 Codex）。
  * 替身是 fetch 层：发件箱在全局 setup 里已被加载，模块 mock 换不掉它对 `./aiDraft` 的引用。
  */
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { __resetWriteStampForTests } from './aiDraft'
 import * as outbox from './aiDraftOutbox'
 
 const puts: { text: string; stamp: number }[] = []
@@ -35,6 +36,7 @@ beforeEach(() => {
 afterEach(() => {
   globalThis.fetch = realFetch
   outbox.__resetOutboxForTests()
+  __resetWriteStampForTests() // 写入戳下限是模块级状态：上一条用例观察到的 9e15 不能抬高这一条的戳
   puts.length = 0
   next = []
 })
@@ -98,3 +100,51 @@ describe('aiDraftOutbox · 基线未知模式', () => {
     expect(puts[1].stamp).toBeGreaterThan(puts[0].stamp)
   })
 })
+
+describe('aiDraftOutbox · 每版本基线与 stale 上限', () => {
+  it('基线：对账之后读到的戳只影响之后新编辑的基线，不改已经 post 的版本——A 在途、别处保存了 B、对账读到 B，A 的 stale 仍被放弃', async () => {
+    const events: string[] = []
+    outbox.subscribe('p', 'f', (e) => events.push(e.kind))
+    outbox.observe('p', 'f', 100) // A 编辑时本页已知的最新戳
+    outbox.post('p', 'f', 'A 版') // A 的基线 = 100
+    outbox.observe('p', 'f', 9e15) // 对账把别处 B 的戳读进来（界面没采纳）：不改 A 的基线
+    next = [{ stale: true, stamp: 9e15 }]
+    await outbox.flush('p', 'f')
+    expect(puts.map((x) => x.text)).toEqual(['A 版']) // A 没有被提升重写
+    expect(events.at(-1)).toBe('abandoned')
+  })
+
+  it('基线：服务器戳 ≤ 这一版自己的基线（墙钟回拨一类）才提升，且用更大的戳重写', async () => {
+    outbox.observe('p', 'f', 500)
+    outbox.post('p', 'f', 'A 版') // 基线 500
+    next = [{ stale: true, stamp: 400 }] // ≤ 基线
+    await outbox.flush('p', 'f')
+    expect(puts.map((x) => x.text)).toEqual(['A 版', 'A 版'])
+    expect(puts[1].stamp).toBeGreaterThan(puts[0].stamp)
+  })
+
+  describe('同一版本连续 stale 到上限之后', () => {
+    beforeEach(() => vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] }))
+    afterEach(() => vi.useRealTimers())
+
+    it('不再无限循环同一个被拒的戳：退避后重新走完整判定、用更大的新戳重写，对方停止后最终写成功；期间超过一分钟出灰字，成功后消失', async () => {
+      const events: string[] = []
+      outbox.subscribe('p', 'f', (e) => events.push(e.kind === 'stalled' ? `stalled:${e.on}` : e.kind))
+      outbox.markUnknown('p', 'f') // 基线未知：stale 一律可提升（对方持续写，服务器戳一直更大）
+      // 对方持续写：连续 60 次 stale（够触发好几轮上限 + 退避，累计超过一分钟），每次服务器戳都比我们刚发的更大；之后才停
+      next = Array.from({ length: 60 }, (_, i) => ({ stale: true, stamp: 7e15 + i * 10 }))
+      outbox.post('p', 'f', 'A 版')
+      await vi.advanceTimersByTimeAsync(outbox.WRITE_DEBOUNCE_MS + 10)
+      await vi.advanceTimersByTimeAsync(3 * 60_000) // 退避重试，足够长
+      expect(puts.length).toBeGreaterThan(60) // 一直在试，不是停在上限
+      const stamps = puts.map((x) => x.stamp)
+      expect(new Set(stamps).size).toBe(stamps.length) // 每次发的戳都不同（上限之后也在推进），没有重复发同一个被拒的戳
+      expect(stamps).toEqual([...stamps].sort((a, b) => a - b))
+      expect(outbox.has('p', 'f')).toBe(false) // 最终写成功，槽清空
+      expect(events).toContain('stalled:true') // 持续失败超过一分钟出灰字
+      expect(events.at(-1)).toBe('accepted')
+      expect(events.indexOf('stalled:false')).toBeGreaterThan(-1) // 成功后灰字消失
+    })
+  })
+})
+

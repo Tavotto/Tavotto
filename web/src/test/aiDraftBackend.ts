@@ -103,7 +103,7 @@ export function createDraftBackend(): DraftBackend {
           p.draftStamp != null && drafts.has(key(pj, file)) && stamps.get(key(pj, file)) === p.draftStamp
         if (del) {
           drafts.delete(key(pj, file))
-          stamps.set(key(pj, file), Math.max((stamps.get(key(pj, file)) ?? 0) + 1, Date.now() * 1000))
+          stamps.set(key(pj, file), (stamps.get(key(pj, file)) ?? 0) + 1) // 墓碑只 +1：取代的恰好是被删的那一版，之后的新编辑不被挡掉
         }
         return json({ cleared: true, draft_deleted: del })
       }
@@ -171,7 +171,7 @@ export function createDraftBackend(): DraftBackend {
         const del = drafts.get(key(pj, file)) === body.if_text
         if (del) {
           drafts.delete(key(pj, file))
-          stamps.set(key(pj, file), Math.max((stamps.get(key(pj, file)) ?? 0) + 1, Date.now() * 1000))
+          stamps.set(key(pj, file), (stamps.get(key(pj, file)) ?? 0) + 1) // 墓碑只 +1：取代的恰好是被删的那一版，之后的新编辑不被挡掉
         }
         return json({ deleted: del })
       }

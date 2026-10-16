@@ -477,12 +477,13 @@ def test_server_side_deletes_advance_the_stamp_so_earlier_writes_are_rejected(cl
         f"/api/ai/drafts/pending/{RID}/accept", json={"file": "F"}, headers=H(a)
     ).get_json()
     assert acc["draft_deleted"] is True
-    assert (
-        put_s(client, a, "F", "已被接受的话", now_stamp - 1_000_000)["stale"] is True
-    )  # 迟到的 PUT 复活不了
+    # 被取代的那一版（戳 = 当初记进账本的 draft_stamp）迟到的 PUT / 重试复活不了
+    assert put_s(client, a, "F", "已被接受的话", now_stamp - 5_000_000)["stale"] is True
+    assert put_s(client, a, "F", "更早的", now_stamp - 6_000_000)["stale"] is True
     assert get(client, a, "F")["draft"] is None
-    # 之后用户新写的（戳更新）照常接受
-    assert "stale" not in put_s(client, a, "F", "新写的", ai_history._now_stamp() + 10_000_000)
+    # 墓碑只推进 +1（取代的恰好是被删的那一版）：用户**之后**新写的（戳更大）不会被服务端清理当成「更新的写入」挡掉
+    assert "stale" not in put_s(client, a, "F", "提交之后新写的", now_stamp - 4_000_000)
+    assert get(client, a, "F")["draft"]["text"] == "提交之后新写的"
 
 
 def test_stamps_are_per_project_and_per_file(client, two):
