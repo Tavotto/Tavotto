@@ -1,0 +1,140 @@
+name: Compatibility Guardian
+
+# 观察型证据 workflow，不是合并门禁：不在 required contexts 里，ci-fast-gate /
+# ci-integration-gate 都不 needs 它，也不监听 merge_group。
+# 只跑登记在仓库里的已提交夹具（run 子命令只收 case id，没有"跑任意脚本"的入口）；
+# 目录隔离不是 OS 隔离，所以只在 GitHub 托管的临时 runner 上跑——绝不派到
+# self-hosted / tavotto-lab（tests/test_compat_guardian_workflow.py 钉着）。
+# 失败一律可见：退出码不吞，GITHUB_STEP_SUMMARY 写结论；唯一被明确放行的非零码是 4
+# （partial_coverage / expected_limitation：没有失败，但不是干净通过——有层未覆盖或是已声明的限制，摘要里会点名）。
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened]
+    # 只在 Guardian 自己的文件变化时跑；不监听产品代码，所以不拖慢其它 PR。
+    paths:
+      - '.github/workflows/compat-guardian.yml'
+      - 'scripts/ci/compat_guardian*.py'
+      - 'scripts/ci/guardian_exec_observer.py'
+      - 'scripts/ci/compat_driver.py'
+      - 'tests/compat/guardian-report.schema.json'
+      - 'tests/test_compat_guardian*.py'
+      - 'docs/ci/compat-guardian.md'
+  workflow_dispatch:
+  schedule:
+    - cron: '41 3 * * *'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: compat-guardian-${{ github.ref }}-${{ github.event_name }}
+  cancel-in-progress: true
+
+env:
+  TAVOTTO_NO_TELEMETRY: '1'
+  TAVOTTO_NO_DIAG_UPLOAD: '1'
+  TAVOTTO_NO_UPDATE_CHECK: '1'
+
+jobs:
+  guardian:
+    name: Guardian observation (hosted, not a required check)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+      # 科学栈钉 packaging/runtime-lock.json 的版本，与 compat-smoke 同一套。
+      - name: Install (scientific stack pinned by the runtime lock)
+        env:
+          PIP_DEFAULT_TIMEOUT: '30'
+          PIP_RETRIES: '5'
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          pip install -e ".[dev,ci]"
+          # shellcheck disable=SC2046
+          pip install $(python scripts/ci/runtime_pins.py --include-corpus)
+      - name: Approved fonts (sha256 verified)
+        run: |
+          python scripts/fetch_fonts.py
+          python scripts/fetch_fonts.py --check
+      - name: Guardian contract tests
+        run: python -m pytest -p no:cacheprovider -q tests/test_compat_guardian.py tests/test_compat_guardian_adversarial.py tests/test_compat_guardian_summary.py
+      - name: Guardian engine suite (reviewed fixtures)
+        timeout-minutes: 8
+        shell: bash
+        run: |
+          set +e
+          python scripts/ci/compat_guardian.py run --suite compat_engine \
+            --case shape_oo_savefig,shape_pyplot_show_only,shape_relative_csv,shape_local_helper_import,shape_multi_figure_a,sci_pillow \
+            --expected-sha "$GITHUB_SHA" --timeout 60 \
+            --out "$RUNNER_TEMP/compat-guardian/engine" > "$RUNNER_TEMP/engine.out" 2>&1
+          code=$?
+          set -e
+          # 公开日志只给每个 case 一行状态；原始 stdout/stderr 留在证据目录里，不上传。
+          grep -E '^[A-Za-z0-9_]+: [a-z_]+$' "$RUNNER_TEMP/engine.out" || true
+          case "$code" in
+            0) ;;
+            4) echo "::warning::engine suite: no failure but not a clean pass (see summary)" ;;
+            *) echo "::error::engine suite exited $code"; tail -n 30 "$RUNNER_TEMP/engine.out"; exit "$code" ;;
+          esac
+      - name: Guardian server Safe suite (reviewed fixtures)
+        if: ${{ !cancelled() }}
+        timeout-minutes: 8
+        shell: bash
+        run: |
+          set +e
+          python scripts/ci/compat_guardian.py run --suite compat_v2 \
+            --case s01_plain,s04_replace_readback,s04b_savefig_tmp_replace,s05_dynamic_rename,s06_savefig_pil_readback,s27_import_pil_present \
+            --expected-sha "$GITHUB_SHA" --timeout 60 \
+            --out "$RUNNER_TEMP/compat-guardian/v2" > "$RUNNER_TEMP/v2.out" 2>&1
+          code=$?
+          set -e
+          grep -E '^[A-Za-z0-9_]+: [a-z_]+$' "$RUNNER_TEMP/v2.out" || true
+          case "$code" in
+            0) ;;
+            4) echo "::warning::V2 suite: no failure but not a clean pass (edit/replay/export/fidelity not covered; declared limitations)" ;;
+            *) echo "::error::V2 suite exited $code"; tail -n 30 "$RUNNER_TEMP/v2.out"; exit "$code" ;;
+          esac
+      - name: Validate and summarize
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          reports=("$RUNNER_TEMP"/compat-guardian/*/*/reports/guardian.json)
+          if [[ ${#reports[@]} -eq 0 ]]; then
+            echo "::error::no Guardian report was produced"
+            echo "### Guardian: no report produced (see step logs)" >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          for report in "${reports[@]}"; do
+            python scripts/ci/compat_guardian.py validate "$report"
+            cat "$(dirname "$report")/summary.md" >> "$GITHUB_STEP_SUMMARY"
+          done
+          python scripts/ci/compat_guardian.py summarize "${reports[@]}" \
+            --markdown-out "$RUNNER_TEMP/guardian-summary.md" \
+            --json-out "$RUNNER_TEMP/guardian-summary.json" > /dev/null
+          cat "$RUNNER_TEMP/guardian-summary.md" >> "$GITHUB_STEP_SUMMARY"
+      # 上传成功与失败两种情况，但只传白名单：报告 JSON、汇总、图片。
+      # 不传 stdout/stderr/process.json/*-execs.jsonl 这类原始输出，也不传已装包全表
+      # （报告里的环境只有版本摘要 + 全表的 sha256）。
+      - name: Upload allowlisted evidence
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v6
+        with:
+          name: compat-guardian-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/compat-guardian/*/*/reports/guardian.json
+            ${{ runner.temp }}/compat-guardian/*/*/reports/summary.md
+            ${{ runner.temp }}/compat-guardian/*/*/reports/guardian.unvalidated.json
+            ${{ runner.temp }}/guardian-summary.json
+            ${{ runner.temp }}/guardian-summary.md
+            ${{ runner.temp }}/compat-guardian/*/*/evidence/**/*.png
+          retention-days: 7
+          if-no-files-found: warn
