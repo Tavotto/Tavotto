@@ -1051,11 +1051,10 @@ def test_an_http_exception_or_error_response_after_spawn_is_unresolved(
     _open(client, _project(tmp_path))
     monkeypatch.setattr(m, "sse_publish", lambda *a: None)
     real_thread = ai_bridge.threading.Thread
-    mode = {"kind": "abort"}
 
     class FaultyThread(real_thread):
         def start(self):
-            if str(self.name).startswith("ai-") and mode["kind"] == "abort":
+            if str(self.name).startswith("ai-"):
                 raise BadRequest("late abort")
             super().start()
 
@@ -1066,19 +1065,23 @@ def test_an_http_exception_or_error_response_after_spawn_is_unresolved(
     assert RID in _pending_rids(client)
     _wait_for(lambda: _spawned(counter) == 1)  # 进程确实起来了（起 Python 要点时间）
 
-    # ≥400 响应：真 spawn 之后，实现层返回一个带码 500
-    mode["kind"] = "ok"
-    rid2 = "rid-late-resp-00001"
+
+def test_an_error_response_after_spawn_is_unresolved(client, tmp_path, cli, monkeypatch):
+    state, counter = cli
+    state["delay"] = 0.3
+    _open(client, _project(tmp_path))
+    monkeypatch.setattr(m, "sse_publish", lambda *a: None)
     real_impl = m._ai_run_impl
+    # 真 spawn 之后，实现层返回一个带码 500
     monkeypatch.setattr(
         m, "_ai_run_impl", lambda: (real_impl(), (m.jsonify({"code": "x"}), 500))[1]
     )
-    _wait_idle()
-    _put_pending(client, rid2)
-    r = _post(client, rid=rid2)
+    _put_pending(client, RID)
+    r = _post(client, rid=RID)
     assert r.status_code == 503 and r.get_json()["code"] == "ai_request_unresolved"
-    assert rid2 in _pending_rids(client)
-    _wait_for(lambda: _spawned(counter) == 2)
+    assert RID in _pending_rids(client)
+    _wait_for(lambda: _spawned(counter) == 1)
+    _wait_idle()
 
 
 def test_failed_cleanup_after_a_pre_spawn_error_is_unresolved_not_a_definite_rejection(
