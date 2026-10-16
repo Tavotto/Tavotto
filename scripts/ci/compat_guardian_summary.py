@@ -119,6 +119,7 @@ def summarize(reports: list[dict]) -> dict:
                 "n": attempts,
                 "status_counts": dict(sorted(statuses.items())),
                 "passed": f"{statuses.get('passed', 0)}/{attempts}",
+                "controls_met": statuses.get("control_met", 0),
                 "not_covered_stage_counts": dict(sorted(uncovered.items())),
                 "not_comparable_attempts": non_comparable,
                 "dirty_runs": group["dirty_runs"],
@@ -159,6 +160,10 @@ def render_markdown(summary: dict) -> str:
             "- status: " + ", ".join(f"{k}={v}" for k, v in group["status_counts"].items()),
             f"- env: python {env.get('python', '?')}, {env.get('platform', '?')}, {env.get('machine', '?')}",
         ]
+        if group["controls_met"]:
+            lines.append(
+                f"- declared controls met: {group['controls_met']} (not counted as passed, not failures)"
+            )
         if group["not_covered_stage_counts"]:
             lines.append(
                 "- layers not covered: "
@@ -190,6 +195,16 @@ def case_markdown(report: dict) -> str:
             f"| {row['id']} | {row['status']} | {category} | {figures['native']} figs "
             f"| {figures['tavotto_valid']} valid | {execs['native']}/{execs['tavotto']} |"
         )
+    controls = [r for r in report["cases"] if r.get("expectation")]
+    if controls:
+        lines += ["", "Declared expectations (control_met is not a pass):"]
+        for row in controls:
+            exp = row["expectation"]
+            lines.append(
+                f"- {row['id']}: declared {exp['declared_outcome']}, observed "
+                f"{exp['observed_outcome']} -> {exp['result']}"
+                + (f" ({exp['diff']})" if exp["diff"] else "")
+            )
     uncovered = sorted(
         {n for r in report["cases"] for n, c in r["stages"].items() if c["status"] == "not_covered"}
     )

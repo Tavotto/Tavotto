@@ -286,40 +286,65 @@ class Case13RestrictedEntry(GuardianBase):
     """#13: a restricted (browser-mode) entry must not auto-upgrade to Native.
 
     The behavior itself is owned by tests/test_execution_fallback_e2e.py. Guardian adds
-    one thing on top: the V2 scenarios that pin Safe-only behavior may only be reported
-    as an expected limitation while they still match their recorded baseline; any change
-    (including a silent upgrade that makes the ideal pass) is failed for human review.
+    one thing on top, declaratively (tests/compat_guardian/expectations.json): the V2
+    controls that pin Safe-only behavior are `control_met` only while the observed outcome
+    equals the declared one; any change, including a result that looks better (and may be
+    a silent Native upgrade), is a mismatch and therefore `failed`.
     """
 
-    OBSERVED = {
-        "ran": True,
-        "exec_count": 1,
-        "final_phase": "action_required",
-        "outcome_kind": "failed",
-        "facts": {"facts": {}},
-        "figures_captured": 0,
-        "figures_valid": 0,
-        "titles": [],
-    }
+    OWNER = "tests/test_execution_fallback_e2e.py::test_a_browser_mode_service_never_falls_back_to_native"
+
+    def entry(self, case="s06_savefig_pil_readback"):
+        return cg.EX.find(cg.EX.load_entries(), "compat_v2", case)
+
+    def v2_row(self, status_stage="failed", baseline_match=True):
+        row = cg.new_row("s06_savefig_pil_readback", "authenticated_server_safe")
+        row["native"] = {"status": "passed", "result": native_result()}
+        row["comparable"] = True
+        row["executions"].update(native=1, tavotto=1)
+        row["figures"] = {"native": 1, "tavotto_captured": 0, "tavotto_valid": 0}
+        row["stages"]["discover"] = cg.stage("passed", "x")
+        row["stages"]["execute"] = cg.stage(status_stage, "x")
+        row["raw"] = {"baseline_match": baseline_match}
+        return row
 
     def test_owner_test_still_exists(self):
-        owner = (Path(cg.ROOT) / "tests" / "test_execution_fallback_e2e.py").read_text(
-            encoding="utf-8"
+        path, name = self.OWNER.split("::")
+        self.assertIn(f"def {name}", (Path(cg.ROOT) / path).read_text(encoding="utf-8"))
+
+    def test_declarations_exist_for_the_three_controls_and_cite_the_owner(self):
+        for case in ("s04b_savefig_tmp_replace", "s05_dynamic_rename", "s06_savefig_pil_readback"):
+            entry = self.entry(case)
+            self.assertEqual(entry["outcome"], "expected_limitation")
+            self.assertIn(self.OWNER, [r["ref"] for r in entry["references"]])
+
+    def test_observed_baseline_match_meets_the_declared_control(self):
+        result = cg.EX.evaluate(self.v2_row(), self.entry())
+        self.assertEqual(result["status"], "control_met")
+        self.assertEqual(result["expectation"]["result"], "control_met")
+        self.assertIsNone(result["category"]["category"])
+
+    def test_a_better_looking_result_is_a_mismatch_not_a_quiet_pass(self):
+        row = self.v2_row(status_stage="passed", baseline_match=False)
+        for name in cg.V2_UNCOVERED:
+            row["stages"][name] = cg.stage("not_covered", "x")
+        for name in ("capture", "open", "semantic"):
+            row["stages"][name] = cg.stage("passed", "x")
+        row["figures"]["tavotto_captured"] = 1
+        result = cg.EX.evaluate(row, self.entry())
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["expectation"]["observed_outcome"], "partial_coverage")
+        self.assertIn(
+            "declared expected_limitation but observed partial_coverage",
+            result["expectation"]["diff"],
         )
-        self.assertIn("def test_a_browser_mode_service_never_falls_back_to_native", owner)
 
-    def test_matching_baseline_is_expected_limitation_not_failure(self):
-        stages = cg.v2_stages(self.OBSERVED, {}, ["ideal not met"], "match")
-        self.assertEqual(stages["execute"]["status"], "expected_limitation")
-        self.assertIn("case 13", stages["execute"]["criterion"])
+    def test_a_worse_result_off_baseline_is_a_mismatch(self):
+        result = cg.EX.evaluate(self.v2_row(baseline_match=False), self.entry())
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["category"]["source_code"], "expectation_mismatch")
 
-    def test_deviation_from_the_baseline_is_failed_even_if_it_looks_better(self):
-        upgraded = {**self.OBSERVED, "final_phase": "completed", "outcome_kind": "succeeded"}
-        stages = cg.v2_stages(upgraded, {}, [], "deviates")
-        self.assertEqual(stages["execute"]["status"], "failed")
-        self.assertIn("silent Native upgrade", stages["execute"]["criterion"])
-
-    def test_only_the_registered_controls_get_the_allowance(self):
-        for cid in cg.RESTRICTED_ENTRY_CONTROLS:
-            self.assertIn(cid, cg.registered("compat_v2"))
-        self.assertNotIn("s25_partial_capture", cg.RESTRICTED_ENTRY_CONTROLS)
+    def test_without_a_declaration_a_baseline_gap_stays_failed(self):
+        row = self.v2_row()
+        self.assertIsNone(cg.EX.find(cg.EX.load_entries(), "compat_v2", "s25_partial_capture"))
+        self.assertEqual(cg.case_status(row), "failed")

@@ -85,7 +85,13 @@ def attribute(row: dict) -> dict:
     gets a category, `unknown` included, so a non-green row is never unlabeled.
     """
     status = row["status"]
-    if status in ("passed", "expected_limitation", "partial_coverage", "not_reproduced"):
+    if status in (
+        "passed",
+        "expected_limitation",
+        "partial_coverage",
+        "not_reproduced",
+        "control_met",
+    ):
         return {
             "category": None,
             "source_code": None,

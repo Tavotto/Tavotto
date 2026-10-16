@@ -115,6 +115,7 @@ class GuardianBase(unittest.TestCase):
             "evidence": cg.evidence_refs(self.ev),
             "verdict": "passed",
             "coverage": cg.coverage_table([self.row]),
+            "expectations_sha256": cg.EX.file_digest(),
             "unverified": ["all product behavior"],
             "duration_s": 1.0,
         }

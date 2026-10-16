@@ -19,6 +19,7 @@ on:
       - 'scripts/ci/compat_driver.py'
       - 'tests/compat/guardian-report.schema.json'
       - 'tests/test_compat_guardian*.py'
+      - 'tests/compat_guardian/**'
       - 'docs/ci/compat-guardian.md'
   workflow_dispatch:
   schedule:
@@ -43,7 +44,7 @@ jobs:
     # dispatch、schedule 照常。fork PR 即使被放行，token 也只读且拿不到 secrets，这条是纵深防御。
     if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 25
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@v5
         with:
@@ -67,7 +68,7 @@ jobs:
           python scripts/fetch_fonts.py
           python scripts/fetch_fonts.py --check
       - name: Guardian contract tests
-        run: python -m pytest -p no:cacheprovider -q tests/test_compat_guardian.py tests/test_compat_guardian_adversarial.py tests/test_compat_guardian_summary.py
+        run: python -m pytest -p no:cacheprovider -q tests/test_compat_guardian*.py
       - name: Guardian engine suite (reviewed fixtures)
         timeout-minutes: 8
         shell: bash
@@ -86,15 +87,14 @@ jobs:
             4) echo "::warning::engine suite: no failure but not a clean pass (see summary)" ;;
             *) echo "::error::engine suite exited $code"; tail -n 30 "$RUNNER_TEMP/engine.out"; exit "$code" ;;
           esac
-      - name: Guardian server Safe suite (reviewed fixtures)
+      - name: Guardian server Safe suite (all V2 scenarios)
         if: ${{ !cancelled() }}
-        timeout-minutes: 8
+        timeout-minutes: 12
         shell: bash
         run: |
           set +e
           python scripts/ci/compat_guardian.py run --suite compat_v2 \
-            --case s01_plain,s04_replace_readback,s04b_savefig_tmp_replace,s05_dynamic_rename,s06_savefig_pil_readback,s27_import_pil_present \
-            --expected-sha "$GITHUB_SHA" --timeout 60 \
+            --expected-sha "$GITHUB_SHA" --timeout 90 \
             --out "$RUNNER_TEMP/compat-guardian/v2" > "$RUNNER_TEMP/v2.out" 2>&1
           code=$?
           set -e

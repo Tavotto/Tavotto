@@ -36,6 +36,7 @@ FILES_THE_PR_FILTER_MAY_NAME = (
     "scripts/ci/compat_driver.py",
     "tests/compat/guardian-report.schema.json",
     "tests/test_compat_guardian",
+    "tests/compat_guardian/",
     "docs/ci/compat-guardian.md",
 )
 
@@ -155,13 +156,15 @@ def test_public_log_only_gets_status_lines_not_raw_output():
             assert "tail -n 30" in step, "a failing exit shows a bounded tail only"
 
 
-def test_every_listed_case_is_a_registered_reviewed_fixture():
-    runs = re.findall(r"--suite (\w+) \\\n\s+--case (\S+) \\", code())
-    assert len(runs) == 2, runs
-    for suite, cases in runs:
-        registry = cg.registered(suite)
-        for case in cases.split(","):
-            assert case in registry, f"{suite}: {case} is not a registered case"
+def test_listed_cases_are_registered_and_the_v2_run_is_the_whole_suite():
+    engine = re.search(r"--suite compat_engine \\\n\s+--case (\S+) \\", code())
+    assert engine, "engine run must pin its case list"
+    registry = cg.registered("compat_engine")
+    for case in engine.group(1).split(","):
+        assert case in registry, f"compat_engine: {case} is not a registered case"
+    v2 = re.search(r"(?s)--suite compat_v2(.*?)--out", code()).group(1)
+    assert "--case" not in v2, "the V2 run must cover every scenario, not a hand-picked subset"
+    assert len(re.findall(r"--suite (\w+)", code())) == 2
 
 
 def test_runs_have_timeouts():
@@ -191,6 +194,7 @@ def test_guardian_infrastructure_changes_have_code_owners():
         "/scripts/ci/compat_guardian*",
         "/scripts/ci/guardian_exec_observer.py",
         "/tests/test_compat_guardian*",
+        "/tests/compat_guardian/**",
         "/.github/workflows/compat-guardian.yml",
         "/docs/ci/compat-guardian.md",
     ):

@@ -63,7 +63,16 @@ STATUSES = (
 )
 #: Row-level extra state: every exercised layer passed with valid proof, but the
 #: adapter does not exercise at least one required layer. Not a pass, not a failure.
-ROW_STATUSES = (*STATUSES, "partial_coverage")
+#: `control_met` is assigned only by a committed expectation (tests/compat_guardian/
+#: expectations.json) whose declared outcome equals the observed one. Not a pass.
+ROW_STATUSES = (*STATUSES, "partial_coverage", "control_met")
+GREEN_STATUSES = (
+    "passed",
+    "expected_limitation",
+    "partial_coverage",
+    "not_reproduced",
+    "control_met",
+)
 #: Stage-level extra state: this adapter does not drive that layer at all (distinct
 #: from `not_run`, which means the layer was in scope but did not execute).
 STAGE_STATUSES = (*STATUSES, "not_covered")
@@ -190,6 +199,7 @@ def registered(suite: str) -> dict[str, dict]:
         if suite == "compat_engine"
         else ["tests/support/compat_v2_scenarios.py", "tests/support/compatbench_v2.py"]
     )
+    metadata = [*metadata, EX.RELATIVE_PATH, EX.SCHEMA_RELATIVE_PATH]
     for rel in metadata:
         blob = subprocess.check_output(["git", "show", f"HEAD:{rel}"], cwd=ROOT)
         if contained(ROOT, rel).read_bytes() != blob:
@@ -336,6 +346,7 @@ def new_row(cid: str, layer: str, before: dict | None = None) -> dict:
             "basis": "not determined: the case did not reach a point where this is known",
         },
         "failure_category": {"category": None, "source_code": None, "basis": "not attributed"},
+        "expectation": None,
         "environment_before": env,
         "environment_after": env,
         "product_classification": None,
@@ -369,6 +380,9 @@ def case_status(row: dict) -> str:
         return "failed"
     if "failed" in statuses:
         return "failed"
+    native_figs, captured = row["figures"]["native"], row["figures"]["tavotto_captured"]
+    if native_figs == 0 and type(captured) is int and captured > 0:
+        return "failed"  # Tavotto shows figures the native run never produced
     if row.get("product_classification") == "product_bug":
         return "unknown"  # a legacy label alone is not independent failure evidence
     if row["executions"]["tavotto"] in (None, 0):
@@ -391,10 +405,12 @@ def verdict(rows: list[dict]) -> str:
         return "failed"
     if all(s == "passed" for s in statuses):
         return "passed"
-    if all(s in ("passed", "partial_coverage", "expected_limitation") for s in statuses):
-        # Decided, nothing failed, but not a clean pass: either an exercised-layers-only
-        # pass (partial_coverage wins, it is the weaker claim) or declared limitations.
-        return "partial_coverage" if "partial_coverage" in statuses else "expected_limitation"
+    decided = ("passed", "partial_coverage", "expected_limitation", "control_met")
+    if all(s in decided for s in statuses):
+        # Decided, nothing failed, not a clean pass. Report the weakest claim present.
+        for weakest in ("partial_coverage", "expected_limitation", "control_met"):
+            if weakest in statuses:
+                return weakest
     if all(s == "environment_unavailable" for s in statuses):
         return "environment_unavailable"
     if all(s == "invalid_fixture" for s in statuses):
@@ -408,6 +424,7 @@ def exit_code_for(outcome: str) -> int:
         "failed": EXIT_FAILED,
         "partial_coverage": EXIT_PARTIAL,
         "expected_limitation": EXIT_PARTIAL,
+        "control_met": EXIT_PARTIAL,
     }.get(outcome, EXIT_UNKNOWN)
 
 
@@ -450,13 +467,15 @@ def _native_status(result: dict) -> str:
         if Path(a.get("path", "")).suffix.lower() in FIGURE_SUFFIXES
     ):
         return "invalid_fixture"
-    if type(result.get("figure_count")) is not int or result["figure_count"] < 1:
-        return "unknown"  # nothing to compare against; not a native failure either
+    if type(result.get("figure_count")) is not int:
+        return "unknown"
+    # Zero figures is a valid native outcome (a script that draws nothing). Whether Tavotto
+    # agrees is judged against it: see the disagreement rule in case_status().
     return "passed"
 
 
 def v2_stages(
-    observed: dict, native: dict, ideal_missing: list, restricted_control: str | None = None
+    observed: dict, native: dict, ideal_missing: list, designed_stop: bool = False
 ) -> dict:
     """Project actual outcomes, keeping invocation counts distinct from success.
 
@@ -503,31 +522,15 @@ def v2_stages(
             "passed" if good else "failed",
             "V2 explicit scientific title/shape/count oracle AND native title comparison",
         )
-    if restricted_control == "match":
-        why = (
-            "restricted-entry control (case 13): observed shape equals the recorded main "
-            "baseline; a browser-mode session must stay Safe and must not auto-upgrade to Native"
-        )
+    if designed_stop and invoked and not ideal_missing:
+        # The V2 oracle for a stop scenario was met exactly (one execution, explicit reason
+        # code, no figure, no fallback): Tavotto stopped by design, which is a declared
+        # limitation of the script's outcome, not a pass and not a defect.
+        why = "designed stop: the V2 stop oracle was met exactly (reason code, no figure, no fallback)"
         for name in ("execute", "capture", "open", "semantic"):
             stages[name] = stage("expected_limitation", why)
-    elif restricted_control == "deviates":
-        stages["execute"] = stage(
-            "failed",
-            "restricted-entry control deviates from its recorded baseline: any change "
-            "(better or worse) needs human review; it may be a silent Native upgrade",
-        )
     return stages
 
-
-#: V2 scenarios that are deliberate controls for "a restricted (non-desktop) entry must not
-#: upgrade to Native" (acceptance case 13): they pin Safe-only behavior and are not
-#: defects to fix. Only these ids may be reported expected_limitation, and only while
-#: the observed shape equals the recorded main baseline.
-RESTRICTED_ENTRY_CONTROLS = (
-    "s04b_savefig_tmp_replace",
-    "s05_dynamic_rename",
-    "s06_savefig_pil_readback",
-)
 
 #: Layers the V2 session adapter does not drive (docs/ci/compat-guardian.md, "Coverage").
 V2_UNCOVERED = ("edit", "replay", "export", "fidelity")
@@ -742,11 +745,11 @@ def _execute(request: dict) -> dict:
         baseline = cs.SCENARIOS[cid].main_baseline
         match = None if baseline is None else cs.baseline_shape(obs) == baseline
         row["raw"]["baseline_match"] = match
-        control = None
-        if cid in RESTRICTED_ENTRY_CONTROLS:
-            control = "match" if match and row["raw"]["ideal_missing"] else "deviates"
         row["stages"] = v2_stages(
-            row["raw"]["observed"], native, row["raw"]["ideal_missing"], control
+            row["raw"]["observed"],
+            native,
+            row["raw"]["ideal_missing"],
+            designed_stop=cs.SCENARIOS[cid].ideal_outcome == "stop_no_fallback",
         )
         row["figures"]["tavotto_captured"] = obs.figures_captured
         row["figures"]["tavotto_valid"] = obs.figures_valid
@@ -907,6 +910,7 @@ def validate_report(report: dict, evidence_root: Path, expected: dict | None = N
         "evidence",
         "verdict",
         "coverage",
+        "expectations_sha256",
         "unverified",
         "duration_s",
     }
@@ -929,6 +933,9 @@ def validate_report(report: dict, evidence_root: Path, expected: dict | None = N
     if sorted(r["id"] for r in rows) != sorted(ids):
         raise EvidenceError("case set is incomplete/duplicated")
     registry = registered(report["suite"])
+    entries = EX.load_entries()
+    if report["expectations_sha256"] != EX.file_digest():
+        raise EvidenceError("expectations digest does not match the committed declaration file")
     fixture_map = {}
     for row in rows:
         if row["id"] not in registry:
@@ -949,18 +956,28 @@ def validate_report(report: dict, evidence_root: Path, expected: dict | None = N
             for s in row["stages"].values()
         ):
             raise EvidenceError("missing stage status/criterion")
+        entry = EX.find(entries, report["suite"], row["id"])
+        resolved = None if entry is None else EX.evaluate(row, entry)
+        if row["expectation"] != (None if resolved is None else resolved["expectation"]):
+            raise EvidenceError("expectation block does not follow from the committed declaration")
+        if resolved is not None and (
+            row["status"] != resolved["status"] or row["failure_category"] != resolved["category"]
+        ):
+            raise EvidenceError("row status does not follow from its declared expectation")
+        mismatch = resolved is not None and resolved["status"] == "failed"
+        if row["status"] == "control_met" and resolved is None:
+            raise EvidenceError("control_met without a committed declaration")
         category = row["failure_category"]["category"]
         if category is not None and category not in TX.CATEGORIES:
             raise EvidenceError("unknown failure category")
-        if (category is None) != (
-            row["status"] in ("passed", "expected_limitation", "partial_coverage", "not_reproduced")
-        ):
+        if (category is None) != (row["status"] in GREEN_STATUSES):
             raise EvidenceError("failure category must be set exactly on non-green rows")
         if row["status"] == "partial_coverage" and not any(
             s["status"] == "not_covered" for s in row["stages"].values()
         ):
             raise EvidenceError("partial_coverage without a not_covered layer")
-        if row["status"] in PROOF_STATUSES and _native_status(row["native"]["result"]) != "passed":
+        proof = row["status"] in PROOF_STATUSES and not mismatch
+        if proof and _native_status(row["native"]["result"]) != "passed":
             raise EvidenceError("native reference does not support a product verdict")
         if row["native"]["status"] != _native_status(row["native"]["result"]) and row["native"][
             "status"
@@ -970,9 +987,9 @@ def validate_report(report: dict, evidence_root: Path, expected: dict | None = N
             count = row["executions"][key]
             if count is not None and (type(count) is not int or count < 0):
                 raise EvidenceError("invalid execution count")
-        if row["status"] in PROOF_STATUSES and row["status"] != case_status(row):
+        if proof and row["status"] != case_status(row):
             raise EvidenceError("verdict lacks native/count/environment/stage proof")
-        if row["status"] in PROOF_STATUSES:
+        if proof:
             env = row["environment_before"]
             if (
                 not env.get("fingerprint")
@@ -993,7 +1010,7 @@ def validate_report(report: dict, evidence_root: Path, expected: dict | None = N
                     fps.add(item["fingerprint"])
             if len(fps) != 1:
                 raise EvidenceError("native and Tavotto launch environments differ")
-        if row["status"] == "failed" and row["native"]["status"] != "passed":
+        if row["status"] == "failed" and not mismatch and row["native"]["status"] != "passed":
             raise EvidenceError("native failure is not a Tavotto defect")
     if report["verdict"] != verdict(rows):
         raise EvidenceError("incorrect aggregate verdict")
@@ -1050,6 +1067,7 @@ def run(args) -> int:
     ):
         raise EvidenceError("GITHUB_SHA disagrees with actual HEAD")
     registry = registered(args.suite)
+    entries = EX.load_entries()
     ids = args.case.split(",") if args.case else list(registry)
     if not ids or len(set(ids)) != len(ids) or any(i not in registry for i in ids):
         raise EvidenceError("empty/duplicate/unknown case selection")
@@ -1116,6 +1134,14 @@ def run(args) -> int:
                     {k: v for k, v in fixtures[cid].items() if not k.endswith(".py")}
                 ),
             }
+            entry = EX.find(entries, args.suite, cid)
+            if entry is not None:
+                resolved = EX.evaluate(row, entry)
+                row.update(
+                    expectation=resolved["expectation"],
+                    status=resolved["status"],
+                    failure_category=resolved["category"],
+                )
             rows.append(row)
             print(f"{cid}: {row['status']}", flush=True)
     if source_state() != initial:
@@ -1132,6 +1158,7 @@ def run(args) -> int:
         "evidence": evidence_refs(evidence),
         "verdict": verdict(rows),
         "coverage": coverage_table(rows),
+        "expectations_sha256": EX.file_digest(),
         "duration_s": round(time.monotonic() - started, 3),
         "unverified": [
             "real WebView2/WKWebView",
@@ -1232,6 +1259,7 @@ def main(argv=None) -> int:
         return 2
 
 
+import compat_guardian_expectations as EX  # noqa: E402
 import compat_guardian_summary as SM  # noqa: E402  (circular by design; bottom import)
 
 if __name__ == "__main__":

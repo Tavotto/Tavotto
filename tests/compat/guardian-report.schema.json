@@ -76,6 +76,9 @@
           "minimum": 0
         }
       }
+    },
+    "expectations_sha256": {
+      "$ref": "#/$defs/sha256"
     }
   },
   "required": [
@@ -91,7 +94,8 @@
     "verdict",
     "unverified",
     "duration_s",
-    "coverage"
+    "coverage",
+    "expectations_sha256"
   ],
   "additionalProperties": false,
   "$defs": {
@@ -581,6 +585,71 @@
             "basis"
           ],
           "additionalProperties": false
+        },
+        "expectation": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "properties": {
+            "declared_outcome": {
+              "type": "string",
+              "minLength": 1
+            },
+            "observed_outcome": {
+              "type": "string",
+              "minLength": 1
+            },
+            "result": {
+              "enum": [
+                "control_met",
+                "mismatch"
+              ]
+            },
+            "reason": {
+              "type": "string",
+              "minLength": 1
+            },
+            "references": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "enum": [
+                      "issue",
+                      "test"
+                    ]
+                  },
+                  "ref": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "kind",
+                  "ref"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "diff": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "declared_outcome",
+            "observed_outcome",
+            "result",
+            "reason",
+            "references",
+            "diff"
+          ],
+          "additionalProperties": false
         }
       },
       "required": [
@@ -602,7 +671,8 @@
         "figures",
         "timings_s",
         "needs_authorization",
-        "failure_category"
+        "failure_category",
+        "expectation"
       ],
       "additionalProperties": false
     },
@@ -617,9 +687,10 @@
         "not_run",
         "invalid_fixture",
         "unknown",
-        "partial_coverage"
+        "partial_coverage",
+        "control_met"
       ],
-      "description": "Case/report outcome. partial_coverage = every exercised layer passed with valid proof but at least one required layer is not_covered by the adapter. It is NOT a pass: it never counts toward the passed numerator."
+      "description": "Case/report outcome. partial_coverage = every exercised layer passed with valid proof but at least one required layer is not_covered by the adapter. It is NOT a pass: it never counts toward the passed numerator. control_met = a committed declaration (tests/compat_guardian/expectations.json) predicted exactly this observed outcome; it is neither a pass nor a failure."
     },
     "stage_status": {
       "type": "string",
