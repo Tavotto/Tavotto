@@ -17,7 +17,7 @@
  * **已知限制**：页面真的关掉（pagehide）时发出的 keepalive 也可能失败，那一刻内存里的发件箱随页面消失；
  * 不用 localStorage 兜底（规格禁止拿它代替持久化设计）。丢的只有「最后一次防抖窗口内、且最后一次 keepalive 也失败」的那一版。
  */
-import { nextWriteStamp, saveDraftStamped, type SaveResult } from './aiDraft'
+import { nextWriteStamp, saveDraftStamped, textHash, type SaveResult } from './aiDraft'
 
 /** 打字停多久才写后端：每个键都发请求没必要，丢的也只是最后半秒（pagehide 会冲刷） */
 export const WRITE_DEBOUNCE_MS = 600
@@ -55,8 +55,6 @@ interface Entry {
    * （否则 A 在途时 B 被保存、对账把 B 的戳读进来，A 的 stale 就被误判成「已知」而盖掉 B）。
    */
   baseStamp?: number
-  /** 本页为**这个戳**（这一版当前的写入戳）发出过几次尝试（普通 PUT 加 pagehide 的 keepalive 等）；换戳（提升重写）时清零 */
-  attempts: number
 }
 
 interface Slot {
@@ -131,7 +129,6 @@ export function post(project: string, fileId: string, text: string): void {
     version: ++versionCounter,
     retries: 0,
     staleRetries: 0,
-    attempts: 0,
     // 这一版的基线：编辑发生此刻本页已知的最新服务器戳；基线未知（首读失败、还没有写成功过）就是 undefined
     baseStamp: slot.unknown ? undefined : slot.known,
   }
@@ -214,39 +211,70 @@ function send(slot: Slot, keepalive: boolean): Promise<'accepted' | 'unavailable
   clearTimers(entry)
   if (slot.inflight && !keepalive) return slot.inflight // 在途的落地时会检查并补发更新的版本
   const v = entry.version
-  entry.attempts++
   const attempt = saveDraftStamped(slot.project, slot.fileId, entry.text, keepalive, entry.stamp)
   if (keepalive) {
     // keepalive 是「发出去就不管」的尽力尝试：**不替换被跟踪的普通请求**（它的连接半开挂住时，原来那次普通请求
-    // 成功了也清不掉 inflight，之后的编辑就永远复用一个卡住的 promise）。它只在落地时参与 `attempts` 判定与槽的收尾
-    return attempt.then(({ result, stamp }) => land(slot, v, result, stamp))
+    // 成功了也清不掉 inflight，之后的编辑就永远复用一个卡住的 promise）。它只在落地时参与「等戳同内容」判定与槽的收尾
+    return attempt.then(({ result, stamp, textHash }) => land(slot, v, result, stamp, textHash))
   }
   // 普通请求：inflight 只跟踪它，并加超时。超时后按 unavailable 走重试；迟到的真实结果仍然会落地（可能已经写成功了）
   let timedOut = false
   let timer: ReturnType<typeof setTimeout> | undefined
-  const timeout = new Promise<{ result: SaveResult; stamp?: number }>((resolve) => {
+  const timeout = new Promise<{ result: SaveResult; stamp?: number; textHash?: string }>((resolve) => {
     timer = setTimeout(() => {
       timedOut = true
       resolve({ result: 'unavailable' })
     }, INFLIGHT_TIMEOUT_MS)
   })
-  const p: Promise<'accepted' | 'unavailable' | 'abandoned'> = Promise.race([attempt, timeout]).then(({ result, stamp }) => {
+  const p: Promise<'accepted' | 'unavailable' | 'abandoned'> = Promise.race([attempt, timeout]).then(({ result, stamp, textHash }) => {
     clearTimeout(timer)
     if (slot.inflight === p) slot.inflight = null
-    return land(slot, v, result, stamp)
+    return land(slot, v, result, stamp, textHash)
   })
-  void attempt.then(({ result, stamp }) => {
-    if (timedOut) void land(slot, v, result, stamp) // 超时之后才回来的结果也要处理（它可能已经把这一版写成功了）
+  void attempt.then(({ result, stamp, textHash }) => {
+    if (timedOut) void land(slot, v, result, stamp, textHash) // 超时之后才回来的结果也要处理（它可能已经把这一版写成功了）
   })
   slot.inflight = p
   return p
 }
 
+/**
+ * 一次落地（不论结果、不论是不是最新版本）：先按结果处理（`landCore`），然后统一过**槽不变式**——
+ * 槽里还有未落定的版本，却既没有在途请求、也没有任何定时器（防抖 / 重试），就补一个，不逐个分支去补。
+ * 典型的漏洞：A 在途时编辑出 B，B 的防抖到点后复用了 A 的 promise（清掉了自己的定时器）；A 落地为 unavailable，
+ * 因为 A 已不是最新版本不安排重试，B 就既没有防抖也没有重试，永远挂在发件箱里。
+ */
 async function land(
   slot: Slot,
   v: number,
   result: SaveResult,
   serverStamp: number | undefined,
+  serverHash?: string,
+): Promise<'accepted' | 'unavailable' | 'abandoned'> {
+  const r = await landCore(slot, v, result, serverStamp, serverHash)
+  ensureScheduled(slot, r)
+  return r
+}
+
+function ensureScheduled(slot: Slot, last: 'accepted' | 'unavailable' | 'abandoned'): void {
+  const e = slot.entry
+  if (!e || slot.inflight) return
+  if (e.debounce || e.retry) return
+  if (last === 'unavailable') {
+    beginFailing(slot)
+    e.retries++
+    e.retry = setTimeout(() => void send(slot, false), retryDelay(e.retries))
+  } else {
+    void send(slot, false)
+  }
+}
+
+async function landCore(
+  slot: Slot,
+  v: number,
+  result: SaveResult,
+  serverStamp: number | undefined,
+  serverHash: string | undefined,
 ): Promise<'accepted' | 'unavailable' | 'abandoned'> {
   const entry = slot.entry
   const latest = !!entry && entry.version === v
@@ -265,10 +293,18 @@ async function land(
 
   // 同一版本的另一次尝试（普通 PUT 与 pagehide keepalive 重叠）先写进去了：服务器回 stale，但它那一行的戳
   // **就是这一版自己的戳**——这是本版本已被接受，不是别处的写入。按已接受收尾，不能当成跨标签页替换而放弃。
-  // 两个条件缺一不可：(1) 戳相等（两个页面的戳由 client 段区分，不可能相等）；(2) 本页确实为这个戳发出过**不止一次**尝试——
-  // 只发过一次的 stale 即使戳相等也不能算「自己的重复尝试先落地」，按普通 stale 规则走
-  //（放弃会让 draftSnapshot 在对账完成前拿到上一版的戳，提交记错戳、被接受后清不掉草稿）
-  if (result === 'stale' && entry && latest && serverStamp !== undefined && serverStamp === entry.stamp && entry.attempts > 1)
+  // 判据只有一条：**戳相等 且 服务器那一行的文本哈希等于本版文本的哈希**（内容身份，不靠本地计数）。
+  // client 段只有 10 位，两个页面仍有 1/1024 的同戳概率——戳相等但内容不同的是别的页面赢了，按普通 stale 规则走（放弃，交给对账）。
+  //（误放弃会让 draftSnapshot 在对账完成前拿到上一版的戳，提交记错戳、被接受后清不掉草稿）
+  if (
+    result === 'stale' &&
+    entry &&
+    latest &&
+    serverStamp !== undefined &&
+    serverStamp === entry.stamp &&
+    serverHash !== undefined &&
+    serverHash === textHash(entry.text)
+  )
     result = 'saved'
 
   if (result === 'stale') {
@@ -290,7 +326,6 @@ async function land(
     }
     // 无论是否到上限都**推进戳**：`observeStamp` 已被 stale 回的服务器戳抬高下限，新戳一定比它大
     entry.stamp = nextWriteStamp()
-    entry.attempts = 0 // 换了新戳：重新数
     if (++entry.staleRetries > MAX_STALE_RETRIES) {
       // 有界：两端互相压戳时别立刻再冲一轮——退避一段时间后**重新走一遍完整的 stale 判定**（计数清零；仍可提升就用上面推进过的新戳重写）。
       // 这种状态也算「连续失败」：超过一分钟就出灰字，不是静默循环

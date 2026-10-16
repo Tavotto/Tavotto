@@ -4,7 +4,7 @@
  * 替身是 fetch 层：发件箱在全局 setup 里已被加载，模块 mock 换不掉它对 `./aiDraft` 的引用。
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { __resetWriteStampForTests } from './aiDraft'
+import { __resetWriteStampForTests, textHash } from './aiDraft'
 import * as outbox from './aiDraftOutbox'
 
 const puts: { text: string; stamp: number }[] = []
@@ -44,49 +44,109 @@ afterEach(() => {
 const jsonResp = (body: unknown) =>
   new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' } })
 
-describe('aiDraftOutbox · 同一版本的重复写入', () => {
-  it('同一版本发过不止一次尝试（keepalive 先挂住，普通 PUT 又发）、本次回 stale 且服务器戳等于本版的戳：按已接受收尾', async () => {
-    const events: string[] = []
-    outbox.subscribe('p', 'f', (e) => events.push(e.kind))
-    outbox.advance('p', 'f', 1) // 基线已知：没有这条修复时会被判为「别处写了更新稿」而放弃
-    outbox.post('p', 'f', 'v1')
-    let sent = 0
+describe('aiDraftOutbox · 同一版本的重复写入：戳相等且文本哈希相同才算已接受', () => {
+  const putStale = (hashOf: (body: { text: string }) => string) => {
     const real = globalThis.fetch
     globalThis.fetch = (async (url: unknown, init?: RequestInit) => {
       if (String(url).includes('/api/ai/drafts') && init?.method === 'PUT') {
         const body = JSON.parse(String(init.body)) as { text: string; stamp: number }
         puts.push({ text: body.text, stamp: body.stamp })
-        sent++
-        if (sent === 1) return new Promise<Response>(() => {}) // 第一次尝试（keepalive）一直不回
-        return jsonResp({ revision: 1, stamp: body.stamp, stale: true }) // 另一次同版本尝试先落地了：stale，戳 = 自己的戳
+        // 服务器回 stale：戳等于这次 PUT 自己带的戳；`text_hash` 是服务器那一行当前文本的哈希
+        return jsonResp({ revision: 1, stamp: body.stamp, stale: true, text_hash: hashOf(body) })
       }
       return real(url as RequestInfo, init)
     }) as typeof fetch
-    void outbox.flush('p', 'f', true) // keepalive：尝试 1（挂住）
-    await outbox.flush('p', 'f') // 普通 PUT：尝试 2 → stale 且戳相等
-    expect(sent).toBe(2) // 没有换戳重写
+  }
+
+  it('等戳且同内容（自己的另一次尝试先落地）：按已接受收尾，不换戳重写、不放弃', async () => {
+    const events: string[] = []
+    outbox.subscribe('p', 'f', (e) => events.push(e.kind))
+    outbox.advance('p', 'f', 1) // 基线已知：没有这条规则时会被判为「别处写了更新稿」而放弃
+    outbox.post('p', 'f', 'v1')
+    putStale((b) => textHash(b.text))
+    await outbox.flush('p', 'f')
+    expect(puts).toHaveLength(1) // 没有换戳重写
     expect(events).toContain('accepted')
     expect(events).not.toContain('abandoned')
     expect(outbox.peek('p', 'f')).toBeNull()
   })
 
-  it('等戳但本页只为这个版本发过一次尝试：不是「自己的重复尝试先落地」，按普通 stale 规则走（基线之外的写入 → 放弃）', async () => {
+  it('等戳但内容不同（别的页面碰巧同戳、赢了）：按普通 stale 规则走——放弃，交给对账；哪怕只发过一次以上尝试也一样', async () => {
     const events: string[] = []
     outbox.subscribe('p', 'f', (e) => events.push(e.kind))
     outbox.advance('p', 'f', 1)
     outbox.post('p', 'f', 'v1')
+    putStale(() => textHash('别的页面的另一份文本'))
+    void outbox.flush('p', 'f', true) // 先有过一次 keepalive 尝试（以前靠 attempts > 1 会在这里误判成已接受）
+    await outbox.flush('p', 'f')
+    expect(events).not.toContain('accepted') // 对照：只看戳 / 计数会把输掉的 PUT 误判成已保存
+    expect(events.at(-1)).toBe('abandoned')
+  })
+
+  it('stale 响应没带 text_hash（老后端）：不能确认是同一份内容，按普通 stale 规则走', async () => {
+    const events: string[] = []
+    outbox.subscribe('p', 'f', (e) => events.push(e.kind))
+    outbox.advance('p', 'f', 1)
+    outbox.post('p', 'f', 'v1')
+    putStale(() => undefined as unknown as string)
+    await outbox.flush('p', 'f')
+    expect(events.at(-1)).toBe('abandoned')
+  })
+})
+
+describe('aiDraftOutbox · 槽不变式', () => {
+  beforeEach(() => vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] }))
+  afterEach(() => vi.useRealTimers())
+
+  it('A 在途时编辑出 B，B 的防抖到期后复用 A 的 promise；A 落地为 unavailable——不靠 focus / online，B 也按退避写成功', async () => {
+    outbox.advance('p', 'f', 1)
+    let n = 0
+    let failFirst!: () => void
     const real = globalThis.fetch
     globalThis.fetch = (async (url: unknown, init?: RequestInit) => {
       if (String(url).includes('/api/ai/drafts') && init?.method === 'PUT') {
         const body = JSON.parse(String(init.body)) as { text: string; stamp: number }
         puts.push({ text: body.text, stamp: body.stamp })
-        return jsonResp({ revision: 1, stamp: body.stamp, stale: true }) // 戳相等，但只发过一次（别的页面碰巧同戳的情形）
+        n++
+        if (n === 1) return new Promise<Response>((_, rej) => (failFirst = () => rej(new TypeError('down')))) // A 在途
+        return jsonResp({ revision: 1, stamp: body.stamp })
       }
       return real(url as RequestInfo, init)
     }) as typeof fetch
-    await outbox.flush('p', 'f')
-    expect(events).not.toContain('accepted') // 对照：只看戳相等会把输掉的 PUT 误判成已保存
-    expect(events.at(-1)).toBe('abandoned')
+    outbox.post('p', 'f', 'A')
+    await vi.advanceTimersByTimeAsync(outbox.WRITE_DEBOUNCE_MS + 10) // A 发出，在途
+    outbox.post('p', 'f', 'B') // 编辑出 B
+    await vi.advanceTimersByTimeAsync(outbox.WRITE_DEBOUNCE_MS + 10) // B 的防抖到期：复用 A 的 promise，清掉自己的定时器
+    failFirst() // A 落地为 unavailable（不是最新版本，自己不安排重试）
+    await vi.advanceTimersByTimeAsync(10)
+    await vi.advanceTimersByTimeAsync(outbox.RETRY_MS + 10) // 只靠退避定时器，没有 focus / online
+    expect(puts.map((x) => x.text)).toEqual(['A', 'B']) // 对照：没有槽不变式时 B 永远挂在发件箱里
+    expect(outbox.has('p', 'f')).toBe(false)
+  })
+
+  it('A 在途时编辑出 B，A 落地为其他结果（已接受）：B 立即发送，不等任何定时器', async () => {
+    outbox.advance('p', 'f', 1)
+    let n = 0
+    let okFirst!: () => void
+    const real = globalThis.fetch
+    globalThis.fetch = (async (url: unknown, init?: RequestInit) => {
+      if (String(url).includes('/api/ai/drafts') && init?.method === 'PUT') {
+        const body = JSON.parse(String(init.body)) as { text: string; stamp: number }
+        puts.push({ text: body.text, stamp: body.stamp })
+        n++
+        if (n === 1) return new Promise<Response>((r) => (okFirst = () => r(jsonResp({ revision: 1, stamp: body.stamp }))))
+        return jsonResp({ revision: 1, stamp: body.stamp })
+      }
+      return real(url as RequestInfo, init)
+    }) as typeof fetch
+    outbox.post('p', 'f', 'A')
+    await vi.advanceTimersByTimeAsync(outbox.WRITE_DEBOUNCE_MS + 10)
+    outbox.post('p', 'f', 'B')
+    await vi.advanceTimersByTimeAsync(outbox.WRITE_DEBOUNCE_MS + 10)
+    okFirst()
+    await vi.advanceTimersByTimeAsync(10)
+    expect(puts.map((x) => x.text)).toEqual(['A', 'B'])
+    expect(outbox.has('p', 'f')).toBe(false)
   })
 })
 

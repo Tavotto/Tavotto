@@ -4,6 +4,8 @@
  * 判与删、20 KB 上限 413、每面板 8 条账本）。真后端的语义在 `tests/test_ai_drafts.py` 钉死；这里的替身只
  * 让前端用例能看见「后端此刻存着什么」，也能模拟失败。
  */
+import { textHash } from '@/lib/aiDraft'
+
 export interface DraftBackend {
   /** 命中草稿相关路由返回 Response，否则 null（调用方继续处理别的路径） */
   handle: (url: string, init?: RequestInit) => Response | Promise<Response> | null
@@ -153,7 +155,8 @@ export function createDraftBackend(): DraftBackend {
           const text = String(body.text)
           const stamp = typeof body.stamp === 'number' ? body.stamp : Date.now() * 1000
           const prev = stamps.get(key(pj, file))
-          if (prev !== undefined && stamp <= prev) return json({ stale: true, revision: 1, stamp: prev })
+          if (prev !== undefined && stamp <= prev)
+            return json({ stale: true, revision: 1, stamp: prev, text_hash: textHash(drafts.get(key(pj, file)) ?? '') })
           stamps.set(key(pj, file), stamp)
           if (text === '' || bytes(text) > MAX) drafts.delete(key(pj, file))
           else drafts.set(key(pj, file), text)

@@ -765,3 +765,38 @@ def test_a_rejected_run_deletes_its_pending_row_on_the_backend(client, two):
         headers=H(a),
     )
     assert [p["rid"] for p in get(client, a, "F")["pendings"]] == [RID2]
+
+
+# ---------------------------------------------------------------------------
+# stale 响应带 text_hash（服务器那一行当前文本的哈希）：客户端在「戳相等」时拿它确认是不是自己的内容
+# ---------------------------------------------------------------------------
+TEXT_HASH_FIXTURES = [
+    ("", "cbf29ce484222325"),
+    ("a", "af63dc4c8601ec8c"),
+    ("你好，图例", "38f6689529094f15"),
+    ("😀 emoji + 中文 + \n换行", "34de6d5cb9e118b8"),
+    ("x" * 5000, "5d45fa080be4e345"),
+]
+
+
+@pytest.mark.parametrize("text,expected", TEXT_HASH_FIXTURES)
+def test_text_hash_matches_the_frontend_fixtures(text, expected):
+    """前端 `textHash`（web/src/lib/aiDraft.ts）用同一组固定文本钉住；两边任何一边改了算法，两个测试同时红。"""
+    assert ai_history.text_hash(text) == expected
+
+
+def test_stale_response_carries_the_hash_of_the_current_row_text(client, two):
+    a, _ = two
+    put_s(client, a, "F", "服务器上的稿", 5_000)
+    r = put_s(client, a, "F", "更旧的稿", 4_000)  # 旧戳 → stale
+    assert r["stale"] is True and r["stamp"] == 5_000
+    assert r["text_hash"] == ai_history.text_hash(
+        "服务器上的稿"
+    )  # 当前那一行的文本，不是被拒的这份
+    # 等戳（同戳的另一份内容）同样回当前行的哈希：客户端据此判是不是自己的内容
+    r2 = put_s(client, a, "F", "同戳但别的内容", 5_000)
+    assert r2["stale"] is True and r2["text_hash"] == ai_history.text_hash("服务器上的稿")
+    # 墓碑（空文本）：哈希是空串的
+    put_s(client, a, "F", "", 6_000)
+    r3 = put_s(client, a, "F", "旧", 5_500)
+    assert r3["text_hash"] == ai_history.text_hash("")

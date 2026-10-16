@@ -104,6 +104,16 @@ export function observeStamp(serverStamp: unknown): void {
   if (typeof serverStamp === 'number' && Number.isFinite(serverStamp) && serverStamp > lastStamp) lastStamp = serverStamp
 }
 
+/**
+ * 文本的 64 位 FNV-1a 哈希（UTF-8 字节，16 位十六进制），与后端 `ai_history.text_hash` 逐字节同算法。
+ * 只用来在「stale 且戳相等」时确认服务器那一行的文本是不是本版自己的文本；`aiDraft.test.ts` 与 `test_ai_drafts.py` 用同一组固定文本钉住一致。
+ */
+export function textHash(text: string): string {
+  let h = 0xcbf29ce484222325n
+  for (const b of new TextEncoder().encode(text)) h = ((h ^ BigInt(b)) * 0x100000001b3n) & 0xffffffffffffffffn
+  return h.toString(16).padStart(16, '0')
+}
+
 const byteLength = (text: string): number => {
   try {
     return new TextEncoder().encode(text).length
@@ -171,13 +181,13 @@ export async function saveDraftStamped(
    * 重试、keepalive 都带同一个戳，旧版本无论何时重试，戳都更小、一定被服务器拒绝。不传才在此刻现取（一次性写入用）。
    */
   stamp: number = nextWriteStamp(),
-): Promise<{ result: SaveResult; stamp?: number }> {
+): Promise<{ result: SaveResult; stamp?: number; textHash?: string }> {
   if (!project || !fileId) return { result: 'unavailable' }
   try {
     // 服务端只接受比已存戳更新的写入，旧版本不管何时落地都不会覆盖新的
     const res = await putAiDraft(fileId, text, project, keepalive && byteLength(text) < 60 * 1024, stamp)
     observeStamp(res.stamp)
-    if (res.stale) return { result: 'stale', stamp: res.stamp } // stale 时回的是服务器当前那一行的戳
+    if (res.stale) return { result: 'stale', stamp: res.stamp, textHash: res.text_hash } // stale 时回的是服务器当前那一行的戳与文本哈希
     return { result: text === '' ? 'removed' : 'saved', stamp: res.stamp }
   } catch (e) {
     if (e instanceof ApiError && e.status === 413) {

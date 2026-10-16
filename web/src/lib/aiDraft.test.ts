@@ -18,6 +18,7 @@ import {
   removeAccepted,
   saveDraft,
   saveDraftStamped,
+  textHash,
   type DraftTarget,
 } from './aiDraft'
 
@@ -133,6 +134,20 @@ describe('写入戳', () => {
     // 本页抬高了下限：再写一次就比它新，被接受
     expect(await saveDraft('pj', 'F', '本页再写')).toBe('saved')
     expect(be.draft('pj', 'F')).toBe('本页再写')
+  })
+})
+
+describe('textHash：与后端 ai_history.text_hash 逐字节同算法', () => {
+  // 固定文本的期望值由后端实现算出（tests/test_ai_drafts.py 钉同一组）：两边任何一边改了算法，两个测试同时红
+  const FIXTURES: [string, string][] = [
+    ['', 'cbf29ce484222325'],
+    ['a', 'af63dc4c8601ec8c'],
+    ['你好，图例', '38f6689529094f15'],
+    ['😀 emoji + 中文 + \n换行', '34de6d5cb9e118b8'],
+    ['x'.repeat(5000), '5d45fa080be4e345'],
+  ]
+  it.each(FIXTURES)('%j', (text, expected) => {
+    expect(textHash(text)).toBe(expected)
   })
 })
 

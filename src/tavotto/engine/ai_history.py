@@ -537,6 +537,16 @@ def _now_stamp() -> int:
     return _now_ms() * 1000
 
 
+def text_hash(text: str) -> str:
+    """文本的 64 位 FNV-1a 哈希（UTF-8 字节，16 位十六进制）。只用来在「戳相等」时确认两段文本是不是同一份——与文本一一对应即可，
+    不是安全用途。**前后端各实现一份**（`web/src/lib/aiDraft.ts` 的 `textHash`），`tests/test_ai_drafts.py` 与 `aiDraft.test.ts`
+    用同一组固定文本钉住两边算出来相等。"""
+    h = 0xCBF29CE484222325
+    for b in text.encode("utf-8"):
+        h = ((h ^ b) * 0x100000001B3) & 0xFFFFFFFFFFFFFFFF
+    return f"{h:016x}"
+
+
 def put_draft(
     project: str,
     file_id: str,
@@ -558,14 +568,21 @@ def put_draft(
     # 新的先提交，旧的随后用过期的 prev_stamp 判断并覆盖回去
     with _immediate(db_path) as con:
         prev = con.execute(
-            "SELECT revision, stamp FROM ai_drafts WHERE project=? AND file_id=?",
+            "SELECT revision, stamp, text FROM ai_drafts WHERE project=? AND file_id=?",
             (project, file_id),
         ).fetchone()
         prev_stamp = prev["stamp"] if prev else -1
         if stamp is None:
             stamp = max(_now_stamp(), prev_stamp + 1)
         elif stamp <= prev_stamp:
-            return {"stale": True, "revision": prev["revision"], "stamp": prev_stamp}
+            # `text_hash`：那一行**当前文本**的哈希。客户端在「戳相等」时拿它和自己这一版文本的哈希比——相等才说明是自己的
+            # 重复尝试先落地了（不同页面碰巧同戳、内容不同的情形不会被误判成已保存）
+            return {
+                "stale": True,
+                "revision": prev["revision"],
+                "stamp": prev_stamp,
+                "text_hash": text_hash(prev["text"]),
+            }
         rev = (prev["revision"] if prev else 0) + 1
         body = "" if (text == "" or too_large) else text
         con.execute(
