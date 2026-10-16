@@ -48,7 +48,7 @@ import uuid
 import zipfile
 from dataclasses import dataclass, field
 
-from . import logsafe, telemetry, tlstrust
+from . import diagsummary, logsafe, telemetry, tlstrust
 
 LOG = logging.getLogger("tavotto.diagsend")
 
@@ -748,6 +748,11 @@ class SendSession:
     dropped: bool = field(default=False, repr=False)
     #: 改参数重试时，上一次尝试（complete 已发出）还没对账：发送线程先问服务端它的下落（I1），(report_id, token)
     reconcile: tuple[str, str] | None = field(default=None, repr=False)
+    #: 最近一次「点发送」那一刻生成的 `error_summary` 声明（同意快照 + 最小事实）；None = 这次不带。
+    #: 它是 init 不可变提交的一部分（服务端同一 `client_request_id` 换了它 = 409），所以与 `params` 一起决定能否复用 id
+    summary: dict | None = field(default=None, repr=False)
+    #: 服务端把带 `error_summary` 的 init 当请求形状错拒了（尚未升级的旧版）：本会话此后不再带它
+    summary_refused: bool = False
 
     def public(self) -> dict:
         out: dict = {
@@ -1024,9 +1029,12 @@ def start(
         if sess.state == "done" or sess.bundle is None:
             raise SendError("send_not_found", 404)
         params = (str(cat), text)
+        # 最终点击的这一刻重新判一次同意：关掉统计后再点发送，就不会再带摘要（已提交的不撤回，这里只管之后）
+        summary = None if sess.summary_refused else diagsummary.build(scope)
         reuse = bool(
             sess.client_request_id
             and sess.params == params
+            and sess.summary == summary
             and sess.failure not in REOPEN_ON
             and sess.state != "cancelled"
         )
@@ -1050,6 +1058,7 @@ def start(
             # 还没传上去：重新 init（同一个 client_request_id 的重放会给新的上传授权）
             sess.token, sess.spec = "", None
         sess.params = params
+        sess.summary = summary
         sess.state, sess.stage, sess.failure, sess.retry_after = "sending", "init", "", None
         sess.cancel_raced = False
         sess.touched = _clock()
@@ -1310,7 +1319,20 @@ def _init(sess: SendSession, target: Target, category: str, note: str, size: int
     }
     if note:
         body["note"] = note
+    if sess.summary is not None:
+        body["error_summary"] = sess.summary
     resp = _json_request(target, "/v1/reports/init", body, API_TIMEOUT_S)
+    if (
+        sess.summary is not None
+        and resp.status in (400, 422)
+        and _server_code(resp) == "bad_request"
+    ):
+        # 部署顺序保险：尚未升级的服务端拒绝未知字段（extra=forbid）。摘要是可选的，不能因它让报告失败——
+        # 去掉它重发一次（同一个 client_request_id：旧服务端没记下被拒的 init）。本会话此后不再带。
+        with _LOCK:
+            sess.summary, sess.summary_refused = None, True
+        del body["error_summary"]
+        resp = _json_request(target, "/v1/reports/init", body, API_TIMEOUT_S)
     if resp.status not in (200, 201):
         code, retry_after = _server_error(resp)
         raise _Failure(code, retry_after)
