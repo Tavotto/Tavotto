@@ -262,7 +262,18 @@ jobs:
             workerd
             src-tauri
       - name: 构建 Rust supervisor（tavotto-workerd）
-        run: cargo build --release --manifest-path workerd/Cargo.toml
+        # STRIP=none 与 desktop-tauri.yml 的 Windows 腿同形：MSVC 上 strip=true 会让 .pdb 不产出
+        # （Cargo.toml 的 release 档为 macOS 写的是 strip=true + split-debuginfo=packed）。
+        env:
+          CARGO_PROFILE_RELEASE_STRIP: none
+        run: |
+          $ErrorActionPreference = "Stop"
+          cargo build --release --manifest-path workerd/Cargo.toml
+          if ($LASTEXITCODE -ne 0) { throw "cargo build 失败（$LASTEXITCODE）" }
+          # 符号另存是发行链的承诺（docs/RELEASING.md「调试符号」）；发行链只在发版时跑，
+          # 所以 PDB 能不能产出在这里先验一次
+          $pdb = "workerd\target\release\tavotto_workerd.pdb"
+          if (-not (Test-Path $pdb) -or (Get-Item $pdb).Length -le 0) { throw "缺 $pdb（或为空）" }
 
       - name: 缓存 CPython embeddable 下载
         uses: actions/cache@v4
@@ -388,6 +399,9 @@ jobs:
       # nightly 慢三倍。
       - name: Tauri 打包（NSIS 安装器）
         if: matrix.python == 'none'
+        env:
+          # 与 desktop-tauri.yml 的 Windows 腿同形（见上面 workerd 那步的说明）
+          CARGO_PROFILE_RELEASE_STRIP: none
         # CLI 版本钉死 2.11.4：src-tauri/windows/installer.nsi 是按这个版本的
         # 上游模板打的品牌补丁，模板与打包器必须同源（tests/test_nsis_template.py
         # 看护四处版本一致）。前端 / workerd / sidecar 前面几步已经出好，
@@ -409,6 +423,21 @@ jobs:
             "$PWD\no-updater.json", '{"bundle":{"createUpdaterArtifacts":false}}')
           pnpm dlx @tauri-apps/cli@2.11.4 build --bundles nsis --config "$PWD\no-updater.json"
           if ($LASTEXITCODE -ne 0) { throw "tauri build 失败（$LASTEXITCODE）" }
+          $pdb = "src-tauri\target\release\tavotto_desktop.pdb"
+          if (-not (Test-Path $pdb) -or (Get-Item $pdb).Length -le 0) { throw "缺 $pdb（或为空）" }
+
+      # 壳自写的小型转储（src-tauri/src/crash_dump.rs）。PR 级 CI 没有 Windows 上的 cargo test
+      # （desktop-shell 只有 ubuntu + macos），所以「真崩一次、.dmp 真落盘」只在这里验：
+      # a_real_access_violation_leaves_a_minidump 起一个子进程触发 access violation，
+      # 断言 %TEMP% 下留下 Tavotto.exe.<pid>.dmp 且是 MDMP 格式。src-tauri 的 target 在上一步
+      # 已有缓存，这里只多编一遍 test 档。
+      - name: 壳崩溃转储（真实 access violation → .dmp）
+        if: matrix.python == 'none'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          cargo test --manifest-path src-tauri\Cargo.toml crash_dump -- --test-threads=1
+          if ($LASTEXITCODE -ne 0) { throw "crash_dump 测试失败（$LASTEXITCODE）" }
 
       # 仓库模板只是原料：真正喂给 makensis 的是 Tauri 把 {{...}} 展开后的
       # 那份中间脚本。installMode / license / startMenuFolder / 语言表都是

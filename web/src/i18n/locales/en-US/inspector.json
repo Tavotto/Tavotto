@@ -1244,8 +1244,8 @@
     "entryActions": "Actions for “{{label}}”"
   },
   "identity": {
-    "problems_one": "{{count}} issue",
-    "problems_other": "{{count}} issues"
+    "problemsLabel_one": "issue",
+    "problemsLabel_other": "issues"
   },
   "docSummary": {
     "title": "This layout",

@@ -200,3 +200,33 @@ Linux 单测使用合成 Mach-O 和系统签名响应替身，只证明判据，
 
 看护：`tests/test_private_python_signed_bundle.py`（信任谓词、原始路径兼容、归档签名闭包、最终再解包验证、
 成员逃逸 / 重复拒绝、快照 check/use、真供应零下载、frozen 冒烟接线）；先证明原实现两条失败，再逐条变异核心判据。
+
+## 修订（2026-10-15，#1075：macOS 上同一份 CPython 带两次——记为代价，1.0 之后再议）
+
+拆 v0.18.0 包体积时确认：macOS 两个目标上，`_internal/runtime/`（解开的 pbs，渲染用）与
+`_internal/private-python/*.tar.gz`（同一份 pbs 原样归档，受管环境的 base）是**同一份 CPython 带了两次**。
+本 ADR 背景一节早已写明两者同源，§二表里的 +25 MB/包就是这份重复的价格（arm64 归档 23 MB 级，几乎压不动）。
+Windows 不在此列：embeddable 当不了 base（§二），两份 CPython 是两种发行版。
+
+**现在不去重，理由**：
+
+1. 信任链依附在**归档字节**上——§一「整份 sha256 等于锁」，以及 2026-10-04 修订的「app 封条认证的签名派生 SHA」
+   （`privatepython_bundle.accepts`），连同签名链（逐成员签名、重打包、固定资源 manifest、最终再解包验证）与
+   `--private-python-smoke` 冒烟都以「包里有这份归档」为前提。改成从 runtime 派生，这几处要一起重写。
+2. 1.0 收敛纪律（根 `AGENTS.md`）：包体积不是 correctness / safety / compatibility / release blocker，
+   不为它重写刚在 0.18 发布阻塞里收敛的模块。
+3. 同一轮里不碰信任边界、零风险的体积项已另行处理：runtime 不再被 PyInstaller 改判改写、顶层不再多出依赖副本
+   （#1073，macOS ≈ 48 MB 未压缩），runtime 剪掉没有任何 Mach-O 链接的 libpython（#1077 / #1074，17 MiB）。
+
+**1.0 之后若要去重，设计要点**（供那时的 ADR 起点，不是已做的决定）：
+
+* 来源：从已签名 .app 的 `_internal/runtime` 复制解释器与标准库（排除 `site-packages`）到 `<data_dir>/private-python/`，
+  不再随包带归档；缓存 / 下载两处来源与「只认原锁 SHA」保持不变。
+* 信任判据：不能再是「归档 sha256」。候选是复用 2026-10-04 修订的 app 封条验证，加一份构建期生成、随 .app 封条的
+  「派生文件清单 + 各文件摘要」manifest，对**实际复制出来的字节**逐个核对（主语是复制结果，不是 runtime 目录）。
+* 差异要实测：runtime 是精简过的布局（`prune_aliases` 剪了 `python` / `python3` 别名，#1074 剪了 libpython，
+  `.pyc` 是 UNCHECKED_HASH 预编译），派生出来的 base 要真跑 `python -m venv` + `ensurepip` + 受管装包全链路；
+  Intel 目标同样要有原生腿证据。
+* 收益上限：macOS 每个安装包 ≈ 25 MB；Windows 不受影响。
+
+看护不变（本修订不改代码）。重新评估的触发条件：1.0 发布之后，或有用户 / 渠道把安装包体积报成实际障碍。

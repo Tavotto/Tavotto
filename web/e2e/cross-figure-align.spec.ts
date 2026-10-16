@@ -98,10 +98,15 @@ async function settleAfter(page: Page, action: () => Promise<void>) {
 }
 
 async function addCard(page: Page, card: string, count: number) {
-  // 加完第一张图左栏会换成属性：素材卡要重新点开「素材」才在
+  // 加完第一张图左栏会换成属性：素材抽屉要重新点开才在。「素材」轨道按钮是**开关**——只在它收着时点，
+  // 并且按 aria-expanded 判，不按「卡片此刻可不可见」判：抽屉已开、卡片瞬时不可见（加载 / 动画）时
+  // 那样会把抽屉点关，之后 focus 落空、Shift+Enter 什么都没置入（#1088，Windows 打包产物上反复出现）
+  const rail = page.locator('[data-rail="assets"]')
+  if ((await rail.getAttribute('aria-expanded')) !== 'true') await rail.click()
+  await expect(rail).toHaveAttribute('aria-expanded', 'true')
   const cardEl = page.locator(`[data-card="${card}"]`)
-  if (!(await cardEl.isVisible())) await page.locator('[data-rail="assets"]').click()
-  await cardEl.focus({ timeout: 30_000 })
+  await expect(cardEl).toBeVisible({ timeout: 30_000 })
+  await cardEl.focus()
   await page.keyboard.press('Shift+Enter')
   await expect(page.locator('[data-object-id]')).toHaveCount(count, { timeout: 30_000 })
   await page.waitForTimeout(1200)

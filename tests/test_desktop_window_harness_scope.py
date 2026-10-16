@@ -147,3 +147,78 @@ def test_menu_cases_never_invoke_the_predefined_clipboard_items():
     accels = ast.literal_eval(wired[0])
     assert accels, "WIRED 是空的"
     assert not set(accels) & {"Ctrl+X", "Ctrl+C", "Ctrl+V", "Ctrl+A"}, accels
+
+
+def _attr_calls(node: ast.AST, attr: str) -> list[ast.Call]:
+    return [
+        c
+        for c in ast.walk(node)
+        if isinstance(c, ast.Call) and isinstance(c.func, ast.Attribute) and c.func.attr == attr
+    ]
+
+
+def test_menu_cases_read_the_menu_from_the_popup_not_the_hidden_menu_bar():
+    """#994 起主窗口的菜单栏是藏起来的（`hide_menu` → `SetMenu(NULL)`，`GetMenu` 恒空）：菜单用例的命令 id
+    要从顶栏「菜单」按钮弹出的菜单读；`menu_items`（读菜单栏）只许用来断言它是空的。
+
+    按 AST 查真实调用与数据流（注释 / 文档串 / 死代码里的字样不算数）：
+    * `_menu` 里每个 `menu_items(..)` 调用都必须正好是 `assert not <调用>` 的被断言式；
+    * `_menu` 点了 `[data-app-menu-button]`；
+    * `_menu` 的每个 `return` 都返回同一个名字，而这个名字唯一的赋值来源是 `popup_menu_items(..)`；
+    * 其余函数一律不许调用 `menu_items`。"""
+    tree = ast.parse((HARNESS / "test_menu_keyboard_focus.py").read_text(encoding="utf-8"))
+    fns = {n.name: n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)}
+    menu = fns.get("_menu")
+    assert menu is not None, "找不到 _menu"
+
+    asserted_empty = {
+        id(a.test.operand)
+        for a in ast.walk(menu)
+        if isinstance(a, ast.Assert)
+        and isinstance(a.test, ast.UnaryOp)
+        and isinstance(a.test.op, ast.Not)
+        and isinstance(a.test.operand, ast.Call)
+    }
+    for c in _attr_calls(menu, "menu_items"):
+        assert id(c) in asserted_empty, f"_menu 第 {c.lineno} 行读了菜单栏，但不是在断言它为空"
+
+    clicked = [
+        c
+        for c in _attr_calls(menu, "click")
+        if c.args
+        and isinstance(c.args[0], ast.Call)
+        and any(
+            isinstance(a, ast.Constant) and a.value == "[data-app-menu-button]"
+            for a in c.args[0].args
+        )
+    ]
+    assert clicked, "_menu 没有点顶栏「菜单」按钮"
+
+    returns = [r for r in ast.walk(menu) if isinstance(r, ast.Return)]
+    assert returns and all(isinstance(r.value, ast.Name) for r in returns), (
+        "_menu 的返回值必须是一个名字"
+    )
+    names = {r.value.id for r in returns}
+    assert len(names) == 1, f"_menu 返回了不止一个名字：{names}"
+    (name,) = names
+    sources = [
+        a.value
+        for a in ast.walk(menu)
+        if isinstance(a, (ast.Assign, ast.AnnAssign, ast.AugAssign, ast.NamedExpr))
+        and any(
+            isinstance(t, ast.Name) and t.id == name
+            for t in (a.targets if isinstance(a, ast.Assign) else [a.target])
+        )
+    ]
+    assert len(sources) == 1, f"{name} 应只有一处赋值：{[ast.unparse(s) for s in sources]}"
+    src = sources[0]
+    assert (
+        isinstance(src, ast.Call)
+        and isinstance(src.func, ast.Attribute)
+        and src.func.attr == "popup_menu_items"
+    ), f"_menu 返回的 {name} 不是来自 popup_menu_items：{ast.unparse(src)}"
+
+    for fn in fns.values():
+        if fn is menu:
+            continue
+        assert not _attr_calls(fn, "menu_items"), f"{fn.name} 直接读了菜单栏（它是藏起来的）"

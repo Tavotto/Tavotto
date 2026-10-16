@@ -197,8 +197,8 @@ export interface SnapNearestResult extends SnapResult {
   y: SnapPick | null
 }
 
-/** 放开一对的距离 = 这个倍数 × 容差 */
-export const SNAP_HOLD_FACTOR = 2
+/** 放开一对的距离 = 这个倍数 × 容差（2026-10-15 手感调试页上实拖后由 2 收到 1.75，ADR 0128） */
+export const SNAP_HOLD_FACTOR = 1.75
 
 /**
  * 三线吸附的「就近」版：左/中/右（上/中/下）里**离候选线最近**的那条边胜出，
@@ -206,7 +206,7 @@ export const SNAP_HOLD_FACTOR = 2
  * 按顺序取会让左边先吸到一条不相干的线上，想对齐的中线反而永远吸不到。
  *
  * X / Y 各自独立。容差内先比档位（`rank`）、同档比距离，再并列取表里靠前的。
- * 带 `hold` 时：上一帧吸着的那一对只要距离仍 < 2×容差就继续吸它，否则放开重挑。
+ * 带 `hold` 时：上一帧吸着的那一对只要距离仍 < 1.75×容差就继续吸它，否则放开重挑。
  */
 export function snapMoveNearest(
   rect: Rect,

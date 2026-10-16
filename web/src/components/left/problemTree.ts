@@ -16,9 +16,12 @@ export const PREVIEW_ROWS = 5
 /** 只差一两条就不值得折：「显示其余 1 项」比直接列出来更啰嗦 */
 export const MIN_HIDDEN_ROWS = 3
 
-/** 尾随格的宽（88px）与名字那一侧给它让出的位置（88 + 行外边距） */
-export const TRAIL_W = 'w-22'
-export const TRAIL_PAD = 'pr-23'
+/**
+ * 尾随格的宽（112px）与名字那一侧给它让出的位置（112 + 行外边距）。
+ * 2026-10-16 由 88 加宽：88px 放不下「8.00 pt → 大于 8 pt」，要求值恰恰是被截掉的那半——名字是中间截断的，让名字让位。
+ */
+export const TRAIL_W = 'w-28'
+export const TRAIL_PAD = 'pr-29'
 
 /**
  * 「这一行此刻热不热」：指针在行或尾随格上 / 焦点在两者之内。行按钮与尾随格是兄弟节点（按钮套按钮读不出来），

@@ -243,6 +243,14 @@
   从命令面板「显示项目检查结果」时出现，`forced`）、`null`（什么都不露）。
 - **几个不同的动作**：「稍后」/「—」缩成角标、×收起（都只改呈现，`uiStore.guideCard`）；「取消检查」只打取消扫描的端点；
   切项目 `clear()` 换代并停轮询（后端那笔账在项目关闭时才收）。没有一个会碰执行 / 安装 / worker。
+- **补拉失败不停轮询**：扫描还在 `running` 时一次 GET 失败（网络抖 / 5xx）按 1.5 / 3 / 6 / 10 s 退避续排，下一次读到快照即清零；
+  连续五次都失败才置 `pollLost`，`scanCard` 把它读成 `stuck`（角标「没能读到检查进度」+「重新检查」），不再永远转「检查中」。
+  终局快照上的失败不续排；`clear()` 换代后旧项目失败的补拉不再续排。不新增业务状态枚举（`pollLost` 只是前端读不到进度的事实）。
+- **同一目标再次打开**（卡开着时点素材库 ▶）：动作在飞（`pending` 是动作种类）时不再 `check`、不抹 `pending`——防连点的闸不能被一次重开打开。
+- **safe → native 静默回退成功**（ADR 0127 D1，默认句子与主按钮不变）：只在详情折叠里补一行（`data-prep-native-fallback`），
+  判据是后端账本 `attempt_history`（本次 run 最后一次尝试是 native 且相对上次换了 `profile`）+ 这次捕获的图 `execution_profile === 'native'`；
+  「改动不会写回脚本」读描述符自己的 `can_writeback_source`，前端不推。老后端没有账本就不说。`nativeFallbackNote()` 唯一出处在 `lib/preparationText.ts`。
+- **进度条只有一个实现**：引导卡的不定态进度是 `ui/ProgressBar`（`pct=null`）；断线 / 引擎已停（`offline`）**不画条**（没有东西在推进）。
 - **迟到响应**：请求序号只认最后发出的、发请求那一刻的项目 id、`clear()` 换代、同一 `scan_id` 内 `observation_seq` 不许倒退；
   POST 回包是「此刻谁在跑」的最新事实，不比序号。后端 404（`project_scan_not_started`）= 丢掉旧快照等下一次 `start()`。
 - 看护：`store/projectScanStore.test.ts`、`lib/projectScanText.test.ts`、`store/projectSwitchScan.test.ts`、

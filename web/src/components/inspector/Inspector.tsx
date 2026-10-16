@@ -7,8 +7,10 @@ import { drawerMotion, type PresenceState } from '@/lib/motion'
 import { t as translate } from '@/i18n'
 import { formatMm } from '@/lib/units'
 import { cn } from '@/lib/utils'
+import { ResizeHandle } from '@/components/ui/ResizeHandle'
+import { tryRegisterPointerCancel } from '@/store/gestureCoordinator'
 import { useDocumentStore } from '@/store/documentStore'
-import { RIGHT_MAX, RIGHT_MIN, useUiStore, type RightTab } from '@/store/uiStore'
+import { RIGHT_DEFAULT, RIGHT_MAX, RIGHT_MIN, useUiStore, type RightTab } from '@/store/uiStore'
 import type { ArrowObject, PanelObject, ShapeObject, TextObject } from '@/types/document'
 import { useAiStore } from '@/store/aiStore'
 import { assistantTabLabel, AssistantPanel } from '../ai/AiPanel'
@@ -185,42 +187,18 @@ export function Inspector({
 
 function WidthHandle() {
   const { t } = useTranslation('inspector')
-  // 可聚焦的 separator 在 ARIA 里是个真控件：必须报出当前值与值域，
-  // 否则屏幕阅读器只会念一句「分隔条」，用户不知道自己在调什么、调到了哪
   const width = useUiStore((s) => s.rightWidth)
-  const start = (e: React.PointerEvent) => {
-    e.preventDefault()
-    const from = useUiStore.getState().rightWidth
-    const x0 = e.clientX
-    const move = (ev: PointerEvent) => useUiStore.getState().setRightWidth(from - (ev.clientX - x0))
-    const up = () => {
-      window.removeEventListener('pointermove', move)
-      window.removeEventListener('pointerup', up)
-    }
-    window.addEventListener('pointermove', move)
-    window.addEventListener('pointerup', up)
-  }
-
   return (
-    <div
-      role="separator"
-      aria-orientation="vertical"
-      aria-label={t('resize', { min: RIGHT_MIN, max: RIGHT_MAX })}
-      aria-valuenow={Math.round(width)}
-      aria-valuemin={RIGHT_MIN}
-      aria-valuemax={RIGHT_MAX}
-      tabIndex={0}
-      onPointerDown={start}
-      onKeyDown={(e) => {
-        if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return
-        e.preventDefault()
-        const ui = useUiStore.getState()
-        ui.setRightWidth(ui.rightWidth + (e.key === 'ArrowLeft' ? 16 : -16))
-      }}
-      // 整条都在抽屉内侧：外层 overflow-hidden（开合动效要用）会把伸到外面的部分剪掉
-      // 蓝色不做任何大块背景（第一节）：hover 只在内侧描一条 1px 的竖线；
-      // 键盘聚焦是一条 2px 的 accent 竖线（2026-10-07 设计审计 §9.2：此前是 8px 宽的 accent/30 蓝带）
-      className="absolute inset-y-0 left-0 z-canvas-chrome w-2 cursor-col-resize border-l border-transparent outline-none hover:border-border-strong focus-visible:border-l-2 focus-visible:border-accent"
+    <ResizeHandle
+      name="inspector"
+      registerCancel={tryRegisterPointerCancel}
+      side="left"
+      value={width}
+      min={RIGHT_MIN}
+      max={RIGHT_MAX}
+      defaultValue={RIGHT_DEFAULT}
+      onChange={(px) => useUiStore.getState().setRightWidth(px)}
+      label={t('resize', { min: RIGHT_MIN, max: RIGHT_MAX })}
     />
   )
 }

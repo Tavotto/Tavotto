@@ -34,7 +34,7 @@ import { listJoin } from '@/i18n/format'
 import { markAutoShown, wasAutoShown } from '@/lib/guideCardSeen'
 import { preparationPanelEnabled } from '@/lib/preparationFlag'
 import { originFactsOf, originViewOfCard } from '@/lib/importOrigin'
-import { dialogKinds, prepRowKey, prepView, targetName, type PrepPrimary, type PrepTone, type PrepView } from '@/lib/preparationText'
+import { dialogKinds, nativeFallbackNote, prepRowKey, prepView, targetName, type PrepPrimary, type PrepTone, type PrepView } from '@/lib/preparationText'
 import { dependenciesLine, issueLine, roleLabel, scanCard, scanLine, type ScanCardKind } from '@/lib/projectScanText'
 import { missingRequirements, readTokens, type ScriptArgsSchema } from '@/lib/scriptArgsForm'
 import { cn } from '@/lib/utils'
@@ -78,6 +78,7 @@ import { Button, IconButton } from './ui/Button'
 import { Details, Summary } from './ui/Details'
 import { TextInput } from './ui/Input'
 import { Menu, MenuItem } from './ui/Menu'
+import { ProgressBar } from './ui/ProgressBar'
 import { Radio } from './ui/Radio'
 
 const pt = (key: string, values?: Record<string, unknown>) =>
@@ -137,13 +138,14 @@ export function PreparationCard() {
   const slow = useProjectScanStore((s) => s.slow)
   const forced = useProjectScanStore((s) => s.forced)
   const { hidden } = usePrepSurface()
+  const lost = useProjectScanStore((s) => s.pollLost)
   const toolbarUp = useCanvasToolbarVisible()
   // 草稿变了要重新渲染（参数改了 → 「继续」）
   const drafts = useScriptArgvStore((s) => s.drafts)
   const editReady = useEditReady(entry?.editRenders ?? {})
   // 壳确认引擎退出了：断线那一句不再说「正在重连」（没人在重连），见 PrepContext.engineExited
   const engineExited = useExitNoticeStore((s) => s.engineExit !== null)
-  const scanned = !entry && !hidden ? scanCard(scan, { slow, forced }) : null
+  const scanned = !entry && !hidden ? scanCard(scan, { slow, forced, lost }) : null
 
   let view: PrepView | null = null
   if (entry && !hidden) {
@@ -384,11 +386,8 @@ function Pill({
   )
 }
 
-const Progress = () => (
-  <div className="relative h-1 overflow-hidden rounded-full bg-surface-active" data-prep-progress aria-hidden>
-    <span className="absolute inset-y-0 left-0 w-1/3 animate-sweep rounded-full bg-ink motion-reduce:animate-none" />
-  </div>
-)
+/** 不定态进度：唯一实现是 `ui/ProgressBar`（pct=null）；没有真数字就不画百分比 */
+const Progress = () => <ProgressBar pct={null} label={pt('progress')} data-prep-progress />
 
 const Later = ({ onClick }: { onClick?: () => void }) => (
   <Button
@@ -1184,6 +1183,7 @@ function SessionDetails({ entry, view }: { entry: PrepEntry; view: PrepView }) {
   const attempt = report?.provider.attempt_id
   const dep = report?.provider.dependency
   const originFacts = originFactsOf(report)
+  const fallbackNote = nativeFallbackNote(report ?? null)
   const env = report?.environment
   const primaryAction = view.primary?.kind === 'action' ? view.primary.action : null
   const recheck = primaryAction !== 'recheck' && report?.actions.some((a) => a.kind === 'recheck')
@@ -1281,6 +1281,11 @@ function SessionDetails({ entry, view }: { entry: PrepEntry; view: PrepView }) {
       )}
       {prepare?.impact.private_python?.origin === 'download' && (
         <p>{pt('install.download', { mb: Math.max(1, Math.round(prepare.impact.private_python.download_bytes / 1048576)) })}</p>
+      )}
+      {fallbackNote && (
+        <p data-prep-native-fallback>
+          {pt(fallbackNote.noWriteback ? 'detail.nativeFallbackNoWriteback' : 'detail.nativeFallback')}
+        </p>
       )}
       {report?.facts && <Facts report={report} />}
       {entry.rejection && (

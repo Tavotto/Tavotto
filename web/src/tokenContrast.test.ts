@@ -9,7 +9,7 @@
  *   - 可编辑框静态没有边：是一块比面板深一级的底（field 对白 ≈1.14:1，2026-09-15 参考 Codex 设置页的输入框）——
  *     OpenAI apps-sdk-ui 静态 alpha-16、Claude 产品壳 10%、Codex「底 +1 级灰」都不到 3:1；
  *     3:1 由聚焦态（不透明 accent 边）承担。
- *   - selected 10% 在纸底上 ≈1.2:1——它只是「轻 tint」，选中态还要靠字重 / 对勾再说一遍（宪法第一节）。
+ *   - selected 12% 在纸底上 ≈1.2:1——它只是「轻 tint」，选中态还要靠字重 / 对勾再说一遍（宪法第一节）。
  *
  * **两套主题各量一遍**（2026-10-07 暗色主题，宪法第二十八节）：值表有两张——浅色是 `@theme` 里的值，暗色是
  * 文件末尾 `:root[data-theme='dark']` 那一段（媒体查询那一段与它逐字相同，这里也守着）。暗色表只写变了的那几项，
@@ -21,6 +21,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import { PIN_COLORS } from './canvas/issuePinColors'
+import { DESK_FIELD_SCOPE } from './components/ui/fieldBox'
 import { canvasSelectionFor, PAPER_INK_RGB, PAPER_RGB, SEL_RGB, SELECTION_RGB } from './lib/canvasSelection'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
@@ -189,6 +190,12 @@ for (const theme of THEMES) {
       expect(ring).not.toContain('color-mix')
     })
 
+    it('focus-ring-inset 与 focus-ring 同一根 2px 不透明 accent，只是 offset 为负（内凹）', () => {
+      const ring = CSS.match(/@utility focus-ring-inset \{([\s\S]*?)\}/)?.[1] ?? ''
+      expect(ring).toContain('2px solid var(--color-accent)')
+      expect(ring).toMatch(/outline-offset:\s*-2px/)
+    })
+
     it('控件边界（border-control：复选框 / 单选 / 关态开关）对白 / 纸 / surface-2 ≥3:1', () => {
       for (const g of GROUNDS) {
         expect(contrast(token('border-control'), token(g)), `border-control on ${g}`).toBeGreaterThanOrEqual(3)
@@ -205,6 +212,28 @@ for (const theme of THEMES) {
       }
     })
 
+    it('桌面（bg）上的可编辑框：field 本身对桌面分不出（<1.1），桌面子树把 field 重定向成白面、hover 重定向成 field-hover-desk；两档对桌面都 ≥1.1:1，hover 不比静态面更暗', () => {
+      const bg = token('bg')
+      // 这是重定向存在的理由：浅色里不重定向，框直接坐在桌面上就「消失」（field 对桌面约 1.04:1）；暗色本来就分得开，重定向无害
+      if (theme === 'light') expect(contrast(token('field'), bg)).toBeLessThan(1.1)
+      // 静态：surface（`[--color-field:var(--color-surface)]`）
+      const staticBox = token('surface')
+      // hover：field-hover-desk = surface 混 ink N%（`[--color-field-hover:var(--color-field-hover-desk)]`）
+      const m = VARS[theme]['color-field-hover-desk']?.match(/^color-mix\(in srgb, var\(--color-ink\) ([\d.]+)%, var\(--color-surface\)\)$/)
+      expect(m, `${theme} 表里 --color-field-hover-desk 不是「surface 混 ink N%」`).toBeTruthy()
+      const hoverBox = over(Number(m![1]) / 100, staticBox, theme)
+      expect(contrast(staticBox, bg), '静态框对桌面').toBeGreaterThanOrEqual(1.1)
+      expect(contrast(hoverBox, bg), 'hover 框对桌面').toBeGreaterThanOrEqual(1.1)
+      // hover 与静态仍有可感差异（> 1.02:1），且不比所在的桌面更暗
+      expect(contrast(hoverBox, staticBox), 'hover 对静态框').toBeGreaterThan(1.02)
+      expect(luminance(hoverBox)).toBeGreaterThan(luminance(bg))
+      // 重定向串本身与「它真的挂在 DOM 根上」由 components/ui/deskFieldScope.test.tsx 渲染后判；这里只钉串的内容
+      expect(DESK_FIELD_SCOPE.split(' ').sort()).toEqual([
+        '[--color-field-hover:var(--color-field-hover-desk)]',
+        '[--color-field:var(--color-surface)]',
+      ])
+    })
+
     it('field 底上要读的字（值 ink、占位 / 单位 / 前缀 ink-3）≥4.5:1；hover 底上也是', () => {
       for (const name of ['ink', 'ink-2', 'ink-3']) {
         for (const g of ['field', 'field-hover']) {
@@ -219,13 +248,13 @@ for (const theme of THEMES) {
       ).toBeGreaterThanOrEqual(1.5)
     })
 
-    it('交互面三档：hover < active < selected，都是 ink 的半透明叠加，selected 是 hover 的两倍', () => {
+    it('交互面三档：hover < active < selected，都是 ink 的半透明叠加，selected 是 hover 的三倍（G10：两倍时并排肉眼难分「鼠标在哪」与「选的是谁」）', () => {
       const h = alphaOfInk('surface-hover')
       const a = alphaOfInk('surface-active')
       const s = alphaOfInk('selected')
       expect(h).toBeLessThan(a)
       expect(a).toBeLessThan(s)
-      expect(s).toBeCloseTo(h * 2, 2)
+      expect(s).toBeCloseTo(h * 3, 2)
     })
 
     it('要读的字（ink / ink-2 / ink-3）对白 / 桌面 / surface-2 / 画布灰 ≥4.5:1；ink 与 ink-2 在合成后的 selected 上也 ≥4.5:1', () => {

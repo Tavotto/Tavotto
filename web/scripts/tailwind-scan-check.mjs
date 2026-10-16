@@ -43,7 +43,7 @@ const REAL_USAGES = [
   ['pointer-events-none', 'src/canvas/OverlaySvg.tsx（className 字面量）'],
   ['min-h-12', 'src/components/settings/CodingAgentsSection.tsx（模板字符串）'],
   ['active:cursor-grabbing', 'src/playground/components/ExampleCard.tsx（变体）'],
-  ['outline-[1.5px]', 'src/components/ui/dropZone.ts（任意值）'],
+  ['h-[26px]', 'src/components/ai/AiPanel.tsx（任意值）'],
   ['data-[state=open]:animate-pop-in', 'src/components/ui/Popover.tsx（data 变体 + 自定义动画）'],
   ['focus-visible:focus-ring', 'src/index.css 的 @utility + 变体'],
   ['shadow-pop', '主题 token 工具类（--shadow-pop）'],

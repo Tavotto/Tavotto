@@ -64,6 +64,7 @@ const LS_KEY = UI_PREFS_KEY
 
 export const LEFT_MIN = 280
 export const LEFT_MAX = 360
+export const LEFT_DEFAULT = 300
 /**
  * 右栏 320–480px（默认 360）。296–320 的旧宽度装不下「可见标签 + 控件」的
  * 检查器排版——字体/字号只能挤成无标签的一行（见 docs/ux/INSPECTOR_REDESIGN.md
@@ -143,7 +144,7 @@ const DEFAULTS: Persisted = {
   prefsVersion: PREFS_VERSION,
   // 素材抽屉 + 右栏都开着：属性栏是编辑过程持续要看的，让它常驻
   leftOpen: true,
-  leftWidth: 300,
+  leftWidth: LEFT_DEFAULT,
   rightWidth: RIGHT_DEFAULT,
   leftPinned: false,
   rightPinned: true,
@@ -243,6 +244,12 @@ function readPersisted(): Persisted {
  */
 export type StatusTone = 'info' | 'progress' | 'done' | 'error'
 
+/** toast 上的一个动作：标签是描述符（跟着语言走），`run` 由挂提示的那一处给 */
+export interface StatusAction {
+  label: UiMessage
+  run: () => void
+}
+
 export interface ConfirmRequest {
   title: UiMessage
   body: UiMessage
@@ -279,6 +286,11 @@ interface UiState extends Persisted {
    * （`clearStatusOwnedBy`），别的图、别的类别的提示碰不到它。
    */
   statusOwner: string | null
+  /**
+   * 这条 toast 的一个动作（可选，`setStatus` 的 `action`）：通知轨里的「查看」。带动作的 toast 是要用户回头处理的
+   * 一句话（导出关窗后失败 / 等你决定），所以**不自己消失**，和错误一样挂到用户点 × 或主人撤掉。
+   */
+  statusAction: StatusAction | null
   /** 正在双击编辑的文字对象 */
   editingTextId: string | null
   /** 进入裁剪模式的面板 */
@@ -443,13 +455,18 @@ interface UiState extends Persisted {
   setStatus: (
     msg: UiMessage | null,
     tone?: StatusTone,
-    opts?: { passive?: boolean; owner?: string },
+    opts?: { passive?: boolean; owner?: string; action?: StatusAction },
   ) => void
   /**
    * 撤掉**这个主人**挂上的 toast；此刻挂着的不是它的（换成了别的图 / 别的类别的提示、或已被关掉）
    * 就什么都不做。主人是 `setStatus` 的 `owner`，由挂提示的那一处自己定（如 `renderFailureOwner`）。
    */
   clearStatusOwnedBy: (owner: string) => void
+  /**
+   * 撤掉主人以 `prefix` 开头的 toast（换项目时：`render.failed:` / `project.error:` 这些说的都是**旧项目**的事，
+   * 没人会再撤它们——事件按 pj 过滤，新项目收不到旧项目的 `render.done`）。
+   */
+  clearStatusOwnedByPrefix: (prefix: string) => void
   setEditingText: (id: string | null) => void
   setIssueHighlight: (v: { objectId: string | null; gid: string | null } | null) => void
   setIssueHover: (v: IssueHover | null) => void
@@ -555,6 +572,7 @@ export const useUiStore = create<UiState>((set, get) => ({
   statusTone: 'info',
   statusPassive: false,
   statusOwner: null,
+  statusAction: null,
   editingTextId: null,
   cropTargetId: null,
   cropBaseline: null,
@@ -734,12 +752,13 @@ export const useUiStore = create<UiState>((set, get) => ({
       statusTone,
       statusPassive: passive,
       statusOwner: status ? (opts?.owner ?? null) : null,
+      statusAction: status ? (opts?.action ?? null) : null,
     })
     statusDismissTimer.cancel()
-    // 普通状态短暂即逝；错误保留到用户处理（toast 上有关闭键）
-    if (status && statusTone !== 'error') {
+    // 普通状态短暂即逝；错误与带动作的保留到用户处理（toast 上有关闭键）
+    if (status && statusTone !== 'error' && !opts?.action) {
       statusDismissTimer.start(STATUS_AUTO_DISMISS_MS, () =>
-        set({ status: null, statusTone: 'info', statusPassive: false, statusOwner: null }),
+        set({ status: null, statusTone: 'info', statusPassive: false, statusOwner: null, statusAction: null }),
       )
     }
   },
@@ -747,7 +766,14 @@ export const useUiStore = create<UiState>((set, get) => ({
   clearStatusOwnedBy: (owner) => {
     if (!get().status || get().statusOwner !== owner) return
     statusDismissTimer.cancel()
-    set({ status: null, statusTone: 'info', statusPassive: false, statusOwner: null })
+    set({ status: null, statusTone: 'info', statusPassive: false, statusOwner: null, statusAction: null })
+  },
+
+  clearStatusOwnedByPrefix: (prefix) => {
+    const owner = get().statusOwner
+    if (!get().status || owner === null || !owner.startsWith(prefix)) return
+    statusDismissTimer.cancel()
+    set({ status: null, statusTone: 'info', statusPassive: false, statusOwner: null, statusAction: null })
   },
 
   // 不按值短路：值相同的新对象也要换上，否则后来者拿不到主人身份，`releaseIssueHover` 会认错人

@@ -287,6 +287,9 @@ async function resetForNewProject(pj: string | null): Promise<RestoreToken> {
   useProjectScanStore.getState().clear()
   // 引导卡（T13b）属于旧项目：收起；新项目要不要自动弹由它自己的扫描与本机标记决定
   useUiStore.getState().setGuideCard('closed')
+  // 通知轨上说旧项目的事的 toast 撤掉：错误 toast 不会自己消失，而它们的撤销事件（`render.done` 等）按 pj 过滤、
+  // 新项目收不到。事件按项目过滤，此刻挂着的只可能是旧项目的
+  for (const prefix of ['render.failed:', 'project.error:', 'export.result']) ui.clearStatusOwnedByPrefix(prefix)
   // 导出作业的**前端状态**跟着丢：结果里的 `/exports/<name>` 是裸路径，
   // 渲染时由 `apiUrl()` 补上**当前**项目的 pj——不清的话，切完项目再打开
   // 导出面板会看到旧项目的结果，而那些链接指向的是新项目的导出目录（不是

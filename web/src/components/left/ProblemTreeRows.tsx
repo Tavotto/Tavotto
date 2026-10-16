@@ -7,6 +7,7 @@ import { TreeChevron, treeIndent } from '@/components/ui/TreeRow'
 import { TruncateMiddle } from '@/components/ui/TruncateMiddle'
 import { t as translate } from '@/i18n'
 import type { IssueGroup } from '@/lib/problemList'
+import type { Severity } from '@/lib/profile'
 import { cn } from '@/lib/utils'
 import type { ValidationIssue } from '@/lib/validation'
 import {
@@ -15,8 +16,6 @@ import {
   issueTitle,
   issueValues,
   severityLabel,
-  SEVERITY_ICON,
-  SEVERITY_INK,
   subjectName,
   technicalDetailLines,
 } from '@/lib/validationText'
@@ -26,6 +25,14 @@ import { Button, IconButton } from '../ui/Button'
 import { Popover } from '../ui/Popover'
 import { FixButton, runBatchFix, useBatchable } from './IssueFixButton'
 
+/** 组头的 6px 圆点：只有「要改」「留意」带色，其余灰（与导出检查的计数芯片同一语言） */
+const DOT_BG: Record<Severity, string> = {
+  error: 'bg-danger',
+  warn: 'bg-warn',
+  not_verifiable: 'bg-ink-faint',
+  suggestion: 'bg-ink-faint',
+}
+
 /** 本组文案在 errors:problems.* 下 */
 const pr = (key: string, values?: Record<string, unknown>) =>
   translate(`problems.${key}`, { ns: 'errors', ...(values ?? {}) })
@@ -33,7 +40,7 @@ const pr = (key: string, values?: Record<string, unknown>) =>
 /*
  * 问题树的**行**（2026-10-07 设计审计 §9.4：卡片 → 披露树）。四种行一种语法：
  *
- *   [缩进][chevron][记号] 名字 ………………… [尾随格 88px]
+ *   [缩进][chevron][记号] 名字 ………………… [尾随格 112px]
  *
  * 行都建在 `listRowClass` 上（圆角 8、选中 = selected 底 + 600）：图 32 · 子图 / 类别 28 · 规则 28 · 对象 28。
  * **尾随格**宽高永不变：静止时是这一行的值（对象行「6.5 → 8 pt」，其余是项数），指到 / 聚焦 / 是「当前」时
@@ -134,7 +141,6 @@ export function GroupNode({
   activeCanvasId: string
   onLocate: (issue: ValidationIssue) => void
 }) {
-  const Icon = SEVERITY_ICON[group.severity]
   const title = issueTitle(group.issues[0])
   // 组的「修复 N」是用户点名这一组：建议档的组也照修（顶上的「全部修复」才不带建议档）
   const fixable = useBatchable(group.issues, activeCanvasId, { includeSuggestions: true })
@@ -166,7 +172,10 @@ export function GroupNode({
           className={cn(listRowClass({ size: 'sm' }), TRAIL_PAD, 'w-[calc(100%-0.5rem)] text-left')}
         >
           <TreeChevron expanded={open} />
-          <Icon size={ICON_SIZE.sm} aria-hidden className={cn('shrink-0', SEVERITY_INK[group.severity])} />
+          {/* 组头只有一颗 6px 圆点带色（要改 = danger、留意 = warn、其余灰）；形状与等级字在可达名与下面的 sr-only 里 */}
+          <span aria-hidden className="flex w-4 shrink-0 justify-center">
+            <span className={cn('size-1.5 rounded-full', DOT_BG[group.severity])} />
+          </span>
           <span className="min-w-0 flex-1 truncate font-medium">{title}</span>
         </button>
         <TrailCell
@@ -300,14 +309,15 @@ export function IssueRow({
         bind={rowBind}
         rest={
           valueText ? (
-            <span data-issue-values className={cn(rowMetaClass(current), 'truncate')} title={valueText}>
+            <span data-issue-values className={cn(rowMetaClass(current), 'truncate font-mono')} title={valueText}>
               {values.current}
               {values.expected && (
                 <>
                   <span aria-hidden className="text-ink-faint">
                     {' → '}
                   </span>
-                  <span className={current ? 'text-ink' : 'text-ink-2'}>{values.expected}</span>
+                  {/* 行内只留要求本身（「大于 8 pt」）；「正好等于不算通过」这类补一句的整句在 title / ⓘ 里 */}
+                  <span className={current ? 'text-ink' : 'text-ink-2'}>{values.expectedHead ?? values.expected}</span>
                 </>
               )}
             </span>

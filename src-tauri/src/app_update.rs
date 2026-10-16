@@ -727,6 +727,23 @@ pub async fn run_install<F>(
 where
     F: Fn() -> UpdaterBuilder,
 {
+    run_install_expecting(make, endpoints, state, limits, None, emit).await
+}
+
+/// 与 [`run_install`] 同一把锁、同一个候选句柄；多一道**候选身份**核对：`expect` 是用户在界面上看到并确认的
+/// 版本号，句柄里的版本与它不一致（期间又 check 过、换了候选）就拒绝，回 `candidate_changed`，不下载、不安装。
+/// 救援页用它（`rescue.rs`）：确认后装的必须就是检查到的那一个版本。`None` = 不核对（沿用旧入口的行为）。
+pub async fn run_install_expecting<F>(
+    make: &F,
+    endpoints: &Endpoints,
+    state: &UpdateState,
+    limits: &Limits,
+    expect: Option<&str>,
+    emit: Emit<'_>,
+) -> Result<Source, Failure>
+where
+    F: Fn() -> UpdaterBuilder,
+{
     let slot = state
         .pending
         .try_lock()
@@ -734,6 +751,11 @@ where
     let pending = slot
         .clone()
         .ok_or_else(|| Failure::code("no_pending_update"))?;
+    if let Some(want) = expect {
+        if pending.update.version != want {
+            return Err(Failure::code("candidate_changed"));
+        }
+    }
     // 句柄保留到成功：失败后用户可以直接再按一次
     apply(fetch(make, endpoints, limits, &pending, emit, &state.cooldown).await?)
 }

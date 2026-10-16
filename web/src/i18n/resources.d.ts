@@ -39,6 +39,14 @@ export default interface Resources {
       "minutes": "{{m}}m {{s}}s",
       "seconds": "{{value}}s"
     },
+    "effortDesc": {
+      "high": "多步修改、需要推敲的布局",
+      "low": "简单调整，几秒出结果",
+      "max": "最仔细，耗时与额度明显更多",
+      "medium": "平衡速度与质量",
+      "minimal": "只做最直接的改动，最快",
+      "xhigh": "比「高」更深入，耗时与额度更多"
+    },
     "effortLabel": {
       "high": "高",
       "low": "低",
@@ -89,6 +97,7 @@ export default interface Resources {
       "cli": "CLI：{{version}}",
       "cliPath": "路径：{{path}}",
       "effort": "推理强度",
+      "effortDefault": "默认",
       "effortPill": "推理 {{effort}}",
       "effortRaw": "强度原始值：{{value}}",
       "emptyHint": "助手会直接修改脚本，改动可回滚。",
@@ -227,9 +236,7 @@ export default interface Resources {
     },
     "export": {
       "blockedTitle": "有阻断问题或无法核验的项。勾选确认后才能导出。",
-      "blockingGroupCount": "{{count}} 项",
       "blockingListLabel": "阻断性问题",
-      "blockingMore_other": "还有 {{count}} 条，在问题面板中查看",
       "cancelExport": "取消导出",
       "cancelFailed": "尚未确认取消，导出可能仍在继续。{{error}}",
       "cancelNotAccepted": "服务器未接受取消请求。请先检查导出状态和输出文件夹，再重试。",
@@ -241,6 +248,11 @@ export default interface Resources {
       "checkLabel": "检查",
       "checkScopeCanvas": "整个画布",
       "checkScopeFigure": "仅此图",
+      "checksMore_other": "还有 {{count}} 项 · 在问题面板中查看全部",
+      "chipError_other": "项要改",
+      "chipNotVerifiable_other": "项无法核验",
+      "chipSuggestion_other": "条建议",
+      "chipWarn_other": "项留意",
       "confirmBoth": "知悉上述 {{errors}} 条阻断问题与 {{notVerifiable}} 类无法核验的项，仍要导出",
       "confirmCheckFailed": "预检没完成，我已自行确认此图可以导出。",
       "confirmErrors": "知悉上述 {{errors}} 条阻断问题，仍要导出",
@@ -358,7 +370,6 @@ export default interface Resources {
         "source_stale": "这张图的源文件现在找不到了，暂时只能按画布导出。",
         "unknown_figure": "找不到这张图的信息，暂时只能按画布导出。"
       },
-      "severityCount": "{{count}} {{label}}",
       "showInFolder": "在文件夹中显示",
       "sizeDiskDiffers": "磁盘上的原文件为 {{dw}} × {{dh}} mm（脚本保存时已裁边），将按图幅 {{w}} × {{h}} mm 导出。",
       "sizeUnknownShort": "尺寸未知",
@@ -369,8 +380,15 @@ export default interface Resources {
       "targetNoFigure": "当前没有图",
       "tiffHint": "位图 · 无损压缩",
       "title": "导出",
+      "toast": {
+        "conflict": "导出停在这里，等你决定同名文件怎么处理。",
+        "failed": "导出失败，没有写出文件。",
+        "partial": "导出只完成了一部分，有文件没能写出。",
+        "unknown": "找不到这次导出的作业，文件可能已写出。"
+      },
       "transparent": "透明背景（仅 PNG / TIFF）",
       "transparentNotForRaster": "这张图是照原样导出的，背景由它自己决定。",
+      "viewResult": "查看",
       "warningsIntro": "以下修改未能应用到重渲染的图上，成图可能与画布不一致："
     },
     "layout": {
@@ -1156,8 +1174,7 @@ export default interface Resources {
       "summary": {
         "editable": "可编辑",
         "layoutOnly": "仅版面",
-        "pending": "待连接",
-        "total": "总计"
+        "pending": "待连接"
       },
       "title": "项目接入状态",
       "useScript": "用 {{script}}",
@@ -3012,6 +3029,7 @@ export default interface Resources {
       "none": "未发现问题",
       "noneEvidenceMulti_other": "按 {{specCount}} 套规范（{{specs}}）检查了 {{count}} 张图 · {{when}}",
       "noneEvidence_other": "按「{{spec}}」检查了 {{count}} 张图 · {{when}}",
+      "noneInCanvas": "画布「{{name}}」上没有问题",
       "noneInFilter": "当前筛选下没有问题",
       "noneInScope": "这张图上没有问题",
       "noneInScopeHint_other": "整份排版里还有 {{count}} 项问题。",
@@ -3026,6 +3044,9 @@ export default interface Resources {
       "rechecking": "正在重新检查…",
       "retry": "重新检查",
       "running": "正在检查…",
+      "scopeCanvas": "当前画布",
+      "scopeCanvasNamed": "画布「{{name}}」",
+      "scopeCanvasTip": "只看画布「{{name}}」的问题",
       "scopeCountAria": "{{label}}（{{count}} 项）",
       "scopeDocument": "整份排版",
       "scopeFigure": "当前图",
@@ -3771,7 +3792,7 @@ export default interface Resources {
       "transformCase": "转换大小写"
     },
     "identity": {
-      "problems_other": "{{count}} 个问题"
+      "problemsLabel_other": "个问题"
     },
     "kindSwitch": {
       "aria": "类型：{{name}}，点击更改",
@@ -5110,6 +5131,8 @@ export default interface Resources {
         },
         "installTo": "装到",
         "installs": "将安装",
+        "nativeFallback": "安全模式拦下了脚本的文件操作，已自动换成按真实文件运行。",
+        "nativeFallbackNoWriteback": "安全模式拦下了脚本的文件操作，已自动换成按真实文件运行。这样出的图，改动不会写回脚本。",
         "noFigureWhy": "没有调用 savefig，也没留下 Figure。",
         "parseKind": "参数问题",
         "parseKinds": {
@@ -5267,6 +5290,7 @@ export default interface Resources {
         "pending": "待准备",
         "pendingMany_other": "{{count}} 个绘图脚本待准备"
       },
+      "progress": "进行中",
       "rasterHint": {
         "line": "这个脚本是用 {{library}} 直接画成图片的，不是 Matplotlib 图",
         "why": "可以把它生成的图片文件加进来排版；想逐个元素编辑，需要改成用 Matplotlib 画。"
@@ -5472,6 +5496,7 @@ export default interface Resources {
         "cancelled": "已取消检查",
         "choose_target_other": "发现 {{count}} 个绘图脚本",
         "failed": "检查没有完成",
+        "lost": "没能读到检查进度",
         "nothing_found": "项目里还没有图和脚本",
         "scanning": "正在检查项目…",
         "static_source": "没有发现脚本，图可以直接排版",

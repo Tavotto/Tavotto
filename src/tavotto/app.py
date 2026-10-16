@@ -2446,6 +2446,20 @@ def _refresh_sink(ctx: "ProjectCtx") -> engine_refresh.RefreshSink:
     return engine_refresh.RefreshSink(publish=sse_publish)
 
 
+_PROJECT_ERROR_LOCK = threading.Lock()
+_PROJECT_ERROR_SEQ = 0
+
+
+def _publish_project_error(payload: dict) -> None:
+    """`project.error`（失败与 `recovered` 两种）的唯一发布口：给每条一个单调递增的 `seq`，**分配与发布在同一把锁内**——
+    watcher 线程与手动刷新线程并发时，事件流里的先后与 seq 的先后一致；前端凭 seq 丢掉比已见过的更旧的，
+    恢复提示不会被迟到的旧错误顶回去。"""
+    global _PROJECT_ERROR_SEQ
+    with _PROJECT_ERROR_LOCK:
+        _PROJECT_ERROR_SEQ += 1
+        sse_publish("project.error", {**payload, "seq": _PROJECT_ERROR_SEQ})
+
+
 def _watch_sink(ctx: "ProjectCtx") -> engine_watch.WatchSink:
     """项目 watcher 的三个出口。
 
@@ -2457,11 +2471,14 @@ def _watch_sink(ctx: "ProjectCtx") -> engine_watch.WatchSink:
     return engine_watch.WatchSink(
         refresh=lambda paths: refresh_project(ctx, reason="watcher", changed_paths=paths),
         script_changed=_script_change_handler(ctx),
-        error=lambda code, params: sse_publish(
-            "project.error",
-            {"pj": ctx.id, "reason": "watcher", "code": code, "params": params},
+        error=lambda code, params: _publish_project_error(
+            {"pj": ctx.id, "reason": "watcher", "code": code, "params": params}
         ),
     )
+
+
+#: 上一次统一刷新以失败收场的项目 id（成功时报一次 `recovered` 并移出）
+_REFRESH_FAILED: set[str] = set()
 
 
 def refresh_project(
@@ -2481,14 +2498,25 @@ def refresh_project(
     把 app 层的两个出口接上去——**别在别处再写第二条**（Prompt 05 的项目
     watcher 也调这个函数，不许自己 merge、自己发事件）。
     """
-    result = engine_refresh.refresh_project_index(
-        ctx,
-        reason=reason,
-        changed_paths=changed_paths,
-        allow_static_merge=allow_static_merge,
-        publish=publish,
-        sink=_refresh_sink(ctx),
-    )
+    try:
+        result = engine_refresh.refresh_project_index(
+            ctx,
+            reason=reason,
+            changed_paths=changed_paths,
+            allow_static_merge=allow_static_merge,
+            publish=publish,
+            sink=_refresh_sink(ctx),
+        )
+    except engine_refresh.RefreshError:
+        _REFRESH_FAILED.add(ctx.id)
+        raise
+    # 「恢复了」只在这一处报：上一次刷新（不论谁触发的）失败过、这一次成功了——哪怕没有语义差异、
+    # `registry.changed` 一条都不发。同一个事件名带 `recovered`，前端据此撤掉那条常驻错误；没有新增事件名
+    if ctx.id in _REFRESH_FAILED and publish:
+        _REFRESH_FAILED.discard(ctx.id)
+        _publish_project_error(
+            {"pj": ctx.id, "reason": reason, "code": "", "params": {}, "recovered": True}
+        )
     # 遥测挂在**成功边界**上，且只在这一处：四条刷新路径（手动 / watcher /
     # Codex / AI）都经过这里。失败抛出去了就没有这一句——失败不是完成。
     _capture_refresh_completed(result)

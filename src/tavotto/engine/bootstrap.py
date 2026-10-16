@@ -21,6 +21,7 @@
 from __future__ import annotations
 
 import os
+import secrets
 import shutil
 import subprocess
 import threading
@@ -33,7 +34,14 @@ INSTALL_TIMEOUT_S = 900  # 首次装 matplotlib 要下几十 MB，网络慢时�
 PROBE_TIMEOUT_S = 30
 
 _lock = threading.Lock()
-_progress: dict = {"state": "idle", "log": "", "error": None}
+#: `attempt`：尝试身份，单调递增、进程内从 1 起（0 = 从没装过）。每开始一次**新**安装加一；`engine.bootstrap` 事件、
+#: 环境状态 GET、install POST 响应都带它——前端凭它判「这条快照说的是哪一次」，不靠推断。
+_progress: dict = {"state": "idle", "log": "", "error": None, "attempt": 0}
+#: 保护「判有没有在跑 + 置 running + attempt 加一」这一小段（install_async 与直接调 install 都经过）
+_attempt_lock = threading.Lock()
+#: 进程级身份（启动时随机生成）：`attempt` 是进程内计数，后端重启会从 0 重来；前端凭 `(boot, attempt)` 判身份，
+#: boot 变了就是另一个进程——它的 attempt 与上一个进程的不可比，直接采用而不是当成「更旧的」丢掉
+_BOOT_ID = secrets.token_hex(8)
 
 
 # ---------------------------------------------------------------------------
@@ -133,11 +141,15 @@ def status() -> dict:
     try:
         python = pool.find_worker_python()
         source = pool.source_of(python)
+        mpl = matplotlib_version(python, bundled=source == pool.SOURCE_BUNDLED)
+        # {attempt, state, error} 一次取成一致的快照，且放在探测之后、组装响应之前：
+        # 探测期间安装若已走到终态，GET 要报这个终态——丢了终态 SSE 的重连对账全靠它
+        snap = _snapshot()
         return {
             "ok": True,
             "python": python,
             "source": source,
-            "matplotlib": matplotlib_version(python, bundled=source == pool.SOURCE_BUNDLED),
+            "matplotlib": mpl,
             "managed": Path(python) == venv_python(),
             "bundled": source == pool.SOURCE_BUNDLED,
             "runtime": rt,
@@ -145,11 +157,14 @@ def status() -> dict:
             # 冒烟脚本靠它断言「产物里真带了 workerd 且渲染真走了它」——
             # 回退是静默的，不报出来就只能靠「怎么有点慢」去猜。
             "control_plane": pool.control_plane(),
-            "state": _progress["state"],
+            "state": snap["state"],
+            "attempt": snap["attempt"],
+            "boot": _BOOT_ID,
         }
     except pool.WorkerError as exc:
         code = exc.code
     base = find_base_python()
+    snap = _snapshot()  # 同上：在可能很慢的 find_base_python 之后再取
     return {
         "ok": False,
         "python": None,
@@ -164,16 +179,24 @@ def status() -> dict:
         "code": code,
         "can_install": base is not None and not rt["expected"],
         "base_python": base,
-        "state": _progress["state"],
-        "error": (runtime.repair_hint() if rt["expected"] else _progress["error"]),
+        "state": snap["state"],
+        "attempt": snap["attempt"],
+        "boot": _BOOT_ID,
+        "error": (runtime.repair_hint() if rt["expected"] else snap["error"]),
     }
 
 
 # ---------------------------------------------------------------------------
 # 安装
 # ---------------------------------------------------------------------------
+def _snapshot() -> dict:
+    """`_progress` 的一致快照：与「置 running + attempt 加一」同一把锁，读不到半新半旧的组合。"""
+    with _attempt_lock:
+        return dict(_progress)
+
+
 def progress() -> dict:
-    return dict(_progress)
+    return {**_snapshot(), "boot": _BOOT_ID}
 
 
 def _append(line: str) -> None:
@@ -188,7 +211,11 @@ def install(on_event=None) -> dict:
     if not _lock.acquire(blocking=False):
         return {"ok": False, "error": "安装已在进行中"}
     try:
-        _progress.update(state="running", log="", error=None)
+        with _attempt_lock:
+            # 经 `install_async` 来的已经在调用线程里同步置过 running 并加过 attempt；直接调用的（脚本 / 测试）在这里开始新一次
+            # attempt 与 state 一次写进去（同一把锁内、一次 update），读方经 `_snapshot` 取同一把锁
+            nxt = _progress["attempt"] + (1 if _progress["state"] != "running" else 0)
+            _progress.update(attempt=nxt, state="running", log="", error=None)
         _emit(on_event)
 
         # 桌面版该有内置 runtime。走到这里说明它缺了或坏了——那时该做的是重装，
@@ -289,4 +316,9 @@ def _emit(on_event) -> None:
 
 
 def install_async(on_event=None) -> None:
+    # 同步把状态置为 running 再返回：调用方（POST 接口）拿到的响应与随后的任何读取都已经看得见这次尝试，
+    # 而不是等线程调度起来才变。已有安装在跑时不动（别把它的日志清掉）
+    with _attempt_lock:
+        if not _lock.locked() and _progress["state"] != "running":
+            _progress.update(attempt=_progress["attempt"] + 1, state="running", log="", error=None)
     threading.Thread(target=lambda: install(on_event), daemon=True, name="mm-bootstrap").start()

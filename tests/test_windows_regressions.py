@@ -3723,3 +3723,52 @@ def test_scan_redirect_metadata_preserves_nonredirect_cloud_placeholders(
     assert scanbudget.is_redirect(metadata) is expected
     if tag == 0x9000001A:
         assert scanbudget.is_placeholder(metadata)
+
+
+@pytest.mark.parametrize("shim", [r"C:\科研工具\Node 环境\pnpm.CMD", "/opt/homebrew/bin/pnpm"])
+@pytest.mark.parametrize("override", [None, r"D:\用户环境\python.exe"])
+def test_perf_agent_resolves_cli_shim_and_passes_its_backend_python(
+    tmp_path, monkeypatch, shim, override
+):
+    """判构造的真实 argv/env；不把 Linux mock 冒充 Windows 真机执行。"""
+    from test_perf_agent import A, report
+
+    current_python = r"C:\科研工具\Python 环境\python.exe"
+    monkeypatch.setattr(shutil, "which", lambda name: shim if name == "pnpm" else None)
+    monkeypatch.setattr(sys, "executable", current_python)
+    if override is None:
+        monkeypatch.delenv("TAVOTTO_PYTHON", raising=False)
+    else:
+        monkeypatch.setenv("TAVOTTO_PYTHON", override)
+    output = tmp_path / "run.json"
+    calls = []
+
+    def execute(argv, **kwargs):
+        calls.append((argv, kwargs["env"]))
+        if len(calls) == 1:
+            Path(kwargs["env"]["TAVOTTO_PERF_AGENT_OUTPUT"]).write_text(json.dumps(report()))
+        elif len(calls) == 2:
+            Path(kwargs["env"]["TAVOTTO_PERF_REPORT_OUT"]).write_text("{}")
+        else:
+            Path(argv[argv.index("--json") + 1]).write_text("[]")
+        return subprocess.CompletedProcess(argv, 0)
+
+    monkeypatch.setattr(subprocess, "run", execute)
+    assert A.main(["run", "--out", str(output), "--include-drag"]) == 0
+    assert len(calls) == 3
+    for argv, env in calls[:2]:
+        assert argv[:4] == [shim, "exec", "playwright", "test"]
+        assert env["TAVOTTO_PYTHON"] == (override or current_python)
+    assert calls[2][0][0] == current_python
+
+
+def test_perf_probe_finds_the_app_bundle_plist_with_windows_separators(monkeypatch):
+    """#1001 合并组 Windows 腿：按 "/Contents/MacOS/" 字符串切路径，反斜杠下版本恒为 None。"""
+    scripts = str(Path(__file__).resolve().parents[1] / "scripts")
+    monkeypatch.syspath_prepend(scripts)
+    import perf_macos_window as mod
+
+    exe = PureWindowsPath("C:\\x\\Tavotto.app\\Contents\\MacOS\\Tavotto")
+    assert mod.info_plist_for_executable(exe) == PureWindowsPath(
+        "C:\\x\\Tavotto.app\\Contents\\Info.plist"
+    )

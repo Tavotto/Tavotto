@@ -7,7 +7,9 @@
 * **按窗口句柄投递消息**：`WM_CLOSE`、`WM_COMMAND`（菜单项 / 加速键翻译之后的那一条）、
   `WM_SETTEXT` / `BM_CLICK`（系统文件对话框里的输入框与按钮）。句柄都先按**进程 id**
   过滤出来，打不到别的应用；
-* **读菜单树**：`GetMenu` / `GetMenuStringW` 读的是 USER 对象，跨进程只读；
+* **读菜单树**：`GetMenu` / `GetMenuStringW` 读的是 USER 对象，跨进程只读。主窗口的菜单栏藏起来之后
+  （`hide_menu` = `SetMenu(NULL)`，#994）`GetMenu` 是空的，改读顶栏「菜单」按钮弹出的那份弹出菜单
+  （窗口类 `#32768`，经 `MN_GETHMENU` 取句柄）；
 * **系统剪贴板**：本进程作为「另一个应用」读写 `CF_UNICODETEXT`——这正是
   「跨应用剪贴板」要量的那一侧。
 
@@ -38,6 +40,14 @@ CF_UNICODETEXT = 13
 GMEM_MOVEABLE = 0x0002
 MF_BYPOSITION = 0x0400
 GW_OWNER = 4
+WM_KEYDOWN = 0x0100
+WM_KEYUP = 0x0101
+WM_CANCELMODE = 0x001F
+MN_GETHMENU = 0x01E1
+VK_ESCAPE = 0x1B
+SMTO_ABORTIFHUNG = 0x0002
+#: 系统弹出菜单（TrackPopupMenu 弹的那种）的窗口类
+POPUP_MENU_CLASS = "#32768"
 
 LRESULT = ctypes.c_ssize_t
 WNDENUMPROC = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
@@ -56,6 +66,16 @@ user32.GetDlgCtrlID.argtypes = [wintypes.HWND]
 user32.PostMessageW.argtypes = [wintypes.HWND, ctypes.c_uint, wintypes.WPARAM, wintypes.LPARAM]
 user32.SendMessageW.argtypes = [wintypes.HWND, ctypes.c_uint, wintypes.WPARAM, wintypes.LPARAM]
 user32.SendMessageW.restype = LRESULT
+user32.SendMessageTimeoutW.argtypes = [
+    wintypes.HWND,
+    ctypes.c_uint,
+    wintypes.WPARAM,
+    wintypes.LPARAM,
+    ctypes.c_uint,
+    ctypes.c_uint,
+    ctypes.POINTER(ctypes.c_size_t),
+]
+user32.SendMessageTimeoutW.restype = LRESULT
 user32.GetMenu.argtypes = [wintypes.HWND]
 user32.GetMenu.restype = wintypes.HMENU
 user32.GetSubMenu.argtypes = [wintypes.HMENU, ctypes.c_int]
@@ -385,9 +405,7 @@ def _menu_text(hmenu, pos: int) -> str:
     return buf.value
 
 
-def menu_items(hwnd: int) -> list[MenuItem]:
-    """窗口菜单栏上的全部叶子项（跨进程只读）。菜单栏是空的时候回空表，由调用方判红。"""
-    root = user32.GetMenu(hwnd)
+def _walk_menu(root) -> list[MenuItem]:
     out: list[MenuItem] = []
 
     def walk(hmenu, prefix: tuple[str, ...]):
@@ -405,6 +423,54 @@ def menu_items(hwnd: int) -> list[MenuItem]:
     if root:
         walk(root, ())
     return out
+
+
+def menu_items(hwnd: int) -> list[MenuItem]:
+    """窗口菜单栏上的全部叶子项（跨进程只读）。菜单栏是空的（或被藏起来了）时回空表。"""
+    return _walk_menu(user32.GetMenu(hwnd))
+
+
+def popup_menu_windows(pid: int) -> list[Window]:
+    return [w for w in top_windows({pid}) if w.cls == POPUP_MENU_CLASS and w.visible]
+
+
+def popup_menu_items(popup_hwnd: int) -> list[MenuItem]:
+    """一个已弹出的系统菜单（`#32768`）里的全部叶子项：`MN_GETHMENU` 取它的 HMENU，再同样地读。
+
+    muda 的弹出菜单（`hpopupmenu`）与菜单栏那份（`hmenu`）项、命令 id、加速键文案一个不差，
+    所以这里读到的命令 id 投给主窗口就是 `TranslateAcceleratorW` 翻出来的那条 `WM_COMMAND`。
+    """
+    res = ctypes.c_size_t(0)
+    ok = user32.SendMessageTimeoutW(
+        popup_hwnd, MN_GETHMENU, 0, 0, SMTO_ABORTIFHUNG, 5000, ctypes.byref(res)
+    )
+    assert ok and res.value, f"弹出菜单 {popup_hwnd:#x} 不回 MN_GETHMENU（没有 HMENU）"
+    return _walk_menu(wintypes.HMENU(res.value))
+
+
+def dismiss_popup_menu(pid: int, owner_hwnd: int, timeout: float = 10.0) -> None:
+    """关掉被测进程弹出的系统菜单，等它真的消失。
+
+    先投 Esc（只投给这个菜单窗口，不是全局按键），不行再对属主窗口发 `WM_CANCELMODE`
+    （结束模态菜单循环的标准办法）。两步之后还在就抛：菜单挂着会让后面的投递全落进模态循环。
+    """
+    deadline = time.monotonic() + timeout
+    for step in ("esc", "cancel"):
+        for pm in popup_menu_windows(pid):
+            if step == "esc":
+                post(pm.hwnd, WM_KEYDOWN, VK_ESCAPE, 0)
+                post(pm.hwnd, WM_KEYUP, VK_ESCAPE, 0xC0000001)
+            else:
+                res = ctypes.c_size_t(0)
+                user32.SendMessageTimeoutW(
+                    owner_hwnd, WM_CANCELMODE, 0, 0, SMTO_ABORTIFHUNG, 3000, ctypes.byref(res)
+                )
+        stop = time.monotonic() + (deadline - time.monotonic()) / 2
+        while time.monotonic() < stop:
+            if not popup_menu_windows(pid):
+                return
+            time.sleep(0.1)
+    raise AssertionError(f"弹出菜单 {timeout:.0f}s 内没关掉：{popup_menu_windows(pid)}")
 
 
 def post_menu_command(hwnd: int, command_id: int, *, from_accelerator: bool) -> None:

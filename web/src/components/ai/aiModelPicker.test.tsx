@@ -7,17 +7,14 @@
  *   1. 执行器与模型是**一个**紧凑选择器（审计 T37）；选不出第二项时不摆
  *      一个选不动的控件，但那一项写的是什么仍要看得见；
  *   2. 模型清单来自 caps，为空时不伪造模型；
- *   3. 推理强度是**真实能力数组驱动**的离散滑杆，档位数 = 数组长度，
- *      滑到第 i 格写的就是 efforts[i]，绝不生成数组里没有的值；
- *   4. 只有一档时滑杆不可调；一档都没有时整块不出现；
- *   5. 键盘方向键可调；
+ *   3. 推理强度不在这个弹层里了（2026-10-16：底栏胶囊 + 菜单，见 `effortMenu.test.tsx`），
+ *      这里只钉「弹层里不再有它」；
  *   6. 正常状态不常驻快照 / CLI / 实现说明（2026-09-11 起弹层里也没有技术详情折叠，
  *      那些内容在设置 → 编码 Agent 的详情页）；
  *   7. 切 Agent 各自保留模型与强度偏好。
  *
  * 合并只是**呈现**：底下仍是 aiStore 的 agent 与 models[agent] 两个字段。
  * 「切到 B 再切回 A，A 的模型还是我上次选的」这条正是那个结构在被检验。
- * 推理强度的滑杆按需展开，**当前档位在收起时就写着**——藏起来的是控件不是值。
  */
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
@@ -100,21 +97,6 @@ const pickPair = async (label: string) => {
     hit!.click()
   })
 }
-/** 推理强度默认收起：要动滑杆先展开 */
-const openEffort = async () => {
-  const btn = buttons().find((b) => b.textContent?.includes('推理强度'))!
-  await act(async () => {
-    btn.click()
-  })
-}
-
-function setRange(el: HTMLInputElement, v: string) {
-  const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!
-  setter.call(el, v)
-  el.dispatchEvent(new Event('input', { bubbles: true }))
-  el.dispatchEvent(new Event('change', { bubbles: true }))
-}
-
 beforeEach(async () => {
   localStorage.clear()
   document.body.innerHTML = ''
@@ -185,10 +167,8 @@ describe('执行器与模型（一个选择器）', () => {
     await mount()
     expect(document.body.querySelector('[data-ai-agent-model="select"]')).toBeTruthy()
     expect(document.body.querySelector('[data-ai-agent-model="static"]')).toBeNull()
-    // codex 支持推理强度 → 折叠入口在，默认收起
-    const disclosure = document.body.querySelector('[data-ai-effort="disclosure"]')
-    expect(disclosure).toBeTruthy()
-    expect(disclosure!.getAttribute('aria-expanded')).toBe('false')
+    // 推理强度已搬到底栏胶囊：弹层里不再有折叠入口
+    expect(document.body.querySelector('[data-ai-effort="disclosure"]')).toBeNull()
 
     // 一个 Agent 一个模型 → 静态文字形态
     await act(async () => {
@@ -216,16 +196,12 @@ describe('执行器与模型（一个选择器）', () => {
     useAiStore.getState().setEffort('codex', 'low')
     useAiStore.getState().setModel('claude', 'opus')
     await mount()
-    // 当前是 codex：展开强度后滑杆停在 low
-    await openEffort()
-    expect(range()!.value).toBe('1') // ['minimal','low',...] → index 1
-    // 切到 claude：它没有强度，滑杆整块消失；模型保留 opus
+    // 切到 claude：模型保留 opus
     await pickPair('Claude Code · opus')
-    expect(range()).toBeNull()
     expect(textOf()).toContain('opus')
-    // 切回 codex：强度还是 low（展开状态是弹层自己的，切一圈回来它还开着）
+    // 切回 codex：强度记忆还是 low（强度的读写在底栏菜单，见 effortMenu.test.tsx）
     await pickPair('Codex · gpt-5.6-sol')
-    expect(range()!.value).toBe('1')
+    expect(useAiStore.getState().efforts.codex).toBe('low')
   })
 
   it('记忆里的模型已不在清单里时照实显示它，不静默换成别的一项', async () => {
@@ -262,118 +238,11 @@ describe('模型选择', () => {
   })
 })
 
-/* ------------------------------- 推理强度 -------------------------------- */
-
-describe('推理强度滑杆', () => {
-  it('档位数 = caps 的真实数组长度', async () => {
+describe('推理强度不在这个弹层里', () => {
+  it('弹层里没有滑杆、没有「推理强度」折叠行', async () => {
     useAiStore.setState({ caps: capsOf(codexSix) })
-    await mount()
-    await openEffort()
-    const r = range()!
-    expect(r.min).toBe('0')
-    expect(r.max).toBe('5') // 六档 → 0..5
-  })
-
-  it('滑到第 i 格写的就是 efforts[i]，不生成数组里没有的值', async () => {
-    useAiStore.setState({ caps: capsOf(codexSix) })
-    await mount()
-    await openEffort()
-    const list = codexSix.efforts
-    for (const [i, expected] of list.entries()) {
-      await act(async () => {
-        setRange(range()!, String(i))
-      })
-      expect(useAiStore.getState().efforts.codex).toBe(expected)
-      expect(list).toContain(useAiStore.getState().efforts.codex)
-    }
-  })
-
-  it('收起时当前档位就写着；展开后 aria-valuetext 与它一致（审计 T37）', async () => {
-    useAiStore.setState({ caps: capsOf(codexSix) })
-    useAiStore.getState().setEffort('codex', 'high')
-    await mount()
-    // 按需展示的是**控件**，不是值：没展开也读得出现在是哪一档
-    expect(range()).toBeNull()
-    expect(textOf()).toContain('推理强度')
-    expect(textOf()).toContain('高')
-    await openEffort()
-    expect(range()!.getAttribute('aria-valuetext')).toBe('高')
-  })
-
-  it('CLI 声明了表里没有的档位时回退原文，不显示空白', async () => {
-    useAiStore.setState({
-      caps: capsOf(agentCaps({ efforts: ['low', 'turbo'], default_effort: 'turbo' })),
-    })
-    await mount()
-    await openEffort()
-    expect(range()!.getAttribute('aria-valuetext')).toBe('turbo')
-  })
-
-  it('只有一档时滑杆不可调', async () => {
-    useAiStore.setState({
-      caps: capsOf(agentCaps({ efforts: ['medium'], default_effort: 'medium' })),
-    })
-    await mount()
-    await openEffort()
-    expect(range()).toBeTruthy()
-    expect(range()!.disabled).toBe(true)
-  })
-
-  it('没有强度能力时整块不出现', async () => {
-    useAiStore.setState({ caps: capsOf(claudeCaps()) })
     await mount()
     expect(range()).toBeNull()
     expect(textOf()).not.toContain('推理强度')
-  })
-
-  it('记忆里的档位已不在清单里时回落到第一格，不越界', async () => {
-    useAiStore.setState({ caps: capsOf(codexSix), efforts: { codex: '不存在的档位' } })
-    await mount()
-    await openEffort()
-    expect(range()!.value).toBe('0')
-  })
-
-  it('是原生 range：方向键与触摸免费拿到，且有可达名', async () => {
-    useAiStore.setState({ caps: capsOf(codexSix) })
-    await mount()
-    await openEffort()
-    expect(range()!.tagName).toBe('INPUT')
-    expect(range()!.type).toBe('range')
-    expect(range()!.getAttribute('aria-label')).toBe('推理强度')
-  })
-})
-
-/* ------------------------------- 文案减负 -------------------------------- */
-
-describe('正常状态的文案', () => {
-  it('不常驻快照 / CLI 版本 / 路径说明', async () => {
-    useAiStore.setState({ caps: capsOf(codexSix) })
-    await mount()
-    expect(textOf()).not.toContain('自动快照')
-    expect(textOf()).not.toContain('codex-cli')
-    expect(textOf()).not.toContain('/opt/homebrew')
-    expect(textOf()).not.toContain('fig1_kinetics.py')
-  })
-
-  /**
-   * 2026-09-11 组件工作台批次把弹层里的「技术详情」折叠整个去掉了：快照说明、
-   * CLI 包名、解释器路径不再在这个弹层里出现（它们在设置 → 编码 Agent 的详情页）。
-   * 守住的仍是第 6 条：正常状态一个字都不常驻。
-   */
-  it('正常状态不常驻快照 / CLI / 实现说明（弹层里也没有技术详情折叠）', async () => {
-    useAiStore.setState({ caps: capsOf(codexSix) })
-    await mount()
-    expect(textOf()).not.toContain('自动快照')
-    expect(textOf()).not.toContain('codex-cli')
-    expect(textOf()).not.toContain('/opt/homebrew')
-    expect(buttons().find((b) => b.textContent?.trim() === '技术详情')).toBeUndefined()
-  })
-
-  it('强度的原始值不出现在弹层里（正常状态给的是当前语言的名字）', async () => {
-    useAiStore.setState({ caps: capsOf(codexSix) })
-    useAiStore.getState().setEffort('codex', 'xhigh')
-    await mount()
-    expect(textOf()).toContain('极高')
-    expect(textOf()).not.toContain('xhigh')
   })
 })

@@ -10,6 +10,7 @@ macos-x86_64）。分层的意义只有一条：一个平台的 wheel 绝不能�
 下面每条针对单个目标的用例都对**所有目标**跑一遍，免得新增目标时漏掉看护。
 """
 
+import ast
 import json
 import os
 import re
@@ -527,6 +528,230 @@ def test_spec_and_build_script_share_one_judgement():
     desktop = (REPO / "scripts" / "build_desktop.py").read_text(encoding="utf-8")
     assert "check_runtime_dir" in spec
     assert "check_runtime_dir" in desktop
+
+
+# ---------------- 打包后 runtime 原样（PyInstaller 改判 / 改写看护）------------------
+def test_runtime_source_dir_honours_the_override(tmp_path, monkeypatch):
+    """spec 收的与 build_desktop 核对的必须是同一份；覆盖了却核对了另一份，闸就空转。"""
+    monkeypatch.delenv("TAVOTTO_RUNTIME_SRC", raising=False)
+    assert brt.runtime_source_dir(tmp_path) == tmp_path / "runtime"
+    monkeypatch.setenv("TAVOTTO_RUNTIME_SRC", str(tmp_path / "elsewhere"))
+    assert brt.runtime_source_dir(tmp_path) == tmp_path / "elsewhere"
+    # 相对覆盖锚定到仓库根，不随调用方的 cwd 漂移（build_desktop 从别处起时核对的仍是被打包的那份）
+    monkeypatch.setenv("TAVOTTO_RUNTIME_SRC", os.path.join("build", "rt"))
+    monkeypatch.chdir(tmp_path.parent)
+    assert brt.runtime_source_dir(tmp_path) == tmp_path / "build" / "rt"
+    spec = (REPO / "packaging" / "tavotto.spec").read_text(encoding="utf-8")
+    assert "RUNTIME = runtime_source_dir(ROOT)" in spec
+
+
+def _fake_runtime(root: Path) -> None:
+    so = root / "lib" / "site-packages" / "numpy" / "_core" / "_multiarray_umath.so"
+    so.parent.mkdir(parents=True)
+    so.write_bytes(b"\xcf\xfa\xed\xfe@loader_path/../.dylibs/libscipy_openblas64_.dylib")
+    blas = root / "lib" / "site-packages" / "numpy" / ".dylibs" / "libscipy_openblas64_.dylib"
+    blas.parent.mkdir(parents=True)
+    blas.write_bytes(b"\xcf\xfa\xed\xfe" + b"\0" * 64)
+    (root / "runtime-manifest.json").write_text("{}", encoding="utf-8")
+
+
+def test_diff_collected_runtime_accepts_a_byte_identical_copy(tmp_path):
+    src, dst = tmp_path / "src", tmp_path / "dst"
+    _fake_runtime(src)
+    shutil.copytree(src, dst)
+    assert brt.diff_collected_runtime(src, dst) == []
+
+
+def test_diff_collected_runtime_reports_rewritten_and_missing_files(tmp_path):
+    """v0.18.0 macOS 的形状：扩展模块被改写成 @rpath（等长，只比 size 会漏），另有文件没进包。"""
+    src, dst = tmp_path / "src", tmp_path / "dst"
+    _fake_runtime(src)
+    shutil.copytree(src, dst)
+    so = dst / "lib" / "site-packages" / "numpy" / "_core" / "_multiarray_umath.so"
+    original = so.read_bytes()
+    rewritten = b"\xcf\xfa\xed\xfe@rpath/libscipy_openblas64_.dylib".ljust(len(original), b"\0")
+    assert len(rewritten) == len(original)
+    so.write_bytes(rewritten)
+    (dst / "runtime-manifest.json").unlink()
+    assert brt.diff_collected_runtime(src, dst) == [
+        os.path.join("lib", "site-packages", "numpy", "_core", "_multiarray_umath.so")
+        + "（字节不同）",
+        "runtime-manifest.json（缺）",
+    ]
+
+
+def test_diff_collected_runtime_reports_files_only_in_the_packed_tree(tmp_path):
+    """成员也要相同：打包器往 runtime/ 里多塞的文件（原件一个没动）同样算不一致。"""
+    src, dst = tmp_path / "src", tmp_path / "dst"
+    _fake_runtime(src)
+    shutil.copytree(src, dst)
+    (dst / "lib" / "libgfortran.5.dylib").write_bytes(b"\xcf\xfa\xed\xfe")
+    assert brt.diff_collected_runtime(src, dst) == [
+        os.path.join("lib", "libgfortran.5.dylib") + "（多出）"
+    ]
+
+
+def test_is_under_treats_another_windows_drive_as_outside():
+    """Windows runner：仓库（runtime）在 D:，打包 Python 的 DLL 在 C:——commonpath 会抛 ValueError。"""
+    import ntpath
+
+    root = r"D:\a\Tavotto\Tavotto\runtime"
+    assert brt._is_under(r"C:\hostedtoolcache\Python\python313.dll", root, ntpath) is False
+    assert brt._is_under(r"d:\A\Tavotto\Tavotto\RUNTIME\Lib\x.pyd", root, ntpath) is True
+    assert brt._is_under(r"D:\a\Tavotto\Tavotto\runtime-other\x.dll", root, ntpath) is False
+
+
+def test_runtime_toc_problems_survives_sources_it_cannot_relate(tmp_path, monkeypatch):
+    """任一条目与 runtime 无公共前缀（跨盘符）时整张 TOC 照样判完，不抛。"""
+    rt = tmp_path / "runtime-src"
+    _fake_runtime(rt)
+
+    def boom(paths):
+        raise ValueError("Paths don't have the same drive")
+
+    monkeypatch.setattr(brt.os.path, "commonpath", boom)
+    toc = [("python313.dll", str(tmp_path / "host.dll"), "BINARY")]
+    assert brt.runtime_toc_problems(toc, rt) == []
+
+
+def test_runtime_toc_problems_flags_copies_outside_and_reclassified_entries(tmp_path):
+    """v0.18.0 macOS 的 TOC 形状（PyInstaller 6.22.3 实测）：runtime 里 numpy/.dylibs 的库被依赖分析
+    以 BINARY 复制到顶层；runtime 自己的扩展模块被改判成 BINARY。冻结层自己的同名库（来源不在
+    runtime 下）不算。"""
+    rt = tmp_path / "runtime-src"
+    _fake_runtime(rt)
+    dylibs = rt / "lib" / "site-packages" / "numpy" / ".dylibs"
+    so = rt / "lib" / "site-packages" / "numpy" / "_core" / "_multiarray_umath.so"
+    host_crypto = tmp_path / "host" / "libcrypto.3.dylib"
+    host_crypto.parent.mkdir()
+    host_crypto.write_bytes(b"x")
+    ok = [
+        (
+            os.path.join("runtime", "runtime-manifest.json"),
+            str(rt / "runtime-manifest.json"),
+            "DATA",
+        ),
+        ("libcrypto.3.dylib", str(host_crypto), "BINARY"),
+        (os.path.join("runtime", "bin", "python3"), "python3.13", "SYMLINK"),
+    ]
+    assert brt.runtime_toc_problems(ok, rt) == []
+
+    copied = ("libscipy_openblas64_.dylib", str(dylibs / "libscipy_openblas64_.dylib"), "BINARY")
+    rewritten = (
+        os.path.join("runtime", "lib", "site-packages", "numpy", "_core", so.name),
+        str(so),
+        "EXTENSION",
+    )
+    bad = brt.runtime_toc_problems([*ok, copied, rewritten], rt)
+    assert len(bad) == 2
+    assert bad[0].startswith("libscipy_openblas64_.dylib ← ") and "外面" in bad[0]
+    assert "typecode=EXTENSION" in bad[1]
+
+
+def test_spec_runs_the_runtime_toc_gate_after_adding_the_runtime():
+    """闸要在 Tree 加进去之后、COLLECT 之前跑，对象是 binaries + datas 全体，失败就拒绝打包。"""
+    spec = (REPO / "packaging" / "tavotto.spec").read_text(encoding="utf-8")
+    tree_at = spec.index('Tree(str(_RUNTIME_AFTER_ANALYSIS), prefix="runtime")')
+    gate_at = spec.index("runtime_toc_problems([*a.binaries, *a.datas], RUNTIME)")
+    assert tree_at < gate_at < spec.index("coll = COLLECT(")
+    assert "raise SystemExit" in spec[gate_at : gate_at + 300]
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="建符号链接要特权")
+def test_diff_collected_runtime_accepts_a_flattened_symlink(tmp_path):
+    """Tree 与 Tauri 都会把符号链接拍平成真文件；那不是改写。"""
+    src, dst = tmp_path / "src", tmp_path / "dst"
+    _fake_runtime(src)
+    (src / "bin").mkdir()
+    (src / "bin" / "pydoc3.13").write_text("#!/bin/sh\n", encoding="utf-8")
+    (src / "bin" / "pydoc3").symlink_to("pydoc3.13")
+    shutil.copytree(src, dst, symlinks=False)
+    assert not (dst / "bin" / "pydoc3").is_symlink()
+    assert brt.diff_collected_runtime(src, dst) == []
+
+
+def _linked_runtime(tmp_path: Path) -> tuple[Path, Path]:
+    src = tmp_path / "src"
+    _fake_runtime(src)
+    (src / "bin").mkdir()
+    (src / "bin" / "python3.13").write_bytes(b"\xcf\xfa\xed\xfe interpreter")
+    (src / "bin" / "python3").symlink_to("python3.13")
+    (src / "lib" / "real-dir").mkdir()
+    (src / "lib" / "real-dir" / "data.txt").write_text("v1", encoding="utf-8")
+    (src / "lib" / "dir-link").symlink_to("real-dir", target_is_directory=True)
+    return src, tmp_path / "dst"
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="建符号链接要特权")
+def test_diff_collected_runtime_checks_flattened_link_contents(tmp_path):
+    """拍平后的链接要与它解析到的源逐字节相同；拍平的目录链接下面的文件也逐个比、计入成员。"""
+    src, dst = _linked_runtime(tmp_path)
+    shutil.copytree(src, dst, symlinks=False)
+    assert brt.diff_collected_runtime(src, dst) == []
+
+    (dst / "bin" / "python3").write_bytes(b"\xcf\xfa\xed\xfe tampered!!")
+    (dst / "lib" / "dir-link" / "data.txt").write_text("v2", encoding="utf-8")
+    (dst / "lib" / "dir-link" / "extra.dylib").write_bytes(b"x")
+    assert brt.diff_collected_runtime(src, dst) == [
+        os.path.join("bin", "python3") + "（字节不同）",
+        os.path.join("lib", "dir-link", "data.txt") + "（字节不同）",
+        os.path.join("lib", "dir-link", "extra.dylib") + "（多出）",
+    ]
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="建符号链接要特权")
+def test_diff_collected_runtime_checks_preserved_link_targets(tmp_path):
+    """保留为链接时比目标字符串：被改指到别处的链接（哪怕两边文件字节一样）也算不一致。"""
+    src, dst = _linked_runtime(tmp_path)
+    shutil.copytree(src, dst, symlinks=True)
+    assert brt.diff_collected_runtime(src, dst) == []
+
+    (dst / "bin" / "python3-copy").write_bytes((dst / "bin" / "python3.13").read_bytes())
+    (dst / "bin" / "python3").unlink()
+    (dst / "bin" / "python3").symlink_to("python3-copy")
+    assert brt.diff_collected_runtime(src, dst) == [
+        os.path.join("bin", "python3-copy") + "（多出）",
+        os.path.join("bin", "python3") + "（链接目标不同）",
+    ]
+
+
+def test_build_desktop_checks_the_packed_runtime_after_pyinstaller():
+    """闸要接在 PyInstaller 之后、Tauri 之前，且用与 spec 同一个来源目录。"""
+    text = (REPO / "scripts" / "build_desktop.py").read_text(encoding="utf-8")
+    main = next(
+        n for n in ast.parse(text).body if isinstance(n, ast.FunctionDef) and n.name == "main"
+    )
+    calls = {
+        n.func.id: n.lineno
+        for n in ast.walk(main)
+        if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
+    }
+    assert "runtime_source_dir" in calls and "diff_collected_runtime" in calls
+    pyinstaller = next(
+        n.lineno for n in ast.walk(main) if isinstance(n, ast.Constant) and n.value == "PyInstaller"
+    )
+    tauri = next(
+        n.lineno
+        for n in ast.walk(main)
+        if isinstance(n, ast.Constant) and isinstance(n.value, str) and "@tauri-apps/cli" in n.value
+    )
+    assert pyinstaller < calls["diff_collected_runtime"] < tauri
+
+
+@pytest.mark.parametrize("job", ["windows-exe-smoke", "macos-app-smoke"])
+def test_ci_smoke_legs_check_the_packed_runtime_after_pyinstaller(job):
+    """CI 的两条冒烟腿直接调 pyinstaller、不经 build_desktop.py——同一道闸要在那里也接上。"""
+    text = (REPO / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    starts = [(m.group(1), m.start()) for m in re.finditer(r"(?m)^  ([\w-]+):\s*$", text)]
+    begin = next(i for i, (name, _) in enumerate(starts) if name == job)
+    end = starts[begin + 1][1] if begin + 1 < len(starts) else len(text)
+    block = text[starts[begin][1] : end]
+    freeze = block.index("run: pyinstaller packaging/tavotto.spec")
+    check = block.index(
+        'diff_collected_runtime(runtime_source_dir("."), "dist/Tavotto/_internal/runtime")'
+    )
+    assert freeze < check
+    assert "sys.exit(1)" in block[check : check + 400]
 
 
 # ---------------- 精简规则 ----------------------------------------------------

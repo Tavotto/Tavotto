@@ -41,6 +41,7 @@ export function problemContextNow(): string {
     loadSeq: doc.loadSeq,
     scope: effectiveScope(ui.problemScope, figure.id),
     figureId: figure.id,
+    canvasId: doc.activeCanvasId,
     view: ui.problemView,
   })
 }

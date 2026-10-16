@@ -5,7 +5,7 @@ import {
   ArrowUp,
   CaseSensitive,
   ChartLine,
-  ChevronRight,
+  ChevronDown,
   FileCodeCorner,
   Image as ImageIcon,
   LayoutGrid,
@@ -41,11 +41,11 @@ import { Button, IconButton } from '../ui/Button'
 import { EmptyState } from '../ui/EmptyState'
 import { Reveal } from '../ui/Field'
 import { fitTextAreaHeight } from '../ui/Input'
+import { Menu, MenuRadioGroup, MenuRadioItem } from '../ui/Menu'
 import { Notice } from '../ui/Notice'
 import { Popover } from '../ui/Popover'
 import { Segmented } from '../ui/Segmented'
 import { Select } from '../ui/Select'
-import { StepSlider } from '../ui/StepSlider'
 import { Tip } from '../ui/Tooltip'
 import { TaskHistory } from './TaskHistory'
 import { Turn } from './Transcript'
@@ -397,9 +397,6 @@ function AssistantPanelBody() {
   }
 
   const suggestions = panel ? chipsFor(scope, element, !!axes) : []
-  // 两态（§6.5）：空着时是 42px 的单行胶囊；一有内容（或正在跑）就展开成「内容 / 工具行」两行
-  const expanded = prompt !== '' || runningHere
-
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       {/* 面板顶部只剩历史：作用目标挪到了输入框上方的上下文带（§6.5） */}
@@ -559,17 +556,15 @@ function AssistantPanelBody() {
           )}
           {/* 玻璃（2026-09-15 参考 Codex，用户拍板）：field 90% 的底 + 16px 背景模糊 + --shadow-composer。
               聚焦只把边框加深到 border-strong（§6.5：只变色无环，更安静；插入点是框里唯一的一点 accent）。
-              两态由 data-layout 说：compact = 42px 胶囊 [内容 | 发送]；expanded = 16px 圆角
-              [内容 / 工具行 + 发送]。同一个 textarea 节点换格子，焦点不丢。禁用只有 opacity-40 一档 */}
+              只有一态（2026-10-16）：16px 圆角 [内容 / 工具行 + 发送]，空着就是这个高度，控件行常驻——
+              此前空态是 42px 胶囊、首字才长到 96px，整块跳一下，模型 / 推理强度平时也看不见。
+              禁用只有 opacity-40 一档 */}
           <div
             data-ai-composer
-            data-layout={expanded ? 'expanded' : 'compact'}
             className={cn(
               'relative grid grid-cols-[minmax(0,1fr)_auto] border border-transparent bg-glass text-ink shadow-composer backdrop-blur-lg',
               'transition-[border-color] duration-fast focus-within:border-border-strong',
-              expanded
-                ? "min-h-24 gap-y-2 rounded-panel pb-2 pl-3.5 pr-2 pt-2.5 [grid-template-areas:'content_content'_'start_end']"
-                : "h-[42px] items-center gap-x-2 rounded-full pl-4 pr-2 [grid-template-areas:'content_end']",
+              "min-h-24 gap-y-2 rounded-panel pb-2 pl-3.5 pr-2 pt-2.5 [grid-template-areas:'content_content'_'start_end']",
               (!panel || noAgent) && 'opacity-40',
             )}
           >
@@ -592,15 +587,12 @@ function AssistantPanelBody() {
               className={cn(
                 'block w-full resize-none bg-transparent text-base leading-5 [grid-area:content]',
                 // 占位是要读的字：ink-3，与其它输入框同一档（faint 只给装饰 / 禁用）
-                'text-ink outline-none placeholder:text-ink-3',
-                expanded ? 'min-h-10 self-start' : 'h-5 overflow-hidden',
+                'min-h-10 self-start text-ink outline-none placeholder:text-ink-3',
               )}
             />
-            {expanded && (
-              <div className="flex min-w-0 items-center gap-1 [grid-area:start]">
-                <AgentPills panel={panel} element={element} axes={axes} scope={scope} scopes={scopes} />
-              </div>
-            )}
+            <div className="flex h-[26px] min-w-0 items-center gap-0.5 [grid-area:start]">
+              <AgentPills panel={panel} element={element} axes={axes} scope={scope} scopes={scopes} />
+            </div>
             <div className="flex items-center self-end [grid-area:end]">
               {/* 快捷键只说一次：发送钮的气泡里已经有「⌘↵」，输入框上不再常驻一枚键帽（打磨 A5） */}
               <Tip label={runningHere ? ai('panel.abort') : ai('panel.send', { key: modKey('↵') })}>
@@ -706,39 +698,82 @@ function ContextBand(props: TargetProps) {
 }
 
 /**
- * 工具行的两颗胶囊（§6.5）：「执行器 · 模型」与「推理 强度」直接可见，不再埋进弹层；点开是同一份详情弹层。
+ * 工具行的两颗文字胶囊（§6.5，2026-10-16 推理强度改版）：「执行器 · 模型」与「推理 强度」常驻在输入框底栏，
+ * 一个点开作用范围 / 模型详情，一个点开推理强度菜单。同一套胶囊语言：26 高、12px、无底，hover / 打开时
+ * ink 4% 底，不带彩色点，尾部一枚 12px 向下的小箭头。
  * 写的是**这一刻真的会派给谁**，不是用户存着的首选值。探测中 / 没有可用 Agent 时不摆（上下文带与说明条说）。
  */
+const COMPOSER_PILL_CLASS = cn(
+  'inline-flex h-[26px] min-w-0 items-center gap-1 rounded-sm border-0 bg-transparent px-2 text-sm text-ink-2',
+  'outline-none transition-colors duration-fast hover:bg-surface-hover hover:text-ink',
+  'focus-visible:focus-ring data-[state=open]:bg-surface-hover data-[state=open]:text-ink',
+)
+
 function AgentPills({ panel, ...rest }: Omit<TargetProps, 'panel'> & { panel: PanelObject | null }) {
   useTranslation('ai')
-  const { caps, active, cur, model, effortList, effortIndex } = useAgentChoice()
+  const { caps, active, cur, model } = useAgentChoice()
   if (!panel || !active || !cur) return null
-  const pill = (key: string, text: string, aria: string) => (
-    <Popover
-      width={288}
-      align="start"
-      side="top"
-      trigger={
-        <Button
-          data-ai-pill={key}
-          variant="secondary"
-          size="sm"
-          aria-label={aria}
-          className="h-6 min-w-0 px-2 text-ink-2 hover:text-ink"
-        >
-          <span className="min-w-0 truncate">{text}</span>
-        </Button>
-      }
-    >
-      <ScopeAgentContent panel={panel} {...rest} />
-    </Popover>
-  )
   return (
     <>
-      {pill('model', modelText(caps, active, model), ai('panel.agentModel'))}
-      {effortList.length > 0 &&
-        pill('effort', ai('panel.effortPill', { effort: effortLabel(effortList[effortIndex]) }), ai('panel.effort'))}
+      <Popover
+        width={288}
+        align="start"
+        side="top"
+        trigger={
+          <button type="button" data-ai-pill="model" aria-label={ai('panel.agentModel')} className={COMPOSER_PILL_CLASS}>
+            <span className="min-w-0 truncate">{modelText(caps, active, model)}</span>
+            <ChevronDown size={ICON_SIZE.xs} aria-hidden className="shrink-0 opacity-70" />
+          </button>
+        }
+      >
+        <ScopeAgentContent panel={panel} {...rest} />
+      </Popover>
+      <EffortPill />
     </>
+  )
+}
+
+/**
+ * 推理强度菜单：每档一行「名称 + 一句说明」，当前档左侧一枚蓝色 ✓，默认档挂灰色「默认」小标。
+ * 档位来自 caps 的真实数组，一格一个值——选中写的就是 `efforts[i]`，绝不生成数组里没有的值。
+ * 只有一档时菜单照开（一行，已选中），不装成能选的样子；一档都没有时胶囊整颗不出现。
+ */
+export function EffortPill() {
+  useTranslation('ai')
+  const { active, cur, effortList, effortIndex } = useAgentChoice()
+  if (!active || !cur || effortList.length === 0) return null
+  const current = effortList[effortIndex]
+  return (
+    <Menu
+      align="start"
+      side="top"
+      width={248}
+      fixedWidth
+      trigger={
+        <button type="button" data-ai-pill="effort" aria-label={ai('panel.effort')} className={COMPOSER_PILL_CLASS}>
+          <span className="min-w-0 truncate">{ai('panel.effortPill', { effort: effortLabel(current) })}</span>
+          <ChevronDown size={ICON_SIZE.xs} aria-hidden className="shrink-0 opacity-70" />
+        </button>
+      }
+    >
+      <MenuRadioGroup
+        data-ai-effort="menu"
+        value={current}
+        onValueChange={(v) => useAiStore.getState().setEffort(active, v)}
+      >
+        {effortList.map((e) => (
+          <MenuRadioItem
+            key={e}
+            value={e}
+            data-ai-effort-item={e}
+            description={effortDescription(e)}
+            tag={e === cur.default_effort ? ai('panel.effortDefault') : undefined}
+          >
+            {effortLabel(e)}
+          </MenuRadioItem>
+        ))}
+      </MenuRadioGroup>
+    </Menu>
   )
 }
 
@@ -747,8 +782,7 @@ const modelText = (caps: AiCapabilities | null, active: string, model: string) =
 
 export function ScopeAgentContent({ panel, element, axes, scope, scopes }: TargetProps) {
   useTranslation('ai')
-  const { caps, usable, active, cur, model, effortList, effortIndex } = useAgentChoice()
-  const [effortOpen, setEffortOpen] = useState(false)
+  const { caps, usable, active, cur, model } = useAgentChoice()
 
   // 「执行器 · 模型」的候选。装了两个 Agent 时每一项都带执行器名，只装一个时
   // 不重复它（触发按钮上已经写着）。**模型清单为空 = 跟随 CLI 默认**，给一条
@@ -841,43 +875,6 @@ export function ScopeAgentContent({ panel, element, axes, scope, scopes }: Targe
               </div>
             )
           )}
-          {/* 推理强度：档位来自 caps 的真实数组，一格一个值。
-              **控件按需展示，当前值不藏**（审计 T37）——收起时那一行就写着
-              「推理强度 · 高」，要动它才展开滑杆。只有一档时滑杆不可调
-              （不是一个假装能拖的滑杆）；一档都没有时整块不出现 */}
-          {effortList.length > 0 && (
-            <div className="flex min-w-0 flex-col gap-0.5">
-              <button
-                data-ai-effort="disclosure"
-                onClick={() => setEffortOpen((v) => !v)}
-                aria-expanded={effortOpen}
-                className="flex min-w-0 items-center gap-1 text-left outline-none focus-visible:focus-ring"
-              >
-                <ChevronRight
-                  size={ICON_SIZE.xs}
-                  aria-hidden
-                  className={cn('shrink-0 text-ink-3 transition-transform', effortOpen && 'rotate-90')}
-                />
-                <span className="shrink-0 text-xs text-ink-2">{ai('panel.effort')}</span>
-                <span
-                  className="ml-auto min-w-0 truncate text-xs font-medium text-ink"
-                  title={effortLabel(effortList[effortIndex])}
-                >
-                  {effortLabel(effortList[effortIndex])}
-                </span>
-              </button>
-              {effortOpen && (
-                <StepSlider
-                  value={effortIndex}
-                  count={effortList.length}
-                  disabled={effortList.length === 1}
-                  ariaLabel={ai('panel.effort')}
-                  valueText={effortLabel(effortList[effortIndex])}
-                  onChange={(i) => active && useAiStore.getState().setEffort(active, effortList[i])}
-                />
-              )}
-            </div>
-          )}
         </div>
       )}
     </div>
@@ -892,6 +889,12 @@ export function ScopeAgentContent({ panel, element, axes, scope, scopes }: Targe
 function effortLabel(value: string | undefined): string {
   if (!value) return ''
   return translate(`effortLabel.${value}`, { ns: 'ai', defaultValue: value })
+}
+
+/** 档位的一句说明；开集，表里没有的档位不编说明（菜单里只显示名称） */
+function effortDescription(value: string): string | undefined {
+  const text = translate(`effortDesc.${value}`, { ns: 'ai', defaultValue: '' })
+  return text || undefined
 }
 
 /** 旧名保留：右栏 tab 仍按 AiPanel 引用这个面板 */

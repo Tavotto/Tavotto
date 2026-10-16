@@ -34,6 +34,22 @@ struct Handshake {
     error: Option<String>,
 }
 
+/// 启动失败：给用户看的原文（走 error.html 的 `msg`，不翻译、不进报告）+ 结构化事实（阶段 / 稳定码 / 退出码，
+/// 进 shell 最小报告，见 `rescue.rs`）。两者分开，报告里就没有任何自由文本的入口。
+pub struct StartError {
+    pub message: String,
+    pub info: crate::rescue::FailureInfo,
+}
+
+impl StartError {
+    fn new(stage: &'static str, code: &'static str, message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+            info: crate::rescue::FailureInfo::new(stage, code),
+        }
+    }
+}
+
 pub struct Sidecar {
     child: Mutex<Option<Child>>,
     stdin: Mutex<Option<ChildStdin>>,
@@ -180,15 +196,21 @@ impl Sidecar {
         config_dir: Option<&Path>,
         // 起不来时这些话会显示在 error.html 上，得说用户选的那门语言
         locale: crate::i18n::Locale,
-    ) -> Result<(Sidecar, u16), String> {
+    ) -> Result<(Sidecar, u16), StartError> {
+        use crate::rescue::{code, stage};
         let m = crate::i18n::text(locale);
-        let (exe, extra_args) = resolve_command(resource_dir.as_deref(), locale)?;
+        let (exe, extra_args) = resolve_command(resource_dir.as_deref(), locale)
+            .map_err(|e| StartError::new(stage::LOCATE, code::SIDECAR_NOT_FOUND, e))?;
 
         std::fs::create_dir_all(log_dir).map_err(|e| {
-            fill2(
-                m.sidecar_log_dir_failed,
-                &log_dir.display().to_string(),
-                &e.to_string(),
+            StartError::new(
+                stage::LAUNCH,
+                code::SIDECAR_LOG_UNAVAILABLE,
+                fill2(
+                    m.sidecar_log_dir_failed,
+                    &log_dir.display().to_string(),
+                    &e.to_string(),
+                ),
             )
         })?;
         let log_path = log_dir.join("sidecar.log");
@@ -197,15 +219,23 @@ impl Sidecar {
             .append(true)
             .open(&log_path)
             .map_err(|e| {
-                fill2(
-                    m.sidecar_log_open_failed,
-                    &log_path.display().to_string(),
-                    &e.to_string(),
+                StartError::new(
+                    stage::LAUNCH,
+                    code::SIDECAR_LOG_UNAVAILABLE,
+                    fill2(
+                        m.sidecar_log_open_failed,
+                        &log_path.display().to_string(),
+                        &e.to_string(),
+                    ),
                 )
             })?;
-        let log_err = log_out
-            .try_clone()
-            .map_err(|e| m.sidecar_log_clone_failed.replace("{err}", &e.to_string()))?;
+        let log_err = log_out.try_clone().map_err(|e| {
+            StartError::new(
+                stage::LAUNCH,
+                code::SIDECAR_LOG_UNAVAILABLE,
+                m.sidecar_log_clone_failed.replace("{err}", &e.to_string()),
+            )
+        })?;
 
         let handshake = std::env::temp_dir().join(format!(
             "tavotto-handshake-{}-{:016x}.json",
@@ -232,10 +262,14 @@ impl Sidecar {
         }
 
         let mut child = cmd.spawn().map_err(|e| {
-            fill2(
-                m.sidecar_spawn_failed,
-                &exe.display().to_string(),
-                &e.to_string(),
+            StartError::new(
+                stage::LAUNCH,
+                code::SIDECAR_SPAWN_FAILED,
+                fill2(
+                    m.sidecar_spawn_failed,
+                    &exe.display().to_string(),
+                    &e.to_string(),
+                ),
             )
         })?;
 
@@ -244,7 +278,14 @@ impl Sidecar {
         let memory_path = port_memory::path(config_dir);
         let stored = port_memory::load(memory_path.as_deref());
         let preferred = port_memory::preferred(stored, rand::random::<u16>());
-        let mut stdin = child.stdin.take().ok_or(m.sidecar_stdin_missing)?;
+        let mut stdin = child.stdin.take().ok_or_else(|| {
+            let _ = child.kill();
+            StartError::new(
+                stage::LAUNCH,
+                code::SIDECAR_STDIN_FAILED,
+                m.sidecar_stdin_missing,
+            )
+        })?;
         let mut hello = serde_json::json!({
             "nonce": nonce,
             "parent_pid": std::process::id(),
@@ -255,8 +296,12 @@ impl Sidecar {
             .and_then(|()| stdin.flush())
             .map_err(|e| {
                 let _ = child.kill();
-                m.sidecar_stdin_write_failed
-                    .replace("{err}", &e.to_string())
+                StartError::new(
+                    stage::LAUNCH,
+                    code::SIDECAR_STDIN_FAILED,
+                    m.sidecar_stdin_write_failed
+                        .replace("{err}", &e.to_string()),
+                )
             })?;
 
         let deadline = Instant::now() + HANDSHAKE_TIMEOUT;
@@ -269,24 +314,41 @@ impl Sidecar {
                             Some(p) => break p,
                             None => {
                                 let _ = child.kill();
-                                return Err(m.sidecar_handshake_no_port.into());
+                                return Err(StartError::new(
+                                    stage::HANDSHAKE,
+                                    code::SIDECAR_HANDSHAKE_FAILED,
+                                    m.sidecar_handshake_no_port,
+                                ));
                             }
                         }
                     }
                     let _ = child.kill();
-                    return Err(hs.error.unwrap_or_else(|| m.sidecar_start_failed.into()));
+                    return Err(StartError::new(
+                        stage::HANDSHAKE,
+                        code::SIDECAR_HANDSHAKE_FAILED,
+                        hs.error.unwrap_or_else(|| m.sidecar_start_failed.into()),
+                    ));
                 }
             }
             if let Ok(Some(status)) = child.try_wait() {
                 let tail = log_tail(&log_path, 2000);
-                return Err(m
-                    .sidecar_exited
-                    .replace("{status}", &status.to_string())
-                    .replace("{tail}", &tail));
+                let mut e = StartError::new(
+                    stage::HANDSHAKE,
+                    code::SIDECAR_EXITED,
+                    m.sidecar_exited
+                        .replace("{status}", &status.to_string())
+                        .replace("{tail}", &tail),
+                );
+                e.info.exit_code = status.code();
+                return Err(e);
             }
             if Instant::now() >= deadline {
                 let _ = child.kill();
-                return Err(m.sidecar_timeout.into());
+                return Err(StartError::new(
+                    stage::HANDSHAKE,
+                    code::SIDECAR_TIMEOUT,
+                    m.sidecar_timeout,
+                ));
             }
             std::thread::sleep(Duration::from_millis(100));
         };
@@ -418,5 +480,108 @@ mod tests {
         let sc = fake(&["more >nul"]);
         sc.shutdown(); // 正常关闭：EOF → 子进程以 0 退出
         assert_eq!(sc.poll_exit(), None);
+    }
+    // ---- 启动失败的结构化事实（阶段 / 稳定码 / 退出码）：shell 最小报告只读这些，不读错误原文 ----
+    fn scratch(tag: &str) -> PathBuf {
+        let d = std::env::temp_dir().join(format!(
+            "tavotto-sidecar-test-{tag}-{}-{:08x}",
+            std::process::id(),
+            rand::random::<u32>()
+        ));
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    /// 在假资源目录里放一个「打包的 sidecar」。
+    fn bundled(res: &Path, body: &[u8]) {
+        let exe = res.join("sidecar").join("Tavotto").join(if cfg!(windows) {
+            "Tavotto.exe"
+        } else {
+            "Tavotto"
+        });
+        std::fs::create_dir_all(exe.parent().unwrap()).unwrap();
+        std::fs::write(&exe, body).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&exe, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+    }
+
+    fn start_in(res: &Path, log_dir: &Path) -> StartError {
+        match Sidecar::start(
+            Some(res.to_path_buf()),
+            log_dir,
+            "n",
+            None,
+            None,
+            crate::i18n::DEFAULT_LOCALE,
+        ) {
+            Ok(_) => panic!("must not start"),
+            Err(e) => e,
+        }
+    }
+
+    #[test]
+    fn an_unwritable_log_dir_is_a_launch_failure_with_a_stable_code() {
+        let res = scratch("res");
+        bundled(&res, b"x");
+        let blocker = scratch("blk").join("file");
+        std::fs::write(&blocker, b"x").unwrap();
+        // 日志目录建在一个普通文件下面：create_dir_all 必然失败
+        let e = start_in(&res, &blocker.join("logs"));
+        assert_eq!(
+            (e.info.stage, e.info.code, e.info.exit_code),
+            ("launch", "sidecar_log_unavailable", None)
+        );
+        assert!(
+            !e.message.is_empty(),
+            "the human-readable message is still there"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_sidecar_that_dies_during_the_handshake_reports_its_exit_code_not_its_stderr() {
+        let res = scratch("res");
+        bundled(&res, b"#!/bin/sh\necho SECRET_STDERR_TEXT >&2\nexit 3\n");
+        let logs = scratch("logs");
+        let e = start_in(&res, &logs);
+        assert_eq!(
+            (e.info.stage, e.info.code, e.info.exit_code),
+            ("handshake", "sidecar_exited", Some(3))
+        );
+        // 原文（含 stderr 尾巴）只在 message 里；结构化事实里没有任何文本
+        assert!(e.message.contains("SECRET_STDERR_TEXT"));
+        let facts = serde_json::to_string(&e.info).unwrap();
+        assert!(!facts.contains("SECRET_STDERR_TEXT"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_sidecar_that_cannot_be_executed_is_a_spawn_failure() {
+        let res = scratch("res");
+        bundled(&res, b"x");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let exe = res.join("sidecar").join("Tavotto").join("Tavotto");
+            std::fs::set_permissions(&exe, std::fs::Permissions::from_mode(0o644)).unwrap();
+        }
+        let e = start_in(&res, &scratch("logs"));
+        assert_eq!(
+            (e.info.stage, e.info.code),
+            ("launch", "sidecar_spawn_failed")
+        );
+    }
+
+    #[test]
+    fn every_start_failure_code_in_the_source_is_in_the_closed_set() {
+        // 源码里所有 `StartError::new(stage::X, code::Y, …)` 的 Y 都必须在 rescue::CODES 里（编译已保证存在，
+        // 这里再保证没有人绕过常量直接写字符串字面量）
+        let src = include_str!("sidecar.rs");
+        let prod = &src[..src.find("#[cfg(test)]\nmod tests").unwrap()];
+        assert!(!prod.contains("StartError::new(\"") && !prod.contains("FailureInfo::new(\""));
+        assert!(!prod.contains("code: \""));
     }
 }

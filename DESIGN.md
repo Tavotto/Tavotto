@@ -178,7 +178,7 @@ Dialog 页脚三槽——全文在 **宪法第二十六节**。
 - **Tavotto Blue（品牌蓝）**：色相取自用户定的 `#5A92E5`（2026-09-30）。它本身对白只有 3.14:1，所以焦点环 / 蓝字用同色相压深的 `#2c73de`（≥4.5:1），画布选择框用 `#4685e2`（≥3:1）；浅底 `#ebf2fc`。只给选择、焦点、AI——链接是灰字（`ink-2` + 悬停下划线）；唯一的例外是改图助手回答里的链接（accent + 1px 下划线，宪法第十八节）。
 
 ### Neutral
-- **Desk（桌面）** (`#efefed`) 应用底：顶栏、左轨、停靠的抽屉坐在它上面 · **Canvas（画布灰）** (`#f5f5f3`) 工作面板里画布那一块 · **Surface（白）** (`#ffffff`) 工作面板 / 浮层 / 卡 · **Surface-2** (`#f7f7f5`) 只读值与徽章底 · **Field** (`#f2f2f0`，hover `#eeeeec`) 所有可编辑框的底（比面板深一级、无边；参考 Codex） · **Selected**（ink 10% 叠加：hover 5% < active 8% < selected 10%） · **Group**（ink 3%：设置页字段组的底）
+- **Desk（桌面）** (`#efefed`) 应用底：顶栏、左轨、停靠的抽屉坐在它上面 · **Canvas（画布灰）** (`#f5f5f3`) 工作面板里画布那一块 · **Surface（白）** (`#ffffff`) 工作面板 / 浮层 / 卡 · **Surface-2** (`#f7f7f5`) 只读值与徽章底 · **Field** (`#f2f2f0`，hover `#eeeeec`) 所有可编辑框的底（比面板深一级、无边；参考 Codex） · **Selected**（ink 12% 叠加：hover 4% < active 8% < selected 12%，selected 是 hover 的三倍） · **Group**（ink 3%：设置页字段组的底）
 - **Ink-2 / Ink-3 / Ink-faint** (`#4a4a45` / `#6c6c66` / `#a3a39a`)：标签 / 元数据与说明 / 禁用。Ink-2 白上 8.9:1；Ink-3 白 / 桌面 / 画布灰 5.28 / 4.59 / 4.84，**所有底色都过 4.5:1**（拍板值 `#74746e` 在桌面上只有 4.08，按「不过就最小幅度压深」收到这一档；`index.css` 里 `--color-ink-3` 上方的注释是这条的权威）；faint 不用于要读的字
 - **Border / Border-strong**（ink 12% / 18% 叠加）：hairline 只给区域边界 · **可编辑框静态没有边**：Field 底就是「框」，聚焦 / 打开才是不透明 accent 边——有框 = 能改，3:1 由聚焦态承担（宪法第二十二节） · **Border-control** (`#84847c`)：未选中复选框 / 单选、关态开关轨道，≥3:1
 
@@ -256,8 +256,8 @@ Dialog 页脚三槽——全文在 **宪法第二十六节**。
 
 ## Elevation & Depth
 
-**The Flat-By-Default Rule.** 持久表面不用投影——**只有「真的是一张卡」的东西例外**，而且只经 `ui/Card` 一处（`appearance="raised"`，门禁守着）：`--shadow-card`（环 6% + 0 1px 2px 4% + 0 4px 12px 4%）；分区、列表行、输入框、分段控件仍是平的。改图助手的输入框是浮在对话流上的玻璃（`--color-glass` field 90% + 16px 背景模糊 + `--shadow-composer`，参考 Codex）。浮层是「1px 半透明环 + 一层大模糊」，不画实色边；所有投影都写成 `color-mix(var(--color-shadow) N%)`（1px 环读 `--color-shadow-edge`，浅色里它就是 shadow），暗色只换这两种颜色（模糊层纯黑、环换白——Tailwind 把投影串内联进工具类，只有 `var()` 是活的；**宪法第二十八节**）：
-`--shadow-pop: 0 0 0 1px color-mix(in srgb, var(--color-shadow-edge) 8%, transparent), 0 8px 24px color-mix(in srgb, var(--color-shadow) 8%, transparent)`（菜单 / popover / 浮条），对话框与命令面板用更深一档的 `--shadow-dialog`；Tooltip 是 ink 底白字，不带投影。
+**The Flat-By-Default Rule.** 持久表面不用投影——**只有「真的是一张卡」的东西例外**，而且只经 `ui/Card` 一处（`appearance="raised"`，门禁守着）：`--shadow-card`（环 6% + 0 1px 2px 4% + 0 4px 12px 4%）；分区、列表行、输入框、分段控件仍是平的。改图助手的输入框是浮在对话流上的玻璃（`--color-glass` field 90% + 16px 背景模糊 + `--shadow-composer`，参考 Codex）。浮层是「1px 半透明环 + 贴边接触阴影 + 一层大模糊」，不画实色边；所有投影都写成 `color-mix(var(--color-shadow) N%)`（1px 环读 `--color-shadow-edge`，浅色里它就是 shadow），暗色只换这两种颜色（模糊层纯黑、环换白——Tailwind 把投影串内联进工具类，只有 `var()` 是活的；**宪法第二十八节**）：
+`--shadow-pop: 0 0 0 1px color-mix(in srgb, var(--color-shadow-edge) 8%, transparent), 0 2px 6px color-mix(in srgb, var(--color-shadow) 6%, transparent), 0 8px 24px color-mix(in srgb, var(--color-shadow) 8%, transparent)`（菜单 / popover / 浮条），对话框与命令面板用更深一档的 `--shadow-dialog`；Tooltip 是 ink 底白字，不带投影。
 
 ## Shapes
 
@@ -269,16 +269,16 @@ lg 12（卡片、菜单 / popover 外壳、多行浮动面板）、panel 16（�
 
 全部原语在 `web/src/components/ui/`，形态与状态在 **宪法第五节**：Button 五档（primary / secondary / ghost / danger / danger-tinted，高 28 / 32）、IconButton（圆）、
 TextInput / NumberField（框内单位）、Select（全仓唯一的下拉）、Checkbox、Toggle（名字必填）、
-Badge、StatusPill、Notice、Card、Tabs（选中 600 + 2px 下划线）、Segmented（灰容器 + 白色浮起的 thumb，选中 600）、listRowClass（28 / 44 / 52，选中 600）/ rowMetaClass / dropLineClass / TreeRow、
+Badge、StatusPill、CountChip（计数芯片：26 / 24 高、ink 4% 底、颜色只在 6px 圆点上，「建议」永不染色；导出检查、问题面板等级开关、属性栏问题胶囊、接入状态摘要共用）、Notice、Card、Tabs（选中 600 + 2px 下划线）、Segmented（灰容器 + 白色浮起的 thumb，选中 600）、listRowClass（28 / 44 / 52，选中 600）/ rowMetaClass / dropLineClass / TreeRow、
 RowMenu（⋯ + 右键 + ⇧F10 同一份菜单）、dropZoneClass（拖放接收态：静态不画、拖入才是 accent 虚线 + 浅底 + 外发光）、SearchInput、Section / Disclosure、FormSection / FieldGroup、EmptyState（40px 图标底座 + 15 / 600 标题）、
 Dialog（sm 400 / md 480 / lg 560 / xl 760 / shell；标题 15 / 600、说明 13 / ink-2、正文 13；页脚 `{ start, secondary, primary }` 三槽、32px；
 栈底才画遮罩；Esc = 安全答案；回应一律 `Notice`，进行中页脚不撤——对话框页的细则在 **宪法第二十六节「对话框与引导」**）。
-四态：hover（surface-hover 5%）< active（surface-active 8%）< selected（selected 10% + 字重 / 对勾）；
+四态：hover（surface-hover 4%）< active（surface-active 8%）< selected（selected 12% + 字重 / 对勾）；selected 是 hover 的三倍；
 disabled 统一 `opacity-40 + cursor-not-allowed`。光标一律箭头（可拖的卡用抓手）。每个上下文一颗主按钮；对话框里的破坏性确认是浅底危险胶囊，不是实心红。
 图标只有自绘的一套（`web/src/components/ui/icons/`，ADR 0052；说明书 `docs/ux/ICONOGRAPHY.md`）。
 
 动效：**宪法第七节**。时长只来自 token（fast 120 / base 180 / slow 240 / exit 90），
-进场 `--ease-pop`、退场 `--ease-exit`、落位收尾 `--ease-spring`、其余 `--ease-standard`；没写时长的
+进场 `--ease-pop`、退场 `--ease-exit`、落位收尾 `--ease-spring`、跟随选中项滑动的指示物（Segmented thumb / Tabs 下划线）`--ease-snap`、其余 `--ease-standard`；没写时长的
 `transition-*` 默认就是 fast + standard（`--default-transition-*`）；`prefers-reduced-motion` 是硬约束。
 加载只有四种写法：不定进度 `animate-sweep`、静态骨架、进行中的字 `text-shimmer`、转圈；Tailwind 的呼吸动画被门禁禁了。
 改图助手对话区（流式逐词淡入 / 亮带状态 / 发送 ↔ 中止同钮 / 贴底跟随）见 **宪法第十八节**；转录的形态（用户气泡 / 无卡回答 / 环境行与显著卡 /

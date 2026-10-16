@@ -323,3 +323,65 @@ export async function lowContrastNodes(page: Page, root = 'body'): Promise<strin
     return out
   }, root)
 }
+
+/**
+ * 可编辑框的**底**对它所在的面：不许分不出（A7，2026-10-15 UI 2.0 精修）。
+ *
+ * 浅色里 `--color-field`（#f2f2f0）对灰桌面（#efefed）只有 ≈1.04:1，框直接坐在桌面上等于没有框；
+ * 桌面子树（左抽屉 / 嵌入头）因此把 field 重定向成白面。这把尺子在真页面上量「每个框原语（`bg-field`）的底、它背后第一个
+ * 不透明祖先是什么」，对比不到 `min` 的返回一行描述。
+ * 量的是**此刻**的底：要量 hover 就先把指针移到框上（a11y 工作台用例对左抽屉搜索框各量一次）；
+ * 桌面子树里 hover 底是 field-hover-desk，两套主题的阈值由 tokenContrast.test 逐值守着。
+ */
+export async function indistinctFieldBoxes(page: Page, min = 1.1): Promise<string[]> {
+  return page.evaluate((minRatio) => {
+    const probe = document.createElement('canvas')
+    probe.width = probe.height = 1
+    const ctx = probe.getContext('2d', { willReadFrequently: true })!
+    const parse = (s: string): number[] => {
+      ctx.clearRect(0, 0, 1, 1)
+      ctx.fillStyle = s
+      ctx.fillRect(0, 0, 1, 1)
+      const d = ctx.getImageData(0, 0, 1, 1).data
+      return [d[0], d[1], d[2], d[3] / 255]
+    }
+    const lin = (c: number) => ((c /= 255) <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4)
+    const lum = (c: number[]) => 0.2126 * lin(c[0]) + 0.7152 * lin(c[1]) + 0.0722 * lin(c[2])
+    const ratio = (a: number[], b: number[]) => {
+      const x = lum(a)
+      const y = lum(b)
+      return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05)
+    }
+    const out: string[] = []
+    let measured = 0
+    // 主语是**框原语本身**（FIELD_BOX 的 `bg-field` 类，`ui/fieldBox.ts` 是全站唯一出处），不是「底色恰好等于
+    // field 的元素」——按颜色认框，最坏的回归（field 解析成与所在面同色、框完全消失）恰好会被跳过。
+    for (const el of Array.from(document.querySelectorAll<HTMLElement>('[class~="bg-field"]'))) {
+      const r = el.getBoundingClientRect()
+      if (r.width < 8 || r.height < 8) continue
+      const raw = parse(getComputedStyle(el).backgroundColor)
+      let p = el.parentElement
+      let under: number[] | null = null
+      while (p) {
+        const b = parse(getComputedStyle(p).backgroundColor)
+        if (b[3] > 0.99) {
+          under = b
+          break
+        }
+        p = p.parentElement
+      }
+      if (!under) continue
+      measured++
+      // 半透明 / 全透明的框按 alpha 合成到它背后的面上再比——跳过它们等于放过「框透明到看不见」这种最坏的回归
+      const a = raw[3]
+      const own = [0, 1, 2].map((i) => raw[i] * a + under[i] * (1 - a))
+      const q = ratio(own, under)
+      if (q < minRatio) {
+        out.push(`${el.tagName}[${el.getAttribute('data-testid') ?? el.className.toString().slice(0, 40)}] ${q.toFixed(2)}:1 < ${minRatio}`)
+      }
+    }
+    // 一个框都没量到 = 尺子没落到东西上（选择器漂了 / 页面没到那一屏），不能当「全部合格」
+    if (measured === 0) out.push('没有量到任何可编辑框（[class~="bg-field"]）')
+    return out
+  }, min)
+}

@@ -22,6 +22,58 @@ pub const CHROME_OVERLAY: &str = "overlay";
 /// Windows：菜单栏藏起来，页面顶栏给一个「菜单」按钮。
 pub const CHROME_MENU_BUTTON: &str = "menu-button";
 
+/// 主窗口进 / 出全屏时壳发给页面的事件，载荷 `{fullscreen: bool}`。**事件名与
+/// `web/src/lib/desktop.ts` 的 `FULLSCREEN_EVENT` 严格同源**（`tests/test_desktop_window_chrome.py`）。
+/// 只有 macOS 发：全屏时红绿灯随系统标题栏一起收起，页面顶栏左侧让给它们的那段就不该再留着。
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+pub const FULLSCREEN_EVENT: &str = "tavotto:fullscreen";
+
+/// 记住上一次告诉页面的全屏状态：`Resized` 一天到晚在发（拖边框、缩放），只有真变了才通知。
+#[derive(Debug, Default)]
+pub struct FullscreenTracker(std::sync::atomic::AtomicBool);
+
+impl FullscreenTracker {
+    /// 记下当前状态；与上次不同返回 `true`（该发事件了）。
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+    pub fn update(&self, now: bool) -> bool {
+        self.0.swap(now, std::sync::atomic::Ordering::SeqCst) != now
+    }
+
+    /// 页面此刻该当作的全屏状态（**按阶段算的**，不是 tao 的切换目标）：原生观察者在位时只有
+    /// did-enter 才会把它置 true，进入动画期间仍是 false。
+    pub fn get(&self) -> bool {
+        self.0.load(std::sync::atomic::Ordering::SeqCst)
+    }
+}
+
+/// `NSWindow` 的全屏通知（`fullscreen_observer.rs`）。
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FullscreenPhase {
+    WillEnter,
+    DidEnter,
+    WillExit,
+    DidExit,
+}
+
+/// 每条通知该告诉页面什么。判据：**红绿灯在屏上时，绝不收回让位的那段**——
+/// 进入动画期间红绿灯还在（不发，等 did-enter 再收）；退出一开始红绿灯就要回来（立刻恢复）。
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+pub const fn phase_verdict(phase: FullscreenPhase) -> Option<bool> {
+    match phase {
+        FullscreenPhase::WillEnter => None,
+        FullscreenPhase::DidEnter => Some(true),
+        FullscreenPhase::WillExit | FullscreenPhase::DidExit => Some(false),
+    }
+}
+
+/// `Resized` + `is_fullscreen()` 这条兜底能不能报这个状态。原生观察者在位时只许报 `false`：
+/// tao 退出动画期间仍说「在全屏」，让它报 `true` 会把 will-exit 发出的 `false` 顶回去。
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+pub const fn resize_may_report(observer_live: bool, fullscreen: bool) -> bool {
+    !observer_live || !fullscreen
+}
+
 /// 这个平台主窗口的窗框形态。
 pub const fn chrome() -> &'static str {
     if cfg!(target_os = "macos") {
@@ -124,6 +176,42 @@ mod tests {
         } else {
             assert!(script.contains(CHROME_MENU_BUTTON));
         }
+    }
+
+    #[test]
+    fn fullscreen_tracker_get_is_what_was_last_recorded() {
+        let t = FullscreenTracker::default();
+        assert!(!t.get());
+        t.update(true);
+        assert!(t.get());
+        t.update(false);
+        assert!(!t.get());
+    }
+
+    #[test]
+    fn fullscreen_tracker_reports_only_changes() {
+        let t = FullscreenTracker::default();
+        assert!(!t.update(false), "初值是非全屏：第一次报 false 不算变化");
+        assert!(t.update(true));
+        assert!(!t.update(true), "Resized 连发：同一状态不重复通知");
+        assert!(t.update(false));
+    }
+
+    #[test]
+    fn exit_restores_the_inset_at_once_and_enter_waits_for_the_traffic_lights_to_go() {
+        use FullscreenPhase::*;
+        assert_eq!(phase_verdict(WillEnter), None);
+        assert_eq!(phase_verdict(DidEnter), Some(true));
+        assert_eq!(phase_verdict(WillExit), Some(false));
+        assert_eq!(phase_verdict(DidExit), Some(false));
+    }
+
+    #[test]
+    fn resize_fallback_never_reports_true_while_the_observer_is_live() {
+        assert!(resize_may_report(false, true), "没有观察者：兜底全权负责");
+        assert!(resize_may_report(false, false));
+        assert!(!resize_may_report(true, true));
+        assert!(resize_may_report(true, false));
     }
 
     #[test]
