@@ -554,6 +554,18 @@ def test_every_client_event_is_accepted_end_to_end(upstream):
             "passed": True,
         },
         "export_completed": {"pdf": True, "png": True, "with_proof": False, "panel_count": 6},
+        "export_result": {
+            "outcome": "partial",
+            "scope": "canvas",
+            "pdf": True,
+            "png": True,
+            "eps": False,
+            "tiff": False,
+            "with_report": False,
+            "delivered": 1,
+            "stage": "raster",
+            "error_class": "other",
+        },
         "ai_assistant_invoked": {"agent": "claude"},
         "update_completed": {"update_kind": "pipx", "target_version": "0.9.0"},
         # Session 22（CONSENT_VERSION 2）

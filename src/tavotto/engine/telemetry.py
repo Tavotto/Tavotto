@@ -64,8 +64,10 @@ SCHEMA_VERSION = 1
 #: 它涵盖旧版本要采的东西，不该反过来失效。
 #:
 #: 版本史：1 = 首版九条事件；2 = Session 22 加了刷新 / 接入状态 / 教程 /
-#: 多选栏 / 保存 / 恢复 / 包操作九条（`docs/analytics/telemetry-events.md`）。
-CONSENT_VERSION = 2
+#: 多选栏 / 保存 / 恢复 / 包操作九条（`docs/analytics/telemetry-events.md`）；
+#: 3 = 两个新采集范围一并升版（ADR 0134）：(a) 导出终态事件 `export_result`；(b) 用户**明确点发送**的
+#: 诊断报告可随附一条不含内容的错误摘要（`engine/diagsummary.py`，走报告服务，不走本模块的事件通道）。
+CONSENT_VERSION = 3
 
 #: 生产默认投递地址。**只发到 Tavotto 自己的代理**，应用里没有、也不该有
 #: 任何 PostHog 项目密钥：开源桌面应用里嵌的东西一律是公开的。
@@ -143,6 +145,32 @@ EVENTS: dict[str, dict[str, dict]] = {
     },
     # 激活事件：**导出真的成功、文件真的写完之后**才发。
     "export_completed": {"pdf": BOOL, "png": BOOL, "with_proof": BOOL, "panel_count": _int(1000)},
+    # 导出终态（2026-10-15 引入）：**每个被受理的导出作业走到终局时一条**（done / partial / failed /
+    # cancelled；被拒的请求与 conflict 不记）。请求了哪些格式、落了几个、坏在哪一步、错误粗类——
+    # 全是闭集，没有文件名 / 路径 / 错误码原文 / 异常文字。取值见 `engine/exporttelemetry.py`。
+    # `export_completed` 语义不变（只在 done / partial 时发，且 pdf / png 是「真写成了」）。
+    "export_result": {
+        "outcome": _enum("done", "partial", "failed", "cancelled"),
+        "scope": _enum("canvas", "original"),
+        "pdf": BOOL,
+        "png": BOOL,
+        "eps": BOOL,
+        "tiff": BOOL,
+        "with_report": BOOL,
+        "delivered": _int(8),
+        "stage": _enum(
+            "prepare", "source", "compile", "compose", "raster", "inspect", "publish", "report"
+        ),
+        "error_class": _enum(
+            "request",
+            "environment",
+            "backend",
+            "artifact_rejected",
+            "source_changed",
+            "report",
+            "other",
+        ),
+    },
     # 只有「用了哪个 agent」。提示词 / 脚本 / 目标 / 会话 id 一个都不发。
     "ai_assistant_invoked": {"agent": _enum("codex", "claude", "other")},
     "update_completed": {"update_kind": _enum("desktop", "pip", "pipx"), "target_version": VERSION},

@@ -463,6 +463,7 @@ export function DiagnosticsSendDialog({
               )}
               <p className="type-caption">{ds('notIncluded')}</p>
               <p className="type-caption">{ds('bestEffort')}</p>
+              <p className="type-caption" data-diag-send-error-summary-note>{ds('errorSummaryNote')}</p>
               <div className="flex items-center gap-2">
                 {prepared && <span className="type-caption">{ds('size', { size: formatBytes(prepared.size) })}</span>}
                 <Button

@@ -108,6 +108,8 @@ class FakeDiagServer:
         self.tls = tls
         self.max_bytes = max_bytes
         self.notes_enabled = notes_enabled
+        #: 服务端是否已升级到认识可选字段 `error_summary`（infra #28）；False = 尚未部署的旧版（extra=forbid）
+        self.accepts_error_summary = False
         self.api_header: str | None = API_VERSION
         self.upload_url: str | None = None  # 覆盖 init 响应里的 upload.url（SSRF 用例）
         self.extra_response_fields: dict = {}
@@ -328,7 +330,9 @@ class FakeDiagServer:
 
     # -- init
     def _do_init(self, req: dict) -> tuple[int, dict]:
-        extra = set(req) - INIT_FIELDS
+        extra = (
+            set(req) - INIT_FIELDS - ({"error_summary"} if self.accepts_error_summary else set())
+        )
         if extra:
             return 422, {
                 "ok": False,
