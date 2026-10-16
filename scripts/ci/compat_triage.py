@@ -15,6 +15,7 @@ from __future__ import annotations
 import ast
 import hashlib
 import json
+import os
 from pathlib import Path
 
 import compat_guardian as cg
@@ -371,6 +372,9 @@ def triage(report_paths: list[Path], rules: list[dict] | None = None) -> dict:
                     "stable_code": sig["stable_code"],
                     "diff": _diff_summary(f),
                     "signature": sig,
+                    "confirmed": (f["row"].get("confirmation") or {}).get("reproduced")
+                    if f["kind"] == "explore"
+                    else None,
                     "execution_policy": "safe",
                     "dependency_source": "missing"
                     if (f["kind"] == "row" and facts.get("raw_missing_prerequisites"))
@@ -382,7 +386,8 @@ def triage(report_paths: list[Path], rules: list[dict] | None = None) -> dict:
         "sources": sources,
         "rules_sha256": hashlib.sha256(RULES_PATH.read_bytes()).hexdigest(),
         "attributions": attributions,
-        "clusters": cluster(attributions, families),
+        "clusters": (clusters := cluster(attributions, families)),
+        "alerts": alerts(clusters),
         "summary": summary(attributions),
         "unverified": [
             "attribution is rule-based evidence, not a confirmed root cause: next_action says how to confirm",
@@ -429,12 +434,76 @@ def cluster(attributions: list[dict], families: list[dict]) -> list[dict]:
                 "known_family": known_family({**first["signature"]}, families),
                 "size": len(members),
                 "members": sorted(m["finding_id"] for m in members),
+                "reproducible": _reproducible(members),
                 "confidence": min((m["confidence"] for m in members), key=CONFIDENCE_ORDER.get),
                 "representative": first["finding_id"],
                 "next_action": first["next_action"],
             }
         )
     return out
+
+
+def _reproducible(members: list[dict]) -> bool | None:
+    """True if a rerun reproduced a member, False if reruns only failed, None if never rerun."""
+    flags = [m["confirmed"] for m in members if m.get("confirmed") is not None]
+    if not flags:
+        return None
+    return any(flags)
+
+
+#: Families that say something about the fixture or the environment, not about Tavotto.
+NOT_PRODUCT_FAMILIES = ("invalid_fixture", "environment_resolution")
+
+
+def alerts(clusters: list[dict]) -> list[dict]:
+    """Only a NEW (no family record), REPRODUCED, product-relevant cluster alerts a maintainer."""
+    return [
+        {
+            "cluster_id": c["cluster_id"],
+            "family": c["key"]["family"],
+            "stage": c["key"]["stage"],
+            "behavior_kind": c["key"]["behavior_kind"],
+            "call_site": c["key"]["call_site"],
+            "size": c["size"],
+            "representative": c["representative"],
+            "next_action": c["next_action"],
+        }
+        for c in clusters
+        if c["known_family"] is None
+        and c["reproducible"] is True
+        and c["key"]["family"] not in NOT_PRODUCT_FAMILIES
+    ]
+
+
+def render_markdown(result: dict) -> str:
+    lines = [
+        "### Guardian triage",
+        f"findings: {result['summary']['findings']}, clusters: {len(result['clusters'])}, "
+        f"unknown: {result['summary']['unknown']}",
+        "",
+        "| cluster | family record | attribution | x | reproduced |",
+        "| --- | --- | --- | --- | --- |",
+    ]
+    for c in result["clusters"]:
+        k = c["key"]
+        lines.append(
+            f"| {c['cluster_id']} | {c['known_family'] or 'NEW'} | "
+            f"{k['family']}/{k['stage']} {k['behavior_kind']} | {c['size']} | {c['reproducible']} |"
+        )
+    if result["alerts"]:
+        lines += ["", "**New reproducible families (no record yet):**"]
+        lines += [
+            f"- {a['cluster_id']}: {a['family']}/{a['stage']} {a['behavior_kind']} x{a['size']} "
+            f"({a['representative']}); next: {a['next_action']}"
+            for a in result["alerts"]
+        ]
+    else:
+        lines += [
+            "",
+            "No new reproducible family: every reproduced difference matches a recorded family.",
+        ]
+    lines += ["", "Attribution is rule-based evidence; no issue or PR was opened."]
+    return "\n".join(lines) + "\n"
 
 
 def summary(attributions: list[dict]) -> dict:
@@ -458,6 +527,15 @@ def run(args) -> int:
     tmp = out.with_suffix(out.suffix + ".tmp")
     tmp.write_text(json.dumps(result, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     tmp.replace(out)
+    if getattr(args, "markdown_out", None):
+        Path(args.markdown_out).write_text(render_markdown(result), encoding="utf-8")
+    if os.environ.get("GITHUB_ACTIONS") == "true":
+        for a in result["alerts"]:
+            print(
+                "::warning title=Guardian: new reproducible family::"
+                f"{a['family']}/{a['stage']} {a['behavior_kind']} x{a['size']} first seen in "
+                f"{a['representative']}; no issue was opened"
+            )
     for c in result["clusters"]:
         label = c["known_family"] or "NEW"
         print(
