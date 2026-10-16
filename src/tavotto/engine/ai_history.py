@@ -108,6 +108,11 @@ class DraftTooLarge(ValueError):
         self.stamp = stamp
 
 
+#: 「会话还没真正结束」的 SQL 条件——**单一定义**：忙碌判定（同脚本不能再 spawn）、恢复占位的 `status=open` 查询、
+#: 历史行的 final 判断都用它的同一个概念。`cancel` 只改 status、不写 ended_ms：此刻 CLI 进程组可能还在写文件、
+#: changed / diff / refresh 还没算出来，所以 `cancelled` 且 `ended_ms` 为空仍算「没结束」。
+OPEN_SESSION_SQL = "(status = 'running' OR (status = 'cancelled' AND ended_ms IS NULL))"
+
 #: running 行超过这么久还没结束就当属主已死（pid 会被复用，不能只信 pid 存活）：绝不让一条僵尸行永久锁住脚本
 RUNNING_OWNER_MAX_AGE_MS = 24 * 3600 * 1000
 
@@ -276,7 +281,7 @@ def record_start(sess: dict, db_path: Path | None = None) -> tuple[bool, str]:
         # 不能只靠进程内的脚本锁：两个服务进程用不同 rid 改同一个用户脚本时它管不到对方
         if sess.get("script"):
             for other in con.execute(
-                "SELECT owner_pid, started_ms FROM sessions WHERE project=? AND script=? AND status='running'",
+                f"SELECT owner_pid, started_ms FROM sessions WHERE project=? AND script=? AND {OPEN_SESSION_SQL}",
                 (sess.get("project", ""), sess["script"]),
             ):
                 if owner_alive(other["owner_pid"], other["started_ms"]):

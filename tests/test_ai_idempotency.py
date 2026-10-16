@@ -1058,3 +1058,35 @@ def test_a_rejection_whose_cleanup_fails_is_unresolved_too(client, tmp_path, cli
     monkeypatch.setattr(ai_history, "drop_rejected_pending", real_drop)
     assert RID in _pending_rids(client)
     _wait_idle()
+
+
+def test_a_cancelled_but_unfinished_session_in_another_process_still_blocks_the_script(tmp_path):
+    """cancel 之后状态立刻是 cancelled，但 CLI 进程组可能还在写文件：另一个进程里属主存活、`ended_ms` 为空的 cancelled 会话
+    仍算「忙」；写了 `ended_ms`（真正结束）之后才放开。"""
+    db = tmp_path / "hist.sqlite3"
+    live = _live_other_pid()
+    ai_history.record_start(_sess("othercanc01", "rid-canc-000009", owner_pid=live), db_path=db)
+    ai_history.update_status("othercanc01", "cancelled", db_path=db)  # 只改 status，不写 ended_ms
+    with pytest.raises(ai_history.ScriptBusy):
+        ai_history.record_start(
+            _sess("mine00000001", "rid-mine-000009", owner_pid=live), db_path=db
+        )
+    ai_history.record_end("othercanc01", "cancelled", db_path=db)  # 真正结束：写了 ended_ms
+    assert (
+        ai_history.record_start(
+            _sess("mine00000002", "rid-mine-000010", owner_pid=live), db_path=db
+        )[0]
+        is True
+    )
+    # 对照：cancelled 但属主已死 → 不挡
+    ai_history.record_end("mine00000002", "done", db_path=db)
+    ai_history.record_start(
+        _sess("deadcanc001", "rid-dead-000009", owner_pid=_dead_pid()), db_path=db
+    )
+    ai_history.update_status("deadcanc001", "cancelled", db_path=db)
+    assert (
+        ai_history.record_start(
+            _sess("mine00000003", "rid-mine-000011", owner_pid=live), db_path=db
+        )[0]
+        is True
+    )
