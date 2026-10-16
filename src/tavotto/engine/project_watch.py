@@ -266,6 +266,9 @@ class ProjectWatcher:
 
         self._snapshot: Snapshot | None = None
         self._pending = Delta()
+        #: 最近一次后台刷新是以失败收场的：只用来决定「注册表变化被判为自写」时要不要仍然刷新一次。
+        #: 「恢复了」由统一刷新的成功边界（`app.refresh_project`）报，不在这里
+        self._errored = False
         self._first_seen: float | None = None
         self._last_seen: float | None = None
         self._missing = False  # 目录当前不可用（只为日志去重）
@@ -386,6 +389,10 @@ class ProjectWatcher:
                 pool.invalidate(rel, str(self.root))
 
         paths = self._refreshable_paths(batch)
+        if not paths and self._errored and batch.registry:
+            # 上次刷新失败着：注册表变化即使与内存里那份一致（被当成自己写的）也要真刷新一次——失败的原因不一定是注册表
+            # （脚本读不了等），恢复只能由**重试成功**来证明，不能由「内容看起来没变」推出来
+            paths = batch.paths()
         if paths:
             self._refresh(paths)
 
@@ -429,11 +436,13 @@ class ProjectWatcher:
             return
         try:
             self.sink.refresh(paths)
+            self._errored = False
         except project_refresh.RefreshError as exc:
             # 刷新失败是**可恢复**的：内存里的注册表原封不动（ADR 0025），
             # watcher 线程继续。注册表被改成非法 JSON 走的正是这条路——
             # 修好之后的那次写入会被下一轮 diff 看到，自动重试。
             LOG.warning("watcher 触发的刷新失败（%s），保留上一次的状态", exc.code)
+            self._errored = True
             if self.sink.error is not None:
                 try:
                     self.sink.error(exc.code, exc.params)

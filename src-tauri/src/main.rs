@@ -10,7 +10,11 @@ mod crash_dump;
 // 分派只有 macOS 的 native_drop 在用；别的平台上它只剩单测（分派规则各平台一样，照样跑）
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 mod drop_paths;
+#[cfg(test)]
+mod exit_guard_tests;
 mod exit_marker;
+#[cfg(target_os = "macos")]
+mod fullscreen_observer;
 mod i18n;
 #[cfg(target_os = "macos")]
 mod native_drop;
@@ -54,6 +58,8 @@ struct AppState {
     engine_gen: AtomicU64,
     /// `restart_engine` 正在进行（重复点击幂等）。
     restarting: AtomicBool,
+    /// 主窗口上一次告诉页面的全屏状态（macOS，见 `window_chrome::FULLSCREEN_EVENT`）。
+    fullscreen: window_chrome::FullscreenTracker,
     /// 本次启动带进来的交接请求（`Tavotto --open <目录> [--stem <s>]`）。
     /// 首启走这条：项目交给 sidecar 的 `--figures`，stem 拼进落地 URL 的
     /// `?open=`。**第二次启动不走这里**——单实例插件会把 argv 转发给已经在
@@ -1356,11 +1362,12 @@ fn spawn_engine_monitor(app: tauri::AppHandle) {
         if state.engine_gen.load(Ordering::SeqCst) != generation {
             return;
         }
-        let exit = match state.sidecar.lock().unwrap().as_ref() {
+        // 变量名不叫 `exit`：退出看护（exit_guard_tests）把任何末段是 exit 的路径都当出口
+        let polled = match state.sidecar.lock().unwrap().as_ref() {
             Some(sc) => sc.poll_exit(),
             None => return,
         };
-        if let Some(kind) = exit {
+        if let Some(kind) = polled {
             on_engine_exited(&app, kind);
             return;
         }
@@ -1415,6 +1422,53 @@ fn current_engine_exit(
     Ok(kind.map(exit_marker::EngineExit::as_str))
 }
 
+/// 主窗口此刻是否全屏（回读，防事件早于前端监听）。只有 macOS 有意义——别处恒 `false`，
+/// 因为只有 macOS 的红绿灯会随全屏收起、页面才需要知道。
+#[tauri::command]
+fn current_fullscreen(window: tauri::WebviewWindow) -> Result<bool, String> {
+    only_main_window(&window)?;
+    // 回读的是去重底账（按阶段算：观察者在位时 did-enter 才置 true），**不是** `is_fullscreen()`——
+    // 后者在进入动画期间就已是切换目标 true，那时红绿灯还在屏上，收回占位会压上去。底账与事件
+    // 同一出处，页面拿到的初值与之后的事件也就不会对不上（否则第一次退出的 false 会被当「没变」吞掉）。
+    Ok(cfg!(target_os = "macos")
+        && window
+            .app_handle()
+            .try_state::<AppState>()
+            .is_some_and(|state| state.fullscreen.get()))
+}
+
+/// 告诉主窗口的页面全屏状态；`FullscreenTracker` 去重，真变了才发 `tavotto:fullscreen`。
+#[cfg(target_os = "macos")]
+fn announce_fullscreen(app: &tauri::AppHandle, now: bool) {
+    let Some(state) = app.try_state::<AppState>() else {
+        return;
+    };
+    if state.fullscreen.update(now) {
+        let _ = app.emit_to(
+            MAIN_WINDOW,
+            window_chrome::FULLSCREEN_EVENT,
+            serde_json::json!({ "fullscreen": now }),
+        );
+    }
+}
+
+/// 原生全屏通知（`fullscreen_observer`）到了：按 `phase_verdict` 该发就发。
+#[cfg(target_os = "macos")]
+pub(crate) fn on_fullscreen_phase(app: &tauri::AppHandle, phase: window_chrome::FullscreenPhase) {
+    if let Some(now) = window_chrome::phase_verdict(phase) {
+        announce_fullscreen(app, now);
+    }
+}
+
+/// `Resized` 兜底：与 `is_fullscreen()` 对账（观察者在位时只许报 false，见 `resize_may_report`）。
+#[cfg(target_os = "macos")]
+fn reconcile_fullscreen(window: &tauri::Window) {
+    let now = window.is_fullscreen().unwrap_or(false);
+    if window_chrome::resize_may_report(fullscreen_observer::installed(), now) {
+        announce_fullscreen(window.app_handle(), now);
+    }
+}
+
 /// 重新启动本机引擎：关旧句柄 → 重新 `Sidecar::start`（端口记忆）→ 新 nonce → 导航。
 /// 只在引擎确已意外退出时才动手；重复点击 / 正在重启时直接返回 `false`（幂等）。
 #[tauri::command]
@@ -1451,9 +1505,26 @@ fn restart_engine_blocking(app: &tauri::AppHandle) -> bool {
     if let Some(sc) = old {
         sc.shutdown();
     }
+    // 按代次清持久化的 engine_exit（ADR 0129）：重启开始只**记下**当前代次、不清——重启期间用户正常退出，旧崩溃仍会被提示；
+    // 成功后只清「这一代」，成功分支跑完前新一代若又崩了（代次已变）就保留它。
+    // 内存里的 previous_exit 不动——它正是「先重启再发」的那张卡，由新页面取走
+    let generation = state.marker.get().map(|m| m.engine_exit_generation());
+    // 内存里的退出状态属于刚收掉的旧引擎：在新引擎（与它的监视线程）起来**之前**清。成功后再清会把
+    // boot_engine 返回前新引擎就报上来的退出一并抹掉，新页面读 current_engine_exit 拿到 None、没有修复卡
+    let previous = state.engine_exit.lock().unwrap().take();
     let ok = boot_engine(app, false);
+    if !ok {
+        // 重启失败：旧页面还在、修复卡要能再点（restart_engine 以 engine_exit 非空为前提）——写回旧状态；
+        // 这期间新引擎若已报了自己的退出，以新的为准
+        let mut cur = state.engine_exit.lock().unwrap();
+        if cur.is_none() {
+            *cur = previous;
+        }
+    }
     if ok {
-        *state.engine_exit.lock().unwrap() = None;
+        if let (Some(m), Some(g)) = (state.marker.get(), generation) {
+            m.clear_engine_exit_if(g);
+        }
     }
     ok
 }
@@ -1666,6 +1737,7 @@ fn main() {
         engine_exit: Mutex::new(None),
         engine_gen: AtomicU64::new(0),
         restarting: AtomicBool::new(false),
+        fullscreen: window_chrome::FullscreenTracker::default(),
         open: parse_open_args(&std::env::args().skip(1).collect::<Vec<_>>()),
         // 真正的初值在 build_menu 里按配置目录读；这里先摆默认档，
         // 免得 set_menu_locale 把「和现在一样」误判成需要重建。
@@ -1716,6 +1788,7 @@ fn main() {
             set_titlebar_colors,
             take_previous_exit,
             current_engine_exit,
+            current_fullscreen,
             restart_engine,
             rescue::rescue_status,
             rescue::rescue_retry,
@@ -1726,6 +1799,16 @@ fn main() {
             rescue::rescue_diag_save
         ])
         .on_window_event(|window, event| {
+            // macOS 全屏：主信号是原生的 will / did 通知（`fullscreen_observer`），这里只做对账兜底；
+            // 主窗口没了就摘掉观察者。
+            #[cfg(target_os = "macos")]
+            if window.label() == MAIN_WINDOW {
+                match event {
+                    tauri::WindowEvent::Resized(_) => reconcile_fullscreen(window),
+                    tauri::WindowEvent::Destroyed => fullscreen_observer::remove(),
+                    _ => {}
+                }
+            }
             // 事件回调是全局的：只看有关窗询问闸的那两个窗口。
             if !guarded_window(window.label()) {
                 return;
@@ -1817,6 +1900,20 @@ fn main() {
             {
                 let drop_handle = handle.clone();
                 let _ = win.with_webview(move |pw| native_drop::install(pw.inner(), drop_handle));
+                // 全屏的原生信号（红绿灯回来之前就要恢复占位）；装不上则 Resized 兜底全权负责
+                if let Ok(ns_window) = win.ns_window() {
+                    fullscreen_observer::install(ns_window, handle.clone());
+                }
+                // 观察者没装上时，底账由 `Resized` 兜底维护：按此刻的真实状态起步（窗口状态插件可能已把它
+                // 恢复成全屏）。观察者在位时**不**按 `is_fullscreen()` 起步——那可能是进入动画中的切换目标，
+                // 红绿灯还在；宁可等 did-enter（最坏是全屏里多留 88px 空位，不会压住红绿灯）。
+                if !fullscreen_observer::installed() {
+                    if let Some(state) = handle.try_state::<AppState>() {
+                        state
+                            .fullscreen
+                            .update(win.is_fullscreen().unwrap_or(false));
+                    }
+                }
             }
             let _ = win.set_focus();
             spawn_e2e_update_if_requested(handle.clone());
@@ -1844,10 +1941,9 @@ fn main() {
 mod tests {
     use super::*;
 
-    /// 退出标记的看护（ADR 0129）：**绕过 `RunEvent::Exit` 的退出路径必须先写 `clean`**，否则
-    /// 每次升级 / e2e 更新之后都会误报「上次没有正常退出」。这里读源码结构而不是搜子串：
-    /// 生产代码里（测试模块之前）不许出现裸 `process::exit` / `.exit(` / `.restart()` /
-    /// `.updater_builder()`——只能经 `e2e_exit` / `mark_clean_exit` / `updater_builder` 三个出口。
+    /// 退出标记的看护（ADR 0129）：**绕过 `RunEvent::Exit` 的退出路径必须先写 `clean`**。
+    /// 「全部生产模块里只有允许名单上的出口」由 `exit_guard_tests.rs` 用 AST 扫描钉住；
+    /// 这里只钉 `main.rs` 里那几个出口函数**内部**的先后顺序。
     fn production_sources() -> Vec<(&'static str, String)> {
         let cut = |s: &'static str| {
             let end = s.find("#[cfg(test)]\nmod tests").unwrap_or(s.len());
@@ -1874,29 +1970,7 @@ mod tests {
 
     #[test]
     fn every_exit_that_skips_run_event_exit_writes_clean_first() {
-        let srcs = production_sources();
-        let main = &srcs[0].1;
-        for (name, src) in &srcs {
-            let allowed = if *name == "main.rs" { 1 } else { 0 };
-            // 注释里提到不算：只数代码行
-            let code = |needle: &str| {
-                src.lines()
-                    .filter(|l| !l.trim_start().starts_with("//"))
-                    .filter(|l| l.contains(needle))
-                    .count()
-            };
-            assert_eq!(code("process::exit("), allowed, "{name}: 裸 process::exit");
-            assert_eq!(
-                code(".updater_builder()"),
-                allowed,
-                "{name}: 裸 updater_builder"
-            );
-            assert_eq!(
-                code("app_handle.exit(") + code("handle.exit(") + code("app.exit("),
-                0,
-                "{name}: 裸 exit"
-            );
-        }
+        let main = &production_sources()[0].1;
         // 唯一的 process::exit 在 e2e_exit 里，且先写 clean
         let e2e = body_of(main, "fn e2e_exit(");
         assert!(e2e.find("mark_clean_exit(").unwrap() < e2e.find("process::exit(").unwrap());
@@ -1909,6 +1983,20 @@ mod tests {
         assert_eq!(restart_sites, 1, "新增了 restart() 调用：先加看护再放行");
         let at = main.find("handle.restart()").unwrap();
         assert!(main[..at].rfind("mark_clean_exit(&handle)").unwrap() + 80 > at);
+        // 允许名单里 rescue.rs 的那一处 restart（原生救援页「重新尝试」，ADR 0130）：同一函数里 mark_clean_exit 在 restart 之前
+        let rescue = &production_sources()
+            .into_iter()
+            .find(|(n, _)| *n == "rescue.rs")
+            .expect("rescue.rs")
+            .1;
+        let retry = body_of(rescue, "fn rescue_retry(");
+        assert_eq!(retry.matches(".restart()").count(), 1);
+        assert!(
+            retry
+                .find("crate::mark_clean_exit(")
+                .expect("rescue_retry 要先写 clean")
+                < retry.find(".restart()").unwrap()
+        );
         // 所有 UpdaterBuilder 都经助手
         assert!(!main.contains("|| handle.updater_builder()"));
         assert!(!main.contains("|| app.updater_builder()"));
@@ -1961,6 +2049,54 @@ mod tests {
             main.matches("app_update::run_install_expecting(").count(),
             1
         );
+    }
+
+    #[test]
+    fn engine_restart_clears_the_persisted_kind_by_generation_only_after_success() {
+        let main = &production_sources()[0].1;
+        let body = body_of(main, "fn restart_engine_blocking(");
+        let gen_at = body
+            .find("engine_exit_generation()")
+            .expect("重启开始要记代次");
+        let boot = body.find("boot_engine(").expect("boot_engine");
+        assert!(gen_at < boot, "代次在新 sidecar / 监视线程起来之前记下");
+        let ok = body.find("if ok {").expect("成功分支");
+        assert!(ok > boot, "清除只在成功分支");
+        assert_eq!(
+            body.matches("clear_engine_exit_if(").count(),
+            1,
+            "只允许成功分支里一处按代次清"
+        );
+        assert!(
+            body[ok..].contains("clear_engine_exit_if("),
+            "成功后按代次清"
+        );
+        // 内存里旧引擎的退出状态：恰好一处、在 boot_engine 之前清（成功后再清会抹掉新引擎的退出，#1070 r4280305203）
+        let mem_take = "state.engine_exit.lock().unwrap().take()";
+        assert_eq!(body.matches(mem_take).count(), 1, "内存退出状态只取走一处");
+        assert!(
+            body.find(mem_take).unwrap() < boot,
+            "内存退出状态要在 boot_engine 之前取走"
+        );
+        assert!(
+            !body.contains("engine_exit.lock().unwrap() = None"),
+            "不许无条件清内存退出状态"
+        );
+        // 重启失败要写回（修复卡还得能再点，#1070 r4280349114），且不覆盖新引擎已报的退出
+        let fail = body.find("if !ok {").expect("失败分支");
+        assert!(fail > boot);
+        let fail_body = &body[fail..fail + body[fail..].find("\n    }\n").expect("失败分支结尾")];
+        assert!(
+            fail_body.contains("cur.is_none()") && fail_body.contains("*cur = previous"),
+            "失败分支写回旧退出状态"
+        );
+        for banned in [
+            "take_engine_exit",
+            "restore_engine_exit",
+            "clear_engine_exit(",
+        ] {
+            assert!(!body.contains(banned), "{banned}：不能提前清或无条件清");
+        }
     }
 
     #[test]

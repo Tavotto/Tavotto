@@ -167,6 +167,32 @@ describe('状态 toast 的语气（2026-10-07 审计 P0：此前非错误一律�
   })
 })
 
+describe('带动作的状态 toast（导出关窗后的结果等）', () => {
+  it('非错误语气带动作：渲染按钮、点了执行；常驻不自己走；可手动关', () => {
+    const run = vi.fn()
+    act(() => useUiStore.getState().setStatus(literal('导出在等你'), 'info', { action: { label: literal('查看'), run } }))
+    const btn = [...statusToast()!.querySelectorAll('button')].find((b) => b.textContent === '查看')!
+    expect(btn).toBeTruthy()
+    tick(STATUS_AUTO_DISMISS_MS * 2)
+    expect(status()).not.toBeNull()
+    act(() => btn.click())
+    expect(run).toHaveBeenCalledTimes(1)
+    expect(statusToast()!.querySelector('button[aria-label]:last-child')).toBeTruthy()
+  })
+
+  it('对照：不带动作的非错误 toast 照旧自己走', () => {
+    act(() => useUiStore.getState().setStatus(literal('好了'), 'info'))
+    tick(STATUS_AUTO_DISMISS_MS + 10)
+    expect(status()).toBeNull()
+  })
+
+  it('被新的一句顶掉后动作随之清空（不留上一句的按钮）', () => {
+    act(() => useUiStore.getState().setStatus(literal('A'), 'info', { action: { label: literal('查看'), run: vi.fn() } }))
+    act(() => useUiStore.getState().setStatus(literal('B'), 'info'))
+    expect(useUiStore.getState().statusAction).toBeNull()
+  })
+})
+
 describe('操作提示的自动收起', () => {
   it('焦点落在它的 × 上不走表；焦点离开后接着数', () => {
     act(() => {

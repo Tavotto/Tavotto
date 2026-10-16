@@ -38,6 +38,14 @@
     "minutes": "{{m}}m {{s}}s",
     "seconds": "{{value}}s"
   },
+  "effortDesc": {
+    "high": "Multi-step edits and layouts that need thought",
+    "low": "Simple tweaks, done in seconds",
+    "max": "Most thorough; noticeably more time and quota",
+    "medium": "Balances speed and quality",
+    "minimal": "Only the most direct change; fastest",
+    "xhigh": "Goes deeper than High; more time and quota"
+  },
   "effortLabel": {
     "high": "High",
     "low": "Low",
@@ -97,6 +105,7 @@
     "draftTooLong": "This instruction is too long (over {{limit}} KB). Shorten it to send.",
     "editAndResend": "Edit and resend",
     "effort": "Reasoning effort",
+    "effortDefault": "Default",
     "effortPill": "Reasoning {{effort}}",
     "effortRaw": "Raw effort: {{value}}",
     "emptyHint": "The assistant edits the script directly; every change can be reverted.",

@@ -456,6 +456,35 @@ describe('动作 POST 也走网络看门狗', () => {
   })
 })
 
+describe('同一目标再次打开不抹掉飞行中的动作', () => {
+  it('动作在飞时再 open 同一目标：pending 保留、防连点仍然有效，只发出一个 run', async () => {
+    mockCreate.mockResolvedValue(prepReport())
+    await useProjectPreparationStore.getState().open(scriptTarget('plot.py'))
+    let finish!: (v: unknown) => void
+    mockAct.mockImplementationOnce(() => new Promise((res) => { finish = res }) as never)
+    const first = useProjectPreparationStore.getState().act(KEY, 'run')
+    expect(entry().pending).toBe('run')
+    // 卡片开着时点素材库的 ▶：同一目标再次打开
+    await useProjectPreparationStore.getState().open(scriptTarget('plot.py'))
+    expect(entry().pending).toBe('run')
+    await useProjectPreparationStore.getState().act(KEY, 'run') // 防连点
+    expect(mockAct).toHaveBeenCalledTimes(1)
+    finish({ report: prepReport({ phase: 'running', actions: [action('cancel')], observation_seq: 2 }) })
+    await first
+    expect(entry().pending).toBeNull()
+  })
+
+  it('对照：换了参数再打开是另一份会话，pending 不带过去', async () => {
+    mockCreate.mockResolvedValue(prepReport())
+    await useProjectPreparationStore.getState().open(scriptTarget('plot.py'))
+    mockAct.mockImplementationOnce(() => new Promise(() => {}) as never)
+    void useProjectPreparationStore.getState().act(KEY, 'run')
+    expect(entry().pending).toBe('run')
+    await useProjectPreparationStore.getState().open({ script: 'plot.py', argv: ['--n', '3'] })
+    expect(entry().pending).toBeNull()
+  })
+})
+
 describe('三个不同的动作', () => {
   it('关面板只改呈现：不发取消，订阅照旧', async () => {
     mockCreate.mockResolvedValueOnce(prepReport({ phase: 'running', actions: [action('cancel')] }))

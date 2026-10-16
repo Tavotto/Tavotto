@@ -21,6 +21,14 @@ export const FIELD_BOX = cn(
   'rounded-md in-data-capsule:rounded-full border border-transparent bg-field text-sm text-ink transition-colors duration-fast',
   'hover:bg-field-hover',
 )
+/**
+ * 灰桌面（`bg-bg`）上的侧栏 / 抽屉子树里框的两个 token 改写（桌面子树唯一出处，LeftPanel 与 `DESK_DRAWER` 都从这里取）：
+ * field 比桌面还浅，放在灰上就看不出是个框，所以静态底换成白面（surface）、hover 底换成 `field-hover-desk`
+ * （surface 混 ink 2%，对桌面 ≥1.1:1，见 index.css）。`fieldBox` 原语不动。
+ * tokenContrast.test 渲染这些组件、断言它实际挂到 DOM 根上。
+ */
+export const DESK_FIELD_SCOPE =
+  '[--color-field:var(--color-surface)] [--color-field-hover:var(--color-field-hover-desk)]'
 /** 框本身就是 `<input>` 时的聚焦态 */
 export const FIELD_FOCUS = 'focus:border-accent'
 /** 框是外壳、里面才是 `<input>` 时的聚焦态 */

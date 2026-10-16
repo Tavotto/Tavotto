@@ -12,6 +12,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 vi.mock('@/lib/api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/api')>()),
   fetchPanels: vi.fn(),
+  // 渲染 hook 的用例要拿到它交给 SSE 订阅的两个回调（事件 / 重连）；其余用例直接驱动 `handleServerEvent`
+  subscribeEvents: vi.fn(() => () => {}),
   refreshProject: vi.fn().mockResolvedValue({}),
   fetchRuntimeAssets: vi.fn().mockResolvedValue({ assets: [] }),
   fetchRegistry: vi.fn().mockResolvedValue({
@@ -48,7 +50,12 @@ import { renderKey, settleRenderFailureToast, useRenderStore } from '@/store/ren
 import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
-import { handleServerEvent } from './useServerEvents'
+import { literal } from '@/i18n'
+import { useDepRepairStore } from '@/store/depRepairStore'
+import { act, createElement } from 'react'
+import { createRoot } from 'react-dom/client'
+import { subscribeEvents } from '@/lib/api'
+import { handleServerEvent, reconcileInstalls, resetProjectErrorSeq, useServerEvents } from './useServerEvents'
 
 const mockPanels = vi.mocked(fetchPanels)
 const mockRefresh = vi.mocked(refreshProject)
@@ -799,5 +806,109 @@ describe('engine.environment_adopted', () => {
     handleServerEvent({ kind: 'engine.environment_adopted', pj: 'p1', id: 'x', source: 'conda', label: 'lab', python_version: '3.12.4' })
     expect(useEnvStore.getState().adoptedEnvironment).toMatchObject({ source: 'conda', label: 'lab', python_version: '3.12.4' })
     useEnvStore.getState().dismissAdoptedEnvironment()
+  })
+})
+
+describe('reconcileInstalls（SSE 重连 / 页面恢复）', () => {
+  it('依赖作业总是对账；引擎 bootstrap 只在还显示「安装中」时才刷环境', () => {
+    const reconcile = vi.fn().mockResolvedValue(undefined)
+    const refresh = vi.fn().mockResolvedValue(undefined)
+    useDepRepairStore.setState({ reconcile })
+    useEnvStore.setState({ refresh, installing: false })
+    reconcileInstalls()
+    expect(reconcile).toHaveBeenCalledTimes(1)
+    expect(refresh).not.toHaveBeenCalled()
+    useEnvStore.setState({ installing: true })
+    reconcileInstalls()
+    expect(refresh).toHaveBeenCalledTimes(1)
+    useEnvStore.setState({ installing: false })
+  })
+})
+
+describe('project.error 的撤销', () => {
+  beforeEach(() => {
+    mockPanels.mockResolvedValue(panels([]))
+  })
+  it('后台刷新失败挂常驻提示（有主人）；registry.changed / assets.changed 说明恢复了就撤', () => {
+    useUiStore.getState().setStatus(null)
+    handleServerEvent(ev({ kind: 'project.error', pj: 'p1', code: 'no_such_code_xyz' }))
+    expect(useUiStore.getState().status).not.toBeNull()
+    expect(useUiStore.getState().statusOwner).toBe('project.error:p1')
+    handleServerEvent(ev({ kind: 'registry.changed', pj: 'p1', scripts: [] }))
+    expect(useUiStore.getState().status).toBeNull()
+
+    handleServerEvent(ev({ kind: 'project.error', pj: 'p1', code: 'no_such_code_xyz' }))
+    handleServerEvent(
+      ev({ kind: 'assets.changed', pj: 'p1', ids: [], added: [], removed: [], changed: [] }),
+    )
+    expect(useUiStore.getState().status).toBeNull()
+  })
+
+  it('刷新恢复但没有语义差异（不发 registry.changed）：project.error 带 recovered 也撤', () => {
+    useUiStore.getState().setStatus(null)
+    handleServerEvent(ev({ kind: 'project.error', pj: 'p1', code: 'no_such_code_xyz' }))
+    expect(useUiStore.getState().status).not.toBeNull()
+    handleServerEvent(ev({ kind: 'project.error', pj: 'p1', code: '', recovered: true }))
+    expect(useUiStore.getState().status).toBeNull()
+  })
+
+  it('seq：恢复之后迟到的旧错误（seq 更小）不把 toast 顶回来；重连清零后新进程的 seq 从头计也认', () => {
+    resetProjectErrorSeq()
+    useUiStore.getState().setStatus(null)
+    handleServerEvent(ev({ kind: 'project.error', pj: 'p1', code: 'no_such_code_xyz', seq: 4 }))
+    expect(useUiStore.getState().status).not.toBeNull()
+    handleServerEvent(ev({ kind: 'project.error', pj: 'p1', code: '', recovered: true, seq: 6 }))
+    expect(useUiStore.getState().status).toBeNull()
+    handleServerEvent(ev({ kind: 'project.error', pj: 'p1', code: 'no_such_code_xyz', seq: 5 })) // 迟到
+    expect(useUiStore.getState().status).toBeNull()
+    handleServerEvent(ev({ kind: 'project.error', pj: 'p1', code: 'no_such_code_xyz', seq: 7 })) // 更新的错误照常
+    expect(useUiStore.getState().status).not.toBeNull()
+    resetProjectErrorSeq() // SSE 重连（后端可能重启，seq 从头计）
+    handleServerEvent(ev({ kind: 'project.error', pj: 'p1', code: '', recovered: true, seq: 1 }))
+    expect(useUiStore.getState().status).toBeNull()
+  })
+
+  it('对照：recovered 不顶出新的错误 toast，也撤不掉别的主人的', () => {
+    useUiStore.getState().setStatus(literal('别的'), 'error', { owner: 'render.failed:p1:x' })
+    handleServerEvent(ev({ kind: 'project.error', pj: 'p1', code: '', recovered: true }))
+    expect(useUiStore.getState().statusOwner).toBe('render.failed:p1:x')
+    useUiStore.getState().setStatus(null)
+  })
+
+  it('对照：别的主人的 toast 不被恢复事件撤掉', () => {
+    useUiStore.getState().setStatus(literal('别的'), 'error', { owner: 'render.failed:p1:x' })
+    handleServerEvent(ev({ kind: 'registry.changed', pj: 'p1', scripts: [] }))
+    expect(useUiStore.getState().status).not.toBeNull()
+    useUiStore.getState().setStatus(null)
+  })
+})
+
+describe('useServerEvents 的 SSE 重连回调', () => {
+  it('重连清零 project.error 的 seq：已见 seq=5 之后，新进程从头计的 recovered(seq=1) 仍能撤掉 toast', async () => {
+    ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
+    mockPanels.mockResolvedValue({ figures_dir: '/f', panels: [] } as never)
+    const sub = vi.mocked(subscribeEvents)
+    sub.mockClear()
+    const Probe = () => {
+      useServerEvents()
+      return null
+    }
+    const host = document.createElement('div')
+    const root = createRoot(host)
+    await act(async () => { root.render(createElement(Probe)) })
+    const call = sub.mock.calls.at(-1)!
+    const onEvent = call[0]
+    const onOpen = call[1]!
+    resetProjectErrorSeq()
+    useUiStore.getState().setStatus(null)
+    act(() => onEvent(ev({ kind: 'project.error', pj: 'p1', code: 'no_such_code_xyz', seq: 5 })))
+    expect(useUiStore.getState().status).not.toBeNull()
+    // 对照：没重连时 seq=1 是迟到的旧事件，撤不掉
+    act(() => onEvent(ev({ kind: 'project.error', pj: 'p1', code: '', recovered: true, seq: 1 })))
+    expect(useUiStore.getState().status).not.toBeNull()
+    await act(async () => { onOpen() }) // SSE 重连（后端可能重启，seq 从头计）
+    act(() => onEvent(ev({ kind: 'project.error', pj: 'p1', code: '', recovered: true, seq: 1 })))
+    expect(useUiStore.getState().status).toBeNull()
+    await act(async () => { root.unmount() })
   })
 })

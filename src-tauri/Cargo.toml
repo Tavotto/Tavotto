@@ -67,6 +67,9 @@ windows = { version = "0.61", features = [
 tauri = { version = "2", features = ["test"] }
 minisign = "0.7"
 base64 = "0.22"
+# 退出路径看护（exit_guard_tests）按 AST 找出口表达式，不按子串
+syn = { version = "2", features = ["full", "visit"] }
+proc-macro2 = "1"
 tokio = { version = "1", default-features = false, features = ["time", "macros", "sync", "rt", "rt-multi-thread", "net", "io-util"] }
 
 [profile.release]

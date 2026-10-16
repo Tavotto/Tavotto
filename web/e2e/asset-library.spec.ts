@@ -248,7 +248,7 @@ test('完整链：保存 → 关闭 → 重开 → 重放 → 预检 → 导出 
   // 出版预检（导出面板只给摘要，完整清单在左侧问题面板 —— ADR 0031 §四）
   await page.getByRole('button', { name: '导出' }).first().click()
   await expect(
-    page.getByText(/导出前检查通过|\d+ (阻断|警告|建议|无法核验)/),
+    page.getByText(/导出前检查通过|\d+ (项要改|项留意|条建议|项无法核验)/),
   ).toBeVisible({ timeout: 30_000 })
   await page.keyboard.press('Escape')
 

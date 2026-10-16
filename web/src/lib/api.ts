@@ -3413,6 +3413,10 @@ export type ServerEvent =
       reason?: RefreshReason
       code: string
       params?: Record<string, string>
+      /** 上一次后台刷新失败之后又成功了一次（成功但无差异时 `registry.changed` 不发）：撤掉那条错误提示，`code` 为空 */
+      recovered?: boolean
+      /** 后端分配的单调序号（失败与恢复同一个计数）：比已见过的更小就是迟到的旧事件，丢弃；老后端没有 */
+      seq?: number
     } & ProjectScoped)
   | ({ kind: 'probe.started'; script: string } & ProjectScoped)
   | ({
@@ -3422,7 +3426,7 @@ export type ServerEvent =
       /** 这一步本身：`{seq, state, at, …}`（时间线用） */
       event: { seq: number; state: NativeSessionState; at: number } & Record<string, unknown>
     } & ProjectScoped)
-  | { kind: 'engine.bootstrap'; state: string; log: string; error: string | null }
+  | { kind: 'engine.bootstrap'; state: string; log: string; error: string | null; attempt?: number; boot?: string }
   | ({ kind: 'engine.dependency' } & DependencyProgress)
   /** 跑前的门自动改用了用户自己的环境（ADR 0079）；不带路径 */
   | ({
@@ -4099,6 +4103,10 @@ export interface EngineEnvironment {
   bundled: boolean
   runtime: BundledRuntime
   state: 'idle' | 'running' | 'done' | 'failed'
+  /** 引擎 bootstrap 的尝试身份（单调递增，0 = 从没装过）；老后端没有 */
+  attempt?: number
+  /** 后端进程身份（重启即变）：`attempt` 只在同一个 boot 内可比 */
+  boot?: string
   /** ok=false 时才有：能不能替用户装一个 */
   can_install?: boolean
   base_python?: string | null
@@ -4118,6 +4126,10 @@ export interface BootstrapProgress {
   state: 'idle' | 'running' | 'done' | 'failed'
   log: string
   error: string | null
+  /** 尝试身份（`engine.bootstrap` 事件 / 环境状态 / install 响应都带）；老后端没有 */
+  attempt?: number
+  /** 后端进程身份（重启即变）：`attempt` 只在同一个 boot 内可比；老后端没有 */
+  boot?: string
 }
 
 export const fetchEngineEnvironment = (probe?: boolean) =>
@@ -5612,10 +5624,29 @@ export interface PreparationAction {
   impact: PreparationImpact
 }
 
-/** 会话报告（`SessionService.report`）：前端只保存这份投影，不另算「能不能跑」 */
 /** `rasterhint.LIBRARIES`：界面按它查库名（`workspace:prep.rasterHint.library.*`） */
 export type RasterLibrary = 'pillow' | 'opencv' | 'imageio' | 'skimage'
 
+/**
+ * 会话里一次真实执行尝试的账本条目（`engine/execpolicy.AttemptRecord.public()`，ADR 0127）：执行语义 · 解释器摘要 ·
+ * 启动上下文摘要 · 触发原因码 · 与上次相比变了哪几维（`profile` / `interpreter` / `launch_context`）· 结局。
+ * 只有摘要与闭集码，没有路径 / argv / 环境值。老后端没有 `attempt_history`。
+ */
+export interface PreparationAttemptRecord {
+  run: number
+  seq: number
+  attempt_id: string
+  profile: 'safe' | 'native'
+  interpreter: string
+  launch: string
+  cause: string
+  changed: string[]
+  outcome: 'pending' | 'succeeded' | 'failed' | 'blocked' | 'cancelled'
+  code: string
+  declined: string
+}
+
+/** 会话报告（`SessionService.report`）：前端只保存这份投影，不另算「能不能跑」 */
 export interface PreparationReport {
   session_version: number
   session_id: string
@@ -5656,6 +5687,8 @@ export interface PreparationReport {
     } | null
   }
   dependency_delta?: Record<string, unknown> | null
+  /** 这个会话里每次真实执行尝试的账本（ADR 0127）；界面只在「safe → native 回退成功」时据此在详情里补一行，不据此判任何事 */
+  attempt_history?: PreparationAttemptRecord[]
   /** 运行意图（P05b）；老后端没有这个键 */
   intent?: PreparationRunIntent | null
   /** 环境：只是一个可展示的事实（ADR 0114 §六），不要求用户动作；老后端没有 */

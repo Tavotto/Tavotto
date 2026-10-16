@@ -13,6 +13,8 @@ import { defineConfig, devices } from '@playwright/test'
  */
 export default defineConfig({
   testDir: './e2e',
+  // Agent 专用长时间性能基准由 playwright.perf.config.ts 启动，常规黄金路径不运行它。
+  testIgnore: ['perf-agent.spec.ts'],
   // 每个用例都要起一次后端（含冷启动的 matplotlib 会话），给足时间
   timeout: 180_000,
   expect: { timeout: 15_000 },
@@ -42,7 +44,7 @@ export default defineConfig({
       use: { ...devices['Desktop Chrome'] },
       // error-recovery-en / preparation-card-en 自带 en-US locale、由 chromium-en 跑：
       // 基础 project 再跑一遍就是同一份内容双倍的串行启动与渲染等待
-      testIgnore: ['error-recovery-en.spec.ts', 'preparation-card-en.spec.ts'],
+      testIgnore: ['error-recovery-en.spec.ts', 'preparation-card-en.spec.ts', 'perf-agent.spec.ts'],
     },
     // WebKit 是 macOS 桌面壳（WKWebView）与 Safari 用户的引擎（审计 P1-03）：
     // 只跑黄金路径与可访问性——全量跑三遍只是把门禁拉长三倍，而剩下那些
@@ -80,6 +82,9 @@ export default defineConfig({
         'timeline-row-actions.spec.ts',
         // 顶栏窄宽度下两两不重叠：量的是字宽，WebKit 的字体度量与 chromium 不同
         'topbar-narrow.spec.ts',
+        // 树行键位与分栏手柄（UI 2.0 PR7）：Esc 回滚 / 双击复位靠 pointer capture 与 WebKit 的事件序列，
+        // 选中加粗的字宽锁量的是 WKWebView 自己的字体度量
+        'tree-list-refine.spec.ts',
       ],
     },
     // 英文 locale（审计 P1-02/P1-03）：a11y spec 是语言无关写法；
@@ -93,9 +98,15 @@ export default defineConfig({
         'ai-draft.spec.ts',
         'a11y.spec.ts',
         'error-recovery-en.spec.ts',
+        // 树与列表精修（UI 2.0 PR7）：英文标签更长（截断 / 字宽锁最容易出事），选择器全是稳定 data-*，两种语言各量一遍
+        'tree-list-refine.spec.ts',
         // 准备引导卡（T13b）：英文文案同样一句话、一个主按钮，可达名与布局在英文下照样成立
         'preparation-card-en.spec.ts',
+        // 改图助手输入框：英文胶囊 / 菜单说明更长，量弹层盒子在两种语言下都不被裁
+        'ai-composer.spec.ts',
         'inspector-overflow.spec.ts',
+        // 导出检查的计数芯片与逐条清单（2026-10-16 精修 03）：语言无关写法，英文标签更长，两种语言各量一遍
+        'export-checks.spec.ts',
         // 同步修改 → 标准写回窗口（ADR 0037 末节）：语言无关写法，两种语言各走一遍
         'sync-overrides.spec.ts',
       ],

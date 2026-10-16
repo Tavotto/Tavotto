@@ -1900,6 +1900,300 @@ def test_installs_into_a_pth_added_external_dir_invalidate_the_cached_negative(t
     assert probe() == {"shared_late_pkg": True}, ".pth 加的外部目录里装了包，旧的『缺』仍被缓存命中"
 
 
+@needs_worker
+@pytest.mark.parametrize("broken", [False, True], ids=["importable", "import-fails"])
+def test_pythonpath_provider_is_deferred_without_importing_it(tmp_path, monkeypatch, broken):
+    """#903：判断的是候选实际继承的 PYTHONPATH；检查只认可能的提供者，Run 才真 import。"""
+    base = tmp_path / "ext"
+    base.mkdir()
+    py = _plain_venv(base, "lab")
+    external = tmp_path / "shared"
+    external.mkdir()
+    marker = tmp_path / "IMPORTED"
+    (external / "pythonpath_only_pkg.py").write_text(
+        f"from pathlib import Path\nPath({str(marker)!r}).touch()\n"
+        + ("raise RuntimeError('broken provider')\n" if broken else "VALUE = 42\n"),
+        "utf-8",
+    )
+    monkeypatch.setenv("PYTHONPATH", str(external))
+    root = str(tmp_path / "proj")
+    health = projectenv.probe_environment(
+        py, modules=("pythonpath_only_pkg",), import_mode="spec", project_root=root
+    )
+    assert health["modules_ok"] == {"pythonpath_only_pkg": None}
+    assert health["modules_detail"] == {"pythonpath_only_pkg": "deferred"}
+    assert health.get("new_imports") == [] and not marker.exists()
+    assert userenvs.imports_missing(py, ["pythonpath_only_pkg"], root=root) == []
+    candidate = {"python": py, "source": userenvs.SOURCE_CONDA, "label": "lab"}
+    before = userenvs.evaluate([candidate], [], ["pythonpath_only_pkg"], root=root)[0]
+    assert before.get("deferred") and before["satisfies"] is None
+    assert not marker.exists()
+    after = userenvs.evaluate([candidate], [], ["pythonpath_only_pkg"], use_cache=False)[0]
+    assert marker.exists()
+    assert after["satisfies"] is (not broken)
+    if broken:
+        assert after["import_failed"] == ["pythonpath_only_pkg"]
+
+
+@needs_worker
+def test_an_unrelated_pythonpath_does_not_hide_a_genuine_missing_module(tmp_path, monkeypatch):
+    base = tmp_path / "ext"
+    base.mkdir()
+    py = _plain_venv(base, "lab")
+    external = tmp_path / "shared"
+    external.mkdir()
+    (external / "unrelated_module.py").write_text(
+        "raise RuntimeError('must not execute')\n", "utf-8"
+    )
+    monkeypatch.setenv("PYTHONPATH", str(external))
+    health = projectenv.probe_environment(
+        py, modules=("really_missing_pkg",), import_mode="spec", project_root=str(tmp_path / "proj")
+    )
+    assert health["modules_ok"] == {"really_missing_pkg": False}
+    assert not health.get("deferred_env") and health["new_imports"] == []
+
+
+@pytest.mark.parametrize("unsupported", [False, True], ids=["supported", "unsupported"])
+@pytest.mark.parametrize("provider", ["requested-only", "matplotlib", "startup-hook"])
+def test_pythonpath_module_uncertainty_does_not_hide_definite_environment_health(
+    tmp_path, monkeypatch, unsupported, provider
+):
+    """#1019 复审：只提供脚本依赖不代表能提供 matplotlib；Python 硬边界更不依赖启动路径。"""
+    venv = tmp_path / "external-venv"
+    subprocess.run(
+        [sys.executable, "-I", "-m", "venv", "--without-pip", str(venv)],
+        check=True,
+        capture_output=True,
+        timeout=30,
+    )
+    py = str(envworld.venv_python(venv))
+    external = tmp_path / "shared"
+    external.mkdir()
+    marker = tmp_path / "EXECUTED"
+    payload = f"from pathlib import Path\nPath({str(marker)!r}).touch()\n"
+    (external / "pythonpath_only_pkg.py").write_text(payload, "utf-8")
+    if provider != "requested-only":
+        name = "matplotlib" if provider == "matplotlib" else "sitecustomize"
+        (external / f"{name}.py").write_text(payload, "utf-8")
+    monkeypatch.setenv("PYTHONPATH", str(external))
+    if unsupported:
+        # 用真实 venv 的版本跨过可控的支持边界，不伪造子进程的版本 / 体检返回值。
+        monkeypatch.setattr(projectenv, "PYTHON_MAX_EXCLUSIVE", sys.version_info[:2])
+    root = str(tmp_path / "proj")
+    health = projectenv.probe_environment(
+        py, modules=("pythonpath_only_pkg",), import_mode="spec", project_root=root
+    )
+    assert health["matplotlib_version"] is None  # 真空 venv，没有宿主的 dist-info / 科学栈
+    assert health["modules_ok"] == {"pythonpath_only_pkg": None}
+    assert health["new_imports"] == [] and not marker.exists()
+    candidate = {"python": py, "source": userenvs.SOURCE_CONDA, "label": "empty"}
+    verdict = userenvs.evaluate([candidate], [], ["pythonpath_only_pkg"], root=root)[0]
+    if unsupported or provider == "requested-only":
+        code = (
+            projectenv.ERROR_UNSUPPORTED_PYTHON if unsupported else projectenv.ERROR_NO_MATPLOTLIB
+        )
+        assert health["ok"] is False and health["code"] == code, health
+        assert not health.get("deferred_env"), health
+        assert verdict["checked"] and verdict["satisfies"] is False, verdict
+        assert verdict["code"] == code and not verdict.get("deferred"), verdict
+    else:
+        # matplotlib 自己 / 启动钩子能改变绘图环境是否可用；只有这时保留整个候选的延后判断。
+        assert health["ok"] and health.get("deferred_env"), health
+        assert verdict.get("deferred") and verdict["satisfies"] is None, verdict
+    assert not marker.exists()
+
+
+@pytest.mark.parametrize("unsupported", [False, True], ids=["supported", "unsupported"])
+def test_an_empty_venv_without_pythonpath_keeps_its_definite_health_error(
+    tmp_path, monkeypatch, unsupported
+):
+    venv = tmp_path / "empty-venv"
+    subprocess.run(
+        [sys.executable, "-I", "-m", "venv", "--without-pip", str(venv)],
+        check=True,
+        capture_output=True,
+        timeout=30,
+    )
+    monkeypatch.delenv("PYTHONPATH", raising=False)
+    if unsupported:
+        monkeypatch.setattr(projectenv, "PYTHON_MAX_EXCLUSIVE", sys.version_info[:2])
+    health = projectenv.probe_environment(
+        str(envworld.venv_python(venv)),
+        modules=("really_missing_pkg",),
+        import_mode="spec",
+        project_root=str(tmp_path / "proj"),
+    )
+    code = projectenv.ERROR_UNSUPPORTED_PYTHON if unsupported else projectenv.ERROR_NO_MATPLOTLIB
+    assert not health["ok"] and health["code"] == code, health
+    if unsupported:
+        assert health["support"] == projectenv.SUPPORT_UNSUPPORTED
+    assert health["modules_ok"] == {"really_missing_pkg": False}
+    assert not health.get("deferred_env") and health["new_imports"] == []
+
+
+@needs_worker
+@pytest.mark.parametrize("spec", [False, True], ids=["import-mode", "spec-mode"])
+def test_changing_pythonpath_invalidates_a_cached_negative(tmp_path, monkeypatch, spec):
+    base = tmp_path / "ext"
+    base.mkdir()
+    py = _plain_venv(base, "lab")
+    first, second = tmp_path / "a", tmp_path / "b"
+    first.mkdir()
+    second.mkdir()
+    (second / "pythonpath_only_pkg.py").write_text("VALUE = 42\n", "utf-8")
+    root = str(tmp_path / "proj")
+    mode = {"mode": "spec", "root": root} if spec else {}
+    monkeypatch.setenv("PYTHONPATH", str(first))
+    assert userenvs._probe(py, ("pythonpath_only_pkg",), **mode)["modules_ok"] == {
+        "pythonpath_only_pkg": False
+    }
+    monkeypatch.setenv("PYTHONPATH", str(second))
+    assert userenvs._probe(py, ("pythonpath_only_pkg",), **mode)["modules_ok"] == {
+        "pythonpath_only_pkg": None if spec else True
+    }
+
+
+@needs_worker
+@pytest.mark.parametrize("exists", [False, True], ids=["new-root", "existing-root"])
+def test_a_new_module_in_pythonpath_invalidates_the_cached_negative(tmp_path, monkeypatch, exists):
+    base = tmp_path / "ext"
+    base.mkdir()
+    py = _plain_venv(base, "lab")
+    external = tmp_path / "shared"
+    if exists:
+        external.mkdir()
+    monkeypatch.setenv("PYTHONPATH", str(external))
+    mode = {"mode": "spec", "root": str(tmp_path / "proj")}
+    assert userenvs._probe(py, ("pythonpath_only_pkg",), **mode)["modules_ok"] == {
+        "pythonpath_only_pkg": False
+    }
+    external.mkdir(exist_ok=True)
+    (external / "pythonpath_only_pkg.py").write_text("VALUE = 42\n", "utf-8")
+    assert userenvs._probe(py, ("pythonpath_only_pkg",), **mode)["modules_ok"] == {
+        "pythonpath_only_pkg": None
+    }
+
+
+@needs_worker
+@pytest.mark.parametrize("spec", [False, True], ids=["import-mode", "spec-mode"])
+def test_creating_a_pythonpath_root_invalidates_an_import_negative(tmp_path, monkeypatch, spec):
+    """#1019 复审：import 阴性也要记住尚不存在的绝对根；spec 复用这份证据前同样检查失效。"""
+    base = tmp_path / "ext"
+    base.mkdir()
+    py = _plain_venv(base, "lab")
+    external = tmp_path / "later"
+    monkeypatch.setenv("PYTHONPATH", str(external))
+    first = userenvs._probe(py, ("pythonpath_only_pkg",))
+    assert first["modules_ok"] == {"pythonpath_only_pkg": False}
+    marker = tmp_path / "IMPORTED"
+    external.mkdir()
+    (external / "pythonpath_only_pkg.py").write_text(
+        f"from pathlib import Path\nPath({str(marker)!r}).touch()\nVALUE = 42\n", "utf-8"
+    )
+    mode = {"mode": "spec", "root": str(tmp_path / "proj")} if spec else {}
+    fresh = userenvs._probe(py, ("pythonpath_only_pkg",), **mode)
+    assert fresh["modules_ok"] == {"pythonpath_only_pkg": None if spec else True}
+    assert fresh is not first
+    assert marker.exists() is (not spec)
+
+
+@needs_worker
+def test_pythonpath_startup_hook_is_not_executed_during_preflight(tmp_path, monkeypatch):
+    base = tmp_path / "ext"
+    base.mkdir()
+    py = _plain_venv(base, "lab")
+    external = tmp_path / "shared"
+    external.mkdir()
+    marker = tmp_path / "STARTUP_EXECUTED"
+    (external / "sitecustomize.py").write_text(
+        f"from pathlib import Path\nPath({str(marker)!r}).touch()\n", "utf-8"
+    )
+    monkeypatch.setenv("PYTHONPATH", str(external))
+    health = projectenv.probe_environment(
+        py, modules=("really_missing_pkg",), import_mode="spec", project_root=str(tmp_path / "proj")
+    )
+    assert health.get("deferred_env") and health["modules_ok"] == {"really_missing_pkg": None}
+    assert not marker.exists() and health["new_imports"] == []
+    projectenv.probe_environment(py, modules=("really_missing_pkg",))
+    assert marker.exists()  # 哨兵先证明是活的，再据此说检查没有执行它
+
+
+@needs_worker
+def test_pythonpath_candidate_keeps_the_run_action_and_is_adopted_only_after_run(
+    client, house, opened, tmp_path, monkeypatch
+):
+    from tavotto.engine import runtime
+
+    base = tmp_path / "ext"
+    base.mkdir()
+    py = _plain_venv(base, "lab")
+    external = tmp_path / "shared"
+    external.mkdir()
+    marker = tmp_path / "IMPORTED"
+    (external / f"{ALPHA[1]}.py").write_text(
+        f"from pathlib import Path\nPath({str(marker)!r}).touch()\nVALUE = 42\n", "utf-8"
+    )
+    # 用真实 Python 模拟内置的启动语义（child_env 摘掉 PYTHONPATH），不 mock 体检 / 执行结果。
+    monkeypatch.setattr(runtime, "bundled_python", lambda: WORKER_PY)
+    monkeypatch.setenv("PYTHONPATH", str(external))
+    _conda_like(monkeypatch, [base / "lab"])
+    proj = opened([ALPHA])
+    report = _create(client, {"script": "figure.py"})
+    assert "run" in _kinds(report) and "prepare_dependencies" not in _kinds(report), report
+    assert not marker.exists() and projectenv.remembered_record(proj) is None
+    assert _act(client, report, "run").status_code == 202
+    final = _wait(client, report["session_id"], lambda r: r["phase"] != "running", timeout=60)
+    assert marker.exists()
+    assert _env_root(projectenv.remembered_record(proj)["path"]) == _env_root(py), final
+    if final["outcome"]["kind"] == "stale":
+        # 沿用环境采用后的工作目录授权纪律：确认新计划，才在新 cwd 下真正跑脚本。
+        assert final["outcome"]["reason"] == "grant_changed", final
+        assert _act(client, final, "recheck").status_code in (200, 202)
+        fresh = _get(client, report["session_id"])
+        assert _act(client, fresh, "run").status_code == 202
+        final = _wait(client, report["session_id"], lambda r: r["phase"] != "running", timeout=60)
+    assert final["phase"] == "completed" and final["captured"], final
+
+
+@needs_worker
+@pytest.mark.parametrize("spec", [False, True], ids=["import-mode", "spec-mode"])
+@pytest.mark.parametrize("change", ["mtime", "size"])
+def test_rewriting_a_pth_in_place_invalidates_a_cached_negative(
+    tmp_path, monkeypatch, spec, change
+):
+    base = tmp_path / "ext"
+    base.mkdir()
+    py = _plain_venv(base, "lab")
+    # 保持两侧目录及 site 目录的 mtime 不动；只有 .pth 文件自己变，不靠 sleep / 目录增删蒙混过关。
+    first = tmp_path / "a"
+    second = tmp_path / ("b" if change == "mtime" else "long_b")
+    first.mkdir()
+    second.mkdir()
+    (second / "pth_retargeted_pkg.py").write_text("VALUE = 42\n", "utf-8")
+    site_dir = _venv_site(base / "lab")
+    pth = site_dir / "0shared.pth"
+    pth.write_text(str(first) + "\n", "utf-8")
+    site_stat, file_stat = site_dir.stat(), pth.stat()
+    root = str(tmp_path / "proj")
+    mode = {"mode": "spec", "root": root} if spec else {}
+    assert userenvs._probe(py, ("pth_retargeted_pkg",), **mode)["modules_ok"] == {
+        "pth_retargeted_pkg": False
+    }
+    pth.write_text(str(second) + "\n", "utf-8")
+    os.utime(
+        pth,
+        ns=(
+            file_stat.st_atime_ns,
+            file_stat.st_mtime_ns + (1_000_000_000 if change == "mtime" else 0),
+        ),
+    )
+    os.utime(site_dir, ns=(site_stat.st_atime_ns, site_stat.st_mtime_ns))
+    assert site_dir.stat().st_mtime_ns == site_stat.st_mtime_ns
+    assert userenvs._probe(py, ("pth_retargeted_pkg",), **mode)["modules_ok"] == {
+        "pth_retargeted_pkg": True
+    }
+
+
 @posix_only
 @needs_worker
 def test_missing_evidence_with_skipped_executable_pth_defers_instead_of_rejecting(tmp_path):
@@ -2070,3 +2364,43 @@ def test_the_confirmation_mode_still_asks_and_detection_does_not(tmp_path, monke
     monkeypatch.setenv("TAVOTTO_ENV_ADOPTION", "confirm")
     assert envadvice.recommend(root, "fig.py")["decision"]["needs_decision"] is True
     assert os.environ["TAVOTTO_ENV_ADOPTION"] == "confirm"
+
+
+@posix_only
+@needs_worker
+@pytest.mark.parametrize("spec", [False, True], ids=["import-mode", "spec-mode"])
+def test_a_dangling_pth_does_not_disable_site_cache_invalidation(tmp_path, monkeypatch, spec):
+    """#903 R1：一个坏链接不能让整个 site 的目录 mtime 和其余 .pth 元数据失效。"""
+    base = tmp_path / "ext"
+    base.mkdir()
+    py = _plain_venv(base, "lab")
+    site = _venv_site(base / "lab")
+    (site / "broken.pth").symlink_to(tmp_path / "removed.pth")
+    monkeypatch.delenv("PYTHONPATH", raising=False)
+    kwargs = {"mode": "spec", "root": str(tmp_path / "proj")} if spec else {}
+    assert userenvs._probe(py, ("late_installed_pkg",), **kwargs)["modules_ok"] == {
+        "late_installed_pkg": False
+    }
+    before = site.stat()
+    (site / "late_installed_pkg.py").write_text("VALUE = 42\n", "utf-8")
+    os.utime(site, ns=(before.st_atime_ns, before.st_mtime_ns + 1_000_000_000))
+    assert userenvs._probe(py, ("late_installed_pkg",), **kwargs)["modules_ok"] == {
+        "late_installed_pkg": True
+    }
+    # 坏链接仍在时，其余可读 .pth 的原地改写也必须独立计入，不能只救回父目录 mtime。
+    first, second = tmp_path / "a", tmp_path / "b"
+    first.mkdir()
+    second.mkdir()
+    (second / "pth_added_pkg.py").write_text("VALUE = 42\n", "utf-8")
+    pth = site / "good.pth"
+    pth.write_text(str(first) + "\n", "utf-8")
+    assert userenvs._probe(py, ("pth_added_pkg",), **kwargs)["modules_ok"] == {
+        "pth_added_pkg": False
+    }
+    site_stat, file_stat = site.stat(), pth.stat()
+    pth.write_text(str(second) + "\n", "utf-8")
+    os.utime(pth, ns=(file_stat.st_atime_ns, file_stat.st_mtime_ns + 1_000_000_000))
+    os.utime(site, ns=(site_stat.st_atime_ns, site_stat.st_mtime_ns))
+    assert userenvs._probe(py, ("pth_added_pkg",), **kwargs)["modules_ok"] == {
+        "pth_added_pkg": True
+    }

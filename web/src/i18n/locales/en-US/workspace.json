@@ -558,7 +558,8 @@
       "nothing_found": "No figures or scripts here yet",
       "unchecked": "Couldn't check the whole project",
       "cancelled": "Check cancelled",
-      "failed": "The check didn't finish"
+      "failed": "The check didn't finish",
+      "lost": "Couldn't read the check's progress"
     },
     "issue": {
       "unreadable_dir": "Couldn't read folder {{path}}.",
@@ -1100,7 +1101,9 @@
       "errorFull": "Full error output",
       "errorTruncated": "Too long; only the last part is kept.",
       "noFigureWhy": "It never called savefig and left no Figure open.",
-      "unlinked": "{{names}}, made earlier with other arguments, is no longer linked. Run again with those arguments to restore it."
+      "unlinked": "{{names}}, made earlier with other arguments, is no longer linked. Run again with those arguments to restore it.",
+      "nativeFallback": "Safe mode blocked the script's file operations, so it was run on your real files instead.",
+      "nativeFallbackNoWriteback": "Safe mode blocked the script's file operations, so it was run on your real files instead. Changes to a figure made this way aren't written back to the script."
     },
     "fact": {
       "finished": "The script finished",
@@ -1187,7 +1190,8 @@
         "distribution_unverifiable": "Can't read what's in this package, so it can't be confirmed.",
         "unknown": "What was installed doesn't match the plan."
       }
-    }
+    },
+    "progress": "In progress"
   },
   "canvasMenu": {
     "aria": "Canvas actions",

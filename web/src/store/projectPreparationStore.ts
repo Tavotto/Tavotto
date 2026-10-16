@@ -336,7 +336,9 @@ export const useProjectPreparationStore = create<PreparationState>((set, get) =>
             restarted: false,
             rejection: null,
             failure: null,
-            pending: null,
+            // 同一目标再次打开（卡开着时点素材库 ▶）：飞行中的动作还在飞，防连点的 `pending` 不能被抹掉，
+            // 否则第二次点击会发出第二个 `run`。换了目标 / 参数是另一份会话，动作随旧会话作废
+            pending: sameTarget ? (prev?.pending ?? null) : null,
             // 「进入编辑」的记录属于那份目标的结果：换了参数就是另一批图，旧图的编辑不许混进新结果的判断
             editing: sameTarget ? (prev?.editing ?? []) : [],
             editRenders: sameTarget ? (prev?.editRenders ?? {}) : {},
@@ -344,6 +346,9 @@ export const useProjectPreparationStore = create<PreparationState>((set, get) =>
         },
       }))
       if (opts?.show !== false) useUiStore.getState().setGuideCard('card')
+      // 同一目标上有动作在飞：它的回包自带最新报告，这里再 `check` 一次既多余，又会把 `pending` 改写成 'check'
+      // 再清空——防连点的闸就开了
+      if (sameTarget && prev?.pending && prev.pending !== 'check') return
       await check(key, target, false)
     },
 

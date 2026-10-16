@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { t as translate } from '@/i18n'
 import {
@@ -26,7 +26,9 @@ import { ICON_SIZE } from '@/components/ui/Icon'
 import { EditableFigureIcon } from '@/components/ui/semanticIcons'
 import { ALT, cn, combo, isMac } from '@/lib/utils'
 import { dropLineClass, listRowClass } from '@/components/ui/listRow'
+import { isTreeNavKey, treeKeyAction } from '@/components/ui/treeKeys'
 import { TreeChevron, TreeIcon, treeIndent } from '@/components/ui/TreeRow'
+import { useBoldTrackingLock } from '@/components/ui/useBoldWidthLock'
 import { useRenameFocusReturn } from '@/components/ui/useRenameFocusReturn'
 import { useFlip } from '@/lib/motion'
 import { renameObject, reorderObject, toggleHidden, toggleLocked } from '@/store/actions'
@@ -79,6 +81,31 @@ export function LayerTree() {
   // 也会让下面所有行整体位移。不给动效的话行「啪」地跳，看不出是哪一行动了
   useFlip(listRef, 'data-layer')
 
+  // 画布 / 其他面板上改选的图层可能在长列表的视口之外：一律滚到恰好看得见（与图内元素树同一写法；
+  // 不平滑，所以 reduced-motion 下也是即时的）——哪怕树此刻还持有焦点。只有**用户在树里**用键盘 / 点击
+  // 造成的选择变化不额外滚：键盘移动的 focus() 自己会带进视野，再滚一次会和它抢。来源靠树上的捕获
+  // 阶段记一笔（按键 / 按下发生在选择变化之前，同一轮事件处理里就会被 effect 消费）
+  const treeDriven = useRef(false)
+  const markTreeDriven = () => {
+    treeDriven.current = true
+    setTimeout(() => (treeDriven.current = false), 0)
+  }
+  const primaryId = selectedIds.at(-1)
+  useEffect(() => {
+    const list = listRef.current
+    if (treeDriven.current) {
+      treeDriven.current = false
+      return
+    }
+    if (!primaryId || !list) return
+    const at = (key: string) => list.querySelector(`[data-layer="${CSS.escape(key)}"]`)
+    // 选中项藏在折叠的组里（行没渲染）：滚到它最近的可见祖先——组标题行
+    const groupId = objects.find((o) => o.id === primaryId)?.groupId
+    const target = at(primaryId) ?? (groupId ? at(`g:${groupId}`) : null)
+    target?.scrollIntoView({ block: 'nearest' })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [primaryId, collapsed])
+
   // 顶层在最上面，与画布的视觉层级一致
   const zOrder = [...objects].reverse()
 
@@ -121,10 +148,24 @@ export function LayerTree() {
   const focusRow = (key: string) =>
     listRef.current?.querySelector<HTMLElement>(`[data-layer="${CSS.escape(key)}"]`)?.focus()
 
-  const moveFocus = (from: string, delta: number) => {
-    const i = rows.findIndex((r) => keyOf(r) === from)
-    const next = rows[i + delta]
-    if (next) focusRow(keyOf(next))
+  // 树键位（`ui/treeKeys`，与元素树同一份）：true = 这个键归树管、行该 preventDefault
+  const navKey = (from: string, key: string) => {
+    const action = treeKeyAction(
+      key,
+      rows.map((r) =>
+        r.kind === 'group'
+          ? { level: 0, expanded: !collapsed[r.gid] }
+          : { level: r.depth },
+      ),
+      rows.findIndex((r) => keyOf(r) === from),
+    )
+    if (!action) return false
+    if (action.type === 'focus') focusRow(keyOf(rows[action.index]))
+    else if (from.startsWith('g:')) {
+      const gid = from.slice(2)
+      setCollapsed((s) => ({ ...s, [gid]: action.type === 'collapse' }))
+    }
+    return true
   }
 
   // Alt+方向键调整 z 序；行的 DOM 会重建，等提交后把焦点接回来
@@ -147,9 +188,12 @@ export function LayerTree() {
     <ul
       ref={listRef}
       role="tree"
+      data-tree="layers"
+      onKeyDownCapture={markTreeDriven}
+      onPointerDownCapture={markTreeDriven}
       aria-label={lt('listLabel')}
       aria-multiselectable
-      className="min-h-0 flex-1 overflow-y-auto py-1"
+      className="min-h-0 flex-1 scroll-py-1 overflow-y-auto py-1"
       onDragLeave={() => setDropHint(null)}
       onDrop={() => setDropHint(null)}
     >
@@ -167,7 +211,7 @@ export function LayerTree() {
               tabbable={focusKey === `g:${r.gid}`}
               allSelected={r.members.every((m) => selectedIds.includes(m.id))}
               onToggle={() => setCollapsed((s) => ({ ...s, [r.gid]: !s[r.gid] }))}
-              onMoveFocus={(d) => moveFocus(`g:${r.gid}`, d)}
+              onNavKey={(k) => navKey(`g:${r.gid}`, k)}
             />
           )
         }
@@ -189,7 +233,7 @@ export function LayerTree() {
             canMoveUp={zi > 0}
             canMoveDown={zi >= 0 && zi < flatIds.length - 1}
             onDropHint={setDropHint}
-            onMoveFocus={(d) => moveFocus(o.id, d)}
+            onNavKey={(k) => navKey(o.id, k)}
             onReorder={(d) => reorder(o.id, d)}
           />
         )
@@ -209,7 +253,7 @@ function GroupRow({
   tabbable,
   allSelected,
   onToggle,
-  onMoveFocus,
+  onNavKey,
 }: {
   gid: string
   members: CanvasObject[]
@@ -220,10 +264,12 @@ function GroupRow({
   tabbable: boolean
   allSelected: boolean
   onToggle: () => void
-  onMoveFocus: (delta: number) => void
+  /** 树键位：true = 已处理 */
+  onNavKey: (key: string) => boolean
 }) {
   useTranslation('workspace')
   const selectAllMembers = () => useSelectionStore.getState().set(members.map((m) => m.id))
+  const labelRef = useBoldTrackingLock<HTMLSpanElement>(allSelected, lt('groupLabel', { count: members.length }))
   return (
     <li
       role="treeitem"
@@ -247,18 +293,11 @@ function GroupRow({
       }}
       onKeyDown={(e) => {
         if (e.target !== e.currentTarget) return
-        if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
-          e.preventDefault()
-          e.stopPropagation()
-          onMoveFocus(e.key === 'ArrowDown' ? 1 : -1)
-        } else if (e.key === 'ArrowRight' && collapsed) {
-          e.preventDefault()
-          e.stopPropagation()
-          onToggle()
-        } else if (e.key === 'ArrowLeft' && !collapsed) {
-          e.preventDefault()
-          e.stopPropagation()
-          onToggle()
+        if (isTreeNavKey(e.key)) {
+          if (onNavKey(e.key)) {
+            e.preventDefault()
+            e.stopPropagation()
+          }
         } else if (e.key === 'Enter') {
           e.preventDefault()
           e.stopPropagation()
@@ -266,7 +305,7 @@ function GroupRow({
         }
       }}
       style={treeIndent(0)}
-      className={cn(listRowClass({ selected: allSelected, muted: true }), 'gap-1.5 pr-2')}
+      className={cn(listRowClass({ selected: allSelected, muted: true }), 'pr-2')}
     >
       <TreeChevron
         expanded={!collapsed}
@@ -274,7 +313,7 @@ function GroupRow({
         label={lt(collapsed ? 'expandGroup' : 'collapseGroup')}
       />
       <TreeIcon icon={Layers} selected={allSelected} />
-      <span className="min-w-0 flex-1 truncate">
+      <span ref={labelRef} data-tree-label className="min-w-0 flex-1 truncate">
         {lt('groupLabel', { count: members.length })}
       </span>
       {layout && <Badge>{layoutKindLabel(layout.kind)}</Badge>}
@@ -295,7 +334,8 @@ interface RowProps {
   canMoveUp: boolean
   canMoveDown: boolean
   onDropHint: (h: { id: string; pos: 'above' | 'below' } | null) => void
-  onMoveFocus: (delta: number) => void
+  /** 树键位：true = 已处理 */
+  onNavKey: (key: string) => boolean
   onReorder: (delta: -1 | 1) => void
 }
 
@@ -311,7 +351,7 @@ function LayerRow({
   canMoveUp,
   canMoveDown,
   onDropHint,
-  onMoveFocus,
+  onNavKey,
   onReorder,
 }: RowProps) {
   useTranslation('workspace')
@@ -324,6 +364,8 @@ function LayerRow({
   const Icon = iconFor(obj)
   const isScript = obj.type === 'panel' && !!obj.script
   const pointerFocusing = useRef(false)
+  const [dragging, setDragging] = useState(false)
+  const labelRef = useBoldTrackingLock<HTMLSpanElement>(selected, objectLabel(obj))
   // 可编辑（能进图内编辑）与隐藏 / 锁定一样进可达名：角标只是视觉记号
   const stateLabel = [
     isScript && lt('editableState'),
@@ -359,12 +401,15 @@ function LayerRow({
         if (e.defaultPrevented || e.target !== e.currentTarget) return
         // 键位契约（2026-10-07 设计审计 §10.3）：↑↓ 走行 · Enter 主操作（只选这一个）· F2 改名 ·
         // ⌥↑↓ 改层级 · ⇧F10 菜单 · Esc 清选区。此前 Enter 是改名，与其它列表的 Enter 不是一件事
-        if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        if (e.altKey && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) {
           e.preventDefault()
           e.stopPropagation()
-          const delta = e.key === 'ArrowDown' ? 1 : -1
-          if (e.altKey) onReorder(delta as -1 | 1)
-          else onMoveFocus(delta)
+          onReorder(e.key === 'ArrowDown' ? 1 : -1)
+        } else if (isTreeNavKey(e.key)) {
+          if (onNavKey(e.key)) {
+            e.preventDefault()
+            e.stopPropagation()
+          }
         } else if (e.key === 'Enter') {
           e.preventDefault()
           e.stopPropagation()
@@ -385,7 +430,10 @@ function LayerRow({
       onDragStart={(e) => {
         e.dataTransfer.setData('application/x-layer-id', obj.id)
         e.dataTransfer.effectAllowed = 'move'
+        setDragging(true)
       }}
+      onDragEnd={() => setDragging(false)}
+      data-dragging={dragging || undefined}
       onDragOver={(e) => {
         if (!e.dataTransfer.types.includes('application/x-layer-id')) return
         e.preventDefault()
@@ -413,7 +461,7 @@ function LayerRow({
       }}
       onDoubleClick={() => setEditing(true)}
       style={treeIndent(depth)}
-      className={cn(listRowClass({ selected, hidden: obj.hidden }), 'gap-1.5 pr-0.5')}
+      className={cn(listRowClass({ selected, hidden: obj.hidden, dragging }), 'pr-0.5')}
     >
       {/* 落点线：2px accent + 圆点（`dropLineClass`，此前是 1px 的内阴影线，几乎看不见） */}
       <span aria-hidden data-layer-drop={dropHint ?? undefined} className={dropLineClass(dropHint === 'above' ? 'before' : dropHint === 'below' ? 'after' : null)} />
@@ -443,7 +491,7 @@ function LayerRow({
           className={cn('h-7 min-w-0 flex-1 px-1.5 outline-none', FIELD_BOX, FIELD_FOCUS)}
         />
       ) : (
-        <span className="min-w-0 flex-1 truncate">{objectLabel(obj)}</span>
+        <span ref={labelRef} data-tree-label className="min-w-0 flex-1 truncate">{objectLabel(obj)}</span>
       )}
       {/* 「可编辑的图」角标与素材卡同源（`ui/semanticIcons`），尺寸与色也同源：xs / ink-3——
           角标不该比行首 14px 的类型图标更响（左栏审计 L28）；行首的 Braces 是大括号形状的

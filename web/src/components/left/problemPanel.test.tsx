@@ -303,6 +303,19 @@ describe('普通界面不出现内部标识', () => {
     expect(text()).toContain('字号低于绝对下限')
     // 当前值 → 要求：两个数字都摆出来，用户不必点开才知道差多少
     expect(text()).toMatch(/6\.00 pt\s*→\s*大于 8 pt/)
+    // 行内只留要求本身：「正好等于不算通过」这类补一句的整句不在行里（在 title / ⓘ），否则 112px 的尾随格又要截断
+    const values = container.querySelector<HTMLElement>('[data-issue-values]')!
+    expect(values.className, '值用等宽数字').toContain('font-mono')
+  })
+
+  it('组头只有一颗 6px 圆点带色，图标与数字不染红 / 琥珀；等级字留给读屏', async () => {
+    await seed()
+    await mount(<ProblemPanel />)
+    const head = container.querySelector<HTMLElement>('[data-issue-group-head]')!
+    expect(head.querySelector('svg.text-danger, svg.text-warn, .text-danger, .text-warn')).toBeNull()
+    const dot = head.querySelector<HTMLElement>('span.size-1\\.5')!
+    expect(dot.className).toMatch(/bg-(danger|warn|ink-faint)/)
+    expect(head.querySelector('.sr-only')!.textContent).toMatch(/阻断|警告|建议|无法核验/)
   })
 })
 
@@ -400,10 +413,66 @@ describe('空态、筛选与「查不了」', () => {
     expect(useUiStore.getState().problemFilter).toBeNull()
   })
 
+  it('「当前画布」那档：范围胶囊写出是哪一块画布，清单只剩这张画布的问题；菜单里有这一档', async () => {
+    await seed()
+    const first = useDocumentStore.getState().activeCanvasId
+    const name = useDocumentStore.getState().canvases.find((c) => c.id === first)!.name
+    useUiStore.getState().setProblemScope('canvas')
+    await mount(<ProblemPanel />)
+    const trigger = container.querySelector<HTMLElement>('[data-problem-scope-trigger]')!
+    expect(trigger.getAttribute('data-problem-scope-trigger')).toBe('canvas')
+    expect(trigger.textContent, '胶囊上要看得出是哪一块画布').toContain(name)
+    expect(trigger.title).toContain(name)
+    // 另一张画布上的问题不进清单：把一条问题搬到别的画布，列表里的数随之少一条
+    const before = container.querySelectorAll('[data-problem-card], [data-issue-row]').length
+    expect(before).toBeGreaterThan(0)
+    await act(async () => {
+      const cur = useValidationStore.getState().issues
+      useValidationStore.setState({ issues: cur.map((i) => ({ ...i, objectRef: { ...i.objectRef, canvasId: 'c_other' } })) })
+    })
+    expect(container.querySelectorAll('[data-issue-row]').length).toBe(0)
+  })
+
+  it('范围裁空时的空态文案按所选范围说：当前图「这张图上」、当前画布「画布「X」上」、整份排版「未发现问题」', async () => {
+    await seed()
+    const first = useDocumentStore.getState().activeCanvasId
+    const name = useDocumentStore.getState().canvases.find((c) => c.id === first)!.name
+    // 当前图：搬走这张图的问题（别的图上仍有），清单为空而整份排版不空
+    await act(async () => {
+      const cur = useValidationStore.getState().issues
+      useValidationStore.setState({ issues: cur.map((i) => ({ ...i, objectRef: { ...i.objectRef, objectId: 'p_other', canvasId: 'c_other' } })) })
+    })
+    useSelectionStore.getState().set(['p1'])
+    useUiStore.getState().setProblemScope('figure')
+    await mount(<ProblemPanel />)
+    expect(text()).toContain('这张图上没有问题')
+    expect(text()).not.toContain('上没有问题」')
+    // 当前画布：同一份清单（都在别的画布上），文案换成画布名
+    await act(async () => {
+      useUiStore.getState().setProblemScope('canvas')
+    })
+    expect(text()).toContain(`画布「${name}」上没有问题`)
+    expect(text(), '范围选了画布，不许再说「这张图」').not.toContain('这张图上没有问题')
+    // 整份排版：清单不空（别的画布的问题都在）→ 不是空态
+    await act(async () => {
+      useUiStore.getState().setProblemScope('document')
+    })
+    expect(text()).not.toContain('上没有问题')
+    expect(text()).not.toContain('未发现问题')
+    // 整份排版真的没有问题：「未发现问题」
+    await act(async () => {
+      useValidationStore.setState({ issues: [] })
+    })
+    expect(text()).toContain('未发现问题')
+  })
+
   it('等级筛选是可切换的开关，带 aria-pressed', async () => {
     await seed()
     await mount(<ProblemPanel />)
     const chip = buttons().find((b) => b.getAttribute('aria-pressed') != null)!
+    // 与导出检查同一个计数芯片（ui/CountChip），底中性：不再给阻断整块染 danger 底
+    expect(chip.hasAttribute('data-count-chip')).toBe(true)
+    expect(chip.className).not.toMatch(/bg-danger|text-danger/)
     expect(chip.getAttribute('aria-pressed')).toBe('false')
     await click(chip)
     expect(chip.getAttribute('aria-pressed')).toBe('true')
@@ -482,8 +551,8 @@ describe('安全修复', () => {
     })
     const all = container.querySelector<HTMLButtonElement>('button[data-problem-autofix]')!
     expect(all.textContent).toBe('全部修复 2')
-    // 一颗填色主动作（32px lg）
-    expect(all.dataset.variant).toBe('primary')
+    // 不再是黑色实心胶囊（2026-10-16 精修 03）：ghost 钮，摘要条里的焦点留给计数芯片
+    expect(all.dataset.variant).toBe('ghost')
     await click(all)
     expect(all.disabled).toBe(true)
     expect(all.textContent).toBe('正在修复…')

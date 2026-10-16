@@ -257,7 +257,7 @@ afterEach(async () => {
 })
 
 describe('六个状态', () => {
-  it('每一张图都有状态名与一句自然话，一个都不缺', async () => {
+  it('每一张图都有自己的一行；异常项行内标状态名，可编辑的不重复（分组名与顶部芯片已经说了）', async () => {
     await open(reportOf(SIX))
     const expected: [string, string][] = [
       ['Ok.pdf', '可编辑'],
@@ -270,7 +270,12 @@ describe('六个状态', () => {
     for (const [id, label] of expected) {
       const row = rowOf(id)
       expect(row, `${id} 没有自己的一行`).toBeTruthy()
-      expect(row!.textContent).toContain(label)
+      if (label === '可编辑') {
+        expect(row!.textContent, '可编辑的行不再画「可编辑」').not.toContain('可编辑')
+        expect(row!.textContent).toContain('ok.py')
+      } else {
+        expect(row!.textContent).toContain(label)
+      }
     }
   })
 
@@ -284,15 +289,24 @@ describe('六个状态', () => {
     }
   })
 
-  it('顶部给出总计 / 可编辑 / 待连接 / 仅排版四个数', async () => {
+  it('顶部一行计数芯片：可编辑 / 待连接 / 仅排版；0 的档不画；只有待连接带色点', async () => {
     await open(reportOf(SIX))
-    const strip = dialog().querySelector('dl')!.textContent ?? ''
-    expect(strip).toContain('总计')
-    expect(strip).toContain('可编辑')
-    expect(strip).toContain('待连接')
-    expect(strip).toContain('仅版面')
+    const strip = dialog().querySelector('[data-registry-summary]')!
+    const chip = (k: string) => strip.querySelector<HTMLElement>(`[data-registry-summary-chip="${k}"]`)
+    expect(chip('editable')!.textContent).toBe('1 可编辑')
     // 待连接 = auto_linkable + needs_probe + conflict + source_missing = 4
-    expect(strip.replace(/\s/g, '')).toContain('待连接4')
+    expect(chip('pending')!.textContent).toBe('4 待连接')
+    expect(chip('layoutOnly')!.textContent).toBe('1 仅版面')
+    expect(strip.textContent).not.toContain('总计')
+    expect(chip('pending')!.getAttribute('data-count-chip')).toBe('warn')
+    expect(chip('editable')!.getAttribute('data-count-chip')).toBe('quiet')
+  })
+
+  it('摘要芯片里 0 的档不画', async () => {
+    await open(reportOf([P({ id: 'Photo.png', stem: 'Photo' }), P({ id: 'Auto.pdf', stem: 'Auto', status: 'auto_linkable', reason_code: 'static_unique_candidate', candidates: ['auto.py'], can_probe: true, details: { candidate_scope: 'panel' } })]))
+    const strip = dialog().querySelector('[data-registry-summary]')!
+    expect(strip.querySelector('[data-registry-summary-chip="pending"]')).not.toBeNull()
+    expect(strip.querySelector('[data-registry-summary-chip="editable"]'), '没有可编辑的图就没有这颗芯片').toBeNull()
   })
 
   it('layout_only 不画成错误：没有 alert，也不说"失败"', async () => {

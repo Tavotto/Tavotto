@@ -266,3 +266,144 @@ describe('树的语义与键位契约（2026-10-07 设计审计 §10.3）', () =
     expect(document.querySelector('[role="menu"]')).not.toBeNull()
   })
 })
+
+describe('图层树的树键位（WAI-ARIA tree，与元素树同一份 ui/treeKeys）', () => {
+  const press = async (el: HTMLElement, key: string) => {
+    await act(async () => {
+      el.focus()
+      el.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true }))
+    })
+    await act(async () => {})
+  }
+  const grouped = () => [
+    panel('p1', 'A'),
+    { ...panel('p2', 'B'), groupId: 'g1' } as CanvasObject,
+    { ...panel('p3', 'C'), groupId: 'g1' } as CanvasObject,
+    panel('p4', 'D'),
+  ]
+  const keys = () => rows().map((r) => r.dataset.layer)
+
+  it('Home / End 跳到第一行 / 最后一行', async () => {
+    await mount(grouped())
+    await press(rows()[1], 'End')
+    expect((document.activeElement as HTMLElement).dataset.layer).toBe(keys().at(-1))
+    await press(document.activeElement as HTMLElement, 'Home')
+    expect((document.activeElement as HTMLElement).dataset.layer).toBe(keys()[0])
+  })
+
+  it('组标题：→ 在已展开时进第一个成员，← 先收起；成员 ← 回组标题', async () => {
+    await mount(grouped())
+    const group = () => rows().find((r) => r.dataset.layer!.startsWith('g:'))!
+    expect(group().getAttribute('aria-expanded')).toBe('true')
+    await press(group(), 'ArrowRight')
+    const member = document.activeElement as HTMLElement
+    expect(member.getAttribute('aria-level')).toBe('2')
+    await press(member, 'ArrowLeft')
+    expect(document.activeElement).toBe(group())
+    await press(group(), 'ArrowLeft')
+    expect(group().getAttribute('aria-expanded')).toBe('false')
+    expect(rows().some((r) => r.getAttribute('aria-level') === '2')).toBe(false)
+    await press(group(), 'ArrowRight')
+    expect(group().getAttribute('aria-expanded')).toBe('true')
+  })
+
+  it('顶层叶子行 ← 不动', async () => {
+    await mount(grouped())
+    const top = rows()[0]
+    await press(top, 'ArrowLeft')
+    expect(document.activeElement).toBe(top)
+  })
+})
+
+describe('树行的列间距（G5）', () => {
+  it('图层行 / 组标题行不再自己写 gap：图标到文字与元素树同为 listRowClass 的 4px', async () => {
+    await mount([panel('p1', 'A'), { ...panel('p2', 'B'), groupId: 'g1' } as CanvasObject])
+    for (const r of rows()) expect(r.className).not.toMatch(/\bgap-(?!1\b)\S+/)
+    expect(rows()[0].className).toMatch(/\bgap-1\b/)
+  })
+})
+
+describe('选中图层滚入视野（G6）', () => {
+  const withScrollSpy = async (fn: (calls: string[]) => Promise<void>) => {
+    const calls: string[] = []
+    const orig = Element.prototype.scrollIntoView
+    Element.prototype.scrollIntoView = function (this: Element, arg?: unknown) {
+      expect(arg).toEqual({ block: 'nearest' })
+      calls.push((this as HTMLElement).dataset.layer ?? '')
+    }
+    try {
+      await fn(calls)
+    } finally {
+      Element.prototype.scrollIntoView = orig
+    }
+  }
+
+  it('从画布选中某个图层：那一行 scrollIntoView({ block: nearest })——树仍持有焦点时也滚', async () => {
+    await withScrollSpy(async (calls) => {
+      await mount([panel('p1', 'A'), panel('p2', 'B'), panel('p3', 'C')])
+      await act(async () => useSelectionStore.getState().set(['p2']))
+      expect(calls.at(-1)).toBe('p2')
+      // 树持有焦点（用户刚在树里点过 / 走过），随后画布上改选：照样滚
+      await act(async () => rows().find((r) => r.dataset.layer === 'p2')!.focus())
+      await new Promise((r) => setTimeout(r, 5)) // 树里那次操作的「来源」标记已过期
+      calls.length = 0
+      await act(async () => useSelectionStore.getState().set(['p3']))
+      expect(calls).toEqual(['p3'])
+    })
+  })
+
+  it('用户在树里按键 / 点击造成的选择变化：不额外滚（键盘移动的 focus() 自己带进视野）', async () => {
+    await withScrollSpy(async (calls) => {
+      await mount([panel('p1', 'A'), panel('p2', 'B'), panel('p3', 'C')])
+      const first = rows()[0]
+      await act(async () => first.focus())
+      await new Promise((r) => setTimeout(r, 5))
+      calls.length = 0
+      await act(async () => {
+        first.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, cancelable: true }))
+      })
+      expect(useSelectionStore.getState().ids).toEqual([rows()[1].dataset.layer])
+      expect(calls).toEqual([])
+      await new Promise((r) => setTimeout(r, 5))
+      await act(async () => {
+        rows()[2].dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, cancelable: true, button: 0 }))
+      })
+      expect(useSelectionStore.getState().ids).toEqual([rows()[2].dataset.layer])
+      expect(calls).toEqual([])
+    })
+  })
+
+  it('选中项在折叠的组里：滚到组标题行', async () => {
+    await withScrollSpy(async (calls) => {
+      await mount([
+        panel('p1', 'A'),
+        { ...panel('p2', 'B'), groupId: 'g1' } as CanvasObject,
+        { ...panel('p3', 'C'), groupId: 'g1' } as CanvasObject,
+      ])
+      const toggle = rows().find((r) => r.dataset.layer === 'g:g1')!.querySelector('button')!
+      await act(async () => toggle.click())
+      expect(rows().some((r) => r.dataset.layer === 'p2')).toBe(false)
+      calls.length = 0
+      await act(async () => useSelectionStore.getState().set(['p2']))
+      expect(calls.at(-1)).toBe('g:g1')
+    })
+  })
+})
+
+describe('被拖行淡化（G11）', () => {
+  it('dragstart 时原位那一行淡化，dragend 还原', async () => {
+    await mount([panel('p1', 'A'), panel('p2', 'B')])
+    const row = rows()[0]
+    expect(row.className).not.toMatch(/opacity-dragging/)
+    const ev = (type: string) => {
+      const e = new Event(type, { bubbles: true, cancelable: true }) as Event & { dataTransfer: unknown }
+      e.dataTransfer = { setData() {}, effectAllowed: '', types: [] }
+      return e
+    }
+    await act(async () => row.dispatchEvent(ev('dragstart')))
+    expect(rows()[0].className).toMatch(/\bopacity-dragging\b/)
+    expect(rows()[0].dataset.dragging).toBe('true')
+    await act(async () => rows()[0].dispatchEvent(ev('dragend')))
+    expect(rows()[0].className).not.toMatch(/opacity-dragging/)
+  })
+})

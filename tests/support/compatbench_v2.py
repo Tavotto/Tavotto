@@ -39,6 +39,10 @@ FIXTURES = ROOT / "tests" / "fixtures" / "compat_v2"
 SESSIONS = "/api/engine/preparation-sessions"
 RESULTS_ENV = "TAVOTTO_COMPAT_V2_RESULTS"
 SCHEMA = 1
+STATUS_OBSERVED = "observed"
+STATUS_NOT_RUN = "not_run"
+#: not_run 记录的原因（闭集）：前提在这台机器上不成立（`PreconditionUnmet`）/ 账本里登记的本基线无从观测
+NOT_RUN_REASONS = ("precondition_unmet", "declared_not_observable")
 # 一次运行的身份：同一进程内的所有记录共用；复用结果目录时 summarize 靠它拒绝混跑
 RUN_ID = os.environ.get("TAVOTTO_COMPAT_V2_RUN_ID") or uuid.uuid4().hex
 
@@ -596,6 +600,7 @@ def record(
 
     return {
         "schema": SCHEMA,
+        "status": STATUS_OBSERVED,
         "scenario": scenario.id,
         "scenes": list(scenario.scenes),
         "title": scenario.title,
@@ -614,6 +619,24 @@ def record(
         "env_identity": obs.env_identity,
         "recorded_at": time.time(),
         "unobserved": UNOBSERVED,
+    }
+
+
+def record_not_run(scenario_id: str, reason: str, detail: str) -> dict:
+    """这个场景这轮**没观测**的记录：不伪造观测值，只留闭集原因与一句说明（读者才分得清「没量」和「忘了量」）。"""
+    from support import foundation_harness as fh
+
+    if reason not in NOT_RUN_REASONS:
+        raise ValueError(f"not_run 原因不在闭集里: {reason!r}")
+    return {
+        "schema": SCHEMA,
+        "status": STATUS_NOT_RUN,
+        "scenario": scenario_id,
+        "reason": reason,
+        "detail": detail,
+        "source_sha": fh.source_sha(ROOT),
+        "run_id": RUN_ID,
+        "recorded_at": time.time(),
     }
 
 
@@ -641,17 +664,56 @@ def main(argv: list[str] | None = None) -> int:
     sm = sub.add_parser("summarize")
     sm.add_argument("dir", type=Path)
     sm.add_argument("--out", type=Path)
+    sm.add_argument(
+        "--scope",
+        choices=("smoke", "all"),
+        help="期望的场景全集（默认：设了 TAVOTTO_COMPAT_V2_ALL 取 all，否则 smoke）",
+    )
+    sm.add_argument("--expect", nargs="+", help="显式给出期望的场景 id（覆盖 --scope；测试用）")
     args = ap.parse_args(argv)
-    rows = load_records(args.dir)
-    if not rows:
+    records = load_records(args.dir)
+    if not records:
         print(f"{args.dir} 里没有记录——空集合不是通过")
+        return 2
+    from support import compat_v2_scenarios as cs  # 延迟导入：它反过来依赖本模块
+
+    if args.expect:
+        expected = list(args.expect)
+    else:
+        scope = args.scope or (
+            "all"
+            if os.environ.get("TAVOTTO_COMPAT_V2_ALL", "").strip() not in ("", "0")
+            else "smoke"
+        )
+        expected = list(cs.SCENARIOS) if scope == "all" else list(cs.SMOKE)
+    # 状态是闭集：认不得的（拼错 / 更新的产出方）不算覆盖，直接失败——否则它算进 present 又被下面两个过滤同时丢掉
+    unknown = sorted(
+        {
+            str(r.get("status"))
+            for r in records
+            if r.get("status", STATUS_OBSERVED) not in (STATUS_OBSERVED, STATUS_NOT_RUN)
+        }
+    )
+    if unknown:
+        print(f"{args.dir} 里有认不得的记录状态: {unknown}")
+        return 2
+    present = {r["scenario"] for r in records}
+    absent = [sid for sid in expected if sid not in present]
+    if absent:
+        print(f"{args.dir} 缺少期望场景的记录（既没观测也没登记 not_run）: {absent}")
+        return 2
+    # 没有 status 字段的老记录按已观测处理
+    rows = [r for r in records if r.get("status", STATUS_OBSERVED) == STATUS_OBSERVED]
+    skipped = [r for r in records if r.get("status") == STATUS_NOT_RUN]
+    if not rows:
+        print(f"{args.dir} 里没有一条已观测的记录——全是 not_run 不是通过")
         return 2
     idents = {json.dumps(r.get("env_identity"), sort_keys=True) for r in rows}
     if len(idents) != 1 or any(not (r.get("env_identity") or {}).get("fingerprint") for r in rows):
         print(f"{args.dir} 的记录没有绑定、或绑定了不一致的被测环境身份: {sorted(idents)}")
         return 2
-    shas = {r.get("source_sha") for r in rows}
-    runs = {r.get("run_id") for r in rows}
+    shas = {r.get("source_sha") for r in records}
+    runs = {r.get("run_id") for r in records}
     if len(shas) != 1 or len(runs) != 1 or None in runs:
         print(
             f"{args.dir} 混了不同的运行（source_sha={sorted(map(str, shas))}, run_id={sorted(map(str, runs))}）"
@@ -664,6 +726,12 @@ def main(argv: list[str] | None = None) -> int:
         "source_sha": rows[0]["source_sha"],
         "summary": summarize(rows),
         "scenarios": rows,
+        # 没量的都在这里，带原因：本轮跑了但前提不成立的 + 账本里登记的本基线无从观测的
+        "not_run": [{k: r[k] for k in ("scenario", "reason", "detail")} for r in skipped]
+        + [
+            {"scenario": sid, "reason": "declared_not_observable", "detail": why}
+            for sid, why in cs.NOT_RUN.items()
+        ],
     }
     text = json.dumps(report, ensure_ascii=False, indent=1, sort_keys=True)
     if args.out:

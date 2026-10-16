@@ -490,6 +490,98 @@ describe('画布上的两个快捷入口也按页面值进出', () => {
     expect(overrideOf('axes_0.legend', 'fontsize')).toBe(12.5)
     await act(async () => useQuickEdit.getState().close())
   })
+
+  const reduceMotion = (reduce: boolean) =>
+    vi.stubGlobal('matchMedia', (q: string) => ({
+      matches: reduce && q.includes('prefers-reduced-motion'),
+      media: q,
+      addEventListener() {},
+      removeEventListener() {},
+    }))
+  const popover = () => document.querySelector<HTMLElement>('[role="dialog"][aria-label]')
+
+  it('右键快捷编辑弹层有退场：关闭后先带 data-state=closed 挂满 exit 一档（不接键盘），再卸载', async () => {
+    reduceMotion(false)
+    await seed(0.6, manifest({ legend: true }))
+    await mountAlone(<QuickEdit />)
+    await act(async () => {
+      useQuickEdit.getState().open({ kind: 'element', panelId: 'p1', gid: 'axes_0.legend' }, 120, 80)
+    })
+    expect(popover()?.dataset.state).toBe('open')
+    expect(popover()?.className).toContain('data-[state=closed]:animate-pop-out')
+    await act(async () => useQuickEdit.getState().close())
+    // 退场中：还在 DOM，已切到 closed，不再吃点击 / 读屏看不到
+    expect(popover()?.dataset.state).toBe('closed')
+    expect(popover()?.getAttribute('aria-hidden')).toBe('true')
+    // 退场中按 Esc 不再被接管（监听已摘）
+    const esc = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })
+    window.dispatchEvent(esc)
+    expect(esc.defaultPrevented).toBe(false)
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 160))
+    })
+    expect(popover()).toBeNull()
+    vi.unstubAllGlobals()
+  })
+
+  it('退场保活的 90ms 里键盘 inert：根带 inert、焦点还给打开者、键入 / 点击都不写 override（Codex #1101 P2）', async () => {
+    reduceMotion(false)
+    await seed(0.6, manifest({ legend: true }))
+    await mountAlone(
+      <>
+        <button data-opener type="button" />
+        <QuickEdit />
+      </>,
+    )
+    const opener = document.querySelector<HTMLButtonElement>('[data-opener]')!
+    opener.focus()
+    await act(async () => {
+      useQuickEdit.getState().open({ kind: 'element', panelId: 'p1', gid: 'axes_0.legend' }, 120, 80)
+    })
+    const input = numberInput()
+    await act(async () => input.focus())
+    expect(popover()!.contains(document.activeElement)).toBe(true)
+    expect(popover()!.hasAttribute('inert')).toBe(false)
+    await act(async () => useQuickEdit.getState().close())
+    // 退场开始的同一帧：整棵保活子树 inert，焦点已经回到打开者
+    expect(popover()?.dataset.state).toBe('closed')
+    expect(popover()!.hasAttribute('inert')).toBe(true)
+    expect(document.activeElement).toBe(opener)
+    // 保活期间硬键入（绕过 focus，直接对旧输入框派发 input / click）：不写 override
+    const before = overrideOf('axes_0.legend', 'fontsize')
+    await type(input, '9')
+    await act(async () => {
+      popover()!.querySelector<HTMLElement>('button')?.click()
+    })
+    expect(overrideOf('axes_0.legend', 'fontsize')).toBe(before)
+    // 全局快捷键照常：键盘事件落在打开者上，冒泡到 window，没被弹层吞掉
+    let reached = false
+    const onKey = () => (reached = true)
+    window.addEventListener('keydown', onKey)
+    await act(async () => {
+      opener.dispatchEvent(new KeyboardEvent('keydown', { key: 'x', bubbles: true, cancelable: true }))
+    })
+    window.removeEventListener('keydown', onKey)
+    expect(reached).toBe(true)
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 160))
+    })
+    expect(popover()).toBeNull()
+    vi.unstubAllGlobals()
+  })
+
+  it('reduced-motion：关闭即卸载，不留退场空档期', async () => {
+    reduceMotion(true)
+    await seed(0.6, manifest({ legend: true }))
+    await mountAlone(<QuickEdit />)
+    await act(async () => {
+      useQuickEdit.getState().open({ kind: 'element', panelId: 'p1', gid: 'axes_0.legend' }, 120, 80)
+    })
+    expect(popover()).not.toBeNull()
+    await act(async () => useQuickEdit.getState().close())
+    expect(popover()).toBeNull()
+    vi.unstubAllGlobals()
+  })
 })
 
 /**

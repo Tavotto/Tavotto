@@ -37,7 +37,7 @@ OptionGrid 与 Segmented 同皮；说明条只有 `Notice`；页签 属性 | 画
 （对话框页脚 / 页面 CTA）；投影全部 `color-mix(var(--color-shadow) N%)`，`shadow-card` **只在 `ui/Card`**；状态色一个锚点派生
 `-surface` / `-border` / `-content`（字用 content），旧 `*-subtle` 是别名；z-index 只用 `z-sticky … z-onboarding` 九档 token；焦点环 offset 2、
 插入点 accent；滚动条 6px、只在悬停 / 内含焦点时出现；加载只有 sweep / 静态骨架 / shimmer / 转圈（禁呼吸动画）；光标一律箭头（可拖的卡用抓手）。
-新原语：`Card`、`Notice`（恢复）、`StatusPill`、`dropZoneClass`（拖放接收态：静态不画、拖入才是 1.5px accent 虚线 + accent-subtle + 外发光）、`FormSection` + `FieldGroup`（`SettingRow layout="balanced"`）、EmptyState v2、`listRowClass({ size })`
+新原语：`Card`、`Notice`（恢复）、`StatusPill`、`dropZoneClass`（拖放接收态：静态不画、拖入才是 1px accent 虚线 + accent-subtle + 外发光）、`FormSection` + `FieldGroup`（`SettingRow layout="balanced"`）、EmptyState v2、`listRowClass({ size })`
 + `rowMetaClass` + `dropLineClass`、`useRowMenu` + `RowMenu`（⋯ / 右键 / ⇧F10 同一份菜单）；Dialog 宽度 sm 400 / md 480 / lg 560 / xl 760 / shell、
 页脚 `{ start, secondary, primary }` 三槽、浮动毛玻璃页脚、`onEscape`（Esc = 安全答案）、栈底才画遮罩；**每个上下文一颗主按钮**；对话框页脚的破坏性动作是
 `Button variant="danger-tinted"`（浅底危险胶囊，永不实心红）；按钮层级的稳定判据是 `data-variant`。门禁全在 `foundation.test`（含逐页阶段的 `LATER_PHASE` 豁免）。
@@ -59,7 +59,7 @@ border-strong、上方玻璃上下文带（目标 · 作用范围 chip）、工�
 radius（2026-10-07 起，见上）：`xs` 4、`sm` 6、`md` 8（行 / 输入框 / 说明条）、`lg` 12（卡片 / 浮层外壳）、`panel` 16（对话框 / 工作面板）、`full`（带字的按钮 / 图标钮 / 分段）；
 Tailwind 自带的 xl 以上已清空。UI 字号 11-14px（`xs/sm/base/lg`）、六个 `type-*` 字体角色；
 控件高 28px、树行高 28px、图标点击区 ≥28px。交互面三档 token：`surface-hover` <
-`surface-active` ≈ `selected`（#e6e6e0，轻 tint + 字重，不靠深灰块）。主按钮近黑色
+`surface-active` < `selected`（ink 4% / 8% / 12%，selected 是 hover 的三倍；轻 tint + 字重，不靠深灰块）。主按钮近黑色
 （`bg-ink`）；按钮四档 primary / secondary / ghost / danger；蓝色只用于选择 / 焦点（链接是灰字，2026-09-30）；
 每个上下文最多一个填色主动作（顶栏=导出、助手=发送、弹窗=确认）。禁用态一档 `opacity-40 +
 cursor-not-allowed`；未选中复选框 / 单选边框与关态开关轨道 `border-control`（≥3:1）；焦点环
@@ -67,6 +67,9 @@ cursor-not-allowed`；未选中复选框 / 单选边框与关态开关轨道 `bo
 由 `ui/slidingIndicator` 滑动（jsdom 量不到几何，用例要自己给 `offsetLeft / offsetWidth` 装值）；折叠
 分组的展开走 `ui/Field.Reveal`（`usePresence` 保活退场那 90ms，所以收起后内容还在 DOM 里一小会儿）；
 没写时长的 `transition-*` 默认就是 `--duration-fast` + `--ease-standard`（`motion.test` 守着）。
+**Card 几何默认不变，`lift` 是登记豁免**（宪法第二十五节「Card `lift`」，用户 2026-10-15 裁决）：`<Card lift>` 在 hover / 键盘聚焦时 translateY(-2px) + scale(`--card-lift-scale`，默认 1.015、上限 1.02) + 阴影升到 `shadow-lift`（含 1px accent/20% 描边，不要外发光；用户 2026-10-16 选定整卡放大 + 描边），按下回落，
+reduced-motion 下只换阴影 / 描边，disabled / selected 不浮起；静止态写恒等变换（`translate-y-0 scale-100`）以免 none↔非 none 引发重排。只许首页项目卡（品牌位置）用，别处不开。
+门禁 `foundation.test`（交互态位移 / 缩放仅 Card.tsx 一处）+ `foundationPrimitives.test`（≤2px 整数、缩放 ≤1.02）。
 **键盘契约在原语里**（2026-09-14 apple-design 审计批次 1）：Dialog 打开后焦点
 在容器、关闭钮 DOM 排最后；Segmented / Tabs 一个 Tab 停靠点 + 方向键；`keyboardPrimitives.test`
 与 `foundation.test`（`role="radio"` / `aria-haspopup` / disabled 写法 / `ring-accent/N`）守着。
@@ -95,8 +98,9 @@ Document 字体（Times）与 UI 字体严格分离。
 公共 primitive 只在 `components/ui/`：Button / IconButton（长得像按钮的 `<a href>` 用 `ui/buttonClass` 取同一份外观，不手写按钮类名）、TextInput（框内 `suffix`）、
 NumberField（框内 `unit`）、Select、Checkbox、Radio、Toggle、Badge、Kbd、Tabs（视图）、`listRowClass`、
 TreeRow（`treeIndent` / `TreeChevron` / `TreeIcon` / `TreeCount`）、SearchInput、Notice、StatusPill、Card、
-FormSection / FieldGroup、RowMenu、Section / Disclosure / Details、Dialog、Popover、Menu、Tooltip、Segmented（取值）、StepSlider、
+FormSection / FieldGroup、RowMenu、Section / Disclosure / Details、Dialog、Popover、Menu、Tooltip、Segmented（取值）、
 EmptyState。**同类控件出现第二套实现先删第二套，不给新写法开豁免。**
+树的键位只有 `ui/treeKeys` 一份、列表行焦点环内凹 `focus-ring-inset`；抽屉 / 栏的宽度把手只有 `ui/ResizeHandle`（双击复位、拖动中 Esc 回滚、键盘步进 + Home/End）。
 跨区域的语义图标在 `ui/semanticIcons.ts`（「可编辑的图」= `EditableFigureIcon`，左轨 / 图层
 角标 / 素材卡 / 元素树空态从同一处取）；角色图标在 `inspector/roles/roleIcons.ts`。
 图内元素的**归属**（谁挂在谁下面、面包屑里子图与元素之间那一级）只有

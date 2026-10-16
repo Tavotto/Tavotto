@@ -1306,32 +1306,32 @@ def savefig_stem(fname) -> str:
     return os.path.splitext(os.path.basename(os.fsdecode(fname)))[0]
 
 
-def savefig_effective_names(fname, kwargs: dict) -> list:
+def savefig_effective_names(fname, kwargs: dict, canvas=None) -> list:
     """`savefig(fname, **kwargs)` 真正会写（被拦截时就是没写）的文件名，供 `BlockedFileOps` 记账（P01a）。
 
     `print_figure` 的规则：显式 `format=` 时文件名**原样**（不补后缀）；否则 `str` / `PathLike`
-    取文件名后缀作格式，**没有后缀**就补默认格式（`stage` → `stage.png`，`stage.` → `stage.png`）。
-    默认格式由 canvas 决定、用户可重载（`savefig_call` 因此不把它当已确定），这里不调用任何用户方法：
-    显式 `format=` / 有后缀 / `bytes` 只记字面名；否则字面名**不会**被写出，只记补 `rcParams["savefig.format"]` 与 `png` 两个候选后缀名——多记一个候选只会让
-    「读了那个名字」多算一次回读，不会漏。`bytes` 目的地 matplotlib 不补后缀，只记字面名。
+    取文件名后缀作格式，**没有后缀**就补 `canvas.get_default_filetype()`（`stage` → `stage.png`，`stage.` → `stage.png`）。
+    缺省格式由该 Figure 当前的 canvas 决定（自定义 canvas 可以重载，不一定等于 `rcParams["savefig.format"]`），
+    所以无后缀且无显式 `format=` 时只记**这一个**确定的名字：`fname.rstrip('.') + '.' + 该 canvas 的缺省格式`，
+    与 matplotlib 自己的解析一致；拿不到 canvas / 调用抛错 / 返回的不是非空字符串，就一个候选都不记
+    （证明不了就不归因，不推测 png，也不单信 rcParams）。显式 `format=` / 有后缀 / `bytes` 只记字面名。
     """
     if not savefig_targets_path(fname):
         return []
-    name = os.fsdecode(fname)
-    names = [fname]
     if kwargs.get("format") is not None or isinstance(fname, bytes):
-        return names
+        return [fname]
+    name = os.fsdecode(fname)
     if os.path.splitext(name)[1][1:]:
-        return names
-    mpl = sys.modules.get("matplotlib")
-    rc = getattr(mpl, "rcParams", None) or {}
-    fmts = (rc.get("savefig.format"), "png")
+        return [fname]
     # 没有后缀也没有显式 format：matplotlib 写的是补了后缀的名字，字面名不会被写出——不记，
     # 否则同名的无关旧文件被读时会被误判成回读被拦下的 savefig（#952 Codex P2）
-    return [
-        name.rstrip(".") + "." + fmt
-        for fmt in dict.fromkeys(f for f in fmts if isinstance(f, str) and f)
-    ]
+    try:
+        fmt = canvas.get_default_filetype()
+    except Exception:  # noqa: BLE001
+        return []
+    if not isinstance(fmt, str) or not fmt:
+        return []
+    return [name.rstrip(".") + "." + fmt]
 
 
 def savefig_call(fname, kwargs: dict) -> dict:

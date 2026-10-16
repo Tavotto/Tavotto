@@ -27,6 +27,8 @@ import type { Manifest, ManifestElement, ManifestGroup } from '@/lib/api'
 import { isElementHidden } from '@/canvas/interactions'
 import { cn, isMac } from '@/lib/utils'
 import { listRowClass } from '@/components/ui/listRow'
+import { useBoldTrackingLock } from '@/components/ui/useBoldWidthLock'
+import { isTreeNavKey, treeKeyAction, type TreeNavRow } from '@/components/ui/treeKeys'
 import { SearchInput } from '@/components/ui/SearchInput'
 import { TreeChevron, TreeCount, TreeIcon, treeIndent } from '@/components/ui/TreeRow'
 import {
@@ -405,14 +407,28 @@ function TreeView({
    * key / gid / 当前展开态，树级回调不必按行闭包。
    */
   const rowsRef = useRef(rows)
+  const navRef = useRef<TreeNavRow[]>([])
   useLayoutEffect(() => {
     rowsRef.current = rows
+    navRef.current = rows.map((r) => ({
+      level: r.depth,
+      expanded: r.node.children.length ? isOpen(r.node, r.key) : undefined,
+    }))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rows])
-  const moveFocus = useCallback((from: string, delta: number) => {
+  /** 树键位（`ui/treeKeys`）：返回 true = 这个键归树管、行该 preventDefault */
+  const navKey = useCallback((from: string, key: string) => {
     const rs = rowsRef.current
-    const next = rs[rs.findIndex((r) => r.key === from) + delta]
-    if (next)
-      listRef.current?.querySelector<HTMLElement>(`[data-el="${CSS.escape(next.key)}"]`)?.focus()
+    const action = treeKeyAction(key, navRef.current, rs.findIndex((r) => r.key === from))
+    if (!action) return false
+    if (action.type === 'focus') {
+      listRef.current
+        ?.querySelector<HTMLElement>(`[data-el="${CSS.escape(rs[action.index].key)}"]`)
+        ?.focus()
+    } else {
+      setOpen((s) => ({ ...s, [from]: action.type === 'expand' }))
+    }
+    return true
   }, [])
   // 行上的 expanded 就是 isOpen(node, key) 的结果：翻转它即可，不必再按行求一次
   const toggle = useCallback(
@@ -507,8 +523,10 @@ function TreeView({
       <ul
         ref={listRef}
         role="tree"
+        data-tree="elements"
         aria-label={et('listLabel')}
-        className="min-h-0 flex-1 overflow-y-auto py-1"
+        aria-multiselectable
+        className="min-h-0 flex-1 scroll-py-1 overflow-y-auto py-1"
       >
         {rows.length === 0 && (
           <li>
@@ -530,7 +548,7 @@ function TreeView({
                 expanded={isOpen(node, key)}
                 tabbable={focusKey === key}
                 onToggle={toggle}
-                onMoveFocus={moveFocus}
+                onNavKey={navKey}
               />
             )
           }
@@ -559,7 +577,7 @@ function TreeView({
                 onToggle={toggle}
                 onSelect={selectGid}
                 onIsolate={setIsolated}
-                onMoveFocus={moveFocus}
+                onNavKey={navKey}
               />
             )
           }
@@ -587,7 +605,7 @@ function TreeView({
               onToggle={toggle}
               onSelect={selectGid}
               onIsolate={setIsolated}
-              onMoveFocus={moveFocus}
+              onNavKey={navKey}
             />
           )
         })}
@@ -619,7 +637,7 @@ const ClusterRow = memo(function ClusterRow({
   expanded,
   tabbable,
   onToggle,
-  onMoveFocus,
+  onNavKey,
 }: {
   rowKey: string
   label: string
@@ -631,7 +649,8 @@ const ClusterRow = memo(function ClusterRow({
   expanded: boolean
   tabbable: boolean
   onToggle: (key: string, expanded: boolean) => void
-  onMoveFocus: (from: string, delta: number) => void
+  /** 树键位：true = 已处理 */
+  onNavKey: (from: string, key: string) => boolean
 }) {
   useTranslation('workspace')
   return (
@@ -647,11 +666,12 @@ const ClusterRow = memo(function ClusterRow({
       style={treeIndent(depth)}
       onKeyDown={(e) => {
         if (e.target !== e.currentTarget) return
-        if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
-          e.preventDefault()
-          e.stopPropagation()
-          onMoveFocus(rowKey, e.key === 'ArrowDown' ? 1 : -1)
-        } else if ((e.key === 'ArrowRight' && !expanded) || (e.key === 'ArrowLeft' && expanded) || e.key === 'Enter') {
+        if (isTreeNavKey(e.key)) {
+          if (onNavKey(rowKey, e.key)) {
+            e.preventDefault()
+            e.stopPropagation()
+          }
+        } else if (e.key === 'Enter') {
           e.preventDefault()
           e.stopPropagation()
           onToggle(rowKey, expanded)
@@ -660,7 +680,7 @@ const ClusterRow = memo(function ClusterRow({
       onPointerDown={(e) => {
         if (e.button === 0) onToggle(rowKey, expanded)
       }}
-      className={cn(listRowClass({ muted: true }), 'pr-2')}
+      className={cn(listRowClass({ muted: true }), 'pr-0.5')}
     >
       <TreeChevron expanded={expanded} />
       <TreeIcon icon={icon} />
@@ -691,7 +711,7 @@ const ElementRow = memo(function ElementRow({
   onToggle,
   onSelect,
   onIsolate,
-  onMoveFocus,
+  onNavKey,
 }: {
   rowKey: string
   panelId: string
@@ -717,7 +737,8 @@ const ElementRow = memo(function ElementRow({
   onToggle: (key: string, expanded: boolean) => void
   onSelect: (gid: string, additive: boolean) => void
   onIsolate: (gid: string) => void
-  onMoveFocus: (from: string, delta: number) => void
+  /** 树键位：true = 已处理 */
+  onNavKey: (from: string, key: string) => boolean
 }) {
   useTranslation('workspace')
   const unsupported = unsupportedOf(role)
@@ -725,6 +746,7 @@ const ElementRow = memo(function ElementRow({
   const shown = engineLabel(label)
   // ⋯ / 右键 / ⇧F10 同一份菜单（`ui/RowMenu`）；行有焦点时 ⋯ 进 Tab 顺序（此前 tabIndex=-1，键盘够不着）
   const menu = useRowMenu()
+  const labelRef = useBoldTrackingLock<HTMLSpanElement>(selected, name)
 
   return (
     <li
@@ -753,18 +775,11 @@ const ElementRow = memo(function ElementRow({
       onKeyDown={(e) => {
         menu.rowProps.onKeyDown?.(e)
         if (e.defaultPrevented || e.target !== e.currentTarget) return
-        if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
-          e.preventDefault()
-          e.stopPropagation()
-          onMoveFocus(rowKey, e.key === 'ArrowDown' ? 1 : -1)
-        } else if (e.key === 'ArrowRight' && expanded === false) {
-          e.preventDefault()
-          e.stopPropagation()
-          onToggle(rowKey, expanded)
-        } else if (e.key === 'ArrowLeft' && expanded === true) {
-          e.preventDefault()
-          e.stopPropagation()
-          onToggle(rowKey, expanded)
+        if (isTreeNavKey(e.key)) {
+          if (onNavKey(rowKey, e.key)) {
+            e.preventDefault()
+            e.stopPropagation()
+          }
         } else if (e.key === 'Enter') {
           e.preventDefault()
           e.stopPropagation()
@@ -799,7 +814,7 @@ const ElementRow = memo(function ElementRow({
       />
       <TreeIcon icon={roleIcon(role)} selected={selected} />
 
-      <span className="min-w-0 flex-1 truncate" title={`${shown} · ${roleName(role)} · ${gid}`}>
+      <span ref={labelRef} data-tree-label className="min-w-0 flex-1 truncate" title={`${shown} · ${roleName(role)} · ${gid}`}>
         {name}
       </span>
 

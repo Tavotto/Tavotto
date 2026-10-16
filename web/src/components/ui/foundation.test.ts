@@ -95,6 +95,13 @@ const RULES: Rule[] = [
     spares: '<div className="transition duration-fast" />',
   },
   {
+    name: '时长 token 用同名工具类，不拿任意值写 duration-[var(--duration-*)]（值相同，写法只许一种）',
+    pattern: /\bduration-\[var\(--duration-/,
+    fix: 'duration-fast / duration-base / duration-slow / duration-exit',
+    catches: '<div className="transition duration-[var(--duration-base)]" />',
+    spares: '<div className="transition duration-base" />',
+  },
+  {
     name: '分区小标题是 type-section，不手拼大写 + 字距',
     pattern: /\buppercase tracking-/,
     fix: 'className="type-section"',
@@ -108,11 +115,22 @@ const RULES: Rule[] = [
     catches: '<div className="rounded-md bg-surface p-3 shadow-card" />',
     spares: '<Card padding="md" className="shadow-pop" />',
     exempt: {
-      '/src/components/ui/Card.tsx': { count: 1, why: '它就是那一处实现（raised）' },
+      '/src/components/ui/Card.tsx': { count: 2, why: '它就是那一处实现（raised）+ lift 变体按下时阴影回落到 card 档' },
       '/src/App.tsx': {
         count: 1,
         why: '工作面板（data-work-panel，宪法第二十五节）不是卡，是一块面板；它的抬升与卡同一档是拍板过的，常驻豁免',
       },
+    },
+  },
+  {
+    // 「几何永不变化」的唯一登记豁免是 ui/Card 的 lift 变体（ui-visual-discipline.md「Card lift」）：别处不许在交互态上写位移 / 缩放
+    name: '交互态不位移不缩放：hover: / active: / focus-visible: 之后没有 scale-* / translate-*（唯一豁免 ui/Card 的 lift：translateY ≤2px 整数 + scale ≤1.02，用户 2026-10-15 裁决）',
+    pattern: /\b(hover|active|focus-visible|group-hover|has-\[[^\]]*\]):(motion-safe:)?-?(scale|translate)-/,
+    fix: '用 outline / 背景色 / 阴影表达交互态；要浮起走 <Card lift>（只首页最近项目卡）',
+    catches: '<div className="hover:scale-105" />',
+    spares: '<div className="hover:bg-surface-hover" />',
+    exempt: {
+      '/src/components/ui/Card.tsx': { count: 6, why: 'lift 变体（用户 2026-10-15 裁决）：hover / 聚焦各 -translate-y-0.5 + scale-(--card-lift-scale)（≤2px、≤1.02，读 index.css 变量，foundationPrimitives.test 钉上限）、按下 translate-y-0 / scale-100' },
     },
   },
   {
@@ -289,7 +307,7 @@ const RULES: Rule[] = [
     exempt: {
       '/src/components/StyleDialog.tsx': { count: 2, why: '文档数据：文字样式的缺省颜色 #000000' },
       '/src/components/VersionDialog.tsx': { count: 2, why: '文档数据：页面底色缺省 #FFFFFF（比较两版页面是否同底）' },
-      '/src/components/CanvasTabs.tsx': { count: 4, why: '遮罩：标签条两端渐隐的 mask-image，黑只表示不透明度' },
+      '/src/components/ui/scrollFade.ts': { count: 4, why: '遮罩：滚动边缘渐隐的 mask-image（原在 CanvasTabs，抽成共享件后豁免随之搬来、个数不变），黑只表示不透明度' },
       '/src/components/ui/Input.tsx': { count: 1, why: '文档数据：原生取色框没有值时的占位 #000000（input[type=color] 只认 hex）' },
       '/src/components/ui/icons/createIcon.tsx': { count: 4, why: '遮罩：图标的镂空 mask（白 = 留、黑 = 挖），不是颜色' },
       '/src/components/inspector/StrokeSection.tsx': { count: 1, why: '文档数据：新加填充的缺省色 #FFFFFF' },

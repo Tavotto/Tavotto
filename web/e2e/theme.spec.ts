@@ -1,4 +1,5 @@
 import { expect, test } from './fixtures'
+import { openGeneralSettings } from './theme'
 import type { Locator, Page } from '@playwright/test'
 
 /**
@@ -18,16 +19,6 @@ const PAPER = 'rgb(255, 255, 255)'
 
 const bg = (loc: Locator) => loc.evaluate((el) => getComputedStyle(el).backgroundColor)
 const theme = (page: Page) => page.evaluate(() => document.documentElement.getAttribute('data-theme'))
-
-async function openGeneralSettings(page: Page) {
-  await page.locator('[data-rail="settings"]').click()
-  const dialog = page.getByRole('dialog')
-  await expect(dialog).toBeVisible({ timeout: 30_000 })
-  await dialog.locator('[data-section="general"]').click()
-  const group = dialog.locator('[data-testid="settings-theme"]')
-  await expect(group).toBeVisible()
-  return { dialog, group }
-}
 
 test(
   '外观：设置里选「深色」界面当场变暗、纸仍是白、刷新后还是深色；「跟随系统」随 prefers-color-scheme 变',

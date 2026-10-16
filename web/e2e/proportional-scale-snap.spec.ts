@@ -74,10 +74,14 @@ const panels = async (page: Page): Promise<Box[]> => {
 async function addBoth(page: Page, baseURL: string) {
   await page.goto(baseURL)
   for (const [i, file] of ['Fig_a.pdf', 'Fig_b.pdf'].entries()) {
-    // 添加后左栏收回去了：素材卡不在时先点回「素材」
+    // 添加后左栏收回去了：「素材」轨道按钮是开关，按 aria-expanded 判、收着才点（#1088 同一形状：
+    // 按卡片在不在 / 可不可见判，会在抽屉已开时把它点关）
+    const rail = page.locator('[data-rail="assets"]')
+    if ((await rail.getAttribute('aria-expanded')) !== 'true') await rail.click()
+    await expect(rail).toHaveAttribute('aria-expanded', 'true')
     const card = page.locator(`[data-card="${file}"]`)
-    if (i > 0 && !(await card.count())) await page.locator('[data-rail="assets"]').click()
-    await card.focus({ timeout: 30_000 })
+    await expect(card).toBeVisible({ timeout: 30_000 })
+    await card.focus()
     await page.keyboard.press('Shift+Enter')
     await expect(page.locator('[data-object-id]')).toHaveCount(i + 1, { timeout: 30_000 })
     await page.waitForTimeout(1500)

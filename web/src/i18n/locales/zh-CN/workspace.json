@@ -532,7 +532,8 @@
       "nothing_found": "项目里还没有图和脚本",
       "unchecked": "项目没能检查完",
       "cancelled": "已取消检查",
-      "failed": "检查没有完成"
+      "failed": "检查没有完成",
+      "lost": "没能读到检查进度"
     },
     "issue": {
       "unreadable_dir": "没能读取目录 {{path}}。",
@@ -1037,7 +1038,9 @@
       },
       "errorFull": "完整错误信息",
       "errorTruncated": "太长，只保留了最后一部分。",
-      "unlinked": "此前带其他参数生成的 {{names}} 已不再关联，用原参数再运行一次即可恢复。"
+      "unlinked": "此前带其他参数生成的 {{names}} 已不再关联，用原参数再运行一次即可恢复。",
+      "nativeFallback": "安全模式拦下了脚本的文件操作，已自动换成按真实文件运行。",
+      "nativeFallbackNoWriteback": "安全模式拦下了脚本的文件操作，已自动换成按真实文件运行。这样出的图，改动不会写回脚本。"
     },
     "fact": {
       "finished": "脚本执行完成",
@@ -1122,7 +1125,8 @@
         "distribution_unverifiable": "读不出这个包里有什么，没法确认它是对的。",
         "unknown": "装上的东西和计划对不上。"
       }
-    }
+    },
+    "progress": "进行中"
   },
   "canvasMenu": {
     "aria": "画布操作",

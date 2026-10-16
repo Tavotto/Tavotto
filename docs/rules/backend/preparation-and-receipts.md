@@ -316,6 +316,20 @@ input 协议，前端也没有 readiness 计算器。端点 `POST /api/engine/pr
 - 看护：`tests/test_execution_policy.py`（策略 / 开关 / 闸门 / 账本 / CLI·MCP 边界）、`tests/test_execution_fallback.py`（假 pool + 假 native runner：同会话两个 attempt、native 失败不回 safe、非 blocked 不回退、safe_only、kill switch、取消窗口 ×3、重跑重算预算、意图步数不变）、
   `tests/test_execution_fallback_e2e.py`（真服务子进程 + 真用户 Python + 脚本自写的执行计数：`os.replace` 脚本 safe 被拦 → 同会话 native 成功、执行 2 次；除零 / 缺包只执行 1 次；safe_only / kill switch 不回退；运行中取消不起 native）。
 
+## 运行前路由（V2 PR2，ADR 0133）
+
+桌面准备会话里，脚本目标不给 `execution` 时是 `auto`：`preparation.plan_for` 调 `runroute.route_for_file`，**静态**（一次 `ast.parse`，零执行）在 safe / native 之间先选一次。裁决处只有 `engine/runroute.py`（纯标准库）。要点：
+
+- **优先级**：`safe_only` 策略 → 运维开关（`TAVOTTO_EXECUTION_FALLBACK=0`，同一个开关也关回退）→ 上次成功沿用（`launchctx` 记录 `profile`，仍成立才算）→ 静态高置信 → 默认 safe。显式 `execution=safe|native`（CLI / MCP / 回退自己的 native 计划）不经路由，`plan.route` 为 None。
+- **high 的结构性门槛**：证据点必须在无条件执行的位置（模块 / 可达函数体顶层语句序列；`__main__` 守卫 body 与 `with` 的 item 表达式算无条件），不在 if / 循环 / try / with 体 / match / lambda / 推导式 / 三元里；函数靠无条件按名调用才算可达。沿用上次成功还要求运行配置（argv 引用）一致，且 native 记录 `basis_observed:false` 不沿用（同 #982）。
+- **只有 high 才直达 native**：R1 同函数内 `savefig(P)` 后读 P；R3 写 T → `replace/rename/move(T,F)` → 读 F 且 T 在真实图库内（cwd 相对路径看 cwd 档：`sandbox` 不在）。R2（savefig 后只 `exists`）、R3_partial、跨函数读回是 medium；动态路径 R4 是 low——都走 safe，由 0127 回退兜底。**低、中置信度永不升级**。
+- **按 import 绑定解析限定名**（`from os import replace as r`、`import PIL.Image as I` 都认；`cache.replace(...)` / 字符串 `.replace` 不认）；路径折叠规则与 blind spots 见 ADR 0133，`Route.blind_spots` 随结果带出，不得宣称覆盖跨函数 / helper / 反射 / subprocess。
+- **只在用户发起的路径里**：`runroute` 只被 `preparation` / `prepsession` import；被动扫描、CLI、MCP 不 import（`tests/test_runroute_boundary.py` 钉，含零执行：Popen / exec / connect / find_spec / import_module 全炸 + 会写哨兵的脚本）。
+- **`PreparationPlan.route`** = `Route.public()`（闭集原因 / 置信度 / 规则 / 行号 / 耗时，无路径与源码），**不入指纹**；日志 `run route …`；任务诊断 `route:{…}`。没有解释器 → 回 safe 且 `declined: no_interpreter`。
+- **cwd 确认不短路**（0057）；native 成功也写 `launchctx` 记录（v2，`profile` 字段，v1 读作 safe；`source.basis_observed:false` = 不含 helper / 数据观察依据），由 `prepsession` 在尝试成功后调 `record_native_success`。
+- 同源对：`runroute` 的词汇镜像 `worker.REQUIRED_EXECUTION_FILE_SEMANTICS` / `BlockedFileOps.KIND_*` / `execpolicy.MODE_*` / `workdir.MODE_*`（`tests/test_runroute.py` 钉相等）；静态 high ↔ 真 safe worker 被拦、静态 safe ↔ 实跑成功（`tests/test_runroute_consistency.py`）。
+- 看护：`tests/test_runroute.py`（规则向量 / 优先级 / 缓存）、`test_runroute_wiring.py`（假 pool + 假 native：直达 native safe 不跑、动态路径回退、safe_only、开关、上次成功沿用、改脚本失效）、`test_run_routing_e2e.py`（真服务子进程 + 真用户 Python + 脚本自写的执行计数）。
+
 ## 终局诊断快照（T04）
 
 `PreparationService._finish` 在每个终局（`ready` / `error` / `cancelled`；`needs_input` 在执行线程里同走 `_finish`）之后调

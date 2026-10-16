@@ -21,7 +21,7 @@ import { listJoin } from '@/i18n/format'
 import { useHeldWhilePointerDown } from '@/hooks/useHeldWhilePointerDown'
 import { openProblemAt } from '@/lib/issueFocus'
 import { switchKindOf } from '@/lib/shapeSwitch'
-import { cn, MOD } from '@/lib/utils'
+import { MOD } from '@/lib/utils'
 import type { ValidationIssue } from '@/lib/validation'
 import { deleteSelected, duplicateSelected, hideElement, updateObjects } from '@/store/actions'
 import { usePanelDisplayManifest } from '@/store/renderStore'
@@ -30,6 +30,7 @@ import { useValidationStore } from '@/store/validationStore'
 import { fastEditPanelOf, useWorkspaceStore } from '@/store/workspace'
 import { objectLabel, type CanvasObject, type PanelObject } from '@/types/document'
 import { Button } from '../ui/Button'
+import { CountChip } from '../ui/CountChip'
 import { Menu, MenuItem, MenuSeparator } from '../ui/Menu'
 import { Tip } from '../ui/Tooltip'
 import { TruncateMiddle } from '../ui/TruncateMiddle'
@@ -188,20 +189,14 @@ function ProblemsChip({
   const errors = mine.filter((i) => i.severity === 'error')
   const first: ValidationIssue = errors[0] ?? mine[0]
   return (
-    <button
-      type="button"
+    <CountChip
+      size="sm"
+      tone={errors.length ? 'danger' : 'warn'}
       data-identity-problems={mine.length}
+      count={mine.length}
+      label={t('identity.problemsLabel', { count: mine.length })}
       onClick={() => openProblemAt(first, all, figureId)}
-      className={cn(
-        'flex h-5 shrink-0 items-center gap-0.5 rounded-full pl-1.5 pr-1 text-xs font-medium outline-none transition-colors focus-visible:focus-ring',
-        errors.length
-          ? 'bg-danger-surface text-danger-content hover:bg-danger-surface-hover'
-          : 'bg-warn-surface text-warn-content hover:inset-ring hover:inset-ring-warn-border',
-      )}
-    >
-      {t('identity.problems', { count: mine.length })}
-      <ChevronRight size={ICON_SIZE.xs} aria-hidden />
-    </button>
+    />
   )
 }
 

@@ -79,6 +79,16 @@ export function registerPointerCancel(cancel: () => void): () => void {
 }
 
 /**
+ * 只在没有别的指针手势占着时登记；占着就回 null、不覆盖。这个槽位是全局单主的（`trackPointer` 也用它），
+ * 后来的独立手势（例如触屏上第二根手指按到宽度把手）若直接覆盖，Esc 只会取消后来者，
+ * 先开始的画布拖动失去取消出口、松手照样提交（Codex #1102）。
+ */
+export function tryRegisterPointerCancel(cancel: () => void): (() => void) | null {
+  if (pointerCancel && pointerCancel !== cancel) return null
+  return registerPointerCancel(cancel)
+}
+
+/**
  * 取消此刻进行中的指针手势。回 true = 真的取消了一次；没有进行中的手势时什么都不做、
  * 回 false，调用方照常走它自己的逻辑。
  */
@@ -88,6 +98,9 @@ export function cancelActivePointerGesture(): boolean {
   cancel()
   return true
 }
+
+/** 此刻有没有进行中的指针手势：Esc 的归属判据——有的话这一下 Esc 属于它（`useKeyboard` 会取消它），别的 Esc 监听别抢 */
+export const hasActivePointerGesture = (): boolean => pointerCancel != null
 
 /** 现在有没有开着的一轮（开发态不变式与测试用） */
 export const hasActiveGesture = (): boolean => active != null

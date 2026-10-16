@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import sys
 from pathlib import Path
 
@@ -64,19 +65,49 @@ def test_nested_copies_and_other_dlls_are_ignored():
     assert gate.ssl_dll_problems(toc(crypto_src=HOST, extra=extra)) == []
 
 
-def test_the_spec_adds_the_runtime_after_analysis_on_windows_and_runs_the_gate():
+def test_the_spec_adds_the_runtime_after_analysis_on_every_platform_and_runs_the_gate():
     spec = (REPO / "packaging" / "tavotto.spec").read_text(encoding="utf-8")
-    assert "_RUNTIME_AFTER_ANALYSIS" in spec
     after = spec[spec.index("a = Analysis(") :]
     assert 'Tree(str(_RUNTIME_AFTER_ANALYSIS), prefix="runtime")' in after
     assert "assert_ssl_dlls_consistent" in after
-    # Windows 分支不再把 runtime 放进 datas（会被重新归类为二进制并做依赖分析）
-    win_branch = spec[
-        spec.index('if sys.platform == "win32":') : spec.index("else:\n        datas.append")
+
+    tree = ast.parse(spec)
+    # runtime 不进 Analysis 的 datas（会被重新归类为二进制并做依赖分析）——任何平台都不行：
+    # Windows 上是 OpenSSL DLL 压掉打包 Python 的那份（#1051），macOS 上是扩展模块被改写成
+    # 指回 `_internal/` 的 @rpath、openblas 等再复制一份到顶层（≈ 48 MB）。
+    runtime_into_datas = [
+        n
+        for n in ast.walk(tree)
+        if isinstance(n, ast.Call)
+        and isinstance(n.func, ast.Attribute)
+        and n.func.attr in ("append", "extend")
+        and isinstance(n.func.value, ast.Name)
+        and n.func.value.id == "datas"
+        and any(isinstance(x, ast.Name) and x.id == "RUNTIME" for a in n.args for x in ast.walk(a))
     ]
-    assert "datas.append" not in win_branch
-    # 其它平台仍走 datas（macOS 的符号链接 / 签名行为不变）
-    assert 'datas.append((str(RUNTIME), "runtime"))' in spec
+    assert runtime_into_datas == []
+
+    # `_RUNTIME_AFTER_ANALYSIS = RUNTIME` 不得藏在任何按平台分的分支里
+    def platform_guarded(node, ancestors):
+        return any(isinstance(a, ast.If) and "platform" in ast.dump(a.test) for a in ancestors)
+
+    hits = []
+
+    def visit(node, ancestors):
+        if (
+            isinstance(node, ast.Assign)
+            and any(
+                isinstance(t, ast.Name) and t.id == "_RUNTIME_AFTER_ANALYSIS" for t in node.targets
+            )
+            and isinstance(node.value, ast.Name)
+            and node.value.id == "RUNTIME"
+        ):
+            hits.append(platform_guarded(node, ancestors))
+        for child in ast.iter_child_nodes(node):
+            visit(child, [*ancestors, node])
+
+    visit(tree, [])
+    assert hits == [False], f"_RUNTIME_AFTER_ANALYSIS = RUNTIME 应恰有一处且不按平台分支：{hits}"
 
 
 def test_the_built_artifact_is_import_checked_before_it_ships():

@@ -63,6 +63,12 @@ export const EASE_STANDARD = 'cubic-bezier(0.4, 0, 0.2, 1)'
  */
 export const EASE_SPRING = 'cubic-bezier(0.34, 1.4, 0.64, 1)'
 
+/**
+ * 吸附曲线，与 index.css 的 `--ease-snap` 逐字节相同（motion.test 看护）。
+ * 给「跟着选中项走」的指示物（Segmented 的 thumb、Tabs 的下划线）：不过冲，终点 y = 1。
+ */
+export const EASE_SNAP = 'cubic-bezier(0.32, 0.72, 0, 1)'
+
 interface TweenOptions {
   duration?: number
   ease?: (t: number) => number

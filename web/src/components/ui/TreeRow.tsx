@@ -10,7 +10,8 @@ import { ICON_SIZE } from './Icon'
  *   [缩进 8 + 14 × depth][chevron 16][类型图标 16] 标签 …… [计数，右对齐]
  *
  * 层级只靠缩进与 chevron 表达，不靠行间留白；叶子行留一个空的 chevron 列，
- * 同一层的图标与文字才对得齐。
+ * 同一层的图标与文字才对得齐。列与列之间的间距只有一个值：`listRowClass` 的 `gap-1`（4px）——
+ * 树行不要再自己写 `gap-*`（图层树此前是 gap-1.5，同一抽屉里切元素树 ↔ 图层树，图标到文字差 2px，2026-10 UI 审计 G5）。
  */
 export const TREE_INDENT = 14
 
@@ -69,10 +70,19 @@ export function TreeIcon({ icon: Icon, selected }: { icon: IconComponent; select
   )
 }
 
-/** 行尾计数 / 元数据：右对齐、等宽数字、ink-3 */
+/**
+ * 行尾计数 / 元数据：等宽数字、ink-3，**占一个 28px 的槽并居中**——与同一棵树里元素行行尾的
+ * 「⋯」（`ui/RowMenu`，28px 的 IconButton，行 `pr-0.5`）同宽同右缘，计数与 ⋯ 的中心线落在同一条竖线上
+ * （2026-10 UI 审计 G4）。⋯ 的槽平时透明但**常驻**（hover 才显现时不能让标签宽度跳动），所以计数不再
+ * 用 `pl-2` 自己找右缘；用计数的行右内边距给 `pr-0.5`，别再给 `pr-2`。
+ */
 export function TreeCount({ children, title }: { children: ReactNode; title?: string }) {
   return (
-    <span className="ml-auto shrink-0 pl-2 type-meta tabular-nums" title={title}>
+    <span
+      className="ml-auto flex w-7 shrink-0 items-center justify-center type-meta tabular-nums"
+      title={title}
+      data-tree-count
+    >
       {children}
     </span>
   )

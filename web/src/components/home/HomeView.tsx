@@ -689,7 +689,7 @@ function RecentItem({
   ) : null
   return (
     <li data-home-recent={entry.path} className="min-w-0">
-      <Card interactive padding="none" className="group h-full">
+      <Card interactive lift disabled={busy || disabled} padding="none" className="group h-full">
         <button
           type="button"
           onClick={onOpen}
@@ -721,7 +721,11 @@ function RecentItem({
                 tip={false}
                 label={t('home.recentMenu', { name: entry.name })}
                 // 平时收起、悬停 / 聚焦 / 菜单开着时出现（坐在缩略图格上，白底才看得清）
-                className="bg-surface text-ink-3 opacity-0 transition-[opacity,background-color] hover:bg-surface-hover focus-visible:opacity-100 group-hover:opacity-100 data-[state=open]:opacity-100"
+                className={cn(
+                  'bg-surface text-ink-3 opacity-0 transition-[opacity,background-color] hover:bg-surface-hover focus-visible:opacity-100 data-[state=open]:opacity-100',
+                  // 卡置灰（切换项目 / 正在打开）时 hover 不再把它揭出来：置灰的卡不应有任何「活着」的 hover 反应
+                  !(busy || disabled) && 'group-hover:opacity-100',
+                )}
               >
                 <Ellipsis size={ICON_SIZE.sm} />
               </IconButton>

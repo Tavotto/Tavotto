@@ -4075,18 +4075,103 @@ class TestIssue1012BackendItems:
     def test_probe_does_not_write_the_matplotlib_font_cache(self, tmp_path, monkeypatch):
         """3：空缓存目录跑真探针，前后各列一次目录，内容不变；字体数量与字体族仍报得出。"""
         py, bundled = self._python()
-        cfg = tmp_path / "mplcfg"
-        cfg.mkdir()
-        before = sorted(p.name for p in cfg.rglob("*"))
+        cfg = tmp_path / "mplcfg"  # 故意不预建：新用户环境里它本来就不存在
         monkeypatch.setattr(
             diagdetail, "PROBE_TIMEOUT_S", 120
         )  # 空缓存要现建字体表，慢机器上超过默认 10 s
         out = REAL_PROBE(py, bundled, str(tmp_path), {"MPLCONFIGDIR": str(cfg)})
         assert out["status"] == "ok", out
-        assert sorted(p.name for p in cfg.rglob("*")) == before == []
+        assert not cfg.exists(), (
+            "探针（含 import matplotlib / get_cachedir）不许把真实缓存目录建出来"
+        )
         mpl = out["matplotlib"]
         assert mpl["font_count"] > 0 and mpl["font_family_count"] > 0 and mpl["fonts"]
         assert mpl["cachedir"] == str(cfg)  # 报的是真实缓存目录，不是临时目录
+        assert mpl["configdir"] == str(cfg)
+
+    def test_probe_leaves_an_existing_cache_dir_untouched(self, tmp_path, monkeypatch):
+        """3：目录已存在时前后列表不变（空缓存也不写 fontlist）。"""
+        py, bundled = self._python()
+        cfg = tmp_path / "mplcfg"
+        cfg.mkdir()
+        monkeypatch.setattr(diagdetail, "PROBE_TIMEOUT_S", 120)
+        out = REAL_PROBE(py, bundled, str(tmp_path), {"MPLCONFIGDIR": str(cfg)})
+        assert out["status"] == "ok", out
+        assert sorted(p.name for p in cfg.rglob("*")) == []
+        assert out["matplotlib"]["cachedir"] == str(cfg)
+
+    def _mpl_dirs(
+        self, monkeypatch, tmp_path, platform, *, localappdata_rule=True, old_exists=False
+    ):
+        """进程内 exec 探针里的路径规则片段，模拟平台与环境；返回 (配置目录, 缓存目录, 家目录, LOCALAPPDATA)。"""
+        import sys
+        from pathlib import Path
+
+        home = tmp_path / "home"
+        home.mkdir()
+        if old_exists:
+            (home / ".matplotlib").mkdir()
+        la = tmp_path / "LocalAppData"
+        monkeypatch.setenv("HOME", str(home))
+        monkeypatch.setenv("USERPROFILE", str(home))
+        monkeypatch.delenv("MPLCONFIGDIR", raising=False)
+        monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
+        monkeypatch.delenv("XDG_CACHE_HOME", raising=False)
+        monkeypatch.setenv("LOCALAPPDATA", str(la))
+        monkeypatch.setattr(sys, "platform", platform)
+        ns = {"os": os, "sys": sys, "Path": Path}
+        exec(diagdetail._MPL_DIRS_CODE, ns)
+        ns["_mpl_uses_localappdata"] = lambda: localappdata_rule
+        return (
+            ns["_real_dir"]("XDG_CONFIG_HOME", ".config"),
+            ns["_real_dir"]("XDG_CACHE_HOME", ".cache"),
+            home,
+            la,
+        )
+
+    def test_mpl_dir_rules_on_windows_follow_matplotlib_3_11(self, monkeypatch, tmp_path):
+        """3：模拟 win32（matplotlib ≥3.11 的规则）：旧 ~/.matplotlib 不存在 → %LOCALAPPDATA%/matplotlib，什么都不建。"""
+        cfg, cache, home, la = self._mpl_dirs(monkeypatch, tmp_path, "win32")
+        assert cfg == cache == str((la / "matplotlib").resolve())
+        assert not la.exists() and not (home / ".matplotlib").exists()
+
+    def test_mpl_dir_rules_on_windows_keep_an_existing_old_dir(self, monkeypatch, tmp_path):
+        """3：win32（≥3.11）旧 ~/.matplotlib 已存在 → 沿用旧的，不去 LOCALAPPDATA。"""
+        cfg, cache, home, la = self._mpl_dirs(monkeypatch, tmp_path, "win32", old_exists=True)
+        assert cfg == cache == str((home / ".matplotlib").resolve())
+        assert not la.exists()
+
+    def test_mpl_dir_rules_on_windows_before_3_11_use_dot_matplotlib(self, monkeypatch, tmp_path):
+        """3：matplotlib ≤3.10（源码里没有 LOCALAPPDATA 分支）：Linux / FreeBSD 以外一律 ~/.matplotlib，不去碰 LOCALAPPDATA。"""
+        cfg, cache, home, la = self._mpl_dirs(
+            monkeypatch, tmp_path, "win32", localappdata_rule=False
+        )
+        assert cfg == cache == str((home / ".matplotlib").resolve())
+        assert not la.exists() and not (home / ".matplotlib").exists()
+
+    def test_mpl_dir_rules_on_other_platforms(self, monkeypatch, tmp_path):
+        cfg, cache, home, _ = self._mpl_dirs(monkeypatch, tmp_path, "darwin")
+        assert cfg == cache == str((home / ".matplotlib").resolve())
+        sub = tmp_path / "linux"
+        sub.mkdir()
+        cfg, cache, home, _ = self._mpl_dirs(monkeypatch, sub, "linux")
+        assert cfg == str((home / ".config" / "matplotlib").resolve())
+        assert cache == str((home / ".cache" / "matplotlib").resolve())
+        assert not (home / ".config").exists() and not (home / ".cache").exists()
+
+    def test_the_localappdata_rule_is_read_from_the_installed_matplotlib_source(self):
+        """规则随版本变：探针读（不 import）matplotlib/__init__.py 判有没有 LOCALAPPDATA 分支。"""
+        import importlib.util
+        from pathlib import Path
+
+        ns = {"os": os, "sys": __import__("sys"), "Path": Path}
+        exec(diagdetail._MPL_DIRS_CODE, ns)
+        spec = importlib.util.find_spec("matplotlib")
+        if spec is None:
+            pytest.skip("本进程没有 matplotlib")
+        assert ns["_mpl_uses_localappdata"]() == (
+            "LOCALAPPDATA" in Path(spec.origin).read_text(encoding="utf-8")
+        )
 
     def _render_env(self, monkeypatch, project, overrides=None):
         py, bundled = self._python()
