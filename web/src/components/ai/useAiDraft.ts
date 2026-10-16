@@ -173,21 +173,18 @@ export function useAiDraft(panel: PanelObject | null) {
     void useAiStore.getState().settleRunningSessions()
     // 过期：又有更新的一次对账、或目标已经换了——不动
     if (token !== reconcileToken.current || key.current.epoch !== epoch) return
-    // 读失败 = 不知道：账本状态没成功过就记 failed（继续锁发送、给重试），成功过的不降级；草稿 / pendings 一概不动
-    if (!state || !projectList) {
-      setLedgerState((cur) => (cur === 'ok' ? cur : 'failed'))
-      return
-    }
-
-    const p = panelRef.current
-    if (p) {
+    type Pending = { file: string; rid: string; text: string; sent: DraftTarget; script: string | null }
+    // 待确认提交：**永远**应用（走同一条还原路径），按 rid 去重
+    const restorePendings = (items: Pending[]) => {
+      const p = panelRef.current
+      if (!p) return
       const objects = useDocumentStore.getState().doc.objects
       const seen = new Set<string>()
-      const apply = (item: { file: string; rid: string; text: string; sent: DraftTarget; script: string | null }) => {
-        if (seen.has(item.rid)) return
+      for (const item of items) {
+        if (seen.has(item.rid)) continue
         seen.add(item.rid)
         const sameFile = item.file === p.fileId
-        if (!sameFile && !(p.script && item.script && sameScript(item.script, p.script))) return
+        if (!sameFile && !(p.script && item.script && sameScript(item.script, p.script))) continue
         const sourcePanel = objects.find((o) => o.type === 'panel' && (o as PanelObject).fileId === item.file) as
           | PanelObject
           | undefined
@@ -203,31 +200,56 @@ export function useAiDraft(panel: PanelObject | null) {
           overrides: sameFile ? p.overrides : (sourcePanel?.overrides ?? []),
         })
       }
-      for (const item of projectList) apply(item)
-      // 本文件自己的账本（随草稿一起回来）同样还原（项目级列表理论上已含，这里兜底、按 rid 去重）
-      for (const own of state.pendings ?? [])
-        apply({ file: f, rid: own.rid, text: own.text, sent: own.sent, script: p.script ?? null })
     }
-
-    setLedgerState('ok') // pendings 已还原：账本恢复完成，可以放开发送
-    if (hasUnsettledWrite() || seq.current !== seqAtStart) return // 本地写入没落定：文本以本地为准，不覆盖
-    if (state.text === text.current) {
-      draftStamp.current = state.stamp ?? null // 服务器这一行与本地一致：记下它的戳
-      outboxAdvance(pj, f, state.stamp) // 输入框显示的就是这份文本：基线推进到它的戳
-      replacePending.current = false // 采纳的是同一份文本：字没变，不提示
+    // 本文件自己的账本（随草稿一起回来）：项目级列表理论上已含，这里兜底、按 rid 去重
+    const ownPendings = (): Pending[] =>
+      (state?.pendings ?? []).map((own) => ({
+        file: f,
+        rid: own.rid,
+        text: own.text,
+        sent: own.sent,
+        script: panelRef.current?.script ?? null,
+      }))
+    // 草稿文本与待确认账本是两次独立的读，**各自独立应用**：「可写 ⇒ 服务器草稿已经应用」——草稿读成功而项目级账本读失败时，
+    // 输入框必须已经显示服务器文本（否则用户看到空框、打的字带着比服务器更高的写入戳，静默盖掉看不见的草稿）
+    const applyDraft = () => {
+      if (!state) return
+      if (hasUnsettledWrite() || seq.current !== seqAtStart) return // 本地写入没落定：文本以本地为准，不覆盖
+      if (state.text === text.current) {
+        draftStamp.current = state.stamp ?? null // 服务器这一行与本地一致：记下它的戳
+        outboxAdvance(pj, f, state.stamp) // 输入框显示的就是这份文本：基线推进到它的戳
+        replacePending.current = false // 采纳的是同一份文本：字没变，不提示
+        return
+      }
+      if (replacePending.current) {
+        // 冲突放弃之后，这次成功的对账真的把另一个窗口的稿换进了输入框：提示用户，不静默替换
+        replacePending.current = false
+        setDraftReplaced(true)
+      }
+      text.current = state.text
+      draftStamp.current = state.stamp ?? null
+      outboxAdvance(pj, f, state.stamp) // 服务器文本被应用到了输入框：基线推进
+      setPromptState(state.text)
+      setTooLarge(false)
+      setRestored(source === 'mount' && state.text !== '')
+    }
+    // 项目级待确认读失败：别的标签页可能在同一份脚本的兄弟面板上留了本页看不到的未确认提交，本页此刻发出去，原任务一结束
+    // 后端的忙检查就不再拦、同一条修改换新 rid 再执行一次——**无论之前是否成功过**都降回 failed（锁发送、给重试），
+    // 直到下一次成功的项目级读取。草稿读成功的部分照常应用。
+    if (!projectList) {
+      setLedgerState('failed')
+      restorePendings(ownPendings())
+      applyDraft()
       return
     }
-    if (replacePending.current) {
-      // 冲突放弃之后，这次成功的对账真的把另一个窗口的稿换进了输入框：提示用户，不静默替换
-      replacePending.current = false
-      setDraftReplaced(true)
+    // 只有草稿读失败（项目级读成功）：什么都不动，维持已有的账本结论
+    if (!state) {
+      setLedgerState((cur) => (cur === 'ok' ? cur : 'failed'))
+      return
     }
-    text.current = state.text
-    draftStamp.current = state.stamp ?? null
-    outboxAdvance(pj, f, state.stamp) // 服务器文本被应用到了输入框：基线推进
-    setPromptState(state.text)
-    setTooLarge(false)
-    setRestored(source === 'mount' && state.text !== '')
+    restorePendings([...projectList, ...ownPendings()])
+    setLedgerState('ok') // pendings 已还原：账本恢复完成，可以放开发送
+    applyDraft()
   }, [])
 
   reconcileRef.current = reconcile

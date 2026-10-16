@@ -647,6 +647,34 @@ describe('同步状态机：单一 reconcile + 写入版本（#1098）', () => {
     })
   })
 
+  it('草稿 GET 成功而项目级账本 GET 失败：输入框已经显示服务器文本（可写 ⇒ 服务器草稿已应用），打字不会盲写盖掉它', async () => {
+    be.putStamped('pa', 'Fig1.pdf', '别的标签页留下的稿', 5)
+    be.setPendingListFails(true)
+    await mount()
+    expect(input().value).toBe('别的标签页留下的稿') // 对照：旧实现提前 return，这里是空框
+    expect(q('[data-ai-ledger="failed"]')).toBeTruthy() // 账本没读到：发送仍锁
+    await typeText('别的标签页留下的稿，再加一句')
+    await act(async () => void (await new Promise((r) => setTimeout(r, WRITE_DEBOUNCE_MS + 50))))
+    await settle()
+    expect(be.draft('pa', 'Fig1.pdf')).toBe('别的标签页留下的稿，再加一句') // 基于已见的服务器版本写，不是盲写
+  })
+
+  it('对账成功过一次之后，项目级待确认读失败：ledgerState 降回 failed、发送锁住；下一次成功的项目级读取才解锁', async () => {
+    await mount()
+    await typeText('一条指令')
+    expect(q<HTMLButtonElement>('[data-ai-send]')!.disabled).toBe(false) // 对账成功过：可发
+    be.setPendingListFails(true)
+    await act(async () => window.dispatchEvent(new Event('focus')))
+    await settle()
+    expect(q('[data-ai-ledger="failed"]')).toBeTruthy() // 对照：旧实现 ok 不降级，仍可发
+    expect(q<HTMLButtonElement>('[data-ai-send]')!.disabled).toBe(true)
+    be.setPendingListFails(false)
+    await act(async () => window.dispatchEvent(new Event('focus')))
+    await settle()
+    expect(q('[data-ai-ledger="failed"]')).toBeNull()
+    expect(q<HTMLButtonElement>('[data-ai-send]')!.disabled).toBe(false)
+  })
+
   it('发件箱不因时间放弃：后端断开 15 分钟后恢复，编辑不丢（超过任何「重试 N 次就放弃」的上限）；退避有上限（≤ 30 s 一次），不是 3 s 死磕', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
     try {

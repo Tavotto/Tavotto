@@ -26,6 +26,7 @@ import socket
 import sys
 import threading
 import time
+import traceback
 import unicodedata
 import urllib.error
 import urllib.parse
@@ -9247,7 +9248,7 @@ def api_ai_run():
         resp = app.make_response(_ai_run_impl())
     except HTTPException as exc:
         if engine_ai.spawn_started():
-            return _post_spawn_unresolved(rid, exc)
+            return _post_spawn_unresolved(exc)
         if not _drop_rejected_pending(rid):
             return _unresolved_response()
         raise
@@ -9256,26 +9257,29 @@ def api_ai_run():
         # 换新 rid 重发——旧 rid 的账本行必须在这里由后端删掉。删除本身也失败了（SQLite 锁住 / 磁盘满）就**不能**再回
         # 「明确拒绝」：账本行还在，换新 rid 之后它会被还原、同一条指令执行两次——回 503 `ai_request_unresolved`（不确定）
         if engine_ai.spawn_started():
-            return _post_spawn_unresolved(rid, exc)
+            return _post_spawn_unresolved(exc)
         if not _drop_rejected_pending(rid):
             return _unresolved_response()
         raise
     if resp.status_code >= 400:
         if engine_ai.spawn_started():
-            return _post_spawn_unresolved(rid, None, status=resp.status_code)
+            return _post_spawn_unresolved(None, status=resp.status_code)
         if not _drop_rejected_pending(rid):
             return _unresolved_response()
     return resp
 
 
-def _post_spawn_unresolved(rid, exc, status=None):
+def _post_spawn_unresolved(exc, status=None):
     """进程已经起来之后的任何失败（HTTPException / 任意异常 / ≥400 响应）：那条指令可能正在改脚本，**不是**明确拒绝——
     前端对除 `ai_request_unresolved` 之外的带码 5xx 一律当明确拒绝、换新 rid 重发，同一条修改就执行两次。
     一律回 503 `ai_request_unresolved`（前端保持同一个 rid、按「未知」对账），账本行绝不删。只记日志（不含提示词 / 脚本内容）。"""
+    # 日志里**没有** rid（docs/rules/backend/ai-agent-bridge.md：请求 id 不进日志 / 诊断输出）也没有异常消息（消息里可能带 rid、
+    # 路径或提示词）：只留异常类型名与调用栈帧（文件:行:函数），足够定位
     if exc is not None:
-        LOG.error("AI 任务已启动但随后出错（rid=%s）: %s", rid, type(exc).__name__, exc_info=exc)
+        frames = "".join(traceback.format_list(traceback.extract_tb(exc.__traceback__)))
+        LOG.error("AI 任务已启动但随后出错: %s\n%s", type(exc).__name__, frames)
     else:
-        LOG.error("AI 任务已启动但响应为 %s（rid=%s）", status, rid)
+        LOG.error("AI 任务已启动但响应为 %s", status)
     return _unresolved_response()
 
 
