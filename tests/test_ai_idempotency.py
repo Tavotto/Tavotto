@@ -291,12 +291,14 @@ def test_events_carry_the_request_id(client, tmp_path, cli, monkeypatch):
     events: list[tuple[str, dict]] = []
     monkeypatch.setattr(m, "sse_publish", lambda ev, data: events.append((ev, data)))
     status = _open(client, _project(tmp_path))
-    _post(client)
+    sid = _post(client).get_json()["session"]
     _wait_idle()
-    # `status` 先翻成终态、`record_end`（SQLite 提交）之后才发 `ai.done`：只等 status 会在慢盘上抢在事件前面
-    _wait_for(lambda: any(ev == "ai.done" for ev, _ in events))
-    done = [d for ev, d in events if ev == "ai.done"]
-    assert done and all(d["client_request_id"] == RID and d["pj"] == status["id"] for d in done)
+    # `status` 先翻成终态、`record_end`（SQLite 提交）之后才发 `ai.done`：只等 status 会在慢盘上抢在事件前面。
+    # 只看**本用例这个会话**的事件：前一条用例在后台收尾的会话也可能在补丁装上之后才发它自己的 `ai.done`
+    _wait_for(lambda: any(ev == "ai.done" and d.get("session") == sid for ev, d in events))
+    done = [d for ev, d in events if ev == "ai.done" and d.get("session") == sid]
+    assert len(done) == 1
+    assert done[0]["client_request_id"] == RID and done[0]["pj"] == status["id"]
 
 
 # ---------------------------------------------------------------------------
