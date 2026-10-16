@@ -1120,3 +1120,38 @@ def test_live_session_detail_has_ended_ms_only_after_the_pump_finishes(tmp_path,
     assert isinstance(ai_bridge.get(sid)["ended_ms"], int)
     _wait_idle()
     engine_watch.stop()
+
+
+def test_detail_after_restart_with_sidecar_carries_the_error(tmp_path, cli, monkeypatch):
+    """服务重启、sidecar 还在时走「sidecar 合并历史」那条路：终态字段整体以历史库为准——失败会话的 error 不能丢
+    （以前逐个字段抄，漏了 error：final 为 true 但失败原因是空的）。"""
+    figs = _project(tmp_path)
+
+    def boom(*_a, **_k):
+        raise RuntimeError("刷新炸了：scan 失败")
+
+    monkeypatch.setattr(ai_bridge, "refresh_outcome", boom)
+    sid = ai_bridge.run("codex", "fig1.py", "p", str(figs))
+    deadline = time.time() + 15
+    while time.time() < deadline and ai_history.get(sid)["status"] == "running":
+        time.sleep(0.05)
+    _wait_idle()
+    ai_bridge.SESSIONS.pop(sid)  # 模拟重启：只剩 sidecar + 历史库
+    assert (ai_bridge.SNAP_DIR / f"{sid}.json").is_file()  # 前提：确实走 sidecar+历史 这一支
+    detail = ai_bridge.get(sid)
+    assert detail["status"] == "failed"
+    assert detail["error"] == "刷新炸了：scan 失败"  # 对照：以前这里没有 error
+    assert isinstance(detail["ended_ms"], int)
+    engine_watch.stop()
+
+
+def test_every_terminal_field_exists_on_a_history_row(tmp_path):
+    """结构性保护：终态字段清单里的每个键，历史行里都有——清单与历史库不会悄悄分叉（清单里多一个历史库没有的键，合并路径会丢掉它）。"""
+    db = tmp_path / "hist.sqlite3"
+    ai_history.record_start(
+        {"id": "termfields01", "project": "/p", "provider": "codex"}, db_path=db
+    )
+    ai_history.record_end("termfields01", "failed", error="x", db_path=db)
+    row = ai_history.get("termfields01", db_path=db)
+    missing = [k for k in ai_bridge.SESSION_TERMINAL_FIELDS if k not in row]
+    assert missing == [], missing

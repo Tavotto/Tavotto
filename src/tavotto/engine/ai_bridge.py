@@ -1181,6 +1181,18 @@ SESSION_DTO_KEYS: tuple[str, ...] = (
     "pinned",
     "note",
 )
+#: **终态字段清单**：会话结束时一起确定、落进历史库的那一组。服务重启后「sidecar 合并历史」的路径用它整体覆盖 sidecar，
+#: 不再逐个字段抄（漏抄一个就会出现「final 为 true 但 error 是空」这类分叉）。新增终态字段时只改这里。
+SESSION_TERMINAL_FIELDS: tuple[str, ...] = (
+    "status",
+    "transcript",
+    "diff",
+    "changed",
+    "refresh",
+    "error",
+    "ended_ms",
+)
+
 #: 会话 dict 里**有意不对外**的内部字段（含不可序列化的）。`tests/test_ai_idempotency.py` 钉住：会话 dict 的每个键
 #: 必须落在 DTO 白名单或这里——新加字段时必须表态，不会悄悄漏进响应、也不会悄悄让详情 500。
 SESSION_INTERNAL_KEYS: frozenset[str] = frozenset(
@@ -1216,11 +1228,8 @@ def get(sid: str) -> dict | None:
         return _session_dto(
             {
                 **side,
-                "status": hist["status"],
-                "transcript": hist["transcript"],
-                "diff": hist["diff"],
-                "changed": hist["changed"],
-                "refresh": hist.get("refresh"),
+                # 终态字段**整体**以历史库为准（同一份清单，不逐个抄——逐个抄漏过 `error`：失败的会话 final 为 true 却没有原因）
+                **{k: hist.get(k) for k in SESSION_TERMINAL_FIELDS if k in hist},
                 "revert_available": hist.get("revert_available"),
                 "note": "后端已重启，记录来自历史库",
             }
