@@ -802,7 +802,7 @@ def test_stale_response_carries_the_hash_of_the_current_row_text(client, two):
     assert r3["text_hash"] == ai_history.text_hash("")
 
 
-# GET /api/ai/history?status=running：一次返回全部，不分页（#1111 Codex P2）
+# ---------------------------------------------------------------------------
 # GET /api/ai/history?status=open：恢复专用，一次返回全部「还没结束」的行；status=running 照常分页（#1111 Codex P2）
 # ---------------------------------------------------------------------------
 def _seed_sessions(tmp_path, name, n_running, n_done=0):
