@@ -524,8 +524,12 @@ export const useProjectPreparationStore = create<PreparationState>((set, get) =>
       if (!e) return Promise.resolve()
       const sid = e.report?.session_id
       if (!sid) {
-        // 还没有任何报告（第一次检查断线了）：重新检查，仍是只读
-        return check(key, e.target, false)
+        // 还没有任何报告（第一次检查断线了）：重新检查，仍是只读。若这是「打开并运行」的首次检查（`wantsRun`），恢复后接着
+        // 代认领——用户的一键意图不因第一次请求超时而丢（Codex #1044 r4290881812）；`armIfReady` 的其余前提照旧
+        const g = guardOf(key)
+        return check(key, e.target, false).then(() => {
+          if (live(key, g) && entry(key)?.wantsRun) return armIfReady(key)
+        })
       }
       const g = guardOf(key)
       const pj = e.pj

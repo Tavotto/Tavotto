@@ -888,6 +888,26 @@ describe('状态丢失后以后端报告为准（Codex #1044 r4271063082 / r4271
     expect(entry().armMaybeFrom).toBe(null)
   })
 
+  it('「打开并运行」的首次检查超时、恢复后的重新检查成功：接着认领 run_when_ready，一键意图不丢（Codex #1044 r4290881812）', async () => {
+    mockCreate.mockRejectedValueOnce(new TypeError('network'))
+    await open()
+    expect(mockAct).not.toHaveBeenCalled()
+    expect(entry().wantsRun).toBe(true)
+    mockCreate.mockResolvedValueOnce(report())
+    claimed(running())
+    await store().refresh(KEY)
+    expect(mockAct).toHaveBeenCalledTimes(1)
+    expect(entry().armed).toBe(true)
+  })
+
+  it('普通打开（不是一键入口）的首次检查超时后恢复：不代认领', async () => {
+    mockCreate.mockRejectedValueOnce(new TypeError('network'))
+    await open(false)
+    mockCreate.mockResolvedValueOnce(report())
+    await store().refresh(KEY)
+    expect(mockAct).not.toHaveBeenCalled()
+  })
+
   it('认领响应丢了、但已跑完的报告带的是点击前就有的旧意图：不算这次点击，不自动进入', async () => {
     mockCreate.mockResolvedValueOnce(report({ intent: live().intent }))
     await open(false)
