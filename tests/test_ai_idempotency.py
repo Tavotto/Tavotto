@@ -570,7 +570,10 @@ def test_a_failed_spawn_keeps_the_failed_record_and_a_new_id_can_run(tmp_path, c
 def _dead_pid() -> int:
     """一个确定已经结束的进程的 pid。"""
     proc = subprocess.run(
-        [sys.executable, "-c", "import os; print(os.getpid())"], capture_output=True, text=True
+        [sys.executable, "-c", "import os; print(os.getpid())"],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
     )
     return int(proc.stdout)
 
