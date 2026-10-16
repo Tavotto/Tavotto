@@ -76,7 +76,7 @@ class Declarations(GuardianBase):
         document["expectations"][0]["case"] = "not_a_case"
         self.rejects(document)
 
-    def row(self, **raw):
+    def v2_row(self, **raw):
         row = cg.new_row("s16a_zero_division", "authenticated_server_safe")
         row["native"] = {"status": "invalid_fixture", "result": native_result(exit_status=1)}
         row["raw"] = raw
@@ -86,7 +86,7 @@ class Declarations(GuardianBase):
         return ex.find(ex.load_entries(), "compat_v2", "s16a_zero_division")
 
     def test_observed_equal_to_declared_is_control_met_and_not_a_pass_or_failure(self):
-        result = ex.evaluate(self.row(), self.entry())
+        result = ex.evaluate(self.v2_row(), self.entry())
         self.assertEqual(result["status"], "control_met")
         self.assertIsNone(result["category"]["category"])
         self.assertEqual(cg.verdict([{"status": "control_met"}]), "control_met")
@@ -94,7 +94,7 @@ class Declarations(GuardianBase):
         self.assertNotEqual(cg.exit_code_for("control_met"), cg.EXIT_FAILED)
 
     def test_mismatch_is_failed_with_the_difference_attached(self):
-        row = self.row()
+        row = self.v2_row()
         row["native"] = {"status": "passed", "result": native_result()}
         row["comparable"] = True
         row["executions"].update(native=1, tavotto=1)
@@ -109,7 +109,7 @@ class Declarations(GuardianBase):
 
     def test_validate_rejects_a_forged_control_met_and_a_forged_expectation_block(self):
         self.report["suite"] = "compat_v2"
-        row = self.row()
+        row = self.v2_row()
         row["id"] = "s16a_zero_division"
         row["fixture"] = copy.deepcopy(self.row_fixture("s16a_zero_division"))
         resolved = ex.evaluate(row, self.entry())
