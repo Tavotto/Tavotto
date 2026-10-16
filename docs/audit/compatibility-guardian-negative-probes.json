@@ -1,0 +1,44 @@
+{
+  "kind": "negative synthetic protocol probes of original code",
+  "actual_head": "7675956233a812faee398eb9d5dede56e1b8329d",
+  "probes": {
+    "missing_stages": {
+      "original_result": [
+        "full_support",
+        "",
+        ""
+      ],
+      "expected_guardian": "reject_missing_stages"
+    },
+    "native_failure": {
+      "original_fidelity": {
+        "ok": false,
+        "detail": {
+          "native": {
+            "ok": false,
+            "code": "native_script_error",
+            "traceback": "ModuleNotFoundError: deliberately_absent"
+          }
+        }
+      },
+      "original_classification": [
+        "product_bug",
+        "",
+        "未通过：['fidelity']"
+      ],
+      "expected_guardian": "environment_unavailable; never product_bug"
+    },
+    "uniform_stale_sha": {
+      "original_exit_code": 0,
+      "record_sha": "0000000000000000000000000000000000000000",
+      "actual_head": "7675956233a812faee398eb9d5dede56e1b8329d",
+      "expected_guardian": "reject_old_sha_even_when_uniform"
+    },
+    "missing_gate_verdict": {
+      "original_exit_code": 0,
+      "original_stdout": "## Tavotto Lab Qualification\n\n**Commit** `Tavotto/Tavotto@7675956233a8` · **档位** `negative-probe` · **版本** 0.18.1\n<sub>Linux 6.18.44 · 5 核 · 17.6 GiB · Python 3.12.14 · 2026-10-16T03:06:21Z</sub>\n\n**正确性 ✅ PASS**　·　**性能 ✅ PASS**\n\n| 环节 | 结果 | 细节 |\n| --- | --- | --- |\n| 开跑前体检 | — | 未运行 |\n| 候选包验收 | — | 未运行 |\n| 升级 N-1 → N | — | 未运行 |\n| Golden 视觉回归 | — | 未运行 |\n| Matplotlib 兼容性 | ✅ PASS | 1 case，目标 ?，捕获 0/0，完全支持 0，产品缺陷 synthetic:execute |\n| Soak 与泄漏 | — | 未运行 |\n| 性能回归 | — | 未运行 |\n| Mutation | — | 未运行 |\n{\"correctness\": true, \"performance\": true, \"reports_found\": 1}\n",
+      "expected_guardian": "missing_terminal_verdict_rejected"
+    }
+  },
+  "scope": "Synthetic negative inputs to original code; never product runtime evidence"
+}

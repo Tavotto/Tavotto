@@ -1,0 +1,185 @@
+{
+  "recorded_at": "2026-10-16",
+  "initial_sha": "f5062da92d8751170ba79f162fafe5b363ebc787",
+  "main_sha": "7675956233a812faee398eb9d5dede56e1b8329d",
+  "main_tree": "bf341b0d526284602a6ebb7a9b012065233a481d",
+  "git_fetch": {
+    "exit_code": 128,
+    "reason": "CONNECT tunnel failed, response 403"
+  },
+  "sync": "97 changed paths fetched via connected GitHub; blob IDs, full index tree, signed commit ID verified; local shallow boundary",
+  "prs": [
+    {
+      "number": 1023,
+      "state": "closed",
+      "merged": true,
+      "head": "dadb30469091fb7ffc732d88a06d59221ab21fb9",
+      "base": "c86c1bea9d8cbf2ca60c17e0145bf5e23be15bfc",
+      "url": "https://github.com/Tavotto/Tavotto/pull/1023"
+    },
+    {
+      "number": 1024,
+      "state": "closed",
+      "merged": true,
+      "head": "7bc5ce28417a5f416f2f6338ebdc43122a72a5ad",
+      "base": "321c67687642a1b438dba139d7ac6246aa252bdb",
+      "url": "https://github.com/Tavotto/Tavotto/pull/1024"
+    },
+    {
+      "number": 1028,
+      "state": "closed",
+      "merged": true,
+      "head": "272dc06acc9eeb0188e230fa604483f27ab57059",
+      "base": "29ae31a5229d22e9abb7ebe266142df2c8591813",
+      "url": "https://github.com/Tavotto/Tavotto/pull/1028"
+    },
+    {
+      "number": 1034,
+      "state": "open",
+      "merged": false,
+      "head": "aae624a6d053cc6c95e6929a62936c7000c94dde",
+      "base": "c110a54a528e4c280d06172ac17ff246d3f9a485",
+      "url": "https://github.com/Tavotto/Tavotto/pull/1034"
+    },
+    {
+      "number": 1044,
+      "state": "open",
+      "merged": false,
+      "head": "30e45a53d46b9fa739090e8ec3a934cde25db204",
+      "base": "aae624a6d053cc6c95e6929a62936c7000c94dde",
+      "url": "https://github.com/Tavotto/Tavotto/pull/1044"
+    },
+    {
+      "number": 1002,
+      "state": "closed",
+      "merged": true,
+      "head": "6d218a88db4bc9db4bcbaec05f54fea6cc830fc0",
+      "base": "59ecbc097a78b723853b80af5ab3b46a70faebec",
+      "url": "https://github.com/Tavotto/Tavotto/pull/1002"
+    },
+    {
+      "number": 1055,
+      "state": "open",
+      "merged": false,
+      "head": "f2324f7642816f6e9d265592efd3132d44b0a6ec",
+      "base": "6d7abdb95081b326dde88afa6ba62c598a3b7691",
+      "url": "https://github.com/Tavotto/Tavotto/pull/1055"
+    },
+    {
+      "number": 1048,
+      "state": "open",
+      "merged": false,
+      "head": "b6abbc0b499ef7e4a67bd521e0ecdbc3bb53f176",
+      "base": "bcb0d0fcd9c4ce04b8bf3aa155b84cecdcffd2ea",
+      "url": "https://github.com/Tavotto/Tavotto/pull/1048"
+    }
+  ],
+  "open_prs": [
+    {
+      "number": 1114,
+      "title": "fix(canvas-tabs): 页签条「放不放得下」按小数几何判，消掉宽度扫描 e2e 的随机红（不放宽跳过区间）",
+      "url": "https://github.com/Tavotto/Tavotto/pull/1114"
+    },
+    {
+      "number": 1111,
+      "title": "fix(ai): 刷新 / 重连后接回后端仍在运行的 AI 会话（只读占位、可中止），收尾与 #1098 共用一条路径",
+      "url": "https://github.com/Tavotto/Tavotto/pull/1111"
+    },
+    {
+      "number": 1110,
+      "title": "feat(ui): 属性栏底部每行带值、素材卡只留右上角「＋」并去掉页脚、抽屉空态一行字（UI 2.0 第二轮 07/08/09 A）",
+      "url": "https://github.com/Tavotto/Tavotto/pull/1110"
+    },
+    {
+      "number": 1107,
+      "title": "feat(ui): 错误与警告改成一行中性提示，构建不一致改顶栏芯片，事后出现的提示不再推挤页面（UI 2.0 第二轮 02 + 05 A）",
+      "url": "https://github.com/Tavotto/Tavotto/pull/1107"
+    },
+    {
+      "number": 1105,
+      "title": "feat(tree): 结构侧栏行视觉、类型词前缀与展开 / 折叠过渡（UI 2.0 第二轮 04 A，叠在 #1102 上）",
+      "url": "https://github.com/Tavotto/Tavotto/pull/1105"
+    },
+    {
+      "number": 1103,
+      "title": "feat(telemetry): 导出终态事件 export_result——每个被受理的导出作业终局时恰好一条",
+      "url": "https://github.com/Tavotto/Tavotto/pull/1103"
+    },
+    {
+      "number": 1102,
+      "title": "feat(tree): 树与列表精修——内凹焦点环、树键位补全、选中加粗不改截断、计数与 ⋯ 对齐、共享分栏手柄（双击复位 / Esc 回滚 / 键盘）",
+      "url": "https://github.com/Tavotto/Tavotto/pull/1102"
+    },
+    {
+      "number": 1101,
+      "title": "feat(ui): 基础视觉与微交互——卡片按压 / 置灰 / 首页卡 1px 浮起（登记豁免）、共享滚动渐隐、快捷编辑弹层退场",
+      "url": "https://github.com/Tavotto/Tavotto/pull/1101"
+    },
+    {
+      "number": 1098,
+      "title": "fix(ai): 同一条 AI 修改不会被无意执行两次——client_request_id 幂等、已发出未确认只给查询、草稿按项目×面板缓存（ADR 0132）",
+      "url": "https://github.com/Tavotto/Tavotto/pull/1098"
+    },
+    {
+      "number": 1097,
+      "title": "fix(web): 任务状态不卡死、不串项目、失败不无声——SSE 重连对账依赖安装、导出关窗终局通知、扫描补拉退避、切项目撤旧 toast",
+      "url": "https://github.com/Tavotto/Tavotto/pull/1097"
+    },
+    {
+      "number": 1094,
+      "title": "feat(export): 导出对象头缩略图标「示意」、透明背景棋盘格、原图范围同源取图；partial 结果先一句汇总",
+      "url": "https://github.com/Tavotto/Tavotto/pull/1094"
+    },
+    {
+      "number": 1085,
+      "title": "feat(ci): Agent 统一验证入口 agent_verify + #961 引擎缺件分诊（ADR 0131，P0）",
+      "url": "https://github.com/Tavotto/Tavotto/pull/1085"
+    },
+    {
+      "number": 1081,
+      "title": "fix(frontend): 保留素材刷新忙碌态并修正注册表快照顺序",
+      "url": "https://github.com/Tavotto/Tavotto/pull/1081"
+    },
+    {
+      "number": 1079,
+      "title": "fix(deps): 保留动态导入保护并记账 hash 声明根",
+      "url": "https://github.com/Tavotto/Tavotto/pull/1079"
+    },
+    {
+      "number": 1055,
+      "title": "feat(export): add direct SVG export with verified Figure snapshots",
+      "url": "https://github.com/Tavotto/Tavotto/pull/1055"
+    },
+    {
+      "number": 1048,
+      "title": "feat(cla): add default-off Cloudflare lifecycle candidate",
+      "url": "https://github.com/Tavotto/Tavotto/pull/1048"
+    },
+    {
+      "number": 1044,
+      "title": "feat(desktop): 「打开并运行」一次点击到编辑——run_when_ready 接线、自动进入编辑、回退不多开标签页、沿用上次成功参数（V2 PR4，#982）",
+      "url": "https://github.com/Tavotto/Tavotto/pull/1044"
+    },
+    {
+      "number": 1034,
+      "title": "feat(execution): Compatibility-first 运行前路由——高置信需要真实文件语义的脚本首跑直达 native、沿用上次成功的执行语义（V2 PR2，ADR 0128）",
+      "url": "https://github.com/Tavotto/Tavotto/pull/1034"
+    },
+    {
+      "number": 1001,
+      "title": "perf(macOS): 窗口拖影取证工具与原生诊断流程",
+      "url": "https://github.com/Tavotto/Tavotto/pull/1001"
+    },
+    {
+      "number": 826,
+      "title": "fix: keep redacted pip evidence when lab bootstrap install fails",
+      "url": "https://github.com/Tavotto/Tavotto/pull/826"
+    }
+  ],
+  "writer_pattern": [
+    {
+      "url": "https://github.com/Tavotto/Tavotto/pull/1034#discussion_r4289852315",
+      "body": "按维护者 10-16 裁决收敛：伤害闸门漏列的写出写法不再逐个修，记入 #1086（https://github.com/Tavotto/Tavotto/issues/1086#issuecomment-6205675378，本条已列）。闸门已按形态覆盖六类写法；结构性出路（反转为白名单）在 issue 里跟踪。"
+    }
+  ]
+}
