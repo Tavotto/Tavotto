@@ -3,7 +3,8 @@
 独立可观测事实只来自脚本自己写在项目外的文件（`compute.log` 的执行次数、`cache.csv` 是否真被 `os.replace` 写出），
 不来自被测接口的回显。**这里不是真桌面窗口**：窗口 / Tauri 壳 / Windows 真机归 P10。
 
-* 脚本 `os.replace` 覆盖缓存再读回（safe 的守卫拦下并报 `safe_file_operation_blocked`）→ **同一会话**接上 native，
+* 路径写成运行前路由读不出的动态形态（V2 PR2 起字面量形态会被路由直接送去 native，见 `test_run_routing_e2e.py`）；
+  脚本 `os.replace` 覆盖缓存再读回（safe 的守卫拦下并报 `safe_file_operation_blocked`）→ **同一会话**接上 native，
   脚本共执行 2 次，最终出图，`attempt_history` 两条；
 * 除零 / 缺包 → 只执行 1 次，不回退；
 * `safe_only` 项目、`TAVOTTO_EXECUTION_FALLBACK=0` → 不回退，如实报 safe 的限制；
@@ -120,7 +121,8 @@ import matplotlib.pyplot as plt
 with open({log!r}, "a") as f:   # 执行次数：脚本每跑一遍写一个字符
     f.write("x")
 here = Path(__file__).resolve().parent
-tmp, final = here / "cache.tmp", here / "cache.csv"
+name = os.environ.get("CACHE_NAME", "cache")  # 动态路径：运行前路由（ADR 0133）看不出读回，留给 safe 实跑 + 回退
+tmp, final = here / (name + ".tmp"), here / (name + ".csv")
 tmp.write_text("2")
 os.replace(tmp, final)
 value = int(final.read_text())
@@ -196,7 +198,7 @@ def _native_sessions(app, root: Path) -> list[dict]:
 
 
 def _runs(log: Path) -> int:
-    return len(log.read_text()) if log.exists() else 0
+    return len(log.read_text(encoding="utf-8")) if log.exists() else 0
 
 
 def test_blocked_replace_falls_back_to_native_in_the_same_session_and_runs_twice(tmp_path):
@@ -211,7 +213,7 @@ def test_blocked_replace_falls_back_to_native_in_the_same_session_and_runs_twice
         assert final["facts"]["figure_captured"] is True
         assert _runs(log) == 2, "safe 一次（被拦）+ native 一次"
         # native 里 os.replace 真的发生了：safe 的守卫没拦它
-        assert (proj / "cache.csv").read_text() == "2"
+        assert (proj / "cache.csv").read_text(encoding="utf-8") == "2"
 
         safe, native = final["attempt_history"]
         assert (safe["profile"], safe["outcome"], safe["code"]) == (

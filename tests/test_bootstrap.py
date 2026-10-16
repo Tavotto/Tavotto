@@ -234,3 +234,102 @@ def test_render_failure_carries_machine_readable_code(client, monkeypatch, tmp_p
     resp = client.post("/api/engine/render", json={"id": "p1.pdf", "patches": []})
     assert resp.status_code == 500
     assert resp.get_json()["code"] == "no_worker_python"
+
+
+def test_install_async_marks_running_before_returning(monkeypatch):
+    """POST 接口调完 `install_async` 就返回：状态必须已经是 running（不等线程被调度起来），
+    否则紧随其后的读取读到上一轮的 idle，前端会以为安装已经结束。"""
+    import threading
+
+    gate = threading.Event()
+    monkeypatch.setattr(bootstrap, "install", lambda on_event=None: gate.wait(5))
+    try:
+        bootstrap.install_async()
+        assert bootstrap.progress()["state"] == "running"
+    finally:
+        gate.set()
+
+
+def test_every_new_install_gets_the_next_attempt_and_events_carry_it(monkeypatch):
+    """尝试身份：新安装 attempt +1；同一次的事件、`progress()`、`status()` 带同一个 attempt。"""
+    monkeypatch.setattr(pool, "find_worker_python", lambda: "/usr/bin/python3")
+    monkeypatch.setattr(bootstrap, "matplotlib_version", lambda p, **_kw: "3.11.1")
+    monkeypatch.setattr(bootstrap, "find_base_python", lambda: None)
+    base = bootstrap.progress()["attempt"]
+    seen = []
+    for expected in (base + 1, base + 2):
+        events = []
+        bootstrap.install(events.append)  # 没有 base python：同步失败收场，仍是一次完整的尝试
+        seen.append([e["attempt"] for e in events])
+        assert {e["attempt"] for e in events} == {expected}
+        assert bootstrap.progress()["attempt"] == expected
+        assert bootstrap.status()["attempt"] == expected
+    assert seen[0] and seen[1]
+
+
+def test_boot_identity_is_stable_within_the_process_and_carried_everywhere(monkeypatch):
+    monkeypatch.setattr(pool, "find_worker_python", lambda: "/usr/bin/python3")
+    monkeypatch.setattr(bootstrap, "matplotlib_version", lambda p, **_kw: "3.11.1")
+    boot = bootstrap.progress()["boot"]
+    assert boot and bootstrap.status()["boot"] == boot
+    events = []
+    monkeypatch.setattr(bootstrap, "find_base_python", lambda: None)
+    bootstrap.install(events.append)
+    assert events and {e["boot"] for e in events} == {boot}
+
+
+def test_a_second_install_request_while_running_keeps_the_current_attempt(monkeypatch):
+    import threading
+
+    gate = threading.Event()
+    monkeypatch.setattr(bootstrap, "install", lambda on_event=None: gate.wait(5))
+    try:
+        before = bootstrap.progress()["attempt"]
+        bootstrap.install_async()
+        first = bootstrap.progress()["attempt"]
+        assert first == before + 1  # 新安装：POST 响应与之后的事件 / GET 带的就是这个新身份
+        bootstrap.install_async()
+        assert bootstrap.progress()["attempt"] == first
+        assert bootstrap.progress()["state"] == "running"
+    finally:
+        gate.set()
+
+
+def test_status_and_progress_read_one_consistent_snapshot(monkeypatch):
+    """环境 GET 与事件都经同一把锁取 `{attempt, state, error}` 的快照：不在两次读之间看到「新 attempt +
+    上一次的终态」——那个组合会被前端当成「这一次已结束」，真正的 running 反而被丢掉（#1097 评审）。"""
+    snap = {"state": "running", "log": "", "error": None, "attempt": 7}
+    monkeypatch.setattr(bootstrap, "_snapshot", lambda: dict(snap))
+    monkeypatch.setattr(pool, "find_worker_python", lambda: "/usr/bin/python3")
+    monkeypatch.setattr(bootstrap, "matplotlib_version", lambda p, **_kw: "3.11.1")
+    st = bootstrap.status()
+    assert (st["state"], st["attempt"]) == ("running", 7)
+    pr = bootstrap.progress()
+    assert (pr["state"], pr["attempt"]) == ("running", 7)
+
+
+@pytest.mark.parametrize("ok", [True, False])
+def test_status_snapshots_after_slow_probing(monkeypatch, ok):
+    """安装在环境探测期间走到终态：GET 要报终态，不是探测前的 running。丢了终态 SSE 的重连对账
+    只能靠这次 GET 收尾，报旧 running 界面就一直卡在安装中（#1097 评审）。"""
+    monkeypatch.setattr(
+        bootstrap, "_progress", {"state": "running", "log": "", "error": None, "attempt": 3}
+    )
+
+    def finish(*_a, **_kw):
+        with bootstrap._attempt_lock:
+            bootstrap._progress.update(state="done")
+        return "3.11.1" if ok else None
+
+    if ok:
+        monkeypatch.setattr(pool, "find_worker_python", lambda: "/usr/bin/python3")
+        monkeypatch.setattr(bootstrap, "matplotlib_version", finish)
+    else:
+
+        def missing():
+            raise pool.WorkerError("no", code="no_worker_python")
+
+        monkeypatch.setattr(pool, "find_worker_python", missing)
+        monkeypatch.setattr(bootstrap, "find_base_python", finish)
+    st = bootstrap.status()
+    assert (st["state"], st["attempt"]) == ("done", 3)

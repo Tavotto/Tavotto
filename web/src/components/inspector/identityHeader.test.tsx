@@ -439,6 +439,10 @@ describe('问题胶囊数的是整组选择（Codex #829）', () => {
     const chip = document.querySelector('[data-identity-problems]')
     expect(chip, '多选时问题胶囊要在').not.toBeNull()
     expect(chip!.getAttribute('data-identity-problems')).toBe('2')
+    // 与导出检查 / 问题面板同一个计数芯片：ink 字 + 圆点，不是红底红字（2026-10-16 精修 03）
+    expect(chip!.hasAttribute('data-count-chip')).toBe(true)
+    expect(chip!.className).not.toMatch(/bg-danger|text-danger|bg-warn|text-warn/)
+    expect(chip!.textContent).toBe('2 个问题')
   })
   it('按着鼠标时校验结果到达：胶囊等松手再出现，按下与松开之间属性栏不多出按钮', async () => {
     await seed([panel], ['p1'])

@@ -204,10 +204,46 @@ function focusField(propertyPath?: string | null): FieldFocus {
 const cssEscape = (v: string): string => v.replace(/[^A-Za-z0-9_-]/g, (c) => `\\${c}`)
 
 /**
+ * 问题面板要看的目标：`figureId` = 某张图（面板「当前图」那一档）；null = 整份排版。
+ * `canvasId` 给了就先切到那张画布（面板的清单按激活画布 / 整份排版取）。
+ */
+export interface ProblemsTarget {
+  canvasId?: string | null
+  figureId: string | null
+}
+
+/**
+ * 把「当前图」与范围落到目标上，**不进快速编辑、不动文档**：当前图的判据是
+ * 快速编辑图 → 图内编辑图 → 选中的面板（`problemContext.currentFigureOf`），前两档清掉、
+ * 第三档选中目标，面板的「当前图」就是它；没有图的目标（按画布导出）切到「当前画布」（`ProblemScope` 的 canvas 档，只列这张画布的问题）。
+ */
+function aimProblemsAt(target: ProblemsTarget): void {
+  if (target.canvasId && target.canvasId !== useDocumentStore.getState().activeCanvasId) {
+    activateCanvas(target.canvasId)
+  }
+  const ui = useUiStore.getState()
+  const figure = target.figureId
+    ? useDocumentStore.getState().doc.objects.find((o) => o.id === target.figureId && o.type === 'panel')
+    : null
+  if (!figure) {
+    // 按画布导出：只看这一张画布的问题（摘要就是按它算的），不是整份排版里别的画布的也列进来
+    ui.setProblemScope('canvas')
+    return
+  }
+  useWorkspaceStore.getState().exitToLayout()
+  ui.setElementPanel(null)
+  useSelectionStore.getState().set([figure.id])
+  ui.setProblemScope('figure')
+}
+
+/**
  * 打开左侧「问题」面板（可带筛选）。**Prompt 12 的导出面板用它把用户
  * 交回问题清单**，而不是在弹窗里再列一遍。
  */
-export function openProblems(filter?: { severities?: Severity[] }): void {
+export function openProblems(filter?: { severities?: Severity[]; target?: ProblemsTarget }): void {
+  // 导出对话框的摘要是按**导出目标**算的（可能是别的画布上、也不是工作区当前选中的那张图）：
+  // 只带等级过去，面板的「当前图」仍取工作区现状，非零芯片会打开另一张图的清单。先把目标落成现场
+  if (filter?.target) aimProblemsAt(filter.target)
   useUiStore.getState().setProblemFilter(filter?.severities ?? null)
   // 交回的是**总览**：带着筛选点进去的那张卡片不一定还装着这些等级
   useUiStore.getState().setProblemDrill(null)
@@ -241,7 +277,7 @@ export function openProblemAt(
   // 面板里不再有「看到游标在卡片外就钻进去」的第二套机制。只有一张卡片的单图没有
   // 卡片层（`singleDrill`），那时不点开，面板直接列它的清单。游标按那张卡片的清单算——
   // 与面板里点一行时 `cursorFor(groups)` 的 groups 是同一份，修好之后「顶上来的那条」才找得对
-  const scoped = issuesInScope(all, scope, figureId)
+  const scoped = issuesInScope(all, scope, figureId, useDocumentStore.getState().activeCanvasId)
   const figures = bucketsByFigure(scoped)
   const single = singleDrill(ui.problemView, figures, scoped.filter(isUnverifiable).length)
   const drill = single && drillIssues(scoped, single).some((i) => i.issueId === issue.issueId)

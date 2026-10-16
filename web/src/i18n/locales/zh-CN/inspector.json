@@ -1214,7 +1214,7 @@
     "entryActions": "“{{label}}”的操作"
   },
   "identity": {
-    "problems_other": "{{count}} 个问题"
+    "problemsLabel_other": "个问题"
   },
   "docSummary": {
     "title": "本排版",

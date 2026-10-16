@@ -131,21 +131,25 @@ describe('还没发过任务时的信息布局', () => {
   })
 })
 
-describe('输入框两态（§6.5）', () => {
-  it('空着时是紧凑的单行胶囊、没有工具行；一有内容就展开成两行，工具行里是模型与推理强度两颗胶囊', async () => {
+describe('输入框只有一态（§6.5，2026-10-16）', () => {
+  it('空着就是完整高度：控件行常驻，模型与推理强度两颗胶囊一开始就在；打字前后是同一个节点、同一套布局类', async () => {
     useAiStore.setState({ caps: capsOf([agentCaps({ efforts: ['low', 'high'], default_effort: 'high' })]) })
     await mount({ withPanel: true })
     const composer = q('[data-ai-composer]')!
-    expect(composer.dataset.layout).toBe('compact')
-    expect(q('[data-ai-pill]')).toBeNull()
-    await typeDraft('把图例移到左上角')
-    expect(composer.dataset.layout).toBe('expanded')
+    expect(composer.hasAttribute('data-layout')).toBe(false)
     expect(q('[data-ai-pill="model"]')!.textContent).toContain('Codex')
     expect(q('[data-ai-pill="effort"]')!.textContent).toContain(ai('effortLabel.high'))
-    // 同一个输入框节点换了格子，不是重建（焦点不丢）
+    const cls = composer.className
+    expect(cls).toContain('min-h-24')
+    expect(cls).not.toMatch(/(^|\s)h-\[42px\]/)
+    // 同一个输入框节点，打字 / 清空都不换格子（焦点不丢、高度不跳）
     const box = q('[data-ai-input]')
+    await typeDraft('把图例移到左上角')
+    expect(composer.className).toBe(cls)
+    expect(q('[data-ai-input]')).toBe(box)
+    expect(q('[data-ai-pill="effort"]')).toBeTruthy()
     await typeDraft('')
-    expect(composer.dataset.layout).toBe('compact')
+    expect(composer.className).toBe(cls)
     expect(q('[data-ai-input]')).toBe(box)
   })
 

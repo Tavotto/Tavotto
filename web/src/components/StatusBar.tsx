@@ -274,17 +274,19 @@ export function NotificationRail({ announceRole = 'alert' }: { announceRole?: 'a
   const fmt = useFormatMessage()
   const status = useUiStore((s) => s.status)
   const tone = useUiStore((s) => s.statusTone)
+  const statusAction = useUiStore((s) => s.statusAction)
   // 退场那 90ms 里 status 已经是 null 了，得把最后一条文案留着播完，
   // 否则会看到一个空壳滑下去。留的是**描述符**，不是翻好的字符串：
   // 退场期间切语言也跟着换。
-  const last = useRef<{ status: UiMessage | null; tone: typeof tone }>({
+  const last = useRef<{ status: UiMessage | null; tone: typeof tone; action: typeof statusAction }>({
     status: null,
     tone: 'info',
+    action: null,
   })
   useEffect(() => {
-    if (status) last.current = { status, tone }
-  }, [status, tone])
-  const shown = status ? { status, tone } : last.current
+    if (status) last.current = { status, tone, action: statusAction }
+  }, [status, tone, statusAction])
+  const shown = status ? { status, tone, action: statusAction } : last.current
   const shownText = fmt(shown.status)
   const liveText = fmt(status)
   const statusPresence = usePresence(!!status, DURATION.exit)
@@ -581,7 +583,8 @@ export function NotificationRail({ announceRole = 'alert' }: { announceRole?: 'a
           data-status-tone={shown.tone}
           icon={<StatusIcon tone={shown.tone} />}
           text={shownText}
-          onClose={shown.tone === 'error' ? () => useUiStore.getState().setStatus(null) : undefined}
+          action={shown.action ? { label: fmt(shown.action.label), onClick: shown.action.run } : undefined}
+          onClose={shown.tone === 'error' || shown.action ? () => useUiStore.getState().setStatus(null) : undefined}
           closeLabel={t('status.dismissError')}
         />
       )}

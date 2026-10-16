@@ -341,6 +341,18 @@ const STATES: Record<string, Partial<PreparationReport>> = {
     captured: [fig('a')],
     actions: [action('run'), action('recheck')],
   },
+  // safe 被拦、自动回退 native 后成功（ADR 0127）：默认仍是同一句话；回退只在详情里说
+  completedFallback: {
+    phase: 'completed',
+    outcome: { kind: 'succeeded' },
+    facts: { execution_finished: true, figure_captured: true },
+    captured: [{ ...fig('a'), execution_profile: 'native' }],
+    attempt_history: [
+      { run: 1, seq: 1, attempt_id: 'a1', profile: 'safe', interpreter: 'i', launch: 'l', cause: '', changed: [], outcome: 'blocked', code: 'safe_file_operation_blocked', declined: '' },
+      { run: 1, seq: 2, attempt_id: 'a2', profile: 'native', interpreter: 'i', launch: 'l', cause: 'safe_file_operation_blocked', changed: ['profile'], outcome: 'succeeded', code: '', declined: '' },
+    ],
+    actions: [action('run'), action('recheck')],
+  },
   completedMany: {
     phase: 'completed',
     outcome: { kind: 'succeeded' },
@@ -453,6 +465,70 @@ describe('一句话 + 至多一个主按钮（每一种状态 × 每一种语种
 const toggleDetails = () =>
   act(async () => (panel().querySelector('[data-prep-details-toggle]') as HTMLButtonElement).click())
 const details = () => panel().querySelector('[data-prep-details]') as HTMLElement | null
+
+describe('safe → native 回退成功：默认句子不变，详情里补一行', () => {
+  const note = () => details()?.querySelector('[data-prep-native-fallback]') ?? null
+  it('回退成功：默认没有这一句；展开详情才有，并说清改动不会写回', async () => {
+    await mount()
+    useUiStore.setState({ guideCard: 'card' })
+    await openWith(report(STATES.completedFallback))
+    const line = panel().querySelector('[data-prep-line]')!.textContent
+    expect(panel().textContent).not.toContain('真实文件')
+    await toggleDetails()
+    expect(details()!.textContent).toContain('已自动换成按真实文件运行')
+    expect(details()!.textContent).toContain('不会写回脚本')
+    expect(panel().querySelector('[data-prep-line]')!.textContent).toBe(line) // 默认句子没动
+    expect(note()).not.toBeNull()
+  })
+
+  it('描述符说能写回就不说「不会写回」（事实读后端，不在前端推）', async () => {
+    await mount()
+    useUiStore.setState({ guideCard: 'card' })
+    await openWith(report({ ...STATES.completedFallback, captured: [{ ...fig('a'), execution_profile: 'native', can_writeback_source: true }] }))
+    await toggleDetails()
+    expect(details()!.textContent).toContain('已自动换成按真实文件运行')
+    expect(details()!.textContent).not.toContain('不会写回脚本')
+  })
+
+  it.each([
+    ['没有回退（一直是 safe）', { ...STATES.completed }],
+    ['老后端没有账本', { ...STATES.completedFallback, attempt_history: undefined }],
+    ['用户一开始就选 native（没有换语义）', { ...STATES.completedFallback, attempt_history: [{ ...STATES.completedFallback.attempt_history![1], changed: [] }] }],
+    ['回退了但这次的图不是 native', { ...STATES.completedFallback, captured: [fig('a')] }],
+  ])('%s：详情里没有这一行', async (_n, over) => {
+    await mount()
+    useUiStore.setState({ guideCard: 'card' })
+    await openWith(report(over as Partial<PreparationReport>))
+    await toggleDetails()
+    expect(details()!.textContent).not.toContain('真实文件')
+  })
+})
+
+describe('进度条：唯一实现是 ui/ProgressBar，断线时不画假活动', () => {
+  const bar = () => panel().querySelector('[data-prep-progress]') as HTMLElement | null
+  it('运行中：不定态进度条是 ui/ProgressBar（role=progressbar、不报 valuenow）', async () => {
+    await mount()
+    await openWith(report(STATES.running))
+    expect(bar()).not.toBeNull()
+    expect(bar()!.getAttribute('role')).toBe('progressbar')
+    expect(bar()!.hasAttribute('aria-valuenow')).toBe(false)
+    expect(bar()!.dataset.progressIndeterminate).toBeDefined()
+  })
+
+  it('断线 / 引擎已停：只有那一句，没有在扫的条', async () => {
+    await mount()
+    await openWith(report(STATES.running))
+    expect(bar()).not.toBeNull() // 对照：同一张卡连着时有条
+    const key = useProjectPreparationStore.getState().focus!
+    await act(async () => {
+      useProjectPreparationStore.setState((st) => ({
+        entries: { ...st.entries, [key]: { ...st.entries[key], connection: 'lost' } },
+      }))
+    })
+    expect(panel().querySelector('[data-prep-line]')).not.toBeNull()
+    expect(bar()).toBeNull()
+  })
+})
 
 describe('safe 守卫拦下文件操作之后的失败（P01a）', () => {
   it('说清是失败、没有出图，且没有「再试一次」「运行」这类会得到同一结果的主按钮', async () => {

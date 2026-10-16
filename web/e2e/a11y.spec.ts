@@ -19,7 +19,7 @@ import type { Page } from '@playwright/test'
 import os from 'node:os'
 import path from 'node:path'
 import { expect, openElementsTab, test, waitForFigureEdit, writeRuntimeNamedProject } from './fixtures'
-import { lowContrastNodes } from './contrast'
+import { indistinctFieldBoxes, lowContrastNodes } from './contrast'
 import { resolveScanned, type ScannedNode } from './scannedNodes'
 
 /**
@@ -251,6 +251,12 @@ test('工作台（项目已开、画布有面板）：axe 无违规、无未定�
   await expectAccessible(page, {
     allow: [contrastCoveredByOurOwnRuler, headingOrderCheckedByOurselves],
   })
+  // 可编辑框的底不许和所在的面分不出（抽屉里的框坐在灰桌面上，靠 field 重定向成白面）
+  expect(await indistinctFieldBoxes(page), '有输入框的底对所在的面不足 1.1:1').toEqual([])
+  // hover 态也量一次：抽屉搜索框 hover 时底换成 field-hover-desk，对桌面同样不许低于 1.1:1
+  await page.locator('[data-left-drawer] input').first().hover()
+  await page.waitForTimeout(300) // 底色过渡（duration-fast）走完
+  expect(await indistinctFieldBoxes(page), 'hover 中的输入框底对所在的面不足 1.1:1').toEqual([])
 })
 
 test('图内编辑的属性栏：展开每一个折叠区之后 axe 仍然干净', async ({ app, page }) => {

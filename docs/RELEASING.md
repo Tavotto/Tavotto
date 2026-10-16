@@ -265,6 +265,34 @@ tag 与 `__version__` 对不上时 `build` job 直接失败，不会发出错版
 验证**，不是替代日常 CI：tag 只应打在 CI 已经全绿、且已合并进 main 的提交上
 （`trust` job 会硬校验 main 可达性，够不着直接拒；第二段的 `trust2` 再验一次）。
 
+## 调试符号：另存，不进安装包
+
+发出去的 Rust 二进制（壳 `tavotto-desktop`、`tavotto-workerd`）仍是剥光的，安装包体积不变；
+符号文件由 `desktop-tauri.yml` 的 `build` 每条腿另存成 workflow artifact
+**`debug-symbols-<腿>`**（`dmg` / `dmg-intel` / `nsis`，保留 90 天）：
+
+| 腿 | 内容 | 配对方式 |
+| --- | --- | --- |
+| macOS（arm64 / Intel） | `tavotto-desktop.dSYM`、`tavotto-workerd.dSYM`、`UUIDS.txt`、`BUILD.txt` | Mach-O UUID（`dwarfdump -u`）；`atos -o <二进制> <地址>` 会按 UUID 找到 dSYM |
+| Windows | `tavotto_desktop.pdb`、`tavotto_workerd.pdb`、`BUILD.txt` | exe 里记的 PDB GUID/age |
+
+- **不在 `desktop-tauri-*` / `artifact-manifest-*` 里**：`release-publish.yml` 的 pattern 下载、
+  `artifact_manifest.py`、`latest.json` 都读不到它，不会挂上 Release、不进更新清单。
+  要长期留存（超过 90 天）由维护者从对应 run 手动取。
+- 缺任一符号文件、或 dSYM 里没有 DWARF 函数，构建腿**失败**——没有符号的发行构建事后补不回来。
+- Cargo 配置：`[profile.release]` 写 `debug = "line-tables-only"` + `split-debuginfo = "packed"` +
+  `strip = true`（macOS 上二进制照旧剥光）；**MSVC 上 strip 会连 PDB 一起不产出**，所以 Windows 腿经
+  `CARGO_PROFILE_RELEASE_STRIP=none` 覆盖（MSVC 的 exe 本来就不内嵌调试段）。
+- PyInstaller sidecar 不存符号：Python 代码没有原生符号，bootloader 是上游预编译的，numpy 等原生库的符号
+  归上游；Python 侧崩溃靠 traceback（已在诊断包里）。需要时再单独评估。
+- Windows 上用户机器的 `.dmp` 由**壳自己写**（`src-tauri/src/crash_dump.rs`）：`main()` 第一句装
+  `SetUnhandledExceptionFilter`，崩溃时 `MiniDumpWriteDump` 写 `%LOCALAPPDATA%\CrashDumps\Tavotto.exe.<pid>.dmp`
+  （诊断包 `crash_dirs()` 勾选「崩溃报告」时收走；启动时轮转，只留最近 5 份、只删这个名字模式）。
+  不用 WER LocalDumps 注册表键：文档只写了 HKLM（要管理员，与 currentUser 安装冲突），HKCU 是否生效没有权威说法。
+  覆盖面：壳进程的 SEH 异常；**不覆盖** Rust panic / abort、Python sidecar（Python 进程，崩溃信息靠 traceback 与
+  faulthandler）、`tavotto-workerd`（独立 crate，复制模块要给它引入 windows 依赖树，暂不做）。
+  符号化时按发行 tag 取对应的 `debug-symbols-nsis`。真崩一次的验证在 `nightly.yml` 的 windows-install。
+
 ## 网站 `/try`：同步与复核必须指名读的是哪棵树
 
 浏览器 playground 的产物由本仓库构建（`scripts/build_browser_playground.py`），

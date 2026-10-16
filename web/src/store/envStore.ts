@@ -208,6 +208,76 @@ export interface AdoptedEnvironment {
  * 的采用、设置页）不必各自再挡一遍，也挡不住（写在它们看得见结果之前就发生了）。
  */
 let projectEpoch = 0
+/**
+ * 引擎 bootstrap（自助安装渲染环境）的状态：**只有一份** `{ attempt, state }`，来源三路（SSE `engine.bootstrap` /
+ * 环境状态 GET / install POST 响应）都经 `applyBootstrap` 这一个入口，规则两条：
+ *   (a) 快照的 `attempt` 更大 → 直接采用（新的一次）；相同 → 按单调序合并（idle < running < done / failed，终态锁定、
+ *       同序重复只更新日志）；更小 → 丢弃。服务端给每次安装一个单调的 `attempt`，所以不需要任何「谁先到」的推断。
+ *   (b) 本地点安装后到 POST 响应回来之前是**待定**：此时已知的 `attempt` 还是上一次的，待定期间 `installing` 不会因为
+ *       上一次的快照翻回 false；一旦采用了 `attempt` 比点击时更大的快照（SSE / 响应 / GET 谁先到都行），待定即解除。
+ * 老后端不带 `attempt`（兼容分支，唯一一处）：快照一律按「同一次」合并，待定由「观察到 running / 终态的快照」或 30 s 兜底解除。
+ */
+export const INSTALL_PENDING_TIMEOUT_MS = 30_000
+const BOOTSTRAP_RANK = { idle: 0, running: 1, done: 2, failed: 2 } as const
+type BootstrapState = keyof typeof BOOTSTRAP_RANK
+let bootstrapKnown: { boot?: string; attempt: number; state: BootstrapState } = { attempt: 0, state: 'idle' }
+/** 待定：点击那一刻已知的 attempt；null = 不在待定 */
+let pendingFloor: number | null = null
+let pendingTimer: ReturnType<typeof setTimeout> | null = null
+
+function clearPending(): void {
+  pendingFloor = null
+  if (pendingTimer) clearTimeout(pendingTimer)
+  pendingTimer = null
+}
+
+/** 只给测试用：把模块级的 bootstrap 账本清零 */
+export function resetBootstrapForTests(): void {
+  bootstrapKnown = { attempt: 0, state: 'idle' }
+  clearPending()
+}
+
+/**
+ * bootstrap 快照的唯一入口。回 `adopted`（采用了新信息）与 `terminal`（这次采用让状态进入了终态）。
+ * `installing` = 已知状态是 running，或仍在待定。
+ */
+function applyBootstrap(
+  snap: { boot?: string; attempt?: number; state?: string; log?: string; error?: string | null },
+  set: (p: Partial<EnvState>) => void,
+): { adopted: boolean; terminal: boolean } {
+  const state = snap.state as BootstrapState | undefined
+  if (!state || !(state in BOOTSTRAP_RANK)) return { adopted: false, terminal: false }
+  const legacy = typeof snap.attempt !== 'number'
+  const attempt = legacy ? bootstrapKnown.attempt : (snap.attempt as number)
+  const known = bootstrapKnown
+  let adopted = false
+  // 后端进程换了（引擎重启 / 端口复用）：attempt 从头计，与上一个进程的不可比——直接采用，待定一并作废
+  // （点击发出去的那个进程已经没了）。第一次见到 boot 只是「学会它」，不算换了
+  const newBoot = snap.boot !== undefined && known.boot !== undefined && snap.boot !== known.boot
+  if (newBoot) {
+    adopted = true
+    clearPending()
+  } else if (attempt > known.attempt) adopted = true
+  else if (attempt === known.attempt) {
+    const r = BOOTSTRAP_RANK[state]
+    const k = BOOTSTRAP_RANK[known.state]
+    adopted = r > k || (r === k && state === 'running') // 终态锁定；running 的重复只收日志
+  }
+  if (!adopted) return { adopted: false, terminal: false }
+  const wasTerminal = !newBoot && BOOTSTRAP_RANK[known.state] === 2 && attempt === known.attempt
+  bootstrapKnown = { boot: snap.boot ?? known.boot, attempt, state }
+  if (pendingFloor !== null) {
+    // 采用了比点击时更新的一次（老后端：看到 running / 终态）= 这次尝试已经被观察到
+    if (legacy ? state !== 'idle' : attempt > pendingFloor) clearPending()
+  }
+  const terminal = BOOTSTRAP_RANK[state] === 2 && !wasTerminal
+  set({
+    installing: state === 'running' || pendingFloor !== null,
+    ...(snap.log !== undefined ? { log: snap.log } : {}),
+    ...(state === 'failed' && snap.error ? { log: snap.error } : {}),
+  })
+  return { adopted: true, terminal }
+}
 
 /**
  * 后端刚关掉本项目的会话、且变的东西说不清影响哪些面板（换环境、改指表增 / 换 / 删）：
@@ -460,6 +530,9 @@ export const useEnvStore = create<EnvState>((set, get) => ({
           return
         }
         set({ env })
+        // 安装进度主要靠 SSE：断线期间丢了终态事件，`installing` 会永久为真——环境状态里的 `{ attempt, state }`
+        // 与 SSE 同一个入口、同一套规则（旧 / 同序的快照自动丢弃，不用在这里猜先后）
+        applyBootstrap(env, (p) => set(p))
         // 改指表的代次（ADR 0106 §五）：重连 / 页面恢复的补拉就是这一次刷新
         const g = env.project?.input_remap?.generation
         if (typeof g === 'number') get().noteInputRemapGeneration(g)
@@ -473,10 +546,31 @@ export const useEnvStore = create<EnvState>((set, get) => ({
 
   install: async () => {
     if (get().installing) return
+    pendingFloor = bootstrapKnown.attempt
     set({ installing: true, log: '' })
     try {
-      await installEngineEnvironment()
+      const res = await installEngineEnvironment()
+      // 响应本身就是一份快照（带新 attempt；终态响应立即应用）。老后端没有 attempt：待定留到观察到 running / 终态
+      // 或 30 s 兜底
+      applyBootstrap(res, (p) => set(p))
+      if (pendingFloor !== null && typeof res.attempt === 'number') {
+        // 响应带着 (boot, attempt)：它就是这次点击的结算。attempt 比点击时更大 = 开出了新的一次（上面已采用并解除）；
+        // 没变 = 这次点击没开出新尝试（已经在跑 / 装不了）——按响应里的状态说话，待定到此为止，不再等一个永远不来的新 attempt
+        clearPending()
+        set({ installing: bootstrapKnown.state === 'running' })
+      }
+      if (pendingFloor !== null && typeof res.attempt !== 'number') {
+        pendingTimer = setTimeout(() => {
+          pendingTimer = null
+          if (pendingFloor === null) return
+          if (import.meta.env.DEV) console.warn('[envStore] 安装已提交但 30s 内没观察到 running / 终态（老后端），用一次读取收尾')
+          clearPending()
+          set({ installing: bootstrapKnown.state === 'running' })
+          void get().refresh()
+        }, INSTALL_PENDING_TIMEOUT_MS)
+      }
     } catch (e) {
+      clearPending()
       set({
         installing: false,
         log: e instanceof Error ? e.message : t('engine.installFailed', { ns: 'errors' }),
@@ -662,12 +756,8 @@ export const useEnvStore = create<EnvState>((set, get) => ({
   },
 
   onProgress: (p) => {
-    set({ log: p.log })
-    if (p.state === 'done' || p.state === 'failed') {
-      set({ installing: false })
-      void get().refresh()
-    } else if (p.state === 'running') {
-      set({ installing: true })
-    }
+    const { terminal } = applyBootstrap(p, (patch) => set(patch))
+    // 终态：环境那半边变了（建好了 / 失败了），读一次
+    if (terminal) void get().refresh()
   },
 }))

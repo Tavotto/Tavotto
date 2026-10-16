@@ -86,7 +86,19 @@ export function CanvasTabs() {
       : gap.parentElement?.querySelector<HTMLElement>('[data-all-canvases]')
     const from = gap.getBoundingClientRect()
     const slack = (menu ? menu.getBoundingClientRect().right : from.right) - from.left
-    setOverflowing(el.scrollWidth > el.clientWidth + slack + 1)
+    // 内容宽与条宽都按**小数**量（getBoundingClientRect），不用取整的 scrollWidth / clientWidth：取整各差最多 1px，
+    // 原先靠一道 `+ 1` 的容差兜，结果判据与真实几何在边上差到 2~3px（e2e 宽度扫描因此随字宽取整随机红）。
+    // 两个状态用同一个量：有菜单时条缩着、`slack` 是撤掉菜单能多出来的 菜单 + 它前面那道 gap；没菜单时是空白宽。
+    // 条一旦放得下，撤掉菜单后条恰好多出 `slack`，内容仍 ≤ 条宽，不会来回翻
+    // 要的是**布局**位置：`useFlip` 在这个 layout effect 之前就给页签挂上了 WAAPI 的 translate（重排滑动），rect 量到的是
+    // 动画中的视觉位置。computed transform 反映动画当前值，把它的平移分量减回去就是布局右缘（FLIP 只有 translate，没有缩放）
+    const last = el.lastElementChild
+    const box = el.getBoundingClientRect()
+    const shift = last && typeof DOMMatrix !== 'undefined' ? new DOMMatrix(getComputedStyle(last).transform).m41 : 0
+    const content = last
+      ? last.getBoundingClientRect().right - shift - box.left + el.scrollLeft + parseFloat(getComputedStyle(el).paddingRight)
+      : 0
+    setOverflowing(content > box.width + slack)
   }, [menuPinned])
 
   // 溢出边缘的渐隐（2026-10-07 设计审计 §3.7 / §10.1）：条外还有页签的那一侧 16px alpha mask，

@@ -187,7 +187,8 @@ const projectEnvDeferred = (report: PreparationReport): boolean =>
   report.checks.some((c) => c.id === 'dependencies' && c.detail?.deferred === 'project_environment')
 
 const offline = (v: Record<string, unknown>, engineExited?: boolean) =>
-  view('offline', engineExited ? 'engineStopped' : 'offline', v, null, { tone: 'mute', slot: 'progress', step: 1 })
+  // 不画活动条：断线 / 引擎已停时没有任何东西在推进，一条在扫的条是假的「还在动」
+  view('offline', engineExited ? 'engineStopped' : 'offline', v, null, { tone: 'mute', step: 1 })
 
 function fromReport(report: PreparationReport, entry: PrepEntry, ctx: PrepContext, script: string): PrepView {
   const v = { script }
@@ -348,8 +349,9 @@ function needsSomething(report: PreparationReport, script: string): PrepView {
       ? view('needs_args', 'argsRejected', { count: given }, { kind: 'reopen', label: 'continue' }, { slot: 'args', argsOpen: true })
       : view('needs_args', 'needsArgs', v, { kind: 'reopen', label: 'continue' }, { slot: 'args', argsOpen: true })
   }
-  // safe 守卫拦下了脚本的文件操作、脚本随后又读了它（P01a）：重试得到同样的结果，没有「再试一次」；
-  // 自动换成"按真实文件运行"的路径还没接通（adapter_available=false），所以没有主按钮——如实说，不替用户换环境重跑
+  // safe 守卫拦下了脚本的文件操作、脚本随后又读了它（P01a）：重试得到同样的结果，没有「再试一次」。
+  // 桌面用户发起的运行会先按执行证据静默回退到 native 再试一次（ADR 0127 D1）；走到这里说明没有回退
+  // （非桌面发起 / 回退被关 / 回退后仍失败……），所以没有主按钮——如实说，不替用户换环境重跑
   if (report.outcome.kind === 'failed' && code === 'safe_file_operation_blocked') {
     return view('file_ops_blocked', 'fileOpsBlocked', v, null, { tone: 'bad', step: 1 })
   }
@@ -419,4 +421,21 @@ export function prepRowKey(entry: PrepEntry | undefined): { key: string; values:
     default:
       return { key: 'attention', values: {} }
   }
+}
+
+/**
+ * safe → native 静默回退**成功**之后，详情里补的那一行（默认句子与主按钮不变，ADR 0127 裁决静默）。
+ * 事实全在后端：账本（`attempt_history`）里本次 run 最后一次尝试是 native 且相对上一次换了执行语义，且这次捕获到的图确实是
+ * native 的；`noWriteback` 读描述符自己的 `can_writeback_source`，不在前端推。老后端没有账本 = 不说。
+ */
+export function nativeFallbackNote(report: PreparationReport | null): { noWriteback: boolean } | null {
+  if (!report || report.phase !== 'completed' || report.outcome.kind !== 'succeeded') return null
+  const history = report.attempt_history ?? []
+  if (history.length === 0) return null
+  const run = Math.max(...history.map((a) => a.run))
+  const last = history.filter((a) => a.run === run).at(-1)
+  if (!last || last.profile !== 'native' || !last.changed.includes('profile')) return null
+  const native = (report.captured ?? []).filter((c) => c.execution_profile === 'native')
+  if (native.length === 0) return null
+  return { noWriteback: native.some((c) => !c.can_writeback_source) }
 }

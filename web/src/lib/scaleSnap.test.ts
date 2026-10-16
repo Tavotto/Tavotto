@@ -45,7 +45,7 @@ describe('snapScaleNearest', () => {
     // 子图右边在页面 x = 40，距固定点 30
     const hit = snapScaleNearest({
       ...base,
-      s0: 1.98,
+      s0: 1.99,
       anchors: anchorsOf([{ v: 40, frame: false, rect: { x: 20, y: 0, w: 20, h: 10 } }]),
       cands: { xs: [line(70, 'axes')], ys: [] },
     })
@@ -57,7 +57,7 @@ describe('snapScaleNearest', () => {
     // 外框右边此刻 69.6：到内容线 69.9 距 0.3（混搭，第二档）；内容锚点 40 此刻 69.4…取同类
     const hit = snapScaleNearest({
       ...base,
-      s0: 1.49,
+      s0: 1.5,
       anchors: anchorsOf([{ v: 40, frame: false, rect: { x: 20, y: 0, w: 20, h: 10 } }]),
       cands: { xs: [line(69.9, 'axes'), line(70.4, 'frame')], ys: [] },
     })
@@ -69,9 +69,9 @@ describe('snapScaleNearest', () => {
   it('页面 / 参考线 / 网格对内容锚点也是第一档', () => {
     const hit = snapScaleNearest({
       ...base,
-      s0: 1.99,
+      s0: 2,
       anchors: anchorsOf([{ v: 40, frame: false, rect: { x: 20, y: 0, w: 20, h: 10 } }]),
-      cands: { xs: [line(69.5, 'frame'), line(70.3, 'guide')], ys: [] },
+      cands: { xs: [line(69.9, 'frame'), line(70.3, 'guide')], ys: [] },
     })
     expect(hit?.line.kind).toBe('guide')
   })
@@ -80,7 +80,7 @@ describe('snapScaleNearest', () => {
     // e 柄：固定点仍是左上角；下边 y=30 的候选线 y=50 → s = 2
     const hit = snapScaleNearest({
       ...base,
-      s0: 1.98,
+      s0: 1.99,
       anchors: anchorsOf(),
       cands: { xs: [], ys: [line(50, 'page')] },
     })
@@ -136,7 +136,14 @@ describe('snapScaleNearest', () => {
     expect(hit?.s).toBeCloseTo(1.5, 9)
   })
 
-  it('手柄跳变闸门：hold 分支同理——已吸住的对在跳变 ≥ 2×容差时放开', () => {
+  it('手柄跳变上限是 0.5×容差：跳变在 0.5×–1× 之间（原来会吸）现在不吸，0.5× 内照吸', () => {
+    // 外框右边此刻 10 + 40·s0；吸到 70 的跳变 = |1.5 − s0|·40（tol = 1）
+    const at = (s0: number) => snapScaleNearest({ ...base, s0, anchors: anchorsOf(), cands: { xs: [line(70)], ys: [] } })
+    expect(at(1.4825)).toBeNull() // 距 0.7、跳变 0.7：容差内但超过 0.5×
+    expect(at(1.4885)?.s).toBeCloseTo(1.5, 9) // 跳变 0.46 < 0.5
+  })
+
+  it('手柄跳变闸门：hold 分支同理——已吸住的对在跳变 ≥ 0.5×1.75×容差时放开', () => {
     const anchors = anchorsOf([{ v: 10.1, frame: false, rect: { x: 10.1, y: 0, w: 5, h: 5 } }])
     const cands = { xs: [line(11, 'guide')], ys: [] }
     const hold = createScaleHold()
@@ -146,21 +153,21 @@ describe('snapScaleNearest', () => {
     expect(hold.held).toBeNull()
   })
 
-  it('吸住后保持：同一对距离 < 2×容差继续吸，超过放开', () => {
+  it('吸住后保持：同一对的跳变 < 0.5×1.75×容差继续吸，超过放开（1.75× 边界两侧）', () => {
     const hold = createScaleHold()
-    const cands = { xs: [line(70, 'frame'), line(71.5, 'frame')], ys: [] }
+    const cands = { xs: [line(70, 'frame'), line(70.6, 'frame')], ys: [] }
     const common = { ...base, anchors: anchorsOf(), cands, hold }
     expect(snapScaleNearest({ ...common, s0: 1.49 })?.line.v).toBe(70) // 右边 69.6 → 70
-    // 拖到 71.2（离 70 有 1.2 < 2·tol；离 71.5 只有 0.3）：仍保持 70
-    expect(snapScaleNearest({ ...common, s0: (71.2 - 10) / 40 })?.line.v).toBe(70)
-    // 拖到 72.2（离 70 有 2.2 ≥ 2）：放开，改挑 71.5
-    expect(snapScaleNearest({ ...common, s0: (72.2 - 10) / 40 })?.line.v).toBe(71.5)
+    // 拖到 70.8（离 70 有 0.8 < 0.875；离 70.6 只有 0.2）：仍保持 70
+    expect(snapScaleNearest({ ...common, s0: (70.8 - 10) / 40 })?.line.v).toBe(70)
+    // 拖到 70.9（离 70 有 0.9 ≥ 0.875）：放开，改挑 70.6
+    expect(snapScaleNearest({ ...common, s0: (70.9 - 10) / 40 })?.line.v).toBe(70.6)
   })
 
   it('没有 hold 时同样的位置按最近挑（对照上一条）', () => {
-    const cands = { xs: [line(70, 'frame'), line(71.5, 'frame')], ys: [] }
-    const hit = snapScaleNearest({ ...base, s0: (71.2 - 10) / 40, anchors: anchorsOf(), cands })
-    expect(hit?.line.v).toBe(71.5)
+    const cands = { xs: [line(70, 'frame'), line(70.6, 'frame')], ys: [] }
+    const hit = snapScaleNearest({ ...base, s0: (70.8 - 10) / 40, anchors: anchorsOf(), cands })
+    expect(hit?.line.v).toBe(70.6)
   })
 })
 
@@ -233,7 +240,7 @@ describe('子图 / 色条的中线以内容身份出线（Codex #1033 r426815738
     })
     return snapScaleNearest({
       fixed: { x: 0, y: 0 }, size: { w: 100, h: 75 }, s0: 3.2111,
-      anchors: scaleAnchorsFor(T, axesManifest()), cands, tol: 1.2,
+      anchors: scaleAnchorsFor(T, axesManifest()), cands, tol: 2.4, // 跳变上限 0.5×tol = 1.2：中线的跳变 ≈ 1.11、外框 0.7，都在内
     })
   }
 

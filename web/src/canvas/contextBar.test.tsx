@@ -8,6 +8,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { TooltipProvider } from '@/components/ui/Tooltip'
 import { useDocumentStore } from '@/store/documentStore'
+import { registerPointerCancel } from '@/store/gestureCoordinator'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
 import { emptyProject, type TextObject } from '@/types/document'
@@ -134,6 +135,20 @@ describe('ContextBar', () => {
     })
     await selectText()
     expect(bar()).not.toBeNull()
+  })
+
+  it('进行中的指针手势（拖分栏手柄、拖对象……）先拿 Esc：工具条不被关掉；手势结束后的 Esc 照常关', async () => {
+    await selectText()
+    const unregister = registerPointerCancel(() => {})
+    await act(async () => {
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
+    })
+    expect(bar()).not.toBeNull()
+    unregister()
+    await act(async () => {
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
+    })
+    expect(bar()).toBeNull()
   })
 
   it('双击进入文字编辑时让位（editingTextId 挂起就不显示）', async () => {

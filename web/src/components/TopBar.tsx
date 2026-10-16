@@ -61,12 +61,15 @@ import { useRenameFocusReturn } from './ui/useRenameFocusReturn'
 import type { StatusTone } from './ui/Notice'
 import { ConflictActions, ConflictDetail } from './DocumentBanner'
 import { RestoreIssueBody, RestoreMetaBody } from './RestoreIssueBody'
+import { useWindowFullscreen } from '@/hooks/useWindowChrome'
 import { MOD, cn } from '@/lib/utils'
 import { msg, t as translate } from '@/i18n'
 import { formatTime } from '@/i18n/format'
 import { useFormatMessage } from '@/i18n/react'
 
 export function TopBar() {
+  // macOS 全屏：红绿灯收起，左侧让位的那段随之收回（进入方向过渡走 motion token，reduced-motion 下全局硬切；退出方向立即恢复）
+  const fullscreen = useWindowFullscreen()
   // 写回原始文件住在「⋯」第一项；它的窗口挂在菜单外面（菜单一合上，项就卸载）
   const writeBack = useWriteBackMenuEntry()
   return (
@@ -79,8 +82,16 @@ export function TopBar() {
     <header
       data-topbar
       {...dragRegionProps()}
-      style={windowChrome() === 'overlay' ? { paddingLeft: TRAFFIC_LIGHTS_INSET } : undefined}
-      className="flex h-11 shrink-0 items-center justify-between gap-3 bg-bg px-3 max-[899px]:gap-1.5 max-[899px]:px-2"
+      style={
+        windowChrome() === 'overlay' && !fullscreen
+          ? { paddingLeft: TRAFFIC_LIGHTS_INSET }
+          : undefined
+      }
+      className={cn(
+        'flex h-11 shrink-0 items-center justify-between gap-3 bg-bg px-3 max-[899px]:gap-1.5 max-[899px]:px-2',
+        // 只有进入全屏方向有过渡；退出时红绿灯马上回来，占位必须立刻恢复（否则控件会压在红绿灯下）
+        fullscreen && 'transition-[padding-left] duration-base',
+      )}
     >
       <div className="flex min-w-0 flex-1 items-center gap-1.5 max-[899px]:gap-1">
         <AppMenuButton />

@@ -230,24 +230,67 @@ test('页签少但放不下时也给「全部画布」菜单，能切到条外�
  *
  * 菜单自己占着条右边一截：按含菜单的宽度判「放不放得下」的话，宽度落在「不带菜单放得下、
  * 带菜单放不下」那一段时菜单撑着自己不走。判据不借实现的算式：从行的几何独立推——页签条按
- * 内容宽（scrollWidth）排开时「+」的右缘落在哪里，落在行的内容盒里 = 不带菜单放得下。
+ * 内容宽（小数几何）排开时「+」的右缘落在哪里，落在行的内容盒里 = 不带菜单放得下。
  */
 async function fitsWithoutMenu(strip: Locator) {
   return strip.evaluate((el) => {
     const row = el.parentElement!
     const plus = row.querySelector('[data-new-canvas-tab]') as HTMLElement
-    const pad = parseFloat(getComputedStyle(row).paddingRight)
-    const plusRight = plus.getBoundingClientRect().right - el.clientWidth + el.scrollWidth
-    // 行最右是缩放菜单（2026-09-30 搬进标签行）：它占着行的右端，页签 +「+」能用的右缘是它的左缘
-    // 再退一道 gap，不是行的内容盒右缘
     const zoom = row.lastElementChild as HTMLElement
     const gap = parseFloat(getComputedStyle(row).columnGap)
-    const rowRight = zoom.querySelector('[data-zoom-menu]')
-      ? zoom.getBoundingClientRect().left - gap
-      : row.getBoundingClientRect().right - pad
+    // 条按内容宽排开时「+」的右缘（小数几何：最后一个页签的右缘 + 条的右内边距，换算到「+」的位置）
+    const last = el.lastElementChild!
+    const box = el.getBoundingClientRect()
+    // 页签重排动画（useFlip）期间最后一个页签带 translate：同样把它的平移减回去，量布局位置
+    const shift = new DOMMatrix(getComputedStyle(last).transform).m41
+    const content =
+      last.getBoundingClientRect().right - shift - box.left + el.scrollLeft + parseFloat(getComputedStyle(el).paddingRight)
+    const plusRight = plus.getBoundingClientRect().right + (content - box.width)
+    // 行最右是缩放菜单（2026-09-30 搬进标签行）：它右贴行尾，不随「画布菜单」撤掉而挪位。撤掉菜单后「+」之后
+    // 依次是 gap、（可能为 0 宽的）弹性空白、gap，才是缩放菜单——「+」右缘最多到缩放菜单左缘退两道 gap。
+    // （此前写成退一道，比真实几何宽松一个 gap；实现的判据是精确的，两边在边上就差出了几 px 的模糊带）
+    const rowRight = zoom.getBoundingClientRect().left - 2 * gap
     return { fits: plusRight <= rowRight + 0.5, slack: rowRight - plusRight }
   })
 }
+
+test('「条放不下」的判定不受最后一个页签的 transform 影响（重排动画期间量布局位置，不量视觉位置）', async ({ app, page }) => {
+  await page.setViewportSize({ width: 600, height: 700 })
+  const a = await app()
+  await page.goto(a.baseURL)
+  await waitForDocumentReady(page)
+  await closeOverlayDrawer(page)
+  const strip = page.locator('[data-canvas-tabs]')
+  const menu = page.locator('[data-all-canvases]')
+  const newCanvas = page.locator('[data-new-canvas-tab]')
+  for (let i = 0; i < 3; i++) await newCanvas.click()
+  const tabs = strip.locator('[data-canvas-tab]')
+  await expect(tabs).toHaveCount(4)
+  for (let i = 0; i < 4; i++) {
+    await tabs.nth(i).dblclick()
+    const input = strip.locator('[data-canvas-tab-rename]')
+    await input.fill(`很长很长的画布名字第${i + 1}个`)
+    await input.press('Enter')
+    await expect(strip.locator('[data-canvas-tab-rename]')).toHaveCount(0)
+  }
+  const start = await fitsWithoutMenu(strip)
+  const exact = 600 - start.slack
+  const lastTab = () => strip.locator('[data-canvas-tab]').last()
+  const settle = () => page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))))
+  // 放不下（slack ≈ -20）：把最后一个页签平移 -40，视觉位置看上去「放得下」——判定仍应是放不下（菜单在）
+  // 放得下（slack ≈ +20）：平移 +40，视觉上看上去「放不下」——判定仍应是放得下（菜单收起）
+  for (const [width, shift, expectMenu] of [[Math.round(exact - 20), -40, 1], [Math.round(exact + 20), 40, 0]] as const) {
+    await lastTab().evaluate((el) => el.style.removeProperty('transform'))
+    await page.setViewportSize({ width: 600, height: 700 })
+    await settle()
+    await lastTab().evaluate((el, s) => el.style.setProperty('transform', `translateX(${s}px)`), shift)
+    await page.setViewportSize({ width, height: 700 })
+    await settle()
+    const f = await fitsWithoutMenu(strip)
+    expect(f.fits, `宽 ${width}：${JSON.stringify(f)}`).toBe(expectMenu === 0)
+    await expect(menu, `宽 ${width} 平移 ${shift}`).toHaveCount(expectMenu)
+  }
+})
 
 test('「条放不下」出现的菜单：窗口拉宽到不带菜单放得下时收起，再变窄时回来（宽度扫描）', async ({ app, page }) => {
   await page.setViewportSize({ width: 600, height: 700 })
@@ -293,8 +336,8 @@ test('「条放不下」出现的菜单：窗口拉宽到不带菜单放得下�
     await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))))
     const f = await fitsWithoutMenu(strip)
     seen.push(`${w}:${f.fits ? 'fit' : 'over'}`)
-    // 正好卡在边上（±2px）：scrollWidth 是取整的，两边的判据可以差不到 1px，这一档不判
-    if (Math.abs(f.slack) < 2) continue
+    // 正好卡在边上（±0.5px，即上面 fits 的容差）：两边都按小数几何量，只剩浮点边界这一档不判
+    if (Math.abs(f.slack) < 0.5) continue
     if (f.fits && f.slack < band) inBand++
     await expect(menu, `宽 ${w}：${JSON.stringify(f)}`).toHaveCount(f.fits ? 0 : 1)
   }

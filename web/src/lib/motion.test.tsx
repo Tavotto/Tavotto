@@ -18,6 +18,7 @@ import { resolve } from 'node:path'
 import {
   DURATION,
   EASE_POP,
+  EASE_SNAP,
   EASE_SPRING,
   EASE_STANDARD,
   easeOutCubic,
@@ -102,6 +103,13 @@ describe('关键帧的形态约束', () => {
     expect(y1).toBeGreaterThan(1)
     expect(y1).toBeLessThanOrEqual(1.5)
     // y2 = 1：收尾不再抖第二下
+    expect(y2).toBe(1)
+  })
+
+  it('指示物的滑动曲线：--ease-snap 与 EASE_SNAP 逐字节相同，不过冲（y1、y2 都 ≤ 1）（Segmented / Tabs 实际用它：见 keyboardPrimitives.test 渲染后的指示元素 class）', () => {
+    expect(cssToken('ease-snap')).toBe(EASE_SNAP)
+    const [, y1, , y2] = EASE_SNAP.match(/cubic-bezier\(([^)]+)\)/)![1].split(',').map(Number)
+    expect(y1).toBeLessThanOrEqual(1)
     expect(y2).toBe(1)
   })
 

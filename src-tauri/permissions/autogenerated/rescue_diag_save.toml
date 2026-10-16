@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-rescue-diag-save"
+description = "Enables the rescue_diag_save command without any pre-configured scope."
+commands.allow = ["rescue_diag_save"]
+
+[[permission]]
+identifier = "deny-rescue-diag-save"
+description = "Denies the rescue_diag_save command without any pre-configured scope."
+commands.deny = ["rescue_diag_save"]

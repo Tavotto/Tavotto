@@ -258,6 +258,15 @@ jobs:
             exit 1
           }
 
+      - name: Windows 保留 PDB（cargo 的 strip=true 在 MSVC 上会连 PDB 一起不产出）
+        # Cargo.toml 的 release 档为 macOS 写的是 strip=true + split-debuginfo=packed；MSVC 上
+        # strip 会让链接器收到 /DEBUG:NONE，.pdb 根本不生成。MSVC 的 exe 本来就不内嵌调试段
+        # （只带一条 PDB 路径），所以这里关掉 strip 不会让安装包变大。写进 GITHUB_ENV，
+        # build_desktop.py 的 workerd 构建与后面的 tauri build 两处 cargo 都吃到。
+        if: runner.os == 'Windows'
+        shell: bash
+        run: echo "CARGO_PROFILE_RELEASE_STRIP=none" >> "$GITHUB_ENV"
+
       - name: 发行签名门禁（缺凭据的发行构建就失败在这里，不是 warning）
         # 1.0 审计 P1-07：签名与安全更新不能是「可选能力」。发出去的安装包
         # 必须签名（macOS 还要能公证），更新包必须带 minisign 签名——缺任一
@@ -447,6 +456,54 @@ jobs:
             pnpm dlx @tauri-apps/cli@2.11.4 build --bundles ${{ matrix.bundles }} \
               --config '{"bundle":{"createUpdaterArtifacts":false}}' ${ARCH_CONFIG[@]+"${ARCH_CONFIG[@]}"}
           fi
+
+      - name: 收集调试符号（另存，不进安装包、不进更新清单）
+        # 发出去的二进制仍是剥光的；这里把同一次构建出的符号文件另存成独立的
+        # workflow artifact `debug-symbols-<腿>`，崩溃栈 / .dmp 靠它符号化。
+        #   macOS:   .dSYM（壳 + tavotto-workerd）+ 各二进制的 UUID（dwarfdump -u），按 UUID 配对
+        #   Windows: .pdb（壳 + tavotto-workerd），exe 里的 PDB GUID/age 与之配对
+        # 缺任何一份都**失败**——没有符号的发行构建事后补不回来。
+        # 这个 artifact 名不在 desktop-tauri-* / artifact-manifest-* 里：release-publish 的
+        # pattern 下载、artifact_manifest 与 updater-manifest 都读不到它，不会被挂上 Release。
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p symbols
+          VER="${RELEASE_TAG#v}"
+          {
+            echo "tag=$RELEASE_TAG"
+            echo "version=$VER"
+            echo "sha=${{ needs.trust.outputs.sha }}"
+            echo "leg=${{ matrix.artifact }}"
+            echo "arch=${{ matrix.arch }}"
+          } > symbols/BUILD.txt
+          if [ "${{ runner.os }}" = "macOS" ]; then
+            for pair in "src-tauri/target/release/tavotto-desktop" "workerd/target/release/tavotto-workerd"; do
+              test -d "$pair.dSYM" || { echo "::error::缺 $pair.dSYM（split-debuginfo 没生效？）"; exit 1; }
+              # dSYM 在 target/release 下是指向 deps/ 的符号链接：-L 拍平成真目录
+              cp -RL "$pair.dSYM" symbols/
+              dwarfdump -u "$pair" >> symbols/UUIDS.txt
+            done
+            # 空壳 dSYM（没有 DWARF）等于没存：必须真有函数
+            for d in symbols/*.dSYM; do
+              n=$(dwarfdump --statistics "$d" | grep -m1 '"#functions"' | tr -dc '0-9')
+              test "${n:-0}" -gt 0 || { echo "::error::$d 里没有 DWARF 函数"; exit 1; }
+            done
+          else
+            for pdb in src-tauri/target/release/tavotto_desktop.pdb workerd/target/release/tavotto_workerd.pdb; do
+              test -s "$pdb" || { echo "::error::缺 $pdb（CARGO_PROFILE_RELEASE_STRIP=none 没生效？）"; exit 1; }
+              cp "$pdb" symbols/
+            done
+          fi
+          ls -laR symbols
+
+      - name: 上传调试符号
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: debug-symbols-${{ matrix.artifact }}
+          path: symbols/
+          if-no-files-found: error
+          retention-days: 90
 
       # 发行链上的安装界面门禁。判的是 Tauri 把 {{...}} 展开后**真正喂给
       # makensis 的那份**中间脚本，不是仓库模板：installMode / license /

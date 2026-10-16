@@ -1156,6 +1156,143 @@ class TestEndToEnd:
         assert errors[0]["code"] == "scan_failed"
         assert isinstance(errors[0]["params"], dict)
 
+    def test_recovery_after_a_failure_is_announced_even_without_a_diff(
+        self, client, tmp_path, sse_spy
+    ):
+        """注册表被改坏 → `project.error`；改回**原样**：刷新成功但没有语义差异，`registry.changed` 一条都不发，
+        前端那条常驻错误提示就没有撤的信号。所以恢复要在同一个事件名里带 `recovered`（不新增事件名）。"""
+        figs = _project(tmp_path)
+        _script(figs, "fig1.py", "Fig1")
+        _pdf(figs / "Fig1.pdf")
+        body = client.post("/api/projects/open", json={"path": str(figs)}).get_json()
+        ctx = m.PROJECTS[body["id"]]
+        engine_watch.stop()
+        m.refresh_project(ctx, reason="manual")
+        reg = figs / "tavotto_registry.json"
+        good = reg.read_text(encoding="utf-8")
+
+        w = engine_watch.ProjectWatcher(ctx, sink=m._watch_sink(ctx), interval=0.01, debounce=0.0)
+        w.prime()
+        reg.write_text("{ 这不是 JSON", encoding="utf-8")
+        w.poll()
+        sse_spy.clear()
+        reg.write_text(good, encoding="utf-8")
+        w.poll()
+
+        kinds = [ev for ev, _ in sse_spy]
+        assert "registry.changed" not in kinds and "assets.changed" not in kinds, sse_spy
+        rec = [d for ev, d in sse_spy if ev == "project.error"]
+        assert len(rec) == 1 and rec[0]["recovered"] is True and rec[0]["pj"] == ctx.id, sse_spy
+        # 之后再无事发生：不重复报
+        sse_spy.clear()
+        w.poll()
+        assert not [1 for ev, _ in sse_spy if ev == "project.error"]
+
+    def test_a_manual_refresh_that_succeeds_also_announces_recovery(
+        self, client, tmp_path, sse_spy
+    ):
+        """「恢复了」放在统一刷新的成功边界：用户手动刷新成功（无语义差异）也撤错误，且只报一次；
+        从没失败过的成功刷新不报；watcher 随后的无事轮询不重复报。"""
+        figs = _project(tmp_path)
+        _script(figs, "fig1.py", "Fig1")
+        _pdf(figs / "Fig1.pdf")
+        body = client.post("/api/projects/open", json={"path": str(figs)}).get_json()
+        ctx = m.PROJECTS[body["id"]]
+        engine_watch.stop()
+        sse_spy.clear()
+        m.refresh_project(ctx, reason="manual")
+        assert not [1 for ev, d in sse_spy if ev == "project.error"], sse_spy  # 没失败过：不报
+
+        reg = figs / "tavotto_registry.json"
+        good = reg.read_text(encoding="utf-8")
+        reg.write_text("{ 这不是 JSON", encoding="utf-8")
+        with pytest.raises(engine_refresh.RefreshError):
+            m.refresh_project(ctx, reason="manual")
+        sse_spy.clear()
+        reg.write_text(good, encoding="utf-8")
+        m.refresh_project(ctx, reason="manual")
+        rec = [d for ev, d in sse_spy if ev == "project.error"]
+        assert len(rec) == 1 and rec[0]["recovered"] is True and rec[0]["pj"] == ctx.id, sse_spy
+        sse_spy.clear()
+        m.refresh_project(ctx, reason="manual")
+        w = engine_watch.ProjectWatcher(ctx, sink=m._watch_sink(ctx), interval=0.01, debounce=0.0)
+        w.prime()
+        w.poll()
+        assert not [1 for ev, _ in sse_spy if ev == "project.error"], sse_spy
+
+    def test_project_error_events_carry_a_monotonic_seq_and_recovery_follows_the_refresh_result(
+        self, client, tmp_path, sse_spy
+    ):
+        """失败与恢复共用一个单调 `seq`（分配与发布同锁）；恢复一定排在同一次刷新的结果事件（`registry.changed`）之后，
+        前端凭 seq 丢迟到的旧错误，恢复提示不会被顶回去。"""
+        figs = _project(tmp_path)
+        _script(figs, "fig1.py", "Fig1")
+        _pdf(figs / "Fig1.pdf")
+        body = client.post("/api/projects/open", json={"path": str(figs)}).get_json()
+        ctx = m.PROJECTS[body["id"]]
+        engine_watch.stop()
+        m.refresh_project(ctx, reason="manual")
+        reg = figs / "tavotto_registry.json"
+        good = reg.read_text(encoding="utf-8")
+        w = engine_watch.ProjectWatcher(ctx, sink=m._watch_sink(ctx), interval=0.01, debounce=0.0)
+        w.prime()
+        sse_spy.clear()
+        reg.write_text("{ 这不是 JSON", encoding="utf-8")
+        w.poll()
+        reg.write_text(good, encoding="utf-8")
+        _script(figs, "fig2.py", "Fig2")  # 恢复的那次刷新带着真实差异
+        m.refresh_project(ctx, reason="manual")
+        errs = [d for ev, d in sse_spy if ev == "project.error"]
+        assert len(errs) == 2 and errs[0]["seq"] < errs[1]["seq"], sse_spy
+        assert errs[1]["recovered"] is True
+        kinds = [ev for ev, _ in sse_spy]
+        assert kinds.index("registry.changed") < len(kinds) - 1 - kinds[::-1].index(
+            "project.error"
+        ), kinds
+
+    def test_recovery_is_only_announced_after_the_failed_refresh_really_succeeds(
+        self, client, tmp_path, sse_spy, monkeypatch
+    ):
+        """失败的原因不一定是注册表（脚本读不了等）：把注册表**原样重写**看起来没变，但那不能证明恢复了。
+        `_errored` 时遇到注册表变化即使被判为自写也要真刷新一次，成功才报；仍失败就保持错误态。"""
+        figs = _project(tmp_path)
+        _script(figs, "fig1.py", "Fig1")
+        _pdf(figs / "Fig1.pdf")
+        body = client.post("/api/projects/open", json={"path": str(figs)}).get_json()
+        ctx = m.PROJECTS[body["id"]]
+        engine_watch.stop()
+        m.refresh_project(ctx, reason="manual")
+        reg = figs / "tavotto_registry.json"
+        good = reg.read_text(encoding="utf-8")
+        w = engine_watch.ProjectWatcher(ctx, sink=m._watch_sink(ctx), interval=0.01, debounce=0.0)
+        w.prime()
+
+        real = engine_refresh.refresh_project_index
+        broken = {"on": True}
+
+        def flaky(c, **kw):
+            if broken["on"]:
+                raise engine_refresh.RefreshError("scan_failed", "脚本读不了", {"reason": "x"})
+            return real(c, **kw)
+
+        monkeypatch.setattr(engine_refresh, "refresh_project_index", flaky)
+        _script(figs, "fig2.py", "Fig2")  # 一次真实变化触发失败的刷新
+        w.poll()
+        assert [d for ev, d in sse_spy if ev == "project.error" and d.get("code") == "scan_failed"]
+        sse_spy.clear()
+
+        reg.write_text(good + " ", encoding="utf-8")  # 内容变了又改回原样
+        reg.write_text(good, encoding="utf-8")
+        w.poll()
+        assert not [1 for ev, d in sse_spy if ev == "project.error" and d.get("recovered")], sse_spy
+
+        broken["on"] = False
+        sse_spy.clear()
+        _script(figs, "fig3.py", "Fig3")
+        w.poll()
+        rec = [d for ev, d in sse_spy if ev == "project.error" and d.get("recovered")]
+        assert len(rec) == 1, sse_spy
+
     def test_a_live_watcher_picks_up_a_new_script(self, client, tmp_path, sse_spy):
         """真线程跑一遍：打开项目 → 在编辑器里新建一个脚本 → 无须点刷新。
 

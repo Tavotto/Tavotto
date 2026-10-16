@@ -941,7 +941,11 @@ def target_key(target: dict) -> str:
     # safe key；原 key 恒以 `script:` / `asset:` 开头，`<执行语义>|` 前缀的 key 因此不可能等于任何 safe key。
     # safe 的 key 与此前逐字节相同（现有会话与用例不失效）
     execution = target.get("execution") or execspec.PROFILE_SAFE
-    return key if execution == execspec.PROFILE_SAFE else f"{execution}|{key}"
+    # `auto`（V2 PR2）是「让路由挑」，与显式 safe / native 各有各的会话（否则显式 safe 会复用路由选了 native
+    # 的会话）；它同样走前缀，省略 / safe 的 key 仍与 main 逐字节相同
+    if execution == execspec.PROFILE_SAFE:
+        return key
+    return f"{execution}|{key}"
 
 
 def _fingerprint(plan: preparation.PreparationPlan) -> str:
@@ -1194,6 +1198,7 @@ class SessionService:
             original_artifact=target.get("original_artifact"),
             original_path=target.get("original_path"),
             target=target["kind"],
+            # 省略 = safe（与 main 相同）；`auto` 由 HTTP 入口在请求省略执行语义时显式带进脚本目标（V2 PR2，ADR 0133）
             execution=target.get("execution") or execspec.PROFILE_SAFE,
             **({"run": target["run"]} if target.get("run") is not None else {}),
         )
@@ -1596,8 +1601,28 @@ class SessionService:
                 409,
                 {"reason": stale[0], "executed": False},
             )
+        base = sess.plan
+        if base.route and base.execution == execspec.PROFILE_NATIVE and not desktop:
+            # 路由（ADR 0133）选了 native，但这次动作不是桌面窗口发起的（浏览器 / 本机凭据客户端 / 无认证入口）：授权边界与回退
+            # 完全一致，非桌面来源不能被路由到 native。检查时拿不到来源，所以在认领这一刻按 safe 重新规划（只读）
+            safe = self._plan_of(
+                sess.project_id,
+                sess.project_root,
+                {**sess.target, "execution": execspec.PROFILE_SAFE},
+            )
+            base = dataclasses.replace(
+                safe,
+                route={
+                    **base.route,
+                    "execution": execspec.PROFILE_SAFE,
+                    "declined": execpolicy.REASON_NOT_DESKTOP,
+                },
+            )
+            # 会话的计划跟上（不加修订，同「点运行时采用了项目环境」）：报告里的 route 如实说这次没走 native
+            sess.plan = base
+            sess.fingerprint = _fingerprint(base)
         plan = dataclasses.replace(
-            sess.plan, plan_id=f"prep-{uuid.uuid4().hex}", created_at=self._clock()
+            base, plan_id=f"prep-{uuid.uuid4().hex}", created_at=self._clock()
         )
         sess.dependency_delta = None  # 新的一次尝试：上一次依赖准备留下的差额已经被这次执行消费
         attempt = _Attempt(
@@ -1622,12 +1647,31 @@ class SessionService:
         entry = self._prep.get(plan.plan_id, sess.project_id)
         if entry is not None and entry[1].status == preparation.STATUS_PENDING:
             try:
+                if plan.execution == execspec.PROFILE_NATIVE:
+                    # 直达 native（路由 / 显式）与回退同一套最后一刻复核：native runner 启动时无条件让位该脚本的桌面 native 会话
+                    # 并占用项目——已有更新的同脚本计划登记（被取代），或运行开始后项目关闭又重开（代次对不上），都不起进程
+                    if self._prep.superseded(plan.plan_id):
+                        raise SessionError(
+                            ERROR_NOT_RUNNABLE,
+                            "已有更新的同脚本运行，这一次不再启动",
+                            409,
+                            {"reason": execpolicy.REASON_SUPERSEDED, "executed": False},
+                        )
+                    if attempt.epoch != nativesession.REGISTRY.project_epoch(sess.project_root):
+                        raise SessionError(
+                            ERROR_NOT_RUNNABLE,
+                            "项目已关闭并重新打开，这一次不再启动",
+                            409,
+                            {"reason": execpolicy.REASON_PROJECT_REOPENED, "executed": False},
+                        )
                 launch(plan, done)
             except Exception:
                 # 没交出去：撤回认领，动作仍可再用
                 sess.attempts.remove(attempt)
                 sess.ledger.discard(plan.plan_id)
                 action.attempt_id = None
+                if plan.execution == execspec.PROFILE_NATIVE:
+                    self._prep.cancel_plan(plan.plan_id)  # 已登记的待执行计划不留成孤儿
                 raise
         else:
             # register 当场落了终局（needs_input / 静态）：没有执行线程，登记也无从谈起
@@ -1688,6 +1732,7 @@ class SessionService:
                 fallback = self._plan_fallback(sess, attempt, done_plan, done_result, code, desktop)
             except Exception:  # noqa: BLE001 — 回退的判断出错不能改写这次尝试已经发生的终局
                 LOG.exception("执行回退的判断失败 %s", done_plan.script)
+            # native 成功的启动记录 + 运行默认值已在 app 的成功收口里同一次写入提交（`launchctx.basis_of`）——这里不再补写
             with sess.lock:
                 sess.ledger.close(attempt.attempt_id, outcome, code)
                 if done_plan.interpreter != sess.plan.interpreter:

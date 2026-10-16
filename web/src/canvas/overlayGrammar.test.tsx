@@ -96,21 +96,20 @@ describe('覆盖层语法', () => {
     expect(snap.querySelector('path')!.getAttribute('d')!.match(/M/g)!.length).toBe(4)
   })
 
-  it('吸附反馈：自身虚线框 + 加粗的边（只画 self 的跨度）+ 目标虚线框；颜色只走 token、线宽不随倍率变', async () => {
+  it('吸附反馈：只框对方（目标虚线框）+ 自身加粗的边（只画 self 的跨度，不画自身虚线框）；颜色只走 token、线宽不随倍率变', async () => {
     const self = { x: 10, y: 20, w: 30, h: 10 }
     const target = { x: 60, y: 40, w: 20, h: 15 }
     await act(async () =>
       useInteractionStore.getState().setSnap([40], [], [{ axis: 'x', v: 40, self, target }]),
     )
     const fb = container.querySelector('[data-snap-feedback="x"]')!
-    const selfBox = fb.querySelector<SVGRectElement>('[data-snap-self]')!
+    expect(fb.querySelector('[data-snap-self]')).toBeNull()
     const targetBox = fb.querySelector<SVGRectElement>('[data-snap-target]')!
     const edge = fb.querySelector<SVGLineElement>('[data-snap-self-edge]')!
     // 同一种虚线（--sel-dash）、同一个 sel token；加粗的边比框线粗
-    for (const el of [selfBox, targetBox, edge]) expect(el.getAttribute('stroke')).toBe('var(--color-sel)')
-    expect(selfBox.style.strokeDasharray).toBe('var(--sel-dash)')
+    for (const el of [targetBox, edge]) expect(el.getAttribute('stroke')).toBe('var(--color-sel)')
     expect(targetBox.style.strokeDasharray).toBe('var(--sel-dash)')
-    expect(Number(edge.getAttribute('stroke-width'))).toBeGreaterThan(Number(selfBox.getAttribute('stroke-width')))
+    expect(Number(edge.getAttribute('stroke-width'))).toBeGreaterThan(Number(targetBox.getAttribute('stroke-width')))
     // 边与整页吸附线同一 x；只画 self 的跨度（高度 = self.h 对应的屏幕长度，不贯穿整页）
     const full = container.querySelector('[data-snap-line="x"] line')!
     expect(edge.getAttribute('x1')).toBe(full.getAttribute('x1'))
@@ -118,14 +117,14 @@ describe('覆盖层语法', () => {
     const fullLen = Math.abs(Number(full.getAttribute('y2')) - Number(full.getAttribute('y1')))
     expect(len).toBeGreaterThan(0)
     expect(len).toBeLessThan(fullLen / 2)
-    // 目标框相对自身框的屏幕尺寸比 = 毫米比（坐标换算正确）
-    expect(Number(targetBox.getAttribute('width')) / Number(selfBox.getAttribute('width'))).toBeCloseTo(20 / 30, 1)
+    // 目标框的屏幕宽 / 自身那条边的跨度 = 毫米比（坐标换算正确：目标 w 20 : 自身 h 10 = 2）
+    expect(Number(targetBox.getAttribute('width')) / len).toBeCloseTo(2, 1)
     // 放大一倍：框随倍率变，线宽不变
-    const w1 = Number(selfBox.getAttribute('width'))
+    const w1 = Number(targetBox.getAttribute('width'))
     await act(async () => useViewportStore.setState({ zoom: 2 }))
-    const selfBox2 = container.querySelector<SVGRectElement>('[data-snap-self]')!
-    expect(Number(selfBox2.getAttribute('width'))).toBeGreaterThan(w1 * 1.8)
-    expect(selfBox2.getAttribute('stroke-width')).toBe('1')
+    const targetBox2 = container.querySelector<SVGRectElement>('[data-snap-target]')!
+    expect(Number(targetBox2.getAttribute('width'))).toBeGreaterThan(w1 * 1.8)
+    expect(targetBox2.getAttribute('stroke-width')).toBe('1')
     expect(container.querySelector('[data-snap-self-edge]')!.getAttribute('stroke-width')).toBe('2')
   })
 
@@ -133,7 +132,8 @@ describe('覆盖层语法', () => {
     await act(async () =>
       useInteractionStore.getState().setSnap([40], [], [{ axis: 'x', v: 40, self: { x: 10, y: 20, w: 30, h: 10 } }]),
     )
-    expect(container.querySelector('[data-snap-self]')).not.toBeNull()
+    expect(container.querySelector('[data-snap-self]')).toBeNull() // 自身从不画虚线框
+    expect(container.querySelector('[data-snap-self-edge]')).not.toBeNull()
     expect(container.querySelector('[data-snap-target]')).toBeNull()
     await act(async () => useInteractionStore.getState().setSnap([40], []))
     expect(container.querySelector('[data-snap-feedback]')).toBeNull()

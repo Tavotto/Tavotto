@@ -35,6 +35,8 @@ import { currentProjectId } from '@/lib/session'
 export const SLOW_SCAN_MS = 500
 /** 运行中补拉的节奏（SSE 提示之外的兜底） */
 const POLL_MS = [400, 800, 1500] as const
+/** 补拉连续失败时的退避（一次失败不等于扫描没了：后端可能只是抖了一下），用完这几档就当读不到进度了 */
+const FAIL_BACKOFF_MS = [1500, 3000, 6000, 10000] as const
 
 export type ScanStartReason = 'claim' | 'restore' | 'manual' | 'refresh'
 
@@ -42,6 +44,11 @@ interface ProjectScanState {
   /** 最后一次成功取回的快照。后台补拉失败不清它——旧事实好过没有事实 */
   scan: ProjectScan | null
   error: string | null
+  /**
+   * 扫描还在跑，但连续几次都读不到它的进度（退避用完）：卡片 / 角标按「没能读到检查进度 + 重新检查」说话
+   * （`scanCard` 的 `stuck`），不再永远转「检查中」。下一次读到快照（SSE 提示 / 重新检查）即清掉。
+   */
+  pollLost: boolean
   /** 被「关闭」的那一轮扫描的 `scan_id`；只隐藏，不取消 */
   dismissedScanId: string | null
   /** 用户主动「重新打开」：即使没有需要关注的事也显示 */
@@ -68,6 +75,8 @@ let generation = 0
 let pollTimer: ReturnType<typeof setTimeout> | null = null
 let slowTimer: ReturnType<typeof setTimeout> | null = null
 let pollStep = 0
+/** 连续失败的补拉次数；任何一次成功落地清零 */
+let pollFailures = 0
 let startInflight: { pj: string | null; promise: Promise<ProjectScan | null> } | null = null
 
 function stopTimers(): void {
@@ -76,6 +85,7 @@ function stopTimers(): void {
   pollTimer = null
   slowTimer = null
   pollStep = 0
+  pollFailures = 0
 }
 
 export const useProjectScanStore = create<ProjectScanState>((set, get) => {
@@ -112,9 +122,11 @@ export const useProjectScanStore = create<ProjectScanState>((set, get) => {
     set({
       scan: data,
       error: null,
+      pollLost: false,
       // 新的一轮扫描（新的 scan_id）自然会再提示；同一轮里关掉的就一直关着
       ...(sameRound ? {} : { slow: false }),
     })
+    pollFailures = 0
     if (data.state === 'running') {
       if (!slowTimer && !get().slow) {
         const gen = generation
@@ -134,11 +146,11 @@ export const useProjectScanStore = create<ProjectScanState>((set, get) => {
     }
   }
 
-  const schedulePoll = () => {
+  const schedulePoll = (backoffMs?: number) => {
     if (pollTimer) return
     const gen = generation
-    const wait = POLL_MS[Math.min(pollStep, POLL_MS.length - 1)]
-    pollStep += 1
+    const wait = backoffMs ?? POLL_MS[Math.min(pollStep, POLL_MS.length - 1)]
+    if (backoffMs === undefined) pollStep += 1
     pollTimer = setTimeout(() => {
       pollTimer = null
       if (gen !== generation) return
@@ -163,10 +175,16 @@ export const useProjectScanStore = create<ProjectScanState>((set, get) => {
         if (gen !== generation || pj !== currentProjectId() || mine < applied) return null
         if (err instanceof ApiError && err.status === 404) {
           // 后端不记得这个扫描（重启 / 项目被重开）：丢掉旧快照，等下一次 start()
-          set({ scan: null, error: null })
+          set({ scan: null, error: null, pollLost: false })
           return null
         }
         set({ error: err instanceof Error ? err.message : String(err) })
+        // 扫描还在跑就不能让轮询跟着这次失败一起停：退避续排；连续失败用完退避才承认读不到进度
+        if (get().scan?.state === 'running') {
+          if (pollFailures >= FAIL_BACKOFF_MS.length) set({ pollLost: true })
+          else schedulePoll(FAIL_BACKOFF_MS[pollFailures])
+          pollFailures += 1
+        }
         return null
       })
   }
@@ -174,6 +192,7 @@ export const useProjectScanStore = create<ProjectScanState>((set, get) => {
   return {
     scan: null,
     error: null,
+    pollLost: false,
     dismissedScanId: null,
     forced: false,
     slow: false,
@@ -221,7 +240,7 @@ export const useProjectScanStore = create<ProjectScanState>((set, get) => {
       generation += 1
       stopTimers()
       startInflight = null
-      set({ scan: null, error: null, dismissedScanId: null, forced: false, slow: false })
+      set({ scan: null, error: null, pollLost: false, dismissedScanId: null, forced: false, slow: false })
     },
   }
 })

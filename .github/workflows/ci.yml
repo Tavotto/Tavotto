@@ -1509,6 +1509,24 @@ jobs:
           TAVOTTO_REQUIRE_RUNTIME: "1"
         run: pyinstaller packaging/tavotto.spec --noconfirm
 
+      # 发出去的 runtime 必须与构建时冒烟过的那一份逐字节一致：PyInstaller 6 会把 Analysis datas 里的
+      # Mach-O / PE 改判成 BINARY 并改写、把依赖复制到 _internal/ 顶层（#1051；macOS ≈ 48 MB）。与
+      # scripts/build_desktop.py 发行链那道闸同一个函数——主语是 dist/ 里真产出的字节。
+      - name: 校验：内置 runtime 原样进包（逐字节）
+        shell: bash
+        # -X utf8：Windows runner 的控制台是 cp1252，打印中文结论会 UnicodeEncodeError（闸门已判完却被打红）
+        run: |
+          python -X utf8 - <<'PY'
+          import sys
+          sys.path.insert(0, "scripts")
+          from build_worker_runtime import diff_collected_runtime, runtime_source_dir
+          bad = diff_collected_runtime(runtime_source_dir("."), "dist/Tavotto/_internal/runtime")
+          if bad:
+              print(f"::error::打包后的内置 runtime 被改动 {len(bad)} 处：" + "；".join(bad[:10]))
+              sys.exit(1)
+          print("内置 runtime 与 runtime/ 逐字节一致")
+          PY
+
       # 退役扫描（U10，ADR 0072）：冻结产物里的原生库名单零 mupdf、PDFium / qpdf 在、字体 13 张——主语是 dist/。
       - name: 退役扫描（冻结产物）
         shell: bash
@@ -1909,6 +1927,24 @@ jobs:
         env:
           TAVOTTO_REQUIRE_RUNTIME: "1"
         run: pyinstaller packaging/tavotto.spec --noconfirm
+
+      # 发出去的 runtime 必须与构建时冒烟过的那一份逐字节一致：PyInstaller 6 会把 Analysis datas 里的
+      # Mach-O / PE 改判成 BINARY 并改写、把依赖复制到 _internal/ 顶层（#1051；macOS ≈ 48 MB）。与
+      # scripts/build_desktop.py 发行链那道闸同一个函数——主语是 dist/ 里真产出的字节。
+      - name: 校验：内置 runtime 原样进包（逐字节）
+        shell: bash
+        # -X utf8：Windows runner 的控制台是 cp1252，打印中文结论会 UnicodeEncodeError（闸门已判完却被打红）
+        run: |
+          python -X utf8 - <<'PY'
+          import sys
+          sys.path.insert(0, "scripts")
+          from build_worker_runtime import diff_collected_runtime, runtime_source_dir
+          bad = diff_collected_runtime(runtime_source_dir("."), "dist/Tavotto/_internal/runtime")
+          if bad:
+              print(f"::error::打包后的内置 runtime 被改动 {len(bad)} 处：" + "；".join(bad[:10]))
+              sys.exit(1)
+          print("内置 runtime 与 runtime/ 逐字节一致")
+          PY
 
       # 退役扫描（U10，ADR 0072）：冻结产物里的原生库名单零 mupdf、PDFium / qpdf 在、字体 13 张——主语是 dist/。
       - name: 退役扫描（冻结产物）

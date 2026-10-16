@@ -2,7 +2,7 @@
  * 智能对齐内核（ADR 0128 §一）：`snapMoveNearest` 的挑法与「吸住后保持」，以及 manifest 元素 → 吸附类型。
  *
  * 钉住的事实：X / Y 各自独立；容差内先比档位、同档比距离；配对过滤能把线挡在外面；
- * 吸住的一对在 2 倍容差内不换、超过就放开重挑；两条一样近时不来回跳。
+ * 吸住的一对在 1.75 倍容差内不换、超过就放开重挑；两条一样近时不来回跳。
  */
 import { describe, expect, it } from 'vitest'
 
@@ -80,18 +80,30 @@ describe('snapMoveNearest：挑法', () => {
 })
 
 describe('snapMoveNearest：吸住后保持', () => {
-  it('2 倍容差内不换：另一条线更近了也继续吸原来那条', () => {
+  it('1.75 倍容差内不换：另一条线更近了也继续吸原来那条', () => {
     const a = line(100)
     const b = line(104)
     const hold = createSnapHold()
     expect(snapMoveNearest(box(101), cands([a, b]), TOL, { hold }).x?.line).toBe(a)
-    // 框移到 102.5：b 只差 1.5、a 差 2.5（已出容差但没到 2×）
+    // 框移到 102.5：b 只差 1.5、a 差 2.5（已出容差但没到 1.75×）
     const r = snapMoveNearest(box(102.5), cands([a, b]), TOL, { hold })
     expect(r.x?.line).toBe(a)
     expect(r.dx).toBeCloseTo(-2.5)
   })
 
-  it('超过 2 倍容差放开，重挑最近的', () => {
+  it('1.75 倍容差边界：3.4 仍保持，3.6 放开（TOL = 2）', () => {
+    const a = line(100)
+    const b = line(104)
+    const at = (x: number) => {
+      const hold = createSnapHold()
+      snapMoveNearest(box(101), cands([a, b]), TOL, { hold })
+      return snapMoveNearest(box(x), cands([a, b]), TOL, { hold }).x?.line
+    }
+    expect(at(103.4)).toBe(a) // 离 a 3.4 < 3.5（b 只差 0.6，仍保持 a）
+    expect(at(103.6)).toBe(b) // 3.6 ≥ 3.5：放开，改挑 b
+  })
+
+  it('超过 1.75 倍容差放开，重挑最近的', () => {
     const a = line(100)
     const b = line(104)
     const hold = createSnapHold()
@@ -107,7 +119,7 @@ describe('snapMoveNearest：吸住后保持', () => {
     snapMoveNearest(box(101), cands([a]), TOL, { hold })
     expect(snapMoveNearest(box(110), cands([a]), TOL, { hold }).x).toBeNull()
     expect(hold.x).toBeNull()
-    // 回到 3（> 容差、< 2×）：已经放开过，不再吸
+    // 回到 3（> 容差、< 1.75×）：已经放开过，不再吸
     expect(snapMoveNearest(box(103), cands([a]), TOL, { hold }).x).toBeNull()
   })
 

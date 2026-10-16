@@ -685,12 +685,22 @@ _probe_cache: dict[tuple, dict] = {}
 
 
 def _dirs_fingerprint(dirs: list[str]) -> tuple:
-    """这些目录的 mtime（ns；不存在 = None）。装 / 卸一个包会在目录里加 / 减一项，目录 mtime 随之变；目录本来不存在、之后被创建
-    （第一次 `pip install --user`）也变。纯 `stat`，不起解释器。"""
+    """目录 mtime 与 .pth 文件的 (名字, mtime_ns, size)；不存在 = None。装 / 卸包、首次建目录、原地改写
+    .pth 均使结论失效。只读目录项与文件元数据，不读 / 执行文件内容，不起解释器。"""
     out = []
     for d in dict.fromkeys(dirs):
         try:
-            out.append((d, os.stat(d).st_mtime_ns))
+            # 原地改写 .pth 不改变父目录 mtime；两个探测方式必须同时作废旧的缺包结论。
+            pths = []
+            for p in sorted(Path(d).glob("*.pth")):
+                try:
+                    st = p.stat()
+                except OSError:
+                    # 一个已卸载目标留下的坏链接，不得抹掉整个 site 的目录 mtime。
+                    pths.append((p.name, None))
+                    continue
+                pths.append((p.name, st.st_mtime_ns, st.st_size))
+            out.append((d, os.stat(d).st_mtime_ns, tuple(pths)))
         except OSError:
             out.append((d, None))
     return tuple(out)
@@ -699,9 +709,12 @@ def _dirs_fingerprint(dirs: list[str]) -> tuple:
 def _health_fingerprint(health: dict) -> tuple:
     """一条体检结论的"站点内容"指纹：**体检进程自己报的目录表**（`site_dirs`——两种方式都报：隔离体检是它真正放进 `sys.path`
     的那些，import 方式是正常启动之后 site / .pth 给出的，含启用时的用户 site 和还不存在的用户 site 目录）。没有这张表
-    （启动就失败的结论，没有可看的站点）回空指纹：失败结论不因站点变化重测（重测一个起不来的解释器最长 60 秒）。"""
+    （启动就失败的结论，没有可看的站点）回空指纹：失败结论不因站点变化重测（重测一个起不来的解释器最长 60 秒）。
+    两种体检均报告继承的绝对 PYTHONPATH 路径（含尚未创建的根）；它们后来新增提供者时，旧的缺失结论也要失效。"""
     dirs = health.get("site_dirs")
-    return _dirs_fingerprint(list(dirs)) if isinstance(dirs, list) else ()
+    if not isinstance(dirs, list):
+        return ()
+    return _dirs_fingerprint(list(dirs) + list(health.get("pythonpath_dirs") or []))
 
 
 def _cache_key(
@@ -722,6 +735,8 @@ def _cache_key(
         tuple(sorted(set(modules))),
         bundled,
         how,
+        # 内置 runtime 会摘掉 PYTHONPATH；用户解释器继承它，换值后旧 import / spec 结论均不可复用。
+        (os.environ.get("PYTHONPATH") or "") if not bundled else "",
         # 启动上下文（direct / conda|exe|prefix）：裸起的结论不能在激活下复用。放在末尾——前面几位有人按位置读（`key[1]` 是环境代）
         launcher.context_key(python),
     )
@@ -741,7 +756,7 @@ def _probe(
     with _lock:
         hit = _probe_cache.get(key)
         if hit is None and mode == "spec":
-            # 点过「运行」之后量过的 import 结论更强，运行之前也可以直接信
+            # 点过「运行」之后的 import 结论更强。
             hit = _probe_cache.get(_cache_key(python, modules, bundled, "import"))
     if hit is not None and _fresh(python, hit):
         return hit

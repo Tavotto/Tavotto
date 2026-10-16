@@ -268,6 +268,39 @@ describe('键盘', () => {
     expect((document.activeElement as HTMLElement).dataset.el).toBe('axes_0.yticks.label_3')
   })
 
+  it('Home / End 跳到第一行 / 最后一行（WAI-ARIA tree）', async () => {
+    await mount()
+    const gids = rowGids()
+    await press(row(gids[2]!), 'End')
+    expect((document.activeElement as HTMLElement).dataset.el).toBe(gids.at(-1))
+    await press(document.activeElement as HTMLElement, 'Home')
+    expect((document.activeElement as HTMLElement).dataset.el).toBe(gids[0])
+  })
+
+  it('→ 在已展开的节点上进第一个子节点；← 在叶子 / 已收起节点上回父节点', async () => {
+    await mount()
+    // 刻度组：展开后 → 进它的第一个子行，子行（叶子）← 回到刻度组，刻度组（已展开）← 先收起，再 ← 回到父
+    await press(row('axes_0.yticks'), 'ArrowRight')
+    await press(row('axes_0.yticks'), 'ArrowRight')
+    expect((document.activeElement as HTMLElement).dataset.el).toBe('axes_0.yticks.label_3')
+    await press(document.activeElement as HTMLElement, 'ArrowLeft')
+    expect((document.activeElement as HTMLElement).dataset.el).toBe('axes_0.yticks')
+    await press(row('axes_0.yticks'), 'ArrowLeft')
+    expect(row('axes_0.yticks').getAttribute('aria-expanded')).toBe('false')
+    const parentLevel = Number(row('axes_0.yticks').getAttribute('aria-level')) - 1
+    await press(row('axes_0.yticks'), 'ArrowLeft')
+    expect(Number((document.activeElement as HTMLElement).getAttribute('aria-level'))).toBe(parentLevel)
+    expect(document.activeElement).not.toBe(row('axes_0.yticks'))
+  })
+
+  it('根（整张图）上 ← 不动；树声明可多选', async () => {
+    await mount()
+    const first = row(rowGids()[0]!)
+    await press(first, 'ArrowLeft')
+    expect(document.activeElement).toBe(first)
+    expect(host.querySelector('[role="tree"]')!.getAttribute('aria-multiselectable')).toBe('true')
+  })
+
   it('没有选中时 Tab 停在第一行，不是第一个聚类行', async () => {
     await mount()
     const tabbable = [...host.querySelectorAll('[data-el]')].filter(

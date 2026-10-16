@@ -8,7 +8,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { literal } from '@/i18n'
 import { focusObject, HIGHLIGHT_MS, openProblems } from './issueFocus'
-import type { ObjectRef } from './validation'
+import { currentFigureOf } from './problemContext'
+import { effectiveScope, issuesInScope } from './problemList'
+import type { ObjectRef, ValidationIssue } from './validation'
 import { useDocumentStore } from '@/store/documentStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
@@ -221,6 +223,50 @@ describe('openProblems', () => {
     useUiStore.getState().setProblemFilter(['suggestion'])
     openProblems()
     expect(useUiStore.getState().problemFilter).toBeNull()
+  })
+
+  /** 面板此刻会当作「当前图」的那张（与 `useCurrentFigure` 同一个判据） */
+  const panelCurrentFigure = () =>
+    currentFigureOf(
+      [useWorkspaceStore.getState().activePanelId, useUiStore.getState().elementPanelId, useSelectionStore.getState().ids.at(-1) ?? null],
+      useDocumentStore.getState().doc.objects,
+    ).id
+
+  it('带导出目标（另一张图、另一张画布）：先切过去、当前图就是它、范围是「当前图」——不是工作区原来选的那张', async () => {
+    await seed([panel(), panel({ id: 'p2', fileId: 'Fig2.pdf', y: 50 })])
+    const first = useDocumentStore.getState().activeCanvasId
+    // 用户原来在 p1 的快速编辑里
+    useWorkspaceStore.getState().enterFastEdit('p1')
+    useUiStore.setState({ elementPanelId: 'p1', problemScope: 'document' })
+    const second = useDocumentStore.getState().addCanvas('画布 2')
+    expect(useDocumentStore.getState().activeCanvasId).toBe(second)
+    openProblems({ severities: ['error'], target: { canvasId: first, figureId: 'p2' } })
+    expect(useDocumentStore.getState().activeCanvasId).toBe(first)
+    expect(panelCurrentFigure(), '面板的当前图仍是上一张').toBe('p2')
+    expect(useUiStore.getState().problemScope).toBe('figure')
+    expect(useUiStore.getState().problemFilter).toEqual(['error'])
+    expect(useUiStore.getState().leftTab).toBe('problems')
+  })
+
+  it('目标是画布（没有图）：范围切到「当前画布」（只列这张画布的问题，不是整份排版）；不带 target 时不动现有范围', async () => {
+    await seed()
+    const first = useDocumentStore.getState().activeCanvasId
+    const second = useDocumentStore.getState().addCanvas('画布 2')
+    useUiStore.setState({ problemScope: 'figure' })
+    openProblems({ target: { canvasId: first, figureId: null } })
+    expect(useDocumentStore.getState().activeCanvasId).toBe(first)
+    expect(useUiStore.getState().problemScope).toBe('canvas')
+    // 面板用同一套函数裁清单：两张画布各一条问题，只剩 A 的那条
+    const mk = (canvasId: string): ValidationIssue =>
+      ({ issueId: `i-${canvasId}`, objectRef: { canvasId, objectId: 'p1', gid: null } }) as unknown as ValidationIssue
+    const all = [mk(first), mk(second)]
+    const scope = effectiveScope(useUiStore.getState().problemScope, null)
+    expect(scope).toBe('canvas')
+    expect(issuesInScope(all, scope, null, useDocumentStore.getState().activeCanvasId).map((i) => i.issueId)).toEqual([`i-${first}`])
+    useUiStore.setState({ problemScope: 'figure' })
+    useUiStore.setState({ problemScope: 'figure' })
+    openProblems()
+    expect(useUiStore.getState().problemScope).toBe('figure')
   })
 })
 

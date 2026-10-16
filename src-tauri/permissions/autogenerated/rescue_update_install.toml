@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-rescue-update-install"
+description = "Enables the rescue_update_install command without any pre-configured scope."
+commands.allow = ["rescue_update_install"]
+
+[[permission]]
+identifier = "deny-rescue-update-install"
+description = "Denies the rescue_update_install command without any pre-configured scope."
+commands.deny = ["rescue_update_install"]

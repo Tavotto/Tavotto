@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-rescue-update-check"
+description = "Enables the rescue_update_check command without any pre-configured scope."
+commands.allow = ["rescue_update_check"]
+
+[[permission]]
+identifier = "deny-rescue-update-check"
+description = "Denies the rescue_update_check command without any pre-configured scope."
+commands.deny = ["rescue_update_check"]

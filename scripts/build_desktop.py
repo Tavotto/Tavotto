@@ -122,7 +122,12 @@ RUNTIME_MANIFEST = RUNTIME_DIR / "runtime-manifest.json"
 RUNTIME_LOCK = ROOT / "packaging" / "runtime-lock.json"
 
 sys.path.insert(0, str(ROOT / "scripts"))
-from build_worker_runtime import BuildError, check_runtime_dir  # noqa: E402
+from build_worker_runtime import (  # noqa: E402
+    BuildError,
+    check_runtime_dir,
+    diff_collected_runtime,
+    runtime_source_dir,
+)
 
 
 def _runtime_is_current() -> str:
@@ -252,6 +257,20 @@ def main() -> None:
             "  packaging/tavotto.spec 的 binaries 落点与 "
             "engine/workerd_client.find_workerd() 对不上了。"
         )
+
+    # 发出去的 runtime 必须就是构建时冒烟过的那一份，逐字节。PyInstaller 6 会把 Analysis datas 里的
+    # Mach-O / PE 改判成 BINARY 并改写、把依赖复制到 `_internal/` 顶层（macOS 多出 ≈ 48 MB；Windows #1051），
+    # spec 因此在 Analysis 之后以 DATA 加入——这里量的是打包器真产出的字节，不是 spec 怎么写。
+    runtime_src = runtime_source_dir(ROOT)
+    if (runtime_src / "runtime-manifest.json").is_file():
+        changed = diff_collected_runtime(runtime_src, sidecar.parent / "_internal" / "runtime")
+        if changed:
+            raise SystemExit(
+                f"打包后的内置 runtime 与 {runtime_src} 不一致（{len(changed)} 处），例如：\n  "
+                + "\n  ".join(changed[:10])
+                + "\n  多半是 runtime 又被交给了 Analysis（packaging/tavotto.spec 文件头说明 3）。"
+            )
+        print(f"* 内置 runtime：与 {runtime_src} 逐字节一致")
 
     # console 版 CLI 同理**缺了就中止**：少了它，装完的桌面版功能一样不缺，
     # 只有「Codex 插件找不到 Tavotto」这一种表现，而那要等用户装完才发现。

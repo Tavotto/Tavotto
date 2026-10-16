@@ -89,6 +89,7 @@ import {
   openProblems,
 } from "@/lib/issueFocus";
 import { stemOf } from "@/lib/openRequest";
+import type { Severity } from "@/lib/profile";
 import type { OriginalOutputSpec } from "@/lib/originalSpec";
 import {
   exportContextIssues,
@@ -101,8 +102,6 @@ import {
 import {
   issueTitle,
   issueValues,
-  SEVERITY_ICON,
-  severityLabel,
   subjectName,
 } from "@/lib/validationText";
 import { buildProofPayload } from "@/lib/preflight";
@@ -162,14 +161,16 @@ import { SendReportButton } from "./SendReportButton";
 import { Select } from "./ui/Select";
 import { Toggle } from "./ui/Toggle";
 import { Card } from "./ui/Card";
+import { CountChip, type CountTone } from "./ui/CountChip";
 import { FieldGroup, FormSection } from "./ui/FormSection";
 import { listRowClass } from "./ui/listRow";
 import { Notice } from "./ui/Notice";
 import { ProgressBar } from "./ui/ProgressBar";
 import { dirTail } from "@/lib/pathDisplay";
 
-/** 阻断问题的图标：与问题面板同一张表（`SEVERITY_ICON`），八角 */
-const BlockingIcon = SEVERITY_ICON.error;
+
+/** 导出终局 toast 的主人：重开对话框 / 新一轮开始时撤掉 */
+const EXPORT_STATUS_OWNER = "export.result";
 
 /** 本对话框的文案都在 `dialogs:export.*` 下 */
 const ex = (key: string, values?: Record<string, unknown>) =>
@@ -179,7 +180,7 @@ const ex = (key: string, values?: Record<string, unknown>) =>
 const PPI_VALUES = ["300", "600", "900", "1200"] as const;
 
 /** 知情确认框上方逐条列出的阻断项上限；再多的进问题面板 */
-const BLOCKING_SHOWN = 5;
+const BLOCKING_SHOWN = 3;
 
 /**
  * 默认文件名**跟着导出对象走**（审计 T33）：按原图 = 那张图的名字（面板名，
@@ -835,6 +836,8 @@ export function ExportDialog() {
    * 定位一条阻断项。先定位再让开：定位失败（对象已删 / 进不了图内编辑）时
    * 对话框留在原地并说出原因，不把用户扔到一个什么都没发生的画布上。
    */
+  /** 点芯片 / 「在问题面板中查看」要带过去的目标：摘要是按它算的，面板就得看同一份（Codex #1106 P2） */
+  const problemsTarget = { canvasId: checkCanvasId, figureId: targetObjectId ?? null };
   const locateBlocking = (issue: ValidationIssue) => {
     const outcome = focusIssue(issue);
     const ui = useUiStore.getState();
@@ -887,30 +890,57 @@ export function ExportDialog() {
    */
   const originalSelectable = figures.length > 0;
 
-  /** 导出完成时报一次状态。**只在终局报一次**，不在每次进度推送上报 */
+  /**
+   * 导出终局报一次状态。**只在终局报一次**（作业 + 终态为键，重复快照不再报），不在每次进度推送上报。
+   * 对话框开着（没被设置 / 样式压住）时结果就在眼前的结果块里，不再弹第二份；关着的时候才走通知轨——
+   * 失败 / 部分完成 / 等你决定 / 作业丢失带「查看」，点了重开对话框看结果，不自己消失（导出关窗不取消作业，
+   * 否则用户以为已经导出了）。
+   */
   const announced = useRef<string | null>(null);
+  const resultVisible = open && !covered;
   useEffect(() => {
-    if (!job || running) return;
-    if (announced.current === job.job_id) return;
-    announced.current = job.job_id;
+    if (!job) return;
+    if (running) {
+      useUiStore.getState().clearStatusOwnedBy(EXPORT_STATUS_OWNER);
+      return;
+    }
+    const key = `${job.job_id}:${job.status}`;
+    if (announced.current === key) return;
+    announced.current = key;
+    if (resultVisible) return;
+    const ui = useUiStore.getState();
+    const view = {
+      label: msg("export.viewResult", undefined, "dialogs"),
+      run: () => {
+        useUiStore.getState().clearStatusOwnedBy(EXPORT_STATUS_OWNER);
+        useUiStore.getState().setExportOpen(true);
+      },
+    };
+    const owner = { owner: EXPORT_STATUS_OWNER, action: view };
     const done = job.outputs.filter((o) => o.status === "done" && o.name);
     if (job.status === "done" && done.length) {
-      useUiStore
-        .getState()
-        .setStatus(
-          msg(
-            "export.exported",
-            { files: done.map((o) => o.name).join("、") },
-            "dialogs",
-          ),
-          "done",
-        );
+      ui.setStatus(
+        msg("export.exported", { files: done.map((o) => o.name).join("、") }, "dialogs"),
+        "done",
+        { owner: EXPORT_STATUS_OWNER },
+      );
     } else if (job.status === "cancelled") {
-      useUiStore
-        .getState()
-        .setStatus(msg("export.cancelled", undefined, "dialogs"), "info");
+      ui.setStatus(msg("export.cancelled", undefined, "dialogs"), "info", { owner: EXPORT_STATUS_OWNER });
+    } else if (job.status === "failed") {
+      ui.setStatus(msg("export.toast.failed", undefined, "dialogs"), "error", owner);
+    } else if (job.status === "partial") {
+      ui.setStatus(msg("export.toast.partial", undefined, "dialogs"), "error", owner);
+    } else if (job.status === "conflict") {
+      ui.setStatus(msg("export.toast.conflict", undefined, "dialogs"), "info", owner);
+    } else if (job.status === "unknown") {
+      ui.setStatus(msg("export.toast.unknown", undefined, "dialogs"), "error", owner);
     }
-  }, [job, running]);
+  }, [job, running, resultVisible]);
+
+  // 重新打开对话框 = 用户已经看到结果：撤掉关窗期间挂着的那条
+  useEffect(() => {
+    if (resultVisible) useUiStore.getState().clearStatusOwnedBy(EXPORT_STATUS_OWNER);
+  }, [resultVisible]);
 
   const conflicts = job?.status === "conflict" ? job.conflicts : [];
   const busy = running;
@@ -1415,9 +1445,9 @@ export function ExportDialog() {
                 <CheckRow
                   summary={summary}
                   scopeHint={ex(scope === "original" && panel ? "checkScopeFigure" : "checkScopeCanvas")}
-                  onOpenPanel={() => {
+                  onOpenPanel={(opts) => {
                     park();
-                    openProblems();
+                    openProblems({ severities: opts?.severities, target: problemsTarget });
                   }}
                 />
               </FormRow>
@@ -1433,7 +1463,7 @@ export function ExportDialog() {
                         onLocate={locateBlocking}
                         onMore={() => {
                           park();
-                          openProblems({ severities: ["error"] });
+                          openProblems({ severities: ["error"], target: problemsTarget });
                         }}
                       />
                     )}
@@ -1827,11 +1857,10 @@ function TargetHeader({
 }
 
 /**
- * 阻断项清单（审计 T33）：**按规则分组**——规则名只在组头说一遍，组内每行是
- * 主语 · 当前值 → 要求 + 一个「定位」（2026-09-14 审计 B4：此前五行「字号低于绝对下限 ·
- * 图例 / · 图例项 / · X 轴刻度…」把同一句规则名重复了五遍，问题面板早已按规则分组）。
- * 只列阻断级、只列前几条、不筛选、不修复——那些都在左侧问题面板。
- * 等级不只靠颜色：图标 + 「阻断」标签 + 颜色三重表达。
+ * 阻断项清单（审计 T33；2026-10-16 UI 2.0 精修 03：每条一行）：「对象 · 属性 · 当前值 → 要求」，
+ * 值用等宽数字，行尾一个「定位」；**先露 3 条**，其余「还有 N 项 · 在问题面板中查看全部」。
+ * 规则名不再占一行组头——它就是行里的「属性」，整句要求进 tooltip。只列阻断级、不筛选、不修复——
+ * 那些都在左侧问题面板。等级不只靠颜色：圆点在摘要芯片里、这里每行是「要改」的那一档，由芯片说。
  */
 function BlockingList({
   issues,
@@ -1845,90 +1874,54 @@ function BlockingList({
   useTranslation(["dialogs", "errors"]);
   const shown = issues.slice(0, BLOCKING_SHOWN);
   const rest = issues.length - shown.length;
-  // 保持首次出现的顺序：先按规则聚合，组内保留原顺序
-  const groups: {
-    ruleCode: string;
-    title: string;
-    items: ValidationIssue[];
-  }[] = [];
-  for (const issue of shown) {
-    const g = groups.find((x) => x.ruleCode === issue.ruleCode);
-    if (g) g.items.push(issue);
-    else
-      groups.push({
-        ruleCode: issue.ruleCode,
-        title: issueTitle(issue),
-        items: [issue],
-      });
-  }
   return (
-    <ul aria-label={ex("blockingListLabel")} className="flex flex-col gap-1">
-      {groups.map((g) => (
-        <li
-          key={g.ruleCode}
-          data-blocking-group={g.ruleCode}
-          className="py-0.5 text-sm"
-        >
-          <div className="flex items-center gap-2 leading-relaxed">
-            {/* 阻断的形状与问题面板同一张表（八角），不在这里另画一个三角 */}
-            <BlockingIcon
-              size={ICON_SIZE.xs}
-              className="shrink-0 text-danger"
-              aria-hidden
-            />
-            <span className="text-ink">{g.title}</span>
-            {g.items.length > 1 && (
-              <span className="type-meta tabular-nums">
-                {ex("blockingGroupCount", { count: g.items.length })}
-              </span>
-            )}
-          </div>
-          <ul className="mt-0.5 flex flex-col gap-0.5 pl-5">
-            {g.items.map((issue) => {
-              const values = issueValues(issue);
-              const subject = subjectName(issue);
-              return (
-                <li
-                  key={issue.issueId}
-                  data-blocking-issue={issue.ruleCode}
-                  className="flex items-start gap-2 py-0.5"
-                >
-                  <span className="min-w-0 flex-1 leading-relaxed">
-                    <span className="text-ink-2">{subject}</span>
-                    {values.current && (
-                      <span className="ml-1.5 text-xs tabular-nums text-ink-3">
-                        {values.expected
-                          ? translate("problems.valueArrow", {
-                              ns: "errors",
-                              current: values.current,
-                              expected: values.expected,
-                            })
-                          : values.current}
-                      </span>
-                    )}
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => onLocate(issue)}
-                    aria-label={ex("locateAria", { subject, title: g.title })}
-                    className="shrink-0 rounded-md text-sm text-ink-2 outline-none hover:underline focus-visible:focus-ring"
-                  >
-                    {ex("locate")}
-                  </button>
-                </li>
-              );
-            })}
-          </ul>
-        </li>
-      ))}
+    <ul aria-label={ex("blockingListLabel")} className="flex flex-col">
+      {shown.map((issue) => {
+        const values = issueValues(issue);
+        const subject = subjectName(issue);
+        const title = issueTitle(issue);
+        const arrow = values.current
+          ? values.expected
+            ? translate("problems.valueArrow", {
+                ns: "errors",
+                current: values.current,
+                expected: values.expected,
+              })
+            : values.current
+          : null;
+        return (
+          <li
+            key={issue.issueId}
+            data-blocking-issue={issue.ruleCode}
+            title={[subject, title, arrow].filter(Boolean).join(" · ")}
+            className="flex min-h-7 items-center gap-2"
+          >
+            <span className="min-w-0 flex-1 truncate text-sm">
+              <span className="text-ink">{subject}</span>
+              <span className="text-ink-3">{` · ${title}`}</span>
+              {arrow && (
+                <span className="ml-2 font-mono text-xs tabular-nums text-ink-2">{arrow}</span>
+              )}
+            </span>
+            <button
+              type="button"
+              onClick={() => onLocate(issue)}
+              aria-label={ex("locateAria", { subject, title })}
+              className="shrink-0 rounded-md px-1.5 text-sm text-ink-2 outline-none hover:bg-surface-hover hover:text-ink focus-visible:focus-ring"
+            >
+              {ex("locate")}
+            </button>
+          </li>
+        );
+      })}
       {rest > 0 && (
-        <li className="py-1 pl-5">
+        <li className="py-1">
           <button
             type="button"
             onClick={onMore}
-            className="rounded-md text-sm text-ink-2 outline-none hover:underline focus-visible:focus-ring"
+            className="rounded-md text-sm text-ink-3 outline-none hover:text-ink hover:underline focus-visible:focus-ring"
           >
-            {ex("blockingMore", { count: rest })}
+            {ex("checksMore", { count: rest })}
           </button>
         </li>
       )}
@@ -1950,7 +1943,11 @@ function CheckRow({
   summary: ValidationSummary;
   /** 这份摘要算的是哪个范围（只算这张图 / 整个画布） */
   scopeHint: string;
-  onOpenPanel: () => void;
+  /**
+   * 带名字的 options 对象，不是裸的 `severities?`：`onClick={onOpenPanel}` 时 React 的 click event 会被当成
+   * 第一个参数——裸数组签名下它被存进 problemFilter、面板一打开就崩（#1106 P2）；对象签名下 event 过不了类型检查。
+   */
+  onOpenPanel: (opts?: { severities: Severity[] }) => void;
 }) {
   useTranslation(["dialogs", "errors"]);
   // 「查不了」与「没问题」是两个答案。压成一个 = 用户带着一屏静悄悄的绿投稿
@@ -1961,7 +1958,7 @@ function CheckRow({
           <TriangleAlert size={ICON_SIZE.sm} className="shrink-0" aria-hidden />
           {ex(summary.total ? "preflightFailedKept" : "preflightFailed")}
         </span>
-        <OpenProblems onClick={onOpenPanel} />
+        <OpenProblems onOpen={() => onOpenPanel()} />
       </div>
     );
   }
@@ -1981,52 +1978,42 @@ function CheckRow({
       </div>
     );
   }
-  // 有问题：一行只给**数量**（阻断 / 警告 / 无法核验 / 建议）+ 这份摘要算的是哪个范围
-  // + 问题面板入口。阻断项由下方的清单逐条列出，完整清单归左侧问题面板（§四）——
-  // 数量这一行不能省：只有警告时没有它，用户看到的就是一片空白，既不知道有警告、
-  // 也没有去问题面板的路
-  const parts = (
-    [
-      "error",
-      "warn",
-      "not_verifiable",
-      "suggestion",
-    ] as (keyof ValidationSummary["counts"])[]
-  )
-    .filter((s) => summary.counts[s] > 0)
-    .map((s) =>
-      ex("severityCount", {
-        count: summary.counts[s],
-        label: severityLabel(s),
-      }),
-    );
+  // 有问题：三个（至多四个）计数芯片 + 这份摘要算的是哪个范围 + 问题面板入口。
+  // 阻断项由下方的清单逐条列出，完整清单归左侧问题面板（§四）——数量这一行不能省：
+  // 只有警告时没有它，用户看到的就是一片空白，既不知道有警告、也没有去问题面板的路。
+  // 颜色只在圆点上：要改 = danger、留意 = warn，建议 / 无法核验永远是灰。点芯片 = 带着这一档去问题面板。
+  const CHIPS: { sev: Severity; tone: CountTone; key: string }[] = [
+    { sev: "error", tone: "danger", key: "chipError" },
+    { sev: "warn", tone: "warn", key: "chipWarn" },
+    { sev: "not_verifiable", tone: "quiet", key: "chipNotVerifiable" },
+    { sev: "suggestion", tone: "quiet", key: "chipSuggestion" },
+  ];
   return (
     <div className="flex items-center justify-between gap-3">
-      <span
-        className={cn(
-          "flex min-w-0 flex-1 flex-wrap items-center gap-x-2 text-sm",
-          summary.blocking ? "text-danger" : "text-ink",
-        )}
-      >
-        {/* 有阻断就是八角，只有警告 / 建议才是三角——与清单、问题面板同一套形状 */}
-        {summary.blocking ? (
-          <BlockingIcon size={ICON_SIZE.sm} className="shrink-0" aria-hidden />
-        ) : (
-          <TriangleAlert size={ICON_SIZE.sm} className="shrink-0" aria-hidden />
-        )}
-        <span className="tabular-nums">{parts.join(" · ")}</span>
-        <span className="text-xs text-ink-3">{`· ${scopeHint}`}</span>
+      {/* 范围（整个画布 / 仅此图）不再是一段内联灰字：悬停说明，读屏照读 */}
+      <span title={scopeHint} className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">
+        {CHIPS.filter((c) => summary.counts[c.sev] > 0).map((c) => (
+          <CountChip
+            key={c.sev}
+            tone={c.tone}
+            count={summary.counts[c.sev]}
+            label={ex(c.key, { count: summary.counts[c.sev] })}
+            onClick={() => onOpenPanel({ severities: [c.sev] })}
+          />
+        ))}
+        <span className="sr-only">{scopeHint}</span>
       </span>
-      <OpenProblems onClick={onOpenPanel} />
+      <OpenProblems onOpen={() => onOpenPanel()} />
     </div>
   );
 }
 
-function OpenProblems({ onClick }: { onClick: () => void }) {
+/** `onOpen` 不收参数，内部一律无参调用——不把 click event 递给上游那些带可选参数的回调 */
+function OpenProblems({ onOpen }: { onOpen: () => void }) {
   return (
     <button
       type="button"
-      onClick={onClick}
+      onClick={() => onOpen()}
       className="shrink-0 rounded-md text-sm text-ink-2 outline-none hover:underline focus-visible:focus-ring"
     >
       {ex("openProblems")}
