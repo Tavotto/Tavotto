@@ -8,11 +8,29 @@
 
     {"ok": true, "ran": true, "project": "...", "stem": "Fig1_removal_rate",
      "parameterizable": true, "launch": "desktop", "conflicts": [],
-     "dynamic_names": [], "tavotto": {"source": "manifest", "cmd": "..."}}
+     "dynamic_names": [], "tavotto": {"source": "manifest", "cmd": "..."},
+     "launch_success": true, "render_success": true, "verified_success": true,
+     "render": {"status": "ok", "verified": true, ...}}
 
 判据只有一个：**parameterizable 为 true 才算交接成功**。false 说明这张图在
 Tavotto 里双击进不去——多半是脚本没跟产物放在同一个目录，或产物名要到运行期
 才知道（见 SKILL.md 的约定 1 与 3）。
+
+## 交接三态（ADR 0131 第六节；加性字段，`ok` 与退出码的语义一字未改）
+
+`ok` 只说「解析、登记、唤起成功」（以及 `parameterizable`），**不说图画出来了**。
+三个顶层字段把这件事拆开说：
+
+    launch_success   true=CLI 报了成功且唤起了界面；null=没唤起（`--no-launch`）；false=交接没走到唤起
+    render_success   true=界面对目标图的那次渲染成功；false=界面**明确报了渲染失败**
+                     （`render.code` 是稳定码，如 `engine_files_incomplete`）；
+                     null=不知道（没等到结论 / 老 CLI / 没唤起）——**null 不是失败**
+    verified_success 只有 true 才算确认：渲染成功，且确认渲染的就是目标 Figure
+                     （stem 一致、注册表里有这个 stem、manifest 非空）；其余一律 false
+
+`render` 是 CLI 原样给的细节：`{"status": "ok|failed|unverified", "code"?, "reason"?, ...}`；
+老 CLI 没有这个字段时补成 `{"status": "unverified", "reason": "cli_without_render_signal"}`。
+判据只在 CLI 那边写一份（`engine/handoffreceipt.summarize`），这里只搬运，不另判。
 
 退出码（**不可参数化也是非零**：图出来了但只是一张死图，那不是成功，
 用 0 报出去等于把「要修」写在一行 JSON 里等人自己发现）：
@@ -576,12 +594,40 @@ def update_notice(tavotto_version: str | None = None) -> dict | None:
     return None if found.get("status") == "disabled" else found
 
 
+#: 交接三态没走到唤起（路径错 / 脚本失败 / 没有 Tavotto / `tavotto open` 失败）时的默认值：
+#: 没唤起 → launch 未成功；渲染没发生 → 未知（null）；当然也没有确认。
+_STATE_DEFAULTS = {"launch_success": False, "render_success": None, "verified_success": False}
+#: 老 CLI（没有 `launch.render`）：不是失败也不是成功，是「这一版没法告诉你」
+RENDER_UNSUPPORTED = {"status": "unverified", "reason": "cli_without_render_signal"}
+
+
+def three_state(final: dict) -> dict:
+    """从 `tavotto open --json` 的成功结果里取出交接三态。**只搬运，不另判。**
+
+    `verified_success` 取 CLI 给的 `render.verified`（判据唯一在 `handoffreceipt.summarize`），
+    且必须严格 `is True`——缺字段、非布尔一律 False。
+    """
+    launch = final.get("launch")
+    render = launch.get("render") if isinstance(launch, dict) else None
+    if not isinstance(render, dict) or render.get("status") not in ("ok", "failed", "unverified"):
+        render = dict(RENDER_UNSUPPORTED) if isinstance(launch, dict) else None
+    status = render.get("status") if render else None
+    return {
+        "launch_success": True if isinstance(launch, dict) and final.get("ok") else None,
+        "render_success": True if status == "ok" else False if status == "failed" else None,
+        "verified_success": bool(render) and render.get("verified") is True and status == "ok",
+        **({"render": render} if render else {}),
+    }
+
+
 def emit(payload: dict, code: int, tavotto_version: str | None = None) -> int:
     """**唯一的输出出口。** stdout 只有那一行 JSON，别的一律 stderr。
 
     调用方读的是 stdout 的最后一行；往里写一句「有新版本」就等于把整条链路
     弄坏（json.loads 当场炸）。所以人话走 stderr，机器读的进 JSON 字段。
     """
+    for key, default in _STATE_DEFAULTS.items():
+        payload.setdefault(key, default)
     update = update_notice(tavotto_version)
     if update:
         payload["update"] = update
@@ -733,6 +779,7 @@ def main(argv: list[str] | None = None) -> int:
         "dynamic_names": reg.get("dynamic_names", []),
         "tavotto": tavotto,
         "timings": timings,
+        **three_state(final),
     }
     if payload["parameterizable"] is not True:
         payload["ok"] = False
