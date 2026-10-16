@@ -1,11 +1,11 @@
 {
-  "schema": 1,
+  "schema": 2,
   "suite": "compat_v2",
-  "case": "s04b_savefig_tmp_replace",
-  "truth_titles": ["size=640x480"],
+  "case": "s04_replace_readback",
+  "truth": {"figures": {"replace": ["value=2"]}},
   "review": {
     "status": "pending",
     "approved_content_hashes": []
   },
-  "note": "Template only. Read the actual fixture/native truth and review each exact reduction before approving. No execution authority; AC-06 not_run."
+  "note": "Pending negative control only: CI 38847288841 verifies both legs correct, so no failure may be invented here. Review each graph before any execution. AC-06 not_run."
 }
