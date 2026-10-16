@@ -260,17 +260,20 @@ export const isOpenSession = (x: Pick<AiSession, 'status' | 'finalized'>): boole
   !x.finalized && (x.status === 'running' || x.status === 'cancelled')
 
 /**
- * 一份会话快照是不是**终态**：只认后端明确给的 `final === true`（`_pump` 收尾、changed / diff / refresh 都确定之后）。
- * 老后端没有 `final` 字段（`undefined`）或根本没有详情时，退回按 `status !== 'running'` 判（旧行为）。
+ * 一份会话快照是不是**终态**：优先认后端明确给的 `final`（`_pump` 收尾、changed / diff / refresh 都确定之后）。
+ * 没有 `final` 字段的后端退回 #1098 的判据：非 running；而 `cancelled` 必须带着 `ended_ms`（pump 收尾后才写）。
+ * 没有详情（404）时无从判断，按 status 走。
  * `cancel` 之后后端内存里的 status 立刻是 `cancelled`、但结果还没算出来——那不是终态，过早收尾会把之后真正的 `ai.done` 当重复丢掉。
  */
 export function snapshotIsFinal(
-  d: Pick<AiSessionDetail, 'status' | 'final'> | null | undefined,
+  d: Pick<AiSessionDetail, 'status' | 'final' | 'ended_ms'> | null | undefined,
   fallbackStatus: string,
 ): boolean {
   if (typeof d?.final === 'boolean') return d.final
   const status = typeof d?.status === 'string' && d.status ? d.status : fallbackStatus
-  return status !== 'running'
+  if (status === 'running') return false
+  if (status === 'cancelled' && d) return typeof d.ended_ms === 'number'
+  return true
 }
 
 /**

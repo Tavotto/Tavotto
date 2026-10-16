@@ -699,7 +699,7 @@ describe('取消之后与分页恢复（#1111 Codex P2）', () => {
     await useAiStore.getState().cancel('s-run')
     expect(sessions()[0]).toMatchObject({ status: 'cancelled' })
     expect(sessions()[0].finalized).toBeFalsy() // 只是「中止请求被接受」，后端最终结局还没到
-    detail['s-run'] = { agent: 'codex', status: 'cancelled', changed: true, diff: 'PARTIAL', transcript: [] } // 此后后端写入了改动
+    detail['s-run'] = { agent: 'codex', status: 'cancelled', final: true, changed: true, diff: 'PARTIAL', transcript: [] } // 此后后端写入了改动
     await vi.advanceTimersByTimeAsync(SAFETY_NET_MS + 100)
     await vi.waitFor(() => expect(sessions()[0]).toMatchObject({ status: 'cancelled', changed: true, diff: 'PARTIAL', finalized: true })) // 对照：旧判据只看 running，永远等不到
     const reads = detailReads()
