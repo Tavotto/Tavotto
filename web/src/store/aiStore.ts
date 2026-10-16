@@ -789,7 +789,13 @@ function autoSettleRestored(rid: string): void {
  * 两个入口（`restoreRunning` 与 `reconcile`→`restoreSubmission`）谁先到都走这里。
  */
 function acceptRunning(rid: string, session: AiSession): void {
-  accept(rid, session.id, session.script, { kind: 'queried', status: 'running', changed: false, detail: null })
+  accept(rid, session.id, session.script, {
+    kind: 'queried',
+    status: session.status, // 占位自己的状态：running，或已取消但后端还没收尾的 cancelled，不覆盖成 running
+    changed: false,
+    detail: null,
+    adopt: true,
+  })
 }
 
 let restoring: { gen: number; pj: string | null; p: Promise<void> } | null = null
@@ -1065,7 +1071,17 @@ function accept(
   script: string,
   how:
     | { kind: 'fresh'; agent: AiAgentId; agentLabel: string }
-    | { kind: 'queried'; status: string; changed: boolean; detail: AiSessionDetail | null },
+    | {
+        kind: 'queried'
+        status: string
+        changed: boolean
+        detail: AiSessionDetail | null
+        /**
+         * 认领一个已存在的占位（还没有终态快照）：**保持占位自己的非终态**（running，或 cancelled 但后端还没收尾），
+         * 只并入提交的归属——不能因为「请求已被接受」就把已经取消的占位改回 running（按钮会重新亮起「中止」，后端又拒绝第二次取消）
+         */
+        adopt?: boolean
+      },
 ): void {
   const { get, set } = { get: useAiStore.getState, set: useAiStore.setState }
   const sub = get().submissions[rid]
@@ -1103,7 +1119,7 @@ function accept(
         ? detail.status
         : how.status
       : 'running'
-  const settled = how.kind === 'queried' && snapshotIsFinal(detail, status)
+  const settled = how.kind === 'queried' && !how.adopt && snapshotIsFinal(detail, status)
   const session: AiSession = {
     id: sid,
     project: sub.project,

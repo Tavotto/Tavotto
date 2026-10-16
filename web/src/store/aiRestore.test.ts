@@ -824,3 +824,31 @@ describe('断线期间任务失败：恢复后失败提示带着后端给的原�
   })
 })
 
+describe('认领占位保持它自己的非终态（#1111 Codex P2 r4290762243）', () => {
+  const RID = 'rid-adopt-cancel-01'
+  const SUBX = {
+    rid: RID, project: 'pa', fileId: 'Fig1.pdf', panelId: 'p1', script: 'fig1.py', prompt: '把线条加粗',
+    target: { scope: 'figure' as const, gid: null, label: null, target: '整张图' }, canvas: null, overrides: [],
+  }
+
+  it('已取消（cancelled、ended_ms 为空）的占位遇到同 rid 的未确认提交：认领之后仍是 cancelled，提交不再是未确认', async () => {
+    history.pa = [row({ status: 'cancelled', ended_ms: null, client_request_id: RID })]
+    detail['s-run'] = { agent: 'codex', status: 'cancelled', final: false, changed: false, diff: '', transcript: [] }
+    await useAiStore.getState().restoreRunning()
+    expect(sessions()[0]).toMatchObject({ status: 'cancelled', requestId: RID })
+    useAiStore.getState().restoreSubmission(SUBX) // 账本这时才对账回来：同 rid
+    expect(Object.keys(useAiStore.getState().submissions)).toEqual([]) // 不再是未确认
+    expect(sessions()).toHaveLength(1)
+    expect(sessions()[0]).toMatchObject({ id: 's-run', status: 'cancelled' }) // 对照：以前被覆盖回 running，「中止」重新亮起、后端又拒绝第二次取消
+    expect(sessions()[0].finalized).toBeFalsy() // 仍是非终态，继续对账
+  })
+
+  it('运行中的占位照旧：认领后仍是 running', async () => {
+    history.pa = [row({ client_request_id: RID })]
+    await useAiStore.getState().restoreRunning()
+    useAiStore.getState().restoreSubmission(SUBX)
+    expect(sessions()[0]).toMatchObject({ status: 'running' })
+    expect(Object.keys(useAiStore.getState().submissions)).toEqual([])
+  })
+})
+

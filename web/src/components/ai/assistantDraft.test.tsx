@@ -1453,6 +1453,24 @@ describe('已发出未确认：不能盲目重发', () => {
     expect(aiRun).not.toHaveBeenCalled()
   })
 
+  it('占位已取消（cancelled 未 final）、同 rid 的未确认提交这时才对账回来：认领后「中止」仍不可用——保持禁用的发送，提交不再是未确认', async () => {
+    const rid = 'rid-adopt-cancel-02'
+    useAiStore.setState({
+      sessions: [
+        failedSession({ id: 's-canc', status: 'cancelled', finalized: false, restored: true, requestId: rid, script: 'p1.py', finishedAt: undefined, panelId: null, fileId: null, changed: false }),
+      ],
+    })
+    be.pendings.set('pa\u0000Fig1.pdf', [{ rid, text: '加粗线条', sent: SENT, script: 'p1.py' }])
+    await mount()
+    expect(q('[data-ai-submission="unconfirmed"]')).toBeNull() // 提交已被认领
+    expect(useAiStore.getState().sessions[0]).toMatchObject({ id: 's-canc', status: 'cancelled' })
+    expect(q('[data-ai-send="stop"]')).toBeNull() // 没有「中止」按钮
+    const btn = q<HTMLButtonElement>('[data-ai-send]')!
+    expect(btn.dataset.aiSend).toBe('send')
+    expect(btn.disabled).toBe(true)
+    expect(btn.getAttribute('aria-label')).toBe('正在结束上一次修改…')
+  })
+
   it('取消后刷新恢复出「cancelled 但未 final」的会话：发送锁住、不显示「中止」而是禁用的发送；final 到了才解锁', async () => {
     useAiStore.setState({
       sessions: [failedSession({ id: 's-canc', status: 'cancelled', finalized: false, restored: true, script: 'p1.py', finishedAt: undefined, panelId: null, fileId: null, changed: false })],
