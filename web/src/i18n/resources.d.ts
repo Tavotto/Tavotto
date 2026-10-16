@@ -2102,6 +2102,7 @@ export default interface Resources {
       "neverScripts": "脚本与源码",
       "neverTitle": "绝不发送",
       "policy": "隐私政策",
+      "reconsentDelta": "比你上次同意时多了两项：导出怎样结束（含失败 / 取消），以及你主动发送问题反馈时附带的一条不含内容的错误摘要。",
       "sendsErrorSummary": "你主动发送问题反馈时，随附一条不含内容的错误摘要",
       "sendsFeatures": "你使用了哪些功能",
       "sendsOutcome": "预检与导出的结果（成功、失败或取消）",
