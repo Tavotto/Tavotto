@@ -1303,7 +1303,19 @@ def savefig_stem(fname) -> str:
     """
     if not savefig_targets_path(fname):
         return ""  # BytesIO / 文件对象：不是一份产物
-    return os.path.splitext(os.path.basename(os.fsdecode(fname)))[0]
+    root, ext = os.path.splitext(os.path.basename(os.fsdecode(fname)))
+    # 先写临时文件再改名（`savefig("final.png.tmp", format="png")` → `os.replace(..., "final.png")`）：
+    # 产物是 `final.png`，stem 是 `final`——否则 stem 成了带扩展名的 `final.png`，`find_original_artifact`
+    # 找不到真实原件、编辑写不回（#1124）。只在临时后缀前面恰是图片产物扩展名时剥，别的名字一个不动
+    if ext.lower() in _TEMP_SUFFIXES:
+        inner, inner_ext = os.path.splitext(root)
+        if inner and inner_ext.lower() in ARTIFACT_EXTS:
+            return inner
+    return root
+
+
+#: 「先写临时文件再改名」的临时后缀（`savefig_stem` 只在其前一段是图片产物扩展名时剥掉）
+_TEMP_SUFFIXES = frozenset({".tmp", ".temp", ".part"})
 
 
 def savefig_effective_names(fname, kwargs: dict, canvas=None) -> list:
