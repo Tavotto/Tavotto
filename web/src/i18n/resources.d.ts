@@ -1313,6 +1313,7 @@ export default interface Resources {
         "telemetry": {
           "autoProps": "每条记录只带应用版本、操作系统、CPU 架构和安装渠道。",
           "detailsTitle": "会发送哪些数据",
+          "errorSummary": "你主动点“发送问题反馈”时，若已同意匿名统计，会另附一条不含内容的错误摘要：出错的内部环节与固定错误码，不含文字、路径、附言或匿名标识。点发送不代表同意今后自动上报。",
           "hardDisabled": "已由本机配置关闭，此开关不可用",
           "hardDisabledDetail": "环境变量 {{env}} 在起作用；去掉它之后开关才可用",
           "needsReconsent": "采集范围有变化，待重新确认",
@@ -1610,6 +1611,7 @@ export default interface Resources {
           "doneAfterCancel": "取消时报告已经送达，这次发送算成功",
           "doneBody": "在 GitHub Issues 或群里提到这个编号，维护者就能找到这份诊断。",
           "doneTitle": "已发送",
+          "errorSummaryNote": "若已同意匿名统计，会另附一条不含内容的错误摘要（出错的内部环节与固定错误码）。点发送不代表同意今后自动上报。",
           "extra": {
             "corrupt_sessions": "会话损坏副本的内容",
             "crash_reports": "系统崩溃报告",
@@ -2129,8 +2131,9 @@ export default interface Resources {
       "neverScripts": "脚本与源码",
       "neverTitle": "绝不发送",
       "policy": "隐私政策",
+      "sendsErrorSummary": "你主动发送问题反馈时，随附一条不含内容的错误摘要",
       "sendsFeatures": "你使用了哪些功能",
-      "sendsOutcome": "预检与导出是否成功",
+      "sendsOutcome": "预检与导出的结果（成功、失败或取消）",
       "sendsPlatform": "操作系统与处理器架构",
       "sendsTitle": "会发送",
       "sendsVersion": "Tavotto 的版本号",

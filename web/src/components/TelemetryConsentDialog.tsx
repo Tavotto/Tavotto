@@ -67,6 +67,7 @@ export function TelemetryConsentDialog() {
               <li>{tt('sendsPlatform')}</li>
               <li>{tt('sendsFeatures')}</li>
               <li>{tt('sendsOutcome')}</li>
+              <li>{tt('sendsErrorSummary')}</li>
             </ul>
           </Card>
           <Card appearance="subtle" data-telemetry-never>
