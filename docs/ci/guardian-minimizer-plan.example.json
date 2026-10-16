@@ -1,0 +1,11 @@
+{
+  "schema": 1,
+  "suite": "compat_v2",
+  "case": "s04b_savefig_tmp_replace",
+  "truth_titles": ["size=640x480"],
+  "review": {
+    "status": "pending",
+    "approved_content_hashes": []
+  },
+  "note": "Template only. Read the actual fixture/native truth and review each exact reduction before approving. No execution authority; AC-06 not_run."
+}
