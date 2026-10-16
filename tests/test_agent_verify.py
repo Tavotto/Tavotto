@@ -384,3 +384,13 @@ def test_git_state_is_snapshotted_before_scenarios_write_evidence(tmp_path, monk
     monkeypatch.setattr(AV, "run_scenario", lambda *a: calls.append("run") or real_run(*a))
     AV.main(["run", "t.snap", "--out", str(tmp_path / "out"), "--python", sys.executable])
     assert calls[:2] == ["commit", "run"] and calls.count("commit") == 1
+
+
+def test_spawn_error_is_recorded_without_the_executable_path(tmp_path):
+    """解释器在前置探测之后消失：report 只记类别，绝对路径只留在本地 stderr 证据里。"""
+    missing = tmp_path / "私有目录" / "venv" / "bin" / "python"
+    rec = AV.run_step([str(missing), "-c", "0"], {}, tmp_path / "01-step", 5)
+    assert rec["exit_code"] is None
+    assert rec["spawn_error"].startswith("FileNotFoundError")
+    assert str(tmp_path) not in rec["spawn_error"] and "私有目录" not in rec["spawn_error"]
+    assert "私有目录" in (tmp_path / "01-step.stderr.log").read_text(encoding="utf-8")

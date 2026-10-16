@@ -27,6 +27,7 @@
 from __future__ import annotations
 
 import argparse
+import errno
 import hashlib
 import importlib.util
 import json
@@ -436,11 +437,14 @@ def run_step(argv: list[str], env: dict, log_prefix: Path, timeout: float) -> di
                 argv, cwd=ROOT, env=env, stdout=out, stderr=err, stdin=subprocess.DEVNULL, **kwargs
             )
         except OSError as exc:
+            # 异常文本带解释器的绝对路径：原文只落本地 stderr 证据，report.json 只记类别
+            err.write(f"{type(exc).__name__}: {exc}\n".encode("utf-8", "replace"))
+            code = errno.errorcode.get(exc.errno, "") if exc.errno else ""
             return {
                 "exit_code": None,
                 "timed_out": False,
                 "duration_s": 0.0,
-                "spawn_error": str(exc),
+                "spawn_error": f"{type(exc).__name__}({code})" if code else type(exc).__name__,
             }
         try:
             rc = proc.wait(timeout=max(timeout, 1))
