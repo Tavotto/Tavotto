@@ -139,7 +139,6 @@ class Case11NothingRan(GuardianBase):
         row["executions"].update(native=1, tavotto=1)
         row["stages"] = {s: cg.stage("passed", "x") for s in cg.CC.STAGES}
         row["raw"] = {"runner_error": "Traceback ... IndexError"}
-        row["product_classification"] = "product_bug"
         cg.finalize_row(row)
         self.assertEqual(row["status"], "unknown")
         self.assertEqual(row["failure_category"]["source_code"], "runner_crash")
