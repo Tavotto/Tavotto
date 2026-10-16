@@ -87,6 +87,12 @@
      `supersedes: [旧 rid]`（放弃旧等待「改写后再发」）由后端在写新行的**同一个事务**里删旧行——客户端**没有** DELETE。
      客户端单方面判断「这一行不存在 / 已不需要」可能是错的（原请求可能还在路上，DELETE 也可能失败），旧行之后被还原成「未确认」，
      而新 rid 已经执行过，同一条指令就执行两次。新行 PUT 失败 = 整个事务回滚 = 旧行还在，状态仍然一致。
+     **`supersedes` 同时给旧 rid 写墓碑预留**（`ai_requests.session = '~superseded'`，同一个事务）：原 POST 可能只是慢，删了行之后它才到达也会照样登记并执行，
+     旧指令和改写后的指令就都执行了。有了墓碑，晚到的旧 rid 走原子预留必撞唯一约束，被 409 `ai_request_superseded` 拒绝（不 spawn）；
+     查询该 rid 回 `status: superseded`（不是 404），前端不再提供同 rid 重发。旧 rid 若已被真实预留（旧请求其实到达了），
+     整个 PUT 回滚并回 409 `ai_supersede_conflict`——不能再当成「没收到」取代它。
+     **spawn 之前的异常**（如 `record_start` 抛 `OperationalError`，被全局处理器转成 500）也由后端删该 rid 的待确认行（`engine_ai.spawn_started()` 标记
+     Popen 成功的那一刻）；**已经 spawn 的绝不删**——那条指令可能正在执行，账本行是响应丢了之后还能查到它的线索。
      **账本写入的结局三分**：`ok` / `rejected`（明确的 4xx：确定没写）/ `unknown`（网络错误 / 超时 / 5xx / 读不出响应：可能已经写入、
      只是响应丢了）。`unknown` 不发，且这条指令**保持同一个 rid** 幂等重试（后端同 rid 重复 PUT 不占名额），不换新 rid。
   4b. **发送前草稿必须先写成功**：composer 来源的发送在 `draftSnapshot()` 拿不到草稿戳（PUT 暂时失败 / 后端不可用）时**中止**——
