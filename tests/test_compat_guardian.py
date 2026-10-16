@@ -247,9 +247,7 @@ class GuardianContract(unittest.TestCase):
         retained = report_path.parent.parent / "evidence" / self.cid / "native-execs.jsonl"
         self.assertEqual(retained.read_text(), raw)
         refs = {item["path"]: item for item in report["evidence"]}
-        self.assertEqual(
-            refs[f"{self.cid}/native-execs.jsonl"]["sha256"], cg.digest(raw.encode())
-        )
+        self.assertEqual(refs[f"{self.cid}/native-execs.jsonl"]["sha256"], cg.digest(raw.encode()))
 
     def test_missing_data_digest_rejected(self):
         del self.row["fixture"]["data_sha256"]
