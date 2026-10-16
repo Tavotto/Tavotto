@@ -129,6 +129,12 @@ CLI 既找不到端口也没有凭据可带；要做成「经会话认证的查�
   `render_success: null`、`verified_success: false`。旧插件读新 CLI：多出的键被忽略。退出码与 `ok` 一字未改。
 - **没覆盖的**：没有任何实例在写回执（旧版本实例 / 数据目录被隔离成不同位置）→ `timeout`；无脚本 Figure（不可参数化）不发起渲染 → `timeout`；
   真 Windows 桌面（MSIX 副本）上的端到端未验。
+- **MSIX 与数据目录（#961 现场，未解决）**：回执路径是 `config.data_dir()` = `%LOCALAPPDATA%\Tavotto`（可被 `TAVOTTO_DATA_DIR` 覆盖）。
+  仓库里没有任何处理 MSIX / LocalCache 的代码（`code-facts.md`），所以**不确定**：Codex 是 MSIX 打包应用，它拉起的 CLI 子进程
+  若继承包的文件系统虚拟化，写 `%LOCALAPPDATA%` 会落到 `Packages\<pkg>\LocalCache\Local\Tavotto`，而非打包的桌面 sidecar
+  读的是真实路径——两边错位，则永远 `unverified/timeout`（不会误报 ok / failed，但这个场景下三态等于没有信号）。
+  同一错位也会影响 `session_client` 的凭据文件，但那条从未在 MSIX 下被验证过。需 Windows 真机验证；若证实，可选的出路
+  （都未实现）：实例额外扫 `Packages\*\LocalCache\Local\Tavotto\session\handoff`，或把 ID 经 argv 传给壳（改同源对 `desktop_argv`）。
 
 ## 不做
 

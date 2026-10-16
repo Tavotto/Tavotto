@@ -21,6 +21,10 @@
 `<data_dir>/session/` 是 0700 目录、文件 0600，能写进去的进程本来就能读用户的任何文件，
 网页（含 DNS rebinding 页面）碰不到。没有新端点，所以没有可被绕过的 guard。
 
+**已知盲区（#961 现场，未验证）**：路径是 `config.data_dir()`。CLI 若跑在 MSIX 打包进程（Codex Store 版）的上下文里，
+`%LOCALAPPDATA%` 的写入可能被虚拟化到 `Packages\\<pkg>\\LocalCache\\...`，而非打包的 sidecar 读真实路径，两边错位——结果是
+永远 `unverified/timeout`（不误报，但没有信号）。仓库里没有现成的「真实路径」解析可复用；需要 Windows 真机确认后再决定出路。
+
 约束（每条都有用例）：
   * ID 严格 `^[0-9a-f]{32}$`，文件名只由 ID 构成，永远在固定目录里解析；
   * 文件必须是本人的普通文件（lstat，不跟符号链接）、不超过 `MAX_BYTES`；
