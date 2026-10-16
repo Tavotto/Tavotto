@@ -55,6 +55,8 @@ interface Entry {
    * （否则 A 在途时 B 被保存、对账把 B 的戳读进来，A 的 stale 就被误判成「已知」而盖掉 B）。
    */
   baseStamp?: number
+  /** 本页为**这个戳**（这一版当前的写入戳）发出过几次尝试（普通 PUT 加 pagehide 的 keepalive 等）；换戳（提升重写）时清零 */
+  attempts: number
 }
 
 interface Slot {
@@ -129,6 +131,7 @@ export function post(project: string, fileId: string, text: string): void {
     version: ++versionCounter,
     retries: 0,
     staleRetries: 0,
+    attempts: 0,
     // 这一版的基线：编辑发生此刻本页已知的最新服务器戳；基线未知（首读失败、还没有写成功过）就是 undefined
     baseStamp: slot.unknown ? undefined : slot.known,
   }
@@ -202,15 +205,38 @@ export function flushAll(keepalive = true): void {
   for (const slot of slots.values()) if (slot.entry) void send(slot, keepalive)
 }
 
+/** 普通 PUT 最多等这么久；超时按 `unavailable` 处理（走正常的退避重试）。半开连接上的请求不会自己结束 */
+export const INFLIGHT_TIMEOUT_MS = 15_000
+
 function send(slot: Slot, keepalive: boolean): Promise<'accepted' | 'unavailable' | 'abandoned'> {
   const entry = slot.entry
   if (!entry) return Promise.resolve('accepted')
   clearTimers(entry)
   if (slot.inflight && !keepalive) return slot.inflight // 在途的落地时会检查并补发更新的版本
   const v = entry.version
-  const p = saveDraftStamped(slot.project, slot.fileId, entry.text, keepalive, entry.stamp).then(({ result, stamp }) => {
+  entry.attempts++
+  const attempt = saveDraftStamped(slot.project, slot.fileId, entry.text, keepalive, entry.stamp)
+  if (keepalive) {
+    // keepalive 是「发出去就不管」的尽力尝试：**不替换被跟踪的普通请求**（它的连接半开挂住时，原来那次普通请求
+    // 成功了也清不掉 inflight，之后的编辑就永远复用一个卡住的 promise）。它只在落地时参与 `attempts` 判定与槽的收尾
+    return attempt.then(({ result, stamp }) => land(slot, v, result, stamp))
+  }
+  // 普通请求：inflight 只跟踪它，并加超时。超时后按 unavailable 走重试；迟到的真实结果仍然会落地（可能已经写成功了）
+  let timedOut = false
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const timeout = new Promise<{ result: SaveResult; stamp?: number }>((resolve) => {
+    timer = setTimeout(() => {
+      timedOut = true
+      resolve({ result: 'unavailable' })
+    }, INFLIGHT_TIMEOUT_MS)
+  })
+  const p: Promise<'accepted' | 'unavailable' | 'abandoned'> = Promise.race([attempt, timeout]).then(({ result, stamp }) => {
+    clearTimeout(timer)
     if (slot.inflight === p) slot.inflight = null
     return land(slot, v, result, stamp)
+  })
+  void attempt.then(({ result, stamp }) => {
+    if (timedOut) void land(slot, v, result, stamp) // 超时之后才回来的结果也要处理（它可能已经把这一版写成功了）
   })
   slot.inflight = p
   return p
@@ -238,9 +264,12 @@ async function land(
   }
 
   // 同一版本的另一次尝试（普通 PUT 与 pagehide keepalive 重叠）先写进去了：服务器回 stale，但它那一行的戳
-  // **就是这一版自己的戳**——这是本版本已被接受，不是别处的写入。按已接受收尾，不能当成跨标签页替换而放弃
+  // **就是这一版自己的戳**——这是本版本已被接受，不是别处的写入。按已接受收尾，不能当成跨标签页替换而放弃。
+  // 两个条件缺一不可：(1) 戳相等（两个页面的戳由 client 段区分，不可能相等）；(2) 本页确实为这个戳发出过**不止一次**尝试——
+  // 只发过一次的 stale 即使戳相等也不能算「自己的重复尝试先落地」，按普通 stale 规则走
   //（放弃会让 draftSnapshot 在对账完成前拿到上一版的戳，提交记错戳、被接受后清不掉草稿）
-  if (result === 'stale' && entry && latest && serverStamp !== undefined && serverStamp === entry.stamp) result = 'saved'
+  if (result === 'stale' && entry && latest && serverStamp !== undefined && serverStamp === entry.stamp && entry.attempts > 1)
+    result = 'saved'
 
   if (result === 'stale') {
     // 服务器说：它那里有比这一版**更新的戳**，这一版没被采纳。只拿**这一版自己的基线**（`baseStamp`）和服务器戳比：
@@ -261,6 +290,7 @@ async function land(
     }
     // 无论是否到上限都**推进戳**：`observeStamp` 已被 stale 回的服务器戳抬高下限，新戳一定比它大
     entry.stamp = nextWriteStamp()
+    entry.attempts = 0 // 换了新戳：重新数
     if (++entry.staleRetries > MAX_STALE_RETRIES) {
       // 有界：两端互相压戳时别立刻再冲一轮——退避一段时间后**重新走一遍完整的 stale 判定**（计数清零；仍可提升就用上面推进过的新戳重写）。
       // 这种状态也算「连续失败」：超过一分钟就出灰字，不是静默循环

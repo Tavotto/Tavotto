@@ -41,32 +41,102 @@ afterEach(() => {
   next = []
 })
 
+const jsonResp = (body: unknown) =>
+  new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' } })
+
 describe('aiDraftOutbox · 同一版本的重复写入', () => {
-  it('同一版本的另一次尝试已写入、本次回 stale 且服务器戳等于本版的戳：按已接受收尾，不当成别处替换而放弃', async () => {
+  it('同一版本发过不止一次尝试（keepalive 先挂住，普通 PUT 又发）、本次回 stale 且服务器戳等于本版的戳：按已接受收尾', async () => {
     const events: string[] = []
     outbox.subscribe('p', 'f', (e) => events.push(e.kind))
     outbox.advance('p', 'f', 1) // 基线已知：没有这条修复时会被判为「别处写了更新稿」而放弃
     outbox.post('p', 'f', 'v1')
-    // 服务器回 stale，带回的戳就是这次 PUT 自己带的戳（另一次同版本尝试先落地了）
     let sent = 0
-    const realFetch2 = globalThis.fetch
+    const real = globalThis.fetch
     globalThis.fetch = (async (url: unknown, init?: RequestInit) => {
       if (String(url).includes('/api/ai/drafts') && init?.method === 'PUT') {
         const body = JSON.parse(String(init.body)) as { text: string; stamp: number }
         puts.push({ text: body.text, stamp: body.stamp })
         sent++
-        return new Response(JSON.stringify({ revision: 1, stamp: body.stamp, stale: true }), {
-          status: 200,
-          headers: { 'Content-Type': 'application/json' },
-        })
+        if (sent === 1) return new Promise<Response>(() => {}) // 第一次尝试（keepalive）一直不回
+        return jsonResp({ revision: 1, stamp: body.stamp, stale: true }) // 另一次同版本尝试先落地了：stale，戳 = 自己的戳
       }
-      return realFetch2(url as RequestInfo, init)
+      return real(url as RequestInfo, init)
     }) as typeof fetch
-    await outbox.flush('p', 'f')
-    expect(sent).toBe(1) // 没有换戳重写
+    void outbox.flush('p', 'f', true) // keepalive：尝试 1（挂住）
+    await outbox.flush('p', 'f') // 普通 PUT：尝试 2 → stale 且戳相等
+    expect(sent).toBe(2) // 没有换戳重写
     expect(events).toContain('accepted')
     expect(events).not.toContain('abandoned')
     expect(outbox.peek('p', 'f')).toBeNull()
+  })
+
+  it('等戳但本页只为这个版本发过一次尝试：不是「自己的重复尝试先落地」，按普通 stale 规则走（基线之外的写入 → 放弃）', async () => {
+    const events: string[] = []
+    outbox.subscribe('p', 'f', (e) => events.push(e.kind))
+    outbox.advance('p', 'f', 1)
+    outbox.post('p', 'f', 'v1')
+    const real = globalThis.fetch
+    globalThis.fetch = (async (url: unknown, init?: RequestInit) => {
+      if (String(url).includes('/api/ai/drafts') && init?.method === 'PUT') {
+        const body = JSON.parse(String(init.body)) as { text: string; stamp: number }
+        puts.push({ text: body.text, stamp: body.stamp })
+        return jsonResp({ revision: 1, stamp: body.stamp, stale: true }) // 戳相等，但只发过一次（别的页面碰巧同戳的情形）
+      }
+      return real(url as RequestInfo, init)
+    }) as typeof fetch
+    await outbox.flush('p', 'f')
+    expect(events).not.toContain('accepted') // 对照：只看戳相等会把输掉的 PUT 误判成已保存
+    expect(events.at(-1)).toBe('abandoned')
+  })
+})
+
+describe('aiDraftOutbox · inflight 只跟踪普通 PUT', () => {
+  beforeEach(() => vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] }))
+  afterEach(() => vi.useRealTimers())
+
+  it('keepalive 连接半开挂住：不占用 inflight，随后新的编辑照常写入、普通请求成功后槽被清', async () => {
+    outbox.advance('p', 'f', 1)
+    let n = 0
+    const real = globalThis.fetch
+    globalThis.fetch = (async (url: unknown, init?: RequestInit) => {
+      if (String(url).includes('/api/ai/drafts') && init?.method === 'PUT') {
+        const body = JSON.parse(String(init.body)) as { text: string; stamp: number }
+        puts.push({ text: body.text, stamp: body.stamp })
+        n++
+        if (n === 1) return new Promise<Response>(() => {}) // keepalive 挂住
+        return jsonResp({ revision: 1, stamp: body.stamp })
+      }
+      return real(url as RequestInfo, init)
+    }) as typeof fetch
+    outbox.post('p', 'f', 'v1')
+    void outbox.flush('p', 'f', true) // keepalive：挂住
+    outbox.post('p', 'f', 'v2') // 新的编辑
+    await outbox.flush('p', 'f') // 对照：keepalive 替换了 inflight 时，这里会一直复用那个卡住的 promise
+    expect(puts.map((x) => x.text)).toEqual(['v1', 'v2'])
+    expect(outbox.has('p', 'f')).toBe(false)
+  })
+
+  it('普通请求挂住超过超时：按 unavailable 走正常重试，重试成功后槽被清', async () => {
+    outbox.advance('p', 'f', 1)
+    let n = 0
+    const real = globalThis.fetch
+    globalThis.fetch = (async (url: unknown, init?: RequestInit) => {
+      if (String(url).includes('/api/ai/drafts') && init?.method === 'PUT') {
+        const body = JSON.parse(String(init.body)) as { text: string; stamp: number }
+        puts.push({ text: body.text, stamp: body.stamp })
+        n++
+        if (n === 1) return new Promise<Response>(() => {}) // 第一次普通请求挂住
+        return jsonResp({ revision: 1, stamp: body.stamp })
+      }
+      return real(url as RequestInfo, init)
+    }) as typeof fetch
+    outbox.post('p', 'f', 'v1')
+    await vi.advanceTimersByTimeAsync(outbox.WRITE_DEBOUNCE_MS + 10) // 第一次发出（挂住）
+    expect(puts).toHaveLength(1)
+    await vi.advanceTimersByTimeAsync(outbox.INFLIGHT_TIMEOUT_MS + 10) // 超时 → unavailable → 排退避重试
+    await vi.advanceTimersByTimeAsync(outbox.RETRY_MS + 10)
+    expect(puts.map((x) => x.text)).toEqual(['v1', 'v1']) // 重试了
+    expect(outbox.has('p', 'f')).toBe(false)
   })
 })
 

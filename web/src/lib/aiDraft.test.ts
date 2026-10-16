@@ -7,6 +7,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { createDraftBackend, type DraftBackend } from '@/test/aiDraftBackend'
 import {
+  __resetWriteStampForTests,
   deleteDraftIf,
   DRAFT_MAX_BYTES,
   isDraftTooLarge,
@@ -132,6 +133,28 @@ describe('写入戳', () => {
     // 本页抬高了下限：再写一次就比它新，被接受
     expect(await saveDraft('pj', 'F', '本页再写')).toBe('saved')
     expect(be.draft('pj', 'F')).toBe('本页再写')
+  })
+})
+
+describe('写入戳：不同页面不可能生成相同的戳', () => {
+  it('两个页面（不同 client 段）在同一毫秒内各生成一个戳：不相等；每个页面内严格递增；量级仍是墙钟微秒', () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    try {
+      vi.setSystemTime(1_800_000_000_000)
+      __resetWriteStampForTests(5) // 页面 A
+      const a = [nextWriteStamp(), nextWriteStamp(), nextWriteStamp()]
+      __resetWriteStampForTests(900) // 页面 B：同一毫秒、重新起步
+      const b = [nextWriteStamp(), nextWriteStamp(), nextWriteStamp()]
+      expect(a.some((x) => b.includes(x))).toBe(false) // 没有任何一个戳相等
+      expect(a[1]).toBeGreaterThan(a[0])
+      expect(a[2]).toBeGreaterThan(a[1])
+      expect(a[0] % 1024).toBe(5)
+      expect(b[0] % 1024).toBe(900)
+      expect(a[0]).toBeGreaterThanOrEqual(1_800_000_000_000 * 1000)
+      expect(a[0]).toBeLessThan(1_800_000_000_000 * 1000 + 3 * 1024 + 1024) // 量级没有漂移
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })
 

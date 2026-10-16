@@ -71,13 +71,32 @@ export type SaveResult = 'saved' | 'removed' | 'too_large' | 'unavailable' | 'st
  * 之后的写入一定比它新。
  */
 let lastStamp = 0
-export function nextWriteStamp(): number {
-  lastStamp = Math.max(lastStamp + 1, Date.now() * 1000)
-  return lastStamp
+/** 低 10 位是本页的随机 client 段：不同页面（标签页）生成的戳在这一段上不同，所以**不可能生成相同的戳**，同时仍保持单调、可比较 */
+const CLIENT_BITS = 1024
+const randomClientId = (): number => {
+  try {
+    return crypto.getRandomValues(new Uint16Array(1))[0] % CLIENT_BITS
+  } catch {
+    return Math.floor(Math.random() * CLIENT_BITS)
+  }
 }
-/** 仅测试：写入戳下限是模块级状态（等于「新开一个页面」），用例之间要能回到从 0 起步 */
-export const __resetWriteStampForTests = (): void => {
+let clientId = randomClientId()
+/**
+ * 写入戳 = （按 1024 µs 对齐的时间部分）+ 本页的随机 client 段。量级仍是墙钟微秒，保持单调（页内每次至少 +1024）、跨标签页可比较，
+ * 后端只比较数字大小。两个页面即使在同一毫秒内各发一次写入，戳也不会相等——相等的戳只可能来自**同一页同一版本**的重复尝试
+ * （普通 PUT 与 pagehide 的 keepalive 重叠）。
+ */
+export function nextWriteStamp(): number {
+  const t = Math.max(lastStamp + 1, Date.now() * 1000)
+  let s = Math.floor(t / CLIENT_BITS) * CLIENT_BITS + clientId
+  if (s < t) s += CLIENT_BITS
+  lastStamp = s
+  return s
+}
+/** 仅测试：写入戳下限是模块级状态（等于「新开一个页面」），用例之间要能回到从 0 起步；可指定 client 段来模拟另一个页面 */
+export const __resetWriteStampForTests = (client?: number): void => {
   lastStamp = 0
+  clientId = client ?? randomClientId()
 }
 export function observeStamp(serverStamp: unknown): void {
   if (typeof serverStamp === 'number' && Number.isFinite(serverStamp) && serverStamp > lastStamp) lastStamp = serverStamp
