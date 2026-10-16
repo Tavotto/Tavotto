@@ -134,7 +134,9 @@ class Trend(GuardianBase):
         self.assertEqual(comparison["scope_changes"]["denominator"], {"previous": 3, "current": 2})
         self.assertFalse(comparison["scope_changes"]["aggregate_rates_compared"])
         self.assertEqual(comparison["fixed_set"]["transitions"], [])
-        self.assertNotIn("improvement", json.dumps(comparison))
+        self.assertEqual(
+            [x for x in comparison["fixed_set"]["transitions"] if x["kind"] == "improvement"], []
+        )
 
     def test_a_fixed_case_getting_fixed_is_the_only_improvement(self):
         previous = self.baseline()
@@ -162,7 +164,10 @@ class Trend(GuardianBase):
         env = copy.deepcopy(self.row["environment_before"])
         env["facts"] = {**env["facts"], "python": "3.14.0 other", "platform": "Other-OS"}
         env["fingerprint"] = cg.canonical(env["facts"])
-        current = self.summary([("a",), ("b", "failed", "a", env), ("c", "failed")], previous)
+        current = self.summary(
+            [("a", "passed", "a", env), ("b", "failed", "a", env), ("c", "failed", "a", env)],
+            previous,
+        )
         fixed = current["comparison"]["fixed_set"]
         self.assertEqual(fixed["verdict"], "incomparable")
         self.assertFalse(fixed["environment_comparable"])

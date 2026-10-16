@@ -420,6 +420,10 @@ def explore(args) -> int:
         parents = [p for p in parents if p.case in wanted]
         if not parents:
             raise cg.EvidenceError("no parent matches --parent")
+    if getattr(args, "families", None):
+        unknown = set(args.families.split(",")) - {t.family for t in XT.TRANSFORMS}
+        if unknown:
+            raise cg.EvidenceError(f"unknown transform family: {sorted(unknown)}")
     generated = XT.generate(args.seed, parents)
     run_id = uuid.uuid4().hex
     out = Path(args.out).resolve() / run_id
