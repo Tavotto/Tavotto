@@ -379,6 +379,25 @@ def test_an_expired_session_is_reopened_once_and_the_call_retried(monkeypatch, t
     assert w._session_id == "s-2"
 
 
+def test_a_session_we_force_closed_is_not_transparently_reopened(monkeypatch, tmp_path):
+    """取消 = `force_kill()` 关掉会话；在飞的 build 先于关闭回应收到 unknown_session。那不是 workerd 重启——
+    不许重开（重开 = 把刚取消的脚本再跑一遍，会话永远停在 running；Windows 打包产物 e2e 实测）。"""
+    w, client = _worker(
+        monkeypatch,
+        tmp_path,
+        [
+            {"ok": True, "session_id": "s-1"},
+            workerd_client.WorkerdError("会话不存在", code="unknown_session"),
+            {"ok": True, "session_id": "s-2"},
+            {"ok": True, "stems": {"Fig1": {}}},
+        ],
+    )
+    w._force_closing = True  # force_kill() 在发 close_session 之前落下
+    with pytest.raises(pool.WorkerError):
+        w.ensure_built()
+    assert [op for op, _ in client.calls] == ["open_session", "build"]
+
+
 def test_the_timeout_tier_travels_with_each_request(monkeypatch, tmp_path):
     """超时档位是 Flask 的策略：BUILD / REQUEST / EXPORT 各走各的，
     workerd 只负责按请求里带的那个执行。"""
