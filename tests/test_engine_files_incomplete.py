@@ -194,11 +194,21 @@ def test_python_pool_startup_eof_is_classified_as_engine_files_incomplete(tmp_pa
 
 def _workerd_exe():
     """忽略 conftest 的默认禁用开关（`TAVOTTO_WORKERD=0`），只看 cargo 产物在不在——
-    与 test_worker_roundtrip.py 的 `_workerd_binary` 同一借法；不撤开关的话这里恒为 None、用例恒 skip。"""
+    与 test_worker_roundtrip.py 的 `_workerd_binary` 同一借法；不撤开关的话这里恒为 None、用例恒 skip。
+    但 `TAVOTTO_WORKERD` 指了路径时照用（CI 钉到刚建的 debug 产物，免得 `find_workerd` 优先挑缓存里
+    残留的旧 release 二进制）；指到不存在的文件就回 None，用例 skip，由 CI 的 junit 核对判红。"""
+    from tavotto.engine import workerd_client
+
+    if (os.environ.get("TAVOTTO_WORKERD") or "").strip().lower() not in (
+        "",
+        "0",
+        "off",
+        "false",
+        "no",
+    ):
+        return workerd_client.find_workerd()
     saved = os.environ.pop("TAVOTTO_WORKERD", None)
     try:
-        from tavotto.engine import workerd_client
-
         return workerd_client.find_workerd()
     finally:
         if saved is not None:
