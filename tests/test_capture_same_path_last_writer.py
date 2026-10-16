@@ -111,6 +111,7 @@ class TestSamePathRule:
         s, a, b = _session(), _Fig(), _Fig()
         s.add_figure("x", a, PYPLOT)
         _save(s, "x", b)
+        s.note_savefig("x", _Fig(), {"format": "pdf"})  # 又一个写入者撞上 b 写过的路径
         assert s.capture["x"] is a and s.capture_source["x"] == PYPLOT
 
     def test_pyplot_fallback_does_not_displace_savefig(self):
