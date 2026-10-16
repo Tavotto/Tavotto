@@ -86,7 +86,16 @@ export function CanvasTabs() {
       : gap.parentElement?.querySelector<HTMLElement>('[data-all-canvases]')
     const from = gap.getBoundingClientRect()
     const slack = (menu ? menu.getBoundingClientRect().right : from.right) - from.left
-    setOverflowing(el.scrollWidth > el.clientWidth + slack + 1)
+    // 内容宽与条宽都按**小数**量（getBoundingClientRect），不用取整的 scrollWidth / clientWidth：取整各差最多 1px，
+    // 原先靠一道 `+ 1` 的容差兜，结果判据与真实几何在边上差到 2~3px（e2e 宽度扫描因此随字宽取整随机红）。
+    // 两个状态用同一个量：有菜单时条缩着、`slack` 是撤掉菜单能多出来的 菜单 + 它前面那道 gap；没菜单时是空白宽。
+    // 条一旦放得下，撤掉菜单后条恰好多出 `slack`，内容仍 ≤ 条宽，不会来回翻
+    const last = el.lastElementChild
+    const box = el.getBoundingClientRect()
+    const content = last
+      ? last.getBoundingClientRect().right - box.left + el.scrollLeft + parseFloat(getComputedStyle(el).paddingRight)
+      : 0
+    setOverflowing(content > box.width + slack)
   }, [menuPinned])
 
   // 溢出边缘的渐隐（2026-10-07 设计审计 §3.7 / §10.1）：条外还有页签的那一侧 16px alpha mask，

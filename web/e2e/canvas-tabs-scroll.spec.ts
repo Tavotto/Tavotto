@@ -236,15 +236,18 @@ async function fitsWithoutMenu(strip: Locator) {
   return strip.evaluate((el) => {
     const row = el.parentElement!
     const plus = row.querySelector('[data-new-canvas-tab]') as HTMLElement
-    const pad = parseFloat(getComputedStyle(row).paddingRight)
-    const plusRight = plus.getBoundingClientRect().right - el.clientWidth + el.scrollWidth
-    // 行最右是缩放菜单（2026-09-30 搬进标签行）：它占着行的右端，页签 +「+」能用的右缘是它的左缘
-    // 再退一道 gap，不是行的内容盒右缘
     const zoom = row.lastElementChild as HTMLElement
     const gap = parseFloat(getComputedStyle(row).columnGap)
-    const rowRight = zoom.querySelector('[data-zoom-menu]')
-      ? zoom.getBoundingClientRect().left - gap
-      : row.getBoundingClientRect().right - pad
+    // 条按内容宽排开时「+」的右缘（小数几何：最后一个页签的右缘 + 条的右内边距，换算到「+」的位置）
+    const last = el.lastElementChild!
+    const box = el.getBoundingClientRect()
+    const content =
+      last.getBoundingClientRect().right - box.left + el.scrollLeft + parseFloat(getComputedStyle(el).paddingRight)
+    const plusRight = plus.getBoundingClientRect().right + (content - box.width)
+    // 行最右是缩放菜单（2026-09-30 搬进标签行）：它右贴行尾，不随「画布菜单」撤掉而挪位。撤掉菜单后「+」之后
+    // 依次是 gap、（可能为 0 宽的）弹性空白、gap，才是缩放菜单——「+」右缘最多到缩放菜单左缘退两道 gap。
+    // （此前写成退一道，比真实几何宽松一个 gap；实现的判据是精确的，两边在边上就差出了几 px 的模糊带）
+    const rowRight = zoom.getBoundingClientRect().left - 2 * gap
     return { fits: plusRight <= rowRight + 0.5, slack: rowRight - plusRight }
   })
 }
@@ -293,8 +296,8 @@ test('「条放不下」出现的菜单：窗口拉宽到不带菜单放得下�
     await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))))
     const f = await fitsWithoutMenu(strip)
     seen.push(`${w}:${f.fits ? 'fit' : 'over'}`)
-    // 正好卡在边上（±2px）：scrollWidth 是取整的，两边的判据可以差不到 1px，这一档不判
-    if (Math.abs(f.slack) < 2) continue
+    // 正好卡在边上（±0.5px，即上面 fits 的容差）：两边都按小数几何量，只剩浮点边界这一档不判
+    if (Math.abs(f.slack) < 0.5) continue
     if (f.fits && f.slack < band) inBand++
     await expect(menu, `宽 ${w}：${JSON.stringify(f)}`).toHaveCount(f.fits ? 0 : 1)
   }
