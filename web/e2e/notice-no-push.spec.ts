@@ -101,39 +101,77 @@ test('左栏刷新失败：Notice 顺着滑出来（有过渡帧），终态位�
   const grid = page.locator('#asset-figures-section')
   await expect(page.locator('[data-card="Fig1_kinetics.pdf"]')).toHaveCount(1, { timeout: 30_000 })
   await expect(page.locator('[data-asset-refresh-failed]')).toHaveCount(0)
+  // 首次加载的「正在检查新文件…」行还在时网格顶边多出 ~23px：等它收走再取基线，否则基线本身就是错的
+  await expect(page.locator('[data-asset-refreshing]')).toHaveCount(0)
   const top0 = (await box(page, '#asset-figures-section')).y
 
   // 后端那一轮成了、/api/panels 失败：load() 吞错，唯一的出口就是这条 Notice
   await page.route(/\/api\/panels(\?|$)/, (route) =>
     route.fulfill({ status: 500, json: { error: 'panels 读不回来', code: 'boom' } }),
   )
-  // 每一帧采样网格顶边，直到 1.2s
+  // 量法不看帧率（rAF 逐帧采样在慢机器上会把「第一帧」采在过渡中途：Windows 退出冒烟里 182→205 一步跳过，
+  // 而那 23px 其实是同一时刻存在的「正在刷新…」行，不是 Notice）。改成在 Notice 插进 DOM 的**那次 DOM 变动的
+  // 同一个微任务**里量：此刻动画刚建好、还没走一步，把它暂停、拨到 0 / 一半 / 结尾各量一次。
+  // 位移 = 网格顶边 − 「正在刷新…」行的高度（那一行是否还在，取决于 POST /api/project/refresh 比 /api/panels 的失败
+  // 晚多久回来，与 Notice 无关；减掉它之后只剩 Notice 这一层带来的位移）
   await page.evaluate(() => {
-    const w = window as unknown as { __tops: number[] }
-    w.__tops = []
-    const t0 = performance.now()
-    const tick = () => {
-      const el = document.querySelector('#asset-figures-section')
-      if (el) w.__tops.push(Math.round(el.getBoundingClientRect().y * 10) / 10)
-      if (performance.now() - t0 < 1200) requestAnimationFrame(tick)
+    const w = window as unknown as { __probe: { start: number; mid: number; end: number; anims: number; dur: number } | null }
+    w.__probe = null
+    const offset = () => {
+      const g = document.querySelector('#asset-figures-section')!.getBoundingClientRect().y
+      const r = document.querySelector('[data-asset-refreshing]')?.getBoundingClientRect().height ?? 0
+      return Math.round((g - r) * 10) / 10
     }
-    requestAnimationFrame(tick)
+    const mo = new MutationObserver(() => {
+      const n = document.querySelector('[data-asset-refresh-failed]')
+      if (!n) return
+      mo.disconnect()
+      const reveal = n.closest('[data-reveal]')!
+      const anims = [reveal, ...Array.from(reveal.querySelectorAll('*'))]
+        .flatMap((el) => el.getAnimations())
+        .filter((a) => a.effect && (a.effect.getTiming().duration as number) > 0)
+      anims.forEach((a) => a.pause())
+      const dur = Math.max(0, ...anims.map((a) => a.effect!.getTiming().duration as number))
+      const at = (ms: number) => {
+        anims.forEach((a) => (a.currentTime = ms))
+        return offset()
+      }
+      const start = at(0)
+      const mid = at(dur / 2)
+      const end = at(dur)
+      anims.forEach((a) => {
+        a.currentTime = 0
+        a.play()
+      })
+      w.__probe = { start, mid, end, anims: anims.length, dur }
+    })
+    mo.observe(document.body, { childList: true, subtree: true })
   })
   await page.locator('[data-asset-refresh]').click()
   const notice = page.locator('[data-asset-refresh-failed]')
   await expect(notice).toHaveCount(1)
   await page.waitForTimeout(1300)
-  const tops = (await page.evaluate(() => (window as unknown as { __tops: number[] }).__tops)) as number[]
-  const final = tops[tops.length - 1] - top0
+  await expect(page.locator('[data-asset-refreshing]')).toHaveCount(0)
+  const probe = await page.evaluate(
+    () => (window as unknown as { __probe: { start: number; mid: number; end: number; anims: number; dur: number } | null }).__probe,
+  )
+  expect(probe, 'Notice 插进 DOM 的那次变动里量到了').not.toBeNull()
+  const { start, mid, end, anims, dur } = probe!
+  const final = (await box(page, '#asset-figures-section')).y - top0
   const nb = await box(page, '[data-asset-refresh-failed]')
   // 一行（30 左右）、不是两三行的大块；终态位移不超过这条 Notice 自己的高度 + 容器 pb-2 的 8
   // （同一时刻「正在刷新…」那一行收走了，所以只会小不会大）
   expect(nb.h, 'Notice 是一行中性提示').toBeLessThanOrEqual(32)
   expect(final).toBeGreaterThan(10)
   expect(final, `终态位移 ${final}，Notice 高 ${nb.h}`).toBeLessThanOrEqual(nb.h + 8 + 1.5)
-  // 过渡：起点 0 → 终点 final 之间至少有两帧停在中间（不是瞬间跳一格）
-  const mid = new Set(tops.map((t) => Math.round(t - top0)).filter((d) => d > 1 && d < final - 1))
-  expect(mid.size, `网格顶边的逐帧轨迹：${tops.join(',')}`).toBeGreaterThanOrEqual(2)
+  // 过渡：真有一段在跑的动画；起点位移 0（这一刻之前网格没被 Notice 这一层推过）；中点停在起终之间；终点 = Notice 自己的高度
+  expect(anims, 'Notice 的显现是一段真实的 CSS 过渡').toBeGreaterThan(0)
+  expect(dur).toBeGreaterThan(0)
+  expect(start - top0, `过渡起点位移（${start} - ${top0}）：Notice 插进来的那一刻不许先跳一格`).toBeLessThanOrEqual(1)
+  expect(mid - top0, `过渡中点位移 ${mid - top0}，起 ${start - top0} 终 ${end - top0}`).toBeGreaterThan(1)
+  expect(mid - top0).toBeLessThan(end - top0 - 1)
+  expect(end - top0, `过渡终点位移 ${end - top0}，Notice 高 ${nb.h}`).toBeGreaterThan(10)
+  expect(end - top0).toBeLessThanOrEqual(nb.h + 8 + 1.5)
   // 它是中性的一行：底不是语义色，图标才是 danger 色
   expect(await grid.count()).toBe(1)
   const icon = notice.locator('[data-notice-icon]')
