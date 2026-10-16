@@ -141,6 +141,10 @@ def run_native(req: dict) -> int:
         size_mm=sizes,
         fallback_stems=sorted(fallback),
         log=_tail(log.getvalue()),
+        **({"semantics": {
+            stem: {"titles": [ax.get_title() for ax in fig.axes]}
+            for stem, fig in captured.items()
+        }} if req.get("observe_semantics") else {}),
     )
 
 

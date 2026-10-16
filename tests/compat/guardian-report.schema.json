@@ -1,0 +1,369 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://tavotto.org/schemas/compatibility-guardian/report-1.0.0.json",
+  "title": "Compatibility Guardian execution evidence (not product support classification)",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "const": "1.0.0"
+    },
+    "run_id": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{32}$"
+    },
+    "source": {
+      "$ref": "#/$defs/source"
+    },
+    "expected_sha": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "suite": {
+      "enum": [
+        "compat_engine",
+        "compat_v2"
+      ]
+    },
+    "expected_cases": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "minItems": 1,
+      "uniqueItems": true
+    },
+    "corpus_sha256": {
+      "$ref": "#/$defs/sha256"
+    },
+    "cases": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/case"
+      },
+      "minItems": 1
+    },
+    "evidence": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/evidence"
+      },
+      "minItems": 1
+    },
+    "verdict": {
+      "$ref": "#/$defs/status"
+    },
+    "unverified": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "minItems": 1
+    },
+    "duration_s": {
+      "type": "number",
+      "minimum": 0
+    }
+  },
+  "required": [
+    "schema_version",
+    "run_id",
+    "source",
+    "expected_sha",
+    "suite",
+    "expected_cases",
+    "corpus_sha256",
+    "cases",
+    "evidence",
+    "verdict",
+    "unverified",
+    "duration_s"
+  ],
+  "additionalProperties": false,
+  "$defs": {
+    "status": {
+      "type": "string",
+      "enum": [
+        "passed",
+        "failed",
+        "expected_limitation",
+        "not_reproduced",
+        "environment_unavailable",
+        "not_run",
+        "invalid_fixture",
+        "unknown"
+      ]
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "stage": {
+      "type": "object",
+      "properties": {
+        "status": {
+          "$ref": "#/$defs/status"
+        },
+        "criterion": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "status",
+        "criterion"
+      ],
+      "additionalProperties": false
+    },
+    "source": {
+      "type": "object",
+      "properties": {
+        "commit": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "tree": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "dirty": {
+          "type": "boolean"
+        },
+        "content_sha256": {
+          "$ref": "#/$defs/sha256"
+        }
+      },
+      "required": [
+        "commit",
+        "tree",
+        "dirty",
+        "content_sha256"
+      ],
+      "additionalProperties": false
+    },
+    "environment": {
+      "type": "object",
+      "properties": {
+        "fingerprint": {
+          "$ref": "#/$defs/sha256"
+        },
+        "facts": {
+          "type": "object"
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    },
+    "fixture": {
+      "type": "object",
+      "properties": {
+        "files": {
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": {
+            "$ref": "#/$defs/sha256"
+          }
+        },
+        "source_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "data_sha256": {
+          "$ref": "#/$defs/sha256"
+        }
+      },
+      "required": [
+        "files",
+        "source_sha256",
+        "data_sha256"
+      ],
+      "additionalProperties": false
+    },
+    "evidence": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "bytes": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "path",
+        "sha256",
+        "bytes"
+      ],
+      "additionalProperties": false
+    },
+    "case": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "status": {
+          "$ref": "#/$defs/status"
+        },
+        "layer": {
+          "type": "string",
+          "minLength": 1
+        },
+        "profile": {
+          "enum": [
+            "safe"
+          ]
+        },
+        "desktop_shell_verified": {
+          "const": false
+        },
+        "stages": {
+          "type": "object",
+          "properties": {
+            "discover": {
+              "$ref": "#/$defs/stage"
+            },
+            "execute": {
+              "$ref": "#/$defs/stage"
+            },
+            "capture": {
+              "$ref": "#/$defs/stage"
+            },
+            "open": {
+              "$ref": "#/$defs/stage"
+            },
+            "semantic": {
+              "$ref": "#/$defs/stage"
+            },
+            "edit": {
+              "$ref": "#/$defs/stage"
+            },
+            "replay": {
+              "$ref": "#/$defs/stage"
+            },
+            "export": {
+              "$ref": "#/$defs/stage"
+            },
+            "fidelity": {
+              "$ref": "#/$defs/stage"
+            }
+          },
+          "required": [
+            "discover",
+            "execute",
+            "capture",
+            "open",
+            "semantic",
+            "edit",
+            "replay",
+            "export",
+            "fidelity"
+          ],
+          "additionalProperties": false
+        },
+        "executions": {
+          "type": "object",
+          "properties": {
+            "native": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 0
+            },
+            "tavotto": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 0
+            },
+            "basis": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "native",
+            "tavotto",
+            "basis"
+          ],
+          "additionalProperties": false
+        },
+        "native": {
+          "type": "object",
+          "properties": {
+            "status": {
+              "$ref": "#/$defs/status"
+            },
+            "result": {
+              "type": "object"
+            }
+          },
+          "required": [
+            "status",
+            "result"
+          ],
+          "additionalProperties": false
+        },
+        "comparable": {
+          "type": "boolean"
+        },
+        "environment_before": {
+          "$ref": "#/$defs/environment"
+        },
+        "environment_after": {
+          "$ref": "#/$defs/environment"
+        },
+        "product_classification": {
+          "enum": [
+            null,
+            "full_support",
+            "partial_support",
+            "unsupported_by_design",
+            "environment_dependency",
+            "product_bug",
+            "invalid_fixture"
+          ]
+        },
+        "raw": {
+          "type": "object"
+        },
+        "unverified": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "fixture": {
+          "$ref": "#/$defs/fixture"
+        }
+      },
+      "required": [
+        "id",
+        "status",
+        "layer",
+        "profile",
+        "desktop_shell_verified",
+        "stages",
+        "executions",
+        "native",
+        "comparable",
+        "environment_before",
+        "environment_after",
+        "product_classification",
+        "raw",
+        "unverified",
+        "fixture"
+      ],
+      "additionalProperties": false
+    }
+  }
+}
