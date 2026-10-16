@@ -423,6 +423,34 @@ describe('同步状态机：单一 reconcile + 写入版本（#1098）', () => {
     }
   })
 
+  it('跨标签页冲突放弃本页未落定的版本、输入框被换成另一个窗口的稿：出一句提示「草稿已被另一个窗口的修改替换」，下一次编辑后消失', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    try {
+      await mount()
+      const releaseA = be.holdNextDraftPut()
+      await typeText('本页刚输入的字')
+      await act(async () => void vi.advanceTimersByTime(WRITE_DEBOUNCE_MS + 50)) // PUT 在途
+      await settle()
+      be.putStamped('pa', 'Fig1.pdf', '另一个窗口的稿', Date.now() * 1000 + 5_000_000_000)
+      releaseA() // stale：别处写了我们编辑时不知道的更新稿 → 放弃本页的版本，对账采纳
+      await settle()
+      expect(input().value).toBe('另一个窗口的稿')
+      expect(q('[data-ai-draft-note="replaced"]')?.textContent).toBe('草稿已被另一个窗口的修改替换') // 对照：以前是静默替换
+      await typeText('我接着写') // 下一次编辑
+      expect(q('[data-ai-draft-note="replaced"]')).toBeNull()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('没有冲突时不出这句提示（正常保存、对账一致）', async () => {
+    await mount()
+    await typeText('正常写的字')
+    await act(async () => window.dispatchEvent(new Event('pagehide')))
+    await settle()
+    expect(q('[data-ai-draft-note="replaced"]')).toBeNull()
+  })
+
   it('首读失败（不知道服务器版本）：允许编辑；之后写被判 stale 按「已见」处理，以本地为准重写——用户的输入不丢', async () => {
     be.putStamped('pa', 'Fig1.pdf', '库里的旧稿', Date.now() * 1000 + 5_000_000_000)
     be.setDown(true) // 首读失败

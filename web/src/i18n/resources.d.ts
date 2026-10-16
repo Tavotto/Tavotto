@@ -92,6 +92,7 @@ export default interface Resources {
       "cliPath": "路径：{{path}}",
       "draftLoading": "正在载入草稿…",
       "draftNotSaved": "没能先保存输入框里的草稿，所以没有发出。检查连接后重试。",
+      "draftReplaced": "草稿已被另一个窗口的修改替换",
       "draftRestored": "已恢复上次没发出的草稿",
       "draftStalled": "草稿还没保存到本机项目，正在重试",
       "draftTooLong": "指令太长（超过 {{limit}} KB），请精简后再发送。",

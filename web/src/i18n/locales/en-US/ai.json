@@ -92,6 +92,7 @@
     "cliPath": "Path: {{path}}",
     "draftNotSaved": "Couldn’t save your draft first, so nothing was sent. Check the connection and retry.",
     "draftRestored": "Restored your unsent draft",
+    "draftReplaced": "Draft replaced by a change from another window",
     "draftStalled": "Draft not saved to the local project yet — retrying",
     "draftTooLong": "This instruction is too long (over {{limit}} KB). Shorten it to send.",
     "editAndResend": "Edit and resend",

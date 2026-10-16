@@ -95,6 +95,8 @@ export function useAiDraft(panel: PanelObject | null) {
    */
   /** 写入已连续失败超过一分钟（发件箱宣布）：输入框上方一行安静的灰字 */
   const [draftStalled, setDraftStalled] = useState(false)
+  /** 跨标签页冲突：本页未落定的版本被放弃、输入框换成了另一个窗口的稿——静默替换会让用户以为自己刚输入的字凭空消失；下一次编辑后消失 */
+  const [draftReplaced, setDraftReplaced] = useState(false)
   const [draftRead, setDraftRead] = useState<'loading' | 'ok' | 'failed'>('loading')
 
   const key = useRef<{ project: string | null; fileId: string | null; epoch: number }>({
@@ -125,6 +127,7 @@ export function useAiDraft(panel: PanelObject | null) {
     seq.current++
     setPromptState(value)
     setRestored(false)
+    setDraftReplaced(false)
     setTooLarge(isDraftTooLarge(value))
     // 投递给发件箱：它负责防抖、PUT、重试、stale 处置，与本实例的寿命无关
     const { project: pj, fileId: f } = key.current
@@ -214,6 +217,8 @@ export function useAiDraft(panel: PanelObject | null) {
   // 目标（项目 × 面板文件）变了：旧的在 cleanup 里冲刷，新的对账一次
   useEffect(() => {
     key.current = { project, fileId, epoch: key.current.epoch + 1 }
+    const epoch = key.current.epoch
+    setDraftReplaced(false)
     text.current = ''
     seq.current = 0
     draftStamp.current = null
@@ -233,8 +238,12 @@ export function useAiDraft(panel: PanelObject | null) {
         return
       }
       if (e.kind === 'abandoned') {
-        // 服务器上有本页没见过的更新版本（别的标签页写的）：本版已放弃，对账采纳服务器值
-        void reconcileRef.current?.('conflict')
+        // 服务器上有本页没见过的更新版本（别的标签页写的）：本版已放弃，对账采纳服务器值——
+        // 采纳之后输入框里的字变了，要让用户知道（一句安静的提示），不能静默替换
+        const before = text.current
+        void reconcileRef.current?.('conflict').then(() => {
+          if (key.current.epoch === epoch && text.current !== before) setDraftReplaced(true)
+        })
         return
       }
       // 服务器上这一行现在就是本地最新的这一版（槽里没有更新的了）：记下它的戳
@@ -318,5 +327,6 @@ export function useAiDraft(panel: PanelObject | null) {
     retryLedger,
     draftLoading: draftRead === 'loading',
     draftStalled,
+    draftReplaced,
   }
 }
