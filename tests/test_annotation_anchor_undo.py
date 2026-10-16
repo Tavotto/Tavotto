@@ -155,6 +155,7 @@ assert state.applied == {} and state.originals == {} and ann not in O._text_pins
             ],
             cwd=self.project,
             text=True,
+            encoding="utf-8",
             capture_output=True,
             timeout=30,
         )
