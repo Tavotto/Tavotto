@@ -54,6 +54,8 @@ const switchProject = (id: string) =>
 
 const startA = () =>
   useAiStore.getState().start({
+    project: currentProjectId(),
+    generation: useAiStore.getState().generation,
     prompt: '把图例移到左上角',
     fileId: 'Fig1.pdf',
     panelId: 'p1',

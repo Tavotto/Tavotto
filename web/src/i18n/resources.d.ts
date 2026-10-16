@@ -2262,6 +2262,7 @@ export default interface Resources {
       "ai_pending_limit": "这张图还有 {{count}} 条已发出的指令没确认，先等它们有结果（或点「查询结果」），再发新的。",
       "ai_request_not_found": "后端没有收到这条请求。",
       "ai_request_superseded": "这条指令已被改写后的新指令取代，不会再执行。",
+      "ai_request_unresolved": "这条请求的状态暂时无法确认，请稍后查询结果。",
       "ai_revert_conflict": "{{script}} 在这次 AI 修改之后又改过，回滚会覆盖后来的改动，已取消。",
       "ai_revert_failed": "无法撤销 AI 修改：{{reason}}",
       "ai_script_busy": "{{script}} 上已有一个 AI 任务在运行。等它结束，或先中止它，再发新的。",

@@ -32,7 +32,7 @@ import { cn, modKey } from '@/lib/utils'
 import { msg, t as translate } from '@/i18n'
 import { DURATION, usePresence } from '@/lib/motion'
 import { engineLabel } from '@/components/inspector/roles/registry'
-import { AiLedgerError, isSessionOf, submissionBlocks, useAiStore, type AiScope, type AiSession } from '@/store/aiStore'
+import { AiLedgerError, isSessionOf, ProjectChangedError, submissionBlocks, useAiStore, type AiScope, type AiSession } from '@/store/aiStore'
 import { useDocumentStore } from '@/store/documentStore'
 import { usePanelDisplayManifest } from '@/store/renderStore'
 import { useSelectionStore } from '@/store/selectionStore'
@@ -50,6 +50,7 @@ import { StepSlider } from '../ui/StepSlider'
 import { Tip } from '../ui/Tooltip'
 import { TaskHistory } from './TaskHistory'
 import { INSTRUCTION_MAX_BYTES } from '@/lib/aiDraft'
+import { currentProjectId } from '@/lib/session'
 import { useAiDraft } from './useAiDraft'
 import { Turn } from './Transcript'
 
@@ -431,12 +432,18 @@ function AssistantPanelBody() {
     if (source === 'composer' && tooLarge) return
     if (sendInFlight.current) return
     sendInFlight.current = true
+    // **在第一个 await 之前固定发送所属的 (项目 id, 项目代次)**，一路传给 `start`：`await draftSnapshot()` 期间切了项目，
+    // 同名文件的指令就会被发到别的项目里。每个 await 之后核对，变了就中止（不发送、不写账本）
+    const pinnedProject = claimedProject
+    const pinnedGeneration = useAiStore.getState().generation
+    const projectMoved = () => useAiStore.getState().generation !== pinnedGeneration || currentProjectId() !== pinnedProject
     try {
       // 发的是输入框里的草稿（不是气泡 / 重试带来的原话）：先把草稿写成功、拿到服务器的写入戳，记进账本——
       // 确认之后后端按「草稿戳没变」清草稿，不比文本（提交文本是 trim 过的，草稿是原样）
       // **来源是显式标明的，不靠「有没有 override」猜**：输入框来的（含失败后的重试）一律先把草稿写成功、拿戳记进账本；
       // 只有从历史会话重发（气泡「重新发送」/ 失败会话的「重试」）才跳过快照——那条路的文本不是输入框里的草稿
       const snap = source === 'composer' ? await draftSnapshot() : { seq: 0, stamp: null }
+      if (projectMoved()) return // 草稿快照期间切了项目：作废
       if (source === 'composer' && snap.stamp === null) {
         // 草稿没写成（PUT 暂时失败 / 后端不可用）：没有草稿戳，被接受后草稿清不掉、同一条指令还能再发——**不发**：
         // 不发 run、不写账本，一句话 + 重试，输入框保持原样（与「账本写不成就不发」同一种处理）
@@ -451,6 +458,8 @@ function AssistantPanelBody() {
         return
       }
       const outcome = await useAiStore.getState().start({
+        project: pinnedProject,
+        generation: pinnedGeneration,
         prompt: text,
         fileId: panel.fileId,
         panelId: panel.id,
@@ -467,6 +476,7 @@ function AssistantPanelBody() {
       // 没拿到草稿戳（后端不可用）时后端不会动草稿，这里也不清；`unconfirmed` 时原样留着（面板进「已发出未确认」）
       if (outcome === 'accepted' && source === 'composer' && snap.stamp !== null) clearIfUnchanged(snap.seq)
     } catch (e) {
+      if (e instanceof ProjectChangedError) return // 发送中途切了项目：作废，不报错
       // 发送记录没写进后端 = 没有发：一句话 + 重试（不是「尽力写、照样发」）
       setError({
         text: e instanceof AiLedgerError ? ai('panel.ledgerFailed') : backendErrorText(e),

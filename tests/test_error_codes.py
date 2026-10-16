@@ -264,6 +264,8 @@ USER_VISIBLE_CODES = {
     # 这个请求 id 已被新指令取代（改写后再发），不会再执行 / 取代时发现旧请求其实已经开始
     "ai_request_superseded": set(),
     "ai_supersede_conflict": set(),
+    # 拒绝之后清待确认行也失败了：状态不确定（503），客户端保持同一个 rid
+    "ai_request_unresolved": set(),
     # ADR 0132：助手草稿单稿超过 20 KB（413，不截断）
     "ai_draft_too_large": {"limit_kb"},
     # 同一面板未解决的待确认提交已满（409，拒绝新的、不淘汰旧的）

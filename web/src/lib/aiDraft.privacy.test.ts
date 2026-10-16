@@ -8,7 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { buildFrontendDiagnosticSnapshot } from '@/diagnostics/snapshot'
 import { __resetDiagnosticsForTests, readDiagnosticTrace } from '@/diagnostics/store'
-import { setCurrentProjectId } from '@/lib/session'
+import { currentProjectId, setCurrentProjectId } from '@/lib/session'
 import '@/lib/aiDraftLedger'
 import { useAiStore } from '@/store/aiStore'
 
@@ -50,6 +50,7 @@ describe('提示词与请求 id 的去向', () => {
     const st = useAiStore.getState()
     mode = 'down'
     await st.start({
+      project: currentProjectId(), generation: st.generation,
       prompt: SECRET, fileId: 'Fig1.pdf', panelId: 'p1', gid: null, label: null,
       scope: 'figure', target: '整张图', overrides: [],
     })

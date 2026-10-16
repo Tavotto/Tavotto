@@ -105,17 +105,41 @@ describe('aiDraftOutbox · 每版本基线与 stale 上限', () => {
   it('基线：对账之后读到的戳只影响之后新编辑的基线，不改已经 post 的版本——A 在途、别处保存了 B、对账读到 B，A 的 stale 仍被放弃', async () => {
     const events: string[] = []
     outbox.subscribe('p', 'f', (e) => events.push(e.kind))
-    outbox.observe('p', 'f', 100) // A 编辑时本页已知的最新戳
+    outbox.advance('p', 'f', 100) // A 编辑时输入框显示的文本对应的服务器戳
     outbox.post('p', 'f', 'A 版') // A 的基线 = 100
-    outbox.observe('p', 'f', 9e15) // 对账把别处 B 的戳读进来（界面没采纳）：不改 A 的基线
+    outbox.noteRead('p', 'f') // 对账读到了别处的 B，但没有应用到输入框（本地有未落定的版本）：不推进基线
     next = [{ stale: true, stamp: 9e15 }]
     await outbox.flush('p', 'f')
     expect(puts.map((x) => x.text)).toEqual(['A 版']) // A 没有被提升重写
     expect(events.at(-1)).toBe('abandoned')
   })
 
+  it('基线 = 输入框当前显示的文本对应的服务器戳：读到别处的 B 但没应用，用户接着输入，新版本的基线仍是旧的——stale 时被放弃，B 保留', async () => {
+    const events: string[] = []
+    outbox.subscribe('p', 'f', (e) => events.push(e.kind))
+    outbox.advance('p', 'f', 100) // 输入框显示的是戳 100 的那份文本
+    outbox.post('p', 'f', 'A1') // 本地有延迟编辑
+    outbox.noteRead('p', 'f') // 别处保存了 B（戳 9e15），对账读到了，但没应用
+    outbox.post('p', 'f', 'A2') // 用户接着输入：A2 的基线必须还是 100，不是 B 的戳
+    next = [{ stale: true, stamp: 9e15 }]
+    await outbox.flush('p', 'f')
+    expect(puts.map((x) => x.text)).toEqual(['A2']) // 只发了 A2 一次，没有被提升重写
+    expect(events.at(-1)).toBe('abandoned')
+  })
+
+  it('基线：stale 回的戳不推进基线（本页没有采用那份文本）', async () => {
+    outbox.advance('p', 'f', 100)
+    outbox.post('p', 'f', 'A')
+    next = [{ stale: true, stamp: 9e15 }]
+    await outbox.flush('p', 'f') // 放弃
+    outbox.post('p', 'f', 'A 之后又写') // 新版本的基线仍是 100（没有采用 9e15 那份）
+    next = [{ stale: true, stamp: 9e15 }]
+    await outbox.flush('p', 'f')
+    expect(puts.map((x) => x.text)).toEqual(['A', 'A 之后又写']) // 第二次同样被放弃，没有以 9e15 为基线提升重写
+  })
+
   it('基线：服务器戳 ≤ 这一版自己的基线（墙钟回拨一类）才提升，且用更大的戳重写', async () => {
-    outbox.observe('p', 'f', 500)
+    outbox.advance('p', 'f', 500)
     outbox.post('p', 'f', 'A 版') // 基线 500
     next = [{ stale: true, stamp: 400 }] // ≤ 基线
     await outbox.flush('p', 'f')

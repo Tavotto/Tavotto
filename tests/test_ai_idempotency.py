@@ -1011,3 +1011,50 @@ def test_an_error_after_spawn_never_deletes_the_pending_row(client, tmp_path, cl
     time.sleep(0.6)
     assert _spawned(counter) == 1  # 进程确实起来了
     assert RID in _pending_rids(client)  # 所以行还在
+
+
+def test_failed_cleanup_after_a_pre_spawn_error_is_unresolved_not_a_definite_rejection(
+    client, tmp_path, cli, monkeypatch
+):
+    """spawn 之前出错、删待确认行的清理也失败了（SQLite 锁住 / 磁盘满）：不能返回明确的 500（前端会换新 rid，旧行之后被还原、
+    同一条指令执行两次）——回 503 `ai_request_unresolved`（不确定），行还在。"""
+    _, counter = cli
+    _open(client, _project(tmp_path))
+    monkeypatch.setattr(m, "sse_publish", lambda *a: None)
+    monkeypatch.setitem(m.app.config, "PROPAGATE_EXCEPTIONS", False)
+    _put_pending(client, RID)
+
+    def boom(*_a, **_k):
+        raise sqlite3.OperationalError("database is locked")
+
+    real_record, real_drop = ai_history.record_start, ai_history.drop_rejected_pending
+    monkeypatch.setattr(ai_history, "record_start", boom)
+    monkeypatch.setattr(ai_history, "drop_rejected_pending", boom)  # 清理也失败
+    r = _post(client, rid=RID)
+    assert r.status_code == 503 and r.get_json()["code"] == "ai_request_unresolved"
+    monkeypatch.setattr(ai_history, "record_start", real_record)
+    monkeypatch.setattr(ai_history, "drop_rejected_pending", real_drop)
+    assert RID in _pending_rids(client)  # 行还在（所以客户端必须保持同一个 rid）
+    time.sleep(0.3)
+    assert _spawned(counter) == 0
+
+
+def test_a_rejection_whose_cleanup_fails_is_unresolved_too(client, tmp_path, cli, monkeypatch):
+    """正常返回的拒绝（409 busy）也一样：清理失败就不能说成明确拒绝。"""
+    state, _ = cli
+    state["delay"] = 1.0
+    _open(client, _project(tmp_path))
+    monkeypatch.setattr(m, "sse_publish", lambda *a: None)
+    assert _post(client, rid="rid-first-00000009").status_code == 200
+    _put_pending(client, RID)
+
+    def boom(*_a, **_k):
+        raise sqlite3.OperationalError("disk full")
+
+    real_drop = ai_history.drop_rejected_pending
+    monkeypatch.setattr(ai_history, "drop_rejected_pending", boom)
+    r = _post(client, rid=RID)
+    assert r.status_code == 503 and r.get_json()["code"] == "ai_request_unresolved"
+    monkeypatch.setattr(ai_history, "drop_rejected_pending", real_drop)
+    assert RID in _pending_rids(client)
+    _wait_idle()

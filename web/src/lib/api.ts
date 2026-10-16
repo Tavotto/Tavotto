@@ -3256,6 +3256,8 @@ export const fetchAiSession = (sid: string, pj: string | null) =>
  */
 export function isDefiniteRunFailure(e: unknown): boolean {
   if (!(e instanceof ApiError)) return false
+  // 后端拒绝了、但清它的待确认行也失败了（503 `ai_request_unresolved`）：状态不确定，不是「明确拒绝」——保持同一个 rid
+  if (e.body?.code === 'ai_request_unresolved') return false
   if (e.status < 500) return true
   return typeof e.body?.code === 'string' && e.body.code !== ''
 }

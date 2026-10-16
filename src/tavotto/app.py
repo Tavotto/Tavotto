@@ -9246,28 +9246,41 @@ def api_ai_run():
     try:
         resp = app.make_response(_ai_run_impl())
     except HTTPException:
-        if not engine_ai.spawn_started():
-            _drop_rejected_pending(rid)
+        if not engine_ai.spawn_started() and not _drop_rejected_pending(rid):
+            return _unresolved_response()
         raise
     except Exception:
         # spawn **之前**的非 HTTP 异常（例如 record_start 抛 OperationalError）：全局处理器会把它转成 500，前端当成明确拒绝、
-        # 换新 rid 重发——旧 rid 的账本行必须在这里由后端删掉。**已经 spawn 的绝不删**（那条指令可能正在执行）
-        if not engine_ai.spawn_started():
-            _drop_rejected_pending(rid)
+        # 换新 rid 重发——旧 rid 的账本行必须在这里由后端删掉。**已经 spawn 的绝不删**（那条指令可能正在执行）。
+        # 删除本身也失败了（SQLite 锁住 / 磁盘满）就**不能**再回「明确拒绝」：账本行还在，换新 rid 之后它会被还原、
+        # 同一条指令执行两次——回 503 `ai_request_unresolved`（不确定），客户端按 unknown 处理、保持同一个 rid
+        if not engine_ai.spawn_started() and not _drop_rejected_pending(rid):
+            return _unresolved_response()
         raise
     if resp.status_code >= 400 and not engine_ai.spawn_started():
         # 已经 spawn 的（哪怕之后报了 500）绝不删：那条指令可能正在执行，账本行是「响应丢了之后还能查到它」的线索
-        _drop_rejected_pending(rid)
+        if not _drop_rejected_pending(rid):
+            return _unresolved_response()
     return resp
 
 
-def _drop_rejected_pending(rid) -> None:
+def _unresolved_response():
+    return jsonify(
+        {"error": "这条请求的状态暂时无法确认", "code": "ai_request_unresolved", "params": {}}
+    ), 503
+
+
+def _drop_rejected_pending(rid) -> bool:
+    """删掉被明确拒绝的 rid 的待确认行。回 `True` = 删干净了（或本来就没有 / 没带 rid）；`False` = 删失败了，
+    账本行可能还在——调用方不能再把这次拒绝说成「明确拒绝」。"""
     if not isinstance(rid, str) or not _valid_client_request_id(rid):
-        return
+        return True
     try:
         engine_ai_history.drop_rejected_pending(str(require_project().resolve()), rid)
-    except Exception:  # noqa: BLE001 — 清账本是尽力而为，不能把原来的拒绝响应变成别的错
+        return True
+    except Exception:  # noqa: BLE001
         LOG.warning("清除被拒绝请求的待确认行失败", exc_info=True)
+        return False
 
 
 def _ai_run_impl():

@@ -64,6 +64,8 @@ interface Slot {
   inflight: Promise<'accepted' | 'unavailable' | 'abandoned'> | null
   /** 本页已知的最新服务器戳（GET 读到的、自己 PUT 被接受的、stale 回的）；-1 = 还没读到过任何戳。只用来给**新编辑**取 `baseStamp` */
   known: number
+  /** 本页成功读到过一次（或写成功过）：基线不再是「未知」 */
+  read: boolean
   /** 当前这一轮连续失败超过一分钟的计时器 / 是否已对界面宣布 */
   stallTimer?: ReturnType<typeof setTimeout>
   stalled: boolean
@@ -80,7 +82,7 @@ function slotOf(project: string, fileId: string): Slot {
   const k = keyOf(project, fileId)
   let s = slots.get(k)
   if (!s) {
-    s = { project, fileId, entry: null, inflight: null, known: -1, unknown: false, listeners: new Set(), stalled: false }
+    s = { project, fileId, entry: null, inflight: null, known: -1, read: false, unknown: false, listeners: new Set(), stalled: false }
     slots.set(k, s)
   }
   return s
@@ -152,21 +154,34 @@ export function subscribe(project: string, fileId: string, listener: (e: OutboxE
   return () => void slot.listeners.delete(listener)
 }
 
-/** 记下本页读到的服务器戳（对账的 GET）；读成功 = 基线已知 */
-export function observe(project: string, fileId: string, stamp: number | undefined): void {
+/** 对账的 GET 成功了（不管文本有没有被采用）：基线不再是「未知」。**不推进 `known`**——没被采用的读取不改变「正在显示的文本」对应哪个服务器戳 */
+export function noteRead(project: string, fileId: string): void {
+  const slot = slotOf(project, fileId)
+  slot.read = true
+  slot.unknown = false
+}
+
+/**
+ * **推进基线**：只有两种情况调用——对账确实把服务器文本应用到了输入框（或输入框里本来就是同一份文本），
+ * 以及本页自己的写入被接受（在发件箱内部）。基线 = 输入框当前显示的那份文本所对应的服务器戳；
+ * 没被应用的读取（本地还有未落定的版本，服务器文本并没有采用）不能推进它，否则用户接着输入时，
+ * 新版本会把别处刚保存的稿的戳当成自己的基线、在 stale 时盖掉它。
+ */
+export function advance(project: string, fileId: string, stamp: number | undefined): void {
   const slot = slotOf(project, fileId)
   if (stamp !== undefined) slot.known = Math.max(slot.known, stamp)
+  slot.read = true
   slot.unknown = false
 }
 
 /** 第一次读失败 / 超时：不知道服务器上有没有更新的版本（只在一次都没读成功过时成立） */
 export function markUnknown(project: string, fileId: string): void {
   const slot = slotOf(project, fileId)
-  if (slot.known < 0) slot.unknown = true
+  if (!slot.read) slot.unknown = true
 }
 
 /** 本页见过这个目标的服务器戳吗（hook 判「第一次读成功过没有」） */
-export const hasSeen = (project: string, fileId: string): boolean => (slots.get(keyOf(project, fileId))?.known ?? -1) >= 0
+export const hasSeen = (project: string, fileId: string): boolean => (slots.get(keyOf(project, fileId))?.read ?? false)
 
 /**
  * 现在就发（不等防抖）：直到槽空了、或遇到暂时失败（交给重试）为止，最多 4 轮（每轮落地时若又有更新的版本就接着发）。
@@ -229,7 +244,7 @@ async function land(
     // 之后对账读到的戳不会改已经 post 的版本的基线，所以 A 在途时 B 被保存、对账读到 B，A 的 stale 回来仍然被放弃，不盖掉 B。
     // 基线未知（首读失败时 post 的版本）一律按「可提升」：用户的输入不能丢。
     const promotable = serverStamp === undefined || !entry || entry.baseStamp === undefined || serverStamp <= entry.baseStamp
-    if (serverStamp !== undefined) slot.known = Math.max(slot.known, serverStamp)
+    // stale 回的戳只说明服务器有更新的文本——本页没有采用它，不推进基线
     if (!entry) return 'accepted'
     if (!latest) return send(slot, false) // 更新的版本带着自己的戳去写；旧版本不换戳、不重写
     if (!promotable) {
@@ -255,7 +270,10 @@ async function land(
   }
 
   // saved / removed / too_large：服务器处理了这一版
-  if (serverStamp !== undefined) slot.known = Math.max(slot.known, serverStamp)
+  if (serverStamp !== undefined) {
+    slot.known = Math.max(slot.known, serverStamp)
+    slot.read = true
+  }
   // 服务器处理过一次写入并回了它那一行的戳（保存、或空文本留下的墓碑）= 基线已知：退出「首读失败按已见」的模式，
   // 之后再遇到没见过的戳就按跨标签页冲突规则放弃，不再以本地为准盖掉别处更新的稿。
   // 超限（413）服务器什么都没存、也没回戳，基线仍未知

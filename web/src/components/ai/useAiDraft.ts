@@ -13,7 +13,8 @@ import {
   hasSeen as outboxHasSeen,
   isStalled as outboxIsStalled,
   markUnknown as outboxMarkUnknown,
-  observe as outboxObserve,
+  noteRead as outboxNoteRead,
+  advance as outboxAdvance,
   peek as outboxPeek,
   post as outboxPost,
   subscribe as outboxSubscribe,
@@ -152,7 +153,7 @@ export function useAiDraft(panel: PanelObject | null) {
     ])
     if (key.current.epoch === epoch) {
       if (state) {
-        outboxObserve(pj, f, state.stamp) // 记下读到的服务器戳（已见），基线已知
+        outboxNoteRead(pj, f) // 读成功：基线不再未知。是否推进基线要看文本有没有被采用（见下）
         setDraftRead('ok')
       } else if (!outboxHasSeen(pj, f)) {
         outboxMarkUnknown(pj, f) // 一次都没读成功过：服务器版本未知，stale 按「已见」处理（用户的输入不能丢）
@@ -203,10 +204,12 @@ export function useAiDraft(panel: PanelObject | null) {
     if (hasUnsettledWrite() || seq.current !== seqAtStart) return // 本地写入没落定：文本以本地为准，不覆盖
     if (state.text === text.current) {
       draftStamp.current = state.stamp ?? null // 服务器这一行与本地一致：记下它的戳
+      outboxAdvance(pj, f, state.stamp) // 输入框显示的就是这份文本：基线推进到它的戳
       return
     }
     text.current = state.text
     draftStamp.current = state.stamp ?? null
+    outboxAdvance(pj, f, state.stamp) // 服务器文本被应用到了输入框：基线推进
     setPromptState(state.text)
     setTooLarge(false)
     setRestored(source === 'mount' && state.text !== '')

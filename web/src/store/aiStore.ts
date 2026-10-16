@@ -120,6 +120,13 @@ export interface DonePayload {
 }
 
 /** 发送前要先把提交记进后端账本；没记成就不发（界面一句话 + 重试） */
+/** 发送的项目在中途变了（切项目会换代）：这次发送作废，不发送、不写账本 */
+export class ProjectChangedError extends Error {
+  constructor() {
+    super('project-changed')
+  }
+}
+
 export class AiLedgerError extends Error {
   constructor() {
     super('ledger-unavailable')
@@ -165,6 +172,13 @@ interface AiState {
    * 超时 / 断网等「不知道后端收到没有」回 `'unconfirmed'`，不抛——那不是失败。
    */
   start: (req: {
+    /**
+     * **发送所属的（项目 id, 项目代次）：调用方在第一个 await 之前固定、一路传进来**。`start` 不再自己读「当前项目」——
+     * 点发送后 `await draftSnapshot()` 期间切到了另一个项目，再读就会把同名文件的指令发到别的项目里。
+     * 代次变了（切过项目）= 这次发送作废：抛 `ProjectChangedError`，不发送、不写账本。
+     */
+    project: string | null
+    generation: number
     prompt: string
     fileId: string
     panelId: string
@@ -394,10 +408,10 @@ export const useAiStore = create<AiState>((set, get) => ({
 
   submissions: {},
 
-  start: async ({ prompt, fileId, panelId, gid, label, scope, target, overrides, canvas, script = null, draftStamp = null }) => {
+  start: async ({ project, generation, prompt, fileId, panelId, gid, label, scope, target, overrides, canvas, script = null, draftStamp = null }) => {
     // 发任务前再确认一次：首选那个可能刚被关掉 / 刚被检测成不可用
     if (!effectiveAgent(get().agent, get().caps)) throw new Error('no-usable-agent')
-    const project = currentProjectId()
+    if (get().generation !== generation) throw new ProjectChangedError()
     // 同一面板、或同一份脚本的别的面板上还有没落定的提交（在路上 / 未确认 / 待重发）：不许再发。
     // 界面已经锁了；这是 store 层的兜底（直接调、竞态都过不去）
     if (Object.values(get().submissions).some((x) => x.project === project && submissionBlocks(x, fileId, script)))
@@ -457,7 +471,13 @@ export const useAiStore = create<AiState>((set, get) => ({
       }
       throw new AiLedgerError()
     }
-    return dispatch(rid, get().generation)
+    // 账本写入是 await：期间切过项目就作废（提交的 project 是调用方固定下来的那个，不是此刻的当前项目）
+    if (get().generation !== generation) {
+      dropSub()
+      queueSupersede(ledgerKey, rid) // 账本可能已经写进后端、却不会发出：之后这个面板再发时随新行带 supersedes 清掉
+      throw new ProjectChangedError()
+    }
+    return dispatch(rid, generation)
   },
 
   resend: async (rid) => {

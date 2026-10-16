@@ -11,8 +11,8 @@ import { handleServerEvent } from '@/hooks/useServerEvents'
 import { AI_RUN_TIMEOUT_MS } from '@/lib/api'
 import { createDraftBackend } from '@/test/aiDraftBackend'
 import '@/lib/aiDraftLedger'
-import { setCurrentProjectId } from '@/lib/session'
-import { AiLedgerError, sameScript, useAiStore } from './aiStore'
+import { currentProjectId, setCurrentProjectId } from '@/lib/session'
+import { AiLedgerError, ProjectChangedError, sameScript, useAiStore } from './aiStore'
 import { useUiStore } from './uiStore'
 
 type Handler = (url: string, init: RequestInit | undefined) => Promise<Response> | Response
@@ -50,6 +50,8 @@ globalThis.fetch = (async (url: unknown, init?: RequestInit) => {
 
 const send = (prompt = '把图例移到左上角', draftStamp: number | null = null) =>
   useAiStore.getState().start({
+    project: currentProjectId(),
+    generation: useAiStore.getState().generation,
     draftStamp,
     prompt,
     fileId: 'Fig1.pdf',
@@ -63,6 +65,8 @@ const send = (prompt = '把图例移到左上角', draftStamp: number | null = n
 
 const sendOn = (fileId: string, script: string | null) =>
   useAiStore.getState().start({
+    project: currentProjectId(),
+    generation: useAiStore.getState().generation,
     prompt: '把图例移到左上角',
     fileId,
     panelId: 'p-' + fileId,
@@ -281,6 +285,15 @@ describe('明确失败才是失败；新的发送换新 rid', () => {
     }
   })
 
+  it('503 ai_request_unresolved（后端拒绝了、但清它的待确认行也失败）：不是明确拒绝——保持同一个 rid，进入「已发出未确认」', async () => {
+    handler = (url) => (url.includes('/api/ai/run') ? json({ error: 'x', code: 'ai_request_unresolved' }, 503) : json({}))
+    const out = await send('指令')
+    expect(out).toBe('unconfirmed') // 对照：5xx 带 code 本来算明确失败
+    const [sub] = subs()
+    expect(sub?.phase).toBe('unconfirmed')
+    expect(pend()).toHaveLength(1) // 账本行还在，查询 / 重发都用同一个 rid
+  })
+
   it('失败后再发：请求 id 与上一次不同', async () => {
     handler = (url) => (url.includes('/api/ai/run') ? json({ error: 'no', code: 'ai_script_busy' }, 409) : json({}))
     await expect(send()).rejects.toBeTruthy()
@@ -324,12 +337,25 @@ describe('接受之后才删草稿', () => {
   })
 
   it('发出后切走项目且请求没有答复：A 的草稿留着 rid，切回来是未确认（不是可普通重发的草稿）', async () => {
-    handler = (url) => (url.includes('/api/ai/run') ? Promise.reject(new TypeError('down')) : json({}))
+    let failRun!: () => void
+    handler = (url) =>
+      url.includes('/api/ai/run') ? new Promise((_, rej) => (failRun = () => rej(new TypeError('down')))) : json({})
     const p = send('指令')
-    useAiStore.getState().clear()
+    await vi.waitFor(() => expect(runBodies).toHaveLength(1)) // run 已经发出去、还没有答复
+    useAiStore.getState().clear() // 此刻切走项目
+    failRun()
     await p
     await flush()
     expect(pend()).toHaveLength(1)
+    expect(subs()).toEqual([])
+  })
+
+  it('账本写入期间切了项目（代次变了）：这次发送作废——不发 run，抛 ProjectChangedError，本地不留提交', async () => {
+    const p = send('指令')
+    useAiStore.getState().clear() // 切项目
+    await expect(p).rejects.toBeInstanceOf(ProjectChangedError)
+    await flush()
+    expect(runBodies).toHaveLength(0) // 没有 run 发出去（既没发到 A，也没发到 B）
     expect(subs()).toEqual([])
   })
 })

@@ -443,6 +443,30 @@ describe('同步状态机：单一 reconcile + 写入版本（#1098）', () => {
     }
   })
 
+  it('本页有延迟编辑 A、别处保存了 B、本页对账读到 B 但没应用、用户接着输入：新版本的基线仍是旧的——stale 时被放弃，B 保留', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    try {
+      await mount()
+      await typeText('A1（防抖还没到）')
+      be.putStamped('pa', 'Fig1.pdf', '别处保存的 B', Date.now() * 1000 + 5_000_000_000)
+      await act(async () => window.dispatchEvent(new Event('focus'))) // 对账读到 B，但本地有未落定的版本：不应用
+      await settle()
+      expect(input().value).toBe('A1（防抖还没到）')
+      // 对账读到 B 的戳会抬高本页的写入戳下限；这里把下限放回去，模拟「B 的戳比本页之后分配的戳更新」（时钟领先的写入者）——
+      // 这样 A2 才会收到 stale，才量得出它的基线
+      __resetWriteStampForTests()
+      await typeText('A2（接着输入）') // 对照：读取就推进基线时，A2 把 B 的戳当基线，stale 时盖掉 B
+      await act(async () => void vi.advanceTimersByTime(WRITE_DEBOUNCE_MS + 50))
+      await settle()
+      await act(async () => void vi.advanceTimersByTime(RETRY_MS * 3))
+      await settle()
+      expect(be.draft('pa', 'Fig1.pdf')).toBe('别处保存的 B')
+      expect(input().value).toBe('别处保存的 B')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('冲突放弃了本页的版本，但另一个窗口的稿恰好和本页输入的一样：输入框里的字没变，不出提示', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
     try {
@@ -1336,6 +1360,23 @@ describe('已发出未确认：不能盲目重发', () => {
     expect(q('[data-ai-resend-same]')).toBeNull() // 没有「重新发送」
     expect(aiRun).toHaveBeenCalledTimes(1) // 没有再发
     expect(JSON.stringify(useUiStore.getState().status)).toContain('status.aiSuperseded')
+  })
+
+  it('点发送后、草稿快照还在 await 时切到有同名文件的项目 B：run 既不发到 B 也不发到 A（发送作废），B 的账本里也没有这条', async () => {
+    vi.mocked(aiRun).mockResolvedValue({ session: 's-1', script: 'p1.py' })
+    await mount()
+    await typeText('把线条加粗一点')
+    const release = be.holdDraftPuts() // 草稿快照卡在写后端上
+    await click(q('[data-ai-send="send"]'))
+    await settle()
+    setCurrentProjectId('pb') // 此刻切到项目 B（B 里也有 Fig1.pdf）
+    await act(async () => useAiStore.getState().clear())
+    release()
+    await settle()
+    expect(aiRun).not.toHaveBeenCalled() // 对照：以前 start 在 await 之后读「当前项目」= B，指令被发到 B
+    expect(be.pendings.get('pb\u0000Fig1.pdf') ?? []).toEqual([])
+    expect(Object.values(useAiStore.getState().submissions)).toEqual([])
+    expect(q('[data-ai-error="send"]')).toBeNull() // 作废是静默的，不是报错
   })
 
   it('放弃旧等待后新行的 PUT 失败：旧行还在（状态仍然一致），之后同一条指令重试成功才一起清掉旧行', async () => {

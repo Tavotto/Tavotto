@@ -25,6 +25,7 @@
     "ai_pending_limit": "This figure still has {{count}} sent instructions awaiting confirmation. Wait for them to finish (or check their results) before sending another.",
     "ai_request_not_found": "The backend never received this request.",
     "ai_request_superseded": "This instruction was replaced by the rewritten one and will not run.",
+    "ai_request_unresolved": "This request’s state can’t be confirmed right now. Check its result in a moment.",
     "ai_supersede_conflict": "The previous change had actually started, so it was not replaced. Check its result first.",
     "ai_revert_conflict": "{{script}} has changed since this AI edit. Reverting would overwrite those later changes, so nothing was reverted.",
     "ai_revert_failed": "Couldn’t revert the AI changes: {{reason}}",
