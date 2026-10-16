@@ -95,7 +95,9 @@ terminal 的 `stable_payload()` / `launch_context()` 逐字节不变（golden）
 ### 六、编辑通道与重跑
 
 只复用既有机制：单 reader 的 `NativeTransport`、`NativeSession` 状态机、`enginesession.resolve`、restore-before-continue、临时导出隔离。
-进程活着才有对象编辑；结束后编辑报 `native_session_ended`，不 pickle Figure、不为进入编辑重跑用户计算。握手是 `NativeRelay.adopt_child`
+进程活着才有对象编辑；结束后编辑报 `native_session_ended`，不 pickle Figure、不为进入编辑重跑用户计算。
+桌面拥有的会话的**展示面由准备会话独占**（V2 PR4）：前端 `nativeSessionStore` 对 `owner === 'desktop'` 的会话不 build、不放置图、不开选择器（runner 自己已 `ensure_built`），
+图只由准备卡的「进入编辑」（或「打开并运行」完成后的自动进入）放进画布；终端拥有的会话照旧。握手是 `NativeRelay.adopt_child`
 （同一份认证 accept，只要 child 一侧），没有第二个协议 reader。
 
 ## 后果与残余（如实）

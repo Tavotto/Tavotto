@@ -814,6 +814,22 @@ for (const locale of ['zh-CN', 'en-US']) {
         )).toEqual(visible)
         const geometry = await measure()
         expect(geometry, state).toEqual(baseline)
+        // 引擎提示一行放得下、不盖到下一节（三条都量：不可见的也占着真实布局；Codex #1110 P2）
+        const fit = await inspector.evaluate((root) => {
+          const sec = root.querySelector('[data-panel-engine-status]')!.closest('section')!
+          const nextTop = sec.nextElementSibling!.getBoundingClientRect().top
+          return [...root.querySelectorAll<HTMLElement>('[data-panel-engine-message]')].map((el) => ({
+            kind: el.dataset.panelEngineMessage,
+            oneLine: el.scrollWidth <= el.clientWidth + 1 || getComputedStyle(el).textOverflow === 'ellipsis',
+            height: el.getBoundingClientRect().height,
+            overflowBelow: el.getBoundingClientRect().bottom - nextTop,
+          }))
+        })
+        for (const m of fit) {
+          expect(m.height, `${state} ${m.kind} 高度`).toBeLessThanOrEqual(12.5)
+          expect(m.overflowBelow, `${state} ${m.kind} 盖到下一节`).toBeLessThanOrEqual(0.5)
+          expect(m.oneLine, `${state} ${m.kind} 单行`).toBe(true)
+        }
         measurements.push({ state, geometry })
       }
       await check('warm', ['building'])

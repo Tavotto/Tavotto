@@ -2,7 +2,7 @@ import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, write
 import os from 'node:os'
 import path from 'node:path'
 import { expect, startApp, test } from './fixtures'
-import { card, expectPageNotShifted, openDetails, pill, primary, workPanelRect } from './prepCard'
+import { card, expectPageNotShifted, pill, primary, workPanelRect } from './prepCard'
 
 /**
  * 准备引导卡（T13b，取代 T09 的准备面板；ADR 0116）——真后端、真 worker、真浏览器，待测项目开始时**只有脚本与数据**（没有图、没有注册表）。
@@ -10,9 +10,9 @@ import { card, expectPageNotShifted, openDetails, pill, primary, workPanelRect }
  * 判据的主语是脚本自己写在项目**之外**的运行日志（每次执行一行 start、跑完一行 done）：执行了几次、拿到的 argv /
  * 数据 / input 回答是什么——不是界面上的 toast，也不是 store 里的期望值。
  *
- *   1. 首跑闭环：打开项目 → 页面不下移、右下引导卡自动弹出（弹出时不建会话）→ 开始准备 → 卡里选运行目录（推荐项预选，
- *      确认只重新检查）→ 卡里改参数（继续 = 按新参数重新检查）→ 运行 → 运行时 input 在卡里答 → 画好了 → 进入编辑（卡片收起、
- *      图内元素可见）——全程执行恰好 1 次；
+ *   1. 首跑闭环：打开项目 → 页面不下移、右下引导卡自动弹出（弹出时不建会话）→ 打开并运行（V2 PR4：检查完，只有卡片会说「可以运行了」才代认领
+ *      run_when_ready；这里要先选运行目录，所以停在目录卡上）→ 卡里选目录（推荐项预选，确认只重新检查）→ 「打开并运行」→ 运行时 input
+ *      在卡里答 → 自动进入编辑（卡片收起、图内元素可见）——全程执行恰好 1 次；
  *   2. 恢复：收起卡片 → 同一问由原对话框接着问；取报告的 HTTP 断开而后台照跑 → 只标「连不上」、不标失败、不重提交，
  *      恢复后读到真实终局；应用重启 → 旧会话 404 → 重建只读检查、不自动重跑；明确停止 → 本会话新建的会话当场关掉。
  *
@@ -40,7 +40,7 @@ const starts = (log: string) => runs(log).filter((r) => r.event === 'start').len
  * 脚本：读项目根下的 `data/values.txt`（脚本在 tools/ 下 → 首开要先选运行目录），可选 `--scale`，运行时 input
  * 选顺序，闸门文件存在时停住（给「后台还在跑」留出可控的窗口），图名运行后才知道（`curve_<choice>`）。
  */
-function script(log: string, hold: string, readsData: boolean): string {
+function script(log: string, hold: string, readsData: boolean, twin = false): string {
   return [
     'import json, os, sys, time',
     'import matplotlib',
@@ -72,6 +72,13 @@ function script(log: string, hold: string, readsData: boolean): string {
     '    fig, ax = plt.subplots(figsize=(3, 2))',
     '    ax.plot(range(len(values)), [v * scale for v in values])',
     '    fig.savefig("curve_" + choice + ".pdf")',
+    ...(twin
+      ? [
+          '    fig2, ax2 = plt.subplots(figsize=(3, 2))',
+          '    ax2.plot(range(len(values)), values)',
+          '    fig2.savefig("curve2_" + choice + ".pdf")',
+        ]
+      : []),
     '    note("done", argv=sys.argv[1:], values=values, choice=choice)',
     '',
     'if __name__ == "__main__":',
@@ -80,7 +87,7 @@ function script(log: string, hold: string, readsData: boolean): string {
   ].join('\n')
 }
 
-test('首跑闭环：只有脚本与数据 → 页面不下移、右下卡自动弹出 → 卡里选目录、改参数、答 input → 画好了 → 进入编辑，执行恰好一次', async ({
+test('首跑闭环：只有脚本与数据 → 页面不下移、右下卡自动弹出 → 打开并运行、卡里选目录、答 input → 自动进入编辑，执行恰好一次', async ({
   app,
   page,
 }) => {
@@ -111,10 +118,11 @@ test('首跑闭环：只有脚本与数据 → 页面不下移、右下卡自动
     expect(sessions).toEqual([])
     await expect(page.locator('[data-project-scan]')).toHaveCount(0) // 顶部检查条已经没有了
 
-    // 开始准备：数据只在项目根找得到 → 卡里选运行目录（推荐项预选），确认只重新检查、不运行
+    // 打开并运行：数据只在项目根找得到 → 卡里先问运行目录（推荐项预选）；问的时候脚本还没执行，也没有认领任何动作
     await primary(page).click()
     await expect(card(page)).toHaveAttribute('data-prep-state', 'workdir', { timeout: 60_000 })
     expect(starts(log)).toBe(0) // 检查不执行
+    await expect(card(page)).toHaveAttribute('data-prep-phase', 'awaiting_configuration')
     await expect(card(page).locator('[data-workdir-option="project_root"] input')).toBeChecked()
     await expect(primary(page)).toHaveText('用项目根目录')
     await primary(page).click()
@@ -123,47 +131,29 @@ test('首跑闭环：只有脚本与数据 → 页面不下移、右下卡自动
     expect(starts(log)).toBe(0) // 选了目录也只是重新检查，不运行
     await expectPageNotShifted(page)
 
-    // 在卡里改参数（这个脚本没有 argparse：原样参数）：草稿变了 → 「继续」→ 新的配置修订
-    await card(page).locator('[data-testid="argv-raw-tools/plot.py"] > summary').click()
-    const add = card(page).getByRole('button', { name: '添加参数' })
-    await add.click()
-    await add.click()
-    await card(page).getByRole('textbox', { name: 'tools/plot.py 的第 1 个参数' }).fill('--scale')
-    await card(page).getByRole('textbox', { name: 'tools/plot.py 的第 2 个参数' }).fill('3')
-    await expect(card(page)).toHaveAttribute('data-prep-state', 'args_changed')
-    await expect(primary(page)).toHaveText('继续')
-    await primary(page).click()
-    await expect(card(page)).toHaveAttribute('data-prep-state', 'ready', { timeout: 60_000 })
-    await expect(card(page).locator('[data-prep-ready-line]')).toContainText('--scale 3')
-    expect(starts(log)).toBe(0)
-
-    // 运行 → 运行时 input 在卡里答（同一请求只有一个展示面：原对话框不出现）
+    // 可以运行了：主按钮就是「打开并运行」（认领 run_when_ready，之后不再点任何东西）；运行时 input 在卡里答（同一请求只有一个展示面：原对话框不出现）
+    await expect(primary(page)).toHaveAttribute('data-prep-primary', 'run_when_ready')
+    await expect(primary(page)).toHaveText('打开并运行')
     await primary(page).click()
     await expect(card(page)).toHaveAttribute('data-prep-state', 'input', { timeout: 120_000 })
     await expect(page.locator('[data-dialog="script-input"]')).toHaveCount(0)
+    await expectPageNotShifted(page)
     const form = card(page).locator('[data-prep-input]')
     await expect(form.locator('[data-script-input-output]')).toContainText('2) reversed')
     await form.locator('[data-script-input-answer]').fill('2')
     await primary(page).click() // 回答
 
-    // 画好了：执行结束 / 捕获到图分开表达（详情）；进入编辑用这次捕获的图，卡片随即收起
-    await expect(card(page)).toHaveAttribute('data-prep-state', 'completed', { timeout: 120_000 })
-    await expect(card(page).locator('[data-prep-line]')).toHaveText('画好了 1 张图')
-    const details = await openDetails(page)
-    await expect(details.locator('[data-fact="execution_finished"]')).toHaveAttribute('data-value', 'true')
-    await expect(details.locator('[data-fact="figure_captured"]')).toHaveAttribute('data-value', 'true')
-    await primary(page).click()
-    await expect(card(page)).toHaveCount(0)
+    // 画好了：一张图 → 自动进入编辑（不需要再点「进入编辑」），卡片随即收起
+    await expect(card(page)).toHaveCount(0, { timeout: 120_000 })
     await expect(pill(page)).toHaveCount(0)
     await expect(page.locator('[data-element-svg] svg').first()).toBeVisible({ timeout: 120_000 })
 
-    // 真值：恰好执行一次，argv 是卡里填的那两个 token，数据是项目根那份（倒序），回答是卡里那一个
+    // 真值：恰好执行一次，无参数，数据是项目根那份（倒序），回答是卡里那一个
     await page.waitForTimeout(1500)
     const all = runs(log)
-    expect(all.filter((r) => r.event === 'start')).toEqual([{ event: 'start', argv: ['--scale', '3'] }])
-    expect(all.filter((r) => r.event === 'done')).toEqual([
-      { event: 'done', argv: ['--scale', '3'], values: [4, 1, 3], choice: '2' },
-    ])
+    expect(all.filter((r) => r.event === 'start')).toEqual([{ event: 'start', argv: [] }])
+    expect(all.filter((r) => r.event === 'done')).toEqual([{ event: 'done', argv: [], values: [4, 1, 3], choice: '2' }])
+    expect(sessions).toHaveLength(1) // 一个会话走完：没有为「运行」「进入编辑」再建会话
     await expectPageNotShifted(page)
   } finally {
     // 先等应用真正退出再删目录：Windows 上 worker 还握着项目目录时 rmSync 会 EBUSY；清理报错不许盖住主失败
@@ -182,21 +172,19 @@ test('恢复：收起卡片换展示面、HTTP 断开后台照跑、应用重启
   const log = path.join(root, 'runs.jsonl')
   const hold = path.join(root, 'HOLD')
   mkdirSync(project, { recursive: true })
-  writeFileSync(path.join(project, 'hold.py'), script(log, hold, false), 'utf-8')
+  // 两张图：单张图在「打开并运行」之后会自动进入编辑、卡片收起（V2 PR4）；这条用例要看卡片在失联 / 重启之后的各个状态，所以让它停在「画好了」上
+  writeFileSync(path.join(project, 'hold.py'), script(log, hold, false, true), 'utf-8')
   let second: Awaited<ReturnType<typeof startApp>> | null = null
   try {
     const a = await app({ figures: project })
     await page.setViewportSize({ width: 1400, height: 900 })
     await page.goto(a.baseURL)
 
-    // 素材库脚本行的 ▶：同一张卡（不直接执行）
+    // 素材库脚本行的 ▶ 就是「打开并运行」：同一张卡，点一次就检查并认领（V2 PR4），脚本跑到 input() 停住
+    writeFileSync(hold, 'hold')
     const run = page.locator('[data-script-run="hold.py"]')
     await expect(run).toBeVisible({ timeout: 30_000 })
     await run.click()
-    await expect(card(page)).toHaveAttribute('data-prep-state', 'ready', { timeout: 60_000 })
-    expect(starts(log)).toBe(0)
-    writeFileSync(hold, 'hold')
-    await primary(page).click()
     await expect(card(page)).toHaveAttribute('data-prep-state', 'input', { timeout: 120_000 })
 
     // 收起卡片只换展示面：同一问由原对话框接着问，脚本不被取消
@@ -266,7 +254,8 @@ test('恢复：收起卡片换展示面、HTTP 断开后台照跑、应用重启
     expect(missing.status()).toBe(404)
     expect(await missing.json()).toMatchObject({ code: 'preparation_session_not_found' })
     await expect(card(page)).toHaveAttribute('data-prep-state', 'restarted', { timeout: 60_000 })
-    await expect(card(page).locator('[data-prep-primary]')).toHaveAttribute('data-prep-primary', 'run')
+    // 重建的只读检查：报告里有后端的 run_when_ready，主按钮是「打开并运行」（不自动认领）
+    await expect(card(page).locator('[data-prep-primary]')).toHaveAttribute('data-prep-primary', 'run_when_ready')
     await page.waitForTimeout(2000)
     expect(starts(log)).toBe(1)
 

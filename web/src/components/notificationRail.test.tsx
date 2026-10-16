@@ -77,6 +77,15 @@ afterEach(async () => {
 })
 
 describe('状态 toast 的自动收起', () => {
+  it('规格：成功类 4 秒收；错误类不自己走，留到用户关掉（失败不能只闪一下）', () => {
+    expect(STATUS_AUTO_DISMISS_MS).toBe(4000)
+    act(() => useUiStore.getState().setStatus(literal('导出失败'), 'error'))
+    tick(10 * 60_000)
+    expect(status(), '错误类十分钟后还在').not.toBeNull()
+    expect(statusToast()!.getAttribute('data-status-tone')).toBe('error')
+    act(() => useUiStore.getState().setStatus(null))
+  })
+
   it('没人碰：到时自己走', () => {
     say('已导出')
     tick(STATUS_AUTO_DISMISS_MS - 1)
@@ -361,30 +370,37 @@ describe('「出了点意外」卡（PR A）', () => {
     expect(toasts()).toHaveLength(0)
   })
 
-  it('仲裁：高于提示类——状态 + 意外卡占满两条时操作提示让位；状态从不让位', () => {
+  it('仲裁：高于提示类——加入说明 + 状态 + 意外卡占满三条时操作提示让位；状态从不让位', () => {
     act(() => {
       showHint('multi_select')
     })
     expect(hintToast()).not.toBeNull()
     showCard()
     expect(unexpectedCard()).not.toBeNull()
-    expect(hintToast(), '提示 + 卡 = 两条，都在').not.toBeNull()
     say('已导出')
-    tick(200) // 让位的那条退场保活 90ms
-    expect(toasts()).toHaveLength(2)
+    tick(200)
+    expect(hintToast(), '提示 + 卡 + 状态 = 三条（上限 3），都在').not.toBeNull()
+    expect(toasts()).toHaveLength(3)
+    // 第四条（加入说明，档位比提示高）来了：提示第一个让
+    act(() => useWorkspaceStore.setState({ addedForEdit: 'p1', activePanelId: 'p1', addedForEditDepth: 0 }))
+    tick(200) // 让位的那条退场保活 120ms
+    expect(toasts()).toHaveLength(3)
     expect(unexpectedCard(), '卡不让位').not.toBeNull()
-    expect(hintToast(), '三者同在：提示第一个让').toBeNull()
+    expect(statusToast(), '状态从不让位').not.toBeNull()
+    expect(hintToast(), '四者同在：提示第一个让').toBeNull()
   })
 
-  it('仲裁：低于「刚为编辑加入」——加入说明 + 状态已占满两条时，意外卡让位；状态走后才出现', () => {
+  it('仲裁：低于「刚为编辑加入」——加入说明 + 引擎修复卡 + 状态已占满三条时，意外卡让位；状态走后才出现', () => {
     useWorkspaceStore.setState({ addedForEdit: 'p1', activePanelId: 'p1', addedForEditDepth: 0 })
+    act(() => useExitNoticeStore.getState().setEngineExit('nonzero'))
     say('正在构建')
     showCard()
     expect(container.querySelector('[data-fast-edit-added-note]')).not.toBeNull()
-    expect(unexpectedCard(), '加入说明 + 状态 = 两条，意外卡让位').toBeNull()
+    expect(unexpectedCard(), '加入说明 + 修复卡 + 状态 = 三条，意外卡让位').toBeNull()
     act(() => useUiStore.getState().setStatus(null))
     tick(200)
     expect(unexpectedCard()).not.toBeNull()
+    act(() => useExitNoticeStore.setState({ engineExit: null, restarting: false, previous: null }))
   })
 
   it('最新的一条最靠近底边：卡出现在已有状态之后 → 排在状态后面', () => {
@@ -469,7 +485,7 @@ describe('引擎退出两张卡（ADR 0129）', () => {
     expect(useDiagSendStore.getState().open).toBe(false)
   })
 
-  it('仲裁：修复卡从不让位——它 + 状态占满两条时，下次启动卡与提示让位', () => {
+  it('仲裁：修复卡从不让位——它 + 加入说明 + 状态占满三条时，下次启动卡与提示让位', () => {
     act(() => {
       useExitNoticeStore.getState().showPrevious('app_unclean')
       useExitNoticeStore.getState().setEngineExit('nonzero')
@@ -477,8 +493,12 @@ describe('引擎退出两张卡（ADR 0129）', () => {
     expect(previousCard(), '修复卡 + 下次启动卡 = 两条').not.toBeNull()
     act(() => useUiStore.getState().setStatus(literal('正在构建')))
     tick(200)
+    expect(previousCard(), '修复卡 + 下次启动卡 + 状态 = 三条（上限 3），都在').not.toBeNull()
+    act(() => useWorkspaceStore.setState({ addedForEdit: 'p1', activePanelId: 'p1', addedForEditDepth: 0 }))
+    tick(200)
     expect(engineCard()).not.toBeNull()
-    expect(previousCard(), '修复卡 + 状态已满两条').toBeNull()
-    expect(toasts()).toHaveLength(2)
+    expect(previousCard(), '修复卡 + 加入说明 + 状态已满三条').toBeNull()
+    expect(toasts()).toHaveLength(3)
+    act(() => useWorkspaceStore.setState({ addedForEdit: null, addedForEditDepth: 0 }))
   })
 })

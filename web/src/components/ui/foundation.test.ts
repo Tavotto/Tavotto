@@ -541,3 +541,78 @@ describe('纸上的东西用纸上的墨（宪法第二十八节）', () => {
     for (const c of texts) expect(['text-paper-ink', 'text-paper-ink-2', 'text-paper-ink-3'], c).toContain(c)
   })
 })
+
+/*
+ * ---- 说明条不再用彩底 / 彩框（2026-10-16 UI 2.0「错误与警告」）----
+ * 主语：`ui/Notice` 这个原语，以及所有写出 `<Notice className=…>` 的调用处。改版前它是「彩底 + 彩框 + 彩色图标 + 彩色整句」
+ * 四件套、warn 与 danger 只差颜色；现在底是中性的 surface-hover、无边框、字永远是 ink，颜色只允许出现在 danger 档的一枚图标上。
+ * 正面形式：原语源码里没有任何语义色 token（-surface / -border / -content / 文字或描边的 danger|warn|ok|info），
+ * 唯一的例外是图标上那一个 `text-danger`；调用处给 `<Notice>` 的 className 只许是版面类（外边距 / 内边距 / 宽 / 收缩 / 字号 /
+ * 换行），不许带颜色、描边、阴影。
+ */
+const SEMANTIC_COLOR =
+  /(?<![\w-])(?:[\w-]+:)*(?:bg|text|border(?:-[trblxy])?|ring|inset-ring|outline|shadow|fill|stroke|from|to|via)-(?:danger|warn|ok|info)(?:-[\w-]+)?(?![\w-])/g
+/** 给 `<Notice>` 的 className 允许的版面类 */
+const NOTICE_LAYOUT_CLASS =
+  /^(?:-?m[trblxy]?-[\w.[\]-]+|p[trblxy]?-[\w.[\]-]+|shrink(?:-0)?|grow|flex-1|min-w-0|w-[\w./[\]-]+|max-w-[\w./[\]-]+|text-(?:xs|sm|base)|break-(?:all|words)|items-\w+|self-\w+|self-stretch)$/
+
+function noticeClassNameOffenders(path: string, src: string): string[] {
+  const sf = ts.createSourceFile(path, src, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX)
+  const out: string[] = []
+  const visit = (node: ts.Node) => {
+    if ((ts.isJsxOpeningElement(node) || ts.isJsxSelfClosingElement(node)) && node.tagName.getText() === 'Notice') {
+      const cls = attr(node, 'className')?.initializer
+      if (cls) {
+        for (const s of stringsIn(cls)) {
+          for (const token of s.text.split(/\s+/).filter(Boolean)) {
+            if (!NOTICE_LAYOUT_CLASS.test(token)) {
+              out.push(`${sf.getLineAndCharacterOfPosition(s.pos).line + 1}:${token}`)
+            }
+          }
+        }
+      }
+    }
+    ts.forEachChild(node, visit)
+  }
+  visit(sf)
+  return out
+}
+
+describe('说明条（Notice）不再用彩底 / 彩框', () => {
+  it('原语源码里没有语义色 token；唯一的颜色是 danger 档图标上的 text-danger', () => {
+    const src = stripComments(SOURCES['/src/components/ui/Notice.tsx'])
+    const hits = [...src.matchAll(SEMANTIC_COLOR)].map((m) => m[0])
+    expect(hits).toEqual(['text-danger'])
+  })
+
+  it('所有调用处给 <Notice> 的 className 只有版面类（不带颜色 / 描边 / 阴影）', () => {
+    const offenders: string[] = []
+    for (const [path, raw] of sources()) {
+      if (!raw.includes('<Notice')) continue
+      for (const o of noticeClassNameOffenders(path, raw)) offenders.push(`${path}:${o}`)
+    }
+    expect(offenders, '彩色只属于 danger 档图标；底 / 框一律由原语给').toEqual([])
+  })
+
+  it('StatusPill 同理：源码里唯一的语义色是字前 6px 圆点的 bg-<tone>，底与字都是中性', () => {
+    const src = stripComments(SOURCES['/src/components/ui/StatusPill.tsx'])
+    const hits = [...src.matchAll(SEMANTIC_COLOR)].map((m) => m[0])
+    expect(hits).toEqual(['bg-info', 'bg-ok', 'bg-warn', 'bg-danger'])
+  })
+
+  it('自检：抓得住彩底彩框，放得过版面类与 ink 墨', () => {
+    const bad = `<Notice tone="warn" className="mx-2 bg-warn-surface inset-ring inset-ring-warn-border text-danger-content" />`
+    const good = `<Notice className="mx-2 mb-2 shrink-0 text-xs break-all" />`
+    expect(noticeClassNameOffenders('x.tsx', bad).map((s) => s.split(':')[1])).toEqual([
+      'bg-warn-surface',
+      'inset-ring',
+      'inset-ring-warn-border',
+      'text-danger-content',
+    ])
+    expect(noticeClassNameOffenders('x.tsx', good)).toEqual([])
+    expect([...'bg-danger-surface text-ink-3 text-danger'.matchAll(SEMANTIC_COLOR)].map((m) => m[0])).toEqual([
+      'bg-danger-surface',
+      'text-danger',
+    ])
+  })
+})

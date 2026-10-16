@@ -37,6 +37,9 @@ import { restartEngineFromCard } from '@/lib/exitNotices'
  * 两者都挂在画布列内部，不占布局高度。
  */
 
+/** 通知轨同时在屏的条数上限（UI 2.0 规格：最多 3 条） */
+const RAIL_MAX = 3
+
 /**
  * 工具提示：落在画布上就是浮层——单行浮动条 = 胶囊 + `shadow-pop`、不画实色边（浮动外观三档，
  * 2026-10-07 设计审计 §10.1；此前是圆角 10 的方盒，与同一角落的 toast 两种浮盒）。
@@ -138,6 +141,8 @@ function Toast({
     <div
       {...rest}
       data-state={state}
+      // 退场保活期间不可点 / 不可聚焦（旧 toast 的动作还会触发回调）
+      inert={state === 'closed'}
       data-toast-layout="pill"
       data-toast-tone={tone}
       title={note}
@@ -151,7 +156,7 @@ function Toast({
       className={cn(
         // 浮层不画实色 border（宪法第一节）：环在 shadow-pop 里。字 12 / ink（2026-09-15 打磨 N2）。
         // 一种高度 36：带动作的那条由 28 的按钮 + py 4 撑到 36，不带动作的靠 min-h 补齐（N3）
-        'pointer-events-auto relative flex min-h-9 max-w-[560px] items-center gap-2 rounded-full bg-surface py-1 pl-3.5 pr-1.5 text-sm text-ink shadow-pop',
+        'pointer-events-auto relative flex min-h-9 max-w-[360px] items-center gap-2 rounded-full bg-surface py-1 pl-3.5 pr-1.5 text-sm text-ink shadow-pop',
         'data-[state=open]:animate-rise-in data-[state=closed]:animate-rise-out',
       )}
     >
@@ -198,7 +203,7 @@ function ErrorBody({ text }: { text: string }) {
   }, [copied])
   return (
     <div className="flex min-w-0 flex-1 items-center gap-1.5">
-      <span className="shrink-0 font-medium text-danger-content">{t('status.errorTitle')}</span>
+      <span className="shrink-0 font-medium text-ink">{t('status.errorTitle')}</span>
       <span aria-hidden className="shrink-0 text-ink-faint">·</span>
       {/* 截断落在里层且是块级：行内的 span 上 overflow / text-overflow 不生效，长路径会穿到按钮底下（Codex #995） */}
       <SwapText className="min-w-0 flex-1" textClassName="block truncate text-ink-2" text={text} title={text} />
@@ -253,7 +258,7 @@ function useArrivalOrder() {
 }
 
 /**
- * 通知轨：底部居中**一条**，最多两条叠着（新的在下、靠近底边；旧的顺延到上面），
+ * 通知轨：底部居中一列，宽 ≤ 360，**最多三条**叠着（新的在下、靠近底边；旧的顺延到上面；2026-10-16 UI 2.0 由两条放宽到三条），
  * 三种来源同一种盒子（2026-09-14 二审 D1）：
  *   - 状态（`uiStore.status`）：普通状态 4.5s 自己走，错误保留到用户关闭；
  *   - 操作提示（`useHintStore`）：可关、到时自己走；
@@ -289,7 +294,7 @@ export function NotificationRail({ announceRole = 'alert' }: { announceRole?: 'a
   const shown = status ? { status, tone, action: statusAction } : last.current
   const shownText = fmt(shown.status)
   const liveText = fmt(status)
-  const statusPresence = usePresence(!!status, DURATION.exit)
+  const statusPresence = usePresence(!!status, DURATION.fast)
 
   const hint = useHintStore((s) => s.current)
   const hintToken = useHintStore((s) => s.token)
@@ -301,7 +306,7 @@ export function NotificationRail({ announceRole = 'alert' }: { announceRole?: 'a
   const justAdded = useWorkspaceStore(
     (s) => s.addedForEdit !== null && s.addedForEdit === s.activePanelId,
   )
-  const addedPresence = usePresence(justAdded, DURATION.exit)
+  const addedPresence = usePresence(justAdded, DURATION.fast)
   // 「移除」= 撤销加入那一步；只在撤销栈还停在加入那一刻时给（之后再改了别的，撤销撤的就是
   // 别的了）。名字用「移除」不用「撤销」：顶栏已有一颗「撤销」，同名两颗读屏与用例都分不清
   const addedDepth = useWorkspaceStore((s) => s.addedForEditDepth)
@@ -309,7 +314,7 @@ export function NotificationRail({ announceRole = 'alert' }: { announceRole?: 'a
   const canRemoveAdded = justAdded && historyDepth === addedDepth
 
   /**
-   * **最多两条**（二审 D1）。三种来源此前各自 `usePresence`、互不让位，双击素材卡进
+   * **最多三条**（二审 D1 定的两条，UI 2.0 放宽到三条：`RAIL_MAX`）。三种来源此前各自 `usePresence`、互不让位，双击素材卡进
    * 快速编辑时实测三条同时在屏（加入说明 + 操作提示 + 「正在构建…」）。
    *
    * 让位顺序：加入说明最高（它带着「移除」这个一次性出口，错过就找不回来），状态次之
@@ -323,7 +328,7 @@ export function NotificationRail({ announceRole = 'alert' }: { announceRole?: 'a
   const lastAdopted = useRef<AdoptedEnvironment | null>(null)
   if (adopted) lastAdopted.current = adopted
   // 「出了点意外」卡（PR A）：优先级低于「刚为编辑加入」、高于全部提示类（改回 / 已用上次的答案 / 操作提示）。
-  // 状态那条从不让位，所以 加入说明 + 状态 已满两条时它让位；下面三类提示的让位判据都改成数「更高档」的在场条数。
+  // 状态那条从不让位，所以 加入说明 + 状态 + 引擎修复卡 已满三条时它让位；下面三类提示的让位判据都改成数「更高档」的在场条数。
   const unexpected = useUnexpectedErrorStore((s) => s.card)
   const lastUnexpected = useRef<{ token: number } | null>(null)
   if (unexpected) lastUnexpected.current = unexpected
@@ -332,11 +337,11 @@ export function NotificationRail({ announceRole = 'alert' }: { announceRole?: 'a
   // 不受发送开关控制（只有「重新启动」，没有发送入口）
   const engineExit = useExitNoticeStore((s) => s.engineExit)
   const restarting = useExitNoticeStore((s) => s.restarting)
-  const enginePresence = usePresence(!!engineExit, DURATION.exit)
+  const enginePresence = usePresence(!!engineExit, DURATION.fast)
   const lastEngineExit = useRef(engineExit)
   if (engineExit) lastEngineExit.current = engineExit
-  const unexpectedHasSlot = diagEnabled && [!!engineExit, justAdded, !!status].filter(Boolean).length < 2
-  const unexpectedPresence = usePresence(!!unexpected && unexpectedHasSlot, DURATION.exit)
+  const unexpectedHasSlot = diagEnabled && [!!engineExit, justAdded, !!status].filter(Boolean).length < RAIL_MAX
+  const unexpectedPresence = usePresence(!!unexpected && unexpectedHasSlot, DURATION.fast)
   const unexpectedShown = unexpected ?? lastUnexpected.current
   // 「上次 Tavotto 没有正常退出」卡（ADR 0129）：与意外错误卡同档、排在它后面；只在发送入口可用时登记
   const previous = useExitNoticeStore((s) => s.previous)
@@ -344,8 +349,8 @@ export function NotificationRail({ announceRole = 'alert' }: { announceRole?: 'a
   if (previous) lastPrevious.current = previous
   const previousHasSlot =
     diagEnabled &&
-    [!!engineExit, justAdded, !!status, !!unexpected && unexpectedHasSlot].filter(Boolean).length < 2
-  const previousPresence = usePresence(!!previous && previousHasSlot, DURATION.exit)
+    [!!engineExit, justAdded, !!status, !!unexpected && unexpectedHasSlot].filter(Boolean).length < RAIL_MAX
+  const previousPresence = usePresence(!!previous && previousHasSlot, DURATION.fast)
   const previousShown = previous ?? lastPrevious.current
   const higherThanNotices = [
     !!engineExit,
@@ -354,8 +359,8 @@ export function NotificationRail({ announceRole = 'alert' }: { announceRole?: 'a
     !!unexpected && unexpectedHasSlot,
     !!previous && previousHasSlot,
   ].filter(Boolean).length
-  const adoptedHasSlot = higherThanNotices < 2
-  const adoptedPresence = usePresence(!!adopted && adoptedHasSlot, DURATION.exit)
+  const adoptedHasSlot = higherThanNotices < RAIL_MAX
+  const adoptedPresence = usePresence(!!adopted && adoptedHasSlot, DURATION.fast)
   const adoptedShown = adopted ?? lastAdopted.current
   const adoptedText = adoptedShown
     ? translate('engine.userEnvAdopted', {
@@ -379,12 +384,12 @@ export function NotificationRail({ announceRole = 'alert' }: { announceRole?: 'a
   }
 
   // 「已用上次的答案：…（修改）」（ADR 0099 §四）：与「已改用你的环境」同一档——带一个一次性出口。
-  // 两条同时在时让它让位（最多两条的规则），它 12 秒就走，环境那条更重要
+  // 两条同时在时让它让位（最多三条的规则），它 12 秒就走，环境那条更重要
   const autofilled = useScriptInputStore((s) => s.autofilled)
   const lastAutofilled = useRef<AutofillNotice | null>(null)
   if (autofilled) lastAutofilled.current = autofilled
-  const autofillHasSlot = !adopted && higherThanNotices < 2
-  const autofillPresence = usePresence(!!autofilled && autofillHasSlot, DURATION.exit)
+  const autofillHasSlot = !adopted && higherThanNotices < RAIL_MAX
+  const autofillPresence = usePresence(!!autofilled && autofillHasSlot, DURATION.fast)
   const autofillShown = autofilled ?? lastAutofilled.current
   const autofillText = autofillShown
     ? autofillShown.answer == null
@@ -410,8 +415,8 @@ export function NotificationRail({ announceRole = 'alert' }: { announceRole?: 'a
   }
 
   const hintHasSlot =
-    [!!engineExit, justAdded, !!adopted || !!autofilled, !!status, !!unexpected && unexpectedHasSlot, !!previous && previousHasSlot].filter(Boolean).length < 2
-  const hintPresence = usePresence(!!hint && hintHasSlot, DURATION.exit)
+    [!!engineExit, justAdded, !!adopted || !!autofilled, !!status, !!unexpected && unexpectedHasSlot, !!previous && previousHasSlot].filter(Boolean).length < RAIL_MAX
+  const hintPresence = usePresence(!!hint && hintHasSlot, DURATION.fast)
 
   // 出现的先后：最新的一条最靠近底边（见 useArrivalOrder）
   const arrival = useArrivalOrder()

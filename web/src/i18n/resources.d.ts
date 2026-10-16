@@ -137,6 +137,7 @@ export default interface Resources {
       "send": "发送（{{key}}）",
       "sendAria": "发送",
       "sendFailed": "没有发出去",
+      "sendFailedReason": "助手服务暂时出错",
       "stepRan": "运行",
       "targetAria": "作用目标：{{target}}",
       "taskHistory": "任务历史",
@@ -217,6 +218,10 @@ export default interface Resources {
       "pxSize": "{{w}} × {{h}} px"
     },
     "mixed": "多个值",
+    "notice": {
+      "copied": "已复制",
+      "details": "详情"
+    },
     "objectType": {
       "arrow": "箭头",
       "emptyText": "空文字",
@@ -260,7 +265,7 @@ export default interface Resources {
       "blockedTitle": "有阻断问题或无法核验的项。勾选确认后才能导出。",
       "blockingListLabel": "阻断性问题",
       "cancelExport": "取消导出",
-      "cancelFailed": "尚未确认取消，导出可能仍在继续。{{error}}",
+      "cancelFailed": "尚未确认取消，导出可能仍在继续",
       "cancelNotAccepted": "服务器未接受取消请求。请先检查导出状态和输出文件夹，再重试。",
       "cancelPending": "正在请求取消…",
       "cancelRequested": "已请求取消",
@@ -291,6 +296,7 @@ export default interface Resources {
       },
       "exportAgain": "再次导出",
       "exported": "导出完成：{{files}}",
+      "failTitle": "导出没有完成",
       "figureListLabel": "要按原图尺寸导出的图",
       "filenameError": {
         "control_char": "文件名里有不可见字符，请重新输入。",
@@ -397,7 +403,7 @@ export default interface Resources {
       "sizeDiskDiffers": "磁盘上的原文件为 {{dw}} × {{dh}} mm（脚本保存时已裁边），将按图幅 {{w}} × {{h}} mm 导出。",
       "sizeUnknownShort": "尺寸未知",
       "start": "开始导出",
-      "statusFailed": "暂时无法获取导出状态，作业仍可能完成。{{error}}",
+      "statusFailed": "暂时无法获取导出状态，作业仍可能完成",
       "strictTitle": "按所选规范重新打开写好的文件核对；不合格或无法核验的文件不会保存。EPS 不核验。",
       "strictToggle": "严格核验产物",
       "targetNoFigure": "当前没有图",
@@ -3218,6 +3224,7 @@ export default interface Resources {
       "foldStyle": "复制 / 粘贴样式",
       "group": "成组",
       "hdist": "水平等距分布（≥3 个对象）",
+      "layerValue": "第 {{n}} 层 / 共 {{total}}",
       "layout": "布局",
       "layoutCol": "列",
       "layoutGrid": "网格",
@@ -4543,6 +4550,7 @@ export default interface Resources {
       "filter": "按名称或路径筛选",
       "filterLabel": "筛选项目",
       "hint": "项目是你的脚本文件夹；一个项目可以有多份排版。",
+      "hintLabel": "关于项目与排版",
       "listLabel": "{{section}}项目",
       "moveDown": "下移",
       "moveUp": "上移",
@@ -4662,7 +4670,7 @@ export default interface Resources {
       "openAria": "编辑原图 {{name}}",
       "openFigure": "编辑原图",
       "refresh": "刷新项目",
-      "refreshFailed": "无法刷新。{{error}}",
+      "refreshFailed": "无法刷新",
       "refreshTip": "检查项目里的新文件与脚本改动",
       "refreshing": "正在检查新文件…",
       "removeFilter": "移除筛选：{{label}}",
@@ -5068,6 +5076,7 @@ export default interface Resources {
         "answer": "回答",
         "background": "放到后台",
         "cancelScan": "取消检查",
+        "clearReuse": "不沿用",
         "confirmOrigins": "确认包名",
         "continue": "继续",
         "dismiss": "知道了",
@@ -5076,6 +5085,7 @@ export default interface Resources {
         "later": "稍后",
         "openAssets": "打开素材库",
         "openRegistry": "打开接入中心",
+        "openRun": "打开并运行",
         "openSettings": "打开设置",
         "pickPython": "换用我的 Python",
         "pointAtData": "指认数据",
@@ -5084,8 +5094,7 @@ export default interface Resources {
         "run": "运行",
         "runAgain": "再运行",
         "runAnyway": "仍然运行",
-        "start": "开始准备",
-        "stop": "停止",
+        "stop": "停止运行",
         "switchScope": "用本项目的版本",
         "useIt": "用它",
         "viewFigures_other": "查看 {{count}} 张图",
@@ -5123,8 +5132,42 @@ export default interface Resources {
         "argsCount_other": "{{count}} 个",
         "argsHidden_other": "{{count}} 个（含口令，不显示）",
         "argsNone": "不带参数",
+        "argsReused_other": "沿用上次成功的 {{count}} 个参数",
         "errorFull": "完整错误信息",
         "errorTruncated": "太长，只保留了最后一部分。",
+        "history": {
+          "attempt": "第 {{n}} 次",
+          "declined": {
+            "already_fell_back": "这次运行已经换过一次，没有再换",
+            "cancelled": "已停止，没有换",
+            "fallback_disabled": "原样运行已关闭，没有换",
+            "interpreter_changed": "解释器变了，没有换",
+            "launch_failed": "没能启动原样运行",
+            "native_to_safe": "不从原样运行换回安全运行",
+            "no_new_root_cause": "没有新的原因，没有再试",
+            "not_blocked": "原因不是安全运行的限制，没有换",
+            "not_desktop_initiated": "不是桌面窗口发起的，没有换",
+            "not_runnable": "原样运行还有事要先答，没有换",
+            "plan_stale": "检查之后环境变了，没有换",
+            "plan_unavailable": "没能算出原样运行，没有换",
+            "policy_safe_only": "项目设为只用安全运行，没有换",
+            "project_reopened": "项目重新打开过，没有换",
+            "superseded": "被更新的一次运行取代，没有换"
+          },
+          "outcome": {
+            "blocked": "被拦下",
+            "cancelled": "已停止",
+            "failed": "出错",
+            "pending": "进行中",
+            "succeeded": "成功"
+          },
+          "profile": {
+            "native": "原样运行",
+            "safe": "安全运行"
+          },
+          "switched": "由安全运行换成原样运行",
+          "title": "运行记录"
+        },
         "installTo": "装到",
         "installs": "将安装",
         "nativeFallback": "安全模式拦下了脚本的文件操作，已自动换成按真实文件运行。",
@@ -5201,7 +5244,10 @@ export default interface Resources {
         "envLocked": "设置里固定的 Python 缺组件",
         "expired": "上次的记录没了",
         "failed": "运行出错了",
+        "failedAfterFallback": "安全运行不能照常执行，改用原样运行后又出错了",
         "fileOpsBlocked": "脚本改了项目里的文件又去读，安全运行不会真改，结果会不同，所以没有出图",
+        "fileOpsBlockedOff": "原样运行被关掉了；脚本改了项目里的文件又去读，安全运行结果会不同，所以没有出图",
+        "fileOpsBlockedSafeOnly": "这个项目设成了只用安全运行；脚本改了文件又去读，结果会不同，所以没有出图",
         "input": "脚本在等你回答",
         "inputSecret": "脚本要一个口令",
         "inputUnanswered": "脚本中途要你回答，再运行一次就能答",
@@ -5527,7 +5573,7 @@ export default interface Resources {
       "group_notRun": "尚未运行",
       "group_runtimeNames": "运行后才知道输出",
       "linkedCount_other": "已关联 {{count}} 张图",
-      "loadFailed": "无法读取脚本清单。{{error}}",
+      "loadFailed": "无法读取脚本清单",
       "loading": "正在读取脚本清单…",
       "noMatch": "没有符合条件的脚本",
       "notRunNote": "脚本尚未运行",
@@ -5801,7 +5847,7 @@ export default interface Resources {
     },
     "update": {
       "banner": "工具已更新，刷新后使用新版本",
-      "later": "稍后"
+      "chip": "界面需要刷新"
     }
   }
 }

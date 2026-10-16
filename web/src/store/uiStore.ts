@@ -539,7 +539,7 @@ function persist(state: UiState) {
 }
 
 /** 普通状态自己走的时长；错误保留到用户关闭 */
-export const STATUS_AUTO_DISMISS_MS = 4500
+export const STATUS_AUTO_DISMISS_MS = 4000
 
 /**
  * 状态的自动收起计时器：指针停在 toast 上、焦点在它的按钮上、页面不可见时都不走表

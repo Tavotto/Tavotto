@@ -59,6 +59,7 @@ import { TextInput } from './ui/Input'
 import { Tip } from './ui/Tooltip'
 import { useRenameFocusReturn } from './ui/useRenameFocusReturn'
 import type { StatusTone } from './ui/Notice'
+import { BuildMismatchChip } from './BuildMismatchChip'
 import { ConflictActions, ConflictDetail } from './DocumentBanner'
 import { RestoreIssueBody, RestoreMetaBody } from './RestoreIssueBody'
 import { useWindowFullscreen } from '@/hooks/useWindowChrome'
@@ -118,6 +119,7 @@ export function TopBar() {
           与紧接着要做的事（导出）都远。缩放在画布标签行、画布工具在画布底部的浮动工具条（2026-09-30 A1）；
           导出是顶栏唯一填色主动作 */}
       <div className="flex min-w-0 shrink-0 items-center justify-end gap-2 max-[899px]:gap-1">
+        <BuildMismatchChip />
         <UndoRedo />
         <ExportButton />
         <MoreMenu writeBackItem={writeBack.item} />

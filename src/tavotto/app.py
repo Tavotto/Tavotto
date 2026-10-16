@@ -7790,6 +7790,22 @@ def _session_error(exc: engine_prepsession.SessionError):
     return resp
 
 
+def _last_success_selection(ctx: "ProjectCtx", script: str):
+    """`reuse_last_success` 的消费端：上次成功的运行配置此刻全部依据仍成立才回 `RunSelection`；否则 None（= 无参数）。"""
+    root = str(ctx.path)
+    try:
+        python, source = engine_pool.resolve_worker_python(root, script=script)
+    except engine_pool.WorkerError:
+        return None
+    cid = engine_launchctx.reusable_run_config(root, script, python=python, python_source=source)
+    if cid is None:
+        return None
+    try:
+        return engine_runconfig.selection(root, cid, script=script)
+    except engine_runconfig.RunConfigError:
+        return None
+
+
 def _session_target(ctx: "ProjectCtx", body: dict):
     """请求体 → 会话目标（`script` 目标或已知素材）；不行回现成的拒绝响应。回 `(target, None)` 或 `(None, 响应)`。"""
     has_script, has_id = "script" in body, "id" in body
@@ -7857,7 +7873,22 @@ def _session_target(ctx: "ProjectCtx", body: dict):
         )
     # T03：精确 argv。只接受字符串数组——不接受一整串 shell 命令（那要猜 token 边界）；坏的抛 `InvalidArgv`
     # （app 级 errorhandler 回 400 + `invalid_argv`），不截断不"修好"
-    run = engine_runconfig.selection_for(
+    reuse = body.get("reuse_last_success")
+    if reuse is not None and not isinstance(reuse, bool):
+        return None, (
+            jsonify(
+                {
+                    "error": "reuse_last_success 只能是布尔值",
+                    "code": "bad_request",
+                    "params": {"fields": ["reuse_last_success"]},
+                }
+            ),
+            400,
+        )
+    # #982：沿用上次成功的运行配置——只在请求明确要求、且没有给 argv 时；依据（解释器 / 环境 / 脚本 / helper / 数据）不全成立就当没有
+    run = (
+        _last_success_selection(ctx, script) if reuse and body.get("argv") is None else None
+    ) or engine_runconfig.selection_for(
         ctx.path, script, body.get("argv"), sensitive=bool(body.get("argv_sensitive"))
     )
     return {

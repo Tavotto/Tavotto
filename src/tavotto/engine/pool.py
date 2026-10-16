@@ -3028,6 +3028,10 @@ class WorkerdWorker:
                     )
                     error.extra = {"reason": "source_changed", "retryable": True}
                     raise error from exc
+                # 会话是被**我们自己**强制关掉的（取消）：在飞的调用先于 close_session 的回应收到 unknown_session——
+                # 这不是 workerd 重启，不许透明重开（重开 = 把刚取消的脚本再跑一遍；Windows 打包产物上实测撞到）
+                if exc.code == "unknown_session" and getattr(self, "_force_closing", False):
+                    raise self._to_worker_error(exc, is_build=op == "build") from exc
                 if exc.code == "unknown_session" and attempt == 0:
                     LOG.warning("workerd 会话已失效，重开: %s", self.script_name)
                     self._open()
@@ -3181,6 +3185,8 @@ class WorkerdWorker:
 
         if not self._session_id:
             return True
+        # 先落标记再发关闭：在飞的 `_call` 可能先于这次回应收到 unknown_session，它据此不重开
+        self._force_closing = True
         try:
             self._client.call(
                 "close_session",

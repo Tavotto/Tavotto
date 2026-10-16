@@ -84,7 +84,6 @@ describe('单选面板：变换 → 内容适配 → 排列 → 源文件', () =
       '对齐到画布',
       '层级',
       '旋转、翻转、透明度',
-      '换一张图',
       '源文件',
     ])
   })
@@ -111,7 +110,7 @@ describe('单选面板：变换 → 内容适配 → 排列 → 源文件', () =
     expect(section('位置与尺寸').querySelector('[role="toolbar"]')).toBeNull()
   })
 
-  it('低频项各是一行摘要：右边只写当前值，点开才有控件（旋转 / 翻转 / 透明度、换一张图）', async () => {
+  it('低频项各是一行摘要：右边只写当前值，点开才有控件（旋转 / 翻转 / 透明度；「换一张图」已移进标题行 ⋯）', async () => {
     const rot = host.querySelector<HTMLElement>('[data-panel-more]')!.closest<HTMLElement>('[data-summary-row]')!
     expect(rot.querySelector('[data-summary-value]')!.textContent).toBe('0° · 不透明')
     expect(rot.querySelector('[data-panel-flip]')).toBeNull()
@@ -119,12 +118,9 @@ describe('单选面板：变换 → 内容适配 → 排列 → 源文件', () =
     expect(host.querySelectorAll('[data-panel-flip]')).toHaveLength(2)
     // 展开后右值收起（控件本身说得更准）
     expect(rot.querySelector('[data-summary-value]')).toBeNull()
-
-    const replace = host.querySelector<HTMLElement>('[data-fold="replace"]')!
-    expect(replace.querySelector('[data-summary-value]')).toBeNull()
-    expect(replace.textContent).not.toContain('选择…')
-    await act(async () => toggleByText('换一张图')!.click())
-    expect(replace.textContent).toContain('选择…')
+    // 「换一张图」是动作，不是设置行（也不再有「选择…」按钮）
+    expect(host.querySelector('[data-fold="replace"]')).toBeNull()
+    expect(host.textContent).not.toContain('换一张图')
   })
 })
 
@@ -146,7 +142,7 @@ describe('对象页的版式（2026-09-15 全面打磨）', () => {
   it('低频项统一是摘要行（名字 + 当前值 + ›）：同一个形状，名字是字重 500 的一行（2026-10-01）', () => {
     // 此前对象页的「更多」是不带 chevron 的文字链接、「源文件与高级」是带 chevron 的分区头
     // 两种形状；现在所有低频项只有摘要行这一种，一律带 ›
-    for (const name of ['层级', '旋转、翻转、透明度', '换一张图', '源文件']) {
+    for (const name of ['层级', '旋转、翻转、透明度', '源文件']) {
       const row = toggleByText(name)!
       expect(row, `找不到「${name}」`).toBeTruthy()
       expect(row.querySelector('svg'), `${name} 缺 ›`).toBeTruthy()

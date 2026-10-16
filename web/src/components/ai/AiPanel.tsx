@@ -18,11 +18,11 @@ import {
   Type,
   type IconComponent,
 } from '@/components/ui/icons'
+import { describeRequestFailure } from '@/lib/noticeText'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import {
   agentById,
   agentDisplayName,
-  backendErrorText,
   effectiveAgent,
   usableAgents,
   type AiCapabilities,
@@ -63,6 +63,12 @@ export const ASSISTANT_TAB_ICON = FileCodeCorner
 /** 本面板的文案都在 ai 命名空间下 */
 const ai = (key: string, values?: Record<string, unknown>) =>
   translate(key, { ns: 'ai', ...(values ?? {}) })
+
+/** 发送失败 → 「一句原因」+「详情」（HTTP 状态 / 后端 detail / 诊断引用折叠在说明条的详情里） */
+const sendFailure = (e: unknown) => {
+  const { reason, detail } = describeRequestFailure(e, ai('panel.sendFailedReason'))
+  return { text: reason, detail }
+}
 
 /**
  * 贴底跟随的松弛量：离底部这么近仍算「看着最新内容」。滚轮一格通常 ≥ 40px，
@@ -284,6 +290,8 @@ function AssistantPanelBody() {
   const sendInFlight = useRef(false)
   const [error, setError] = useState<{
     text: string
+    /** 读得懂的原因之外的技术细节（进「详情」折叠，`describeRequestFailure`） */
+    detail: string | null
     prompt: string
     target: SendTarget
     panelId: string
@@ -449,6 +457,7 @@ function AssistantPanelBody() {
         // 不发 run、不写账本，一句话 + 重试，输入框保持原样（与「账本写不成就不发」同一种处理）
         setError({
           text: ai('panel.draftNotSaved'),
+          detail: null,
           prompt: text,
           target: ctx,
           panelId: panel.id,
@@ -479,7 +488,7 @@ function AssistantPanelBody() {
       if (e instanceof ProjectChangedError) return // 发送中途切了项目：作废，不报错
       // 发送记录没写进后端 = 没有发：一句话 + 重试（不是「尽力写、照样发」）
       setError({
-        text: e instanceof AiLedgerError ? ai('panel.ledgerFailed') : backendErrorText(e),
+        ...(e instanceof AiLedgerError ? { text: ai('panel.ledgerFailed'), detail: null } : sendFailure(e)),
         prompt: text,
         target: ctx,
         panelId: panel.id,
@@ -512,7 +521,7 @@ function AssistantPanelBody() {
       await useAiStore.getState().resend(submission.rid)
     } catch (e) {
       setError({
-        text: backendErrorText(e),
+        ...sendFailure(e),
         prompt: text,
         target: submission.target,
         panelId: submission.panelId,
@@ -683,9 +692,11 @@ function AssistantPanelBody() {
               tone="danger"
               data-ai-error="send"
               className="mb-2"
+              // 一句话「没有发出去 · 原因」+ 「重试」；HTTP 状态 / 后端 detail / 诊断引用在「详情」里
               title={ai('panel.sendFailed')}
+              detail={error.detail}
               action={
-                <Button data-ai-retry variant="secondary" size="sm" disabled={!canSend || (error.source === 'composer' && tooLarge)} onClick={retryFailed}>
+                <Button data-ai-retry size="sm" disabled={!canSend || (error.source === 'composer' && tooLarge)} onClick={retryFailed}>
                   {ai('panel.retry')}
                 </Button>
               }
@@ -763,7 +774,7 @@ function AssistantPanelBody() {
               data-ai-no-agent
               className="mb-2"
               action={
-                <Button variant="secondary" size="sm" onClick={() => useUiStore.getState().setSettingsOpen(true, 'ai')}>
+                <Button size="sm" onClick={() => useUiStore.getState().setSettingsOpen(true, 'ai')}>
                   {ai('panel.openAiSettings')}
                 </Button>
               }

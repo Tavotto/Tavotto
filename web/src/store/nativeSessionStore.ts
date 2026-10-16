@@ -4,6 +4,7 @@ import {
   approveNativePending,
   buildNativeSession,
   cancelNativePending,
+  cancelNativeSession,
   continueNativeSession,
   detachNativeSession,
   fetchNativePending,
@@ -127,6 +128,8 @@ interface NativeSessionStore {
   resume: (sessionId: string) => Promise<void>
   detach: (sessionId: string) => Promise<void>
   terminate: (sessionId: string) => Promise<void>
+  /** 结束桌面拥有的会话（没有对应的准备卡时，native 卡上的「停止运行」）：与上面三个同一套互斥闸 / 记错 */
+  cancelOwned: (sessionId: string) => Promise<void>
   /** 重新拉一次清单（重开界面 / SSE 重连之后的对账） */
   refresh: (projectRoot?: string) => Promise<void>
   /** 收起一条终态会话的卡片 */
@@ -315,7 +318,13 @@ export const useNativeSessionStore = create<NativeSessionStore>((set, get) => ({
     syncNativePendingInput(session)
     // 屏障是"可以编辑了"那一刻，图要在这时候进画布。**由界面显式发 build**
     // ——后端不在 reader 线程里自己发，那是自己等自己（ADR 0021 §5.2）。
-    if (session.state === 'barrier' && get().builtSeq[session.session_id] !== session.sequence) {
+    // 桌面拥有的会话由准备会话独占展示面（ADR 0125 / 0126）：它的 runner 自己 build 过，图由卡片上的「进入编辑」放进
+    // 画布；这里再 build / 放置就是不点就自动开面板（甚至弹选择器），与准备会话的「进入编辑才开标签页」契约冲突
+    if (
+      session.state === 'barrier' &&
+      session.owner !== 'desktop' &&
+      get().builtSeq[session.session_id] !== session.sequence
+    ) {
       void get().build(session.session_id)
     }
   },
@@ -323,6 +332,7 @@ export const useNativeSessionStore = create<NativeSessionStore>((set, get) => ({
   build: async (sessionId) => {
     const session = get().sessions[sessionId]
     if (!session || get().busy[sessionId]) return
+    if (session.owner === 'desktop') return // 桌面拥有的会话：展示面归准备会话（见 applyEvent）
     // **只在屏障处**：别处 build 后端会回 `native_session_not_at_barrier`，
     // 而那是一条会吓到用户的错误——它描述的是正常状态，不是故障。
     if (session.state !== 'barrier') return
@@ -357,6 +367,7 @@ export const useNativeSessionStore = create<NativeSessionStore>((set, get) => ({
   resume: (sessionId) => runAction(sessionId, continueNativeSession, set, get),
   detach: (sessionId) => runAction(sessionId, detachNativeSession, set, get),
   terminate: (sessionId) => runAction(sessionId, terminateNativeSession, set, get),
+  cancelOwned: (sessionId) => runAction(sessionId, cancelNativeSession, set, get),
 
   refresh: async (projectRoot) => {
     const epoch = get().epoch

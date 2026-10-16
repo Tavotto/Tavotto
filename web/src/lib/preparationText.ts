@@ -19,6 +19,7 @@ import type {
   GuiDialogPayload,
   MissingInputOffer,
   PreparationActionKind,
+  PreparationAttempt,
   PreparationReport,
   PreparationRequirement,
   WorkdirConfirmation,
@@ -47,7 +48,7 @@ export type PrepPrimary =
   | { kind: 'dismiss' }
 
 /** 主按钮的文案键（`workspace:prep.btn.*`）：按钮说的就是它真正做的那件事 */
-export type PrepButton = 'run' | 'runAnyway' | 'runAgain' | 'retry' | 'stop' | 'install' | 'switchScope' | 'recheck'
+export type PrepButton = 'run' | 'openRun' | 'runAnyway' | 'runAgain' | 'retry' | 'stop' | 'install' | 'switchScope' | 'recheck'
 
 /** 卡片的视觉语气：标题左边那个小图标（`busy` 转圈、`ok` 勾、`bad` 叹号、`mute` 灰） */
 export type PrepTone = 'busy' | 'ok' | 'bad' | 'mute' | null
@@ -97,11 +98,37 @@ const has = (report: PreparationReport, kind: PreparationActionKind) =>
 
 const act = (action: PreparationActionKind, label: PrepButton): PrepPrimary => ({ kind: 'action', action, label })
 
+/**
+ * 「运行」这件事的主按钮：报告里有 `run_when_ready`（「打开并运行」，ADR 0124）就认领它——准备、运行、进入编辑一次点完；
+ * 老后端 / 已经跑过一次之后只有 `run`，就认领 `run`。按钮来自后端报告里的动作，这里不判「能不能」。
+ * `label` 是这张卡想说的字（「仍然运行」「再运行一次」…）；缺省时 `run_when_ready` 说「打开并运行」、`run` 说「运行」
+ */
+const runPrimary = (report: PreparationReport, label?: PrepButton): PrepPrimary | null => {
+  if (has(report, 'run_when_ready')) return act('run_when_ready', label ?? 'openRun')
+  if (has(report, 'run')) return act('run', label ?? 'run')
+  return null
+}
+
 const find = <K extends PreparationRequirement['kind']>(
   report: PreparationReport,
   kind: K,
 ): Extract<PreparationRequirement, { kind: K }> | undefined =>
   report.requirements.find((r) => r.kind === kind) as Extract<PreparationRequirement, { kind: K }> | undefined
+
+/** 当前这一次尝试在账本里的那一条（没有就取最后一条）；老后端没有账本 = undefined */
+export const currentAttempt = (report: PreparationReport): PreparationAttempt | undefined => {
+  const all = report.attempt_history ?? []
+  return all.find((a) => a.attempt_id === report.provider.attempt_id) ?? all[all.length - 1]
+}
+
+/** 这个会话的账本里有没有 safe → native 的回退（native 尝试的触发原因 = safe 自己的限制） */
+export const fellBack = (report: PreparationReport): boolean => {
+  const current = currentAttempt(report)
+  // 只看**本次运行**（账本按 run 分组，历史里更早一次运行的回退不算）
+  return (report.attempt_history ?? []).some(
+    (a) => current !== undefined && a.run === current.run && a.profile === 'native' && a.changed.includes('profile'),
+  )
+}
 
 type Extra = Partial<Pick<PrepView, 'input' | 'argsOpen' | 'primaryDisabled' | 'ghost' | 'step' | 'tone' | 'slot'>>
 
@@ -233,17 +260,17 @@ function fromReport(report: PreparationReport, entry: PrepEntry, ctx: PrepContex
         const { file, ask } = dialogKinds(dialog.payload)
         // 选文件与询问都有：一句话涵盖两者，不塌成只讲文件
         const key = file && ask ? 'dialogBoth' : file ? 'dialogFile' : 'dialogAsk'
-        return view('gui_dialog', key, v, has(report, 'run') ? act('run', 'runAnyway') : null, {
+        return view('gui_dialog', key, v, runPrimary(report, 'runAnyway'), {
           slot: 'ready',
           tone: 'bad',
         })
       }
       if (origins) {
-        return view('origin_unknown', 'originUnknown', { ...v, count: origins.count }, has(report, 'run') ? act('run', 'runAnyway') : null, {
+        return view('origin_unknown', 'originUnknown', { ...v, count: origins.count }, runPrimary(report, 'runAnyway'), {
           tone: 'mute',
         })
       }
-      return view('ready', projectEnvDeferred(report) ? 'readyProject' : 'ready', v, has(report, 'run') ? act('run', 'run') : null, {
+      return view('ready', projectEnvDeferred(report) ? 'readyProject' : 'ready', v, runPrimary(report), {
         slot: 'ready',
       })
     }
@@ -265,7 +292,7 @@ function fromReport(report: PreparationReport, entry: PrepEntry, ctx: PrepContex
       }
       return view('not_registered', 'notRegistered', v, { kind: 'open_registry' }, { tone: 'bad', step: 1 })
     case 'cancelled':
-      return view('cancelled', 'cancelled', v, has(report, 'run') ? act('run', 'runAgain') : null, { tone: 'mute', step: 1 })
+      return view('cancelled', 'cancelled', v, runPrimary(report, 'runAgain'), { tone: 'mute', step: 1 })
     default:
       return needsSomething(report, script)
   }
@@ -320,7 +347,15 @@ function needsSomething(report: PreparationReport, script: string): PrepView {
   }
   const deps = find(report, 'dependency_authorization')
   if (deps) {
-    const prepare = has(report, 'prepare_dependencies') ? act('prepare_dependencies', 'install') : null
+    // 报告里有「打开并运行」、而这次安装只进 Tavotto 自己的环境（授权合同的范围）：主按钮就是它，装完自动接着运行；
+    // 要改用户自己环境的安装不在合同里，仍是逐次确认的「安装」
+    const installAction = report.actions.find((a) => a.kind === 'prepare_dependencies')
+    const prepare =
+      installAction === undefined
+        ? null
+        : has(report, 'run_when_ready') && deps.origin !== 'runtime_missing' && !installAction.impact.modifies_user_environment
+          ? act('run_when_ready', 'openRun')
+          : act('prepare_dependencies', 'install')
     if (deps.origin === 'runtime_missing') {
       const p = (deps.payload ?? {}) as { module?: string; installable?: boolean; route?: string }
       if (!p.installable) {
@@ -350,10 +385,18 @@ function needsSomething(report: PreparationReport, script: string): PrepView {
       : view('needs_args', 'needsArgs', v, { kind: 'reopen', label: 'continue' }, { slot: 'args', argsOpen: true })
   }
   // safe 守卫拦下了脚本的文件操作、脚本随后又读了它（P01a）：重试得到同样的结果，没有「再试一次」。
-  // 桌面用户发起的运行会先按执行证据静默回退到 native 再试一次（ADR 0127 D1）；走到这里说明没有回退
-  // （非桌面发起 / 回退被关 / 回退后仍失败……），所以没有主按钮——如实说，不替用户换环境重跑
+  // 桌面用户发起的运行里后端会在同一会话里自动换成保留文件语义的执行再跑一次（ADR 0127），所以走到这里只有一种情况：
+  // 后端没有回退（项目设成只用安全运行 / 运维关了回退 / 老后端）——如实说为什么，不替用户换环境重跑，没有主按钮。
+  // 原因来自账本里的闭集理由码（`declined`），前端不另判
   if (report.outcome.kind === 'failed' && code === 'safe_file_operation_blocked') {
-    return view('file_ops_blocked', 'fileOpsBlocked', v, null, { tone: 'bad', step: 1 })
+    const declined = currentAttempt(report)?.declined
+    const key =
+      declined === 'policy_safe_only'
+        ? 'fileOpsBlockedSafeOnly'
+        : declined === 'fallback_disabled'
+          ? 'fileOpsBlockedOff'
+          : 'fileOpsBlocked'
+    return view('file_ops_blocked', key, v, null, { tone: 'bad', step: 1 })
   }
   if (missing) return view('missing_data', 'missingData', v, { kind: 'missing_input', payload: missing.payload }, { step: 1 })
   const fallback = has(report, 'recheck') ? act('recheck', 'recheck') : null
@@ -375,16 +418,20 @@ function needsSomething(report: PreparationReport, script: string): PrepView {
         // 口令：理由是 secret_required，或读取方式本身是 getpass（首问无人应答 / 超时时理由是别的）
         const params = report.result?.error?.params
         const secret = params?.reason === 'secret_required' || params?.input_kind === 'getpass'
-        return view('input_unanswered', secret ? 'inputUnansweredSecret' : 'inputUnanswered', v, has(report, 'run') ? act('run', 'retry') : fallback, {
+        return view('input_unanswered', secret ? 'inputUnansweredSecret' : 'inputUnanswered', v, runPrimary(report, 'retry') ?? fallback, {
           tone: 'bad',
           step: 1,
         })
       }
-      return view('failed', 'failed', v, has(report, 'run') ? act('run', 'retry') : fallback, { tone: 'bad', step: 1 })
+      // 换成原样运行之后又出错了：一句话说明已经换过（脚本自己的错误原文与运行记录在详情里），主按钮仍是再试一次
+      return view('failed', fellBack(report) ? 'failedAfterFallback' : 'failed', v, runPrimary(report, 'retry') ?? fallback, {
+        tone: 'bad',
+        step: 1,
+      })
     case 'cancelled':
       return view('cancelled', 'depsCancelled', v, fallback, { tone: 'mute' })
     default:
-      return view('attention', 'attention', v, has(report, 'run') ? act('run', 'run') : fallback)
+      return view('attention', 'attention', v, runPrimary(report) ?? fallback)
   }
 }
 

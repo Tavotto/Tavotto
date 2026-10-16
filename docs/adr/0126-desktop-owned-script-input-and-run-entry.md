@@ -73,8 +73,10 @@ runner 发 `input_request` 事件（`request_id` / `kind` / `prompt` / `ordinal`
 * **没有真桌面窗口验证**：Tauri 壳、WebView、Windows / macOS 真机（含 Job 路径）归 P10；本轮的「真」是真服务子进程 + 真用户 Python + HTTP。
 * 前端只做到把 `pending_input` 镜像进**同一个**答题队列（`scriptInputStore`）、作答 / 停止走 native 接口；**没有新增「native 运行」按钮或设置**——
   何时发 `execution: "native"`（默认？仅用户 Python？）是产品决定，本轮留给调用方。**（已由 [0127](0127-execution-policy-and-unified-retry-guard.md) / [0133](0133-run-routing-compatibility-first.md) 关闭：发 native 的调用方是准备会话里的执行回退与运行前路由，前端不发 `execution`。）**
-* **成功答案的上下文记忆**（`scriptanswers`）与菜单 / 读取方式 / argv 变化失效：未接到 native 路径（本轮每个提问都问）。
-* **`reuse_last_success`（#982）**：依赖 P09 / #975，本轮不做。接口点：打开脚本动作发 `execution` 的那一处。
+* **成功答案的上下文记忆**（`scriptanswers`）与菜单 / 读取方式 / argv 变化失效：未接到 native 路径（本轮每个提问都问）。**V2 PR4 核实后仍未接**：safe 的 `recall` 要用输出上下文校验（`context`）才立即回填，
+  native 的输入桥没有等价的上下文，缺口在 bridge runner 侧（要先提供输出摘要再复用 `scriptanswers.recall` / `inputbroker._emit_autofilled`）；所以 safe 里答过的题回退到 native 会再问一遍（不伪造）。
+* **`reuse_last_success`（#982）**：本轮不做 → **V2 PR4 完成**：消费端是 `launchctx.reusable_run_config`（请求明确带 `reuse_last_success: true` 且没给 argv；解释器 / 环境 / 脚本 / helper / 数据全部仍成立，
+  敏感配置与 `source.basis_observed: false` 的 native 成功记录不沿用），前端只从明确的「打开 / 再次打开脚本」动作发送、卡上显示沿用个数并可清除。
 * 缺依赖、凭据、外部软件的「一句话原因 + 一个动作」（AC-21）沿用 safe 路径的映射，native 的 `script_error` 暂以原文呈现。
 * 提问只支持主线程里的调用：runner 的控制通道只在主线程上使用（线程模型不变）；脚本在子线程里 `input()` 与屏障同时读同一条通道的边角未处理（残余）。
 * `sys.stdin.readlines()` / `for line in sys.stdin` 读到 EOF 才结束——界面上要点「没有输入」才会收尾，与终端里按 Ctrl-D 同义。

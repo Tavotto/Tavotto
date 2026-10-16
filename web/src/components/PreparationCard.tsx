@@ -21,7 +21,9 @@ import { ICON_SIZE } from '@/components/ui/Icon'
 import {
   backendCodeMsg,
   fetchDependencyOffer,
+  isNativeTerminal,
   type GuiDialogPayload,
+  type PreparationAttempt,
   type PreparationReport,
   type ProjectScan,
   type WorkdirConfirmation,
@@ -37,33 +39,32 @@ import { dependenciesLine, issueLine, roleLabel, scanCard, scanLine, type ScanCa
 import { missingRequirements, readTokens, type ScriptArgsSchema } from '@/lib/scriptArgsForm'
 import { cn } from '@/lib/utils'
 import { useCanvasToolbarVisible } from '@/components/CanvasToolbar'
-import { addRuntimePanelToCanvas, openFastEdit } from '@/store/workspace'
 import { refreshProjectNow } from '@/store/liveSync'
 import { useAssetStore } from '@/store/assetStore'
 import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
 import { useDepRepairStore } from '@/store/depRepairStore'
 import { useEnvStore } from '@/store/envStore'
 import { useExitNoticeStore } from '@/store/exitNoticeStore'
-import { useOnboardingStore } from '@/store/onboardingStore'
 import { useProjectReadinessStore } from '@/store/projectReadinessStore'
 import { useProjectScanStore } from '@/store/projectScanStore'
-import { useProjectStore } from '@/store/projectStore'
+import { usePrepSurface } from '@/hooks/usePrepSurface'
 import {
+  argsSchemaOf,
   draftDiffers,
+  reusedArgCount,
   scriptTarget,
   useProjectPreparationStore,
   type EditRender,
   type PrepEntry,
 } from '@/store/projectPreparationStore'
 import { exactPanelRender, renderKeyOf, useRenderStore } from '@/store/renderStore'
-import { takeDeferredEntryOutcome } from '@/store/documentRestore'
+import { enterEdit, noteAddedPanelFor, type EnterEditHost } from '@/store/prepEnterEdit'
 import { findFigurePanel } from '@/store/documentStore'
-import { useWorkspaceStore } from '@/store/workspaceStore'
 import { captureProjectEpoch } from '@/lib/projectEpoch'
-import type { PanelObject } from '@/types/document'
 import { useScriptArgvStore } from '@/store/scriptArgvStore'
 import { useScriptInputStore } from '@/store/scriptInputStore'
 import { useScriptRunStore } from '@/store/scriptRunStore'
+import { useNativeSessionStore } from '@/store/nativeSessionStore'
 import { useUiStore } from '@/store/uiStore'
 import { ProbeResultsDialog } from './left/ScriptLibrary'
 import { OriginReasonCounts } from './OriginDetails'
@@ -86,31 +87,11 @@ const pt = (key: string, values?: Record<string, unknown>) =>
 /** 展示面的名字（`scriptInputStore.claimPresentation`）：卡片展开且正展示那一问时，原对话框让开 */
 const SURFACE = 'prep-card'
 
-/**
- * 入口动作为这张图创建 / 复用的面板与渲染键（动作做完、面板已在文档里的那一刻记下）。
- * 文档里找不到面板就没有可观察的渲染——不猜。
- */
-function editRenderOf(assetId: string): EditRender | undefined {
-  const found = findFigurePanel(assetId)
-  return found ? { panelId: found.panel.id, renderKey: renderKeyOf(found.panel) } : undefined
-}
-
-/** 记入编辑记录：资产 id + 它在画布上那个面板的渲染键 */
-function noteEditingFor(entryKey: string, assetId: string): void {
-  useProjectPreparationStore.getState().noteEditing(entryKey, assetId, editRenderOf(assetId))
-}
-
-/**
- * 结果对话框刚加进画布的那个面板：**直接**记它的 id 与渲染键，不按 assetId 去文档里找——同一素材文档里可能已经有
- * 别的实例，按 assetId 找会选中旧实例、它已有的就绪渲染会让「首次编辑渲染」立刻成立。
- * 取文档里的现值（加图之后取景等动作可能改过对象），找不到才用返回的那个对象。
- */
-function noteAddedPanelFor(entryKey: string, assetId: string, added: PanelObject): void {
-  const live = findFigurePanel(assetId, added.id)?.panel ?? added
-  useProjectPreparationStore
-    .getState()
-    .noteEditing(entryKey, assetId, { panelId: live.id, renderKey: renderKeyOf(live) })
-}
+/** 把这个条目的会话持有者递给 `prepEnterEdit`（项目代际 + 记入编辑记录） */
+const editHost = (entryKey: string): EnterEditHost => ({
+  epoch: () => useProjectPreparationStore.getState().epoch,
+  note: (assetId, render) => useProjectPreparationStore.getState().noteEditing(entryKey, assetId, render),
+})
 
 /**
  * 加进画布的图首次编辑渲染好了没有（这是前端自己观察到的事实，不是后端判据）：只认入口动作记下的那个面板、
@@ -126,12 +107,6 @@ function useEditReady(renders: Record<string, EditRender>): boolean {
   )
 }
 
-/** 报告里后端给的参数 schema（`script_arguments` 待办的载荷）；没有 argparse 证据就没有 */
-const argsSchemaOf = (report: PreparationReport | null): ScriptArgsSchema | null => {
-  const req = report?.requirements.find((r) => r.kind === 'script_arguments')
-  return req && req.kind === 'script_arguments' ? req.payload.schema : null
-}
-
 /**
  * 准备引导卡（T13b，取代 T02 的顶部检查条与 T09 的准备面板；设计稿 v2）：画布工作面板右下的**一张**浮动卡，
  * 不占布局（页面不下移）。所有「准备并打开」的入口——导入即扫描发现了绘图脚本、素材库脚本行 ▶、接入中心逐行
@@ -140,7 +115,7 @@ const argsSchemaOf = (report: PreparationReport | null): ScriptArgsSchema | null
  * ```text
  * 准备 · 运行 · 编辑                        —  ×
  * 发现绘图脚本 spectrum.py
- * 详情 ▾                       稍后  [开始准备]
+ * 详情 ▾                       稍后  [打开并运行]
  * ```
  *
  * * **一句话 + 一个黑色主按钮**（用户硬性要求「卡片一句话读懂」）：标题与主按钮只在 `lib/preparationText.ts`（会话）/
@@ -148,11 +123,11 @@ const argsSchemaOf = (report: PreparationReport | null): ScriptArgsSchema | null
  * * **三种呈现**（`uiStore.guideCard`）：展开 / 角标 / 收起。「稍后」「—」「放到后台」缩成角标；角标或卡上的 × 才收起。
  *   缩成角标时只有脚本发问才自动展开（跑完、出错只改角标）；收起时等作答的 input 由原对话框接着问。
  * * **每个项目只自动弹一次**（`lib/guideCardSeen.ts`，本机按项目记）：扫描发现待准备的绘图脚本时弹；扫描中、没看全只出角标。
- *   **弹出时不建会话**——建会话就是检查（会起候选解释器），扫描阶段零执行；用户点「开始准备」才建。
+ *   **弹出时不建会话**——建会话就是检查（会起候选解释器），扫描阶段零执行；用户点「打开并运行」才建（检查完接着认领后端的 run_when_ready）。
  * * **按钮就是真实动作**：会话的动作来自报告（运行 / 安装 / 重新检查 / 停止），运行目录在卡里直接选（推荐项预选，确认后只
  *   重新检查、不运行），进入编辑用这次捕获的图；卡片不复制任何一个动作的实现。
  * * **进入编辑之后卡片自动收起**，工作区自己的「渲染完成」说结果。
- * * 本地开关关掉（`lib/preparationFlag`）时，「开始准备」回到旧的同步试运行（`scriptRunStore.run`），其余照旧。
+ * * 本地开关关掉（`lib/preparationFlag`）时，「打开并运行」回到旧的同步试运行（`scriptRunStore.run`），其余照旧。
  */
 export function PreparationCard() {
   useTranslation('workspace')
@@ -162,14 +137,12 @@ export function PreparationCard() {
   const scan = useProjectScanStore((s) => s.scan)
   const slow = useProjectScanStore((s) => s.slow)
   const forced = useProjectScanStore((s) => s.forced)
+  const { hidden } = usePrepSurface()
   const lost = useProjectScanStore((s) => s.pollLost)
-  const tutorialProject = useProjectStore((s) => s.project?.tutorial === true)
-  const onboardingActive = useOnboardingStore((s) => s.status === 'active')
   const toolbarUp = useCanvasToolbarVisible()
   // 草稿变了要重新渲染（参数改了 → 「继续」）
   const drafts = useScriptArgvStore((s) => s.drafts)
   const editReady = useEditReady(entry?.editRenders ?? {})
-  const hidden = tutorialProject || onboardingActive
   // 壳确认引擎退出了：断线那一句不再说「正在重连」（没人在重连），见 PrepContext.engineExited
   const engineExited = useExitNoticeStore((s) => s.engineExit !== null)
   const scanned = !entry && !hidden ? scanCard(scan, { slow, forced, lost }) : null
@@ -180,7 +153,11 @@ export function PreparationCard() {
     const schema = argsSchemaOf(entry.report)
     const tokens = script ? (drafts[script]?.tokens ?? []) : []
     // 单一入口：表单关着时 missingRequirements 自己只认读得准的必填项，并照旧拦必选子命令
-    const missingArgs = !schema ? null : missingRequirements(schema, readTokens(schema, tokens), tokens).count
+    const missingArgs = !schema
+      ? null
+      : tokens.length === 0 && reusedArgCount(entry) > 0
+        ? 0
+        : missingRequirements(schema, readTokens(schema, tokens), tokens).count
     view = prepView(entry, {
       argsChanged: draftDiffers(entry.target),
       editReady,
@@ -453,7 +430,8 @@ function ScanCard({ scan, card }: { scan: ProjectScan; card: { kind: ScanCardKin
       void useScriptRunStore.getState().run(script)
       return
     }
-    void useProjectPreparationStore.getState().open(scriptTarget(script))
+    // 「开始准备」就是明确的「打开并运行」：检查完、后端报告里有 run_when_ready 就接着认领（授权合同由 act 回显）
+    void useProjectPreparationStore.getState().open(scriptTarget(script, { reuse: true }), { run: true })
   }
   const deps = dependenciesLine(scan)
   const details = (
@@ -527,7 +505,7 @@ function ScanCard({ scan, card }: { scan: ProjectScan; card: { kind: ScanCardKin
               if (target) start(target)
             }}
           >
-            {pt('btn.start')}
+            {pt('btn.openRun')}
           </Button>
         }
       />
@@ -614,6 +592,22 @@ const ARGS_FOLDED = new Set([
   'cancelled',
 ])
 
+/**
+ * 「停止运行」：用户不感知运行层。这次运行此刻有桌面拥有的进程（`launch_id` = 报告里当前尝试的计划号、会话没结束）就结束它——
+ * 后端同一个端点会连准备计划一起取消；否则（safe 阶段 / 还没起进程）认领准备会话的 `cancel` 动作。
+ */
+function useStopRun(entry: PrepEntry): () => void {
+  const sessions = useNativeSessionStore((s) => s.sessions)
+  return () => {
+    const plan = entry.report?.provider.attempt_id
+    const owned = plan
+      ? Object.values(sessions).find((s) => s.owner === 'desktop' && s.launch_id === plan && !isNativeTerminal(s.state))
+      : undefined
+    if (owned) void useProjectPreparationStore.getState().stopOwned(entry.key, owned.session_id)
+    else void useProjectPreparationStore.getState().act(entry.key, 'cancel')
+  }
+}
+
 const primaryId = (p: PrepPrimary): string => (p.kind === 'action' ? p.action : p.kind)
 
 function primaryLabel(p: PrepPrimary, workdir: WorkdirMode | null): string {
@@ -677,47 +671,19 @@ function useRunPrimary(entry: PrepEntry, onMany: () => void) {
           onMany() // 多张图：每一张都列出来、各自加进画布（绝不只取第一张）
           return null
         }
-        const d = figures[0]
-        // 进入编辑 = 稳定动作 `openFastEdit`（加进文档并说出口 → 进入图内编辑 → 引擎按热会话渲染，脚本不再跑）。
-        // 素材清单还没取到这张新图时先用这次捕获的描述符把它加进画布，再进入编辑
-        // 挂起期间可能切了项目：续延带着 A 的描述符，绝不能把 A 的面板加进 B 的版面
-        const guard = captureProjectEpoch(() => useProjectPreparationStore.getState().epoch)
-        await useRuntimeAssetStore.getState().loadAssets()
-        if (!guard.still()) return null
-        // 清单里没有、文档里也还没有这张图才加：清单请求在途时连点两下，两个续延都看到「清单里没有」，
-        // 只有文档才是已经加过一次的权威（补审 #914 r4236701619）。这两步之间没有 await，第二个续延必然看到第一个加的面板
-        const known = (useRuntimeAssetStore.getState().assets ?? []).some((a) => a.id === d.asset_id)
-        if (!known && !findFigurePanel(d.asset_id)) {
-          addRuntimePanelToCanvas(d)
-        }
-        const outcome = openFastEdit(d.asset_id)
-        // 记 `openFastEdit` 实际打开的那个面板（它选中的实例），不是文档里按素材 id 找到的第一个；
-        // 进入编辑之后卡片自动收起，不留角标（工作区自己的「渲染完成」说结果）
-        const landed = () => {
-          const opened = useWorkspaceStore.getState().activePanelId
-          const found = opened ? findFigurePanel(d.asset_id, opened) : null
-          if (found) noteAddedPanelFor(entry.key, d.asset_id, found.panel)
-          else noteEditingFor(entry.key, d.asset_id)
-          ui.setGuideCard('closed')
-        }
-        if (outcome === 'blocked') {
-          // 上次的排版还要用户先处理：这次什么都没放进去（门已经说了「上次的排版还没打开」）——卡片留着，处理完再点
-          return null
-        }
-        if (outcome === 'deferred') {
-          // 上次的排版还在恢复：入口已排队，**真的落进文档之后**才收卡片；被取代 / 超时（没落）就留着
-          // 以这个入口**自己的结局**为准（`ran`）：恢复被同项目里显式打开的别的排版取代时，入口被丢掉；
-          // 那份排版里恰好有同一张图也不能当成这次进入编辑成了
-          void takeDeferredEntryOutcome()?.then((result) => {
-            if (result === 'ran' && guard.still() && findFigurePanel(d.asset_id)) landed()
-          })
-          return null
-        }
-        landed()
+        // 进入编辑的实现只有一份（`store/prepEnterEdit`）：与「打开并运行」完成后的自动进入共用
+        await enterEdit(editHost(entry.key), figures[0])
         return null
       }
       case 'reopen':
-        await store.open('id' in entry.target ? entry.target : scriptTarget(entry.target.script))
+        // 沿用上次成功参数的条目重新打开时仍沿用（目标构造点只有 scriptTarget，别在这里另拼）；草稿里有参数时用户给的赢
+        await store.open(
+          'id' in entry.target
+            ? entry.target
+            : scriptTarget(entry.target.script, { reuse: entry.target.reuse_last_success === true }),
+          // 「继续」不是新的一次「打开并运行」：回到已跑完的同配置会话时复用结果，不重跑（registry-center-preparation e2e）
+          { run: entry.wantsRun, rerun: false },
+        )
         return null
       case 'confirm_origins': {
         // 名字不在会话报告里（只有计数与原因码）：点的时候取一份联合计划载荷，框里读 `origins[]`。取回来时已换了项目就整个丢弃
@@ -784,7 +750,7 @@ function SessionCard({ entry, view }: { entry: PrepEntry; view: PrepView }) {
   // 报告换了（新修订 / 新观察）就把上一次本地动作的失败收起
   useEffect(() => setLocalError(null), [report?.config_revision, report?.observation_seq])
   const runPrimary = useRunPrimary(entry, () => setResultsOpen(true))
-  const store = useProjectPreparationStore.getState()
+  const stopRun = useStopRun(entry)
   const pending = entry.pending !== null
   // 回答框、「回答」、⋯ 共用同一份作答状态（框里的字只在这里，不进 store）
   const answer = useScriptInputAnswer()
@@ -838,7 +804,7 @@ function SessionCard({ entry, view }: { entry: PrepEntry; view: PrepView }) {
         data-prep-stop
         className="text-ink-2"
         disabled={pending}
-        onClick={() => void store.act(entry.key, 'cancel')}
+        onClick={stopRun}
       >
         {pt('btn.stop')}
       </Button>
@@ -885,7 +851,7 @@ function SessionCard({ entry, view }: { entry: PrepEntry; view: PrepView }) {
           descriptors={report.captured ?? []}
           dropped={0}
           open={resultsOpen}
-          onAdded={(d, added) => noteAddedPanelFor(entry.key, d.asset_id, added)}
+          onAdded={(d, added) => noteAddedPanelFor(editHost(entry.key), d.asset_id, added)}
           onOpenChange={(v) => {
             setResultsOpen(v)
             if (!v) useUiStore.getState().setGuideCard('closed')
@@ -916,6 +882,18 @@ function SessionPill({ entry, view }: { entry: PrepEntry; view: PrepView }) {
     }
   })()
   const enter = view.primary?.kind === 'enter_edit' ? view.primary : null
+  const stopRun = useStopRun(entry)
+  const stop =
+    view.ghost === 'stop' ? (
+      <button
+        type="button"
+        data-prep-pill-stop
+        className="shrink-0 rounded-full px-1.5 text-ink-2 outline-none hover:text-ink focus-visible:focus-ring"
+        onClick={stopRun}
+      >
+        {pt('btn.stop')}
+      </button>
+    ) : undefined
   return (
     <Pill
       attrs={attrs}
@@ -931,7 +909,9 @@ function SessionPill({ entry, view }: { entry: PrepEntry; view: PrepView }) {
           >
             {primaryLabel(enter, null)}
           </button>
-        ) : undefined
+        ) : (
+          stop
+        )
       }
     >
       <b className="font-medium">{script}</b> {text}
@@ -1032,22 +1012,41 @@ function ReadyLine({ entry }: { entry: PrepEntry }) {
   const mode = useEnvStore((s) => s.env?.project?.workdir?.mode ?? null)
   const target = entry.target
   const argv = 'id' in target ? [] : (target.argv ?? [])
+  // 沿用上次成功的参数（#982）：只说个数（值不回前端），旁边一个文字钮「不沿用」——重新按无参数检查，不替用户运行
+  const reused = reusedArgCount(entry)
   const args =
-    argv.length === 0
-      ? pt('detail.argsNone')
-      : 'argv_sensitive' in target && target.argv_sensitive
-        ? pt('detail.argsHidden', { count: argv.length })
-        : argv.map((t) => (/[\s"']/.test(t) || t === '' ? JSON.stringify(t) : t)).join(' ')
+    reused > 0
+      ? pt('detail.argsReused', { count: reused })
+      : argv.length === 0
+        ? pt('detail.argsNone')
+        : 'argv_sensitive' in target && target.argv_sensitive
+          ? pt('detail.argsHidden', { count: argv.length })
+          : argv.map((t) => (/[\s"']/.test(t) || t === '' ? JSON.stringify(t) : t)).join(' ')
   return (
-    <p className="truncate text-sm text-ink-2" data-prep-ready-line>
-      {mode && (
-        <>
-          {pt(WORKDIR_LABEL[mode as WorkdirMode] ?? 'workdir.project_root')}
-          {' · '}
-        </>
+    <div className="flex items-baseline gap-3" data-prep-ready-line>
+      <p className="min-w-0 flex-1 truncate text-sm text-ink-2">
+        {mode && (
+          <>
+            {pt(WORKDIR_LABEL[mode as WorkdirMode] ?? 'workdir.project_root')}
+            {' · '}
+          </>
+        )}
+        <span className={reused > 0 ? undefined : 'font-mono'} data-prep-args-summary>
+          {args}
+        </span>
+      </p>
+      {reused > 0 && !('id' in target) && (
+        <button
+          type="button"
+          data-prep-reuse-clear
+          disabled={entry.pending !== null}
+          className="shrink-0 rounded-xs text-sm text-ink-3 outline-none hover:text-ink-2 focus-visible:focus-ring disabled:opacity-40"
+          onClick={() => void useProjectPreparationStore.getState().open(scriptTarget(target.script), { run: false })}
+        >
+          {pt('btn.clearReuse')}
+        </button>
       )}
-      <span className="font-mono">{args}</span>
-    </p>
+    </div>
   )
 }
 
@@ -1122,6 +1121,52 @@ function GuiDialogHint({ payload }: { payload: GuiDialogPayload }) {
         />
       ))}
       {payload.truncated && <p data-prep-dialog-more>{pt('dialog.more')}</p>}
+    </div>
+  )
+}
+
+const HISTORY_PROFILES = ['safe', 'native']
+const HISTORY_OUTCOMES = ['pending', 'succeeded', 'failed', 'blocked', 'cancelled']
+const HISTORY_DECLINED = [
+  'project_reopened',
+  'superseded',
+  'not_desktop_initiated',
+  'fallback_disabled',
+  'policy_safe_only',
+  'not_blocked',
+  'cancelled',
+  'plan_stale',
+  'already_fell_back',
+  'native_to_safe',
+  'no_new_root_cause',
+  'not_runnable',
+  'interpreter_changed',
+  'plan_unavailable',
+  'launch_failed',
+]
+
+/** 闭集码翻成人话；后端以后新增的码（旧前端不认识）原样显示，不丢也不猜 */
+const closedText = (set: string[], group: string, code: string): string =>
+  set.includes(code) ? pt(`detail.history.${group}.${code}`) : code
+
+/**
+ * 运行记录（ADR 0127）：这个会话里每次真实执行尝试——用的是安全运行还是原样运行、怎么收场、本可换却没换的理由。
+ * 只在详情里（折叠）；全是后端的闭集码，没有路径 / 参数。只有一次且没有「没换」的理由时不显示（没有可说的）。
+ */
+function RunHistory({ history }: { history: PreparationAttempt[] }) {
+  useTranslation('workspace')
+  if (history.length < 2 && !history.some((a) => a.declined)) return null
+  return (
+    <div className="flex flex-col gap-1" data-prep-history>
+      <span className="text-ink-3">{pt('detail.history.title')}</span>
+      {history.map((a, i) => (
+        <Row
+          key={a.attempt_id}
+          k={`${pt('detail.history.attempt', { n: i + 1 })} · ${closedText(HISTORY_PROFILES, 'profile', a.profile)}`}
+          v={a.declined ? closedText(HISTORY_DECLINED, 'declined', a.declined) : closedText(HISTORY_OUTCOMES, 'outcome', a.outcome)}
+          attr="history"
+        />
+      ))}
     </div>
   )
 }
@@ -1203,6 +1248,7 @@ function SessionDetails({ entry, view }: { entry: PrepEntry; view: PrepView }) {
       {(report?.unlinked_stems ?? []).length > 0 && report?.phase === 'completed' && (
         <p data-prep-unlinked>{pt('detail.unlinked', { names: listJoin(report.unlinked_stems ?? []) })}</p>
       )}
+      {(report?.attempt_history?.length ?? 0) > 0 && <RunHistory history={report?.attempt_history ?? []} />}
       {report?.target.script && <Row k={pt('detail.script')} v={<span className="font-mono">{report.target.script}</span>} attr="script" />}
       {env?.kind && (
         <Row
@@ -1213,7 +1259,11 @@ function SessionDetails({ entry, view }: { entry: PrepEntry; view: PrepView }) {
       )}
       {mode && !wdReq && <Row k={pt('detail.workdir')} v={pt(WORKDIR_LABEL[mode as WorkdirMode] ?? 'workdir.project_root')} attr="workdir" />}
       {report?.target.kind === 'script' && (
-        <Row k={pt('detail.args')} v={argc ? pt('detail.argsCount', { count: argc }) : pt('detail.argsNone')} attr="args" />
+        <Row
+          k={pt('detail.args')}
+          v={reusedArgCount(entry) > 0 ? pt('detail.argsReused', { count: reusedArgCount(entry) }) : argc ? pt('detail.argsCount', { count: argc }) : pt('detail.argsNone')}
+          attr="args"
+        />
       )}
       {wdReq && <p>{pt('workdir.writes')}</p>}
       {wdReq?.kind === 'workdir_choice' && (wdReq.payload?.conflicts.length ?? 0) > 0 && (

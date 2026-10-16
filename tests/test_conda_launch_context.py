@@ -711,7 +711,8 @@ def test_the_legacy_probe_success_clears_an_older_launch_record(conda_world, tmp
 # ---------------------------------------------------------------------------
 @needs_worker
 def test_success_is_recorded_and_argv_behaviour_is_unchanged(conda_world, tmp_path):
-    """成功后写下可验证的启动上下文；但「再次打开」不沿用：省略 argv（含带着已废弃的 `reuse_last_success`）就是无参数运行。"""
+    """成功后写下可验证的启动上下文；但「再次打开」不靠省略 argv 推断沿用：省略 argv 就是无参数运行。`reuse_last_success` 由 V2 PR4（#982）接上消费端，
+    这里最后一次成功是无参数运行，没有可沿用的，所以带着它也是无参数（沿用本身见 tests/test_reuse_last_success.py）。"""
     proj, prefix, log, counter = conda_world
     work = tmp_path / "work"
     env = {
@@ -737,7 +738,7 @@ def test_success_is_recorded_and_argv_behaviour_is_unchanged(conda_world, tmp_pa
             _run_session(app, {"script": "fig.py", "reuse_last_success": True})["phase"]
             == "completed"
         )
-        assert [r["argv"] for r in runs(counter)][-1] == []  # 字段不被认：与 P09 之前逐字节一致
+        assert [r["argv"] for r in runs(counter)][-1] == []  # 上一次成功是无参数运行：没有可沿用的
 
 
 @posix_only

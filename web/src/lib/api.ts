@@ -5624,6 +5624,30 @@ export interface PreparationAction {
   impact: PreparationImpact
 }
 
+/**
+ * 会话里一次真实执行尝试的公开记录（`execpolicy.AttemptRecord.public`，ADR 0127）：执行语义 · 解释器 / 启动上下文摘要 ·
+ * 触发它的原因码 · 与上次相比变了什么 · 结局 · 本可回退却没回退的理由。全是闭集码与不可还原的摘要，没有路径 / argv / 环境值。
+ */
+export interface PreparationAttempt {
+  /** 第几次用户发起的运行（新的运行动作重算预算） */
+  run: number
+  /** 在这次运行里的序号，从 1 起 */
+  seq: number
+  attempt_id: string
+  profile: 'safe' | 'native'
+  interpreter: string
+  launch: string
+  /** 触发这次尝试的上一次尝试的稳定错误码；第一次为空串 */
+  cause: string
+  /** 相对上一次变了的维度：`profile` | `interpreter` | `launch_context` */
+  changed: string[]
+  outcome: 'pending' | 'succeeded' | 'failed' | 'blocked' | 'cancelled'
+  code: string
+  /** 本可回退（原因是 blocked）却没回退的闭集理由（`execpolicy.REASONS`）；空串 = 不适用 / 已回退 */
+  declined: string
+}
+
+/** 会话报告（`SessionService.report`）：前端只保存这份投影，不另算「能不能跑」 */
 /** `rasterhint.LIBRARIES`：界面按它查库名（`workspace:prep.rasterHint.library.*`） */
 export type RasterLibrary = 'pillow' | 'opencv' | 'imageio' | 'skimage'
 
@@ -5632,19 +5656,8 @@ export type RasterLibrary = 'pillow' | 'opencv' | 'imageio' | 'skimage'
  * 启动上下文摘要 · 触发原因码 · 与上次相比变了哪几维（`profile` / `interpreter` / `launch_context`）· 结局。
  * 只有摘要与闭集码，没有路径 / argv / 环境值。老后端没有 `attempt_history`。
  */
-export interface PreparationAttemptRecord {
-  run: number
-  seq: number
-  attempt_id: string
-  profile: 'safe' | 'native'
-  interpreter: string
-  launch: string
-  cause: string
-  changed: string[]
-  outcome: 'pending' | 'succeeded' | 'failed' | 'blocked' | 'cancelled'
-  code: string
-  declined: string
-}
+/** #1097 起的同一份账本记录（与 `PreparationAttempt` 同形） */
+export type PreparationAttemptRecord = PreparationAttempt
 
 /** 会话报告（`SessionService.report`）：前端只保存这份投影，不另算「能不能跑」 */
 export interface PreparationReport {
@@ -5687,10 +5700,10 @@ export interface PreparationReport {
     } | null
   }
   dependency_delta?: Record<string, unknown> | null
-  /** 这个会话里每次真实执行尝试的账本（ADR 0127）；界面只在「safe → native 回退成功」时据此在详情里补一行，不据此判任何事 */
-  attempt_history?: PreparationAttemptRecord[]
   /** 运行意图（P05b）；老后端没有这个键 */
   intent?: PreparationRunIntent | null
+  /** 这个会话里每次真实执行尝试的账本（V2，ADR 0127，有界）；老后端没有这个键 */
+  attempt_history?: PreparationAttempt[]
   /** 环境：只是一个可展示的事实（ADR 0114 §六），不要求用户动作；老后端没有 */
   environment?: PreparationEnvironmentFact | null
   /** 正在等的那一问（只有 id / 序号 / 读取方式 / 要不要掩码；提示与答案走 `/api/script_input/*`） */
@@ -5750,7 +5763,17 @@ export interface PreparationEnvironmentFact {
 
 /** 会话目标：一份脚本（可带精确 argv，空 = 不带参数、请求体里没有 `argv`）或一张已知的图 */
 export type PreparationTarget =
-  | { script: string; entry?: string; argv?: readonly string[]; argv_sensitive?: boolean }
+  | {
+      script: string
+      entry?: string
+      argv?: readonly string[]
+      argv_sensitive?: boolean
+      /**
+       * 「打开 / 再次打开脚本」的明确动作：让后端沿用上次成功的运行配置（#982）。后端核验解释器 / 环境 / 脚本 / helper / 数据
+       * 全部仍成立才沿用，沿用了几个参数在会话报告 `target.argv_count`（值不回前端）。给了 `argv` 时被忽略
+       */
+      reuse_last_success?: true
+    }
   | { id: string }
 
 const preparationBody = (target: PreparationTarget) =>
@@ -5761,7 +5784,9 @@ const preparationBody = (target: PreparationTarget) =>
         ...(target.entry ? { entry: target.entry } : {}),
         ...(target.argv && target.argv.length > 0
           ? { argv: [...target.argv], ...(target.argv_sensitive ? { argv_sensitive: true } : {}) }
-          : {}),
+          : target.reuse_last_success
+            ? { reuse_last_success: true }
+            : {}),
       }
 
 /**
@@ -6106,6 +6131,8 @@ export interface NativeSessionInfo {
   editable: boolean
   /** 谁拥有这个脚本进程：`desktop` = Tavotto 自己起的（可取消、脚本的 input 由界面作答）；`terminal` = 用户的终端 */
   owner?: 'desktop' | 'terminal'
+  /** 桌面拥有的会话所属的准备计划号（= 准备报告 `provider.attempt_id`）；终端拥有的为空串，老后端没有 */
+  launch_id?: string
   /** 桌面拥有的脚本此刻停在的那一次提问（事实在后端，不属于某个窗口）；没有在等的 = null */
   pending_input?: NativePendingInput | null
   /** 被所有者取消结束的（与脚本自己退出 / 崩溃分开） */

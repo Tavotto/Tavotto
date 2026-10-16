@@ -97,6 +97,8 @@ export default defineConfig({
         // 助手草稿与提交可靠性（ADR 0132）：状态说明是中英两套文案，定位走 data-*，两种语言各走一遍
         'ai-draft.spec.ts',
         'a11y.spec.ts',
+        // 说明条 + 不推挤（UI 2.0 PR10）：构建不一致芯片不位移、刷新失败 Notice 顺着滑出；英文文案更长，两种语言各量
+        'notice-no-push.spec.ts',
         'error-recovery-en.spec.ts',
         // 树与列表精修（UI 2.0 PR7）：英文标签更长（截断 / 字宽锁最容易出事），选择器全是稳定 data-*，两种语言各量一遍
         'tree-list-refine.spec.ts',
@@ -111,6 +113,8 @@ export default defineConfig({
         'sync-overrides.spec.ts',
         // 导出对象头的「示意」标注与透明背景棋盘格（PR3）：英文标注更长，撑破对象头的话先在这里红
         'export-preview.spec.ts',
+        // 素材卡 / 属性栏底部：英文文案更长，量盒子位置两种语言各一遍
+        'inspector-assets.spec.ts',
       ],
     },
   ],

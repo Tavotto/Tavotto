@@ -981,7 +981,7 @@ describe('可编辑图的动作层级', () => {
       reprobe!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
       await Promise.resolve()
     })
-    expect(mockCreateSession.mock.calls.map((c) => c[0])).toEqual([{ script: 'ok.py' }])
+    expect(mockCreateSession.mock.calls.map((c) => c[0])).toEqual([{ script: 'ok.py', reuse_last_success: true }])
     expect(mockProbe).not.toHaveBeenCalled()
     // 开关关闭：同一个菜单项走素材库那台状态机
     await act(async () => root.unmount())

@@ -77,4 +77,7 @@ CLI 与 MCP 的确认合同**不变**：`tavotto run` 仍由用户亲手敲，�
 * **用户可见**：桌面上点运行，脚本被 safe 的守卫拦下时不再是死胡同——同一个准备会话里自动换成保留文件语义的执行再跑一次，最终出图。native 路径的取舍如实存在：该图写回被拒（native 面板硬拒绝写回，ADR 0021 §9），脚本的文件写入是真的。
 * **脚本最多执行 2 次**。safe 那一次在被拦之前的外部副作用会重复；这是 D1 的已知代价（场景 17）。
 * 新稳定行为：`safe_only` / kill switch 下 safe 的限制照旧如实报告，`attempt_history[0].declined` 说明为什么没回退。
+* 界面接线（V2 PR4）：素材库 ▶ / 接入中心 / 引导卡「打开并运行」是明确入口，检查完（卡片会说「可以运行了」时）代用户认领 `run_when_ready`，前端**永不发 `execution`**；回退是同一会话里的第二个 attempt，
+  面板身份（资产 id）不含执行语义所以不多开标签页；桌面拥有的 native 会话由准备会话独占展示面；`file_ops_blocked` 只剩「后端明确没回退」一种成因，一句话按 `declined` 闭集码说原因、没有主按钮，
+  回退也失败时一句话 + 再试一次、`attempt_history` 在详情「运行记录」。规则全文 `docs/rules/frontend/readiness-and-left-shell.md`「准备引导卡」。
 * 未做（如实）：项目设置的读写端点与界面开关（改 `app.py` + 前端，列后续）；磁盘面板跟随权威 profile、旧 safe 热 worker 让位（PR3b）；运行前路由（PR2）；资产目标（已有图）的回退（本轮只覆盖脚本目标）；`worker.py` 里「没有换环境重跑」的过期文案与 `errors.json`（PR3a 持有）。

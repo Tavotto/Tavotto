@@ -123,6 +123,188 @@ def test_perf_manifest_incomplete_or_missing_is_failed(tmp_path):
 
 
 # --------------------------------------------------------------------------
+# perf_agent 判定：以摘要 status 为准，不只看退出码
+# --------------------------------------------------------------------------
+_PA_IDS = sorted(AV._PERF_AGENT_SCENARIOS)
+
+
+def _pa_summary(tmp_path: Path, **over) -> Path:
+    rows = {
+        k: {"count": 16, "expected_count": 16, "p50_ms": 20.0, "p95_ms": 31.5, "max_ms": 40.0}
+        for k in _PA_IDS
+    }
+    data = {
+        "schema": "tavotto-perf-agent/1",
+        "status": "ok",
+        "coverage": "browser_webview_proxy_only",
+        "regression_status": "not_checked_without_baseline",
+        "not_covered": ["native_window_drag"],
+        "environment": {"browser": "chromium", "platform": "darwin"},
+        "scenarios": rows,
+        "suites": {"symbol_ui": "ok", "canvas_drag": "not_requested"},
+    }
+    data.update(over)
+    p = tmp_path / "summary.json"
+    p.write_text(json.dumps(data), encoding="utf-8")
+    return p
+
+
+def test_perf_agent_ok_passes_without_claiming_performance(tmp_path):
+    result, reason, facts = AV.judge_perf_agent({"exit_code": 0}, _pa_summary(tmp_path))
+    assert result == "passed"
+    assert facts["regression_status"].startswith("not_checked")
+    assert facts["suites"]["canvas_drag"] == "not_requested"
+    assert "未与基线比较" in reason and "拖动未测" in reason
+    assert [r["id"] for r in facts["scenarios"]] == _PA_IDS
+
+
+@pytest.mark.parametrize(
+    "status, expected",
+    [
+        ("incomplete", "failed"),
+        ("failed", "failed"),
+        ("regression", "failed"),
+        ("incomparable", "not_run"),
+        ("no_baseline", "not_run"),
+        ("pending", "error"),
+        ("weird", "error"),
+        (None, "error"),
+    ],
+)
+def test_perf_agent_status_mapping_follows_the_summary_not_the_exit_code(
+    tmp_path, status, expected
+):
+    # 退出码 0 也不改变非 ok 状态的映射：status 才是权威
+    for rc in (0, 2, 3):
+        got = AV.judge_perf_agent({"exit_code": rc}, _pa_summary(tmp_path, status=status))[0]
+        assert got == expected, (status, rc)
+        assert got != "passed"
+
+
+def test_perf_agent_ok_with_nonzero_exit_is_error(tmp_path):
+    assert AV.judge_perf_agent({"exit_code": 2}, _pa_summary(tmp_path))[0] == "error"
+    assert AV.judge_perf_agent({"exit_code": None}, _pa_summary(tmp_path))[0] == "error"
+
+
+def test_perf_agent_missing_or_corrupt_or_foreign_summary_is_error(tmp_path):
+    assert AV.judge_perf_agent({"exit_code": 0}, tmp_path / "absent.json")[0] == "error"
+    bad = tmp_path / "summary.json"
+    bad.write_text("{not json", encoding="utf-8")
+    assert AV.judge_perf_agent({"exit_code": 0}, bad)[0] == "error"
+    bad.write_text("[]", encoding="utf-8")
+    assert AV.judge_perf_agent({"exit_code": 0}, bad)[0] == "error"
+    assert (
+        AV.judge_perf_agent({"exit_code": 0}, _pa_summary(tmp_path, schema="other/1"))[0] == "error"
+    )
+
+
+def test_perf_agent_status_field_missing_is_error(tmp_path):
+    p = _pa_summary(tmp_path)
+    data = json.loads(p.read_text(encoding="utf-8"))
+    del data["status"]
+    p.write_text(json.dumps(data), encoding="utf-8")
+    assert AV.judge_perf_agent({"exit_code": 0}, p)[0] == "error"
+
+
+@pytest.mark.parametrize(
+    "over",
+    [
+        {"suites": {"symbol_ui": "ok", "canvas_drag": "ok"}},  # 我们没请求拖动
+        {"suites": {"symbol_ui": "failed", "canvas_drag": "not_requested"}},
+        {"suites": None},
+        {"scenarios": {}},
+        {"regression_status": "pass"},  # 没传基线，不该出现裁决
+        {"regression_status": None},
+    ],
+)
+def test_perf_agent_ok_that_contradicts_itself_is_not_passed(tmp_path, over):
+    result = AV.judge_perf_agent({"exit_code": 0}, _pa_summary(tmp_path, **over))[0]
+    assert result == "error"
+
+
+def test_perf_agent_short_or_missing_samples_are_not_passed(tmp_path):
+    p = _pa_summary(tmp_path)
+    data = json.loads(p.read_text(encoding="utf-8"))
+    data["scenarios"]["symbol.alpha"]["count"] = 15
+    p.write_text(json.dumps(data), encoding="utf-8")
+    assert AV.judge_perf_agent({"exit_code": 0}, p)[0] == "error"
+    del data["scenarios"]["symbol.alpha"]
+    p.write_text(json.dumps(data), encoding="utf-8")
+    assert AV.judge_perf_agent({"exit_code": 0}, p)[0] == "error"
+    data["scenarios"]["symbol.alpha"] = {"count": 0, "expected_count": 0, "p95_ms": None}
+    p.write_text(json.dumps(data), encoding="utf-8")
+    assert AV.judge_perf_agent({"exit_code": 0}, p)[0] == "error"
+
+
+def test_perf_agent_scenario_ids_mirror_the_tool():
+    sys.path.insert(0, str(ROOT / "scripts"))
+    import perf_agent
+
+    assert AV._PERF_AGENT_SCENARIOS == frozenset(perf_agent.ALLOWED_SCENARIOS)
+    assert set(AV._PERF_AGENT_ENV_KEYS) == set(perf_agent.ENV_FIELDS)
+
+
+def test_perf_agent_scenario_runs_through_the_real_pipeline(tmp_path, monkeypatch):
+    """替身 perf_agent 写 incomplete 摘要并退 2：整条链路落成 failed，基线状态透传，不更新基线。"""
+    code = (
+        "import json,sys,pathlib; a=sys.argv; "
+        "pathlib.Path(a[a.index('--summary')+1]).write_text(json.dumps("
+        "{'schema':'tavotto-perf-agent/1','status':'incomplete',"
+        "'regression_status':'not_checked_without_baseline','scenarios':{}}),encoding='utf-8'); "
+        "sys.exit(2)"
+    )
+    fake = AV.Scenario(
+        id="t.pa",
+        summary="fake",
+        kind="measurement",
+        steps=(
+            AV.Step(
+                "perf_agent_run",
+                ("{python}", "-c", code, "--summary", "{evidence}/summary.json"),
+                parser="perf_agent",
+            ),
+        ),
+        timeout_s=60,
+        claim="fake",
+        owner_doc="docs/perf-agent.md",
+    )
+    rec = AV.run_scenario(fake, tmp_path, sys.executable)
+    assert rec["result"] == "failed" and rec["baseline"]["status"] == "not_checked"
+    assert rec["baseline"]["verdict"] == "not_checked_without_baseline"
+
+
+# --------------------------------------------------------------------------
+# 新增前置条件探针
+# --------------------------------------------------------------------------
+def test_tool_and_any_file_preconditions():
+    assert AV.check_precondition("tool:definitely_no_such_tool_xyz", sys.executable)["ok"] is False
+    assert (
+        AV.check_precondition("any_file:no/such.html|scripts/ci/agent_verify.py", sys.executable)[
+            "ok"
+        ]
+        is True
+    )
+    assert AV.check_precondition("any_file:no/a.html|no/b.html", sys.executable)["ok"] is False
+
+
+def test_playwright_browser_missing_deps_is_not_ok_and_path_free(monkeypatch):
+    # web/node_modules 不存在（新 worktree）或浏览器未装：都是「环境不满足」，且原因不带路径
+    rec = AV.check_precondition("playwright_browser:chromium", sys.executable)
+    if not rec["ok"]:
+        assert "/" not in rec["detail"].split("（")[0]
+    with pytest.raises(ValueError):
+        AV.check_precondition("playwright_browser:firefox", sys.executable)
+
+
+def test_perf_agent_symbol_ui_without_environment_is_environment_unavailable(tmp_path, monkeypatch):
+    """缺 node / 依赖 / 浏览器时必须是 environment_unavailable，且不启动任何子进程。"""
+    monkeypatch.setenv("TAVOTTO_FONTS_DIR", str(tmp_path / "nofonts"))
+    rec = AV.run_scenario(AV.SCENARIOS["perf.agent.symbol_ui"], tmp_path, sys.executable)
+    assert rec["result"] == "environment_unavailable"
+    assert rec["steps"] == []
+
+
+# --------------------------------------------------------------------------
 # 登记表本身
 # --------------------------------------------------------------------------
 def test_registry_ids_are_unique_and_kinds_closed():
@@ -133,13 +315,33 @@ def test_registry_ids_are_unique_and_kinds_closed():
         assert s.timeout_s > 0 and s.claim and s.owner_doc
 
 
+def test_registered_perf_scenarios_state_what_they_do_not_prove():
+    sym = AV.SCENARIOS["perf.agent.symbol_ui"]
+    assert "不是「性能达标」" in sym.claim
+    assert any("基线" in u for u in sym.unverified) and any("拖动" in u for u in sym.unverified)
+    # 真实测量场景绝不带 --baseline / --include-drag：入口不碰基线、不放大范围
+    argv = sym.steps[0].argv
+    assert "--baseline" not in argv and "--include-drag" not in argv
+    win = AV.SCENARIOS["perf.macos_window.selftest"]
+    assert win.semantics == "diagnostic_only" and win.kind == "selftest"
+    assert all(s.name == "pytest" for s in win.steps)  # 不登记 record / compare
+    assert any("真窗口" in u or "真实运行" in u for u in win.unverified)
+
+
+def test_semantics_is_a_closed_annotation_not_a_result():
+    assert {s.semantics for s in AV.SCENARIOS.values()} <= {"", "diagnostic_only"}
+    assert "diagnostic_only" not in AV.RESULTS
+
+
 def test_registry_points_at_files_that_exist():
     """登记的脚本 / 用例 / 文档都要真实存在——指向空气的场景只会永远 not_run。"""
     for s in AV.SCENARIOS.values():
         assert (ROOT / s.owner_doc).is_file(), s.owner_doc
         for c in s.preconditions:
-            if c.startswith("file:"):
+            if c.startswith("file:") and "node_modules" not in c:  # 依赖安装物不进 git
                 assert (ROOT / c[5:]).is_file(), (s.id, c)
+            if c.startswith("any_file:"):  # 至少一个出处是仓库里的路径形状（构建产物本身不进 git）
+                assert all("/" in part for part in c[9:].split("|")), (s.id, c)
         for step in s.steps:
             for a in step.argv:
                 if a.startswith(("scripts/", "tests/")):
@@ -150,7 +352,7 @@ def test_registry_argv_is_argument_vector_not_shell():
     for s in AV.SCENARIOS.values():
         for step in s.steps:
             assert step.argv[0] == "{python}"
-            assert step.parser in {"exit_code", "pytest", "perf_manifest"}
+            assert step.parser in {"exit_code", "pytest", "perf_manifest", "perf_agent"}
             for a in step.argv:
                 assert not any(ch in a for ch in ";|&`$<>"), (s.id, a)
 
@@ -158,7 +360,15 @@ def test_registry_argv_is_argument_vector_not_shell():
 def test_registry_preconditions_are_known_kinds(tmp_path):
     for s in AV.SCENARIOS.values():
         for c in s.preconditions:
-            assert c.split(":", 1)[0] in {"fonts", "file", "python_module", "workerd_binary"}, c
+            assert c.split(":", 1)[0] in {
+                "fonts",
+                "file",
+                "any_file",
+                "tool",
+                "playwright_browser",
+                "python_module",
+                "workerd_binary",
+            }, c
 
 
 # --------------------------------------------------------------------------

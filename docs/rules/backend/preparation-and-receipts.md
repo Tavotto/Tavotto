@@ -295,10 +295,18 @@ input 协议，前端也没有 readiness 计算器。端点 `POST /api/engine/pr
   影响扩大 / 超出合同 → 撤销，不循环。
 - 修订变化只有「本意图批准的安装终局」与「本意图正在等的目录 / 环境回答」两类是预期（`classify_transition`，纯函数）；脚本字节、解释器、授权、数据绑定、已评估依赖变了 → `revoked`。
 - argv 换了：`run_when_ready` + `transfer_from`，在新旧两把会话锁内原子转移**未认领执行**的意图并退役旧会话未认领动作；旧意图已执行 / 在执行 / 不 active → 409
-  `preparation_run_intent_not_transferable`；未转移而并存 → 409 `preparation_run_intent_conflict`。
+  `preparation_run_intent_not_transferable`；未转移而并存 → 409 `preparation_run_intent_conflict`（`params.session_id` = 旧意图所在会话，前端状态丢了也能据此转移，前端自动带 `transfer_from` 重试一次）。
 - 已执行之后才缺包（EX13）仍是 `needs_dependencies` + 新一次尝试，意图不复活；运行时 `input()` 复用原 `Pending`。
 - 看护：`tests/test_preparation_run_intent.py`（假 pool：被动 0 次、一次、目录回答后继续、取消 / 外部变化 / 预算 / 重启、argv 转移与竞态；`held`：授权范围内安装、超出授权、影响扩大、
   取消后迟到 done；真 worker：装好后恰一次执行、**外部计数夹具**写一次后缺包，修复不把计数变 2）。
+
+## 沿用上次成功的运行配置（V2 PR4，#982）
+
+`POST /api/engine/preparation-sessions` 的脚本目标可带 `reuse_last_success: true`（布尔，别的类型 400 `bad_request`；只对脚本目标；给了 `argv` 时被忽略）。消费端只有
+`launchctx.reusable_run_config`（`app._last_success_selection` 解析此刻的解释器后调用）：上次成功的 `launches[脚本]` 记录里的运行配置引用，**全部依据仍成立**才沿用
+（`launchctx.verify` 全部 facet；敏感配置不沿用；`source.basis_observed: false`——桌面 native 成功，没有 helper / 数据观察——不沿用，证据不全不假装可复用；上次是无参数运行 = 没有可沿用的）。
+不满足一律当没有（无参数），不报错。**只有省略（或 null）argv 才考虑沿用**：显式给的 `argv: []`（明确要无参数运行）与任何显式 argv 都赢，不被上次的参数覆盖。沿用了几个参数在会话报告 `target.argv_count`（值不进公开投影）。省略标志 = 无参数运行，与 P09 之后逐字节一致。
+看护：`tests/test_reuse_last_success.py`（真服务子进程 + 真 worker：执行的 argv 以脚本日志为准）。
 
 ## 执行回退与统一重试闸门（V2 PR1，ADR 0127）
 

@@ -278,6 +278,47 @@ describe('用户级入口在恢复中排队（素材卡双击 / 加入排版 / �
     expect(panelsOf(app)).toHaveLength(1)
   })
 
+  it('自动进入编辑传的守卫：恢复期间排队，落定时守卫不满足 → 入口不执行（不放图、不进编辑）', async () => {
+    const app = await setAssets(await boot())
+    const ws = await import('@/store/workspace')
+    const hold = gate()
+    be.state.hold.session = hold.promise
+    const restoring = app.doc.restoreSession()
+    await vi.waitFor(() => expect(be.state.calls).toContain('GET session'))
+    let wanted = true
+    expect(ws.openFastEdit('Fig1.pdf', { guard: () => wanted })).toBe('deferred')
+    wanted = false // 用户在恢复期间把卡放到后台 / 切去别的卡
+    hold.release()
+    await restoring
+    await vi.waitFor(() => expect(app.doc.getRestoreGate().state).toBe('ready'))
+    await new Promise((r) => setTimeout(r, 30))
+    expect(panelsOf(app)).toEqual([])
+  })
+
+  it('自动进入编辑（enterEdit）在恢复中排队、图还不在文档里：落定前切走 → 不插入面板、不进编辑、不记编辑', async () => {
+    const app = await setAssets(await boot())
+    const { enterEdit } = await import('@/store/prepEnterEdit')
+    const desc = {
+      asset_id: 'runtime:s.py#a', script: 's.py', entry: '__main__', stem: 'a', capture_source: 'savefig', execution_profile: 'safe',
+      original_artifact: null, size_mm: [80, 60], source_fingerprint: 'fp', can_writeback_artifact: false, can_writeback_source: false,
+    } as never
+    const hold = gate()
+    be.state.hold.session = hold.promise
+    const restoring = app.doc.restoreSession()
+    await vi.waitFor(() => expect(be.state.calls).toContain('GET session'))
+    let wanted = true
+    const noted: string[] = []
+    const out = await enterEdit({ epoch: () => 0, note: (id) => noted.push(id), stillWanted: () => wanted }, desc)
+    expect(out).toBe('deferred')
+    wanted = false // 恢复期间用户把卡放到后台 / 切去别的卡
+    hold.release()
+    await restoring
+    await vi.waitFor(() => expect(app.doc.getRestoreGate().state).toBe('ready'))
+    await new Promise((r) => setTimeout(r, 30))
+    expect(panelsOf(app)).toEqual([]) // 没插入面板（取景跟着插入走，也就没有）
+    expect(noted).toEqual([]) // 没进编辑、没记编辑
+  })
+
   it('拖放 / 选图对话框的加图（addPanelToCanvas）同样排队，返回 null', async () => {
     const app = await setAssets(await boot())
     const ws = await import('@/store/workspace')
