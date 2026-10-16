@@ -48,6 +48,13 @@ interface Entry {
   retry?: ReturnType<typeof setTimeout>
   retries: number
   staleRetries: number
+  /**
+   * **这一版编辑所基于的服务器戳**：编辑发生那一刻本页已知的最新服务器戳（`undefined` = 那时基线未知，首读失败）。
+   * stale 回来时只拿**这一版自己的**基线和服务器戳比：≤ 基线 = 这一版是在已知的最新状态上编辑的，可以提升；
+   * > 基线 = 有我们编辑时不知道的写入，放弃、交给对账采纳服务器值。之后对账读到的戳只影响**之后新编辑**的基线，不改已 post 的版本
+   * （否则 A 在途时 B 被保存、对账把 B 的戳读进来，A 的 stale 就被误判成「已知」而盖掉 B）。
+   */
+  baseStamp?: number
 }
 
 interface Slot {
@@ -55,8 +62,8 @@ interface Slot {
   fileId: string
   entry: Entry | null
   inflight: Promise<'accepted' | 'unavailable' | 'abandoned'> | null
-  /** 本页见过的服务器戳（GET 读到的、自己 PUT 被接受的、stale 回的） */
-  seen: Set<number>
+  /** 本页已知的最新服务器戳（GET 读到的、自己 PUT 被接受的、stale 回的）；-1 = 还没读到过任何戳。只用来给**新编辑**取 `baseStamp` */
+  known: number
   /** 当前这一轮连续失败超过一分钟的计时器 / 是否已对界面宣布 */
   stallTimer?: ReturnType<typeof setTimeout>
   stalled: boolean
@@ -73,7 +80,7 @@ function slotOf(project: string, fileId: string): Slot {
   const k = keyOf(project, fileId)
   let s = slots.get(k)
   if (!s) {
-    s = { project, fileId, entry: null, inflight: null, seen: new Set(), unknown: false, listeners: new Set(), stalled: false }
+    s = { project, fileId, entry: null, inflight: null, known: -1, unknown: false, listeners: new Set(), stalled: false }
     slots.set(k, s)
   }
   return s
@@ -120,6 +127,8 @@ export function post(project: string, fileId: string, text: string): void {
     version: ++versionCounter,
     retries: 0,
     staleRetries: 0,
+    // 这一版的基线：编辑发生此刻本页已知的最新服务器戳；基线未知（首读失败、还没有写成功过）就是 undefined
+    baseStamp: slot.unknown ? undefined : slot.known,
   }
   slot.entry = entry
   entry.debounce = setTimeout(() => void send(slot, false), WRITE_DEBOUNCE_MS)
@@ -146,18 +155,18 @@ export function subscribe(project: string, fileId: string, listener: (e: OutboxE
 /** 记下本页读到的服务器戳（对账的 GET）；读成功 = 基线已知 */
 export function observe(project: string, fileId: string, stamp: number | undefined): void {
   const slot = slotOf(project, fileId)
-  if (stamp !== undefined) slot.seen.add(stamp)
+  if (stamp !== undefined) slot.known = Math.max(slot.known, stamp)
   slot.unknown = false
 }
 
 /** 第一次读失败 / 超时：不知道服务器上有没有更新的版本（只在一次都没读成功过时成立） */
 export function markUnknown(project: string, fileId: string): void {
   const slot = slotOf(project, fileId)
-  if (slot.seen.size === 0) slot.unknown = true
+  if (slot.known < 0) slot.unknown = true
 }
 
 /** 本页见过这个目标的服务器戳吗（hook 判「第一次读成功过没有」） */
-export const hasSeen = (project: string, fileId: string): boolean => (slots.get(keyOf(project, fileId))?.seen.size ?? 0) > 0
+export const hasSeen = (project: string, fileId: string): boolean => (slots.get(keyOf(project, fileId))?.known ?? -1) >= 0
 
 /**
  * 现在就发（不等防抖）：直到槽空了、或遇到暂时失败（交给重试）为止，最多 4 轮（每轮落地时若又有更新的版本就接着发）。
@@ -214,33 +223,39 @@ async function land(
   }
 
   if (result === 'stale') {
-    // 服务器说：它那里有比这一版**更新的戳**，这一版没被采纳。只看「这个服务器戳本页见过没有」：
-    // 见过 = 没有别处在我们不知情时写过，本版是用户在已知最新状态上的编辑——仍是最新版本时换更大的戳重写（有界）；
-    // 没见过 = 别的标签页写了我们不知道的更新版本：不提升、不重写，放弃这一版（调用方对账采纳服务器值），A 晚到不盖掉 B。
-    // 首读失败（`unknown`）时一律按「已见」：用户的输入不能丢。
-    const seen = serverStamp === undefined || slot.unknown || slot.seen.has(serverStamp)
-    if (serverStamp !== undefined) slot.seen.add(serverStamp)
+    // 服务器说：它那里有比这一版**更新的戳**，这一版没被采纳。只拿**这一版自己的基线**（`baseStamp`）和服务器戳比：
+    // ≤ 基线 = 本版是在已知的最新状态上编辑的（墙钟回拨属于这种）——仍是最新版本时换更大的戳重写（有界）；
+    // > 基线 = 有我们编辑时不知道的写入（别的标签页写了更新稿）：不提升、不重写，放弃这一版（调用方对账采纳服务器值）。
+    // 之后对账读到的戳不会改已经 post 的版本的基线，所以 A 在途时 B 被保存、对账读到 B，A 的 stale 回来仍然被放弃，不盖掉 B。
+    // 基线未知（首读失败时 post 的版本）一律按「可提升」：用户的输入不能丢。
+    const promotable = serverStamp === undefined || !entry || entry.baseStamp === undefined || serverStamp <= entry.baseStamp
+    if (serverStamp !== undefined) slot.known = Math.max(slot.known, serverStamp)
     if (!entry) return 'accepted'
     if (!latest) return send(slot, false) // 更新的版本带着自己的戳去写；旧版本不换戳、不重写
-    if (!seen) {
+    if (!promotable) {
       clearTimers(entry)
       slot.entry = null
       endFailing(slot)
       emit(slot, { kind: 'abandoned' })
       return 'abandoned'
     }
+    // 无论是否到上限都**推进戳**：`observeStamp` 已被 stale 回的服务器戳抬高下限，新戳一定比它大
+    entry.stamp = nextWriteStamp()
     if (++entry.staleRetries > MAX_STALE_RETRIES) {
-      // 有界：两端互相压戳时别没完没了，隔一会儿再试
+      // 有界：两端互相压戳时别立刻再冲一轮——退避一段时间后**重新走一遍完整的 stale 判定**（计数清零；仍可提升就用上面推进过的新戳重写）。
+      // 这种状态也算「连续失败」：超过一分钟就出灰字，不是静默循环
+      entry.staleRetries = 0
+      entry.retries++
+      beginFailing(slot)
       clearTimeout(entry.retry)
-      entry.retry = setTimeout(() => void send(slot, false), RETRY_MS)
+      entry.retry = setTimeout(() => void send(slot, false), retryDelay(entry.retries))
       return 'unavailable'
     }
-    entry.stamp = nextWriteStamp()
     return send(slot, false)
   }
 
   // saved / removed / too_large：服务器处理了这一版
-  if (serverStamp !== undefined) slot.seen.add(serverStamp)
+  if (serverStamp !== undefined) slot.known = Math.max(slot.known, serverStamp)
   // 服务器处理过一次写入并回了它那一行的戳（保存、或空文本留下的墓碑）= 基线已知：退出「首读失败按已见」的模式，
   // 之后再遇到没见过的戳就按跨标签页冲突规则放弃，不再以本地为准盖掉别处更新的稿。
   // 超限（413）服务器什么都没存、也没回戳，基线仍未知
