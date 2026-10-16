@@ -870,3 +870,130 @@ def test_a_rejected_run_deletes_its_pending_row_for_every_kind_of_rejection(
     assert _post(client, rid=rid3).status_code == 200
     assert rid3 in _pending_rids(client)
     _wait_idle()
+
+
+# ---------------------------------------------------------------------------
+# supersedes 的墓碑预留；spawn 之前 / 之后的异常（Codex #1098 P1 r4289529467 / r4289529472）
+# ---------------------------------------------------------------------------
+SENT = {"scope": "figure", "gid": None, "label": None, "target": "整张图"}
+
+
+def _put_pending(client, rid, text="t", **extra):
+    return client.put(
+        f"/api/ai/drafts/pending/{rid}",
+        json={"file": "Fig1.pdf", "text": text, "sent": SENT, **extra},
+    )
+
+
+def test_a_superseded_rid_can_never_run_even_if_its_post_arrives_late(
+    client, tmp_path, cli, monkeypatch
+):
+    """旧 rid 的 POST 只是慢，在 supersedes 之后才到：它不能再登记并执行（否则旧指令和改写后的指令都执行了）。"""
+    _, counter = cli
+    figs = _project(tmp_path)
+    _open(client, figs)
+    monkeypatch.setattr(m, "sse_publish", lambda *a: None)
+    old, new = "rid-old-000000001", "rid-new-000000001"
+    assert _put_pending(client, old).status_code == 200
+    assert _put_pending(client, new, supersedes=[old]).status_code == 200
+    # 晚到的旧请求：被明确拒绝，不 spawn
+    late = _post(client, rid=old)
+    assert late.status_code == 409 and late.get_json()["code"] == "ai_request_superseded"
+    # 查询返回 superseded，不是 404（前端据此不再提供同 rid 重发）
+    q = client.get(f"/api/ai/requests/{old}")
+    assert q.status_code == 200 and q.get_json()["status"] == "superseded"
+    time.sleep(0.3)
+    assert _spawned(counter) == 0
+    # 新 rid 照常执行
+    assert _post(client, rid=new).status_code == 200
+    _wait_idle()
+    assert _spawned(counter) == 1
+
+
+def test_superseded_is_enforced_by_the_atomic_reservation_not_just_the_fast_path(
+    tmp_path, cli, monkeypatch
+):
+    """并发里快速路径可能看不见墓碑：逼 run() 走到原子预留，同样被拒绝，不 spawn、不留半成品。"""
+    _, counter = cli
+    figs = _project(tmp_path)
+    project_key = str(figs.resolve())
+    ai_history.put_pending(
+        project_key, "Fig1.pdf", "rid-new-000000002", "t", SENT, supersedes=["rid-old-000000002"]
+    )
+    monkeypatch.setattr(ai_bridge, "find_request", lambda *_a, **_k: None)
+    with pytest.raises(ai_bridge.AgentError) as ei:
+        ai_bridge.run("codex", "fig1.py", "p", str(figs), client_request_id="rid-old-000000002")
+    assert ei.value.code == "ai_request_superseded"
+    time.sleep(0.3)
+    assert _spawned(counter) == 0
+    snaps = list((tmp_path / "snapshots").glob("*")) if (tmp_path / "snapshots").exists() else []
+    assert snaps == [], snaps
+
+
+def test_supersede_is_refused_when_the_old_request_was_already_registered(client, tmp_path, cli):
+    """旧请求其实已经到达并登记了：不能再当成「没收到」取代它——整个 PUT 回滚，新行不写，旧行保留。"""
+    figs = _project(tmp_path)
+    _open(client, figs)
+    project_key = str(figs.resolve())
+    old = "rid-old-000000003"
+    ai_history.record_start(
+        {
+            "id": "realsess0001",
+            "project": project_key,
+            "provider": "codex",
+            "script": "x.py",
+            "client_request_id": old,
+            "owner_pid": 0,
+        }
+    )
+    assert _put_pending(client, old).status_code == 200
+    r = _put_pending(client, "rid-new-000000003", supersedes=[old])
+    assert r.status_code == 409 and r.get_json()["code"] == "ai_supersede_conflict"
+    rids = [p["rid"] for p in client.get("/api/ai/drafts/pending").get_json()["pendings"]]
+    assert rids == [old]
+
+
+def test_an_exception_before_spawn_deletes_the_pending_row_on_the_backend(
+    client, tmp_path, cli, monkeypatch
+):
+    """spawn 之前的非 HTTP 异常（record_start 抛 OperationalError）：被全局处理器转成 500，前端当成明确拒绝、换新 rid——
+    旧 rid 的账本行必须由后端删掉。"""
+    _, counter = cli
+    _open(client, _project(tmp_path))
+    monkeypatch.setattr(m, "sse_publish", lambda *a: None)
+    monkeypatch.setitem(m.app.config, "PROPAGATE_EXCEPTIONS", False)
+    _put_pending(client, RID)
+
+    def boom(*_a, **_k):
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(ai_history, "record_start", boom)
+    r = _post(client, rid=RID)
+    assert r.status_code == 500
+    assert RID not in _pending_rids(client)
+    time.sleep(0.3)
+    assert _spawned(counter) == 0
+
+
+def test_an_error_after_spawn_never_deletes_the_pending_row(client, tmp_path, cli, monkeypatch):
+    """spawn 之后才出的异常：那条指令可能正在执行，账本行是「响应丢了之后还能查到它」的线索，绝不删。"""
+    state, counter = cli
+    state["delay"] = 0.3
+    _open(client, _project(tmp_path))
+    monkeypatch.setattr(m, "sse_publish", lambda *a: None)
+    _put_pending(client, RID)
+
+    real_thread = ai_bridge.threading.Thread
+
+    class FaultyThread(real_thread):
+        def start(self):
+            if str(self.name).startswith("ai-"):
+                raise RuntimeError("can't start new thread")  # Popen 之后、返回之前
+            super().start()
+
+    monkeypatch.setattr(ai_bridge.threading, "Thread", FaultyThread)
+    r = _post(client, rid=RID)
+    assert r.status_code >= 400
+    time.sleep(0.6)
+    assert _spawned(counter) == 1  # 进程确实起来了
+    assert RID in _pending_rids(client)  # 所以行还在

@@ -112,6 +112,19 @@ class DraftTooLarge(ValueError):
 RUNNING_OWNER_MAX_AGE_MS = 24 * 3600 * 1000
 
 
+#: `ai_requests.session` 的哨兵值：这个 (项目, rid) 被**新指令取代**（`supersedes`）——它是一个「墓碑预留」，不是真实会话。
+#: 之后带这个 rid 的 run 走原子预留必然撞上唯一约束、拿到它，被明确拒绝，不 spawn。真实会话 id 是 12 位十六进制，不会与它相撞
+SUPERSEDED = "~superseded"
+
+
+class SupersedeConflict(Exception):
+    """要取代的旧 rid 已经被真实预留（旧请求其实已经到达后端并登记了）：不能再当成「没收到」取代它。"""
+
+    def __init__(self, rid: str):
+        super().__init__(rid)
+        self.rid = rid
+
+
 class ScriptBusy(Exception):
     """同一 (项目, 脚本) 上已有一个**属主进程还活着**的 running 会话（可能在另一个 Tavotto 服务进程里）。"""
 
@@ -623,11 +636,27 @@ def put_pending(
         # `supersedes`：用户放弃了旧的等待（「改写后再发」）、这条用新 rid 发。旧行**在写新行的同一个事务里**删——
         # 客户端不单方面删（它对「这一行不存在 / 已不需要」的判断可能是错的：原请求可能正在路上）；新写入失败 = 整个事务回滚 = 旧行还在
         for old in supersedes or []:
-            if old != rid:
+            if old == rid:
+                continue
+            # 删行还不够：原 POST 可能只是慢，在删除之后才到达、照样登记并执行——于是旧指令和改写后的指令都执行了。
+            # 同一个事务里给旧 rid 写一条**墓碑预留**（session=SUPERSEDED）：之后它的 run 走原子预留必撞唯一约束，被拒绝。
+            # 旧 rid 已被真实预留（旧请求其实已经登记）则整个事务回滚——不能再当成「没收到」取代它
+            try:
                 con.execute(
-                    "DELETE FROM ai_pending WHERE project=? AND file_id=? AND rid=?",
-                    (project, file_id, old),
+                    "INSERT INTO ai_requests (project, client_request_id, session, created_ms) VALUES (?,?,?,?)",
+                    (project, old, SUPERSEDED, now),
                 )
+            except sqlite3.IntegrityError:
+                existing = con.execute(
+                    "SELECT session FROM ai_requests WHERE project=? AND client_request_id=?",
+                    (project, old),
+                ).fetchone()
+                if existing is None or existing["session"] != SUPERSEDED:
+                    raise SupersedeConflict(old) from None
+            con.execute(
+                "DELETE FROM ai_pending WHERE project=? AND file_id=? AND rid=?",
+                (project, file_id, old),
+            )
         # 同 rid 的重写（重试写账本）不占新名额；其它 rid 满了就拒绝
         exists = con.execute(
             "SELECT 1 FROM ai_pending WHERE project=? AND file_id=? AND rid=?",

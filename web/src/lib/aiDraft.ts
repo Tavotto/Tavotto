@@ -206,7 +206,8 @@ export async function markSubmitted(
   } catch (e) {
     if (e instanceof ApiError && e.status < 500) {
       // 这个面板已发出未确认的提交满了：这是**明确的拒绝原因**，抛出去让界面说一句话（不是「记账失败」）
-      if (e.status === 409 && e.body?.code === 'ai_pending_limit') throw e
+      const code = e.body?.code
+      if (e.status === 409 && (code === 'ai_pending_limit' || code === 'ai_supersede_conflict')) throw e
       return 'rejected' // 明确的 4xx（400 参数错 / 413 超限）：后端确定没写
     }
     // 网络错误 / 超时 / 5xx / 读不出响应：**不知道后端写没写**——可能已经写入、只是响应丢了。

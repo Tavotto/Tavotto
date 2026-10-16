@@ -72,6 +72,8 @@ class AgentError(RuntimeError):
 
 #: `find_request` 的 status：请求登记过（已执行），但会话的历史记录被用户删掉了，结局不可知
 REQUEST_HISTORY_DELETED = "history_deleted"
+#: 请求被新指令取代（`supersedes` 的墓碑预留）：一定没执行，也不会再执行——不能提供同 rid 重发
+REQUEST_SUPERSEDED = "superseded"
 
 
 class DuplicateRequest(Exception):
@@ -80,6 +82,19 @@ class DuplicateRequest(Exception):
     def __init__(self, sid: str):
         super().__init__(sid)
         self.sid = sid
+
+
+#: 「这个请求线程里的 run() 已经 spawn 出了 CLI 进程」的标记（线程本地，Flask 每个请求一个线程）。路由包装层据此区分
+#: spawn 之前的异常（可以安全地清掉账本行）和之后的（绝不能清：那条指令可能正在执行）
+_SPAWN_MARK = threading.local()
+
+
+def reset_spawn_mark() -> None:
+    _SPAWN_MARK.started = False
+
+
+def spawn_started() -> bool:
+    return bool(getattr(_SPAWN_MARK, "started", False))
 
 
 def _drop_attempt_files(sid: str, snap: Path) -> None:
@@ -112,6 +127,8 @@ def find_request(project: str, client_request_id: str) -> dict | None:
         rec = ai_history.find_request_record(project, client_request_id)
         if rec is None:
             return None
+        if rec["session"] == ai_history.SUPERSEDED:
+            return {"session": "", "status": REQUEST_SUPERSEDED, "changed": False, "script": None}
         return {
             "session": rec["session"],
             "status": REQUEST_HISTORY_DELETED,
@@ -703,6 +720,8 @@ def run(
         if client_request_id:
             known = find_request(project_key, client_request_id)
             if known is not None:
+                if known["status"] == REQUEST_SUPERSEDED:
+                    raise AgentError("ai_request_superseded")
                 raise DuplicateRequest(known["session"])
         if not script_path.is_file():
             raise RuntimeError(f"脚本不存在: {script}")
@@ -789,6 +808,11 @@ def run(
             stderr_log.close()
             _drop_attempt_files(sid, snap)
             raise
+        if isinstance(started, tuple) and not started[0] and started[1] == ai_history.SUPERSEDED:
+            # 并发里被新指令取代的 rid：不 spawn（与上面的快速路径同一个结局）
+            stderr_log.close()
+            _drop_attempt_files(sid, snap)
+            raise AgentError("ai_request_superseded")
         if isinstance(started, tuple) and not started[0]:
             # 别的调用者（可能是另一个共用数据目录的 Tavotto 进程）已经原子预留了这个 (项目, 请求 id)：
             # 不 spawn，清掉这次为它准备的快照 / sidecar / 日志，按去重语义回既有会话
@@ -814,6 +838,7 @@ def run(
                 # Windows 的 `taskkill /T` 按 pid 找子树，不需要单独的组
                 start_new_session=os.name != "nt",
             )
+            _SPAWN_MARK.started = True  # 进程已经起来了：此后任何异常都不能再清账本行
         except BaseException as exc:
             # 记录已落库而进程没起来：标成失败，不是删掉——「查询」要查得到它，且明确是没执行
             stderr_log.close()

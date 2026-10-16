@@ -153,6 +153,7 @@
     "running": "Editing the script…"
   },
   "status": {
+    "aiSuperseded": "This instruction was replaced by the rewritten one and will not run.",
     "aiAlreadyRan": "This request already ran (its task record was deleted), so it won’t be sent again.",
     "aiChanged": "The assistant edited the script; re-rendering the figure…",
     "aiChangedRefreshFailed": "The assistant edited the script, but the project couldn’t refresh: {{reason}}. Your edit is saved, and Tavotto will retry automatically.",

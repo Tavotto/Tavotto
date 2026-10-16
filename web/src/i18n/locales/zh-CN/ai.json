@@ -150,6 +150,7 @@
     "running": "正在修改脚本…"
   },
   "status": {
+    "aiSuperseded": "这条指令已被改写后的新指令取代，不会再执行。",
     "aiAlreadyRan": "这条指令已经执行过（任务记录已被删除），不会再次发送。",
     "aiChanged": "助手已修改脚本，正在重新渲染…",
     "aiChangedRefreshFailed": "AI 已修改脚本，但项目刷新失败：{{reason}}。改动已保存，Tavotto 会自动重试。",

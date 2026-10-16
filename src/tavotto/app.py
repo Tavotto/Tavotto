@@ -9242,12 +9242,21 @@ def api_ai_run():
     客户端不单方面 DELETE（它的 DELETE 可能失败，旧行之后被还原成「未确认」，而新 rid 已经执行过）。"""
     body = request.get_json(silent=True) or {}
     rid = body.get("client_request_id") if isinstance(body, dict) else None
+    engine_ai.reset_spawn_mark()
     try:
         resp = app.make_response(_ai_run_impl())
     except HTTPException:
-        _drop_rejected_pending(rid)
+        if not engine_ai.spawn_started():
+            _drop_rejected_pending(rid)
         raise
-    if resp.status_code >= 400:
+    except Exception:
+        # spawn **之前**的非 HTTP 异常（例如 record_start 抛 OperationalError）：全局处理器会把它转成 500，前端当成明确拒绝、
+        # 换新 rid 重发——旧 rid 的账本行必须在这里由后端删掉。**已经 spawn 的绝不删**（那条指令可能正在执行）
+        if not engine_ai.spawn_started():
+            _drop_rejected_pending(rid)
+        raise
+    if resp.status_code >= 400 and not engine_ai.spawn_started():
+        # 已经 spawn 的（哪怕之后报了 500）绝不删：那条指令可能正在执行，账本行是「响应丢了之后还能查到它」的线索
         _drop_rejected_pending(rid)
     return resp
 
@@ -9276,6 +9285,9 @@ def _ai_run_impl():
         # **先去重、后解析面板 / 注册表**：这两样是可变目标。原请求登记之后输出文件或注册表映射变了，同 id 的重发若先走
         # 校验就会 404——前端把 404 当「明确拒绝」、删掉账本后换新 id 重发，同一条修改执行两次
         known = engine_ai.find_request(str(require_project().resolve()), request_id)
+        if known is not None and known["status"] == engine_ai.REQUEST_SUPERSEDED:
+            # 这个 rid 已被新指令取代（`supersedes` 的墓碑预留）：明确拒绝，不 spawn，也不是「重复」
+            return _agent_error(engine_ai.AgentError("ai_request_superseded"))
         if known is not None:
             LOG.info("AI 任务请求重复，返回既有会话（session %s）", known["session"])
             return jsonify(
@@ -9486,6 +9498,11 @@ def api_ai_pending_put(rid):
                 "code": "ai_pending_limit",
                 "params": {"count": exc.count},
             }
+        ), 409
+    except engine_ai_history.SupersedeConflict:
+        # 要取代的旧 rid 其实已经被后端登记（旧请求到达了）：不能再当成「没收到」取代它
+        return jsonify(
+            {"error": "上一次的修改其实已经开始了", "code": "ai_supersede_conflict", "params": {}}
         ), 409
     return jsonify({"ok": True})
 

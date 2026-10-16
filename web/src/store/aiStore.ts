@@ -128,7 +128,8 @@ export class AiLedgerError extends Error {
 
 export type SubmitOutcome = 'accepted' | 'unconfirmed'
 /** `already_run`：后端登记过它、但任务历史被用户删了（结局不可知）——已执行过，绝不重发 */
-export type QueryOutcome = 'accepted' | 'already_run' | 'not_received' | 'unreachable' | 'gone'
+/** `superseded`：这条请求已被改写后的新指令取代（后端的墓碑预留）——一定没执行也不会再执行，不能再提供同 rid 重发 */
+export type QueryOutcome = 'accepted' | 'already_run' | 'not_received' | 'unreachable' | 'gone' | 'superseded'
 
 interface AiState {
   /**
@@ -437,6 +438,10 @@ export const useAiStore = create<AiState>((set, get) => ({
       recorded = marked ? await marked : undefined
     } catch (e) {
       dropSub() // 后端明确拒绝记账（如未确认的提交已满，`ai_pending_limit`）：不发，原因原样交给界面
+      if (e instanceof ApiError && e.body?.code === 'ai_supersede_conflict') {
+        // 要取代的旧 rid 其实已被后端登记（旧请求到达了）：它不能再被当成「没收到」取代；别让它永远卡在队列里挡住之后的每次发送
+        supersedeQueue.delete(ledgerKey)
+      }
       throw e
     }
     if (recorded === 'ok') {
@@ -673,6 +678,13 @@ async function settleFromSnapshot(rid: string): Promise<QueryOutcome> {
     if (born !== get().generation) {
       removeAccepted(sub.project, sub.fileId, rid)
       return 'gone'
+    }
+    if (found.status === 'superseded') {
+      set((s) => {
+        const { [rid]: _gone, ...rest } = s.submissions
+        return { submissions: rest }
+      })
+      return 'superseded'
     }
     if (found.status === 'history_deleted') {
       // 执行过、只是记录被删：没有会话可接，但**一定不能重发**。提交与草稿一并收掉
