@@ -563,10 +563,13 @@ test('素材卡的状态角标不引入嵌套交互（axe nested-interactive）'
     nodes: v.nodes.slice(0, 8).map((n) => n.target.join(' ')),
   }))).toEqual([])
 
-  // 「查看接入状态」必须键盘到得了：它不在 option 里，所以 Tab 出列表就能落上去
-  await expect(
-    page.getByRole('button', { name: /查看接入状态|Project readiness/ }).first(),
-  ).toBeVisible()
+  // 「查看接入状态」必须键盘到得了：素材卡没有页脚之后它在卡片菜单里（不嵌在 option 里），
+  // 选中的卡上按 Shift+F10 打开菜单就能落到这一项
+  await card.focus()
+  await page.keyboard.press('Shift+F10')
+  const entry = page.getByRole('menuitem', { name: /查看接入状态|Project readiness/ })
+  await expect(entry).toBeVisible()
+  await expect(entry).toBeEnabled()
 })
 
 test('问题面板：axe 无违规、行内的「修复」不是「定位」的子节点', async ({
