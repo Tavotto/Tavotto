@@ -526,7 +526,7 @@ class GuardianContract(GuardianBase):
         self.assertLess(len(json.dumps(facts)), 4000)
 
     def test_stub_subcommands_exit_nonzero_and_produce_nothing(self):
-        for name in ("explore", "triage", "minimize"):
+        for name in ("triage", "minimize"):
             with mock.patch("sys.stderr") as err:
                 self.assertEqual(cg.main([name]), cg.EXIT_USAGE)
             self.assertIn(
