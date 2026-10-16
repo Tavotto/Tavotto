@@ -267,47 +267,90 @@ test('展开 / 折叠：子树高度过渡（收起期间 inert、播完卸载�
   const full = (await branch.boundingBox())!.height
   expect(full).toBeGreaterThan(60)
 
-  // 对 branch 逐帧采样：高度、状态、是否 inert
-  const sample = (ms: number) =>
-    page.evaluate(
-      (ms) =>
-        new Promise<{ h: number; state: string | null; inert: boolean }[]>((resolve) => {
-          const row = document.querySelector('[data-tree="elements"] [data-el="axes_0"]')!
-          const out: { h: number; state: string | null; inert: boolean }[] = []
-          const t0 = performance.now()
-          const tick = () => {
-            const b = row.nextElementSibling as HTMLElement | null
-            const live = b && b.hasAttribute('data-tree-branch') ? b : null
-            out.push({ h: live ? live.getBoundingClientRect().height : 0, state: live?.getAttribute('data-tree-branch') ?? null, inert: !!live?.hasAttribute('inert') })
-            if (performance.now() - t0 < ms) requestAnimationFrame(tick)
-            else resolve(out)
+  // 过渡中点测量，与帧率无关：按键**之前**在页面里装 MutationObserver，branch 一翻到目标状态
+  // （收起 = closed、展开 = open）就在同一个微任务里 getAnimations() → 暂停 → 定位到 50% → 量高度 / 状态 /
+  // inert / aria-hidden → 放行继续播。逐帧 rAF 采样在慢机器上（Windows WebKit 500 ms 只渲 4 帧）会把
+  // 90 ms 的退场整个漏在两帧之间——这里不看帧，只看动画本身。
+  type Probe = { h: number; state: string | null; inert: boolean; ariaHidden: boolean; names: string[]; progress: number[] }
+  const arm = (want: 'open' | 'closed') =>
+    page.evaluate((want) => {
+      const w = window as unknown as { __probe?: Promise<Probe | null> }
+      const root = document.querySelector('[data-tree="elements"]')!
+      const row = root.querySelector('[data-el="axes_0"]')!
+      w.__probe = new Promise<Probe | null>((resolve) => {
+        const mo = new MutationObserver(() => {
+          const b = row.nextElementSibling as HTMLElement | null
+          if (!b || !b.hasAttribute('data-tree-branch') || b.getAttribute('data-tree-branch') !== want) return
+          const anims = b.getAnimations()
+          if (anims.length === 0) return // 样式还没解析出动画：等下一批变更
+          const progress: number[] = []
+          for (const a of anims) {
+            a.pause()
+            const t = a.effect!.getComputedTiming()
+            a.currentTime = Number(t.endTime) / 2
+            progress.push(Number(t.duration))
           }
-          requestAnimationFrame(tick)
-        }),
-      ms,
-    )
+          resolve({
+            h: b.getBoundingClientRect().height,
+            state: b.getAttribute('data-tree-branch'),
+            inert: b.hasAttribute('inert'),
+            ariaHidden: b.getAttribute('aria-hidden') === 'true',
+            names: anims.map((a) => (a as CSSAnimation).animationName ?? ''),
+            progress,
+          })
+          for (const a of anims) a.play()
+          mo.disconnect()
+        })
+        mo.observe(root, { subtree: true, childList: true, attributes: true })
+        // 保底：2 s 内没出现动画就交 null，断言里会带着这个现象失败（不是挂到超时）
+        setTimeout(() => {
+          mo.disconnect()
+          resolve(null)
+        }, 2000)
+      })
+    }, want)
+  const probed = () => page.evaluate(() => (window as unknown as { __probe: Promise<Probe | null> }).__probe)
 
   await page.emulateMedia({ reducedMotion: 'no-preference' })
   await row.focus()
-  const collapsing = sample(500)
+  await arm('closed')
   await page.keyboard.press('ArrowLeft')
-  const down = await collapsing
-  expect(down.some((s) => s.state === 'closed' && s.inert), '收起期间容器 inert').toBe(true)
-  expect(down.some((s) => s.h > 0 && s.h < full), `收起要有中间高度（full=${full}）：${JSON.stringify(down.map((s) => Math.round(s.h)))}`).toBe(true)
-  expect(down.at(-1)!.state, '播完卸载').toBeNull()
+  const mid = await probed()
+  expect(mid, '收起时 branch 上要有 CSS 动画').not.toBeNull()
+  expect(mid!.names.some((n) => n.includes('reveal-out')), `收起播的是退场动画：${JSON.stringify(mid)}`).toBe(true)
+  expect(mid!.state).toBe('closed')
+  expect(mid!.inert, '收起期间容器 inert').toBe(true)
+  expect(mid!.ariaHidden, '收起期间容器 aria-hidden').toBe(true)
+  expect(mid!.h > 0 && mid!.h < full, `收起要有中间高度（full=${full}）：${JSON.stringify(mid)}`).toBe(true)
+  await expect(branch, '播完卸载').toHaveCount(0)
 
-  const expanding = sample(600)
+  await arm('open')
   await page.keyboard.press('ArrowRight')
-  const up = await expanding
-  expect(up.some((s) => s.h > 0 && s.h < full * 0.98), `展开要有中间高度：${JSON.stringify(up.map((s) => Math.round(s.h)))}`).toBe(true)
-  expect(Math.abs(up.at(-1)!.h - full)).toBeLessThanOrEqual(1)
+  const up = await probed()
+  expect(up, '展开时 branch 上要有 CSS 动画').not.toBeNull()
+  expect(up!.names.some((n) => n.includes('reveal-in')), `展开播的是进场动画：${JSON.stringify(up)}`).toBe(true)
+  expect(up!.inert, '展开的容器不 inert').toBe(false)
+  expect(up!.h > 0 && up!.h < full * 0.98, `展开要有中间高度（full=${full}）：${JSON.stringify(up)}`).toBe(true)
+  await expect.poll(async () => Math.abs(((await branch.boundingBox())?.height ?? 0) - full), { message: '展开后回到完整高度' }).toBeLessThanOrEqual(1)
   await expect(branch).not.toHaveAttribute('inert', /.*/)
+  await expect(branch).toHaveAttribute('data-tree-branch', 'open')
 
-  // reduced-motion：直接切，不留退场帧
+  // reduced-motion：直接切，不留退场帧——任何一批变更里都不许看到 closed 的保活 branch
   await page.emulateMedia({ reducedMotion: 'reduce' })
   await row.focus()
-  const reduced = sample(200)
+  await page.evaluate(() => {
+    const w = window as unknown as { __closedSeen?: boolean }
+    const root = document.querySelector('[data-tree="elements"]')!
+    const row = root.querySelector('[data-el="axes_0"]')!
+    w.__closedSeen = false
+    const mo = new MutationObserver(() => {
+      const b = row.nextElementSibling
+      if (b?.hasAttribute('data-tree-branch') && b.getAttribute('data-tree-branch') === 'closed') w.__closedSeen = true
+    })
+    mo.observe(root, { subtree: true, childList: true, attributes: true })
+  })
   await page.keyboard.press('ArrowLeft')
-  const r = await reduced
-  expect(r.slice(3).every((s) => s.state === null), `reduce 下不留退场：${JSON.stringify(r.map((s) => s.state))}`).toBe(true)
+  await expect(branch).toHaveCount(0)
+  await page.waitForTimeout(150) // 比退场时长（90 ms）长：真有保活帧此时早已出现过
+  expect(await page.evaluate(() => (window as unknown as { __closedSeen: boolean }).__closedSeen), 'reduce 下不留退场帧').toBe(false)
 })
