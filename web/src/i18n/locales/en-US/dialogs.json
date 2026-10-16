@@ -1709,6 +1709,7 @@
     "decline": "Not now",
     "intro": "Send anonymous usage statistics to show which features get used. Off by default; not tied to an account.",
     "later": "You can change this any time in Settings.",
+    "reconsentDelta": "Two things were added since you last agreed: how an export ended (including failed or cancelled), and a content-free error summary attached when you choose to send a problem report.",
     "neverData": "Scientific data and text inside figures",
     "neverFigures": "Your figures and project files",
     "neverPaths": "Filenames and paths",
