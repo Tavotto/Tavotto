@@ -98,19 +98,21 @@ def spawn_started() -> bool:
 
 
 def _finish_session(sess: dict, *, error: str | None = None) -> None:
-    """**终态字段的唯一写入点**：status / error / changed / diff / transcript / refresh 同时落到内存会话和历史库，再置 `final`。
-    `get()` 优先返回内存会话——两边分叉（比如异常分支只把 error 写进历史库）会让对账拿到 `final: true` 但没有 error 的快照，
-    恢复后的失败提示就是空白的。"""
+    """**终态字段的唯一写入点**：`SESSION_TERMINAL_FIELDS` 里的那一组同时落到内存会话和历史库，再置 `final`。
+    `get()` 优先返回内存会话、重启后的合并路径整体以历史库为准——两边分叉（比如异常分支只把 error 写进历史库）会让对账拿到
+    `final: true` 但没有 error 的快照，恢复后的失败提示就是空白的。清单只有一份：这里按它写、`get()` 按它读。"""
     if error is not None:
         sess["error"] = error
+    for k in SESSION_TERMINAL_FIELDS:
+        sess.setdefault(k, None)  # 内存会话上一定带齐清单里的每个键
     ai_history.record_end(
         sess["id"],
         sess["status"],
-        diff=sess.get("diff") or "",
-        changed=bool(sess.get("changed")),
-        error=sess.get("error"),
-        transcript=sess.get("transcript") or [],
-        refresh=sess.get("refresh"),
+        diff=sess["diff"] or "",
+        changed=bool(sess["changed"]),
+        error=sess["error"],
+        transcript=sess["transcript"] or [],
+        refresh=sess["refresh"],
     )
     # 结束时刻：详情的 `ended_ms`（#1098 单独合入时前端靠它判 cancelled 快照是不是终态；这里与 `final` 同时置位）
     sess["ended_ms"] = int(time.time() * 1000)

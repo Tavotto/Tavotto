@@ -1453,7 +1453,7 @@ def test_finishing_a_live_session_sets_every_terminal_field(tmp_path, cli):
     while time.time() < deadline and not ai_bridge.SESSIONS[sid].get("final"):
         time.sleep(0.05)
     sess = ai_bridge.SESSIONS[sid]
-    missing = [k for k in ai_bridge.SESSION_TERMINAL_FIELDS if k not in sess and k != "error"]
+    missing = [k for k in ai_bridge.SESSION_TERMINAL_FIELDS if k not in sess]
     assert missing == [], missing
     _wait_idle()
     engine_watch.stop()
