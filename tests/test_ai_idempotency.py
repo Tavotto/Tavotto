@@ -930,6 +930,20 @@ def test_superseded_is_enforced_by_the_atomic_reservation_not_just_the_fast_path
     assert snaps == [], snaps
 
 
+def test_run_fast_path_also_refuses_a_superseded_rid(tmp_path, cli):
+    """`run()` 开头的进程内快速路径（直接调 run、不经路由）同样把墓碑当明确拒绝，而不是「重复」去重到一个不存在的会话。"""
+    _, counter = cli
+    figs = _project(tmp_path)
+    project_key = str(figs.resolve())
+    ai_history.put_pending(
+        project_key, "Fig1.pdf", "rid-new-000000004", "t", SENT, supersedes=["rid-old-000000004"]
+    )
+    with pytest.raises(ai_bridge.AgentError) as ei:
+        ai_bridge.run("codex", "fig1.py", "p", str(figs), client_request_id="rid-old-000000004")
+    assert ei.value.code == "ai_request_superseded"
+    assert _spawned(counter) == 0
+
+
 def test_supersede_is_refused_when_the_old_request_was_already_registered(client, tmp_path, cli):
     """旧请求其实已经到达并登记了：不能再当成「没收到」取代它——整个 PUT 回滚，新行不写，旧行保留。"""
     figs = _project(tmp_path)
