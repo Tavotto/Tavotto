@@ -1254,11 +1254,6 @@ def get(sid: str) -> dict | None:
                 **side,
                 # 终态字段**整体**以历史库为准（同一份清单，不逐个抄——逐个抄漏过 `error`：失败的会话 final 为 true 却没有原因）
                 **{k: hist.get(k) for k in SESSION_TERMINAL_FIELDS if k in hist},
-                "status": hist["status"],
-                "transcript": hist["transcript"],
-                "diff": hist["diff"],
-                "changed": hist["changed"],
-                "refresh": hist.get("refresh"),
                 "final": _history_final(hist),
                 "revert_available": hist.get("revert_available"),
                 "note": "后端已重启，记录来自历史库",

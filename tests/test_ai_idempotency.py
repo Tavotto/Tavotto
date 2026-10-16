@@ -1302,6 +1302,8 @@ def _ended(db):
         return list(raw.execute("SELECT id, status, ended_ms FROM sessions"))
 
 
+
+
 # 会话详情的 `final`：cancel 之后 status 立刻是 cancelled，但 changed / diff / refresh 要等 _pump 收尾才算出来
 # ---------------------------------------------------------------------------
 def test_session_detail_is_not_final_until_the_pump_finishes(tmp_path, cli, monkeypatch):
@@ -1439,5 +1441,19 @@ def test_pump_exception_puts_the_error_on_the_in_memory_session_too(tmp_path, cl
     hist = ai_history.get(sid)
     assert hist["error"] == "刷新炸了：scan 失败"  # 历史库是同一份
     assert hist["changed"] == detail["changed"] and hist["diff"] == detail["diff"]  # 两边不分叉
+    _wait_idle()
+    engine_watch.stop()
+
+
+def test_finishing_a_live_session_sets_every_terminal_field(tmp_path, cli):
+    """内存会话和历史库同一份终态字段清单：`_finish_session` 收尾之后，清单里的每个键在内存会话上都有（与合并路径用的清单一致）。"""
+    figs = _project(tmp_path)
+    sid = ai_bridge.run("codex", "fig1.py", "p", str(figs))
+    deadline = time.time() + 15
+    while time.time() < deadline and not ai_bridge.SESSIONS[sid].get("final"):
+        time.sleep(0.05)
+    sess = ai_bridge.SESSIONS[sid]
+    missing = [k for k in ai_bridge.SESSION_TERMINAL_FIELDS if k not in sess and k != "error"]
+    assert missing == [], missing
     _wait_idle()
     engine_watch.stop()
