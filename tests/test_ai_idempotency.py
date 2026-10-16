@@ -44,13 +44,22 @@ def client():
 
 @pytest.fixture
 def cli(tmp_path, monkeypatch):
-    """假 CLI：每次被 spawn 往 counter 追加一行，然后睡 `delay` 秒。"""
+    """假 CLI：每次被 spawn 往 counter 追加一行，然后睡 `delay` 秒。
+
+    `state["hold"] = True` 时不按时间睡，改成一直等到 `release` 文件出现（测试 `state["release"]()` 放行，fixture 收尾也会放行）：
+    需要「这个会话**一定**还在跑」的用例用它——负载很高的 Windows runner 上，固定秒数的 sleep 会在两次请求之间走完。"""
     counter = tmp_path / "spawned.txt"
-    state = {"delay": 0.0}
+    release_file = tmp_path / "release.flag"
+    state = {"delay": 0.0, "hold": False}
+    state["release"] = lambda: release_file.write_text("go", encoding="utf-8")
 
     def fake_cmd(*_a, **_k):
-        code = "import time; open({c!r}, 'a').write('x\\n'); time.sleep({d})".format(
-            c=str(counter), d=state["delay"]
+        if state["hold"]:
+            wait = "end = time.time() + 120\nwhile time.time() < end and not os.path.exists({r!r}):\n    time.sleep(0.02)"
+        else:
+            wait = "time.sleep({d})"
+        code = ("import os, time; open({c!r}, 'a').write('x\\n')\n" + wait).format(
+            c=str(counter), d=state["delay"], r=str(release_file)
         )
         return [sys.executable, "-c", code], {}
 
@@ -61,6 +70,7 @@ def cli(tmp_path, monkeypatch):
     monkeypatch.setattr(ai_history, "DB_PATH", tmp_path / "hist.sqlite3")
     before = set(ai_bridge.SESSIONS)
     yield state, counter
+    state["release"]()
     for sid in set(ai_bridge.SESSIONS) - before:
         ai_bridge.SESSIONS.pop(sid, None)
 
@@ -98,6 +108,15 @@ def _wait_idle(timeout=15.0):
             return
         time.sleep(0.05)
     raise AssertionError("会话没在时限内结束")
+
+
+def _wait_for(pred, timeout=15.0):
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if pred():
+            return
+        time.sleep(0.02)
+    raise AssertionError("条件没在时限内成立")
 
 
 def _spawned(counter) -> int:
@@ -274,6 +293,8 @@ def test_events_carry_the_request_id(client, tmp_path, cli, monkeypatch):
     status = _open(client, _project(tmp_path))
     _post(client)
     _wait_idle()
+    # `status` 先翻成终态、`record_end`（SQLite 提交）之后才发 `ai.done`：只等 status 会在慢盘上抢在事件前面
+    _wait_for(lambda: any(ev == "ai.done" for ev, _ in events))
     done = [d for ev, d in events if ev == "ai.done"]
     assert done and all(d["client_request_id"] == RID and d["pj"] == status["id"] for d in done)
 
@@ -850,7 +871,7 @@ def test_a_rejected_run_deletes_its_pending_row_for_every_kind_of_rejection(
 
     # 1) 正常返回的错误响应：同一脚本上已有任务在跑 → 409 ai_script_busy（不同 rid）
     state, _ = cli
-    state["delay"] = 1.0
+    state["hold"] = True  # 第一个会话一直占着脚本，直到下面放行——不靠固定秒数
     assert _post(client, rid="rid-first-00000001").status_code == 200
     put_pending(RID)
     r = _post(client, rid=RID)
@@ -866,7 +887,9 @@ def test_a_rejected_run_deletes_its_pending_row_for_every_kind_of_rejection(
     assert r.status_code == 400
     assert rid2 not in _pending_rids(client)
     # 3) 成功的请求不删（只有 accept 删）
+    state["release"]()
     _wait_idle()
+    state["hold"] = False
     state["delay"] = 0.1
     rid3 = "rid-okreq-00000001"
     put_pending(rid3)
