@@ -421,6 +421,37 @@ def terminate(proc: subprocess.Popen) -> dict:
     return info
 
 
+def run_isolated_command(
+    command: list[str], *, env: dict, cwd: Path, evidence: Path, timeout: float
+) -> dict:
+    """Bound a generic harness subprocess with the existing process-tree cleanup.
+
+    Application launch/authentication stays with the calling harness. This helper
+    owns only process lifetime and retained output; it never calls an app API.
+    """
+    with (
+        (evidence / "stdout.txt").open("w") as stdout,
+        (evidence / "stderr.txt").open("w") as stderr,
+    ):
+        proc = subprocess.Popen(
+            command,
+            env=env,
+            cwd=cwd,
+            stdout=stdout,
+            stderr=stderr,
+            stdin=subprocess.DEVNULL,
+            start_new_session=os.name != "nt",
+        )
+        timed_out = False
+        try:
+            proc.wait(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            timed_out = True
+        finally:
+            cleanup = terminate(proc)
+    return {"exit_code": proc.returncode, "timed_out": timed_out, "cleanup": cleanup}
+
+
 def run_attempt(n: int, cmd: list[str], attempt_dir: Path, port: int, timeout: float) -> dict:
     """起一次、等就绪、打两条请求、终止。每次尝试各自一套 data / config / 日志。"""
     data_dir = attempt_dir / "data"

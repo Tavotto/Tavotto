@@ -144,6 +144,175 @@ def run_native(req: dict) -> int:
     )
 
 
+# ---------------------------------------------------------------- 原生参照（Guardian M1）
+#: 目录快照里不算副作用的噪音。
+_REF_SKIP_DIRS = {"__pycache__", ".ipynb_checkpoints"}
+_RASTER_SUFFIXES = {".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp", ".gif", ".webp"}
+
+
+def _ref_snapshot(root: str) -> dict[str, tuple[int, str]]:
+    """相对路径 → (字节数, sha256)。符号链接不跟随，也不读内容。"""
+    import hashlib  # noqa: PLC0415
+
+    snap: dict[str, tuple[int, str]] = {}
+    for base, dirs, files in os.walk(root, followlinks=False):
+        dirs[:] = sorted(d for d in dirs if d not in _REF_SKIP_DIRS)
+        for name in sorted(files):
+            path = os.path.join(base, name)
+            rel = os.path.relpath(path, root).replace(os.sep, "/")
+            if os.path.islink(path):
+                snap[rel] = (-1, "symlink")
+                continue
+            try:
+                with open(path, "rb") as fh:
+                    data = fh.read()
+            except OSError:
+                snap[rel] = (-1, "unreadable")
+                continue
+            snap[rel] = (len(data), hashlib.sha256(data).hexdigest())
+    return snap
+
+
+def _ref_readable(path: str) -> bool:
+    """产物能不能被读回来——只回答「是不是一个合法文件」，不回答「画得对不对」。"""
+    suffix = os.path.splitext(path)[1].lower()
+    try:
+        if os.path.getsize(path) == 0:
+            return False
+        if suffix in _RASTER_SUFFIXES:
+            from PIL import Image  # noqa: PLC0415
+
+            with Image.open(path) as img:
+                img.load()
+            return True
+        with open(path, "rb") as fh:
+            head = fh.read(2048)
+        if suffix == ".pdf":
+            return head.startswith(b"%PDF")
+        if suffix == ".svg":
+            import xml.etree.ElementTree as ET  # noqa: PLC0415
+
+            return ET.parse(path).getroot().tag.endswith("svg")
+        return True
+    except Exception:  # noqa: BLE001 - 任何读不回来都是 False
+        return False
+
+
+def run_native_ref(req: dict) -> int:
+    """Guardian 的原生参照：普通 `python script.py`，只观测、不干预。
+
+    与 `run_native` 的区别是**独立实现**：这里不 import `figcapture`，图的身份只用
+    Figure 对象自己，文件命名一律按原样记路径。共用产品的命名/收集代码，对照组就会
+    继承产品的同一个盲点。输出不含渲染（不出 PNG），只出事实：
+
+    * `exit_status`：脚本自然结束 = 0；`SystemExit(code)` 记 code；异常 = 1；
+    * `figure_count`：脚本期间被 `savefig` 的不同 Figure ∪ 退出时 pyplot 里还开着的；
+    * `artifacts`：目录快照差里新增/改动的文件 + 是否读得回来；
+    * `side_effects`：新增 / 修改 / 删除 的相对路径（项目目录整体快照对比）；
+    * `script_entries`：驱动自己数到的脚本入口次数（只作交叉核对，权威计数在驱动外）。
+
+    `entry` 与 `run_native` 同义：`__main__` 走 runpy，其余 import 模块后调用该函数。
+    """
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.figure as mfigure
+    import matplotlib.pyplot as plt
+
+    project = req["project"]
+    script = req["script"]
+    root_real = os.path.realpath(project)
+    saved: list[dict] = []
+    figures: list[object] = []
+    real_savefig = mfigure.Figure.savefig
+
+    def recording_savefig(self, fname, *args, **kwargs):
+        if not any(self is f for f in figures):
+            figures.append(self)
+        target = os.fspath(fname) if isinstance(fname, (str, os.PathLike)) else None
+        saved.append(
+            {
+                "figure": next(i for i, f in enumerate(figures) if f is self),
+                "path": os.path.realpath(target) if target else None,
+            }
+        )
+        return real_savefig(self, fname, *args, **kwargs)
+
+    sys.path.insert(0, os.path.dirname(script))
+    sys.path.insert(0, project)
+    before = _ref_snapshot(project)
+    mfigure.Figure.savefig = recording_savefig
+    plt.show = lambda *a, **k: None
+    os.chdir(os.path.dirname(script))
+    sys.argv = [script]
+
+    log = io.StringIO()
+    entries = 0
+    exit_status: int = 0
+    error: dict | None = None
+    try:
+        with contextlib.redirect_stdout(log):
+            entries += 1
+            if req.get("entry", "__main__") == "__main__":
+                runpy.run_path(script, run_name="__main__")
+            else:
+                import importlib  # noqa: PLC0415
+
+                mod = importlib.import_module(os.path.splitext(os.path.basename(script))[0])
+                getattr(mod, req["entry"])()
+    except SystemExit as exc:
+        code = exc.code
+        exit_status = code if isinstance(code, int) else (0 if code is None else 1)
+    except BaseException as exc:  # noqa: BLE001 - 用户代码
+        exit_status = 1
+        error = {"type": type(exc).__name__, "traceback": _tail(traceback.format_exc())}
+    finally:
+        mfigure.Figure.savefig = real_savefig
+
+    open_figures = [plt.figure(n) for n in plt.get_fignums()]
+    for fig in open_figures:
+        if not any(fig is f for f in figures):
+            figures.append(fig)
+    after = _ref_snapshot(project)
+    created = sorted(set(after) - set(before))
+    deleted = sorted(set(before) - set(after))
+    modified = sorted(p for p in set(before) & set(after) if before[p] != after[p])
+    artifacts = [
+        {
+            "path": rel,
+            "bytes": after[rel][0],
+            "sha256": after[rel][1],
+            "readable": _ref_readable(os.path.join(project, rel)),
+        }
+        for rel in created + modified
+    ]
+    by_path: dict[str, set[int]] = {}
+    for entry in saved:
+        if entry["path"]:
+            by_path.setdefault(entry["path"], set()).add(entry["figure"])
+    return _ok(
+        exit_status=exit_status,
+        error=error,
+        script_entries=entries,
+        figure_count=len(figures),
+        figures_saved=len({e["figure"] for e in saved}),
+        figures_open_at_exit=len(open_figures),
+        savefig_calls=len(saved),
+        same_path_distinct_figures=sorted(
+            os.path.relpath(p, root_real).replace(os.sep, "/")
+            for p, ids in by_path.items()
+            if len(ids) > 1 and p.startswith(root_real + os.sep)
+        ),
+        artifacts=artifacts,
+        side_effects={"created": created, "modified": modified, "deleted": deleted},
+        semantics={
+            f"figure{i}": {"titles": [ax.get_title() for ax in fig.axes]}
+            for i, fig in enumerate(figures)
+        },
+        log=_tail(log.getvalue()),
+    )
+
+
 # ---------------------------------------------------------------- artist 普查
 #: 普查**剪枝**这些容器：不计数、也不下探。
 #:
@@ -403,7 +572,12 @@ def run_browser(req: dict) -> int:
     )
 
 
-MODES = {"native": run_native, "census": run_census, "browser": run_browser}
+MODES = {
+    "native": run_native,
+    "native_ref": run_native_ref,
+    "census": run_census,
+    "browser": run_browser,
+}
 
 
 def main(argv: list[str] | None = None) -> int:
