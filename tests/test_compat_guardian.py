@@ -25,9 +25,15 @@ class GuardianContract(unittest.TestCase):
     def setUpClass(cls):
         cls.cid = "shape_oo_savefig"
         cls.files = cg.fixture_files("compat_engine", cg.registered("compat_engine")[cls.cid])
-        cls.fixture = {"files": cls.files,
-                       "source_sha256": cg.canonical({k:v for k,v in cls.files.items() if k.endswith('.py')}),
-                       "data_sha256": cg.canonical({k:v for k,v in cls.files.items() if not k.endswith('.py')})}
+        cls.fixture = {
+            "files": cls.files,
+            "source_sha256": cg.canonical(
+                {k: v for k, v in cls.files.items() if k.endswith(".py")}
+            ),
+            "data_sha256": cg.canonical(
+                {k: v for k, v in cls.files.items() if not k.endswith(".py")}
+            ),
+        }
 
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory(prefix="cg-contract-")
@@ -36,23 +42,51 @@ class GuardianContract(unittest.TestCase):
         self.ev = self.root / "evidence"
         self.ev.mkdir()
         (self.ev / "raw.json").write_text('{"contract_fixture":true}')
-        self.source = {"commit": "a" * 40, "tree": "b" * 40, "dirty": False, "content_sha256": "c" * 64}
+        self.source = {
+            "commit": "a" * 40,
+            "tree": "b" * 40,
+            "dirty": False,
+            "content_sha256": "c" * 64,
+        }
         environment = {"facts": {"contract_fixture": True}}
         environment["fingerprint"] = cg.canonical(environment["facts"])
         self.row = {
-            "id": self.cid, "status": "passed", "layer": "contract_fixture", "profile": "safe", "desktop_shell_verified": False,
-            "stages": {s: cg.stage("passed", "synthetic validator test only") for s in cg.CC.STAGES},
+            "id": self.cid,
+            "status": "passed",
+            "layer": "contract_fixture",
+            "profile": "safe",
+            "desktop_shell_verified": False,
+            "stages": {
+                s: cg.stage("passed", "synthetic validator test only") for s in cg.CC.STAGES
+            },
             "executions": {"native": 1, "tavotto": 1, "basis": "contract_fixture"},
             "native": {"status": "passed", "result": {"contract_fixture": True}},
-            "comparable": True, "environment_before": environment, "environment_after": copy.deepcopy(environment),
-            "product_classification": None, "raw": {"launch_environments": {"native": [environment], "tavotto": [copy.deepcopy(environment)]}}, "unverified": ["all product behavior"],
+            "comparable": True,
+            "environment_before": environment,
+            "environment_after": copy.deepcopy(environment),
+            "product_classification": None,
+            "raw": {
+                "launch_environments": {
+                    "native": [environment],
+                    "tavotto": [copy.deepcopy(environment)],
+                }
+            },
+            "unverified": ["all product behavior"],
             "fixture": copy.deepcopy(self.fixture),
         }
         self.report = {
-            "schema_version": cg.SCHEMA_VERSION, "run_id": "1" * 32, "source": self.source,
-            "expected_sha": "a" * 40, "suite": "compat_engine", "expected_cases": [self.cid],
-            "corpus_sha256": cg.canonical({self.cid: self.files}), "cases": [self.row], "evidence": cg.evidence_refs(self.ev),
-            "verdict": "passed", "unverified": ["all product behavior"], "duration_s": 1.0,
+            "schema_version": cg.SCHEMA_VERSION,
+            "run_id": "1" * 32,
+            "source": self.source,
+            "expected_sha": "a" * 40,
+            "suite": "compat_engine",
+            "expected_cases": [self.cid],
+            "corpus_sha256": cg.canonical({self.cid: self.files}),
+            "cases": [self.row],
+            "evidence": cg.evidence_refs(self.ev),
+            "verdict": "passed",
+            "unverified": ["all product behavior"],
+            "duration_s": 1.0,
         }
 
     def valid(self):
@@ -132,8 +166,26 @@ class GuardianContract(unittest.TestCase):
         self.rejected()
 
     def test_native_environment_failure_is_classified_first(self):
-        self.assertEqual(cg._native_status({"ok": False, "code": "native_script_error", "traceback": "ModuleNotFoundError: missing"}), "environment_unavailable")
-        self.assertEqual(cg._native_status({"ok": False, "code": "native_script_error", "traceback": "ZeroDivisionError: division by zero"}), "invalid_fixture")
+        self.assertEqual(
+            cg._native_status(
+                {
+                    "ok": False,
+                    "code": "native_script_error",
+                    "traceback": "ModuleNotFoundError: missing",
+                }
+            ),
+            "environment_unavailable",
+        )
+        self.assertEqual(
+            cg._native_status(
+                {
+                    "ok": False,
+                    "code": "native_script_error",
+                    "traceback": "ZeroDivisionError: division by zero",
+                }
+            ),
+            "invalid_fixture",
+        )
 
     def test_exit_zero_protocol_failure_not_success(self):
         self.assertEqual(cg._native_status({"ok": False}), "unknown")
@@ -160,8 +212,13 @@ class GuardianContract(unittest.TestCase):
         work = self.root / "timeout-work"
         work.mkdir()
         with self.assertRaises(cg.EvidenceError):
-            cg.launch_adapter([sys.executable, "-c", "import time; print('started', flush=True); time.sleep(10)"],
-                              work=work, evidence=self.ev, env=cg.isolated_env(work), timeout=0.2)
+            cg.launch_adapter(
+                [sys.executable, "-c", "import time; print('started', flush=True); time.sleep(10)"],
+                work=work,
+                evidence=self.ev,
+                env=cg.isolated_env(work),
+                timeout=0.2,
+            )
         process = json.loads((self.ev / "process.json").read_text())
         self.assertTrue(process["timed_out"])
         self.assertIn("started", (self.ev / "stdout.txt").read_text())
@@ -215,7 +272,14 @@ class GuardianContract(unittest.TestCase):
         self.rejected()
 
     def test_child_environment_is_local_and_strips_credentials(self):
-        with mock.patch.dict(os.environ, {"GITHUB_TOKEN": "never-export", "TAVOTTO_DATA_DIR": "/real/user", "HOME": "/real/home"}):
+        with mock.patch.dict(
+            os.environ,
+            {
+                "GITHUB_TOKEN": "never-export",
+                "TAVOTTO_DATA_DIR": "/real/user",
+                "HOME": "/real/home",
+            },
+        ):
             env = cg.isolated_env(self.root / "launch")
         self.assertNotIn("GITHUB_TOKEN", env)
         self.assertTrue(Path(env["HOME"]).is_relative_to(self.root))
