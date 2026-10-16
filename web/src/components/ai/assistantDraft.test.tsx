@@ -1453,6 +1453,24 @@ describe('已发出未确认：不能盲目重发', () => {
     expect(aiRun).not.toHaveBeenCalled()
   })
 
+  it('取消后刷新恢复出「cancelled 但未 final」的会话：发送锁住、不显示「中止」而是禁用的发送；final 到了才解锁', async () => {
+    useAiStore.setState({
+      sessions: [failedSession({ id: 's-canc', status: 'cancelled', finalized: false, restored: true, script: 'p1.py', finishedAt: undefined, panelId: null, fileId: null, changed: false })],
+    })
+    await mount()
+    await typeText('下一条指令')
+    const btn = q<HTMLButtonElement>('[data-ai-send]')!
+    expect(btn.dataset.aiSend).toBe('send') // 已经取消了，不再显示「中止」
+    expect(btn.disabled).toBe(true) // 对照：只认 running 时这里是可点的，点了再记一条提交然后撞 ai_script_busy
+    expect(btn.getAttribute('aria-label')).toBe('正在结束上一次修改…')
+    await click(btn)
+    expect(aiRun).not.toHaveBeenCalled()
+    await act(async () => {
+      useAiStore.getState().finish({ session: 's-canc', status: 'cancelled', changed: true, diff: 'D' })
+    })
+    expect(q<HTMLButtonElement>('[data-ai-send]')!.disabled).toBe(false) // final 之后解锁
+  })
+
   it('「改写后再发」：放弃这条等待、输入框可改，下一次发送是新 rid', async () => {
     await mount()
     await sendIt('旧指令')

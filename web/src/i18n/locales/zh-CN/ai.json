@@ -90,6 +90,7 @@
   },
   "panel": {
     "abort": "中止",
+    "finishing": "正在结束上一次修改…",
     "agentModel": "执行器与模型",
     "agentNote": "直接修改脚本；每次运行前自动快照，可回滚。",
     "checkResult": "查询结果",

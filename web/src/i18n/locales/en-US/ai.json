@@ -92,6 +92,7 @@
   },
   "panel": {
     "abort": "Stop",
+    "finishing": "Finishing the previous change…",
     "agentModel": "Agent and model",
     "agentNote": "Edits the script directly; a snapshot is taken before each run, so changes can be reverted.",
     "checkResult": "Check result",

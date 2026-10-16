@@ -33,6 +33,7 @@ import { msg, t as translate } from '@/i18n'
 import { DURATION, usePresence } from '@/lib/motion'
 import { engineLabel } from '@/components/inspector/roles/registry'
 import { AiLedgerError, isSessionOf, ProjectChangedError, submissionBlocks, useAiStore, type AiScope, type AiSession } from '@/store/aiStore'
+import { AiLedgerError, isOpenSession, isSessionOf, submissionBlocks, useAiStore, type AiScope, type AiSession } from '@/store/aiStore'
 import { useDocumentStore } from '@/store/documentStore'
 import { usePanelDisplayManifest } from '@/store/renderStore'
 import { useSelectionStore } from '@/store/selectionStore'
@@ -373,12 +374,16 @@ function AssistantPanelBody() {
   const mine = panel ? sessions.filter((s) => isSessionOf(s, panel)) : []
   // 只有「同一个脚本正在被改」才该挡住发送——别的面板在跑与这里无关
   const runningHere = mine.some((s) => s.status === 'running')
+  // 已取消、但后端还没给出最终结果（`cancelled` 且未 finalize，含刷新后恢复出来的）：任务还没真正结束、脚本仍被占着——
+  // 发送继续锁（共用 `isOpenSession` 谓词，直到 final 才释放），否则再记一条提交就会撞上 ai_script_busy。
+  // 已经取消了，不再显示「中止」，而是禁用的发送 + 一句「正在结束上一次修改」
+  const finishingHere = !runningHere && mine.some(isOpenSession)
   // 一个可用的编码 Agent 都没有：**探测出结果之后**才这么说
   // （caps 还是 null 时是「正在检测」，那时不该把输入区锁上）
   const noAgent = caps !== null && usableAgents(caps).length === 0
   // 有一条提交还没落定（在路上 / 未确认 / 没收到待重发）= 不许再发新的：未确认时后端可能已经在执行它
   // 账本恢复没成功之前（读着 / 读失败）不许发：原任务可能已结束，放行会用新 id 把同一条修改再执行一遍
-  const canSend = !!panel && !noAgent && !submission && !runningHere && ledgerState === 'ok'
+  const canSend = !!panel && !noAgent && !submission && !runningHere && !finishingHere && ledgerState === 'ok'
 
   // 原先每个 delta 都把视口拽回底部——往上翻看旧回答时等于不让人看。
   // 换了目标面板视作重新贴底。jsdom 里 scrollHeight 恒 0，gap 恒 0，一律贴底。
@@ -850,7 +855,7 @@ function AssistantPanelBody() {
             </div>
             <div className="flex items-center self-end [grid-area:end]">
               {/* 快捷键只说一次：发送钮的气泡里已经有「⌘↵」，输入框上不再常驻一枚键帽（打磨 A5） */}
-              <Tip label={runningHere ? ai('panel.abort') : ai('panel.send', { key: modKey('↵') })}>
+              <Tip label={runningHere ? ai('panel.abort') : finishingHere ? ai('panel.finishing') : ai('panel.send', { key: modKey('↵') })}>
                 <Button
                   variant="primary"
                   size="icon-sm"
@@ -862,11 +867,11 @@ function AssistantPanelBody() {
                     !panel ||
                     (runningHere
                       ? false
-                      : noAgent || !!submission || !prompt.trim() || ledgerState !== 'ok' || tooLarge)
+                      : noAgent || !!submission || finishingHere || !prompt.trim() || ledgerState !== 'ok' || tooLarge)
                   }
                   aria-busy={sending || runningHere || undefined}
                   onClick={runningHere ? stopRunning : () => send({ source: 'composer' })}
-                  aria-label={runningHere ? ai('panel.abort') : ai('panel.sendAria')}
+                  aria-label={runningHere ? ai('panel.abort') : finishingHere ? ai('panel.finishing') : ai('panel.sendAria')}
                 >
                   <SendStopGlyph stop={runningHere} busy={sending || runningHere} />
                 </Button>

@@ -111,6 +111,7 @@ export default interface Resources {
       "effortRaw": "强度原始值：{{value}}",
       "emptyHint": "助手会直接修改脚本，改动可回滚。",
       "emptyTitle": "想怎么改这张图？",
+      "finishing": "正在结束上一次修改…",
       "inputAria": "描述要怎么改这张图",
       "ledgerFailed": "没能保存这条指令的发送记录，所以没有发出。检查连接后重试。",
       "ledgerUnreadable": "暂时读不到这张图有没有未结的发送记录，所以先不能发送。",
