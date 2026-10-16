@@ -1180,15 +1180,6 @@ def run(args) -> int:
     return exit_code_for(report["verdict"])
 
 
-def not_implemented(name: str) -> int:
-    print(
-        f"guardian {name}: not implemented in CG-01 (planned for a later stage; "
-        "this stub never produces results)",
-        file=sys.stderr,
-    )
-    return EXIT_USAGE
-
-
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     subs = ap.add_subparsers(dest="command", required=True)
@@ -1216,10 +1207,28 @@ def main(argv=None) -> int:
     explorer.add_argument("--limit", type=int, help="family-balanced cap on executed candidates")
     explorer.add_argument("--parent", help="comma-separated parent case ids")
     explorer.add_argument("--static-only", action="store_true")
+    explorer.add_argument("--candidates", help="comma-separated candidate ids to run")
     explorer.add_argument("--expected-sha")
     explorer.add_argument("--timeout", type=float, default=240)
-    for name in ("triage", "minimize"):
-        subs.add_parser(name, help="not implemented in CG-01")
+    triager = subs.add_parser(
+        "triage", help="attribute and cluster findings from run/explore reports"
+    )
+    triager.add_argument("reports", nargs="+")
+    triager.add_argument("--out", required=True)
+    minimizer = subs.add_parser(
+        "minimize", help="bounded, re-verified reduction of one explore finding"
+    )
+    minimizer.add_argument(
+        "--report", required=True, help="explore report containing the candidate"
+    )
+    minimizer.add_argument("--candidate", required=True)
+    minimizer.add_argument("--out", required=True)
+    minimizer.add_argument("--max-runs", type=int, default=40)
+    minimizer.add_argument("--max-seconds", type=float, default=1500)
+    minimizer.add_argument("--timeout", type=float, default=240)
+    minimizer.add_argument(
+        "--repeat", type=int, default=2, help="extra confirmation runs of the final result"
+    )
     hidden = subs.add_parser("_explore_execute", help=argparse.SUPPRESS)
     hidden.add_argument("request")
     private = subs.add_parser("_execute", help=argparse.SUPPRESS)
@@ -1230,8 +1239,14 @@ def main(argv=None) -> int:
             if not math.isfinite(args.timeout) or args.timeout <= 0:
                 raise EvidenceError("timeout must be positive")
             return run(args)
-        if args.command in ("triage", "minimize"):
-            return not_implemented(args.command)
+        if args.command == "triage":
+            import compat_triage
+
+            return compat_triage.run(args)
+        if args.command == "minimize":
+            import compat_minimize
+
+            return compat_minimize.run(args)
         if args.command == "explore":
             import compat_explore
 

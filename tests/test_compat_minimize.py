@@ -1,0 +1,285 @@
+"""CG-03 minimize: bounded, re-verified reduction; refuses reductions that lose or change the failure."""
+
+from __future__ import annotations
+
+import ast
+import sys
+import unittest
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts/ci"))
+
+import compat_explore_transforms as xt  # noqa: E402
+import compat_guardian as cg  # noqa: E402
+import compat_minimize as mn  # noqa: E402
+import compat_triage as tg  # noqa: E402
+
+RULES = tg.load_rules()
+
+
+def record(
+    outcome="difference_found",
+    kinds=("zero_figures",),
+    error="script_no_figure",
+    native_exit=0,
+    shown=1,
+    saved=0,
+):
+    diffs = [
+        {
+            "kind": k,
+            "summary": k,
+            "category": "figure_capture",
+            "evidence": {"tavotto_error": error},
+        }
+        for k in kinds
+    ]
+    return {
+        "judgment": {
+            "outcome": outcome,
+            "differences": diffs if outcome == "difference_found" else [],
+        },
+        "native": {
+            "exit_status": native_exit,
+            "figure_count": 1,
+            "figures_shown": shown,
+            "savefig_calls": saved,
+            "savefig_last_writer": {},
+            "semantics": {},
+            "artifacts": [],
+        },
+        "tavotto": {
+            "route": "probe",
+            "error": {"code": error, "message": ""} if error else None,
+            "stems": {},
+        },
+    }
+
+
+class Accept(unittest.TestCase):
+    def sig(self, **kw):
+        return mn.signature(record(**kw), ["show_close"], RULES)
+
+    def test_same_failure_is_accepted(self):
+        self.assertTrue(mn.accept(self.sig(), self.sig())[0])
+
+    def test_case_10_error_vanishes_so_the_reduction_is_rejected(self):
+        ok, reason = mn.accept(self.sig(), self.sig(outcome="no_difference", kinds=(), error=None))
+        self.assertFalse(ok)
+        self.assertIn("disappeared", reason)
+
+    def test_a_new_error_masquerading_as_the_defect_is_rejected(self):
+        for code in ("script_error", "syntax_error", "missing_dependency"):
+            ok, reason = mn.accept(self.sig(), self.sig(error=code))
+            self.assertFalse(ok, code)
+            self.assertIn("different Tavotto error", reason)
+
+    def test_a_reduction_that_breaks_native_is_rejected_not_blamed_on_tavotto(self):
+        ok, reason = mn.accept(self.sig(), self.sig(native_exit=1))
+        self.assertFalse(ok)
+        self.assertIn("native", reason)
+
+    def test_a_changed_native_expectation_or_difference_kind_is_rejected(self):
+        self.assertFalse(mn.accept(self.sig(), self.sig(shown=0, saved=1))[0])
+        overwrite = mn.signature(record(), ["show_close"], RULES)
+        overwrite["native_expect"] = dict(overwrite["native_expect"], overwrite=True)
+        self.assertFalse(mn.accept(self.sig(), overwrite)[0])
+        self.assertFalse(
+            mn.accept(self.sig(), self.sig(kinds=("zero_figures", "fewer_figures")))[0]
+        )
+
+    def test_a_changed_attributed_stage_or_family_is_rejected(self):
+        original = self.sig()
+        changed = dict(original, family="partial_capture")
+        self.assertFalse(mn.accept(original, changed)[0])
+
+
+class Machinery(unittest.TestCase):
+    SRC = (
+        "import json\nimport matplotlib.pyplot as plt\n\n\ndef main():\n"
+        "    fig, ax = plt.subplots()\n    ax.plot([1, 2])\n    for i in range(2):\n        ax.set_title(str(i))\n"
+        "    plt.show()\n    plt.close('all')\n"
+    )
+
+    def test_apply_reduction_only_removes_code(self):
+        tree = ast.parse(self.SRC)
+        addrs = xt.statement_addresses(tree)
+        reduced = xt.apply_reduction(self.SRC, {"delete": addrs[:2]})
+        before = {ast.dump(n) for n in ast.walk(tree) if isinstance(n, ast.stmt)}
+        after = {ast.dump(n) for n in ast.walk(ast.parse(reduced)) if isinstance(n, ast.stmt)}
+        self.assertLessEqual({d for d in after if "Pass" not in d}, before)
+        compile(reduced, "r.py", "exec")
+
+    def test_unwrap_replaces_a_block_by_its_body_and_rejects_non_blocks(self):
+        loop = next(
+            a
+            for a in xt.statement_addresses(ast.parse(self.SRC))
+            if isinstance(_at(self.SRC, a), ast.For)
+        )
+        out = xt.apply_reduction(self.SRC, {"unwrap": [loop]})
+        self.assertNotIn("for i in", out)
+        self.assertIn("ax.set_title(str(i))", out)
+        call = next(
+            a
+            for a in xt.statement_addresses(ast.parse(self.SRC))
+            if "plot" in ast.unparse(_at(self.SRC, a))
+        )
+        with self.assertRaises(cg.EvidenceError):
+            xt.apply_reduction(self.SRC, {"unwrap": [call]})
+
+    def test_unknown_address_is_rejected(self):
+        with self.assertRaises(cg.EvidenceError):
+            xt.apply_reduction(self.SRC, {"delete": ["/body99"]})
+
+    def test_a_reduction_cannot_drop_the_script_or_an_absent_file(self):
+        parent = xt.load_parent("compat_engine", "shape_oo_savefig")
+        with self.assertRaises(cg.EvidenceError):
+            xt.build_reduced(
+                parent, ("import_alias",), 1, {"delete": [], "drop_files": [parent.script]}
+            )
+        with self.assertRaises(cg.EvidenceError):
+            xt.build_reduced(
+                parent, ("import_alias",), 1, {"delete": [], "drop_files": ["nope.csv"]}
+            )
+
+    def test_entry_function_and_main_guard_are_never_removal_units(self):
+        units = mn.units_of(self.SRC, "main")
+        nodes = [_at(self.SRC, a) for a in units]
+        self.assertFalse(any(isinstance(n, ast.FunctionDef) and n.name == "main" for n in nodes))
+        guarded = "import os\nif __name__ == '__main__':\n    print(1)\n"
+        self.assertFalse(
+            any(isinstance(_at(guarded, a), ast.If) for a in mn.units_of(guarded, "__main__"))
+        )
+
+    def test_ddmin_finds_a_minimal_keep_set_and_is_bounded(self):
+        needed = {"c", "f"}
+        calls = []
+
+        def test(kept):
+            calls.append(tuple(kept))
+            return needed <= set(kept)
+
+        got = mn.ddmin(list("abcdefgh"), test, mn.Budget(100, 100))
+        self.assertEqual(set(got), needed)
+        self.assertEqual(len(calls), len(set(calls)), "no config is evaluated twice")
+
+    def test_budget_rejects_non_finite_or_non_positive_values(self):
+        for bad in ((0, 10), (5, 0), (5, float("inf")), (True, 5)):
+            with self.assertRaises(cg.EvidenceError):
+                mn.Budget(*bad)
+
+
+def _at(source, addr):
+    tree = ast.parse(source)
+    node = tree
+    for part in addr.strip("/").split("/"):
+        field = part.rstrip("0123456789")
+        node = getattr(node, field)[int(part[len(field) :])]
+    return node
+
+
+class Search(unittest.TestCase):
+    """The whole search against a scripted oracle (no processes): fast and deterministic."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.parent = xt.load_parent("compat_engine", "shape_oo_savefig")
+        cls.manifest, _ = xt.build(cls.parent, ("show_close",), 7)
+
+    def oracle_for(self, behavior):
+        calls = []
+
+        def oracle(reduction, tag):
+            _, files = xt.build_reduced(self.parent, ("show_close",), 7, reduction)
+            calls.append(tag)
+            return behavior(files[self.parent.script].decode())
+
+        oracle.calls = calls
+        return oracle
+
+    def search(self, behavior, budget=None, repeat=2):
+        oracle = self.oracle_for(behavior)
+        result = mn.minimize_candidate(
+            self.manifest, self.parent, oracle, RULES, budget or mn.Budget(80, 600), repeat
+        )
+        return result, oracle
+
+    @staticmethod
+    def failing(source):
+        """The scripted product: zero figures iff the script still shows then closes."""
+        if "show()" in source and "close(" in source:
+            if "plt.subplots" not in source and "ax." in source:
+                return record(error="script_error")  # NameError-ish: a different failure
+            return record()
+        return record(outcome="no_difference", kinds=(), error=None)
+
+    def test_reduces_to_the_statements_that_matter_and_keeps_the_same_failure(self):
+        result, oracle = self.search(self.failing)
+        self.assertEqual(result["status"], "minimized", result.get("note"))
+        text = result["files"][self.parent.script].decode()
+        self.assertIn("show()", text)
+        self.assertIn("close(", text)
+        self.assertNotIn("set_xlabel", text)
+        self.assertLess(result["after"]["statements"], result["before"]["statements"])
+        self.assertEqual(result["reproducibility"], {"confirmed": 3, "total": 3})
+        rejected = [t for t in result["trials"] if not t["accepted"]]
+        self.assertTrue(rejected, "rejections are recorded, not hidden")
+        self.assertTrue(any("disappeared" in t["reason"] for t in rejected))
+
+    def test_case_10_a_reduction_that_loses_the_error_never_survives(self):
+        result, _ = self.search(self.failing)
+        text = result["files"][self.parent.script].decode()
+        self.assertTrue(
+            "show()" in text and "close(" in text, "the lines that carry the defect must remain"
+        )
+        self.assertTrue(any("disappeared" in t["reason"] for t in result["trials"]))
+
+    def test_a_reduction_that_swaps_in_a_new_error_is_rejected(self):
+        result, _ = self.search(self.failing)
+        # removing plt.subplots while ax.* stays would "fail" with a different error: rejected
+        self.assertTrue(any("different Tavotto error" in t["reason"] for t in result["trials"]))
+
+    def test_budget_exhaustion_is_minimization_failed_and_keeps_the_original(self):
+        result, oracle = self.search(self.failing, mn.Budget(3, 600))
+        self.assertEqual(result["status"], "minimization_failed")
+        self.assertIsNone(result["reduction"])
+        original = xt.build(self.parent, ("show_close",), 7)[1]
+        self.assertEqual(result["files"], original)
+        self.assertLessEqual(len(oracle.calls), 3)
+        self.assertIn("budget", result["note"])
+
+    def test_time_budget_also_stops_the_search(self):
+        budget = mn.Budget(100, 0.001)
+        import time
+
+        time.sleep(0.01)
+        result, _ = self.search(self.failing, budget)
+        self.assertEqual(result["status"], "minimization_failed")
+
+    def test_case_15_a_candidate_that_does_not_fail_is_not_reproduced_and_nothing_is_invented(self):
+        result, oracle = self.search(
+            lambda source: record(outcome="no_difference", kinds=(), error=None)
+        )
+        self.assertEqual(result["status"], "not_reproduced")
+        self.assertEqual(
+            oracle.calls, ["base"], "no reduction is attempted without a reproduced failure"
+        )
+        self.assertNotIn("reduction", result)
+
+    def test_unstable_reproduction_is_not_reported_as_minimized(self):
+        def oracle(reduction, tag):
+            _, files = xt.build_reduced(self.parent, ("show_close",), 7, reduction)
+            if tag.startswith("confirm"):
+                return record(outcome="no_difference", kinds=(), error=None)
+            return self.failing(files[self.parent.script].decode())
+
+        result = mn.minimize_candidate(
+            self.manifest, self.parent, oracle, RULES, mn.Budget(80, 600), 2
+        )
+        self.assertEqual(result["status"], "minimization_failed")
+        self.assertIn("did not reproduce", result["note"])
+        self.assertIsNone(result["reduction"])
+
+
+if __name__ == "__main__":
+    unittest.main()
