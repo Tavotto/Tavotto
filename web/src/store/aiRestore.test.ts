@@ -783,6 +783,17 @@ describe('终态要后端明确说 final；终态转录以快照为准（#1111 C
     expect(out.some((e) => e.streaming)).toBe(false)
     expect(out[0].at).toBe(1) // 本地已有的那条保留到达时刻
   })
+
+  it('mergeTranscript：快照里没有对应完整条目的流式半截保留（只清 streaming），不让已看到的输出消失（#1111 Codex P2 r4299848602）', () => {
+    const local = [
+      { kind: 'message' as const, text: 'A', at: 1 },
+      { kind: 'message' as const, text: '断线前看到的半截', streaming: true, at: 2 },
+    ]
+    // 后端不持久化 delta：断线后 agent 没再发完整 message，终态快照里就没有它
+    const out = mergeTranscript(local, [{ kind: 'message', text: 'A' }])
+    expect(out.map((e) => e.text)).toEqual(['A', '断线前看到的半截'])
+    expect(out.some((e) => e.streaming)).toBe(false)
+  })
 })
 
 describe('断线期间任务失败：恢复后失败提示带着后端给的原因（#1111 Codex P2 r4289419771）', () => {

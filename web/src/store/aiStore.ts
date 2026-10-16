@@ -298,8 +298,9 @@ export function mergeTranscript(local: AiEntry[], snapshot: { kind: string; text
       sp = k + 1
       continue
     }
-    // 没对上：流式中的半截气泡 / 快照里某条的前缀会被快照里的完整条目取代；其余是本地独有，保留
-    const superseded = l.streaming || snap.some((s) => s.kind === l.kind && s.text.startsWith(l.text))
+    // 没对上：只有快照里**确实有**一条同类、以它开头的完整条目时，它（流式半截 / 前缀）才算被取代；
+    // 否则保留——后端不持久化 delta，断线前已看到的半截在快照里本来就没有，丢掉就是让用户看过的输出消失
+    const superseded = snap.some((s) => s.kind === l.kind && s.text.startsWith(l.text))
     if (!superseded) out.push({ ...l, streaming: false })
   }
   for (let i = sp; i < snap.length; i++) out.push(snap[i])
