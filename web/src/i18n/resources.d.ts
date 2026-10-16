@@ -344,6 +344,7 @@ export default interface Resources {
       "openProblems": "在问题面板中查看",
       "operationFailed": "无法完成：{{error}}",
       "outputFailed": "无法导出 {{format}}：{{reason}}",
+      "partialSummary": "已保存 {{ok}} 个，{{failed}} 个失败",
       "pdfHint": "矢量",
       "phase": {
         "cancelled": "已取消",
@@ -400,6 +401,7 @@ export default interface Resources {
       "strictTitle": "按所选规范重新打开写好的文件核对；不合格或无法核验的文件不会保存。EPS 不核验。",
       "strictToggle": "严格核验产物",
       "targetNoFigure": "当前没有图",
+      "thumbNote": "缩略图仅为示意 · 非最终文件",
       "tiffHint": "位图 · 无损压缩",
       "title": "导出",
       "toast": {
@@ -2312,6 +2314,7 @@ export default interface Resources {
       "endpoint_invalid": "接口配置无效：{{reason}}",
       "endpoint_save_failed": "无法保存接口：{{reason}}",
       "engine_capability_missing": "本机的 Tavotto 引擎版本较旧，不支持按参数运行。请升级 Tavotto 后再试；不会改用空参数运行。",
+      "engine_files_incomplete": "Tavotto 的程序文件不完整，没法正常渲染。请重新安装 Tavotto。",
       "environment_candidate_gone": "这个环境已经找不到了，请重新检查",
       "environment_changed": "这个环境在你确认之前被重建过，请重新查看再确认",
       "environment_check_running": "这个项目的环境检查正在进行",
@@ -4835,7 +4838,6 @@ export default interface Resources {
       "noEditableTitle": "画布上还没有可编辑的图",
       "noMatch": "没有匹配的元素",
       "noPanelTitle": "选择一张可编辑的图以查看图内元素",
-      "openAssets": "打开素材",
       "readonly": "只读",
       "rowActions": "{{label}} 的操作",
       "rowAria": "{{label}}（{{role}}）",

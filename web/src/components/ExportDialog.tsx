@@ -57,7 +57,6 @@ import { Checkbox } from "./ui/Checkbox";
 import { Segmented } from "./ui/Segmented";
 import { Details, Summary } from "@/components/ui/Details";
 import {
-  panelSrc,
   engineErrorMsg,
   type AssetOriginalSpec,
   type ExportJob,
@@ -311,6 +310,8 @@ export function ExportDialog() {
    */
   const runtimeAssets = useRuntimeAssetStore((s) => s.assets);
   const runtimeById = useRuntimeAssetStore((s) => s.byId);
+  // 缩略图换代用（对象头与清单行共用 `figure.stamp`，runtime 预览重画时要跟着换）
+  const runtimePreviewNonce = useRuntimeAssetStore((s) => s.previewNonce);
   const assetPanels = useAssetStore((s) => s.panels);
   const canvases = useDocumentStore((s) => s.canvases);
   const selectedIds = useSelectionStore((s) => s.ids);
@@ -318,7 +319,7 @@ export function ExportDialog() {
   const figures = useMemo(
     () => listExportableFigures(),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [doc.objects, canvases, assets, assetPanels, runtimeAssets, runtimeById],
+    [doc.objects, canvases, assets, assetPanels, runtimeAssets, runtimeById, runtimePreviewNonce],
   );
   /**
    * 用户在对话框列表里点过的那张。**对话框本地状态**，打开时清空：它是这一次
@@ -357,8 +358,6 @@ export function ExportDialog() {
     anyFigures: figures.length > 0,
     panel,
   });
-  // 只给缩略图换代用；规格与可用性都从上面那个 hook 来
-  const runtimePreviewNonce = useRuntimeAssetStore((s) => s.previewNonce);
   /**
    * 这次的检查、留档与严格核验**按哪张画布算**：原图 = 那张图所在的画布（它可能不是
    * 当前画布），画布 = 当前画布。下面的规范、摘要、导出上下文检查、报告的条目与规范戳、
@@ -1166,7 +1165,7 @@ export function ExportDialog() {
             spec={availability.spec}
             doc={doc}
             asset={figureId ? assets[figureId] : undefined}
-            previewNonce={figureId ? runtimePreviewNonce[figureId] : undefined}
+            transparent={transparent && transparentApplies}
           />
         )
       }
@@ -1582,6 +1581,32 @@ function FigurePicker({
  * 缩略图在这里的职责是**认出是哪张图**，不是核对修改——核对归画布。
  */
 function FigureThumb({ figure }: { figure: ExportableFigure }) {
+  const source = useFigureThumbSource(figure, 160);
+  return (
+    <span className="flex h-7 w-10 shrink-0 items-center justify-center overflow-hidden rounded-xs bg-paper ring-1 ring-inset ring-border">
+      <FigureThumbArt source={source} boxRatio={10 / 7} />
+    </span>
+  );
+}
+
+/** `useFigureThumbSource` 的结果：清单行与对象头共用，取图只有这一处 */
+interface FigureThumbSource {
+  svgMarkup: { __html: string } | undefined;
+  src: string | null;
+  /** 图幅宽高比（读不到时 4:3） */
+  ratio: number;
+}
+
+/**
+ * 一张图缩略图的取图逻辑——**清单行（`FigureThumb`）与原图范围的对象头（`TargetHeader`）
+ * 共用这一份**，不各起一套：原图范围导出的就是「带图内修改重渲」的那一版
+ * （`_export_produce_original` → `_resolve_panel_source` 带 overrides），所以缩略图也得是
+ * 同一版；头部若读磁盘原图而清单读编辑后，同屏会出现两个不一致的「这张图」。
+ */
+function useFigureThumbSource(
+  figure: ExportableFigure,
+  bucket: number,
+): FigureThumbSource {
   const render = usePanelRender(figure.panel);
   const tracked = useRenderStore((s) => !!s.tracked[figure.figureId]);
   const panel = figure.panel;
@@ -1593,39 +1618,60 @@ function FigureThumb({ figure }: { figure: ExportableFigure }) {
   const svg = needsEngine ? (render?.svg ?? null) : null;
   // 同一份字符串复用同一个 `{__html}`：缩略格随对话框重渲时不必把整张 SVG 重新解析一遍
   const svgMarkup = useHtmlMarkup(svg);
-  const src = figureThumbSrc(figure, 160);
+  const src = figureThumbSrc(figure, bucket);
   const sizeMm = render?.manifest?.size_mm ?? figure.sizeMm;
   const ratio =
     sizeMm && sizeMm[0] > 0 && sizeMm[1] > 0 ? sizeMm[0] / sizeMm[1] : 4 / 3;
-  return (
-    <span className="flex h-7 w-10 shrink-0 items-center justify-center overflow-hidden rounded-xs bg-paper ring-1 ring-inset ring-border">
-      {svg ? (
-        // store 里的 SVG 已被 `prepareSvg` 改成 width/height 100%，得给它一个
-        // 按图幅比例定好的盒子，否则会被拉成缩略格的形状
-        <span
-          data-export-thumb="svg"
-          className="block"
-          style={{
-            aspectRatio: String(ratio),
-            ...(ratio >= 1 ? { width: "100%" } : { height: "100%" }),
-            maxWidth: "100%",
-            maxHeight: "100%",
-          }}
-          dangerouslySetInnerHTML={svgMarkup}
-        />
-      ) : src ? (
+  return { svgMarkup: svg ? svgMarkup : undefined, src, ratio };
+}
+
+/**
+ * 缩略图本体：按**真实图幅比例**定盒，再放进调用方给的固定外框里（外框尺寸不变、不溢出）。
+ * `boxRatio` = 外框的宽高比，用来判断该贴宽还是贴高。
+ */
+function FigureThumbArt({
+  source,
+  boxRatio,
+  ratio,
+}: {
+  source: FigureThumbSource;
+  boxRatio: number;
+  /** 覆盖图幅比例（对象头用 `OriginalOutputSpec` 的最终图幅） */
+  ratio?: number;
+}) {
+  const r = ratio ?? source.ratio;
+  const fit = {
+    aspectRatio: String(r),
+    ...(r >= boxRatio ? { width: "100%" } : { height: "100%" }),
+    maxWidth: "100%",
+    maxHeight: "100%",
+  };
+  if (source.svgMarkup) {
+    // store 里的 SVG 已被 `prepareSvg` 改成 width/height 100%，得给它一个
+    // 按图幅比例定好的盒子，否则会被拉成缩略格的形状
+    return (
+      <span
+        data-export-thumb="svg"
+        className="block"
+        style={fit}
+        dangerouslySetInnerHTML={source.svgMarkup}
+      />
+    );
+  }
+  if (source.src) {
+    return (
+      <span className="block" style={fit}>
         <RetryImg
           data-export-thumb="file"
-          src={src}
+          src={source.src}
           alt=""
           draggable={false}
-          className="max-h-full max-w-full object-contain"
+          className="h-full w-full object-contain"
         />
-      ) : (
-        <span data-export-thumb="none" className="h-full w-full bg-surface-2" />
-      )}
-    </span>
-  );
+      </span>
+    );
+  }
+  return <span data-export-thumb="none" className="h-full w-full bg-surface-2" />;
 }
 
 /**
@@ -1758,7 +1804,7 @@ function TargetHeader({
   spec,
   doc,
   asset,
-  previewNonce,
+  transparent,
 }: {
   scope: ExportScope;
   /** 原图范围下这次导的那张（候选清单里的那一条；还没上画布的素材 `panel` 为 null 也是它） */
@@ -1767,7 +1813,8 @@ function TargetHeader({
   doc: FigureDocument;
   /** 素材清单里的那一条（缩略图换代的 mtime + 磁盘原件的尺寸）；不在清单里就是 undefined */
   asset: PanelInfo | undefined;
-  previewNonce: number | undefined;
+  /** 这次导出实际会出透明背景（已含 `transparentApplies`）：画布范围的缩略图画成棋盘格 */
+  transparent: boolean;
 }) {
   useTranslation("dialogs");
   const original = scope === "original";
@@ -1783,25 +1830,20 @@ function TargetHeader({
     : ex("mmSize", { w: round1(doc.page.w), h: round1(doc.page.h) });
   const originNote =
     original && spec ? diskSizeNote(spec, asset?.original_spec) : null;
-  const src =
-    original && figure
-      ? panelSrc(
-          figure.figureId,
-          figure.kind,
-          200,
-          figure.kind === "runtime" ? previewNonce : asset?.mtime,
-        )
-      : null;
   const visibleObjects = doc.objects.filter((o) => !o.hidden).length;
   return (
     <div data-export-target className="flex items-center gap-3">
       {original ? (
-        <div className="flex h-10 w-[60px] shrink-0 items-center justify-center overflow-hidden rounded-xs border border-border bg-paper">
-          {src ? (
-            <RetryImg
-              src={src}
-              alt=""
-              className="max-h-full max-w-full object-contain p-0.5"
+        <div className="flex h-10 w-[60px] shrink-0 items-center justify-center overflow-hidden rounded-xs border border-border bg-paper p-0.5">
+          {figure ? (
+            // 与清单行同一份取图（`useFigureThumbSource`），盒按最终图幅（`spec`）的比例
+            <HeaderFigureThumb
+              figure={figure}
+              ratio={
+                spec && !spec.fallback && spec.heightMm > 0
+                  ? spec.widthMm / spec.heightMm
+                  : undefined
+              }
             />
           ) : (
             <ImageOff
@@ -1818,6 +1860,7 @@ function TargetHeader({
           page={doc.page}
           objects={doc.objects}
           className="h-10 w-[60px]"
+          transparent={transparent}
         />
       )}
       <div className="min-w-0 flex-1">
@@ -1836,9 +1879,27 @@ function TargetHeader({
           )}
         </p>
         {originNote && <p className="type-caption">{originNote}</p>}
+        {/* 缩略图不是最终文件（画布缩略图不含图内修改与页面合成、位图格式的像素也不在这里），
+            说一句，克制：中性灰，不是警告 */}
+        <p data-export-thumb-note className="type-caption text-ink-3">
+          {ex("thumbNote")}
+        </p>
       </div>
     </div>
   );
+}
+
+/** 对象头里的原图缩略图：`FigureThumb` 的取图，外框是对象头自己的 */
+function HeaderFigureThumb({
+  figure,
+  ratio,
+}: {
+  figure: ExportableFigure;
+  ratio: number | undefined;
+}) {
+  const source = useFigureThumbSource(figure, 200);
+  // 外框 60×40 去掉 p-0.5 的内边距后约 56×36
+  return <FigureThumbArt source={source} boxRatio={56 / 36} ratio={ratio} />;
 }
 
 /**
@@ -2098,6 +2159,15 @@ export function ResultBlock({
             "exports/",
         })}
       </p>
+      {/* 部分失败：先一句汇总（数字就是下面逐行的计数，来自后端回执的 outputs，不另算） */}
+      {job.status === "partial" && (
+        <p data-export-partial-summary className="text-sm font-medium text-ink">
+          {ex("partialSummary", {
+            ok: job.outputs.filter(outputSaved).length,
+            failed: job.outputs.filter((o) => !outputSaved(o)).length,
+          })}
+        </p>
+      )}
       {job.outputs.map((o) => (
         <OutputRow
           key={`${o.format}-${o.name ?? "x"}`}
@@ -2127,6 +2197,9 @@ export function ResultBlock({
     </Card>
   );
 }
+
+/** 这一件产物已被后端确认写出（`OutputRow` 画成功行的同一条判据） */
+const outputSaved = (o: ExportOutput) => o.status !== "failed" && !!o.name;
 
 function OutputRow({ out, dir }: { out: ExportOutput; dir: string }) {
   useTranslation(["dialogs", "errors"]);

@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { memo, useCallback, type ReactNode, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useLocale } from '@/i18n/react'
 import { useRenderProgress } from '@/hooks/useRenderProgress'
@@ -12,7 +12,6 @@ import {
   Lock,
   LockOpen,
   Ruler,
-  SearchX,
   Shapes,
   TriangleAlert,
   Type,
@@ -22,11 +21,12 @@ import {
 import { structuralParent } from '@/components/inspector/roles/hierarchy'
 import { roleIcon } from '@/components/inspector/roles/roleIcons'
 import { ICON_SIZE } from '@/components/ui/Icon'
-import { EditableFigureIcon } from '@/components/ui/semanticIcons'
 import type { Manifest, ManifestElement, ManifestGroup } from '@/lib/api'
 import { isElementHidden } from '@/canvas/interactions'
 import { cn, isMac } from '@/lib/utils'
 import { listRowClass } from '@/components/ui/listRow'
+import { findVisibleRow, TreeBranch } from '@/components/ui/TreeBranch'
+import { splitTypePrefix } from './rowName'
 import { useBoldTrackingLock } from '@/components/ui/useBoldWidthLock'
 import { isTreeNavKey, treeKeyAction, type TreeNavRow } from '@/components/ui/treeKeys'
 import { SearchInput } from '@/components/ui/SearchInput'
@@ -45,7 +45,7 @@ import type { PanelObject } from '@/types/document'
 import { untruncatedLabel } from '../inspector/identityCrumbs'
 import { engineLabel, groupName, roleName, unsupportedOf } from '../inspector/roles/registry'
 import { IconButton } from '../ui/Button'
-import { EmptyState } from '../ui/EmptyState'
+import { EmptyLine } from '../ui/EmptyLine'
 import { BackgroundChoice } from '../inspector/ElementInspector'
 import { MenuItem } from '../ui/Menu'
 import { RowMenu } from '../ui/RowMenu'
@@ -285,24 +285,20 @@ export function ElementTree({ chrome = 'drawer' }: { chrome?: 'drawer' | 'bare' 
     const editable = objects.filter((o): o is PanelObject => o.type === 'panel' && !!o.script)
     if (editable.length === 0) {
       return (
-        <EmptyState
-          icon={EditableFigureIcon}
-          title={et('noEditableTitle')}
-          hint={et('noEditableHint')}
-          action={{ label: et('openAssets'), onClick: () => useUiStore.getState().setLeftTab('assets') }}
-        />
+        // 画布上一张可编辑的图都没有：纯占位，不配动作（起步动作只有画布中央的「添加图」，审计 T03）
+        <EmptyLine title={et('noEditableHint')}>{et('noEditableTitle')}</EmptyLine>
       )
     }
     return (
-      <EmptyState
-        icon={EditableFigureIcon}
-        title={et('noPanelTitle')}
+      <EmptyLine
         action={{
           label: et('locateEditable'),
           // 选中即够：这棵树的目标面板就是「选中的那张可编辑的图」，不必先进编辑态
           onClick: () => useSelectionStore.getState().set([editable[0].id]),
         }}
-      />
+      >
+        {et('noPanelTitle')}
+      </EmptyLine>
     )
   }
 
@@ -310,7 +306,7 @@ export function ElementTree({ chrome = 'drawer' }: { chrome?: 'drawer' | 'bare' 
     return <BackgroundChoice key={`${panel.id} ${renderKeyOf(panel)}`} panel={panel} />
   }
 
-  // 「需要渲染一次」也是一种空态：全站只有 EmptyState 一种形态（宪法第五节；左栏审计 L34）。
+  // 「需要渲染一次」也是一种空态：抽屉里的空态只有 `EmptyLine` 一种形态（列表顶部一行灰字 + 一个文字动作，UI 2.0 第二轮 09）。
   // 渲染中把动作换成一句现状
   if (!manifest) {
     return <UnbuiltTree panel={panel} rendering={rendering} />
@@ -322,13 +318,15 @@ export function ElementTree({ chrome = 'drawer' }: { chrome?: 'drawer' | 'bare' 
 /** 计时只更新空态叶子；已经有元素的树不订阅进度或每秒重画。 */
 function UnbuiltTree({ panel, rendering }: { panel: PanelObject; rendering: boolean }) {
   const progress = useRenderProgress(panel.fileId, rendering, et('building'))
-  return <EmptyState
-    data-render-progress={progress.active ? progress.phase : undefined}
-    icon={EditableFigureIcon}
-    title={et('needRender', { name: panel.name ?? panel.fileId })}
-    hint={progress.active ? progress.text : undefined}
-    action={progress.active ? undefined : { label: et('load'), onClick: () => enterElementEdit(panel.id) }}
-  />
+  return (
+    <EmptyLine
+      data-render-progress={progress.active ? progress.phase : undefined}
+      action={progress.active ? undefined : { label: et('load'), onClick: () => enterElementEdit(panel.id) }}
+    >
+      {et('needRender', { name: panel.name ?? panel.fileId })}
+      {progress.active && ` ${progress.text}`}
+    </EmptyLine>
+  )
 }
 
 function TreeView({
@@ -343,6 +341,10 @@ function TreeView({
   useTranslation('workspace')
   const selectedGids = useUiStore((s) => s.selectedGids)
   const [query, setQuery] = useState('')
+  // 条目少于 6 个时不显示搜索框（UI 2.0 第二轮 09）；输入过就一直留着，免得删到空的那一下框自己消失
+  const [searched, setSearched] = useState(false)
+  if (query !== '' && !searched) setSearched(true)
+  const showSearch = manifest.elements.length >= 6 || query !== '' || searched
   const [isolated, setIsolated] = useState<string | null>(null)
   const [open, setOpen] = useState<Record<string, boolean>>({})
   const listRef = useRef<HTMLUListElement>(null)
@@ -392,11 +394,15 @@ function TreeView({
     })
   }, [primaryGid, tree])
   useEffect(() => {
-    if (!primaryGid) return
-    listRef.current
-      ?.querySelector(`[data-el="${CSS.escape(primaryGid)}"]`)
-      ?.scrollIntoView({ block: 'nearest' })
-  }, [primaryGid, rows])
+    const list = listRef.current
+    if (!primaryGid || !list) return
+    // 选中项自己的行不可见（祖先刚被折叠，子树在退场动画里保活）：滚到最近的可见祖先——折叠后的组头
+    const chain = ancestorKeys(tree, primaryGid) ?? []
+    const target =
+      findVisibleRow(list, 'data-el', primaryGid) ??
+      [...chain].reverse().map((k) => findVisibleRow(list, 'data-el', k)).find(Boolean)
+    target?.scrollIntoView({ block: 'nearest' })
+  }, [primaryGid, rows, tree])
 
   const focusRow = (key: string) =>
     listRef.current?.querySelector<HTMLElement>(`[data-el="${CSS.escape(key)}"]`)?.focus()
@@ -489,51 +495,7 @@ function TreeView({
     (primaryGid !== undefined ? rows.find((r) => nodeGid(r.node) === primaryGid)?.key : undefined) ??
     rows[0]?.key
 
-  return (
-    <div className="flex min-h-0 flex-1 flex-col">
-      {/* 搜索框下留白与素材页 / 画布页同一档 8px（左栏审计 L36）。「只看这一支」是搜索行里的一枚 chip，
-          不再是搜索框下面另起的一条横幅（2026-10-07 设计审计 §10.3）：它与搜索一样是「看哪些行」的筛选 */}
-      <div className={cn('flex shrink-0 items-center gap-1.5', chrome === 'bare' ? 'p-2' : 'px-3 pb-2')}>
-        <SearchInput
-          value={query}
-          onValueChange={setQuery}
-          onKeyDown={(e) => {
-            if (e.key === 'ArrowDown' && rows.length) {
-              e.preventDefault()
-              focusRow(rows[0].key)
-            }
-          }}
-          placeholder={et('search')}
-          aria-label={et('searchAria')}
-        />
-        {isolated && (
-          <span
-            data-element-isolate
-            className="flex h-7 min-w-0 max-w-[50%] shrink items-center gap-1 rounded-full bg-surface-hover pl-2 pr-0.5 text-xs text-ink"
-          >
-            <Crosshair size={ICON_SIZE.xs} aria-hidden className="shrink-0 text-ink-3" />
-            <span className="min-w-0 truncate">{isolatedLabel}</span>
-            <IconButton iconSize="xs" label={et('exitIsolate')} data-element-isolate-exit onClick={() => setIsolated(null)}>
-              <X size={ICON_SIZE.xs} />
-            </IconButton>
-          </span>
-        )}
-      </div>
-
-      <ul
-        ref={listRef}
-        role="tree"
-        data-tree="elements"
-        aria-label={et('listLabel')}
-        aria-multiselectable
-        className="min-h-0 flex-1 scroll-py-1 overflow-y-auto py-1"
-      >
-        {rows.length === 0 && (
-          <li>
-            <EmptyState icon={SearchX} title={et('noMatch')} />
-          </li>
-        )}
-        {rows.map(({ node, depth, key, pos, size }) => {
+  const renderRow = ({ node, depth, key, pos, size }: Row) => {
           if (node.cluster) {
             return (
               <ClusterRow
@@ -608,7 +570,85 @@ function TreeView({
               onNavKey={navKey}
             />
           )
-        })}
+        }
+
+  /**
+   * 扁平行 → 带子树容器的渲染：紧跟在父行后面、更深一级的那一段行收进 `TreeBranch`
+   * （展开 / 收起的高度过渡）；行本身与键位仍按扁平序列。有子节点的行恒有一个 branch（收起时空着、
+   * 缓存上次的行供退场用）。
+   */
+  const renderTree = (from: number, depth: number): { out: ReactNode[]; next: number } => {
+    const out: ReactNode[] = []
+    let i = from
+    while (i < rows.length && rows[i].depth === depth) {
+      const r = rows[i++]
+      out.push(renderRow(r))
+      let kids: ReactNode[] = []
+      if (i < rows.length && rows[i].depth > depth) {
+        const sub = renderTree(i, depth + 1)
+        kids = sub.out
+        i = sub.next
+      }
+      if (r.node.children.length) {
+        out.push(
+          <TreeBranch key={`branch:${r.key}`} open={isOpen(r.node, r.key)}>
+            {kids}
+          </TreeBranch>,
+        )
+      }
+    }
+    return { out, next: i }
+  }
+
+  return (
+    <div className="flex min-h-0 flex-1 flex-col">
+      {/* 搜索框下留白与素材页 / 画布页同一档 8px（左栏审计 L36）。「只看这一支」是搜索行里的一枚 chip，
+          不再是搜索框下面另起的一条横幅（2026-10-07 设计审计 §10.3）：它与搜索一样是「看哪些行」的筛选 */}
+      {(showSearch || isolated) && (
+      <div className={cn('flex shrink-0 items-center gap-1.5', chrome === 'bare' ? 'p-2' : 'px-3 pb-2')}>
+        {showSearch && (
+        <SearchInput
+          value={query}
+          onValueChange={setQuery}
+          onKeyDown={(e) => {
+            if (e.key === 'ArrowDown' && rows.length) {
+              e.preventDefault()
+              focusRow(rows[0].key)
+            }
+          }}
+          placeholder={et('search')}
+          aria-label={et('searchAria')}
+        />
+        )}
+        {isolated && (
+          <span
+            data-element-isolate
+            className="flex h-7 min-w-0 max-w-[50%] shrink items-center gap-1 rounded-full bg-surface-hover pl-2 pr-0.5 text-xs text-ink"
+          >
+            <Crosshair size={ICON_SIZE.xs} aria-hidden className="shrink-0 text-ink-3" />
+            <span className="min-w-0 truncate">{isolatedLabel}</span>
+            <IconButton iconSize="xs" label={et('exitIsolate')} data-element-isolate-exit onClick={() => setIsolated(null)}>
+              <X size={ICON_SIZE.xs} />
+            </IconButton>
+          </span>
+        )}
+      </div>
+      )}
+
+      <ul
+        ref={listRef}
+        role="tree"
+        data-tree="elements"
+        aria-label={et('listLabel')}
+        aria-multiselectable
+        className="min-h-0 flex-1 scroll-py-1 overflow-y-auto py-1"
+      >
+        {rows.length === 0 && (
+          <li>
+            <EmptyLine>{et('noMatch')}</EmptyLine>
+          </li>
+        )}
+        {renderTree(0, 0).out}
       </ul>
     </div>
   )
@@ -680,7 +720,7 @@ const ClusterRow = memo(function ClusterRow({
       onPointerDown={(e) => {
         if (e.button === 0) onToggle(rowKey, expanded)
       }}
-      className={cn(listRowClass({ muted: true }), 'pr-0.5')}
+      className={cn(listRowClass({ tree: true, group: true }), 'pr-0.5')}
     >
       <TreeChevron expanded={expanded} />
       <TreeIcon icon={icon} />
@@ -747,6 +787,7 @@ const ElementRow = memo(function ElementRow({
   // ⋯ / 右键 / ⇧F10 同一份菜单（`ui/RowMenu`）；行有焦点时 ⋯ 进 Tab 顺序（此前 tabIndex=-1，键盘够不着）
   const menu = useRowMenu()
   const labelRef = useBoldTrackingLock<HTMLSpanElement>(selected, name)
+  const { prefix, name: rest } = splitTypePrefix(name)
 
   return (
     <li
@@ -805,17 +846,18 @@ const ElementRow = memo(function ElementRow({
         if (isMac && e.ctrlKey) return
         onSelect(gid, e.shiftKey || e.ctrlKey || e.metaKey)
       }}
-      className={cn(listRowClass({ selected, hidden }), 'pr-0.5')}
+      className={cn(listRowClass({ tree: true, group: expanded !== undefined, selected, hidden }), 'pr-0.5')}
     >
       <TreeChevron
         expanded={expanded}
         onToggle={expanded === undefined ? undefined : () => onToggle(rowKey, expanded)}
         label={expanded === undefined ? undefined : et(expanded ? 'collapse' : 'expand')}
       />
-      <TreeIcon icon={roleIcon(role)} selected={selected} />
+      <TreeIcon icon={roleIcon(role)} />
 
       <span ref={labelRef} data-tree-label className="min-w-0 flex-1 truncate" title={`${shown} · ${roleName(role)} · ${gid}`}>
-        {name}
+        {prefix && <span className={cn('font-normal', selected ? 'text-ink-2' : 'text-ink-3')}>{prefix}</span>}
+        {rest}
       </span>
 
       {unsupported && (

@@ -318,11 +318,19 @@ async function openOriginalExport(page: Page, id: string) {
   await (await only(dialog.locator('[data-onboarding-anchor="export-scope"] [data-value="original"]'))).click()
   // The displayed name is a stem; identity belongs to the actual source thumbnail and request.
   const target = await only(dialog.locator('[data-export-target]'))
-  const thumb = await only(target.locator('img'))
-  await expect.poll(async () => {
-    const src = await thumb.getAttribute('src')
-    return src ? new URL(src, page.url()).searchParams.get('id') : null
-  }).toBe(FILE)
+  // 对象头缩略图与清单行同一份取图：图带着图内修改（或在引擎里）时是引擎 SVG（`data-export-thumb="svg"`，
+  // 身份由引擎渲染与下面的导出请求认），否则是磁盘原图的 <img>（身份认它 src 里的 id）。两种都只有一个、不能是占位
+  const thumb = await only(target.locator('[data-export-thumb]'))
+  const kind = await thumb.getAttribute('data-export-thumb')
+  expect(['file', 'svg'], `缩略图形态 ${kind}`).toContain(kind)
+  if (kind === 'file') {
+    await expect.poll(async () => {
+      const src = await thumb.getAttribute('src')
+      return src ? new URL(src, page.url()).searchParams.get('id') : null
+    }).toBe(FILE)
+  } else {
+    await expect(thumb.locator('svg')).toHaveCount(1)
+  }
   const confirm = dialog.locator('input[data-export-confirm]')
   if (await confirm.count()) await (await only(confirm)).check()
   // Deliberately stays red on the old asset-list-only sourceReachable predicate.

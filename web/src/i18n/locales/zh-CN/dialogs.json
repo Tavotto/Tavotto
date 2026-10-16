@@ -77,6 +77,7 @@
     "openProblems": "在问题面板中查看",
     "operationFailed": "无法完成：{{error}}",
     "outputFailed": "无法导出 {{format}}：{{reason}}",
+    "partialSummary": "已保存 {{ok}} 个，{{failed}} 个失败",
     "pdfHint": "矢量",
     "phase": {
       "cancelled": "已取消",
@@ -128,6 +129,7 @@
     "sizeUnknownShort": "尺寸未知",
     "start": "开始导出",
     "targetNoFigure": "当前没有图",
+    "thumbNote": "缩略图仅为示意 · 非最终文件",
     "tiffHint": "位图 · 无损压缩",
     "title": "导出",
     "transparent": "透明背景（仅 PNG / TIFF）",

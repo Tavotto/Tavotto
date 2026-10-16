@@ -1063,6 +1063,10 @@ jobs:
       # `tavotto-workerd` 产物的机器上 skip，而 CI 里唯一有 `target/debug/tavotto-workerd` 的地方就是
       # 这里（`cargo test` 刚建的）——两条冒烟腿验的是「产物自带的 workerd 能渲染」，验不了
       # 「三路逐字节等价」。所以在这个 job 里装上科学栈对着刚建的二进制真跑一次。
+      # 同一步也带上 #961 的 workerd 启动期缺件分诊（test_engine_files_incomplete.py 里带 workerd 的那条）。
+      # find_workerd 优先 release：Rust 缓存若恢复出旧的 target/release 二进制，这批用例会对着过期字节
+      # 变绿（Codex #1085 / #1117）。不靠设环境变量钉（那等于替自动发现填答案，test_workerd_packaging
+      # 禁止），而是先删掉可能残留的 release 产物，再断言自动发现落在刚建的 debug 产物上。
       # `-k workerd` 选的就是那 12 条（用例名里都带 workerd）；`-rs` 把仍 skip 的理由打出来——
       # 这一步的判据是「它们真跑了」，全 skip 也算失败（同一步末尾按 junit 核对）。
       - uses: actions/setup-python@v6
@@ -1089,15 +1093,27 @@ jobs:
           # 批准字体（U10）：等价性矩阵里的导出经 RenderCore，没字体就 fonts_dir_missing
           python scripts/fetch_fonts.py && python scripts/fetch_fonts.py --check
           test -x workerd/target/debug/tavotto-workerd
+          rm -f workerd/target/release/tavotto-workerd
+          python - <<'PY'
+          import os, sys
+          from tavotto.engine.workerd_client import find_workerd
+          found = find_workerd()
+          want = "workerd/target/debug/tavotto-workerd"
+          if not found or not os.path.samefile(found, want):
+              sys.exit(f"find_workerd() -> {found!r}，不是刚建的 {want}")
+          PY
           python -m pytest tests/test_equivalence_matrix.py tests/test_worker_roundtrip.py \
+            tests/test_engine_files_incomplete.py \
             -k workerd -p no:cacheprovider -q -rs --junitxml "${{ runner.temp }}/workerd-pytest.xml"
           python - <<'PY'
           import xml.etree.ElementTree as ET, os
           root = ET.parse(os.path.join(os.environ["RUNNER_TEMP"], "workerd-pytest.xml")).getroot()
-          cases = root.iter("testcase")
+          cases = list(root.iter("testcase"))
           ran = [c for c in cases if c.find("skipped") is None]
           assert ran, "workerd 那批用例一条都没真跑（全 skip）——产物没被认出来，这一步就成了空转"
-          print(f"真跑了 {len(ran)} 条 workerd 用例")
+          ran_961 = [c for c in ran if "engine_files_incomplete" in c.get("classname", "")]
+          assert ran_961, "#961 的 workerd 启动期缺件用例没真跑"
+          print(f"真跑了 {len(ran)} 条 workerd 用例（其中 #961 {len(ran_961)} 条）")
           PY
 
   # 桌面壳（Tauri）的静态门禁 + 单测。**与 workerd 同一条纪律**，理由也一样：

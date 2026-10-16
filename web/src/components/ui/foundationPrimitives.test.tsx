@@ -248,6 +248,13 @@ describe('listRowClass / rowMetaClass / dropLineClass', () => {
     for (const size of ['sm', 'md', 'lg'] as const) expect(listRowClass({ size })).toMatch(/\brounded-md\b/)
     expect(listRowClass({ selected: true })).toMatch(/\bbg-selected\b.*\bfont-semibold\b|\bfont-semibold\b.*\bbg-selected\b/)
     expect(listRowClass()).not.toMatch(/font-semibold/)
+    // 结构侧栏变体：圆角 6；叶子 ink-2、分组头 500 + ink、选中 600 + ink
+    expect(listRowClass({ tree: true })).toMatch(/\brounded-sm\b/)
+    expect(listRowClass({ tree: true })).toMatch(/\btext-ink-2\b/)
+    expect(listRowClass({ tree: true, group: true })).toMatch(/\bfont-medium\b.*\btext-ink\b|\btext-ink\b.*\bfont-medium\b/)
+    expect(listRowClass({ tree: true, selected: true })).toMatch(/\bfont-semibold\b/)
+    expect(listRowClass({ tree: true, selected: true })).not.toMatch(/text-ink-2/)
+    expect(listRowClass()).toMatch(/\brounded-md\b/)
     // 被拖行淡化：用 opacity-dragging，且压过 hidden 的 45
     expect(listRowClass({ dragging: true })).toMatch(/\bopacity-dragging\b/)
     expect(listRowClass({ dragging: true, hidden: true })).not.toMatch(/opacity-45/)

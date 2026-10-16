@@ -16,6 +16,7 @@
  *    发送 ↔ 中止的图标）——4px 位移上的回弹是 0.2px，是手感不是动作。
  */
 import {
+  useCallback,
   useEffect,
   useLayoutEffect,
   useRef,
@@ -129,6 +130,8 @@ export function usePresence(
 ): { mounted: boolean; state: 'open' | 'closed' } {
   const [mounted, setMounted] = useState(open)
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+  const mountedRef = useRef(mounted)
+  mountedRef.current = mounted
 
   useEffect(() => {
     clearTimeout(timer.current)
@@ -136,7 +139,9 @@ export function usePresence(
       setMounted(true)
       return
     }
-    // 已经卸载了就别再排一次定时器（否则每次 open=false 的重渲染都排一个）
+    // 已经卸载了就别再排一次定时器：一开始就是收起的（树里每个折叠节点一个）排了也只是 90ms 后
+    // 白白重渲染一次自己，量提交次数的用例会被这一下随机撞红
+    if (!mountedRef.current) return
     if (prefersReducedMotion() || exitMs <= 0) {
       setMounted(false)
       return
@@ -209,21 +214,46 @@ export function drawerMotion({ state, overlay, width, side }: DrawerMotionOption
  *    那套两帧把戏，也不会和元素自己的 transform 类抢同一个属性声明。
  *    reduced-motion 下整个跳过——WAAPI 同样不受 index.css 的全局 override 管。
  */
-export function useFlip(container: RefObject<HTMLElement | null>, attr = 'data-flip-id'): void {
+export function useFlip(
+  container: RefObject<HTMLElement | null>,
+  attr = 'data-flip-id',
+  skipKey?: unknown,
+): { rebase: () => void } {
   const prev = useRef(new Map<string, { left: number; top: number }>())
+  // `skipKey` 变了 = 别的动画接管了这一批位移（树里展开 / 折叠一个组：子树自己有 grid 高度过渡，下面的行再被
+  // FLIP 滑一遍就是两倍位移，还会先往上跳）。进入「让位期」：期间每次提交都只量位置、不播；
+  // 别的动画结束时调 `rebase()`——重新量一次基准（此时位置已是终点）并结束让位期。过渡期间夹进来的别的提交
+  // 只会记下半路的位置，不 rebase 的话，过渡一结束的下一次重排会从那个半路基准多滑一段。
+  // 兜底：没人调 rebase（动画没播起来）时 `SETTLE_FALLBACK_MS` 后自己结束，免得 FLIP 永久静音
+  const prevSkip = useRef(skipKey)
+  const settling = useRef(false)
+  const settleTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+  if (prevSkip.current !== skipKey) {
+    prevSkip.current = skipKey
+    settling.current = true
+    clearTimeout(settleTimer.current)
+    settleTimer.current = setTimeout(() => {
+      settling.current = false
+    }, SETTLE_FALLBACK_MS)
+  }
+  useEffect(() => () => clearTimeout(settleTimer.current), [])
+
+  const rebase = useCallback(() => {
+    clearTimeout(settleTimer.current)
+    settling.current = false
+    const root = container.current
+    if (!root) return
+    prev.current = measureFlipItems(root, attr)
+  }, [container, attr])
 
   useLayoutEffect(() => {
     const root = container.current
     if (!root) return
+    const skipThis = settling.current
     const items = [...root.querySelectorAll<HTMLElement>(`[${attr}]`)]
     const next = new Map<string, { left: number; top: number }>()
     const reduced = prefersReducedMotion()
-    // 位置一律换算到**容器的内容坐标系**（减容器左上角、加回滚动量），不能直接
-    // 用视口坐标：列表能滚，而滚动不触发重渲染——下一次因为别的原因重渲染时，
-    // 拿视口坐标算出来的位移正好等于这期间滚过的距离，整列表会凭空滑一下。
-    const base = root.getBoundingClientRect()
-    const ox = base.left - root.scrollLeft
-    const oy = base.top - root.scrollTop
+    const { ox, oy } = contentOrigin(root)
 
     for (const el of items) {
       const id = el.getAttribute(attr)
@@ -237,7 +267,7 @@ export function useFlip(container: RefObject<HTMLElement | null>, attr = 'data-f
       const left = r.left - t.x - ox
       const top = r.top - t.y - oy
       next.set(id, { left, top })
-      if (reduced) continue
+      if (reduced || skipThis) continue
       const old = prev.current.get(id)
       if (!old) continue // 新来的项没有「原来的位置」，直接就位
       // 布局没变：正在播的那段（如果有）照常播完，不打断、不重起
@@ -260,6 +290,31 @@ export function useFlip(container: RefObject<HTMLElement | null>, attr = 'data-f
     }
     prev.current = next
   })
+
+  return { rebase }
+}
+
+/** 让位期的兜底时长：比最长的展开过渡（base 180）多留一截 */
+const SETTLE_FALLBACK_MS = 400
+
+/** 位置换算到**容器的内容坐标系**的原点（见 useFlip 里的说明） */
+function contentOrigin(root: HTMLElement) {
+  const base = root.getBoundingClientRect()
+  return { ox: base.left - root.scrollLeft, oy: base.top - root.scrollTop }
+}
+
+/** 一次量下所有 `[attr]` 项的布局位置（不含正在播的 translate），不播任何动画 */
+function measureFlipItems(root: HTMLElement, attr: string) {
+  const out = new Map<string, { left: number; top: number }>()
+  const { ox, oy } = contentOrigin(root)
+  for (const el of root.querySelectorAll<HTMLElement>(`[${attr}]`)) {
+    const id = el.getAttribute(attr)
+    if (!id) continue
+    const r = el.getBoundingClientRect()
+    const t = runningTranslate(el)
+    out.set(id, { left: r.left - t.x - ox, top: r.top - t.y - oy })
+  }
+  return out
 }
 
 /** useFlip 在每个元素上正在播的那一段；新的一段开始前停掉旧的 */

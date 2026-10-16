@@ -234,8 +234,7 @@
     "noPanelTitle": "Select an editable figure to see its elements",
     "noEditableTitle": "No editable figure on the canvas yet",
     "noEditableHint": "Only script-generated figures expose their objects",
-    "locateEditable": "Select an editable figure",
-    "openAssets": "Open assets"
+    "locateEditable": "Select an editable figure"
   },
   "fastEdit": {
     "addToCanvas": "Add to canvas",
