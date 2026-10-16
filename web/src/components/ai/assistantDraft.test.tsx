@@ -995,6 +995,25 @@ describe('同步状态机：单一 reconcile + 写入版本（#1098）', () => {
     expect(q<HTMLButtonElement>('[data-ai-send]')!.disabled).toBe(false) // 发送解锁
   })
 
+  it('cancel 之后 SSE 断开：本地 cancelled 但未 finalize 的会话重连对账时继续查——快照还没有 ended_ms 就等，后端写入 changed / diff 后收尾', async () => {
+    useAiStore.setState({
+      sessions: [failedSession({ id: 's-canc', status: 'cancelled', finalized: false, script: 'p1.py', finishedAt: undefined, changed: false })],
+    })
+    await mount()
+    // 取消已被接受，但后端的 pump 还没收尾：快照是 cancelled、没有 ended_ms（changed / diff 还没算出来）
+    vi.mocked(fetchAiSession).mockResolvedValue({ agent: 'codex', status: 'cancelled', changed: false, diff: '', transcript: [] })
+    await act(async () => window.dispatchEvent(new Event('mm:sse-open')))
+    await settle()
+    expect(useAiStore.getState().sessions[0].finalized).toBeFalsy() // 不把没算完的快照当终态
+    // 之后 pump 收尾：写入 changed / diff 和 ended_ms；ai.done 因为断线丢了，重连对账拿到
+    vi.mocked(fetchAiSession).mockResolvedValue({
+      agent: 'codex', status: 'cancelled', ended_ms: 1700000000000, changed: true, diff: 'REAL-DIFF', transcript: [],
+    })
+    await act(async () => window.dispatchEvent(new Event('mm:sse-open')))
+    await settle()
+    expect(useAiStore.getState().sessions[0]).toMatchObject({ status: 'cancelled', finalized: true, changed: true, diff: 'REAL-DIFF' })
+  })
+
   it('读不到快照 / 快照仍是 running：本地会话不动（不把「查不到」当结束）', async () => {
     vi.mocked(aiRun).mockResolvedValue({ session: 's-1', script: 'p1.py' })
     await mount()

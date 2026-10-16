@@ -923,6 +923,9 @@ def run(
                 transcript=sess["transcript"],
                 refresh=sess["refresh"],
             )
+            # 结束时刻：会话详情据此告诉前端「这是不是终态快照」——`cancel` 之后 status 立刻是 cancelled，但 changed / diff / refresh
+            # 要等 pump 收尾才算出来；没有 ended_ms 的 cancelled 快照不是终态
+            sess["ended_ms"] = int(time.time() * 1000)
             emit(
                 "ai.done",
                 {
@@ -946,6 +949,7 @@ def run(
                 transcript=sess.get("transcript") or [],
                 refresh=sess["refresh"],
             )
+            sess["ended_ms"] = int(time.time() * 1000)
             emit(
                 "ai.done",
                 {

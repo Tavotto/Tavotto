@@ -3242,6 +3242,8 @@ export interface AiSessionDetail {
   /** 文件变了之后项目刷新的结局（`changed:true` + `failed` = 改成了、项目没刷新） */
   refresh?: AiRefreshOutcome | null
   status: string
+  /** 后端写下的结束时刻（`_pump` 收尾之后）；`cancelled` 但没有它 = 取消已被接受、结果还没算出来，不是终态快照 */
+  ended_ms?: number | null
   changed: boolean | null
   diff: string
   transcript: { kind: string; text: string }[]

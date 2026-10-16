@@ -227,6 +227,25 @@ const MAX_LINES = 600
 const EARLY_MAX_SIDS = 16
 const EARLY_MAX_EVENTS = 500
 const early = new Map<string, EarlyEvent[]>()
+
+/**
+ * **非终态会话的谓词**：还没拿到后端确定的终态（`!finalized`）。本地 `cancel` 成功后状态先标成 `cancelled`，但那只是「中止请求被接受」，
+ * 后端的最终结局（changed / diff / refresh）还没到——所以 running 和「cancelled 但未 finalized」都要继续对账，
+ * 否则 `ai.done` 在 SSE 断线期间丢了，会话永远停在 cancelled、结果（脚本其实被改了）也看不到。
+ */
+export const isOpenSession = (x: Pick<AiSession, 'status' | 'finalized'>): boolean =>
+  !x.finalized && (x.status === 'running' || x.status === 'cancelled')
+
+/**
+ * 一份会话快照是不是**终态**：非 running；而 `cancelled` 必须带着后端写下的 `ended_ms`（pump 收尾之后才有）。
+ * 没有详情（404）时无从判断，按 status 走。
+ */
+export function snapshotIsFinal(d: Pick<AiSessionDetail, 'status' | 'ended_ms'> | null | undefined, fallbackStatus: string): boolean {
+  const status = typeof d?.status === 'string' && d.status ? d.status : fallbackStatus
+  if (status === 'running') return false
+  if (status === 'cancelled' && d) return typeof d.ended_ms === 'number'
+  return true
+}
 /** 账本写入「不知道」写没写成的那条指令（按 项目×文件）：重试沿用同一个 rid */
 const ledgerUnknown = new Map<string, { rid: string; prompt: string; sentJson: string }>()
 /** 被放弃的旧等待（按 项目×文件）：下一次这个面板发新 rid 时，随新账本行的 PUT 带 `supersedes`，由后端在同一个事务里删 */
@@ -494,10 +513,10 @@ export const useAiStore = create<AiState>((set, get) => ({
     const born = get().generation
     const pj = currentProjectId()
     for (const x of get().sessions) {
-      if (x.status !== 'running' || x.finalized || x.project !== pj) continue
+      if (!isOpenSession(x) || x.project !== pj) continue
       const snap = await readSessionDetail(x.id, x.project)
       const d = snap.ok ? snap.detail : null
-      if (born !== get().generation || typeof d?.status !== 'string' || d.status === 'running') continue
+      if (born !== get().generation || typeof d?.status !== 'string' || !snapshotIsFinal(d, d.status)) continue
       const done: DonePayload = {
         session: x.id,
         status: d.status,
@@ -838,7 +857,7 @@ function accept(
         ? detail.status
         : how.status
       : 'running'
-  const settled = how.kind === 'queried' && status !== 'running'
+  const settled = how.kind === 'queried' && snapshotIsFinal(detail, status)
   const session: AiSession = {
     id: sid,
     project: sub.project,

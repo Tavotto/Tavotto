@@ -1090,3 +1090,33 @@ def test_a_cancelled_but_unfinished_session_in_another_process_still_blocks_the_
         )[0]
         is True
     )
+
+
+def test_live_session_detail_has_ended_ms_only_after_the_pump_finishes(tmp_path, cli, monkeypatch):
+    """cancel 之后 status 立刻是 cancelled，但 changed / diff / refresh 要等 pump 收尾——收尾之前的详情没有 ended_ms，
+    前端据此不把 cancelled 快照当终态（SSE 断线期间丢了 ai.done 时靠对账拿到真正的结果）。"""
+    state, _ = cli
+    state["delay"] = 2.0
+    figs = _project(tmp_path)
+    gate = threading.Event()
+    real_refresh = ai_bridge.refresh_outcome
+
+    def slow_refresh(*a, **k):
+        gate.wait(10)
+        return real_refresh(*a, **k)
+
+    monkeypatch.setattr(ai_bridge, "refresh_outcome", slow_refresh)
+    sid = ai_bridge.run("codex", "fig1.py", "p", str(figs))
+    assert ai_bridge.cancel(sid) is True
+    time.sleep(0.4)
+    detail = ai_bridge.get(sid)
+    assert detail["status"] == "cancelled" and not detail.get(
+        "ended_ms"
+    )  # pump 卡在 refresh 上：还没结束
+    gate.set()
+    deadline = time.time() + 15
+    while time.time() < deadline and not ai_bridge.SESSIONS[sid].get("ended_ms"):
+        time.sleep(0.05)
+    assert isinstance(ai_bridge.get(sid)["ended_ms"], int)
+    _wait_idle()
+    engine_watch.stop()
