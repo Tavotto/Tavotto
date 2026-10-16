@@ -97,6 +97,24 @@ def spawn_started() -> bool:
     return bool(getattr(_SPAWN_MARK, "started", False))
 
 
+def _finish_session(sess: dict, *, error: str | None = None) -> None:
+    """**终态字段的唯一写入点**：status / error / changed / diff / transcript / refresh 同时落到内存会话和历史库，再置 `final`。
+    `get()` 优先返回内存会话——两边分叉（比如异常分支只把 error 写进历史库）会让对账拿到 `final: true` 但没有 error 的快照，
+    恢复后的失败提示就是空白的。"""
+    if error is not None:
+        sess["error"] = error
+    ai_history.record_end(
+        sess["id"],
+        sess["status"],
+        diff=sess.get("diff") or "",
+        changed=bool(sess.get("changed")),
+        error=sess.get("error"),
+        transcript=sess.get("transcript") or [],
+        refresh=sess.get("refresh"),
+    )
+    sess["final"] = True
+
+
 def _drop_attempt_files(sid: str, snap: Path) -> None:
     """这次尝试没有真正起任务（被拒绝）：清掉为它备好的快照 / sidecar / 日志，不留半成品。"""
     for leftover in (snap, SNAP_DIR / f"{sid}.json", SNAP_DIR / f"{sid}.stderr.log"):
@@ -929,7 +947,7 @@ def run(
             # 要等 pump 收尾才算出来；没有 ended_ms 的 cancelled 快照不是终态
             sess["ended_ms"] = int(time.time() * 1000)
             # changed / diff / refresh 此刻才全部确定：`final` 之前的快照（包括 cancel 之后立刻变成 cancelled 的）不是终态
-            sess["final"] = True
+            _finish_session(sess)
             emit(
                 "ai.done",
                 {
@@ -945,6 +963,8 @@ def run(
             _terminate(sess)
             _await_exit(sess)
             sess["status"] = "failed"
+            sess["changed"] = False
+            sess["diff"] = ""
             sess["refresh"] = sess.get("refresh") or {"status": "skipped"}
             ai_history.record_end(
                 sid,
@@ -955,6 +975,7 @@ def run(
             )
             sess["ended_ms"] = int(time.time() * 1000)
             sess["final"] = True
+            _finish_session(sess, error=str(exc))
             emit(
                 "ai.done",
                 {

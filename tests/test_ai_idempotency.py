@@ -1418,3 +1418,26 @@ def test_interrupted_rows_are_final_even_without_ended_ms(tmp_path, cli):
     }
     assert ended["intr-unended1"] is not None and ended["canc-unended1"] is not None
     assert ai_bridge.get("canc-unended1")["final"] is True  # 补上之后 cancelled 也收尾了
+
+
+def test_pump_exception_puts_the_error_on_the_in_memory_session_too(tmp_path, cli, monkeypatch):
+    """_pump 抛异常的分支：error 必须同时写进内存会话和历史库。`get()` 优先返回内存会话——只写历史库的话，
+    对账拿到的是 final:true 却没有 error 的快照，恢复后的失败提示是空白的。"""
+    figs = _project(tmp_path)
+
+    def boom(*_a, **_k):
+        raise RuntimeError("刷新炸了：scan 失败")
+
+    monkeypatch.setattr(ai_bridge, "refresh_outcome", boom)
+    sid = ai_bridge.run("codex", "fig1.py", "p", str(figs))
+    deadline = time.time() + 15
+    while time.time() < deadline and not ai_bridge.SESSIONS[sid].get("final"):
+        time.sleep(0.05)
+    detail = ai_bridge.get(sid)  # 内存会话仍在
+    assert detail["final"] is True and detail["status"] == "failed"
+    assert detail["error"] == "刷新炸了：scan 失败"  # 对照：以前这里没有 error
+    hist = ai_history.get(sid)
+    assert hist["error"] == "刷新炸了：scan 失败"  # 历史库是同一份
+    assert hist["changed"] == detail["changed"] and hist["diff"] == detail["diff"]  # 两边不分叉
+    _wait_idle()
+    engine_watch.stop()
