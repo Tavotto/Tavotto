@@ -1340,12 +1340,12 @@
     "note": "这些路径**不经 facade**，替换 PyMuPDF 时它们不变——但它们是 facade 边界之外「谁还碰 PDF/位图」的完整名单，U10 的退役扫描主语要把它们分清。",
     "items": [
       {
-        "path": "src/tavotto/app.py:942 _serialize_figure",
+        "path": "src/tavotto/app.py:943 _serialize_figure",
         "category": "worker_direct",
         "detail": "worker 的 matplotlib savefig：SVG / EPS 只从这里出；要了 EPS 时 PDF/PNG/TIFF 也让 worker 现画（_resolve_panel_source(rerender=True)），四个格式出自同一次脚本运行。"
       },
       {
-        "path": "src/tavotto/app.py:1213 _produce_original_eps",
+        "path": "src/tavotto/app.py:1214 _produce_original_eps",
         "category": "worker_direct",
         "detail": "scope=original 的 EPS；没有脚本报 eps_needs_script。"
       },
