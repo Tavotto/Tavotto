@@ -71,11 +71,13 @@ export type SaveResult = 'saved' | 'removed' | 'too_large' | 'unavailable' | 'st
  * 之后的写入一定比它新。
  */
 let lastStamp = 0
-/** 低 10 位是本页的随机 client 段：不同页面（标签页）生成的戳在这一段上不同，所以**不可能生成相同的戳**，同时仍保持单调、可比较 */
+/** 低 10 位是本页的随机 client 段：不同页面（标签页）生成的戳在这一段上几乎总是不同（两页碰巧同段的概率 1/1024，
+ * 那种情况下还有发件箱的 attempts 判定兜底），同时仍保持单调、可比较 */
 const CLIENT_BITS = 1024
 const randomClientId = (): number => {
   try {
-    return crypto.getRandomValues(new Uint16Array(1))[0] % CLIENT_BITS
+    // 取低 10 位用位掩码（1024 整除 65536，本来就没有偏差；掩码写法让这一点一眼可见）
+    return crypto.getRandomValues(new Uint16Array(1))[0] & (CLIENT_BITS - 1)
   } catch {
     return Math.floor(Math.random() * CLIENT_BITS)
   }
