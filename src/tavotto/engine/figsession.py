@@ -50,6 +50,7 @@ import platform
 import sys
 import threading
 import time
+import weakref
 from pathlib import Path
 
 import matplotlib
@@ -510,6 +511,9 @@ class LiveFigureSession:
         #: stem -> 与 `savefig_calls[stem]` 逐项对齐的 `bbox_extra_artists` **对象**（进不了 JSON，
         #: 只活在这个进程里；算图幅时要把同一批 artist 交回 savefig，ADR 0098 §一）
         self.savefig_extras: dict[str, list] = {}
+        #: stem -> {格式 -> 最近一次把这条路径（stem + 格式）写盘的 Figure（弱引用）}。只为
+        #: 「同一路径换了写入者」这一个判断服务，见 `note_savefig`。
+        self.savefig_writers: dict[str, dict[str, weakref.ref]] = {}
         # Safe capture normally suppresses savefig. File-object saves really draw
         # during the script; do not treat their later state as an undrawn seed.
         self.passthrough_figures: set[int] = set()
@@ -559,7 +563,36 @@ class LiveFigureSession:
         return True
 
     def note_savefig(self, stem: str, fig, call: dict | None, extra_artists=None) -> None:
-        """记一次 savefig 调用（规则在 `figcapture.record_savefig_call`）。"""
+        """记一次 savefig 调用（规则在 `figcapture.record_savefig_call`）。
+
+        同一路径换了写入者（`docs/rules/backend/figure-capture-and-execution.md`「同一路径多个
+        写入者」）：`add_figure` 对已有 stem 先到先得，但**这条路径**（stem + 格式）上一次是另一张
+        图写的、这次换成了 `fig`，磁盘上留下的就是 `fig` 的产物，捕获的也必须是它——最后写入者胜。
+        只认路径重合，不认「同 stem」：同 stem 不同格式（`a.pdf` 是甲、`a.svg` 是乙）磁盘上各有
+        各的文件，不构成顶替，stem 仍归先认领的那张。顶掉时，被顶掉那张的调用与 `bbox_extra_artists`
+        一并清掉（那是它的参数）。显式 savefig 之外的认领（pyplot 兜底）永远不顶掉；已进入编辑或
+        已记失败的 stem 不换图（override / 清单 / 预览都挂在那张图上）。
+        """
+        if call is not None:
+            fmt = str(call.get("format") or "").lower()
+            fmt = {"jpeg": "jpg", "tif": "tiff"}.get(fmt, fmt)
+            writers = self.savefig_writers.setdefault(stem, {})
+            prev = writers.get(fmt)
+            writers[fmt] = weakref.ref(fig)
+            held = self.capture.get(stem)
+            if (
+                prev is not None
+                and prev() is not None
+                and prev() is not fig
+                and held is not None
+                and held is not fig
+                and self.capture_source.get(stem) == figcapture.SOURCE_SAVEFIG
+                and stem not in self.states
+                and stem not in self.failures
+            ):
+                self.capture[stem] = fig
+                self.savefig_calls.pop(stem, None)
+                self.savefig_extras.pop(stem, None)
         if figcapture.record_savefig_call(self.savefig_calls, self.capture, stem, fig, call):
             self.savefig_extras.setdefault(stem, []).append(extra_artists)
 
@@ -805,6 +838,7 @@ class LiveFigureSession:
                 self.capture_source.pop(stem, None)
                 self.savefig_calls.pop(stem, None)
                 self.savefig_extras.pop(stem, None)
+                self.savefig_writers.pop(stem, None)
                 self.failures.pop(stem, None)
                 self._failed_states.pop(stem, None)
                 self.live_captured_at.pop(stem, None)
@@ -849,6 +883,7 @@ class LiveFigureSession:
             self.capture_source,
             self.savefig_calls,
             self.savefig_extras,
+            self.savefig_writers,
             self.failures,
             self._failed_states,
             self.live_captured_at,
