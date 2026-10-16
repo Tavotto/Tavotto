@@ -112,6 +112,8 @@ BLIND_TOO_LARGE = "too_large"
 MAX_SOURCE_BYTES = 1 << 20
 CACHE_SIZE = 64
 _MAX_DEPTH = 8  # 名字追踪 / 表达式折叠的递归深度
+#: 规则配对的比较预算：超出 = 不给高置信（回 safe），不为病态的生成脚本付 n² 的代价
+_PAIR_BUDGET = 200_000
 
 
 # ---------------------------------------------------------------- 调用表（限定名 = import 绑定解析之后的点号名）
@@ -695,6 +697,46 @@ class _Collector:
         }
     )
     _WRITER_PREFIXES = ("shutil.copy", "shutil.make_archive", "shutil.unpack_archive")
+    #: `to_*` / `write_*` 这一族（pandas `to_xml` / `to_latex` / `to_markdown`、polars `write_csv`、xarray `to_netcdf`……）按**形态**
+    #: 收口而不是逐个列名（Codex #1034 r4286232612）：带了实参就算写出；只排除常见的、从不写文件的转换方法。多判只会回 safe
+    _CONVERT_TAILS = frozenset(
+        {
+            "to_numpy",
+            "to_dict",
+            "to_list",
+            "to_frame",
+            "to_series",
+            "to_datetime",
+            "to_numeric",
+            "to_timedelta",
+            "to_period",
+            "to_timestamp",
+            "to_records",
+            "to_dense",
+            "to_flat_index",
+            "to_pydatetime",
+            "to_offset",
+            "to_rgba",
+            "to_rgba_array",
+            "to_rgb",
+            "to_hex",
+            "to_tuple",
+            "to_coo",
+            "to_array",
+            "to_dataset",
+            "to_dataframe",
+            "to_pandas",
+            "to_xarray",
+            "to_masked_array",
+            "to_device",
+            "to_bytes",
+            "to_value",
+            "to_unit",
+            "to_polygons",
+            "to_path",
+            "to_mask",
+        }
+    )
     #: 第二个实参是 mode 时这些字符串方法会撞形（`s.replace("x", "a")`），不按 mode 判
     _STR_METHODS = frozenset(
         {
@@ -800,6 +842,27 @@ class _Collector:
             tails.add(last)
         if tails & self._WRITER_TAILS:
             return True
+        # 日志写文件（Codex #1034 r4286453690）：`logging.basicConfig(filename=…)`、`*FileHandler(…)`、按配置建处理器的 `fileConfig` /
+        # `dictConfig`——safe 里落沙箱、native 里截断真实文件
+        if any(t.endswith("FileHandler") or t in ("fileConfig", "dictConfig") for t in tails):
+            return True
+        # 写出器对象（Codex #1034 r4286515577）：名字里带 writer 的构造 / 工厂（`pd.ExcelWriter`、`imageio.get_writer`、
+        # `cv2.VideoWriter`、`csv.writer`……）与建档即落盘的容器（`pd.HDFStore`、`PdfPages`）——按形态认，不逐个列名
+        if (node.args or node.keywords) and any(
+            "writer" in t.lower() or t in ("HDFStore", "PdfPages") for t in tails
+        ):
+            return True
+        if any(k.arg in ("filename", "filemode") for k in node.keywords) and (
+            (q or "").startswith("logging") or "basicConfig" in tails
+        ):
+            return True
+        if (node.args or node.keywords) and any(
+            (t.startswith("to_") and t not in self._CONVERT_TAILS)
+            or t.startswith("write_")
+            or t == "writeto"
+            for t in tails
+        ):
+            return True
         if names & self._WRITER_QUALIFIED or any(
             n.startswith(self._WRITER_PREFIXES) for n in names if n
         ):
@@ -845,7 +908,74 @@ class _Collector:
         return False
 
     def has_guarded_ops(self) -> bool:
-        return any(isinstance(n, ast.Call) and self._guarded_call(n) for n in ast.walk(self.tree))
+        if any(isinstance(n, ast.Call) and self._guarded_call(n) for n in ast.walk(self.tree)):
+            return True
+        return self._writer_escapes()
+
+    def _writer_tail(self, attr: str) -> bool:
+        return (
+            "writer" in attr.lower()
+            or attr in ("HDFStore", "PdfPages")
+            or attr.endswith("FileHandler")
+            or attr in self._WRITER_TAILS
+            or attr in self._GUARDED_TAILS
+            or (attr.startswith("to_") and attr not in self._CONVERT_TAILS)
+            or attr.startswith("write_")
+            or attr == "writeto"
+        )
+
+    def _writer_escapes(self) -> bool:
+        """已知写出器 / 守卫操作**不经直接调用**地出现：绑定成别名（`w = Path("v").write_text; w("x")`、`rm = os.remove`、
+        `from os import remove` 之后把 `remove` 传走）或按字面名取属性（`getattr(p, "write_text")`）。调用点看不出是谁，
+        所以只要它在脚本里被引用就宁宽：按含守卫操作处理（Codex #1034 r4286291290）。"""
+        called = {id(n.func) for n in ast.walk(self.tree) if isinstance(n, ast.Call)}
+        qualified = self._GUARDED_QUALIFIED | self._WRITER_QUALIFIED
+        for n in ast.walk(self.tree):
+            if (
+                isinstance(n, ast.Call)
+                and (
+                    n.func.id
+                    if isinstance(n.func, ast.Name)
+                    else n.func.attr
+                    if isinstance(n.func, ast.Attribute)
+                    else None
+                )
+                in ("getattr", "methodcaller", "attrgetter")
+                and any(
+                    isinstance(a, ast.Constant)
+                    and isinstance(a.value, str)
+                    and (
+                        self._writer_tail(a.value)
+                        or a.value in self._GENERIC_TAILS
+                        or a.value == "open"
+                    )
+                    for a in n.args
+                )
+            ):
+                return True
+            if id(n) in called:
+                continue
+            if isinstance(n, ast.Attribute):
+                q = self.qual(n) or ""
+                # 不经直接调用的 `.open`（`o = Path("v").open; o("w")`）：调用点的 mode 看不到，宁宽（Codex #1034 r4286575586）；
+                # 只读的 `PIL.Image.open` 除外
+                if n.attr == "open" and not q.startswith(self._READONLY_OPEN_ROOTS):
+                    return True
+                if (
+                    self._writer_tail(n.attr)
+                    or q in qualified
+                    or q.startswith(self._WRITER_PREFIXES)
+                ):
+                    return True
+            elif isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load):
+                q = self.qual(n) or ""
+                if q and (
+                    q in qualified
+                    or q.startswith(self._WRITER_PREFIXES)
+                    or ("." in q and self._writer_tail(q.rsplit(".", 1)[1]))
+                ):
+                    return True
+        return False
 
     # ---- 第二遍：事件
     def collect(self) -> None:
@@ -1535,13 +1665,19 @@ def _static(facts: ScriptFacts, w: _Where) -> tuple[list[dict], int, bool, bool]
             item["read_line"] = other
         evidence.append(item)
 
+    # 每个（规则, 规范路径）只出一条证据；配对比较有总预算，超了就不再给高置信（回 safe，Codex #1034 r4286453702）——
+    # 生成出来的脚本重复成千上万次同一对 savefig / 读回时，证据与耗时都不随 n² 增长
     seen: set[tuple] = set()
+    budget = _PAIR_BUDGET
 
     for s, sk in keyed:
         if s.kind != _E_SAVEFIG or sk is None:
             continue
         # R1 / R2：同一规范路径、之后出现的读 / 探
         for r, rk in keyed:
+            budget -= 1
+            if budget < 0:
+                return evidence, dynamic, False, False
             if rk != sk or r.kind not in (_E_READ, _E_STAT) or not _after(r, s):
                 continue
             same_scope = r.scope == s.scope
@@ -1556,8 +1692,8 @@ def _static(facts: ScriptFacts, w: _Where) -> tuple[list[dict], int, bool, bool]
                     rule = RULE_R1_UNPROVEN
             else:
                 rule = RULE_R2
-            if (rule, s.line, r.line) not in seen:
-                seen.add((rule, s.line, r.line))
+            if (rule, sk) not in seen:
+                seen.add((rule, sk))
                 ev(rule, KIND_SAVEFIG, "savefig", s.line, r.line)
         # 不同作用域里的读回也在上面按 R1_cross_scope 记了（_after 只看行序）；这里不再重复
 
@@ -1569,6 +1705,9 @@ def _static(facts: ScriptFacts, w: _Where) -> tuple[list[dict], int, bool, bool]
         inside = mk[0] == "root" and _really_inside(w, mk[1])
         if not inside:
             continue
+        budget -= 2 * len(keyed)
+        if budget < 0:
+            return evidence, dynamic, False, False
         wrote = any(
             wk == mk
             and x.kind in (_E_WRITE, _E_SAVEFIG)
@@ -1590,11 +1729,15 @@ def _static(facts: ScriptFacts, w: _Where) -> tuple[list[dict], int, bool, bool]
                 ):
                     read_line = r.line
                     break
-        if wrote and read_line is not None and m.top and m.scope in facts.live_scopes:
-            ev(RULE_R3, KIND_RENAME, m.op, m.line, read_line)
-            high_r3 = True
-        else:
-            ev(RULE_R3_PARTIAL, KIND_RENAME, m.op, m.line, read_line)
+        rule = (
+            RULE_R3
+            if wrote and read_line is not None and m.top and m.scope in facts.live_scopes
+            else RULE_R3_PARTIAL
+        )
+        high_r3 = high_r3 or rule == RULE_R3
+        if (rule, mk) not in seen:
+            seen.add((rule, mk))
+            ev(rule, KIND_RENAME, m.op, m.line, read_line)
     if dynamic:
         evidence.append(
             {

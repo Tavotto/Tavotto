@@ -466,13 +466,16 @@ def test_savefig_readback_does_not_depend_on_the_cwd_mode():
 
 
 def test_absolute_literal_paths_are_in_the_library_only_under_the_project_root():
+    # 字面路径用本平台上项目根的真实绝对形式：Windows 上 `/proj` 会被补成 `D:\\proj`，而脚本里不带盘符的 `/proj/...`
+    # 指向运行时当前盘的根，静态证明不了在项目里（判 safe 是对的）
+    root = os.path.abspath(ROOT)
     inside = f"""
         import os
-        open({ROOT + "/a.tmp"!r}, "w").write("1")
-        os.replace({ROOT + "/a.tmp"!r}, {ROOT + "/a.dat"!r})
-        open({ROOT + "/a.dat"!r}).read()
+        open({root + "/a.tmp"!r}, "w").write("1")
+        os.replace({root + "/a.tmp"!r}, {root + "/a.dat"!r})
+        open({root + "/a.dat"!r}).read()
         """
-    outside = inside.replace(ROOT, "/elsewhere")
+    outside = inside.replace(repr(root)[1:-1], "/elsewhere")
     assert _route(inside, cwd=runroute.CWD_SANDBOX).execution == "native"
     assert _route(outside, cwd=runroute.CWD_SANDBOX).execution == "safe"
 
@@ -1417,6 +1420,73 @@ GATED = [
     ("sqlite_connect", MPL + "import sqlite3\nsqlite3.connect('v.db')\n" + TAIL),
     ("os_symlink", MPL + "import os\nos.symlink('a', 'b')\n" + TAIL),
     ("path_rename_one_arg", MPL + "from pathlib import Path\nPath('a').rename('b')\n" + TAIL),
+    # Codex r4286232612：`to_*` / `write_*` 写出族按形态收口，不逐个列名
+    ("pandas_to_xml", MPL + "import pandas as pd\npd.DataFrame().to_xml('victim.xml')\n" + TAIL),
+    ("pandas_to_latex", MPL + "import pandas as pd\npd.DataFrame().to_latex(buf='v.tex')\n" + TAIL),
+    ("polars_write_csv", MPL + "import polars as pl\npl.DataFrame().write_csv('v.csv')\n" + TAIL),
+    (
+        "astropy_writeto",
+        MPL + "from astropy.io import fits\nfits.PrimaryHDU().writeto('v.fits')\n" + TAIL,
+    ),
+    # Codex r4286291290：写出器 / 守卫操作不经直接调用地出现（别名、按字面名取属性）
+    (
+        "bound_write_text_alias",
+        MPL
+        + 'from pathlib import Path\nwriter = Path("victim").write_text\nwriter("destroyed")\n'
+        + 'if len(__import__("sys").argv) > 1:\n    p = "x.png"\nelse:\n    raise SystemExit\n'
+        + "plt.savefig(p)\nopen(p).read()\n",
+    ),
+    ("os_remove_alias", MPL + "import os\nrm = os.remove\nrm('a')\n" + TAIL),
+    (
+        "imported_remove_passed_on",
+        MPL + "from os import remove\nfs = [remove]\nfs[0]('a')\n" + TAIL,
+    ),
+    (
+        "getattr_literal_writer",
+        MPL + "from pathlib import Path\ngetattr(Path('a'), 'unlink')()\n" + TAIL,
+    ),
+    (
+        "operator_methodcaller",
+        MPL
+        + "import operator\noperator.methodcaller('unlink')(__import__('pathlib').Path('a'))\n"
+        + TAIL,
+    ),
+    # Codex r4286453690：日志写文件
+    (
+        "logging_basicconfig_filename",
+        MPL + "import logging\nlogging.basicConfig(filename='victim.log', filemode='w')\n" + TAIL,
+    ),
+    ("logging_file_handler", MPL + "import logging\nlogging.FileHandler('v.log')\n" + TAIL),
+    (
+        "logging_rotating_handler",
+        MPL
+        + "from logging.handlers import RotatingFileHandler\nRotatingFileHandler('v.log')\n"
+        + TAIL,
+    ),
+    ("logging_dict_config", MPL + "import logging.config\nlogging.config.dictConfig({})\n" + TAIL),
+    # Codex r4286515577：写出器对象 / 建档即落盘的容器
+    (
+        "pandas_excel_writer",
+        MPL + "import pandas as pd\nw = pd.ExcelWriter('victim.xlsx')\n" + TAIL,
+    ),
+    ("imageio_get_writer", MPL + "import imageio\nimageio.get_writer('v.mp4')\n" + TAIL),
+    ("pandas_hdfstore", MPL + "import pandas as pd\npd.HDFStore('v.h5')\n" + TAIL),
+    (
+        "pdfpages",
+        MPL + "from matplotlib.backends.backend_pdf import PdfPages\nPdfPages('v.pdf')\n" + TAIL,
+    ),
+    ("excel_writer_alias", MPL + "import pandas as pd\nW = pd.ExcelWriter\nW('v.xlsx')\n" + TAIL),
+    # Codex r4286575586：不经直接调用的 open
+    (
+        "path_open_alias",
+        MPL + "from pathlib import Path\no = Path('victim').open\no('w').write('x')\n" + TAIL,
+    ),
+    ("builtin_open_alias", MPL + "o = open\no('victim', 'w').write('x')\n" + TAIL),
+    (
+        "getattr_literal_open",
+        MPL + "from pathlib import Path\ngetattr(Path('v'), 'open')('w')\n" + TAIL,
+    ),
+    ("numpy_save_alias", MPL + "import numpy as np\nsv = np.save\nsv('v.npy', [1])\n" + TAIL),
 ]
 
 
@@ -1431,6 +1501,12 @@ UNGATED = [
     ("plain_readback", MPL + TAIL),
     ("str_replace_two_args", MPL + 'name = "a.b".replace(".", "_")\n' + TAIL),
     ("list_remove", MPL + "xs = [1]\nxs.remove(1)\n" + TAIL),
+    (
+        "conversions_are_not_writes",
+        MPL
+        + "import matplotlib.colors as mc\nc = mc.to_rgba('r')\nimport pandas as pd\nd = pd.DataFrame().to_dict('list')\n"
+        + TAIL,
+    ),
     ("read_only_pathlib", MPL + 'from pathlib import Path\nPath("a").read_text()\n' + TAIL),
     (
         "pandas_rename_columns",
@@ -1722,3 +1798,13 @@ def test_a_foreign_flavor_pure_path_is_not_comparable_on_posix():
     )
     route = _route(src)
     assert route.execution == "safe", route
+
+
+def test_repeated_savefig_readback_pairs_yield_one_proof_per_path_and_stay_bounded():
+    """Codex #1034 r4286453702：重复的同一对 savefig / 读回不按 n² 产证据。"""
+    pair = 'plt.savefig("x.png")\nopen("x.png", "rb").read()\n'
+    route = _route(MPL + pair * 300)
+    assert route.execution == "native"
+    assert len([e for e in route.evidence if e["rule"] == "R1"]) == 1
+    huge = _route(MPL + pair * 1000)  # 超出配对预算：不给高置信，回 safe
+    assert huge.execution == "safe" and len(huge.evidence) < 10
