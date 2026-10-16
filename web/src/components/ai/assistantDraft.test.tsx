@@ -1464,6 +1464,10 @@ describe('已发出未确认：不能盲目重发', () => {
     expect(btn.disabled).toBe(true) // 对照：只认 running 时这里是可点的，点了再记一条提交然后撞 ai_script_busy
     expect(btn.getAttribute('aria-label')).toBe('正在结束上一次修改…')
     await click(btn)
+    await act(async () => {
+      input().dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', ctrlKey: true, bubbles: true })) // ⌘↵ 也不能绕过锁
+    })
+    await settle()
     expect(aiRun).not.toHaveBeenCalled()
     await act(async () => {
       useAiStore.getState().finish({ session: 's-canc', status: 'cancelled', changed: true, diff: 'D' })
