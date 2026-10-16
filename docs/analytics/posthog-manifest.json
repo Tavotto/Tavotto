@@ -64,77 +64,7 @@
     "ci_suspected_exclusion_hogql": "distinct_id NOT IN (SELECT distinct_id FROM events WHERE distinct_id != 'distribution_metrics' GROUP BY distinct_id HAVING count() = 1 AND any(event) = 'telemetry_enabled' AND any(properties.distribution) = 'source')",
     "ci_suspected_note": "规则出自 yc-dashboard.json ci_phantom_installs。缺来源证据，所以称疑似 CI；a6 给出含/不含的敏感性对照；不删除原始数据，也不排除所有 source 用户。"
   },
-  "pending_events": {
-    "export_result": {
-      "depends_on": "#1103 + CONSENT_VERSION 3",
-      "pr": "https://github.com/Tavotto/Tavotto/pull/1103 (draft)",
-      "schema_source": "PR #1103 head aadb10ce3d442c5451b8553dfe5018675d41eb68 的 engine/telemetry.py；草稿仍可能变，合并前必须对照 main 复核",
-      "not_on_main": true,
-      "properties": {
-        "outcome": {
-          "kind": "enum",
-          "values": [
-            "done",
-            "partial",
-            "failed",
-            "cancelled"
-          ]
-        },
-        "scope": {
-          "kind": "enum",
-          "values": [
-            "canvas",
-            "original"
-          ]
-        },
-        "pdf": {
-          "kind": "bool"
-        },
-        "png": {
-          "kind": "bool"
-        },
-        "eps": {
-          "kind": "bool"
-        },
-        "tiff": {
-          "kind": "bool"
-        },
-        "with_report": {
-          "kind": "bool"
-        },
-        "delivered": {
-          "kind": "int",
-          "max": 8
-        },
-        "stage": {
-          "kind": "enum",
-          "values": [
-            "prepare",
-            "source",
-            "compile",
-            "compose",
-            "raster",
-            "inspect",
-            "publish",
-            "report"
-          ]
-        },
-        "error_class": {
-          "kind": "enum",
-          "values": [
-            "request",
-            "environment",
-            "backend",
-            "artifact_rejected",
-            "source_changed",
-            "report",
-            "other"
-          ]
-        }
-      },
-      "current_data_fallback": "export_completed：done 或 partial 时发送，pdf/png 表示该格式真的写出；不是『请求的文件全部成功』，没有 failed/cancelled。"
-    }
-  },
+  "pending_events": {},
   "dashboards": [
     {
       "logical_name": "tavotto-main-v2",
@@ -599,10 +529,9 @@
       "missing_data_note": "该事件上线前整段无数据，必须显示『无数据』而不是 100% 成功或 0 失败；离线/丢事件/客户端关闭统计时终态事件不会到达，比例有偏",
       "governed_metric_id": null,
       "version": 1,
-      "status": "pending_event",
+      "status": "not_created",
       "remote_id": null,
       "url": null,
-      "depends_on": "#1103 + CONSENT_VERSION 3",
       "fallback": "当前可用：b1（export_completed，done 或 partial 才发，无失败/取消）。不得把 export_completed 数当作『全部成功』。"
     },
     {
@@ -669,10 +598,9 @@
       "missing_data_note": "上线前整段无数据，显示『无数据』而不是 100%；opt-in、离线与丢事件使比例可能有偏，方向未知，不称保守下界",
       "governed_metric_id": null,
       "version": 1,
-      "status": "pending_event",
+      "status": "not_created",
       "remote_id": null,
       "url": null,
-      "depends_on": "#1103 + CONSENT_VERSION 3",
       "fallback": "当前无等价比例；只能看 b1 的次数趋势，且不得推失败率。"
     },
     {
@@ -737,10 +665,9 @@
       "missing_data_note": "上线前整段无数据，不是零失败；app_version 不是 build 标识；sidecar 或代理不可达时失败事件本身也可能发不出，没有失败事件不能证明没有 P0",
       "governed_metric_id": null,
       "version": 1,
-      "status": "pending_event",
+      "status": "not_created",
       "remote_id": null,
       "url": null,
-      "depends_on": "#1103 + CONSENT_VERSION 3",
       "fallback": "当前无导出失败事件；只能用 d3 看保存失败与包操作失败，导出方面为未知。"
     },
     {
@@ -1318,9 +1245,8 @@
       "needs_online_verification_note": "阈值/条件字段按 PostHog 公开告警模型手写，未在线上校验；formula 序列能否被告警评估以线上为准",
       "enabled": false,
       "version": 1,
-      "status": "pending_event",
-      "remote_id": null,
-      "depends_on": "#1103 + CONSENT_VERSION 3"
+      "status": "not_created",
+      "remote_id": null
     },
     {
       "logical_name": "alert_export_failed_installs_by_version",
@@ -1354,9 +1280,8 @@
       "needs_online_verification_note": "阈值/条件字段按 PostHog 公开告警模型手写，未在线上校验；formula 序列能否被告警评估以线上为准",
       "enabled": false,
       "version": 1,
-      "status": "pending_event",
-      "remote_id": null,
-      "depends_on": "#1103 + CONSENT_VERSION 3"
+      "status": "not_created",
+      "remote_id": null
     },
     {
       "logical_name": "alert_document_save_failed_installs",

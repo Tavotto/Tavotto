@@ -64,8 +64,10 @@ SCHEMA_VERSION = 1
 #: 它涵盖旧版本要采的东西，不该反过来失效。
 #:
 #: 版本史：1 = 首版九条事件；2 = Session 22 加了刷新 / 接入状态 / 教程 /
-#: 多选栏 / 保存 / 恢复 / 包操作九条（`docs/analytics/telemetry-events.md`）。
-CONSENT_VERSION = 2
+#: 多选栏 / 保存 / 恢复 / 包操作九条（`docs/analytics/telemetry-events.md`）；
+#: 3 = 两个新采集范围一并升版（ADR 0134）：(a) 导出终态事件 `export_result`；(b) 用户**明确点发送**的
+#: 诊断报告可随附一条不含内容的错误摘要（`engine/diagsummary.py`，走报告服务，不走本模块的事件通道）。
+CONSENT_VERSION = 3
 
 #: 生产默认投递地址。**只发到 Tavotto 自己的代理**，应用里没有、也不该有
 #: 任何 PostHog 项目密钥：开源桌面应用里嵌的东西一律是公开的。
