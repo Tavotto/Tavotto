@@ -12,8 +12,8 @@ import argparse
 import hashlib
 import importlib.util
 import json
-import os
 import math
+import os
 import re
 import shutil
 import subprocess
@@ -37,12 +37,27 @@ from guardian_exec_observer import actual_environment  # noqa: E402
 
 SCHEMA_VERSION = "1.0.0"
 STATUSES = (
-    "passed", "failed", "expected_limitation", "not_reproduced",
-    "environment_unavailable", "not_run", "invalid_fixture", "unknown",
+    "passed",
+    "failed",
+    "expected_limitation",
+    "not_reproduced",
+    "environment_unavailable",
+    "not_run",
+    "invalid_fixture",
+    "unknown",
 )
 SUITES = ("compat_engine", "compat_v2")
 SCHEMA_PATH = ROOT / "tests" / "compat" / "guardian-report.schema.json"
-REQUIRED_MODULES = ("flask", "pikepdf", "uharfbuzz", "pypdfium2", "PIL", "matplotlib", "numpy", "packaging")
+REQUIRED_MODULES = (
+    "flask",
+    "pikepdf",
+    "uharfbuzz",
+    "pypdfium2",
+    "PIL",
+    "matplotlib",
+    "numpy",
+    "packaging",
+)
 
 
 class EvidenceError(ValueError):
@@ -62,9 +77,13 @@ def git(*args: str) -> str:
 
 
 def source_state() -> dict:
-    files = subprocess.check_output(
-        ["git", "ls-files", "--cached", "--others", "--exclude-standard", "-z"], cwd=ROOT
-    ).decode().split("\0")
+    files = (
+        subprocess.check_output(
+            ["git", "ls-files", "--cached", "--others", "--exclude-standard", "-z"], cwd=ROOT
+        )
+        .decode()
+        .split("\0")
+    )
     content = {}
     for name in sorted(set(files) - {""}):
         p = ROOT / name
@@ -75,14 +94,22 @@ def source_state() -> dict:
         else:
             content[name] = "missing"
     return {
-        "commit": git("rev-parse", "HEAD"), "tree": git("rev-parse", "HEAD^{tree}"),
-        "dirty": bool(git("status", "--porcelain")), "content_sha256": canonical(content),
+        "commit": git("rev-parse", "HEAD"),
+        "tree": git("rev-parse", "HEAD^{tree}"),
+        "dirty": bool(git("status", "--porcelain")),
+        "content_sha256": canonical(content),
     }
 
 
 def contained(root: Path, name: str) -> Path:
     p = Path(name)
-    if p.is_absolute() or PureWindowsPath(name).is_absolute() or ".." in p.parts or "\\" in name or not name:
+    if (
+        p.is_absolute()
+        or PureWindowsPath(name).is_absolute()
+        or ".." in p.parts
+        or "\\" in name
+        or not name
+    ):
         raise EvidenceError(f"unsafe relative path: {name}")
     candidate = root / p
     if candidate.is_symlink() or not candidate.resolve().is_relative_to(root.resolve()):
@@ -105,9 +132,11 @@ def preflight() -> list[str]:
 
 
 def registered(suite: str) -> dict[str, dict]:
-    metadata = ["tests/compat/manifest.json"] if suite == "compat_engine" else [
-        "tests/support/compat_v2_scenarios.py", "tests/support/compatbench_v2.py"
-    ]
+    metadata = (
+        ["tests/compat/manifest.json"]
+        if suite == "compat_engine"
+        else ["tests/support/compat_v2_scenarios.py", "tests/support/compatbench_v2.py"]
+    )
     for rel in metadata:
         blob = subprocess.check_output(["git", "show", f"HEAD:{rel}"], cwd=ROOT)
         if contained(ROOT, rel).read_bytes() != blob:
@@ -116,6 +145,7 @@ def registered(suite: str) -> dict[str, dict]:
         return {c["id"]: c for c in CC.load_manifest()["cases"]}
     if suite == "compat_v2":
         from support import compat_v2_scenarios as cs
+
         return {sid: {"id": sid} for sid in cs.SCENARIOS}
     raise EvidenceError(f"unregistered suite: {suite}")
 
@@ -127,7 +157,7 @@ def fixture_files(suite: str, case: dict) -> dict[str, str]:
     else:
         # Validate materialization destinations as well as source paths.
         contained(Path("/guardian-project"), case.get("script_dest") or Path(case["script"]).name)
-        for dest in (case.get("extra_files") or {}):
+        for dest in case.get("extra_files") or {}:
             contained(Path("/guardian-project"), dest)
         for asset in case.get("assets", []):
             contained(Path("/guardian-project"), asset)
@@ -150,24 +180,59 @@ def fixture_files(suite: str, case: dict) -> dict[str, str]:
 
 def isolated_env(work: Path, audit_log: Path | None = None, hashes=()) -> dict:
     # An allowlist deliberately excludes connector/cloud credentials and personal config.
-    env = {k: os.environ[k] for k in ("PATH", "SYSTEMROOT", "WINDIR", "COMSPEC", "PATHEXT", "LD_LIBRARY_PATH", "DYLD_LIBRARY_PATH") if k in os.environ}
+    env = {
+        k: os.environ[k]
+        for k in (
+            "PATH",
+            "SYSTEMROOT",
+            "WINDIR",
+            "COMSPEC",
+            "PATHEXT",
+            "LD_LIBRARY_PATH",
+            "DYLD_LIBRARY_PATH",
+        )
+        if k in os.environ
+    }
     for key, sub in {
-        "HOME": "home", "USERPROFILE": "home", "APPDATA": "appdata", "LOCALAPPDATA": "localappdata",
-        "XDG_CACHE_HOME": "cache", "XDG_CONFIG_HOME": "config", "XDG_DATA_HOME": "data",
-        "TAVOTTO_DATA_DIR": "data", "TAVOTTO_CONFIG_DIR": "config", "MPLCONFIGDIR": "mpl",
-        "TMPDIR": "tmp", "TEMP": "tmp", "TMP": "tmp",
+        "HOME": "home",
+        "USERPROFILE": "home",
+        "APPDATA": "appdata",
+        "LOCALAPPDATA": "localappdata",
+        "XDG_CACHE_HOME": "cache",
+        "XDG_CONFIG_HOME": "config",
+        "XDG_DATA_HOME": "data",
+        "TAVOTTO_DATA_DIR": "data",
+        "TAVOTTO_CONFIG_DIR": "config",
+        "MPLCONFIGDIR": "mpl",
+        "TMPDIR": "tmp",
+        "TEMP": "tmp",
+        "TMP": "tmp",
     }.items():
         path = work / sub
         path.mkdir(parents=True, exist_ok=True)
         env[key] = str(path)
-    env.update(TAVOTTO_NO_TELEMETRY="1", TAVOTTO_NO_DIAG_UPLOAD="1", TAVOTTO_USER_ENV_DISCOVERY="0", PYTHONDONTWRITEBYTECODE="1", PYTHONUTF8="1", PYTHONHASHSEED="0", MPLBACKEND="Agg")
+    env.update(
+        TAVOTTO_NO_TELEMETRY="1",
+        TAVOTTO_NO_DIAG_UPLOAD="1",
+        TAVOTTO_USER_ENV_DISCOVERY="0",
+        PYTHONDONTWRITEBYTECODE="1",
+        PYTHONUTF8="1",
+        PYTHONHASHSEED="0",
+        MPLBACKEND="Agg",
+    )
     roots = [str(ROOT / "src"), str(ROOT / "tests"), str(HERE)]
     if audit_log is not None:
         bootstrap = work / "bootstrap"
         bootstrap.mkdir()
-        (bootstrap / "sitecustomize.py").write_text("from guardian_exec_observer import install\ninstall()\n")
+        (bootstrap / "sitecustomize.py").write_text(
+            "from guardian_exec_observer import install\ninstall()\n"
+        )
         roots.insert(0, str(bootstrap))
-        env.update(CG_EXEC_ROOT=str(work), CG_EXEC_LOG=str(audit_log), CG_EXEC_HASHES=json.dumps(list(hashes)))
+        env.update(
+            CG_EXEC_ROOT=str(work),
+            CG_EXEC_LOG=str(audit_log),
+            CG_EXEC_HASHES=json.dumps(list(hashes)),
+        )
     env["PYTHONPATH"] = os.pathsep.join(roots)
     # Explicit user-selected test interpreter; never let native/worker choose different stacks.
     env["TAVOTTO_WORKER_PYTHON"] = sys.executable
@@ -186,7 +251,9 @@ def case_status(row: dict) -> str:
         return "unknown"
     statuses = [s["status"] for s in row["stages"].values()]
     raw = row.get("raw") or {}
-    if any(r.get("status") == "fail" for r in (raw.get("routes") or {}).values() if isinstance(r, dict)):
+    if any(
+        r.get("status") == "fail" for r in (raw.get("routes") or {}).values() if isinstance(r, dict)
+    ):
         return "failed"
     if isinstance(raw.get("browser"), dict) and raw["browser"].get("ok") is False:
         return "failed"
@@ -239,14 +306,25 @@ def _execute(request: dict) -> dict:
     evidence = Path(request["evidence"])
     before = environment()
     row = {
-        "id": cid, "status": "unknown", "layer": "engine" if suite == "compat_engine" else "authenticated_server_safe",
-        "profile": "safe", "desktop_shell_verified": False,
+        "id": cid,
+        "status": "unknown",
+        "layer": "engine" if suite == "compat_engine" else "authenticated_server_safe",
+        "profile": "safe",
+        "desktop_shell_verified": False,
         "stages": {s: stage("not_run", "not reached") for s in CC.STAGES},
         "executions": {"native": None, "tavotto": None, "basis": "python_exec_audit"},
-        "native": {"status": "not_run", "result": {}}, "comparable": False,
-        "environment_before": before, "environment_after": before,
-        "product_classification": None, "raw": {},
-        "unverified": ["real desktop shell", "save occurrence snapshots", "arbitrary user scripts", "scientific values beyond registered oracle"],
+        "native": {"status": "not_run", "result": {}},
+        "comparable": False,
+        "environment_before": before,
+        "environment_after": before,
+        "product_classification": None,
+        "raw": {},
+        "unverified": [
+            "real desktop shell",
+            "save occurrence snapshots",
+            "arbitrary user scripts",
+            "scientific values beyond registered oracle",
+        ],
     }
     missing = preflight()
     if any(f"module:{name}" in missing for name in ("matplotlib", "numpy", "PIL")):
@@ -260,18 +338,28 @@ def _execute(request: dict) -> dict:
         project, script, entry = cm.materialize([case], native_root)
     else:
         from support import compat_v2_scenarios as cs, compatbench_v2 as cb
+
         project, script, entry = cb.stage(cid, native_root), "script.py", "__main__"
     os.environ["CG_EXEC_LOG"] = str(work / "native-execs.jsonl")
     # The already installed audit hook opened its file at process start; child
     # native driver receives this separate leg's counter via sitecustomize.
-    native = cm.run_driver(sys.executable, "native", {
-        "project": str(project), "script": str(project / script), "entry": entry,
-        "engine_dir": str(cm.ENGINE_DIR), "out_dir": str(evidence / "native"),
-        "observe_semantics": True,
-    })
+    native = cm.run_driver(
+        sys.executable,
+        "native",
+        {
+            "project": str(project),
+            "script": str(project / script),
+            "entry": entry,
+            "engine_dir": str(cm.ENGINE_DIR),
+            "out_dir": str(evidence / "native"),
+            "observe_semantics": True,
+        },
+    )
     row["native"] = {"status": _native_status(native), "result": native}
     native_counter = work / "native-execs.jsonl"
-    row["executions"]["native"] = len(native_counter.read_text().splitlines()) if native_counter.exists() else None
+    row["executions"]["native"] = (
+        len(native_counter.read_text().splitlines()) if native_counter.exists() else None
+    )
     # Native fixture invalidity never enters the product-defect population.
     if row["native"]["status"] != "passed":
         row["status"] = row["native"]["status"]
@@ -287,6 +375,7 @@ def _execute(request: dict) -> dict:
         # Matrix's diagnostic native/census runs are real script executions but
         # are not Tavotto executions. Keep each role in a separate event log.
         original_driver = cm.run_driver
+
         def role_driver(python, mode, request, timeout=900):
             previous = os.environ["CG_EXEC_LOG"]
             os.environ["CG_EXEC_LOG"] = str(work / f"diagnostic-{mode}-execs.jsonl")
@@ -294,32 +383,53 @@ def _execute(request: dict) -> dict:
                 return original_driver(python, mode, request, timeout)
             finally:
                 os.environ["CG_EXEC_LOG"] = previous
+
         cm.run_driver = role_driver
         # Preserve export bytes before the existing runner clears its workspace.
         original_export = cm.stage_export
+
         def keep_export(worker, stem, out_dir, formats):
             response = original_export(worker, stem, out_dir, formats)
             shutil.copytree(out_dir, evidence / "exports", dirs_exist_ok=True)
             return response
+
         cm.stage_export = keep_export
         engine_case = {**case, "product_routes": {}}
-        result = cm.run_group([engine_case], python=sys.executable, root=work, out_dir=evidence,
-                              want_fidelity=True, want_browser=False)[cid]
+        result = cm.run_group(
+            [engine_case],
+            python=sys.executable,
+            root=work,
+            out_dir=evidence,
+            want_fidelity=True,
+            want_browser=False,
+        )[cid]
         row["raw"] = result
         for s in CC.STAGES:
             if s in result["stages"]:
                 good = result["stages"][s]
-                state = "passed" if good else ("failed" if case["expected"].get(s, True) else "expected_limitation")
+                state = (
+                    "passed"
+                    if good
+                    else ("failed" if case["expected"].get(s, True) else "expected_limitation")
+                )
                 row["stages"][s] = stage(state, "existing CompatBench stage oracle; see raw.detail")
             elif s in result.get("skipped", {}):
                 row["stages"][s] = stage("not_run", result["skipped"][s])
         repeated_native = (result.get("detail", {}).get("fidelity") or {}).get("native")
         if repeated_native and repeated_native.get("ok") is not True:
-            row["stages"]["fidelity"] = stage("unknown", "repeated native control failed; cannot attribute difference to Tavotto")
+            row["stages"]["fidelity"] = stage(
+                "unknown", "repeated native control failed; cannot attribute difference to Tavotto"
+            )
         count = work / "tavotto-execs.jsonl"
-        row["executions"]["tavotto"] = len(count.read_text().splitlines()) if count.exists() else None
-        row["unverified"].append("fidelity metric is existing grayscale comparison; not RGBA qualification")
-        row["unverified"].append("product routes not_run in engine adapter; existing dedicated route tests remain authoritative")
+        row["executions"]["tavotto"] = (
+            len(count.read_text().splitlines()) if count.exists() else None
+        )
+        row["unverified"].append(
+            "fidelity metric is existing grayscale comparison; not RGBA qualification"
+        )
+        row["unverified"].append(
+            "product routes not_run in engine adapter; existing dedicated route tests remain authoritative"
+        )
         row["raw"]["diagnostic_execution_counts"] = {
             p.name: len(p.read_text().splitlines()) for p in work.glob("diagnostic-*-execs.jsonl")
         }
@@ -328,24 +438,43 @@ def _execute(request: dict) -> dict:
         case_work = work / "v2"
         case_work.mkdir()
         try:
-            obs = cb.observe(cs.SCENARIOS[cid], case_work, needs_absent=cs.NEEDS_ABSENT.get(cid, ()),
-                             env_overrides={"PYTHONPATH": os.environ["PYTHONPATH"]})
+            obs = cb.observe(
+                cs.SCENARIOS[cid],
+                case_work,
+                needs_absent=cs.NEEDS_ABSENT.get(cid, ()),
+                env_overrides={"PYTHONPATH": os.environ["PYTHONPATH"]},
+            )
         except cb.PreconditionUnmet as exc:
             row["status"] = "environment_unavailable"
             row["raw"] = {"precondition_unmet": str(exc)}
             return row
-        row["raw"] = {"observed": obs.to_json(), "ideal_missing": cs.IDEAL[cid](obs),
-                      "historical_baseline": cs.SCENARIOS[cid].main_baseline}
+        row["raw"] = {
+            "observed": obs.to_json(),
+            "ideal_missing": cs.IDEAL[cid](obs),
+            "historical_baseline": cs.SCENARIOS[cid].main_baseline,
+        }
         cb.assert_no_execution_before_run(obs)
         row["executions"]["tavotto"] = obs.exec_count
         row["executions"]["basis"] = "fixture_external_exec_log"
-        row["stages"]["discover"] = stage("passed", "authenticated scan/check; fixture log proves zero pre-run executions")
-        row["stages"]["execute"] = stage("passed" if obs.ran and obs.exec_count > 0 else "not_run", "real run action and fixture execution log")
+        row["stages"]["discover"] = stage(
+            "passed", "authenticated scan/check; fixture log proves zero pre-run executions"
+        )
+        row["stages"]["execute"] = stage(
+            "passed" if obs.ran and obs.exec_count > 0 else "not_run",
+            "real run action and fixture execution log",
+        )
         for s, good in (("capture", obs.figures_captured > 0), ("open", obs.figures_valid > 0)):
-            row["stages"][s] = stage("passed" if good else "failed", "captured count and actual rendered manifest")
-        titles = [title for v in native.get("semantics", {}).values() for title in v["titles"] if title]
+            row["stages"][s] = stage(
+                "passed" if good else "failed", "captured count and actual rendered manifest"
+            )
+        titles = [
+            title for v in native.get("semantics", {}).values() for title in v["titles"] if title
+        ]
         good = not row["raw"]["ideal_missing"] and sorted(obs.titles) == sorted(titles)
-        row["stages"]["semantic"] = stage("passed" if good else "failed", "V2 explicit scientific title/shape/count oracle AND native title comparison")
+        row["stages"]["semantic"] = stage(
+            "passed" if good else "failed",
+            "V2 explicit scientific title/shape/count oracle AND native title comparison",
+        )
         row["unverified"].append("V2 adapter does not claim edit/replay/export/fidelity")
         log = case_work / "exec_log.jsonl"
         if log.exists():
@@ -354,15 +483,26 @@ def _execute(request: dict) -> dict:
     launches = {}
     for role in ("native", "tavotto"):
         log = work / f"{role}-execs.jsonl"
-        launches[role] = [json.loads(line)["environment"] for line in log.read_text().splitlines()] if log.exists() else []
+        launches[role] = (
+            [json.loads(line)["environment"] for line in log.read_text().splitlines()]
+            if log.exists()
+            else []
+        )
     row["raw"]["launch_environments"] = launches
     fingerprints = {env["fingerprint"] for records in launches.values() for env in records}
-    row["comparable"] = (row["environment_before"] == row["environment_after"] and
-                         all(launches.values()) and len(fingerprints) == 1)
+    row["comparable"] = (
+        row["environment_before"] == row["environment_after"]
+        and all(launches.values())
+        and len(fingerprints) == 1
+    )
     if suite == "compat_v2" and len(launches["tavotto"]) != row["executions"]["tavotto"]:
         row["comparable"] = False
     row["status"] = case_status(row)
-    for name in ["native-execs.jsonl", "tavotto-execs.jsonl", *[p.name for p in work.glob("diagnostic-*-execs.jsonl")]]:
+    for name in [
+        "native-execs.jsonl",
+        "tavotto-execs.jsonl",
+        *[p.name for p in work.glob("diagnostic-*-execs.jsonl")],
+    ]:
         p = work / name
         if p.exists():
             shutil.copy2(p, evidence / name)
@@ -375,11 +515,17 @@ def evidence_refs(root: Path) -> list[dict]:
         if p.is_file():
             rel = str(p.relative_to(root))
             checked = contained(root, rel)
-            refs.append({"path": rel, "sha256": digest(checked.read_bytes()), "bytes": checked.stat().st_size})
+            refs.append(
+                {
+                    "path": rel,
+                    "sha256": digest(checked.read_bytes()),
+                    "bytes": checked.stat().st_size,
+                }
+            )
     return refs
 
 
-def schema_check(value, schema: dict, root: dict | None = None, path: str = "$" ) -> None:
+def schema_check(value, schema: dict, root: dict | None = None, path: str = "$") -> None:
     """Validate the small, closed vocabulary used by our public JSON Schema.
 
     No network resolver or optional jsonschema runtime dependency. Unsupported
@@ -390,27 +536,60 @@ def schema_check(value, schema: dict, root: dict | None = None, path: str = "$" 
     if "$ref" in schema:
         schema_check(value, root["$defs"][schema["$ref"].split("/")[-1]], root, path)
         return
-    supported = {"$schema", "$id", "$defs", "title", "type", "properties", "required", "additionalProperties", "items", "minItems", "uniqueItems", "minProperties", "enum", "const", "pattern", "minimum", "minLength"}
+    supported = {
+        "$schema",
+        "$id",
+        "$defs",
+        "title",
+        "type",
+        "properties",
+        "required",
+        "additionalProperties",
+        "items",
+        "minItems",
+        "uniqueItems",
+        "minProperties",
+        "enum",
+        "const",
+        "pattern",
+        "minimum",
+        "minLength",
+    }
     if set(schema) - supported:
         raise EvidenceError(f"unsupported schema keywords at {path}")
-    types = {"object": lambda x: isinstance(x, dict), "array": lambda x: isinstance(x, list),
-             "string": lambda x: isinstance(x, str), "integer": lambda x: type(x) is int,
-             "number": lambda x: type(x) in (int, float), "boolean": lambda x: type(x) is bool,
-             "null": lambda x: x is None}
+    types = {
+        "object": lambda x: isinstance(x, dict),
+        "array": lambda x: isinstance(x, list),
+        "string": lambda x: isinstance(x, str),
+        "integer": lambda x: type(x) is int,
+        "number": lambda x: type(x) in (int, float),
+        "boolean": lambda x: type(x) is bool,
+        "null": lambda x: x is None,
+    }
     wanted = schema.get("type")
-    if wanted and not any(types[t](value) for t in (wanted if isinstance(wanted, list) else [wanted])):
+    if wanted and not any(
+        types[t](value) for t in (wanted if isinstance(wanted, list) else [wanted])
+    ):
         raise EvidenceError(f"wrong type at {path}")
     if "enum" in schema and value not in schema["enum"]:
         raise EvidenceError(f"unknown enum at {path}")
     if "const" in schema and (type(value) is not type(schema["const"]) or value != schema["const"]):
         raise EvidenceError(f"wrong constant at {path}")
     if isinstance(value, str):
-        if len(value) < schema.get("minLength", 0) or ("pattern" in schema and re.fullmatch(schema["pattern"], value) is None):
+        if len(value) < schema.get("minLength", 0) or (
+            "pattern" in schema and re.fullmatch(schema["pattern"], value) is None
+        ):
             raise EvidenceError(f"invalid string at {path}")
-    if type(value) in (int, float) and (value != value or value in (float("inf"), float("-inf")) or value < schema.get("minimum", float("-inf"))):
+    if type(value) in (int, float) and (
+        value != value
+        or value in (float("inf"), float("-inf"))
+        or value < schema.get("minimum", float("-inf"))
+    ):
         raise EvidenceError(f"invalid number at {path}")
     if isinstance(value, dict):
-        if set(schema.get("required", [])) - set(value) or len(value) < schema.get("minProperties", 0):
+        if set(schema.get("required", [])) - set(value) or len(value) < schema.get(
+            "minProperties", 0
+        ):
             raise EvidenceError(f"missing field at {path}")
         props = schema.get("properties", {})
         for key, child in value.items():
@@ -420,7 +599,9 @@ def schema_check(value, schema: dict, root: dict | None = None, path: str = "$" 
             if isinstance(rule, dict):
                 schema_check(child, rule, root, f"{path}.{key}")
     if isinstance(value, list):
-        if len(value) < schema.get("minItems", 0) or (schema.get("uniqueItems") and len({canonical(v) for v in value}) != len(value)):
+        if len(value) < schema.get("minItems", 0) or (
+            schema.get("uniqueItems") and len({canonical(v) for v in value}) != len(value)
+        ):
             raise EvidenceError(f"empty/duplicate array at {path}")
         for i, child in enumerate(value):
             schema_check(child, schema.get("items", {}), root, f"{path}[{i}]")
@@ -428,13 +609,29 @@ def schema_check(value, schema: dict, root: dict | None = None, path: str = "$" 
 
 def validate_report(report: dict, evidence_root: Path, expected: dict | None = None) -> None:
     schema_check(report, json.loads(SCHEMA_PATH.read_text()))
-    required = {"schema_version", "run_id", "source", "expected_sha", "suite", "expected_cases", "corpus_sha256", "cases", "evidence", "verdict", "unverified", "duration_s"}
+    required = {
+        "schema_version",
+        "run_id",
+        "source",
+        "expected_sha",
+        "suite",
+        "expected_cases",
+        "corpus_sha256",
+        "cases",
+        "evidence",
+        "verdict",
+        "unverified",
+        "duration_s",
+    }
     if set(report) != required or report["schema_version"] != SCHEMA_VERSION:
         raise EvidenceError("missing/unknown report field or schema version")
     if not re.fullmatch(r"[0-9a-f]{32}", report["run_id"]):
         raise EvidenceError("missing unique run_id")
     src = report["source"]
-    if not re.fullmatch(r"[0-9a-f]{40}", report["expected_sha"]) or src["commit"] != report["expected_sha"]:
+    if (
+        not re.fullmatch(r"[0-9a-f]{40}", report["expected_sha"])
+        or src["commit"] != report["expected_sha"]
+    ):
         raise EvidenceError("wrong/missing commit")
     if expected is not None and src != expected:
         raise EvidenceError("report does not prove current checkout content")
@@ -450,25 +647,36 @@ def validate_report(report: dict, evidence_root: Path, expected: dict | None = N
         if row["id"] not in registry:
             raise EvidenceError("case does not belong to registered suite")
         files = fixture_files(report["suite"], registry[row["id"]])
-        fixture = {"files": files,
-                   "source_sha256": canonical({k:v for k,v in files.items() if k.endswith('.py')}),
-                   "data_sha256": canonical({k:v for k,v in files.items() if not k.endswith('.py')})}
+        fixture = {
+            "files": files,
+            "source_sha256": canonical({k: v for k, v in files.items() if k.endswith(".py")}),
+            "data_sha256": canonical({k: v for k, v in files.items() if not k.endswith(".py")}),
+        }
         if row["fixture"] != fixture:
             raise EvidenceError("fixture/source/data digest mismatch")
         fixture_map[row["id"]] = files
         if row["status"] not in STATUSES or set(row["stages"]) != set(CC.STAGES):
             raise EvidenceError("missing stage/unknown status")
-        if any(s.get("status") not in STATUSES or not s.get("criterion") for s in row["stages"].values()):
+        if any(
+            s.get("status") not in STATUSES or not s.get("criterion")
+            for s in row["stages"].values()
+        ):
             raise EvidenceError("missing stage status/criterion")
         for key in ("native", "tavotto"):
             count = row["executions"][key]
             if count is not None and (type(count) is not int or count < 0):
                 raise EvidenceError("invalid execution count")
-        if row["status"] in ("passed", "failed", "expected_limitation") and row["status"] != case_status(row):
+        if row["status"] in ("passed", "failed", "expected_limitation") and row[
+            "status"
+        ] != case_status(row):
             raise EvidenceError("verdict lacks native/count/environment/stage proof")
         if row["status"] in ("passed", "failed", "expected_limitation"):
             env = row["environment_before"]
-            if not env.get("fingerprint") or env != row["environment_after"] or env["fingerprint"] != canonical(env["facts"]):
+            if (
+                not env.get("fingerprint")
+                or env != row["environment_after"]
+                or env["fingerprint"] != canonical(env["facts"])
+            ):
                 raise EvidenceError("environment mismatch/unbound fingerprint")
             launches = row["raw"].get("launch_environments") or {}
             if set(launches) != {"native", "tavotto"}:
@@ -496,22 +704,38 @@ def validate_report(report: dict, evidence_root: Path, expected: dict | None = N
     paths = []
     for ref in report["evidence"]:
         p = contained(evidence_root, ref["path"])
-        if not p.is_file() or digest(p.read_bytes()) != ref["sha256"] or p.stat().st_size != ref["bytes"]:
+        if (
+            not p.is_file()
+            or digest(p.read_bytes()) != ref["sha256"]
+            or p.stat().st_size != ref["bytes"]
+        ):
             raise EvidenceError("missing/changed evidence: " + ref["path"])
         paths.append(ref["path"])
     if len(paths) != len(set(paths)):
         raise EvidenceError("duplicate evidence reference")
 
 
-def launch_adapter(command: list[str], *, work: Path, evidence: Path, env: dict, timeout: float) -> None:
+def launch_adapter(
+    command: list[str], *, work: Path, evidence: Path, env: dict, timeout: float
+) -> None:
     """Reuse package-smoke's process-group cleanup; retain timeout output.
 
     Only the registered engine/server paths run here. Engine product routes that
     deliberately detach desktop processes are outside this adapter's scope.
     """
-    with (evidence / "stdout.txt").open("w") as stdout, (evidence / "stderr.txt").open("w") as stderr:
-        proc = subprocess.Popen(command, env=env, cwd=work, stdout=stdout, stderr=stderr,
-                                stdin=subprocess.DEVNULL, start_new_session=os.name != "nt")
+    with (
+        (evidence / "stdout.txt").open("w") as stdout,
+        (evidence / "stderr.txt").open("w") as stderr,
+    ):
+        proc = subprocess.Popen(
+            command,
+            env=env,
+            cwd=work,
+            stdout=stdout,
+            stderr=stderr,
+            stdin=subprocess.DEVNULL,
+            start_new_session=os.name != "nt",
+        )
         timed_out = False
         try:
             proc.wait(timeout=timeout)
@@ -532,7 +756,10 @@ def run(args) -> int:
     expected_sha = args.expected_sha or initial["commit"]
     if expected_sha != initial["commit"]:
         raise EvidenceError("expected SHA is not actual HEAD")
-    if os.environ.get("GITHUB_REPOSITORY") == "Tavotto/Tavotto" and os.environ.get("GITHUB_SHA", expected_sha) != expected_sha:
+    if (
+        os.environ.get("GITHUB_REPOSITORY") == "Tavotto/Tavotto"
+        and os.environ.get("GITHUB_SHA", expected_sha) != expected_sha
+    ):
         raise EvidenceError("GITHUB_SHA disagrees with actual HEAD")
     registry = registered(args.suite)
     ids = args.case.split(",") if args.case else list(registry)
@@ -554,28 +781,79 @@ def run(args) -> int:
             work = Path(tmp)
             req = {"suite": args.suite, "case": cid, "work": str(work), "evidence": str(dest)}
             (work / "request.json").write_text(json.dumps(req))
-            source_hashes = [v for k, v in fixtures[cid].items() if k.endswith(".py") and Path(k).name == Path(registry[cid].get("script", "script.py")).name]
+            source_hashes = [
+                v
+                for k, v in fixtures[cid].items()
+                if k.endswith(".py")
+                and Path(k).name == Path(registry[cid].get("script", "script.py")).name
+            ]
             env = isolated_env(work, work / "adapter-execs.jsonl", source_hashes)
             try:
-                launch_adapter([sys.executable, str(Path(__file__).resolve()), "_execute", str(work / "request.json")],
-                               env=env, work=work, evidence=dest, timeout=args.timeout)
+                launch_adapter(
+                    [
+                        sys.executable,
+                        str(Path(__file__).resolve()),
+                        "_execute",
+                        str(work / "request.json"),
+                    ],
+                    env=env,
+                    work=work,
+                    evidence=dest,
+                    timeout=args.timeout,
+                )
                 row = json.loads((dest / "result.json").read_text())
             except (subprocess.TimeoutExpired, EvidenceError, OSError, ValueError) as exc:
-                row = {"id": cid, "status": "unknown", "layer": "runner", "profile": "safe", "desktop_shell_verified": False,
-                       "stages": {s: stage("not_run", "adapter did not produce valid terminal evidence") for s in CC.STAGES},
-                       "executions": {"native": None, "tavotto": None, "basis": "unobserved"},
-                       "native": {"status": "unknown", "result": {}}, "comparable": False,
-                       "environment_before": {}, "environment_after": {}, "product_classification": None,
-                       "raw": {"runner_error": str(exc)}, "unverified": ["adapter did not complete"]}
-            row["fixture"] = {"files": fixtures[cid], "source_sha256": canonical({k:v for k,v in fixtures[cid].items() if k.endswith('.py')}), "data_sha256": canonical({k:v for k,v in fixtures[cid].items() if not k.endswith('.py')})}
+                row = {
+                    "id": cid,
+                    "status": "unknown",
+                    "layer": "runner",
+                    "profile": "safe",
+                    "desktop_shell_verified": False,
+                    "stages": {
+                        s: stage("not_run", "adapter did not produce valid terminal evidence")
+                        for s in CC.STAGES
+                    },
+                    "executions": {"native": None, "tavotto": None, "basis": "unobserved"},
+                    "native": {"status": "unknown", "result": {}},
+                    "comparable": False,
+                    "environment_before": {},
+                    "environment_after": {},
+                    "product_classification": None,
+                    "raw": {"runner_error": str(exc)},
+                    "unverified": ["adapter did not complete"],
+                }
+            row["fixture"] = {
+                "files": fixtures[cid],
+                "source_sha256": canonical(
+                    {k: v for k, v in fixtures[cid].items() if k.endswith(".py")}
+                ),
+                "data_sha256": canonical(
+                    {k: v for k, v in fixtures[cid].items() if not k.endswith(".py")}
+                ),
+            }
             rows.append(row)
             print(f"{cid}: {row['status']}", flush=True)
     if source_state() != initial:
         raise EvidenceError("source content changed during run; no report published")
-    report = {"schema_version": SCHEMA_VERSION, "run_id": run_id, "source": initial, "expected_sha": expected_sha,
-              "suite": args.suite, "expected_cases": ids, "corpus_sha256": canonical(fixtures), "cases": rows,
-              "evidence": evidence_refs(evidence), "verdict": verdict(rows), "duration_s": round(time.monotonic()-started,3),
-              "unverified": ["real WebView2/WKWebView", "unreviewed/external scripts", "not user success rate", "no automatic promotion/baseline update"]}
+    report = {
+        "schema_version": SCHEMA_VERSION,
+        "run_id": run_id,
+        "source": initial,
+        "expected_sha": expected_sha,
+        "suite": args.suite,
+        "expected_cases": ids,
+        "corpus_sha256": canonical(fixtures),
+        "cases": rows,
+        "evidence": evidence_refs(evidence),
+        "verdict": verdict(rows),
+        "duration_s": round(time.monotonic() - started, 3),
+        "unverified": [
+            "real WebView2/WKWebView",
+            "unreviewed/external scripts",
+            "not user success rate",
+            "no automatic promotion/baseline update",
+        ],
+    }
     validate_report(report, evidence, initial)
     path = write_report("guardian.json", report, root=output)
     print(json.dumps({"report": str(path), "run_id": run_id, "verdict": report["verdict"]}))
@@ -603,7 +881,9 @@ def main(argv=None) -> int:
             return run(args)
         if args.command == "validate":
             path = Path(args.report)
-            validate_report(json.loads(path.read_text()), path.parent.parent / "evidence", source_state())
+            validate_report(
+                json.loads(path.read_text()), path.parent.parent / "evidence", source_state()
+            )
             print("valid current-checkout evidence")
             return 0
         request = json.loads(Path(args.request).read_text())

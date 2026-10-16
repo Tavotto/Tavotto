@@ -23,12 +23,17 @@ def actual_environment() -> dict:
         "python": sys.version,
         "platform": platform.platform(),
         "machine": platform.machine(),
-        "executable_sha256": hashlib.sha256(Path(sys.executable).resolve().read_bytes()).hexdigest(),
+        "executable_sha256": hashlib.sha256(
+            Path(sys.executable).resolve().read_bytes()
+        ).hexdigest(),
         "distributions": sorted(
-            f"{d.metadata['Name']}=={d.version}" for d in importlib.metadata.distributions()
+            f"{d.metadata['Name']}=={d.version}"
+            for d in importlib.metadata.distributions()
             if d.metadata.get("Name")
         ),
-        "execution_env": {k: os.environ.get(k) for k in ("PYTHONHASHSEED", "MPLBACKEND", "LANG", "LC_ALL")},
+        "execution_env": {
+            k: os.environ.get(k) for k in ("PYTHONHASHSEED", "MPLBACKEND", "LANG", "LC_ALL")
+        },
     }
     canon = json.dumps(facts, sort_keys=True, separators=(",", ":")).encode()
     return {"fingerprint": hashlib.sha256(canon).hexdigest(), "facts": facts}
@@ -52,8 +57,12 @@ def install() -> None:
             digest = hashlib.sha256(path.read_bytes()).hexdigest()
             if digest not in allowed:
                 return
-            row = {"pid": os.getpid(), "source_sha256": digest,
-                   "script": str(path.relative_to(root)), "environment": actual_environment()}
+            row = {
+                "pid": os.getpid(),
+                "source_sha256": digest,
+                "script": str(path.relative_to(root)),
+                "environment": actual_environment(),
+            }
             os.write(fd, (json.dumps(row, sort_keys=True) + "\n").encode())
         except OSError:
             # Missing counter evidence cannot result in a passing Guardian report.
