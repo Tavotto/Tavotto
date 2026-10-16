@@ -137,10 +137,11 @@
   **`supersedes` 与墓碑**：`PUT /api/ai/drafts/pending/<rid>` 带 `supersedes` 时，同一个事务里先给每个旧 rid 写墓碑预留（`ai_requests.session='~superseded'`）再删旧行；
   晚到的旧 rid 在 `run()` 的原子预留处被 409 `ai_request_superseded` 拒绝，`GET /api/ai/requests/<rid>` 回 `status: superseded`；
   旧 rid 已被真实预留则回滚并 409 `ai_supersede_conflict`。路由包装层对 spawn 之前的任何异常也删该 rid 的待确认行，spawn 之后的绝不删。
-  **`GET /api/ai/history?status=running`（无搜索 / 固定筛选）一次返回全部运行中的行，不分页**（运行中的会话天然有上限；
-  翻页期间集合会变，offset 翻页会漏掉仍在运行的），硬上限 2000，超过时响应带 `truncated: true` 并记一条日志（实际不会发生）；
-  其余查询的分页行为不变。前端 `doRestore` 因此一次请求取全，用的是 **`status=open`**：同样不分页，集合是「running，或已取消但
-  `_pump` 还没收尾（status=cancelled 且 ended_ms 为空）」——取消后刷新时后者没有占位、没有轮询，之后到的 `ai.done` 会被丢掉。
+  **`GET /api/ai/history?status=open`（无搜索 / 固定筛选，恢复专用）一次返回全部「还没结束」的行，不分页**——集合是「running，或已取消但
+  `_pump` 还没收尾（status=cancelled 且 ended_ms 为空）」，即 `OPEN_SESSION_SQL`（运行中的会话天然有上限；翻页期间集合会变，offset 翻页会漏掉
+  仍在运行的），硬上限 2000，超过时响应带 `truncated: true` 并记一条日志（实际不会发生）。取消后刷新时后者没有占位、没有轮询，
+  之后到的 `ai.done` 会被丢掉，所以恢复要这一集合。**其余查询（含任务历史面板的 `status=running` 筛选）照常分页**，`status=running` 不再有一次取全的特例。
+  前端 `doRestore` 因此一次请求取全。
   会话详情 `GET /api/ai/sessions/<sid>` 是**显式白名单 DTO**（`SESSION_DTO_KEYS`），会话 dict 里的内部对象（`proc`、`exited` 的 Event 等）
   列在 `SESSION_INTERNAL_KEYS`，新增字段必须在两者之一表态（有用例钉住）。
   **会话详情 `GET /api/ai/sessions/<sid>` 带 `final`**：只有 `_pump` 收尾（changed / diff / refresh 都确定、已落库）之后才为 true。

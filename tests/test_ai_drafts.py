@@ -801,6 +801,7 @@ def test_stale_response_carries_the_hash_of_the_current_row_text(client, two):
     r3 = put_s(client, a, "F", "旧", 5_500)
     assert r3["text_hash"] == ai_history.text_hash("")
 # GET /api/ai/history?status=running：一次返回全部，不分页（#1111 Codex P2）
+# GET /api/ai/history?status=open：恢复专用，一次返回全部「还没结束」的行；status=running 照常分页（#1111 Codex P2）
 # ---------------------------------------------------------------------------
 def _seed_sessions(tmp_path, name, n_running, n_done=0):
     project = str((tmp_path / name).resolve())
@@ -826,23 +827,36 @@ def _history(client, pj, **qs):
     return client.get("/api/ai/history", query_string=qs, headers=H(pj)).get_json()
 
 
-def test_history_running_returns_every_running_row_regardless_of_paging(client, two, tmp_path):
+def test_history_open_returns_every_open_row_regardless_of_paging(client, two, tmp_path):
     a, _ = two
     _seed_sessions(tmp_path, "a", n_running=150, n_done=5)
     got = _history(
-        client, a, status="running", limit=20, offset=100
-    )  # 翻页参数被忽略：运行中的集合一次取全
+        client, a, status="open", limit=20, offset=100
+    )  # 翻页参数被忽略：恢复要的集合一次取全
     assert got["total"] == 150 and len(got["sessions"]) == 150
     assert {r["id"] for r in got["sessions"]} == {f"run{i:04d}" for i in range(150)}
     assert got["truncated"] is False
 
 
-def test_history_running_is_truncated_only_past_the_hard_limit(client, two, tmp_path, monkeypatch):
+def test_history_open_is_truncated_only_past_the_hard_limit(client, two, tmp_path, monkeypatch):
     a, _ = two
     monkeypatch.setattr(m, "RUNNING_HISTORY_HARD_LIMIT", 10)
     _seed_sessions(tmp_path, "a", n_running=15)
-    got = _history(client, a, status="running")
+    got = _history(client, a, status="open")
     assert got["total"] == 15 and len(got["sessions"]) == 10 and got["truncated"] is True
+
+
+def test_history_running_filter_paginates_like_any_other(client, two, tmp_path):
+    """任务历史面板的 `status=running` 筛选照常分页：第一页只给一页，翻页拿到不同的一批（不是第一页就给全部、翻页又拿到同一批）。"""
+    a, _ = two
+    _seed_sessions(tmp_path, "a", n_running=7)
+    page1 = _history(client, a, status="running", limit=3, offset=0)
+    page2 = _history(client, a, status="running", limit=3, offset=3)
+    page3 = _history(client, a, status="running", limit=3, offset=6)
+    assert page1["total"] == 7 and [len(p["sessions"]) for p in (page1, page2, page3)] == [3, 3, 1]
+    ids = [r["id"] for p in (page1, page2, page3) for r in p["sessions"]]
+    assert len(set(ids)) == 7  # 三页互不重复、合起来是全部
+    assert "truncated" not in page1
 
 
 def test_history_other_queries_keep_paging(client, two, tmp_path):
