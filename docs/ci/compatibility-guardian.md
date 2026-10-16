@@ -63,8 +63,10 @@ candidate is promoted automatically. Controlled fixtures are not a sample of
 real-user success rates.
 
 The existing hosted `compat-smoke` job runs two observation steps after its locked
-dependencies/fonts are prepared: engine OO/savefig, show-only and relative CSV;
-V2 plain and replace/readback through the authenticated Safe server. Each step
+dependencies/fonts are prepared: engine OO/savefig, show-only, relative CSV,
+helper import, multi-Figure capture and Pillow; V2 plain, replace/readback,
+savefig/Pillow readback, installed Pillow and native-error/no-figure/missing-CV2
+controls through the authenticated Safe server. Each step
 retains the actual CLI exit and validates the terminal report against the exact
 checkout, then uploads the entire UUID report/evidence tree even on failure.
 `continue-on-error` does not change a report verdict: V2's four unrun stages still
@@ -73,6 +75,10 @@ manager. Only unchanged committed fixtures run; checkout credentials may still
 exist in Git configuration, so this job cannot execute external/generated scripts.
 Interrupted/negative adapters preserve any execution logs before temporary data
 is removed.
+The broader controls can produce environment_unavailable, invalid_fixture,
+unknown or Safe-only failures. A Safe-only failure does not establish a desktop
+regression or authorize a product repair. The generic process lifetime wrapper
+reuses package_smoke; the actual server/authentication remains Foundation's.
 
 ## First cloud run and limits (2026-10-16)
 

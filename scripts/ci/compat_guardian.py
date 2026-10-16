@@ -719,31 +719,13 @@ def launch_adapter(
     Only the registered engine/server paths run here. Engine product routes that
     deliberately detach desktop processes are outside this adapter's scope.
     """
-    with (
-        (evidence / "stdout.txt").open("w") as stdout,
-        (evidence / "stderr.txt").open("w") as stderr,
-    ):
-        proc = subprocess.Popen(
-            command,
-            env=env,
-            cwd=work,
-            stdout=stdout,
-            stderr=stderr,
-            stdin=subprocess.DEVNULL,
-            start_new_session=os.name != "nt",
-        )
-        timed_out = False
-        try:
-            proc.wait(timeout=timeout)
-        except subprocess.TimeoutExpired:
-            timed_out = True
-        finally:
-            cleanup = package_smoke.terminate(proc)
-    process = {"exit_code": proc.returncode, "timed_out": timed_out, "cleanup": cleanup}
+    process = package_smoke.run_isolated_command(
+        command, env=env, cwd=work, evidence=evidence, timeout=timeout
+    )
     (evidence / "process.json").write_text(json.dumps(process))
-    if cleanup.get("group_gone") is False:
+    if process["cleanup"].get("group_gone") is False:
         raise EvidenceError("adapter cleanup uncertain: process group remains")
-    if timed_out or proc.returncode != 0:
+    if process["timed_out"] or process["exit_code"] != 0:
         raise EvidenceError("adapter timeout/failure; retained stdout/stderr/process evidence")
 
 

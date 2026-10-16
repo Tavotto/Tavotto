@@ -27,8 +27,8 @@ No role edited code, ran a fixture, installed dependencies, or certified a test.
 
 ## In-flight ownership
 
-Live GitHub metadata: #1023, #1024, #1028 and #1002 are merged. #1034 and #1044
-remain open. #1055 head `f2324f7642816f6e9d265592efd3132d44b0a6ec` and #1048
+Initial GitHub snapshot: #1023, #1024, #1028 and #1002 were merged; #1034 and #1044
+were open. #1055 head `f2324f7642816f6e9d265592efd3132d44b0a6ec` and #1048
 are owned by another task; Guardian does not modify their branches or duplicate them.
 #1085 introduces `agent_verify` and engine triage; Guardian is a specialized
 compatibility evidence adapter, not another universal verification dispatcher.
@@ -36,6 +36,13 @@ compatibility evidence adapter, not another universal verification dispatcher.
 The latest #1034 writer-pattern finding is explicitly deferred by the maintainer:
 [discussion r4289852315](https://github.com/Tavotto/Tavotto/pull/1034#discussion_r4289852315),
 tracked by #1086. It is **unfixed / deferred**, not a passing Guardian acceptance.
+Follow-up: #1034 merged at 04:09:15 UTC, head
+`aae624a6d053cc6c95e6929a62936c7000c94dde`, squash
+`c6f577baec5442775ba1f2e02764ea738a9b2196`. Latest main observed through the
+connected read channel is `a48872109012b13cb6c2e83265cd4f7e52782ef2`.
+The writer-pattern/alias risk remains deferred under #1086; merging #1034 does
+not qualify its independent Native acceptance. New product reproduction must
+bind the later actual CI checkout and must not repair already merged work.
 The complete observed open-PR list and exact heads are in `compatibility-guardian-state.json`.
 
 ## Nine-stage paths and what each proves
