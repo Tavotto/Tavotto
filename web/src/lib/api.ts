@@ -3252,6 +3252,8 @@ export interface AiSessionDetail {
    * 老后端没有这个字段（`undefined`）：退回按 `status !== 'running'` 判。
    */
   final?: boolean
+  /** 失败 / 超时的原因（后端给的一句话）；失败的会话没有它，恢复后的失败提示就是空白的 */
+  error?: string | null
   changed: boolean | null
   diff: string
   transcript: { kind: string; text: string }[]

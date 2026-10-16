@@ -784,3 +784,42 @@ describe('终态要后端明确说 final；终态转录以快照为准（#1111 C
   })
 })
 
+describe('断线期间任务失败：恢复后失败提示带着后端给的原因（#1111 Codex P2 r4289419771）', () => {
+  const FAILED = { agent: 'codex', status: 'failed', final: true, changed: false, diff: '', transcript: [], error: 'codex 退出码 2：找不到模块 foo' }
+
+  it('占位被详情快照收尾（settleRunningSessions）：error 进会话', async () => {
+    history.pa = [row()]
+    detail['s-run'] = FAILED
+    await useAiStore.getState().restoreRunning()
+    expect(sessions()[0]).toMatchObject({ status: 'failed', finalized: true, error: 'codex 退出码 2：找不到模块 foo' }) // 对照：以前是空白失败提示
+  })
+
+  it('占位被认领后快照回来（accept 找不到提交 → 按会话 id 收尾）：error 进会话', async () => {
+    requestsDb['rid-err-000001'] = { session: 's-run', status: 'failed', changed: false, script: 'fig1.py' }
+    detail['s-run'] = FAILED
+    let open!: () => void
+    detailGate = new Promise<void>((r) => (open = r))
+    useAiStore.getState().restoreSubmission({
+      rid: 'rid-err-000001', project: 'pa', fileId: 'Fig1.pdf', panelId: 'p1', script: 'fig1.py', prompt: 'p',
+      target: { scope: 'figure', gid: null, label: null, target: '整张图' }, canvas: null, overrides: [],
+    })
+    await vi.waitFor(() => expect(urls.some((u) => u.includes('/api/ai/sessions/s-run'))).toBe(true))
+    history.pa = [row({ id: 's-run', client_request_id: 'rid-err-000001' })]
+    detail['s-run'] = { agent: 'codex', status: 'running', changed: false, diff: '', transcript: [] }
+    await useAiStore.getState().restoreRunning()
+    open()
+    await vi.waitFor(() => expect(sessions()[0]).toMatchObject({ status: 'failed', finalized: true, error: 'codex 退出码 2：找不到模块 foo' }))
+  })
+
+  it('经查询请求新建会话（accept 主路径）：error 进会话', async () => {
+    requestsDb['rid-err-000002'] = { session: 's-q', status: 'failed', changed: false, script: 'fig1.py' }
+    detail['s-q'] = FAILED
+    useAiStore.getState().restoreSubmission({
+      rid: 'rid-err-000002', project: 'pa', fileId: 'Fig1.pdf', panelId: 'p1', script: 'fig1.py', prompt: 'p',
+      target: { scope: 'figure', gid: null, label: null, target: '整张图' }, canvas: null, overrides: [],
+    })
+    await vi.waitFor(() => expect(sessions()).toHaveLength(1))
+    expect(sessions()[0]).toMatchObject({ id: 's-q', status: 'failed', finalized: true, error: 'codex 退出码 2：找不到模块 foo' })
+  })
+})
+

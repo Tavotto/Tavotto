@@ -620,6 +620,7 @@ export const useAiStore = create<AiState>((set, get) => ({
         status: d.status,
         changed: !!d.changed,
         diff: d.diff ?? '',
+        ...(d.error ? { error: d.error } : {}),
         ...(d.refresh ? { refresh: d.refresh } : {}),
       }
       settleSessionTo(x.id, done, d.transcript)
@@ -1101,6 +1102,7 @@ function accept(
             status: st,
             changed: !!(how.changed || d?.changed),
             diff: d?.diff ?? '',
+            ...(d?.error ? { error: d.error } : {}),
             ...(d?.refresh ? { refresh: d.refresh } : {}),
           },
           d?.transcript,
@@ -1139,6 +1141,7 @@ function accept(
     diff: detail?.diff ?? '',
     startedAt: Date.now(),
     ...(settled ? { finalized: true, finishedAt: Date.now() } : {}),
+    ...(settled && detail?.error ? { error: detail.error } : {}),
   }
   set((s) => {
     const { [rid]: _gone, ...rest } = s.submissions
@@ -1170,7 +1173,9 @@ function accept(
                       status: session.status,
                       changed: session.changed || x.changed,
                       diff: session.diff || x.diff,
-                      ...(session.finalized ? { finalized: true, finishedAt: session.finishedAt } : {}),
+                      ...(session.finalized
+                        ? { finalized: true, finishedAt: session.finishedAt, ...(session.error ? { error: session.error } : {}) }
+                        : {}),
                     }),
               }
             : x,
@@ -1193,6 +1198,7 @@ function accept(
       status: session.status,
       changed: session.changed,
       diff: session.diff,
+      ...(session.error ? { error: session.error } : {}),
       ...(detail?.refresh ? { refresh: detail.refresh } : {}),
     })
   }
