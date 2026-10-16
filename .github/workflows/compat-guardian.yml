@@ -39,6 +39,9 @@ env:
 jobs:
   guardian:
     name: Guardian observation (hosted, not a required check)
+    # fork 的 PR 不跑：fork 代码会在这里被执行（夹具与脚本都来自 PR）。同仓库分支的 PR、
+    # dispatch、schedule 照常。fork PR 即使被放行，token 也只读且拿不到 secrets，这条是纵深防御。
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     steps:

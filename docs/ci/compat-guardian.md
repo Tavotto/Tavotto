@@ -183,6 +183,12 @@ CompatBench 的 `run_group` 之外 runner 崩溃目前会被 `compat_matrix.py:m
 - 触发：`workflow_dispatch`、每日 `schedule`、以及 `pull_request`（`branches: [main]`，`paths` 只列
   Guardian 自己的文件）。不监听 `merge_group` / `push` / `pull_request_target`。
 - `permissions: contents: read`；checkout `persist-credentials: false`；无 secrets、无 token。
+- **fork PR**：job 级 `if` 只在「非 PR 事件，或 PR 的 head 仓库 == 本仓库」时运行，所以 fork 的 PR 不会执行
+  Guardian（`test_fork_pull_requests_do_not_run_guardian` 钉着）。依据与纵深：① `pull_request`（不是
+  `pull_request_target`）下 fork 的 token 本来就只读、拿不到 secrets，且本 workflow 不引用任何 secret；
+  ② 这条 `if` 让 fork 代码根本不被执行；③ 同仓库分支的 PR 会执行该分支提交的夹具与脚本——这正是 §1
+  说的「自洽检查不是评审」，所以只在托管临时 runner 上跑、无凭据、无 secrets。注意这类静态保证量的是 main 上的
+  yml，PR 自带的 yml 能改掉它，兜底在仓库的 fork-PR 审批策略。
 - **不是必需检查**：job 名不在 `GATE_CONTEXTS`，`ci-fast-gate` / `ci-integration-gate` 不 `needs` 它，
   因此 required contexts 不变（`merge_queue_ruleset.py verify-live` 与此无关，未运行）。
 - 失败可见：不用 `continue-on-error`；`set +e` 的步骤必须按退出码重新抛出，只有 4 放行为 `::warning::`；

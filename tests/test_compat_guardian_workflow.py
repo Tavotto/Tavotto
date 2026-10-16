@@ -217,3 +217,12 @@ def test_any_workflow_that_references_guardian_code_is_hosted_only_and_not_lab_r
         assert labels <= HOSTED, f"{name} runs Guardian on {sorted(labels - HOSTED)}"
         assert "tavotto-lab" not in executable and "self-hosted" not in executable, name
         assert "_lab-qualification.yml" not in executable, name
+
+
+def test_fork_pull_requests_do_not_run_guardian():
+    job = code().split("jobs:", 1)[1].split("    steps:", 1)[0]
+    assert (
+        "if: ${{ github.event_name != 'pull_request' || "
+        "github.event.pull_request.head.repo.full_name == github.repository }}"
+    ) in job
+    assert "pull_request_target" not in code()
