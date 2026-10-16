@@ -77,6 +77,8 @@ PLATFORM_SKIPS = {
     # chromium + chromium-en 两个 project）执行；Windows 腿跳过。不让假 CLI 跨平台，是因为那要在 exe 形态下
     # 伪造一份 `codex.cmd` → node 脚本的 shim 解析链，造出来的就不是产品真实走的那条路了
     "ai-draft.spec.ts": 1,
+    # 运行中会话恢复（PR4b）：同上，假 `codex` 是 POSIX shell 脚本（等放行文件才退出）→ posix-e2e 腿执行，Windows 腿跳过
+    "ai-restore.spec.ts": 1,
 }
 
 

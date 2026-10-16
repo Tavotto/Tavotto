@@ -97,6 +97,28 @@ def spawn_started() -> bool:
     return bool(getattr(_SPAWN_MARK, "started", False))
 
 
+def _finish_session(sess: dict, *, error: str | None = None) -> None:
+    """**终态字段的唯一写入点**：`SESSION_TERMINAL_FIELDS` 里的那一组同时落到内存会话和历史库，再置 `final`。
+    `get()` 优先返回内存会话、重启后的合并路径整体以历史库为准——两边分叉（比如异常分支只把 error 写进历史库）会让对账拿到
+    `final: true` 但没有 error 的快照，恢复后的失败提示就是空白的。清单只有一份：这里按它写、`get()` 按它读。"""
+    if error is not None:
+        sess["error"] = error
+    for k in SESSION_TERMINAL_FIELDS:
+        sess.setdefault(k, None)  # 内存会话上一定带齐清单里的每个键
+    ai_history.record_end(
+        sess["id"],
+        sess["status"],
+        diff=sess["diff"] or "",
+        changed=bool(sess["changed"]),
+        error=sess["error"],
+        transcript=sess["transcript"] or [],
+        refresh=sess["refresh"],
+    )
+    # 结束时刻：详情的 `ended_ms`（#1098 单独合入时前端靠它判 cancelled 快照是不是终态；这里与 `final` 同时置位）
+    sess["ended_ms"] = int(time.time() * 1000)
+    sess["final"] = True
+
+
 def _drop_attempt_files(sid: str, snap: Path) -> None:
     """这次尝试没有真正起任务（被拒绝）：清掉为它备好的快照 / sidecar / 日志，不留半成品。"""
     for leftover in (snap, SNAP_DIR / f"{sid}.json", SNAP_DIR / f"{sid}.stderr.log"):
@@ -864,6 +886,8 @@ def run(
             "exited": threading.Event(),
             "started": time.time(),
             "client_request_id": client_request_id,
+            #: `_pump` 收尾（changed / diff / refresh 都确定、已落库）之后才为 True；会话详情据此告诉前端「这是不是终态快照」
+            "final": False,
         }
         SESSIONS[sid] = sess
     emit = on_event or (lambda *_: None)
@@ -915,17 +939,8 @@ def run(
                 sess["changed"],
                 sess["refresh"]["status"],
             )
-            ai_history.record_end(
-                sid,
-                sess["status"],
-                diff=sess["diff"],
-                changed=sess["changed"],
-                transcript=sess["transcript"],
-                refresh=sess["refresh"],
-            )
-            # 结束时刻：会话详情据此告诉前端「这是不是终态快照」——`cancel` 之后 status 立刻是 cancelled，但 changed / diff / refresh
-            # 要等 pump 收尾才算出来；没有 ended_ms 的 cancelled 快照不是终态
-            sess["ended_ms"] = int(time.time() * 1000)
+            # changed / diff / refresh 此刻才全部确定：`final` 之前的快照（包括 cancel 之后立刻变成 cancelled 的）不是终态
+            _finish_session(sess)
             emit(
                 "ai.done",
                 {
@@ -941,15 +956,10 @@ def run(
             _terminate(sess)
             _await_exit(sess)
             sess["status"] = "failed"
+            sess["changed"] = False
+            sess["diff"] = ""
             sess["refresh"] = sess.get("refresh") or {"status": "skipped"}
-            ai_history.record_end(
-                sid,
-                "failed",
-                error=str(exc),
-                transcript=sess.get("transcript") or [],
-                refresh=sess["refresh"],
-            )
-            sess["ended_ms"] = int(time.time() * 1000)
+            _finish_session(sess, error=str(exc))
             emit(
                 "ai.done",
                 {
@@ -1164,6 +1174,7 @@ SESSION_DTO_KEYS: tuple[str, ...] = (
     "script",
     "prompt",
     "status",
+    "final",
     "changed",
     "diff",
     "transcript",
@@ -1200,6 +1211,19 @@ SESSION_INTERNAL_KEYS: frozenset[str] = frozenset(
 )
 
 
+#: 状态本身就是确定终态的会话：之后不会再有结果补进来（`interrupted` 由 `interrupt_all` / 启动清理写，进程已经没了）。
+#: `cancelled` **不在其中**：`cancel` 之后 `_pump` 还会补 changed / diff / refresh，要看 `ended_ms` 是否已写。
+FINAL_STATUSES: frozenset[str] = frozenset({"done", "failed", "timeout", "interrupted"})
+
+
+def _history_final(hist: dict) -> bool:
+    """历史库里这一行是不是终态：状态本身是确定终态（`FINAL_STATUSES`），或写了 `ended_ms`（`record_end` / 启动清理才写）。
+    `cancel` 只改 status、不写 ended_ms——那一刻 changed / diff / refresh 还没算出来；若这行属于另一个仍活着的服务进程，
+    它的 `_pump` 之后才会收尾。`interrupt_all`（/api/shutdown）写 interrupted 也不写 ended_ms、进程随后就没了：
+    不能因此永远 `final: false`。"""
+    return hist.get("status") in FINAL_STATUSES or hist.get("ended_ms") is not None
+
+
 def _session_dto(raw: dict) -> dict:
     """把会话 dict（内存里的 / sidecar 合并历史的 / 历史行）收成可序列化的对外形状：只取白名单里有的键。"""
     out = {k: raw[k] for k in SESSION_DTO_KEYS if k in raw}
@@ -1223,13 +1247,16 @@ def get(sid: str) -> dict | None:
         # `refresh` 结局，不回 404——404 会被前端当成「没有详情」，凭摘要收尾、丢掉「改成了但项目没刷新」的警告（Codex #1098）
         if hist is None:
             return None
-        return _session_dto({**hist, "note": "改前快照已清理，记录来自历史库"})
+        return _session_dto(
+            {**hist, "final": _history_final(hist), "note": "改前快照已清理，记录来自历史库"}
+        )
     if hist is not None:
         return _session_dto(
             {
                 **side,
                 # 终态字段**整体**以历史库为准（同一份清单，不逐个抄——逐个抄漏过 `error`：失败的会话 final 为 true 却没有原因）
                 **{k: hist.get(k) for k in SESSION_TERMINAL_FIELDS if k in hist},
+                "final": _history_final(hist),
                 "revert_available": hist.get("revert_available"),
                 "note": "后端已重启，记录来自历史库",
             }
@@ -1241,6 +1268,7 @@ def get(sid: str) -> dict | None:
             "transcript": [],
             "diff": "",
             "changed": None,
+            "final": True,  # 后端已重启，没有进程会再产出结果了
             "note": "后端已重启，仅可回滚",
         }
     )

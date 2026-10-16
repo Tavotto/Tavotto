@@ -111,6 +111,7 @@ export default interface Resources {
       "effortRaw": "强度原始值：{{value}}",
       "emptyHint": "助手会直接修改脚本，改动可回滚。",
       "emptyTitle": "想怎么改这张图？",
+      "finishing": "正在结束上一次修改…",
       "inputAria": "描述要怎么改这张图",
       "ledgerFailed": "没能保存这条指令的发送记录，所以没有发出。检查连接后重试。",
       "ledgerUnreadable": "暂时读不到这张图有没有未结的发送记录，所以先不能发送。",
@@ -158,6 +159,7 @@ export default interface Resources {
     "session": {
       "doneChanged": "改动已写入脚本",
       "doneNoChange": "已完成，脚本没有变化",
+      "restoredNote": "已接回仍在运行的任务；此前的输出不再显示，结束后会更新结果。",
       "reverted": "已回滚，脚本已恢复到修改前。",
       "revertedStatus": "已回滚助手的修改，正在重建图表…",
       "running": "正在修改脚本…"
