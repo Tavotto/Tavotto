@@ -1082,7 +1082,7 @@ def test_the_post_spawn_log_never_contains_the_request_id(
     class FaultyThread(real_thread):
         def start(self):
             if str(self.name).startswith("ai-"):
-                raise RuntimeError(leaked)
+                raise ValueError(leaked)
             super().start()
 
     monkeypatch.setattr(ai_bridge.threading, "Thread", FaultyThread)
@@ -1095,7 +1095,7 @@ def test_the_post_spawn_log_never_contains_the_request_id(
     for rec in caplog.records:
         text = rec.getMessage() + (rec.exc_text or "") + str(rec.args) + str(rec.exc_info)
         assert RID not in text and leaked not in text
-    assert "RuntimeError" in logged[0].getMessage()  # 类型名还在，能定位
+    assert "ValueError" in logged[0].getMessage()  # 类型名还在，能定位
 
 
 def test_an_error_response_after_spawn_is_unresolved(client, tmp_path, cli, monkeypatch):
