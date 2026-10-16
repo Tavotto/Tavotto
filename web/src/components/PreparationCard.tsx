@@ -681,7 +681,8 @@ function useRunPrimary(entry: PrepEntry, onMany: () => void) {
           'id' in entry.target
             ? entry.target
             : scriptTarget(entry.target.script, { reuse: entry.target.reuse_last_success === true }),
-          { run: entry.wantsRun },
+          // 「继续」不是新的一次「打开并运行」：回到已跑完的同配置会话时复用结果，不重跑（registry-center-preparation e2e）
+          { run: entry.wantsRun, rerun: false },
         )
         return null
       case 'confirm_origins': {

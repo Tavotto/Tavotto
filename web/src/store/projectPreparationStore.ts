@@ -135,7 +135,8 @@ interface PreparationState {
    * `run: true` = 用户在一个**明确的「打开并运行」入口**上点了它：检查完、报告里有 `run_when_ready` 动作且必填参数齐了，
    * 就代用户认领它（授权合同的摘要由 `act` 回显）——这是唯一一条「打开」之后自动认领的路径；其余入口只检查
    */
-  open: (target: PreparationTarget, opts?: { show?: boolean; run?: boolean }) => Promise<void>
+  /** `rerun: false`：卡上「继续」带着运行意图重开——只认领新的 `run_when_ready`，落到已跑完的同配置会话就复用那份结果，不重跑 */
+  open: (target: PreparationTarget, opts?: { show?: boolean; run?: boolean; rerun?: boolean }) => Promise<void>
   /** 只读补拉（SSE 提示 / 轮询 / 重连） */
   refresh: (key: string) => Promise<void>
   /** SSE `preparation.session`：只是「重读」的提示 */
@@ -423,7 +424,7 @@ export const useProjectPreparationStore = create<PreparationState>((set, get) =>
    * 只由 `open(..., { run: true })` 调——也就是用户明确点了那个入口；其余任何路径（刷新 / 重连 / 重建会话 / `recheckIdle`）都不走这里。
    * 必填参数没填齐时不认领（卡片已换成参数卡，填完用卡上的主按钮）。
    */
-  const armIfReady = async (key: string) => {
+  const armIfReady = async (key: string, allowRerun = true) => {
     const e = entry(key)
     const report = e?.report
     if (!e || !report || e.failure || e.pending || e.connection !== 'ok' || 'id' in e.target) return
@@ -434,6 +435,8 @@ export const useProjectPreparationStore = create<PreparationState>((set, get) =>
       report.actions.some((a) => a.kind === 'run') &&
       ENDED_PHASES.has(report.phase)
     if (!rerun && !report.actions.some((a) => a.kind === 'run_when_ready')) return
+    // 只有明确的「打开并运行」入口（脚本行 ▶ / 接入中心试运行）才在已跑完的会话上再跑；「继续」回到已有结果就复用它
+    if (rerun && !allowRerun) return
     // 只在卡片会说「可以运行了」（`ready`，没有要用户先看的事）时代认领：要先答的事（运行目录 / 环境 / 数据 / 必填参数）、要装的组件（用户该先看见
     // 装什么、装到哪）、弹窗 / 来源不明的提醒、重启后重建的会话都停在各自的卡上，由用户点那张卡的主按钮（它同样是 run_when_ready）
     const missing = missingArgsFor(e, e.target.argv ?? [])
@@ -514,7 +517,7 @@ export const useProjectPreparationStore = create<PreparationState>((set, get) =>
       // 再清空——防连点的闸就开了
       if (sameTarget && prev?.pending && prev.pending !== 'check') return
       await check(key, target, false)
-      if (opts?.run) await armIfReady(key)
+      if (opts?.run) await armIfReady(key, opts.rerun !== false)
     },
 
     refresh: (key) => {

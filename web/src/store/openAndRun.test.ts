@@ -511,6 +511,13 @@ describe('已跑完的会话只给 run（没有 run_when_ready）：显式「打
     expect(mockAct.mock.calls[1][1]).toMatchObject({ action_id: 'act-run' })
   })
 
+  it('卡上「继续」带运行意图重开（rerun:false）落到已跑完的同配置会话：复用结果，不认领 run 重跑', async () => {
+    mockCreate.mockResolvedValueOnce(finished())
+    await store().open(scriptTarget('plot.py'), { run: true, rerun: false })
+    expect(mockAct).not.toHaveBeenCalled()
+    expect(entry().wantsRun).toBe(true)
+  })
+
   it('认领 run 的响应里报告还是旧的 completed：武装了也不进入旧结果，等新尝试', async () => {
     mockCreate.mockResolvedValueOnce(finished())
     mockAct.mockResolvedValueOnce({ claimed: true, report: finished() })
