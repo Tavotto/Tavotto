@@ -50,6 +50,7 @@ from __future__ import annotations
 import argparse
 import builtins
 import contextlib
+import hashlib
 import importlib.util
 import io
 import json
@@ -129,6 +130,9 @@ _CAPTURE_SAVEFIG: dict = {}
 #: stem -> 与 `_CAPTURE_SAVEFIG[stem]` 逐项对齐的 `bbox_extra_artists` 对象（算图幅用，ADR 0098）
 _CAPTURE_EXTRAS: dict = {}
 _SAVEFIG_OBSERVATIONS = figcapture.SavefigObservations()
+#: 「先写临时文件再改名」的 savefig（#1124）：认领它的 stem -> 待确认的提升
+#: `{"tmp": 绝对路径, "final": 绝对路径, "stem": 最终 stem, "digest": 写完那一刻的内容摘要}`
+_TEMP_SAVES: dict = {}
 #: pyplot 兜底因上限丢掉的张数
 _DROPPED = 0
 #: 引擎自己写盘（预览 / 导出）时暂停捕获——否则 export 到任意路径会被
@@ -196,9 +200,62 @@ def _install_savefig_hook(mfigure) -> None:
             _SAVEFIG_OBSERVATIONS.complete(observation, "failed")
             raise
         _SAVEFIG_OBSERVATIONS.complete(observation, "saved")
+        if _CAPTURING:
+            _note_temp_save(self, fname)
         return result
 
     mfigure.Figure.savefig = _patched_savefig
+
+
+def _digest(path: str) -> str | None:
+    try:
+        with open(path, "rb") as f:
+            return hashlib.sha256(f.read()).hexdigest()
+    except OSError:
+        return None
+
+
+def _note_temp_save(fig, fname) -> None:
+    """`savefig("final.png.tmp")` 真的写完了：记下它认领的 stem 与写完那一刻的内容摘要，等脚本结束时
+    确认它成了 `final.png` 才把 stem 改成 `final`（`_promote_temp_saves`）。"""
+    target = figcapture.temp_save_target(fname)
+    if target is None:
+        return
+    stem = figcapture.savefig_stem(fname)
+    if not stem or _CAPTURE.get(stem) is not fig:
+        return
+    tmp = os.path.abspath(os.fsdecode(fname))
+    _TEMP_SAVES[stem] = {
+        "tmp": tmp,
+        "final": os.path.join(os.path.dirname(tmp), target[0]),
+        "stem": target[1],
+        "digest": _digest(tmp),
+    }
+
+
+def _promote_temp_saves(published=()) -> None:
+    """脚本结束：确认过的「临时文件 → 产物」提升把 stem 从 `final.png` 改成 `final`（#1124）。
+
+    确认的判据是**结果**而不是过程：临时文件已不在、对应的最终文件存在、且内容与这次 savefig 写进临时文件的
+    字节完全一致——`os.replace` / `Path.replace` / `shutil.move` / 复制后删除都满足，脚本跳过改名、磁盘上躺着
+    一份旧 `final.png`（Codex #1126 P1）、改名后又被别的内容覆盖都不满足。不在用户进程里替换 `os.replace`
+    之类去「观察改名」：那改的是用户代码的运行环境，而结果判据已经足够。
+
+    另外两条：最终 stem 没被别的图占用；已经在屏障上交给界面的 stem（`published`）不改——界面与会话已按
+    旧名索引了它。改名保持捕获顺序。"""
+    for old, t in list(_TEMP_SAVES.items()):
+        new = t["stem"]
+        if os.path.exists(t["tmp"]) or not os.path.isfile(t["final"]):
+            continue
+        if t["digest"] is None or _digest(t["final"]) != t["digest"]:
+            continue
+        if old not in _CAPTURE or new in _CAPTURE or old in published:
+            continue
+        for table in (_CAPTURE, _CAPTURE_SOURCE, _CAPTURE_SAVEFIG, _CAPTURE_EXTRAS):
+            if old in table:
+                items = [(new if k == old else k, v) for k, v in table.items()]
+                table.clear()
+                table.update(items)
 
 
 def _install_show_hook(plt, barrier) -> None:
@@ -1166,6 +1223,8 @@ def main(argv: list | None = None) -> int:
         exit_code = TERMINATE_EXIT
 
     _resolve_module_source(args)
+
+    _promote_temp_saves(run.session.capture if run.session is not None else ())
 
     plt = sys.modules.get("matplotlib.pyplot")
     if plt is not None:

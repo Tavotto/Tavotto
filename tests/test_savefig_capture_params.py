@@ -428,26 +428,3 @@ def test_bytes_filenames_are_paths_too(fake_mpl):
     assert figcapture.savefig_targets_path(b"out/Fig1.pdf")
     assert figcapture.savefig_stem(b"out/Fig1.pdf") == "Fig1"
     assert figcapture.savefig_call(b"out/Fig1.pdf", {})["format"] == "pdf"
-
-
-@pytest.mark.parametrize(
-    "fname,stem",
-    [
-        ("final.png.tmp", "final"),
-        ("out/Fig1.PDF.temp", "Fig1"),
-        (b"plots/a.svg.part", "a"),
-        ("results.tmp", "results"),  # 前一段不是图片扩展名：照旧只去最后一段
-        ("data.v2.tmp", "data.v2"),
-        ("Fig1.tmp.png", "Fig1.tmp"),  # 临时后缀不在最后：不动
-        ("Fig1.pdf", "Fig1"),
-    ],
-)
-def test_a_temp_file_written_before_a_rename_takes_the_final_artifact_stem(fname, stem):
-    """#1124：`savefig("final.png.tmp")` 再 `os.replace` 成 `final.png`——stem 是 `final`，原件按它找得到。"""
-    assert figcapture.savefig_stem(fname) == stem
-
-
-def test_the_temp_rename_stem_finds_the_real_artifact(tmp_path):
-    (tmp_path / "final.png").write_bytes(b"x")
-    stem = figcapture.savefig_stem("final.png.tmp")
-    assert figcapture.find_original_artifact(str(tmp_path), stem) == "final.png"
