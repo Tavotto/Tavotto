@@ -1300,6 +1300,18 @@ describe('已发出未确认：不能盲目重发', () => {
     expect(putOfNew?.body.supersedes).toEqual([rid1])
   })
 
+  it('查询得到 superseded（这条请求已被改写后的新指令取代）：不再提供同 rid 重发，提交被收掉，说一句', async () => {
+    await mount()
+    await sendIt('旧指令')
+    vi.mocked(fetchAiRequest).mockResolvedValue({ session: '', status: 'superseded', changed: false, script: '' })
+    await click(q('[data-ai-check]'))
+    await settle()
+    expect(q('[data-ai-submission]')).toBeNull() // 提交被收掉
+    expect(q('[data-ai-resend-same]')).toBeNull() // 没有「重新发送」
+    expect(aiRun).toHaveBeenCalledTimes(1) // 没有再发
+    expect(JSON.stringify(useUiStore.getState().status)).toContain('status.aiSuperseded')
+  })
+
   it('放弃旧等待后新行的 PUT 失败：旧行还在（状态仍然一致），之后同一条指令重试成功才一起清掉旧行', async () => {
     await mount()
     await sendIt('旧指令')
