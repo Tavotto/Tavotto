@@ -9245,23 +9245,38 @@ def api_ai_run():
     engine_ai.reset_spawn_mark()
     try:
         resp = app.make_response(_ai_run_impl())
-    except HTTPException:
-        if not engine_ai.spawn_started() and not _drop_rejected_pending(rid):
+    except HTTPException as exc:
+        if engine_ai.spawn_started():
+            return _post_spawn_unresolved(rid, exc)
+        if not _drop_rejected_pending(rid):
             return _unresolved_response()
         raise
-    except Exception:
+    except Exception as exc:
         # spawn **之前**的非 HTTP 异常（例如 record_start 抛 OperationalError）：全局处理器会把它转成 500，前端当成明确拒绝、
-        # 换新 rid 重发——旧 rid 的账本行必须在这里由后端删掉。**已经 spawn 的绝不删**（那条指令可能正在执行）。
-        # 删除本身也失败了（SQLite 锁住 / 磁盘满）就**不能**再回「明确拒绝」：账本行还在，换新 rid 之后它会被还原、
-        # 同一条指令执行两次——回 503 `ai_request_unresolved`（不确定），客户端按 unknown 处理、保持同一个 rid
-        if not engine_ai.spawn_started() and not _drop_rejected_pending(rid):
+        # 换新 rid 重发——旧 rid 的账本行必须在这里由后端删掉。删除本身也失败了（SQLite 锁住 / 磁盘满）就**不能**再回
+        # 「明确拒绝」：账本行还在，换新 rid 之后它会被还原、同一条指令执行两次——回 503 `ai_request_unresolved`（不确定）
+        if engine_ai.spawn_started():
+            return _post_spawn_unresolved(rid, exc)
+        if not _drop_rejected_pending(rid):
             return _unresolved_response()
         raise
-    if resp.status_code >= 400 and not engine_ai.spawn_started():
-        # 已经 spawn 的（哪怕之后报了 500）绝不删：那条指令可能正在执行，账本行是「响应丢了之后还能查到它」的线索
+    if resp.status_code >= 400:
+        if engine_ai.spawn_started():
+            return _post_spawn_unresolved(rid, None, status=resp.status_code)
         if not _drop_rejected_pending(rid):
             return _unresolved_response()
     return resp
+
+
+def _post_spawn_unresolved(rid, exc, status=None):
+    """进程已经起来之后的任何失败（HTTPException / 任意异常 / ≥400 响应）：那条指令可能正在改脚本，**不是**明确拒绝——
+    前端对除 `ai_request_unresolved` 之外的带码 5xx 一律当明确拒绝、换新 rid 重发，同一条修改就执行两次。
+    一律回 503 `ai_request_unresolved`（前端保持同一个 rid、按「未知」对账），账本行绝不删。只记日志（不含提示词 / 脚本内容）。"""
+    if exc is not None:
+        LOG.error("AI 任务已启动但随后出错（rid=%s）: %s", rid, type(exc).__name__, exc_info=exc)
+    else:
+        LOG.error("AI 任务已启动但响应为 %s（rid=%s）", status, rid)
+    return _unresolved_response()
 
 
 def _unresolved_response():
