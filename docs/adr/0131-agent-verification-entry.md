@@ -105,7 +105,7 @@ pytest 的假设进去会扩大攻击面）。纯标准库，复用 `_common.run
 
 #### 实现（交接三态 PR）
 
-**确认信号用 0700/0600 的回执文件，不开 HTTP 端点。** 原因是事实而非偏好：桌面 sidecar 的端口由壳建议、实绑后
+**确认信号用 0700/0600 的回执文件，不开 HTTP 端点（用户已拍板定案）。** 原因是事实而非偏好：桌面 sidecar 的端口由壳建议、实绑后
 只写进壳的握手文件，磁盘上没有任何本机凭据（ADR 0008「桌面模式的差异」：不写凭据文件、`/api/session/relaunch` 回 404），
 CLI 既找不到端口也没有凭据可带；要做成「经会话认证的查询」就得给桌面新造一个凭据发布面，那是放宽 ADR 0008。
 回执通道的信任锚与 `session_client` 凭据文件、ADR 0021 §4 的 native descriptor 是同一个论证（`<data_dir>/session/`
@@ -119,7 +119,7 @@ CLI 既找不到端口也没有凭据可带；要做成「经会话认证的查�
   期望有效期 = 等待上限 + 30 秒宽限，陈旧文件（1 小时）顺手清。**到点没结论是 `unverified/timeout`，绝不记 failed。**
 - **`launch.render`**（加性对象，`ok`、`protocol: 1` 不变）：
   `{"status": "ok|failed|unverified", "verified": bool, "waited_ms": int, …}`。
-  `unverified` 带 `reason`（闭集 `not_waited` / `timeout` / `channel_unavailable` / `no_target_stem`）；
+  `unverified` 带 `reason`（闭集 `not_waited` / `timeout` / `channel_unavailable` / `no_target_stem` / `not_renderable`）；
   `failed` 带 `code`（实例报出的 worker 稳定码，如 `engine_files_incomplete`、`missing_dependency`；
   不合规的串落成 `render_failed`）；`ok` 带 `stem` / `registry_match` / `manifest_elements`。
   `verified` 的**唯一判据**是 `handoffreceipt.summarize`：渲染成功 ∧ 回执 stem == 目标 stem ∧ 注册表里有该 stem ∧ manifest 非空。
@@ -127,13 +127,13 @@ CLI 既找不到端口也没有凭据可带；要做成「经会话认证的查�
   `render_success`（true / false=明确失败 / **null=不知道**）、`verified_success`（仅 `render.verified === true` 才 true）；外加 `render` 细节。
   旧 CLI 没有 `launch.render`：插件补 `{"status":"unverified","reason":"cli_without_render_signal"}`，
   `render_success: null`、`verified_success: false`。旧插件读新 CLI：多出的键被忽略。退出码与 `ok` 一字未改。
-- **没覆盖的**：没有任何实例在写回执（旧版本实例 / 数据目录被隔离成不同位置）→ `timeout`；无脚本 Figure（不可参数化）不发起渲染 → `timeout`；
+- **没覆盖的**：没有任何实例在写回执（旧版本实例 / 数据目录被隔离成不同位置）→ `timeout`；无脚本 Figure（`registry.parameterizable === false`）不发起渲染 → CLI 不等待，直接 `unverified/not_renderable`；
   真 Windows 桌面（MSIX 副本）上的端到端未验。
 - **MSIX 与数据目录（#961 现场，未解决）**：回执路径是 `config.data_dir()` = `%LOCALAPPDATA%\Tavotto`（可被 `TAVOTTO_DATA_DIR` 覆盖）。
   仓库里没有任何处理 MSIX / LocalCache 的代码（`code-facts.md`），所以**不确定**：Codex 是 MSIX 打包应用，它拉起的 CLI 子进程
   若继承包的文件系统虚拟化，写 `%LOCALAPPDATA%` 会落到 `Packages\<pkg>\LocalCache\Local\Tavotto`，而非打包的桌面 sidecar
   读的是真实路径——两边错位，则永远 `unverified/timeout`（不会误报 ok / failed，但这个场景下三态等于没有信号）。
-  同一错位也会影响 `session_client` 的凭据文件，但那条从未在 MSIX 下被验证过。需 Windows 真机验证；若证实，可选的出路
+  同一错位也会影响 `session_client` 的凭据文件，但那条从未在 MSIX 下被验证过。本 PR 不修（另开 issue，方向是回执 ID 经 argv 传给壳）；需 Windows 真机验证；若证实，可选的出路
   （都未实现）：实例额外扫 `Packages\*\LocalCache\Local\Tavotto\session\handoff`，或把 ID 经 argv 传给壳（改同源对 `desktop_argv`）。
 
 ## 不做

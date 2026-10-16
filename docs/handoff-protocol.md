@@ -134,7 +134,7 @@ CLI、唤起却静默退回浏览器模式——用户明明装了桌面版却�
 | --- | --- | --- |
 | `ok` | 界面对目标 stem 的那次渲染成功了 | `verified`、`stem`、`registry_match`、`manifest_elements` |
 | `failed` | 实例**明确报了渲染失败** | `code`：worker 的稳定码（`engine_files_incomplete`、`missing_dependency`…；不合规的串落成 `render_failed`） |
-| `unverified` | 没法下结论——**不是失败** | `reason`：`not_waited` / `timeout` / `channel_unavailable` / `no_target_stem` |
+| `unverified` | 没法下结论——**不是失败** | `reason`：`not_waited` / `timeout` / `channel_unavailable` / `no_target_stem` / `not_renderable` |
 
 `verified` 为 true 当且仅当：渲染成功 ∧ 回执里的 stem == 目标 stem ∧ 注册表里确有这个 stem ∧ manifest 非空
 （判据唯一在 `engine/handoffreceipt.py::summarize`，调用方不要自己再判一遍）。`waited_ms` 是实际等了多久。
@@ -144,7 +144,7 @@ CLI、唤起却静默退回浏览器模式——用户明明装了桌面版却�
 读到后删掉。**只记录界面本来就会做的那次渲染，不为验证执行用户脚本，也没有新的 HTTP 端点**
 （桌面 sidecar 没有磁盘凭据，ADR 0008；信任锚与会话凭据文件同一个论证，见 ADR 0131 第六节「实现」）。
 没有实例在写回执（老版本实例、数据目录被隔离成别处）或无脚本的 Figure（不发起渲染）一律落成
-`unverified/timeout`；目录级 / 多 Figure 交接没有目标 stem，落成 `unverified/no_target_stem`。
+`unverified/timeout`；目录级 / 多 Figure 交接没有目标 stem，落成 `unverified/no_target_stem`；登记结果已是不可参数化（`registry.parameterizable === false`，界面不会为它发起引擎渲染）时**不等待**，直接 `unverified/not_renderable`。
 
 ### `tavotto open --json` 失败时
 

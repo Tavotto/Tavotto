@@ -347,6 +347,24 @@ def test_directory_handoff_has_no_target_stem(tmp_path, monkeypatch):
     assert result["launch"]["render"]["reason"] == "no_target_stem"
 
 
+def test_a_figure_without_a_script_is_not_waited_for(tmp_path, monkeypatch):
+    """不可参数化 = 界面不发起引擎渲染：不写期望、不等，直接 not_renderable。"""
+    d = tmp_path / "gallery"
+    d.mkdir()
+    (d / "Fig9.pdf").write_bytes(b"%PDF-1.4\n%%EOF\n")  # 没有任何脚本产出它
+    seen: list[bool] = []
+    monkeypatch.setattr(
+        handoff, "launch", FakeLaunch(lambda t: seen.append(os.path.isdir(receipt.receipt_dir())))
+    )
+    clock = Clock()
+    result = handoff.open_target(
+        str(d / "Fig9.pdf"), render_wait=20, receipt_clock=clock, receipt_sleep=clock.sleep
+    )
+    assert result["registry"]["parameterizable"] is False
+    assert result["launch"]["render"]["reason"] == "not_renderable"
+    assert clock.sleeps == [] and seen == [False]
+
+
 def test_unwritable_channel_is_unverified_not_an_error(tmp_path, monkeypatch):
     blocker = tmp_path / "blocker"
     blocker.write_text("not a directory", encoding="utf-8")

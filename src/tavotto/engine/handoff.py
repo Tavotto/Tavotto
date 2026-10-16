@@ -1104,6 +1104,8 @@ def open_target(
             prefer=prefer,
             port=port,
             render_wait=render_wait,
+            # 与插件判 `not_parameterizable` 的同一个判据：无脚本的图界面不发起引擎渲染
+            renderable=registry_info.get("parameterizable") is not False,
             clock=receipt_clock,
             sleep=receipt_sleep,
             **kw,
@@ -1112,7 +1114,13 @@ def open_target(
 
 
 def _launch_with_render(
-    target: Target, *, render_wait: float, clock=None, sleep=None, **launch_kw
+    target: Target,
+    *,
+    render_wait: float,
+    renderable: bool = True,
+    clock=None,
+    sleep=None,
+    **launch_kw,
 ) -> dict:
     """唤起，并给 `launch` 加上 `render`（ADR 0131 第六节「交接三态」）。
 
@@ -1125,6 +1133,8 @@ def _launch_with_render(
     render: dict
     if target.stem is None:
         render = engine_receipt.unverified(engine_receipt.REASON_NO_TARGET_STEM)
+    elif not renderable:
+        render = engine_receipt.unverified(engine_receipt.REASON_NOT_RENDERABLE)
     elif render_wait <= 0:
         render = engine_receipt.unverified(engine_receipt.REASON_NOT_WAITED)
     else:

@@ -67,11 +67,14 @@ REASON_TIMEOUT = "timeout"
 REASON_CHANNEL_UNAVAILABLE = "channel_unavailable"
 #: 目录级 / 多 Figure 交接：没有「目标 stem」，不存在「那一次渲染」可看
 REASON_NO_TARGET_STEM = "no_target_stem"
+#: 登记结果说这张图不可参数化（无脚本）：界面不会为它发起引擎渲染，等也是白等
+REASON_NOT_RENDERABLE = "not_renderable"
 REASONS = (
     REASON_NOT_WAITED,
     REASON_TIMEOUT,
     REASON_CHANNEL_UNAVAILABLE,
     REASON_NO_TARGET_STEM,
+    REASON_NOT_RENDERABLE,
 )
 #: 实例报「渲染失败」却没给合法 code（或给了不合规的串）时用的稳定码
 CODE_RENDER_FAILED = "render_failed"
