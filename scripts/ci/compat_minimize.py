@@ -66,6 +66,8 @@ def signature(record: dict, chain: list[str], rules: list[dict]) -> dict:
             "shown": (nat.get("figures_shown") or 0) > 0,
             "saved": (nat.get("savefig_calls") or 0) > 0,
             "multi_writer": bool(nat.get("savefig_last_writer")),
+            # several distinct figures written to one path: what makes a same-path finding real
+            "overwrite": bool(nat.get("same_path_distinct_figures")),
             "figures": (nat.get("figure_count") or 0) > 0,
         },
         "tavotto_error": ((record.get("tavotto") or {}).get("error") or {}).get("code"),

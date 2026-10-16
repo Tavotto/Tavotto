@@ -172,16 +172,18 @@ def compare(candidate_class: str, native: dict, tavotto: dict, parent_native: di
             )
         for path, writer in sorted(nat["last_writer"].items()):
             stem = Path(path).stem
-            if stem in stems and writer["titles"] and stems[stem]["titles"] != writer["titles"]:
+            native_titles = [t for t in writer["titles"] if t]
+            # An untitled figure carries no content to compare; [""] vs [] is not a difference.
+            if stem in stems and native_titles and stems[stem]["titles"] != native_titles:
                 diffs.append(
                     _diff(
                         "same_path_content_mismatch",
-                        f"native last figure written to {path}: {writer['titles']} / "
+                        f"native last figure written to {path}: {native_titles} / "
                         f"Tavotto kept {stems[stem]['titles']}",
                         "figure_capture",
                         {
                             "path": path,
-                            "native_titles": writer["titles"],
+                            "native_titles": native_titles,
                             "tavotto_titles": stems[stem]["titles"],
                         },
                     )
@@ -522,6 +524,7 @@ def evidence_summary(record: dict) -> dict | None:
             "savefig_calls": native.get("savefig_calls"),
             "artifacts": sorted(a["path"] for a in native.get("artifacts", [])),
             "last_writer": native.get("savefig_last_writer") or {},
+            "same_path_distinct_figures": native.get("same_path_distinct_figures") or [],
             "titles": [t for v in (native.get("semantics") or {}).values() for t in v["titles"]],
         },
         "tavotto": {
