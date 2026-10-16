@@ -119,6 +119,7 @@ describe('aiDraftOutbox · 槽不变式', () => {
     await vi.advanceTimersByTimeAsync(outbox.WRITE_DEBOUNCE_MS + 10) // B 的防抖到期：复用 A 的 promise，清掉自己的定时器
     failFirst() // A 落地为 unavailable（不是最新版本，自己不安排重试）
     await vi.advanceTimersByTimeAsync(10)
+    expect(puts).toHaveLength(1) // 失败之后按退避，不是立刻连发（立刻连发会把挂掉的后端打成死循环）
     await vi.advanceTimersByTimeAsync(outbox.RETRY_MS + 10) // 只靠退避定时器，没有 focus / online
     expect(puts.map((x) => x.text)).toEqual(['A', 'B']) // 对照：没有槽不变式时 B 永远挂在发件箱里
     expect(outbox.has('p', 'f')).toBe(false)
