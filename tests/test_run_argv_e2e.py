@@ -7,14 +7,16 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
+import re
 import time
 from pathlib import Path
 
 import pytest
 
 from support import foundation_app as fa
-from tavotto.engine import figcapture, pool as _pool
+from tavotto.engine import figcapture, pool as _pool, svgstore
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -77,6 +79,167 @@ def _call(app, path, payload=None, **kw):
         return app.call(path, payload, **kw)
     except fa.HttpError as exc:
         return exc.status, exc.body
+
+
+def _snapshot_project_files(proj: Path, source_ids: set[str]) -> set[str]:
+    """Only verified, content-addressed export pairs may join project files.
+
+    X03 persists Figure outputs, never replay arguments. Check the real files
+    after capture, rather than exempting everything below a directory prefix.
+    """
+    root = proj / "tavottofile" / "figure_snapshots"
+    assert root.is_dir()
+    allowed = {root.relative_to(proj).as_posix()}
+    found_sources = set()
+    for path in root.rglob("*"):
+        rel = path.relative_to(root).as_posix()
+        assert not path.is_symlink(), path
+        if path.is_dir():
+            assert rel in {"entries", "sources", "blobs", "snapshots"}, path
+        elif rel == ".lock":
+            assert path.stat().st_size <= 1
+        elif re.fullmatch(r"blobs/[0-9a-f]{64}\.(pdf|svg)", rel):
+            data = path.read_bytes()
+            assert hashlib.sha256(data).hexdigest() == path.stem, path
+            assert b"--scale" not in data and SECRET.encode() not in data, path
+        else:
+            assert re.fullmatch(r"(entries|sources|snapshots)/[0-9a-f]{64}\.json", rel), path
+            raw = path.read_text(encoding="utf-8")
+            assert "--scale" not in raw and SECRET not in raw, path
+
+            # Run-config references are opaque; no raw argument field belongs
+            # anywhere inside an execution receipt or snapshot metadata.
+            def public_object(pairs):
+                assert len(pairs) == len({key for key, _ in pairs}), path
+                assert not {
+                    "argv",
+                    "raw_argv",
+                    "argv0",
+                    "args",
+                    "arguments",
+                    "token",
+                    "spec",
+                    "spec_stable",
+                    "launch_context",
+                    "runtime",
+                    "inputs",
+                    "descriptors",
+                    "interpreter",
+                    "project_root",
+                    "private_invalidation_key",
+                    "launcher",
+                    "instance",
+                }.intersection(key for key, _ in pairs), path
+                return dict(pairs)
+
+            envelope = json.loads(raw, object_pairs_hook=public_object)
+            assert set(envelope) == {"payload", "sha256"}, path
+            record = envelope["payload"]
+
+            def digest(value):
+                return hashlib.sha256(
+                    json.dumps(
+                        value,
+                        ensure_ascii=False,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                        allow_nan=False,
+                    ).encode("utf-8")
+                ).hexdigest()
+
+            assert envelope["sha256"] == digest(record), path
+            identity = record["identity"]
+            if path.parent.name != "snapshots":
+                assert path.stem == digest(identity), path
+            assert identity["project"] == "."
+            assert identity["source_id"] in source_ids
+            if path.parent.name in {"entries", "snapshots"}:
+                assert set(record) == {
+                    "version",
+                    "identity",
+                    "created_at",
+                    "pdf_artifact",
+                    "svg_artifact",
+                    "receipt",
+                    "execution_owner",
+                }, path
+                assert set(record["execution_owner"]) == {"script", "run_config"}, path
+                assert record["execution_owner"]["script"] == "scaled.py", path
+                ref = record["execution_owner"]["run_config"]
+                assert ref is None or (
+                    isinstance(ref, str) and re.fullmatch(r"rc_[a-zA-Z0-9_-]+", ref)
+                ), path
+                assert set(record["receipt"]) == {
+                    "receipt_identity",
+                    "receipt_id",
+                    "completeness",
+                    "runtime_rejected",
+                    "pid_check",
+                    "control_plane",
+                    "python_source",
+                    "generation",
+                    "source_revision",
+                    "python_version",
+                    "python_implementation",
+                    "platform",
+                    "machine",
+                    "packages",
+                    "cwd_origin",
+                    "observation",
+                    "fidelity",
+                    "binding",
+                }, path
+                found_sources.add(identity["source_id"])
+                kwargs = dict(
+                    static_sha256=identity["static_sha256"],
+                    remap_fingerprint=identity["remap_fingerprint"],
+                    storage_root=root,
+                )
+                if path.parent.name == "snapshots":
+                    current = record["receipt"]
+                    snapshot_id = digest(
+                        {
+                            "identity": identity,
+                            "receipt": {
+                                key: current[key]
+                                for key in ("receipt_id", "receipt_identity", "generation")
+                            },
+                            "pdf": record["pdf_artifact"]["bytes_sha256"],
+                            "svg": record["svg_artifact"]["bytes_sha256"],
+                            "execution_owner": record["execution_owner"],
+                        }
+                    )
+                    assert path.stem == snapshot_id, path
+                    reference = {
+                        "version": 1,
+                        "sourceId": identity["source_id"],
+                        "patchHash": identity["patch_hash"],
+                        "receiptId": current["receipt_id"],
+                        "snapshotId": snapshot_id,
+                        "executionOwner": record["execution_owner"],
+                    }
+                    assert svgstore.load_snapshot(
+                        proj,
+                        reference,
+                        source_id=identity["source_id"],
+                        patch_hash=identity["patch_hash"],
+                        **kwargs,
+                    ), path
+                else:
+                    assert svgstore.load(
+                        proj, identity["source_id"], identity["patch_hash"], **kwargs
+                    ), path
+            else:
+                assert set(record) == {"version", "identity", "receipt", "updated_at"}, path
+                assert set(identity) == {"project", "source_id", "remap_fingerprint"}, path
+                assert set(record["receipt"]) == {
+                    "receipt_id",
+                    "receipt_identity",
+                    "generation",
+                }, path
+        allowed.add(path.relative_to(proj).as_posix())
+    assert found_sources == source_ids
+    return allowed
 
 
 @pytest.fixture
@@ -145,14 +308,19 @@ def test_same_script_same_stem_different_argv_never_mixes_across_the_whole_lifec
         assert status == 200 and exported["status"] == "done", exported
         assert _runs(counter)[before_export:] == [["--scale", "3"]]
 
-        # ---- 对用户项目：运行配置不写进去（既有的登记与用户明确要的导出除外）；参数值哪儿都没有
+        # ---- 对用户项目：运行配置不写进去；X03 的同源导出资产只含不透明身份和已验图形。
         new_files = set(p.relative_to(proj).as_posix() for p in proj.rglob("*")) - set(tree_before)
-        assert new_files <= {
-            "tavotto_registry.json",
-            "tavottofile",
-            "tavottofile/export",
-            "tavottofile/export/three.pdf",
-        }, new_files
+        snapshot_files = _snapshot_project_files(proj, {base_id, id_two, id_three})
+        assert (
+            new_files
+            <= {
+                "tavotto_registry.json",
+                "tavottofile",
+                "tavottofile/export",
+                "tavottofile/export/three.pdf",
+            }
+            | snapshot_files
+        ), new_files
         assert "--scale" not in (proj / "tavotto_registry.json").read_text(encoding="utf-8")
 
     # ---- 保存重开：新进程，同一份数据目录，资产 id 里冻结的配置引用仍解析成当初的 argv
@@ -212,7 +380,8 @@ def test_a_sensitive_argument_is_masked_everywhere_and_not_kept_across_restarts(
         log = app.server_log()
     # 磁盘 / 日志 / 回应里都没有明文
     assert SECRET not in log
-    for path in (work / "data").rglob("*"):
+    _snapshot_project_files(proj, {asset_id})
+    for path in [*(work / "data").rglob("*"), *proj.rglob("*")]:
         if path.is_file():
             try:
                 assert SECRET not in path.read_text(encoding="utf-8", errors="ignore"), path

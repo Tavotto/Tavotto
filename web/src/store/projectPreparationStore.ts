@@ -36,6 +36,8 @@ import {
 import { currentProjectId } from '@/lib/session'
 import { captureProjectEpoch, type ProjectEpochGuard } from '@/lib/projectEpoch'
 import { useEnvStore } from '@/store/envStore'
+import '@/store/figureSnapshotInvalidation'
+import { observeFigureExecution } from '@/lib/figureExecutionEvents'
 import { useScriptArgvStore } from '@/store/scriptArgvStore'
 import { useUiStore } from '@/store/uiStore'
 
@@ -196,6 +198,8 @@ function newer(cur: PreparationReport | null, next: PreparationReport): boolean 
 
 /** 同一个 key 下「目标（参数）换过几次」：在途的检查 / 补拉 / 动作带着发起时的戳，参数换了就失去落地资格 */
 const targetGens = new Map<string, number>()
+/** Whether an execution token was actively observed or only a passive initial baseline. */
+const observedFigureExecutions = new Map<string, boolean>()
 
 export const useProjectPreparationStore = create<PreparationState>((set, get) => {
   /** 回包资格戳 = 代（换项目）× 目标代（同 key 换参数）；两者任一变了，在途响应都不许落地 */
@@ -239,6 +243,14 @@ export const useProjectPreparationStore = create<PreparationState>((set, get) =>
       (report.provider.attempt_id ?? null) !== (before.provider.attempt_id ?? null)
     // 动态 import 之后项目 / 代可能已经换了：回调带着发起时的归属，落地前复核
     const owner = captureProjectEpoch(() => get().epoch)
+    const execution = report.figure_snapshot_invalidation
+    if (execution) {
+      const token = JSON.stringify([report.session_id, execution.execution_id])
+      // First reading an old session is a baseline. A later real execution in an already-observed
+      // session is accepted regardless of succeeded/failed/no-figure, with replay dedup downstream.
+      if (!observedFigureExecutions.has(token)) observedFigureExecutions.set(token, before?.session_id === report.session_id)
+      if (observedFigureExecutions.get(token) && owner.still()) observeFigureExecution(execution, owner.pj)
+    }
     // `rejection` 不在这里清：被拒之后重读到的新修订正是要配着那一句看的；下一次动作 / 重新打开才收起它
     patch(key, () => ({
       report,
@@ -432,6 +444,7 @@ export const useProjectPreparationStore = create<PreparationState>((set, get) =>
         accept(key, res.report)
       } catch (err) {
         if (!live(key, g)) return
+        if (kind === 'run' && err instanceof ApiError) observeFigureExecution(err.body.figure_snapshot_invalidation, pj)
         patch(key, () => ({ pending: null }))
         if (isRestarted(err)) {
           await check(key, e.target, true)
@@ -467,6 +480,7 @@ export const useProjectPreparationStore = create<PreparationState>((set, get) =>
     clear: () => {
       stopAllTimers()
       inflight.clear()
+      observedFigureExecutions.clear()
       set((s) => ({ epoch: s.epoch + 1, entries: {}, focus: null }))
     },
   }

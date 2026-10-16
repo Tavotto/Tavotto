@@ -134,14 +134,31 @@ test('升级前的排版：原样打开 → 切到原图图幅内容不动 → �
   expect(Math.abs(titleAfter.y - titleBefore.y)).toBeLessThan(1.5)
   await expect(note).toHaveCount(0)
 
-  // 3. 撤销：外框回到切换之前
+  // 3. 撤销：外框回到切换之前。只认这份文档恢复几何后的保存回执，
+  // 改图幅的旧 PUT 仍在 freeze 时可能晚回，不能拿它的 200 当撤销已落盘。
+  const savedUndo = page.waitForResponse((response) => {
+    if (response.request().method() !== 'PUT' || !response.ok() ||
+        new URL(response.url()).pathname !== `/api/autosave/${LEGACY_DOC_ID}`) return false
+    const body = response.request().postDataJSON() as ReturnType<typeof legacyProject>
+    const p = body.canvases.flatMap((c) => c.objects).find((o) => o.id === 'p1')
+    return p?.type === 'panel' &&
+      JSON.stringify([p.x, p.y, p.w, p.h, p.nativeW, p.nativeH]) === JSON.stringify([20, 15, 80, 57.6, 80, 57.6]) &&
+      JSON.stringify(p.overrides) === JSON.stringify([EDIT, { gid: 'figure', prop: 'frame', value: 'figsize' }])
+  })
   await page.getByRole('button', { name: '撤销' }).click()
   await expect.poll(async () => (await panelRect(page)).width, { timeout: 30_000 }).toBeCloseTo(before.width, 0)
   const back = await panelRect(page)
   expect(Math.abs(back.x - before.x)).toBeLessThan(1)
   expect(Math.abs(back.y - before.y)).toBeLessThan(1)
 
-  // 自动保存里的面板：figsize 那条回来了，几何与升级前逐字节相同
+  // 自动保存里的面板：figsize 那条回来了，几何与升级前逐字节相同。
+  // 等完整响应再重载；未完成保存的 beforeunload 只能提供本机恢复候选。
+  await page.keyboard.press('ControlOrMeta+s')
+  await expect(page.locator('[data-layout-save]')).toBeVisible()
+  const written = await savedUndo
+  expect(await written.finished()).toBeNull()
+  await page.keyboard.press('Escape')
+  await expect(page.locator('[data-layout-save]')).toBeHidden()
   await page.reload()
   await expect(obj).toBeVisible({ timeout: 60_000 })
   const saved = JSON.parse(readFileSync(path.join(autosave, `${LEGACY_DOC_ID}.json`), 'utf-8'))

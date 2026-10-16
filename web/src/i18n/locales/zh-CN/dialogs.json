@@ -128,6 +128,8 @@
     "sizeUnknownShort": "尺寸未知",
     "start": "开始导出",
     "targetNoFigure": "当前没有图",
+    "svgHint": "矢量 · 文字默认转轮廓",
+    "svgNote": "SVG 默认将文字转为轮廓，在 Office 中不能作为文字继续编辑。不支持的来源会明确报告导出失败。",
     "tiffHint": "位图 · 无损压缩",
     "title": "导出",
     "transparent": "透明背景（仅 PNG / TIFF）",

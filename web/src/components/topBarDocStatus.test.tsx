@@ -227,3 +227,21 @@ describe('文档名', () => {
     setCurrentProjectId(null)
   })
 })
+
+
+describe('Autosave SVG snapshot warning', () => {
+  it('keeps the saved state and exposes quiet details without an automatic popover', async () => {
+    await act(async () => useDocumentStore.setState({ svgSnapshotWarnings: ['source.pdf'], saveState: 'saved' }))
+    expect(chip().dataset.docIssue).toBe('svg_snapshot')
+    expect(pill()!.dataset.tone).toBe('warn')
+    expect(document.querySelector('[data-doc-status-popover]')).toBeNull()
+    expect(chip().querySelector('[data-save-live]')!.textContent).toBe('')
+    const pop = await openPill()
+    expect(pop!.textContent).toContain('排版已保存')
+    expect(pop!.textContent).toContain('source.pdf')
+    expect(pop!.textContent).toContain('重新运行脚本')
+    expect(useDocumentStore.getState().saveState).toBe('saved')
+    await act(async () => useDocumentStore.setState({ svgSnapshotWarnings: [] }))
+    expect(pill()).toBeNull()
+  })
+})

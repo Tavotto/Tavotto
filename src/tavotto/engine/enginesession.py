@@ -96,6 +96,7 @@ def resolve(
     registry=None,
     artifact_source=None,
     run=None,
+    existing_only: bool = False,
 ):
     """按 profile 给出一个 **Worker-like** 的东西。
 
@@ -111,6 +112,8 @@ def resolve(
                 code="artifact_source_unavailable",
             )
         session = nativesession.REGISTRY.route_for(project_root, script, stem)
+        if session is None and existing_only:
+            return None
         if session is None:
             # **不 fallback。** 这张图是用户自己那个 Python 画的，safe worker
             # 拿他的脚本重跑一遍得到的不是同一张图（不同的 matplotlib、
@@ -123,6 +126,9 @@ def resolve(
     if run is not None:
         # T03：产物绑定的运行配置（`execspec.RunSelection`）；没有 = 旧调用形状，一个字节不变
         context["run"] = run
+    if existing_only:
+        worker = pool.peek(script, str(project_root), run=run, artifact_source=artifact_source)
+        return worker if worker is not None and worker.built else None
     return pool.get(script, str(project_root), entry, **context)
 
 

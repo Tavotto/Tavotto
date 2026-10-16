@@ -357,6 +357,7 @@ USER_VISIBLE_CODES = {
     #     与没有脚本的图各报一条，其余格式照常交付（`partial`）---
     "eps_not_for_canvas": set(),
     "eps_needs_script": {"figure"},
+    "svg_source_unsupported": {"id"},
     # --- Prompt 20（ADR 0039）：离线教程资源 / 副本。全部经 app._tutorial_error
     #     一个漏斗转成 JSON，`reason` 是异常里的原文 ---
     "tutorial_resources_missing": {"reason"},

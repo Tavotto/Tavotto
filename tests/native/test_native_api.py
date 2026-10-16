@@ -147,6 +147,53 @@ def test_the_request_body_cannot_replace_the_invocation(client, monkeypatch):
     assert got["metadata"]["target_display"] == "figure.py"
 
 
+def test_approval_execution_project_comes_from_attached_session(client, monkeypatch, tmp_path):
+    """A pending handoff can belong to another workspace than the approving tab."""
+    project = tmp_path / "attached"
+    project.mkdir()
+    native_id = make_descriptor(project_root=str(project))
+    session = nativesession.NativeSession(
+        session_id=f"native-{native_id}",
+        descriptor={"native_id": native_id, "metadata": {**FIELDS, "project_root": str(project)}},
+    )
+    fact = {
+        "scope": "owner",
+        "script": "figure.py",
+        "run_config": None,
+        "execution_id": "a" * 48,
+        "source_ids": [],
+        "receipt_ids": [],
+    }
+    session.figure_snapshot_invalidation = fact
+    monkeypatch.setattr(nativesession.REGISTRY, "attach", lambda *_a, **_k: session)
+    response = client.post(
+        f"/api/native/pending/{native_id}/approve",
+        json={"pj": "untrusted", "project_root": str(tmp_path / "wrong")},
+        headers={"X-Tavotto-Project": "also-untrusted"},
+    )
+    assert response.status_code == 200
+    body = response.get_json()
+    assert body["pj"] == appmod._project_id(project)
+    assert body["session"]["figure_snapshot_invalidation"] == fact
+    assert body["session"]["project_root"] == str(project)
+
+
+def test_approval_project_identity_failure_does_not_undo_attach(client, monkeypatch):
+    native_id = make_descriptor()
+    monkeypatch.setattr(
+        nativesession.REGISTRY, "attach", lambda *_a, **_k: _fake_session(native_id)
+    )
+
+    def unavailable(_path):
+        raise OSError("project identity unavailable")
+
+    monkeypatch.setattr(appmod, "_project_id", unavailable)
+    response = client.post(f"/api/native/pending/{native_id}/approve")
+    assert response.status_code == 200
+    assert response.get_json()["pj"] is None
+    assert response.get_json()["session"]["session_id"] == f"native-{native_id}"
+
+
 def test_remember_is_opt_in_and_scoped(client, monkeypatch, tmp_path):
     native_id = make_descriptor(project_root=str(tmp_path))
     monkeypatch.setattr(

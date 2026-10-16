@@ -108,6 +108,7 @@ ENGINE_SIBLINGS = (
 _TOPLEVEL_TO_RESTORE = (
     *ENGINE_SIBLINGS,
     "figsession",
+    "executionfact",
     "wireproto",
     "previewbudget",
     "preview_complexity",

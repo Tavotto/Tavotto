@@ -30,6 +30,14 @@
   `receipt_identity`。默认 `to_payload()` 不带机器路径，诊断包用 `include_private=True`；
   `PreparationPlan.to_payload()` 同样：项目外的解释器只给来源标签（路径存私有字段），错误分支的
   `project_env` 只留 `ok / code / module / reason`。
+- **native 执行实例不能只靠 wire generation（X03）**：回执的私有 `instance` 由 native `session_id`
+  与执行 / 屏障 epoch（`snapshot_epoch`）组成，参与不透明 `receipt_id`，不改变公开语义身份或协议里的
+  `generation`。同一 barrier 内重复读取 / 导出回执稳定；成功 continue / released 与新 barrier 都推进 epoch，
+  continue 后直接结束也不能让旧 barrier 的回执继续授权旧快照；
+  重新启动的另一 session 也有不同实例身份，不能把两次用户代码执行的 Figure 当成同一张快照。
+  私有实例值不进公开投影，不为区分执行而记录 / 泄漏 argv；仍沿用已有 argv 计数与占位政策。
+  看护：`tests/test_execution_receipt.py`、`tests/test_run_argv_e2e.py`。文档保存时对回执的明确引用与
+  冷态读取规则见 `layout-versions-and-documents.md`，磁盘 marker 或预览 metadata 不是已观察执行的替身。
 - **LaunchContext 是派生视图**：`execspec.launch_context(spec)` 从 spec 算，`ExecutionSpec`
   与 `worker_argv` 的 golden 一个字节不动。四个 `cwd_origin` 各有且只有一个生产者
   （`sandbox` / `project`=脚本目录 / `project_root`=项目根 / native；ADR 0057 §二）；

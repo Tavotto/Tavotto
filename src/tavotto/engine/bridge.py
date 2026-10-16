@@ -332,7 +332,18 @@ class BridgeSession:
         self.rev += 1
         return self.request({"cmd": "override", "stem": stem, "patches": patches, **kw})
 
-    def export(self, stem: str, patches: list, path: str, fmt: str = "pdf", dpi: int = 600) -> dict:
+    def export(
+        self,
+        stem: str,
+        patches: list,
+        path: str,
+        fmt: str = "pdf",
+        dpi: int = 600,
+        *,
+        svg_path: str | None = None,
+        require_built: bool = False,
+        snapshot_only: bool = False,
+    ) -> dict:
         return self.request(
             {
                 "cmd": "export",
@@ -341,6 +352,9 @@ class BridgeSession:
                 "path": path,
                 "format": fmt,
                 "dpi": dpi,
+                **({"svg_path": svg_path} if svg_path is not None else {}),
+                **({"require_built": True} if require_built else {}),
+                **({"snapshot_only": True} if snapshot_only else {}),
             },
             BARRIER_TIMEOUT,
         )

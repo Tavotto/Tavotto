@@ -428,6 +428,19 @@ describe('T43 导出偏好：与导出对话框同名同单位', () => {
     expect(byAria(ex('ppiSelectLabel'))!.hasAttribute('disabled')).toBe(true)
   })
 
+  it('SVG defaults persist, disclose outlines, and keep PPI disabled without raster formats', async () => {
+    defaults({ formats: ['pdf'] })
+    await open('export')
+    const checkbox = (format: string) => body().querySelector<HTMLInputElement>(`[data-export-format="${format}"] input`)!
+    expect(checkbox('svg')).toBeTruthy()
+    expect(checkbox('svg').checked).toBe(false)
+    await act(async () => { checkbox('svg').click(); checkbox('pdf').click() })
+    expect(checkbox('svg').checked).toBe(true)
+    expect(JSON.parse(localStorage.getItem('tavotto.export.defaults')!).formats).toEqual(['svg'])
+    expect(bodyText()).toContain(ex('svgNote'))
+    expect(byAria(ex('ppiSelectLabel'))!.hasAttribute('disabled')).toBe(true)
+  })
+
   it('选上位图之后分辨率就可用了（说明上一条量的是格式，不是恒真）', async () => {
     defaults({ formats: ['pdf', 'png'] })
     await open('export')

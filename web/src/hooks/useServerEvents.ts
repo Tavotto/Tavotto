@@ -1,4 +1,5 @@
 import { useEffect } from 'react'
+import { observeFigureExecution } from '@/lib/figureExecutionEvents'
 import { i18n, msg, t } from '@/i18n'
 import {
   affectedAssetIdsOf,
@@ -68,6 +69,11 @@ export function handleServerEvent(ev: ServerEvent) {
   if ('pj' in ev && ev.pj && mine && ev.pj !== mine) return
 
   switch (ev.kind) {
+    case 'figure.snapshot_invalidated':
+      // This event is live execution evidence, never an initialization/reconnect replay.
+      // Require the explicit project even while the general stream is between project adoptions.
+      if (ev.pj === currentProjectId()) observeFigureExecution(ev, ev.pj)
+      break
     case 'engine.bootstrap':
       // 渲染环境安装进度（建 venv + 装 matplotlib）
       useEnvStore.getState().onProgress(ev)

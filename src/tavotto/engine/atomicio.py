@@ -315,9 +315,16 @@ def publish_file(tmp: Path, dest: Path) -> None:
     _fsync_dir(dest.parent)
 
 
-def write_json(path: Path, obj: Any, *, indent: int | None = None) -> None:
-    """原子写 JSON。序列化在**碰磁盘之前**完成——载荷有问题时原文件一字未动。"""
-    write_bytes(Path(path), dumps_json(obj, indent=indent))
+def write_json(path: Path, obj: Any, *, indent: int | None = None) -> str:
+    """原子写 JSON，成功后返回**本次写入字节**的修订号。
+
+    序列化在**碰磁盘之前**完成——载荷有问题时原文件一字未动。修订号从同一份
+    字节计算，不读回路径：写完后别的进程可能已经替换了文件。
+    """
+    path = Path(path)
+    data = dumps_json(obj, indent=indent)
+    write_bytes(path, data)
+    return revision_of(data)
 
 
 def revision_of(data: bytes) -> str:

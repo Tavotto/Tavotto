@@ -687,6 +687,95 @@ def real_spawn(tmp_path, monkeypatch):
     engine_pool._workers.clear()
 
 
+@pytest.mark.parametrize("boundary", ["watcher", "retirement"])
+@pytest.mark.parametrize("origin", ["detected", "caller"])
+@pytest.mark.parametrize("change", ["record", "generation", "launch_context"])
+def test_acquire_keeps_its_environment_decision_across_lifecycle_waits(
+    real_spawn, monkeypatch, boundary, origin, change
+):
+    """A wait may change shared selection, never this call's validated environment.
+
+    The real constructor and spawn gate consume the pin. Only process creation
+    and the source of the concurrent change are controlled by this fixture.
+    """
+    root, x, y = (real_spawn[k] for k in ("root", "x", "y"))
+    assert projectenv.remember(root, x, automatic=True, trigger=projectenv.TRIGGER_AUTO_DETECTED)
+    pin = engine_pool.EnvironmentDecision(
+        python=x,
+        source=engine_pool.SOURCE_SYSTEM,
+        generation=projectenv.environment_generation(x),
+        launch_context=launcher.context_key(x),
+    )
+    original_context = launcher.context_key
+    changes, decisions = [], []
+
+    def change_while_waiting():
+        changes.append(boundary)
+        assert len(changes) == 1
+        assert projectenv.remember(
+            root, y, automatic=True, trigger=projectenv.TRIGGER_AUTO_DETECTED
+        )
+        if change == "generation":
+            os.utime(x, (1, 1))
+            assert projectenv.environment_generation(x) != pin.generation
+        elif change == "launch_context":
+            monkeypatch.setattr(
+                launcher,
+                "context_key",
+                lambda python: (
+                    "changed-launch-context" if python == x else original_context(python)
+                ),
+            )
+            assert launcher.context_key(x) != pin.launch_context
+
+    def decide(*_):
+        decisions.append(1)
+        assert origin == "detected", "a caller pin must not trigger another environment decision"
+        # If acquire incorrectly decides again after the wait, the other
+        # script's choice is now Y. Checking the actual launch catches it.
+        return (
+            engine_pool.EnvironmentDecision(
+                python=y,
+                source=engine_pool.SOURCE_SYSTEM,
+                generation=projectenv.environment_generation(y),
+            )
+            if changes
+            else pin
+        )
+
+    monkeypatch.setattr(engine_pool, "ENVIRONMENT_DECIDERS", [decide])
+    monkeypatch.setattr(engine_pool, "_pending_retirements", {})
+    monkeypatch.setattr(
+        engine_pool,
+        "COLD_ACQUIRE_OBSERVER",
+        lambda *_: change_while_waiting() if boundary == "watcher" else None,
+    )
+    key = engine_pool._worker_key(root, "fig.py")
+    if boundary == "retirement":
+
+        class Retiring:
+            def force_kill(self):
+                change_while_waiting()
+                return True
+
+        engine_pool._pending_retirements[key] = [Retiring()]
+    kwargs = {"pinned": pin} if origin == "caller" else {}
+    if change == "record":
+        worker, created = engine_pool.acquire("fig.py", root, "__main__", **kwargs)
+        assert created and worker.python == x
+        assert real_spawn["gate_saw"] == [x]
+        assert real_spawn["launched"] == [x]
+    else:
+        with pytest.raises(engine_pool.WorkerError) as caught:
+            engine_pool.acquire("fig.py", root, "__main__", **kwargs)
+        assert caught.value.code == engine_pool.ENVIRONMENT_CHANGED
+        assert real_spawn["launched"] == []
+        assert key not in engine_pool._workers
+    assert changes == [boundary]
+    assert decisions == ([1] if origin == "detected" else [])
+    assert key not in engine_pool._pending_retirements
+
+
 def test_real_new_worker_hands_the_pinned_interpreter_to_the_gate_and_the_constructor(real_spawn):
     """修复前：依赖门与 `EngineWorker` 构造函数各自再解析一遍共享记录，拿到的是 Y——第一个脚本会为 Y 弹依赖授权、
     甚至先起在 Y 上再被拒。修复后：钉下的决定作为参数一路传进门和构造函数。"""

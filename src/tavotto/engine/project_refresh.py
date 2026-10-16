@@ -25,11 +25,12 @@ autosave / 版本历史目录（Prompt 02–03 的文档合同）。这个模块
 
 from __future__ import annotations
 
+import contextlib
 import os
 import stat
 import threading
 from collections.abc import Callable, Iterable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from . import atomicio, discover, pool, registry, scanbudget
@@ -151,6 +152,11 @@ class RefreshState:
     #: 拿它认自己写的那一下（见模块末尾 `is_self_written()`）。
     registry_revision: str | None = None
 
+    # A successful registry write can describe a worker which already produced
+    # those outputs. Only that exact publication/instance may survive its reload.
+    publication_revision: str | None = None
+    publications: list[ExecutionPublication] = field(default_factory=list)
+
     #: 上一次静态合并**写**注册表时失败了没有（磁盘满、文件本身只读、
     #: Windows 上被杀毒软件锁住）。就绪度（`engine/readiness.py`）拿它区分
     #: 「还没登记」的两种成因：一种再刷新一次就好了，另一种刷多少次都一样。
@@ -177,6 +183,67 @@ def state_of(ctx) -> RefreshState:
                 st = RefreshState(lock=threading.RLock())
                 ctx.refresh_state = st
     return st
+
+
+@dataclass(frozen=True)
+class ExecutionPublication:
+    target: pool.WorkerTarget
+    execution_id: str
+    script: str
+    registration: dict
+
+
+@contextlib.contextmanager
+def publishing_execution(ctx, worker, execution_id):
+    """Serialize successful registration with refresh, never with user execution.
+
+    The callback receives the exact bytes' revision from the atomic writer and
+    its corresponding registry value. Reading the file afterwards would let an
+    intervening external edit masquerade as our own publication.
+    """
+    state = state_of(ctx)
+    with state.lock:
+        target_at_start = next(
+            (
+                target
+                for target in pool.invalidation_targets(None, str(ctx.path))
+                if target.worker is worker
+            ),
+            None,
+        )
+
+        def published(revision, config):
+            scripts = config.get("scripts", {})
+            live = {
+                id(target.worker): target
+                for target in pool.invalidation_targets(None, str(ctx.path))
+            }
+            kept = [
+                fact
+                for fact in state.publications
+                if id(fact.target.worker) in live and scripts.get(fact.script) == fact.registration
+            ]
+            execution = execution_id
+            target = target_at_start
+            script = getattr(worker, "script_name", "")
+            registration = scripts.get(script)
+            if (
+                target is not None
+                and execution
+                and execution == getattr(worker, "execution_id", None)
+                and execution == getattr(worker, "last_build_execution_id", None)
+                and getattr(worker, "built", False)
+                and isinstance(registration, dict)
+                and registration.get("entry") == getattr(worker, "entry", None)
+            ):
+                kept = [fact for fact in kept if fact.target.worker is not worker]
+                kept.append(ExecutionPublication(target, execution, script, registration))
+            # Bound strong references even when dead pool handles have not been reaped;
+            # losing this optimization is conservative. Consume on next refresh.
+            state.publications = kept[-pool.MAX_ALIVE :]
+            state.publication_revision = revision
+
+        yield published
 
 
 def seed_state(ctx) -> RefreshState:
@@ -648,8 +715,23 @@ def refresh_project_index(
         # worker 失效：**只动关系真的变了的那些**。新增一张不相干的图片、
         # 或者一次什么都没发现的刷新，一个会话都不该被打掉——那是几十秒的
         # 冷启动，用户会以为是自己点坏了什么。
+        publications, state.publications = state.publications, []
+        publication_revision, state.publication_revision = state.publication_revision, None
         for script in registry_diff["removed_scripts"] + registry_diff["changed_scripts"]:
-            pool.invalidate(script, str(root))
+            preserve = tuple(
+                fact.target
+                for fact in publications
+                if publication_revision == state.registry_revision
+                and fact.script == script
+                and after_registry.get(script) == fact.registration
+                and getattr(fact.target.worker, "execution_id", None) == fact.execution_id
+                and getattr(fact.target.worker, "last_build_execution_id", None)
+                == fact.execution_id
+            )
+            if preserve:
+                pool.invalidate(script, str(root), preserve=preserve)
+            else:
+                pool.invalidate(script, str(root))
 
         # 就绪度缓存：**只在事实真的动了的时候**清。它的键本来就是内容签名
         # （见 `readiness._inputs_signature`），所以这一句是**第二道**判据而

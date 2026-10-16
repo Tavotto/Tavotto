@@ -516,6 +516,8 @@ def test_cancel_closes_only_the_runtime_this_session_created(client, tmp_path, f
     sid = report["session_id"]
     fake_pool["gate"].clear()
     assert _act(client, sid, _action(report, "run")["id"], 1).status_code == 202
+    assert fake_pool["build_entered"].wait(5), "cancel must happen after pool ownership is assigned"
+    assert fake_pool["build_calls"] == 1
     running = _get(client, sid).get_json()
     assert running["phase"] == "running"
     assert [a["kind"] for a in running["actions"]] == ["cancel"]  # 在跑时只有取消
@@ -532,6 +534,8 @@ def test_cancel_does_not_touch_a_runtime_someone_else_owns(client, tmp_path, fak
     fake_pool["created"] = False  # 池里本来就有这条会话（别的消费者的）
     fake_pool["gate"].clear()
     assert _act(client, sid, _action(report, "run")["id"], 1).status_code == 202
+    assert fake_pool["build_entered"].wait(5), "cancel must happen after pool ownership is assigned"
+    assert fake_pool["build_calls"] == 1
     running = _get(client, sid).get_json()
     assert _act(client, sid, _action(running, "cancel")["id"], 1).status_code == 200
     fake_pool["gate"].set()

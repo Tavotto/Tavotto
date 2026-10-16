@@ -205,6 +205,7 @@ import matplotlib.figure as mfigure  # noqa: E402
 #: safe worker 要装进私有包的引擎模块——**整条平铺 import 闭包**，一次装完
 #: （safe 档不像 native 那样要分两阶段避开 matplotlib：这里 matplotlib 本来就先 import）。
 _ENGINE_MODULES = (
+    "executionfact",
     "figcapture",
     "patchspec",
     "pathgeom",
@@ -241,6 +242,7 @@ wireproto = _PKG.wireproto
 scriptinput = _PKG.scriptinput
 # Windows 平台判断与 CREATE_NO_WINDOW 的唯一出处（只依赖标准库，装进私有包不拖闭包）
 runtime = _PKG.runtime
+executionfact = _PKG.executionfact
 
 #: 本 worker 的常驻会话。`_patched_savefig` 是模块级函数（要顶掉
 #: `Figure.savefig` 这个类属性），拿不到 Worker 实例，只能走模块级引用。
@@ -705,6 +707,8 @@ class Worker(wireproto.V1Handler):
         self.entry = args.entry
         self.preview_dpi = args.preview_dpi
         self.built = False
+        self.execution_id: str | None = None
+        self._execution_watch: str | None = None
         #: pyplot 兜底因上限丢掉的张数（0 = 一张没丢）。build 响应带出去。
         self.dropped_figures = 0
         #: 每张捕获 Figure 的结构化描述（figcapture.CapturedFigureDescriptor
@@ -739,6 +743,11 @@ class Worker(wireproto.V1Handler):
         super().__init__(SESSION)
 
     def configure_run(self, payload: dict) -> None:
+        watch = payload.get("execution_watch")
+        if watch is not None:
+            if not executionfact.valid_watch(watch):
+                raise ProtocolError("bad_request", "Invalid execution observation identity")
+            self._execution_watch = watch
         run = payload.get("run")
         if run is None:
             if self.run_config and not self._run_loaded:
@@ -806,6 +815,7 @@ class Worker(wireproto.V1Handler):
                     "parse_kind",
                     "missing_module",
                     "missing_dependency",
+                    "execution_id",
                 )
                 if k in err
             }
@@ -819,6 +829,22 @@ class Worker(wireproto.V1Handler):
             "error": "Sensitive run failed; script diagnostics were omitted.",
             "traceback": _PRIVATE_OUTPUT_NOTICE.strip(),
         }
+
+    def handle_v1(self, req: dict) -> dict:
+        try:
+            result = super().handle_v1(req)
+        except ProtocolError as exc:
+            exc.extra["execution_id"] = self.execution_id
+            raise
+        except Exception as exc:  # noqa: BLE001 — same fallback as wireproto.respond
+            raise ProtocolError(
+                "internal",
+                str(exc) or exc.__class__.__name__,
+                retryable=True,
+                traceback_text=traceback.format_exc(),
+                extra={"execution_id": self.execution_id},
+            ) from exc
+        return {**result, "execution_id": self.execution_id}
 
     def select_artifact(self, context):
         try:
@@ -836,6 +862,10 @@ class Worker(wireproto.V1Handler):
         self.session.artifact_source = selected
 
     # ---------------- build ----------------
+    def _execution_entered(self) -> None:
+        self.execution_id = executionfact.new_id()
+        executionfact.write(self.out_dir, self._execution_watch, self.execution_id)
+
     def build(self, timings: dict | None = None) -> dict:
         """跑一次用户脚本，把产出的 Figure 全部收进内存。
 
@@ -1058,7 +1088,10 @@ class Worker(wireproto.V1Handler):
         # 里连一行 traceback 都没有。与 `python fig.py` 的语义对齐：退出码 0 /
         # None 就是脚本正常结束（已经画好的图照常捕获），非零才是它自己报的失败。
         # paper_style 的 import 也在这道保护里：它是用户代码，import 期间一样能 exit。
-        with contextlib.redirect_stdout(stdout_tail):
+        with (
+            contextlib.redirect_stdout(stdout_tail),
+            executionfact.on_user_entry(self.script, self._execution_entered),
+        ):
             try:
                 # paper_style 是某些图库的私有方言，不是引擎的依赖：没有就跳过，
                 # 靠 _patched_savefig 这条通用兜底捕获。曾经这里是无保护的 import，
@@ -1226,6 +1259,13 @@ class Worker(wireproto.V1Handler):
             }
         if cmd == "build":
             return {"ok": True, **self.build()}
+        if cmd == "export" and (req.get("require_built") or req.get("snapshot_only")):
+            if not self.built or req.get("stem") not in self.session.states:
+                return {
+                    "ok": False,
+                    "code": "svg_source_unavailable",
+                    "error": "An already built Figure session is required for SVG capture.",
+                }
         if not self.built:
             self.build()
 
@@ -1266,6 +1306,8 @@ class Worker(wireproto.V1Handler):
                     req["path"],
                     req.get("format", "pdf"),
                     int(req.get("dpi", 600)),
+                    **({"svg_path": req["svg_path"]} if req.get("svg_path") is not None else {}),
+                    **({"snapshot_only": True} if req.get("snapshot_only") else {}),
                 ),
             }
 

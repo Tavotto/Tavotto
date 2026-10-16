@@ -89,11 +89,11 @@ try:
 finally:
     sys.dont_write_bytecode = _dont_write_bytecode
 
-#: 第一阶段只装纯标准库的那两个（捕获策略 + patch 规范化）。**绝不在这里装
+#: 第一阶段只装纯标准库（捕获策略 + patch 规范化 + 执行事实）。**绝不在这里装
 #: manifest / overrides**——它们在模块层 import matplotlib 与 numpy，而
 #: `import matplotlib` 会当场读 cwd 下的 matplotlibrc、钉死 rcParams，
 #: 用户脚本自己那句 `matplotlib.use(...)` 的语义就不一样了。
-_PHASE1 = ("figcapture", "patchspec")
+_PHASE1 = ("figcapture", "patchspec", "executionfact")
 #: 第二阶段（屏障那一刻才装）：要 matplotlib/numpy 的那几个，而那时用户早就
 #: import 过了；外加只被它们平铺 import 到的纯标准库模块。
 #:
@@ -265,7 +265,7 @@ _SCRIPT_STEM = ["figure"]
 # ---------------------------------------------------------------------------
 # 用户上下文（与真实 python 对拍，见 tests/bridge/test_bridge_invocation.py）
 # ---------------------------------------------------------------------------
-def run_script(target: str, argv: list) -> None:
+def run_script(target: str, argv: list, on_start=None) -> None:
     """等价于 `python <target> <argv…>`。
 
     **不用 `runpy.run_path`**：它把 `__file__` 设成传进去的原串、把
@@ -304,6 +304,8 @@ def run_script(target: str, argv: list) -> None:
     main_mod.__cached__ = None
     main_mod.__doc__ = None
     sys.modules["__main__"] = main_mod
+    if on_start is not None:
+        on_start(abspath)
     exec(code, main_mod.__dict__)
 
 
@@ -334,7 +336,7 @@ def resolve_module_origin(target: str) -> str:
     return getattr(spec, "origin", "") or ""
 
 
-def run_module(target: str, argv: list, on_origin=None) -> None:
+def run_module(target: str, argv: list, on_origin=None, on_start=None) -> None:
     """等价于 `python -m <target> <argv…>`。
 
     `runpy.run_module(..., run_name="__main__", alter_sys=True)` 在
@@ -351,6 +353,17 @@ def run_module(target: str, argv: list, on_origin=None) -> None:
 
     sys.argv = [target, *argv]  # run_module(alter_sys=True) 会把 argv[0] 换成模块文件
     sys.path.insert(0, os.getcwd())
+    if on_start is not None:
+        # These are run_module(alter_sys=True)'s own two operations, split at
+        # the compiled-code boundary. A missing/invalid target must not report
+        # target execution. Resolving it may already import parent packages:
+        # those side effects are NOT evidence that this target's code ran.
+        _, spec, code = runpy._get_module_details(target)  # noqa: SLF001
+        if on_origin is not None:
+            on_origin(spec.origin or "")
+        on_start(spec.origin or "")
+        runpy._run_module_code(code, None, "__main__", spec)  # noqa: SLF001
+        return
     if on_origin is not None:
         on_origin(resolve_module_origin(target))
     runpy.run_module(target, run_name="__main__", alter_sys=True)
@@ -721,6 +734,38 @@ class BridgeRun:
         #: （`except BaseException:` / `except SystemExit:` / 一个 `finally`
         #: 里再 return），那时"终止"就变成了一次静默的普通退出。
         self.terminated = False
+        self.execution_id: str | None = None
+        self.execution_script: str | None = None
+
+    def execution_started(self, origin: str) -> None:
+        """Report the compiled target's actual exec boundary once, without argv.
+
+        External/loader-only module origins have no canonical project owner;
+        retain the execution fact but do not invent a basename-based identity.
+        """
+        if self.execution_id is not None:
+            return
+        self.execution_id = _PKG.executionfact.new_id()
+        script = None
+        if origin and os.path.isabs(origin):
+            root = os.path.abspath(self.args.project_root or os.getcwd())
+            source = os.path.abspath(origin)
+            try:
+                if (
+                    os.path.commonpath((root, source)) == root
+                    and os.path.commonpath((os.path.realpath(root), os.path.realpath(source)))
+                    == os.path.realpath(root)
+                    and source != root
+                ):
+                    # Keep the same project-relative alias as descriptors and
+                    # ExecutionSpec; realpath is a containment check, not a new
+                    # script identity which would differ across safe/native.
+                    script = os.path.relpath(source, root).replace("\\", "/")
+            except ValueError:  # Different Windows volumes have no project-relative identity.
+                pass
+        self.execution_script = script
+        if self.control is not None:
+            self.control.event("execution_started", execution_id=self.execution_id, script=script)
 
     # ---- 第二阶段装载 ----
     def _ensure_engine(self):
@@ -805,7 +850,20 @@ class BridgeRun:
                         )
                     run._barrier_released = True
                     run.released = True
-                    return {"released": True}
+                    if run.execution_id is None:
+                        # A module's parent-package import may show a Figure
+                        # before target compilation. Its release is not proof
+                        # that the requested target has begun executing.
+                        return {"released": True}
+                    # This response is itself trusted evidence of release.
+                    # Detach can close the controller before the later event
+                    # arrives, so both channels carry the SAME execution fact.
+                    run.execution_id = _PKG.executionfact.new_id()
+                    return {
+                        "released": True,
+                        "execution_id": run.execution_id,
+                        "script": run.execution_script,
+                    }
                 if cmd == "terminate":
                     run.terminated = True
                     run.released = True
@@ -1052,7 +1110,17 @@ class BridgeRun:
             raise SystemExit(TERMINATE_EXIT)
         if self.control is None:
             return
-        self.control.event("released", reason=reason)
+        # Reuse the fact already returned by successful continue. A failed
+        # continue stays inside the barrier and never reaches this boundary.
+        self.control.event(
+            "released",
+            reason=reason,
+            **(
+                {"execution_id": self.execution_id, "script": self.execution_script}
+                if self.execution_id is not None
+                else {}
+            ),
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -1142,9 +1210,14 @@ def main(argv: list | None = None) -> int:
     exit_code = 0
     try:
         if args.target_kind == "script":
-            run_script(args.target, args.user_argv)
+            run_script(args.target, args.user_argv, on_start=run.execution_started)
         else:
-            run_module(args.target, args.user_argv, on_origin=_set_module_source(args))
+            run_module(
+                args.target,
+                args.user_argv,
+                on_origin=_set_module_source(args),
+                on_start=run.execution_started,
+            )
     except SystemExit as exc:  # 用户脚本自己 sys.exit(...)：图仍然算数
         exit_code = exc.code if isinstance(exc.code, int) else (0 if exc.code is None else 1)
     except BaseException as exc:  # noqa: BLE001 — 脚本炸了也要把已有的图交出去

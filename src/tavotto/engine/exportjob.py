@@ -79,6 +79,7 @@ ERROR_CODES = (
     # `Produced.error_code`，与 `format_failed` 同一条漏斗 `_legacy_export_response`）
     "eps_not_for_canvas",
     "eps_needs_script",
+    "svg_source_unsupported",
     "no_output",
     "publish_failed",
     "report_failed",

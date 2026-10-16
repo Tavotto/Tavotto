@@ -162,6 +162,7 @@ def _panel_node(
             "source", str(exc), {"id": str(o.get("id", "")), "source_code": exc.code, **exc.params}
         ) from exc
     art = fs.artifact
+    companion = fs.svg_representation()
     key = f"file:{art.bytes_sha256[:16]}:{art.semantic_identity()[7:23]}"
     if key not in resources:
         resources[key] = FileResource(
@@ -170,6 +171,7 @@ def _panel_node(
             sha256=art.bytes_sha256,
             origin=art.origin,
             semantic_identity=art.semantic_identity(),
+            svg_sha256=companion.artifact.bytes_sha256 if companion is not None else None,
         )
         frozen[key] = fs
     x, y, w, h = _box_pt(o)
@@ -351,7 +353,13 @@ def compile_plan(
         background=background,
     )
     ref = exportreq.render_plan_ref(
-        req, [fs.artifact.to_payload() for fs in compiled.sources.values()]
+        req,
+        [
+            source.artifact.to_payload()
+            for fs in compiled.sources.values()
+            for source in (fs, fs.svg_representation())
+            if source is not None
+        ],
     )
     return RenderPlan(
         plan_ref=ref,

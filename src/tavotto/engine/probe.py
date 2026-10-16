@@ -313,12 +313,20 @@ def probe(
     should_cancel=None,
     run=None,
     on_acquired=None,
+    on_built=None,
 ) -> dict:
     """`_probe()` + 这次运行的输入去向（T08）：成功取 worker 的 `last_input_facts`，失败取第一处错误那次
     build 挂在异常上的 `input_facts`——与 `error` 说的是同一次尝试。"""
     box: dict = {}
     result = _probe(
-        figures_dir, script, entries, should_cancel, run, facts=box, on_acquired=on_acquired
+        figures_dir,
+        script,
+        entries,
+        should_cancel,
+        run,
+        facts=box,
+        on_acquired=on_acquired,
+        on_built=on_built,
     )
     if box.get("facts") is not None:
         result[INPUT_FACTS_KEY] = box["facts"]
@@ -334,6 +342,7 @@ def _probe(
     *,
     facts: dict,
     on_acquired=None,
+    on_built=None,
 ) -> dict:
     """跑一次脚本，返回它真实产出的 stem 与每张图的结构化描述。
 
@@ -463,6 +472,8 @@ def _probe(
         stems = sorted(resp.get("stems") or {})
         facts["facts"] = getattr(_worker, "last_input_facts", None)
         if stems:
+            if on_built is not None:
+                on_built(_worker, resp.get("execution_id"))
             LOG.info("探测成功 %s [entry=%s] → %s", script, entry, stems)
             return {
                 "script": script,
@@ -549,6 +560,7 @@ def probe_and_register(
     should_cancel=None,
     run=None,
     on_acquired=None,
+    register_result=None,
 ) -> dict:
     """探测成功就写进 tavotto_registry.json 并重载注册表。
 
@@ -561,20 +573,29 @@ def probe_and_register(
     取消（`should_cancel`）输给成功：脚本在取消到达前跑完了就是跑完了，
     照常登记——「已经发生的执行」不因迟到的取消而假装没发生。
     """
+    built = []
     result = probe(
         figures_dir,
         script,
         should_cancel=should_cancel,
         **({"run": run} if run is not None else {}),
         **({"on_acquired": on_acquired} if on_acquired is not None else {}),
+        **(
+            {"on_built": lambda worker, execution: built.append((worker, execution))}
+            if register_result is not None
+            else {}
+        ),
     )
     if not result["stems"]:
         return {**result, "registered": False}
+    if register_result is not None:
+        worker, execution = built[-1] if built else (None, None)
+        return register_result(result, worker, execution)
     return register_probed(figures_dir, script, result, cost=cost)
 
 
 def register_probed(
-    figures_dir: str | Path, script: str, result: dict, cost: str = "medium"
+    figures_dir: str | Path, script: str, result: dict, cost: str = "medium", *, on_registered=None
 ) -> dict:
     """把一次**已经成功**的执行（`stems` 非空）按真实产出登记进注册表：冲突 / 改指代次的判据只此一份。
 
@@ -606,6 +627,7 @@ def register_probed(
     # 登记在改指表的锁里、核对过代次才落地（ADR 0106 §五）：试运行途中改了指认，产出的图名 / 描述
     # 是按旧位置的数据来的——丢弃、可重试，注册表零改动
     append = bool(result.get("run_config"))
+    written = []
     try:
         with inputremap.landing(figures_dir, result.get("remap_generation")):
             # 无参数运行整条替换（T03 已知缺口）：替换之前这个脚本名下、这次没产出的图名会就此失去关联——多半是此前**带参数**
@@ -615,7 +637,7 @@ def register_probed(
             # 注册表字节不变——绝不能出现「端点报失败、注册表却已丢了旧 stem」（r4220769153）
             # 一次索引：运行配置读一次、cache 目录列一次，不随被替换 stem 数 × 配置数增长（#819 r4232302927）
             unlinked = sorted(captured_stems(figures_dir, script, set(before) - set(all_stems))[0])
-            discover.register(
+            registered_config = discover.register(
                 figures_dir,
                 script,
                 all_stems,
@@ -624,6 +646,7 @@ def register_probed(
                 # T03：带运行配置的执行只是这个脚本的**另一份配置**——并进去，不换掉。整条替换会让
                 # 无参数 / 别的参数登记过的图当场失去编辑入口（注册表是 stem 归属的唯一权威）
                 append=append,
+                **({"on_written": written.append} if on_registered is not None else {}),
             )
             registry.load(figures_dir)
             # stems 可能由数据决定：记下是在哪张改指表下登记的，表变了渲染时据此重新登记
@@ -637,6 +660,8 @@ def register_probed(
             "registered": False,
             "error": _err(inputremap.ERROR_CHANGED, str(exc)),
         }
+    if on_registered is not None and written:
+        on_registered(written[-1], registered_config)
     return {**result, "registered": True, **({"unlinked_stems": unlinked} if unlinked else {})}
 
 

@@ -1,5 +1,8 @@
+import { svgSnapshotWarning } from '@/lib/svgSnapshotWarning'
 import { artifactBackgroundOriginal, artifactRequestFields, artifactValidationIssue, ArtifactValidationError, FIGSIZE_SOURCE_POLICY, validationFromSource, beginArtifactEntry, artifactEntryCurrent, cancelArtifactEntry, deferArtifactEntry, refuseArtifactOperation, rememberArtifactEdit } from '@/lib/artifactValidation'
 import { currentProjectId } from '@/lib/session'
+import '@/store/figureSnapshotInvalidation'
+import { captureProjectEpoch } from '@/lib/projectEpoch'
 import { requestRender, type RenderPolicy } from '@/store/renderScheduler'
 import { isJustBakedBaselineOf } from '@/lib/bakedBaseline'
 import { engineTransport } from '@/lib/engineTransport'
@@ -573,7 +576,8 @@ export async function runManualSave(): Promise<void> {
   const ui = useUiStore.getState()
   // 按下 ⌘S 那一刻的排版 / 项目 / 绑定：整条链只用它（`saveContext.ts`）
   const ctx = captureSaveContext()
-  const { state, wrote } = await saveNowWithResult()
+  const savedName = useDocumentStore.getState().projectMeta.name
+  const { state, wrote, svgSnapshotWarnings } = await saveNowWithResult()
   // saveNow 途中切走了：本机那一份（入口那份）已经照常落盘，项目文件这一步不再做——
   // 此刻开着的是另一份，写它、给它弹「存进项目」都不是用户要的；没写进项目要说出来
   if (ctx.pj !== null && !stillCurrent(ctx)) {
@@ -594,7 +598,10 @@ export async function runManualSave(): Promise<void> {
   // 跟**这次写没写成**走，不跟最终的实时状态走：写的途中又改过的话状态照实是 dirty，
   // 但按下那一刻的内容已经在盘上了（Codex #679）
   if (wrote) emitLayoutSaved('local', { moment: ctx.moment })
-  if (state === 'saved' || state === 'clean') {
+  const warning = wrote ? svgSnapshotWarning(savedName, svgSnapshotWarnings) : null
+  if (warning && state !== 'conflict' && state !== 'save_error') {
+    ui.setStatus(warning, 'info')
+  } else if (state === 'saved' || state === 'clean') {
     ui.setStatus(msg('save.doneLocal', undefined, 'workspace'), 'done')
   } else if (state === 'conflict') {
     ui.setStatus(msg('save.conflict', undefined, 'workspace'), 'error')
@@ -1253,8 +1260,9 @@ async function settledRender(key: string): Promise<void> {
  * 它是用户明确触发的一次脚本执行（00_SHARED_RULES §4 允许的形态），做的事与
  * 「脚本文件变了」那条路**逐字相同**：后端 `pool.invalidate`（同一个原语）+
  * 前端 `markStale`（清掉该文件全部变体的权威，画布留着上一张不闪白）+ 一次
- * immediate 渲染。**不改源脚本、不写回原始文件、不清 override**——文档一个字节
- * 不动，所以它**不进历史**（撤销撤的是编辑，不是一次重画）。
+ * immediate 渲染。**不改源脚本、不写回原始文件、不清 override**，
+ * **不进历史**（撤销撤的是编辑，不是一次重画）。成功重跑退役源的旧快照引用，
+ * 这项变化须自动保存，并将已绑定的项目排版标为有未保存改动。
  *
  * 同一文件的多个实例共享一条会话：会话作废对它们一视同仁，其余实例由
  * `useEngineSync` 的跟踪位（`markStale` 置的）按各自 overrides 重画。
@@ -1271,11 +1279,13 @@ export async function rebuildPanel(panelId: string): Promise<RebuildOutcome> {
   // 字号还在安静计时里时点「重新构建」：先把那次编辑收进历史，重画的才是定稿的 overrides
   finishActiveGesture()
   const fileId = panel.fileId
+  const owner = captureProjectEpoch(() => useDocumentStore.getState().documentId)
   let invalidated = false
   if (!engineTransport()) {
     try {
       invalidated = (await engineInvalidate(fileId)).invalidated
     } catch (err) {
+      if (!owner.still()) return 'skipped'
       status(
         note('rebuildFailed', { error: err instanceof Error ? err.message : String(err) }),
         'error',
@@ -1284,8 +1294,9 @@ export async function rebuildPanel(panelId: string): Promise<RebuildOutcome> {
     }
   }
   // 等后端这一趟的时间里面板可能被删了：以此刻文档里的那份为准
+  if (!owner.still()) return 'skipped'
   const fresh = findObject(panelId)
-  if (fresh?.type !== 'panel') return 'skipped'
+  if (fresh?.type !== 'panel' || fresh.fileId !== fileId) return 'skipped'
   const store = useRenderStore.getState()
   store.markStale([fileId])
   // 登记 wantPatches、清掉挂着的防抖计时器；真正的发送在下一行，要等它的结果
@@ -1293,7 +1304,11 @@ export async function rebuildPanel(panelId: string): Promise<RebuildOutcome> {
   const key = renderKeyOf(fresh)
   await store.render(fileId, fresh.overrides, undefined, 'immediate', undefined, fresh.artifactValidation)
   await settledRender(key)
-  if (useRenderStore.getState().get(key).status !== 'ready') return 'failed'
+  const succeeded = useRenderStore.getState().get(key).status === 'ready'
+  // renderStore consumes trusted execution evidence even for failed/zero-output runs.
+  // Render readiness and cache invalidation alone do not prove that user code executed.
+  if (!owner.still()) return 'skipped'
+  if (!succeeded) return 'failed'
   status(note(invalidated ? 'panelRebuilt' : 'panelRerenderedNoRerun'), 'done')
   return invalidated ? 'rebuilt' : 'rerendered'
 }

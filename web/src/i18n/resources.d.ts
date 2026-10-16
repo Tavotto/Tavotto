@@ -377,6 +377,8 @@ export default interface Resources {
       "statusFailed": "暂时无法获取导出状态，作业仍可能完成。{{error}}",
       "strictTitle": "按所选规范重新打开写好的文件核对；不合格或无法核验的文件不会保存。EPS 不核验。",
       "strictToggle": "严格核验产物",
+      "svgHint": "矢量 · 文字默认转轮廓",
+      "svgNote": "SVG 默认将文字转为轮廓，在 Office 中不能作为文字继续编辑。不支持的来源会明确报告导出失败。",
       "targetNoFigure": "当前没有图",
       "tiffHint": "位图 · 无损压缩",
       "title": "导出",
@@ -2464,6 +2466,7 @@ export default interface Resources {
       "source_missing": "该图的源文件暂时不可用：{{figure}}。",
       "specfix_native_unsupported": "用 {{product}} Run 打开的图暂不支持自动修复，图没有改动。",
       "stale_write": "自动保存冲突：磁盘上已有更新的版本",
+      "svg_source_unsupported": "{{id}} 的当前来源无法安全转换为 SVG。请改用 PDF 格式导出。",
       "sync_different_scripts": "两张图不属于同一个脚本，无法同步",
       "tiff_bigtiff": "{{file}} 是 BigTIFF，暂不支持。请另存为普通 TIFF 或 PNG。",
       "tiff_bit_depth": "{{file}} 的位深暂不支持。只支持 8 位或 16 位（1 位仅限黑白）。",
@@ -5431,7 +5434,9 @@ export default interface Resources {
       "projectConflict": "项目里的 {{file}} 已在别处改过，这次没有写入。请在弹出的对话框里决定。",
       "projectFailed": "没能存进项目里的 {{file}}：{{reason}}",
       "projectSkipped": "没有写入项目里的 {{file}}：按下保存之后切换了排版或项目。回到那份排版再保存一次。",
-      "skippedSwitched": "按下保存之后切换了排版或项目，这次没有写进项目。回到那份排版再保存一次。"
+      "skippedSwitched": "按下保存之后切换了排版或项目，这次没有写进项目。回到那份排版再保存一次。",
+      "svgSnapshotPill": "SVG 快照未完整保留",
+      "svgSnapshotWarning": "排版已保存：{{name}}。以下来源的 SVG 快照未能保留：{{sources}}。重新打开后，导出这些来源的 SVG 可能需要你明确重新运行脚本。"
     },
     "scan": {
       "deps": {

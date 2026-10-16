@@ -40,7 +40,7 @@ SCOPE_ORIGINAL = "original"
 SCOPE_CANVAS = "canvas"
 SCOPES = (SCOPE_ORIGINAL, SCOPE_CANVAS)
 
-#: 输出格式。`pdf` / `eps` 是矢量载体，`png` / `tiff` 是位图载体。
+#: 输出格式。`pdf` / `eps` / `svg` 是矢量载体，`png` / `tiff` 是位图载体。
 #: **不许在这里加一个当前管线给不出真矢量的格式**（共享规则 §8：不得伪称矢量）。
 #:
 #: 顺序是结果的一部分（`outputs[]` 与界面上的清单逐项对上），所以新格式
@@ -57,16 +57,13 @@ FORMAT_PNG = "png"
 FORMAT_SVG = "svg"
 FORMAT_EPS = "eps"
 FORMAT_TIFF = "tiff"
-FORMATS = (FORMAT_PDF, FORMAT_PNG, FORMAT_EPS, FORMAT_TIFF)
+FORMATS = (FORMAT_PDF, FORMAT_PNG, FORMAT_EPS, FORMAT_TIFF, FORMAT_SVG)
 
-#: 引擎**直接序列化**那条路（codex-plugin 的 `tavotto_export`）额外认的格式。
+#: 引擎**直接序列化**那条路（codex-plugin 的 `tavotto_export`）保留既有顺序。
 #:
-#: `svg` **不在 `FORMATS` 里**，理由不是"svg 不够矢量"——matplotlib 序列化出来的
-#: SVG 与它的 PDF 同源，是真矢量——而是画布合成走 RenderCore（PDF / PNG / TIFF），那条路**给不出**
-#: SVG。把它放进全局枚举，导出面板就会摆出一个合成管线兑现不了的选项。
-#: 所以「这次认哪几种格式」是**消费点自己带的参数**
-#: （`normalize(allowed_formats=…)`），而规则（清洗、扩展名、去重、PPI 语义、
-#: 顺序）仍然只有这一份。
+#: SVG（X03）追加进统一导出格式；支持的画布节点由 RenderCore 写出，原图由
+#: worker 直接序列化。无法安全转换的来源逐项报错，不静默栅格化。
+#: 两条入口认同一个集合，但此处 SVG 原先就在第三位，不能改变插件已有的输出顺序。
 ENGINE_FORMATS = (FORMAT_PDF, FORMAT_PNG, FORMAT_SVG, FORMAT_EPS, FORMAT_TIFF)
 
 #: 哪些格式是位图 —— 「PPI 只在位图输出时有意义」这句话的唯一判据。
@@ -291,6 +288,7 @@ class OriginalSource:
     ignored: tuple[str, ...] = ()
     source_policy: str | None = None
     expected_source: dict | None = None
+    figure_snapshot: dict | None = None
 
 
 @dataclass(frozen=True)
@@ -359,6 +357,11 @@ class ExportRequest:
             **(
                 {"source_policy": self.original.source_policy}
                 if self.original and self.original.source_policy is not None
+                else {}
+            ),
+            **(
+                {"figure_snapshot": self.original.figure_snapshot}
+                if self.original and self.original.figure_snapshot is not None
                 else {}
             ),
         }
@@ -541,6 +544,17 @@ def _source_basis(source, patches=()):
         ) from exc
 
 
+def _figure_snapshot(source):
+    if "figure_snapshot" not in source:
+        return None
+    from .svgstore import validate_reference
+
+    try:
+        return validate_reference(source["figure_snapshot"])
+    except ValueError as exc:
+        raise ExportRequestError("bad_request", "Invalid Figure snapshot reference", {}) from exc
+
+
 def normalize(spec: dict, *, allowed_formats: tuple[str, ...] = FORMATS) -> ExportRequest:
     """任意 JSON → `ExportRequest`。**缺省值只有这一处**。
 
@@ -621,6 +635,7 @@ def normalize(spec: dict, *, allowed_formats: tuple[str, ...] = FORMATS) -> Expo
         for obj in objects:
             if isinstance(obj, dict):
                 _source_basis(obj, obj.get("overrides"))
+                _figure_snapshot(obj)
         canvas = CanvasSource(
             page_w_mm=_float(source.get("page_w_mm"), "page_w_mm"),
             page_h_mm=_float(source.get("page_h_mm"), "page_h_mm"),
@@ -640,6 +655,7 @@ def normalize(spec: dict, *, allowed_formats: tuple[str, ...] = FORMATS) -> Expo
             figure_id=figure_id,
             source_policy=source.get("source_policy"),
             expected_source=_source_basis(source, overrides),
+            figure_snapshot=_figure_snapshot(source),
             overrides=[o for o in overrides if isinstance(o, dict)],
             w_mm=float(source["w_mm"]) if source.get("w_mm") else None,
             h_mm=float(source["h_mm"]) if source.get("h_mm") else None,

@@ -56,8 +56,12 @@ def sse_spy(monkeypatch):
 
 @pytest.fixture
 def invalidated(monkeypatch):
-    calls: list[tuple[str, str]] = []
-    monkeypatch.setattr(m.engine_pool, "invalidate", lambda script, d: calls.append((script, d)))
+    calls: list[tuple[str, str, tuple | None]] = []
+    monkeypatch.setattr(
+        m.engine_pool,
+        "invalidate",
+        lambda script, d, *, targets=None: calls.append((script, d, targets)),
+    )
     return calls
 
 
@@ -67,6 +71,15 @@ class FakeClock:
 
     def __call__(self) -> float:
         return self.t
+
+
+class FakeWorker:
+    def __init__(self, generation=1):
+        self.generation = generation
+        self.closed = threading.Event()
+
+    def shutdown(self):
+        self.closed.set()
 
 
 def _pdf(path):
@@ -198,7 +211,7 @@ class TestAfterAiChange:
         result = m._after_ai_change(ctx, "fig1.py")
 
         assert result["reason"] == "ai" and result["panel_event"] is True
-        assert invalidated == [("fig1.py", str(ctx.path))]
+        assert invalidated == [("fig1.py", str(ctx.path), None)]
         kinds = [ev for ev, _ in sse_spy]
         assert kinds.count("panel.file_changed") == 1
         payload = next(d for ev, d in sse_spy if ev == "panel.file_changed")
@@ -215,6 +228,10 @@ class TestAfterAiChange:
         # 用户紧接着再改一次：watcher 照常触发——absorb 认的是签名，不是时间窗
         _ai_edit(figs)
         w.poll()
+        assert invalidated == [
+            ("fig1.py", str(ctx.path), None),
+            ("fig1.py", str(ctx.path), ()),
+        ]
         assert calls["refresh"] and calls["script_changed"] == [["fig1.py"]]
 
     def test_a_write_already_pending_in_the_watcher_is_still_fresh(
@@ -236,7 +253,7 @@ class TestAfterAiChange:
 
         result = m._after_ai_change(ctx, "fig1.py")
         assert result["panel_event"] is True, "躺在 pending 里的写入也算没消化"
-        assert invalidated == [("fig1.py", str(ctx.path))]
+        assert invalidated == [("fig1.py", str(ctx.path), None)]
         assert [ev for ev, _ in sse_spy].count("panel.file_changed") == 1
 
         clock.t += 5.0
@@ -272,7 +289,7 @@ class TestAfterAiChange:
         _ai_edit(figs)
         w.poll()  # watcher 先看到：作废 + 刷新 + panel.file_changed 都是它做的
         assert calls["script_changed"] == [["fig1.py"]]
-        assert invalidated == [("fig1.py", str(ctx.path))]
+        assert invalidated == [("fig1.py", str(ctx.path), ())]
         invalidated.clear()
         n_before = len([ev for ev, _ in sse_spy if ev == "panel.file_changed"])
 
@@ -280,6 +297,65 @@ class TestAfterAiChange:
         assert result["panel_event"] is False
         assert invalidated == [], "watcher 已作废过，AI 路径不再作废一次"
         assert len([ev for ev, _ in sse_spy if ev == "panel.file_changed"]) == n_before
+
+    @pytest.mark.parametrize("change", ["replacement", "generation"])
+    def test_delayed_watcher_and_ai_completion_preserve_the_new_worker(
+        self, client, tmp_path, sse_spy, monkeypatch, change
+    ):
+        figs = _project(tmp_path)
+        ctx = _open(client, figs)
+        clock = FakeClock()
+        w, calls = _manual_watcher(ctx, debounce=0.5, clock=clock)
+        monkeypatch.setattr(m.engine_pool, "_workers", {})
+        key = m.engine_pool._worker_key(str(ctx.path), "fig1.py", None, None)
+        old = FakeWorker()
+        m.engine_pool._workers[key] = old
+        invalidations = []
+        real_invalidate = m.engine_pool.invalidate
+
+        def invalidate(script, root, *, targets=None):
+            invalidations.append((script, root, targets))
+            real_invalidate(script, root, targets=targets)
+
+        monkeypatch.setattr(m.engine_pool, "invalidate", invalidate)
+        sse_spy.clear()
+        _ai_edit(figs)
+        w.poll()  # 观察旧实例，但还没到结算时间。
+        (target,) = w._pending.targets["fig1.py"]
+        assert target.key == key and target.worker is old and target.generation == 1
+        assert calls == {"refresh": [], "script_changed": []}
+
+        # 两条身份条件分别反证：同代换对象，以及同对象换代。
+        current = FakeWorker() if change == "replacement" else old
+        if change == "generation":
+            current.generation = 2
+        m.engine_pool._workers[key] = current
+        clock.t += 1
+        w.poll()
+        assert invalidations == [("fig1.py", str(ctx.path), (target,))]
+        assert target.worker is old and target.generation == 1
+        assert m.engine_pool._workers[key] is current
+        assert not current.closed.is_set()
+        assert calls == {"refresh": [["fig1.py"]], "script_changed": [["fig1.py"]]}
+
+        result = m._after_ai_change(ctx, "fig1.py")
+        assert result["panel_event"] is False
+        assert invalidations == [("fig1.py", str(ctx.path), (target,))]
+        assert m.engine_pool._workers[key] is current
+        assert not current.closed.is_set()
+        assert sse_spy == []
+
+        # 真正的新修改仍要作废当前实例，不能靠忽略所有 watcher 通知过关。
+        _ai_edit(figs)
+        w.poll()
+        clock.t += 1
+        w.poll()
+        assert key not in m.engine_pool._workers
+        assert current.closed.wait(1)
+        script, root, (latest,) = invalidations[-1]
+        assert (script, root) == ("fig1.py", str(ctx.path))
+        assert latest.key == key and latest.worker is current
+        assert latest.generation == current.generation
 
     def test_without_a_watcher_the_backend_path_does_everything(
         self, client, tmp_path, sse_spy, invalidated
@@ -291,7 +367,7 @@ class TestAfterAiChange:
         _ai_edit(figs)
         result = m._after_ai_change(ctx, "fig1.py")
         assert result["panel_event"] is True
-        assert invalidated == [("fig1.py", str(ctx.path))]
+        assert invalidated == [("fig1.py", str(ctx.path), None)]
         assert [ev for ev, _ in sse_spy].count("panel.file_changed") == 1
 
     def test_new_script_from_ai_shows_up_in_the_registry_diff(self, client, tmp_path, sse_spy):
@@ -339,7 +415,7 @@ class TestAfterAiChange:
         _ai_edit(figs_a)
         m._after_ai_change(ctx_a, "fig1.py")
         assert all(d.get("pj") == ctx_a.id for _, d in sse_spy)
-        assert invalidated == [("fig1.py", str(ctx_a.path))]
+        assert invalidated == [("fig1.py", str(ctx_a.path), None)]
         w_b.poll()
         assert calls_b == {"refresh": [], "script_changed": []}
 

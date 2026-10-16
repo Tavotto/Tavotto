@@ -25,6 +25,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import importlib
+import inspect
 import json
 import ntpath
 import os
@@ -2559,11 +2560,48 @@ def export(
 
     def _produce(job, tmp_dir: Path) -> list:
         produced = []
+        paired = {"pdf", "svg"}.issubset(job.request.formats)
+        pair_response = None
+        pair_error = None
+        normalize_svg = getattr(engine_artifactinspect, "normalize_worker_svg", None)
+        # Older supported engines must still export PDF, but cannot certify a
+        # pair. Inspect before calling: a TypeError retry could draw twice.
+        pair_supported = False
+        if paired and normalize_svg is not None:
+            try:
+                parameter = inspect.signature(worker.export).parameters.get("svg_path")
+                pair_supported = parameter is not None and parameter.kind in (
+                    inspect.Parameter.POSITIONAL_OR_KEYWORD,
+                    inspect.Parameter.KEYWORD_ONLY,
+                )
+            except (TypeError, ValueError):
+                pass
         for fmt in job.request.formats:
             job.check_cancelled()
             tmp = tmp_dir / f"{job.id}.{fmt}"
             try:
-                resp = worker.export(session.stem, session.patches, str(tmp), fmt, dpi)
+                if paired and fmt in {"pdf", "svg"}:
+                    if pair_response is None and pair_error is None:
+                        try:
+                            pair_response = worker.export(
+                                session.stem,
+                                session.patches,
+                                str(tmp_dir / f"{job.id}.pdf"),
+                                "pdf",
+                                dpi,
+                                **(
+                                    {"svg_path": str(tmp_dir / f"{job.id}.svg")}
+                                    if pair_supported
+                                    else {}
+                                ),
+                            )
+                        except engine_pool.WorkerError as exc:
+                            pair_error = exc
+                    if pair_error is not None:
+                        raise pair_error
+                    resp = pair_response
+                else:
+                    resp = worker.export(session.stem, session.patches, str(tmp), fmt, dpi)
             except engine_pool.WorkerError as exc:
                 # 一个格式挂了，不该让另一个已经渲染好的成果跟着丢，更不该把
                 # 半套文件留在最终目录里：失败的那一项带自己的 code 进
@@ -2580,6 +2618,52 @@ def export(
             for w in resp.get("warnings") or []:
                 if w not in job.warnings:
                     job.warnings.append(w)
+            vector = fmt in engine_exportreq.VECTOR_FORMATS
+            if fmt == "svg":
+                expected = None
+                if paired:
+                    expected = resp.get("svg")
+                    # A leftover file is not an acknowledgement. In particular,
+                    # dynamic draw guards may preserve PDF while declining SVG.
+                    if (
+                        not pair_supported
+                        or not isinstance(expected, dict)
+                        or expected.get("path") != str(tmp)
+                    ):
+                        error = resp.get("svg_error")
+                        produced.append(
+                            engine_exportjob.Produced(
+                                format=fmt,
+                                error_code="svg_source_unsupported",
+                                error_params={
+                                    "error": (
+                                        error.get("message") if isinstance(error, dict) else None
+                                    )
+                                    or "The engine could not produce a verified PDF/SVG pair.",
+                                },
+                            )
+                        )
+                        continue
+                # New engines share HTTP's static-SVG producer boundary; older
+                # supported engines retain their own inspector without a new import.
+                if normalize_svg is not None:
+                    try:
+                        if paired:
+                            normalize_svg(tmp, expected)
+                        else:
+                            normalize_svg(tmp)
+                        svg_vector = getattr(engine_artifactinspect, "svg_vector", None)
+                        if svg_vector is not None:
+                            vector = svg_vector(tmp)
+                    except (ValueError, OSError):
+                        produced.append(
+                            engine_exportjob.Produced(
+                                format=fmt,
+                                error_code="artifact_rejected",
+                                error_params={"failed": "integrity", "policy": "standard"},
+                            )
+                        )
+                        continue
             if acceptance is not None:
                 # **验的是临时目录里那个文件本身**（不是 figsize、不是预览）：
                 # 不过就不发布，回执里那一项带 `acceptance_failed`
@@ -2629,8 +2713,8 @@ def export(
                     # 文件里的像素数，不给的话 `size` 那一维只能 unknown
                     width_px=int(round(size_mm[0] / 25.4 * dpi)) if raster else None,
                     height_px=int(round(size_mm[1] / 25.4 * dpi)) if raster else None,
-                    # PDF/SVG/EPS 是 matplotlib 直接序列化的真矢量；PNG/TIFF 才吃 dpi
-                    vector=fmt in engine_exportreq.VECTOR_FORMATS,
+                    # SVG reports its actual static carrier, including image-only originals.
+                    vector=vector,
                     manifest={"provenance": provenance} if provenance else None,
                 )
             )

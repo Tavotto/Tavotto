@@ -5,6 +5,8 @@ import { expect, openElementsTab, test, writeRuntimeNamedProject, type RunningAp
 import type { Page } from '@playwright/test'
 import { horizontalOffenders } from './overflow'
 
+import { autosavePanelEvidence } from './autosaveEvidence'
+
 // 这一组钉的是**旧**的同步试运行路径（T09 起它只在本地开关关闭时走；默认的准备面板路径见
 // `preparation-card.spec.ts`）。开关是本机 localStorage 偏好，在页面脚本之前写好
 test.beforeEach(async ({ page }) => {
@@ -190,12 +192,36 @@ test('完整链：保存 → 关闭 → 重开 → 重放 → 预检 → 导出 
   // undo/redo 一轮（结束时两条编辑都在）
   await page.getByRole('button', { name: '撤销' }).click()
   await expect(panel.getByText(/项已修改/)).toHaveCount(0)
+  // 这份夹具只有一个面板。对象身份来自实际画布；首次防抖前恢复索引可能尚不存在，
+  // 也可能仍指向另一份排版，不能拿它猜当前文档的写盘槽位。
+  const currentObject = page.locator('[data-canvas-stage] [data-object-id]')
+  await expect(currentObject).toHaveCount(1)
+  await expect(currentObject).toBeVisible()
+  const panelId = await currentObject.getAttribute('data-object-id')
+  expect(panelId).toBeTruthy()
+  const saveTarget = {
+    panelId: panelId!, fileId: 'runtime:show_only.py#show_only',
+    requiredOverrides: [{ gid: 'axes_0.title', prop: 'fontsize' }, { prop: 'linewidth' }],
+  }
+  // 只认当前对象的两条最终编辑；文档 id 取这条真实 PUT 的路径，不读恢复索引。
+  const savedEdits = page.waitForResponse((response) => autosavePanelEvidence(response, saveTarget) !== null)
   await page.getByRole('button', { name: '重做' }).click()
   await expect(panel.getByText('1 项已修改')).toBeVisible()
+  // 未绑定项目文件的排版：正式保存先等本机写队列排空，才打开命名框。
+  // 单独一个同内容的迟到 200 仍可能早于队列里更旧的正文，不能据此关页。
+  await page.keyboard.press('ControlOrMeta+s')
+  await expect(page.locator('[data-layout-save]')).toBeVisible()
+  const written = await savedEdits
+  expect(await written.finished()).toBeNull()
+  await page.keyboard.press('Escape')
+  await expect(page.locator('[data-layout-save]')).toBeHidden()
+  const evidence = autosavePanelEvidence(written, saveTarget)
+  expect(evidence).not.toBeNull()
+  const { docId, panel: writtenPanel } = evidence!
 
-  // reload = beforeunload 冲刷自动保存；顺带验证同实例内的恢复
+  // 同实例恢复也必须等真实面板装好；空 root 同样没有「画布是空的」文案。
   await page.reload()
-  await expect(page.getByText('画布是空的')).toHaveCount(0, { timeout: 30_000 })
+  await expect(page.locator(`[data-object-id="${writtenPanel.id}"]`)).toBeVisible({ timeout: 30_000 })
   // 恢复索引在 localStorage（按 origin）：重启后端口会变，索引要原样带走
   const stored: Record<string, string> = await page.evaluate(() =>
     Object.fromEntries(
@@ -206,9 +232,7 @@ test('完整链：保存 → 关闭 → 重开 → 重放 → 预检 → 导出 
 
   // 「保存文档」的证据在磁盘上：自动保存文件里 runtime 面板带着两条 override
   const autosaveDir = path.join(env.TAVOTTO_DATA_DIR, 'layouts', '_autosave')
-  const saved = readdirSync(autosaveDir).filter((f) => f.endsWith('.json'))
-  expect(saved.length).toBeGreaterThan(0)
-  const pd = JSON.parse(readFileSync(path.join(autosaveDir, saved[0]), 'utf-8'))
+  const pd = JSON.parse(readFileSync(path.join(autosaveDir, `${docId}.json`), 'utf-8'))
   const objects = pd.canvases[0].objects as {
     type: string
     fileId?: string
@@ -217,6 +241,7 @@ test('完整链：保存 → 关闭 → 重开 → 重放 → 预检 → 导出 
   }[]
   const rt = objects.find((o) => o.type === 'panel' && o.fileId?.startsWith('runtime:'))!
   expect(rt).toBeTruthy()
+  expect(rt.overrides).toEqual(writtenPanel.overrides)
   const props = (rt.overrides ?? []).map((o) => `${o.gid}.${o.prop}`)
   expect(props).toContain('axes_0.title.fontsize')
   expect(props).toEqual(expect.arrayContaining([expect.stringMatching(/linewidth$/)]))
@@ -229,9 +254,8 @@ test('完整链：保存 → 关闭 → 重开 → 重放 → 预检 → 导出 
     for (const [k, v] of Object.entries(entries)) localStorage.setItem(k, v)
   }, stored)
   await page.goto(a2.baseURL)
-  await expect(page.getByText('画布是空的')).toHaveCount(0, { timeout: 30_000 })
-  const obj = page.locator('[data-object-id]').first()
-  await expect(obj).toBeVisible()
+  const obj = page.locator(`[data-object-id="${writtenPanel.id}"]`)
+  await expect(obj).toBeVisible({ timeout: 30_000 })
 
   // lazy rehydrate → 重新运行 → override 恢复（字号 13 还在）。
   // **这一条走的是画布上的对象**（重开项目后从版上点进去），不是素材卡——

@@ -102,6 +102,28 @@ def client(tmp_path):
 
 
 # ------------------------------ 二进制发现 ------------------------------
+def test_startup_failure_proves_request_was_not_sent(client, monkeypatch):
+    def fail():
+        raise workerd_client.WorkerdError("startup failed", code="workerd_unavailable")
+
+    monkeypatch.setattr(client, "ensure_started", fail)
+    with pytest.raises(workerd_client.WorkerdError) as caught:
+        client.call("build")
+    assert caught.value.extra["request_sent"] is False
+
+
+def test_partial_write_failure_is_not_claimed_as_unsent(client, monkeypatch):
+    client.ensure_started()
+
+    def fail(*args):
+        raise OSError("partial write")
+
+    monkeypatch.setattr(client, "_write", fail)
+    with pytest.raises(workerd_client.WorkerdError) as caught:
+        client.call("build")
+    assert caught.value.extra["request_sent"] is None
+
+
 def test_the_env_switch_can_disable_workerd_entirely(monkeypatch):
     """`TAVOTTO_WORKERD=0` 一律走 Python 池——排障时要能一键切回参考实现。"""
     for value in ("0", "off", "FALSE", "No"):
@@ -295,6 +317,7 @@ def test_a_wedged_supervisor_times_out_with_its_own_code(client, monkeypatch):
     with pytest.raises(workerd_client.WorkerdError) as e:
         client.call("never", timeout=0.2)
     assert e.value.code == "workerd_unavailable"
+    assert e.value.extra["request_sent"] is True
 
 
 def test_the_request_envelope_matches_the_supervisor_protocol(client):

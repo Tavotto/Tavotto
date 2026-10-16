@@ -1,3 +1,4 @@
+import { figureSnapshotFor } from './figureSnapshot'
 import { artifactRequestFields, artifactValidationIssue, originalArtifactOverrides } from './artifactValidation'
 /**
  * 统一导出请求的构造 —— **全产品只有这一份**（ADR 0031）。
@@ -33,7 +34,7 @@ import type { FigureDocument, PanelObject } from '@/types/document'
 import type { WorkspaceMode } from '@/store/workspace'
 
 export type ExportScope = 'original' | 'canvas'
-export type ExportFormat = 'pdf' | 'png' | 'eps' | 'tiff'
+export type ExportFormat = 'pdf' | 'png' | 'eps' | 'tiff' | 'svg'
 export type OverwritePolicy = 'ask' | 'replace' | 'rename'
 export type ExportBackground = 'white' | 'transparent'
 
@@ -41,11 +42,11 @@ export type ExportBackground = 'white' | 'transparent'
  * 画布这条入口认的格式，**顺序与 `engine/exportreq.FORMATS` 同源**：结果里的
  * `outputs[]` 按它排，界面上的清单也按它排。新格式追加在后面（ADR 0046）。
  */
-export const FORMATS: readonly ExportFormat[] = ['pdf', 'png', 'eps', 'tiff']
+export const FORMATS: readonly ExportFormat[] = ['pdf', 'png', 'eps', 'tiff', 'svg']
 
 /** 位图格式的判据。「PPI 有没有意义」全产品只问这一句（与 `RASTER_FORMATS` 同源） */
 export const RASTER_FORMATS: readonly ExportFormat[] = ['png', 'tiff']
-export const VECTOR_FORMATS: readonly ExportFormat[] = ['pdf', 'eps']
+export const VECTOR_FORMATS: readonly ExportFormat[] = ['pdf', 'eps', 'svg']
 
 /** 与 `engine/exportreq.py` 的 `PPI_MIN/PPI_MAX/PPI_DEFAULT` 同源 */
 export const PPI_MIN = 36
@@ -248,6 +249,9 @@ export function buildExportRequest(input: ExportRequestInput): BuiltRequest {
     const patches = input.panel ? originalArtifactOverrides(input.panel) : []
     request.original = {
       figure_id: input.figureId ?? '',
+      ...(input.panel && input.panel.fileId === input.figureId &&
+          JSON.stringify(patches) === JSON.stringify(input.panel.overrides) && figureSnapshotFor(input.panel)
+        ? { figure_snapshot: figureSnapshotFor(input.panel) } : {}),
       ...(input.panel ? artifactRequestFields(input.panel) : {}),
       overrides: patches.length ? patches : undefined,
       w_mm: spec?.widthMm ?? null,

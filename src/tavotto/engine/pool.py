@@ -29,6 +29,7 @@ from . import (
     config,
     envlease,
     execspec,
+    executionfact,
     figcapture,
     inputbroker,
     inputremap,
@@ -379,6 +380,9 @@ _worker_python: str | None = None
 _worker_ctx: str = ""
 _worker_source: str = ""
 _workers: dict[tuple[str, ...], "EngineWorker"] = {}
+# Detached workerd handles whose supervisor close has not been confirmed. A
+# parent object's _dead flag does not prove its spawn-hash entry was removed.
+_pending_retirements: dict[tuple[str, ...], list["WorkerdWorker"]] = {}
 
 
 def _run_payload(run) -> dict:
@@ -442,14 +446,14 @@ def _runtime_of(resp: dict) -> dict | None:
     return dict(rt) if isinstance(rt, dict) else None
 
 
-def peek(script_name: str, figures_dir: str | Path, run=None):
+def peek(script_name: str, figures_dir: str | Path, run=None, *, artifact_source=None):
     """池里**现在**有没有这个脚本的活会话——只读，不建、不复用判定、不淘汰。
 
     `get()` 的副作用（重建 / LRU）在这里一个都不发生；回来的可能是没 build 的
     会话（正在冷启动）。给准备接口回答「现有 runtime 正在运行」（ADR 0053）用：
     它要的是事实，不是一条新会话。
     """
-    key = _worker_key(figures_dir, script_name, None, run)
+    key = _worker_key(figures_dir, script_name, artifact_source, run)
     with _lock:
         w = _workers.get(key)
         return w if w is not None and w.alive() else None
@@ -1924,6 +1928,218 @@ def reset_worker_python() -> None:
     projectenv.reset_cache()
 
 
+_execution_observer: Callable | None = None
+_execution_state_lock = threading.Lock()
+_EXECUTING_COMMANDS = frozenset(
+    {"build", "render", "override", "export", "render_png", "preview_png"}
+)
+_BEFORE_EXECUTION_ERRORS = frozenset(
+    {
+        "unknown_session",
+        "queue_full",
+        "queue_superseded",
+        "spawn_failed",
+        "handshake_timeout",
+        "bad_request",
+    }
+)
+
+
+def register_execution_observer(callback: Callable | None) -> None:
+    """Observe actual safe-worker executions as callback(worker, opaque_id).
+
+    Calls may occur on a polling thread, before build finishes. Consumers must
+    order by execution_started_ns(opaque_id), not pool generation (workerd may reopen).
+    Observer failures never prevent the scientific execution itself.
+    """
+    global _execution_observer
+    _execution_observer = callback
+
+
+def execution_started_ns(execution_id: str) -> int:
+    """Order the exact callback fact, independent of a worker's later mutable state."""
+    return executionfact.started_ns(execution_id)
+
+
+def _execution_state(worker) -> None:
+    with _execution_state_lock:
+        if not hasattr(worker, "_execution_lock"):
+            worker._execution_lock = threading.RLock()
+            worker._execution_watches = {}
+            worker.execution_id = None
+            worker.execution_started_ns = 0
+            worker.execution_observation_unknown = False
+            worker.execution_unknown_started_ns = 0
+
+
+def _record_execution(worker, execution_id: str) -> None:
+    started = executionfact.started_ns(execution_id)
+    with worker._execution_lock:
+        if started <= worker.execution_started_ns:
+            return  # An older response must not overwrite a newer execution.
+        worker.execution_id = execution_id
+        worker.execution_started_ns = started
+        worker.execution_observation_unknown = worker.execution_unknown_started_ns > started
+    callback = _execution_observer
+    if callback is not None:
+        try:
+            callback(worker, execution_id)
+        except Exception:  # noqa: BLE001 — bookkeeping cannot block user code
+            LOG.warning("Execution observer failed", exc_info=True)
+
+
+def refresh_execution(worker) -> str | None:
+    """Reconcile live request markers, including a build currently being cancelled."""
+    _execution_state(worker)
+    with worker._execution_lock:
+        watches = list(worker._execution_watches.values())
+    for watch in watches:
+        watch.refresh()
+    return worker.execution_id
+
+
+def refresh_owner_execution(project_root, script, run_config=None) -> list:
+    """Refresh existing safe sessions for one owner without acquiring/building one.
+
+    Selected-artifact variants share the same owner. Inspect only trusted spec
+    identity fields; private argv and key reconstruction are unnecessary.
+    """
+    root = os.path.normcase(os.path.realpath(project_root))
+    with _lock:
+        workers = []
+        for worker in _workers.values():
+            spec = getattr(worker, "spec", None)
+            if (
+                getattr(worker, "execution_replaces_current", False)
+                and isinstance(spec, execspec.ExecutionSpec)
+                and spec.profile == execspec.PROFILE_SAFE
+                and spec.target_kind == execspec.TARGET_SCRIPT
+                and os.path.normcase(os.path.realpath(spec.project_root)) == root
+                and spec.target == script
+                and (spec.run_config or None) == (run_config or None)
+            ):
+                workers.append(worker)
+    for worker in workers:
+        refresh_execution(worker)
+    return workers
+
+
+def execution_inflight_unobserved(worker) -> bool:
+    """Temporary uncertainty only: a potentially executing dispatch lacks facts.
+
+    This neither asserts actual entry nor permanently retires an owner. A caller
+    can temporarily refuse old snapshots until a marker or reply resolves it.
+    """
+    _execution_state(worker)
+    with worker._execution_lock:
+        return any(
+            watch.can_start and watch.sent and not watch.acknowledged and not watch.observed
+            for watch in worker._execution_watches.values()
+        )
+
+
+def _stopped_execution(worker) -> None:
+    refresh_execution(worker)
+    with worker._execution_lock:
+        for watch in worker._execution_watches.values():
+            watch.mark_unknown()
+
+
+class _ExecutionWatch:
+    """Two independent facts: a reply, or a request-bound marker before user code.
+
+    With neither fact after an in-flight transport failure, absence is unknown,
+    not evidence that nothing ran. Rust's queued/in-flight `cancelled` shares one
+    code, so that case is likewise unknown unless a marker resolves it.
+    """
+
+    def __init__(self, worker, command):
+        _execution_state(worker)
+        self.worker = worker
+        # A live Python child cannot rebuild itself during a hot request; workerd
+        # can transparently replace a child even while the parent still says built.
+        self.can_start = not getattr(worker, "built", False) or isinstance(worker, WorkerdWorker)
+        self.key = (
+            uuid.uuid4().hex
+            if command in _EXECUTING_COMMANDS and getattr(worker, "out_dir", None) is not None
+            else None
+        )
+        self.sent = False
+        self.sent_ns = 0
+        self.acknowledged = False
+        self.observed = False
+        self.stop = threading.Event()
+        self.thread = None
+
+    def __enter__(self):
+        if self.key is not None:
+            with self.worker._execution_lock:
+                self.worker._execution_watches[self.key] = self
+            self.thread = threading.Thread(
+                target=self._poll, name="tavotto-execution-observe", daemon=True
+            )
+            try:
+                self.thread.start()
+            except RuntimeError:
+                # Thread exhaustion must not turn optional observation into a
+                # scientific-run failure. Reply/final synchronous refresh remain.
+                self.thread = None
+                LOG.warning("Execution observation polling could not start", exc_info=True)
+        return self
+
+    def _poll(self):
+        while not self.stop.wait(0.05):
+            self.refresh()
+
+    def refresh(self):
+        if self.key is None:
+            return
+        value = executionfact.read(self.worker.out_dir, self.key)
+        if value is not None:
+            self.observed = True
+            _record_execution(self.worker, value)
+
+    def acknowledge(self, data):
+        if not isinstance(data, dict) or "execution_id" not in data:
+            return
+        value = data["execution_id"]
+        if value is None or executionfact.valid_id(value):
+            self.acknowledged = True
+        if executionfact.valid_id(value):
+            self.observed = True
+            _record_execution(self.worker, value)
+
+    def mark_unknown(self):
+        if (
+            self.key is not None
+            and self.can_start
+            and self.sent
+            and not self.acknowledged
+            and not self.observed
+        ):
+            with self.worker._execution_lock:
+                if self.sent_ns > self.worker.execution_started_ns:
+                    self.worker.execution_unknown_started_ns = max(
+                        self.worker.execution_unknown_started_ns, self.sent_ns
+                    )
+                    self.worker.execution_observation_unknown = True
+
+    def __exit__(self, exc_type, exc, tb):
+        self.stop.set()
+        if self.thread is not None:
+            self.thread.join(timeout=1.0)
+        self.refresh()
+        if exc_type is None or getattr(exc, "code", "") not in _BEFORE_EXECUTION_ERRORS:
+            self.mark_unknown()
+        if self.key is not None:
+            with self.worker._execution_lock:
+                self.worker._execution_watches.pop(self.key, None)
+            try:
+                executionfact.marker_path(self.worker.out_dir, self.key).unlink(missing_ok=True)
+            except OSError:
+                pass  # Disposable IPC; normal cache pruning owns eventual cleanup.
+
+
 class EngineWorker:
     def __init__(
         self,
@@ -1943,6 +2159,8 @@ class EngineWorker:
         #: T03：这条会话冻结的运行配置（`execspec.RunSelection`；None = 没给参数，旧行为）。会话的整个生命周期
         #: 里它不变——冷重放（`one_shot`）、导出、写回重放都从这里取，不读"项目最新配置"。
         self.run = run
+        # Isolated one_shot/writeback verification must not retire the hot source.
+        self.execution_replaces_current = base_dir is None
         self.artifact_admission_lock = threading.Lock()
         # `base_dir` 只给一次性 worker（`one_shot()`）用：与热会话共用 out/
         # 会让重放的 manifest/SVG 盖掉用户正在看的那份。池里的会话永远走
@@ -1971,6 +2189,7 @@ class EngineWorker:
         self.last_patch_hash_by_stem: dict[str, str] = {}
         self.lock = threading.Lock()
         self.built = False
+        _execution_state(self)
         #: 上一次**跑完的** build 是失败的（`built=False` 分不出「还没 build / 正在 build」与「build 过但失败了」，
         #: 复用前的工作目录门只管后者——Codex #599 P2）。成功那一刻清掉。
         self.build_failed = False
@@ -1981,6 +2200,7 @@ class EngineWorker:
         #: 最近一次 build 响应里 worker 自报的运行时事实（`figsession.runtime_report`，
         #: ADR 0053）；老 worker 没带就是 None——回执据此标 partial，不补不猜。
         self.last_build_runtime: dict | None = None
+        self.last_build_execution_id: str | None = None
         self.last_used = time.time()
         # 这一代从日志的哪个字节开始（append 模式，目录跨代复用）
         self._log_offset = start_log_generation(self.log_path)
@@ -2308,6 +2528,12 @@ class EngineWorker:
         )
 
     def request(self, obj: dict, timeout: float | None = None) -> dict:
+        with _ExecutionWatch(self, obj.get("cmd")) as watch:
+            if watch.key is not None:
+                obj = {**obj, "execution_watch": watch.key}
+            return self._request_observed(obj, timeout, watch)
+
+    def _request_observed(self, obj: dict, timeout: float | None, watch: _ExecutionWatch) -> dict:
         obj = {**obj, **_run_payload(getattr(self, "run", None))}
         if getattr(self, "artifact_source", None) is not None:
             obj = {**obj, "artifact_source": self.artifact_source}
@@ -2332,6 +2558,10 @@ class EngineWorker:
             try:
                 alive = self.alive()
                 if alive:
+                    watch.sent_ns = time.monotonic_ns()
+                    # Once writing starts, an exception cannot prove that no
+                    # complete line reached the child (including flush errors).
+                    watch.sent = True
                     self.proc.stdin.write(json.dumps(env, ensure_ascii=False) + "\n")
                     self.proc.stdin.flush()
             except (OSError, ValueError):  # BrokenPipeError / 管道已关（ValueError: closed file）
@@ -2382,6 +2612,8 @@ class EngineWorker:
             raise err
         resp = self._parse_line(line)
         self._check_envelope(resp, rid)
+        watch.acknowledge(resp)
+        watch.acknowledge(resp.get("error"))
         if resp.get("hash_mismatch"):
             # 不影响本次结果（worker 照常执行了），但两侧的规范化实现已经分叉
             LOG.warning(
@@ -2417,6 +2649,7 @@ class EngineWorker:
             figcapture.clear_preview_poison(self.out_dir)
         self.last_build_descriptors = list(resp.get("descriptors") or [])
         self.last_build_runtime = _runtime_of(resp)
+        self.last_build_execution_id = resp.get("execution_id")
         self.last_build_artifact_probe = resp.get("artifact_probe")
         self.last_build_script_inputs = _script_inputs_of(resp)
         try:
@@ -2447,7 +2680,23 @@ class EngineWorker:
         self.last_patch_hash_by_stem[stem] = self.last_patch_hash
         return _fold_build_timings(resp, build)
 
-    def export(self, stem: str, patches: list, path: str, fmt: str = "pdf", dpi: int = 600) -> dict:
+    def export(
+        self,
+        stem: str,
+        patches: list,
+        path: str,
+        fmt: str = "pdf",
+        dpi: int = 600,
+        *,
+        svg_path: str | None = None,
+        require_built: bool = False,
+        snapshot_only: bool = False,
+    ) -> dict:
+        if (require_built or snapshot_only) and not self.built:
+            raise WorkerError(
+                "An already built Figure session is required for SVG capture.",
+                code="svg_source_unavailable",
+            )
         build = self.ensure_built().get("timings") if not self.built else None
         resp = self.request(
             {
@@ -2457,6 +2706,9 @@ class EngineWorker:
                 "path": path,
                 "format": fmt,
                 "dpi": dpi,
+                **({"svg_path": svg_path} if svg_path is not None else {}),
+                **({"require_built": True} if require_built else {}),
+                **({"snapshot_only": True} if snapshot_only else {}),
             },
             EXPORT_TIMEOUT,
         )
@@ -2582,6 +2834,7 @@ class EngineWorker:
         `rmtree` 必然撞 sharing violation（run 32937999297）。
         """
         self._terminate_and_reap(graceful=True)
+        _stopped_execution(self)
 
     def force_kill(self) -> None:
         """兜底硬杀（`shutdown_all(wait=True)` 在优雅关停超时后调）——**同样等到收尸**。
@@ -2590,6 +2843,7 @@ class EngineWorker:
         python.exe 还在，Popen 没回收，句柄还占着目录。
         """
         self._terminate_and_reap(graceful=False)
+        _stopped_execution(self)
 
 
 # ============================================================================
@@ -2700,6 +2954,12 @@ def _worker_error(
     return err
 
 
+def _workerd_close_confirmed(response) -> bool:
+    return isinstance(response, dict) and (
+        response.get("closed") is True or response.get("known") is False
+    )
+
+
 class WorkerdWorker:
     """`EngineWorker` 的等价物，但生命周期由 tavotto-workerd 管。
 
@@ -2733,6 +2993,7 @@ class WorkerdWorker:
         self.entry = entry
         self.artifact_source = figcapture.selected_artifact_context(artifact_source)
         self.run = run  # 与 EngineWorker 同源（T03）
+        self.execution_replaces_current = base_dir is None
         self.artifact_admission_lock = threading.Lock()
         # 目录布局与 EngineWorker 完全一致：prune_engine_cache 按 base 走，
         # 换个控制面就换个落点的话，清理会把正在用的会话目录当成垃圾删掉。
@@ -2760,9 +3021,11 @@ class WorkerdWorker:
         # 「一个慢请求占死整条会话」重新绑回来。
         self.lock = threading.Lock()
         self.built = False
+        _execution_state(self)
         self.build_failed = False  # 与 EngineWorker 同一个判据
         self.last_build_descriptors: list = []
         self.last_build_runtime: dict | None = None
+        self.last_build_execution_id: str | None = None
         self.child_pid: int | None = None
         self.last_used = time.time()
         self._dead = False
@@ -2915,6 +3178,16 @@ class WorkerdWorker:
         payload: dict | None = None,
         idle_timeout: float | None = None,
     ) -> dict:
+        with _ExecutionWatch(self, op) as watch:
+            if watch.key is not None:
+                payload = {**(payload or {}), "execution_watch": watch.key}
+            return self._call_observed(
+                op, timeout, stem=stem, payload=payload, idle_timeout=idle_timeout, watch=watch
+            )
+
+    def _call_observed(
+        self, op, timeout, *, stem, payload, idle_timeout, watch: _ExecutionWatch
+    ) -> dict:
         from . import workerd_client
 
         payload = {**(payload or {}), **_run_payload(getattr(self, "run", None))}
@@ -2926,6 +3199,8 @@ class WorkerdWorker:
         for attempt in (0, 1):
             t_call = time.perf_counter()
             try:
+                watch.sent = True
+                watch.sent_ns = time.monotonic_ns()
                 resp = self._client.call(
                     op,
                     session_id=self._session_id,
@@ -2935,6 +3210,21 @@ class WorkerdWorker:
                     idle_timeout=idle_timeout,
                 )
             except workerd_client.WorkerdError as exc:
+                watch.acknowledge(exc.extra)
+                if exc.extra.get("request_sent") is False:
+                    watch.sent = False
+                if exc.code == "unknown_session":
+                    # This attempt did not reach a child. A failed reopen is not
+                    # an ambiguous user-code execution either.
+                    watch.sent = False
+                if exc.code == "unknown_session" and (
+                    payload.get("require_built") or payload.get("snapshot_only")
+                ):
+                    self._dead = True
+                    raise WorkerError(
+                        "The existing Figure session expired; SVG capture cannot rerun it.",
+                        code="svg_source_unavailable",
+                    ) from exc
                 # workerd 重启过 → session_id 作废。这条**透明重开一次**：
                 # 对上层来说这只是一次稍慢的渲染，没有任何语义变化。
                 if exc.code == "unknown_session" and self.artifact_source is not None:
@@ -2952,6 +3242,7 @@ class WorkerdWorker:
                     self._open()
                     continue
                 raise self._to_worker_error(exc, is_build=op == "build") from exc
+            watch.acknowledge(resp)
             if resp.get("hash_mismatch"):
                 # 本次结果照常可用（worker 执行了），但两侧的规范化实现已经分叉
                 LOG.warning(
@@ -3009,6 +3300,7 @@ class WorkerdWorker:
             figcapture.clear_preview_poison(self.out_dir)
         self.last_build_descriptors = list(resp.get("descriptors") or [])
         self.last_build_runtime = _runtime_of(resp)
+        self.last_build_execution_id = resp.get("execution_id")
         self.last_build_artifact_probe = resp.get("artifact_probe")
         self.last_build_script_inputs = _script_inputs_of(resp)
         try:
@@ -3038,13 +3330,37 @@ class WorkerdWorker:
         self.last_patch_hash_by_stem[stem] = self.last_patch_hash
         return _fold_build_timings(resp, build)
 
-    def export(self, stem: str, patches: list, path: str, fmt: str = "pdf", dpi: int = 600) -> dict:
+    def export(
+        self,
+        stem: str,
+        patches: list,
+        path: str,
+        fmt: str = "pdf",
+        dpi: int = 600,
+        *,
+        svg_path: str | None = None,
+        require_built: bool = False,
+        snapshot_only: bool = False,
+    ) -> dict:
+        if (require_built or snapshot_only) and not self.built:
+            raise WorkerError(
+                "An already built Figure session is required for SVG capture.",
+                code="svg_source_unavailable",
+            )
         build = self.ensure_built().get("timings") if not self.built else None
         resp = self._call(
             "export",
             EXPORT_TIMEOUT,
             stem=stem,
-            payload={"patches": patches, "path": path, "format": fmt, "dpi": dpi},
+            payload={
+                "patches": patches,
+                "path": path,
+                "format": fmt,
+                "dpi": dpi,
+                **({"svg_path": svg_path} if svg_path is not None else {}),
+                **({"require_built": True} if require_built else {}),
+                **({"snapshot_only": True} if snapshot_only else {}),
+            },
         )
         return _fold_build_timings(resp, build)
 
@@ -3078,21 +3394,23 @@ class WorkerdWorker:
             payload={"patches": patches, "width": width_px, "with_manifest": True},
         )
 
-    def shutdown(self) -> None:
-        """优雅关会话；workerd 收不到就当它已经没了（不许把退出流程挂住）。"""
+    def shutdown(self) -> bool:
+        """Graceful release; report whether the supervisor actually retired it."""
         from . import workerd_client
 
         if not self._session_id:
-            return
+            return True
         try:
-            # 退出路径不许被一个卡住的 supervisor 拖住：余量收到 5 秒
-            self._client.call(
+            response = self._client.call(
                 "close_session", session_id=self._session_id, timeout=SHUTDOWN_TIMEOUT, slack=5.0
             )
+            # A released reference can leave the same spawn cached and alive.
+            return _workerd_close_confirmed(response)
         except workerd_client.WorkerdError:
-            pass
+            return False
         finally:
             self._dead = True
+            _stopped_execution(self)
 
     def force_kill(self) -> bool:
         """硬关：workerd 当场杀掉 worker，不等在飞的活跑完。False 表示关停未确认，不能据此重跑。"""
@@ -3101,7 +3419,7 @@ class WorkerdWorker:
         if not self._session_id:
             return True
         try:
-            self._client.call(
+            response = self._client.call(
                 "close_session",
                 session_id=self._session_id,
                 payload={"force": True},
@@ -3111,9 +3429,10 @@ class WorkerdWorker:
         except workerd_client.WorkerdError:
             return False
         else:
-            return True
+            return _workerd_close_confirmed(response)
         finally:
             self._dead = True
+            _stopped_execution(self)
 
 
 class WorkerdUnavailable(RuntimeError):
@@ -3159,6 +3478,16 @@ def register_spawn_gate(gate) -> None:
 #: import 时登记。它与 `SPAWN_GATES` 分开、且排在 `acquire()` 解析解释器与查租约**之前**：门跑在
 #: `_new_worker()` 里，那时 `is_mutating` 已经查过了——在门里换解释器，查的是旧的、起的是新的（Codex #522 P1）。
 ENVIRONMENT_DECIDERS: list = []
+# Project lifecycle owns this optional port; the pool must not import watchers.
+# No watcher is registered in standalone pool consumers, so their cold path is
+# unchanged. Invocations are outside _lock, and existing hot sessions skip it.
+COLD_ACQUIRE_OBSERVER: Callable[[str, str], None] | None = None
+
+
+def set_cold_acquire_observer(observer: Callable[[str, str], None] | None) -> None:
+    global COLD_ACQUIRE_OBSERVER
+    COLD_ACQUIRE_OBSERVER = observer
+
 
 #: 起会话时检测出的解释器与记录已不是同一个（别的脚本在两次解析之间换了共享的项目记录）。
 ENVIRONMENT_CHANGED = "environment_changed"
@@ -3670,19 +3999,32 @@ def acquire(
     # 依赖门，本该自动改用的只会弹框。第二遍一定已经决定过，所以最多两遍。
     force_decide = False
     rewarms = 0
+    watcher_synced = False
+    needs_watch_sync = False
+    retiring = ()
+    # One acquisition owns one immutable environment decision, including a
+    # caller's preparation pin. Watcher/retirement waits must not reselect from
+    # a shared project record another script may have changed meanwhile.
+    pin = pinned if pinned is not None and pinned.pinned else None
     while True:
+        if retiring:
+            _confirm_retirements(key, retiring)
+            retiring = ()
+        if needs_watch_sync:
+            # Only a new/replacement execution boundary, never a hot render.
+            # This must stay outside _lock (watcher -> refresh -> pool).
+            observer = COLD_ACQUIRE_OBSERVER
+            if observer is not None:
+                observer(figures_dir, script_name)
+            watcher_synced = True
+            needs_watch_sync = False
         # **在锁外**算这个项目现在该用哪个解释器：worker 构造函数自己也会调它，
         # 在 `_lock` 里再调一次就是自锁。缓存命中时这是一次字典查询。首开的发现 + 体检
         # （U03）也发生在这里——在起任何会话**之前**，脚本目录决定从哪层往上找 venv。
-        decided = not ENVIRONMENT_DECIDERS
-        pin: EnvironmentDecision | None = None
-        if pinned is not None and pinned.pinned:
-            # 调用方（准备的一次运行）已经带着自己的不可变决定：只认它——不再让决定者对共享的项目记录重新决定
-            # （另一个脚本在检查之后、取会话之前换了记录，这次运行不能悄悄跑在别的解释器里；Codex #820 r4234067402）
-            decided, pin = True, pinned
+        decided = not ENVIRONMENT_DECIDERS or pin is not None
         try:
             want_python = (
-                pinned.python
+                pin.python
                 if pin is not None
                 else resolve_worker_python(figures_dir, script=script_name)[0]
             )
@@ -3708,6 +4050,8 @@ def acquire(
                 pin.python if pin else resolve_worker_python(figures_dir, script=script_name)[0]
             )
             decided = True
+        if pin is not None and not pin.matches(pin.python):
+            raise _environment_changed()
         _refuse_if_mutating(want_python)
         if want_python:
             # 需要 Conda 激活的解释器：激活捕获（最长一个超时）在池锁**外**做完；锁内起会话只命中缓存
@@ -3736,6 +4080,17 @@ def acquire(
                     # 会话是按旧改指表起的（ADR 0106 §五）：`shutdown_all` 摘掉之后仍在起的那条，
                     # 可能在改动之后才登记进池——复用它就是拿旧映射画图
                     why = "改指表已变"
+            if (w is None or why or getattr(w, "build_failed", False)) and not watcher_synced:
+                needs_watch_sync = True
+                continue
+            if w is None or why:
+                retiring = tuple(_pending_retirements.get(key, ()))
+                if retiring:
+                    continue  # bounded close confirmation is outside every pool/watch lock
+                if sum(map(len, _pending_retirements.values())) >= MAX_ALIVE:
+                    # Unknown retirements count against cold-session capacity.
+                    # Never drop a fence merely to admit a different script.
+                    raise WorkerError("旧渲染会话尚未确认关闭，请重试", code="session_dead")
             if (w is None or why) and not decided:
                 force_decide = True
                 continue  # 出锁：决定要体检子进程，不能占着池锁
@@ -4191,6 +4546,77 @@ def _build_with(
     return worker, worker.ensure_built(), created or created_again
 
 
+def _remember_retirements(victims) -> None:
+    """Called under _lock, atomically with detaching the original instances."""
+    for key, worker in victims:
+        if isinstance(worker, WorkerdWorker):
+            pending = _pending_retirements.setdefault(key, [])
+            if not any(old is worker for old in pending):
+                pending.append(worker)
+
+
+def _forget_retirement(key, worker) -> None:
+    with _lock:
+        _forget_retirement_locked(key, worker)
+
+
+def _forget_retirement_locked(key, worker) -> None:
+    """Remove only this confirmed handle while the caller owns _lock."""
+    pending = _pending_retirements.get(key, ())
+    kept = [old for old in pending if old is not worker]
+    if kept:
+        _pending_retirements[key] = kept
+    else:
+        _pending_retirements.pop(key, None)
+
+
+def _shutdown_retired(key, worker) -> None:
+    try:
+        confirmed = worker.shutdown() is True
+    except Exception:  # noqa: BLE001 — retain the fence when cleanup itself fails
+        LOG.warning("worker 优雅关停失败，保留会话退役屏障: %s", worker.script_name)
+        return
+    if confirmed:
+        _forget_retirement(key, worker)
+
+
+def _confirm_retirements(key, workers) -> None:
+    # No pool or watcher lock: another request can keep using an unrelated hot
+    # session, and shutdown callbacks may acquire their own bookkeeping locks.
+    for worker in workers:
+        if worker.force_kill() is False:
+            raise WorkerError("无法确认旧渲染会话已关闭，请重试", code="session_dead")
+        _forget_retirement(key, worker)
+
+
+@dataclass(frozen=True)
+class WorkerTarget:
+    """A notification's original pool instance, never a path-only authority."""
+
+    key: tuple[str, ...]
+    worker: object
+    generation: int | None
+
+
+def invalidation_targets(script_name: str | None, figures_dir: str) -> tuple[WorkerTarget, ...]:
+    """Bind all run configurations while the observer still owns its baseline."""
+    prefix = (_norm_dir(figures_dir), script_name)
+    with _lock:
+        return tuple(
+            WorkerTarget(key, worker, getattr(worker, "generation", None))
+            for key, worker in _workers.items()
+            if key[0] == prefix[0] and (script_name is None or key[1] == script_name)
+        )
+
+
+def _target_matches(target: WorkerTarget, key: tuple[str, ...], worker) -> bool:
+    return (
+        target.key == key
+        and target.worker is worker
+        and target.generation == getattr(worker, "generation", None)
+    )
+
+
 def invalidate(
     script_name: str,
     figures_dir: str | None = None,
@@ -4198,6 +4624,8 @@ def invalidate(
     *,
     only_run: bool = False,
     force: bool = False,
+    targets: tuple[WorkerTarget, ...] | None = None,
+    preserve: tuple[WorkerTarget, ...] = (),
 ) -> None:
     """脚本文件变更后作废其会话（下次请求自动重建）。
 
@@ -4220,21 +4648,45 @@ def invalidate(
             keys = [k for k in _workers if k == _worker_key(figures_dir, script_name, None, run)]
         else:
             keys = [k for k in _workers if k[:2] == (_norm_dir(figures_dir), script_name)]
+        if targets is not None:
+            # Compare and detach under the same lock. An old delayed event must
+            # not retire the replacement now occupying its original pool key.
+            keys = [
+                key
+                for key in keys
+                if any(_target_matches(target, key, _workers[key]) for target in targets)
+            ]
+        if preserve and not force:
+            keys = [
+                key
+                for key in keys
+                if not any(_target_matches(target, key, _workers[key]) for target in preserve)
+            ]
         if force:
             for key in keys:
                 worker = _workers[key]
                 # force_kill bypasses the worker request lock and is bounded.
                 # Keep acquisition fenced until workerd has removed by_hash.
-                if worker.force_kill() is False:
-                    raise WorkerError("无法确认旧渲染会话已关闭，请重试", code="session_dead")
+                try:
+                    if worker.force_kill() is False:
+                        raise WorkerError("无法确认旧渲染会话已关闭，请重试", code="session_dead")
+                except Exception:
+                    # The adapter is already marked dead. Keep ordinary acquire
+                    # from reopening its unconfirmed supervisor spawn as well.
+                    _remember_retirements([(key, worker)])
+                    raise
+                _forget_retirement_locked(key, worker)
                 _workers.pop(key, None)
             return
-        victims = [_workers.pop(k) for k in keys]
-    for w in victims:
-        threading.Thread(target=w.shutdown, daemon=True).start()
+        victims = [(key, _workers.pop(key)) for key in keys]
+        _remember_retirements(victims)
+    for key, worker in victims:
+        threading.Thread(target=_shutdown_retired, args=(key, worker), daemon=True).start()
 
 
-def invalidate_project(figures_dir: str | Path) -> None:
+def invalidate_project(
+    figures_dir: str | Path, *, targets: tuple[WorkerTarget, ...] | None = None
+) -> None:
     """作废**一个项目**的全部会话（共享样式模块变更走这条路）。
 
     与 `shutdown_all(figures_dir)` 的差别在语义而不在实现：那个是"这个项目
@@ -4247,9 +4699,16 @@ def invalidate_project(figures_dir: str | Path) -> None:
     target = _norm_dir(figures_dir)
     with _lock:
         keys = [k for k in _workers if k[0] == target]
-        victims = [_workers.pop(k) for k in keys]
-    for w in victims:
-        threading.Thread(target=w.shutdown, daemon=True).start()
+        if targets is not None:
+            keys = [
+                key
+                for key in keys
+                if any(_target_matches(item, key, _workers[key]) for item in targets)
+            ]
+        victims = [(key, _workers.pop(key)) for key in keys]
+        _remember_retirements(victims)
+    for key, worker in victims:
+        threading.Thread(target=_shutdown_retired, args=(key, worker), daemon=True).start()
 
 
 def force_cancel(
@@ -4312,25 +4771,33 @@ def shutdown_all(figures_dir: str | None = None, wait: bool = False) -> None:
     必须硬杀一次兜底。
     （LRU 淘汰路径不动：那里 worker 还可能是正常在跑的慢脚本。）
     """
+    target = _norm_dir(figures_dir) if figures_dir is not None else None
     with _lock:
-        if figures_dir is None:
-            victims = list(_workers.values())
-            _workers.clear()
-        else:
-            target = _norm_dir(figures_dir)
-            keys = [k for k in _workers if k[0] == target]
-            victims = [_workers.pop(k) for k in keys]
-    threads = [threading.Thread(target=w.shutdown, daemon=True) for w in victims]
-    for t in threads:
-        t.start()
+        # Pending watcher closes belong to the project even after detachment.
+        # Do not release another reference with a duplicate graceful close.
+        pending = [
+            (key, worker, None)
+            for key, workers in _pending_retirements.items()
+            if target is None or key[0] == target
+            for worker in workers
+        ]
+        keys = [key for key in _workers if target is None or key[0] == target]
+        victims = [(key, _workers.pop(key)) for key in keys]
+        _remember_retirements(victims)
+    closing = [
+        (key, worker, threading.Thread(target=_shutdown_retired, args=(key, worker), daemon=True))
+        for key, worker in victims
+    ]
+    for _, _, thread in closing:
+        thread.start()
     if wait:
-        for t, w in zip(threads, victims):
-            t.join(timeout=_SHUTDOWN_JOIN_TIMEOUT)
-            if t.is_alive():
-                LOG.warning("worker 关停超时（可能卡在死循环脚本里），强制 kill: %s", w.script_name)
-                # `force_kill()` 两条控制面都有：Python 池是 `proc.kill()`，
-                # workerd 是「当场关掉会话、不等在飞的活」。
-                w.force_kill()
+        _finish_shutdown(pending + closing)
+    else:
+        # A project close/settings change must also eventually reclaim workerd
+        # slots. Keep the existing nonblocking Python-worker shutdown behavior.
+        workerd_closing = pending + [item for item in closing if isinstance(item[1], WorkerdWorker)]
+        if workerd_closing:
+            threading.Thread(target=_finish_shutdown, args=(workerd_closing,), daemon=True).start()
     if wait and figures_dir is None:
         # 「本进程即将退出」这条路径顺手把 supervisor 也收掉。不收也不会留孤儿
         # （父进程一走它的 stdin 就 EOF，workerd 自己会退），但那要等到父进程真的
@@ -4341,3 +4808,27 @@ def shutdown_all(figures_dir: str | None = None, wait: bool = False) -> None:
             workerd_client.reset_client()
         except Exception:  # noqa: BLE001 — 退出路径不许因为收尾动作抛出而中断
             pass
+
+
+def _finish_shutdown(closing) -> None:
+    """Bounded cleanup outside pool/watch locks; unknown sessions stay fenced."""
+    for key, worker, thread in closing:
+        if thread is not None:
+            thread.join(timeout=_SHUTDOWN_JOIN_TIMEOUT)
+        if isinstance(worker, WorkerdWorker):
+            with _lock:
+                unconfirmed = any(old is worker for old in _pending_retirements.get(key, ()))
+        else:
+            unconfirmed = thread is not None and thread.is_alive()
+        if not unconfirmed:
+            continue
+        LOG.warning("worker 关停未确认，强制 kill: %s", worker.script_name)
+        try:
+            result = worker.force_kill()
+            confirmed = result is True if isinstance(worker, WorkerdWorker) else result is not False
+        except Exception:  # noqa: BLE001 — one failed close must not skip the other victims
+            confirmed = False
+        if confirmed:
+            _forget_retirement(key, worker)
+        else:
+            LOG.warning("worker 强制关停未确认，保留会话退役屏障: %s", worker.script_name)

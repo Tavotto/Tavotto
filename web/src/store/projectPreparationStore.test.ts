@@ -25,6 +25,7 @@ import {
   ApiError,
   createPreparationSession,
   fetchPreparationSession,
+  type FigureSnapshotInvalidation,
   type PreparationAction,
   type PreparationReport,
 } from '@/lib/api'
@@ -38,6 +39,11 @@ import {
 import { useEnvStore } from './envStore'
 import { useScriptArgvStore } from './scriptArgvStore'
 import { useUiStore } from './uiStore'
+import { registerFigureExecutionConsumer } from '@/lib/figureExecutionEvents'
+
+// These tests cover entry admission; replay deduplication belongs to the snapshot coordinator.
+vi.mock('./figureSnapshotInvalidation', () => ({}))
+const acceptedExecution = vi.fn()
 
 const mockCreate = vi.mocked(createPreparationSession)
 const mockGet = vi.mocked(fetchPreparationSession)
@@ -84,6 +90,8 @@ beforeEach(() => {
   mockCreate.mockReset()
   mockGet.mockReset()
   mockAct.mockReset()
+  acceptedExecution.mockClear()
+  registerFigureExecutionConsumer(acceptedExecution)
   __setPreparationTimingForTests({ requestTimeoutMs: 15_000, pollMs: [10_000] })
   useProjectPreparationStore.getState().clear()
   useScriptArgvStore.getState().clear()
@@ -94,6 +102,143 @@ beforeEach(() => {
 afterEach(() => {
   useProjectPreparationStore.getState().clear()
   setCurrentProjectId(null)
+})
+
+const executionFact = (executionId = 'execution-1'): FigureSnapshotInvalidation => ({
+  scope: 'owner', script: 'plot.py', run_config: null,
+  source_ids: ['runtime:plot.py#previous'], execution_id: executionId,
+})
+
+describe('preparation admits actual execution rather than successful descriptors', () => {
+  const executed = (executionId = 'execution-1', seq = 2, over: Partial<PreparationReport> = {}): PreparationReport => prepReport({
+    phase: 'completed', outcome: { kind: 'succeeded' }, observation_seq: seq,
+    facts: { execution_finished: true, figure_captured: true },
+    provider: { plan_id: 'prep-plan', attempt_id: 'attempt-1', attempts: 1, dependency: null },
+    captured: [{ asset_id: 'runtime:plot.py#a' } as never],
+    figure_snapshot_invalidation: executionFact(executionId),
+    ...over,
+  })
+
+  it('explicit run forwards the actual-start fact before completion or capture', async () => {
+    mockCreate.mockResolvedValueOnce(prepReport())
+    await useProjectPreparationStore.getState().open(scriptTarget('plot.py'))
+    mockAct.mockResolvedValueOnce({ claimed: true, report: executed('execution-1', 2, {
+      phase: 'running', outcome: { kind: 'pending' },
+      facts: { execution_finished: null, figure_captured: null }, captured: [],
+    }) })
+    await useProjectPreparationStore.getState().act(KEY, 'run')
+    expect(acceptedExecution).toHaveBeenCalledExactlyOnceWith(executionFact(), 'pj-a')
+  })
+
+  it('replayed accepted facts are forwarded for downstream deduplication and later bindings', async () => {
+    mockCreate.mockResolvedValueOnce(prepReport())
+    await useProjectPreparationStore.getState().open(scriptTarget('plot.py'))
+    mockAct.mockResolvedValueOnce({ claimed: true, report: executed() })
+    await useProjectPreparationStore.getState().act(KEY, 'run')
+    expect(acceptedExecution).toHaveBeenCalledWith(executionFact(), 'pj-a')
+    acceptedExecution.mockClear()
+    const enriched = { ...executionFact(), source_ids: ['runtime:plot.py#previous', 'runtime:plot.py#a'] }
+    mockGet.mockResolvedValueOnce(executed('execution-1', 3, { figure_snapshot_invalidation: enriched }))
+    await useProjectPreparationStore.getState().refresh(KEY)
+    expect(acceptedExecution).toHaveBeenCalledExactlyOnceWith(enriched, 'pj-a')
+  })
+
+  it('the first report token stays a passive baseline even after reports omit and replay it', async () => {
+    mockCreate.mockResolvedValueOnce(executed())
+    await useProjectPreparationStore.getState().open(scriptTarget('plot.py'))
+    mockGet.mockResolvedValueOnce(prepReport({ observation_seq: 3 }))
+    await useProjectPreparationStore.getState().refresh(KEY)
+    mockGet.mockResolvedValueOnce(executed('execution-1', 4))
+    await useProjectPreparationStore.getState().refresh(KEY)
+    expect(acceptedExecution).not.toHaveBeenCalled()
+    // A new execution in the same observed session is real even if its result failed.
+    mockGet.mockResolvedValueOnce(executed('execution-2', 5, { outcome: { kind: 'failed' }, captured: [] }))
+    await useProjectPreparationStore.getState().refresh(KEY)
+    expect(acceptedExecution).toHaveBeenCalledExactlyOnceWith(executionFact('execution-2'), 'pj-a')
+  })
+
+  it.each([
+    { outcome: { kind: 'failed' as const }, captured: [] },
+    { outcome: { kind: 'cancelled' as const }, captured: [] },
+    { facts: { execution_finished: true, figure_captured: false }, captured: [] },
+    { facts: { execution_finished: null, figure_captured: null }, captured: [] },
+    { provider: { plan_id: 'prep-plan', attempt_id: null, attempts: 0, dependency: null } },
+  ])('a new actual-execution token is accepted regardless of capture/outcome/attempt metadata: %j', async (over) => {
+    mockCreate.mockResolvedValueOnce(prepReport())
+    await useProjectPreparationStore.getState().open(scriptTarget('plot.py'))
+    mockGet.mockResolvedValueOnce(executed('execution-1', 2, over))
+    await useProjectPreparationStore.getState().refresh(KEY)
+    expect(acceptedExecution).toHaveBeenCalledExactlyOnceWith(executionFact(), 'pj-a')
+  })
+
+  it.each(['succeeded', 'failed', 'cancelled'] as const)(
+    '%s outcome without an actual-execution fact cannot retire snapshots', async (kind) => {
+      mockCreate.mockResolvedValueOnce(prepReport())
+      await useProjectPreparationStore.getState().open(scriptTarget('plot.py'))
+      mockGet.mockResolvedValueOnce(executed('execution-1', 2, {
+        outcome: { kind }, figure_snapshot_invalidation: undefined,
+      }))
+      await useProjectPreparationStore.getState().refresh(KEY)
+      expect(acceptedExecution).not.toHaveBeenCalled()
+    },
+  )
+
+  it('a run HTTP failure forwards actual-start evidence, even when the follow-up report has no result', async () => {
+    mockCreate.mockResolvedValueOnce(prepReport())
+    await useProjectPreparationStore.getState().open(scriptTarget('plot.py'))
+    mockAct.mockRejectedValueOnce(new ApiError('script failed', 500, {
+      code: 'script_probe_failed', figure_snapshot_invalidation: executionFact(),
+    }))
+    mockGet.mockResolvedValueOnce(prepReport({ observation_seq: 2 }))
+    await useProjectPreparationStore.getState().act(KEY, 'run')
+    expect(acceptedExecution).toHaveBeenCalledExactlyOnceWith(executionFact(), 'pj-a')
+  })
+
+  it('a before-start action rejection preserves snapshots', async () => {
+    mockCreate.mockResolvedValueOnce(prepReport())
+    await useProjectPreparationStore.getState().open(scriptTarget('plot.py'))
+    mockAct.mockRejectedValueOnce(new ApiError('environment busy', 409, { code: 'environment_mutating' }))
+    mockGet.mockResolvedValueOnce(prepReport({ observation_seq: 2 }))
+    await useProjectPreparationStore.getState().act(KEY, 'run')
+    expect(acceptedExecution).not.toHaveBeenCalled()
+  })
+
+  it('late actual-execution evidence after a project A → B → A round trip is discarded', async () => {
+    mockCreate.mockResolvedValueOnce(prepReport())
+    await useProjectPreparationStore.getState().open(scriptTarget('plot.py'))
+    let resolve!: (r: PreparationReport) => void
+    mockGet.mockImplementationOnce(() => new Promise((r) => { resolve = r }))
+    const refreshing = useProjectPreparationStore.getState().refresh(KEY)
+    setCurrentProjectId('pj-b')
+    setCurrentProjectId('pj-a')
+    resolve(executed())
+    await refreshing
+    expect(acceptedExecution).not.toHaveBeenCalled()
+  })
+
+  it('a delayed old-session fact cannot replace a newly opened target session', async () => {
+    mockCreate.mockResolvedValueOnce(prepReport())
+    await useProjectPreparationStore.getState().open(scriptTarget('plot.py'))
+    let resolve!: (r: PreparationReport) => void
+    mockGet.mockImplementationOnce(() => new Promise((r) => { resolve = r }))
+    const refreshing = useProjectPreparationStore.getState().refresh(KEY)
+    useScriptArgvStore.getState().setTokens('plot.py', ['--n', '2'])
+    mockCreate.mockResolvedValueOnce(prepReport({ session_id: 'psess-2' }))
+    await useProjectPreparationStore.getState().open(scriptTarget('plot.py'))
+    resolve(executed())
+    await refreshing
+    expect(entry().report?.session_id).toBe('psess-2')
+    expect(acceptedExecution).not.toHaveBeenCalled()
+  })
+
+  it('an older observation cannot introduce an unseen execution token', async () => {
+    mockCreate.mockResolvedValueOnce(prepReport({ observation_seq: 5 }))
+    await useProjectPreparationStore.getState().open(scriptTarget('plot.py'))
+    mockGet.mockResolvedValueOnce(executed('execution-stale', 4))
+    await useProjectPreparationStore.getState().refresh(KEY)
+    expect(entry().report?.observation_seq).toBe(5)
+    expect(acceptedExecution).not.toHaveBeenCalled()
+  })
 })
 
 describe('打开：参数在这一刻冻结', () => {
@@ -469,19 +614,31 @@ describe('同一目标再次打开不抹掉飞行中的动作', () => {
     expect(entry().pending).toBe('run')
     await useProjectPreparationStore.getState().act(KEY, 'run') // 防连点
     expect(mockAct).toHaveBeenCalledTimes(1)
-    finish({ report: prepReport({ phase: 'running', actions: [action('cancel')], observation_seq: 2 }) })
+    expect(mockCreate).toHaveBeenCalledTimes(1)
+    expect(acceptedExecution).not.toHaveBeenCalled()
+    finish({ report: prepReport({
+      phase: 'running', actions: [action('cancel')], observation_seq: 2,
+      figure_snapshot_invalidation: executionFact(),
+    }) })
     await first
     expect(entry().pending).toBeNull()
+    // 同目标重开没有把真实执行降成被动初读，也不靠成功 / 捕获结果来猜是否执行过。
+    expect(acceptedExecution).toHaveBeenCalledExactlyOnceWith(executionFact(), 'pj-a')
   })
 
   it('对照：换了参数再打开是另一份会话，pending 不带过去', async () => {
     mockCreate.mockResolvedValue(prepReport())
     await useProjectPreparationStore.getState().open(scriptTarget('plot.py'))
-    mockAct.mockImplementationOnce(() => new Promise(() => {}) as never)
-    void useProjectPreparationStore.getState().act(KEY, 'run')
+    let finish!: (v: unknown) => void
+    mockAct.mockImplementationOnce(() => new Promise((res) => { finish = res }) as never)
+    const first = useProjectPreparationStore.getState().act(KEY, 'run')
     expect(entry().pending).toBe('run')
     await useProjectPreparationStore.getState().open({ script: 'plot.py', argv: ['--n', '3'] })
     expect(entry().pending).toBeNull()
+    finish({ report: prepReport({ observation_seq: 2, figure_snapshot_invalidation: executionFact() }) })
+    await first
+    expect(entry().report?.observation_seq).toBe(1)
+    expect(acceptedExecution).not.toHaveBeenCalled()
   })
 })
 

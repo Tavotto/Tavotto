@@ -12,7 +12,10 @@ import {
   type WorkdirConfirmation,
 } from '@/lib/api'
 import { currentProjectId } from '@/lib/session'
+import { captureProjectEpoch } from '@/lib/projectEpoch'
+import { observeFigureExecution } from '@/lib/figureExecutionEvents'
 import { useAssetStore } from '@/store/assetStore'
+import '@/store/figureSnapshotInvalidation'
 import { msg, t as translate } from '@/i18n'
 import { useEnvStore } from '@/store/envStore'
 import { useRenderStore } from '@/store/renderStore'
@@ -250,6 +253,7 @@ export const useScriptRunStore = create<ScriptRunStore>((set, get) => ({
     const prev = get().byScript[script]
     if (prev && isBusyPhase(prev.phase)) return // 同脚本防并发
     const epoch = get().epoch
+    const owner = captureProjectEpoch(() => get().epoch)
     const projectAtStart = currentProjectId()
     const gen = (prev?.gen ?? 0) + 1
     set((s) => ({
@@ -261,7 +265,7 @@ export const useScriptRunStore = create<ScriptRunStore>((set, get) => ({
 
     /** 迟到响应（换代 / 换项目）一律丢弃 */
     const stale = () =>
-      get().epoch !== epoch || get().byScript[script]?.gen !== gen
+      !owner.still() || get().epoch !== epoch || get().byScript[script]?.gen !== gen
     const settle = (patch: Partial<ScriptRunState>) => {
       if (stale()) return
       set((s) => ({
@@ -278,6 +282,7 @@ export const useScriptRunStore = create<ScriptRunStore>((set, get) => ({
         ? probeWithDraft(probeScript, script)
         : probeScript(script, undefined, { run_config: runConfig }))
       if (stale()) return
+      observeFigureExecution(res.figure_snapshot_invalidation, projectAtStart)
       if (res.error?.code === INPUT_REMAP_CHANGED_CODE) {
         // 试运行途中改了指认，后端按代次丢弃了这次结果（ADR 0106 §五）：按新表重跑一次，不报失败
         set((s) => {
@@ -331,6 +336,7 @@ export const useScriptRunStore = create<ScriptRunStore>((set, get) => ({
       }
     } catch (e) {
       if (stale()) return
+      if (e instanceof ApiError) observeFigureExecution(e.body.figure_snapshot_invalidation, projectAtStart)
       const error = probeErrorOf(e)
       settle({ phase: phaseOf(error), error, diagnostic: probeDiagnosticOf(e), descriptors: [] })
       handOffProbeGate(error, projectAtStart)
