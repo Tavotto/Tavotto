@@ -109,13 +109,16 @@ class AnnotationAnchorUndo(unittest.TestCase):
                 self.assert_same(self.observe(hot, followup), self.observe(fresh, followup))
 
     def test_layouts_keep_the_native_pin_after_arrow_then_text(self):
-        source = FIXTURE.read_text()
+        source = FIXTURE.read_text(encoding="utf-8")
         original = "plt.subplots(figsize=(3.8, 2.4))"
         self.assertEqual(source.count(original), 1)
         for layout in ("constrained", "tight"):
             with self.subTest(layout=layout):
                 (self.project / "script.py").write_text(
-                    source.replace(original, f"plt.subplots(figsize=(3.8, 2.4), layout={layout!r})")
+                    source.replace(
+                        original, f"plt.subplots(figsize=(3.8, 2.4), layout={layout!r})"
+                    ),
+                    encoding="utf-8",
                 )
                 with self.worker() as hot, self.worker() as fresh:
                     for patches in ([CLEAR], [CLEAR, ENDPOINTS], [CLEAR, ENDPOINTS, POSITION]):
