@@ -496,9 +496,7 @@ def _execute(request: dict) -> dict:
         cb.assert_no_execution_before_run(obs)
         row["executions"]["tavotto"] = obs.exec_count
         row["executions"]["basis"] = "fixture_external_exec_log"
-        row["stages"] = v2_stages(
-            row["raw"]["observed"], native, row["raw"]["ideal_missing"]
-        )
+        row["stages"] = v2_stages(row["raw"]["observed"], native, row["raw"]["ideal_missing"])
         row["unverified"].append("V2 adapter does not claim edit/replay/export/fidelity")
     row["environment_after"] = environment()
     launches = {}
