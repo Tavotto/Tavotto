@@ -394,3 +394,16 @@ def test_spawn_error_is_recorded_without_the_executable_path(tmp_path):
     assert rec["spawn_error"].startswith("FileNotFoundError")
     assert str(tmp_path) not in rec["spawn_error"] and "私有目录" not in rec["spawn_error"]
     assert "私有目录" in (tmp_path / "01-step.stderr.log").read_text(encoding="utf-8")
+
+
+def test_spawn_error_evidence_names_the_executable_when_the_os_text_does_not(tmp_path, monkeypatch):
+    """Windows 的 WinError 2 文本不带路径：本地证据仍要写出是哪个解释器起不来。"""
+
+    def boom(*a, **k):
+        raise FileNotFoundError(2, "The system cannot find the file specified")
+
+    monkeypatch.setattr(AV.subprocess, "Popen", boom)
+    missing = tmp_path / "私有目录" / "python.exe"
+    rec = AV.run_step([str(missing), "-c", "0"], {}, tmp_path / "01-step", 5)
+    assert rec["spawn_error"] == "FileNotFoundError(ENOENT)"
+    assert "私有目录" in (tmp_path / "01-step.stderr.log").read_text(encoding="utf-8")

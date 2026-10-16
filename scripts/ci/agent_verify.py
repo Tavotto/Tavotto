@@ -437,8 +437,9 @@ def run_step(argv: list[str], env: dict, log_prefix: Path, timeout: float) -> di
                 argv, cwd=ROOT, env=env, stdout=out, stderr=err, stdin=subprocess.DEVNULL, **kwargs
             )
         except OSError as exc:
-            # 异常文本带解释器的绝对路径：原文只落本地 stderr 证据，report.json 只记类别
-            err.write(f"{type(exc).__name__}: {exc}\n".encode("utf-8", "replace"))
+            # 解释器路径与异常原文（POSIX 上也带路径）只落本地 stderr 证据，report.json 只记类别；
+            # Windows 的 WinError 文本不含路径，所以显式写 argv[0]
+            err.write(f"{argv[0]}: {type(exc).__name__}: {exc}\n".encode("utf-8", "replace"))
             code = errno.errorcode.get(exc.errno, "") if exc.errno else ""
             return {
                 "exit_code": None,
