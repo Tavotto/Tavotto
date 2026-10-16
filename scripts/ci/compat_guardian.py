@@ -296,6 +296,48 @@ def _native_status(result: dict) -> str:
     return "unknown"
 
 
+def v2_stages(observed: dict, native: dict, ideal_missing: list) -> dict:
+    """Project actual outcomes, keeping invocation counts distinct from success."""
+    stages = {s: stage("not_run", "not reached") for s in CC.STAGES}
+    stages["discover"] = stage(
+        "passed", "authenticated scan/check; fixture log proves zero pre-run executions"
+    )
+    invoked = observed["ran"] and observed["exec_count"] > 0
+    if not invoked:
+        return stages
+    finished = (
+        observed["final_phase"] == "completed"
+        and observed["outcome_kind"] == "succeeded"
+        and observed["facts"].get("facts", {}).get("execution_finished") is True
+    )
+    execution = (
+        "passed" if finished else "failed" if observed["outcome_kind"] == "failed" else "unknown"
+    )
+    stages["execute"] = stage(
+        execution, "actual script invocation AND completed/succeeded terminal execution facts"
+    )
+    captured, opened = observed["figures_captured"] > 0, observed["figures_valid"] > 0
+    if finished or captured:
+        stages["capture"] = stage(
+            "passed" if captured else "failed", "actual captured figure count"
+        )
+    if captured:
+        stages["open"] = stage("passed" if opened else "failed", "actual rendered manifest")
+    if opened:
+        titles = [
+            title
+            for value in native.get("semantics", {}).values()
+            for title in value["titles"]
+            if title
+        ]
+        good = not ideal_missing and sorted(observed["titles"]) == sorted(titles)
+        stages["semantic"] = stage(
+            "passed" if good else "failed",
+            "V2 explicit scientific title/shape/count oracle AND native title comparison",
+        )
+    return stages
+
+
 def _execute(request: dict) -> dict:
     """Private adapter, launched only with a request created by run()."""
     import compat_matrix as cm
@@ -454,24 +496,8 @@ def _execute(request: dict) -> dict:
         cb.assert_no_execution_before_run(obs)
         row["executions"]["tavotto"] = obs.exec_count
         row["executions"]["basis"] = "fixture_external_exec_log"
-        row["stages"]["discover"] = stage(
-            "passed", "authenticated scan/check; fixture log proves zero pre-run executions"
-        )
-        row["stages"]["execute"] = stage(
-            "passed" if obs.ran and obs.exec_count > 0 else "not_run",
-            "real run action and fixture execution log",
-        )
-        for s, good in (("capture", obs.figures_captured > 0), ("open", obs.figures_valid > 0)):
-            row["stages"][s] = stage(
-                "passed" if good else "failed", "captured count and actual rendered manifest"
-            )
-        titles = [
-            title for v in native.get("semantics", {}).values() for title in v["titles"] if title
-        ]
-        good = not row["raw"]["ideal_missing"] and sorted(obs.titles) == sorted(titles)
-        row["stages"]["semantic"] = stage(
-            "passed" if good else "failed",
-            "V2 explicit scientific title/shape/count oracle AND native title comparison",
+        row["stages"] = v2_stages(
+            row["raw"]["observed"], native, row["raw"]["ideal_missing"]
         )
         row["unverified"].append("V2 adapter does not claim edit/replay/export/fidelity")
     row["environment_after"] = environment()

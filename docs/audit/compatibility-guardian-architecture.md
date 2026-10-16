@@ -132,3 +132,41 @@ not discharge those rows. Controlled corpus results are never user success rates
 The primary agent is the unique source writer. Read-only auditors/reviewer inspect
 evidence and criteria independently. Each PR records base/head, commands/exit codes,
 raw evidence, CI and platform limits, remaining risks, and merge eligibility.
+
+## Hosted observation, 2026-10-16 04:21 UTC
+
+[CI 38849952795](https://github.com/Tavotto/Tavotto/actions/runs/38849952795)
+checked out merge `b67f7242d5f0e474eb4582fe95c92f8849bfb3b0`, with parents main
+`a48872109012b13cb6c2e83265cd4f7e52782ef2` and Guardian
+`1a227273dbcfca74617b603c750ead9bd123c380`. The two complete report JSON documents
+were read from the job's raw logs, including source, environment, native controls,
+stage criteria and evidence references. Artifact `12024464389` has SHA-256
+`69a22e8461c4c64f75e9033b4fb0d89124c55e45e59df1b8324332a6ee448914`;
+its image/export/counter files have not been downloaded independently here.
+
+Engine's six selected fixtures passed their registered nine-stage criteria:
+OO/savefig, show-only, relative CSV, helper import, the selected multi-Figure stem,
+and Pillow image. Each native control ran once; Tavotto counts were 2/3/2/2/3/2.
+This is controlled engine coverage, not full multi-Figure product routing, arbitrary
+scientific array equivalence, bitmap object editing, or desktop qualification.
+
+V2 plain, replace/readback (`value=2`) and installed Pillow passed the first five
+criteria and remain `unknown` because four stages were not run. Native errors
+were `invalid_fixture`, no-figure was `unknown`, and missing CV2 was
+`environment_unavailable`, all before Tavotto execution. V2's aggregate exit was 1
+because savefig/Pillow readback reproduced a **known Safe-only difference**:
+native succeeded, but Safe execution ended `action_required` with
+`safe_file_operation_blocked` / `FileNotFoundError` and no figures. The raw
+observation equals its historical baseline; this does not establish a new main
+regression or a desktop Native defect. Existing origin policy forbids upgrading
+this authenticated server entry to Native.
+
+This real failure also exposed a Guardian stage-projection bug: the old report
+marked execute passed from invocation count, then three downstream stages failed.
+The follow-up requires completed/succeeded terminal execution facts, records
+execute failed, and leaves unreached capture/open/semantic `not_run`. Historical
+raw evidence is unchanged. Five added contract tests exercise this distinction,
+semantic disagreement, correct partial coverage and zero/incomplete execution;
+the local contract suite now has 42 tests. New hosted execution after that fix
+must be read before attributing results to its new commit. No product Repair or
+complete minimized failure-family qualification is claimed from this observation.

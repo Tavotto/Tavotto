@@ -42,6 +42,9 @@ sessions. It checks the explicit IDEAL oracle and native titles, preserves the
 fixture's external execution log, and verifies it against module-exec events.
 Its edit/replay/export/fidelity stages remain `not_run`, so it cannot qualify a
 complete nine-stage pass. Historical baseline matches are not successes.
+The execute stage requires both an actual invocation and completed/succeeded
+terminal execution facts. A failed invocation with no captured figures leaves
+capture/open/semantic `not_run`; it cannot invent three downstream defects.
 The Safe API cannot establish desktop Native fallback: fixtures whose IDEAL
 requires Native must not be reported as desktop regressions. The current missing-
 dependency V2 precondition also rejects the runner's explicit worker override;

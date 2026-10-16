@@ -201,6 +201,54 @@ class GuardianContract(unittest.TestCase):
     def test_both_correct_do_not_invent_defect(self):
         self.assertEqual(cg.case_status(self.row), "passed")
 
+    def v2_observation(self, **changes):
+        return {
+            "ran": True,
+            "exec_count": 1,
+            "final_phase": "completed",
+            "outcome_kind": "succeeded",
+            "facts": {"facts": {"execution_finished": True}},
+            "figures_captured": 1,
+            "figures_valid": 1,
+            "titles": ["correct"],
+            **changes,
+        }
+
+    def test_v2_invocation_is_not_successful_execution(self):
+        observed = self.v2_observation(
+            final_phase="action_required",
+            outcome_kind="failed",
+            facts={"facts": {}},
+            figures_captured=0,
+            figures_valid=0,
+            titles=[],
+        )
+        stages = cg.v2_stages(observed, {}, ["known Safe readback difference"])
+        self.assertEqual(stages["execute"]["status"], "failed")
+        for name in ("capture", "open", "semantic"):
+            self.assertEqual(stages[name]["status"], "not_run")
+
+    def test_v2_incomplete_execution_cannot_pass(self):
+        stages = cg.v2_stages(self.v2_observation(outcome_kind=None), {}, [])
+        self.assertEqual(stages["execute"]["status"], "unknown")
+
+    def test_v2_both_graphs_wrong_science_fails(self):
+        native = {"semantics": {"figure": {"titles": ["independent truth"]}}}
+        stages = cg.v2_stages(self.v2_observation(), native, [])
+        self.assertEqual(stages["open"]["status"], "passed")
+        self.assertEqual(stages["semantic"]["status"], "failed")
+
+    def test_v2_both_correct_preserves_unverified_funnel(self):
+        native = {"semantics": {"figure": {"titles": ["correct"]}}}
+        self.row["stages"] = cg.v2_stages(self.v2_observation(), native, [])
+        for name in ("discover", "execute", "capture", "open", "semantic"):
+            self.assertEqual(self.row["stages"][name]["status"], "passed")
+        self.assertEqual(cg.case_status(self.row), "unknown")
+
+    def test_v2_zero_invocations_do_not_reach_downstream_stages(self):
+        stages = cg.v2_stages(self.v2_observation(exec_count=0), {}, [])
+        self.assertTrue(all(stages[s]["status"] == "not_run" for s in cg.CC.STAGES[1:]))
+
     def test_actual_product_route_failure_not_hidden_by_stage_green(self):
         self.row["raw"]["routes"] = {"safe_probe": {"status": "fail"}}
         self.rejected()
