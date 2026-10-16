@@ -1302,8 +1302,6 @@ def _ended(db):
         return list(raw.execute("SELECT id, status, ended_ms FROM sessions"))
 
 
-
-
 # 会话详情的 `final`：cancel 之后 status 立刻是 cancelled，但 changed / diff / refresh 要等 _pump 收尾才算出来
 # ---------------------------------------------------------------------------
 def test_session_detail_is_not_final_until_the_pump_finishes(tmp_path, cli, monkeypatch):
