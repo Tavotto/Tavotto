@@ -118,4 +118,18 @@ pytest 的假设进去会扩大攻击面）。纯标准库，复用 `_common.run
 2. `perf.probe.analyze`：入口这一层给 `perf_report.py` 补 schema 预检，并把 findings 级别映射成结果；输入必须是真机录的探针报告；
 3. sidecar 启动期 / `tavotto doctor` 的引擎文件清单自检（#961 修复 B）；
 4. 如需 CI 消费：hosted runner、事件闭集内、只上传 `report.json`；
-5. #1001 合入后登记一个 `diagnostic_only` 场景。
+5. #1001 合入后登记一个 `diagnostic_only` 场景。**已落地（2026-10-16）**，见文末「追加说明」。
+
+## 追加说明（2026-10-16，后续切分第 5 条落地）
+
+登记了三个场景，**结果闭集与聚合顺序未改**：
+
+- `perf.agent.symbol_ui`（measurement）：`perf_agent.py run`（chromium，16 轮，无 `--baseline` / `--include-drag`）。
+  新增 parser `perf_agent`，以摘要 `status` 为准：`ok`→passed（且摘要自洽），`incomplete` / `failed` /
+  `regression`→failed，`incomparable` / `no_baseline`→not_run，`pending` / 未知 / 摘要缺失→error；
+  基线状态原样透传，passed 不等于性能达标。前置条件新增 `tool:`、`any_file:`、`playwright_browser:`，
+  缺 node / pnpm / 依赖 / 前端构建 / 浏览器一律 environment_unavailable。
+- `perf.agent.selftest`（selftest）：`tests/test_perf_agent.py`。
+- `perf.macos_window.selftest`（selftest）：`tests/test_perf_macos_window.py`。
+  `perf_macos_window.py record / compare` 需要真实 macOS 窗口与人工拖动，Agent 无法无人值守，**不登记**；
+  `diagnostic_only` 用场景上新增的 `semantics` 标注（不是结果状态）表达。

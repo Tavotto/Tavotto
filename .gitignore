@@ -26,6 +26,8 @@ __pycache__/
 web/node_modules/
 web/dist/
 web/test-results/
+# perf_agent 的 Playwright outputDir（playwright.perf.config.ts）；agent_verify 跑完后树要保持干净
+web/test-results-perf-agent-playwright/
 web/playwright-report/
 # 从仓库根跑 `npx playwright test` 时产物落在根上，同样挡住
 # （曾被 `git add -A` 顺手收进一次提交）

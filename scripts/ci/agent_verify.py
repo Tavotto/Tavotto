@@ -109,7 +109,7 @@ class Step:
     name: str
     argv: tuple[str, ...]
     #: pytest：从 junit 读通过 / 失败 / 跳过计数，不信退出码一个数。
-    parser: str = "exit_code"  # exit_code | pytest | perf_manifest
+    parser: str = "exit_code"  # exit_code | pytest | perf_manifest | perf_agent
 
 
 @dataclass(frozen=True)
@@ -127,6 +127,9 @@ class Scenario:
     platforms: tuple[str, ...] = ("darwin", "linux", "win32")
     issue: str = ""
     extra_env: tuple[tuple[str, str], ...] = field(default=())
+    #: 结果语义的附加标注（不进结果闭集）。`diagnostic_only`：被登记的验证器自己只产出诊断，
+    #: 没有 pass 的概念；场景 passed 只说明验证器逻辑自检通过，不是任何性能 / 呈现结论。
+    semantics: str = ""
 
 
 def _pytest(*paths: str) -> Step:
@@ -214,6 +217,95 @@ SCENARIOS: dict[str, Scenario] = {
             owner_doc="docs/perf-manifest-agent.md",
         ),
         Scenario(
+            id="perf.agent.symbol_ui",
+            summary="真实后端 + Playwright 的符号 / 预设插入交互计时（perf_agent run，不含拖动、不比基线）",
+            kind="measurement",
+            steps=(
+                Step(
+                    "perf_agent_run",
+                    (
+                        "{python}",
+                        "scripts/perf_agent.py",
+                        "run",
+                        "--browser",
+                        "chromium",
+                        "--repeat",
+                        "16",
+                        "--out",
+                        "{evidence}/run.json",
+                        "--summary",
+                        "{evidence}/summary.json",
+                    ),
+                    parser="perf_agent",
+                ),
+            ),
+            timeout_s=1500,
+            preconditions=(
+                "fonts",
+                "python_module:matplotlib",
+                "python_module:flask",
+                "tool:node",
+                "tool:pnpm",
+                "file:web/node_modules/@playwright/test/package.json",
+                "any_file:src/tavotto/web/index.html|web/dist/index.html",
+                "playwright_browser:chromium",
+                "file:scripts/perf_agent.py",
+            ),
+            claim=(
+                "passed = 五个符号 / 预设交互场景在 chromium 里都拿到了完整样本"
+                "（tavotto-perf-agent/1 status=ok，符号套件 ok）；"
+                "不是「性能达标」，也不是「没有回归」"
+            ),
+            unverified=(
+                "性能是否回归：没有同机基线，不传 --baseline，regression_status 原样透传、绝不更新基线",
+                "拖动：不含 --include-drag，canvas_drag=not_requested，拖动性能未测",
+                "指标是 click capture 到第二个 rAF 的浏览器代理，不是 GPU 上屏或端到端延迟",
+                "原生窗口移动 / WindowServer / 拖影（见 perf.macos_window.selftest 与 needs_native_mac_capture）",
+                "webkit 未测；前端构建是否对应当前源码不核对（src/tavotto/web 优先于 web/dist）",
+            ),
+            owner_doc="docs/perf-agent.md",
+        ),
+        Scenario(
+            id="perf.agent.selftest",
+            summary="perf_agent 的反向用例：摘要状态机、基线只读、比较门禁（离线、确定性）",
+            kind="selftest",
+            steps=(_pytest("tests/test_perf_agent.py"),),
+            timeout_s=900,
+            preconditions=("python_module:pytest", "file:tests/test_perf_agent.py"),
+            claim=(
+                "passed = perf_agent 对不完整 / 不可比 / 别名输入拒绝放行的用例全部通过，且无 skip；"
+                "不产生任何真实计时"
+            ),
+            unverified=(
+                "不启动浏览器与后端：真实交互计时见 perf.agent.symbol_ui",
+                "Windows 上创建符号链接受限的用例会 skip，此时整场景降级为 skipped",
+            ),
+            owner_doc="docs/perf-agent.md",
+        ),
+        Scenario(
+            id="perf.macos_window.selftest",
+            summary="perf_macos_window 的解析、归因边界与脱敏契约自检（离线；不取真窗口样本）",
+            kind="selftest",
+            steps=(_pytest("tests/test_perf_macos_window.py"),),
+            timeout_s=300,
+            preconditions=("python_module:pytest", "file:tests/test_perf_macos_window.py"),
+            claim=(
+                "passed = ps 解析、进程家族归类、compare 只出 diagnostic_only / incomparable 且"
+                "绝不出 pass、输出脱敏这些离线契约的用例全部通过；不含任何真实窗口取样，"
+                "更不是呈现延迟 / 拖影结论"
+            ),
+            unverified=(
+                "record / compare 需要真实运行的 macOS Tavotto 窗口和人工拖动窗口，"
+                "Agent 无法无人值守执行，本入口不登记：真窗口取证（idle + 活动阶段）整体未覆盖",
+                "测的是进程家族 CPU/RSS 与系统级 WindowServer CPU，不是呈现延迟 / GPU / 拖影；"
+                "真相需 Instruments 与视频对照",
+                "compare 的 diagnostic_only 在真机数据上的取值未验",
+            ),
+            owner_doc="docs/perf-macos-window.md",
+            issue="#1001",
+            semantics="diagnostic_only",
+        ),
+        Scenario(
             id="regression.961.engine_files_incomplete",
             summary="#961：引擎自家模块缺失不被误判成用户缺包（模拟缺件的 engine 目录）",
             kind="regression",
@@ -284,6 +376,43 @@ def _import_failure_category(stderr: str) -> str:
     return f"import_failed:{head}" if head.isidentifier() else "import_failed"
 
 
+def _playwright_browser_check(spec: str, browser: str) -> dict:
+    """Playwright 浏览器二进制装没装：问 web/ 里装的 @playwright/test 自己，而不是猜缓存目录。"""
+    if browser not in ("chromium", "webkit"):
+        raise ValueError(f"unknown playwright browser {browser!r}")
+    env = _base_env()
+    node = shutil.which("node", path=env.get("PATH"))
+    if node is None:
+        return {"check": spec, "ok": False, "detail": "tool_missing", "raw": ""}
+    script = (
+        f"const p=require('@playwright/test').{browser}.executablePath();"
+        "process.exit(p&&require('fs').existsSync(p)?0:1)"
+    )
+    try:
+        proc = subprocess.run(
+            [node, "-e", script],
+            cwd=ROOT / "web",
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=60,
+            env=env,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return {
+            "check": spec,
+            "ok": False,
+            "detail": f"node_unavailable:{type(exc).__name__}",
+            "raw": str(exc),
+        }
+    ok = proc.returncode == 0
+    detail = (
+        "ok" if ok else f"browser_not_installed（cd web && pnpm exec playwright install {browser}）"
+    )
+    return {"check": spec, "ok": ok, "detail": detail, "raw": proc.stderr}
+
+
 def check_precondition(spec: str, python: str) -> dict:
     """一条前置条件 → `{check, ok, detail, raw}`。判不出也算不满足。
 
@@ -333,6 +462,16 @@ def check_precondition(spec: str, python: str) -> dict:
     if kind == "file":
         ok = (ROOT / arg).is_file()
         return {"check": spec, "ok": ok, "detail": "ok" if ok else "file_missing", "raw": ""}
+    if kind == "any_file":
+        # `a|b`：任一存在即可（前端构建产物有包内与 web/dist 两个出处）
+        ok = any((ROOT / part).is_file() for part in arg.split("|"))
+        return {"check": spec, "ok": ok, "detail": "ok" if ok else "file_missing", "raw": ""}
+    if kind == "tool":
+        # 与场景子进程同一个 PATH（白名单环境），而不是调用方 shell 的
+        ok = shutil.which(arg, path=_base_env().get("PATH")) is not None
+        return {"check": spec, "ok": ok, "detail": "ok" if ok else "tool_missing", "raw": ""}
+    if kind == "playwright_browser":
+        return _playwright_browser_check(spec, arg)
     if kind == "python_module":
         try:
             proc = subprocess.run(
@@ -527,6 +666,111 @@ def judge_perf_manifest(step: dict, summary_path: Path) -> tuple[str, str, dict 
     return "failed", f"数据不完整（status={data.get('status')}，退出码 {rc}）", facts
 
 
+#: perf_agent.ALLOWED_SCENARIOS 的镜像（入口不 import 被验脚本）；一致性由看护用例核对。
+_PERF_AGENT_SCENARIOS = frozenset(
+    {
+        "dialog.presets_open",
+        "symbol.alpha",
+        "symbol.superscript_2",
+        "symbol.micron",
+        "preset.dimension",
+    }
+)
+_PERF_AGENT_ENV_KEYS = (
+    "platform",
+    "arch",
+    "browser",
+    "browser_major",
+    "browser_version",
+    "viewport_w",
+    "viewport_h",
+    "dpr",
+    "headless",
+    "os_release",
+    "cpu_model",
+    "cpu_count",
+    "total_mem_gib",
+)
+
+
+def _perf_agent_facts(data: dict) -> dict:
+    scenarios = data.get("scenarios")
+    rows = []
+    if isinstance(scenarios, dict):
+        for name in sorted(k for k in scenarios if isinstance(k, str)):
+            row = scenarios[name] if isinstance(scenarios[name], dict) else {}
+            rows.append(
+                {
+                    "id": name,
+                    "count": row.get("count"),
+                    "expected_count": row.get("expected_count"),
+                    "p50_ms": row.get("p50_ms"),
+                    "p95_ms": row.get("p95_ms"),
+                    "max_ms": row.get("max_ms"),
+                }
+            )
+    env = data.get("environment")
+    return {
+        "status": data.get("status"),
+        "regression_status": data.get("regression_status"),
+        "coverage": data.get("coverage"),
+        "not_covered": data.get("not_covered"),
+        "suites": data.get("suites"),
+        "environment": (
+            {k: env.get(k) for k in _PERF_AGENT_ENV_KEYS} if isinstance(env, dict) else None
+        ),
+        "scenarios": rows,
+    }
+
+
+def _perf_agent_complete(facts: dict) -> bool:
+    """`ok` 的自洽核对：入口不盲信一个字符串，样本数必须和摘要自己声称的期望一致。"""
+    suites = facts["suites"] if isinstance(facts["suites"], dict) else {}
+    rows = facts["scenarios"]
+    return (
+        suites.get("symbol_ui") == "ok"
+        and suites.get("canvas_drag") == "not_requested"
+        and {r["id"] for r in rows} == _PERF_AGENT_SCENARIOS
+        and all(
+            type(r["count"]) is int
+            and r["count"] > 0
+            and r["count"] == r["expected_count"]
+            and isinstance(r["p95_ms"], (int, float))
+            for r in rows
+        )
+        and isinstance(facts["regression_status"], str)
+        and facts["regression_status"].startswith("not_checked")
+    )
+
+
+def judge_perf_agent(step: dict, summary_path: Path) -> tuple[str, str, dict | None]:
+    """perf_agent 的结论以 summary.json 的 `status` 为准，退出码只作一致性旁证。
+
+    ok→passed（且自洽）；incomplete / failed / regression→failed；
+    incomparable / no_baseline→not_run（没有得到裁决，不是失败也不是通过）；
+    pending、未知状态、摘要缺失 / 损坏、ok 与退出码或内容矛盾→error。"""
+    rc = step["exit_code"]
+    try:
+        data = json.loads(summary_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        data = None
+    if not isinstance(data, dict) or data.get("schema") != "tavotto-perf-agent/1":
+        return "error", f"perf_agent 退出码 {rc}，没有可读的 tavotto-perf-agent/1 摘要", None
+    facts = _perf_agent_facts(data)
+    status = data.get("status")
+    if status == "ok":
+        if rc != 0:
+            return "error", f"摘要 status=ok 但退出码 {rc}，自相矛盾", facts
+        if not _perf_agent_complete(facts):
+            return "error", "摘要 status=ok 但套件 / 场景 / 样本数不自洽，不按 ok 采信", facts
+        return "passed", "符号交互样本完整（ok）；性能未与基线比较、拖动未测", facts
+    if status in ("incomplete", "failed", "regression"):
+        return "failed", f"perf_agent status={status}（退出码 {rc}）", facts
+    if status in ("incomparable", "no_baseline"):
+        return "not_run", f"perf_agent status={status}：没有得到性能裁决", facts
+    return "error", f"perf_agent 摘要状态 {status!r} 无法判定（退出码 {rc}）", facts
+
+
 # --------------------------------------------------------------------------
 # 执行一个场景
 # --------------------------------------------------------------------------
@@ -564,6 +808,7 @@ def run_scenario(scenario: Scenario, out: Path, python: str) -> dict:
         "summary": scenario.summary,
         "issue": scenario.issue or None,
         "claim": scenario.claim,
+        "semantics": scenario.semantics or None,
         "owner_doc": scenario.owner_doc,
         "result": "not_run",
         "reason": "",
@@ -631,6 +876,13 @@ def run_scenario(scenario: Scenario, out: Path, python: str) -> dict:
                 rec["baseline"] = {
                     "status": "not_checked",
                     "verdict": facts.get("comparison_verdict"),
+                }
+        elif step.parser == "perf_agent":
+            result, reason, facts = judge_perf_agent(srec, evidence / "summary.json")
+            if facts:
+                rec["baseline"] = {
+                    "status": "not_checked",
+                    "verdict": facts.get("regression_status"),
                 }
         elif srec["exit_code"] != 0:
             result, reason = "failed", f"{step.name} 退出码 {srec['exit_code']}"
@@ -753,6 +1005,7 @@ def _list(as_json: bool) -> int:
             "timeout_s": s.timeout_s,
             "preconditions": list(s.preconditions),
             "claim": s.claim,
+            "semantics": s.semantics or None,
             "owner_doc": s.owner_doc,
         }
         for s in SCENARIOS.values()
