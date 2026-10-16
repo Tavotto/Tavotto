@@ -18,6 +18,7 @@ import errno
 import hashlib
 import json
 import logging
+import math
 import os
 import queue
 import re
@@ -5108,30 +5109,47 @@ def _resolve_engine_worker(rel_id: str, *, artifact_source=None):
 
 
 def _note_handoff_render(stem: str, *, code: str | None = None, **facts) -> None:
-    """把这次渲染的结论写进匹配的交接期望（ADR 0131 第六节）。
+    """把这次渲染的结论记进进程内结论表（ADR 0131 第六节），供 `GET /api/handoff/render-status` 查询。
 
-    只读取这次本来就要做的渲染的结果，不触发任何执行；没有交接在等（绝大多数渲染）时
-    目录都不存在，零成本返回。**任何失败都不许影响渲染响应。**
+    只读取这次本来就要做的渲染的结果，不触发任何执行；没有交接在查时也记（几个标量，零 IO）。
+    **任何失败都不许影响渲染响应。**
     """
     try:
-        project = current_ctx().path  # 取不到项目也在保护范围内：回执是旁路
+        project = current_ctx().path  # 取不到项目也在保护范围内：结论表是旁路
         if code is None:
             engine_handoffreceipt.record_ok(project, stem, **facts)
         else:
             engine_handoffreceipt.record_failed(project, stem, code)
-    except Exception:  # noqa: BLE001 —— 回执是旁路，不许拖累渲染
-        LOG.debug("交接回执写入失败", exc_info=True)
+    except Exception:  # noqa: BLE001 —— 结论表是旁路，不许拖累渲染
+        LOG.debug("交接渲染结论记录失败", exc_info=True)
 
 
 def _handoff_target_stem(rel_id: str) -> str:
-    """面板 id → 回执匹配用的 stem，判据与 `_resolve_engine_worker` 一致（runtime 素材查注册表，磁盘面板取文件名主干）。"""
+    """面板 id → 结论表匹配用的 stem，判据与 `_resolve_engine_worker` 一致（runtime 素材查注册表，磁盘面板取文件名主干）。"""
     try:
         if engine_runtimeasset.is_runtime_id(rel_id):
             info = engine_runtimeasset.resolve(rel_id, current_registry())
             return info["stem"] if info else ""
-    except Exception:  # noqa: BLE001 —— 回执是旁路
+    except Exception:  # noqa: BLE001 —— 结论表是旁路
         return ""
     return Path(rel_id).stem
+
+
+@app.get(security.HANDOFF_STATUS_PATH)
+def api_handoff_render_status():
+    """`tavotto open` 查「`since` 之后某项目某 stem 的第一份渲染结论」（ADR 0131 第六节）。
+
+    认证由 guard 管：cookie / 完整 secret / 只对本端点有效的 scoped 只读 token。响应不回显路径、不含 traceback。
+    """
+    project = request.args.get("project", "")
+    stem = request.args.get("stem", "")
+    try:
+        since = float(request.args.get("since", ""))
+    except ValueError:
+        since = float("nan")
+    if not project or not stem or not math.isfinite(since):
+        return jsonify({"error": "参数无效", "code": "bad_handoff_query"}), 400
+    return jsonify(engine_handoffreceipt.query(project, stem, since))
 
 
 @app.post("/api/engine/render")
@@ -5198,7 +5216,7 @@ def api_engine_render():
         cold = not worker.built
     except Exception as exc:
         # worker 启动 / 环境解析失败（WorkerError）也是「那一次渲染」的失败结论：
-        # 不写回执 CLI 会白等到 timeout（ADR 0131 §六）。此时 stem 还没拿到，按
+        # 不记结论 CLI 会白等到 timeout（ADR 0131 §六）。此时 stem 还没拿到，按
         # `_resolve_engine_worker` 同一判据反推（旁路，任何失败都不影响原异常）。
         if isinstance(exc, engine_pool.WorkerError):
             _note_handoff_render(_handoff_target_stem(rel_id), code=exc.code)

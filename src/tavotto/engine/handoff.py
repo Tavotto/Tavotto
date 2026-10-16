@@ -39,6 +39,7 @@ import math
 import os
 import subprocess
 import sys
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -1052,7 +1053,7 @@ def open_target(
     receipt_sleep=None,
     **kw,
 ) -> dict:
-    """解析 → 登记 →（脚本目标按需 safe probe）→ 唤起 →（`render_wait` > 0 时）等渲染回执。
+    """解析 → 登记 →（脚本目标按需 safe probe）→ 唤起 →（`render_wait` > 0 时）查渲染结论。
 
     返回一份可直接 json.dumps 的结果。`.py` 目标带 `probe` / `figures` /
     `pick` 三个附加键（路由细节见 resolve_script_route）。
@@ -1138,37 +1139,30 @@ def _launch_with_render(
 
     `ok` 的语义**不变**（仍是「唤起成功且进程活着」）；`render` 是加性字段：
     `ok` / `failed` / `unverified` 三值，**查不到、超时、通道不可用、没有目标 stem 一律 unverified**，
-    只有实例明确报了错才是 failed。期望必须在唤起**之前**写好——转发给已在跑的实例时
-    渲染可能比 launch 返回还早。
+    只有实例明确报了错才是 failed。确认信号是对实例的**经认证 HTTP 查询**（`handoffreceipt`），CLI 不往磁盘写任何东西；
+    `since` 必须在唤起**之前**取——转发给已在跑的实例时渲染可能比 launch 返回还早。
     """
-    exp = None
-    render: dict
     render_wait = engine_receipt.finite_budget(render_wait)  # 库调用同样防 nan / inf / 负数
+    waiting = target.stem is not None and renderable and render_wait > 0
+    # 回拨一点余量（理由见 SINCE_SKEW_S）
+    since = time.time() - engine_receipt.SINCE_SKEW_S
+    info = launch(target, **launch_kw)
     if target.stem is None:
         render = engine_receipt.unverified(engine_receipt.REASON_NO_TARGET_STEM)
     elif not renderable:
+        # 与插件判 `not_parameterizable` 的同一个判据：无脚本的图界面不发起引擎渲染
         render = engine_receipt.unverified(engine_receipt.REASON_NOT_RENDERABLE)
-    elif render_wait <= 0:
+    elif not waiting:
         render = engine_receipt.unverified(engine_receipt.REASON_NOT_WAITED)
     else:
-        exp = engine_receipt.expect(target.project, target.stem, render_wait)
-        render = engine_receipt.unverified(engine_receipt.REASON_CHANNEL_UNAVAILABLE)
-    try:
-        info = launch(target, **launch_kw)
-    except BaseException:
-        if exp is not None:
-            engine_receipt.discard(exp)
-        raise
-    if exp is not None:
-        try:
-            kw = {}
-            if clock is not None:
-                kw["clock"] = clock
-            if sleep is not None:
-                kw["sleep"] = sleep
-            render = engine_receipt.wait(exp, render_wait, **kw)
-        finally:
-            engine_receipt.discard(exp)
+        kw = {}
+        if clock is not None:
+            kw["clock"] = clock
+        if sleep is not None:
+            kw["sleep"] = sleep
+        render = engine_receipt.wait(
+            target.project, target.stem, since, render_wait, port=launch_kw.get("port"), **kw
+        )
     info["render"] = render
     return info
 
