@@ -2,6 +2,8 @@
 
 These synthetic protocol records test the validator, never claim product success.
 Actual native/product execution belongs in the CLI artifacts, not these records.
+Adversarial acceptance cases live in test_compat_guardian_adversarial.py, which reuses
+`GuardianBase` from here.
 """
 
 from __future__ import annotations
@@ -21,7 +23,28 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts/ci"))
 import compat_guardian as cg  # noqa: E402
 
 
-class GuardianContract(unittest.TestCase):
+def native_result(**changes) -> dict:
+    """A well-formed `native_ref` driver response for a script that behaved."""
+    result = {
+        "ok": True,
+        "exit_status": 0,
+        "error": None,
+        "script_entries": 1,
+        "figure_count": 1,
+        "figures_saved": 1,
+        "figures_open_at_exit": 0,
+        "savefig_calls": 1,
+        "same_path_distinct_figures": [],
+        "artifacts": [{"path": "out.png", "bytes": 10, "sha256": "d" * 64, "readable": True}],
+        "side_effects": {"created": ["out.png"], "modified": [], "deleted": []},
+        "semantics": {"figure0": {"titles": ["correct"]}},
+        "log": "",
+    }
+    result.update(changes)
+    return result
+
+
+class GuardianBase(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.cid = "shape_oo_savefig"
@@ -42,7 +65,7 @@ class GuardianContract(unittest.TestCase):
         self.root = Path(self.tmp.name)
         self.ev = self.root / "evidence"
         self.ev.mkdir()
-        (self.ev / "raw.json").write_text('{"contract_fixture":true}')
+        (self.ev / "raw.json").write_text('{"contract_fixture":true}', encoding="utf-8")
         self.source = {
             "commit": "a" * 40,
             "tree": "b" * 40,
@@ -51,29 +74,34 @@ class GuardianContract(unittest.TestCase):
         }
         environment = {"facts": {"contract_fixture": True}}
         environment["fingerprint"] = cg.canonical(environment["facts"])
-        self.row = {
-            "id": self.cid,
-            "status": "passed",
-            "layer": "contract_fixture",
-            "profile": "safe",
-            "desktop_shell_verified": False,
-            "stages": {
-                s: cg.stage("passed", "synthetic validator test only") for s in cg.CC.STAGES
+        self.row = cg.new_row(self.cid, "contract_fixture", environment)
+        self.row.update(
+            status="passed",
+            stages={s: cg.stage("passed", "synthetic validator test only") for s in cg.CC.STAGES},
+            executions={
+                "native": 1,
+                "tavotto": 1,
+                "basis": "contract_fixture",
+                "attempt_history": None,
+                "attempt_history_agrees": None,
             },
-            "executions": {"native": 1, "tavotto": 1, "basis": "contract_fixture"},
-            "native": {"status": "passed", "result": {"contract_fixture": True}},
-            "comparable": True,
-            "environment_before": environment,
-            "environment_after": copy.deepcopy(environment),
-            "product_classification": None,
-            "raw": {
+            native={"status": "passed", "result": native_result()},
+            comparable=True,
+            figures={"native": 1, "tavotto_captured": 1, "tavotto_valid": 1},
+            environment_after=copy.deepcopy(environment),
+            raw={
                 "launch_environments": {
                     "native": [environment],
                     "tavotto": [copy.deepcopy(environment)],
                 }
             },
-            "unverified": ["all product behavior"],
-            "fixture": copy.deepcopy(self.fixture),
+            unverified=["all product behavior"],
+            fixture=copy.deepcopy(self.fixture),
+        )
+        self.row["failure_category"] = {
+            "category": None,
+            "source_code": None,
+            "basis": "no failure to attribute (passed)",
         }
         self.report = {
             "schema_version": cg.SCHEMA_VERSION,
@@ -86,6 +114,7 @@ class GuardianContract(unittest.TestCase):
             "cases": [self.row],
             "evidence": cg.evidence_refs(self.ev),
             "verdict": "passed",
+            "coverage": cg.coverage_table([self.row]),
             "unverified": ["all product behavior"],
             "duration_s": 1.0,
         }
@@ -97,6 +126,8 @@ class GuardianContract(unittest.TestCase):
         with self.assertRaises(cg.EvidenceError):
             self.valid()
 
+
+class GuardianContract(GuardianBase):
     def test_complete_contract_is_accepted(self):
         self.valid()
 
@@ -191,11 +222,18 @@ class GuardianContract(unittest.TestCase):
     def test_exit_zero_protocol_failure_not_success(self):
         self.assertEqual(cg._native_status({"ok": False}), "unknown")
         self.assertEqual(cg._native_status({"ok": True, "stems": []}), "unknown")
+        self.assertEqual(cg._native_status(native_result(exit_status=None)), "unknown")
 
     def test_both_graphs_with_semantic_difference_fail(self):
         self.row["status"] = "failed"
         self.row["stages"]["semantic"]["status"] = "failed"
+        self.row["failure_category"] = {
+            "category": "manifest_semantics",
+            "source_code": "stage:semantic",
+            "basis": "first stage that failed while the native reference passed",
+        }
         self.report["verdict"] = "failed"
+        self.report["coverage"] = cg.coverage_table([self.row])
         self.valid()
 
     def test_both_correct_do_not_invent_defect(self):
@@ -243,11 +281,16 @@ class GuardianContract(unittest.TestCase):
         self.row["stages"] = cg.v2_stages(self.v2_observation(), native, [])
         for name in ("discover", "execute", "capture", "open", "semantic"):
             self.assertEqual(self.row["stages"][name]["status"], "passed")
-        self.assertEqual(cg.case_status(self.row), "unknown")
+        # Exercised layers pass; edit/replay/export/fidelity are not_covered. The row is
+        # a defined non-pass: partial_coverage, never passed and never permanent unknown.
+        self.assertEqual(cg.case_status(self.row), "partial_coverage")
+        for name in cg.V2_UNCOVERED:
+            self.assertEqual(self.row["stages"][name]["status"], "not_covered")
 
     def test_v2_zero_invocations_do_not_reach_downstream_stages(self):
         stages = cg.v2_stages(self.v2_observation(exec_count=0), {}, [])
-        self.assertTrue(all(stages[s]["status"] == "not_run" for s in cg.CC.STAGES[1:]))
+        for name in ("execute", "capture", "open", "semantic"):
+            self.assertEqual(stages[name]["status"], "not_run")
 
     def test_actual_product_route_failure_not_hidden_by_stage_green(self):
         self.row["raw"]["routes"] = {"safe_probe": {"status": "fail"}}
@@ -268,9 +311,9 @@ class GuardianContract(unittest.TestCase):
                 env=cg.isolated_env(work),
                 timeout=0.2,
             )
-        process = json.loads((self.ev / "process.json").read_text())
+        process = json.loads((self.ev / "process.json").read_text(encoding="utf-8"))
         self.assertTrue(process["timed_out"])
-        self.assertIn("started", (self.ev / "stdout.txt").read_text())
+        self.assertIn("started", (self.ev / "stdout.txt").read_text(encoding="utf-8"))
         if os.name != "nt":
             self.assertTrue(process["cleanup"]["group_gone"])
 
@@ -278,7 +321,7 @@ class GuardianContract(unittest.TestCase):
         raw = '{"contract_fixture":"partial native execution"}\n'
 
         def interrupted(command, *, work, evidence, env, timeout):
-            (work / "native-execs.jsonl").write_text(raw)
+            (work / "native-execs.jsonl").write_text(raw, encoding="utf-8")
             raise cg.EvidenceError("simulated adapter interruption")
 
         args = Namespace(
@@ -291,9 +334,9 @@ class GuardianContract(unittest.TestCase):
         with mock.patch.object(cg, "launch_adapter", side_effect=interrupted):
             self.assertEqual(cg.run(args), 3)
         report_path = next((self.root / "runs").glob("*/reports/guardian.json"))
-        report = json.loads(report_path.read_text())
+        report = json.loads(report_path.read_text(encoding="utf-8"))
         retained = report_path.parent.parent / "evidence" / self.cid / "native-execs.jsonl"
-        self.assertEqual(retained.read_text(), raw)
+        self.assertEqual(retained.read_text(encoding="utf-8"), raw)
         refs = {item["path"]: item for item in report["evidence"]}
         self.assertEqual(refs[f"{self.cid}/native-execs.jsonl"]["sha256"], cg.digest(raw.encode()))
 
@@ -326,7 +369,7 @@ class GuardianContract(unittest.TestCase):
         self.rejected()
 
     def test_evidence_tampering_rejected(self):
-        (self.ev / "raw.json").write_text("tampered")
+        (self.ev / "raw.json").write_text("tampered", encoding="utf-8")
         self.rejected()
 
     def test_duplicate_case_rejected(self):
@@ -335,7 +378,7 @@ class GuardianContract(unittest.TestCase):
 
     def test_symlink_evidence_outside_root_rejected(self):
         target = self.root / "private.txt"
-        target.write_text("outside evidence")
+        target.write_text("outside evidence", encoding="utf-8")
         (self.ev / "raw.json").unlink()
         try:
             (self.ev / "raw.json").symlink_to(target)
@@ -360,12 +403,19 @@ class GuardianContract(unittest.TestCase):
 
     def test_exec_counter_measures_real_script_entry(self):
         script = self.root / "script.py"
-        script.write_text("print('trusted test fixture')\n")
+        script.write_text("print('trusted test fixture')\n", encoding="utf-8")
         counter = self.root / "exec.jsonl"
         env = cg.isolated_env(self.root, counter, [cg.digest(script.read_bytes())])
-        out = subprocess.run([sys.executable, str(script)], env=env, capture_output=True, text=True)
+        out = subprocess.run(
+            [sys.executable, str(script)],
+            env=env,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+        )
         self.assertEqual(out.returncode, 0, out.stderr)
-        records = [json.loads(line) for line in counter.read_text().splitlines()]
+        records = [json.loads(line) for line in counter.read_text(encoding="utf-8").splitlines()]
         self.assertEqual(len(records), 1)
         self.assertEqual(records[0]["source_sha256"], cg.digest(script.read_bytes()))
 
@@ -374,14 +424,120 @@ class GuardianContract(unittest.TestCase):
         with mock.patch("_common.os.replace", side_effect=OSError("simulated failed publish")):
             with self.assertRaises(OSError):
                 cg.write_report("r.json", {"new": True}, root=self.root)
-        self.assertEqual(json.loads(dest.read_text()), {"old": True})
+        self.assertEqual(json.loads(dest.read_text(encoding="utf-8")), {"old": True})
+
+    def test_partial_coverage_row_is_accepted_but_is_not_a_pass(self):
+        for name in cg.V2_UNCOVERED:
+            self.row["stages"][name] = cg.stage("not_covered", "layer not exercised")
+        self.row["status"] = "partial_coverage"
+        self.report["verdict"] = "partial_coverage"
+        self.report["coverage"] = cg.coverage_table([self.row])
+        self.valid()
+        self.assertEqual(cg.exit_code_for("partial_coverage"), cg.EXIT_PARTIAL)
+        self.assertNotEqual(cg.exit_code_for("partial_coverage"), cg.EXIT_PASSED)
+        self.assertEqual(cg.verdict([self.row]), "partial_coverage")
+
+    def test_aggregate_verdict_for_declared_limitations_and_partial_rows(self):
+        def row(status):
+            return {"status": status}
+
+        self.assertEqual(
+            cg.verdict([row("passed"), row("expected_limitation")]), "expected_limitation"
+        )
+        self.assertEqual(
+            cg.verdict([row("partial_coverage"), row("expected_limitation")]), "partial_coverage"
+        )
+        self.assertEqual(cg.verdict([row("partial_coverage"), row("failed")]), "failed")
+        self.assertEqual(cg.verdict([row("partial_coverage"), row("unknown")]), "unknown")
+        self.assertEqual(cg.exit_code_for("expected_limitation"), cg.EXIT_PARTIAL)
+        self.assertEqual(cg.exit_code_for("passed"), cg.EXIT_PASSED)
+
+    def test_partial_coverage_without_an_uncovered_layer_rejected(self):
+        self.row["status"] = "partial_coverage"
+        self.report["verdict"] = "partial_coverage"
+        self.rejected()
+
+    def test_not_covered_layer_never_counts_as_green(self):
+        self.row["stages"]["export"] = cg.stage("not_covered", "layer not exercised")
+        self.assertEqual(cg.case_status(self.row), "partial_coverage")
+        self.row["status"] = "passed"
+        self.rejected()
+
+    def test_failure_category_must_be_set_on_non_green_and_absent_on_green(self):
+        self.row["failure_category"]["category"] = "figure_capture"
+        self.rejected()
+
+    def test_failure_category_outside_the_taxonomy_rejected(self):
+        self.row["status"] = "unknown"
+        self.row["failure_category"]["category"] = "made_up_family"
+        self.report["verdict"] = "unknown"
+        self.rejected()
+
+    def test_every_non_green_row_gets_a_category_and_unknown_is_allowed(self):
+        row = cg.new_row("x", "contract_fixture")
+        self.assertEqual(cg.finalize_row(row)["failure_category"]["category"], "unknown")
+
+    def test_taxonomy_mapping_only_points_into_the_closed_set(self):
+        import compat_guardian_taxonomy as tx
+
+        self.assertEqual(len(set(tx.CATEGORIES)), len(tx.CATEGORIES))
+        for value in (*tx.CODE_TO_CATEGORY.values(), *tx.STAGE_TO_CATEGORY.values()):
+            self.assertIn(value, tx.CATEGORIES)
+        self.assertEqual(tx.category_of_code("never_seen_before"), "unknown")
+        self.assertEqual(set(tx.STAGE_TO_CATEGORY), set(cg.CC.STAGES))
+
+    def test_every_status_a_report_can_hold_is_in_the_schema_enums(self):
+        schema = json.loads(cg.SCHEMA_PATH.read_text(encoding="utf-8"))
+        self.assertEqual(schema["$defs"]["row_status"]["enum"], list(cg.ROW_STATUSES))
+        self.assertEqual(schema["$defs"]["stage_status"]["enum"], list(cg.STAGE_STATUSES))
+        self.assertEqual(
+            schema["$defs"]["case"]["properties"]["failure_category"]["properties"]["category"][
+                "enum"
+            ],
+            [None, *__import__("compat_guardian_taxonomy").CATEGORIES],
+        )
+
+    def test_every_case_row_declares_timings_authorization_and_category(self):
+        row = cg.new_row("x", "contract_fixture")
+        self.assertEqual(set(row["timings_s"]["stages"]), set(cg.CC.STAGES))
+        self.assertIn("required", row["needs_authorization"])
+        self.assertIn("category", row["failure_category"])
+        self.assertIsNone(row["timings_s"]["native"], "unmeasured must be null, never 0")
+
+    def test_fonts_dir_override_is_exclusive_and_forwarded_to_the_adapter(self):
+        override = self.root / "fonts"
+        override.mkdir()
+        with mock.patch.dict(os.environ, {"TAVOTTO_FONTS_DIR": str(override)}):
+            self.assertEqual(cg.fonts_dir(), override)
+            missing = cg.preflight()
+            self.assertTrue(any(item.startswith("font:") for item in missing))
+            env = cg.isolated_env(self.root / "launch-fonts")
+            self.assertEqual(env["TAVOTTO_FONTS_DIR"], str(override))
+        with mock.patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("TAVOTTO_FONTS_DIR", None)
+            self.assertEqual(cg.fonts_dir(), cg.ROOT / "src/tavotto/resources/fonts")
+
+    def test_environment_in_reports_has_version_summary_and_digest_not_the_full_inventory(self):
+        facts = cg.environment()["facts"]
+        self.assertNotIn("distributions", facts)
+        self.assertRegex(facts["distributions_sha256"], r"^[0-9a-f]{64}$")
+        self.assertGreater(facts["distribution_count"], 0)
+        self.assertLess(len(json.dumps(facts)), 4000)
+
+    def test_stub_subcommands_exit_nonzero_and_produce_nothing(self):
+        for name in ("explore", "triage", "minimize"):
+            with mock.patch("sys.stderr") as err:
+                self.assertEqual(cg.main([name]), cg.EXIT_USAGE)
+            self.assertIn(
+                "not implemented in CG-01", "".join(c.args[0] for c in err.write.call_args_list)
+            )
 
     def test_public_schema_independent_reader(self):
         try:
             import jsonschema
         except ImportError:
             self.skipTest("jsonschema independent reader unavailable")
-        schema = json.loads(cg.SCHEMA_PATH.read_text())
+        schema = json.loads(cg.SCHEMA_PATH.read_text(encoding="utf-8"))
         jsonschema.Draft202012Validator.check_schema(schema)
         jsonschema.validate(self.report, schema)
         del self.row["fixture"]["source_sha256"]

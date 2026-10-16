@@ -17,8 +17,33 @@ import platform
 import sys
 from pathlib import Path
 
+#: Versions worth showing in a public report. The full installed set is bound by
+#: digest instead of listed: a complete package inventory does not belong in
+#: artifacts anyone with read access can download.
+KEY_DISTRIBUTIONS = (
+    "matplotlib",
+    "numpy",
+    "pillow",
+    "pandas",
+    "scipy",
+    "seaborn",
+    "scikit-learn",
+    "opencv-python",
+    "opencv-python-headless",
+    "flask",
+    "pikepdf",
+    "uharfbuzz",
+    "pypdfium2",
+)
+
 
 def actual_environment() -> dict:
+    installed = sorted(
+        f"{d.metadata['Name']}=={d.version}"
+        for d in importlib.metadata.distributions()
+        if d.metadata.get("Name")
+    )
+    lowered = {item.split("==")[0].lower(): item.split("==", 1)[1] for item in installed}
     facts = {
         "python": sys.version,
         "platform": platform.platform(),
@@ -26,11 +51,9 @@ def actual_environment() -> dict:
         "executable_sha256": hashlib.sha256(
             Path(sys.executable).resolve().read_bytes()
         ).hexdigest(),
-        "distributions": sorted(
-            f"{d.metadata['Name']}=={d.version}"
-            for d in importlib.metadata.distributions()
-            if d.metadata.get("Name")
-        ),
+        "distribution_count": len(installed),
+        "distributions_sha256": hashlib.sha256("\n".join(installed).encode()).hexdigest(),
+        "key_distributions": {n: lowered[n] for n in KEY_DISTRIBUTIONS if n in lowered},
         "execution_env": {
             k: os.environ.get(k) for k in ("PYTHONHASHSEED", "MPLBACKEND", "LANG", "LC_ALL")
         },

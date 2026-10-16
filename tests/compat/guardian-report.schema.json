@@ -51,7 +51,7 @@
       "minItems": 1
     },
     "verdict": {
-      "$ref": "#/$defs/status"
+      "$ref": "#/$defs/row_status"
     },
     "unverified": {
       "type": "array",
@@ -64,6 +64,18 @@
     "duration_s": {
       "type": "number",
       "minimum": 0
+    },
+    "coverage": {
+      "type": "object",
+      "minProperties": 9,
+      "description": "Per stage, how many cases ended in each stage status. Names what was and was not exercised.",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
     }
   },
   "required": [
@@ -78,7 +90,8 @@
     "evidence",
     "verdict",
     "unverified",
-    "duration_s"
+    "duration_s",
+    "coverage"
   ],
   "additionalProperties": false,
   "$defs": {
@@ -93,7 +106,8 @@
         "not_run",
         "invalid_fixture",
         "unknown"
-      ]
+      ],
+      "description": "Run outcome state (brief 'Runner contract'). Distinct from CompatBench's six product classes."
     },
     "sha256": {
       "type": "string",
@@ -103,7 +117,7 @@
       "type": "object",
       "properties": {
         "status": {
-          "$ref": "#/$defs/status"
+          "$ref": "#/$defs/stage_status"
         },
         "criterion": {
           "type": "string",
@@ -209,7 +223,7 @@
           "minLength": 1
         },
         "status": {
-          "$ref": "#/$defs/status"
+          "$ref": "#/$defs/row_status"
         },
         "layer": {
           "type": "string",
@@ -287,12 +301,29 @@
             "basis": {
               "type": "string",
               "minLength": 1
+            },
+            "attempt_history": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 0,
+              "description": "Session-reported attempts. Cross-check only; never a substitute for the out-of-project counter."
+            },
+            "attempt_history_agrees": {
+              "type": [
+                "boolean",
+                "null"
+              ],
+              "description": "null when either side is unavailable."
             }
           },
           "required": [
             "native",
             "tavotto",
-            "basis"
+            "basis",
+            "attempt_history",
+            "attempt_history_agrees"
           ],
           "additionalProperties": false
         },
@@ -344,6 +375,212 @@
         },
         "fixture": {
           "$ref": "#/$defs/fixture"
+        },
+        "figures": {
+          "type": "object",
+          "properties": {
+            "native": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 0
+            },
+            "tavotto_captured": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 0
+            },
+            "tavotto_valid": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 0
+            }
+          },
+          "required": [
+            "native",
+            "tavotto_captured",
+            "tavotto_valid"
+          ],
+          "additionalProperties": false
+        },
+        "timings_s": {
+          "type": "object",
+          "properties": {
+            "total": {
+              "type": "number",
+              "minimum": 0
+            },
+            "native": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "minimum": 0
+            },
+            "tavotto": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "minimum": 0
+            },
+            "stages": {
+              "type": "object",
+              "properties": {
+                "discover": {
+                  "type": [
+                    "number",
+                    "null"
+                  ],
+                  "minimum": 0
+                },
+                "execute": {
+                  "type": [
+                    "number",
+                    "null"
+                  ],
+                  "minimum": 0
+                },
+                "capture": {
+                  "type": [
+                    "number",
+                    "null"
+                  ],
+                  "minimum": 0
+                },
+                "open": {
+                  "type": [
+                    "number",
+                    "null"
+                  ],
+                  "minimum": 0
+                },
+                "semantic": {
+                  "type": [
+                    "number",
+                    "null"
+                  ],
+                  "minimum": 0
+                },
+                "edit": {
+                  "type": [
+                    "number",
+                    "null"
+                  ],
+                  "minimum": 0
+                },
+                "replay": {
+                  "type": [
+                    "number",
+                    "null"
+                  ],
+                  "minimum": 0
+                },
+                "export": {
+                  "type": [
+                    "number",
+                    "null"
+                  ],
+                  "minimum": 0
+                },
+                "fidelity": {
+                  "type": [
+                    "number",
+                    "null"
+                  ],
+                  "minimum": 0
+                }
+              },
+              "required": [
+                "discover",
+                "execute",
+                "capture",
+                "open",
+                "semantic",
+                "edit",
+                "replay",
+                "export",
+                "fidelity"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "total",
+            "native",
+            "tavotto",
+            "stages"
+          ],
+          "additionalProperties": false,
+          "description": "Wall-clock seconds. null = not measured (never 0 for unmeasured)."
+        },
+        "needs_authorization": {
+          "type": "object",
+          "properties": {
+            "required": {
+              "type": [
+                "boolean",
+                "null"
+              ],
+              "description": "Would a real user flow need an authorization decision (install, Native). null = not determined."
+            },
+            "basis": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "required",
+            "basis"
+          ],
+          "additionalProperties": false
+        },
+        "failure_category": {
+          "type": "object",
+          "properties": {
+            "category": {
+              "enum": [
+                null,
+                "environment_resolution",
+                "dependency_provider",
+                "dependency_version",
+                "argument_or_input",
+                "cwd_or_data_path",
+                "safe_execution_divergence",
+                "figure_capture",
+                "partial_capture",
+                "product_entry_reachability",
+                "manifest_semantics",
+                "editing_capability",
+                "replay_inconsistency",
+                "export_or_fidelity",
+                "timeout_or_process_crash",
+                "invalid_fixture",
+                "unknown"
+              ]
+            },
+            "source_code": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "basis": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "category",
+            "source_code",
+            "basis"
+          ],
+          "additionalProperties": false
         }
       },
       "required": [
@@ -361,9 +598,43 @@
         "product_classification",
         "raw",
         "unverified",
-        "fixture"
+        "fixture",
+        "figures",
+        "timings_s",
+        "needs_authorization",
+        "failure_category"
       ],
       "additionalProperties": false
+    },
+    "row_status": {
+      "type": "string",
+      "enum": [
+        "passed",
+        "failed",
+        "expected_limitation",
+        "not_reproduced",
+        "environment_unavailable",
+        "not_run",
+        "invalid_fixture",
+        "unknown",
+        "partial_coverage"
+      ],
+      "description": "Case/report outcome. partial_coverage = every exercised layer passed with valid proof but at least one required layer is not_covered by the adapter. It is NOT a pass: it never counts toward the passed numerator."
+    },
+    "stage_status": {
+      "type": "string",
+      "enum": [
+        "passed",
+        "failed",
+        "expected_limitation",
+        "not_reproduced",
+        "environment_unavailable",
+        "not_run",
+        "invalid_fixture",
+        "unknown",
+        "not_covered"
+      ],
+      "description": "not_covered = the adapter does not drive this layer at all; not_run = the layer was in scope but did not execute."
     }
   }
 }

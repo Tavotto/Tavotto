@@ -1,9 +1,21 @@
 #!/usr/bin/env python3
-"""Registered Compatibility Guardian runner; no arbitrary-script execution API.
+"""Compatibility Guardian runner (CG-01): observation-only evidence reports.
 
-Reuses CompatBench, its native driver, and V2/Foundation authenticated server
-harness. Directory/environment isolation is not OS isolation: only reviewed,
-unchanged repository fixtures execute. No dependency installation or promotion.
+Reuses CompatBench, its native driver, and the V2/Foundation authenticated server
+harness. There is no API for running an arbitrary script: `run` takes registry
+case ids only.
+
+What is and is not guaranteed (see docs/ci/compat-guardian.md):
+
+* Guaranteed by this code: every executed fixture is a registry entry whose bytes
+  equal the bytes committed at the checked-out HEAD, and the whole source tree is
+  unchanged between start and end of the run. A run on a dirty tree says so in
+  its report and cannot validate against a clean checkout.
+* NOT guaranteed by this code: that HEAD was reviewed. That is a property of how
+  HEAD got onto the branch (merge to main under CODEOWNERS), not something a
+  script can attest about itself.
+* Directory/environment isolation here is not OS isolation. No dependency
+  installation, no promotion, no baseline writes.
 """
 
 from __future__ import annotations
@@ -31,11 +43,14 @@ sys.path.insert(0, str(ROOT / "src"))
 sys.path.insert(0, str(ROOT / "tests"))
 
 import compat_corpus as CC  # noqa: E402
+import compat_guardian_taxonomy as TX  # noqa: E402
 import package_smoke  # noqa: E402
 from _common import write_report  # noqa: E402
 from guardian_exec_observer import actual_environment  # noqa: E402
 
 SCHEMA_VERSION = "1.0.0"
+#: Run outcome states (brief, "Runner contract"); separate from CompatBench's six
+#: product classifications.
 STATUSES = (
     "passed",
     "failed",
@@ -46,7 +61,32 @@ STATUSES = (
     "invalid_fixture",
     "unknown",
 )
+#: Row-level extra state: every exercised layer passed with valid proof, but the
+#: adapter does not exercise at least one required layer. Not a pass, not a failure.
+ROW_STATUSES = (*STATUSES, "partial_coverage")
+#: Stage-level extra state: this adapter does not drive that layer at all (distinct
+#: from `not_run`, which means the layer was in scope but did not execute).
+STAGE_STATUSES = (*STATUSES, "not_covered")
+#: Rows with these statuses assert something about the product and need full proof.
+PROOF_STATUSES = ("passed", "failed", "expected_limitation", "partial_coverage")
+#: Process exit codes of `run`. Only 0 is a clean pass. 4 is the explicitly defined
+#: "decided, no failure, not a clean pass" outcome (partial_coverage or declared
+#: expected_limitation rows) and is never mapped to 0.
+EXIT_PASSED, EXIT_FAILED, EXIT_USAGE, EXIT_UNKNOWN, EXIT_PARTIAL = 0, 1, 2, 3, 4
 SUITES = ("compat_engine", "compat_v2")
+#: Output suffixes whose readability decides whether native produced a usable figure.
+FIGURE_SUFFIXES = {
+    ".png",
+    ".jpg",
+    ".jpeg",
+    ".tif",
+    ".tiff",
+    ".bmp",
+    ".gif",
+    ".webp",
+    ".pdf",
+    ".svg",
+}
 SCHEMA_PATH = ROOT / "tests" / "compat" / "guardian-report.schema.json"
 REQUIRED_MODULES = (
     "flask",
@@ -62,6 +102,10 @@ REQUIRED_MODULES = (
 
 class EvidenceError(ValueError):
     pass
+
+
+class AdapterTimeout(EvidenceError):
+    """The adapter exceeded its budget; the process group was reaped."""
 
 
 def digest(data: bytes) -> str:
@@ -121,11 +165,20 @@ def environment() -> dict:
     return actual_environment()
 
 
+def fonts_dir() -> Path:
+    """Same rule as rendercore.fonts.fonts_dir(): TAVOTTO_FONTS_DIR overrides exclusively."""
+    override = os.environ.get("TAVOTTO_FONTS_DIR")
+    return Path(override) if override else ROOT / "src/tavotto/resources/fonts"
+
+
 def preflight() -> list[str]:
     missing = [f"module:{m}" for m in REQUIRED_MODULES if importlib.util.find_spec(m) is None]
-    allowlist = json.loads((ROOT / "src/tavotto/rendercore/fonts_allowlist.json").read_text())
+    allowlist = json.loads(
+        (ROOT / "src/tavotto/rendercore/fonts_allowlist.json").read_text(encoding="utf-8")
+    )
+    base = fonts_dir()
     for face in allowlist["faces"].values():
-        path = ROOT / "src/tavotto/resources/fonts" / face["file"]
+        path = base / face["file"]
         if not path.is_file() or digest(path.read_bytes()) != face["sha256"]:
             missing.append("font:" + face["file"])
     return missing
@@ -190,6 +243,7 @@ def isolated_env(work: Path, audit_log: Path | None = None, hashes=()) -> dict:
             "PATHEXT",
             "LD_LIBRARY_PATH",
             "DYLD_LIBRARY_PATH",
+            "TAVOTTO_FONTS_DIR",  # a read-only approved-font location, not a secret
         )
         if k in os.environ
     }
@@ -225,7 +279,7 @@ def isolated_env(work: Path, audit_log: Path | None = None, hashes=()) -> dict:
         bootstrap = work / "bootstrap"
         bootstrap.mkdir()
         (bootstrap / "sitecustomize.py").write_text(
-            "from guardian_exec_observer import install\ninstall()\n"
+            "from guardian_exec_observer import install\ninstall()\n", encoding="utf-8"
         )
         roots.insert(0, str(bootstrap))
         env.update(
@@ -243,14 +297,70 @@ def stage(status: str, criterion: str) -> dict:
     return {"status": status, "criterion": criterion}
 
 
+UNVERIFIED_BASE = (
+    "real desktop shell",
+    "save occurrence snapshots",
+    "arbitrary user scripts",
+    "scientific values beyond registered oracle",
+)
+
+
+def new_row(cid: str, layer: str, before: dict | None = None) -> dict:
+    """A case row with every required field present and nothing claimed."""
+    env = before or {}
+    return {
+        "id": cid,
+        "status": "unknown",
+        "layer": layer,
+        "profile": "safe",
+        "desktop_shell_verified": False,
+        "stages": {s: stage("not_run", "not reached") for s in CC.STAGES},
+        "executions": {
+            "native": None,
+            "tavotto": None,
+            "basis": "python_exec_audit",
+            "attempt_history": None,
+            "attempt_history_agrees": None,
+        },
+        "native": {"status": "not_run", "result": {}},
+        "comparable": False,
+        "figures": {"native": None, "tavotto_captured": None, "tavotto_valid": None},
+        "timings_s": {
+            "total": 0.0,
+            "native": None,
+            "tavotto": None,
+            "stages": {s: None for s in CC.STAGES},
+        },
+        "needs_authorization": {
+            "required": None,
+            "basis": "not determined: the case did not reach a point where this is known",
+        },
+        "failure_category": {"category": None, "source_code": None, "basis": "not attributed"},
+        "environment_before": env,
+        "environment_after": env,
+        "product_classification": None,
+        "raw": {},
+        "unverified": list(UNVERIFIED_BASE),
+    }
+
+
+def finalize_row(row: dict) -> dict:
+    """Derive status and failure category once all evidence is in the row."""
+    row["status"] = case_status(row)
+    row["failure_category"] = TX.attribute(row)
+    return row
+
+
 def case_status(row: dict) -> str:
     native = row["native"]["status"]
     if native != "passed":
         return native
+    raw = row.get("raw") or {}
+    if "runner_error" in raw:
+        return "unknown"  # a crashed runner is never evidence about the product
     if not row["comparable"] or not (row["executions"]["native"] or 0):
         return "unknown"
     statuses = [s["status"] for s in row["stages"].values()]
-    raw = row.get("raw") or {}
     if any(
         r.get("status") == "fail" for r in (raw.get("routes") or {}).values() if isinstance(r, dict)
     ):
@@ -265,8 +375,11 @@ def case_status(row: dict) -> str:
         return "unknown"
     if all(s == "passed" for s in statuses):
         return "passed"
-    if "expected_limitation" in statuses:
-        return "expected_limitation"
+    if all(s in ("passed", "expected_limitation", "not_covered") for s in statuses):
+        if "expected_limitation" in statuses:
+            return "expected_limitation"
+        # Exercised layers all passed; the rest are layers this adapter does not drive.
+        return "partial_coverage"
     return "unknown"
 
 
@@ -278,6 +391,10 @@ def verdict(rows: list[dict]) -> str:
         return "failed"
     if all(s == "passed" for s in statuses):
         return "passed"
+    if all(s in ("passed", "partial_coverage", "expected_limitation") for s in statuses):
+        # Decided, nothing failed, but not a clean pass: either an exercised-layers-only
+        # pass (partial_coverage wins, it is the weaker claim) or declared limitations.
+        return "partial_coverage" if "partial_coverage" in statuses else "expected_limitation"
     if all(s == "environment_unavailable" for s in statuses):
         return "environment_unavailable"
     if all(s == "invalid_fixture" for s in statuses):
@@ -285,20 +402,71 @@ def verdict(rows: list[dict]) -> str:
     return "unknown"
 
 
+def exit_code_for(outcome: str) -> int:
+    return {
+        "passed": EXIT_PASSED,
+        "failed": EXIT_FAILED,
+        "partial_coverage": EXIT_PARTIAL,
+        "expected_limitation": EXIT_PARTIAL,
+    }.get(outcome, EXIT_UNKNOWN)
+
+
+def coverage_table(rows: list[dict]) -> dict:
+    """Per stage: how many cases ended in each stage status (names the uncovered)."""
+    table: dict[str, dict[str, int]] = {}
+    for name in CC.STAGES:
+        counts: dict[str, int] = {}
+        for row in rows:
+            state = row["stages"][name]["status"]
+            counts[state] = counts.get(state, 0) + 1
+        table[name] = counts
+    return table
+
+
 def _native_status(result: dict) -> str:
-    if result.get("ok") is True and result.get("stems"):
-        return "passed"
-    tb = result.get("traceback", "")
-    if "ModuleNotFoundError:" in tb or result.get("code") in ("driver_timeout", "driver_no_output"):
-        return "environment_unavailable"
-    if result.get("code") == "native_script_error":
+    """Judge the native reference (compat_driver `native_ref`) on its own facts.
+
+    A failing, empty, or unreadable native control is a fixture/environment problem
+    and never enters the Tavotto-defect population.
+    """
+    if result.get("ok") is not True:
+        tb = result.get("traceback", "")
+        if "ModuleNotFoundError:" in tb or result.get("code") in (
+            "driver_timeout",
+            "driver_no_output",
+        ):
+            return "environment_unavailable"
+        if result.get("code") == "native_script_error":
+            return "invalid_fixture"
+        return "unknown"
+    if type(result.get("exit_status")) is not int:
+        return "unknown"
+    if result["exit_status"] != 0:
+        tb = (result.get("error") or {}).get("traceback", "")
+        return "environment_unavailable" if "ModuleNotFoundError:" in tb else "invalid_fixture"
+    if any(
+        a.get("readable") is not True
+        for a in result.get("artifacts", [])
+        if Path(a.get("path", "")).suffix.lower() in FIGURE_SUFFIXES
+    ):
         return "invalid_fixture"
-    return "unknown"
+    if type(result.get("figure_count")) is not int or result["figure_count"] < 1:
+        return "unknown"  # nothing to compare against; not a native failure either
+    return "passed"
 
 
-def v2_stages(observed: dict, native: dict, ideal_missing: list) -> dict:
-    """Project actual outcomes, keeping invocation counts distinct from success."""
+def v2_stages(
+    observed: dict, native: dict, ideal_missing: list, restricted_control: str | None = None
+) -> dict:
+    """Project actual outcomes, keeping invocation counts distinct from success.
+
+    The V2 adapter drives scan/check/run through the authenticated server only. It does
+    not drive edit, replay, export or fidelity; those are `not_covered`, never `not_run`
+    (not run) and never passed.
+    """
     stages = {s: stage("not_run", "not reached") for s in CC.STAGES}
+    for name in V2_UNCOVERED:
+        stages[name] = stage("not_covered", "layer not exercised by the V2 session adapter")
     stages["discover"] = stage(
         "passed", "authenticated scan/check; fixture log proves zero pre-run executions"
     )
@@ -335,45 +503,90 @@ def v2_stages(observed: dict, native: dict, ideal_missing: list) -> dict:
             "passed" if good else "failed",
             "V2 explicit scientific title/shape/count oracle AND native title comparison",
         )
+    if restricted_control == "match":
+        why = (
+            "restricted-entry control (case 13): observed shape equals the recorded main "
+            "baseline; a browser-mode session must stay Safe and must not auto-upgrade to Native"
+        )
+        for name in ("execute", "capture", "open", "semantic"):
+            stages[name] = stage("expected_limitation", why)
+    elif restricted_control == "deviates":
+        stages["execute"] = stage(
+            "failed",
+            "restricted-entry control deviates from its recorded baseline: any change "
+            "(better or worse) needs human review; it may be a silent Native upgrade",
+        )
     return stages
+
+
+#: V2 scenarios that are deliberate controls for "a restricted (non-desktop) entry must not
+#: upgrade to Native" (acceptance case 13): they pin Safe-only behavior and are not
+#: defects to fix. Only these ids may be reported expected_limitation, and only while
+#: the observed shape equals the recorded main baseline.
+RESTRICTED_ENTRY_CONTROLS = (
+    "s04b_savefig_tmp_replace",
+    "s05_dynamic_rename",
+    "s06_savefig_pil_readback",
+)
+
+#: Layers the V2 session adapter does not drive (docs/ci/compat-guardian.md, "Coverage").
+V2_UNCOVERED = ("edit", "replay", "export", "fidelity")
+
+
+def _trim_native(result: dict) -> dict:
+    """Bound free-text fields so reports stay public-log-safe; judge before trimming."""
+    trimmed = dict(result)
+    for key in ("log", "stderr", "stdout", "traceback"):
+        if isinstance(trimmed.get(key), str):
+            trimmed[key] = trimmed[key][-1200:]
+    if isinstance(trimmed.get("error"), dict):
+        trimmed["error"] = {
+            k: (v[-1200:] if isinstance(v, str) else v) for k, v in trimmed["error"].items()
+        }
+    return trimmed
+
+
+def _count(path: Path) -> int | None:
+    """Lines in an append-only counter; None when the counter was never opened."""
+    return len(path.read_text(encoding="utf-8").splitlines()) if path.exists() else None
+
+
+def _authorization(suite: str, cid: str, scenario_absent: tuple, facts: dict) -> dict:
+    installs = (facts or {}).get("dependency_installs")
+    if scenario_absent or installs:
+        return {
+            "required": True,
+            "basis": "scenario depends on packages absent from the interpreter ("
+            + ",".join(scenario_absent or ())
+            + "): a user flow needs an install decision; Guardian never installs",
+        }
+    return {
+        "required": False,
+        "basis": "reviewed fixture; Safe profile with already-installed dependencies; "
+        "no install and no Native escalation was needed or performed",
+    }
 
 
 def _execute(request: dict) -> dict:
     """Private adapter, launched only with a request created by run()."""
     import compat_matrix as cm
 
+    t_total = time.monotonic()
     suite, cid = request["suite"], request["case"]
     case = registered(suite)[cid]
     work = Path(request["work"])
     evidence = Path(request["evidence"])
     before = environment()
-    row = {
-        "id": cid,
-        "status": "unknown",
-        "layer": "engine" if suite == "compat_engine" else "authenticated_server_safe",
-        "profile": "safe",
-        "desktop_shell_verified": False,
-        "stages": {s: stage("not_run", "not reached") for s in CC.STAGES},
-        "executions": {"native": None, "tavotto": None, "basis": "python_exec_audit"},
-        "native": {"status": "not_run", "result": {}},
-        "comparable": False,
-        "environment_before": before,
-        "environment_after": before,
-        "product_classification": None,
-        "raw": {},
-        "unverified": [
-            "real desktop shell",
-            "save occurrence snapshots",
-            "arbitrary user scripts",
-            "scientific values beyond registered oracle",
-        ],
-    }
+    row = new_row(
+        cid, "engine" if suite == "compat_engine" else "authenticated_server_safe", before
+    )
+    scenario_absent: tuple = ()
     missing = preflight()
     if any(f"module:{name}" in missing for name in ("matplotlib", "numpy", "PIL")):
-        row["status"] = "environment_unavailable"
         row["native"]["status"] = "environment_unavailable"
         row["raw"] = {"missing_prerequisites": missing}
-        return row
+        row["timings_s"]["total"] = round(time.monotonic() - t_total, 3)
+        return finalize_row(row)
     native_root = work / "native-control"
     native_root.mkdir()
     if suite == "compat_engine":
@@ -382,35 +595,32 @@ def _execute(request: dict) -> dict:
         from support import compat_v2_scenarios as cs, compatbench_v2 as cb
 
         project, script, entry = cb.stage(cid, native_root), "script.py", "__main__"
+        scenario_absent = tuple(cs.NEEDS_ABSENT.get(cid, ()))
     os.environ["CG_EXEC_LOG"] = str(work / "native-execs.jsonl")
-    # The already installed audit hook opened its file at process start; child
+    # The already installed audit hook opened its file at process start; the child
     # native driver receives this separate leg's counter via sitecustomize.
+    t0 = time.monotonic()
     native = cm.run_driver(
         sys.executable,
-        "native",
-        {
-            "project": str(project),
-            "script": str(project / script),
-            "entry": entry,
-            "engine_dir": str(cm.ENGINE_DIR),
-            "out_dir": str(evidence / "native"),
-            "observe_semantics": True,
-        },
+        "native_ref",
+        {"project": str(project), "script": str(project / script), "entry": entry},
     )
-    row["native"] = {"status": _native_status(native), "result": native}
-    native_counter = work / "native-execs.jsonl"
-    row["executions"]["native"] = (
-        len(native_counter.read_text().splitlines()) if native_counter.exists() else None
-    )
+    row["timings_s"]["native"] = round(time.monotonic() - t0, 3)
+    row["native"] = {"status": _native_status(native), "result": _trim_native(native)}
+    row["executions"]["native"] = _count(work / "native-execs.jsonl")
+    row["figures"]["native"] = native.get("figure_count") if native.get("ok") else None
     # Native fixture invalidity never enters the product-defect population.
     if row["native"]["status"] != "passed":
-        row["status"] = row["native"]["status"]
-        return row
+        row["timings_s"]["total"] = round(time.monotonic() - t_total, 3)
+        return finalize_row(row)
     if missing:
-        row["status"] = "environment_unavailable"
         row["raw"] = {"missing_prerequisites": missing}
+        row["timings_s"]["total"] = round(time.monotonic() - t_total, 3)
+        row["status"] = "environment_unavailable"
+        row["failure_category"] = TX.attribute(row)
         return row
     os.environ["CG_EXEC_LOG"] = str(work / "tavotto-execs.jsonl")
+    t0 = time.monotonic()
     if suite == "compat_engine":
         # Matrix's diagnostic native/census runs are real script executions but
         # are not Tavotto executions. Keep each role in a separate event log.
@@ -435,15 +645,23 @@ def _execute(request: dict) -> dict:
 
         cm.stage_export = keep_export
         engine_case = {**case, "product_routes": {}}
-        result = cm.run_group(
-            [engine_case],
-            python=sys.executable,
-            root=work,
-            out_dir=evidence,
-            want_fidelity=True,
-            want_browser=False,
-        )[cid]
+        try:
+            result = cm.run_group(
+                [engine_case],
+                python=sys.executable,
+                root=work,
+                out_dir=evidence,
+                want_fidelity=True,
+                want_browser=False,
+            )[cid]
+        except Exception:  # noqa: BLE001 - a crashed runner is evidence about the runner
+            row["raw"] = {"runner_error": traceback.format_exc()[-1500:]}
+            row["timings_s"]["tavotto"] = round(time.monotonic() - t0, 3)
+            row["timings_s"]["total"] = round(time.monotonic() - t_total, 3)
+            return finalize_row(row)
         row["raw"] = result
+        if "runner_error" in (result.get("detail") or {}):
+            row["raw"]["runner_error"] = str(result["detail"]["runner_error"])[-1500:]
         for s in CC.STAGES:
             if s in result["stages"]:
                 good = result["stages"][s]
@@ -460,10 +678,7 @@ def _execute(request: dict) -> dict:
             row["stages"]["fidelity"] = stage(
                 "unknown", "repeated native control failed; cannot attribute difference to Tavotto"
             )
-        count = work / "tavotto-execs.jsonl"
-        row["executions"]["tavotto"] = (
-            len(count.read_text().splitlines()) if count.exists() else None
-        )
+        row["executions"]["tavotto"] = _count(work / "tavotto-execs.jsonl")
         row["unverified"].append(
             "fidelity metric is existing grayscale comparison; not RGBA qualification"
         )
@@ -471,9 +686,25 @@ def _execute(request: dict) -> dict:
             "product routes not_run in engine adapter; existing dedicated route tests remain authoritative"
         )
         row["raw"]["diagnostic_execution_counts"] = {
-            p.name: len(p.read_text().splitlines()) for p in work.glob("diagnostic-*-execs.jsonl")
+            p.name: len(p.read_text(encoding="utf-8").splitlines())
+            for p in work.glob("diagnostic-*-execs.jsonl")
         }
         row["product_classification"] = result.get("classification")
+        capture = (result.get("detail") or {}).get("capture") or {}
+        got = capture.get("got_figures")
+        row["figures"]["tavotto_captured"] = got if type(got) is int else None
+        opened = row["stages"]["open"]["status"]
+        row["figures"]["tavotto_valid"] = (
+            row["figures"]["tavotto_captured"]
+            if opened == "passed"
+            else 0
+            if opened == "failed"
+            else None
+        )
+        ran = (result.get("detail") or {}).get("execute") or {}
+        if type(ran.get("script_exec_ms")) in (int, float):
+            row["timings_s"]["stages"]["execute"] = round(ran["script_exec_ms"] / 1000, 3)
+        row["needs_authorization"] = _authorization(suite, cid, (), {})
     else:
         case_work = work / "v2"
         case_work.mkdir()
@@ -485,9 +716,17 @@ def _execute(request: dict) -> dict:
                 env_overrides={"PYTHONPATH": os.environ["PYTHONPATH"]},
             )
         except cb.PreconditionUnmet as exc:
-            row["status"] = "environment_unavailable"
             row["raw"] = {"precondition_unmet": str(exc)}
+            row["timings_s"]["tavotto"] = round(time.monotonic() - t0, 3)
+            row["timings_s"]["total"] = round(time.monotonic() - t_total, 3)
+            row["status"] = "environment_unavailable"
+            row["failure_category"] = TX.attribute(row)
             return row
+        except Exception:  # noqa: BLE001 - harness crash is not a product observation
+            row["raw"] = {"runner_error": traceback.format_exc()[-1500:]}
+            row["timings_s"]["tavotto"] = round(time.monotonic() - t0, 3)
+            row["timings_s"]["total"] = round(time.monotonic() - t_total, 3)
+            return finalize_row(row)
         row["raw"] = {
             "observed": obs.to_json(),
             "ideal_missing": cs.IDEAL[cid](obs),
@@ -496,14 +735,40 @@ def _execute(request: dict) -> dict:
         cb.assert_no_execution_before_run(obs)
         row["executions"]["tavotto"] = obs.exec_count
         row["executions"]["basis"] = "fixture_external_exec_log"
-        row["stages"] = v2_stages(row["raw"]["observed"], native, row["raw"]["ideal_missing"])
-        row["unverified"].append("V2 adapter does not claim edit/replay/export/fidelity")
+        row["executions"]["attempt_history"] = obs.attempts
+        row["executions"]["attempt_history_agrees"] = (
+            None if obs.attempts is None else obs.attempts == obs.exec_count
+        )
+        baseline = cs.SCENARIOS[cid].main_baseline
+        match = None if baseline is None else cs.baseline_shape(obs) == baseline
+        row["raw"]["baseline_match"] = match
+        control = None
+        if cid in RESTRICTED_ENTRY_CONTROLS:
+            control = "match" if match and row["raw"]["ideal_missing"] else "deviates"
+        row["stages"] = v2_stages(
+            row["raw"]["observed"], native, row["raw"]["ideal_missing"], control
+        )
+        row["figures"]["tavotto_captured"] = obs.figures_captured
+        row["figures"]["tavotto_valid"] = obs.figures_valid
+        t = obs.timings_s
+        if "scan" in t and "check" in t:
+            row["timings_s"]["stages"]["discover"] = round(t["scan"] + t["check"], 3)
+        if "run_to_terminal" in t:
+            row["timings_s"]["stages"]["execute"] = t["run_to_terminal"]
+        row["needs_authorization"] = _authorization(suite, cid, scenario_absent, obs.facts)
+        row["unverified"].append(
+            "V2 adapter does not drive edit/replay/export/fidelity (reported not_covered)"
+        )
+    row["timings_s"]["tavotto"] = round(time.monotonic() - t0, 3)
     row["environment_after"] = environment()
     launches = {}
     for role in ("native", "tavotto"):
         log = work / f"{role}-execs.jsonl"
         launches[role] = (
-            [json.loads(line)["environment"] for line in log.read_text().splitlines()]
+            [
+                json.loads(line)["environment"]
+                for line in log.read_text(encoding="utf-8").splitlines()
+            ]
             if log.exists()
             else []
         )
@@ -516,8 +781,8 @@ def _execute(request: dict) -> dict:
     )
     if suite == "compat_v2" and len(launches["tavotto"]) != row["executions"]["tavotto"]:
         row["comparable"] = False
-    row["status"] = case_status(row)
-    return row
+    row["timings_s"]["total"] = round(time.monotonic() - t_total, 3)
+    return finalize_row(row)
 
 
 def preserve_execution_logs(work: Path, evidence: Path) -> None:
@@ -561,6 +826,7 @@ def schema_check(value, schema: dict, root: dict | None = None, path: str = "$")
         "$id",
         "$defs",
         "title",
+        "description",
         "type",
         "properties",
         "required",
@@ -628,7 +894,7 @@ def schema_check(value, schema: dict, root: dict | None = None, path: str = "$")
 
 
 def validate_report(report: dict, evidence_root: Path, expected: dict | None = None) -> None:
-    schema_check(report, json.loads(SCHEMA_PATH.read_text()))
+    schema_check(report, json.loads(SCHEMA_PATH.read_text(encoding="utf-8")))
     required = {
         "schema_version",
         "run_id",
@@ -640,6 +906,7 @@ def validate_report(report: dict, evidence_root: Path, expected: dict | None = N
         "cases",
         "evidence",
         "verdict",
+        "coverage",
         "unverified",
         "duration_s",
     }
@@ -675,22 +942,37 @@ def validate_report(report: dict, evidence_root: Path, expected: dict | None = N
         if row["fixture"] != fixture:
             raise EvidenceError("fixture/source/data digest mismatch")
         fixture_map[row["id"]] = files
-        if row["status"] not in STATUSES or set(row["stages"]) != set(CC.STAGES):
+        if row["status"] not in ROW_STATUSES or set(row["stages"]) != set(CC.STAGES):
             raise EvidenceError("missing stage/unknown status")
         if any(
-            s.get("status") not in STATUSES or not s.get("criterion")
+            s.get("status") not in STAGE_STATUSES or not s.get("criterion")
             for s in row["stages"].values()
         ):
             raise EvidenceError("missing stage status/criterion")
+        category = row["failure_category"]["category"]
+        if category is not None and category not in TX.CATEGORIES:
+            raise EvidenceError("unknown failure category")
+        if (category is None) != (
+            row["status"] in ("passed", "expected_limitation", "partial_coverage", "not_reproduced")
+        ):
+            raise EvidenceError("failure category must be set exactly on non-green rows")
+        if row["status"] == "partial_coverage" and not any(
+            s["status"] == "not_covered" for s in row["stages"].values()
+        ):
+            raise EvidenceError("partial_coverage without a not_covered layer")
+        if row["status"] in PROOF_STATUSES and _native_status(row["native"]["result"]) != "passed":
+            raise EvidenceError("native reference does not support a product verdict")
+        if row["native"]["status"] != _native_status(row["native"]["result"]) and row["native"][
+            "status"
+        ] in ("passed", "invalid_fixture"):
+            raise EvidenceError("native status does not follow from native facts")
         for key in ("native", "tavotto"):
             count = row["executions"][key]
             if count is not None and (type(count) is not int or count < 0):
                 raise EvidenceError("invalid execution count")
-        if row["status"] in ("passed", "failed", "expected_limitation") and row[
-            "status"
-        ] != case_status(row):
+        if row["status"] in PROOF_STATUSES and row["status"] != case_status(row):
             raise EvidenceError("verdict lacks native/count/environment/stage proof")
-        if row["status"] in ("passed", "failed", "expected_limitation"):
+        if row["status"] in PROOF_STATUSES:
             env = row["environment_before"]
             if (
                 not env.get("fingerprint")
@@ -715,6 +997,8 @@ def validate_report(report: dict, evidence_root: Path, expected: dict | None = N
             raise EvidenceError("native failure is not a Tavotto defect")
     if report["verdict"] != verdict(rows):
         raise EvidenceError("incorrect aggregate verdict")
+    if report["coverage"] != coverage_table(rows):
+        raise EvidenceError("coverage table does not follow from the case stages")
     if not re.fullmatch(r"[0-9a-f]{64}", report["corpus_sha256"]):
         raise EvidenceError("missing corpus digest")
     if report["corpus_sha256"] != canonical(fixture_map):
@@ -746,11 +1030,13 @@ def launch_adapter(
     process = package_smoke.run_isolated_command(
         command, env=env, cwd=work, evidence=evidence, timeout=timeout
     )
-    (evidence / "process.json").write_text(json.dumps(process))
+    (evidence / "process.json").write_text(json.dumps(process), encoding="utf-8")
     if process["cleanup"].get("group_gone") is False:
         raise EvidenceError("adapter cleanup uncertain: process group remains")
-    if process["timed_out"] or process["exit_code"] != 0:
-        raise EvidenceError("adapter timeout/failure; retained stdout/stderr/process evidence")
+    if process["timed_out"]:
+        raise AdapterTimeout("adapter timeout; retained stdout/stderr/process evidence")
+    if process["exit_code"] != 0:
+        raise EvidenceError("adapter failure; retained stdout/stderr/process evidence")
 
 
 def run(args) -> int:
@@ -782,7 +1068,7 @@ def run(args) -> int:
         with tempfile.TemporaryDirectory(prefix="compat-guardian-") as tmp:
             work = Path(tmp)
             req = {"suite": args.suite, "case": cid, "work": str(work), "evidence": str(dest)}
-            (work / "request.json").write_text(json.dumps(req))
+            (work / "request.json").write_text(json.dumps(req), encoding="utf-8")
             source_hashes = [
                 v
                 for k, v in fixtures[cid].items()
@@ -803,27 +1089,22 @@ def run(args) -> int:
                     evidence=dest,
                     timeout=args.timeout,
                 )
-                row = json.loads((dest / "result.json").read_text())
+                row = json.loads((dest / "result.json").read_text(encoding="utf-8"))
             except (subprocess.TimeoutExpired, EvidenceError, OSError, ValueError) as exc:
-                row = {
-                    "id": cid,
-                    "status": "unknown",
-                    "layer": "runner",
-                    "profile": "safe",
-                    "desktop_shell_verified": False,
-                    "stages": {
-                        s: stage("not_run", "adapter did not produce valid terminal evidence")
-                        for s in CC.STAGES
-                    },
-                    "executions": {"native": None, "tavotto": None, "basis": "unobserved"},
-                    "native": {"status": "unknown", "result": {}},
-                    "comparable": False,
-                    "environment_before": {},
-                    "environment_after": {},
-                    "product_classification": None,
-                    "raw": {"runner_error": str(exc)},
-                    "unverified": ["adapter did not complete"],
+                row = new_row(cid, "runner")
+                row["native"] = {"status": "unknown", "result": {}}
+                row["stages"] = {
+                    s: stage("not_run", "adapter did not produce valid terminal evidence")
+                    for s in CC.STAGES
                 }
+                row["executions"]["basis"] = "unobserved"
+                row["raw"] = (
+                    {"adapter_timeout": str(exc)[:300]}
+                    if isinstance(exc, AdapterTimeout)
+                    else {"runner_error": str(exc)[:300]}
+                )
+                row["unverified"].append("adapter did not complete")
+                finalize_row(row)
             finally:
                 preserve_execution_logs(work, dest)
             row["fixture"] = {
@@ -850,6 +1131,7 @@ def run(args) -> int:
         "cases": rows,
         "evidence": evidence_refs(evidence),
         "verdict": verdict(rows),
+        "coverage": coverage_table(rows),
         "duration_s": round(time.monotonic() - started, 3),
         "unverified": [
             "real WebView2/WKWebView",
@@ -858,10 +1140,26 @@ def run(args) -> int:
             "no automatic promotion/baseline update",
         ],
     }
-    validate_report(report, evidence, initial)
+    try:
+        validate_report(report, evidence, initial)
+    except EvidenceError:
+        # Keep what was observed for diagnosis, under a name `validate` never accepts.
+        write_report("guardian.unvalidated.json", report, root=output)
+        raise
     path = write_report("guardian.json", report, root=output)
+    summary_path = output / "reports" / "summary.md"
+    summary_path.write_text(SM.case_markdown(report), encoding="utf-8")
     print(json.dumps({"report": str(path), "run_id": run_id, "verdict": report["verdict"]}))
-    return 0 if report["verdict"] == "passed" else 1 if report["verdict"] == "failed" else 3
+    return exit_code_for(report["verdict"])
+
+
+def not_implemented(name: str) -> int:
+    print(
+        f"guardian {name}: not implemented in CG-01 (planned for a later stage; "
+        "this stub never produces results)",
+        file=sys.stderr,
+    )
+    return EXIT_USAGE
 
 
 def main(argv=None) -> int:
@@ -875,6 +1173,16 @@ def main(argv=None) -> int:
     runner.add_argument("--timeout", type=float, default=600)
     checker = subs.add_parser("validate")
     checker.add_argument("report")
+    summarizer = subs.add_parser("summarize", help="aggregate reports (never invents a rate)")
+    summarizer.add_argument("reports", nargs="+")
+    summarizer.add_argument("--json-out")
+    summarizer.add_argument("--markdown-out")
+    promoter = subs.add_parser("promote", help="emit a promotion candidate record (proposal only)")
+    promoter.add_argument("report")
+    promoter.add_argument("--case", required=True)
+    promoter.add_argument("--out", required=True)
+    for name in ("explore", "triage", "minimize"):
+        subs.add_parser(name, help="not implemented in CG-01")
     private = subs.add_parser("_execute", help=argparse.SUPPRESS)
     private.add_argument("request")
     args = ap.parse_args(argv)
@@ -883,17 +1191,38 @@ def main(argv=None) -> int:
             if not math.isfinite(args.timeout) or args.timeout <= 0:
                 raise EvidenceError("timeout must be positive")
             return run(args)
+        if args.command in ("explore", "triage", "minimize"):
+            return not_implemented(args.command)
+        if args.command == "summarize":
+            summary = SM.summarize([SM.load_report(Path(r)) for r in args.reports])
+            markdown = SM.render_markdown(summary)
+            if args.json_out:
+                Path(args.json_out).write_text(
+                    json.dumps(summary, indent=2) + "\n", encoding="utf-8"
+                )
+            if args.markdown_out:
+                Path(args.markdown_out).write_text(markdown, encoding="utf-8")
+            print(markdown)
+            return 0
+        if args.command == "promote":
+            candidate = SM.promote(SM.load_report(Path(args.report)), args.case, Path(args.out))
+            print(json.dumps({"candidate": args.out, "eligible": candidate["eligible_for_review"]}))
+            return 0
         if args.command == "validate":
             path = Path(args.report)
             validate_report(
-                json.loads(path.read_text()), path.parent.parent / "evidence", source_state()
+                json.loads(path.read_text(encoding="utf-8")),
+                path.parent.parent / "evidence",
+                source_state(),
             )
             print("valid current-checkout evidence")
             return 0
-        request = json.loads(Path(args.request).read_text())
+        request = json.loads(Path(args.request).read_text(encoding="utf-8"))
         fixture_files(request["suite"], registered(request["suite"])[request["case"]])
         row = _execute(request)
-        (Path(request["evidence"]) / "result.json").write_text(json.dumps(row, indent=2))
+        (Path(request["evidence"]) / "result.json").write_text(
+            json.dumps(row, indent=2), encoding="utf-8"
+        )
         return 0
     except (EvidenceError, KeyError, ValueError, OSError) as exc:
         print(f"guardian: {exc}", file=sys.stderr)
@@ -903,5 +1232,10 @@ def main(argv=None) -> int:
         return 2
 
 
+import compat_guardian_summary as SM  # noqa: E402  (circular by design; bottom import)
+
 if __name__ == "__main__":
-    raise SystemExit(main())
+    # Run through the importable module so helper modules share one EvidenceError class.
+    import compat_guardian
+
+    raise SystemExit(compat_guardian.main())
