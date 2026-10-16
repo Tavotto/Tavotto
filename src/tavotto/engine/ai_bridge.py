@@ -112,6 +112,8 @@ def _finish_session(sess: dict, *, error: str | None = None) -> None:
         transcript=sess.get("transcript") or [],
         refresh=sess.get("refresh"),
     )
+    # 结束时刻：详情的 `ended_ms`（#1098 单独合入时前端靠它判 cancelled 快照是不是终态；这里与 `final` 同时置位）
+    sess["ended_ms"] = int(time.time() * 1000)
     sess["final"] = True
 
 
@@ -935,17 +937,6 @@ def run(
                 sess["changed"],
                 sess["refresh"]["status"],
             )
-            ai_history.record_end(
-                sid,
-                sess["status"],
-                diff=sess["diff"],
-                changed=sess["changed"],
-                transcript=sess["transcript"],
-                refresh=sess["refresh"],
-            )
-            # 结束时刻：会话详情据此告诉前端「这是不是终态快照」——`cancel` 之后 status 立刻是 cancelled，但 changed / diff / refresh
-            # 要等 pump 收尾才算出来；没有 ended_ms 的 cancelled 快照不是终态
-            sess["ended_ms"] = int(time.time() * 1000)
             # changed / diff / refresh 此刻才全部确定：`final` 之前的快照（包括 cancel 之后立刻变成 cancelled 的）不是终态
             _finish_session(sess)
             emit(
@@ -966,15 +957,6 @@ def run(
             sess["changed"] = False
             sess["diff"] = ""
             sess["refresh"] = sess.get("refresh") or {"status": "skipped"}
-            ai_history.record_end(
-                sid,
-                "failed",
-                error=str(exc),
-                transcript=sess.get("transcript") or [],
-                refresh=sess["refresh"],
-            )
-            sess["ended_ms"] = int(time.time() * 1000)
-            sess["final"] = True
             _finish_session(sess, error=str(exc))
             emit(
                 "ai.done",
