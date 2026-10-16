@@ -87,7 +87,7 @@ pytest 的假设进去会扩大攻击面）。纯标准库，复用 `_common.run
   - NSIS 安装 → 升级后的真实文件集；
   - 真 Codex（Store 版）交接。
 
-### 六、交接三态（后续独立 PR，本 PR 不实现）
+### 六、交接三态（独立 PR 实现，见本节末「实现」）
 
 交接现在的 `ok` 有两层含义：
 - CLI 层（`engine/handoff.py` `open_target`）：解析、登记、唤起都成功了，桌面模式下进程还活着；
@@ -102,6 +102,33 @@ pytest 的假设进去会扩大攻击面）。纯标准库，复用 `_common.run
   - `verified_success`：`render_success` 为真，且渲染结果确认是目标 Figure（stem 与 registry 一致、manifest 非空）。
 - 确认信号要新增一个**经本机会话认证（ADR 0008）**的有限期查询，不开无认证端点，不为验证去执行用户脚本。
   同源对：`locate.PROTOCOL_VERSION` ↔ 插件 `PROTOCOL`、`docs/handoff-protocol.md`、技能文本。
+
+#### 实现（交接三态 PR）
+
+**确认信号用 0700/0600 的回执文件，不开 HTTP 端点。** 原因是事实而非偏好：桌面 sidecar 的端口由壳建议、实绑后
+只写进壳的握手文件，磁盘上没有任何本机凭据（ADR 0008「桌面模式的差异」：不写凭据文件、`/api/session/relaunch` 回 404），
+CLI 既找不到端口也没有凭据可带；要做成「经会话认证的查询」就得给桌面新造一个凭据发布面，那是放宽 ADR 0008。
+回执通道的信任锚与 `session_client` 凭据文件、ADR 0021 §4 的 native descriptor 是同一个论证（`<data_dir>/session/`
+本人可读写、网页碰不到），没有新端点就没有可被绕过的 guard。实现与约束全文在 `engine/handoffreceipt.py` 的模块文档。
+
+- **流程**：CLI 唤起**之前**写 `<data_dir>/session/handoff/<32 位十六进制 ID>.json`（项目身份、stem、`expires_at`、
+  `result: null`）→ 唤起 → 有界轮询；实例在 `/api/engine/render` 收尾处（成功 / `WorkerError`）把结论写进匹配的期望
+  （项目 + stem 相同、未过期、尚无结论；第一份结论赢）→ CLI 读到后删掉自己的期望。**只记录桌面端本来就会做的那次渲染，
+  不为验证触发任何执行**；交接落图走 `openFastEdit → enterElementEdit`，有脚本的 Figure 会发起这次渲染。
+- **等待与超时**：`tavotto open --render-wait SECONDS`，CLI 默认 20 秒、0 = 不等；`open_target()` 自己默认 0（库调用不被拖慢）。
+  期望有效期 = 等待上限 + 30 秒宽限，陈旧文件（1 小时）顺手清。**到点没结论是 `unverified/timeout`，绝不记 failed。**
+- **`launch.render`**（加性对象，`ok`、`protocol: 1` 不变）：
+  `{"status": "ok|failed|unverified", "verified": bool, "waited_ms": int, …}`。
+  `unverified` 带 `reason`（闭集 `not_waited` / `timeout` / `channel_unavailable` / `no_target_stem`）；
+  `failed` 带 `code`（实例报出的 worker 稳定码，如 `engine_files_incomplete`、`missing_dependency`；
+  不合规的串落成 `render_failed`）；`ok` 带 `stem` / `registry_match` / `manifest_elements`。
+  `verified` 的**唯一判据**是 `handoffreceipt.summarize`：渲染成功 ∧ 回执 stem == 目标 stem ∧ 注册表里有该 stem ∧ manifest 非空。
+- **插件顶层三字段**（`scripts/handoff.py`，只搬运不另判）：`launch_success`（true=唤起成功；null=`--no-launch`；false=没走到唤起）、
+  `render_success`（true / false=明确失败 / **null=不知道**）、`verified_success`（仅 `render.verified === true` 才 true）；外加 `render` 细节。
+  旧 CLI 没有 `launch.render`：插件补 `{"status":"unverified","reason":"cli_without_render_signal"}`，
+  `render_success: null`、`verified_success: false`。旧插件读新 CLI：多出的键被忽略。退出码与 `ok` 一字未改。
+- **没覆盖的**：没有任何实例在写回执（旧版本实例 / 数据目录被隔离成不同位置）→ `timeout`；无脚本 Figure（不可参数化）不发起渲染 → `timeout`；
+  真 Windows 桌面（MSIX 副本）上的端到端未验。
 
 ## 不做
 

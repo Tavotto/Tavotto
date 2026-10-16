@@ -84,6 +84,13 @@
   `projectStore.open`（那条路 switchDocument 成空白文档，用户排的版当场没）；
   ② 必须重扫素材（交接的图刚写到磁盘，实例手里那份 panels 是旧的）；
   ③ 找不到就说找不到，绝不退而求其次选别的面板。重复交接同一张只选中，不叠第二份。
+- **交接三态（ADR 0131 第六节）**：`ok` 的语义不变，只加性地给 `launch.render`
+  （`ok|failed|unverified` + `verified` + 稳定 `code`/`reason`）与插件顶层 `launch_success` /
+  `render_success` / `verified_success`。确认信号是 `engine/handoffreceipt.py` 的 0700/0600 回执文件
+  （CLI 唤起**前**写期望、`/api/engine/render` 收尾写回、CLI 有界轮询），**不是 HTTP 端点**——桌面
+  sidecar 没有磁盘凭据（ADR 0008），为查询新造凭据面等于放宽边界。到点没结论一律 `unverified`，
+  绝不记 failed；`verified` 的判据只在 `handoffreceipt.summarize` 一处，插件只搬运。看护
+  `tests/test_handoff_render_receipt.py`。
 
 ## 速查表原要点（2026-09-25 迁入，#608）
 

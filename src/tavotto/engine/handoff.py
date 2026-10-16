@@ -49,6 +49,7 @@ from urllib.parse import quote
 from . import (
     discover as engine_discover,
     figcapture as engine_figcapture,
+    handoffreceipt as engine_receipt,
     locate as engine_locate,
     registry as engine_registry,
     session_client,
@@ -62,6 +63,10 @@ MAX_PARENTS = 3
 #: 桌面 App 路径覆盖（开发态指向 dist/Tavotto，与 TAVOTTO_WORKER_PYTHON 同款惯例）
 APP_ENV = "TAVOTTO_DESKTOP_APP"
 DEFAULT_PORT = 5089
+#: 唤起之后最多等多久，看实例对目标 stem 的那一次渲染有没有结论（秒，`--render-wait`）。
+#: CLI 默认值（`cli()`）；`open_target` 自己默认 0 = 不等，库调用不被偷偷拖慢。
+#: 到点没结论是 `unverified`，不是 `failed`；0 = 不等。
+DEFAULT_RENDER_WAIT = 20.0
 
 
 class HandoffError(RuntimeError):
@@ -1041,9 +1046,12 @@ def open_target(
     launch_ui: bool = True,
     stem: str | None = None,
     no_probe: bool = False,
+    render_wait: float = 0.0,
+    receipt_clock=None,
+    receipt_sleep=None,
     **kw,
 ) -> dict:
-    """解析 → 登记 →（脚本目标按需 safe probe）→ 唤起。
+    """解析 → 登记 →（脚本目标按需 safe probe）→ 唤起 →（`render_wait` > 0 时）等渲染回执。
 
     返回一份可直接 json.dumps 的结果。`.py` 目标带 `probe` / `figures` /
     `pick` 三个附加键（路由细节见 resolve_script_route）。
@@ -1091,8 +1099,55 @@ def open_target(
         result["probe"] = {k: v for k, v in probe_info.items() if k != "figures"}
         result["pick"] = target.pick
     if launch_ui:
-        result["launch"] = launch(target, prefer=prefer, port=port, **kw)
+        result["launch"] = _launch_with_render(
+            target,
+            prefer=prefer,
+            port=port,
+            render_wait=render_wait,
+            clock=receipt_clock,
+            sleep=receipt_sleep,
+            **kw,
+        )
     return result
+
+
+def _launch_with_render(
+    target: Target, *, render_wait: float, clock=None, sleep=None, **launch_kw
+) -> dict:
+    """唤起，并给 `launch` 加上 `render`（ADR 0131 第六节「交接三态」）。
+
+    `ok` 的语义**不变**（仍是「唤起成功且进程活着」）；`render` 是加性字段：
+    `ok` / `failed` / `unverified` 三值，**查不到、超时、通道不可用、没有目标 stem 一律 unverified**，
+    只有实例明确报了错才是 failed。期望必须在唤起**之前**写好——转发给已在跑的实例时
+    渲染可能比 launch 返回还早。
+    """
+    exp = None
+    render: dict
+    if target.stem is None:
+        render = engine_receipt.unverified(engine_receipt.REASON_NO_TARGET_STEM)
+    elif render_wait <= 0:
+        render = engine_receipt.unverified(engine_receipt.REASON_NOT_WAITED)
+    else:
+        exp = engine_receipt.expect(target.project, target.stem, render_wait)
+        render = engine_receipt.unverified(engine_receipt.REASON_CHANNEL_UNAVAILABLE)
+    try:
+        info = launch(target, **launch_kw)
+    except BaseException:
+        if exp is not None:
+            engine_receipt.discard(exp)
+        raise
+    if exp is not None:
+        try:
+            kw = {}
+            if clock is not None:
+                kw["clock"] = clock
+            if sleep is not None:
+                kw["sleep"] = sleep
+            render = engine_receipt.wait(exp, render_wait, **kw)
+        finally:
+            engine_receipt.discard(exp)
+    info["render"] = render
+    return info
 
 
 def _report(result: dict) -> None:
@@ -1146,6 +1201,11 @@ def _report(result: dict) -> None:
         print(f"* 已交给正在运行的 Tavotto: {launch_info['url']}")
     else:
         print(f"* 正在启动 Tavotto: {launch_info['url']}")
+    render = launch_info.get("render") or {}
+    if render.get("status") == "failed":
+        print(f"! 界面里这张图没渲染出来（{render.get('code')}）——窗口已打开，但图没有画成")
+    elif render.get("status") == "ok" and not render.get("verified"):
+        print("! 界面渲染了，但没能确认渲染的就是这张图（stem 与注册表不一致或清单为空）")
 
 
 def cli(argv: list[str]) -> int:
@@ -1162,6 +1222,16 @@ def cli(argv: list[str]) -> int:
     )
     ap.add_argument("--stem", default=None, help="脚本产出多张图时显式选哪张（只对 .py 目标有效）")
     ap.add_argument("--port", type=int, default=DEFAULT_PORT, help="浏览器模式端口")
+    ap.add_argument(
+        "--render-wait",
+        type=float,
+        default=DEFAULT_RENDER_WAIT,
+        metavar="SECONDS",
+        help=(
+            "唤起后最多等多少秒，看界面对目标图的那一次渲染有没有结论"
+            f"（默认 {DEFAULT_RENDER_WAIT:g}；0 = 不等）。到点没结论是 unverified，不是失败"
+        ),
+    )
     ap.add_argument("--json", action="store_true", help="输出机器可读结果")
     args = ap.parse_args(argv)
     # stdout 是管道时 Windows 退回 cp936/cp1252，输出里的中文（项目路径、
@@ -1197,6 +1267,7 @@ def cli(argv: list[str]) -> int:
             launch_ui=not args.no_launch,
             stem=args.stem,
             no_probe=args.no_probe,
+            render_wait=args.render_wait,
         )
     except HandoffError as exc:
         # 失败也必须是**机器可解析的一行 JSON**：调用方按 `code` 分诊，
