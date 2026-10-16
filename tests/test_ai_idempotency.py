@@ -1066,6 +1066,38 @@ def test_an_http_exception_or_error_response_after_spawn_is_unresolved(
     _wait_for(lambda: _spawned(counter) == 1)  # 进程确实起来了（起 Python 要点时间）
 
 
+def test_the_post_spawn_log_never_contains_the_request_id(
+    client, tmp_path, cli, monkeypatch, caplog
+):
+    """请求 id 不进日志（docs/rules/backend/ai-agent-bridge.md）：异常消息里带着 rid 也一样——只留类型名与栈帧。"""
+    import logging
+
+    state, _ = cli
+    state["delay"] = 0.3
+    _open(client, _project(tmp_path))
+    monkeypatch.setattr(m, "sse_publish", lambda *a: None)
+    real_thread = ai_bridge.threading.Thread
+    leaked = f"boom {RID}"
+
+    class FaultyThread(real_thread):
+        def start(self):
+            if str(self.name).startswith("ai-"):
+                raise RuntimeError(leaked)
+            super().start()
+
+    monkeypatch.setattr(ai_bridge.threading, "Thread", FaultyThread)
+    _put_pending(client, RID)
+    with caplog.at_level(logging.DEBUG):
+        r = _post(client, rid=RID)
+    assert r.status_code == 503
+    logged = [rec for rec in caplog.records if "AI 任务已启动但随后出错" in rec.getMessage()]
+    assert logged, "出错必须留一条日志"
+    for rec in caplog.records:
+        text = rec.getMessage() + (rec.exc_text or "") + str(rec.args) + str(rec.exc_info)
+        assert RID not in text and leaked not in text
+    assert "RuntimeError" in logged[0].getMessage()  # 类型名还在，能定位
+
+
 def test_an_error_response_after_spawn_is_unresolved(client, tmp_path, cli, monkeypatch):
     state, counter = cli
     state["delay"] = 0.3
