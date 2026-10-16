@@ -237,6 +237,11 @@ async function land(
     return 'unavailable'
   }
 
+  // 同一版本的另一次尝试（普通 PUT 与 pagehide keepalive 重叠）先写进去了：服务器回 stale，但它那一行的戳
+  // **就是这一版自己的戳**——这是本版本已被接受，不是别处的写入。按已接受收尾，不能当成跨标签页替换而放弃
+  //（放弃会让 draftSnapshot 在对账完成前拿到上一版的戳，提交记错戳、被接受后清不掉草稿）
+  if (result === 'stale' && entry && latest && serverStamp !== undefined && serverStamp === entry.stamp) result = 'saved'
+
   if (result === 'stale') {
     // 服务器说：它那里有比这一版**更新的戳**，这一版没被采纳。只拿**这一版自己的基线**（`baseStamp`）和服务器戳比：
     // ≤ 基线 = 本版是在已知的最新状态上编辑的（墙钟回拨属于这种）——仍是最新版本时换更大的戳重写（有界）；

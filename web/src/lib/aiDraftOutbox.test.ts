@@ -41,6 +41,35 @@ afterEach(() => {
   next = []
 })
 
+describe('aiDraftOutbox · 同一版本的重复写入', () => {
+  it('同一版本的另一次尝试已写入、本次回 stale 且服务器戳等于本版的戳：按已接受收尾，不当成别处替换而放弃', async () => {
+    const events: string[] = []
+    outbox.subscribe('p', 'f', (e) => events.push(e.kind))
+    outbox.advance('p', 'f', 1) // 基线已知：没有这条修复时会被判为「别处写了更新稿」而放弃
+    outbox.post('p', 'f', 'v1')
+    // 服务器回 stale，带回的戳就是这次 PUT 自己带的戳（另一次同版本尝试先落地了）
+    let sent = 0
+    const realFetch2 = globalThis.fetch
+    globalThis.fetch = (async (url: unknown, init?: RequestInit) => {
+      if (String(url).includes('/api/ai/drafts') && init?.method === 'PUT') {
+        const body = JSON.parse(String(init.body)) as { text: string; stamp: number }
+        puts.push({ text: body.text, stamp: body.stamp })
+        sent++
+        return new Response(JSON.stringify({ revision: 1, stamp: body.stamp, stale: true }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      }
+      return realFetch2(url as RequestInfo, init)
+    }) as typeof fetch
+    await outbox.flush('p', 'f')
+    expect(sent).toBe(1) // 没有换戳重写
+    expect(events).toContain('accepted')
+    expect(events).not.toContain('abandoned')
+    expect(outbox.peek('p', 'f')).toBeNull()
+  })
+})
+
 describe('aiDraftOutbox · 基线未知模式', () => {
   it('首读失败后第一次写成功，就退出基线未知：之后遇到没见过的戳被判 stale 时放弃，不换戳重写', async () => {
     const events: string[] = []
