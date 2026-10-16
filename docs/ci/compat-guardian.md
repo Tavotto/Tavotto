@@ -45,14 +45,15 @@ python scripts/ci/compat_guardian.py run --suite {compat_engine|compat_v2} [--ca
 python scripts/ci/compat_guardian.py validate DIR/RUN_ID/reports/guardian.json
 python scripts/ci/compat_guardian.py summarize REPORT [REPORT ...] [--json-out F] [--markdown-out F]
 python scripts/ci/compat_guardian.py promote REPORT --case ID --out FILE     # 只出提案
-python scripts/ci/compat_guardian.py {explore|triage|minimize}              # CG-01：桩，退出码 2
+python scripts/ci/compat_guardian.py explore --seed N --out DIR [--limit N] [--parent a,b] [--static-only]
+python scripts/ci/compat_guardian.py {triage|minimize}                      # 桩，退出码 2
 ```
 
 - `--out` 必须在源码工作树之外；每次 `run` 建一个 UUID 目录：`reports/guardian.json`（原子写）、
   `reports/summary.md`（每 case 一行的表）、`evidence/<case>/…`（原始证据，按 sha256 引用）。
   校验失败时保留 `reports/guardian.unvalidated.json` 供诊断，`validate` 永不接受这个名字。
 - 省略 `--case` = 跑该 suite 的全部登记 case。
-- `explore / triage / minimize` 在 CG-01 是**显式的桩**：退出码 2，stderr 写
+- `triage / minimize` 仍是**显式的桩**：退出码 2，stderr 写
   `not implemented in CG-01`，不产出任何结果。它们不被伪装成已实现。
 - `promote` 只写一个候选记录（`proposal_only: true, applied: false`），**拒绝**写入
   `tests/compat/`、`tests/fixtures/`、`tests/support/`，也拒绝写任何名为 `manifest.json` /
@@ -248,6 +249,56 @@ CompatBench 的 `run_group` 之外 runner 崩溃目前会被 `compat_matrix.py:m
 | 13 | 受限入口不能自动升 Native | 行为由 `tests/test_execution_fallback_e2e.py::test_a_browser_mode_service_never_falls_back_to_native` 拥有；Guardian 加一层：`s04b / s05 / s06` 在声明文件里声明为 `expected_limitation`（理由「案例 13」+ 上述 owner 测试）；观测偏离声明（包括「变好」，可能是静默升 Native）即 `failed` |
 | 14 | 两边都出图但语义不同 | `v2_stages` 的标题语义对比（`test_v2_both_graphs_wrong_science_fails`）；更一般的数据级语义留 CG-02 |
 | 15 | 两边都对 → 不能编造缺陷 | `Case15BothCorrect` |
+
+---
+
+## 11. Explore（CG-02）
+
+`explore` 从**已评审父本**出发，用**已评审的确定性 AST 变换**生成派生候选，真实运行 native 与 Tavotto 引擎路径，
+把差异记成「候选失败记录」。实现：`scripts/ci/compat_explore_transforms.py`（变换/去重/覆盖）、
+`scripts/ci/compat_explore.py`（执行/比较/报告）。
+
+**候选 = 父本 + 变换链 + seed，仅此而已。** 执行器只接受这三个输入，自己重新推导文件并核对 `candidate_id`；
+不存在「运行某个路径/源码字符串」的入口，候选清单里的文件或字段被改了也拿不到执行权（`derive` 不通过）。
+
+| 信任级 | 条件 | 做什么 |
+| --- | --- | --- |
+| 父本级 | 父本是已提交语料（`tests/compat` 引擎父本）、变换是固定确定性模板、静态判定无随机/时间/网络/子进程/`eval` | 在 CG-01 同一套隔离里真实执行（托管临时 runner 或本机隔离目录；仍不是 OS 隔离） |
+| 仅静态 | V2 父本（会话 adapter 不由 explore 驱动）；任何来源不确定或非确定性（`random/secrets/uuid/time/datetime/socket/urllib/subprocess/ctypes`、`numpy.random`、`eval/exec/input`） | 只 `compile`，永不执行；报告里写原因 |
+
+依赖授权端点零调用、不装任何东西、不用外部 LLM/API；缺包只会让 native 失败 → `environment_unavailable`。
+
+**变换（一次只动一个轴；少量二因子组合按 seed 抽样）**
+
+| 家族 | 变换 | 轴 | 类别 |
+| --- | --- | --- | --- |
+| show_close | `show_close`（去 savefig，末尾 show()+close('all')，**G1**）、`show_only` | output_call | 改轴 |
+| same_path_multi_figure | `same_path_loop`（循环里 N 张图写同一路径，**G2**） | output_name | 改轴 |
+| import_alias | `import_alias`（pyplot/numpy 别名） | import_alias | 保型 |
+| entry_form | `wrap_main`（顶层改 `main()` + `__main__` 守卫） | entry | 保型 |
+| argparse_defaults | `argparse_out`（保存路径来自 argparse，默认值=原路径） | args | 保型 |
+| data_source | `inline_to_file`（第一个字面量数据列表改读相对 JSON） | data_source | 保型 |
+| style_rc | `rcparams`、`style_use` | style | 改轴 |
+
+保型：native 输出（图数、标题）必须等于父本——执行器同时跑父本 native 核对，不等就是 `invalid_candidate`（模板有 bug，
+不是 Tavotto 缺陷）。改轴：只能与这个变体自己的 native 比。所有改动都是 AST 编辑，结果必须能 `compile`。
+同 seed 逐字节相同（参数由 `seed + 父本 + 变换名` 的哈希派生，不依赖其它候选）。
+
+**比较（`compare`，纯函数）**：`zero_figures`（原生 N 图 / Tavotto 0 图）、`fewer_figures`（partial_capture）、
+`same_path_content_mismatch`（原生最后写入该路径的图 vs Tavotto 保留的图）、`title_missing`。差异带 Guardian 失败类别。
+Tavotto 侧走产品自己的发现链（静态注册表，不足时试运行探测）再起一次性 worker 取 manifest。
+`show()` 之后 `close()` 的图原生算「出现过」（`native_ref` 记录 show 时的在开图）。
+
+**结构去重与覆盖**：按「轴向量 + 规范化 AST 签名」去重（数字/字符串常量与 `cg_plt3` 之类别名数字归一，所以仅参数不同不算新结构）。
+报告 `coverage` 给出：每个家族的轴、适用父本数、候选数；每个轴的候选数；保型/改轴数；去重前后；以及父本按语料类别的分布
+对比整个语料——**父本全是已经通过的 `script_shapes`，`core_artists / axes_layout / metamorphic / scientific_stack` 为零**，
+这个偏向在报告里是明文，候选与自己的 native 一致不代表别的形状没问题。
+
+**输出**（`--out/RUN_ID/`）：`candidates.json`（确定性）、`candidates/<id>/files/`、`evidence/<id>/…`、
+`reports/explore-report.json`、`reports/explore-summary.md`。报告含每候选的 seed、父本、变换链、AST 签名、信任级、
+执行次数（项目外审计计数器）、差异，以及 `known_gaps`：G1/G2 是否**由探索自己**发现（AC-05）。
+退出码：0 无差异；1 发现差异（候选失败记录）；3 有候选无结论；2 错误。**差异只是记录**：不改 baseline/manifest、
+不开 issue、不 promote。
 
 ---
 

@@ -32,10 +32,12 @@ HOSTED = {"ubuntu-24.04", "ubuntu-latest"}
 FILES_THE_PR_FILTER_MAY_NAME = (
     ".github/workflows/compat-guardian.yml",
     "scripts/ci/compat_guardian",
+    "scripts/ci/compat_explore",
     "scripts/ci/guardian_exec_observer.py",
     "scripts/ci/compat_driver.py",
     "tests/compat/guardian-report.schema.json",
     "tests/test_compat_guardian",
+    "tests/test_compat_explore",
     "tests/compat_guardian/",
     "docs/ci/compat-guardian.md",
 )
@@ -192,8 +194,10 @@ def test_guardian_infrastructure_changes_have_code_owners():
         "/tests/compat/**",
         "/tests/fixtures/compat_v2/**",
         "/scripts/ci/compat_guardian*",
+        "/scripts/ci/compat_explore*",
         "/scripts/ci/guardian_exec_observer.py",
         "/tests/test_compat_guardian*",
+        "/tests/test_compat_explore*",
         "/tests/compat_guardian/**",
         "/.github/workflows/compat-guardian.yml",
         "/docs/ci/compat-guardian.md",
@@ -210,7 +214,10 @@ def test_any_workflow_that_references_guardian_code_is_hosted_only_and_not_lab_r
     referencing = {
         path.name: path.read_text(encoding="utf-8")
         for path in sorted(WF.glob("*.y*ml"))
-        if re.search(r"compat_guardian|guardian_exec_observer", path.read_text(encoding="utf-8"))
+        if re.search(
+            r"compat_guardian|compat_explore|guardian_exec_observer",
+            path.read_text(encoding="utf-8"),
+        )
     }
     assert "compat-guardian.yml" in referencing, (
         "wrong subject: the Guardian workflow must be in the set"

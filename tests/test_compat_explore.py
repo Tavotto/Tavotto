@@ -1,0 +1,409 @@
+"""CG-02 explore: deterministic derivation, trust boundary, dedup, and real G1/G2 discovery."""
+
+from __future__ import annotations
+
+import ast
+import hashlib
+import json
+import sys
+import tempfile
+import unittest
+from argparse import Namespace
+from pathlib import Path
+from unittest import mock
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts/ci"))
+
+import compat_explore as ex  # noqa: E402
+import compat_explore_transforms as xt  # noqa: E402
+import compat_guardian as cg  # noqa: E402
+from test_compat_guardian import native_result  # noqa: E402
+
+SCRIPTS = Path(cg.HERE)
+CORPUS_FILES = ("tests/compat/manifest.json", "tests/compat/baseline.json")
+
+
+def fake_parent(case="fake_parent", source=None, executable=True) -> xt.Parent:
+    text = source or (
+        "import matplotlib.pyplot as plt\n\n\ndef main():\n"
+        "    fig, ax = plt.subplots()\n    ax.plot([1, 2, 3])\n    ax.set_title('t')\n"
+        "    fig.savefig('out.png')\n"
+    )
+    return xt.Parent(
+        "compat_engine",
+        case,
+        "script_shapes",
+        {"s.py": text.encode()},
+        "s.py",
+        "main",
+        executable,
+        {"files": {"s.py": cg.digest(text.encode())}},
+    )
+
+
+class Determinism(unittest.TestCase):
+    def test_same_seed_is_byte_identical_and_different_seed_differs(self):
+        outputs = []
+        for _ in range(2):
+            with tempfile.TemporaryDirectory() as tmp:
+                out = Path(tmp)
+                ex.write_candidates(xt.generate(11), out)
+                outputs.append(
+                    {
+                        p.relative_to(out).as_posix(): p.read_bytes()
+                        for p in sorted(out.rglob("*"))
+                        if p.is_file()
+                    }
+                )
+        self.assertEqual(outputs[0], outputs[1])
+        self.assertGreater(len(outputs[0]), 100)
+        other = xt.generate(12)["candidates"]
+        self.assertNotEqual(
+            [c["candidate_id"] for c in xt.generate(11)["candidates"]],
+            [c["candidate_id"] for c in other],
+        )
+
+    def test_every_candidate_compiles_and_records_its_derivation(self):
+        generated = xt.generate(3)
+        for manifest in generated["candidates"]:
+            for rel, data in generated["_files"][manifest["candidate_id"]].items():
+                if rel.endswith(".py"):
+                    compile(data.decode(), rel, "exec", dont_inherit=True)
+            self.assertEqual(manifest["seed"], 3)
+            self.assertIn(manifest["class"], ("shape_preserving", "axis_changing"))
+            self.assertRegex(manifest["ast_signature"], r"^[0-9a-f]{16}$")
+            self.assertTrue(manifest["chain"] and manifest["parent"]["files"])
+            self.assertEqual(manifest["trust"]["level"], "parent")
+
+    def test_transforms_never_use_string_replacement_on_source(self):
+        tree = ast.parse((SCRIPTS / "compat_explore_transforms.py").read_text(encoding="utf-8"))
+        calls = [
+            n
+            for n in ast.walk(tree)
+            if isinstance(n, ast.Call)
+            and isinstance(n.func, ast.Attribute)
+            and n.func.attr in ("replace", "sub")
+        ]
+        # The only text operations: identifier normalization for the AST signature and a
+        # comparison of the guard expression. Neither rewrites generated source.
+        texts = sorted(ast.unparse(c) for c in calls)
+        self.assertEqual(len(texts), 3, texts)
+        self.assertTrue(
+            all(("node.id" in t or "node.asname" in t or "node.test" in t) for t in texts), texts
+        )
+
+    def test_one_axis_per_chain_in_canonical_order(self):
+        parent = xt.load_parent("compat_engine", "shape_oo_savefig")
+        with self.assertRaises(cg.EvidenceError):
+            xt.build(parent, ("style_use", "rcparams"), 1)  # same axis twice
+        with self.assertRaises(cg.EvidenceError):
+            xt.build(parent, ("import_alias", "rcparams"), 1)  # wrong order
+        for manifest in xt.generate(5)["candidates"]:
+            self.assertLessEqual(len(manifest["chain"]), 2)
+
+    def test_changing_the_seed_changes_parameters_not_structure_signature(self):
+        parent = xt.load_parent("compat_engine", "shape_oo_savefig")
+        a, _ = xt.build(parent, ("same_path_loop",), 1)
+        found = {
+            xt.build(parent, ("same_path_loop",), s)[0]["chain"][0]["params"]["passes"]
+            for s in range(12)
+        }
+        self.assertGreater(len(found), 1)
+        self.assertEqual(
+            {xt.build(parent, ("same_path_loop",), s)[0]["ast_signature"] for s in range(12)},
+            {a["ast_signature"]},
+        )
+
+
+class TrustBoundary(unittest.TestCase):
+    def test_a_candidate_cannot_authorize_itself_identity_is_rederived(self):
+        parent = xt.load_parent("compat_engine", "shape_oo_savefig")
+        manifest, _ = xt.build(parent, ("import_alias",), 4)
+        spec = {"suite": "compat_engine", "case": "shape_oo_savefig"}
+        ex.derive(spec, ["import_alias"], 4, manifest["candidate_id"])
+        for bad in (
+            dict(chain=["rcparams"], seed=4, cid=manifest["candidate_id"]),
+            dict(chain=["import_alias"], seed=5, cid=manifest["candidate_id"]),
+            dict(chain=["import_alias"], seed=4, cid="0" * 20),
+        ):
+            with self.assertRaises(cg.EvidenceError):
+                ex.derive(spec, bad["chain"], bad["seed"], bad["cid"])
+
+    def test_executor_has_no_entry_that_takes_files_or_paths(self):
+        import inspect
+
+        for fn in (ex.derive, ex.execute_request, ex.run_one):
+            names = set(inspect.signature(fn).parameters)
+            self.assertFalse(names & {"files", "path", "source", "script"}, fn.__name__)
+
+    def test_nondeterministic_candidates_are_static_only_and_never_run(self):
+        risky = (
+            "import random\nimport matplotlib.pyplot as plt\n\n\ndef main():\n"
+            "    fig, ax = plt.subplots()\n    ax.plot([random.random(), 2])\n    fig.savefig('o.png')\n"
+        )
+        parent = fake_parent("risky", risky)
+        manifest, _ = xt.build(parent, ("style_use",), 1)
+        self.assertEqual(manifest["execution_plan"]["status"], "static_only")
+        self.assertTrue(any("random" in r for r in manifest["execution_plan"]["reasons"]))
+        for body in (
+            "import time\nt = time.time()\n",
+            "import subprocess\n",
+            "x = eval('1')\n",
+            "import numpy as np\nnp.random.rand()\n",
+        ):
+            plan = xt.execution_plan({"s.py": body.encode()}, True)
+            self.assertEqual(plan["status"], "static_only", body)
+        with tempfile.TemporaryDirectory() as tmp:
+            args = Namespace(
+                seed=1,
+                out=tmp,
+                limit=None,
+                parent=None,
+                static_only=False,
+                expected_sha=None,
+                timeout=5,
+            )
+            with (
+                mock.patch.object(xt, "default_parents", return_value=[parent]),
+                mock.patch.object(
+                    ex, "run_one", side_effect=AssertionError("must not execute")
+                ) as runner,
+            ):
+                ex.explore(args)
+            runner.assert_not_called()
+
+    def test_v2_parents_are_static_only(self):
+        generated = xt.generate(2)
+        v2 = [c for c in generated["candidates"] if c["parent"]["suite"] == "compat_v2"]
+        self.assertTrue(v2)
+        self.assertTrue(all(c["execution_plan"]["status"] == "static_only" for c in v2))
+
+    def test_no_dependency_authorization_or_install_surface_in_explore_code(self):
+        forbidden = (
+            "/api/",
+            "deprepair",
+            "depplan",
+            "depresolve",
+            "pip",
+            "install",
+            "authoriz",
+            "nativeperm",
+        )
+        for name in ("compat_explore.py", "compat_explore_transforms.py"):
+            tree = ast.parse((SCRIPTS / name).read_text(encoding="utf-8"))
+            doc_nodes = {
+                id(n.body[0].value)
+                for n in ast.walk(tree)
+                if isinstance(n, (ast.Module, ast.FunctionDef, ast.ClassDef))
+                and n.body
+                and isinstance(n.body[0], ast.Expr)
+                and isinstance(n.body[0].value, ast.Constant)
+            }
+            used = []
+            for n in ast.walk(tree):
+                if (
+                    isinstance(n, ast.Constant)
+                    and isinstance(n.value, str)
+                    and id(n) not in doc_nodes
+                ):
+                    used.append(n.value)
+                elif isinstance(n, ast.Name):
+                    used.append(n.id)
+                elif isinstance(n, ast.Attribute):
+                    used.append(n.attr)
+                elif isinstance(n, (ast.Import, ast.ImportFrom)):
+                    used += [a.name for a in n.names] + [getattr(n, "module", None) or ""]
+            for text in used:
+                for token in forbidden:
+                    # the 'pip' token must not match words like 'pipeline'; others are substrings
+                    self.assertFalse(token in text.lower(), f"{name}: {token!r} in {text!r}")
+            imported = {
+                a.name.split(".")[0]
+                for n in ast.walk(tree)
+                if isinstance(n, ast.Import)
+                for a in n.names
+            }
+            self.assertFalse(
+                imported & {"subprocess", "socket", "urllib", "requests", "http"}, name
+            )
+
+
+class Dedup(unittest.TestCase):
+    def test_structurally_identical_parents_collapse_by_axis_vector_and_signature(self):
+        a, b = fake_parent("twin_a"), fake_parent("twin_b")
+        generated = xt.generate(1, [a, b])
+        self.assertGreater(len(generated["dropped_duplicates"]), 0)
+        self.assertEqual(
+            generated["coverage"]["dedup"]["generated"],
+            len(generated["candidates"]) + len(generated["dropped_duplicates"]),
+        )
+        kept = {(tuple(c["axis_vector"]), c["ast_signature"]) for c in generated["candidates"]}
+        self.assertEqual(len(kept), len(generated["candidates"]))
+        singles = [c for c in generated["candidates"] if len(c["chain"]) == 1]
+        self.assertTrue(all(c["parent"]["case"] == "twin_a" for c in singles))
+
+    def test_coverage_exposes_bias_by_family_axis_and_parent_category(self):
+        cov = xt.generate(1)["coverage"]
+        self.assertGreaterEqual(len(cov["by_family"]), 7)
+        for fam in cov["by_family"].values():
+            self.assertIn("parent_count", fam)
+            self.assertIn("axis", fam)
+        self.assertIn("script_shapes", cov["parents"]["used_by_manifest_category"])
+        self.assertGreater(cov["parents"]["corpus_by_manifest_category"]["core_artists"], 0)
+        self.assertNotIn("core_artists", cov["parents"]["used_by_manifest_category"])
+        self.assertIn("bias_note", cov)
+        self.assertEqual(set(cov["by_class"]), {"shape_preserving", "axis_changing"})
+
+    def test_limit_selection_is_family_balanced_and_deterministic(self):
+        candidates = xt.generate(1)["candidates"]
+        chosen = ex.select(candidates, 9)
+        self.assertEqual(chosen, ex.select(candidates, 9))
+        self.assertGreaterEqual(len({c["axis_vector"][0] for c in chosen}), 7)
+
+
+class Judgment(unittest.TestCase):
+    NATIVE = native_result(
+        figure_count=3,
+        semantics={f"figure{i}": {"titles": [f"t{i}"]} for i in range(3)},
+        savefig_last_writer={"o.png": {"figure": 2, "titles": ["t2"]}},
+    )
+
+    def stems(self, **titles):
+        return {"stems": {k: {"titles": v} for k, v in titles.items()}, "error": None}
+
+    def test_all_figures_present_is_no_difference_case_15(self):
+        tav = self.stems(o=["t2"], a=["t0"], b=["t1"])
+        self.assertEqual(
+            ex.compare("axis_changing", self.NATIVE, tav, None)["outcome"], "no_difference"
+        )
+
+    def test_zero_figures_fewer_figures_and_wrong_figure_are_distinct_findings(self):
+        zero = ex.compare(
+            "axis_changing", self.NATIVE, {"stems": {}, "error": {"code": "script_no_figure"}}, None
+        )
+        self.assertEqual(zero["differences"][0]["kind"], "zero_figures")
+        self.assertIn("native 3 figure(s) / Tavotto 0 figures", zero["differences"][0]["summary"])
+        fewer = ex.compare("axis_changing", self.NATIVE, self.stems(o=["t2"]), None)
+        self.assertEqual(fewer["differences"][0]["kind"], "fewer_figures")
+        self.assertEqual(fewer["differences"][0]["category"], "partial_capture")
+        wrong = ex.compare(
+            "axis_changing", self.NATIVE, self.stems(o=["t0"], a=["t1"], b=["t2"]), None
+        )
+        kinds = [d["kind"] for d in wrong["differences"]]
+        self.assertEqual(kinds, ["same_path_content_mismatch"])
+        self.assertIn("Tavotto kept ['t0']", wrong["differences"][0]["summary"])
+
+    def test_preserving_transform_that_changes_native_output_is_an_invalid_candidate(self):
+        parent_native = native_result(figure_count=1, semantics={"figure0": {"titles": ["t0"]}})
+        verdict = ex.compare("shape_preserving", self.NATIVE, self.stems(o=["t2"]), parent_native)
+        self.assertEqual(verdict["outcome"], "invalid_candidate")
+        self.assertEqual(verdict["differences"], [])
+
+    def test_native_failure_is_never_a_tavotto_difference(self):
+        failed = native_result(exit_status=1, error={"type": "X", "traceback": "t"})
+        self.assertEqual(
+            ex.compare("axis_changing", failed, {"stems": {}, "error": {"code": "x"}}, None)[
+                "outcome"
+            ],
+            "invalid_fixture",
+        )
+        missing = native_result(
+            exit_status=1,
+            error={"type": "ModuleNotFoundError", "traceback": "ModuleNotFoundError: x"},
+        )
+        self.assertEqual(
+            ex.compare("axis_changing", missing, {"stems": {}}, None)["outcome"],
+            "environment_unavailable",
+        )
+
+
+class Cli(unittest.TestCase):
+    def test_static_only_explore_writes_candidates_executes_nothing_and_touches_no_corpus(self):
+        before = {p: hashlib.sha256((cg.ROOT / p).read_bytes()).hexdigest() for p in CORPUS_FILES}
+        with tempfile.TemporaryDirectory() as tmp:
+            args = Namespace(
+                seed=9,
+                out=tmp,
+                limit=12,
+                parent="shape_oo_savefig",
+                static_only=True,
+                expected_sha=None,
+                timeout=5,
+            )
+            with mock.patch.object(ex, "run_one", side_effect=AssertionError("must not execute")):
+                self.assertEqual(ex.explore(args), cg.EXIT_PASSED)
+            (run,) = Path(tmp).iterdir()
+            report = json.loads((run / "reports/explore-report.json").read_text(encoding="utf-8"))
+            self.assertEqual(list(report["outcome_counts"]), ["static_only"])
+            self.assertTrue((run / "candidates.json").is_file())
+            self.assertTrue(all(c["executions"]["tavotto"] == 0 for c in report["candidates"]))
+        self.assertEqual(
+            before,
+            {p: hashlib.sha256((cg.ROOT / p).read_bytes()).hexdigest() for p in CORPUS_FILES},
+        )
+
+    def test_out_inside_the_worktree_is_refused_and_expected_sha_is_pinned(self):
+        args = Namespace(
+            seed=1,
+            out=str(cg.ROOT / "tmp-explore"),
+            limit=1,
+            parent="shape_oo_savefig",
+            static_only=True,
+            expected_sha=None,
+            timeout=5,
+        )
+        with self.assertRaises(cg.EvidenceError):
+            ex.explore(args)
+        self.assertFalse((cg.ROOT / "tmp-explore").exists())
+        args.out, args.expected_sha = tempfile.mkdtemp(), "0" * 40
+        with self.assertRaises(cg.EvidenceError):
+            ex.explore(args)
+
+
+class RealDiscovery(unittest.TestCase):
+    """Real execution against the current product code (needs the scientific stack)."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.parent = xt.load_parent("compat_engine", "shape_oo_savefig")
+        cls.tmp = tempfile.TemporaryDirectory()
+        cls.addClassCleanup(cls.tmp.cleanup)
+
+    def run_chain(self, *chain):
+        manifest, _ = xt.build(self.parent, chain, 7)
+        out = Path(self.tmp.name) / "_".join(chain)
+        out.mkdir()
+        return manifest, ex.run_one(manifest, 7, out, 200)
+
+    def test_g1_show_then_close_is_found_by_exploration(self):
+        manifest, record = self.run_chain("show_close")
+        diff = record["judgment"]["differences"]
+        self.assertEqual(record["judgment"]["outcome"], "difference_found", record)
+        self.assertEqual(diff[0]["kind"], "zero_figures")
+        self.assertIn("native 1 figure(s) / Tavotto 0 figures", diff[0]["summary"])
+        self.assertGreaterEqual(record["executions"]["native"], 1)
+        row = {
+            "candidate_id": manifest["candidate_id"],
+            "chain": ["show_close"],
+            "differences": diff,
+        }
+        self.assertTrue(ex.known_gap_findings([row])["G1"]["found"])
+
+    def test_g2_same_path_in_a_loop_is_found_by_exploration(self):
+        manifest, record = self.run_chain("same_path_loop")
+        diff = record["judgment"]["differences"]
+        self.assertEqual(record["judgment"]["outcome"], "difference_found", record)
+        self.assertEqual(diff[0]["kind"], "same_path_content_mismatch")
+        self.assertIn("native last figure written to", diff[0]["summary"])
+        self.assertIn("Tavotto kept", diff[0]["summary"])
+
+    def test_shape_preserving_transforms_on_a_passing_parent_make_no_fake_difference(self):
+        for chain in (("import_alias",), ("argparse_out",), ("inline_to_file",)):
+            manifest, record = self.run_chain(*chain)
+            self.assertEqual(manifest["class"], "shape_preserving")
+            self.assertEqual(record["judgment"]["outcome"], "no_difference", (chain, record))
+            self.assertEqual(record["judgment"]["differences"], [])
+
+
+if __name__ == "__main__":
+    unittest.main()

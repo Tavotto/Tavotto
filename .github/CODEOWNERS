@@ -37,9 +37,11 @@
 /tests/compat/**                        @erwanjun
 /tests/fixtures/compat_v2/**            @erwanjun
 /scripts/ci/compat_guardian*            @erwanjun
+/scripts/ci/compat_explore*             @erwanjun
 /scripts/ci/guardian_exec_observer.py   @erwanjun
 /scripts/ci/compat_driver.py            @erwanjun
 /tests/test_compat_guardian*            @erwanjun
+/tests/test_compat_explore*             @erwanjun
 /tests/compat_guardian/**            @erwanjun
 /.github/workflows/compat-guardian.yml  @erwanjun
 /docs/ci/compat-guardian.md             @erwanjun

@@ -206,7 +206,8 @@ def run_native_ref(req: dict) -> int:
     继承产品的同一个盲点。输出不含渲染（不出 PNG），只出事实：
 
     * `exit_status`：脚本自然结束 = 0；`SystemExit(code)` 记 code；异常 = 1；
-    * `figure_count`：脚本期间被 `savefig` 的不同 Figure ∪ 退出时 pyplot 里还开着的；
+    * `figure_count`：脚本期间被 `savefig` 的、被 `show()` 展示过的、以及退出时 pyplot 里还开着的不同 Figure
+      （`show()` 之后 `close()` 的图用户看见过，必须算）；`savefig_last_writer` 记每个路径最后由哪张图写出；
     * `artifacts`：目录快照差里新增/改动的文件 + 是否读得回来；
     * `side_effects`：新增 / 修改 / 删除 的相对路径（项目目录整体快照对比）；
     * `script_entries`：驱动自己数到的脚本入口次数（只作交叉核对，权威计数在驱动外）。
@@ -234,6 +235,7 @@ def run_native_ref(req: dict) -> int:
             {
                 "figure": next(i for i, f in enumerate(figures) if f is self),
                 "path": os.path.realpath(target) if target else None,
+                "titles": [ax.get_title() for ax in self.axes],
             }
         )
         return real_savefig(self, fname, *args, **kwargs)
@@ -241,8 +243,19 @@ def run_native_ref(req: dict) -> int:
     sys.path.insert(0, os.path.dirname(script))
     sys.path.insert(0, project)
     before = _ref_snapshot(project)
+    shown: list[object] = []
+
+    def recording_show(*args, **kwargs):
+        """`show()` is where a user would see every open figure; remember them."""
+        for number in plt.get_fignums():
+            fig = plt.figure(number)
+            if not any(fig is f for f in figures):
+                figures.append(fig)
+            if not any(fig is f for f in shown):
+                shown.append(fig)
+
     mfigure.Figure.savefig = recording_savefig
-    plt.show = lambda *a, **k: None
+    plt.show = recording_show
     os.chdir(os.path.dirname(script))
     sys.argv = [script]
 
@@ -290,11 +303,19 @@ def run_native_ref(req: dict) -> int:
     for entry in saved:
         if entry["path"]:
             by_path.setdefault(entry["path"], set()).add(entry["figure"])
+    # relpath -> the LAST figure written there (what is on disk after `python script.py`).
+    last_writer: dict[str, dict] = {}
+    for entry in saved:
+        if entry["path"] and entry["path"].startswith(root_real + os.sep):
+            rel = os.path.relpath(entry["path"], root_real).replace(os.sep, "/")
+            last_writer[rel] = {"figure": entry["figure"], "titles": entry["titles"]}
     return _ok(
         exit_status=exit_status,
         error=error,
         script_entries=entries,
         figure_count=len(figures),
+        figures_shown=len(shown),
+        savefig_last_writer=last_writer,
         figures_saved=len({e["figure"] for e in saved}),
         figures_open_at_exit=len(open_figures),
         savefig_calls=len(saved),
