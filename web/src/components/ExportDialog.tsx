@@ -63,7 +63,7 @@ import {
   type ExportOutput,
   type PanelInfo,
 } from "@/lib/api";
-import { formatMessage, msg, t as translate } from "@/i18n";
+import { formatMessage, msg, t as translate, type UiMessage } from "@/i18n";
 import { emitActivity } from "@/lib/activity";
 import { useHtmlMarkup } from "@/lib/useHtmlMarkup";
 import {
@@ -163,7 +163,7 @@ import { CountChip, type CountTone } from "./ui/CountChip";
 import { FieldGroup, FormSection } from "./ui/FormSection";
 import { listRowClass } from "./ui/listRow";
 import { Notice } from "./ui/Notice";
-import { splitNoticeText } from "@/lib/noticeText";
+import { splitNoticeSentences } from "@/lib/noticeText";
 import { ProgressBar } from "./ui/ProgressBar";
 import { dirTail } from "@/lib/pathDisplay";
 
@@ -179,12 +179,14 @@ interface FailureRaw {
   title: string;
   text: string;
   code?: string;
+  /** `text` 是标题之外的补充（出路 / 技术原文）：整段进「详情」，不再接在标题后面 */
+  detailOnly?: boolean;
 }
 type FailureKind = "refusal" | "start-error" | "cancel-error" | "poll-error" | "reveal-error";
 
 /**
  * 导出脚部状态区的失败条**同时最多一条**：几路错误各自在不同时刻出现，后来的替换前一条（按「由空变有 / 内容变了」
- * 的先后盖戳，取戳最大的那路）。原文是一句读得懂的话就接在标题后面；裸的「HTTP 500」、过长或多行的整段进「详情」，
+ * 的先后盖戳，取戳最大的那路）。原文是一句读得懂的话就接在标题后面（连着两句就取开头放得下的整句，其余进详情）；裸的「HTTP 500」、过长或多行的整段进「详情」，
  * 详情里再带上稳定码——不再只剩一个状态码。
  */
 function useLatestFailure(raw: Record<FailureKind, FailureRaw | null>) {
@@ -200,9 +202,22 @@ function useLatestFailure(raw: Record<FailureKind, FailureRaw | null>) {
   const kind = live.reduce((a, b) => ((book.current.stamp[b] ?? 0) > (book.current.stamp[a] ?? 0) ? b : a));
   const r = raw[kind]!;
   const bare = /^HTTP \d{3}$/.test(r.text.trim());
-  const split = bare ? { inline: null, detail: r.text.trim() } : splitNoticeText(r.text);
+  const split = r.detailOnly ? { inline: null, detail: r.text.trim() || null } : bare ? { inline: null, detail: r.text.trim() } : splitNoticeSentences(r.text);
   const detail = [r.code, split.detail].filter(Boolean).join("\n") || null;
   return { kind, id: r.id, title: r.title, inline: split.inline, detail };
+}
+
+/**
+ * 起作业失败的一条原材料。有具体的、翻译过的原因（源文件已变 / 会话失效 / 连接失败……）时，**那一句就是标题**
+ * （用户要读的是原因，不是「导出没完成」）；连着的出路句、稳定码进详情。只有后端原文（裸「HTTP 500」、
+ * 没有文案的 code）才用通用标题兜底，原文进详情。
+ */
+function startFailureRaw(code: string, message: UiMessage): FailureRaw {
+  const text = formatMessage(message);
+  const id = `${code}:${JSON.stringify(message)}`;
+  const known = message.key !== "literal" ? splitNoticeSentences(text) : null;
+  if (known?.inline) return { id, title: known.inline, text: known.detail ?? "", code, detailOnly: true };
+  return { id, title: ex("failTitle"), text, code };
 }
 
 const ex = (key: string, values?: Record<string, unknown>) =>
@@ -1035,12 +1050,7 @@ export function ExportDialog() {
       startError && !prepared.error
         ? startError.code === "bad_filename"
           ? { id: `bad_filename:${startError.message}`, title: ex(`filenameError.${startError.message}`), text: "" }
-          : {
-              id: `${startError.code}:${JSON.stringify(startError.message)}`,
-              title: ex("failTitle"),
-              text: formatMessage(startError.message),
-              code: startError.code,
-            }
+          : startFailureRaw(startError.code, startError.message)
         : null,
     "cancel-error": cancelError
       ? { id: JSON.stringify(cancelError), title: ex("cancelFailed"), text: formatMessage(cancelError) }

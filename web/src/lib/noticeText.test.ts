@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { ApiError } from '@/lib/api'
-import { describeRequestFailure, NOTICE_INLINE_MAX, splitNoticeText } from './noticeText'
+import { describeRequestFailure, NOTICE_INLINE_MAX, splitNoticeSentences, splitNoticeText } from './noticeText'
 
 describe('splitNoticeText：一句话留在正文，一段进详情', () => {
   it('空 / 空白 → 两边都没有', () => {
@@ -16,6 +16,30 @@ describe('splitNoticeText：一句话留在正文，一段进详情', () => {
     const long = 'x'.repeat(NOTICE_INLINE_MAX + 1)
     expect(splitNoticeText(long)).toEqual({ inline: null, detail: long })
     expect(splitNoticeText('Traceback\n  File "a.py"')).toEqual({ inline: null, detail: 'Traceback\n  File "a.py"' })
+  })
+})
+
+describe('splitNoticeSentences：读得懂的原因取开头放得下的整句', () => {
+  it('放得下整段 → 与 splitNoticeText 一致', () => {
+    expect(splitNoticeSentences('源文件变了。')).toEqual({ inline: '源文件变了。', detail: null })
+  })
+  it('英文两句连着超限 → 前两句在正文，后面的出路进详情', () => {
+    const a = 'The source file changed. Your edits are preserved.'
+    const b = 'Restore the matching source or choose a compatible history version.'
+    expect(splitNoticeSentences(`${a} ${b}`)).toEqual({ inline: a, detail: b })
+  })
+  it('中文按句号切', () => {
+    const a = '源文件已经变了，你的编辑都还在。'
+    const b = '请还原匹配的源文件，或选择一个兼容的历史版本后再试一次，这样导出才能继续往下进行，不会丢失。'
+    expect(splitNoticeSentences(a + b + b)).toEqual({ inline: a + b, detail: b })
+  })
+  it('没有句界 / 带换行 / 首句就超限 → 整段进详情', () => {
+    const long = 'x'.repeat(NOTICE_INLINE_MAX + 1)
+    expect(splitNoticeSentences(long)).toEqual({ inline: null, detail: long })
+    const tb = 'Traceback.\n  File "a.py"'
+    expect(splitNoticeSentences(tb)).toEqual({ inline: null, detail: tb })
+    const big = `${'y'.repeat(NOTICE_INLINE_MAX + 5)}. ok.`
+    expect(splitNoticeSentences(big)).toEqual({ inline: null, detail: big })
   })
 })
 

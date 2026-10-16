@@ -2114,6 +2114,20 @@ describe('visible export recovery', () => {
     expect(useDocumentStore.getState().doc).toBe(doc)
   })
 
+  it('启动失败有具体原因（源文件已变）：这一句就是正文，通用标题不顶替它；技术细节在详情', async () => {
+    for (const [lng, reason, generic] of [['en-US', 'The source file changed. Your edits are preserved.', 'The export didn’t finish'], ['zh-CN', '源文件已变化，已保留你的修改。', '导出没有完成']] as const) {
+      initI18n(lng)
+      await setup(9)
+      globalThis.fetch = vi.fn(async () => response({ error: 'Source changed', code: 'artifact_source_unavailable', params: { reason: 'source_changed' } }, 409)) as typeof fetch
+      await act(async () => { await runExport(input()) })
+      const notice = document.querySelector('[data-export-start-error]')!
+      expect(notice.textContent).toContain(reason)
+      expect(notice.textContent).not.toContain(generic)
+      expect(notice.querySelector('[data-notice-detail-toggle]')).not.toBeNull()
+      resetExportState()
+    }
+  })
+
   it('启动失败只有「HTTP 500」：标题是一句人话，状态码折进详情；状态区同时只有一条失败条', async () => {
     initI18n('en-US')
     await setup(9)

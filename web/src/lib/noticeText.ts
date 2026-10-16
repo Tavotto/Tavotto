@@ -14,6 +14,26 @@ export function splitNoticeText(text: string | null | undefined): { inline: stri
   return s.length > NOTICE_INLINE_MAX || s.includes('\n') ? { inline: null, detail: s } : { inline: s, detail: null }
 }
 
+/**
+ * 翻译过的、读得懂的原因（`UiMessage`）常是「一句结论 + 一句出路」连在一起，整段超过一句话的上限就被全塞进详情，
+ * 用户只看到通用标题。这里改成：整段放得下照旧；放不下就取**开头放得下的整句**留在正文，其余进详情。
+ * 一句也放不下、带换行、没有句界的（后端原文 / traceback）仍然整段进详情——不去切原文。
+ */
+export function splitNoticeSentences(text: string | null | undefined): { inline: string | null; detail: string | null } {
+  const whole = splitNoticeText(text)
+  if (whole.inline !== null || whole.detail === null || whole.detail.includes('\n')) return whole
+  const s = whole.detail
+  const sentences = s.match(/[^。！？.!?]+(?:[。！？]|[.!?](?=\s|$))+\s*/g) ?? []
+  let lead = ''
+  for (const sentence of sentences) {
+    if ((lead + sentence).trim().length > NOTICE_INLINE_MAX) break
+    lead += sentence
+  }
+  const inline = lead.trim()
+  if (!inline || inline.length >= s.length) return whole
+  return { inline, detail: s.slice(lead.length).trim() || null }
+}
+
 const BARE_HTTP = /^HTTP \d{3}$/
 
 /**
