@@ -1180,15 +1180,6 @@ def run(args) -> int:
     return exit_code_for(report["verdict"])
 
 
-def not_implemented(name: str) -> int:
-    print(
-        f"guardian {name}: not implemented in CG-01 (planned for a later stage; "
-        "this stub never produces results)",
-        file=sys.stderr,
-    )
-    return EXIT_USAGE
-
-
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     subs = ap.add_subparsers(dest="command", required=True)
