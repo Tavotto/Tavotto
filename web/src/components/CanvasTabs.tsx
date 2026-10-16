@@ -94,7 +94,7 @@ export function CanvasTabs() {
     // 动画中的视觉位置。computed transform 反映动画当前值，把它的平移分量减回去就是布局右缘（FLIP 只有 translate，没有缩放）
     const last = el.lastElementChild
     const box = el.getBoundingClientRect()
-    const shift = last ? new DOMMatrix(getComputedStyle(last).transform).m41 : 0
+    const shift = last && typeof DOMMatrix !== 'undefined' ? new DOMMatrix(getComputedStyle(last).transform).m41 : 0
     const content = last
       ? last.getBoundingClientRect().right - shift - box.left + el.scrollLeft + parseFloat(getComputedStyle(el).paddingRight)
       : 0
