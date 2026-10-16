@@ -124,6 +124,24 @@ The nine events in the second half were added in **`CONSENT_VERSION` 2** (2026-0
 Consent stored for version 1 stopped being sufficient the moment that constant was
 raised; those installs are asked again and keep their `install_id`.
 
+### `CONSENT_VERSION` 3 (2026-10-16, ADR 0134)
+
+One bump covers two new collection scopes:
+
+1. the `export_result` event (table above);
+2. the **optional error summary** on a diagnostics report the user explicitly sends
+   (`engine/diagsummary.py` → `POST /v1/reports/init` `error_summary`). It is **not** a
+   telemetry event and never goes through the proxy: it is a consent snapshot
+   (`telemetry_consent`, `no_telemetry_env`, `scope_version`, `purposes`) plus one fact
+   (internal component / operation / stable error code). No `install_id`, no timestamps.
+
+Consent stored for version 2 stopped being sufficient the moment the constant was raised:
+no event of any kind (including `export_result`) is sent until the user is asked again;
+re-consent keeps the `install_id`; users who declined are not asked again and stay
+silent. `export_result` rows exist only from the first release that carries version 3,
+and only for installs that re-consented, so its counts are not comparable with
+`export_completed` over the same period.
+
 ### Explicitly forbidden on every event
 
 file names · stems · script names · paths · project or canvas names · document
