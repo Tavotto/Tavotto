@@ -132,7 +132,7 @@ pytest 的假设进去会扩大攻击面）。纯标准库，复用 `_common.run
 - **CLI 侧**：唤起**之前**取 `since = time.time() - 2 s`（回拨余量：唤起前取时刻与实例渲染完成之间可能被调度打乱；代价是 2 秒内同一
   stem 的上一次渲染也会被算进来，`verified` 还要求 stem 一致 + 注册表有 + manifest 非空）。唤起后有界轮询，**每轮重新发现凭据**
   （冷启动时 sidecar 在唤起之后才发布）：扫 `handoff-status-*.json`（pid 存活的才算，可能多份、逐个查）+ 已知浏览器端口的
-  `port-<端口>.json`；`urllib` 直连 `127.0.0.1`（地址字面量固定，过 outbound 闸门），单次超时 1 秒。
+  `port-<端口>.json`；`http.client.HTTPConnection("127.0.0.1", 端口)` 直连（主机字面量固定，outbound 闸门只放行这一种 HTTPConnection 写法），单次超时 1 秒。**绝不经过代理**：请求带 `X-Tavotto-Auth`，`urlopen` 会按环境变量 / 系统设置走 HTTP 代理而把凭据发给代理；直连 socket 不读任何代理设置（用例：假代理收 0 连接）。
 - **等待与超时**：`tavotto open --render-wait SECONDS`，CLI 默认 20 秒、0 = 不等；`open_target()` 自己默认 0（库调用不被拖慢）；
   `nan` / `inf` / 负数被 argparse 拒绝（退出 2），库调用按 0。**到点没结论是 `unverified/timeout`；一个实例都没连上（找不到凭据 / 连接失败 /
   被拒）是 `unverified/channel_unavailable`；都不是 failed。**

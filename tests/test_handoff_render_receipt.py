@@ -555,6 +555,40 @@ def test_cli_with_a_wrong_token_file_is_channel_unavailable(sidecar, project):
     assert out["reason"] == "channel_unavailable"  # 被拒 = 查不到，不是 failed
 
 
+def test_the_credentialed_query_never_goes_through_a_proxy(sidecar, project, monkeypatch):
+    """带 `X-Tavotto-Auth` 的回环查询绝不经过代理：环境里配了代理（NO_PROXY 清空）、假代理在监听——
+    请求直达实例拿到结论，假代理 0 个连接。换回 `urlopen` 会把凭据发给代理（本用例红）。"""
+    import socket
+    import urllib.request
+
+    # 模块级 `urlopen` 第一次调用就把当时的代理环境缓存进全局 opener：清掉，别让用例顺序决定红绿
+    monkeypatch.setattr(urllib.request, "_opener", None)
+    proxy = socket.socket()
+    proxy.bind(("127.0.0.1", 0))
+    proxy.listen(8)
+    proxy.settimeout(0.2)
+    url = f"http://127.0.0.1:{proxy.getsockname()[1]}"
+    for name in (
+        "HTTP_PROXY",
+        "http_proxy",
+        "ALL_PROXY",
+        "all_proxy",
+        "HTTPS_PROXY",
+        "https_proxy",
+    ):
+        monkeypatch.setenv(name, url)
+    for name in ("NO_PROXY", "no_proxy"):
+        monkeypatch.delenv(name, raising=False)
+    try:
+        receipt.record_ok(str(project), "Fig1", registry_match=True, manifest_elements=4)
+        out = receipt.wait(str(project), "Fig1", 0.0, 3, interval=0.05)
+        assert out["status"] == "ok" and out["manifest_elements"] == 4
+        with pytest.raises(socket.timeout):
+            proxy.accept()  # 假代理一个连接都没收到
+    finally:
+        proxy.close()
+
+
 def test_browser_mode_falls_back_to_the_full_secret_for_the_known_port(project):
     session_client.publish_secret(5811, "browser-secret")
     try:

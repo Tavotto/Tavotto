@@ -26,21 +26,21 @@ secret（`X-Tavotto-Auth`，`port-<端口>.json`），以及桌面 sidecar 发�
   * `since` 之前的结论不返回；同一项目 + stem 的第一份赢；项目 / stem 之间互相隔离；
   * 响应只有 status / code / stem / registry_match / manifest_elements，**不回显路径、不含 traceback**；
   * 等待预算必须是有限非负数：`nan` / `inf` / 负数一律按 0（不等）处理，CLI 入口在 argparse 层就拒绝；
-  * CLI 不往磁盘写任何东西；只连 127.0.0.1，每次请求超时 <= `REQUEST_TIMEOUT_S`。
+  * CLI 不往磁盘写任何东西；只连 127.0.0.1，每次请求超时 <= `REQUEST_TIMEOUT_S`；
+  * 带凭据的查询**绝不经过代理**：`http.client.HTTPConnection` 直连，不读 `HTTP_PROXY` / 系统代理设置。
 """
 
 from __future__ import annotations
 
 import collections
+import http.client
 import json
 import math
 import os
 import re
 import threading
 import time
-import urllib.error
 import urllib.parse
-import urllib.request
 
 from . import config, session_client
 
@@ -245,15 +245,24 @@ def candidates(port: int | None) -> list[tuple[int, str]]:
 def fetch(port: int, credential: str, project: str, stem: str, since: float) -> dict | None:
     """GET 端点。返回净化后的 ok / failed、`{"status": "pending"}`；连不上 / 被拒 / 读不懂 None。"""
     qs = urllib.parse.urlencode({"project": project, "stem": stem, "since": repr(float(since))})
-    req = urllib.request.Request(
-        f"http://127.0.0.1:{int(port)}{session_client.HANDOFF_STATUS_PATH}?{qs}",
-        headers={session_client.AUTH_HEADER: credential},
-    )
+    # 直连 socket 而不是 `urlopen`：后者按环境变量 / 系统设置走 HTTP 代理，`X-Tavotto-Auth`（scoped token
+    # 或浏览器模式的完整 secret）会连同请求发给代理——凭据外泄。`HTTPConnection` 不读任何代理设置，
+    # 这条带凭据的回环请求绝不经过代理；也不跟随重定向（3xx 当作读不懂）。
+    conn = http.client.HTTPConnection("127.0.0.1", int(port), timeout=REQUEST_TIMEOUT_S)
     try:
-        with urllib.request.urlopen(req, timeout=REQUEST_TIMEOUT_S) as resp:
-            data = json.loads(resp.read(MAX_RESPONSE_BYTES).decode("utf-8", "replace"))
-    except (urllib.error.URLError, OSError, ValueError):
+        conn.request(
+            "GET",
+            f"{session_client.HANDOFF_STATUS_PATH}?{qs}",
+            headers={session_client.AUTH_HEADER: credential},
+        )
+        resp = conn.getresponse()
+        if resp.status != 200:
+            return None
+        data = json.loads(resp.read(MAX_RESPONSE_BYTES).decode("utf-8", "replace"))
+    except (http.client.HTTPException, OSError, ValueError):
         return None
+    finally:
+        conn.close()
     if isinstance(data, dict) and data.get("status") == STATUS_PENDING:
         return {"status": STATUS_PENDING}
     return clean_result(data)
