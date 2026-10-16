@@ -1155,3 +1155,43 @@ def test_every_terminal_field_exists_on_a_history_row(tmp_path):
     row = ai_history.get("termfields01", db_path=db)
     missing = [k for k in ai_bridge.SESSION_TERMINAL_FIELDS if k not in row]
     assert missing == [], missing
+
+
+def test_startup_cleanup_finalizes_cancelled_rows_of_dead_owners_and_keeps_live_ones(tmp_path):
+    """已取消但 `_pump` 还没收尾（cancelled 且 ended_ms 为空）的行：属主已死 → 补上 ended_ms、状态保持 cancelled（不改成 failed /
+    interrupted）；属主还活着 → 不动。谓词与 `OPEN_SESSION_SQL` 一致，这些行不再永远开着、永远占着脚本的忙碌判定。"""
+    db = tmp_path / "hist.sqlite3"
+    ai_history.record_start(
+        _sess("canc-dead", "rid-cdead-0001", "a.py", owner_pid=_dead_pid()), db_path=db
+    )
+    ai_history.update_status("canc-dead", "cancelled", db_path=db)
+    ai_history.record_start(
+        _sess("canc-live", "rid-clive-0001", "b.py", owner_pid=_live_other_pid()), db_path=db
+    )
+    ai_history.update_status("canc-live", "cancelled", db_path=db)
+    ai_history.record_start(
+        _sess("canc-done", "rid-cdone-0001", "c.py", owner_pid=_dead_pid()), db_path=db
+    )
+    ai_history.record_end(
+        "canc-done", "cancelled", db_path=db
+    )  # 已经收尾的 cancelled：本来就有 ended_ms
+    before_done = {r["id"]: r["ended_ms"] for r in _ended(db)}["canc-done"]
+    assert ai_history.mark_interrupted_running(db_path=db) == 0  # 没有 running 被转成 interrupted
+    rows = {r["id"]: (r["status"], r["ended_ms"]) for r in _ended(db)}
+    assert rows["canc-dead"][0] == "cancelled" and isinstance(
+        rows["canc-dead"][1], int
+    )  # 补上了 ended_ms，状态保持
+    assert rows["canc-live"] == ("cancelled", None)  # 属主活着：不动
+    assert rows["canc-done"] == ("cancelled", before_done)  # 已收尾的不被改写
+    # 死属主的 cancelled 不再占着忙碌判定：同一脚本可以再认领
+    assert ai_history.record_start(
+        _sess("next-a", "rid-next-0000a", "a.py", owner_pid=_live_other_pid()), db_path=db
+    )[0]
+
+
+def _ended(db):
+    import sqlite3 as _sq
+
+    with _sq.connect(db) as raw:
+        raw.row_factory = _sq.Row
+        return list(raw.execute("SELECT id, status, ended_ms FROM sessions"))

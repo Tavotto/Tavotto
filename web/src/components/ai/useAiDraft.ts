@@ -16,6 +16,7 @@ import {
   noteRead as outboxNoteRead,
   advance as outboxAdvance,
   peek as outboxPeek,
+  peekRejected as outboxPeekRejected,
   post as outboxPost,
   subscribe as outboxSubscribe,
 } from '@/lib/aiDraftOutbox'
@@ -111,6 +112,12 @@ export function useAiDraft(panel: PanelObject | null) {
   /** 服务器上**与本地文本一致**的那一行的写入戳（发件箱接受 / 对账读到时更新）；发送前拿它记进账本 */
   const draftStamp = useRef<number | null>(null)
   const reconcileRef = useRef<((source: ReconcileSource) => Promise<void>) | null>(null)
+  /**
+   * **冲突替换待发生**：发件箱放弃了本页版本（别处写了更新稿）、要用服务器文本替换输入框。这个标记是持久状态，不绑在某一次
+   * 对账的回调上——紧接的那次冲突对账失败 / 超时时，之后 focus / 重连的对账仍会用另一窗口的稿覆盖可见文本，那时照样要提示。
+   * 只在**一次成功的对账确实应用了不同文本**时消费并提示；应用相同文本则清掉不提示；下一次用户编辑也清掉。
+   */
+  const replacePending = useRef(false)
   const reconcileToken = useRef(0)
   /** 最新的 panel：`reconcile` 里读（不把它放进依赖，免得每次渲染都重建各个入口） */
   const panelRef = useRef(panel)
@@ -119,7 +126,8 @@ export function useAiDraft(panel: PanelObject | null) {
   /** 有没落定的本地写入（发件箱里还留着这个目标的版本：没发出 / 在途 / 失败待重试）：此刻对账读回的文本不许覆盖输入框 */
   const hasUnsettledWrite = () => {
     const { project: pj, fileId: f } = key.current
-    return !!pj && !!f && outboxHas(pj, f)
+    // 被 413 拒绝的那一版文本（服务端只留了空墓碑）也算：它是输入框里用户的字，对账不得用服务器的空文本覆盖它
+    return !!pj && !!f && (outboxHas(pj, f) || outboxPeekRejected(pj, f) !== null)
   }
 
   const setPrompt = useCallback((next: string | ((prev: string) => string)) => {
@@ -129,6 +137,7 @@ export function useAiDraft(panel: PanelObject | null) {
     setPromptState(value)
     setRestored(false)
     setDraftReplaced(false)
+    replacePending.current = false
     setTooLarge(isDraftTooLarge(value))
     // 投递给发件箱：它负责防抖、PUT、重试、stale 处置，与本实例的寿命无关
     const { project: pj, fileId: f } = key.current
@@ -205,7 +214,13 @@ export function useAiDraft(panel: PanelObject | null) {
     if (state.text === text.current) {
       draftStamp.current = state.stamp ?? null // 服务器这一行与本地一致：记下它的戳
       outboxAdvance(pj, f, state.stamp) // 输入框显示的就是这份文本：基线推进到它的戳
+      replacePending.current = false // 采纳的是同一份文本：字没变，不提示
       return
+    }
+    if (replacePending.current) {
+      // 冲突放弃之后，这次成功的对账真的把另一个窗口的稿换进了输入框：提示用户，不静默替换
+      replacePending.current = false
+      setDraftReplaced(true)
     }
     text.current = state.text
     draftStamp.current = state.stamp ?? null
@@ -220,14 +235,14 @@ export function useAiDraft(panel: PanelObject | null) {
   // 目标（项目 × 面板文件）变了：旧的在 cleanup 里冲刷，新的对账一次
   useEffect(() => {
     key.current = { project, fileId, epoch: key.current.epoch + 1 }
-    const epoch = key.current.epoch
     setDraftReplaced(false)
+    replacePending.current = false
     text.current = ''
     seq.current = 0
     draftStamp.current = null
     setDraftRead(project && fileId ? 'loading' : 'ok') // 没有可读的目标（无项目认领 / 无面板）= 没有要载入的草稿
     // 发件箱里还留着这个目标没落定的版本（上一个实例退役时没写成）：先显示它，不是服务器上的旧值；对账也不会覆盖它
-    const held = project && fileId ? outboxPeek(project, fileId) : null
+    const held = project && fileId ? (outboxPeek(project, fileId) ?? outboxPeekRejected(project, fileId)) : null
     text.current = held ?? ''
     setPromptState(held ?? '')
     setRestored(false)
@@ -243,10 +258,8 @@ export function useAiDraft(panel: PanelObject | null) {
       if (e.kind === 'abandoned') {
         // 服务器上有本页没见过的更新版本（别的标签页写的）：本版已放弃，对账采纳服务器值——
         // 采纳之后输入框里的字变了，要让用户知道（一句安静的提示），不能静默替换
-        const before = text.current
-        void reconcileRef.current?.('conflict').then(() => {
-          if (key.current.epoch === epoch && text.current !== before) setDraftReplaced(true)
-        })
+        replacePending.current = true // 持久标记：这次对账失败也不丢，下一次成功的对账应用不同文本时消费
+        void reconcileRef.current?.('conflict')
         return
       }
       // 服务器上这一行现在就是本地最新的这一版（槽里没有更新的了）：记下它的戳

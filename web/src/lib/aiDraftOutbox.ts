@@ -64,6 +64,12 @@ interface Slot {
   inflight: Promise<'accepted' | 'unavailable' | 'abandoned'> | null
   /** 本页已知的最新服务器戳（GET 读到的、自己 PUT 被接受的、stale 回的）；-1 = 还没读到过任何戳。只用来给**新编辑**取 `baseStamp` */
   known: number
+  /**
+   * 被服务器以 413（超长）拒绝的那一版文本：服务端留了空墓碑、什么都没存，**不再重试、不再调度 PUT**，
+   * 但文本要留在内存里——否则 hook 已卸载（切面板 / 关助手）时槽被清掉，重开面板读到的是空墓碑，用户写的超长文字就丢了。
+   * 重新挂载时 hydrate 优先用它（并仍显示「太长」的提示）；对账不得用服务器的空文本覆盖它；用户 `post` 新版本（改短了）即清掉。
+   */
+  rejected: string | null
   /** 本页成功读到过一次（或写成功过）：基线不再是「未知」 */
   read: boolean
   /** 当前这一轮连续失败超过一分钟的计时器 / 是否已对界面宣布 */
@@ -82,7 +88,7 @@ function slotOf(project: string, fileId: string): Slot {
   const k = keyOf(project, fileId)
   let s = slots.get(k)
   if (!s) {
-    s = { project, fileId, entry: null, inflight: null, known: -1, read: false, unknown: false, listeners: new Set(), stalled: false }
+    s = { project, fileId, entry: null, inflight: null, known: -1, rejected: null, read: false, unknown: false, listeners: new Set(), stalled: false }
     slots.set(k, s)
   }
   return s
@@ -123,6 +129,7 @@ function clearTimers(entry: Entry): void {
 export function post(project: string, fileId: string, text: string): void {
   const slot = slotOf(project, fileId)
   if (slot.entry) clearTimers(slot.entry)
+  slot.rejected = null // 用户有了新版本（比如改短了）：被拒的旧文本不再需要保留
   const entry: Entry = {
     text,
     stamp: nextWriteStamp(),
@@ -146,6 +153,9 @@ export const isStalled = (project: string, fileId: string): boolean => !!slots.g
 export function peek(project: string, fileId: string): string | null {
   return slots.get(keyOf(project, fileId))?.entry?.text ?? null
 }
+
+/** 被 413 拒绝、但仍需让用户看到的那一版文本（见 `Slot.rejected`）；没有 = null */
+export const peekRejected = (project: string, fileId: string): string | null => slots.get(keyOf(project, fileId))?.rejected ?? null
 
 /** 订阅一个目标的结果；返回取消订阅。槽与未落定的版本不随订阅者消失 */
 export function subscribe(project: string, fileId: string, listener: (e: OutboxEvent) => void): () => void {
@@ -351,6 +361,7 @@ async function landCore(
   if (entry && latest) {
     clearTimers(entry)
     slot.entry = null
+    if (result === 'too_large') slot.rejected = entry.text // 不重试，但文本留着（hook 卸载后重开也拿得回）
     endFailing(slot)
     emit(slot, { kind: 'accepted', result, ...(serverStamp !== undefined ? { stamp: serverStamp } : {}) })
     return 'accepted'

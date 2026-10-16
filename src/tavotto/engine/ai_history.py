@@ -348,25 +348,31 @@ def update_status(sid: str, status: str, db_path: Path | None = None) -> None:
 
 
 def mark_interrupted_running(db_path: Path | None = None) -> int:
-    """启动时调用：上个进程留下的 running 转为 interrupted。**只标属主已死的**（`owner_alive`）：共用同一数据目录的
-    另一个服务进程里仍在跑的会话不能被这次启动标掉（否则它的脚本被当成空闲、再被另一个进程改写）。
-    属主未知（老行）/ 就是本进程的旧实例 / pid 已死 / 行太老 → 标。"""
+    """启动时调用：上个进程留下的「还没结束」的会话收尾。**只动属主已死的**（`owner_alive`）：共用同一数据目录的
+    另一个服务进程里仍在跑的会话不能被这次启动动掉（否则它的脚本被当成空闲、再被另一个进程改写）。
+    属主未知（老行）/ 就是本进程的旧实例 / pid 已死 / 行太老 → 动。
+    谓词与 `OPEN_SESSION_SQL` 一致：`running` 转为 `interrupted` 并写 `ended_ms`；已取消但 `_pump` 还没收尾的
+    （`cancelled` 且 `ended_ms` 为空，进程随即死掉）**保持 cancelled**，只补上 `ended_ms`——否则这些行永远开着、
+    永远占着脚本的忙碌判定。回值是被转为 interrupted 的行数。"""
     now = int(time.time() * 1000)
     with (
         _immediate(db_path) as con
     ):  # 读出死的 → 逐个标：同一个事务，期间别的进程把某行 record_end 了也不会被我们改回 interrupted
-        dead = [
-            r["id"]
-            for r in con.execute(
-                "SELECT id, owner_pid, started_ms FROM sessions WHERE status='running'"
-            )
-            if not owner_alive(r["owner_pid"], r["started_ms"], now)
-        ]
-        for sid in dead:
-            con.execute(
-                "UPDATE sessions SET status='interrupted', ended_ms=? WHERE id=?", (now, sid)
-            )
-        return len(dead)
+        interrupted = 0
+        for r in con.execute(
+            f"SELECT id, status, owner_pid, started_ms FROM sessions WHERE {OPEN_SESSION_SQL}"
+        ).fetchall():
+            if owner_alive(r["owner_pid"], r["started_ms"], now):
+                continue
+            if r["status"] == "running":
+                con.execute(
+                    "UPDATE sessions SET status='interrupted', ended_ms=? WHERE id=?",
+                    (now, r["id"]),
+                )
+                interrupted += 1
+            else:
+                con.execute("UPDATE sessions SET ended_ms=? WHERE id=?", (now, r["id"]))
+        return interrupted
 
 
 def set_pinned(sid: str, pinned: bool, db_path: Path | None = None) -> bool:

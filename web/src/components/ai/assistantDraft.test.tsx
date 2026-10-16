@@ -485,6 +485,53 @@ describe('同步状态机：单一 reconcile + 写入版本（#1098）', () => {
     }
   })
 
+  it('冲突放弃之后紧接的冲突对账失败：「替换待发生」标记保留；之后 focus 的对账用另一窗口的稿覆盖可见文本时照样提示', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    try {
+      await mount()
+      const releaseA = be.holdNextDraftPut()
+      await typeText('本页刚输入的字')
+      await act(async () => void vi.advanceTimersByTime(WRITE_DEBOUNCE_MS + 50)) // PUT 在途
+      await settle()
+      be.putStamped('pa', 'Fig1.pdf', '另一个窗口的稿', Date.now() * 1000 + 5_000_000_000)
+      be.setDown(true) // 紧接的冲突对账会失败
+      releaseA()
+      await settle()
+      expect(input().value).toBe('本页刚输入的字') // 对账没成功：输入框还没被换
+      expect(q('[data-ai-draft-note="replaced"]')).toBeNull()
+      be.setDown(false)
+      await act(async () => window.dispatchEvent(new Event('focus'))) // 之后的对账成功，换进另一个窗口的稿
+      await settle()
+      expect(input().value).toBe('另一个窗口的稿')
+      expect(q('[data-ai-draft-note="replaced"]')?.textContent).toBe('草稿已被另一个窗口的修改替换') // 对照：以前标记绑在失败的那次回调上，这里没有提示
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('超长文本（413）：hook 卸载后槽里的被拒文本仍在——重开面板拿回原文、仍显示「太长」提示、没有后续 PUT；对账不用服务器的空墓碑覆盖它；改短后走新版本', async () => {
+    const big = '长'.repeat(INSTRUCTION_MAX_BYTES) // UTF-8 下远超上限
+    await mount()
+    await typeText(big)
+    await unmount() // 防抖没到就卸载：冲刷一次 → 后端 413，留空墓碑
+    await settle()
+    expect(be.draft('pa', 'Fig1.pdf')).toBeUndefined() // 服务端什么都没存
+    const putsBefore = putsOf().length
+    await mount() // 重开面板
+    expect(input().value).toBe(big) // 对照：以前槽被清掉，重开读到空墓碑，超长文字丢了
+    expect(q('[data-ai-draft-note="too-large"]')).toBeTruthy()
+    await act(async () => window.dispatchEvent(new Event('focus'))) // 再对账也不覆盖
+    await settle()
+    expect(input().value).toBe(big)
+    expect(putsOf()).toHaveLength(putsBefore) // 没有后续 fetch：被拒的版本不再重试
+    // 用户改短：正常走新版本
+    await typeText('改短了的指令')
+    await act(async () => window.dispatchEvent(new Event('pagehide')))
+    await settle()
+    expect(be.draft('pa', 'Fig1.pdf')).toBe('改短了的指令')
+    expect(q('[data-ai-draft-note="too-large"]')).toBeNull()
+  })
+
   it('没有冲突时不出这句提示（正常保存、对账一致）', async () => {
     await mount()
     await typeText('正常写的字')
