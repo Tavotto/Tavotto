@@ -136,15 +136,17 @@ CLI、唤起却静默退回浏览器模式——用户明明装了桌面版却�
 | `failed` | 实例**明确报了渲染失败** | `code`：worker 的稳定码（`engine_files_incomplete`、`missing_dependency`…；不合规的串落成 `render_failed`） |
 | `unverified` | 没法下结论——**不是失败** | `reason`：`not_waited` / `timeout` / `channel_unavailable` / `no_target_stem` / `not_renderable` |
 
-`verified` 为 true 当且仅当：渲染成功 ∧ 回执里的 stem == 目标 stem ∧ 注册表里确有这个 stem ∧ manifest 非空
+`verified` 为 true 当且仅当：渲染成功 ∧ 结论里的 stem == 目标 stem ∧ 注册表里确有这个 stem ∧ manifest 非空
 （判据唯一在 `engine/handoffreceipt.py::summarize`，调用方不要自己再判一遍）。`waited_ms` 是实际等了多久。
 
-确认信号怎么来的：CLI 唤起**之前**在 `<数据目录>/session/handoff/<ID>.json`（目录 0700、文件 0600、
-有 `expires_at`）写一份期望；实例在 `/api/engine/render` 收尾时把结论写回同一份文件；CLI 有界轮询它、
-读到后删掉。**只记录界面本来就会做的那次渲染，不为验证执行用户脚本，也没有新的 HTTP 端点**
-（桌面 sidecar 没有磁盘凭据，ADR 0008；信任锚与会话凭据文件同一个论证，见 ADR 0131 第六节「实现」）。
-没有实例在写回执（老版本实例、数据目录被隔离成别处）或无脚本的 Figure（不发起渲染）一律落成
-`unverified/timeout`；目录级 / 多 Figure 交接没有目标 stem，落成 `unverified/no_target_stem`；登记结果已是不可参数化（`registry.parameterizable === false`，界面不会为它发起引擎渲染）时**不等待**，直接 `unverified/not_renderable`。
+确认信号怎么来的：实例在 `/api/engine/render` 收尾时把结论记进进程内的有界结论表；CLI 唤起**之前**取 `since`
+（留 2 秒回拨余量），唤起后有界轮询 `GET /api/handoff/render-status?project=&stem=&since=`，拿到 `since` 之后该项目 + stem
+的**第一份**结论即返回。端点**经认证**（Host / Origin 照旧）：凭据是浏览器模式的完整 secret（`port-<端口>.json`），或桌面
+sidecar 发布的**只读、只对这一个端点有效**的 token（`<数据目录>/session/handoff-status-<端口>.json`，0600）。
+**CLI 不往磁盘写任何东西**；只记录界面本来就会做的那次渲染，不为验证执行用户脚本（信任锚与会话凭据文件同一个论证，
+见 ADR 0131 第六节「实现」与 ADR 0008 修订）。找不到任何凭据 / 连不上实例 / 被拒落成 `unverified/channel_unavailable`；
+连上了但到点没有结论（实例在跑但没有给出结论）落成 `unverified/timeout`；
+目录级 / 多 Figure 交接没有目标 stem，落成 `unverified/no_target_stem`；登记结果已是不可参数化（`registry.parameterizable === false`，界面不会为它发起引擎渲染）时**不等待**，直接 `unverified/not_renderable`。
 
 ### `tavotto open --json` 失败时
 
