@@ -154,7 +154,7 @@ describe('两个选择', () => {
   it('说清楚发什么、不发什么', () => {
     const text = document.body.textContent ?? ''
     for (const key of ['sendsTitle', 'sendsVersion', 'sendsPlatform', 'sendsFeatures',
-                       'sendsOutcome', 'neverTitle', 'neverFigures', 'neverScripts',
+                       'sendsOutcome', 'sendsErrorSummary', 'neverTitle', 'neverFigures', 'neverScripts',
                        'neverPaths', 'neverData', 'neverPrompts', 'later']) {
       expect(text).toContain(dlg(key))
     }

@@ -213,12 +213,15 @@ describe('先看再发', () => {
     const det = q<HTMLDetailsElement>('[data-diag-send-details]')!
     expect(det.open).toBe(false)
     // 默认可见的交互元素：页脚两颗 + 折叠标题；清单 / 保存 / 说明 / 类型 / 政策链接都在折叠里
-    const folded = ['[data-diag-send-kinds]', '[data-diag-send-save]', '[data-diag-send-note]', '[data-diag-send-policy]']
+    const folded = ['[data-diag-send-kinds]', '[data-diag-send-save]', '[data-diag-send-note]', '[data-diag-send-policy]', '[data-diag-send-error-summary-note]']
     for (const sel of folded) expect(q(sel)?.closest('details')).toBe(det)
     const footer = Array.from(document.body.querySelectorAll<HTMLButtonElement>('[data-diag-send-confirm],[data-diag-send-dismiss]'))
     expect(footer.map((b) => b.textContent)).toEqual([ds('close'), ds('send')])
     expect(det.textContent).toContain(ds('bestEffort'))
     expect(det.textContent).toContain(ds('noteAttached'))
+    // 错误摘要的披露只在折叠里（不新增可见段落）；不暗示同意今后自动上报
+    expect(det.textContent).toContain(ds('errorSummaryNote'))
+    expect(q('[data-diag-send-sentence]')!.textContent).not.toContain(ds('errorSummaryNote'))
   })
 
   it('展开「查看详情」后可保存同一份 ZIP（展开不触发任何发送）', async () => {
