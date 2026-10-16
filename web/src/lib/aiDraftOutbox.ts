@@ -225,6 +225,12 @@ function send(slot: Slot, keepalive: boolean): Promise<'accepted' | 'unavailable
   if (keepalive) {
     // keepalive 是「发出去就不管」的尽力尝试：**不替换被跟踪的普通请求**（它的连接半开挂住时，原来那次普通请求
     // 成功了也清不掉 inflight，之后的编辑就永远复用一个卡住的 promise）。它只在落地时参与「等戳同内容」判定与槽的收尾
+    // **有界兜底**：keepalive 不进 `inflight`，连接半开时它的 promise 永远不落地——而上面的 `clearTimers` 已清掉了这一版唯一的
+    // 定时器，页面留在后台（没有后续 visibilitychange）就再没有任何重试，被丢弃时最新草稿丢失。所以补一个重试定时器：
+    // 到点还没落地就走一次**普通** PUT（同戳同内容，服务器按戳 / text_hash 幂等，不会写两次；`send` 遇到在途请求复用它，
+    // 同槽不会并发两个 PUT）。普通 PUT 失败走既有的退避重试（`retries` 计数、上限 `RETRY_MAX_MS`），不会无界死循环；
+    // keepalive 先落地则 `land` / `clearTimers` 会清掉它。
+    entry.retry = setTimeout(() => void send(slot, false), RETRY_MS)
     return attempt.then(({ result, stamp, textHash }) => land(slot, v, result, stamp, textHash))
   }
   // 普通请求：inflight 只跟踪它，并加超时。超时后按 unavailable 走重试；迟到的真实结果仍然会落地（可能已经写成功了）

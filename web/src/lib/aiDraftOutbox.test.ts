@@ -177,6 +177,39 @@ describe('aiDraftOutbox · inflight 只跟踪普通 PUT', () => {
     expect(outbox.has('p', 'f')).toBe(false)
   })
 
+  it('页面转入后台时发的 keepalive 一直挂住、之后再没有任何可见性事件：兜底定时器到点走一次普通 PUT，成功后槽被清；同槽不并发两个 PUT', async () => {
+    outbox.advance('p', 'f', 1)
+    let n = 0
+    let concurrent = 0
+    let maxConcurrent = 0
+    const real = globalThis.fetch
+    globalThis.fetch = (async (url: unknown, init?: RequestInit) => {
+      if (String(url).includes('/api/ai/drafts') && init?.method === 'PUT') {
+        const body = JSON.parse(String(init.body)) as { text: string; stamp: number }
+        puts.push({ text: body.text, stamp: body.stamp })
+        n++
+        if (n === 1) return new Promise<Response>(() => {}) // keepalive：半开，永远不落地
+        concurrent++
+        maxConcurrent = Math.max(maxConcurrent, concurrent)
+        await Promise.resolve()
+        concurrent--
+        return jsonResp({ revision: 1, stamp: body.stamp })
+      }
+      return real(url as RequestInfo, init)
+    }) as typeof fetch
+    outbox.post('p', 'f', 'v1')
+    outbox.flushAll(true) // visibilitychange → hidden：清掉防抖定时器、发 keepalive
+    expect(puts.map((x) => x.text)).toEqual(['v1'])
+    expect(outbox.has('p', 'f')).toBe(true)
+    await vi.advanceTimersByTimeAsync(outbox.RETRY_MS - 100)
+    expect(puts).toHaveLength(1) // 还没到兜底时间
+    await vi.advanceTimersByTimeAsync(200) // 对照：没有兜底时，这里永远不会有第二次 PUT
+    expect(puts.map((x) => x.text)).toEqual(['v1', 'v1'])
+    expect(puts[1]!.stamp).toBe(puts[0]!.stamp) // 同戳同内容：服务器幂等，不会写两次
+    expect(outbox.has('p', 'f')).toBe(false)
+    expect(maxConcurrent).toBe(1)
+  })
+
   it('超时之后迟到的原请求成功了（它其实写成功了）：落地收尾，槽被清，不再重试', async () => {
     outbox.advance('p', 'f', 1)
     let n = 0
