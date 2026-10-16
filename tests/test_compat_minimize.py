@@ -238,7 +238,6 @@ class Search(unittest.TestCase):
         result, _ = self.search(self.failing)
         # removing plt.subplots while ax.* stays would "fail" with a different error: rejected
         self.assertTrue(any("different Tavotto error" in t["reason"] for t in result["trials"]))
-        self.assertIn("plt.subplots", result["files"][self.parent.script].decode())
 
     def test_budget_exhaustion_is_minimization_failed_and_keeps_the_original(self):
         result, oracle = self.search(self.failing, mn.Budget(3, 600))

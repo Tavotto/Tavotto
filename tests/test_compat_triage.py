@@ -73,7 +73,7 @@ class Rules(unittest.TestCase):
                 lambda d: d["rules"][0].update(modules=["src/tavotto/engine/not_a_module.py"]),
                 "missing module",
             ),
-            (lambda d: d["rules"][0]["when"][0].update(op="gt"), "operator without value"),
+            (lambda d: d["rules"][0]["when"][0].update(op="true"), "operator without value"),
             (lambda d: d["rules"].append(copy.deepcopy(d["rules"][0])), "duplicate id"),
         ):
             doc = copy.deepcopy(document)
