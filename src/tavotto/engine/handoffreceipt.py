@@ -29,13 +29,17 @@
   * ID 严格 `^[0-9a-f]{32}$`，文件名只由 ID 构成，永远在固定目录里解析；
   * 文件必须是本人的普通文件（lstat，不跟符号链接）、不超过 `MAX_BYTES`；
   * 期望有 `expires_at`（等待上限 + 宽限），过期的一律当没有；陈旧文件在写入与查询时顺手清；
-  * 结果是一次性的：第一份结论赢，之后的渲染不改写它；
+  * 结果是一次性的：第一份结论赢，之后的渲染不改写它——写入走每份回执一把的写锁
+    （`<id>.json.lock`，`O_CREAT|O_EXCL`，拿到后重读仍无结论才写，写完删）；拿不到锁 = 别人正在写第一份，跳过；
+    崩溃残留的锁按 mtime 超过 `LOCK_STALE_S` 视为陈旧并清理；
+  * 等待预算必须是有限非负数：`nan` / `inf` / 负数一律按 0（不等）处理，CLI 入口在 argparse 层就拒绝；
   * 回执里只有 stem、计数与稳定错误码，**不含脚本、路径之外的内容、traceback**。
 """
 
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
 import secrets
@@ -55,6 +59,9 @@ MAX_BYTES = 4096
 GRACE_S = 30.0
 #: CLI 崩了没来得及删的期望，超过这个年龄一律清掉
 STALE_S = 3600.0
+#: 写锁文件的后缀 / 超过这个年龄（秒）视为写者崩溃残留
+LOCK_SUFFIX = ".lock"
+LOCK_STALE_S = 5.0
 #: 一份回执能被扫描的上限条数（目录被塞满时不让每次渲染都扫一整片）
 MAX_SCAN = 64
 
@@ -86,6 +93,15 @@ class Expectation(NamedTuple):
     project: str
     stem: str
     expires_at: float
+
+
+def finite_budget(value: float) -> float:
+    """等待预算归一：非有限（nan / inf）或负数 = 0（不等），绝不让轮询无界。"""
+    try:
+        v = float(value)
+    except (TypeError, ValueError):
+        return 0.0
+    return v if math.isfinite(v) and v > 0 else 0.0
 
 
 def receipt_dir() -> str:
@@ -158,7 +174,7 @@ def _entries(d: str) -> list[str]:
 
 
 def _prune(d: str, now: float) -> None:
-    """清过期与陈旧的期望（含命名不合规的残留 .tmp）。"""
+    """清过期与陈旧的期望（含命名不合规的残留 .tmp 与崩溃残留的 .lock）。"""
     try:
         names = os.listdir(d)
     except OSError:
@@ -166,7 +182,8 @@ def _prune(d: str, now: float) -> None:
     for name in names:
         path = os.path.join(d, name)
         try:
-            if now - os.lstat(path).st_mtime > STALE_S:
+            limit = LOCK_STALE_S if name.endswith(LOCK_SUFFIX) else STALE_S
+            if now - os.lstat(path).st_mtime > limit:
                 os.unlink(path)
         except OSError:
             pass
@@ -183,7 +200,7 @@ def expect(project: str, stem: str, wait_s: float, *, now=time.time) -> Expectat
     eid = secrets.token_hex(16)
     path = os.path.join(d, eid + ".json")
     ident = _identity(project)
-    expires = t + max(0.0, wait_s) + GRACE_S
+    expires = t + finite_budget(wait_s) + GRACE_S
     payload = {
         "schema": SCHEMA,
         "id": eid,
@@ -225,10 +242,11 @@ def read_result(exp: Expectation) -> dict | None:
 
 
 def discard(exp: Expectation) -> None:
-    try:
-        os.unlink(exp.path)
-    except OSError:
-        pass
+    for p in (exp.path, exp.path + LOCK_SUFFIX):
+        try:
+            os.unlink(p)
+        except OSError:
+            pass
 
 
 def unverified(reason: str, waited_ms: int = 0) -> dict:
@@ -279,6 +297,7 @@ def wait(
     interval: float = 0.25,
 ) -> dict:
     """有界轮询（可注入时钟，不是裸 sleep）。到点没有结论 = unverified/timeout，**不是 failed**。"""
+    budget_s = finite_budget(budget_s)  # nan / inf / 负数按 0：读一次就收，不无界等
     start = clock()
     while True:
         got = read_result(exp)
@@ -291,6 +310,26 @@ def wait(
 
 
 # ------------------------------- 实例侧 ------------------------------------
+def _acquire_lock(lock: str) -> bool:
+    """拿一份回执的写锁（`O_EXCL`，跨平台）。拿不到 = 别人正在写；陈旧锁先清一次再试。"""
+    for _ in range(2):
+        try:
+            fd = os.open(lock, os.O_WRONLY | os.O_CREAT | os.O_EXCL, stat.S_IRUSR | stat.S_IWUSR)
+        except FileExistsError:
+            try:
+                if time.time() - os.lstat(lock).st_mtime <= LOCK_STALE_S:
+                    return False
+                os.unlink(lock)
+            except OSError:
+                return False
+            continue
+        except OSError:
+            return False
+        os.close(fd)
+        return True
+    return False
+
+
 def _record(project: str, stem: str, result: dict, *, now=time.time) -> int:
     """把结果写进所有匹配的、未过期且尚无结论的期望。返回写了几份。"""
     d = os.path.join(session_client.session_dir(), DIR_NAME)
@@ -309,9 +348,21 @@ def _record(project: str, stem: str, result: dict, *, now=time.time) -> int:
             continue
         if data.get("project") != ident or data.get("stem") != stem:
             continue
-        data["result"] = {**result, "recorded_at": t}
-        if _write_atomic(path, data):
-            wrote += 1
+        lock = path + LOCK_SUFFIX
+        if not _acquire_lock(lock):
+            continue  # 别人正在写这份的第一个结论：第一份赢，我们让路
+        try:
+            fresh = _read_checked(path)  # 拿到锁后重读：读到写之间可能已有人写完
+            if fresh is None or fresh.get("result") is not None:
+                continue
+            fresh["result"] = {**result, "recorded_at": t}
+            if _write_atomic(path, fresh):
+                wrote += 1
+        finally:
+            try:
+                os.unlink(lock)
+            except OSError:
+                pass
     return wrote
 
 

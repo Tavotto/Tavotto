@@ -23,6 +23,7 @@ import re
 import stat
 import sys
 import threading
+import time
 from pathlib import Path
 
 import pymupdf
@@ -776,3 +777,63 @@ def test_concurrent_records_do_not_corrupt_the_receipt(project):
         t.join()
     got = receipt.read_result(exp)  # 无论谁赢，文件始终是合法 JSON
     assert got is not None and got["status"] == "ok" and got["manifest_elements"] >= 1
+
+
+def test_render_endpoint_reports_a_worker_startup_error(client, tmp_path, monkeypatch):
+    """worker 启动 / 环境解析阶段（取 worker 的那段）失败也要写回执，CLI 才不白等到 timeout。"""
+    figs = _gallery(client, tmp_path)
+    err = engine_pool.WorkerError("缺引擎文件", code="engine_files_incomplete")
+
+    def boom(*a, **kw):
+        raise err
+
+    monkeypatch.setattr(m, "_engine_worker", boom)
+    exp = receipt.expect(str(figs), "p1", 20)
+    client.post("/api/engine/render", json={"id": "p1.pdf", "patches": []})
+    assert receipt.read_result(exp) == {"status": "failed", "code": "engine_files_incomplete"}
+
+
+def test_two_interleaved_writers_keep_the_first_conclusion(project, monkeypatch):
+    """第一个写者读后、写前被暂停，第二个写者此时进来：结论仍是第一个的。"""
+    exp = receipt.expect(str(project), "Fig1", 20)
+    real_write = receipt._write_atomic
+    state = {"inner": None}
+
+    def write_after_second_writer(path, payload):
+        if state["inner"] is None:
+            state["inner"] = receipt.record_failed(str(project), "Fig1", "second_writer")
+        return real_write(path, payload)
+
+    monkeypatch.setattr(receipt, "_write_atomic", write_after_second_writer)
+    assert receipt.record_ok(str(project), "Fig1", registry_match=True, manifest_elements=3) == 1
+    assert state["inner"] == 0  # 第二个写者拿不到锁，让路
+    got = receipt.read_result(exp)
+    assert got is not None and got["status"] == "ok" and got["manifest_elements"] == 3
+    assert not os.path.exists(exp.path + receipt.LOCK_SUFFIX)
+
+
+def test_a_stale_lock_is_cleared_and_a_fresh_one_blocks(project):
+    exp = receipt.expect(str(project), "Fig1", 20)
+    lock = exp.path + receipt.LOCK_SUFFIX
+    open(lock, "w").close()
+    assert receipt.record_ok(str(project), "Fig1", registry_match=True, manifest_elements=1) == 0
+    old = time.time() - receipt.LOCK_STALE_S - 5
+    os.utime(lock, (old, old))
+    assert receipt.record_ok(str(project), "Fig1", registry_match=True, manifest_elements=1) == 1
+    assert not os.path.exists(lock)
+    assert receipt._entries(os.path.dirname(exp.path)) == [os.path.basename(exp.path)]
+
+
+@pytest.mark.parametrize("bad", ["nan", "inf", "-inf", "-1"])
+def test_render_wait_rejects_non_finite_or_negative(bad):
+    with pytest.raises(SystemExit) as e:
+        handoff.cli(["x.pdf", f"--render-wait={bad}"])
+    assert e.value.code == 2
+
+
+@pytest.mark.parametrize("bad", [float("nan"), float("inf"), -3.0])
+def test_wait_budget_is_defended_against_non_finite_values(project, bad):
+    exp = receipt.expect(str(project), "Fig1", bad)
+    out = receipt.wait(exp, bad, clock=lambda: 0.0, sleep=lambda s: pytest.fail("不该睡"))
+    assert out["status"] == "unverified" and out["reason"] == "timeout"
+    assert exp.expires_at - time.time() < receipt.GRACE_S + 5

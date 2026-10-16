@@ -5123,6 +5123,17 @@ def _note_handoff_render(stem: str, *, code: str | None = None, **facts) -> None
         LOG.debug("交接回执写入失败", exc_info=True)
 
 
+def _handoff_target_stem(rel_id: str) -> str:
+    """面板 id → 回执匹配用的 stem，判据与 `_resolve_engine_worker` 一致（runtime 素材查注册表，磁盘面板取文件名主干）。"""
+    try:
+        if engine_runtimeasset.is_runtime_id(rel_id):
+            info = engine_runtimeasset.resolve(rel_id, current_registry())
+            return info["stem"] if info else ""
+    except Exception:  # noqa: BLE001 —— 回执是旁路
+        return ""
+    return Path(rel_id).stem
+
+
 @app.post("/api/engine/render")
 def api_engine_render():
     """应用全量 override 列表并重渲染，返回新 manifest 与版本号。
@@ -5186,6 +5197,11 @@ def api_engine_render():
         info = current_registry().for_stem(Path(stem).stem) or {}
         cold = not worker.built
     except Exception as exc:
+        # worker 启动 / 环境解析失败（WorkerError）也是「那一次渲染」的失败结论：
+        # 不写回执 CLI 会白等到 timeout（ADR 0131 §六）。此时 stem 还没拿到，按
+        # `_resolve_engine_worker` 同一判据反推（旁路，任何失败都不影响原异常）。
+        if isinstance(exc, engine_pool.WorkerError):
+            _note_handoff_render(_handoff_target_stem(rel_id), code=exc.code)
         # 准备态同样须有终局；原异常留给原有 Flask handler，HTTP/code 不变。
         sse_publish("render.failed", {"pj": pj, "id": rel_id, "error": str(exc)})
         raise

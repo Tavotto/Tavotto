@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import subprocess
 import sys
@@ -1113,6 +1114,17 @@ def open_target(
     return result
 
 
+def _render_wait_arg(text: str) -> float:
+    """argparse 的 `--render-wait` 类型：只收有限且 >= 0 的数（nan / inf / 负数是用法错误，退出 2）。"""
+    try:
+        v = float(text)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"不是数字: {text!r}") from None
+    if not math.isfinite(v) or v < 0:
+        raise argparse.ArgumentTypeError(f"必须是有限且不小于 0 的秒数: {text!r}")
+    return v
+
+
 def _launch_with_render(
     target: Target,
     *,
@@ -1131,6 +1143,7 @@ def _launch_with_render(
     """
     exp = None
     render: dict
+    render_wait = engine_receipt.finite_budget(render_wait)  # 库调用同样防 nan / inf / 负数
     if target.stem is None:
         render = engine_receipt.unverified(engine_receipt.REASON_NO_TARGET_STEM)
     elif not renderable:
@@ -1234,7 +1247,7 @@ def cli(argv: list[str]) -> int:
     ap.add_argument("--port", type=int, default=DEFAULT_PORT, help="浏览器模式端口")
     ap.add_argument(
         "--render-wait",
-        type=float,
+        type=_render_wait_arg,
         default=DEFAULT_RENDER_WAIT,
         metavar="SECONDS",
         help=(
