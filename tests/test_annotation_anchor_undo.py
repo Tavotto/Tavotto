@@ -97,6 +97,17 @@ class AnnotationAnchorUndo(unittest.TestCase):
                     self.assert_same(self.observe(hot, survivor), self.observe(fresh, survivor))
                     self.assert_same(self.observe(hot, []), self.observe(fresh, []))
 
+    def test_changed_position_replays_unchanged_endpoints(self):
+        moved = {"gid": TEXT, "prop": "pos_frac", "value": [0.20, 0.30]}
+        for start, followup in (
+            ([CLEAR, POSITION, ENDPOINTS], [CLEAR, moved, ENDPOINTS]),
+            ([CLEAR, ENDPOINTS, POSITION], [CLEAR, ENDPOINTS, moved]),
+            ([CLEAR, ENDPOINTS], [CLEAR, moved, ENDPOINTS]),
+        ):
+            with self.subTest(start=start), self.worker() as hot, self.worker() as fresh:
+                self.observe(hot, start)
+                self.assert_same(self.observe(hot, followup), self.observe(fresh, followup))
+
     def test_layouts_keep_the_native_pin_after_arrow_then_text(self):
         source = FIXTURE.read_text()
         original = "plt.subplots(figsize=(3.8, 2.4))"
