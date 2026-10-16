@@ -6,7 +6,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { handleServerEvent } from '@/hooks/useServerEvents'
-import { setCurrentProjectId } from '@/lib/session'
+import { currentProjectId, setCurrentProjectId } from '@/lib/session'
 import { isSessionOf, mergeTranscript, SAFETY_NET_MS, setAiSubmissionLedger, submissionBlocks, useAiStore } from './aiStore'
 import { useUiStore } from './uiStore'
 
@@ -251,6 +251,7 @@ describe('占位与「已发出未确认」「按脚本的发送锁」并存（P
       String(url).includes('/api/ai/run') ? Promise.reject(new TypeError('down')) : g(url as string, init)) as typeof fetch
     try {
       await useAiStore.getState().start({
+        project: currentProjectId(), generation: useAiStore.getState().generation,
         prompt: '把线条加粗', fileId, panelId: 'p-' + fileId, gid: null, label: null, scope: 'figure',
         target: '整张图', overrides: [], script,
       })
