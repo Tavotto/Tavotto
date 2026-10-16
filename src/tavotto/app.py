@@ -5107,13 +5107,14 @@ def _resolve_engine_worker(rel_id: str, *, artifact_source=None):
     )
 
 
-def _note_handoff_render(project: Path, stem: str, *, code: str | None = None, **facts) -> None:
+def _note_handoff_render(stem: str, *, code: str | None = None, **facts) -> None:
     """把这次渲染的结论写进匹配的交接期望（ADR 0131 第六节）。
 
     只读取这次本来就要做的渲染的结果，不触发任何执行；没有交接在等（绝大多数渲染）时
     目录都不存在，零成本返回。**任何失败都不许影响渲染响应。**
     """
     try:
+        project = current_ctx().path  # 取不到项目也在保护范围内：回执是旁路
         if code is None:
             engine_handoffreceipt.record_ok(project, stem, **facts)
         else:
@@ -5207,7 +5208,7 @@ def api_engine_render():
         )
     except engine_pool.WorkerError as exc:
         LOG.error("引擎渲染失败: %s: %s", stem, exc)
-        _note_handoff_render(current_ctx().path, Path(stem).stem, code=exc.code)
+        _note_handoff_render(Path(stem).stem, code=exc.code)
         # 按新改指表 build 过、只是图名变了（stems 由数据决定，`unknown_stem`）：注册表按这次 build 的真实
         # 产出重新登记，新图在素材库里出现（ADR 0106 §五）
         # 一张都没出（`unknown_stem` 被换成 `no_figures_captured*`）同样是按新表跑出的权威结果：旧 stems 要摘掉
@@ -5253,7 +5254,6 @@ def api_engine_render():
         raise
     sse_publish("render.done", {"pj": pj, "id": rel_id, "rev": worker.rev})
     _note_handoff_render(
-        current_ctx().path,
         Path(stem).stem,
         registry_match=bool(info),
         manifest_elements=len((resp.get("manifest") or {}).get("elements") or []),
