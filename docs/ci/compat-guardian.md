@@ -100,7 +100,7 @@ expected_cases, corpus_sha256, cases[], evidence[], verdict, coverage, unverifie
 
 ### 3.1 状态词表（含「该层未覆盖」的精确定义）
 
-行状态 = 简报的八态 + `partial_coverage`；格状态 = 八态 + `not_covered`。
+行状态 = 简报的八态 + `partial_coverage` + `control_met`；格状态 = 八态 + `not_covered`。
 
 - `not_run`：这一层**在范围内但没有执行**（前序失败、被跳过）。
 - `not_covered`：这个 adapter **根本不驱动**这一层。V2 会话 adapter 只走「扫描 → 检查 → 运行 → 捕获 →
@@ -110,12 +110,29 @@ expected_cases, corpus_sha256, cases[], evidence[], verdict, coverage, unverifie
   所有被驱动的层都 `passed`；其余层全是 `not_covered`，且至少有一个。它**不是通过**：不进「通过」分子，
   汇总里单列，退出码 4。要升级成 `passed`，必须有 adapter 真正驱动那些层——不能靠改词或调阈值。
 - `passed` 的必要条件：原生参照通过；两侧计数 > 0；环境可比；九格全部 `passed`。
-- `expected_limitation`：只有两条来源——CompatBench 清单里**显式声明**期望为假的阶段；以及 V2 的
-  「受限入口对照」（§10 案例 13），且仅当观测形状与记录的 main 基线逐项相等。
+- `expected_limitation`：来源——CompatBench 清单里**显式声明**期望为假的阶段；以及 V2「设计停止」场景
+  （`ideal_outcome == stop_no_fallback` 且 V2 停止判据逐项满足：一次执行、明确原因码、无图、不回退）。
+- `control_met`：见 §3.2，只由已提交的声明文件产生。
 - `failed` 必须有独立证据（阶段失败 / 路由失败 / 浏览器失败）；遗留的 `product_bug` 标签单独只给 `unknown`。
 - 聚合 `verdict`：有 `failed` → `failed`；全 `passed` → `passed`；其余全在 {passed, partial_coverage,
   expected_limitation} → `partial_coverage`（只要有一个 partial）否则 `expected_limitation`；全是同一种
   环境/夹具问题 → 该状态；其余 `unknown`。空集合 → `unknown`。
+
+### 3.2 声明式预期（`tests/compat_guardian/expectations.json`）
+
+不再有写死的 id 清单。一个 case 的**观测结果本来就不是干净通过**时（别的规则的对照、故意写错的夹具、
+设计停止、前提设计上不成立），必须在声明文件里登记：`suite, case, outcome, reason`，以及**至少一条**
+`references`（`issue`：`#123`；`test`：`path::name`，文件和名字都要真实存在）。schema 在
+`tests/compat_guardian/expectations.schema.json`；可声明的结果只有
+`invalid_fixture / expected_limitation / environment_unavailable / partial_coverage / not_reproduced`
+（`passed` 不需要声明，`failed` / `control_met` 是结果不是声明）。
+
+判定是机械的：**观测结果 == 声明** → 行状态 `control_met`（不是通过、不是失败，不进通过分子，摘要单列）；
+**不等** → `failed`，行上带 `expectation.diff`（「declared X but observed Y」），类别 `unknown /
+expectation_mismatch`。比声明更好的结果同样是不等：它可能是静默的行为变化（例如受限入口悄悄升了 Native），
+必须有人改声明。观测结果里「失败但形状与记录的 main 基线逐项相等」按 `expected_limitation` 计，这只在存在声明
+时才起作用；没有声明的 case 保持原样（如 `s07 / s17 / s25` 仍是 `failed`）。声明文件与它的 schema 同夹具一样
+按 `git show HEAD:` 比对，报告里带 `expectations_sha256`，`validate` 会按声明重算每一行的状态。
 
 ## 4. 原生参照（`compat_driver.py --mode native_ref`，M1）
 
@@ -130,8 +147,8 @@ savefig_calls`、`same_path_distinct_figures`（不同 Figure 写同一路径—
 `script_entries`（驱动自己数到的入口次数，仅作交叉核对）。
 
 判定（`_native_status`）：`exit_status != 0` → `invalid_fixture`（缺模块 → `environment_unavailable`）；
-图类产物读不回来 → `invalid_fixture`；`figure_count == 0` → `unknown`（没有可比对象，也不是原生失败）；
-否则 `passed`。**原生失败永远先于 Tavotto 归因，且不会进入产品缺陷人群**；`validate` 会按原生事实重算
+图类产物读不回来 → `invalid_fixture`；`figure_count == 0` 是合法的原生结果（脚本不画图），仍为 `passed`，由对侧判：Tavotto 捕获了原生没有产生的图 →
+`failed`。否则 `passed`。**原生失败永远先于 Tavotto 归因，且不会进入产品缺陷人群**；`validate` 会按原生事实重算
 这个状态，伪造「原生失败但 Tavotto failed」的报告会被拒。
 
 ## 5. 执行次数
@@ -199,19 +216,17 @@ CompatBench 的 `run_group` 之外 runner 崩溃目前会被 `compat_matrix.py:m
   汇总 JSON/MD、证据里的 `*.png`。注意：下载到的 artifact 不含全部证据文件，**完整 `validate` 只在
   产生它的 job 内成立**。
 - 观察的 case 集：engine = `shape_oo_savefig, shape_pyplot_show_only, shape_relative_csv,
-  shape_local_helper_import, shape_multi_figure_a, sci_pillow`；V2 = `s01_plain, s04_replace_readback,
-  s04b_savefig_tmp_replace, s05_dynamic_rename, s06_savefig_pil_readback, s27_import_pil_present`。
-  没放进去的 V2 场景及原因：`s16a/s16b`（原生本来就按设计失败 → `invalid_fixture`，没有可比对象）、
-  `s21_no_figure`（原生 0 图 → `unknown`）、`s26`/`s14`（依赖「缺包」前提，本环境装了包 →
-  `environment_unavailable`）、`s07/s17/s25`（有已记录的 main 基线缺口，不是受限入口对照；留给 CG-04
-  的修复 PR 而不是被观察 workflow 每天标红）。
+  shape_local_helper_import, shape_multi_figure_a, sci_pillow`；V2 = 全部场景。
+  没放进去的 V2 场景及原因：全部 15 个场景（不挑子集）。`s16a/b`、`s04b/s05/s06`、`s14`、`s18`、`s21`、`s26` 由声明文件产出 `control_met`；
+  `s01/s04/s27` 为 `partial_coverage`；`s07/s17/s25` 是真实的、已在 V2 基线里钉住的产品缺口，保持 `failed`——
+  所以只要它们未修，这个观察 workflow 每次都会红，这是有意的，不是被吞掉。
 
 ## 9. 评审边界（CODEOWNERS）
 
 `.github/CODEOWNERS` 为下列路径列出显式条目：`tests/compat/**`（manifest、基线、schema）、
 `tests/fixtures/compat_v2/**`、`scripts/ci/compat_guardian*`、`scripts/ci/guardian_exec_observer.py`、
 `scripts/ci/compat_driver.py`、`tests/test_compat_guardian*`、Guardian workflow 与本文档。
-目前只有一位维护者，条目等于默认值；它们的作用是：等有第二位维护者时，这些路径不会跟着默认规则漂走，
+`tests/compat_guardian/**`（声明文件与 schema）同样在列。目前只有一位维护者，条目等于默认值；它们的作用是：等有第二位维护者时，这些路径不会跟着默认规则漂走，
 且「改夹具 = 改权利边界」在文件里写明了。
 
 ## 10. 15 个对抗验收案例的覆盖
@@ -230,7 +245,7 @@ CompatBench 的 `run_group` 之外 runner 崩溃目前会被 `compat_matrix.py:m
 | 10 | 缩小丢了原始错误 → 最小化器拒绝 | CG-03（`minimize` 是桩） |
 | 11 | 什么都没跑 → 报告不能成功 | `Case11NothingRan` |
 | 12 | 旧 SHA 的证据证明不了新提交 | `Case12StaleEvidence` |
-| 13 | 受限入口不能自动升 Native | 行为由 `tests/test_execution_fallback_e2e.py::test_a_browser_mode_service_never_falls_back_to_native` 拥有；Guardian 加一层：`RESTRICTED_ENTRY_CONTROLS`（`s04b, s05, s06`）仅在形状与 main 基线逐项相等时记 `expected_limitation`，任何偏离（包括「变好」，可能是静默升 Native）记 `failed` 待人工 |
+| 13 | 受限入口不能自动升 Native | 行为由 `tests/test_execution_fallback_e2e.py::test_a_browser_mode_service_never_falls_back_to_native` 拥有；Guardian 加一层：`s04b / s05 / s06` 在声明文件里声明为 `expected_limitation`（理由「案例 13」+ 上述 owner 测试）；观测偏离声明（包括「变好」，可能是静默升 Native）即 `failed` |
 | 14 | 两边都出图但语义不同 | `v2_stages` 的标题语义对比（`test_v2_both_graphs_wrong_science_fails`）；更一般的数据级语义留 CG-02 |
 | 15 | 两边都对 → 不能编造缺陷 | `Case15BothCorrect` |
 
