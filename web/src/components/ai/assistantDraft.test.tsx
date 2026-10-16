@@ -443,6 +443,24 @@ describe('同步状态机：单一 reconcile + 写入版本（#1098）', () => {
     }
   })
 
+  it('冲突放弃了本页的版本，但另一个窗口的稿恰好和本页输入的一样：输入框里的字没变，不出提示', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    try {
+      await mount()
+      const releaseA = be.holdNextDraftPut()
+      await typeText('一样的字')
+      await act(async () => void vi.advanceTimersByTime(WRITE_DEBOUNCE_MS + 50))
+      await settle()
+      be.putStamped('pa', 'Fig1.pdf', '一样的字', Date.now() * 1000 + 5_000_000_000)
+      releaseA()
+      await settle()
+      expect(input().value).toBe('一样的字')
+      expect(q('[data-ai-draft-note="replaced"]')).toBeNull()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('没有冲突时不出这句提示（正常保存、对账一致）', async () => {
     await mount()
     await typeText('正常写的字')
