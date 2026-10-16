@@ -3117,22 +3117,152 @@ export interface AiRunRequest {
   scope?: string
   target?: string
   canvas?: string | null
+  /**
+   * 点「发送」时生成的请求 id（UUID），与后端 `api_ai_run` 的 `client_request_id` 同名同义：
+   * 同 (项目, id) 再 POST 后端返回既有会话、不再 spawn。重发「同一条」必须带同一个 id；
+   * 用户有意的新任务（含明确失败后的重试）换新 id。
+   */
+  client_request_id?: string
 }
+
+/** 发送请求的等待上限：超时 = 「已发出、未收到确认」，不是失败（后端可能已经接受了） */
+export const AI_RUN_TIMEOUT_MS = 30_000
 
 /**
  * `pj`：会话**所属**的项目（#589）。发起、撤销、中止都钉在它上面，不跟着「此刻认领的项目」走——
  * 切项目之后还能摸到的旧会话按钮，请求也绝不发往新项目。
+ *
+ * 带 `AbortController` 超时：超时与网络错误一样抛**非 `ApiError`**——调用方据此区分「后端明确拒绝了」
+ * （`ApiError`，一定没执行）与「不知道后端收到没有」（其余，不得静默重发，见 `aiStore.start`）。
  */
-export const aiRun = (req: AiRunRequest, pj: string | null) =>
-  jsonFetch<{ session: string; script: string }>(
+export const aiRun = (req: AiRunRequest, pj: string | null, timeoutMs: number = AI_RUN_TIMEOUT_MS) => {
+  const ctl = new AbortController()
+  const timer = setTimeout(() => ctl.abort(), timeoutMs)
+  return jsonFetch<{ session: string; script: string; deduped?: boolean }>(
     '/api/ai/run',
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(req),
+      signal: ctl.signal,
+    },
+    pj,
+  ).finally(() => clearTimeout(timer))
+}
+
+/** 后端按请求 id 登记的会话摘要（`GET /api/ai/requests/<id>`） */
+export interface AiRequestStatus {
+  session: string
+  status: string
+  changed: boolean
+  script: string
+}
+
+/**
+ * 「这条请求后端到底接受了没有」。404 + `ai_request_not_found` 是**明确结论**（后端没登记过）；
+ * 其余失败（网络、老后端没这个端点、5xx）都不是结论——调用方不得把它们当「没发过」。
+ */
+export const fetchAiRequest = (requestId: string, pj: string | null) =>
+  jsonFetch<AiRequestStatus>(`/api/ai/requests/${encodeURIComponent(requestId)}`, undefined, pj)
+
+export const AI_REQUEST_NOT_FOUND = 'ai_request_not_found'
+
+/* ------------------- 助手草稿与待确认账本（ADR 0132：存后端，不存浏览器） ------------------- */
+
+export interface AiDraftDoc {
+  draft: { text: string; revision: number; updated_ms: number; stamp: number } | null
+  /** 这一行（含墓碑）的写入戳：读到就抬高本页的戳下限 */
+  stamp?: number
+  /** 未落定的提交（按 rid 一条，由老到新） */
+  pendings: { rid: string; text: string; sent: unknown; created_ms: number }[]
+}
+
+const JSON_HEADERS = { 'Content-Type': 'application/json' }
+
+export const fetchAiDraft = (file: string, pj: string | null, signal?: AbortSignal) =>
+  jsonFetch<AiDraftDoc>(`/api/ai/drafts?file=${encodeURIComponent(file)}`, signal ? { signal } : undefined, pj)
+
+/**
+ * 全文覆盖（最后写入为准）；空文本 = 删。`keepalive`：页面正在关 / 刷新（pagehide）时用，浏览器会在
+ * 页面销毁后继续把这个请求发完（正文有 64 KB 的 keepalive 上限，草稿 ≤ 20 KB 够用）。
+ */
+export const putAiDraft = (file: string, text: string, pj: string | null, keepalive = false, stamp?: number) =>
+  jsonFetch<{ revision: number; stamp: number; stale?: boolean; text_hash?: string }>(
+    '/api/ai/drafts',
+    { method: 'PUT', headers: JSON_HEADERS, body: JSON.stringify({ file, text, stamp }), keepalive },
+    pj,
+  )
+
+/** 条件删除：只有后端的文本仍等于 `ifText` 才删（不删另一个标签页的新稿） */
+export const deleteAiDraftIf = (file: string, ifText: string, pj: string | null) =>
+  jsonFetch<{ deleted: boolean }>(
+    '/api/ai/drafts',
+    { method: 'DELETE', headers: JSON_HEADERS, body: JSON.stringify({ file, if_text: ifText }) },
+    pj,
+  )
+
+export const putAiPending = (
+  rid: string,
+  file: string,
+  text: string,
+  sent: unknown,
+  pj: string | null,
+  script: string | null = null,
+  draftStamp: number | null = null,
+  supersedes: string[] = [],
+) =>
+  jsonFetch<{ ok: boolean }>(
+    `/api/ai/drafts/pending/${encodeURIComponent(rid)}`,
+    {
+      method: 'PUT',
+      headers: JSON_HEADERS,
+      // `supersedes`：放弃的旧等待，后端在写这条的同一个事务里删它们（客户端不单方面 DELETE）
+      body: JSON.stringify({ file, text, sent, script, draft_stamp: draftStamp, ...(supersedes.length ? { supersedes } : {}) }),
     },
     pj,
   )
+
+/** 本项目全部未落定的提交（跨面板，带 script）：发起它的面板已不在时也找得回来 */
+export const fetchAiPendings = (pj: string | null, signal?: AbortSignal) =>
+  jsonFetch<{
+    pendings: { file: string; rid: string; text: string; sent: unknown; script: string | null; created_ms: number }[]
+  }>('/api/ai/drafts/pending', signal ? { signal } : undefined, pj)
+
+/** 请求已被接受：清这条账本；草稿文本仍等于提交时的原文才一并删（后端一个事务里判与删） */
+export const acceptAiPending = (rid: string, file: string, pj: string | null) =>
+  jsonFetch<{ cleared: boolean; draft_deleted: boolean }>(
+    `/api/ai/drafts/pending/${encodeURIComponent(rid)}/accept`,
+    { method: 'POST', headers: JSON_HEADERS, body: JSON.stringify({ file }) },
+    pj,
+  )
+
+/** 会话详情（转录 + diff）；查询到已登记的会话后补全界面用 */
+export interface AiSessionDetail {
+  agent?: string
+  /** 文件变了之后项目刷新的结局（`changed:true` + `failed` = 改成了、项目没刷新） */
+  refresh?: AiRefreshOutcome | null
+  status: string
+  /** 后端写下的结束时刻（`_pump` 收尾之后）；`cancelled` 但没有它 = 取消已被接受、结果还没算出来，不是终态快照 */
+  ended_ms?: number | null
+  changed: boolean | null
+  diff: string
+  transcript: { kind: string; text: string }[]
+}
+export const fetchAiSession = (sid: string, pj: string | null) =>
+  jsonFetch<AiSessionDetail>(`/api/ai/sessions/${encodeURIComponent(sid)}`, undefined, pj)
+
+/**
+ * 发送失败是不是「后端明确拒绝」：有 HTTP 响应，且 4xx、或 5xx 但带着我们自己的稳定 `code`
+ * （后端处理过的失败）。网关式 5xx（502/503/504，没有 code）、超时、断网、200 但读不出体——
+ * 都不确定后端收到没有。
+ */
+export function isDefiniteRunFailure(e: unknown): boolean {
+  if (!(e instanceof ApiError)) return false
+  // 后端拒绝了、但清它的待确认行也失败了（503 `ai_request_unresolved`）：状态不确定，不是「明确拒绝」——保持同一个 rid
+  if (e.body?.code === 'ai_request_unresolved') return false
+  if (e.status < 500) return true
+  return typeof e.body?.code === 'string' && e.body.code !== ''
+}
 
 export const aiRevert = (sid: string, pj: string | null) =>
   jsonFetch<{ ok: boolean; script: string }>(
@@ -3309,11 +3439,20 @@ export type ServerEvent =
   | ({ kind: 'engine.package' } & PackageProgress)
   /** 导出作业的进度与终局。载荷 = `ExportJob` 的全部字段（不是增量，是快照） */
   | ({ kind: 'export.progress' } & ExportJob)
-  | { kind: 'ai.delta'; pj?: string; session: string; text: string; kindOf?: AiDeltaKind }
+  | {
+      kind: 'ai.delta'
+      pj?: string
+      /** 发起这次任务的请求 id；老后端 / 老前端发起的没有 */
+      client_request_id?: string
+      session: string
+      text: string
+      kindOf?: AiDeltaKind
+    }
   | ({
       kind: 'ai.done'
       /** 发起这次任务的项目（#589）；老后端没有这个字段 */
       pj?: string
+      client_request_id?: string
       session: string
       status: string
       changed: boolean

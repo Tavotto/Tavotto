@@ -12,6 +12,7 @@
  *
  * 动画本身（淡入、弹簧）jsdom 播不出来——只钉类名与 token（motion.test）。
  */
+import { DURATION } from '@/lib/motion'
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -239,6 +240,11 @@ describe('贴底跟随', () => {
 
     await act(async () => scrollPill()!.click())
     expect(el.scrollTop).toBe(700)
+    // 退场：先进入 closed 态（播 pop-out），播完才卸载——不是到底的那一帧硬消失
+    expect(scrollPill()?.getAttribute('data-state')).toBe('closed')
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, DURATION.exit + 40))
+    })
     expect(scrollPill()).toBeUndefined()
   })
 
