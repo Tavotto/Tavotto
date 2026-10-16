@@ -218,8 +218,8 @@ CompatBench 的 `run_group` 之外 runner 崩溃目前会被 `compat_matrix.py:m
 - 观察的 case 集：engine = `shape_oo_savefig, shape_pyplot_show_only, shape_relative_csv,
   shape_local_helper_import, shape_multi_figure_a, sci_pillow`；V2 = 全部场景。
   没放进去的 V2 场景及原因：全部 15 个场景（不挑子集）。`s16a/b`、`s04b/s05/s06`、`s14`、`s18`、`s21`、`s26` 由声明文件产出 `control_met`；
-  `s01/s04/s27` 为 `partial_coverage`；`s07/s17/s25` 是真实的、已在 V2 基线里钉住的产品缺口，保持 `failed`——
-  所以只要它们未修，这个观察 workflow 每次都会红，这是有意的，不是被吞掉。
+  `s01/s04/s27` 为 `partial_coverage`；`s07/s17` 与 `s04b/s05/s06` 同属案例 13（声明为 `expected_limitation`）；`s25` 是真实产品缺口
+  （#1134，G3），不声明、保持 `failed`——所以只要它未修，这个观察 workflow 每次都会红，这是有意的，不是被吞掉。
 
 ## 9. 评审边界（CODEOWNERS）
 
@@ -306,6 +306,10 @@ CompatBench 的 `run_group` 之外 runner 崩溃目前会被 `compat_matrix.py:m
 Guardian 系列不改任何 `engine/` 文件。
 
 ## E. 已知限制（CG-01 如实留下的）
+
+- **缺桌面来源变体**：`s04b/s05/s06/s07/s17` 声明的是「浏览器模式按设计不升 Native」；桌面路径由 #1028 的回退覆盖，
+  但 V2 adapter 只走浏览器模式，所以**现在没有任何 Guardian 证据证明桌面路径真的能出图**。需要桌面来源变体才能补上。
+- **s25 / G3**：partial 被投影成 completed、失败的图不可见，见 #1134；保持 `failed`，修复在 CG-04。
 
 - V2 adapter 只覆盖扫描→标题语义；edit/replay/export/fidelity 是 `not_covered`，因此 V2 case 的最好结果是
   `partial_coverage`，不是 `passed`。引擎 adapter 覆盖九级，但**不**覆盖产品路由（专用路由测试仍是权威）。
