@@ -50,7 +50,6 @@ from __future__ import annotations
 import argparse
 import builtins
 import contextlib
-import hashlib
 import importlib.util
 import io
 import json
@@ -208,9 +207,9 @@ def _install_savefig_hook(mfigure) -> None:
 
 
 def _digest(path: str) -> str | None:
+    # 分块读（`figcapture.hash_file`）：未压缩 TIFF 之类的大产物不整份进内存（Codex #1126 r4295028879）
     try:
-        with open(path, "rb") as f:
-            return hashlib.sha256(f.read()).hexdigest()
+        return figcapture.hash_file(path)[0]
     except OSError:
         return None
 
@@ -817,6 +816,9 @@ class BridgeRun:
 
     def _ensure_session(self):
         self._ensure_engine()
+        # 进屏障、把 stem 交给界面之前先提升一遍：改名之后紧接着 `plt.show()` 的脚本，界面拿到的就是 `final`
+        # 而不是之后再也改不动的 `final.png`（#1124，Codex #1126 r4295028867）
+        _promote_temp_saves(self.session.capture if self.session is not None else ())
         if self.session is not None:
             self._sync_captures()
             self.session.instrument_all()

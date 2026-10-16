@@ -106,6 +106,68 @@ def test_a_final_stem_already_taken_by_another_figure_is_left_alone(tmp_path):
     assert _stems(tmp_path, body) == ["final.png", "final"]
 
 
+def _barrier_stems(tmp_path: Path, body: str) -> list[list[str]]:
+    """带控制通道跑（桌面 / `tavotto run` 的形态）：假的父进程握手、记下每个 `barrier` 事件交给界面的 stems，
+    然后关掉连接（EOF = 父进程走了 → 屏障放开、脚本照常跑完）。"""
+    import socket
+    import threading
+
+    (tmp_path / "s.py").write_text(HEAD + body, encoding="utf-8")
+    server = socket.create_server(("127.0.0.1", 0))
+    port = server.getsockname()[1]
+    seen: list[list[str]] = []
+
+    def serve():
+        conn, _ = server.accept()
+        with conn, conn.makefile("r", encoding="utf-8") as rf:
+            assert json.loads(rf.readline())["token"] == "t0k"
+            conn.sendall(b'{"ok": true}\n')
+            for line in rf:
+                msg = json.loads(line)
+                if msg.get("bridge_event") == "barrier":
+                    seen.append(msg["stems"])
+                    return  # 关连接：屏障放开
+
+    t = threading.Thread(target=serve, daemon=True)
+    t.start()
+    proc = subprocess.run(  # noqa: S603
+        [
+            sys.executable,
+            str(RUNNER),
+            "--target-kind",
+            "script",
+            "--target",
+            "s.py",
+            "--out-dir",
+            str(tmp_path / "out"),
+            "--control-port",
+            str(port),
+        ],
+        cwd=tmp_path,
+        env={**__import__("os").environ, "TAVOTTO_BRIDGE_TOKEN": "t0k"},
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=180,
+    )
+    t.join(timeout=30)
+    server.close()
+    assert proc.returncode == 0, proc.stderr[-2000:]
+    return seen
+
+
+def test_a_rename_before_show_reaches_the_ui_as_the_final_stem(tmp_path):
+    """Codex #1126 P1（r4295028867）：改名之后紧接着阻塞的 `plt.show()`——第一个屏障交给界面的就得是 `final`。"""
+    body = 'os.replace("final.png.tmp", "final.png")\nplt.show()\n'
+    assert _barrier_stems(tmp_path, body)[0] == ["final"]
+
+
+def test_a_stem_published_before_the_rename_is_not_renamed_afterwards(tmp_path):
+    """屏障上已按 `final.png` 交给界面、之后才改名：不再改（界面与会话已按旧名索引）。"""
+    body = 'plt.show()\nos.replace("final.png.tmp", "final.png")\n'
+    assert _barrier_stems(tmp_path, body)[0] == ["final.png"]
+
+
 @pytest.mark.parametrize(
     "fname,target",
     [
