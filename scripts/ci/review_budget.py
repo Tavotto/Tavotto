@@ -173,7 +173,7 @@ def _bot_summary(comments: list[dict]) -> dict:
 def _signals(comments: list[dict]) -> dict:
     manual = {"code": [], "security": []}
     quota = {"code": [], "security": [], "unspecified": []}
-    automated_open = False
+    automatic_seen = {"code": False, "security": False}
     for c in comments:
         body = c.get("body") or ""
         when = c.get("created_at") or ""
@@ -187,12 +187,25 @@ def _signals(comments: list[dict]) -> dict:
                     else "unspecified"
                 )
                 quota[kind].append(when)
-            if (
-                "codex-review-state:v1" in body
-                and "| PR opened |" in body
-                and "Security Review" in body
-            ):
-                automated_open = True
+            if "codex-review-state:v1" in body:
+                # Bot summary shows only the latest trigger for each kind.
+                # Parse per row: a code PR-open must not masquerade as security auto.
+                for line in body.splitlines():
+                    columns = [part.strip().lower() for part in line.strip().strip("|").split("|")]
+                    if len(columns) < 4:
+                        continue
+                    trigger = columns[3]
+                    automatic = trigger in {
+                        "pr opened",
+                        "pr reopened",
+                        "pr ready for review",
+                        "pr marked ready",
+                        "automatically triggered",
+                    }
+                    if automatic:
+                        for kind in ("code", "security"):
+                            if kind + " review" in columns[0]:
+                                automatic_seen[kind] = True
         else:
             for m in REVIEW_REQUEST.finditer(body):
                 kind = "security" if m.group(1) else "code"
@@ -204,7 +217,8 @@ def _signals(comments: list[dict]) -> dict:
         "quota_replies": {k: len(v) for k, v in quota.items()},
         "last_quota_reply": {k: max(v, default=None) for k, v in quota.items()},
         "last_manual_request": {k: max(v, default=None) for k, v in manual.items()},
-        "security_auto_trigger_observed": automated_open,
+        "automatic_review_trigger_observed": automatic_seen,
+        "security_auto_trigger_observed": automatic_seen["security"],
     }
 
 

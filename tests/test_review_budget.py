@@ -168,6 +168,23 @@ def test_unresolved_findings_are_not_silently_approved():
     assert r["suggested_action"] == "resolve_review_findings_and_verify"
 
 
+def test_automatic_review_trigger_is_detected_per_bot_summary_row():
+    body = (
+        '<!-- codex-review-state:v1 {"code_review":{},"security_review":{}} -->\n'
+        "| Review | Status | Commit | Review trigger |\n"
+        "| --- | --- | --- | --- |\n"
+        "| 📝 **Code Review** | Failed | abc | PR opened |\n"
+        "| 🔒 **Security Review** | Completed | abc | Manual request |\n"
+    )
+    r = _audit(["src/tavotto/security.py"], comments=[_comment(body, author=B.BOT)])
+    assert r["signals"]["automatic_review_trigger_observed"] == {
+        "code": True,
+        "security": False,
+    }
+    assert r["signals"]["security_auto_trigger_observed"] is False
+    assert r["signals"]["manual_requests"]["code"] == 0
+
+
 def test_quota_responses_halt_retry_recommendations_without_claiming_current_quota():
     r = _audit(
         ["web/src/App.tsx"],
