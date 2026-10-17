@@ -143,7 +143,6 @@ def test_spoofed_review_text_from_human_cannot_mark_coverage():
 
 
 def test_unresolved_findings_are_not_silently_approved():
-    mark = chr(96)
     summary = _comment(
         '<!-- codex-review-state:v1 {"code_review":{"commit_sha":"'
         + "a" * 40
