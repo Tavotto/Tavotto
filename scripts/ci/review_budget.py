@@ -100,7 +100,7 @@ def classify(files: list[dict], labels: list[str]) -> dict:
         secure |= is_secure
         if rank == 2:
             drivers.append(path)
-    selected = [l for l in labels if l in RISK_LABELS]
+    selected = [label for label in labels if label in RISK_LABELS]
     labeled = max((TIERS[label.partition(":")[2]] for label in selected), default=0)
     effective = max(floor, labeled)
     conflict = len(set(selected)) > 1 or any(
@@ -191,7 +191,9 @@ def _signals(comments: list[dict]) -> dict:
                 # Bot summary shows only the latest trigger for each kind.
                 # Parse per row: a code PR-open must not masquerade as security auto.
                 for line in body.splitlines():
-                    columns = [part.strip().lower() for part in line.strip().strip("|").split("|")]
+                    columns = [
+                        part.strip().lower() for part in line.strip().strip("|").split("|")
+                    ]
                     if len(columns) < 4:
                         continue
                     trigger = columns[3]
