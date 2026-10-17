@@ -74,9 +74,15 @@ def _floor(path: str) -> tuple[int, bool]:
     if secure or path in HIGH_EXACT or any(path.startswith(p) for p in HIGH_PREFIXES):
         return 2, secure
     # Only demonstrably non-policy prose is automatically low.
-    if (path == "README.md" or path == "CHANGELOG.md" or
-            (path.startswith("docs/") and path.endswith((".md", ".mdx", ".rst")) and
-             not path.startswith(("docs/rules/", "docs/adr/", "docs/ci/", "docs/security")))):
+    if (
+        path == "README.md"
+        or path == "CHANGELOG.md"
+        or (
+            path.startswith("docs/")
+            and path.endswith((".md", ".mdx", ".rst"))
+            and not path.startswith(("docs/rules/", "docs/adr/", "docs/ci/", "docs/security"))
+        )
+    ):
         return 0, False
     return 1, False
 
@@ -95,10 +101,10 @@ def classify(files: list[dict], labels: list[str]) -> dict:
         if rank == 2:
             drivers.append(path)
     selected = [l for l in labels if l in RISK_LABELS]
-    labeled = max((TIERS[l.partition(":")[2]] for l in selected), default=0)
+    labeled = max((TIERS[label.partition(":")[2]] for label in selected), default=0)
     effective = max(floor, labeled)
     conflict = len(set(selected)) > 1 or any(
-        TIERS[l.partition(":")[2]] < floor for l in selected
+        TIERS[label.partition(":")[2]] < floor for label in selected
     )
     return {
         "tier": TIER_NAMES[effective],
@@ -116,8 +122,12 @@ def _bot(item: dict) -> bool:
 
 
 def _sha_matches(head: str, observed: str | None) -> bool:
-    return bool(observed and re.fullmatch(r"[a-f0-9]{7,40}", observed, re.I) and
-                len(head) == 40 and head.lower().startswith(observed.lower()))
+    return bool(
+        observed
+        and re.fullmatch(r"[a-f0-9]{7,40}", observed, re.I)
+        and len(head) == 40
+        and head.lower().startswith(observed.lower())
+    )
 
 
 def _review_receipts(reviews: list[dict], comments: list[dict]) -> list[dict]:
@@ -132,12 +142,15 @@ def _review_receipts(reviews: list[dict], comments: list[dict]) -> list[dict]:
         kind = "security" if "Codex Security Review" in body else "code"
         if "codex-review-receipt:v1" not in body and "Codex Review:" not in body:
             continue
-        results.append({
-            "kind": kind, "sha": sha.group(1).lower(),
-            "at": obj.get("submitted_at") or obj.get("created_at") or "",
-            "automatically_triggered": "Automatically triggered" in body,
-            "id": obj.get("id"),
-        })
+        results.append(
+            {
+                "kind": kind,
+                "sha": sha.group(1).lower(),
+                "at": obj.get("submitted_at") or obj.get("created_at") or "",
+                "automatically_triggered": "Automatically triggered" in body,
+                "id": obj.get("id"),
+            }
+        )
     return sorted(results, key=lambda x: (x["at"], str(x["id"])))
 
 
@@ -166,11 +179,19 @@ def _signals(comments: list[dict]) -> dict:
         when = c.get("created_at") or ""
         if _bot(c):
             if "reached your codex usage limits" in body.lower():
-                kind = ("security" if "security review" in body.lower()
-                        else "code" if "code review" in body.lower() else "unspecified")
+                kind = (
+                    "security"
+                    if "security review" in body.lower()
+                    else "code"
+                    if "code review" in body.lower()
+                    else "unspecified"
+                )
                 quota[kind].append(when)
-            if ("codex-review-state:v1" in body and
-                    "| PR opened |" in body and "Security Review" in body):
+            if (
+                "codex-review-state:v1" in body
+                and "| PR opened |" in body
+                and "Security Review" in body
+            ):
                 automated_open = True
         else:
             for m in REVIEW_REQUEST.finditer(body):
@@ -187,22 +208,28 @@ def _signals(comments: list[dict]) -> dict:
     }
 
 
-def _review_state(kind: str, head: str, required: bool, receipts: list[dict],
-                  signals: dict, summary: dict) -> dict:
+def _review_state(
+    kind: str, head: str, required: bool, receipts: list[dict], signals: dict, summary: dict
+) -> dict:
     if not required:
         return {"state": "not_required", "reviewed_head": False}
     own = [r for r in receipts if r["kind"] == kind]
     current = [r for r in own if _sha_matches(head, r["sha"])]
-    bot_current = (summary.get(kind + "_review") or {})
+    bot_current = summary.get(kind + "_review") or {}
     summary_matches = _sha_matches(head, bot_current.get("commit_sha"))
-    unresolved = (bot_current.get("has_unresolved_findings") if summary_matches
-                  else None)
+    unresolved = bot_current.get("has_unresolved_findings") if summary_matches else None
     performed = bool(current)
     latest_receipt = max((r["at"] for r in own), default="")
-    quota_at = max(filter(None, [
-        signals["last_quota_reply"][kind],
-        signals["last_quota_reply"]["unspecified"],
-    ]), default="")
+    quota_at = max(
+        filter(
+            None,
+            [
+                signals["last_quota_reply"][kind],
+                signals["last_quota_reply"]["unspecified"],
+            ],
+        ),
+        default="",
+    )
     manual_count = signals["manual_requests"][kind]
     if performed:
         state = "reviewed_findings_open" if unresolved is True else "reviewed_on_head"
@@ -227,7 +254,7 @@ def _review_state(kind: str, head: str, required: bool, receipts: list[dict],
 
 
 def assess(pr: dict, files: list[dict], comments: list[dict], reviews: list[dict]) -> dict:
-    head = ((pr.get("head") or {}).get("sha") or "")
+    head = (pr.get("head") or {}).get("sha") or ""
     if not re.fullmatch(r"[0-9a-f]{40}", head, re.I):
         raise IncompleteEvidence("PR head SHA unavailable")
     base = (pr.get("base") or {}).get("ref")
@@ -243,34 +270,42 @@ def assess(pr: dict, files: list[dict], comments: list[dict], reviews: list[dict
     summary = _bot_summary(comments)
     required_code = risk["tier"] != "low"
     code = _review_state("code", head, required_code, receipts, signals, summary)
-    security = _review_state("security", head, risk["security_review_recommended"],
-                             receipts, signals, summary)
-    if (risk["label_conflict"] or
-            any(s["state"] == "manual_escalation" for s in (code, security))):
+    security = _review_state(
+        "security", head, risk["security_review_recommended"], receipts, signals, summary
+    )
+    if risk["label_conflict"] or any(s["state"] == "manual_escalation" for s in (code, security)):
         action = "manual_risk_or_review_decision"
     elif any(s["state"] == "quota_blocked" for s in (code, security)):
         action = "pause_requests_check_codex_quota"
     elif any(s["state"] in ("requested_unconfirmed",) for s in (code, security)):
         action = "wait_for_existing_review"
-    elif any(s["state"] in ("full_review_suggested", "targeted_recheck_needed")
-             for s in (code, security)):
+    elif any(
+        s["state"] in ("full_review_suggested", "targeted_recheck_needed") for s in (code, security)
+    ):
         action = "review_after_fast_checks_pass"
     elif any(s["state"] == "reviewed_findings_open" for s in (code, security)):
         action = "resolve_review_findings_and_verify"
     else:
         action = "no_additional_ai_review_indicated"
     return {
-        "schema_version": 1, "status": "observed", "repository": pr.get("base", {}).get("repo", {}).get("full_name"),
-        "pr_number": pr.get("number"), "head_sha": head, "base_ref": base,
-        "stacked_pr": stacked, "draft": bool(pr.get("draft")),
-        "risk": risk, "code_review": code, "security_review": security,
+        "schema_version": 1,
+        "status": "observed",
+        "repository": pr.get("base", {}).get("repo", {}).get("full_name"),
+        "pr_number": pr.get("number"),
+        "head_sha": head,
+        "base_ref": base,
+        "stacked_pr": stacked,
+        "draft": bool(pr.get("draft")),
+        "risk": risk,
+        "code_review": code,
+        "security_review": security,
         "signals": signals,
         "receipts": {
             "code": len([r for r in receipts if r["kind"] == "code"]),
             "security": len([r for r in receipts if r["kind"] == "security"]),
-            "security_automatically_triggered": len([
-                r for r in receipts if r["kind"] == "security" and r["automatically_triggered"]
-            ]),
+            "security_automatically_triggered": len(
+                [r for r in receipts if r["kind"] == "security" and r["automatically_triggered"]]
+            ),
         },
         "suggested_action": action,
         "disclaimer": "Advisory only. No trigger, merge gate, CI verdict or Codex account setting is changed.",
@@ -279,12 +314,15 @@ def assess(pr: dict, files: list[dict], comments: list[dict], reviews: list[dict
 
 def _api(repo: str, endpoint: str, token: str) -> object:
     url = "https://api.github.com/repos/" + repo + endpoint
-    req = urllib.request.Request(url, headers={
-        "Accept": "application/vnd.github+json",
-        "Authorization": "Bearer " + token,
-        "X-GitHub-Api-Version": "2022-11-28",
-        "User-Agent": "tavotto-review-budget",
-    })
+    req = urllib.request.Request(
+        url,
+        headers={
+            "Accept": "application/vnd.github+json",
+            "Authorization": "Bearer " + token,
+            "X-GitHub-Api-Version": "2022-11-28",
+            "User-Agent": "tavotto-review-budget",
+        },
+    )
     try:
         with urllib.request.urlopen(req, timeout=20) as response:
             return json.load(response)
@@ -342,8 +380,12 @@ def main(argv: list[str] | None = None) -> int:
             data = json.loads(Path(args.fixture).read_text(encoding="utf-8"))
             result = assess(data["pr"], data["files"], data["comments"], data["reviews"])
         else:
-            if (not args.repo or not re.fullmatch(r"[\w.-]+/[\w.-]+", args.repo) or
-                    not args.pr or args.pr < 1):
+            if (
+                not args.repo
+                or not re.fullmatch(r"[\w.-]+/[\w.-]+", args.repo)
+                or not args.pr
+                or args.pr < 1
+            ):
                 p.error("--repo owner/repo and positive --pr are required")
             token = os.environ.get("GITHUB_TOKEN")
             if not token:
@@ -357,9 +399,12 @@ def main(argv: list[str] | None = None) -> int:
             result = assess(pr, files, comments, reviews)
         rc = 0
     except (IncompleteEvidence, KeyError, TypeError, ValueError) as exc:
-        result = {"schema_version": 1, "status": "unknown",
-                  "error": type(exc).__name__ + ": " + str(exc),
-                  "disclaimer": "Evidence incomplete; cannot claim review coverage."}
+        result = {
+            "schema_version": 1,
+            "status": "unknown",
+            "error": type(exc).__name__ + ": " + str(exc),
+            "disclaimer": "Evidence incomplete; cannot claim review coverage.",
+        }
         rc = 2
     dest = Path(args.out)
     dest.parent.mkdir(parents=True, exist_ok=True)
@@ -367,9 +412,16 @@ def main(argv: list[str] | None = None) -> int:
     if args.summary:
         with Path(args.summary).open("a", encoding="utf-8") as f:
             f.write(_markdown(result))
-    print(json.dumps({"status": result["status"],
-                      "action": result.get("suggested_action"),
-                      "out": str(dest)}, ensure_ascii=False))
+    print(
+        json.dumps(
+            {
+                "status": result["status"],
+                "action": result.get("suggested_action"),
+                "out": str(dest),
+            },
+            ensure_ascii=False,
+        )
+    )
     return rc
 
 

@@ -13,8 +13,10 @@ SCRIPT = ROOT / "scripts/ci/review_budget.py"
 if not SCRIPT.is_file():
     if (ROOT / ".github").is_dir():
         raise AssertionError("Source checkout unexpectedly lost scripts/ci/review_budget.py")
-    pytest.skip("sdist does not ship scripts/ci; workflow-level test needs source checkout",
-                allow_module_level=True)
+    pytest.skip(
+        "sdist does not ship scripts/ci; workflow-level test needs source checkout",
+        allow_module_level=True,
+    )
 sys.path.insert(0, str(SCRIPT.parent))
 import review_budget as B  # noqa: E402
 
@@ -40,16 +42,21 @@ def _comment(body, *, at="2026-10-16T10:00:00Z", author="erwanjun", id=12):
 def _receipt(*, sha="a" * 40, security=False, at="2026-10-16T11:00:00Z", id=42):
     title = "Codex Security Review" if security else "Codex Review"
     mark = chr(96)
-    body = ("<!-- codex-review-receipt:v1 -->\n"
-            + title + "\n**Reviewed commit:** " + mark + sha[:10] + mark)
+    body = (
+        "<!-- codex-review-receipt:v1 -->\n"
+        + title
+        + "\n**Reviewed commit:** "
+        + mark
+        + sha[:10]
+        + mark
+    )
     if security:
         body += "\nAutomatically triggered"
     return _comment(body, at=at, author=B.BOT, id=id)
 
 
 def _audit(paths, comments=(), reviews=(), labels=(), head="a" * 40):
-    return B.assess(_pr(head=head, labels=labels), _files(*paths),
-                    list(comments), list(reviews))
+    return B.assess(_pr(head=head, labels=labels), _files(*paths), list(comments), list(reviews))
 
 
 def test_pure_nonpolicy_docs_do_not_request_ai():
@@ -61,9 +68,12 @@ def test_pure_nonpolicy_docs_do_not_request_ai():
 
 
 def test_tests_and_rules_are_not_silently_assumed_safe():
-    for path in ("tests/test_security.py", "docs/rules/ci/ci-lanes.md",
-                 "docs/adr/0008-unified-local-session-auth.md",
-                 "web/src/App.tsx"):
+    for path in (
+        "tests/test_security.py",
+        "docs/rules/ci/ci-lanes.md",
+        "docs/adr/0008-unified-local-session-auth.md",
+        "web/src/App.tsx",
+    ):
         r = _audit([path], labels=["risk:low"])
         assert r["risk"]["tier"] == "normal", path
         assert r["risk"]["label_conflict"] is True, path
@@ -71,10 +81,12 @@ def test_tests_and_rules_are_not_silently_assumed_safe():
 
 
 def test_security_sensitive_path_overrides_low_label_and_needs_both_reviews():
-    for path in (".github/workflows/ci.yml",
-                 "src/tavotto/security.py",
-                 "src-tauri/capabilities/main.json",
-                 "scripts/ci/aggregate_gate.py"):
+    for path in (
+        ".github/workflows/ci.yml",
+        "src/tavotto/security.py",
+        "src-tauri/capabilities/main.json",
+        "scripts/ci/aggregate_gate.py",
+    ):
         r = _audit([path], labels=["risk:low"])
         assert r["risk"]["tier"] == "high"
         assert r["risk"]["path_floor"] == "high"
@@ -161,11 +173,17 @@ def test_quota_responses_halt_retry_recommendations_without_claiming_current_quo
         ["web/src/App.tsx"],
         comments=[
             _comment("@codex review", at="2026-10-16T10:00:00Z"),
-            _comment("You have reached your Codex usage limits for code reviews.",
-                     at="2026-10-16T10:00:10Z", author=B.BOT),
+            _comment(
+                "You have reached your Codex usage limits for code reviews.",
+                at="2026-10-16T10:00:10Z",
+                author=B.BOT,
+            ),
             _comment("@codex review", at="2026-10-16T10:05:00Z"),
-            _comment("You have reached your Codex usage limits for code reviews.",
-                     at="2026-10-16T10:05:10Z", author=B.BOT),
+            _comment(
+                "You have reached your Codex usage limits for code reviews.",
+                at="2026-10-16T10:05:10Z",
+                author=B.BOT,
+            ),
         ],
     )
     assert r["signals"]["manual_requests"]["code"] == 2
@@ -178,8 +196,9 @@ def test_quota_responses_halt_retry_recommendations_without_claiming_current_quo
 def test_after_quota_an_actual_head_receipt_counts_but_only_as_reviewed():
     r = _audit(
         ["web/src/App.tsx"],
-        comments=[_comment("You have reached your Codex usage limits for code reviews.",
-                           author=B.BOT)],
+        comments=[
+            _comment("You have reached your Codex usage limits for code reviews.", author=B.BOT)
+        ],
         reviews=[_receipt(at="2026-10-17T12:00:00Z")],
     )
     assert r["code_review"]["state"] == "reviewed_on_head"
@@ -200,9 +219,7 @@ def test_request_or_bot_help_text_is_not_evidence_of_a_completed_review():
 
 
 def test_repeated_completed_stale_reviews_escalate_to_human_instead_of_third_round():
-    r = _audit(["web/src/App.tsx"], reviews=[
-        _receipt(sha="b" * 40), _receipt(sha="c" * 40, id=46)
-    ])
+    r = _audit(["web/src/App.tsx"], reviews=[_receipt(sha="b" * 40), _receipt(sha="c" * 40, id=46)])
     assert r["code_review"]["state"] == "manual_escalation"
     assert r["suggested_action"] == "manual_risk_or_review_decision"
 
@@ -234,11 +251,11 @@ def test_cli_fixture_emits_json_evidence_without_token(tmp_path, monkeypatch):
     inp = tmp_path / "in.json"
     out = tmp_path / "ledger.json"
     summary = tmp_path / "summary.md"
-    inp.write_text(json.dumps({
-        "pr": _pr(), "files": _files("README.md"), "comments": [], "reviews": []
-    }), encoding="utf-8")
-    assert B.main(["--fixture", str(inp), "--out", str(out),
-                   "--summary", str(summary)]) == 0
+    inp.write_text(
+        json.dumps({"pr": _pr(), "files": _files("README.md"), "comments": [], "reviews": []}),
+        encoding="utf-8",
+    )
+    assert B.main(["--fixture", str(inp), "--out", str(out), "--summary", str(summary)]) == 0
     assert json.loads(out.read_text())["suggested_action"] == "no_additional_ai_review_indicated"
     assert "advisory" in summary.read_text().lower()
 
@@ -246,9 +263,9 @@ def test_cli_fixture_emits_json_evidence_without_token(tmp_path, monkeypatch):
 def test_cli_reports_unknown_and_nonzero_when_evidence_is_bad(tmp_path):
     inp = tmp_path / "bad.json"
     out = tmp_path / "ledger.json"
-    inp.write_text(json.dumps({
-        "pr": _pr(), "files": [], "comments": [], "reviews": []
-    }), encoding="utf-8")
+    inp.write_text(
+        json.dumps({"pr": _pr(), "files": [], "comments": [], "reviews": []}), encoding="utf-8"
+    )
     assert B.main(["--fixture", str(inp), "--out", str(out)]) == 2
     result = json.loads(out.read_text())
     assert result["status"] == "unknown"
