@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -296,9 +297,14 @@ def test_advisory_workflow_does_not_elevate_permissions_or_touch_required_gates(
     body = workflow.read_text(encoding="utf-8")
     assert "branches: [main]" in body
     assert "runs-on: ubuntu-latest" in body
-    assert "pull_request_target:" not in body
-    assert "merge_group:" not in body
-    assert "workflow_run:" not in body
+    # Validate actual event keys, not strings in comments or job descriptions.
+    # The allowed event set is deliberately closed, including workflow_dispatch.
+    on_section = body.partition("\non:\n")[2]
+    assert on_section, "Expected a literal top-level on: block"
+    event_section, sep, _ = on_section.partition("\npermissions:\n")
+    assert sep, "Expected an explicit top-level permissions: block"
+    event_keys = set(re.findall(r"(?m)^  ([a-z_]+):\s*$", event_section))
+    assert event_keys == {"pull_request", "workflow_dispatch"}
     assert "review_budget.py" in body
     assert "default_branch" in body
     assert "contents: read" in body

@@ -16,6 +16,20 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
+
+def _pin_utf8_streams() -> None:
+    # Isolated `python -I` cannot import scripts/ci/_common; keep the entry
+    # point's Windows stdout/stderr contract explicit and self-contained.
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            try:
+                stream.reconfigure(encoding="utf-8", errors="replace")
+            except (OSError, ValueError):
+                pass
+
+
+_pin_utf8_streams()
+
 BOT = "chatgpt-codex-connector[bot]"
 TIERS = {"low": 0, "normal": 1, "high": 2}
 TIER_NAMES = {v: k for k, v in TIERS.items()}
@@ -191,9 +205,7 @@ def _signals(comments: list[dict]) -> dict:
                 # Bot summary shows only the latest trigger for each kind.
                 # Parse per row: a code PR-open must not masquerade as security auto.
                 for line in body.splitlines():
-                    columns = [
-                        part.strip().lower() for part in line.strip().strip("|").split("|")
-                    ]
+                    columns = [part.strip().lower() for part in line.strip().strip("|").split("|")]
                     if len(columns) < 4:
                         continue
                     trigger = columns[3]
