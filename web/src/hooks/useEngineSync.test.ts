@@ -1371,6 +1371,31 @@ describe('跨图邻居补渲染（ADR 0128 §二）', () => {
     expect(renderTargets(objs(), 'a', {}).map((x) => x.id)).toEqual(['a'])
   })
 
+  describe('PNG 源图邻居：未采用的不补渲染（补渲染只能发无 source_policy 的 patches=[]）', () => {
+    const guard = { version: 1, requiredFrame: 'figsize', sourceId: 'same.png', bytesSha256: 'a'.repeat(64), sizeBytes: 9 } as const
+    const png = (id: string, extra: Partial<PanelObject> = {}) =>
+      ({ ...panel(id, 'same.png', 0), fileKind: 'raster', ...extra }) as PanelObject
+    const sameFile = (b: Partial<PanelObject> = {}): CanvasObject[] =>
+      [png('a', { artifactValidation: guard, overrides: [{ gid: 'figure', prop: 'frame', value: 'figsize' }] as PanelObject['overrides'] }), png('b', b)]
+
+    it('未采用（无 artifactValidation、无 override）的 PNG 不是邻居；采用过的 / 有 override 的照旧', () => {
+      expect(ids(sameFile())).toEqual([])
+      expect(ids(sameFile({ artifactValidation: guard }))).toEqual(['b'])
+      expect(ids(sameFile({ overrides: [{ gid: 'g', prop: 'color', value: '#000' }] as PanelObject['overrides'] }))).toEqual(['b'])
+    })
+
+    it('syncEngine：A 被采用后进编辑，未采用的同源 B 不会发出无策略渲染', async () => {
+      const { useWorkspaceStore } = await import('@/store/workspaceStore')
+      useWorkspaceStore.setState({ mode: 'layout', activePanelId: null })
+      useViewportStore.setState({ zoom: 1, panX: 0, panY: 0, viewW: 900, viewH: 700 })
+      const renders: unknown[] = []
+      useRenderStore.setState({ render: async (...args) => { renders.push(args) } })
+      syncEngine(sameFile(), 'a')
+      expect(renders).toHaveLength(1)
+      expect(renders[0]).toMatchObject(['same.png', [{ gid: 'figure', prop: 'frame', value: 'figsize' }], undefined, 'immediate', expect.anything(), guard])
+    })
+  })
+
   it('syncEngine：进编辑时发出邻居的渲染；快速编辑不发', async () => {
     const { useWorkspaceStore } = await import('@/store/workspaceStore')
     for (const [mode, expected] of [

@@ -1,4 +1,4 @@
-import { artifactValidationIssue, artifactEntryPending, artifactEditIntentChanged } from '@/lib/artifactValidation'
+import { artifactValidationIssue, isUnadoptedPngSource, artifactEntryPending, artifactEditIntentChanged } from '@/lib/artifactValidation'
 /**
  * 引擎渲染的**订阅与生命周期装配**。调度（防抖 / 立即 / 占位 / 定稿）在
  * `store/renderScheduler.ts`，「只带基线、还没动过」的判据在 `lib/bakedBaseline.ts`；
@@ -106,6 +106,9 @@ export function crossFigureNeighbours(
   for (const o of objects) {
     if (o.type !== 'panel' || o.id === editingId || o.hidden || !o.script) continue
     if (o.fileKind === 'runtime' || o.cost === 'heavy') continue
+    // 未采用的 PNG 源图没有权威 manifest 可补：补渲染只能发无策略的 patches=[]，让脚本重跑出一张
+    // 没对过字节的图，还会和它自己的采用请求抢同一份首渲染。要先走 admitPngEntry（带 source_policy）。
+    if (!Object.hasOwn(o, 'artifactValidation') && isUnadoptedPngSource(o)) continue
     if (panelRotation(o) || o.flipH || o.flipV) continue
     if (
       visible &&
