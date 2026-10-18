@@ -278,6 +278,16 @@ class TestAlternatingWriters:
         s.note_savefig("x", b, PDF, None, target=_path("x", "pdf"))
         s.note_savefig("x", a, PDF, None, target=_path("x", "pdf"))
         assert s.capture["x"] is a and s.savefig_calls["x"] is None
+        assert "x" not in s.savefig_extras  # 整份「不知道」：不留与调用错位的 extras
+
+    def test_unobserved_call_with_a_path_never_takes_over(self):
+        s, a, b = _session(), _Fig(), _Fig()
+        s.add_figure("x", a, SAVEFIG)
+        s.note_savefig("x", a, PDF, None, target=_path("x", "pdf"))
+        s.add_figure("x", b, SAVEFIG)
+        s.note_savefig("x", b, PDF, None, target=_path("x", "pdf"))
+        s.note_savefig("x", a, None, None, target=_path("x", "pdf"))
+        assert s.capture["x"] is b
 
     def test_rebuild_obeys_call_cap(self):
         s, a, b = _session(), _Fig(), _Fig()
