@@ -435,6 +435,16 @@ def find_candidate(report_path: Path, candidate_id: str) -> tuple[dict, dict]:
     report = json.loads(report_path.read_text(encoding="utf-8"))
     run_dir = report_path.resolve().parent.parent
     listing = json.loads((run_dir / "candidates.json").read_text(encoding="utf-8"))
+    # candidates.json lists everything the generator produced (also what --limit/--candidates
+    # skipped); only the report says what was executed and found.
+    rows = [r for r in report.get("candidates", []) if r.get("candidate_id") == candidate_id]
+    if len(rows) != 1:
+        raise cg.EvidenceError(f"candidate {candidate_id} was not observed in {report_path}")
+    if rows[0].get("outcome") != "difference_found":
+        raise cg.EvidenceError(
+            f"candidate {candidate_id} is not a finding in {report_path} "
+            f"(outcome {rows[0].get('outcome')!r}); only difference_found is minimized"
+        )
     for manifest in listing["candidates"]:
         if manifest["candidate_id"] == candidate_id:
             return manifest, report
