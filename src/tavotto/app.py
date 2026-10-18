@@ -219,6 +219,21 @@ RENDER_CACHE_MAX_BYTES = 500 * 1024 * 1024  # cache/*.png 渲染缓存总预算
 BACKUP_KEEP = 20  # 「更新原图」备份保留份数
 
 
+#: 路径里带助手请求 id 的路由（`/api/ai/requests/<request_id>`、`/api/ai/drafts/pending/<rid>[/accept]`）。
+#: werkzeug 的访问日志（`WSGIRequestHandler.log_request`）把原始请求行作为参数交给 `werkzeug` logger，
+#: 不经过 Flask 的路由——这里在写入 stderr / app.log 之前把 id 换成占位，「请求 id 不进日志」对访问日志同样成立
+_AI_RID_PATH_RE = re.compile(r"(/api/ai/(?:requests|drafts/pending)/)[^/?#\s\"]+")
+
+
+class _RedactAiRequestIds(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        if record.name == "werkzeug" and isinstance(record.args, tuple):
+            record.args = tuple(
+                _AI_RID_PATH_RE.sub(r"\1<rid>", a) if isinstance(a, str) else a for a in record.args
+            )
+        return True
+
+
 def setup_logging() -> None:
     """stderr + cache/app.log（1MB×3 轮转）。重复调用无副作用。"""
     root = logging.getLogger()
@@ -242,6 +257,9 @@ def setup_logging() -> None:
         encoding="utf-8",
     )
     export.setFormatter(engine_diagnostics.ExportLogFormatter(route_of=_route_rule_of))
+    redact = _RedactAiRequestIds()
+    for h in (stream, file):
+        h.addFilter(redact)
     root.setLevel(logging.INFO)
     root.addHandler(stream)
     root.addHandler(file)

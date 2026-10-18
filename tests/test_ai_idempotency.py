@@ -367,6 +367,54 @@ def test_prompt_and_request_id_never_reach_the_log(client, tmp_path, cli, monkey
     assert SECRET not in text and RID not in text
 
 
+def test_access_log_lines_written_by_the_real_server_carry_no_request_id(tmp_path, monkeypatch):
+    """test client 不经过 werkzeug 的访问日志（`WSGIRequestHandler.log_request` 把原始请求行交给 `werkzeug` logger）：
+    起一个真的 werkzeug server、按产品的 `setup_logging` 接线，读 stderr 同源的 app.log 本身（Codex #1098 P2）。"""
+    import urllib.error
+    import urllib.request
+    from logging.handlers import RotatingFileHandler
+
+    from werkzeug.serving import make_server
+
+    monkeypatch.setattr(m, "CACHE_DIR", tmp_path)
+    root = logging.getLogger()
+    saved, level = root.handlers[:], root.level
+    root.handlers = [h for h in saved if not isinstance(h, RotatingFileHandler)]
+    try:
+        m.setup_logging()
+        srv = make_server("127.0.0.1", 0, m.app, threaded=True)
+        t = threading.Thread(target=srv.serve_forever, daemon=True)
+        t.start()
+        base = f"http://127.0.0.1:{srv.server_port}"
+        try:
+            for method, path in (
+                ("PUT", f"/api/ai/drafts/pending/{RID}"),
+                ("POST", f"/api/ai/drafts/pending/{RID}/accept"),
+                ("GET", f"/api/ai/requests/{RID}"),
+            ):
+                req = urllib.request.Request(base + path, data=b"{}", method=method)
+                if method == "GET":
+                    req = urllib.request.Request(base + path, method=method)
+                try:
+                    urllib.request.urlopen(req, timeout=10).close()
+                except urllib.error.HTTPError:
+                    pass  # 鉴权 / 校验拒绝也照样写访问日志：这里只看日志
+        finally:
+            srv.shutdown()
+            t.join(10)
+        for h in root.handlers:
+            h.flush()
+        text = (tmp_path / "app.log").read_text(encoding="utf-8")
+        assert "/api/ai/drafts/pending/<rid>" in text and "/api/ai/requests/<rid>" in text
+        assert RID not in text
+    finally:
+        for h in root.handlers:
+            if h not in saved:
+                h.close()
+        root.handlers = saved
+        root.setLevel(level)
+
+
 # ---------------------------------------------------------------------------
 # 幂等账本独立于用户可删的历史（Codex #1098 P2）
 # ---------------------------------------------------------------------------
