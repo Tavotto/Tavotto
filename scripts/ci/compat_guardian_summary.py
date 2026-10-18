@@ -39,8 +39,16 @@ def load_report(path: Path) -> dict:
         raise cg.EvidenceError(f"{path}: coverage table does not follow from its cases")
     for row in report["cases"]:
         expectation = row.get("expectation") or {}
+        # `expectation` is report data, i.e. untrusted here. A declared mismatch can only waive
+        # the proof of a row that is itself `failed` and whose block is self-consistent (declared
+        # != observed); a green status is never waived, whatever the block claims.
+        mismatch = (
+            row.get("status") == "failed"
+            and expectation.get("result") == "mismatch"
+            and expectation.get("declared_outcome") != expectation.get("observed_outcome")
+        )
         try:
-            cg.check_row_proof(row, expectation.get("result") == "mismatch")
+            cg.check_row_proof(row, mismatch)
         except (cg.EvidenceError, KeyError, TypeError) as exc:
             # A row its own facts cannot support must not be counted in any rate.
             raise cg.EvidenceError(
