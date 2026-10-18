@@ -91,6 +91,12 @@ def observed_outcome(row: dict) -> str:
     scenario is a known, pinned gap: `expected_limitation` (the baseline is itself a
     committed, tested artifact). Without a declaration that mapping has no effect.
     """
+    raw = row.get("raw") or {}
+    if "precondition_unmet" in raw or "missing_prerequisites" in raw:
+        # The environment could not host the case: that conclusion is kept as-is, so it can
+        # only ever match a declared environment_unavailable (control_met), never read as
+        # a pass and never degrade into `unknown`.
+        return "environment_unavailable"
     computed = cg.case_status(row)
     if computed == "failed" and (row.get("raw") or {}).get("baseline_match") is True:
         return "expected_limitation"
