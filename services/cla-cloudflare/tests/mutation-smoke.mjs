@@ -8,6 +8,7 @@ const root=fileURLToPath(new URL('../',import.meta.url));
 // Each mutation changes one asserted source location in an isolated copy; a
 // nonzero test exit proves the named behavioral regression is actually detected.
 const cases=[
+ ...JSON.parse(readFileSync(new URL('./agreement-activation-mutation-cases.json',import.meta.url),'utf8')),
  ...JSON.parse(readFileSync(new URL('./historical-revocation-mutation-cases.json',import.meta.url),'utf8')),
  ...JSON.parse(readFileSync(new URL('./independent-review-mutation-cases.json',import.meta.url),'utf8')),
  ...JSON.parse(readFileSync(new URL('./inflight-mutation-cases.json',import.meta.url),'utf8')),

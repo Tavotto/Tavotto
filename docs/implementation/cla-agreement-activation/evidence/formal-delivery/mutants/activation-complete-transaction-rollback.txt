@@ -1,0 +1,127 @@
+✖ activation final insert failure rolls back every row and invalidation (58.916302ms)
+ℹ tests 1
+ℹ suites 0
+ℹ pass 0
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 244.229523
+
+✖ failing tests:
+
+test at tests/agreement-activation.test.mjs:148:1
+✖ activation final insert failure rolls back every row and invalidation (58.916302ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:
+  + actual - expected
+  ... Skipped lines
+
+    [
+      [
+        'cla_native_v2__guards',
+        []
+      ],
+  ...
+          },
+  +       {
+  +         content: '# SYNTHETIC individual AGREEMENT ONLY\n' +
+  +           '\n' +
+  +           '**CLA_VERSION: 2.0**\n' +
+  +           '\n' +
+  +           'SYNTHETIC NON-LEGAL TEST CONTENT \n',
+  +         digest: 'fb089952e5d8bb92048501deabb616cb8549bc14ebb8ff6a1eadef80aa147853',
+  +         kind: 'individual',
+  +         rowid: 3,
+  +         source_sha: 'eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee',
+  +         version: '2.0'
+  +       }
+        ]
+      ],
+      [
+        'cla_native_v2_agreements',
+        [
+  ...
+          },
+  +       {
+  +         digest: 'fb089952e5d8bb92048501deabb616cb8549bc14ebb8ff6a1eadef80aa147853',
+  +         kind: 'individual',
+  +         rowid: 3,
+  +         version: '2.0'
+  +       }
+        ]
+      ],
+      [
+        'cla_native_v2_audit',
+        [
+  ...
+          {
+  +         attempt: '',
+  -         attempt: 'SYNTHETIC OLD ATTEMPT',
+            created: 1,
+            head: 'cccccccccccccccccccccccccccccccccccccccc',
+  +         lease_until: 0,
+  -         lease_until: 120,
+            pr: 9,
+            request_key: 'done',
+  +         result: '',
+  -         result: 'SYNTHETIC OBSERVATION',
+            rowid: 1,
+  +         status: 'pending'
+  -         status: 'done'
+          },
+          {
+  +         attempt: '',
+  -         attempt: 'SYNTHETIC OLD ATTEMPT',
+            created: 1,
+            head: 'cccccccccccccccccccccccccccccccccccccccc',
+  +         lease_until: 0,
+  -         lease_until: 120,
+            pr: 9,
+            request_key: 'running',
+  +         result: '',
+  -         result: 'SYNTHETIC OBSERVATION',
+            rowid: 2,
+  +         status: 'pending'
+  -         status: 'running'
+          },
+          {
+            attempt: 'SYNTHETIC OLD ATTEMPT',
+            created: 1,
+            head: 'cccccccccccccccccccccccccccccccccccccccc',
+  ...
+            due: 0,
+  +         generation: 2,
+  -         generation: 1,
+            lease: '',
+            lease_until: 0,
+            rowid: 1,
+            target_key: 'pr:707:9',
+  +         wanted_revision: 6
+  -         wanted_revision: 5
+          }
+        ]
+      ],
+      [
+        'cla_native_v2_packets',
+  ...
+            id: 1,
+  +         revision: 6
+  -         revision: 5
+          }
+        ]
+      ],
+      [
+        'cla_native_v2_targets',
+
+      at deniedUnchanged (file:///tmp/cla-agreement-activation-formal-review/mutants/activation-complete-transaction-rollback/tests/agreement-activation.test.mjs:21:64)
+      at async file:///tmp/cla-agreement-activation-formal-review/mutants/activation-complete-transaction-rollback/tests/agreement-activation.test.mjs:155:3
+      at async iso (file:///tmp/cla-agreement-activation-formal-review/mutants/activation-complete-transaction-rollback/tests/activation-fixture.mjs:44:66)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: [ [ 'cla_native_v2__guards', [] ], [ 'cla_native_v2_agreement_activations', [] ], [ 'cla_native_v2_agreement_documents', [Array] ], [ 'cla_native_v2_agreements', [Array] ], [ 'cla_native_v2_audit', [Array] ], [ 'cla_native_v2_authority', [Array] ], [ 'cla_native_v2_delegated_controls', [Array] ], [ 'cla_native_v2_delegated_grants', [Array] ], [ 'cla_native_v2_delegated_receipts', [Array] ], [ 'cla_native_v2_deliveries', [] ], [ 'cla_native_v2_eligibility_blocks', [Array] ], [ 'cla_native_v2_head_deliveries', [] ], [ 'cla_native_v2_head_requests', [Array] ], [ 'cla_native_v2_intents', [Array] ], [ 'cla_native_v2_oauth_states', [] ], [ 'cla_native_v2_outbox', [Array] ], [ 'cla_native_v2_packets', [Array] ], [ 'cla_native_v2_publication_attempts', [] ], [ 'cla_native_v2_published_checks', [] ], [ 'cla_native_v2_reconciliation_progress', [] ], [ 'cla_native_v2_refresh_requests', [] ], [ 'cla_native_v2_sessions', [Array] ], [ 'cla_native_v2_signatures', [Array] ], [ 'cla_native_v2_state', [Array] ], [ 'cla_native_v2_targets', [Array] ] ],
+    expected: [ [ 'cla_native_v2__guards', [] ], [ 'cla_native_v2_agreement_activations', [] ], [ 'cla_native_v2_agreement_documents', [Array] ], [ 'cla_native_v2_agreements', [Array] ], [ 'cla_native_v2_audit', [Array] ], [ 'cla_native_v2_authority', [Array] ], [ 'cla_native_v2_delegated_controls', [Array] ], [ 'cla_native_v2_delegated_grants', [Array] ], [ 'cla_native_v2_delegated_receipts', [Array] ], [ 'cla_native_v2_deliveries', [] ], [ 'cla_native_v2_eligibility_blocks', [Array] ], [ 'cla_native_v2_head_deliveries', [] ], [ 'cla_native_v2_head_requests', [Array] ], [ 'cla_native_v2_intents', [Array] ], [ 'cla_native_v2_oauth_states', [] ], [ 'cla_native_v2_outbox', [Array] ], [ 'cla_native_v2_packets', [Array] ], [ 'cla_native_v2_publication_attempts', [] ], [ 'cla_native_v2_published_checks', [] ], [ 'cla_native_v2_reconciliation_progress', [] ], [ 'cla_native_v2_refresh_requests', [] ], [ 'cla_native_v2_sessions', [Array] ], [ 'cla_native_v2_signatures', [Array] ], [ 'cla_native_v2_state', [Array] ], [ 'cla_native_v2_targets', [Array] ] ],
+    operator: 'deepStrictEqual',
+    diff: 'simple'
+  }

@@ -11,10 +11,14 @@ export interface LiveConfig extends Config {
   holderAuthorizationId?: string;
   automaticVerificationEnabled?: boolean;
   automaticPublishingEnabled?: boolean;
+  agreementActivationEnabled?: boolean;
+  agreementActivationHash?: string;
 }
 export interface Secrets { clientSecret: string; pkcs8: string; evidenceKey: string }
 export function validateLive(c: LiveConfig): void {
-  validateConfig(c);
+  if(c.agreementActivationEnabled!==undefined && typeof c.agreementActivationEnabled!=='boolean')throw new Rejected('live_configuration_invalid');
+  if(c.agreementActivationEnabled===true && !/^[0-9a-f]{64}$/.test(c.agreementActivationHash ?? ''))throw new Rejected('agreement_activation_pin_required');
+  validateConfig(c,c.agreementActivationEnabled===true);
   if(c.automaticPublishingEnabled!==undefined && typeof c.automaticPublishingEnabled!=='boolean')throw new Rejected('live_configuration_invalid');
   if(c.automaticPublishingEnabled===true && (!c.automaticVerificationEnabled || !c.checkPublishingEnabled || !c.backgroundEnabled))throw new Rejected('automatic_publication_recovery_required');
   if(c.delegatedCountersigningEnabled!==undefined && typeof c.delegatedCountersigningEnabled!=='boolean' ||

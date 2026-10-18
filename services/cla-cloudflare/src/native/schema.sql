@@ -30,6 +30,24 @@ CREATE TABLE agreement_documents (
 CREATE TRIGGER documents_update BEFORE UPDATE ON agreement_documents BEGIN SELECT RAISE(ABORT,'immutable'); END;
 CREATE TRIGGER documents_delete BEFORE DELETE ON agreement_documents BEGIN SELECT RAISE(ABORT,'immutable'); END;
 
+-- Explicit current selection; historical agreements/documents remain immutable.
+CREATE TABLE agreement_activations (
+ generation INTEGER PRIMARY KEY CHECK(generation>0),hash TEXT NOT NULL UNIQUE,previous_hash TEXT NOT NULL,
+ activation_revision INTEGER NOT NULL CHECK(activation_revision>0),repository_id INTEGER NOT NULL CHECK(repository_id>0),
+ holder_id INTEGER NOT NULL CHECK(holder_id>0),reference_sha TEXT NOT NULL,policy_json TEXT NOT NULL,
+ individual_version TEXT NOT NULL,individual_digest TEXT NOT NULL REFERENCES agreement_documents(digest),
+ corporate_version TEXT NOT NULL,corporate_digest TEXT NOT NULL REFERENCES agreement_documents(digest),
+ observation_json TEXT NOT NULL,body TEXT NOT NULL,created INTEGER NOT NULL CHECK(created>=0)
+);
+CREATE TRIGGER activation_order BEFORE INSERT ON agreement_activations BEGIN
+ SELECT CASE WHEN NEW.generation!=coalesce((SELECT max(generation) FROM agreement_activations),0)+1
+ OR NEW.previous_hash!=coalesce((SELECT hash FROM agreement_activations ORDER BY generation DESC LIMIT 1),printf('%064d',0))
+ OR NEW.activation_revision!=(SELECT revision FROM state WHERE id=1)
+ THEN RAISE(ABORT,'activation_order') END;
+END;
+CREATE TRIGGER activations_update BEFORE UPDATE ON agreement_activations BEGIN SELECT RAISE(ABORT,'immutable'); END;
+CREATE TRIGGER activations_delete BEFORE DELETE ON agreement_activations BEGIN SELECT RAISE(ABORT,'immutable'); END;
+
 -- Bounded OAuth admission and expiry pruning use this index.
 CREATE INDEX oauth_expiry ON oauth_states(expires,state_hash);
 

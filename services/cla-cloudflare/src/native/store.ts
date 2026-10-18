@@ -1,11 +1,14 @@
-import type { CheckProposal, Config, D1Database, D1Statement, Job, Packet, Role, Session } from '../core/types.ts';
+import type { CheckProposal, D1Database, D1Statement, Job, Packet, Role, Session } from '../core/types.ts';
+import type {LiveConfig} from './config.ts';
+import {policyMaterial,packetAgreementMatches} from '../core/policy.ts';
+import {activationProjection,verifyActivationRecord} from './activation-record.ts';
 import { Rejected } from '../core/types.ts';
 import { canonical, randomToken } from '../core/crypto.ts';
 import { Store } from '../core/store.ts';
 import { BudgetDeferred, FREE_BUDGET, InvocationBudget, meterDatabase } from './budget.ts';
 
 export const PREFIX = 'cla_native_v2_';
-const objects = ['head_requests','head_deliveries','head_deliveries_update','head_deliveries_delete','head_request_identity','head_revision','oauth_expiry','packets_subject_digest','authority','agreements','state','sessions','oauth_states','packets','intents','signatures',
+const objects = ['agreement_activations','activation_order','activations_update','activations_delete','head_requests','head_deliveries','head_deliveries_update','head_deliveries_delete','head_request_identity','head_revision','oauth_expiry','packets_subject_digest','authority','agreements','state','sessions','oauth_states','packets','intents','signatures',
   'eligibility_blocks','audit','targets','outbox','outbox_due','deliveries','published_checks','_guards',
   'revision_outbox','delivery_outbox','agreements_update','agreements_delete','packets_update','packets_delete',
   'signatures_update','signatures_delete','blocks_update','blocks_delete','audit_update','audit_delete',
@@ -26,22 +29,42 @@ export interface Progress {cursor:number;horizon:number}
 export interface ClaimedJob extends Job {lease_clock:number}
 export class LiveStore extends Store {
   readonly budget:InvocationBudget|undefined;
-  readonly expectedConfig:Config|undefined;
-  constructor(db: D1Database,budget?:InvocationBudget,expectedConfig?:Config) { super(namespace(budget?meterDatabase(db,budget):db));this.budget=budget;this.expectedConfig=expectedConfig; }
-  readiness():{sql:string;values:unknown[]} {
+  readonly expectedConfig:LiveConfig|undefined;
+  constructor(db: D1Database,budget?:InvocationBudget,expectedConfig?:LiveConfig) { super(namespace(budget?meterDatabase(db,budget):db));this.budget=budget;this.expectedConfig=expectedConfig; }
+  readiness(c:LiveConfig|undefined=this.expectedConfig):{sql:string;values:unknown[]} {
+    if(!c)return {sql:'1',values:[]};
+    const sql=`(SELECT count(*) FROM authority)=1 AND EXISTS(SELECT 1 FROM authority WHERE id=1 AND holder=?)
+      AND EXISTS(SELECT 1 FROM agreements WHERE kind='individual' AND version=? AND digest=?)
+      AND EXISTS(SELECT 1 FROM agreements WHERE kind='corporate' AND version=? AND digest=?)`;
+    const values:unknown[]=[c.holderId,c.policy.agreements.individual.version,c.policy.agreements.individual.sha256,c.policy.agreements.corporate.version,c.policy.agreements.corporate.sha256];
+    if(c.agreementActivationEnabled!==true)return {sql:sql+' AND (SELECT count(*) FROM agreements)=2 AND NOT EXISTS(SELECT 1 FROM agreement_activations)',values};
+    return {sql:sql+` AND (SELECT count(*) FROM agreements)>2 AND EXISTS(SELECT 1 FROM agreement_activations a
+      WHERE a.generation=(SELECT max(generation) FROM agreement_activations) AND a.hash=? AND a.repository_id=? AND a.holder_id=?
+      AND a.reference_sha=? AND a.policy_json=? AND a.individual_version=? AND a.individual_digest=? AND a.corporate_version=? AND a.corporate_digest=?
+      AND a.activation_revision<=(SELECT revision FROM state WHERE id=1) AND a.created<=${DB_NOW})`,
+      values:[...values,c.agreementActivationHash,c.repositoryId,c.holderId,c.referenceSha,policyMaterial(c.policy),
+        c.policy.agreements.individual.version,c.policy.agreements.individual.sha256,c.policy.agreements.corporate.version,c.policy.agreements.corporate.sha256]};
+  }
+  private async verifySelection(activation?:string):Promise<void> {
+    if(this.expectedConfig?.agreementActivationEnabled!==true)return;
+    if(!activation)throw new Rejected('database_configuration_uninitialized_or_mismatched');
+    await verifyActivationRecord(JSON.parse(activation),this.expectedConfig);
+  }
+  private currentTuple():{sql:string;values:unknown[]} {
     const c=this.expectedConfig;if(!c)return {sql:'1',values:[]};
-    return {sql:`(SELECT count(*) FROM authority)=1 AND EXISTS(SELECT 1 FROM authority WHERE id=1 AND holder=?)
-      AND (SELECT count(*) FROM agreements)=2 AND EXISTS(SELECT 1 FROM agreements WHERE kind='individual' AND version=? AND digest=?)
-      AND EXISTS(SELECT 1 FROM agreements WHERE kind='corporate' AND version=? AND digest=?)`,
-      values:[c.holderId,c.policy.agreements.individual.version,c.policy.agreements.individual.sha256,c.policy.agreements.corporate.version,c.policy.agreements.corporate.sha256]};
+    return {sql:"((p.kind='individual' AND p.version=? AND p.digest=?) OR (p.kind='corporate' AND p.version=? AND p.digest=?))",
+      values:[c.policy.agreements.individual.version,c.policy.agreements.individual.sha256,c.policy.agreements.corporate.version,c.policy.agreements.corporate.sha256]};
   }
   async assertReady():Promise<void> {
-    const ready=this.readiness();const row=await this.stmt(`SELECT CASE WHEN (${ready.sql}) THEN 1 ELSE 0 END AS ready`,...ready.values).first<{ready:number}>();
+    const ready=this.readiness();const row=await this.stmt(`SELECT CASE WHEN (${ready.sql}) THEN 1 ELSE 0 END AS ready,
+      ${this.expectedConfig?.agreementActivationEnabled===true?activationProjection:'NULL'} AS activation`,...ready.values).first<{ready:number;activation?:string}>();
     if(row?.ready!==1)throw new Rejected('database_configuration_uninitialized_or_mismatched');
+    await this.verifySelection(row.activation);
   }
   override async revision():Promise<number> {
-    const ready=this.readiness();const row=await this.stmt(`SELECT revision FROM state WHERE id=1 AND (${ready.sql})`,...ready.values).first<{revision:number}>();
-    if(!row)throw new Rejected('database_configuration_uninitialized_or_mismatched');return row.revision;
+    const ready=this.readiness();const row=await this.stmt(`SELECT revision,${this.expectedConfig?.agreementActivationEnabled===true?activationProjection:'NULL'} AS activation
+      FROM state WHERE id=1 AND (${ready.sql})`,...ready.values).first<{revision:number;activation?:string}>();
+    if(!row)throw new Rejected('database_configuration_uninitialized_or_mismatched');await this.verifySelection(row.activation);return row.revision;
   }
   override async batch(stmts:D1Statement[]):Promise<void> {
     try{const results=await this.db.batch(stmts);if(results.some(r=>!r.success))throw new Error();}
@@ -341,6 +364,7 @@ export class LiveStore extends Store {
     if(rows.length>1)throw new Rejected('packet_ineligible');return rows[0] ?? null;
   }
   async createAuthenticatedPacket(s:Session,p:Packet):Promise<Packet> {
+    const ready=this.readiness(),matches=!this.expectedConfig || packetAgreementMatches(this.expectedConfig,p);
     // D1 batch is one transaction. A racing creator sees the previous committed
     // active/completed row; no signature or prior packet is copied or extended.
     const usable=`(p.valid_until>${DB_NOW} OR EXISTS(SELECT 1 FROM signatures c JOIN signatures h ON h.packet=c.packet
@@ -348,38 +372,41 @@ export class LiveStore extends Store {
       AND h.actor=(SELECT holder FROM authority WHERE id=1) AND h.actor!=p.subject))`;
     await this.batch([
       ...this.guard(`EXISTS(SELECT 1 FROM sessions WHERE token_hash=? AND actor=? AND csrf_hash=? AND expires>${DB_NOW}) AND ?=?
-        AND NOT EXISTS(SELECT 1 FROM eligibility_blocks b JOIN packets old ON old.id=b.packet WHERE old.subject=?)`,s.token_hash,s.actor,s.csrf_hash,s.actor,p.subject,p.subject),
+        AND NOT EXISTS(SELECT 1 FROM eligibility_blocks b JOIN packets old ON old.id=b.packet WHERE old.subject=?)
+        AND (${ready.sql}) AND ?=1`,s.token_hash,s.actor,s.csrf_hash,s.actor,p.subject,p.subject,...ready.values,matches?1:0),
       this.stmt(`INSERT INTO packets SELECT ?,?,?,?,?,?,? WHERE NOT EXISTS(SELECT 1 FROM packets p WHERE subject=? AND digest=? AND ${usable})`,p.id,p.subject,p.kind,p.version,p.digest,p.created,p.valid_until,p.subject,p.digest),
       ...this.guard(`(SELECT count(*) FROM packets p WHERE subject=? AND digest=? AND ${usable})=1`,p.subject,p.digest),
     ]);
     const row=await this.stmt(`SELECT * FROM packets p WHERE subject=? AND digest=? AND ${usable}`,p.subject,p.digest).first<Packet>();
-    if(!row)throw new Rejected('packet_unavailable');return row;
+    if(!row || this.expectedConfig && !packetAgreementMatches(this.expectedConfig,row))throw new Rejected('packet_unavailable');return row;
   }
   async addAuthenticatedIntent(hash:string,s:Session,p:Packet,role:Role|'hold',expires:number):Promise<void> {
+    const ready=this.readiness(),tuple=this.currentTuple();
     await this.batch([
-      ...this.guard(`EXISTS(SELECT 1 FROM sessions s JOIN packets p ON p.id=? WHERE s.token_hash=? AND s.actor=?
+      ...this.guard(`EXISTS(SELECT 1 FROM sessions s JOIN packets p ON p.id=? WHERE (${ready.sql}) AND (?='hold' OR (${tuple.sql})) AND s.token_hash=? AND s.actor=?
         AND s.csrf_hash=? AND s.expires>${DB_NOW} AND (?='hold' OR p.valid_until>${DB_NOW}) AND p.digest=?
         AND NOT EXISTS(SELECT 1 FROM eligibility_blocks b JOIN packets old ON old.id=b.packet WHERE old.subject=p.subject)
         AND ((?='contributor' AND s.actor=p.subject) OR (?='holder' AND s.actor=(SELECT holder FROM authority WHERE id=1)
           AND s.actor!=p.subject AND EXISTS(SELECT 1 FROM signatures WHERE packet=p.id AND role='contributor' AND actor=p.subject))
           OR (?='hold' AND (s.actor=p.subject OR s.actor=(SELECT holder FROM authority WHERE id=1)))))`,
-        p.id,s.token_hash,s.actor,s.csrf_hash,role,p.digest,role,role,role),
+        p.id,...ready.values,role,...tuple.values,s.token_hash,s.actor,s.csrf_hash,role,p.digest,role,role,role),
       this.stmt('INSERT INTO intents(token_hash,session_hash,packet,role,digest,expires) VALUES(?,?,?,?,?,?)',hash,s.token_hash,p.id,role,p.digest,expires),
     ]);
   }
   async signAtomic(input:{session:Session;packet:Packet;intentHash:string;role:Role;cipher:string;evidenceHash:string;created:number;revision:number}):Promise<number> {
     const {session:s,packet:p,role} = input;
+    const ready=this.readiness(),tuple=this.currentTuple();
     await this.batch([
       ...this.cas(input.revision),
       ...this.guard(`EXISTS(SELECT 1 FROM intents i JOIN sessions s ON s.token_hash=i.session_hash JOIN packets p ON p.id=i.packet
-        WHERE i.token_hash=? AND s.token_hash=? AND p.id=? AND i.used=0 AND i.expires>${DB_NOW}
+        WHERE (${ready.sql}) AND (${tuple.sql}) AND i.token_hash=? AND s.token_hash=? AND p.id=? AND i.used=0 AND i.expires>${DB_NOW}
         AND s.expires>${DB_NOW} AND p.valid_until>${DB_NOW} AND i.digest=p.digest AND p.digest=?
         AND p.kind=? AND p.version=? AND i.role=? AND s.actor=? AND s.login=? AND s.csrf_hash=?
         AND NOT EXISTS(SELECT 1 FROM eligibility_blocks b JOIN packets old ON old.id=b.packet WHERE old.subject=p.subject)
         AND NOT EXISTS(SELECT 1 FROM signatures g WHERE g.packet=p.id AND g.role=i.role)
         AND ((i.role='contributor' AND s.actor=p.subject) OR (i.role='holder' AND s.actor=(SELECT holder FROM authority WHERE id=1)
           AND s.actor!=p.subject AND EXISTS(SELECT 1 FROM signatures g WHERE g.packet=p.id AND g.role='contributor' AND g.actor=p.subject))))`,
-        input.intentHash,s.token_hash,p.id,p.digest,p.kind,p.version,role,s.actor,s.login,s.csrf_hash),
+        ...ready.values,...tuple.values,input.intentHash,s.token_hash,p.id,p.digest,p.kind,p.version,role,s.actor,s.login,s.csrf_hash),
       this.stmt('INSERT INTO signatures VALUES(?,?,?,?,?,?,?)',p.id,role,s.actor,input.cipher,input.evidenceHash,null,input.created),
       this.stmt('UPDATE intents SET used=1 WHERE token_hash=?',input.intentHash),
       this.stmt('INSERT INTO audit(packet,actor,event,created) VALUES(?,?,?,?)',p.id,s.actor,'signed:'+role,input.created),

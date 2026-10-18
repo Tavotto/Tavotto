@@ -1,0 +1,401 @@
+[
+  {
+    "name": "activation real legacy binary fence",
+    "file": "src/native/agreement-activation.ts",
+    "before": "...store.guard(`(SELECT count(*) FROM agreements)>2 AND (${docs.sql})`,...docs.values)",
+    "after": "...store.guard(`(SELECT count(*) FROM agreements)>=2 AND (${docs.sql})`,...docs.values)",
+    "pattern": "activation cannot replace a real version transition with source only",
+    "testFile": "tests/agreement-activation.test.mjs",
+    "assertionError": true,
+    "location_count": 1,
+    "source_sha256": "7c48adcd5c2efed70c230fca9b499b4536bd1e9872566db772c3cf8b12373ce9",
+    "mutant_sha256": "e9be0fffc9df2eda64d6b811288f70885c4ef016dd48f5fd115dae3b85f12742",
+    "argv": [
+      "node",
+      "--test",
+      "--test-name-pattern=activation cannot replace a real version transition with source only",
+      "tests/agreement-activation.test.mjs"
+    ],
+    "exit_code": 1,
+    "actual_assertion_error": true,
+    "log": "/tmp/cla-agreement-activation-formal-review/activation-real-legacy-binary-fence.txt"
+  },
+  {
+    "name": "activation whole call SQL budget",
+    "file": "src/native/agreement-activation.ts",
+    "before": "      ...store.cas(r.activation_revision-1),",
+    "after": "      store.stmt('SELECT 1'),...store.cas(r.activation_revision-1),",
+    "pattern": "activation first real version fences legacy binaries within13 SQL",
+    "testFile": "tests/agreement-activation.test.mjs",
+    "assertionError": true,
+    "location_count": 1,
+    "source_sha256": "7c48adcd5c2efed70c230fca9b499b4536bd1e9872566db772c3cf8b12373ce9",
+    "mutant_sha256": "12ebc46d6fc4e061e0546aa4dbdc88a130b3eeeee2cb71c6f32011dcb0dbd23a",
+    "argv": [
+      "node",
+      "--test",
+      "--test-name-pattern=activation first real version fences legacy binaries within13 SQL",
+      "tests/agreement-activation.test.mjs"
+    ],
+    "exit_code": 1,
+    "actual_assertion_error": true,
+    "log": "/tmp/cla-agreement-activation-formal-review/activation-whole-call-SQL-budget.txt"
+  },
+  {
+    "name": "activation legacy anchor exclusion",
+    "file": "src/native/store.ts",
+    "before": " AND NOT EXISTS(SELECT 1 FROM agreement_activations)',values};",
+    "after": "',values};",
+    "pattern": "activation legacy mode rejects a journal even with two registry rows",
+    "testFile": "tests/agreement-activation.test.mjs",
+    "assertionError": true,
+    "location_count": 1,
+    "source_sha256": "2619aa8ab95f3ebb3d6dc5fcb3fd12916501f2fb8b8499807f921e1624de389f",
+    "mutant_sha256": "ad678beea25ce519cc788df375b921dba2749a3773f1bb3cf94ee665b42f98f3",
+    "argv": [
+      "node",
+      "--test",
+      "--test-name-pattern=activation legacy mode rejects a journal even with two registry rows",
+      "tests/agreement-activation.test.mjs"
+    ],
+    "exit_code": 1,
+    "actual_assertion_error": true,
+    "log": "/tmp/cla-agreement-activation-formal-review/activation-legacy-anchor-exclusion.txt"
+  },
+  {
+    "name": "activation configuration pin binding",
+    "file": "src/native/activation-record.ts",
+    "before": "if(c && (c.agreementActivationEnabled!==true",
+    "after": "if(c && false && (c.agreementActivationEnabled!==true",
+    "pattern": "activation current config binds",
+    "testFile": "tests/agreement-activation.test.mjs",
+    "assertionError": true,
+    "location_count": 1,
+    "source_sha256": "0f47b6adc0e70104b112e83cf1766ed457488ad297db4362a4cf96c84032d279",
+    "mutant_sha256": "9232e370e0e225ef9bcda71dd8cd9924a00f242e12eec705e1004bc4c9b489b4",
+    "argv": [
+      "node",
+      "--test",
+      "--test-name-pattern=activation current config binds",
+      "tests/agreement-activation.test.mjs"
+    ],
+    "exit_code": 1,
+    "actual_assertion_error": true,
+    "log": "/tmp/cla-agreement-activation-formal-review/activation-configuration-pin-binding.txt"
+  },
+  {
+    "name": "activation runtime canonical record verification",
+    "file": "src/native/store.ts",
+    "before": "    await verifyActivationRecord(JSON.parse(activation),this.expectedConfig);",
+    "after": "    // mutation: bypass canonical record verification",
+    "pattern": "activation runtime verifies stored canonical bytes beyond mirrored columns",
+    "testFile": "tests/agreement-activation.test.mjs",
+    "assertionError": true,
+    "location_count": 1,
+    "source_sha256": "2619aa8ab95f3ebb3d6dc5fcb3fd12916501f2fb8b8499807f921e1624de389f",
+    "mutant_sha256": "786861aad23007d4725f77b7d9c56fa555cad9e7d14acd04ef159599746245fa",
+    "argv": [
+      "node",
+      "--test",
+      "--test-name-pattern=activation runtime verifies stored canonical bytes beyond mirrored columns",
+      "tests/agreement-activation.test.mjs"
+    ],
+    "exit_code": 1,
+    "actual_assertion_error": true,
+    "log": "/tmp/cla-agreement-activation-formal-review/activation-runtime-canonical-record-verification.txt"
+  },
+  {
+    "name": "activation new document bytes",
+    "file": "src/native/agreement-activation.ts",
+    "before": " || await sha256(d.content)!==d.digest",
+    "after": "",
+    "pattern": "activation rejects altered fresh individual bytes",
+    "testFile": "tests/agreement-activation.test.mjs",
+    "assertionError": true,
+    "location_count": 1,
+    "source_sha256": "7c48adcd5c2efed70c230fca9b499b4536bd1e9872566db772c3cf8b12373ce9",
+    "mutant_sha256": "d9f2ee3d2702184402939797538e6649b651792b0cf7aab8d9f25a3459d7d6bd",
+    "argv": [
+      "node",
+      "--test",
+      "--test-name-pattern=activation rejects altered fresh individual bytes",
+      "tests/agreement-activation.test.mjs"
+    ],
+    "exit_code": 1,
+    "actual_assertion_error": true,
+    "log": "/tmp/cla-agreement-activation-formal-review/activation-new-document-bytes.txt"
+  },
+  {
+    "name": "activation new version marker",
+    "file": "src/native/agreement-activation.ts",
+    "before": " || markers[0]![1]!==d.version",
+    "after": "",
+    "pattern": "activation requires a version marker matching the selected new agreement",
+    "testFile": "tests/agreement-activation.test.mjs",
+    "assertionError": true,
+    "location_count": 1,
+    "source_sha256": "7c48adcd5c2efed70c230fca9b499b4536bd1e9872566db772c3cf8b12373ce9",
+    "mutant_sha256": "e9221159b85576d4dd32fd4a842171f59590c062d41c343e1937ef0bb0d82b12",
+    "argv": [
+      "node",
+      "--test",
+      "--test-name-pattern=activation requires a version marker matching the selected new agreement",
+      "tests/agreement-activation.test.mjs"
+    ],
+    "exit_code": 1,
+    "actual_assertion_error": true,
+    "log": "/tmp/cla-agreement-activation-formal-review/activation-new-version-marker.txt"
+  },
+  {
+    "name": "activation exact repeat is no operation",
+    "file": "src/native/agreement-activation.ts",
+    "before": "if(current?.hash===r.hash){",
+    "after": "if(false && current?.hash===r.hash){",
+    "pattern": "activation replay is an exact read only noop",
+    "testFile": "tests/agreement-activation.test.mjs",
+    "assertionError": true,
+    "location_count": 1,
+    "source_sha256": "7c48adcd5c2efed70c230fca9b499b4536bd1e9872566db772c3cf8b12373ce9",
+    "mutant_sha256": "114f16af7540fa5d97d79af3832a5b670e8ad9517601ad2ac387f1f033e4cf56",
+    "argv": [
+      "node",
+      "--test",
+      "--test-name-pattern=activation replay is an exact read only noop",
+      "tests/agreement-activation.test.mjs"
+    ],
+    "exit_code": 1,
+    "actual_assertion_error": true,
+    "log": "/tmp/cla-agreement-activation-formal-review/activation-exact-repeat-is-no-operation.txt"
+  },
+  {
+    "name": "activation identical concurrency confirmation",
+    "file": "src/native/agreement-activation.ts",
+    "before": "if(await confirmCurrent(store,c,p))return {status:'already_active',hash:r.hash};throw error;",
+    "after": "if(false && await confirmCurrent(store,c,p))return {status:'already_active',hash:r.hash};throw error;",
+    "pattern": "activation identical concurrent proposals recover the committed winner without another write",
+    "testFile": "tests/agreement-activation.test.mjs",
+    "assertionError": true,
+    "location_count": 1,
+    "source_sha256": "7c48adcd5c2efed70c230fca9b499b4536bd1e9872566db772c3cf8b12373ce9",
+    "mutant_sha256": "9a40b35cfae6f6653b4fe59e640affbc0d965c1974ba17a4618b0aa56c147ca0",
+    "argv": [
+      "node",
+      "--test",
+      "--test-name-pattern=activation identical concurrent proposals recover the committed winner without another write",
+      "tests/agreement-activation.test.mjs"
+    ],
+    "exit_code": 1,
+    "actual_assertion_error": true,
+    "log": "/tmp/cla-agreement-activation-formal-review/activation-identical-concurrency-confirmation.txt"
+  },
+  {
+    "name": "activation consumes its own evidence revision",
+    "file": "src/native/agreement-activation.ts",
+    "before": "      ...store.cas(r.activation_revision-1),",
+    "after": "",
+    "pattern": "activation cannot consume an unrelated later evidence revision",
+    "testFile": "tests/agreement-activation.test.mjs",
+    "assertionError": true,
+    "location_count": 1,
+    "source_sha256": "7c48adcd5c2efed70c230fca9b499b4536bd1e9872566db772c3cf8b12373ce9",
+    "mutant_sha256": "b7ef981ad492387b9fc06851fbe8c2b7db579be38dd2c12dfac26b5c20e6a830",
+    "argv": [
+      "node",
+      "--test",
+      "--test-name-pattern=activation cannot consume an unrelated later evidence revision",
+      "tests/agreement-activation.test.mjs"
+    ],
+    "exit_code": 1,
+    "actual_assertion_error": true,
+    "log": "/tmp/cla-agreement-activation-formal-review/activation-consumes-its-own-evidence-revision.txt"
+  },
+  {
+    "name": "activation complete transaction rollback",
+    "file": "src/native/store.ts",
+    "before": "try{const results=await this.db.batch(stmts);if(results.some(r=>!r.success))throw new Error();}",
+    "after": "try{for(const stmt of stmts)await stmt.run();}",
+    "pattern": "activation final insert failure rolls back every row and invalidation",
+    "testFile": "tests/agreement-activation.test.mjs",
+    "assertionError": true,
+    "location_count": 1,
+    "source_sha256": "2619aa8ab95f3ebb3d6dc5fcb3fd12916501f2fb8b8499807f921e1624de389f",
+    "mutant_sha256": "ce19ba7f765ce9196d8aa5fa5676ca6cdce556a3e07d3d6d5f80b9012bf3bab4",
+    "argv": [
+      "node",
+      "--test",
+      "--test-name-pattern=activation final insert failure rolls back every row and invalidation",
+      "tests/agreement-activation.test.mjs"
+    ],
+    "exit_code": 1,
+    "actual_assertion_error": true,
+    "log": "/tmp/cla-agreement-activation-formal-review/activation-complete-transaction-rollback.txt"
+  },
+  {
+    "name": "activation packet supplied tuple",
+    "file": "src/native/store.ts",
+    "before": "const ready=this.readiness(),matches=!this.expectedConfig || packetAgreementMatches(this.expectedConfig,p);",
+    "after": "const ready=this.readiness(),matches=true;",
+    "pattern": "activation current store rejects old tuple for a new subject before commit",
+    "testFile": "tests/agreement-activation.test.mjs",
+    "assertionError": true,
+    "location_count": 1,
+    "source_sha256": "2619aa8ab95f3ebb3d6dc5fcb3fd12916501f2fb8b8499807f921e1624de389f",
+    "mutant_sha256": "64eab5de905eec59ae06443d818bc3cd9e6ba8ace0c115dc336c3a8eeebdea83",
+    "argv": [
+      "node",
+      "--test",
+      "--test-name-pattern=activation current store rejects old tuple for a new subject before commit",
+      "tests/agreement-activation.test.mjs"
+    ],
+    "exit_code": 1,
+    "actual_assertion_error": true,
+    "log": "/tmp/cla-agreement-activation-formal-review/activation-packet-supplied-tuple.txt"
+  },
+  {
+    "name": "activation final current packet predicate",
+    "file": "src/native/store.ts",
+    "before": "sql:\"((p.kind='individual' AND p.version=? AND p.digest=?) OR (p.kind='corporate' AND p.version=? AND p.digest=?))\"",
+    "after": "sql:\"(? IS NOT NULL AND ? IS NOT NULL AND ? IS NOT NULL AND ? IS NOT NULL)\"",
+    "pattern": "activation current store rejects old signing intent",
+    "testFile": "tests/agreement-activation.test.mjs",
+    "assertionError": true,
+    "location_count": 1,
+    "source_sha256": "2619aa8ab95f3ebb3d6dc5fcb3fd12916501f2fb8b8499807f921e1624de389f",
+    "mutant_sha256": "1e9dfeac0457ce2b5942de3ba3ccf53b7a4095b2d88a256d332ec5d06d5cbf2f",
+    "argv": [
+      "node",
+      "--test",
+      "--test-name-pattern=activation current store rejects old signing intent",
+      "tests/agreement-activation.test.mjs"
+    ],
+    "exit_code": 1,
+    "actual_assertion_error": true,
+    "log": "/tmp/cla-agreement-activation-formal-review/activation-final-current-packet-predicate.txt"
+  },
+  {
+    "name": "activation subsequent evidence revisions",
+    "file": "src/native/store.ts",
+    "before": "AND a.activation_revision<=(SELECT revision FROM state WHERE id=1)",
+    "after": "AND a.activation_revision=(SELECT revision FROM state WHERE id=1)",
+    "pattern": "activation historic hold remains available and later evidence revisions stay ready",
+    "testFile": "tests/agreement-activation.test.mjs",
+    "assertionError": true,
+    "location_count": 1,
+    "source_sha256": "2619aa8ab95f3ebb3d6dc5fcb3fd12916501f2fb8b8499807f921e1624de389f",
+    "mutant_sha256": "ac421debfb5962f4e0bb6e63cb826d07d17616539d2f0f155de53b457ccfcad4",
+    "argv": [
+      "node",
+      "--test",
+      "--test-name-pattern=activation historic hold remains available and later evidence revisions stay ready",
+      "tests/agreement-activation.test.mjs"
+    ],
+    "exit_code": 1,
+    "actual_assertion_error": true,
+    "log": "/tmp/cla-agreement-activation-formal-review/activation-subsequent-evidence-revisions.txt"
+  },
+  {
+    "name": "activation snapshot packet write guard",
+    "file": "src/native/store.ts",
+    "before": "AND (${ready.sql}) AND ?=1",
+    "after": "AND (? IS NOT NULL AND ? IS NOT NULL AND ? IS NOT NULL AND ? IS NOT NULL AND ? IS NOT NULL) AND ?=1",
+    "pattern": "activation after packet or intent preread rejects the final stale write",
+    "testFile": "tests/agreement-activation.test.mjs",
+    "assertionError": true,
+    "location_count": 1,
+    "source_sha256": "2619aa8ab95f3ebb3d6dc5fcb3fd12916501f2fb8b8499807f921e1624de389f",
+    "mutant_sha256": "261aa2e8e958cb968be215561570aa54dd9d55324c9f2e315d071d9d2c82f6e8",
+    "argv": [
+      "node",
+      "--test",
+      "--test-name-pattern=activation after packet or intent preread rejects the final stale write",
+      "tests/agreement-activation.test.mjs"
+    ],
+    "exit_code": 1,
+    "actual_assertion_error": true,
+    "log": "/tmp/cla-agreement-activation-formal-review/activation-snapshot-packet-write-guard.txt"
+  },
+  {
+    "name": "activation snapshot intent write guard",
+    "file": "src/native/store.ts",
+    "before": "WHERE (${ready.sql}) AND (?='hold'",
+    "after": "WHERE (? IS NOT NULL AND ? IS NOT NULL AND ? IS NOT NULL AND ? IS NOT NULL AND ? IS NOT NULL) AND (?='hold'",
+    "pattern": "activation after packet or intent preread rejects the final stale write",
+    "testFile": "tests/agreement-activation.test.mjs",
+    "assertionError": true,
+    "location_count": 1,
+    "source_sha256": "2619aa8ab95f3ebb3d6dc5fcb3fd12916501f2fb8b8499807f921e1624de389f",
+    "mutant_sha256": "b55293abff363f1847a1769c2ae2edeacc508cb0b4d849795e647ff176e66914",
+    "argv": [
+      "node",
+      "--test",
+      "--test-name-pattern=activation after packet or intent preread rejects the final stale write",
+      "tests/agreement-activation.test.mjs"
+    ],
+    "exit_code": 1,
+    "actual_assertion_error": true,
+    "log": "/tmp/cla-agreement-activation-formal-review/activation-snapshot-intent-write-guard.txt"
+  },
+  {
+    "name": "activation prior personal consent is not inherited",
+    "file": "src/native/service.ts",
+    "before": "if(this.c.delegatedCountersigningEnabled===true) {\n      const candidate=",
+    "after": "if(this.c.delegatedCountersigningEnabled===true) {\n      const old=await this.store.stmt('SELECT id FROM packets WHERE subject=? ORDER BY created LIMIT 1',subject).first<{id:string}>();\n      if(old && await this.store.completed(old.id))return true;\n      const candidate=",
+    "pattern": "activation new agreement needs fresh personal contributor and holder consent",
+    "testFile": "tests/agreement-activation.test.mjs",
+    "assertionError": true,
+    "location_count": 1,
+    "source_sha256": "bfcfb96d22db6c3b38573bfd24aa9f14c80ac6d838f489968e1ba4ec9db24105",
+    "mutant_sha256": "cd50435aa7061751de411fce517b11399864a52458eeeeca3cfa065ef621bead",
+    "argv": [
+      "node",
+      "--test",
+      "--test-name-pattern=activation new agreement needs fresh personal contributor and holder consent",
+      "tests/agreement-activation.test.mjs"
+    ],
+    "exit_code": 1,
+    "actual_assertion_error": true,
+    "log": "/tmp/cla-agreement-activation-formal-review/activation-prior-personal-consent-is-not-inherited.txt"
+  },
+  {
+    "name": "activation environment capability override",
+    "file": "src/native/worker.ts",
+    "before": "agreementActivationEnabled:env.CLA_AGREEMENT_ACTIVATION_ENABLED==='true'",
+    "after": "agreementActivationEnabled:c.agreementActivationEnabled===true",
+    "pattern": "activation capability requires an environment flag and an explicit hash pin",
+    "testFile": "tests/agreement-activation.test.mjs",
+    "assertionError": true,
+    "location_count": 1,
+    "source_sha256": "e6deedfd60e8a9edf468ee0fb3bf5a02ddcf530edf471f3b15bb85504ee989e1",
+    "mutant_sha256": "fe5fd233cb1dade8dd43d089fbe437407628d3a92ebd4ab797c439a775b7468e",
+    "argv": [
+      "node",
+      "--test",
+      "--test-name-pattern=activation capability requires an environment flag and an explicit hash pin",
+      "tests/agreement-activation.test.mjs"
+    ],
+    "exit_code": 1,
+    "actual_assertion_error": true,
+    "log": "/tmp/cla-agreement-activation-formal-review/activation-environment-capability-override.txt"
+  },
+  {
+    "name": "activation explicit current hash pin",
+    "file": "src/native/config.ts",
+    "before": "  if(c.agreementActivationEnabled===true && !/^[0-9a-f]{64}$/.test(c.agreementActivationHash ?? ''))throw new Rejected('agreement_activation_pin_required');",
+    "after": "",
+    "pattern": "activation capability requires an environment flag and an explicit hash pin",
+    "testFile": "tests/agreement-activation.test.mjs",
+    "assertionError": true,
+    "location_count": 1,
+    "source_sha256": "7d4d4daaaf8099cf0aef7e2a4ce2bc27148ae139227c2522110418e4c09fb50a",
+    "mutant_sha256": "bc735194e852756996f91ccdc6d02cb74bb25080859477d6b939aead92008001",
+    "argv": [
+      "node",
+      "--test",
+      "--test-name-pattern=activation capability requires an environment flag and an explicit hash pin",
+      "tests/agreement-activation.test.mjs"
+    ],
+    "exit_code": 1,
+    "actual_assertion_error": true,
+    "log": "/tmp/cla-agreement-activation-formal-review/activation-explicit-current-hash-pin.txt"
+  }
+]

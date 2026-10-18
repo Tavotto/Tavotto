@@ -6,12 +6,14 @@ import {validateLive} from '../src/native/config.ts';
 import {nativeSQL} from '../src/native/store.ts';
 export function bootstrapSQL(c){
   validateLive(c);
+  if(c.agreementActivationEnabled===true)throw Error('activation_requires_separate_transaction');
   const a=c.policy.agreements,individual=a.individual,corporate=a.corporate;
   // All interpolated values have been constrained to integer/version/hex by validation.
   const state={holder:c.holderId,individual:{version:individual.version,digest:individual.sha256},corporate:{version:corporate.version,digest:corporate.sha256}};
   const digest=createHash('sha256').update(JSON.stringify(state)).digest('hex');
   return `-- OFFLINE rehearsal only; seed configuration SHA256 ${digest}\nBEGIN IMMEDIATE;\n`+nativeSQL(`
 INSERT OR ROLLBACK INTO _guards(id,ok) SELECT 'bootstrap-config',CASE WHEN
+ NOT EXISTS(SELECT 1 FROM agreement_activations) AND
  NOT EXISTS(SELECT 1 FROM authority WHERE id!=1 OR holder!=${c.holderId}) AND
  NOT EXISTS(SELECT 1 FROM agreements WHERE NOT
   (kind='individual' AND version='${individual.version}' AND digest='${individual.sha256}') AND NOT
