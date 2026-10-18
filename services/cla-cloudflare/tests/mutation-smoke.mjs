@@ -10,6 +10,7 @@ const root=fileURLToPath(new URL('../',import.meta.url));
 const cases=[
  ...JSON.parse(readFileSync(new URL('./independent-review-mutation-cases.json',import.meta.url),'utf8')),
  ...JSON.parse(readFileSync(new URL('./inflight-mutation-cases.json',import.meta.url),'utf8')),
+ ...JSON.parse(readFileSync(new URL('./ci-wait-mutation-cases.json',import.meta.url),'utf8')),
  {name:'head admission capacity',file:'src/native/automatic.ts',before:'LIMIT 100))<100',after:'LIMIT 100))<101',pattern:'head request admission rejects the 101st distinct head',testFile:'tests/automatic.test.mjs'},
  {name:'delivery admission capacity',file:'src/native/automatic.ts',before:'LIMIT 1000))<1000',after:'LIMIT 1000))<1001',pattern:'delivery admission rejects the 1001st record while exact duplicate remains idempotent',testFile:'tests/automatic.test.mjs'},
  {name:'delegated disabled direct operation',file:'src/native/delegation.ts',before:"if(this.s.c.delegatedCountersigningEnabled!==true || !this.s.c.signingEnabled)throw new Rejected('delegated_countersigning_disabled');",after:'// mutation: skip delegation capability guard',pattern:'disabled delegated operation cannot use an existing personally signed packet',testFile:'tests/delegation.test.mjs'},
@@ -46,7 +47,7 @@ for(const c of cases){const tmp=mkdtempSync(path.join(os.tmpdir(),'cla-mutation-
  const changed=before.replace(c.before,c.after);assert.notEqual(changed,before);writeFileSync(file,changed);assert.ok(readFileSync(file,'utf8').includes(c.after));
  const r=c.runner==='python'?spawnSync('python3',[c.testFile,'Migration.'+c.pattern,'-v'],{cwd:tmp,encoding:'utf8'}):
    spawnSync(process.execPath,['--test','--test-name-pattern='+c.pattern,c.testFile??'tests/independent-lifecycle.test.mjs'],{cwd:tmp,encoding:'utf8'});
- assert.equal(r.error,undefined);assert.notEqual(r.status,0,c.name+' must make selected test fail');assert.ok((r.stdout+r.stderr).includes(c.pattern),'selected test was executed');
+ assert.equal(r.error,undefined);assert.notEqual(r.status,0,c.name+' must make selected test fail');assert.ok((r.stdout+r.stderr).includes(c.selectedTitle??c.pattern),'selected test was executed');
  if(c.assertionError){assert.equal(r.status,1);assert.ok((r.stdout+r.stderr).includes('AssertionError'),'actual assertion must fail');}
  console.log('Detected mutation: '+c.name+' (selected exit '+r.status+')');
 }finally{rmSync(tmp,{recursive:true,force:true});}}

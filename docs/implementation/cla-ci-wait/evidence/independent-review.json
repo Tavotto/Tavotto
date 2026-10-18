@@ -1,0 +1,86 @@
+{
+  "recorded_at_utc": "2026-10-18T08:09:40.388384+00:00",
+  "base_sha": "d2b0ba59340761b61f7ac5b8b534d43bcdd731f4",
+  "stage": "independent read-only review of uncommitted CI bounded wait, after proof-first-observation deadline fix",
+  "source_hashes": "final-source-hashes.json",
+  "current_workspace_source_hash_mismatches": [],
+  "checks": [
+    {
+      "command": "node --test tests/ci-candidate.test.mjs tests/ci-wait.test.mjs",
+      "exit_code": 0,
+      "passed": 42,
+      "failed": 0,
+      "log": "fixed-targeted-tests.txt"
+    },
+    {
+      "command": "node --test tests/independent-proof-deadline.test.mjs",
+      "before_fix_exit_code": 1,
+      "before_fix_failed": 2,
+      "after_fix_exit_code": 0,
+      "after_fix_passed": 2,
+      "before_log": "proof-deadline-red.txt",
+      "after_log": "proof-deadline-green.txt"
+    },
+    {
+      "command": "node tests/mutation-smoke.mjs",
+      "exit_code": 0,
+      "detected": 65,
+      "selected_exit": 1,
+      "snapshot": "fixed-service; first11 new wait cases",
+      "log": "fixed-mutations.txt"
+    },
+    {
+      "command": "node --test --test-name-pattern=CI wait anchors proof deadline before first success path tests/ci-wait.test.mjs",
+      "subject": "single isolated deletion of options.observe before first authority",
+      "selected_exit_code": 1,
+      "assertion_error": true,
+      "location_count": 1,
+      "case": "first-authority-observer-mutant.json",
+      "log": "first-authority-observer-mutant.txt"
+    }
+  ],
+  "mutation_coverage": {
+    "total_unique_cases": 66,
+    "execution": "65 full-snapshot cases plus exactly1 newly appended case; no claim of a single66-case command",
+    "first11_wait_cases_unchanged_in_final_json": true
+  },
+  "findings_fixed": [
+    {
+      "path": "src/ci/wait.ts and src/ci/consumer.ts",
+      "issue": "short proof monotonic deadline began only after pending response and was absent on first-attempt success",
+      "fix": "validated candidate observer before initial authority GET immediately narrows deadline; min prevents later extension",
+      "independent_result": "2 actual unexpected-success assertions red before fix, both green after fix; deletion mutation red"
+    }
+  ],
+  "remaining_confirmed_findings": [],
+  "typing": {
+    "static_inspection": "No apparent TypeScript structural/import/signature error identified. Read signal is optional; observer is synchronous and typed; imports have no cycle.",
+    "actual_typecheck": "not executed; tsc unavailable locally, no dependencies downloaded. Node runtime passing is not a typecheck."
+  },
+  "four_gaps": {
+    "agreement_version_migration": "still independent missing mechanism; new terms/grants/active-historical mappings must be designed",
+    "120s_scheduling_and_throughput": "CI visibility waiting only; 15-minute dispatch/two-minute recovery and budget acceptance not established",
+    "trusted_ci": "consumer and CLI default-off; trusted-main landing and later workflow wiring still required",
+    "merge_group": "unsupported; candidate rejects before requests and PR proof cannot satisfy queue head"
+  },
+  "boundaries": [
+    "No Worker, signing, publication, D1 schema, cron, policy or live workflow change in this wait worktree",
+    "No success cache or proof replacement; source/candidate/head anchors remain fixed",
+    "No external formal review requested; final staged PR typecheck/build/hosted CI not accepted yet"
+  ],
+  "not_executed": [
+    "workspace writes by reviewer",
+    "HTTP or external writes",
+    "dependency download",
+    "real authorization/key/credentials/signing/deployment",
+    "successful-publication-across-expiry test"
+  ],
+  "log_sha256": {
+    "proof-deadline-red.txt": "58ba5e98cd4504149ee0d5961fa3aababbda5193098a1aee77e3002b7c01e8f2",
+    "proof-deadline-green.txt": "68a56250a5232800d650b284f24678b48b6dc143b7d0bedb96422ec6fcdfdfa6",
+    "fixed-targeted-tests.txt": "f58c5d9146bd9cf95f06006cbd05e58946d62dd3b342a76372cf91273c707a2b",
+    "fixed-mutations.txt": "5e05f836462839cac304898942ac737e6332a3bc42adc331e1df6f8b508f186c",
+    "first-authority-observer-mutant.txt": "10bb3bc71bbfaf1b25b16985f004b1f889f1702e98ea448fd1ffbfde8639b349",
+    "first-authority-observer-mutant.json": "b094fdcf37aa16aea3b945666f330ef5a45acd7da86304f485cf275430083d54"
+  }
+}

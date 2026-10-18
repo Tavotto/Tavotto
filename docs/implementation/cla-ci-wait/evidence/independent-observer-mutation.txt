@@ -1,0 +1,25 @@
+✖ CI wait anchors proof deadline before first success path (81.90556ms)
+ℹ tests 1
+ℹ suites 0
+ℹ pass 0
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 252.480834
+
+✖ failing tests:
+
+test at tests/ci-wait.test.mjs:119:57
+✖ CI wait anchors proof deadline before first success path (81.90556ms)
+  AssertionError [ERR_ASSERTION]: Missing expected rejection.
+      at async file:///tmp/cla-ci-wait-implementation-review/observer-mutant/tests/ci-wait.test.mjs:124:2
+      at async iso (file:///tmp/cla-ci-wait-implementation-review/observer-mutant/tests/delegation-fixture.mjs:37:79)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    operator: 'rejects',
+    diff: 'simple'
+  }

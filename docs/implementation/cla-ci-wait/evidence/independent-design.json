@@ -1,0 +1,62 @@
+{
+  "base_sha": "d2b0ba59340761b61f7ac5b8b534d43bcdd731f4",
+  "phase": "read-only design review before implementation",
+  "four_gaps": [
+    {
+      "name": "agreement-version migration",
+      "class": "missing independent mechanism",
+      "effect_of_wait": "none",
+      "remaining": "Worker version1.0 and exact two-row readiness; immutable history and old public-key audit validation do not implement rollout."
+    },
+    {
+      "name": "120-second publication/confirmation/CI timing and throughput",
+      "class": "partly offline mechanism, mainly live scheduling/resource acceptance",
+      "effect_of_wait": "bridges bounded check/confirmation read visibility only; cannot guarantee recovery */2 or automatic 15-minute cadence, unchanged per-invocation limits.",
+      "remaining": "live acceptance remains blocked; no successful publication across expiry test executed."
+    },
+    {
+      "name": "trusted CI",
+      "class": "offline consumer mechanism followed by separately approved trusted-main workflow wiring",
+      "effect_of_wait": "default-off bounded read-only polling can be independently reviewed without changing actual gate.",
+      "remaining": "original event head, trusted-main pin, candidate/proof pin and dual live authority revalidation required on every attempt."
+    },
+    {
+      "name": "merge-group",
+      "class": "missing independent proof/binding/recovery design",
+      "effect_of_wait": "none; reject before read",
+      "remaining": "PR proof cannot authorize merge-group head."
+    }
+  ],
+  "confirmed_protocol_issue": {
+    "expected_by_initial_proposal": 503,
+    "actual_worker_status": 403,
+    "actual_body": {
+      "error": "proof_not_confirmed"
+    },
+    "file": "src/native/worker.ts:181",
+    "resolution_advice": "Keep Worker unchanged; exact403 single-field error only, typed pending for first authority stage. All other status/body/stage combinations terminal.",
+    "test": {
+      "command": "node /tmp/cla-ci-wait-review/worker-pending-status.mjs",
+      "exit_code": 0,
+      "log": "worker-pending-status.txt",
+      "network_calls": 0
+    }
+  },
+  "required_invariants": [
+    "Complete paginated zero-owned-check observation only; ambiguous/incomplete list never retry.",
+    "Pin first valid trusted-main source even when check is absent; keep event head unchanged.",
+    "After candidate seen, missing or changed run/id/attempt/proofhash terminates.",
+    "First authority precise pending only; second authority error always terminal; no prior success reuse.",
+    "Fixed maxAttempts<=8, integer interval1-10s, timeout<=60s; monotonic overall deadline and nonrenewable proof expiry deadline.",
+    "Bound transport and response-body await with cancellation/race; check deadlines before/after awaits/sleep and before success.",
+    "Default disabled consumer behavior and original errors retained; no workflow/publisher/cron/credentials change."
+  ],
+  "not_executed": [
+    "workspace edits by reviewer",
+    "HTTP",
+    "external review request",
+    "dependency download",
+    "real authorization/signing/deployment",
+    "successful publication across proof expiry"
+  ]
+}

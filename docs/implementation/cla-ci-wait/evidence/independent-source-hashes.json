@@ -1,0 +1,11 @@
+{
+  "src/ci/consumer.ts": "b2b09ea5023848d31114db4e76ed4fdfecb2999a139d57bdbbc546ebd6b9a96a",
+  "src/ci/wait.ts": "53cb415d79a3333f408a70a2e882ffe14a5bbd438a8c674534cbf4283e0a0fb6",
+  "scripts/ci-candidate.mjs": "f010b5888c79cfecf65a94d65de8e6730ef5dd60bd78f4e176d1982fbed721c3",
+  "deployment/ci.disabled.json": "7a0498856b503b846b59703349369fec5cb9f1a03fba92caf2d3c6dacee0eb2e",
+  "tests/ci-fixture.mjs": "686f31617dd30e168e2726ba058e9a70fe16d46a3a6a5d79d387edc8b1a936d6",
+  "tests/ci-candidate.test.mjs": "29e6d5f3626a025c4b58a0bf0b5c6a9a7dd0a4ff5cf8f078128614b7da0f6ba2",
+  "tests/ci-wait.test.mjs": "5916e94ca243f4cf6fc6fed102d6b9581dad938508900a9a75f0531f271ed9be",
+  "tests/ci-wait-mutation-cases.json": "6fc4105b134f699ba03e5599c7905980b88e5840c95b22dde3163df571116f3f",
+  "tests/mutation-smoke.mjs": "932d882352b2ac2de6b6a1da3a01d6999a0f6ea49644a2a67383930927290338"
+}

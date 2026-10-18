@@ -1,0 +1,11 @@
+import test from 'node:test';import assert from 'node:assert/strict';
+import {candidate} from '../scripts/ci-candidate.mjs';import {setup} from './ci-fixture.mjs';import {iso} from './delegation-fixture.mjs';import {canonical} from '../src/core/crypto.ts';
+globalThis.fetch=async()=>{throw Error('OUTBOUND_FORBIDDEN');};
+for(const phase of ['first-success','first-pending-delay'])test('independent proof deadline begins at candidate observation '+phase,()=>iso(async f=>{
+ const t=await setup(f);t.config.wait={enabled:true,maxAttempts:3,intervalMs:1000,timeoutMs:10000};let tick=0,authorities=0;
+ const proof=JSON.parse(t.run.output.summary.split('\n')[1]);proof.expires_at=f.now()+2;t.run.output.summary='tavotto-cla-v1\n'+canonical(proof);
+ await f.store.stmt('UPDATE publication_attempts SET proof_text=?,expires=?',t.run.output.summary,proof.expires_at).run();
+ t.hooks.authority=n=>{if(phase==='first-success'&&n===2)tick=3000;};
+ const transport=async(u,i)=>{if(new URL(u).origin===f.c.origin){authorities++;if(phase==='first-pending-delay'&&authorities===1){tick=1500;return Response.json({error:'proof_not_confirmed'},{status:403});}}return t.transport(u,i);};
+ await assert.rejects(candidate(t.config,t.event,'pull_request','SYNTHETIC_TOKEN',{transport,clock:f.now,monotonic:()=>tick,pause:async()=>{tick+=1000;}}),e=>e.code==='ci_wait_deadline');
+}));

@@ -1,0 +1,53 @@
+Detected mutation: archive-current-binding (selected exit 1)
+Detected mutation: audit-final-session (selected exit 1)
+Detected mutation: audit-subject-hold (selected exit 1)
+Detected mutation: dispatch-final-binding (selected exit 1)
+Detected mutation: journal-revision (selected exit 1)
+Detected mutation: journal-proof-expiry (selected exit 1)
+Detected mutation: journal-unresolved-other-head (selected exit 1)
+Detected mutation: dispatch-external-reserve (selected exit 1)
+Detected mutation: adapter-existing-owned-run (selected exit 1)
+Detected mutation: recovery-required (selected exit 1)
+Detected mutation: status-captured-revision (selected exit 1)
+Detected mutation: journal-request-head (selected exit 1)
+Detected mutation: journal-lease-boundary (selected exit 1)
+Detected mutation: persisted send lease (selected exit 1)
+Detected mutation: active send claim exclusion (selected exit 1)
+Detected mutation: active send eligibility (selected exit 1)
+Detected mutation: active send next deadline (selected exit 1)
+Detected mutation: reconciliation snapshot CAS (selected exit 1)
+Detected mutation: failure snapshot CAS (selected exit 1)
+Detected mutation: deferral snapshot CAS (selected exit 1)
+Detected mutation: automatic settlement cannot resurrect manual (selected exit 1)
+Detected mutation: automatic wake preserves current lease (selected exit 1)
+Detected mutation: automatic settlement durable wake (selected exit 1)
+Detected mutation: migration every source column (selected exit 1)
+Detected mutation: migration namespaces new objects (selected exit 1)
+Detected mutation: trusted source pin (selected exit 1)
+Detected mutation: candidate identity pin (selected exit 1)
+Detected mutation: second authority stage (selected exit 1)
+Detected mutation: current Worker status contract (selected exit 1)
+Detected mutation: pending exact response shape (selected exit 1)
+Detected mutation: global return deadline (selected exit 1)
+Detected mutation: monotonic rollback (selected exit 1)
+Detected mutation: proof expiry before another read (selected exit 1)
+Detected mutation: proof monotonic deadline (selected exit 1)
+Detected mutation: maximum attempt configuration (selected exit 1)
+node:internal/modules/run_main:107
+    triggerUncaughtException(
+    ^
+
+AssertionError [ERR_ASSERTION]: actual assertion must fail
+    at file:///workspace/Tavotto-cla-ci-wait/services/cla-cloudflare/tests/mutation-smoke.mjs:51:55
+    at ModuleJob.run (node:internal/modules/esm/module_job:439:25)
+    at async node:internal/modules/esm/loader:643:26
+    at async asyncRunEntryPointWithESMLoader (node:internal/modules/run_main:101:5) {
+  generatedMessage: false,
+  code: 'ERR_ASSERTION',
+  actual: false,
+  expected: true,
+  operator: '==',
+  diff: 'simple'
+}
+
+Node.js v24.19.0

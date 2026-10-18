@@ -1,0 +1,40 @@
+✖ independent proof deadline begins at candidate observation first-success (224.122816ms)
+✖ independent proof deadline begins at candidate observation first-pending-delay (56.226204ms)
+ℹ tests 2
+ℹ suites 0
+ℹ pass 0
+ℹ fail 2
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 575.331051
+
+✖ failing tests:
+
+test at tests/independent-proof-deadline.test.mjs:4:60
+✖ independent proof deadline begins at candidate observation first-success (224.122816ms)
+  AssertionError [ERR_ASSERTION]: Missing expected rejection.
+      at async file:///tmp/cla-ci-wait-implementation-review/service/tests/independent-proof-deadline.test.mjs:10:2
+      at async iso (file:///tmp/cla-ci-wait-implementation-review/service/tests/delegation-fixture.mjs:37:79)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    operator: 'rejects',
+    diff: 'simple'
+  }
+
+test at tests/independent-proof-deadline.test.mjs:4:60
+✖ independent proof deadline begins at candidate observation first-pending-delay (56.226204ms)
+  AssertionError [ERR_ASSERTION]: Missing expected rejection.
+      at async file:///tmp/cla-ci-wait-implementation-review/service/tests/independent-proof-deadline.test.mjs:10:2
+      at async iso (file:///tmp/cla-ci-wait-implementation-review/service/tests/delegation-fixture.mjs:37:79)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    operator: 'rejects',
+    diff: 'simple'
+  }

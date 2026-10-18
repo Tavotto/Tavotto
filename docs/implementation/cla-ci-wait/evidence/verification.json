@@ -1,0 +1,111 @@
+{
+  "base": "d2b0ba59340761b61f7ac5b8b534d43bcdd731f4",
+  "stage": "precommit source fingerprints identify the tested inputs",
+  "commands": [
+    {
+      "command": "npm test",
+      "cwd": "services/cla-cloudflare",
+      "exit_code": 0,
+      "passed": 349,
+      "new_wait_tests": 32,
+      "failed": 0,
+      "skipped": 0,
+      "log": "node-tests.txt"
+    },
+    {
+      "command": "node tests/mutation-smoke.mjs",
+      "cwd": "services/cla-cloudflare",
+      "exit_code": 0,
+      "detected": 66,
+      "new_wait_cases": 12,
+      "each_new_case_requires_AssertionError_exit_1": true,
+      "log": "mutations.txt"
+    },
+    {
+      "command": "python3 tests/migration.test.py",
+      "cwd": "services/cla-cloudflare",
+      "exit_code": 0,
+      "passed": 4,
+      "log": "migration.txt"
+    },
+    {
+      "command": "npm run typecheck",
+      "exit_code": 127,
+      "status": "blocked",
+      "reason": "tsc not installed; no dependency download attempted",
+      "log": "blocked-typecheck.txt"
+    },
+    {
+      "command": "npm run build",
+      "exit_code": 1,
+      "status": "blocked",
+      "reason": "esbuild module absent; no dependency download attempted",
+      "log": "blocked-build.txt"
+    }
+  ],
+  "independent_review": {
+    "targeted_tests": 42,
+    "targeted_exit_code": 0,
+    "deadline_red_tests": 2,
+    "deadline_red_exit_code": 1,
+    "deadline_green_exit_code": 0,
+    "mutations": "65-case command exit0 plus one separately located observer mutation AssertionError exit1; 66 distinct cases",
+    "source_hashes_match": 9,
+    "formal_external_review_requested": false
+  },
+  "witness_strengthening": "Initial trusted-config mutation produced TypeError, rejected by the AssertionError requirement. The positive test was wrapped in assert.doesNotReject; final mutated selected test has actual AssertionError. Original failed harness output retained.",
+  "source_sha256": {
+    "services/cla-cloudflare/deployment/ci.disabled.json": "7a0498856b503b846b59703349369fec5cb9f1a03fba92caf2d3c6dacee0eb2e",
+    "services/cla-cloudflare/scripts/ci-candidate.mjs": "f010b5888c79cfecf65a94d65de8e6730ef5dd60bd78f4e176d1982fbed721c3",
+    "services/cla-cloudflare/src/ci/consumer.ts": "b2b09ea5023848d31114db4e76ed4fdfecb2999a139d57bdbbc546ebd6b9a96a",
+    "services/cla-cloudflare/src/ci/wait.ts": "53cb415d79a3333f408a70a2e882ffe14a5bbd438a8c674534cbf4283e0a0fb6",
+    "services/cla-cloudflare/tests/ci-candidate.test.mjs": "29e6d5f3626a025c4b58a0bf0b5c6a9a7dd0a4ff5cf8f078128614b7da0f6ba2",
+    "services/cla-cloudflare/tests/ci-fixture.mjs": "686f31617dd30e168e2726ba058e9a70fe16d46a3a6a5d79d387edc8b1a936d6",
+    "services/cla-cloudflare/tests/ci-wait.test.mjs": "5916e94ca243f4cf6fc6fed102d6b9581dad938508900a9a75f0531f271ed9be",
+    "services/cla-cloudflare/tests/ci-wait-mutation-cases.json": "6fc4105b134f699ba03e5599c7905980b88e5840c95b22dde3163df571116f3f",
+    "services/cla-cloudflare/tests/mutation-smoke.mjs": "932d882352b2ac2de6b6a1da3a01d6999a0f6ea49644a2a67383930927290338"
+  },
+  "normalization": [
+    {
+      "file": "independent-design.json",
+      "original_sha256": "e7e74ad1f59756e037348c555c75e596dfd8546bb2a804d14dafca41b7dd9001",
+      "change": "trailing whitespace only"
+    }
+  ],
+  "log_sha256": {
+    "independent-review.json": "2a3107dd13c8c05869b52b450d9b436dea0c76dd7a1c39acb4c21381398a0a8a",
+    "mutations.txt": "2b50045bba19b71c54dd5250b9f98380dc1b24e047a18904a06e683ff6b38150",
+    "blocked-build.txt": "22e4d4b3e5f8886059e79e1bda0b44184ccf2570cca710c0c853f1250ecd88b7",
+    "independent-65-mutations.txt": "5e05f836462839cac304898942ac737e6332a3bc42adc331e1df6f8b508f186c",
+    "node-tests.txt": "bcf60704f69a73bb7235068f8b58a27a61a67556ab463a8afb3ec93f523f31be",
+    "migration.txt": "62f05e43d507409ea130ebb84a7af42446bc1f460da1f51f185f66237b6c5f46",
+    "independent-source-hashes.json": "61c17f2b07ea5704d6c4319283683a25dee54d1c591ef28c88256140c281ec63",
+    "worker-status-contract.txt": "b1309fb99162a44fec51e9f666e7d63631373bfefca733a102cdf86a7e06c7e7",
+    "blocked-typecheck.txt": "93eed0553081bd499f8b8cda0baee9c9c74eed7c493953de4dcad753d748bb50",
+    "independent-deadline-red.txt": "58ba5e98cd4504149ee0d5961fa3aababbda5193098a1aee77e3002b7c01e8f2",
+    "initial-mutation-witness.txt": "5d85c77f1a065b6986a0a645a915dd0c4741e66e4a49e89fef9f1c52f73e5890",
+    "independent-deadline-green.txt": "68a56250a5232800d650b284f24678b48b6dc143b7d0bedb96422ec6fcdfdfa6",
+    "independent-observer-mutation.txt": "10bb3bc71bbfaf1b25b16985f004b1f889f1702e98ea448fd1ffbfde8639b349",
+    "independent-targeted-tests.txt": "f58c5d9146bd9cf95f06006cbd05e58946d62dd3b342a76372cf91273c707a2b",
+    "independent-design.json": "5f01620e3bd0702250dc9c9da69ca0c14d3b4e2d670927f84488969ddc0fb576",
+    "independent-proof-deadline.test.mjs.txt": "a7f8ca5076c4c2640edf0e070bbad2e598979e1859a2b6bfb00d9c07c83492a2"
+  },
+  "not_executed": [
+    "dependency download or environment switch",
+    "live HTTP/signing/authorization/credentials",
+    "production or preview deployment",
+    "successful publication or successful-publication transition across proof expiry",
+    "workflow/gate/permission/schedule activation",
+    "extra #1151 external review"
+  ],
+  "pending": [
+    "strict TypeScript/build",
+    "hosted CI after normal stacked-base landing and retarget/rebase",
+    "formal external review for this new draft after deterministic prerequisites",
+    "version migration",
+    "dispatch/recovery/CI timing and throughput",
+    "trusted-main workflow wiring",
+    "native merge-group contract",
+    "full CI and live acceptance"
+  ]
+}
