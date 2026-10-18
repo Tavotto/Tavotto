@@ -244,8 +244,10 @@ export function useAiDraft(panel: PanelObject | null) {
       applyDraft()
       return
     }
-    // 只有草稿读失败（项目级读成功）：什么都不动，维持已有的账本结论
+    // 只有草稿读失败（项目级读成功）：项目级列表**照样还原**——别的标签页可能刚在兄弟面板上留了未确认提交，丢掉它本页就能再发一次；
+    // 账本结论维持已有的（这次没读到本文件自己那份兜底，不因此新放开发送）
     if (!state) {
+      restorePendings(projectList)
       setLedgerState((cur) => (cur === 'ok' ? cur : 'failed'))
       return
     }

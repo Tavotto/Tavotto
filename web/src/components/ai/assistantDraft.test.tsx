@@ -670,6 +670,19 @@ describe('同步状态机：单一 reconcile + 写入版本（#1098）', () => {
     expect(be.draft('pa', 'Fig1.pdf')).toBe('别的标签页留下的稿，再加一句') // 基于已见的服务器版本写，不是盲写
   })
 
+  it('对账成功过一次之后，草稿读失败而项目级账本读成功：别的标签页新留在兄弟面板上的未确认提交照样还原、发送锁住', async () => {
+    useSelectionStore.setState({ ids: ['p3'] } as never)
+    await mount()
+    await typeText('一条指令')
+    expect(q<HTMLButtonElement>('[data-ai-send]')!.disabled).toBe(false)
+    be.pendings.set('pa\u0000Fig1.pdf', [{ rid: 'rid-othertab-001', text: '别的标签页发出的话', sent: SENT, script: 'p1.py' }])
+    be.setDraftGetFails(true)
+    await act(async () => window.dispatchEvent(new Event('focus')))
+    await settle()
+    expect(Object.keys(useAiStore.getState().submissions)).toEqual(['rid-othertab-001'])
+    expect(q<HTMLButtonElement>('[data-ai-send]')!.disabled).toBe(true)
+  })
+
   it('对账成功过一次之后，项目级待确认读失败：ledgerState 降回 failed、发送锁住；下一次成功的项目级读取才解锁', async () => {
     await mount()
     await typeText('一条指令')

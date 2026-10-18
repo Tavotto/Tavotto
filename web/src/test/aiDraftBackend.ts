@@ -26,6 +26,8 @@ export interface DraftBackend {
   setDraftPutFails: (fails: boolean) => void
   /** 只让「读项目级账本列表」失败（草稿的读照常成功） */
   setPendingListFails: (fails: boolean) => void
+  /** 只让「读这个文件的草稿」失败（项目级账本列表照常成功） */
+  setDraftGetFails: (fails: boolean) => void
   /** 只让「写账本」失败（PUT pending 回 500），别的照常 */
   setPendingWriteFails: (fails: boolean) => void
   /** 模拟「这个面板未解决的提交已满」：新 rid 一律 409 `ai_pending_limit`（params.count = 传入的数）；null = 不限 */
@@ -55,6 +57,7 @@ export function createDraftBackend(): DraftBackend {
   let pendingLimit: number | null = null
   let loseNextPendingResponses = 0
   let pendingListFails = false
+  let draftGetFails = false
   let draftPutFails = false
   let hold: Promise<void> | null = null
   let holdNext: Promise<void> | null = null
@@ -83,6 +86,7 @@ export function createDraftBackend(): DraftBackend {
         return handle(url, init) as Response
       })
     }
+    if (method === 'GET' && !isList && draftGetFails) return json({ error: 'boom', code: 'internal_error' }, 500)
     if (u.pathname === '/api/ai/drafts/pending' && method === 'GET') {
       if (pendingListFails) return json({ error: 'boom', code: 'internal_error' }, 500)
       const prefix = key(pj, '')
@@ -231,6 +235,9 @@ export function createDraftBackend(): DraftBackend {
     },
     setPendingListFails: (f) => {
       pendingListFails = f
+    },
+    setDraftGetFails: (f) => {
+      draftGetFails = f
     },
     setPendingLimit: (n) => {
       pendingLimit = n
