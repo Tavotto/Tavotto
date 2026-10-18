@@ -1488,6 +1488,27 @@ describe('已发出未确认：不能盲目重发', () => {
     expect(putOfNew?.body.supersedes).toEqual([rid1])
   })
 
+  it('「改写后再发」时旧请求其实已登记（409 ai_supersede_conflict）：放弃的那条原样还原、照旧锁住发送，并按它的 rid 查询接回会话；新指令不发', async () => {
+    await mount()
+    await sendIt('旧指令')
+    const rid1 = (vi.mocked(aiRun).mock.calls[0][0] as { client_request_id: string }).client_request_id
+    vi.mocked(fetchAiRequest).mockRejectedValue(new ApiError('nf', 404, { code: 'ai_request_not_found' }))
+    await click(q('[data-ai-check]'))
+    await settle()
+    await click(q('[data-ai-edit-resend]'))
+    // 旧请求的慢 POST 这时才到、登记成会话
+    be.markRegistered(rid1)
+    vi.mocked(fetchAiRequest).mockReset()
+    vi.mocked(fetchAiRequest).mockResolvedValue({ session: 's-old', status: 'running', changed: false, script: 'fig1.py' })
+    await typeText('新指令')
+    await click(q('[data-ai-send="send"]'))
+    await settle()
+    expect(aiRun).toHaveBeenCalledTimes(1) // 新指令没有发出
+    expect(vi.mocked(fetchAiRequest).mock.calls.some((c) => c[0] === rid1)).toBe(true) // 按旧 rid 查询
+    expect(useAiStore.getState().sessions.map((x) => x.id)).toContain('s-old') // 接回旧请求的会话
+    expect(q('[data-ai-send="send"]')).toBeNull() // 旧任务还在跑：只剩「停止」，不能再发
+  })
+
   it('查询得到 superseded（这条请求已被改写后的新指令取代）：不再提供同 rid 重发，提交被收掉，说一句', async () => {
     await mount()
     await sendIt('旧指令')

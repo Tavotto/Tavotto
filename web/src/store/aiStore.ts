@@ -254,7 +254,13 @@ const ledgerUnknown = new Map<string, { rid: string; prompt: string; sentJson: s
  * 等待，「改写后再发」之后从这个面板发也必须带上它，否则旧 rid 的慢 POST 在新指令之后登记，两条都执行。不按路径字符串做 key：
  * `sameScript` 把分隔符不同的写法、旧数据的绝对路径与它的相对后缀都认作同一份，字符串 key 会把它们分进不同的桶
  */
-type SupersedeOwner = { project: string | null; fileId: string; script: string | null }
+type SupersedeOwner = {
+  project: string | null
+  fileId: string
+  script: string | null
+  /** 「改写后再发」放弃的那条提交本身：取代被后端拒绝（旧请求其实已登记）时原样还原它，继续锁住这份脚本 */
+  sub?: AiSubmission
+}
 const supersedeQueue = new Map<string, SupersedeOwner>()
 const queueSupersede = (owner: SupersedeOwner, rid: string): void => {
   supersedeQueue.set(rid, owner)
@@ -481,8 +487,16 @@ export const useAiStore = create<AiState>((set, get) => ({
     } catch (e) {
       dropSub() // 后端明确拒绝记账（如未确认的提交已满，`ai_pending_limit`）：不发，原因原样交给界面
       if (e instanceof ApiError && e.body?.code === 'ai_supersede_conflict') {
-        // 要取代的旧 rid 其实已被后端登记（旧请求到达了）：它不能再被当成「没收到」取代；别让它永远卡在队列里挡住之后的每次发送
-        for (const x of supersedes) supersedeQueue.delete(x)
+        // 要取代的旧 rid 其实已被后端登记（旧请求到达了）：它不能再被当成「没收到」取代，出队；但**不能就此忘掉它**——
+        // 放弃时提交已从界面收走，什么都不留的话重试按钮一放开、旧任务又恰好已结束（runningHere 不再挡），新 rid 不带 supersedes
+        // 发出去，两条都执行。所以把放弃的那条原样还原成「未确认」（照旧锁住同面板 / 同脚本），并立刻按 rid 查询接回它的会话
+        for (const x of supersedes) {
+          const restored = supersedeQueue.get(x)?.sub
+          supersedeQueue.delete(x)
+          if (!restored) continue
+          get().restoreSubmission(restored)
+          void get().queryRequest(x)
+        }
       }
       throw e
     }
@@ -549,7 +563,7 @@ export const useAiStore = create<AiState>((set, get) => ({
     if (!sub) return
     // 放弃这条等待（「改写后再发」）：**不 DELETE**。「后端没收到」的判断可能是错的（原请求可能还在路上），客户端单方面删了
     // 账本行，之后它又被还原、新 rid 却已经执行过。记下这个 rid，下一次发这个面板时随新行的 PUT 带 `supersedes`，由后端在同一个事务里删
-    queueSupersede({ project: sub.project ?? null, fileId: sub.fileId, script: sub.script ?? null }, rid)
+    queueSupersede({ project: sub.project ?? null, fileId: sub.fileId, script: sub.script ?? null, sub }, rid)
     set((s) => {
       const { [rid]: _gone, ...rest } = s.submissions
       return { submissions: rest }

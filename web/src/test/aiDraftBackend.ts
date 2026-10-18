@@ -28,6 +28,8 @@ export interface DraftBackend {
   setPendingListFails: (fails: boolean) => void
   /** 只让「读这个文件的草稿」失败（项目级账本列表照常成功） */
   setDraftGetFails: (fails: boolean) => void
+  /** 这个 rid 已被后端真实登记（旧请求其实到达了）：带它的 `supersedes` 一律 409 `ai_supersede_conflict`，整次写入不生效 */
+  markRegistered: (rid: string) => void
   /** 只让「写账本」失败（PUT pending 回 500），别的照常 */
   setPendingWriteFails: (fails: boolean) => void
   /** 模拟「这个面板未解决的提交已满」：新 rid 一律 409 `ai_pending_limit`（params.count = 传入的数）；null = 不限 */
@@ -58,6 +60,7 @@ export function createDraftBackend(): DraftBackend {
   let loseNextPendingResponses = 0
   let pendingListFails = false
   let draftGetFails = false
+  const registered = new Set<string>()
   let draftPutFails = false
   let hold: Promise<void> | null = null
   let holdNext: Promise<void> | null = null
@@ -119,6 +122,8 @@ export function createDraftBackend(): DraftBackend {
           return json({ error: 'full', code: 'ai_pending_limit', params: { count: pendingLimit } }, 409)
         // `supersedes`：与后端一致，在写新行的同一个「事务」里删旧行
         const gone = new Set(Array.isArray(body.supersedes) ? (body.supersedes as string[]) : [])
+        if ([...gone].some((x) => registered.has(x)))
+          return json({ error: '上一次的修改其实已经开始了', code: 'ai_supersede_conflict', params: {} }, 409)
         const next = [
           ...list.filter((x) => x.rid !== rid && !gone.has(x.rid)),
           {
@@ -238,6 +243,9 @@ export function createDraftBackend(): DraftBackend {
     },
     setDraftGetFails: (f) => {
       draftGetFails = f
+    },
+    markRegistered: (rid) => {
+      registered.add(rid)
     },
     setPendingLimit: (n) => {
       pendingLimit = n
