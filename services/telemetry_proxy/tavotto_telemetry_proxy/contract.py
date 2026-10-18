@@ -95,6 +95,29 @@ EVENTS: dict[str, dict[str, dict]] = {
         ),
     },
     "ai_assistant_invoked": {"agent": enum("codex", "claude", "other")},
+    # MCP 工具调用（客户端 CONSENT_VERSION 3，ADR 0134 §MCP）：与客户端表逐字对拍，没有参数与返回内容
+    "mcp_tool_call": {
+        "tool": enum(
+            "tavotto_health",
+            "tavotto_open_figure",
+            "tavotto_apply_overrides",
+            "tavotto_normalize_figure",
+            "tavotto_preflight",
+            "tavotto_export",
+            "tavotto_verify_replay",
+            "tavotto_refresh_project",
+            "tavotto_session_state",
+            "tavotto_close_session",
+            "other",
+        ),
+        "outcome": enum("ok", "tool_error", "protocol_error", "internal_error"),
+        "error_class": enum(
+            "none", "workspace", "needs_input", "request", "environment", "render", "other"
+        ),
+        "duration_bucket": enum("lt_1s", "1_5s", "5_30s", "30_120s", "gt_120s"),
+        "host": enum("codex", "claude", "other"),
+        "elided": BOOL,
+    },
     "update_completed": {"update_kind": enum("desktop", "pip", "pipx"), "target_version": VERSION},
     # ---- 客户端 CONSENT_VERSION 2（Session 22）新增的九条；与客户端表逐字对拍 ----
     "project_refresh_completed": {

@@ -109,6 +109,7 @@ and answers no question we actually have.
 | `export_completed` | an export job ended `done` **or** `partial` — i.e. at least one requested image was written (**not** "every requested file"; before 2026-10-15 this row said so wrongly). `pdf` / `png` say which of those two formats were really written | server (`app._export_telemetry`, called from `app.api_export` and the `export.progress` publisher of `app.api_export_start`) | `pdf`, `png`, `with_proof`: bool; `panel_count`: int ≤ 1000 |
 | `export_result` | **introduced 2026-10-15 (first release after v0.18.0)**. An *accepted* export job reached its terminal state — exactly one per job, from `exportjob._emit` via `ExportJob.on_terminal`, so sync / background / early-exit failures / user cancel all share one origin. Not sent: requests rejected before acceptance (HTTP 4xx), `overwrite=ask` name conflicts (`conflict`: nothing was done; the resubmit is the attempt) | server (`app._export_result_telemetry` → `engine/exporttelemetry.properties`) | `outcome`: `done` \| `partial` \| `failed` \| `cancelled`; `scope`: `canvas` \| `original`; `pdf`, `png`, `eps`, `tiff`, `with_report`: bool — what was **requested**; `delivered`: int ≤ 8 — image files actually written; `stage` (not on `done`): `prepare` \| `source` \| `compile` \| `compose` \| `raster` \| `inspect` \| `publish` \| `report` — where it failed or stopped; `error_class` (`failed` / `partial` only): `request` \| `environment` \| `backend` \| `artifact_rejected` \| `source_changed` \| `report` \| `other` — a coarse fold of the error code, never the code text or exception |
 | `ai_assistant_invoked` | `engine_ai.run()` returned a session | server (`app.api_ai_run`) | `agent`: `codex` \| `claude` \| `other` |
+| `mcp_tool_call` | **introduced 2026-10-18 (consent version 3, ADR 0134 §MCP)**. One `tools/call` handled by the Tavotto MCP server (Codex plugin and the other hosts share it). Duration covers the tool only, not the workspace-approval prompt before it. Arguments and results are **never** sent | MCP server process (`tavotto_mcp/server.py` `_call_tool_counted` → `usage.properties` → `bridge.note_tool_call`) | `tool`: one of the ten `tavotto_*` tool names \| `other`; `outcome`: `ok` \| `tool_error` \| `protocol_error` \| `internal_error`; `error_class`: `none` \| `workspace` \| `needs_input` \| `request` \| `environment` \| `render` \| `other` — a coarse fold of the plugin's stable error code, never the code text; `duration_bucket`: `lt_1s` \| `1_5s` \| `5_30s` \| `30_120s` \| `gt_120s`; `host`: `codex` \| `claude` \| `other` (from the MCP `clientInfo.name`, which itself is not sent); `elided`: bool — the result was trimmed to the host's size budget |
 | `update_completed` | an update finished installing | server (`engine/updater.apply_upgrade`) for pip/pipx; client (`store/updateStore.installDesktop`) for the desktop shell | `update_kind`: `desktop` \| `pip` \| `pipx`; `target_version`: version (omitted when unknown) |
 | `project_refresh_completed` | the unified project refresh **succeeded** (`app.refresh_project`, the single funnel for manual / watcher / Codex / AI) | server | `source`: `watcher` \| `manual` \| `codex` \| `ai` (refreshes caused by probe, manual registration or opening a project are **not** captured); `changed_bucket`: `none` \| `one` \| `few` (2–5) \| `many` (6+) — script + asset change count, bucketed |
 | `project_readiness_opened` | the readiness center is opened from a named entry point and the report has arrived | client (`store/projectReadinessStore.openCenter`) | `source`: `banner` \| `panel` \| `quickedit` \| `palette`; `status_bucket`: `all_editable` \| `mixed` \| `layout_only` (a project with zero figures sends nothing) |
@@ -126,7 +127,7 @@ raised; those installs are asked again and keep their `install_id`.
 
 ### `CONSENT_VERSION` 3 (2026-10-16, ADR 0134)
 
-One bump covers two new collection scopes:
+One bump covers three new collection scopes:
 
 1. the `export_result` event (table above);
 2. the **optional error summary** on a diagnostics report the user explicitly sends
@@ -134,6 +135,10 @@ One bump covers two new collection scopes:
    telemetry event and never goes through the proxy: it is a consent snapshot
    (`telemetry_consent`, `no_telemetry_env`, `scope_version`, `purposes`) plus one fact
    (internal component / operation / stable error code). No `install_id`, no timestamps.
+3. the `mcp_tool_call` event (table above). The MCP server reads the same saved consent as the
+   desktop app and has no consent prompt of its own: plugin-only users who never answered the
+   desktop prompt are `unset` and send nothing. On exit it waits at most 1.5 s for the queue
+   to drain, then drops whatever is left.
 
 Consent stored for version 2 stopped being sufficient the moment the constant was raised:
 no event of any kind (including `export_result`) is sent until the user is asked again;

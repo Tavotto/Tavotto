@@ -1338,6 +1338,24 @@ def _live_session_for(project: str, stem: str, run_config: str | None = None) ->
     return max(live, key=lambda s: s.last_used) if live else None
 
 
+def note_tool_call(properties: dict) -> None:
+    """一次 tools/call 的匿名用量事件（属性由 `usage.properties` 折成闭集）。
+
+    旧引擎的白名单里没有 `mcp_tool_call`：`capture` 校验不过、安静地回 False——这正是想要的
+    降级，桥不为它抬最低引擎版本。"""
+    try:
+        engine_telemetry.capture("mcp_tool_call", properties)
+    except Exception:  # noqa: BLE001 — 埋点绝不连累工具调用
+        pass
+
+
+def flush_usage(timeout: float) -> None:
+    try:
+        engine_telemetry.flush(timeout)
+    except Exception:  # noqa: BLE001 — 收尾不许连累退出
+        pass
+
+
 def shutdown_all() -> None:
     """进程退出前收摊：会话账本清空 + 关掉 worker 子进程（不留孤儿）。"""
     for session in _SESSIONS.values():

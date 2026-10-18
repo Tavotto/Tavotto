@@ -898,6 +898,7 @@
         "policy": "隐私政策",
         "sends": {
           "ai_assistant_invoked": "调用改图助手：用的是 Codex、Claude 还是其他 Agent。",
+          "mcp_tool_call": "AI Agent 调用 Tavotto 工具：哪个工具、成功与否、错误的大类、耗时分档、宿主是 Codex、Claude 还是其他；不含工具的参数与返回内容（路径、脚本名、图内文字）。",
           "app_started": "应用启动：桌面版还是浏览器版。",
           "canvas_created": "新建画布：空白、来自项目还是复制。",
           "context_bar_multi_used": "多选浮动栏：按钮类型与选中数量档位。",
@@ -1694,7 +1695,7 @@
     "decline": "暂不",
     "intro": "可发送匿名用量统计，了解哪些功能有人用。默认关闭，与账号无关。",
     "later": "随时可在设置里改。",
-    "reconsentDelta": "比你上次同意时多了两项：导出怎样结束（含失败 / 取消），以及你主动发送问题反馈时附带的一条不含内容的错误摘要。",
+    "reconsentDelta": "比你上次同意时多了三项：导出怎样结束（含失败 / 取消）；AI Agent 调用了哪个 Tavotto 工具、成功与否（不含参数与内容）；以及你主动发送问题反馈时附带的一条不含内容的错误摘要。",
     "neverData": "科研数据与图内文字",
     "neverFigures": "你的图与项目文件",
     "neverPaths": "文件名与路径",

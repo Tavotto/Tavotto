@@ -910,6 +910,7 @@
         "policy": "Privacy policy",
         "sends": {
           "ai_assistant_invoked": "Invoking the assistant: whether it ran Codex, Claude or something else.",
+          "mcp_tool_call": "An AI agent calling a Tavotto tool: which tool, whether it succeeded, a broad error category, a duration bucket and whether the host was Codex, Claude or something else. Never the tool's arguments or results (paths, script names, figure text).",
           "app_started": "App start: desktop or browser build.",
           "canvas_created": "A new canvas: blank, from the project, or a copy.",
           "context_bar_multi_used": "The multi-selection bar: which button, and the size bucket of the selection.",
@@ -1711,7 +1712,7 @@
     "decline": "Not now",
     "intro": "Send anonymous usage statistics to show which features get used. Off by default; not tied to an account.",
     "later": "You can change this any time in Settings.",
-    "reconsentDelta": "Two things were added since you last agreed: how an export ended (including failed or cancelled), and a content-free error summary attached when you choose to send a problem report.",
+    "reconsentDelta": "Three things were added since you last agreed: how an export ended (including failed or cancelled); which Tavotto tool an AI agent called and whether it succeeded (never its arguments or content); and a content-free error summary attached when you choose to send a problem report.",
     "neverData": "Scientific data and text inside figures",
     "neverFigures": "Your figures and project files",
     "neverPaths": "Filenames and paths",

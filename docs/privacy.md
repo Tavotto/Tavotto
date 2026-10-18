@@ -150,13 +150,20 @@ explicitly opts in**, either in the one-time first-run prompt or under
   accepted export ended: done, partly done, failed or cancelled, which formats were
   requested, how many image files were written, at which coarse stage it stopped and a
   coarse error class. No file name, path, error text or figure content is included.
+* **MCP tool calls (consent version 3).** When an AI agent (Codex, Claude Code or another
+  host) calls a Tavotto MCP tool, the `mcp_tool_call` event reports which tool, whether it
+  succeeded, a coarse error class, a duration bucket, whether the host was Codex, Claude or
+  something else, and whether the result was trimmed. The tool's arguments and results —
+  paths, script names, figure text, prompts — are never included. The MCP server uses the
+  consent saved by the desktop app and never asks on its own; if you have not agreed there,
+  it sends nothing.
 * **Consent version 2 (2026-09-02).** Adding those events widened the scope, so the
   consent version was raised: consent given for version 1 stopped being sufficient
   at that moment, no event is transmitted until the user is asked again, and the
   existing identifier is kept.
-* **Consent version 3 (2026-10-16).** Two things were added at once, so the consent
-  version was raised a single time: the export outcome event above, and the optional
-  error summary described under [Diagnostics bundle](#diagnostics-bundle). Consent given
+* **Consent version 3 (2026-10-16).** Three things were added at once, so the consent
+  version was raised a single time: the export outcome event and the MCP tool-call event
+  above, and the optional error summary described under [Diagnostics bundle](#diagnostics-bundle). Consent given
   for version 2 stopped being sufficient at that moment: no event is transmitted until
   the user is asked again, the existing identifier is kept, and anyone who had declined
   is not asked again.

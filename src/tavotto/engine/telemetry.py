@@ -174,6 +174,32 @@ EVENTS: dict[str, dict[str, dict]] = {
     },
     # 只有「用了哪个 agent」。提示词 / 脚本 / 目标 / 会话 id 一个都不发。
     "ai_assistant_invoked": {"agent": _enum("codex", "claude", "other")},
+    # MCP server（Codex 插件 / 其他宿主）的一次 tools/call（ADR 0134 §MCP，CONSENT_VERSION 3 的范围之一）。
+    # 只有工具名、结局、错误大类、耗时分档、宿主粗分、结果是否被裁剪——**参数与返回内容不发**：
+    # 路径、脚本名、stem、gid、图内文字、错误原文都不在这张表里。属性由插件
+    # `codex-plugin/mcp/tavotto_mcp/usage.py` 折出；同意仍是本模块这一份（MCP 自己不弹同意框）。
+    "mcp_tool_call": {
+        "tool": _enum(
+            "tavotto_health",
+            "tavotto_open_figure",
+            "tavotto_apply_overrides",
+            "tavotto_normalize_figure",
+            "tavotto_preflight",
+            "tavotto_export",
+            "tavotto_verify_replay",
+            "tavotto_refresh_project",
+            "tavotto_session_state",
+            "tavotto_close_session",
+            "other",
+        ),
+        "outcome": _enum("ok", "tool_error", "protocol_error", "internal_error"),
+        "error_class": _enum(
+            "none", "workspace", "needs_input", "request", "environment", "render", "other"
+        ),
+        "duration_bucket": _enum("lt_1s", "1_5s", "5_30s", "30_120s", "gt_120s"),
+        "host": _enum("codex", "claude", "other"),
+        "elided": BOOL,
+    },
     "update_completed": {"update_kind": _enum("desktop", "pip", "pipx"), "target_version": VERSION},
     # ---- Session 22（CONSENT_VERSION 2）：跨入口整合之后的粗粒度事件 ----
     # 统一刷新**成功**之后（`app.refresh_project`）。source 只收四个用户可见的

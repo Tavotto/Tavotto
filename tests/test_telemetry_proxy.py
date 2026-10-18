@@ -567,6 +567,14 @@ def test_every_client_event_is_accepted_end_to_end(upstream):
             "error_class": "other",
         },
         "ai_assistant_invoked": {"agent": "claude"},
+        "mcp_tool_call": {
+            "tool": "tavotto_open_figure",
+            "outcome": "tool_error",
+            "error_class": "workspace",
+            "duration_bucket": "1_5s",
+            "host": "codex",
+            "elided": False,
+        },
         "update_completed": {"update_kind": "pipx", "target_version": "0.9.0"},
         # Session 22（CONSENT_VERSION 2）
         "project_refresh_completed": {"source": "codex", "changed_bucket": "one"},
