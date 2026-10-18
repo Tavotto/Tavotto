@@ -225,3 +225,18 @@ def test_repeated_atomic_saves_reach_every_barrier_as_the_final_stem(tmp_path):
 )
 def test_temp_save_target_is_only_a_shape(fname, target):
     assert figcapture.temp_save_target(fname) == target
+
+
+def test_a_failing_bookkeeping_does_not_change_the_users_savefig(tmp_path):
+    """Codex #1126 r4305538684：自定义 PathLike 的 __fspath__ 在第 3 次起抛错（matplotlib 自己会调用 2 次，保存先成功），簿记失败只是不提升。"""
+    body = (
+        "class Odd:\n"
+        "    n = 0\n"
+        "    def __fspath__(self):\n"
+        "        Odd.n += 1\n"
+        "        if Odd.n > __N__:\n"
+        "            raise RuntimeError('second call')\n"
+        "        return 'odd.png'\n"
+        'fig.savefig(Odd(), format="png")\n'
+    )
+    assert _stems(tmp_path, body.replace("__N__", "2")) == ["final.png", "odd"]

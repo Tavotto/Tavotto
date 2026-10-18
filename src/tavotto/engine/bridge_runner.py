@@ -206,7 +206,11 @@ def _install_savefig_hook(mfigure) -> None:
             raise
         _SAVEFIG_OBSERVATIONS.complete(observation, "saved")
         if _CAPTURING:
-            _note_temp_save(self, fname, stem)
+            # 簿记尽力而为，失败只是不提升，不改变用户 savefig 的结果（Codex #1126 r4305538684）
+            try:
+                _note_temp_save(self, fname, stem)
+            except Exception:
+                pass
         return result
 
     mfigure.Figure.savefig = _patched_savefig
