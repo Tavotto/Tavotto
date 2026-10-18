@@ -1,4 +1,4 @@
-import type { Candidate, CheckProposal, CheckReceipt, GitHubPort, Identity, Job, Policy, Target } from '../core/types.ts';
+import type { Candidate, CheckProposal, CheckReceipt, GitHubPort, Identity, Job, Policy, PrSnapshot, Target } from '../core/types.ts';
 import { Rejected } from '../core/types.ts';
 import { appJwtWithKey, importAppSigningKey, bytes, canonical, sha256, unbase64 } from '../core/crypto.ts';
 import { identity } from '../core/identity.ts';
@@ -7,6 +7,8 @@ import type { LiveConfig, Secrets } from './config.ts';
 import { validateLive } from './config.ts';
 import type { Document, Publication } from './store.ts';
 import { BudgetDeferred, InvocationBudget } from './budget.ts';
+import { readQueue, prefixFor } from './merge-prefix.ts';
+import type { MergePrefixSnapshot, MergePrefixTarget } from './merge-prefix.ts';
 
 type Json = Record<string, any>;
 type AppJwtCache={material:string;context:string;mintedAt:number;expiresAt:number;promise:Promise<string>};
@@ -237,6 +239,12 @@ export class GitHub implements GitHubPort {
           await sha256(await this.content(agreement.path,trusted.sha,token)) !== agreement.sha256)
         throw new Rejected('agreement_hash_mismatch');
     }
+    const pr=await this.prSnapshot(target,token,repo);
+    const branchAfter=await this.api(repo+'/commits/'+encodeURIComponent(metadata.default_branch),token);
+    if(branchAfter.sha!==trusted.sha)throw new Rejected('state_changed');
+    return {kind:'pr',repositoryId:this.c.repositoryId,headSha:pr.headSha,baseSha:pr.baseSha,policy,members:[],prs:[pr]};
+  }
+  private async prSnapshot(target:{number:number},token:string,repo:string,baseRef?:string):Promise<PrSnapshot> {
     const pr = await this.api(repo+'/pulls/'+target.number,token);
     if (pr.number !== target.number || pr.state !== 'open' || pr.base?.repo?.id !== this.c.repositoryId ||
         !validSha(pr.head?.sha) || !validSha(pr.base?.sha) || !Number.isSafeInteger(pr.commits) || pr.commits < 1 || pr.commits > 1000)
@@ -257,12 +265,39 @@ export class GitHub implements GitHubPort {
     if (total !== commits.length || new Set(commits.map(x=>x.sha)).size !== commits.length || !commits.some(x=>x.sha === pr.head.sha))
       throw new Rejected('commits_incomplete');
     const after = await this.api(repo+'/pulls/'+target.number,token);
-    const branchAfter = await this.api(repo+'/commits/'+encodeURIComponent(metadata.default_branch),token);
     if (after.state !== 'open' || after.number !== pr.number || after.head?.sha !== pr.head.sha || after.base?.sha !== pr.base.sha ||
-        after.commits !== pr.commits || after.user?.id !== pr.user?.id || after.base?.repo?.id !== this.c.repositoryId ||
-        branchAfter.sha !== trusted.sha) throw new Rejected('state_changed');
-    return {kind:'pr',repositoryId:this.c.repositoryId,headSha:pr.head.sha,baseSha:pr.base.sha,policy,members:[],
-      prs:[{number:pr.number,state:'open',headSha:pr.head.sha,baseSha:pr.base.sha,author:identity(pr.user),expectedCommits:pr.commits,commits}]};
+        after.commits !== pr.commits || after.user?.id !== pr.user?.id || after.base?.repo?.id !== this.c.repositoryId) throw new Rejected('state_changed');
+    if(baseRef!==undefined && (pr.base?.ref!==baseRef || after.base?.ref!==baseRef || after.user?.login!==pr.user?.login || after.user?.type!==pr.user?.type))throw new Rejected('state_changed');
+    return {number:pr.number,state:'open',headSha:pr.head.sha,baseSha:pr.base.sha,author:identity(pr.user),expectedCommits:pr.commits,commits};
+  }
+
+  async mergePrefixSnapshot(input:MergePrefixTarget):Promise<MergePrefixSnapshot> {
+    if(this.c.mergePrefixAssessmentEnabled!==true)throw new Rejected('merge_prefix_disabled');
+    const target=structuredClone(input);
+    if(!target || Object.keys(target).sort().join(',')!=='baseRef,baseSha,headSha' || target.baseRef!=='refs/heads/main' ||
+      !validSha(target.headSha) || !validSha(target.baseSha))throw new Rejected('merge_prefix_target_invalid');
+    const token=await this.installationToken(),repo=`/repos/${this.c.repository}`;
+    const metadata=await this.api(repo,token);
+    if(metadata.id!==this.c.repositoryId || metadata.full_name!==this.c.repository || metadata.default_branch!=='main')throw new Rejected('repository_mismatch');
+    const trusted=await this.api(repo+'/commits/main',token);
+    if(!validSha(trusted.sha))throw new Rejected('policy_unavailable');
+    let policy:Policy;try{policy=JSON.parse(await this.content('.github/cla-policy.json',trusted.sha,token));}
+    catch(error){if(error instanceof BudgetDeferred)throw error;throw new Rejected('policy_unavailable');}
+    if(await policyDigest(policy)!==await policyDigest(this.c.policy) || canonical(policy.provider)!==canonical(this.c.policy.provider))throw new Rejected('trusted_policy_changed');
+    for(const [kind,agreement]of Object.entries(this.c.policy.agreements)) {
+      if(agreement.path!==(kind==='individual'?'docs/legal/CLA_INDIVIDUAL.md':'docs/legal/CLA_CORPORATE.md') ||
+        await sha256(await this.content(agreement.path,trusted.sha,token))!==agreement.sha256)throw new Rejected('agreement_hash_mismatch');
+    }
+    const queue=()=>readQueue(this.c.repository,this.c.repositoryId,(query,variables)=>this.json('https://api.github.com/graphql','POST',token,{query,variables}));
+    const entries=await queue(),prefix=prefixFor(entries,target),prs:PrSnapshot[]=[];
+    for(const entry of prefix) {
+      const pr=await this.prSnapshot({number:entry.pullRequest.number},token,repo,'main');
+      if(pr.headSha!==entry.pullRequest.headRefOid)throw new Rejected('merge_prefix_changed');prs.push(pr);
+    }
+    if(canonical(entries)!==canonical(await queue()) || (await this.api(repo+'/commits/main',token)).sha!==trusted.sha)
+      throw new Rejected('merge_prefix_changed');
+    return {kind:'merge_group',repositoryId:this.c.repositoryId,headSha:target.headSha,baseSha:target.baseSha,policy,
+      members:prefix.map(entry=>({pr:entry.pullRequest.number,headSha:entry.pullRequest.headRefOid})),prs,queueEntries:entries,trustedSourceSha:trusted.sha};
   }
   private receipt(data: Json, check: CheckProposal): CheckReceipt {
     if (!validId(data.id) || data.app?.id !== this.c.appId || data.app?.slug !== this.c.appSlug ||

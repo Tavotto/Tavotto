@@ -1,0 +1,28 @@
+from pathlib import Path
+import shutil,subprocess,json,hashlib
+root=Path('/workspace/Tavotto-cla-queue-prefix/services/cla-cloudflare');out=Path('/tmp/cla-merge-prefix-independent');tree=out/'replayed-original-closing';tree.mkdir(exist_ok=True)
+for part in ['src','tests']:shutil.copytree(root/part,tree/part,dirs_exist_ok=True)
+shutil.copy2(root/'package.json',tree/'package.json')
+s=(tree/'src/native/service.ts').read_text();start=s.index('  async assessMergePrefix(');end=s.index('  async check(',start)
+old='''  async assessMergePrefix(input:MergePrefixTarget):Promise<MergePrefixAssessment> {
+    if(this.c.mergePrefixAssessmentEnabled!==true)throw new Rejected('merge_prefix_disabled');
+    if(!this.store.budget || this.github.budget!==this.store.budget)throw new Rejected('invocation_budget_required');
+    const target=structuredClone(input),revision=await this.store.revision();
+    const first=await mergePrefixBinding(this.c,this.github,target,await this.github.mergePrefixSnapshot(target));
+    const now=await this.store.databaseNow(),exempt=new Set(Object.values(this.c.exemptionIds));
+    const people=first.binding.contributors.filter(person=>!exempt.has(person.id));
+    if(people.length>successCapacity(this.c))throw new Rejected('contributor_capacity_exceeded');
+    this.store.budget.reserveWorkSQL(qualificationSQL(this.c)*people.length+2);
+    let eligible=this.c.policy.provider.configured===true;const ceiling={expires:Number.MAX_SAFE_INTEGER};
+    for(const person of people)if(!await this.qualified(person.id,ceiling,now))eligible=false;
+    const last=await mergePrefixBinding(this.c,this.github,target,await this.github.mergePrefixSnapshot(target));
+    if(canonical(first)!==canonical(last))throw new Rejected('merge_prefix_changed');
+    const finalRevision=await this.store.revision(),observed=await this.store.databaseNow(),expires=Math.min(now+120,ceiling.expires);
+    if(finalRevision!==revision || observed<now || observed>=expires)throw new Rejected('state_changed');
+    return {...first,protocol:'cla-merge-prefix-assessment-v1',eligible,revision,observed_at:observed,valid_until:expires,publication:'not_attempted'};
+  }
+'''
+(tree/'src/native/service.ts').write_text(s[:start]+old+s[end:]);(tree/'src/native/store.ts').write_bytes(subprocess.check_output(['git','show','f73a4b17b89f58e4595f3581afd2fe8ecaf6a90b:services/cla-cloudflare/src/native/store.ts'],cwd=root))
+script=(out/'closing-hold-race.test.mjs').read_text().replace(str(root),str(tree));(tree/'closing-hold-race.test.mjs').write_text(script)
+r=subprocess.run(['node','--test','closing-hold-race.test.mjs'],cwd=tree,text=True,capture_output=True);(out/'closing-hold-race-replayed-red.log').write_text(r.stdout+r.stderr)
+m={'provenance':'Reconstructed original closing method from the initial read-only diff and exact f73 base Store; not a byte copy captured before author repair. Other current files are copied but original race uses a GitHub stub. Original initial actual-red log remains separately preserved.','source_sha256':{str(p.relative_to(tree)):hashlib.sha256(p.read_bytes()).hexdigest() for p in [tree/'src/native/service.ts',tree/'src/native/store.ts',tree/'closing-hold-race.test.mjs']},'exit_code':r.returncode,'actual_assertion_error':'AssertionError' in r.stdout+r.stderr,'log':str(out/'closing-hold-race-replayed-red.log')};(out/'original-race-replay.json').write_text(json.dumps(m,indent=2)+'\n');assert r.returncode==1 and m['actual_assertion_error'];print(json.dumps(m,indent=2))

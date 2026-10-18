@@ -8,6 +8,8 @@ const root=fileURLToPath(new URL('../',import.meta.url));
 // Each mutation changes one asserted source location in an isolated copy; a
 // nonzero test exit proves the named behavioral regression is actually detected.
 const cases=[
+ ...JSON.parse(readFileSync(new URL('./independent-merge-prefix-mutation-cases.json',import.meta.url),'utf8')),
+ ...JSON.parse(readFileSync(new URL('./merge-prefix-adapter-mutation-cases.json',import.meta.url),'utf8')),
  ...JSON.parse(readFileSync(new URL('./independent-slot-recovery-mutation-cases.json',import.meta.url),'utf8')),
  ...JSON.parse(readFileSync(new URL('./slot-recovery-mutation-cases.json',import.meta.url),'utf8')),
  ...JSON.parse(readFileSync(new URL('./v2-upgrade-durability-mutation-cases.json',import.meta.url),'utf8')),
@@ -36,7 +38,7 @@ const cases=[
  {name:'automatic expected head',file:'src/native/automatic.ts',before:"if(check.headSha!==job.head)throw new Rejected('automatic_head_changed');",after:'// mutation: omit requested head guard',pattern:'old head event rejects before enqueue and queued old head becomes manual with empty result',testFile:'tests/automatic.test.mjs'},
  {name:'automatic final binding',file:'src/native/automatic.ts',before:'!sameBinding(check.proof,fresh) || ',after:'',pattern:'base changes during final read never commits observation',testFile:'tests/automatic.test.mjs'},
  {name:'automatic evidence revision requeue',file:'src/native/schema.sql',before:"WHERE status IN ('done','running');",after:"WHERE status='__never__';",pattern:'signing after an initial negative observation queues a new revision and clears old result',testFile:'tests/automatic.test.mjs'},
- {name:'verification producer capacity',file:'src/native/service.ts',before:'length>successCapacity(this.c))',after:'length>successCapacity(this.c)+1)',pattern:'seven-person producer rejects capacity before qualification or any publication',testFile:'tests/independent-bootstrap-budget.test.mjs'},
+ {name:'verification producer capacity',file:'src/native/service.ts',before:'if(bound.contributors.filter(person=>!exempt.has(person.id)).length>successCapacity(this.c))',after:'if(bound.contributors.filter(person=>!exempt.has(person.id)).length>successCapacity(this.c)+1)',pattern:'seven-person producer rejects capacity before qualification or any publication',testFile:'tests/independent-bootstrap-budget.test.mjs'},
  {name:'production bootstrap readiness',file:'src/native/worker.ts',before:'new LiveStore(env.DB,budget,c)',after:'new LiveStore(env.DB,budget)',pattern:'production service fresh schema refuses writes without fixture initialization',testFile:'tests/independent-bootstrap-budget.test.mjs'},
  {name:'identity lookup preflight cap',file:'src/core/identity.ts',before:"if(resolve.size>10)throw new Rejected('identity_lookup_limit');",after:"if(resolve.size>11)throw new Rejected('identity_lookup_limit');",pattern:'11 unique lookup identities fail before any remote lookup',testFile:'tests/independent-identity-admission.test.mjs'},
  {name:'fresh exemption identity',file:'src/core/identity.ts',before:'resolve.set(normalized,id);',after:'// mutation: trust configured exemption ID',pattern:'exemption login match still requires fresh trusted ID resolution',testFile:'tests/independent-identity-admission.test.mjs'},

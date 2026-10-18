@@ -111,3 +111,15 @@ missing or uncertain observations retain capacity and persist bounded polling
 backoff. It never resets manual head/refresh decisions or treats elapsed time as
 evidence of no send. Details and remaining event/availability limitations live
 in `docs/implementation/cla-slot-negative-recovery/README.md`.
+
+The separately approved queue membership rule includes every queued PR from
+position 1 through the current candidate; an earlier unsigned contributor blocks
+the candidate. A default-disabled internal native assessment reuses the existing
+Python queue-prefix query/rule and PR enumeration/identity/evidence verifiers.
+Two complete snapshots bind ordered entry identity and position, every PR head,
+candidate queue head/base, trusted policy source, contributor union, evidence
+revision and authorization deadline. Its separate assessment protocol creates no
+proof, publication or cached eligibility. Group CI/authority, send journals and
+negative recovery remain closed; actual queue permissions and platform acceptance
+are separate from this membership-policy approval. See
+`docs/implementation/cla-merge-prefix/README.md`.

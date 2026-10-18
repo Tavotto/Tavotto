@@ -1,0 +1,208 @@
+{
+  "review": "Independent read-only merge queue full-prefix assessment reverse review",
+  "created_at_utc": "2026-10-18T17:25:41.255786+00:00",
+  "repository": "Tavotto/Tavotto",
+  "worktree": "/workspace/Tavotto-cla-queue-prefix",
+  "base_sha": "f73a4b17b89f58e4595f3581afd2fe8ecaf6a90b",
+  "reviewed_tree": "uncommitted runtime implementation; exact source per-file hashes below; source changes belong to parent",
+  "source_sha256": {
+    "src/native/merge-prefix.ts": "a8bbce79d3f4dc7c3d5890b437ddb8e5b54f351e36865638dd85d615d0cbf27b",
+    "src/native/service.ts": "f5d5e3818e05667c0c7bcc395b0e9b65403242e8aa7c282c6bc22b77ccb565f3",
+    "src/native/store.ts": "a6c8eccd380c059dfa58dfde43404b0f04be68262c41d0ce296c4b2441fa9b23",
+    "src/native/github.ts": "58e846e63ce98d2b95a246d789a2756bc3f9b86c9baa665deccb5268c70d3315",
+    "src/native/config.ts": "c2fc121ba062ad5c197d63637bfd64e220f70ac9fb6a0525cb069c88680ca839",
+    "src/native/worker.ts": "a704260c92327e2e1e268325cb5b8c69dbf29644f6d4a64daa8fb3db085eec92",
+    "src/native/budget.ts": "89db5eeb1fbf97e541bae54764c2fe3f85ff566577363116270f873cf25db5cd",
+    "src/native/delegation.ts": "06010c9961b0036726f2a69e422f8ece0cb0ee223f1c7d36b231ae04964f547e",
+    "src/native/verification.ts": "fed366829694544af6893a1ef3de01ce4309f9eba47d9f76c6c2c6e68a2adb9e",
+    "src/core/identity.ts": "606324b384342474f72cb2ac8338a77aa608fcfa47344f1057033bc609a1d951",
+    "src/core/types.ts": "e17c6bdd86d9c6dbd99d0e7cfd1e68f2b336f69351751b1cdd8a83b7c7dab92b",
+    "src/core/proof.ts": "9775610725f0550110e9691fc2c63dd0df581952c0bae16452592c583f42b8d5",
+    "src/core/policy.ts": "c399ff69da0a36c7ac3a2299a61b1b2a9136b5d7110792e32efb4af738d96d2e",
+    "src/core/crypto.ts": "17baac97c94bd6f5c892bf013dc876711b52c1538ab6b1f11a3b1d704cd4242e",
+    "src/core/store.ts": "9d142e35e903f2d822f7fa9947a36f42e309ae7c14620cda6a092b189dd75403",
+    "src/base.sql": "b7c158869acbd1eb43dcbfee72f85ebf1149716082a66f9140989c56a4927e69",
+    "src/native/schema.sql": "0e4cc1672c78837b219eba0c1f54de89fc86169c87ffd26277085a229dfe3a08",
+    "src/ci/consumer.ts": "b2b09ea5023848d31114db4e76ed4fdfecb2999a139d57bdbbc546ebd6b9a96a",
+    "src/ci/wait.ts": "c4b3276ce018dc9db3ff9a90485d089ccbae6d5bd31d4498ce0b20173d1faebb",
+    "scripts/ci-candidate.mjs": "86f27446ed18b4a181dff2db488c414c1bc85b36165863d4fac29ac7875d8e01",
+    "tests/delegation-fixture.mjs": "8f142a2f31a125fec60008d8e91cfbfeab51d2c8b07802bfd487774e77fd033d",
+    "tests/activation-fixture.mjs": "673439c52dc1c90a150f9035caa680a91c2bf1985fe17325122126f49aeadd5d",
+    "tests/independent-oauth-db.mjs": "14e1882935a149240dd33694e2e8524a5749ee614af92925edfddd8c9946f004"
+  },
+  "frozen_test_sha256": {
+    "tests/independent-merge-prefix.test.mjs": "c6f6d34e26a9440b502c3e92b53424202492a624bbc619d053e68e9e6deb9477",
+    "tests/independent-merge-prefix-mutation-cases.json": "786e6c6c88d2f6d46ed914656217da65c49b04d5417b4a2f789b92d4128339ae"
+  },
+  "reviewer_workspace_writes": [
+    "tests/independent-merge-prefix.test.mjs",
+    "tests/independent-merge-prefix-mutation-cases.json"
+  ],
+  "runtime_or_root_harness_writes_by_reviewer": false,
+  "commands": [
+    {
+      "command": "node --test closing-hold-race.test.mjs",
+      "cwd": "/tmp/cla-merge-prefix-independent",
+      "stage": "original service closing revision-before-clock bug",
+      "exit_code": 1,
+      "tests": 1,
+      "actual_assertion_error": true,
+      "log": "/tmp/cla-merge-prefix-independent/closing-hold-race-red.log"
+    },
+    {
+      "command": "node --test tests/independent-merge-prefix.test.mjs",
+      "cwd": "/workspace/Tavotto-cla-queue-prefix/services/cla-cloudflare",
+      "stage": "first formal test attempt",
+      "exit_code": 1,
+      "tests": 47,
+      "pass": 46,
+      "failure_reason": "synthetic stale-packet setup violated an active SQLite foreign key; no product failure inferred",
+      "log": "/tmp/cla-merge-prefix-independent/first-formal-run.log"
+    },
+    {
+      "command": "node --test tests/independent-merge-prefix.test.mjs",
+      "cwd": "/workspace/Tavotto-cla-queue-prefix/services/cla-cloudflare",
+      "stage": "stale-packet setup corrected using real synthetic agreement activation; all DB constraints retained",
+      "exit_code": 0,
+      "tests": 47,
+      "pass": 47,
+      "log": "/tmp/cla-merge-prefix-independent/formal-green.log"
+    },
+    {
+      "command": "node --test tests/independent-merge-prefix.test.mjs",
+      "cwd": "/workspace/Tavotto-cla-queue-prefix/services/cla-cloudflare",
+      "stage": "frozen final independent suite",
+      "exit_code": 0,
+      "tests": 50,
+      "pass": 50,
+      "log": "/tmp/cla-merge-prefix-independent/final-formal-run.log"
+    },
+    {
+      "command": "python run-mutants.py",
+      "cwd": "/tmp/cla-merge-prefix-independent",
+      "stage": "21 formal JSON mutations applied to isolated source copies",
+      "exit_code": 0,
+      "mutants": 21,
+      "selected_test_exit_codes": [
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1
+      ],
+      "actual_assertion_errors": 21,
+      "log": "/tmp/cla-merge-prefix-independent/mutations-run.log",
+      "results": "/tmp/cla-merge-prefix-independent/mutations.json"
+    },
+    {
+      "command": "python archive-original-race.py",
+      "cwd": "/tmp/cla-merge-prefix-independent",
+      "stage": "explicitly reconstructed original closing method and exact base Store, replaying original race",
+      "exit_code": 0,
+      "selected_test_exit_code": 1,
+      "actual_assertion_error": true,
+      "log": "/tmp/cla-merge-prefix-independent/closing-hold-race-replayed-red.log",
+      "provenance": "/tmp/cla-merge-prefix-independent/original-race-replay.json"
+    },
+    {
+      "command": "node --test --test-name-pattern='^independent merge prefix hold before final SQL invalidates prior eligibility$' tests/independent-merge-prefix.test.mjs",
+      "cwd": "/workspace/Tavotto-cla-queue-prefix/services/cla-cloudflare",
+      "stage": "adapted hook before new atomic assessmentState SQL; real hold commits before linearization point",
+      "exit_code": 0,
+      "tests": 1,
+      "pass": 1,
+      "log": "/tmp/cla-merge-prefix-independent/closing-hold-fixed-green.log"
+    },
+    {
+      "command": "node --test publication-isolation.test.mjs",
+      "cwd": "/tmp/cla-merge-prefix-independent",
+      "stage": "negative-only direct existing publication adapter and PR authority isolation",
+      "exit_code": 0,
+      "tests": 2,
+      "pass": 2,
+      "log": "/tmp/cla-merge-prefix-independent/publication-isolation.log"
+    }
+  ],
+  "finding": {
+    "status": "fixed and independently verified",
+    "location": "LiveService.assessMergePrefix closing revision/time sequence",
+    "trigger": "hold commits during awaited final databaseNow after finalRevision has already been captured",
+    "bad_result": "initial implementation returned eligible true with stale revision while observed time was from after the hold",
+    "fix": "LiveStore.assessmentState reads readiness/activation/revision/database time in one final SQL snapshot; final service budget guard retained",
+    "original_actual_red": "/tmp/cla-merge-prefix-independent/closing-hold-race-red.log",
+    "fixed_green": "/tmp/cla-merge-prefix-independent/closing-hold-fixed-green.log",
+    "orthogonal_reverse_mutation": "/tmp/cla-merge-prefix-independent/mutation-14.log",
+    "original_snapshot_provenance": "Original closing method reconstructed transparently from initial read-only diff plus exact f73 base Store; not presented as a before-fix byte copy."
+  },
+  "verified_contracts": [
+    "Exact environment true; JSON cannot enable; disabled before I/O",
+    "Store and GitHub share one InvocationBudget",
+    "Complete queue prefix: unsigned predecessor blocks signed current",
+    "PR author, commit author and strict immutable-ID noreply coauthor union uses actual personal evidence",
+    "Per-PR before/after checks plus complete commit counts and queued head matching",
+    "Queue entry ID, order, source SHA, contributor and whole-queue tail changes reject across snapshots",
+    "GraphQL repository pin, complete positions and IDs, pagination/cursor bounds and exact candidate base",
+    "Actual held evidence, signed delegated grant/control/receipt, terminal revoke and grant expiry affect assessment",
+    "Closing hold invalidates prior eligibility; strict database deadline and work deadline reject",
+    "Old personal signatures survive real synthetic version activation but do not qualify new terms",
+    "No assessment DB writes; old PR proof/CI/authority/sending rejection remains",
+    "No new token scope or permission request: synthetic token POST asserts original repository-scoped read-only contents/PR/check permissions"
+  ],
+  "measured_cost": {
+    "two_prefix_members_two_personal_contributors": {
+      "sql": 7,
+      "external": 32,
+      "includes_real_implementation_synthetic_RSA_JWT_and_installation_token_exchanges": true
+    },
+    "one_prefix_with_PR_author_commit_author_remote_coauthor": {
+      "external": 32,
+      "remote_coauthor_lookups": 2
+    },
+    "all_counted_requests_are_in_process_synthetic_transport": true,
+    "limits_unchanged": {
+      "sql_work": 20,
+      "sql_total": 40,
+      "external_work": 35,
+      "external_total": 40
+    }
+  },
+  "limitations": [
+    "Internal readonly technical assessment only; not a publishable proof, authority receipt or CI merge verdict",
+    "Native group journal, sending, recovery, private failure-witness group binding, public authority route and CI event support remain unimplemented and rejected",
+    "Real Merge queues read permission, GraphQL schema and platform behavior remain separately approved/unverified activation dependencies",
+    "No real network, Worker fetch, credential registration, legal signatures, authorization or deployment; token/grant/key material is ephemeral synthetic fixture data",
+    "No previously denied dynamic successful publication across proof expiry test was executed or renamed",
+    "Full 100-entry prefix capacity is structural only: actual shared external/SQL budgets can reject smaller prefixes; no truncation or cached qualification fallback",
+    "The old-version regression uses genuine synthetic activation and actual SQL/evidence with an injected group snapshot port; the primary adapter tests use the real GitHub adapter and real synthetic auth exchange",
+    "Only this targeted suite and isolated mutants were independently executed; parent-owned combined suite, migration, CI, build/typecheck claims are not independently re-certified"
+  ],
+  "evidence_history": {
+    "unrepaired_mutation_survivors": 0,
+    "mutation_harness_errors": 0,
+    "test_fixture_setup_errors": 1,
+    "initial_fixture_error_preserved": true,
+    "auxiliary_read_errors": [
+      "One log tail used service-directory-relative path and reported file missing; corrected by reading absolute evidence directory. Test execution had already exited 0."
+    ]
+  },
+  "remaining_review_blockers": [],
+  "report": "/tmp/cla-merge-prefix-independent/review.md",
+  "report_sha256": "3985886b0448e463e7adfe685a897d8abf1b829f412e6c63fb33f2980b46f400",
+  "evidence_frozen": true
+}

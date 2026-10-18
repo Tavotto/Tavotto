@@ -71,6 +71,14 @@ export class LiveStore extends Store {
       FROM state WHERE id=1 AND (${ready.sql})`,...ready.values).first<{revision:number;activation?:string}>();
     if(!row)throw new Rejected('database_configuration_uninitialized_or_mismatched');await this.verifySelection(row.activation);return row.revision;
   }
+  async assessmentState():Promise<{revision:number;now:number}> {
+    const ready=this.readiness();const row=await this.stmt(`SELECT revision,${DB_NOW} AS now,
+      ${this.expectedConfig?.agreementActivationEnabled===true?activationProjection:'NULL'} AS activation
+      FROM state WHERE id=1 AND (${ready.sql})`,...ready.values).first<{revision:number;now:number;activation?:string}>();
+    if(!row || !Number.isSafeInteger(row.revision) || row.revision<0 || !Number.isSafeInteger(row.now))
+      throw new Rejected('database_configuration_uninitialized_or_mismatched');
+    await this.verifySelection(row.activation);return {revision:row.revision,now:row.now};
+  }
   override async batch(stmts:D1Statement[]):Promise<void> {
     try{const results=await this.db.batch(stmts);if(results.some(r=>!r.success))throw new Error();}
     catch(error){if(error instanceof BudgetDeferred)throw error;throw new Rejected('transaction_rejected');}
