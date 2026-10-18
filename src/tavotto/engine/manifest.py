@@ -4713,6 +4713,8 @@ def _measure_manifest(
     # 那一刻由 Formatter 填进去的）
     sync_tick_elements(state)
     budget = pathgeom.Budget()
+    # 真实绘制次序（给 geometry 盖 `paint_order` / `fill_alpha` 用，命中评分据此分层）
+    paint_ranks = pathgeom.paint_ranks(fig)
 
     elements = []
     #: 登记了、却在这一轮 build 里被丢掉的元素（量不出几何 / 文字空了 / 刻度
@@ -5088,6 +5090,10 @@ def _measure_manifest(
                 geom = pathgeom.element_geometry(artist, W, H, budget, arrow_path=True)
                 if geom is not None:
                     entry["geometry"] = geom
+        # 绘制事实：命中评分要知道「谁画在谁上面」与「上面那块填充盖不盖得住」
+        # （ADR 0086）。在所有 geometry 分支之后统一盖章，包括不出端点的箭头。
+        if "geometry" in entry:
+            pathgeom.stamp_paint(entry["geometry"], artist, paint_ranks)
         # 裁剪框（figure 分数、top-origin）：matplotlib 会在这个框处把这个元素
         # 切掉，框外的部分一笔都不会画。**bbox 不含这一维**——数据远超坐标轴
         # 范围的散点 / 曲线，`get_window_extent` / `get_datalim` 给的是**未裁剪的
