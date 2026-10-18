@@ -233,6 +233,9 @@
   `savefig_calls` / `savefig_extras` 一并清掉（那是它的参数，新图从空表开始记）。stem 在捕获表里的次序不变。
 * **同 stem 不同格式不算同一路径**（`a.pdf` 是甲、`a.svg` 是乙，磁盘上各有各的文件）：stem 仍归先认领的那张——
   `tests/test_savefig_capture_params.py` 的 TIGHT 用例钉着这一条。
+* **先认领那张在别的格式上仍是最后写入者时不顶掉**（甲写 `a.pdf` + `a.png`，乙再写 `a.pdf`）：磁盘上 `a.png` 还是甲，
+  stem 只能挂一张图，宁可 `a.pdf` 那份与磁盘不一致，也不让一张磁盘上还在的图从捕获里消失——
+  `tests/test_savefig_observations.py` 的真 worker 用例钉着这一条。等甲在每个格式上都被覆盖，才换成乙。
 * 同一张图存多次仍是一张图（调用照记）；不同 stem 互不影响；三个写入者取第三个；写回原来那张又取回。
 * **pyplot 认领永远不被顶掉**，兜底也永远不顶显式 savefig；`call is None`（`paper_style.save` 没观察到参数）不知道路径，
   不顶替。

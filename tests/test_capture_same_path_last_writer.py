@@ -5,6 +5,7 @@
 
 * 同一路径（stem + 格式）换了写入者：最后写入者胜，被顶掉那张的 savefig 记账一并清掉；
   同 stem 不同格式不算同一路径（磁盘上各有各的文件），stem 仍归先认领的那张；
+  先认领那张在别的格式上仍是最后写入者时不顶掉（它的文件还在磁盘上）；
 * 同一张图存两次：仍是一张图；不同 stem：互不影响；
 * pyplot 兜底永远不顶掉显式 savefig；
 * 已在编辑（`states`）的 stem 不换图。
@@ -99,12 +100,25 @@ class TestSamePathRule:
         assert s.capture["x"] is a
         assert s.savefig_calls["x"] == [{"format": "pdf"}]
 
+    def test_holder_still_latest_on_another_format_is_not_displaced(self):
+        """甲写 `x.pdf` + `x.png`，乙再写 `x.pdf`：磁盘上 `x.png` 仍是甲，甲不能从捕获里消失。"""
+        s, a, b = _session(), _Fig(), _Fig()
+        _save(s, "x", a, "pdf")
+        s.note_savefig("x", a, {"format": "png"})
+        _save(s, "x", b, "pdf")
+        assert s.capture["x"] is a
+        assert s.savefig_calls["x"] == [{"format": "pdf"}, {"format": "png"}]
+
     def test_replaced_figure_records_are_dropped(self):
+        """甲在每个格式上都被乙覆盖之后才换图；换图时甲的调用与 extras 一并清掉。"""
         s, a, b = _session(), _Fig(), _Fig()
         _save(s, "x", a, "pdf", ["art-a"])
         s.note_savefig("x", a, {"format": "png"}, ["art-a2"])
         _save(s, "x", b, "pdf", None)
-        assert s.savefig_calls["x"] == [{"format": "pdf"}]
+        assert s.capture["x"] is a
+        _save(s, "x", b, "png", None)
+        assert s.capture["x"] is b
+        assert s.savefig_calls["x"] == [{"format": "png"}]
         assert s.savefig_extras["x"] == [None]
 
     def test_pyplot_claim_is_never_displaced(self):

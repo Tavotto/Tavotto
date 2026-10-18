@@ -571,7 +571,8 @@ class LiveFigureSession:
         只认路径重合，不认「同 stem」：同 stem 不同格式（`a.pdf` 是甲、`a.svg` 是乙）磁盘上各有
         各的文件，不构成顶替，stem 仍归先认领的那张。顶掉时，被顶掉那张的调用与 `bbox_extra_artists`
         一并清掉（那是它的参数）。显式 savefig 之外的认领（pyplot 兜底）永远不顶掉；已进入编辑或
-        已记失败的 stem 不换图（override / 清单 / 预览都挂在那张图上）。
+        已记失败的 stem 不换图（override / 清单 / 预览都挂在那张图上）；先认领那张在别的格式上仍是
+        最后写入者时也不换（它的文件还在磁盘上，不能从捕获里消失）。
         """
         if call is not None:
             fmt = str(call.get("format") or "").lower()
@@ -580,8 +581,13 @@ class LiveFigureSession:
             prev = writers.get(fmt)
             writers[fmt] = weakref.ref(fig)
             held = self.capture.get(stem)
+            # 先认领的那张在这个 stem 下还有别的格式仍是「最后写入者」（`a.pdf` 被乙覆盖、`a.png`
+            # 仍是甲）：磁盘上还留着甲的产物，stem 只能挂一张图，不顶掉——宁可 pdf 那份与磁盘不一致，
+            # 也不能让一张磁盘上还在的图从捕获里消失。
+            held_still_on_disk = any(ref() is held for f, ref in writers.items() if f != fmt)
             if (
-                prev is not None
+                not held_still_on_disk
+                and prev is not None
                 and prev() is not None
                 and prev() is not fig
                 and held is not None
