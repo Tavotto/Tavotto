@@ -453,8 +453,24 @@ function AssistantPanelBody() {
       // 确认之后后端按「草稿戳没变」清草稿，不比文本（提交文本是 trim 过的，草稿是原样）
       // **来源是显式标明的，不靠「有没有 override」猜**：输入框来的（含失败后的重试）一律先把草稿写成功、拿戳记进账本；
       // 只有从历史会话重发（气泡「重新发送」/ 失败会话的「重试」）才跳过快照——那条路的文本不是输入框里的草稿
+      // 发的文本、草稿的版本号与写入戳必须指同一份草稿：文本是点发送那一刻取的，版本号也在 await 之前记下
+      const seqAtClick = draftSeq()
       const snap = source === 'composer' ? await draftSnapshot() : { seq: 0, stamp: null }
       if (projectMoved()) return // 草稿快照期间切了项目：作废
+      if (source === 'composer' && snap.seq !== seqAtClick) {
+        // 等草稿写成功的途中用户又改了输入框：快照拿到的版本号 / 戳属于**新**稿，发出去的却是旧文本——被接受后后端按戳删掉新稿、
+        // 本地按版本号清空输入框，途中打的字就悄悄没了。不发；一句话，输入框原样留着，用户确认后再发
+        setError({
+          text: ai('panel.draftChangedWhileSending'),
+          detail: null,
+          prompt: text,
+          target: ctx,
+          panelId: panel.id,
+          source,
+          draftSeq: draftSeq(),
+        })
+        return
+      }
       if (source === 'composer' && snap.stamp === null) {
         // 草稿没写成（PUT 暂时失败 / 后端不可用）：没有草稿戳，被接受后草稿清不掉、同一条指令还能再发——**不发**：
         // 不发 run、不写账本，一句话 + 重试，输入框保持原样（与「账本写不成就不发」同一种处理）

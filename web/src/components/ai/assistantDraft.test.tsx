@@ -321,6 +321,24 @@ describe('同步状态机：单一 reconcile + 写入版本（#1098）', () => {
     expect(be.draft('pa', 'Fig1.pdf')).toBe('第一版加字') // 没有把旧文本写回去
   })
 
+  it('点发送后等草稿写成功的途中又改了输入框：不发（发的文本与快照的版本号 / 戳会指向两份稿），途中打的字留着；重试按当前输入框发', async () => {
+    vi.mocked(aiRun).mockResolvedValue({ session: 's-1', script: 'p1.py' })
+    await mount()
+    await typeText('把线条加粗')
+    const release = be.holdDraftPuts()
+    await click(q('[data-ai-send="send"]')) // 发送先等草稿写成功：PUT 被扣住
+    await typeText('把线条加粗，再改成虚线') // 途中继续打字
+    release()
+    await settle()
+    expect(aiRun).not.toHaveBeenCalled()
+    expect(q('[data-ai-error="send"]')?.textContent).toContain('发送途中改过了')
+    expect(input().value).toBe('把线条加粗，再改成虚线') // 途中打的字没丢
+    await click(q('[data-ai-retry]'))
+    await settle()
+    expect(aiRun).toHaveBeenCalledTimes(1)
+    expect((vi.mocked(aiRun).mock.calls[0][0] as { prompt: string }).prompt).toBe('把线条加粗，再改成虚线')
+  })
+
   it('PUT 在途时本地又有更新的写入：防抖到点时因为在途而被跳过，落地后以本地为准补写一次（不靠再来一次防抖）', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
     try {

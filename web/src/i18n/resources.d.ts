@@ -98,6 +98,7 @@ export default interface Resources {
       "checkUnreachable": "暂时联系不上后端，稍后再查询。",
       "cli": "CLI：{{version}}",
       "cliPath": "路径：{{path}}",
+      "draftChangedWhileSending": "输入框在发送途中改过了，所以没有发出。确认内容后再点一次发送。",
       "draftLoading": "正在载入草稿…",
       "draftNotSaved": "没能先保存输入框里的草稿，所以没有发出。检查连接后重试。",
       "draftReplaced": "草稿已被另一个窗口的修改替换",
