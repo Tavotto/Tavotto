@@ -105,6 +105,22 @@ class SummaryAndPromote(GuardianBase):
         with self.assertRaises(cg.EvidenceError):
             sm.load_report(self.write("forged.json", forged))
 
+    def test_a_self_declared_mismatch_never_waives_proof_for_a_green_row(self):
+        lying = self.variant()
+        row = lying["cases"][0]
+        row["executions"]["tavotto"] = 0
+        row["expectation"] = {
+            "declared_outcome": "expected_limitation",
+            "observed_outcome": "passed",
+            "result": "mismatch",
+            "reason": "x" * 30,
+            "references": [{"kind": "issue", "ref": "#1"}],
+            "diff": "declared expected_limitation but observed passed",
+        }
+        with self.assertRaises(cg.EvidenceError) as caught:
+            sm.load_report(self.write("mismatch-lie.json", lying))
+        self.assertIn("proof invariants", str(caught.exception))
+
     def test_unsupported_schema_field_is_rejected(self):
         extra = self.variant(surprise=True)
         with self.assertRaises(cg.EvidenceError):
