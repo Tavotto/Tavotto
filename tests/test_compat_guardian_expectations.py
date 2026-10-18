@@ -7,6 +7,8 @@ import json
 import sys
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts/ci"))
 
 import compat_guardian as cg  # noqa: E402
@@ -173,3 +175,29 @@ class Declarations(GuardianBase):
         import inspect
 
         self.assertIn("EX.RELATIVE_PATH", inspect.getsource(cg.registered))
+
+
+def test_a_reference_must_name_an_exact_definition_not_a_substring(tmp_path, monkeypatch):
+    """改名成更长的名字后，旧的 `::test_x` 引用不得仍然成立（Codex #1118 r4305942184）。"""
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "t.py").write_text(
+        "class Group:\n    def test_inner(self):\n        pass\n\n"
+        "def test_scenario_baseline_new():\n    pass  # test_scenario_baseline in a comment\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(cg, "ROOT", tmp_path)
+    ok = [
+        {"kind": "test", "ref": "tests/t.py::test_scenario_baseline_new"},
+        {"kind": "test", "ref": "tests/t.py::Group::test_inner"},
+        {"kind": "test", "ref": "tests/t.py::Group"},
+        {"kind": "test", "ref": "tests/t.py::test_scenario_baseline_new[param]"},
+    ]
+    for ref in ok:
+        ex._check_reference(ref)
+    for bad in (
+        "tests/t.py::test_scenario_baseline",
+        "tests/t.py::Group::test_missing",
+        "tests/t.py::test_inner",
+    ):
+        with pytest.raises(cg.EvidenceError):
+            ex._check_reference({"kind": "test", "ref": bad})
