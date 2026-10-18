@@ -50,7 +50,6 @@ import platform
 import sys
 import threading
 import time
-import weakref
 from pathlib import Path
 
 import matplotlib
@@ -511,9 +510,8 @@ class LiveFigureSession:
         #: stem -> 与 `savefig_calls[stem]` 逐项对齐的 `bbox_extra_artists` **对象**（进不了 JSON，
         #: 只活在这个进程里；算图幅时要把同一批 artist 交回 savefig，ADR 0098 §一）
         self.savefig_extras: dict[str, list] = {}
-        #: stem -> {格式 -> 最近一次把这条路径（stem + 格式）写盘的 Figure（弱引用）}。只为
-        #: 「同一路径换了写入者」这一个判断服务，见 `note_savefig`。
-        self.savefig_writers: dict[str, dict[str, weakref.ref]] = {}
+        #: stem -> {目标文件键 -> 最近写它的 Figure（弱引用）}，见 `figcapture.note_savefig_writer`
+        self.savefig_writers: dict[str, dict] = {}
         # Safe capture normally suppresses savefig. File-object saves really draw
         # during the script; do not treat their later state as an undrawn seed.
         self.passthrough_figures: set[int] = set()
@@ -562,43 +560,25 @@ class LiveFigureSession:
         self.capture_source[stem] = source
         return True
 
-    def note_savefig(self, stem: str, fig, call: dict | None, extra_artists=None) -> None:
+    def note_savefig(
+        self, stem: str, fig, call: dict | None, extra_artists=None, target: str | None = None
+    ) -> None:
         """记一次 savefig 调用（规则在 `figcapture.record_savefig_call`）。
 
-        同一路径换了写入者（`docs/rules/backend/figure-capture-and-execution.md`「同一路径多个
-        写入者」）：`add_figure` 对已有 stem 先到先得，但**这条路径**（stem + 格式）上一次是另一张
-        图写的、这次换成了 `fig`，磁盘上留下的就是 `fig` 的产物，捕获的也必须是它——最后写入者胜。
-        只认路径重合，不认「同 stem」：同 stem 不同格式（`a.pdf` 是甲、`a.svg` 是乙）磁盘上各有
-        各的文件，不构成顶替，stem 仍归先认领的那张。顶掉时，被顶掉那张的调用与 `bbox_extra_artists`
-        一并清掉（那是它的参数）。显式 savefig 之外的认领（pyplot 兜底）永远不顶掉；已进入编辑或
-        已记失败的 stem 不换图（override / 清单 / 预览都挂在那张图上）；先认领那张在别的格式上仍是
-        最后写入者时也不换（它的文件还在磁盘上，不能从捕获里消失）。
+        同一路径换了写入者的规则唯一实现在 `figcapture.note_savefig_writer`（三条入口同源）。
         """
-        if call is not None:
-            fmt = str(call.get("format") or "").lower()
-            fmt = {"jpeg": "jpg", "tif": "tiff"}.get(fmt, fmt)
-            writers = self.savefig_writers.setdefault(stem, {})
-            prev = writers.get(fmt)
-            writers[fmt] = weakref.ref(fig)
-            held = self.capture.get(stem)
-            # 先认领的那张在这个 stem 下还有别的格式仍是「最后写入者」（`a.pdf` 被乙覆盖、`a.png`
-            # 仍是甲）：磁盘上还留着甲的产物，stem 只能挂一张图，不顶掉——宁可 pdf 那份与磁盘不一致，
-            # 也不能让一张磁盘上还在的图从捕获里消失。
-            held_still_on_disk = any(ref() is held for f, ref in writers.items() if f != fmt)
-            if (
-                not held_still_on_disk
-                and prev is not None
-                and prev() is not None
-                and prev() is not fig
-                and held is not None
-                and held is not fig
-                and self.capture_source.get(stem) == figcapture.SOURCE_SAVEFIG
-                and stem not in self.states
-                and stem not in self.failures
-            ):
-                self.capture[stem] = fig
-                self.savefig_calls.pop(stem, None)
-                self.savefig_extras.pop(stem, None)
+        if call is not None and target is not None:
+            figcapture.note_savefig_writer(
+                self.savefig_writers,
+                self.capture,
+                self.capture_source,
+                self.savefig_calls,
+                self.savefig_extras,
+                stem,
+                fig,
+                target,
+                locked=stem in self.states or stem in self.failures,
+            )
         if figcapture.record_savefig_call(self.savefig_calls, self.capture, stem, fig, call):
             self.savefig_extras.setdefault(stem, []).append(extra_artists)
 

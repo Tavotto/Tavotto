@@ -172,6 +172,8 @@ __all__ = [
     "savefig_stem",
     "savefig_call",
     "record_savefig_call",
+    "savefig_target_key",
+    "note_savefig_writer",
     "savefig_calls_of",
     "SavefigObservations",
     "savefig_metadata_reader",
@@ -1451,6 +1453,71 @@ def record_savefig_call(calls: dict, capture: dict, stem: str, fig, call: dict |
         ):
             return False
     seq.append(call)
+    return True
+
+
+def savefig_target_key(fname, kwargs: dict, canvas=None) -> str | None:
+    """`savefig(fname)` 真正写的那个**磁盘文件**的可比较身份；写不出路径（缓冲区 / 认不出文件名）时 None。
+
+    「同一路径多个写入者」（`note_savefig_writer`）的键：文件名经 `savefig_effective_names`
+    （显式 `format=` 不改文件名、无后缀补 canvas 缺省格式——与 matplotlib 一致），再按调用那一刻的
+    cwd 取 `realpath` + `normcase`。所以 `savefig("a.pdf")` 与 `savefig("a.pdf", format="png")` 是同一个文件，
+    `a.pdf` 与 `a.svg` 不是。
+    """
+    names = savefig_effective_names(fname, kwargs, canvas)
+    if len(names) != 1:
+        return None
+    try:
+        return os.path.normcase(os.path.realpath(os.fsdecode(names[0])))
+    except (OSError, ValueError, TypeError):
+        return None
+
+
+def note_savefig_writer(
+    writers: dict,
+    capture: dict,
+    capture_source: dict,
+    calls: dict,
+    extras: dict,
+    stem: str,
+    fig,
+    target: str | None,
+    locked: bool = False,
+) -> bool:
+    """同一路径换了写入者：最后写入者胜——三条入口（safe worker、native bridge、浏览器）的同一份实现。
+
+    `writers`：stem -> {目标文件键 -> 最近写它的 Figure（弱引用）}。目标文件（`savefig_target_key`）
+    上一次是另一张图写的、这次换成了 `fig`，磁盘上留下的就是 `fig` 的产物，`capture[stem]` 换成它，
+    被顶掉那张的 `calls` / `extras` 一并清掉（那是它的参数）。调用方须在 `capture` 已按先到先得认领
+    之后、`record_savefig_call` 之前调用。护栏（任一不满足都不顶）：
+
+    * `target is None`（缓冲区 / 不知道路径）不参与；
+    * 只顶 savefig 来源的认领（pyplot 兜底永不被顶）；
+    * `locked`（stem 已进入编辑或已记失败，override / 清单 / 预览都挂在那张图上）不换图；
+    * 先认领那张在本 stem 下别的目标文件上仍是最后写入者时不顶——它的文件还在磁盘上。
+
+    返回是否顶替了。
+    """
+    if not stem or target is None:
+        return False
+    table = writers.setdefault(stem, {})
+    prev = table.get(target)
+    table[target] = weakref.ref(fig)
+    held = capture.get(stem)
+    if (
+        locked
+        or prev is None
+        or prev() is None
+        or prev() is fig
+        or held is None
+        or held is fig
+        or capture_source.get(stem) != SOURCE_SAVEFIG
+        or any(ref() is held for t, ref in table.items() if t != target)
+    ):
+        return False
+    capture[stem] = fig
+    calls.pop(stem, None)
+    extras.pop(stem, None)
     return True
 
 

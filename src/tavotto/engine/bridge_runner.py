@@ -128,6 +128,10 @@ _CAPTURE_SOURCE: dict = {}
 _CAPTURE_SAVEFIG: dict = {}
 #: stem -> 与 `_CAPTURE_SAVEFIG[stem]` 逐项对齐的 `bbox_extra_artists` 对象（算图幅用，ADR 0098）
 _CAPTURE_EXTRAS: dict = {}
+#: stem -> {目标文件键 -> 最近写它的 Figure 弱引用}（`figcapture.note_savefig_writer`，同一路径最后写入者胜）
+_CAPTURE_WRITERS: dict = {}
+#: 已被会话接走（屏障处同步过）的 stem：之后不再换图，规则同 `states` / `failures`
+_CAPTURE_LOCKED: set = set()
 _SAVEFIG_OBSERVATIONS = figcapture.SavefigObservations()
 #: pyplot 兜底因上限丢掉的张数
 _DROPPED = 0
@@ -188,6 +192,18 @@ def _install_savefig_hook(mfigure) -> None:
                 # stem 存了盘：它从此是显式存过盘的图（来源升级为 savefig，调用照记）。只在
                 # native 发生——safe worker 与浏览器的 pyplot 兜底在脚本跑完之后才收
                 _CAPTURE_SOURCE[stem] = figcapture.SOURCE_SAVEFIG
+            if call is not None:
+                figcapture.note_savefig_writer(
+                    _CAPTURE_WRITERS,
+                    _CAPTURE,
+                    _CAPTURE_SOURCE,
+                    _CAPTURE_SAVEFIG,
+                    _CAPTURE_EXTRAS,
+                    stem,
+                    self,
+                    figcapture.savefig_target_key(fname, kwargs, getattr(self, "canvas", None)),
+                    locked=stem in _CAPTURE_LOCKED,
+                )
             if figcapture.record_savefig_call(_CAPTURE_SAVEFIG, _CAPTURE, stem, self, call):
                 _CAPTURE_EXTRAS.setdefault(stem, []).append(kwargs.get("bbox_extra_artists"))
         try:
@@ -757,6 +773,7 @@ class BridgeRun:
         for stem, calls in _CAPTURE_SAVEFIG.items():
             self.session.savefig_calls[stem] = None if calls is None else list(calls)
             self.session.savefig_extras[stem] = list(_CAPTURE_EXTRAS.get(stem, []))
+        _CAPTURE_LOCKED.update(_CAPTURE)
 
     def _ensure_session(self):
         self._ensure_engine()

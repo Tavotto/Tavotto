@@ -226,26 +226,30 @@
 ## 同一路径多个写入者（Compatibility Guardian G2）
 
 脚本在循环里让不同的 Figure 反复写同一个路径（`fig.savefig("a.pdf"); plt.close(fig)`），原生 Python 下磁盘上留下的是
-**最后一次写入**的那张；捕获表按 stem 记账，必须与之一致。唯一实现 `figsession.LiveFigureSession.note_savefig`
-（`add_figure` 仍对已有 stem 先到先得，不动）：
+**最后一次写入**的那张；捕获表按 stem 记账，必须与之一致。**唯一实现 `figcapture.note_savefig_writer`**，三条入口同源：
+desktop worker（`LiveFigureSession.note_savefig` 转调）、浏览器 playground 的钩子、native bridge 的 `_patched_savefig`
+（各持一张 writers 表：会话的 `savefig_writers` / `BrowserSession.savefig_writers` / `bridge_runner._CAPTURE_WRITERS`）。
+`add_figure` / `setdefault` 对已有 stem 仍先到先得，不动：
 
-* **同一路径（stem + 格式）上一次是另一张图写的、这次换了写入者：最后写入者胜**，`capture[stem]` 换成它；被顶掉那张的
+* **键是真实目标文件，不是格式**：`figcapture.savefig_target_key(fname, kwargs, canvas)`——文件名走 `savefig_effective_names`
+  （显式 `format=` 不改文件名、无后缀补 canvas 缺省格式），再按调用那一刻的 cwd 取 `realpath` + `normcase`。
+  `savefig("a.pdf")` 与 `savefig("a.pdf", format="png")` 是同一个文件；缓冲区（BytesIO）/ 认不出文件名 = `None`，不参与顶替。
+* **同一目标文件上一次是另一张图写的、这次换了写入者：最后写入者胜**，`capture[stem]` 换成它；被顶掉那张的
   `savefig_calls` / `savefig_extras` 一并清掉（那是它的参数，新图从空表开始记）。stem 在捕获表里的次序不变。
-* **同 stem 不同格式不算同一路径**（`a.pdf` 是甲、`a.svg` 是乙，磁盘上各有各的文件）：stem 仍归先认领的那张——
+* **同 stem 不同文件不算同一路径**（`a.pdf` 是甲、`a.svg` 是乙，磁盘上各有各的文件）：stem 仍归先认领的那张——
   `tests/test_savefig_capture_params.py` 的 TIGHT 用例钉着这一条。
-* **先认领那张在别的格式上仍是最后写入者时不顶掉**（甲写 `a.pdf` + `a.png`，乙再写 `a.pdf`）：磁盘上 `a.png` 还是甲，
+* **先认领那张在别的文件上仍是最后写入者时不顶掉**（甲写 `a.pdf` + `a.png`，乙再写 `a.pdf`）：磁盘上 `a.png` 还是甲，
   stem 只能挂一张图，宁可 `a.pdf` 那份与磁盘不一致，也不让一张磁盘上还在的图从捕获里消失——
-  `tests/test_savefig_observations.py` 的真 worker 用例钉着这一条。等甲在每个格式上都被覆盖，才换成乙。
+  `tests/test_savefig_observations.py` 的真 worker 用例钉着这一条。等甲在每个文件上都被覆盖，才换成乙。
 * 同一张图存多次仍是一张图（调用照记）；不同 stem 互不影响；三个写入者取第三个；写回原来那张又取回。
 * **pyplot 认领永远不被顶掉**，兜底也永远不顶显式 savefig；`call is None`（`paper_style.save` 没观察到参数）不知道路径，
   不顶替。
-* **已进入编辑（`states`）或已记失败（`failures`）的 stem 不再换图**：override / 清单 / 预览都挂在那张图上。
+* **已进入编辑（`states`）或已记失败（`failures`）的 stem 不再换图**（`locked`）：override / 清单 / 预览都挂在那张图上。
   safe worker 的捕获发生在 instrument 之前，规则只在脚本执行期生效；写回重放起新 worker 重跑脚本，同一规则再走一遍，
-  重放出的就是最后写入者。
-* 已知未覆盖：native bridge 的模块级 `bridge_runner._CAPTURE` 钩子仍是 `stem not in _CAPTURE` 先到先得，且它的
-  记账走 `figcapture.record_savefig_call(_CAPTURE_SAVEFIG, _CAPTURE, ...)`，不经本类；`paper_style.save` 捷径同理。
+  重放出的就是最后写入者。native 的同义：第一个屏障处被会话接走的 stem 进 `_CAPTURE_LOCKED`，之后不再换图。
+* 已知未覆盖：`paper_style.save` 捷径不经 savefig 钩子，不参与；Windows 大小写 / 盘符 / 符号链接的 `realpath` 归一化只在 CI 编译，没有真机验过。
 
-看护 `tests/test_capture_same_path_last_writer.py`（会话规则 + 真 worker 端到端）。
+看护 `tests/test_capture_same_path_last_writer.py`（会话规则 + 目标键 + 真 worker / 浏览器端到端）、`tests/bridge/test_bridge_same_path_last_writer.py`（native）。
 
 ## 运行参数（T03，ADR 0014 §2 修订）
 
