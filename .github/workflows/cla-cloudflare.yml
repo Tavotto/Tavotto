@@ -1,0 +1,41 @@
+name: CLA Cloudflare offline checks
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "services/cla-cloudflare/**"
+      - ".github/workflows/cla-cloudflare.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  TAVOTTO_NO_TELEMETRY: "1"
+
+concurrency:
+  group: cla-cloudflare-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  offline-checks:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: services/cla-cloudflare
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: "24"
+          package-manager-cache: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.12"
+      - name: Install locked development dependencies without lifecycle scripts
+        run: npm ci --ignore-scripts
+      - name: Typecheck, local regression, migration, build, mutation checks
+        run: npm run check

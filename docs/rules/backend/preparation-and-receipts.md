@@ -295,10 +295,48 @@ input 协议，前端也没有 readiness 计算器。端点 `POST /api/engine/pr
   影响扩大 / 超出合同 → 撤销，不循环。
 - 修订变化只有「本意图批准的安装终局」与「本意图正在等的目录 / 环境回答」两类是预期（`classify_transition`，纯函数）；脚本字节、解释器、授权、数据绑定、已评估依赖变了 → `revoked`。
 - argv 换了：`run_when_ready` + `transfer_from`，在新旧两把会话锁内原子转移**未认领执行**的意图并退役旧会话未认领动作；旧意图已执行 / 在执行 / 不 active → 409
-  `preparation_run_intent_not_transferable`；未转移而并存 → 409 `preparation_run_intent_conflict`。
+  `preparation_run_intent_not_transferable`；未转移而并存 → 409 `preparation_run_intent_conflict`（`params.session_id` = 旧意图所在会话，前端状态丢了也能据此转移，前端自动带 `transfer_from` 重试一次）。
 - 已执行之后才缺包（EX13）仍是 `needs_dependencies` + 新一次尝试，意图不复活；运行时 `input()` 复用原 `Pending`。
 - 看护：`tests/test_preparation_run_intent.py`（假 pool：被动 0 次、一次、目录回答后继续、取消 / 外部变化 / 预算 / 重启、argv 转移与竞态；`held`：授权范围内安装、超出授权、影响扩大、
   取消后迟到 done；真 worker：装好后恰一次执行、**外部计数夹具**写一次后缺包，修复不把计数变 2）。
+
+## 沿用上次成功的运行配置（V2 PR4，#982）
+
+`POST /api/engine/preparation-sessions` 的脚本目标可带 `reuse_last_success: true`（布尔，别的类型 400 `bad_request`；只对脚本目标；给了 `argv` 时被忽略）。消费端只有
+`launchctx.reusable_run_config`（`app._last_success_selection` 解析此刻的解释器后调用）：上次成功的 `launches[脚本]` 记录里的运行配置引用，**全部依据仍成立**才沿用
+（`launchctx.verify` 全部 facet；敏感配置不沿用；`source.basis_observed: false`——桌面 native 成功，没有 helper / 数据观察——不沿用，证据不全不假装可复用；上次是无参数运行 = 没有可沿用的）。
+不满足一律当没有（无参数），不报错。**只有省略（或 null）argv 才考虑沿用**：显式给的 `argv: []`（明确要无参数运行）与任何显式 argv 都赢，不被上次的参数覆盖。沿用了几个参数在会话报告 `target.argv_count`（值不进公开投影）。省略标志 = 无参数运行，与 P09 之后逐字节一致。
+看护：`tests/test_reuse_last_success.py`（真服务子进程 + 真 worker：执行的 argv 以脚本日志为准）。
+
+## 执行回退与统一重试闸门（V2 PR1，ADR 0127）
+
+桌面用户发起的运行里，safe 尝试以 `safe_file_operation_blocked` 收场且策略允许 → **同一准备会话**接上第二个 attempt（`execution=native`，#1022 的 `_native_preparation_runner`）。
+裁决处只有 `engine/execpolicy.py`（纯逻辑）；会话侧接线在 `prepsession.SessionService._done_callback` / `_plan_fallback` / `_start_fallback`。要点：
+
+- **根因不另造枚举**：就是已有稳定错误码；`execpolicy.cause_of` 归类，`may_fall_back` **只对 `blocked` 为真**。缺包 / 参数 / 路径 / 脚本异常 / 超时 / 崩溃 / 无图一律不回退。
+- **策略**：项目设置键 `execution_policy`（`compatible` 缺省 / `safe_only`），坏值按缺省；运维开关 `TAVOTTO_EXECUTION_FALLBACK=0`（环境变量优先，其次全局 `worker.execution_fallback`）。
+- **闸门**：`decide_fallback` 固定优先级 开关 → 策略 → 取消 → 过期 → 原因 → `RetryGuard`（native 之后不回 safe、一次 run 至多一次、同执行身份同根因不重复）。回退在锁外规划（只读）、**在锁内最后一刻再核**取消标记 / 闸门，再接第二个 attempt；取消动作落在最新一次尝试上。
+- **只在桌面用户发起的运行里**：`app._desktop_initiated()` = `--desktop-sidecar` 进程 + 无本机凭据 + 窗口 cookie，服务端验证；`SESSIONS.act(desktop_initiated=)` 默认 False，意图创建时记下。`decide_fallback` 默认拒（`not_desktop_initiated`）。会话 safe 尝试开始前上一次桌面 native 会话让位（`_launch_session_attempt`）。
+- **只在会话 `run` / `run_when_ready` 认领之后**：CLI（`runcli`）与 MCP 不 import `execpolicy` / `prepsession`（`tests/test_execution_policy.py` 钉）；旧 `/api/engine/preparation` 不回退；前端永不发 `execution`。
+- **解释器沿用 safe 当时那一个**；native 计划算出的解释器 / 源码修订 / 检查项与 safe 当时不一致 → 不回退，闭集理由进 `attempt_history[].declined`。
+- **账本**：`Session.ledger`（有界 16、线程安全、按 run 分组，新的用户运行重算预算）；`attempt_history` 每条 = run · seq · attempt_id · profile · interpreter / launch 摘要 · cause · changed ∈ {profile, interpreter, launch_context} · outcome · code · declined。**无路径 / argv / env 值**。回退不是意图步数（`intent.attempts` 记名下全部尝试）。
+- **诊断**：native 尝试的任务诊断快照多 `retry:{of, cause, changed, execution}`（`PreparationPlan.retry_*`，全是闭集码 / plan id）。
+- 看护：`tests/test_execution_policy.py`（策略 / 开关 / 闸门 / 账本 / CLI·MCP 边界）、`tests/test_execution_fallback.py`（假 pool + 假 native runner：同会话两个 attempt、native 失败不回 safe、非 blocked 不回退、safe_only、kill switch、取消窗口 ×3、重跑重算预算、意图步数不变）、
+  `tests/test_execution_fallback_e2e.py`（真服务子进程 + 真用户 Python + 脚本自写的执行计数：`os.replace` 脚本 safe 被拦 → 同会话 native 成功、执行 2 次；除零 / 缺包只执行 1 次；safe_only / kill switch 不回退；运行中取消不起 native）。
+
+## 运行前路由（V2 PR2，ADR 0133）
+
+桌面准备会话里，脚本目标不给 `execution` 时是 `auto`：`preparation.plan_for` 调 `runroute.route_for_file`，**静态**（一次 `ast.parse`，零执行）在 safe / native 之间先选一次。裁决处只有 `engine/runroute.py`（纯标准库）。要点：
+
+- **优先级**：`safe_only` 策略 → 运维开关（`TAVOTTO_EXECUTION_FALLBACK=0`，同一个开关也关回退）→ 上次成功沿用（`launchctx` 记录 `profile`，仍成立才算）→ 静态高置信 → 默认 safe。显式 `execution=safe|native`（CLI / MCP / 回退自己的 native 计划）不经路由，`plan.route` 为 None。
+- **high 的结构性门槛**：证据点必须在无条件执行的位置（模块 / 可达函数体顶层语句序列；`__main__` 守卫 body 与 `with` 的 item 表达式算无条件），不在 if / 循环 / try / with 体 / match / lambda / 推导式 / 三元里；函数靠无条件按名调用才算可达。沿用上次成功还要求运行配置（argv 引用）一致，且 native 记录 `basis_observed:false` 不沿用（同 #982）。
+- **只有 high 才直达 native**：R1 同函数内 `savefig(P)` 后读 P；R3 写 T → `replace/rename/move(T,F)` → 读 F 且 T 在真实图库内（cwd 相对路径看 cwd 档：`sandbox` 不在）。R2（savefig 后只 `exists`）、R3_partial、跨函数读回是 medium；动态路径 R4 是 low——都走 safe，由 0127 回退兜底。**低、中置信度永不升级**。
+- **按 import 绑定解析限定名**（`from os import replace as r`、`import PIL.Image as I` 都认；`cache.replace(...)` / 字符串 `.replace` 不认）；路径折叠规则与 blind spots 见 ADR 0133，`Route.blind_spots` 随结果带出，不得宣称覆盖跨函数 / helper / 反射 / subprocess。
+- **只在用户发起的路径里**：`runroute` 只被 `preparation` / `prepsession` import；被动扫描、CLI、MCP 不 import（`tests/test_runroute_boundary.py` 钉，含零执行：Popen / exec / connect / find_spec / import_module 全炸 + 会写哨兵的脚本）。
+- **`PreparationPlan.route`** = `Route.public()`（闭集原因 / 置信度 / 规则 / 行号 / 耗时，无路径与源码），**不入指纹**；日志 `run route …`；任务诊断 `route:{…}`。没有解释器 → 回 safe 且 `declined: no_interpreter`。
+- **cwd 确认不短路**（0057）；native 成功也写 `launchctx` 记录（v2，`profile` 字段，v1 读作 safe；`source.basis_observed:false` = 不含 helper / 数据观察依据），由 `prepsession` 在尝试成功后调 `record_native_success`。
+- 同源对：`runroute` 的词汇镜像 `worker.REQUIRED_EXECUTION_FILE_SEMANTICS` / `BlockedFileOps.KIND_*` / `execpolicy.MODE_*` / `workdir.MODE_*`（`tests/test_runroute.py` 钉相等）；静态 high ↔ 真 safe worker 被拦、静态 safe ↔ 实跑成功（`tests/test_runroute_consistency.py`）。
+- 看护：`tests/test_runroute.py`（规则向量 / 优先级 / 缓存）、`test_runroute_wiring.py`（假 pool + 假 native：直达 native safe 不跑、动态路径回退、safe_only、开关、上次成功沿用、改脚本失效）、`test_run_routing_e2e.py`（真服务子进程 + 真用户 Python + 脚本自写的执行计数）。
 
 ## 终局诊断快照（T04）
 

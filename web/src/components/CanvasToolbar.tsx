@@ -206,7 +206,7 @@ function Bar() {
           </MenuItem>
         ))}
         <MenuSeparator />
-        <MenuItem onSelect={() => setPresetsOpen(true)}>{t('workspace:topbar.presets')}</MenuItem>
+        <MenuItem data-perf-open-presets onSelect={() => setPresetsOpen(true)}>{t('workspace:topbar.presets')}</MenuItem>
       </Menu>
       <PresetsDialog open={presetsOpen} onClose={() => setPresetsOpen(false)} />
 

@@ -34,6 +34,7 @@ import { LegendPositionPicker } from '@/components/inspector/controls/LegendPosi
 import { effectiveOverride } from '@/lib/effectiveOverride'
 import { BOTTOM_SAFE } from './context-bar/position'
 import { trapTab } from '@/lib/focusTrap'
+import { usePresence } from '@/lib/motion'
 
 /**
  * 右键快捷编辑：光标处的小弹层。
@@ -52,6 +53,23 @@ import { trapTab } from '@/lib/focusTrap'
  */
 
 const MARGIN = 8
+
+/** 退场保活期间在根上吞掉输入类事件（捕获阶段先于子控件的 onChange / onKeyDown / onClick） */
+const swallow = (e: { stopPropagation: () => void; preventDefault: () => void }) => {
+  e.stopPropagation()
+  e.preventDefault()
+}
+const SWALLOW = {
+  onChangeCapture: swallow,
+  onInputCapture: swallow,
+  onBeforeInputCapture: swallow,
+  onKeyDownCapture: swallow,
+  onKeyUpCapture: swallow,
+  onPasteCapture: swallow,
+  onCutCapture: swallow,
+  onClickCapture: swallow,
+  onPointerDownCapture: swallow,
+}
 
 /** 快捷编辑的文案（workspace:quickEdit.*） */
 const qe = (key: string, values?: Record<string, unknown>) =>
@@ -74,10 +92,20 @@ export function QuickEdit() {
     }
   }, [target, close])
 
-  if (!target) return null
-  if (target.kind === 'object') return <ObjectContextMenu id={target.id} at={at} close={close} />
-  return <ElementPopover target={target} at={at} close={close} />
+  // 图内元素的弹层是自己写的条件渲染，没有 Radix 的 Presence：用 usePresence 保活 exit 那一档，
+  // 让 pop-out 播完再卸载（对象右键菜单是 Radix 菜单，自带退场）。退场期间弹层读的是**最后一个**元素目标
+  const elementTarget = target?.kind === 'element' ? target : null
+  const [last, setLast] = useState<{ target: ElementTarget; at: { x: number; y: number } } | null>(null)
+  if (elementTarget && (last?.target !== elementTarget || last.at !== at)) setLast({ target: elementTarget, at })
+  const { mounted, state } = usePresence(elementTarget !== null)
+
+  if (target?.kind === 'object') return <ObjectContextMenu id={target.id} at={at} close={close} />
+  const shown = elementTarget ?? (mounted ? last?.target : null)
+  if (!shown) return null
+  return <ElementPopover target={shown} at={elementTarget ? at : (last?.at ?? at)} state={state} close={close} />
 }
+
+type ElementTarget = { kind: 'element'; panelId: string; gid: string; focusText?: boolean }
 
 /* -------------------------------------------------------------------------- */
 /*  图内元素的弹层外壳                                                          */
@@ -86,15 +114,19 @@ export function QuickEdit() {
 function ElementPopover({
   target,
   at,
+  state,
   close,
 }: {
-  target: { kind: 'element'; panelId: string; gid: string; focusText?: boolean }
+  target: ElementTarget
   at: { x: number; y: number }
+  /** closed = 正在退场（pop-out 播放中）：不再接键盘 / 指针，也不吃点击 */
+  state: 'open' | 'closed'
   close: () => void
 }) {
   useTranslation('workspace')
   const ref = useRef<HTMLDivElement>(null)
   const [pos, setPos] = useState(at)
+  const opener = useRef<HTMLElement | null>(null)
 
   // 量出实际尺寸再贴边，避免弹层被视口切掉
   useLayoutEffect(() => {
@@ -105,6 +137,11 @@ function ElementPopover({
       x: Math.max(MARGIN, Math.min(at.x, window.innerWidth - w - MARGIN)),
       y: Math.max(MARGIN, Math.min(at.y, window.innerHeight - BOTTOM_SAFE - h - MARGIN)),
     })
+    // 记下打开前的焦点：退场开始时还给它（没有就让焦点落回 body，全局快捷键照常）
+    if (!opener.current) {
+      const prev = document.activeElement
+      if (prev instanceof HTMLElement && prev !== document.body && !el?.contains(prev)) opener.current = prev
+    }
     // 双击文字进来的直接聚焦内容框（全选便于整段替换）；
     // 其余情况焦点给容器，Tab 才能走到弹层里的控件
     const ta = target.focusText ? el?.querySelector('textarea') : null
@@ -116,7 +153,20 @@ function ElementPopover({
     }
   }, [target, at])
 
+  // 退场开始的同一帧：焦点离开保活的子树（还给打开者，没有就失焦回 body），否则 textarea 仍握着焦点，
+  // 退场那 90ms 里的键入会继续写 override、吞掉全局快捷键（Codex #1101 P2）
+  useLayoutEffect(() => {
+    if (state !== 'closed') return
+    const root = ref.current
+    const active = document.activeElement
+    if (!root || !(active instanceof HTMLElement) || !root.contains(active)) return
+    const back = opener.current
+    if (back?.isConnected) back.focus({ preventScroll: true })
+    else active.blur()
+  }, [state])
+
   useEffect(() => {
+    if (state === 'closed') return
     // Esc 走捕获阶段：全局快捷键里的 Esc 另有职责（退编辑态），这里要先接住
     const onKey = (e: KeyboardEvent) => {
       // 焦点陷阱（2026-10-07 设计审计 §10.1）：Tab 在弹层里转圈，不掉回画布 / 页面后面那一串控件——
@@ -144,7 +194,7 @@ function ElementPopover({
       window.removeEventListener('keydown', onKey, true)
       window.removeEventListener('pointerdown', onDown, true)
     }
-  }, [close])
+  }, [close, state])
 
   return createPortal(
     <div
@@ -153,12 +203,18 @@ function ElementPopover({
       // 含输入控件，按对话框宣告更诚实（纯菜单那份在 ObjectContextMenu）
       role="dialog"
       aria-label={qe('aria')}
+      data-quick-popover
+      data-state={state}
+      aria-hidden={state === 'closed' || undefined}
+      // 退场中整棵保活子树 inert（不可聚焦、不收指针 / 键盘），再用捕获层兜底：退场期间任何输入 / 点击都不进子控件
+      inert={state === 'closed'}
+      {...(state === 'closed' ? SWALLOW : undefined)}
       onContextMenu={(e) => e.preventDefault()}
       style={{ left: pos.x, top: pos.y }}
       className={cn(
         'fixed z-dialog w-[268px] rounded-lg bg-surface p-1',
         // 12px：与菜单项同档（M2）。此前整块 11，而里面的数字框是 12
-        'text-sm text-ink shadow-pop animate-pop-in',
+        'text-sm text-ink shadow-pop data-[state=open]:animate-pop-in data-[state=closed]:pointer-events-none data-[state=closed]:animate-pop-out',
       )}
     >
       <ElementQuick target={target} close={close} />

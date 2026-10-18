@@ -34,6 +34,9 @@ import {
   onEngineExited,
   restartEngine,
   takePreviousExit,
+  FULLSCREEN_EVENT,
+  getFullscreen,
+  onFullscreenChange,
 } from './desktop'
 
 // 远程实例窗口那一组用：壳在，但本机文件类能力一条都不许碰
@@ -516,5 +519,56 @@ describe('引擎退出与上次退出（ADR 0129）：回退契约', () => {
     handler!({ payload: null })
     handler!({ payload: { kind: 'signal' } })
     expect(seen).toEqual(['nonzero', 'signal'])
+  })
+})
+
+describe('全屏状态（macOS overlay 窗框）：订阅与回读', () => {
+  const w = window as unknown as Record<string, unknown>
+  afterEach(() => {
+    delete w.__TAURI_INTERNALS__
+    delete w.__TAVOTTO_WINDOW_CHROME__
+    vi.clearAllMocks()
+  })
+
+  it('浏览器 / 非 overlay 窗框：false + 空取消函数，不碰任何 @tauri-apps', async () => {
+    expect(await getFullscreen()).toBe(false)
+    expect(typeof (await onFullscreenChange(() => {}))).toBe('function')
+    w.__TAURI_INTERNALS__ = {}
+    w.__TAVOTTO_WINDOW_CHROME__ = 'menu-button'
+    expect(await getFullscreen()).toBe(false)
+    await onFullscreenChange(() => {})
+    expect(tauri.invoke).not.toHaveBeenCalled()
+    expect(tauri.listen).not.toHaveBeenCalled()
+  })
+
+  it('overlay：订阅同名事件、只认布尔载荷、取消函数就是 listen 返回的那个', async () => {
+    w.__TAURI_INTERNALS__ = {}
+    w.__TAVOTTO_WINDOW_CHROME__ = 'overlay'
+    let handler: ((e: { payload: unknown }) => void) | undefined
+    const unlisten = vi.fn()
+    tauri.listen.mockImplementationOnce(((name: string, cb: (e: { payload: unknown }) => void) => {
+      expect(name).toBe(FULLSCREEN_EVENT)
+      handler = cb
+      return Promise.resolve(unlisten)
+    }) as never)
+    const seen: boolean[] = []
+    const off = await onFullscreenChange((v) => seen.push(v))
+    handler!({ payload: { fullscreen: true } })
+    handler!({ payload: { fullscreen: 'yes' } })
+    handler!({ payload: null })
+    handler!({ payload: { fullscreen: false } })
+    expect(seen).toEqual([true, false])
+    off()
+    expect(unlisten).toHaveBeenCalledTimes(1)
+  })
+
+  it('overlay：回读走 current_fullscreen，出错当 false', async () => {
+    w.__TAURI_INTERNALS__ = {}
+    w.__TAVOTTO_WINDOW_CHROME__ = 'overlay'
+    tauri.invoke.mockResolvedValueOnce(true)
+    expect(await getFullscreen()).toBe(true)
+    expect(tauri.invoke).toHaveBeenCalledWith('current_fullscreen')
+    tauri.invoke.mockRejectedValueOnce(new Error('denied'))
+    expect(await getFullscreen()).toBe(false)
   })
 })

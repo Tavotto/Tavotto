@@ -1243,7 +1243,7 @@ function EdgeStrips({
 }
 
 /**
- * 吸附反馈：线宽恒为屏幕像素（与吸附线同一换算，不随画布倍率变）。自身那条边只画 `self` 的跨度，不贯穿整页；
+ * 吸附反馈：线宽恒为屏幕像素（与吸附线同一换算，不随画布倍率变）。自身只画那条加粗边（跨度取 `self`，不贯穿整页）、不框自己，只用虚线框出对方；
  * 虚线只用 `--sel-dash` 那一种（吸附是拖动中的暂定状态）。
  */
 function SnapFeedbackMark({ f, t }: { f: SnapFeedback; t: ViewTransform }) {
@@ -1254,7 +1254,6 @@ function SnapFeedbackMark({ f, t }: { f: SnapFeedback; t: ViewTransform }) {
       : { x1: self.x, y1: mmToViewY(f.v, t) + 0.5, x2: self.x + self.w, y2: mmToViewY(f.v, t) + 0.5 }
   return (
     <g data-snap-feedback={f.axis} style={{ pointerEvents: 'none' }}>
-      <rect data-snap-self {...rectAttrs(self)} fill="none" stroke={SEL} strokeWidth={1} style={DASH} />
       {f.target && (
         <rect
           data-snap-target

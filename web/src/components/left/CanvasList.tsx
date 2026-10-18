@@ -1,7 +1,7 @@
 import { useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { msg, t as translate } from '@/i18n'
-import { ArrowDown, ArrowUp, Copy, Pencil, Plus, SearchX, Trash2 } from '@/components/ui/icons'
+import { ArrowDown, ArrowUp, Copy, Pencil, Plus, Trash2 } from '@/components/ui/icons'
 import { FIELD_BOX, FIELD_FOCUS } from '@/components/ui/fieldBox'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { dropLineClass, listRowClass, rowMetaClass } from '@/components/ui/listRow'
@@ -17,7 +17,8 @@ import { askConfirm, useUiStore } from '@/store/uiStore'
 import type { CanvasData } from '@/types/document'
 import { IconButton } from '../ui/Button'
 import { CanvasThumb } from '../CanvasThumb'
-import { EmptyState } from '../ui/EmptyState'
+import { EmptyLine } from '../ui/EmptyLine'
+import { SEARCH_MIN_ITEMS } from '../ui/searchThreshold'
 import { MenuItem, MenuSeparator } from '../ui/Menu'
 import { RowMenu } from '../ui/RowMenu'
 import { SearchInput } from '../ui/SearchInput'
@@ -72,14 +73,16 @@ export function CanvasList() {
           <Plus size={ICON_SIZE.md} />
         </IconButton>
       </DrawerHeaderActions>
-      <div className="flex shrink-0 items-center px-3 pb-2">
-        <SearchInput
-          value={query}
-          onValueChange={setQuery}
-          placeholder={cl('search')}
-          aria-label={cl('searchAria')}
-        />
-      </div>
+      {(canvases.length >= SEARCH_MIN_ITEMS || query !== '') && (
+        <div className="flex shrink-0 items-center px-3 pb-2">
+          <SearchInput
+            value={query}
+            onValueChange={setQuery}
+            placeholder={cl('search')}
+            aria-label={cl('searchAria')}
+          />
+        </div>
+      )}
 
       {/* 行自己带 `mx-1`（listRowClass），列表不再另加左右内边距：缩略图落在 56 那条竖线上。
           一列一个 Tab 停靠点（↑↓ 走行，Enter 打开，F2 改名，⌥↑↓ 排序，⇧F10 菜单） */}
@@ -111,7 +114,9 @@ export function CanvasList() {
         ))}
         {rows.length === 0 && (
           <li>
-            <EmptyState icon={SearchX} title={cl('noMatch')} />
+            <EmptyLine action={{ label: translate('actions.clearSearch'), onClick: () => setQuery('') }}>
+              {cl('noMatch')}
+            </EmptyLine>
           </li>
         )}
       </ul>

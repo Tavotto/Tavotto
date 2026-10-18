@@ -49,6 +49,7 @@ import { useProjectReadinessStore } from '@/store/projectReadinessStore'
 import { useUiStore } from '@/store/uiStore'
 import { schedule, useValidationStore } from '@/store/validationStore'
 import { Button, IconButton } from '../ui/Button'
+import { CountChip } from '../ui/CountChip'
 import { EmptyState } from '../ui/EmptyState'
 import {
   Menu,
@@ -59,11 +60,11 @@ import {
   MenuRadioItem,
   MenuSeparator,
 } from '../ui/Menu'
-import { Notice } from '../ui/Notice'
+import { Notice, NoticeReveal } from '../ui/Notice'
 import { Tip } from '../ui/Tooltip'
 import { DrawerHeaderActions, DrawerTitleMeta } from './DrawerHeader'
 import { runBatchFix, useBatchable } from './IssueFixButton'
-import { CategoryCards, FigureCards, SeverityGlyph, UnverifiableEntry } from './ProblemCards'
+import { CategoryCards, FigureCards, UnverifiableEntry } from './ProblemCards'
 import { ProblemTreeContext, type ProblemTreeCtx } from './problemTree'
 import { GroupNode } from './ProblemTreeRows'
 import { useScopedProblems } from './useProblemScope'
@@ -86,11 +87,11 @@ const pr = (key: string, values?: Record<string, unknown>) =>
  * * **标题行**（`LeftPanel` 的 36px 头）：「问题」+ 范围胶囊「当前图 13 ▾」（两档各带自己的数，
  *   判据 `lib/problemList`，与清单同一份）+ 正在重新检查的 shimmer；「⋯」里是分组方式（按图 / 按类别）、
  *   画布标记开关、重新检查。轨道上不挂数字：有阻断项时一颗红点，数字在可达名里。
- * * **摘要条**（32px）：等级开关（只有阻断着色）+ 唯一一颗填色主动作「全部修复 N」（`batchable()`，不含建议档）。
+ * * **摘要条**（32px）：等级开关（计数芯片，颜色只在圆点上）+ ghost 的「全部修复 N」（`batchable()`，不含建议档）。
  *   总数与等级比例条删掉了——数字在开关上各说一遍。
  * * **树**：图（32）→ 子图（28）→ 规则（28）→ 对象（28），全部建在 `listRowClass` 上、**就地展开**；
  *   「按类别」是 类别 → 规则 → 对象。只有一张拆不出子图的图时跳过分桶层，规则直接在顶层。
- *   每行一个 88px 尾随格：静止时是值，指到 / 聚焦 / 当前时同一格换成「修复」（一个动词：修复 / 修复… / 修复 N）。
+ *   每行一个 112px 尾随格：静止时是值，指到 / 聚焦 / 当前时同一格换成「修复」（一个动词：修复 / 修复… / 修复 N）。
  *   「无法核验」不进分桶，在树底只占一行。
  * * **定位后清单留在原地**：点一行 = `focusIssue`，正在处理的那一条是选中底（600 + selected，
  *   不只靠颜色）；底部「上一项 / 下一项」，F8 / ⇧F8 同一个动作，走到一支的尽头接着走下一支。
@@ -110,6 +111,7 @@ export function ProblemPanel() {
   const filter = useUiStore((s) => s.problemFilter)
   const view = useUiStore((s) => s.problemView)
   const activeCanvasId = useDocumentStore((s) => s.activeCanvasId)
+  const canvasName = useDocumentStore((s) => s.canvases.find((c) => c.id === s.activeCanvasId)?.name ?? '')
   // 点开的那一支与游标是**派生**的：写下它们的现场（排版 / 范围与当前图 / 切法）不是此刻就是
   // null——换项目、换当前图时没有人需要记得来清（2026-09-29 #690 评审）
   const { figureId, figureName, scope, issues, context, drill, cursor } = useScopedProblems()
@@ -367,6 +369,7 @@ export function ProblemPanel() {
 
   // 范围胶囊的两个数（审计 B55：两个数得同时看得见，用户才知道切过去会多出几条）
   const figureCount = figureId ? issuesInScope(all, 'figure', figureId).length : 0
+  const canvasCount = issuesInScope(all, 'canvas', figureId, activeCanvasId).length
   const documentCount = all.length
 
   return (
@@ -376,7 +379,9 @@ export function ProblemPanel() {
           figureId={figureId}
           figureName={figureName}
           scope={scope}
-          counts={ready ? { figure: figureCount, document: documentCount } : null}
+          canvasName={canvasName}
+          showCanvas={canvasCount !== documentCount || scope === 'canvas'}
+          counts={ready ? { figure: figureCount, canvas: canvasCount, document: documentCount } : null}
         />
         {rechecking && (
           <span data-problem-rechecking role="status" className="type-meta shrink-0 text-shimmer">
@@ -403,8 +408,8 @@ export function ProblemPanel() {
           <span className="flex-1" />
           {fixableHere.length > 0 && (
             <Button
-              size="lg"
-              variant="primary"
+              size="md"
+              variant="ghost"
               data-problem-autofix
               className="shrink-0 tabular-nums"
               disabled={fixing}
@@ -423,7 +428,7 @@ export function ProblemPanel() {
         空态的话，那些问题仍然被计进计数、也仍然进导出摘要，却在**唯一
         一份完整问题清单**里翻不到、点不到、跳不过去（PR #214 第七轮评审）。
       */}
-      {retained && (
+      <NoticeReveal open={!!retained}>
         <div className="shrink-0 px-2 pb-2">
           <Notice
             tone="warn"
@@ -437,7 +442,7 @@ export function ProblemPanel() {
             {pr('failedKeptHint')}
           </Notice>
         </div>
-      )}
+      </NoticeReveal>
 
       {failed && !retained ? (
         <EmptyState
@@ -462,7 +467,8 @@ export function ProblemPanel() {
           /* 范围裁掉了：整份排版里有问题、这张图上没有——是两句不同的话 */
           <EmptyState
             icon={CircleCheck}
-            title={pr('noneInScope')}
+            // 按范围说：当前图 =「这张图上」、当前画布 =「画布「X」上」——范围选了画布、清单是空的，却说「这张图」是自相矛盾
+            title={scope === 'canvas' ? pr('noneInCanvas', { name: canvasName }) : pr('noneInScope')}
             hint={pr('noneInScopeHint', { count: all.length })}
             action={{
               label: pr('scopeDocument'),
@@ -492,7 +498,7 @@ export function ProblemPanel() {
                 <ul>{tree.body(single, 0)}</ul>
               </li>
             ) : view === 'figure' ? (
-              <FigureCards figures={figures} withHeaders={scope === 'document' || figures.length > 1} />
+              <FigureCards figures={figures} withHeaders={scope !== 'figure' || figures.length > 1} />
             ) : (
               <CategoryCards categories={categories} />
             )}
@@ -582,16 +588,27 @@ function ScopePill({
   figureId,
   figureName,
   scope,
+  canvasName,
+  showCanvas,
   counts,
 }: {
   figureId: string | null
   figureName: string | null
   scope: ProblemScope
-  /** 两档各自的问题数；这一轮还没查完时是 null（挂着旧数字与骨架是两句打架的话） */
-  counts: { figure: number; document: number } | null
+  /** 激活画布的名字：「当前画布」那档的胶囊上写它，看得出是哪一块 */
+  canvasName: string
+  /** 只有一张画布（或别的画布没有问题）时「当前画布」与「整份排版」是同一份清单，不单列这一档 */
+  showCanvas: boolean
+  /** 三档各自的问题数；这一轮还没查完时是 null（挂着旧数字与骨架是两句打架的话） */
+  counts: { figure: number; canvas: number; document: number } | null
 }) {
-  const label = scope === 'figure' ? pr('scopeFigure') : pr('scopeDocument')
-  const n = counts ? (scope === 'figure' ? counts.figure : counts.document) : null
+  const label =
+    scope === 'figure'
+      ? pr('scopeFigure')
+      : scope === 'canvas'
+        ? pr('scopeCanvasNamed', { name: canvasName })
+        : pr('scopeDocument')
+  const n = counts ? counts[scope === 'figure' ? 'figure' : scope === 'canvas' ? 'canvas' : 'document'] : null
   return (
     <Menu
       width={220}
@@ -602,7 +619,13 @@ function ScopePill({
           aria-label={
             n != null ? pr('scopeCountAria', { label, count: n }) : label
           }
-          title={scope === 'figure' && figureName ? pr('scopeFigureTip', { name: figureName }) : undefined}
+          title={
+            scope === 'figure' && figureName
+              ? pr('scopeFigureTip', { name: figureName })
+              : scope === 'canvas'
+                ? pr('scopeCanvasTip', { name: canvasName })
+                : undefined
+          }
           className={cn(
             'flex h-6 min-w-0 items-center gap-1 rounded-full bg-surface-hover pl-2 pr-1.5 text-xs text-ink-2 outline-none',
             'transition-colors duration-fast hover:bg-surface-active hover:text-ink focus-visible:focus-ring data-[state=open]:bg-surface-active',
@@ -610,7 +633,7 @@ function ScopePill({
         >
           <span className="truncate">{label}</span>
           {n != null && n > 0 && (
-            // 计数坐在 hover 5% 的胶囊底上（桌面上合成 ≈ #e4e4e2）：ink-3 在那里只有 4.14:1，跟胶囊的字走 ink-2
+            // 计数坐在 hover 胶囊底上（ink 4% 叠在桌面上；2026-10-15 前是 5%、合成 ≈ #e4e4e2 时 ink-3 只有 4.14:1）：跟胶囊的字走 ink-2
             // （e2e/a11y 的自算对比度尺子量到的；数字是要读的字）
             <span aria-hidden className="text-xs tabular-nums">
               {n}
@@ -631,6 +654,16 @@ function ScopePill({
         >
           {pr('scopeFigure')}
         </MenuRadioItem>
+        {showCanvas && (
+          <MenuRadioItem
+            value="canvas"
+            data-problem-scope="canvas"
+            reason={canvasName}
+            shortcut={counts ? String(counts.canvas) : undefined}
+          >
+            {pr('scopeCanvas')}
+          </MenuRadioItem>
+        )}
         <MenuRadioItem
           value="document"
           data-problem-scope="document"
@@ -679,8 +712,8 @@ function PanelMenu({ view }: { view: ProblemView }) {
 /* ------------------------------- 摘要条 ----------------------------------- */
 
 /**
- * 等级开关：记号 + 数，可切换（aria-pressed）。**只有阻断着色**（danger 浅底 + content 字）——
- * 警告 / 建议不打扰，形状与名字照样说出等级（名字在可达名里）。
+ * 等级开关：圆点 + 数，可切换（aria-pressed）。与导出对话框的检查摘要同一个小组件（`ui/CountChip`）：
+ * 底与数字一律中性，颜色只在 6px 圆点上（要改 = danger、留意 = warn，其余灰）；等级名在可达名里。
  */
 function SeverityToggle({ severity, count, active }: { severity: Severity; count: number; active: boolean }) {
   const label = severityLabel(severity)
@@ -689,28 +722,19 @@ function SeverityToggle({ severity, count, active }: { severity: Severity; count
     const next = cur.includes(severity) ? cur.filter((s) => s !== severity) : [...cur, severity]
     useUiStore.getState().setProblemFilter(next.length ? next : null)
   }
-  const tinted = severity === 'error'
   return (
     <Tip label={pr('filterAria', { label, count })} side="bottom">
-      <button
-        type="button"
+      <CountChip
         onClick={toggle}
         data-problem-severity={severity}
-        aria-pressed={active}
+        pressed={active}
         aria-label={pr('filterAria', { label, count })}
-        className={cn(
-          'flex h-6 shrink-0 items-center gap-1 rounded-full px-2 text-xs tabular-nums outline-none',
-          'outline-1 -outline-offset-1 transition-colors duration-fast focus-visible:focus-ring',
-          tinted
-            ? 'bg-danger-surface text-danger-content hover:bg-danger-surface'
-            : 'text-ink-2 hover:bg-surface-hover hover:text-ink',
-          active ? (tinted ? 'font-medium outline-danger-border' : 'bg-selected font-medium text-ink outline-border-strong') : 'outline-transparent',
-        )}
-      >
-        <SeverityGlyph severity={severity} size="sm" />
-        <span>{count}</span>
-        <span className="sr-only">{label}</span>
-      </button>
+        tone={severity === 'error' ? 'danger' : severity === 'warn' ? 'warn' : 'quiet'}
+        count={count}
+        label={label}
+        hideLabel
+        size="sm"
+      />
     </Tip>
   )
 }

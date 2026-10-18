@@ -4,11 +4,12 @@
 > 这里是这一主题规则的**唯一全文**；`web/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
 
 素材面板分「图」（FileAsset + RuntimeFigureAsset 同一个 listbox，runtime
-卡带「运行时图」badge、cache 预览、stale 角标；重跑是选中页脚 `SelectedAssetActions` 的「重新运行」，不嵌在卡里）与「脚本」
+卡带「运行时图」badge、cache 预览、stale 角标；重跑在卡片的右键 / ⇧F10 / ContextMenu 键菜单里的「重新运行」，不嵌在卡里；素材抽屉没有页脚，UI 2.0 第二轮 08）与「脚本」
 （`ScriptLibrary`，项目内每个合理 .py 一行）两个区。普通路径必须在这里
 完成；RegistryDialog 只留冲突裁决 / 手工 stem / 高级诊断。
 
 > **T09（ADR 0116）起**：脚本行 ▶ 默认打开准备引导卡（T13b 起是画布右下的浮动卡）（后端准备会话：只读检查 → 用户确认 → 运行 → 进入编辑），不再直接试运行；
+> **V2 PR4 起 ▶ 就是明确的「打开并运行」**（`open(..., { run: true })`：检查完认领后端的 `run_when_ready`，准备完成后自动进入编辑）；
 > 行上的状态一句话翻译会话 phase。下文的 `scriptRunStore` 状态机、门相位与「答完重跑」协调、修复卡 / 失败恢复 / 「复制诊断」
 > 是本地开关（`lib/preparationFlag.ts`）关闭时的**旧路径**，保留一版，退出条件见 ADR 0116 §七；卡片的规则在
 > `readiness-and-left-shell.md`「准备引导卡」。
@@ -17,6 +18,10 @@
   幂等去重）、`runtimeAssetStore.assets`（`GET /api/runtime/assets`，只读
   清单 + `previewNonce` 预览换代）、`scriptRunStore`（运行状态机）。
   三者都在 `registry.changed` SSE 时重取**已经取过的**，项目切换全清。
+- **SSE 断线对账**：依赖安装 / 引擎 bootstrap 的进度只走 SSE（`/api/events` 无重放，队列满会丢），丢了终态事件卡片会永停「正在安装」。
+  SSE 重连与页面恢复（`visibilitychange`）时 `reconcileInstalls()`：`depRepairStore.reconcile()` 对本标签页起过、还没见到终态的作业
+  （当前卡片 + 切走项目收着的）按 `plan_id` 问一次 `fetchDependencyState`，结果走 `onProgress` 同一条规则（所属项目分格、终态副作用只在所属项目开着时派发）；
+  `idle`（后端不认识）或问不到都不改任何东西，等回包期间 SSE 已推到终态则丢弃较早的快照；`envStore` 只在还显示 `installing` 时刷环境、后端说不在跑就收尾。
   **三个 store 都有项目代际（epoch）**（清单本身的 `assetStore` 同样有，见下一条）：模块级 in-flight 请求活得比一次
   Zustand reset 长，`clear()` 必须换代 + 清 inflight，A 项目的响应绝不
   落进 B（Session 6 评审修复；vitest 各有作废用例看护）。`packageStore`
@@ -160,9 +165,10 @@
   role 承诺了一件它并没有做的事。区先在、内容后变，由
   `fastEditStage.test.tsx`「播报区常驻」那条钉着。「添加到画布」（Shift+Enter / 就近入口 / 看大图弹窗）一律走
   `addFigureToLayout`（文件与 runtime 同一条路，已在文档里只聚焦）——加图分层链的第 1 层；
-  哪个入口走哪一层以 `canvas-objects-and-workspace.md` 的「加图是一条分层链」为准。列表下方
-  `SelectedAssetActions` 给一对 listbox 之外的真按钮——option 里不许嵌可 Tab
-  控件。**不许再用一个中性的「打开」承载加入文档。**
+  哪个入口走哪一层以 `canvas-objects-and-workspace.md` 的「加图是一条分层链」为准。抽屉标题行的
+  工具区给一对 listbox 之外的真按钮（`IconButton`「编辑原图」「添加到画布」，`data-asset-open` /
+  `data-asset-add`，作用于当前选中的卡，没选中时置灰）——位置固定，选中不同卡时抽屉几何不变；
+  option 里不许嵌可 Tab 控件，卡片右上角的「＋」只是指针的快捷入口（不可聚焦）。**不许再用一个中性的「打开」承载加入文档。**
   搜索词与筛选在 `store/assetBrowseStore`（组件会被卸载；换项目 `clear()`，
   不落 localStorage）。同脚本 + 同 stem 的 runtime 条目紧跟它的磁盘图并写
   「同源：X.pdf」（`runtimeSiblingOf`）；`assets.changed` 时 runtime 清单也
@@ -248,7 +254,8 @@ BooleanOptional 仅在有长名反向选项时提供三态，短名只有「用�
   （不许并进「仅版面」，卡上写着「需试运行」时下一步是跑一下）；`capability` 缺席时有 `script` 算可编辑、没有就不归组（不补
   `layout_only`）；运行时图有描述符算可编辑、没有算待连接。「待连接」一档只在有这类图或正选着它时出现；它是一眼可见的取值，
   不进可移除的筛选标签；用不了的文件（`UnsupportedAssets`）只在「全部」下列出。胶囊的显示规则：有图、或有用不了的文件、或正选着非「全部」时都出，三者皆无才不出——正选着非默认值时绝不藏控件，否则最后一张图消失会把用户困在「没有匹配的图」里（Codex #1027）。胶囊标签是专用短键（`assets.editabilityEditable/Layout/Pending/All`），不复用 `statusLabel` 的长句：它要放进 280px 最窄抽屉（扣内边距 256px），英文四档「All / Editable / Pending / Layout」由 e2e 在最窄抽屉里量过不溢出（Codex #1027 r4267757501）。看护 `AssetBrowser.editability.test.tsx`、`e2e/asset-library.spec.ts`（功能 `assets.editability-filter`）；
-  刷新失败是图区里的一条 danger `Notice`，挂在「图」区头下面、**不在可折叠的网格里**（首次读不出的 `EmptyState` 同此）——
+  刷新失败是图区里的一条 danger `Notice`（一行中性提示：「无法刷新」+ 一句原因，长原因进「详情」；包 `NoticeReveal`，长出来时下面的网格顺着滑下去而不是瞬间跳），
+  挂在「图」区头下面、**不在可折叠的网格里**（首次读不出的 `EmptyState` 同此）——
   图区收着时 `/api/panels` 失败不弹提示（`load()` 吞错返回 null），藏进 `hidden` 就是静默失败（Codex #832，`AssetBrowser.refresh.test.tsx`）。刷新中那行「正在刷新…」（`data-asset-refreshing`）**暂留**：`e2e/tutorial.spec.ts`
   拿它挤动卡片来量 coachmark 的同步重测（Codex #731），换掉那根杠杆之前不删（审计「刷新只留旋转图标」那一条待办）。
 - **脚本区**：组头 28px `type-section` + `type-meta` 计数；运行中 = 一颗静止的 accent 点 + 状态句的 `text-shimmer`（不转圈）；

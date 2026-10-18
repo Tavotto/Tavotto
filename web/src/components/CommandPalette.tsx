@@ -444,7 +444,7 @@ export function CommandPalette() {
                   // 指针按下不抢焦点：焦点留在输入框里（组合框的约定），点击照常执行
                   onPointerDown={(e) => e.preventDefault()}
                   onClick={() => runCommand(c)}
-                  // 行 32 / 13（宪法第二十节命令面板那条的 2026-10-07 修订）；选中行 `selected`（ink 10%）：
+                  // 行 32 / 13（宪法第二十节命令面板那条的 2026-10-07 修订）；选中行 `selected`（ink 12%）：
                   // `surface-2` 对白底只有 1.05:1，「现在会执行哪一条」几乎看不出来
                   className={cn(
                     'flex h-8 items-center gap-3 rounded-md px-2.5 text-base text-ink',

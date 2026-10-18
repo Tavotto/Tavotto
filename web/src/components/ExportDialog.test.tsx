@@ -9,7 +9,7 @@
  * 4. **PPI 只在位图输出时出现**；文件名非法时就地报错并挡住导出。
  */
 import { act } from 'react'
-import { initI18n, literal } from '@/i18n'
+import { i18n, initI18n, literal } from '@/i18n'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -40,6 +40,8 @@ import { runValidation, useValidationStore } from '@/store/validationStore'
 import { bindingFor } from '@/lib/specBinding'
 import { toCatalog, useProfileStore } from '@/store/profileStore'
 import { applyExportJob, cancelCurrentExport, refreshExportStatus, resetExportState, runExport, useExportStore } from '@/store/exportStore'
+import { currentFigureOf } from '@/lib/problemContext'
+import { effectiveScope, issuesInScope } from '@/lib/problemList'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useWorkspaceStore } from '@/store/workspace'
 import { emptyProject, type PanelObject } from '@/types/document'
@@ -89,7 +91,7 @@ let root: Root
 let exportBodies: Record<string, unknown>[]
 
 /** 后端把作业**一次跑完**就回终局：用例不必等轮询 */
-let jobStatus: 'done' | 'conflict' = 'done'
+let jobStatus: 'done' | 'partial' | 'conflict' = 'done'
 /** 终局回执里的 outputs（不设 = 一件没有 manifest 的 PDF） */
 let jobOutputs: Record<string, unknown>[] | null = null
 
@@ -104,7 +106,7 @@ function stubFetch() {
           job_id: 'j1',
           status: jobStatus,
           outputs:
-            jobStatus === 'done'
+            jobStatus === 'done' || jobStatus === 'partial'
               ? (jobOutputs ?? [
                   {
                     format: 'pdf',
@@ -1058,7 +1060,7 @@ describe('检查摘要只给数量，完整清单在问题面板', () => {
   it('摘要里有计数与入口，不列第二套清单', async () => {
     // 80×40 的页面 + 同尺寸面板：只有 page-aspect 这一条 warn
     await setup(9, { w: 80, h: 40 }, 40)
-    expect(text()).toContain('1 警告')
+    expect(text()).toContain('1 项留意')
     expect(text()).not.toContain('页面比例')   // 明细归问题面板
     const open = button('在问题面板中查看')!
     await click(open)
@@ -1449,8 +1451,8 @@ describe('T33 · 检查摘要按导出目标取范围', () => {
     expect(button('开始导出')!.hasAttribute('disabled')).toBe(false)
 
     await click(radios()[1])
-    expect(text()).toMatch(/\d+ 阻断/)
-    expect(text()).toContain('1 警告')
+    expect(text()).toMatch(/\d+ 项要改/)
+    expect(text()).toContain('1 项留意')
     expect(text()).toContain('整个画布')
     expect(button('开始导出')!.hasAttribute('disabled')).toBe(true)
   })
@@ -1470,8 +1472,8 @@ describe('T33 · 检查摘要按导出目标取范围', () => {
         .issues.filter((i) => i.severity === 'error' && i.objectRef.objectId === id).length
     expect(errorsOn('p1')).toBeGreaterThan(0)
     expect(errorsOn('p2'), '夹具里另一张图也得有阻断项，否则这条什么都没证明').toBeGreaterThan(0)
-    expect(text()).toContain(`${errorsOn('p1')} 阻断`)
-    expect(text()).not.toContain(`${errorsOn('p1') + errorsOn('p2')} 阻断`)
+    expect(text()).toContain(`${errorsOn('p1')} 项要改`)
+    expect(text()).not.toContain(`${errorsOn('p1') + errorsOn('p2')} 项要改`)
     expect(button('开始导出')!.hasAttribute('disabled')).toBe(true)
     const check = confirmBox()!
     await act(async () => {
@@ -1506,27 +1508,73 @@ describe('T33 · 阻断项逐条列出，紧挨着知情确认，每条可定位
     expect(rows()).toHaveLength(errors.length)
     const row = rows().find((r) => r.getAttribute('data-blocking-issue') === 'font-below-absolute-floor')!
     expect(row, '每一行带着稳定的规则码').toBeTruthy()
-    // 规则名在组头只说一遍（2026-09-14 审计 B4），行里是主语与数值
-    expect(row.closest('[data-blocking-group]')!.textContent).toContain('字号低于绝对下限')
-    expect(row.textContent).not.toContain('字号低于绝对下限')
+    // 每条一行（2026-10-16 精修 03）：「对象 · 属性（规则名）· 当前值 → 要求」，不再有规则组头
+    expect(row.closest('[data-blocking-group]')).toBeNull()
+    expect(row.textContent).toContain('字号低于绝对下限')
     expect(row.textContent).toContain('x 刻度 1')
     expect(row.textContent).toContain('8.00 pt')
     expect(locateButtons()).toHaveLength(errors.length)
     // 列表紧挨着确认框：确认框是它的下一个兄弟
     expect(list()!.nextElementSibling?.querySelector('input[type="checkbox"]')).toBeTruthy()
     // 警告（page-aspect）不逐条列
-    expect(text()).toContain('1 警告')
+    expect(text()).toContain('1 项留意')
     expect(text()).not.toContain('页面比例')
   })
 
-  it('超过 5 条只列 5 条，其余交给问题面板', async () => {
+  it('超过 3 条只列 3 条，其余「还有 N 项 · 在问题面板中查看全部」', async () => {
     await stage({ panels: [panel], renders: { 'Fig1.pdf': manifestWithTicks(7, 8) } })
     await mountDialogs()
     await openDialog()
     const errors = useValidationStore.getState().issues.filter((i) => i.severity === 'error').length
-    expect(errors).toBeGreaterThan(5)
-    expect(rows()).toHaveLength(5)
-    expect(text()).toContain(`还有 ${errors - 5} 条`)
+    expect(errors).toBeGreaterThan(3)
+    expect(rows()).toHaveLength(3)
+    expect(text()).toContain(`还有 ${errors - 3} 项`)
+    await click(button(`还有 ${errors - 3} 项 · 在问题面板中查看全部`)!)
+    expect(useUiStore.getState().leftTab).toBe('problems')
+    expect(useUiStore.getState().problemFilter).toEqual(['error'])
+  })
+
+  it('计数芯片来自真实检查结果：要改 / 留意带色点，建议与无法核验永远是灰；点芯片带着这一档去问题面板', async () => {
+    await stage({
+      panels: [panel],
+      renders: { 'Fig1.pdf': manifestWithTicks(1, 8) },
+      page: { w: 80, h: 40 },
+    })
+    await mountDialogs()
+    await openDialog()
+    // 夹具本身不产出「建议」：补一条（同一份清单里改等级），才能证明「建议」那颗芯片确实是灰的
+    await act(async () => {
+      const cur = useValidationStore.getState().issues
+      useValidationStore.setState({ issues: [...cur, { ...cur[0], issueId: 'extra-suggestion', severity: 'suggestion' }] })
+    })
+    const counts = useValidationStore.getState().issues.reduce<Record<string, number>>((m, i) => {
+      m[i.severity] = (m[i.severity] ?? 0) + 1
+      return m
+    }, {})
+    const chip = (tone: string) => document.body.querySelector<HTMLElement>(`[data-count-chip="${tone}"]`)
+    expect(chip('danger')!.textContent).toBe(`${counts.error} 项要改`)
+    expect(chip('warn')!.textContent).toBe(`${counts.warn} 项留意`)
+    // 建议 / 无法核验只会出现在 quiet 档（有才出现），数字与检查结果一致
+    for (const el of document.body.querySelectorAll<HTMLElement>('[data-count-chip="quiet"]')) {
+      const n = Number(el.textContent!.match(/\d+/)![0])
+      expect([counts.suggestion, counts.not_verifiable]).toContain(n)
+    }
+    expect(document.body.querySelectorAll('[data-count-chip="danger"]')).toHaveLength(1)
+    // 每颗芯片的档由它的名字决定：只有「项要改」是 danger、「项留意」是 warn，其余（建议 / 无法核验）一律 quiet
+    const toneOf: Record<string, string> = { 项要改: 'danger', 项留意: 'warn', 条建议: 'quiet', 项无法核验: 'quiet' }
+    const all = [...document.body.querySelectorAll<HTMLElement>('[data-count-chip]')]
+    expect(all.length).toBeGreaterThanOrEqual(2)
+    for (const el of all) {
+      const word = Object.keys(toneOf).find((w) => el.textContent!.includes(w))!
+      expect(word, el.textContent!).toBeTruthy()
+      expect(el.getAttribute('data-count-chip'), el.textContent!).toBe(toneOf[word])
+    }
+    // 圆点之外芯片不染色：没有任何 danger / warn 的字或底
+    expect(chip('danger')!.className).not.toMatch(/text-danger|bg-danger|text-warn|bg-warn/)
+    await click(chip('warn')!)
+    expect(useUiStore.getState().leftTab).toBe('problems')
+    expect(useUiStore.getState().problemFilter).toEqual(['warn'])
+    expect(useUiStore.getState().exportOpen).toBe(false)
   })
 
   it('进不了图内编辑（没有源脚本）：对话框留在原地并说出原因', async () => {
@@ -1640,6 +1688,109 @@ describe('T35 · 设置压在导出之上：一次只显示一个主对话框', 
 
 const originalRadio = () => document.body.querySelector('[role="radio"]') as HTMLButtonElement
 const figureOptions = () => [...document.body.querySelectorAll('[role="option"]')] as HTMLElement[]
+
+describe('检查芯片 / 「在问题面板中查看」带着导出目标去（#1106 P2）', () => {
+  /** 面板此刻会当作「当前图」的那张（与 `useCurrentFigure` 同一个判据） */
+  const panelCurrentFigure = () =>
+    currentFigureOf(
+      [useWorkspaceStore.getState().activePanelId, useUiStore.getState().elementPanelId, useSelectionStore.getState().ids.at(-1) ?? null],
+      useDocumentStore.getState().doc.objects,
+    ).id
+
+  async function twoWithErrorOnP2() {
+    await setupTwo({ select: ['p1'] })
+    // Fig2 上 5 组 8 pt 刻度（多于先露的 3 条）：p2 有阻断项、p1 干净
+    const k2 = renderKey('Fig2.pdf', [])
+    await act(async () => {
+      const cur = useRenderStore.getState().byKey[k2]
+      useRenderStore.setState({
+        byKey: { ...useRenderStore.getState().byKey, [k2]: { ...cur, manifest: manifestWithTicks(5, 8, [65, 50]) } },
+      } as never)
+      runValidation()
+    })
+    await click(originalRadio())
+    await click(figureOptions()[1]) // 导出目标 = p2；画布上选中的仍是 p1
+    expect(useSelectionStore.getState().ids).toEqual(['p1'])
+    expect(panelCurrentFigure()).toBe('p1')
+  }
+  const danger = () => document.body.querySelector<HTMLElement>('[data-count-chip="danger"]')
+
+  it('点「要改」芯片：面板的当前图 = 导出的那张，范围「当前图」，筛选只留阻断', async () => {
+    await twoWithErrorOnP2()
+    expect(danger(), 'p2 有阻断项，应有芯片').not.toBeNull()
+    await click(danger()!)
+    expect(panelCurrentFigure(), '芯片只带了等级，面板仍看工作区原来的图').toBe('p2')
+    expect(useUiStore.getState().problemScope).toBe('figure')
+    expect(useUiStore.getState().problemFilter).toEqual(['error'])
+  })
+
+  it('按画布导出：从画布 A 的芯片进去只列 A 的问题，B 画布的不跟进来（#1106 P2）', async () => {
+    await stage({
+      panels: [panel, { ...panel, id: 'p2', fileId: 'Fig2.pdf', x: 0, y: 60, script: 'fig2.py' }],
+      renders: { 'Fig1.pdf': manifestWithTicks(1, 8), 'Fig2.pdf': manifestWithTicks(1, 9) },
+    })
+    await mountDialogs()
+    await openDialog()
+    const active = useDocumentStore.getState().activeCanvasId
+    expect(text()).toMatch(/\d+ 项要改/)
+    // 另一张画布上也有一条阻断项（克隆 A 的一条、换画布 id）：整份排版里是两张画布的问题
+    await act(async () => {
+      const cur = useValidationStore.getState().issues
+      const err = cur.find((i) => i.severity === 'error')!
+      useValidationStore.setState({
+        issues: [...cur, { ...err, issueId: 'other-canvas', objectRef: { ...err.objectRef, canvasId: 'c_other' } }],
+      })
+    })
+    await click(danger()!)
+    const all = useValidationStore.getState().issues
+    const scope = effectiveScope(useUiStore.getState().problemScope, null)
+    expect(scope, '导出整块画布落在「当前画布」那档，不是整份排版').toBe('canvas')
+    const listed = issuesInScope(all, scope, null, useDocumentStore.getState().activeCanvasId)
+    expect(listed.some((i) => i.issueId === 'other-canvas'), 'B 画布的问题不该列进来').toBe(false)
+    expect(listed.length).toBeGreaterThan(0)
+    expect(listed.every((i) => i.objectRef.canvasId === active)).toBe(true)
+    expect(all.length, '前提：整份排版里确实比 A 多').toBeGreaterThan(listed.length)
+  })
+
+  it('校验失败、保留上一轮结果的分支：「在问题面板中查看」打开面板，problemFilter 是 null 而不是 click event', async () => {
+    await twoWithErrorOnP2()
+    await act(async () => {
+      useValidationStore.setState({ failed: true })
+    })
+    expect(text()).toContain('来自更早一次')
+    useUiStore.getState().setProblemFilter(['warn'])
+    await click(button('在问题面板中查看')!)
+    expect(useUiStore.getState().leftTab).toBe('problems')
+    // 筛选必须是 null 或等级数组——click event 被当成 severities 存进去，面板一打开 `.includes` 就崩
+    const f = useUiStore.getState().problemFilter
+    expect(f === null || (Array.isArray(f) && f.every((x) => typeof x === 'string'))).toBe(true)
+    expect(f).toBeNull()
+  })
+
+  it('「在问题面板中查看」与「还有 N 项」同样带目标', async () => {
+    await twoWithErrorOnP2()
+    await click(button('在问题面板中查看')!)
+    expect(panelCurrentFigure()).toBe('p2')
+    expect(useUiStore.getState().problemScope).toBe('figure')
+    // 回到导出，工作区当前图又换回 p1：「还有 N 项」同样把面板对准导出的那张
+    await act(async () => {
+      useUiStore.getState().setExportOpen(true)
+    })
+    await act(async () => {
+      useSelectionStore.getState().set(['p1'])
+      useUiStore.getState().setProblemScope('document')
+    })
+    expect(panelCurrentFigure()).toBe('p1')
+    await click(originalRadio()) // 重新打开不带上一次点的那张：再点一次 p2
+    await click(figureOptions()[1])
+    const more = [...document.body.querySelectorAll('button')].find((b) => /^还有 \d+ 项/.test(b.textContent ?? ''))!
+    expect(more, '5 组阻断多于先露的 3 条').toBeTruthy()
+    await click(more)
+    expect(panelCurrentFigure()).toBe('p2')
+    expect(useUiStore.getState().problemScope).toBe('figure')
+    expect(useUiStore.getState().problemFilter).toEqual(['error'])
+  })
+})
 
 describe('画布模式下选中的图就是要导的那张（用户反馈 06）', () => {
   it('画布上选中了一个面板：原图尺寸可用，导的就是它', async () => {
@@ -1963,6 +2114,53 @@ describe('visible export recovery', () => {
     expect(useDocumentStore.getState().doc).toBe(doc)
   })
 
+  it('启动失败有具体原因（源文件已变）：这一句就是正文，通用标题不顶替它；技术细节在详情', async () => {
+    for (const [lng, reason, generic] of [['en-US', 'The source file changed. Your edits are preserved.', 'The export didn’t finish'], ['zh-CN', '源文件已变化，已保留你的修改。', '导出没有完成']] as const) {
+      initI18n(lng)
+      await setup(9)
+      globalThis.fetch = vi.fn(async () => response({ error: 'Source changed', code: 'artifact_source_unavailable', params: { reason: 'source_changed' } }, 409)) as typeof fetch
+      await act(async () => { await runExport(input()) })
+      const notice = document.querySelector('[data-export-start-error]')!
+      expect(notice.textContent).toContain(reason)
+      expect(notice.textContent).not.toContain(generic)
+      expect(notice.querySelector('[data-notice-detail-toggle]')).not.toBeNull()
+      resetExportState()
+    }
+  })
+
+  it('启动失败只有「HTTP 500」：标题是一句人话，状态码折进详情；状态区同时只有一条失败条', async () => {
+    initI18n('en-US')
+    await setup(9)
+    globalThis.fetch = vi.fn(async () => response({}, 500)) as typeof fetch
+    await act(async () => { await runExport(input()) })
+    const notice = document.querySelector('[data-export-start-error]')!
+    expect(notice.textContent).toContain('The export didn’t finish')
+    expect(notice.textContent).not.toContain('HTTP 500')
+    await act(async () => { (notice.querySelector('[data-notice-detail-toggle]') as HTMLButtonElement).click() })
+    expect(notice.querySelector('[data-notice-detail]')?.textContent).toContain('HTTP 500')
+    expect(document.querySelectorAll('[data-export-failure]')).toHaveLength(1)
+  })
+
+  it('失败条的先后与详情展开不依赖译文：先状态失败、再取消失败，切换界面语言后仍是取消那条', async () => {
+    initI18n('en-US')
+    await setup(9)
+    globalThis.fetch = vi.fn(async () => response(runningJob)) as typeof fetch
+    await act(async () => { await runExport(input()) })
+    globalThis.fetch = vi.fn(async () => { throw new TypeError('Failed to fetch') }) as typeof fetch
+    await act(async () => { await refreshExportStatus() })
+    expect(document.querySelector('[data-export-poll-error]')).not.toBeNull()
+    // 取消失败带一段较长的原文 → 有「详情」可展开
+    globalThis.fetch = vi.fn(async () => { throw new TypeError(`Failed to fetch ${'upstream '.repeat(15)}`) }) as typeof fetch
+    await act(async () => { await cancelCurrentExport() })
+    expect(document.querySelectorAll('[data-export-failure]')).toHaveLength(1)
+    expect(document.querySelector('[data-export-cancel-error]')).not.toBeNull()
+    await act(async () => { await i18n.changeLanguage('zh-CN') })
+    // 签名只认稳定的失败身份：换语言后所有译文都变了，也不会按固定键序重新盖戳把旧的状态失败顶上来
+    expect(document.querySelector('[data-export-poll-error]')).toBeNull()
+    expect(document.querySelector('[data-export-cancel-error]')).not.toBeNull()
+    expect(document.querySelectorAll('[data-export-failure]')).toHaveLength(1)
+  })
+
   it('shows cancel and status failures, keeps dialog/job on dismissal, and retries status', async () => {
     initI18n('en-US')
     await setup(9)
@@ -1970,13 +2168,18 @@ describe('visible export recovery', () => {
     await act(async () => { await runExport(input()) })
     globalThis.fetch = vi.fn(async () => { throw new TypeError('Failed to fetch') }) as typeof fetch
     await act(async () => { await cancelCurrentExport(); await refreshExportStatus() })
-    expect(document.querySelector('[data-export-cancel-error]')?.textContent).toContain('not confirmed')
+    // 失败条同时最多一条：取消失败先出现、状态失败后出现 → 后来的替换前一条（不堆叠）
+    expect(document.querySelectorAll('[data-export-failure]')).toHaveLength(1)
+    expect(document.querySelector('[data-export-cancel-error]')).toBeNull()
     expect(document.querySelector('[data-export-poll-error]')?.textContent).toContain('job may still finish')
-    expect(document.querySelector('[data-export-poll-error]')?.textContent).toContain('Check the connection')
+    // 原文较长：折在「详情」里，展开才见
+    expect(document.querySelector('[data-export-poll-error]')?.textContent).not.toContain('Check the connection')
+    await act(async () => { (document.querySelector('[data-export-poll-error] [data-notice-detail-toggle]') as HTMLButtonElement).click() })
+    expect(document.querySelector('[data-export-poll-error] [data-notice-detail]')?.textContent).toContain('Check the connection')
     await act(async () => { useUiStore.getState().setExportOpen(false) })
     expect(useExportStore.getState().ownedJobId).toBe('feedback-job')
     await act(async () => { useUiStore.getState().setExportOpen(true) })
-    expect(document.querySelector('[data-export-cancel-error]')).toBeTruthy()
+    expect(document.querySelector('[data-export-poll-error]')).toBeTruthy()
     globalThis.fetch = vi.fn(async () => response({ ...runningJob, status: 'done' })) as typeof fetch
     await act(async () => { (document.querySelector('[data-export-status-retry]') as HTMLButtonElement).click() })
     expect(document.querySelector('[data-export-poll-error]')).toBeNull()
@@ -2012,6 +2215,91 @@ describe('visible export recovery', () => {
     expect(useExportStore.getState().running).toBe(true)
     await act(async () => { applyExportJob({ ...runningJob, status: 'cancelled' }) })
     expect(document.querySelector('[data-export-cancel]')).toBeNull()
+  })
+})
+
+
+describe('导出终局通知：关窗期间的结果不能无声', () => {
+  afterEach(() => { resetExportState(); initI18n('zh-CN'); useUiStore.getState().setStatus(null) })
+  const input = () => ({ scope: 'canvas' as const, formats: ['pdf', 'png'], filename: 'Keep name', ppi: 600, documentId: 'd_export', doc: useDocumentStore.getState().doc })
+  const response = (body: unknown) => new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' } })
+  const base = { job_id: 'job-1', warnings: [], conflicts: [] as string[], error: null }
+  const failedOut = { format: 'png', name: null, url: null, bytes: null, dimensions: null, vector: false, status: 'failed', replaced: false, error: { code: 'format_failed', params: {}, recoverable: true } }
+  const doneOut = { format: 'pdf', name: 'a.pdf', url: '/exports/a.pdf', bytes: 1, dimensions: { px: null, mm: null }, vector: true, status: 'done', replaced: false, error: null }
+  const status = () => useUiStore.getState()
+
+  async function startThenClose(closeFirst = true) {
+    await setup(9)
+    globalThis.fetch = vi.fn(async () => response({ ...base, status: 'running', outputs: [] })) as typeof fetch
+    await act(async () => { await runExport(input()) })
+    if (closeFirst) await act(async () => { useUiStore.getState().setExportOpen(false) })
+  }
+  const finish = (job: Record<string, unknown>) => act(async () => { applyExportJob({ ...base, outputs: [], ...job } as never) })
+
+  it.each([
+    ['failed', { status: 'failed', outputs: [failedOut], error: { code: 'format_failed', params: {}, recoverable: true } }, 'error'],
+    ['partial', { status: 'partial', outputs: [doneOut, failedOut] }, 'error'],
+    ['conflict', { status: 'conflict', conflicts: ['a.pdf'] }, 'info'],
+    ['unknown', { status: 'unknown' }, 'error'],
+  ])('关着对话框时 %s：出一条带「查看」的通知，且不自己消失', async (_n, job, tone) => {
+    await startThenClose()
+    await finish(job)
+    const s = status()
+    expect(s.status).not.toBeNull()
+    expect(s.statusTone).toBe(tone)
+    expect(JSON.stringify(s.status)).toContain('export.toast.')
+    expect(s.statusAction).not.toBeNull()
+    expect(s.statusOwner).toBe('export.result')
+  })
+
+  it('「查看」重新打开对话框并撤掉这条通知', async () => {
+    await startThenClose()
+    await finish({ status: 'failed', outputs: [failedOut], error: { code: 'format_failed', params: {}, recoverable: true } })
+    await act(async () => { status().statusAction!.run() })
+    expect(status().exportOpen).toBe(true)
+    expect(status().status).toBeNull()
+  })
+
+  it('对话框开着时不再弹第二份（结果就在结果块里）', async () => {
+    await startThenClose(false)
+    expect(status().exportOpen).toBe(true)
+    await finish({ status: 'failed', outputs: [failedOut], error: { code: 'format_failed', params: {}, recoverable: true } })
+    expect(status().status).toBeNull()
+    // 成功也一样：开着就不弹
+    resetExportState()
+    await startThenClose(false)
+    await finish({ job_id: 'job-1', status: 'done', outputs: [doneOut] })
+    expect(status().status).toBeNull()
+  })
+
+  it('对照：关着对话框时成功 / 取消仍有一句话（不带动作、自己消失）', async () => {
+    await startThenClose()
+    await finish({ status: 'done', outputs: [doneOut] })
+    expect(JSON.stringify(status().status)).toContain('export.exported')
+    expect(status().statusAction).toBeNull()
+  })
+
+  it('重复的终态快照只通知一次：用户关掉后同一结果不会再冒出来', async () => {
+    await startThenClose()
+    const job = { status: 'failed', outputs: [failedOut], error: { code: 'format_failed', params: {}, recoverable: true } }
+    await finish(job)
+    expect(status().status).not.toBeNull()
+    await act(async () => { useUiStore.getState().setStatus(null) })
+    await finish(job)
+    await act(async () => { await refreshExportStatus() })
+    expect(status().status).toBeNull()
+    // 开了又关一次对话框（可见性变化会让通知逻辑重跑）：同一个结果仍然不再冒出来
+    await act(async () => { useUiStore.getState().setExportOpen(true) })
+    await act(async () => { useUiStore.getState().setExportOpen(false) })
+    expect(status().status).toBeNull()
+  })
+
+  it('重新打开对话框也撤掉关窗期间挂着的通知', async () => {
+    await startThenClose()
+    await finish({ status: 'conflict', conflicts: ['a.pdf'] })
+    expect(status().status).not.toBeNull()
+    await act(async () => { useUiStore.getState().setExportOpen(true) })
+    expect(status().status).toBeNull()
   })
 })
 
@@ -2141,5 +2429,114 @@ describe('状态区与完成态脚部', () => {
       rejectFirst(new Error('late'))
     })
     expect(document.body.querySelector('[data-export-reveal-error]')).toBeNull()
+  })
+})
+
+describe('预览信息完善（PR3）：缩略图说真话', () => {
+  const q = (sel: string) => document.body.querySelector<HTMLElement>(sel)
+  const target = () => q('[data-export-target]')!
+
+  it('对象头缩略图旁有「示意 · 非最终文件」的标注（两种范围都有），且不是警告色', async () => {
+    await setup(9)
+    expect(target().querySelector('[data-export-thumb-note]')?.textContent).toBe(
+      '缩略图仅为示意 · 非最终文件',
+    )
+    expect(target().querySelector('[data-export-thumb-note]')?.className).not.toContain('warn')
+    useWorkspaceStore.setState({ mode: 'fast_edit', activePanelId: 'p1' })
+    await act(async () => useUiStore.getState().setExportOpen(false))
+    await act(async () => useUiStore.getState().setExportOpen(true))
+    expect(target().querySelector('[data-export-thumb-note]')).toBeTruthy()
+  })
+
+  it('勾了透明背景（PNG 画布范围）：对象头缩略图的页面画成棋盘格；不勾就是纸白', async () => {
+    await setup(9)
+    expect(target().querySelector('[data-thumb-transparent]')).toBeNull()
+    expect(formatBox('PNG').checked, '默认就带 PNG').toBe(true)
+    const toggle = document.body.querySelector<HTMLElement>('[aria-label="透明背景（仅 PNG / TIFF）"]')!
+    await click(toggle)
+    const page = target().querySelector('[data-thumb-page]')!
+    expect(page.hasAttribute('data-thumb-transparent')).toBe(true)
+    expect(page.getAttribute('fill')).toMatch(/^url\(#thumb-checker-/)
+    expect(target().querySelector('pattern')).toBeTruthy()
+    await click(toggle)
+    expect(target().querySelector('[data-thumb-transparent]')).toBeNull()
+    expect(target().querySelector('[data-thumb-page]')!.getAttribute('fill')).toBe('var(--color-paper)')
+  })
+
+  it('原图范围：对象头与图清单行取同一份图——有图内修改就都是引擎 SVG（导出的正是重渲那一版）', async () => {
+    await setup(9)
+    useDocumentStore.getState().commit(literal('改'), (d) => {
+      ;(d.objects[0] as PanelObject).overrides = [
+        { gid: 'axes_0.xticks', prop: 'fontsize', value: 9 },
+      ]
+    })
+    const edited = useDocumentStore.getState().doc.objects[0] as PanelObject
+    seedExactRender(edited, manifest(9) as never, { svg: '<svg data-marker="edited"></svg>' })
+    useWorkspaceStore.setState({ mode: 'fast_edit', activePanelId: 'p1' })
+    await act(async () => useUiStore.getState().setExportOpen(false))
+    await act(async () => useUiStore.getState().setExportOpen(true))
+    const head = target().querySelector('[data-export-thumb="svg"]')
+    const row = q('[data-export-figure="Fig1.pdf"] [data-export-thumb="svg"]')
+    expect(head, '对象头读的是编辑后的引擎 SVG，不是磁盘原图').toBeTruthy()
+    expect(row).toBeTruthy()
+    expect(head!.innerHTML).toBe(row!.innerHTML)
+    expect(head!.innerHTML).toContain('data-marker="edited"')
+    expect(target().querySelector('[data-export-thumb="file"]')).toBeNull()
+  })
+
+  it('原图缩略图的盒按真实图幅比例（不是固定 60×40）：竖图贴高、宽图贴宽，外框尺寸不变', async () => {
+    await setup(9)
+    useDocumentStore.getState().commit(literal('改'), (d) => {
+      ;(d.objects[0] as PanelObject).overrides = [
+        { gid: 'axes_0.xticks', prop: 'fontsize', value: 9 },
+      ]
+    })
+    const edited = useDocumentStore.getState().doc.objects[0] as PanelObject
+    // 竖图 40×80：manifest 的图幅 → 比例 0.5
+    seedExactRender(edited, { ...manifest(9), size_mm: [40, 80] } as never, { svg: '<svg></svg>' })
+    useWorkspaceStore.setState({ mode: 'fast_edit', activePanelId: 'p1' })
+    await act(async () => useUiStore.getState().setExportOpen(false))
+    await act(async () => useUiStore.getState().setExportOpen(true))
+    const box = target().querySelector<HTMLElement>('[data-export-thumb="svg"]')!
+    expect(box.style.aspectRatio.replace(' / 1', '')).toBe('0.5')
+    expect(box.style.height).toBe('100%')
+    expect(box.style.maxWidth).toBe('100%')
+    // 外框仍是 60×40
+    expect(box.parentElement!.className).toContain('h-10')
+    expect(box.parentElement!.className).toContain('w-[60px]')
+  })
+})
+
+describe('预览信息完善（PR3）：结果块', () => {
+  const q = (sel: string) => document.body.querySelector<HTMLElement>(sel)
+  const out = (format: string, name: string | null, status: 'done' | 'failed') => ({
+    format,
+    name,
+    url: name ? `/exports/${name}` : null,
+    bytes: name ? 10 : null,
+    dimensions: { px: null, mm: [80, 60] },
+    vector: format === 'pdf',
+    status,
+    replaced: false,
+    error: status === 'failed' ? { code: 'format_failed', params: {} } : null,
+  })
+
+  it('partial：一句汇总的数字取自后端 outputs；逐行不变', async () => {
+    jobStatus = 'partial'
+    jobOutputs = [
+      out('pdf', 'a.pdf', 'done'),
+      out('png', 'a.png', 'done'),
+      out('tiff', null, 'failed'),
+    ]
+    await setup(9)
+    await click(q('[data-export-start]')!)
+    expect(q('[data-export-partial-summary]')?.textContent).toBe('已保存 2 个，1 个失败')
+  })
+
+  it('全部成功：没有汇总句', async () => {
+    await setup(9)
+    await click(q('[data-export-start]')!)
+    expect(q('[data-export-result]')).toBeTruthy()
+    expect(q('[data-export-partial-summary]')).toBeNull()
   })
 })

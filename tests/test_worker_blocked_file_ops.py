@@ -866,7 +866,7 @@ def test_savefig_effective_names_cover_what_matplotlib_really_writes(
     try:
         with matplotlib.rc_context({"savefig.format": rc_format} if rc_format else {}):
             fig.savefig(kind(target), **kwargs)
-            names = figcapture.savefig_effective_names(kind(target), kwargs)
+            names = figcapture.savefig_effective_names(kind(target), kwargs, fig.canvas)
     finally:
         plt.close(fig)
     written = {p.relative_to(tmp_path).as_posix() for p in tmp_path.rglob("*") if p.is_file()}
@@ -879,6 +879,7 @@ def test_savefig_effective_names_ignore_file_objects_and_keep_bytes_literal():
 
     assert figcapture.savefig_effective_names(io.BytesIO(), {}) == []
     assert figcapture.savefig_effective_names(b"stage", {}) == [b"stage"]
+    assert figcapture.savefig_effective_names("stage", {}) == []  # 拿不到 canvas：一个候选都不记
 
 
 # ====================================================== #952 第四轮
@@ -1065,11 +1066,165 @@ def test_p2_extensionless_savefig_does_not_taint_an_unrelated_file_of_that_name(
     assert e.code == CODE, (e.code, str(e))
 
 
+SVG_DEFAULT_PLOT = _PLOT + "matplotlib.rcParams['savefig.format'] = 'svg'\n"
+
+
+@needs_worker
+def test_retro_open_of_the_non_default_png_name_is_not_blamed(figs):
+    """#1076 Codex P2：SVG 默认下 `savefig('out'); open('out.png','rb')` 直接运行同样 FileNotFoundError，不能归因。"""
+    src = (
+        SVG_DEFAULT_PLOT
+        + 'fig.savefig("out")\ntry:\n    open("out.png", "rb")\nexcept FileNotFoundError:\n    pass\n'
+    )
+    _build(figs, "open_spec.py", src, project_mode=False)
+
+
+@needs_worker
+def test_retro_ambiguous_png_candidate_is_not_blamed_when_the_default_format_is_svg(figs):
+    """#1065 Codex P2：默认格式 svg 时 `savefig('out')` 写的是 out.svg；读 out.png 直接运行也 FileNotFoundError，
+    推测的 png 候选不能被归因成守卫造成的 `safe_file_operation_blocked`。"""
+    src = SVG_DEFAULT_PLOT + 'fig.savefig("out")\nimport os\nos.path.getsize("out.png")\n'
+    with pytest.raises(engine_pool.WorkerError) as err:
+        _build(figs, "amb_png.py", src, project_mode=False)
+    assert err.value.code != CODE, (err.value.code, str(err.value))
+
+
+@needs_worker
+def test_retro_default_canvas_follows_rc_so_reading_the_rc_format_is_blamed(figs):
+    src = SVG_DEFAULT_PLOT + 'fig.savefig("out")\nimport os\nos.path.getsize("out.svg")\n'
+    e = _blocked(figs, "rc_svg.py", src, project_mode=False)
+    assert e.code == CODE, (e.code, str(e))
+
+
+CUSTOM_CANVAS_PNG = (
+    SVG_DEFAULT_PLOT
+    + "from matplotlib.backends.backend_agg import FigureCanvasAgg\n"
+    + "class C(FigureCanvasAgg):\n"
+    + "    def get_default_filetype(self):\n"
+    + '        return "png"\n'
+    + "C(fig)\n"
+    + 'fig.savefig("out")\n'
+    + "import os\n"
+)
+
+
+@needs_worker
+def test_retro_custom_canvas_default_png_with_rc_svg_reading_svg_is_not_blamed(figs):
+    """#1076 Codex P2：自定义 canvas 的缺省格式（png）≠ rcParams（svg）：直接运行写的是 out.png。"""
+    with pytest.raises(engine_pool.WorkerError) as err:
+        _build(
+            figs,
+            "cc_svg.py",
+            CUSTOM_CANVAS_PNG + 'os.path.getsize("out.svg")\n',
+            project_mode=False,
+        )
+    assert err.value.code != CODE, (err.value.code, str(err.value))
+
+
+@needs_worker
+def test_retro_custom_canvas_default_png_with_rc_svg_reading_png_is_blamed(figs):
+    e = _blocked(
+        figs, "cc_png.py", CUSTOM_CANVAS_PNG + 'os.path.getsize("out.png")\n', project_mode=False
+    )
+    assert e.code == CODE, (e.code, str(e))
+
+
+@needs_worker
+def test_retro_explicit_suffix_target_is_still_blamed(figs):
+    src = SVG_DEFAULT_PLOT + 'fig.savefig("out.svg")\nimport os\nos.path.getsize("out.svg")\n'
+    e = _blocked(figs, "def_svg.py", src, project_mode=False)
+    assert e.code == CODE, (e.code, str(e))
+
+
+@needs_worker
+def test_retro_explicit_format_target_is_still_blamed(figs):
+    src = _PLOT + 'fig.savefig("out", format="png")\nimport os\nos.path.getsize("out")\n'
+    e = _blocked(figs, "def_fmt.py", src, project_mode=False)
+    assert e.code == CODE, (e.code, str(e))
+
+
+_OVERFLOW_PREFIX = (
+    "import os, sys\n"
+    "for i in range(260):\n"
+    '    with open(f"q{i}.tmp", "w") as f:\n'
+    "        f.write(str(i))\n"
+    '    os.replace(f"q{i}.tmp", f"q{i}.csv")\n'
+)
+
+
+@needs_worker
+@pytest.mark.parametrize("overflow", [False, True], ids=["inline", "after_overflow"])
+def test_retro_speculative_png_is_not_blamed_for_a_failed_getsize(figs, overflow):
+    """#1076 Codex P2：溢出 MAX_EVENTS 之后合并进溢出集合的事件，同样不能把推测候选归给守卫。"""
+    head = (_OVERFLOW_PREFIX if overflow else "import os, sys\n") + SVG_DEFAULT_PLOT
+    src = head + 'fig.savefig("out")\nos.path.getsize("out.png")\n'
+    with pytest.raises(engine_pool.WorkerError) as err:
+        _build(figs, "amb_all.py", src, project_mode=True)
+    assert err.value.code != CODE, (err.value.code, str(err.value))
+
+
+@needs_worker
+def test_retro_definitive_candidate_is_still_blamed_after_overflow(figs):
+    src = (
+        _OVERFLOW_PREFIX + SVG_DEFAULT_PLOT + 'fig.savefig("out.svg")\nos.path.getsize("out.svg")\n'
+    )
+    e = _blocked(figs, "def_ovf.py", src, project_mode=True)
+    assert e.code == CODE, (e.code, str(e))
+
+
+RENAME_SPECULATIVE_SRC = (
+    "import os\n"
+    + SVG_DEFAULT_PLOT
+    + 'fig.savefig("out")\n'
+    + "try:\n"
+    + '    os.rename("out.png", "moved.png")\n'
+    + "except FileNotFoundError:\n"
+    + "    pass\n"
+    + "try:\n"
+    + '    open("moved.png").close()\n'
+    + "except FileNotFoundError:\n"
+    + "    pass\n"
+)
+
+
+@needs_worker
+def test_retro_rename_of_an_independently_existing_source_keeps_the_ordinary_event(figs):
+    """#1076 Codex P2：项目里本来就有 out.png，SVG 默认的 savefig('out') 之后改名它——直接运行真的移走了文件，
+    守卫拦下后读 moved.png 就是分叉，普通改名事件不能因为源名恰是推测候选而丢掉。"""
+    (figs / "out.png").write_bytes(b"pre-existing")
+    e = _blocked(figs, "ren_exist.py", RENAME_SPECULATIVE_SRC, project_mode=True)
+    assert e.code == CODE, (e.code, str(e))
+    assert [o["op"] for o in e.extra["operations"]] == ["os.rename"]
+
+
+@needs_worker
+def test_retro_rename_of_a_definitive_savefig_target_is_still_blamed(figs):
+    src = RENAME_SPECULATIVE_SRC.replace('fig.savefig("out")', 'fig.savefig("out.png")')
+    e = _blocked(figs, "ren_def.py", src, project_mode=True)
+    assert e.code == CODE, (e.code, str(e))
+
+
 def test_savefig_effective_names_skip_the_literal_name_when_matplotlib_appends_a_suffix():
-    assert "stage" not in figcapture.savefig_effective_names("stage", {})
-    assert "stage" not in figcapture.savefig_effective_names("stage.", {})
-    assert "stage" in figcapture.savefig_effective_names("stage", {"format": "png"})
-    assert "stage.png" in figcapture.savefig_effective_names("stage", {})
+    class Canvas:
+        def get_default_filetype(self):
+            return "png"
+
+    class Broken:
+        def get_default_filetype(self):
+            raise RuntimeError("boom")
+
+    class NotText:
+        def get_default_filetype(self):
+            return None
+
+    c = Canvas()
+    assert "stage" not in figcapture.savefig_effective_names("stage", {}, c)
+    assert "stage" not in figcapture.savefig_effective_names("stage.", {}, c)
+    assert "stage" in figcapture.savefig_effective_names("stage", {"format": "png"}, c)
+    assert figcapture.savefig_effective_names("stage", {}, c) == ["stage.png"]
+    assert figcapture.savefig_effective_names("stage.", {}, c) == ["stage.png"]
+    for bad in (None, Broken(), NotText()):
+        assert figcapture.savefig_effective_names("stage", {}, bad) == []
 
 
 RMTREE_RECREATE = """\

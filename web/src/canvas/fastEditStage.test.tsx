@@ -20,6 +20,7 @@ import { subscribePruneSelection } from '@/hooks/usePruneSelection'
 import { DURATION } from '@/lib/motion'
 import { TooltipProvider } from '@/components/ui/Tooltip'
 import { useAssetStore } from '@/store/assetStore'
+import { useExitNoticeStore } from '@/store/exitNoticeStore'
 import { useDocumentStore } from '@/store/documentStore'
 import { useHintStore } from '@/lib/onboarding/hints'
 import { useUiStore } from '@/store/uiStore'
@@ -281,9 +282,9 @@ describe('「刚为编辑加入本文档」的说明', () => {
   })
 
   /**
-   * 通知轨最多两条（二审 D1）。实测踩到的是三条同屏：双击素材卡进快速编辑时
-   * 「加入说明」「操作提示」「渲染完成」同时想上屏，而三块此前各自 usePresence、
-   * 互不让位（2026-09-15 打磨 N1）。
+   * 通知轨有条数上限（二审 D1 定的两条，UI 2.0 放宽到三条：`RAIL_MAX`）。实测踩到的是多条同屏：
+   * 双击素材卡进快速编辑时「加入说明」「操作提示」「渲染完成」同时想上屏，而几块此前各自
+   * usePresence、互不让位（2026-09-15 打磨 N1）。
    *
    * 让位顺序按「丢了会不会再有」定：加入说明带着一次性的「移除」出口，状态报的是
    * 刚发生的事，**操作提示第一个让**——它本来就会重来，少说一次不丢信息，而且让位
@@ -294,14 +295,14 @@ describe('「刚为编辑加入本文档」的说明', () => {
       (e) => !e.className.includes('sr-only'),
     )
   const hintToast = () => container.querySelector('[data-onboarding-hint]')
-  /** 正在播退场的那条还在 DOM 里（usePresence 保活 90ms），它不算「叠着的一条」 */
+  /** 正在播退场的那条还在 DOM 里（usePresence 保活 120ms），它不算「叠着的一条」 */
   const openToasts = () => toasts().filter((e) => e.getAttribute('data-state') === 'open')
   const afterExit = () =>
     act(async () => {
-      await new Promise((r) => setTimeout(r, DURATION.exit + 40))
+      await new Promise((r) => setTimeout(r, DURATION.fast + 40))
     })
 
-  it('三条同时想上屏时只留两条：先顶掉操作提示，状态走完它自己回来', async () => {
+  it('四条同时想上屏时只留三条：先顶掉操作提示，修复卡走完它自己回来', async () => {
     act(() => openFastEdit('a.pdf'))
     await mountWithRail()
     // 加入说明 + 操作提示：两条，都在
@@ -309,22 +310,27 @@ describe('「刚为编辑加入本文档」的说明', () => {
     expect(toasts().length).toBe(2)
     expect(hintToast(), '还没有状态，提示有位子').not.toBeNull()
 
-    // 状态来了 → 三条候选，提示让位
+    // 状态来了 → 三条（加入说明 + 提示 + 状态），正好是上限，提示还在
     act(() => useUiStore.getState().setStatus(literal('渲染完成')))
-    expect(openToasts().length, '最多两条').toBe(2)
+    expect(openToasts().length, '上限三条').toBe(3)
+    expect(hintToast()!.getAttribute('data-state'), '三条没超上限，提示不让').toBe('open')
+
+    // 引擎修复卡来了 → 四条候选，提示让位
+    act(() => useExitNoticeStore.getState().setEngineExit('nonzero'))
+    expect(openToasts().length, '最多三条').toBe(3)
     expect(hintToast()!.getAttribute('data-state'), '让位的是提示').toBe('closed')
     expect(note(), '加入说明优先级最高，不让').not.toBeNull()
-    // 退场播完之后 DOM 里也只剩两条
+    // 退场播完之后 DOM 里也只剩三条
     await afterExit()
-    expect(toasts().length).toBe(2)
+    expect(toasts().length).toBe(3)
     expect(hintToast()).toBeNull()
 
-    // 状态走完 → 提示自己回来（让位只是不渲染，没有把它 dismiss 掉）
-    act(() => useUiStore.getState().setStatus(null))
+    // 修复卡走完 → 提示自己回来（让位只是不渲染，没有把它 dismiss 掉）
+    act(() => useExitNoticeStore.setState({ engineExit: null, restarting: false, previous: null }))
     expect(useHintStore.getState().current, '让位期间提示仍在 store 里').toBe('problem_found')
     expect(hintToast()!.getAttribute('data-state')).toBe('open')
     await afterExit()
-    expect(openToasts().length).toBe(2)
+    expect(openToasts().length).toBe(3)
   })
 
   it('撤销那次加入 → 快速编辑退出，说明跟着消失', async () => {

@@ -487,6 +487,36 @@ export function windowChrome(): WindowChrome {
  */
 export const TRAFFIC_LIGHTS_INSET = 88
 
+/** 壳在主窗口进 / 出全屏时发的事件，载荷 `{fullscreen: boolean}`（`window_chrome.rs` 的 `FULLSCREEN_EVENT`，两侧严格同源）。 */
+export const FULLSCREEN_EVENT = 'tavotto:fullscreen'
+
+/**
+ * 订阅主窗口进 / 出全屏。只有 `overlay` 窗框（macOS 主窗口）有这条事件——全屏时红绿灯随系统标题栏
+ * 收起，顶栏就不必再给它们留 `TRAFFIC_LIGHTS_INSET`。别的窗框 / 浏览器 / 远程窗口返回空的取消函数。
+ */
+export async function onFullscreenChange(cb: (fullscreen: boolean) => void): Promise<() => void> {
+  if (windowChrome() !== 'overlay') return () => {}
+  try {
+    const { listen } = await import('@tauri-apps/api/event')
+    return await listen<{ fullscreen?: unknown }>(FULLSCREEN_EVENT, (e) => {
+      if (typeof e.payload?.fullscreen === 'boolean') cb(e.payload.fullscreen)
+    })
+  } catch {
+    return () => {}
+  }
+}
+
+/** 回读主窗口此刻是否全屏（防事件早于监听）。非 `overlay` / 老壳 / 出错一律 false。 */
+export async function getFullscreen(): Promise<boolean> {
+  if (windowChrome() !== 'overlay') return false
+  try {
+    const { invoke } = await import('@tauri-apps/api/core')
+    return (await invoke('current_fullscreen')) === true
+  } catch {
+    return false
+  }
+}
+
 /**
  * 拖动区标记（Tauri 的 `data-tauri-drag-region`）：`deep` = 子树里非交互的地方都能拖，按钮 /
  * 输入框 / 带 tabindex 的元素照常点击。只在 `overlay` 下给——别的窗框有系统标题栏可拖。

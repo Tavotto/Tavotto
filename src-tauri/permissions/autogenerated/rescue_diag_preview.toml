@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-rescue-diag-preview"
+description = "Enables the rescue_diag_preview command without any pre-configured scope."
+commands.allow = ["rescue_diag_preview"]
+
+[[permission]]
+identifier = "deny-rescue-diag-preview"
+description = "Denies the rescue_diag_preview command without any pre-configured scope."
+commands.deny = ["rescue_diag_preview"]

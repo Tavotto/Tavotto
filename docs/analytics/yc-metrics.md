@@ -8,6 +8,7 @@ Companion files:
 
 * [`telemetry-events.md`](telemetry-events.md) — the event contract
 * [`yc-dashboard.json`](yc-dashboard.json) — machine-readable dashboard spec
+* [`posthog-dashboard.md`](posthog-dashboard.md) — offline PostHog dashboard / alert / subscription drafts (nothing created online)
 
 ## Vocabulary (use these exact words)
 

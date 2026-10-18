@@ -25,7 +25,7 @@ const scan = (over: Partial<ProjectScan> = {}): ProjectScan => ({
   ...over,
 })
 const flags = { forced: false, slow: false }
-const kindOf = (s: ProjectScan | null, f = flags) => scanCard(s, f)?.kind ?? null
+const kindOf = (s: ProjectScan | null, f: { forced: boolean; slow: boolean; lost?: boolean } = flags) => scanCard(s, f)?.kind ?? null
 
 describe('引导卡要不要露出来（T13b）', () => {
   it.each([
@@ -112,5 +112,20 @@ describe('句子', () => {
       expect(text, code).not.toContain('scan.issue')
     }
     expect(issueLine({ code: 'unreadable_dir', severity: 'partial', scope: 'dir', path: 'sub/dir', count: 1 })).toContain('sub/dir')
+  })
+})
+
+describe('读不到进度（lost）', () => {
+  const running = () => scan({ state: 'running', phase: 'scanning', outcome: { kind: 'scanning' } })
+  it('扫描还在跑却读不到进度：stuck（角标 + 重新检查），文案不是「正在检查」', () => {
+    const card = scanCard(running(), { ...flags, lost: true })!
+    expect(card.kind).toBe('stuck')
+    expect(scanLine(card)).not.toContain('scan.line')
+    expect(scanLine(card)).not.toBe(scanLine(scanCard(running(), { ...flags, slow: true })!))
+  })
+  it('对照：没丢时跑得快不露、跑得慢是 scanning；终局不受 lost 影响', () => {
+    expect(kindOf(running())).toBeNull()
+    expect(kindOf(running(), { ...flags, slow: true })).toBe('scanning')
+    expect(kindOf(scan(), { ...flags, lost: true })).toBeNull()
   })
 })

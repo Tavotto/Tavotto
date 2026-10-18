@@ -24,6 +24,7 @@ import subprocess
 import sys
 import threading
 import time
+import zipfile
 from pathlib import Path
 
 import pytest
@@ -32,8 +33,10 @@ from support.dependency_repair import (
     FIXTURE_DIST,
     FIXTURE_IMPORT,
     WORKER_PY,
+    build_wheel,
     needs_worker,
     real_venv,
+    site_packages,
     wait_for,
 )
 from tavotto.engine import (
@@ -53,6 +56,15 @@ pytest_plugins = ("support.dependency_repair",)
 @pytest.fixture(autouse=True)
 def _clean(clean_state):
     """本文件每条用例前后都清一遍模块级状态（实现在 support 里，只有一份）。"""
+
+
+def _publish_fixture_wheel(python: str) -> None:
+    """假 pip 成功也要留下真实提供者证据；后续核验仍读目标 venv 的 metadata。"""
+    venv = Path(python).parent.parent
+    assert (venv / "pyvenv.cfg").is_file(), "只写测试创建的 venv，不能写宿主环境"
+    wheel = build_wheel(venv / "fixture-wheelhouse")
+    with zipfile.ZipFile(wheel) as archive:
+        archive.extractall(site_packages(venv))
 
 
 # ===========================================================================
@@ -377,9 +389,13 @@ def test_the_plan_binds_the_requirement_not_the_request(project, monkeypatch):
     assert plan.python == projectenv.interpreter_of(venv)
 
     installs: list[str] = []
-    monkeypatch.setattr(
-        deprepair, "_pip_install", lambda py, req, ev, log, **_: (installs.append(req), ("", ""))[1]
-    )
+
+    def _install_fixture(py, req, ev, log, **_):
+        installs.append(req)
+        _publish_fixture_wheel(py)
+        return "", ""
+
+    monkeypatch.setattr(deprepair, "_pip_install", _install_fixture)
     monkeypatch.setattr(deprepair, "_run", lambda argv, timeout: (0, "pip 24.0"))
     monkeypatch.setattr(
         deprepair.projectenv, "probe_environment", lambda py, mod=None: {"ok": True, "python": py}
@@ -680,7 +696,12 @@ def test_imports_can_pass_while_the_worker_still_cannot_run(project, monkeypatch
         str(project), "figure.py", FIXTURE_IMPORT, target_kind=deprepair.TARGET_PROJECT_VENV
     )
     monkeypatch.setattr(deprepair, "_run", lambda argv, t: (0, "pip 24.0"))
-    monkeypatch.setattr(deprepair, "_pip_install", lambda *a, **_: ("", "ok"))
+
+    def _install_fixture(py, *args, **kwargs):
+        _publish_fixture_wheel(py)
+        return "", "ok"
+
+    monkeypatch.setattr(deprepair, "_pip_install", _install_fixture)
     monkeypatch.setattr(deprepair, "installed_version", lambda py, dist: "1.0")
     # 第一、二层：都说没问题
     monkeypatch.setattr(
@@ -1398,9 +1419,13 @@ def test_a_second_plan_formed_before_the_first_install_finished_does_not_repeat_
     )
     runs: list[str] = []
     monkeypatch.setattr(deprepair, "_run", lambda argv, timeout: (0, "pip 24.0"))
-    monkeypatch.setattr(
-        deprepair, "_pip_install", lambda py, req, ev, log, **_: (runs.append(req), ("", ""))[1]
-    )
+
+    def _install_fixture(py, req, ev, log, **_):
+        runs.append(req)
+        _publish_fixture_wheel(py)
+        return "", ""
+
+    monkeypatch.setattr(deprepair, "_pip_install", _install_fixture)
     monkeypatch.setattr(
         deprepair.projectenv, "probe_environment", lambda py, mod=None: {"ok": True, "python": py}
     )

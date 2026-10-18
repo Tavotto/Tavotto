@@ -8,6 +8,8 @@ import { cn } from '@/lib/utils'
 const CONTENT_CLASS = cn(
   'z-popover rounded-lg bg-surface p-1 shadow-pop',
   'data-[state=open]:animate-pop-in data-[state=closed]:animate-pop-out',
+  // 向上展开的菜单（输入框底栏）：入场的位移从下往上，与它离开触发器的方向一致
+  'data-[side=top]:data-[state=open]:animate-pop-in-up',
 )
 
 /** 一条菜单项的样式：`MenuItem` 与子菜单的触发项共用 */
@@ -20,7 +22,9 @@ export function Menu({
   trigger,
   children,
   align = 'start',
+  side,
   width = 200,
+  fixedWidth,
   open,
   onOpenChange,
   onCloseAutoFocus,
@@ -30,7 +34,11 @@ export function Menu({
   trigger: ReactElement
   children: ReactNode
   align?: 'start' | 'center' | 'end'
+  /** 首选展开方向；放不下 Radix 照旧翻面。输入框底栏的菜单要朝上 */
+  side?: 'top' | 'bottom'
   width?: number
+  /** `width` 是最小宽；带说明的菜单要一个确定的宽度（说明折行而不是撑宽）时给 true */
+  fixedWidth?: boolean
   /** 受控打开（`RowMenu` 用它让 ⇧F10 / 右键打开同一份菜单）；不给就是 Radix 自己管 */
   open?: boolean
   onOpenChange?: (open: boolean) => void
@@ -70,8 +78,10 @@ export function Menu({
       <DM.Portal>
         <DM.Content
           align={align}
+          side={side}
           sideOffset={6}
-          style={{ minWidth: width }}
+          collisionPadding={8}
+          style={fixedWidth ? { width } : { minWidth: width }}
           className={cn(
             CONTENT_CLASS,
             // 从触发器那个角展开，而不是从自己中心——菜单与按钮的因果关系才看得出来
@@ -336,10 +346,18 @@ export function MenuRadioItem({
   shortcut,
   disabled,
   reason,
+  description,
+  tag,
   ...rest
 }: {
   value: string
   children: ReactNode
+  /**
+   * 每项一句说明（第二行 11.5px ink-3）。给了它，这一项就是「带说明的单选」：勾用品牌蓝、
+   * 行内边距放大一档（7/8），名称旁可挂一枚灰色小标 `tag`（「默认」）。
+   */
+  description?: string
+  tag?: string
   icon?: ComponentType<{ size?: number; className?: string }>
   /** 与 MenuItem 同一列的快捷键（标注工具的 A / R / O / L、缩放预设的 ⌘0） */
   shortcut?: string
@@ -348,13 +366,22 @@ export function MenuRadioItem({
   reason?: string
 } & Record<`data-${string}`, string | number | boolean | undefined>) {
   return (
-    <DM.RadioItem {...rest} value={value} disabled={disabled} className={cn(ITEM_CLASS, 'relative pl-6 text-ink')}>
-      <DM.ItemIndicator className="absolute left-1.5 flex items-center">
+    <DM.RadioItem
+      {...rest}
+      value={value}
+      disabled={disabled}
+      className={cn(ITEM_CLASS, 'relative pl-6 text-ink', description && 'items-start py-[7px] pl-8 pr-2')}
+    >
+      <DM.ItemIndicator className={cn('absolute flex items-center', description ? 'left-2 top-[9px] text-accent' : 'left-1.5')}>
         <Check size={ICON_SIZE.sm} />
       </DM.ItemIndicator>
       {Icon && <Icon size={ICON_SIZE.sm} className="shrink-0 text-ink-2" aria-hidden />}
       <span className="flex min-w-0 flex-1 flex-col">
-        <span className="truncate">{children}</span>
+        <span className={cn(!description && 'truncate', description && 'flex items-center gap-1.5')}>
+          {children}
+          {tag && <span className="rounded-sm bg-surface-hover px-1.5 text-xs leading-4 text-ink-3">{tag}</span>}
+        </span>
+        {description && <span className="text-xs leading-4 text-ink-3">{description}</span>}
         {reason && <span className="truncate text-xs leading-4 text-ink-3">{reason}</span>}
       </span>
       {shortcut && <span className="shrink-0 text-xs tabular-nums text-ink-3">{shortcut}</span>}

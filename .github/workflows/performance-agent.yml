@@ -1,0 +1,194 @@
+name: Performance Agent
+
+# 不改变现有 CI 必需 Gate。定期在独立 runner 真跑浏览器/后端；
+# 不将 Linux 浏览器结果误称 macOS 原生窗口性能。
+on:
+  # 只在改动性能 Runner 的 PR 上做真实浏览器资格，不改仓库既有必需 Gate。
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened]
+    paths:
+      - 'scripts/perf_agent.py'
+      - 'tests/test_perf_agent.py'
+      - 'web/playwright.perf.config.ts'
+      - 'web/e2e/perf-agent.spec.ts'
+      - 'scripts/perf_report.py'
+      - 'web/e2e/perf-probe.spec.ts'
+      - 'web/src/perf/**'
+      - 'web/src/lib/presets.ts'
+      - 'web/src/components/PresetsDialog.tsx'
+      - 'web/src/components/PresetPreview.tsx'
+      - 'web/src/components/CanvasToolbar.tsx'
+      - 'web/src/canvas/ObjectView.tsx'
+      - 'web/src/canvas/TextView.tsx'
+      - 'web/src/canvas/PanelView.tsx'
+      - 'web/src/canvas/MeasureChip.tsx'
+      - 'web/src/canvas/interactions.ts'
+      - 'web/src/store/documentStore.ts'
+      - 'web/src/store/interactionStore.ts'
+      - 'web/src/store/svgPreviewStore.ts'
+      - '.github/workflows/performance-agent.yml'
+  workflow_dispatch:
+    inputs:
+      browser:
+        description: Browser engine
+        required: true
+        type: choice
+        options:
+          - chromium
+          - webkit
+        default: chromium
+      repeat:
+        description: Repeat each action at least 10 times for comparison
+        required: true
+        type: number
+        default: 16
+  schedule:
+    - cron: '27 17 * * *'
+
+permissions:
+  contents: read
+  # 只读历史 main workflow 的 artifact，绝不修改基线或仓库状态。
+  actions: read
+
+concurrency:
+  group: performance-agent-${{ github.ref }}-${{ github.event_name }}
+  cancel-in-progress: false
+
+env:
+  TAVOTTO_NO_TELEMETRY: '1'
+  TAVOTTO_NO_DIAG_UPLOAD: '1'
+  TAVOTTO_NO_UPDATE_CHECK: '1'
+
+jobs:
+  browser-interaction:
+    name: Browser performance probe (not macOS native)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        id: py
+        with:
+          python-version: '3.13'
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 11.27.1
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+      - name: Install Tavotto & matplotlib
+        env:
+          PIP_DEFAULT_TIMEOUT: '30'
+          PIP_RETRIES: '5'
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e . matplotlib --only-binary=matplotlib
+      - name: Download and verify approved fonts
+        run: |
+          python scripts/fetch_fonts.py
+          python scripts/fetch_fonts.py --check
+      - name: Build application UI
+        run: python scripts/build_frontend.py
+      - name: Install browser engines
+        working-directory: web
+        env:
+          PERF_BROWSER: ${{ inputs.browser || 'chromium' }}
+        run: pnpm exec playwright install --with-deps "$PERF_BROWSER"
+      - name: Run autonomous UI performance suite
+        env:
+          TAVOTTO_PYTHON: ${{ steps.py.outputs.python-path }}
+          PERF_BROWSER: ${{ inputs.browser || 'chromium' }}
+          PERF_REPEAT: ${{ inputs.repeat || '16' }}
+        run: |
+          python scripts/perf_agent.py run --browser "$PERF_BROWSER" --repeat "$PERF_REPEAT" \
+            --include-drag --out web/test-results/perf-agent/run.json \
+            --summary web/test-results/perf-agent/summary.json
+      # GitHub 托管 runner 的瞬时负载不稳定。历史对照只作 advisory，
+      # 不把不同 CPU / OS / 浏览器的数字伪装成性能过关。
+      - name: Compare to the latest successful main run (advisory)
+        if: success()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          CURRENT="web/test-results/perf-agent/run.json"
+          BASE=""
+          RESULT="web/test-results/perf-agent/comparison.json"
+          # 即使 main 一个历史 run 都没有，也不可上传上一次留下的 comparison.json。
+          rm -f "$RESULT"
+          # workflow 初次出现在 PR 分支时默认分支可能还没有它；这属于 no-baseline，
+          # 不因为查询无结果便假装“回归对比通过”。
+          ids="$(gh run list --workflow performance-agent.yml --branch main --status success --limit 8 --json databaseId --jq '.[].databaseId' 2>/dev/null || true)"
+          had_baseline=0
+          for id in $ids; do
+            target="$RUNNER_TEMP/tavotto-perf-baseline-$id"
+            if ! gh run download "$id" --repo "$GH_REPO" --name "tavotto-performance-agent-$id" --dir "$target" >/dev/null 2>&1; then
+              continue
+            fi
+            candidate="$target/test-results/perf-agent/run.json"
+            if [[ ! -f "$candidate" ]]; then
+              continue
+            fi
+            had_baseline=1
+            rm -f "$RESULT"
+            # --compare 对不同 CPU / OS / 浏览器返回 incomparable (rc 3)。
+            # 不能在第一份不兼容的 main 历史报告就停止搜索。
+            python scripts/perf_agent.py compare "$CURRENT" "$candidate" --json "$RESULT" || :
+            if [[ ! -f "$RESULT" ]]; then
+              echo "::error::Downloaded baseline was not analyzable"
+              exit 1
+            fi
+            verdict="$(python -c 'import json; print(json.load(open("web/test-results/perf-agent/comparison.json", encoding="utf-8"))["status"])')"
+            if [[ "$verdict" == "incomparable" ]]; then
+              rm -f "$RESULT"
+              continue
+            fi
+            if [[ "$verdict" != "pass" && "$verdict" != "regression" ]]; then
+              echo "::error::Unexpected baseline verdict"
+              exit 1
+            fi
+            BASE="$candidate"
+            echo "Compatible historical main run: $id" >> "$GITHUB_STEP_SUMMARY"
+            break
+          done
+          if [[ -z "$BASE" ]]; then
+            if [[ "$had_baseline" -eq 1 ]]; then
+              echo "Baseline: recent main artifacts exist, but none are comparable (NOT regression PASS)." >> "$GITHUB_STEP_SUMMARY"
+            else
+              echo "Baseline: no successful main artifact yet (record-only, NOT regression PASS)." >> "$GITHUB_STEP_SUMMARY"
+            fi
+            exit 0
+          fi
+          # 外部同机历史比较完成后也更新本次 Agent 的总报告，
+          # 不能让 summary.json 继续声称 not_checked。
+          python scripts/perf_agent.py compare "$CURRENT" "$BASE" --json "$RESULT" \
+            --summary "web/test-results/perf-agent/summary.json" || :
+          summary_verdict="$(python -c 'import json; print(json.load(open("web/test-results/perf-agent/summary.json", encoding="utf-8"))["regression_status"])')"
+          if [[ "$summary_verdict" != "$verdict" ]]; then
+            echo "::error::Failed to persist baseline comparison into summary.json"
+            exit 1
+          fi
+          echo "Baseline verdict: **$verdict** (advisory: ephemeral shared runner)" >> "$GITHUB_STEP_SUMMARY"
+          case "$verdict" in
+            pass) echo "Comparable baseline found; no defined regression detected." ;;
+            regression) echo "::warning::Potential interaction latency regression; see comparison.json" ;;
+            *) echo "::error::Unexpected comparison verdict"; exit 1 ;;
+          esac
+      - name: Upload numeric results and failure traces
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: tavotto-performance-agent-${{ github.run_id }}
+          path: |
+            web/test-results/perf-agent/**
+            web/test-results-perf-agent-playwright/**
+            web/test-results/**/trace.zip
+            web/test-results/**/test-failed-*.png
+            web/test-results-perf-drag/**
+          if-no-files-found: warn
+          retention-days: 30

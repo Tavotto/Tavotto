@@ -302,6 +302,12 @@ interface DepRepairState {
   cancel: () => Promise<void>
   rebuildManaged: () => Promise<void>
   onProgress: (p: DependencyProgress) => void
+  /**
+   * 对账（SSE 重连 / 页面恢复）：后端 `/api/events` 无重放，断线期间丢了终态事件，卡片就永远停在「正在安装」。
+   * 对本标签页起过的、还没看到终态的作业（当前卡片 + 切走项目收着的），按 plan_id 问一次实况，结果走 `onProgress`
+   * 同一条规则（所属项目分格、终态副作用只在所属项目开着时派发）。`idle` = 后端不认识这个 id，不据此改任何东西。
+   */
+  reconcile: () => Promise<void>
   /** 关掉确认卡片 / 换一个目标时回到干净状态 */
   reset: () => void
   /**
@@ -879,6 +885,14 @@ export const useDepRepairStore = create<DepRepairState>((set, get) => ({
   },
 
   onProgress: (p) => {
+    // 作业状态只前进（SSE、对账回包、POST 失败后的实况接回都经过这里，判据只此一处）：同一 plan 已经到过终态，
+    // 任何后来的快照（终态的重复、缓冲里的旧非终态）一律丢弃；非终态之间只丢「更早的」——同一状态的重复要收
+    // （下载字节数就是同一状态里一条条来的）
+    const seen = get().progress?.plan_id === p.plan_id ? get().progress : Object.values(get().parked).find((q) => q.plan_id === p.plan_id)
+    if (seen) {
+      if (TERMINAL.includes(seen.state)) return
+      if (!TERMINAL.includes(p.state) && STATE_ORDER[p.state] < STATE_ORDER[seen.state]) return
+    }
     // 重建到了终局：那个项目的单飞放开——不管此刻开着哪个项目
     if (TERMINAL.includes(p.state)) {
       const owner = startedPlans.get(p.plan_id)
@@ -949,6 +963,27 @@ export const useDepRepairStore = create<DepRepairState>((set, get) => ({
       // 留着它，别的脚本行会因为「修复属于别人」一直不给卡片
       if (rerun) get().reset()
     }
+  },
+
+  reconcile: async () => {
+    const pending = new Map<string, DependencyProgress>()
+    const note = (p: DependencyProgress | null | undefined) => {
+      if (p && startedPlans.has(p.plan_id) && p.state !== 'idle' && !TERMINAL.includes(p.state)) pending.set(p.plan_id, p)
+    }
+    note(get().progress)
+    for (const p of Object.values(get().parked)) note(p)
+    await Promise.all(
+      [...pending.keys()].map(async (id) => {
+        let actual: DependencyProgress
+        try {
+          actual = await fetchDependencyState(id)
+        } catch {
+          return // 问不到实况不打扰：下一次重连 / 回到页面再对
+        }
+        if (actual.plan_id !== id || actual.state === 'idle') return
+        get().onProgress(actual) // 先后判据在 `onProgress`（唯一落点）
+      }),
+    )
   },
 
   reset: () =>
@@ -1057,15 +1092,34 @@ function releaseRebuild(owner: string | null, id: string): void {
  */
 function adoptActualRebuild(owner: string | null, actual: DependencyProgress): void {
   const store = useDepRepairStore.getState()
-  // 同一条规则：所属项目此刻开着（含 A → B → A 已经切回）就接到当前卡片上，否则停放到它那格
+  // 同一条规则：所属项目此刻开着（含 A → B → A 已经切回）就接到当前卡片上，否则停放到它那格。
+  // 终态不在这里预写进度：交给 `onProgress`（先后判据与终局副作用的唯一落点，预写了它会当成重复丢掉）
+  const terminal = TERMINAL.includes(actual.state)
   deliverToOwner(
     owner,
-    () => useDepRepairStore.setState({ busy: false, progress: actual }),
-    () => useDepRepairStore.setState({ parked: { ...store.parked, [projectKey(owner)]: actual } }),
+    () => useDepRepairStore.setState(terminal ? { busy: false } : { busy: false, progress: actual }),
+    () => {
+      if (!terminal) useDepRepairStore.setState({ parked: { ...store.parked, [projectKey(owner)]: actual } })
+    },
   )
-  if (TERMINAL.includes(actual.state)) useDepRepairStore.getState().onProgress(actual)
+  if (terminal) useDepRepairStore.getState().onProgress(actual)
 }
 const TERMINAL: readonly DependencyProgress['state'][] = ['done', 'failed', 'cancelled']
+/**
+ * 作业状态的先后（`reconcile` 判「这份回包是不是比我已知的旧」的唯一出处；与 `RepairProgressLine` 的步骤表同序，
+ * 但那张表按阶段分组、不区分 verifying，所以这里单列）。终态同序：互相之间不比。
+ */
+const STATE_ORDER: Record<DependencyProgress['state'], number> = {
+  idle: 0,
+  preparing: 1,
+  downloading_python: 2,
+  creating_env: 3,
+  installing: 4,
+  verifying: 5,
+  done: 6,
+  failed: 6,
+  cancelled: 6,
+}
 
 /**
  * 切项目之后才失败的那次执行请求（install / prepare 的 POST 被拒）：作业没起来，它所属项目那格要说出

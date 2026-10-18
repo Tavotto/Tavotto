@@ -5,11 +5,14 @@ import { Pin } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { drawerMotion, type PresenceState } from '@/lib/motion'
 import { cn } from '@/lib/utils'
+import { ResizeHandle } from '@/components/ui/ResizeHandle'
+import { tryRegisterPointerCancel } from '@/store/gestureCoordinator'
 import { useDocumentStore } from '@/store/documentStore'
 import { usePanelDisplayManifest } from '@/store/renderStore'
 import { useSelectionStore } from '@/store/selectionStore'
-import { LEFT_MAX, LEFT_MIN, RAIL_W, useUiStore } from '@/store/uiStore'
+import { LEFT_DEFAULT, LEFT_MAX, LEFT_MIN, RAIL_W, useUiStore } from '@/store/uiStore'
 import { IconButton } from '../ui/Button'
+import { DESK_FIELD_SCOPE } from '../ui/fieldBox'
 import { AssetBrowser } from './AssetBrowser'
 import { CanvasList } from './CanvasList'
 import { DrawerCount } from './DrawerCount'
@@ -64,7 +67,7 @@ export function LeftPanel({
         // 「必须与抽屉同色才不露缝」的子元素读（问题面板的组头），不另造设计 token
         overlay
           ? 'absolute inset-y-0 z-drawer bg-surface shadow-pop [--drawer-bg:var(--color-surface)]'
-          : 'bg-bg [--drawer-bg:var(--color-bg)] [--color-field-hover:var(--color-surface-2)] [--color-field:var(--color-surface)]',
+          : `bg-bg [--drawer-bg:var(--color-bg)] ${DESK_FIELD_SCOPE}`,
         motion.className,
       )}
     >
@@ -140,52 +143,18 @@ function ElementCount() {
 /** 右边缘的拖拽把手：卡片网格的列宽由它决定，所以宽度值得可调且记住 */
 function WidthHandle() {
   const { t } = useTranslation('workspace')
-  // 可聚焦的 separator 是个真控件：必须报出当前值与值域（axe critical）
   const width = useUiStore((s) => s.leftWidth)
-  const start = (e: React.PointerEvent) => {
-    e.preventDefault()
-    const from = useUiStore.getState().leftWidth
-    const x0 = e.clientX
-    const move = (ev: PointerEvent) => useUiStore.getState().setLeftWidth(from + ev.clientX - x0)
-    const up = () => {
-      window.removeEventListener('pointermove', move)
-      window.removeEventListener('pointerup', up)
-    }
-    window.addEventListener('pointermove', move)
-    window.addEventListener('pointerup', up)
-  }
-
   return (
-    <div
-      role="separator"
-      aria-orientation="vertical"
-      aria-label={t('drawer.resize', { min: LEFT_MIN, max: LEFT_MAX })}
-      aria-valuenow={Math.round(width)}
-      aria-valuemin={LEFT_MIN}
-      aria-valuemax={LEFT_MAX}
-      tabIndex={0}
-      onPointerDown={start}
-      onKeyDown={(e) => {
-        if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return
-        e.preventDefault()
-        const ui = useUiStore.getState()
-        ui.setLeftWidth(ui.leftWidth + (e.key === 'ArrowRight' ? 16 : -16))
-      }}
-      // 整条都在抽屉内侧：外层 overflow-hidden（开合动效要用）会把伸到外面的部分剪掉。
-      // 命中区仍是 8px，**看得见的只有右缘一根 1px 发丝线**（2026-10-07 设计审计 §4.1：此前是整条 8px
-      // 灰块，透明时又完全看不出可拖）：hover 画 border-strong 发丝线，键盘聚焦时发丝线换 accent、加宽到 2px
-      className={cn(
-        'group/resize absolute inset-y-0 right-0 z-canvas-chrome flex w-2 cursor-col-resize justify-end outline-none',
-      )}
-    >
-      <span
-        aria-hidden
-        data-drawer-resize-line
-        className={cn(
-          'h-full w-px bg-transparent transition-colors duration-fast',
-          'group-hover/resize:bg-border-strong group-focus-visible/resize:w-0.5 group-focus-visible/resize:bg-accent',
-        )}
-      />
-    </div>
+    <ResizeHandle
+      name="left-drawer"
+      registerCancel={tryRegisterPointerCancel}
+      side="right"
+      value={width}
+      min={LEFT_MIN}
+      max={LEFT_MAX}
+      defaultValue={LEFT_DEFAULT}
+      onChange={(px) => useUiStore.getState().setLeftWidth(px)}
+      label={t('drawer.resize', { min: LEFT_MIN, max: LEFT_MAX })}
+    />
   )
 }

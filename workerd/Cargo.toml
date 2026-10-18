@@ -26,3 +26,11 @@ sha2 = "0.10"
 opt-level = 2
 lto = "thin"
 strip = true
+# 符号文件另存、发出去的二进制仍是剥光的（发行约定见 docs/RELEASING.md「调试符号」）：
+# debug 只留行表（崩溃栈符号化够用，dSYM/PDB 比全量 DWARF 小得多）；
+# split-debuginfo=packed 让 macOS 产出 .dSYM、Windows 产出 .pdb；strip=true 在 macOS 上剥掉二进制里的
+# 调试段与符号表（实测体积与不开 debug 时只差 100 字节量级）。
+# **Windows MSVC 上 strip 会连 PDB 一起不产出**：Windows 腿由 desktop-tauri.yml 用
+# CARGO_PROFILE_RELEASE_STRIP=none 覆盖（MSVC 的 exe 本来就不内嵌调试段，只多一条 PDB 路径）。
+debug = "line-tables-only"
+split-debuginfo = "packed"

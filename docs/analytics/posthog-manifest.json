@@ -1,0 +1,1481 @@
+{
+  "manifest_version": 1,
+  "provider": "posthog",
+  "online_state": {
+    "created": false,
+    "statement": "线上未创建：本文件是离线定义，没有访问 PostHog，未调用任何 PostHog 接口，未创建/修改任何看板、insight、告警或订阅。所有 remote_id 为 null，所有 status 为 not_created 或 pending_event。",
+    "verified_against_live_project": false
+  },
+  "project": {
+    "id": 567339,
+    "name": "Default project",
+    "timezone": "UTC",
+    "url": "https://us.posthog.com/project/567339/",
+    "observed_on": "2026-10-08",
+    "observed_source": "Recovery and Diagnostics Prompt Pack §6.1（只读观察，未在线复核；执行时必须重新核对组织/项目/时区）"
+  },
+  "contract_source": {
+    "events": "src/tavotto/engine/telemetry.py EVENTS / AUTO_PROPS（main）",
+    "distribution_events": "services/telemetry_proxy/tavotto_telemetry_proxy/contract.py METRICS_EVENTS",
+    "consent_version_on_main": 2
+  },
+  "sync_rule": {
+    "key": "logical_name",
+    "rule": "同步脚本/人工以 logical_name 为唯一键：manifest 里有 remote_id 就更新该远端资产；remote_id 为 null 时先在目标看板按『标题 + 标签 tavotto-manifest:<logical_name>』查找，找到就认领并回填 remote_id，找不到才创建，创建后立刻回填 remote_id 与 url。绝不按标题新建副本；不删除他人资产；version 递增表示定义变更。",
+    "tag_convention": "每个远端资产加标签 tavotto-manifest:<logical_name>，认领靠它而不是标题",
+    "duplicate_policy": "发现同 logical_name 多个远端资产：停止并人工处理，不自动删"
+  },
+  "analysis_disciplines_ref": "docs/analytics/posthog-dashboard.md 的『分析纪律』一节（Prompt Pack §6.5 十条）",
+  "known_biases": [
+    {
+      "id": "opt_in",
+      "text": "只覆盖同意且送达的匿名安装（distinct_id 是安装不是人）；比例也可能有偏，方向未知，不称保守下界"
+    },
+    {
+      "id": "mainland_china",
+      "text": "大陆网络不可达，大陆安装缺席而非少报（yc-metrics.md）"
+    },
+    {
+      "id": "macos_desktop_le_0_16_0",
+      "text": "macOS desktop 在 v0.16.0 及更早无事件（#439）"
+    },
+    {
+      "id": "suspected_ci",
+      "text": "疑似 CI 安装按全历史规则识别，缺来源证据；#440 修复合入日见 yc-metrics.md，历史数量不是实时数量"
+    },
+    {
+      "id": "app_version_not_build",
+      "text": "app_version 不是 build 标识，同一版本号可能对应多个未发布提交"
+    },
+    {
+      "id": "sidecar_silence",
+      "text": "统计经 sidecar 转发，sidecar 挂掉时连错误统计也发不出；没有错误事件不能证明没有 P0"
+    }
+  ],
+  "shared_fragments": {
+    "engaged_events": [
+      "figure_opened",
+      "figure_edit_completed",
+      "canvas_created",
+      "preflight_completed",
+      "export_completed",
+      "ai_assistant_invoked"
+    ],
+    "ci_suspected_exclusion_hogql": "distinct_id NOT IN (SELECT distinct_id FROM events WHERE distinct_id != 'distribution_metrics' GROUP BY distinct_id HAVING count() = 1 AND any(event) = 'telemetry_enabled' AND any(properties.distribution) = 'source')",
+    "ci_suspected_note": "规则出自 yc-dashboard.json ci_phantom_installs。缺来源证据，所以称疑似 CI；a6 给出含/不含的敏感性对照；不删除原始数据，也不排除所有 source 用户。"
+  },
+  "pending_events": {
+    "export_result": {
+      "depends_on": "#1103 + CONSENT_VERSION 3",
+      "pr": "https://github.com/Tavotto/Tavotto/pull/1103 (draft)",
+      "schema_source": "PR #1103 head aadb10ce3d442c5451b8553dfe5018675d41eb68 的 engine/telemetry.py；草稿仍可能变，合并前必须对照 main 复核",
+      "not_on_main": true,
+      "properties": {
+        "outcome": {
+          "kind": "enum",
+          "values": [
+            "done",
+            "partial",
+            "failed",
+            "cancelled"
+          ]
+        },
+        "scope": {
+          "kind": "enum",
+          "values": [
+            "canvas",
+            "original"
+          ]
+        },
+        "pdf": {
+          "kind": "bool"
+        },
+        "png": {
+          "kind": "bool"
+        },
+        "eps": {
+          "kind": "bool"
+        },
+        "tiff": {
+          "kind": "bool"
+        },
+        "with_report": {
+          "kind": "bool"
+        },
+        "delivered": {
+          "kind": "int",
+          "max": 8
+        },
+        "stage": {
+          "kind": "enum",
+          "values": [
+            "prepare",
+            "source",
+            "compile",
+            "compose",
+            "raster",
+            "inspect",
+            "publish",
+            "report"
+          ]
+        },
+        "error_class": {
+          "kind": "enum",
+          "values": [
+            "request",
+            "environment",
+            "backend",
+            "artifact_rejected",
+            "source_changed",
+            "report",
+            "other"
+          ]
+        }
+      },
+      "current_data_fallback": "export_completed：done 或 partial 时发送，pdf/png 表示该格式真的写出；不是『请求的文件全部成功』，没有 failed/cancelled。"
+    }
+  },
+  "dashboards": [
+    {
+      "logical_name": "tavotto-main-v2",
+      "title": "Tavotto 主看板（v2）",
+      "project_id": 567339,
+      "remote_id": null,
+      "url": null,
+      "status": "not_created",
+      "version": 1,
+      "groups": [
+        {
+          "name": "使用与激活",
+          "insights": [
+            "a1_started_installs_weekly",
+            "a2_engaged_installs_weekly",
+            "a3_weekly_successful_exporters",
+            "a4_activation_direct_path",
+            "a5_activation_deep_edit_path",
+            "a6_observed_installs_ci_sensitivity"
+          ]
+        },
+        {
+          "name": "关键操作健康",
+          "insights": [
+            "b1_export_completed_by_version",
+            "b2_export_result_outcomes",
+            "b3_export_done_ratio",
+            "b4_export_failed_installs_by_version",
+            "b5_document_saved_outcomes",
+            "b6_document_saved_affected_installs"
+          ]
+        },
+        {
+          "name": "引导与回访",
+          "insights": [
+            "c1_tutorial_funnel_by_version",
+            "c2_tutorial_steps_by_step_id",
+            "c3_export_return_weekly",
+            "c4_engaged_d7_return"
+          ]
+        },
+        {
+          "name": "版本与分发",
+          "insights": [
+            "d1_version_adoption",
+            "d2_platform_distribution_mix",
+            "d3_version_received_faults",
+            "d4_installer_downloads_30d"
+          ]
+        }
+      ],
+      "relationship_to_existing": "不触碰项目里的 Your starter dashboard（ID 2014147）及其 8 个默认 $pageview 示例 insight：它们与 Tavotto 数据不匹配，但属于他人/默认资产，是否归档由负责人决定。"
+    }
+  ],
+  "insights": [
+    {
+      "logical_name": "a1_started_installs_weekly",
+      "group": "使用与激活",
+      "title": "收到启动事件的安装（滚动 7 日）",
+      "description": "过去 7 日内发过 app_started 的匿名安装数。只说明『应用服务启动且事件送达』，不代表 UI 已就绪、完成有用操作或 crash-free。也是『接收断流』告警的数据源。",
+      "population": "opted_in_install",
+      "kind": "TrendsQuery",
+      "query": {
+        "kind": "TrendsQuery",
+        "series": [
+          {
+            "kind": "EventsNode",
+            "event": "app_started",
+            "name": "app_started",
+            "math": "weekly_active"
+          }
+        ],
+        "dateRange": {
+          "date_from": "-90d",
+          "date_to": null,
+          "explicitDate": true
+        },
+        "interval": "day",
+        "trendsFilter": {
+          "display": "ActionsLineGraph"
+        },
+        "filterTestAccounts": false
+      },
+      "events": [
+        "app_started"
+      ],
+      "properties": {
+        "app_started": []
+      },
+      "filters": "event = app_started；无属性过滤",
+      "window": "每个日点 = 截至该日的滚动 7 日，UTC 日界",
+      "timezone": "UTC（项目时区，PostHog 项目 567339）",
+      "denominator": "无（绝对数，非比例）；它是下游所有『受影响安装』比例的参照量之一",
+      "exclusions": "疑似 CI 安装（规则见 shared_fragments.ci_suspected_exclusion_hogql）：类型化查询不含 telemetry_enabled 起点，疑似 CI 安装无 app_started/export_completed，天然不进入；HogQL 版本显式排除",
+      "data_start": "遥测上线日起；仓库内没有记录确切起点，上线前用 SELECT min(timestamp) FROM events WHERE event = '<事件>' 实测并回填 data_start_value",
+      "data_start_value": null,
+      "data_start_verified": false,
+      "missing_data_note": "无数据的区间显示『无数据』，不当作 0；app_started 不等于 UI 就绪；sidecar 挂掉时该事件和错误事件都发不出，所以数字下降不能区分『没人用』与『链路断了』；大陆网络不可达，大陆安装不是少报而是缺席，比例也可能有偏，偏向方向未知",
+      "governed_metric_id": null,
+      "version": 1,
+      "status": "not_created",
+      "remote_id": null,
+      "url": null
+    },
+    {
+      "logical_name": "a2_engaged_installs_weekly",
+      "group": "使用与激活",
+      "title": "有效使用的安装（UTC 自然周）",
+      "description": "每个自然周内发过任一有效使用事件（figure_opened、figure_edit_completed、canvas_created、preflight_completed、export_completed、ai_assistant_invoked）的匿名安装数。app_started 单独不算。",
+      "population": "opted_in_install",
+      "kind": "HogQLQuery",
+      "query": {
+        "kind": "HogQLQuery",
+        "query": "SELECT toStartOfWeek(timestamp, 1) AS week, count(DISTINCT distinct_id) AS engaged_installs FROM events WHERE event IN ('figure_opened', 'figure_edit_completed', 'canvas_created', 'preflight_completed', 'export_completed', 'ai_assistant_invoked') AND distinct_id != 'distribution_metrics' AND distinct_id NOT IN (SELECT distinct_id FROM events WHERE distinct_id != 'distribution_metrics' GROUP BY distinct_id HAVING count() = 1 AND any(event) = 'telemetry_enabled' AND any(properties.distribution) = 'source') AND timestamp >= toStartOfWeek(now(), 1) - INTERVAL 12 WEEK AND timestamp < toStartOfWeek(now(), 1) GROUP BY week ORDER BY week"
+      },
+      "events": [
+        "figure_opened",
+        "figure_edit_completed",
+        "canvas_created",
+        "preflight_completed",
+        "export_completed",
+        "ai_assistant_invoked",
+        "telemetry_enabled"
+      ],
+      "properties": {
+        "telemetry_enabled": []
+      },
+      "filters": "event IN 有效使用事件集合；排除疑似 CI",
+      "window": "最近 12 个完整 UTC 自然周（周一起），不含当前未结束的一周",
+      "timezone": "UTC（项目时区，PostHog 项目 567339）",
+      "denominator": "无（绝对数，非比例）",
+      "exclusions": "排除 distribution_metrics；显式排除疑似 CI（全历史只有一次 telemetry_enabled 且 distribution=source；缺来源证据，只称疑似）",
+      "data_start": "遥测上线日起；仓库内没有记录确切起点，上线前用 SELECT min(timestamp) FROM events WHERE event = '<事件>' 实测并回填 data_start_value",
+      "data_start_value": null,
+      "data_start_verified": false,
+      "missing_data_note": "无数据的区间显示『无数据』，不当作 0；当前未结束周被刻意排除，避免半周低估；preflight_completed.errors 是图表检查结果不是运行时异常；大陆网络不可达，大陆安装不是少报而是缺席，比例也可能有偏，偏向方向未知",
+      "governed_metric_id": "engaged_wau",
+      "version": 1,
+      "status": "not_created",
+      "remote_id": null,
+      "url": null,
+      "definition_change": "yc-dashboard 的 engaged_wau 是滚动 7 日；此处改为 UTC 自然周且去掉未完成周。原因：HogQL 滚动 WAU 需逐日展开 7 日窗口，且滚动值最后一点含不完整窗口；类型化 TrendsQuery 又无法对多个事件做去重并集。数值不可与滚动 WAU 直接对比。"
+    },
+    {
+      "logical_name": "a3_weekly_successful_exporters",
+      "group": "使用与激活",
+      "title": "每周有导出文件的安装（滚动 7 日）",
+      "description": "过去 7 日内至少有一次 export_completed 的匿名安装数（受治理指标 weekly_successful_exporters）。export_completed 在完整成功或部分成功（done/partial）时发送，pdf/png 表示该格式真的写出；它不等于『请求的文件全部成功』，也没有失败/取消。",
+      "population": "opted_in_install",
+      "kind": "TrendsQuery",
+      "query": {
+        "kind": "TrendsQuery",
+        "series": [
+          {
+            "kind": "EventsNode",
+            "event": "export_completed",
+            "name": "export_completed",
+            "math": "weekly_active"
+          }
+        ],
+        "dateRange": {
+          "date_from": "-90d",
+          "date_to": null,
+          "explicitDate": true
+        },
+        "interval": "day",
+        "trendsFilter": {
+          "display": "ActionsLineGraph"
+        },
+        "filterTestAccounts": false
+      },
+      "events": [
+        "export_completed"
+      ],
+      "properties": {
+        "export_completed": []
+      },
+      "filters": "event = export_completed",
+      "window": "滚动 7 日，UTC 日界",
+      "timezone": "UTC（项目时区，PostHog 项目 567339）",
+      "denominator": "无（绝对数）；比例看 b3（待 export_result）",
+      "exclusions": "疑似 CI 安装（规则见 shared_fragments.ci_suspected_exclusion_hogql）：类型化查询不含 telemetry_enabled 起点，疑似 CI 安装无 app_started/export_completed，天然不进入；HogQL 版本显式排除",
+      "data_start": "遥测上线日起；仓库内没有记录确切起点，上线前用 SELECT min(timestamp) FROM events WHERE event = '<事件>' 实测并回填 data_start_value",
+      "data_start_value": null,
+      "data_start_verified": false,
+      "missing_data_note": "无数据的区间显示『无数据』，不当作 0；partial 与 done 在此混在一起（旧事件无法区分），不得当作『全部成功』；失败和取消没有事件，缺失不是零；大陆网络不可达，大陆安装不是少报而是缺席，比例也可能有偏，偏向方向未知",
+      "governed_metric_id": "weekly_successful_exporters",
+      "version": 1,
+      "status": "not_created",
+      "remote_id": null,
+      "url": null
+    },
+    {
+      "logical_name": "a4_activation_direct_path",
+      "group": "使用与激活",
+      "title": "首次观察后 7 日内导出（直接路径）",
+      "description": "app_started → export_completed，7 日转化窗口。覆盖不经图内编辑、直接布局/导出的路径，所以它包含深度编辑路径的人，不是其对立面。",
+      "population": "opted_in_install",
+      "kind": "FunnelsQuery",
+      "query": {
+        "kind": "FunnelsQuery",
+        "series": [
+          {
+            "kind": "EventsNode",
+            "event": "app_started",
+            "name": "app_started"
+          },
+          {
+            "kind": "EventsNode",
+            "event": "export_completed",
+            "name": "export_completed"
+          }
+        ],
+        "dateRange": {
+          "date_from": "-97d",
+          "date_to": "-7d",
+          "explicitDate": true
+        },
+        "funnelsFilter": {
+          "funnelVizType": "steps",
+          "funnelOrderType": "ordered",
+          "funnelWindowInterval": 7,
+          "funnelWindowIntervalUnit": "day"
+        },
+        "filterTestAccounts": false
+      },
+      "events": [
+        "app_started",
+        "export_completed"
+      ],
+      "properties": {
+        "app_started": [],
+        "export_completed": []
+      },
+      "filters": "两步有序漏斗",
+      "window": "起点日在 [-97d,-7d]（保证 7 日窗口已成熟），转化窗口 7 日",
+      "timezone": "UTC（项目时区，PostHog 项目 567339）",
+      "denominator": "窗口内发过 app_started 的匿名安装（第一步人数）",
+      "exclusions": "疑似 CI 安装（规则见 shared_fragments.ci_suspected_exclusion_hogql）：类型化查询不含 telemetry_enabled 起点，疑似 CI 安装无 app_started/export_completed，天然不进入；HogQL 版本显式排除",
+      "data_start": "遥测上线日起；仓库内没有记录确切起点，上线前用 SELECT min(timestamp) FROM events WHERE event = '<事件>' 实测并回填 data_start_value",
+      "data_start_value": null,
+      "data_start_verified": false,
+      "missing_data_note": "无数据的区间显示『无数据』，不当作 0；类型化漏斗按『窗口内任一次 app_started』入队，不是严格的『首次观察』；严格口径见 yc-metrics E 节（需 HogQL），如要对外引用请注明变体。『首次观察』不等于首次安装；opt-in 较晚的安装会被抬高转化；大陆网络不可达，大陆安装不是少报而是缺席，比例也可能有偏，偏向方向未知",
+      "governed_metric_id": "activation_rate_7d",
+      "version": 1,
+      "status": "not_created",
+      "remote_id": null,
+      "url": null
+    },
+    {
+      "logical_name": "a5_activation_deep_edit_path",
+      "group": "使用与激活",
+      "title": "首次观察后 7 日内导出（深度编辑路径）",
+      "description": "app_started → figure_opened → figure_edit_completed → export_completed，7 日转化窗口。与 a4 对照即可看出多少导出不经图内编辑。",
+      "population": "opted_in_install",
+      "kind": "FunnelsQuery",
+      "query": {
+        "kind": "FunnelsQuery",
+        "series": [
+          {
+            "kind": "EventsNode",
+            "event": "app_started",
+            "name": "app_started"
+          },
+          {
+            "kind": "EventsNode",
+            "event": "figure_opened",
+            "name": "figure_opened"
+          },
+          {
+            "kind": "EventsNode",
+            "event": "figure_edit_completed",
+            "name": "figure_edit_completed"
+          },
+          {
+            "kind": "EventsNode",
+            "event": "export_completed",
+            "name": "export_completed"
+          }
+        ],
+        "dateRange": {
+          "date_from": "-97d",
+          "date_to": "-7d",
+          "explicitDate": true
+        },
+        "funnelsFilter": {
+          "funnelVizType": "steps",
+          "funnelOrderType": "ordered",
+          "funnelWindowInterval": 7,
+          "funnelWindowIntervalUnit": "day"
+        },
+        "filterTestAccounts": false
+      },
+      "events": [
+        "app_started",
+        "figure_opened",
+        "figure_edit_completed",
+        "export_completed"
+      ],
+      "properties": {
+        "app_started": [],
+        "figure_opened": [],
+        "figure_edit_completed": [],
+        "export_completed": []
+      },
+      "filters": "四步有序漏斗",
+      "window": "起点日在 [-97d,-7d]，转化窗口 7 日",
+      "timezone": "UTC（项目时区，PostHog 项目 567339）",
+      "denominator": "窗口内发过 app_started 的匿名安装（第一步人数）",
+      "exclusions": "疑似 CI 安装（规则见 shared_fragments.ci_suspected_exclusion_hogql）：类型化查询不含 telemetry_enabled 起点，疑似 CI 安装无 app_started/export_completed，天然不进入；HogQL 版本显式排除",
+      "data_start": "遥测上线日起；仓库内没有记录确切起点，上线前用 SELECT min(timestamp) FROM events WHERE event = '<事件>' 实测并回填 data_start_value",
+      "data_start_value": null,
+      "data_start_verified": false,
+      "missing_data_note": "无数据的区间显示『无数据』，不当作 0；同 a4 的『首次观察』限制；figure_edit_completed 是一次历史事务一条事件，不是编辑次数的度量；大陆网络不可达，大陆安装不是少报而是缺席，比例也可能有偏，偏向方向未知",
+      "governed_metric_id": "activation_funnel",
+      "version": 1,
+      "status": "not_created",
+      "remote_id": null,
+      "url": null
+    },
+    {
+      "logical_name": "a6_observed_installs_ci_sensitivity",
+      "group": "使用与激活",
+      "title": "观察到的新安装：含/不含疑似 CI（敏感性对照）",
+      "description": "按首次观察周统计匿名安装数，同时给出排除与不排除疑似 CI 的两列，让排除规则的影响可见。规则为全历史只有一次 telemetry_enabled 且 distribution=source；缺来源证据，只称疑似，可能包含真实退出或丢事件的 source 用户。",
+      "population": "opted_in_install",
+      "kind": "HogQLQuery",
+      "query": {
+        "kind": "HogQLQuery",
+        "query": "SELECT toStartOfWeek(first_seen, 1) AS week, countIf(NOT suspected_ci) AS installs_excluding_suspected_ci, count() AS installs_including_suspected_ci, countIf(suspected_ci) AS suspected_ci_installs FROM (SELECT distinct_id, min(timestamp) AS first_seen, (count() = 1 AND any(event) = 'telemetry_enabled' AND any(properties.distribution) = 'source') AS suspected_ci FROM events WHERE distinct_id != 'distribution_metrics' GROUP BY distinct_id) WHERE first_seen >= toStartOfWeek(now(), 1) - INTERVAL 12 WEEK AND first_seen < toStartOfWeek(now(), 1) GROUP BY week ORDER BY week"
+      },
+      "events": [
+        "telemetry_enabled"
+      ],
+      "properties": {
+        "telemetry_enabled": []
+      },
+      "filters": "全历史聚合后按首次观察周过滤（不是窗口内计数）",
+      "window": "最近 12 个完整 UTC 自然周",
+      "timezone": "UTC（项目时区，PostHog 项目 567339）",
+      "denominator": "无（绝对数）；三列互相对照",
+      "exclusions": "本图同时给出含/不含两列，不做单边排除；仅排除 distribution_metrics",
+      "data_start": "遥测上线日起；仓库内没有记录确切起点，上线前用 SELECT min(timestamp) FROM events WHERE event = '<事件>' 实测并回填 data_start_value",
+      "data_start_value": null,
+      "data_start_verified": false,
+      "missing_data_note": "无数据的区间显示『无数据』，不当作 0；一次性规则只能全历史评估，不能只看窗口；'首次观察'不是首次安装；#440 修复前后的疑似 CI 数量不同，历史观察数不能当实时数；大陆网络不可达，大陆安装不是少报而是缺席，比例也可能有偏，偏向方向未知",
+      "governed_metric_id": "opted_in_install",
+      "version": 1,
+      "status": "not_created",
+      "remote_id": null,
+      "url": null
+    },
+    {
+      "logical_name": "b1_export_completed_by_version",
+      "group": "关键操作健康",
+      "title": "导出事件（done/partial）按版本",
+      "description": "按 app_version 拆分 export_completed 的次数与安装数。语义同 a3：只有 done 或 partial 才会发，所以没有失败率；失败率等 export_result（见 b2 到 b4）。",
+      "population": "opted_in_install",
+      "kind": "TrendsQuery",
+      "query": {
+        "kind": "TrendsQuery",
+        "series": [
+          {
+            "kind": "EventsNode",
+            "event": "export_completed",
+            "name": "export_completed",
+            "math": "total"
+          },
+          {
+            "kind": "EventsNode",
+            "event": "export_completed",
+            "name": "export_completed",
+            "math": "dau"
+          }
+        ],
+        "dateRange": {
+          "date_from": "-56d",
+          "date_to": null,
+          "explicitDate": true
+        },
+        "interval": "week",
+        "trendsFilter": {
+          "display": "ActionsTable"
+        },
+        "breakdownFilter": {
+          "breakdown": "app_version",
+          "breakdown_type": "event"
+        },
+        "filterTestAccounts": false
+      },
+      "events": [
+        "export_completed"
+      ],
+      "properties": {
+        "export_completed": [
+          "app_version"
+        ]
+      },
+      "filters": "event = export_completed；按 app_version 拆分",
+      "window": "最近 8 周（含当前未结束周，读数时忽略最后一列）",
+      "timezone": "UTC（项目时区，PostHog 项目 567339）",
+      "denominator": "无比例（次数与安装数并列）；解读版本差异时对照 d1 的各版本安装规模",
+      "exclusions": "疑似 CI 安装（规则见 shared_fragments.ci_suspected_exclusion_hogql）：类型化查询不含 telemetry_enabled 起点，疑似 CI 安装无 app_started/export_completed，天然不进入；HogQL 版本显式排除",
+      "data_start": "遥测上线日起；仓库内没有记录确切起点，上线前用 SELECT min(timestamp) FROM events WHERE event = '<事件>' 实测并回填 data_start_value",
+      "data_start_value": null,
+      "data_start_verified": false,
+      "missing_data_note": "无数据的区间显示『无数据』，不当作 0；app_version 不是 build 标识：同一版本号可能对应多个未发布提交；没有 failed/cancelled 事件，不能由此推失败率；大陆网络不可达，大陆安装不是少报而是缺席，比例也可能有偏，偏向方向未知",
+      "governed_metric_id": null,
+      "version": 1,
+      "status": "not_created",
+      "remote_id": null,
+      "url": null
+    },
+    {
+      "logical_name": "b2_export_result_outcomes",
+      "group": "关键操作健康",
+      "title": "导出终态分布（done/partial/failed/cancelled）",
+      "description": "每个被受理的导出作业终局时一条 export_result，按 outcome 拆分次数。分母是『收到的终态事件』，不是尝试数：没有 export_started，也没有可安全联结的尝试 id，所以不做逐尝试 start/result 联结。",
+      "population": "opted_in_install",
+      "kind": "TrendsQuery",
+      "query": {
+        "kind": "TrendsQuery",
+        "series": [
+          {
+            "kind": "EventsNode",
+            "event": "export_result",
+            "name": "export_result",
+            "math": "total"
+          }
+        ],
+        "dateRange": {
+          "date_from": "-56d",
+          "date_to": null,
+          "explicitDate": true
+        },
+        "interval": "week",
+        "trendsFilter": {
+          "display": "ActionsStackedBar"
+        },
+        "breakdownFilter": {
+          "breakdown": "outcome",
+          "breakdown_type": "event"
+        },
+        "filterTestAccounts": false
+      },
+      "events": [
+        "export_result"
+      ],
+      "properties": {
+        "export_result": [
+          "outcome"
+        ]
+      },
+      "filters": "event = export_result；按 outcome 拆分",
+      "window": "最近 8 周",
+      "timezone": "UTC（项目时区，PostHog 项目 567339）",
+      "denominator": "同周全部 export_result 事件（收到的终态事件数）",
+      "exclusions": "疑似 CI 安装（规则见 shared_fragments.ci_suspected_exclusion_hogql）：类型化查询不含 telemetry_enabled 起点，疑似 CI 安装无 app_started/export_completed，天然不进入；HogQL 版本显式排除",
+      "data_start": "export_result 首条事件（待 #1103 合并并随批量 CONSENT_VERSION 3 发布；此前无数据）",
+      "data_start_value": null,
+      "data_start_verified": false,
+      "missing_data_note": "该事件上线前整段无数据，必须显示『无数据』而不是 100% 成功或 0 失败；离线/丢事件/客户端关闭统计时终态事件不会到达，比例有偏",
+      "governed_metric_id": null,
+      "version": 1,
+      "status": "pending_event",
+      "remote_id": null,
+      "url": null,
+      "depends_on": "#1103 + CONSENT_VERSION 3",
+      "fallback": "当前可用：b1（export_completed，done 或 partial 才发，无失败/取消）。不得把 export_completed 数当作『全部成功』。"
+    },
+    {
+      "logical_name": "b3_export_done_ratio",
+      "group": "关键操作健康",
+      "title": "导出完整成功占比（done / 终态）",
+      "description": "outcome = done 的 export_result 占全部 export_result 的比例（公式 A/B）。partial 不算 done。『某版本导出失败』的告警数据源之一。",
+      "population": "opted_in_install",
+      "kind": "TrendsQuery",
+      "query": {
+        "kind": "TrendsQuery",
+        "series": [
+          {
+            "kind": "EventsNode",
+            "event": "export_result",
+            "name": "export_result",
+            "math": "total",
+            "properties": [
+              {
+                "key": "outcome",
+                "operator": "exact",
+                "value": [
+                  "done"
+                ],
+                "type": "event"
+              }
+            ]
+          },
+          {
+            "kind": "EventsNode",
+            "event": "export_result",
+            "name": "export_result",
+            "math": "total"
+          }
+        ],
+        "dateRange": {
+          "date_from": "-56d",
+          "date_to": null,
+          "explicitDate": true
+        },
+        "interval": "week",
+        "trendsFilter": {
+          "display": "ActionsLineGraph",
+          "formula": "A / B"
+        },
+        "filterTestAccounts": false
+      },
+      "events": [
+        "export_result"
+      ],
+      "properties": {
+        "export_result": [
+          "outcome"
+        ]
+      },
+      "filters": "A: outcome=done；B: 全部；公式 A/B",
+      "window": "最近 8 周；告警用上一个完整周",
+      "timezone": "UTC（项目时区，PostHog 项目 567339）",
+      "denominator": "同周全部 export_result 终态事件（B 序列）；样本不足时不读比例",
+      "exclusions": "疑似 CI 安装（规则见 shared_fragments.ci_suspected_exclusion_hogql）：类型化查询不含 telemetry_enabled 起点，疑似 CI 安装无 app_started/export_completed，天然不进入；HogQL 版本显式排除",
+      "data_start": "export_result 首条事件（待 #1103 合并并随批量 CONSENT_VERSION 3 发布；此前无数据）",
+      "data_start_value": null,
+      "data_start_verified": false,
+      "missing_data_note": "上线前整段无数据，显示『无数据』而不是 100%；opt-in、离线与丢事件使比例可能有偏，方向未知，不称保守下界",
+      "governed_metric_id": null,
+      "version": 1,
+      "status": "pending_event",
+      "remote_id": null,
+      "url": null,
+      "depends_on": "#1103 + CONSENT_VERSION 3",
+      "fallback": "当前无等价比例；只能看 b1 的次数趋势，且不得推失败率。"
+    },
+    {
+      "logical_name": "b4_export_failed_installs_by_version",
+      "group": "关键操作健康",
+      "title": "导出失败受影响安装（按版本）",
+      "description": "outcome = failed 的 export_result 的唯一安装数，按 app_version 拆分。看受影响安装数，不看事件数，避免同一安装重试放大。",
+      "population": "opted_in_install",
+      "kind": "TrendsQuery",
+      "query": {
+        "kind": "TrendsQuery",
+        "series": [
+          {
+            "kind": "EventsNode",
+            "event": "export_result",
+            "name": "export_result",
+            "math": "dau",
+            "properties": [
+              {
+                "key": "outcome",
+                "operator": "exact",
+                "value": [
+                  "failed"
+                ],
+                "type": "event"
+              }
+            ]
+          }
+        ],
+        "dateRange": {
+          "date_from": "-56d",
+          "date_to": null,
+          "explicitDate": true
+        },
+        "interval": "week",
+        "trendsFilter": {
+          "display": "ActionsBar"
+        },
+        "breakdownFilter": {
+          "breakdown": "app_version",
+          "breakdown_type": "event"
+        },
+        "filterTestAccounts": false
+      },
+      "events": [
+        "export_result"
+      ],
+      "properties": {
+        "export_result": [
+          "outcome",
+          "app_version"
+        ]
+      },
+      "filters": "outcome = failed；按 app_version 拆分",
+      "window": "最近 8 周",
+      "timezone": "UTC（项目时区，PostHog 项目 567339）",
+      "denominator": "同版本同周发过 export_result 的安装数（用 b2 的版本拆分或 d3 对照）",
+      "exclusions": "疑似 CI 安装（规则见 shared_fragments.ci_suspected_exclusion_hogql）：类型化查询不含 telemetry_enabled 起点，疑似 CI 安装无 app_started/export_completed，天然不进入；HogQL 版本显式排除",
+      "data_start": "export_result 首条事件（待 #1103 合并并随批量 CONSENT_VERSION 3 发布；此前无数据）",
+      "data_start_value": null,
+      "data_start_verified": false,
+      "missing_data_note": "上线前整段无数据，不是零失败；app_version 不是 build 标识；sidecar 或代理不可达时失败事件本身也可能发不出，没有失败事件不能证明没有 P0",
+      "governed_metric_id": null,
+      "version": 1,
+      "status": "pending_event",
+      "remote_id": null,
+      "url": null,
+      "depends_on": "#1103 + CONSENT_VERSION 3",
+      "fallback": "当前无导出失败事件；只能用 d3 看保存失败与包操作失败，导出方面为未知。"
+    },
+    {
+      "logical_name": "b5_document_saved_outcomes",
+      "group": "关键操作健康",
+      "title": "保存结果（ok / conflict / failed × 手动 / 自动）",
+      "description": "document_saved 的次数，按 outcome 与 trigger 拆分。conflict（版本冲突）与 failed（写盘故障）分开看；自动保存会重试，次数会放大，所以与 b6 的受影响安装数一起读。",
+      "population": "opted_in_install",
+      "kind": "TrendsQuery",
+      "query": {
+        "kind": "TrendsQuery",
+        "series": [
+          {
+            "kind": "EventsNode",
+            "event": "document_saved",
+            "name": "document_saved",
+            "math": "total"
+          }
+        ],
+        "dateRange": {
+          "date_from": "-56d",
+          "date_to": null,
+          "explicitDate": true
+        },
+        "interval": "week",
+        "trendsFilter": {
+          "display": "ActionsStackedBar"
+        },
+        "breakdownFilter": {
+          "breakdowns": [
+            {
+              "property": "outcome",
+              "type": "event"
+            },
+            {
+              "property": "trigger",
+              "type": "event"
+            }
+          ]
+        },
+        "filterTestAccounts": false
+      },
+      "events": [
+        "document_saved"
+      ],
+      "properties": {
+        "document_saved": [
+          "outcome",
+          "trigger"
+        ]
+      },
+      "filters": "event = document_saved；按 outcome、trigger 拆分",
+      "window": "最近 8 周",
+      "timezone": "UTC（项目时区，PostHog 项目 567339）",
+      "denominator": "同周全部 document_saved 事件（次数口径；不是尝试数，也不是安装数）",
+      "exclusions": "疑似 CI 安装（规则见 shared_fragments.ci_suspected_exclusion_hogql）：类型化查询不含 telemetry_enabled 起点，疑似 CI 安装无 app_started/export_completed，天然不进入；HogQL 版本显式排除",
+      "data_start": "CONSENT_VERSION 2（文档记 2026-09-02）所含事件，带该事件的客户端版本发布后才有；确切首条时间用 SELECT min(timestamp) FROM events WHERE event = '<事件>' 实测并回填 data_start_value，此前一律视为无数据而不是零",
+      "data_start_value": null,
+      "data_start_verified": false,
+      "missing_data_note": "无数据的区间显示『无数据』，不当作 0；次数会被自动保存与重试放大，不能直接当失败率；客户端关闭统计或离线时事件丢失；大陆网络不可达，大陆安装不是少报而是缺席，比例也可能有偏，偏向方向未知",
+      "governed_metric_id": null,
+      "version": 1,
+      "status": "not_created",
+      "remote_id": null,
+      "url": null
+    },
+    {
+      "logical_name": "b6_document_saved_affected_installs",
+      "group": "关键操作健康",
+      "title": "保存失败 / 冲突的受影响安装",
+      "description": "三条序列（滚动周内唯一安装）：A 有保存事件的安装（分母）、B outcome=failed 的安装、C outcome=conflict 的安装。failed 与 conflict 分开，不合并成一个『失败率』。『保存失败受影响安装』告警取序列 B。",
+      "population": "opted_in_install",
+      "kind": "TrendsQuery",
+      "query": {
+        "kind": "TrendsQuery",
+        "series": [
+          {
+            "kind": "EventsNode",
+            "event": "document_saved",
+            "name": "document_saved",
+            "math": "weekly_active"
+          },
+          {
+            "kind": "EventsNode",
+            "event": "document_saved",
+            "name": "document_saved",
+            "math": "weekly_active",
+            "properties": [
+              {
+                "key": "outcome",
+                "operator": "exact",
+                "value": [
+                  "failed"
+                ],
+                "type": "event"
+              }
+            ]
+          },
+          {
+            "kind": "EventsNode",
+            "event": "document_saved",
+            "name": "document_saved",
+            "math": "weekly_active",
+            "properties": [
+              {
+                "key": "outcome",
+                "operator": "exact",
+                "value": [
+                  "conflict"
+                ],
+                "type": "event"
+              }
+            ]
+          }
+        ],
+        "dateRange": {
+          "date_from": "-56d",
+          "date_to": null,
+          "explicitDate": true
+        },
+        "interval": "day",
+        "trendsFilter": {
+          "display": "ActionsLineGraph"
+        },
+        "filterTestAccounts": false
+      },
+      "events": [
+        "document_saved"
+      ],
+      "properties": {
+        "document_saved": [
+          "outcome"
+        ]
+      },
+      "filters": "A 无过滤；B outcome=failed；C outcome=conflict",
+      "window": "滚动 7 日，UTC 日界，最近 8 周",
+      "timezone": "UTC（项目时区，PostHog 项目 567339）",
+      "denominator": "序列 A：同窗口内发过 document_saved 的安装数；读比例时 A 小于 20 个安装则只看绝对数（建议值，待校准）",
+      "exclusions": "疑似 CI 安装（规则见 shared_fragments.ci_suspected_exclusion_hogql）：类型化查询不含 telemetry_enabled 起点，疑似 CI 安装无 app_started/export_completed，天然不进入；HogQL 版本显式排除",
+      "data_start": "CONSENT_VERSION 2（文档记 2026-09-02）所含事件，带该事件的客户端版本发布后才有；确切首条时间用 SELECT min(timestamp) FROM events WHERE event = '<事件>' 实测并回填 data_start_value，此前一律视为无数据而不是零",
+      "data_start_value": null,
+      "data_start_verified": false,
+      "missing_data_note": "无数据的区间显示『无数据』，不当作 0；只统计成功送达的安装；安装在同一窗口可能既有 ok 也有 failed，所以 B 与 A 的差不是『未受影响』的补集；大陆网络不可达，大陆安装不是少报而是缺席，比例也可能有偏，偏向方向未知",
+      "governed_metric_id": null,
+      "version": 1,
+      "status": "not_created",
+      "remote_id": null,
+      "url": null
+    },
+    {
+      "logical_name": "c1_tutorial_funnel_by_version",
+      "group": "引导与回访",
+      "title": "教程：开始 → 到达完成（按教程版本）",
+      "description": "tutorial_started → tutorial_completed，按 tutorial_version 拆分，7 日转化窗口。tutorial_completed 不证明每一步都做过（可以跳步），跳步造成的差异看 c2。",
+      "population": "opted_in_install",
+      "kind": "FunnelsQuery",
+      "query": {
+        "kind": "FunnelsQuery",
+        "series": [
+          {
+            "kind": "EventsNode",
+            "event": "tutorial_started",
+            "name": "tutorial_started"
+          },
+          {
+            "kind": "EventsNode",
+            "event": "tutorial_completed",
+            "name": "tutorial_completed"
+          }
+        ],
+        "dateRange": {
+          "date_from": "-97d",
+          "date_to": "-7d",
+          "explicitDate": true
+        },
+        "funnelsFilter": {
+          "funnelVizType": "steps",
+          "funnelOrderType": "ordered",
+          "funnelWindowInterval": 7,
+          "funnelWindowIntervalUnit": "day"
+        },
+        "breakdownFilter": {
+          "breakdown": "tutorial_version",
+          "breakdown_type": "event"
+        },
+        "filterTestAccounts": false
+      },
+      "events": [
+        "tutorial_started",
+        "tutorial_completed"
+      ],
+      "properties": {
+        "tutorial_started": [
+          "tutorial_version"
+        ],
+        "tutorial_completed": [
+          "tutorial_version"
+        ]
+      },
+      "filters": "两步有序漏斗；按 tutorial_version 拆分（当前 web ONBOARDING_FLOW_VERSION = 2）",
+      "window": "起点日在 [-97d,-7d]，转化窗口 7 日",
+      "timezone": "UTC（项目时区，PostHog 项目 567339）",
+      "denominator": "同 tutorial_version 下发过 tutorial_started 的安装",
+      "exclusions": "疑似 CI 安装（规则见 shared_fragments.ci_suspected_exclusion_hogql）：类型化查询不含 telemetry_enabled 起点，疑似 CI 安装无 app_started/export_completed，天然不进入；HogQL 版本显式排除",
+      "data_start": "CONSENT_VERSION 2（文档记 2026-09-02）所含事件，带该事件的客户端版本发布后才有；确切首条时间用 SELECT min(timestamp) FROM events WHERE event = '<事件>' 实测并回填 data_start_value，此前一律视为无数据而不是零",
+      "data_start_value": null,
+      "data_start_verified": false,
+      "missing_data_note": "无数据的区间显示『无数据』，不当作 0；不同 tutorial_version 的流程不同，不得跨版本合并；恢复/续做不算开始；样本很小时只看绝对数；大陆网络不可达，大陆安装不是少报而是缺席，比例也可能有偏，偏向方向未知",
+      "governed_metric_id": null,
+      "version": 1,
+      "status": "not_created",
+      "remote_id": null,
+      "url": null
+    },
+    {
+      "logical_name": "c2_tutorial_steps_by_step_id",
+      "group": "引导与回访",
+      "title": "教程各步骤到达（当前版本）",
+      "description": "tutorial_step_completed 按 step_id 的唯一安装数，限定 tutorial_version = 2（对应当前流程）。跳过的步骤不发事件，所以相邻步骤数量不单调正常，缺口即跳步或流失，不能区分。",
+      "population": "opted_in_install",
+      "kind": "TrendsQuery",
+      "query": {
+        "kind": "TrendsQuery",
+        "series": [
+          {
+            "kind": "EventsNode",
+            "event": "tutorial_step_completed",
+            "name": "tutorial_step_completed",
+            "math": "dau",
+            "properties": [
+              {
+                "key": "tutorial_version",
+                "operator": "exact",
+                "value": [
+                  2
+                ],
+                "type": "event"
+              }
+            ]
+          }
+        ],
+        "dateRange": {
+          "date_from": "-90d",
+          "date_to": null,
+          "explicitDate": true
+        },
+        "interval": "month",
+        "trendsFilter": {
+          "display": "ActionsBarValue"
+        },
+        "breakdownFilter": {
+          "breakdown": "step_id",
+          "breakdown_type": "event"
+        },
+        "filterTestAccounts": false
+      },
+      "events": [
+        "tutorial_step_completed"
+      ],
+      "properties": {
+        "tutorial_step_completed": [
+          "tutorial_version",
+          "step_id"
+        ]
+      },
+      "filters": "tutorial_version = 2；按 step_id 拆分",
+      "window": "最近 90 日汇总",
+      "timezone": "UTC（项目时区，PostHog 项目 567339）",
+      "denominator": "同 tutorial_version 下 c1 第一步的安装数（对照读，不在本图内）",
+      "exclusions": "疑似 CI 安装（规则见 shared_fragments.ci_suspected_exclusion_hogql）：类型化查询不含 telemetry_enabled 起点，疑似 CI 安装无 app_started/export_completed，天然不进入；HogQL 版本显式排除",
+      "data_start": "CONSENT_VERSION 2（文档记 2026-09-02）所含事件，带该事件的客户端版本发布后才有；确切首条时间用 SELECT min(timestamp) FROM events WHERE event = '<事件>' 实测并回填 data_start_value，此前一律视为无数据而不是零",
+      "data_start_value": null,
+      "data_start_verified": false,
+      "missing_data_note": "无数据的区间显示『无数据』，不当作 0；0.17.0 及更早客户端会发已取消的 welcome 步骤（代理仍接收，客户端枚举里没有）；换 tutorial_version 时同步改过滤值",
+      "governed_metric_id": null,
+      "version": 1,
+      "status": "not_created",
+      "remote_id": null,
+      "url": null
+    },
+    {
+      "logical_name": "c3_export_return_weekly",
+      "group": "引导与回访",
+      "title": "导出回访（首次导出后每周再导出）",
+      "description": "队列：按首次 export_completed 的自然周；回访事件：之后再次 export_completed；W1 到 W4。这是『完成有用操作的留存』，与启动回访分开命名。研究者在投稿期集中出图，所以用周而不是日。",
+      "population": "opted_in_install",
+      "kind": "RetentionQuery",
+      "query": {
+        "kind": "RetentionQuery",
+        "dateRange": {
+          "date_from": "-63d",
+          "date_to": null,
+          "explicitDate": true
+        },
+        "retentionFilter": {
+          "retentionType": "retention_first_time",
+          "retentionReference": "total",
+          "totalIntervals": 5,
+          "period": "Week",
+          "targetEntity": {
+            "id": "export_completed",
+            "type": "events"
+          },
+          "returningEntity": {
+            "id": "export_completed",
+            "type": "events"
+          }
+        },
+        "filterTestAccounts": false
+      },
+      "events": [
+        "export_completed"
+      ],
+      "properties": {
+        "export_completed": []
+      },
+      "filters": "target = returning = export_completed；first_time",
+      "window": "最近 9 周起点，5 个周期",
+      "timezone": "UTC（项目时区，PostHog 项目 567339）",
+      "denominator": "队列内首次导出的安装数（每行第 0 列）",
+      "exclusions": "疑似 CI 安装（规则见 shared_fragments.ci_suspected_exclusion_hogql）：类型化查询不含 telemetry_enabled 起点，疑似 CI 安装无 app_started/export_completed，天然不进入；HogQL 版本显式排除",
+      "data_start": "遥测上线日起；仓库内没有记录确切起点，上线前用 SELECT min(timestamp) FROM events WHERE event = '<事件>' 实测并回填 data_start_value",
+      "data_start_value": null,
+      "data_start_verified": false,
+      "missing_data_note": "无数据的区间显示『无数据』，不当作 0；未成熟的队列/周期格不得进入平均行（不要读 mean 行，它混了成熟与未成熟）；opt-in 较晚的安装『首次导出』被后移；大陆网络不可达，大陆安装不是少报而是缺席，比例也可能有偏，偏向方向未知",
+      "governed_metric_id": "retention_core_value",
+      "version": 1,
+      "status": "not_created",
+      "remote_id": null,
+      "url": null
+    },
+    {
+      "logical_name": "c4_engaged_d7_return",
+      "group": "引导与回访",
+      "title": "启动队列的第 7 天有效使用回访（精确日）",
+      "description": "队列：首次观察 app_started 的 UTC 周（按首次观察日 d0 归周）；回访：d0 之后第 7 个 UTC 日当天（精确日 D7，不是滚动窗口）发过任一有效使用事件。只纳入 D7 当日已结束的队列。启动与有效使用分开命名：队列用启动，回访用有效使用。",
+      "population": "opted_in_install",
+      "kind": "HogQLQuery",
+      "query": {
+        "kind": "HogQLQuery",
+        "query": "SELECT toStartOfWeek(s.d0, 1) AS cohort_week, count(DISTINCT s.distinct_id) AS cohort_installs, uniqIf(s.distinct_id, toDate(e.timestamp) = s.d0 + 7) AS d7_exact_day_returned FROM (SELECT distinct_id, min(toDate(timestamp)) AS d0 FROM events WHERE event = 'app_started' AND distinct_id != 'distribution_metrics' AND distinct_id NOT IN (SELECT distinct_id FROM events WHERE distinct_id != 'distribution_metrics' GROUP BY distinct_id HAVING count() = 1 AND any(event) = 'telemetry_enabled' AND any(properties.distribution) = 'source') GROUP BY distinct_id HAVING d0 >= today() - 90 AND d0 <= today() - 8) AS s LEFT JOIN (SELECT distinct_id, timestamp FROM events WHERE event IN ('figure_opened', 'figure_edit_completed', 'canvas_created', 'preflight_completed', 'export_completed', 'ai_assistant_invoked') AND timestamp >= today() - 90) AS e ON e.distinct_id = s.distinct_id GROUP BY cohort_week ORDER BY cohort_week"
+      },
+      "events": [
+        "app_started",
+        "figure_opened",
+        "figure_edit_completed",
+        "canvas_created",
+        "preflight_completed",
+        "export_completed",
+        "ai_assistant_invoked",
+        "telemetry_enabled"
+      ],
+      "properties": {
+        "telemetry_enabled": []
+      },
+      "filters": "回访 = 精确第 7 个 UTC 日（d0+7）的有效使用事件",
+      "window": "d0 在 [今天-90, 今天-8]，保证 D7 当日已过完",
+      "timezone": "UTC（项目时区，PostHog 项目 567339）",
+      "denominator": "cohort_installs：该周内首次观察 app_started 的安装（只含已成熟的 d0）",
+      "exclusions": "排除 distribution_metrics；显式排除疑似 CI（全历史只有一次 telemetry_enabled 且 distribution=source；缺来源证据，只称疑似）",
+      "data_start": "遥测上线日起；仓库内没有记录确切起点，上线前用 SELECT min(timestamp) FROM events WHERE event = '<事件>' 实测并回填 data_start_value",
+      "data_start_value": null,
+      "data_start_verified": false,
+      "missing_data_note": "无数据的区间显示『无数据』，不当作 0；精确日 D7 对研究者偏苛刻（投稿期集中），同时看 c3 的周回访；『首次观察』不是首次安装；队列周内样本很小时只读绝对数；大陆网络不可达，大陆安装不是少报而是缺席，比例也可能有偏，偏向方向未知",
+      "governed_metric_id": "retention_engagement",
+      "version": 1,
+      "status": "not_created",
+      "remote_id": null,
+      "url": null,
+      "definition_change": "yc-metrics G1 的 D1/D7/D30 未规定精确日还是滚动窗口；此处固定为精确第 7 日并按周聚合队列，且 d0 <= 今天-8 保证成熟。D1/D30 不在最小集合内。"
+    },
+    {
+      "logical_name": "d1_version_adoption",
+      "group": "版本与分发",
+      "title": "版本采用（启动的安装按版本）",
+      "description": "每周发过 app_started 的唯一安装，按 app_version 堆叠。看新版本被多少安装用上。",
+      "population": "opted_in_install",
+      "kind": "TrendsQuery",
+      "query": {
+        "kind": "TrendsQuery",
+        "series": [
+          {
+            "kind": "EventsNode",
+            "event": "app_started",
+            "name": "app_started",
+            "math": "dau"
+          }
+        ],
+        "dateRange": {
+          "date_from": "-56d",
+          "date_to": null,
+          "explicitDate": true
+        },
+        "interval": "week",
+        "trendsFilter": {
+          "display": "ActionsStackedBar"
+        },
+        "breakdownFilter": {
+          "breakdown": "app_version",
+          "breakdown_type": "event"
+        },
+        "filterTestAccounts": false
+      },
+      "events": [
+        "app_started"
+      ],
+      "properties": {
+        "app_started": [
+          "app_version"
+        ]
+      },
+      "filters": "event = app_started；按 app_version 拆分",
+      "window": "最近 8 周（当前未结束周偏低，读数忽略最后一列）",
+      "timezone": "UTC（项目时区，PostHog 项目 567339）",
+      "denominator": "同周所有版本的启动安装合计（堆叠总高）",
+      "exclusions": "疑似 CI 安装（规则见 shared_fragments.ci_suspected_exclusion_hogql）：类型化查询不含 telemetry_enabled 起点，疑似 CI 安装无 app_started/export_completed，天然不进入；HogQL 版本显式排除",
+      "data_start": "遥测上线日起；仓库内没有记录确切起点，上线前用 SELECT min(timestamp) FROM events WHERE event = '<事件>' 实测并回填 data_start_value",
+      "data_start_value": null,
+      "data_start_verified": false,
+      "missing_data_note": "无数据的区间显示『无数据』，不当作 0；app_version 不是 build 标识；app_started 不是 UI 就绪；自动更新延迟、离线与 opt-in 偏差都会让版本构成失真；macOS desktop 在 v0.16.0 及更早版本因缺 CA 整体没有事件（#439），那段时间的平台/版本构成不可比；大陆网络不可达，大陆安装不是少报而是缺席，比例也可能有偏，偏向方向未知",
+      "governed_metric_id": null,
+      "version": 1,
+      "status": "not_created",
+      "remote_id": null,
+      "url": null
+    },
+    {
+      "logical_name": "d2_platform_distribution_mix",
+      "group": "版本与分发",
+      "title": "平台与分发方式构成（有效使用安装，30 日）",
+      "description": "最近 30 日有效使用的匿名安装，按 platform 与 distribution 拆分。用于判断构建与支持优先级。",
+      "population": "opted_in_install",
+      "kind": "HogQLQuery",
+      "query": {
+        "kind": "HogQLQuery",
+        "query": "SELECT properties.platform AS platform, properties.distribution AS distribution, count(DISTINCT distinct_id) AS engaged_installs FROM events WHERE event IN ('figure_opened', 'figure_edit_completed', 'canvas_created', 'preflight_completed', 'export_completed', 'ai_assistant_invoked') AND distinct_id != 'distribution_metrics' AND distinct_id NOT IN (SELECT distinct_id FROM events WHERE distinct_id != 'distribution_metrics' GROUP BY distinct_id HAVING count() = 1 AND any(event) = 'telemetry_enabled' AND any(properties.distribution) = 'source') AND timestamp >= now() - INTERVAL 30 DAY GROUP BY platform, distribution ORDER BY engaged_installs DESC"
+      },
+      "events": [
+        "figure_opened",
+        "figure_edit_completed",
+        "canvas_created",
+        "preflight_completed",
+        "export_completed",
+        "ai_assistant_invoked",
+        "telemetry_enabled"
+      ],
+      "properties": {
+        "telemetry_enabled": []
+      },
+      "filters": "有效使用事件；按 platform、distribution 拆分",
+      "window": "滚动最近 30 日（至当前时刻）",
+      "timezone": "UTC（项目时区，PostHog 项目 567339）",
+      "denominator": "30 日内全部有效使用安装（各行相加；同一安装若更换平台/分发方式可能被重复计一次）",
+      "exclusions": "排除 distribution_metrics；显式排除疑似 CI（全历史只有一次 telemetry_enabled 且 distribution=source；缺来源证据，只称疑似）",
+      "data_start": "遥测上线日起；仓库内没有记录确切起点，上线前用 SELECT min(timestamp) FROM events WHERE event = '<事件>' 实测并回填 data_start_value",
+      "data_start_value": null,
+      "data_start_verified": false,
+      "missing_data_note": "无数据的区间显示『无数据』，不当作 0；macOS desktop 在 v0.16.0 及更早版本整体缺席（#439），跨期比较需排除；大陆缺席；与下载量人群不同，不得并列相加；大陆网络不可达，大陆安装不是少报而是缺席，比例也可能有偏，偏向方向未知",
+      "governed_metric_id": "platform_mix",
+      "version": 1,
+      "status": "not_created",
+      "remote_id": null,
+      "url": null
+    },
+    {
+      "logical_name": "d3_version_received_faults",
+      "group": "版本与分发",
+      "title": "各版本收到的故障（受影响安装）",
+      "description": "按 app_version 统计最近 30 日：观察到的安装数，以及保存失败、保存冲突、包操作失败各自影响的唯一安装数。只含已送达的事件；sample_ok 表示该版本观察安装数 >= 20（建议值，待校准）。",
+      "population": "opted_in_install",
+      "kind": "HogQLQuery",
+      "query": {
+        "kind": "HogQLQuery",
+        "query": "SELECT properties.app_version AS app_version, count(DISTINCT distinct_id) AS installs_observed, count(DISTINCT distinct_id) >= 20 AS sample_ok, uniqIf(distinct_id, event = 'document_saved' AND properties.outcome = 'failed') AS installs_save_failed, uniqIf(distinct_id, event = 'document_saved' AND properties.outcome = 'conflict') AS installs_save_conflict, uniqIf(distinct_id, event = 'package_action' AND properties.outcome = 'failed') AS installs_package_failed FROM events WHERE event IN ('app_started', 'document_saved', 'package_action', 'figure_opened', 'figure_edit_completed', 'canvas_created', 'preflight_completed', 'export_completed', 'ai_assistant_invoked') AND distinct_id != 'distribution_metrics' AND distinct_id NOT IN (SELECT distinct_id FROM events WHERE distinct_id != 'distribution_metrics' GROUP BY distinct_id HAVING count() = 1 AND any(event) = 'telemetry_enabled' AND any(properties.distribution) = 'source') AND timestamp >= now() - INTERVAL 30 DAY GROUP BY app_version ORDER BY installs_observed DESC"
+      },
+      "events": [
+        "app_started",
+        "document_saved",
+        "package_action",
+        "figure_opened",
+        "figure_edit_completed",
+        "canvas_created",
+        "preflight_completed",
+        "export_completed",
+        "ai_assistant_invoked",
+        "telemetry_enabled"
+      ],
+      "properties": {
+        "telemetry_enabled": []
+      },
+      "filters": "document_saved outcome=failed/conflict；package_action outcome=failed；按 app_version",
+      "window": "滚动最近 30 日",
+      "timezone": "UTC（项目时区，PostHog 项目 567339）",
+      "denominator": "installs_observed：该版本在窗口内发过上述任一事件的安装数",
+      "exclusions": "排除 distribution_metrics；显式排除疑似 CI（全历史只有一次 telemetry_enabled 且 distribution=source；缺来源证据，只称疑似）",
+      "data_start": "CONSENT_VERSION 2（文档记 2026-09-02）所含事件，带该事件的客户端版本发布后才有；确切首条时间用 SELECT min(timestamp) FROM events WHERE event = '<事件>' 实测并回填 data_start_value，此前一律视为无数据而不是零",
+      "data_start_value": null,
+      "data_start_verified": false,
+      "missing_data_note": "无数据的区间显示『无数据』，不当作 0；sidecar 挂掉时错误事件也发不出，没有故障行不能证明没有 P0；导出失败待 export_result（b4）；app_version 不是 build 标识；同一安装跨版本升级会出现在多行；大陆网络不可达，大陆安装不是少报而是缺席，比例也可能有偏，偏向方向未知",
+      "governed_metric_id": null,
+      "version": 1,
+      "status": "not_created",
+      "remote_id": null,
+      "url": null
+    },
+    {
+      "logical_name": "d4_installer_downloads_30d",
+      "group": "版本与分发",
+      "title": "桌面安装包下载（30 日，分发背景）",
+      "description": "受治理指标 github_installer_downloads_30d：每个 installer 资产计数器的 30 日差值之和。这是公开分发计数，不是安装或用户，且含大陆下载；与产品行为人群分开，不得与上面任何安装数相加。",
+      "population": "distribution_metrics",
+      "kind": "HogQLQuery",
+      "query": {
+        "kind": "HogQLQuery",
+        "query": "SELECT sum(greatest(0, last_v - first_v)) AS installer_downloads_30d FROM (SELECT properties.asset_id AS asset_id, argMax(properties.asset_role, timestamp) AS current_role, maxIf(toInt(properties.download_count_total), toDate(properties.observed_date) <= today()) AS last_v, maxIf(toInt(properties.download_count_total), toDate(properties.observed_date) <= today() - 30) AS first_v FROM events WHERE event = 'github_release_asset_snapshot' AND distinct_id = 'distribution_metrics' GROUP BY asset_id HAVING current_role = 'installer')"
+      },
+      "events": [
+        "github_release_asset_snapshot"
+      ],
+      "properties": {
+        "github_release_asset_snapshot": [
+          "asset_id",
+          "asset_role",
+          "download_count_total",
+          "observed_date"
+        ]
+      },
+      "filters": "asset_role 取每个 asset_id 最近一次快照的角色，再对该资产全部行聚合（role_resolution 规则）",
+      "window": "滚动最近 30 日；首窗口基线缺失按 0",
+      "timezone": "UTC（项目时区，PostHog 项目 567339）",
+      "denominator": "无（绝对数）；不是用户数",
+      "exclusions": "仅 distinct_id = distribution_metrics；排除 updater/update_check/plugin_manifest 等非人为下载角色",
+      "data_start": "采集器首个快照起；资产在窗口内首次出现时整个计数器计入本期（符合 yc-metrics 规则）",
+      "data_start_value": null,
+      "data_start_verified": false,
+      "missing_data_note": "采集器失败会让 workflow 变红；缺快照的日子无数据；maxIf 无命中时返回 0 会把『无基线』与『基线为 0』混淆，已在 data_start 说明，核对时看最早快照日",
+      "governed_metric_id": "github_installer_downloads_30d",
+      "version": 1,
+      "status": "not_created",
+      "remote_id": null,
+      "url": null,
+      "dedupe_note": "MAX 聚合对重复上报幂等，所以不再按 snapshot_key 去重；与 yc-dashboard 的 dedupe_by 等价。"
+    }
+  ],
+  "alerts": [
+    {
+      "logical_name": "alert_export_done_ratio_drop",
+      "title": "新终态导出完整成功占比下降",
+      "insight": "b3_export_done_ratio",
+      "series_index": 0,
+      "data_source": "manifest 中名为 insight 的 TrendsQuery（PostHog 普通告警只能挂在 Trends insight 上）",
+      "executable_query": "见该 insight 的 query 字段（同一份）",
+      "condition": {
+        "type": "absolute_value",
+        "bound": "lower"
+      },
+      "window": "上一个完整 UTC 周的 done / 全部 export_result",
+      "min_sample": "B 序列（全部终态事件）>= 30 才判断；安装数 >= 10",
+      "min_sample_enforcement": "PostHog 普通告警不支持最小样本门槛：告警文案里附分母序列，收到后人工先核样本再判断，不据单次触发宣布 P0",
+      "threshold": {
+        "lower": 0.8
+      },
+      "threshold_label": "建议值，待真实基线校准；不是 SLO",
+      "recovery_and_dedup": "连续 2 个完整周回到阈值以上视为恢复；同一周只通知一次",
+      "observation_scope": "全部渠道的 export_result；partial 不算 done；不含被拒请求与覆盖冲突",
+      "known_bias": "仅覆盖同意且能送达的匿名安装；离线、关闭统计、大陆网络不可达、sidecar 挂掉都会少报；没有告警不等于没有故障",
+      "channel": "UNSET",
+      "recipient": "UNSET",
+      "frequency": "daily",
+      "calculation_interval": "daily",
+      "timezone": "UTC",
+      "consumes_free_slot": true,
+      "slot_note": "占用 1 个免费告警名额（启用后；PostHog 免费额度以线上实际为准，项目 567339 的 Alerts 观察数为 0，2026-10-08）",
+      "needs_online_verification": true,
+      "needs_online_verification_note": "阈值/条件字段按 PostHog 公开告警模型手写，未在线上校验；formula 序列能否被告警评估以线上为准",
+      "enabled": false,
+      "version": 1,
+      "status": "pending_event",
+      "remote_id": null,
+      "depends_on": "#1103 + CONSENT_VERSION 3"
+    },
+    {
+      "logical_name": "alert_export_failed_installs_by_version",
+      "title": "某版本导出失败受影响安装增加",
+      "insight": "b4_export_failed_installs_by_version",
+      "series_index": 0,
+      "data_source": "manifest 中名为 insight 的 TrendsQuery（PostHog 普通告警只能挂在 Trends insight 上）",
+      "executable_query": "见该 insight 的 query 字段（同一份）",
+      "condition": {
+        "type": "absolute_value",
+        "bound": "upper"
+      },
+      "window": "上一个完整 UTC 周内按 app_version 的 failed 唯一安装数",
+      "min_sample": "该版本同周发过 export_result 的安装 >= 20（对照 b2 或 d3）",
+      "min_sample_enforcement": "PostHog 普通告警不支持最小样本门槛：告警文案里附分母序列，收到后人工先核样本再判断，不据单次触发宣布 P0",
+      "threshold": {
+        "upper": 3
+      },
+      "threshold_label": "建议值，待真实基线校准；不是 SLO",
+      "recovery_and_dedup": "该版本降到阈值以下一整周视为恢复；同版本同周一次",
+      "observation_scope": "按版本拆分后各版本单独评估；同一版本号可能含多个提交",
+      "known_bias": "仅覆盖同意且能送达的匿名安装；离线、关闭统计、大陆网络不可达、sidecar 挂掉都会少报；没有告警不等于没有故障",
+      "channel": "UNSET",
+      "recipient": "UNSET",
+      "frequency": "daily",
+      "calculation_interval": "daily",
+      "timezone": "UTC",
+      "consumes_free_slot": true,
+      "slot_note": "占用 1 个免费告警名额（启用后；PostHog 免费额度以线上实际为准，项目 567339 的 Alerts 观察数为 0，2026-10-08）",
+      "needs_online_verification": true,
+      "needs_online_verification_note": "阈值/条件字段按 PostHog 公开告警模型手写，未在线上校验；formula 序列能否被告警评估以线上为准",
+      "enabled": false,
+      "version": 1,
+      "status": "pending_event",
+      "remote_id": null,
+      "depends_on": "#1103 + CONSENT_VERSION 3"
+    },
+    {
+      "logical_name": "alert_document_save_failed_installs",
+      "title": "保存失败受影响安装增加",
+      "insight": "b6_document_saved_affected_installs",
+      "series_index": 1,
+      "data_source": "manifest 中名为 insight 的 TrendsQuery（PostHog 普通告警只能挂在 Trends insight 上）",
+      "executable_query": "见该 insight 的 query 字段（同一份）",
+      "condition": {
+        "type": "absolute_value",
+        "bound": "upper"
+      },
+      "window": "滚动 7 日内 outcome=failed 的唯一安装数（序列 B）",
+      "min_sample": "序列 A（有保存事件的安装）>= 20 才判断",
+      "min_sample_enforcement": "PostHog 普通告警不支持最小样本门槛：告警文案里附分母序列，收到后人工先核样本再判断，不据单次触发宣布 P0",
+      "threshold": {
+        "upper": 3
+      },
+      "threshold_label": "建议值，待真实基线校准；不是 SLO",
+      "recovery_and_dedup": "降到阈值以下并持续 3 日视为恢复；告警冷却 7 日去重",
+      "observation_scope": "仅 failed，conflict 单独看不告警；自动保存重试不放大唯一安装数",
+      "known_bias": "仅覆盖同意且能送达的匿名安装；离线、关闭统计、大陆网络不可达、sidecar 挂掉都会少报；没有告警不等于没有故障",
+      "channel": "UNSET",
+      "recipient": "UNSET",
+      "frequency": "daily",
+      "calculation_interval": "daily",
+      "timezone": "UTC",
+      "consumes_free_slot": true,
+      "slot_note": "占用 1 个免费告警名额（启用后；PostHog 免费额度以线上实际为准，项目 567339 的 Alerts 观察数为 0，2026-10-08）",
+      "needs_online_verification": true,
+      "needs_online_verification_note": "阈值/条件字段按 PostHog 公开告警模型手写，未在线上校验；formula 序列能否被告警评估以线上为准",
+      "enabled": false,
+      "version": 1,
+      "status": "not_created",
+      "remote_id": null
+    },
+    {
+      "logical_name": "alert_ingest_silence",
+      "title": "统计接收断流",
+      "insight": "a1_started_installs_weekly",
+      "series_index": 0,
+      "data_source": "manifest 中名为 insight 的 TrendsQuery（PostHog 普通告警只能挂在 Trends insight 上）",
+      "executable_query": "见该 insight 的 query 字段（同一份）",
+      "condition": {
+        "type": "absolute_value",
+        "bound": "lower"
+      },
+      "window": "滚动 7 日 app_started 唯一安装数",
+      "min_sample": "不适用（目标就是整体归零或骤降）",
+      "min_sample_enforcement": "PostHog 普通告警不支持最小样本门槛：告警文案里附分母序列，收到后人工先核样本再判断，不据单次触发宣布 P0",
+      "threshold": {
+        "lower": 1
+      },
+      "threshold_label": "建议值，待真实基线校准；不是 SLO",
+      "recovery_and_dedup": "回到 1 以上视为恢复；冷却 3 日",
+      "observation_scope": "这是『收不到数据』而非『没故障』：断流可能是 sidecar、代理或 PostHog 摄取问题，需先查代理和采集器 workflow 再下结论",
+      "known_bias": "仅覆盖同意且能送达的匿名安装；离线、关闭统计、大陆网络不可达、sidecar 挂掉都会少报；没有告警不等于没有故障",
+      "channel": "UNSET",
+      "recipient": "UNSET",
+      "frequency": "daily",
+      "calculation_interval": "daily",
+      "timezone": "UTC",
+      "consumes_free_slot": true,
+      "slot_note": "占用 1 个免费告警名额（启用后；PostHog 免费额度以线上实际为准，项目 567339 的 Alerts 观察数为 0，2026-10-08）",
+      "needs_online_verification": true,
+      "needs_online_verification_note": "阈值/条件字段按 PostHog 公开告警模型手写，未在线上校验；formula 序列能否被告警评估以线上为准",
+      "enabled": false,
+      "version": 1,
+      "status": "not_created",
+      "remote_id": null
+    }
+  ],
+  "subscriptions": [
+    {
+      "logical_name": "weekly_key_ops_version_report",
+      "title": "关键操作与版本周报（草稿）",
+      "target_type": "dashboard",
+      "target": "tavotto-main-v2",
+      "target_note": "PostHog 订阅按看板或单个 insight 发送，无法在看板内选子集；周报内容 = 主看板全部图。要只发关键操作/版本两组，需另建一块只含这两组的看板（本次未做）",
+      "preview": {
+        "basis": "manifest 里 group 为『关键操作健康』『版本与分发』的 insight；订阅目标是整块看板，故实际含全部 20 张",
+        "key_ops_insights": [
+          "b1_export_completed_by_version",
+          "b2_export_result_outcomes",
+          "b3_export_done_ratio",
+          "b4_export_failed_installs_by_version",
+          "b5_document_saved_outcomes",
+          "b6_document_saved_affected_installs"
+        ],
+        "version_insights": [
+          "d1_version_adoption",
+          "d2_platform_distribution_mix",
+          "d3_version_received_faults",
+          "d4_installer_downloads_30d"
+        ],
+        "pending_blank": [
+          "b2_export_result_outcomes",
+          "b3_export_done_ratio",
+          "b4_export_failed_installs_by_version"
+        ],
+        "pending_note": "export_result 上线前这三张显示无数据，周报里应写『尚无数据』，不是 0",
+        "rendered": false,
+        "rendered_note": "未在线上渲染；本预览仅列内容构成，实际渲染图与数字 NOT_RUN"
+      },
+      "frequency": "weekly",
+      "byweekday": [
+        "monday"
+      ],
+      "time_of_day": "建议 01:00 UTC（北京时间 09:00），待收件人确认",
+      "timezone": "UTC",
+      "channel": "UNSET",
+      "recipient": "UNSET",
+      "enabled": false,
+      "consumes_free_slot": "订阅是否占名额以线上为准；本草稿默认不假设免费",
+      "ai_summary": false,
+      "ai_summary_note": "不使用 PostHog AI 摘要（付费能力，不能替代普通订阅）",
+      "version": 1,
+      "status": "not_created",
+      "remote_id": null
+    }
+  ]
+}

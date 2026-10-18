@@ -52,6 +52,7 @@ from __future__ import annotations
 
 import contextlib
 import dataclasses
+import hashlib
 import logging
 import threading
 import time
@@ -63,15 +64,19 @@ from . import (
     deprepair,
     depresolve,
     envadvice,
+    execpolicy,
     execspec,
     figcapture,
     inputbroker,
     inputremap,
+    launchctx,
     launcher,
     nativesession,
     pool,
     projectenv,
     receipt,
+    runconfig,
+    runroute,
     scriptargs,
     taskdiag,
     trace as tracemod,
@@ -85,6 +90,8 @@ PLAN_VERSION = 1
 
 TARGET_ASSET = "asset"
 TARGET_SCRIPT = "script"
+#: 脚本目标的执行语义「让运行前路由挑」（ADR 0133）：HTTP 入口在请求省略执行语义时带进目标；引擎层省略 = safe
+EXECUTION_AUTO = runroute.EXECUTION_AUTO
 
 STATUS_PENDING = "pending"
 STATUS_RUNNING = "running"
@@ -207,6 +214,14 @@ class PreparationPlan:
     #: 私有。conda install / 改 activate.d、conda 从找不到变成找得到（直接启动 → 激活）都不换「代」，但跑起来的环境变了：
     #: 执行前 `_stale_reason` 比它，对不上 = 计划过期（P09）
     environment_state: str = ""
+    #: 这份计划是对上一次尝试的**重试**（V2，ADR 0127）：上一次尝试的 plan_id / 触发它的稳定错误码 / 相对上一次变了哪几维
+    #: （`execpolicy.CHANGED_DIMENSIONS`）。三者都是诊断事实：不含路径 / argv。第一次尝试全为空。
+    retry_of: str | None = None
+    retry_cause: str = ""
+    retry_changed: tuple[str, ...] = ()
+    #: 运行前路由的结果（V2 PR2，ADR 0133）：只有调用方给了 `execution="auto"` 才有（`runroute.Route.public()`：闭集原因 /
+    #: 置信度 / 命中规则 / 行号 / 耗时，不含路径与源码）；显式 safe / native 恒 None。**不入语义指纹**（`execution` 已在里面）
+    route: dict | None = None
     #: 登记那一刻项目的关闭代次（私有，仅桌面拥有的 native 计划；`PreparationService.register` 盖章）。启动时带给注册表：
     #: 关闭之后才走到起进程的旧计划，即使项目已重新打开也被拒（代次对不上）
     project_epoch: int | None = None
@@ -239,12 +254,89 @@ class PreparationPlan:
                 dict(self.dependency_preparation) if self.dependency_preparation else None
             ),
             "binding": dict(self.binding) if self.binding else None,
+            **({"route": dict(self.route)} if self.route else {}),
             **(
                 {"run_config": self.run.config_id, "argv_count": len(self.run.argv)}
                 if self.run is not None
                 else {}
             ),
         }
+
+
+def _last_success_profile(
+    root: str, script: str, *, python: str, source: str, run=None
+) -> str | None:
+    """这个脚本上一次成功用的执行语义（`launchctx` 记录），记录此刻仍成立才算；否则 None。
+
+    成立 = 解释器 / 环境 / 脚本字节 / 运行目录档都没变，**且记录的运行配置就是本次请求的运行配置**（argv 的不透明引用相同）。"""
+    if not python:
+        return None
+    try:
+        record = runconfig.launch_record(root, script)
+    except runconfig.RunConfigError:
+        return None
+    if record is None:
+        return None
+    facets = (
+        launchctx.FACET_INTERPRETER,
+        launchctx.FACET_ENVIRONMENT,
+        launchctx.FACET_SOURCE,
+        launchctx.FACET_CWD,
+    )
+    reason = launchctx.verify(
+        record, project_root=root, script=script, python=python, python_source=source, facets=facets
+    )
+    if reason is not None:
+        return None
+    # 记录是对**某个运行配置**的成功：本次请求的运行配置不同（或记录有而请求没有），沿用的就是别人的结论
+    if record.get("run_config") != (run.config_id if run is not None else None):
+        return None
+    profile = launchctx.profile_of(record)
+    if (
+        profile == execspec.PROFILE_NATIVE
+        and (record.get("source") or {}).get("basis_observed") is False
+    ):
+        # 与 #982 的 reuse_last_success 同样保守：native 没有观察过 helper / 数据文件，不证明它们没变，不据此沿用 native
+        return None
+    return profile
+
+
+def _route_of(
+    root: str, script: str, *, python: str, source: str, decision: dict | None, run=None
+) -> tuple[runroute.Route, str | None]:
+    """`execution="auto"` 的落点：策略 / 运维开关 / 上次成功 / 静态证据 → 路由（零执行用户代码）。
+    同时返回路由分析的那份字节的 sha256，`plan_for` 用它核对计划的 `script_revision`（#1034：分析与 revision 须是同一份内容）。"""
+    policy = execpolicy.mode_for(root)
+    enabled = execpolicy.fallback_enabled()
+    last = None
+    if policy != execpolicy.MODE_SAFE_ONLY and enabled:
+        last = _last_success_profile(root, script, python=python, source=source, run=run)
+    mode = decision["mode"] if decision else workdir.mode_for(root)
+    path = Path(root) / figcapture.normalize_relative_script(script)
+    try:
+        with open(path, "rb") as fh:
+            raw: bytes | None = fh.read(runroute.MAX_SOURCE_BYTES + 1)
+    except OSError:
+        raw = None
+    route = runroute.route_for_file(
+        path,
+        cwd_mode=mode,
+        project_root=root,
+        script=script,
+        policy=policy,
+        last_success=last,
+        operator_enabled=enabled,
+        source=raw,
+    )
+    LOG.info(
+        "run route %s reason=%s confidence=%s rules=%s ms=%.2f",
+        route.execution,
+        route.reason,
+        route.confidence,
+        ",".join(sorted({e["rule"] for e in route.evidence})) or "-",
+        route.elapsed_ms,
+    )
+    return route, (hashlib.sha256(raw).hexdigest() if raw is not None else None)
 
 
 def plan_for(
@@ -411,6 +503,26 @@ def plan_for(
             root,
             decision["mode"] if decision else workdir.mode_for(root),
         )
+    route = None
+    if execution == EXECUTION_AUTO:
+        # 运行前路由（V2 PR2，ADR 0133）：只在用户发起的桌面运行里由准备会话要 `auto`；CLI / MCP 永远是显式 safe
+        execution = execspec.PROFILE_SAFE
+        if script is not None and target == TARGET_SCRIPT:
+            route, routed_digest = _route_of(
+                root, script, python=python, source=source, decision=decision, run=run
+            )
+            if route.execution == execspec.PROFILE_NATIVE and not python:
+                route = route.downgraded("no_interpreter")  # 没有解释器就没有 native 可起
+            execution = route.execution
+    script_revision = _script_revision(root, script) if target == TARGET_SCRIPT else None
+    if (
+        route is not None
+        and route.execution == execspec.PROFILE_NATIVE
+        and (script_revision is None or routed_digest != script_revision.split(":", 1)[0])
+    ):
+        # 路由分析之后脚本又被改写：native 的依据是旧内容，新内容没有被证明过。回 safe，下次检查再路由
+        route = route.downgraded("script_changed")
+        execution = route.execution
     if script is not None and python and execution == execspec.PROFILE_NATIVE:
         mode = decision["mode"] if decision else workdir.mode_for(root)
         spec = execspec.desktop_native_spec(
@@ -506,6 +618,7 @@ def plan_for(
         dependency_conflicts=tuple(depresolve.conflicts(intents)),
         launch_context=launch_context,
         execution=execution,
+        route=route.public() if route is not None else None,
         grant=grant,
         budget={
             "build_idle_timeout_s": pool.BUILD_IDLE_TIMEOUT,
@@ -519,7 +632,7 @@ def plan_for(
         target=target,
         run=run,
         input_remap_generation=remap_generation,
-        script_revision=_script_revision(root, script) if target == TARGET_SCRIPT else None,
+        script_revision=script_revision,
         native_spec=native_spec,
         environment_state=environment_state,
     )
@@ -674,11 +787,22 @@ class PreparationService:
     def __init__(self) -> None:
         self._entries: dict[str, _Entry] = {}
         self._lock = threading.Lock()
+        #: `cancel_project(project_id, script, keep)` 之前调的回调（准备会话登记；纯标记，不取别的锁）
+        self.project_cancel_listeners: list = []
         self._order = 0  # 登记序号计数（`PreparationPlan.launch_order`）
 
     # ---- 登记 ----
-    def register(self, plan: PreparationPlan, *, force_rebuild: bool = False) -> PreparationResult:
-        """登记一份计划。没有脚本可跑的直接落 `static_source_available`（不起线程）。"""
+    def register(
+        self,
+        plan: PreparationPlan,
+        *,
+        force_rebuild: bool = False,
+        project_epoch: int | None = None,
+    ) -> PreparationResult:
+        """登记一份计划。没有脚本可跑的直接落 `static_source_available`（不起线程）。
+
+        `project_epoch`：桌面 native 计划盖的项目关闭代次，缺省 = 登记那一刻的。执行回退（ADR 0127）传**运行开始时**记下的
+        代次——登记发生在 safe 尝试之后，期间项目关闭再重开，盖新代次就让关闭前的旧运行通过注册表的代次检查。"""
         result = PreparationResult()
         if plan.script is None:
             result.note = (
@@ -698,16 +822,21 @@ class PreparationService:
             )
             result.finished_at = time.time()
             result.status = STATUS_NEEDS_INPUT
-        with self._lock:
-            self._order += 1
-            order = self._order
+        # 关闭代次只对桌面 native 计划有意义；先在锁外取（注册表有自己的锁），别夹在拿序号与入表之间
         if plan.execution == execspec.PROFILE_NATIVE:
             plan = dataclasses.replace(
                 plan,
-                project_epoch=nativesession.REGISTRY.project_epoch(plan.project_root),
-                launch_order=order,
+                project_epoch=(
+                    project_epoch
+                    if project_epoch is not None
+                    else nativesession.REGISTRY.project_epoch(plan.project_root)
+                ),
             )
         with self._lock:
+            # 登记序号对所有计划盖（safe 的重跑让位也要拿它判先后）；拿序号与入表在同一把锁里，入表顺序
+            # （`cancel_project` / `older_than` / `superseded` 用）与 `launch_order`（native runner 用）才一致（Codex #1028 r4273983562）
+            self._order += 1
+            plan = dataclasses.replace(plan, launch_order=self._order)
             self._sweep()
             self._entries[plan.plan_id] = _Entry(
                 plan=plan, result=result, force_rebuild=force_rebuild
@@ -1223,7 +1352,15 @@ class PreparationService:
 
         * 项目关闭:只给 `project_id`;
         * 同一脚本重新运行:给 `script` 与 `keep`(新计划自己)——只有**比 keep 更早登记**的同脚本计划让位,更新的(另一个窗口刚发起的重跑)不取消。
-        返回接受了取消的数量。别的项目 / 别的脚本的计划不动。"""
+        返回接受了取消的数量。别的项目 / 别的脚本的计划不动。
+
+        先通知监听者（准备会话据此给范围内的会话落「已取消」标记，ADR 0127）：safe 尝试刚终局、回退还没接上的
+        窗口里没有「未终局的计划」可取消，只有这个标记能拦住随后的 native 回退。范围与下面取消的计划一致。"""
+        for listener in list(self.project_cancel_listeners):
+            try:
+                listener(project_id, script, keep)
+            except Exception:  # noqa: BLE001 — 监听者出错不能挡住关项目
+                LOG.exception("项目取消监听者失败")
         with self._lock:
             order = list(self._entries)  # 登记顺序 = 计划的先后
             if keep is not None and keep not in order:
@@ -1244,6 +1381,57 @@ class PreparationService:
         用例）不算已取消。"""
         entry = self._entry(plan_id)
         return entry is not None and entry.cancel.is_set()
+
+    def older_than(self, keep: str) -> frozenset[str]:
+        """登记得比 `keep` 更早的计划号（登记顺序 = 计划的先后）；`keep` 未登记 = 空。`cancel_project(keep=)` 取消的就是这一批。"""
+        with self._lock:
+            order = list(self._entries)
+        return frozenset(order[: order.index(keep)]) if keep in order else frozenset()
+
+    def superseded(
+        self, plan_id: str, *, ignoring: frozenset[str] | set[str] = frozenset()
+    ) -> bool:
+        """同项目同脚本里有没有登记得比 `plan_id` 更晚的**运行计划**（登记顺序 = 计划的先后）：有 = 这份计划已被更新的重跑取代。
+        只数脚本目标（会话里的运行尝试）：旧端点按素材做准备（`TARGET_ASSET`）不是替代运行，不算取代。
+        `ignoring`：不计入的计划号（调用方自己刚登记的回退计划）。`plan_id` 未登记按「没被取代」。"""
+        with self._lock:
+            order = list(self._entries)
+            if plan_id not in order:
+                return False
+            mine = self._entries[plan_id].plan
+            return any(
+                pid not in ignoring
+                and self._entries[pid].plan.target == TARGET_SCRIPT
+                and self._entries[pid].plan.project_id == mine.project_id
+                and self._entries[pid].plan.script == mine.script
+                for pid in order[order.index(plan_id) + 1 :]
+            )
+
+    def launch_blocked(self, plan_id: str) -> bool:
+        """native 起进程闸门的判定（`reserve` / `begin_start` / `check_start` 共用）：计划已被取消，**或**同项目同脚本里已有登记得
+        更晚的脚本目标计划。后者与 `register` 同一把锁里读登记表：更新的重跑「登记了、还没轮到自己的 `cancel_project(keep=)`」
+        的窗口里，`entry.cancel` 还没置位，旧计划不能因此起进程；闸门放行之后才登记的更新重跑，则必然走
+        `cancel_project(keep=)` 的真终止路径（Codex #1028 P1：启动认领与被取代判定同序）。"""
+        with self._lock:
+            entry = self._entries.get(plan_id)
+            if entry is None:
+                return False
+            if entry.cancel.is_set():
+                return True
+            mine = entry.plan
+            after = False
+            for pid, e in self._entries.items():
+                if pid == plan_id:
+                    after = True
+                    continue
+                if (
+                    after
+                    and e.plan.target == TARGET_SCRIPT
+                    and e.plan.project_id == mine.project_id
+                    and e.plan.script == mine.script
+                ):
+                    return True
+            return False
 
     def cancel_plan(self, plan_id: str) -> bool:
         """按计划号取消(界面只拿到 native 会话的 `launch_id` 时用:它就是计划号)。没有这个计划 / 已终局回 False。"""
@@ -1422,6 +1610,38 @@ def diagnostic_projection(plan: PreparationPlan, result: PreparationResult) -> d
                 if result.captured
                 else None,
             },
+            "route": (
+                {
+                    "execution": taskdiag.closed(plan.route.get("execution"), runroute.EXECUTIONS),
+                    "reason": taskdiag.closed(plan.route.get("reason"), runroute.REASONS),
+                    "confidence": taskdiag.closed(
+                        plan.route.get("confidence"), runroute.CONFIDENCES
+                    ),
+                    "rules": [
+                        r
+                        for r in plan.route.get("rules") or []
+                        if taskdiag.closed(r, runroute.RULES)
+                    ],
+                    "dynamic_paths": taskdiag.count(plan.route.get("dynamic_paths")),
+                    "elapsed_ms": taskdiag.number(plan.route.get("elapsed_ms")),
+                }
+                if plan.route
+                else None
+            ),
+            "retry": (
+                {
+                    "of": taskdiag.ident(plan.retry_of),
+                    "cause": taskdiag.code(plan.retry_cause),
+                    "changed": [
+                        c
+                        for c in plan.retry_changed
+                        if taskdiag.closed(c, execpolicy.CHANGED_DIMENSIONS)
+                    ],
+                    "execution": taskdiag.closed(plan.execution, execspec.PROFILES),
+                }
+                if plan.retry_of
+                else None
+            ),
             "error": (
                 {
                     "code": taskdiag.code(err.get("code")),

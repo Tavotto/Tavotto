@@ -172,7 +172,7 @@ describe('单选：对齐到画布常驻，层级是一行摘要（审计 B09；
     expect(align.querySelectorAll('button')).toHaveLength(6)
     // 层级：摘要行，默认收起，里面的四颗键不在 DOM 里
     const fold = host.querySelector<HTMLButtonElement>('[data-fold="zorder"] > button')!
-    expect(fold.textContent?.trim()).toBe('层级')
+    expect(fold.textContent?.trim().startsWith('层级')).toBe(true)
     expect(fold.getAttribute('aria-expanded')).toBe('false')
     expect(host.querySelector('[aria-label="层级"][role="toolbar"]')).toBeNull()
     await act(async () => fold.click())

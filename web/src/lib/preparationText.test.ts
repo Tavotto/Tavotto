@@ -15,6 +15,13 @@ const lost: PrepEntry = {
   pending: null,
   editing: [],
   editRenders: {},
+  armed: false,
+  armMaybe: false,
+  armMaybeBaseline: null,
+  armMaybeFrom: null,
+  wantsRun: false,
+  allowRerun: true,
+  transferFrom: null,
 }
 const ctx: PrepContext = { argsChanged: false, editReady: false, missingArgs: null }
 

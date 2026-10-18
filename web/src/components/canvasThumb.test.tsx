@@ -30,6 +30,7 @@ vi.mock('@/lib/api', async (importOriginal) => ({
 import { fetchVersionDoc, fetchTimeline, type LayoutVersionMeta } from '@/lib/api'
 import { literal } from '@/i18n'
 import { TooltipProvider } from '@/components/ui/Tooltip'
+import { CanvasThumb } from '@/components/CanvasThumb'
 import { CanvasList } from '@/components/left/CanvasList'
 import { VersionDrawer } from '@/components/VersionDialog'
 import { useAssetStore } from '@/store/assetStore'
@@ -157,5 +158,32 @@ describe('两处缩略图是同一份组件', () => {
     expect(href).toContain('a.pdf')
     // mtime 来自素材库、不在草图里 —— 草图带上它才是把 /api/panels 的职责抄一份
     expect(href).toContain('m=7')
+  })
+})
+
+describe('透明背景（导出对话框用）：默认行为一字不变', () => {
+  const objs = [{ id: 't', type: 'text', x: 2, y: 2, w: 20, h: 6, text: '标题' }] as never
+  const draw = async (el: React.ReactElement) => {
+    await teardown()
+    return render(el)
+  }
+
+  it('不传 transparent、传 false：DOM 逐字相同；没有棋盘格图案，页面仍是纸白', async () => {
+    const plain = (await draw(<CanvasThumb page={PAGE} objects={objs} />)).outerHTML
+    const off = (await draw(<CanvasThumb page={PAGE} objects={objs} transparent={false} />)).outerHTML
+    expect(off).toBe(plain)
+    expect(plain).not.toContain('pattern')
+    expect(plain).not.toContain('data-thumb-transparent')
+    expect(plain).toContain('fill="var(--color-paper)"')
+  })
+
+  it('transparent：页面填棋盘格图案，图案只用纸白与纸墨（两套主题同值）；对象照画', async () => {
+    const svg = await draw(<CanvasThumb page={PAGE} objects={objs} transparent />)
+    const page = svg.querySelector('[data-thumb-page]')!
+    const id = svg.querySelector('pattern')!.id
+    expect(page.getAttribute('fill')).toBe(`url(#${id})`)
+    expect(svg.querySelector('pattern')!.innerHTML).toContain('var(--color-paper-ink)')
+    expect(svg.querySelector('pattern')!.innerHTML).not.toMatch(/#[0-9a-f]{3,6}/i)
+    expect(svg.textContent).toContain('标题')
   })
 })

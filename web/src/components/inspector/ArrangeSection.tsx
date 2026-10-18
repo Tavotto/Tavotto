@@ -202,6 +202,12 @@ export function ArrangeSection({
   useTranslation('inspector')
   const foldOpen = useInspectorPrefs((s) => s.foldOpen)
   const setFoldOpen = useInspectorPrefs((s) => s.setFoldOpen)
+  // 层级摘要行的当前值：「第 2 层 / 共 3」——按绘制顺序（`doc.objects` 自底向上）数，单选才有答案
+  const stack = useDocumentStore((s) => s.doc.objects)
+  const selectedIds = useSelectionStore((s) => s.ids)
+  const layerIndex = !multi && selectedIds.length === 1 ? stack.findIndex((o) => o.id === selectedIds[0]) : -1
+  const layerValue =
+    layerIndex >= 0 ? ar('layerValue', { n: layerIndex + 1, total: stack.length }) : undefined
   /** 摘要行（设计稿 A1 / A9）：展开状态按「arrange:id」记在会话里，单选与多选各自一份 */
   const fold = (id: string, label: string, children: ReactNode, value?: string) => {
     const key = `arrange:${multi ? 'multi' : 'single'}:${id}`
@@ -228,7 +234,7 @@ export function ArrangeSection({
           </div>
         </Section>
         {/* 层级是低频的：收成摘要行（设计稿 A1），点开是原来的四个键 */}
-        {fold('zorder', ar('zorderLabel'), <ZOrderToolbar />)}
+        {fold('zorder', ar('zorderLabel'), <ZOrderToolbar />, layerValue)}
       </>
     )
   }

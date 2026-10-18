@@ -2,22 +2,23 @@ import type { HTMLAttributes } from 'react'
 import { cn } from '@/lib/utils'
 import type { StatusTone } from './Notice'
 
-const PILL: Record<StatusTone, { box: string; dot: string }> = {
-  neutral: { box: 'bg-surface-active text-ink-2', dot: 'bg-ink-3' },
-  info: { box: 'bg-info-surface text-info-content', dot: 'bg-info' },
-  ok: { box: 'bg-ok-surface text-ok-content', dot: 'bg-ok' },
-  warn: { box: 'bg-warn-surface text-warn-content', dot: 'bg-warn' },
-  danger: { box: 'bg-danger-surface text-danger-content', dot: 'bg-danger' },
+/** 圆点是唯一的语义色；neutral 的点是 ink-3 */
+const DOT: Record<StatusTone, string> = {
+  neutral: 'bg-ink-3',
+  info: 'bg-info',
+  ok: 'bg-ok',
+  warn: 'bg-warn',
+  danger: 'bg-danger',
 }
 
 /**
- * 状态胶囊：20px 高、11px / 500、锚点派生的底与字。「就绪 / 需要登录 / 失败」这类**状态**用它
- * （此前只有一颗绿点、其它状态有字——一种状态一种写法）；计数 / 版本号这类数据仍是 `Badge`。
- * `dot` 在字前加一颗 6px 锚点色圆点（装饰，aria-hidden）。
+ * 状态胶囊：20px 高、11px / 500、中性底（surface-hover）、**文字永远 ink**，语义色只在字前那颗 6px 圆点上
+ * （2026-10-16 UI 2.0：此前整枚染色，与 Notice 同一个「红橙大块」问题）。「就绪 / 需要登录 / 失败」这类**状态**用它；
+ * 计数 / 版本号这类数据仍是 `Badge`。圆点是装饰（aria-hidden），非 neutral 默认画（neutral 是版本号 / 选区这类数据，不画），可用 `dot` 显式开关。
  */
 export function StatusPill({
   tone = 'neutral',
-  dot = false,
+  dot,
   className,
   children,
   ...rest
@@ -28,11 +29,11 @@ export function StatusPill({
       data-status-pill={tone}
       className={cn(
         'inline-flex h-5 shrink-0 items-center gap-1 whitespace-nowrap rounded-full px-2 text-xs font-medium',
-        PILL[tone].box,
+        'bg-surface-hover text-ink',
         className,
       )}
     >
-      {dot && <span aria-hidden className={cn('size-1.5 shrink-0 rounded-full', PILL[tone].dot)} />}
+      {(dot ?? tone !== 'neutral') && <span aria-hidden className={cn('size-1.5 shrink-0 rounded-full', DOT[tone])} />}
       {children}
     </span>
   )

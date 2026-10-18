@@ -379,6 +379,35 @@ describe('屏障 → build → 图进画布', () => {
     expect(mockAddPanel).toHaveBeenCalledTimes(1)
   })
 
+  it('桌面拥有、由准备会话管理的会话停在屏障上：不 build、不放置、不开选择器（交给准备会话的「进入编辑」，V2 PR4）', async () => {
+    mockBuild.mockResolvedValue({
+      session: session({ state: 'barrier', sequence: 4, owner: 'desktop' }),
+      stems: {},
+      descriptors: [desc('Fig1'), desc('Fig2')],
+    })
+    store().applyEvent(
+      session({ state: 'barrier', sequence: 4, owner: 'desktop', descriptors: [desc('Fig1'), desc('Fig2')] }),
+    )
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(mockBuild).not.toHaveBeenCalled()
+    expect(mockAddPanel).not.toHaveBeenCalled()
+    expect(useFigurePickerStore.getState().script).toBeNull()
+    // 状态仍然进 store：面板的「能不能编辑」读它
+    expect(store().sessions[`native-${ID}`].state).toBe('barrier')
+  })
+
+  it('终端拥有的会话照旧在屏障处 build 并放置（过滤只认 owner===desktop；老后端没有 owner 也照旧）', async () => {
+    mockBuild.mockResolvedValue({
+      session: session({ state: 'barrier', sequence: 4, owner: 'terminal' }),
+      stems: {},
+      descriptors: [desc('Fig1')],
+    })
+    store().applyEvent(session({ state: 'barrier', sequence: 4, owner: 'terminal' }))
+    await vi.waitFor(() => expect(mockBuild).toHaveBeenCalledTimes(1))
+    expect(mockAddPanel).toHaveBeenCalledTimes(1)
+  })
+
   it('不在屏障上绝不 build——那条 409 描述的是正常状态，不是故障', async () => {
     store().applyEvent(session({ state: 'running_script', sequence: 2 }))
     await store().build(`native-${ID}`)
