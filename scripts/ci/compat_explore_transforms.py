@@ -570,7 +570,7 @@ def build(parent: Parent, chain: tuple[str, ...], seed: int) -> dict:
         },
     }
     core["static_checks"] = {"python_ast": "passed", "compile": "passed", "execution": "not_run"}
-    core["execution_plan"] = execution_plan(files, parent.executable)
+    core["execution_plan"] = execution_plan(files, parent.executable, [st["name"] for st in steps])
     return {"candidate_id": cg.canonical(core)[:20], **core}, files
 
 
@@ -595,9 +595,23 @@ _UNCERTAIN_IMPORTS = {
 }
 
 
-def execution_plan(files: dict[str, bytes], parent_executable: bool) -> dict:
+#: Transforms whose effect `compat_explore.compare` cannot observe (it compares figure counts,
+#: titles and written paths, never line widths, colors or other style). Executing them could only
+#: ever answer `no_difference`, which would read as "style agrees"; they stay static-only.
+STYLE_UNOBSERVED = ("rcparams", "style_use")
+
+
+def execution_plan(
+    files: dict[str, bytes], parent_executable: bool, chain: list[str] | tuple[str, ...] = ()
+) -> dict:
     """Decide executable vs static-only. Uncertain or non-deterministic means static only."""
     reasons = []
+    for name in chain:
+        if name in STYLE_UNOBSERVED:
+            reasons.append(
+                f"{name}: style axis is not compared (explore observes figure counts, titles "
+                "and paths only), so a run could not detect a style regression"
+            )
     if not parent_executable:
         reasons.append("parent is a V2 session fixture; explore does not drive the V2 adapter")
     for rel, data in sorted(files.items()):
