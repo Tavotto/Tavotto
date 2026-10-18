@@ -127,6 +127,21 @@ def main():
     ])
     fig.savefig("Fig.pdf")
 """,
+    # 虚线间隙色 / 线帽不同：不命名（全部可见样式参与比对，不靠逐维列举）
+    "gap_cap_off": """\
+import matplotlib.pyplot as plt
+from matplotlib.lines import Line2D
+
+def main():
+    fig, ax = plt.subplots(figsize=(4, 3))
+    ax.plot([0, 1], [0, 1], color="r", linestyle="--", gapcolor="k")
+    ax.plot([0, 1], [1, 2], color="b", lw=6, solid_capstyle="round")
+    ax.legend(handles=[
+        Line2D([], [], color="r", linestyle="--", gapcolor="y", label="gap"),
+        Line2D([], [], color="b", lw=6, solid_capstyle="butt", label="cap"),
+    ])
+    fig.savefig("Fig.pdf")
+""",
     # 有自己 label 的线与普通 ax.legend()：行为不变
     "own_label": """\
 import matplotlib.pyplot as plt
@@ -205,3 +220,7 @@ def test_marker_fillstyle_or_alt_color_off_stays_unnamed(figs):
         "axes_0.lines_0": "曲线 1",
         "axes_0.lines_1": "曲线 2",
     }
+
+
+def test_gapcolor_or_capstyle_off_stays_unnamed(figs):
+    assert _labels(figs, "gap_cap_off") == {"axes_0.lines_0": "曲线 1", "axes_0.lines_1": "曲线 2"}

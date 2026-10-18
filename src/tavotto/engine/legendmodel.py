@@ -1044,8 +1044,8 @@ def legend_proxy_names(ax) -> dict[int, str]:
 
     主语：被命名的是 `ax` 里的曲线 / 散点（按 `ax.lines` / `ax.collections` 的活对象），
     判据取自 `ax.get_legend()` 此刻画出来的示意线与「matplotlib 自己的 handler 从这条
-    线派生出来的示意线」的样式指纹（`legend_handle_fingerprint`，颜色 / 线型 / 线宽 /
-    marker / 面色 / 边色 / 边宽 / 大小 / alpha，规范化后的值比，不比对象身份）。
+    线派生出来的示意线」的**全部可见样式**（`_glyph_style`：`properties()` 去掉与长相无关的键，
+    规范化后的值比，不比对象身份；认不出的值恒不相等）。
 
     保守到宁缺毋滥：
       - 同一指纹被图中多个系列对象命中（**含有自己 label 的**——图例里它自己的条目
@@ -1063,7 +1063,7 @@ def legend_proxy_names(ax) -> dict[int, str]:
     series = [*ax.lines, *ax.collections]
     entries: list[tuple[tuple, str]] = []
     for h, text in zip(handles[:n], texts[:n], strict=True):
-        entries.append(((legend_handle_fingerprint(h), _glyph_extra(h)), text))
+        entries.append((_glyph_style(h), text))
     if not entries:
         return {}
     fp_of: dict[int, tuple] = {}
@@ -1075,7 +1075,7 @@ def legend_proxy_names(ax) -> dict[int, str]:
         except Exception:  # noqa: BLE001 — 造不出示意线的对象不参与
             continue
         if fresh is not None:
-            fp_of[id(art)] = (legend_handle_fingerprint(fresh), _glyph_extra(fresh))
+            fp_of[id(art)] = _glyph_style(fresh)
     out: dict[int, str] = {}
     for art in series:
         fp = fp_of.get(id(art))
@@ -1090,31 +1090,90 @@ def legend_proxy_names(ax) -> dict[int, str]:
     return out
 
 
-def _glyph_extra(h) -> tuple:
-    """图例示意**画得出来、共享指纹却没比**的那几维，只给 `legend_proxy_names` 用。
+#: `artist.properties()` 里**与示意长相无关**的键：数据 / 位置 / 变换 / 裁剪 / 交互 / 身份 / 由数据
+#: 派生的映射输入（映射结果已在 facecolor / edgecolor 里）。其余键一律参与比对——
+#: matplotlib 以后新增的样式属性自动纳入，不用再逐维补（#1162 评审连报散点形状、半填充、
+#: gapcolor / 线帽三轮后换成这个口径）。
+_NON_GLYPH_PROPS = frozenset(
+    {
+        "agg_filter",
+        "animated",
+        "array",
+        "axes",
+        "bbox",
+        "children",
+        "clim",
+        "clip_box",
+        "clip_on",
+        "clip_path",
+        "cmap",
+        "data",
+        "datalim",
+        "figure",
+        "gid",
+        "in_layout",
+        "label",
+        "markevery",
+        "mouseover",
+        "offset_transform",
+        "offsets",
+        "path",
+        "picker",
+        "pickradius",
+        "rasterized",
+        "tightbbox",
+        "transform",
+        "transformed_clip_path_and_affine",
+        "transforms",
+        "url",
+        "urls",
+        "visible",
+        "window_extent",
+        "xdata",
+        "xydata",
+        "ydata",
+        "zorder",
+    }
+)
 
-    `legend_handle_fingerprint` 也是 `bind_legend_entries` 的判据，往里加维度会挪动存量图例
-    的绑定，所以不改它；命名要的是「样式精确一致」，在这里一次补齐（#1162 评审连着报了
-    散点形状 / 大小、marker 半填充两维，按族一次收口，不再逐维追）：
 
-    * Line2D：`fillstyle`、`markerfacecoloralt`（半填充时另一半的颜色）、`drawstyle`；
-    * PathCollection（散点）：marker 路径顶点、sizes、边线线型。
+def _glyph_value(key: str, v):
+    """把一个样式属性值规范成可比较的不可变值；认不出的对象回一个按身份的值（= 恒不相等，
+    宁可不命名也不借错）。"""
+    if v is None or isinstance(v, bool | str | int):
+        return v
+    if isinstance(v, float):
+        return round(v, 4)
+    if "color" in key:
+        try:
+            return tuple(np.round(mcolors.to_rgba_array(v), 4).ravel().tolist())
+        except (ValueError, TypeError):
+            pass
+    if isinstance(v, np.ndarray):
+        return (v.shape, tuple(np.round(v.astype(float), 4).ravel().tolist()))
+    if isinstance(v, list | tuple):
+        return tuple(_glyph_value(key, x) for x in v)
+    if hasattr(v, "vertices") and hasattr(v, "codes"):  # matplotlib Path
+        codes = None if v.codes is None else tuple(int(c) for c in v.codes)
+        return ("path", _glyph_value(key, v.vertices), codes)
+    if hasattr(v, "get_marker") and hasattr(v, "get_fillstyle"):  # MarkerStyle
+        return ("marker", _glyph_value(key, v.get_marker()), v.get_fillstyle())
+    return ("object", id(v))
 
-    两侧都是 matplotlib 同一个 handler 派生的示意，口径一致，可直接比；其它类型回空元组。
-    """
-    if isinstance(h, Line2D):
-        return (
-            str(h.get_fillstyle()),
-            _rgba(h.get_markerfacecoloralt()),
-            str(h.get_drawstyle()),
-        )
-    if isinstance(h, PathCollection):
-        paths = h.get_paths()
-        verts = tuple(np.round(paths[0].vertices, 4).ravel().tolist()) if len(paths) else ()
-        sizes = tuple(np.round(np.asarray(h.get_sizes(), dtype=float), 3).tolist())
-        styles = tuple(str(ls) for ls in h.get_linestyle())
-        return (verts, sizes, styles)
-    return ()
+
+def _glyph_style(h) -> tuple:
+    """示意的**全部可见样式**：`properties()` 去掉 `_NON_GLYPH_PROPS` 后逐键规范化。只给
+    `legend_proxy_names` 用——不替换 `legend_handle_fingerprint`（它也是 `bind_legend_entries`
+    的判据，换了会挪动存量图例的绑定）。两侧都是 matplotlib 同一个 handler 派生的示意，
+    口径一致，可直接比。取不到属性就回按身份的值（恒不相等）。"""
+    try:
+        props = h.properties()
+    except Exception:  # noqa: BLE001 — 说不清长相的示意不参与借名
+        return (type(h).__name__, ("object", id(h)))
+    return (
+        type(h).__name__,
+        tuple((k, _glyph_value(k, props[k])) for k in sorted(props) if k not in _NON_GLYPH_PROPS),
+    )
 
 
 def _source_label(art) -> str:
