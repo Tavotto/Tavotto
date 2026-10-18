@@ -874,6 +874,30 @@ class TestLazyHolderVerification:
         assert st.cap["x"] is b and n == [1]
         assert "/p/x.pdf" not in st.w["x"]["files"]  # 从未落盘的登记被删掉
 
+    def test_failed_holder_rewrite_falls_back_to_the_earlier_successful_save(self):
+        """A 成功存 x.pdf，再以坏参数重写 x.pdf 失败；B 存 x.png：磁盘上的 x.pdf 仍是 A 第一次的产物，A 不被顶掉
+        （Codex r4306209189）。"""
+        st, a, b = _State(), _Fig(), _Fig()
+        st.claim(a)
+        n1, good = self._counter(True)
+        st.save(a, "/p/x.pdf", verify=good)
+        n2, bad = self._counter(False)
+        st.save(a, "/p/x.pdf", {"format": "pdf", "dpi": "bad"}, verify=bad)
+        _, ok = self._counter(True)
+        assert st.save(b, "/p/x.png", {"format": "png"}, verify=ok) is False
+        assert st.cap["x"] is a and n2 == [1] and n1 == [1]
+        assert st.w["x"]["files"]["/p/x.pdf"]() is a
+
+    def test_fallback_chain_is_bounded(self):
+        st, a = _State(), _Fig()
+        st.claim(a)
+        for _ in range(3 * figcapture._MAX_PREV):
+            st.save(a, "/p/x.pdf", verify=self._counter(False)[1])
+        depth, node = 0, st.w["x"]["files"]["/p/x.pdf"].prev
+        while node is not None:
+            depth, node = depth + 1, node.prev
+        assert depth <= figcapture._MAX_PREV
+
     def test_valid_blocker_blocks_and_is_verified_only_once(self):
         st, a, b = _State(), _Fig(), _Fig()
         st.claim(a)

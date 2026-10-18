@@ -1582,31 +1582,66 @@ def savefig_verifier(real_savefig, fig, fname, args, kwargs: dict):
 
 class _FileEntry:
     """`writers[stem]["files"][目标键]`：最近写它的 Figure（弱引用，调用即取）+ 这次保存是否已确认真能成功。
-    持有者自己的写入先不验证（常规路径零渲染），带上 `thunk` 惰性验证；native 与已验证过的 `verified=True`。"""
+    持有者自己的写入先不验证（常规路径零渲染），带上 `thunk` 惰性验证；native 与已验证过的 `verified=True`。
+    未验证的登记保留它覆盖掉的那条（`prev`）作后备：验证失败 = 那次保存从未落盘，磁盘上仍是上一条的产物
+    （Codex #1141 r4306209189）。后备链有界（`_MAX_PREV`），已验证的登记之后不再需要更早的后备。"""
 
-    __slots__ = ("ref", "thunk", "verified")
+    __slots__ = ("ref", "thunk", "verified", "prev")
 
-    def __init__(self, fig, thunk=None):
+    def __init__(self, fig, thunk=None, prev=None):
         self.ref = weakref.ref(fig)
         self.thunk = thunk
         self.verified = thunk is None
+        self.prev = None if self.verified else _bounded_prev(prev)
 
     def __call__(self):
         return self.ref()
 
 
-def _held_still_on_disk(files: dict, held, target) -> bool:
-    """持有者在**别的**目标文件上是否仍是最近成功写入者。未验证的登记（持有者自己的写入）只在它要挡住一次顶替时才
-    验证：成功 → 标记已验证；失败 = 那次保存从未落盘，删掉登记，继续看还有没有别的挡路者。"""
-    for t, entry in list(files.items()):
-        if t == target or entry() is not held:
-            continue
+_MAX_PREV = 8
+
+
+def _bounded_prev(prev):
+    """截断后备链：遇到已验证的登记就到此为止；未验证的最多留 `_MAX_PREV` 层。"""
+    head, node, depth = prev, prev, 0
+    while node is not None:
+        depth += 1
+        if node.verified or depth >= _MAX_PREV:
+            node.prev = None
+            break
+        node = node.prev
+    return head
+
+
+def _resolve_entry(entry):
+    """把一条（可能未验证的）登记解析成磁盘上真实的那条：未验证就跑 thunk，失败退到 `prev`；全都不成立 = None。"""
+    while entry is not None:
+        if entry() is None:
+            return None
         if entry.verified:
-            return True
+            return entry
         if entry.thunk():
-            entry.verified, entry.thunk = True, None
+            entry.verified, entry.thunk, entry.prev = True, None, None
+            return entry
+        entry = entry.prev
+    return None
+
+
+def _held_still_on_disk(files: dict, held, target) -> bool:
+    """持有者在**别的**目标文件上是否仍是最近成功写入者。未验证的登记只在它要挡住一次顶替时才验证
+    （`_resolve_entry`）：失败退回它覆盖掉的那条，再看磁盘上的那条是不是持有者。"""
+    for t, entry in list(files.items()):
+        if t == target:
+            continue
+        if entry() is not held and entry.verified:
+            continue
+        real = _resolve_entry(entry)
+        if real is None:
+            del files[t]
+            continue
+        files[t] = real
+        if real() is held:
             return True
-        del files[t]
     return False
 
 
@@ -1671,7 +1706,7 @@ def note_savefig_writer(
     _record_writer_call(mine, call, extra)
     if target is not None and call is not None:
         # 外来写入前面已验证；持有者自己的写入带上 thunk 惰性验证（verify 为 None = native，保存已成功）
-        files[target] = _FileEntry(fig, None if foreign else verify)
+        files[target] = _FileEntry(fig, None if foreign else verify, prev=files.get(target))
     if takes:
         capture[stem] = held = fig
     if held is fig:
