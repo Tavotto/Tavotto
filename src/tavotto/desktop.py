@@ -29,7 +29,8 @@
     此后 /api、/exports、渲染图片、SSE 一律凭 cookie；Host/Origin 同时校验。
 
 桌面与浏览器模式的差别只剩参数：桌面的 cookie 是会话级（窗口即进程）、
-没有磁盘上的本机凭据文件（nonce 走 stdin，实例复用由壳的单实例转发负责）。
+没有磁盘上的完整本机凭据文件（nonce 走 stdin，实例复用由壳的单实例转发负责）；
+只发布一份 scoped 只读的 `handoff-status-<端口>.json`（只对 render-status 一个端点有效，ADR 0008 修订）。
 """
 
 from __future__ import annotations
@@ -50,6 +51,7 @@ from .engine import (
     nativesession as engine_nativesession,
     pool as engine_pool,
     project_watch as engine_watch,
+    session_client as engine_session_client,
 )
 
 LOG = logging.getLogger("tavotto.desktop")
@@ -261,6 +263,8 @@ class SidecarServer:
         self._srv.server_port = self._srv.port
         # Host / Origin 校验钉的是这里——**实际**拿到的端口，不是建议的那个
         state.port = self._srv.server_port
+        self._state = state
+        self._status_published = False
         flask_app.config["TAVOTTO_DESKTOP_MODE"] = True
         flask_app.config[security.STATE_KEY] = state
         self._shutting_down = threading.Event()
@@ -271,7 +275,20 @@ class SidecarServer:
         return self._srv.server_port
 
     def announce_ready(self) -> None:
+        self._publish_status_token()
         write_handshake(self._handshake, ready=True, port=self.port)
+
+    def _publish_status_token(self) -> None:
+        """发布**只读交接状态**凭据（scoped，只对 render-status 一个端点有效；ADR 0008 修订 2026-10-16）。
+
+        发不出去只意味着 `tavotto open` 落成 `unverified/channel_unavailable`，不影响启动。
+        **绝不**把 nonce 或别的 secret 写盘（ADR 0008「桌面模式的差异」）。
+        """
+        try:
+            engine_session_client.publish_status_token(self.port, self._state.status_token)
+            self._status_published = True
+        except OSError:
+            LOG.warning("交接状态凭据写不出去（tavotto open 将无法确认渲染结果）", exc_info=True)
 
     def serve_forever(self) -> None:
         try:
@@ -318,6 +335,8 @@ class SidecarServer:
                 step()
             except Exception:  # noqa: BLE001 — 清理路径绝不能把退出堵死
                 LOG.exception("sidecar 清理：%s异常（继续退出）", what)
+        if self._status_published:
+            engine_session_client.remove_status_token(self.port)
         if self._handshake is not None:
             try:
                 self._handshake.unlink(missing_ok=True)

@@ -16,7 +16,7 @@
   退回 `127.0.0.1:0`；连续 3 次落空才改记，策略是 `sidecar/port_memory.rs` 的纯函数；
   字段与 Python 侧严格同源，ADR 0108——端口一变 localStorage 整个换一份）、
   werkzeug 线程 server（可优雅 shutdown）、nonce 走 **stdin 首行**
-  （环境变量对同用户进程可见；桌面**不写**磁盘凭据文件，实例复用由壳的
+  （环境变量对同用户进程可见；桌面**不写**完整磁盘凭据，只写 scoped 只读的 handoff-status 文件（ADR 0008 修订），实例复用由壳的
   单实例 argv 转发负责）、握手文件（无密钥、原子写、退出清理）、
   stdin EOF + 父 PID 双路「壳没了就自杀」（`test_desktop_sidecar.py` 看护）。
 - **前端唯一桌面感知点是 `web/src/lib/desktop.ts`**：组件不得直接 import

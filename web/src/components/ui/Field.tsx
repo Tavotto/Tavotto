@@ -49,6 +49,7 @@ export function Section({
  * 折叠内容的展开 / 收起（2026-09-14 二审 E3）：`grid-template-rows: 0fr → 1fr` + 淡入，
  * 下面的行跟着内容长高而不是瞬间跳出——动效解释的是「哪些行是新出现的」。
  * 收起走 `usePresence` 保活 exit 那 90ms 播 1fr → 0fr，之后才真的卸载（内容不常驻）。
+ * 退场保活期间整棵子树 `inert` + `aria-hidden`。
  * 裁切只在动画期间生效：播完就把 overflow-hidden 撤掉，否则贴边控件的焦点环会被切。
  * `prefers-reduced-motion` 由 index.css 的全局兜底把两段动画压到 0.01ms。
  */
@@ -62,6 +63,9 @@ export function Reveal({ open, className, children }: { open: boolean; className
   return (
     <div
       data-state={state}
+      // 退场保活那一段里旧子树还挂着，但已经「不在了」：不许点、焦点进不去、读屏不念（否则旧按钮仍会用旧上下文触发回调）
+      inert={state === 'closed'}
+      aria-hidden={state === 'closed' || undefined}
       data-reveal
       className={cn(
         // 列钉成 minmax(0,1fr)：grid 的隐式列按 min-content 定宽，里面一行 truncate 的长路径会把列

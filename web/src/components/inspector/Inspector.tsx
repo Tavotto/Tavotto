@@ -14,8 +14,8 @@ import { RIGHT_DEFAULT, RIGHT_MAX, RIGHT_MIN, useUiStore, type RightTab } from '
 import type { ArrowObject, PanelObject, ShapeObject, TextObject } from '@/types/document'
 import { useAiStore } from '@/store/aiStore'
 import { assistantTabLabel, AssistantPanel } from '../ai/AiPanel'
-import { IconButton } from '../ui/Button'
-import { Card } from '../ui/Card'
+import { Button, IconButton } from '../ui/Button'
+import { Notice } from '../ui/Notice'
 import { ColorFieldContext } from '../ui/colorPalette'
 import { Tab, TabList, TabPanel } from '../ui/Tabs'
 import { Tip } from '../ui/Tooltip'
@@ -292,26 +292,20 @@ function DocumentSummary() {
   ]
   return (
     <div className="p-3">
-      <Card appearance="subtle" padding="md" data-document-summary className="flex flex-col gap-2">
-        <p className="type-title">{t('docSummary.title')}</p>
-        <ul className="flex flex-col gap-0.5">
-          {facts.map((f) => (
-            <li key={f} className="type-number text-ink-2">
-              {f}
-            </li>
-          ))}
-        </ul>
-        <p className="type-caption">{t('emptyHint')}</p>
-        <button
-          type="button"
-          data-document-summary-canvas
-          onClick={() => useUiStore.getState().setRightTab('canvas')}
-          className="-mx-1 flex h-7 items-center gap-1 self-start rounded-md px-1 text-sm text-ink-2 outline-none hover:bg-surface-hover hover:text-ink focus-visible:focus-ring"
-        >
-          {t('docSummary.canvasSettings')}
-          <ChevronRight size={ICON_SIZE.xs} aria-hidden />
-        </button>
-      </Card>
+      {/* 一行提示（UI 2.0）：「本排版 · 尺寸 · 几张图」+ 「画布设置 ›」；起步那句提示折进「详情」。不再是一张三层的卡 */}
+      <Notice
+        data-document-summary
+        title={t('docSummary.title')}
+        detail={t('emptyHint')}
+        action={
+          <Button size="sm" data-document-summary-canvas onClick={() => useUiStore.getState().setRightTab('canvas')}>
+            {t('docSummary.canvasSettings')}
+            <ChevronRight size={ICON_SIZE.xs} aria-hidden />
+          </Button>
+        }
+      >
+        {facts.join(' · ')}
+      </Notice>
     </div>
   )
 }

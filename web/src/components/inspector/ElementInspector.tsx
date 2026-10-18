@@ -110,7 +110,6 @@ import { INSPECTOR_CONTROL_X, INSPECTOR_HALF, INSPECTOR_LABEL_W } from './layout
 import { OriginalFileActions } from './OriginalFileActions'
 import { Grid2, Reveal, Row, Section } from '../ui/Field'
 import { SummaryRow } from '../ui/SummaryRow'
-import { Details, Summary } from '../ui/Details'
 import { Notice } from '../ui/Notice'
 import { ColorField, NumberField, TextArea, TextInput } from '../ui/Input'
 import { Select } from '../ui/Select'
@@ -687,9 +686,22 @@ function ErrorBlock({
 }) {
   return (
     <Section>
-      <Notice tone="danger" data-render-error>
+      {/* 一行中性提示：一句话 + 至多一个动作（重试）；完整 traceback 在「详情」里（折叠、可复制） */}
+      <Notice
+        tone="danger"
+        data-render-error
+        detail={traceback || null}
+        action={
+          onRetry && (
+            <Button size="sm" onClick={onRetry}>
+              <RotateCcw size={ICON_SIZE.xs} />
+              {el('retryRender')}
+            </Button>
+          )
+        }
+      >
         {/* 描述符在**显示这一刻**才翻，切语言后这条跟着换 */}
-        <p>{formatMessage(error)}</p>
+        <p className="text-ink">{formatMessage(error)}</p>
         {/* 「先选运行目录」（U03）：确认框被「稍后」关掉之后从这里再开；
             「脚本跑完没出图」：多半是沙盒 cwd 下相对路径找不到数据，给出口（ADR 0047） */}
         {code === WORKDIR_CONFIRMATION_CODE ? (
@@ -701,24 +713,7 @@ function ErrorBlock({
         )}
         {/* 数据找不到（ADR 0106）：指认对话框被关掉之后从这里再开 */}
         <MissingInputButton offer={missingInput ?? null} />
-        <div className="mt-0.5 flex items-center gap-2">
-          <p className="text-xs">{el('keptPrevious')}</p>
-          {onRetry && (
-            <Button variant="danger" size="sm" className="-my-1" onClick={onRetry}>
-              <RotateCcw size={ICON_SIZE.xs} />
-              {el('retryRender')}
-            </Button>
-          )}
-        </div>
-        {traceback && (
-          // 折叠只有三种写法（SummaryRow / GroupToggle / Details）：技术细节是原生 details
-          <Details className="mt-1">
-            <Summary className="h-6 text-xs">{el('traceback')}</Summary>
-            <pre className="mt-1 max-h-40 overflow-auto whitespace-pre-wrap break-all rounded-sm bg-surface p-1.5 font-mono text-xs leading-relaxed text-ink-2">
-              {traceback}
-            </pre>
-          </Details>
-        )}
+        <p className="text-xs">{el('keptPrevious')}</p>
       </Notice>
     </Section>
   )
@@ -3087,16 +3082,16 @@ function UnsupportedNote({ role }: { role: string }) {
   if (!info) return null
   return (
     /* 说明条只有一种皮：`ui/Notice`；入口是 ghost、不撑满（打磨 E10） */
-    <Notice className="mt-2" title={info.title}>
-      <p className="text-ink-2">{info.reason}</p>
-      <Button
-        variant="ghost"
-        size="sm"
-        className="-ml-2.5 mt-0.5"
-        onClick={() => useUiStore.getState().setRightTab('assistant')}
-      >
-        {el('useAssistant')}
-      </Button>
+    <Notice
+      className="mt-2"
+      title={info.title}
+      action={
+        <Button size="sm" onClick={() => useUiStore.getState().setRightTab('assistant')}>
+          {el('useAssistant')}
+        </Button>
+      }
+    >
+      {info.reason}
     </Notice>
   )
 }

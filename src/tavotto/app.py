@@ -18,6 +18,7 @@ import errno
 import hashlib
 import json
 import logging
+import math
 import os
 import queue
 import re
@@ -84,6 +85,7 @@ from .engine import (
     exportreq as engine_exportreq,
     figcapture as engine_figcapture,
     handoff as engine_handoff,
+    handoffreceipt as engine_handoffreceipt,
     inputbroker as engine_inputbroker,
     inputremap as engine_inputremap,
     inputtranscript as engine_inputtranscript,
@@ -5106,6 +5108,50 @@ def _resolve_engine_worker(rel_id: str, *, artifact_source=None):
     )
 
 
+def _note_handoff_render(stem: str, *, code: str | None = None, **facts) -> None:
+    """把这次渲染的结论记进进程内结论表（ADR 0131 第六节），供 `GET /api/handoff/render-status` 查询。
+
+    只读取这次本来就要做的渲染的结果，不触发任何执行；没有交接在查时也记（几个标量，零 IO）。
+    **任何失败都不许影响渲染响应。**
+    """
+    try:
+        project = current_ctx().path  # 取不到项目也在保护范围内：结论表是旁路
+        if code is None:
+            engine_handoffreceipt.record_ok(project, stem, **facts)
+        else:
+            engine_handoffreceipt.record_failed(project, stem, code)
+    except Exception:  # noqa: BLE001 —— 结论表是旁路，不许拖累渲染
+        LOG.debug("交接渲染结论记录失败", exc_info=True)
+
+
+def _handoff_target_stem(rel_id: str) -> str:
+    """面板 id → 结论表匹配用的 stem，判据与 `_resolve_engine_worker` 一致（runtime 素材查注册表，磁盘面板取文件名主干）。"""
+    try:
+        if engine_runtimeasset.is_runtime_id(rel_id):
+            info = engine_runtimeasset.resolve(rel_id, current_registry())
+            return info["stem"] if info else ""
+    except Exception:  # noqa: BLE001 —— 结论表是旁路
+        return ""
+    return Path(rel_id).stem
+
+
+@app.get(security.HANDOFF_STATUS_PATH)
+def api_handoff_render_status():
+    """`tavotto open` 查「`since` 之后某项目某 stem 的第一份渲染结论」（ADR 0131 第六节）。
+
+    认证由 guard 管：cookie / 完整 secret / 只对本端点有效的 scoped 只读 token。响应不回显路径、不含 traceback。
+    """
+    project = request.args.get("project", "")
+    stem = request.args.get("stem", "")
+    try:
+        since = float(request.args.get("since", ""))
+    except ValueError:
+        since = float("nan")
+    if not project or not stem or not math.isfinite(since):
+        return jsonify({"error": "参数无效", "code": "bad_handoff_query"}), 400
+    return jsonify(engine_handoffreceipt.query(project, stem, since))
+
+
 @app.post("/api/engine/render")
 def api_engine_render():
     """应用全量 override 列表并重渲染，返回新 manifest 与版本号。
@@ -5169,6 +5215,11 @@ def api_engine_render():
         info = current_registry().for_stem(Path(stem).stem) or {}
         cold = not worker.built
     except Exception as exc:
+        # worker 启动 / 环境解析失败（WorkerError）也是「那一次渲染」的失败结论：
+        # 不记结论 CLI 会白等到 timeout（ADR 0131 §六）。此时 stem 还没拿到，按
+        # `_resolve_engine_worker` 同一判据反推（旁路，任何失败都不影响原异常）。
+        if isinstance(exc, engine_pool.WorkerError):
+            _note_handoff_render(_handoff_target_stem(rel_id), code=exc.code)
         # 准备态同样须有终局；原异常留给原有 Flask handler，HTTP/code 不变。
         sse_publish("render.failed", {"pj": pj, "id": rel_id, "error": str(exc)})
         raise
@@ -5191,6 +5242,7 @@ def api_engine_render():
         )
     except engine_pool.WorkerError as exc:
         LOG.error("引擎渲染失败: %s: %s", stem, exc)
+        _note_handoff_render(Path(stem).stem, code=exc.code)
         # 按新改指表 build 过、只是图名变了（stems 由数据决定，`unknown_stem`）：注册表按这次 build 的真实
         # 产出重新登记，新图在素材库里出现（ADR 0106 §五）
         # 一张都没出（`unknown_stem` 被换成 `no_figures_captured*`）同样是按新表跑出的权威结果：旧 stems 要摘掉
@@ -5235,6 +5287,11 @@ def api_engine_render():
         sse_publish("render.failed", {"pj": pj, "id": rel_id, "error": str(exc)})
         raise
     sse_publish("render.done", {"pj": pj, "id": rel_id, "rev": worker.rev})
+    _note_handoff_render(
+        Path(stem).stem,
+        registry_match=bool(info),
+        manifest_elements=len((resp.get("manifest") or {}).get("elements") or []),
+    )
     _resync_registration(current_ctx(), worker)
     if engine_runtimeasset.is_runtime_id(rel_id):
         # 重开文档时的首帧占位从这里来：刷新 materialized cache 的预览与

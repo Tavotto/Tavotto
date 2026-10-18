@@ -10,6 +10,17 @@
   * **没有 savefig 的脚本也要捕获**（`plt.plot(...); plt.show()` 是 AI 最常见
     的输出形态）。以前只有 browser.py 有兜底，桌面一张都捕获不到——同一份
     脚本两个入口两个答案，是数据级的分叉。
+  * **`plt.show()` 时开着的图，之后被 `plt.close()` 也要捕获（G1，safe worker）**：
+    兜底只看跑完仍活着的图，`plt.show(); plt.close('all')` / 循环里逐张 show+close 的脚本以前
+    ok 却 0 张。worker 在脚本 import pyplot 的那一刻包 `plt.show`（先记账、再原样调用，不改行为、
+    不碰活动图），账是 `figcapture.ShownFigures`（有界：强引用 ≤ 上限、其余只计数；弱引用判重）；
+    `collect_pyplot_figures(..., shown=)` 把 show 过的排在跑完仍活着的之前，**同一套** stem 命名 /
+    来源 `pyplot` / 8 张上限与提示，savefig 认领或仍开着的图不重复。没 show 就 close 的图仍不捕获
+    （交互用户也没见过）。**账每次 build 开始时重建**（`_install_show_capture`；`build_failed` 的会话会被复用、重跑脚本，
+    上一次留下的已关闭图不许带进这一次；show 钩子每次读模块全局 `_SHOWN`，不抓闭包里的旧账）。**8 张上限只限 pyplot
+    兜底**：show 时已被 savefig 认领的图（`figcapture.claimed_ids`，与 `collect_pyplot_figures` 去重同一判据）不占名额，
+    之后才认领的在下一次 show 腾出名额；溢出且已关闭的图一旦丢了强引用就补不回（只计数），故「show 之后才 savefig 一张
+    已溢出的已关闭图」不在保证内。native bridge 在 show 屏障本来就收，浏览器 playground 不传 `shown`。
   * **fallback stem 按「本次捕获里的第几张」编号**（`<脚本名>`、`-2`、`-3`），
     **不按 `plt.get_fignums()` 的 figure 号**：脚本中途 `plt.close()` 过一次
     号就跳，用户的 override 于是挂在一个不存在的 stem 上，表现是「打开是

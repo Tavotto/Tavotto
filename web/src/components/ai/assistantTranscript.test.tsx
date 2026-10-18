@@ -15,7 +15,7 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { aiRevert, fetchAiHistory } from '@/lib/api'
+import { ApiError, aiRevert, fetchAiHistory } from '@/lib/api'
 import { t } from '@/i18n'
 import { STREAM_WORD_CLASS } from '@/lib/streamMarkdown'
 import { TooltipProvider } from '@/components/ui/Tooltip'
@@ -322,6 +322,33 @@ describe('发送失败（§6.7）', () => {
     expect(start).toHaveBeenCalledTimes(2)
     expect((start.mock.calls[1] as unknown as [{ prompt: string }])[0].prompt).toBe('加粗线条')
     expect(q('[data-ai-error="send"]')).toBeNull()
+  })
+
+  it('一句话「没有发出去 · 原因」+「重试」：HTTP 状态 / 稳定码 / 诊断引用折在「详情」里，不再只显示 HTTP 500', async () => {
+    start.mockImplementationOnce(async () => {
+      throw new ApiError('HTTP 500', 500, { code: 'upstream_timeout' }, 'ref-3f9a')
+    })
+    await mount([])
+    const box = q<HTMLTextAreaElement>('[data-ai-input]')!
+    const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!
+    await act(async () => {
+      setter.call(box, '加粗线条')
+      box.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    await act(async () => q<HTMLButtonElement>('[data-ai-send]')!.click())
+    const notice = q('[data-ai-error="send"]')!
+    // 正文：一句话，原因是通用原因（后端只给了裸状态码），状态码不在正文里
+    expect(notice.textContent).toContain(`${ai('panel.sendFailed')} · ${ai('panel.sendFailedReason')}`)
+    expect(notice.textContent).not.toContain('HTTP 500')
+    // 一个主动作：重试
+    expect(notice.querySelectorAll('[data-ai-retry]')).toHaveLength(1)
+    // 详情默认折叠；展开才见状态 / 稳定码 / 诊断引用
+    expect(notice.querySelector('[data-notice-detail]')).toBeNull()
+    await act(async () => notice.querySelector<HTMLButtonElement>('[data-notice-detail-toggle]')!.click())
+    const detail = notice.querySelector('[data-notice-detail]')!.textContent!
+    expect(detail).toContain('HTTP 500')
+    expect(detail).toContain('upstream_timeout')
+    expect(detail).toContain('ref ref-3f9a')
   })
 
   it('发送失败钉在那一张图上：换到别的图就不摆它的重试，回来照常重试原处（Codex #827 P1）', async () => {

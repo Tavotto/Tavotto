@@ -17,6 +17,7 @@ import { existsSync, readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import {
   DURATION,
+  drawerMotion,
   EASE_POP,
   EASE_SNAP,
   EASE_SPRING,
@@ -239,5 +240,13 @@ describe('usePresence', () => {
       await new Promise((r) => setTimeout(r, 140))
     })
     expect(box()?.getAttribute('data-state')).toBe('open')
+  })
+})
+
+describe('drawerMotion：退场保活期间 inert', () => {
+  it('closed 时 inert + aria-hidden，open 时都没有', () => {
+    const o = { overlay: false, width: 300, side: 'left' as const }
+    expect(drawerMotion({ ...o, state: 'closed' })).toMatchObject({ inert: true, 'aria-hidden': true })
+    expect(drawerMotion({ ...o, state: 'open' })).toMatchObject({ inert: false, 'aria-hidden': undefined })
   })
 })
