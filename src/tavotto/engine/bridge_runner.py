@@ -132,6 +132,9 @@ _SAVEFIG_OBSERVATIONS = figcapture.SavefigObservations()
 #: 「先写临时文件再改名」的 savefig（#1124）：认领它的 stem -> 待确认的提升
 #: `{"tmp": 绝对路径, "final": 绝对路径, "stem": 最终 stem, "digest": 写完那一刻的内容摘要}`
 _TEMP_SAVES: dict = {}
+#: 已确认提升的 stem：旧 stem（`final.png`）-> 新 stem（`final`）。同一张图之后再按临时文件 + 改名保存
+#: 一次（多个 `show()` 之间反复原子保存），`savefig_stem` 又算出旧 stem，要并回已提升的捕获而不是新开一个
+_PROMOTED: dict = {}
 #: pyplot 兜底因上限丢掉的张数
 _DROPPED = 0
 #: 引擎自己写盘（预览 / 导出）时暂停捕获——否则 export 到任意路径会被
@@ -172,8 +175,10 @@ def _install_savefig_hook(mfigure) -> None:
 
     def _patched_savefig(self, fname, *args, **kwargs):
         observation = None
+        stem = None
         if _CAPTURING:
             stem = figcapture.savefig_stem(fname)
+            stem = _resolve_promoted(stem, self)
             call = figcapture.savefig_call(fname, kwargs)
             observation = _SAVEFIG_OBSERVATIONS.record(
                 self,
@@ -200,7 +205,7 @@ def _install_savefig_hook(mfigure) -> None:
             raise
         _SAVEFIG_OBSERVATIONS.complete(observation, "saved")
         if _CAPTURING:
-            _note_temp_save(self, fname)
+            _note_temp_save(self, fname, stem)
         return result
 
     mfigure.Figure.savefig = _patched_savefig
@@ -214,19 +219,43 @@ def _digest(path: str) -> str | None:
         return None
 
 
-def _note_temp_save(fig, fname) -> None:
+def _file_signature(path: str):
+    """文件身份签名 `(dev, ino, size, mtime_ns, ctime_ns)`；不存在 / 读不到记 None。"""
+    try:
+        st = os.stat(path)
+    except OSError:
+        return None
+    return (st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns, st.st_ctime_ns)
+
+
+def _resolve_promoted(stem, fig):
+    """旧 stem 已被提升、且提升后的捕获就是这张图：并回新 stem（别的图存同名临时文件不走别名）。"""
+    new = _PROMOTED.get(stem) if stem else None
+    if new is not None and _CAPTURE.get(new) is fig:
+        return new
+    return stem
+
+
+def _note_temp_save(fig, fname, stem=None) -> None:
     """`savefig("final.png.tmp")` 真的写完了：记下它认领的 stem 与写完那一刻的内容摘要，等脚本结束时
-    确认它成了 `final.png` 才把 stem 改成 `final`（`_promote_temp_saves`）。"""
+    确认它成了 `final.png` 才把 stem 改成 `final`（`_promote_temp_saves`）。
+
+    `stem` 是调用方解析过别名的 stem；已经是提升后的 stem（`final`）就不再登记。"""
     target = figcapture.temp_save_target(fname)
     if target is None:
         return
-    stem = figcapture.savefig_stem(fname)
-    if not stem or _CAPTURE.get(stem) is not fig:
+    if stem is None:
+        stem = _resolve_promoted(figcapture.savefig_stem(fname), fig)
+    if not stem or stem in _PROMOTED.values():
+        return
+    if _CAPTURE.get(stem) is not fig:
         return
     tmp = os.path.abspath(os.fsdecode(fname))
+    final = os.path.join(os.path.dirname(tmp), target[0])
     _TEMP_SAVES[stem] = {
+        "final_sig": _file_signature(final),
         "tmp": tmp,
-        "final": os.path.join(os.path.dirname(tmp), target[0]),
+        "final": final,
         "stem": target[1],
         "digest": _digest(tmp),
     }
@@ -240,6 +269,10 @@ def _promote_temp_saves(published=()) -> None:
     一份旧 `final.png`（Codex #1126 P1）、改名后又被别的内容覆盖都不满足。不在用户进程里替换 `os.replace`
     之类去「观察改名」：那改的是用户代码的运行环境，而结果判据已经足够。
 
+    还要求最终文件的身份签名（dev/ino/size/mtime/ctime）与 savefig 那一刻不同：确定性重跑时磁盘上可能
+    本来就躺着一份字节相同的旧 `final.png`，脚本删掉临时文件却没改名（Codex #1126 r4305488366）——摘要相等
+    证明内容、签名变化证明是这次执行在 savefig 之后写的（改名换 inode / ctime，复制写入改 mtime / ctime）。
+
     另外两条：最终 stem 没被别的图占用；已经在屏障上交给界面的 stem（`published`）不改——界面与会话已按
     旧名索引了它。改名保持捕获顺序。"""
     for old, t in list(_TEMP_SAVES.items()):
@@ -248,8 +281,11 @@ def _promote_temp_saves(published=()) -> None:
             continue
         if t["digest"] is None or _digest(t["final"]) != t["digest"]:
             continue
+        if _file_signature(t["final"]) == t["final_sig"]:
+            continue
         if old not in _CAPTURE or new in _CAPTURE or old in published:
             continue
+        _PROMOTED[old] = new
         for table in (_CAPTURE, _CAPTURE_SOURCE, _CAPTURE_SAVEFIG, _CAPTURE_EXTRAS):
             if old in table:
                 items = [(new if k == old else k, v) for k, v in table.items()]

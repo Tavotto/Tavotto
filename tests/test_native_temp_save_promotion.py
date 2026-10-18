@@ -106,7 +106,7 @@ def test_a_final_stem_already_taken_by_another_figure_is_left_alone(tmp_path):
     assert _stems(tmp_path, body) == ["final.png", "final"]
 
 
-def _barrier_stems(tmp_path: Path, body: str) -> list[list[str]]:
+def _barrier_stems(tmp_path: Path, body: str, release: bool = False) -> list[list[str]]:
     """带控制通道跑（桌面 / `tavotto run` 的形态）：假的父进程握手、记下每个 `barrier` 事件交给界面的 stems，
     然后关掉连接（EOF = 父进程走了 → 屏障放开、脚本照常跑完）。"""
     import socket
@@ -126,7 +126,10 @@ def _barrier_stems(tmp_path: Path, body: str) -> list[list[str]]:
                 msg = json.loads(line)
                 if msg.get("bridge_event") == "barrier":
                     seen.append(msg["stems"])
-                    return  # 关连接：屏障放开
+                    if not release:
+                        return  # 关连接：屏障放开
+                    # 发 continue 放行这一个屏障，连接留着——后面的屏障也读得到
+                    conn.sendall(b'{"protocol_version": 1, "cmd": "continue", "request_id": "c"}\n')
 
     t = threading.Thread(target=serve, daemon=True)
     t.start()
@@ -166,6 +169,29 @@ def test_a_stem_published_before_the_rename_is_not_renamed_afterwards(tmp_path):
     """屏障上已按 `final.png` 交给界面、之后才改名：不再改（界面与会话已按旧名索引）。"""
     body = 'plt.show()\nos.replace("final.png.tmp", "final.png")\n'
     assert _barrier_stems(tmp_path, body)[0] == ["final.png"]
+
+
+def test_a_stale_identical_final_file_with_the_temp_removed_is_not_a_promotion(tmp_path):
+    """Codex #1126 r4305488366：确定性重跑，磁盘上本来就有字节相同的旧 `final.png`，脚本删掉临时文件却没改名。"""
+    assert _stems(tmp_path, 'os.replace("final.png.tmp", "final.png")\n') == ["final"]
+    first = (tmp_path / "final.png").read_bytes()
+    assert _stems(tmp_path, 'os.remove("final.png.tmp")\n') == ["final.png"]
+    assert (tmp_path / "final.png").read_bytes() == first
+
+
+def test_repeated_atomic_saves_across_shows_stay_one_capture(tmp_path):
+    """Codex #1126 r4305488370：savefig tmp -> replace -> show -> 又 savefig tmp -> replace -> show，同一张图只有一个 stem。"""
+    one = 'fig.savefig("final.png.tmp", format="png")\nos.replace("final.png.tmp", "final.png")\nplt.show()\n'
+    body = 'os.replace("final.png.tmp", "final.png")\nplt.show()\n' + one
+    assert _stems(tmp_path, body) == ["final"]
+
+
+def test_repeated_atomic_saves_reach_every_barrier_as_the_final_stem(tmp_path):
+    one = 'fig.savefig("final.png.tmp", format="png")\nos.replace("final.png.tmp", "final.png")\nplt.show()\n'
+    body = 'os.replace("final.png.tmp", "final.png")\nplt.show()\n' + one
+    barriers = _barrier_stems(tmp_path, body, release=True)
+    assert len(barriers) >= 2
+    assert all(b == ["final"] for b in barriers), barriers
 
 
 @pytest.mark.parametrize(
