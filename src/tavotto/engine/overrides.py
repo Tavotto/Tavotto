@@ -37,7 +37,7 @@ from matplotlib.offsetbox import AnchoredOffsetbox, AnnotationBbox
 from matplotlib.patches import BoxStyle, FancyArrowPatch, FancyBboxPatch, Patch, Rectangle
 from matplotlib.text import Annotation, Text
 from matplotlib.transforms import ScaledTranslation
-from mpl_toolkits.mplot3d import proj3d
+from mpl_toolkits.mplot3d import art3d, proj3d
 
 import colorbarmodel
 import legendmodel
@@ -2775,6 +2775,51 @@ def _set_image_origin(im: AxesImage, v) -> None:
     im.stale = True
 
 
+def on_axes3d(artist) -> bool:
+    """这个 artist 住在 3D 轴上。**唯一出处**——manifest 的 3D 分支（zorder / 面状代理 / 取色）
+    与 handler 的 3D 分支问的是同一件事（ADR 0135）。"""
+    return getattr(getattr(artist, "axes", None), "name", "") == "3d"
+
+
+def collection_sizes(coll):
+    """Collection 的标记大小（pt²）**按脚本给的顺序**。
+
+    `Path3DCollection.do_3d_projection` 每帧把 `_sizes` 重排成深度序（多于一个值时），所以 `get_sizes()`
+    读到的是上一帧的排序、不是脚本的顺序：拿它当「脚本原样」撤销，逐点大小会被打乱。mplot3d 为此另存
+    了一份 `_sizes3d`（`set_sizes` 在 draw 之外都会更新它），读它。2D 与不带这份缓存的一律走
+    `get_sizes()`。manifest 的字段值与 handler 的 getter 共用这一个函数。"""
+    if isinstance(coll, art3d.Path3DCollection):
+        return np.array(coll._sizes3d, dtype=float).ravel()  # noqa: SLF001
+    return coll.get_sizes().copy()
+
+
+def collection_linewidths(coll):
+    """同 `collection_sizes`：`Path3DCollection` 的 `_linewidths` 每帧被重排，脚本顺序在 `_linewidths3d`。"""
+    if isinstance(coll, art3d.Path3DCollection):
+        return np.array(coll._linewidths3d, dtype=float).ravel()  # noqa: SLF001
+    return coll.get_linewidths().copy()
+
+
+def collection_face_rgba(coll):
+    """面色数组，**脚本的顺序、没有深度着色**。
+
+    3D 集合的 `get_facecolor()` 返回的是按深度排好序、再乘过深度 alpha（`depthshade`）的数组，
+    `[0]` 随视角变；读 `Collection.get_facecolor` 拿到的是未排序的原始 `_facecolors`。
+    2D 集合原样走 `get_facecolor()`。"""
+    if isinstance(coll, (art3d.Path3DCollection, art3d.Poly3DCollection)):
+        return Collection.get_facecolor(coll)
+    return coll.get_facecolor()
+
+
+def collection_edge_rgba(coll):
+    """边色数组，口径同 `collection_face_rgba`（边色是 `'face'` 时跟着面色走）。"""
+    if isinstance(coll, (art3d.Path3DCollection, art3d.Poly3DCollection)):
+        if isinstance(coll._edgecolors, str) and coll._edgecolors == "face":  # noqa: SLF001
+            return collection_face_rgba(coll)
+        return np.asarray(coll._edgecolors)  # noqa: SLF001
+    return coll.get_edgecolor()
+
+
 def _set_collection_sizes(coll, v) -> None:
     coll.set_sizes([float(v)] if isinstance(v, (int, float)) else v)
 
@@ -2801,6 +2846,32 @@ def _restore_scatter_marker(coll, orig) -> None:
 
 def _set_collection_lw(coll, v) -> None:
     coll.set_linewidth(float(v) if isinstance(v, (int, float)) else v)
+    _heal_zero_dashes(coll)
+
+
+def _heal_zero_dashes(coll) -> None:
+    """线宽为 0 的集合上，虚线按线宽缩放成全 0，矢量后端的 `set_dashes` 当场抛 ValueError。
+
+    `Collection._bcast_lwls` 把 dash 乘以线宽：`linewidth=0` + `linestyle="--"` 得到 `(0, (0, 0))`。
+    Agg 的 C++ 路径不检查，**SVG / PDF 的 `draw_path_collection` 走 `gc.set_dashes`，
+    "At least one value in the dash list must be positive"**——预览 SVG 画不出来，整张图的渲染失败。
+    必须有花纹 + 边色 + 虚线 + 线宽 0 才触发（plain mpl 里 2D 的 `fill_between` 与 3D 曲面逐位同样复现），
+    但 3D 曲面惯用 `linewidth=0`，用户在检查器里先选虚线、再调线宽就会踩到。
+
+    线宽 0 时那条边本来就不画，虚线没有可见效果：把缩放成全 0 的 dash 退成实线。`_us_linestyles`
+    （未缩放规格）原样保留，线宽再设回正数时 matplotlib 自己重新缩放，撤销回的还是脚本原样。"""
+    ls = getattr(coll, "_linestyles", None)
+    if not ls:
+        return
+    healed = [
+        (0, None)
+        if seq is not None and len(seq) and not any(float(x) > 0 for x in seq)
+        else (off, seq)
+        for off, seq in ls
+    ]
+    if any(a is not b and a != b for a, b in zip(healed, ls)):
+        coll._linestyles = healed  # noqa: SLF001
+        coll.stale = True
 
 
 def _set_linestyle(a, v) -> None:
@@ -2887,6 +2958,7 @@ def _set_linecoll_ls(coll, v) -> None:
     两种形状都要认——`originals` 里存的正是 `_get_linecoll_ls` 回的那份。
     """
     coll.set_linestyle(v)
+    _heal_zero_dashes(coll)
 
 
 class PinnedTightLayoutEngine(TightLayoutEngine):
@@ -3368,6 +3440,14 @@ def _get_coll_edgecolor(coll):
     return getattr(coll, "_original_edgecolor", coll.get_edgecolor())
 
 
+def _set_coll_color(coll, setter: str, v) -> None:
+    """Collection 面色 / 边色的唯一 setter 入口：3D 曲面改完要按「原始设定 + 此刻 alpha」重建，
+    不依赖它与 alpha 谁先谁后（`_canonical_poly3d_colors`）。2D 与别的 3D 集合原样透传。"""
+    _remember_poly3d_native(coll)
+    getattr(coll, setter)(v)
+    _canonical_poly3d_colors(coll)
+
+
 def _get_coll_facecolor(coll):
     """面色的可回灌表示。理由同 `_get_coll_edgecolor`：`_set_mappable_flags()`
     读的是 `_original_facecolor`，回灌解析后的数组会让 `'none'` 这个**字符串
@@ -3477,7 +3557,82 @@ def _with_hatch_pinned(a, fn) -> None:
 def _set_alpha_pinned(a, v) -> None:
     """所有 Patch / Collection 的 alpha 编辑唯一入口（#874 / #956）：新增 alpha handler 若作用于
     可能带花纹的 artist，必须走这里，不得直接 `set_alpha`（`tests/test_hatch_alpha_consumers.py` 扫源码）。"""
+    _remember_poly3d_native(a)
     _with_hatch_pinned(a, lambda: a.set_alpha(None if v is None else float(v)))
+    _canonical_poly3d_colors(a)
+
+
+#: 记在 `Poly3DCollection` 上的「脚本原样」：首次被我们的 setter 碰之前的原始设定 + 四份颜色数组。
+_POLY3D_NATIVE = "_mm_poly3d_native"
+
+
+def _remember_poly3d_native(a) -> None:
+    """首次改面色 / 边色 / alpha **之前**，记下 mplot3d 此刻（脚本留下的）原样。"""
+    if not isinstance(a, art3d.Poly3DCollection) or hasattr(a, _POLY3D_NATIVE):
+        return
+
+    def dup(v):
+        return v.copy() if isinstance(v, np.ndarray) else v
+
+    setattr(
+        a,
+        _POLY3D_NATIVE,
+        {
+            "alpha": dup(a.get_alpha()),
+            "face": dup(getattr(a, "_original_facecolor", None)),
+            "edge": dup(getattr(a, "_original_edgecolor", None)),
+            "arrays": {
+                k: dup(getattr(a, k, None))
+                for k in ("_facecolors", "_edgecolors", "_facecolor3d", "_edgecolor3d")
+            },
+        },
+    )
+
+
+def _canonical_poly3d_colors(a) -> None:
+    """`Poly3DCollection` 的面色 / 边色 / alpha **与应用顺序无关**，且撤干净就是脚本原样（ADR 0135）。
+
+    mplot3d 把颜色另存一份 `_facecolor3d` / `_edgecolor3d`（深度排序前的原序），而三个 setter 各动
+    各的，结果依赖谁先谁后：
+
+    * `set_alpha(a)` 把 alpha 烤进 `_facecolor3d`、**不碰** `_edgecolor3d`；`set_alpha(None)` 清不掉
+      已烤进去的 alpha（`to_rgba_array(旧数组, None)` 保留数组自带的 alpha 列）；
+    * `set_edgecolor(c)` 用**当时的** `_alpha` 合成边色——先 alpha 后边色，边是半透明的；先边色后
+      alpha，边仍不透明（3.8.4 / 3.10.9 / 3.11.2 同一份代码，实测像素差 3431）。
+
+    热会话逐步累加（边色早就落了、alpha 后来才加）与冷启动一次性重放（按列表序）因此画出两张图，
+    写回的像素门会 409。规范化分两档：
+
+    * **三者的设定都回到脚本原样**（原始设定与 alpha 都与首次触碰前相同）：把首次触碰前记下的四份数组
+      原样放回——撤销**逐位**回到 mplot3d 自己留下的状态，哪怕那状态带着 mplot3d 的怪癖（脚本事后
+      `set_alpha` 留下的不透明边、`set_edgecolor("face")` 抄来的深度序面色）；
+    * 否则按 2D `Collection.set_alpha` 的口径从**原始设定**重建——`_set_facecolor(_original_facecolor)` /
+      `_set_edgecolor(_original_edgecolor)`（都按当前 `_alpha` 合成，alpha 同时落在面与边上，与 2D
+      一致），再回写 `_facecolor3d` / `_edgecolor3d`。重建只依赖「原始设定 + 此刻的 alpha」，不依赖历史；
+      alpha 变回 None 也就真的清干净。映射中的面色每帧由 `do_3d_projection` 回写，与 2D 同一做法。"""
+    if not isinstance(a, art3d.Poly3DCollection):
+        return
+    snap = getattr(a, _POLY3D_NATIVE, None)
+    if (
+        snap is not None
+        and _same_value(a.get_alpha(), snap["alpha"])
+        and _same_value(getattr(a, "_original_facecolor", None), snap["face"])
+        and _same_value(getattr(a, "_original_edgecolor", None), snap["edge"])
+    ):
+        for k, v in snap["arrays"].items():
+            setattr(a, k, v.copy() if isinstance(v, np.ndarray) else v)
+        a.stale = True
+        return
+    try:
+        Collection._set_facecolor(a, a._original_facecolor)  # noqa: SLF001
+        Collection._set_edgecolor(a, a._original_edgecolor)  # noqa: SLF001
+    except Exception:  # noqa: BLE001 — 私有重建失败就保留 mplot3d 自己的结果（旧行为）
+        return
+    a._facecolor3d = Collection.get_facecolor(a)  # noqa: SLF001
+    # 边色是 `'face'` 时 `Collection.get_edgecolor` 会回 3D 子类的 `get_facecolor()`——深度排序后的
+    # `_facecolors2d`，与 `_edgecolor3d` 要的脚本顺序对不上（逐面着色的曲面上边色会被打乱）
+    a._edgecolor3d = collection_edge_rgba(a)  # noqa: SLF001
+    a.stale = True
 
 
 # 图例族模块是叶子、不能 import 本模块：把钉住入口交给它（#956）
@@ -3652,16 +3807,16 @@ _COLLECTION_CAPS: dict[str, tuple] = {
     # face / edge 的 getter 回的是**原始设定**（`_original_*`），不是解析出来
     # 的 RGBA 数组：matplotlib 判「这条通道归不归 colormap 管」只看那两个值，
     # 回灌数组会把映射永久关掉（详见 `_get_coll_edgecolor`）。
-    "facecolor": (_get_coll_facecolor, lambda a, v: a.set_facecolor(v)),
-    "edgecolor": (_get_coll_edgecolor, lambda a, v: a.set_edgecolor(v)),
-    "linewidth": (lambda a: a.get_linewidths().copy(), _set_collection_lw),
+    "facecolor": (_get_coll_facecolor, lambda a, v: _set_coll_color(a, "set_facecolor", v)),
+    "edgecolor": (_get_coll_edgecolor, lambda a, v: _set_coll_color(a, "set_edgecolor", v)),
+    "linewidth": (collection_linewidths, _set_collection_lw),
     # 线型的 getter 走**未缩放**规格（`_us_linestyles`）而不是
     # `get_linestyle()`：后者回的是按线宽缩放过的 dash，`set_linestyle()` 会
     # 把喂进去的值再缩放一遍，撤销一次线型就疏一档、复利放大。整个
     # Collection 族都是这个毛病，不只线组——判据与理由见 `_get_linecoll_ls`。
     "linestyle": (_get_linecoll_ls, _set_linecoll_ls),
     "hatch": _CAP_HATCH,
-    "size": (lambda a: a.get_sizes().copy(), _set_collection_sizes),
+    "size": (collection_sizes, _set_collection_sizes),
     "marker": (lambda a: list(a.get_paths()), _set_scatter_marker),
     "cmap": _CAP_CMAP,
     "vmin": _CAP_VMIN,

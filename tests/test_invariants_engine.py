@@ -1051,6 +1051,44 @@ REMOVAL_CASES = [
             [{"gid": "axes_2.colorbar", "prop": "vmin", "value": 0.3}],
         ],
     ),
+    # ---- 3D 数据图元（ADR 0135）：曲面 / 3D contourf / 独立 ScalarMappable 色条共用同一个
+    # Colormap + Norm 实例。色阶兄弟成立后，撤销要各回各的原样（含没注册的自定义色图）
+    (
+        "K-3d-surface-narrow-then-cb-drop-both",
+        "Inv3D",
+        [
+            [{"gid": "axes_0.fill_0", "prop": "cmap", "value": "cividis"}],
+            [
+                {"gid": "axes_0.fill_0", "prop": "cmap", "value": "cividis"},
+                {"gid": "axes_1.colorbar", "prop": "cmap", "value": "plasma"},
+            ],
+            [],
+        ],
+    ),
+    (
+        "K-3d-contourf-vmin-then-cb-vmin-drop-sibling",
+        "Inv3D",
+        [
+            [{"gid": "axes_0.collections_1", "prop": "vmin", "value": 0.2}],
+            [
+                {"gid": "axes_0.collections_1", "prop": "vmin", "value": 0.2},
+                {"gid": "axes_1.colorbar", "prop": "vmin", "value": 0.3},
+            ],
+            [{"gid": "axes_1.colorbar", "prop": "vmin", "value": 0.3}],
+        ],
+    ),
+    (
+        "K-3d-cb-cmap-then-surface-narrow-drop-cb",
+        "Inv3D",
+        [
+            [{"gid": "axes_1.colorbar", "prop": "cmap", "value": "plasma"}],
+            [
+                {"gid": "axes_1.colorbar", "prop": "cmap", "value": "plasma"},
+                {"gid": "axes_0.fill_0", "prop": "cmap", "value": "cividis"},
+            ],
+            [{"gid": "axes_0.fill_0", "prop": "cmap", "value": "cividis"}],
+        ],
+    ),
     (
         "A-colorbar-drop-mappable",
         "InvCbar",
