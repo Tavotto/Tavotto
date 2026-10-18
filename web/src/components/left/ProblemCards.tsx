@@ -291,8 +291,9 @@ function BucketNode({
         rest={
           <span className={cn(rowMetaClass(), 'flex items-center gap-1')}>
             {blocking > 0 && (
-              <span className="flex items-center gap-0.5 text-danger-content">
-                <SeverityGlyph severity="error" />
+              <span className="flex items-center gap-1">
+                {/* 阻断数：一颗 6px 红点 + 中性数字（不再整段染红，2026-10-16 精修 03） */}
+                <span aria-hidden className="size-1.5 shrink-0 rounded-full bg-danger" />
                 {blocking}
                 <span aria-hidden className="text-ink-faint">
                   ·

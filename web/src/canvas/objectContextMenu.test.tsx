@@ -1268,15 +1268,23 @@ describe('图内元素的弹层（dialog）外壳不回归', () => {
       portal.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }))
     })
     expect(document.querySelector('[role="dialog"]')).not.toBeNull()
+    // 关闭后弹层带 closed 保活播 pop-out（usePresence 的 exit 一档），播完才卸载
+    const gone = async () => {
+      expect(document.querySelector('[role="dialog"]')?.getAttribute('data-state')).toBe('closed')
+      await act(async () => {
+        await new Promise((r) => setTimeout(r, 160))
+      })
+      expect(document.querySelector('[role="dialog"]')).toBeNull()
+    }
     await act(async () => {
       document.body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }))
     })
-    expect(document.querySelector('[role="dialog"]')).toBeNull()
+    await gone()
     await openElement()
     await act(async () => {
       window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
     })
-    expect(document.querySelector('[role="dialog"]')).toBeNull()
+    await gone()
   })
 })
 

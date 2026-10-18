@@ -126,7 +126,8 @@ pub struct Marker {
     app: String,
     closed: Arc<AtomicBool>,
     /// 本次会话里引擎意外退出的类型：之后每次落盘（含 clean）都带着它
-    engine: Arc<Mutex<Option<EngineExit>>>,
+    /// 并带一个代次：每次 `mark_engine_exit` 加一，重启成功时只清「重启开始时看到的那一代」
+    engine: Arc<Mutex<(u64, Option<EngineExit>)>>,
 }
 
 impl Marker {
@@ -139,7 +140,7 @@ impl Marker {
                 .unwrap_or(0),
             app: app.to_string(),
             closed: Arc::new(AtomicBool::new(false)),
-            engine: Arc::new(Mutex::new(None)),
+            engine: Arc::new(Mutex::new((0, None))),
         }
     }
 
@@ -149,23 +150,45 @@ impl Marker {
     }
 
     pub fn mark_running(&self) {
-        self.write("running");
+        let g = self.engine.lock().unwrap();
+        self.write_locked("running", g.1);
     }
 
-    /// 引擎意外退出：状态仍是 `running`（壳还活着），只多一个类型。
+    /// 引擎意外退出：状态仍是 `running`（壳还活着），只多一个类型；代次加一。
     pub fn mark_engine_exit(&self, kind: EngineExit) {
-        *self.engine.lock().unwrap() = Some(kind);
-        self.write("running");
+        let mut g = self.engine.lock().unwrap();
+        g.0 += 1;
+        g.1 = Some(kind);
+        self.write_locked("running", g.1);
+    }
+
+    /// 当前的引擎退出代次。重启开始时记下它（**不清除**）：重启期间用户正常退出，文件里仍带着旧类型，下次启动照样提示。
+    pub fn engine_exit_generation(&self) -> u64 {
+        self.engine.lock().unwrap().0
+    }
+
+    /// 重启成功之后：只有文件里的类型仍是 `generation` 那一代才清（立即重写，状态仍是 `running`）。
+    /// 这期间新一代若又崩了（代次已变），它的类型保留。返回是否清了。
+    pub fn clear_engine_exit_if(&self, generation: u64) -> bool {
+        let mut g = self.engine.lock().unwrap();
+        if g.0 != generation || g.1.is_none() {
+            return false;
+        }
+        g.1 = None;
+        self.write_locked("running", None);
+        true
     }
 
     /// 正常退出（`engine_exit` 不清，见 [`judge`]）——也是所有绕过 `RunEvent::Exit` 的退出路径必须先调的那一句。幂等。
     pub fn mark_clean(&self) {
-        self.write("clean");
+        let g = self.engine.lock().unwrap();
+        self.write_locked("clean", g.1);
         self.closed.store(true, Ordering::SeqCst);
     }
 
-    fn write(&self, state: &str) {
-        let engine_exit = *self.engine.lock().unwrap();
+    /// 只在**持有 `engine` 锁**时调用：改内存状态与落盘在同一把锁里完成，并发的两次写不会让旧内容
+    /// 后落盘、盖掉新内容（#1070 r4280411389）。`closed` 也在锁内读写，clean 之后不会再被 running 覆盖。
+    fn write_locked(&self, state: &str, engine_exit: Option<EngineExit>) {
         if self.closed.load(Ordering::SeqCst) {
             return;
         }
@@ -313,6 +336,104 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    #[test]
+    fn a_successful_restart_clears_the_generation_it_started_from() {
+        let dir = tmp_dir("restart");
+        let m = Marker::new(Some(&dir), "1.0.0");
+        m.mark_running();
+        m.mark_engine_exit(EngineExit::Nonzero);
+        let g = m.engine_exit_generation(); // 重启开始：只记代次，不清
+        assert!(read(&dir).contains(r#""engine_exit":"nonzero""#));
+        assert!(m.clear_engine_exit_if(g));
+        assert!(!read(&dir).contains("engine_exit"));
+        // 崩 → 重启成功 → 正常退出：下次启动无提示
+        m.mark_clean();
+        assert_eq!(Marker::new(Some(&dir), "1.0.1").read_previous(), None);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn quitting_during_a_restart_still_prompts_for_the_old_crash() {
+        let dir = tmp_dir("quit-mid-restart");
+        let m = Marker::new(Some(&dir), "1.0.0");
+        m.mark_running();
+        m.mark_engine_exit(EngineExit::Nonzero);
+        let _g = m.engine_exit_generation(); // 重启开始，尚未成功
+        m.mark_clean(); // 用户此刻正常退出
+        assert_eq!(
+            Marker::new(Some(&dir), "1.0.1").read_previous(),
+            Some(Previous::EngineExited)
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_new_generation_crash_before_the_success_branch_survives_clean() {
+        let dir = tmp_dir("newgen");
+        let m = Marker::new(Some(&dir), "1.0.0");
+        m.mark_running();
+        m.mark_engine_exit(EngineExit::Nonzero);
+        let g = m.engine_exit_generation();
+        m.mark_engine_exit(EngineExit::Signal); // 新 sidecar / 监视线程已起，成功分支还没跑完时就崩了
+        assert!(!m.clear_engine_exit_if(g), "代次已变：不清");
+        m.mark_clean();
+        assert!(read(&dir).contains(r#""engine_exit":"signal""#));
+        assert_eq!(
+            Marker::new(Some(&dir), "1.0.1").read_previous(),
+            Some(Previous::EngineExited)
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_failed_restart_keeps_the_old_kind() {
+        let dir = tmp_dir("failed");
+        let m = Marker::new(Some(&dir), "1.0.0");
+        m.mark_running();
+        m.mark_engine_exit(EngineExit::Nonzero);
+        let _g = m.engine_exit_generation(); // 失败分支不调 clear
+        m.mark_clean();
+        assert_eq!(
+            Marker::new(Some(&dir), "1.0.1").read_previous(),
+            Some(Previous::EngineExited)
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn no_restart_keeps_the_engine_exit_through_clean() {
+        let dir = tmp_dir("norestart");
+        let m = Marker::new(Some(&dir), "1.0.0");
+        m.mark_running();
+        m.mark_engine_exit(EngineExit::Signal);
+        m.mark_clean();
+        assert_eq!(
+            Marker::new(Some(&dir), "1.0.1").read_previous(),
+            Some(Previous::EngineExited)
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn crashing_again_after_a_restart_sticks_the_new_kind() {
+        let dir = tmp_dir("recrash");
+        let m = Marker::new(Some(&dir), "1.0.0");
+        m.mark_running();
+        m.mark_engine_exit(EngineExit::Nonzero);
+        let g = m.engine_exit_generation();
+        assert!(m.clear_engine_exit_if(g));
+        m.mark_engine_exit(EngineExit::Signal);
+        assert!(read(&dir).contains(r#""engine_exit":"signal""#));
+        m.mark_clean();
+        assert_eq!(m.read_previous(), Some(Previous::EngineExited));
+        // 崩 → 重启成功 → 再崩 → 不重启就退出：仍提示
+        assert_eq!(
+            Marker::new(Some(&dir), "1.0.1").read_previous(),
+            Some(Previous::EngineExited)
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     /// 替换已存在的文件（`write_atomic` 的 tmp + rename 在任何平台都必须能覆盖旧文件）：running → clean 之后
     /// 文件内容是 clean、没有遗留 tmp。Windows 上 `std::fs::rename` 是 MOVEFILE_REPLACE_EXISTING，这条用例防任何平台替换失败。
     #[test]
@@ -352,5 +473,62 @@ mod tests {
         m.mark_running();
         m.mark_clean();
         assert_eq!(m.read_previous(), None);
+    }
+
+    /// 改状态与落盘同锁（#1070 r4280411389）：并发的崩溃 / 按代次清 / running 写完之后，文件里的类型必须等于
+    /// 内存里最后的类型——不会有一次旧渲染后落盘、盖掉新内容。
+    #[test]
+    fn concurrent_writes_leave_the_file_matching_the_final_state() {
+        for round in 0..20 {
+            let dir = tmp_dir(&format!("race{round}"));
+            let m = Marker::new(Some(&dir), "1.0.0");
+            m.mark_running();
+            let workers: Vec<_> = (0..4)
+                .map(|t| {
+                    let m = m.clone();
+                    std::thread::spawn(move || {
+                        for i in 0..50 {
+                            match (t + i) % 3 {
+                                0 => m.mark_engine_exit(EngineExit::Signal),
+                                1 => {
+                                    let g = m.engine_exit_generation();
+                                    m.clear_engine_exit_if(g);
+                                }
+                                _ => m.mark_running(),
+                            }
+                        }
+                    })
+                })
+                .collect();
+            for w in workers {
+                w.join().unwrap();
+            }
+            let want = m.engine.lock().unwrap().1;
+            let v: serde_json::Value = serde_json::from_str(&read(&dir)).unwrap();
+            let got = v
+                .get("engine_exit")
+                .and_then(|x| x.as_str())
+                .map(str::to_owned);
+            assert_eq!(got.as_deref(), want.map(|k| k.as_str()), "round {round}");
+        }
+    }
+
+    /// 结构看护：`write_locked` 的每个调用点都在同一函数里先拿了 `self.engine.lock()`。
+    #[test]
+    fn every_write_happens_under_the_engine_lock() {
+        let src = include_str!("exit_marker.rs");
+        let prod = &src[..src.find("#[cfg(test)]").unwrap()];
+        let mut calls = 0;
+        for (at, _) in prod.match_indices("self.write_locked(") {
+            calls += 1;
+            let fn_start = prod[..at].rfind("fn ").unwrap();
+            let lock = prod[fn_start..at].find("self.engine.lock()");
+            assert!(
+                lock.is_some(),
+                "write_locked 调用点（偏移 {at}）之前没拿 engine 锁"
+            );
+        }
+        assert!(calls >= 4, "write_locked 调用点少于 4 处：{calls}");
+        assert!(!prod.contains("fn write("), "不许留不拿锁的 write");
     }
 }

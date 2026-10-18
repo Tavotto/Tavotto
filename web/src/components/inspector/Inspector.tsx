@@ -7,13 +7,15 @@ import { drawerMotion, type PresenceState } from '@/lib/motion'
 import { t as translate } from '@/i18n'
 import { formatMm } from '@/lib/units'
 import { cn } from '@/lib/utils'
+import { ResizeHandle } from '@/components/ui/ResizeHandle'
+import { tryRegisterPointerCancel } from '@/store/gestureCoordinator'
 import { useDocumentStore } from '@/store/documentStore'
-import { RIGHT_MAX, RIGHT_MIN, useUiStore, type RightTab } from '@/store/uiStore'
+import { RIGHT_DEFAULT, RIGHT_MAX, RIGHT_MIN, useUiStore, type RightTab } from '@/store/uiStore'
 import type { ArrowObject, PanelObject, ShapeObject, TextObject } from '@/types/document'
 import { useAiStore } from '@/store/aiStore'
 import { assistantTabLabel, AssistantPanel } from '../ai/AiPanel'
-import { IconButton } from '../ui/Button'
-import { Card } from '../ui/Card'
+import { Button, IconButton } from '../ui/Button'
+import { Notice } from '../ui/Notice'
 import { ColorFieldContext } from '../ui/colorPalette'
 import { Tab, TabList, TabPanel } from '../ui/Tabs'
 import { Tip } from '../ui/Tooltip'
@@ -185,42 +187,18 @@ export function Inspector({
 
 function WidthHandle() {
   const { t } = useTranslation('inspector')
-  // 可聚焦的 separator 在 ARIA 里是个真控件：必须报出当前值与值域，
-  // 否则屏幕阅读器只会念一句「分隔条」，用户不知道自己在调什么、调到了哪
   const width = useUiStore((s) => s.rightWidth)
-  const start = (e: React.PointerEvent) => {
-    e.preventDefault()
-    const from = useUiStore.getState().rightWidth
-    const x0 = e.clientX
-    const move = (ev: PointerEvent) => useUiStore.getState().setRightWidth(from - (ev.clientX - x0))
-    const up = () => {
-      window.removeEventListener('pointermove', move)
-      window.removeEventListener('pointerup', up)
-    }
-    window.addEventListener('pointermove', move)
-    window.addEventListener('pointerup', up)
-  }
-
   return (
-    <div
-      role="separator"
-      aria-orientation="vertical"
-      aria-label={t('resize', { min: RIGHT_MIN, max: RIGHT_MAX })}
-      aria-valuenow={Math.round(width)}
-      aria-valuemin={RIGHT_MIN}
-      aria-valuemax={RIGHT_MAX}
-      tabIndex={0}
-      onPointerDown={start}
-      onKeyDown={(e) => {
-        if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return
-        e.preventDefault()
-        const ui = useUiStore.getState()
-        ui.setRightWidth(ui.rightWidth + (e.key === 'ArrowLeft' ? 16 : -16))
-      }}
-      // 整条都在抽屉内侧：外层 overflow-hidden（开合动效要用）会把伸到外面的部分剪掉
-      // 蓝色不做任何大块背景（第一节）：hover 只在内侧描一条 1px 的竖线；
-      // 键盘聚焦是一条 2px 的 accent 竖线（2026-10-07 设计审计 §9.2：此前是 8px 宽的 accent/30 蓝带）
-      className="absolute inset-y-0 left-0 z-canvas-chrome w-2 cursor-col-resize border-l border-transparent outline-none hover:border-border-strong focus-visible:border-l-2 focus-visible:border-accent"
+    <ResizeHandle
+      name="inspector"
+      registerCancel={tryRegisterPointerCancel}
+      side="left"
+      value={width}
+      min={RIGHT_MIN}
+      max={RIGHT_MAX}
+      defaultValue={RIGHT_DEFAULT}
+      onChange={(px) => useUiStore.getState().setRightWidth(px)}
+      label={t('resize', { min: RIGHT_MIN, max: RIGHT_MAX })}
     />
   )
 }
@@ -314,26 +292,20 @@ function DocumentSummary() {
   ]
   return (
     <div className="p-3">
-      <Card appearance="subtle" padding="md" data-document-summary className="flex flex-col gap-2">
-        <p className="type-title">{t('docSummary.title')}</p>
-        <ul className="flex flex-col gap-0.5">
-          {facts.map((f) => (
-            <li key={f} className="type-number text-ink-2">
-              {f}
-            </li>
-          ))}
-        </ul>
-        <p className="type-caption">{t('emptyHint')}</p>
-        <button
-          type="button"
-          data-document-summary-canvas
-          onClick={() => useUiStore.getState().setRightTab('canvas')}
-          className="-mx-1 flex h-7 items-center gap-1 self-start rounded-md px-1 text-sm text-ink-2 outline-none hover:bg-surface-hover hover:text-ink focus-visible:focus-ring"
-        >
-          {t('docSummary.canvasSettings')}
-          <ChevronRight size={ICON_SIZE.xs} aria-hidden />
-        </button>
-      </Card>
+      {/* 一行提示（UI 2.0）：「本排版 · 尺寸 · 几张图」+ 「画布设置 ›」；起步那句提示折进「详情」。不再是一张三层的卡 */}
+      <Notice
+        data-document-summary
+        title={t('docSummary.title')}
+        detail={t('emptyHint')}
+        action={
+          <Button size="sm" data-document-summary-canvas onClick={() => useUiStore.getState().setRightTab('canvas')}>
+            {t('docSummary.canvasSettings')}
+            <ChevronRight size={ICON_SIZE.xs} aria-hidden />
+          </Button>
+        }
+      >
+        {facts.join(' · ')}
+      </Notice>
     </div>
   )
 }

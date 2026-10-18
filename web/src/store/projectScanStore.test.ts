@@ -290,3 +290,63 @@ describe('失败语义', () => {
     expect(useProjectScanStore.getState().error).toBe('network')
   })
 })
+
+describe('补拉失败后轮询不能就此停掉', () => {
+  const running = () => scan({ state: 'running', phase: 'scanning', outcome: { kind: 'scanning' } })
+
+  it('扫描还在跑时一次补拉失败：退避续排，下一轮读到终局就收尾', async () => {
+    mockStart.mockResolvedValueOnce(running())
+    await useProjectScanStore.getState().start()
+    mockFetch.mockRejectedValueOnce(new Error('network'))
+    mockFetch.mockResolvedValueOnce(scan({ observation_seq: 2 }))
+    await vi.advanceTimersByTimeAsync(400) // 第一次轮询：失败
+    expect(useProjectScanStore.getState().error).toBe('network')
+    expect(useProjectScanStore.getState().scan?.state).toBe('running')
+    expect(useProjectScanStore.getState().pollLost).toBe(false)
+    await vi.advanceTimersByTimeAsync(1500) // 退避后的下一轮
+    expect(mockFetch).toHaveBeenCalledTimes(2)
+    expect(useProjectScanStore.getState().scan?.state).toBe('complete')
+    expect(useProjectScanStore.getState().error).toBeNull()
+  })
+
+  it('连续失败用完退避：承认读不到进度（pollLost），不再无限重试；之后读到快照即清掉', async () => {
+    mockStart.mockResolvedValueOnce(running())
+    await useProjectScanStore.getState().start()
+    mockFetch.mockRejectedValue(new Error('network'))
+    await vi.advanceTimersByTimeAsync(60_000)
+    expect(useProjectScanStore.getState().pollLost).toBe(true)
+    const calls = mockFetch.mock.calls.length
+    expect(calls).toBe(5)
+    await vi.advanceTimersByTimeAsync(60_000)
+    expect(mockFetch.mock.calls.length).toBe(calls) // 不再续排
+    // SSE 提示触发的补拉读到了：恢复
+    mockFetch.mockReset()
+    mockFetch.mockResolvedValueOnce(scan({ observation_seq: 9 }))
+    await useProjectScanStore.getState().refresh()
+    expect(useProjectScanStore.getState().pollLost).toBe(false)
+  })
+
+  it('对照：扫描已经是终局时补拉失败不续排', async () => {
+    useProjectScanStore.setState({ scan: scan() })
+    mockFetch.mockRejectedValue(new Error('network'))
+    await useProjectScanStore.getState().refresh()
+    await vi.advanceTimersByTimeAsync(60_000)
+    expect(mockFetch).toHaveBeenCalledTimes(1)
+    expect(useProjectScanStore.getState().pollLost).toBe(false)
+  })
+
+  it('切项目后：旧项目失败的补拉不再续排，新项目也不继承 pollLost', async () => {
+    mockStart.mockResolvedValueOnce(running())
+    await useProjectScanStore.getState().start()
+    const late = deferred<ProjectScan>()
+    mockFetch.mockReturnValueOnce(late.promise)
+    const pending = useProjectScanStore.getState().refresh()
+    setCurrentProjectId('pj-b')
+    useProjectScanStore.getState().clear()
+    late.reject(new Error('network'))
+    await pending
+    await vi.advanceTimersByTimeAsync(60_000)
+    expect(mockFetch).toHaveBeenCalledTimes(1)
+    expect(useProjectScanStore.getState()).toMatchObject({ scan: null, pollLost: false })
+  })
+})

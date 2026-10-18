@@ -10,6 +10,9 @@ The two tables are deliberately duplicated and kept in step by
 compiler would remove ~40 lines of duplication and add a mechanism nobody reads;
 a drift test costs one function. **If you change one side, change the other.**
 
+Dashboard, alert and subscription drafts built on this contract (offline; nothing created online):
+[`posthog-dashboard.md`](posthog-dashboard.md), [`posthog-manifest.json`](posthog-manifest.json).
+
 ## Ground rules
 
 1. **Nothing is sent before explicit consent.** Consent is tri-state

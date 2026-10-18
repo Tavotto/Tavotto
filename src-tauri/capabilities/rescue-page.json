@@ -1,0 +1,18 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "rescue-page",
+  "description": "主窗口里壳自带的 error.html（tauri:// 源，ADR 0130）：Python sidecar 起不来、主窗口从未进入应用页时的原生救援——重新尝试（重启整个应用）、检查并安装修复版本（与应用内更新同一个协调器）、预览 / 发送 / 保存启动诊断。只给本机壳页面（local，不含任何 remote URL，所以 127.0.0.1 上的引擎页拿不到）；每条命令 Rust 端还会查窗口 label、当前 URL 与「是否进过编辑态」。远程实例窗口一条都没有。",
+  "windows": [
+    "main"
+  ],
+  "local": true,
+  "permissions": [
+    "allow-rescue-status",
+    "allow-rescue-retry",
+    "allow-rescue-update-check",
+    "allow-rescue-update-install",
+    "allow-rescue-diag-preview",
+    "allow-rescue-diag-send",
+    "allow-rescue-diag-save"
+  ]
+}

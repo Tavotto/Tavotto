@@ -23,16 +23,21 @@
 
 3. **两个桌面平台都把内置渲染 runtime 一起带上**（`runtime/`，由
    `scripts/build_worker_runtime.py` 生成）。这样没装过 Python 的用户装完就能
-   渲染，首次渲染也不联网。runtime 作为 datas 进包 → 落在 `_internal/runtime`，
+   渲染，首次渲染也不联网。runtime 落在 `_internal/runtime`，
    `engine/runtime.py` 按 `sys._MEIPASS` 解析；macOS 上这一整坨再被 Tauri 收进
    `Tavotto.app/Contents/Resources/sidecar/Tavotto/`，`_MEIPASS` 照样指得准。
 
-   走 **datas 而不是 binaries** 是有意的：binaries 会被做依赖分析并改写 rpath，
-   而这份 runtime 的内部引用（`bin/python3.13` → `lib/libpython3.13.dylib`、
-   各 .so 之间）本来就是自洽的，改写只会把它弄坏。实测 PyInstaller 6.x 仍会
-   把 datas 里的 Mach-O 重新 adhoc 签一遍（原来的 linker 签名被换掉），**这不影响
-   运行**，而且发行链随后会用 Developer ID 全部重签一遍——最终说了算的是那一次。
-   符号链接与可执行位都被保留（实测），所以 `bin/python3` 不会被拍平成第二个 18 MB 副本。
+   runtime **原样**进包，不经 Analysis：它的内部引用（各 .so → 自带 `.dylibs/`）本来
+   就是自洽的，且构建时已冒烟过。交给 `Analysis(datas=...)` 是不够的——PyInstaller 6
+   会按内容把 datas 里的 Mach-O / PE 改判成 BINARY，做依赖分析、改写成指回 `_internal/`
+   的 `@rpath`，再把 openblas / gfortran / tcl 等复制一份到 `_internal/` 顶层
+   （v0.18.0 macOS arm64 多出 ≈ 48 MB，runtime 自带的原件没人加载）；Windows 上同一机制
+   让 runtime 的 OpenSSL DLL 压掉了打包 Python 自己那份（#1051）。所以两个平台都在
+   Analysis **之后**以 `Tree(..., prefix="runtime")`（typecode=DATA）加入，按给定 typecode
+   原样复制；`build_desktop.py` 打包后用 `build_worker_runtime.diff_collected_runtime()`
+   逐字节核对发出去的 runtime 就是冒烟过的那一份。可执行位保留（COLLECT 对带 X 位的
+   DATA 照样 chmod 755）；Tree 会把符号链接拍平，但别名已在构建时剪掉（`prune_aliases`），
+   Tauri 打包也本来就拍平。发行链随后用 Developer ID 全部重签——最终说了算的是那一次。
 
 4. **除了 GUI 的 Tavotto，还出一个 console 版 `tavotto-cli`**。两个 exe 出自
    同一个 Analysis、共用同一份 `_internal/`（只多一个 ~1.5 MB 的 bootloader），
@@ -121,14 +126,19 @@ for name in ("worker.py", "manifest.py", "overrides.py", "patchspec.py",
 # TAVOTTO_RUNTIME_SRC 可指到别处；TAVOTTO_REQUIRE_RUNTIME=1 时缺了就直接失败——
 # 发行流水线必须打开它，否则「忘了构建 runtime」会安静地产出一个装完不能渲染的
 # 安装包，而这种包只有到了用户手里才会暴露。
-RUNTIME = Path(os.environ.get("TAVOTTO_RUNTIME_SRC") or (ROOT / "runtime"))
-_require = os.environ.get("TAVOTTO_REQUIRE_RUNTIME") in ("1", "true", "yes")
-_MANIFEST = RUNTIME / "runtime-manifest.json"
-
 # 「这份 runtime 配不配得上这次构建」的判据只有一份，在构建脚本里
 # （build_desktop.py 复用同一个函数）。分头各写一遍的话，迟早一边放行
-# 另一边拦住，而放行的那一边才是发出去的。
-from build_worker_runtime import BuildError, check_runtime_dir  # noqa: E402
+# 另一边拦住，而放行的那一边才是发出去的。来源目录同理（打包后逐字节核对的也是它）。
+from build_worker_runtime import (  # noqa: E402
+    BuildError,
+    check_runtime_dir,
+    runtime_source_dir,
+    runtime_toc_problems,
+)
+
+RUNTIME = runtime_source_dir(ROOT)
+_require = os.environ.get("TAVOTTO_REQUIRE_RUNTIME") in ("1", "true", "yes")
+_MANIFEST = RUNTIME / "runtime-manifest.json"
 
 _RUNTIME_AFTER_ANALYSIS = None
 if _MANIFEST.is_file():
@@ -136,14 +146,12 @@ if _MANIFEST.is_file():
         _info = check_runtime_dir(_MANIFEST, require_smoke=_require)
     except BuildError as exc:
         raise SystemExit(f"[tavotto.spec] {exc}")
-    if sys.platform == "win32":
-        # Windows：runtime 在 Analysis **之后**以 DATA 加入（见下面 `_RUNTIME_AFTER_ANALYSIS`）。放进 `datas` 的话
-        # PyInstaller 会把里面的 PE 文件重新归类为二进制并做依赖分析，runtime 自带的 `libcrypto-3.dll` / `libssl-3.dll`
-        # 作为依赖落到 `_internal/` 顶层、先到先得压掉打包 Python 自己那一份——两边 Python 小版本不同（OpenSSL 不同）时
-        # 新的 `_ssl.pyd` 就导入失败（#1051）。runtime 是独立进程用的，原样复制即可。
-        _RUNTIME_AFTER_ANALYSIS = RUNTIME
-    else:
-        datas.append((str(RUNTIME), "runtime"))
+    # 两个平台都在 Analysis **之后**以 DATA 加入（见下面 `_RUNTIME_AFTER_ANALYSIS` 与文件头说明 3）。放进 `datas`
+    # 的话 PyInstaller 会把里面的 PE / Mach-O 重新归类为二进制并做依赖分析：Windows 上 runtime 自带的
+    # `libcrypto-3.dll` / `libssl-3.dll` 落到 `_internal/` 顶层、先到先得压掉打包 Python 自己那一份，`_ssl.pyd`
+    # 导入失败（#1051）；macOS 上每个扩展模块被改写成指回 `_internal/` 的 @rpath，openblas 等再复制一份到顶层。
+    # runtime 是独立进程用的，原样复制即可。
+    _RUNTIME_AFTER_ANALYSIS = RUNTIME
     print(f"[tavotto.spec] 内置 runtime: {RUNTIME} "
           f"（{_info['platform']['os']}/{_info['platform']['arch']}，"
           f"Python {_info['python']['version']}，冒烟 {_info['build']['smoke']}）")
@@ -260,7 +268,7 @@ a = Analysis(
     hookspath=[],
     runtime_hooks=[],
     # 科学栈刻意排除（见文件头说明 2）：主进程不需要，打包机上装了也不要进包。
-    # 内置 runtime 里的那一套走 datas，与这里互不影响。**PIL 不在这张表上**（U10 起）：
+    # 内置 runtime 里的那一套在 Analysis 之后以 DATA 加入，与这里互不影响。**PIL 不在这张表上**（U10 起）：
     # Pillow 是 RenderCore 的直接依赖（rasterio 解码位图素材、pikepdf 的硬依赖，ADR 0066），
     # 排除它的表现是导出位图面板时 ImportError——源码树上永远复现不了。
     excludes=["matplotlib", "numpy", "scipy", "pandas", "tkinter",
@@ -269,6 +277,16 @@ a = Analysis(
 )
 if _RUNTIME_AFTER_ANALYSIS is not None:
     a.datas += Tree(str(_RUNTIME_AFTER_ANALYSIS), prefix="runtime")  # noqa: F821 — spec 作用域里的 PyInstaller 内置
+
+# 构建期闸门：来源在 runtime 下的 TOC 条目只许以 DATA 原样落进 runtime/——被依赖分析复制到 `_internal/`
+# 顶层的副本、被改判成 BINARY（会被改写）的条目都在这里拦下（文件头说明 3）。打包后
+# build_desktop.py / CI 再用 diff_collected_runtime() 逐字节核对 runtime/ 这棵树本身。
+_runtime_toc_bad = runtime_toc_problems([*a.binaries, *a.datas], RUNTIME)
+if _runtime_toc_bad:
+    raise SystemExit(
+        f"[tavotto.spec] 内置 runtime 没有原样进包（{len(_runtime_toc_bad)} 处），例如：\n  "
+        + "\n  ".join(_runtime_toc_bad[:10])
+    )
 
 # 构建期闸门（#1051）：顶层的 libcrypto / libssl 必须与 `_ssl.pyd` 同源，否则宁可这里就失败，
 # 不要打出一个一启动就 `DLL load failed while importing _ssl` 的包（只在 Windows 上存在这种同名 DLL 竞争）。

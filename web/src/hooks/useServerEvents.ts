@@ -42,6 +42,13 @@ const costHint = (cost: string): string =>
 
 export { renderFailureOwner }
 
+/** 每个项目已见过的 `project.error` 最大 seq。seq 是后端进程内计数，后端重启会从头计：SSE 重连时清空（见 `resetProjectErrorSeq`），否则新进程的事件全被当成旧的 */
+const lastProjectErrorSeq = new Map<string, number>()
+export const resetProjectErrorSeq = () => lastProjectErrorSeq.clear()
+
+/** 「后台刷新失败」那条常驻提示的主人：按项目；刷新恢复（`registry.changed` / `assets.changed`）时撤 */
+export const projectErrorOwner = (pj: string | null | undefined) => `project.error:${pj ?? ''}`
+
 /**
  * 单条事件的处理。**导出是为了让用例驱动同一份判断**——与 `useEngineSync`
  * 导出 `syncEngine` 同一条纪律：经 `EventSource` 去测的话，测的是 jsdom 的
@@ -204,6 +211,8 @@ export function handleServerEvent(ev: ServerEvent) {
     }
 
     case 'assets.changed': {
+      // 后台刷新又成功了：先前「刷新失败」的常驻提示说的事不成立了
+      useUiStore.getState().clearStatusOwnedBy(projectErrorOwner(ev.pj))
       // 素材本身变了（脚本重新产出了 PDF / 用户在外面换了张图 / 删了一张）。
       // 刷新之后：`mtime` 换代 → 静态图片 URL 跟着换（`panelSrc` 带 `m=`），
       // 浏览器不会继续吃旧缓存；派生元数据（位图像素尺寸、cost）原地同步。
@@ -223,6 +232,16 @@ export function handleServerEvent(ev: ServerEvent) {
     }
 
     case 'project.error': {
+      // 迟到的旧事件（seq 不比已见过的大）丢弃：恢复提示撤掉 toast 之后，旧错误不能再把它顶回来。老后端没有 seq 就不判
+      if (typeof ev.seq === 'number') {
+        if (ev.seq <= (lastProjectErrorSeq.get(ev.pj ?? '') ?? 0)) break
+        lastProjectErrorSeq.set(ev.pj ?? '', ev.seq)
+      }
+      if (ev.recovered) {
+        // 后台刷新又成功了（含「文件改回原样、没有语义差异」那种不发 registry.changed 的）：撤掉先前那条
+        useUiStore.getState().clearStatusOwnedBy(projectErrorOwner(ev.pj))
+        break
+      }
       // 后台刷新失败，**可恢复**：内存里的注册表原封不动，watcher 继续跑，
       // 文件修好之后下一轮自动重试。所以它是一条常驻的状态提示，不是模态框
       // ——没有需要用户当场做的决定。
@@ -232,6 +251,8 @@ export function handleServerEvent(ev: ServerEvent) {
           ? msg(`backend.${ev.code}`, ev.params ?? {}, 'errors')
           : msg('status.projectBackgroundError', undefined, 'workspace'),
         'error',
+        // 有主人才能在恢复后撤（见 `registry.changed` / `assets.changed`）；同一项目的新错误照旧顶掉旧的
+        { owner: projectErrorOwner(ev.pj) },
       )
       break
     }
@@ -249,6 +270,7 @@ export function handleServerEvent(ev: ServerEvent) {
       break
 
     case 'registry.changed': {
+      useUiStore.getState().clearStatusOwnedBy(projectErrorOwner(ev.pj))
       // 注册表变了（本标签页 probe 成功 / 另一标签页登记 / 手工裁决 /
       // 外部编辑器新增或删除脚本）：脚本清单与 runtime 素材清单都要重取
       // ——但只重取**已经取过的**，没打开过素材面板的标签页不必为别人的
@@ -331,6 +353,7 @@ export function useServerEvents() {
         // 后端重启后 SSE 会重连，借这个时机让版本自检立刻复查一次
         window.dispatchEvent(new Event('mm:sse-open'))
         // 断线期间发生的事件全都没收到：补一次素材刷新 + 派生同步（节流）
+        resetProjectErrorSeq()
         recoverAfterReconnect()
         // 还在等作答的脚本输入（ADR 0099）也要接回来；顺带取记住的答案（脚本行的入口靠它）
         void useScriptInputStore.getState().loadAnswers()
@@ -338,17 +361,28 @@ export function useServerEvents() {
         useProjectPreparationStore.getState().refreshAll()
         // 断线期间可能丢了 `input_remap_changed`：拉一次此刻的代次，落后就补一次作废（ADR 0106 §五）
         catchUpInputRemap()
+        // 依赖安装 / 引擎 bootstrap 的进度也只走 SSE：丢了终态事件就以实况为准收尾
+        reconcileInstalls()
       }),
     [],
   )
   // 页面恢复（切回标签页 / 唤醒）同理：休眠期间事件流可能断过而没触发重连
   useEffect(() => {
     const onVisible = () => {
-      if (document.visibilityState === 'visible') catchUpInputRemap()
+      if (document.visibilityState === 'visible') {
+        catchUpInputRemap()
+        reconcileInstalls()
+      }
     }
     document.addEventListener('visibilitychange', onVisible)
     return () => document.removeEventListener('visibilitychange', onVisible)
   }, [])
+}
+
+/** 安装类作业对账：依赖修复按 plan_id 问实况；引擎 bootstrap 只在还显示「安装中」时才刷一次环境 */
+export function reconcileInstalls(): void {
+  void useDepRepairStore.getState().reconcile()
+  if (useEnvStore.getState().installing) void useEnvStore.getState().refresh()
 }
 
 /** 补拉改指表代次：环境刷新里带着它，`envStore.refresh` 交给 `noteInputRemapGeneration` 去重 / 补作废 */

@@ -129,6 +129,13 @@ _CAPTURE_SAVEFIG: dict = {}
 #: stem -> 与 `_CAPTURE_SAVEFIG[stem]` 逐项对齐的 `bbox_extra_artists` 对象（算图幅用，ADR 0098）
 _CAPTURE_EXTRAS: dict = {}
 _SAVEFIG_OBSERVATIONS = figcapture.SavefigObservations()
+#: 「先写临时文件再改名」的 savefig（#1124）：认领它的 stem -> 待确认的提升
+#: `{"tmp": 绝对路径, "final": 绝对路径, "stem": 最终 stem, "digest": 写完那一刻的内容摘要,
+#: "tmp_id": 临时文件写完那一刻的 (st_dev, st_ino)}`——最终文件必须还是这同一个 inode 才算它成了产物
+_TEMP_SAVES: dict = {}
+#: 已确认提升的 stem：旧 stem（`final.png`）-> 新 stem（`final`）。同一张图之后再按临时文件 + 改名保存
+#: 一次（多个 `show()` 之间反复原子保存），`savefig_stem` 又算出旧 stem，要并回已提升的捕获而不是新开一个
+_PROMOTED: dict = {}
 #: pyplot 兜底因上限丢掉的张数
 _DROPPED = 0
 #: 引擎自己写盘（预览 / 导出）时暂停捕获——否则 export 到任意路径会被
@@ -169,8 +176,10 @@ def _install_savefig_hook(mfigure) -> None:
 
     def _patched_savefig(self, fname, *args, **kwargs):
         observation = None
+        stem = None
         if _CAPTURING:
             stem = figcapture.savefig_stem(fname)
+            stem = _resolve_promoted(stem, self)
             call = figcapture.savefig_call(fname, kwargs)
             observation = _SAVEFIG_OBSERVATIONS.record(
                 self,
@@ -196,9 +205,98 @@ def _install_savefig_hook(mfigure) -> None:
             _SAVEFIG_OBSERVATIONS.complete(observation, "failed")
             raise
         _SAVEFIG_OBSERVATIONS.complete(observation, "saved")
+        if _CAPTURING:
+            # 簿记尽力而为，失败只是不提升，不改变用户 savefig 的结果（Codex #1126 r4305538684）
+            try:
+                _note_temp_save(self, fname, stem)
+            except Exception:
+                pass
         return result
 
     mfigure.Figure.savefig = _patched_savefig
+
+
+def _digest(path: str) -> str | None:
+    # 分块读（`figcapture.hash_file`）：未压缩 TIFF 之类的大产物不整份进内存（Codex #1126 r4295028879）
+    try:
+        return figcapture.hash_file(path)[0]
+    except OSError:
+        return None
+
+
+def _file_identity(path: str):
+    """文件身份 `(st_dev, st_ino)`；读不到或文件系统给不出 inode（`st_ino == 0`）记 None。"""
+    try:
+        st = os.stat(path)
+    except OSError:
+        return None
+    if not st.st_ino:
+        return None
+    return (st.st_dev, st.st_ino)
+
+
+def _resolve_promoted(stem, fig):
+    """旧 stem 已被提升、且提升后的捕获就是这张图：并回新 stem（别的图存同名临时文件不走别名）。"""
+    new = _PROMOTED.get(stem) if stem else None
+    if new is not None and _CAPTURE.get(new) is fig:
+        return new
+    return stem
+
+
+def _note_temp_save(fig, fname, stem=None) -> None:
+    """`savefig("final.png.tmp")` 真的写完了：记下它认领的 stem、写完那一刻的内容摘要与临时文件的 inode 身份，等脚本结束时
+    确认它成了 `final.png` 才把 stem 改成 `final`（`_promote_temp_saves`）。
+
+    `stem` 是调用方解析过别名的 stem；已经是提升后的 stem（`final`）就不再登记。"""
+    target = figcapture.temp_save_target(fname)
+    if target is None:
+        return
+    if stem is None:
+        stem = _resolve_promoted(figcapture.savefig_stem(fname), fig)
+    if not stem or stem in _PROMOTED.values():
+        return
+    if _CAPTURE.get(stem) is not fig:
+        return
+    tmp = os.path.abspath(os.fsdecode(fname))
+    final = os.path.join(os.path.dirname(tmp), target[0])
+    _TEMP_SAVES[stem] = {
+        "tmp": tmp,
+        "final": final,
+        "stem": target[1],
+        "digest": _digest(tmp),
+        "tmp_id": _file_identity(tmp),
+    }
+
+
+def _promote_temp_saves(published=()) -> None:
+    """脚本结束：确认过的「临时文件 → 产物」提升把 stem 从 `final.png` 改成 `final`（#1124）。
+
+    确认的判据是「临时文件这个文件本身成了最终文件」：临时文件已不在、最终文件存在且与 savefig 时的临时文件
+    是同一个 `(dev, ino)`（只有 rename / replace / 同盘 move / 硬链接做得到），并且内容仍是这次写的字节
+    （改名后又被原地改写会改摘要）。`os.replace` / `os.rename` / `Path.replace` / 同盘 `shutil.move` /
+    硬链接后删除都满足；跳过改名而磁盘上躺着旧 `final.png`（Codex #1126 P1）、改名后被别的内容覆盖、
+    旧文件被 `os.utime` 改了时间再删临时文件（Codex #1126 r4305517904）、复制后删除（复制产生的是另一份
+    文件）、跨盘 move 都不满足。确认不了因果就保守地保留临时 stem：原件按 `final.png` 找不到，只是不能
+    写回，不会关联错文件。不在用户进程里替换 `os.replace` 之类去「观察改名」：那改的是用户代码的运行环境。
+
+    另外两条：最终 stem 没被别的图占用；已经在屏障上交给界面的 stem（`published`）不改——界面与会话已按
+    旧名索引了它。改名保持捕获顺序。"""
+    for old, t in list(_TEMP_SAVES.items()):
+        new = t["stem"]
+        if os.path.exists(t["tmp"]) or not os.path.isfile(t["final"]):
+            continue
+        if t["digest"] is None or _digest(t["final"]) != t["digest"]:
+            continue
+        if t["tmp_id"] is None or _file_identity(t["final"]) != t["tmp_id"]:
+            continue
+        if old not in _CAPTURE or new in _CAPTURE or old in published:
+            continue
+        _PROMOTED[old] = new
+        for table in (_CAPTURE, _CAPTURE_SOURCE, _CAPTURE_SAVEFIG, _CAPTURE_EXTRAS):
+            if old in table:
+                items = [(new if k == old else k, v) for k, v in table.items()]
+                table.clear()
+                table.update(items)
 
 
 def _install_show_hook(plt, barrier) -> None:
@@ -760,6 +858,9 @@ class BridgeRun:
 
     def _ensure_session(self):
         self._ensure_engine()
+        # 进屏障、把 stem 交给界面之前先提升一遍：改名之后紧接着 `plt.show()` 的脚本，界面拿到的就是 `final`
+        # 而不是之后再也改不动的 `final.png`（#1124，Codex #1126 r4295028867）
+        _promote_temp_saves(self.session.capture if self.session is not None else ())
         if self.session is not None:
             self._sync_captures()
             self.session.instrument_all()
@@ -1166,6 +1267,8 @@ def main(argv: list | None = None) -> int:
         exit_code = TERMINATE_EXIT
 
     _resolve_module_source(args)
+
+    _promote_temp_saves(run.session.capture if run.session is not None else ())
 
     plt = sys.modules.get("matplotlib.pyplot")
     if plt is not None:

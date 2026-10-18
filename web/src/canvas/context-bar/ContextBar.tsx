@@ -6,6 +6,7 @@ import { isElementHidden } from '@/lib/elementGeom'
 import { boundsOf } from '@/lib/geometry'
 import { cn } from '@/lib/utils'
 import { useDocumentStore } from '@/store/documentStore'
+import { hasActivePointerGesture } from '@/store/gestureCoordinator'
 import { useInteractionStore } from '@/store/interactionStore'
 import { useExactPanelManifest, usePanelDisplayManifest } from '@/store/renderStore'
 import { useSelectionStore } from '@/store/selectionStore'
@@ -273,6 +274,9 @@ export function ContextBar() {
     if (!active) return
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return
+      // 进行中的指针手势（拖画布对象、拖分栏手柄……）先拿这一下 Esc：`useKeyboard` 会取消它——
+      // 这里别同时把工具条关掉（关掉后要到改选才回来）
+      if (hasActivePointerGesture()) return
       // 不抢全局 Esc 的职责（退编辑态、清选区等）：只有焦点在工具条里才拦下来；
       // 那时只关本次显示，选区一个字不动
       if (ref.current?.contains(document.activeElement)) {

@@ -40,6 +40,17 @@ export function artifactValidationIssue(panel: Subject): string | null {
   return null
 }
 
+/**
+ * 未采用的 PNG 源图：磁盘上的 PNG + 脚本，没动过（无 override）、还没经 `admitPngEntry` 验过字节身份。
+ * 它的唯一合法首渲染是带 `source_policy` 的采用请求；任何别的路径（跨图邻居、同步器）发出的
+ * 无策略 patches=[] 渲染都会让脚本重跑出一张没对过字节的图。进图内编辑的入口与这些路径共用这一个判据。
+ */
+export function isUnadoptedPngSource(
+  panel: Pick<PanelObject, 'fileKind' | 'fileId' | 'script' | 'overrides'>,
+): boolean {
+  return panel.fileKind === 'raster' && /\.png$/i.test(panel.fileId) && !!panel.script && panel.overrides.length === 0
+}
+
 export function artifactRequestFields(panel: Subject): ArtifactRequestFields {
   const issue = artifactValidationIssue(panel)
   if (issue) throw new ArtifactValidationError(issue)

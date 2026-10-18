@@ -103,7 +103,12 @@ async function mount(panels: PanelInfo[]) {
 
 const cardOf = (id: string) =>
   host.querySelector<HTMLElement>(`[data-card="${CSS.escape(id)}"]`)!
-const notice = () => host.querySelector('[data-capability-notice]')
+/** 接入说明不再常驻页脚（2026-10-16）：原因在右键菜单的「查看接入状态」项第二行、卡片可达名与状态词的 title 里 */
+const capItem = () => document.querySelector<HTMLElement>('[data-asset-capability]')
+const openMenu = (id: string) =>
+  act(async () => {
+    cardOf(id).dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 20, clientY: 20 }))
+  })
 
 beforeEach(() => {
   localStorage.clear()
@@ -184,47 +189,45 @@ describe('无障碍：option 里不许再嵌可 Tab 的控件', () => {
   })
 })
 
-describe('选中卡片后的说明条', () => {
-  it('非可编辑：给出状态、一句原因和一个真按钮', async () => {
+describe('接入说明（2026-10-16：不再常驻页脚，选中不同卡布局不跳）', () => {
+  it('选中非可编辑的卡：页脚与说明块都不存在（抽屉底部布局恒定）', async () => {
     await mount([panel('Photo.pdf', { capability: cap('layout_only') })])
     await act(async () => cardOf('Photo.pdf').click())
-    const box = notice()
-    expect(box).not.toBeNull()
-    expect(box!.textContent).toContain('仅版面')
-    expect(box!.textContent).toMatch(/摆放|裁剪|导出/)
-    expect(box!.querySelector('button')).not.toBeNull()
-    // 它在 listbox **外面**
-    expect(box!.closest('[role="listbox"]')).toBeNull()
+    expect(host.querySelector('[data-asset-footer]')).toBeNull()
+    expect(host.querySelector('[data-capability-notice]')).toBeNull()
   })
 
-  it('按钮打开接入状态并聚焦到这张图', async () => {
+  it('原因在卡片的可达名与状态词的 title 里（读屏与悬停都读得到）', async () => {
     await mount([panel('Photo.pdf', { capability: cap('layout_only') })])
-    await act(async () => cardOf('Photo.pdf').click())
-    await act(async () => notice()!.querySelector('button')!.click())
+    const label = cardOf('Photo.pdf').getAttribute('aria-label')!
+    expect(label).toContain('仅版面')
+    expect(label).toMatch(/摆放|裁剪|导出/)
+  })
+
+  it('右键菜单里「查看接入状态」第二行写原因，点它打开接入状态并聚焦到这张图', async () => {
+    await mount([panel('Photo.pdf', { capability: cap('layout_only') })])
+    await openMenu('Photo.pdf')
+    const item = capItem()!
+    expect(item.textContent).toMatch(/摆放|裁剪|导出/)
+    expect(item.closest('[role="listbox"]')).toBeNull()
+    await act(async () => {
+      item.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }))
+      item.click()
+    })
     expect(useUiStore.getState().registryOpen).toBe(true)
     expect(useProjectReadinessStore.getState().focusId).toBe('Photo.pdf')
   })
 
-  it('换一张卡片就跟着换；选中可编辑的那张则整条消失', async () => {
+  it('可编辑的卡：菜单里没有这一项；capability 还没到也不说话', async () => {
     await mount([
-      panel('Gone.pdf', { capability: cap('source_missing') }),
       panel('Ok.pdf', { script: 'fig.py', capability: cap('editable') }),
+      panel('New.pdf'),
     ])
-    await act(async () => cardOf('Gone.pdf').click())
-    expect(notice()!.textContent).toContain('源脚本丢失')
-    await act(async () => cardOf('Ok.pdf').click())
-    expect(notice()).toBeNull()
-  })
-
-  it('capability 还没到：选中了也不说话（"这一轮还不知道"不是一种状态）', async () => {
-    await mount([panel('New.pdf')])
-    await act(async () => cardOf('New.pdf').click())
-    expect(notice()).toBeNull()
-  })
-
-  it('没选中任何卡片时不占位', async () => {
-    await mount([panel('Photo.pdf', { capability: cap('layout_only') })])
-    expect(notice()).toBeNull()
+    await openMenu('Ok.pdf')
+    expect(capItem()).toBeNull()
+    await act(async () => document.body.click())
+    await openMenu('New.pdf')
+    expect(capItem()).toBeNull()
   })
 })
 
@@ -239,17 +242,14 @@ describe('卡片与页脚（2026-10-07 设计审计 §5 / §10.3）', () => {
     expect(shell.hasAttribute('data-selected')).toBe(true)
   })
 
-  it('选中之后只有一条页脚：动作行与接入说明在同一个容器里', async () => {
+  it('选中之后没有页脚（2026-10-16：常驻动作栏与说明块都去掉）', async () => {
     await mount([panel('A.pdf', { capability: cap('auto_linkable') })])
     await act(async () => cardOf('A.pdf').click())
-    const footers = host.querySelectorAll('[data-asset-footer]')
-    expect(footers).toHaveLength(1)
-    expect(footers[0].querySelector('[data-selected-asset-actions]')).toBeTruthy()
-    expect(footers[0].querySelector('[data-capability-notice]')).toBeTruthy()
+    expect(host.querySelectorAll('[data-asset-footer]')).toHaveLength(0)
   })
 
-  it('没有外壳时刷新钮就地画出；搜索行里只有搜索框', async () => {
-    await mount([panel('A.pdf')])
+  it('没有外壳时刷新钮就地画出；搜索行里只有搜索框（条目 ≥ 6 个才有）', async () => {
+    await mount(['A', 'B', 'C', 'D', 'E', 'F'].map((n) => panel(`${n}.pdf`)))
     const refresh = host.querySelector('[data-asset-refresh]')!
     expect(refresh).toBeTruthy()
     const searchRow = host.querySelector('input')!.closest('div.flex-col')!
@@ -258,7 +258,7 @@ describe('卡片与页脚（2026-10-07 设计审计 §5 / §10.3）', () => {
 
   it('就近入口是箭头光标（卡片本身才是抓手）', async () => {
     await mount([panel('A.pdf')])
-    const action = cardOf('A.pdf').querySelector<HTMLElement>('[data-card-actions] > span')!
+    const action = cardOf('A.pdf').querySelector<HTMLElement>('[data-card-add]')!
     expect(action.className).toContain('cursor-default')
     expect(cardOf('A.pdf').className).toContain('cursor-grab')
   })

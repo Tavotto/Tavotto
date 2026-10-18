@@ -18,6 +18,7 @@ import errno
 import hashlib
 import json
 import logging
+import math
 import os
 import queue
 import re
@@ -84,6 +85,7 @@ from .engine import (
     exportreq as engine_exportreq,
     figcapture as engine_figcapture,
     handoff as engine_handoff,
+    handoffreceipt as engine_handoffreceipt,
     inputbroker as engine_inputbroker,
     inputremap as engine_inputremap,
     inputtranscript as engine_inputtranscript,
@@ -680,6 +682,10 @@ def _worker_error_payload(exc, stage: str = "") -> dict:
         body["params"] = engine_pool.file_operation_blocked_params(getattr(exc, "extra", None))
     if getattr(exc, "module", ""):
         body["module"] = exc.module
+    if exc.code == engine_pool.ENGINE_FILES_INCOMPLETE_CODE:
+        # Tavotto 自己的引擎文件缺了（#961）：不是缺依赖，不带 module / 安装去向 / 一键安装 offer；
+        # 缺的模块名是 Tavotto 自家的，可以给诊断与界面看
+        body["engine_module"] = getattr(exc, "engine_module", "")
     # 项目环境自动接手失败时的结构化原因（ADR 0018）：找不到 venv / venv 里
     # 也没这个包 / 那个环境没有 matplotlib / Python 版本不支持。前端据此给出
     # 各自不同的恢复引导——四种情况用户要做的事完全不同，混成一句话等于没说。
@@ -2446,6 +2452,20 @@ def _refresh_sink(ctx: "ProjectCtx") -> engine_refresh.RefreshSink:
     return engine_refresh.RefreshSink(publish=sse_publish)
 
 
+_PROJECT_ERROR_LOCK = threading.Lock()
+_PROJECT_ERROR_SEQ = 0
+
+
+def _publish_project_error(payload: dict) -> None:
+    """`project.error`（失败与 `recovered` 两种）的唯一发布口：给每条一个单调递增的 `seq`，**分配与发布在同一把锁内**——
+    watcher 线程与手动刷新线程并发时，事件流里的先后与 seq 的先后一致；前端凭 seq 丢掉比已见过的更旧的，
+    恢复提示不会被迟到的旧错误顶回去。"""
+    global _PROJECT_ERROR_SEQ
+    with _PROJECT_ERROR_LOCK:
+        _PROJECT_ERROR_SEQ += 1
+        sse_publish("project.error", {**payload, "seq": _PROJECT_ERROR_SEQ})
+
+
 def _watch_sink(ctx: "ProjectCtx") -> engine_watch.WatchSink:
     """项目 watcher 的三个出口。
 
@@ -2457,11 +2477,14 @@ def _watch_sink(ctx: "ProjectCtx") -> engine_watch.WatchSink:
     return engine_watch.WatchSink(
         refresh=lambda paths: refresh_project(ctx, reason="watcher", changed_paths=paths),
         script_changed=_script_change_handler(ctx),
-        error=lambda code, params: sse_publish(
-            "project.error",
-            {"pj": ctx.id, "reason": "watcher", "code": code, "params": params},
+        error=lambda code, params: _publish_project_error(
+            {"pj": ctx.id, "reason": "watcher", "code": code, "params": params}
         ),
     )
+
+
+#: 上一次统一刷新以失败收场的项目 id（成功时报一次 `recovered` 并移出）
+_REFRESH_FAILED: set[str] = set()
 
 
 def refresh_project(
@@ -2481,14 +2504,25 @@ def refresh_project(
     把 app 层的两个出口接上去——**别在别处再写第二条**（Prompt 05 的项目
     watcher 也调这个函数，不许自己 merge、自己发事件）。
     """
-    result = engine_refresh.refresh_project_index(
-        ctx,
-        reason=reason,
-        changed_paths=changed_paths,
-        allow_static_merge=allow_static_merge,
-        publish=publish,
-        sink=_refresh_sink(ctx),
-    )
+    try:
+        result = engine_refresh.refresh_project_index(
+            ctx,
+            reason=reason,
+            changed_paths=changed_paths,
+            allow_static_merge=allow_static_merge,
+            publish=publish,
+            sink=_refresh_sink(ctx),
+        )
+    except engine_refresh.RefreshError:
+        _REFRESH_FAILED.add(ctx.id)
+        raise
+    # 「恢复了」只在这一处报：上一次刷新（不论谁触发的）失败过、这一次成功了——哪怕没有语义差异、
+    # `registry.changed` 一条都不发。同一个事件名带 `recovered`，前端据此撤掉那条常驻错误；没有新增事件名
+    if ctx.id in _REFRESH_FAILED and publish:
+        _REFRESH_FAILED.discard(ctx.id)
+        _publish_project_error(
+            {"pj": ctx.id, "reason": reason, "code": "", "params": {}, "recovered": True}
+        )
     # 遥测挂在**成功边界**上，且只在这一处：四条刷新路径（手动 / watcher /
     # Codex / AI）都经过这里。失败抛出去了就没有这一句——失败不是完成。
     _capture_refresh_completed(result)
@@ -5074,6 +5108,50 @@ def _resolve_engine_worker(rel_id: str, *, artifact_source=None):
     )
 
 
+def _note_handoff_render(stem: str, *, code: str | None = None, **facts) -> None:
+    """把这次渲染的结论记进进程内结论表（ADR 0131 第六节），供 `GET /api/handoff/render-status` 查询。
+
+    只读取这次本来就要做的渲染的结果，不触发任何执行；没有交接在查时也记（几个标量，零 IO）。
+    **任何失败都不许影响渲染响应。**
+    """
+    try:
+        project = current_ctx().path  # 取不到项目也在保护范围内：结论表是旁路
+        if code is None:
+            engine_handoffreceipt.record_ok(project, stem, **facts)
+        else:
+            engine_handoffreceipt.record_failed(project, stem, code)
+    except Exception:  # noqa: BLE001 —— 结论表是旁路，不许拖累渲染
+        LOG.debug("交接渲染结论记录失败", exc_info=True)
+
+
+def _handoff_target_stem(rel_id: str) -> str:
+    """面板 id → 结论表匹配用的 stem，判据与 `_resolve_engine_worker` 一致（runtime 素材查注册表，磁盘面板取文件名主干）。"""
+    try:
+        if engine_runtimeasset.is_runtime_id(rel_id):
+            info = engine_runtimeasset.resolve(rel_id, current_registry())
+            return info["stem"] if info else ""
+    except Exception:  # noqa: BLE001 —— 结论表是旁路
+        return ""
+    return Path(rel_id).stem
+
+
+@app.get(security.HANDOFF_STATUS_PATH)
+def api_handoff_render_status():
+    """`tavotto open` 查「`since` 之后某项目某 stem 的第一份渲染结论」（ADR 0131 第六节）。
+
+    认证由 guard 管：cookie / 完整 secret / 只对本端点有效的 scoped 只读 token。响应不回显路径、不含 traceback。
+    """
+    project = request.args.get("project", "")
+    stem = request.args.get("stem", "")
+    try:
+        since = float(request.args.get("since", ""))
+    except ValueError:
+        since = float("nan")
+    if not project or not stem or not math.isfinite(since):
+        return jsonify({"error": "参数无效", "code": "bad_handoff_query"}), 400
+    return jsonify(engine_handoffreceipt.query(project, stem, since))
+
+
 @app.post("/api/engine/render")
 def api_engine_render():
     """应用全量 override 列表并重渲染，返回新 manifest 与版本号。
@@ -5137,6 +5215,11 @@ def api_engine_render():
         info = current_registry().for_stem(Path(stem).stem) or {}
         cold = not worker.built
     except Exception as exc:
+        # worker 启动 / 环境解析失败（WorkerError）也是「那一次渲染」的失败结论：
+        # 不记结论 CLI 会白等到 timeout（ADR 0131 §六）。此时 stem 还没拿到，按
+        # `_resolve_engine_worker` 同一判据反推（旁路，任何失败都不影响原异常）。
+        if isinstance(exc, engine_pool.WorkerError):
+            _note_handoff_render(_handoff_target_stem(rel_id), code=exc.code)
         # 准备态同样须有终局；原异常留给原有 Flask handler，HTTP/code 不变。
         sse_publish("render.failed", {"pj": pj, "id": rel_id, "error": str(exc)})
         raise
@@ -5159,6 +5242,7 @@ def api_engine_render():
         )
     except engine_pool.WorkerError as exc:
         LOG.error("引擎渲染失败: %s: %s", stem, exc)
+        _note_handoff_render(Path(stem).stem, code=exc.code)
         # 按新改指表 build 过、只是图名变了（stems 由数据决定，`unknown_stem`）：注册表按这次 build 的真实
         # 产出重新登记，新图在素材库里出现（ADR 0106 §五）
         # 一张都没出（`unknown_stem` 被换成 `no_figures_captured*`）同样是按新表跑出的权威结果：旧 stems 要摘掉
@@ -5203,6 +5287,11 @@ def api_engine_render():
         sse_publish("render.failed", {"pj": pj, "id": rel_id, "error": str(exc)})
         raise
     sse_publish("render.done", {"pj": pj, "id": rel_id, "rev": worker.rev})
+    _note_handoff_render(
+        Path(stem).stem,
+        registry_match=bool(info),
+        manifest_elements=len((resp.get("manifest") or {}).get("elements") or []),
+    )
     _resync_registration(current_ctx(), worker)
     if engine_runtimeasset.is_runtime_id(rel_id):
         # 重开文档时的首帧占位从这里来：刷新 materialized cache 的预览与
@@ -7543,7 +7632,7 @@ def _native_preparation_runner(pl, before_retry=None):
                 launch_id=pl.plan_id,
                 project_epoch=pl.project_epoch,
                 launch_order=pl.launch_order,
-                cancelled=lambda: engine_preparation.SERVICE.is_cancelled(pl.plan_id),
+                cancelled=lambda: engine_preparation.SERVICE.launch_blocked(pl.plan_id),
             )
         )
     except engine_runcodes.RunError as exc:
@@ -7639,6 +7728,41 @@ def _launch_preparation(ctx: "ProjectCtx", plan, on_done=None) -> None:
     )
 
 
+def _desktop_initiated() -> bool:
+    """这个请求是不是**桌面用户主动发起**的（ADR 0127 D1 的授权边界）。服务端可验证，不信请求体里任何自报字段：
+
+    * 进程是 `--desktop-sidecar`（`TAVOTTO_DESKTOP_MODE` 只由 `SidecarServer` 设置）；
+    * 没有磁盘本机凭据（`api_secret is None`——桌面模式不存在能被 MCP / Agent / 脚本拿走的凭据）；
+    * 请求带着由启动 nonce 兑换的会话 cookie（只有 Tauri 壳里的窗口兑换得到）。
+
+    没有会话状态（测试 / `--insecure-no-auth`）、浏览器模式、带本机凭据头的 API 客户端一律 False（fail closed）。"""
+    if not app.config.get("TAVOTTO_DESKTOP_MODE"):
+        return False
+    state = app.config.get(security.STATE_KEY)
+    if state is None or state.api_secret:
+        return False
+    return state.valid_cookie(request.cookies.get(security.COOKIE_NAME))
+
+
+def _launch_session_attempt(ctx: "ProjectCtx", plan, on_done=None) -> None:
+    """会话 `run` 认领出来的尝试交给执行线程。safe 尝试开始前，同一脚本上一次桌面 native 会话 / 计划票据先让位
+    （P2）：回退成功后 native 进程停在屏障上占着环境租约，用户重跑 safe 不让位就会一直 `environment_in_use_by_native_session`。
+    复用 #1022 重跑入口的同两个机制（`cancel_project(script=, keep=)` 与 `REGISTRY.cancel_project(script=, older_than=)`）；
+    native 尝试由 `_native_preparation_runner` 自己做同样的事。旧的素材准备端点不走这里（面板展示不该结束正在编辑的活图）。"""
+    found = engine_preparation.SERVICE.get(plan.plan_id, plan.project_id)
+    order = found[0].launch_order if found is not None else None
+    if plan.execution != engine_execspec.PROFILE_NATIVE and plan.script and order is not None:
+        # 与 `_native_preparation_runner` 同一套让位语义：只结束登记序号**比自己小**的（`older_than=`）。被更新的重跑取代的
+        # 旧动作因此结束不了新一次（可能已回退到 native）的会话 / 票据（Codex #1028 r4268029512）
+        engine_preparation.SERVICE.cancel_project(
+            plan.project_id, script=plan.script, keep=plan.plan_id
+        )
+        engine_nativesession.REGISTRY.cancel_project(
+            plan.project_root, script=plan.script, older_than=order
+        )
+    _launch_preparation(ctx, plan, on_done)
+
+
 def _preparation_payload(plan, result) -> dict:
     return {"plan": plan.to_payload(), "result": result.to_payload()}
 
@@ -7722,6 +7846,22 @@ def _session_error(exc: engine_prepsession.SessionError):
     return resp
 
 
+def _last_success_selection(ctx: "ProjectCtx", script: str):
+    """`reuse_last_success` 的消费端：上次成功的运行配置此刻全部依据仍成立才回 `RunSelection`；否则 None（= 无参数）。"""
+    root = str(ctx.path)
+    try:
+        python, source = engine_pool.resolve_worker_python(root, script=script)
+    except engine_pool.WorkerError:
+        return None
+    cid = engine_launchctx.reusable_run_config(root, script, python=python, python_source=source)
+    if cid is None:
+        return None
+    try:
+        return engine_runconfig.selection(root, cid, script=script)
+    except engine_runconfig.RunConfigError:
+        return None
+
+
 def _session_target(ctx: "ProjectCtx", body: dict):
     """请求体 → 会话目标（`script` 目标或已知素材）；不行回现成的拒绝响应。回 `(target, None)` 或 `(None, 响应)`。"""
     has_script, has_id = "script" in body, "id" in body
@@ -7789,7 +7929,22 @@ def _session_target(ctx: "ProjectCtx", body: dict):
         )
     # T03：精确 argv。只接受字符串数组——不接受一整串 shell 命令（那要猜 token 边界）；坏的抛 `InvalidArgv`
     # （app 级 errorhandler 回 400 + `invalid_argv`），不截断不"修好"
-    run = engine_runconfig.selection_for(
+    reuse = body.get("reuse_last_success")
+    if reuse is not None and not isinstance(reuse, bool):
+        return None, (
+            jsonify(
+                {
+                    "error": "reuse_last_success 只能是布尔值",
+                    "code": "bad_request",
+                    "params": {"fields": ["reuse_last_success"]},
+                }
+            ),
+            400,
+        )
+    # #982：沿用上次成功的运行配置——只在请求明确要求、且没有给 argv 时；依据（解释器 / 环境 / 脚本 / helper / 数据）不全成立就当没有
+    run = (
+        _last_success_selection(ctx, script) if reuse and body.get("argv") is None else None
+    ) or engine_runconfig.selection_for(
         ctx.path, script, body.get("argv"), sensitive=bool(body.get("argv_sensitive"))
     )
     return {
@@ -7801,8 +7956,9 @@ def _session_target(ctx: "ProjectCtx", body: dict):
         "original_artifact": None,
         "original_path": None,
         **({"run": run} if run is not None else {}),
-        # P07：桌面拥有的 native（保留真文件语义、输入由界面作答）。省略 = safe，会话与计划逐字节不变
-        **({"execution": execution} if execution == engine_execspec.PROFILE_NATIVE else {}),
+        # P07：桌面拥有的 native（保留真文件语义、输入由界面作答）。显式 safe / native 原样带进目标（V2 PR2：显式 safe 不许被运行前路由覆盖）；
+        # 请求省略 = 让路由挑，显式写成 `auto` 带进目标（引擎层省略仍是 safe，与 main 相同）
+        "execution": execution if execution is not None else engine_preparation.EXECUTION_AUTO,
     }, None
 
 
@@ -7900,7 +8056,7 @@ def _finalize_script_attempt(ctx: "ProjectCtx", plan, result) -> dict:
     engine_launchctx.record_success(
         ctx.path,
         plan.script,
-        None if captured.get("failed_figures") else getattr(result, "receipt", None),
+        engine_launchctx.basis_of(result, plan, bool(captured.get("failed_figures"))),
         run=run,
         update_default=True,
     )
@@ -8035,8 +8191,9 @@ def api_engine_preparation_session_action(session_id: str):
             ctx.id,
             body["action_id"],
             revision,
-            launch=lambda plan, on_done: _launch_preparation(ctx, plan, on_done),
+            launch=lambda plan, on_done: _launch_session_attempt(ctx, plan, on_done),
             finalize=lambda plan, result: _finalize_script_attempt(ctx, plan, result),
+            desktop_initiated=_desktop_initiated(),
             impact_digest=echoed,
             prepare=_session_dependency_starter(ctx),
             transfer_from=transfer_from,

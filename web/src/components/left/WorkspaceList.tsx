@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { t as translate } from '@/i18n'
-import { Bookmark, ClipboardList, ExternalLink, FolderOpen, FolderPlus, SearchX } from '@/components/ui/icons'
+import { Bookmark, ClipboardList, ExternalLink, FolderOpen, FolderPlus, Info } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { backendErrorMsg, type ProjectStatus } from '@/lib/api'
 import { canRevealInFileManager } from '@/lib/desktop'
@@ -10,13 +10,15 @@ import { useProjectStore } from '@/store/projectStore'
 import { useUiStore } from '@/store/uiStore'
 import { TailPath, useProjectEntry } from '../ProjectPicker'
 import { BookmarkFilled, ProjectRow, RevealItem } from '../ProjectPickerRow'
-import { Button } from '../ui/Button'
+import { Button, IconButton } from '../ui/Button'
 import { Card } from '../ui/Card'
-import { EmptyState } from '../ui/EmptyState'
+import { EmptyLine } from '../ui/EmptyLine'
+import { SEARCH_MIN_ITEMS } from '../ui/searchThreshold'
 import { MenuItem, MenuSeparator } from '../ui/Menu'
 import { RowMenu } from '../ui/RowMenu'
 import { SearchInput } from '../ui/SearchInput'
 import { useRowMenu } from '../ui/useRowMenu'
+import { DrawerHeaderActions } from './DrawerHeader'
 import { openInNewTab } from './projectActions'
 import { useRovingList } from './rovingList'
 
@@ -84,7 +86,9 @@ export function WorkspaceList() {
     recent.filter((r) => !pinnedPaths.has(r.path) && r.path !== currentPath),
     query,
   )
-  const nothing = pinnedRows.length + available.length + missing.length === 0
+  // 实际渲染（也就是搜得到）的行数：已去重、已排除当前项目，空态与搜索框阈值共用这一个数
+  const searchableRows = pinnedRows.length + available.length + missing.length
+  const nothing = searchableRows === 0
   // 排序按**显示出来的**收藏算（Codex #832）：当前项目被收藏时它藏在顶上的卡里，下标、两端判据与
   // 「上移 / 下移」都只认可见的那几行——不然紧挨着它的那一行第一下是跟看不见的它换位，界面上没动静，
   // 可见的首尾行也还亮着上移 / 下移。不筛选时 `pinnedRows` 就是这份显示顺序
@@ -101,10 +105,19 @@ export function WorkspaceList() {
 
   return (
     <div className="flex min-h-0 flex-1 flex-col" data-workspace-list>
-      {/* 搜索行只放搜索（审计 §10.3） */}
-      <div className="flex shrink-0 items-center px-3 pb-2">
-        <SearchInput value={query} onValueChange={setQuery} placeholder={ws('filter')} aria-label={ws('filterLabel')} />
-      </div>
+      {/* 名词说明（2026-09-26 用户拍板四个名词，ADR 0001 修订）：项目 ≠ 排版。常驻的一句说明收进
+          标题行的 ⓘ（2026-10-16：常驻说明进 tooltip），不再占列表下方的位置 */}
+      <DrawerHeaderActions>
+        <IconButton label={ws('hintLabel')} tip={ws('hint')} data-workspace-hint iconSize="sm" className="text-ink-3">
+          <Info size={ICON_SIZE.sm} />
+        </IconButton>
+      </DrawerHeaderActions>
+      {/* 搜索行只放搜索（审计 §10.3）；条目少于 6 个时不显示，有搜索词时保留 */}
+      {(searchableRows >= SEARCH_MIN_ITEMS || query !== '') && (
+        <div className="flex shrink-0 items-center px-3 pb-2">
+          <SearchInput value={query} onValueChange={setQuery} placeholder={ws('filter')} aria-label={ws('filterLabel')} />
+        </div>
+      )}
 
       <div
         ref={roving.ref}
@@ -180,17 +193,15 @@ export function WorkspaceList() {
 
         {nothing &&
           (filtered ? (
-            <EmptyState icon={SearchX} title={ws('noMatch')} />
+            <EmptyLine action={{ label: translate('actions.clearSearch'), onClick: () => setQuery('') }}>
+              {ws('noMatch')}
+            </EmptyLine>
           ) : (
-            <p className="px-4 py-3 type-meta">{ws('emptyRecent')}</p>
+            // 起步屏只有画布中央那一个动作（canvas-objects-and-workspace.md「空状态」，审计 T03）：这里不配按钮，
+            // 打开文件夹在下面的页脚里
+            <EmptyLine>{ws('emptyRecent')}</EmptyLine>
           ))}
       </div>
-
-      {/* 名词说明（2026-09-26 用户拍板四个名词，ADR 0001 修订）：项目 ≠ 排版。一行 meta
-          字压在两个入口上方，不占列表的位置 */}
-      <p className="shrink-0 px-3 pb-1.5 type-meta" data-workspace-hint>
-        {ws('hint')}
-      </p>
 
       {/* 页脚（左栏只有一种页脚语法：border-t px-1.5 py-1 + 28px 控件，底是抽屉底）。两个入口平级，
           都不是这一屏的主动作：不给填色（宪法：每个上下文最多一个填色主动作） */}

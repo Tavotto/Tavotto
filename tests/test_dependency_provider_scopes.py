@@ -10,6 +10,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import subprocess
 from pathlib import Path
 
@@ -121,6 +122,38 @@ def test_each_declared_provider_is_the_only_one_installed_and_the_receipt_names_
     ]
     ledger = {e["distribution"]: e for e in managedenv.ledger_entries(project)}
     assert set(ledger) == {declared} and ledger[declared]["resolved_version"] == VERSION
+
+
+@needs_worker
+def test_a_hash_lock_switch_receipt_names_the_provider_really_installed(
+    tmp_path, cv2_house, offline_managed_env
+):
+    """#970：旧 active 的互斥包不改 hash 锁的实际安装集合，回执与新代真实导入同源。"""
+    project = tmp_path / "paper"
+    _scope(project, ".", f"opencv-python=={VERSION}\n")
+    assert _prepare(project, "figure.py")["state"] == deprepair.STATE_DONE
+    wheel = next(cv2_house.glob("opencv_python_headless-*.whl"))
+    digest = hashlib.sha256(wheel.read_bytes()).hexdigest()
+    _scope(project, ".", f"opencv-python-headless=={VERSION} --hash=sha256:{digest}\n")
+    plan = deprepair.create_joint_plan(project, "figure.py")
+    assert plan.require_hashes is True
+    assert plan.requirements == (f"opencv-python-headless=={VERSION}",)
+    deprepair.prepare_async(plan.plan_id, confirmed_impact=plan.impact_digest)
+    rec = wait_for(plan.plan_id)
+    assert rec["state"] == deprepair.STATE_DONE, rec
+    python = managedenv.python_of(project)
+    assert _opencv_installed(python) == {"opencv-python-headless"}
+    assert _run(python, project) == "opencv-python-headless"
+    assert rec["result"]["providers"] == [
+        {
+            "import_name": "cv2",
+            "distribution": "opencv-python-headless",
+            "version": VERSION,
+            "source": depresolve.SOURCE_PROJECT_DECLARED,
+            "provenance": "index",
+            "generation": managedenv.active_generation(project),
+        }
+    ]
 
 
 @pytest.fixture

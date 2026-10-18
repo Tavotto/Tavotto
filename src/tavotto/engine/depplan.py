@@ -1571,7 +1571,8 @@ def plan(
             "via": list(c.via),
         }
         for c in scan.needed
-        if arbitrated.get(c.module, c.distribution) in to_install
+        # hash 锁会安装整份集合：active 中的互斥 provider 不能让新代回执丢掉这个 import（#970）。
+        if arbitrated.get(c.module, c.distribution) in installing
         and c.module not in missing_imports
     )
     if roots_active:
@@ -1752,7 +1753,7 @@ def plan(
             verdicts,
             arbitrated,
             by_name,
-            to_install,
+            installing,
             user_entries,
             None if same_target else target_installed,
         ),

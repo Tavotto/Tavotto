@@ -20,7 +20,7 @@ import { setCurrentProjectId } from '@/lib/session'
 import { t } from '@/i18n'
 import type { DependencyPreparationOffer, DependencyProgress, DependencyRepairPlan } from '@/lib/api'
 import { __resetDepRepairParkingForTests, useDepRepairStore } from './depRepairStore'
-import { useEnvStore } from './envStore'
+import { INSTALL_PENDING_TIMEOUT_MS, resetBootstrapForTests, useEnvStore } from './envStore'
 import { useProjectStore } from './projectStore'
 import { useRenderStore } from './renderStore'
 import { useScriptRunStore, type ScriptRunState } from './scriptRunStore'
@@ -913,5 +913,326 @@ describe('A → B → A 在结果回来之前已切回：结果立即作用于 A
     expect(s.progress?.state).toBe('installing')
     expect(s.parked).toEqual({})
     expect(s.rebuildRunningFor('p1')).toBe(true)
+  })
+})
+
+describe('SSE 断线后的对账（reconcile）：丢了终态事件，卡片不能永远停在「正在安装」', () => {
+  it('丢了 done：重连对账后以实况收尾，计划被消费', async () => {
+    await startInstallOnA()
+    expect(useDepRepairStore.getState().progress?.state).toBe('installing')
+    // 终态事件没收到；后端实况已经是 done
+    stateAnswer = progress('done')
+    await useDepRepairStore.getState().reconcile()
+    const s = useDepRepairStore.getState()
+    expect(s.progress?.state).toBe('done')
+    expect(s.plan).toBeNull()
+  })
+
+  it('丢了 failed：失败的结局与错误文案也接回来', async () => {
+    await startInstallOnA()
+    stateAnswer = progress('failed', { code: 'dependency_install_failed', error: 'pip 失败' })
+    await useDepRepairStore.getState().reconcile()
+    const s = useDepRepairStore.getState()
+    expect(s.progress?.state).toBe('failed')
+    expect(s.errorCode).toBe('dependency_install_failed')
+  })
+
+  it('对照：实况还在跑，就照实更新、不提前收尾', async () => {
+    await startInstallOnA()
+    stateAnswer = progress('verifying', { log: 'Verifying' })
+    await useDepRepairStore.getState().reconcile()
+    expect(useDepRepairStore.getState().progress?.state).toBe('verifying')
+    expect(useDepRepairStore.getState().plan).not.toBeNull()
+  })
+
+  it('后端不认识这个 id（idle）或问不到实况：什么都不改', async () => {
+    await startInstallOnA()
+    stateAnswer = { state: 'idle', plan_id: '', log: '', error: null, code: '' }
+    await useDepRepairStore.getState().reconcile()
+    expect(useDepRepairStore.getState().progress?.state).toBe('installing')
+    stateAnswer = 'network'
+    await useDepRepairStore.getState().reconcile()
+    expect(useDepRepairStore.getState().progress?.state).toBe('installing')
+  })
+
+  it('等回包期间 SSE 已推到终态：较早的实况快照不能把终局盖回去', async () => {
+    await startInstallOnA()
+    holding.add('/api/engine/dependency/state')
+    const pending = useDepRepairStore.getState().reconcile()
+    await vi.waitFor(() => expect(held.has('/api/engine/dependency/state')).toBe(true))
+    useDepRepairStore.getState().onProgress(progress('done'))
+    held.get('/api/engine/dependency/state')?.(progress('installing'))
+    await pending
+    expect(useDepRepairStore.getState().progress?.state).toBe('done')
+  })
+
+  it('不是本标签页起的作业不对账（没有登记的 plan_id 不发请求）', async () => {
+    useDepRepairStore.setState({ progress: progress('installing', { plan_id: 'someone-else' }) })
+    await useDepRepairStore.getState().reconcile()
+    expect(calls.some((c) => c.url.includes('/api/engine/dependency/state'))).toBe(false)
+  })
+
+  it('切走项目时收着的作业也对账：结局落进它那一格，B 的界面不动', async () => {
+    await startInstallOnA()
+    await switchTo('p2')
+    expect(useDepRepairStore.getState().progress).toBeNull()
+    stateAnswer = progress('done')
+    await useDepRepairStore.getState().reconcile()
+    expect(useDepRepairStore.getState().progress).toBeNull()
+    expect(useDepRepairStore.getState().parked['p1']?.state).toBe('done')
+  })
+
+  it('depRepair：reconcile 应用了 done 之后，缓冲里旧的 verifying（SSE）到达：仍是 done', async () => {
+    await startInstallOnA()
+    stateAnswer = progress('done')
+    await useDepRepairStore.getState().reconcile()
+    expect(useDepRepairStore.getState().progress?.state).toBe('done')
+    useDepRepairStore.getState().onProgress(progress('verifying'))
+    expect(useDepRepairStore.getState().progress?.state).toBe('done')
+  })
+
+  it('depRepair：SSE 先到 done，迟到的 installing 快照：仍是 done；同状态的重复（下载字节）照常收', async () => {
+    await startInstallOnA()
+    useDepRepairStore.getState().onProgress(progress('installing', { log: 'line 2' }))
+    expect(useDepRepairStore.getState().progress?.log).toBe('line 2')
+    useDepRepairStore.getState().onProgress(progress('done'))
+    useDepRepairStore.getState().onProgress(progress('installing'))
+    expect(useDepRepairStore.getState().progress?.state).toBe('done')
+  })
+
+  it('depRepair：已到终态后，终态的重复 / 另一个终态都不再派发副作用（对账回包与 SSE 同时带来 done）', async () => {
+    await startInstallOnA()
+    const retry = vi.fn()
+    useRenderStore.setState({ retryEnvironmentFailures: retry })
+    useDepRepairStore.getState().onProgress(progress('done'))
+    useDepRepairStore.getState().onProgress(progress('done'))
+    useDepRepairStore.getState().onProgress(progress('failed', { code: 'x', error: 'late' }))
+    expect(retry).toHaveBeenCalledTimes(1)
+    expect(useDepRepairStore.getState().progress?.state).toBe('done')
+  })
+
+  it('depRepair：缓冲里先到的 verifying 之后，在飞的 done 回包仍然被接受（更靠后的终态）', async () => {
+    await startInstallOnA()
+    holding.add('/api/engine/dependency/state')
+    const pending = useDepRepairStore.getState().reconcile()
+    await vi.waitFor(() => expect(held.has('/api/engine/dependency/state')).toBe(true))
+    useDepRepairStore.getState().onProgress(progress('verifying'))
+    held.get('/api/engine/dependency/state')?.(progress('done'))
+    await pending
+    expect(useDepRepairStore.getState().progress?.state).toBe('done')
+  })
+
+  it('depRepair：较早的 installing 回包晚到（已知 verifying）：不倒退', async () => {
+    await startInstallOnA()
+    holding.add('/api/engine/dependency/state')
+    const pending = useDepRepairStore.getState().reconcile()
+    await vi.waitFor(() => expect(held.has('/api/engine/dependency/state')).toBe(true))
+    useDepRepairStore.getState().onProgress(progress('verifying'))
+    held.get('/api/engine/dependency/state')?.(progress('installing'))
+    await pending
+    expect(useDepRepairStore.getState().progress?.state).toBe('verifying')
+  })
+
+  // ---- engine bootstrap：服务端给的尝试身份 `attempt` ----
+  const snap = (attempt: number, state: string, over: Record<string, unknown> = {}) => ({ attempt, state, log: '', error: null, ...over })
+  const sse = (attempt: number, state: string, over: Record<string, unknown> = {}) =>
+    useEnvStore.getState().onProgress(snap(attempt, state, over) as never)
+  const envGet = (body: Record<string, unknown>) => {
+    const orig = globalThis.fetch
+    globalThis.fetch = (async (url: unknown, init?: RequestInit) =>
+      String(url).includes('/api/engine/environment') && !String(url).includes('/install')
+        ? respond({ ok: false, project: { open: true }, ...body })
+        : orig(url as never, init)) as typeof fetch
+    return () => {
+      globalThis.fetch = orig
+    }
+  }
+  const withEnv = async (body: Record<string, unknown>) => {
+    const restore = envGet(body)
+    try {
+      await useEnvStore.getState().refresh()
+    } finally {
+      restore()
+    }
+  }
+  const clickInstall = async () => {
+    holding.add('/api/engine/environment/install')
+    const install = useEnvStore.getState().install()
+    await vi.waitFor(() => expect(held.has('/api/engine/environment/install')).toBe(true))
+    holding.clear()
+    return {
+      install,
+      respond: async (body: unknown) => {
+        held.get('/api/engine/environment/install')?.(body)
+        await install
+      },
+    }
+  }
+  const installing = () => useEnvStore.getState().installing
+
+  describe('bootstrap 尝试身份（attempt）', () => {
+    beforeEach(() => {
+      resetBootstrapForTests()
+      useEnvStore.setState({ installing: false, log: '' })
+    })
+
+    it('丢了终态事件：同一次的 GET 说 done，就收尾；更旧 / 同序的快照不倒回去', async () => {
+      sse(3, 'running')
+      expect(installing()).toBe(true)
+      await withEnv(snap(3, 'done'))
+      expect(installing()).toBe(false)
+      await withEnv(snap(3, 'idle'))
+      sse(3, 'running') // 缓冲回放
+      sse(2, 'running') // 更旧的一次
+      expect(installing()).toBe(false)
+    })
+
+    it('refresh 在飞时回放旧 running：不改变这次尝试，随后更新的 done 回包照样收尾', async () => {
+      sse(3, 'running')
+      holding.add('/api/engine/environment')
+      const refresh = useEnvStore.getState().refresh()
+      await vi.waitFor(() => expect(held.has('/api/engine/environment')).toBe(true))
+      sse(3, 'running') // 重放
+      held.get('/api/engine/environment')?.({ ok: true, project: { open: true }, ...snap(3, 'done') })
+      await refresh
+      expect(installing()).toBe(false)
+      holding.clear()
+    })
+
+    it('点安装、POST 还没回：上一次的快照（旧 idle / 旧终态 / 旧 running）都清不掉 installing', async () => {
+      sse(3, 'done')
+      const c = await clickInstall()
+      expect(installing()).toBe(true)
+      await withEnv(snap(3, 'idle'))
+      await withEnv(snap(3, 'done'))
+      sse(3, 'done')
+      sse(2, 'running')
+      expect(installing()).toBe(true)
+      await c.respond(snap(4, 'running'))
+      expect(installing()).toBe(true)
+    })
+
+    it('POST 响应之前先到的终态事件属于新 attempt：采用，待定即解除，installing 收掉（Codex）', async () => {
+      sse(3, 'done')
+      const c = await clickInstall()
+      sse(4, 'running')
+      sse(4, 'failed', { error: '没网' })
+      expect(installing()).toBe(false)
+      await c.respond(snap(4, 'running')) // 迟到的响应说的是同一次的较早状态：不倒退
+      expect(installing()).toBe(false)
+      expect(useEnvStore.getState().log).toBe('没网')
+    })
+
+    it('POST 响应本身就是终态：立即应用（Codex）', async () => {
+      const c = await clickInstall()
+      await c.respond(snap(1, 'failed', { error: '没有可用的 Python' }))
+      expect(installing()).toBe(false)
+      expect(useEnvStore.getState().log).toBe('没有可用的 Python')
+    })
+
+    it('响应带 running：installing 保持；之后同一次的 idle 快照不能清，done 才清', async () => {
+      const c = await clickInstall()
+      await c.respond(snap(1, 'running'))
+      await withEnv(snap(1, 'idle'))
+      expect(installing()).toBe(true)
+      sse(1, 'done')
+      expect(installing()).toBe(false)
+    })
+
+    it('POST 在飞时发起的 refresh、响应之后才回 idle：不清', async () => {
+      sse(3, 'done')
+      await new Promise((r) => setTimeout(r, 30)) // 终态事件触发的那次读取先落地，免得它让后面的读取重试
+      holding.add('/api/engine/environment/install')
+      holding.add('/api/engine/environment')
+      const install = useEnvStore.getState().install()
+      const refresh = useEnvStore.getState().refresh()
+      await vi.waitFor(() => expect(held.has('/api/engine/environment')).toBe(true))
+      await vi.waitFor(() => expect(held.has('/api/engine/environment/install')).toBe(true))
+      held.get('/api/engine/environment/install')?.(snap(4, 'running'))
+      await install
+      held.get('/api/engine/environment')?.({ ok: false, project: { open: true }, ...snap(3, 'done') })
+      await refresh
+      expect(installing()).toBe(true)
+      holding.clear()
+    })
+
+    it('后端重启（boot 变了）：attempt 从头计也采用；同一个 boot 内更小的 attempt 照旧丢弃', () => {
+      sse(3, 'done', { boot: 'b1' })
+      sse(1, 'running', { boot: 'b2' }) // 新进程：(b2,1) 与 (b1,3) 不可比
+      expect(installing()).toBe(true)
+      sse(1, 'done', { boot: 'b2' })
+      expect(installing()).toBe(false)
+      sse(5, 'running', { boot: 'b1' })
+      sse(2, 'running', { boot: 'b2' })
+      sse(1, 'running', { boot: 'b2' }) // 同 boot 更旧 / 同序：丢弃
+      expect(installing()).toBe(true) // (b2,2) running 被采用，(b2,1) 没把它拉回去
+    })
+
+    it('后端重启也作废待定：点击发给了已经没有的进程', async () => {
+      sse(3, 'done', { boot: 'b1' })
+      const c = await clickInstall()
+      sse(1, 'failed', { boot: 'b2', error: '新进程' })
+      expect(installing()).toBe(false)
+      await c.respond(snap(1, 'failed', { boot: 'b2', error: '新进程' })) // 同一新进程的响应：重复，不变
+      expect(installing()).toBe(false)
+    })
+
+    it('POST 成功但没开出新尝试（响应 attempt 不变）：以响应结算待定，installing 收掉，不永远等新 attempt', async () => {
+      sse(3, 'done', { boot: 'b1' })
+      const c = await clickInstall()
+      expect(installing()).toBe(true)
+      await c.respond({ ok: true, ...snap(3, 'done', { boot: 'b1' }) })
+      expect(installing()).toBe(false)
+      // 待定已结算：之后旧 idle 快照照旧不会误开，新一次的 running 照常采用
+      sse(4, 'running', { boot: 'b1' })
+      expect(installing()).toBe(true)
+    })
+
+    it('终态锁定：同一次的终态重复（带别的内容）不覆盖已采用的那份', () => {
+      sse(5, 'failed', { error: '第一份' })
+      sse(5, 'failed', { error: '第二份' })
+      expect(useEnvStore.getState().log).toBe('第一份')
+    })
+
+    it('POST 失败：待定解除，installing 收掉、日志是错误；之后旧快照照常按 attempt 判', async () => {
+      sse(3, 'done')
+      await new Promise((r) => setTimeout(r, 30))
+      holding.add('/api/engine/environment/install')
+      const install = useEnvStore.getState().install()
+      await vi.waitFor(() => expect(held.has('/api/engine/environment/install')).toBe(true))
+      held.get('/api/engine/environment/install')?.({ error: '没找到 Python', code: 'python_missing' }, 400)
+      await install
+      holding.clear()
+      expect(installing()).toBe(false)
+      expect(useEnvStore.getState().log).not.toBe('')
+    })
+
+    it('老后端（没有 attempt）：待定由观察到 running / 终态解除；idle 在待定期间不清；30s 兜底', async () => {
+      const c = await clickInstall()
+      await c.respond({ started: true, state: 'idle', log: '', error: null })
+      expect(installing()).toBe(true)
+      await withEnv({ state: 'idle' })
+      expect(installing()).toBe(true)
+      sse(undefined as never, 'running')
+      await withEnv({ state: 'idle' }) // 已观察到 running：idle 是更早的，仍不清
+      expect(installing()).toBe(true)
+      sse(undefined as never, 'done')
+      expect(installing()).toBe(false)
+    })
+
+    it('老后端兜底：一直没观察到 running / 终态，30s 后收尾', async () => {
+      vi.useFakeTimers()
+      try {
+        const c = await clickInstall()
+        await c.respond({ started: true, state: 'idle', log: '', error: null })
+        expect(installing()).toBe(true)
+        await vi.advanceTimersByTimeAsync(INSTALL_PENDING_TIMEOUT_MS - 1000)
+        expect(installing()).toBe(true)
+        await vi.advanceTimersByTimeAsync(2000)
+        expect(installing()).toBe(false)
+      } finally {
+        vi.useRealTimers()
+      }
+    })
   })
 })

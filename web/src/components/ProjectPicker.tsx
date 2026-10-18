@@ -69,33 +69,33 @@ export function ProjectPicker() {
     }
   }
 
-  if (view === 'home') {
-    return (
-      <HomeView
-        variant={variant}
-        error={error}
-        busyPath={busyPath}
-        openPath={(path) => openPath(path)}
-        onShowAll={() => {
-          setError(null)
-          setView('all')
-        }}
-      />
-    )
-  }
-  // 选择器不在工作台的 TooltipProvider 里（App 在没有项目时只渲染这一屏）：行的「⋯」是带气泡的
-  // IconButton（`ui/RowMenu`），这里自己给一层
+  // 选择器不在工作台的 TooltipProvider 里（App 在没有项目时只渲染这一屏）：行的「⋯」与 Windows 桌面版
+  // 左上角的「菜单」按钮都是带气泡的 IconButton，主页与「全部项目」两个视图都要有这一层
+  // （只给「全部项目」包过：Windows 桌面版主页因 AppMenuButton 直接崩到「界面出错了」，#1080）
   return (
     <TooltipProvider>
-      <AllProjects
-        error={error}
-        busyPath={busyPath}
-        openPath={openPath}
-        onBack={() => {
-          setError(null)
-          setView('home')
-        }}
-      />
+      {view === 'home' ? (
+        <HomeView
+          variant={variant}
+          error={error}
+          busyPath={busyPath}
+          openPath={(path) => openPath(path)}
+          onShowAll={() => {
+            setError(null)
+            setView('all')
+          }}
+        />
+      ) : (
+        <AllProjects
+          error={error}
+          busyPath={busyPath}
+          openPath={openPath}
+          onBack={() => {
+            setError(null)
+            setView('home')
+          }}
+        />
+      )}
     </TooltipProvider>
   )
 }

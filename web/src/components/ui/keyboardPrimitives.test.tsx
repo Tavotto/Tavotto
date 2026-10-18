@@ -185,6 +185,10 @@ describe('共享指示物：整组只有一条下划线 / 一块选中底，位�
     await act(async () => tabs[2].click())
     expect(bars()).toHaveLength(1)
     expect(bars()[0].style.transform).toBe('translateX(80px)')
+    // 实际渲染出来的下划线挂的是 snap 缓动 + base 时长（不是源码里出现过这几个字就算）
+    expect(bars()[0].className).toContain('ease-snap')
+    expect(bars()[0].className).toContain('duration-base')
+    expect(bars()[0].className).not.toContain('ease-pop')
     for (const t of tabs) expect(t.className).not.toContain('after:')
   })
 
@@ -203,6 +207,10 @@ describe('共享指示物：整组只有一条下划线 / 一块选中底，位�
     expect(host.querySelectorAll('[data-segmented-thumb]')).toHaveLength(1)
     expect(thumb()!.style.transform).toBe('translateX(80px)')
     expect(thumb()!.style.width).toBe('30px')
+    // 实际渲染出来的滑块挂的是 snap 缓动 + base 时长
+    expect(thumb()!.className).toContain('ease-snap')
+    expect(thumb()!.className).toContain('duration-base')
+    expect(thumb()!.className).not.toContain('ease-pop')
     await act(async () => radios[0].click())
     expect(thumb()!.style.transform).toBe('translateX(0px)')
     for (const r of radios) expect(r.className).not.toContain('bg-selected')

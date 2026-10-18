@@ -118,7 +118,7 @@ export function Segmented<T extends string>({
           data-segmented-thumb
           className={cn(
             'pointer-events-none absolute inset-y-0.5 left-0 rounded-full bg-thumb shadow-thumb',
-            thumb.animate && 'transition-[transform,width] duration-base ease-pop',
+            thumb.animate && 'transition-[transform,width] duration-base ease-snap',
           )}
           style={thumb.style}
         />

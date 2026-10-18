@@ -273,29 +273,21 @@ test(
     await required.getByRole('textbox', { name: '--label 的第 1 个值' }).fill(ARGV[3])
     await expect(card(page)).toHaveAttribute('data-prep-state', 'args_changed')
     await expect(primary(page)).toBeEnabled()
-    await primary(page).click() // 继续 = 按新参数重新检查
-    await expect(card(page)).toHaveAttribute('data-prep-state', 'ready', { timeout: 60_000 })
-    await expect(card(page).locator('[data-prep-line]')).toHaveText('可以运行了')
-    await expect(card(page).locator('[data-prep-ready-line]')).toContainText('--scale 1.5 --label "峰 值 A"')
     expect(execs(project)).toHaveLength(0)
-    await expectPageNotShifted(page)
-
-    // 运行 → 运行时 input 在卡里答（原对话框不出现）
+    // 继续 = 按新参数重新检查，并接着「打开并运行」（V2 PR4：这个条目是从「打开并运行」入口打开的，不让用户为同一个目的点两次；
+    // 检查完卡片会说「可以运行了」才代认领）：直接运行；运行时 input 在卡里答（原对话框不出现）
     await primary(page).click()
     await expect(card(page)).toHaveAttribute('data-prep-state', 'input', { timeout: 120_000 })
+    await expectPageNotShifted(page)
     await expect(page.locator('[data-dialog="script-input"]')).toHaveCount(0)
     const form = card(page).locator('[data-prep-input]')
     await expect(form.locator('[data-script-input-output]')).toContainText('1) smooth')
     await form.locator('[data-script-input-answer]').fill('1')
     await primary(page).click() // 回答
-    await expect(card(page)).toHaveAttribute('data-prep-state', 'completed', { timeout: 120_000 })
-    await expect(card(page).locator('[data-prep-line]')).toHaveText('画好了 1 张图')
-    await expectPageNotShifted(page)
 
-    // 进入编辑：同一次捕获，不重跑；卡片随即收起、不留角标（T13b），左栏轨道、编辑区、元素树都点得到；
+    // 画好了一张图 → 自动进入编辑：同一次捕获，不重跑；卡片随即收起、不留角标（T13b），左栏轨道、编辑区、元素树都点得到；
     // 取景适应窗口（不是停在 25% 只露一角）
-    await primary(page).click()
-    await expect(card(page)).toHaveCount(0)
+    await expect(card(page)).toHaveCount(0, { timeout: 120_000 })
     await expect(pill(page)).toHaveCount(0)
     await expect(page.locator('[data-element-svg] svg').first()).toBeVisible({ timeout: 120_000 })
     await expectHittable(page.locator('[data-rail="elements"]'), '左栏「元素」轨道')

@@ -102,7 +102,7 @@ describe('崩溃页的「发送问题反馈」入口（PR A）', () => {
   const crash = () =>
     act(() =>
       root.render(
-        <ErrorBoundary>
+        <ErrorBoundary diagnostics>
           <Boom />
         </ErrorBoundary>,
       ),
@@ -172,5 +172,50 @@ describe('崩溃页的「发送问题反馈」入口（PR A）', () => {
     expect(ring[0].level).toBe('boundary')
     expect(ring[0].message).toContain('kaboom')
     expect(ring[0].stack).toContain('componentStack:')
+  })
+})
+
+describe('playground / mcp 形态（不传 diagnostics）：没有 Flask 诊断 API，不发这个请求', () => {
+  const crashPlain = () => act(() => root.render(<ErrorBoundary><Boom /></ErrorBoundary>))
+
+  it('崩溃时不取 /api/diagnostics/send 的能力说明，崩溃页与接入发送功能之前逐元素一致', async () => {
+    const fetchSpy = vi.fn(() =>
+      Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({ enabled: true }), headers: new Headers() }),
+    )
+    vi.stubGlobal('fetch', fetchSpy)
+    const loadSpy = vi.spyOn(useDiagSendStore.getState(), 'load')
+    try {
+      crashPlain()
+      await act(async () => {})
+      expect(fetchSpy).not.toHaveBeenCalled()
+      expect(loadSpy).not.toHaveBeenCalled()
+      expect(useDiagSendStore.getState().capability).toBeNull()
+      expect(Array.from(host.querySelectorAll('*')).map((e) => e.tagName.toLowerCase()).join(' ')).toBe(BASELINE_SHAPE)
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it('即便 store 里碰巧有能力说明，也不渲染入口与对话框', () => {
+    useDiagSendStore.setState({ capability: { enabled: true }, open: true })
+    crashPlain()
+    expect(host.querySelector('[data-crash-screen]')).not.toBeNull()
+    expect(host.querySelector('[data-send-report]')).toBeNull()
+    expect(host.querySelector('[data-fake-send-dialog]')).toBeNull()
+  })
+
+  it('主应用形态（diagnostics）仍会取一次', async () => {
+    const fetchSpy = vi.fn(() =>
+      Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({ enabled: true }), headers: new Headers() }),
+    )
+    vi.stubGlobal('fetch', fetchSpy)
+    try {
+      act(() => root.render(<ErrorBoundary diagnostics><Boom /></ErrorBoundary>))
+      await act(async () => {})
+      expect(fetchSpy).toHaveBeenCalled()
+      expect(String((fetchSpy.mock.calls[0] as unknown[])[0])).toContain('/api/diagnostics/send')
+    } finally {
+      vi.unstubAllGlobals()
+    }
   })
 })

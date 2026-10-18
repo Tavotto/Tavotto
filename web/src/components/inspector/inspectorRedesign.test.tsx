@@ -256,6 +256,9 @@ describe('身份头与右栏', () => {
     await render(<Inspector />)
     const card = q('[data-document-summary]')!
     expect(card).not.toBeNull()
+    // 一行提示（Notice），不是三层的卡：一句话 +「画布设置 ›」，起步提示折在详情里
+    expect(card.hasAttribute('data-notice')).toBe(true)
+    expect(card.querySelector('[data-notice-detail-toggle]')).not.toBeNull()
     await act(async () => q<HTMLButtonElement>('[data-document-summary-canvas]')!.click())
     expect(useUiStore.getState().rightTab).toBe('canvas')
   })

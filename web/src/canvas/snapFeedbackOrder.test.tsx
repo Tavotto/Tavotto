@@ -1,5 +1,5 @@
 /**
- * 吸附反馈的叠放顺序（Codex #1036）：选中元素的实线框与反馈的自身虚线框同坐标同色，反馈必须画在选中框
+ * 吸附反馈的叠放顺序（Codex #1036）：选中元素的实线框与反馈的自身加粗边同坐标同色，反馈必须画在选中框
  * **之上**（否则虚线被盖住），又在手柄**之下**（手柄要看得见、点得着）。主语：渲染出来的 OverlaySvg DOM 顺序。
  */
 import { act, createElement } from 'react'
@@ -76,15 +76,16 @@ afterEach(async () => {
 const follows = (a: Node, b: Node) => !!(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING)
 
 describe('吸附反馈的叠放顺序', () => {
-  it('图内编辑态：自身虚线框在选中框之后、在缩放手柄之前（只画一份）', async () => {
+  it('图内编辑态：自身加粗边在选中框之后、在缩放手柄之前（只画一份）', async () => {
     await act(async () =>
       useInteractionStore
         .getState()
         .setSnap([40], [], [{ axis: 'x', v: 40, self: { x: 25, y: 44, w: 60, h: 40 } }]),
     )
-    expect(container.querySelectorAll('[data-snap-self]')).toHaveLength(1)
+    expect(container.querySelector('[data-snap-self]')).toBeNull() // 不再画自身虚线框
+    expect(container.querySelectorAll('[data-snap-self-edge]')).toHaveLength(1)
     const selected = container.querySelector('[data-element-box="selected"]')!
-    const self = container.querySelector('[data-snap-self]')!
+    const self = container.querySelector('[data-snap-self-edge]')!
     const handle = container.querySelector('[data-element-handle]')
     expect(selected).not.toBeNull()
     expect(handle).not.toBeNull()

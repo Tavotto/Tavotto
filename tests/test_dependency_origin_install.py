@@ -165,6 +165,49 @@ class TestObservedProviders:
         )  # 没读索引 = 没有观察可披露
 
 
+class TestHashProviderReceipt:
+    def _plan(self, tmp_path):
+        lock = "\n".join(
+            f"{name}=={version} --hash=sha256:{'a' * 64}"
+            for name, version in (
+                ("opencv-python-headless", "4.10.0.84"),
+                ("matplotlib", "3.10.0"),
+                ("numpy", "2.1.0"),
+            )
+        )
+        proj = _project(tmp_path, "import cv2\n", requirements=lock + "\n")
+        active = _running(tmp_path, {"opencv-python": ("4.10.0.84", "cv2", None)})
+        return _plan(proj, active, install_facts=active)
+
+    def test_the_lock_discloses_the_provider_it_will_install_not_the_active_alternative(
+        self, tmp_path
+    ):
+        """#970：active 的 opencv-python 满足 import，不代表 hash 锁不会安装 headless。"""
+        plan = self._plan(tmp_path)
+        assert plan.status == depplan.STATUS_READY and plan.require_hashes
+        assert plan.requirements == (
+            "opencv-python-headless==4.10.0.84",
+            "matplotlib==3.10.0",
+            "numpy==2.1.0",
+        )
+        d = _decision(plan, "cv2")
+        assert (d["action"], d["distribution"], d["basis"]) == (
+            "install",
+            "opencv-python-headless",
+            depresolve.SOURCE_PROJECT_DECLARED,
+        )
+        assert d["replaces_observed"] is True
+
+    def test_the_lock_records_the_import_mapping_for_the_provider_actually_installed(
+        self, tmp_path
+    ):
+        plan = self._plan(tmp_path)
+        (entry,) = [e for e in plan.install_entries if e["import_name"] == "cv2"]
+        assert entry["distribution"] == "opencv-python-headless"
+        assert entry["resolution_source"] == depresolve.SOURCE_PROJECT_DECLARED
+        assert not [e for e in plan.install_entries if e["distribution"] == "opencv-python"]
+
+
 class TestTwoDeclaredProvidersStayAConflict:
     def test_two_declared_providers_are_not_both_installed(self, tmp_path):
         proj = _project(

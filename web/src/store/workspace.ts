@@ -145,8 +145,16 @@ export function addRuntimePanelToCanvas(
   desc: CapturedFigureDescriptor,
   atX?: number,
   atY?: number,
+  opts?: { guard?: () => boolean },
 ): PanelObject | null {
-  if (deferUserEntry(() => void addRuntimePanelToCanvas(desc)) !== 'run') return null
+  // `guard` 同 `openFastEdit`：自动进入编辑的排队插入面板（连同取景）在执行前也要过守卫，切走后不留下没人要的面板
+  if (
+    deferUserEntry(() => {
+      if (opts?.guard && !opts.guard()) return
+      void addRuntimePanelToCanvas(desc)
+    }) !== 'run'
+  )
+    return null
   return placeRuntimePanelToCanvas(desc, atX, atY)
 }
 
@@ -231,8 +239,13 @@ export type OpenFastEditOutcome = 'editing' | 'layout_only' | 'missing' | 'defer
  * （`ObjectView` 双击、`enterElementEdit`）。**不在这里另起一份判据**
  * ——状态与措辞归 `lib/readinessText.ts`，两者不是一件事。
  */
-export function openFastEdit(figureId: string): OpenFastEditOutcome {
-  const entry = deferUserEntry(() => void openFastEdit(figureId))
+export function openFastEdit(figureId: string, opts?: { guard?: () => boolean }): OpenFastEditOutcome {
+  // `guard`（只有自动进入编辑传）：入口在恢复期间排队时，真正执行前再核一次「用户还要这个入口」——
+  // 不满足就整个不执行（不替换他此刻的工作区）；用户手动的入口不传，行为不变
+  const entry = deferUserEntry(() => {
+    if (opts?.guard && !opts.guard()) return
+    void openFastEdit(figureId)
+  })
   if (entry !== 'run') return entry === 'deferred' ? 'deferred' : 'blocked'
   const got = ensurePanel(figureId, 'docOnly')
   if (!got) {

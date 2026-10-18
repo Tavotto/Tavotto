@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-rescue-retry"
+description = "Enables the rescue_retry command without any pre-configured scope."
+commands.allow = ["rescue_retry"]
+
+[[permission]]
+identifier = "deny-rescue-retry"
+description = "Denies the rescue_retry command without any pre-configured scope."
+commands.deny = ["rescue_retry"]

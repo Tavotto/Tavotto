@@ -1,4 +1,4 @@
-import type { ComponentType, ReactNode } from 'react'
+import { useState, type ComponentType, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   ChevronRight,
@@ -11,6 +11,7 @@ import {
   Lock,
   LockOpen,
   MoveUpRight,
+  Replace,
   Square,
   Trash2,
   Type as TypeIcon,
@@ -21,7 +22,7 @@ import { listJoin } from '@/i18n/format'
 import { useHeldWhilePointerDown } from '@/hooks/useHeldWhilePointerDown'
 import { openProblemAt } from '@/lib/issueFocus'
 import { switchKindOf } from '@/lib/shapeSwitch'
-import { cn, MOD } from '@/lib/utils'
+import { MOD } from '@/lib/utils'
 import type { ValidationIssue } from '@/lib/validation'
 import { deleteSelected, duplicateSelected, hideElement, updateObjects } from '@/store/actions'
 import { usePanelDisplayManifest } from '@/store/renderStore'
@@ -30,12 +31,14 @@ import { useValidationStore } from '@/store/validationStore'
 import { fastEditPanelOf, useWorkspaceStore } from '@/store/workspace'
 import { objectLabel, type CanvasObject, type PanelObject } from '@/types/document'
 import { Button } from '../ui/Button'
+import { CountChip } from '../ui/CountChip'
 import { Menu, MenuItem, MenuSeparator } from '../ui/Menu'
 import { Tip } from '../ui/Tooltip'
 import { TruncateMiddle } from '../ui/TruncateMiddle'
 import { displayLabel, identityCrumbs, untruncatedLabel } from './identityCrumbs'
 import { KIND_SWITCH_ICON } from './kindSwitchIcons'
-import { ObjectKindSwitch } from './ObjectKindSwitch'
+import { KindBadge, ObjectKindSwitch } from './ObjectKindSwitch'
+import { ReplaceAssetDialog } from './PanelSection'
 import { RestoreMenu } from './RestoreMenu'
 import { ancestorsOf, containerGid, groupByGid, structuralParent } from './roles/hierarchy'
 import { groupName, roleName } from './roles/registry'
@@ -188,20 +191,14 @@ function ProblemsChip({
   const errors = mine.filter((i) => i.severity === 'error')
   const first: ValidationIssue = errors[0] ?? mine[0]
   return (
-    <button
-      type="button"
+    <CountChip
+      size="sm"
+      tone={errors.length ? 'danger' : 'warn'}
       data-identity-problems={mine.length}
+      count={mine.length}
+      label={t('identity.problemsLabel', { count: mine.length })}
       onClick={() => openProblemAt(first, all, figureId)}
-      className={cn(
-        'flex h-5 shrink-0 items-center gap-0.5 rounded-full pl-1.5 pr-1 text-xs font-medium outline-none transition-colors focus-visible:focus-ring',
-        errors.length
-          ? 'bg-danger-surface text-danger-content hover:bg-danger-surface-hover'
-          : 'bg-warn-surface text-warn-content hover:inset-ring hover:inset-ring-warn-border',
-      )}
-    >
-      {t('identity.problems', { count: mine.length })}
-      <ChevronRight size={ICON_SIZE.xs} aria-hidden />
-    </button>
+    />
   )
 }
 
@@ -281,7 +278,12 @@ function ElementIdentity({ panel }: { panel: PanelObject }) {
   return (
     <IdentityFrame
       path={
-        crumbs.length > 1 && (
+        // 类型词只有一种写法（2026-10-16 UI 2.0 §07）：名字上方路径行里的灰色小字——面板写「图」、
+        // 整张图写「整张图」，不再是名字前一枚灰底胶囊
+        !el && !selGroup && crumbs.length <= 1 ? (
+          <KindBadge>{roleName('figure')}</KindBadge>
+        ) : (
+          crumbs.length > 1 && (
           // 整条路径的全文在 title 上；每一级是 24px 高的按钮，长名字中间省略（保留有区分力的尾部）
           <span className="flex min-w-0 items-center gap-0.5" title={crumbs.join(' / ')}>
             {crumbs.slice(0, -1).map((c, i) => (
@@ -298,6 +300,7 @@ function ElementIdentity({ panel }: { panel: PanelObject }) {
               </span>
             ))}
           </span>
+          )
         )
       }
       chips={
@@ -314,12 +317,7 @@ function ElementIdentity({ panel }: { panel: PanelObject }) {
       icon={<RoleIcon size={ICON_SIZE.md} aria-hidden />}
       name={
         <>
-          {/* 没选元素时标题是面板名：标出「整张图」这一层，免得与画布上的面板混淆（审计 T01） */}
-          {!el && !selGroup && (
-            <span data-object-kind className="shrink-0 rounded-sm bg-surface-active px-1 text-xs text-ink-2">
-              {roleName('figure')}
-            </span>
-          )}
+          {/* 没选元素时标题是面板名；「整张图」这一层写在上面的路径行里（审计 T01 → 2026-10-16 统一类型词） */}
           <NameHeading>{name}</NameHeading>
         </>
       }
@@ -375,6 +373,9 @@ function ObjectIdentity({ objs }: { objs: CanvasObject[] }) {
   const locked = objs.length > 0 && objs.every((o) => o.locked)
   const hidden = objs.length > 0 && objs.every((o) => o.hidden)
   const ids = objs.map((o) => o.id)
+  // 「换一张图」是动作不是设置：单选一张面板时放进 ⋯ 菜单，选完弹出原来的素材选择对话框
+  const [replacing, setReplacing] = useState(false)
+  const replaceTarget = one?.type === 'panel' ? one : null
   const setLocked = (v: boolean) =>
     updateObjects(ids, msg(v ? 'history.lockObject' : 'history.unlockObject', undefined, 'workspace'), (o) => {
       o.locked = v
@@ -385,6 +386,7 @@ function ObjectIdentity({ objs }: { objs: CanvasObject[] }) {
     })
 
   return (
+    <>
     <IdentityFrame
       path={
         title != null && (
@@ -433,6 +435,11 @@ function ObjectIdentity({ objs }: { objs: CanvasObject[] }) {
           <MenuItem icon={locked ? LockOpen : Lock} onSelect={() => setLocked(!locked)}>
             {t(locked ? 'unlock' : 'lock')}
           </MenuItem>
+          {replaceTarget && (
+            <MenuItem icon={Replace} data-replace-picture onSelect={() => setReplacing(true)}>
+              {t('panel.replacePicture')}
+            </MenuItem>
+          )}
           <MenuSeparator />
           <MenuItem danger shortcut="⌫" onSelect={deleteSelected} icon={Trash2}>
             {translate('actions.delete')}
@@ -440,6 +447,8 @@ function ObjectIdentity({ objs }: { objs: CanvasObject[] }) {
         </MoreMenu>
       }
     />
+    {replaceTarget && <ReplaceAssetDialog panel={replaceTarget} open={replacing} onOpenChange={setReplacing} />}
+    </>
   )
 }
 

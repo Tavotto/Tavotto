@@ -6,8 +6,9 @@ import { card, expectPageNotShifted, pill, primary, workPanelRect } from './prep
 
 /**
  * 准备引导卡（T13b）的英文一遍：en-US 文案同样极简（一句话、一个主按钮），可达名与布局在英文下照样成立。
- * 只有一个用 argparse 的绘图脚本（一个必填参数）：卡片自动弹出 → Get ready → 1 argument missing（Continue 置灰）→
- * 填上 → Continue → Ready to run → Run → Drew 1 figure → Edit（卡片收起）。真后端、真 worker；全程不联网。
+ * 只有一个用 argparse 的绘图脚本（一个必填参数）：卡片自动弹出 → Open and run → 1 argument missing（Continue 置灰，没有运行）→
+ * 填上 → Continue（V2 PR4：这就是「打开并运行」的继续，接着认领 run_when_ready）→ 运行 → 自动进入编辑（卡片收起）。
+ * 真后端、真 worker；全程不联网。
  */
 test.use({ locale: 'en-US' })
 
@@ -44,7 +45,7 @@ test('English guide card: one sentence, one primary button, through to editing',
 
     await expect(card(page)).toHaveAttribute('data-prep-state', 'discover', { timeout: 30_000 })
     await expect(card(page).locator('[data-prep-line]')).toHaveText('Found plot script plot.py')
-    await expect(primary(page)).toHaveText('Get ready')
+    await expect(primary(page)).toHaveText('Open and run')
     await expect(card(page).locator('[data-prep-later]')).toHaveText('Later')
     expect(await workPanelRect(page)).toEqual(before)
     await expectPageNotShifted(page)
@@ -58,18 +59,8 @@ test('English guide card: one sentence, one primary button, through to editing',
     await card(page).getByRole('textbox', { name: 'Value 1 of --scale' }).fill('2')
     await expect(card(page).locator('[data-prep-line]')).toHaveText('Arguments filled in')
     await primary(page).click()
-    await expect(card(page)).toHaveAttribute('data-prep-state', 'ready', { timeout: 60_000 })
-    await expect(card(page).locator('[data-prep-line]')).toHaveText('Ready to run')
-    await expect(primary(page)).toHaveText('Run')
-
-    await primary(page).click()
-    await expect(card(page)).toHaveAttribute('data-prep-state', 'completed', { timeout: 120_000 })
-    await expect(card(page).locator('[data-prep-line]')).toHaveText('Drew 1 figure')
-    await expect(primary(page)).toHaveText('Edit')
-    // 每张卡至多一个黑色主按钮
-    await expect(card(page).locator('button.bg-ink')).toHaveCount(1)
-    await primary(page).click()
-    await expect(card(page)).toHaveCount(0)
+    // Continue 之后不再停在「Ready to run」：意图接着运行，画好一张图就自动进入编辑，卡片收起
+    await expect(card(page)).toHaveCount(0, { timeout: 120_000 })
     await expect(pill(page)).toHaveCount(0)
     await expect(page.locator('[data-element-svg] svg').first()).toBeVisible({ timeout: 120_000 })
   } finally {

@@ -96,9 +96,14 @@ afterEach(async () => {
   host.remove()
 })
 
+/** 一行 +「详情 ›」：原因折在详情里，展开才见 */
+const expand = () => act(async () => host.querySelector<HTMLButtonElement>('[data-notice-detail-toggle]')!.click())
+
 it('仅排版：说清它还能做什么，并给出查看入口', async () => {
   await mount(panel(), asset(capabilityOf('layout_only')))
   expect(host.textContent).toContain('仅版面')
+  expect(host.textContent).not.toMatch(/摆放|裁剪|导出/)
+  await expand()
   expect(host.textContent).toMatch(/摆放|裁剪|导出/)
   expect(host.querySelector('[role="alert"]')).toBeNull()
   expect(host.querySelector('button')).not.toBeNull()
@@ -107,6 +112,7 @@ it('仅排版：说清它还能做什么，并给出查看入口', async () => {
 it('源脚本丢失用的是它自己那句话，不是「仅排版」那句', async () => {
   await mount(panel(), asset(capabilityOf('source_missing')))
   expect(host.textContent).toContain('源脚本丢失')
+  await expand()
   expect(host.textContent).toContain('fig.py')
 })
 
@@ -122,7 +128,8 @@ it('capability 还没到：不说话（不替后端补一个默认状态）', as
 
 it('入口打开接入状态并聚焦到这张图', async () => {
   await mount(panel(), asset(capabilityOf('layout_only')))
-  await act(async () => host.querySelector('button')!.click())
+  const buttons = host.querySelectorAll('button')
+  await act(async () => buttons[buttons.length - 1].click())
   expect(useUiStore.getState().registryOpen).toBe(true)
   expect(useProjectReadinessStore.getState().focusId).toBe('Photo.pdf')
 })

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { CircleCheck, CircleDashed, CircleMinus, Ellipsis, Play, Plus, RefreshCw, TriangleAlert } from '@/components/ui/icons'
+import { CountChip } from '@/components/ui/CountChip'
 import { Details, Summary } from '@/components/ui/Details'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { RetryImg } from '@/components/ui/RetryImg'
@@ -50,7 +51,7 @@ import { Button, IconButton } from './ui/Button'
 import { Dialog } from './ui/Dialog'
 import { EmptyState } from './ui/EmptyState'
 import { Menu, MenuItem, MenuSub } from './ui/Menu'
-import { Notice } from './ui/Notice'
+import { Notice, NoticeReveal } from './ui/Notice'
 import { Select } from './ui/Select'
 import { TextInput } from './ui/Input'
 
@@ -248,7 +249,7 @@ function ReadinessBody() {
   const probe = (script: string) => {
     if (preparationPanelEnabled()) {
       useProjectReadinessStore.getState().closeCenter()
-      void useProjectPreparationStore.getState().open(scriptTarget(script))
+      void useProjectPreparationStore.getState().open(scriptTarget(script, { reuse: true }), { run: true })
       return
     }
     void run(script, async () => {
@@ -330,7 +331,9 @@ function ReadinessBody() {
       <ProjectNotices report={report} staleError={loadError} refreshing={loading} />
 
       {/* 项目级说明与动作失败都是摘要下面的 Notice（2026-10-07 设计审计 §10.2：此前一块灰底列表 + 一行红字） */}
-      {error && <Notice tone="danger">{error}</Notice>}
+      <NoticeReveal open={!!error}>
+        <Notice tone="danger">{error}</Notice>
+      </NoticeReveal>
 
       {report.summary.total === 0 ? (
         <EmptyState icon={EditableFigureIcon} title={rd('emptyTitle')} hint={rd('emptyHint')} />
@@ -401,26 +404,26 @@ function SummaryStrip({ report }: { report: ReadinessReport }) {
   if (allEditable(s)) {
     return (
       <p className="flex min-w-0 flex-1 items-center gap-1.5 text-ink">
-        <CircleCheck size={ICON_SIZE.sm} className="shrink-0 text-ok" aria-hidden />
+        <CircleCheck size={ICON_SIZE.sm} className="shrink-0 text-ink-2" aria-hidden />
         <span className="tabular-nums">{rd('allEditable', { count: s.total })}</span>
       </p>
     )
   }
-  const cells: { key: string; value: number }[] = [
-    { key: 'total', value: s.total },
-    { key: 'editable', value: s.editable },
-    { key: 'pending', value: pending },
-    { key: 'layoutOnly', value: s.layout_only },
+  // 计数芯片（2026-10-16 精修 03，与导出检查 / 问题面板同一个 ui/CountChip）：顶部一行说完「几张可编辑 / 几张待连接 /
+  // 几张仅版面」，行内就只标异常项。颜色只在圆点上：待连接 = warn，其余灰；0 的档不画。
+  const cells: { key: string; value: number; tone: 'warn' | 'quiet' }[] = [
+    { key: 'editable', value: s.editable, tone: 'quiet' },
+    { key: 'pending', value: pending, tone: 'warn' },
+    { key: 'layoutOnly', value: s.layout_only, tone: 'quiet' },
   ]
   return (
-    <dl className="flex min-w-0 flex-wrap gap-x-4 gap-y-1">
-      {cells.map((c) => (
-        <div key={c.key} className="flex items-baseline gap-1">
-          <dt className="type-meta">{rd(`summary.${c.key}`)}</dt>
-          <dd className="text-sm tabular-nums text-ink">{c.value}</dd>
-        </div>
-      ))}
-    </dl>
+    <div data-registry-summary className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">
+      {cells
+        .filter((c) => c.value > 0)
+        .map((c) => (
+          <CountChip key={c.key} tone={c.tone} count={c.value} label={rd(`summary.${c.key}`)} data-registry-summary-chip={c.key} />
+        ))}
+    </div>
   )
 }
 
@@ -455,19 +458,13 @@ function ProjectNotices({
   if (!report.project.scan_ok) notes.push(rd('scanUnavailable'))
   // 后台刷新失败：显示的是上一次成功那份，说清楚它可能已经旧了
   if (staleError && !refreshing) notes.push(rd('staleReport'))
-  if (!notes.length) return null
+  // 一行：第一条是那句话，其余（若有）折进「详情」；事后才冒出来的（后台刷新失败）包 NoticeReveal，列表顺着滑下去而不是跳一格
   return (
-    <Notice tone="warn" data-readiness-notices>
-      {notes.length === 1 ? (
-        notes[0]
-      ) : (
-        <ul className="flex list-outside list-disc flex-col gap-0.5 pl-4">
-          {notes.map((n) => (
-            <li key={n}>{n}</li>
-          ))}
-        </ul>
-      )}
-    </Notice>
+    <NoticeReveal open={notes.length > 0}>
+      <Notice tone="warn" data-readiness-notices detail={notes.length > 1 ? notes.slice(1).join('\n') : null}>
+        {notes[0]}
+      </Notice>
+    </NoticeReveal>
   )
 }
 
@@ -505,7 +502,7 @@ const STATUS_MARK: Record<
   ReadinessStatus,
   { icon: typeof CircleCheck; tone: string }
 > = {
-  editable: { icon: CircleCheck, tone: 'text-ok' },
+  editable: { icon: CircleCheck, tone: 'text-ink-3' },
   auto_linkable: { icon: CircleDashed, tone: 'text-ink-3' },
   needs_probe: { icon: CircleDashed, tone: 'text-ink-3' },
   conflict: { icon: TriangleAlert, tone: 'text-danger' },
@@ -605,10 +602,11 @@ function PanelRow({
             {fileName(panel.id)}
           </p>
           <p className="type-meta mt-0.5 flex min-w-0 items-center gap-1">
-            <StatusMark status={panel.status} />
+            {/* 状态只标异常项：可编辑是分组名与顶部芯片已经说过的，每行再画一遍绿勾 +「可编辑」是噪声 */}
+            {panel.status !== 'editable' && <StatusMark status={panel.status} />}
             {panel.script && (
               <>
-                <span aria-hidden>·</span>
+                {panel.status !== 'editable' && <span aria-hidden>·</span>}
                 <span className="min-w-0 truncate font-mono" title={panel.script}>
                   {panel.script}
                 </span>

@@ -53,7 +53,15 @@ fn main() {
             "set_titlebar_colors",
             "take_previous_exit",
             "current_engine_exit",
+            "current_fullscreen",
             "restart_engine",
+            "rescue_status",
+            "rescue_retry",
+            "rescue_update_check",
+            "rescue_update_install",
+            "rescue_diag_preview",
+            "rescue_diag_send",
+            "rescue_diag_save",
         ]),
     ))
     .expect("failed to run tauri-build");

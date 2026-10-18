@@ -14,6 +14,8 @@ interface ScriptLibraryStore {
   /** 最近一次已落地视图的请求发出时刻（毫秒）；晚到不代表快照更新 */
   loadedAt: number
   error: string | null
+  /** 项目代际：`clear()`（切项目）加一。依赖它的 effect 在换项目后重跑（`loaded` 在 A 失败、B 清空时都是 false，不会变） */
+  generation: number
   load: () => Promise<void>
   clear: () => void
 }
@@ -29,6 +31,7 @@ export const useScriptLibraryStore = create<ScriptLibraryStore>((set, get) => ({
   loaded: false,
   loadedAt: 0,
   error: null,
+  generation: 0,
 
   load: () => {
     if (inflight) {
@@ -63,6 +66,6 @@ export const useScriptLibraryStore = create<ScriptLibraryStore>((set, get) => ({
   clear: () => {
     epoch += 1
     inflight = null
-    set({ view: null, loading: false, loaded: false, loadedAt: 0, error: null })
+    set((s) => ({ view: null, loading: false, loaded: false, loadedAt: 0, error: null, generation: s.generation + 1 }))
   },
 }))

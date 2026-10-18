@@ -18,6 +18,11 @@ import matplotlib.pyplot as plt
 mpl.rcParams.update({
     "font.family": "serif",
     "font.serif": ["Times New Roman", "DejaVu Serif"],
+    # 公式（如 $\\mathrm{min^{-1}}$）也走 Times，否则 mathtext 默认回落到 DejaVu Sans
+    "mathtext.fontset": "custom",
+    "mathtext.rm": "Times New Roman",
+    "mathtext.it": "Times New Roman:italic",
+    "mathtext.bf": "Times New Roman:bold",
     "font.size": 9,
     "axes.labelsize": 9,
     "axes.titlesize": 9,

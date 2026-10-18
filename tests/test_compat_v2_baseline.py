@@ -83,6 +83,11 @@ def test_scenario_baseline(scenario_id, tmp_path):
     try:
         obs = cb.observe(sc, tmp_path, needs_absent=cs.NEEDS_ABSENT.get(scenario_id, ()))
     except cb.PreconditionUnmet as exc:
+        # 跳过也要留记录：汇总不能悄悄少一个场景
+        cb.write_record(
+            cb.record_not_run(scenario_id, "precondition_unmet", str(exc)),
+            cb.results_dir() or (tmp_path / "results"),
+        )
         pytest.skip(str(exc))
     missing = cs.IDEAL[scenario_id](obs)
     shape = cs.baseline_shape(obs)
@@ -162,13 +167,14 @@ def test_summarize_rejects_a_directory_that_mixes_runs(tmp_path):
         "b": rec("b", "sha2", "run1"),
     }.items():
         (tmp_path / f"{name}.json").write_text(json.dumps(row), "utf-8")
-    assert cb.main(["summarize", str(tmp_path)]) == 2  # 两个修订混在一起
+    ab = ["--expect", "a", "b"]
+    assert cb.main(["summarize", str(tmp_path), *ab]) == 2  # 两个修订混在一起
     (tmp_path / "b.json").write_text(json.dumps(rec("b", "sha1", "run2")), "utf-8")
     assert (
-        cb.main(["summarize", str(tmp_path)]) == 2
+        cb.main(["summarize", str(tmp_path), *ab]) == 2
     )  # 同一修订但两次运行混在一起（冒烟跑盖在全量上）
     (tmp_path / "b.json").write_text(json.dumps(rec("b", "sha1", "run1")), "utf-8")
-    assert cb.main(["summarize", str(tmp_path)]) == 0
+    assert cb.main(["summarize", str(tmp_path), *ab]) == 0
 
 
 def test_write_record_replaces_nothing_from_other_runs_silently(tmp_path):
@@ -715,15 +721,19 @@ def test_summarize_rejects_mixed_or_missing_environment_identities(tmp_path):
     b = cb.env_identity(_facts(numpy="2.1"), "3.11.2")  # 同路径不同内容
     (tmp_path / "a.json").write_text(json.dumps(rec("a", a)), "utf-8")
     (tmp_path / "b.json").write_text(json.dumps(rec("b", a)), "utf-8")
-    assert cb.main(["summarize", str(tmp_path)]) == 0
+    assert cb.main(["summarize", str(tmp_path), "--expect", "a", "b"]) == 0
     (tmp_path / "b.json").write_text(json.dumps(rec("b", b)), "utf-8")
-    assert cb.main(["summarize", str(tmp_path)]) == 2  # 同一 run 里量了两个不同的环境
+    assert (
+        cb.main(["summarize", str(tmp_path), "--expect", "a", "b"]) == 2
+    )  # 同一 run 里量了两个不同的环境
     (tmp_path / "b.json").write_text(json.dumps(rec("b", None)), "utf-8")
-    assert cb.main(["summarize", str(tmp_path)]) == 2  # 没绑环境身份 = 不知道量的是什么
+    assert (
+        cb.main(["summarize", str(tmp_path), "--expect", "a", "b"]) == 2
+    )  # 没绑环境身份 = 不知道量的是什么
     unknown = cb.env_identity(None, "3.11.2")  # 拿不到环境内容：指纹 null，同样视作缺失
     (tmp_path / "a.json").write_text(json.dumps(rec("a", unknown)), "utf-8")
     (tmp_path / "b.json").write_text(json.dumps(rec("b", unknown)), "utf-8")
-    assert cb.main(["summarize", str(tmp_path)]) == 2
+    assert cb.main(["summarize", str(tmp_path), "--expect", "a", "b"]) == 2
 
 
 def test_figure_scenarios_pin_the_in_figure_truth():
@@ -732,3 +742,77 @@ def test_figure_scenarios_pin_the_in_figure_truth():
         if sc.ideal_outcome in ("figure", "partial_figure"):
             ex = cs.EXPECT[sid]
             assert ex.title is not None or ex.title_re is not None, f"{sid} 没有钉图内标题真值"
+
+
+# ---------------------------------------------------------------- Codex 补评审（PR #1064）：基线诚实
+
+
+def _obs_rec(sid):
+    same_run = cb.record_not_run(
+        sid, "precondition_unmet", "x"
+    )  # 与 not_run 记录同一修订、同一次运行
+    return {
+        "scenario": sid,
+        "status": "observed",
+        "source_sha": same_run["source_sha"],
+        "run_id": same_run["run_id"],
+        "env_identity": {"fingerprint": "x", "python_version": "3", "platform": "p"},
+        "ideal_outcome": "figure",
+        "ideal_met": True,
+        "observed": {
+            "first_valid_figure": True,
+            "one_shot_success": True,
+            "exec_count": 1,
+            "timings_s": {"total": 1.0},
+        },
+    }
+
+
+def test_summarize_fails_when_an_expected_scenario_left_no_record(tmp_path):
+    """#1064 Codex P2：跳过的场景不落记录时，汇总静默少一个场景。场景全集必须齐全。"""
+    (tmp_path / "a.json").write_text(json.dumps(_obs_rec("a")), "utf-8")
+    assert cb.main(["summarize", str(tmp_path), "--expect", "a", "b"]) == 2
+    (tmp_path / "b.json").write_text(
+        json.dumps(cb.record_not_run("b", "precondition_unmet", "两个探针包都已安装")), "utf-8"
+    )
+    out = tmp_path / "summary.json"
+    assert cb.main(["summarize", str(tmp_path), "--expect", "a", "b", "--out", str(out)]) == 0
+    report = json.loads(out.read_text("utf-8"))
+    assert [r["scenario"] for r in report["scenarios"]] == ["a"]  # 不伪造观测值
+    skipped = {r["scenario"]: r for r in report["not_run"]}
+    assert skipped["b"]["reason"] == "precondition_unmet"
+    assert skipped["b"]["detail"]
+
+
+def test_summarize_emits_the_declared_not_run_ledger(tmp_path):
+    (tmp_path / "a.json").write_text(json.dumps(_obs_rec("a")), "utf-8")
+    out = tmp_path / "summary.json"
+    assert cb.main(["summarize", str(tmp_path), "--expect", "a", "--out", str(out)]) == 0
+    ledger = {r["scenario"]: r for r in json.loads(out.read_text("utf-8"))["not_run"]}
+    assert set(cs.NOT_RUN) <= set(ledger)
+    assert all(ledger[k]["reason"] == "declared_not_observable" for k in cs.NOT_RUN)
+
+
+def test_summarize_rejects_a_run_of_only_not_run_records(tmp_path):
+    (tmp_path / "a.json").write_text(
+        json.dumps(cb.record_not_run("a", "precondition_unmet", "x")), "utf-8"
+    )
+    assert cb.main(["summarize", str(tmp_path), "--expect", "a"]) == 2
+
+
+def test_not_run_reason_is_a_closed_set():
+    with pytest.raises(ValueError):
+        cb.record_not_run("a", "forgot", "x")
+
+
+def test_default_scope_is_the_smoke_set_and_missing_ones_fail(tmp_path):
+    (tmp_path / "s01_plain.json").write_text(json.dumps(_obs_rec("s01_plain")), "utf-8")
+    assert cb.main(["summarize", str(tmp_path), "--scope", "smoke"]) == 2
+
+
+def test_summarize_rejects_an_unknown_record_status(tmp_path):
+    """#1076 Codex P2：认不得的 status 曾算进覆盖、又被观测 / not_run 两个过滤同时丢掉，汇总静默少一个场景。"""
+    (tmp_path / "a.json").write_text(json.dumps(_obs_rec("a")), "utf-8")
+    odd = dict(_obs_rec("b"), status="observd")
+    (tmp_path / "b.json").write_text(json.dumps(odd), "utf-8")
+    assert cb.main(["summarize", str(tmp_path), "--expect", "a", "b"]) == 2

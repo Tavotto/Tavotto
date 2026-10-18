@@ -1326,29 +1326,6 @@ function noteDragCommit(
 const carriesContents = (ev: { metaKey: boolean; ctrlKey: boolean }) => !ev.metaKey && !ev.ctrlKey
 
 /**
- * 停住不动时按下 / 松开 ⌘ / Ctrl：没有 pointermove，预览也得跟着换——否则画面上是
- * 「带着走」、松手提交的却是「只拖自己」（提交认的是 pointerup 上的修饰键）。
- * 回一个解绑函数，收尾时调用。
- */
-function watchCarryKeys(
-  items: CarriedItem[],
-  delta: () => [number, number],
-): () => void {
-  if (!items.length) return () => {}
-  const onKey = (ev: KeyboardEvent) => {
-    if (ev.key !== 'Meta' && ev.key !== 'Control') return
-    const [dfx, dfy] = delta()
-    previewCarried(items, dfx, dfy, carriesContents(ev))
-  }
-  window.addEventListener('keydown', onKey)
-  window.addEventListener('keyup', onKey)
-  return () => {
-    window.removeEventListener('keydown', onKey)
-    window.removeEventListener('keyup', onKey)
-  }
-}
-
-/**
  * 被带着走的内容的乐观预览：整体平移的（文字、形状、两端都在框里的箭头）平移 SVG 组；
  * 只有一端跟随的箭头形状变了，交给覆盖层画虚线（`previewLine`，预览平面的一部分：
  * 松手后留到权威渲染换上来）。`on=false`（按住了 ⌘）时全部归位。
@@ -1388,7 +1365,7 @@ export interface InFigureMove {
   snapKind?: SnapKind
   /** 吸附候选里要排除的：被移动的元素、它们的后代、随行元素与被带着走的内容 */
   moving: (gid: string) => boolean
-  /** 按住 / 松开 ⌘ / Ctrl 时要切换预览的那些被带着走的内容（`watchCarryKeys`） */
+  /** 按住 / 松开 ⌘ / Ctrl 时要切换预览的那些被带着走的内容（`trackInFigureMove` 的 `frame` 按键重算） */
   carryPreview: CarriedItem[]
   /**
    * 累计位移在落点处被钳位后的**实际**位移（子图被钳在图框内）；缺省 = 不钳位。吸附反馈的自身框取它，
@@ -1597,38 +1574,57 @@ function trackInFigureMove(
   e.stopPropagation()
   interaction().begin('element')
   const toContent = contentDelta(panel, layout)
+  // raw = 未吸附的原始位移（含 ⇧ 锁向）；last = 按当前修饰键算出的最终位移（松手提交它）。
+  // 吸上后手不动、只按下 / 松开 ⌘ / Ctrl 没有新的 pointermove，预览与提交都得按此刻的修饰键重算
+  // （与 startAxesDrag 同一做法）；带着走的内容预览也在 frame 里随修饰键换
+  let raw: [number, number] = [0, 0]
+  // raw 是按最后一次 pointermove 的 ⇧ 锁向算的；重算时 ⇧ 沿用它，只换 ⌘ / Ctrl（否则松手前先松 ⇧
+  // 会让吸附放开被锁的那一轴、提交与最后的预览不一致，Codex #1069）
+  let rawShift = false
   let last: [number, number] = [0, 0]
-  const unwatchKeys = watchCarryKeys(mv.carryPreview, () => last)
+  let started = false
   const box0 = mv.snapBox
   const snapper = box0 ? inFigureSnapper(panel, mv.moving, mv.snapKind, mv.clampedToPanel) : null
+  const frame = (ev: { metaKey: boolean; ctrlKey: boolean }) => {
+    const mods = { metaKey: ev.metaKey, ctrlKey: ev.ctrlKey, shiftKey: rawShift }
+    let [dfx, dfy] = raw
+    if (snapper && box0) {
+      const [sx, sy] = snapper([box0[0] + dfx, box0[1] + dfy, box0[2], box0[3]], mods, [dfx, dfy])
+      dfx += sx
+      dfy += sy
+      const [rx, ry] = mv.settle ? mv.settle(dfx, dfy) : [dfx, dfy]
+      snapper.report([box0[0] + rx, box0[1] + ry, box0[2], box0[3]])
+    }
+    last = [dfx, dfy]
+    mv.preview(dfx, dfy, carriesContents(mods))
+  }
+  const onKey = (ev: KeyboardEvent) => {
+    if (started && (ev.key === 'Meta' || ev.key === 'Control')) frame(ev)
+  }
+  window.addEventListener('keydown', onKey)
+  window.addEventListener('keyup', onKey)
 
   trackPointer(e, {
     onMove: (ev, dxPx, dyPx) => {
       let [dfx, dfy] = toContent(dxPx, dyPx)
       if (ev.shiftKey) [dfx, dfy] = contentAxisLock(layout, dfx, dfy)
-      if (snapper && box0) {
-        const [sx, sy] = snapper(
-          [box0[0] + dfx, box0[1] + dfy, box0[2], box0[3]],
-          ev,
-          [dfx, dfy],
-        )
-        dfx += sx
-        dfy += sy
-        const [rx, ry] = mv.settle ? mv.settle(dfx, dfy) : [dfx, dfy]
-        snapper.report([box0[0] + rx, box0[1] + ry, box0[2], box0[3]])
-      }
-      last = [dfx, dfy]
-      mv.preview(dfx, dfy, carriesContents(ev))
+      raw = [dfx, dfy]
+      rawShift = ev.shiftKey
+      started = true
+      frame(ev)
     },
     onEnd: (moved, ev, end) => {
-      unwatchKeys()
+      window.removeEventListener('keydown', onKey)
+      window.removeEventListener('keyup', onKey)
+      // 吸附与跟随集合都按松手那一下的修饰键定（见 carriesContents）；先重算再 end（end 收掉吸附线 / 反馈）
+      if (moved && !end.cancelled) frame(ev)
       interaction().end()
       if (!moved || end.cancelled) {
         mv.cancel(end.cancelled)
         if (!moved && !end.cancelled) onTap?.()
+      } else {
+        mv.commit(last[0], last[1], carriesContents(ev))
       }
-      // 跟随集合按松手那一下的修饰键定（见 carriesContents）
-      else mv.commit(last[0], last[1], carriesContents(ev))
     },
   })
 }
@@ -1895,11 +1891,11 @@ function crossAndGuideLines(
   // 只有会被钳在面板里的路径（子图 / 色条的平移与缩放手柄）才过滤：范围外的线它们够不着，吸附线与反馈不能指向它。
   // 图例 / 标题 / 文字提交的是未钳位的锚点，够得着图外的参考线与相邻图的元素（Codex #1036），由调用方显式传，不按 kind 猜
   if (!clampToPanel) return { xs, ys }
-  const full = panelFullRect(panel)
+  // 按面板**可见**范围（裁剪后的 x/y/w/h）过滤：整图矩形含被裁掉的部分，线落在裁掉区域里同样够不着
   const within = (v: number, lo: number, size: number) => v >= lo - 1e-6 && v <= lo + size + 1e-6
   return {
-    xs: xs.filter((l) => within(l.v, full.x, full.w)),
-    ys: ys.filter((l) => within(l.v, full.y, full.h)),
+    xs: xs.filter((l) => within(l.v, panel.x, panel.w)),
+    ys: ys.filter((l) => within(l.v, panel.y, panel.h)),
   }
 }
 

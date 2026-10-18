@@ -16,7 +16,7 @@
   退回 `127.0.0.1:0`；连续 3 次落空才改记，策略是 `sidecar/port_memory.rs` 的纯函数；
   字段与 Python 侧严格同源，ADR 0108——端口一变 localStorage 整个换一份）、
   werkzeug 线程 server（可优雅 shutdown）、nonce 走 **stdin 首行**
-  （环境变量对同用户进程可见；桌面**不写**磁盘凭据文件，实例复用由壳的
+  （环境变量对同用户进程可见；桌面**不写**完整磁盘凭据，只写 scoped 只读的 handoff-status 文件（ADR 0008 修订），实例复用由壳的
   单实例 argv 转发负责）、握手文件（无密钥、原子写、退出清理）、
   stdin EOF + 父 PID 双路「壳没了就自杀」（`test_desktop_sidecar.py` 看护）。
 - **前端唯一桌面感知点是 `web/src/lib/desktop.ts`**：组件不得直接 import
@@ -42,7 +42,19 @@
   意外退出写标记、发 `tavotto:engine-exited`、`current_engine_exit` 回读；`restart_engine`（仅主窗口，远程窗口**无**）与首启共用 `boot_engine`
   （新 nonce，`AppState.port` 可变）。`app_config_dir()/session-state.json` 只含版本 / 时间 / running|clean / 退出类型闭集，不上传；
   `take_previous_exit` 取走即清空。**绕过 `RunEvent::Exit` 的退出路径必须先写 clean**：`std::process::exit` 只许经 `e2e_exit`，
-  `UpdaterBuilder` 只许经 `updater_builder()`（`on_before_exit`）——`main.rs` 的结构测试钉着，新增退出路径先加看护。
+  `UpdaterBuilder` 只许经 `updater_builder()`（`on_before_exit`）——`exit_guard_tests.rs` 用 syn 扫 `src/` 全部生产 `.rs` 的 AST（不做 `use` 别名解析：`use` 里出现 std 的 process 段或导入 exit 即 hit，任何末段是 exit 的路径也是 hit；宏体遍历 TokenTree 只看 Ident；`use` 按叶子逐个 hit；允许名单列到具体叶子,与实际命中按多重集精确相等），`main.rs` 的结构测试钉出口函数内部先写 clean 的顺序；新增退出路径先加看护。
+- **原生救援页**（ADR 0130，`src/rescue.rs` + `src/shell_report.rs` + `shell/error.html`）：sidecar 起不来时由壳自己检查修复版本、重新尝试、发送最小启动诊断。
+  四条别改坏：① **只在「从未进入编辑态」时可用**——`RescueState.entered` 在 `boot_engine` 导航到应用页**之前**置位、永不复位，置位后七条 `rescue_*` 命令一律拒绝
+  （`editing_state_unknown`），不靠超时推断干净；② **只许主窗口的壳自带 `error.html` 调用**（`rescue::decide` 查 label + 当前 URL，ACL 之外再查一道）；
+  capability 是独立的 `rescue-page.json`（`local:true`、无 remote、`windows:["main"]`），`main.json` 与 `remote-*.json` 不得出现 `allow-rescue-*`；
+  ③ **更新走同一个协调器**（同一个 `UpdateState`，安装带 `expected_version`，对不上 `candidate_changed`）；
+  ④ **重新尝试 = 重启整个应用**（收 sidecar → 写 clean → `restart()`），不做同进程重试。shell 报告只含闭集字段（`STAGES` / `CODES`），不收 `msg` / 日志路径 / 环境变量；
+  **只有 `rescue_diag_send` 联网**，由用户单独点击触发；端点是编译期常量，环境变量只能关。协议常量、失败码、上传地址向量、包内容以
+  `tests/golden/diag_shell_report.json` 为唯一出处（Rust 与 `tests/test_diag_shell_contract.py` 各读）。发行边界：只能救援已带此功能且壳能运行的客户端。
+- **macOS 全屏收起顶栏让位**（`window_chrome.rs`）：主信号是 `fullscreen_observer.rs` 听的 NSWindow will/did 全屏通知（will-exit 立刻发 false、did-enter 才发 true：红绿灯在屏上时绝不收回占位；`Resized` 只作兜底且观察者在位时只许报 false）；`FullscreenTracker` 去重，真变了才向主窗口发
+  `tavotto:fullscreen`（`{fullscreen}`）；`current_fullscreen` 回读防事件早于监听（仅主窗口，ACL 三处同步）。
+  前端 `useWindowFullscreen`（非 `overlay` 窗框恒 false）让 TopBar 撤掉 `TRAFFIC_LIGHTS_INSET`。
+  事件名 / 命令 / ACL 由 `tests/test_desktop_window_chrome.py` 看护。
 - **主页拖放拿真实路径**（ADR 0092）：`disable_drag_drop_handler()` 必须留着（装上 Tauri 的处理器
   页面 HTML5 拖放整片失效）；macOS 上 `native_drop.rs` 只旁听 `performDragOperation:` 读路径、发
   `tavotto:file-drop`、再调原实现。路径分派只在 `drop_paths::classify`（绝对 + canonicalize，Rust 单测），
@@ -106,6 +118,14 @@
   **@tauri-apps/cli 钉死在 2.11.4**——模板与打包器必须同源，升级 CLI 时
   取新模板重打补丁并同步 build_desktop.py / desktop-tauri.yml / nightly.yml
   （tests/test_nsis_template.py 看护四处版本一致与 BMP 形态）。
+
+- **调试符号与小型转储**：`[profile.release]` 的 `debug = "line-tables-only"` + `split-debuginfo = "packed"` 让 macOS 产出 .dSYM、
+  二进制仍剥光；MSVC 上 `strip` 会吞 PDB，Windows 腿由 `desktop-tauri.yml` 用 `CARGO_PROFILE_RELEASE_STRIP=none` 覆盖
+  （`workerd/Cargo.toml` 同）。符号另存为 `debug-symbols-*` artifact，**不进安装包、不进更新清单**（`docs/RELEASING.md`「调试符号」）。
+  Windows 小型转储由壳自写（`crash_dump.rs`：`main()` 第一句装未处理异常过滤器，过滤器里不分配堆、不加锁；
+  落到诊断包 `crash_dirs()` 的 `%LOCALAPPDATA%\CrashDumps\Tavotto.exe.<pid>.dmp`，启动时轮转留 5 份，崩溃后短暂可有 6 份）。
+  **不写 WER LocalDumps 注册表**（HKCU 是否生效无权威说法，HKLM 要管理员）。看护：模块内单测 +
+  `main_installs_the_filter_as_its_first_statement`；「真崩一次」只在 `nightly.yml` windows-install 跑（PR CI 没有 Windows cargo test）。
 
 ## 壳内多语言
 
