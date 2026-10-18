@@ -1,7 +1,8 @@
 """mplot3d：line / scatter / surface / wireframe / bar3d。
 
-3D 里 Tavotto 的产品边界是「只有文字类元素与视角可编辑」，盒内数据属性
-（spines/lim/scale）刻意禁用。CompatBench 记录的是这条边界本身。
+3D 里 Tavotto 的产品边界（ADR 0135 起）：文字类元素、视角、轴线 / 网格 + **数据图元的样式**（颜色 / 色图 /
+线宽 / 线型 / 花纹 / marker / 大小 / alpha / visible）可编辑；盒内数据属性（spines/lim/scale）、位置与
+数据偏移刻意禁用。CompatBench 记录的是这条边界本身。
 """
 import matplotlib.pyplot as plt
 import numpy as np

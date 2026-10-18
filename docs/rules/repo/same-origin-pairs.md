@@ -33,6 +33,7 @@
   | 遥测 `EVENTS` 表 ↔ 代理白名单 | `test_client_and_proxy_contracts_match` |
   | 遥测 `EVENTS` 表 ↔ `web/src/lib/telemetryDisclosure.ts` + 两份界面文案 | `tests/test_telemetry_disclosure.py`（顺序也比；界面上那份「会发送哪些数据」不许漏一条，也不许多写一条） |
   | `engine/overrides.LEGEND_ENTRY_STYLE_PROPS`+`LEGEND_BINDINGS` ↔ `web/src/lib/legendModel.ts` | `tests/test_legend_model_pairs.py`（顺序也比） |
+  | 3D 集合的「脚本顺序」读数：`overrides.collection_sizes` / `collection_linewidths` / `collection_face_rgba` / `collection_edge_rgba`（唯一出处，handler 的 getter 与还原用它）↔ `manifest._collection_fields`（字段值）、`pathgeom._drawn_offsets`（轮廓偏移，与 draw 时深度序的 `_sizes` 配套）；`overrides.on_axes3d` ↔ `manifest._is_area_field` / `_computed_zorder_3d` / `_refresh_hidden_3d_projections`（ADR 0135：`Path3DCollection` 每帧把大小 / 线宽重排成深度序，读 `get_*` 会把「脚本原样」打乱，撤销回不去） | `tests/test_mplot3d_data_artists.py`（逐点大小的轮廓对号、热态 == 冷启动重放、隐藏元素按此刻视角）+ `tests/test_invariants_engine.py` 的 `Inv3DP`（逐字还原） |
   | `engine/documents.py` `SCHEMA_CURRENT` ↔ `web/src/types/document.ts` 同名常量 | `test_frontend_and_backend_agree_on_the_current_schema` |
   | `engine/diagnostics.py` `BUNDLE_SCHEMA_VERSION` ↔ `web/src/diagnostics/types.ts` 同名常量 | `tests/test_diagnostics_bundle.py::test_bundle_schema_is_one_number_on_both_sides` |
   | `engine/originalspec.py` `DPI_SOURCES` ↔ `web/src/lib/api.ts` `dpi_source` 联合 | `test_frontend_and_backend_agree_on_the_dpi_source_set` |
