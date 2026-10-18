@@ -802,14 +802,29 @@ async function onDependencyPrepared(owner: ProjectEpochGuard): Promise<void> {
 // 环境 / 运行目录 / 数据位置有了答案（采用环境、选了目录、指认了数据、改指作废）：空闲的会话只读地重新检查。
 // 下一步（是否运行）仍由后端的报告给出、由用户点——这里绝不认领 `run`。
 useEnvStore.subscribe((state, prev) => {
+  // 项目的环境快照第一次落地（未加载 → 有值）且里面没有任何「用户答过」的痕迹（运行目录没定过、没明确采用过环境）：这是启动时的被动读取，
+  // 不是答案变了——会话的检查读的是后端事实（创建请求只带目标，不带这份快照）。慢机器上快照比会话创建晚到，若算作变化就会在
+  // 用户还没点任何东西时给停在「运行目录」等卡上的会话发一次 recheck。
+  // 快照里已有答过的痕迹（用户在快照到达前就答了、setter 因 env 还是空而退回整份重读；或别的窗口答过）仍照旧 recheck：宁可多一次只读检查，也不留陈旧的卡
+  // 「还没有这个项目的快照」有两种形状：整份 env 为空（启动），或 `resetProject()` 留下的占位 `{ open: false }`（已有环境后再进项目）
+  const projectUnloaded = (s: typeof state) => s.env === null || s.env.project?.open === false
+  const passiveFirstLoad =
+    projectUnloaded(prev) &&
+    !projectUnloaded(state) &&
+    !state.env?.project?.workdir?.decided &&
+    state.env?.project?.consent !== 'confirmed'
   const sig = (s: typeof state) =>
     [
       s.inputRemapGeneration,
       s.probeResultsGeneration,
-      s.env?.project?.workdir?.mode ?? '',
-      String(s.env?.project?.workdir?.decided ?? ''),
-      s.env?.project?.python ?? '',
-      s.env?.project?.consent ?? '',
+      ...(passiveFirstLoad
+        ? []
+        : [
+            s.env?.project?.workdir?.mode ?? '',
+            String(s.env?.project?.workdir?.decided ?? ''),
+            s.env?.project?.python ?? '',
+            s.env?.project?.consent ?? '',
+          ]),
     ].join('|')
   if (sig(state) !== sig(prev)) useProjectPreparationStore.getState().recheckIdle()
 })
