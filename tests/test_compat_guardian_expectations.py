@@ -198,6 +198,8 @@ def test_a_reference_must_name_an_exact_definition_not_a_substring(tmp_path, mon
         "tests/t.py::test_scenario_baseline",
         "tests/t.py::Group::test_missing",
         "tests/t.py::test_inner",
+        "tests/t.py",
+        "tests/t.py::",
     ):
         with pytest.raises(cg.EvidenceError):
             ex._check_reference({"kind": "test", "ref": bad})

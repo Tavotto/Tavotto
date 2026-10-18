@@ -161,6 +161,16 @@ def compare(candidate_class: str, native: dict, tavotto: dict, parent_native: di
                     {"native_figures": n, "tavotto_figures": len(stems)},
                 )
             )
+        if len(stems) > n:
+            # 多捕获同样是差异（入口变换让绘图跑了两遍、兜底多收了一张……），不能因标题仍在而判 clean
+            diffs.append(
+                _diff(
+                    "extra_figures",
+                    f"native {n} figure(s) / Tavotto {len(stems)} figures",
+                    "figure_capture",
+                    {"native_figures": n, "tavotto_figures": len(stems)},
+                )
+            )
         if n and not stems:
             diffs.append(
                 _diff(
