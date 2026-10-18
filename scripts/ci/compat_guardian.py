@@ -459,10 +459,10 @@ def _native_status(result: dict) -> str:
     """
     if result.get("ok") is not True:
         tb = result.get("traceback", "")
-        if "ModuleNotFoundError:" in tb or result.get("code") in (
-            "driver_timeout",
-            "driver_no_output",
-        ):
+        # Only a missing module is evidence of a missing prerequisite. A driver that crashed,
+        # printed nothing or timed out proves nothing about the environment: it stays `unknown`
+        # and can never satisfy a declared environment_unavailable (control_met).
+        if "ModuleNotFoundError:" in tb:
             return "environment_unavailable"
         if result.get("code") == "native_script_error":
             return "invalid_fixture"
