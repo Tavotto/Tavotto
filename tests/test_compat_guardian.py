@@ -548,3 +548,27 @@ class GuardianContract(GuardianBase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class MatchesHeadLineEndings(unittest.TestCase):
+    """Windows checkout 按 `core.autocrlf` 把 LF 写成 CRLF：同一份评审过的内容不能因换行被判「与 HEAD 不同」，
+    真改了内容仍要判不同（windows-latest backend-platforms 上 `execution metadata differs` 的根因）。"""
+
+    def test_crlf_checkout_matches_but_a_real_edit_does_not(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            env = {**os.environ, "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1"}
+
+            def git(*args):
+                subprocess.run(["git", *args], cwd=root, check=True, env=env, capture_output=True)
+
+            git("init", "-q")
+            git("config", "core.autocrlf", "true")
+            (root / "m.json").write_bytes(b'{"a": 1}\n')
+            git("add", "m.json")
+            git("-c", "user.name=t", "-c", "user.email=t@example.invalid", "commit", "-qm", "x")
+            with mock.patch.dict(os.environ, env):
+                (root / "m.json").write_bytes(b'{"a": 1}\r\n')
+                self.assertTrue(cg.matches_head(root, "m.json"))
+                (root / "m.json").write_bytes(b'{"a": 2}\r\n')
+                self.assertFalse(cg.matches_head(root, "m.json"))
