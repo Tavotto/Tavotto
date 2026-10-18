@@ -314,7 +314,9 @@ def execute_request(request: dict) -> dict:
 
 def select(candidates: list[dict], limit: int | None) -> list[dict]:
     """Deterministic, family-balanced selection so a small limit still spans every axis."""
-    if not limit or limit >= len(candidates):
+    if limit is not None and limit < 1:
+        raise cg.EvidenceError(f"--limit must be a positive integer, got {limit}")
+    if limit is None or limit >= len(candidates):
         return candidates
     buckets: dict[str, list[dict]] = {}
     for c in candidates:
@@ -444,6 +446,9 @@ def explore(args) -> int:
         chosen = [c for c in generated["candidates"] if c["candidate_id"] in wanted_ids]
         if len(chosen) != len(wanted_ids):
             raise cg.EvidenceError("--candidates names an id this seed does not generate")
+    if not chosen:
+        # An empty selection observed nothing; `all([])` must never read as a clean run.
+        raise cg.EvidenceError("no candidates selected (not_run); no report published")
     started = time.monotonic()
     rows = []
     by_id: dict[str, dict] = {}

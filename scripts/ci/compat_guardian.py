@@ -1186,6 +1186,14 @@ def SM_families() -> list[dict]:
     return compat_triage.load_families()
 
 
+def positive_int(text: str) -> int:
+    """argparse type: a count of one or more (0 and negatives select nothing, never 'all')."""
+    value = int(text)
+    if value < 1:
+        raise argparse.ArgumentTypeError(f"must be a positive integer, got {value}")
+    return value
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     subs = ap.add_subparsers(dest="command", required=True)
@@ -1211,7 +1219,9 @@ def main(argv=None) -> int:
     )
     explorer.add_argument("--seed", type=int, required=True)
     explorer.add_argument("--out", required=True)
-    explorer.add_argument("--limit", type=int, help="family-balanced cap on executed candidates")
+    explorer.add_argument(
+        "--limit", type=positive_int, help="family-balanced cap on executed candidates"
+    )
     explorer.add_argument("--parent", help="comma-separated parent case ids")
     explorer.add_argument("--static-only", action="store_true")
     explorer.add_argument("--candidates", help="comma-separated candidate ids to run")
@@ -1233,10 +1243,11 @@ def main(argv=None) -> int:
     minimizer = subs.add_parser(
         "minimize", help="bounded, re-verified reduction of one explore finding"
     )
+    minimizer.add_argument("--report", help="explore report containing the candidate")
+    minimizer.add_argument("--candidate")
     minimizer.add_argument(
-        "--report", required=True, help="explore report containing the candidate"
+        "--replay", help="repro.json to re-run (instead of --report/--candidate)"
     )
-    minimizer.add_argument("--candidate", required=True)
     minimizer.add_argument("--out", required=True)
     minimizer.add_argument("--max-runs", type=int, default=40)
     minimizer.add_argument("--max-seconds", type=float, default=1500)
@@ -1249,6 +1260,12 @@ def main(argv=None) -> int:
     private = subs.add_parser("_execute", help=argparse.SUPPRESS)
     private.add_argument("request")
     args = ap.parse_args(argv)
+    if args.command == "minimize":
+        # Two exclusive modes: reduce a finding, or replay a recorded reproduction.
+        if args.replay and (args.report or args.candidate):
+            ap.error("minimize: --replay cannot be combined with --report/--candidate")
+        if not args.replay and not (args.report and args.candidate):
+            ap.error("minimize needs --report and --candidate, or --replay")
     try:
         if args.command == "run":
             if not math.isfinite(args.timeout) or args.timeout <= 0:

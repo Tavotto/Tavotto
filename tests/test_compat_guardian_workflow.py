@@ -37,7 +37,12 @@ FILES_THE_PR_FILTER_MAY_NAME = (
     "scripts/ci/compat_minimize",
     "scripts/ci/guardian_exec_observer.py",
     "scripts/ci/compat_driver.py",
-    "tests/compat/guardian-report.schema.json",
+    "scripts/ci/compat_corpus.py",
+    "scripts/ci/compat_matrix.py",
+    "tests/compat/",
+    "tests/fixtures/compat_v2/",
+    "tests/support/compat_v2_scenarios.py",
+    "tests/support/compatbench_v2.py",
     "tests/test_compat_guardian",
     "tests/test_compat_explore",
     "tests/test_compat_triage",
@@ -101,6 +106,21 @@ def test_pull_request_trigger_is_limited_to_main_and_guardians_own_files():
         assert path.startswith(FILES_THE_PR_FILTER_MAY_NAME), (
             f"filter names a non-Guardian path: {path}"
         )
+
+
+def test_pull_request_filter_covers_every_input_the_workflow_executes():
+    """Every committed input the run reads (registered corpus + V2 scenarios/fixtures) re-runs it."""
+    block = top_block("on")
+    paths = re.findall(r"(?m)^      - '([^']+)'$", block.split("paths:", 1)[1])
+    for needed in (
+        "tests/compat/**",
+        "tests/fixtures/compat_v2/**",
+        "tests/support/compat_v2_scenarios.py",
+        "tests/support/compatbench_v2.py",
+        "scripts/ci/compat_corpus.py",
+        "scripts/ci/compat_matrix.py",
+    ):
+        assert needed in paths, f"PR filter misses an executed input: {needed}"
 
 
 def test_token_is_read_only_and_credentials_are_not_persisted():
