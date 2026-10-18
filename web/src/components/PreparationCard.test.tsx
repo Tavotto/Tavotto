@@ -438,6 +438,14 @@ const STATES: Record<string, Partial<PreparationReport>> = {
     unlinked_stems: ['a_scaled', 'b_scaled'],
     actions: [action('run'), action('recheck')],
   },
+  completedPartial: {
+    phase: 'partial',
+    outcome: { kind: 'succeeded' },
+    facts: { execution_finished: true, figure_captured: true },
+    captured: [fig('good')],
+    failed_figures: [{ stem: 'bad', code: 'preview_capture_failed' }],
+    actions: [action('run'), action('recheck')],
+  },
   cancelled: { phase: 'cancelled', outcome: { kind: 'cancelled' }, actions: [action('run'), action('recheck')] },
 }
 
@@ -1297,6 +1305,18 @@ describe('执行结束、捕获到图、首次编辑渲染是三件事', () => {
     await toggleDetails()
     expect(details()?.querySelector('[data-prep-unlinked]')?.textContent).toBe(
       '此前带其他参数生成的 a_scaled 和 b_scaled 已不再关联，用原参数再运行一次即可恢复。',
+    )
+  })
+
+  it('部分捕获（#1134）：不叫画好了——标题说 N/M 张并点名失败的图，主按钮仍是进入编辑，原因码折叠在详情里', async () => {
+    await mount()
+    await openWith(report(STATES.completedPartial))
+    expect(panel().dataset.prepState).toBe('completed_partial')
+    expect(panel().querySelector('[data-prep-line]')?.textContent).toBe('只画好了 1/2 张图，bad 没画出来')
+    expect(primary()?.dataset.prepPrimary).toBe('enter_edit')
+    await toggleDetails()
+    expect(details()?.querySelector('[data-prep-failed-figures]')?.textContent).toBe(
+      '没画出来的图：bad（preview_capture_failed）。其余的图可以照常编辑。',
     )
   })
 

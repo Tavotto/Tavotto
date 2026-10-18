@@ -589,6 +589,7 @@ const ARGS_FOLDED = new Set([
   'no_figure_raster',
   'completed',
   'completed_unlinked',
+  'completed_partial',
   'cancelled',
 ])
 
@@ -1245,6 +1246,14 @@ function SessionDetails({ entry, view }: { entry: PrepEntry; view: PrepView }) {
       )}
       {view.state === 'no_figure' && <p data-prep-nofigure-why>{pt('detail.noFigureWhy')}</p>}
       {view.state === 'no_figure_raster' && <p data-prep-nofigure-raster-why>{pt('rasterHint.why')}</p>}
+      {(report?.failed_figures ?? []).length > 0 && report?.phase === 'partial' && (
+        <p data-prep-failed-figures>
+          {pt('detail.failedFigures', {
+            names: listJoin((report.failed_figures ?? []).map((f) => f.stem)),
+            codes: listJoin([...new Set((report.failed_figures ?? []).map((f) => f.code).filter((c): c is string => !!c))]),
+          })}
+        </p>
+      )}
       {(report?.unlinked_stems ?? []).length > 0 && report?.phase === 'completed' && (
         <p data-prep-unlinked>{pt('detail.unlinked', { names: listJoin(report.unlinked_stems ?? []) })}</p>
       )}
