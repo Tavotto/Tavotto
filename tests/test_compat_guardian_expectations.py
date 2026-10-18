@@ -93,6 +93,24 @@ class Declarations(GuardianBase):
         self.assertNotEqual(cg.exit_code_for("control_met"), cg.EXIT_PASSED)
         self.assertNotEqual(cg.exit_code_for("control_met"), cg.EXIT_FAILED)
 
+    def test_a_precondition_unmet_row_is_environment_unavailable_not_unknown(self):
+        row = self.v2_row(precondition_unmet="numpy missing")
+        row["native"] = {"status": "passed", "result": native_result()}
+        row["status"] = "environment_unavailable"
+        self.assertEqual(ex.observed_outcome(row), "environment_unavailable")
+        declared = {
+            "outcome": "environment_unavailable",
+            "reason": "x" * 30,
+            "references": [],
+        }
+        met = ex.evaluate(row, declared)
+        self.assertEqual(met["status"], "control_met")
+        self.assertNotEqual(met["status"], "passed")
+        # Undeclared, it stays a visible mismatch: environment_unavailable is never a pass.
+        other = ex.evaluate(row, {**declared, "outcome": "partial_coverage"})
+        self.assertEqual(other["status"], "failed")
+        self.assertEqual(other["expectation"]["observed_outcome"], "environment_unavailable")
+
     def test_mismatch_is_failed_with_the_difference_attached(self):
         row = self.v2_row()
         row["native"] = {"status": "passed", "result": native_result()}
