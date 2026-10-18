@@ -521,6 +521,41 @@ describe('三个不同的动作', () => {
     expect(mockAct).toHaveBeenCalledTimes(1)
     expect(mockAct.mock.calls[0][1].action_id).toBe('act-recheck')
   })
+
+  it.each([
+    ['启动时 env 为空', null],
+    ['已有环境后换进项目（resetProject 的占位）', { project: { open: false } }],
+  ])('环境快照第一次落地（比会话创建晚到，%s）且没有用户答过的痕迹：不发 recheck；之后真改了目录才发', async (_n, initial) => {
+    useEnvStore.setState({ env: initial as never })
+    mockCreate.mockResolvedValueOnce(prepReport({ phase: 'action_required', actions: [action('run'), action('recheck')] }))
+    await useProjectPreparationStore.getState().open(scriptTarget('plot.py'))
+    mockAct.mockResolvedValue({ claimed: true, report: prepReport({ observation_seq: 2 }) })
+    const env = (decided: boolean, consent = 'none') =>
+      ({ project: { open: true, workdir: { mode: 'project_root', decided }, python: '', consent } }) as never
+    useEnvStore.setState({ env: env(false) })
+    await flush()
+    expect(mockAct).not.toHaveBeenCalled()
+    useEnvStore.setState({ env: env(true) })
+    await flush()
+    expect(mockAct).toHaveBeenCalledTimes(1)
+    expect(mockAct.mock.calls[0][1].action_id).toBe('act-recheck')
+  })
+
+  it.each([
+    ['运行目录已答过', { decided: true, consent: 'none' }],
+    ['环境已被明确采用', { decided: false, consent: 'confirmed' }],
+  ])('环境快照第一次落地但带着用户答过的痕迹（%s）：照旧 recheck，不留陈旧的卡', async (_n, v) => {
+    useEnvStore.setState({ env: null })
+    mockCreate.mockResolvedValueOnce(prepReport({ phase: 'action_required', actions: [action('run'), action('recheck')] }))
+    await useProjectPreparationStore.getState().open(scriptTarget('plot.py'))
+    mockAct.mockResolvedValue({ claimed: true, report: prepReport({ observation_seq: 2 }) })
+    useEnvStore.setState({
+      env: { project: { open: true, workdir: { mode: 'project_root', decided: v.decided }, python: '', consent: v.consent } } as never,
+    })
+    await flush()
+    expect(mockAct).toHaveBeenCalledTimes(1)
+    expect(mockAct.mock.calls[0][1].action_id).toBe('act-recheck')
+  })
 })
 
 describe('依赖准备装完：画布上停在依赖门上的渲染重排（T09b）', () => {

@@ -60,7 +60,7 @@ import {
   MenuRadioItem,
   MenuSeparator,
 } from '../ui/Menu'
-import { Notice } from '../ui/Notice'
+import { Notice, NoticeReveal } from '../ui/Notice'
 import { Tip } from '../ui/Tooltip'
 import { DrawerHeaderActions, DrawerTitleMeta } from './DrawerHeader'
 import { runBatchFix, useBatchable } from './IssueFixButton'
@@ -428,7 +428,7 @@ export function ProblemPanel() {
         空态的话，那些问题仍然被计进计数、也仍然进导出摘要，却在**唯一
         一份完整问题清单**里翻不到、点不到、跳不过去（PR #214 第七轮评审）。
       */}
-      {retained && (
+      <NoticeReveal open={!!retained}>
         <div className="shrink-0 px-2 pb-2">
           <Notice
             tone="warn"
@@ -442,7 +442,7 @@ export function ProblemPanel() {
             {pr('failedKeptHint')}
           </Notice>
         </div>
-      )}
+      </NoticeReveal>
 
       {failed && !retained ? (
         <EmptyState

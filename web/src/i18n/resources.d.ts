@@ -120,6 +120,7 @@ export default interface Resources {
       "send": "发送（{{key}}）",
       "sendAria": "发送",
       "sendFailed": "没有发出去",
+      "sendFailedReason": "助手服务暂时出错",
       "stepRan": "运行",
       "targetAria": "作用目标：{{target}}",
       "taskHistory": "任务历史",
@@ -195,6 +196,10 @@ export default interface Resources {
       "pxSize": "{{w}} × {{h}} px"
     },
     "mixed": "多个值",
+    "notice": {
+      "copied": "已复制",
+      "details": "详情"
+    },
     "objectType": {
       "arrow": "箭头",
       "emptyText": "空文字",
@@ -238,7 +243,7 @@ export default interface Resources {
       "blockedTitle": "有阻断问题或无法核验的项。勾选确认后才能导出。",
       "blockingListLabel": "阻断性问题",
       "cancelExport": "取消导出",
-      "cancelFailed": "尚未确认取消，导出可能仍在继续。{{error}}",
+      "cancelFailed": "尚未确认取消，导出可能仍在继续",
       "cancelNotAccepted": "服务器未接受取消请求。请先检查导出状态和输出文件夹，再重试。",
       "cancelPending": "正在请求取消…",
       "cancelRequested": "已请求取消",
@@ -269,6 +274,7 @@ export default interface Resources {
       },
       "exportAgain": "再次导出",
       "exported": "导出完成：{{files}}",
+      "failTitle": "导出没有完成",
       "figureListLabel": "要按原图尺寸导出的图",
       "filenameError": {
         "control_char": "文件名里有不可见字符，请重新输入。",
@@ -375,7 +381,7 @@ export default interface Resources {
       "sizeDiskDiffers": "磁盘上的原文件为 {{dw}} × {{dh}} mm（脚本保存时已裁边），将按图幅 {{w}} × {{h}} mm 导出。",
       "sizeUnknownShort": "尺寸未知",
       "start": "开始导出",
-      "statusFailed": "暂时无法获取导出状态，作业仍可能完成。{{error}}",
+      "statusFailed": "暂时无法获取导出状态，作业仍可能完成",
       "strictTitle": "按所选规范重新打开写好的文件核对；不合格或无法核验的文件不会保存。EPS 不核验。",
       "strictToggle": "严格核验产物",
       "targetNoFigure": "当前没有图",
@@ -4635,7 +4641,7 @@ export default interface Resources {
       "openAria": "编辑原图 {{name}}",
       "openFigure": "编辑原图",
       "refresh": "刷新项目",
-      "refreshFailed": "无法刷新。{{error}}",
+      "refreshFailed": "无法刷新",
       "refreshTip": "检查项目里的新文件与脚本改动",
       "refreshing": "正在检查新文件…",
       "removeFilter": "移除筛选：{{label}}",
@@ -5538,7 +5544,7 @@ export default interface Resources {
       "group_notRun": "尚未运行",
       "group_runtimeNames": "运行后才知道输出",
       "linkedCount_other": "已关联 {{count}} 张图",
-      "loadFailed": "无法读取脚本清单。{{error}}",
+      "loadFailed": "无法读取脚本清单",
       "loading": "正在读取脚本清单…",
       "noMatch": "没有符合条件的脚本",
       "notRunNote": "脚本尚未运行",
@@ -5812,7 +5818,7 @@ export default interface Resources {
     },
     "update": {
       "banner": "工具已更新，刷新后使用新版本",
-      "later": "稍后"
+      "chip": "界面需要刷新"
     }
   }
 }

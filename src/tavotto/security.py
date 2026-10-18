@@ -28,6 +28,11 @@ localhost 应用，而它暴露的是目录浏览、项目打开/创建、写回
 rebinding。Host 只认 `127.0.0.1:<port>` 一种写法；带 Origin 的请求必须
 严格同源；未认证请求对除首屏静态资源与 /api/version 之外的一切路径 401。
 
+桌面 sidecar 另有一枚**只读、只对 `GET /api/handoff/render-status` 有效**的 scoped token
+（`SessionState.status_token`，随机、与 nonce / secret 无关），发布在 0600 文件里供 `tavotto open`
+查询「某项目某 stem 最近一次渲染成败」（ADR 0008 修订 2026-10-16）。它换不到 relaunch nonce，
+带去任何其它端点都是 401。
+
 测试 / 开发旁路：app.config 里没有 `TAVOTTO_SESSION_STATE` 时 guard 全部
 放行（test_client、`--insecure-no-auth`、vite dev proxy 的后端就是这一档）。
 """
@@ -52,6 +57,8 @@ BOOTSTRAP_PATH = "/api/session/bootstrap"
 LEGACY_BOOTSTRAP_PATH = "/api/desktop/bootstrap"  # 兼容别名，同一处理器
 RELAUNCH_PATH = session_client.RELAUNCH_PATH
 PING_PATH = "/api/session/ping"
+#: scoped 只读 token 唯一有效的路径（ADR 0008 修订 2026-10-16 / ADR 0131 第六节）
+HANDOFF_STATUS_PATH = session_client.HANDOFF_STATUS_PATH
 
 # 浏览器模式 cookie 的 Max-Age：服务器进程常驻、浏览器会整个重开，
 # 会话级 cookie 会让「第二天再打开标签页」全是 401。token 只在进程内存里，
@@ -82,7 +89,7 @@ class SessionState:
 
     desktop.DesktopState 是它的别名——桌面 sidecar 与浏览器模式共用同一份
     实现，唯二差别由参数表达：`api_secret`（浏览器模式的本机进程凭据；
-    桌面为 None，磁盘上不存在任何凭据）与 `persistent_cookie`。
+    桌面为 None，磁盘上不存在完整凭据，只有 `status_token` 的 scoped 文件）与 `persistent_cookie`。
     """
 
     def __init__(
@@ -93,6 +100,9 @@ class SessionState:
         self._tokens: list[str] = []
         self._lock = threading.Lock()
         self.port: int | None = None
+        # 只读交接状态 token：与 nonce / api_secret 无关的独立随机值，只对 HANDOFF_STATUS_PATH 有效。
+        # 桌面 sidecar 把它发布到 0600 文件里（engine/session_client.publish_status_token）
+        self.status_token = _secrets.token_urlsafe(32)
         self.api_secret = api_secret
         self.persistent_cookie = persistent_cookie
 
@@ -140,6 +150,9 @@ class SessionState:
             and hmac.compare_digest(self.api_secret, submitted)
         )
 
+    def valid_status_token(self, submitted: str | None) -> bool:
+        return bool(submitted) and hmac.compare_digest(self.status_token, submitted)
+
     def _prune_locked(self) -> None:
         now = time.monotonic()
         for nonce, expiry in list(self._pending.items()):
@@ -182,7 +195,7 @@ def install(flask_app) -> None:
     def _session_relaunch():
         state: SessionState | None = flask_app.config.get(STATE_KEY)
         if state is None or not state.api_secret:
-            # 桌面模式也走这条 404：它没有磁盘凭据，实例复用由壳的单实例转发负责
+            # 桌面模式也走这条 404：它没有完整磁盘凭据，实例复用由壳的单实例转发负责
             return jsonify({"error": "会话认证未启用", "code": "no_session_mode"}), 404
         body = request.get_json(force=True, silent=True) or {}
         if not state.valid_api_secret(str(body.get("secret") or "")):
@@ -213,6 +226,13 @@ def install(flask_app) -> None:
         if state.valid_cookie(request.cookies.get(COOKIE_NAME)):
             return None
         if state.valid_api_secret(request.headers.get(session_client.AUTH_HEADER)):
+            return None
+        # scoped 只读 token：只认「GET 交接状态」这一个端点，其它路径一律不认
+        if (
+            p == HANDOFF_STATUS_PATH
+            and request.method == "GET"
+            and state.valid_status_token(request.headers.get(session_client.AUTH_HEADER))
+        ):
             return None
         return jsonify({"error": "会话未建立或已失效", "code": "session_auth_required"}), 401
 

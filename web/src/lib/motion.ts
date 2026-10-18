@@ -178,11 +178,16 @@ interface DrawerMotionOptions {
  */
 export function drawerMotion({ state, overlay, width, side }: DrawerMotionOptions): {
   'data-state': PresenceState
+  /** 退场保活期间整个抽屉 inert：旧内容不许再被点 / 聚焦 */
+  inert: boolean
+  'aria-hidden': true | undefined
   className: string
   style: CSSProperties
 } {
   return {
     'data-state': state,
+    inert: state === 'closed',
+    'aria-hidden': state === 'closed' ? true : undefined,
     className: overlay
       ? 'data-[state=open]:animate-drawer-slide-in data-[state=closed]:animate-drawer-slide-out'
       : 'data-[state=open]:animate-drawer-in data-[state=closed]:animate-drawer-out',

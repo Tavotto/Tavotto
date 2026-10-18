@@ -5,6 +5,7 @@ import { ICON_SIZE } from '@/components/ui/Icon'
 import { SwapText } from '@/components/ui/SwapText'
 import { t as translate } from '@/i18n'
 import { formatTime } from '@/i18n/format'
+import { splitNoticeText } from '@/lib/noticeText'
 import { cn } from '@/lib/utils'
 import { sessionAgentLabel, useAiStore, type AiSession } from '@/store/aiStore'
 import { Button, IconButton } from '../ui/Button'
@@ -101,15 +102,17 @@ export function Turn({
           tone="danger"
           data-ai-error="session"
           title={statusLabel(session.status)}
+          // 一句话留在正文；长的 / 多行的整段进「详情」（带复制）
+          detail={splitNoticeText(session.error).detail}
           action={
             canRetry ? (
-              <Button data-ai-retry variant="secondary" size="sm" onClick={() => onRetry(session)}>
+              <Button data-ai-retry size="sm" onClick={() => onRetry(session)}>
                 {ai('panel.retry')}
               </Button>
             ) : undefined
           }
         >
-          {session.error}
+          {splitNoticeText(session.error).inline}
         </Notice>
       )}
 
@@ -120,7 +123,7 @@ export function Turn({
         <span className="shrink-0">{sessionAgentLabel(caps, session)} ·</span>
         <SwapText
           text={statusText(session)}
-          textClassName={running ? 'text-shimmer' : failed ? 'text-danger' : 'text-ink-3'}
+          textClassName={running ? 'text-shimmer' : 'text-ink-3'}
           data-ai-status={session.status}
         />
         {total != null && !running && <span className="type-number shrink-0 text-ink-3">· {formatDuration(total)}</span>}

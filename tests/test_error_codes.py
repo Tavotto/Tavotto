@@ -550,6 +550,8 @@ NON_UI_CODES = {
     "bad_secret",
     "no_session_mode",
     "desktop_auth_required",
+    # `GET /api/handoff/render-status` 的参数错误：只有 `tavotto open` 的轮询客户端会调，界面不展示（ADR 0131 §六）
+    "bad_handoff_query",
     # 一键安装的**进度**状态码，不是错误响应：它们的文案在
     # dialogs:settings.agents.install.error.*（由 pnpm i18n:check
     # 守双语齐全），不该也不能进 errors.backend 那张表。
