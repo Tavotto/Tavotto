@@ -14,10 +14,23 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts/ci"))
 
 import compat_explore as ex  # noqa: E402
 import compat_guardian as cg  # noqa: E402
+import compat_guardian_expectations as ex_decl  # noqa: E402
 
 FAMILIES = cg.ROOT / "tests/compat_guardian/families"
 SCHEMA = cg.ROOT / "tests/compat_guardian/families.schema.json"
 DRIVER = Path(cg.HERE) / "compat_driver.py"
+
+
+def reference_resolves(ref: str, root: Path | None = None) -> bool:
+    """`path.py` (the file must exist) or `path.py::Class::test_x[param]` (the whole node must be
+    defined, found level by level through the AST: comments, strings and a same-named test in
+    another class do not count)."""
+    path, _, node = ref.partition("::")
+    target = (root or cg.ROOT) / path
+    if not target.is_file():
+        return False
+    node = node.split("[")[0]
+    return not node or ex_decl._defines(target, node)
 
 
 def records() -> list[dict]:
@@ -65,9 +78,38 @@ class Records(unittest.TestCase):
     def test_every_listed_regression_test_exists(self):
         for record in records():
             for ref in record["key_regression_tests"]:
-                path, _, name = ref.partition("::")
-                text = (cg.ROOT / path).read_text(encoding="utf-8")
-                self.assertIn(name.split("::")[-1], text, ref)
+                self.assertTrue(reference_resolves(ref), ref)
+
+    def test_reference_resolution_checks_the_whole_node_not_a_substring(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "test_x.py").write_text(
+                "# test_commented_only is mentioned here\n"
+                "NAME = 'test_in_a_string'\n"
+                "class Right:\n"
+                "    def test_x(self): ...\n"
+                "def test_top(): ...\n",
+                encoding="utf-8",
+            )
+            ok = (
+                "test_x.py",
+                "test_x.py::Right::test_x",
+                "test_x.py::test_top",
+                "test_x.py::Right",
+            )
+            for ref in ok:
+                self.assertTrue(reference_resolves(ref, root), ref)
+            bad = (
+                "test_x.py::WrongClass::test_x",  # test_x exists, but not under WrongClass
+                "test_x.py::test_x",  # a method, not a module-level function
+                "test_x.py::test_commented_only",
+                "test_x.py::test_in_a_string",
+                "test_x.py::Right::test_missing",
+                "missing.py",  # a file-only reference still needs the file
+                "missing.py::test_top",
+            )
+            for ref in bad:
+                self.assertFalse(reference_resolves(ref, root), ref)
 
 
 def _project(tmp: str, record: dict) -> Path:
