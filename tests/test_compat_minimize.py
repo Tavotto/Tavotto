@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import ast
+import json
 import sys
+import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts/ci"))
 
@@ -264,7 +267,57 @@ class Search(unittest.TestCase):
         self.assertEqual(
             oracle.calls, ["base"], "no reduction is attempted without a reproduced failure"
         )
-        self.assertNotIn("reduction", result)
+        self.assertIsNone(result["reduction"])
+        for key in ("files", "after", "runs", "seconds", "trials"):
+            self.assertIn(key, result, f"not_reproduced skipped the common tail: {key}")
+
+    def test_a_not_reproduced_result_is_published_by_write_outcome_without_a_crash(self):
+        result, _ = self.search(
+            lambda source: record(outcome="no_difference", kinds=(), error=None)
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            path = mn.write_outcome(
+                result, self.manifest, self.parent, Path(tmp), RULES, {"max_runs": 80}
+            )
+            doc = json.loads(path.read_text(encoding="utf-8"))
+        self.assertEqual(doc["status"], "not_reproduced")
+        self.assertIsNone(doc["reduction"])
+        self.assertEqual(doc["before_after"]["before"], doc["before_after"]["after"])
+        self.assertEqual(doc["script"], self.parent.script)
+
+    def test_the_documented_replay_command_shape_parses_and_runs(self):
+        result, _ = self.search(self.failing)
+        self.assertEqual(result["status"], "minimized")
+        with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as scratch:
+            repro = mn.write_outcome(
+                result, self.manifest, self.parent, Path(tmp), RULES, {"max_runs": 80}
+            )
+            doc = json.loads(repro.read_text(encoding="utf-8"))
+            self.assertIn("minimize --replay <dir>/repro.json", doc["commands"]["tavotto"])
+            with mock.patch.object(mn.ex, "run_one", return_value=record()) as run_one:
+                code = cg.main(["minimize", "--replay", str(repro), "--out", scratch])
+            self.assertEqual(code, cg.EXIT_PASSED)
+            self.assertEqual(run_one.call_args.args[-1], "replay")
+
+    def test_minimize_modes_are_exclusive_and_one_is_required(self):
+        for argv in (
+            ["minimize", "--out", "/x"],
+            ["minimize", "--report", "r.json", "--out", "/x"],
+            [
+                "minimize",
+                "--replay",
+                "a.json",
+                "--report",
+                "r.json",
+                "--candidate",
+                "c",
+                "--out",
+                "/x",
+            ],
+        ):
+            with self.assertRaises(SystemExit) as caught:
+                cg.main(argv)
+            self.assertEqual(caught.exception.code, 2, argv)
 
     def test_unstable_reproduction_is_not_reported_as_minimized(self):
         def oracle(reduction, tag):

@@ -1228,10 +1228,11 @@ def main(argv=None) -> int:
     minimizer = subs.add_parser(
         "minimize", help="bounded, re-verified reduction of one explore finding"
     )
+    minimizer.add_argument("--report", help="explore report containing the candidate")
+    minimizer.add_argument("--candidate")
     minimizer.add_argument(
-        "--report", required=True, help="explore report containing the candidate"
+        "--replay", help="repro.json to re-run (instead of --report/--candidate)"
     )
-    minimizer.add_argument("--candidate", required=True)
     minimizer.add_argument("--out", required=True)
     minimizer.add_argument("--max-runs", type=int, default=40)
     minimizer.add_argument("--max-seconds", type=float, default=1500)
@@ -1244,6 +1245,12 @@ def main(argv=None) -> int:
     private = subs.add_parser("_execute", help=argparse.SUPPRESS)
     private.add_argument("request")
     args = ap.parse_args(argv)
+    if args.command == "minimize":
+        # Two exclusive modes: reduce a finding, or replay a recorded reproduction.
+        if args.replay and (args.report or args.candidate):
+            ap.error("minimize: --replay cannot be combined with --report/--candidate")
+        if not args.replay and not (args.report and args.candidate):
+            ap.error("minimize needs --report and --candidate, or --replay")
     try:
         if args.command == "run":
             if not math.isfinite(args.timeout) or args.timeout <= 0:

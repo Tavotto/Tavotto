@@ -255,6 +255,13 @@ def minimize_candidate(
         )
         return ok, reason, record
 
+    def close() -> Result:
+        """Common tail for every outcome: write_outcome needs files/after/reduction/runs/seconds."""
+        result.update(trials=trials, runs=budget.runs, seconds=budget.seconds)
+        if result["status"] != "minimized":
+            result.update(files=files0, after=result["before"], reduction=None)
+        return result
+
     try:
         # 0. the original must reproduce the finding, or there is nothing to minimize
         budget.spend()
@@ -267,7 +274,7 @@ def minimize_candidate(
                 trials=trials,
                 reproduced_base=False,
             )
-            return result
+            return close()
         result["signature"] = original_sig
         # 1. statements and blocks
         kept = ddmin(
@@ -312,10 +319,7 @@ def minimize_candidate(
             result["note"] = "the reduced script did not reproduce the failure every time"
     except BudgetExceeded as exc:
         result.update(status="minimization_failed", note=str(exc))
-    result.update(trials=trials, runs=budget.runs, seconds=budget.seconds)
-    if result["status"] != "minimized":
-        result.update(files=files0, after=result["before"], reduction=None)
-    return result
+    return close()
 
 
 def _unwrappable(source: str, kept: set[str]) -> list[str]:
