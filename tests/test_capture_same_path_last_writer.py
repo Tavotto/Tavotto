@@ -512,9 +512,30 @@ class TestWouldSucceed:
         monkeypatch.chdir(tmp_path)
         assert figcapture.savefig_would_succeed("a.pdf", {}, None)
         assert not figcapture.savefig_would_succeed("a.pdf", {"format": "bogus"}, None)
+        assert not figcapture.savefig_would_succeed("a.bogus", {}, None)
         assert not figcapture.savefig_would_succeed("a.pdf", {"backend": "nonexistent"}, None)
-        assert not figcapture.savefig_would_succeed("nodir/a.pdf", {}, None)
         assert figcapture.savefig_would_succeed("a.pdf", {"backend": "module://x.y"}, None)
+        assert figcapture.savefig_would_succeed("a.pdf", {"backend": "Agg"}, None)
+        assert figcapture.savefig_would_succeed("a.pdf", {"backend": "pdf"}, None)
+
+    def test_missing_directory_is_not_a_failure(self, tmp_path, monkeypatch):
+        """safe 下 `os.makedirs` 可能被拦：目录不存在不代表原生会失败，合法的 format / backend 仍记账。"""
+        import matplotlib.backend_bases  # noqa: F401
+
+        monkeypatch.chdir(tmp_path)
+        assert figcapture.savefig_would_succeed("nodir/a.pdf", {}, None)
+        assert figcapture.savefig_would_succeed(
+            "nodir/a.png", {"format": "png", "backend": "agg"}, None
+        )
+
+    def test_save_into_missing_directory_still_records_calls(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        s, a = _session(), _Fig()
+        s.add_figure("a", a, SAVEFIG)
+        name = "nodir/a.pdf"
+        if figcapture.savefig_would_succeed(name, {}, None):
+            s.note_savefig("a", a, PDF, None, target=figcapture.savefig_target_key(name, {}))
+        assert s.savefig_calls["a"] == [PDF]
 
 
 @needs_worker

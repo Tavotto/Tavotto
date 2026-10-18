@@ -1475,36 +1475,38 @@ def savefig_target_key(fname, kwargs: dict, canvas=None) -> str | None:
         return None
 
 
-_SAVEFIG_BACKENDS = frozenset({"agg", "cairo", "pdf", "pgf", "ps", "svg", "template"})
-
-
 def savefig_would_succeed(fname, kwargs: dict, canvas=None) -> bool:
-    """这次 `savefig(fname, **kwargs)` 在**真实语义**下会不会成功——safe worker / 浏览器不真写盘，
+    """这次 `savefig(fname, **kwargs)` 在**真实语义下会不会成功**——safe worker / 浏览器不真写盘，
     拿不到「是否成功」，写入者记账（`note_savefig_writer`）只能先判这个：native 里一次失败的保存磁盘上没动，
     不能顶掉上一个写入者，safe / 浏览器里同一场景也不能（三条入口同源）。
 
-    只在**确定会失败**时返回 False：目标目录不存在、格式不被 matplotlib 认（显式 `format=` 或后缀）、
-    `backend=` 不是已知名字也不是 `module://…`。认不清（拿不到文件名 / matplotlib 没载入）按成功算，
-    保持原行为。永不抛。
+    只在**确定会失败**时返回 False：格式（显式 `format=` 或后缀）不在该 canvas / matplotlib 认的集合里；
+    `backend=` 不是 `module://…` 且 `matplotlib.backends.backend_<名字>` 找不到模块。**不判目标目录**：
+    safe 下脚本的 `os.makedirs` 可能被拦或落在别处，磁盘上没有目录不代表原生会失败，误判会丢掉
+    本来成功的保存的 `savefig_calls`。判不清、过程抛任何异常一律按成功算。永不抛。
     """
     try:
-        names = savefig_effective_names(fname, kwargs, canvas)
         backend = kwargs.get("backend")
-        if backend is not None and not (
-            isinstance(backend, str)
-            and (backend.lower() in _SAVEFIG_BACKENDS or backend.startswith("module://"))
-        ):
-            return False
+        if backend is not None:
+            if not isinstance(backend, str):
+                return False
+            if not backend.startswith("module://") and (
+                importlib.util.find_spec("matplotlib.backends.backend_" + backend.lower()) is None
+            ):
+                return False
+        names = savefig_effective_names(fname, kwargs, canvas)
         bases = sys.modules.get("matplotlib.backend_bases")
         if not names or bases is None:
             return True
-        supported = {str(k).lower() for k in bases.FigureCanvasBase.filetypes}
+        try:
+            filetypes = canvas.get_supported_filetypes()
+        except Exception:  # noqa: BLE001
+            filetypes = bases.FigureCanvasBase.filetypes
+        supported = {str(k).lower() for k in filetypes}
         fmt = kwargs.get("format")
         for name in names:
-            path = os.fsdecode(name)
-            if not os.path.isdir(os.path.dirname(os.path.abspath(path))):
-                return False
-            if str(fmt or os.path.splitext(path)[1][1:] or "").lower() not in supported:
+            ext = os.path.splitext(os.fsdecode(name))[1][1:]
+            if str(fmt or ext or "").lower() not in supported:
                 return False
     except Exception:  # noqa: BLE001 —— 判不清按成功算
         return True

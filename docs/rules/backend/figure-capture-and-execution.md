@@ -250,8 +250,10 @@ desktop worker（`LiveFigureSession.note_savefig` 转调）、浏览器 playgrou
 * 同一张图存多次仍是一张图（调用照记）；不同 stem 互不影响；三个写入者取第三个；写回原来那张又取回。
 * **失败的保存不顶替、不记账**（Codex 4305548808）：一次磁盘上没动的 savefig 不能让别的图成为被捕获的图。native 的写入者 /
   调用记账在 `_REAL_SAVEFIG` **成功返回之后**才做（失败只记 observation = failed）；safe worker 与浏览器不真写盘，拿不到
-  成败，由 `figcapture.savefig_would_succeed`（目标目录不存在、格式不被 matplotlib 认、`backend=` 不是已知名字也不是
-  `module://…` = 确定失败；认不清按成功算）判定，三条入口同一份判据。首次认领（`add_figure` / `setdefault`）不受此限，保持原行为。
+  成败，由 `figcapture.savefig_would_succeed` 判定，三条入口同一份判据，**只在确定失败时**为 False：格式（显式 `format=` 或后缀）
+  不在 canvas / matplotlib 认的集合里；`backend=` 不是 `module://…` 且 `importlib.util.find_spec("matplotlib.backends.backend_<名字>")`
+  找不到。**不判目标目录**（safe 下 `os.makedirs` 可能被拦或落在别处，磁盘上没有目录不代表原生会失败，误判会丢 `savefig_calls`）；
+  判不清、过程抛任何异常按成功算。首次认领（`add_figure` / `setdefault`）不受此限，保持原行为。
 * **pyplot 认领永远不被顶掉**，兜底也永远不顶显式 savefig；`call is None`（`paper_style.save` 没观察到参数）不知道路径，
   不顶替。
 * **已进入编辑（`states`）或已记失败（`failures`）的 stem 不再换图**（`locked`）：override / 清单 / 预览都挂在那张图上。
