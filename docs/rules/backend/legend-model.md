@@ -12,7 +12,7 @@
   `_cls_key` 是 `legend_text`（text handler 逐条镜像 + 条目 handler：
   `handle_color/linestyle/linewidth/marker/markersize` / `binding` / `visible`），
   图例标题仍是 `text`。**代理句柄借名**（`legend_proxy_names`，只改显示名）：曲线 / 散点自己没有可显示 label、
-  图例里**恰好一个**代理句柄与它的示意线指纹精确一致（反向也唯一，含有 label 的系列一并计数）→ 用该条目文字
+  图例里**恰好一个**代理句柄与它的示意线指纹精确一致（共享指纹之外再比 `_glyph_extra`：Line2D 的 fillstyle / 备用面色 / drawstyle，散点的 marker 路径 / sizes / 边线线型——只在借名这里比，不进 `bind_legend_entries` 的共享指纹；反向也唯一，含有 label 的系列一并计数）→ 用该条目文字
   命名「曲线 “pH=1”」；歧义一律不命名，不按位置猜，不改 gid / 字段（看护 `tests/test_series_name_from_legend_proxy.py`）。
   每一项按 label + 示意线指纹绑定源对象
   （`bind_legend_entries`，并列时只认 `get_legend_handles_labels()` 的位置，
