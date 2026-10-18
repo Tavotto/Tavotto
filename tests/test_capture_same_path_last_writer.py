@@ -172,6 +172,44 @@ class TestSamePathRule:
         assert s.capture["x"] is a
 
 
+class TestSharedFunction:
+    """三条入口共用的 `note_savefig_writer` 本体（浏览器 / native 的钩子直接调它）。"""
+
+    @staticmethod
+    def _call(w, cap, src, fig, target, stem="x", locked=False):
+        cap.setdefault(stem, fig)
+        src.setdefault(stem, SAVEFIG)
+        return figcapture.note_savefig_writer(
+            w, cap, src, {stem: [{}]}, {stem: [None]}, stem, fig, target, locked
+        )
+
+    def test_none_target_neither_displaces_nor_registers(self):
+        w, cap, src, a, b = {}, {}, {}, _Fig(), _Fig()
+        assert self._call(w, cap, src, a, "/p/x.pdf") is False
+        assert self._call(w, cap, src, b, "/p/x.pdf") is True
+        assert self._call(w, cap, src, a, None) is False
+        assert cap["x"] is b and w["x"]["/p/x.pdf"]() is b and None not in w["x"]
+
+    def test_dead_previous_writer_does_not_displace(self):
+        w, cap, src, a = {}, {}, {}, _Fig()
+        self._call(w, cap, src, a, "/p/x.pdf")
+        dead = _Fig()
+        w["x"]["/p/x.pdf"] = __import__("weakref").ref(dead)
+        del dead
+        b = _Fig()
+        assert self._call(w, cap, src, b, "/p/x.pdf") is False
+        assert cap["x"] is a
+
+    def test_displacement_drops_loser_records(self):
+        w, cap, src, a, b = {}, {}, {}, _Fig(), _Fig()
+        calls, extras = {"x": [{}]}, {"x": [None]}
+        for fig in (a, b):
+            cap.setdefault("x", fig)
+            src.setdefault("x", SAVEFIG)
+            figcapture.note_savefig_writer(w, cap, src, calls, extras, "x", fig, "/p/x.pdf")
+        assert cap["x"] is b and "x" not in calls and "x" not in extras
+
+
 class TestTargetKey:
     def test_format_kwarg_does_not_change_the_file(self, tmp_path, monkeypatch):
         """`savefig("a.pdf")` 与 `savefig("a.pdf", format="png")` 写的是同一个文件。"""
