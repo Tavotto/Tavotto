@@ -572,3 +572,16 @@ class MatchesHeadLineEndings(unittest.TestCase):
                 self.assertTrue(cg.matches_head(root, "m.json"))
                 (root / "m.json").write_bytes(b'{"a": 2}\r\n')
                 self.assertFalse(cg.matches_head(root, "m.json"))
+
+
+class EvidenceRefsArePosix(unittest.TestCase):
+    """证据引用的相对路径一律 posix：Windows 上 `str(relative_to)` 带 `\\`，会被 `contained()` 判成不安全
+    （windows-latest backend-platforms 的 `unsafe relative path: shape_oo_savefig\\process.json`）。"""
+
+    def test_nested_evidence_paths_use_forward_slashes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "case" / "sub").mkdir(parents=True)
+            (root / "case" / "sub" / "process.json").write_text("{}", encoding="utf-8")
+            (ref,) = cg.evidence_refs(root)
+            self.assertEqual(ref["path"], "case/sub/process.json")

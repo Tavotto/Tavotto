@@ -83,7 +83,7 @@ def install() -> None:
             row = {
                 "pid": os.getpid(),
                 "source_sha256": digest,
-                "script": str(path.relative_to(root)),
+                "script": path.relative_to(root).as_posix(),
                 "environment": actual_environment(),
             }
             os.write(fd, (json.dumps(row, sort_keys=True) + "\n").encode())

@@ -812,7 +812,9 @@ def evidence_refs(root: Path) -> list[dict]:
     refs = []
     for p in sorted(root.rglob("*")):
         if p.is_file():
-            rel = str(p.relative_to(root))
+            rel = p.relative_to(
+                root
+            ).as_posix()  # 报告里的路径一律 posix：Windows 的 `\` 会被 contained() 判成不安全
             checked = contained(root, rel)
             refs.append(
                 {
