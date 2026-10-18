@@ -25,7 +25,7 @@ import matplotlib.colors as mcolors
 import numpy as np
 from matplotlib.artist import Artist
 from matplotlib.axes import Axes
-from matplotlib.collections import Collection, LineCollection
+from matplotlib.collections import Collection, LineCollection, PathCollection
 from matplotlib.legend import Legend
 from matplotlib.legend_handler import HandlerBase
 from matplotlib.lines import Line2D
@@ -1032,6 +1032,62 @@ def sync_legends(state: RebuildState) -> None:
                         _legend_replace_handle(leg, k, base, copy_of=base)
             except Exception as exc:  # noqa: BLE001 — 同步失败不拖垮渲染
                 print(f"[legend] {model.gid_of(j)} 同步示意线失败: {exc}", file=sys.stderr)
+
+
+def legend_proxy_names(ax) -> dict[int, str]:
+    """{id(图中系列对象): 图例里与它**画得一模一样**的那个代理句柄的文字}（只用于显示名）。
+
+    科研脚本常见写法：系列线 `ax.plot(..., color=c, marker=m)` 不写 label，图例另用
+    `Line2D([], [], color=c, marker=m, label="pH=1")` 做代理句柄再 `ax.legend(handles=...)`。
+    线自己没有可显示的 label，元素树里就是一串「曲线 N」。这里在 instrument 时（脚本原样）
+    把图例条目的文字借给样式精确一致的那条线当显示名。
+
+    主语：被命名的是 `ax` 里的曲线 / 散点（按 `ax.lines` / `ax.collections` 的活对象），
+    判据取自 `ax.get_legend()` 此刻画出来的示意线与「matplotlib 自己的 handler 从这条
+    线派生出来的示意线」的样式指纹（`legend_handle_fingerprint`，颜色 / 线型 / 线宽 /
+    marker / 面色 / 边色 / 边宽 / 大小 / alpha，规范化后的值比，不比对象身份）。
+
+    保守到宁缺毋滥：
+      - 同一指纹被图中多个系列对象命中（**含有自己 label 的**——图例里它自己的条目
+        长得和它一样，不能借给样式相同的无名线）→ 歧义，都不命名；
+      - 同一系列命中多个条目（含同指纹同文字）→ 歧义，不命名；
+      - 不按位置 / 相邻猜。
+    只改显示名，不动 gid、不动任何字段。
+    """
+    leg = ax.get_legend()
+    if leg is None:
+        return {}
+    handles = [h for h in getattr(leg, "legend_handles", []) if h is not None]
+    texts = [t.get_text() for t in leg.get_texts()]
+    n = min(len(handles), len(texts))
+    series = [*ax.lines, *ax.collections]
+    entries: list[tuple[tuple, str]] = []
+    for h, text in zip(handles[:n], texts[:n], strict=True):
+        entries.append((legend_handle_fingerprint(h), text))
+    if not entries:
+        return {}
+    fp_of: dict[int, tuple] = {}
+    for art in series:
+        if not isinstance(art, Line2D | PathCollection):
+            continue
+        try:
+            fresh = legend_fresh_handle(leg, art)
+        except Exception:  # noqa: BLE001 — 造不出示意线的对象不参与
+            continue
+        if fresh is not None:
+            fp_of[id(art)] = legend_handle_fingerprint(fresh)
+    out: dict[int, str] = {}
+    for art in series:
+        fp = fp_of.get(id(art))
+        if fp is None:
+            continue
+        hits = [text for efp, text in entries if efp == fp]
+        if len(hits) != 1:
+            continue
+        if sum(1 for other in fp_of.values() if other == fp) != 1:
+            continue
+        out[id(art)] = hits[0]
+    return out
 
 
 def _source_label(art) -> str:

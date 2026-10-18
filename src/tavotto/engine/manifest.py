@@ -72,6 +72,7 @@ from legendmodel import (
     legend_anchor_state,
     legend_entries,
     legend_pos_cfg,
+    legend_proxy_names,
 )
 from overrides import (
     _ARROWSTYLES,
@@ -169,6 +170,15 @@ _SKIP_LABELS = ("_child", "_nolegend_")
 def _snippet(text: str, n: int = 18) -> str:
     text = " ".join(text.split())
     return text if len(text) <= n else text[: n - 1] + "…"
+
+
+def _legend_proxy_names_safe(ax) -> dict[int, str]:
+    """`legendmodel.legend_proxy_names` 的护栏：显示名是锦上添花，算不出就当没有。"""
+    try:
+        return legend_proxy_names(ax)
+    except Exception as exc:  # noqa: BLE001
+        print(f"[legend] 代理句柄显示名推断失败: {exc}", file=sys.stderr)
+        return {}
 
 
 def _relabel(registered: str, text: str) -> str:
@@ -747,10 +757,13 @@ def instrument(state: FigState) -> None:
                     # 别名只进 index、不进 elements（ColorbarProxy 同样思路）。
                     for _m in grp.members():
                         _alias_consumed_member(state, ax, f"axes_{i}", _m)
+            proxy_names = _legend_proxy_names_safe(ax)
             for j, ln in enumerate(ax.lines):
                 if id(ln) in skip_ids:
                     continue
                 lab = str(ln.get_label())
+                if not lab or lab.startswith("_"):
+                    lab = proxy_names.get(id(ln), "")  # 图例代理句柄借来的显示名
                 nice = (
                     f"曲线 “{_snippet(lab)}”"
                     if lab and not lab.startswith("_")
@@ -780,6 +793,8 @@ def instrument(state: FigState) -> None:
                 gid = f"axes_{i}.{prefix}_{j}"
                 if prefix == "scatter":
                     lab = str(coll.get_label())
+                    if not lab or lab.startswith("_"):
+                        lab = proxy_names.get(id(coll), "")
                     nice = (
                         f"散点 “{_snippet(lab)}”"
                         if lab and not lab.startswith("_")
