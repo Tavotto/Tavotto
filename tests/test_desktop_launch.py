@@ -130,6 +130,188 @@ def test_spawn_launch_clean_exit_means_forwarded():
     assert out["handoff"] == "forwarded" and out["ready"] == "forwarder_exited"
 
 
+# ----------------- 转发卡住：已有实例时，活着的转发进程不是「起来了」 -----------------
+class _StuckProc(_FakeProc):
+    """转发进程挂住：poll 永远 None；terminate 可配成无效（逼出 kill）。"""
+
+    def __init__(self, *, terminate_works=True):
+        super().__init__([None])
+        self.terminated = False
+        self.killed = False
+        self._terminate_works = terminate_works
+
+    def terminate(self):
+        self.terminated = True
+        if self._terminate_works:
+            self._polls = [1]
+
+    def kill(self):
+        self.killed = True
+        self._polls = [1]
+
+
+def _spawn_with(proc, pids, fake):
+    return handoff._launch_desktop_via_spawn(
+        "C:\\T\\Tavotto.exe",
+        handoff.Target("/p", "Fig1"),
+        spawn=lambda argv, **kw: proc,
+        pids_of=lambda app: pids,
+        clock=fake.clock,
+        sleep=fake.sleep,
+    )
+
+
+def test_spawn_forward_stuck_with_existing_instance_is_launch_failed_and_reaped():
+    """#1149：已有实例、转发进程活过窗口 = 转发卡住，不是 process_alive；进程要收掉。"""
+    fake = _FakeClock()
+    proc = _StuckProc()
+    with pytest.raises(handoff.HandoffError) as exc:
+        _spawn_with(proc, [777], fake)
+    err = exc.value
+    assert err.code == "launch_failed" and err.extra["reason"] == "forward_stuck"
+    assert err.extra["retryable"] is False and "app" in err.extra and "log_path" in err.extra
+    assert proc.terminated and not proc.killed
+
+
+def test_spawn_forward_stuck_kills_when_terminate_does_not_take():
+    fake = _FakeClock()
+    proc = _StuckProc(terminate_works=False)
+    with pytest.raises(handoff.HandoffError):
+        _spawn_with(proc, [777], fake)
+    assert proc.terminated and proc.killed
+
+
+def test_spawn_without_existing_instance_alive_is_still_process_alive():
+    fake = _FakeClock()
+    proc = _StuckProc()
+    out = _spawn_with(proc, [], fake)
+    assert out["ready"] == "process_alive" and out["handoff"] == "launched"
+    assert not proc.terminated
+
+
+def test_spawn_unknown_instance_state_keeps_old_behavior():
+    fake = _FakeClock()
+    proc = _StuckProc()
+    out = _spawn_with(proc, None, fake)
+    assert out["ready"] == "process_alive" and not proc.terminated
+
+
+def test_spawn_existing_instance_fast_zero_exit_is_still_forwarded():
+    fake = _FakeClock()
+    out = _spawn_with(_FakeProc([None, 0]), [777], fake)
+    assert out["handoff"] == "forwarded" and out["ready"] == "forwarder_exited"
+
+
+def test_pids_of_windows_matches_image_name_only():
+    csv_out = (
+        '"Tavotto.exe","4321","Console","1","80,000 K"\n"tavotto.exe","99","Console","1","1 K"\n'
+    )
+
+    class R:
+        returncode = 0
+        stdout = csv_out
+        stderr = ""
+
+    calls = []
+
+    def run(argv, **kw):
+        calls.append(argv)
+        return R()
+
+    assert handoff._pids_of_windows("C:\\x\\Tavotto.exe", run=run) == [4321, 99]
+    assert calls[0][:3] == ["tasklist", "/FI", "IMAGENAME eq Tavotto.exe"]
+
+    class Empty(R):
+        stdout = "信息: 没有运行的任务匹配指定标准。\n"
+
+    assert handoff._pids_of_windows("Tavotto.exe", run=lambda argv, **kw: Empty()) == []
+
+    class Bad(R):
+        returncode = 1
+
+    assert handoff._pids_of_windows("Tavotto.exe", run=lambda argv, **kw: Bad()) is None
+
+    def boom(argv, **kw):
+        raise OSError("no tasklist")
+
+    assert handoff._pids_of_windows("Tavotto.exe", run=boom) is None
+
+
+# ----------------- 沙箱判据：受限令牌 / AppContainer 里不拉进程 -----------------
+_WIN_APP = "C:\\Tools\\Tavotto\\Tavotto.exe"
+
+
+def _win_launch(probe, spawn):
+    return handoff.launch(
+        handoff.Target("/p", "Fig1"),
+        system="win32",
+        environ={handoff.APP_ENV: _WIN_APP},
+        isfile=lambda p: p == _WIN_APP,
+        spawn=spawn,
+        token_probe=probe,
+        pids_of=lambda app: [],
+    )
+
+
+@pytest.mark.parametrize("kind", ["restricted_token", "app_container"])
+def test_sandboxed_token_refuses_before_any_spawn(kind):
+    def no_spawn(argv, **kw):
+        pytest.fail("受限沙箱里不许拉进程")
+
+    with pytest.raises(handoff.HandoffError) as exc:
+        _win_launch(lambda: kind, no_spawn)
+    err = exc.value
+    assert err.code == "sandboxed_launch"
+    assert err.extra["sandbox"] == kind and err.extra["retryable"] is True
+    assert err.extra["app"] == _WIN_APP and "log_path" in err.extra
+    assert "沙箱外" in str(err)
+
+
+def test_sandbox_probe_error_or_unknown_keeps_old_behavior():
+    def boom():
+        raise OSError("ctypes broke")
+
+    for probe in (boom, lambda: None):
+        spawned = []
+        proc = _FakeProc([None])
+        out = _win_launch(probe, lambda argv, **kw: spawned.append(argv) or proc)
+        assert spawned and out["mode"] == "desktop"
+
+
+def test_sandbox_probe_is_windows_only(monkeypatch):
+    app = "/A/Tavotto"
+    for system in ("linux", "darwin"):
+        called = []
+        spawned = []
+        out = handoff.launch(
+            handoff.Target("/p", None),
+            system=system,
+            environ={handoff.APP_ENV: app},
+            isfile=lambda p: p == app,
+            spawn=lambda argv, **kw: spawned.append(argv) or _FakeProc([None]),
+            token_probe=lambda: called.append(1) or "restricted_token",
+            pids_of=lambda a: [],
+        )
+        assert not called and spawned and out["mode"] == "desktop"
+    assert handoff._sandbox_kind("linux", lambda: "restricted_token") is None
+    assert handoff._sandbox_kind("win32", lambda: "bogus") is None
+    assert handoff._windows_token_sandbox() is None if handoff.os.name != "nt" else True
+
+
+def test_sandboxed_launch_json_carries_the_fields(figures, monkeypatch):
+    monkeypatch.setattr(handoff, "find_desktop_app", lambda **kw: _WIN_APP)
+    monkeypatch.setattr(handoff.sys, "platform", "win32")
+    monkeypatch.setattr(handoff, "_windows_token_sandbox", lambda: "restricted_token")
+    monkeypatch.setattr(handoff, "_spawn_detached", lambda *a, **kw: pytest.fail("不该拉进程"))
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        rc = handoff.cli([str(figures / "Fig1_demo.pdf"), "--json"])
+    out = json.loads(buf.getvalue().strip().splitlines()[-1])
+    assert rc == 2 and out["protocol"] == 1 and out["ok"] is False
+    assert out["code"] == "sandboxed_launch" and out["sandbox"] == "restricted_token"
+    assert out["retryable"] is True
+
+
 # --------------------------- LaunchServices 那条 ---------------------------
 def _open_ok(argv, **kw):
     class R:

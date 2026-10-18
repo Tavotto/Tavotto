@@ -615,10 +615,13 @@ def desktop_argv(app: str, target: Target) -> list[str]:
 #:                在这窗口里就消失了
 #: CRASH_WINDOW   直接 spawn 那条路上观察「起来就死」的窗口
 #: POLL           轮询间隔
+#: REAP_WINDOW    卡住的转发进程 terminate 后最多等多久再 kill
 LAUNCH_READY_TIMEOUT = 20.0
 LAUNCH_SETTLE = 1.5
 LAUNCH_CRASH_WINDOW = 6.0
 LAUNCH_POLL = 0.15
+#: 收卡住的转发进程：terminate 之后等它走多久，不走就 kill
+LAUNCH_REAP_WINDOW = 2.0
 
 
 def _spawn_detached(argv: list[str], *, spawn=subprocess.Popen):
@@ -684,6 +687,8 @@ def _pids_of(exe: str, *, run=subprocess.run) -> "list[int] | None":
     macOS 上 `ps -axo pid=,comm=` 的 comm 是完整可执行路径——按整条路径比，
     不做子串匹配（`Tavotto` 会撞上别的进程）。
     """
+    if os.name == "nt":
+        return _pids_of_windows(exe, run=run)
     if os.name != "posix":
         return None
     try:
@@ -701,6 +706,41 @@ def _pids_of(exe: str, *, run=subprocess.run) -> "list[int] | None":
         if comm.strip() == exe:
             try:
                 pids.append(int(pid_s))
+            except ValueError:
+                continue
+    return pids
+
+
+def _pids_of_windows(exe: str, *, run=subprocess.run) -> "list[int] | None":
+    """Windows：按映像名（如 `Tavotto.exe`）列进程号；查不了回 None。
+
+    `tasklist` 只看得到映像名、看不到完整路径，所以另一份安装目录里的同名
+    `Tavotto.exe` 也会算进来——这里只用来回答「桌面应用是不是已经在跑」，
+    而 Tavotto 本就是单实例，同名即同一个应用。没有匹配时 tasklist 打一句
+    本地化的提示（不是 CSV），按第一列精确比对自然把它滤掉。
+    """
+    import csv
+
+    image = exe.replace("\\", "/").rsplit("/", 1)[-1]
+    if not image:
+        return None
+    try:
+        proc = run(
+            ["tasklist", "/FI", f"IMAGENAME eq {image}", "/FO", "CSV", "/NH"],
+            capture_output=True,
+            text=True,
+            errors="replace",
+            timeout=10,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if proc.returncode != 0:
+        return None
+    pids: list[int] = []
+    for row in csv.reader((proc.stdout or "").splitlines()):
+        if len(row) >= 2 and row[0].lower() == image.lower():
+            try:
+                pids.append(int(row[1]))
             except ValueError:
                 continue
     return pids
@@ -741,6 +781,83 @@ def _launch_failed(
 ) -> HandoffError:
     log = sidecar_log_path()
     return HandoffError(message, code, app=app, log_path=log, retryable=retryable, **extra)
+
+
+def _windows_token_sandbox() -> "str | None":
+    """当前进程令牌是不是受限沙箱：`"app_container"` / `"restricted_token"` / None。
+
+    只读、无副作用，只在 Windows 上有意义。Codex 的默认沙箱（`unelevated`）给命令
+    一枚**受限令牌**（`TokenIsRestricted`），从里面拉起的 `Tavotto.exe` 写不进
+    WebView2 与数据目录，Tauri 的 setup 钩子 panic（os error 5）；已经开着的窗口
+    也收不到转发。判据只看操作系统令牌，**不认任何宿主私有的环境变量**。
+
+    任何 ctypes / OSError 失败都回 None（查不出来就按原有行为走，不误伤）。
+    `GetCurrentProcess` 返回的是伪句柄 -1，argtypes 不写全会 OverflowError。
+    """
+    if os.name != "nt":
+        return None
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        advapi32 = ctypes.WinDLL("advapi32", use_last_error=True)
+        kernel32.GetCurrentProcess.argtypes = []
+        kernel32.GetCurrentProcess.restype = wintypes.HANDLE
+        kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+        kernel32.CloseHandle.restype = wintypes.BOOL
+        advapi32.OpenProcessToken.argtypes = [
+            wintypes.HANDLE,
+            wintypes.DWORD,
+            ctypes.POINTER(wintypes.HANDLE),
+        ]
+        advapi32.OpenProcessToken.restype = wintypes.BOOL
+        advapi32.GetTokenInformation.argtypes = [
+            wintypes.HANDLE,
+            ctypes.c_int,
+            wintypes.LPVOID,
+            wintypes.DWORD,
+            ctypes.POINTER(wintypes.DWORD),
+        ]
+        advapi32.GetTokenInformation.restype = wintypes.BOOL
+
+        token = wintypes.HANDLE()
+        token_query = 0x0008
+        if not advapi32.OpenProcessToken(
+            kernel32.GetCurrentProcess(), token_query, ctypes.byref(token)
+        ):
+            return None
+        try:
+
+            def flag(info_class: int) -> bool:
+                value = wintypes.DWORD(0)
+                got = wintypes.DWORD(0)
+                ok = advapi32.GetTokenInformation(
+                    token, info_class, ctypes.byref(value), ctypes.sizeof(value), ctypes.byref(got)
+                )
+                return bool(ok) and value.value != 0
+
+            if flag(29):  # TokenIsAppContainer
+                return "app_container"
+            if flag(40):  # TokenIsRestricted
+                return "restricted_token"
+            return None
+        finally:
+            kernel32.CloseHandle(token)
+    except Exception:  # noqa: BLE001 —— ctypes 的 OSError / OverflowError / ArgumentError 都算查不出
+        return None
+
+
+def _sandbox_kind(system: str, probe=None) -> "str | None":
+    """桌面路径唤起前的沙箱判据；非 Windows 恒 None，探测抛什么都当没查出来。"""
+    if not system.startswith("win"):
+        return None
+    probe = _windows_token_sandbox if probe is None else probe
+    try:
+        kind = probe()
+    except Exception:  # noqa: BLE001 —— 探测只能放行，不能把交接拦死
+        return None
+    return kind if kind in ("restricted_token", "app_container") else None
 
 
 def _launch_desktop_via_open(
@@ -838,15 +955,34 @@ def _launch_desktop_via_open(
     )
 
 
+def _reap(proc, *, clock, sleep) -> None:
+    """收掉卡住的转发进程：先 terminate，限期内还没走就 kill——不留孤儿。"""
+    start = clock()
+    try:
+        if hasattr(proc, "terminate"):
+            proc.terminate()
+        while clock() - start < LAUNCH_REAP_WINDOW:
+            if proc.poll() is not None:
+                return
+            sleep(LAUNCH_POLL)
+        if hasattr(proc, "kill"):
+            proc.kill()
+    except OSError:
+        pass  # 进程已经没了，或权限不够——收不掉也不能盖过要报的失败
+
+
 def _launch_desktop_via_spawn(
-    app: str, target: Target, *, spawn=None, clock=None, sleep=None
+    app: str, target: Target, *, spawn=None, clock=None, sleep=None, pids_of=None
 ) -> dict:
     """Windows（以及指到裸二进制、拼不出 bundle 的 macOS 覆盖）：直接 spawn。
 
     就绪判据（带限期的轮询，不是 sleep）：
       * 进程在观察窗口里退出且退出码非零 → launch_failed（带 exit_code/signal）
       * 进程很快以 0 退出 → 单实例转发给了已在跑的窗口，算成功（forwarded）
-      * 进程活过观察窗口 → 算起来了（process_alive）
+      * 进程活过观察窗口 → 算起来了（process_alive）；**但 spawn 之前就已有实例时
+        不是**：新进程本该把 argv 转发出去就退出，活着不退 = 转发卡住（受限环境里
+        进程被拦在单实例通道外，#1149），先收掉它再报 launch_failed
+        （`reason: "forward_stuck"`）。查不出有没有实例（None）时保持旧行为。
     """
     import time as _time
 
@@ -854,7 +990,9 @@ def _launch_desktop_via_spawn(
     clock = _time.monotonic if clock is None else clock
     sleep = _time.sleep if sleep is None else sleep
 
+    pids_of = _pids_of if pids_of is None else pids_of
     argv = desktop_argv(app, target)
+    already = bool(pids_of(app))
     try:
         proc = _spawn_detached(argv, spawn=spawn)
     except OSError as exc:
@@ -901,6 +1039,15 @@ def _launch_desktop_via_spawn(
             ),
             app,
             **details,
+        )
+    if already:
+        _reap(proc, clock=clock, sleep=sleep)
+        raise _launch_failed(
+            "Tavotto 桌面应用已在运行，但把这次交接转发给它的进程卡住了"
+            f"（{LAUNCH_CRASH_WINDOW:g}s 内没有退出），已结束该进程。"
+            "多半是当前环境（受限沙箱）挡住了进程间转发，请在沙箱外重新运行同一条交接命令。",
+            app,
+            reason="forward_stuck",
         )
     return {
         "mode": "desktop",
@@ -965,6 +1112,7 @@ def launch(
     pids_of=None,
     clock=None,
     sleep=None,
+    token_probe=None,
 ) -> dict:
     """唤起界面。返回 {"mode": ..., ...}；mode 是给插件看的机器可读值。
 
@@ -983,7 +1131,24 @@ def launch(
                 return _launch_desktop_via_open(
                     app, bundle, target, run=run, pids_of=pids_of, clock=clock, sleep=sleep
                 )
-            return _launch_desktop_via_spawn(app, target, spawn=spawn, clock=clock, sleep=sleep)
+            kind = _sandbox_kind(sysname, token_probe)
+            if kind:
+                # 不拉进程：受限令牌下 Tauri setup 写不进 WebView2 / 数据目录会 panic，
+                # 转发给已开着的窗口也送不到（#1149）。**不借别的进程绕出沙箱**——
+                # 那是逃逸；让调用方在沙箱外重跑同一条命令。
+                raise _launch_failed(
+                    "当前进程在受限沙箱里"
+                    + ("（AppContainer）" if kind == "app_container" else "（受限令牌）")
+                    + "，Tavotto 桌面应用在这里起不来，也转发不到已开着的窗口。"
+                    "请在沙箱外重新运行同一条交接命令。",
+                    app,
+                    code="sandboxed_launch",
+                    retryable=True,
+                    sandbox=kind,
+                )
+            return _launch_desktop_via_spawn(
+                app, target, spawn=spawn, clock=clock, sleep=sleep, pids_of=pids_of
+            )
         if prefer == "desktop":
             raise HandoffError(
                 "没找到 Tavotto 桌面应用。装一个（GitHub Releases），"
