@@ -1795,6 +1795,12 @@ def fallback_stems(taken, script_stem: str, count: int) -> list[str]:
     return out
 
 
+def claimed_ids(capture) -> set[int]:
+    """已被 savefig（或别的来源）认领进 `capture` 的 Figure 的 id——`collect_pyplot_figures` 去重与
+    `ShownFigures` 执行上限用的是**同一个**判据。"""
+    return {id(f) for f in (capture or {}).values()}
+
+
 class ShownFigures:
     """`plt.show()` 那一刻还开着的 pyplot Figure 的账（有界）。
 
@@ -1804,7 +1810,8 @@ class ShownFigures:
 
     有界：最多强引用 `limit` 张（超出的只在 `overflow` 里计数，Figure 本身不留——
     `for i in range(10000): ...; plt.show(); plt.close()` 不能把内存烧光）；身份判重用弱引用集合，
-    同一张图 show 多次只记一次。不改 Gcf 的活动图（不碰 `plt.figure(num)`），脚本之后的 `plt.gcf()` 不变。
+    同一张图 show 多次只记一次。上限只限 pyplot 兜底：此刻已被 savefig 认领的图不占名额（`note(capture=)`，
+    判据 `claimed_ids`），之后才认领的会在下一次 show 时腾出名额。不改 Gcf 的活动图（不碰 `plt.figure(num)`），脚本之后的 `plt.gcf()` 不变。
     """
 
     def __init__(self, limit: int = MAX_PYPLOT_FALLBACK):
@@ -1818,27 +1825,31 @@ class ShownFigures:
         self._seen = weakref.WeakSet()
         self._overflowed = weakref.WeakSet()
 
-    def note(self, plt) -> None:
-        """记下此刻 Gcf 里所有开着的 Figure（show 调用时）。"""
+    def note(self, plt, capture: dict | None = None) -> None:
+        """记下此刻 Gcf 里所有开着的 Figure（show 调用时）。`capture` 是 savefig 已认领的图（见 `claimed_ids`）。"""
+        claimed = claimed_ids(capture)
+        # 已被 savefig 认领的不必再留强引用（capture 自己握着），腾出名额给兜底的图
+        self.kept = [f for f in self.kept if id(f) not in claimed]
         for manager in list(plt._pylab_helpers.Gcf.get_all_fig_managers()):
             fig = manager.canvas.figure
             if fig in self._seen:
                 continue
             self._seen.add(fig)
+            if id(fig) in claimed:
+                continue
             if len(self.kept) < self.limit:
                 self.kept.append(fig)
             else:
                 self.overflow += 1
                 self._overflowed.add(fig)
 
-    def overflow_closed(self, plt) -> int:
-        """超出上限、且跑完时已经关掉的张数（仍开着的归 `collect_pyplot_figures` 数）。"""
-        still_open = sum(
-            1
-            for m in plt._pylab_helpers.Gcf.get_all_fig_managers()
-            if m.canvas.figure in self._overflowed
-        )
-        return max(0, self.overflow - still_open)
+    def overflow_closed(self, plt, capture: dict | None = None) -> int:
+        """超出上限、且跑完时已经关掉、也没被 savefig 认领的张数
+        （仍开着的归 `collect_pyplot_figures` 数，认领了的已经在 `capture` 里）。"""
+        claimed = claimed_ids(capture)
+        open_ids = {id(m.canvas.figure) for m in plt._pylab_helpers.Gcf.get_all_fig_managers()}
+        accounted = sum(1 for f in list(self._overflowed) if id(f) in open_ids or id(f) in claimed)
+        return max(0, self.overflow - accounted)
 
 
 def collect_pyplot_figures(
@@ -1865,7 +1876,7 @@ def collect_pyplot_figures(
     跑完仍活着的图**之前**（它们先于脚本结尾出现），同一张图仍只一个 stem、仍受同一个上限。
     不传 = 只看跑完仍活着的（浏览器 playground 与 native 的既有行为）。
     """
-    seen = {id(f) for f in capture.values()}
+    seen = claimed_ids(capture)
     pending = []
     for fig in shown.kept if shown is not None else ():
         if id(fig) in seen:
@@ -1882,7 +1893,7 @@ def collect_pyplot_figures(
     if dropped:
         pending = pending[: max(0, int(limit))]
     if shown is not None:
-        dropped += shown.overflow_closed(plt)
+        dropped += shown.overflow_closed(plt, capture)
     stems = fallback_stems(capture.keys(), script_stem, len(pending))
     for stem, fig in zip(stems, pending):
         capture[stem] = fig

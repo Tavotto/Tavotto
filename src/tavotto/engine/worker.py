@@ -249,7 +249,8 @@ SESSION: "SafeSession | None" = None
 _intercept = True
 _REAL_SAVEFIG = mfigure.Figure.savefig
 #: 本次 build 里 `plt.show()` 时开着的 Figure 账（见 `figcapture.ShownFigures`）。show 钩子是模块级的
-#: （装在 pyplot 模块上，拿不到 Worker 实例）；一个 worker 进程只 build 一次，一本账够。
+#: （装在 pyplot 模块上，拿不到 Worker 实例）；**每次 build 开始时重新建一本**（`_install_show_capture`）——
+#: build 失败的会话会被复用、重跑脚本，上一次留下的已关闭 Figure 不许带进这一次。
 _SHOWN = figcapture.ShownFigures()
 _SAVEFIG_METADATA = figcapture.savefig_metadata_reader(mfigure)
 #: 正在用户的 `paper_style.save(fig, stem)` 里：其间的 savefig 一律记到这个 stem 名下
@@ -289,13 +290,17 @@ def _install_show_capture() -> None:
     """
     import importlib.abc  # noqa: PLC0415
 
+    global _SHOWN
+    _SHOWN = figcapture.ShownFigures()
+
     def wrap(plt) -> None:
         real_show = plt.show
         if getattr(real_show, "_tavotto_show_capture", False):
             return
 
         def _show_with_capture(*args, **kwargs):
-            _SHOWN.note(plt)
+            # 钩子每次都读模块全局 `_SHOWN`（当前这本账），不抓闭包里的旧对象
+            _SHOWN.note(plt, SESSION.capture if SESSION is not None else None)
             return real_show(*args, **kwargs)
 
         _show_with_capture._tavotto_show_capture = True

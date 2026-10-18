@@ -214,3 +214,73 @@ for i in range(5):
     resp = build(tmp_path, src)
     assert len(resp["stems"]) == 5
     assert not resp.get("dropped_figures")
+
+
+RETRY_SRC = """\
+import builtins
+
+import matplotlib.pyplot as plt
+
+run = getattr(builtins, "_g1_run", 0) + 1
+builtins._g1_run = run
+n = 3 if run == 1 else 1
+for i in range(n):
+    plt.figure(figsize=(2.0 + run, 1.5))
+    plt.show()
+    plt.close()
+if run == 1:
+    raise RuntimeError("第一次 build 在 show+close 之后失败")
+"""
+
+
+def test_failed_build_retry_in_same_worker_starts_a_fresh_ledger(tmp_path):
+    """build 失败的会话会被复用、重跑脚本：第二次捕获只来自第二次（Codex #1138 P1）。"""
+    figs = tmp_path / "figs"
+    figs.mkdir()
+    (figs / "g1.py").write_text(RETRY_SRC, encoding="utf-8")
+    w = pool.one_shot("g1.py", str(figs), "__main__")
+    try:
+        with pytest.raises(Exception):
+            w.ensure_built()
+        assert w.build_failed
+        resp = w.ensure_built()
+    finally:
+        pool.discard(w)
+    stems = resp["stems"]
+    assert list(stems) == ["g1"]
+
+
+def test_savefig_claimed_figures_do_not_eat_the_fallback_cap(tmp_path):
+    """10 张 show+close，前两张显式 savefig：8 张兜底 + 2 张 savefig，不丢（Codex #1138 P2）。"""
+    src = """\
+import matplotlib.pyplot as plt
+
+for i in range(10):
+    fig = plt.figure(figsize=(2.0, 1.5))
+    if i < 2:
+        fig.savefig(f"saved{i}.png")
+    plt.show()
+    plt.close()
+"""
+    resp = build(tmp_path, src)
+    sources = [s["source"] for s in resp["stems"].values()]
+    assert sources.count("savefig") == 2 and sources.count("pyplot") == 8
+    assert not resp.get("dropped_figures")
+
+
+def test_cap_boundary_with_savefig_claims_still_reports_the_excess(tmp_path):
+    """savefig 认领 2 张 + 11 张兜底：兜底仍只留 8 张，丢 3 张。"""
+    src = """\
+import matplotlib.pyplot as plt
+
+for i in range(13):
+    fig = plt.figure(figsize=(2.0, 1.5))
+    if i < 2:
+        fig.savefig(f"saved{i}.png")
+    plt.show()
+    plt.close()
+"""
+    resp = build(tmp_path, src)
+    sources = [s["source"] for s in resp["stems"].values()]
+    assert sources.count("savefig") == 2 and sources.count("pyplot") == 8
+    assert resp.get("dropped_figures") == 3
