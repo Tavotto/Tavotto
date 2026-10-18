@@ -193,6 +193,18 @@ def preflight() -> list[str]:
     return missing
 
 
+def matches_head(root: Path, rel: str, path: Path | None = None) -> bool:
+    """工作区里的 `rel` 与 HEAD 里评审过的那份是否同一内容——按 git 自己的换行 / 过滤规则比
+    （`git hash-object --path` 对工作区文件做与提交时相同的规范化，再与 `HEAD:rel` 的 blob id 比）。
+    直接比字节在 Windows 上恒不等：checkout 按 `core.autocrlf` 把 LF 写成 CRLF。"""
+    path = path or contained(root, rel)
+    head = subprocess.check_output(["git", "rev-parse", f"HEAD:{rel}"], cwd=root, text=True).strip()
+    work = subprocess.check_output(
+        ["git", "hash-object", f"--path={rel}", "--", str(path)], cwd=root, text=True
+    ).strip()
+    return work == head
+
+
 def registered(suite: str) -> dict[str, dict]:
     metadata = (
         ["tests/compat/manifest.json"]
@@ -201,8 +213,7 @@ def registered(suite: str) -> dict[str, dict]:
     )
     metadata = [*metadata, EX.RELATIVE_PATH, EX.SCHEMA_RELATIVE_PATH]
     for rel in metadata:
-        blob = subprocess.check_output(["git", "show", f"HEAD:{rel}"], cwd=ROOT)
-        if contained(ROOT, rel).read_bytes() != blob:
+        if not matches_head(ROOT, rel):
             raise EvidenceError(f"execution metadata differs from reviewed HEAD: {rel}")
     if suite == "compat_engine":
         return {c["id"]: c for c in CC.load_manifest()["cases"]}
@@ -233,7 +244,7 @@ def fixture_files(suite: str, case: dict) -> dict[str, str]:
         checked = contained(ROOT, rel)
         # The review boundary is the committed repository corpus, not a CLI flag.
         blob = subprocess.check_output(["git", "show", f"HEAD:{rel}"], cwd=ROOT)
-        if blob != checked.read_bytes():
+        if not matches_head(ROOT, rel, checked):
             raise EvidenceError(f"fixture differs from reviewed HEAD: {rel}")
         result[rel] = digest(blob)
     if not result:
