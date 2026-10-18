@@ -5183,6 +5183,25 @@ def api_handoff_render_status():
     return jsonify(engine_handoffreceipt.query(project, stem, since))
 
 
+@app.post("/api/handoff/display-ack")
+def api_handoff_display_ack():
+    """重复交接命中已显示面板时，前端回一条「这张图当前的渲染状态」（ADR 0131 第六节修订 2026-10-18）。
+
+    只有会话 cookie / 完整 secret 能写（guard 的 scoped 只读 token 只认 GET render-status）；
+    结论按**当前时间**记进 `LEDGER`，键与形状同 `_note_handoff_render`，`verified` 仍由 `summarize` 判。
+    """
+    ack = engine_handoffreceipt.parse_ack(request.get_json(silent=True))
+    stem = _handoff_target_stem(ack["id"]) if ack else ""
+    if ack is None or not stem:
+        return jsonify({"error": "参数无效", "code": "bad_handoff_ack"}), 400
+    try:
+        registry_match = bool(current_registry().for_stem(Path(stem).stem))
+    except Exception:  # noqa: BLE001 —— 结论表是旁路，查不到注册表按不匹配（verified=false）
+        registry_match = False
+    engine_handoffreceipt.record_ack(current_ctx().path, stem, ack, registry_match=registry_match)
+    return jsonify({"ok": True})
+
+
 @app.post("/api/engine/render")
 def api_engine_render():
     """应用全量 override 列表并重渲染，返回新 manifest 与版本号。
