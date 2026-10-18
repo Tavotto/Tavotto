@@ -1,0 +1,112 @@
+[
+  {
+    "name": "persisted send lease",
+    "file": "src/native/store.ts",
+    "before": "(SELECT lease_until FROM head_requests WHERE request_key=? AND attempt=?)",
+    "after": "(SELECT 0*lease_until FROM head_requests WHERE request_key=? AND attempt=?)",
+    "pattern": "inflight recovery cannot terminalize a negative send revision=false",
+    "testFile": "tests/inflight-publication.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "active send claim exclusion",
+    "file": "src/native/store.ts",
+    "before": "      AND NOT EXISTS(SELECT 1 FROM publication_attempts p WHERE p.target_key=outbox.target_key AND p.phase='issued' AND p.send_until>${DB_NOW})",
+    "after": "",
+    "pattern": "inflight recovery cannot terminalize a negative send revision=false",
+    "testFile": "tests/inflight-publication.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "active send eligibility",
+    "file": "src/native/store.ts",
+    "before": "      AND (p.phase!='issued' OR p.send_until<=${DB_NOW})\n",
+    "after": "",
+    "pattern": "active send fence defeats changed generation and expired negative proof urgency",
+    "testFile": "tests/inflight-publication.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "active send next deadline",
+    "file": "src/native/store.ts",
+    "before": "CASE WHEN p.phase='issued' AND p.send_until>${DB_NOW} THEN p.send_until\n      WHEN",
+    "after": "CASE WHEN",
+    "pattern": "active send fence defeats changed generation and expired negative proof urgency",
+    "testFile": "tests/inflight-publication.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "reconciliation snapshot CAS",
+    "file": "src/native/store.ts",
+    "before": "observed_generation=? WHERE id=?\n        AND phase=? AND (phase!='issued' OR send_until<=${DB_NOW})",
+    "after": "observed_generation=? WHERE id=?\n        AND (? IS NOT NULL) AND (phase!='issued' OR send_until<=${DB_NOW})",
+    "pattern": "stale recovery phase cannot overwrite concurrent negative settlement record",
+    "testFile": "tests/inflight-publication.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "failure snapshot CAS",
+    "file": "src/native/store.ts",
+    "before": "reconcile_attempts=min(3,reconcile_attempts+1),observed_generation=?,updated=${DB_NOW} WHERE id=?\n      AND phase=? AND (phase!='issued' OR send_until<=${DB_NOW})",
+    "after": "reconcile_attempts=min(3,reconcile_attempts+1),observed_generation=?,updated=${DB_NOW} WHERE id=?\n      AND (? IS NOT NULL) AND (phase!='issued' OR send_until<=${DB_NOW})",
+    "pattern": "stale recovery phase cannot overwrite concurrent negative settlement failure",
+    "testFile": "tests/inflight-publication.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "deferral snapshot CAS",
+    "file": "src/native/store.ts",
+    "before": "observation='budget_deferred',reconcile_due=${DB_NOW}+60,observed_generation=?,updated=${DB_NOW} WHERE id=?\n      AND phase=? AND (phase!='issued' OR send_until<=${DB_NOW})",
+    "after": "observation='budget_deferred',reconcile_due=${DB_NOW}+60,observed_generation=?,updated=${DB_NOW} WHERE id=?\n      AND (? IS NOT NULL) AND (phase!='issued' OR send_until<=${DB_NOW})",
+    "pattern": "stale recovery phase cannot overwrite concurrent negative settlement defer",
+    "testFile": "tests/inflight-publication.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "automatic settlement cannot resurrect manual",
+    "file": "src/native/store.ts",
+    "before": "WHERE id=? AND phase='issued' AND send_until>0",
+    "after": "WHERE id=?",
+    "pattern": "negative settlement atomically restores a missing recovery signal and cannot release manual state",
+    "testFile": "tests/inflight-publication.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "automatic wake preserves current lease",
+    "file": "src/native/store.ts",
+    "before": "SET wanted_revision=excluded.wanted_revision,due=0,attempts=0",
+    "after": "SET wanted_revision=excluded.wanted_revision,due=0,attempts=0,lease='',lease_until=0",
+    "pattern": "automatic settlement wakes current revision without releasing another generation lease",
+    "testFile": "tests/inflight-publication.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "automatic settlement durable wake",
+    "file": "src/native/store.ts",
+    "before": "this.stmt(`INSERT INTO outbox(target_key,wanted_revision,due)\n        SELECT target_key,(SELECT revision FROM state WHERE id=1),0 FROM publication_attempts WHERE id=?\n        ON CONFLICT(target_key) DO UPDATE SET wanted_revision=excluded.wanted_revision,due=0,attempts=0`,id)",
+    "after": "this.stmt('SELECT 1')",
+    "pattern": "negative settlement atomically restores a missing recovery signal and cannot release manual state",
+    "testFile": "tests/inflight-publication.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "migration every source column",
+    "file": "migrations/migrate-local-snapshot.py",
+    "before": "or rows(new, target, source_columns[t]) != before[t]",
+    "after": "or False",
+    "pattern": "test_rejects_corrupted_source_column",
+    "testFile": "tests/migration.test.py",
+    "assertionError": true,
+    "runner": "python"
+  },
+  {
+    "name": "migration namespaces new objects",
+    "file": "migrations/migrate-local-snapshot.py",
+    "before": "SELECT name FROM sqlite_schema WHERE sql IS NOT NULL",
+    "after": "SELECT name FROM sqlite_schema WHERE sql IS NOT NULL AND name NOT LIKE 'delegated_%' AND name NOT LIKE 'head_%'",
+    "pattern": "test_exact_history_and_rowid",
+    "testFile": "tests/migration.test.py",
+    "assertionError": true,
+    "runner": "python"
+  }
+]

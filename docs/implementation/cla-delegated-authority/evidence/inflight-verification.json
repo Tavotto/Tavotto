@@ -1,0 +1,107 @@
+{
+  "baseline_commit": "2cf74761ce823eb19f962235839fb0c99f0e7df9",
+  "stage": "P1 fix before commit; source fingerprints identify tested inputs",
+  "review": {
+    "requested_once": "https://github.com/Tavotto/Tavotto/pull/1151#issuecomment-6246617837",
+    "code_finding": "https://github.com/Tavotto/Tavotto/pull/1151#discussion_r4306034335",
+    "security_completed_no_findings": "https://github.com/Tavotto/Tavotto/pull/1151#issuecomment-6246678971",
+    "reviewed_source": "2cf74761ce823eb19f962235839fb0c99f0e7df9",
+    "additional_external_review_requested": false
+  },
+  "commands": [
+    {
+      "command": "npm test",
+      "cwd": "services/cla-cloudflare",
+      "exit_code": 0,
+      "passed": 317,
+      "failed": 0,
+      "skipped": 0,
+      "log": "inflight-node-tests.txt"
+    },
+    {
+      "command": "python3 tests/migration.test.py",
+      "cwd": "services/cla-cloudflare",
+      "exit_code": 0,
+      "passed": 4,
+      "log": "inflight-migration.txt"
+    },
+    {
+      "command": "node tests/mutation-smoke.mjs",
+      "cwd": "services/cla-cloudflare",
+      "exit_code": 0,
+      "detected_mutations": 54,
+      "new_p1_mutations": 12,
+      "selected_child_exit_code": 1,
+      "new_cases_require_actual_AssertionError": true,
+      "log": "inflight-mutations.txt"
+    },
+    {
+      "command": "node scripts/deployment-plan.mjs deployment/wrangler.disabled.json",
+      "exit_code": 0,
+      "ready_to_deploy": false
+    }
+  ],
+  "source_sha256": {
+    "services/cla-cloudflare/migrations/migrate-local-snapshot.py": "1d15a0451a7a624bd731f726dfa415380ff146fa04e10162c6cf2d9aa697a65a",
+    "services/cla-cloudflare/src/native/automatic.ts": "ae02a5044d741471f8297de2bcd4ace99695cfb65d625563e20d55189b13a34e",
+    "services/cla-cloudflare/src/native/schema.sql": "bc8cb9f59b779690bebfffff1fb8ffa062aab12b8af1284cc1c5bd198a45ff0e",
+    "services/cla-cloudflare/src/native/store.ts": "98d6681c2694c4b0d32cc5bb261d6164f6745a057e19a675e4189bfa0c78e22e",
+    "services/cla-cloudflare/tests/automatic-publication.test.mjs": "b7f479f556ae3d0b876865ec434bcc0c7a7e2de1bd3ebdaa40af18d397bc2496",
+    "services/cla-cloudflare/tests/migration.test.py": "8588b3353ad8ef860ce01156d4fba96c50584ca5eb169dce705656748029bbf7",
+    "services/cla-cloudflare/tests/mutation-smoke.mjs": "e0b4ff2c88edbf3b26b27b57e7fbc3c26c86e05990fe66e0d6f78d34196bf5a1",
+    "services/cla-cloudflare/tests/inflight-mutation-cases.json": "96a98bcd77b223d86b38aee5f704519d5667caf7e9d2d4e85681553ac43026de",
+    "services/cla-cloudflare/tests/inflight-publication.test.mjs": "2d1b9c6372e0a0589a024569219a3bf5494c6330dc6aa14a1133204aa2e43b0a"
+  },
+  "constraints": {
+    "synthetic_only": true,
+    "outbound_fetch_forbidden": true,
+    "successful_publication": false,
+    "successful_publication_across_proof_expiry": false,
+    "production_deployment": false,
+    "real_authorization": false
+  },
+  "local_unavailable": [
+    "Ruff (executable/module absent)",
+    "tsc/esbuild/pytest (dependencies unavailable; earlier E403 download not retried)"
+  ],
+  "not_claimed": [
+    "legal identity or legal effect",
+    "real D1 concurrency/clock/migration",
+    "live GitHub/Cloudflare acceptance",
+    "operational dispatch/recovery/CI timing or throughput",
+    "high-risk full CI",
+    "new-head hosted typecheck/build before new run completes"
+  ],
+  "log_sha256": {
+    "inflight-original-independent.json": "9cf25830eaca44754a778cb4e7f26c995d52274ffdc6cc8d9124c2482993aa73",
+    "inflight-migration.txt": "d8bca44dbe93f046a4333e65ede715d6273bcf9b8bf455b533c6fa75e4b5f40c",
+    "inflight-node-tests.txt": "67fdfb7f6734c564662eda451cdd2e7fe14b00431c7eebf37d138ac56eebd014",
+    "inflight-mutations.txt": "cc6f2155d37c87aa26df9626977ca9fc7021a62ff473e5cb1f87b0e7101068a1",
+    "inflight-original-safety-red.txt": "09d9a177fd9a4a4888853a7c0143fa4277e88bc25d63ec8ddb48c494c037b07f",
+    "inflight-independent-mutations.txt": "cc6f2155d37c87aa26df9626977ca9fc7021a62ff473e5cb1f87b0e7101068a1",
+    "inflight-namespace-equivalence.json": "708ec6789e3ee9efae16c9121d0f32c72bd89894944657119745963cc05fe332",
+    "inflight-independent-migration.txt": "0cf57cbf8729980143491e1e90cf89ca373c60c2f055a0e4aa49946257c29314",
+    "inflight-independent-tests.txt": "c9d09c7f1e81ca12363fe7d43452c075efdf6b1e52424ca840519bce1e983046",
+    "inflight-independent-hashes.json": "30ab9cbc653b4760635cfd1a2f8c589af5b03761a9ce49becf73971b6ee2ace3",
+    "inflight-independent-review.json": "ade49845b5cf311c6ffb09a89627cd77c0d7518545f49933132adc9a11aedd83"
+  },
+  "independent_followup": {
+    "baseline": "2cf74761ce823eb19f962235839fb0c99f0e7df9",
+    "targeted_node_passed": 60,
+    "migration_passed": 4,
+    "mutations_detected": 54,
+    "exit_codes": [
+      0,
+      0,
+      0
+    ],
+    "runtime_and_migration_sqlite_schema_equal": true,
+    "objects": 55,
+    "tables": 24,
+    "foreign_keys": 20,
+    "test_setup_retry": "Initial independent isolated copy omitted deployment/, causing ENOENT; no source or policy failure. Completed copy then passed."
+  },
+  "evidence_normalization": {
+    "inflight-original-safety-red.txt": "Only trailing whitespace stripped to pass git diff --check; original byte hash retained in inflight-original-independent.json."
+  }
+}

@@ -80,8 +80,11 @@ export class LiveStore extends Store {
         NOT EXISTS(SELECT 1 FROM publication_attempts WHERE target_key=? AND (head_sha=? OR phase NOT IN ('confirmed','resolved'))) AND
         NOT EXISTS(SELECT 1 FROM refresh_requests WHERE target_key=? AND status='manual')`,
         key,json,check.proof.revision,check.proof.issued_at,check.proof.expires_at,job.request_key,job.pr,job.head,job.attempt,key,job.head,key),
-      this.stmt(`INSERT INTO publication_attempts(id,target_key,head_sha,revision,expires,phase,created,updated,conclusion,proof_text)
-        VALUES(?,?,?,?,?,'issued',${DB_NOW},${DB_NOW},?,?)`,id,key,check.headSha,check.proof.revision,check.proof.expires_at,check.conclusion,check.text),
+      // The head claim's persisted lease outlives the invocation's 90-second cleanup
+      // budget. A recovery tick/revision change cannot terminalize a live sender.
+      this.stmt(`INSERT INTO publication_attempts(id,target_key,head_sha,revision,expires,phase,created,updated,conclusion,proof_text,send_until)
+        VALUES(?,?,?,?,?,'issued',${DB_NOW},${DB_NOW},?,?,(SELECT lease_until FROM head_requests WHERE request_key=? AND attempt=?))`,
+        id,key,check.headSha,check.proof.revision,check.proof.expires_at,check.conclusion,check.text,job.request_key,job.attempt),
       this.stmt("UPDATE head_requests SET status='dispatched',result='' WHERE request_key=? AND attempt=?",job.request_key,job.attempt),
       this.stmt(`INSERT INTO outbox(target_key,wanted_revision,due) VALUES(?,?,0) ON CONFLICT(target_key) DO UPDATE SET
         wanted_revision=excluded.wanted_revision,generation=outbox.generation+1,due=0,attempts=0`,key,check.proof.revision),
@@ -179,6 +182,7 @@ export class LiveStore extends Store {
   }
   private eligible(job:Job):string {
     return `p.phase NOT IN ('resolved','manual') AND p.reconcile_attempts<3 AND p.reconcile_due IS NOT NULL
+      AND (p.phase!='issued' OR p.send_until<=${DB_NOW})
       AND (p.reconcile_due<=${DB_NOW} OR (p.observation!='budget_deferred' AND p.reconcile_attempts=0 AND (p.observed_generation!=${job.generation} OR p.expires<=${DB_NOW})))
       AND p.rowid=(SELECT max(q.rowid) FROM publication_attempts q WHERE q.target_key=p.target_key AND q.head_sha=p.head_sha)`;
   }
@@ -195,12 +199,14 @@ export class LiveStore extends Store {
       phase=CASE WHEN reconcile_attempts>=2 THEN 'manual' ELSE phase END,
       observation=CASE WHEN reconcile_attempts>=2 THEN 'retry_exhausted' ELSE 'retry_pending' END,
       reconcile_due=CASE WHEN reconcile_attempts>=2 THEN NULL ELSE ${DB_NOW}+CASE reconcile_attempts WHEN 0 THEN 2 WHEN 1 THEN 4 ELSE 8 END END,
-      reconcile_attempts=min(3,reconcile_attempts+1),observed_generation=?,updated=${DB_NOW} WHERE id=?`,job.generation,p.id),
+      reconcile_attempts=min(3,reconcile_attempts+1),observed_generation=?,updated=${DB_NOW} WHERE id=?
+      AND phase=? AND (phase!='issued' OR send_until<=${DB_NOW})`,job.generation,p.id,p.phase),
       ...this.guard('changes()=1'),...this.advance(job,p)]);
   }
   async deferPublication(job:Job,p:Publication,revision:number):Promise<void> {
     await this.batch([...this.leaseGuard(job,revision),this.stmt(`UPDATE publication_attempts SET
-      observation='budget_deferred',reconcile_due=${DB_NOW}+60,observed_generation=?,updated=${DB_NOW} WHERE id=?`,job.generation,p.id),
+      observation='budget_deferred',reconcile_due=${DB_NOW}+60,observed_generation=?,updated=${DB_NOW} WHERE id=?
+      AND phase=? AND (phase!='issued' OR send_until<=${DB_NOW})`,job.generation,p.id,p.phase),
       ...this.guard('changes()=1'),...this.advance(job,p),
       this.stmt(`UPDATE outbox SET due=${DB_NOW}+1,lease='',lease_until=0 WHERE target_key=? AND lease=? AND generation=?`,job.target_key,job.lease,job.generation)]);
   }
@@ -211,7 +217,8 @@ export class LiveStore extends Store {
   async finishBatch(job:Job,revision:number):Promise<void> {
     const progress=(await this.stmt('SELECT cursor,horizon FROM reconciliation_progress WHERE target_key=?',job.target_key).first<Progress>())!;
     const ahead=await this.stmt(`SELECT 1 FROM publication_attempts p WHERE p.target_key=? AND p.rowid>? AND p.rowid<=? AND ${this.eligible(job)} LIMIT 1`,job.target_key,progress.cursor,progress.horizon).first();
-    const next=await this.stmt(`SELECT min(CASE WHEN p.observation!='budget_deferred' AND p.reconcile_attempts=0 AND (p.observed_generation!=? OR p.expires<=${DB_NOW}) THEN 0 ELSE p.reconcile_due END) AS due
+    const next=await this.stmt(`SELECT min(CASE WHEN p.phase='issued' AND p.send_until>${DB_NOW} THEN p.send_until
+      WHEN p.observation!='budget_deferred' AND p.reconcile_attempts=0 AND (p.observed_generation!=? OR p.expires<=${DB_NOW}) THEN 0 ELSE p.reconcile_due END) AS due
       FROM publication_attempts p WHERE p.target_key=? AND p.phase NOT IN ('resolved','manual') AND p.reconcile_attempts<3
       AND p.rowid=(SELECT max(q.rowid) FROM publication_attempts q WHERE q.target_key=p.target_key AND q.head_sha=p.head_sha)`,job.generation,job.target_key).first<{due:number|null}>();
     const pending=`SELECT r.due FROM refresh_requests r WHERE r.target_key=outbox.target_key AND r.status='pending'
@@ -246,6 +253,7 @@ export class LiveStore extends Store {
   override async claim(_now:number):Promise<ClaimedJob|null> {
     const result=await this.db.batch<ClaimedJob>([this.stmt(`UPDATE outbox SET lease=?,lease_until=${DB_NOW}+120
       WHERE target_key=(SELECT target_key FROM outbox WHERE due<=${DB_NOW} AND lease_until<=${DB_NOW} AND attempts<3
+      AND NOT EXISTS(SELECT 1 FROM publication_attempts p WHERE p.target_key=outbox.target_key AND p.phase='issued' AND p.send_until>${DB_NOW})
       ORDER BY due,target_key LIMIT 1) AND lease_until<=${DB_NOW} RETURNING *,${DB_NOW} AS lease_clock`,randomToken())]);return result[0]?.results[0] ?? null;
   }
   override async owns(job:Job,_now:number):Promise<boolean> {
@@ -260,7 +268,8 @@ export class LiveStore extends Store {
       ...this.guard(`EXISTS(SELECT 1 FROM outbox WHERE target_key=? AND lease=? AND lease_until>${DB_NOW} AND generation=?)
         AND (SELECT revision FROM state WHERE id=1)=?`,job.target_key,job.lease,job.generation,revision),
       this.stmt(`UPDATE publication_attempts SET phase=?,run_id=?,observation=?,updated=${DB_NOW},reconcile_due=?,reconcile_attempts=0,observed_generation=? WHERE id=?
-        AND (?!='confirmed' OR (revision=? AND expires>${DB_NOW}))`,phase,run,observation,due,job.generation,p.id,phase,revision),
+        AND phase=? AND (phase!='issued' OR send_until<=${DB_NOW})
+        AND (?!='confirmed' OR (revision=? AND expires>${DB_NOW}))`,phase,run,observation,due,job.generation,p.id,p.phase,phase,revision),
       ...this.guard('changes()=1'),
       ...(p.position===undefined?[]:this.advance(job,p)),
     ]);
@@ -278,6 +287,18 @@ export class LiveStore extends Store {
       this.stmt(`UPDATE publication_attempts SET phase=?,run_id=?,updated=${DB_NOW} WHERE id=? AND phase='issued'
         AND (?!='confirmed' OR (revision=(SELECT revision FROM state WHERE id=1) AND expires>${DB_NOW}))`,phase,run,id,phase),
       ...this.guard('changes()=1'),
+    ]);
+  }
+  async settleAutomaticPublication(id:string,phase:'unknown'|'reconcile',run:number|null=null):Promise<void> {
+    await this.batch([
+      this.stmt(`UPDATE publication_attempts SET phase=?,run_id=?,updated=${DB_NOW},send_until=0,reconcile_due=0
+        WHERE id=? AND phase='issued' AND send_until>0`,phase,run,id),
+      ...this.guard('changes()=1'),
+      // Wake current evidence, without releasing any concurrently claimed lease
+      // or changing its generation. Stale selected rows are rejected by phase CAS.
+      this.stmt(`INSERT INTO outbox(target_key,wanted_revision,due)
+        SELECT target_key,(SELECT revision FROM state WHERE id=1),0 FROM publication_attempts WHERE id=?
+        ON CONFLICT(target_key) DO UPDATE SET wanted_revision=excluded.wanted_revision,due=0,attempts=0`,id),
     ]);
   }
   override async addOAuth(hash:string,browser:string,cipher:string,_expires:number):Promise<void> {

@@ -34,6 +34,12 @@ The native entry is src/entry.ts. Each capability requires its explicit environm
 
 migrations/migrate-local-snapshot.py reads a canonical local v1 snapshot and creates a different local output file. It refuses unknown schemas/triggers or an existing output/v2 namespace. It creates separate cla_native_v2_* tables, retains v1, copies every declared column and rowid, and checks row equality and foreign keys. Rowid preservation matters to publication reconciliation cursors.
 
+Object names come from SQLite parsing the canonical DDL, including delegated and
+head-request tables. Comparison covers every source column and rowid; the sole
+reviewed target-only column is publication_attempts.send_until, initialized to
+zero for historical attempts. Migration grants no historical attempt an active
+send fence or technical eligibility.
+
 This is not a D1 migration command or authorization to read production evidence. source_opened_read_only means this tool does not write its input; it does not establish that external writers are absent. Copied signature rows are not automatically trusted: the service still validates cryptographic evidence.
 
 ## Remaining activation gates

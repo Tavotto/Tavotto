@@ -53,11 +53,11 @@ export async function verifyHeadOne(s:LiveService):Promise<string> {
           s.store.budget!.reserveWorkExternal(1);
           issued=await s.store.beginAutomaticPublication(job,check);return issued;
         });
-        s.store.budget!.settlement();await s.store.settlePublication(issued!,'reconcile',receipt.id);
+        s.store.budget!.settlement();await s.store.settleAutomaticPublication(issued!,'reconcile',receipt.id);
         return 'automatic_publication_requires_reconciliation';
       }catch(error){
         if(!issued)throw error;
-        s.store.budget!.settlement();try{await s.store.settlePublication(issued,'unknown');}catch{}
+        s.store.budget!.settlement();try{await s.store.settleAutomaticPublication(issued,'unknown');}catch{}
         return 'automatic_publication_unknown_no_replay';
       }
     }

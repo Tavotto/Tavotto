@@ -52,6 +52,14 @@ uncertain operation is never replayed; independent existing recovery must observ
 and requalify it. The dual-read authority endpoint remains the live eligibility
 check; neither an observation nor a successful POST response grants eligibility.
 
+The issued journal persists the head claim's 120-second lease as a send fence,
+longer than the invocation's 90-second cleanup budget. Recovery cannot claim the
+target or process that issued row while the fence is live, including after an
+evidence revision. Sender settlement atomically clears the fence and wakes the
+current revision without releasing another recovery lease. Recovery writes
+compare the phase they observed; a stale observer cannot overwrite settlement.
+An abandoned send becomes observable after the fence, without replaying POST.
+
 Automatic observations use a separate reserved cron invocation
 (`7-59/15 * * * *`); the original recovery invocation remains separate. Each
 invocation uses the existing 20 work / 40 total SQL budget. No cron or other

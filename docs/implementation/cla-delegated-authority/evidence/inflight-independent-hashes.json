@@ -1,0 +1,10 @@
+{
+  "src/native/store.ts": "98d6681c2694c4b0d32cc5bb261d6164f6745a057e19a675e4189bfa0c78e22e",
+  "src/native/automatic.ts": "ae02a5044d741471f8297de2bcd4ace99695cfb65d625563e20d55189b13a34e",
+  "src/native/schema.sql": "bc8cb9f59b779690bebfffff1fb8ffa062aab12b8af1284cc1c5bd198a45ff0e",
+  "migrations/migrate-local-snapshot.py": "1d15a0451a7a624bd731f726dfa415380ff146fa04e10162c6cf2d9aa697a65a",
+  "tests/migration.test.py": "8588b3353ad8ef860ce01156d4fba96c50584ca5eb169dce705656748029bbf7",
+  "tests/inflight-publication.test.mjs": "2d1b9c6372e0a0589a024569219a3bf5494c6330dc6aa14a1133204aa2e43b0a",
+  "tests/inflight-mutation-cases.json": "96a98bcd77b223d86b38aee5f704519d5667caf7e9d2d4e85681553ac43026de",
+  "tests/mutation-smoke.mjs": "e0b4ff2c88edbf3b26b27b57e7fbc3c26c86e05990fe66e0d6f78d34196bf5a1"
+}

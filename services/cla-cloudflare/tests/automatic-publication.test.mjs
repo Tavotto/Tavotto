@@ -17,7 +17,7 @@ test('new-head issued journal precedes ambiguous synthetic send; unknown never r
   const publish=async(check,beforeSend)=>{const attempt=await beforeSend();sends++;
     const row=await f.store.stmt('SELECT * FROM publication_attempts WHERE id=?',attempt).first();assert.equal(row.phase,'issued');assert.equal(row.head_sha,f.gh.head);assert.equal(row.proof_text,check.text);
     throw Error('SYNTHETIC_AMBIGUOUS_OUTCOME');};
-  const first=metered(f,publish);assert.equal(await verifyHeadOne(first.s),'automatic_publication_unknown_no_replay');assert.equal(first.budget.snapshot().sql,19);
+  const first=metered(f,publish);assert.equal(await verifyHeadOne(first.s),'automatic_publication_unknown_no_replay');assert.equal(first.budget.snapshot().sql,20);
   const row=await f.store.stmt('SELECT * FROM publication_attempts').first();assert.equal(row.phase,'unknown');assert.equal(row.run_id,null);
   assert.equal((await f.store.stmt('SELECT status FROM head_requests WHERE request_key=?',key).first()).status,'dispatched');
   assert.equal((await f.store.stmt('SELECT count(*) n FROM outbox').first()).n,1);

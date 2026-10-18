@@ -7,7 +7,8 @@ CREATE TABLE publication_attempts (
  conclusion TEXT NOT NULL CHECK(conclusion IN ('success','failure')), proof_text TEXT NOT NULL,
  observation TEXT NOT NULL DEFAULT '',
  reconcile_due INTEGER DEFAULT 0, reconcile_attempts INTEGER NOT NULL DEFAULT 0 CHECK(reconcile_attempts BETWEEN 0 AND 3),
- observed_generation INTEGER NOT NULL DEFAULT 0
+ observed_generation INTEGER NOT NULL DEFAULT 0,
+ send_until INTEGER NOT NULL DEFAULT 0 CHECK(send_until>=0)
 );
 CREATE UNIQUE INDEX publication_unresolved ON publication_attempts(target_key) WHERE phase IN ('issued','unknown');
 CREATE TABLE reconciliation_progress (

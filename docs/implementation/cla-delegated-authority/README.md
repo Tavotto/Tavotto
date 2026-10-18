@@ -18,6 +18,9 @@ See [ADR 0134](../../adr/0134-limited-cla-countersigning-authority.md).
   new-head publication makes one attempt after an atomic issued/dispatched/outbox
   transaction; uncertainty cannot retry. Existing recovery independently confirms
   or withdraws. Observations and POST responses cannot satisfy CI.
+  A persisted send lease excludes concurrent recovery until settlement or its
+  deadline. Phase comparisons reject stale recovery writes; atomic settlement
+  wakes current evidence without releasing another lease.
 - [Disabled deployment inputs and planner](../../../services/cla-cloudflare/deployment/README.md)
   supply explicit binding shapes and approval checkpoints without provisioning.
 - [Inactive trusted CI proposal](../../../services/cla-cloudflare/deployment/ci-proposal.md)
@@ -45,6 +48,9 @@ revisions clear observations; dispatched attempts recover through the outbox.
 
 Original committed evidence is in evidence/verification.json. Followup evidence
 is in evidence/followup-verification.json with actual logs and source fingerprints.
+The formal-review P1 fix and migration regression evidence are recorded in
+evidence/inflight-verification.json. Those tests use failed proposals and local
+transactions, with no HTTP or successful publication.
 Tests execute service/worker/Web Crypto/local SQLite transactions; the UI harness
 executes shipped client code in a browser-shaped VM, not a real browser. CI tests
 use real qualification and pre-existing synthetic confirmed records at fixed time;
