@@ -279,6 +279,76 @@ class Trend(GuardianBase):
         self.assertEqual(out["metrics"]["first_figure_success"]["status"], "not_computed")
 
 
+BANNED_CALLS = {"open", "eval", "exec", "compile", "__import__", "builtins.open"}
+BANNED_OS = {
+    "system",
+    "popen",
+    "remove",
+    "unlink",
+    "rename",
+    "replace",
+    "makedirs",
+    "putenv",
+    "kill",
+}
+
+
+def confinement_violations(tree: ast.AST) -> tuple[list[str], list[str]]:
+    """调用目标按 import **解析后的全名**判（`import os as safe; safe.system()`、`from os import system`
+    都还原成 `os.system`），不看拼写（Codex #1139 r4306195794）。返回（违规清单, 文件写入目标）。"""
+    alias: dict[str, str] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for a in node.names:
+                alias[a.asname or a.name.split(".")[0]] = (
+                    a.name if a.asname else a.name.split(".")[0]
+                )
+        elif isinstance(node, ast.ImportFrom):
+            for a in node.names:
+                alias[a.asname or a.name] = f"{node.module or ''}.{a.name}"
+
+    def target(func) -> str:
+        if isinstance(func, ast.Name):
+            return alias.get(func.id, func.id)
+        if isinstance(func, ast.Attribute):
+            return f"{target(func.value)}.{func.attr}"
+        return ""
+
+    violations, writes = [], []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        name = target(node.func)
+        if name in BANNED_CALLS:
+            violations.append(name)
+        if name.startswith("os."):
+            attr = name.split(".", 1)[1]
+            if attr in BANNED_OS or attr.startswith(("exec", "spawn")):
+                violations.append(name)
+        if isinstance(node.func, ast.Attribute) and node.func.attr in (
+            "write_text",
+            "write_bytes",
+            "open",
+            "touch",
+            "unlink",
+        ):
+            writes.append(ast.unparse(node.func.value))
+    return violations, writes
+
+
+class ConfinementCheckerSelfTest(unittest.TestCase):
+    def test_aliases_and_from_imports_are_resolved_to_the_real_target(self):
+        for snippet, hit in (
+            ("import os as safe\nsafe.system('x')", "os.system"),
+            ("from os import system\nsystem('x')", "os.system"),
+            ("from os import system as s\ns('x')", "os.system"),
+            ("import os\nos.execv('x', [])", "os.execv"),
+            ("import builtins as b\nb.open('x')", "builtins.open"),
+        ):
+            self.assertIn(hit, confinement_violations(ast.parse(snippet))[0], snippet)
+        self.assertEqual(confinement_violations(ast.parse("# os.system('x')\n'os.system'"))[0], [])
+
+
 class Alerts(unittest.TestCase):
     def cluster(self, **over):
         base = {
@@ -333,21 +403,8 @@ class Alerts(unittest.TestCase):
             elif isinstance(node, ast.ImportFrom):
                 imported.add((node.module or "").split(".")[0])
         self.assertLessEqual(imported, allowed)
-        banned_names = {"open", "eval", "exec", "compile", "__import__"}
-        banned_os = {"system", "popen", "remove", "unlink", "rename", "makedirs", "putenv", "kill"}
-        writes = []
-        for node in ast.walk(tree):
-            if not isinstance(node, ast.Call):
-                continue
-            func = node.func
-            if isinstance(func, ast.Name):
-                self.assertNotIn(func.id, banned_names, ast.dump(node)[:80])
-            if isinstance(func, ast.Attribute):
-                if isinstance(func.value, ast.Name) and func.value.id == "os":
-                    self.assertNotIn(func.attr, banned_os)
-                    self.assertFalse(func.attr.startswith(("exec", "spawn")), func.attr)
-                if func.attr in ("write_text", "write_bytes", "open", "touch", "unlink"):
-                    writes.append(ast.unparse(func.value))
+        violations, writes = confinement_violations(tree)
+        self.assertEqual(violations, [])
         self.assertEqual(
             sorted(writes), ["Path(args.markdown_out)", "tmp"], "unexpected file-write target"
         )
