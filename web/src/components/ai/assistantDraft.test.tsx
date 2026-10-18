@@ -1399,8 +1399,11 @@ describe('已发出未确认：不能盲目重发', () => {
     expect(q<HTMLButtonElement>('[data-ai-send]')!.disabled).toBe(true)
   })
 
-  it('兄弟面板上「改写后再发」：A 面板发起的旧等待也随这个面板新行的 PUT 带进 supersedes（按脚本记，不按发起面板）', async () => {
-    be.pendings.set('pa\u0000Fig1.pdf', [{ rid: 'rid-sibling-0002', text: 'A 面板发出的话', sent: SENT, script: 'p1.py' }])
+  it.each([
+    ['同一种写法', 'p1.py'],
+    ['旧数据的绝对路径（sameScript 认作同一份）', 'C:\\proj\\p1.py'],
+  ])('兄弟面板上「改写后再发」：A 面板发起的旧等待也随这个面板新行的 PUT 带进 supersedes（%s）', async (_n, oldScript) => {
+    be.pendings.set('pa\u0000Fig1.pdf', [{ rid: 'rid-sibling-0002', text: 'A 面板发出的话', sent: SENT, script: oldScript }])
     useSelectionStore.setState({ ids: ['p3'] } as never)
     await mount()
     vi.mocked(fetchAiRequest).mockRejectedValue(new ApiError('nf', 404, { code: 'ai_request_not_found' }))

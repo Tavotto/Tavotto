@@ -249,18 +249,20 @@ export function snapshotIsFinal(d: Pick<AiSessionDetail, 'status' | 'ended_ms'> 
 /** 账本写入「不知道」写没写成的那条指令（按 项目×文件）：重试沿用同一个 rid */
 const ledgerUnknown = new Map<string, { rid: string; prompt: string; sentJson: string }>()
 /**
- * 被放弃的旧等待：下一次发新 rid 时，随新账本行的 PUT 带 `supersedes`，由后端在同一个事务里删并写墓碑。
- * 按**脚本**记（没有脚本的才按 项目×文件）：同一份脚本的兄弟面板会被对账还原出别的面板发起的等待，「改写后再发」之后从这个面板发，
- * 也必须带上它——否则旧 rid 的慢 POST 在新指令之后登记，两条都执行
+ * 被放弃的旧等待（rid → 它属于哪个 项目×面板×脚本）：下一次发新 rid 时，随新账本行的 PUT 带 `supersedes`，由后端在同一个事务里删并写墓碑。
+ * 发送时按**与 `submissionBlocks` 同一个判据**挑：同项目，且同面板或 `sameScript`——同一份脚本的兄弟面板会被对账还原出别的面板发起的
+ * 等待，「改写后再发」之后从这个面板发也必须带上它，否则旧 rid 的慢 POST 在新指令之后登记，两条都执行。不按路径字符串做 key：
+ * `sameScript` 把分隔符不同的写法、旧数据的绝对路径与它的相对后缀都认作同一份，字符串 key 会把它们分进不同的桶
  */
-const supersedeQueue = new Map<string, Set<string>>()
-const supersedeKey = (project: string | null | undefined, fileId: string, script: string | null | undefined): string =>
-  script ? `${project ?? ''}\u0000s\u0000${script}` : `${project ?? ''}\u0000f\u0000${fileId}`
-const queueSupersede = (key: string, rid: string): void => {
-  const set = supersedeQueue.get(key) ?? new Set<string>()
-  set.add(rid)
-  supersedeQueue.set(key, set)
+type SupersedeOwner = { project: string | null; fileId: string; script: string | null }
+const supersedeQueue = new Map<string, SupersedeOwner>()
+const queueSupersede = (owner: SupersedeOwner, rid: string): void => {
+  supersedeQueue.set(rid, owner)
 }
+const supersedesFor = (project: string | null, fileId: string, script: string | null): string[] =>
+  [...supersedeQueue.entries()]
+    .filter(([, o]) => (o.project ?? null) === (project ?? null) && submissionBlocks(o, fileId, script))
+    .map(([rid]) => rid)
 
 /**
  * 会话在「建好之后才到的 `ai.done`」那条路上也要有和直达路径一样的提示（状态栏）。副作用在
@@ -449,10 +451,10 @@ export const useAiStore = create<AiState>((set, get) => ({
     const prior = ledgerUnknown.get(ledgerKey)
     const reuse = !!prior && prior.prompt === prompt && prior.sentJson === sentJson
     const rid = reuse ? prior!.rid : newRequestId()
-    if (prior && !reuse) queueSupersede(supersedeKey(project, fileId, script), prior.rid)
+    const owner: SupersedeOwner = { project: project ?? null, fileId, script: script ?? null }
+    if (prior && !reuse) queueSupersede(owner, prior.rid)
     ledgerUnknown.delete(ledgerKey)
-    const sKey = supersedeKey(project, fileId, script)
-    const supersedes = [...(supersedeQueue.get(sKey) ?? [])].filter((x) => x !== rid)
+    const supersedes = supersedesFor(project ?? null, fileId, script ?? null).filter((x) => x !== rid)
     const sub: AiSubmission = {
       rid,
       project,
@@ -480,12 +482,12 @@ export const useAiStore = create<AiState>((set, get) => ({
       dropSub() // 后端明确拒绝记账（如未确认的提交已满，`ai_pending_limit`）：不发，原因原样交给界面
       if (e instanceof ApiError && e.body?.code === 'ai_supersede_conflict') {
         // 要取代的旧 rid 其实已被后端登记（旧请求到达了）：它不能再被当成「没收到」取代；别让它永远卡在队列里挡住之后的每次发送
-        supersedeQueue.delete(sKey)
+        for (const x of supersedes) supersedeQueue.delete(x)
       }
       throw e
     }
     if (recorded === 'ok') {
-      for (const x of supersedes) supersedeQueue.get(sKey)?.delete(x) // 后端已在同一事务里删掉它们
+      for (const x of supersedes) supersedeQueue.delete(x) // 后端已在同一事务里删掉它们
     } else if (recorded) {
       // 账本没写成：**不发**。丢了响应之后没有 rid 可查，刷新就会放行同一条指令换新 id 再执行
       dropSub()
@@ -493,14 +495,14 @@ export const useAiStore = create<AiState>((set, get) => ({
         // 不知道后端写没写：保持同一个 rid，重试时幂等重放，**不换新 rid**
         ledgerUnknown.set(ledgerKey, { rid, prompt, sentJson })
       } else if (reuse) {
-        queueSupersede(sKey, rid) // 明确拒绝，但上一次「不知道」的尝试可能已经写入：让之后的新写入顺手清掉它
+        queueSupersede(owner, rid) // 明确拒绝，但上一次「不知道」的尝试可能已经写入：让之后的新写入顺手清掉它
       }
       throw new AiLedgerError()
     }
     // 账本写入是 await：期间切过项目就作废（提交的 project 是调用方固定下来的那个，不是此刻的当前项目）
     if (get().generation !== generation) {
       dropSub()
-      queueSupersede(sKey, rid) // 账本可能已经写进后端、却不会发出：之后这个面板再发时随新行带 supersedes 清掉
+      queueSupersede(owner, rid) // 账本可能已经写进后端、却不会发出：之后这个面板再发时随新行带 supersedes 清掉
       throw new ProjectChangedError()
     }
     return dispatch(rid, generation)
@@ -547,7 +549,7 @@ export const useAiStore = create<AiState>((set, get) => ({
     if (!sub) return
     // 放弃这条等待（「改写后再发」）：**不 DELETE**。「后端没收到」的判断可能是错的（原请求可能还在路上），客户端单方面删了
     // 账本行，之后它又被还原、新 rid 却已经执行过。记下这个 rid，下一次发这个面板时随新行的 PUT 带 `supersedes`，由后端在同一个事务里删
-    queueSupersede(supersedeKey(sub.project, sub.fileId, sub.script), rid)
+    queueSupersede({ project: sub.project ?? null, fileId: sub.fileId, script: sub.script ?? null }, rid)
     set((s) => {
       const { [rid]: _gone, ...rest } = s.submissions
       return { submissions: rest }
