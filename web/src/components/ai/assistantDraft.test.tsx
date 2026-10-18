@@ -1587,6 +1587,26 @@ describe('已发出未确认：不能盲目重发', () => {
     expect(q('[data-ai-error="send"]')).toBeNull() // 作废是静默的，不是报错
   })
 
+  it('账本 PUT 回 409 ai_pending_unresolved 时已经切到项目 B：A 的挡路行不还原进 B、不查询、不报错（B 不被锁，A 的会话不挂到 B 上）', async () => {
+    vi.mocked(aiRun).mockResolvedValue({ session: 's-1', script: 'p1.py' })
+    await mount()
+    await typeText('新指令')
+    be.pendings.set('pa\u0000Fig1.pdf', [{ rid: 'rid-othertab-011', text: '别的标签页发出的话', sent: SENT, script: 'p1.py' }])
+    vi.mocked(fetchAiRequest).mockResolvedValue({ session: 's-a', status: 'running', changed: false, script: 'p1.py' })
+    be.afterPendingUnresolved(() => {
+      setCurrentProjectId('pb') // 响应回来之前切到项目 B（B 里也有同名脚本）
+      useAiStore.getState().clear()
+    })
+    await click(q('[data-ai-send="send"]'))
+    await settle()
+    be.afterPendingUnresolved(null)
+    expect(aiRun).not.toHaveBeenCalled()
+    expect(Object.values(useAiStore.getState().submissions)).toEqual([])
+    expect(vi.mocked(fetchAiRequest).mock.calls.some((c) => c[0] === 'rid-othertab-011')).toBe(false)
+    expect(useAiStore.getState().sessions.map((x) => x.id)).not.toContain('s-a')
+    expect(q('[data-ai-error="send"]')).toBeNull()
+  })
+
   it('放弃旧等待后新行的 PUT 失败：旧行还在（状态仍然一致），之后同一条指令重试成功才一起清掉旧行', async () => {
     await mount()
     await sendIt('旧指令')

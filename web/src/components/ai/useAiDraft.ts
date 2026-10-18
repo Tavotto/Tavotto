@@ -362,9 +362,9 @@ export function useAiDraft(panel: PanelObject | null) {
    * 别的标签页可能已经确认并删掉了这一行，本页就既看不到它、也查不了它，发送随即放开
    */
   const restoreBlockers = useCallback(
-    (items: Pending[]) => {
-      const pj = key.current.project
-      if (pj) restorePendingsFor(pj, items)
+    (pj: string | null, items: Pending[]) => {
+      // 项目由调用方钉住（发送时固定下来的那个），不读「当前项目」；与当前的不一致（途中切过）就什么都不动
+      if (pj && pj === key.current.project) restorePendingsFor(pj, items)
     },
     [restorePendingsFor],
   )
