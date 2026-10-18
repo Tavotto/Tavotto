@@ -318,6 +318,33 @@ class Judgment(unittest.TestCase):
 
 
 class Cli(unittest.TestCase):
+    def test_non_positive_limit_is_rejected_by_the_parser_and_by_select(self):
+        for bad in ("-1", "0"):
+            with self.assertRaises(SystemExit) as caught:
+                cg.main(["explore", "--seed", "1", "--out", "/nowhere", "--limit", bad])
+            self.assertEqual(caught.exception.code, 2)
+        with self.assertRaises(cg.EvidenceError):
+            ex.select([{"axis_vector": ["a"]}], 0)
+        with self.assertRaises(cg.EvidenceError):
+            ex.select([{"axis_vector": ["a"]}], -3)
+
+    def test_an_empty_selection_never_publishes_a_report_or_exits_clean(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            args = Namespace(
+                seed=9,
+                out=tmp,
+                limit=None,
+                parent="shape_oo_savefig",
+                static_only=True,
+                expected_sha=None,
+                timeout=5,
+            )
+            with mock.patch.object(ex, "select", return_value=[]):
+                with self.assertRaises(cg.EvidenceError):
+                    ex.explore(args)
+            for run in Path(tmp).iterdir():
+                self.assertFalse((run / "reports").exists())
+
     def test_static_only_explore_writes_candidates_executes_nothing_and_touches_no_corpus(self):
         before = {p: hashlib.sha256((cg.ROOT / p).read_bytes()).hexdigest() for p in CORPUS_FILES}
         with tempfile.TemporaryDirectory() as tmp:
