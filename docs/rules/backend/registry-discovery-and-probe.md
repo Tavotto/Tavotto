@@ -167,3 +167,14 @@
 `/api/registry/probe` 每次落地（成功或失败）冻结一份 `probe.diagnostic_projection`（`kind=script_run`），响应多一个可选键
 `diagnostic: {kind, ref}`（老客户端忽略）。投影只取：终局词汇（`ready` / `error` / `cancelled`）、`error.code`、argv 个数与
 `rc_…` 引用、捕获张数、耗时；`error.message` / `params` / `traceback`、`stems`、`entry`、`descriptors`、`stem_conflicts` 不进。
+
+## SVG 图片素材（2026-10-18）
+
+`project_refresh.SVG_EXT` 是静态 SVG 的素材边界。只读零执行；SVG 与同名 PDF 分别保留。
+`svgasset.read` 有界读取并复用 `rendercore.svgcheck.parse_svg` 的完整静态白名单。
+只删除 Matplotlib 完全匹配的惰性标准 DTD，任何剩余 DTD、实体、外部资源和活动内容仍拒绝；
+响应只发送校验过的同一份字节，带 sandbox CSP 与 nosniff。两种已有图片端点均先经项目
+路径与会话认证，文件变化后重新校验。物理单位与 viewBox 尺寸换算使用 SVG 的 96 px/in 口径。
+
+只做整图预览、摆放和原图 SVG 导出，不宣称静态 SVG 已有跨格式渲染闭包；不支持的导出
+明确报错。看护：`tests/test_svg_assets.py`，含去掉静态白名单后的反证。

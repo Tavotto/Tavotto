@@ -142,6 +142,7 @@ DATA_ROOT = engine_config.data_dir()  # 可写：运行时产物（装成包后 
 # 这里只是别名，别在本文件里另写一份集合。
 EXCLUDE_DIRS = engine_refresh.EXCLUDE_DIRS
 PDF_EXT = engine_refresh.PDF_EXT
+SVG_EXT = engine_refresh.SVG_EXT
 IMG_EXT = engine_refresh.IMG_EXT
 TIFF_EXT = engine_refresh.TIFF_EXT
 #: 写回重写的产物格式（顺序即写的顺序：PDF 在前，PNG 由它的同一次重放出）
@@ -454,7 +455,7 @@ def safe_resolve(rel_id: str) -> Path:
         abort(403)
     if not p.is_file():
         abort(404)
-    if p.suffix.lower() not in PDF_EXT | IMG_EXT:
+    if p.suffix.lower() not in PDF_EXT | IMG_EXT | SVG_EXT:
         abort(403)
     if p.suffix.lower() in TIFF_EXT:
         tiffprobe.check(p)
@@ -543,7 +544,12 @@ def scan_panels(unsupported: list[dict] | None = None) -> list[dict]:
             "mtime": int(p.stat().st_mtime),
         }
         try:
-            probe = pdfbackend.probe_asset(p, kind)
+            if kind == "svg":
+                from . import svgasset
+
+                _, probe = svgasset.read(p)
+            else:
+                probe = pdfbackend.probe_asset(p, kind)
             # 「这张图有多大」只算一次（`engine/originalspec`，ADR 0028）。
             # `native_*_mm` 是那份 spec 的投影而不是第二次计算——改造前位图那一
             # 档在这里现猜一个 ppi（`600 if png else 300`），猜完既不说也没有
@@ -579,6 +585,10 @@ def scan_panels(unsupported: list[dict] | None = None) -> list[dict]:
             if cap is not None:
                 entry["capability"] = cap
         except Exception:
+            if kind == "svg" and unsupported is not None:
+                unsupported.append(
+                    {"id": rel, "name": p.name, "folder": folder, "code": "svg_asset_unsupported"}
+                )
             # 单个素材坏了不拖垮整个列表，但绝不静默——用户丢面板时
             # app.log 里要能看到是哪个文件、为什么
             LOG.warning("素材扫描跳过 %s（probe 失败）", p, exc_info=True)
@@ -1036,6 +1046,8 @@ def api_render():
     want_w = int(request.args.get("w", 400))
     w = next((b for b in RENDER_BUCKETS if b >= want_w), RENDER_BUCKETS[-1])
     path = safe_resolve(rel_id)
+    if path.suffix.lower() in SVG_EXT:
+        return _svg_asset_response(path)
     cache = rc_facade.preview_cache(CACHE_DIR, max_bytes=RENDER_CACHE_MAX_BYTES)
     try:
         # hold：交出来的文件一直钉到响应关闭——从 get() 返回到 send_file 打开它之间，别的请求发布新预览触发的
@@ -1070,10 +1082,28 @@ def api_render():
     return resp
 
 
+def _svg_asset_response(path):
+    from . import svgasset
+
+    try:
+        data, _ = svgasset.read(path)
+    except svgasset.UnsupportedSVG as exc:
+        return jsonify({"code": exc.code, "error": str(exc), "params": exc.params}), 422
+    resp = app.response_class(data, mimetype="image/svg+xml")
+    resp.headers["Content-Security-Policy"] = (
+        "sandbox; default-src 'none'; img-src data:; style-src 'unsafe-inline'"
+    )
+    resp.headers["X-Content-Type-Options"] = "nosniff"
+    resp.headers["Cache-Control"] = "no-cache"
+    return resp
+
+
 @app.get("/api/file")
 def api_file():
-    """位图面板直接回传原文件（浏览器自行缩放显示）。"""
+    """静态图片直接回传；SVG 先校验同一份字节，禁止活动内容与外部引用。"""
     path = safe_resolve(request.args.get("id", ""))
+    if path.suffix.lower() in SVG_EXT:
+        return _svg_asset_response(path)
     resp = send_file(path, conditional=True)
     resp.headers["Cache-Control"] = "no-cache"
     return resp
@@ -2035,6 +2065,36 @@ def _export_produce_original(job, tmp_dir: Path, *, artifact_sources=None) -> li
     """
     req = job.request
     src = req.original
+    if (
+        Path(src.figure_id).suffix.lower() in SVG_EXT
+        and not src.overrides
+        and src.figure_snapshot is None
+    ):
+        from . import svgasset
+
+        data, probe = svgasset.read(safe_resolve(src.figure_id))
+        produced = []
+        for fmt in req.formats:
+            job.check_cancelled()
+            if fmt == engine_exportreq.FORMAT_SVG:
+                target = tmp_dir / "original.svg"
+                target.write_bytes(data)
+                produced.append(
+                    engine_exportjob.Produced(
+                        format=fmt,
+                        tmp_path=target,
+                        width_mm=probe["w_pt"] * 25.4 / 72,
+                        height_mm=probe["h_pt"] * 25.4 / 72,
+                        vector=engine_artifactinspect.svg_vector(target),
+                    )
+                )
+            else:
+                produced.append(
+                    engine_exportjob.Produced(
+                        format=fmt, error_code="svg_asset_export_unsupported", error_params={}
+                    )
+                )
+        return produced
     dpi = req.ppi or engine_exportreq.PPI_DEFAULT
     wants_eps = engine_exportreq.FORMAT_EPS in req.formats
     job.check_cancelled()
@@ -2317,6 +2377,13 @@ def _export_produce_rendercore(job, tmp_dir: Path, *, artifact_sources=None) -> 
         项目——与旧路 `safe_resolve` 只在碰面板时才要项目同一语义。"""
 
         def resolve(self, obj: dict):
+            if Path(str(obj.get("id", ""))).suffix.lower() in SVG_EXT:
+                safe_resolve(obj["id"])
+                raise engine_exportreq.ExportRequestError(
+                    "svg_asset_export_unsupported",
+                    "Static SVG canvas conversion is not available",
+                    {},
+                )
             fs = rc_sources.StaticSourceResolver(require_project()).resolve(obj)
             # 这条路不经 `safe_resolve`（它自己做包含检查与存在性），TIFF 的支持范围得在这里补上：
             # 漏掉它，范围之外的 TIFF 在候选后端下会被画成一张错图交付（issue #534）。先让解析器把

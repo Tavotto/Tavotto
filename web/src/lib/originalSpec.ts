@@ -210,7 +210,7 @@ const isRuntime = (figureId: string) => figureId.startsWith('runtime:')
 
 function sourceKind(panel: PanelObject | null, asset: AssetOriginalSpec | null) {
   if (panel?.fileKind === 'runtime') return 'figure'
-  if (panel?.fileKind === 'pdf' || asset?.source_kind === 'vector') return 'vector'
+  if (panel?.fileKind === 'svg' || panel?.fileKind === 'pdf' || asset?.source_kind === 'vector') return 'vector'
   if (panel?.fileKind === 'raster' || asset?.source_kind === 'raster') return 'raster'
   return 'unknown'
 }

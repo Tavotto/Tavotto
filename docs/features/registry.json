@@ -1078,6 +1078,25 @@
           "title": "图内编辑拖图例靠近另一张图的图例：左边与对方图例左边对齐（页面 mm 误差 < 0.1）"
         }
       ]
+    },
+    {
+      "id": "assets.svg-preview",
+      "status": "active",
+      "platform": "both",
+      "summary": {
+        "zh-CN": "静态 SVG 在素材区显示并可加入画布",
+        "en-US": "Preview static SVG images in assets and place them on the canvas"
+      },
+      "entry": "项目内 SVG → 素材 → 添加到画布",
+      "e2e": [
+        {
+          "spec": "svg-assets.spec.ts",
+          "title": "SVG 素材：真实解码、加入画布并保持矢量预览"
+        }
+      ],
+      "desktop_manual": [
+        "打开含静态 SVG 的项目，确认缩略图、添加到画布及缩放后图像清晰。"
+      ]
     }
   ]
 }

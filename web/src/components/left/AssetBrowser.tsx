@@ -21,6 +21,7 @@ import {
   backendErrorMsg,
   extOf,
   renderUrl,
+  fileUrl,
   runtimePreviewUrl,
   type PanelInfo,
   type RuntimeAssetInfo,
@@ -82,13 +83,13 @@ type SortKey = AssetSortKey
 const ab = (key: string, values?: Record<string, unknown>) =>
   translate(`assets.${key}`, { ns: 'workspace', ...(values ?? {}) })
 
-const TYPE_VALUES: TypeFilter[] = ['all', 'pdf', 'raster', 'runtime']
+const TYPE_VALUES: TypeFilter[] = ['all', 'pdf', 'raster', 'svg', 'runtime']
 const SORT_VALUES: SortKey[] = ['name', 'recent', 'used']
 
 /** PDF 是格式名，不翻译；其余按 key 取当前语言 */
 const typeLabel = (v: TypeFilter) =>
-  v === 'pdf'
-    ? 'PDF'
+  v === 'pdf' || v === 'svg'
+    ? v.toUpperCase()
     : ab(v === 'all' ? 'typeAll' : v === 'raster' ? 'typeRaster' : 'typeRuntime')
 const sortLabel = (v: SortKey) =>
   ab(v === 'name' ? 'sortName' : v === 'recent' ? 'sortRecent' : 'sortUsed')
@@ -226,9 +227,10 @@ export function AssetBrowser() {
     const q = query.trim().toLowerCase()
     const { source: src, type: ty, usedOnly: used, editability: ed } = filters
     // 用不了的文件连排版都进不去，不属于「能不能编辑」的任何一组
-    if (used || ed !== 'all' || (ty !== 'all' && ty !== 'raster')) return []
+    if (used || ed !== 'all' || (ty !== 'all' && ty !== 'raster' && ty !== 'svg')) return []
     return unsupported.filter(
       (u) =>
+        (ty === 'all' || (extOf(u.id) === 'svg' ? ty === 'svg' : ty === 'raster')) &&
         (src === 'all' || u.folder === src) &&
         (!q || u.id.toLowerCase().includes(q) || u.name.toLowerCase().includes(q)),
     )
@@ -243,6 +245,7 @@ export function AssetBrowser() {
       if (source !== 'all' && p.folder !== source) return false
       if (type === 'pdf' && p.kind !== 'pdf') return false
       if (type === 'raster' && p.kind !== 'raster') return false
+      if (type === 'svg' && p.kind !== 'svg') return false
       if (type === 'runtime') return false
       if (editability !== 'all' && editabilityOf({ kind: 'file', panel: p }) !== editability)
         return false
@@ -673,7 +676,7 @@ export function AssetBrowser() {
         {zoomed?.kind === 'file' && (
           <div className="flex items-center justify-center bg-paper p-2">
             <img
-              src={renderUrl(zoomed.panel.id, 800, zoomed.panel.mtime)}
+              src={zoomed.panel.kind === 'svg' ? fileUrl(zoomed.panel.id, zoomed.panel.mtime) : renderUrl(zoomed.panel.id, 800, zoomed.panel.mtime)}
               alt={ab('zoomAlt', { name: fileName(zoomed.panel.id) })}
               className="max-h-[56vh] max-w-full object-contain"
             />
@@ -954,7 +957,7 @@ function AssetCard({
       <CardPreview>
         <img
           loading="lazy"
-          src={renderUrl(panel.id, 400, panel.mtime)}
+          src={panel.kind === 'svg' ? fileUrl(panel.id, panel.mtime) : renderUrl(panel.id, 400, panel.mtime)}
           alt=""
           draggable={false}
           className="h-full w-full object-contain p-1"

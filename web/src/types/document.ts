@@ -99,7 +99,7 @@ export type PanelRotation = 0 | 90 | 180 | 270
  * 未来新增的取值对旧构建是未知形态：消费方一律经 panelKind() 判别并对
  * unknown fail closed（当缺失素材显示，绝不猜成文件路径）。
  */
-export type PanelFileKind = 'pdf' | 'raster' | 'runtime'
+export type PanelFileKind = 'pdf' | 'raster' | 'svg' | 'runtime'
 
 /**
  * RuntimeFigureAsset 的持久化描述块（CapturedFigureDescriptor 的子集，
@@ -288,7 +288,7 @@ export interface ShapeObject extends ObjectBase {
  * **绝不**把它当成相对路径去猜文件（那会显示出另一个面板的图）。
  */
 export function panelKind(o: Pick<PanelObject, 'fileKind'>): PanelFileKind | 'unknown' {
-  return o.fileKind === 'pdf' || o.fileKind === 'raster' || o.fileKind === 'runtime'
+  return o.fileKind === 'svg' || o.fileKind === 'pdf' || o.fileKind === 'raster' || o.fileKind === 'runtime'
     ? o.fileKind
     : 'unknown'
 }

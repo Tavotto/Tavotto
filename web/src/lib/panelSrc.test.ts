@@ -25,6 +25,7 @@ describe('panelSrc 的位图分支', () => {
   )
 
   it('矢量与未知形态不受影响', () => {
+    expect(panelSrc('diagram.svg', 'svg', 400, 7)).toContain('/api/file?id=diagram.svg&m=7')
     expect(panelSrc('a.pdf', 'pdf', 400)).toContain('/api/render?id=')
     expect(panelSrc('a.tif', 'mystery', 400)).toBeNull()
   })
