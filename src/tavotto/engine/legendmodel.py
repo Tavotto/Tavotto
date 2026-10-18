@@ -1057,13 +1057,21 @@ def legend_proxy_names(ax) -> dict[int, str]:
     leg = ax.get_legend()
     if leg is None:
         return {}
+    # 自定义 handler（类型级或按实例）可能一格画好几个 artist，而 `legend_handles` 只留第一个：
+    # 只比第一个会把长相不同的两格判成一样。说不清整格长相就整张图例不借名（#1162 评审）
+    try:
+        handler_map = leg.get_legend_handler_map()
+    except Exception:  # noqa: BLE001
+        return {}
+    if any(type(h).__module__ != "matplotlib.legend_handler" for h in handler_map.values()):
+        return {}
     handles = [h for h in getattr(leg, "legend_handles", []) if h is not None]
     texts = [t.get_text() for t in leg.get_texts()]
     n = min(len(handles), len(texts))
     series = [*ax.lines, *ax.collections]
     entries: list[tuple[tuple, str]] = []
     for h, text in zip(handles[:n], texts[:n], strict=True):
-        entries.append((_glyph_style(h), text))
+        entries.append((_proxy_fingerprint(h), text))
     if not entries:
         return {}
     fp_of: dict[int, tuple] = {}
@@ -1075,7 +1083,7 @@ def legend_proxy_names(ax) -> dict[int, str]:
         except Exception:  # noqa: BLE001 — 造不出示意线的对象不参与
             continue
         if fresh is not None:
-            fp_of[id(art)] = _glyph_style(fresh)
+            fp_of[id(art)] = _proxy_fingerprint(fresh)
     out: dict[int, str] = {}
     for art in series:
         fp = fp_of.get(id(art))
@@ -1174,6 +1182,13 @@ def _glyph_style(h) -> tuple:
         type(h).__name__,
         tuple((k, _glyph_value(k, props[k])) for k in sorted(props) if k not in _NON_GLYPH_PROPS),
     )
+
+
+def _proxy_fingerprint(h) -> tuple:
+    """借名比对用的指纹 = 共享指纹 ∪ 全部可见样式。共享指纹里有 `properties()` 拿不到的私有事实
+    （`_dash_key`：自定义虚线序列被 matplotlib 规范成 "--"），`_glyph_style` 覆盖其余所有可见
+    属性；两者都相等才算长相一致（#1162 评审）。"""
+    return (legend_handle_fingerprint(h), _glyph_style(h))
 
 
 def _source_label(art) -> str:

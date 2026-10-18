@@ -142,6 +142,35 @@ def main():
     ])
     fig.savefig("Fig.pdf")
 """,
+    # 自定义虚线序列不同（properties() 都报 "--"）：不命名
+    "dash_seq_off": """\
+import matplotlib.pyplot as plt
+from matplotlib.lines import Line2D
+
+def main():
+    fig, ax = plt.subplots(figsize=(4, 3))
+    ax.plot([0, 1], [0, 1], color="r", linestyle=(0, (3, 2)))
+    ax.legend(handles=[Line2D([], [], color="r", linestyle=(0, (5, 3)), label="dash")])
+    fig.savefig("Fig.pdf")
+""",
+    # 类型级自定义 handler（一格两条线，第一条恒为黑）：说不清整格长相，整张图例不借名
+    "custom_handler": """\
+import matplotlib.pyplot as plt
+from matplotlib.legend_handler import HandlerBase
+from matplotlib.lines import Line2D
+
+class TwoLines(HandlerBase):
+    def create_artists(self, legend, orig, x0, y0, w, h, fs, trans):
+        a = Line2D([x0, x0 + w], [y0, y0], color="k", transform=trans)
+        b = Line2D([x0, x0 + w], [y0 + h, y0 + h], color=orig.get_color(), transform=trans)
+        return [a, b]
+
+def main():
+    fig, ax = plt.subplots(figsize=(4, 3))
+    ax.plot([0, 1], [0, 1], color="b")
+    ax.legend(handles=[Line2D([], [], color="r", label="red")], handler_map={Line2D: TwoLines()})
+    fig.savefig("Fig.pdf")
+""",
     # 有自己 label 的线与普通 ax.legend()：行为不变
     "own_label": """\
 import matplotlib.pyplot as plt
@@ -224,3 +253,11 @@ def test_marker_fillstyle_or_alt_color_off_stays_unnamed(figs):
 
 def test_gapcolor_or_capstyle_off_stays_unnamed(figs):
     assert _labels(figs, "gap_cap_off") == {"axes_0.lines_0": "曲线 1", "axes_0.lines_1": "曲线 2"}
+
+
+def test_custom_dash_sequence_off_stays_unnamed(figs):
+    assert _labels(figs, "dash_seq_off") == {"axes_0.lines_0": "曲线 1"}
+
+
+def test_custom_handler_legend_lends_no_names(figs):
+    assert _labels(figs, "custom_handler") == {"axes_0.lines_0": "曲线 1"}
