@@ -40,6 +40,8 @@ class _Instance:
                 seen.append(
                     (self.command, self.path, self.headers.get(session_client.AUTH_HEADER), b"")
                 )
+                if self.path.startswith("/big"):
+                    return self._reply(200, {"items": ["x" * 1000] * 2000})  # > 1 MiB 的合法 JSON
                 self._reply(
                     409 if self.path.startswith("/conflict") else 200,
                     {"code": "probe_in_progress"} if self.path.startswith("/conflict") else None,
@@ -146,3 +148,22 @@ def test_unreachable_instance_keeps_the_none_semantics(tmp_path, monkeypatch):
     assert handoff._http_json_status(f"http://127.0.0.1:{port}/x", timeout=0.5) == (None, None)
     session_client.publish_secret(port, SECRET)
     assert session_client.relaunch_nonce(port, timeout=0.5) is None
+
+
+def test_large_valid_json_responses_are_read_in_full(instance):
+    """refresh / readiness / probe 的响应随项目规模增长：超过 1 MiB 的合法 JSON 也要完整解出来（原 urlopen 完整读取）。"""
+    url = f"http://127.0.0.1:{instance.port}/big"
+    status, body = handoff._http_json_status(url, timeout=5)
+    assert status == 200 and len(body["items"]) == 2000
+    assert len(handoff._http_json(url, timeout=5)["items"]) == 2000
+
+
+def test_relaunch_nonce_response_is_capped(tmp_path, monkeypatch):
+    monkeypatch.setenv("TAVOTTO_DATA_DIR", str(tmp_path))
+    monkeypatch.setattr(session_client, "RELAUNCH_MAX_RESPONSE_BYTES", 8)
+    inst = _Instance()
+    try:
+        session_client.publish_secret(inst.port, SECRET)
+        assert session_client.relaunch_nonce(inst.port, timeout=3) is None  # 截断后读不懂 = None
+    finally:
+        inst.stop()

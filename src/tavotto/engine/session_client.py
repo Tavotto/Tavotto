@@ -110,8 +110,9 @@ def auth_headers(port: int) -> dict:
     return {AUTH_HEADER: secret} if secret else {}
 
 
-#: 本机回环响应体的读取上限（会话 / 交接端点的响应都是几个标量或一份小 JSON）
-LOOPBACK_MAX_RESPONSE_BYTES = 1 << 20
+#: `relaunch_nonce` 的响应体上限：只有一枚 nonce。其余调用方（refresh / readiness / probe 的响应随项目里
+#: 脚本、素材数量增长）不设上限，与原来 `urlopen` 的完整读取一致，截断会让合法 JSON 解不开
+RELAUNCH_MAX_RESPONSE_BYTES = 64 * 1024
 
 
 def loopback_request(
@@ -121,13 +122,13 @@ def loopback_request(
     payload: bytes | None = None,
     headers: dict | None = None,
     timeout: float,
-    max_bytes: int = LOOPBACK_MAX_RESPONSE_BYTES,
+    max_bytes: int | None = None,
 ) -> tuple[int, bytes]:
     """对 `127.0.0.1:<port>` 发一次请求，返回 (状态码, 响应体)；`payload` 非 None 为 POST，否则 GET。
 
     带 `X-Tavotto-Auth` / 会话 secret 的本机请求一律走这里，**不用 `urlopen`**：后者按
     `HTTP_PROXY` / `ALL_PROXY` / 系统设置走代理，凭据会连同请求发给代理（#1132）。`HTTPConnection`
-    不读任何代理设置；也不跟随重定向（3xx 原样交给调用方）。失败抛 `http.client.HTTPException` /
+    不读任何代理设置；也不跟随重定向（3xx 原样交给调用方）。`max_bytes=None` 完整读取，给了就最多读这么多。失败抛 `http.client.HTTPException` /
     `OSError` / `ValueError`，由调用方按自己的「连不上」语义收敛。
     """
     conn = http.client.HTTPConnection("127.0.0.1", int(port), timeout=timeout)
@@ -154,6 +155,7 @@ def relaunch_nonce(port: int, timeout: float = 3.0) -> str | None:
             payload=json.dumps({"secret": secret}).encode("utf-8"),
             headers={"Content-Type": "application/json"},
             timeout=timeout,
+            max_bytes=RELAUNCH_MAX_RESPONSE_BYTES,
         )
         if not 200 <= status < 300:
             return None
