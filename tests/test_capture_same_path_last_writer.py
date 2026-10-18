@@ -833,7 +833,9 @@ COUNTED = r"""
 import matplotlib.pyplot as plt
 import matplotlib.backends.backend_pdf as bp
 n = [0]
+import functools
 orig = bp.FigureCanvasPdf.print_pdf
+@functools.wraps(orig)  # matplotlib 按签名决定传哪些 kwargs
 def spy(self, *a, **k):
     n[0] += 1
     return orig(self, *a, **k)
