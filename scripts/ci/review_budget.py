@@ -40,6 +40,7 @@ MAX_PAGES = 30
 SECURITY_PREFIXES = (
     ".github/workflows/",
     "src-tauri/capabilities/",
+    "src-tauri/src/sidecar/",
     "services/telemetry_proxy/",
 )
 SECURITY_EXACT = {
@@ -51,7 +52,7 @@ SECURITY_EXACT = {
     "src/tavotto/engine/session_client.py",
     "src/tavotto/engine/worker.py",
     "src/tavotto/desktop.py",
-    "src-tauri/src/sidecar/mod.rs",
+    "src-tauri/src/sidecar.rs",
 }
 HIGH_PREFIXES = (
     ".github/",
@@ -102,9 +103,27 @@ def _floor(path: str) -> tuple[int, bool]:
 
 
 def classify(files: list[dict], labels: list[str]) -> dict:
-    if not files or any(not isinstance(f.get("filename"), str) or not f["filename"] for f in files):
-        raise IncompleteEvidence("File list missing or invalid; cannot assign a low risk tier")
-    paths = [f["filename"] for f in files]
+    if not files:
+        raise IncompleteEvidence("Changed file list missing; cannot assign a low risk tier")
+    paths: list[str] = []
+    for changed in files:
+        if not isinstance(changed, dict):
+            raise IncompleteEvidence("Changed file entry is invalid")
+        current = changed.get("filename")
+        if not isinstance(current, str) or not current:
+            raise IncompleteEvidence("Changed file path missing or invalid")
+        paths.append(current)
+        previous = changed.get("previous_filename")
+        # GitHub reports the OLD path separately for a rename. Ignoring it
+        # would downgrade deletion/movement of security-sensitive code.
+        if changed.get("status") == "renamed" and (
+            not isinstance(previous, str) or not previous
+        ):
+            raise IncompleteEvidence("Renamed file lacks its previous_filename")
+        if previous is not None:
+            if not isinstance(previous, str) or not previous:
+                raise IncompleteEvidence("Previous file path invalid")
+            paths.append(previous)
     floor = 0
     secure = False
     drivers = []
@@ -127,7 +146,7 @@ def classify(files: list[dict], labels: list[str]) -> dict:
         "label_conflict": conflict,
         "risk_labels": sorted(set(selected)),
         "drivers": sorted(set(drivers))[:20],
-        "files_count": len(paths),
+        "files_count": len(files),
     }
 
 

@@ -53,6 +53,10 @@ Risk floor is conservative:
   other explicitly mapped boundaries. Security-sensitive paths separately recommend
   a Security Review. Example: rendercore correctness is high but does not automatically
   spend a security review; authentication or workflow permissions recommend both.
+- GitHub renames are evaluated using **both** `filename` (new) and `previous_filename`
+  (old); moving or disabling a protected path cannot reduce the risk floor. A rename
+  with missing origin evidence is `unknown`, not low. Deleted files retain their own path.
+- Sidecar security coverage includes `src-tauri/src/sidecar.rs` and its submodules.
 - Author risk labels may **raise**, but never lower, the path floor. Inconsistent labels
   emit label_conflict and require a human decision.
 

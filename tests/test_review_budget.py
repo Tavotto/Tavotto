@@ -86,6 +86,8 @@ def test_security_sensitive_path_overrides_low_label_and_needs_both_reviews():
         ".github/workflows/ci.yml",
         "src/tavotto/security.py",
         "src-tauri/capabilities/main.json",
+        "src-tauri/src/sidecar.rs",
+        "src-tauri/src/sidecar/port_memory.rs",
         "scripts/ci/aggregate_gate.py",
     ):
         r = _audit([path], labels=["risk:low"])
@@ -96,6 +98,69 @@ def test_security_sensitive_path_overrides_low_label_and_needs_both_reviews():
         assert r["code_review"]["state"] == "full_review_suggested"
         assert r["security_review"]["state"] == "full_review_suggested"
         assert r["suggested_action"] == "manual_risk_or_review_decision"
+
+
+@pytest.mark.parametrize(
+    ("previous", "current"),
+    [
+        ("src/tavotto/security.py", "src/tavotto/auth.py"),
+        (".github/workflows/ci.yml", "docs/guide/archived-ci.md"),
+        ("src-tauri/src/sidecar.rs", "docs/guide/old-sidecar.md"),
+        ("src-tauri/src/sidecar/port_memory.rs", "docs/guide/old-port.md"),
+        ("docs/guide/old-layout.md", "src/tavotto/security.py"),
+    ],
+)
+def test_renaming_security_sensitive_paths_never_lowers_review_floor(previous, current):
+    result = B.classify(
+        [{"filename": current, "previous_filename": previous, "status": "renamed"}],
+        ["risk:low"],
+    )
+    assert result["tier"] == "high"
+    assert result["path_floor"] == "high"
+    assert result["security_review_recommended"] is True
+    assert result["label_conflict"] is True
+    assert result["files_count"] == 1
+    assert previous in result["drivers"] or current in result["drivers"]
+
+
+def test_ordinary_document_rename_stays_low_without_double_counting():
+    result = B.classify(
+        [
+            {
+                "filename": "docs/guide/new.md",
+                "previous_filename": "docs/guide/old.md",
+                "status": "renamed",
+            }
+        ],
+        ["risk:low"],
+    )
+    assert result["tier"] == "low"
+    assert result["security_review_recommended"] is False
+    assert result["files_count"] == 1
+
+
+def test_deleted_security_file_keeps_its_security_requirement():
+    result = B.classify([{"filename": "src/tavotto/security.py", "status": "removed"}], [])
+    assert result["tier"] == "high"
+    assert result["security_review_recommended"] is True
+
+
+def test_missing_or_invalid_rename_origin_is_unknown_not_low():
+    for entry in (
+        {"filename": "README.md", "status": "renamed"},
+        {"filename": "docs/guide/new.md", "status": "renamed", "previous_filename": ""},
+        {"filename": "docs/guide/new.md", "status": "renamed", "previous_filename": 12},
+        {"filename": "docs/guide/new.md", "status": "modified", "previous_filename": ""},
+    ):
+        with pytest.raises(B.IncompleteEvidence):
+            B.classify([entry], ["risk:low"])
+
+
+def test_sidecar_security_rule_points_to_real_module():
+    assert (ROOT / "src-tauri/src/sidecar.rs").is_file()
+    assert "src-tauri/src/sidecar.rs" in B.SECURITY_EXACT
+    assert B._floor("src-tauri/src/sidecar.rs") == (2, True)
+    assert B._floor("src-tauri/src/sidecar/port_memory.rs") == (2, True)
 
 
 def test_core_correctness_high_without_inventing_security_requirement():
