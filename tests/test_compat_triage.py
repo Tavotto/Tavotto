@@ -345,6 +345,19 @@ class Clusters(unittest.TestCase):
         result = tg.triage([path])
         self.assertEqual((result["attributions"], result["clusters"]), ([], []))
 
+    def test_a_null_recorded_error_matches_only_findings_without_an_error(self):
+        families = tg.load_families()
+        g2 = next(f for f in families if f["id"].startswith("G2"))
+        self.assertIsNone(g2["signature"]["tavotto_error"])
+        shape = {
+            "behavior_kind": g2["signature"]["behavior_kind"],
+            "call_site": g2["signature"]["call_site"],
+        }
+        plain = {**shape, "stable_code": f"diff:{shape['behavior_kind']}"}
+        with_error = {**shape, "stable_code": "script_error"}
+        self.assertEqual(tg.known_family(plain, families), g2["id"])
+        self.assertIsNone(tg.known_family(with_error, families), "a new error code is NEW")
+
     def test_known_family_records_link_the_clusters(self):
         result = tg.triage([self.report_path])
         linked = {c["key"]["behavior_kind"]: c["known_family"] for c in result["clusters"]}

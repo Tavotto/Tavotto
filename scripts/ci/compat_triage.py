@@ -231,7 +231,12 @@ def known_family(signature: dict, families: list[dict]) -> str | None:
             want["behavior_kind"] == signature["behavior_kind"]
             and want["call_site"] == signature["call_site"]
         )
-        same_code = want["tavotto_error"] in (None, signature["stable_code"].removeprefix("diff:"))
+        # `diff:<kind>` is the stable code of a finding with no Tavotto error. A recorded
+        # `tavotto_error: null` means exactly "no error", not "any error": a candidate that also
+        # carries a new error code is a different cluster identity and must stay NEW.
+        stable = signature["stable_code"]
+        observed_error = None if stable.startswith("diff:") else stable
+        same_code = want["tavotto_error"] == observed_error
         if same_shape and same_code:
             return fam["id"]
     return None
