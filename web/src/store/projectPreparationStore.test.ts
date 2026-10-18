@@ -522,8 +522,11 @@ describe('三个不同的动作', () => {
     expect(mockAct.mock.calls[0][1].action_id).toBe('act-recheck')
   })
 
-  it('环境快照第一次落地（比会话创建晚到）且没有用户答过的痕迹：不发 recheck；之后真改了目录才发', async () => {
-    useEnvStore.setState({ env: null })
+  it.each([
+    ['启动时 env 为空', null],
+    ['已有环境后换进项目（resetProject 的占位）', { project: { open: false } }],
+  ])('环境快照第一次落地（比会话创建晚到，%s）且没有用户答过的痕迹：不发 recheck；之后真改了目录才发', async (_n, initial) => {
+    useEnvStore.setState({ env: initial as never })
     mockCreate.mockResolvedValueOnce(prepReport({ phase: 'action_required', actions: [action('run'), action('recheck')] }))
     await useProjectPreparationStore.getState().open(scriptTarget('plot.py'))
     mockAct.mockResolvedValue({ claimed: true, report: prepReport({ observation_seq: 2 }) })
