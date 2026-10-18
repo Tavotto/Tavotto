@@ -704,6 +704,14 @@ class TestFileIdentity:
         assert figcapture._dir_folds_case(gone) is True
         figcapture._CASE_FOLD_CACHE.pop(gone, None)
 
+    def test_case_folding_does_not_over_fold_unicode(self, tmp_path, monkeypatch):
+        """不区分大小写的目录里 `shape.ß` 与 `shape.ss` 仍是两个文件：只折叠大小写，不做 casefold（Codex r4305745044）。"""
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setattr(figcapture, "_dir_folds_case", lambda d: True)
+        key = figcapture.savefig_target_key
+        assert key("shape.ß", {"format": "pdf"}) != key("shape.ss", {"format": "pdf"})
+        assert key("Plot.pdf", {}) == key("plot.pdf", {})
+
     def test_recreated_path_keeps_its_key(self, tmp_path, monkeypatch):
         """删掉再重建同一路径：仍是同一个目标键（不按 inode，Codex #1141 r4305717514）。"""
         monkeypatch.chdir(tmp_path)

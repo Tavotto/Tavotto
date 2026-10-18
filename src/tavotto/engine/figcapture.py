@@ -1505,7 +1505,9 @@ def savefig_target_key(fname, kwargs: dict, canvas=None) -> str | None:
         path = os.path.abspath(os.fsdecode(names[0]))
         directory, base = os.path.split(os.path.realpath(path))
         if _dir_folds_case(directory):
-            base = base.casefold()
+            # 只折叠大小写（`lower`），不做 `casefold` 的全 Unicode 折叠：NTFS / APFS 的不区分大小写比较不把
+            # `ß` 当 `ss`（Codex #1141 r4305745044）；更细的文件系统排序规则 / Unicode 归一化见细则「已知未覆盖」与 #1150
+            base = base.lower()
         return os.path.join(directory, base)
     except (OSError, ValueError, TypeError):
         return None

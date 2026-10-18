@@ -255,7 +255,7 @@
   还超就按先来后到淘汰非持有者（连同它名下的目标记录）。持有者永不淘汰；被淘汰者日后重新成为写入者就从新调用开始——这是有界的
   代价。每个写入者的调用表本身由 `record_savefig_call` 的 HARD 上限约束。
 * safe worker 的捕获发生在 instrument 之前，规则只在脚本执行期生效；写回重放起新 worker 重跑脚本，同一规则再走一遍。
-* 已知未覆盖：`paper_style.save` 捷径不经 savefig 钩子，不参与；**硬链接别名**（两个不同路径指向同一 inode）按两个文件算——故意不用 inode 作键，删掉再重建同一路径必须仍是同一目标；Windows 上的大小写探测只在 CI 跑，没有真机验过。
+* 已知未覆盖：`paper_style.save` 捷径不经 savefig 钩子，不参与；**文件系统自己的文件名比较规则**（不区分大小写时只做 `lower()` 折叠；NTFS 大写表 / APFS 的 Unicode 归一化等更细的等价不模拟，见 #1150）；**硬链接别名**（两个不同路径指向同一 inode）按两个文件算——故意不用 inode 作键，删掉再重建同一路径必须仍是同一目标；Windows 上的大小写探测只在 CI 跑，没有真机验过。
 
 看护 `tests/test_capture_same_path_last_writer.py`（共享函数 + 会话规则 + 目标键 + 真 worker / 浏览器端到端）、
 `tests/bridge/test_bridge_same_path_last_writer.py`（native）。
