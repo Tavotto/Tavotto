@@ -105,6 +105,16 @@ def main():
     fig6.savefig("ArrowFig.pdf")
 
     # 文字类（画布按 bbox 命中、无 geometry）：标题 / 轴标签 / 文字 / 图例 / 图例项
+    # 一根不透明柱 + 一根空心（facecolor='none'，带描边与 hatch）：空心不是「透明填充」
+    fig8, ax8 = plt.subplots(figsize=(4.0, 3.0))
+    ax8.bar([0], [2], color="tab:blue")
+    ax8.bar([1], [2], facecolor="none", edgecolor="k", hatch="//")
+    mixed = ax8.bar([2, 3], [2, 2], color="tab:red", edgecolor="k")
+    mixed[1].set_facecolor("none")  # 同组里一根不透明、一根 facecolor='none'
+    nofill = ax8.bar([4, 5], [2, 2], color="tab:red", edgecolor="k")
+    nofill[1].set_fill(False)  # fill=False：facecolor 仍带色、alpha 为 0
+    fig8.savefig("HollowBarFig.pdf")
+
     fig7, ax7 = plt.subplots(figsize=(4.0, 3.0))
     ax7.set_xlim(0, 1)
     ax7.set_ylim(0, 1)
@@ -279,3 +289,14 @@ def test_axis_label_order_is_its_axis_order(manifests):
     # 轴标签随 Axis 画：Axis（axisbelow=False 时 zorder 2.5）在线之后、zorder 20 的 patch 之前
     assert _geom(man, "axes_0.lines_0")["paint_order"] < xl["paint_order"]
     assert xl["paint_order"] < _by_role(man, "patch")[0]["geometry"]["paint_order"]
+
+
+def test_hollow_patch_member_is_not_a_transparent_fill(manifests):
+    man = manifests("HollowBarFig")
+    series = _by_role(man, "bar_series")
+    # 柱组按添加次序：[0] 不透明、[1] 空心(hatch)、[2] 一根 set_facecolor('none')、[3] 一根 set_fill(False)
+    for idx in (2, 3):
+        grp = series[idx]["geometry"]
+        assert grp["fill"] is True  # 前提：走得到 stamp_paint 的 fill 分支
+        # 空心成员的 RGBA 是 (r,g,b,0)，不能当成 0.0 的透明填充把整组拉成透明
+        assert grp["fill_alpha"] == 1.0, idx

@@ -1457,12 +1457,24 @@ def _face_alpha(a) -> float | None:
             if mfc is None or (isinstance(mfc, str) and mfc.lower() == "none"):
                 return None
             return float(to_rgba(mfc, a.get_alpha())[3])
+        if isinstance(a, Patch):
+            # Patch 的 facecolor='none' / fill=False 不是空数组：`get_facecolor()` 回的是
+            # (r,g,b,0) 的 RGBA（实测 3.11.2：Rectangle(fc='none') → (0,0,0,0)，fill=False →
+            # 默认色带 alpha 0），和显式 alpha=0 的真透明填充**撞形**，先按「根本不填充」判掉。
+            # 依赖：公开的 `get_fill()`，以及私有的 `_original_facecolor`（Patch._set_facecolor
+            # 存的用户原值，'none' 字面量只在这里留得住；缺该属性时只靠 get_fill，当作「不是 'none'」）。
+            # 版本核实：只在本机 3.11.2 实测过，3.8 / 3.10 未在本机核。
+            if not a.get_fill():
+                return None
+            orig = getattr(a, "_original_facecolor", None)
+            if isinstance(orig, str) and orig.lower() == "none":
+                return None
         get = getattr(a, "get_facecolor", None)
         if get is None:
             return None
         arr = np.atleast_2d(np.asarray(get(), dtype=float))
         if arr.size == 0:
-            return None  # facecolor 'none'：根本不填充
+            return None  # Collection 族 facecolor='none'：空数组（实测 3.11.2：PolyCollection / scatter 均为 shape (0,4)），根本不填充
         if arr.shape[-1] < 4:
             return 1.0
         return float(np.min(arr[:, 3]))
