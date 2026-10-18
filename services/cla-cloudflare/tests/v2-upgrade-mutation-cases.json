@@ -1,5 +1,14 @@
 [
   {
+    "name": "v2 upgrade uncertain-commit fresh-schema provenance",
+    "file": "scripts/v2-upgrade-offline.mjs",
+    "before": "   if(current.schema_sha256!==hash(m.upgraded))deny('uncertain_commit_schema_mismatch');",
+    "after": "   // mutation: attribute an unrelated fresh target to the old source plan",
+    "pattern": "old source plan rejects unrelated fresh target",
+    "testFile": "tests/independent-v2-upgrade.test.mjs",
+    "assertionError": true
+  },
+  {
     "name": "v2 upgrade default-off pre-database gate",
     "file": "scripts/v2-upgrade-offline.mjs",
     "before": "if(execute!==true || syntheticFixture!==true)return {status:'disabled',offline_only:true,production_authorized:false};",

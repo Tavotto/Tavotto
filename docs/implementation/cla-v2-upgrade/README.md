@@ -101,8 +101,8 @@ does not depend on the unresolved agreement-version rollback policy.
 
 ## Verification and convergence boundary
 
-The final Node suite passes 507 tests; the existing v1 snapshot migration
-passes four tests unchanged; the mutation harness detects 146 cases (22 new
+At original reviewed head `a19e88f0`, the Node suite passed 507 tests; the existing v1 snapshot migration
+passed four tests unchanged; the mutation harness detected 146 cases (22 new
 unique-location counter-mutations, each actual AssertionError / exit 1).
 Independent contract tests pass 46 cases with 18 reverse mutants; the separate
 review executes 24 groups, including 31 individual DDL fault rollbacks and the
@@ -124,8 +124,12 @@ inventory, system-table mapping, SQLite-engine differences, D1 transactional DDL
 and trigger support, realistic dataset size/charging/latency, backups and the
 single-authority cutover remain unverified. The Node SQLite transaction is not
 a claim that these 31 statements are an approved D1 migration batch.
-Current-head hosted checks and formal external reviews remain pending; none
-are requested by this slice.
+Original head `a19e88f00e959d29dc0ca391774b884a59ce2acb` passed hosted run
+39135502966, including actual checkout, dependency installation, typecheck,
+507 Node tests, four migrations, build and 146 mutations. Its first complete
+code/security review completed; security had no findings and code reported the
+fresh-schema recognition P2 described below. The corrected head requires its
+own hosted checks before the one allowed targeted follow-up.
 
 **#1168 is still not an available fully automatic loop.** A confirmed run keeps
 the sole global slot. Only a fresh owned failure GET witness releases it;
@@ -160,6 +164,30 @@ Store hash and actual new local results are separately recorded in
 [the propagation evidence](evidence/ts2700/verification.json): 507 Node, four
 migration, 146 mutation and 50 targeted refresh/budget checks pass. The parent
 archives both original raw CI logs and six independent erasure/row-boundary
-probes. No old-head CI success is borrowed. New-head hosted typecheck/build
-remain pending; local tools are still absent and no dependency retry was made.
-No external review is requested until the correct heads pass verification.
+probes. No old-head CI success is borrowed. The corrected parent and inherited
+type fix were compiled by the hosted jobs, including the original `a19e88f0` run
+above. Local tools are still absent and no dependency retry was made.
+
+## P2: uncertain-commit recognition requires the actual ALTER result
+
+The first code review found that an old prepared source plan could be presented
+to an independently created fresh target with matching old rows. That target's
+CREATE text cannot result from the reviewed ALTER sequence, yet the old branch
+reported `already_applied` and `data_preserved:true`. Empty and matching-row
+synthetic fixtures reproduce the error with actual AssertionError / exit 1.
+
+Recognition now checks the current schema hash against the trusted model's exact
+ALTER-generated schema before projecting original data. It does not trust a hash
+supplied in the plan. A mismatch rolls back without writes or a residual
+transaction. A fresh target can still use its own `already_target` plan, with
+zero writes and no claim that an old source migration preserved its data. A real
+ALTER result still supports read-only lost-COMMIT recognition and WAL reopen.
+
+Current local checks pass 509 Node tests, four migrations and 147 mutation cases.
+The added unique guard-deletion mutant actually fails the new regression with
+AssertionError / exit 1. Independent tests separately reproduce the original
+failure, pass all three fixed cases and reject the same reverse mutant.
+[Current P2 commands, raw logs and fingerprints](evidence/p2-fresh-schema/verification.json)
+separate these results from the original head's hosted run. Current-fix hosted
+typecheck/build and the single targeted follow-up remain pending. No production
+database, D1 adapter, real signature, publication or dependency download is used.

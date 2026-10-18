@@ -100,6 +100,8 @@ export function applySyntheticV2Upgrade(db,plan,{execute=false,syntheticFixture=
   if(current.status==='already_target' && plan?.status==='prepared'){
    // An uncertain commit may only be recognized read-only against the complete
    // original data and still-empty additions. Never retry or repair partial DDL.
+   // A fresh CREATE target cannot be the result of this exact ALTER sequence.
+   if(current.schema_sha256!==hash(m.upgraded))deny('uncertain_commit_schema_mismatch');
    const original={...current,status:'prepared',schema_sha256:hash(m.before),statements:m.statements,data:data(db,m.originalTables)};
    if(canonical(plan)!==canonical(original))deny('prepared_plan_changed');
    quiet(db);defaultsAndEmpty(db,m);db.exec('COMMIT');begun=false;

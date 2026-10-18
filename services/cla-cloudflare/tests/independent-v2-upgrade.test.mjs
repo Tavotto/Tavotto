@@ -199,6 +199,26 @@ test('v2 upgrade lost COMMIT reply is recognized without repeating any DDL',()=>
   assert.equal(result.status,'already_applied');assert.deepEqual(executed,['BEGIN IMMEDIATE','COMMIT']);
 }));
 
+for(const seeded of [false,true])test('v2 upgrade old source plan rejects unrelated fresh target '+(seeded?'matching synthetic rows':'empty'),()=>using(db=>{
+  const fresh=new DatabaseSync(':memory:');
+  try{
+    for(const name of ['base.sql','native/schema.sql'])fresh.exec(nativeSQL(fs.readFileSync(new URL('../src/'+name,import.meta.url),'utf8')));
+    if(seeded)for(const target of [db,fresh])target.exec(`INSERT INTO ${P}sessions VALUES('SYNTHETIC-INDEPENDENT',2,'SYNTHETIC rebuilt target',X'0080FF',999999)`);
+    const plan=prepareSyntheticV2Upgrade(db),freshPlan=prepareSyntheticV2Upgrade(fresh),before=snapshot(fresh);
+    assert.equal(plan.status,'prepared');assert.equal(freshPlan.status,'already_target');
+    assert.equal(freshPlan.schema_sha256,freshPlan.fresh_target_schema_sha256);
+    assert.notEqual(freshPlan.schema_sha256,plan.target_schema_sha256);
+    for(const [name,original] of Object.entries(plan.data))assert.deepEqual(freshPlan.data[name],original,'old rows match despite unrelated schema provenance');
+    const executed=[],restore=intercept(fresh,(sql,exec)=>{executed.push(sql);return exec(sql);});
+    try{deniedUnchanged(fresh,()=>apply(fresh,plan),/uncertain_commit_schema_mismatch/);}finally{restore();}
+    assert.equal(fresh.isTransaction,false);assert.deepEqual(executed,['BEGIN IMMEDIATE','ROLLBACK']);assert.deepEqual(snapshot(fresh),before);
+    const ownExecuted=[],restoreOwn=intercept(fresh,(sql,exec)=>{ownExecuted.push(sql);return exec(sql);});let own;
+    try{own=apply(fresh,freshPlan);}finally{restoreOwn();}
+    assert.equal(own.status,'already_target');assert.equal(own.writes,0);assert.equal(own.data_preserved,undefined);
+    assert.deepEqual(ownExecuted,['BEGIN IMMEDIATE','COMMIT']);assert.deepEqual(snapshot(fresh),before);
+  }finally{if(fresh.isTransaction)fresh.exec('ROLLBACK');fresh.close();}
+},source));
+
 for(const stage of ['ALTER','TABLE','TRIGGER','COMMIT'])test('v2 upgrade late '+stage+' failure restores complete schema rows and revision',()=>using(db=>{
   const plan=prepareSyntheticV2Upgrade(db);let injected=false;
   const restore=intercept(db,(sql,exec)=>{
