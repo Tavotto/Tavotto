@@ -315,21 +315,14 @@ def _patched_savefig(self, fname, *args, **kwargs):
         SESSION.note_artifact(observation, stem, self, kwargs.get("bbox_extra_artists"))
     if stem and SESSION is not None:
         SESSION.add_figure(stem, self, figcapture.SOURCE_SAVEFIG)
-        target = figcapture.savefig_target_key(fname, kwargs, getattr(self, "canvas", None))
-        # 不落盘拿不到成败：带路径的保存当场不落盘真渲染一次，原生下会抛 = 这次保存视为失败（与 native 同源：
-        # 不进 files、不记调用、不顶替）。target 为 None（缓冲区等）沿用原行为。
-        if (
-            target is None
-            or call is None
-            or figcapture.savefig_verify_render(_REAL_SAVEFIG, self, fname, args, kwargs)
-        ):
-            SESSION.note_savefig(
-                stem,
-                self,
-                call,
-                kwargs.get("bbox_extra_artists"),
-                target=target,
-            )
+        SESSION.note_savefig(
+            stem,
+            self,
+            call,
+            kwargs.get("bbox_extra_artists"),
+            target=figcapture.savefig_target_key(fname, kwargs, getattr(self, "canvas", None)),
+            verify=figcapture.savefig_verifier(_REAL_SAVEFIG, self, fname, args, kwargs),
+        )
     if not to_path:
         if SESSION is not None:
             SESSION.passthrough_figures.add(id(self))

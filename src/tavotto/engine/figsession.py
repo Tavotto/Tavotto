@@ -567,6 +567,7 @@ class LiveFigureSession:
         call: dict | None,
         extra_artists=None,
         target: str | None = None,
+        verify=None,
     ) -> None:
         """记一次**成功的** savefig 调用（规则在 `figcapture.note_savefig_writer`）。
 
@@ -584,6 +585,7 @@ class LiveFigureSession:
             call,
             extra_artists,
             locked=stem in self.states or stem in self.failures,
+            verify=verify,
         )
 
     def note_artifact(self, observation, stem, fig, extra_artists):

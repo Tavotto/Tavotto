@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+import sys
+
 import pytest
 
 from support.bridgekit import write
@@ -160,6 +162,9 @@ keep.close()
 """
 
 
+@pytest.mark.skipif(
+    sys.platform == "win32", reason="Windows 不允许 unlink 仍被打开的文件，场景造不出来"
+)
 def test_native_recreated_path_is_still_the_same_target(tmp_path, bridge_session):
     """A 写 x.pdf、旧 inode 仍被打开、unlink 后 B 新建 x.pdf：同一路径，捕获 B（Codex #1141 r4305717514）。"""
     proj = tmp_path / "proj"
