@@ -12,7 +12,7 @@ import { AI_RUN_TIMEOUT_MS } from '@/lib/api'
 import { createDraftBackend } from '@/test/aiDraftBackend'
 import '@/lib/aiDraftLedger'
 import { currentProjectId, setCurrentProjectId } from '@/lib/session'
-import { AiLedgerError, ProjectChangedError, sameScript, useAiStore } from './aiStore'
+import { AiLedgerError, ProjectChangedError, sameScript, snapshotIsFinal, useAiStore } from './aiStore'
 import sameScriptCases from './sameScriptCases.json'
 import { useUiStore } from './uiStore'
 
@@ -472,6 +472,15 @@ describe('发送锁比完整的项目相对路径，不比文件名（Codex #109
     handler = defaultHandler
     await expect(sendOn('FigB.pdf', 'b/plot.py')).resolves.toBe('accepted') // 旧实现按文件名比，这里被误锁
     await expect(sendOn('FigC.pdf', 'a\\plot.py')).rejects.toThrow('submission-pending')
+  })
+
+  it('snapshotIsFinal：cancelled / interrupted 都要带 ended_ms 才是终态（interrupt_all 与 cancel 一样只先写 status）', () => {
+    for (const status of ['cancelled', 'interrupted']) {
+      expect(snapshotIsFinal({ status, ended_ms: null } as never, status)).toBe(false)
+      expect(snapshotIsFinal({ status, ended_ms: 5 } as never, status)).toBe(true)
+    }
+    expect(snapshotIsFinal({ status: 'done', ended_ms: null } as never, 'done')).toBe(true)
+    expect(snapshotIsFinal({ status: 'running', ended_ms: 5 } as never, 'running')).toBe(false)
   })
 
   it('sameScript ↔ 后端 ai_history.same_script 严格同源：两边跑同一张用例表（tests/test_ai_drafts.py 读同一份 JSON）', () => {

@@ -685,6 +685,22 @@ describe('同步状态机：单一 reconcile + 写入版本（#1098）', () => {
     expect(useAiStore.getState().sessions.map((x) => x.id)).toContain('s-other') // 接回了那次的结果
   })
 
+  it('409 ai_pending_unresolved 之后、本页再读之前，别的标签页已确认并删掉了挡路的那一行：照着 409 带回的行还原并查询，接回会话、不放开发送', async () => {
+    useSelectionStore.setState({ ids: ['p3'] } as never)
+    await mount()
+    await typeText('新指令')
+    be.pendings.set('pa\u0000Fig1.pdf', [{ rid: 'rid-othertab-010', text: '别的标签页发出的话', sent: SENT, script: 'p1.py' }])
+    be.afterPendingUnresolved(() => be.dropRejectedPending('rid-othertab-010')) // 回 409 的同时，那一行被别的标签页 accept 掉了
+    vi.mocked(fetchAiRequest).mockResolvedValue({ session: 's-other', status: 'running', changed: false, script: 'p1.py' })
+    await click(q('[data-ai-send="send"]'))
+    await settle()
+    be.afterPendingUnresolved(null)
+    expect(aiRun).not.toHaveBeenCalled()
+    expect(vi.mocked(fetchAiRequest).mock.calls.some((c) => c[0] === 'rid-othertab-010')).toBe(true)
+    expect(useAiStore.getState().sessions.map((x) => x.id)).toContain('s-other')
+    expect(q('[data-ai-send="send"]')).toBeNull() // 那次任务还在跑：只剩「停止」
+  })
+
   it('对账成功过一次之后，草稿读失败而项目级账本读成功：别的标签页新留在兄弟面板上的未确认提交照样还原、发送锁住', async () => {
     useSelectionStore.setState({ ids: ['p3'] } as never)
     await mount()

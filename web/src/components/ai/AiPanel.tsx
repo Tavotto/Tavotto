@@ -284,6 +284,7 @@ function AssistantPanelBody() {
     ledgerState,
     retryLedger,
     reconcileNow,
+    restoreBlockers,
     draftLoading,
     draftStalled,
     draftReplaced,
@@ -492,10 +493,11 @@ function AssistantPanelBody() {
         // 后端（写账本的事务里）说这个面板 / 这份脚本上还有没落定的提交——本页的视图过期了（别的标签页刚留下、对账还在读、
         // 旧请求迟到登记……）。不发；把它们还原出来（照旧锁住发送），再按 rid 逐条查询：执行过的接回会话，没收到的交给用户
         // 「重发」或「改写后再发」显式取代
-        const rids = Array.isArray(e.body?.rids) ? (e.body.rids as unknown[]).filter((x): x is string => typeof x === 'string') : []
-        void reconcileNow().then(() => {
-          for (const rid of rids) void useAiStore.getState().queryRequest(rid)
-        })
+        // 照着 409 带回的行还原（不等另读一次列表：那之前别的标签页可能已确认并删了它），再逐条查询；之后对账一次补齐其余状态
+        const blockers = Array.isArray(e.body?.pendings) ? (e.body.pendings as Parameters<typeof restoreBlockers>[0]) : []
+        restoreBlockers(blockers)
+        for (const b of blockers) void useAiStore.getState().queryRequest(b.rid)
+        void reconcileNow()
       }
       // 发送记录没写进后端 = 没有发：一句话 + 重试（不是「尽力写、照样发」）
       setError({

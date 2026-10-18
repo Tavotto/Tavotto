@@ -132,11 +132,14 @@ class PendingUnresolved(Exception):
 
     「这份脚本有没有还没落定的指令」由后端在写账本的同一个事务里判，不信客户端：任何标签页、任何时机（对账还在读、
     读失败、别的标签页刚留下一条、旧请求迟到登记）拿着过期的本地视图发新指令，都过不了这里。客户端收到后还原这些 rid、
-    逐条查询（已执行的接回会话 / 没收到的由用户「重发」或「改写后再发」显式取代），之后才能发新的。"""
+    逐条查询（已执行的接回会话 / 没收到的由用户「重发」或「改写后再发」显式取代），之后才能发新的。
+    `pendings` 是这些行本身（file / rid / text / sent / script）：客户端**照着它还原**，不再靠之后另读一次列表——那次读之前别的标签页
+    可能已经确认并删掉了这一行，客户端就既看不到它、也查不了它。"""
 
-    def __init__(self, rids: list[str]):
-        super().__init__(len(rids))
-        self.rids = rids
+    def __init__(self, pendings: list[dict]):
+        super().__init__(len(pendings))
+        self.pendings = pendings
+        self.rids = [p["rid"] for p in pendings]
 
 
 def _script_identity(p: str) -> str:
@@ -150,6 +153,15 @@ def _script_identity(p: str) -> str:
 
 def _is_absolute_script(p: str) -> bool:
     return p.startswith("/") or re.match(r"^[A-Za-z]:/", p) is not None
+
+
+def _sent_or_empty(raw) -> dict:
+    """账本行的 `sent`（JSON）读不出来时给空对象：这一行照样挡住新提交（它没落定），只是还原时少了目标说明。"""
+    try:
+        v = json.loads(raw)
+    except (ValueError, TypeError):
+        return {}
+    return v if isinstance(v, dict) else {}
 
 
 def same_script(a: str, b: str) -> bool:
@@ -746,9 +758,15 @@ def put_pending(
             # 同面板 / 同脚本上还有没落定的提交、这次又没显式取代它：拒绝（与上面的取代同一个事务，看到的是此刻的事实）。
             # 名额先判：守住它之后同面板最多一条，名额只对守住之前留下的旧数据还起作用
             blockers = [
-                r["rid"]
+                {
+                    "file": r["file_id"],
+                    "rid": r["rid"],
+                    "text": r["text"],
+                    "sent": _sent_or_empty(r["sent"]),
+                    "script": r["script"],
+                }
                 for r in con.execute(
-                    "SELECT rid, file_id, script FROM ai_pending WHERE project=? AND rid != ? "
+                    "SELECT rid, file_id, text, sent, script FROM ai_pending WHERE project=? AND rid != ? "
                     "ORDER BY created_ms, rid",
                     (project, rid),
                 ).fetchall()

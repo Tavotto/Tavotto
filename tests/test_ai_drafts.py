@@ -785,6 +785,10 @@ def test_a_second_unresolved_submission_on_the_same_panel_or_script_is_refused(c
         )
         assert r.status_code == 409, (file, script)
         assert r.get_json()["code"] == "ai_pending_unresolved" and r.get_json()["rids"] == [old]
+        # 挡路的行本身也带回来（与 GET 列表同形）：客户端照着还原，不靠之后另读——那之前别的标签页可能已确认并删了它
+        assert r.get_json()["pendings"] == [
+            {"file": "F", "rid": old, "text": "旧", "sent": SENT, "script": "figs/plot.py"}
+        ]
     assert get(client, a, "G")["pendings"] == []  # 被拒：什么都没写
     # 别的脚本、别的面板：不受影响
     other = client.put(

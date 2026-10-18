@@ -31,6 +31,8 @@ export interface DraftBackend {
   setDraftGetFails: (fails: boolean) => void
   /** 这个 rid 已被后端真实登记（旧请求其实到达了）：带它的 `supersedes` 一律 409 `ai_supersede_conflict`，整次写入不生效 */
   markRegistered: (rid: string) => void
+  /** 回了 409 `ai_pending_unresolved` 之后立刻调用（带挡路的 rid）：模拟「回 409 之后、本页再读之前」别的标签页做了什么 */
+  afterPendingUnresolved: (fn: ((rids: string[]) => void) | null) => void
   /** 只让「写账本」失败（PUT pending 回 500），别的照常 */
   setPendingWriteFails: (fails: boolean) => void
   /** 模拟「这个面板未解决的提交已满」：新 rid 一律 409 `ai_pending_limit`（params.count = 传入的数）；null = 不限 */
@@ -62,6 +64,7 @@ export function createDraftBackend(): DraftBackend {
   let pendingListFails = false
   let draftGetFails = false
   const registered = new Set<string>()
+  let onUnresolved: ((rids: string[]) => void) | null = null
   let draftPutFails = false
   let hold: Promise<void> | null = null
   let holdNext: Promise<void> | null = null
@@ -135,9 +138,20 @@ export function createDraftBackend(): DraftBackend {
             .flatMap(([k, rows]) => rows.map((r) => ({ file: k.slice(prefix.length), ...r })))
             .filter((r) => r.rid !== rid && !gone.has(r.rid))
             .filter((r) => r.file === file || (!!script && !!r.script && sameScript(r.script, script)))
-            .map((r) => r.rid)
-          if (blockers.length)
-            return json({ error: '还有没落定的', code: 'ai_pending_unresolved', params: {}, rids: blockers }, 409)
+          if (blockers.length) {
+            const res = json(
+              {
+                error: '还有没落定的',
+                code: 'ai_pending_unresolved',
+                params: {},
+                rids: blockers.map((r) => r.rid),
+                pendings: blockers.map((r) => ({ file: r.file, rid: r.rid, text: r.text, sent: r.sent, script: r.script ?? null })),
+              },
+              409,
+            )
+            onUnresolved?.(blockers.map((r) => r.rid))
+            return res
+          }
         }
         const next = [
           ...list.filter((x) => x.rid !== rid && !gone.has(x.rid)),
@@ -261,6 +275,9 @@ export function createDraftBackend(): DraftBackend {
     },
     markRegistered: (rid) => {
       registered.add(rid)
+    },
+    afterPendingUnresolved: (fn) => {
+      onUnresolved = fn
     },
     setPendingLimit: (n) => {
       pendingLimit = n

@@ -80,6 +80,8 @@ export type ReconcileSource = 'mount' | 'focus' | 'visible' | 'reconnect' | 'acc
  * 戳的下限：每次读到服务器的戳（对账的 GET、PUT 的响应、stale 的响应）都抬高本页下限，所以墙钟回拨 / 新开页面
  * 从 0 起步，后面发出的戳也一定比库里的大；被判 stale 时本地是用户真实输入的，就以本地为准用更大的戳重写（有界）。
  */
+type Pending = { file: string; rid: string; text: string; sent: DraftTarget; script: string | null }
+
 export function useAiDraft(panel: PanelObject | null) {
   const fileId = panel?.fileId ?? null
   // 项目认领是异步到的（刷新后挂载那一刻可能还是 null）：跟着它走，到了就读
@@ -151,6 +153,34 @@ export function useAiDraft(panel: PanelObject | null) {
    * - 草稿文本：只有在没有任何未落定的本地写入、且对账期间本地没再改过时才应用（挂载来源额外亮「已恢复」提示）。
    * 读失败（`null`）= 不知道，什么都不动。
    */
+  // 待确认提交：**永远**应用（走同一条还原路径），按 rid 去重。对账与「后端说还有没落定的」（409 带回的行）共用它
+  const restorePendingsFor = useCallback((pj: string, items: Pending[]) => {
+    const p = panelRef.current
+    if (!p) return
+    const objects = useDocumentStore.getState().doc.objects
+    const seen = new Set<string>()
+    for (const item of items) {
+      if (seen.has(item.rid)) continue
+      seen.add(item.rid)
+      const sameFile = item.file === p.fileId
+      if (!sameFile && !(p.script && item.script && sameScript(item.script, p.script))) continue
+      const sourcePanel = objects.find((o) => o.type === 'panel' && (o as PanelObject).fileId === item.file) as
+        | PanelObject
+        | undefined
+      useAiStore.getState().restoreSubmission({
+        rid: item.rid,
+        project: pj,
+        fileId: item.file,
+        panelId: sourcePanel?.id ?? '',
+        script: item.script ?? (sameFile ? (p.script ?? null) : null),
+        prompt: item.text,
+        target: item.sent,
+        canvas: useDocumentStore.getState().activeCanvasId,
+        overrides: sameFile ? p.overrides : (sourcePanel?.overrides ?? []),
+      })
+    }
+  }, [])
+
   const reconcile = useCallback(async (source: ReconcileSource) => {
     const { project: pj, fileId: f, epoch } = key.current
     if (!pj || !f) return
@@ -175,34 +205,7 @@ export function useAiDraft(panel: PanelObject | null) {
     void useAiStore.getState().settleRunningSessions()
     // 过期：又有更新的一次对账、或目标已经换了——不动
     if (token !== reconcileToken.current || key.current.epoch !== epoch) return
-    type Pending = { file: string; rid: string; text: string; sent: DraftTarget; script: string | null }
-    // 待确认提交：**永远**应用（走同一条还原路径），按 rid 去重
-    const restorePendings = (items: Pending[]) => {
-      const p = panelRef.current
-      if (!p) return
-      const objects = useDocumentStore.getState().doc.objects
-      const seen = new Set<string>()
-      for (const item of items) {
-        if (seen.has(item.rid)) continue
-        seen.add(item.rid)
-        const sameFile = item.file === p.fileId
-        if (!sameFile && !(p.script && item.script && sameScript(item.script, p.script))) continue
-        const sourcePanel = objects.find((o) => o.type === 'panel' && (o as PanelObject).fileId === item.file) as
-          | PanelObject
-          | undefined
-        useAiStore.getState().restoreSubmission({
-          rid: item.rid,
-          project: pj,
-          fileId: item.file,
-          panelId: sourcePanel?.id ?? '',
-          script: item.script ?? (sameFile ? (p.script ?? null) : null),
-          prompt: item.text,
-          target: item.sent,
-          canvas: useDocumentStore.getState().activeCanvasId,
-          overrides: sameFile ? p.overrides : (sourcePanel?.overrides ?? []),
-        })
-      }
-    }
+    const restorePendings = (items: Pending[]) => restorePendingsFor(pj, items)
     // 本文件自己的账本（随草稿一起回来）：项目级列表理论上已含，这里兜底、按 rid 去重
     const ownPendings = (): Pending[] =>
       (state?.pendings ?? []).map((own) => ({
@@ -254,7 +257,7 @@ export function useAiDraft(panel: PanelObject | null) {
     restorePendings([...projectList, ...ownPendings()])
     setLedgerState('ok') // pendings 已还原：账本恢复完成，可以放开发送
     applyDraft()
-  }, [])
+  },[restorePendingsFor])
 
   reconcileRef.current = reconcile
 
@@ -354,6 +357,17 @@ export function useAiDraft(panel: PanelObject | null) {
   const retryLedger = useCallback(() => void reconcile('focus'), [reconcile])
   /** 立即对账一次、等它做完（后端说「还有没落定的」之后：先把它们还原出来，再逐条查询） */
   const reconcileNow = useCallback(() => reconcile('focus'), [reconcile])
+  /**
+   * 后端（写账本的事务里）回 409 `ai_pending_unresolved` 时带回的挡路行：**照着它还原**，不靠之后另读一次列表——那次读之前
+   * 别的标签页可能已经确认并删掉了这一行，本页就既看不到它、也查不了它，发送随即放开
+   */
+  const restoreBlockers = useCallback(
+    (items: Pending[]) => {
+      const pj = key.current.project
+      if (pj) restorePendingsFor(pj, items)
+    },
+    [restorePendingsFor],
+  )
 
   /** 输入框当前的本地版本号（失败的发送记下它；重试时据此判「输入框自那以后没改过」） */
   const draftSeq = useCallback(() => seq.current, [])
@@ -370,6 +384,7 @@ export function useAiDraft(panel: PanelObject | null) {
     ledgerState,
     retryLedger,
     reconcileNow,
+    restoreBlockers,
     draftLoading: draftRead === 'loading',
     draftStalled,
     draftReplaced,

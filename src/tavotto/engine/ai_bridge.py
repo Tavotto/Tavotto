@@ -1241,6 +1241,8 @@ def get(sid: str) -> dict | None:
             "transcript": [],
             "diff": "",
             "changed": None,
+            # 进程随上一个后端一起没了：这是终态。`interrupted` 与 `cancelled` 一样要带 `ended_ms` 才算终态（前端 `snapshotIsFinal`）
+            "ended_ms": side.get("ended_ms") or int(time.time() * 1000),
             "note": "后端已重启，仅可回滚",
         }
     )
