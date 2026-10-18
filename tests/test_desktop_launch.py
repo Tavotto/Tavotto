@@ -245,6 +245,41 @@ def test_pids_of_probe_failure_never_blocks_the_handoff():
     assert out["ready"] == "process_alive"
 
 
+class _FakeDll:
+    """任何属性都是可记录调用的桩函数；`ret` 按函数名给返回值。"""
+
+    def __init__(self, ret):
+        self.calls = []
+        self._ret = ret
+
+    def __getattr__(self, name):
+        def fn(*args):
+            self.calls.append(name)
+            return self._ret.get(name, True)
+
+        return type(
+            "F", (), {"argtypes": None, "restype": None, "__call__": lambda s, *a: fn(*a)}
+        )()
+
+
+def test_windows_ctypes_paths_run_to_the_end_with_fake_dlls(monkeypatch):
+    """ctypes 两段只在 Windows 上真跑；这里用桩 DLL 走完 Python 层，防止名字 / 签名笔误
+    被 `except Exception` 悄悄吞成「查不出」（真机就踩过一次 TypeError）。"""
+    import ctypes
+
+    kernel, advapi = _FakeDll({"OpenProcess": 0}), _FakeDll({})
+    dlls = {"kernel32": kernel, "advapi32": advapi}
+    monkeypatch.setattr(handoff.os, "name", "nt")
+    monkeypatch.setattr(ctypes, "WinDLL", lambda name, **kw: dlls[name], raising=False)
+    # 枚举：EnumProcesses 成功但 got=0 → 空列表（None 才是「整体失败」）
+    assert handoff._windows_process_images() == []
+    assert "K32EnumProcesses" in kernel.calls
+    # 令牌：走到 finally 里的 CloseHandle，说明 flag() 两次都调完了没抛
+    assert handoff._windows_token_sandbox() is None
+    assert advapi.calls.count("GetTokenInformation") == 2
+    assert "CloseHandle" in kernel.calls
+
+
 # ----------------- 沙箱判据：受限令牌 / AppContainer 里不拉进程 -----------------
 _WIN_APP = "C:\\Tools\\Tavotto\\Tavotto.exe"
 
