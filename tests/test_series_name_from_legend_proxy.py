@@ -97,6 +97,21 @@ def main():
     ])
     fig.savefig("Fig.pdf")
 """,
+    # 散点同色、只差 marker 形状 / 只差大小：不命名
+    "scatter_shape_off": """\
+import matplotlib.pyplot as plt
+
+def main():
+    fig, ax = plt.subplots(figsize=(4, 3))
+    ax.scatter([0, 1], [0, 1], color="g", marker="^", s=30)
+    ax.scatter([0, 1], [1, 2], color="b", marker="s", s=30)
+    shape = ax.scatter([], [], color="g", marker="o", s=30, label="circle")
+    size = ax.scatter([], [], color="b", marker="s", s=80, label="big")
+    shape.remove()
+    size.remove()
+    ax.legend(handles=[shape, size])
+    fig.savefig("Fig.pdf")
+""",
     # 有自己 label 的线与普通 ax.legend()：行为不变
     "own_label": """\
 import matplotlib.pyplot as plt
@@ -161,3 +176,10 @@ def test_own_label_untouched(figs):
     assert got["axes_0.lines_0"] == "曲线 “alpha”"
     assert got["axes_0.lines_1"] == "曲线 2"
     assert got["axes_0.lines_2"] == "曲线 3"
+
+
+def test_scatter_marker_or_size_off_stays_unnamed(figs):
+    assert _labels(figs, "scatter_shape_off") == {
+        "axes_0.scatter_0": "散点系列 1",
+        "axes_0.scatter_1": "散点系列 2",
+    }

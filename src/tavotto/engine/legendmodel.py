@@ -1063,7 +1063,7 @@ def legend_proxy_names(ax) -> dict[int, str]:
     series = [*ax.lines, *ax.collections]
     entries: list[tuple[tuple, str]] = []
     for h, text in zip(handles[:n], texts[:n], strict=True):
-        entries.append((legend_handle_fingerprint(h), text))
+        entries.append(((legend_handle_fingerprint(h), _scatter_shape(h)), text))
     if not entries:
         return {}
     fp_of: dict[int, tuple] = {}
@@ -1075,7 +1075,7 @@ def legend_proxy_names(ax) -> dict[int, str]:
         except Exception:  # noqa: BLE001 — 造不出示意线的对象不参与
             continue
         if fresh is not None:
-            fp_of[id(art)] = legend_handle_fingerprint(fresh)
+            fp_of[id(art)] = (legend_handle_fingerprint(fresh), _scatter_shape(fresh))
     out: dict[int, str] = {}
     for art in series:
         fp = fp_of.get(id(art))
@@ -1088,6 +1088,23 @@ def legend_proxy_names(ax) -> dict[int, str]:
             continue
         out[id(art)] = hits[0]
     return out
+
+
+def _scatter_shape(h) -> tuple:
+    """散点示意的**形状与大小**（marker 路径顶点 + sizes），补 `legend_handle_fingerprint` 在
+    Collection 分支没比的两维；非散点回空元组。
+
+    只给 `legend_proxy_names` 用、不并进共享指纹：那份指纹也是 `bind_legend_entries` 的判据，
+    改它会挪动存量图例的绑定。命名要的是「样式精确一致」，同色不同 marker / 不同 `s` 的代理
+    句柄不能把名字借给散点（#1162 评审）。两侧都是 matplotlib 同一个 handler 派生的示意，
+    sizes 口径一致，可直接比。
+    """
+    if not isinstance(h, PathCollection):
+        return ()
+    paths = h.get_paths()
+    verts = tuple(np.round(paths[0].vertices, 4).ravel().tolist()) if len(paths) else ()
+    sizes = tuple(np.round(np.asarray(h.get_sizes(), dtype=float), 3).tolist())
+    return (verts, sizes)
 
 
 def _source_label(art) -> str:
