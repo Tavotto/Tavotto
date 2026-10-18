@@ -223,6 +223,27 @@
   会拿到 worker 的 `--script/--out-dir/--entry`，存出一堆叫 `--entry` 的图
   （试运行探测时当场撞见过，`test_script_sees_its_own_argv_not_the_workers` 看护）。
 
+## 同一路径多个写入者（Compatibility Guardian G2）
+
+脚本在循环里让不同的 Figure 反复写同一个路径（`fig.savefig("a.pdf"); plt.close(fig)`），原生 Python 下磁盘上留下的是
+**最后一次写入**的那张；捕获表按 stem 记账，必须与之一致。唯一实现 `figsession.LiveFigureSession.note_savefig`
+（`add_figure` 仍对已有 stem 先到先得，不动）：
+
+* **同一路径（stem + 格式）上一次是另一张图写的、这次换了写入者：最后写入者胜**，`capture[stem]` 换成它；被顶掉那张的
+  `savefig_calls` / `savefig_extras` 一并清掉（那是它的参数，新图从空表开始记）。stem 在捕获表里的次序不变。
+* **同 stem 不同格式不算同一路径**（`a.pdf` 是甲、`a.svg` 是乙，磁盘上各有各的文件）：stem 仍归先认领的那张——
+  `tests/test_savefig_capture_params.py` 的 TIGHT 用例钉着这一条。
+* 同一张图存多次仍是一张图（调用照记）；不同 stem 互不影响；三个写入者取第三个；写回原来那张又取回。
+* **pyplot 认领永远不被顶掉**，兜底也永远不顶显式 savefig；`call is None`（`paper_style.save` 没观察到参数）不知道路径，
+  不顶替。
+* **已进入编辑（`states`）或已记失败（`failures`）的 stem 不再换图**：override / 清单 / 预览都挂在那张图上。
+  safe worker 的捕获发生在 instrument 之前，规则只在脚本执行期生效；写回重放起新 worker 重跑脚本，同一规则再走一遍，
+  重放出的就是最后写入者。
+* 已知未覆盖：native bridge 的模块级 `bridge_runner._CAPTURE` 钩子仍是 `stem not in _CAPTURE` 先到先得，且它的
+  记账走 `figcapture.record_savefig_call(_CAPTURE_SAVEFIG, _CAPTURE, ...)`，不经本类；`paper_style.save` 捷径同理。
+
+看护 `tests/test_capture_same_path_last_writer.py`（会话规则 + 真 worker 端到端）。
+
 ## 运行参数（T03，ADR 0014 §2 修订）
 
 用户手动给的**精确 argv** 贯通 探测 → 热编辑 → 冷重放 → 导出 → 重开；自动 argparse 表单是 T07，不在这里。
