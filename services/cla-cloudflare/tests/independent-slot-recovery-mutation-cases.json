@@ -1,0 +1,142 @@
+[
+  {
+    "name": "manual owner SQL eligibility",
+    "file": "src/native/store.ts",
+    "before": "return `(p.id=(SELECT active_attempt FROM slot_policy WHERE id=1) AND (p.phase='manual' OR p.reconcile_attempts>=3 OR ${job.attempts>=3?'1':'0'}=1))`;",
+    "after": "return `(p.id=(SELECT active_attempt FROM slot_policy WHERE id=1) AND (p.reconcile_attempts>=3 OR ${job.attempts>=3?'1':'0'}=1))`;",
+    "pattern": "^exact negative GET drains owner \\{\"phase\":\"manual\",\"attempts\":0\\}$",
+    "selectedTitle": "exact negative GET drains owner {\"phase\":\"manual\",\"attempts\":0}",
+    "testFile": "tests/independent-slot-recovery.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "exhausted publication SQL eligibility",
+    "file": "src/native/store.ts",
+    "before": "return `(p.id=(SELECT active_attempt FROM slot_policy WHERE id=1) AND (p.phase='manual' OR p.reconcile_attempts>=3 OR ${job.attempts>=3?'1':'0'}=1))`;",
+    "after": "return `(p.id=(SELECT active_attempt FROM slot_policy WHERE id=1) AND (p.phase='manual' OR ${job.attempts>=3?'1':'0'}=1))`;",
+    "pattern": "^exact negative GET drains owner \\{\"phase\":\"unknown\",\"attempts\":3\\}$",
+    "selectedTitle": "exact negative GET drains owner {\"phase\":\"unknown\",\"attempts\":3}",
+    "testFile": "tests/independent-slot-recovery.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "held owner outbox retry admission",
+    "file": "src/native/store.ts",
+    "before": "AND (attempts<3 OR EXISTS(SELECT 1 FROM publication_attempts p WHERE p.target_key=outbox.target_key AND p.id=(SELECT active_attempt FROM slot_policy WHERE id=1)))",
+    "after": "AND attempts<3",
+    "pattern": "^exact negative GET drains owner \\{\"phase\":\"confirmed\",\"outboxAttempts\":3\\}$",
+    "selectedTitle": "exact negative GET drains owner {\"phase\":\"confirmed\",\"outboxAttempts\":3}",
+    "testFile": "tests/independent-slot-recovery.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "nonowner exhaustion isolation",
+    "file": "src/native/store.ts",
+    "before": "AND (attempts<3 OR EXISTS(SELECT 1 FROM publication_attempts p WHERE p.target_key=outbox.target_key AND p.id=(SELECT active_attempt FROM slot_policy WHERE id=1)))",
+    "after": "AND (attempts<3 OR EXISTS(SELECT 1 FROM publication_attempts p WHERE p.target_key=outbox.target_key))",
+    "pattern": "^legacy exhausted outbox cannot cross cap without active ownership$",
+    "selectedTitle": "legacy exhausted outbox cannot cross cap without active ownership",
+    "testFile": "tests/independent-slot-recovery.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "strict manual recovery due",
+    "file": "src/native/store.ts",
+    "before": "(${negativeOnly} AND coalesce(p.reconcile_due,0)<=${DB_NOW})",
+    "after": "(${negativeOnly} AND 1)",
+    "pattern": "^strict due remains future even when exhausted outbox is separately due$",
+    "selectedTitle": "strict due remains future even when exhausted outbox is separately due",
+    "testFile": "tests/independent-slot-recovery.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "never evaluate or reconfirm manual owner",
+    "file": "src/native/background.ts",
+    "before": "let valid=!slotRecoveryOnly(job,p) &&",
+    "after": "let valid=",
+    "pattern": "^owned success input is negative only \\{\"phase\":\"manual\",\"expired\":false\\}$",
+    "selectedTitle": "owned success input is negative only {\"phase\":\"manual\",\"expired\":false}",
+    "testFile": "tests/independent-slot-recovery.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "missing owned run remains scheduled",
+    "file": "src/native/background.ts",
+    "before": "if(p.confirmation_slot===1)await s.store.deferHeldRecovery(job,p,revision,'slot_recovery_not_observed');",
+    "after": "if(false)await s.store.deferHeldRecovery(job,p,revision,'slot_recovery_not_observed');",
+    "pattern": "^unavailable evidence keeps manual pointer and durable60 missing$",
+    "selectedTitle": "unavailable evidence keeps manual pointer and durable60 missing",
+    "testFile": "tests/independent-slot-recovery.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "error does not restore null retry deadline",
+    "file": "src/native/background.ts",
+    "before": "if(slotRecoveryOnly(job,p) || p.confirmation_slot===1 && (p.reconcile_attempts ?? 0)>=2)",
+    "after": "if(false)",
+    "pattern": "^unavailable evidence keeps manual pointer and durable60 error$",
+    "selectedTitle": "unavailable evidence keeps manual pointer and durable60 error",
+    "testFile": "tests/independent-slot-recovery.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "saturated publication attempt history",
+    "file": "src/native/store.ts",
+    "before": "reconcile_due=${DB_NOW}+60,reconcile_attempts=min(3,reconcile_attempts+1),observed_generation=?",
+    "after": "reconcile_due=${DB_NOW}+60,reconcile_attempts=0,observed_generation=?",
+    "pattern": "^unavailable evidence keeps manual pointer and durable60 missing$",
+    "selectedTitle": "unavailable evidence keeps manual pointer and durable60 missing",
+    "testFile": "tests/independent-slot-recovery.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "saturated outbox attempt history",
+    "file": "src/native/store.ts",
+    "before": "AND ${this.negativeRecoverySQL(job)}) THEN attempts ELSE 0 END",
+    "after": "AND ${this.negativeRecoverySQL(job)}) THEN 0 ELSE 0 END",
+    "pattern": "^unavailable evidence keeps manual pointer and durable60 missing$",
+    "selectedTitle": "unavailable evidence keeps manual pointer and durable60 missing",
+    "testFile": "tests/independent-slot-recovery.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "durable deadline is not restarted",
+    "file": "src/native/store.ts",
+    "before": "WHEN ${this.negativeRecoverySQL(job)} THEN coalesce(p.reconcile_due,${DB_NOW}+60)",
+    "after": "WHEN ${this.negativeRecoverySQL(job)} THEN ${DB_NOW}+60",
+    "pattern": "^finish keeps the persisted manual deadline rather than restarting60$",
+    "selectedTitle": "finish keeps the persisted manual deadline rather than restarting60",
+    "testFile": "tests/independent-slot-recovery.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "manual owner does not jump rowid progress",
+    "file": "src/native/store.ts",
+    "before": "AND p.phase!='manual' AND (p.phase!='resolved' OR p.id=(SELECT active_attempt FROM slot_policy WHERE id=1))",
+    "after": "AND (p.phase!='resolved' OR p.id=(SELECT active_attempt FROM slot_policy WHERE id=1))",
+    "pattern": "^older due rows progress before repeatedly deferred manual owner$",
+    "selectedTitle": "older due rows progress before repeatedly deferred manual owner",
+    "testFile": "tests/independent-slot-recovery.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "manual send fence blocks claim itself",
+    "file": "src/native/store.ts",
+    "before": "AND NOT EXISTS(SELECT 1 FROM publication_attempts p WHERE p.target_key=outbox.target_key AND p.id=(SELECT active_attempt FROM slot_policy WHERE id=1) AND p.send_until>${DB_NOW})",
+    "after": "AND 1",
+    "pattern": "^live send fence dominates recovery cap manual$",
+    "selectedTitle": "live send fence dominates recovery cap manual",
+    "testFile": "tests/independent-slot-recovery.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "manual recurrence must not monopolize global claim",
+    "file": "src/native/store.ts",
+    "before": "ORDER BY CASE WHEN EXISTS(SELECT 1 FROM publication_attempts p WHERE p.target_key=outbox.target_key AND ${this.withdrawalPriority()}) THEN 0 ELSE 1 END,",
+    "after": "ORDER BY CASE WHEN EXISTS(SELECT 1 FROM publication_attempts p WHERE p.target_key=outbox.target_key\n        AND p.id=(SELECT active_attempt FROM slot_policy WHERE id=1) AND (p.phase='manual' OR p.reconcile_attempts>=3 OR outbox.attempts>=3))\n        OR EXISTS(SELECT 1 FROM publication_attempts p WHERE p.target_key=outbox.target_key AND ${this.withdrawalPriority()}) THEN 0 ELSE 1 END,",
+    "pattern": "^a repeatedly missing manual owner must not outrank older due work on every scheduled tick$",
+    "selectedTitle": "a repeatedly missing manual owner must not outrank older due work on every scheduled tick",
+    "testFile": "tests/independent-slot-recovery.test.mjs",
+    "assertionError": true
+  }
+]

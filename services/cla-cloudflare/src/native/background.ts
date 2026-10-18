@@ -4,6 +4,7 @@ import type { Job, Proof } from '../core/types.ts';
 import { Rejected } from '../core/types.ts';
 import type { LiveService } from './service.ts';
 import type { Publication, RefreshRequest } from './store.ts';
+import {slotRecoveryOnly} from './store.ts';
 import { BudgetDeferred, FREE_BUDGET, qualificationSQL } from './budget.ts';
 
 async function one(s:LiveService,job:Job,p:Publication,revision:number,pr:number):Promise<string> {
@@ -11,13 +12,18 @@ async function one(s:LiveService,job:Job,p:Publication,revision:number,pr:number
   if(previous.protocol!=='tavotto-cla-v1' || previous.repository_id!==s.c.repositoryId || previous.head_sha!==p.head_sha ||
     previous.revision!==p.revision || previous.expires_at!==p.expires || canonical(previous)!==p.proof_text.slice('tavotto-cla-v1\n'.length))throw new Rejected('stored_proof_unavailable');
   const remote=await s.github.observe(p,{job,revision});
-  if(!remote){s.store.budget!.settlement();await s.store.recordReconciliation(job,p,'manual',null,'not_observed_no_retry',revision);return 'manual_review_required';}
+  if(!remote){s.store.budget!.settlement();
+    if(p.confirmation_slot===1)await s.store.deferHeldRecovery(job,p,revision,'slot_recovery_not_observed');
+    else await s.store.recordReconciliation(job,p,'manual',null,'not_observed_no_retry',revision);
+    return 'manual_review_required';}
   if(remote.conclusion==='failure'){
     s.store.budget!.settlement();
     await s.store.recordReconciliation(job,p,'resolved',remote.id,'remote_failure_observed',revision,null,
       p.confirmation_slot===1?{source:s.github,witness:remote.negativeWitness!}:undefined);return 'remote_failure_observed';
   }
-  let valid=p.conclusion==='success' && revision===p.revision && await s.store.databaseNow()<p.expires;
+  // A manual/exhausted owner can only be drained. Remote success is never a
+  // reason to restore confirmation, evaluate eligibility or replay a send.
+  let valid=!slotRecoveryOnly(job,p) && p.conclusion==='success' && revision===p.revision && await s.store.databaseNow()<p.expires;
   if(valid) {
     try {const current=await s.evaluate(pr);
       valid=current.conclusion==='success' && current.proof.revision===p.revision && sameBinding(previous,current.proof);}
@@ -104,7 +110,11 @@ export async function reconcileOne(s:LiveService):Promise<{disposition:string;bu
     for(const p of records) {
       selected=p;
       try{disposition=await one(s,job,p,revision,target.number);committed=true;}
-      catch(error){if(error instanceof BudgetDeferred)throw error;budget.settlement();await s.store.publicationFailure(job,p,revision);committed=true;disposition='head_retry_pending_or_exhausted';}
+      catch(error){if(error instanceof BudgetDeferred)throw error;budget.settlement();
+        if(slotRecoveryOnly(job,p) || p.confirmation_slot===1 && (p.reconcile_attempts ?? 0)>=2)
+          await s.store.deferHeldRecovery(job,p,revision,'slot_recovery_observation_unavailable');
+        else await s.store.publicationFailure(job,p,revision);
+        committed=true;disposition='head_retry_pending_or_exhausted';}
     }
     budget.settlement();await s.store.finishBatch(job,revision);return result(disposition);
   } catch(error) {

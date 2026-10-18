@@ -102,3 +102,12 @@ positive paths are fenced after enrollment; compatible independent recovery and
 personal signing remain. Details and acceptance limits live in
 `docs/implementation/cla-confirmation-slot/README.md`. No live upgrade, real
 permission, authority or deployment is approved by this candidate.
+
+The active-slot negative-recovery candidate retains manual as a prohibition on
+positive requalification and send replay. Only the durable held owner may be
+selected beyond manual/exhausted retry boundaries to observe or withdraw its
+original run. Release still requires the same fresh exact failure GET witness;
+missing or uncertain observations retain capacity and persist bounded polling
+backoff. It never resets manual head/refresh decisions or treats elapsed time as
+evidence of no send. Details and remaining event/availability limitations live
+in `docs/implementation/cla-slot-negative-recovery/README.md`.

@@ -1,0 +1,117 @@
+{
+  "base": "7324a2d0541d79b90f106aed74991b22b8af60ae",
+  "main_observed": "0991bb9501489395a38542c94867fcfeffbdf196",
+  "scope": "Active-slot negative-only recovery; no schema, permissions, resource, credentials or deployment changes.",
+  "commands": [
+    {
+      "command": "node --test --test-name-pattern='slot exhausted owner drains|slot missing exhausted owner|slot manual observed success only' tests/independent-slot-budget.test.mjs",
+      "runtime": "exact base runtime in isolated copy with new regressions",
+      "exit_code": 1,
+      "count": 5,
+      "log": "root-base-red.log"
+    },
+    {
+      "command": "node --test tests/*.test.mjs",
+      "exit_code": 0,
+      "count": 541,
+      "log": "root-node.log"
+    },
+    {
+      "command": "python3 tests/migration.test.py",
+      "exit_code": 0,
+      "count": 4,
+      "log": "root-migration.log"
+    },
+    {
+      "command": "node tests/mutation-smoke.mjs",
+      "exit_code": 0,
+      "count": 168,
+      "log": "root-mutations.log"
+    },
+    {
+      "command": "git diff --check",
+      "exit_code": 0
+    }
+  ],
+  "independent": {
+    "design_review_before_implementation": "design-review.md",
+    "portable_tests": 27,
+    "portable_exit": 0,
+    "unique_mutants": 14,
+    "each_mutant_exit": 1,
+    "each_mutant_assertion_error": true,
+    "harness_exit": 0,
+    "report": "independent-review.md",
+    "finding": "New global manual-owner priority could starve older due targets. Fixed by preserving original claim ordering; original failure, green and unique reverse mutation retained."
+  },
+  "measured_synthetic_negative_release": {
+    "sql_work": 10,
+    "sql_total": 27,
+    "external_gets": 2,
+    "authentication": "installationToken is a synthetic override; real token exchange and production charging/latency were not measured",
+    "budgets": "existing 20 work / 40 total SQL and 35 work / 40 total external ceilings unchanged"
+  },
+  "source_sha256": {
+    "services/cla-cloudflare/src/native/store.ts": "eaeba99f908d736d56552cdaa1e8f315b33287c1ed57f548f21af6840b815730",
+    "services/cla-cloudflare/src/native/background.ts": "e1b81a05194976b60096feff27c5ab012031f9b153ddc68eeae0c2951221155d",
+    "services/cla-cloudflare/src/native/schema.sql": "0e4cc1672c78837b219eba0c1f54de89fc86169c87ffd26277085a229dfe3a08",
+    "services/cla-cloudflare/tests/independent-slot-budget.test.mjs": "22ef76d13c97380450939309ed501b091a7bf8f40091fef182da10187140b887",
+    "services/cla-cloudflare/tests/independent-slot-recovery.test.mjs": "e777e7976f73717adef6909be9e9b9f1042738698710ad4b452e997700b81888",
+    "services/cla-cloudflare/tests/slot-recovery-mutation-cases.json": "3a96009995bfb9d967b52650648afb832ab817d7dfdf75f26d13285f6bc1cb18",
+    "services/cla-cloudflare/tests/independent-slot-recovery-mutation-cases.json": "28fca35d27e0f2e604a67bc976e901929a772b5f1eecce3e55c4d17634305ef1",
+    "services/cla-cloudflare/tests/confirmation-slot-mutation-cases.json": "a328e15fb407655ace8551102284dbd3abf733f0f068d1b39c09a931a102c207",
+    "services/cla-cloudflare/tests/mutation-smoke.mjs": "f213b55829895b58f5f07410e194fff962b49fae9c2964022192c7f24676d9ab"
+  },
+  "artifact_encoding": "Logical log/report names are exact UTF-8 string members of raw-logs.json, each with original byte SHA256.",
+  "raw_bundle_sha256": "41e0838afe342aa5132f36fec9de21d77d88b1bc618ba09bf2100a237d4b682d",
+  "artifact_sha256": {
+    "root-base-red.log": "256b3c7455da713e9335984c8befce6f4e5d3426c624f4bf472e6458530ee1fb",
+    "root-node.log": "5877436bb1d0cb53716957a262df2963dab781ef80ea84dd393402194e3463d5",
+    "root-migration.log": "9cdbec613313ffc96bb20a5275ff1c8f76091e6b964a22df1d6ea967dc1358c0",
+    "root-mutations.log": "2f75b8259557ab58103f57a837518613e849cd2ac073e10821b1e190e1137789",
+    "initial-location-failure.log": "e470d780e6e4178b5f6bc39bd5eec16ca1fb8b1b179ef720a1f5cec0ebdf1d89",
+    "second-location-failure.log": "b226f61b948c4e4ac4443213f709df4788bc440359c387605701c556fd1dbeca",
+    "design-review.md": "3edbc61b4775bfb44bc96566d0c73d777d1d0fee65f46c0d23561ad3e7072764",
+    "design-manifest.json": "74455dfe1141555847a3da0d223398ea38360ba90eee5a30b0d2b13d99811e4f",
+    "design-probe.log": "b094506712c54943452c4194af6d0f435c537f06c409d22a1be6325ac37f0251",
+    "wakeup-report.md": "8e0a75744698ab5f47e963a26b075d8916cf68323721ee5b984239558e35b59f",
+    "wakeup-options.md": "e01c4a736bf4ad6143bc50475c9988096b78e455c0e3fb5eaa9cb53a9a242a97",
+    "wakeup-probe.log": "782c69f4ac348e8483a84118043c3b5c587aa1feaad7c324ea209b05f6fe5b1c",
+    "independent-review.md": "90ecc6ad9486c0ed6f7939d788cdcc0527c979e858f9ec2066eae2c075ebc4ed",
+    "independent-manifest.json": "59e0e961cfcb8d6bad1b177552120d0f70684bcaf9af877d7b36540880fe8605",
+    "independent-final-run.log": "d8e15c209fa7cc9096f5eb6ec47b8d249bdbd9d1ae7beddfd5d34f9b71e8d04f",
+    "independent-portable-tests.log": "8eb70f09f329441be70dcfcfa80332c9f4904cb0449c532378d19d0eeb837ffd",
+    "independent-portable-run.log": "076b2dbe21e92a3ba48df4c52ed74d9f1cb7b9a1c656590ce9abdb94a112b556",
+    "independent-portable-mutations.json": "42ed6b2e3faf248705086cba82d7c3ede79574c2bfa09383762a02160884ff8f",
+    "independent-cross-target-starvation-red.log": "787df10efca9fc0552144caa08610c827b3f0148f1bb8b0c7e5e2410610db10e",
+    "independent-cross-target-starvation-green.log": "ed9bf1b3b8fc0f763be451ff3ee75e63a904f974bc569e5ddbb31a35d6387ca9",
+    "independent-cross-target-starvation.test.mjs": "4996364f4d66abace53b1ff612b6d511763237010a65514b9b38898541f8eeed",
+    "independent-pre-fairness-fix-source.json": "fd18909964356f08c659c0ef896e3678862528d0bbdad0370c68cc96703e801c",
+    "independent-pre-fairness-fix.diff": "ff8c189ae1de8069b5ed0765ff29f42efd5ebac4f5e3c3efe98b8a9054d98799",
+    "independent-portable-mutation-01.log": "22546b820700681f60392e05df4fd82f741998114cb2d228ae2f573b00928ed5",
+    "independent-portable-mutation-02.log": "3c4cf13276fd73bbe11c2e2cd4ed052d68f7caa6a62ae2081c81cd20aac410e7",
+    "independent-portable-mutation-03.log": "099b3bee2c5568219fb90c563d92e14e9d9f6ef8653381f3a0d896a14bad4df0",
+    "independent-portable-mutation-04.log": "5e160e7be4d1510a019288dd991478874073d28510a71940601e898c2faae10a",
+    "independent-portable-mutation-05.log": "a790272902f0cab34b8e6d6a61320e3d120fea081a12258bbfb6705c1a26b0d0",
+    "independent-portable-mutation-06.log": "3e063fb15b4bfcd29b95e530180c1eabcaf03e7d458abeb3c4862a8275daff07",
+    "independent-portable-mutation-07.log": "ee5880cff7b793aa8a063cbb3d9f1f4c1819e90365dfb9365204d9c7adee37b3",
+    "independent-portable-mutation-08.log": "a1b45f10c8f7abea876ee7d5979c4cd6962713a63264767cab6fb0c2b2354583",
+    "independent-portable-mutation-09.log": "90237a38aacecba02098e4636e01b23d7fafc31649da928c0ca51e43924e72a4",
+    "independent-portable-mutation-10.log": "df75674c8e4f65c50f361e6edb09fcca2fb12121a8338bf3d4b3e6364c466144",
+    "independent-portable-mutation-11.log": "091934bf57b8011ca3d10d7cc140f743609be93820768aa481ed0ef64db406c1",
+    "independent-portable-mutation-12.log": "6576b8cf022944b395079a10a4bb97cee1a5e9c69cb04bf2be0d5faa21a6c6b4",
+    "independent-portable-mutation-13.log": "85aa16abddda3279dca924ab0b67a412b6fd2d157146e050d39c41534b9e4c37",
+    "independent-portable-mutation-14.log": "be1d3278f44f06b9e87dd823886aa8d9fa69b03a4226cefebb5ccfd01998ba34"
+  },
+  "mutation_locator_note": "Initial harness runs stopped on the old settlement snapshot matching two guards, then on changed claim ordering. Old settlement witness was qualified with its original phase context; original claim ordering was restored after the independent fairness finding. Final 168 mutations all execute and fail their selected assertions.",
+  "hosted_current_head": "pending; no compiler/build success borrowed from base",
+  "external_review": "new Draft first review not requested until current-head deterministic prerequisites pass",
+  "limits": [
+    "All runtime network-shaped GET/PATCH tests use fixed synthetic SQLite and in-process Response transport; global fetch is forbidden. No real GitHub/D1 end-to-end acceptance.",
+    "No successful publication, clock transition across proof expiry, credential creation, real grant/signature, merge, deploy or enablement.",
+    "Earlier npm E403 and forbidden dynamic cross-proof-expiry successful-publication test were not retried or bypassed.",
+    "Permanently missing or unprovable original sends still retain the slot; this solves recovery only when verifiable facts become available.",
+    "Actual independent wakeup/deadline, native merge-group policy/permission/implementation, trusted-main wiring and real-platform acceptance remain unresolved.",
+    "#1163 current head formal review coverage gap is preserved; #1169 review budget remains used with no new review request."
+  ]
+}

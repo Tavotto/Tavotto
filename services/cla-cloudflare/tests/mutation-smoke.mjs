@@ -8,6 +8,8 @@ const root=fileURLToPath(new URL('../',import.meta.url));
 // Each mutation changes one asserted source location in an isolated copy; a
 // nonzero test exit proves the named behavioral regression is actually detected.
 const cases=[
+ ...JSON.parse(readFileSync(new URL('./independent-slot-recovery-mutation-cases.json',import.meta.url),'utf8')),
+ ...JSON.parse(readFileSync(new URL('./slot-recovery-mutation-cases.json',import.meta.url),'utf8')),
  ...JSON.parse(readFileSync(new URL('./v2-upgrade-durability-mutation-cases.json',import.meta.url),'utf8')),
  ...JSON.parse(readFileSync(new URL('./v2-upgrade-mutation-cases.json',import.meta.url),'utf8')),
  ...JSON.parse(readFileSync(new URL('./v2-upgrade-cli-mutation-cases.json',import.meta.url),'utf8')),
@@ -54,7 +56,7 @@ for(const c of cases){const tmp=mkdtempSync(path.join(os.tmpdir(),'cla-mutation-
  const changed=before.replace(c.before,c.after);assert.notEqual(changed,before);writeFileSync(file,changed);assert.ok(readFileSync(file,'utf8').includes(c.after));
  const r=c.runner==='python'?spawnSync('python3',[c.testFile,'Migration.'+c.pattern,'-v'],{cwd:tmp,encoding:'utf8'}):
    spawnSync(process.execPath,['--test','--test-name-pattern='+c.pattern,c.testFile??'tests/independent-lifecycle.test.mjs'],{cwd:tmp,encoding:'utf8'});
- assert.equal(r.error,undefined);assert.notEqual(r.status,0,c.name+' must make selected test fail');assert.ok((r.stdout+r.stderr).includes(c.pattern),'selected test was executed');
+ assert.equal(r.error,undefined);assert.notEqual(r.status,0,c.name+' must make selected test fail');assert.ok((r.stdout+r.stderr).includes(c.selectedTitle??c.pattern),'selected test was executed');
  if(c.assertionError){assert.equal(r.status,1);assert.ok((r.stdout+r.stderr).includes('AssertionError'),'actual assertion must fail');}
  console.log('Detected mutation: '+c.name+' (selected exit '+r.status+')');
 }finally{rmSync(tmp,{recursive:true,force:true});}}

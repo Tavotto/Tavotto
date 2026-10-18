@@ -28,6 +28,10 @@ export interface Publication {id:string;target_key:string;head_sha:string;revisi
 export interface RefreshRequest {target_key:string;source_attempt:string;revision:number;status:'pending'|'done'|'manual';attempts:number;due:number;reason:string;capacity_blocked?:boolean}
 export interface Progress {cursor:number;horizon:number}
 export interface ClaimedJob extends Job {lease_clock:number}
+// The SQL eligibility branch below mirrors this boundary. It never grants
+// positive qualification; only the durable active owner can cross retry caps.
+export const slotRecoveryOnly=(job:Job,p:Publication):boolean=>p.confirmation_slot===1 &&
+  (p.phase==='manual' || (p.reconcile_attempts ?? 0)>=3 || job.attempts>=3);
 export class LiveStore extends Store {
   readonly budget:InvocationBudget|undefined;
   readonly expectedConfig:LiveConfig|undefined;
@@ -231,11 +235,17 @@ export class LiveStore extends Store {
       this.stmt('UPDATE reconciliation_progress SET horizon=coalesce((SELECT max(rowid) FROM publication_attempts WHERE target_key=?),0) WHERE target_key=? AND horizon=0',job.target_key,job.target_key)]);
     return (await this.stmt('SELECT cursor,horizon FROM reconciliation_progress WHERE target_key=?',job.target_key).first<Progress>())!;
   }
+  private negativeRecoverySQL(job:Job):string {
+    return `(p.id=(SELECT active_attempt FROM slot_policy WHERE id=1) AND (p.phase='manual' OR p.reconcile_attempts>=3 OR ${job.attempts>=3?'1':'0'}=1))`;
+  }
   private eligible(job:Job):string {
-    return `(p.phase NOT IN ('resolved','manual') OR (p.phase='resolved' AND p.id=(SELECT active_attempt FROM slot_policy WHERE id=1))) AND p.reconcile_attempts<3 AND (p.reconcile_due IS NOT NULL OR p.id=(SELECT active_attempt FROM slot_policy WHERE id=1))
+    const negativeOnly=this.negativeRecoverySQL(job);
+    return `((${negativeOnly} AND coalesce(p.reconcile_due,0)<=${DB_NOW}) OR (NOT ${negativeOnly}
+      AND (p.phase NOT IN ('resolved','manual') OR (p.phase='resolved' AND p.id=(SELECT active_attempt FROM slot_policy WHERE id=1)))
+      AND p.reconcile_attempts<3 AND (p.reconcile_due IS NOT NULL OR p.id=(SELECT active_attempt FROM slot_policy WHERE id=1))
+      AND (p.reconcile_due<=${DB_NOW} OR (p.id=(SELECT active_attempt FROM slot_policy WHERE id=1) AND p.phase='resolved') OR (p.observation!='budget_deferred' AND p.reconcile_attempts=0 AND (p.observed_generation!=${job.generation} OR p.expires<=${DB_NOW})))))
       AND (p.phase!='issued' OR p.send_until<=${DB_NOW})
       AND (p.id IS NOT (SELECT active_attempt FROM slot_policy WHERE id=1) OR p.send_until<=${DB_NOW})
-      AND (p.reconcile_due<=${DB_NOW} OR (p.id=(SELECT active_attempt FROM slot_policy WHERE id=1) AND p.phase='resolved') OR (p.observation!='budget_deferred' AND p.reconcile_attempts=0 AND (p.observed_generation!=${job.generation} OR p.expires<=${DB_NOW})))
       AND (p.id=(SELECT active_attempt FROM slot_policy WHERE id=1) OR p.rowid=(SELECT max(q.rowid) FROM publication_attempts q WHERE q.target_key=p.target_key AND q.head_sha=p.head_sha))`;
   }
   async publicationBatch(job:Job,progress:Progress):Promise<Publication[]> {
@@ -255,6 +265,16 @@ export class LiveStore extends Store {
       AND phase=? AND (phase!='issued' OR send_until<=${DB_NOW})`,job.generation,p.id,p.phase),
       ...this.guard('changes()=1'),...this.advance(job,p)]);
   }
+  async deferHeldRecovery(job:Job,p:Publication,revision:number,reason:string):Promise<void> {
+    if(p.confirmation_slot!==1 || p.target_key!==job.target_key)throw new Rejected('held_recovery_unavailable');
+    await this.batch([...this.leaseGuard(job,revision),
+      this.stmt(`UPDATE publication_attempts SET phase='manual',observation=?,updated=${DB_NOW},
+        reconcile_due=${DB_NOW}+60,reconcile_attempts=min(3,reconcile_attempts+1),observed_generation=?
+        WHERE id=? AND phase=? AND target_key=? AND head_sha=? AND revision=? AND expires=? AND proof_text=? AND run_id IS ?
+        AND id=(SELECT active_attempt FROM slot_policy WHERE id=1) AND send_until<=${DB_NOW}`,
+        reason,job.generation,p.id,p.phase,p.target_key,p.head_sha,p.revision,p.expires,p.proof_text,p.run_id),
+      ...this.guard('changes()=1'),...(p.position===undefined?[]:this.advance(job,p))]);
+  }
   async deferPublication(job:Job,p:Publication,revision:number):Promise<void> {
     await this.batch([...this.leaseGuard(job,revision),this.stmt(`UPDATE publication_attempts SET
       observation='budget_deferred',reconcile_due=${DB_NOW}+60,observed_generation=?,updated=${DB_NOW} WHERE id=?
@@ -271,7 +291,7 @@ export class LiveStore extends Store {
     const ahead=await this.stmt(`SELECT 1 FROM publication_attempts p WHERE p.target_key=? AND p.rowid>? AND p.rowid<=? AND ${this.eligible(job)} LIMIT 1`,job.target_key,progress.cursor,progress.horizon).first();
     const next=await this.stmt(`SELECT min(CASE WHEN p.phase='issued' AND p.send_until>${DB_NOW} THEN p.send_until
       WHEN p.id=(SELECT active_attempt FROM slot_policy WHERE id=1) AND p.send_until>${DB_NOW} THEN p.send_until
-      WHEN p.id=(SELECT active_attempt FROM slot_policy WHERE id=1) AND p.phase='manual' THEN ${DB_NOW}+60
+      WHEN ${this.negativeRecoverySQL(job)} THEN coalesce(p.reconcile_due,${DB_NOW}+60)
       WHEN p.id=(SELECT active_attempt FROM slot_policy WHERE id=1) AND p.phase='resolved' THEN 0
       WHEN p.observation!='budget_deferred' AND p.reconcile_attempts=0 AND (p.observed_generation!=? OR p.expires<=${DB_NOW}) THEN 0 ELSE p.reconcile_due END) AS due
       FROM publication_attempts p WHERE p.target_key=? AND (p.phase NOT IN ('resolved','manual') OR p.id=(SELECT active_attempt FROM slot_policy WHERE id=1))
@@ -302,13 +322,16 @@ export class LiveStore extends Store {
       ]:[]),
       ...(next?.due===null && !ahead?[this.stmt(`DELETE FROM outbox WHERE target_key=? AND lease=? AND generation=?
         AND NOT EXISTS(${pending}) AND NOT EXISTS(SELECT 1 FROM publication_attempts WHERE target_key=outbox.target_key AND id=(SELECT active_attempt FROM slot_policy WHERE id=1))`,job.target_key,job.lease,job.generation)]:[]),
-      this.stmt(`UPDATE outbox SET due=max(${DB_NOW}+1,coalesce((${pending}),?)),lease='',lease_until=0,attempts=0
+      this.stmt(`UPDATE outbox SET due=max(${DB_NOW}+1,coalesce((${pending}),?)),lease='',lease_until=0,
+        attempts=CASE WHEN EXISTS(SELECT 1 FROM publication_attempts p WHERE p.target_key=outbox.target_key
+          AND ${this.negativeRecoverySQL(job)}) THEN attempts ELSE 0 END
         WHERE target_key=? AND lease=? AND generation=?`,ahead?0:next?.due ?? 0,job.target_key,job.lease,job.generation),
     ]);
   }
   override async claim(_now:number):Promise<ClaimedJob|null> {
     const result=await this.db.batch<ClaimedJob>([this.stmt(`UPDATE outbox SET lease=?,lease_until=${DB_NOW}+120
-      WHERE target_key=(SELECT target_key FROM outbox WHERE due<=${DB_NOW} AND lease_until<=${DB_NOW} AND attempts<3
+      WHERE target_key=(SELECT target_key FROM outbox WHERE due<=${DB_NOW} AND lease_until<=${DB_NOW}
+      AND (attempts<3 OR EXISTS(SELECT 1 FROM publication_attempts p WHERE p.target_key=outbox.target_key AND p.id=(SELECT active_attempt FROM slot_policy WHERE id=1)))
       AND NOT EXISTS(SELECT 1 FROM publication_attempts p WHERE p.target_key=outbox.target_key AND p.phase='issued' AND p.send_until>${DB_NOW})
       AND NOT EXISTS(SELECT 1 FROM publication_attempts p WHERE p.target_key=outbox.target_key AND p.id=(SELECT active_attempt FROM slot_policy WHERE id=1) AND p.send_until>${DB_NOW})
       ORDER BY CASE WHEN EXISTS(SELECT 1 FROM publication_attempts p WHERE p.target_key=outbox.target_key AND ${this.withdrawalPriority()}) THEN 0 ELSE 1 END,

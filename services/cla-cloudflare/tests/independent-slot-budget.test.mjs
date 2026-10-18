@@ -112,8 +112,8 @@ async function fixture({ persistent = false } = {}) {
   };
   // Static pre-existing owner snapshots only: expiry is already at the fixed
   // instant. No successful dispatch, confirmation, or time transition occurs.
-  const historicalOwner = (pr = 9, { phase = 'confirmed', liveFence = false } = {}) => {
-    target(pr); const check = proposal(pr, { expired: true }), id = randomToken();
+  const historicalOwner = (pr = 9, { phase = 'confirmed', liveFence = false, expired = true } = {}) => {
+    target(pr); const check = proposal(pr, { expired }), id = randomToken();
     run('INSERT INTO _guards VALUES(?,1)', 'confirmation-slot:' + id);
     run(`INSERT INTO publication_attempts(id,target_key,head_sha,revision,expires,phase,run_id,created,updated,conclusion,proof_text,send_until)
       VALUES(?,?,?,?,?,'issued',101,?,?,'success',?,?)`, id, key(pr), check.headSha, 0, check.proof.expires_at, NOW - 120, NOW, check.text, NOW + 120);
@@ -164,6 +164,58 @@ function measured(t, scenario, current, work, expectedWork, expectedTotal) {
   assert.ok(work <= FREE_BUDGET.sqlWork); assert.ok(current.budget.snapshot().sql <= FREE_BUDGET.sql);
   t.diagnostic(JSON.stringify({ scenario, work_sql: work, total_sql: current.budget.snapshot().sql, stages: current.stages }));
 }
+
+for(const phase of ['manual','confirmed','unknown'])test('slot exhausted owner drains through fresh failure GET '+phase,()=>isolated(async f=>{
+  const owner=f.historicalOwner(9,{phase}),p=f.first('SELECT * FROM publication_attempts WHERE id=?',owner);
+  f.run('UPDATE publication_attempts SET reconcile_attempts=3,reconcile_due=NULL WHERE id=?',owner);
+  f.run('UPDATE outbox SET attempts=3 WHERE target_key=?',key(9));
+  f.head(9,proposal(9),'manual');
+  f.run("INSERT INTO refresh_requests VALUES(?,?,0,'manual',3,?,'SYNTHETIC MANUAL')",key(9),owner,NOW);
+  const current=f.invocation(false),{github,requests}=negativeAdapter(f,current,p);
+  const result=await reconcileOne({c:{...f.c,confirmationSlotEnabled:false},store:current.store,github,
+    evaluate:async()=>{throw Error('EXHAUSTED_OWNER_MUST_NOT_QUALIFY');}});
+  assert.equal(result.disposition,'remote_failure_observed');assert.equal(requests.length,2);
+  assert.equal(f.first('SELECT active_attempt FROM slot_policy').active_attempt,null);
+  assert.equal(f.first('SELECT phase FROM publication_attempts WHERE id=?',owner).phase,'resolved');
+  assert.equal(f.first('SELECT status FROM head_requests').status,'manual');
+  assert.equal(f.first('SELECT status,attempts FROM refresh_requests').status,'manual');
+  assert.equal(f.first('SELECT attempts FROM refresh_requests').attempts,3);
+  assert.ok(result.budget.sql<=FREE_BUDGET.sql);assert.ok(result.budget.external<=FREE_BUDGET.external);
+}));
+
+test('slot missing exhausted owner persists strict backoff and never retries a send',()=>isolated(async f=>{
+  const owner=f.historicalOwner(9,{phase:'manual'});f.run('UPDATE publication_attempts SET reconcile_attempts=3,reconcile_due=NULL WHERE id=?',owner);
+  f.run('UPDATE outbox SET attempts=3 WHERE target_key=?',key(9));const current=f.invocation(),calls=[];
+  const github=new GitHub(f.c,{clientSecret:'',pkcs8:'',evidenceKey:''},async(url,init)=>{
+    assert.equal(init.method,'GET');calls.push(url);return Response.json({total_count:0,check_runs:[]});
+  },()=>NOW,current.budget);github.installationToken=async()=>'SYNTHETIC_READ_ONLY';
+  const result=await reconcileOne({c:f.c,store:current.store,github,evaluate:async()=>{throw Error('MISSING_OWNER_MUST_NOT_QUALIFY');}});
+  assert.equal(result.disposition,'manual_review_required');assert.equal(calls.length,1);
+  assert.equal(f.first('SELECT active_attempt FROM slot_policy').active_attempt,owner);
+  assert.deepEqual(f.first('SELECT phase,reconcile_due,reconcile_attempts FROM publication_attempts WHERE id=?',owner),
+    {phase:'manual',reconcile_due:NOW+60,reconcile_attempts:3});
+  assert.deepEqual(f.first('SELECT due,attempts FROM outbox WHERE target_key=?',key(9)),{due:NOW+60,attempts:3});
+  // An unrelated due row/generation change must not bypass the owner's timer.
+  f.run('UPDATE outbox SET due=0,generation=generation+1 WHERE target_key=?',key(9));
+  const next=f.invocation(),job=await next.store.claim(0),progress=await next.store.openProgress(job,0);
+  assert.deepEqual(await next.store.publicationBatch(job,progress),[]);
+}));
+
+test('slot manual observed success only withdraws and never restores confirmation',()=>isolated(async f=>{
+  const owner=f.historicalOwner(9,{phase:'manual',expired:false}),p=f.first('SELECT * FROM publication_attempts WHERE id=?',owner),current=f.invocation();
+  let failed=false;const calls=[],run={id:p.run_id,app:{id:f.c.appId,slug:f.c.appSlug},name:f.c.checkName,
+    head_sha:p.head_sha,external_id:p.id,status:'completed',conclusion:'success',output:{summary:p.proof_text}};
+  const github=new GitHub(f.c,{clientSecret:'',pkcs8:'',evidenceKey:''},async(url,init)=>{
+    assert.ok(init.method==='GET'||init.method==='PATCH');calls.push(init.method);
+    if(init.method==='PATCH'){assert.equal(JSON.parse(init.body).conclusion,'failure');failed=true;}
+    const remote=failed?{...run,conclusion:'failure'}:run;
+    return Response.json(new URL(url).pathname.includes('/commits/')?{total_count:1,check_runs:[remote]}:remote);
+  },()=>NOW,current.budget);github.installationToken=async()=>'SYNTHETIC_EXISTING_SCOPE';
+  const result=await reconcileOne({c:f.c,store:current.store,github,evaluate:async()=>{throw Error('MANUAL_OWNER_MUST_NOT_QUALIFY');}});
+  assert.equal(result.disposition,'remote_failure_verified');assert.deepEqual(calls,['GET','GET','PATCH','GET']);
+  assert.equal(f.first('SELECT active_attempt FROM slot_policy').active_attempt,null);
+  assert.equal(f.first('SELECT phase FROM publication_attempts WHERE id=?',owner).phase,'resolved');
+}));
 
 test('slot new-head one delegated person actual issued and unknown settlement SQL', async t => {
   const f = await qualificationFixture();

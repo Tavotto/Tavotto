@@ -155,8 +155,8 @@
   {
     "name": "confirmation slot settlement exact proof snapshot",
     "file": "src/native/store.ts",
-    "before": "AND target_key=? AND head_sha=? AND revision=? AND expires=? AND proof_text=? AND run_id IS ?",
-    "after": "AND target_key=? AND head_sha=? AND revision=? AND expires=? AND ? IS NOT NULL AND run_id IS ?",
+    "before": "AND phase=? AND (phase!='issued' OR send_until<=${DB_NOW})\n        AND target_key=? AND head_sha=? AND revision=? AND expires=? AND proof_text=? AND run_id IS ?",
+    "after": "AND phase=? AND (phase!='issued' OR send_until<=${DB_NOW})\n        AND target_key=? AND head_sha=? AND revision=? AND expires=? AND ? IS NOT NULL AND run_id IS ?",
     "pattern": "slot nonrelease settlement independently rejects stale proof",
     "testFile": "tests/independent-confirmation-slot.test.mjs",
     "assertionError": true
