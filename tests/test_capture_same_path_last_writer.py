@@ -633,14 +633,28 @@ class TestVerifyOnlyWhenTakingOver:
         st.save(a, "/p/x.png", {"format": "png"}, verify=v)
         assert n == [] and st.calls["x"] == [PDF, {"format": "png"}]
 
-    def test_non_taking_foreign_write_never_verifies(self):
+    def test_non_taking_foreign_write_is_verified_and_ignored_on_failure(self):
+        """不会顶替的非持有者写也更新 `files`，所以也要验证；失败不更新 files。"""
         st, a, b = _State(), _Fig(), _Fig()
         st.claim(a)
         st.save(a, "/p/x.pdf")
         st.save(a, "/p/x.png", {"format": "png"})
         n, v = self._run(False)
-        assert st.save(b, "/p/x.pdf", verify=v) is False  # a 在 png 上仍是最近写入者
-        assert n == []
+        assert st.save(b, "/p/x.pdf", {"format": "pdf", "dpi": "bad"}, verify=v) is False
+        assert n == [1]
+        assert st.w["x"]["files"]["/p/x.pdf"]() is a and id(b) not in st.w["x"]["by"]
+
+    def test_failed_foreign_write_cannot_set_up_a_wrong_later_takeover(self):
+        """A 写 pdf+png；B 以坏参数写 pdf（失败）；B 再合法写 png → 磁盘上 pdf 仍是 A，A 不能被顶掉。"""
+        st, a, b = _State(), _Fig(), _Fig()
+        st.claim(a)
+        st.save(a, "/p/x.pdf")
+        st.save(a, "/p/x.png", {"format": "png"})
+        _, bad = self._run(False)
+        st.save(b, "/p/x.pdf", {"format": "pdf", "dpi": "bad"}, verify=bad)
+        _, ok = self._run(True)
+        assert st.save(b, "/p/x.png", {"format": "png"}, verify=ok) is False
+        assert st.cap["x"] is a
 
     def test_taking_over_verifies_once_and_commits_on_success(self):
         st, a, b = _State(), _Fig(), _Fig()
@@ -754,3 +768,25 @@ def test_browser_failed_first_claimant_is_replaced(tmp_path, bad):
     out = browser_load(FAILED_FIRST.format(bad=bad), "first.py", tmp_path / "ws")
     assert out["ok"], out
     assert _browser_width_in(out, "shape") == 4.0
+
+
+# 非顶替的非持有者写也要验证：失败的写入不能在 files 里占位
+FOREIGN_FAIL = """\
+import matplotlib.pyplot as plt
+a, _ = plt.subplots(figsize=(4, 2.6))
+b, _ = plt.subplots(figsize=(5, 2.6))
+a.savefig("shape.pdf")
+a.savefig("shape.png")
+try:
+    b.savefig("shape.pdf", dpi="bad")
+except Exception:
+    pass
+b.savefig("shape.png")
+"""
+
+
+@needs_worker
+def test_real_worker_failed_non_taking_write_does_not_hold_a_file(tmp_path):
+    write(tmp_path, "foreign.py", FOREIGN_FAIL)
+    built = desktop_build(tmp_path, "foreign.py")
+    assert _width_in(built, "shape") == 4.0  # shape.pdf 磁盘上仍是 A，A 不能被顶掉

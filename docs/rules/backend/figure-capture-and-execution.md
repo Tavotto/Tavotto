@@ -232,9 +232,10 @@
 
 * **成败怎么知道**：不预判（参数组合穷举不完）。native 在 `_REAL_SAVEFIG` **成功返回之后**才调用，失败的保存不进任何表。
   safe worker / 浏览器不真写盘，钩子传 `verify` 闭包（`figcapture.savefig_verify_render`：用未打补丁的 `Figure.savefig` 把同一组
-  参数写进 `io.BytesIO()`，格式取显式 `format=` 或后缀）；共享函数**只在这次写入会顶替持有者的那一刻**调用它，抛异常 =
-  原生下这次保存会失败 → 整次忽略（不顶替、不更新 `files`、不记该写入者的调用）。其余写入（持有者自己写、不会顶替的非持有者写）
-  不验证、照常记账——常规路径没有额外渲染，代价是持有者自己的失败保存（如 `dpi="bad"`）沿用「照记」的老行为。matplotlib 的
+  参数写进 `io.BytesIO()`，格式取显式 `format=` 或后缀）；共享函数对每次**非持有者**写入（`fig` 不是 `capture[stem]`，
+  `target` / `call` 非 None——顶不顶替它都会更新 `files`）先调用它，抛异常 = 原生下这次保存会失败 → 整次忽略（不顶替、不更新
+  `files`、不记该写入者的调用）。持有者自己的写入不验证、照常记账——只有同 stem 多图才有额外渲染，常规路径零开销；代价是持有者
+  自己的失败保存（如 `dpi="bad"`）沿用「照记」的老行为。matplotlib 的
   savefig 自己会还原 dpi / 尺寸 / 布局（`TestVerifyRender::test_figure_state_is_unchanged` 钉着）。
 * **每个 stem 一份状态** `writers[stem] = {"files": {目标文件键 -> 最近写它的 Figure 弱引用}, "by": {id(fig) -> [弱引用,
   该写入者自己的调用表, extras]}}`。**文件身份** `figcapture.savefig_target_key`：文件名经 `savefig_effective_names`（显式

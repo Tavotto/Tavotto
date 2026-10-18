@@ -1560,10 +1560,10 @@ def note_savefig_writer(
     """一次 savefig 的写入者记账与「同一路径最后写入者胜」——三条入口（safe worker、native bridge、浏览器）的同一份
     实现，也是 `calls` / `extras`（`savefig_calls[stem]` / `savefig_extras[stem]`）的唯一写入点。调用方须在
     `capture` 已按先到先得认领之后调用。native 在 `_REAL_SAVEFIG` **成功返回之后**才调用（失败的保存不进任何表）；
-    safe / 浏览器不真写盘、拿不到成败，传 `verify`（`savefig_verify_render` 的闭包）：本函数**只在这次写入会
-    顶替持有者的那一刻**调用它，返回 False（原生下这次保存会抛）就整次忽略——不顶替、不更新 `files`、不记该
-    写入者的调用。不会顶替的写入（持有者自己写、持有者仍是别的目标最近写入者时的非持有者写……）不验证、照常
-    记账，所以常规路径没有额外渲染；持有者自己的一次失败保存因此沿用「照记」的老行为。
+    safe / 浏览器不真写盘、拿不到成败，传 `verify`（`savefig_verify_render` 的闭包）：本函数对每次**非持有者**
+    的写入（`fig` 不是 `capture[stem]`，且 `target` / `call` 都非 None——不管最终顶不顶替，它都会更新 `files`）
+    先调用它，返回 False（原生下这次保存会抛）就整次忽略——不顶替、不更新 `files`、不记该写入者的调用。持有者
+    自己的写入不验证、照常记账（沿用「照记」的老行为），所以只有同 stem 多图时才有额外渲染，常规路径零开销。
 
     每个 stem 一份状态 `writers[stem]` = `{"files": {目标文件键 -> 最近写它的 Figure（弱引用）},
     "by": {id(fig) -> [弱引用, 该写入者自己的调用表（None = 不知道）, extras]}}`：
@@ -1583,16 +1583,14 @@ def note_savefig_writer(
     entry = writers.setdefault(stem, {"files": {}, "by": {}})
     files, by = entry["files"], entry["by"]
     held = capture.get(stem)
+    foreign = target is not None and call is not None and held is not None and held is not fig
     takes = (
-        target is not None
-        and call is not None
-        and held is not None
-        and held is not fig
+        foreign
         and not locked
         and capture_source.get(stem) == SOURCE_SAVEFIG
         and not any(ref() is held for t, ref in files.items() if t != target)
     )
-    if takes and verify is not None and not verify():
+    if foreign and verify is not None and not verify():
         return False
     mine = by.get(id(fig))
     if mine is None or mine[0]() is not fig:
