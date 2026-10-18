@@ -248,6 +248,10 @@ SESSION: "SafeSession | None" = None
 
 _intercept = True
 _REAL_SAVEFIG = mfigure.Figure.savefig
+#: 本次 build 里 `plt.show()` 时开着的 Figure 账（见 `figcapture.ShownFigures`）。show 钩子是模块级的
+#: （装在 pyplot 模块上，拿不到 Worker 实例）；**每次 build 开始时重新建一本**（`_install_show_capture`）——
+#: build 失败的会话会被复用、重跑脚本，上一次留下的已关闭 Figure 不许带进这一次。
+_SHOWN = figcapture.ShownFigures()
 _SAVEFIG_METADATA = figcapture.savefig_metadata_reader(mfigure)
 #: 正在用户的 `paper_style.save(fig, stem)` 里：其间的 savefig 一律记到这个 stem 名下
 #: （`save` 里存成 `f"{stem}_final.pdf"` 的图库，按文件名取 stem 会让已有 override 挂空）
@@ -274,6 +278,58 @@ class SafeSession(figsession.LiveFigureSession):
 
     def real_output(self):
         return _real_output()
+
+
+def _install_show_capture() -> None:
+    """脚本里的 `plt.show()` 先把此刻开着的 Figure 记账，再照原样调原来的 show。
+
+    pyplot 不一定已经 import（纯 OO 脚本永远不会；这里 import 一次要白付几十毫秒），所以 pyplot
+    尚未载入时挂一个一次性的 import 钩子，等脚本自己 import 它的那一刻才包 `show`——
+    `from matplotlib.pyplot import show` 也在包完之后才绑定。不替换成 no-op：行为（含非交互后端的
+    警告）与以前一字不差，只多一笔账。
+    """
+    import importlib.abc  # noqa: PLC0415
+
+    global _SHOWN
+    _SHOWN = figcapture.ShownFigures()
+
+    def wrap(plt) -> None:
+        real_show = plt.show
+        if getattr(real_show, "_tavotto_show_capture", False):
+            return
+
+        def _show_with_capture(*args, **kwargs):
+            # 钩子每次都读模块全局 `_SHOWN`（当前这本账），不抓闭包里的旧对象
+            _SHOWN.note(plt, SESSION.capture if SESSION is not None else None)
+            return real_show(*args, **kwargs)
+
+        _show_with_capture._tavotto_show_capture = True
+        plt.show = _show_with_capture
+
+    existing = sys.modules.get("matplotlib.pyplot")
+    if existing is not None:
+        wrap(existing)
+        return
+
+    class _Finder(importlib.abc.MetaPathFinder):
+        def find_spec(self, name, path, target=None):
+            if name != "matplotlib.pyplot":
+                return None
+            sys.meta_path.remove(self)
+            spec = importlib.util.find_spec(name)
+            loader = getattr(spec, "loader", None)
+            if loader is None or not hasattr(loader, "exec_module"):
+                return spec
+            real_exec = loader.exec_module
+
+            def exec_module(module):
+                real_exec(module)
+                wrap(module)
+
+            loader.exec_module = exec_module
+            return spec
+
+    sys.meta_path.insert(0, _Finder())
 
 
 def _patched_savefig(self, fname, *args, **kwargs):
@@ -1009,6 +1065,7 @@ class Worker(wireproto.V1Handler):
         # 拦截必须发生在 import 脚本之前（多数脚本 from paper_style import save）
         mfigure.Figure.savefig = _patched_savefig
         figcapture.install_colorbar_capture(mfigure)
+        _install_show_capture()
 
         # 脚本看到的 argv 必须是它自己的，不是 worker 的。不换的话
         # `sys.argv[1:]` 拿到的是 --script/--out-dir/--entry 这串内部参数，
@@ -1124,7 +1181,7 @@ class Worker(wireproto.V1Handler):
         _plt = sys.modules.get("matplotlib.pyplot")
         if _plt is not None:
             fallback, dropped = figcapture.collect_pyplot_figures(
-                self.session.capture, self.script.stem, _plt
+                self.session.capture, self.script.stem, _plt, shown=_SHOWN
             )
             for stem in fallback:
                 self.session.capture_source[stem] = figcapture.SOURCE_PYPLOT

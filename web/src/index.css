@@ -299,7 +299,7 @@
   --animate-fade-out: fade-out var(--duration-exit) var(--ease-exit);
   /* 从下方升起：toast */
   --animate-rise-in: rise-in var(--duration-base) var(--ease-pop);
-  --animate-rise-out: rise-out var(--duration-exit) var(--ease-exit);
+  --animate-rise-out: rise-out var(--duration-fast) var(--ease-exit);
   /* 折叠内容展开 / 收起（ui/Field 的 Reveal，2026-09-14 二审 E3）：grid 行高 0fr ↔ 1fr，
      下面的行跟着长高而不是瞬间跳出；退场短一档 */
   --animate-reveal-in: reveal-in var(--duration-base) var(--ease-pop);
@@ -445,7 +445,7 @@
 @keyframes rise-in {
   from {
     opacity: 0;
-    transform: translateY(4px);
+    transform: translateY(4px) scale(0.98);
   }
   to {
     opacity: 1;

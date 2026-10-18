@@ -37,6 +37,10 @@
     "pxSize": "{{w}} × {{h}} px"
   },
   "mixed": "Mixed",
+  "notice": {
+    "details": "Details",
+    "copied": "Copied"
+  },
   "objectType": {
     "arrow": "Arrow",
     "emptyText": "Empty text",

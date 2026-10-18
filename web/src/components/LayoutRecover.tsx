@@ -288,7 +288,7 @@ export function LayoutRecover({ open, onClose }: { open: boolean; onClose: () =>
     <Notice
       tone="warn"
       action={
-        <Button variant="secondary" size="sm" onClick={() => void load(scope)}>
+        <Button size="sm" onClick={() => void load(scope)}>
           {t('dialogs:layout.recoverRetry')}
         </Button>
       }

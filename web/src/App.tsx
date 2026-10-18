@@ -22,7 +22,6 @@ import { TelemetryConsentDialog } from '@/components/TelemetryConsentDialog'
 import { DiagnosticsSendHost } from '@/components/DiagnosticsSendHost'
 import { ShortcutHelp } from '@/components/ShortcutHelp'
 import { StyleDialog } from '@/components/StyleDialog'
-import { BannerStack } from '@/components/DocumentBanner'
 import { PreparationCard } from '@/components/PreparationCard'
 import { VersionDrawer } from '@/components/VersionDialog'
 import { NamedNodeQuickBox } from '@/components/NamedNodeQuickBox'
@@ -31,7 +30,6 @@ import { LeftRail } from '@/components/left/LeftRail'
 import { CanvasHud, NotificationRail } from '@/components/StatusBar'
 import { PerfProbeHud } from '@/components/PerfProbeHud'
 import { TopBar } from '@/components/TopBar'
-import { BuildMismatchNotice } from '@/components/BuildMismatchNotice'
 import { UpdateNoticeDialog } from '@/components/UpdateNoticeDialog'
 import { DependencyPrepareDialog } from '@/components/DependencyPrepareDialog'
 import { ImportOriginDialog } from '@/components/ImportOriginDialog'
@@ -42,7 +40,6 @@ import { TooltipProvider } from '@/components/ui/Tooltip'
 import { EngineRenderSync, useEngineDocumentSync } from '@/hooks/useEngineSync'
 import { useWindowChrome } from '@/hooks/useWindowChrome'
 import { startStyleBindingSync } from '@/store/styleBinding'
-import { useBuildVersion } from '@/hooks/useBuildVersion'
 import { runMenuAction } from '@/hooks/menuActions'
 import { useKeyboard } from '@/hooks/useKeyboard'
 import { useWorkspaceLayout } from '@/hooks/useWorkspaceLayout'
@@ -149,7 +146,6 @@ function Workspace() {
   // 画布跟随样式（ADR 0081）：纯订阅、不画东西，挂一次
   useEffect(() => startStyleBindingSync(), [])
   useSelectionRouting()
-  const outdated = useBuildVersion()
 
   // 快速编辑不显示画布标签行：那是排版的语言（哪几张版、当前在哪一张），
   // 而这条工作流里用户面对的只有一张图。
@@ -258,7 +254,7 @@ function Workspace() {
   return (
     <TooltipProvider>
       {/* 顶栏坐在灰色桌面上（2026-09-30 重设计）：底色是它自己给的 `bg`（2026-10-07 起不再由这里级联覆盖）。
-          提示条不再横贯整个窗口：进了工作面板（见下面的 BannerStack） */}
+          工作面板里没有任何提示条：长期状态在顶栏的芯片里，一次性消息在画布底部的浮动通知轨 */}
       <div className="flex h-full flex-col overflow-hidden bg-bg text-ink">
         <TopBar />
         <div className="relative flex min-h-0 flex-1">
@@ -273,9 +269,9 @@ function Workspace() {
             className="relative mb-2 mr-2 flex min-w-0 flex-1 overflow-hidden rounded-panel bg-surface shadow-card"
           >
             <div className="relative flex min-w-0 flex-1 flex-col">
-              {/* 工作面板里只剩「构建版本不一致」这一条提示条（2026-10 设计审计第二轮）：文档的事（冲突 / 保存失败……）
-                  在顶栏的文档状态芯片里，项目接入状态在项目名后面的胶囊里——它们不再把画布往下推 */}
-              <BannerStack>{outdated && <BuildMismatchNotice />}</BannerStack>
+              {/* 工作面板里不再有提示条（2026-10-16 UI 2.0）：文档的事（冲突 / 保存失败……）在顶栏的文档状态芯片里，
+                  项目接入状态在项目名后面的胶囊里，「构建版本不一致」是顶栏右侧的 `BuildMismatchChip`——
+                  没有任何东西会在这里插进一行把画布往下推 */}
               {!fastEdit && <CanvasTabs />}
               <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
                 <CanvasStage />

@@ -47,7 +47,7 @@ OptionGrid 与 Segmented 同皮；说明条只有 `Notice`；页签 属性 | 画
 改了脚本是唯一带边框的显著卡（`DiffView`：文件头 + hover 替换计数的操作 + 22px 行 + 4px 变更条 + 行号 + 词级高亮）；代码块无边框 + 语言 + 复制 +
 `--color-syntax-*` 语法色（/try 的 Code Sheet 共用）；回答里的链接 accent 是「链接灰字」的唯一例外；输入框 42px 胶囊 ↔ 两行两态、聚焦只加深到
 border-strong、上方玻璃上下文带（目标 · 作用范围 chip）、工具行两颗模型 / 推理强度胶囊、26px 圆形发送 / 中止（交叉淡化不缩放，进行中 1px 轨道）；
-任务历史是 320px 弹层；错误是 danger `Notice` + 重试。600 字重在 `ai/Markdown`（h2 / h3）与 `ai/DiffView`（「已修改」）有带个数的门禁豁免。
+任务历史是 320px 弹层；错误是 danger `Notice`（一行中性提示，2026-10-16 起，见「说明条与不推挤」）+ 重试。600 字重在 `ai/Markdown`（h2 / h3）与 `ai/DiffView`（「已修改」）有带个数的门禁豁免。
 选择器认 `data-ai-*`（`data-ai-input` / `-composer[data-layout]` / `-context` / `-target` / `-pill` / `-user` / `-process-toggle` / `-step` /
 `-diff` / `-revert` / `-code` / `-history` …）。
 
@@ -112,7 +112,7 @@ EmptyState。**同类控件出现第二套实现先删第二套，不给新写�
 **2026-10-07 外壳与画布浮层（宪法第二十七节·外壳）**——与下文冲突处以它为准：画布视口四个角位各 12px 内距，右上一个堆叠容器
 （缩放 → 会话卡 → 探针，`data-canvas-corner="top-right"`）；覆盖层只描边不着色、虚线只有 `--sel-dash` 一种且只给暂定的东西、框选实线、
 手柄 8 + 16 命中 + 沿边命中带、吸附线带 × 帽、吸附反馈（跨图目标的 `--sel-dash` 虚线框，不框自身 + 自身那条边加粗 2px）；拖动读数贴着选区（`canvas/MeasureChip`：读数是逻辑盒，贴在 `visualBounds` 的并下面；标尺选区带同样按 `visualBounds`，与 `zoomToSelection` 同口径，取的对象也同一判据 `renderedSelection`——快速编辑里只认正在编辑的那张图，Codex #833），HUD 只剩工具提示；顶栏 = 首页胶囊（含品牌）/ 面包屑 /
-项目锚点（项目接入状态胶囊）/ 文档状态芯片 / 时间线 ……撤销重做 / 导出 / 更多（空心环 = 未写进项目文件，实心 accent 点 = 有更新）；工作面板里的提示条只剩「构建版本不一致」（`BannerStack`，2026-10 设计审计第二轮）；
+项目锚点（项目接入状态胶囊）/ 文档状态芯片 / 时间线 ……撤销重做 / 导出 / 更多（空心环 = 未写进项目文件，实心 accent 点 = 有更新）；工作面板里**没有任何提示条**（2026-10-16：「构建版本不一致」也成了顶栏右侧的 `BuildMismatchChip`，`BannerStack` 已删）；
 快捷键只出自 `lib/keymap.ts`（`lib/keymap.test.tsx` 对拍 `useKeyboard`，按美式布局合成真浏览器给的事件：⇧ 改写后的 key，⇧⌘] 是 `}`）；命令面板 = `Dialog chrome="palette"`。
 
 工作台结构：顶栏 44px（左=首页胶囊/文档名/状态芯片/时间线，右=撤销重做/导出/更多）；
@@ -129,8 +129,9 @@ EmptyState。**同类控件出现第二套实现先删第二套，不给新写�
 280–360px 上下文抽屉（再点收起）；右栏 296–320px 三模式（属性/改图助手/
 画布），无选择且未钉住时不占位；断点 ≥1440 双栏可钉住、1024–1439 左右
 互斥、<1024 覆盖式抽屉。底部无常驻状态栏：拖动中的几何读数贴在选区下方（`MeasureChip`；放不下翻到上方，最后整体夹进舞台，选区占满 / 出界时也不被裁掉；底部浮动工具条显示时那一条（`viewportStore.fitBottomClear` = `TOOLBAR_FIT_CLEARANCE`，与「适应」取景同一个值）不算舞台，翻转与夹取都让开它；图内编辑态的方向键微调贴在被推的图内元素下面——位置与 Δ 都取 `InFigureMove.preview` 发布的预览（`elementPreview` / `gidDrag`，与 `ElementBoxes` 同源），落到页面走画布画这张图的同一个变换 `lib/panelTransform`（先翻转再旋转，翻转面板上贴在镜像后的元素下、Δ 报看得见的方向，#832 评审），子图贴边被钳住时芯片跟着停、Δ 报真正挪了的量，权威缺席时不报，不拿面板的框顶替，Codex #833），左下 HUD 只有工具提示，
-通知只有一条轨（`NotificationRail`，底部居中、最多两条叠着、最新的最靠近底边）：普通状态短暂即逝、错误常驻可关（面板形 + 复制详情）、
-操作提示可关、「已为编辑加入本文档」带撤销；保存状态是顶栏文档名旁的状态芯片。
+通知只有一条轨（`NotificationRail`，底部居中、宽 ≤ 360、**最多三条**叠着、最新的最靠近底边；`StatusBar` 的 `RAIL_MAX`）：普通状态短暂即逝
+（成功类 4 秒收，`STATUS_AUTO_DISMISS_MS`）、错误常驻可关（胶囊 + 复制详情）、操作提示可关、「已为编辑加入本文档」带撤销；入场
+`rise-in`（180ms，opacity + 4px 位移 + scale .98→1）、退场 `rise-out`（120ms ease-in）；保存状态是顶栏文档名旁的状态芯片。
 
 **图标**（2026-09-06 统一，2026-09-15 换成自绘图标集，ADR 0052；细则 `docs/ux/ICONOGRAPHY.md`）：
 全产品只有 `components/ui/icons` 一套（几何 `defs.ts`、工厂 `createIcon.tsx`，142 个名字与
@@ -142,6 +143,38 @@ strokeWidth；开关 / 激活态写 `filled`（29 个有实心孪生，其余忽
 按个数豁免）、不许引入图标集里没有的名字、不许拿字符 / emoji 当图标、不许裸 `<summary>`
 ——`iconography.test.tsx` 用 AST 逐条守着。同一语义只用一个图标（表在文档第四节）；加新
 图标是在 `defs.ts` 里**画**，不是去别的库挑。
+
+## 说明条与不推挤（2026-10-16 UI 2.0·PR10，规格 02 / 05；与上文冲突处以本节为准）
+
+用户原话：「大卡片黄色/红色字体图标有点丑」「看到这些红色橙色的大块图标就很焦虑」「不太喜欢突然出现一段文字，然后把整体页面往下移」。
+
+- **`ui/Notice` = 一行中性提示**：8 圆角（`rounded-md`）、`bg-surface-hover` 底、**无边框**、最小高 30；**文字永远是 ink**（有 `title` 时
+  `children` 是次要灰字 ink-2——不用 ink-3，说明条常坐在桌面灰上，ink-3 叠 5% 墨底实测 4.2:1 过不了 AA；不是染色）；图标 14px 单色 ink-3，**只有 `tone="danger"`（需要用户处理的那一档）图标染 danger 色**；
+  warn / info / ok / neutral 同样安静，靠图标形状分严重度（警告三角 / 信息圆 / 完成对勾 / 阻断圆叹号），不再是「同形换色」。
+  `role` 不变（只有 danger 默认 `alert`，其余不带，调用方可显式传）。
+- **一句话 + 至多一个动作 + 可选详情**：`title`（主句）· `children`（次要灰字）· `action`（**一颗 ghost `sm` 按钮**，不再是 secondary 灰底）· `detail`
+  （默认折叠，「详情 ›」展开，`Reveal` 的 grid 行过渡，里面是等宽小字灰底块 +「复制」）。错误码 / HTTP 状态 / 后端 detail / 请求 id / 长路径 /
+  traceback 一律放 `detail`，**正文只放读得完的一句**；`lib/noticeText.ts` 的 `splitNoticeText`（> 80 字或多行 → 详情）与 `describeRequestFailure`
+  （「HTTP 500」这类裸状态换成通用原因，原话 + 状态 + 稳定码 + 诊断引用进详情）是这条规则的唯一实现。
+- **门禁**（`ui/foundation.test.ts`「说明条不再用彩底 / 彩框」，正面形式）：`Notice.tsx` 源码里唯一的语义色是 danger 图标上的 `text-danger`；
+  所有写出 `<Notice className=…>` 的调用处，className 只许是版面类（外边距 / 内边距 / 宽 / 收缩 / 字号 / 换行）。`ui/notice.test.tsx` 钉：
+  底中性、文字不染色、只有 danger 图标染色、五种 tone 的 role 不变、详情折叠 / 展开 / 复制、动作槽里是调用方给的那一个。
+- **助手发送失败**：一句话「没有发出去 · 原因」（后端给了读得懂的一句就用它，否则通用原因）+「重试」，HTTP 状态 / 后端 detail / 诊断引用在详情里。
+- **不推挤**（原则：系统触发的变化绝不位移用户正在看的东西；用户触发的可以，但要有过渡且限在自己的盒子里）：
+  - 工作面板的文档流里**不再有任何提示条**——`DocumentBanner` 的 `Banner` / `BannerStack` 已删，**绝不往工作面板文档流插提示条**。
+  - 长期状态 → 顶栏状态芯片：「构建版本不一致」是顶栏右侧的 `BuildMismatchChip`（24 高、surface 底 + 1px 描边环、6px warn 圆点 + 一句
+    「界面需要刷新」；点开是一句话 + 一个「刷新」；窄于 900 只留圆点）。文档级的事在文档状态芯片、项目接入在项目锚点（既有）。
+  - 一次性消息 → 通知轨（见上）。预留不了、必须就地展开的（左栏刷新失败、问题面板「保留上一轮结果」、属性栏 `capability-note` /
+    `frame-note`）→ 包 `NoticeReveal`（`Reveal` 的 0fr → 1fr + 淡入，退场期间留着最后一份内容），它长出来时下面的内容是顺着滑下去的。
+  - 失败不能只靠 toast：错误类 toast 常驻到用户关（`STATUS_AUTO_DISMISS_MS` 只管非错误）。
+- **同一原则的其它落点**（第二轮盘点）：`ui/StatusPill` 中性底、文字 ink，语义色只在字前 6px 圆点（门禁在 `foundation.test`）；素材页 runtime 卡 stale
+  行文字 ink-3、只有 14px 图标染 danger；素材首次读不出是一行 Notice（原文进详情，不再整屏空态里摆原始文本）；导出脚部状态区的失败条
+  **同时最多一条**（拒绝 / 启动 / 取消 / 状态 / 在文件夹中显示五路，后来的替换前一条，`ExportDialog` 的 `useLatestFailure`），标题是一句人话
+  （「导出没有完成」），裸的「HTTP 500」、过长或多行的原文连同稳定码进详情；接入状态对话框的过期 / 错误条包 `NoticeReveal`、多条只留第一条在行上、
+  其余折进详情；属性栏 `capability-note` / `frame-note` 是「一句话 + 详情 › + 入口」（换不过去的原因常显，按钮 `aria-describedby` 指它）；属性栏空选态
+  「本排版」是一行 Notice（事实用 · 连起来 +「画布设置 ›」，起步提示折进详情）。
+- **时长**：只用现有 motion token（详情展开 `Reveal` 180ms；通知轨入场 180 / 退场 120 = base / fast，规格的 200 / 130 落到最近一档）；位移 ≤ 4px 的
+  纪律保留（规格写的 6px 没采，`motion.test` 的 ≤4px 门禁在）；reduced-motion 由 index.css 全局兜底直接切换。
 
 ## 速查表原要点（2026-09-25 迁入，#608）
 

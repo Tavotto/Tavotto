@@ -128,7 +128,7 @@
   （ADR 0017）、外框与**视口可见矩形**（`viewportStore.visibleRectMm`，视口尺寸未知时不剔）相交；
   元素中心在它自己面板裁剪窗外的不出线。**邻居要有权威 manifest 才出线，所以进图内编辑时补渲染**：
   `useEngineSync.crossFigureNeighbours`（排版模式、视口里看得见、未隐藏、非 runtime、`cost !== 'heavy'`、
-  未旋转 / 翻转、有脚本）算出的面板 id 作为 `renderTargets` 的参数传入，「只带基线、没动过」的邻居也渲染一次
+  未旋转 / 翻转、有脚本，且**不是未采用的 PNG 源图**——`isUnadoptedPngSource`：补渲染只能发无 `source_policy` 的 patches=[]，必须先走带策略的采用请求）算出的面板 id 作为 `renderTargets` 的参数传入，「只带基线、没动过」的邻居也渲染一次
   （同 `styleBound` 的纪律；runtime 面板仍不自动执行脚本）；不订阅视口，只在进编辑 / 文档变化时按当时视口算，
   渲染回来后下一次手势起手自然拿到。**只在排版模式**：`workspaceStore.mode === 'fast_edit'`
   不跨图（别的图让开了）；**多选整组平移不跨图**（`InFigureMove.snapKind` 缺省 = 只吸本图与参考线，
