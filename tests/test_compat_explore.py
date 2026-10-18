@@ -453,19 +453,13 @@ class RealDiscovery(unittest.TestCase):
         out.mkdir()
         return manifest, ex.run_one(manifest, 7, out, 200)
 
-    def test_g1_show_then_close_is_found_by_exploration(self):
+    def test_g1_show_then_close_no_longer_differs_after_the_fix(self):
+        """G1 已由 #1138 修复：同一条 show_close 派生候选现在原生 / Tavotto 一致（曾经是 zero_figures）。"""
         manifest, record = self.run_chain("show_close")
-        diff = record["judgment"]["differences"]
-        self.assertEqual(record["judgment"]["outcome"], "difference_found", record)
-        self.assertEqual(diff[0]["kind"], "zero_figures")
-        self.assertIn("native 1 figure(s) / Tavotto 0 figures", diff[0]["summary"])
+        self.assertEqual(record["judgment"]["outcome"], "no_difference", record)
         self.assertGreaterEqual(record["executions"]["native"], 1)
-        row = {
-            "candidate_id": manifest["candidate_id"],
-            "chain": ["show_close"],
-            "differences": diff,
-        }
-        self.assertTrue(ex.known_gap_findings([row])["G1"]["found"])
+        row = {"candidate_id": manifest["candidate_id"], "chain": ["show_close"], "differences": []}
+        self.assertFalse(ex.known_gap_findings([row])["G1"]["found"])
 
     def test_g2_same_path_in_a_loop_is_found_by_exploration(self):
         manifest, record = self.run_chain("same_path_loop")

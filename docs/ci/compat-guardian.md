@@ -235,7 +235,7 @@ CompatBench 的 `run_group` 之外 runner 崩溃目前会被 `compat_matrix.py:m
 | # | 案例 | CG-01 状态 |
 | --- | --- | --- |
 | 1 | 普通脚本一次运行出图 | 登记夹具 `shape_oo_savefig` / `s01_plain` 的真实运行 |
-| 2 | show-only | `shape_pyplot_show_only` 真实运行；G1（show 后 close 无 savefig 零图）是已知产品缺口，CG-02/04 |
+| 2 | show-only | `shape_pyplot_show_only` 真实运行；G1（show 后 close 无 savefig 零图）已由 #1138 修复，现为回归用例 |
 | 3 | savefig 后立即读回 | `s06`（受限入口对照 → `expected_limitation`）；Native 回退由 `tests/test_execution_fallback_e2e.py` 拥有 |
 | 4 | os.replace 后读回 | `s04b`（同上）；`s04_replace_readback` 为 `partial_coverage` |
 | 5 | 多图不能静默只留一张 | `tests/test_compat_guardian_adversarial.py::Case05MultiFigure`（原生计图数、捕获少于原生 → `partial_capture`）；`shape_multi_figure_a` 的 `expected_figures` 由 CompatBench capture 阶段判 |
@@ -337,7 +337,7 @@ CG-02 的 27 条真实差异聚成恰好两簇：G1（show 后 close，11 条）
 输出 `DIR/repro.json`（最小脚本全文、必要数据哈希、运行命令、环境身份、原生行为、Tavotto 行为、可复现性、缩减前后、归因证据、
 预算与全部试验）、`DIR/minimal/`、`DIR/work/evidence/`。`minimize --replay` 用记录的缩减重跑并核对签名。
 
-首批真实结果与家族记录：`families/G1-show-close-zero-figures.json`（11 → 5 条语句）、
+首批真实结果与家族记录：`families/G1-show-close-zero-figures.json`（11 → 5 条语句；已由 #1138 修复，`fix_pr` 记录在案，`RealRepro` / `RealDiscovery` 的 G1 用例已转为「修复后无差异」的回归）、
 `families/G2-same-path-multi-figure.json`（13 → 7 条）；记录里写明根因、关键回归测试、已验证/未验证环境，
 `in_corpus: false`、`fix_pr: null`。`tests/test_compat_guardian_families.py::RealRepro` 钉着这两个最小复现**目前仍然失败**：
 缺口修好时它们会红，那是更新记录、把复现转成正式回归用例的信号。
