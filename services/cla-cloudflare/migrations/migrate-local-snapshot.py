@@ -120,10 +120,7 @@ def migrate(source, output):
                 new.execute(sql)
         for t in tables:
             target = t.replace("cla_native_v1_", "cla_native_v2_", 1)
-            if (
-                rows(new, t) != before[t]
-                or rows(new, target, source_columns[t]) != before[t]
-            ):
+            if rows(new, t) != before[t] or rows(new, target, source_columns[t]) != before[t]:
                 raise ValueError("row preservation mismatch")
             target_columns = {r[1] for r in new.execute("PRAGMA table_info(" + target + ")")}
             added = target_columns - set(source_columns[t])

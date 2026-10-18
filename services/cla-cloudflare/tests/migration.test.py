@@ -41,7 +41,9 @@ class Migration(unittest.TestCase):
             report = m.migrate(old, new)
             self.assertTrue(report["v1_preserved"])
             self.assertTrue(report["v2_exact_source_row_copy"])
-            self.assertEqual(report["target_column_defaults"], {"publication_attempts.send_until": 0})
+            self.assertEqual(
+                report["target_column_defaults"], {"publication_attempts.send_until": 0}
+            )
             self.assertEqual(old.read_bytes(), original)
             db = sqlite3.connect(new)
             self.assertEqual(
