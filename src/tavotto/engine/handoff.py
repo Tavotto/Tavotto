@@ -830,7 +830,7 @@ def _windows_token_sandbox() -> "str | None":
     """当前进程令牌是不是受限沙箱：`"app_container"` / `"restricted_token"` / None。
 
     只读、无副作用，只在 Windows 上有意义。Codex 的默认沙箱（`unelevated`）给命令
-    一枚**受限令牌**（`TokenIsRestricted`），从里面拉起的 `Tavotto.exe` 写不进
+    一枚**受限令牌**（`IsTokenRestricted`），从里面拉起的 `Tavotto.exe` 写不进
     WebView2 与数据目录，Tauri 的 setup 钩子 panic（os error 5）；已经开着的窗口
     也收不到转发。判据只看操作系统令牌，**不认任何宿主私有的环境变量**。
 
@@ -863,6 +863,8 @@ def _windows_token_sandbox() -> "str | None":
             ctypes.POINTER(wintypes.DWORD),
         ]
         advapi32.GetTokenInformation.restype = wintypes.BOOL
+        advapi32.IsTokenRestricted.argtypes = [wintypes.HANDLE]
+        advapi32.IsTokenRestricted.restype = wintypes.BOOL
 
         token = wintypes.HANDLE()
         token_query = 0x0008
@@ -871,18 +873,17 @@ def _windows_token_sandbox() -> "str | None":
         ):
             return None
         try:
-
-            def flag(info_class: int) -> bool:
-                value = wintypes.DWORD(0)
-                got = wintypes.DWORD(0)
-                ok = advapi32.GetTokenInformation(
-                    token, info_class, ctypes.byref(value), ctypes.sizeof(value), ctypes.byref(got)
-                )
-                return bool(ok) and value.value != 0
-
-            if flag(29):  # TokenIsAppContainer
+            value = wintypes.DWORD(0)
+            got = wintypes.DWORD(0)
+            # TokenIsAppContainer(29) 是有文档的信息类
+            ok = advapi32.GetTokenInformation(
+                token, 29, ctypes.byref(value), ctypes.sizeof(value), ctypes.byref(got)
+            )
+            if ok and value.value != 0:
                 return "app_container"
-            if flag(40):  # TokenIsRestricted
+            # 受限令牌用有文档的 IsTokenRestricted；TokenIsRestricted(40) 这个信息类
+            # 微软标为「保留给系统使用」，不是受支持的查询
+            if advapi32.IsTokenRestricted(token):
                 return "restricted_token"
             return None
         finally:
@@ -1010,8 +1011,30 @@ def _reap(proc, *, clock, sleep) -> None:
             sleep(LAUNCH_POLL)
         if hasattr(proc, "kill"):
             proc.kill()
+            # 有界地等它真的退出（POSIX 上不收尸会留僵尸）；等不到也不抛、不盖过要报的失败
+            waited = clock()
+            while clock() - waited < LAUNCH_REAP_WINDOW:
+                if proc.poll() is not None:
+                    return
+                sleep(LAUNCH_POLL)
     except OSError:
         pass  # 进程已经没了，或权限不够——收不掉也不能盖过要报的失败
+
+
+def _old_instance_still_there(pids_of, app: str, before: set, own_pid) -> bool:
+    """判 forward_stuck 前复查：spawn 前的旧实例（排除新拉起的进程自己）是否还活着。
+
+    旧实例在观察窗口内退出了，新进程活着就是它接手成了主实例，不是卡住。
+    **取舍**：复查探测抛错或返回 None 时一律按「不是卡住」放行（不 kill、返回
+    process_alive）——误杀一个健康的新实例，比多报一次假成功更糟。
+    """
+    try:
+        now = pids_of(app)
+    except Exception:  # noqa: BLE001
+        return False
+    if now is None:
+        return False
+    return bool((set(now) & before) - {own_pid})
 
 
 def _launch_desktop_via_spawn(
@@ -1036,9 +1059,10 @@ def _launch_desktop_via_spawn(
     pids_of = _pids_of if pids_of is None else pids_of
     argv = desktop_argv(app, target)
     try:
-        already = bool(pids_of(app))
+        before = set(pids_of(app) or ())
     except Exception:  # noqa: BLE001 —— 只是辅助判据，查不出（None）就按旧行为走，绝不拦死交接
-        already = False
+        before = set()
+    already = bool(before)
     try:
         proc = _spawn_detached(argv, spawn=spawn)
     except OSError as exc:
@@ -1086,7 +1110,7 @@ def _launch_desktop_via_spawn(
             app,
             **details,
         )
-    if already:
+    if already and _old_instance_still_there(pids_of, app, before, getattr(proc, "pid", None)):
         _reap(proc, clock=clock, sleep=sleep)
         raise _launch_failed(
             "Tavotto 桌面应用已在运行，但把这次交接转发给它的进程卡住了"

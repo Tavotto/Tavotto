@@ -181,6 +181,73 @@ def test_spawn_forward_stuck_kills_when_terminate_does_not_take():
     assert proc.terminated and proc.killed
 
 
+class _SlowKillProc(_StuckProc):
+    """kill 之后还要再 poll 几次才真正退出（POSIX 上要 wait 才收尸）。"""
+
+    def __init__(self, *, exits_after=3):
+        super().__init__(terminate_works=False)
+        self._left = exits_after
+        self.polls_after_kill = 0
+
+    def poll(self):
+        if self.killed:
+            self.polls_after_kill += 1
+            return 1 if self.polls_after_kill >= self._left else None
+        return None
+
+
+def test_reap_waits_for_the_killed_process_to_exit():
+    fake = _FakeClock()
+    proc = _SlowKillProc()
+    handoff._reap(proc, clock=fake.clock, sleep=fake.sleep)
+    assert proc.killed and proc.poll() is not None
+
+
+def test_reap_is_bounded_and_silent_when_the_process_never_dies():
+    fake = _FakeClock()
+    proc = _SlowKillProc(exits_after=10**9)
+    handoff._reap(proc, clock=fake.clock, sleep=fake.sleep)  # 不抛、不死等
+    assert proc.killed and fake.t < 3 * handoff.LAUNCH_REAP_WINDOW + 1
+
+
+def _pids_seq(*answers):
+    """pids_of 的脚本：每次调用按序给一个答案（Exception 实例则抛），最后一格重复。"""
+    seq = list(answers)
+
+    def pids_of(app):
+        a = seq.pop(0) if len(seq) > 1 else seq[0]
+        if isinstance(a, Exception):
+            raise a
+        return a
+
+    return pids_of
+
+
+def test_spawn_old_instance_gone_and_new_process_alive_is_process_alive():
+    """旧实例在观察窗口内退出、新进程接手成了主实例：不是卡住，不能杀它。"""
+    fake = _FakeClock()
+    proc = _StuckProc()
+    out = _spawn_with(proc, _pids_seq([777], [4242]), fake)
+    assert out["ready"] == "process_alive" and not proc.terminated and not proc.killed
+
+
+def test_spawn_old_instance_still_there_alongside_new_pid_is_stuck():
+    fake = _FakeClock()
+    proc = _StuckProc()
+    with pytest.raises(handoff.HandoffError) as exc:
+        _spawn_with(proc, _pids_seq([777], [777, 4242]), fake)
+    assert exc.value.extra["reason"] == "forward_stuck" and proc.terminated
+
+
+@pytest.mark.parametrize("recheck", [None, OSError("tasklist gone"), TypeError("bad")])
+def test_spawn_recheck_failure_is_conservative_never_kills(recheck):
+    """复查查不出（None / 抛错）：误杀健康的新实例比报一次假成功更糟，保守放行。"""
+    fake = _FakeClock()
+    proc = _StuckProc()
+    out = _spawn_with(proc, _pids_seq([777], recheck), fake)
+    assert out["ready"] == "process_alive" and not proc.terminated and not proc.killed
+
+
 def test_spawn_without_existing_instance_alive_is_still_process_alive():
     fake = _FakeClock()
     proc = _StuckProc()
@@ -246,20 +313,26 @@ def test_pids_of_probe_failure_never_blocks_the_handoff():
 
 
 class _FakeDll:
-    """任何属性都是可记录调用的桩函数；`ret` 按函数名给返回值。"""
+    """任何属性都是可记录调用的桩函数；`ret` 按函数名给返回值，`args` 记每次调用的实参。"""
 
     def __init__(self, ret):
         self.calls = []
+        self.args = []
         self._ret = ret
 
     def __getattr__(self, name):
-        def fn(*args):
-            self.calls.append(name)
-            return self._ret.get(name, True)
+        owner = self
 
-        return type(
-            "F", (), {"argtypes": None, "restype": None, "__call__": lambda s, *a: fn(*a)}
-        )()
+        class F:
+            argtypes = None
+            restype = None
+
+            def __call__(self, *args):
+                owner.calls.append(name)
+                owner.args.append((name, args))
+                return owner._ret.get(name, True)
+
+        return F()
 
 
 def test_windows_ctypes_paths_run_to_the_end_with_fake_dlls(monkeypatch):
@@ -267,17 +340,25 @@ def test_windows_ctypes_paths_run_to_the_end_with_fake_dlls(monkeypatch):
     被 `except Exception` 悄悄吞成「查不出」（真机就踩过一次 TypeError）。"""
     import ctypes
 
-    kernel, advapi = _FakeDll({"OpenProcess": 0}), _FakeDll({})
+    kernel, advapi = (
+        _FakeDll({"OpenProcess": 0}),
+        _FakeDll({"IsTokenRestricted": False}),
+    )
     dlls = {"kernel32": kernel, "advapi32": advapi}
     monkeypatch.setattr(handoff.os, "name", "nt")
     monkeypatch.setattr(ctypes, "WinDLL", lambda name, **kw: dlls[name], raising=False)
     # 枚举：EnumProcesses 成功但 got=0 → 空列表（None 才是「整体失败」）
     assert handoff._windows_process_images() == []
     assert "K32EnumProcesses" in kernel.calls
-    # 令牌：走到 finally 里的 CloseHandle，说明 flag() 两次都调完了没抛
+    # 令牌：AppContainer 走有文档的 GetTokenInformation(29)；受限令牌走 IsTokenRestricted，
+    # 不再用保留给系统的信息类 40 调 GetTokenInformation
     assert handoff._windows_token_sandbox() is None
-    assert advapi.calls.count("GetTokenInformation") == 2
+    classes = [a[1] for n, a in advapi.args if n == "GetTokenInformation"]
+    assert classes == [29]
+    assert advapi.calls.count("IsTokenRestricted") == 1
     assert "CloseHandle" in kernel.calls
+    advapi._ret["IsTokenRestricted"] = True
+    assert handoff._windows_token_sandbox() == "restricted_token"
 
 
 # ----------------- 沙箱判据：受限令牌 / AppContainer 里不拉进程 -----------------
