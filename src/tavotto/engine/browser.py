@@ -134,18 +134,6 @@ def _patched_savefig(self, fname, *args, **kwargs):
                 call,
                 kwargs.get("bbox_extra_artists"),
             )
-        if (
-            _ACTIVE is not None
-            and ok
-            and figcapture.record_savefig_call(
-                _ACTIVE.savefig_calls,
-                _ACTIVE.capture,
-                stem,
-                self,
-                call,
-            )
-        ):
-            _ACTIVE.savefig_extras.setdefault(stem, []).append(kwargs.get("bbox_extra_artists"))
     return None
 
 

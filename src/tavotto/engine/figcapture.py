@@ -176,7 +176,7 @@ __all__ = [
     "savefig_target_key",
     "savefig_would_succeed",
     "note_savefig_writer",
-    "MAX_SAVEFIG_SHADOW",
+    "MAX_SAVEFIG_WRITERS",
     "savefig_calls_of",
     "SavefigObservations",
     "savefig_metadata_reader",
@@ -1518,8 +1518,8 @@ def savefig_would_succeed(fname, kwargs: dict, canvas=None) -> bool:
     return True
 
 
-#: 每个 stem 的 savefig 影子日志最多留多少条（旧的先丢）；只为「胜者顶回时恢复它的全部调用」服务
-MAX_SAVEFIG_SHADOW = 4 * MAX_SAVEFIG_CALLS_HARD
+#: 每个 stem 最多同时记几个写入者的调用表；超出时先淘汰不是持有者、也不是任何目标最近成功写入者的（或已死的）
+MAX_SAVEFIG_WRITERS = 16
 
 
 def note_savefig_writer(
@@ -1535,60 +1535,85 @@ def note_savefig_writer(
     extra=None,
     locked: bool = False,
 ) -> bool:
-    """同一路径换了写入者：最后写入者胜——三条入口（safe worker、native bridge、浏览器）的同一份实现。
+    """一次**成功的** savefig 的写入者记账与「同一路径最后写入者胜」——三条入口（safe worker、native
+    bridge、浏览器）的同一份实现，也是 `calls` / `extras`（`savefig_calls[stem]` / `savefig_extras[stem]`）的
+    唯一写入点。调用方须在 `capture` 已按先到先得认领之后、**保存成功之后**调用（native 在
+    `_REAL_SAVEFIG` 返回后；safe / 浏览器在 `savefig_would_succeed` 为真时）；失败的保存不调用。
 
-    `writers[stem]` = `{"files": {目标文件键 -> 最近写它的 Figure（弱引用）}, "log": [(Figure 弱引用,
-    call, extra)]}`。目标文件（`savefig_target_key`）上一次是另一张图写的、这次换成了 `fig`，磁盘上留下的
-    就是 `fig` 的产物，`capture[stem]` 换成它。被顶掉那张的 `calls` / `extras` 清掉（那是它的参数），
-    **换上来的这张在顶替之前被忽略的调用**（它不持有 stem 时 `record_savefig_call` 不记）从影子日志里
-    按原顺序、经同一条 `record_savefig_call` 规则（上限、新格式第一次照记）重建；它历史里有过
-    `call is None` 就重建成 None（整份「不知道」）。调用方在本函数之后照常 `record_savefig_call` 记这一次。
-    调用方须在 `capture` 已按先到先得认领之后调用，每次带 stem 的 savefig 都调（`call` 为 None 也调：
-    要进影子日志，但不参与顶替）。顶替的护栏（任一不满足都不顶）：
+    每个 stem 一份状态 `writers[stem]` = `{"files": {目标文件键 -> 最近成功写它的 Figure（弱引用）},
+    "by": {id(fig) -> [弱引用, 该写入者自己的调用表（None = 不知道）, extras]}}`：
 
-    * `target is None`（缓冲区 / 不知道路径）或 `call is None` 不参与；
-    * 只顶 savefig 来源的认领（pyplot 兜底永不被顶）；
-    * `locked`（stem 已进入编辑或已记失败，override / 清单 / 预览都挂在那张图上）不换图；
-    * 先认领那张在本 stem 下别的目标文件上仍是最后写入者时不顶——它的文件还在磁盘上。
+    * 调用按**写入者**分表记，规则与 `record_savefig_call` 完全一致（上限、新格式第一次照记、
+      `call is None` 整份变「不知道」），与其它写入者交替多少次互不影响；
+    * 持有者（`capture[stem]`）的调用表同步成 `calls[stem]` / `extras[stem]` 的副本；
+    * 顶替：`fig` 不是持有者，且持有者**不是本 stem 任何目标文件的最近成功写入者**（含持有者从未成功写过），
+      则 `capture[stem] = fig`，`calls` / `extras` 换成 `fig` 自己的表。护栏（任一不满足都不顶）：
+      `target` 或 `call` 为 None（不知道写的是哪个文件）、`locked`（stem 已进入编辑或已记失败）、
+      来源不是 savefig（pyplot 认领永不被顶）、持有者在别的目标文件上仍是最近写入者（它的文件还在磁盘上）；
+    * 有界：最多 `MAX_SAVEFIG_WRITERS` 个写入者表，被淘汰者日后重新成为写入者就从新调用开始。
 
     返回是否顶替了。
     """
     if not stem:
         return False
-    entry = writers.setdefault(stem, {"files": {}, "log": []})
-    log = entry["log"]
+    entry = writers.setdefault(stem, {"files": {}, "by": {}})
+    files, by = entry["files"], entry["by"]
+    mine = by.get(id(fig))
+    if mine is None or mine[0]() is not fig:
+        mine = by[id(fig)] = [weakref.ref(fig), [], []]
+    _record_writer_call(mine, call, extra)
+
+    held = capture.get(stem)
     replaced = False
     if target is not None and call is not None:
-        table = entry["files"]
-        prev = table.get(target)
-        table[target] = weakref.ref(fig)
-        held = capture.get(stem)
-        if not (
-            locked
-            or prev is None
-            or prev() is None
-            or prev() is fig
-            or held is None
-            or held is fig
-            or capture_source.get(stem) != SOURCE_SAVEFIG
-            or any(ref() is held for t, ref in table.items() if t != target)
+        files[target] = weakref.ref(fig)
+        if (
+            held is not None
+            and held is not fig
+            and not locked
+            and capture_source.get(stem) == SOURCE_SAVEFIG
+            and not any(ref() is held for ref in files.values())
         ):
-            capture[stem] = fig
-            calls.pop(stem, None)
-            extras.pop(stem, None)
-            temp = {stem: fig}
-            for ref, old_call, old_extra in log:
-                if ref() is not fig:
-                    continue
-                if record_savefig_call(calls, temp, stem, fig, old_call):
-                    extras.setdefault(stem, []).append(old_extra)
-                if calls.get(stem, ...) is None:
-                    extras.pop(stem, None)
-                    break
+            capture[stem] = held = fig
             replaced = True
-    log.append((weakref.ref(fig), call, extra))
-    del log[: max(0, len(log) - MAX_SAVEFIG_SHADOW)]
+    if held is fig:
+        calls[stem] = None if mine[1] is None else list(mine[1])
+        if mine[1] is None:
+            extras.pop(stem, None)
+        else:
+            extras[stem] = list(mine[2])
+    _trim_writers(entry, held)
     return replaced
+
+
+def _record_writer_call(mine: list, call: dict | None, extra) -> None:
+    """把一次调用记进某个写入者自己的表（`record_savefig_call` 同一条规则，`mine[1] is None` = 不知道）。"""
+    if mine[1] is None:
+        return
+    if call is None:
+        mine[1], mine[2] = None, []
+        return
+    tmp = {"k": mine[1]}
+    if record_savefig_call(tmp, {"k": mine[0]()}, "k", mine[0](), call):
+        mine[2].append(extra)
+
+
+def _trim_writers(entry: dict, held) -> None:
+    """写入者表有界：先淘汰已死的、不是持有者也不是任何目标最近写入者的；还超就按先来后到淘汰非持有者
+    （连同它名下的目标记录——有界的代价：它的文件之后算「没人写过」）。持有者永不淘汰。"""
+    by, files = entry["by"], entry["files"]
+    if len(by) <= MAX_SAVEFIG_WRITERS:
+        return
+    latest = {id(ref()) for ref in files.values() if ref() is not None}
+    for hard in (False, True):
+        for key in list(by):
+            if len(by) <= MAX_SAVEFIG_WRITERS:
+                return
+            fig = by[key][0]()
+            if fig is None or (fig is not held and (hard or id(fig) not in latest)):
+                del by[key]
+                for t in [t for t, ref in files.items() if ref() is fig]:
+                    del files[t]
 
 
 def _norm_format(fmt) -> str:

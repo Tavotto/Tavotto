@@ -215,8 +215,6 @@ def _install_savefig_hook(mfigure) -> None:
                 kwargs.get("bbox_extra_artists"),
                 locked=stem in _CAPTURE_LOCKED,
             )
-            if figcapture.record_savefig_call(_CAPTURE_SAVEFIG, _CAPTURE, stem, self, call):
-                _CAPTURE_EXTRAS.setdefault(stem, []).append(kwargs.get("bbox_extra_artists"))
         return result
 
     mfigure.Figure.savefig = _patched_savefig

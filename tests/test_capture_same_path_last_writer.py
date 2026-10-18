@@ -176,69 +176,127 @@ class TestSamePathRule:
 PDF = {"format": "pdf"}
 
 
+class _State:
+    """`note_savefig_writer` 的五张表，测试里手动驱动。"""
+
+    def __init__(self):
+        self.w, self.cap, self.src, self.calls, self.extras = {}, {}, {}, {}, {}
+
+    def claim(self, fig, stem="x"):
+        self.cap.setdefault(stem, fig)
+        self.src.setdefault(stem, SAVEFIG)
+
+    def save(self, fig, target, call=PDF, extra=None, stem="x", locked=False):
+        return figcapture.note_savefig_writer(
+            self.w,
+            self.cap,
+            self.src,
+            self.calls,
+            self.extras,
+            stem,
+            fig,
+            target,
+            call,
+            extra,
+            locked,
+        )
+
+
 class TestSharedFunction:
     """三条入口共用的 `note_savefig_writer` 本体（浏览器 / native 的钩子直接调它）。"""
 
-    @staticmethod
-    def _call(w, cap, src, fig, target, stem="x", locked=False):
-        cap.setdefault(stem, fig)
-        src.setdefault(stem, SAVEFIG)
-        return figcapture.note_savefig_writer(
-            w, cap, src, {stem: [{}]}, {stem: [None]}, stem, fig, target, PDF, None, locked=locked
-        )
-
     def test_none_target_neither_displaces_nor_registers(self):
-        w, cap, src, a, b = {}, {}, {}, _Fig(), _Fig()
-        assert self._call(w, cap, src, a, "/p/x.pdf") is False
-        assert self._call(w, cap, src, b, "/p/x.pdf") is True
-        assert self._call(w, cap, src, a, None) is False
-        assert cap["x"] is b and w["x"]["files"]["/p/x.pdf"]() is b and None not in w["x"]["files"]
+        st, a, b = _State(), _Fig(), _Fig()
+        st.claim(a)
+        assert st.save(a, "/p/x.pdf") is False
+        assert st.save(b, "/p/x.pdf") is True
+        assert st.save(a, None) is False
+        assert st.cap["x"] is b and None not in st.w["x"]["files"]
 
-    def test_dead_previous_writer_does_not_displace(self):
-        w, cap, src, a = {}, {}, {}, _Fig()
-        self._call(w, cap, src, a, "/p/x.pdf")
-        dead = _Fig()
-        w["x"]["files"]["/p/x.pdf"] = __import__("weakref").ref(dead)
-        del dead
-        b = _Fig()
-        assert self._call(w, cap, src, b, "/p/x.pdf") is False
-        assert cap["x"] is a
+    def test_first_claimant_without_any_successful_write_is_replaced(self):
+        """Codex r4305617407：B 先认领但保存失败（没有写入记录），A 随后成功——捕获 A，调用是 A 的。"""
+        st, a, b = _State(), _Fig(), _Fig()
+        st.claim(b)  # B 认领了 stem，但它的保存失败，不调用 note_savefig_writer
+        assert st.save(a, "/p/x.pdf", PDF, "art") is True
+        assert st.cap["x"] is a
+        assert st.calls["x"] == [PDF] and st.extras["x"] == ["art"]
 
-    def test_displacement_drops_loser_records(self):
-        w, cap, src, a, b = {}, {}, {}, _Fig(), _Fig()
-        calls, extras = {"x": [{}]}, {"x": [None]}
-        for fig in (a, b):
-            cap.setdefault("x", fig)
-            src.setdefault("x", SAVEFIG)
-            figcapture.note_savefig_writer(w, cap, src, calls, extras, "x", fig, "/p/x.pdf", PDF)
-        assert cap["x"] is b and "x" not in calls and "x" not in extras
+    def test_holder_without_writes_is_kept_by_non_savefig_source(self):
+        st, a, b = _State(), _Fig(), _Fig()
+        st.cap["x"], st.src["x"] = b, PYPLOT
+        assert st.save(a, "/p/x.pdf") is False and st.cap["x"] is b
+        assert "x" not in st.calls  # 持有者不是 a：不写 calls[stem]
+
+    def test_unlocked_only(self):
+        st, a, b = _State(), _Fig(), _Fig()
+        st.claim(b)
+        assert st.save(a, "/p/x.pdf", locked=True) is False and st.cap["x"] is b
 
     def test_same_writer_rewriting_its_file_is_not_a_takeover(self):
-        import weakref
-
-        a, b = _Fig(), _Fig()
-        w = {"x": {"files": {"/p/x.pdf": weakref.ref(b)}, "log": []}}
-        cap, src = {"x": a}, {"x": SAVEFIG}
-        assert figcapture.note_savefig_writer(w, cap, src, {}, {}, "x", b, "/p/x.pdf", PDF) is False
-        assert cap["x"] is a
+        st, a = _State(), _Fig()
+        st.claim(a)
+        st.save(a, "/p/x.pdf")
+        assert st.save(a, "/p/x.pdf") is False
+        assert st.calls["x"] == [PDF, PDF]
 
     def test_holder_rewriting_after_a_foreign_write_keeps_its_records(self):
-        import weakref
+        st, a, b = _State(), _Fig(), _Fig()
+        st.claim(a)
+        st.save(a, "/p/x.pdf")
+        st.save(a, "/p/x.png", {"format": "png"})
+        assert st.save(b, "/p/x.pdf") is False  # a 在 png 上仍是最近写入者
+        assert st.save(a, "/p/x.pdf") is False
+        assert [c["format"] for c in st.calls["x"]] == ["pdf", "png", "pdf"]
 
-        a, b = _Fig(), _Fig()
-        w = {"x": {"files": {"/p/x.pdf": weakref.ref(b)}, "log": []}}
-        cap, src, calls = {"x": a}, {"x": SAVEFIG}, {"x": [{}]}
-        assert (
-            figcapture.note_savefig_writer(w, cap, src, calls, {}, "x", a, "/p/x.pdf", PDF) is False
-        )
-        assert calls == {"x": [{}]}
+    def test_displacement_swaps_in_the_winners_own_table(self):
+        st, a, b = _State(), _Fig(), _Fig()
+        st.claim(a)
+        st.save(a, "/p/x.pdf", PDF, "a-art")
+        assert st.save(b, "/p/x.pdf", PDF, "b-art") is True
+        assert st.calls["x"] == [PDF] and st.extras["x"] == ["b-art"]
+
+    def test_unknown_call_is_unknown_for_that_writer_only(self):
+        st, a, b = _State(), _Fig(), _Fig()
+        st.claim(a)
+        st.save(a, "/p/x.pdf")
+        st.save(a, None, None)  # 没观察到参数
+        assert st.calls["x"] is None and "x" not in st.extras
+        st.save(b, "/p/x.pdf")
+        assert st.cap["x"] is b and st.calls["x"] == [PDF]
 
     def test_unclaimed_stem_is_not_displaced(self):
-        a = _Fig()
-        w, cap, src = {}, {}, {"x": SAVEFIG}
-        figcapture.note_savefig_writer(w, cap, src, {}, {}, "x", a, "/p/x.pdf", PDF)
-        figcapture.note_savefig_writer(w, cap, src, {}, {}, "x", _Fig(), "/p/x.pdf", PDF)
-        assert cap == {}
+        st, a = _State(), _Fig()
+        st.src["x"] = SAVEFIG
+        st.save(a, "/p/x.pdf")
+        st.save(_Fig(), "/p/x.pdf")
+        assert st.cap == {}
+
+    def test_hundred_alternations_keep_the_winners_first_call(self):
+        """Codex r4305617412：交替很多次后，胜者最早的决定性调用（首次 tight）仍在。"""
+        st, a, b = _State(), _Fig(), _Fig()
+        tight = {"format": "pdf", "bbox_inches": "tight"}
+        st.claim(a)
+        st.save(a, "/p/x.pdf", tight)
+        for _ in range(100):
+            st.save(b, "/p/x.pdf")
+            st.save(a, "/p/x.pdf")
+        assert st.cap["x"] is a
+        assert st.calls["x"][0] == tight
+        assert len(st.calls["x"]) <= figcapture.MAX_SAVEFIG_CALLS_HARD
+
+    def test_writer_tables_are_bounded_and_keep_holder_and_latest(self):
+        st, held = _State(), _Fig()
+        st.claim(held)
+        st.save(held, "/p/x.pdf")
+        figs = []
+        for i in range(figcapture.MAX_SAVEFIG_WRITERS * 3):
+            f = _Fig()
+            figs.append(f)
+            st.save(f, f"/p/x{i}.png", {"format": "png"})
+        by = st.w["x"]["by"]
+        assert len(by) <= figcapture.MAX_SAVEFIG_WRITERS
+        assert id(held) in by and id(figs[-1]) in by  # 持有者与最新的写入者不被淘汰
+        assert len(st.w["x"]["files"]) <= figcapture.MAX_SAVEFIG_WRITERS + 1
 
 
 class TestAlternatingWriters:
@@ -302,13 +360,6 @@ class TestAlternatingWriters:
         assert s.capture["x"] is a
         assert len(calls) == figcapture.MAX_SAVEFIG_CALLS  # 满额；pdf 已记过，不是新格式
         assert [c["format"] for c in calls].count("pdf") == 1
-
-    def test_shadow_log_is_bounded(self):
-        s, a = _session(), _Fig()
-        s.add_figure("x", a, SAVEFIG)
-        for _ in range(figcapture.MAX_SAVEFIG_SHADOW * 2):
-            s.note_savefig("x", a, PDF, None, target=_path("x", "pdf"))
-        assert len(s.savefig_writers["x"]["log"]) == figcapture.MAX_SAVEFIG_SHADOW
 
 
 class TestTargetKey:
@@ -567,5 +618,37 @@ def test_browser_failed_save_does_not_displace(tmp_path, bad):
     if WORKER_PY is None:
         pytest.skip("找不到装有 matplotlib 的解释器")
     out = browser_load(FAILED_SAVE.format(bad=bad), "bad.py", tmp_path / "ws")
+    assert out["ok"], out
+    assert _browser_width_in(out, "shape") == 4.0
+
+
+# Codex r4305617407：先认领的图保存失败（没有任何成功写入），第一个成功写入者必须取代它
+FAILED_FIRST = """\
+import matplotlib.pyplot as plt
+b, _ = plt.subplots(figsize=(5, 2.6))
+a, _ = plt.subplots(figsize=(4, 2.6))
+try:
+    b.savefig("shape.pdf", {bad})
+except Exception:
+    pass
+a.savefig("shape.pdf")
+"""
+
+
+@needs_worker
+@pytest.mark.parametrize("bad", BAD_SAVES)
+def test_real_worker_failed_first_claimant_is_replaced(tmp_path, bad):
+    write(tmp_path, "first.py", FAILED_FIRST.format(bad=bad))
+    built = desktop_build(tmp_path, "first.py")
+    assert _width_in(built, "shape") == 4.0
+
+
+@pytest.mark.parametrize("bad", BAD_SAVES)
+def test_browser_failed_first_claimant_is_replaced(tmp_path, bad):
+    from test_compat_capture_parity import browser_load
+
+    if WORKER_PY is None:
+        pytest.skip("找不到装有 matplotlib 的解释器")
+    out = browser_load(FAILED_FIRST.format(bad=bad), "first.py", tmp_path / "ws")
     assert out["ok"], out
     assert _browser_width_in(out, "shape") == 4.0

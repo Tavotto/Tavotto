@@ -563,7 +563,7 @@ class LiveFigureSession:
     def note_savefig(
         self, stem: str, fig, call: dict | None, extra_artists=None, target: str | None = None
     ) -> None:
-        """记一次 savefig 调用（规则在 `figcapture.record_savefig_call`）。
+        """记一次**成功的** savefig 调用（规则在 `figcapture.note_savefig_writer`）。
 
         同一路径换了写入者的规则唯一实现在 `figcapture.note_savefig_writer`（三条入口同源）。
         """
@@ -580,8 +580,6 @@ class LiveFigureSession:
             extra_artists,
             locked=stem in self.states or stem in self.failures,
         )
-        if figcapture.record_savefig_call(self.savefig_calls, self.capture, stem, fig, call):
-            self.savefig_extras.setdefault(stem, []).append(extra_artists)
 
     def note_artifact(self, observation, stem, fig, extra_artists):
         if self.artifact_source is None:

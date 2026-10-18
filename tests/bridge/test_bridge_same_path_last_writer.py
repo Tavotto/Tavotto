@@ -106,3 +106,33 @@ def test_native_failed_save_does_not_displace(tmp_path, bridge_session, bad):
         sess.wait_event("barrier")
         sess.resume()
         sess.wait_event("exit")
+
+
+FAILED_FIRST = """\
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+b, _ = plt.subplots(figsize=(5, 2.6))
+a, _ = plt.subplots(figsize=(4, 2.6))
+try:
+    b.savefig("shape.pdf", {bad})
+except Exception:
+    pass
+a.savefig("shape.pdf")
+plt.show()
+"""
+
+
+@pytest.mark.parametrize("bad", ['format="bogus"', 'backend="nonexistent"'])
+def test_native_failed_first_claimant_is_replaced(tmp_path, bridge_session, bad):
+    proj = tmp_path / "proj"
+    write(proj / "first.py", FAILED_FIRST.format(bad=bad))
+    with bridge_session(proj / "first.py", cwd=str(proj)) as sess:
+        sess.wait_event("barrier")
+        (desc,) = [d for d in sess.ensure_built()["descriptors"] if d["stem"] == "shape"]
+        assert round(desc["size_mm"][0] / 25.4, 2) == 4.0
+        assert [c["format"] for c in desc["savefig_calls"]] == ["pdf"]
+        sess.resume()
+        sess.wait_event("barrier")
+        sess.resume()
+        sess.wait_event("exit")

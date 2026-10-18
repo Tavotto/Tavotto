@@ -226,43 +226,34 @@
 ## 同一路径多个写入者（Compatibility Guardian G2）
 
 脚本在循环里让不同的 Figure 反复写同一个路径（`fig.savefig("a.pdf"); plt.close(fig)`），原生 Python 下磁盘上留下的是
-**最后一次写入**的那张；捕获表按 stem 记账，必须与之一致。**唯一实现 `figcapture.note_savefig_writer`**，三条入口同源：
-desktop worker（`LiveFigureSession.note_savefig` 转调）、浏览器 playground 的钩子、native bridge 的 `_patched_savefig`
-（各持一张 writers 表：会话的 `savefig_writers` / `BrowserSession.savefig_writers` / `bridge_runner._CAPTURE_WRITERS`）。
-`add_figure` / `setdefault` 对已有 stem 仍先到先得，不动：
+**最后一次成功写入**的那张；捕获表按 stem 记账，必须与之一致。**唯一实现 `figcapture.note_savefig_writer`**，三条入口同源
+（desktop worker 经 `LiveFigureSession.note_savefig`、浏览器钩子、native 的 `_patched_savefig`），也是 `savefig_calls[stem]` /
+`savefig_extras[stem]` 的**唯一写入点**（钩子里不再另调 `record_savefig_call`）。`add_figure` / `setdefault` 的先到先得认领不动。
 
-* **键是真实目标文件，不是格式**：`figcapture.savefig_target_key(fname, kwargs, canvas)`——文件名走 `savefig_effective_names`
-  （显式 `format=` 不改文件名、无后缀补 canvas 缺省格式），再按调用那一刻的 cwd 取 `realpath` + `normcase`。
-  `savefig("a.pdf")` 与 `savefig("a.pdf", format="png")` 是同一个文件；缓冲区（BytesIO）/ 认不出文件名 = `None`，不参与顶替。
-* **同一目标文件上一次是另一张图写的、这次换了写入者：最后写入者胜**，`capture[stem]` 换成它；被顶掉那张的
-  `savefig_calls` / `savefig_extras` 一并清掉（那是它的参数，新图从空表开始记）。stem 在捕获表里的次序不变。
-* **同 stem 不同文件不算同一路径**（`a.pdf` 是甲、`a.svg` 是乙，磁盘上各有各的文件）：stem 仍归先认领的那张——
-  `tests/test_savefig_capture_params.py` 的 TIGHT 用例钉着这一条。
-* **先认领那张在别的文件上仍是最后写入者时不顶掉**（甲写 `a.pdf` + `a.png`，乙再写 `a.pdf`）：磁盘上 `a.png` 还是甲，
-  stem 只能挂一张图，宁可 `a.pdf` 那份与磁盘不一致，也不让一张磁盘上还在的图从捕获里消失——
-  `tests/test_savefig_observations.py` 的真 worker 用例钉着这一条。等甲在每个文件上都被覆盖，才换成乙。
-* **顶回来的图带回它自己的全部调用**（Codex 4305499990：甲 `x.pdf`、乙 `x.pdf` 顶替、甲 `x.png`〔甲不持有 stem，不记〕、甲再
-  `x.pdf` 顶回）：`note_savefig_writer` 为每个 stem 留一份**影子日志** `writers[stem]["log"]`（所有带 stem 的 savefig 调用，含
-  `call is None`，弱引用 + call + `bbox_extra_artists`，上限 `MAX_SAVEFIG_SHADOW`，旧的先丢）。顶替时 `calls` / `extras`
-  先清空，再把日志里属于胜者的条目**按原顺序经同一条 `record_savefig_call` 规则**（上限、新格式第一次照记）重建，最后调用方
-  照常记这一次——结果 `["pdf","png","pdf"]`，各格式取景参数是自己那次的。胜者历史里有过 `call is None` 就重建成 None（整份
-  「不知道」）。writers 表每个 stem 的值是 `{"files": {目标文件键: 弱引用}, "log": [...]}`，重置 / 退役处整份清。
-* 同一张图存多次仍是一张图（调用照记）；不同 stem 互不影响；三个写入者取第三个；写回原来那张又取回。
-* **失败的保存不顶替、不记账**（Codex 4305548808）：一次磁盘上没动的 savefig 不能让别的图成为被捕获的图。native 的写入者 /
-  调用记账在 `_REAL_SAVEFIG` **成功返回之后**才做（失败只记 observation = failed）；safe worker 与浏览器不真写盘，拿不到
-  成败，由 `figcapture.savefig_would_succeed` 判定，三条入口同一份判据，**只在确定失败时**为 False：格式（显式 `format=` 或后缀）
-  不在 canvas / matplotlib 认的集合里；`backend=` 不是 `module://…` 且 `importlib.util.find_spec("matplotlib.backends.backend_<名字>")`
-  找不到；**给了 `backend=` 就不再按当前 canvas 判格式**（格式集合属于那个 backend，`module://my_backend` 可以提供当前
-  canvas 没有的格式，Codex r4305600962）。**不判目标目录**（safe 下 `os.makedirs` 可能被拦或落在别处，磁盘上没有目录不代表原生会失败，误判会丢 `savefig_calls`）；
-  判不清、过程抛任何异常按成功算。首次认领（`add_figure` / `setdefault`）不受此限，保持原行为。
-* **pyplot 认领永远不被顶掉**，兜底也永远不顶显式 savefig；`call is None`（`paper_style.save` 没观察到参数）不知道路径，
-  不顶替。
-* **已进入编辑（`states`）或已记失败（`failures`）的 stem 不再换图**（`locked`）：override / 清单 / 预览都挂在那张图上。
-  safe worker 的捕获发生在 instrument 之前，规则只在脚本执行期生效；写回重放起新 worker 重跑脚本，同一规则再走一遍，
-  重放出的就是最后写入者。native 的同义：第一个屏障处被会话接走的 stem 进 `_CAPTURE_LOCKED`，之后不再换图。
+* **只记成功的保存**：native 在 `_REAL_SAVEFIG` 成功返回之后调用；safe / 浏览器不真写盘，由
+  `figcapture.savefig_would_succeed` 判（只在**确定失败**时为 False：没给 `backend=` 时格式不被 canvas / matplotlib 认；给了
+  `backend=` 时它不是 `module://…` 且 `importlib.util.find_spec("matplotlib.backends.backend_<名字>")` 找不到，此时不再按当前
+  canvas 判格式。**不判目标目录**——safe 下 `os.makedirs` 可能被拦；判不清、抛异常按成功算）。失败的保存不进任何表。
+* **每个 stem 一份状态** `writers[stem] = {"files": {目标文件键 -> 最近成功写它的 Figure 弱引用}, "by": {id(fig) -> [弱引用,
+  该写入者自己的调用表, extras]}}`。目标文件键 `figcapture.savefig_target_key`：文件名经 `savefig_effective_names`（显式 `format=`
+  不改文件名）取 `realpath` + `normcase`；缓冲区 / 认不出文件名 = `None`。
+* **调用按写入者分表**，规则就是 `record_savefig_call` 的（上限、新格式第一次照记、`call is None` 整份「不知道」），与别的写入者
+  交替多少次互不影响（交替 100 次，胜者的首次 `bbox_inches="tight"` 仍在）。持有者（`capture[stem]`）的表同步成
+  `calls[stem]` / `extras[stem]` 的副本。
+* **顶替**：`fig` 不是持有者，且**持有者不是本 stem 任何目标文件的最近成功写入者**（含持有者从未成功写过——先认领的图保存失败、
+  第一个成功写入者取代它）→ `capture[stem] = fig`，`calls` / `extras` 换成 `fig` 自己的表（跨格式交替后顶回来的图带着它的全部
+  调用，如 `["pdf","png","pdf"]`）。护栏：`target` 或 `call` 为 None 不参与顶替（`paper_style.save` 捷径不知道路径）；
+  `locked`（stem 已进入编辑 `states` 或已记失败 `failures`；native 的同义是第一个屏障处被会话接走的 `_CAPTURE_LOCKED`）不换图；
+  **pyplot 认领永不被顶**；持有者在别的目标文件上仍是最近写入者时不顶（甲写 `a.pdf` + `a.png`，乙再写 `a.pdf` → 仍是甲，
+  磁盘上 `a.png` 还是甲）；不同目标文件互不顶替（`a.pdf` 甲 / `a.svg` 乙 → 甲，TIGHT 用例钉着）；不同 stem 互不影响。
+* **有界**：每个 stem 最多 `MAX_SAVEFIG_WRITERS`（16）个写入者表；先淘汰已死的与「不是持有者也不是任何目标最近写入者」的，
+  还超就按先来后到淘汰非持有者（连同它名下的目标记录）。持有者永不淘汰；被淘汰者日后重新成为写入者就从新调用开始——这是有界的
+  代价。每个写入者的调用表本身由 `record_savefig_call` 的 HARD 上限约束。
+* safe worker 的捕获发生在 instrument 之前，规则只在脚本执行期生效；写回重放起新 worker 重跑脚本，同一规则再走一遍。
 * 已知未覆盖：`paper_style.save` 捷径不经 savefig 钩子，不参与；Windows 大小写 / 盘符 / 符号链接的 `realpath` 归一化只在 CI 编译，没有真机验过。
 
-看护 `tests/test_capture_same_path_last_writer.py`（会话规则 + 目标键 + 真 worker / 浏览器端到端）、`tests/bridge/test_bridge_same_path_last_writer.py`（native）。
+看护 `tests/test_capture_same_path_last_writer.py`（共享函数 + 会话规则 + 目标键 + 真 worker / 浏览器端到端）、
+`tests/bridge/test_bridge_same_path_last_writer.py`（native）。
 
 ## 运行参数（T03，ADR 0014 §2 修订）
 
