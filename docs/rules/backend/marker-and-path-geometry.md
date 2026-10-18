@@ -173,6 +173,6 @@
   matplotlib draw 同一规则；主语是 manifest 测量那一刻的 `fig` 对象，不是 zorder 字面值也不是登记序；
   伪元素取成员里最晚画的；3D 子轴内容不给）；`fill_alpha` = 填充此刻的有效不透明度（读
   `get_facecolor()` 的 alpha——matplotlib 的 `set_alpha` 是**替换**不是相乘，实测 fc alpha .5 + alpha .8
-  画出来是 .8；逐元素色与成员取最小，没有填充的成员不计）。盖章在 `manifest._measure_manifest` 所有
+  画出来是 .8；逐元素色与成员取最小，根本没填充的成员不计，填充了但 alpha=0 的成员计为 0；全无填充则不给该字段）。盖章在 `manifest._measure_manifest` 所有
   geometry 分支之后统一做（`pathgeom.stamp_paint`）。严格同源：`web/src/lib/api.ts` 的 `ElementGeometry`、
   `web/src/lib/pathGeom.ts` 的 `OPAQUE_FILL_ALPHA`。看护 `tests/test_paint_facts_geometry.py`。

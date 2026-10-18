@@ -85,6 +85,14 @@ def main():
     bars[0].set_zorder(5)
     ax4.plot([0, 2], [1, 1], zorder=4)
     fig4.savefig("MixedBarFig.pdf")
+
+    # 一不透明一完全透明（alpha=0）的柱：透明柱仍是「填充了」，整组不能报成不透明
+    fig5, ax5 = plt.subplots(figsize=(4.0, 3.0))
+    ax5.plot([0, 1], [1, 1])
+    ax5.bar([0, 1], [2, 2], color=[(0, 0, 1, 1.0), (0, 0, 1, 0.0)])
+    # facecolor='none' 的单个 patch：根本不填充
+    ax5.add_patch(Rectangle((0.2, 0.2), 0.3, 0.3, fc="none", ec="k"))
+    fig5.savefig("TransparentBarFig.pdf")
 """
 
 
@@ -194,3 +202,10 @@ def test_group_paint_order_is_the_latest_member(manifests):
     bars = next(e for e in man["elements"] if e["role"] == "bar_series")
     # 最晚画的成员（zorder 5 的那根）在线之上：整组的墨迹最上层以它计
     assert bars["geometry"]["paint_order"] > _order(man, "axes_0.lines_0")
+
+
+def test_fully_transparent_member_keeps_group_conservative(manifests):
+    man = manifests("TransparentBarFig")
+    bars = next(e for e in man["elements"] if e["role"] == "bar_series")
+    # alpha=0 的柱是「填充了但全透明」，不是「没填充」：整组取 0，下面的线仍可选
+    assert bars["geometry"]["fill_alpha"] == 0.0

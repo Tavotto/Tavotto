@@ -1437,7 +1437,11 @@ def paint_ranks(fig) -> dict[int, int]:
 
 
 def _face_alpha(a) -> float | None:
-    """一个 artist 的**填充此刻画出来的不透明度**（0..1）；取不到返回 None。
+    """一个 artist 的**填充此刻画出来的不透明度**（0..1）；根本不填充 / 取不到返回 None。
+
+    区分两件事：「根本不填充」（facecolor 'none'、markerfacecolor 为 none、没有
+    get_facecolor）返回 None；「填充了但 alpha=0」返回 0.0。后者要留在保守最小值里
+    ——一组柱子里有一根全透明的，整组就不能被报成不透明。
 
     直接读 artist 画的那份 RGBA，而不是自己去乘「facecolor alpha × artist alpha」：
     matplotlib 的 `set_alpha` 是**替换**颜色里的 alpha 而不是相乘（Patch._set_facecolor /
@@ -1451,14 +1455,14 @@ def _face_alpha(a) -> float | None:
         if isinstance(a, Line2D):
             mfc = a.get_markerfacecolor()
             if mfc is None or (isinstance(mfc, str) and mfc.lower() == "none"):
-                return 0.0
+                return None
             return float(to_rgba(mfc, a.get_alpha())[3])
         get = getattr(a, "get_facecolor", None)
         if get is None:
             return None
         arr = np.atleast_2d(np.asarray(get(), dtype=float))
         if arr.size == 0:
-            return 0.0  # facecolor 'none'
+            return None  # facecolor 'none'：根本不填充
         if arr.shape[-1] < 4:
             return 1.0
         return float(np.min(arr[:, 3]))
@@ -1485,7 +1489,8 @@ def stamp_paint(geom: dict, artist, ranks: dict[int, int]) -> None:
     * `paint_order`：该元素在真实 draw 顺序里的序号（`paint_ranks`）。伪元素取成员里
       **最晚**画的那个（它的墨迹最靠上；成员在同一 axes 里 zorder 接近，差别可忽略）。
     * `fill_alpha`：有填充的 geometry 才给，填充此刻的有效不透明度（`_face_alpha`）；
-      多个成员取最小（不算没有填充的成员）。
+      多个成员取最小（不算根本没填充的成员；填充了但 alpha=0 的成员算，值为 0）。
+      所有成员都没填充就不写这个字段（前端 `fill_alpha ?? 0` 即判不透明为否）。
 
     两项都是**渲染派生数据**，和 geometry 同生同灭，不进文档、不是 override。
     """
@@ -1496,10 +1501,9 @@ def stamp_paint(geom: dict, artist, ranks: dict[int, int]) -> None:
     if geom.get("fill"):
         alphas = [al for m in members if (al := _face_alpha(m)) is not None]
         if alphas:
-            # 0 = 这个成员根本没填充（误差线的 LineCollection、空心 patch），不是「全透明的
-            # 填充」：它不该把有实心 marker 的整组拉成 0
-            drawn = [al for al in alphas if al > 0]
-            geom["fill_alpha"] = round(min(drawn), 3) if drawn else 0.0
+            # None（误差线的 LineCollection、空心 patch）= 根本没填充，已在上面滤掉，不会把
+            # 有实心 marker 的整组拉成 0；alpha=0 的真填充成员保留，整组按最保守的算
+            geom["fill_alpha"] = round(min(alphas), 3)
 
 
 def _member_draws(m) -> bool:
