@@ -20,6 +20,9 @@ on:
       - 'scripts/ci/compat_driver.py'
       - 'scripts/ci/compat_corpus.py'
       - 'scripts/ci/compat_matrix.py'
+      # compat_guardian 直接 import 它跑每个 adapter（超时 / 进程树清理）
+      - 'scripts/ci/package_smoke.py'
+      - 'tests/test_package_smoke.py'
       # 工作流实际执行的输入：引擎语料（manifest/cases/assets/schema）与 V2 场景及其夹具。
       - 'tests/compat/**'
       - 'tests/fixtures/compat_v2/**'
