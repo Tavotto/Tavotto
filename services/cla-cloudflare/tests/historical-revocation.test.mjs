@@ -24,8 +24,21 @@ test('historical revoke uses original registered key after ID and key rotation w
   for(const table of ['delegated_receipts','packets','signatures','agreement_documents'])assert.deepEqual(after[table],before[table]);
   assert.equal(after.delegated_controls.at(-1).action,'revoke');
   await assert.rejects(f.s.delegation.qualified(p,(await f.store.signatures(p.id))[0],f.now()));
-  const a=await f.s.audit(f.args('contributor')[0],p.id);assert.equal(a.delegated.current,false);assert.equal(a.delegated.state,'revoked');
+  const a=await s.audit(f.args('contributor')[0],p.id);assert.equal(a.delegated.current,false);assert.equal(a.delegated.state,'revoked');
   await f.sign(p,'holder');assert.equal((await f.s.evaluate(9)).conclusion,'success');
+}));
+for(const mode of ['enabled-rotated','disabled-rotated','held-rotated','expired-current','expired-disabled-rotated'])
+test('historical terminal revocation remains visible in current caller audit '+mode,()=>iso(async f=>{
+  await f.install();const p=await f.create();await f.sign(p);
+  const s=mode==='expired-current'?f.s:rotate(f);
+  if(mode==='enabled-rotated')Object.assign(s.c,{signingEnabled:true,delegatedCountersigningEnabled:true});
+  if(mode==='held-rotated')await f.s.hold(...f.args('contributor'),p.id,await f.s.intent(...f.args('contributor'),p.id,'hold'));
+  await s.delegation.appendHistoricalRevocation(f.grant.id,await f.control('revoke'));
+  if(mode.startsWith('expired-'))f.advance(f.grant.expires_at-f.now());
+  const a=await s.audit(f.args('contributor')[0],p.id);
+  assert.equal(a.delegated.state,'revoked');assert.equal(a.delegated.current,false);
+  assert.equal(JSON.parse(a.delegated.controls.at(-1).body).action,'revoke');
+  if(mode==='held-rotated')assert.equal((await s.status(f.args('contributor')[0],p.id)).blocked,true);
 }));
 for(const action of ['enable','suspend'])test('historical path refuses nonterminal '+action,()=>iso(async f=>{
   await f.install();const s=rotate(f),record=await f.control(action);

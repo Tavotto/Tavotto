@@ -182,10 +182,10 @@ export class Delegation {
     await this.s.stagedVerifyEvidence(p,contributor);
     const receipt=await this.receipt(p,contributor,now,{g:grant,e:control,grantHash:g.hash,controlHash:r.control_hash},r);
     // Historical cryptographic validity is distinct from current technical eligibility.
-    const state=blocked?'blocked':this.s.c.delegatedCountersigningEnabled!==true || !this.s.c.signingEnabled?'disabled':
+    const state=e.action==='revoke'?'revoked':blocked?'blocked':this.s.c.delegatedCountersigningEnabled!==true || !this.s.c.signingEnabled?'disabled':
       grant.id!==this.s.c.holderAuthorizationId || g.public_key!==this.s.c.holderAuthorizationKey ||
       p.version!==this.s.c.policy.agreements.individual.version || p.digest!==this.s.c.policy.agreements.individual.sha256?'superseded':
-      now>=grant.expires_at?'expired':now<grant.not_before?'not_started':e.action==='revoke'?'revoked':e.action==='suspend'?'suspended':
+      now>=grant.expires_at?'expired':now<grant.not_before?'not_started':e.action==='suspend'?'suspended':
       e.hash!==r.control_hash?'superseded':'current';
     return {current:state==='current',state,executed_at:r.created,expires_at:grant.expires_at,receipt,receipt_sha256:r.hash,
       authorization:{body:g.body,signature:g.signature,public_key:g.public_key,identity_assurance:'not_determined_by_this_export'},

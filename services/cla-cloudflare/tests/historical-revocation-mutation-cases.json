@@ -1,5 +1,14 @@
 [
   {
+    "name": "terminal revocation audit priority after rotation",
+    "file": "src/native/delegation.ts",
+    "before": "const state=e.action==='revoke'?'revoked':blocked?'blocked':",
+    "after": "const state=blocked?'blocked':",
+    "pattern": "historical terminal revocation remains visible in current caller audit disabled-rotated",
+    "testFile": "tests/historical-revocation.test.mjs",
+    "assertionError": true
+  },
+  {
     "name": "historical terminal only",
     "file": "src/native/delegation.ts",
     "before": "    if(event.action!=='revoke')throw new Rejected('authorization_terminal_revocation_required');",

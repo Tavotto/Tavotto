@@ -32,7 +32,7 @@ GitHub connector was `78a12af161cd95d02aeb62c7ab23780a9a57bc83`; its eight commi
 after the shared base did not change CLA paths. Neither parent branch was changed.
 
 [Command exits, source hashes and logs](evidence/verification.json) record real
-Node 24 / in-memory SQLite / Web Crypto execution: 358 tests, four migration tests,
+Node 24 / in-memory SQLite / Web Crypto execution at the initially reviewed head: 358 tests, four migration tests,
 and 62 detected mutations (eight new unique source locations each require an
 actual AssertionError and exit 1). The new operation consumes 11 SQL statements
 and zero external calls in a metered synthetic fixture, within unchanged limits.
@@ -45,16 +45,26 @@ The additional old-version tuple case is explicitly an unpinned registry unit
 fixture: production still rejects a third agreement row and versions other than
 1.0. It is **not** a production agreement migration or activation test.
 
-`npm run typecheck` exits 127 (tsc absent); `npm run build` exits 1 (esbuild absent).
-The earlier dependency-download E403 is preserved; no download retry, mirror,
-proxy, credential replacement or execution-environment workaround was attempted.
-Node execution is not a TypeScript check. The stacked PR base is filtered by
-existing PR workflows targeting main; the existing CLA workflow's manual dispatch
-is a normal validation route. This connector has no dispatch action and existing
-CLI authentication is invalid, so current-head hosted verification is pending an
-operator run. No base, workflow, permissions or gate is changed to obtain a check.
-Formal external review waits for deterministic type/build prerequisites; offline
-independent reverse review is separately recorded.
+The first review covered exact head `6d8809f03150b762cfafeacdaf89af6c9c9bbc05` after
+[hosted typecheck, build and all offline checks succeeded](https://github.com/Tavotto/Tavotto/actions/runs/39112930285/job/117632693576).
+Security review reported no findings; code review found P2 audit-state precedence.
+Terminal signed `revoke` now remains visible as `revoked` through disabled, rotated,
+held and expired current callers. It always stays `current=false`; hold status and
+independent personal holder recovery keep their separate eligibility checks.
+
+[The P2 evidence](evidence/p2-audit-priority/verification.json) records 363 Node
+tests, four migration tests and 63 detected mutations, all exit 0. The independent
+five-case reproduction exits 1 on the reviewed source and 0 on the actual fix;
+two reverse mutations each fail with AssertionError / exit 1. Original raw failure
+text and hashes are preserved alongside whitespace-normalized display logs.
+
+The local typecheck still exits 127 (tsc absent) and build exits 1 (esbuild absent).
+No dependency download, mirror, proxy, credential replacement or alternate
+environment was attempted. The prior hosted success does not validate a new fix
+head. New-head hosted verification and the one permitted targeted followup remain
+pending; no repeat review is requested before deterministic prerequisites pass.
+The operator may use the existing manual CLA workflow; this connector exposes no
+dispatch action. No workflow, permission, branch protection or live gate is changed.
 
 The 100-control ceiling remains. A signed revoke may occupy slot 100; an already
 full chain cannot append slot 101 and must clearly reject without claiming
