@@ -87,7 +87,7 @@ pytest 的假设进去会扩大攻击面）。纯标准库，复用 `_common.run
   - NSIS 安装 → 升级后的真实文件集；
   - 真 Codex（Store 版）交接。
 
-### 六、交接三态（后续独立 PR，本 PR 不实现）
+### 六、交接三态（独立 PR 实现，见本节末「实现」）
 
 交接现在的 `ok` 有两层含义：
 - CLI 层（`engine/handoff.py` `open_target`）：解析、登记、唤起都成功了，桌面模式下进程还活着；
@@ -100,8 +100,59 @@ pytest 的假设进去会扩大攻击面）。纯标准库，复用 `_common.run
   - `launch_success`：等于现有 CLI `ok` 的语义；
   - `render_success`：桌面 sidecar 对目标 stem 的一次渲染结果；
   - `verified_success`：`render_success` 为真，且渲染结果确认是目标 Figure（stem 与 registry 一致、manifest 非空）。
-- 确认信号要新增一个**经本机会话认证（ADR 0008）**的有限期查询，不开无认证端点，不为验证去执行用户脚本。
+- 确认信号要新增一个**经本机会话认证（ADR 0008）**的有限期查询，不开无认证端点，不为验证去执行用户脚本（实现见下文「实现」）。
   同源对：`locate.PROTOCOL_VERSION` ↔ 插件 `PROTOCOL`、`docs/handoff-protocol.md`、技能文本。
+
+#### 实现（交接三态 PR）
+
+**确认信号 = 经认证的 HTTP 查询**（`GET /api/handoff/render-status`）。曾考虑 0700/0600 回执文件（CLI 先写期望、实例写回结论），
+维护者 2026-10-16 改为 HTTP 查询：文件通道要自带期望文件、写锁、清理，又是与会话认证并行的第二套信任面；HTTP 查询复用
+`security.py` 的同一道 guard（Host / Origin / 凭据），first-wins 由时间序保证，不需要锁，CLI 不往磁盘写任何东西。
+代价是桌面 sidecar 原本没有可供 CLI 使用的凭据——见下文「scoped token」，那是对 ADR 0008 的最小放宽。
+
+- **实例侧**：`/api/engine/render` 收尾处（成功 / override 的 `WorkerError` / 取 worker 阶段的 `WorkerError`）把结论记进
+  **进程内有界结论表**（`engine/handoffreceipt.py::LEDGER`，最多 128 条、每条保留 10 分钟，键 = 项目身份 + stem，线程安全，
+  零 IO，没有交接在查时也记）。记录是旁路，任何异常不影响渲染响应。**只记录桌面端本来就会做的那次渲染，不为验证触发任何执行**；
+  交接落图走 `openFastEdit → enterElementEdit`，有脚本的 Figure 会发起这次渲染。
+- **端点**：`GET /api/handoff/render-status?project=<路径>&stem=<stem>&since=<epoch 秒>`，返回 `since` 之后（含）该项目 + stem 的
+  **第一份**结论，没有则 `{"status":"pending"}`；响应只含 `status` / `code` / `stem` / `registry_match` / `manifest_elements`，
+  不回显路径、不含 traceback；缺参数 / `since` 非有限数 → 400。
+- **认证**（不开无认证端点）：走 guard，Host / Origin 校验照旧；接受 cookie、浏览器模式的完整 secret（`X-Tavotto-Auth`，
+  `port-<端口>.json`），以及下面的 scoped token。比较用 `hmac.compare_digest`。
+- **scoped token**：桌面 sidecar 在端口实绑后（`SidecarServer.announce_ready`）写 `<data_dir>/session/handoff-status-<端口>.json`
+  （目录 0700、文件 0600、原子写；`{port, pid, token, scope: "handoff_render_status", created}`），退出时删除，启动时顺手清 pid 已死 /
+  超过 30 天的同类文件。token 是 256 位随机，**与启动 nonce、会话 token、api secret 都无关**；guard 只在「`GET` 且路径恰为该端点」
+  时认它，带去任何其它端点（含 `/api/session/relaunch`）都是 401/403/404。浏览器模式不另写这份：它本来就有完整 secret 文件，
+  CLI 对已知端口直接用。写不出来只会让 CLI 落成 `unverified/channel_unavailable`，不影响 sidecar 启动。
+- **为什么是对 ADR 0008 的最小放宽**：ADR 0008 划的边界是「桌面磁盘上没有任何能换会话的凭据」（nonce 走 stdin，不写文件，
+  `relaunch` 回 404）。这里新增的是一份**只读、单端点**的凭据，不是会话凭据：换不到 nonce / cookie，调不了任何写端点。
+- **威胁模型**：能读 `<data_dir>/session/` 的同用户本机进程本来就能读用户的任何文件（与 `session_client` 凭据文件、ADR 0021 §4 native
+  descriptor 同一个论证）；网页（含 DNS rebinding 页面）读不到文件，且 Host / Origin 钉死。token 泄露的后果仅是看到「某项目某 stem
+  最近渲染成功与否」（需要知道项目路径与 stem）。
+- **CLI 侧**：唤起**之前**取 `since = time.time() - 2 s`（回拨余量：唤起前取时刻与实例渲染完成之间可能被调度打乱；代价是 2 秒内同一
+  stem 的上一次渲染也会被算进来，`verified` 还要求 stem 一致 + 注册表有 + manifest 非空）。唤起后有界轮询，**每轮重新发现凭据**
+  （冷启动时 sidecar 在唤起之后才发布）：扫 `handoff-status-*.json`（pid 存活的才算，可能多份、逐个查）+ 已知浏览器端口的
+  `port-<端口>.json`；`http.client.HTTPConnection("127.0.0.1", 端口)` 直连（主机字面量固定，outbound 闸门只放行这一种 HTTPConnection 写法），单次超时 1 秒。**绝不经过代理**：请求带 `X-Tavotto-Auth`，`urlopen` 会按环境变量 / 系统设置走 HTTP 代理而把凭据发给代理；直连 socket 不读任何代理设置（用例：假代理收 0 连接）。
+- **等待与超时**：`tavotto open --render-wait SECONDS`，CLI 默认 20 秒、0 = 不等；`open_target()` 自己默认 0（库调用不被拖慢）；
+  `nan` / `inf` / 负数被 argparse 拒绝（退出 2），库调用按 0。**到点没结论是 `unverified/timeout`；一个实例都没连上（找不到凭据 / 连接失败 /
+  被拒）是 `unverified/channel_unavailable`；都不是 failed。**
+- **`launch.render`**（加性对象，`ok`、退出码、`protocol: 1` 不变）：
+  `{"status": "ok|failed|unverified", "verified": bool, "waited_ms": int, …}`。
+  `unverified` 带 `reason`（闭集 `not_waited` / `timeout` / `channel_unavailable` / `no_target_stem` / `not_renderable`）；
+  `failed` 带 `code`（实例报出的 worker 稳定码，如 `engine_files_incomplete`、`missing_dependency`；
+  不合规的串落成 `render_failed`）；`ok` 带 `stem` / `registry_match` / `manifest_elements`。
+  `verified` 的**唯一判据**是 `handoffreceipt.summarize`：渲染成功 ∧ 结论 stem == 目标 stem ∧ 注册表里有该 stem ∧ manifest 非空。
+- **插件顶层三字段**（`scripts/handoff.py`，只搬运不另判）：`launch_success`（true=唤起成功；null=`--no-launch`；false=没走到唤起）、
+  `render_success`（true / false=明确失败 / **null=不知道**）、`verified_success`（仅 `render.verified === true` 才 true）；外加 `render` 细节。
+  旧 CLI 没有 `launch.render`：插件补 `{"status":"unverified","reason":"cli_without_render_signal"}`，
+  `render_success: null`、`verified_success: false`。旧插件读新 CLI：多出的键被忽略。退出码与 `ok` 一字未改。
+- **没覆盖的**：旧版本实例没有这个端点 / 没发布凭据 → `channel_unavailable`；无脚本 Figure（`registry.parameterizable === false`）不发起渲染
+  → CLI 不查询，直接 `unverified/not_renderable`；结论表是进程内的，实例重启后丢失（CLI 只关心刚发生的那一次）；
+  真 Windows 桌面上的端到端未验。
+- **MSIX 与数据目录（#961 现场，#1129，未在真机验证）**：CLI 现在只**读**桌面写在真实 `%LOCALAPPDATA%\Tavotto\session\` 下的 scoped
+  凭据文件，不再写任何东西。MSIX 的文件系统虚拟化对读通常合并到真实路径，因此**预计可读到**；但仓库里没有处理 MSIX /
+  LocalCache 的代码（`code-facts.md`），仍未在 Windows 真机（Codex Store 版拉起 CLI）验证。若读不到，结果是
+  `unverified/channel_unavailable`（不误报 ok / failed，但这个场景下三态没有信号）。本 PR 不声称已解决。
 
 ## 不做
 

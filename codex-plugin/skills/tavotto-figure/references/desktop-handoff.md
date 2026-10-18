@@ -9,6 +9,10 @@
 python3 scripts/handoff.py <脚本路径>
 ```
 
+**Windows 版 Codex 里，这条命令要申请在沙箱外运行**（`sandbox_permissions: "require_escalated"`，
+附一句理由，例如「Tavotto 桌面应用需要在沙箱外启动或接收交接」）：默认沙箱的受限令牌下桌面应用
+起不来，也转发不到已开着的窗口。
+
 它做三件事：产物缺失或比脚本旧就先跑一遍脚本 → 把产物登记进图库注册表 →
 唤起 Tavotto（桌面应用优先，没装就用浏览器模式）。**退出码非零就是没做完**
 （0 成功 / 1 脚本报错 / 2 路径或交接失败 / 3 这台机器上用不了 Tavotto /
@@ -22,6 +26,14 @@ python3 scripts/handoff.py <脚本路径>
 * `"parameterizable": true` —— 成了，交接完成。
 * `"parameterizable": false` —— **没成，要修**。多半是脚本没和产物放在同一个目录
   （契约 1），或产物名静态解不出（契约 3）。改完重跑重新交接，不要把它当噪音略过。
+* **`ok` / 退出码 0 不代表图画出来了。** 另读三个顶层字段（加性，退出码不变）：
+  `launch_success`（唤起成功）、`render_success`（界面对这张图的那次渲染：`true` 成功 /
+  `false` **明确失败** / `null` 不知道，**null 不是失败**）、`verified_success`（只有 `true`
+  才算确认渲染的就是这张图）。`render_success: false` 时 `render.code` 是稳定码——
+  `engine_files_incomplete` = Tavotto 自己的引擎文件缺了（装坏了，让用户重装 / 升级，
+  **不要**教他 `pip install` 任何包）；`missing_dependency` = 脚本缺第三方包。`null` 时
+  别说「已渲染」，也别说「渲染失败」，如实说「窗口已打开，还没能确认图画出来」。
+  `render.reason: "cli_without_render_signal"` = 他的 Tavotto 版本老，给不出这个信息；`"not_renderable"` = 这张图没有脚本，界面不会渲染它（同时会是 `not_parameterizable`）。
 * `"error_code": "tavotto_missing"` —— 用户机器上没有 Tavotto。按输出里的 `hint`
   引导安装；图已经画好了，脚本和产物都在原处，装完再执行同一条命令即可。
 * `"error_code": "desktop_found_cli_missing"` —— **他装了桌面版，只是版本旧**
@@ -35,6 +47,14 @@ python3 scripts/handoff.py <脚本路径>
   （`signal: "SIGABRT"` 多半是安装损坏或从受限环境启动 GUI），指给他
   `log_path` 的 sidecar 日志与 `~/Library/Logs/DiagnosticReports/` 的崩溃
   报告；`retryable: false` 时**不要**自己重试一个已知会崩的程序。
+* `"error_code": "sandboxed_launch"` —— 命令跑在**受限沙箱**里（Windows 版 Codex 的默认沙箱），
+  桌面应用在这里起不来，也转发不到已经开着的窗口，CLI 没有拉任何进程。**用沙箱外权限重跑同一条
+  命令**（`sandbox_permissions: "require_escalated"`，理由写「Tavotto 桌面应用需要在沙箱外启动或接收交接」），
+  **不要让用户手动打开 Tavotto**，也**不要**自己想办法绕出沙箱（借 explorer、计划任务等）。
+  `sandbox` 是 `restricted_token` / `app_container`；`retryable: true`。
+* `"error_code": "launch_failed"` 且 `"reason": "forward_stuck"` —— Tavotto 已经开着，但把这次交接转发给它的
+  进程卡住了（CLI 已结束那个进程），`launch_success` 是 `false`。同样先在沙箱外重跑同一条命令；
+  还不行再把 `log_path` 给用户。
 * `"error_code": "launch_timeout"` —— 唤起后进程在限期内没出现。
   `retryable: true`，可以重试一次；再超时就把 `log_path` 给用户。
 * 顺便留意 `conflicts`（两个脚本抢同一个 stem）和 `dynamic_names`（某些脚本的产出名

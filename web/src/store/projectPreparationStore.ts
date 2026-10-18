@@ -115,6 +115,12 @@ export interface PrepEntry {
   armMaybeFrom: { session_id: string; config_revision: number; observation_seq: number } | null
   /** 这个条目是从明确的「打开并运行」入口打开的：卡片上的「继续 / 再试一次」（重新打开）沿用这份意图，不让用户为同一个目的点两次 */
   wantsRun: boolean
+  /**
+   * 这次 `open` 是否允许在已跑完的同配置会话上认领 `run` 重跑（`opts.rerun !== false`）。卡上「继续」是 `false`：这条策略要活过它自己的恢复路径
+   * （首次检查断线后 `refresh` 的无会话恢复），否则恢复后落到已跑完的会话会把用户脚本再跑一遍（Codex #1152 补评 r4305863214）。
+   * 每次 `open` 重新设定、不继承：新的明确「打开并运行」入口（`rerun` 未设）仍允许重跑
+   */
+  allowRerun: boolean
   /** 同一脚本换了参数（另一份运行配置）时，旧会话里还在等的运行意图：「打开并运行」带它去后端原子转移，不并存两份 */
   transferFrom: string | null
 }
@@ -504,6 +510,7 @@ export const useProjectPreparationStore = create<PreparationState>((set, get) =>
             armMaybeBaseline: keepArm ? prev.armMaybeBaseline : null,
             armMaybeFrom: keepArm ? prev.armMaybeFrom : null,
             wantsRun: !!opts?.run,
+            allowRerun: opts?.rerun !== false,
             transferFrom: sameTarget
               ? (prev?.transferFrom ?? null)
               : prev?.report?.intent?.status === 'active'
@@ -517,7 +524,7 @@ export const useProjectPreparationStore = create<PreparationState>((set, get) =>
       // 再清空——防连点的闸就开了
       if (sameTarget && prev?.pending && prev.pending !== 'check') return
       await check(key, target, false)
-      if (opts?.run) await armIfReady(key, opts.rerun !== false)
+      if (opts?.run) await armIfReady(key, entry(key)?.allowRerun !== false)
     },
 
     refresh: (key) => {
@@ -531,7 +538,7 @@ export const useProjectPreparationStore = create<PreparationState>((set, get) =>
         // 代认领——用户的一键意图不因第一次请求超时而丢（Codex #1044 r4290881812）；`armIfReady` 的其余前提照旧
         const g = guardOf(key)
         return check(key, e.target, false).then(() => {
-          if (live(key, g) && entry(key)?.wantsRun) return armIfReady(key)
+          if (live(key, g) && entry(key)?.wantsRun) return armIfReady(key, entry(key)?.allowRerun !== false)
         })
       }
       const g = guardOf(key)
@@ -802,14 +809,29 @@ async function onDependencyPrepared(owner: ProjectEpochGuard): Promise<void> {
 // 环境 / 运行目录 / 数据位置有了答案（采用环境、选了目录、指认了数据、改指作废）：空闲的会话只读地重新检查。
 // 下一步（是否运行）仍由后端的报告给出、由用户点——这里绝不认领 `run`。
 useEnvStore.subscribe((state, prev) => {
+  // 项目的环境快照第一次落地（未加载 → 有值）且里面没有任何「用户答过」的痕迹（运行目录没定过、没明确采用过环境）：这是启动时的被动读取，
+  // 不是答案变了——会话的检查读的是后端事实（创建请求只带目标，不带这份快照）。慢机器上快照比会话创建晚到，若算作变化就会在
+  // 用户还没点任何东西时给停在「运行目录」等卡上的会话发一次 recheck。
+  // 快照里已有答过的痕迹（用户在快照到达前就答了、setter 因 env 还是空而退回整份重读；或别的窗口答过）仍照旧 recheck：宁可多一次只读检查，也不留陈旧的卡
+  // 「还没有这个项目的快照」有两种形状：整份 env 为空（启动），或 `resetProject()` 留下的占位 `{ open: false }`（已有环境后再进项目）
+  const projectUnloaded = (s: typeof state) => s.env === null || s.env.project?.open === false
+  const passiveFirstLoad =
+    projectUnloaded(prev) &&
+    !projectUnloaded(state) &&
+    !state.env?.project?.workdir?.decided &&
+    state.env?.project?.consent !== 'confirmed'
   const sig = (s: typeof state) =>
     [
       s.inputRemapGeneration,
       s.probeResultsGeneration,
-      s.env?.project?.workdir?.mode ?? '',
-      String(s.env?.project?.workdir?.decided ?? ''),
-      s.env?.project?.python ?? '',
-      s.env?.project?.consent ?? '',
+      ...(passiveFirstLoad
+        ? []
+        : [
+            s.env?.project?.workdir?.mode ?? '',
+            String(s.env?.project?.workdir?.decided ?? ''),
+            s.env?.project?.python ?? '',
+            s.env?.project?.consent ?? '',
+          ]),
     ].join('|')
   if (sig(state) !== sig(prev)) useProjectPreparationStore.getState().recheckIdle()
 })

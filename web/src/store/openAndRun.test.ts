@@ -907,6 +907,27 @@ describe('状态丢失后以后端报告为准（Codex #1044 r4271063082 / r4271
     expect(entry().armed).toBe(true)
   })
 
+  it('卡上「继续」（run:true, rerun:false）首次检查超时、恢复后落到已跑完的同配置会话：不认领 run 重跑（Codex #1152 补评 r4305863214）', async () => {
+    mockCreate.mockRejectedValueOnce(new TypeError('network'))
+    await store().open(scriptTarget('plot.py'), { run: true, rerun: false })
+    expect(entry().wantsRun).toBe(true)
+    expect(entry().allowRerun).toBe(false)
+    mockCreate.mockResolvedValueOnce(done(['a'], 'att-1', 3, { actions: [action('run'), action('recheck')] }))
+    await store().refresh(KEY)
+    expect(mockAct).not.toHaveBeenCalled()
+  })
+
+  it('对照：明确「打开并运行」（rerun 未设）首次检查超时、恢复后落到已跑完的同配置会话：仍认领 run 重跑', async () => {
+    mockCreate.mockRejectedValueOnce(new TypeError('network'))
+    await open()
+    expect(entry().allowRerun).toBe(true)
+    mockCreate.mockResolvedValueOnce(done(['a'], 'att-1', 3, { actions: [action('run'), action('recheck')] }))
+    mockAct.mockResolvedValueOnce({ claimed: true, report: running(4) })
+    await store().refresh(KEY)
+    expect(mockAct).toHaveBeenCalledTimes(1)
+    expect(mockAct.mock.calls[0][1]).toMatchObject({ action_id: 'act-run' })
+  })
+
   it('普通打开（不是一键入口）的首次检查超时后恢复：不代认领', async () => {
     mockCreate.mockRejectedValueOnce(new TypeError('network'))
     await open(false)
