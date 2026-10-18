@@ -1,0 +1,35 @@
+{
+  "base": "830bd89cc905d28b41f690c7aa6c0236a06aec84",
+  "initial_script_sha256": "0b562df2210853c1bd89d5e032fd92830da3c045d8f1ed4299f3111a832af22a",
+  "final_script_sha256": "0cfcb86f7ae32da1b5be5b005bdd9ca336228a41dea2ea3dbabc15da0cf85cbe",
+  "same_independent_test_sha256": "a99ef0839a47bd0e74b0b501431d0342cae7dc68d17c49223a90d8ea2febf10a",
+  "red_exit": 1,
+  "green_exit": 0,
+  "mutations": 10,
+  "all_mutant_exits": [
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1
+  ],
+  "cli_exits": {
+    "short_read": 0,
+    "oversize": 1,
+    "directory": 1,
+    "model_refusal": 2
+  },
+  "no_http_or_runtime_execution": true,
+  "boundary_only_red_sha256": "5fe37991d4932bb142ac08d45b90e93786b79188f41ddaaf3a3a623c76691af2",
+  "boundary_only_red_exit": 1,
+  "same_test_hash_verified": true,
+  "workspace_current_script_sha256": "0cfcb86f7ae32da1b5be5b005bdd9ca336228a41dea2ea3dbabc15da0cf85cbe",
+  "primary_commands_file": "independent-commands.json",
+  "red_log": "independent-red-boundary-only.txt",
+  "green_log": "independent-green-final-source.txt"
+}

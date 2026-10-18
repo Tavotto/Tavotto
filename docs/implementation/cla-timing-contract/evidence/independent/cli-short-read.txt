@@ -1,0 +1,47 @@
+{
+  "protocol": "cla-offline-timing-plan-v1",
+  "assumptions_sha256": "2a52ca2dd2c5e3ee889dec3ded2804fe065d5634e0244829f3395c4d08db6eb3",
+  "model_feasible": true,
+  "reasons": [],
+  "ready_to_deploy": false,
+  "live_accepted": false,
+  "execution_supported": false,
+  "runtime_eligibility": false,
+  "network_operations": 0,
+  "assumptions_assurance": "caller_supplied_not_platform_verified",
+  "time_ms": {
+    "remaining_proof": 110000,
+    "ready_after_dispatch": 3000,
+    "critical_path_with_margin": 5000,
+    "worst_ci_finish_after_event": 8700
+  },
+  "budget": {
+    "non_exempt_contributors": 1,
+    "qualification_sql_per_person": 3,
+    "dispatch_work_sql": 16,
+    "dispatch_total_sql": 20,
+    "confirmation_work_with_withdrawal_sql": 19,
+    "recovery_window_demand_ms": 3000,
+    "limits": {
+      "heads": 1,
+      "external": 40,
+      "externalWork": 35,
+      "sql": 40,
+      "sqlWork": 20,
+      "workMs": 60000,
+      "cleanupMs": 90000,
+      "leaseMarginMs": 30000
+    }
+  },
+  "required_runtime_work": [
+    "atomic slot reservation with issued journal and revision/head/attempt guards",
+    "independent invocation wakeup after sender settlement; durable outbox remains authoritative",
+    "fresh independent observation and qualification; no replay, manual release or proof extension"
+  ],
+  "required_live_acceptance": [
+    "actual tail latency and backlog bounds",
+    "resource permissions, quotas, costs and withdrawal fairness",
+    "trusted-main CI and live platform checks"
+  ],
+  "plan_sha256": "53ebc57cb111798b24cc76874cab012ad0b8469ee3aac41997b25218d2c9f9eb"
+}

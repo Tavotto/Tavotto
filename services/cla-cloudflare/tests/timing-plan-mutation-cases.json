@@ -1,0 +1,176 @@
+[
+  {
+    "name": "timing dispatch work phase",
+    "file": "scripts/timing-plan.mjs",
+    "before": "if(b.dispatch_work_ms>=FREE_BUDGET.workMs || b.dispatch_work_ms>b.send_settle_ms)reject('invocation_time_budget_exceeded');",
+    "after": "",
+    "pattern": "timing dispatch work",
+    "testFile": "tests/timing-plan.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "timing FIFO nonblocking open",
+    "file": "scripts/timing-plan.mjs",
+    "before": "fs.openSync(process.argv[2],fs.constants.O_RDONLY|fs.constants.O_NONBLOCK)",
+    "after": "fs.openSync(process.argv[2],'r')",
+    "pattern": "timing CLI refuses a FIFO before reading without blocking",
+    "testFile": "tests/timing-plan.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "timing unknown wakeup",
+    "file": "scripts/timing-plan.mjs",
+    "before": "if(b.wakeup_ms===null || b.backlog_ms===null)reject('independent_wakeup_or_backlog_bound_unknown');",
+    "after": "if(false)reject('independent_wakeup_or_backlog_bound_unknown');",
+    "pattern": "timing unknown independent bound refuses wakeup_ms",
+    "testFile": "tests/timing-plan.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "timing remaining original proof",
+    "file": "scripts/timing-plan.mjs",
+    "before": "const remaining=proof.expires_at*1000-input.dispatch_at_ms;",
+    "after": "const remaining=120000;",
+    "pattern": "timing proof remaining lifetime uses original dispatch clock",
+    "testFile": "tests/timing-plan.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "timing strict critical boundary",
+    "file": "scripts/timing-plan.mjs",
+    "before": "if(criticalPath>=remaining)reject('proof_remaining_time_insufficient');",
+    "after": "if(criticalPath>remaining)reject('proof_remaining_time_insufficient');",
+    "pattern": "timing critical path equality at original expiry refuses",
+    "testFile": "tests/timing-plan.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "timing authority ceiling",
+    "file": "scripts/timing-plan.mjs",
+    "before": "if(input.authority_expires_at!==null && proof.expires_at>input.authority_expires_at)reject('proof_exceeds_authority_expiry');",
+    "after": "",
+    "pattern": "timing authorization shorter than encoded proof refuses",
+    "testFile": "tests/timing-plan.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "timing last earliest poll",
+    "file": "scripts/timing-plan.mjs",
+    "before": "if(readyAfterEvent>=start+(wait.maxAttempts-1)*wait.intervalMs)reject('ci_attempts_exhaust_before_readiness');",
+    "after": "",
+    "pattern": "timing wait attempts can exhaust before its longer timeout",
+    "testFile": "tests/timing-plan.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "timing pending read duration",
+    "file": "scripts/timing-plan.mjs",
+    "before": "worstCIFinishAfterEvent=start+(wait.maxAttempts-1)*(wait.intervalMs+b.pending_read_ms)+b.final_read_ms;",
+    "after": "worstCIFinishAfterEvent=start+(wait.maxAttempts-1)*wait.intervalMs+b.final_read_ms;",
+    "pattern": "timing slow pending reads are included in the entire CI timeout",
+    "testFile": "tests/timing-plan.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "timing final read boundary",
+    "file": "scripts/timing-plan.mjs",
+    "before": "if(worstCIFinishAfterEvent+b.margin_ms>=b.dispatch_after_event_ms+remaining)reject('ci_finishes_at_or_after_proof_deadline');",
+    "after": "",
+    "pattern": "timing last CI read plus safety margin must precede proof expiry",
+    "testFile": "tests/timing-plan.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "timing withdrawals ahead",
+    "file": "scripts/timing-plan.mjs",
+    "before": "l.withdrawals_ahead*l.withdrawal_pass_ms+",
+    "after": "",
+    "pattern": "timing confirmation backlog includes priority withdrawals ahead",
+    "testFile": "tests/timing-plan.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "timing SQL reserve",
+    "file": "scripts/timing-plan.mjs",
+    "before": "confirmationWork=16+q*n+s.confirmation_work;",
+    "after": "confirmationWork=14+q*n+s.confirmation_work;",
+    "pattern": "timing extra coordination SQL must fit both invocation phases",
+    "testFile": "tests/timing-plan.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "timing recovery demand",
+    "file": "scripts/timing-plan.mjs",
+    "before": "if(loadMs>l.window_ms)reject('recovery_window_overcommitted');",
+    "after": "",
+    "pattern": "timing recovery window reserves withdrawals and new confirmation demand",
+    "testFile": "tests/timing-plan.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "timing occupied slot",
+    "file": "scripts/timing-plan.mjs",
+    "before": "if(l.occupied_slots!==0)reject('confirmation_slot_occupied');",
+    "after": "",
+    "pattern": "timing occupied confirmation slot refuses without releasing it",
+    "testFile": "tests/timing-plan.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "timing execution unavailable",
+    "file": "scripts/timing-plan.mjs",
+    "before": "execution_supported:false,runtime_eligibility:false",
+    "after": "execution_supported:true,runtime_eligibility:true",
+    "pattern": "timing planner only models fixed assumptions and never grants runtime eligibility",
+    "testFile": "tests/timing-plan.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "timing first poll ordering",
+    "file": "scripts/timing-plan.mjs",
+    "before": "if(readyAfterEvent<start)worstCIFinishAfterEvent=start+b.final_read_ms;",
+    "after": "if(readyAfterEvent<=start)worstCIFinishAfterEvent=start+b.final_read_ms;",
+    "pattern": "timing single-shot CI at exact confirmation completion cannot assume commit ordering",
+    "testFile": "tests/timing-plan.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "timing complete bounded input",
+    "file": "scripts/timing-plan.mjs",
+    "before": "while(count>0 && length<buffer.length);",
+    "after": "while(false);",
+    "pattern": "timing CLI reads the complete bounded file even when regular reads are short",
+    "testFile": "tests/timing-plan.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "confirmation exact work deadline",
+    "file": "scripts/timing-plan.mjs",
+    "before": "b.confirmation_ms>=FREE_BUDGET.workMs",
+    "after": "b.confirmation_ms>FREE_BUDGET.workMs",
+    "pattern": "timing phase rejects the exact deadline confirmation_ms",
+    "selectedTitle": "timing phase rejects the exact deadline confirmation_ms",
+    "testFile": "tests/timing-plan.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "settlement exact cleanup deadline",
+    "file": "scripts/timing-plan.mjs",
+    "before": "b.send_settle_ms>=FREE_BUDGET.cleanupMs",
+    "after": "b.send_settle_ms>FREE_BUDGET.cleanupMs",
+    "pattern": "timing phase rejects the exact deadline send_settle_ms",
+    "selectedTitle": "timing phase rejects the exact deadline send_settle_ms",
+    "testFile": "tests/timing-plan.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "withdrawal exact cleanup deadline",
+    "file": "scripts/timing-plan.mjs",
+    "before": "l.withdrawal_pass_ms>=FREE_BUDGET.cleanupMs",
+    "after": "l.withdrawal_pass_ms>FREE_BUDGET.cleanupMs",
+    "pattern": "timing withdrawal pass rejects its exact cleanup deadline",
+    "selectedTitle": "timing withdrawal pass rejects its exact cleanup deadline",
+    "testFile": "tests/timing-plan.test.mjs",
+    "assertionError": true
+  }
+]

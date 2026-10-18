@@ -1,0 +1,49 @@
+{
+  "protocol": "cla-offline-timing-assumptions-v1",
+  "proof_text": "tavotto-cla-v1\n{\"base_sha\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"contributors\":[{\"id\":2,\"login\":\"synthetic-contributor\"}],\"expires_at\":1800000120,\"head_sha\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"issued_at\":1800000000,\"kind\":\"pr\",\"members\":[],\"policy_sha256\":\"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\",\"pr\":9,\"protocol\":\"tavotto-cla-v1\",\"repository_id\":707,\"revision\":1}",
+  "dispatch_at_ms": 1800000010000,
+  "authority_expires_at": 1800000200,
+  "delegated": true,
+  "exemption_ids": [],
+  "bounds": {
+    "dispatch_after_event_ms": 900000,
+    "dispatch_work_ms": 1000,
+    "send_settle_ms": 1000,
+    "wakeup_ms": 120000,
+    "backlog_ms": null,
+    "confirmation_ms": 1000,
+    "pending_read_ms": 100,
+    "final_read_ms": 1000,
+    "margin_ms": 1000
+  },
+  "ci": {
+    "start_after_event_ms": 0,
+    "wait": {
+      "enabled": true,
+      "maxAttempts": 8,
+      "intervalMs": 1000,
+      "timeoutMs": 60000
+    }
+  },
+  "load": {
+    "slots": 1,
+    "occupied_slots": 0,
+    "withdrawals_ahead": 0,
+    "withdrawal_pass_ms": 1000,
+    "withdrawal_reserve_ms": 1000,
+    "window_ms": 60000,
+    "confirmations_in_window": 1,
+    "withdrawals_in_window": 1
+  },
+  "sql_overhead": {
+    "dispatch_work": 0,
+    "settlement": 0,
+    "confirmation_work": 0
+  },
+  "external": {
+    "dispatch_work": null,
+    "dispatch_total": null,
+    "confirmation_work": null,
+    "confirmation_total": null
+  }
+}
