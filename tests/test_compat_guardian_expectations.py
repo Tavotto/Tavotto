@@ -113,6 +113,20 @@ class Declarations(GuardianBase):
         self.assertEqual(other["status"], "failed")
         self.assertEqual(other["expectation"]["observed_outcome"], "environment_unavailable")
 
+    def test_a_crashed_or_silent_native_driver_is_unknown_and_never_control_met(self):
+        for result in (
+            {"ok": False, "code": "driver_no_output", "message": "exit 1"},
+            {"ok": False, "code": "driver_timeout", "message": "timeout"},
+        ):
+            self.assertEqual(cg._native_status(result), "unknown", result)
+            row = self.v2_row()
+            row["native"] = {"status": cg._native_status(result), "result": result}
+            declared = {"outcome": "environment_unavailable", "reason": "x" * 30, "references": []}
+            met = ex.evaluate(row, declared)
+            self.assertNotEqual(met["status"], "control_met", result)
+        missing = {"ok": False, "traceback": "ModuleNotFoundError: No module named 'cv2'"}
+        self.assertEqual(cg._native_status(missing), "environment_unavailable")
+
     def test_mismatch_is_failed_with_the_difference_attached(self):
         row = self.v2_row()
         row["native"] = {"status": "passed", "result": native_result()}
