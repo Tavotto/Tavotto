@@ -329,6 +329,43 @@ def behavior_signature(finding: dict, attribution: dict) -> dict:
     }
 
 
+def classify(f: dict, rules: list[dict]) -> tuple[dict, dict, dict]:
+    """(facts, attribution, behavior signature incl. call site) of one finding.
+
+    The one place that turns a finding into the identity `cluster_key` groups by, so explore's
+    confirmation compares exactly what triage clusters on.
+    """
+    facts = explore_facts(f["row"], f["diff"]) if f["kind"] == "explore" else row_facts(f["row"])
+    attr = attribute(facts, f["kind"] if f["kind"] == "explore" else "row", rules)
+    sig = behavior_signature(f, attr)
+    sig["call_site"] = call_site_signature(f["source"]) if f["source"] else ["unavailable"]
+    return facts, attr, sig
+
+
+def explore_identity(row: dict, source: str | None, rules: list[dict] | None = None) -> tuple:
+    """Behavior identity of one explore row: the sorted triage cluster keys of its findings."""
+    rules = rules if rules is not None else load_rules()
+    items = row["differences"] or (
+        [None] if row["outcome"] not in ("no_difference", "static_only") else []
+    )
+    keys = set()
+    for diff in items:
+        finding = {"kind": "explore", "row": row, "diff": diff, "source": source}
+        _facts, attr, sig = classify(finding, rules)
+        keys.add(
+            cluster_key(
+                {
+                    **attr,
+                    "stable_code": sig["stable_code"],
+                    "signature": sig,
+                    "execution_policy": "safe",
+                    "dependency_source": "installed_environment",
+                }
+            )
+        )
+    return tuple(sorted(keys, key=repr))
+
+
 def triage(report_paths: list[Path], rules: list[dict] | None = None) -> dict:
     rules = rules if rules is not None else load_rules()
     families = load_families()
@@ -354,15 +391,7 @@ def triage(report_paths: list[Path], rules: list[dict] | None = None) -> dict:
             }
         )
         for f in findings:
-            facts = (
-                explore_facts(f["row"], f["diff"])
-                if f["kind"] == "explore"
-                else row_facts(f["row"])
-            )
-            attr = attribute(facts, f["kind"] if f["kind"] == "explore" else "row", rules)
-            sig = behavior_signature(f, attr)
-            call_site = call_site_signature(f["source"]) if f["source"] else ["unavailable"]
-            sig["call_site"] = call_site
+            facts, attr, sig = classify(f, rules)
             attributions.append(
                 {
                     "finding_id": f["id"],

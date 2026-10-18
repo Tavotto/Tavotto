@@ -180,6 +180,11 @@ def test_previous_trend_comes_from_the_latest_completed_run_that_has_the_artifac
     assert "not_computed" in step
 
 
+def test_trend_requires_a_report_for_every_expected_suite():
+    step = [s for s in steps("trend") if "compat_guardian.py summarize" in s][0]
+    assert "--require-suites compat_engine,compat_v2" in step
+
+
 def test_trend_job_is_structurally_read_only():
     """Proves, from the workflow text's structure: the trend job's permissions are exactly
     contents: read + actions: read, nothing in it references secrets, and every checkout drops

@@ -289,11 +289,26 @@ def uncovered(runs: list[dict], explores: list[dict], env: dict) -> list[str]:
 # ---------------------------------------------------------------- previous vs current
 
 
-def compare(previous: dict | None, current: dict) -> dict:
+def compare(previous: dict | None, current: dict, required_suites: tuple[str, ...] = ()) -> dict:
     if not previous:
         return {
             "status": "no_previous",
             "reason": "no previous summary was provided: trend, added and removed cases are not computed",
+        }
+    # A suite that produced no report is a missing observation, not a removal.
+    missing = {
+        "current": sorted(set(required_suites) - set(current.get("corpus", {}))),
+        "previous": sorted(set(required_suites) - set(previous.get("corpus", {}))),
+    }
+    if missing["current"] or missing["previous"]:
+        return {
+            "status": "not_computed",
+            "reason": (
+                "an expected suite has no report ("
+                + ", ".join(f"{side}: {names}" for side, names in missing.items() if names)
+                + "): absent cases are missing observations, so no added/removed/regression is computed"
+            ),
+            "missing_suites": missing,
         }
     prev_cases, cur_cases = previous["cases"], current["cases"]
     shared = sorted(set(prev_cases) & set(cur_cases))
@@ -375,7 +390,11 @@ def compare(previous: dict | None, current: dict) -> dict:
 
 
 def build(
-    run_paths: list[Path], explore_paths: list[Path], previous: dict | None, families: list[dict]
+    run_paths: list[Path],
+    explore_paths: list[Path],
+    previous: dict | None,
+    families: list[dict],
+    required_suites: tuple[str, ...] = (),
 ) -> dict:
     runs = [classify(p)[1] for p in run_paths]
     explores = [classify(p)[1] for p in explore_paths]
@@ -428,7 +447,9 @@ def build(
         ],
     }
     prior = (previous or {}).get("trend", previous)
-    summary["comparison"] = compare(prior if prior and "cases" in prior else None, summary)
+    summary["comparison"] = compare(
+        prior if prior and "cases" in prior else None, summary, tuple(required_suites)
+    )
     summary["digest"] = hashlib.sha256(
         json.dumps({k: v for k, v in summary.items() if k != "digest"}, sort_keys=True).encode()
     ).hexdigest()
@@ -474,7 +495,7 @@ def render_markdown(summary: dict) -> str:
                 )
     cmp_ = summary["comparison"]
     lines += ["", "### Against the previous run"]
-    if cmp_["status"] == "no_previous":
+    if cmp_["status"] in ("no_previous", "not_computed"):
         lines.append(f"not computed: {cmp_['reason']}")
     else:
         fixed, scope = cmp_["fixed_set"], cmp_["scope_changes"]

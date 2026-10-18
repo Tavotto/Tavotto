@@ -568,22 +568,39 @@ def confirm_differences(rows: list[dict], by_id: dict, args, out: Path) -> None:
     budget = getattr(args, "confirm_differences", 0) or 0
     for row in rows:
         row["confirmation"] = None
+    import compat_triage as TG
+
+    rules = TG.load_rules()
+
+    def source_of(row: dict) -> str | None:
+        script = ((by_id.get(row["candidate_id"]) or {}).get("parent") or {}).get("script")
+        path = out / "candidates" / row["candidate_id"] / "files" / (script or "")
+        return path.read_text(encoding="utf-8") if script and path.is_file() else None
+
     seen: set[tuple] = set()
     for row in rows:
         if budget <= 0:
             break
         if row["outcome"] != "difference_found":
             continue
-        key = (tuple(sorted(d["kind"] for d in row["differences"])), row["chain"][0])
-        if key in seen:
+        # The same behavior identity triage clusters on (attribution, relation, call site), so two
+        # candidates triage would keep apart are never collapsed into one confirmation.
+        source = source_of(row)
+        identity = TG.explore_identity(row, source, rules)
+        if identity in seen:
             continue
-        seen.add(key)
+        seen.add(identity)
         budget -= 1
         again = run_one(by_id[row["candidate_id"]], args.seed, out, args.timeout, None, "confirm")
-        kinds = sorted(d["kind"] for d in again["judgment"]["differences"])
+        rerun_row = {
+            **row,
+            "outcome": again["judgment"]["outcome"],
+            "differences": again["judgment"]["differences"],
+            "evidence": evidence_summary(again),
+        }
         row["confirmation"] = {
             "reproduced": again["judgment"]["outcome"] == "difference_found"
-            and kinds == sorted(d["kind"] for d in row["differences"]),
+            and TG.explore_identity(rerun_row, source, rules) == identity,
             "runs": 1,
         }
         print(

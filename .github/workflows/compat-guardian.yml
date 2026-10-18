@@ -316,6 +316,7 @@ jobs:
           if [[ ${#previous[@]} -gt 0 ]]; then extra=(--previous "${previous[0]}"); fi
           mkdir -p "$RUNNER_TEMP/trend"
           python scripts/ci/compat_guardian.py summarize "${reports[@]}" "${extra[@]}" \
+            --require-suites compat_engine,compat_v2 \
             --json-out "$RUNNER_TEMP/trend/compat-guardian-trend.json" \
             --markdown-out "$RUNNER_TEMP/trend/trend.md" > /dev/null
           cat "$RUNNER_TEMP/trend/trend.md" >> "$GITHUB_STEP_SUMMARY"

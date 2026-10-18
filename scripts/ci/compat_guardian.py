@@ -1220,6 +1220,10 @@ def main(argv=None) -> int:
     summarizer.add_argument("reports", nargs="+")
     summarizer.add_argument("--json-out")
     summarizer.add_argument("--markdown-out")
+    summarizer.add_argument(
+        "--require-suites",
+        help="comma-separated suites that must each have a report, else the comparison is not_computed",
+    )
     summarizer.add_argument("--previous", help="previous summary JSON for fixed-set comparison")
     promoter = subs.add_parser("promote", help="emit a promotion candidate record (proposal only)")
     promoter.add_argument("report")
@@ -1316,7 +1320,11 @@ def main(argv=None) -> int:
                 if args.previous and Path(args.previous).is_file()
                 else None
             )
-            trend = TR.build(run_paths, explore_paths, previous, SM_families())
+            required = tuple(filter(None, (args.require_suites or "").split(",")))
+            unknown = set(required) - set(SUITES)
+            if unknown:
+                raise EvidenceError(f"--require-suites names an unknown suite: {sorted(unknown)}")
+            trend = TR.build(run_paths, explore_paths, previous, SM_families(), required)
             summary["trend"] = trend
             markdown = (
                 (SM.render_markdown(summary) if run_paths else "")

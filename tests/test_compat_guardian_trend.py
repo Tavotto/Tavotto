@@ -167,6 +167,29 @@ class Trend(GuardianBase):
         self.assertEqual(again["comparison"]["scope_changes"]["declaration_changed"], [])
         self.assertEqual(again["comparison"]["fixed_set"]["size"], 3)
 
+    def test_a_missing_expected_suite_is_not_computed_never_read_as_removed(self):
+        both = ("compat_engine", "compat_v2")
+
+        def build(suites, previous=None):
+            paths = []
+            for i, suite in enumerate(suites):
+                report = self.make_report([self.case(f"{suite}-a")], suite=suite)
+                paths.append(self.write(f"s{len(list(self.root.iterdir()))}-{i}.json", report))
+            return tr.build(paths, [], previous, [], both)
+
+        full = build(both)
+        self.assertEqual(full["comparison"]["status"], "no_previous")
+        partial = build(("compat_engine",), full)
+        self.assertEqual(partial["comparison"]["status"], "not_computed")
+        self.assertEqual(partial["comparison"]["missing_suites"]["current"], ["compat_v2"])
+        self.assertNotIn("scope_changes", partial["comparison"], "nothing is reported as removed")
+        self.assertIn("not computed", tr.render_markdown(partial))
+        # the incomplete summary must not become the baseline of the next complete run either
+        again = build(both, partial)
+        self.assertEqual(again["comparison"]["status"], "not_computed")
+        self.assertEqual(again["comparison"]["missing_suites"]["previous"], ["compat_v2"])
+        self.assertEqual(build(both, full)["comparison"]["status"], "compared")
+
     def test_different_corpus_version_is_not_compared_as_a_regression(self):
         previous = self.baseline()
         current = self.summary(
@@ -399,6 +422,55 @@ class ExploreOptions(unittest.TestCase):
         with mock.patch.object(ex, "run_one", return_value=gone):
             ex.confirm_differences(rows2, {"c0": {}}, args, Path("/nonexistent"))
         self.assertFalse(rows2[0]["confirmation"]["reproduced"])
+
+    def test_confirmation_keys_on_triage_behavior_identity_and_compares_it_again(self):
+        diff = {
+            "kind": "zero_figures",
+            "summary": "s",
+            "category": "figure_capture",
+            "evidence": {},
+        }
+
+        def evidence(code):
+            return {
+                "native": {"exit_status": 0, "figure_count": 1, "figures_shown": 1},
+                "tavotto": {"route": "r", "error": {"code": code}, "stems": {}},
+            }
+
+        def row(cid, code):
+            return {
+                "candidate_id": cid,
+                "outcome": "difference_found",
+                "chain": ["show_close"],  # same first transform and same difference kind
+                "differences": [diff],
+                "evidence": evidence(code),
+            }
+
+        rows = [row("c0", "E_ONE"), row("c1", "E_TWO"), row("c2", "E_ONE")]
+        args = Namespace(confirm_differences=5, seed=1, timeout=1)
+
+        def rerun(manifest, seed, out, timeout, reduction, tag):
+            code = "E_ONE" if manifest["candidate_id"] == "c0" else "E_OTHER"
+            return {
+                "judgment": {"outcome": "difference_found", "differences": [diff]},
+                "native": {"exit_status": 0, "figure_count": 1, "figures_shown": 1},
+                "tavotto": {"route": "r", "error": {"code": code}, "stems": {}},
+            }
+
+        with mock.patch.object(ex, "run_one", side_effect=rerun) as run_one:
+            ex.confirm_differences(
+                rows,
+                {r["candidate_id"]: {"candidate_id": r["candidate_id"]} for r in rows},
+                args,
+                Path("/x"),
+            )
+        self.assertEqual(run_one.call_count, 2, "two behavior identities, two confirmations")
+        self.assertTrue(rows[0]["confirmation"]["reproduced"])
+        self.assertFalse(
+            rows[1]["confirmation"]["reproduced"],
+            "same kind but a different behavior on the rerun is not a reproduction",
+        )
+        self.assertIsNone(rows[2]["confirmation"], "identical identity to c0 is deduplicated")
 
 
 if __name__ == "__main__":
