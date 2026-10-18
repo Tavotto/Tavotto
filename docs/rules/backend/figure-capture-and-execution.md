@@ -252,7 +252,8 @@ desktop worker（`LiveFigureSession.note_savefig` 转调）、浏览器 playgrou
   调用记账在 `_REAL_SAVEFIG` **成功返回之后**才做（失败只记 observation = failed）；safe worker 与浏览器不真写盘，拿不到
   成败，由 `figcapture.savefig_would_succeed` 判定，三条入口同一份判据，**只在确定失败时**为 False：格式（显式 `format=` 或后缀）
   不在 canvas / matplotlib 认的集合里；`backend=` 不是 `module://…` 且 `importlib.util.find_spec("matplotlib.backends.backend_<名字>")`
-  找不到。**不判目标目录**（safe 下 `os.makedirs` 可能被拦或落在别处，磁盘上没有目录不代表原生会失败，误判会丢 `savefig_calls`）；
+  找不到；**给了 `backend=` 就不再按当前 canvas 判格式**（格式集合属于那个 backend，`module://my_backend` 可以提供当前
+  canvas 没有的格式，Codex r4305600962）。**不判目标目录**（safe 下 `os.makedirs` 可能被拦或落在别处，磁盘上没有目录不代表原生会失败，误判会丢 `savefig_calls`）；
   判不清、过程抛任何异常按成功算。首次认领（`add_figure` / `setdefault`）不受此限，保持原行为。
 * **pyplot 认领永远不被顶掉**，兜底也永远不顶显式 savefig；`call is None`（`paper_style.save` 没观察到参数）不知道路径，
   不顶替。

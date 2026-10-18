@@ -518,6 +518,20 @@ class TestWouldSucceed:
         assert figcapture.savefig_would_succeed("a.pdf", {"backend": "Agg"}, None)
         assert figcapture.savefig_would_succeed("a.pdf", {"backend": "pdf"}, None)
 
+    def test_alternate_backend_formats_are_not_judged_by_the_current_canvas(
+        self, tmp_path, monkeypatch
+    ):
+        """`backend="module://my_backend"` 可以提供当前 canvas 没有的格式（`out.dat`）：原生会写盘，
+        判据不能拿当前 canvas 的格式集合否决它（Codex #1141 r4305600962）。"""
+        import matplotlib.backend_bases  # noqa: F401
+
+        monkeypatch.chdir(tmp_path)
+        assert not figcapture.savefig_would_succeed("out.dat", {}, None)
+        assert figcapture.savefig_would_succeed(
+            "out.dat", {"backend": "module://my_backend", "format": "dat"}, None
+        )
+        assert figcapture.savefig_would_succeed("out.dat", {"backend": "module://my_backend"}, None)
+
     def test_missing_directory_is_not_a_failure(self, tmp_path, monkeypatch):
         """safe 下 `os.makedirs` 可能被拦：目录不存在不代表原生会失败，合法的 format / backend 仍记账。"""
         import matplotlib.backend_bases  # noqa: F401

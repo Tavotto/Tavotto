@@ -1481,8 +1481,9 @@ def savefig_would_succeed(fname, kwargs: dict, canvas=None) -> bool:
     拿不到「是否成功」，写入者记账（`note_savefig_writer`）只能先判这个：native 里一次失败的保存磁盘上没动，
     不能顶掉上一个写入者，safe / 浏览器里同一场景也不能（三条入口同源）。
 
-    只在**确定会失败**时返回 False：格式（显式 `format=` 或后缀）不在该 canvas / matplotlib 认的集合里；
-    `backend=` 不是 `module://…` 且 `matplotlib.backends.backend_<名字>` 找不到模块。**不判目标目录**：
+    只在**确定会失败**时返回 False：没给 `backend=` 时，格式（显式 `format=` 或后缀）不在该 canvas /
+    matplotlib 认的集合里；给了 `backend=` 时，它不是 `module://…` 且 `matplotlib.backends.backend_<名字>`
+    找不到模块（给了 backend 就不再按当前 canvas 判格式——格式集合属于那个 backend）。**不判目标目录**：
     safe 下脚本的 `os.makedirs` 可能被拦或落在别处，磁盘上没有目录不代表原生会失败，误判会丢掉
     本来成功的保存的 `savefig_calls`。判不清、过程抛任何异常一律按成功算。永不抛。
     """
@@ -1495,6 +1496,9 @@ def savefig_would_succeed(fname, kwargs: dict, canvas=None) -> bool:
                 importlib.util.find_spec("matplotlib.backends.backend_" + backend.lower()) is None
             ):
                 return False
+            # 显式换了 backend：支持哪些格式由**那个** backend 的 canvas 决定，当前 canvas 的集合不作数
+            # （`module://my_backend` 可以提供当前 canvas 没有的格式）——判不清按成功算
+            return True
         names = savefig_effective_names(fname, kwargs, canvas)
         bases = sys.modules.get("matplotlib.backend_bases")
         if not names or bases is None:
