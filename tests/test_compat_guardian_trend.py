@@ -325,15 +325,32 @@ def confinement_violations(tree: ast.AST) -> tuple[list[str], list[str]]:
             attr = name.split(".", 1)[1]
             if attr in BANNED_OS or attr.startswith(("exec", "spawn")):
                 violations.append(name)
-        if isinstance(node.func, ast.Attribute) and node.func.attr in (
-            "write_text",
-            "write_bytes",
-            "open",
-            "touch",
-            "unlink",
-        ):
-            writes.append(ast.unparse(node.func.value))
+        if isinstance(node.func, ast.Attribute) and node.func.attr in PATH_MUTATORS:
+            # 接收者与（rename / replace / *_to 的）目标都是被改动的路径（Codex #1139 r4306432457）
+            writes.append(f"{node.func.attr}:{ast.unparse(node.func.value)}")
+            if node.func.attr in PATH_MOVERS and node.args:
+                writes.append(f"{node.func.attr}->{ast.unparse(node.args[0])}")
     return violations, writes
+
+
+#: 所有会改文件系统的 `Path` 方法（写、建、删、改名、链接、改权限）
+PATH_MUTATORS = {
+    "write_text",
+    "write_bytes",
+    "open",
+    "touch",
+    "unlink",
+    "rmdir",
+    "mkdir",
+    "rename",
+    "replace",
+    "symlink_to",
+    "hardlink_to",
+    "link_to",
+    "chmod",
+    "lchmod",
+}
+PATH_MOVERS = {"rename", "replace", "symlink_to", "hardlink_to", "link_to"}
 
 
 class ConfinementCheckerSelfTest(unittest.TestCase):
@@ -347,6 +364,13 @@ class ConfinementCheckerSelfTest(unittest.TestCase):
         ):
             self.assertIn(hit, confinement_violations(ast.parse(snippet))[0], snippet)
         self.assertEqual(confinement_violations(ast.parse("# os.system('x')\n'os.system'"))[0], [])
+
+    def test_every_mutating_path_call_is_tracked_with_its_destination(self):
+        _, writes = confinement_violations(
+            ast.parse("p.replace(q)\np.rename(r)\np.mkdir()\np.symlink_to(s)\np.chmod(0)")
+        )
+        for hit in ("replace->q", "rename->r", "mkdir:p", "symlink_to->s", "chmod:p"):
+            self.assertIn(hit, writes)
 
 
 class Alerts(unittest.TestCase):
@@ -406,7 +430,15 @@ class Alerts(unittest.TestCase):
         violations, writes = confinement_violations(tree)
         self.assertEqual(violations, [])
         self.assertEqual(
-            sorted(writes), ["Path(args.markdown_out)", "tmp"], "unexpected file-write target"
+            sorted(writes),
+            [
+                "mkdir:out.parent",
+                "replace->out",
+                "replace:tmp",
+                "write_text:Path(args.markdown_out)",
+                "write_text:tmp",
+            ],
+            "unexpected file-mutation target",
         )
         # the only stdout channel for alerts is a workflow annotation, emitted by print()
         printed = [
