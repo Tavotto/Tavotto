@@ -113,6 +113,9 @@ def main():
     mixed[1].set_facecolor("none")  # 同组里一根不透明、一根 facecolor='none'
     nofill = ax8.bar([4, 5], [2, 2], color="tab:red", edgecolor="k")
     nofill[1].set_fill(False)  # fill=False：facecolor 仍带色、alpha 为 0
+    hidden = ax8.bar([6, 7], [2, 2], color="tab:red", edgecolor="k")
+    hidden[1].set_alpha(0.0)
+    hidden[1].set_visible(False)  # 隐藏的 alpha=0 柱：不进几何，也不该进绘制事实
     fig8.savefig("HollowBarFig.pdf")
 
     fig7, ax7 = plt.subplots(figsize=(4.0, 3.0))
@@ -300,3 +303,12 @@ def test_hollow_patch_member_is_not_a_transparent_fill(manifests):
         assert grp["fill"] is True  # 前提：走得到 stamp_paint 的 fill 分支
         # 空心成员的 RGBA 是 (r,g,b,0)，不能当成 0.0 的透明填充把整组拉成透明
         assert grp["fill_alpha"] == 1.0, idx
+
+
+def test_hidden_member_is_left_out_of_group_facts(manifests):
+    man = manifests("HollowBarFig")
+    grp = _by_role(man, "bar_series")[4]["geometry"]
+    assert grp["fill"] is True  # 前提：走得到 stamp_paint 的 fill 分支
+    # 几何里只有看得见的那根不透明柱；隐藏的 alpha=0 柱不能把整组拉成透明
+    assert len(grp["paths"]) == 1
+    assert grp["fill_alpha"] == 1.0

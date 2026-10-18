@@ -1483,13 +1483,19 @@ def _face_alpha(a) -> float | None:
 
 
 def _paint_members(artist) -> list:
-    """伪元素（柱形系列 / 误差棒 / 茎叶）背后真正被画的那些 artist；普通元素就是它自己。"""
+    """伪元素（柱形系列 / 误差棒 / 茎叶）背后**此刻真画出来**的那些 artist；普通元素就是它自己。
+
+    只收 `_member_draws` 为真的成员——与组几何（`series_group_geometry` / 柱组几何）跳过
+    隐藏 / 空成员是同一个判据。绘制事实必须描述 geometry 里实际有的那些路径：隐藏的一根
+    alpha=0 柱没进几何，却把整组 `fill_alpha` 拉成 0，看得见的不透明柱就盖不住它下面的线了
+    （#1158 评审）。
+    """
     kind = getattr(artist, "kind", None)
     try:
         if kind == "bar_series":
-            return [m for m in artist.artists if m is not None]
+            return [m for m in artist.artists if m is not None and _member_draws(m)]
         if kind in ("errorbar", "stem_series"):
-            return [m for m in artist.members() if m is not None]
+            return [m for m in artist.members() if m is not None and _member_draws(m)]
     except Exception:
         return []
     return [artist]
