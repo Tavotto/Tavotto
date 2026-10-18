@@ -318,6 +318,47 @@ class Judgment(unittest.TestCase):
 
 
 class Cli(unittest.TestCase):
+    def explore_args(self, tmp, **over):
+        base = dict(
+            seed=9,
+            out=tmp,
+            limit=3,
+            parent="shape_oo_savefig",
+            static_only=True,
+            expected_sha=None,
+            timeout=5,
+        )
+        return Namespace(**{**base, **over})
+
+    def test_every_parent_id_is_validated_typos_empties_and_duplicates_are_refused(self):
+        for bad in (
+            "shape_oo_savefig,misspelled_case",
+            "shape_oo_savefig,",
+            ",shape_oo_savefig",
+            "shape_oo_savefig,shape_oo_savefig",
+        ):
+            with tempfile.TemporaryDirectory() as tmp:
+                with self.assertRaises(cg.EvidenceError, msg=bad):
+                    ex.explore(self.explore_args(tmp, parent=bad))
+                self.assertEqual(
+                    list(Path(tmp).iterdir()), [], "nothing is written for a bad scope"
+                )
+
+    def test_style_axis_candidates_are_static_only_never_a_clean_no_difference(self):
+        parent = xt.load_parent("compat_engine", "shape_oo_savefig")
+        for name in ("rcparams", "style_use"):
+            manifest, _ = xt.build(parent, (name,), 3)
+            plan = manifest["execution_plan"]
+            self.assertEqual(plan["status"], "static_only", name)
+            self.assertTrue(any("style axis is not compared" in r for r in plan["reasons"]))
+            with self.assertRaises(cg.EvidenceError):
+                ex.derive(
+                    {"suite": "compat_engine", "case": "shape_oo_savefig"},
+                    [name],
+                    3,
+                    manifest["candidate_id"],
+                )
+
     def test_non_positive_limit_is_rejected_by_the_parser_and_by_select(self):
         for bad in ("-1", "0"):
             with self.assertRaises(SystemExit) as caught:

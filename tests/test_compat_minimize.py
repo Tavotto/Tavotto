@@ -285,6 +285,36 @@ class Search(unittest.TestCase):
         self.assertEqual(doc["before_after"]["before"], doc["before_after"]["after"])
         self.assertEqual(doc["script"], self.parent.script)
 
+    def test_minimize_refuses_candidates_the_report_never_observed_as_a_finding(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp) / "run"
+            (run_dir / "reports").mkdir(parents=True)
+            manifests = [
+                {"candidate_id": "a" * 20},
+                {"candidate_id": "b" * 20},
+                {"candidate_id": "c" * 20},
+            ]
+            (run_dir / "candidates.json").write_text(
+                json.dumps({"candidates": manifests}), encoding="utf-8"
+            )
+            report = run_dir / "reports/explore-report.json"
+            report.write_text(
+                json.dumps(
+                    {
+                        "candidates": [
+                            {"candidate_id": "a" * 20, "outcome": "difference_found"},
+                            {"candidate_id": "b" * 20, "outcome": "no_difference"},
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+            manifest, _ = mn.find_candidate(report, "a" * 20)
+            self.assertEqual(manifest["candidate_id"], "a" * 20)
+            for cid in ("b" * 20, "c" * 20):  # observed-but-clean, and listed-but-never-run
+                with self.assertRaises(cg.EvidenceError, msg=cid):
+                    mn.find_candidate(report, cid)
+
     def test_the_documented_replay_command_shape_parses_and_runs(self):
         result, _ = self.search(self.failing)
         self.assertEqual(result["status"], "minimized")
