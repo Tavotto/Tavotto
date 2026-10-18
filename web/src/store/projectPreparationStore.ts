@@ -232,6 +232,8 @@ export const capturedOf = (report: PreparationReport | null): CapturedFigureDesc
 const timers = new Map<string, ReturnType<typeof setTimeout>>()
 const pollStep = new Map<string, number>()
 const inflight = new Map<string, Promise<void>>()
+// 飞行中的「新建 / 复用 / 重建」检查：同一目标又来一次 open（同一次点击落成两次调用、卡开着时再点 ▶）搭这一趟，不再发第二个创建请求
+const checkFlight = new Map<string, Promise<void>>()
 
 function stopTimer(key: string): void {
   const t = timers.get(key)
@@ -407,7 +409,14 @@ export const useProjectPreparationStore = create<PreparationState>((set, get) =>
   }
 
   /** 检查会话（新建 / 复用 / 重建）。只读：后端不执行任何用户代码 */
-  const check = async (key: string, target: PreparationTarget, restarted: boolean) => {
+  const check = (key: string, target: PreparationTarget, restarted: boolean): Promise<void> => {
+    const p = runCheck(key, target, restarted).finally(() => {
+      if (checkFlight.get(key) === p) checkFlight.delete(key)
+    })
+    checkFlight.set(key, p)
+    return p
+  }
+  const runCheck = async (key: string, target: PreparationTarget, restarted: boolean) => {
     const g = guardOf(key)
     const pj = g.pj
     patch(key, () => ({ pending: 'check' }))
@@ -483,7 +492,11 @@ export const useProjectPreparationStore = create<PreparationState>((set, get) =>
         stopTimer(key)
         pollStep.delete(key)
         inflight.delete(key)
+        checkFlight.delete(key)
       }
+      // 同一目标的首次检查还在飞（慢机器上同一次点击落成两次 open）：搭这一趟，不再发第二个创建请求。
+      // 否则两趟检查先后回来，后一趟把先一趟已置上的 `pending`（run_when_ready 在飞）清掉，防连点的闸就开了，认领发两次（#1137）
+      const joined = sameTarget && prev?.pending === 'check' ? checkFlight.get(key) : undefined
       set((s) => ({
         focus: key,
         entries: {
@@ -523,7 +536,7 @@ export const useProjectPreparationStore = create<PreparationState>((set, get) =>
       // 同一目标上有动作在飞：它的回包自带最新报告，这里再 `check` 一次既多余，又会把 `pending` 改写成 'check'
       // 再清空——防连点的闸就开了
       if (sameTarget && prev?.pending && prev.pending !== 'check') return
-      await check(key, target, false)
+      await (joined ?? check(key, target, false))
       if (opts?.run) await armIfReady(key, entry(key)?.allowRerun !== false)
     },
 
@@ -696,6 +709,7 @@ export const useProjectPreparationStore = create<PreparationState>((set, get) =>
     clear: () => {
       stopAllTimers()
       inflight.clear()
+      checkFlight.clear()
       set((s) => ({ epoch: s.epoch + 1, entries: {}, focus: null }))
     },
   }
