@@ -120,6 +120,17 @@ def main():
     ax10.plot([0.7], [0.5], "o", ms=30, mfc="k")
     fig10.savefig("HalfMarkerFig.pdf")
 
+    # 不透明矩形被裁成圆（任意形状裁剪）；另一块不透明矩形只有默认的矩形裁剪
+    from matplotlib.patches import Circle
+
+    fig11, ax11 = plt.subplots(figsize=(4.0, 3.0))
+    ax11.set_xlim(0, 1)
+    ax11.set_ylim(0, 1)
+    clipped = ax11.add_patch(Rectangle((0.1, 0.1), 0.4, 0.4, fc="k", zorder=5))
+    clipped.set_clip_path(Circle((0.3, 0.3), 0.1, transform=ax11.transData))
+    ax11.add_patch(Rectangle((0.6, 0.6), 0.2, 0.2, fc="k", zorder=5))
+    fig11.savefig("ClipFig.pdf")
+
     # 文字类（画布按 bbox 命中、无 geometry）：标题 / 轴标签 / 文字 / 图例 / 图例项
     # 一根不透明柱 + 一根空心（facecolor='none'，带描边与 hatch）：空心不是「透明填充」
     fig8, ax8 = plt.subplots(figsize=(4.0, 3.0))
@@ -346,3 +357,12 @@ def test_half_filled_marker_counts_its_empty_half(manifests):
     # 右半 'none' 是空的：整颗盖不住透过它看得见的线
     assert half["fill_alpha"] == 0.0
     assert full["fill_alpha"] == 1.0
+
+
+def test_custom_clipped_fill_claims_no_cover(manifests):
+    man = manifests("ClipFig")
+    clipped, plain = _geom(man, "axes_0.patches_0"), _geom(man, "axes_0.patches_1")
+    assert clipped["fill"] is True and "clip" not in clipped  # 前提：裁剪形状表达不了
+    # 担保不了画出来的范围 → 不给遮挡事实；默认矩形裁剪的照常给
+    assert "fill_alpha" not in clipped
+    assert plain["fill_alpha"] == 1.0

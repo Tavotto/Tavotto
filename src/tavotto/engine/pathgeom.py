@@ -1569,7 +1569,13 @@ def stamp_paint(geom: dict, artist, ranks: dict[int, int]) -> None:
     order = paint_order_of(artist, ranks)
     if order is not None:
         geom["paint_order"] = order
-    if geom.get("fill"):
+    # 「能盖住」是 geometry 对**画出来的填充范围**的担保：成员被裁成任意形状（`set_clip_path`
+    # 非矩形；矩形裁剪 matplotlib 自己转成 clip box、走 `_clip_rect`）时 geometry 表达不了
+    # 真实范围——被裁掉、看不见的那块也会被当成盖着。担保不了就不给（前端即不判遮挡），
+    # 与 `_clip_rect`「表达不了就不给」同一条纪律（#1158 评审）。
+    if geom.get("fill") and not any(
+        m.get_clip_on() and m.get_clip_path() is not None for m in members
+    ):
         alphas = [al for m in members if (al := _face_alpha(m)) is not None]
         if alphas:
             # None（误差线的 LineCollection、空心 patch）= 根本没填充，已在上面滤掉，不会把
