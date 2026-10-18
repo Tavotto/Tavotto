@@ -1,0 +1,420 @@
+[
+  {
+    "name": "confirmation slot marker consumption",
+    "file": "src/native/schema.sql",
+    "unique_locations": 1,
+    "command": [
+      "node",
+      "--test",
+      "--test-name-pattern=slot first enrollment atomically consumes marker and preserves an unsent journal within seven SQL",
+      "tests/independent-confirmation-slot.test.mjs"
+    ],
+    "selected_test": "slot first enrollment atomically consumes marker and preserves an unsent journal within seven SQL",
+    "exit_code": 1,
+    "actual_assertion_error": true,
+    "selected_test_observed": true,
+    "source_before_sha256": "0e4cc1672c78837b219eba0c1f54de89fc86169c87ffd26277085a229dfe3a08",
+    "source_after_sha256": "98b3e35ba422c3090c15ba768f5e1217f6a7a9698a861d0a943622b53f518178",
+    "log": "/tmp/cla-confirmation-slot-implementation-review/mutation-01.log",
+    "detected": true
+  },
+  {
+    "name": "confirmation slot automatic marker admission",
+    "file": "src/native/store.ts",
+    "unique_locations": 1,
+    "command": [
+      "node",
+      "--test",
+      "--test-name-pattern=slot first enrollment atomically consumes marker and preserves an unsent journal within seven SQL",
+      "tests/independent-confirmation-slot.test.mjs"
+    ],
+    "selected_test": "slot first enrollment atomically consumes marker and preserves an unsent journal within seven SQL",
+    "exit_code": 1,
+    "actual_assertion_error": true,
+    "selected_test_observed": true,
+    "source_before_sha256": "f56a0d9effb65a44ebb118ee33fd1611340361ea4bce9f5c3a31f77690dfad83",
+    "source_after_sha256": "a4a1822fade9b7a16881fef9f319e0df68f5dd289656cd1668ef9b3d2ba1fd3c",
+    "log": "/tmp/cla-confirmation-slot-implementation-review/mutation-02.log",
+    "detected": true
+  },
+  {
+    "name": "confirmation slot legacy global blocker",
+    "file": "src/native/schema.sql",
+    "unique_locations": 1,
+    "command": [
+      "node",
+      "--test",
+      "--test-name-pattern=slot global legacy success blocks first enrollment manual",
+      "tests/independent-confirmation-slot.test.mjs"
+    ],
+    "selected_test": "slot global legacy success blocks first enrollment manual",
+    "exit_code": 1,
+    "actual_assertion_error": true,
+    "selected_test_observed": true,
+    "source_before_sha256": "0e4cc1672c78837b219eba0c1f54de89fc86169c87ffd26277085a229dfe3a08",
+    "source_after_sha256": "7e5e62fce76c8f757748fd7093ec31d564e78b76c6c69f449c59de3558b1edaf",
+    "log": "/tmp/cla-confirmation-slot-implementation-review/mutation-03.log",
+    "detected": true
+  },
+  {
+    "name": "confirmation slot marker duplicate no-op",
+    "file": "src/native/schema.sql",
+    "unique_locations": 1,
+    "command": [
+      "node",
+      "--test",
+      "--test-name-pattern=slot marker duplicate legacy id cannot commit an ignored journal no-op",
+      "tests/independent-confirmation-slot.test.mjs"
+    ],
+    "selected_test": "slot marker duplicate legacy id cannot commit an ignored journal no-op",
+    "exit_code": 1,
+    "actual_assertion_error": true,
+    "selected_test_observed": true,
+    "source_before_sha256": "0e4cc1672c78837b219eba0c1f54de89fc86169c87ffd26277085a229dfe3a08",
+    "source_after_sha256": "aa9da1a0ac17798ec6cc835b1d023e8cf82c8a83c38bec5cde6d773876fe3aca",
+    "log": "/tmp/cla-confirmation-slot-implementation-review/mutation-04.log",
+    "detected": true
+  },
+  {
+    "name": "confirmation slot policy replacement",
+    "file": "src/native/schema.sql",
+    "unique_locations": 1,
+    "command": [
+      "node",
+      "--test",
+      "--test-name-pattern=slot policy REPLACE cannot replace enrollment even with a matching marker",
+      "tests/independent-confirmation-slot.test.mjs"
+    ],
+    "selected_test": "slot policy REPLACE cannot replace enrollment even with a matching marker",
+    "exit_code": 1,
+    "actual_assertion_error": true,
+    "selected_test_observed": true,
+    "source_before_sha256": "0e4cc1672c78837b219eba0c1f54de89fc86169c87ffd26277085a229dfe3a08",
+    "source_after_sha256": "7391905bf0ab775a2bce927c2f7679a96365fc253fba313d04184795980a3b0f",
+    "log": "/tmp/cla-confirmation-slot-implementation-review/mutation-05.log",
+    "detected": true
+  },
+  {
+    "name": "confirmation slot owner replacement",
+    "file": "src/native/schema.sql",
+    "unique_locations": 1,
+    "command": [
+      "node",
+      "--test",
+      "--test-name-pattern=slot active journal REPLACE cannot turn its owner into a failure",
+      "tests/independent-confirmation-slot.test.mjs"
+    ],
+    "selected_test": "slot active journal REPLACE cannot turn its owner into a failure",
+    "exit_code": 1,
+    "actual_assertion_error": true,
+    "selected_test_observed": true,
+    "source_before_sha256": "0e4cc1672c78837b219eba0c1f54de89fc86169c87ffd26277085a229dfe3a08",
+    "source_after_sha256": "22c73b118626e255fe82596664b8271f35f32e2efb2868f752777c975673dbd5",
+    "log": "/tmp/cla-confirmation-slot-implementation-review/mutation-06.log",
+    "detected": true
+  },
+  {
+    "name": "confirmation slot policy transition capability",
+    "file": "src/native/schema.sql",
+    "unique_locations": 1,
+    "command": [
+      "node",
+      "--test",
+      "--test-name-pattern=slot policy rejects direct NULL no-op deletion and metadata transitions",
+      "tests/independent-confirmation-slot.test.mjs"
+    ],
+    "selected_test": "slot policy rejects direct NULL no-op deletion and metadata transitions",
+    "exit_code": 1,
+    "actual_assertion_error": true,
+    "selected_test_observed": true,
+    "source_before_sha256": "0e4cc1672c78837b219eba0c1f54de89fc86169c87ffd26277085a229dfe3a08",
+    "source_after_sha256": "3ef38d99cd9c9c8f119839d506e5f0dba1966e260669418c3fd59b66ee07ba35",
+    "log": "/tmp/cla-confirmation-slot-implementation-review/mutation-07.log",
+    "detected": true
+  },
+  {
+    "name": "confirmation slot immutable original proof",
+    "file": "src/native/schema.sql",
+    "unique_locations": 1,
+    "command": [
+      "node",
+      "--test",
+      "--test-name-pattern=slot immutable owner proof identity and known run survive attempted SQL edits",
+      "tests/independent-confirmation-slot.test.mjs"
+    ],
+    "selected_test": "slot immutable owner proof identity and known run survive attempted SQL edits",
+    "exit_code": 1,
+    "actual_assertion_error": true,
+    "selected_test_observed": true,
+    "source_before_sha256": "0e4cc1672c78837b219eba0c1f54de89fc86169c87ffd26277085a229dfe3a08",
+    "source_after_sha256": "4050a45a5c4f41246ea8bf53919aead6bbc5ed6c584b0357ad4326775aaf04a0",
+    "log": "/tmp/cla-confirmation-slot-implementation-review/mutation-08.log",
+    "detected": true
+  },
+  {
+    "name": "confirmation slot released historical observation",
+    "file": "src/native/schema.sql",
+    "unique_locations": 1,
+    "command": [
+      "node",
+      "--test",
+      "--test-name-pattern=slot read-only negative GET releases exact owner and preserves immutable historical evidence",
+      "tests/independent-confirmation-slot.test.mjs"
+    ],
+    "selected_test": "slot read-only negative GET releases exact owner and preserves immutable historical evidence",
+    "exit_code": 1,
+    "actual_assertion_error": true,
+    "selected_test_observed": true,
+    "source_before_sha256": "0e4cc1672c78837b219eba0c1f54de89fc86169c87ffd26277085a229dfe3a08",
+    "source_after_sha256": "696b04cf2f565cfbbfb7dfe083b20b9aa929669dab48ca3fa97589a5fb9bdb7a",
+    "log": "/tmp/cla-confirmation-slot-implementation-review/mutation-09.log",
+    "detected": true
+  },
+  {
+    "name": "confirmation slot owned outbox retention",
+    "file": "src/native/schema.sql",
+    "unique_locations": 1,
+    "command": [
+      "node",
+      "--test",
+      "--test-name-pattern=slot owned outbox cannot be deleted while unrelated negative recovery remains usable",
+      "tests/independent-confirmation-slot.test.mjs"
+    ],
+    "selected_test": "slot owned outbox cannot be deleted while unrelated negative recovery remains usable",
+    "exit_code": 1,
+    "actual_assertion_error": true,
+    "selected_test_observed": true,
+    "source_before_sha256": "0e4cc1672c78837b219eba0c1f54de89fc86169c87ffd26277085a229dfe3a08",
+    "source_after_sha256": "957578c5226a632c3a9346ba9b42d498e73070217486348655b9f4698629d487",
+    "log": "/tmp/cla-confirmation-slot-implementation-review/mutation-10.log",
+    "detected": true
+  },
+  {
+    "name": "confirmation slot legacy NULL positive downgrade",
+    "file": "src/native/schema.sql",
+    "unique_locations": 1,
+    "command": [
+      "node",
+      "--test",
+      "--test-name-pattern=slot flag false still selects and projects its owner while blocking legacy positive insert",
+      "tests/independent-confirmation-slot.test.mjs"
+    ],
+    "selected_test": "slot flag false still selects and projects its owner while blocking legacy positive insert",
+    "exit_code": 1,
+    "actual_assertion_error": true,
+    "selected_test_observed": true,
+    "source_before_sha256": "0e4cc1672c78837b219eba0c1f54de89fc86169c87ffd26277085a229dfe3a08",
+    "source_after_sha256": "ddb92711b3e0aa261e568292b79c5967fd90ef1c3ecb73f91abe7f18761c4457",
+    "log": "/tmp/cla-confirmation-slot-implementation-review/mutation-11.log",
+    "detected": true
+  },
+  {
+    "name": "confirmation slot owner projection when disabled",
+    "file": "src/native/store.ts",
+    "unique_locations": 1,
+    "command": [
+      "node",
+      "--test",
+      "--test-name-pattern=slot flag false still selects and projects its owner while blocking legacy positive insert",
+      "tests/independent-confirmation-slot.test.mjs"
+    ],
+    "selected_test": "slot flag false still selects and projects its owner while blocking legacy positive insert",
+    "exit_code": 1,
+    "actual_assertion_error": true,
+    "selected_test_observed": true,
+    "source_before_sha256": "f56a0d9effb65a44ebb118ee33fd1611340361ea4bce9f5c3a31f77690dfad83",
+    "source_after_sha256": "4778ba374b8b6c4b8c20f61c8ec1e7a2045fde773d1f07eb4d4c247e72f31b2f",
+    "log": "/tmp/cla-confirmation-slot-implementation-review/mutation-12.log",
+    "detected": true
+  },
+  {
+    "name": "confirmation slot capability single consumption",
+    "file": "src/native/github.ts",
+    "unique_locations": 1,
+    "command": [
+      "node",
+      "--test",
+      "--test-name-pattern=slot witness capability itself is consumed exactly once",
+      "tests/independent-confirmation-slot.test.mjs"
+    ],
+    "selected_test": "slot witness capability itself is consumed exactly once",
+    "exit_code": 1,
+    "actual_assertion_error": true,
+    "selected_test_observed": true,
+    "source_before_sha256": "7ceb34f9872bb911c6989469a97dd9b470f5ff8c16be42b2118e8acb250993b5",
+    "source_after_sha256": "82595884a7254cdb6e7501ea680db765a25724ba3a1c039f3b89d91f4595bfdc",
+    "log": "/tmp/cla-confirmation-slot-implementation-review/mutation-13.log",
+    "detected": true
+  },
+  {
+    "name": "confirmation slot adapter freshness boundary",
+    "file": "src/native/github.ts",
+    "unique_locations": 1,
+    "command": [
+      "node",
+      "--test",
+      "--test-name-pattern=slot negative witness rejects expiry at its fixed ten second boundary",
+      "tests/independent-confirmation-slot.test.mjs"
+    ],
+    "selected_test": "slot negative witness rejects expiry at its fixed ten second boundary",
+    "exit_code": 1,
+    "actual_assertion_error": true,
+    "selected_test_observed": true,
+    "source_before_sha256": "7ceb34f9872bb911c6989469a97dd9b470f5ff8c16be42b2118e8acb250993b5",
+    "source_after_sha256": "66547e7403d396323915017b19c2fc173d055a6cb8fb50f366e2215eb2a38849",
+    "log": "/tmp/cla-confirmation-slot-implementation-review/mutation-14.log",
+    "detected": true
+  },
+  {
+    "name": "confirmation slot fresh GET exact run",
+    "file": "src/native/github.ts",
+    "unique_locations": 1,
+    "command": [
+      "node",
+      "--test",
+      "--test-name-pattern=slot negative GET cannot mint a witness for a changed owned run",
+      "tests/independent-confirmation-slot.test.mjs"
+    ],
+    "selected_test": "slot negative GET cannot mint a witness for a changed owned run",
+    "exit_code": 1,
+    "actual_assertion_error": true,
+    "selected_test_observed": true,
+    "source_before_sha256": "7ceb34f9872bb911c6989469a97dd9b470f5ff8c16be42b2118e8acb250993b5",
+    "source_after_sha256": "396c4347682731512b8dec89b4572186b80ad1bafd533ec024712a69f97c114d",
+    "log": "/tmp/cla-confirmation-slot-implementation-review/mutation-15.log",
+    "detected": true
+  },
+  {
+    "name": "confirmation slot fresh GET required",
+    "file": "src/native/github.ts",
+    "unique_locations": 1,
+    "command": [
+      "node",
+      "--test",
+      "--test-name-pattern=slot read-only negative GET releases exact owner and preserves immutable historical evidence",
+      "tests/independent-confirmation-slot.test.mjs"
+    ],
+    "selected_test": "slot read-only negative GET releases exact owner and preserves immutable historical evidence",
+    "exit_code": 1,
+    "actual_assertion_error": true,
+    "selected_test_observed": true,
+    "source_before_sha256": "7ceb34f9872bb911c6989469a97dd9b470f5ff8c16be42b2118e8acb250993b5",
+    "source_after_sha256": "d946908bbbfe3e32ba234d3c38e511bc836cb74bbf4fcb7416efb01b3d5b2912",
+    "log": "/tmp/cla-confirmation-slot-implementation-review/mutation-16.log",
+    "detected": true
+  },
+  {
+    "name": "confirmation slot settlement phase CAS",
+    "file": "src/native/store.ts",
+    "unique_locations": 1,
+    "command": [
+      "node",
+      "--test",
+      "--test-name-pattern=slot nonrelease settlement independently rejects stale phase",
+      "tests/independent-confirmation-slot.test.mjs"
+    ],
+    "selected_test": "slot nonrelease settlement independently rejects stale phase",
+    "exit_code": 1,
+    "actual_assertion_error": true,
+    "selected_test_observed": true,
+    "source_before_sha256": "f56a0d9effb65a44ebb118ee33fd1611340361ea4bce9f5c3a31f77690dfad83",
+    "source_after_sha256": "448cc45b2d3bfaa72accd7bf814a7ec09463702ba54336a388a92d65c0afde50",
+    "log": "/tmp/cla-confirmation-slot-implementation-review/mutation-17.log",
+    "detected": true
+  },
+  {
+    "name": "confirmation slot settlement exact proof snapshot",
+    "file": "src/native/store.ts",
+    "unique_locations": 1,
+    "command": [
+      "node",
+      "--test",
+      "--test-name-pattern=slot nonrelease settlement independently rejects stale proof",
+      "tests/independent-confirmation-slot.test.mjs"
+    ],
+    "selected_test": "slot nonrelease settlement independently rejects stale proof",
+    "exit_code": 1,
+    "actual_assertion_error": true,
+    "selected_test_observed": true,
+    "source_before_sha256": "f56a0d9effb65a44ebb118ee33fd1611340361ea4bce9f5c3a31f77690dfad83",
+    "source_after_sha256": "5aad7b59b8a515ec170aefaed270e0cadaa98d8aa34414e6de35a4fa6fc06b66",
+    "log": "/tmp/cla-confirmation-slot-implementation-review/mutation-18.log",
+    "detected": true
+  },
+  {
+    "name": "confirmation slot settlement current generation",
+    "file": "src/native/store.ts",
+    "unique_locations": 1,
+    "command": [
+      "node",
+      "--test",
+      "--test-name-pattern=slot nonrelease settlement independently rejects stale generation",
+      "tests/independent-confirmation-slot.test.mjs"
+    ],
+    "selected_test": "slot nonrelease settlement independently rejects stale generation",
+    "exit_code": 1,
+    "actual_assertion_error": true,
+    "selected_test_observed": true,
+    "source_before_sha256": "f56a0d9effb65a44ebb118ee33fd1611340361ea4bce9f5c3a31f77690dfad83",
+    "source_after_sha256": "363e8bc1c14f368fceda42b955bf44160da973cefbb9c15d90b13205dc286f56",
+    "log": "/tmp/cla-confirmation-slot-implementation-review/mutation-19.log",
+    "detected": true
+  },
+  {
+    "name": "confirmation slot settlement current revision",
+    "file": "src/native/store.ts",
+    "unique_locations": 1,
+    "command": [
+      "node",
+      "--test",
+      "--test-name-pattern=slot nonrelease settlement independently rejects stale revision",
+      "tests/independent-confirmation-slot.test.mjs"
+    ],
+    "selected_test": "slot nonrelease settlement independently rejects stale revision",
+    "exit_code": 1,
+    "actual_assertion_error": true,
+    "selected_test_observed": true,
+    "source_before_sha256": "f56a0d9effb65a44ebb118ee33fd1611340361ea4bce9f5c3a31f77690dfad83",
+    "source_after_sha256": "b0fdda3965f8ec9d66195a850a5c8cec4fe46539a9666a2f5d4f16511cff101b",
+    "log": "/tmp/cla-confirmation-slot-implementation-review/mutation-20.log",
+    "detected": true
+  },
+  {
+    "name": "confirmation slot live sender recovery exclusion",
+    "file": "src/native/store.ts",
+    "unique_locations": 1,
+    "command": [
+      "node",
+      "--test",
+      "--test-name-pattern=slot static expired original proof and changed revision cannot bypass a live send fence",
+      "tests/independent-confirmation-slot.test.mjs"
+    ],
+    "selected_test": "slot static expired original proof and changed revision cannot bypass a live send fence",
+    "exit_code": 1,
+    "actual_assertion_error": true,
+    "selected_test_observed": true,
+    "source_before_sha256": "f56a0d9effb65a44ebb118ee33fd1611340361ea4bce9f5c3a31f77690dfad83",
+    "source_after_sha256": "8ecd47411fda07b2b67c336f8055b6d5496b1eb3d056afea3191640d64cfed82",
+    "log": "/tmp/cla-confirmation-slot-implementation-review/mutation-21.log",
+    "detected": true
+  },
+  {
+    "name": "confirmation slot SQL observed phase binding",
+    "file": "src/native/schema.sql",
+    "unique_locations": 1,
+    "command": [
+      "node",
+      "--test",
+      "--test-name-pattern=slot SQL rejects a negative witness describing a different observed phase",
+      "tests/independent-confirmation-slot.test.mjs"
+    ],
+    "selected_test": "slot SQL rejects a negative witness describing a different observed phase",
+    "exit_code": 1,
+    "actual_assertion_error": true,
+    "selected_test_observed": true,
+    "source_before_sha256": "0e4cc1672c78837b219eba0c1f54de89fc86169c87ffd26277085a229dfe3a08",
+    "source_after_sha256": "50591acc4b8558f47eb48abb995ad0838ffcd450cfd6669a01d4f034aaf5bc69",
+    "log": "/tmp/cla-confirmation-slot-implementation-review/mutation-22.log",
+    "detected": true
+  }
+]

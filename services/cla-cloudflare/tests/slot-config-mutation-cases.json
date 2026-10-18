@@ -1,0 +1,29 @@
+[
+  {
+    "name": "slot exact environment switch",
+    "file": "src/native/worker.ts",
+    "before": "confirmationSlotEnabled:env.CLA_CONFIRMATION_SLOT_ENABLED==='true'",
+    "after": "confirmationSlotEnabled:c.confirmationSlotEnabled===true || env.CLA_CONFIRMATION_SLOT_ENABLED==='true'",
+    "pattern": "slot JSON cannot enable the runtime capability without the exact environment switch",
+    "testFile": "tests/confirmation-slot-config.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "slot independent recovery prerequisite",
+    "file": "src/native/config.ts",
+    "before": "if(c.confirmationSlotEnabled===true && (!c.backgroundEnabled || !c.checkPublishingEnabled))throw new Rejected('confirmation_slot_recovery_required');",
+    "after": "// mutation: ignore independent recovery prerequisite",
+    "pattern": "slot activation refuses missing independent recovery capability",
+    "testFile": "tests/confirmation-slot-config.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "slot disabled deployment switch required",
+    "file": "scripts/deployment-plan.mjs",
+    "before": "flags.some(flag=>c.vars?.[flag]!=='false')",
+    "after": "flags.some(flag=>flag!=='CLA_CONFIRMATION_SLOT_ENABLED' && c.vars?.[flag]!=='false')",
+    "pattern": "disabled plan refuses an enabled or missing slot switch",
+    "testFile": "tests/confirmation-slot-config.test.mjs",
+    "assertionError": true
+  }
+]

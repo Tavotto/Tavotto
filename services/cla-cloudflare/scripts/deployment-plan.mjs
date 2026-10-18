@@ -1,6 +1,6 @@
 // OFFLINE DATA VALIDATION ONLY. No Wrangler execution, network, D1 or secret writes.
 import fs from 'node:fs';import {fileURLToPath} from 'node:url';import {createHash} from 'node:crypto';
-const flags=['CLA_GITHUB_ENABLED','CLA_OAUTH_ENABLED','CLA_SIGNING_ENABLED','CLA_CHECK_PUBLISHING_ENABLED','CLA_UI_ENABLED','CLA_BACKGROUND_ENABLED','CLA_CI_VERIFICATION_ENABLED','CLA_DELEGATED_COUNTERSIGNING_ENABLED','CLA_AUTOMATIC_VERIFICATION_ENABLED','CLA_AUTOMATIC_PUBLISHING_ENABLED','CLA_AGREEMENT_ACTIVATION_ENABLED'];
+const flags=['CLA_GITHUB_ENABLED','CLA_OAUTH_ENABLED','CLA_SIGNING_ENABLED','CLA_CHECK_PUBLISHING_ENABLED','CLA_UI_ENABLED','CLA_BACKGROUND_ENABLED','CLA_CI_VERIFICATION_ENABLED','CLA_DELEGATED_COUNTERSIGNING_ENABLED','CLA_AUTOMATIC_VERIFICATION_ENABLED','CLA_AUTOMATIC_PUBLISHING_ENABLED','CLA_AGREEMENT_ACTIVATION_ENABLED','CLA_CONFIRMATION_SLOT_ENABLED'];
 export function deploymentPlan(c){
   if(!c || c.workers_dev!==false || c.preview_urls!==false || !Array.isArray(c.routes) || c.routes.length || !Array.isArray(c.triggers?.crons) || c.triggers.crons.length ||
     flags.some(flag=>c.vars?.[flag]!=='false') || Object.keys(c.vars??{}).some(key=>!flags.includes(key)&&key!=='CLA_CONFIG'))throw Error('disabled_manifest_required');
