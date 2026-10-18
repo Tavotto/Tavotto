@@ -1553,6 +1553,29 @@ def paint_order_of(artist, ranks: dict[int, int]) -> int | None:
     return int(hi)
 
 
+def _clip_key(m):
+    """一个成员此刻**实际生效的裁剪**：None = 不裁；"custom" = 任意形状（`set_clip_path` 非矩形，
+    geometry 表达不了；矩形裁剪 matplotlib 自己转成 clip box）；否则是 clip box 的范围。"""
+    if not m.get_clip_on():
+        return None
+    if m.get_clip_path() is not None:
+        return "custom"
+    bb = m.get_clip_box()
+    return None if bb is None else tuple(round(float(v), 3) for v in bb.bounds)
+
+
+def _clip_represented(members) -> bool:
+    """geometry 里那**一份**裁剪（`_clip_rect`，组几何取第一个成员的）能否代表每个成员的实际裁剪。
+
+    「能盖住」（`fill_alpha`）是 geometry 对**画出来的填充范围**的担保：有成员被裁成任意形状，或
+    成员之间的矩形裁剪框不一致，geometry 就表达不了真实范围——被裁掉、看不见的那块也会被当成
+    盖着，把底下看得见的线降层。担保不了就不给（前端即不判遮挡），与 `_clip_rect`「表达不了就
+    不给」同一条纪律。裁剪一族（任意形状、成员框不一）在这一处收口（#1158 评审两轮）。
+    """
+    keys = {_clip_key(m) for m in members}
+    return "custom" not in keys and len(keys) <= 1
+
+
 def stamp_paint(geom: dict, artist, ranks: dict[int, int]) -> None:
     """给一份 geometry 补两项**绘制事实**（加字段协议，老前端忽略）：
 
@@ -1569,13 +1592,7 @@ def stamp_paint(geom: dict, artist, ranks: dict[int, int]) -> None:
     order = paint_order_of(artist, ranks)
     if order is not None:
         geom["paint_order"] = order
-    # 「能盖住」是 geometry 对**画出来的填充范围**的担保：成员被裁成任意形状（`set_clip_path`
-    # 非矩形；矩形裁剪 matplotlib 自己转成 clip box、走 `_clip_rect`）时 geometry 表达不了
-    # 真实范围——被裁掉、看不见的那块也会被当成盖着。担保不了就不给（前端即不判遮挡），
-    # 与 `_clip_rect`「表达不了就不给」同一条纪律（#1158 评审）。
-    if geom.get("fill") and not any(
-        m.get_clip_on() and m.get_clip_path() is not None for m in members
-    ):
+    if geom.get("fill") and _clip_represented(members):
         alphas = [al for m in members if (al := _face_alpha(m)) is not None]
         if alphas:
             # None（误差线的 LineCollection、空心 patch）= 根本没填充，已在上面滤掉，不会把

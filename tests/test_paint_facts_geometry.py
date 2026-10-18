@@ -129,6 +129,11 @@ def main():
     clipped = ax11.add_patch(Rectangle((0.1, 0.1), 0.4, 0.4, fc="k", zorder=5))
     clipped.set_clip_path(Circle((0.3, 0.3), 0.1, transform=ax11.transData))
     ax11.add_patch(Rectangle((0.6, 0.6), 0.2, 0.2, fc="k", zorder=5))
+    # 柱组里一根柱的矩形裁剪框比其它柱小：组几何只带第一根的裁剪，表达不了
+    bars = ax11.bar([0.15, 0.35], [0.3, 0.3], width=0.1, color="k", zorder=6)
+    from matplotlib.transforms import Bbox, TransformedBbox
+
+    bars[1].set_clip_box(TransformedBbox(Bbox([[0.3, 0.0], [0.4, 0.1]]), ax11.transData))
     fig11.savefig("ClipFig.pdf")
 
     # 文字类（画布按 bbox 命中、无 geometry）：标题 / 轴标签 / 文字 / 图例 / 图例项
@@ -366,3 +371,11 @@ def test_custom_clipped_fill_claims_no_cover(manifests):
     # 担保不了画出来的范围 → 不给遮挡事实；默认矩形裁剪的照常给
     assert "fill_alpha" not in clipped
     assert plain["fill_alpha"] == 1.0
+
+
+def test_group_with_mismatched_member_clips_claims_no_cover(manifests):
+    man = manifests("ClipFig")
+    grp = next(e for e in man["elements"] if e["role"] == "bar_series")["geometry"]
+    assert grp["fill"] is True  # 前提：走得到 stamp_paint 的 fill 分支
+    # 成员的裁剪框不一致：一份 clip 代表不了，不给遮挡事实
+    assert "fill_alpha" not in grp
