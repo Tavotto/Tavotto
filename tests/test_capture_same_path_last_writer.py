@@ -593,8 +593,9 @@ class TestVerifyRender:
         fig, real = self._fig()
         assert not figcapture.savefig_verify_render(real, fig, "a.pdf", (), kwargs)
 
-    def test_unmeasurable_tight_frame_is_not_a_failed_save(self):
-        """tight 量包围盒失败由 Tavotto 另报 `frame_unavailable`（ADR 0098）；渲染本身没问题就算保存成功。"""
+    def test_unmeasurable_tight_frame_is_a_failed_save_like_native(self):
+        """tight 量包围盒失败时原生 savefig 会抛、文件不会写出：验证与 native 同源判失败（Codex #1141 r4306180020）。
+        验证只决定顶替；持有者自己的保存不经验证，ADR 0098 的 `frame_unavailable` 报告不受影响。"""
         from matplotlib.artist import Artist
 
         class Unmeasurable(Artist):
@@ -606,10 +607,10 @@ class TestVerifyRender:
 
         fig, real = self._fig()
         fig.add_artist(Unmeasurable())
-        assert figcapture.savefig_verify_render(real, fig, "a.pdf", (), {"bbox_inches": "tight"})
         assert not figcapture.savefig_verify_render(
-            real, fig, "a.pdf", (), {"bbox_inches": "bogus"}
+            real, fig, "a.pdf", (), {"bbox_inches": "tight"}
         )
+        assert figcapture.savefig_verify_render(real, fig, "a.pdf", (), {})
 
     def test_unknown_suffix_fails(self):
         fig, real = self._fig()

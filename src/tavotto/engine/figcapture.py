@@ -1560,16 +1560,9 @@ def savefig_verify_render(real_savefig, fig, fname, args, kwargs: dict) -> bool:
             if not ext:
                 return True
             kw["format"] = ext
-        try:
-            real_savefig(fig, io.BytesIO(), *args, **kw)
-        except Exception:  # noqa: BLE001
-            if kw.get("bbox_inches") != "tight":
-                raise
-            # tight 量包围盒失败（用户 artist 的 `get_tightbbox` 抛……）是 Tavotto 另外如实报告的
-            # `frame_unavailable`（ADR 0098 §一第 4 条），不是「这次保存没发生」：去掉 tight 再验一次，
-            # 渲染本身没问题就算保存成功，调用照记（否则这类图的 tight 参数被丢、图幅原因不再被报告）
-            kw["bbox_inches"] = None
-            real_savefig(fig, io.BytesIO(), *args, **kw)
+        # tight 量包围盒失败在原生下同样会抛、文件不会写出：与 native 同源判失败（Codex #1141 r4306180020）。
+        # 这里只决定**顶替**，持有者自己的保存不经验证，ADR 0098 的 frame_unavailable 报告不受影响
+        real_savefig(fig, io.BytesIO(), *args, **kw)
     except Exception:  # noqa: BLE001 —— 原生下这次保存会抛
         return False
     return True
