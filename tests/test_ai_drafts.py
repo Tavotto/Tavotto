@@ -713,6 +713,27 @@ def test_supersedes_deletes_the_old_row_in_the_same_transaction_as_the_new_write
     ]  # 旧行随新写入一起没了
 
 
+def test_supersedes_deletes_the_old_row_even_when_it_was_filed_under_a_sibling_panel(client, two):
+    """同一份脚本的兄弟面板：旧等待挂在面板 F 下，「改写后再发」从面板 G 发——旧行照样随新写入删掉（项目内按 rid），
+    不按新行的 file_id 删（否则旧行之后又被还原成「未确认」）。"""
+    a, _ = two
+    assert _put_pending(client, a, "rid-old-00000001", "旧", script="s.py").status_code == 200
+    r = client.put(
+        "/api/ai/drafts/pending/rid-new-00000001",
+        json={
+            "file": "G",
+            "text": "新",
+            "sent": SENT,
+            "script": "s.py",
+            "supersedes": ["rid-old-00000001"],
+        },
+        headers=H(a),
+    )
+    assert r.status_code == 200
+    assert get(client, a, "F")["pendings"] == []
+    assert [p["rid"] for p in get(client, a, "G")["pendings"]] == ["rid-new-00000001"]
+
+
 def test_a_failed_new_write_keeps_the_superseded_row(client, two):
     """新 PUT 失败 = 整个事务回滚 = 旧行还在，状态仍然一致（旧行之后只能被查询 / 确认，不会凭空消失）。"""
     a, _ = two

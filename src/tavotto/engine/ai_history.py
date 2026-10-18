@@ -110,8 +110,12 @@ class DraftTooLarge(ValueError):
 
 #: 「会话还没真正结束」的 SQL 条件——**单一定义**：忙碌判定（同脚本不能再 spawn）、恢复占位的 `status=open` 查询、
 #: 历史行的 final 判断都用它的同一个概念。`cancel` 只改 status、不写 ended_ms：此刻 CLI 进程组可能还在写文件、
-#: changed / diff / refresh 还没算出来，所以 `cancelled` 且 `ended_ms` 为空仍算「没结束」。
-OPEN_SESSION_SQL = "(status = 'running' OR (status = 'cancelled' AND ended_ms IS NULL))"
+#: changed / diff / refresh 还没算出来，所以 `cancelled` 且 `ended_ms` 为空仍算「没结束」。`interrupted` 同理：`interrupt_all()`
+#: （关机 / 桌面收尾）发出终止就写 status，不等进程组退出——`ended_ms` 由 `_pump` 观察到退出后的 `record_end` 写，进程没来得及
+#: 收尾就由下次启动的 `mark_interrupted_running` 按属主存活补上。之前共用数据目录的另一个服务进程不能当这份脚本空闲
+OPEN_SESSION_SQL = (
+    "(status = 'running' OR (status IN ('cancelled', 'interrupted') AND ended_ms IS NULL))"
+)
 
 #: running 行超过这么久还没结束就当属主已死（pid 会被复用，不能只信 pid 存活）：绝不让一条僵尸行永久锁住脚本
 RUNNING_OWNER_MAX_AGE_MS = 24 * 3600 * 1000
@@ -351,8 +355,8 @@ def mark_interrupted_running(db_path: Path | None = None) -> int:
     """启动时调用：上个进程留下的「还没结束」的会话收尾。**只动属主已死的**（`owner_alive`）：共用同一数据目录的
     另一个服务进程里仍在跑的会话不能被这次启动动掉（否则它的脚本被当成空闲、再被另一个进程改写）。
     属主未知（老行）/ 就是本进程的旧实例 / pid 已死 / 行太老 → 动。
-    谓词与 `OPEN_SESSION_SQL` 一致：`running` 转为 `interrupted` 并写 `ended_ms`；已取消但 `_pump` 还没收尾的
-    （`cancelled` 且 `ended_ms` 为空，进程随即死掉）**保持 cancelled**，只补上 `ended_ms`——否则这些行永远开着、
+    谓词与 `OPEN_SESSION_SQL` 一致：`running` 转为 `interrupted` 并写 `ended_ms`；已取消 / 已中断但 `_pump` 还没收尾的
+    （`cancelled` / `interrupted` 且 `ended_ms` 为空，进程随即死掉）**保持原状态**，只补上 `ended_ms`——否则这些行永远开着、
     永远占着脚本的忙碌判定。回值是被转为 interrupted 的行数。"""
     now = int(time.time() * 1000)
     with (
@@ -682,9 +686,11 @@ def put_pending(
                 ).fetchone()
                 if existing is None or existing["session"] != SUPERSEDED:
                     raise SupersedeConflict(old) from None
+            # 项目内按 rid 删（同 `drop_rejected_pending`），不按本行的 file_id：同一份脚本的另一个面板放弃的旧等待挂在它自己的
+            # file_id 下，按新面板的 file_id 删就删不到，它之后又被还原成「未确认」
             con.execute(
-                "DELETE FROM ai_pending WHERE project=? AND file_id=? AND rid=?",
-                (project, file_id, old),
+                "DELETE FROM ai_pending WHERE project=? AND rid=?",
+                (project, old),
             )
         # 同 rid 的重写（重试写账本）不占新名额；其它 rid 满了就拒绝
         exists = con.execute(

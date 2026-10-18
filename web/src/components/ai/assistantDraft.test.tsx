@@ -554,6 +554,17 @@ describe('同步状态机：单一 reconcile + 写入版本（#1098）', () => {
     expect(input().value).toBe('读不到服务器时打的字')
   })
 
+  it('读成功过一次、卸载后重开时读失败：仍退出 loading、允许编辑（发件箱槽位留着 read=true 也不能让文本框一直只读）', async () => {
+    await mount()
+    await settle()
+    expect(input().readOnly).toBe(false)
+    await unmount()
+    be.setDown(true)
+    await mount()
+    await settle()
+    expect(input().readOnly).toBe(false)
+  })
+
   // —— 发件箱：未落定的写入由模块级发件箱持有，与 hook 实例 / 挂载的目标无关 ——
   const putsOf = () => be.calls.filter((c) => c.method === 'PUT' && c.path === '/api/ai/drafts')
 
@@ -1373,6 +1384,23 @@ describe('已发出未确认：不能盲目重发', () => {
     await mount()
     expect(q('[data-ai-submission="unconfirmed"]')).toBeTruthy()
     expect(q<HTMLButtonElement>('[data-ai-send]')!.disabled).toBe(true)
+  })
+
+  it('兄弟面板上「改写后再发」：A 面板发起的旧等待也随这个面板新行的 PUT 带进 supersedes（按脚本记，不按发起面板）', async () => {
+    be.pendings.set('pa\u0000Fig1.pdf', [{ rid: 'rid-sibling-0002', text: 'A 面板发出的话', sent: SENT, script: 'p1.py' }])
+    useSelectionStore.setState({ ids: ['p3'] } as never)
+    await mount()
+    vi.mocked(fetchAiRequest).mockRejectedValue(new ApiError('nf', 404, { code: 'ai_request_not_found' }))
+    await click(q('[data-ai-check]'))
+    await settle()
+    await click(q('[data-ai-edit-resend]'))
+    vi.mocked(aiRun).mockResolvedValue({ session: 's-9', script: 'p1.py' })
+    await typeText('新指令')
+    await click(q('[data-ai-send="send"]'))
+    await settle()
+    const rid2 = (vi.mocked(aiRun).mock.calls[0][0] as { client_request_id: string }).client_request_id
+    const putOfNew = be.calls.find((c) => c.method === 'PUT' && c.path.endsWith(`/pending/${rid2}`))
+    expect(putOfNew?.body.supersedes).toEqual(['rid-sibling-0002'])
   })
 
   it('发起请求的面板已不在（删了 / 换图）：同脚本的面板上仍还原这条未确认，说明来源不在了，且能查询', async () => {

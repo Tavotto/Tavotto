@@ -1165,18 +1165,21 @@ def test_a_rejection_whose_cleanup_fails_is_unresolved_too(client, tmp_path, cli
     _wait_idle()
 
 
-def test_a_cancelled_but_unfinished_session_in_another_process_still_blocks_the_script(tmp_path):
-    """cancel 之后状态立刻是 cancelled，但 CLI 进程组可能还在写文件：另一个进程里属主存活、`ended_ms` 为空的 cancelled 会话
-    仍算「忙」；写了 `ended_ms`（真正结束）之后才放开。"""
+@pytest.mark.parametrize("status", ["cancelled", "interrupted"])
+def test_a_cancelled_but_unfinished_session_in_another_process_still_blocks_the_script(
+    tmp_path, status
+):
+    """cancel / `interrupt_all()`（关机收尾）之后状态立刻变了，但 CLI 进程组可能还在写文件：另一个进程里属主存活、`ended_ms`
+    为空的 cancelled / interrupted 会话仍算「忙」；写了 `ended_ms`（真正结束）之后才放开。"""
     db = tmp_path / "hist.sqlite3"
     live = _live_other_pid()
     ai_history.record_start(_sess("othercanc01", "rid-canc-000009", owner_pid=live), db_path=db)
-    ai_history.update_status("othercanc01", "cancelled", db_path=db)  # 只改 status，不写 ended_ms
+    ai_history.update_status("othercanc01", status, db_path=db)  # 只改 status，不写 ended_ms
     with pytest.raises(ai_history.ScriptBusy):
         ai_history.record_start(
             _sess("mine00000001", "rid-mine-000009", owner_pid=live), db_path=db
         )
-    ai_history.record_end("othercanc01", "cancelled", db_path=db)  # 真正结束：写了 ended_ms
+    ai_history.record_end("othercanc01", status, db_path=db)  # 真正结束：写了 ended_ms
     assert (
         ai_history.record_start(
             _sess("mine00000002", "rid-mine-000010", owner_pid=live), db_path=db
@@ -1188,7 +1191,7 @@ def test_a_cancelled_but_unfinished_session_in_another_process_still_blocks_the_
     ai_history.record_start(
         _sess("deadcanc001", "rid-dead-000009", owner_pid=_dead_pid()), db_path=db
     )
-    ai_history.update_status("deadcanc001", "cancelled", db_path=db)
+    ai_history.update_status("deadcanc001", status, db_path=db)
     assert (
         ai_history.record_start(
             _sess("mine00000003", "rid-mine-000011", owner_pid=live), db_path=db
@@ -1275,6 +1278,10 @@ def test_startup_cleanup_finalizes_cancelled_rows_of_dead_owners_and_keeps_live_
     )
     ai_history.update_status("canc-live", "cancelled", db_path=db)
     ai_history.record_start(
+        _sess("intr-dead", "rid-idead-0001", "d.py", owner_pid=_dead_pid()), db_path=db
+    )
+    ai_history.update_status("intr-dead", "interrupted", db_path=db)  # interrupt_all 只写 status
+    ai_history.record_start(
         _sess("canc-done", "rid-cdone-0001", "c.py", owner_pid=_dead_pid()), db_path=db
     )
     ai_history.record_end(
@@ -1287,6 +1294,7 @@ def test_startup_cleanup_finalizes_cancelled_rows_of_dead_owners_and_keeps_live_
         rows["canc-dead"][1], int
     )  # 补上了 ended_ms，状态保持
     assert rows["canc-live"] == ("cancelled", None)  # 属主活着：不动
+    assert rows["intr-dead"][0] == "interrupted" and isinstance(rows["intr-dead"][1], int)
     assert rows["canc-done"] == ("cancelled", before_done)  # 已收尾的不被改写
     # 死属主的 cancelled 不再占着忙碌判定：同一脚本可以再认领
     assert ai_history.record_start(

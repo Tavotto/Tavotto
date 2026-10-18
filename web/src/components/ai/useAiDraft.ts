@@ -164,8 +164,10 @@ export function useAiDraft(panel: PanelObject | null) {
       if (state) {
         outboxNoteRead(pj, f) // 读成功：基线不再未知。是否推进基线要看文本有没有被采用（见下）
         setDraftRead('ok')
-      } else if (!outboxHasSeen(pj, f)) {
-        outboxMarkUnknown(pj, f) // 一次都没读成功过：服务器版本未知，stale 按「已见」处理（用户的输入不能丢）
+      } else {
+        // 一次都没读成功过：服务器版本未知，stale 按「已见」处理（用户的输入不能丢）
+        if (!outboxHasSeen(pj, f)) outboxMarkUnknown(pj, f)
+        // 这次读失败就退出 loading：重开面板时出口槽位还留着上次的 read=true，只挡 markUnknown，否则文本框一直只读
         setDraftRead('failed')
       }
     }
