@@ -149,7 +149,7 @@ export class LiveStore extends Store {
       AND NOT EXISTS(SELECT 1 FROM publication_attempts p WHERE p.target_key=r.target_key AND p.phase!='resolved')
       AND NOT EXISTS(SELECT 1 FROM publication_attempts p WHERE p.target_key=r.target_key AND p.id=(SELECT active_attempt FROM slot_policy WHERE id=1))
       AND EXISTS(SELECT 1 FROM outbox o WHERE o.target_key=r.target_key AND o.lease=? AND o.generation=? AND o.lease_until>${DB_NOW})`,
-      job.target_key,job.lease,job.generation).first<RefreshRequest & {capacity_blocked:number}>();
+      job.target_key,job.lease,job.generation).first<Omit<RefreshRequest,'capacity_blocked'> & {capacity_blocked:number}>();
     if(!row)return null;const {capacity_blocked,...request}=row;return {...request,...(capacity_blocked?{capacity_blocked:true}:{})};
   }
   async refreshPredecessor(key:string,head:string):Promise<Publication|null> {

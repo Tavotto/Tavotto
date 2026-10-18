@@ -136,3 +136,26 @@ controls, resource acceptance and recovery operations. In #1167 an explicit new
 generation/pin may select a historical exact agreement tuple; that tuple's old
 evidence can qualify again. Only replay of an old prepared proposal is refused;
 monotonic agreement-version selection requires a separate product decision.
+
+## Current-head CI correction: TS2700
+
+The manual job for original head `dc2431f725798bd78c40a3b07e0a8054690fe82c`
+(run 39126012271, job 117671183649) successfully installed dependencies, then
+failed typechecking at store.ts:153 with TS2700. Its `&&` chain did not run Node,
+migration, build or mutation checks. The child #1169 original head failed for
+the same shared type. This is a real compilation failure, not missing CI tools.
+
+The database CASE returns a numeric `capacity_blocked`, while the business
+RefreshRequest uses an optional boolean. Intersecting both without omitting the
+old property collapses the row type; the fix explicitly omits that property
+before declaring the numeric raw row. No any or compiler suppression is used.
+Node's built-in type erasure produces byte-identical JavaScript before/after.
+Actual local 456 Node / 4 migration / 124 mutation checks pass; six independent
+row-boundary/erasure probes pass. These results do not establish compiler
+success: current-fix hosted typecheck/build remain pending, and local tsc is
+still unavailable without retrying the earlier rejected download.
+
+[The correction evidence](evidence/ts2700/verification.json) retains raw old-head
+CI logs and separates original failed runs from current-fix local verification.
+Earlier evidence manifests remain historical records of their pinned sources.
+No review is triggered until the correct new head satisfies verification.
