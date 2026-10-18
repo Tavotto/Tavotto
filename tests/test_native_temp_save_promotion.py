@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -91,12 +92,12 @@ def test_a_copy_that_leaves_the_temp_file_is_not_a_promotion(tmp_path):
     assert _stems(tmp_path, body) == ["final.png"]
 
 
-def test_copy_then_delete_is_judged_by_the_result_like_a_rename(tmp_path):
-    """判据是结果（临时文件没了、最终文件就是这次写的字节），不是用了哪个函数。"""
+def test_copy_then_delete_is_not_a_promotion(tmp_path):
+    """复制产生的是另一份文件（不同 inode），临时文件本身没有成为最终文件，因果确认不了（Codex #1126 r4305517904）。"""
     body = (
         'import shutil\nshutil.copyfile("final.png.tmp", "final.png")\nos.remove("final.png.tmp")\n'
     )
-    assert _stems(tmp_path, body) == ["final"]
+    assert _stems(tmp_path, body) == ["final.png"]
 
 
 def test_a_final_stem_already_taken_by_another_figure_is_left_alone(tmp_path):
@@ -177,6 +178,22 @@ def test_a_stale_identical_final_file_with_the_temp_removed_is_not_a_promotion(t
     first = (tmp_path / "final.png").read_bytes()
     assert _stems(tmp_path, 'os.remove("final.png.tmp")\n') == ["final.png"]
     assert (tmp_path / "final.png").read_bytes() == first
+
+
+def test_utime_on_a_stale_identical_final_file_is_not_a_promotion(tmp_path):
+    """Codex #1126 r4305517904：旧的同字节 `final.png` 只被改了时间、临时文件被删，没有内容转移。"""
+    assert _stems(tmp_path, 'os.replace("final.png.tmp", "final.png")\n') == ["final"]
+    first = (tmp_path / "final.png").read_bytes()
+    body = 'os.utime("final.png")\nos.remove("final.png.tmp")\n'
+    assert _stems(tmp_path, body) == ["final.png"]
+    assert (tmp_path / "final.png").read_bytes() == first
+
+
+@pytest.mark.skipif(not hasattr(os, "link"), reason="平台不支持硬链接")
+def test_hard_link_then_delete_is_a_promotion(tmp_path):
+    """硬链接后删临时文件：最终文件与临时文件同一个 inode，内容就是这次写的。"""
+    body = 'os.link("final.png.tmp", "final.png")\nos.remove("final.png.tmp")\n'
+    assert _stems(tmp_path, body) == ["final"]
 
 
 def test_repeated_atomic_saves_across_shows_stay_one_capture(tmp_path):

@@ -130,7 +130,8 @@ _CAPTURE_SAVEFIG: dict = {}
 _CAPTURE_EXTRAS: dict = {}
 _SAVEFIG_OBSERVATIONS = figcapture.SavefigObservations()
 #: 「先写临时文件再改名」的 savefig（#1124）：认领它的 stem -> 待确认的提升
-#: `{"tmp": 绝对路径, "final": 绝对路径, "stem": 最终 stem, "digest": 写完那一刻的内容摘要}`
+#: `{"tmp": 绝对路径, "final": 绝对路径, "stem": 最终 stem, "digest": 写完那一刻的内容摘要,
+#: "tmp_id": 临时文件写完那一刻的 (st_dev, st_ino)}`——最终文件必须还是这同一个 inode 才算它成了产物
 _TEMP_SAVES: dict = {}
 #: 已确认提升的 stem：旧 stem（`final.png`）-> 新 stem（`final`）。同一张图之后再按临时文件 + 改名保存
 #: 一次（多个 `show()` 之间反复原子保存），`savefig_stem` 又算出旧 stem，要并回已提升的捕获而不是新开一个
@@ -219,13 +220,15 @@ def _digest(path: str) -> str | None:
         return None
 
 
-def _file_signature(path: str):
-    """文件身份签名 `(dev, ino, size, mtime_ns, ctime_ns)`；不存在 / 读不到记 None。"""
+def _file_identity(path: str):
+    """文件身份 `(st_dev, st_ino)`；读不到或文件系统给不出 inode（`st_ino == 0`）记 None。"""
     try:
         st = os.stat(path)
     except OSError:
         return None
-    return (st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns, st.st_ctime_ns)
+    if not st.st_ino:
+        return None
+    return (st.st_dev, st.st_ino)
 
 
 def _resolve_promoted(stem, fig):
@@ -237,7 +240,7 @@ def _resolve_promoted(stem, fig):
 
 
 def _note_temp_save(fig, fname, stem=None) -> None:
-    """`savefig("final.png.tmp")` 真的写完了：记下它认领的 stem 与写完那一刻的内容摘要，等脚本结束时
+    """`savefig("final.png.tmp")` 真的写完了：记下它认领的 stem、写完那一刻的内容摘要与临时文件的 inode 身份，等脚本结束时
     确认它成了 `final.png` 才把 stem 改成 `final`（`_promote_temp_saves`）。
 
     `stem` 是调用方解析过别名的 stem；已经是提升后的 stem（`final`）就不再登记。"""
@@ -253,25 +256,24 @@ def _note_temp_save(fig, fname, stem=None) -> None:
     tmp = os.path.abspath(os.fsdecode(fname))
     final = os.path.join(os.path.dirname(tmp), target[0])
     _TEMP_SAVES[stem] = {
-        "final_sig": _file_signature(final),
         "tmp": tmp,
         "final": final,
         "stem": target[1],
         "digest": _digest(tmp),
+        "tmp_id": _file_identity(tmp),
     }
 
 
 def _promote_temp_saves(published=()) -> None:
     """脚本结束：确认过的「临时文件 → 产物」提升把 stem 从 `final.png` 改成 `final`（#1124）。
 
-    确认的判据是**结果**而不是过程：临时文件已不在、对应的最终文件存在、且内容与这次 savefig 写进临时文件的
-    字节完全一致——`os.replace` / `Path.replace` / `shutil.move` / 复制后删除都满足，脚本跳过改名、磁盘上躺着
-    一份旧 `final.png`（Codex #1126 P1）、改名后又被别的内容覆盖都不满足。不在用户进程里替换 `os.replace`
-    之类去「观察改名」：那改的是用户代码的运行环境，而结果判据已经足够。
-
-    还要求最终文件的身份签名（dev/ino/size/mtime/ctime）与 savefig 那一刻不同：确定性重跑时磁盘上可能
-    本来就躺着一份字节相同的旧 `final.png`，脚本删掉临时文件却没改名（Codex #1126 r4305488366）——摘要相等
-    证明内容、签名变化证明是这次执行在 savefig 之后写的（改名换 inode / ctime，复制写入改 mtime / ctime）。
+    确认的判据是「临时文件这个文件本身成了最终文件」：临时文件已不在、最终文件存在且与 savefig 时的临时文件
+    是同一个 `(dev, ino)`（只有 rename / replace / 同盘 move / 硬链接做得到），并且内容仍是这次写的字节
+    （改名后又被原地改写会改摘要）。`os.replace` / `os.rename` / `Path.replace` / 同盘 `shutil.move` /
+    硬链接后删除都满足；跳过改名而磁盘上躺着旧 `final.png`（Codex #1126 P1）、改名后被别的内容覆盖、
+    旧文件被 `os.utime` 改了时间再删临时文件（Codex #1126 r4305517904）、复制后删除（复制产生的是另一份
+    文件）、跨盘 move 都不满足。确认不了因果就保守地保留临时 stem：原件按 `final.png` 找不到，只是不能
+    写回，不会关联错文件。不在用户进程里替换 `os.replace` 之类去「观察改名」：那改的是用户代码的运行环境。
 
     另外两条：最终 stem 没被别的图占用；已经在屏障上交给界面的 stem（`published`）不改——界面与会话已按
     旧名索引了它。改名保持捕获顺序。"""
@@ -281,7 +283,7 @@ def _promote_temp_saves(published=()) -> None:
             continue
         if t["digest"] is None or _digest(t["final"]) != t["digest"]:
             continue
-        if _file_signature(t["final"]) == t["final_sig"]:
+        if t["tmp_id"] is None or _file_identity(t["final"]) != t["tmp_id"]:
             continue
         if old not in _CAPTURE or new in _CAPTURE or old in published:
             continue
