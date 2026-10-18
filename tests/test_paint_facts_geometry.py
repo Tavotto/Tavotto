@@ -104,6 +104,14 @@ def main():
     ax6.add_patch(Rectangle((0.3, 0.3), 0.4, 0.4, fc="k"))
     fig6.savefig("ArrowFig.pdf")
 
+    # 纯箭头注解：箭头是 Annotation.arrow_patch，不是 Axes 的 child；矩形 zorder 5 画在注解（3）之上
+    fig9, ax9 = plt.subplots(figsize=(4.0, 3.0))
+    ax9.set_xlim(0, 1)
+    ax9.set_ylim(0, 1)
+    ax9.annotate("", xy=(0.9, 0.5), xytext=(0.1, 0.5), arrowprops={"arrowstyle": "->"})
+    ax9.add_patch(Rectangle((0.3, 0.3), 0.4, 0.4, fc="k", zorder=5))
+    fig9.savefig("AnnotArrowFig.pdf")
+
     # 文字类（画布按 bbox 命中、无 geometry）：标题 / 轴标签 / 文字 / 图例 / 图例项
     # 一根不透明柱 + 一根空心（facecolor='none'，带描边与 hatch）：空心不是「透明填充」
     fig8, ax8 = plt.subplots(figsize=(4.0, 3.0))
@@ -312,3 +320,12 @@ def test_hidden_member_is_left_out_of_group_facts(manifests):
     # 几何里只有看得见的那根不透明柱；隐藏的 alpha=0 柱不能把整组拉成透明
     assert len(grp["paths"]) == 1
     assert grp["fill_alpha"] == 1.0
+
+
+def test_annotation_arrow_inherits_its_annotation_order(manifests):
+    man = manifests("AnnotArrowFig")
+    arrow = next(e for e in man["elements"] if e.get("arrow_endpoints"))
+    assert "geometry" not in arrow  # 前提：端点箭头，走元素级 paint_order 那条路
+    patch = next(e for e in man["elements"] if e["role"] == "patch")
+    # 箭头随所属 Annotation（zorder 3）画，在 zorder 5 的矩形之下：要能被它盖住降层
+    assert arrow["paint_order"] < patch["geometry"]["paint_order"]

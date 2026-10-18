@@ -1416,6 +1416,24 @@ def paint_ranks(fig) -> dict[int, int]:
         # 背景 patch 总是最先画（Figure.draw / Axes.draw 都先画它再画 children）
         return [c for c in children if c is not patch]
 
+    def inherit(a, r: int) -> None:
+        # 叶子的**全部后代**与叶子同序：它们由叶子自己的 draw 一并画出（图例里的文字与标题、
+        # Axis 的轴标签、注解的箭头……），在别的 artist 看来就是叶子那一笔。一条规则盖住
+        # 「子元素没次序」整族，不按角色逐个去找所属者（#1158 评审连着三次撞到这一族）。
+        # `Annotation.get_children()` 不含 `arrow_patch`（箭头在 Annotation.draw 里单独画，
+        # 3.8.4 / 3.10.9 实测），这里显式补上——它是唯一的例外，别在调用方另找所属者。
+        try:
+            children = list(a.get_children())
+        except Exception:
+            children = []
+        arrow = getattr(a, "arrow_patch", None)
+        if arrow is not None:
+            children.append(arrow)
+        for c in children:
+            if id(c) not in ranks:
+                ranks[id(c)] = r
+                inherit(c, r)
+
     def visit(a) -> None:
         take(a)
         if getattr(a, "name", "") == "3d":
@@ -1427,6 +1445,7 @@ def paint_ranks(fig) -> dict[int, int]:
                 visit(c)
             else:
                 take(c)
+                inherit(c, ranks[id(c)])
 
     try:
         visit(root_figure(fig))
