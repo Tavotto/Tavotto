@@ -2578,6 +2578,29 @@ export interface EngineRenderOptions extends ArtifactRequestFields {
   previewDpi?: number
 }
 
+/**
+ * 重复交接命中已显示面板时回给后端的「当前渲染状态」（ADR 0131 第六节修订 2026-10-18）。
+ * 形状与 `handoffreceipt.parse_ack` 同源：`ok` 带 manifest 元素数、`failed` 带稳定 code、
+ * `displayed` = 显示着但拿不出这一版的精确渲染。走会话 cookie，不新造凭据。
+ */
+export type HandoffDisplayAck =
+  | { id: string; status: 'ok'; manifest_elements: number }
+  | { id: string; status: 'failed'; code: string }
+  | { id: string; status: 'displayed' }
+
+/** 旁路：失败（老后端 404 / 网络）一律吞掉——CLI 那头回落到等超时，与没有这条确认时一样。 */
+export async function postHandoffDisplayAck(ack: HandoffDisplayAck): Promise<void> {
+  try {
+    await fetch(apiUrl('/api/handoff/display-ack'), withProject({
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(ack),
+    }))
+  } catch {
+    /* 旁路 */
+  }
+}
+
 export async function engineRender(
   id: string,
   patches: unknown[],
