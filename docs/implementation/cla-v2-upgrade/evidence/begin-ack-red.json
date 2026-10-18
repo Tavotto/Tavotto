@@ -1,0 +1,7 @@
+{
+  "source_sha256": "62fefce961321cd392ffbbcbb371d053bcd6e1db7b00d737ff60b841b24e5016",
+  "begin_did_succeed": true,
+  "transaction_left_open": true,
+  "status": "FAIL",
+  "error": "AssertionError [ERR_ASSERTION]: callee BEGIN succeeded but threw before begun=true; its transaction must be rolled back\n\ntrue !== false\n"
+}

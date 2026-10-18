@@ -1,0 +1,87 @@
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import {spawnSync} from 'node:child_process';
+import {createHash} from 'node:crypto';
+import {pathToFileURL} from 'node:url';
+const root='/workspace/Tavotto-cla-v2-upgrade/services/cla-cloudflare';
+const modulePath=root+'/scripts/v2-upgrade-offline.mjs';
+const startingSource=fs.readFileSync(modulePath);
+const {prepareSyntheticV2Upgrade:prepare,applySyntheticV2Upgrade:apply,syntheticSource:source}=await import(pathToFileURL(modulePath));
+const P='cla_native_v2_';
+const q=name=>'"'+name.replaceAll('"','""')+'"';
+const sha=bytes=>createHash('sha256').update(bytes).digest('hex');
+const options={execute:true,syntheticFixture:true};
+const results=[];
+function run(name,fn){try{const detail=fn();results.push({name,status:'pass',detail});}catch(e){results.push({name,status:'FAIL',error:String(e),stack:e.stack});}}
+function snapshot(db){
+ const objects=db.prepare("SELECT type,name,tbl_name,sql FROM sqlite_schema WHERE sql IS NOT NULL AND name NOT GLOB 'sqlite_*' ORDER BY type,name").all();
+ const rows=objects.filter(o=>o.type==='table').map(o=>{const columns=db.prepare(`PRAGMA table_xinfo(${q(o.name)})`).all().map(c=>c.name);
+ const select=columns.map(c=>`typeof(${q(c)}) AS ${q('type_'+c)},hex(${q(c)}) AS ${q('hex_'+c)},quote(${q(c)}) AS ${q('quote_'+c)}`);
+ const stmt=db.prepare(`SELECT rowid AS _rowid,${select.join(',')} FROM ${q(o.name)} ORDER BY rowid`);stmt.setReadBigInts(true);
+ return [o.name,stmt.all()];});
+ return JSON.stringify({objects,rows},(_,v)=>typeof v==='bigint'?v.toString():v);
+}
+function seeded(){const db=source();db.exec(`
+ INSERT INTO ${P}authority VALUES(1,41);
+ INSERT INTO ${P}agreements VALUES('individual','1.0','${'a'.repeat(64)}'),('corporate','1.0','${'b'.repeat(64)}');
+ UPDATE ${P}state SET revision=9007199254740993 WHERE id=1;
+ INSERT INTO ${P}sessions(rowid,token_hash,actor,login,csrf_hash,expires) VALUES(9007199254740993,'session',41,CAST(X'80' AS TEXT),X'00FF',9007199254740993),(2,'real-session',42,'real','csrf',1.25);
+ INSERT INTO ${P}oauth_states VALUES('oauth','browser','cipher',100,1);
+ INSERT INTO ${P}packets VALUES('packet',41,'individual','1.0','${'a'.repeat(64)}',10,100);
+ INSERT INTO ${P}intents VALUES('intent','session','packet','contributor','${'a'.repeat(64)}',50,1);
+ INSERT INTO ${P}signatures VALUES('packet','contributor',41,'cipher','hash',NULL,11),('packet','holder',42,'holder-cipher','holder-hash','key',12);
+ INSERT INTO ${P}eligibility_blocks VALUES('packet',41,13,'party_requested_review');
+ INSERT INTO ${P}audit VALUES(9007199254740993,'packet',41,'signed:contributor',11);
+ INSERT INTO ${P}agreement_documents VALUES('${'a'.repeat(64)}','individual','1.0','${'c'.repeat(40)}','existing historical bytes');
+ `);
+ for(const phase of ['confirmed','reconcile','manual','resolved']){
+  db.prepare(`INSERT INTO ${P}targets VALUES(?,?)`).run(phase,JSON.stringify({number:1,phase}));
+  db.prepare(`INSERT INTO ${P}outbox VALUES(?,9007199254740993,2,0,3,'',0)`).run(phase);
+  db.prepare(`INSERT INTO ${P}publication_attempts VALUES(?,?,?,9007199254740993,100,?,123,10,20,'success','fixed existing proof','history',NULL,3,2)`).run('attempt-'+phase,phase,'d'.repeat(40),phase);
+  db.prepare(`INSERT INTO ${P}published_checks VALUES(?,123,?,'success',9007199254740993,20)`).run(phase,'d'.repeat(40));
+  db.prepare(`INSERT INTO ${P}reconciliation_progress VALUES(?,2,99)`).run(phase);
+  db.prepare(`INSERT INTO ${P}refresh_requests VALUES(?, ?,9007199254740993,'manual',3,0,'fixed-history')`).run(phase,'attempt-'+phase);
+ }
+ db.prepare(`INSERT INTO ${P}deliveries VALUES('delivery','body','confirmed',20)`).run();
+ return db;
+}
+function denyCase(name,mutate,re){run(name,()=>{const db=seeded();try{const plan=prepare(db);mutate(db);const before=snapshot(db);assert.throws(()=>apply(db,plan,options),re);assert.equal(snapshot(db),before);assert.equal(db.isTransaction,false);return {unchanged:true};}finally{db.close();}});}
+run('default-off-before-database-read',()=>{for(const flags of [{},{execute:true},{syntheticFixture:true},{execute:1,syntheticFixture:true},{execute:true,syntheticFixture:1}])assert.equal(apply(null,null,flags).status,'disabled');return {cases:5,database_reads:0};});
+run('all-historical-data-and-typed-rowids-preserved',()=>{const db=seeded();try{const plan=prepare(db);assert.equal(plan.source_ref,'77e2cab77597318859f874d9319c47f15da0e1dd');assert.equal(plan.statements.length,31);assert.equal(plan.new_tables.length,7);
+ const pre=plan.data;const result=apply(db,plan,options);assert.equal(result.status,'upgraded_synthetic_only');assert.equal(result.ddl_statements,31);assert.deepEqual(result.data,pre);
+ const stmt=db.prepare(`SELECT revision FROM ${P}state`);stmt.setReadBigInts(true);assert.equal(stmt.get().revision,9007199254740993n);
+ assert.deepEqual(db.prepare(`SELECT DISTINCT send_until FROM ${P}publication_attempts`).all().map(r=>r.send_until),[0]);
+ assert.deepEqual(db.prepare(`SELECT phase FROM ${P}publication_attempts ORDER BY phase`).all().map(r=>r.phase),['confirmed','manual','reconcile','resolved']);
+ assert.equal(db.prepare(`SELECT hex(login) AS bytes FROM ${P}sessions WHERE token_hash='session'`).get().bytes,'80');
+ for(const table of plan.new_tables)assert.equal(db.prepare(`SELECT count(*) AS n FROM ${q(table)}`).get().n,0);
+ const snapshotAfter=snapshot(db);assert.equal(apply(db,plan,options).status,'already_applied');assert.equal(snapshot(db),snapshotAfter);
+ const targetPlan=prepare(db);assert.equal(targetPlan.status,'already_target');assert.equal(apply(db,targetPlan,options).status,'already_target');assert.equal(snapshot(db),snapshotAfter);
+ return {ddl:31,new_tables:7,tables:Object.keys(pre).length,source_rev:'9007199254740993',repeat:'already_applied',target_plan:'already_target'};
+ }finally{db.close();}});
+denyCase('stale-plan-mutable-original-row',db=>db.prepare(`UPDATE ${P}sessions SET expires=expires+1 WHERE token_hash='real-session'`).run(),/prepared_plan_changed/);
+denyCase('raw-invalid-UTF8-change-is-detected',db=>db.exec(`UPDATE ${P}sessions SET login=CAST(X'81' AS TEXT) WHERE token_hash='session'`),/prepared_plan_changed/);
+denyCase('stale-plan-high-int64-change-is-detected',db=>db.exec(`UPDATE ${P}sessions SET expires=9007199254740994 WHERE token_hash='session'`),/prepared_plan_changed/);
+denyCase('stale-rowid-is-detected',db=>db.exec(`UPDATE ${P}sessions SET rowid=9007199254740994 WHERE token_hash='session'`),/prepared_plan_changed/);
+denyCase('extra-schema-sqliteXfoo-is-not-hidden',db=>db.exec('CREATE TABLE sqliteXfoo(x)'),/unknown_schema_manual_mapping_required/);
+denyCase('temporary-table-rejects',db=>db.exec('CREATE TEMP TABLE shadow(x)'),/attached_or_temporary_schema_requires_review/);
+denyCase('temporary-shadow-rejects',db=>db.exec(`CREATE TEMP TABLE ${P}state(id,revision)`),/attached_or_temporary_schema_requires_review/);
+denyCase('attached-database-rejects',db=>db.exec("ATTACH DATABASE ':memory:' AS synthetic_extra"),/attached_or_temporary_schema_requires_review/);
+denyCase('existing-lease-rejects',db=>db.exec(`UPDATE ${P}outbox SET lease='synthetic-existing-lease',lease_until=1 WHERE target_key='confirmed'`),/source_not_quiescent/);
+denyCase('existing-marker-rejects',db=>db.exec(`INSERT INTO ${P}_guards VALUES('existing',1)`),/source_not_quiescent/);
+for(const phase of ['issued','unknown'])denyCase('existing-'+phase+'-rejects',db=>db.prepare(`UPDATE ${P}publication_attempts SET phase=? WHERE id='attempt-confirmed'`).run(phase),/source_not_quiescent/);
+run('caller-transaction-not-committed-or-rolled-back',()=>{const db=seeded();try{const plan=prepare(db);db.exec('BEGIN IMMEDIATE');db.exec(`UPDATE ${P}sessions SET expires=55 WHERE token_hash='real-session'`);assert.throws(()=>apply(db,plan,options),/caller_transaction_must_remain_untouched/);assert.equal(db.isTransaction,true);assert.equal(db.prepare(`SELECT expires FROM ${P}sessions WHERE token_hash='real-session'`).get().expires,55);db.exec('ROLLBACK');return {caller_transaction_preserved:true};}finally{db.close();}});
+run('every-DDL-failure-rolls-back-complete-schema-and-data',()=>{let cases=0;for(let failAt=1;failAt<=31;failAt++){const db=seeded();try{const plan=prepare(db),before=snapshot(db),exec=db.exec.bind(db);let ddl=0;db.exec=sql=>{if(/^(?:ALTER TABLE|CREATE TABLE|CREATE TRIGGER)\b/.test(sql.trim())){ddl++;if(ddl===failAt)throw Error('synthetic-ddl-failure-'+failAt);}return exec(sql);};
+ assert.throws(()=>apply(db,plan,options),new RegExp('synthetic-ddl-failure-'+failAt));assert.equal(snapshot(db),before);assert.equal(db.isTransaction,false);cases++;}finally{db.close();}}
+ return {cases,fully_rolled_back:true};});
+run('late-COMMIT-failure-rolls-back',()=>{const db=seeded();try{const plan=prepare(db),before=snapshot(db),exec=db.exec.bind(db);db.exec=sql=>{if(sql==='COMMIT')throw Error('synthetic-before-commit-failure');return exec(sql);};assert.throws(()=>apply(db,plan,options),/synthetic-before-commit-failure/);assert.equal(snapshot(db),before);assert.equal(db.isTransaction,false);return {fully_rolled_back:true};}finally{db.close();}});
+run('uncertain-commit-recognized-only-readonly',()=>{const db=seeded();try{const plan=prepare(db),exec=db.exec.bind(db);db.exec=sql=>{const result=exec(sql);if(sql==='COMMIT')throw Error('synthetic-commit-return-lost');return result;};assert.throws(()=>apply(db,plan,options),/synthetic-commit-return-lost/);assert.equal(db.isTransaction,false);db.exec=exec;const after=snapshot(db);assert.equal(apply(db,plan,options).status,'already_applied');assert.equal(snapshot(db),after);return {uncertain_commit_retry:'already_applied',read_only:true};}finally{db.close();}});
+run('partial-target-schema-is-rejected',()=>{const db=seeded();try{const plan=prepare(db);db.exec(plan.statements[0]);const before=snapshot(db);assert.throws(()=>apply(db,plan,options),/unknown_schema_manual_mapping_required/);assert.equal(snapshot(db),before);return {repair_attempted:false};}finally{db.close();}});
+run('already-applied-retry-rejects-data-change',()=>{const db=seeded();try{const plan=prepare(db);apply(db,plan,options);db.exec(`UPDATE ${P}sessions SET expires=55 WHERE token_hash='real-session'`);const before=snapshot(db);assert.throws(()=>apply(db,plan,options),/prepared_plan_changed/);assert.equal(snapshot(db),before);return {unchanged:true};}finally{db.close();}});
+run('post-DDL-original-data-change-rolls-back',()=>{const db=seeded();try{const plan=prepare(db),before=snapshot(db),exec=db.exec.bind(db);let ddl=0;db.exec=sql=>{const r=exec(sql);if(/^(?:ALTER TABLE|CREATE TABLE|CREATE TRIGGER)\b/.test(sql.trim())&&++ddl===31)exec(`UPDATE ${P}sessions SET expires=55 WHERE token_hash='real-session'`);return r;};assert.throws(()=>apply(db,plan,options),/original_rows_changed/);assert.equal(snapshot(db),before);assert.equal(db.isTransaction,false);return {fully_rolled_back:true};}finally{db.close();}});
+run('post-DDL-new-capability-data-rolls-back',()=>{const db=seeded();try{const plan=prepare(db),before=snapshot(db),exec=db.exec.bind(db);let ddl=0;db.exec=sql=>{const r=exec(sql);if(/^(?:ALTER TABLE|CREATE TABLE|CREATE TRIGGER)\b/.test(sql.trim())&&++ddl===31)exec(`INSERT INTO ${P}head_requests VALUES('synthetic-only',1,'head','manual','',0,0,'')`);return r;};assert.throws(()=>apply(db,plan,options),/new_capability_data_must_remain_empty/);assert.equal(snapshot(db),before);assert.equal(db.isTransaction,false);return {fully_rolled_back:true};}finally{db.close();}});
+run('foreign-keys-disabled-rejects-without-write',()=>{const db=seeded();try{const plan=prepare(db);db.exec('PRAGMA foreign_keys=OFF');const before=snapshot(db);assert.throws(()=>apply(db,plan,options),/foreign_keys_must_be_enabled/);assert.equal(snapshot(db),before);assert.equal(db.isTransaction,false);return {unchanged:true};}finally{db.close();}});
+run('CLI-only-synthetic-plan',()=>{const commands=[[],['--plan'],['--execute'],['/tmp/not-opened-by-v2-review.sqlite'],['--plan','--execute']];let accepted=0,rejected=0;for(const args of commands){const p=spawnSync(process.execPath,[modulePath,...args],{encoding:'utf8',timeout:10000});assert.equal(p.signal,null);if(args.length===0||args.length===1&&args[0]==='--plan'){assert.equal(p.status,0);const plan=JSON.parse(p.stdout);assert.equal(plan.execution_enabled,false);assert.equal(plan.production_authorized,false);assert.equal(plan.activation_performed,false);assert.equal(plan.statements.length,31);accepted++;}else{assert.equal(p.status,1);assert.match(p.stderr,/no file target or execution option/);rejected++;}}assert.equal(fs.existsSync('/tmp/not-opened-by-v2-review.sqlite'),false);return {accepted,rejected,file_target_created:false};});
+assert.deepEqual(fs.readFileSync(modulePath),startingSource,'source changed while running independent probe');
+const report={module_sha256:sha(fs.readFileSync(modulePath)),source_ref:'77e2cab77597318859f874d9319c47f15da0e1dd',target_ref:'dc2431f725798bd78c40a3b07e0a8054690fe82c',node:process.version,results,pass:results.filter(r=>r.status==='pass').length,fail:results.filter(r=>r.status==='FAIL').length,http:0,worker_fetch:0,publication:0,production:0};
+fs.writeFileSync('/tmp/cla-v2-upgrade-independent-probe.json',JSON.stringify(report,null,2)+'\n');
+console.log(JSON.stringify(report,null,2));if(report.fail)process.exitCode=1;

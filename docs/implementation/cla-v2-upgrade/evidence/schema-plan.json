@@ -1,0 +1,133 @@
+{
+  "protocol": "cla-offline-v2-upgrade-v1",
+  "status": "prepared",
+  "source_ref": "77e2cab77597318859f874d9319c47f15da0e1dd",
+  "target_ref": "dc2431f725798bd78c40a3b07e0a8054690fe82c",
+  "offline_only": true,
+  "execution_enabled": false,
+  "production_authorized": false,
+  "activation_performed": false,
+  "schema_sha256": "ceedd9896a080884cb490b03dbbf9f1ae1cfc76d9bec3b39b2eef6cc3a2c5cf5",
+  "data": {
+    "cla_native_v2__guards": {
+      "rows": 0,
+      "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+    },
+    "cla_native_v2_agreement_documents": {
+      "rows": 0,
+      "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+    },
+    "cla_native_v2_agreements": {
+      "rows": 0,
+      "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+    },
+    "cla_native_v2_audit": {
+      "rows": 0,
+      "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+    },
+    "cla_native_v2_authority": {
+      "rows": 0,
+      "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+    },
+    "cla_native_v2_deliveries": {
+      "rows": 0,
+      "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+    },
+    "cla_native_v2_eligibility_blocks": {
+      "rows": 0,
+      "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+    },
+    "cla_native_v2_intents": {
+      "rows": 0,
+      "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+    },
+    "cla_native_v2_oauth_states": {
+      "rows": 0,
+      "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+    },
+    "cla_native_v2_outbox": {
+      "rows": 0,
+      "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+    },
+    "cla_native_v2_packets": {
+      "rows": 0,
+      "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+    },
+    "cla_native_v2_publication_attempts": {
+      "rows": 0,
+      "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+    },
+    "cla_native_v2_published_checks": {
+      "rows": 0,
+      "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+    },
+    "cla_native_v2_reconciliation_progress": {
+      "rows": 0,
+      "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+    },
+    "cla_native_v2_refresh_requests": {
+      "rows": 0,
+      "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+    },
+    "cla_native_v2_sessions": {
+      "rows": 0,
+      "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+    },
+    "cla_native_v2_signatures": {
+      "rows": 0,
+      "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+    },
+    "cla_native_v2_state": {
+      "rows": 1,
+      "sha256": "528893a122e1559f95a03d36ca96c2f440ec6c998c5da6c72d65b34f49daf351"
+    },
+    "cla_native_v2_targets": {
+      "rows": 0,
+      "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+    }
+  },
+  "target_schema_sha256": "3c3cfc06f9372e5da4500afdf8a253ce661a23e2291ae4188833a5c52dd3fea2",
+  "fresh_target_schema_sha256": "261e8102e02e6da7ae865b4c010287770c5a3efaa58b24af3ab8ac76f7121782",
+  "statements": [
+    "ALTER TABLE cla_native_v2_publication_attempts ADD COLUMN send_until INTEGER NOT NULL DEFAULT 0 CHECK(send_until>=0)",
+    "CREATE TABLE cla_native_v2_agreement_activations (\n generation INTEGER PRIMARY KEY CHECK(generation>0),hash TEXT NOT NULL UNIQUE,previous_hash TEXT NOT NULL,\n activation_revision INTEGER NOT NULL CHECK(activation_revision>0),repository_id INTEGER NOT NULL CHECK(repository_id>0),\n holder_id INTEGER NOT NULL CHECK(holder_id>0),reference_sha TEXT NOT NULL,policy_json TEXT NOT NULL,\n individual_version TEXT NOT NULL,individual_digest TEXT NOT NULL REFERENCES cla_native_v2_agreement_documents(digest),\n corporate_version TEXT NOT NULL,corporate_digest TEXT NOT NULL REFERENCES cla_native_v2_agreement_documents(digest),\n observation_json TEXT NOT NULL,body TEXT NOT NULL,created INTEGER NOT NULL CHECK(created>=0)\n)",
+    "CREATE TABLE cla_native_v2_delegated_controls (\n grant_id TEXT NOT NULL REFERENCES cla_native_v2_delegated_grants(id),sequence INTEGER NOT NULL CHECK(sequence BETWEEN 1 AND 100),\n body TEXT NOT NULL,signature TEXT NOT NULL,hash TEXT NOT NULL UNIQUE,\n action TEXT NOT NULL CHECK(action IN ('enable','suspend','revoke')),issued_at INTEGER NOT NULL,\n PRIMARY KEY(grant_id,sequence)\n)",
+    "CREATE TABLE cla_native_v2_delegated_grants (id TEXT PRIMARY KEY,body TEXT NOT NULL,signature TEXT NOT NULL,hash TEXT NOT NULL UNIQUE,public_key TEXT NOT NULL)",
+    "CREATE TABLE cla_native_v2_delegated_receipts (\n packet TEXT NOT NULL REFERENCES cla_native_v2_packets(id),grant_id TEXT NOT NULL REFERENCES cla_native_v2_delegated_grants(id),control_hash TEXT NOT NULL REFERENCES cla_native_v2_delegated_controls(hash),\n contributor_hash TEXT NOT NULL,cipher TEXT NOT NULL,hash TEXT NOT NULL,created INTEGER NOT NULL,expires INTEGER NOT NULL,\n PRIMARY KEY(packet,grant_id,control_hash)\n)",
+    "CREATE TABLE cla_native_v2_head_deliveries (id TEXT PRIMARY KEY,body_hash TEXT NOT NULL,request_key TEXT NOT NULL REFERENCES cla_native_v2_head_requests(request_key),created INTEGER NOT NULL)",
+    "CREATE TABLE cla_native_v2_head_requests (\n request_key TEXT PRIMARY KEY,pr INTEGER NOT NULL CHECK(pr>0),head TEXT NOT NULL,\n status TEXT NOT NULL CHECK(status IN ('pending','running','done','dispatched','manual')),attempt TEXT NOT NULL,\n lease_until INTEGER NOT NULL,created INTEGER NOT NULL,result TEXT NOT NULL\n)",
+    "CREATE TABLE cla_native_v2_slot_policy (\n id INTEGER PRIMARY KEY CHECK(id=1),protocol TEXT NOT NULL CHECK(protocol='cla-confirmation-slot-v1'),\n first_attempt TEXT NOT NULL REFERENCES cla_native_v2_publication_attempts(id),\n active_attempt TEXT REFERENCES cla_native_v2_publication_attempts(id),created INTEGER NOT NULL\n)",
+    "CREATE TRIGGER cla_native_v2_activation_order BEFORE INSERT ON cla_native_v2_agreement_activations BEGIN\n SELECT CASE WHEN NEW.generation!=coalesce((SELECT max(generation) FROM cla_native_v2_agreement_activations),0)+1\n OR NEW.previous_hash!=coalesce((SELECT hash FROM cla_native_v2_agreement_activations ORDER BY generation DESC LIMIT 1),printf('%064d',0))\n OR NEW.activation_revision!=(SELECT revision FROM cla_native_v2_state WHERE id=1)\n THEN RAISE(ABORT,'cla_native_v2_activation_order') END;\nEND",
+    "CREATE TRIGGER cla_native_v2_activations_delete BEFORE DELETE ON cla_native_v2_agreement_activations BEGIN SELECT RAISE(ABORT,'immutable'); END",
+    "CREATE TRIGGER cla_native_v2_activations_update BEFORE UPDATE ON cla_native_v2_agreement_activations BEGIN SELECT RAISE(ABORT,'immutable'); END",
+    "CREATE TRIGGER cla_native_v2_delegated_control_order BEFORE INSERT ON cla_native_v2_delegated_controls BEGIN\n SELECT CASE WHEN NEW.sequence!=coalesce((SELECT max(sequence) FROM cla_native_v2_delegated_controls WHERE grant_id=NEW.grant_id),0)+1\n OR EXISTS(SELECT 1 FROM cla_native_v2_delegated_controls WHERE grant_id=NEW.grant_id AND action='revoke')\n THEN RAISE(ABORT,'control_order') END;\nEND",
+    "CREATE TRIGGER cla_native_v2_delegated_controls_delete BEFORE DELETE ON cla_native_v2_delegated_controls BEGIN SELECT RAISE(ABORT,'immutable'); END",
+    "CREATE TRIGGER cla_native_v2_delegated_controls_update BEFORE UPDATE ON cla_native_v2_delegated_controls BEGIN SELECT RAISE(ABORT,'immutable'); END",
+    "CREATE TRIGGER cla_native_v2_delegated_grants_delete BEFORE DELETE ON cla_native_v2_delegated_grants BEGIN SELECT RAISE(ABORT,'immutable'); END",
+    "CREATE TRIGGER cla_native_v2_delegated_grants_update BEFORE UPDATE ON cla_native_v2_delegated_grants BEGIN SELECT RAISE(ABORT,'immutable'); END",
+    "CREATE TRIGGER cla_native_v2_delegated_receipts_delete BEFORE DELETE ON cla_native_v2_delegated_receipts BEGIN SELECT RAISE(ABORT,'immutable'); END",
+    "CREATE TRIGGER cla_native_v2_delegated_receipts_update BEFORE UPDATE ON cla_native_v2_delegated_receipts BEGIN SELECT RAISE(ABORT,'immutable'); END",
+    "CREATE TRIGGER cla_native_v2_head_deliveries_delete BEFORE DELETE ON cla_native_v2_head_deliveries BEGIN SELECT RAISE(ABORT,'immutable'); END",
+    "CREATE TRIGGER cla_native_v2_head_deliveries_update BEFORE UPDATE ON cla_native_v2_head_deliveries BEGIN SELECT RAISE(ABORT,'immutable'); END",
+    "CREATE TRIGGER cla_native_v2_head_request_identity BEFORE UPDATE ON cla_native_v2_head_requests WHEN NEW.request_key!=OLD.request_key OR NEW.pr!=OLD.pr OR NEW.head!=OLD.head OR NEW.created!=OLD.created\n BEGIN SELECT RAISE(ABORT,'immutable_identity'); END",
+    "CREATE TRIGGER cla_native_v2_head_revision AFTER UPDATE OF revision ON cla_native_v2_state BEGIN\n UPDATE cla_native_v2_head_requests SET status='pending',attempt='',lease_until=0,result='' WHERE status IN ('done','running');\nEND",
+    "CREATE TRIGGER cla_native_v2_outbox_slot_delete BEFORE DELETE ON cla_native_v2_outbox WHEN EXISTS(\n SELECT 1 FROM cla_native_v2_publication_attempts p WHERE p.target_key=OLD.target_key AND p.id=(SELECT active_attempt FROM cla_native_v2_slot_policy WHERE id=1))\n BEGIN SELECT RAISE(ABORT,'slot_recovery_required'); END",
+    "CREATE TRIGGER cla_native_v2_publication_slot_delete BEFORE DELETE ON cla_native_v2_publication_attempts WHEN\n OLD.id=(SELECT active_attempt FROM cla_native_v2_slot_policy WHERE id=1) OR\n CASE WHEN json_valid(OLD.observation) THEN json_extract(OLD.observation,'$.protocol') END='cla-negative-release-v1'\n BEGIN SELECT RAISE(ABORT,'slot_history_protected'); END",
+    "CREATE TRIGGER cla_native_v2_publication_slot_enroll AFTER INSERT ON cla_native_v2_publication_attempts\n WHEN EXISTS(SELECT 1 FROM cla_native_v2__guards WHERE id='confirmation-slot:'||NEW.id AND ok=1) BEGIN\n INSERT INTO cla_native_v2_slot_policy SELECT 1,'cla-confirmation-slot-v1',NEW.id,NEW.id,CAST(strftime('%s','now') AS INTEGER)\n WHERE NOT EXISTS(SELECT 1 FROM cla_native_v2_slot_policy);\n UPDATE cla_native_v2_slot_policy SET active_attempt=NEW.id WHERE id=1 AND active_attempt IS NULL;\n SELECT CASE WHEN (SELECT active_attempt FROM cla_native_v2_slot_policy WHERE id=1) IS NOT NEW.id THEN RAISE(ABORT,'slot_enrollment_failed') END;\n DELETE FROM cla_native_v2__guards WHERE id='confirmation-slot:'||NEW.id;\nEND",
+    "CREATE TRIGGER cla_native_v2_publication_slot_insert BEFORE INSERT ON cla_native_v2_publication_attempts BEGIN\n -- REPLACE may skip DELETE triggers. Fence it before any implicit delete.\n SELECT CASE WHEN EXISTS(SELECT 1 FROM cla_native_v2_publication_attempts p WHERE p.id=NEW.id AND (\n   p.id=(SELECT active_attempt FROM cla_native_v2_slot_policy WHERE id=1) OR\n   CASE WHEN json_valid(p.observation) THEN json_extract(p.observation,'$.protocol') END='cla-negative-release-v1'\n   OR EXISTS(SELECT 1 FROM cla_native_v2__guards WHERE id='confirmation-slot:'||NEW.id)))\n OR EXISTS(SELECT 1 FROM cla_native_v2_publication_attempts p WHERE p.id=(SELECT active_attempt FROM cla_native_v2_slot_policy WHERE id=1)\n  AND p.target_key=NEW.target_key AND (p.head_sha=NEW.head_sha OR p.phase IN ('issued','unknown')))\n OR CASE WHEN json_valid(NEW.observation) THEN json_extract(NEW.observation,'$.protocol') END='cla-negative-release-v1'\n THEN RAISE(ABORT,'slot_history_protected') END;\n SELECT CASE WHEN NEW.conclusion='success' AND NOT EXISTS(SELECT 1 FROM cla_native_v2__guards WHERE id='confirmation-slot:'||NEW.id AND ok=1)\n  AND EXISTS(SELECT 1 FROM cla_native_v2_slot_policy) THEN RAISE(ABORT,'slot_required') END;\n SELECT CASE WHEN EXISTS(SELECT 1 FROM cla_native_v2__guards WHERE id='confirmation-slot:'||NEW.id) AND coalesce((\n  NEW.conclusion='success' AND NEW.phase='issued' AND NEW.send_until>CAST(strftime('%s','now') AS INTEGER)\n  AND NOT EXISTS(SELECT 1 FROM cla_native_v2_slot_policy WHERE active_attempt IS NOT NULL)\n  AND NOT EXISTS(SELECT 1 FROM cla_native_v2_publication_attempts WHERE conclusion='success' AND phase!='resolved')\n ),0)!=1 THEN RAISE(ABORT,'slot_capacity_unavailable') END;\nEND",
+    "CREATE TRIGGER cla_native_v2_publication_slot_release AFTER UPDATE ON cla_native_v2_publication_attempts\n WHEN OLD.id=(SELECT active_attempt FROM cla_native_v2_slot_policy WHERE id=1) AND NEW.phase='resolved' BEGIN\n UPDATE cla_native_v2_slot_policy SET active_attempt=NULL WHERE id=1 AND active_attempt=NEW.id;\nEND",
+    "CREATE TRIGGER cla_native_v2_publication_slot_update BEFORE UPDATE ON cla_native_v2_publication_attempts BEGIN\n SELECT CASE WHEN (OLD.id=(SELECT active_attempt FROM cla_native_v2_slot_policy WHERE id=1) OR\n  CASE WHEN json_valid(OLD.observation) THEN json_extract(OLD.observation,'$.protocol') END='cla-negative-release-v1') AND\n  (NEW.id IS NOT OLD.id OR NEW.target_key IS NOT OLD.target_key OR NEW.head_sha IS NOT OLD.head_sha OR NEW.revision IS NOT OLD.revision\n   OR NEW.expires IS NOT OLD.expires OR NEW.conclusion IS NOT OLD.conclusion OR NEW.proof_text IS NOT OLD.proof_text OR NEW.created IS NOT OLD.created\n   OR (OLD.run_id IS NOT NULL AND NEW.run_id IS NOT OLD.run_id)) THEN RAISE(ABORT,'slot_identity_immutable') END;\n SELECT CASE WHEN CASE WHEN json_valid(OLD.observation) THEN json_extract(OLD.observation,'$.protocol') END='cla-negative-release-v1'\n  AND NEW.observation IS NOT OLD.observation THEN RAISE(ABORT,'slot_release_immutable') END;\n SELECT CASE WHEN OLD.id=(SELECT active_attempt FROM cla_native_v2_slot_policy WHERE id=1) AND NEW.send_until IS NOT OLD.send_until\n  AND NOT(OLD.phase='issued' AND NEW.phase IN ('unknown','reconcile') AND NEW.send_until=0)\n THEN RAISE(ABORT,'slot_send_fence_protected') END;\n SELECT CASE WHEN OLD.id=(SELECT active_attempt FROM cla_native_v2_slot_policy WHERE id=1) AND NEW.phase='resolved' AND coalesce((\n  OLD.send_until<=CAST(strftime('%s','now') AS INTEGER) AND CASE WHEN json_valid(NEW.observation) THEN\n   json_extract(NEW.observation,'$.protocol')='cla-negative-release-v1'\n   AND json_extract(NEW.observation,'$.attempt')=OLD.id AND json_extract(NEW.observation,'$.target_key')=OLD.target_key\n   AND json_extract(NEW.observation,'$.head')=OLD.head_sha AND json_extract(NEW.observation,'$.original_revision')=OLD.revision\n   AND json_extract(NEW.observation,'$.proof_text')=OLD.proof_text AND json_extract(NEW.observation,'$.expires')=OLD.expires\n   AND json_extract(NEW.observation,'$.old_run_id') IS OLD.run_id AND json_extract(NEW.observation,'$.observed_phase')=OLD.phase\n   AND json_extract(NEW.observation,'$.run_id')=NEW.run_id AND NEW.run_id>0\n   AND json_extract(NEW.observation,'$.source') IN ('observed_get','withdrawal_get')\n   AND json_extract(NEW.observation,'$.observed_at')<=CAST(strftime('%s','now') AS INTEGER)\n   AND json_extract(NEW.observation,'$.valid_until')>CAST(strftime('%s','now') AS INTEGER)\n   AND json_extract(NEW.observation,'$.recovery_revision')=(SELECT revision FROM cla_native_v2_state WHERE id=1)\n   AND EXISTS(SELECT 1 FROM cla_native_v2_outbox o WHERE o.target_key=OLD.target_key AND o.lease=json_extract(NEW.observation,'$.lease')\n    AND o.generation=json_extract(NEW.observation,'$.generation') AND o.lease_until>CAST(strftime('%s','now') AS INTEGER)) END\n ),0)!=1 THEN RAISE(ABORT,'fresh_negative_release_required') END;\nEND",
+    "CREATE TRIGGER cla_native_v2_slot_policy_delete BEFORE DELETE ON cla_native_v2_slot_policy BEGIN SELECT RAISE(ABORT,'slot_policy_immutable'); END",
+    "CREATE TRIGGER cla_native_v2_slot_policy_insert BEFORE INSERT ON cla_native_v2_slot_policy BEGIN\n SELECT CASE WHEN EXISTS(SELECT 1 FROM cla_native_v2_slot_policy) OR coalesce((NEW.active_attempt=NEW.first_attempt\n  AND EXISTS(SELECT 1 FROM cla_native_v2_publication_attempts p JOIN cla_native_v2__guards g ON g.id='confirmation-slot:'||p.id AND g.ok=1\n   WHERE p.id=NEW.active_attempt AND p.phase='issued' AND p.conclusion='success' AND p.send_until>CAST(strftime('%s','now') AS INTEGER))),0)!=1\n THEN RAISE(ABORT,'slot_policy_enrollment_required') END;\nEND",
+    "CREATE TRIGGER cla_native_v2_slot_policy_update BEFORE UPDATE ON cla_native_v2_slot_policy BEGIN\n SELECT CASE WHEN NEW.id IS NOT OLD.id OR NEW.protocol IS NOT OLD.protocol OR NEW.first_attempt IS NOT OLD.first_attempt\n  OR NEW.created IS NOT OLD.created THEN RAISE(ABORT,'slot_policy_immutable') END;\n SELECT CASE WHEN coalesce((\n  (OLD.active_attempt IS NULL AND NEW.active_attempt IS NOT NULL AND EXISTS(\n   SELECT 1 FROM cla_native_v2_publication_attempts p JOIN cla_native_v2__guards g ON g.id='confirmation-slot:'||p.id AND g.ok=1\n    WHERE p.id=NEW.active_attempt AND p.phase='issued' AND p.conclusion='success' AND p.send_until>CAST(strftime('%s','now') AS INTEGER)))\n  OR (OLD.active_attempt IS NOT NULL AND NEW.active_attempt IS NULL AND EXISTS(\n   SELECT 1 FROM cla_native_v2_publication_attempts p JOIN cla_native_v2_outbox o ON o.target_key=p.target_key WHERE p.id=OLD.active_attempt AND p.phase='resolved'\n    AND CASE WHEN json_valid(p.observation) THEN json_extract(p.observation,'$.protocol') END='cla-negative-release-v1'\n    AND json_extract(p.observation,'$.attempt')=p.id AND json_extract(p.observation,'$.run_id')=p.run_id\n    AND json_extract(p.observation,'$.recovery_revision')=(SELECT revision FROM cla_native_v2_state WHERE id=1)\n    AND json_extract(p.observation,'$.observed_at')<=CAST(strftime('%s','now') AS INTEGER)\n    AND json_extract(p.observation,'$.valid_until')>CAST(strftime('%s','now') AS INTEGER)\n    AND o.lease=json_extract(p.observation,'$.lease') AND o.generation=json_extract(p.observation,'$.generation')\n    AND o.lease_until>CAST(strftime('%s','now') AS INTEGER)))\n ),0)!=1 THEN RAISE(ABORT,'slot_transition_rejected') END;\nEND"
+  ],
+  "new_tables": [
+    "cla_native_v2_agreement_activations",
+    "cla_native_v2_delegated_controls",
+    "cla_native_v2_delegated_grants",
+    "cla_native_v2_delegated_receipts",
+    "cla_native_v2_head_deliveries",
+    "cla_native_v2_head_requests",
+    "cla_native_v2_slot_policy"
+  ]
+}

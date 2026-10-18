@@ -1,0 +1,192 @@
+{
+  "module_sha256": "480b62ea6e3bc81c4f242cd6d343e7ec1b327ce63699edda8b68c6b57bde199f",
+  "source_ref": "77e2cab77597318859f874d9319c47f15da0e1dd",
+  "target_ref": "dc2431f725798bd78c40a3b07e0a8054690fe82c",
+  "node": "v24.19.0",
+  "results": [
+    {
+      "name": "default-off-before-database-read",
+      "status": "pass",
+      "detail": {
+        "cases": 5,
+        "database_reads": 0
+      }
+    },
+    {
+      "name": "all-historical-data-and-typed-rowids-preserved",
+      "status": "pass",
+      "detail": {
+        "ddl": 31,
+        "new_tables": 7,
+        "tables": 19,
+        "source_rev": "9007199254740993",
+        "repeat": "already_applied",
+        "target_plan": "already_target"
+      }
+    },
+    {
+      "name": "stale-plan-mutable-original-row",
+      "status": "pass",
+      "detail": {
+        "unchanged": true
+      }
+    },
+    {
+      "name": "raw-invalid-UTF8-change-is-detected",
+      "status": "pass",
+      "detail": {
+        "unchanged": true
+      }
+    },
+    {
+      "name": "stale-plan-high-int64-change-is-detected",
+      "status": "pass",
+      "detail": {
+        "unchanged": true
+      }
+    },
+    {
+      "name": "stale-rowid-is-detected",
+      "status": "pass",
+      "detail": {
+        "unchanged": true
+      }
+    },
+    {
+      "name": "extra-schema-sqliteXfoo-is-not-hidden",
+      "status": "pass",
+      "detail": {
+        "unchanged": true
+      }
+    },
+    {
+      "name": "temporary-table-rejects",
+      "status": "pass",
+      "detail": {
+        "unchanged": true
+      }
+    },
+    {
+      "name": "temporary-shadow-rejects",
+      "status": "pass",
+      "detail": {
+        "unchanged": true
+      }
+    },
+    {
+      "name": "attached-database-rejects",
+      "status": "pass",
+      "detail": {
+        "unchanged": true
+      }
+    },
+    {
+      "name": "existing-lease-rejects",
+      "status": "pass",
+      "detail": {
+        "unchanged": true
+      }
+    },
+    {
+      "name": "existing-marker-rejects",
+      "status": "pass",
+      "detail": {
+        "unchanged": true
+      }
+    },
+    {
+      "name": "existing-issued-rejects",
+      "status": "pass",
+      "detail": {
+        "unchanged": true
+      }
+    },
+    {
+      "name": "existing-unknown-rejects",
+      "status": "pass",
+      "detail": {
+        "unchanged": true
+      }
+    },
+    {
+      "name": "caller-transaction-not-committed-or-rolled-back",
+      "status": "pass",
+      "detail": {
+        "caller_transaction_preserved": true
+      }
+    },
+    {
+      "name": "every-DDL-failure-rolls-back-complete-schema-and-data",
+      "status": "pass",
+      "detail": {
+        "cases": 31,
+        "fully_rolled_back": true
+      }
+    },
+    {
+      "name": "late-COMMIT-failure-rolls-back",
+      "status": "pass",
+      "detail": {
+        "fully_rolled_back": true
+      }
+    },
+    {
+      "name": "uncertain-commit-recognized-only-readonly",
+      "status": "pass",
+      "detail": {
+        "uncertain_commit_retry": "already_applied",
+        "read_only": true
+      }
+    },
+    {
+      "name": "partial-target-schema-is-rejected",
+      "status": "pass",
+      "detail": {
+        "repair_attempted": false
+      }
+    },
+    {
+      "name": "already-applied-retry-rejects-data-change",
+      "status": "pass",
+      "detail": {
+        "unchanged": true
+      }
+    },
+    {
+      "name": "post-DDL-original-data-change-rolls-back",
+      "status": "pass",
+      "detail": {
+        "fully_rolled_back": true
+      }
+    },
+    {
+      "name": "post-DDL-new-capability-data-rolls-back",
+      "status": "pass",
+      "detail": {
+        "fully_rolled_back": true
+      }
+    },
+    {
+      "name": "foreign-keys-disabled-rejects-without-write",
+      "status": "pass",
+      "detail": {
+        "unchanged": true
+      }
+    },
+    {
+      "name": "CLI-only-synthetic-plan",
+      "status": "pass",
+      "detail": {
+        "accepted": 2,
+        "rejected": 3,
+        "file_target_created": false
+      }
+    }
+  ],
+  "pass": 24,
+  "fail": 0,
+  "http": 0,
+  "worker_fetch": 0,
+  "publication": 0,
+  "production": 0
+}
