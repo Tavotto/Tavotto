@@ -592,6 +592,24 @@ class TestVerifyRender:
         fig, real = self._fig()
         assert not figcapture.savefig_verify_render(real, fig, "a.pdf", (), kwargs)
 
+    def test_unmeasurable_tight_frame_is_not_a_failed_save(self):
+        """tight 量包围盒失败由 Tavotto 另报 `frame_unavailable`（ADR 0098）；渲染本身没问题就算保存成功。"""
+        from matplotlib.artist import Artist
+
+        class Unmeasurable(Artist):
+            def draw(self, renderer):
+                pass
+
+            def get_tightbbox(self, renderer=None):
+                raise ValueError("no extent")
+
+        fig, real = self._fig()
+        fig.add_artist(Unmeasurable())
+        assert figcapture.savefig_verify_render(real, fig, "a.pdf", (), {"bbox_inches": "tight"})
+        assert not figcapture.savefig_verify_render(
+            real, fig, "a.pdf", (), {"bbox_inches": "bogus"}
+        )
+
     def test_unknown_suffix_fails(self):
         fig, real = self._fig()
         assert not figcapture.savefig_verify_render(real, fig, "a.bogus", (), {})

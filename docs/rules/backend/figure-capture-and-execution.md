@@ -234,7 +234,7 @@
   safe worker / 浏览器不真写盘，钩子对**每一次**带路径（`target` 与 `call` 非 None）的 savefig，在调用共享函数前当场
   `figcapture.savefig_verify_render`：用未打补丁的 `Figure.savefig` 把同一组参数写进 `io.BytesIO()`（格式取显式 `format=` 或后缀）。
   抛异常 = 原生下这次保存会失败 = 视为失败，与 native 同源：不进 `files`、不记该写入者的调用、不顶替——包括持有者自己的失败保存
-  （这是对旧行为的有意改变：旧行为照记）。当场验证（而不是以后再验）才拿得到「保存当时」的 Figure 状态。`target` 为 None
+  （这是对旧行为的有意改变：旧行为照记）。例外：`bbox_inches="tight"` 渲染失败时去掉 tight 再验一次，成功就算保存成功——tight 量包围盒失败是 Tavotto 另报的 `frame_unavailable`（ADR 0098 §一第 4 条），不是保存没发生。当场验证（而不是以后再验）才拿得到「保存当时」的 Figure 状态。`target` 为 None
   （缓冲区等）与 `call is None`（`paper_style.save`）不验证、沿用原行为。**代价（维护者裁决 #1141）**：safe / 浏览器里每次带路径的
   savefig 多一次 BytesIO 真渲染（恰好一次，`test_real_worker_each_savefig_renders_exactly_once` 钉着）；matplotlib 的 savefig
   自己会还原 dpi / 尺寸 / 布局（`TestVerifyRender::test_figure_state_is_unchanged`）。
