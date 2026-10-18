@@ -146,6 +146,7 @@ import builtins
 import contextlib
 import dataclasses
 import hashlib
+import importlib.util
 import inspect
 import io
 import itertools
