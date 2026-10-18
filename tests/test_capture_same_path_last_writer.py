@@ -489,3 +489,48 @@ def test_real_worker_alternating_writers_keep_all_winner_calls(tmp_path):
     calls = desc["savefig_calls"]
     assert [c["format"] for c in calls] == ["pdf", "png", "pdf"]
     assert calls[1]["dpi"] == 150
+
+
+# Codex 4305548808：失败的保存磁盘上没动，不能顶掉上一个写入者
+FAILED_SAVE = """\
+import matplotlib.pyplot as plt
+a, _ = plt.subplots(figsize=(4, 2.6))
+b, _ = plt.subplots(figsize=(5, 2.6))
+a.savefig("shape.pdf")
+try:
+    b.savefig("shape.pdf", {bad})
+except Exception:
+    pass
+"""
+BAD_SAVES = ['format="bogus"', 'backend="nonexistent"']
+
+
+class TestWouldSucceed:
+    def test_definite_failures(self, tmp_path, monkeypatch):
+        import matplotlib.backend_bases  # noqa: F401 — 判格式要它已载入
+
+        monkeypatch.chdir(tmp_path)
+        assert figcapture.savefig_would_succeed("a.pdf", {}, None)
+        assert not figcapture.savefig_would_succeed("a.pdf", {"format": "bogus"}, None)
+        assert not figcapture.savefig_would_succeed("a.pdf", {"backend": "nonexistent"}, None)
+        assert not figcapture.savefig_would_succeed("nodir/a.pdf", {}, None)
+        assert figcapture.savefig_would_succeed("a.pdf", {"backend": "module://x.y"}, None)
+
+
+@needs_worker
+@pytest.mark.parametrize("bad", BAD_SAVES)
+def test_real_worker_failed_save_does_not_displace(tmp_path, bad):
+    write(tmp_path, "bad.py", FAILED_SAVE.format(bad=bad))
+    built = desktop_build(tmp_path, "bad.py")
+    assert _width_in(built, "shape") == 4.0
+
+
+@pytest.mark.parametrize("bad", BAD_SAVES)
+def test_browser_failed_save_does_not_displace(tmp_path, bad):
+    from test_compat_capture_parity import browser_load
+
+    if WORKER_PY is None:
+        pytest.skip("找不到装有 matplotlib 的解释器")
+    out = browser_load(FAILED_SAVE.format(bad=bad), "bad.py", tmp_path / "ws")
+    assert out["ok"], out
+    assert _browser_width_in(out, "shape") == 4.0

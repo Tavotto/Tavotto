@@ -173,6 +173,8 @@ def _install_savefig_hook(mfigure) -> None:
 
     def _patched_savefig(self, fname, *args, **kwargs):
         observation = None
+        stem = ""
+        call = None
         if _CAPTURING:
             stem = figcapture.savefig_stem(fname)
             call = figcapture.savefig_call(fname, kwargs)
@@ -192,28 +194,29 @@ def _install_savefig_hook(mfigure) -> None:
                 # stem 存了盘：它从此是显式存过盘的图（来源升级为 savefig，调用照记）。只在
                 # native 发生——safe worker 与浏览器的 pyplot 兜底在脚本跑完之后才收
                 _CAPTURE_SOURCE[stem] = figcapture.SOURCE_SAVEFIG
-            if stem:
-                figcapture.note_savefig_writer(
-                    _CAPTURE_WRITERS,
-                    _CAPTURE,
-                    _CAPTURE_SOURCE,
-                    _CAPTURE_SAVEFIG,
-                    _CAPTURE_EXTRAS,
-                    stem,
-                    self,
-                    figcapture.savefig_target_key(fname, kwargs, getattr(self, "canvas", None)),
-                    call,
-                    kwargs.get("bbox_extra_artists"),
-                    locked=stem in _CAPTURE_LOCKED,
-                )
-            if figcapture.record_savefig_call(_CAPTURE_SAVEFIG, _CAPTURE, stem, self, call):
-                _CAPTURE_EXTRAS.setdefault(stem, []).append(kwargs.get("bbox_extra_artists"))
         try:
             result = _REAL_SAVEFIG(self, fname, *args, **kwargs)
         except BaseException:
             _SAVEFIG_OBSERVATIONS.complete(observation, "failed")
             raise
         _SAVEFIG_OBSERVATIONS.complete(observation, "saved")
+        # 写入者 / 调用记账只在这次真写盘成功之后：失败的保存磁盘上没动，不能让它顶掉别人
+        if _CAPTURING and stem:
+            figcapture.note_savefig_writer(
+                _CAPTURE_WRITERS,
+                _CAPTURE,
+                _CAPTURE_SOURCE,
+                _CAPTURE_SAVEFIG,
+                _CAPTURE_EXTRAS,
+                stem,
+                self,
+                figcapture.savefig_target_key(fname, kwargs, getattr(self, "canvas", None)),
+                call,
+                kwargs.get("bbox_extra_artists"),
+                locked=stem in _CAPTURE_LOCKED,
+            )
+            if figcapture.record_savefig_call(_CAPTURE_SAVEFIG, _CAPTURE, stem, self, call):
+                _CAPTURE_EXTRAS.setdefault(stem, []).append(kwargs.get("bbox_extra_artists"))
         return result
 
     mfigure.Figure.savefig = _patched_savefig

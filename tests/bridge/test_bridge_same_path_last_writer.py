@@ -77,3 +77,32 @@ def test_native_alternating_writers_keep_all_winner_calls(tmp_path, bridge_sessi
         sess.wait_event("barrier")
         sess.resume()
         sess.wait_event("exit")
+
+
+FAILED_SAVE = """\
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+a, _ = plt.subplots(figsize=(4, 2.6))
+b, _ = plt.subplots(figsize=(5, 2.6))
+a.savefig("shape.pdf")
+try:
+    b.savefig("shape.pdf", {bad})
+except Exception:
+    pass
+plt.show()
+"""
+
+
+@pytest.mark.parametrize("bad", ['format="bogus"', 'backend="nonexistent"'])
+def test_native_failed_save_does_not_displace(tmp_path, bridge_session, bad):
+    proj = tmp_path / "proj"
+    write(proj / "bad.py", FAILED_SAVE.format(bad=bad))
+    with bridge_session(proj / "bad.py", cwd=str(proj)) as sess:
+        sess.wait_event("barrier")
+        (desc,) = [d for d in sess.ensure_built()["descriptors"] if d["stem"] == "shape"]
+        assert round(desc["size_mm"][0] / 25.4, 2) == 4.0
+        sess.resume()
+        sess.wait_event("barrier")
+        sess.resume()
+        sess.wait_event("exit")

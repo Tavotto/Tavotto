@@ -248,6 +248,10 @@ desktop worker（`LiveFigureSession.note_savefig` 转调）、浏览器 playgrou
   照常记这一次——结果 `["pdf","png","pdf"]`，各格式取景参数是自己那次的。胜者历史里有过 `call is None` 就重建成 None（整份
   「不知道」）。writers 表每个 stem 的值是 `{"files": {目标文件键: 弱引用}, "log": [...]}`，重置 / 退役处整份清。
 * 同一张图存多次仍是一张图（调用照记）；不同 stem 互不影响；三个写入者取第三个；写回原来那张又取回。
+* **失败的保存不顶替、不记账**（Codex 4305548808）：一次磁盘上没动的 savefig 不能让别的图成为被捕获的图。native 的写入者 /
+  调用记账在 `_REAL_SAVEFIG` **成功返回之后**才做（失败只记 observation = failed）；safe worker 与浏览器不真写盘，拿不到
+  成败，由 `figcapture.savefig_would_succeed`（目标目录不存在、格式不被 matplotlib 认、`backend=` 不是已知名字也不是
+  `module://…` = 确定失败；认不清按成功算）判定，三条入口同一份判据。首次认领（`add_figure` / `setdefault`）不受此限，保持原行为。
 * **pyplot 认领永远不被顶掉**，兜底也永远不顶显式 savefig；`call is None`（`paper_style.save` 没观察到参数）不知道路径，
   不顶替。
 * **已进入编辑（`states`）或已记失败（`failures`）的 stem 不再换图**（`locked`）：override / 清单 / 预览都挂在那张图上。
