@@ -254,7 +254,8 @@ BooleanOptional 仅在有长名反向选项时提供三态，短名只有「用�
   （不许并进「仅版面」，卡上写着「需试运行」时下一步是跑一下）；`capability` 缺席时有 `script` 算可编辑、没有就不归组（不补
   `layout_only`）；运行时图有描述符算可编辑、没有算待连接。「待连接」一档只在有这类图或正选着它时出现；它是一眼可见的取值，
   不进可移除的筛选标签；用不了的文件（`UnsupportedAssets`）只在「全部」下列出。胶囊的显示规则：有图、或有用不了的文件、或正选着非「全部」时都出，三者皆无才不出——正选着非默认值时绝不藏控件，否则最后一张图消失会把用户困在「没有匹配的图」里（Codex #1027）。胶囊标签是专用短键（`assets.editabilityEditable/Layout/Pending/All`），不复用 `statusLabel` 的长句：它要放进 280px 最窄抽屉（扣内边距 256px），英文四档「All / Editable / Pending / Layout」由 e2e 在最窄抽屉里量过不溢出（Codex #1027 r4267757501）。看护 `AssetBrowser.editability.test.tsx`、`e2e/asset-library.spec.ts`（功能 `assets.editability-filter`）；
-  刷新失败是图区里的一条 danger `Notice`，挂在「图」区头下面、**不在可折叠的网格里**（首次读不出的 `EmptyState` 同此）——
+  刷新失败是图区里的一条 danger `Notice`（一行中性提示：「无法刷新」+ 一句原因，长原因进「详情」；包 `NoticeReveal`，长出来时下面的网格顺着滑下去而不是瞬间跳），
+  挂在「图」区头下面、**不在可折叠的网格里**（首次读不出的 `EmptyState` 同此）——
   图区收着时 `/api/panels` 失败不弹提示（`load()` 吞错返回 null），藏进 `hidden` 就是静默失败（Codex #832，`AssetBrowser.refresh.test.tsx`）。刷新中那行「正在刷新…」（`data-asset-refreshing`）**暂留**：`e2e/tutorial.spec.ts`
   拿它挤动卡片来量 coachmark 的同步重测（Codex #731），换掉那根杠杆之前不删（审计「刷新只留旋转图标」那一条待办）。
 - **脚本区**：组头 28px `type-section` + `type-meta` 计数；运行中 = 一颗静止的 accent 点 + 状态句的 `text-shimmer`（不转圈）；

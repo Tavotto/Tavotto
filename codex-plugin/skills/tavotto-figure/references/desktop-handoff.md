@@ -22,6 +22,14 @@ python3 scripts/handoff.py <脚本路径>
 * `"parameterizable": true` —— 成了，交接完成。
 * `"parameterizable": false` —— **没成，要修**。多半是脚本没和产物放在同一个目录
   （契约 1），或产物名静态解不出（契约 3）。改完重跑重新交接，不要把它当噪音略过。
+* **`ok` / 退出码 0 不代表图画出来了。** 另读三个顶层字段（加性，退出码不变）：
+  `launch_success`（唤起成功）、`render_success`（界面对这张图的那次渲染：`true` 成功 /
+  `false` **明确失败** / `null` 不知道，**null 不是失败**）、`verified_success`（只有 `true`
+  才算确认渲染的就是这张图）。`render_success: false` 时 `render.code` 是稳定码——
+  `engine_files_incomplete` = Tavotto 自己的引擎文件缺了（装坏了，让用户重装 / 升级，
+  **不要**教他 `pip install` 任何包）；`missing_dependency` = 脚本缺第三方包。`null` 时
+  别说「已渲染」，也别说「渲染失败」，如实说「窗口已打开，还没能确认图画出来」。
+  `render.reason: "cli_without_render_signal"` = 他的 Tavotto 版本老，给不出这个信息；`"not_renderable"` = 这张图没有脚本，界面不会渲染它（同时会是 `not_parameterizable`）。
 * `"error_code": "tavotto_missing"` —— 用户机器上没有 Tavotto。按输出里的 `hint`
   引导安装；图已经画好了，脚本和产物都在原处，装完再执行同一条命令即可。
 * `"error_code": "desktop_found_cli_missing"` —— **他装了桌面版，只是版本旧**

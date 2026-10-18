@@ -121,6 +121,7 @@
     "send": "Send ({{key}})",
     "sendAria": "Send",
     "sendFailed": "Couldn’t send",
+    "sendFailedReason": "Assistant service error",
     "stepRan": "Ran",
     "targetAria": "Target: {{target}}",
     "taskHistory": "Task history",

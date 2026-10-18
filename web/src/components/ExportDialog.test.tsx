@@ -9,7 +9,7 @@
  * 4. **PPI 只在位图输出时出现**；文件名非法时就地报错并挡住导出。
  */
 import { act } from 'react'
-import { initI18n, literal } from '@/i18n'
+import { i18n, initI18n, literal } from '@/i18n'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -2114,6 +2114,53 @@ describe('visible export recovery', () => {
     expect(useDocumentStore.getState().doc).toBe(doc)
   })
 
+  it('启动失败有具体原因（源文件已变）：这一句就是正文，通用标题不顶替它；技术细节在详情', async () => {
+    for (const [lng, reason, generic] of [['en-US', 'The source file changed. Your edits are preserved.', 'The export didn’t finish'], ['zh-CN', '源文件已变化，已保留你的修改。', '导出没有完成']] as const) {
+      initI18n(lng)
+      await setup(9)
+      globalThis.fetch = vi.fn(async () => response({ error: 'Source changed', code: 'artifact_source_unavailable', params: { reason: 'source_changed' } }, 409)) as typeof fetch
+      await act(async () => { await runExport(input()) })
+      const notice = document.querySelector('[data-export-start-error]')!
+      expect(notice.textContent).toContain(reason)
+      expect(notice.textContent).not.toContain(generic)
+      expect(notice.querySelector('[data-notice-detail-toggle]')).not.toBeNull()
+      resetExportState()
+    }
+  })
+
+  it('启动失败只有「HTTP 500」：标题是一句人话，状态码折进详情；状态区同时只有一条失败条', async () => {
+    initI18n('en-US')
+    await setup(9)
+    globalThis.fetch = vi.fn(async () => response({}, 500)) as typeof fetch
+    await act(async () => { await runExport(input()) })
+    const notice = document.querySelector('[data-export-start-error]')!
+    expect(notice.textContent).toContain('The export didn’t finish')
+    expect(notice.textContent).not.toContain('HTTP 500')
+    await act(async () => { (notice.querySelector('[data-notice-detail-toggle]') as HTMLButtonElement).click() })
+    expect(notice.querySelector('[data-notice-detail]')?.textContent).toContain('HTTP 500')
+    expect(document.querySelectorAll('[data-export-failure]')).toHaveLength(1)
+  })
+
+  it('失败条的先后与详情展开不依赖译文：先状态失败、再取消失败，切换界面语言后仍是取消那条', async () => {
+    initI18n('en-US')
+    await setup(9)
+    globalThis.fetch = vi.fn(async () => response(runningJob)) as typeof fetch
+    await act(async () => { await runExport(input()) })
+    globalThis.fetch = vi.fn(async () => { throw new TypeError('Failed to fetch') }) as typeof fetch
+    await act(async () => { await refreshExportStatus() })
+    expect(document.querySelector('[data-export-poll-error]')).not.toBeNull()
+    // 取消失败带一段较长的原文 → 有「详情」可展开
+    globalThis.fetch = vi.fn(async () => { throw new TypeError(`Failed to fetch ${'upstream '.repeat(15)}`) }) as typeof fetch
+    await act(async () => { await cancelCurrentExport() })
+    expect(document.querySelectorAll('[data-export-failure]')).toHaveLength(1)
+    expect(document.querySelector('[data-export-cancel-error]')).not.toBeNull()
+    await act(async () => { await i18n.changeLanguage('zh-CN') })
+    // 签名只认稳定的失败身份：换语言后所有译文都变了，也不会按固定键序重新盖戳把旧的状态失败顶上来
+    expect(document.querySelector('[data-export-poll-error]')).toBeNull()
+    expect(document.querySelector('[data-export-cancel-error]')).not.toBeNull()
+    expect(document.querySelectorAll('[data-export-failure]')).toHaveLength(1)
+  })
+
   it('shows cancel and status failures, keeps dialog/job on dismissal, and retries status', async () => {
     initI18n('en-US')
     await setup(9)
@@ -2121,13 +2168,18 @@ describe('visible export recovery', () => {
     await act(async () => { await runExport(input()) })
     globalThis.fetch = vi.fn(async () => { throw new TypeError('Failed to fetch') }) as typeof fetch
     await act(async () => { await cancelCurrentExport(); await refreshExportStatus() })
-    expect(document.querySelector('[data-export-cancel-error]')?.textContent).toContain('not confirmed')
+    // 失败条同时最多一条：取消失败先出现、状态失败后出现 → 后来的替换前一条（不堆叠）
+    expect(document.querySelectorAll('[data-export-failure]')).toHaveLength(1)
+    expect(document.querySelector('[data-export-cancel-error]')).toBeNull()
     expect(document.querySelector('[data-export-poll-error]')?.textContent).toContain('job may still finish')
-    expect(document.querySelector('[data-export-poll-error]')?.textContent).toContain('Check the connection')
+    // 原文较长：折在「详情」里，展开才见
+    expect(document.querySelector('[data-export-poll-error]')?.textContent).not.toContain('Check the connection')
+    await act(async () => { (document.querySelector('[data-export-poll-error] [data-notice-detail-toggle]') as HTMLButtonElement).click() })
+    expect(document.querySelector('[data-export-poll-error] [data-notice-detail]')?.textContent).toContain('Check the connection')
     await act(async () => { useUiStore.getState().setExportOpen(false) })
     expect(useExportStore.getState().ownedJobId).toBe('feedback-job')
     await act(async () => { useUiStore.getState().setExportOpen(true) })
-    expect(document.querySelector('[data-export-cancel-error]')).toBeTruthy()
+    expect(document.querySelector('[data-export-poll-error]')).toBeTruthy()
     globalThis.fetch = vi.fn(async () => response({ ...runningJob, status: 'done' })) as typeof fetch
     await act(async () => { (document.querySelector('[data-export-status-retry]') as HTMLButtonElement).click() })
     expect(document.querySelector('[data-export-poll-error]')).toBeNull()

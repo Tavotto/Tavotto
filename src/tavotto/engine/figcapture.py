@@ -1310,6 +1310,29 @@ def savefig_stem(fname) -> str:
     return os.path.splitext(os.path.basename(os.fsdecode(fname)))[0]
 
 
+#: 「先写临时文件再改名」的临时后缀（#1124）
+TEMP_SAVE_SUFFIXES = (".tmp", ".temp", ".part")
+
+
+def temp_save_target(fname) -> tuple[str, str] | None:
+    """`savefig("final.png.tmp")` 这种「先写临时文件、再改名成产物」的名字 → `(最终文件名, 最终 stem)`，
+    即 `("final.png", "final")`；不是这种形状回 None。
+
+    **只是形状判断，不是事实**：脚本可能根本没改名、而磁盘上躺着一份旧的 `final.png`。拿它改 stem 之前，
+    调用方必须确认这次执行真的把这个临时文件改名成了那个最终文件、内容就是这次写的（#1124，
+    Codex #1126 P1）——否则会把这张图关联到一份它没产出的原件上，编辑写回就覆盖了别人的文件。
+    """
+    if not savefig_targets_path(fname):
+        return None
+    root, ext = os.path.splitext(os.path.basename(os.fsdecode(fname)))
+    if ext.lower() not in TEMP_SAVE_SUFFIXES:
+        return None
+    inner, inner_ext = os.path.splitext(root)
+    if not inner or inner_ext.lower() not in ARTIFACT_EXTS:
+        return None
+    return root, inner
+
+
 def savefig_effective_names(fname, kwargs: dict, canvas=None) -> list:
     """`savefig(fname, **kwargs)` 真正会写（被拦截时就是没写）的文件名，供 `BlockedFileOps` 记账（P01a）。
 
@@ -1513,7 +1536,7 @@ def savefig_target_key(fname, kwargs: dict, canvas=None) -> str | None:
             # `ß` 当 `ss`（Codex #1141 r4305745044）；更细的文件系统排序规则 / Unicode 归一化见细则「已知未覆盖」与 #1150
             base = base.lower()
         return os.path.join(directory, base)
-    except (OSError, ValueError, TypeError):
+    except Exception:  # noqa: BLE001 —— 簿记尽力而为：认不出路径就不参与顶替，绝不改变用户 savefig 的结果
         return None
 
 

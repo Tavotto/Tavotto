@@ -95,6 +95,8 @@ export default defineConfig({
       // inspector-overflow：英文标签更长，撑破的多半是它——两种语言各量一遍
       testMatch: [
         'a11y.spec.ts',
+        // 说明条 + 不推挤（UI 2.0 PR10）：构建不一致芯片不位移、刷新失败 Notice 顺着滑出；英文文案更长，两种语言各量
+        'notice-no-push.spec.ts',
         'error-recovery-en.spec.ts',
         // 树与列表精修（UI 2.0 PR7）：英文标签更长（截断 / 字宽锁最容易出事），选择器全是稳定 data-*，两种语言各量一遍
         'tree-list-refine.spec.ts',

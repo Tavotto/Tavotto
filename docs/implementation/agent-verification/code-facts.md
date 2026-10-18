@@ -11,6 +11,8 @@
 | `scripts/perf_report.py` | schema `tavotto-perf-probe/1`。CLI `reports... [--html] [--json]`，无条件 `return 0`。`--json` 是裸列表，没有 schema / status。schema 不符时以 `SystemExit(str)` 退 1；✅ 文件不存在时抛未捕获 `FileNotFoundError` |
 | PR #1000（已合入） | 探针报告加 `actions` 字段，记录符号和预设插入的同步分段与双 rAF 代理（明确不等于上屏延迟），`perf_report --json` 输出 `actions[].*_p95_ms` |
 | PR #1001（Draft） | `scripts/perf_macos_window.py compare` 只输出 `diagnostic_only` 或 `incomparable`，绝无 pass。OS 版本或架构不同、样本少于 5 个时拒绝对照。只能在 macOS 真窗口运行 |
+| `scripts/perf_agent.py` | schema `tavotto-perf-agent/1`。`run` 经 `pnpm exec playwright test --config playwright.perf.config.ts` 起真实后端 + 浏览器；`--summary` 摘要的顶层 `status` ∈ ok / incomplete / failed / pending / regression / incomparable，`suites.symbol_ui` / `suites.canvas_drag`，`regression_status` 无基线时为 `not_checked_without_baseline`。退出码 0 / 2（失败、不完整）/ 3（回归或不可比）。依赖 pnpm、`web/node_modules`、前端构建（`src/tavotto/web` 优先于 `web/dist`）、Playwright 浏览器。✅ 本机（10-16，worktree 补装依赖后）`run --browser chromium --repeat 16` 约 42 s、`status=ok` |
+| `scripts/perf_macos_window.py` | `record` 采 Tavotto 进程家族 CPU/RSS 与全局 WindowServer CPU，要真实运行的 macOS 窗口并人工拖动；`compare` 只出 `diagnostic_only` / `incomparable`。离线部分由 `tests/test_perf_macos_window.py` 覆盖 |
 | `scripts/perf_manifest_report.py` | schema `tavotto-perf-manifest/1`。`recorded` 退 0，`incomplete` 或坏文件退 2。`comparison_verdict` 恒为 `not_checked_without_pinned_same_machine_baseline`。只输出数字和场景序号 |
 | `scripts/bench_render.py` | 自己拉起后端，走真实 HTTP。每轮用全新数据目录。原始 `--json` 含项目路径和文件名 |
 | ✅ `bench_render.py` 在新 worktree 里 | 没有字体（`src/tavotto/resources/fonts` 不进 git）时，`/api/export` 返回 HTTP 500，脚本 rc=1，输出 traceback。设置 `TAVOTTO_FONTS_DIR` 后 6.5 秒跑完三张示例图，三个面板全部 9/9 recorded |

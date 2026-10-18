@@ -173,25 +173,33 @@ describe('Card', () => {
 })
 
 describe('Notice / StatusPill', () => {
-  it.each(['neutral', 'info', 'ok', 'warn', 'danger'] as const)('Notice tone=%s：data-notice 落在根上，字走 -content（neutral 是 ink-2）', async (tone) => {
+  it.each(['neutral', 'info', 'ok', 'warn', 'danger'] as const)('Notice tone=%s：data-notice 落在根上，8 圆角、中性底、无彩框，role 不随改版变', async (tone) => {
     await render(<Notice tone={tone} title={T} action={<Button data-n-action>{T}</Button>}>{T}</Notice>)
     const n = q(`[data-notice="${tone}"]`)!
     expect(n).not.toBeNull()
     expect(n.className).toMatch(/\brounded-md\b/)
-    expect(n.className).toContain(tone === 'neutral' ? 'text-ink-2' : `text-${tone}-content`)
     expect(n.querySelector('[data-n-action]')).not.toBeNull()
     expect(n.getAttribute('role')).toBe(tone === 'danger' ? 'alert' : null)
   })
 
-  it('StatusPill：20px 胶囊、500、锚点派生；dot 是 aria-hidden 的锚点色圆点', async () => {
-    await render(<StatusPill tone="ok" dot>{T}</StatusPill>)
-    const p = q('[data-status-pill="ok"]')!
+  it('StatusPill：20px 胶囊、500、中性底、文字 ink；语义色只在 6px 圆点（aria-hidden）上', async () => {
+    await render(
+      <>
+        <StatusPill tone="ok" data-sp="ok">{T}</StatusPill>
+        <StatusPill data-sp="n">{T}</StatusPill>
+      </>,
+    )
+    const p = q('[data-sp="ok"]')!
     expect(p.className).toMatch(/\bh-5\b/)
     expect(p.className).toMatch(/\brounded-full\b/)
     expect(p.className).toMatch(/\bfont-medium\b/)
-    expect(p.className).toContain('text-ok-content')
+    expect(p.className).toContain('bg-surface-hover')
+    expect(p.className).toContain('text-ink')
+    expect(p.className).not.toMatch(/(?:ok|warn|danger|info)-(?:surface|content|border)/)
     const dot = p.querySelector('[aria-hidden]')!
     expect(dot.className).toContain('bg-ok')
+    // 中性（版本号 / 选区这类数据）不画点
+    expect(q('[data-sp="n"] [aria-hidden]')).toBeNull()
   })
 })
 

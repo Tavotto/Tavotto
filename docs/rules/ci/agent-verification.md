@@ -41,6 +41,26 @@ python scripts/ci/agent_verify.py run <场景ID>... --python .venv/bin/python [-
 - **不更新基线**：性能场景透传 `comparison_verdict`，基线状态是 `not_checked`。
   将来接入同机基线时，机器指纹不同只出 `incomparable`。
 
+## 已登记的性能场景（perf_agent / perf_macos_window）
+
+| 场景 | 类型 | passed 证明什么 | 缺环境时 |
+| --- | --- | --- | --- |
+| `perf.agent.symbol_ui` | measurement | chromium 里五个符号 / 预设交互都有完整样本（摘要 `status=ok`）；**不是性能达标，不含拖动，不比基线** | `environment_unavailable`（node / pnpm / `web/node_modules` / 前端构建 / Playwright 浏览器 / 字体 / flask / matplotlib 任一缺） |
+| `perf.agent.selftest` | selftest | `tests/test_perf_agent.py` 全绿且无 skip | `python_module:pytest` 缺则 `environment_unavailable` |
+| `perf.macos_window.selftest` | selftest，`semantics=diagnostic_only` | 离线解析 / 归因边界 / 脱敏契约全绿；**没有任何真窗口取样** | 同上 |
+
+- `perf_agent` 的结论以 `summary.json` 的 `status` 为准（parser `perf_agent`），退出码只作一致性旁证：
+  `ok`→`passed`（还要摘要自洽：`symbol_ui=ok`、`canvas_drag=not_requested`、五个场景样本数等于期望、
+  `regression_status` 仍是 `not_checked*`，否则 `error`）；`incomplete` / `failed` / `regression`→`failed`；
+  `incomparable` / `no_baseline`→`not_run`（没得到裁决）；`pending`、未知状态、摘要缺失或损坏→`error`。
+  `ok` 却退出码非 0 也是 `error`。入口**不**传 `--baseline` / `--include-drag`，基线状态原样透传、绝不更新。
+- `semantics` 是场景上的附加标注，**不是**结果状态：结果闭集不变。`diagnostic_only` 表示被登记的验证器
+  自己只出诊断（`perf_macos_window compare` 只出 `diagnostic_only` / `incomparable`，永无 pass）。
+- `perf_macos_window record / compare` 需要真实运行的 macOS Tavotto 窗口并人工拖动窗口，Agent 无法无人值守
+  执行，**不登记**；真窗口取证写在场景 `unverified` 里。
+- `perf.agent.symbol_ui` 会在 `web/` 下写 Playwright 产物目录（`web/test-results-perf-agent-playwright/`，已 gitignore），
+  耗时约一分钟量级（本机实测 42 s）。
+
 ## 看护
 
 `tests/test_agent_verify.py`：
@@ -50,4 +70,6 @@ python scripts/ci/agent_verify.py run <场景ID>... --python .venv/bin/python [-
 - 调用方环境不泄漏、隔离变量到位；
 - 未登记 ID 和非空 `--out` 是用法错误；
 - 报告不含绝对路径；
-- 登记的脚本、用例、文档都真实存在。
+- 登记的脚本、用例、文档都真实存在；
+- `perf_agent` 判定的每个状态映射（含退出码 0 但 status 非 ok、ok 但自相矛盾、摘要缺失 / 损坏）；
+  场景 ID 与 `perf_agent.ALLOWED_SCENARIOS` 同源；真实测量场景缺环境判 `environment_unavailable` 且不启动子进程。

@@ -35,7 +35,7 @@
     "openAria": "Edit {{name}}",
     "openFigure": "Edit",
     "refresh": "Refresh project",
-    "refreshFailed": "Refresh failed. {{error}}",
+    "refreshFailed": "Couldn’t refresh",
     "refreshTip": "Check the project for new files and script changes",
     "refreshing": "Checking for new files…",
     "removeFilter": "Remove filter: {{label}}",
@@ -620,7 +620,7 @@
     "group_runtimeNames": "Outputs unknown until run",
     "linkedCount_one": "{{count}} linked figure",
     "linkedCount_other": "{{count}} linked figures",
-    "loadFailed": "Couldn’t load the script list. {{error}}",
+    "loadFailed": "Couldn’t load the script list",
     "loading": "Loading script list…",
     "noMatch": "No scripts match",
     "notRunNote": "This script hasn’t run yet",
@@ -917,7 +917,7 @@
   },
   "update": {
     "banner": "Tavotto has been updated. Reload to use the new version.",
-    "later": "Later"
+    "chip": "Reload needed"
   },
   "hints": {
     "panel_editable": "Double-click to edit inside the figure.",
