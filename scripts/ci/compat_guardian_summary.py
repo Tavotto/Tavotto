@@ -24,7 +24,7 @@ PROTECTED = ("tests/compat", "tests/fixtures", "tests/support")
 
 
 def load_report(path: Path) -> dict:
-    """Structural validation only: schema + internal consistency.
+    """Structural validation only: schema + internal consistency + per-row proof invariants.
 
     Evidence files and the checkout the report was produced on are not available
     to an aggregator, so claims about *this* checkout stay with `validate`.
@@ -37,6 +37,15 @@ def load_report(path: Path) -> dict:
         raise cg.EvidenceError(f"{path}: aggregate verdict does not follow from its cases")
     if report["coverage"] != cg.coverage_table(report["cases"]):
         raise cg.EvidenceError(f"{path}: coverage table does not follow from its cases")
+    for row in report["cases"]:
+        expectation = row.get("expectation") or {}
+        try:
+            cg.check_row_proof(row, expectation.get("result") == "mismatch")
+        except (cg.EvidenceError, KeyError, TypeError) as exc:
+            # A row its own facts cannot support must not be counted in any rate.
+            raise cg.EvidenceError(
+                f"{path}: case {row.get('id')} fails its proof invariants: {exc}"
+            ) from exc
     return report
 
 

@@ -418,10 +418,15 @@ def explore(args) -> int:
         raise cg.EvidenceError("expected SHA is not actual HEAD")
     parents = XT.default_parents()
     if args.parent:
-        wanted = set(args.parent.split(","))
-        parents = [p for p in parents if p.case in wanted]
-        if not parents:
-            raise cg.EvidenceError("no parent matches --parent")
+        requested = args.parent.split(",")
+        known = {p.case for p in parents}
+        bad = sorted({r for r in requested if r not in known})
+        if bad or len(requested) != len(set(requested)):
+            raise cg.EvidenceError(
+                "--parent must be distinct, non-empty parent ids; "
+                + (f"unknown: {bad}" if bad else "duplicate entry")
+            )
+        parents = [p for p in parents if p.case in set(requested)]
     generated = XT.generate(args.seed, parents)
     run_id = uuid.uuid4().hex
     out = Path(args.out).resolve() / run_id

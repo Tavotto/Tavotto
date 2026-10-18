@@ -21,6 +21,16 @@ class SummaryAndPromote(GuardianBase):
         path.write_text(json.dumps(report or self.report), encoding="utf-8")
         return path
 
+    @staticmethod
+    def rebind_env(row: dict, facts: dict) -> None:
+        """Keep a row internally consistent after changing its environment facts."""
+        env = {"facts": facts, "fingerprint": cg.canonical(facts)}
+        row["environment_before"] = copy.deepcopy(env)
+        row["environment_after"] = copy.deepcopy(env)
+        for records in row["raw"]["launch_environments"].values():
+            for record in records:
+                record.update(copy.deepcopy(env))
+
     def variant(self, **top) -> dict:
         report = copy.deepcopy(self.report)
         report.update(top)
@@ -46,9 +56,7 @@ class SummaryAndPromote(GuardianBase):
 
     def test_different_environment_is_incomparable(self):
         other = self.variant()
-        env = other["cases"][0]["environment_before"]
-        env["facts"] = {"other": True}
-        env["fingerprint"] = cg.canonical(env["facts"])
+        self.rebind_env(other["cases"][0], {"other": True})
         out = sm.summarize(
             [sm.load_report(self.write("a.json")), sm.load_report(self.write("b.json", other))]
         )
@@ -77,6 +85,26 @@ class SummaryAndPromote(GuardianBase):
         with self.assertRaises(cg.EvidenceError):
             sm.load_report(self.write("lie.json", lying))
 
+    def test_a_row_its_own_facts_cannot_support_is_rejected_not_counted(self):
+        lying = self.variant()
+        row = lying["cases"][0]
+        self.assertEqual(row["status"], "passed")
+        row["executions"]["tavotto"] = 0  # a pass with no Tavotto execution proves nothing
+        with self.assertRaises(cg.EvidenceError) as caught:
+            sm.load_report(self.write("zero.json", lying))
+        self.assertIn("proof invariants", str(caught.exception))
+        forged = self.variant()
+        forged["cases"][0]["status"] = "control_met"
+        forged["cases"][0]["failure_category"] = {
+            "category": None,
+            "source_code": None,
+            "basis": "x",
+        }
+        forged["verdict"] = cg.verdict(forged["cases"])
+        forged["coverage"] = cg.coverage_table(forged["cases"])
+        with self.assertRaises(cg.EvidenceError):
+            sm.load_report(self.write("forged.json", forged))
+
     def test_unsupported_schema_field_is_rejected(self):
         extra = self.variant(surprise=True)
         with self.assertRaises(cg.EvidenceError):
@@ -84,9 +112,9 @@ class SummaryAndPromote(GuardianBase):
 
     def test_markdown_carries_no_package_inventory_and_no_raw_text(self):
         report = self.variant()
-        report["cases"][0]["environment_before"]["facts"]["distributions"] = ["secret-pkg==1.0"]
-        env = report["cases"][0]["environment_before"]
-        env["fingerprint"] = cg.canonical(env["facts"])
+        facts = copy.deepcopy(report["cases"][0]["environment_before"]["facts"])
+        facts["distributions"] = ["secret-pkg==1.0"]
+        self.rebind_env(report["cases"][0], facts)
         text = sm.render_markdown(sm.summarize([sm.load_report(self.write("a.json", report))]))
         self.assertNotIn("secret-pkg", text)
         self.assertNotIn("Traceback", text)

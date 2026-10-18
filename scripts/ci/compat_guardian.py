@@ -896,6 +896,61 @@ def schema_check(value, schema: dict, root: dict | None = None, path: str = "$")
             schema_check(child, schema.get("items", {}), root, f"{path}[{i}]")
 
 
+def check_row_proof(row: dict, mismatch: bool) -> None:
+    """Row-level proof invariants that need only the row itself (no checkout, no evidence files).
+
+    Shared by `validate_report` and by `summarize`, so an aggregator never counts a row whose
+    status the row's own facts cannot support (e.g. `passed` with a zero Tavotto execution count).
+    """
+    if row["status"] == "control_met" and row.get("expectation") is None:
+        raise EvidenceError("control_met without an expectation block")
+    category = row["failure_category"]["category"]
+    if category is not None and category not in TX.CATEGORIES:
+        raise EvidenceError("unknown failure category")
+    if (category is None) != (row["status"] in GREEN_STATUSES):
+        raise EvidenceError("failure category must be set exactly on non-green rows")
+    if row["status"] == "partial_coverage" and not any(
+        s["status"] == "not_covered" for s in row["stages"].values()
+    ):
+        raise EvidenceError("partial_coverage without a not_covered layer")
+    proof = row["status"] in PROOF_STATUSES and not mismatch
+    if proof and _native_status(row["native"]["result"]) != "passed":
+        raise EvidenceError("native reference does not support a product verdict")
+    if row["native"]["status"] != _native_status(row["native"]["result"]) and row["native"][
+        "status"
+    ] in ("passed", "invalid_fixture"):
+        raise EvidenceError("native status does not follow from native facts")
+    for key in ("native", "tavotto"):
+        count = row["executions"][key]
+        if count is not None and (type(count) is not int or count < 0):
+            raise EvidenceError("invalid execution count")
+    if proof and row["status"] != case_status(row):
+        raise EvidenceError("verdict lacks native/count/environment/stage proof")
+    if proof:
+        env = row["environment_before"]
+        if (
+            not env.get("fingerprint")
+            or env != row["environment_after"]
+            or env["fingerprint"] != canonical(env["facts"])
+        ):
+            raise EvidenceError("environment mismatch/unbound fingerprint")
+        launches = row["raw"].get("launch_environments") or {}
+        if set(launches) != {"native", "tavotto"}:
+            raise EvidenceError("missing actual child environment evidence")
+        fps = set()
+        for role, records in launches.items():
+            if not records or len(records) != row["executions"][role]:
+                raise EvidenceError("execution count does not match actual child records")
+            for item in records:
+                if item.get("fingerprint") != canonical(item.get("facts")):
+                    raise EvidenceError("child environment fingerprint mismatch")
+                fps.add(item["fingerprint"])
+        if len(fps) != 1:
+            raise EvidenceError("native and Tavotto launch environments differ")
+    if row["status"] == "failed" and not mismatch and row["native"]["status"] != "passed":
+        raise EvidenceError("native failure is not a Tavotto defect")
+
+
 def validate_report(report: dict, evidence_root: Path, expected: dict | None = None) -> None:
     schema_check(report, json.loads(SCHEMA_PATH.read_text(encoding="utf-8")))
     required = {
@@ -967,51 +1022,7 @@ def validate_report(report: dict, evidence_root: Path, expected: dict | None = N
         mismatch = resolved is not None and resolved["status"] == "failed"
         if row["status"] == "control_met" and resolved is None:
             raise EvidenceError("control_met without a committed declaration")
-        category = row["failure_category"]["category"]
-        if category is not None and category not in TX.CATEGORIES:
-            raise EvidenceError("unknown failure category")
-        if (category is None) != (row["status"] in GREEN_STATUSES):
-            raise EvidenceError("failure category must be set exactly on non-green rows")
-        if row["status"] == "partial_coverage" and not any(
-            s["status"] == "not_covered" for s in row["stages"].values()
-        ):
-            raise EvidenceError("partial_coverage without a not_covered layer")
-        proof = row["status"] in PROOF_STATUSES and not mismatch
-        if proof and _native_status(row["native"]["result"]) != "passed":
-            raise EvidenceError("native reference does not support a product verdict")
-        if row["native"]["status"] != _native_status(row["native"]["result"]) and row["native"][
-            "status"
-        ] in ("passed", "invalid_fixture"):
-            raise EvidenceError("native status does not follow from native facts")
-        for key in ("native", "tavotto"):
-            count = row["executions"][key]
-            if count is not None and (type(count) is not int or count < 0):
-                raise EvidenceError("invalid execution count")
-        if proof and row["status"] != case_status(row):
-            raise EvidenceError("verdict lacks native/count/environment/stage proof")
-        if proof:
-            env = row["environment_before"]
-            if (
-                not env.get("fingerprint")
-                or env != row["environment_after"]
-                or env["fingerprint"] != canonical(env["facts"])
-            ):
-                raise EvidenceError("environment mismatch/unbound fingerprint")
-            launches = row["raw"].get("launch_environments") or {}
-            if set(launches) != {"native", "tavotto"}:
-                raise EvidenceError("missing actual child environment evidence")
-            fps = set()
-            for role, records in launches.items():
-                if not records or len(records) != row["executions"][role]:
-                    raise EvidenceError("execution count does not match actual child records")
-                for item in records:
-                    if item.get("fingerprint") != canonical(item.get("facts")):
-                        raise EvidenceError("child environment fingerprint mismatch")
-                    fps.add(item["fingerprint"])
-            if len(fps) != 1:
-                raise EvidenceError("native and Tavotto launch environments differ")
-        if row["status"] == "failed" and not mismatch and row["native"]["status"] != "passed":
-            raise EvidenceError("native failure is not a Tavotto defect")
+        check_row_proof(row, mismatch)
     if report["verdict"] != verdict(rows):
         raise EvidenceError("incorrect aggregate verdict")
     if report["coverage"] != coverage_table(rows):

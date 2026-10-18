@@ -278,7 +278,7 @@ CompatBench 的 `run_group` 之外 runner 崩溃目前会被 `compat_matrix.py:m
 | entry_form | `wrap_main`（顶层改 `main()` + `__main__` 守卫） | entry | 保型 |
 | argparse_defaults | `argparse_out`（保存路径来自 argparse，默认值=原路径） | args | 保型 |
 | data_source | `inline_to_file`（第一个字面量数据列表改读相对 JSON） | data_source | 保型 |
-| style_rc | `rcparams`、`style_use` | style | 改轴 |
+| style_rc | `rcparams`、`style_use` | style | 改轴；**仅静态**：compare 只看图数/标题/路径，观察不到样式，执行只会得到假的 `no_difference`，所以含这两步的候选恒为 static_only 并在报告里点名 |
 
 保型：native 输出（图数、标题）必须等于父本——执行器同时跑父本 native 核对，不等就是 `invalid_candidate`（模板有 bug，
 不是 Tavotto 缺陷）。改轴：只能与这个变体自己的 native 比。所有改动都是 AST 编辑，结果必须能 `compile`。
