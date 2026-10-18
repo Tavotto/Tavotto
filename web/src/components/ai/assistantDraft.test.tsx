@@ -1582,6 +1582,25 @@ describe('已发出未确认：不能盲目重发', () => {
     expect(new Set(puts.map((c) => c.path)).size).toBe(1) // 两次 PUT 都落在同一个 rid 上
   })
 
+  it('账本写入结果未知的旧 rid 被别的标签页登记了，本页改了指令再发（409 ai_supersede_conflict）：旧 rid 还原成未确认并查询接回会话，新指令不发', async () => {
+    vi.mocked(aiRun).mockResolvedValue({ session: 's-1', script: 'p1.py' })
+    await mount()
+    await typeText('把线条加粗一点')
+    be.losePendingResponses(1)
+    await click(q('[data-ai-send="send"]'))
+    await settle()
+    const rid1 = be.pendings.get('pa\u0000Fig1.pdf')![0].rid
+    be.markRegistered(rid1) // 别的标签页还原了这条账本行、把它发了出去
+    vi.mocked(fetchAiRequest).mockResolvedValue({ session: 's-other', status: 'running', changed: false, script: 'p1.py' })
+    await typeText('改成虚线')
+    await click(q('[data-ai-send="send"]'))
+    await settle()
+    expect(aiRun).not.toHaveBeenCalled()
+    expect(vi.mocked(fetchAiRequest).mock.calls.some((c) => c[0] === rid1)).toBe(true)
+    expect(useAiStore.getState().sessions.map((x) => x.id)).toContain('s-other')
+    expect(q('[data-ai-send="send"]')).toBeNull()
+  })
+
   it('账本 PUT 回 5xx 同样是「不知道」：恢复后重试沿用同一个 rid；明确的 4xx 才算确定没写', async () => {
     vi.mocked(aiRun).mockResolvedValue({ session: 's-1', script: 'p1.py' })
     await mount()
