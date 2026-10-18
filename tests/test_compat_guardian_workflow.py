@@ -166,6 +166,37 @@ def test_no_secrets_and_the_token_is_confined_to_one_read_only_step():
         assert other not in step[0]
 
 
+def test_previous_trend_comes_from_the_latest_completed_run_that_has_the_artifact():
+    """The scheduled V2 step may exit 1 on purpose, so a failed run still carries a valid trend."""
+    step = [s for s in steps("trend") if "GH_TOKEN" in s][0]
+    assert "--status completed" in step and "--status success" not in step
+    assert "--event schedule" in step
+    # cancelled/skipped runs are filtered by conclusion; success and failure are both usable
+    assert '.conclusion == "success" or .conclusion == "failure"' in step
+    assert "cancelled" not in step.replace("cancelled/skipped", "")
+    # selection is by downloadable artifact, searching back a bounded number of runs
+    assert "[:5]" in step and "for prev in" in step and "break" in step
+    assert "compat-guardian-trend.json" in step and "gh run download" in step
+    assert "not_computed" in step
+
+
+def test_trend_job_is_structurally_read_only():
+    """Proves, from the workflow text's structure: the trend job's permissions are exactly
+    contents: read + actions: read, nothing in it references secrets, and every checkout drops
+    credentials. It does not prove what the downloaded artifacts contain."""
+    block = jobs()["trend"]
+    perms = re.search(r"(?m)^    permissions:\n((?:      .+\n)+)", block)
+    assert perms
+    entries = dict(
+        line.strip().split(": ", 1) for line in perms.group(1).splitlines() if line.strip()
+    )
+    assert entries == {"contents": "read", "actions": "read"}
+    assert "secrets" not in block.lower()
+    assert "id-token" not in block and "write" not in block.replace("write_", "")
+    checkout = [s for s in steps("trend") if s.startswith("uses: actions/checkout@")]
+    assert checkout and all("persist-credentials: false" in s for s in checkout)
+
+
 def test_no_failure_is_swallowed():
     assert "continue-on-error" not in code()
     for line in code().splitlines():
@@ -293,6 +324,9 @@ def test_candidate_source_is_restricted_to_reviewed_parents_by_construction():
 def test_explore_cannot_be_given_an_unvalidated_seed_limit_or_family():
     run = [s for s in steps("explore") if "Explore derived candidates" in s][0]
     assert "=~ ^[0-9]+$" in run and "=~ ^[a-z_,]*$" in run
+    # limit is a positive integer: 0 must not be accepted (select() would otherwise run everything)
+    assert '"$EXPLORE_LIMIT" =~ ^[1-9][0-9]*$' in run
+    assert '"$EXPLORE_LIMIT" =~ ^[0-9]+$' not in run
     assert run.index("=~") < run.index("compat_guardian.py explore")
 
 

@@ -63,6 +63,15 @@ def case_table(runs: list[dict]) -> dict:
                 "status": row["status"],
                 "fixture": cg.canonical(row["fixture"]["files"]),
                 "declared": (row.get("expectation") or {}).get("declared_outcome"),
+                # Digest of the declaration itself (outcome + reason + references): a changed
+                # declaration rewrites the status without the product behaving differently.
+                "declaration_sha256": cg.canonical(
+                    {
+                        k: v
+                        for k, v in (row.get("expectation") or {}).items()
+                        if k in ("declared_outcome", "reason", "references")
+                    }
+                ),
                 "stages": stages,
                 "native_status": row["native"]["status"],
                 "native_figures": row["figures"]["native"],
@@ -288,8 +297,16 @@ def compare(previous: dict | None, current: dict) -> dict:
         }
     prev_cases, cur_cases = previous["cases"], current["cases"]
     shared = sorted(set(prev_cases) & set(cur_cases))
-    fixed = [k for k in shared if prev_cases[k]["fixture"] == cur_cases[k]["fixture"]]
-    changed = [k for k in shared if k not in fixed]
+    same_fixture = [k for k in shared if prev_cases[k]["fixture"] == cur_cases[k]["fixture"]]
+    # A status that follows from a rewritten declaration is scope, not behaviour. A previous
+    # summary without the digest cannot prove the declaration is unchanged, so it is excluded too.
+    fixed = [
+        k
+        for k in same_fixture
+        if prev_cases[k].get("declaration_sha256") == cur_cases[k]["declaration_sha256"]
+    ]
+    changed = [k for k in shared if k not in same_fixture]
+    declaration_changed = [k for k in same_fixture if k not in fixed]
     added = sorted(set(cur_cases) - set(prev_cases))
     removed = sorted(set(prev_cases) - set(cur_cases))
     corpus_changed = {
@@ -345,6 +362,7 @@ def compare(previous: dict | None, current: dict) -> dict:
             "added": added,
             "removed": removed,
             "fixture_changed": changed,
+            "declaration_changed": declaration_changed,
             "removed_non_passing": hard_removed,
             "denominator": {"previous": len(prev_cases), "current": len(cur_cases)},
             "note": "scope changes are not regressions and not improvements; removing a hard case never counts as one",
@@ -470,6 +488,7 @@ def render_markdown(summary: dict) -> str:
             "",
             f"**Scope changes** (reported separately, never as regression or improvement): "
             f"added {len(scope['added'])}, removed {len(scope['removed'])}, fixtures changed {len(scope['fixture_changed'])}, "
+            f"declarations changed {len(scope['declaration_changed'])}, "
             f"denominator {scope['denominator']['previous']} -> {scope['denominator']['current']}",
         ]
         if scope["removed_non_passing"]:
@@ -477,6 +496,12 @@ def render_markdown(summary: dict) -> str:
                 "- removed cases that were not passing: "
                 + ", ".join(scope["removed_non_passing"])
                 + " (not an improvement)"
+            )
+        if scope["declaration_changed"]:
+            lines.append(
+                "- declaration changed (status follows from a rewritten expectation, not from "
+                "behaviour; not an improvement or regression): "
+                + ", ".join(scope["declaration_changed"])
             )
         if any(scope["corpus_version_changed"].values()):
             lines.append(

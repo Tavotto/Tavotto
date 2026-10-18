@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import copy
 import json
 import sys
@@ -144,6 +145,28 @@ class Trend(GuardianBase):
         kinds = [t["kind"] for t in current["comparison"]["fixed_set"]["transitions"]]
         self.assertEqual(kinds, ["improvement"])
 
+    def test_a_rewritten_declaration_is_scope_not_an_improvement(self):
+        previous = self.baseline()  # c is an undeclared failure
+        declared = self.case("c", "expected_limitation")
+        declared["expectation"] = {
+            "declared_outcome": "expected_limitation",
+            "observed_outcome": "expected_limitation",
+            "result": "control_met",
+            "reason": "now declared a known limitation",
+            "references": [{"kind": "issue", "ref": "#1"}],
+            "diff": None,
+        }
+        current = self.summary([("a",), ("b",), declared], previous)
+        comparison = current["comparison"]
+        self.assertEqual(comparison["fixed_set"]["transitions"], [])
+        self.assertEqual(comparison["fixed_set"]["size"], 2)
+        self.assertEqual(comparison["scope_changes"]["declaration_changed"], ["compat_engine/c"])
+        self.assertIn("declaration changed", tr.render_markdown(current))
+        # The same declaration on both sides is compared as usual.
+        again = self.summary([("a",), ("b",), declared], current)
+        self.assertEqual(again["comparison"]["scope_changes"]["declaration_changed"], [])
+        self.assertEqual(again["comparison"]["fixed_set"]["size"], 3)
+
     def test_different_corpus_version_is_not_compared_as_a_regression(self):
         previous = self.baseline()
         current = self.summary(
@@ -262,11 +285,56 @@ class Alerts(unittest.TestCase):
                 tg.alerts([self.cluster(key={**self.cluster()["key"], "family": family})]), []
             )
 
-    def test_annotations_are_the_only_channel_and_no_write_api_is_used(self):
-        source = (Path(cg.HERE) / "compat_triage.py").read_text(encoding="utf-8")
-        for forbidden in ("issues", "api.github", "gh ", "subprocess", "urllib", "requests"):
-            self.assertNotIn(forbidden, source)
-        self.assertIn("::warning title=", source)
+    def test_triage_is_structurally_confined_to_its_report_files_and_annotations(self):
+        """Proves, by parsing compat_triage.py with `ast` (comments and strings cannot fool it):
+        its own imports stay inside a fixed allowlist (no network, subprocess or dynamic-import
+        module), it has no `open`/`eval`/`exec`/`__import__`/`os.system`-style calls, and the only
+        file writes are `.write_text` on the `--out` temp file and the `--markdown-out` path.
+        It does NOT prove what the imported Guardian modules do, nor what the runner permits;
+        the workflow's read-only permissions are checked separately."""
+        tree = ast.parse((Path(cg.HERE) / "compat_triage.py").read_text(encoding="utf-8"))
+        allowed = {
+            "__future__",
+            "ast",
+            "hashlib",
+            "json",
+            "os",
+            "pathlib",
+            "compat_guardian",
+            "compat_guardian_taxonomy",
+        }
+        imported = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                imported |= {a.name.split(".")[0] for a in node.names}
+            elif isinstance(node, ast.ImportFrom):
+                imported.add((node.module or "").split(".")[0])
+        self.assertLessEqual(imported, allowed)
+        banned_names = {"open", "eval", "exec", "compile", "__import__"}
+        banned_os = {"system", "popen", "remove", "unlink", "rename", "makedirs", "putenv", "kill"}
+        writes = []
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            func = node.func
+            if isinstance(func, ast.Name):
+                self.assertNotIn(func.id, banned_names, ast.dump(node)[:80])
+            if isinstance(func, ast.Attribute):
+                if isinstance(func.value, ast.Name) and func.value.id == "os":
+                    self.assertNotIn(func.attr, banned_os)
+                    self.assertFalse(func.attr.startswith(("exec", "spawn")), func.attr)
+                if func.attr in ("write_text", "write_bytes", "open", "touch", "unlink"):
+                    writes.append(ast.unparse(func.value))
+        self.assertEqual(
+            sorted(writes), ["Path(args.markdown_out)", "tmp"], "unexpected file-write target"
+        )
+        # the only stdout channel for alerts is a workflow annotation, emitted by print()
+        printed = [
+            ast.unparse(n.args[0])
+            for n in ast.walk(tree)
+            if isinstance(n, ast.Call) and getattr(n.func, "id", None) == "print" and n.args
+        ]
+        self.assertTrue(any("::warning title=" in p for p in printed))
 
 
 class ExploreOptions(unittest.TestCase):
