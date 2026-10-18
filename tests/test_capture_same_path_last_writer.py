@@ -704,19 +704,15 @@ class TestFileIdentity:
         assert figcapture._dir_folds_case(gone) is True
         figcapture._CASE_FOLD_CACHE.pop(gone, None)
 
-    def test_on_disk_key_is_the_inode(self, tmp_path, monkeypatch):
+    def test_recreated_path_keeps_its_key(self, tmp_path, monkeypatch):
+        """删掉再重建同一路径：仍是同一个目标键（不按 inode，Codex #1141 r4305717514）。"""
         monkeypatch.chdir(tmp_path)
         (tmp_path / "a.pdf").write_bytes(b"x")
-        try:
-            (tmp_path / "link.pdf").hardlink_to(tmp_path / "a.pdf")
-        except OSError:
-            pytest.skip("文件系统不支持硬链接")
-        k1 = figcapture.savefig_target_key("a.pdf", {}, on_disk=True)
-        assert k1.startswith("ino:") and k1 == figcapture.savefig_target_key(
-            "link.pdf", {}, on_disk=True
-        )
-        # 文件不存在（stat 不了）回退到路径键
-        assert not figcapture.savefig_target_key("new.pdf", {}, on_disk=True).startswith("ino:")
+        k1 = figcapture.savefig_target_key("a.pdf", {})
+        (tmp_path / "a.pdf").unlink()
+        (tmp_path / "a.pdf").write_bytes(b"y")
+        assert figcapture.savefig_target_key("a.pdf", {}) == k1
+        assert figcapture.savefig_target_key("gone.pdf", {}) != k1
 
 
 @needs_worker

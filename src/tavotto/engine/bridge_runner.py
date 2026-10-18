@@ -210,9 +210,7 @@ def _install_savefig_hook(mfigure) -> None:
                 _CAPTURE_EXTRAS,
                 stem,
                 self,
-                figcapture.savefig_target_key(
-                    fname, kwargs, getattr(self, "canvas", None), on_disk=True
-                ),
+                figcapture.savefig_target_key(fname, kwargs, getattr(self, "canvas", None)),
                 call,
                 kwargs.get("bbox_extra_artists"),
                 locked=stem in _CAPTURE_LOCKED,

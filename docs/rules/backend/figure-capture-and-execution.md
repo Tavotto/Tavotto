@@ -239,8 +239,7 @@
   savefig 自己会还原 dpi / 尺寸 / 布局（`TestVerifyRender::test_figure_state_is_unchanged` 钉着）。
 * **每个 stem 一份状态** `writers[stem] = {"files": {目标文件键 -> 最近写它的 Figure 弱引用}, "by": {id(fig) -> [弱引用,
   该写入者自己的调用表, extras]}}`。**文件身份** `figcapture.savefig_target_key`：文件名经 `savefig_effective_names`（显式
-  `format=` 不改文件名）；native（保存已成功，`on_disk=True`）用 `os.stat` 的 `(st_dev, st_ino)`，硬链接 / 符号链接 / 大小写别名
-  天然同一文件；safe / 浏览器（不落盘）用「目录 `realpath` + 文件名」，文件名折叠大小写与否按**该目录所在文件系统**判
+  `format=` 不改文件名）；三条入口同一个**路径**键：`realpath`（符号链接解到目标）拆成目录 + 文件名，文件名折叠大小写与否按**该目录所在文件系统**判
   （`_dir_folds_case`：目录存在时翻转路径里最后一个有大小写的字母探测，探测不了按平台默认 darwin / win32 不区分、其余区分，
   按目录缓存；Pyodide 虚拟 FS 区分）。缓冲区 / 认不出文件名 = `None`。
 * **调用按写入者分表**，规则就是 `record_savefig_call` 的（上限、新格式第一次照记、`call is None` 整份「不知道」），与别的写入者
@@ -256,7 +255,7 @@
   还超就按先来后到淘汰非持有者（连同它名下的目标记录）。持有者永不淘汰；被淘汰者日后重新成为写入者就从新调用开始——这是有界的
   代价。每个写入者的调用表本身由 `record_savefig_call` 的 HARD 上限约束。
 * safe worker 的捕获发生在 instrument 之前，规则只在脚本执行期生效；写回重放起新 worker 重跑脚本，同一规则再走一遍。
-* 已知未覆盖：`paper_style.save` 捷径不经 savefig 钩子，不参与；Windows 上的 `st_ino` 与大小写探测只在 CI 编译，没有真机验过。
+* 已知未覆盖：`paper_style.save` 捷径不经 savefig 钩子，不参与；**硬链接别名**（两个不同路径指向同一 inode）按两个文件算——故意不用 inode 作键，删掉再重建同一路径必须仍是同一目标；Windows 上的大小写探测只在 CI 跑，没有真机验过。
 
 看护 `tests/test_capture_same_path_last_writer.py`（共享函数 + 会话规则 + 目标键 + 真 worker / 浏览器端到端）、
 `tests/bridge/test_bridge_same_path_last_writer.py`（native）。

@@ -1486,16 +1486,15 @@ def _dir_folds_case(directory: str) -> bool:
     return result
 
 
-def savefig_target_key(fname, kwargs: dict, canvas=None, on_disk: bool = False) -> str | None:
+def savefig_target_key(fname, kwargs: dict, canvas=None) -> str | None:
     """`savefig(fname)` 真正写的那个**磁盘文件**的可比较身份；写不出路径（缓冲区 / 认不出文件名）时 None。
 
     「同一路径多个写入者」（`note_savefig_writer`）的键。文件名经 `savefig_effective_names`（显式 `format=`
     不改文件名、无后缀补 canvas 缺省格式——与 matplotlib 一致），所以 `savefig("a.pdf")` 与
     `savefig("a.pdf", format="png")` 是同一个文件，`a.pdf` 与 `a.svg` 不是。
 
-    * `on_disk=True`（native：保存已成功，文件真在磁盘上）：优先用 `(st_dev, st_ino)`——硬链接、符号链接、
-      大小写别名都天然是同一个文件；`stat` 不了回退到路径键。
-    * 路径键（safe worker / 浏览器，不落盘）：目录取 `realpath`，文件名是否折叠大小写按**该目录所在文件系统**
+    * 三条入口同一个**路径**键（不用 inode：脚本删掉再重建同一路径时 inode 会变，而磁盘上那个路径留下的仍是
+      最后写入者——Codex #1141 r4305717514）：路径取 `realpath`（符号链接解到目标），文件名是否折叠大小写按**该目录所在文件系统**
       判（`_dir_folds_case`），不是一刀切的 `normcase`——macOS 默认卷上 `Plot.pdf` / `plot.pdf` 是同一个文件，
       区分大小写的卷（Linux、Windows 的区分目录）上是两个。
     """
@@ -1504,14 +1503,7 @@ def savefig_target_key(fname, kwargs: dict, canvas=None, on_disk: bool = False) 
         return None
     try:
         path = os.path.abspath(os.fsdecode(names[0]))
-        if on_disk:
-            try:
-                st = os.stat(path)
-                return f"ino:{st.st_dev}:{st.st_ino}"
-            except OSError:
-                pass
-        directory, base = os.path.split(path)
-        directory = os.path.realpath(directory)
+        directory, base = os.path.split(os.path.realpath(path))
         if _dir_folds_case(directory):
             base = base.casefold()
         return os.path.join(directory, base)

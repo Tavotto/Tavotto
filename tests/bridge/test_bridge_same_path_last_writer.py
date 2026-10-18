@@ -144,7 +144,7 @@ def test_native_failed_first_claimant_is_replaced(tmp_path, bridge_session, bad)
         sess.wait_event("exit")
 
 
-HARDLINK = """\
+RECREATE = """\
 import os
 import matplotlib
 matplotlib.use("Agg")
@@ -152,17 +152,18 @@ import matplotlib.pyplot as plt
 a, _ = plt.subplots(figsize=(4, 2.6))
 b, _ = plt.subplots(figsize=(5, 2.6))
 a.savefig("x.pdf")
-os.makedirs("sub", exist_ok=True)
-os.link("x.pdf", "sub/x.pdf")
-b.savefig("sub/x.pdf")
+keep = open("x.pdf", "rb")  # 旧 inode 仍被打开着
+os.unlink("x.pdf")
+b.savefig("x.pdf")  # 新建同一路径：inode 变了，磁盘上 x.pdf 是 b
 plt.show()
+keep.close()
 """
 
 
-def test_native_same_inode_under_different_paths_is_the_same_file(tmp_path, bridge_session):
-    """`sub/x.pdf` 是 `x.pdf` 的硬链接：写它就是改写同一个磁盘文件，路径字符串不同也要判同一文件。"""
+def test_native_recreated_path_is_still_the_same_target(tmp_path, bridge_session):
+    """A 写 x.pdf、旧 inode 仍被打开、unlink 后 B 新建 x.pdf：同一路径，捕获 B（Codex #1141 r4305717514）。"""
     proj = tmp_path / "proj"
-    write(proj / "link.py", HARDLINK)
+    write(proj / "link.py", RECREATE)
     with bridge_session(proj / "link.py", cwd=str(proj)) as sess:
         sess.wait_event("barrier")
         (desc,) = [d for d in sess.ensure_built()["descriptors"] if d["stem"] == "x"]
