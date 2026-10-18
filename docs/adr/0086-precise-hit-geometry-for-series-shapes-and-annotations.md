@@ -140,7 +140,7 @@ bbox 的这两处变化，对拖动锚点没有影响：文字的 `anchor` 由 `
 * `fill_alpha`：有填充的 geometry 才给，填充此刻画出来的不透明度。**读 `get_facecolor()` 的 alpha，
   不乘**：matplotlib 的 `set_alpha` 是替换颜色里的 alpha（实测 facecolor alpha .5 + artist alpha .8
   画出来是 .8，像素验证）。逐元素色（多色 PolyCollection、逐柱不同 alpha）取**最小值**（保守：
-  宁可认为盖不住，下面的线仍可选）；根本没有填充的成员（误差线；Patch 的 `fill=False` / `facecolor='none'`——后者 `get_facecolor()` 回的是 (r,g,b,0) 而非空数组，要先查 `get_fill()` 与 `_original_facecolor`；Collection 族的 'none' 才是空数组）不计入，填充了但 alpha=0 的成员计入（值 0，整组按最保守的报）；全部成员都没填充则不给该字段。
+  宁可认为盖不住，下面的线仍可选）；根本没有填充的成员（误差线；Patch 的 `fill=False` / `facecolor='none'`——后者 `get_facecolor()` 回的是 (r,g,b,0) 而非空数组，要先查 `get_fill()` 与 `_original_facecolor`；Collection 族的 'none' 才是空数组；已知不可区分：`bar(color=[..., 'none'])` 在 matplotlib 里已被转成 RGBA 元组、`_original_facecolor` 不再是 'none'，与真 alpha=0 无从分辨，按 0.0 保守报——下面的线仍可选）不计入，填充了但 alpha=0 的成员计入（值 0，整组按最保守的报）；全部成员都没填充则不给该字段。
 
 放在 `ElementGeometry` 上而不是元素顶层：它们只在几何参与命中时才有意义，随 geometry 同生同灭，
 盖章在所有 geometry 分支之后的一处（`pathgeom.stamp_paint`），不碰各族的出几何代码。
