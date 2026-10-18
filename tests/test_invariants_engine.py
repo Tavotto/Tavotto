@@ -1334,10 +1334,10 @@ def test_unsupported_says_what_and_why(probe):
 
     # **普查本身也要走 child_axes**。上面两条走的是「登记了却被丢掉」那条路
     # （`_drop`），碰不到 `census()` 的遍历——夹具里那个 3D 插图就是为此存在的：
-    # `plot_surface` 的 `Poly3DCollection` 是 instrument **不登记**、只有普查
+    # 3D `ax.bar` 的 `Patch3D` 是 instrument **不登记**、只有普查
     # 报得出来的那一类（CompatBench 的「Top unrecognized artists」里排第一）。
     # 少了这一条，`census()` 走不走 `_ordered_axes` 没有任何用例能证明。
-    poly3d = [r for r in probe["completeness"]["unsupported"] if "Poly3DCollection" in r["cls"]]
+    poly3d = [r for r in probe["completeness"]["unsupported"] if "Patch3D" in r["cls"]]
     assert poly3d, (
         "子 axes 里普查该报的东西没报出来——`census()` 是不是又只走 "
         f"`fig.axes` 了？{probe['completeness']['unsupported']}"
