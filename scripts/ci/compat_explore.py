@@ -523,11 +523,12 @@ def explore(args) -> int:
     print(json.dumps({"report": str(path), "run_id": run_id, "outcomes": report["outcome_counts"]}))
     if any(r["outcome"] == "difference_found" for r in rows):
         return EXIT_DIFFERENCES
-    return (
-        EXIT_CLEAN
-        if all(r["outcome"] in ("no_difference", "static_only") for r in rows)
-        else cg.EXIT_UNKNOWN
-    )
+    # clean 要求真比对过：全是 static_only（没有一次原生 / Tavotto 对照）不是「无差异」（AC-11，Codex #1135 r4306059452）
+    if all(r["outcome"] in ("no_difference", "static_only") for r in rows) and any(
+        r["outcome"] == "no_difference" for r in rows
+    ):
+        return EXIT_CLEAN
+    return cg.EXIT_UNKNOWN
 
 
 def evidence_summary(record: dict) -> dict | None:
