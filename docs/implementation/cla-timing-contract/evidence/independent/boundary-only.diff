@@ -1,0 +1,11 @@
+--- boundary-only-red/scripts/timing-plan.mjs
++++ final-green/scripts/timing-plan.mjs
+@@ -50,7 +50,7 @@
+     criticalPath=readyAfterDispatch+b.final_read_ms+b.margin_ms;
+     if(criticalPath>=remaining)reject('proof_remaining_time_insufficient');
+     const readyAfterEvent=b.dispatch_after_event_ms+readyAfterDispatch,start=input.ci.start_after_event_ms;
+-    if(readyAfterEvent<=start)worstCIFinishAfterEvent=start+b.final_read_ms;
++    if(readyAfterEvent<start)worstCIFinishAfterEvent=start+b.final_read_ms;
+     else if(!wait)reject('single_shot_ci_starts_before_confirmation');
+     else {
+       // Pending reads may finish instantly. Even the earliest final attempt must

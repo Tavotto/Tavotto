@@ -1,0 +1,97 @@
+{
+  "reviewed_head": "6e12bd49f274be9ae7e13b10d7526a7aca4dcda1",
+  "new_base": "907af3f3920a62bbc52712c1e9fcf9da371f54d5",
+  "findings": [
+    "https://github.com/Tavotto/Tavotto/pull/1163#discussion_r4306428052",
+    "https://github.com/Tavotto/Tavotto/pull/1163#discussion_r4306428055"
+  ],
+  "commands": [
+    {
+      "command": "node --test tests/*.test.mjs",
+      "exit_code": 0,
+      "log": "node.txt"
+    },
+    {
+      "command": "node tests/mutation-smoke.mjs",
+      "exit_code": 0,
+      "log": "mutations.txt"
+    },
+    {
+      "command": "python3 tests/migration.test.py",
+      "exit_code": 0,
+      "log": "migration.txt"
+    },
+    {
+      "command": "npm run typecheck",
+      "exit_code": 127,
+      "log": "typecheck.txt"
+    },
+    {
+      "command": "npm run build",
+      "exit_code": 1,
+      "log": "build.txt"
+    }
+  ],
+  "passed": 420,
+  "migration_tests": 4,
+  "detected_mutations": 92,
+  "timing_tests": 62,
+  "independent_tests": 9,
+  "independent_mutant_exits": [
+    1,
+    1,
+    1,
+    1,
+    1
+  ],
+  "source_sha256": {
+    "scripts/timing-plan.mjs": "5b1ac135d576b8998acca4c1c5bfc923bf38f60adf2bc555d2556eab9a38ff29",
+    "tests/timing-plan.test.mjs": "97a9b0a7847d93a20a56daf8b7d98e4c7f5065b2a2b39e72a76b295f0e8582f9",
+    "tests/timing-plan-fixture.mjs": "7ee57779fbfab67e0da9f75c32b76f0d946b85be2c2d0f79b6225491e3a512bf",
+    "tests/timing-plan-mutation-cases.json": "2f7003809611b1d48547c85e50a3dd9eb3d6311273caf829ce2ab4b3e68da930",
+    "planning/timing.disabled.synthetic.json": "3ffdcc8dc9de62a6fda20dfbfa1437c6b8b05b5b723a437aa01c3fe918cedc18"
+  },
+  "artifact_sha256": {
+    "phase-equality-red.txt.raw.json": "280cd354c4c655667ec51dfeb4ab64ebfe5ef5f5549111d04f734b14dfb06b28",
+    "phase-equality-red.txt": "c41708dbfa0ef1517cf528c24901945cf75515d6b9ecc2ce0be1a91bf9b90073",
+    "node.txt": "93760e191edaafaad36a2c737394dc1f1a864b0396d04420abf4195cab99fc7e",
+    "mutations.txt": "c8658db3686fe010aa63fd1f120ce73e93ca24f47346bf4adf33fea54b0a4ecf",
+    "build.txt": "f306fe0cabc3d58eed085ea9b9e311fb6bbbd610c39fe4cb741c927228bea4f6",
+    "independent-mutants.json": "f760b91b803a3eb167bf05208e1e80af3d684f0edf61aee10206988e0d69423e",
+    "migration.txt": "cda227f833652deab0291d68b6f56ada1416293b36a3d5d2d35e1d0b9b0ae41e",
+    "independent-review.md": "3140cb2f0e047a4886c742707c9b4437567155db3d2fb460e12c3213069f1956",
+    "typecheck.txt": "93eed0553081bd499f8b8cda0baee9c9c74eed7c493953de4dcad753d748bb50",
+    "phase-equality-green.txt": "491b533210a8026c84dc43a8808dd7bb759394419ec1e6a6edc7243308145dc0",
+    "mutants/timing-FIFO-nonblocking-open.txt.raw.json": "7a13bbf4fc0d56f36b104b55d338b83e3282b2cff938f35016c0deff06c79fe0",
+    "mutants/settlement-exact-cleanup-deadline.txt.raw.json": "ef8eb3710701e0ccabb41af1bdb0b9e22ab77d943a6272bb9f0e239ca3ce0b41",
+    "mutants/timing-FIFO-nonblocking-open.txt": "13e170e950affac56f2fdd922001368c45f425cef6c78a786f05544130273084",
+    "mutants/timing-dispatch-work-phase.txt": "41fd172147a7769edb21c3476689ec0903dd8509b3985e0695edfa44286eb0b5",
+    "mutants/settlement-exact-cleanup-deadline.txt": "16291894b49ae2700500f0c26188f96fef9d4c189a5e1d1998db5fab0fd74358",
+    "mutants/timing-dispatch-work-phase.txt.raw.json": "ea66bc6edbeae8901cbf22dd1bd8c7fc00737076c9751e53f7129695270edebe",
+    "mutants/withdrawal-exact-cleanup-deadline.txt": "aed9f8feac9931c068df6981a8b48f75535caa49894221d21d7e2d9eb9211809",
+    "mutants/withdrawal-exact-cleanup-deadline.txt.raw.json": "805a9d43bab3adfe47eb341e7a660c708ffe04b4869d8627b93bc88eed19f9eb",
+    "mutants/confirmation-exact-work-deadline.txt": "13a7d00723e12f6dbe7d5c542f1bdff4af2d03b61344d935c2d22f4041b4f073",
+    "initial/commands.json": "ef1f46e71be403e70405b3fbcf5dcd2e162f5d8d4f568e0293d959d8c9cceb77",
+    "initial/fifo-original-red.txt": "215f7516c57597015dcedc855afdf8d1a3d0b1a18f3c882070172090ab1443f2",
+    "initial/fifo-original-red.txt.raw.json": "5159c525a1117d72b1e9423eb01f9cf87fefc3b5f8089141b525397177bcf1c6",
+    "initial/mutation-1-baseline.txt": "6b18aa1dd4a04dc796ce311e8292d2b18b6955a9c56691a650aa2b94d8e3f42d",
+    "initial/mutation-1-red.txt.raw.json": "d7f6c7c0f8ad6ee9d8ffca9441aacf9f1ab64deaab6f1eb7c6fa719828d2d4ca",
+    "initial/mutation-2-baseline.txt": "130988ab10964bccc9d20677d9bd6a3e99764c9679f4b1a260fdae17a2a43051",
+    "initial/mutation-2-red.txt.raw.json": "16fa26a0c7f26a565600d6fb1f72b046787632adb7c3baeaa30bafd55f52127f",
+    "initial/mutation-1-red.txt": "3470ae2a127b7694de5dd510343b463164b71590e39d29a9aea648cd8ec7ea20",
+    "initial/mutation-2-red.txt": "dc00ce123cf78285bb1da62156b7d9c4c67d3579111f197e6a9d8cbc2845ce25",
+    "initial/before-manifest.json": "96ee055aeadacc2c6d44838be443480095d8037800f31ded4cdce5a1b0aa39e0",
+    "initial/dispatch-original-red.txt": "3c9e44b8cdcfabbf718778072c5dcf6799644575e8e55d0a9e668cf5c0694679",
+    "original/docs/implementation/cla-timing-contract/README.md.txt": "db47f3e41fbdd0706dbb13b0bbfd6b1e06419fffc9ac44699f22f835e60ed5ca",
+    "original/services/cla-cloudflare/tests/timing-plan-fixture.mjs.txt": "6bb0046e6123f9dbf95ed1a7ed442da7ff58d414b3bd195c416633084745caeb",
+    "original/services/cla-cloudflare/tests/timing-plan-mutation-cases.json.txt": "4044fa2ae607023ec0e83f6f44b2b98759ad7c8bf21be50117582730c435e961",
+    "original/services/cla-cloudflare/tests/timing-plan.test.mjs.txt": "cb94210c04d6f4431166f59fd5e425fc58433e8cacbce8e970c7474b4cddd89a",
+    "original/services/cla-cloudflare/scripts/timing-plan.mjs.txt": "0cfcb86f7ae32da1b5be5b005bdd9ca336228a41dea2ea3dbabc15da0cf85cbe",
+    "original/services/cla-cloudflare/planning/timing.disabled.synthetic.json.txt": "89a33ecf088a562eb4f3c581f1cda9ec22f852098cbe5eac13b684c426e0de9e"
+  },
+  "hosted_on_new_head": "pending; prior exact-head hosted success is historical",
+  "external_review": "first code/security done, two P2 fixed; normal-risk P2 fixes do not request extra external review",
+  "old_equality_red_note": "the original withdrawal fixture also overcommitted its load window; final independent isolated test and mutant prove the phase predicate alone",
+  "default_flags_changed": false,
+  "no_dynamic_success_publication_across_expiry": true
+}

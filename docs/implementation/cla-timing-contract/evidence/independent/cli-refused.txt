@@ -1,0 +1,49 @@
+{
+  "protocol": "cla-offline-timing-plan-v1",
+  "assumptions_sha256": "b401ab78970d5b46720ce4d7fecc9691d2850071d82e6f5235c364760c77fe4a",
+  "model_feasible": false,
+  "reasons": [
+    "independent_wakeup_or_backlog_bound_unknown"
+  ],
+  "ready_to_deploy": false,
+  "live_accepted": false,
+  "execution_supported": false,
+  "runtime_eligibility": false,
+  "network_operations": 0,
+  "assumptions_assurance": "caller_supplied_not_platform_verified",
+  "time_ms": {
+    "remaining_proof": 110000,
+    "ready_after_dispatch": null,
+    "critical_path_with_margin": null,
+    "worst_ci_finish_after_event": null
+  },
+  "budget": {
+    "non_exempt_contributors": 1,
+    "qualification_sql_per_person": 3,
+    "dispatch_work_sql": 16,
+    "dispatch_total_sql": 20,
+    "confirmation_work_with_withdrawal_sql": 19,
+    "recovery_window_demand_ms": 3000,
+    "limits": {
+      "heads": 1,
+      "external": 40,
+      "externalWork": 35,
+      "sql": 40,
+      "sqlWork": 20,
+      "workMs": 60000,
+      "cleanupMs": 90000,
+      "leaseMarginMs": 30000
+    }
+  },
+  "required_runtime_work": [
+    "atomic slot reservation with issued journal and revision/head/attempt guards",
+    "independent invocation wakeup after sender settlement; durable outbox remains authoritative",
+    "fresh independent observation and qualification; no replay, manual release or proof extension"
+  ],
+  "required_live_acceptance": [
+    "actual tail latency and backlog bounds",
+    "resource permissions, quotas, costs and withdrawal fairness",
+    "trusted-main CI and live platform checks"
+  ],
+  "plan_sha256": "1639502179bd01d913db81546a91d3a1c874b583fb09e133e9c78ac237299353"
+}

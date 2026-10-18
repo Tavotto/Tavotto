@@ -1,0 +1,12 @@
+{
+  "head": "6e12bd49f274be9ae7e13b10d7526a7aca4dcda1",
+  "status": "",
+  "source_sha256": {
+    "services/cla-cloudflare/scripts/timing-plan.mjs": "0cfcb86f7ae32da1b5be5b005bdd9ca336228a41dea2ea3dbabc15da0cf85cbe",
+    "services/cla-cloudflare/tests/timing-plan.test.mjs": "cb94210c04d6f4431166f59fd5e425fc58433e8cacbce8e970c7474b4cddd89a",
+    "services/cla-cloudflare/tests/timing-plan-fixture.mjs": "6bb0046e6123f9dbf95ed1a7ed442da7ff58d414b3bd195c416633084745caeb",
+    "services/cla-cloudflare/tests/timing-plan-mutation-cases.json": "4044fa2ae607023ec0e83f6f44b2b98759ad7c8bf21be50117582730c435e961",
+    "services/cla-cloudflare/planning/timing.disabled.synthetic.json": "89a33ecf088a562eb4f3c581f1cda9ec22f852098cbe5eac13b684c426e0de9e",
+    "docs/implementation/cla-timing-contract/README.md": "db47f3e41fbdd0706dbb13b0bbfd6b1e06419fffc9ac44699f22f835e60ed5ca"
+  }
+}

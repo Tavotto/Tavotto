@@ -222,3 +222,8 @@ integration can map each string to `db.prepare(sql)` and submit the entire array
 in one `db.batch(...)`, then perform the production readiness read. Do not split
 it into independently committed requests. The local adapter test exercises this
 single-batch shape without invoking Cloudflare.
+
+The [offline timing/capacity contract](../../docs/implementation/cla-timing-contract/README.md)
+adds a data-only planner for remaining proof lifetime, independent confirmation,
+CI attempts and declared recovery load. Its output never grants eligibility or
+activation; the runtime slot/wakeup adapter and live acceptance remain pending.

@@ -1,0 +1,54 @@
+✖ timing dispatch work must finish strictly before the work deadline (3.904784ms)
+✖ timing dispatch work cannot exceed aggregate send and settlement time (0.692606ms)
+ℹ tests 2
+ℹ suites 0
+ℹ pass 0
+ℹ fail 2
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 133.882801
+
+✖ failing tests:
+
+test at tests/timing-plan.test.mjs:97:1
+✖ timing dispatch work must finish strictly before the work deadline (3.904784ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+
+  true !== false
+
+      at rejected (file:///tmp/cla-timing-p2-6e12bd49/mutants/1/tests/timing-plan.test.mjs:5:69)
+      at TestContext.<anonymous> (file:///tmp/cla-timing-p2-6e12bd49/mutants/1/tests/timing-plan.test.mjs:99:67)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1382:25)
+      at Test.start (node:internal/test_runner/test:1242:17)
+      at startSubtestAfterBootstrap (node:internal/test_runner/harness:387:17) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: true,
+    expected: false,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at tests/timing-plan.test.mjs:103:1
+✖ timing dispatch work cannot exceed aggregate send and settlement time (0.692606ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+
+  true !== false
+
+      at rejected (file:///tmp/cla-timing-p2-6e12bd49/mutants/1/tests/timing-plan.test.mjs:5:69)
+      at TestContext.<anonymous> (file:///tmp/cla-timing-p2-6e12bd49/mutants/1/tests/timing-plan.test.mjs:104:56)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1382:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:960:18)
+      at Test.postRun (node:internal/test_runner/test:1522:19)
+      at Test.run (node:internal/test_runner/test:1447:12)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: true,
+    expected: false,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }

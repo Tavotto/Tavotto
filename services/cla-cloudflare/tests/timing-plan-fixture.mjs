@@ -1,0 +1,13 @@
+import {canonical} from '../src/core/crypto.ts';
+export function assumptions(){
+  // One fixed-time synthetic proof input, never published or advanced through expiry.
+  const proof={protocol:'tavotto-cla-v1',repository_id:707,head_sha:'a'.repeat(40),base_sha:'b'.repeat(40),kind:'pr',pr:9,members:[],
+    contributors:[{id:2,login:'synthetic-contributor'}],policy_sha256:'c'.repeat(64),revision:1,issued_at:1800000000,expires_at:1800000120};
+  return {protocol:'cla-offline-timing-assumptions-v1',proof_text:'tavotto-cla-v1\n'+canonical(proof),dispatch_at_ms:1800000010000,
+    authority_expires_at:1800000200,delegated:true,exemption_ids:[],
+    bounds:{dispatch_after_event_ms:0,dispatch_work_ms:1000,send_settle_ms:1000,wakeup_ms:1000,backlog_ms:0,confirmation_ms:1000,pending_read_ms:100,final_read_ms:1000,margin_ms:1000},
+    ci:{start_after_event_ms:0,wait:{enabled:true,maxAttempts:8,intervalMs:1000,timeoutMs:60000}},
+    load:{slots:1,occupied_slots:0,withdrawals_ahead:0,withdrawal_pass_ms:1000,withdrawal_reserve_ms:1000,window_ms:60000,confirmations_in_window:1,withdrawals_in_window:1},
+    sql_overhead:{dispatch_work:0,settlement:0,confirmation_work:0},
+    external:{dispatch_work:10,dispatch_total:10,confirmation_work:10,confirmation_total:15}};
+}

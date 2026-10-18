@@ -1,0 +1,306 @@
+[
+  {
+    "argv": [
+      "node",
+      "--test",
+      "tests/timing-independent.test.mjs"
+    ],
+    "cwd": "/tmp/cla-timing-independent-review-830bd89c/initial-snapshot",
+    "exit": 1,
+    "log": "independent-red-original-source.txt"
+  },
+  {
+    "argv": [
+      "node",
+      "--test",
+      "tests/timing-independent.test.mjs"
+    ],
+    "cwd": "/tmp/cla-timing-independent-review-830bd89c/snapshot",
+    "exit": 0,
+    "log": "independent-green-final-source.txt"
+  },
+  {
+    "argv": [
+      "node",
+      "--test",
+      "--test-name-pattern=fractional dispatch",
+      "tests/timing-independent.test.mjs"
+    ],
+    "cwd": "/tmp/cla-timing-independent-review-830bd89c/snapshot",
+    "exit": 0,
+    "log": "mutation-remaining-clock-baseline.txt"
+  },
+  {
+    "argv": [
+      "node",
+      "--test",
+      "--test-name-pattern=fractional dispatch",
+      "tests/timing-independent.test.mjs"
+    ],
+    "cwd": "/tmp/cla-timing-independent-review-830bd89c/mutants/remaining-clock",
+    "exit": 1,
+    "log": "mutation-remaining-clock-red.txt"
+  },
+  {
+    "argv": [
+      "node",
+      "--test",
+      "--test-name-pattern=authority ceiling",
+      "tests/timing-independent.test.mjs"
+    ],
+    "cwd": "/tmp/cla-timing-independent-review-830bd89c/snapshot",
+    "exit": 0,
+    "log": "mutation-authority-cap-baseline.txt"
+  },
+  {
+    "argv": [
+      "node",
+      "--test",
+      "--test-name-pattern=authority ceiling",
+      "tests/timing-independent.test.mjs"
+    ],
+    "cwd": "/tmp/cla-timing-independent-review-830bd89c/mutants/authority-cap",
+    "exit": 1,
+    "log": "mutation-authority-cap-red.txt"
+  },
+  {
+    "argv": [
+      "node",
+      "--test",
+      "--test-name-pattern=critical path equality",
+      "tests/timing-plan.test.mjs"
+    ],
+    "cwd": "/tmp/cla-timing-independent-review-830bd89c/snapshot",
+    "exit": 0,
+    "log": "mutation-proof-strict-expiry-baseline.txt"
+  },
+  {
+    "argv": [
+      "node",
+      "--test",
+      "--test-name-pattern=critical path equality",
+      "tests/timing-plan.test.mjs"
+    ],
+    "cwd": "/tmp/cla-timing-independent-review-830bd89c/mutants/proof-strict-expiry",
+    "exit": 1,
+    "log": "mutation-proof-strict-expiry-red.txt"
+  },
+  {
+    "argv": [
+      "node",
+      "--test",
+      "--test-name-pattern=single-shot earliest read",
+      "tests/timing-independent.test.mjs"
+    ],
+    "cwd": "/tmp/cla-timing-independent-review-830bd89c/snapshot",
+    "exit": 0,
+    "log": "mutation-first-poll-readiness-baseline.txt"
+  },
+  {
+    "argv": [
+      "node",
+      "--test",
+      "--test-name-pattern=single-shot earliest read",
+      "tests/timing-independent.test.mjs"
+    ],
+    "cwd": "/tmp/cla-timing-independent-review-830bd89c/mutants/first-poll-readiness",
+    "exit": 1,
+    "log": "mutation-first-poll-readiness-red.txt"
+  },
+  {
+    "argv": [
+      "node",
+      "--test",
+      "--test-name-pattern=readiness at the final earliest poll",
+      "tests/timing-plan.test.mjs"
+    ],
+    "cwd": "/tmp/cla-timing-independent-review-830bd89c/snapshot",
+    "exit": 0,
+    "log": "mutation-last-poll-readiness-baseline.txt"
+  },
+  {
+    "argv": [
+      "node",
+      "--test",
+      "--test-name-pattern=readiness at the final earliest poll",
+      "tests/timing-plan.test.mjs"
+    ],
+    "cwd": "/tmp/cla-timing-independent-review-830bd89c/mutants/last-poll-readiness",
+    "exit": 1,
+    "log": "mutation-last-poll-readiness-red.txt"
+  },
+  {
+    "argv": [
+      "node",
+      "--test",
+      "--test-name-pattern=latest pending schedule",
+      "tests/timing-independent.test.mjs"
+    ],
+    "cwd": "/tmp/cla-timing-independent-review-830bd89c/snapshot",
+    "exit": 0,
+    "log": "mutation-pending-duration-baseline.txt"
+  },
+  {
+    "argv": [
+      "node",
+      "--test",
+      "--test-name-pattern=latest pending schedule",
+      "tests/timing-independent.test.mjs"
+    ],
+    "cwd": "/tmp/cla-timing-independent-review-830bd89c/mutants/pending-duration",
+    "exit": 1,
+    "log": "mutation-pending-duration-red.txt"
+  },
+  {
+    "argv": [
+      "node",
+      "--test",
+      "--test-name-pattern=withdrawal ahead",
+      "tests/timing-independent.test.mjs"
+    ],
+    "cwd": "/tmp/cla-timing-independent-review-830bd89c/snapshot",
+    "exit": 0,
+    "log": "mutation-withdrawal-load-baseline.txt"
+  },
+  {
+    "argv": [
+      "node",
+      "--test",
+      "--test-name-pattern=withdrawal ahead",
+      "tests/timing-independent.test.mjs"
+    ],
+    "cwd": "/tmp/cla-timing-independent-review-830bd89c/mutants/withdrawal-load",
+    "exit": 1,
+    "log": "mutation-withdrawal-load-red.txt"
+  },
+  {
+    "argv": [
+      "node",
+      "--test",
+      "--test-name-pattern=SQL phases",
+      "tests/timing-independent.test.mjs"
+    ],
+    "cwd": "/tmp/cla-timing-independent-review-830bd89c/snapshot",
+    "exit": 0,
+    "log": "mutation-confirmation-sql-baseline.txt"
+  },
+  {
+    "argv": [
+      "node",
+      "--test",
+      "--test-name-pattern=SQL phases",
+      "tests/timing-independent.test.mjs"
+    ],
+    "cwd": "/tmp/cla-timing-independent-review-830bd89c/mutants/confirmation-sql",
+    "exit": 1,
+    "log": "mutation-confirmation-sql-red.txt"
+  },
+  {
+    "argv": [
+      "node",
+      "--test",
+      "--test-name-pattern=SQL phases",
+      "tests/timing-independent.test.mjs"
+    ],
+    "cwd": "/tmp/cla-timing-independent-review-830bd89c/snapshot",
+    "exit": 0,
+    "log": "mutation-correction-requests-baseline.txt"
+  },
+  {
+    "argv": [
+      "node",
+      "--test",
+      "--test-name-pattern=SQL phases",
+      "tests/timing-independent.test.mjs"
+    ],
+    "cwd": "/tmp/cla-timing-independent-review-830bd89c/mutants/correction-requests",
+    "exit": 1,
+    "log": "mutation-correction-requests-red.txt"
+  },
+  {
+    "argv": [
+      "node",
+      "--test",
+      "--test-name-pattern=model feasibility never grants",
+      "tests/timing-independent.test.mjs"
+    ],
+    "cwd": "/tmp/cla-timing-independent-review-830bd89c/snapshot",
+    "exit": 0,
+    "log": "mutation-runtime-acceptance-baseline.txt"
+  },
+  {
+    "argv": [
+      "node",
+      "--test",
+      "--test-name-pattern=model feasibility never grants",
+      "tests/timing-independent.test.mjs"
+    ],
+    "cwd": "/tmp/cla-timing-independent-review-830bd89c/mutants/runtime-acceptance",
+    "exit": 1,
+    "log": "mutation-runtime-acceptance-red.txt"
+  },
+  {
+    "argv": [
+      "node",
+      "--input-type=module",
+      "-e",
+      "import {assumptions} from './tests/timing-plan-fixture.mjs';process.stdout.write(JSON.stringify(assumptions()));"
+    ],
+    "cwd": "/tmp/cla-timing-independent-review-830bd89c/snapshot",
+    "exit": 0,
+    "log": "cli-fixture-generation.txt"
+  },
+  {
+    "argv": [
+      "node",
+      "--import",
+      "/tmp/cla-timing-independent-review-830bd89c/short-read.mjs",
+      "scripts/timing-plan.mjs",
+      "/tmp/cla-timing-independent-review-830bd89c/cli-assumptions.json"
+    ],
+    "cwd": "/tmp/cla-timing-independent-review-830bd89c/snapshot",
+    "exit": 0,
+    "log": "cli-short-read.txt"
+  },
+  {
+    "argv": [
+      "node",
+      "scripts/timing-plan.mjs",
+      "/tmp/cla-timing-independent-review-830bd89c/oversize.json"
+    ],
+    "cwd": "/tmp/cla-timing-independent-review-830bd89c/snapshot",
+    "exit": 1,
+    "log": "cli-oversize.txt"
+  },
+  {
+    "argv": [
+      "node",
+      "scripts/timing-plan.mjs",
+      "/tmp/cla-timing-independent-review-830bd89c"
+    ],
+    "cwd": "/tmp/cla-timing-independent-review-830bd89c/snapshot",
+    "exit": 1,
+    "log": "cli-directory.txt"
+  },
+  {
+    "argv": [
+      "node",
+      "scripts/timing-plan.mjs",
+      "/tmp/cla-timing-independent-review-830bd89c/cli-refused.json"
+    ],
+    "cwd": "/tmp/cla-timing-independent-review-830bd89c/snapshot",
+    "exit": 2,
+    "log": "cli-refused.txt"
+  },
+  {
+    "argv": [
+      "node",
+      "--test",
+      "tests/timing-independent.test.mjs"
+    ],
+    "cwd": "/tmp/cla-timing-independent-review-830bd89c/mutants/first-poll-readiness",
+    "exit": 1,
+    "log": "independent-red-boundary-only.txt",
+    "note": "Same nine independent tests; only <= to < differs from final green source."
+  }
+]
