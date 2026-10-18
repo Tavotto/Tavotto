@@ -137,12 +137,42 @@ interface AxeReport {
   incomplete: { id: string; impact: string | null | undefined; nodes: ScannedNode[] }[]
 }
 
+/**
+ * 等到界面真的静止再量：文档里不剩任何**会结束**的动画 / 过渡（无限循环的转圈不算，
+ * 它不改颜色的稳态）。只关 reduced-motion 不够——它只缩短**之后**才起的过渡，
+ * 切主题 / 开对话框时已经在跑的颜色过渡（duration-fast）照走原来的时长；慢 runner
+ * （Windows WebKit）上 axe 就量到「一半浅色前景、一半深色底」的插值色
+ * （例：#1b1b18 压在 #161615 上，对比度 1.04）。
+ * 循环到两轮之间没有新的动画冒出来才算静止（一批结束可能触发下一批）。
+ */
+export async function waitForStillUi(page: Page): Promise<void> {
+  await page.evaluate(async () => {
+    const finite = (a: Animation) => {
+      const end = a.effect?.getComputedTiming().endTime
+      return typeof end === 'number' && Number.isFinite(end)
+    }
+    for (let round = 0; round < 20; round++) {
+      const running = document.getAnimations().filter((a) => a.playState !== 'finished' && finite(a))
+      if (!running.length) {
+        // 再让两帧：刚好在这一帧起的过渡要等样式重算后才进 getAnimations
+        await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)))
+        if (!document.getAnimations().some((a) => a.playState !== 'finished' && finite(a))) return
+        continue
+      }
+      await Promise.all(running.map((a) => a.finished.catch(() => undefined)))
+    }
+    throw new Error('界面 20 轮之后仍有未结束的动画 / 过渡')
+  })
+}
+
 /** 扫描一次，拿回 critical/serious 违规与**全部** incomplete（含每个节点的 target）。
  *  扫描前把动效关掉：对话框/抽屉的进出场动画进行到一半时，axe 对
  *  颜色对比的取样会撞上过渡态，产出不可复现的假阳性；应用本来就支持
- *  prefers-reduced-motion，这也是它的一次真实行使。 */
+ *  prefers-reduced-motion，这也是它的一次真实行使。已经在跑的过渡不受它影响，
+ *  所以还要 `waitForStillUi` 等它们走完。 */
 async function axeReport(page: Page): Promise<AxeReport> {
   await page.emulateMedia({ reducedMotion: 'reduce' })
+  await waitForStillUi(page)
   const results = await new AxeBuilder({ page }).analyze()
   return {
     violations: results.violations
@@ -266,6 +296,8 @@ test('工作台（项目已开、画布有面板）：axe 无违规、无未定�
  * 叠色 / 透明度 / 选中底从没在暗色里量过。这两条在稳定态扫：axeReport 先关动效，进出场动画不会让取样撞上过渡态。
  */
 const darkApplied = async (page: Page) => {
+  // 切主题 / 开对话框后颜色还在过渡：先等静止，否则下面量到的是插值色
+  await waitForStillUi(page)
   expect(await page.evaluate(() => document.documentElement.getAttribute('data-theme'))).toBe('dark')
   // 不是「扫了个浅色页」：body 的计算底色确实是暗色桌面（#161615），否则这两条是恒真的
   expect(await page.locator('body').evaluate((el) => getComputedStyle(el).backgroundColor)).toBe('rgb(22, 22, 21)')

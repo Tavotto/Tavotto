@@ -217,7 +217,9 @@ python3 scripts/handoff.py <脚本路径>
 ```
 
 **退出码非零就是没做完**；输出是一行 JSON，你必须读——`parameterizable`
-的判定与全部 `error_code` 的分诊在 `references/desktop-handoff.md`。
+的判定与全部 `error_code` 的分诊在 `references/desktop-handoff.md`。退出码 0 只说交接成了，
+**不说图画出来了**：再读 `render_success`（`false` = 界面明确渲染失败，`null` = 还不知道，
+不是失败）和 `verified_success`，没到 `true` 就不要对用户说「已在 Tavotto 里渲染好」。
 
 ## 完成判据：画完之后就收手
 
