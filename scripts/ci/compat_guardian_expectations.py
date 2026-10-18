@@ -52,7 +52,10 @@ def _check_reference(ref: dict) -> None:
     target = cg.ROOT / path
     if cg.contained(cg.ROOT, path) != target or not target.is_file():
         raise cg.EvidenceError(f"test reference points at a missing file: {ref['ref']}")
-    if name and not _defines(target, name.split("[")[0]):
+    if not name:
+        # 只指到文件不够：文件还在、拥有该对照的测试删了，声明仍会成立（Codex #1118 r4305976570）
+        raise cg.EvidenceError(f"test reference must name a test node (path::name): {ref['ref']}")
+    if not _defines(target, name.split("[")[0]):
         raise cg.EvidenceError(f"test reference names something absent from the file: {ref['ref']}")
 
 

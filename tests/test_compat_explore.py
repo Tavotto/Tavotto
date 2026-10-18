@@ -293,6 +293,16 @@ class Judgment(unittest.TestCase):
         self.assertEqual(kinds, ["same_path_content_mismatch"])
         self.assertIn("Tavotto kept ['t0']", wrong["differences"][0]["summary"])
 
+    def test_extra_tavotto_figures_are_a_difference_even_with_matching_titles(self):
+        """原生 3 张、Tavotto 4 张（多出的那张标题与原生重复）：不能判 clean（Codex #1135 r4305973918）。"""
+        extra = ex.compare(
+            "axis_changing", self.NATIVE, self.stems(o=["t2"], a=["t0"], b=["t1"], c=["t1"]), None
+        )
+        self.assertEqual(extra["outcome"], "difference_found")
+        kinds = [d["kind"] for d in extra["differences"]]
+        self.assertEqual(kinds, ["extra_figures"])
+        self.assertEqual(extra["differences"][0]["category"], "figure_capture")
+
     def test_preserving_transform_that_changes_native_output_is_an_invalid_candidate(self):
         parent_native = native_result(figure_count=1, semantics={"figure0": {"titles": ["t0"]}})
         verdict = ex.compare("shape_preserving", self.NATIVE, self.stems(o=["t2"]), parent_native)
