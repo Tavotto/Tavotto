@@ -2352,7 +2352,7 @@ export interface ManifestElement {
    */
   arrow_endpoints?: [number, number][]
   /**
-   * 端点箭头（有 `arrow_endpoints`、不出 geometry）的真实绘制次序，语义同 `ElementGeometry.paint_order`。
+   * 端点箭头（有 `arrow_endpoints`、不出 geometry）与按 bbox 命中的文字 / 图例类的真实绘制次序，语义同 `ElementGeometry.paint_order`。
    * 缺席 = 次序未知，不判遮挡。
    */
   paint_order?: number

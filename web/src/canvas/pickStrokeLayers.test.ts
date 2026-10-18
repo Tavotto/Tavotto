@@ -232,12 +232,36 @@ describe('规则 5：不轮换时旧行为不变', () => {
     expect(gids(m, 0.5, 0.5)[0]).toBe('line')
   })
 
+  const txt = (extra: Partial<ManifestElement> = {}) =>
+    mk('txt', 'text', null, {
+      bbox: [0.45, 0.47, 0.1, 0.06] as [number, number, number, number],
+      ...extra,
+    })
+
   it('字的框（本身是墨迹）压着线时，仍是字赢（面积小）', () => {
-    const m = man(
-      line('line', [0.1, 0.5], [0.9, 0.5]),
-      mk('txt', 'text', null, { bbox: [0.45, 0.47, 0.1, 0.06] as [number, number, number, number] }),
-    )
+    const m = man(line('line', [0.1, 0.5], [0.9, 0.5], { paint_order: 1 }), txt({ paint_order: 2 }))
     expect(gids(m, 0.5, 0.5)[0]).toBe('txt')
+  })
+
+  it('字被后画的不透明 patch 盖住：patch 赢，字降到 tier 2', () => {
+    const m = man(txt({ paint_order: 2 }), rect('p', [0.4, 0.4, 0.6, 0.6], { fill_alpha: 1, paint_order: 5 }))
+    expect(gids(m, 0.5, 0.5)).toEqual(['p', 'axes_0', 'txt'])
+  })
+
+  it('字画在 patch 上面（框内标签）：仍选字', () => {
+    const m = man(rect('p', [0.4, 0.4, 0.6, 0.6], { fill_alpha: 1, paint_order: 1 }), txt({ paint_order: 2 }))
+    expect(gids(m, 0.5, 0.5)[0]).toBe('txt')
+  })
+
+  it('字缺 paint_order（老 manifest）：留在 tier 1 按面积比，不升描边层', () => {
+    const small = rect('small', [0.46, 0.48, 0.54, 0.52], { fill_alpha: 1 })
+    // 旧面积评分：更小的 patch 赢过字框
+    expect(gids(man(txt(), small), 0.5, 0.5)[0]).toBe('small')
+    // 字比 patch 小时字赢
+    const big = rect('big', [0.2, 0.2, 0.8, 0.8], { fill_alpha: 1 })
+    expect(gids(man(txt(), big), 0.5, 0.5)[0]).toBe('txt')
+    // 线是描边层，次序未知的字不再抢它
+    expect(gids(man(line('line', [0.1, 0.5], [0.9, 0.5]), txt()), 0.5, 0.5)[0]).toBe('line')
   })
 
   it('图像类背景 bbox 不抢容差内的线', () => {

@@ -1171,13 +1171,16 @@ export function pickElementStack(
     if (fx < x - PAD || fx > x + w + PAD || fy < y - PAD || fy > y + h + PAD) continue
     // 字 / 图例本身就是墨迹：命中它的框 = 点在可见的东西上，和线同一层（落在 0 档、按面积比，
     // 与旧评分逐位相同）。背景类（子图、图像、色条、刻度外壳、散点退回的 bbox…）留在 tier 1
+    // 只有**次序已知**的字 / 图例才升到 tier 0：次序未知就没法判它是否被后画的不透明填充
+    // 盖住，留在 tier 1 按旧面积评分（逐位回到旧行为）
+    const order = el.paint_order ?? -1
     hits.push({
       el,
       i,
-      tier: INK_BBOX_ROLES.has(el.role) ? 0 : 1,
+      tier: INK_BBOX_ROLES.has(el.role) && order >= 0 ? 0 : 1,
       score: w * h * (HIT_PENALTY[el.role] ?? 1),
       bucket: 0,
-      order: -1,
+      order,
       inside: false,
     })
   }

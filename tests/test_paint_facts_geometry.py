@@ -103,6 +103,19 @@ def main():
     ax6.add_patch(FancyArrowPatch((0.1, 0.5), (0.9, 0.5), arrowstyle="->"))
     ax6.add_patch(Rectangle((0.3, 0.3), 0.4, 0.4, fc="k"))
     fig6.savefig("ArrowFig.pdf")
+
+    # 文字类（画布按 bbox 命中、无 geometry）：标题 / 轴标签 / 文字 / 图例 / 图例项
+    fig7, ax7 = plt.subplots(figsize=(4.0, 3.0))
+    ax7.set_xlim(0, 1)
+    ax7.set_ylim(0, 1)
+    ax7.plot([0, 1], [0, 1], label="curve")
+    ax7.set_axisbelow(False)  # Axis 画在线之上（zorder 2.5）：轴标签次序随 Axis，不是随线
+    ax7.set_title("T")
+    ax7.set_xlabel("X")
+    ax7.text(0.5, 0.5, "note")
+    ax7.legend(title="LT")
+    ax7.add_patch(Rectangle((0.1, 0.1), 0.2, 0.2, fc="k", zorder=20))
+    fig7.savefig("InkFig.pdf")
 """
 
 
@@ -239,3 +252,30 @@ def test_fully_transparent_member_keeps_group_conservative(manifests):
     bars = next(e for e in man["elements"] if e["role"] == "bar_series")
     # alpha=0 的柱是「填充了但全透明」，不是「没填充」：整组取 0，下面的线仍可选
     assert bars["geometry"]["fill_alpha"] == 0.0
+
+
+def _by_role(man, role):
+    return [e for e in man["elements"] if e["role"] == role]
+
+
+def test_ink_roles_get_element_level_paint_order(manifests):
+    man = manifests("InkFig")
+    patch = _by_role(man, "patch")[0]["geometry"]["paint_order"]
+    legend = _by_role(man, "legend")[0]
+    for role in ("title", "axis_label", "text", "legend"):
+        els = [e for e in _by_role(man, role) if "paint_order" in e]
+        assert els, f"{role} 没有 paint_order"
+        # 高 zorder 的 patch 最后画
+        assert all(e["paint_order"] < patch for e in els), role
+    # 图例项（含标题）画在图例里：次序就是图例的
+    texts = _by_role(man, "legend_text")
+    assert len(texts) >= 2  # 标题 + 一项
+    assert all(e["paint_order"] == legend["paint_order"] for e in texts)
+
+
+def test_axis_label_order_is_its_axis_order(manifests):
+    man = manifests("InkFig")
+    xl = next(e for e in _by_role(man, "axis_label") if e["gid"].endswith("xlabel"))
+    # 轴标签随 Axis 画：Axis（axisbelow=False 时 zorder 2.5）在线之后、zorder 20 的 patch 之前
+    assert _geom(man, "axes_0.lines_0")["paint_order"] < xl["paint_order"]
+    assert xl["paint_order"] < _by_role(man, "patch")[0]["geometry"]["paint_order"]

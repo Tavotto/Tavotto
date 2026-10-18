@@ -4048,6 +4048,31 @@ def _fields_for(el, state: FigState) -> list[dict]:
 _MIN_HIT_PX = 4.0  # 扁平元素最小命中厚度（display 像素）
 
 
+def _ink_paint_owner(state: FigState, el: dict, artist):
+    """文字类元素在 `paint_ranks` 里**占位的那个 artist**：次序归它。
+
+    * text / title / legend：自己就是 Figure / Axes 的 child，`paint_ranks` 里有；
+    * legend_text：画在图例里（图例是 `paint_ranks` 的叶子），次序用所属图例的；
+    * axis_label：Axis 的子 Text，Axis 在 `paint_ranks` 里是叶子，次序用所属 Axis 的。
+    拿不到所属对象返回 None（不写次序，前端按次序未知处理）。
+    """
+    role = el["role"]
+    try:
+        if role == "legend_text":
+            owner = getattr(artist, "_mm_legend_entry", None)
+            if owner is not None:
+                return owner[0]
+            return state.resolve(el["gid"].rsplit(".", 1)[0])  # 图例标题：gid 去掉末段即图例
+        if role == "axis_label":
+            drag = getattr(artist, "_mm_drag", None)  # (f"{x|y}label", ax)
+            if drag is not None:
+                return getattr(drag[1], "xaxis" if drag[0].startswith("x") else "yaxis")
+            return getattr(artist, "_mm_axis", None)
+    except Exception:
+        return None
+    return artist
+
+
 def _finite_geometry(entry: dict) -> bool:
     """entry 里的几何字段全是有限值。见 `build_manifest` 里那道总闸的说明。"""
     for field in (
@@ -5095,6 +5120,13 @@ def _measure_manifest(
                 geom = pathgeom.element_geometry(artist, W, H, budget, arrow_path=True)
                 if geom is not None:
                     entry["geometry"] = geom
+        # 文字 / 标题 / 轴标签 / 图例（画布按 bbox 命中、没有 geometry）：次序写在元素级，
+        # 被后画的不透明填充盖住时前端据此降层。拿不到次序就不写（前端回到旧面积评分）
+        if el["role"] in ("text", "title", "axis_label", "legend", "legend_text"):
+            owner = _ink_paint_owner(state, el, artist)
+            r = paint_ranks.get(id(owner)) if owner is not None else None
+            if r is not None:
+                entry["paint_order"] = int(r)
         # 绘制事实：命中评分要知道「谁画在谁上面」与「上面那块填充盖不盖得住」
         # （ADR 0086）。在所有 geometry 分支之后统一盖章，包括不出端点的箭头。
         if "geometry" in entry:
