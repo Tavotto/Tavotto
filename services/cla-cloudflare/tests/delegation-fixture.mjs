@@ -9,9 +9,9 @@ export async function fixture(enabled=true){
     repository:'synthetic/repo',installationId:2,clientId:'synthetic',holderName:'SYNTHETIC HOLDER',syntheticSigning:false,mockCheckPublishing:false,autoHolder:false,
     exemptionIds:{erwanjun:1},githubEnabled:false,oauthEnabled:false,signingEnabled:true,checkPublishingEnabled:false,delegatedCountersigningEnabled:enabled,
     holderAuthorizationKey:base64url(publicKey),holderAuthorizationId:randomToken(),
-    policy:{agreements:{individual:{path:'docs/legal/CLA_INDIVIDUAL.md',version:'1.0',sha256:await sha256(text)},corporate:{path:'docs/legal/CLA_CORPORATE.md',version:'1.0',sha256:'b'.repeat(64)}},
+    policy:{agreements:{individual:{path:'docs/legal/CLA_INDIVIDUAL.md',version:'1.0',sha256:await sha256(text)},corporate:{path:'docs/legal/CLA_CORPORATE.md',version:'1.0',sha256:await sha256('SYNTHETIC CORPORATE CLA')}},
       exemptions:[{login:'erwanjun',kind:'rights_holder',reason:'synthetic'}],provider:{configured:true,protocol:'tavotto-cla-v1',app_id:123,app_slug:'synthetic-cla',check_name:'synthetic-cla'}}};
-  await f.store.initialize(c);const key=await importAes(crypto.getRandomValues(new Uint8Array(32)));
+  await f.store.initialize(c);const keyBytes=crypto.getRandomValues(new Uint8Array(32)),key=await importAes(keyBytes);
   const gh={head:'c'.repeat(40),extra:[],resolveLogin:async login=>({id:login==='erwanjun'?1:2,login,type:'User'}),
     agreement:async()=>({digest:c.policy.agreements.individual.sha256,kind:'individual',version:'1.0',source_sha:c.referenceSha,content:text}),
     snapshot:async()=>({repositoryId:707,kind:'pr',headSha:gh.head,baseSha:'d'.repeat(40),policy:c.policy,members:[],
@@ -32,7 +32,7 @@ export async function fixture(enabled=true){
     return signed({protocol:'cla-holder-control-v1',authorization_id:grant.id,grant_sha256:await sha256(canonical(grant)),sequence:(e?.sequence??0)+1,
       previous_sha256:e?.hash??await sha256(canonical(grant)),action,issued_at:f.now(),...overrides});};
   const install=async()=>{await s.delegation.register(await signed(grant));await s.delegation.append(await control());};
-  return {...f,c,s,gh,key,grant,args,evidence,sign,signed,control,install,create:()=>s.packet(...args('contributor'),'individual')};
+  return {...f,c,s,gh,key,keyBytes,grant,args,evidence,sign,signed,control,install,create:()=>s.packet(...args('contributor'),'individual')};
 }
 export async function iso(fn,enabled=true){const f=await fixture(enabled);try{await fn(f);}finally{f.close();}}
 export async function deny(fn){let rejected=false;try{const r=await fn();if(r?.conclusion==='failure')return;}catch(e){if(/PUBLISH_FORBIDDEN|OUTBOUND_FORBIDDEN/.test(String(e)))throw e;rejected=true;}

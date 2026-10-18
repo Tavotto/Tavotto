@@ -36,7 +36,7 @@ CREATE TRIGGER authority_update BEFORE UPDATE ON authority BEGIN SELECT RAISE(AB
 CREATE TRIGGER authority_delete BEFORE DELETE ON authority BEGIN SELECT RAISE(ABORT,'immutable'); END;
 
 -- Separate from personal signatures: delegated evidence never occupies a holder signing slot.
-CREATE TABLE delegated_grants (id TEXT PRIMARY KEY,body TEXT NOT NULL,signature TEXT NOT NULL,hash TEXT NOT NULL UNIQUE);
+CREATE TABLE delegated_grants (id TEXT PRIMARY KEY,body TEXT NOT NULL,signature TEXT NOT NULL,hash TEXT NOT NULL UNIQUE,public_key TEXT NOT NULL);
 CREATE TABLE delegated_controls (
  grant_id TEXT NOT NULL REFERENCES delegated_grants(id),sequence INTEGER NOT NULL CHECK(sequence BETWEEN 1 AND 100),
  body TEXT NOT NULL,signature TEXT NOT NULL,hash TEXT NOT NULL UNIQUE,
@@ -62,7 +62,7 @@ CREATE TRIGGER delegated_receipts_delete BEFORE DELETE ON delegated_receipts BEG
 
 CREATE TABLE head_requests (
  request_key TEXT PRIMARY KEY,pr INTEGER NOT NULL CHECK(pr>0),head TEXT NOT NULL,
- status TEXT NOT NULL CHECK(status IN ('pending','running','done','manual')),attempt TEXT NOT NULL,
+ status TEXT NOT NULL CHECK(status IN ('pending','running','done','dispatched','manual')),attempt TEXT NOT NULL,
  lease_until INTEGER NOT NULL,created INTEGER NOT NULL,result TEXT NOT NULL
 );
 CREATE TABLE head_deliveries (id TEXT PRIMARY KEY,body_hash TEXT NOT NULL,request_key TEXT NOT NULL REFERENCES head_requests(request_key),created INTEGER NOT NULL);

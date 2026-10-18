@@ -10,8 +10,9 @@ export const VERIFICATION_FINAL_SQL = 3;
 export const VERIFICATION_FIXED_SQL = 2+3+VERIFICATION_FINAL_SQL;
 export const QUALIFICATION_SQL_PER_PERSON = 2;
 export const MAX_SUCCESS_CONTRIBUTORS = Math.floor((FREE_BUDGET.sqlWork-VERIFICATION_FIXED_SQL)/QUALIFICATION_SQL_PER_PERSON);
-// Delegated fallback: personal lookup, packet, signatures, grant, bounded control chain, receipt.
-export const qualificationSQL=(c:{delegatedCountersigningEnabled?:boolean})=>c.delegatedCountersigningEnabled===true?6:QUALIFICATION_SQL_PER_PERSON;
+// Three actual SELECTs: candidate + signatures, grant + bounded signed controls, exact receipt.
+// Each invocation still verifies all raw cryptographic evidence; no qualification cache.
+export const qualificationSQL=(c:{delegatedCountersigningEnabled?:boolean})=>c.delegatedCountersigningEnabled===true?3:QUALIFICATION_SQL_PER_PERSON;
 export const successCapacity=(c:{delegatedCountersigningEnabled?:boolean})=>Math.floor((FREE_BUDGET.sqlWork-VERIFICATION_FIXED_SQL)/qualificationSQL(c));
 export class BudgetDeferred extends Rejected {
   readonly reason:string;
@@ -57,6 +58,9 @@ export class InvocationBudget {
     return AbortSignal.timeout(Math.max(1,Math.ceil(Math.min(10_000,(this.phase==='work'?this.workEnd:this.cleanupEnd)-this.clock()))));
   }
   snapshot():{sql:number;external:number} {return {sql:this.sql,external:this.external};}
+  reserveWorkExternal(count:number):void {
+    this.checkWork();if(!Number.isSafeInteger(count) || count<0 || this.external+count>FREE_BUDGET.externalWork)throw new BudgetDeferred('external');
+  }
 }
 
 // Ignore separators inside SQLite strings, identifiers and comments. Trigger bodies

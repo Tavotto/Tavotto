@@ -87,9 +87,9 @@ test('receipt transaction failure preserves contributor and manual route',()=>is
   const p=await f.create();assert.equal((await f.sign(p)).countersignature,'pending_manual_review');assert.equal((await f.store.signatures(p.id)).length,1);
   await f.sign(p,'holder');assert.equal((await f.s.evaluate(9)).conclusion,'success');
 }));
-test('delegated qualification reserves six reads per person without increasing ceilings',()=>iso(async f=>{
+test('delegated qualification uses three reads per person without increasing ceilings',()=>iso(async f=>{
   await f.install();const p=await f.create();await f.sign(p);const budget=new InvocationBudget(),store=new LiveStore(f.db,budget,f.c),s=new LiveService(f.c,store,f.gh,f.key);
-  assert.equal(successCapacity(f.c),2);assert.equal((await s.evaluate(9,3)).conclusion,'success');assert.equal(budget.snapshot().sql,9);
+  assert.equal(successCapacity(f.c),4);assert.equal((await s.evaluate(9,3)).conclusion,'success');assert.equal(budget.snapshot().sql,6);
   assert.equal((await f.store.signatures(p.id)).length,1);
 }));
 test('new head gets a fresh binding and added unsigned contributor never inherits eligibility',()=>iso(async f=>{

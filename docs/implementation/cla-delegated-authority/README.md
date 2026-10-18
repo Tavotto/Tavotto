@@ -1,66 +1,82 @@
 # Limited CLA automation candidate
 
-The implementation is disabled and synthetic tests create only ephemeral test
-keys. See [ADR 0134](../../adr/0134-limited-cla-countersigning-authority.md).
-The authoritative CLA texts and .github/cla-policy.json are unchanged.
+This draft is default disabled. All tests use synthetic identities and ephemeral
+keys. Authoritative CLA text/hashes and provider.configured=false are unchanged.
+See [ADR 0134](../../adr/0134-limited-cla-countersigning-authority.md).
 
-## Reviewable deliverables
+## Reviewable implementation
 
-- src/native/delegation.ts: detached Ed25519 authorization/control verification,
-  internal preparation methods and independent encrypted execution receipts.
-- src/native/automatic.ts: authenticated, bounded new-head observation queue.
-- authorization-template.json: unsigned placeholders; no registered identity,
-  key or authority. A body object is not an already signed body.
-- Tests: actual local SQLite transactions, Web Crypto, service/worker code and
-  isolated source mutations; global outbound fetch is forbidden.
+- delegation.ts verifies exact Ed25519 grants and signed enable/suspend/revoke
+  chains, retains immutable registered public-key snapshots and records separate
+  encrypted execution receipts after the contributor personally signs.
+- service.ts / worker.ts / UI provide authenticated status and private audit
+  export, distinguish personal holder signatures from delegated system receipts,
+  preserve manual holder signing and clear consent on account/packet changes.
+  Historical downloads after rotation/revocation do not restore eligibility.
+- automatic.ts admits bounded signed webhook locators and revalidates current
+  heads/contributors/evidence. Observation is the default. Separately enabled
+  new-head publication makes one attempt after an atomic issued/dispatched/outbox
+  transaction; uncertainty cannot retry. Existing recovery independently confirms
+  or withdraws. Observations and POST responses cannot satisfy CI.
+- [Disabled deployment inputs and planner](../../../services/cla-cloudflare/deployment/README.md)
+  supply explicit binding shapes and approval checkpoints without provisioning.
+- [Inactive trusted CI proposal](../../../services/cla-cloudflare/deployment/ci-proposal.md)
+  and tested default-off CLI consume two live authority reads. No live workflow
+  is wired; merge-group candidates are rejected.
+- authorization-template.json remains unsigned, with no registered identity/key.
+  Internal preparation methods have no HTTP route. Actual import and signing
+  require separate holder approval and verified key/identity registration.
 
-In a separately approved process, the holder reviews every field and its exact
-canonical UTF-8 bytes, signs outside the service, and separately signs a control
-whose first previous_sha256 is the grant body hash. Later controls name the
-previous control body hash and increment sequence by exactly one. Registration
-alone is inactive; revoke is terminal. Controls are limited to 100 events, bodies
-to 8 KiB. No preparation method is exposed to a browser. Identity mapping, key
-custody, approval evidence and actual import require human verification.
+Authorization bodies are canonical UTF-8. The first control references the grant
+hash; later controls increment sequence and hash-link predecessors. Registration
+is inactive; revoke is terminal. Controls are bounded to 100 events and 8 KiB per
+body. Three SQL reads per delegated contributor retain cryptographic verification;
+read-only verification fits four contributors, automatic dispatch/confirmation
+one within unchanged 20 work/40 total SQL and 35 work/40 total external limits.
+Complex remote reads can exhaust budgets and require manual handling.
 
-The webhook requires its own limiter and an existing operator-provided secret;
-this change creates neither. HMAC covers the original bounded raw bytes.
-Admission caps are 100 distinct head requests and 1,000 delivery records, with no
-automatic deletion; exhaustion requires reviewed archival/recovery. Only
-opened/reopened/synchronize events on main PRs are admitted. The payload is a
-locator; current GitHub data and actual evidence determine each new observation.
-A done result is historical data and cannot satisfy CI. Evidence revisions clear
-it; expired proof data must never be consumed as current eligibility. Manual
-requests cannot be released by replaying an event.
+Webhook admission caps are 100 distinct heads and 1,000 delivery records with no
+automatic deletion. Only opened/reopened/synchronize main PR locators are admitted.
+Expired/uncertain/manual work never replays. The distinct reserved automatic cron
+must not replace or starve the original withdrawal/recovery cron. Evidence
+revisions clear observations; dispatched attempts recover through the outbox.
+
+## Verification and boundaries
+
+Original committed evidence is in evidence/verification.json. Followup evidence
+is in evidence/followup-verification.json with actual logs and source fingerprints.
+Tests execute service/worker/Web Crypto/local SQLite transactions; the UI harness
+executes shipped client code in a browser-shaped VM, not a real browser. CI tests
+use real qualification and pre-existing synthetic confirmed records at fixed time;
+no HTTP, successful publication or proof-expiry publication transition is tested.
+A separately audited existing GitHub offline job passed original head fe22f4b;
+that result must not be attributed to later heads without reading their jobs.
+
+Local dependency installation was blocked by npm E403. No mirror, proxy, alternate
+execution environment or repeat download was used. Local tsc/esbuild and pytest
+remain unavailable. The previously rejected dynamic successful-publication-across-
+proof-expiry test was not run under another name. Offline passes establish no
+legal effect, true holder identity, actual D1/GitHub behavior or plan acceptance.
 
 ## Minimum human activation gates — outstanding
 
-1. Approve legal/operational purpose, narrow scope, time limits, consent UX,
-   recovery and treatment of prior contracts. Independently verify holder
-   identity and register the correct public key and new authorization ID.
-   Obtain the holder's actual grant and enable signatures. Chat instructions,
-   repository ownership and this template are not substitutes.
-2. Review/apply the namespaced schema and rehearsal/backup/single-authority
-   cutover. Grant/control imports must use verified preparation methods,
-   never arbitrary SQL that assumes signatures were checked. Verify D1 clock,
-   immutability, CAS and concurrent transactions on the actual platform.
-3. Complete delegated status/consent UI and authorized audit download. The
-   current UI describes personal holder signing; it is not accepted for real
-   delegated execution. No legal-sufficiency conclusion is supplied.
-4. Separately approve existing App/OAuth identity/permissions, credential
-   custody, D1/static-asset/rate-limit bindings, deployment packaging and webhook
-   subscription. Preserve the original recovery cron and add the distinct
-   reserved observation cron only after quota/plan acceptance. No deployment
-   script or real resource bindings are delivered by this PR.
-5. Design/review new-head publication, live authority consumption, merge-group
-   qualification and trusted-main CI wiring in later PRs. Existing
-   cla_service_verify.py checks GitHub proof only; the dual-read consumer in
-   src/ci/consumer.ts supplies live authority revalidation. Do not mark the
-   provider configured or treat observations as successful GitHub checks.
-6. Complete pinned typecheck/build and independent live acceptance before
-   enabling any real signing/publication. Existing flags and new
-   CLA_DELEGATED_COUNTERSIGNING_ENABLED / CLA_AUTOMATIC_VERIFICATION_ENABLED
-   remain absent/false. Never expand budgets or bypass manual states.
-
-The previously rejected dynamic successful-publication-across-proof-expiry test
-was not run under another name. No environment, proxy or dependency mirror was
-changed to evade the network restriction.
+1. Approve exact legal purpose/scope/term, personal consent UX, key custody and
+   treatment of prior agreements. Verify holder identity, register its actual
+   public key/authorization ID, obtain real grant and enable signatures. Chat,
+   ownership, code and this template are not substitutes for those actions.
+2. Approve single-authority cutover, backups and immutable archival mappings.
+   Rehearse actual D1 batch/clock/CAS/concurrency and schema changes, including
+   delegated_grants.public_key and head_requests.dispatched. No guessed historical
+   keys, arbitrary SQL imports or returning to stale snapshots after real writes.
+3. Independently accept real browser/session flows and private audit handling;
+   confirm the material's legal sufficiency outside these technical tests.
+4. Approve existing App/OAuth permissions/secret custody, explicit resource IDs,
+   assets, limiter namespaces, quota and separate recovery/automatic crons. Review
+   the disabled manifest and offline plan; this PR creates or enables none.
+5. Land trusted source first, then separately review CI wiring. Resolve native
+   merge-group binding/queue policy before replacing required checks. Do not
+   treat old PR proofs, observations or the Python proof-only verifier as live
+   native authority validation. Keep provider.configured false until acceptance.
+6. Complete current-head pinned typecheck/build, high-risk full CI and independent
+   live acceptance, including the excluded publication boundary through a separately
+   permitted process. No flag, manual state or resource limit is bypassed here.

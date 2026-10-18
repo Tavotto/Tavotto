@@ -1,0 +1,9 @@
+{
+  "enabled": false,
+  "repository": "Tavotto/Tavotto",
+  "repositoryId": 0,
+  "origin": "https://REPLACE_WITH_APPROVED_AUTHORITY.invalid",
+  "appId": 0,
+  "appSlug": "replace-with-approved-app",
+  "checkName": "REPLACE_WITH_APPROVED_CHECK_NAME"
+}

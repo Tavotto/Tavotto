@@ -42,8 +42,15 @@ exact repository and installation. It deduplicates delivery IDs/body hashes,
 re-reads current GitHub bindings on admission and evaluation, and commits a
 new observational result under head, revision, attempt and lease guards. Evidence
 revision changes atomically clear completed/running observations and enqueue a
-new evaluation. Manual failures remain manual. It does not send GitHub checks,
-provide a CI eligibility endpoint, or reuse an earlier observation as proof.
+new evaluation. Manual failures remain manual. Observations never count as CI
+evidence. A separate default-off publication capability may dispatch one new-head
+Check Run only after fresh binding, shared-budget reservation and an atomic
+issued/head-dispatched/outbox transaction. Authentication and remote pre-reads
+precede that transaction. Any existing owned run, unresolved target, manual
+refresh, stale revision/head/lease or expired proof blocks dispatch. A sent or
+uncertain operation is never replayed; independent existing recovery must observe
+and requalify it. The dual-read authority endpoint remains the live eligibility
+check; neither an observation nor a successful POST response grants eligibility.
 
 Automatic observations use a separate reserved cron invocation
 (`7-59/15 * * * *`); the original recovery invocation remains separate. Each
@@ -51,15 +58,27 @@ invocation uses the existing 20 work / 40 total SQL budget. No cron or other
 Cloudflare resource is configured here. An operator must preserve the recovery
 trigger and verify both triggers before any future activation.
 
-Delegated fallback requires six SQL reads per non-exempt person. Read-only
-verification admits at most two; a scheduled new-head observation currently fits
-one. Existing same-head publication refresh cannot fit any non-exempt contributor
-with this mode enabled (16 + 6N > 20); it defers into bounded manual recovery.
+Delegated fallback requires three SQL reads per non-exempt person: one combined
+packet/personal evidence snapshot, one bounded signed grant/control snapshot,
+one encrypted receipt. All original cryptographic checks and final revision
+guards remain. Read-only verification admits at most four; automatic dispatch
+admits one so later confirmation fits (16 + 3N <= 20). Same-head dispatch fits
+one (13 + 3N); confirmation uses 14 + 3N plus two reserved withdrawal reads.
 The global flag conservatively applies that accounting even to personal signatures.
 The ceilings are unchanged, and this limitation is not a legal verdict.
 
-This PR does not activate the provider, change legal texts/hashes, connect CI,
-implement delegated signing UI/audit export, configure an App/OAuth or deploy
-resources. Those remain separate review/approval gates. The trusted-main CI
-bootstrap requires code to land before wiring; native merge-group proof support
-is still absent. Offline tests do not establish legal effect or live acceptance.
+Authenticated UI distinguishes personal signatures from system receipts and
+permits the independent personal holder route. A private audit export includes
+the immutable document, actual personal evidence, encrypted-receipt plaintext,
+canonical signed grant/control history and the immutable public-key snapshot
+retained at registration. Historical verification uses its original packet and
+key; changed ID/key/agreement makes current eligibility false. Export does not
+establish legal identity, legal effect or merge eligibility.
+
+This PR supplies disabled deployment inputs, an offline shape/plan checker and
+a default-off CI entry/proposal. It does not activate the provider, change legal
+texts/hashes, connect CI, configure an App/OAuth or deploy resources. The
+trusted-main CI bootstrap requires code to land before wiring; native merge-group
+proof support is still absent. Offline tests do not establish legal effect or
+live acceptance. Real registrations, control signatures and resource acceptance
+remain separately approved operations.

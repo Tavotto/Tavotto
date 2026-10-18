@@ -67,6 +67,26 @@ export class LiveStore extends Store {
         ON CONFLICT(target_key) DO UPDATE SET wanted_revision=excluded.wanted_revision,generation=outbox.generation+1,due=0,attempts=0`,key),
     ]); return id;
   }
+  async beginAutomaticPublication(job:{request_key:string;pr:number;head:string;attempt:string},check:CheckProposal):Promise<string> {
+    if(check.headSha!==job.head || check.proof.head_sha!==job.head || check.proof.pr!==job.pr || check.proof.kind!=='pr' ||
+      check.text!=='tavotto-cla-v1\n'+canonical(check.proof) || check.proof.expires_at<=check.proof.issued_at || check.proof.expires_at>check.proof.issued_at+120 ||
+      check.proof.expires_at>(check.authorityExpires ?? Number.MAX_SAFE_INTEGER))throw new Rejected('fresh_proof_unavailable');
+    const target={kind:'pr' as const,number:job.pr},key=this.targetKey(check.proof.repository_id,target),json=canonical(target),id=randomToken();
+    await this.batch([
+      this.stmt('INSERT OR IGNORE INTO targets VALUES(?,?)',key,json),
+      ...this.guard(`EXISTS(SELECT 1 FROM targets WHERE target_key=? AND target_json=?) AND
+        (SELECT revision FROM state WHERE id=1)=? AND ?<=${DB_NOW} AND ${DB_NOW}<? AND
+        EXISTS(SELECT 1 FROM head_requests WHERE request_key=? AND pr=? AND head=? AND status='running' AND attempt=? AND lease_until>${DB_NOW}) AND
+        NOT EXISTS(SELECT 1 FROM publication_attempts WHERE target_key=? AND (head_sha=? OR phase NOT IN ('confirmed','resolved'))) AND
+        NOT EXISTS(SELECT 1 FROM refresh_requests WHERE target_key=? AND status='manual')`,
+        key,json,check.proof.revision,check.proof.issued_at,check.proof.expires_at,job.request_key,job.pr,job.head,job.attempt,key,job.head,key),
+      this.stmt(`INSERT INTO publication_attempts(id,target_key,head_sha,revision,expires,phase,created,updated,conclusion,proof_text)
+        VALUES(?,?,?,?,?,'issued',${DB_NOW},${DB_NOW},?,?)`,id,key,check.headSha,check.proof.revision,check.proof.expires_at,check.conclusion,check.text),
+      this.stmt("UPDATE head_requests SET status='dispatched',result='' WHERE request_key=? AND attempt=?",job.request_key,job.attempt),
+      this.stmt(`INSERT INTO outbox(target_key,wanted_revision,due) VALUES(?,?,0) ON CONFLICT(target_key) DO UPDATE SET
+        wanted_revision=excluded.wanted_revision,generation=outbox.generation+1,due=0,attempts=0`,key,check.proof.revision),
+    ]);return id;
+  }
   async saveDocument(d:Document):Promise<void> {
     await this.batch([this.stmt('INSERT OR IGNORE INTO agreement_documents VALUES(?,?,?,?,?)',d.digest,d.kind,d.version,d.source_sha,d.content),
       ...this.guard('EXISTS(SELECT 1 FROM agreement_documents WHERE digest=? AND kind=? AND version=? AND content=?)',d.digest,d.kind,d.version,d.content)]);
@@ -366,6 +386,19 @@ export class LiveStore extends Store {
       WHERE p.subject=? AND p.digest=? AND EXISTS(SELECT 1 FROM delegated_receipts WHERE packet=p.id AND grant_id=?)
       AND NOT EXISTS(SELECT 1 FROM eligibility_blocks b JOIN packets old ON old.id=b.packet WHERE old.subject=p.subject)
       ORDER BY p.created DESC,p.id DESC LIMIT 1`,subject,digest,grant).first<Packet>();
+  }
+  async delegatedCandidate(subject:number,digest:string,grant:string):Promise<{packet:Packet;rows:SignatureRow[]}|null> {
+    const row=await this.stmt(`SELECT p.*,
+      (SELECT json_group_array(json_object('role',role,'actor',actor,'evidence_cipher',evidence_cipher,'evidence_hash',evidence_hash,'created',created))
+        FROM signatures WHERE packet=p.id) signature_rows
+      FROM packets p WHERE p.subject=? AND p.digest=?
+      AND EXISTS(SELECT 1 FROM signatures WHERE packet=p.id AND role='contributor' AND actor=p.subject)
+      AND (EXISTS(SELECT 1 FROM signatures WHERE packet=p.id AND role='holder' AND actor=(SELECT holder FROM authority WHERE id=1) AND actor!=p.subject)
+        OR EXISTS(SELECT 1 FROM delegated_receipts WHERE packet=p.id AND grant_id=?))
+      AND NOT EXISTS(SELECT 1 FROM eligibility_blocks b JOIN packets old ON old.id=b.packet WHERE old.subject=p.subject)
+      ORDER BY EXISTS(SELECT 1 FROM signatures WHERE packet=p.id AND role='holder') DESC,p.created DESC,p.id DESC LIMIT 1`,subject,digest,grant).first<Packet & {signature_rows:string}>();
+    if(!row)return null;
+    const {signature_rows,...packet}=row;return {packet,rows:JSON.parse(signature_rows)};
   }
   async qualification(subject:number,digest:string):Promise<Packet|null> {
     return this.stmt(`SELECT p.* FROM packets p JOIN signatures c ON c.packet=p.id AND c.role='contributor'

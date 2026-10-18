@@ -20,6 +20,8 @@ export function client():void {
     ($('packets-more') as HTMLButtonElement).disabled=busy || uncertain || !nextCursor;
     ($('login') as HTMLButtonElement).disabled=busy || !cap.oauthEnabled;
     ($('refresh') as HTMLButtonElement).disabled=busy;
+    for(const role of ['contributor','holder','audit'])$<HTMLButtonElement>('download-'+role).disabled=busy || uncertain || !state ||
+      (role==='audit'?!state.delegated?.canAudit:!state.signatures.some((row:any)=>row.role===role));
   }
   async function agreement(path:string){const d=await api(path);text('version',d.version);text('digest',d.digest);text('agreement',d.content);return d;}
   function clearConsent(){($('signature') as HTMLInputElement).value='';
@@ -31,7 +33,7 @@ export function client():void {
     packet='';state=null;clearConsent();sessionStorage.removeItem('cla.packet');history.replaceState(null,'','/');
     clearPersonalFields();
     $('attestations').replaceChildren();text('contributor-state','尚未签署');text('holder-state','等待本人审阅与签署');text('record-time','');
-    for(const role of ['contributor','holder'])$<HTMLButtonElement>('download-'+role).disabled=true;
+    for(const role of ['contributor','holder','audit'])$<HTMLButtonElement>('download-'+role).disabled=true;
   }
   const labels:Record<string,string>={personal:'我本人作出此决定；没有由他人代签。',electronic:'我同意用电子签名作出本次签署。',
     read:'我已经阅读上方完整协议，并同意这个版本和哈希对应的文本。',identity:'该 GitHub 数字身份属于我；姓名和地址是我本人填写的。',
@@ -60,10 +62,15 @@ export function client():void {
         history.replaceState(null,'','/?packet='+encodeURIComponent(packet));
         await agreement('/agreement?packet='+encodeURIComponent(packet));
         text('contributor-state',state.signatures.some((r:any)=>r.role==='contributor')?'已签署':'尚未签署');
-        text('holder-state',state.signatures.some((r:any)=>r.role==='holder')?'已签署':'等待本人审阅与签署');
+        const personalHolder=state.signatures.some((r:any)=>r.role==='holder'),delegated=state.delegated;
+        const delegatedStates:Record<string,string>={disabled:'入口已关闭',expired:'授权已到期',revoked:'授权已撤销',suspended:'授权已暂停',superseded:'需重新会签',blocked:'资格已停止',unverifiable:'材料暂不可验证',not_started:'授权尚未生效'};
+        text('holder-state',personalHolder?'本人已签署':delegated?.current?'已按限定授权自动会签':
+          delegated?.recorded?'自动会签历史记录 · '+(delegatedStates[delegated.state] ?? '需人工核对'):'等待本人审阅与签署');
         text('eligibility',state.blocked?'本地资格已停止，检查撤销待后台核对':!state.current?'此记录已过期或版本不再适用':
-          state.signatures.length===2?'双方签署记录齐全；检查与合并状态另行核对':'等待双方各自签署');
-        text('record-time',state.completed ? '双方已签署；待签截止不限制已完成记录资格。' : '待签完成截止 '+new Date(state.packet.valid_until*1000).toLocaleString());
+          state.signatures.length===2?'双方本人签署记录齐全；检查与合并状态另行核对':delegated?.current?
+          '本人签署与限定授权会签材料齐全；当前提交和合并资格仍须另行核验。':'等待有效限定授权会签或权利人本人签署');
+        text('record-time',state.signatures.length===2 ? '双方本人已签署；待签截止不限制已完成记录资格。' : delegated?.current?
+          '自动授权有效至 '+new Date(delegated.expiresAt*1000).toLocaleString():'待签完成截止 '+new Date(state.packet.valid_until*1000).toLocaleString());
         const box=$('attestations'),legend=document.createElement('legend');legend.textContent='逐项确认本人的意愿';box.replaceChildren(legend);
         const keys=['personal','electronic','read','identity',...(state.actor.role==='holder'?['reviewed']:['adult','own_rights','independent'])];
         for(const key of keys){const label=document.createElement('label'),input=document.createElement('input');input.type='checkbox';input.name=key;input.required=true;
@@ -71,6 +78,7 @@ export function client():void {
         text('sign',state.actor.role==='holder'?'由我本人签署（权利人）':'由我本人签署（贡献者）');
         ($('download-contributor') as HTMLButtonElement).disabled=!state.signatures.some((r:any)=>r.role==='contributor');
         ($('download-holder') as HTMLButtonElement).disabled=!state.signatures.some((r:any)=>r.role==='holder');
+        ($('download-audit') as HTMLButtonElement).disabled=!delegated?.canAudit;
       }else{state=null;await agreement('/agreement');text('eligibility',hasPackets?'请选择已有签署记录。':'创建本人记录后才能签署。');}
     }catch(error){state=null;if((error as Error).message==='packet_unavailable' && own){
         discardPacket();packetPage(own,true);await agreement('/agreement');text('eligibility',hasPackets?'之前选择的记录不可访问；请选择当前账号的签署记录。':'之前选择的记录不可访问；可创建当前账号的签署记录。');
@@ -94,7 +102,9 @@ export function client():void {
     const role=state.actor.role,input={name:$<HTMLInputElement>('name').value,address:$<HTMLTextAreaElement>('address').value,
       signature:$<HTMLInputElement>('signature').value,attestations:Object.fromEntries([...document.querySelectorAll<HTMLInputElement>('#attestations input')].map(x=>[x.name,x.checked]))};
     const intent=(await api('/intents',{packet,role})).intent;
-    await api('/sign',{packet,intent,role,evidence:input});clearConsent();$<HTMLFormElement>('sign-form').reset();await refresh();message('本人的签署已保存。另一方仍须独立审阅并自行签署。');
+    const result=await api('/sign',{packet,intent,role,evidence:input});clearConsent();$<HTMLFormElement>('sign-form').reset();await refresh();
+    message(result.countersignature==='recorded'?'本人的签署已保存；系统已按限定授权记录会签。可下载审计材料，提交资格仍须核验。':
+      result.countersignature==='pending_manual_review'?'本人的签署已保存；自动会签尚未确认，请核对状态或等待权利人本人签署。':'本人的签署已保存。另一方可独立审阅并本人签署。');
   });};
   $('hold').onclick=()=>void action(async()=>{if(!$<HTMLInputElement>('hold-confirm').checked)throw new Error('personal_confirmation_required');
     const intent=(await api('/intents',{packet,role:'hold'})).intent;await api('/hold',{packet,intent});clearConsent();await refresh();
@@ -103,5 +113,11 @@ export function client():void {
     const evidence=await api('/evidence?packet='+encodeURIComponent(packet)+'&role='+role),document=await api('/agreement?packet='+encodeURIComponent(packet));
     const link=window.document.createElement('a'),url=URL.createObjectURL(new Blob([JSON.stringify({agreement:document,evidence},null,2)],{type:'application/json'}));
     link.href=url;link.download='cla-'+packet+'-'+role+'.json';link.click();URL.revokeObjectURL(url);message('证据已下载到您的设备；请妥善保存个人资料。');});
+  $('download-audit').onclick=()=>void action(async()=>{
+    const audit=await api('/audit?packet='+encodeURIComponent(packet));
+    const link=window.document.createElement('a'),url=URL.createObjectURL(new Blob([JSON.stringify(audit,null,2)],{type:'application/json'}));
+    link.href=url;link.download='cla-'+packet+'-audit.json';link.click();URL.revokeObjectURL(url);
+    message('已下载本人可访问记录的授权与会签审计材料。历史记录不等于当前提交资格，也不裁定法律效力。');
+  });
   void refresh().catch(error=>{controls();message('无法读取当前协议或身份（'+(error as Error).message+'）。请重新登录或稍后手动刷新；签署保持不可用。',true);});
 }

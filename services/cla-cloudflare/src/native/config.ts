@@ -10,10 +10,13 @@ export interface LiveConfig extends Config {
   holderAuthorizationKey?: string;
   holderAuthorizationId?: string;
   automaticVerificationEnabled?: boolean;
+  automaticPublishingEnabled?: boolean;
 }
 export interface Secrets { clientSecret: string; pkcs8: string; evidenceKey: string }
 export function validateLive(c: LiveConfig): void {
   validateConfig(c);
+  if(c.automaticPublishingEnabled!==undefined && typeof c.automaticPublishingEnabled!=='boolean')throw new Rejected('live_configuration_invalid');
+  if(c.automaticPublishingEnabled===true && (!c.automaticVerificationEnabled || !c.checkPublishingEnabled || !c.backgroundEnabled))throw new Rejected('automatic_publication_recovery_required');
   if(c.delegatedCountersigningEnabled!==undefined && typeof c.delegatedCountersigningEnabled!=='boolean' ||
     c.automaticVerificationEnabled!==undefined && typeof c.automaticVerificationEnabled!=='boolean')throw new Rejected('live_configuration_invalid');
   if(c.delegatedCountersigningEnabled===true && (!c.signingEnabled ||

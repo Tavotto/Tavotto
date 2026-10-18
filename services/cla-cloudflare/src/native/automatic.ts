@@ -1,10 +1,11 @@
-// New-head verification is observational. It never publishes or renews a GitHub check.
+// Observations are default; independently enabled publication dispatches once and reconciles later.
 import {bytes,canonical,randomToken,sha256,validWebhook} from '../core/crypto.ts';
 import {sameBinding} from '../core/identity.ts';
 import {validId,validSha} from '../core/policy.ts';
 import {Rejected} from '../core/types.ts';
 import type {LiveService} from './service.ts';
 import {DB_NOW} from './store.ts';
+import {BudgetDeferred,FREE_BUDGET,qualificationSQL} from './budget.ts';
 interface HeadRequest {request_key:string;pr:number;head:string;status:string;attempt:string;lease_until:number}
 // A separate scheduled invocation keeps both queues' existing per-invocation budgets intact.
 export const AUTOMATIC_CRON='7-59/15 * * * *';
@@ -30,6 +31,7 @@ export async function admitHead(s:LiveService,raw:Uint8Array<ArrayBuffer>,signat
 }
 export async function verifyHeadOne(s:LiveService):Promise<string> {
   if(s.c.automaticVerificationEnabled!==true)return 'automatic_verification_disabled';
+  if(s.c.automaticPublishingEnabled && (!s.store.budget || s.github.budget!==s.store.budget))throw new Rejected('invocation_budget_required');
   await s.store.assertReady();const attempt=randomToken();
   // Expired workers require manual recovery. No uncertain operation is automatically replayed.
   await s.store.stmt(`UPDATE head_requests SET status='manual',result='' WHERE status='running' AND lease_until<=${DB_NOW}`).run();
@@ -37,8 +39,30 @@ export async function verifyHeadOne(s:LiveService):Promise<string> {
     WHERE request_key=(SELECT request_key FROM head_requests WHERE status='pending' ORDER BY created,request_key LIMIT 1) AND status='pending' RETURNING *`,attempt)]);
   if(result.some(r=>!r.success))throw new Rejected('transaction_rejected');const job=result[0]?.results[0];if(!job)return 'idle';
   try {
-    const check=await s.evaluate(job.pr,5),fresh=await s.freshBinding(job.pr),now=await s.store.databaseNow();
-    if(check.headSha!==job.head || !sameBinding(check.proof,fresh) || now>=check.proof.expires_at)throw new Rejected('automatic_head_changed');
+    const check=await s.evaluate(job.pr,s.c.automaticPublishingEnabled?7:5);
+    if(check.headSha!==job.head)throw new Rejected('automatic_head_changed');
+    if(s.c.automaticPublishingEnabled) {
+      const exempt=new Set(Object.values(s.c.exemptionIds));
+      if(16+qualificationSQL(s.c)*check.proof.contributors.filter(person=>!exempt.has(person.id)).length>FREE_BUDGET.sqlWork)throw new BudgetDeferred('confirmation_capacity');
+      let issued:string|undefined;
+      try {
+        const receipt=await s.github.publishNew(check,async()=>{
+          const fresh=await s.freshBinding(job.pr);
+          if(!sameBinding(check.proof,fresh))throw new Rejected('automatic_head_changed');
+          if(await s.store.databaseNow()>=check.proof.expires_at)throw new Rejected('proof_expired');
+          s.store.budget!.reserveWorkExternal(1);
+          issued=await s.store.beginAutomaticPublication(job,check);return issued;
+        });
+        s.store.budget!.settlement();await s.store.settlePublication(issued!,'reconcile',receipt.id);
+        return 'automatic_publication_requires_reconciliation';
+      }catch(error){
+        if(!issued)throw error;
+        s.store.budget!.settlement();try{await s.store.settlePublication(issued,'unknown');}catch{}
+        return 'automatic_publication_unknown_no_replay';
+      }
+    }
+    const fresh=await s.freshBinding(job.pr),now=await s.store.databaseNow();
+    if(!sameBinding(check.proof,fresh) || now>=check.proof.expires_at)throw new Rejected('automatic_head_changed');
     // This is a new read-only result; no earlier proof is accepted as input or extended.
     const observation=canonical({protocol:'cla-head-observation-v1',proof:check.proof,eligible:check.conclusion==='success',
       agreement_version:s.c.policy.agreements.individual.version,agreement_sha256:s.c.policy.agreements.individual.sha256,observed_at:now,

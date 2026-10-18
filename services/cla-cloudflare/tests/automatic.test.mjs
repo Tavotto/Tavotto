@@ -54,7 +54,7 @@ test('revocation during binding recheck cannot commit a successful observation',
 }));
 test('new head observation meters all database operations within unchanged work budget',()=>iso(async f=>{
   await f.install();const p=await f.create();await f.sign(p);enable(f);await admit(f);const budget=new InvocationBudget(),s=new LiveService(f.c,new LiveStore(f.db,budget,f.c),f.gh,f.key);
-  assert.equal(await verifyHeadOne(s),'head_verified_without_publication');assert.equal(budget.snapshot().sql,16);
+  assert.equal(await verifyHeadOne(s),'head_verified_without_publication');assert.equal(budget.snapshot().sql,13);
 }));
 test('automatic and recovery schedules are separate invocations with default disabled routes',async()=>{
   let touched=0;const env={DB:{prepare(){touched++;throw Error('DB_FORBIDDEN');}}};await worker.scheduled({cron:AUTOMATIC_CRON},env);await worker.scheduled({cron:'* * * * *'},env);assert.equal(touched,0);
