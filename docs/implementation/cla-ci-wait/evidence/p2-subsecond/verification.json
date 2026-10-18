@@ -1,0 +1,88 @@
+{
+  "reviewed_head": "830bd89cc905d28b41f690c7aa6c0236a06aec84",
+  "finding": "https://github.com/Tavotto/Tavotto/pull/1160#discussion_r4306426824",
+  "commands": [
+    {
+      "command": "node --test tests/*.test.mjs",
+      "exit_code": 0,
+      "log": "node.txt"
+    },
+    {
+      "command": "node tests/mutation-smoke.mjs",
+      "exit_code": 0,
+      "log": "mutations.txt"
+    },
+    {
+      "command": "python3 tests/migration.test.py",
+      "exit_code": 0,
+      "log": "migration.txt"
+    },
+    {
+      "command": "npm run typecheck",
+      "exit_code": 127,
+      "log": "typecheck.txt"
+    },
+    {
+      "command": "npm run build",
+      "exit_code": 1,
+      "log": "build.txt"
+    }
+  ],
+  "passed": 358,
+  "migration_tests": 4,
+  "detected_mutations": 73,
+  "original_subsecond_red_exit": 1,
+  "independent_default_green_exit": 0,
+  "independent_clock_matrix_green_exit": 0,
+  "independent_mutant_exits": [
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1
+  ],
+  "source_sha256": {
+    "src/ci/wait.ts": "c4b3276ce018dc9db3ff9a90485d089ccbae6d5bd31d4498ce0b20173d1faebb",
+    "scripts/ci-candidate.mjs": "86f27446ed18b4a181dff2db488c414c1bc85b36165863d4fac29ac7875d8e01",
+    "tests/ci-wait.test.mjs": "07eeef9f8b1af601f11783b03e547e70149c305db0f89bb2ec9dd50491012ef0",
+    "tests/ci-wait-mutation-cases.json": "72a236150278497a71b483ebb4631db4b520838b993eaaba2274bbd6a1ba8e15"
+  },
+  "artifact_sha256": {
+    "red.txt.raw.json": "0fc8d20ee1fd11f36975f7c6eada48c8eeba89287d8b81736cafc0f08e0c1c1d",
+    "node.txt": "7560d8da7e274427ad71a48e36631eb2963db9d42b06cf97745c56223db917b9",
+    "original-wait.ts.txt": "53cb415d79a3333f408a70a2e882ffe14a5bbd438a8c674534cbf4283e0a0fb6",
+    "mutations.txt": "00c28a10a8c6516ea650c910423f716989f69af82f06c7f09796801fbdd6c6d6",
+    "build.txt": "22e4d4b3e5f8886059e79e1bda0b44184ccf2570cca710c0c853f1250ecd88b7",
+    "intermediate-abnormal.test.mjs.txt": "aacf3b65dd844139bf824551610e083870d6953aea8cdfc5eed9e49c631e25bc",
+    "intermediate-abnormal-red.txt": "9e67ea14293a3c0d370b8163bd852339ff6738a766218a8e9466c05cfe81cefd",
+    "independent-samples.txt": "462bdd75baef07dee7874170e32b043301fdcad8fced602f27c52f7006da3687",
+    "independent-samples.test.mjs.txt": "daeb71538e770b022be64baff2ba6618dda00479ab56f0452f1b6d510a614d01",
+    "independent-mutants.json": "e494ec9cc88c50172fb2c0ab809f3795a97648f21d8f9eb88f69e7b08736eafb",
+    "migration.txt": "2144aad53bc4f58ee55ac37ab60a9f77116818ddc297f4a4c4bf260e32292654",
+    "independent-default.test.mjs.txt": "470dba0108bab7b0df02f5d507752004fd4fa4b47a7c538aaedfc07798c8d5c1",
+    "red.txt": "cce145f3850b7778f5ed34b42fca8770f0376e486161b1b2da430b338c243ed2",
+    "independent-mutations.py.txt": "88b5a6602a6d16a41fe2c17ca8d3bf79b3c6a85d0719489bd65adfcbe8f8caf7",
+    "independent-allowed-suite.txt": "0e5b4886f2983d89521611ea777baea7d658e1e2210640e6c264481f4af1e619",
+    "independent-review.md": "8f1dd20a0e61e4f22d414aa85ab03bae71180572f6e7f32f39228dceb5c7ac9e",
+    "typecheck.txt": "93eed0553081bd499f8b8cda0baee9c9c74eed7c493953de4dcad753d748bb50",
+    "independent-default.txt": "8ff57f9d185366c0068b70a750229245faa7df1ac8115961fc86508540c2222a",
+    "mutants/millisecond-wall-rollback.txt.raw.json": "6924f3c1d39180fe457bf04471712b5523c7d9fa285b4090923cee16855c71ee",
+    "mutants/millisecond-wall-validity.txt.raw.json": "017c5d5b18ea93ac66941baa0a14f1b7fcc34a2c9dc86cf139de41bd6131488e",
+    "mutants/default-subsecond-wall-precision.txt": "5f8f0953f55a8c63659451b4362e47c904e383a6dd83601e7227ef0f1e2e74a9",
+    "mutants/proof-mapping-validated-clock-snapshot.txt": "b14d2f6198e4b9d2f86a99aa98489fd79d429e38dc8a0d58f5bf1d7a66f1415a",
+    "mutants/initial-clock-sample-validation.txt.raw.json": "f7c93f620714d127f7d0c9ba068c7347c6fc4dd8f4ed86c5d436650db7ce25f9",
+    "mutants/initial-clock-sample-validation.txt": "4d85225a0d6d63ef185dec505227e01c71a66ee15e171a195d1fa0825c0e4163",
+    "mutants/subsecond-proof-cancellation-precision.txt.raw.json": "bf4b3d813d16b7c780bbdfdacac591acccbeed548589148d240489fa9692773e",
+    "mutants/millisecond-wall-validity.txt": "3640fbfeac41c427e74694687805d4116513e0bc9a4a125910d51551ddc515a1",
+    "mutants/millisecond-wall-rollback.txt": "e85c48ae33b7b464ae7b06a26d79f2f0b72f4d9618193dfc1aa316290670de75",
+    "mutants/default-subsecond-wall-precision.txt.raw.json": "fa3ce8611ffa6dd6325689d434f942f46fd6b9b299c1299f09535d109ddd33d6",
+    "mutants/subsecond-proof-cancellation-precision.txt": "3c5b5590cdcda626d677d92ae4b8109de99c8b78eb4f3d7b9851eaa90e97b601",
+    "mutants/millisecond-wall-expiry.txt": "c5de32ef7953e0606b44601948478d19f7e60b7e366adeffe1aea98a78ceddfe"
+  },
+  "hosted_on_new_head": "pending; prior exact-head hosted success is historical",
+  "new_external_review": "not_requested; waiting current-head deterministic type/build prerequisite",
+  "default_flags_changed": false,
+  "no_dynamic_success_publication_across_expiry": true
+}

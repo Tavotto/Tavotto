@@ -1,0 +1,79 @@
+[
+  {
+    "name": "subsecond proof cancellation precision",
+    "source": "/workspace/Tavotto-cla-ci-wait/services/cla-cloudflare/src/ci/wait.ts",
+    "source_sha256": "c4b3276ce018dc9db3ff9a90485d089ccbae6d5bd31d4498ce0b20173d1faebb",
+    "mutated_sha256": "9a2317965b6a79b55b8d644c251d2be0fda056efcd46141cb578d9654b19891a",
+    "validated_unique_replacement": true,
+    "selected_test": "CI wait bounds subsecond proof expiry during authority transport",
+    "exit_code": 1,
+    "failure": "AssertionError",
+    "tap": "/tmp/cla-ci-wait-independent-mutants/subsecond-proof-cancellation-precision/result.tap"
+  },
+  {
+    "name": "default subsecond wall precision",
+    "source": "/workspace/Tavotto-cla-ci-wait/services/cla-cloudflare/src/ci/wait.ts",
+    "source_sha256": "c4b3276ce018dc9db3ff9a90485d089ccbae6d5bd31d4498ce0b20173d1faebb",
+    "mutated_sha256": "993c24f06b66eec5bbe7192b8d1ad0c08fb5c030d85b4794b21af2080f9d5508",
+    "validated_unique_replacement": true,
+    "selected_test": "CI wait bounds subsecond proof expiry during authority default clock",
+    "exit_code": 1,
+    "failure": "AssertionError",
+    "tap": "/tmp/cla-ci-wait-independent-mutants/default-subsecond-wall-precision/result.tap"
+  },
+  {
+    "name": "millisecond wall validity",
+    "source": "/workspace/Tavotto-cla-ci-wait/services/cla-cloudflare/src/ci/wait.ts",
+    "source_sha256": "c4b3276ce018dc9db3ff9a90485d089ccbae6d5bd31d4498ce0b20173d1faebb",
+    "mutated_sha256": "1ff9f6c04a1d2c22452c163988fdee2a0a2c1440b5d2119d5def00470ed63a3c",
+    "validated_unique_replacement": true,
+    "selected_test": "CI wait rejects millisecond wall invalid",
+    "exit_code": 1,
+    "failure": "AssertionError",
+    "tap": "/tmp/cla-ci-wait-independent-mutants/millisecond-wall-validity/result.tap"
+  },
+  {
+    "name": "millisecond wall rollback",
+    "source": "/workspace/Tavotto-cla-ci-wait/services/cla-cloudflare/src/ci/wait.ts",
+    "source_sha256": "c4b3276ce018dc9db3ff9a90485d089ccbae6d5bd31d4498ce0b20173d1faebb",
+    "mutated_sha256": "83801f2dfdeb8b1f2b49cf4d4f33e8617094bf234db8a6ae608c02f708e47133",
+    "validated_unique_replacement": true,
+    "selected_test": "CI wait rejects millisecond wall rollback",
+    "exit_code": 1,
+    "failure": "AssertionError",
+    "tap": "/tmp/cla-ci-wait-independent-mutants/millisecond-wall-rollback/result.tap"
+  },
+  {
+    "name": "millisecond wall expiry",
+    "source": "/workspace/Tavotto-cla-ci-wait/services/cla-cloudflare/src/ci/wait.ts",
+    "source_sha256": "c4b3276ce018dc9db3ff9a90485d089ccbae6d5bd31d4498ce0b20173d1faebb",
+    "mutated_sha256": "1070a763c72bebf00d6b5df24ed6c5669c5c3d529f249ebd35f814f78ab9506e",
+    "validated_unique_replacement": true,
+    "selected_test": "CI wait rejects millisecond wall expiry",
+    "exit_code": 1,
+    "failure": "AssertionError",
+    "tap": "/tmp/cla-ci-wait-independent-mutants/millisecond-wall-expiry/result.tap"
+  },
+  {
+    "name": "initial clock sample validation",
+    "source": "/workspace/Tavotto-cla-ci-wait/services/cla-cloudflare/src/ci/wait.ts",
+    "source_sha256": "c4b3276ce018dc9db3ff9a90485d089ccbae6d5bd31d4498ce0b20173d1faebb",
+    "mutated_sha256": "b8511ffc84bbda545fd72b8402bed22156fb03dd45de79cfb8af14cee3d25ab8",
+    "validated_unique_replacement": true,
+    "selected_test": "CI wait validates initial clock samples",
+    "exit_code": 1,
+    "failure": "AssertionError",
+    "tap": "/tmp/cla-ci-wait-independent-mutants/initial-clock-sample-validation/result.tap"
+  },
+  {
+    "name": "proof mapping validated clock snapshot",
+    "source": "/workspace/Tavotto-cla-ci-wait/services/cla-cloudflare/src/ci/wait.ts",
+    "source_sha256": "c4b3276ce018dc9db3ff9a90485d089ccbae6d5bd31d4498ce0b20173d1faebb",
+    "mutated_sha256": "4a1316e352cc38c7051ea25797012e2d3f3ad2014f1eb0e0ff7a522d49e0cb49",
+    "validated_unique_replacement": true,
+    "selected_test": "CI wait validates every observed millisecond sample",
+    "exit_code": 1,
+    "failure": "AssertionError",
+    "tap": "/tmp/cla-ci-wait-independent-mutants/proof-mapping-validated-clock-snapshot/result.tap"
+  }
+]

@@ -1,0 +1,41 @@
+✖ initial invalid millisecond sample must reject rather than accepting eligibility (85.787707ms)
+✖ rollback used directly for proof deadline must not extend its cancellation delay (23.652131ms)
+ℹ tests 2
+ℹ suites 0
+ℹ pass 0
+ℹ fail 2
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 274.078034
+
+✖ failing tests:
+
+test at ../../tmp/cla-ci-wait-abnormal-samples.test.mjs:8:1
+✖ initial invalid millisecond sample must reject rather than accepting eligibility (85.787707ms)
+  AssertionError [ERR_ASSERTION]: Missing expected rejection.
+      at async file:///tmp/cla-ci-wait-abnormal-samples.test.mjs:8:124
+      at async iso (file:///tmp/cla-ci-wait-abnormal-samples.test.mjs:7:415)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    operator: 'rejects',
+    diff: 'simple'
+  }
+
+test at ../../tmp/cla-ci-wait-abnormal-samples.test.mjs:9:1
+✖ rollback used directly for proof deadline must not extend its cancellation delay (23.652131ms)
+  AssertionError [ERR_ASSERTION]: transient rollback armed 10000 milliseconds instead of at most 1100
+      at file:///tmp/cla-ci-wait-abnormal-samples.test.mjs:9:945
+      at async iso (file:///tmp/cla-ci-wait-abnormal-samples.test.mjs:7:415)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: false,
+    expected: true,
+    operator: '==',
+    diff: 'simple'
+  }

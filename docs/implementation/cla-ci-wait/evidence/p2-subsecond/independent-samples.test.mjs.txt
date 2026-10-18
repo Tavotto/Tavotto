@@ -1,0 +1,23 @@
+import test from 'node:test';import assert from 'node:assert/strict';
+import {candidate} from '/workspace/Tavotto-cla-ci-wait/services/cla-cloudflare/scripts/ci-candidate.mjs';
+import {fixture} from '/workspace/Tavotto-cla-ci-wait/services/cla-cloudflare/tests/delegation-fixture.mjs';
+import {setup} from '/workspace/Tavotto-cla-ci-wait/services/cla-cloudflare/tests/ci-fixture.mjs';
+import {canonical} from '/workspace/Tavotto-cla-ci-wait/services/cla-cloudflare/src/core/crypto.ts';
+let outbound=0;globalThis.fetch=async()=>{outbound++;throw Error('OUTBOUND_FORBIDDEN');};
+const counts={runs:0,injected:0,rejectedBeforeAuthority:0,authorityCancellationBounded:0};
+async function iso(fn){const f=await fixture();try{const t=await setup(f);t.config.wait={enabled:true,maxAttempts:3,intervalMs:1000,timeoutMs:10000};const proof=JSON.parse(t.run.output.summary.split('\n')[1]);proof.expires_at=f.now()+2;t.run.output.summary='tavotto-cla-v1\n'+canonical(proof);await f.store.stmt('UPDATE publication_attempts SET proof_text=?,expires=?',t.run.output.summary,proof.expires_at).run();await fn(f,t);}finally{f.close();}}
+for(const clockKind of ['milliseconds','monotonic'])for(const valueKind of ['NaN','rollback'])test('every called '+clockKind+' sample rejects or keeps original cancellation bound: '+valueKind,()=>iso(async(f,t)=>{
+ for(let nth=1;nth<=60;nth++){
+  const set=globalThis.setTimeout,clear=globalThis.clearTimeout;let callback,delay,observed,samples=0,injected=false,signal;
+  globalThis.setTimeout=(fn,ms)=>{callback=fn;delay=ms;return 1;};globalThis.clearTimeout=()=>{};
+  const sample=(kind,normal)=>{if(kind!==clockKind)return normal;if(++samples!==nth)return normal;injected=true;return valueKind==='NaN'?NaN:normal-10000;};
+  try{await assert.rejects(candidate(t.config,t.event,'pull_request','SYNTHETIC_TOKEN',{
+   clock:f.now,wallMilliseconds:()=>sample('milliseconds',f.now()*1000+900),monotonic:()=>sample('monotonic',0),
+   transport:async(u,i)=>{if(new URL(u).origin!=='https://cla.invalid')return t.transport(u,i);observed=delay;signal=i.signal;queueMicrotask(()=>callback());return new Promise(()=>{});}
+  }),e=>['ci_wait_deadline','ci_source_invalid'].includes(e.code));}finally{globalThis.setTimeout=set;globalThis.clearTimeout=clear;}
+  counts.runs++;if(injected)counts.injected++;
+  if(observed===undefined){counts.rejectedBeforeAuthority++;assert.equal(injected,true,'clean clock cannot reject before authority');}
+  else{counts.authorityCancellationBounded++;assert.ok(observed<=1100,'sample '+nth+' armed '+observed+'ms');assert.equal(signal.aborted,true);}
+ }
+}));
+test('sampling matrix uses zero outbound calls and exercised bad samples',()=>{assert.equal(outbound,0);assert.ok(counts.injected>0);console.log(JSON.stringify(counts));});

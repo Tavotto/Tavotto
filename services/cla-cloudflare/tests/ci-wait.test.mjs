@@ -125,3 +125,58 @@ for(const mode of ['first success path','slow pending'])test('CI wait anchors pr
   if(mode==='slow pending'&&authority(u)&&++reads===1){tick=1500;return pending();}return t.transport(u,i);
  }}),e=>e.code==='ci_wait_deadline');if(mode==='slow pending')assert.equal(reads,1);
 }));
+for(const phase of ['transport','body','default clock'])test('CI wait bounds subsecond proof expiry during authority '+phase,()=>iso(async f=>{
+ const t=await setup(f);t.config.wait=wait;
+ const proof=JSON.parse(t.run.output.summary.split('\n')[1]);proof.expires_at=f.now()+2;t.run.output.summary='tavotto-cla-v1\n'+canonical(proof);
+ await f.store.stmt('UPDATE publication_attempts SET proof_text=?,expires=?',t.run.output.summary,proof.expires_at).run();
+ // Fixed existing synthetic proof. Capture and fire the cancellation timer; no
+ // publication or successful read is carried over an expiry transition.
+ const originalSet=globalThis.setTimeout,originalClear=globalThis.clearTimeout,originalDate=Date.now;let timer,delay,observed,cancelled=false,signal;
+ globalThis.setTimeout=(callback,ms)=>{timer=callback;delay=ms;return 1;};globalThis.clearTimeout=()=>{};
+ if(phase==='default clock')Date.now=()=>f.now()*1000+900;
+ try{
+  await assert.rejects(candidate(t.config,t.event,'pull_request','SYNTHETIC_TOKEN',{
+   ...(phase==='default clock'?{}:{clock:f.now,wallMilliseconds:()=>f.now()*1000+900}),monotonic:()=>0,
+   transport:async(u,i)=>{
+    if(!authority(u))return t.transport(u,i);observed=delay;signal=i.signal;
+    if(phase!=='body'){queueMicrotask(()=>timer());return new Promise(()=>{});}
+    return new Response(new ReadableStream({pull(){queueMicrotask(()=>timer());},cancel(){cancelled=true;}}),{headers:{'content-type':'application/json'}});
+   }
+  }),e=>e.code==='ci_wait_deadline');
+ }finally{globalThis.setTimeout=originalSet;globalThis.clearTimeout=originalClear;Date.now=originalDate;}
+ assert.equal(signal.aborted,true);if(phase==='body')assert.equal(cancelled,true);
+ assert.equal(observed,1100,'cancellation uses the remaining milliseconds in the original proof');
+}));
+for(const mode of ['invalid','nonfinite','rollback','expiry'])test('CI wait rejects millisecond wall '+mode,()=>iso(async f=>{
+ const t=await setup(f);t.config.wait=wait;let milliseconds=f.now()*1000+900,reads=0;
+ const proof=JSON.parse(t.run.output.summary.split('\n')[1]);
+ await assert.rejects(candidate(t.config,t.event,'pull_request','SYNTHETIC_TOKEN',{
+  clock:f.now,wallMilliseconds:()=>milliseconds,monotonic:()=>0,
+  transport:async(u,i)=>{if(authority(u)){reads++;milliseconds=mode==='invalid'?milliseconds+0.5:mode==='nonfinite'?NaN:mode==='rollback'?milliseconds-1:proof.expires_at*1000;return mode==='expiry'?t.transport(u,i):pending();}return t.transport(u,i);}
+ }),e=>e.code==='ci_wait_deadline');assert.equal(reads,1);
+}));
+test('CI wait validates initial clock samples',async()=>{
+ for(const source of ['monotonic','seconds','milliseconds'])await iso(async f=>{
+  const t=await setup(f);t.config.wait=wait;let samples=0,reads=0;
+  const first=normal=>samples++===0?NaN:normal;
+  await assert.rejects(candidate(t.config,t.event,'pull_request','SYNTHETIC_TOKEN',{
+   clock:source==='seconds'?()=>first(f.now()):f.now,
+   wallMilliseconds:source==='milliseconds'?()=>first(f.now()*1000+900):()=>f.now()*1000+900,
+   monotonic:source==='monotonic'?()=>first(0):()=>0,
+   transport:async(u,i)=>{reads++;return t.transport(u,i);}
+  }),e=>e.code==='ci_wait_deadline');assert.equal(reads,0);
+ });
+});
+test('CI wait validates every observed millisecond sample',()=>iso(async f=>{
+ const t=await setup(f);t.config.wait=wait;let samples=0;
+ const options={clock:f.now,monotonic:()=>0,transport:t.transport,wallMilliseconds:()=>{samples++;return f.now()*1000+900;}};
+ assert.equal((await candidate(t.config,t.event,'pull_request','SYNTHETIC_TOKEN',options)).status,'success');
+ const count=samples;assert.ok(count>1 && count<1000);
+ for(const mode of ['nonfinite','rollback'])for(let n=mode==='rollback'?2:1;n<=count;n++){
+  samples=0;
+  await assert.rejects(candidate(t.config,t.event,'pull_request','SYNTHETIC_TOKEN',{
+   ...options,wallMilliseconds:()=>++samples===n?(mode==='nonfinite'?NaN:f.now()*1000+899):f.now()*1000+900
+  }),e=>['ci_wait_deadline','ci_source_invalid'].includes(e.code),'reject '+mode+' sample '+n);
+  assert.ok(samples>=n);
+ }
+}));

@@ -1,0 +1,28 @@
+(node:51739) TimeoutNaNWarning: NaN is not a number.
+Timeout duration was set to 1.
+(Use `node --trace-warnings ...` to show where the warning was created)
+✖ CI wait validates every observed millisecond sample (214.321571ms)
+ℹ tests 1
+ℹ suites 0
+ℹ pass 0
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 381.492637
+
+✖ failing tests:
+
+test at tests/ci-wait.test.mjs:170:1
+✖ CI wait validates every observed millisecond sample (214.321571ms)
+  AssertionError [ERR_ASSERTION]: Missing expected rejection: reject rollback sample 19
+      at async file:///tmp/cla-ci-wait-independent-mutants/proof-mapping-validated-clock-snapshot/tests/ci-wait.test.mjs:177:3
+      at async iso (file:///tmp/cla-ci-wait-independent-mutants/proof-mapping-validated-clock-snapshot/tests/delegation-fixture.mjs:37:79)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    operator: 'rejects',
+    diff: 'simple'
+  }

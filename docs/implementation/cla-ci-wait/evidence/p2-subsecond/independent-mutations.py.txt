@@ -1,0 +1,17 @@
+import pathlib,json,hashlib,shutil,subprocess
+root=pathlib.Path('/workspace/Tavotto-cla-ci-wait/services/cla-cloudflare');out=pathlib.Path('/tmp/cla-ci-wait-independent-mutants');out.mkdir(exist_ok=True)
+names={'subsecond proof cancellation precision','default subsecond wall precision','millisecond wall validity','millisecond wall rollback','millisecond wall expiry','initial clock sample validation','proof mapping validated clock snapshot'}
+report=[]
+for case in json.loads((root/'tests/ci-wait-mutation-cases.json').read_text()):
+ if case['name'] not in names:continue
+ target=out/case['name'].replace(' ','-');
+ if target.exists():shutil.rmtree(target)
+ for dirname in ['src','scripts','tests']:shutil.copytree(root/dirname,target/dirname)
+ shutil.copyfile(root/'package.json',target/'package.json')
+ source=target/case['file'];before=source.read_text();assert before.count(case['before'])==1,case['name'];original_hash=hashlib.sha256(before.encode()).hexdigest();source.write_text(before.replace(case['before'],case['after'],1));assert case['after'] in source.read_text()
+ result=subprocess.run(['node','--test','--test-name-pattern='+case['pattern'],case['testFile']],cwd=target,capture_output=True,text=True)
+ (target/'result.tap').write_text(result.stdout+result.stderr)
+ assert result.returncode==1 and 'AssertionError' in result.stdout and case['selectedTitle'] in result.stdout,(case['name'],result.returncode,result.stdout,result.stderr)
+ report.append({'name':case['name'],'source':str(root/case['file']),'source_sha256':original_hash,'mutated_sha256':hashlib.sha256(source.read_bytes()).hexdigest(),'validated_unique_replacement':True,'selected_test':case['selectedTitle'],'exit_code':result.returncode,'failure':'AssertionError','tap':str(target/'result.tap')})
+assert len(report)==len(names)
+(out/'report.json').write_text(json.dumps(report,indent=2)+'\n');print(json.dumps(report,indent=2))

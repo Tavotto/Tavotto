@@ -53,7 +53,11 @@ No earlier eligible response is cached or reused.
 The overall monotonic deadline covers every GET, response body, pause and final
 return, including a transport/body that ignores cancellation. Abort is propagated
 to the request and body reader. Before the first authority read, remaining proof life
-also fixes a monotonic deadline that cannot be extended. Wall/monotonic rollback,
+also fixes a monotonic deadline that cannot be extended. The default clock retains
+the fractional wall second; a custom seconds-only test clock uses the conservative
+end of its reported second. Initial samples are validated. Deadline mapping and
+timer arming use validated snapshots rather than extra unchecked clock samples.
+Wall/monotonic rollback,
 either deadline and proof expiry all reject before another read or success.
 
 ## Validation and acceptance
@@ -66,13 +70,23 @@ The current Worker 403 response is exercised through its actual fetch handler
 without HTTP or remote calls. Source mutations are isolated, uniquely located
 and must make the selected test actually fail.
 
-Exact commands, exits, output hashes, source hashes and independent review are in
-evidence/verification.json. Dependency download remains prohibited after the
-earlier E403; local tsc/esbuild are unavailable. A stacked PR does not trigger
-the repository's main-base workflow. Typecheck/build and hosted CI are pending
-the normal reviewed-base landing/retarget/rebase process; no alternate workflow
-or environment is used to bypass those boundaries. No extra #1151 review is
-triggered, and this draft has not received its own formal external review.
+The first external code/security review covered exact head
+`830bd89cc905d28b41f690c7aa6c0236a06aec84` after its [hosted typecheck,
+build and offline checks succeeded](https://github.com/Tavotto/Tavotto/actions/runs/39112917441/job/117632653129).
+Security reported no findings; code review found subsecond cancellation overrun.
+The fix and an independent review also closed unchecked initial/extra clock-sample
+paths found while reproducing it. [Current evidence](evidence/p2-subsecond/verification.json)
+records 358 Node tests, four migration tests and 73 detected mutations, all exit 0.
+The original two subsecond regressions fail with AssertionError / exit 1. Independent
+default-clock tests, 240 clock-fault invocations and seven actual AssertionError / exit 1
+mutants are archived with source hashes and the intermediate red evidence.
+
+Local typecheck still exits 127 (tsc absent) and build exits 1 (esbuild absent).
+No dependency-download retry, proxy, mirror or alternate environment was used.
+The earlier hosted success belongs only to its original head. New-head hosted
+verification and the one permitted targeted followup remain pending; no further
+review is requested before deterministic prerequisites pass. No extra #1151 review,
+workflow, permission, gate or deployment is triggered by this fix.
 
 Real legal approval/signatures, identity-key registration, secret/resource
 custody, single-authority migration, full CI and live platform acceptance remain

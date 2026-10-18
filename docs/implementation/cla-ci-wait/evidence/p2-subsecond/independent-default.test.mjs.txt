@@ -1,0 +1,24 @@
+import test from 'node:test';import assert from 'node:assert/strict';
+import {candidate} from '/workspace/Tavotto-cla-ci-wait/services/cla-cloudflare/scripts/ci-candidate.mjs';
+import {fixture} from '/workspace/Tavotto-cla-ci-wait/services/cla-cloudflare/tests/delegation-fixture.mjs';
+import {setup} from '/workspace/Tavotto-cla-ci-wait/services/cla-cloudflare/tests/ci-fixture.mjs';
+import {canonical} from '/workspace/Tavotto-cla-ci-wait/services/cla-cloudflare/src/core/crypto.ts';
+let outbound=0;globalThis.fetch=async()=>{outbound++;throw Error('OUTBOUND_FORBIDDEN');};
+const wait={enabled:true,maxAttempts:3,intervalMs:1000,timeoutMs:10000};
+const authority=u=>new URL(u).origin==='https://cla.invalid';
+async function iso(fn){const f=await fixture();try{const t=await setup(f);t.config.wait=wait;const proof=JSON.parse(t.run.output.summary.split('\n')[1]);proof.expires_at=f.now()+2;t.run.output.summary='tavotto-cla-v1\n'+canonical(proof);await f.store.stmt('UPDATE publication_attempts SET proof_text=?,expires=?',t.run.output.summary,proof.expires_at).run();await fn(f,t);}finally{f.close();}}
+async function bounded(f,t,{phase='transport',mono=0,defaults=false,secondsOnly=false,wallMilliseconds}={}){
+ const originals={set:globalThis.setTimeout,clear:globalThis.clearTimeout,date:Date.now};let timer,delay,observed,signal,cancelled=false;
+ globalThis.setTimeout=(fn,ms)=>{timer=fn;delay=ms;return 1;};globalThis.clearTimeout=()=>{};Date.now=()=>f.now()*1000+900;
+ try{await assert.rejects(candidate(t.config,t.event,'pull_request','SYNTHETIC_TOKEN',{
+  monotonic:()=>mono,...(defaults?{}:{clock:f.now,...(secondsOnly?{}:{wallMilliseconds:wallMilliseconds??(()=>f.now()*1000+900)})}),
+  transport:async(u,i)=>{if(!authority(u))return t.transport(u,i);observed=delay;signal=i.signal;if(phase==='transport'){queueMicrotask(()=>timer());return new Promise(()=>{});}return new Response(new ReadableStream({pull(){queueMicrotask(()=>timer());},cancel(){cancelled=true;}}),{headers:{'content-type':'application/json'}});}
+ }),e=>e.code==='ci_wait_deadline');}finally{globalThis.setTimeout=originals.set;globalThis.clearTimeout=originals.clear;Date.now=originals.date;}
+ assert.equal(signal.aborted,true);if(phase==='body')assert.equal(cancelled,true);return observed;
+}
+for(const phase of ['transport','body'])test('default Date.now retains 900 fractional milliseconds and aborts '+phase,()=>iso(async(f,t)=>assert.equal(await bounded(f,t,{phase,defaults:true}),1100)));
+test('fractional monotonic clock retains wall millisecond accuracy within one microsecond',()=>iso(async(f,t)=>assert.ok(Math.abs(await bounded(f,t,{defaults:true,mono:123.4})-1100)<0.001)));
+test('seconds-only custom clock conservatively cancels from the end of its second',()=>iso(async(f,t)=>assert.equal(await bounded(f,t,{secondsOnly:true}),1000)));
+for(const value of [NaN,Infinity,1.5])test('invalid steady milliseconds '+value+' rejects before transport',()=>iso(async(f,t)=>{let reads=0;await assert.rejects(candidate(t.config,t.event,'pull_request','SYNTHETIC_TOKEN',{clock:f.now,wallMilliseconds:()=>value,monotonic:()=>0,transport:async()=>{reads++;throw Error('NO_READ_EXPECTED');}}),e=>e.code==='ci_wait_deadline');assert.equal(reads,0);}));
+test('a rollback sampled by the guard rejects without another transport read',()=>iso(async(f,t)=>{let reads=0,ms=f.now()*1000+900;await assert.rejects(candidate(t.config,t.event,'pull_request','SYNTHETIC_TOKEN',{clock:f.now,wallMilliseconds:()=>ms,monotonic:()=>0,transport:async(u,i)=>{reads++;ms--;return t.transport(u,i);}}),e=>e.code==='ci_wait_deadline');assert.equal(reads,1);}));
+test('outbound requests remained forbidden',()=>assert.equal(outbound,0));

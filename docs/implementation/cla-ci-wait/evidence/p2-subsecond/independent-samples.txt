@@ -1,0 +1,14 @@
+✔ every called milliseconds sample rejects or keeps original cancellation bound: NaN (431.850956ms)
+✔ every called milliseconds sample rejects or keeps original cancellation bound: rollback (130.86052ms)
+✔ every called monotonic sample rejects or keeps original cancellation bound: NaN (148.246725ms)
+{"runs":240,"injected":92,"rejectedBeforeAuthority":83,"authorityCancellationBounded":157}
+✔ every called monotonic sample rejects or keeps original cancellation bound: rollback (151.037882ms)
+✔ sampling matrix uses zero outbound calls and exercised bad samples (0.528983ms)
+ℹ tests 5
+ℹ suites 0
+ℹ pass 5
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 1230.097068

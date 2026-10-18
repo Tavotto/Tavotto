@@ -1,0 +1,33 @@
+(node:51721) TimeoutNaNWarning: NaN is not a number.
+Timeout duration was set to 1.
+(Use `node --trace-warnings ...` to show where the warning was created)
+✖ CI wait validates initial clock samples (69.644025ms)
+ℹ tests 1
+ℹ suites 0
+ℹ pass 0
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 234.124733
+
+✖ failing tests:
+
+test at tests/ci-wait.test.mjs:158:1
+✖ CI wait validates initial clock samples (69.644025ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+
+  3 !== 0
+
+      at file:///tmp/cla-ci-wait-independent-mutants/initial-clock-sample-validation/tests/ci-wait.test.mjs:167:45
+      at async iso (file:///tmp/cla-ci-wait-independent-mutants/initial-clock-sample-validation/tests/delegation-fixture.mjs:37:79)
+      at async TestContext.<anonymous> (file:///tmp/cla-ci-wait-independent-mutants/initial-clock-sample-validation/tests/ci-wait.test.mjs:159:61)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 3,
+    expected: 0,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }

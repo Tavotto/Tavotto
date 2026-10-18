@@ -1,0 +1,17 @@
+✔ default Date.now retains 900 fractional milliseconds and aborts transport (76.172092ms)
+✔ default Date.now retains 900 fractional milliseconds and aborts body (31.05348ms)
+✔ fractional monotonic clock retains wall millisecond accuracy within one microsecond (23.022545ms)
+✔ seconds-only custom clock conservatively cancels from the end of its second (20.690079ms)
+✔ invalid steady milliseconds NaN rejects before transport (19.22532ms)
+✔ invalid steady milliseconds Infinity rejects before transport (17.896484ms)
+✔ invalid steady milliseconds 1.5 rejects before transport (20.819107ms)
+✔ a rollback sampled by the guard rejects without another transport read (18.102235ms)
+✔ outbound requests remained forbidden (0.465587ms)
+ℹ tests 9
+ℹ suites 0
+ℹ pass 9
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 380.227674
