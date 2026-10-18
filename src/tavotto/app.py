@@ -9675,6 +9675,16 @@ def api_ai_pending_put(rid):
         return jsonify(
             {"error": "上一次的修改其实已经开始了", "code": "ai_supersede_conflict", "params": {}}
         ), 409
+    except engine_ai_history.PendingUnresolved as exc:
+        # 同面板 / 同脚本上还有没落定的提交：不写、不发。回它们的 rid，客户端还原并逐条查询之后才能发新的
+        return jsonify(
+            {
+                "error": "这份脚本还有一条已发出的指令没确认",
+                "code": "ai_pending_unresolved",
+                "params": {},
+                "rids": exc.rids,
+            }
+        ), 409
     return jsonify({"ok": True})
 
 

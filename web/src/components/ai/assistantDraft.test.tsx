@@ -670,6 +670,21 @@ describe('同步状态机：单一 reconcile + 写入版本（#1098）', () => {
     expect(be.draft('pa', 'Fig1.pdf')).toBe('别的标签页留下的稿，再加一句') // 基于已见的服务器版本写，不是盲写
   })
 
+  it('本页视图过期（别的标签页刚在兄弟面板留下未确认、任务已结束，本页还没对账）就点发送：后端 409 ai_pending_unresolved——新指令不发，那条被还原并按 rid 查询接回会话', async () => {
+    useSelectionStore.setState({ ids: ['p3'] } as never)
+    await mount()
+    await typeText('新指令')
+    expect(q<HTMLButtonElement>('[data-ai-send="send"]')!.disabled).toBe(false) // 本页看来可以发
+    be.pendings.set('pa\u0000Fig1.pdf', [{ rid: 'rid-othertab-009', text: '别的标签页发出的话', sent: SENT, script: 'p1.py' }])
+    vi.mocked(fetchAiRequest).mockResolvedValue({ session: 's-other', status: 'done', changed: true, script: 'p1.py' })
+    await click(q('[data-ai-send="send"]'))
+    await settle()
+    expect(aiRun).not.toHaveBeenCalled() // 同一修改不会执行第二次
+    expect(q('[data-ai-error="send"]')?.textContent).toContain('先看它的结果')
+    expect(vi.mocked(fetchAiRequest).mock.calls.some((c) => c[0] === 'rid-othertab-009')).toBe(true)
+    expect(useAiStore.getState().sessions.map((x) => x.id)).toContain('s-other') // 接回了那次的结果
+  })
+
   it('对账成功过一次之后，草稿读失败而项目级账本读成功：别的标签页新留在兄弟面板上的未确认提交照样还原、发送锁住', async () => {
     useSelectionStore.setState({ ids: ['p3'] } as never)
     await mount()

@@ -119,6 +119,11 @@
      旧指令和改写后的指令就都执行了。有了墓碑，晚到的旧 rid 走原子预留必撞唯一约束，被 409 `ai_request_superseded` 拒绝（不 spawn）；
      查询该 rid 回 `status: superseded`（不是 404），前端不再提供同 rid 重发。旧 rid 若已被真实预留（旧请求其实到达了），
      整个 PUT 回滚并回 409 `ai_supersede_conflict`——不能再当成「没收到」取代它。
+     **「这份脚本还有没落定的指令」由后端判，不信客户端**：同一个写事务里，同面板、或 `sameScript` 认作同一份脚本的兄弟面板上还有待确认行、
+     这次又没在 `supersedes` 里显式取代它 → 409 `ai_pending_unresolved`（带 `rids`），什么都不写、不发。前端的锁（`submissionBlocks` /
+     `ledgerState`）只管体验：多标签页、对账读到一半 / 读失败、旧请求迟到登记，本页视图随时可能过期，正确性只靠这道闸。收到后面板
+     立即对账一次把它们还原成「未确认」，再按 rid 逐条查询：执行过的接回会话，没收到的交给用户「重发」或「改写后再发」。
+     `sameScript` ↔ 后端 `ai_history.same_script` 严格同源，两边共用用例表 `web/src/store/sameScriptCases.json`。
      **spawn 之前的异常**（如 `record_start` 抛 `OperationalError`，被全局处理器转成 500）也由后端删该 rid 的待确认行（`engine_ai.spawn_started()` 标记
      Popen 成功的那一刻）；**已经 spawn 的绝不删**——那条指令可能正在执行，账本行是响应丢了之后还能查到它的线索。
      **删除本身也失败了**（SQLite 锁住 / 磁盘满）就不能再回「明确拒绝」：回 503 `ai_request_unresolved`（不确定），客户端按 `unknown` 处理——

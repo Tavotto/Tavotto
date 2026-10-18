@@ -930,7 +930,11 @@ export const hasUsableAgent = (caps: AiCapabilities | null): boolean =>
 /** 作用域名；是函数不是常量表——常量在模块求值时就把语言定死了 */
 export const scopeLabel = (scope: AiScope): string => t(`scope.${scope}`, { ns: 'ai' })
 
-/** 脚本路径的比较身份：统一分隔符、去掉 `./` 前缀与重复斜杠（不改大小写，与后端 `script_busy` 的 realpath 同向保守） */
+/**
+ * 脚本路径的比较身份：统一分隔符、去掉 `./` 前缀与重复斜杠（不改大小写，与后端 `script_busy` 的 realpath 同向保守）。
+ * 它与 `sameScript` ↔ 后端 `ai_history._script_identity` / `same_script` 严格同源（后端在写账本的事务里用它判「同一份脚本还有没落定的」），
+ * 两边共用用例表 `sameScriptCases.json`
+ */
 const scriptIdentity = (p: string): string => p.replace(/\\/g, '/').replace(/\/{2,}/g, '/').replace(/^(\.\/)+/, '')
 const isAbsolutePath = (p: string): boolean => p.startsWith('/') || /^[A-Za-z]:\//.test(p)
 

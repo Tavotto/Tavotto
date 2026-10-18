@@ -5,6 +5,7 @@
  * 让前端用例能看见「后端此刻存着什么」，也能模拟失败。
  */
 import { textHash } from '@/lib/aiDraft'
+import { sameScript } from '@/store/aiStore'
 
 export interface DraftBackend {
   /** 命中草稿相关路由返回 Response，否则 null（调用方继续处理别的路径） */
@@ -124,6 +125,20 @@ export function createDraftBackend(): DraftBackend {
         const gone = new Set(Array.isArray(body.supersedes) ? (body.supersedes as string[]) : [])
         if ([...gone].some((x) => registered.has(x)))
           return json({ error: '上一次的修改其实已经开始了', code: 'ai_supersede_conflict', params: {} }, 409)
+        // 与后端 `put_pending` 同一道闸：同面板 / 同脚本上还有没落定的（且这次没取代它）→ 409 ai_pending_unresolved，什么都不写
+        const isNew = !list.some((x) => x.rid === rid)
+        if (isNew) {
+          const script = (body.script as string | null) ?? null
+          const prefix = key(pj, '')
+          const blockers = [...pendings.entries()]
+            .filter(([k]) => k.startsWith(prefix))
+            .flatMap(([k, rows]) => rows.map((r) => ({ file: k.slice(prefix.length), ...r })))
+            .filter((r) => r.rid !== rid && !gone.has(r.rid))
+            .filter((r) => r.file === file || (!!script && !!r.script && sameScript(r.script, script)))
+            .map((r) => r.rid)
+          if (blockers.length)
+            return json({ error: '还有没落定的', code: 'ai_pending_unresolved', params: {}, rids: blockers }, 409)
+        }
         const next = [
           ...list.filter((x) => x.rid !== rid && !gone.has(x.rid)),
           {

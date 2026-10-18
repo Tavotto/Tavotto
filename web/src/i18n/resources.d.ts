@@ -2285,6 +2285,7 @@ export default interface Resources {
       "ai_agent_unknown": "无法识别该改图助手：{{agent}}。",
       "ai_draft_too_large": "指令过长（超过 {{limit_kb}} KB），没有保存为草稿。",
       "ai_pending_limit": "这张图还有 {{count}} 条已发出的指令没确认，先等它们有结果（或点「查询结果」），再发新的。",
+      "ai_pending_unresolved": "这份脚本还有已发出的指令没确认，先看它的结果再发新的。",
       "ai_request_not_found": "后端没有收到这条请求。",
       "ai_request_superseded": "这条指令已被改写后的新指令取代，不会再执行。",
       "ai_request_unresolved": "这条请求的状态暂时无法确认，请稍后查询结果。",

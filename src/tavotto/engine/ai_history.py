@@ -12,6 +12,7 @@ from __future__ import annotations
 import contextlib
 import json
 import os
+import re
 import sqlite3
 import time
 from pathlib import Path
@@ -124,6 +125,45 @@ RUNNING_OWNER_MAX_AGE_MS = 24 * 3600 * 1000
 #: `ai_requests.session` 的哨兵值：这个 (项目, rid) 被**新指令取代**（`supersedes`）——它是一个「墓碑预留」，不是真实会话。
 #: 之后带这个 rid 的 run 走原子预留必然撞上唯一约束、拿到它，被明确拒绝，不 spawn。真实会话 id 是 12 位十六进制，不会与它相撞
 SUPERSEDED = "~superseded"
+
+
+class PendingUnresolved(Exception):
+    """同一 (项目, 面板) 或同一份脚本上还有**未落定**的待确认提交（不在这次的 `supersedes` 里）：拒绝写新的一条。
+
+    「这份脚本有没有还没落定的指令」由后端在写账本的同一个事务里判，不信客户端：任何标签页、任何时机（对账还在读、
+    读失败、别的标签页刚留下一条、旧请求迟到登记）拿着过期的本地视图发新指令，都过不了这里。客户端收到后还原这些 rid、
+    逐条查询（已执行的接回会话 / 没收到的由用户「重发」或「改写后再发」显式取代），之后才能发新的。"""
+
+    def __init__(self, rids: list[str]):
+        super().__init__(len(rids))
+        self.rids = rids
+
+
+def _script_identity(p: str) -> str:
+    """脚本路径的比较身份：统一分隔符、合并重复斜杠、去掉 `./` 前缀（不改大小写）。
+    ↔ `web/src/store/aiStore.ts` 的 `scriptIdentity` 严格同源（共用用例表 `web/src/store/sameScriptCases.json`）。"""
+    p = re.sub(r"/{2,}", "/", p.replace("\\", "/"))
+    while p.startswith("./"):
+        p = p[2:]
+    return p
+
+
+def _is_absolute_script(p: str) -> bool:
+    return p.startswith("/") or re.match(r"^[A-Za-z]:/", p) is not None
+
+
+def same_script(a: str, b: str) -> bool:
+    """两个脚本路径是不是同一份脚本：比完整的项目相对路径；一边是绝对路径（旧数据）时，另一边必须是它的路径后缀。
+    ↔ `web/src/store/aiStore.ts` 的 `sameScript` 严格同源。"""
+    x, y = _script_identity(a), _script_identity(b)
+    if x == y:
+        return True
+    xa, ya = _is_absolute_script(x), _is_absolute_script(y)
+    if xa and not ya:
+        return x.endswith("/" + y)
+    if ya and not xa:
+        return y.endswith("/" + x)
+    return False
 
 
 class SupersedeConflict(Exception):
@@ -703,6 +743,20 @@ def put_pending(
             ).fetchone()[0]
             if n >= PENDING_MAX_PER_FILE:
                 raise PendingLimit(n)
+            # 同面板 / 同脚本上还有没落定的提交、这次又没显式取代它：拒绝（与上面的取代同一个事务，看到的是此刻的事实）。
+            # 名额先判：守住它之后同面板最多一条，名额只对守住之前留下的旧数据还起作用
+            blockers = [
+                r["rid"]
+                for r in con.execute(
+                    "SELECT rid, file_id, script FROM ai_pending WHERE project=? AND rid != ? "
+                    "ORDER BY created_ms, rid",
+                    (project, rid),
+                ).fetchall()
+                if r["file_id"] == file_id
+                or (script and r["script"] and same_script(r["script"], script))
+            ]
+            if blockers:
+                raise PendingUnresolved(blockers)
         con.execute(
             "INSERT OR REPLACE INTO ai_pending (project, file_id, rid, text, sent, script, draft_stamp, created_ms) "
             "VALUES (?,?,?,?,?,?,?,?)",

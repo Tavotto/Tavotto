@@ -352,6 +352,8 @@ export function useAiDraft(panel: PanelObject | null) {
 
   /** 账本读失败后的「重试」：就是再对账一次（同一个入口） */
   const retryLedger = useCallback(() => void reconcile('focus'), [reconcile])
+  /** 立即对账一次、等它做完（后端说「还有没落定的」之后：先把它们还原出来，再逐条查询） */
+  const reconcileNow = useCallback(() => reconcile('focus'), [reconcile])
 
   /** 输入框当前的本地版本号（失败的发送记下它；重试时据此判「输入框自那以后没改过」） */
   const draftSeq = useCallback(() => seq.current, [])
@@ -367,6 +369,7 @@ export function useAiDraft(panel: PanelObject | null) {
     project,
     ledgerState,
     retryLedger,
+    reconcileNow,
     draftLoading: draftRead === 'loading',
     draftStalled,
     draftReplaced,
