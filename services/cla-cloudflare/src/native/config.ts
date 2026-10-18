@@ -6,10 +6,19 @@ export interface LiveConfig extends Config {
   repository: string; installationId: number; clientId: string; holderName: string;
   githubEnabled: boolean; oauthEnabled: boolean; signingEnabled: boolean; checkPublishingEnabled: boolean;
   backgroundEnabled?: boolean;
+  delegatedCountersigningEnabled?: boolean;
+  holderAuthorizationKey?: string;
+  holderAuthorizationId?: string;
+  automaticVerificationEnabled?: boolean;
 }
 export interface Secrets { clientSecret: string; pkcs8: string; evidenceKey: string }
 export function validateLive(c: LiveConfig): void {
   validateConfig(c);
+  if(c.delegatedCountersigningEnabled!==undefined && typeof c.delegatedCountersigningEnabled!=='boolean' ||
+    c.automaticVerificationEnabled!==undefined && typeof c.automaticVerificationEnabled!=='boolean')throw new Rejected('live_configuration_invalid');
+  if(c.delegatedCountersigningEnabled===true && (!c.signingEnabled ||
+    !/^[A-Za-z0-9_-]{43}$/.test(c.holderAuthorizationKey ?? '') || !/^[A-Za-z0-9_-]{43}$/.test(c.holderAuthorizationId ?? '')))
+    throw new Rejected('holder_authorization_configuration_required');
   if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(c.repository) ||
       !validId(c.installationId) || !/^[A-Za-z0-9_]{1,100}$/.test(c.clientId) ||
       typeof c.holderName !== 'string' || !c.holderName.trim() || c.holderName.length > 1000 ||
@@ -18,6 +27,7 @@ export function validateLive(c: LiveConfig): void {
     throw new Rejected('live_configuration_invalid');
   if ((c.oauthEnabled || c.checkPublishingEnabled) && !c.githubEnabled) throw new Rejected('network_disabled');
   if (c.backgroundEnabled===true && !c.githubEnabled) throw new Rejected('network_disabled');
+  if (c.automaticVerificationEnabled===true && !c.githubEnabled) throw new Rejected('network_disabled');
   if ((c.signingEnabled || c.checkPublishingEnabled) &&
       (c.policy.provider.configured !== true || c.policy.provider.app_id !== c.appId ||
        c.policy.provider.app_slug !== c.appSlug || c.policy.provider.check_name !== c.checkName ||

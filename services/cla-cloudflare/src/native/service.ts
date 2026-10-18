@@ -5,16 +5,19 @@ import { binding, sameBinding } from '../core/identity.ts';
 import { currentPacket, packetAgreementMatches, validId } from '../core/policy.ts';
 import type { LiveConfig } from './config.ts';
 import { attestations, validateLive } from './config.ts';
-import { MAX_SUCCESS_CONTRIBUTORS } from './budget.ts';
 import { GitHub } from './github.ts';
 import { LiveStore, type SignatureRow } from './store.ts';
+import { Delegation } from './delegation.ts';
+import { qualificationSQL, successCapacity } from './budget.ts';
 
 const TOKEN = /^[A-Za-z0-9_-]{43}$/;
 export interface EvidenceInput { name:string; address:string; signature:string; attestations:Record<string,boolean> }
 export class LiveService {
   readonly c:LiveConfig; readonly store:LiveStore; readonly github:GitHub; private readonly key:CryptoKey;
+  readonly delegation:Delegation;
   constructor(c:LiveConfig,store:LiveStore,github:GitHub,key:CryptoKey) {
     validateLive(c); this.c=c; this.store=store; this.github=github; this.key=key;
+    this.delegation=new Delegation(this,key);
   }
   sameOrigin(origin:string|null):void { if (origin !== this.c.origin) throw new Rejected('origin_rejected'); }
   async session(token:string):Promise<Session> {
@@ -80,7 +83,7 @@ export class LiveService {
         !input.attestations || canonical(Object.keys(input.attestations).sort()) !== canonical(attestations(role).sort()) ||
         attestations(role).some(k=>input.attestations[k]!==true)) throw new Rejected('personal_evidence_required');
   }
-  async sign(token:string,csrf:string,origin:string|null,packet:string,nonce:string,role:unknown,input:EvidenceInput):Promise<{revision:number}> {
+  async sign(token:string,csrf:string,origin:string|null,packet:string,nonce:string,role:unknown,input:EvidenceInput):Promise<{revision:number;countersignature?:'recorded'|'pending_manual_review'}> {
     this.signing(); if (!TOKEN.test(nonce) || !['contributor','holder'].includes(role as string)) throw new Rejected('intent_rejected');
     const requested=role as Role,s=await this.authorize(token,csrf,origin),p=await this.packetFor(s,packet);
     const now=await this.store.databaseNow(); if (!currentPacket(this.c,p,now)) throw new Rejected('packet_ineligible');
@@ -92,7 +95,15 @@ export class LiveService {
     const raw=canonical(record),cipher=await seal(this.key,raw,`signature:${p.id}:${requested}:${p.digest}`);
     await this.store.assertReady();
     const committed=await this.store.signAtomic({session:s,packet:p,intentHash:await sha256(nonce),role:requested,cipher,
-      evidenceHash:await sha256(raw),created:now,revision}); return {revision:committed};
+      evidenceHash:await sha256(raw),created:now,revision});
+    if(requested==='contributor' && this.c.delegatedCountersigningEnabled===true) {
+      // Contributor consent is already committed. A failed delegated operation never replays or fabricates it.
+      try {
+        const contributor=(await this.store.signatures(p.id)).find(row=>row.role==='contributor')!;
+        return {revision:await this.delegation.countersign(p,contributor),countersignature:'recorded'};
+      }catch{return {revision:committed,countersignature:'pending_manual_review'};}
+    }
+    return {revision:committed};
   }
   async hold(token:string,csrf:string,origin:string|null,packet:string,nonce:string):Promise<{revision:number}> {
     this.signing(); if (!TOKEN.test(nonce)) throw new Rejected('intent_rejected');
@@ -150,8 +161,17 @@ export class LiveService {
     return {actor:{id:s.actor,login:s.login,role:s.actor===this.c.holderId?'holder':'contributor'},packets,
       nextCursor:rows.length>20?packets[packets.length-1]!.id:null};
   }
-  private async qualified(subject:number):Promise<boolean> {
+  private async qualified(subject:number,ceiling?:{expires:number},now?:number):Promise<boolean> {
     const p=await this.store.qualification(subject,this.c.policy.agreements.individual.sha256);
+    if(!p && this.c.delegatedCountersigningEnabled===true) {
+      const delegated=await this.store.delegatedPacket(subject,this.c.policy.agreements.individual.sha256,this.c.holderAuthorizationId!);
+      if(!delegated || !packetAgreementMatches(this.c,delegated))return false;
+      const rows=await this.store.signatures(delegated.id),contributor=rows.find(row=>row.role==='contributor' && row.actor===subject);
+      if(!contributor || rows.some(row=>row.role==='holder'))throw new Rejected('evidence_binding_mismatch');
+      await this.evidenceRecord(delegated,contributor);
+      const expires=await this.delegation.qualified(delegated,contributor,now ?? await this.store.databaseNow());
+      if(ceiling)ceiling.expires=Math.min(ceiling.expires,expires);return true;
+    }
     if (!p || !packetAgreementMatches(this.c,p)) return false;
     const rows=await this.store.signatures(p.id);
     if (rows.length!==2 || !rows.some(r=>r.role==='contributor' && r.actor===p.subject) ||
@@ -168,26 +188,30 @@ export class LiveService {
     const revision=await this.store.revision(),bound=await this.freshBinding(pr),now=await this.store.databaseNow();
     let good=this.c.policy.provider.configured===true,expires=now+120;
     const exempt=new Set(Object.values(this.c.exemptionIds));
-    if(bound.contributors.filter(person=>!exempt.has(person.id)).length>MAX_SUCCESS_CONTRIBUTORS)
+    if(bound.contributors.filter(person=>!exempt.has(person.id)).length>successCapacity(this.c))
       throw new Rejected('contributor_capacity_exceeded');
     // Background callers reserve their remaining journal/CAS statements before
     // starting per-person reads. Qualification uses two SQL statements per actor.
     if(reservedSQL!==undefined)this.store.budget?.reserveWorkSQL(
-      2*bound.contributors.filter(person=>!exempt.has(person.id)).length+1+reservedSQL);
+      qualificationSQL(this.c)*bound.contributors.filter(person=>!exempt.has(person.id)).length+1+reservedSQL);
+    const ceiling={expires:Number.MAX_SAFE_INTEGER};
     for (const person of bound.contributors) if (!exempt.has(person.id)) {
-      if (!await this.qualified(person.id)) good=false;
+      if (!await this.qualified(person.id,ceiling,now)) good=false;
     }
     if (await this.store.revision()!==revision) throw new Rejected('state_changed');
+    expires=Math.min(expires,ceiling.expires);
+    if(expires<=now)throw new Rejected('authorization_expired');
     const proof={...bound,protocol:'tavotto-cla-v1' as const,revision,issued_at:now,expires_at:expires};
     return {name:this.c.checkName,appId:this.c.appId,appSlug:this.c.appSlug,headSha:bound.head_sha,
-      conclusion:good?'success':'failure',proof,text:'tavotto-cla-v1\n'+canonical(proof)};
+      conclusion:good?'success':'failure',proof,text:'tavotto-cla-v1\n'+canonical(proof),
+      ...(ceiling.expires<Number.MAX_SAFE_INTEGER?{authorityExpires:ceiling.expires}:{})};
   }
-  async check(pr:number):Promise<{disposition:string;check:CheckProposal}> {
+  async check(pr:number,expectedHead?:string):Promise<{disposition:string;check:CheckProposal}> {
     // Track before evaluation: each later evidence/hold revision enqueues a durable notification intent.
     await this.store.assertReady();
     await this.store.track(this.c.repositoryId,{kind:'pr',number:pr});
     const check=await this.evaluate(pr),fresh=await this.freshBinding(pr);
-    if (!sameBinding(check.proof,fresh) || await this.store.revision()!==check.proof.revision ||
+    if (expectedHead!==undefined && check.headSha!==expectedHead || !sameBinding(check.proof,fresh) || await this.store.revision()!==check.proof.revision ||
         await this.store.databaseNow()>=check.proof.expires_at) throw new Rejected('state_changed');
     if (!this.c.checkPublishingEnabled) return {disposition:'dry_run',check};
     const key=this.store.targetKey(this.c.repositoryId,{kind:'pr',number:pr});

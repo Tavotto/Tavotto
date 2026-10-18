@@ -10,6 +10,9 @@ export const VERIFICATION_FINAL_SQL = 3;
 export const VERIFICATION_FIXED_SQL = 2+3+VERIFICATION_FINAL_SQL;
 export const QUALIFICATION_SQL_PER_PERSON = 2;
 export const MAX_SUCCESS_CONTRIBUTORS = Math.floor((FREE_BUDGET.sqlWork-VERIFICATION_FIXED_SQL)/QUALIFICATION_SQL_PER_PERSON);
+// Delegated fallback: personal lookup, packet, signatures, grant, bounded control chain, receipt.
+export const qualificationSQL=(c:{delegatedCountersigningEnabled?:boolean})=>c.delegatedCountersigningEnabled===true?6:QUALIFICATION_SQL_PER_PERSON;
+export const successCapacity=(c:{delegatedCountersigningEnabled?:boolean})=>Math.floor((FREE_BUDGET.sqlWork-VERIFICATION_FIXED_SQL)/qualificationSQL(c));
 export class BudgetDeferred extends Rejected {
   readonly reason:string;
   constructor(reason:string) {super('budget_deferred');this.reason=reason;}

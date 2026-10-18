@@ -5,11 +5,12 @@ import { Store } from '../core/store.ts';
 import { BudgetDeferred, FREE_BUDGET, InvocationBudget, meterDatabase } from './budget.ts';
 
 export const PREFIX = 'cla_native_v2_';
-const objects = ['oauth_expiry','packets_subject_digest','authority','agreements','state','sessions','oauth_states','packets','intents','signatures',
+const objects = ['head_requests','head_deliveries','head_deliveries_update','head_deliveries_delete','head_request_identity','head_revision','oauth_expiry','packets_subject_digest','authority','agreements','state','sessions','oauth_states','packets','intents','signatures',
   'eligibility_blocks','audit','targets','outbox','outbox_due','deliveries','published_checks','_guards',
   'revision_outbox','delivery_outbox','agreements_update','agreements_delete','packets_update','packets_delete',
   'signatures_update','signatures_delete','blocks_update','blocks_delete','audit_update','audit_delete',
-  'publication_attempts','publication_unresolved','reconciliation_progress','refresh_requests','agreement_documents','documents_update','documents_delete','authority_update','authority_delete'];
+  'publication_attempts','publication_unresolved','reconciliation_progress','refresh_requests','agreement_documents','documents_update','documents_delete','authority_update','authority_delete',
+  'delegated_grants','delegated_controls','delegated_receipts','delegated_grants_update','delegated_grants_delete','delegated_controls_update','delegated_controls_delete','delegated_receipts_update','delegated_receipts_delete','delegated_control_order'];
 // Only trusted source SQL is passed here; identifiers cannot come from a request.
 export const nativeSQL = (sql: string) => sql.replace(/\b[A-Za-z_][A-Za-z_0-9]*\b/g,
   word => objects.includes(word) ? PREFIX+word : word);
@@ -104,7 +105,8 @@ export class LiveStore extends Store {
   async beginFreshPublication(job:Job,r:RefreshRequest,check:CheckProposal,predecessor:Publication):Promise<string> {
     if(check.conclusion!=='success' || check.proof.head_sha!==check.headSha || check.proof.revision!==r.revision ||
       !Number.isSafeInteger(check.proof.issued_at) || !Number.isSafeInteger(check.proof.expires_at) ||
-      check.proof.expires_at!==check.proof.issued_at+120 || check.text!=='tavotto-cla-v1\n'+canonical(check.proof))throw new Rejected('fresh_proof_unavailable');
+      check.proof.expires_at>check.proof.issued_at+120 || check.proof.expires_at<=check.proof.issued_at ||
+      check.proof.expires_at>(check.authorityExpires ?? Number.MAX_SAFE_INTEGER) || check.text!=='tavotto-cla-v1\n'+canonical(check.proof))throw new Rejected('fresh_proof_unavailable');
     if(predecessor.id!==r.source_attempt || predecessor.target_key!==job.target_key || predecessor.head_sha!==check.headSha ||
       predecessor.phase!=='resolved' || predecessor.run_id===null || !Number.isSafeInteger(predecessor.run_id) || predecessor.run_id<=0)throw new Rejected('fresh_predecessor_unavailable');
     const id=randomToken();
@@ -358,6 +360,12 @@ export class LiveStore extends Store {
   }
   async signatures(packet:string):Promise<SignatureRow[]> {
     return (await this.stmt('SELECT role,actor,evidence_cipher,evidence_hash,created FROM signatures WHERE packet=?',packet).all<SignatureRow>()).results;
+  }
+  async delegatedPacket(subject:number,digest:string,grant:string):Promise<Packet|null> {
+    return this.stmt(`SELECT p.* FROM packets p JOIN signatures c ON c.packet=p.id AND c.role='contributor' AND c.actor=p.subject
+      WHERE p.subject=? AND p.digest=? AND EXISTS(SELECT 1 FROM delegated_receipts WHERE packet=p.id AND grant_id=?)
+      AND NOT EXISTS(SELECT 1 FROM eligibility_blocks b JOIN packets old ON old.id=b.packet WHERE old.subject=p.subject)
+      ORDER BY p.created DESC,p.id DESC LIMIT 1`,subject,digest,grant).first<Packet>();
   }
   async qualification(subject:number,digest:string):Promise<Packet|null> {
     return this.stmt(`SELECT p.* FROM packets p JOIN signatures c ON c.packet=p.id AND c.role='contributor'

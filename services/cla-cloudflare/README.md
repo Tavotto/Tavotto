@@ -19,7 +19,14 @@ Seven days limits completion of a pending packet. Valid, independently completed
 
 Expired incomplete packets remain immutable history. A new packet requires fresh independent signatures; no old signatures or intents are transferred. Creation is transactional. A hold on any packet blocks the subject across all packets and digests, with no automatic release mechanism. A hold blocks automated qualification; it does not purport to revoke or amend a legal agreement.
 
-Both parties must personally sign. This is workflow automation, not automatic rights-holder countersigning. GitHub account authentication does not establish legal identity, ownership or authority. Corporate/guardian/unresolved-authority cases remain outside this automated route.
+The contributor must personally sign. Personal holder signing remains the default.
+The disabled delegated-authority candidate in src/native/delegation.ts requires a
+separately approved, signed, narrowly scoped holder authorization and current
+signed enable control. It records a distinct system receipt, never a personal
+signature. No real authorization is shipped. GitHub authentication does not
+establish legal identity, ownership or authority. Corporate/guardian/unresolved
+cases remain outside this route. See [ADR 0134](../../docs/adr/0134-limited-cla-countersigning-authority.md)
+and the [outstanding activation gates](../../docs/implementation/cla-delegated-authority/README.md).
 
 The native entry is src/entry.ts. Each capability requires its explicit environment flag; omitted flags keep it off. No credentials, account bindings, worker IDs, queues or resource names are shipped. Agreement version 1.0 remains the only supported configuration; changing the same version's digest fails closed. A future version rollout needs separate review.
 
@@ -60,6 +67,17 @@ Resource limits remain 20 work SQL statements / 40 total and 35 work external ca
 Dynamic success-publication-across-expiry integration validation is not part of this candidate's passing evidence. New tests are restricted to offline rejection, budget, durable deduplication and uncertainty handling with failed proposals; they do not establish successful end-to-end refresh behavior. Live GitHub/Cloudflare acceptance and the excluded integration scenario remain activation gates.
 
 ### Public endpoints: abuse limits and pinned agreement asset
+
+The two-person same-head refresh limit above applies with delegation disabled.
+With delegated countersigning enabled, qualification reserves six SQL reads per
+non-exempt contributor: at most two fit read-only verification, one fits scheduled
+new-head observation, and none fit same-head automatic publication refresh
+(16 + 6N exceeds 20). That path defers into bounded manual recovery even for
+personal signatures while the global flag is enabled. Budgets are not expanded.
+The new-head queue only stores observations, never publishes checks or satisfies
+CI. Its distinct reserved cron, signed webhook, admission bounds, unsigned
+authorization template and remaining UI/CI/deployment gates are documented in
+the activation checklist linked above. No trigger or resource is configured here.
 
 OAuth remains off by default. Before enabling it, supply the `CLA_OAUTH_LIMITER`
 Workers Rate Limiting binding. The worker uses a fixed `oauth-start` key before

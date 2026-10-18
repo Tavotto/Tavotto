@@ -1,0 +1,32 @@
+
+> tavotto-cla-cloudflare@0.0.0 test:mutation
+> node tests/mutation-smoke.mjs
+
+Detected mutation: head admission capacity
+Detected mutation: delivery admission capacity
+Detected mutation: delegated disabled direct operation
+Detected mutation: delegated receipt hash
+Detected mutation: delegated holder identity
+Detected mutation: delegated exact agreement hash
+Detected mutation: delegated authorization signature
+Detected mutation: delegated personal evidence verification
+Detected mutation: delegated active control
+Detected mutation: delegated receipt identity
+Detected mutation: delegated expiry ceiling
+Detected mutation: automatic expected head
+Detected mutation: automatic final binding
+Detected mutation: automatic evidence revision requeue
+Detected mutation: verification producer capacity
+Detected mutation: production bootstrap readiness
+Detected mutation: identity lookup preflight cap
+Detected mutation: fresh exemption identity
+Detected mutation: OAuth bounded burst
+Detected mutation: public agreement pinned digest
+Detected mutation: target-wide refresh blocker
+Detected mutation: cached account selection
+Detected mutation: expired UI replacement
+Detected mutation: holder page continuation
+Detected mutation: stateless token length
+Detected mutation: completed deadline
+Detected mutation: proof lifetime
+Detected mutation: evidence hash
