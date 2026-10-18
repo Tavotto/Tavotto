@@ -1472,10 +1472,22 @@ def _face_alpha(a) -> float | None:
     """
     try:
         if isinstance(a, Line2D):
-            mfc = a.get_markerfacecolor()
-            if mfc is None or (isinstance(mfc, str) and mfc.lower() == "none"):
+            # 半填充 marker（fillstyle left / right / top / bottom）两半各用一种面色：
+            # 主面色与 `markerfacecoloralt`，两半都在几何里（`_line_marker_subpaths`），
+            # 所以两半都要算进保守最小值——备用面色是 'none' 时那一半是空的，整颗
+            # marker 盖不住透过它看得见的线（#1158 评审）。两半都不填才算「根本不填充」。
+            faces = [a.get_markerfacecolor()]
+            if a.get_fillstyle() not in ("full", "none"):
+                faces.append(a.get_markerfacecoloralt())
+            unfilled = [
+                fc is None or (isinstance(fc, str) and fc.lower() == "none") for fc in faces
+            ]
+            if all(unfilled):
                 return None
-            return float(to_rgba(mfc, a.get_alpha())[3])
+            return min(
+                0.0 if empty else float(to_rgba(fc, a.get_alpha())[3])
+                for fc, empty in zip(faces, unfilled, strict=True)
+            )
         if isinstance(a, Patch):
             # Patch 的 facecolor='none' / fill=False 不是空数组：`get_facecolor()` 回的是
             # (r,g,b,0) 的 RGBA（实测 3.11.2：Rectangle(fc='none') → (0,0,0,0)，fill=False →

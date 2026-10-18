@@ -112,6 +112,14 @@ def main():
     ax9.add_patch(Rectangle((0.3, 0.3), 0.4, 0.4, fc="k", zorder=5))
     fig9.savefig("AnnotArrowFig.pdf")
 
+    # 只有 marker 的线：一颗半填充（左半实心、右半 'none'），一颗全填充
+    fig10, ax10 = plt.subplots(figsize=(4.0, 3.0))
+    ax10.set_xlim(0, 1)
+    ax10.set_ylim(0, 1)
+    ax10.plot([0.3], [0.5], "o", ms=30, fillstyle="left", mfc="k", markerfacecoloralt="none")
+    ax10.plot([0.7], [0.5], "o", ms=30, mfc="k")
+    fig10.savefig("HalfMarkerFig.pdf")
+
     # 文字类（画布按 bbox 命中、无 geometry）：标题 / 轴标签 / 文字 / 图例 / 图例项
     # 一根不透明柱 + 一根空心（facecolor='none'，带描边与 hatch）：空心不是「透明填充」
     fig8, ax8 = plt.subplots(figsize=(4.0, 3.0))
@@ -329,3 +337,12 @@ def test_annotation_arrow_inherits_its_annotation_order(manifests):
     patch = next(e for e in man["elements"] if e["role"] == "patch")
     # 箭头随所属 Annotation（zorder 3）画，在 zorder 5 的矩形之下：要能被它盖住降层
     assert arrow["paint_order"] < patch["geometry"]["paint_order"]
+
+
+def test_half_filled_marker_counts_its_empty_half(manifests):
+    man = manifests("HalfMarkerFig")
+    half, full = _geom(man, "axes_0.lines_0"), _geom(man, "axes_0.lines_1")
+    assert half["fill"] is True and full["fill"] is True  # 前提：走得到 stamp_paint 的 fill 分支
+    # 右半 'none' 是空的：整颗盖不住透过它看得见的线
+    assert half["fill_alpha"] == 0.0
+    assert full["fill_alpha"] == 1.0
