@@ -105,14 +105,21 @@ test('元素树：键位（Home/End/→进首子/←回父）、内凹焦点环�
     const longest = spans.sort((x, y) => (y.textContent?.length ?? 0) - (x.textContent?.length ?? 0))[0]
     return (longest.closest('li') as HTMLElement).dataset.el!
   })
+  // 抽屉收到下限（280），最长的名字才一定被截断——不截断的行本来就不需要锁
+  const handle = page.locator('[data-resize-handle="left-drawer"]')
+  await expect(handle).toHaveCount(1)
+  await handle.focus()
+  await page.keyboard.press('Home')
+  await expect(handle).toHaveAttribute('aria-valuenow', '280')
+  await page.waitForTimeout(400)
   const textWidth = () =>
     page.evaluate((gid) => {
-      const spans = document.querySelectorAll(`[data-el="${CSS.escape(gid)}"] [data-tree-label]`)
+      const spans = document.querySelectorAll<HTMLElement>(`[data-el="${CSS.escape(gid)}"] [data-tree-label]`)
       if (spans.length !== 1) throw new Error(`标签钩子应恰好 1 个，实际 ${spans.length}`)
       const span = spans[0]
       const r = document.createRange()
       r.selectNodeContents(span)
-      return r.getBoundingClientRect().width
+      return { w: r.getBoundingClientRect().width, clipped: span.scrollWidth > span.clientWidth }
     }, target)
   // 先取消选中再量；默认动效与 prefers-reduced-motion 各量一遍（后者全局给所有属性 0.01ms 过渡，
   // 同一帧里改字重量到的是起点值——锁一度因此悄悄失效）
@@ -124,12 +131,14 @@ test('元素树：键位（Home/End/→进首子/←回父）、内凹焦点环�
     await page.mouse.move(5, 5)
     await page.waitForTimeout(300)
     const before = await textWidth()
+    expect(before.clipped, '抽屉收到下限后最长的名字应当被截断，否则这条量不到东西').toBe(true)
     await page.locator(`[data-el="${target}"]`).click()
     await expect(page.locator(`[data-el="${target}"]`)).toHaveAttribute('aria-selected', 'true')
     await page.mouse.move(5, 5)
     await page.waitForTimeout(300)
     const after = await textWidth()
-    expect(Math.abs(after - before), `${reducedMotion}：选中前 ${before}px / 选中后 ${after}px`).toBeLessThanOrEqual(0.6)
+    expect(after.clipped).toBe(true)
+    expect(Math.abs(after.w - before.w), `${reducedMotion}：选中前 ${before.w}px / 选中后 ${after.w}px`).toBeLessThanOrEqual(0.6)
   }
 
   // G5：图层树的列间距与元素树相同
@@ -245,4 +254,103 @@ test('拖分栏手柄时按 Esc：宽度复原，且选中对象的上下文栏�
   await expect(handle).toHaveAttribute('aria-valuenow', '300')
   // 这一下 Esc 只属于拖动：选区还在，上下文栏仍可见
   await expect(bar).toBeVisible()
+})
+
+test('展开 / 折叠：子树高度过渡（收起期间 inert、播完卸载）；reduced-motion 直接切', async ({ app, page }) => {
+  const a = await app()
+  await openFigureTree(page, a.baseURL)
+  const row = page.locator('[data-tree="elements"] [data-el="axes_0"]')
+  await expect(row).toHaveCount(1)
+  await expect(row).toHaveAttribute('aria-expanded', 'true')
+  const branch = row.locator('xpath=following-sibling::li[@data-tree-branch][1]')
+  await expect(branch).toHaveCount(1)
+  const full = (await branch.boundingBox())!.height
+  expect(full).toBeGreaterThan(60)
+
+  // 过渡中点测量，与帧率无关：按键**之前**在页面里装 MutationObserver，branch 一翻到目标状态
+  // （收起 = closed、展开 = open）就在同一个微任务里 getAnimations() → 暂停 → 定位到 50% → 量高度 / 状态 /
+  // inert / aria-hidden → 放行继续播。逐帧 rAF 采样在慢机器上（Windows WebKit 500 ms 只渲 4 帧）会把
+  // 90 ms 的退场整个漏在两帧之间——这里不看帧，只看动画本身。
+  type Probe = { h: number; state: string | null; inert: boolean; ariaHidden: boolean; names: string[]; progress: number[] }
+  const arm = (want: 'open' | 'closed') =>
+    page.evaluate((want) => {
+      const w = window as unknown as { __probe?: Promise<Probe | null> }
+      const root = document.querySelector('[data-tree="elements"]')!
+      const row = root.querySelector('[data-el="axes_0"]')!
+      w.__probe = new Promise<Probe | null>((resolve) => {
+        const mo = new MutationObserver(() => {
+          const b = row.nextElementSibling as HTMLElement | null
+          if (!b || !b.hasAttribute('data-tree-branch') || b.getAttribute('data-tree-branch') !== want) return
+          const anims = b.getAnimations()
+          if (anims.length === 0) return // 样式还没解析出动画：等下一批变更
+          const progress: number[] = []
+          for (const a of anims) {
+            a.pause()
+            const t = a.effect!.getComputedTiming()
+            a.currentTime = Number(t.endTime) / 2
+            progress.push(Number(t.duration))
+          }
+          resolve({
+            h: b.getBoundingClientRect().height,
+            state: b.getAttribute('data-tree-branch'),
+            inert: b.hasAttribute('inert'),
+            ariaHidden: b.getAttribute('aria-hidden') === 'true',
+            names: anims.map((a) => (a as CSSAnimation).animationName ?? ''),
+            progress,
+          })
+          for (const a of anims) a.play()
+          mo.disconnect()
+        })
+        mo.observe(root, { subtree: true, childList: true, attributes: true })
+        // 保底：2 s 内没出现动画就交 null，断言里会带着这个现象失败（不是挂到超时）
+        setTimeout(() => {
+          mo.disconnect()
+          resolve(null)
+        }, 2000)
+      })
+    }, want)
+  const probed = () => page.evaluate(() => (window as unknown as { __probe: Promise<Probe | null> }).__probe)
+
+  await page.emulateMedia({ reducedMotion: 'no-preference' })
+  await row.focus()
+  await arm('closed')
+  await page.keyboard.press('ArrowLeft')
+  const mid = await probed()
+  expect(mid, '收起时 branch 上要有 CSS 动画').not.toBeNull()
+  expect(mid!.names.some((n) => n.includes('reveal-out')), `收起播的是退场动画：${JSON.stringify(mid)}`).toBe(true)
+  expect(mid!.state).toBe('closed')
+  expect(mid!.inert, '收起期间容器 inert').toBe(true)
+  expect(mid!.ariaHidden, '收起期间容器 aria-hidden').toBe(true)
+  expect(mid!.h > 0 && mid!.h < full, `收起要有中间高度（full=${full}）：${JSON.stringify(mid)}`).toBe(true)
+  await expect(branch, '播完卸载').toHaveCount(0)
+
+  await arm('open')
+  await page.keyboard.press('ArrowRight')
+  const up = await probed()
+  expect(up, '展开时 branch 上要有 CSS 动画').not.toBeNull()
+  expect(up!.names.some((n) => n.includes('reveal-in')), `展开播的是进场动画：${JSON.stringify(up)}`).toBe(true)
+  expect(up!.inert, '展开的容器不 inert').toBe(false)
+  expect(up!.h > 0 && up!.h < full * 0.98, `展开要有中间高度（full=${full}）：${JSON.stringify(up)}`).toBe(true)
+  await expect.poll(async () => Math.abs(((await branch.boundingBox())?.height ?? 0) - full), { message: '展开后回到完整高度' }).toBeLessThanOrEqual(1)
+  await expect(branch).not.toHaveAttribute('inert', /.*/)
+  await expect(branch).toHaveAttribute('data-tree-branch', 'open')
+
+  // reduced-motion：直接切，不留退场帧——任何一批变更里都不许看到 closed 的保活 branch
+  await page.emulateMedia({ reducedMotion: 'reduce' })
+  await row.focus()
+  await page.evaluate(() => {
+    const w = window as unknown as { __closedSeen?: boolean }
+    const root = document.querySelector('[data-tree="elements"]')!
+    const row = root.querySelector('[data-el="axes_0"]')!
+    w.__closedSeen = false
+    const mo = new MutationObserver(() => {
+      const b = row.nextElementSibling
+      if (b?.hasAttribute('data-tree-branch') && b.getAttribute('data-tree-branch') === 'closed') w.__closedSeen = true
+    })
+    mo.observe(root, { subtree: true, childList: true, attributes: true })
+  })
+  await page.keyboard.press('ArrowLeft')
+  await expect(branch).toHaveCount(0)
+  await page.waitForTimeout(150) // 比退场时长（90 ms）长：真有保活帧此时早已出现过
+  expect(await page.evaluate(() => (window as unknown as { __closedSeen: boolean }).__closedSeen), 'reduce 下不留退场帧').toBe(false)
 })

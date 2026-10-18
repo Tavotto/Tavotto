@@ -80,6 +80,25 @@
       ]
     },
     {
+      "id": "assets.open-and-run",
+      "status": "active",
+      "platform": "both",
+      "summary": {
+        "zh-CN": "素材库脚本行点一次「打开并运行」，准备、运行、进入编辑一次完成",
+        "en-US": "One click on a script row's “Open and run” prepares, runs and enters editing"
+      },
+      "entry": "左栏「素材」→ 脚本行 ▶（打开并运行）",
+      "e2e": [
+        {
+          "spec": "open-and-run.spec.ts",
+          "title": "素材库 ▶ 点一次：检查 → 认领 run_when_ready → 运行 → 自动进入编辑，脚本恰好执行一次、请求里没有 execution"
+        }
+      ],
+      "desktop_manual": [
+        "桌面窗口里点脚本行 ▶：不再需要点「运行」「进入编辑」，画好一张图自动进入编辑；脚本写了真实文件又读回时（os.replace / savefig 后 Image.open）同一次点击里自动换成保留文件语义的运行，标签页只开一个（需要 --desktop-sidecar 真窗口，浏览器 e2e 触发不了回退）"
+      ]
+    },
+    {
       "id": "assets.editability-filter",
       "status": "active",
       "platform": "both",

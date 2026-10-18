@@ -2116,7 +2116,8 @@ class SessionService:
                     ERROR_INTENT_CONFLICT,
                     "这个脚本已经有另一份运行配置的「打开并运行」在等；换参数请转移它，或先取消",
                     409,
-                    {"executed": False},
+                    # 旧意图所在的会话 id：前端状态丢了（刷新 / 切项目）也能据此转移，不会被隐形的旧意图堵到过期
+                    {"executed": False, "session_id": other.session_id},
                 )
 
     def advance(self, sess: Session) -> None:

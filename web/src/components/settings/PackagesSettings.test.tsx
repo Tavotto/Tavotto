@@ -457,6 +457,51 @@ describe('安装', () => {
     expect(input().disabled).toBe(false)
   })
 
+  it('日志超过 max-h：内层滚动的 <pre> 在还能往下滚时带 data-fade-end 与 mask，滚到底收起', async () => {
+    runMock.mockResolvedValue({ started: true, job_id: 'job-1', state: 'installing', log: '', error: null, code: '' })
+    await mount()
+    await type('lmfit')
+    await act(async () => byName(pk('install'))!.click())
+    // jsdom 没有布局引擎：给 HTMLElement 原型装一份「内容比视口高 200px」的几何，让首次量就读到溢出
+    const proto = HTMLElement.prototype
+    Object.defineProperty(proto, 'clientHeight', { configurable: true, value: 160 })
+    Object.defineProperty(proto, 'scrollHeight', { configurable: true, value: 360 })
+    Object.defineProperty(proto, 'scrollTop', { configurable: true, writable: true, value: 0 })
+    try {
+      await act(async () => {
+        usePackageStore.getState().onProgress({
+          job_id: 'job-1',
+          state: 'installing',
+          log: 'Collecting lmfit\n'.repeat(40),
+          error: null,
+          code: '',
+          op: 'install',
+          distribution: 'lmfit',
+        })
+      })
+      await act(async () => byName(pk('job.log'))!.click())
+      const pre = document.querySelector<HTMLElement>('[data-packages-log]')!
+      expect(pre).not.toBeNull()
+      expect(pre.dataset.fadeEnd).toBe('true')
+      expect(pre.dataset.fadeStart).toBeUndefined()
+      // 渐隐只落在内层 <pre>（mask 样式本身由 scrollFade.test 钉），外壳（带底色 / 边的折叠区）不带 data-fade-*
+      expect(pre.parentElement!.hasAttribute('data-fade-end')).toBe(false)
+      await act(async () => {
+        pre.scrollTop = 200
+        pre.dispatchEvent(new Event('scroll'))
+      })
+      expect(pre.dataset.fadeEnd).toBeUndefined()
+      expect(pre.dataset.fadeStart).toBe('true')
+    } finally {
+      // @ts-expect-error 还原：删掉测试装在原型上的几何
+      delete proto.clientHeight
+      // @ts-expect-error 同上
+      delete proto.scrollHeight
+      // @ts-expect-error 同上
+      delete proto.scrollTop
+    }
+  })
+
   it('空闲标签页不认领别的项目的作业：进度为空时收到陌生 job_id 也不显示、不刷清单', async () => {
     await mount()
     listMock.mockClear()

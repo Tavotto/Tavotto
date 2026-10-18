@@ -1,5 +1,5 @@
 import { svgSnapshotWarning } from '@/lib/svgSnapshotWarning'
-import { artifactBackgroundOriginal, artifactRequestFields, artifactValidationIssue, ArtifactValidationError, FIGSIZE_SOURCE_POLICY, validationFromSource, beginArtifactEntry, artifactEntryCurrent, cancelArtifactEntry, deferArtifactEntry, refuseArtifactOperation, rememberArtifactEdit } from '@/lib/artifactValidation'
+import { artifactBackgroundOriginal, artifactRequestFields, isUnadoptedPngSource, artifactValidationIssue, ArtifactValidationError, FIGSIZE_SOURCE_POLICY, validationFromSource, beginArtifactEntry, artifactEntryCurrent, cancelArtifactEntry, deferArtifactEntry, refuseArtifactOperation, rememberArtifactEdit } from '@/lib/artifactValidation'
 import { currentProjectId } from '@/lib/session'
 import '@/store/figureSnapshotInvalidation'
 import { captureProjectEpoch } from '@/lib/projectEpoch'
@@ -1543,8 +1543,7 @@ export function enterElementEdit(
     return false
   }
   // Existing edited/baked PNG panels keep their established legacy semantics.
-  const sourceEntry = Object.hasOwn(panel, 'artifactValidation') ||
-    (panel.fileKind === 'raster' && /\.png$/i.test(panel.fileId) && !!panel.script && panel.overrides.length === 0)
+  const sourceEntry = Object.hasOwn(panel, 'artifactValidation') || isUnadoptedPngSource(panel)
   if (sourceEntry) return admitPngEntry(panel, leftTab)
   const entered = finishElementEntry(panelId, leftTab)
   if (panel.fileKind === 'raster' && /\.png$/i.test(panel.fileId) && panel.overrides.length) {

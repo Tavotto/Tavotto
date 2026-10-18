@@ -11,6 +11,8 @@ import { msg, t as translate, type UiMessage } from '@/i18n'
 import { useFormatMessage } from '@/i18n/react'
 import { askConfirm } from '@/store/uiStore'
 import { sortSessions, useNativeSessionStore } from '@/store/nativeSessionStore'
+import { usePrepSurface } from '@/hooks/usePrepSurface'
+import { useProjectPreparationStore } from '@/store/projectPreparationStore'
 import { InlineWarning } from './settings/SettingRow'
 import { Button } from './ui/Button'
 import { cn } from '@/lib/utils'
@@ -37,7 +39,19 @@ const ns = (key: string, values?: Record<string, unknown>) =>
 export function NativeSessionCards() {
   useTranslation('workspace')
   const sessions = useNativeSessionStore((s) => s.sessions)
-  const list = sortSessions(Object.values(sessions))
+  // 此刻**可见**的那张准备卡 / 角标代表的条目：准备界面只有一个焦点（`focus`），展开或角标才可见（收起 = 没有），教程 / 引导中整个隐藏
+  const { surface } = usePrepSurface()
+  const surfaceEntry = useProjectPreparationStore((s) => (surface ? s.entries[surface.key] : undefined))
+  // 桌面拥有的会话由准备会话管（owner === 'desktop' 只来自准备会话的回退 / 路由，ADR 0125）：用户不感知运行层切换，不出「tavotto run」式卡；
+  // 停止走准备卡 / 角标上的「停止运行」。**只在存在对应的准备卡片 / 角标时才让位**（`launch_id` 对得上某个条目当前尝试的计划号，
+  // 与 `PreparationCard.useStopRun` 同一把尺子）：刷新 / A→B→A 之后准备 store 是空的、没人重建它的卡，这时仍在跑的桌面会话由这里照常显示并给「停止运行」，
+  // 否则用户既看不到进度也没有停止入口。终端拥有的照旧
+  // 「存在对应条目」不够：A 在跑时用户打开了 B 的卡，A 的条目还在 `entries` 里但没有可见的面——只有当前可见面代表的那个条目才让位
+  const surfaced = (s: NativeSessionInfo) =>
+    !!surfaceEntry && !!s.launch_id && surfaceEntry?.report?.provider.attempt_id === s.launch_id
+  const list = sortSessions(
+    Object.values(sessions).filter((s) => s.owner !== 'desktop' || (!isNativeTerminal(s.state) && !surfaced(s))),
+  )
   if (!list.length) return null
   // 位置不在这里定：画布右上角的堆叠容器（App 的 `data-canvas-corner="top-right"`，缩放 → 会话卡 → 探针）
   // 给 12px 内距与宽度；此前这里自己 absolute 在 right-2 top-2，与快速编辑的缩放、探针互相压（2026-10-07 设计审计 §10.1）
@@ -118,6 +132,11 @@ function SessionCard({ session }: { session: NativeSessionInfo }) {
             {stateLine(session)}
           </p>
         </div>
+        {!terminal && session.owner === 'desktop' && (
+          <Button variant="ghost" size="sm" data-native-stop-owned disabled={busy} onClick={act(store.cancelOwned)}>
+            {translate('prep.btn.stop', { ns: 'workspace' })}
+          </Button>
+        )}
         {terminal && (
           <Button
             variant="ghost"
@@ -161,7 +180,7 @@ function SessionCard({ session }: { session: NativeSessionInfo }) {
           描述正常状态的错误。
           脚本正在跑时用户该做什么，卡片那行状态说了（Ctrl+C 在他自己的
           终端里，那个进程是他的）。 */}
-      {!terminal && atBarrier && (
+      {!terminal && atBarrier && session.owner !== 'desktop' && (
         <div className="mt-1.5 flex flex-wrap items-center gap-1">
           <Button
             variant="primary"

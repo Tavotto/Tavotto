@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { t as translate } from '@/i18n'
 import {
@@ -27,6 +27,7 @@ import { EditableFigureIcon } from '@/components/ui/semanticIcons'
 import { ALT, cn, combo, isMac } from '@/lib/utils'
 import { dropLineClass, listRowClass } from '@/components/ui/listRow'
 import { isTreeNavKey, treeKeyAction } from '@/components/ui/treeKeys'
+import { findVisibleRow, TreeBranch } from '@/components/ui/TreeBranch'
 import { TreeChevron, TreeIcon, treeIndent } from '@/components/ui/TreeRow'
 import { useBoldTrackingLock } from '@/components/ui/useBoldWidthLock'
 import { useRenameFocusReturn } from '@/components/ui/useRenameFocusReturn'
@@ -37,7 +38,7 @@ import { useSelectionStore } from '@/store/selectionStore'
 import { objectLabel, type CanvasObject, type LayoutGroup } from '@/types/document'
 import { layoutKindLabel } from '@/store/actions'
 import { Badge } from '../ui/Badge'
-import { EmptyState } from '../ui/EmptyState'
+import { EmptyLine } from '../ui/EmptyLine'
 import { MenuItem, MenuSeparator } from '../ui/Menu'
 import { RowMenu } from '../ui/RowMenu'
 import { useRowMenu } from '../ui/useRowMenu'
@@ -79,7 +80,13 @@ export function LayerTree() {
   const listRef = useRef<HTMLUListElement>(null)
   // 重排是 drop 那一刻整列换位的（拖动中只有一条落点提示线）；折叠/展开组
   // 也会让下面所有行整体位移。不给动效的话行「啪」地跳，看不出是哪一行动了
-  useFlip(listRef, 'data-layer')
+  // 展开 / 折叠一个组时，组成员的 grid 高度过渡（`TreeBranch`）已经在负责下面行的位移，FLIP 这一次不播
+  // （否则位移叠成两倍，还会先往上跳）；FLIP 只留给重排（拖放、层级调整）
+  const collapsedKey = Object.keys(collapsed)
+    .filter((k) => collapsed[k])
+    .sort()
+    .join(',')
+  const { rebase } = useFlip(listRef, 'data-layer', collapsedKey)
 
   // 画布 / 其他面板上改选的图层可能在长列表的视口之外：一律滚到恰好看得见（与图内元素树同一写法；
   // 不平滑，所以 reduced-motion 下也是即时的）——哪怕树此刻还持有焦点。只有**用户在树里**用键盘 / 点击
@@ -98,7 +105,8 @@ export function LayerTree() {
       return
     }
     if (!primaryId || !list) return
-    const at = (key: string) => list.querySelector(`[data-layer="${CSS.escape(key)}"]`)
+    // 收起中的组成员还保活着（退场动画，整棵 inert）：那不算「可见」（`findVisibleRow`，与元素树同一出口）
+    const at = (key: string) => findVisibleRow(list, 'data-layer', key)
     // 选中项藏在折叠的组里（行没渲染）：滚到它最近的可见祖先——组标题行
     const groupId = objects.find((o) => o.id === primaryId)?.groupId
     const target = at(primaryId) ?? (groupId ? at(`g:${groupId}`) : null)
@@ -111,7 +119,10 @@ export function LayerTree() {
 
   // 轻量占位：起步的那个主要行动（「添加图」）只在画布中央出现一次（审计 T03），
   // 侧栏不再各配一颗按钮
-  if (!zOrder.length) return <EmptyState icon={Layers} title={lt('emptyTitle')} />
+  if (!zOrder.length) {
+    // 画布空时工作台的起步动作只有画布中央的「添加图」：抽屉空态是纯占位，不配按钮 / 链接（审计 T03）
+    return <EmptyLine>{lt('emptyTitle')}</EmptyLine>
+  }
 
   // 成组的对象折进组标题下（在最上层成员的位置出现一次）。树的语义（2026-10-07 设计审计 §10.3：
   // listbox → tree）：顶层是对象与组标题，组成员是第二层；每行报自己在同层里的位置与个数
@@ -184,20 +195,7 @@ export function LayerTree() {
       ? selectedIds.at(-1)!
       : keyOf(rows[0])
 
-  return (
-    <ul
-      ref={listRef}
-      role="tree"
-      data-tree="layers"
-      onKeyDownCapture={markTreeDriven}
-      onPointerDownCapture={markTreeDriven}
-      aria-label={lt('listLabel')}
-      aria-multiselectable
-      className="min-h-0 flex-1 scroll-py-1 overflow-y-auto py-1"
-      onDragLeave={() => setDropHint(null)}
-      onDrop={() => setDropHint(null)}
-    >
-      {rows.map((r) => {
+  const renderRow = (r: TreeRow) => {
         if (r.kind === 'group') {
           return (
             <GroupRow
@@ -237,7 +235,42 @@ export function LayerTree() {
             onReorder={(d) => reorder(o.id, d)}
           />
         )
-      })}
+      }
+
+  // 组成员收进 `TreeBranch`（折叠 / 展开的高度过渡）；行本身与键位仍按扁平序列
+  const renderTree = (): ReactNode[] => {
+    const out: ReactNode[] = []
+    for (let i = 0; i < rows.length; i++) {
+      const r = rows[i]
+      out.push(renderRow(r))
+      if (r.kind !== 'group') continue
+      const kids: ReactNode[] = []
+      while (i + 1 < rows.length && rows[i + 1].kind === 'object' && (rows[i + 1] as { depth: number }).depth === 1) {
+        kids.push(renderRow(rows[++i]))
+      }
+      out.push(
+        <TreeBranch key={`branch:${r.gid}`} open={!collapsed[r.gid]} onSettled={rebase}>
+          {kids}
+        </TreeBranch>,
+      )
+    }
+    return out
+  }
+
+  return (
+    <ul
+      ref={listRef}
+      role="tree"
+      data-tree="layers"
+      onKeyDownCapture={markTreeDriven}
+      onPointerDownCapture={markTreeDriven}
+      aria-label={lt('listLabel')}
+      aria-multiselectable
+      className="min-h-0 flex-1 scroll-py-1 overflow-y-auto py-1"
+      onDragLeave={() => setDropHint(null)}
+      onDrop={() => setDropHint(null)}
+    >
+      {renderTree()}
     </ul>
   )
 }
@@ -305,14 +338,14 @@ function GroupRow({
         }
       }}
       style={treeIndent(0)}
-      className={cn(listRowClass({ selected: allSelected, muted: true }), 'pr-2')}
+      className={cn(listRowClass({ tree: true, group: true, selected: allSelected }), 'pr-2')}
     >
       <TreeChevron
         expanded={!collapsed}
         onToggle={onToggle}
         label={lt(collapsed ? 'expandGroup' : 'collapseGroup')}
       />
-      <TreeIcon icon={Layers} selected={allSelected} />
+      <TreeIcon icon={Layers} />
       <span ref={labelRef} data-tree-label className="min-w-0 flex-1 truncate">
         {lt('groupLabel', { count: members.length })}
       </span>
@@ -461,13 +494,13 @@ function LayerRow({
       }}
       onDoubleClick={() => setEditing(true)}
       style={treeIndent(depth)}
-      className={cn(listRowClass({ selected, hidden: obj.hidden, dragging }), 'pr-0.5')}
+      className={cn(listRowClass({ tree: true, selected, hidden: obj.hidden, dragging }), 'pr-0.5')}
     >
       {/* 落点线：2px accent + 圆点（`dropLineClass`，此前是 1px 的内阴影线，几乎看不见） */}
       <span aria-hidden data-layer-drop={dropHint ?? undefined} className={dropLineClass(dropHint === 'above' ? 'before' : dropHint === 'below' ? 'after' : null)} />
       {/* 顶层对象没有折叠箭头，留一个空列：与组标题行的图标对齐 */}
       <TreeChevron />
-      <TreeIcon icon={Icon} selected={selected} />
+      <TreeIcon icon={Icon} />
       {editing ? (
         <input
           autoFocus

@@ -7,6 +7,7 @@ import { cn } from '@/lib/utils'
 import { Details, Summary } from '@/components/ui/Details'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { backendCodeMsg, type CapturedFigureDescriptor, type ScriptInventoryEntry } from '@/lib/api'
+import { splitNoticeText } from '@/lib/noticeText'
 import { formatCm } from '@/lib/units'
 import { formatMessage, msg, t as translate } from '@/i18n'
 import { addRuntimePanelToCanvas } from '@/store/workspace'
@@ -148,8 +149,13 @@ export function ScriptLibrary({ query }: { query: string }) {
   if (error && !view) {
     return (
       <div className="px-3 pb-2">
-        <Notice tone="danger" data-script-load-failed>
-          {sc('loadFailed', { error })}
+        <Notice
+          tone="danger"
+          data-script-load-failed
+          title={sc('loadFailed')}
+          detail={splitNoticeText(error).detail}
+        >
+          {splitNoticeText(error).inline}
         </Notice>
       </div>
     )
@@ -276,7 +282,8 @@ function ScriptRow({
 
   const onRunOrCancel = () => {
     if (viaPanel) {
-      void useProjectPreparationStore.getState().open(scriptTarget(entry.script))
+      // 这颗钮就是「打开并运行」：检查完接着认领后端的 run_when_ready，准备完成后自动进入编辑
+      void useProjectPreparationStore.getState().open(scriptTarget(entry.script, { reuse: true }), { run: true })
       return
     }
     const store = useScriptRunStore.getState()

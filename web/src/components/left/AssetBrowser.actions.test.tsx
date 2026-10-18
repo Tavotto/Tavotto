@@ -129,13 +129,26 @@ const seedPanels = (panels: PanelInfo[]) =>
 
 const cardOf = (id: string) => host.querySelector<HTMLElement>(`[data-card="${CSS.escape(id)}"]`)!
 const cardIds = () => [...host.querySelectorAll<HTMLElement>('li[data-card]')].map((c) => c.dataset.card)
-// 就近入口锚在结构（`data-card-actions`）：文字区的文件名 / 状态也带 title，
+// 就近入口锚在结构（`data-card-add`，2026-10-16 起每张卡只有一个）：文字区的文件名 / 状态也带 title，
 // 光按 `span[title]` 找会把它们数进来
-const chips = (card: HTMLElement) =>
-  [...card.querySelectorAll<HTMLElement>('[data-card-actions] span[title]')].filter((s) =>
-    s.textContent?.trim(),
+const chips = (card: HTMLElement) => [...card.querySelectorAll<HTMLElement>('[data-card-add]')]
+/** 右键 / ⇧F10 菜单（挂在 body 的 portal 上，不在 host 里） */
+const menuItems = () =>
+  [...document.querySelectorAll<HTMLElement>('[data-asset-card-menu] [role="menuitem"]')].map((m) =>
+    m.textContent?.trim(),
   )
-const actionsBar = () => host.querySelector<HTMLElement>('[data-selected-asset-actions]')
+const rightClick = (card: HTMLElement) =>
+  act(async () => {
+    card.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 40, clientY: 40 }))
+  })
+const clickMenuItem = (label: string) =>
+  act(async () => {
+    const item = [...document.querySelectorAll<HTMLElement>('[data-asset-card-menu] [role="menuitem"]')].find((m) =>
+      m.textContent?.includes(label),
+    )!
+    item.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }))
+    item.click()
+  })
 const key = (card: HTMLElement, k: string, shift = false) =>
   act(async () => {
     card.dispatchEvent(new KeyboardEvent('keydown', { key: k, shiftKey: shift, bubbles: true }))
@@ -161,21 +174,30 @@ describe('文件卡：两个动作', () => {
     await mount()
   })
 
-  it('就近入口写的是「编辑原图」与「添加到画布」，不再是一个中性的「打开」', () => {
-    const labels = chips(cardOf('Fig1.pdf')).map((c) => c.textContent?.trim())
-    expect(labels).toContain('编辑原图')
-    expect(labels).toContain('添加到画布')
-    expect(labels).not.toContain('打开')
+  it('卡片上只有一个就近入口「＋添加到画布」，在缩略图右上角；没有「编辑」那一枚', () => {
+    const adds = chips(cardOf('Fig1.pdf'))
+    expect(adds).toHaveLength(1)
+    expect(adds[0].textContent?.trim()).toBe('添加到画布')
+    expect(cardOf('Fig1.pdf').querySelector('[data-card-actions]')).toBeNull()
+    // 右上角（不压图里的文字）：top / right，不是 bottom
+    expect(adds[0].className).toMatch(/\btop-1\.5\b/)
+    expect(adds[0].className).toMatch(/\bright-1\.5\b/)
+    expect(adds[0].className).not.toMatch(/\bbottom-/)
+    // 悬停 / 键盘焦点才出现
+    expect(adds[0].className).toContain('opacity-0')
+    expect(adds[0].className).toContain('group-hover:opacity-100')
+    expect(adds[0].className).toContain('group-focus-visible:opacity-100')
   })
 
-  it('点「编辑原图」→ openFastEdit；点「添加到画布」→ addFigureToLayout；各带这张图的 id', async () => {
-    const [edit, add] = chips(cardOf('Fig1.pdf'))
-    await act(async () => edit.click())
-    expect(mockOpen).toHaveBeenCalledWith('Fig1.pdf')
-    expect(mockAdd).not.toHaveBeenCalled()
-    await act(async () => add.click())
+  it('点「＋」→ addFigureToLayout；双击卡片 = 编辑原图（openFastEdit）；各带这张图的 id', async () => {
+    await act(async () => chips(cardOf('Fig1.pdf'))[0].click())
     expect(mockAdd).toHaveBeenCalledWith('Fig1.pdf')
-    expect(mockOpen).toHaveBeenCalledTimes(1)
+    expect(mockOpen).not.toHaveBeenCalled()
+    await act(async () => {
+      cardOf('Fig1.pdf').dispatchEvent(new MouseEvent('dblclick', { bubbles: true }))
+    })
+    expect(mockOpen).toHaveBeenCalledWith('Fig1.pdf')
+    expect(mockAdd).toHaveBeenCalledTimes(1)
   })
 
   it('Enter = 编辑原图，Shift+Enter = 添加到画布；可达名旁声明了这两个键', async () => {
@@ -189,19 +211,74 @@ describe('文件卡：两个动作', () => {
     expect(mockOpen).toHaveBeenCalledTimes(1)
   })
 
-  it('选中一张卡后列表下方出现两个真按钮（listbox 之外），落到同一对动作上', async () => {
-    expect(actionsBar()).toBeNull()
+  it('选中一张卡后下方没有页脚（常驻动作栏已去掉）；option 里也没有可 Tab 的控件', async () => {
     await act(async () => cardOf('Fig1.pdf').click())
-    const bar = actionsBar()!
-    expect(bar).toBeTruthy()
-    // 真按钮住在 listbox 外面：option 里不许再嵌可 Tab 的控件
-    expect(host.querySelector('[role="listbox"]')!.contains(bar)).toBe(false)
-    const buttons = [...bar.querySelectorAll('button')]
-    expect(buttons.map((b) => b.textContent?.trim())).toEqual(['编辑原图', '添加到画布'])
-    await act(async () => buttons[0].click())
+    expect(host.querySelector('[data-asset-footer]')).toBeNull()
+    expect(host.querySelector('[data-selected-asset-actions]')).toBeNull()
+    expect(cardOf('Fig1.pdf').querySelector('button, [tabindex="0"]')).toBeNull()
+  })
+
+  it('右键：菜单里有这张卡的全部动作（编辑原图 / 添加到画布），落到同一对 action 上', async () => {
+    await rightClick(cardOf('Fig1.pdf'))
+    expect(menuItems()).toEqual(['编辑原图', '添加到画布'])
+    // 菜单在 listbox 之外
+    expect(host.querySelector('[role="listbox"]')!.contains(document.querySelector('[data-asset-card-menu]'))).toBe(false)
+    await clickMenuItem('编辑原图')
     expect(mockOpen).toHaveBeenCalledWith('Fig1.pdf')
-    await act(async () => buttons[1].click())
+    await rightClick(cardOf('Fig1.pdf'))
+    await clickMenuItem('添加到画布')
     expect(mockAdd).toHaveBeenCalledWith('Fig1.pdf')
+  })
+
+  it('键盘：⇧F10 与 ContextMenu 键开同一份菜单（键盘用户到得了每个动作）', async () => {
+    await key(cardOf('Fig1.pdf'), 'F10', true)
+    expect(menuItems()).toEqual(['编辑原图', '添加到画布'])
+    await act(async () => {
+      document.querySelector('[data-asset-card-menu]')!.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }),
+      )
+    })
+    await key(cardOf('Fig1.pdf'), 'ContextMenu')
+    expect(menuItems()).toEqual(['编辑原图', '添加到画布'])
+  })
+
+  it('标题行有两颗真按钮（可聚焦、带标签、listbox 之外）：没选中置灰，选中后落到与快捷键同一对动作', async () => {
+    const open = () => host.querySelector<HTMLButtonElement>('[data-asset-open]')!
+    const add = () => host.querySelector<HTMLButtonElement>('[data-asset-add]')!
+    expect(open().tagName).toBe('BUTTON')
+    expect(open().getAttribute('aria-label')).toBe('编辑原图')
+    expect(add().getAttribute('aria-label')).toBe('添加到画布')
+    expect(host.querySelector('[role="listbox"]')!.contains(open())).toBe(false)
+    // 没选中：置灰（不可聚焦，不作用于一个看不见的目标）
+    expect(open().disabled).toBe(true)
+    expect(add().disabled).toBe(true)
+    await act(async () => cardOf('Fig1.pdf').click())
+    expect(open().disabled).toBe(false)
+    expect(add().disabled).toBe(false)
+    open().focus()
+    expect(document.activeElement).toBe(open())
+    await act(async () => open().click())
+    expect(mockOpen).toHaveBeenCalledWith('Fig1.pdf')
+    await act(async () => add().click())
+    expect(mockAdd).toHaveBeenCalledWith('Fig1.pdf')
+  })
+
+  it('没有描述符的运行时图选中后两颗钮仍置灰（没有可编辑 / 可添加的东西）', async () => {
+    await act(async () => root?.unmount())
+    host.remove()
+    seedPanels([])
+    useRuntimeAssetStore.setState({
+      assets: [runtime('show', { cached: false, descriptor: null, size_mm: null, status: 'needs_rerun' })],
+    })
+    await mount()
+    await act(async () => cardOf('runtime:fig.py#show').click())
+    expect(host.querySelector<HTMLButtonElement>('[data-asset-open]')!.disabled).toBe(true)
+    expect(host.querySelector<HTMLButtonElement>('[data-asset-add]')!.disabled).toBe(true)
+  })
+
+  it('文件名后的「可编辑」小图标有可达名', () => {
+    const marker = cardOf('Fig1.pdf').querySelector<HTMLElement>('[role="img"]')
+    expect(marker?.getAttribute('aria-label')).toBe('可编辑')
   })
 })
 
@@ -210,7 +287,10 @@ describe('运行时图卡', () => {
     useRuntimeAssetStore.setState({ assets: [runtime('show')] })
     await mount()
     const card = cardOf('runtime:fig.py#show')
-    expect(chips(card).map((c) => c.textContent?.trim())).toEqual(['编辑原图', '添加到画布'])
+    expect(chips(card).map((c) => c.textContent?.trim())).toEqual(['添加到画布'])
+    await rightClick(card)
+    expect(menuItems()).toEqual(['编辑原图', '添加到画布'])
+    await act(async () => document.body.click())
     await key(card, 'Enter', true)
     expect(mockAdd).toHaveBeenCalledWith('runtime:fig.py#show')
     expect(mockOpen).not.toHaveBeenCalled()
@@ -225,8 +305,8 @@ describe('运行时图卡', () => {
     expect(chips(card).map((c) => c.textContent?.trim())).toEqual(['运行并发现图'])
     await key(card, 'Enter', true)
     expect(mockAdd).not.toHaveBeenCalled()
-    await act(async () => card.click())
-    expect([...actionsBar()!.querySelectorAll('button')].map((b) => b.textContent?.trim())).toEqual(['运行并发现图'])
+    await rightClick(card)
+    expect(menuItems()).toEqual(['运行并发现图'])
   })
 })
 
@@ -325,7 +405,8 @@ describe('「图」区头的计数', () => {
 
 describe('搜索词与筛选活得比组件长', () => {
   it('卸载再挂载（切页签 / 收起抽屉）后输入还在；换项目（clear）才回默认', async () => {
-    seedPanels([panel('Fig1.pdf'), panel('Fig2.pdf')])
+    // 条目少于 6 个时没有搜索框（2026-10-16），要有 6 张才摆得出来
+    seedPanels(['Fig1.pdf', 'Fig2.pdf', 'Fig3.pdf', 'Fig4.pdf', 'Fig5.pdf', 'Fig6.pdf'].map((id) => panel(id)))
     await mount()
     const input = host.querySelector<HTMLInputElement>('input[aria-label="搜索图"]')!
     await act(async () => {
@@ -342,7 +423,7 @@ describe('搜索词与筛选活得比组件长', () => {
 
     await act(async () => useAssetBrowseStore.getState().clear())
     expect(host.querySelector<HTMLInputElement>('input[aria-label="搜索图"]')!.value).toBe('')
-    expect(cardIds()).toEqual(['Fig1.pdf', 'Fig2.pdf'])
+    expect(cardIds()).toHaveLength(6)
     expect(useAssetBrowseStore.getState().filters).toEqual(DEFAULT_ASSET_FILTERS)
   })
 })

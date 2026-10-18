@@ -24,6 +24,8 @@ export function listRowClass({
   muted = false,
   hidden = false,
   dragging = false,
+  tree = false,
+  group = false,
 }: {
   size?: ListRowSize
   selected?: boolean
@@ -32,14 +34,25 @@ export function listRowClass({
   hidden?: boolean
   /** 这一行正被拖着：原位淡到 `opacity-dragging`（压过 hidden 的 45%） */
   dragging?: boolean
+  /**
+   * 结构侧栏（元素树 / 图层树）变体（2026-10-16 UI 2.0 第二轮 04）：圆角 6；叶子 ink-2、
+   * 分组头（`group`）500 + ink，选中仍是 selected 底 + 600 + ink。hover / 选中底沿用同一档 token。
+   */
+  tree?: boolean
+  /** 树变体里的分组头（带子节点的行） */
+  group?: boolean
 } = {}): string {
   return cn(
-    'group relative mx-1 flex cursor-default items-center gap-1 rounded-md outline-none',
+    'group relative mx-1 flex cursor-default items-center gap-1 outline-none',
+    tree ? 'rounded-sm' : 'rounded-md',
     SIZE[size],
     'transition-colors duration-fast focus-visible:focus-ring-inset',
     selected
       ? 'bg-selected font-semibold text-ink'
-      : cn(muted ? 'text-ink-2' : 'text-ink', 'hover:bg-surface-hover'),
+      : cn(
+          tree ? (group ? 'font-medium text-ink' : 'text-ink-2') : muted ? 'text-ink-2' : 'text-ink',
+          'hover:bg-surface-hover',
+        ),
     dragging ? 'opacity-dragging' : hidden && 'opacity-45',
   )
 }

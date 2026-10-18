@@ -511,7 +511,7 @@ def _pin_place(a, value) -> None:
         _place_offsetbox(a, value)
 
 
-def _set_text_pos_frac(t: Text, value) -> None:
+def _set_text_pos_frac(t: Text, value, state=None) -> None:
     """拖动文字：落到 figure 分数 `value`，并登记成「拖过的」（布局引擎下见上面那段）。
 
     **可能失败的那一步（`_place_text`）排在登记之前**：坏值 / 不支持的坐标系抛出去时
@@ -520,9 +520,14 @@ def _set_text_pos_frac(t: Text, value) -> None:
     pins = _text_pins(t.get_figure())
     prev = pins.get(t)
     native = prev[1] if prev is not None else _text_native_state(t)
+    if prev is None and state is not None and isinstance(t, Annotation):
+        native = (_anchor_original(state, t, "pos_frac", native[0]),)
     _place_text(t, value)
     pins[t] = (tuple(value), native)
     _ensure_text_pin_hook(t.get_figure())
+
+
+_set_text_pos_frac._needs_state = True  # noqa: SLF001
 
 
 def _get_text_pos(t: Text):
@@ -1421,6 +1426,10 @@ def _set_arrow_endpoints(a, value, state=None) -> None:
             orig = None if state is None else state.originals.get((a.get_gid(), "endpoints_frac"))
             if isinstance(orig, _AnnAnchors):
                 _put_ann_anchors(ann, orig)
+                # The inactive arrow must not erase a still-requested text drag.
+                text_key = (ann.get_gid(), "pos_frac")
+                if text_key in state.pending:
+                    _set_text_pos_frac(ann, state.pending[text_key], state)
             # 「失效」这个裁决要**留着**（#552 第五轮评审）：清掉它，下一轮无变化的渲染里
             # `_must_replay` 会把 None ≠ False 当成裁决变了、再撤一次——而那时 xyann 已是
             # 恢复文字后用户拖过的位置，字被拽回去、没变的 pos_frac 又被跳过
@@ -1478,6 +1487,28 @@ def _restore_arrow_endpoints(a, orig) -> None:
     a.__dict__.pop("_mm_arrow_native", None)
     if orig is not None:
         a.set_positions(orig[0], orig[1])
+
+
+def _annotation_anchor_owner(artist, prop):
+    if prop == "pos_frac" and isinstance(artist, Annotation):
+        return artist
+    if prop == "endpoints_frac":
+        return getattr(artist, "_mm_annotation", None)
+    return None
+
+
+def _anchor_original(state, artist, prop, value):
+    """Text position and arrow endpoints share Annotation.xyann, hence its original."""
+    ann = _annotation_anchor_owner(artist, prop)
+    if ann is None:
+        return value
+    if prop == "pos_frac" and ann.arrow_patch is not None:
+        peer = state.originals.get((ann.arrow_patch.get_gid(), "endpoints_frac"))
+        return peer[1] if isinstance(peer, _AnnAnchors) else value
+    peer_key = (ann.get_gid(), "pos_frac")
+    if isinstance(value, _AnnAnchors) and peer_key in state.originals:
+        return _AnnAnchors((value[0], state.originals[peer_key], value[2]))
+    return value
 
 
 def _patch_base_transform(p):
@@ -5061,12 +5092,16 @@ def _apply(state: FigState, patches: list[dict]) -> list[str]:
     #: 都会把同组其他成员盖掉，所以整组都要重放——「值没变就跳过」那条捷径
     #: 对它们是错的，与 `_must_replay` 同一个道理。
     dirty_groups: set[tuple] = set()
+    dirty_annotation_anchors: set[Annotation] = set()
 
     def _mark_restored(key: tuple, artist) -> None:
         """还原（或半路抛了的还原）动过这个键：几何标记与别名组标脏。"""
         nonlocal geometry_moved
         if _is_geometry_key(key[1], artist):
             geometry_moved = True
+        ann = _annotation_anchor_owner(artist, key[1])
+        if ann is not None:
+            dirty_annotation_anchors.add(ann)
         # 还原一个组员会把同组其他成员一起盖掉（广播还原写的是整组，
         # 窄的还原写的是广播本该管着的那一个）——整组标脏，下面重放。
         if key in owner:
@@ -5219,6 +5254,7 @@ def _apply(state: FigState, patches: list[dict]) -> list[str]:
                     and not _must_replay(prop, artist, state)
                     and key not in dirty_groups
                     and not dirty_groups.intersection(owner.get(key, ()))
+                    and _annotation_anchor_owner(artist, prop) not in dirty_annotation_anchors
                     # ④ 上一轮撤掉它时还原失败、此刻又回到列表里：图上停的是半改状态，
                     #    不是 applied 里记的那个值
                     and key not in state.unrestored
@@ -5291,7 +5327,7 @@ def _apply(state: FigState, patches: list[dict]) -> list[str]:
                                 break
                     if _seeded is _NOTHING:
                         _capture_original_value(key)
-                        state.originals[key] = getter(artist)
+                        state.originals[key] = _anchor_original(state, artist, prop, getter(artist))
                         # 柱系列：getter 读的是**此刻**每根柱的值，单柱若已先被改过（originals 里有它的脚本
                         # 原样），系列代采的那一份必须用单柱的原样，否则全撤时系列的还原把单柱的编辑写回
                         # （#968，Codex #972 r4250928441）。成员序与 getter 的列表序一致（同取 `grp.artists`）
@@ -5340,6 +5376,9 @@ def _apply(state: FigState, patches: list[dict]) -> list[str]:
                 else:
                     setter(artist, value)
                 state.applied[key] = value
+                ann = _annotation_anchor_owner(artist, prop)
+                if ann is not None:
+                    dirty_annotation_anchors.add(ann)
                 # 重新落成了请求值：欠的还原一笔勾销（originals 一直留着，仍是脚本原样）
                 state.unrestored.discard(key)
             except Exception as exc:  # noqa: BLE001

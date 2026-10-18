@@ -583,6 +583,35 @@ describe('2026-10-07 设计审计 §4.2：叙事句 / 卡片网格 / 拖放接�
     }
   })
 
+  it('切换项目期间最近项目卡置灰：data-disabled 在、不带 hover 描边 / 按压类；结束后恢复', async () => {
+    await mount()
+    const cards = () =>
+      [...host.querySelectorAll<HTMLElement>('[data-home-recent] [data-card]')]
+    expect(cards().length).toBeGreaterThan(0)
+    for (const c of cards()) {
+      expect(c.dataset.disabled).toBeUndefined()
+      expect(c.className).toContain('hover:outline-border')
+    }
+    await act(async () => useProjectStore.setState({ switching: true }))
+    for (const c of cards()) {
+      expect(c.dataset.disabled).toBe('true')
+      expect(c.className).not.toContain('hover:outline-border')
+      expect(c.className).not.toContain('bg-surface-active')
+    }
+    await act(async () => useProjectStore.setState({ switching: false }))
+    for (const c of cards()) expect(c.dataset.disabled).toBeUndefined()
+  })
+
+  it('置灰的卡不靠 hover 揭出 ⋯ 菜单钮（group-hover:opacity-100 只在可用时有）；聚焦仍能出现', async () => {
+    await mount()
+    const trigger = () => host.querySelector<HTMLElement>('[data-home-recent] [aria-haspopup="menu"]')!
+    expect(trigger().className).toContain('group-hover:opacity-100')
+    await act(async () => useProjectStore.setState({ switching: true }))
+    expect(trigger().className).not.toContain('group-hover:opacity-100')
+    expect(trigger().className).toContain('focus-visible:opacity-100')
+    await act(async () => useProjectStore.setState({ switching: false }))
+  })
+
   it('拖放区静态时没有虚线；带文件拖进页面才是接收态（accent 虚线 + 浅底）', async () => {
     await mount()
     const zone = host.querySelector<HTMLElement>('[data-home-dropzone]')!

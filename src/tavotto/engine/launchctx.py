@@ -23,8 +23,9 @@ v2（V2 PR2，ADR 0133）起记录多一个 `profile`（`safe` | `native`）：s
 记录只是**事实**，不驱动启动决策：启动方式是解释器路径的纯函数（`launcher.launcher_for_interpreter`），与脚本、项目、记录
 无关——所以以前裸起成功过的 Conda 脚本，今后会带上激活环境（这本来就是用户对 Conda 环境的预期）。
 
-`verify`（全部依据）——供「再次打开时沿用上次成功配置」的入口用。**这个消费端不在本期**（见 #982，由 P07 结合界面做）：
-界面没有参数时本来就不带 argv，不能靠省略推断沿用；记录里的路径也只用来对账、不当可执行路径。
+`verify`（全部依据）——供「再次打开时沿用上次成功配置」的入口用。消费端是 `reusable_run_config`（V2 PR4，#982）：
+只在请求**明确**带 `reuse_last_success: true`（界面的「打开 / 再次打开脚本」动作）且没有给 argv 时才用——不能靠省略 argv 推断沿用；
+记录里的路径也只用来对账、不当可执行路径。
 
 纯标准库；Flask 父进程侧。
 """
@@ -239,6 +240,41 @@ def basis_of(result, plan, partial: bool):
     if getattr(plan, "execution", None) == PROFILE_NATIVE:
         return NativeBasis(plan)
     return getattr(result, "receipt", None)
+
+
+def reusable_run_config(
+    project_root: str | Path, script: str, *, python: str | None, python_source: str | None
+) -> str | None:
+    """「再次打开时沿用上次成功的运行配置」：上次成功用的运行配置引用（`rc_…`），**此刻全部依据仍成立**才回；否则 None。
+
+    只回引用，不回 argv：调用方用 `runconfig.selection` 取（敏感值此刻不在也会在那里被拒）。拒绝的情形（都回 None，让用户重新给）：
+
+    * 没有记录 / 记录读不出 / 上次是无参数运行（没有可沿用的）；
+    * 敏感配置（`run_sensitive`）：不自动复用，秘密值本来也没落盘；
+    * `source.basis_observed` 为 False（桌面 native 成功）：native 没有观察 helper 模块与数据文件，核验只覆盖脚本本身，
+      凑不齐「解释器 / 环境 / 脚本 / helper / 数据」五样依据——证据不全就不假装可复用（见 `build_native_record`）；
+    * `verify` 的全部依据（解释器、环境、脚本字节、helper 与数据文件摘要、运行目录档、运行配置、数据绑定）任何一处对不上。
+
+    纯读：只 stat / 读文件算摘要；不执行用户代码。"""
+    try:
+        record = runconfig.launch_record(project_root, script)
+    except runconfig.RunConfigError:
+        return None
+    if not isinstance(record, dict):
+        return None
+    cid = record.get("run_config")
+    if not isinstance(cid, str) or not cid or record.get("run_sensitive"):
+        return None
+    if (record.get("source") or {}).get("basis_observed") is False:
+        return None
+    reason = verify(
+        record,
+        project_root=project_root,
+        script=script,
+        python=python,
+        python_source=python_source,
+    )
+    return cid if reason is None else None
 
 
 def record_success(

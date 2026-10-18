@@ -108,8 +108,9 @@ async function mount() {
   await act(async () => {})
 }
 
-const rowGids = () =>
-  [...host.querySelectorAll('[data-el]')].map((n) => (n as HTMLElement).dataset.el)
+// 收起的子树要保活一个退场时长（高度过渡）：那段时间行还在 DOM 里，但整棵是 inert——不算「在树里」
+const liveRows = () => [...host.querySelectorAll('[data-el]')].filter((n) => !n.closest('[inert]'))
+const rowGids = () => liveRows().map((n) => (n as HTMLElement).dataset.el)
 const search = () => host.querySelector('input') as HTMLInputElement
 const heading = () => host.querySelector('h2')?.parentElement?.textContent ?? ''
 
@@ -317,7 +318,7 @@ describe('键盘', () => {
     await mount()
     // 聚类行的 key 是「父 key#聚类名」，不是 gid。聚类默认是**展开**的（审计 B44：
     // 文字 / 数据系列 / 图例 / 坐标轴的成员一进来就看得见），所以先 ← 再 →
-    const cluster = [...host.querySelectorAll('[data-el]')].find((n) =>
+    const cluster = liveRows().find((n) =>
       (n as HTMLElement).dataset.el!.includes('#'),
     ) as HTMLElement
     expect(cluster).toBeTruthy()
@@ -337,7 +338,7 @@ describe('键盘', () => {
 describe('空态', () => {
   const et = (key: string) => t(`elementTree.${key}`, { ns: 'workspace' })
 
-  it('一张可编辑的图都没有：说清原因，主动作是打开素材', async () => {
+  it('一张可编辑的图都没有：只说清原因，不配任何按钮 / 链接（起步动作只有画布中央的「添加图」，审计 T03）', async () => {
     useUiStore.getState().setElementPanel(null)
     useSelectionStore.getState().set([])
     useDocumentStore.getState().commit(literal('清空'), (d) => {
@@ -346,10 +347,8 @@ describe('空态', () => {
     await mount()
     expect(host.textContent).toContain(et('noEditableTitle'))
     expect(host.textContent).not.toContain('参数化')
-    const btn = [...host.querySelectorAll('button')].find((b) => b.textContent === et('openAssets'))!
-    expect(btn).toBeTruthy()
-    await act(async () => btn.click())
-    expect(useUiStore.getState().leftTab).toBe('assets')
+    expect(host.querySelector('[data-left-drawer] button, button')).toBeNull()
+    expect(host.querySelector('a, [role="button"], [role="link"]')).toBeNull()
   })
 
   it('有可编辑的图但没选中：主动作选中它，树随即出现', async () => {
@@ -429,5 +428,90 @@ describe('树的语义、行菜单与「只看这一支」（2026-10-07 设计�
     await act(async () => host.querySelector<HTMLElement>('[data-element-isolate-exit]')!.click())
     expect(host.querySelector('[data-element-isolate]')).toBeNull()
     expect(rowGids()).toContain('axes_0.xlabel')
+  })
+})
+
+describe('空态与搜索框（UI 2.0 第二轮 09）', () => {
+  const emptyLine = () => host.querySelector<HTMLElement>('[data-empty-line]')
+
+  it('条目少于 6 个：不显示搜索框；够 6 个：显示', async () => {
+    seedExactRender(panel, { ...manifest, elements: manifest.elements.slice(0, 3) } as never)
+    await mount()
+    expect(host.querySelector('[data-tree="elements"]')).not.toBeNull()
+    expect(search()).toBeNull()
+    await act(async () => root.unmount())
+    host.remove()
+    seedExactRender(panel, manifest as never)
+    await mount()
+    expect(search()).not.toBeNull()
+  })
+
+  it('搜索词在就保留搜索框；输入过之后删空也不消失', async () => {
+    await mount()
+    await type('曲线')
+    expect(search().value).toBe('曲线')
+    await type('')
+    expect(search()).not.toBeNull()
+  })
+
+  it('画布上没有可编辑的图：列表顶部一行灰字，没有大图标与标题，也没有任何按钮 / 链接', async () => {
+    await act(async () => {
+      useDocumentStore.getState().commit(literal('去掉脚本'), (d) => {
+        d.objects = [{ ...panel, script: undefined } as unknown as CanvasObject]
+      })
+    })
+    useUiStore.getState().setElementPanel(null)
+    useSelectionStore.getState().set([])
+    await mount()
+    const line = emptyLine()!
+    expect(line.textContent).toBe(t('elementTree.noEditableTitle', { ns: 'workspace' }))
+    expect(host.querySelector('[data-empty-state]')).toBeNull()
+    expect(line.querySelector('svg')).toBeNull()
+    expect(line.querySelector('button, a, [role="button"], [role="link"]')).toBeNull()
+  })
+
+  it('有可编辑的图但没选中：一行灰字 + 「选中一张可编辑的图」', async () => {
+    useUiStore.getState().setElementPanel(null)
+    useSelectionStore.getState().set([])
+    await mount()
+    const line = emptyLine()!
+    expect(line.textContent).toContain(t('elementTree.noPanelTitle', { ns: 'workspace' }))
+    await act(async () => line.querySelector('button')!.click())
+    expect(useSelectionStore.getState().ids).toEqual(['p1'])
+  })
+
+  it('搜索无结果：一行灰字，不是大图标空态', async () => {
+    await mount()
+    await type('绝对不存在的名字zzz')
+    expect(emptyLine()!.textContent).toBe(t('elementTree.noMatch', { ns: 'workspace' }))
+    expect(host.querySelector('[data-empty-state]')).toBeNull()
+  })
+})
+
+describe('选中项滚入视野与折叠中的子树', () => {
+  it('选中深层子项后折叠其祖先：scrollIntoView 停在组头，不是退场动画里保活着的那一行', async () => {
+    const calls: string[] = []
+    const orig = Element.prototype.scrollIntoView
+    Element.prototype.scrollIntoView = function (this: Element) {
+      calls.push((this as HTMLElement).dataset.el ?? '')
+    }
+    try {
+      await mount()
+      await act(async () => useUiStore.getState().setSelectedGid('axes_0.yticks.label_3'))
+      await act(async () => {})
+      expect(calls.at(-1)).toBe('axes_0.yticks.label_3')
+      calls.length = 0
+      const head = host.querySelector('[data-el="axes_0.yticks"]') as HTMLElement
+      await act(async () => {
+        head.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true, cancelable: true }))
+      })
+      await act(async () => {})
+      // 退场期间子行还在 DOM 里（inert），但 rows 变了、effect 重跑：目标必须是可见的组头
+      expect(host.querySelector('[data-el="axes_0.yticks.label_3"]')?.closest('[inert]')).not.toBeNull()
+      expect(calls.length).toBeGreaterThan(0)
+      expect(calls.every((c) => c === 'axes_0.yticks')).toBe(true)
+    } finally {
+      Element.prototype.scrollIntoView = orig
+    }
   })
 })

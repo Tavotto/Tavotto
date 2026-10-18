@@ -73,12 +73,8 @@ async function openFigure(page: Page, baseURL: string, runtime = false) {
   await page.setViewportSize({ width: 1440, height: 1000 })
   await page.goto(baseURL)
   if (runtime) {
+    // ▶ 就是「打开并运行」（V2 PR4）：点一次，检查 → 运行 → 一张图自动进入编辑，下面的断言等的就是它
     await page.locator('[data-script-run="fig_flow.py"]').click({ timeout: 30_000 })
-    const preparation = page.locator('[data-prep-card]')
-    await expect(preparation).toHaveAttribute('data-prep-state', 'ready', { timeout: 60_000 })
-    await preparation.locator('[data-prep-primary]').click()
-    await expect(preparation).toHaveAttribute('data-prep-state', 'completed', { timeout: 120_000 })
-    await preparation.locator('[data-prep-primary]').click()
   } else {
     await page.locator('[data-card="Flowchart.pdf"]').dblclick({ timeout: 120_000 })
   }

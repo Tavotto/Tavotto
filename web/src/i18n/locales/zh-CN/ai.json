@@ -118,6 +118,7 @@
     "send": "发送（{{key}}）",
     "sendAria": "发送",
     "sendFailed": "没有发出去",
+    "sendFailedReason": "助手服务暂时出错",
     "stepRan": "运行",
     "targetAria": "作用目标：{{target}}",
     "taskHistory": "任务历史",

@@ -203,6 +203,15 @@
     0 0 0 1px color-mix(in srgb, var(--color-shadow-edge) 6%, transparent),
     0 1px 2px color-mix(in srgb, var(--color-shadow) 4%, transparent),
     0 4px 12px color-mix(in srgb, var(--color-shadow) 4%, transparent);
+  /* 浮起的卡（ui/Card 的 lift 变体：只有首页最近项目卡，用户 2026-10-15 裁决放宽到「≤2px 位移 + ≤1.02 缩放 + 阴影 / 光晕」）：
+     比 shadow-card 明显升档——1px 环 + 紧贴的接触影 + 大而偏下的主影（负扩散，不糊成一片灰）+ 1px 品牌蓝描边（--lift-halo = accent 20% 的 1px 环，下面 :root；用户 2026-10-16 选定方案 B，不要外发光）。
+     浅 / 深色共用一串：黑影走 --color-shadow（暗色里是纯黑）、环走 --color-shadow-edge（暗色里是白）、描边走 accent，各自随主题变；
+     名字刻意不含 `shadow-card`（那条门禁只许 Card 手写它） */
+  --shadow-lift:
+    0 0 0 1px color-mix(in srgb, var(--color-shadow-edge) 10%, transparent),
+    0 2px 6px color-mix(in srgb, var(--color-shadow) 10%, transparent),
+    0 10px 28px -8px color-mix(in srgb, var(--color-shadow) 22%, transparent),
+    var(--lift-halo);
   /* 浮层：1px 环 + 贴边的接触阴影（0 2px 6px 6%）+ 一层大模糊。只有大模糊时，浮层叠在白面板上边缘发飘（2026-10-15 UI 2.0 精修） */
   --shadow-pop:
     0 0 0 1px color-mix(in srgb, var(--color-shadow-edge) 8%, transparent),
@@ -290,7 +299,7 @@
   --animate-fade-out: fade-out var(--duration-exit) var(--ease-exit);
   /* 从下方升起：toast */
   --animate-rise-in: rise-in var(--duration-base) var(--ease-pop);
-  --animate-rise-out: rise-out var(--duration-exit) var(--ease-exit);
+  --animate-rise-out: rise-out var(--duration-fast) var(--ease-exit);
   /* 折叠内容展开 / 收起（ui/Field 的 Reveal，2026-09-14 二审 E3）：grid 行高 0fr ↔ 1fr，
      下面的行跟着长高而不是瞬间跳出；退场短一档 */
   --animate-reveal-in: reveal-in var(--duration-base) var(--ease-pop);
@@ -339,6 +348,12 @@
 :root {
   --sfi-resolve: var(--duration-slow);
   --sfi-settle: var(--duration-exit);
+
+  /* Card lift 的两个可调量（放在 @theme 之外：@theme 里没被工具类直接用到的变量不会输出）。
+     --card-lift-scale 上限 1.02（门禁 foundationPrimitives.test 读这里）；--lift-halo = accent 20% 的 1px 环（描边，不是外发光），
+     是 --shadow-lift 阴影串里的最后一层，不要光晕就写 0 0 0 0 transparent */
+  --card-lift-scale: 1.015;
+  --lift-halo: 0 0 0 1px color-mix(in srgb, var(--color-accent) 20%, transparent);
 
   /* 层级（z-index）token（2026-10-07 设计审计 §1）：组件里只写 z-sticky / z-canvas-chrome / … 这些工具类
      （下面的 @utility），不写数字——foundation.test 守着。值与 token 化之前的裸值逐档对应，叠放顺序不变：
@@ -430,7 +445,7 @@
 @keyframes rise-in {
   from {
     opacity: 0;
-    transform: translateY(4px);
+    transform: translateY(4px) scale(0.98);
   }
   to {
     opacity: 1;

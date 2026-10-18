@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { msg, t as translate } from '@/i18n'
 import { formatDateTime } from '@/i18n/format'
@@ -18,6 +18,7 @@ import { Menu, MenuItem } from '../ui/Menu'
 import { Notice } from '../ui/Notice'
 import { StatusPill } from '../ui/StatusPill'
 import { ProgressBar } from '../ui/ProgressBar'
+import { scrollFadeStyle, useScrollFade } from '../ui/scrollFade'
 import { TextInput } from '../ui/Input'
 import { Select } from '../ui/Select'
 import { CopyButton } from './CopyButton'
@@ -690,11 +691,9 @@ function JobPanel({
       {/* 包管理器不报百分比：不确定态，来回扫（轨道 border 档） */}
       {running && <ProgressBar pct={null} label={pk('job.progressAria')} data-packages-progress />}
       {failure && (
-        <Notice tone="danger">
+        // 稳定码是技术信息：进「详情」（可复制），不再挤在那一句话后面
+        <Notice tone="danger" detail={errorText && repairCodeMessage(errorCode) ? errorCode : null}>
           {failure}
-          {errorText && repairCodeMessage(errorCode) && (
-            <span className="ml-1 font-mono text-xs">{errorCode}</span>
-          )}
         </Notice>
       )}
       {progress?.log && (
@@ -702,11 +701,30 @@ function JobPanel({
           title={pk('job.log')}
           action={<CopyButton text={progress.log} label={pk('job.copyLog')} />}
         >
-          <pre className="max-h-40 overflow-auto whitespace-pre-wrap break-words font-mono text-xs leading-relaxed text-ink-3">
-            {progress.log}
-          </pre>
+          <JobLog log={progress.log} />
         </DiagnosticDisclosure>
       )}
     </div>
+  )
+}
+
+/**
+ * 作业日志：超过 max-h 的长日志在盒子上下缘不再拦腰截断，还能滚的那一侧淡出（`ui/scrollFade`）。
+ * mask 挂在内层滚动的 `<pre>` 上——它没有底色，淡掉的只有字；外面 `DiagnosticDisclosure` 的底与边不受影响
+ */
+function JobLog({ log }: { log: string }) {
+  const ref = useRef<HTMLPreElement>(null)
+  const { fade } = useScrollFade(ref, 'y')
+  return (
+    <pre
+      ref={ref}
+      data-packages-log
+      data-fade-start={fade.start || undefined}
+      data-fade-end={fade.end || undefined}
+      style={scrollFadeStyle(fade, 'y')}
+      className="max-h-40 overflow-auto whitespace-pre-wrap break-words font-mono text-xs leading-relaxed text-ink-3"
+    >
+      {log}
+    </pre>
   )
 }

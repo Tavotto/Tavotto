@@ -348,6 +348,8 @@ def test_changing_argv_transfers_an_unclaimed_intent_and_retires_the_old_target(
     conflict = _arm(client, two)
     assert conflict.status_code == 409
     assert conflict.get_json()["code"] == "preparation_run_intent_conflict"
+    # 前端状态丢了（刷新 / 切项目）也能找回旧意图的会话 id 去转移（Codex #1044 r4271063082）
+    assert conflict.get_json()["params"]["session_id"] == one["session_id"]
     assert _get(client, two["session_id"]).get_json()["intent"] is None
     moved = _arm(client, two, transfer_from=one["session_id"])
     assert moved.status_code == 202, moved.get_json()

@@ -70,4 +70,6 @@ ADR 0116 把「准备」与「执行」拆成两次用户确认：依赖装好�
 
 * 0116 §一 的「任何入口都不在答完之后自动认领 `run`」改为：**没有有效意图的入口仍不**；有效意图只放行用户代码首次执行之前的前置推进。
 * 新错误码：`preparation_run_intent_conflict` / `preparation_run_intent_not_transferable`；新动作 `run_when_ready`；报告新增 `intent`。
-* 未做（剩余项）：界面的「打开并运行」入口与按 argv 编辑触发 `transfer_from` 的接线；桌面 / Windows 真机；意图的跨重启持久化（有意不做）。
+* 界面的「打开并运行」入口与 argv 换了时的 `transfer_from` 接线已由 V2 PR4（[0127](0127-execution-policy-and-unified-retry-guard.md)）完成：素材库 ▶、接入中心、引导卡「打开并运行」`open(..., { run: true })` 在检查后代用户认领报告里的
+  `run_when_ready`（回显授权摘要，只有这条路径；没有有效意图的入口仍不认领）；旧会话里意图仍 `active` 时带 `transfer_from`；完成后恰好一张图时自动进入编辑。
+* 未做（剩余项）：桌面 / Windows 真机；意图的跨重启持久化（有意不做）。

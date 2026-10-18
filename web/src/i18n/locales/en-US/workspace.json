@@ -35,7 +35,7 @@
     "openAria": "Edit {{name}}",
     "openFigure": "Edit",
     "refresh": "Refresh project",
-    "refreshFailed": "Refresh failed. {{error}}",
+    "refreshFailed": "Couldn’t refresh",
     "refreshTip": "Check the project for new files and script changes",
     "refreshing": "Checking for new files…",
     "removeFilter": "Remove filter: {{label}}",
@@ -234,8 +234,7 @@
     "noPanelTitle": "Select an editable figure to see its elements",
     "noEditableTitle": "No editable figure on the canvas yet",
     "noEditableHint": "Only script-generated figures expose their objects",
-    "locateEditable": "Select an editable figure",
-    "openAssets": "Open assets"
+    "locateEditable": "Select an editable figure"
   },
   "fastEdit": {
     "addToCanvas": "Add to canvas",
@@ -623,7 +622,7 @@
     "group_runtimeNames": "Outputs unknown until run",
     "linkedCount_one": "{{count}} linked figure",
     "linkedCount_other": "{{count}} linked figures",
-    "loadFailed": "Couldn’t load the script list. {{error}}",
+    "loadFailed": "Couldn’t load the script list",
     "loading": "Loading script list…",
     "noMatch": "No scripts match",
     "notRunNote": "This script hasn’t run yet",
@@ -920,7 +919,7 @@
   },
   "update": {
     "banner": "Tavotto has been updated. Reload to use the new version.",
-    "later": "Later"
+    "chip": "Reload needed"
   },
   "hints": {
     "panel_editable": "Double-click to edit inside the figure.",
@@ -973,6 +972,9 @@
       "install": "Install missing components first",
       "needsArgs": "The script needs arguments",
       "fileOpsBlocked": "The script changes project files, then reads them; safe mode doesn't change them, so the result would differ and no figure was made",
+      "fileOpsBlockedSafeOnly": "This project is set to safe mode only; the script changes files, then reads them, so the result would differ and no figure was made",
+      "fileOpsBlockedOff": "Running as-is is turned off; the script changes project files, then reads them, so safe mode's result would differ and no figure was made",
+      "failedAfterFallback": "Safe mode couldn't run the script as written, and running it as-is failed too",
       "argsRejected_one": "The script rejected the argument you gave",
       "argsRejected_other": "The script rejected the {{count}} arguments you gave",
       "inputUnanswered": "The script stopped to ask you something; run it again to answer",
@@ -992,13 +994,14 @@
       "originUnknown_other": "Can't tell where {{count}} libraries come from"
     },
     "btn": {
-      "start": "Get ready",
       "later": "Later",
       "run": "Run",
+      "openRun": "Open and run",
+      "clearReuse": "Don't reuse",
       "runAnyway": "Run anyway",
       "runAgain": "Run again",
       "retry": "Try again",
-      "stop": "Stop",
+      "stop": "Stop run",
       "install": "Install",
       "switchScope": "Use this project's versions",
       "recheck": "Check again",
@@ -1088,6 +1091,8 @@
       "args": "Arguments",
       "argsCount_one": "1",
       "argsCount_other": "{{count}}",
+      "argsReused_one": "Reusing the last successful argument",
+      "argsReused_other": "Reusing the last {{count}} successful arguments",
       "argsNone": "None",
       "argsHidden_one": "1 (has a password, hidden)",
       "argsHidden_other": "{{count}} (has a password, hidden)",
@@ -1104,6 +1109,39 @@
       "errorTruncated": "Too long; only the last part is kept.",
       "noFigureWhy": "It never called savefig and left no Figure open.",
       "unlinked": "{{names}}, made earlier with other arguments, is no longer linked. Run again with those arguments to restore it.",
+      "history": {
+        "title": "Run history",
+        "attempt": "Run {{n}}",
+        "profile": {
+          "safe": "Safe mode",
+          "native": "As-is"
+        },
+        "outcome": {
+          "pending": "Running",
+          "succeeded": "Succeeded",
+          "failed": "Failed",
+          "blocked": "Blocked",
+          "cancelled": "Stopped"
+        },
+        "switched": "Switched from safe mode to as-is",
+        "declined": {
+          "project_reopened": "The project was reopened; not switched",
+          "superseded": "Replaced by a newer run; not switched",
+          "not_desktop_initiated": "Not started from the desktop window; not switched",
+          "fallback_disabled": "Running as-is is turned off; not switched",
+          "policy_safe_only": "This project is set to safe mode only; not switched",
+          "not_blocked": "The cause wasn't a safe-mode limit; not switched",
+          "cancelled": "Stopped; not switched",
+          "plan_stale": "The environment changed after the check; not switched",
+          "already_fell_back": "Already switched once in this run; not switched again",
+          "native_to_safe": "Doesn't switch from as-is back to safe mode",
+          "no_new_root_cause": "No new cause; not retried",
+          "not_runnable": "Running as-is needs an answer first; not switched",
+          "interpreter_changed": "The interpreter changed; not switched",
+          "plan_unavailable": "Couldn't work out running as-is; not switched",
+          "launch_failed": "Couldn't start running as-is"
+        }
+      },
       "nativeFallback": "Safe mode blocked the script's file operations, so it was run on your real files instead.",
       "nativeFallbackNoWriteback": "Safe mode blocked the script's file operations, so it was run on your real files instead. Changes to a figure made this way aren't written back to the script."
     },

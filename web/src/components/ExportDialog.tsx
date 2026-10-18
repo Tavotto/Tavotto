@@ -57,14 +57,13 @@ import { Checkbox } from "./ui/Checkbox";
 import { Segmented } from "./ui/Segmented";
 import { Details, Summary } from "@/components/ui/Details";
 import {
-  panelSrc,
   engineErrorMsg,
   type AssetOriginalSpec,
   type ExportJob,
   type ExportOutput,
   type PanelInfo,
 } from "@/lib/api";
-import { formatMessage, msg, t as translate } from "@/i18n";
+import { formatMessage, msg, t as translate, type UiMessage } from "@/i18n";
 import { emitActivity } from "@/lib/activity";
 import { useHtmlMarkup } from "@/lib/useHtmlMarkup";
 import {
@@ -165,6 +164,7 @@ import { CountChip, type CountTone } from "./ui/CountChip";
 import { FieldGroup, FormSection } from "./ui/FormSection";
 import { listRowClass } from "./ui/listRow";
 import { Notice } from "./ui/Notice";
+import { splitNoticeSentences } from "@/lib/noticeText";
 import { ProgressBar } from "./ui/ProgressBar";
 import { dirTail } from "@/lib/pathDisplay";
 
@@ -173,6 +173,54 @@ import { dirTail } from "@/lib/pathDisplay";
 const EXPORT_STATUS_OWNER = "export.result";
 
 /** 本对话框的文案都在 `dialogs:export.*` 下 */
+/** 一条失败的原始材料：标题（一句人话）+ 后端原文 + 可选稳定码 */
+interface FailureRaw {
+  /** 失败事件的稳定身份（原始错误描述符 / 稳定码，**不是**翻译后的文字）：排先后、重置详情都认它，切语言不改变它 */
+  id: string;
+  title: string;
+  text: string;
+  code?: string;
+  /** `text` 是标题之外的补充（出路 / 技术原文）：整段进「详情」，不再接在标题后面 */
+  detailOnly?: boolean;
+}
+type FailureKind = "refusal" | "start-error" | "cancel-error" | "poll-error" | "reveal-error";
+
+/**
+ * 导出脚部状态区的失败条**同时最多一条**：几路错误各自在不同时刻出现，后来的替换前一条（按「由空变有 / 内容变了」
+ * 的先后盖戳，取戳最大的那路）。原文是一句读得懂的话就接在标题后面（连着两句就取开头放得下的整句，其余进详情）；裸的「HTTP 500」、过长或多行的整段进「详情」，
+ * 详情里再带上稳定码——不再只剩一个状态码。
+ */
+function useLatestFailure(raw: Record<FailureKind, FailureRaw | null>) {
+  const book = useRef({ n: 0, stamp: {} as Record<string, number>, last: {} as Record<string, string | null> });
+  const kinds = Object.keys(raw) as FailureKind[];
+  for (const k of kinds) {
+    const sig = raw[k] ? raw[k]!.id : null;
+    if (sig !== null && sig !== book.current.last[k]) book.current.stamp[k] = ++book.current.n;
+    book.current.last[k] = sig;
+  }
+  const live = kinds.filter((k) => raw[k]);
+  if (live.length === 0) return null;
+  const kind = live.reduce((a, b) => ((book.current.stamp[b] ?? 0) > (book.current.stamp[a] ?? 0) ? b : a));
+  const r = raw[kind]!;
+  const bare = /^HTTP \d{3}$/.test(r.text.trim());
+  const split = r.detailOnly ? { inline: null, detail: r.text.trim() || null } : bare ? { inline: null, detail: r.text.trim() } : splitNoticeSentences(r.text);
+  const detail = [r.code, split.detail].filter(Boolean).join("\n") || null;
+  return { kind, id: r.id, title: r.title, inline: split.inline, detail };
+}
+
+/**
+ * 起作业失败的一条原材料。有具体的、翻译过的原因（源文件已变 / 会话失效 / 连接失败……）时，**那一句就是标题**
+ * （用户要读的是原因，不是「导出没完成」）；连着的出路句、稳定码进详情。只有后端原文（裸「HTTP 500」、
+ * 没有文案的 code）才用通用标题兜底，原文进详情。
+ */
+function startFailureRaw(code: string, message: UiMessage): FailureRaw {
+  const text = formatMessage(message);
+  const id = `${code}:${JSON.stringify(message)}`;
+  const known = message.key !== "literal" ? splitNoticeSentences(text) : null;
+  if (known?.inline) return { id, title: known.inline, text: known.detail ?? "", code, detailOnly: true };
+  return { id, title: ex("failTitle"), text, code };
+}
+
 const ex = (key: string, values?: Record<string, unknown>) =>
   translate(`export.${key}`, { ns: "dialogs", ...(values ?? {}) });
 
@@ -312,6 +360,8 @@ export function ExportDialog() {
    */
   const runtimeAssets = useRuntimeAssetStore((s) => s.assets);
   const runtimeById = useRuntimeAssetStore((s) => s.byId);
+  // 缩略图换代用（对象头与清单行共用 `figure.stamp`，runtime 预览重画时要跟着换）
+  const runtimePreviewNonce = useRuntimeAssetStore((s) => s.previewNonce);
   const assetPanels = useAssetStore((s) => s.panels);
   const canvases = useDocumentStore((s) => s.canvases);
   const selectedIds = useSelectionStore((s) => s.ids);
@@ -319,7 +369,7 @@ export function ExportDialog() {
   const figures = useMemo(
     () => listExportableFigures(),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [doc.objects, canvases, assets, assetPanels, runtimeAssets, runtimeById],
+    [doc.objects, canvases, assets, assetPanels, runtimeAssets, runtimeById, runtimePreviewNonce],
   );
   /**
    * 用户在对话框列表里点过的那张。**对话框本地状态**，打开时清空：它是这一次
@@ -358,8 +408,6 @@ export function ExportDialog() {
     anyFigures: figures.length > 0,
     panel,
   });
-  // 只给缩略图换代用；规格与可用性都从上面那个 hook 来
-  const runtimePreviewNonce = useRuntimeAssetStore((s) => s.previewNonce);
   /**
    * 这次的检查、留档与严格核验**按哪张画布算**：原图 = 那张图所在的画布（它可能不是
    * 当前画布），画布 = 当前画布。下面的规范、摘要、导出上下文检查、报告的条目与规范戳、
@@ -993,14 +1041,32 @@ export function ExportDialog() {
    * （`Dialog status`）。正文一长，末尾就在视口外——点了「开始导出」看不见进度，
    * 撞名时看不见那两条出路（设计审计 §10.2 P0）。各种回应一律是 `Notice`（一种说明条，不是七种方言）。
    */
+  // 五路失败里此刻要摆的**一条**：最近才出现的那条（见 `useLatestFailure`）
+  const failure = useLatestFailure({
+    // 拒绝本来就是一句完整的人话（engineErrorMsg）：它自己就是标题
+    "refusal": prepared.error
+      ? { id: String(prepared.error.reason), title: formatMessage(engineErrorMsg(prepared.error)), text: "" }
+      : null,
+    "start-error":
+      startError && !prepared.error
+        ? startError.code === "bad_filename"
+          ? { id: `bad_filename:${startError.message}`, title: ex(`filenameError.${startError.message}`), text: "" }
+          : startFailureRaw(startError.code, startError.message)
+        : null,
+    "cancel-error": cancelError
+      ? { id: JSON.stringify(cancelError), title: ex("cancelFailed"), text: formatMessage(cancelError) }
+      : null,
+    "poll-error": pollError
+      ? { id: JSON.stringify(pollError), title: ex("statusFailed"), text: formatMessage(pollError) }
+      : null,
+    "reveal-error": revealError ? { id: revealError, title: revealError, text: "" } : null,
+  });
+  /** 「在文件夹中显示」失败的标题里是完整路径，要能在任意处折行 */
+  const failureIsPath = failure?.kind === "reveal-error";
   const statusVisible =
     busy ||
     conflicts.length > 0 ||
-    !!prepared.error ||
-    !!startError ||
-    !!cancelError ||
-    !!pollError ||
-    !!revealError ||
+    !!failure ||
     (!!job && job.status !== "conflict");
   const statusBlock = statusVisible ? (
     <div data-export-status className="flex flex-col gap-2">
@@ -1011,49 +1077,35 @@ export function ExportDialog() {
           {ex("conflict", { files: conflicts.join("、") })}
         </Notice>
       )}
-      {prepared.error && (
-        <Notice tone="danger" data-export-refusal>
-          {formatMessage(engineErrorMsg(prepared.error))}
-        </Notice>
-      )}
-      {startError && !prepared.error && (
-        <Notice tone="danger" data-export-start-error>
-          {startError.code === "bad_filename"
-            ? ex(`filenameError.${startError.message}`)
-            : ex("operationFailed", { error: formatMessage(startError.message) })}
-        </Notice>
-      )}
-      {cancelError && (
-        <Notice tone="danger" data-export-cancel-error>
-          {ex("cancelFailed", { error: formatMessage(cancelError) })}
-        </Notice>
-      )}
-      {pollError && (
+      {/* 失败条同时**最多一条**：几路错误（拒绝 / 启动 / 取消 / 状态 / 在文件夹中显示）后来的替换前一条，不堆叠、不挤正文；
+          一句话 + 一个动作，状态码 / 后端 detail 在「详情」里 */}
+      {failure && (
         <Notice
           tone="danger"
-          data-export-poll-error
+          data-export-failure={failure.kind}
+          {...{ [`data-export-${failure.kind}`]: "" }}
+          title={failure.title}
+          detailKey={`${failure.kind}\u0000${failure.id}`}
+          detail={failure.detail}
+          className={failureIsPath ? "break-all" : undefined}
           action={
-            <Button
-              data-export-status-retry
-              variant="secondary"
-              size="sm"
-              disabled={refreshing}
-              onClick={() => void refreshExportStatus()}
-            >
-              {ex("retryStatus")}
-            </Button>
+            failure.kind === "poll-error" ? (
+              <Button
+                data-export-status-retry
+                size="sm"
+                disabled={refreshing}
+                onClick={() => void refreshExportStatus()}
+              >
+                {ex("retryStatus")}
+              </Button>
+            ) : undefined
           }
         >
-          {ex("statusFailed", { error: formatMessage(pollError) })}
+          {failure.inline}
         </Notice>
       )}
       {job && !busy && job.status !== "conflict" && (
         <ResultBlock job={job} edited={editedDuringExport} onRetry={() => void start("ask")} />
-      )}
-      {revealError && (
-        <Notice tone="danger" data-export-reveal-error className="break-all">
-          {revealError}
-        </Notice>
       )}
     </div>
   ) : null;
@@ -1167,7 +1219,7 @@ export function ExportDialog() {
             spec={availability.spec}
             doc={doc}
             asset={figureId ? assets[figureId] : undefined}
-            previewNonce={figureId ? runtimePreviewNonce[figureId] : undefined}
+            transparent={transparent && transparentApplies}
           />
         )
       }
@@ -1597,6 +1649,32 @@ function FigurePicker({
  * 缩略图在这里的职责是**认出是哪张图**，不是核对修改——核对归画布。
  */
 function FigureThumb({ figure }: { figure: ExportableFigure }) {
+  const source = useFigureThumbSource(figure, 160);
+  return (
+    <span className="flex h-7 w-10 shrink-0 items-center justify-center overflow-hidden rounded-xs bg-paper ring-1 ring-inset ring-border">
+      <FigureThumbArt source={source} boxRatio={10 / 7} />
+    </span>
+  );
+}
+
+/** `useFigureThumbSource` 的结果：清单行与对象头共用，取图只有这一处 */
+interface FigureThumbSource {
+  svgMarkup: { __html: string } | undefined;
+  src: string | null;
+  /** 图幅宽高比（读不到时 4:3） */
+  ratio: number;
+}
+
+/**
+ * 一张图缩略图的取图逻辑——**清单行（`FigureThumb`）与原图范围的对象头（`TargetHeader`）
+ * 共用这一份**，不各起一套：原图范围导出的就是「带图内修改重渲」的那一版
+ * （`_export_produce_original` → `_resolve_panel_source` 带 overrides），所以缩略图也得是
+ * 同一版；头部若读磁盘原图而清单读编辑后，同屏会出现两个不一致的「这张图」。
+ */
+function useFigureThumbSource(
+  figure: ExportableFigure,
+  bucket: number,
+): FigureThumbSource {
   const render = usePanelRender(figure.panel);
   const tracked = useRenderStore((s) => !!s.tracked[figure.figureId]);
   const panel = figure.panel;
@@ -1608,39 +1686,60 @@ function FigureThumb({ figure }: { figure: ExportableFigure }) {
   const svg = needsEngine ? (render?.svg ?? null) : null;
   // 同一份字符串复用同一个 `{__html}`：缩略格随对话框重渲时不必把整张 SVG 重新解析一遍
   const svgMarkup = useHtmlMarkup(svg);
-  const src = figureThumbSrc(figure, 160);
+  const src = figureThumbSrc(figure, bucket);
   const sizeMm = render?.manifest?.size_mm ?? figure.sizeMm;
   const ratio =
     sizeMm && sizeMm[0] > 0 && sizeMm[1] > 0 ? sizeMm[0] / sizeMm[1] : 4 / 3;
-  return (
-    <span className="flex h-7 w-10 shrink-0 items-center justify-center overflow-hidden rounded-xs bg-paper ring-1 ring-inset ring-border">
-      {svg ? (
-        // store 里的 SVG 已被 `prepareSvg` 改成 width/height 100%，得给它一个
-        // 按图幅比例定好的盒子，否则会被拉成缩略格的形状
-        <span
-          data-export-thumb="svg"
-          className="block"
-          style={{
-            aspectRatio: String(ratio),
-            ...(ratio >= 1 ? { width: "100%" } : { height: "100%" }),
-            maxWidth: "100%",
-            maxHeight: "100%",
-          }}
-          dangerouslySetInnerHTML={svgMarkup}
-        />
-      ) : src ? (
+  return { svgMarkup: svg ? svgMarkup : undefined, src, ratio };
+}
+
+/**
+ * 缩略图本体：按**真实图幅比例**定盒，再放进调用方给的固定外框里（外框尺寸不变、不溢出）。
+ * `boxRatio` = 外框的宽高比，用来判断该贴宽还是贴高。
+ */
+function FigureThumbArt({
+  source,
+  boxRatio,
+  ratio,
+}: {
+  source: FigureThumbSource;
+  boxRatio: number;
+  /** 覆盖图幅比例（对象头用 `OriginalOutputSpec` 的最终图幅） */
+  ratio?: number;
+}) {
+  const r = ratio ?? source.ratio;
+  const fit = {
+    aspectRatio: String(r),
+    ...(r >= boxRatio ? { width: "100%" } : { height: "100%" }),
+    maxWidth: "100%",
+    maxHeight: "100%",
+  };
+  if (source.svgMarkup) {
+    // store 里的 SVG 已被 `prepareSvg` 改成 width/height 100%，得给它一个
+    // 按图幅比例定好的盒子，否则会被拉成缩略格的形状
+    return (
+      <span
+        data-export-thumb="svg"
+        className="block"
+        style={fit}
+        dangerouslySetInnerHTML={source.svgMarkup}
+      />
+    );
+  }
+  if (source.src) {
+    return (
+      <span className="block" style={fit}>
         <RetryImg
           data-export-thumb="file"
-          src={src}
+          src={source.src}
           alt=""
           draggable={false}
-          className="max-h-full max-w-full object-contain"
+          className="h-full w-full object-contain"
         />
-      ) : (
-        <span data-export-thumb="none" className="h-full w-full bg-surface-2" />
-      )}
-    </span>
-  );
+      </span>
+    );
+  }
+  return <span data-export-thumb="none" className="h-full w-full bg-surface-2" />;
 }
 
 /**
@@ -1773,7 +1872,7 @@ function TargetHeader({
   spec,
   doc,
   asset,
-  previewNonce,
+  transparent,
 }: {
   scope: ExportScope;
   /** 原图范围下这次导的那张（候选清单里的那一条；还没上画布的素材 `panel` 为 null 也是它） */
@@ -1782,7 +1881,8 @@ function TargetHeader({
   doc: FigureDocument;
   /** 素材清单里的那一条（缩略图换代的 mtime + 磁盘原件的尺寸）；不在清单里就是 undefined */
   asset: PanelInfo | undefined;
-  previewNonce: number | undefined;
+  /** 这次导出实际会出透明背景（已含 `transparentApplies`）：画布范围的缩略图画成棋盘格 */
+  transparent: boolean;
 }) {
   useTranslation("dialogs");
   const original = scope === "original";
@@ -1798,25 +1898,20 @@ function TargetHeader({
     : ex("mmSize", { w: round1(doc.page.w), h: round1(doc.page.h) });
   const originNote =
     original && spec ? diskSizeNote(spec, asset?.original_spec) : null;
-  const src =
-    original && figure
-      ? panelSrc(
-          figure.figureId,
-          figure.kind,
-          200,
-          figure.kind === "runtime" ? previewNonce : asset?.mtime,
-        )
-      : null;
   const visibleObjects = doc.objects.filter((o) => !o.hidden).length;
   return (
     <div data-export-target className="flex items-center gap-3">
       {original ? (
-        <div className="flex h-10 w-[60px] shrink-0 items-center justify-center overflow-hidden rounded-xs border border-border bg-paper">
-          {src ? (
-            <RetryImg
-              src={src}
-              alt=""
-              className="max-h-full max-w-full object-contain p-0.5"
+        <div className="flex h-10 w-[60px] shrink-0 items-center justify-center overflow-hidden rounded-xs border border-border bg-paper p-0.5">
+          {figure ? (
+            // 与清单行同一份取图（`useFigureThumbSource`），盒按最终图幅（`spec`）的比例
+            <HeaderFigureThumb
+              figure={figure}
+              ratio={
+                spec && !spec.fallback && spec.heightMm > 0
+                  ? spec.widthMm / spec.heightMm
+                  : undefined
+              }
             />
           ) : (
             <ImageOff
@@ -1833,6 +1928,7 @@ function TargetHeader({
           page={doc.page}
           objects={doc.objects}
           className="h-10 w-[60px]"
+          transparent={transparent}
         />
       )}
       <div className="min-w-0 flex-1">
@@ -1851,9 +1947,27 @@ function TargetHeader({
           )}
         </p>
         {originNote && <p className="type-caption">{originNote}</p>}
+        {/* 缩略图不是最终文件（画布缩略图不含图内修改与页面合成、位图格式的像素也不在这里），
+            说一句，克制：中性灰，不是警告 */}
+        <p data-export-thumb-note className="type-caption text-ink-3">
+          {ex("thumbNote")}
+        </p>
       </div>
     </div>
   );
+}
+
+/** 对象头里的原图缩略图：`FigureThumb` 的取图，外框是对象头自己的 */
+function HeaderFigureThumb({
+  figure,
+  ratio,
+}: {
+  figure: ExportableFigure;
+  ratio: number | undefined;
+}) {
+  const source = useFigureThumbSource(figure, 200);
+  // 外框 60×40 去掉 p-0.5 的内边距后约 56×36
+  return <FigureThumbArt source={source} boxRatio={56 / 36} ratio={ratio} />;
 }
 
 /**
@@ -2066,7 +2180,7 @@ export function ResultBlock({
         tone="warn"
         data-export-job-lost
         action={
-          <Button variant="secondary" size="sm" onClick={onRetry}>
+          <Button size="sm" onClick={onRetry}>
             {ex("retry")}
           </Button>
         }
@@ -2082,7 +2196,7 @@ export function ResultBlock({
         data-export-failed
         action={
           job.error?.recoverable !== false ? (
-            <Button variant="secondary" size="sm" onClick={onRetry}>
+            <Button size="sm" onClick={onRetry}>
               {ex("retry")}
             </Button>
           ) : (
@@ -2113,6 +2227,15 @@ export function ResultBlock({
             "exports/",
         })}
       </p>
+      {/* 部分失败：先一句汇总（数字就是下面逐行的计数，来自后端回执的 outputs，不另算） */}
+      {job.status === "partial" && (
+        <p data-export-partial-summary className="text-sm font-medium text-ink">
+          {ex("partialSummary", {
+            ok: job.outputs.filter(outputSaved).length,
+            failed: job.outputs.filter((o) => !outputSaved(o)).length,
+          })}
+        </p>
+      )}
       {job.outputs.map((o) => (
         <OutputRow
           key={`${o.format}-${o.name ?? "x"}`}
@@ -2142,6 +2265,9 @@ export function ResultBlock({
     </Card>
   );
 }
+
+/** 这一件产物已被后端确认写出（`OutputRow` 画成功行的同一条判据） */
+const outputSaved = (o: ExportOutput) => o.status !== "failed" && !!o.name;
 
 function OutputRow({ out, dir }: { out: ExportOutput; dir: string }) {
   useTranslation(["dialogs", "errors"]);

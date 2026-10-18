@@ -110,7 +110,7 @@
 - **分类靠结构，不靠关键词猜严重度**：`ApiError` 与一切业务自己的错误类（原型不是内建错误原型的，如 `EngineError` / `PendingConflict` / `ArtifactValidationError`）、AbortError、`ResizeObserver loop…`、跨域 `Script error.`、pyodide / web worker 的 onerror、非 Error 的拒绝（取消令牌）一律忽略（连 trace 也不记）。用户脚本运行错误、缺依赖、业务校验失败、取消本来就是结构化结果，不经这里。
 - **去重与风暴上界**（常量 `MAX_FINGERPRINTS = 64` / `MAX_PROMPTS_PER_SESSION = 5`）：指纹 = `source + error_name + message_hash`（引擎 500 用 `source + 方法 + 路由规则`，路由里非纯小写词的段规整成 `:id`）；同一指纹每会话最多提示一次，关掉后不再提示；去重集合 LRU；同时最多 1 张卡在轨上；总数超限只记环不弹。
 - **防递归**：诊断 / 发送流程自身抛的错（发送对话框开着、或栈指回 `diagnostics/` / `DiagnosticsSendDialog` / `diagSend`）照记 trace 与环，**不触发提示**。
-- **卡片**在通知轨（`NotificationRail`，绝不进 `BannerStack`）：error 语气、一句固定的话 + 主动作「发送问题反馈」+ ×，不带错误原文；点主动作只是 `diagSendStore.setOpen(true)`（打开 = 本机备包，沿用既有确认框，不新增 prepare / start 以外的路径）。最多两条的仲裁：低于「刚为编辑加入」、高于全部提示类（已改用环境 / 已用上次的答案 / 操作提示）。
+- **卡片**在通知轨（`NotificationRail`，绝不进工作面板的文档流；`BannerStack` 已于 2026-10-16 删除）：error 语气、一句固定的话 + 主动作「发送问题反馈」+ ×，不带错误原文；点主动作只是 `diagSendStore.setOpen(true)`（打开 = 本机备包，沿用既有确认框，不新增 prepare / start 以外的路径）。最多三条的仲裁（原两条，2026-10-16 起 `RAIL_MAX = 3`）：低于「刚为编辑加入」、高于全部提示类（已改用环境 / 已用上次的答案 / 操作提示）。
 - **崩溃页**：主按钮仍是「重新加载」；「发送问题反馈」放进折叠的「详情」（secondary）。App 树已崩，崩溃页自己渲染一份 `DiagnosticsSendHost`（外套 `TooltipProvider` 与内层 `SendHostBoundary`——对话框出错时退回空，崩溃页不二次崩）。这是对「崩溃页只依赖最朴素原语」的**有意放宽，范围仅限 `diagSendStore` 与发送对话框**。ErrorBoundary 来源不登记通知轨卡片（轨已随 App 树消失），只记 trace 与环。
 
 ## 补充（2026-10-14）：异常退出标记

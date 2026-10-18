@@ -86,7 +86,9 @@ afterEach(async () => {
 })
 
 /** 第 n 行（顶层在最上面 = z 序倒序） */
-const rows = () => Array.from(document.querySelectorAll<HTMLElement>('li[data-layer]'))
+// 收起的组成员保活一个退场时长（高度过渡），期间整棵 inert：不算「在树里」
+const rows = () =>
+  Array.from(document.querySelectorAll<HTMLElement>('li[data-layer]')).filter((r) => !r.closest('[inert]'))
 const rowButtons = (i: number) => Array.from(rows()[i].querySelectorAll('button'))
 
 /**
@@ -405,5 +407,65 @@ describe('被拖行淡化（G11）', () => {
     expect(rows()[0].dataset.dragging).toBe('true')
     await act(async () => rows()[0].dispatchEvent(ev('dragend')))
     expect(rows()[0].className).not.toMatch(/opacity-dragging/)
+  })
+})
+
+describe('空态（UI 2.0 第二轮 09）', () => {
+  it('没有对象：列表顶部一行灰字，没有大图标与标题，也没有任何按钮 / 链接（起步动作只有画布中央的「添加图」，审计 T03）', async () => {
+    await mount([])
+    const line = document.querySelector<HTMLElement>('[data-empty-line]')!
+    expect(line.textContent).toBe(lt('emptyTitle'))
+    expect(document.querySelector('[data-empty-state]')).toBeNull()
+    expect(line.querySelector('svg')).toBeNull()
+    expect(line.querySelector('button, a, [role="button"], [role="link"]')).toBeNull()
+  })
+})
+
+describe('展开 / 折叠组时不走 FLIP（TreeBranch 的 grid 过渡单独负责），重排照旧', () => {
+  it('折叠组期间的位移不播；过渡结束后基准重量，之后的位移按真实值播（不从半路多滑）', async () => {
+    const anims: Array<{ id: string; dy: number }> = []
+    let shift = 0
+    const protoRect = HTMLElement.prototype.getBoundingClientRect
+    const protoAnimate = (Element.prototype as { animate?: unknown }).animate
+    HTMLElement.prototype.getBoundingClientRect = function (this: HTMLElement) {
+      const id = this.getAttribute('data-layer')
+      const top = id === 'p4' ? 100 + shift : id ? 10 : 0
+      return { left: 0, top, width: 100, height: 20, right: 100, bottom: top + 20, x: 0, y: top } as DOMRect
+    }
+    ;(Element.prototype as { animate?: unknown }).animate = function (this: Element, frames: Keyframe[]) {
+      const m = String((frames[0] as { transform?: string }).transform).match(/(-?[\d.]+)px[ ,]+\s*(-?[\d.]+)px/)
+      anims.push({ id: (this as HTMLElement).dataset.layer ?? '', dy: m ? Number(m[2]) : NaN })
+      return { finished: Promise.resolve(), cancel() {} } as unknown as Animation
+    }
+    try {
+      await mount([
+        panel('p1', 'A'),
+        { ...panel('p2', 'B'), groupId: 'g1' } as CanvasObject,
+        { ...panel('p3', 'C'), groupId: 'g1' } as CanvasObject,
+        panel('p4', 'D'),
+      ])
+      anims.length = 0
+      // 折叠组：p4 随之上移（终点 −40），同一次提交——不播
+      shift = -10 // 过渡半路
+      const toggle = rows().find((r) => r.dataset.layer === 'g:g1')!.querySelector('button')!
+      await act(async () => toggle.click())
+      expect(anims.filter((a) => a.id === 'p4')).toEqual([])
+      // 过渡进行中夹进一次改选提交（p4 在半路）：让位期内，只记位置、不播
+      await act(async () => useSelectionStore.getState().set(['p1']))
+      expect(anims.filter((a) => a.id === 'p4')).toEqual([])
+      // 过渡结束（保活期过去、子树卸载 → onSettled → rebase）：p4 到了终点
+      shift = -40
+      await act(async () => {
+        await new Promise((r) => setTimeout(r, 200))
+      })
+      expect(anims.filter((a) => a.id === 'p4')).toEqual([])
+      // 之后别的原因造成的位移：p4 从 −40 → −16，位移是真实的 24（从半路 −10 起算会是 6）
+      shift = -16
+      await act(async () => useSelectionStore.getState().set(['p4']))
+      expect(anims.filter((a) => a.id === 'p4')).toEqual([{ id: 'p4', dy: -24 }])
+    } finally {
+      HTMLElement.prototype.getBoundingClientRect = protoRect
+      ;(Element.prototype as { animate?: unknown }).animate = protoAnimate
+    }
   })
 })

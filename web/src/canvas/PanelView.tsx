@@ -1342,7 +1342,7 @@ function RenderStatusBadge({ obj, approx = false }: { obj: PanelObject; approx?:
             假进度条比没有更坏。 */}
         {shown.cold && (
           <span aria-hidden className="absolute inset-x-0 bottom-0 h-0.5">
-            <span className="block h-full w-1/4 rounded-full bg-surface/75 animate-sweep" />
+            <span className="block h-full w-1/4 rounded-full bg-surface/75 animate-sweep motion-reduce:animate-none" />
           </span>
         )}
       </span>

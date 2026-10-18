@@ -12,6 +12,10 @@ Host 只认 `127.0.0.1:<port>`、带 Origin 必须同源，`/`、`/assets/*`、
 （`engine/session_client.py`，**纯标准库**——Flask 父进程与 handoff 都
 import 它）：本机 CLI/冒烟凭 `X-Tavotto-Auth` 头直连，二次启动/交接凭
 `/api/session/relaunch` 换新 nonce（实例复用 = 安全的 token 交接）。
+**桌面 sidecar 不写完整凭据**（nonce 只经 stdin），只写一份 scoped 只读的
+`handoff-status-<端口>.json`（0600，`SessionState.status_token`，ADR 0008 2026-10-16 修订、ADR 0131 §六）：
+guard 只在 `GET /api/handoff/render-status` 上认它，带去任何其它端点（含 relaunch）一律拒；
+**新增类似的 scoped 凭据必须同样“按路径+方法限定、与主 secret 无关”**，别把它做成第二个通用 token。
 **旁路只有三个**：pytest 的 test_client（无状态天然旁路）、
 `--insecure-no-auth` / `TAVOTTO_INSECURE_NO_AUTH=1`（vite dev proxy、
 e2e、手工 curl；启动时打印警告）。看护 `tests/test_browser_auth.py` +

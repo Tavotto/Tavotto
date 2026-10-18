@@ -267,9 +267,14 @@
   角标或卡上的 × 才收起。缩成角标时只有**脚本发问**才自动展开（跑完、出错只改角标）；收起时等作答的 input 由原对话框接着问
   （同一问只有一个展示面，`scriptInputStore.claimPresentation('prep-card')`）。**进入编辑之后卡片自动收起、不留角标**。
 - **每个项目只自动弹一次**（`lib/guideCardSeen.ts`，本机 localStorage 按后端 `project_id` 记）：扫描给出 `discover` / `choose`
-  时弹；**弹出时不建会话**——建会话 = 检查 = 检测候选（会起解释器），扫描阶段零执行；用户点「开始准备」才 `open()`。
-- **入口**：卡上「开始准备」、素材库脚本行 ▶、接入中心逐行「试运行并连接 / 重新试运行」（T09b：接入中心先让开）都只
-  **打开**会话（`projectPreparationStore.open(scriptTarget(script))`，同时把卡展开）：后端只做只读检查，一个试运行请求都不发；
+  时弹；**弹出时不建会话**——建会话 = 检查 = 检测候选（会起解释器），扫描阶段零执行；用户点「打开并运行」才 `open()`。
+- **入口 = 明确的「打开并运行」**（V2 PR4，ADR 0124 / 0127）：卡上「打开并运行」（原「开始准备」）、素材库脚本行 ▶、接入中心逐行「试运行并连接 /
+  重新试运行」（T09b：接入中心先让开）都是 `projectPreparationStore.open(scriptTarget(script, { reuse: true }), { run: true })`（同时把卡展开）：
+  打开 = 后端只读检查；检查完**只有这条路径**代用户认领报告里后端生成的 `run_when_ready`（`armIfReady`：报告有这个动作、且 `prepView` 算出来卡片会说「可以运行了」
+  （`state === 'ready'`）、没有沿用到上次的参数；授权合同摘要由 `act` 回显）——此后准备、运行、（后端会话内的 safe→native 静默回退）、进入编辑一次点完。
+  目标已有**已结束**的会话（completed / partial / action_required / cancelled：后端复用它，报告只有 `run`、没有 `run_when_ready`）时，同一入口在同样的门槛下认领 `run`——门槛 = `prepView` 说卡片可以直接再跑（结果卡，或主按钮本身就是 `run`）；有要用户先答的事（参数 / 目录 / 依赖 / 数据 / 环境 / 弹窗提醒）仍停在卡上；动作成功后才武装，旧结果不触发自动进入，只认新一轮跑完。
+  有要用户先答的事（运行目录 / 环境 / 数据 / 必填参数）、要装的组件（该先看见装什么、装到哪）、弹窗 / 来源不明的提醒、重启后重建的会话，都**停在各自的卡上**，
+  由用户点那张卡的主按钮（有 `run_when_ready` 时它同样是「打开并运行」，认领即授权）。刷新 / 重连 / 重建会话 / `recheckIdle` / 普通 `open()` 都不认领；一个试运行请求都不发；**前端永远不发 `execution`**（回退是后端同一会话里的第二个 attempt，`scriptTarget` 不带它）；
   参数草稿在这一刻取拷贝（`scriptTarget`），之后再改草稿不动这份会话——草稿与会话冻结的不同（`draftDiffers`）时卡片说「参数已填好」、
   主按钮「继续」（按新参数重新检查）。本地开关 `lib/preparationFlag.ts`（`localStorage['tavotto.preparationPanel']`，默认开，`'off'` 时
   「开始准备」/ ▶ / 接入中心回到**同一台**旧状态机 `scriptRunStore.run`；接入中心委派它、读它的状态显示那一行；参数草稿照样经
@@ -277,8 +282,9 @@
   `pool._new_worker` 两道门的薄展示适配器，答完续上的是被挡住的那次渲染 / 准入（ADR 0116 §二）。同一份依赖需求两个展示面的下游效果只有
   一种：授权框 / 修复卡装完或明确跳过 → 空闲会话 `recheckIdle`；会话里的依赖作业装完 → `renderStore.retryEnvironmentFailures()`。
 - **按钮只来自报告**：`lib/preparationText.prepView` 按 phase / outcome / requirement kind 查标题（一句话、不带句号），主按钮只来自
-  报告里后端生成的 `actions` 与 `requirements`——没有 `run` 动作就没有「运行」，有 `prepare_dependencies` 才有「安装」（回显
-  `impact_digest`）。环境不让用户选（ADR 0114 §六）：「用的是哪一套」只在详情一行人话（报告 `environment.kind`），界面不出现
+  报告里后端生成的 `actions` 与 `requirements`——有 `run_when_ready` 就是「打开并运行」（取代「运行」；缺组件且只进 Tavotto 自己环境的「安装」也由它取代，
+  装完自动接着运行；要改用户自己环境的安装不在授权合同里，仍是逐次确认的「安装」），没有它（老后端；已经执行过一次之后的再来一次也只有 `run`）才回到「运行」。
+  `TAVOTTO_EXECUTION_FALLBACK=0` 只关后端的静默回退，不影响这个按钮；有 `prepare_dependencies` 才有「安装」（回显 `impact_digest`）。前端没有新开关。环境不让用户选（ADR 0114 §六）：「用的是哪一套」只在详情一行人话（报告 `environment.kind`），界面不出现
   环境 / 解释器 / venv 字样；`environment_choice` 只在确认模式出现。**必填参数没填齐时任何卡都不说「可以运行」**：参数 schema 是报告里
   `script_arguments` 待办的载荷，草稿缺几个必填项由 `lib/scriptArgsForm.missingRequired` 读出来（`ctx.missingArgs`），这时换成参数卡
   （只摆必填项；其余参数、原样 token、粘贴命令在折叠里）、主按钮置灰。参数块在可以运行 / 出错 / 没出图 / 画好的卡上以折叠摆着，按同一个
@@ -292,6 +298,20 @@
   `envStore.setWorkdirMode(mode, {confirmed:true})`（与原对话框同一次 PATCH），会话随 `envStore` 订阅只读地 `recheck`，**不运行**；
   按钮说「用项目根目录」之类，不说「运行」（原对话框同改为「用这个目录」）。缺数据仍交 `envStore.requestMissingInput`；
   确认模式下的环境候选用 `envStore.adoptCandidate`。作答后**绝不认领 `run`**。
+- **自动进入编辑 + 只开一个标签页**（V2 PR4）：认领过「打开并运行」的条目带 `armed` 记号（只是这个窗口里的用户意图记号，不是后端事实）；会话
+  `completed` 且恰好捕获一张图时由 `store/prepEnterEdit.enterEdit` 自动进入编辑（与卡片上「进入编辑」是同一份实现）；**只在用户正看着这张卡时**（聚焦且展开）——
+  放到后台（角标）/ 收起 / 切去看别的卡之后他可能正在编辑别的图，不抢工作区，角标上仍有「进入编辑」；多张图要用户挑、这次替换掉了旧图名（`unlinked_stems`，恢复提示要看见）、
+  失败 / 取消 / 没出图撤掉记号不进入——撤销即**退役**这次意图：`armed`、`wantsRun`、`armMaybe` 一并清，之后同一会话里普通的「重试」不再被恢复逻辑重新武装，要用户再点「打开并运行」。回退产生新的 `attempt_id` 不撤记号（中途 `safe_file_operation_blocked` 且账本还没记「为什么没回退」时可能紧接着就是回退）。面板身份是资产 id，
+  回退后仍是同一块面板；桌面拥有的 native 会话不再被 `nativeSessionStore` 自动 build / 放置（见 `tavotto-run-desktop-side.md`）。argv 换了且旧会话里意图仍
+  `active`：下一次认领带 `transfer_from`（旧会话 id），被拒（不可转移）就不再带；前端状态丢了（刷新 / 切项目）而服务端 409 `preparation_run_intent_conflict` 时，用它带回的 `params.session_id` 转移、只重试一次。
+  **状态以后端报告为准恢复**：认领响应丢了（连接失败，`armMaybe`）或页面刷新后同一入口重新打开，只要报告里意图仍在（`active` / `launched`）且会话没跑完，就恢复「自动进入编辑」（`accept`）；报告里仍有 `run_when_ready` 动作 = 没收到，记号清掉。回退文案（`fellBack`）只看当前尝试所在的 `run`。
+- **safe 被拦、后端没有回退**（`file_ops_blocked`，ADR 0127）：自动回退存在时这张卡不会出现；只剩后端明确没回退（项目设为只用安全运行 / 运维关了回退 / 老后端）时
+  才出现，一句话按账本里的闭集理由 `declined` 说原因（`policy_safe_only` / `fallback_disabled`，其余用原来的一句），**没有主按钮**。换成原样运行之后又出错：
+  一句话「安全运行不能照常执行，改用原样运行后又出错了」+ 再试一次；`attempt_history`（执行语义 · 结局 · 没换的闭集理由，无路径 / argv）在默认折叠的详情「运行记录」里。
+- **沿用上次成功的参数**（#982）：明确的打开动作带 `reuse_last_success`（`scriptTarget(script, { reuse: true })`，草稿有参数时用户给的赢；目标构造点仍只有
+  `scriptTarget`，`recheckIdle` / 草稿变化不发请求，「继续 / 再试一次」重新打开沿用同一个标志，所以不翻转）。后端核验解释器 / 环境 / 脚本 / helper / 数据全部仍成立才沿用；
+  沿用了几个只说个数（`report.target.argv_count`，值不回前端），在「可以运行」卡的参数行说「沿用上次成功的 N 个参数」并给一个文字钮「不沿用」（重新按无参数检查，不替用户运行，
+  不占主按钮）；沿用了参数时「打开并运行」不代认领，让用户先看见这个数。
 - **三种关停**：收起 / 角标 = `uiStore.guideCard`（订阅照旧）；切项目 = `clear()` 换代、停轮询、零请求（后端一样不取消），卡片收起；
   停止 = 会话的 `cancel` 动作（按 owner，当场）——运行 / 安装中它是文字按钮，主按钮是「放到后台」。
 - **连接不是执行**：取报告带看门狗（`REQUEST_TIMEOUT_MS`），超时 / 断网只把 `connection` 标 `lost`、退避补拉，phase 原样、不标失败、
@@ -304,7 +324,7 @@
   无参数运行替换掉的旧图名（`unlinked_stems`，T09b）在「画好了」卡的详情里说清怎么恢复。
 - **重新提问的原因分开说**（ADR 0099 §十）：`ScriptInputForm.suggestionText` 按 `recheck` 选句子——`legacy_answer`（这台电脑上没有当时的记录）
   不说成「输出变了」；`config_changed` 说参数变了；其余说输出变了。
-- 看护：`store/projectPreparationStore.test.ts`、`components/PreparationCard.test.tsx`、`components/preparationEntries.test.tsx`、
+- 看护：`store/projectPreparationStore.test.ts`、`components/PreparationCard.test.tsx`、`components/preparationEntries.test.tsx`、`store/openAndRun.test.ts`、`lib/preparationApi.test.ts`、
   `components/ScriptInputDialog.test.tsx`、`store/projectReadinessStore.test.ts`（A → B → A）、`components/EngineEnvironmentCard.test.tsx`；
   真浏览器 + 真后端：`e2e/preparation-card.spec.ts`（只有脚本与数据的项目：页面不下移、卡自动弹出且不建会话 → 选目录 → 改参数 → 答 input →
   进入编辑后卡片收起，执行恰好一次；收起卡片换展示面、放到后台、HTTP 断开、应用重启、明确停止）、`e2e/first-run-qualification.spec.ts`

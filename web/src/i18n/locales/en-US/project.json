@@ -140,6 +140,7 @@
     "filter": "Filter by name or path",
     "filterLabel": "Filter projects",
     "hint": "A project is your script folder; one project can hold several layouts.",
+    "hintLabel": "About projects and layouts",
     "listLabel": "{{section}} projects",
     "moveDown": "Move down",
     "moveUp": "Move up",

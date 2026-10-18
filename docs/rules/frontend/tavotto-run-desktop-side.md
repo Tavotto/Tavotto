@@ -30,7 +30,12 @@ descriptor 文件读。
 - **屏障处的 build 由界面显式发**，后端不在收到 barrier 事件时自己发——
   那条事件在 reader 线程里，而 build 的响应要由**同一个** reader 读回来
   （ADR 0021 §5.2，自己等自己）。一张图直接进画布、多张开
-  `FigurePickerDialog`（native 只是换了个数据源）。
+  `FigurePickerDialog`（native 只是换了个数据源）。**只对终端拥有的会话**：桌面拥有的会话（`owner === 'desktop'`，准备会话的 safe→native
+  回退与路由产生的）由准备会话**独占展示面**——runner 自己已经 `ensure_built`，图由卡片上的（或「打开并运行」完成后自动的）
+  「进入编辑」放进画布（`store/prepEnterEdit.ts`，面板身份是资产 id，不含执行语义，所以不会多开标签页）；`applyEvent` / `build`
+  对它们不 build、不放置、不开选择器，只把状态写进 store（面板角标读它）并镜像 `pending_input`（ADR 0125 / 0126 / 0127，V2 PR4）。
+  `NativeSessionCards` 同样过滤掉它们（用户不感知运行层切换，不出「tavotto run」式卡，也不给「放手」）——**只在此刻可见的准备卡 / 角标代表它时**（准备界面只有一个焦点：聚焦条目的 `provider.attempt_id` 对得上 `launch_id`，且卡展开或缩成角标；收起、教程 / 引导中、焦点在别的条目上都不算——A 在跑时打开 B 的卡，A 的 native 卡照常显示）；刷新 / A→B→A 之后准备 store 是空的，仍在跑的桌面会话照常出卡并给「停止运行」（`nativeSessionStore.cancelOwned`，同一取消端点；已结束的不出）；用户停止走准备卡 / 角标上的「停止运行」
+  （`PreparationCard.useStopRun`：`launch_id` 对得上当前尝试计划号的活桌面会话 → `cancelNativeSession`，后端同一端点连准备计划一起取消；否则认领准备会话的 `cancel`）。
 - **面板角标只在需要说话时说话**（`nativePanelState`）：停在屏障上 → 无；
   脚本正在跑 → 「停下来才能编辑」；出自 native 但没有活会话 → 「会话已
   结束」；停在屏障上但这张图**与文档不一致**（引擎撤掉的改动还原不回去，
