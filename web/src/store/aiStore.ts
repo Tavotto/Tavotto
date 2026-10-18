@@ -481,6 +481,9 @@ export const useAiStore = create<AiState>((set, get) => ({
       recorded = marked ? await marked : undefined
     } catch (e) {
       dropSub() // 后端明确拒绝记账（如未确认的提交已满，`ai_pending_limit`）：不发，原因原样交给界面
+      // 账本写入是 await：拒绝回来时已经切了项目，它说的是那个项目的事——不还原、不查询（还原进当前 store，旧项目的会话就会
+      // 挂到新项目上、锁住同名脚本的面板）。旧项目的待确认行还在后端（整个事务回滚了），回到那个项目时对账会还原它
+      if (get().generation !== generation) throw new ProjectChangedError()
       if (e instanceof ApiError && e.body?.code === 'ai_supersede_conflict') {
         // 要取代的旧 rid 其实已被后端登记（旧请求到达了）：它不能再被当成「没收到」取代，出队；但**不能就此忘掉它**——
         // 放弃时提交已从界面收走，什么都不留的话重试按钮一放开、旧任务又恰好已结束（runningHere 不再挡），新 rid 不带 supersedes

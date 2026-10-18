@@ -1607,6 +1607,33 @@ describe('已发出未确认：不能盲目重发', () => {
     expect(q('[data-ai-error="send"]')).toBeNull()
   })
 
+  it('「改写后再发」的 PUT 回 409 ai_supersede_conflict 时已经切到项目 B：A 放弃的那条不还原进 B、不查询、不报错', async () => {
+    await mount()
+    await sendIt('旧指令')
+    const rid1 = (vi.mocked(aiRun).mock.calls[0][0] as { client_request_id: string }).client_request_id
+    vi.mocked(fetchAiRequest).mockRejectedValue(new ApiError('nf', 404, { code: 'ai_request_not_found' }))
+    await click(q('[data-ai-check]'))
+    await settle()
+    await click(q('[data-ai-edit-resend]'))
+    be.markRegistered(rid1)
+    vi.mocked(fetchAiRequest).mockReset()
+    vi.mocked(fetchAiRequest).mockResolvedValue({ session: 's-a', status: 'running', changed: false, script: 'fig1.py' })
+    // 两道各自成立的防线钉在这一条上：切项目的 `clear()` 清空放弃队列，`start()` 的拒绝分支先核项目代次——两者都去掉这条才红
+    be.afterSupersedeConflict(() => {
+      setCurrentProjectId('pb')
+      useAiStore.getState().clear()
+    })
+    await typeText('新指令')
+    await click(q('[data-ai-send="send"]'))
+    await settle()
+    be.afterSupersedeConflict(null)
+    expect(aiRun).toHaveBeenCalledTimes(1) // 新指令没发
+    expect(Object.values(useAiStore.getState().submissions)).toEqual([])
+    expect(vi.mocked(fetchAiRequest).mock.calls.some((c) => c[0] === rid1)).toBe(false)
+    expect(useAiStore.getState().sessions.map((x) => x.id)).not.toContain('s-a')
+    expect(q('[data-ai-error="send"]')).toBeNull()
+  })
+
   it('放弃旧等待后新行的 PUT 失败：旧行还在（状态仍然一致），之后同一条指令重试成功才一起清掉旧行', async () => {
     await mount()
     await sendIt('旧指令')
