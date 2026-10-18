@@ -50,8 +50,9 @@
     "runs": 34
   },
   "key_regression_tests": [
-    "tests/test_compat_explore.py::RealDiscovery::test_g1_show_then_close_is_found_by_exploration",
-    "tests/test_compat_guardian_families.py::RealRepro::test_g1_minimal_repro_still_shows_the_gap"
+    "tests/test_compat_explore.py::RealDiscovery::test_g1_show_then_close_no_longer_differs_after_the_fix",
+    "tests/test_compat_guardian_families.py::RealRepro::test_g1_minimal_repro_is_fixed",
+    "tests/test_capture_show_then_close.py"
   ],
   "environments": {
     "verified": [
@@ -73,7 +74,7 @@
   },
   "recurrence": "11 of 100 candidates in the CG-02 run (seed 42)",
   "in_corpus": false,
-  "fix_pr": null,
+  "fix_pr": 1138,
   "promoted": false,
   "issues": []
 }

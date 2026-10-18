@@ -24,6 +24,10 @@ def records() -> list[dict]:
     return [json.loads(p.read_text(encoding="utf-8")) for p in sorted(FAMILIES.glob("*.json"))]
 
 
+#: 已修复的族 → 修复 PR 号（家族记录的 fix_pr 必须与之一致）
+FIXED = {"G1-show-close-zero-figures": 1138}
+
+
 class Records(unittest.TestCase):
     def test_there_are_records_for_the_two_audited_gaps(self):
         self.assertEqual(
@@ -37,7 +41,8 @@ class Records(unittest.TestCase):
             cg.schema_check(record, schema)
             self.assertFalse(record["in_corpus"], "not in the corpus until a maintainer adds it")
             self.assertFalse(record["promoted"])
-            self.assertIsNone(record["fix_pr"])
+            # 修好的族记下修复 PR（G1 → #1138）；没修的仍是 None——两种都不得自动 promote
+            self.assertEqual(record["fix_pr"], FIXED.get(record["id"]))
             self.assertTrue(record["environments"]["unverified"])
             self.assertIn(record["category"], __import__("compat_guardian_taxonomy").CATEGORIES)
 
@@ -108,10 +113,10 @@ def _tavotto(project: Path) -> dict:
 
 
 class RealRepro(unittest.TestCase):
-    """The minimal scripts still show the gaps on the current product code.
+    """The minimal scripts against the current product code.
 
-    When a gap is fixed these go red on purpose: update the family record (fix_pr) and turn
-    the repro into a normal regression case at that point.
+    An unfixed gap must still show; when a gap is fixed its test goes red on purpose and is
+    turned into a regression case here (G1 fixed by #1138).
     """
 
     def run_family(self, family_id):
@@ -122,11 +127,13 @@ class RealRepro(unittest.TestCase):
             tavotto = _tavotto(project)
         return ex.compare("axis_changing", native, tavotto, None), native, tavotto
 
-    def test_g1_minimal_repro_still_shows_the_gap(self):
+    def test_g1_minimal_repro_is_fixed(self):
+        """G1 已由 #1138 修复：show 后 close 的那张图被捕获，原生 / Tavotto 无差异。"""
         verdict, native, tavotto = self.run_family("G1-show-close-zero-figures")
         self.assertEqual((native["figures_shown"], native["savefig_calls"]), (1, 0))
-        self.assertEqual(tavotto["error"]["code"], "script_no_figure")
-        self.assertEqual([d["kind"] for d in verdict["differences"]], ["zero_figures"])
+        self.assertIsNone(tavotto.get("error"), tavotto)
+        self.assertEqual(len(tavotto["stems"]), 1)
+        self.assertEqual(verdict["outcome"], "no_difference", verdict)
 
     def test_g2_minimal_repro_still_shows_the_gap(self):
         verdict, native, tavotto = self.run_family("G2-same-path-multi-figure")
