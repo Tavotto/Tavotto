@@ -172,3 +172,32 @@ def test_native_recreated_path_is_still_the_same_target(tmp_path, bridge_session
         sess.wait_event("barrier")
         sess.resume()
         sess.wait_event("exit")
+
+
+LAZY = """\
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+a, _ = plt.subplots(figsize=(4, 2.6))
+b, _ = plt.subplots(figsize=(5, 2.6))
+try:
+    a.savefig("x.pdf", {first})
+except Exception:
+    pass
+b.savefig("x.png")
+plt.show()
+"""
+
+
+@pytest.mark.parametrize("first,expect", [('dpi="bad"', 5.0), ("dpi=100", 4.0)])
+def test_native_failed_holder_write_does_not_block(tmp_path, bridge_session, first, expect):
+    proj = tmp_path / "proj"
+    write(proj / "lazy.py", LAZY.format(first=first))
+    with bridge_session(proj / "lazy.py", cwd=str(proj)) as sess:
+        sess.wait_event("barrier")
+        (desc,) = [d for d in sess.ensure_built()["descriptors"] if d["stem"] == "x"]
+        assert round(desc["size_mm"][0] / 25.4, 2) == expect
+        sess.resume()
+        sess.wait_event("barrier")
+        sess.resume()
+        sess.wait_event("exit")

@@ -131,9 +131,7 @@ def _patched_savefig(self, fname, *args, **kwargs):
                 figcapture.savefig_target_key(fname, kwargs, getattr(self, "canvas", None)),
                 call,
                 kwargs.get("bbox_extra_artists"),
-                verify=lambda: figcapture.savefig_verify_render(
-                    _REAL_SAVEFIG, self, fname, args, kwargs
-                ),
+                verify=figcapture.savefig_verifier(_REAL_SAVEFIG, self, fname, args, kwargs),
             )
     return None
 

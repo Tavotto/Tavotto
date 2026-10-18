@@ -174,6 +174,7 @@ __all__ = [
     "record_savefig_call",
     "savefig_target_key",
     "savefig_verify_render",
+    "savefig_verifier",
     "note_savefig_writer",
     "MAX_SAVEFIG_WRITERS",
     "savefig_calls_of",
@@ -1533,6 +1534,48 @@ def savefig_verify_render(real_savefig, fig, fname, args, kwargs: dict) -> bool:
     return True
 
 
+def savefig_verifier(real_savefig, fig, fname, args, kwargs: dict):
+    """`note_savefig_writer` 的 `verify` 闭包：只持有 Figure 的弱引用与 args / kwargs 的浅拷贝（登记会活得比这次调用久，
+    不能把 Figure 或调用方后来改动的 kwargs 拖住）；Figure 已死 = 失败。"""
+    ref, a, kw = weakref.ref(fig), tuple(args), dict(kwargs)
+
+    def verify() -> bool:
+        target = ref()
+        return target is not None and savefig_verify_render(real_savefig, target, fname, a, kw)
+
+    return verify
+
+
+class _FileEntry:
+    """`writers[stem]["files"][目标键]`：最近写它的 Figure（弱引用，调用即取）+ 这次保存是否已确认真能成功。
+    持有者自己的写入先不验证（常规路径零渲染），带上 `thunk` 惰性验证；native 与已验证过的 `verified=True`。"""
+
+    __slots__ = ("ref", "thunk", "verified")
+
+    def __init__(self, fig, thunk=None):
+        self.ref = weakref.ref(fig)
+        self.thunk = thunk
+        self.verified = thunk is None
+
+    def __call__(self):
+        return self.ref()
+
+
+def _held_still_on_disk(files: dict, held, target) -> bool:
+    """持有者在**别的**目标文件上是否仍是最近成功写入者。未验证的登记（持有者自己的写入）只在它要挡住一次顶替时才
+    验证：成功 → 标记已验证；失败 = 那次保存从未落盘，删掉登记，继续看还有没有别的挡路者。"""
+    for t, entry in list(files.items()):
+        if t == target or entry() is not held:
+            continue
+        if entry.verified:
+            return True
+        if entry.thunk():
+            entry.verified, entry.thunk = True, None
+            return True
+        del files[t]
+    return False
+
+
 #: 每个 stem 最多同时记几个写入者的调用表；超出时先淘汰不是持有者、也不是任何目标最近成功写入者的（或已死的）
 MAX_SAVEFIG_WRITERS = 16
 
@@ -1557,7 +1600,9 @@ def note_savefig_writer(
     safe / 浏览器不真写盘、拿不到成败，传 `verify`（`savefig_verify_render` 的闭包）：本函数对每次**非持有者**
     的写入（`fig` 不是 `capture[stem]`，且 `target` / `call` 都非 None——不管最终顶不顶替，它都会更新 `files`）
     先调用它，返回 False（原生下这次保存会抛）就整次忽略——不顶替、不更新 `files`、不记该写入者的调用。持有者
-    自己的写入不验证、照常记账（沿用「照记」的老行为），所以只有同 stem 多图时才有额外渲染，常规路径零开销。
+    自己的写入照常记账、不立刻验证，但它在 `files` 里的登记带着 `verify` 作为惰性验证：只有当它要**挡住一次顶替**
+    （持有者在别的目标上「仍是最近写入者」）时才对挡路的登记验证，成功 = 确认落盘，失败 = 从未落盘，删掉登记。
+    所以常规路径零渲染，只有同 stem 多图时才有额外渲染。
 
     每个 stem 一份状态 `writers[stem]` = `{"files": {目标文件键 -> 最近写它的 Figure（弱引用）},
     "by": {id(fig) -> [弱引用, 该写入者自己的调用表（None = 不知道）, extras]}}`：
@@ -1578,20 +1623,21 @@ def note_savefig_writer(
     files, by = entry["files"], entry["by"]
     held = capture.get(stem)
     foreign = target is not None and call is not None and held is not None and held is not fig
+    if foreign and verify is not None and not verify():
+        return False
     takes = (
         foreign
         and not locked
         and capture_source.get(stem) == SOURCE_SAVEFIG
-        and not any(ref() is held for t, ref in files.items() if t != target)
+        and not _held_still_on_disk(files, held, target)
     )
-    if foreign and verify is not None and not verify():
-        return False
     mine = by.get(id(fig))
     if mine is None or mine[0]() is not fig:
         mine = by[id(fig)] = [weakref.ref(fig), [], []]
     _record_writer_call(mine, call, extra)
     if target is not None and call is not None:
-        files[target] = weakref.ref(fig)
+        # 外来写入前面已验证；持有者自己的写入带上 thunk 惰性验证（verify 为 None = native，保存已成功）
+        files[target] = _FileEntry(fig, None if foreign else verify)
     if takes:
         capture[stem] = held = fig
     if held is fig:

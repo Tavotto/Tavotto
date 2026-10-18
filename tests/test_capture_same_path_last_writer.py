@@ -794,3 +794,95 @@ def test_real_worker_failed_non_taking_write_does_not_hold_a_file(tmp_path):
     write(tmp_path, "foreign.py", FOREIGN_FAIL)
     built = desktop_build(tmp_path, "foreign.py")
     assert _width_in(built, "shape") == 4.0  # shape.pdf 磁盘上仍是 A，A 不能被顶掉
+
+
+class TestLazyHolderVerification:
+    """Codex r4305758512：持有者自己的失败保存（未验证的登记）不能挡住别的图的顶替；常规路径仍零渲染。"""
+
+    @staticmethod
+    def _counter(verdict):
+        n = []
+
+        def thunk():
+            n.append(1)
+            return verdict
+
+        return n, thunk
+
+    def test_holders_own_write_does_not_render(self):
+        st, a = _State(), _Fig()
+        st.claim(a)
+        n, t = self._counter(False)
+        st.save(a, "/p/x.pdf", verify=t)
+        st.save(a, "/p/x.png", {"format": "png"}, verify=t)
+        assert n == []
+
+    def test_unverified_blocker_that_fails_is_dropped_and_does_not_block(self):
+        st, a, b = _State(), _Fig(), _Fig()
+        st.claim(a)
+        n, bad = self._counter(False)
+        st.save(a, "/p/x.pdf", {"format": "pdf", "dpi": "bad"}, verify=bad)  # 持有者自己的失败保存
+        _, ok = self._counter(True)
+        assert st.save(b, "/p/x.png", {"format": "png"}, verify=ok) is True
+        assert st.cap["x"] is b and n == [1]
+        assert "/p/x.pdf" not in st.w["x"]["files"]  # 从未落盘的登记被删掉
+
+    def test_valid_blocker_blocks_and_is_verified_only_once(self):
+        st, a, b = _State(), _Fig(), _Fig()
+        st.claim(a)
+        n, good = self._counter(True)
+        st.save(a, "/p/x.pdf", verify=good)
+        _, ok = self._counter(True)
+        assert st.save(b, "/p/x.png", {"format": "png"}, verify=ok) is False
+        assert st.save(b, "/p/x.svg", {"format": "svg"}, verify=ok) is False
+        assert st.cap["x"] is a and n == [1]  # A 的 pdf 确实在盘上：挡住，且只验证一次
+
+    def test_only_blocking_entries_are_verified(self):
+        """没有要挡的顶替（持有者的登记就是这次的目标）时不渲染。"""
+        st, a, b = _State(), _Fig(), _Fig()
+        st.claim(a)
+        n, t = self._counter(True)
+        st.save(a, "/p/x.pdf", verify=t)
+        _, ok = self._counter(True)
+        st.save(b, "/p/x.pdf", verify=ok)  # 同一目标：持有者不在「别的」目标上
+        assert n == []
+
+    def test_verifier_holds_figure_weakly(self):
+        import gc
+
+        fig = _Fig()
+        v = figcapture.savefig_verifier(lambda *a, **k: None, fig, "a.pdf", (), {"dpi": 1})
+        del fig
+        gc.collect()
+        assert v() is False
+
+
+LAZY_SCRIPT = """\
+import matplotlib.pyplot as plt
+a, _ = plt.subplots(figsize=(4, 2.6))
+b, _ = plt.subplots(figsize=(5, 2.6))
+try:
+    a.savefig("x.pdf", {first})
+except Exception:
+    pass
+b.savefig("x.png")
+"""
+
+
+@needs_worker
+@pytest.mark.parametrize("first,expect", [('dpi="bad"', 5.0), ("dpi=100", 4.0)])
+def test_real_worker_failed_holder_write_does_not_block(tmp_path, first, expect):
+    write(tmp_path, "lazy.py", LAZY_SCRIPT.format(first=first))
+    built = desktop_build(tmp_path, "lazy.py")
+    assert _width_in(built, "x") == expect
+
+
+@pytest.mark.parametrize("first,expect", [('dpi="bad"', 5.0), ("dpi=100", 4.0)])
+def test_browser_failed_holder_write_does_not_block(tmp_path, first, expect):
+    from test_compat_capture_parity import browser_load
+
+    if WORKER_PY is None:
+        pytest.skip("找不到装有 matplotlib 的解释器")
+    out = browser_load(LAZY_SCRIPT.format(first=first), "lazy.py", tmp_path / "ws")
+    assert out["ok"], out
+    assert _browser_width_in(out, "x") == expect
