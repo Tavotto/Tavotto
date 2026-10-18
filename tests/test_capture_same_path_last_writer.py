@@ -209,8 +209,52 @@ class TestSharedFunction:
             figcapture.note_savefig_writer(w, cap, src, calls, extras, "x", fig, "/p/x.pdf")
         assert cap["x"] is b and "x" not in calls and "x" not in extras
 
+    def test_same_writer_rewriting_its_file_is_not_a_takeover(self):
+        import weakref
+
+        a, b = _Fig(), _Fig()
+        w = {"x": {"/p/x.pdf": weakref.ref(b)}}
+        cap, src = {"x": a}, {"x": SAVEFIG}
+        assert figcapture.note_savefig_writer(w, cap, src, {}, {}, "x", b, "/p/x.pdf") is False
+        assert cap["x"] is a
+
+    def test_holder_rewriting_after_a_foreign_write_keeps_its_records(self):
+        import weakref
+
+        a, b = _Fig(), _Fig()
+        w = {"x": {"/p/x.pdf": weakref.ref(b)}}
+        cap, src, calls = {"x": a}, {"x": SAVEFIG}, {"x": [{}]}
+        assert figcapture.note_savefig_writer(w, cap, src, calls, {}, "x", a, "/p/x.pdf") is False
+        assert calls == {"x": [{}]}
+
+    def test_unclaimed_stem_is_not_displaced(self):
+        a = _Fig()
+        w, cap, src = {}, {}, {}
+        figcapture.note_savefig_writer(w, cap, src, {}, {}, "x", a, "/p/x.pdf")
+        assert cap == {}
+
 
 class TestTargetKey:
+    def test_same_name_in_different_directories_is_not_a_takeover(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        (tmp_path / "one").mkdir()
+        (tmp_path / "two").mkdir()
+        s, a, b = _session(), _Fig(), _Fig()
+        for fig, name in ((a, "one/a.pdf"), (b, "two/a.pdf")):
+            s.add_figure("a", fig, SAVEFIG)
+            s.note_savefig(
+                "a", fig, {"format": "pdf"}, None, target=figcapture.savefig_target_key(name, {})
+            )
+        assert s.capture["a"] is a
+
+    def test_suffixless_name_with_explicit_format_is_the_literal_file(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        k = figcapture.savefig_target_key("a", {"format": "png"})
+        assert k is not None and k == figcapture.savefig_target_key("a", {"format": "svg"})
+        assert (
+            figcapture.savefig_target_key("a", {}) is None
+        )  # 补什么后缀问 canvas，证明不了就不归因
+
     def test_format_kwarg_does_not_change_the_file(self, tmp_path, monkeypatch):
         """`savefig("a.pdf")` 与 `savefig("a.pdf", format="png")` 写的是同一个文件。"""
         monkeypatch.chdir(tmp_path)
