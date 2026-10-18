@@ -1189,6 +1189,14 @@ def not_implemented(name: str) -> int:
     return EXIT_USAGE
 
 
+def positive_int(text: str) -> int:
+    """argparse type: a count of one or more (0 and negatives select nothing, never 'all')."""
+    value = int(text)
+    if value < 1:
+        raise argparse.ArgumentTypeError(f"must be a positive integer, got {value}")
+    return value
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     subs = ap.add_subparsers(dest="command", required=True)
@@ -1213,7 +1221,9 @@ def main(argv=None) -> int:
     )
     explorer.add_argument("--seed", type=int, required=True)
     explorer.add_argument("--out", required=True)
-    explorer.add_argument("--limit", type=int, help="family-balanced cap on executed candidates")
+    explorer.add_argument(
+        "--limit", type=positive_int, help="family-balanced cap on executed candidates"
+    )
     explorer.add_argument("--parent", help="comma-separated parent case ids")
     explorer.add_argument("--static-only", action="store_true")
     explorer.add_argument("--expected-sha")
