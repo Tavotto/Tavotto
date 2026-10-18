@@ -1,0 +1,192 @@
+[
+  {
+    "name": "trusted source pin",
+    "file": "src/ci/consumer.ts",
+    "before": "  if(options?.anchor && branch.sha!==options.anchor.source)throw new Rejected('ci_source_changed');",
+    "after": "",
+    "pattern": "CI\\ wait\\ pins\\ trusted\\ source\\ before\\ any\\ check\\ appears",
+    "selectedTitle": "CI wait pins trusted source before any check appears",
+    "testFile": "tests/ci-wait.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "candidate identity pin",
+    "file": "src/ci/consumer.ts",
+    "before": "  if(options?.anchor?.candidate && identity!==options.anchor.candidate)throw new Rejected('ci_candidate_changed');",
+    "after": "",
+    "pattern": "CI\\ wait\\ pins\\ candidate\\ run",
+    "selectedTitle": "CI wait pins candidate run",
+    "testFile": "tests/ci-wait.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "second authority stage",
+    "file": "src/ci/consumer.ts",
+    "before": "if(error instanceof CIPending)throw new Rejected('ci_live_state_changed');",
+    "after": "if(error instanceof CIPending)throw new CIPending('confirmation_pending',{source:branch.sha,candidate:identity,expiresAt:proof.expires_at});",
+    "pattern": "CI\\ wait\\ second\\ authority\\ pending\\ is\\ terminal",
+    "selectedTitle": "CI wait second authority pending is terminal",
+    "testFile": "tests/ci-wait.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "current Worker status contract",
+    "file": "src/ci/consumer.ts",
+    "before": "r.status===403",
+    "after": "r.status===503",
+    "pattern": "CI\\ wait\\ current\\ Worker\\ pending\\ contract\\ is\\ an\\ exact\\ 403\\ rejection",
+    "selectedTitle": "CI wait current Worker pending contract is an exact 403 rejection",
+    "testFile": "tests/ci-wait.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "pending exact response shape",
+    "file": "src/ci/consumer.ts",
+    "before": "keys(data,['error']) && ",
+    "after": "",
+    "pattern": "CI\\ wait\\ refuses\\ other\\ status\\ or\\ pending\\ shape\\ 403\\{\"error\":\"proof_not_confirmed\",\"eligible\":true\\}",
+    "selectedTitle": "CI wait refuses other status or pending shape 403{\"error\":\"proof_not_confirmed\",\"eligible\":true}",
+    "testFile": "tests/ci-wait.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "global return deadline",
+    "file": "src/ci/wait.ts",
+    "before": "now>=deadline ||",
+    "after": "",
+    "pattern": "CI\\ wait\\ final\\ successful\\ read\\ at\\ global\\ deadline\\ still\\ rejects",
+    "selectedTitle": "CI wait final successful read at global deadline still rejects",
+    "testFile": "tests/ci-wait.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "monotonic rollback",
+    "file": "src/ci/wait.ts",
+    "before": "now<last ||",
+    "after": "",
+    "pattern": "CI\\ wait\\ monotonic\\ deadline\\ and\\ wall\\ rollback\\ reject",
+    "selectedTitle": "CI wait monotonic deadline and wall rollback reject",
+    "testFile": "tests/ci-wait.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "proof expiry before another read",
+    "file": "src/ci/wait.ts",
+    "before": "anchor?.expiresAt!==undefined && milliseconds>=anchor.expiresAt*1000 ||\n      anchor?.expiresAt!==undefined && wall>=anchor.expiresAt",
+    "after": "false",
+    "pattern": "CI\\ wait\\ expiry\\ boundary\\ rejects\\ before\\ a\\ new\\ read\\ or\\ successful\\ result",
+    "selectedTitle": "CI wait expiry boundary rejects before a new read or successful result",
+    "testFile": "tests/ci-wait.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "proof monotonic deadline",
+    "file": "src/ci/wait.ts",
+    "before": "deadline=Math.min(deadline,now+anchor.expiresAt*1000-milliseconds);",
+    "after": "",
+    "pattern": "CI\\ wait\\ maps\\ short\\ proof\\ lifetime\\ to\\ one\\ monotonic\\ deadline",
+    "selectedTitle": "CI wait maps short proof lifetime to one monotonic deadline",
+    "testFile": "tests/ci-wait.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "subsecond proof cancellation precision",
+    "file": "src/ci/wait.ts",
+    "before": "deadline=Math.min(deadline,now+anchor.expiresAt*1000-milliseconds);",
+    "after": "deadline=Math.min(deadline,tick()+(anchor.expiresAt-clock())*1000);",
+    "pattern": "CI wait bounds subsecond proof expiry during authority transport",
+    "selectedTitle": "CI wait bounds subsecond proof expiry during authority transport",
+    "testFile": "tests/ci-wait.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "maximum attempt configuration",
+    "file": "src/ci/wait.ts",
+    "before": "maxAttempts!>8 ||",
+    "after": "",
+    "pattern": "CI\\ wait\\ validates\\ configuration\\ before\\ transport",
+    "selectedTitle": "CI wait validates configuration before transport",
+    "testFile": "tests/ci-wait.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "trusted config snapshot",
+    "file": "scripts/ci-candidate.mjs",
+    "before": "const trusted=structuredClone(config);",
+    "after": "const trusted=config;",
+    "pattern": "CI\\ wait\\ original\\ event\\ and\\ trusted\\ config\\ cannot\\ mutate\\ during\\ pause",
+    "selectedTitle": "CI wait original event and trusted config cannot mutate during pause",
+    "testFile": "tests/ci-wait.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "proof deadline before first authority",
+    "file": "src/ci/consumer.ts",
+    "before": "  options?.observe?.({source:branch.sha,candidate:identity,expiresAt:proof.expires_at});",
+    "after": "",
+    "pattern": "CI wait anchors proof deadline before first success path",
+    "selectedTitle": "CI wait anchors proof deadline before first success path",
+    "testFile": "tests/ci-wait.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "default subsecond wall precision",
+    "file": "src/ci/wait.ts",
+    "before": ":()=>Date.now())",
+    "after": ":()=>Math.floor(Date.now()/1000)*1000)",
+    "pattern": "CI wait bounds subsecond proof expiry during authority default clock",
+    "selectedTitle": "CI wait bounds subsecond proof expiry during authority default clock",
+    "testFile": "tests/ci-wait.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "millisecond wall validity",
+    "file": "src/ci/wait.ts",
+    "before": "!Number.isSafeInteger(milliseconds) || ",
+    "after": "",
+    "pattern": "CI wait rejects millisecond wall invalid",
+    "selectedTitle": "CI wait rejects millisecond wall invalid",
+    "testFile": "tests/ci-wait.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "millisecond wall rollback",
+    "file": "src/ci/wait.ts",
+    "before": "milliseconds<lastMilliseconds ||",
+    "after": "",
+    "pattern": "CI wait rejects millisecond wall rollback",
+    "selectedTitle": "CI wait rejects millisecond wall rollback",
+    "testFile": "tests/ci-wait.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "millisecond wall expiry",
+    "file": "src/ci/wait.ts",
+    "before": "anchor?.expiresAt!==undefined && milliseconds>=anchor.expiresAt*1000 ||",
+    "after": "",
+    "pattern": "CI wait rejects millisecond wall expiry",
+    "selectedTitle": "CI wait rejects millisecond wall expiry",
+    "testFile": "tests/ci-wait.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "initial clock sample validation",
+    "file": "src/ci/wait.ts",
+    "before": "  if(!Number.isFinite(last) || !Number.isSafeInteger(lastWall) || !Number.isSafeInteger(lastMilliseconds))throw new Rejected('ci_wait_deadline');",
+    "after": "",
+    "pattern": "CI wait validates initial clock samples",
+    "selectedTitle": "CI wait validates initial clock samples",
+    "testFile": "tests/ci-wait.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "proof mapping validated clock snapshot",
+    "file": "src/ci/wait.ts",
+    "before": "    const {now,milliseconds}=guard();anchor=next;",
+    "after": "    guard();const now=tick(),milliseconds=wallMilliseconds();anchor=next;",
+    "pattern": "CI wait validates every observed millisecond sample",
+    "selectedTitle": "CI wait validates every observed millisecond sample",
+    "testFile": "tests/ci-wait.test.mjs",
+    "assertionError": true
+  }
+]
