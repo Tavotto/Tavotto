@@ -116,9 +116,7 @@ def classify(files: list[dict], labels: list[str]) -> dict:
         previous = changed.get("previous_filename")
         # GitHub reports the OLD path separately for a rename. Ignoring it
         # would downgrade deletion/movement of security-sensitive code.
-        if changed.get("status") == "renamed" and (
-            not isinstance(previous, str) or not previous
-        ):
+        if changed.get("status") == "renamed" and (not isinstance(previous, str) or not previous):
             raise IncompleteEvidence("Renamed file lacks its previous_filename")
         if previous is not None:
             if not isinstance(previous, str) or not previous:
