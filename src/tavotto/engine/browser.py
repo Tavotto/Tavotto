@@ -119,7 +119,7 @@ def _patched_savefig(self, fname, *args, **kwargs):
         # 来源记账与 worker.CAPTURE_SOURCE 同语义：savefig 认领的 stem
         # **可能**有原始产物（在桌面上；这里的虚拟 FS 里永远没有）。
         _session_sources().setdefault(stem, figcapture.SOURCE_SAVEFIG)
-        if _ACTIVE is not None and call is not None:
+        if _ACTIVE is not None:
             figcapture.note_savefig_writer(
                 _ACTIVE.savefig_writers,
                 _ACTIVE.capture,
@@ -129,6 +129,8 @@ def _patched_savefig(self, fname, *args, **kwargs):
                 stem,
                 self,
                 figcapture.savefig_target_key(fname, kwargs, getattr(self, "canvas", None)),
+                call,
+                kwargs.get("bbox_extra_artists"),
             )
         if _ACTIVE is not None and figcapture.record_savefig_call(
             _ACTIVE.savefig_calls,
@@ -218,7 +220,7 @@ class BrowserSession:
         self.workspace = workspace
         self.capture: dict[str, object] = {}  # stem → Figure（脚本产出顺序）
         self.capture_source: dict[str, str] = {}  # stem → figcapture.SOURCE_*
-        #: stem → {目标文件键 → 最近写它的 Figure 弱引用}（`figcapture.note_savefig_writer`）
+        #: stem → {files: 目标文件键 → 最近写它的 Figure 弱引用, log: 影子日志}（`figcapture.note_savefig_writer`）
         self.savefig_writers: dict[str, dict] = {}
         #: stem → 认领它的 savefig 调用（与 worker 同一条记账：`figcapture.record_savefig_call`）
         self.savefig_calls: dict[str, list | None] = {}

@@ -47,3 +47,33 @@ def test_native_loop_over_same_path_captures_last(tmp_path, bridge_session):
 def test_native_same_file_with_format_kwarg_is_same_path(tmp_path, bridge_session):
     """`savefig("shape.pdf", format="pdf")` 与 `savefig("shape.pdf")` 是同一个文件。"""
     assert _last_width(tmp_path, bridge_session, kw=', format="pdf"') == 6.0
+
+
+ALTERNATE = """\
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+a, _ = plt.subplots(figsize=(4, 2.6))
+b, _ = plt.subplots(figsize=(5, 2.6))
+a.savefig("x.pdf")
+b.savefig("x.pdf")
+a.savefig("x.png", dpi=150)
+a.savefig("x.pdf")
+plt.show()
+"""
+
+
+def test_native_alternating_writers_keep_all_winner_calls(tmp_path, bridge_session):
+    proj = tmp_path / "proj"
+    write(proj / "alt.py", ALTERNATE)
+    with bridge_session(proj / "alt.py", cwd=str(proj)) as sess:
+        sess.wait_event("barrier")
+        (desc,) = [d for d in sess.ensure_built()["descriptors"] if d["stem"] == "x"]
+        assert round(desc["size_mm"][0] / 25.4, 2) == 4.0
+        calls = desc["savefig_calls"]
+        assert [c["format"] for c in calls] == ["pdf", "png", "pdf"]
+        assert calls[1]["dpi"] == 150
+        sess.resume()
+        sess.wait_event("barrier")
+        sess.resume()
+        sess.wait_event("exit")

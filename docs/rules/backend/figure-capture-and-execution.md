@@ -241,6 +241,12 @@ desktop worker（`LiveFigureSession.note_savefig` 转调）、浏览器 playgrou
 * **先认领那张在别的文件上仍是最后写入者时不顶掉**（甲写 `a.pdf` + `a.png`，乙再写 `a.pdf`）：磁盘上 `a.png` 还是甲，
   stem 只能挂一张图，宁可 `a.pdf` 那份与磁盘不一致，也不让一张磁盘上还在的图从捕获里消失——
   `tests/test_savefig_observations.py` 的真 worker 用例钉着这一条。等甲在每个文件上都被覆盖，才换成乙。
+* **顶回来的图带回它自己的全部调用**（Codex 4305499990：甲 `x.pdf`、乙 `x.pdf` 顶替、甲 `x.png`〔甲不持有 stem，不记〕、甲再
+  `x.pdf` 顶回）：`note_savefig_writer` 为每个 stem 留一份**影子日志** `writers[stem]["log"]`（所有带 stem 的 savefig 调用，含
+  `call is None`，弱引用 + call + `bbox_extra_artists`，上限 `MAX_SAVEFIG_SHADOW`，旧的先丢）。顶替时 `calls` / `extras`
+  先清空，再把日志里属于胜者的条目**按原顺序经同一条 `record_savefig_call` 规则**（上限、新格式第一次照记）重建，最后调用方
+  照常记这一次——结果 `["pdf","png","pdf"]`，各格式取景参数是自己那次的。胜者历史里有过 `call is None` 就重建成 None（整份
+  「不知道」）。writers 表每个 stem 的值是 `{"files": {目标文件键: 弱引用}, "log": [...]}`，重置 / 退役处整份清。
 * 同一张图存多次仍是一张图（调用照记）；不同 stem 互不影响；三个写入者取第三个；写回原来那张又取回。
 * **pyplot 认领永远不被顶掉**，兜底也永远不顶显式 savefig；`call is None`（`paper_style.save` 没观察到参数）不知道路径，
   不顶替。

@@ -174,6 +174,7 @@ __all__ = [
     "record_savefig_call",
     "savefig_target_key",
     "note_savefig_writer",
+    "MAX_SAVEFIG_SHADOW",
     "savefig_calls_of",
     "SavefigObservations",
     "savefig_metadata_reader",
@@ -1473,6 +1474,10 @@ def savefig_target_key(fname, kwargs: dict, canvas=None) -> str | None:
         return None
 
 
+#: 每个 stem 的 savefig 影子日志最多留多少条（旧的先丢）；只为「胜者顶回时恢复它的全部调用」服务
+MAX_SAVEFIG_SHADOW = 4 * MAX_SAVEFIG_CALLS_HARD
+
+
 def note_savefig_writer(
     writers: dict,
     capture: dict,
@@ -1482,43 +1487,64 @@ def note_savefig_writer(
     stem: str,
     fig,
     target: str | None,
+    call: dict | None = None,
+    extra=None,
     locked: bool = False,
 ) -> bool:
     """同一路径换了写入者：最后写入者胜——三条入口（safe worker、native bridge、浏览器）的同一份实现。
 
-    `writers`：stem -> {目标文件键 -> 最近写它的 Figure（弱引用）}。目标文件（`savefig_target_key`）
-    上一次是另一张图写的、这次换成了 `fig`，磁盘上留下的就是 `fig` 的产物，`capture[stem]` 换成它，
-    被顶掉那张的 `calls` / `extras` 一并清掉（那是它的参数）。调用方须在 `capture` 已按先到先得认领
-    之后、`record_savefig_call` 之前调用。护栏（任一不满足都不顶）：
+    `writers[stem]` = `{"files": {目标文件键 -> 最近写它的 Figure（弱引用）}, "log": [(Figure 弱引用,
+    call, extra)]}`。目标文件（`savefig_target_key`）上一次是另一张图写的、这次换成了 `fig`，磁盘上留下的
+    就是 `fig` 的产物，`capture[stem]` 换成它。被顶掉那张的 `calls` / `extras` 清掉（那是它的参数），
+    **换上来的这张在顶替之前被忽略的调用**（它不持有 stem 时 `record_savefig_call` 不记）从影子日志里
+    按原顺序、经同一条 `record_savefig_call` 规则（上限、新格式第一次照记）重建；它历史里有过
+    `call is None` 就重建成 None（整份「不知道」）。调用方在本函数之后照常 `record_savefig_call` 记这一次。
+    调用方须在 `capture` 已按先到先得认领之后调用，每次带 stem 的 savefig 都调（`call` 为 None 也调：
+    要进影子日志，但不参与顶替）。顶替的护栏（任一不满足都不顶）：
 
-    * `target is None`（缓冲区 / 不知道路径）不参与；
+    * `target is None`（缓冲区 / 不知道路径）或 `call is None` 不参与；
     * 只顶 savefig 来源的认领（pyplot 兜底永不被顶）；
     * `locked`（stem 已进入编辑或已记失败，override / 清单 / 预览都挂在那张图上）不换图；
     * 先认领那张在本 stem 下别的目标文件上仍是最后写入者时不顶——它的文件还在磁盘上。
 
     返回是否顶替了。
     """
-    if not stem or target is None:
+    if not stem:
         return False
-    table = writers.setdefault(stem, {})
-    prev = table.get(target)
-    table[target] = weakref.ref(fig)
-    held = capture.get(stem)
-    if (
-        locked
-        or prev is None
-        or prev() is None
-        or prev() is fig
-        or held is None
-        or held is fig
-        or capture_source.get(stem) != SOURCE_SAVEFIG
-        or any(ref() is held for t, ref in table.items() if t != target)
-    ):
-        return False
-    capture[stem] = fig
-    calls.pop(stem, None)
-    extras.pop(stem, None)
-    return True
+    entry = writers.setdefault(stem, {"files": {}, "log": []})
+    log = entry["log"]
+    replaced = False
+    if target is not None and call is not None:
+        table = entry["files"]
+        prev = table.get(target)
+        table[target] = weakref.ref(fig)
+        held = capture.get(stem)
+        if not (
+            locked
+            or prev is None
+            or prev() is None
+            or prev() is fig
+            or held is None
+            or held is fig
+            or capture_source.get(stem) != SOURCE_SAVEFIG
+            or any(ref() is held for t, ref in table.items() if t != target)
+        ):
+            capture[stem] = fig
+            calls.pop(stem, None)
+            extras.pop(stem, None)
+            temp = {stem: fig}
+            for ref, old_call, old_extra in log:
+                if ref() is not fig:
+                    continue
+                if record_savefig_call(calls, temp, stem, fig, old_call):
+                    extras.setdefault(stem, []).append(old_extra)
+                if calls.get(stem, ...) is None:
+                    extras.pop(stem, None)
+                    break
+            replaced = True
+    log.append((weakref.ref(fig), call, extra))
+    del log[: max(0, len(log) - MAX_SAVEFIG_SHADOW)]
+    return replaced
 
 
 def _norm_format(fmt) -> str:

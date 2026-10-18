@@ -123,8 +123,9 @@ class TestSamePathRule:
         assert s.capture["x"] is a
         _save(s, "x", b, "png", None)
         assert s.capture["x"] is b
-        assert s.savefig_calls["x"] == [{"format": "png"}]
-        assert s.savefig_extras["x"] == [None]
+        # 甲的调用清掉；乙先前被忽略的 pdf 调用从影子日志里带回来，再加这一次 png
+        assert s.savefig_calls["x"] == [{"format": "pdf"}, {"format": "png"}]
+        assert s.savefig_extras["x"] == [None, None]
 
     def test_pyplot_claim_is_never_displaced(self):
         s, a, b = _session(), _Fig(), _Fig()
@@ -172,6 +173,9 @@ class TestSamePathRule:
         assert s.capture["x"] is a
 
 
+PDF = {"format": "pdf"}
+
+
 class TestSharedFunction:
     """三条入口共用的 `note_savefig_writer` 本体（浏览器 / native 的钩子直接调它）。"""
 
@@ -180,7 +184,7 @@ class TestSharedFunction:
         cap.setdefault(stem, fig)
         src.setdefault(stem, SAVEFIG)
         return figcapture.note_savefig_writer(
-            w, cap, src, {stem: [{}]}, {stem: [None]}, stem, fig, target, locked
+            w, cap, src, {stem: [{}]}, {stem: [None]}, stem, fig, target, PDF, None, locked=locked
         )
 
     def test_none_target_neither_displaces_nor_registers(self):
@@ -188,13 +192,13 @@ class TestSharedFunction:
         assert self._call(w, cap, src, a, "/p/x.pdf") is False
         assert self._call(w, cap, src, b, "/p/x.pdf") is True
         assert self._call(w, cap, src, a, None) is False
-        assert cap["x"] is b and w["x"]["/p/x.pdf"]() is b and None not in w["x"]
+        assert cap["x"] is b and w["x"]["files"]["/p/x.pdf"]() is b and None not in w["x"]["files"]
 
     def test_dead_previous_writer_does_not_displace(self):
         w, cap, src, a = {}, {}, {}, _Fig()
         self._call(w, cap, src, a, "/p/x.pdf")
         dead = _Fig()
-        w["x"]["/p/x.pdf"] = __import__("weakref").ref(dead)
+        w["x"]["files"]["/p/x.pdf"] = __import__("weakref").ref(dead)
         del dead
         b = _Fig()
         assert self._call(w, cap, src, b, "/p/x.pdf") is False
@@ -206,33 +210,95 @@ class TestSharedFunction:
         for fig in (a, b):
             cap.setdefault("x", fig)
             src.setdefault("x", SAVEFIG)
-            figcapture.note_savefig_writer(w, cap, src, calls, extras, "x", fig, "/p/x.pdf")
+            figcapture.note_savefig_writer(w, cap, src, calls, extras, "x", fig, "/p/x.pdf", PDF)
         assert cap["x"] is b and "x" not in calls and "x" not in extras
 
     def test_same_writer_rewriting_its_file_is_not_a_takeover(self):
         import weakref
 
         a, b = _Fig(), _Fig()
-        w = {"x": {"/p/x.pdf": weakref.ref(b)}}
+        w = {"x": {"files": {"/p/x.pdf": weakref.ref(b)}, "log": []}}
         cap, src = {"x": a}, {"x": SAVEFIG}
-        assert figcapture.note_savefig_writer(w, cap, src, {}, {}, "x", b, "/p/x.pdf") is False
+        assert figcapture.note_savefig_writer(w, cap, src, {}, {}, "x", b, "/p/x.pdf", PDF) is False
         assert cap["x"] is a
 
     def test_holder_rewriting_after_a_foreign_write_keeps_its_records(self):
         import weakref
 
         a, b = _Fig(), _Fig()
-        w = {"x": {"/p/x.pdf": weakref.ref(b)}}
+        w = {"x": {"files": {"/p/x.pdf": weakref.ref(b)}, "log": []}}
         cap, src, calls = {"x": a}, {"x": SAVEFIG}, {"x": [{}]}
-        assert figcapture.note_savefig_writer(w, cap, src, calls, {}, "x", a, "/p/x.pdf") is False
+        assert (
+            figcapture.note_savefig_writer(w, cap, src, calls, {}, "x", a, "/p/x.pdf", PDF) is False
+        )
         assert calls == {"x": [{}]}
 
     def test_unclaimed_stem_is_not_displaced(self):
         a = _Fig()
         w, cap, src = {}, {}, {"x": SAVEFIG}
-        figcapture.note_savefig_writer(w, cap, src, {}, {}, "x", a, "/p/x.pdf")
-        figcapture.note_savefig_writer(w, cap, src, {}, {}, "x", _Fig(), "/p/x.pdf")
+        figcapture.note_savefig_writer(w, cap, src, {}, {}, "x", a, "/p/x.pdf", PDF)
+        figcapture.note_savefig_writer(w, cap, src, {}, {}, "x", _Fig(), "/p/x.pdf", PDF)
         assert cap == {}
+
+
+class TestAlternatingWriters:
+    """Codex 4305499990：写入者跨格式交替，顶回来的图要带回它自己的全部调用。"""
+
+    PNG = {"format": "png"}
+
+    def _seq(self, s, a, b, a_png_extra="png-art"):
+        s.add_figure("x", a, SAVEFIG)
+        s.note_savefig("x", a, PDF, "pdf-a1", target=_path("x", "pdf"))
+        s.add_figure("x", b, SAVEFIG)
+        s.note_savefig("x", b, PDF, "pdf-b", target=_path("x", "pdf"))
+        s.note_savefig("x", a, self.PNG, a_png_extra, target=_path("x", "png"))
+        s.note_savefig("x", a, PDF, "pdf-a2", target=_path("x", "pdf"))
+
+    def test_winner_gets_back_its_ignored_calls(self):
+        s, a, b = _session(), _Fig(), _Fig()
+        self._seq(s, a, b)
+        assert s.capture["x"] is a
+        assert [c["format"] for c in s.savefig_calls["x"]] == ["pdf", "png", "pdf"]
+        assert s.savefig_extras["x"] == ["pdf-a1", "png-art", "pdf-a2"]
+
+    def test_loser_calls_are_not_resurrected_for_others(self):
+        s, a, b = _session(), _Fig(), _Fig()
+        s.add_figure("x", a, SAVEFIG)
+        s.note_savefig("x", a, PDF, None, target=_path("x", "pdf"))
+        s.add_figure("x", b, SAVEFIG)
+        s.note_savefig("x", b, PDF, None, target=_path("x", "pdf"))
+        assert s.capture["x"] is b and s.savefig_calls["x"] == [PDF]
+
+    def test_unknown_call_in_winner_history_rebuilds_as_unknown(self):
+        s, a, b = _session(), _Fig(), _Fig()
+        s.add_figure("x", a, SAVEFIG)
+        s.note_savefig("x", a, PDF, None, target=_path("x", "pdf"))
+        s.note_savefig("x", a, None)  # paper_style.save：参数没观察到
+        s.add_figure("x", b, SAVEFIG)
+        s.note_savefig("x", b, PDF, None, target=_path("x", "pdf"))
+        s.note_savefig("x", a, PDF, None, target=_path("x", "pdf"))
+        assert s.capture["x"] is a and s.savefig_calls["x"] is None
+
+    def test_rebuild_obeys_call_cap(self):
+        s, a, b = _session(), _Fig(), _Fig()
+        s.add_figure("x", a, SAVEFIG)
+        s.note_savefig("x", a, PDF, None, target=_path("x", "pdf"))
+        s.add_figure("x", b, SAVEFIG)
+        s.note_savefig("x", b, PDF, None, target=_path("x", "pdf"))
+        for _ in range(figcapture.MAX_SAVEFIG_CALLS + 3):
+            s.note_savefig("x", a, self.PNG, None, target=_path("x", "png"))
+        s.note_savefig("x", a, PDF, None, target=_path("x", "pdf"))
+        calls = s.savefig_calls["x"]
+        assert s.capture["x"] is a
+        assert len(calls) == figcapture.MAX_SAVEFIG_CALLS  # 满额；pdf 已记过，不是新格式
+        assert [c["format"] for c in calls].count("pdf") == 1
+
+    def test_shadow_log_is_bounded(self):
+        s, a = _session(), _Fig()
+        s.add_figure("x", a, SAVEFIG)
+        for _ in range(figcapture.MAX_SAVEFIG_SHADOW * 2):
+            s.note_savefig("x", a, PDF, None, target=_path("x", "pdf"))
+        assert len(s.savefig_writers["x"]["log"]) == figcapture.MAX_SAVEFIG_SHADOW
 
 
 class TestTargetKey:
@@ -391,3 +457,25 @@ def test_browser_same_file_via_format_kwarg_is_same_path(tmp_path):
     out = browser_load(src, "fmt.py", tmp_path / "ws")
     assert out["ok"], out
     assert _browser_width_in(out, "s") == 5.0
+
+
+ALTERNATE = """\
+import matplotlib.pyplot as plt
+a, _ = plt.subplots(figsize=(4, 2.6))
+b, _ = plt.subplots(figsize=(5, 2.6))
+a.savefig("x.pdf", bbox_inches="tight")
+b.savefig("x.pdf")
+a.savefig("x.png", dpi=150)
+a.savefig("x.pdf", bbox_inches="tight")
+"""
+
+
+@needs_worker
+def test_real_worker_alternating_writers_keep_all_winner_calls(tmp_path):
+    write(tmp_path, "alt.py", ALTERNATE)
+    built = desktop_build(tmp_path, "alt.py")
+    assert _width_in(built, "x") < 4.5  # 甲（figsize 4 英寸，tight 后略窄），不是乙的 5
+    (desc,) = [d for d in built["descriptors"] if d["stem"] == "x"]
+    calls = desc["savefig_calls"]
+    assert [c["format"] for c in calls] == ["pdf", "png", "pdf"]
+    assert calls[1]["dpi"] == 150

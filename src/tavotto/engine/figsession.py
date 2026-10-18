@@ -510,7 +510,7 @@ class LiveFigureSession:
         #: stem -> 与 `savefig_calls[stem]` 逐项对齐的 `bbox_extra_artists` **对象**（进不了 JSON，
         #: 只活在这个进程里；算图幅时要把同一批 artist 交回 savefig，ADR 0098 §一）
         self.savefig_extras: dict[str, list] = {}
-        #: stem -> {目标文件键 -> 最近写它的 Figure（弱引用）}，见 `figcapture.note_savefig_writer`
+        #: stem -> {files: 目标文件键 -> 最近写它的 Figure（弱引用）, log: 影子日志}，见 `figcapture.note_savefig_writer`
         self.savefig_writers: dict[str, dict] = {}
         # Safe capture normally suppresses savefig. File-object saves really draw
         # during the script; do not treat their later state as an undrawn seed.
@@ -567,18 +567,19 @@ class LiveFigureSession:
 
         同一路径换了写入者的规则唯一实现在 `figcapture.note_savefig_writer`（三条入口同源）。
         """
-        if call is not None and target is not None:
-            figcapture.note_savefig_writer(
-                self.savefig_writers,
-                self.capture,
-                self.capture_source,
-                self.savefig_calls,
-                self.savefig_extras,
-                stem,
-                fig,
-                target,
-                locked=stem in self.states or stem in self.failures,
-            )
+        figcapture.note_savefig_writer(
+            self.savefig_writers,
+            self.capture,
+            self.capture_source,
+            self.savefig_calls,
+            self.savefig_extras,
+            stem,
+            fig,
+            target,
+            call,
+            extra_artists,
+            locked=stem in self.states or stem in self.failures,
+        )
         if figcapture.record_savefig_call(self.savefig_calls, self.capture, stem, fig, call):
             self.savefig_extras.setdefault(stem, []).append(extra_artists)
 
