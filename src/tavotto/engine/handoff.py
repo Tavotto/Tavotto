@@ -688,7 +688,7 @@ def _pids_of(exe: str, *, run=subprocess.run) -> "list[int] | None":
     不做子串匹配（`Tavotto` 会撞上别的进程）。
     """
     if os.name == "nt":
-        return _pids_of_windows(exe, run=run)
+        return _pids_of_windows(exe)
     if os.name != "posix":
         return None
     try:
@@ -1035,7 +1035,10 @@ def _launch_desktop_via_spawn(
 
     pids_of = _pids_of if pids_of is None else pids_of
     argv = desktop_argv(app, target)
-    already = bool(pids_of(app))
+    try:
+        already = bool(pids_of(app))
+    except Exception:  # noqa: BLE001 —— 只是辅助判据，查不出（None）就按旧行为走，绝不拦死交接
+        already = False
     try:
         proc = _spawn_detached(argv, spawn=spawn)
     except OSError as exc:

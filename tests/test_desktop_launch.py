@@ -223,6 +223,28 @@ def test_pids_of_windows_total_failure_is_none():
     assert handoff._windows_process_images() is None or handoff.os.name == "nt"
 
 
+def test_pids_of_dispatches_to_windows_by_path(monkeypatch):
+    """真调 `_pids_of`（不注入）：nt 分支的调用签名要和 `_pids_of_windows` 对得上（真机 TypeError）。"""
+    monkeypatch.setattr(handoff.os, "name", "nt")
+    monkeypatch.setattr(
+        handoff, "_windows_process_images", lambda: [(10, SIDECAR), (20, SHELL.lower())]
+    )
+    assert handoff._pids_of(SHELL) == [20]
+
+
+def test_pids_of_probe_failure_never_blocks_the_handoff():
+    """求「已有实例」只是辅助判据：pids_of 抛什么都按旧行为走，不拦死交接。"""
+
+    def boom(app):
+        raise TypeError("bad signature")
+
+    fake = _FakeClock()
+    out = _spawn_with(_FakeProc([None, 0]), boom, fake)
+    assert out["ready"] == "forwarder_exited"
+    out = _spawn_with(_StuckProc(), boom, _FakeClock())
+    assert out["ready"] == "process_alive"
+
+
 # ----------------- 沙箱判据：受限令牌 / AppContainer 里不拉进程 -----------------
 _WIN_APP = "C:\\Tools\\Tavotto\\Tavotto.exe"
 
