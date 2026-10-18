@@ -202,39 +202,25 @@ def test_spawn_existing_instance_fast_zero_exit_is_still_forwarded():
     assert out["handoff"] == "forwarded" and out["ready"] == "forwarder_exited"
 
 
-def test_pids_of_windows_matches_image_name_only():
-    csv_out = (
-        '"Tavotto.exe","4321","Console","1","80,000 K"\n"tavotto.exe","99","Console","1","1 K"\n'
-    )
+SHELL = "C:\\Users\\u\\AppData\\Local\\Tavotto\\Tavotto.exe"
+SIDECAR = "C:\\Users\\u\\AppData\\Local\\Tavotto\\sidecar\\Tavotto\\Tavotto.exe"
 
-    class R:
-        returncode = 0
-        stdout = csv_out
-        stderr = ""
 
-    calls = []
+def test_pids_of_windows_same_image_name_in_sidecar_dir_is_not_an_instance():
+    """sidecar 与桌面壳同名 Tavotto.exe：只能按完整路径比，孤儿 sidecar 不算已有实例。"""
+    images = [(10, SIDECAR), (11, SIDECAR), (12, "C:\\Windows\\explorer.exe")]
+    assert handoff._pids_of_windows(SHELL, enum=lambda: images) == []
+    assert handoff._pids_of_windows(SHELL, enum=lambda: [*images, (20, SHELL)]) == [20]
 
-    def run(argv, **kw):
-        calls.append(argv)
-        return R()
 
-    assert handoff._pids_of_windows("C:\\x\\Tavotto.exe", run=run) == [4321, 99]
-    assert calls[0][:3] == ["tasklist", "/FI", "IMAGENAME eq Tavotto.exe"]
+def test_pids_of_windows_ignores_prefix_case_and_separators():
+    images = [(5, "\\\\?\\" + SHELL.upper()), (6, SHELL.replace("\\", "/"))]
+    assert handoff._pids_of_windows(SHELL, enum=lambda: images) == [5, 6]
 
-    class Empty(R):
-        stdout = "信息: 没有运行的任务匹配指定标准。\n"
 
-    assert handoff._pids_of_windows("Tavotto.exe", run=lambda argv, **kw: Empty()) == []
-
-    class Bad(R):
-        returncode = 1
-
-    assert handoff._pids_of_windows("Tavotto.exe", run=lambda argv, **kw: Bad()) is None
-
-    def boom(argv, **kw):
-        raise OSError("no tasklist")
-
-    assert handoff._pids_of_windows("Tavotto.exe", run=boom) is None
+def test_pids_of_windows_total_failure_is_none():
+    assert handoff._pids_of_windows(SHELL, enum=lambda: None) is None
+    assert handoff._windows_process_images() is None or handoff.os.name == "nt"
 
 
 # ----------------- 沙箱判据：受限令牌 / AppContainer 里不拉进程 -----------------

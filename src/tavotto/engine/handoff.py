@@ -711,39 +711,82 @@ def _pids_of(exe: str, *, run=subprocess.run) -> "list[int] | None":
     return pids
 
 
-def _pids_of_windows(exe: str, *, run=subprocess.run) -> "list[int] | None":
-    """Windows：按映像名（如 `Tavotto.exe`）列进程号；查不了回 None。
+def _windows_process_images() -> "list[tuple[int, str]] | None":
+    """Windows：枚举 (pid, 完整映像路径)。整体失败（ctypes 不可用 / EnumProcesses 失败）回 None。
 
-    `tasklist` 只看得到映像名、看不到完整路径，所以另一份安装目录里的同名
-    `Tavotto.exe` 也会算进来——这里只用来回答「桌面应用是不是已经在跑」，
-    而 Tavotto 本就是单实例，同名即同一个应用。没有匹配时 tasklist 打一句
-    本地化的提示（不是 CSV），按第一列精确比对自然把它滤掉。
+    打不开的进程（权限不够、已退出）直接跳过。只读，不起子进程。
     """
-    import csv
-
-    image = exe.replace("\\", "/").rsplit("/", 1)[-1]
-    if not image:
+    if os.name != "nt":
         return None
     try:
-        proc = run(
-            ["tasklist", "/FI", f"IMAGENAME eq {image}", "/FO", "CSV", "/NH"],
-            capture_output=True,
-            text=True,
-            errors="replace",
-            timeout=10,
-        )
-    except (OSError, subprocess.TimeoutExpired):
-        return None
-    if proc.returncode != 0:
-        return None
-    pids: list[int] = []
-    for row in csv.reader((proc.stdout or "").splitlines()):
-        if len(row) >= 2 and row[0].lower() == image.lower():
-            try:
-                pids.append(int(row[1]))
-            except ValueError:
+        import ctypes
+        from ctypes import wintypes
+
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.K32EnumProcesses.argtypes = [
+            ctypes.POINTER(wintypes.DWORD),
+            wintypes.DWORD,
+            ctypes.POINTER(wintypes.DWORD),
+        ]
+        kernel32.K32EnumProcesses.restype = wintypes.BOOL
+        kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+        kernel32.OpenProcess.restype = wintypes.HANDLE
+        kernel32.QueryFullProcessImageNameW.argtypes = [
+            wintypes.HANDLE,
+            wintypes.DWORD,
+            wintypes.LPWSTR,
+            ctypes.POINTER(wintypes.DWORD),
+        ]
+        kernel32.QueryFullProcessImageNameW.restype = wintypes.BOOL
+        kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+        kernel32.CloseHandle.restype = wintypes.BOOL
+
+        capacity = 1024
+        while True:
+            pids = (wintypes.DWORD * capacity)()
+            got = wintypes.DWORD(0)
+            if not kernel32.K32EnumProcesses(pids, ctypes.sizeof(pids), ctypes.byref(got)):
+                return None
+            if got.value < ctypes.sizeof(pids):
+                break
+            capacity *= 2  # 正好填满 = 可能被截断，翻倍重来
+        out: list[tuple[int, str]] = []
+        for pid in pids[: got.value // ctypes.sizeof(wintypes.DWORD)]:
+            handle = kernel32.OpenProcess(0x1000, False, pid)  # PROCESS_QUERY_LIMITED_INFORMATION
+            if not handle:
                 continue
-    return pids
+            try:
+                buf = ctypes.create_unicode_buffer(32768)
+                size = wintypes.DWORD(len(buf))
+                if kernel32.QueryFullProcessImageNameW(handle, 0, buf, ctypes.byref(size)):
+                    out.append((int(pid), buf.value))
+            finally:
+                kernel32.CloseHandle(handle)
+        return out
+    except Exception:  # noqa: BLE001 —— 查不了就是查不了，调用方按旧行为走
+        return None
+
+
+def _norm_win_path(path: str) -> str:
+    if path.startswith("\\\\?\\"):
+        path = path[4:]
+    return os.path.normcase(os.path.normpath(path.replace("/", "\\"))).lower()
+
+
+def _pids_of_windows(exe: str, *, enum=None) -> "list[int] | None":
+    """Windows：正在跑这个可执行文件（按**完整路径**）的进程号；查不了回 None。
+
+    **不能按映像名比**：sidecar 的映像名同样是 `Tavotto.exe`
+    （`…\\sidecar\\Tavotto\\Tavotto.exe`），桌面壳崩了留下孤儿 sidecar 时，
+    按名字比会把它当成「已有实例」，之后每次正常冷启动都被误判成转发卡住。
+    与 macOS 那一支（整条路径精确比）同一语义；两边都去掉 `\\\\?\\` 前缀、
+    统一大小写与分隔符。`enum` 是注入点（列出 (pid, 完整路径)）。
+    """
+    images = (_windows_process_images if enum is None else enum)()
+    if images is None:
+        return None
+    want = _norm_win_path(exe)
+    return [pid for pid, path in images if _norm_win_path(path) == want]
 
 
 # 负 returncode 的编号是 POSIX 语义，解码表就该按 POSIX 编号写死——

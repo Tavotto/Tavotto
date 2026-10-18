@@ -83,7 +83,7 @@
   **不认 `CODEX_*` 之类宿主私有环境变量**），命中就回 `sandboxed_launch`
   （`sandbox` + `retryable: true`），一次 spawn 都不做；查不出来（ctypes / OSError）按原样走。
   **绝不借 explorer.exe / 计划任务等手段代为启动——那是逃逸沙箱**，出路只有调用方在沙箱外重跑。
-  **转发卡住不算起来了**：spawn 之前 `_pids_of`（Windows 走 `tasklist` 按映像名）已有实例、
+  **转发卡住不算起来了**：spawn 之前 `_pids_of`（Windows 经 ctypes 枚举进程、按**完整路径**精确比对，不按映像名——sidecar 同名 `Tavotto.exe`，孤儿 sidecar 会被误当成已有实例）已有实例、
   新进程却活过观察窗口不退 → 先 terminate / kill 再回 `launch_failed` + `reason: "forward_stuck"`；
   原本没有实例的 `process_alive` 与查不出实例（None）的旧行为不变。
   看护同在 `tests/test_desktop_launch.py`。
