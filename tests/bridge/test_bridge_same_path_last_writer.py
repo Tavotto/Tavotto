@@ -142,3 +142,32 @@ def test_native_failed_first_claimant_is_replaced(tmp_path, bridge_session, bad)
         sess.wait_event("barrier")
         sess.resume()
         sess.wait_event("exit")
+
+
+HARDLINK = """\
+import os
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+a, _ = plt.subplots(figsize=(4, 2.6))
+b, _ = plt.subplots(figsize=(5, 2.6))
+a.savefig("x.pdf")
+os.makedirs("sub", exist_ok=True)
+os.link("x.pdf", "sub/x.pdf")
+b.savefig("sub/x.pdf")
+plt.show()
+"""
+
+
+def test_native_same_inode_under_different_paths_is_the_same_file(tmp_path, bridge_session):
+    """`sub/x.pdf` 是 `x.pdf` 的硬链接：写它就是改写同一个磁盘文件，路径字符串不同也要判同一文件。"""
+    proj = tmp_path / "proj"
+    write(proj / "link.py", HARDLINK)
+    with bridge_session(proj / "link.py", cwd=str(proj)) as sess:
+        sess.wait_event("barrier")
+        (desc,) = [d for d in sess.ensure_built()["descriptors"] if d["stem"] == "x"]
+        assert round(desc["size_mm"][0] / 25.4, 2) == 5.0
+        sess.resume()
+        sess.wait_event("barrier")
+        sess.resume()
+        sess.wait_event("exit")
