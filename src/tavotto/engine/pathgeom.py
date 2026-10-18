@@ -1483,21 +1483,43 @@ def _paint_members(artist) -> list:
     return [artist]
 
 
+def paint_order_of(artist, ranks: dict[int, int]) -> int | None:
+    """一个元素（含伪元素）在真实 draw 顺序里的序号；给不出就返回 None（= 次序未知，前端不判遮挡）。
+
+    伪元素（柱形系列 / 误差棒 / 茎叶）有多个成员：**只有成员同处一「层」才给**——成员的 rank
+    区间 `[min, max]` 里没有任何**非成员**的 artist 夹在中间。成员 zorder 不同（一根柱
+    `set_zorder(5)`、其余默认，中间还画着别的线）时，一个数字说不清整组「在谁上面」：
+    取最大会把整组报成在线之上，`covers` 就把线降到看不见的层。次序未知 = 既不盖别人也不被盖，
+    保守落在「下面的线仍可选」。不用「成员 zorder 全相同」做判据：误差棒的误差线与数据线
+    zorder 天然差 0.1，却是紧挨着画的一层。
+    """
+    got = [ranks[id(m)] for m in _paint_members(artist) if id(m) in ranks]
+    if not got:
+        return None
+    lo, hi = min(got), max(got)
+    if hi > lo:
+        mine = set(got)
+        if any(lo < r < hi and r not in mine for r in ranks.values()):
+            return None
+    return int(hi)
+
+
 def stamp_paint(geom: dict, artist, ranks: dict[int, int]) -> None:
     """给一份 geometry 补两项**绘制事实**（加字段协议，老前端忽略）：
 
-    * `paint_order`：该元素在真实 draw 顺序里的序号（`paint_ranks`）。伪元素取成员里
-      **最晚**画的那个（它的墨迹最靠上；成员在同一 axes 里 zorder 接近，差别可忽略）。
+    * `paint_order`：该元素在真实 draw 顺序里的序号（`paint_order_of`）。伪元素成员同处
+      一层才给，取最晚画的那个；成员被别的 artist 隔开则不给（次序未知）。
     * `fill_alpha`：有填充的 geometry 才给，填充此刻的有效不透明度（`_face_alpha`）；
       多个成员取最小（不算根本没填充的成员；填充了但 alpha=0 的成员算，值为 0）。
       所有成员都没填充就不写这个字段（前端 `fill_alpha ?? 0` 即判不透明为否）。
 
     两项都是**渲染派生数据**，和 geometry 同生同灭，不进文档、不是 override。
+    端点箭头不出 geometry，它的次序由 manifest 写在元素级 `paint_order` 上（同一个 `paint_order_of`）。
     """
     members = _paint_members(artist)
-    got = [ranks[id(m)] for m in members if id(m) in ranks]
-    if got:
-        geom["paint_order"] = int(max(got))
+    order = paint_order_of(artist, ranks)
+    if order is not None:
+        geom["paint_order"] = order
     if geom.get("fill"):
         alphas = [al for m in members if (al := _face_alpha(m)) is not None]
         if alphas:

@@ -2169,7 +2169,7 @@ export interface ElementGeometry {
   /**
    * 真实绘制次序（ADR 0086 修订）：越大越晚画、越在上层，跨 axes 也可比。主语是 manifest 测量那一刻
    * 的 figure 对象（`pathgeom.paint_ranks`：Figure/Axes 的 children 按 zorder 稳定升序，与
-   * matplotlib draw 同一规则），不是 zorder 字面值也不是登记序。伪元素取成员里最晚画的。
+   * matplotlib draw 同一规则），不是 zorder 字面值也不是登记序。伪元素取成员里最晚画的，成员被别的 artist 隔开则不给。
    * 缺席 = 次序未知（老引擎、3D 子轴），前端不据此判遮挡。
    */
   paint_order?: number
@@ -2351,6 +2351,11 @@ export interface ManifestElement {
    * 写 endpoints_frac override（[ax, ay, bx, by]）。
    */
   arrow_endpoints?: [number, number][]
+  /**
+   * 端点箭头（有 `arrow_endpoints`、不出 geometry）的真实绘制次序，语义同 `ElementGeometry.paint_order`。
+   * 缺席 = 次序未知，不判遮挡。
+   */
+  paint_order?: number
   /**
    * 直角坐标轴四条边框**画出来的那条线**（figure 分数、y 向下），供画布建立
    * 「边框内侧 / 外侧」的语义命中区（Prompt 16，`lib/tickSides.ts`）。

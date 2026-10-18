@@ -248,6 +248,31 @@ describe('规则 5：不轮换时旧行为不变', () => {
     expect(pickElement(m, 0.5, 0.51)?.gid).toBe('line')
   })
 
+  describe('端点箭头（无 geometry、元素级 paint_order）', () => {
+    const arrow = (order?: number) =>
+      mk('arrow', 'arrow_patch', null, {
+        arrow_endpoints: [
+          [0.1, 0.5],
+          [0.9, 0.5],
+        ],
+        ...(order === undefined ? {} : { paint_order: order }),
+      })
+    const opaque = (order: number) =>
+      rect('fill', [0.1, 0.1, 0.9, 0.9], { fill_alpha: 1, paint_order: order })
+
+    it('箭头画在不透明 patch 下面：被降层，patch 赢', () => {
+      expect(gids(man(arrow(2), opaque(5)), 0.5, 0.5)).toEqual(['fill', 'axes_0', 'arrow'])
+    })
+
+    it('箭头画在不透明 patch 上面：仍是 tier 0', () => {
+      expect(gids(man(opaque(1), arrow(2)), 0.5, 0.5)[0]).toBe('arrow')
+    })
+
+    it('箭头次序未知（老 manifest）：不判遮挡', () => {
+      expect(gids(man(arrow(), opaque(5)), 0.5, 0.5)[0]).toBe('arrow')
+    })
+  })
+
   it('没有任何命中：回落到子图，再没有就是 figure', () => {
     const m = man(line('line', [0.1, 0.5], [0.9, 0.5]))
     expect(pickElement(m, 0.5, 0.9)?.gid).toBe('axes_0')

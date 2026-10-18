@@ -1110,7 +1110,7 @@ export function pickElementStack(
         tier: 0,
         score: (lenMm * 2 * PATH_HIT_MM) / (sw * sh),
         bucket: strokeDistBucket(null, d),
-        order: -1,
+        order: el.paint_order ?? -1,
         inside: false,
       })
       continue
@@ -1181,9 +1181,9 @@ export function pickElementStack(
       inside: false,
     })
   }
-  // 被上层不透明填充盖住的几何候选降到 tier 2（次序未知不判遮挡）
+  // 被上层不透明填充盖住的候选（几何元素与端点箭头）降到 tier 2（次序未知不判遮挡）
   for (const h of hits) {
-    if (!h.geom || h.order < 0 || h.tier === 2) continue
+    if (h.order < 0 || h.tier === 2) continue
     if (covers.some((c) => c.gid !== h.el.gid && c.order > h.order)) h.tier = 2
   }
   // 次序：先分层。tier 0 里先比离墨迹的远近档，再比墨迹面积（短网格段不能因为面积小就

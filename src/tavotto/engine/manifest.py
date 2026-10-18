@@ -5083,6 +5083,11 @@ def _measure_manifest(
                 entry["arrow_endpoints"] = [
                     [round(float(x) / W, 4), round(1.0 - float(y) / H, 4)] for x, y in disp
                 ]
+                # 端点箭头不出 geometry（前端按端点线命中），次序写在元素级：箭头画在后画的
+                # 不透明填充下面时，前端据此把它降层（ADR 0086 修订）
+                arrow_order = pathgeom.paint_order_of(artist, paint_ranks)
+                if arrow_order is not None:
+                    entry["paint_order"] = arrow_order
             else:
                 # 不出端点的箭头（带字注释的箭头、坐标系逆算不回去的）从前只有 bbox：
                 # 弯箭杆的 bbox 是一大块空白，点空白也选中它（ADR 0086）。描真实的

@@ -93,6 +93,16 @@ def main():
     # facecolor='none' 的单个 patch：根本不填充
     ax5.add_patch(Rectangle((0.2, 0.2), 0.3, 0.3, fc="none", ec="k"))
     fig5.savefig("TransparentBarFig.pdf")
+
+    # 独立箭头（端点契约，manifest 不给 geometry）画在后加的不透明 patch 下面
+    from matplotlib.patches import FancyArrowPatch
+
+    fig6, ax6 = plt.subplots(figsize=(4.0, 3.0))
+    ax6.set_xlim(0, 1)
+    ax6.set_ylim(0, 1)
+    ax6.add_patch(FancyArrowPatch((0.1, 0.5), (0.9, 0.5), arrowstyle="->"))
+    ax6.add_patch(Rectangle((0.3, 0.3), 0.4, 0.4, fc="k"))
+    fig6.savefig("ArrowFig.pdf")
 """
 
 
@@ -197,11 +207,31 @@ def test_group_elements_get_facts_too(manifests):
     assert eb["geometry"]["fill_alpha"] == 1.0
 
 
-def test_group_paint_order_is_the_latest_member(manifests):
+def test_group_split_by_other_artists_has_no_paint_order(manifests):
     man = manifests("MixedBarFig")
     bars = next(e for e in man["elements"] if e["role"] == "bar_series")
-    # 最晚画的成员（zorder 5 的那根）在线之上：整组的墨迹最上层以它计
-    assert bars["geometry"]["paint_order"] > _order(man, "axes_0.lines_0")
+    # 第 0 根柱 zorder 5（在线之上）、其余柱在线之下：线夹在成员之间，一个数字说不清
+    # 整组在谁上面——次序未知（不写），线在低柱上方不会被组降层
+    assert "paint_order" not in bars["geometry"]
+    # 线自己的次序照常给
+    assert "paint_order" in _geom(man, "axes_0.lines_0")
+
+
+def test_contiguous_group_takes_the_latest_member(manifests):
+    man = manifests("BarFig")
+    eb = next(e for e in man["elements"] if e["role"] == "errorbar")
+    bars = next(e for e in man["elements"] if e["role"] == "bar_series")
+    # 误差棒的数据线与误差线 zorder 差 0.1 但紧挨着画：同一层，照给
+    assert eb["geometry"]["paint_order"] > bars["geometry"]["paint_order"]
+
+
+def test_endpoint_arrow_gets_element_level_paint_order(manifests):
+    man = manifests("ArrowFig")
+    arrow = next(e for e in man["elements"] if e.get("arrow_endpoints"))
+    assert "geometry" not in arrow
+    patch = next(e for e in man["elements"] if e["role"] == "patch")
+    # 箭头先加、矩形后加（同 zorder）：箭头次序更小
+    assert arrow["paint_order"] < patch["geometry"]["paint_order"]
 
 
 def test_fully_transparent_member_keeps_group_conservative(manifests):

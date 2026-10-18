@@ -136,7 +136,7 @@ bbox 的这两处变化，对拖动锚点没有影响：文字的 `anchor` 由 `
   升序、递归展开（`pathgeom.paint_ranks`），与 matplotlib 的 draw 同一规则——zorder 相同按添加次序，
   不同 axes 按 axes 的 zorder（twin 轴整个在宿主之后），inset 等子轴按它自己的 zorder 排位。
   不是脚本里的 zorder 字面值，也不是 manifest 登记序（登记序按种类分组，不是 draw 次序）。伪元素
-  （柱形系列 / 误差棒 / 茎叶）取成员里最晚画的。3D 子轴内容不给（按深度而非 zorder 画）。
+  （柱形系列 / 误差棒 / 茎叶）取成员里最晚画的，**但只在成员同处一层时才给**：成员 rank 区间 `[min, max]` 内夹着非成员 artist（例：一根柱 zorder 5、其余柱默认、线 zorder 4）就不写 `paint_order`，次序未知＝不盖别人也不被盖，免得整组被报在线之上而把低柱上方的线降层。不用「成员 zorder 全相同」：误差棒的误差线与数据线 zorder 差 0.1 却紧挨着画。端点箭头（`arrow_endpoints`，不出 geometry）把同一个次序写在**元素级** `paint_order`，前端按它参与遮挡降级（箭头无填充，只会被盖）。3D 子轴内容不给（按深度而非 zorder 画）。
 * `fill_alpha`：有填充的 geometry 才给，填充此刻画出来的不透明度。**读 `get_facecolor()` 的 alpha，
   不乘**：matplotlib 的 `set_alpha` 是替换颜色里的 alpha（实测 facecolor alpha .5 + artist alpha .8
   画出来是 .8，像素验证）。逐元素色（多色 PolyCollection、逐柱不同 alpha）取**最小值**（保守：
