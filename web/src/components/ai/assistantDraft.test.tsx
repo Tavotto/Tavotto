@@ -1162,6 +1162,24 @@ describe('同步状态机：单一 reconcile + 写入版本（#1098）', () => {
     expect(useAiStore.getState().sessions[0]).toMatchObject({ status: 'cancelled', finalized: true, changed: true, diff: 'REAL-DIFF' })
   })
 
+  it('查询接回的会话还是临时快照（interrupted、没有 ended_ms）：之后的对账继续取详情，拿到终态的 changed / diff 才收尾', async () => {
+    be.pendings.set('pa\u0000Fig1.pdf', [{ rid: 'rid-intr-0000001', text: '别的服务进程发的', sent: SENT, script: 'p1.py' }])
+    useSelectionStore.setState({ ids: ['p3'] } as never)
+    await mount()
+    vi.mocked(fetchAiRequest).mockResolvedValue({ session: 's-intr', status: 'interrupted', changed: false, script: 'p1.py' })
+    vi.mocked(fetchAiSession).mockResolvedValue({ status: 'interrupted', ended_ms: null, changed: false, diff: '', transcript: [] } as never)
+    await click(q('[data-ai-check]'))
+    await settle()
+    const s0 = useAiStore.getState().sessions.find((x) => x.id === 's-intr')
+    expect(s0 && !s0.finalized).toBe(true) // 临时快照：不当终态
+    vi.mocked(fetchAiSession).mockResolvedValue({ status: 'interrupted', ended_ms: 9, changed: true, diff: '@@ d', transcript: [] } as never)
+    await act(async () => window.dispatchEvent(new Event('mm:sse-open')))
+    await settle()
+    const s1 = useAiStore.getState().sessions.find((x) => x.id === 's-intr')
+    expect(s1?.finalized).toBe(true)
+    expect(s1?.changed).toBe(true)
+  })
+
   it('读不到快照 / 快照仍是 running：本地会话不动（不把「查不到」当结束）', async () => {
     vi.mocked(aiRun).mockResolvedValue({ session: 's-1', script: 'p1.py' })
     await mount()

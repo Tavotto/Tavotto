@@ -230,11 +230,12 @@ const early = new Map<string, EarlyEvent[]>()
 
 /**
  * **非终态会话的谓词**：还没拿到后端确定的终态（`!finalized`）。本地 `cancel` 成功后状态先标成 `cancelled`，但那只是「中止请求被接受」，
- * 后端的最终结局（changed / diff / refresh）还没到——所以 running 和「cancelled 但未 finalized」都要继续对账，
+ * 后端的最终结局（changed / diff / refresh）还没到——所以 running 和「cancelled 但未 finalized」都要继续对账；
+ * 查询接回的临时快照（`interrupted` 还没有 `ended_ms`：另一个服务进程的 `interrupt_all()` 刚写了 status、pump 还没收尾）
+ * 在本地映射成 `failed` 但同样没 finalized，也要继续对账。会话只在 `accept` 里建，没 finalized = 还没拿到终态，所以只看这一个标志，
  * 否则 `ai.done` 在 SSE 断线期间丢了，会话永远停在 cancelled、结果（脚本其实被改了）也看不到。
  */
-export const isOpenSession = (x: Pick<AiSession, 'status' | 'finalized'>): boolean =>
-  !x.finalized && (x.status === 'running' || x.status === 'cancelled')
+export const isOpenSession = (x: Pick<AiSession, 'status' | 'finalized'>): boolean => !x.finalized
 
 /**
  * 一份会话快照是不是**终态**：非 running；而 `cancelled` / `interrupted` 必须带着后端写下的 `ended_ms`（pump 收尾之后才有；
