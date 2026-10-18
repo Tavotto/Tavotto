@@ -46,6 +46,10 @@ class Budget:
             raise BudgetExceeded(f"budget exhausted after {self.runs} run(s)")
         self.runs += 1
 
+    def remaining(self) -> float:
+        """Wall-clock budget left; an in-flight trial must not outlive it."""
+        return max(0.0, self.max_seconds - (time.monotonic() - self.started))
+
     @property
     def seconds(self) -> float:
         return round(time.monotonic() - self.started, 3)
@@ -255,11 +259,21 @@ def minimize_candidate(
         )
         return ok, reason, record
 
+    base_record: dict | None = None
+
     def close() -> Result:
         """Common tail for every outcome: write_outcome needs files/after/reduction/runs/seconds."""
         result.update(trials=trials, runs=budget.runs, seconds=budget.seconds)
         if result["status"] != "minimized":
-            result.update(files=files0, after=result["before"], reduction=None)
+            # Fall back to the original script AND the evidence of the run that reproduced it:
+            # the reduced candidate's record/reproducibility describe a different script.
+            result.update(
+                files=files0,
+                after=result["before"],
+                reduction=None,
+                final_record=base_record,
+                reproducibility=None,
+            )
         return result
 
     try:
@@ -267,6 +281,7 @@ def minimize_candidate(
         budget.spend()
         base = oracle(reduction_for(all_units, all_units), "base")
         original_sig = signature(base, chain, rules)
+        base_record = base
         if original_sig["outcome"] != "difference_found" or original_sig["native_exit"] != 0:
             result.update(
                 status="not_reproduced",
@@ -451,6 +466,11 @@ def find_candidate(report_path: Path, candidate_id: str) -> tuple[dict, dict]:
     raise cg.EvidenceError(f"candidate {candidate_id} is not in {run_dir / 'candidates.json'}")
 
 
+def trial_timeout(per_trial: float, budget: Budget) -> float:
+    """Per-trial timeout capped by the wall-clock budget left (floor avoids a 0 timeout)."""
+    return min(per_trial, max(0.5, budget.remaining()))
+
+
 def run(args) -> int:
     rules = TG.load_rules()
     out = Path(args.out).resolve()
@@ -475,7 +495,9 @@ def run(args) -> int:
     work.mkdir(parents=True, exist_ok=True)
 
     def oracle(reduction, tag):
-        return ex.run_one(derived, derived["seed"], work, args.timeout, reduction or None, tag)
+        # never let one trial run past the total wall-clock budget (floor avoids a 0 timeout)
+        timeout = trial_timeout(args.timeout, budget)
+        return ex.run_one(derived, derived["seed"], work, timeout, reduction or None, tag)
 
     budget = Budget(args.max_runs, args.max_seconds)
     result = minimize_candidate(derived, parent, oracle, rules, budget, args.repeat)

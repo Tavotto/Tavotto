@@ -181,6 +181,10 @@ def _at(source, addr):
     return node
 
 
+def result_original(case) -> str:
+    return xt.build(case.parent, ("show_close",), 7)[1][case.parent.script].decode()
+
+
 class Search(unittest.TestCase):
     """The whole search against a scripted oracle (no processes): fast and deterministic."""
 
@@ -314,6 +318,32 @@ class Search(unittest.TestCase):
             for cid in ("b" * 20, "c" * 20):  # observed-but-clean, and listed-but-never-run
                 with self.assertRaises(cg.EvidenceError, msg=cid):
                     mn.find_candidate(report, cid)
+
+    def test_a_failed_confirmation_falls_back_with_the_base_run_evidence_only(self):
+        def oracle(reduction, tag):
+            rec = record() if not tag.startswith("confirm") else record(error="script_error")
+            return {**rec, "_tag": tag}
+
+        result = mn.minimize_candidate(
+            self.manifest, self.parent, oracle, RULES, mn.Budget(80, 600), 1
+        )
+        self.assertEqual(result["status"], "minimization_failed")
+        self.assertEqual(result["final_record"]["_tag"], "base", "evidence is the base run's")
+        self.assertIsNone(result["reproducibility"])
+        self.assertIsNone(result["reduction"])
+        self.assertEqual(result["files"][self.parent.script].decode(), result_original(self))
+
+    def test_each_trial_is_bounded_by_the_remaining_wall_clock_budget(self):
+        budget = mn.Budget(10, 100)
+        self.assertLessEqual(mn.trial_timeout(240, budget), 100)
+        short = mn.Budget(10, 1)
+        short.started -= 0.9  # 0.1 s left
+        self.assertLess(mn.trial_timeout(240, short), 1.0)
+        self.assertGreater(mn.trial_timeout(240, short), 0)
+        spent = mn.Budget(10, 1)
+        spent.started -= 5
+        self.assertEqual(mn.trial_timeout(240, spent), 0.5)
+        self.assertEqual(mn.trial_timeout(3, mn.Budget(10, 1000)), 3)
 
     def test_the_documented_replay_command_shape_parses_and_runs(self):
         result, _ = self.search(self.failing)
