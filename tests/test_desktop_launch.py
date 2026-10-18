@@ -155,7 +155,7 @@ def _spawn_with(proc, pids, fake):
         "C:\\T\\Tavotto.exe",
         handoff.Target("/p", "Fig1"),
         spawn=lambda argv, **kw: proc,
-        pids_of=lambda app: pids,
+        pids_of=pids if callable(pids) else (lambda app: pids),
         clock=fake.clock,
         sleep=fake.sleep,
     )
