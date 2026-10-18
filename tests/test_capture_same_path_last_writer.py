@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
@@ -186,7 +187,7 @@ class _State:
         self.cap.setdefault(stem, fig)
         self.src.setdefault(stem, SAVEFIG)
 
-    def save(self, fig, target, call=PDF, extra=None, stem="x", locked=False, verify=None):
+    def save(self, fig, target, call=PDF, extra=None, stem="x", locked=False):
         return figcapture.note_savefig_writer(
             self.w,
             self.cap,
@@ -199,7 +200,6 @@ class _State:
             call,
             extra,
             locked,
-            verify,
         )
 
 
@@ -614,66 +614,6 @@ class TestVerifyRender:
         assert seen == [1]  # 只调传进去的那个“真”函数一次
 
 
-class TestVerifyOnlyWhenTakingOver:
-    @staticmethod
-    def _run(verdict):
-        calls = []
-
-        def verify():
-            calls.append(1)
-            return verdict
-
-        return calls, verify
-
-    def test_holder_writing_itself_never_verifies(self):
-        st, a = _State(), _Fig()
-        st.claim(a)
-        n, v = self._run(False)
-        st.save(a, "/p/x.pdf", verify=v)
-        st.save(a, "/p/x.png", {"format": "png"}, verify=v)
-        assert n == [] and st.calls["x"] == [PDF, {"format": "png"}]
-
-    def test_non_taking_foreign_write_is_verified_and_ignored_on_failure(self):
-        """不会顶替的非持有者写也更新 `files`，所以也要验证；失败不更新 files。"""
-        st, a, b = _State(), _Fig(), _Fig()
-        st.claim(a)
-        st.save(a, "/p/x.pdf")
-        st.save(a, "/p/x.png", {"format": "png"})
-        n, v = self._run(False)
-        assert st.save(b, "/p/x.pdf", {"format": "pdf", "dpi": "bad"}, verify=v) is False
-        assert n == [1]
-        assert st.w["x"]["files"]["/p/x.pdf"]() is a and id(b) not in st.w["x"]["by"]
-
-    def test_failed_foreign_write_cannot_set_up_a_wrong_later_takeover(self):
-        """A 写 pdf+png；B 以坏参数写 pdf（失败）；B 再合法写 png → 磁盘上 pdf 仍是 A，A 不能被顶掉。"""
-        st, a, b = _State(), _Fig(), _Fig()
-        st.claim(a)
-        st.save(a, "/p/x.pdf")
-        st.save(a, "/p/x.png", {"format": "png"})
-        _, bad = self._run(False)
-        st.save(b, "/p/x.pdf", {"format": "pdf", "dpi": "bad"}, verify=bad)
-        _, ok = self._run(True)
-        assert st.save(b, "/p/x.png", {"format": "png"}, verify=ok) is False
-        assert st.cap["x"] is a
-
-    def test_taking_over_verifies_once_and_commits_on_success(self):
-        st, a, b = _State(), _Fig(), _Fig()
-        st.claim(a)
-        st.save(a, "/p/x.pdf")
-        n, v = self._run(True)
-        assert st.save(b, "/p/x.pdf", PDF, "art", verify=v) is True
-        assert n == [1] and st.cap["x"] is b and st.extras["x"] == ["art"]
-
-    def test_failed_verification_ignores_the_write_entirely(self):
-        st, a, b = _State(), _Fig(), _Fig()
-        st.claim(a)
-        st.save(a, "/p/x.pdf")
-        n, v = self._run(False)
-        assert st.save(b, "/p/x.pdf", {"format": "pdf", "dpi": 1}, verify=v) is False
-        assert n == [1] and st.cap["x"] is a and st.calls["x"] == [PDF]
-        assert id(b) not in st.w["x"]["by"] and st.w["x"]["files"]["/p/x.pdf"]() is a
-
-
 class TestFileIdentity:
     def test_case_variants_follow_the_directory_filesystem(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
@@ -693,6 +633,33 @@ class TestFileIdentity:
         expected = (d.parent / "caseprobe").exists()
         figcapture._CASE_FOLD_CACHE.pop(str(d), None)
         assert figcapture._dir_folds_case(str(d)) is expected
+
+    def test_probe_sees_a_literal_variant_symlink_as_case_sensitive(self, tmp_path):
+        """区分大小写的卷上，目录的大小写变体若是指向它的符号链接，samefile 为真但它是独立条目，不是大小写别名。"""
+        real = tmp_path.resolve() / "CaseDir"
+        real.mkdir()
+        try:
+            (tmp_path.resolve() / "casedir").symlink_to(real)
+        except (FileExistsError, OSError):
+            pytest.skip("本机文件系统不区分大小写或不能建符号链接")
+        figcapture._CASE_FOLD_CACHE.pop(str(real), None)
+        assert figcapture._dir_folds_case(str(real)) is False
+
+    @pytest.mark.parametrize("literal,expected", [(True, False), (False, True)])
+    def test_probe_logic_with_a_faked_filesystem(self, tmp_path, monkeypatch, literal, expected):
+        d = str(tmp_path.resolve() / "CaseDir")
+        os.makedirs(d)
+        figcapture._CASE_FOLD_CACHE.pop(d, None)
+        real_listdir = os.listdir
+        monkeypatch.setattr(
+            figcapture.os,
+            "listdir",
+            lambda p: [*real_listdir(p), "cASEdIR"] if literal else real_listdir(p),
+        )
+        monkeypatch.setattr(figcapture.os.path, "exists", lambda p: True)
+        monkeypatch.setattr(figcapture.os.path, "samefile", lambda a, b: True)
+        assert figcapture._dir_folds_case(d) is expected
+        figcapture._CASE_FOLD_CACHE.pop(d, None)
 
     def test_probe_falls_back_to_platform_default(self, tmp_path, monkeypatch):
         gone = str(tmp_path / "Nope")
@@ -796,67 +763,6 @@ def test_real_worker_failed_non_taking_write_does_not_hold_a_file(tmp_path):
     assert _width_in(built, "shape") == 4.0  # shape.pdf 磁盘上仍是 A，A 不能被顶掉
 
 
-class TestLazyHolderVerification:
-    """Codex r4305758512：持有者自己的失败保存（未验证的登记）不能挡住别的图的顶替；常规路径仍零渲染。"""
-
-    @staticmethod
-    def _counter(verdict):
-        n = []
-
-        def thunk():
-            n.append(1)
-            return verdict
-
-        return n, thunk
-
-    def test_holders_own_write_does_not_render(self):
-        st, a = _State(), _Fig()
-        st.claim(a)
-        n, t = self._counter(False)
-        st.save(a, "/p/x.pdf", verify=t)
-        st.save(a, "/p/x.png", {"format": "png"}, verify=t)
-        assert n == []
-
-    def test_unverified_blocker_that_fails_is_dropped_and_does_not_block(self):
-        st, a, b = _State(), _Fig(), _Fig()
-        st.claim(a)
-        n, bad = self._counter(False)
-        st.save(a, "/p/x.pdf", {"format": "pdf", "dpi": "bad"}, verify=bad)  # 持有者自己的失败保存
-        _, ok = self._counter(True)
-        assert st.save(b, "/p/x.png", {"format": "png"}, verify=ok) is True
-        assert st.cap["x"] is b and n == [1]
-        assert "/p/x.pdf" not in st.w["x"]["files"]  # 从未落盘的登记被删掉
-
-    def test_valid_blocker_blocks_and_is_verified_only_once(self):
-        st, a, b = _State(), _Fig(), _Fig()
-        st.claim(a)
-        n, good = self._counter(True)
-        st.save(a, "/p/x.pdf", verify=good)
-        _, ok = self._counter(True)
-        assert st.save(b, "/p/x.png", {"format": "png"}, verify=ok) is False
-        assert st.save(b, "/p/x.svg", {"format": "svg"}, verify=ok) is False
-        assert st.cap["x"] is a and n == [1]  # A 的 pdf 确实在盘上：挡住，且只验证一次
-
-    def test_only_blocking_entries_are_verified(self):
-        """没有要挡的顶替（持有者的登记就是这次的目标）时不渲染。"""
-        st, a, b = _State(), _Fig(), _Fig()
-        st.claim(a)
-        n, t = self._counter(True)
-        st.save(a, "/p/x.pdf", verify=t)
-        _, ok = self._counter(True)
-        st.save(b, "/p/x.pdf", verify=ok)  # 同一目标：持有者不在「别的」目标上
-        assert n == []
-
-    def test_verifier_holds_figure_weakly(self):
-        import gc
-
-        fig = _Fig()
-        v = figcapture.savefig_verifier(lambda *a, **k: None, fig, "a.pdf", (), {"dpi": 1})
-        del fig
-        gc.collect()
-        assert v() is False
-
-
 LAZY_SCRIPT = """\
 import matplotlib.pyplot as plt
 a, _ = plt.subplots(figsize=(4, 2.6))
@@ -886,3 +792,63 @@ def test_browser_failed_holder_write_does_not_block(tmp_path, first, expect):
     out = browser_load(LAZY_SCRIPT.format(first=first), "lazy.py", tmp_path / "ws")
     assert out["ok"], out
     assert _browser_width_in(out, "x") == expect
+
+
+# 维护者裁决（#1141 r4305796141）：safe / 浏览器每次带路径的 savefig 当场验证——保存当时的状态，不是之后的 Figure
+BROKEN_AFTER = r"""
+import matplotlib.pyplot as plt
+a, _ = plt.subplots(figsize=(4, 2.6))
+b, _ = plt.subplots(figsize=(5, 2.6))
+a.savefig("x.pdf")
+a.suptitle(r"$\frac{$")  # 保存之后才变得渲染不出
+b.savefig("x.png")
+"""
+
+
+@needs_worker
+def test_real_worker_holder_broken_after_its_save_is_still_the_holder(tmp_path):
+    """A 的 x.pdf 当时存成功了（盘上有）；之后 A 被改成渲染不出，B 存 x.png：A 仍是持有者，不能被 B 顶掉。"""
+    write(tmp_path, "brk.py", BROKEN_AFTER)
+    built = desktop_build(tmp_path, "brk.py")
+    assert "x" not in built["stems"]  # B 若被捕获，x 会以 B 的 5 英寸出现
+    assert [f["stem"] for f in built["failed_figures"]] == ["x"]  # 被捕获的是（现在渲染不出的）A
+
+
+@needs_worker
+def test_real_worker_holders_failed_own_save_is_not_recorded(tmp_path):
+    write(
+        tmp_path,
+        "own.py",
+        "import matplotlib.pyplot as plt\n"
+        "a, _ = plt.subplots(figsize=(4, 2.6))\n"
+        "try:\n    a.savefig('x.pdf', dpi='bad')\nexcept Exception:\n    pass\n"
+        "a.savefig('x.png')\n",
+    )
+    built = desktop_build(tmp_path, "own.py")
+    (desc,) = [d for d in built["descriptors"] if d["stem"] == "x"]
+    assert [c["format"] for c in desc["savefig_calls"]] == ["png"]  # 失败的 pdf 保存不记
+
+
+COUNTED = r"""
+import matplotlib.pyplot as plt
+import matplotlib.backends.backend_pdf as bp
+n = [0]
+orig = bp.FigureCanvasPdf.print_pdf
+def spy(self, *a, **k):
+    n[0] += 1
+    return orig(self, *a, **k)
+bp.FigureCanvasPdf.print_pdf = spy
+fig, _ = plt.subplots(figsize=(4, 2.6))
+fig.savefig("x.pdf")
+assert n[0] == 1, n[0]
+fig.savefig("x.pdf")
+assert n[0] == 2, n[0]
+"""
+
+
+@needs_worker
+def test_real_worker_each_savefig_renders_exactly_once(tmp_path):
+    """代价（维护者裁决）：safe 里每次带路径的 savefig 多一次 BytesIO 渲染，且恰好一次。"""
+    write(tmp_path, "count.py", COUNTED)
+    built = desktop_build(tmp_path, "count.py")  # 断言失败会让脚本执行失败抛出
+    assert "x" in built["stems"]
