@@ -170,6 +170,68 @@ fn fill2(template: &str, path: &str, err: &str) -> String {
     template.replace("{path}", path).replace("{err}", err)
 }
 
+/// 写 hello 失败后，等子进程退出的上限。
+const EXIT_GRACE: Duration = Duration::from_secs(2);
+
+/// 握手阶段发现 sidecar 已退出：带退出码，stderr 尾巴只进 message。
+fn exited_error(
+    status: std::process::ExitStatus,
+    log_path: &Path,
+    m: &crate::i18n::ShellText,
+) -> StartError {
+    use crate::rescue::{code, stage};
+    let tail = log_tail(log_path, 2000);
+    let mut e = StartError::new(
+        stage::HANDSHAKE,
+        code::SIDECAR_EXITED,
+        m.sidecar_exited
+            .replace("{status}", &status.to_string())
+            .replace("{tail}", &tail),
+    );
+    e.info.exit_code = status.code();
+    e
+}
+
+/// 把 hello 行写进 sidecar 的 stdin。
+///
+/// 写失败（EPIPE）多半是 sidecar 在父进程写之前就退出了（Python 一启动 import 失败等）：
+/// 此时报 `handshake / sidecar_exited` + 退出码，与握手循环里发现退出走同一条路径；
+/// 只有子进程仍在运行时才是真正的「stdin 写不进去」。
+fn send_hello(
+    child: &mut Child,
+    stdin: &mut ChildStdin,
+    line: &str,
+    log_path: &Path,
+    m: &crate::i18n::ShellText,
+) -> Result<(), StartError> {
+    use crate::rescue::{code, stage};
+    let err = match stdin
+        .write_all(line.as_bytes())
+        .and_then(|()| stdin.flush())
+    {
+        Ok(()) => return Ok(()),
+        Err(e) => e,
+    };
+    // 管道断了但进程还没被回收：短暂轮询，给它一点时间把退出状态交出来
+    let deadline = Instant::now() + EXIT_GRACE;
+    loop {
+        if let Ok(Some(status)) = child.try_wait() {
+            return Err(exited_error(status, log_path, m));
+        }
+        if Instant::now() >= deadline {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    let _ = child.kill();
+    Err(StartError::new(
+        stage::LAUNCH,
+        code::SIDECAR_STDIN_FAILED,
+        m.sidecar_stdin_write_failed
+            .replace("{err}", &err.to_string()),
+    ))
+}
+
 fn log_tail(path: &Path, max: u64) -> String {
     let Ok(mut f) = std::fs::File::open(path) else {
         return String::new();
@@ -291,18 +353,7 @@ impl Sidecar {
             "parent_pid": std::process::id(),
         });
         hello[port_memory::HELLO_FIELD] = serde_json::json!(preferred);
-        stdin
-            .write_all(format!("{hello}\n").as_bytes())
-            .and_then(|()| stdin.flush())
-            .map_err(|e| {
-                let _ = child.kill();
-                StartError::new(
-                    stage::LAUNCH,
-                    code::SIDECAR_STDIN_FAILED,
-                    m.sidecar_stdin_write_failed
-                        .replace("{err}", &e.to_string()),
-                )
-            })?;
+        send_hello(&mut child, &mut stdin, &format!("{hello}\n"), &log_path, m)?;
 
         let deadline = Instant::now() + HANDSHAKE_TIMEOUT;
         let port = loop {
@@ -331,16 +382,7 @@ impl Sidecar {
                 }
             }
             if let Ok(Some(status)) = child.try_wait() {
-                let tail = log_tail(&log_path, 2000);
-                let mut e = StartError::new(
-                    stage::HANDSHAKE,
-                    code::SIDECAR_EXITED,
-                    m.sidecar_exited
-                        .replace("{status}", &status.to_string())
-                        .replace("{tail}", &tail),
-                );
-                e.info.exit_code = status.code();
-                return Err(e);
+                return Err(exited_error(status, &log_path, m));
             }
             if Instant::now() >= deadline {
                 let _ = child.kill();
@@ -555,6 +597,61 @@ mod tests {
         assert!(e.message.contains("SECRET_STDERR_TEXT"));
         let facts = serde_json::to_string(&e.info).unwrap();
         assert!(!facts.contains("SECRET_STDERR_TEXT"));
+    }
+
+    /// 起一个 `sh -c body` 子进程，返回 (child, stdin)。
+    #[cfg(unix)]
+    fn spawn_sh(body: &str) -> (Child, ChildStdin) {
+        let mut child = Command::new("sh")
+            .args(["-c", body])
+            .stdin(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let stdin = child.stdin.take().unwrap();
+        (child, stdin)
+    }
+
+    /// 写 hello 失败且子进程已退出（确定性：先等它退出、读端必已关闭）→ sidecar_exited + 退出码。
+    #[cfg(unix)]
+    #[test]
+    fn a_hello_write_to_an_already_dead_sidecar_reports_its_exit_code() {
+        let (mut child, mut stdin) = spawn_sh("echo SECRET_STDERR_TEXT >&2; exit 3");
+        while child.try_wait().unwrap().is_none() {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let log = scratch("log").join("sidecar.log");
+        std::fs::write(&log, b"SECRET_STDERR_TEXT\n").unwrap();
+        let m = crate::i18n::text(crate::i18n::DEFAULT_LOCALE);
+        let e = send_hello(&mut child, &mut stdin, "{}\n", &log, m).unwrap_err();
+        assert_eq!(
+            (e.info.stage, e.info.code, e.info.exit_code),
+            ("handshake", "sidecar_exited", Some(3))
+        );
+        assert!(e.message.contains("SECRET_STDERR_TEXT"));
+    }
+
+    /// 写失败而子进程仍在跑（自己关了 stdin 读端）→ 仍是 sidecar_stdin_failed，且不留孤儿。
+    #[cfg(unix)]
+    #[test]
+    fn a_hello_write_to_a_live_sidecar_with_closed_stdin_is_a_stdin_failure() {
+        let (mut child, mut stdin) = spawn_sh("exec 0<&-; sleep 30");
+        let log = scratch("log").join("sidecar.log");
+        let m = crate::i18n::text(crate::i18n::DEFAULT_LOCALE);
+        // 等 sh 真把 stdin 关掉：写到失败为止（sh 启动前管道缓冲区能吃下小写入）
+        let mut last = Ok(());
+        for _ in 0..200 {
+            last = send_hello(&mut child, &mut stdin, "{}\n", &log, m);
+            if last.is_err() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let e = last.unwrap_err();
+        assert_eq!(
+            (e.info.stage, e.info.code, e.info.exit_code),
+            ("launch", "sidecar_stdin_failed", None)
+        );
+        assert!(child.wait().is_ok(), "killed, no orphan");
     }
 
     #[cfg(unix)]

@@ -56,7 +56,7 @@ import { Dialog } from '../ui/Dialog'
 import { Row, Section } from '../ui/Field'
 import { SummaryRow } from '../ui/SummaryRow'
 import { NumberField, TextInput } from '../ui/Input'
-import { Notice } from '../ui/Notice'
+import { Notice, NoticeReveal } from '../ui/Notice'
 import { Tip } from '../ui/Tooltip'
 import { ArrangeSection } from './ArrangeSection'
 import { INSPECTOR_LABEL_W } from './layout'
@@ -111,20 +111,30 @@ export function PanelSection({ objs }: { objs: PanelObject[] }) {
 export function PanelCapabilityNote({ panel }: { panel: PanelObject }) {
   useTranslation('inspector')
   const cap = useAssetStore((s) => s.byId[panel.fileId]?.capability)
-  if (panel.script || !cap || cap.status === 'editable') return null
+  const show = !panel.script && !!cap && cap.status !== 'editable'
   return (
-    /* 说明条只有一种皮：`ui/Notice`（2026-10-07 设计审计 §9.2：此前属性栏里四种提示框皮肤） */
-    <Notice data-capability-note className="mx-3 mb-1.5" title={statusLabel(cap.status)}>
-      <p className="text-ink-2">{reasonText(cap)}</p>
-      <Button
-        variant="ghost"
-        size="sm"
-        className="-ml-2.5 mt-0.5"
-        onClick={() => useProjectReadinessStore.getState().focusPanel(panel.fileId, 'panel')}
-      >
-        {translate('readiness.openCenter', { ns: 'workspace' })}
-      </Button>
-    </Notice>
+    // 能力是异步到的：事后才出现的说明条不硬插，包 NoticeReveal（下面的控件顺着滑下去，不瞬间跳一格）
+    <NoticeReveal open={show}>
+      {cap && (
+        /* 说明条只有一种皮：`ui/Notice`（2026-10-07 设计审计 §9.2：此前属性栏里四种提示框皮肤）；
+           一句话（标题）+ 次要灰字（原因）+ 一个入口 */
+        <Notice
+          data-capability-note
+          className="mx-3 mb-1.5"
+          title={statusLabel(cap.status)}
+          // 一行 +「详情 ›」：状态一句话在行上，原因折进详情
+          detail={reasonText(cap)}
+          action={
+            <Button
+              size="sm"
+              onClick={() => useProjectReadinessStore.getState().focusPanel(panel.fileId, 'panel')}
+            >
+              {translate('readiness.openCenter', { ns: 'workspace' })}
+            </Button>
+          }
+        />
+      )}
+    </NoticeReveal>
   )
 }
 
@@ -132,42 +142,49 @@ export function PanelCapabilityNote({ panel }: { panel: PanelObject }) {
  * 升级前放上排版的 tight 图（ADR 0098 §三，用户 2026-09-26 选 C）：它保持着升级前按 figsize 的
  * 样子，这里说一句为什么与脚本保存的原图不同，并给一键切换（内容在排版上不动、外框变）。
  * 判据与换算都在 `lib/figureFrame`，依据是这张面板精确的 manifest——没有就不出现。
+ * manifest 是异步到的，所以包 NoticeReveal：它长出来时下面的控件顺着滑下去，不瞬间跳。
  */
 export function PanelFrameNote({ panel }: { panel: PanelObject }) {
   useTranslation('inspector')
   const blockedId = useId()
   const manifest = useExactPanelManifest(panel)
   const frame = frameSwitchAvailable(panel, manifest)
-  if (!frame) return null
   // 旧裁剪与新图幅不相交：换过去什么都不剩，不给切换，说清为什么（判据只在 `frameSwitchPatch`）
-  const blocked = !frameSwitchPatch(panel, frame)
+  const blocked = frame ? !frameSwitchPatch(panel, frame) : false
   return (
-    <Notice data-frame-note className="mx-3 mb-1.5" title={pn('frameLegacyTitle')}>
-      <p className="text-ink-2">
-        {pn('frameLegacyBody', {
-          w: round1(frame.savefig_mm[2]),
-          h: round1(frame.savefig_mm[3]),
-        })}
-      </p>
-      <Button
-        variant="ghost"
-        size="sm"
-        className="-ml-2.5 mt-0.5"
-        data-frame-adopt
-        disabled={blocked}
-        aria-describedby={blocked ? blockedId : undefined}
-        onClick={() => {
-          adoptScriptFrame(panel.id)
-        }}
-      >
-        {pn('frameLegacyAdopt')}
-      </Button>
-      {blocked && (
-        <p id={blockedId} data-frame-adopt-blocked className="text-ink-2">
-          {pn('frameLegacyAdoptBlocked')}
-        </p>
+    <NoticeReveal open={!!frame}>
+      {frame && (
+        <Notice
+          data-frame-note
+          className="mx-3 mb-1.5"
+          title={pn('frameLegacyTitle')}
+          // 一行 +「详情 ›」：为什么与脚本保存的原图不同折进详情；换不过去的原因必须常显（按钮 aria-describedby 指它）
+          detail={pn('frameLegacyBody', {
+            w: round1(frame.savefig_mm[2]),
+            h: round1(frame.savefig_mm[3]),
+          })}
+          action={
+            <Button
+              size="sm"
+              data-frame-adopt
+              disabled={blocked}
+              aria-describedby={blocked ? blockedId : undefined}
+              onClick={() => {
+                adoptScriptFrame(panel.id)
+              }}
+            >
+              {pn('frameLegacyAdopt')}
+            </Button>
+          }
+        >
+          {blocked && (
+            <span id={blockedId} data-frame-adopt-blocked className="block">
+              {pn('frameLegacyAdoptBlocked')}
+            </span>
+          )}
+        </Notice>
       )}
-    </Notice>
+    </NoticeReveal>
   )
 }
 

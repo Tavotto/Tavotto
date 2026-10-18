@@ -51,7 +51,7 @@ import { Button, IconButton } from './ui/Button'
 import { Dialog } from './ui/Dialog'
 import { EmptyState } from './ui/EmptyState'
 import { Menu, MenuItem, MenuSub } from './ui/Menu'
-import { Notice } from './ui/Notice'
+import { Notice, NoticeReveal } from './ui/Notice'
 import { Select } from './ui/Select'
 import { TextInput } from './ui/Input'
 
@@ -331,7 +331,9 @@ function ReadinessBody() {
       <ProjectNotices report={report} staleError={loadError} refreshing={loading} />
 
       {/* 项目级说明与动作失败都是摘要下面的 Notice（2026-10-07 设计审计 §10.2：此前一块灰底列表 + 一行红字） */}
-      {error && <Notice tone="danger">{error}</Notice>}
+      <NoticeReveal open={!!error}>
+        <Notice tone="danger">{error}</Notice>
+      </NoticeReveal>
 
       {report.summary.total === 0 ? (
         <EmptyState icon={EditableFigureIcon} title={rd('emptyTitle')} hint={rd('emptyHint')} />
@@ -456,19 +458,13 @@ function ProjectNotices({
   if (!report.project.scan_ok) notes.push(rd('scanUnavailable'))
   // 后台刷新失败：显示的是上一次成功那份，说清楚它可能已经旧了
   if (staleError && !refreshing) notes.push(rd('staleReport'))
-  if (!notes.length) return null
+  // 一行：第一条是那句话，其余（若有）折进「详情」；事后才冒出来的（后台刷新失败）包 NoticeReveal，列表顺着滑下去而不是跳一格
   return (
-    <Notice tone="warn" data-readiness-notices>
-      {notes.length === 1 ? (
-        notes[0]
-      ) : (
-        <ul className="flex list-outside list-disc flex-col gap-0.5 pl-4">
-          {notes.map((n) => (
-            <li key={n}>{n}</li>
-          ))}
-        </ul>
-      )}
-    </Notice>
+    <NoticeReveal open={notes.length > 0}>
+      <Notice tone="warn" data-readiness-notices detail={notes.length > 1 ? notes.slice(1).join('\n') : null}>
+        {notes[0]}
+      </Notice>
+    </NoticeReveal>
   )
 }
 

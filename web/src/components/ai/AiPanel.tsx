@@ -18,11 +18,11 @@ import {
   Type,
   type IconComponent,
 } from '@/components/ui/icons'
+import { describeRequestFailure } from '@/lib/noticeText'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import {
   agentById,
   agentDisplayName,
-  backendErrorText,
   effectiveAgent,
   usableAgents,
   type AiCapabilities,
@@ -59,6 +59,12 @@ export const ASSISTANT_TAB_ICON = FileCodeCorner
 /** 本面板的文案都在 ai 命名空间下 */
 const ai = (key: string, values?: Record<string, unknown>) =>
   translate(key, { ns: 'ai', ...(values ?? {}) })
+
+/** 发送失败 → 「一句原因」+「详情」（HTTP 状态 / 后端 detail / 诊断引用折叠在说明条的详情里） */
+const sendFailure = (e: unknown) => {
+  const { reason, detail } = describeRequestFailure(e, ai('panel.sendFailedReason'))
+  return { text: reason, detail }
+}
 
 /**
  * 贴底跟随的松弛量：离底部这么近仍算「看着最新内容」。滚轮一格通常 ≥ 40px，
@@ -252,7 +258,7 @@ function AssistantPanelBody() {
   const { panel, element, axes } = useAssistantTarget()
   const caps = useAiStore((s) => s.caps)
   const [prompt, setPrompt] = useState('')
-  const [error, setError] = useState<{ text: string; prompt: string; target: SendTarget; panelId: string } | null>(null)
+  const [error, setError] = useState<{ text: string; detail: string | null; prompt: string; target: SendTarget; panelId: string } | null>(null)
   const [sending, setSending] = useState(false)
   const [historyOpen, setHistoryOpen] = useState(false)
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -384,7 +390,7 @@ function AssistantPanelBody() {
       })
       if (override == null) setPrompt('')
     } catch (e) {
-      setError({ text: backendErrorText(e), prompt: text, target: ctx, panelId: panel.id })
+      setError({ ...sendFailure(e), prompt: text, target: ctx, panelId: panel.id })
     } finally {
       setSending(false)
     }
@@ -526,9 +532,11 @@ function AssistantPanelBody() {
               tone="danger"
               data-ai-error="send"
               className="mb-2"
+              // 一句话「没有发出去 · 原因」+ 「重试」；HTTP 状态 / 后端 detail / 诊断引用在「详情」里
               title={ai('panel.sendFailed')}
+              detail={error.detail}
               action={
-                <Button data-ai-retry variant="secondary" size="sm" disabled={!canSend} onClick={() => send(error.prompt, error.target)}>
+                <Button data-ai-retry size="sm" disabled={!canSend} onClick={() => send(error.prompt, error.target)}>
                   {ai('panel.retry')}
                 </Button>
               }
@@ -543,7 +551,7 @@ function AssistantPanelBody() {
               data-ai-no-agent
               className="mb-2"
               action={
-                <Button variant="secondary" size="sm" onClick={() => useUiStore.getState().setSettingsOpen(true, 'ai')}>
+                <Button size="sm" onClick={() => useUiStore.getState().setSettingsOpen(true, 'ai')}>
                   {ai('panel.openAiSettings')}
                 </Button>
               }

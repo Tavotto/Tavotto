@@ -7,13 +7,13 @@ import { msg } from '@/i18n'
 import { askConfirm, useUiStore } from '@/store/uiStore'
 import { Button } from './ui/Button'
 import { Menu, MenuItem } from './ui/Menu'
-import { Notice, type StatusTone } from './ui/Notice'
 import type { DiskDocumentSummary } from '@/lib/api'
 
 /**
  * 文档级的事此前在这里有一条常驻提示条（冲突 / 保存失败）；2026-10 设计审计第二轮起它们只在顶栏的文档状态芯片里
- * （`TopBar.SaveStateLabel`：进入时说明块自动展开一次、读屏 assertive 播报）。这个文件留下的是芯片说明块与
- * 「构建版本不一致」那条提示条共用的几块：冲突摘要 / 冲突三出口 / `Banner` 外壳 / `BannerStack`。
+ * （`TopBar.SaveStateLabel`：进入时说明块自动展开一次、读屏 assertive 播报）。这个文件留下的是芯片说明块用的
+ * 冲突摘要 / 冲突三出口。工作面板里不再有任何提示条——`Banner` / `BannerStack` 已删（2026-10-16 UI 2.0：构建版本不一致
+ * 也进了顶栏状态芯片 `BuildMismatchChip`）。
  */
 
 /** 磁盘上那份的一句摘要（顶栏芯片的说明块用） */
@@ -110,56 +110,4 @@ async function confirmOverwriteDisk(stale: boolean): Promise<boolean> {
   if (now.saveState !== 'conflict' || now.documentId !== before) return false
   await overwriteDisk()
   return true
-}
-
-/**
- * 工作面板顶上那条提示条，**全产品一种**（2026-10-07 设计审计 §10.1）：`Notice` 的锚点色底，内嵌在
- * `[data-work-panel]` 里、画布标签行上方（外边距 8、圆角 8），一句标题 + 可选的一句细节（窄于 900 收起）+ 出口。
- * 冲突 / 保存失败 / 接入状态 / 构建版本不一致四条同形；两条以上挨着出现时是同一摞。
- */
-export function Banner({
-  tone = 'neutral',
-  title,
-  detail,
-  action,
-  urgent = false,
-  icon,
-  ...rest
-}: {
-  tone?: StatusTone
-  title: React.ReactNode
-  detail?: React.ReactNode
-  action?: React.ReactNode
-  /**
-   * 不处理就会丢编辑的那几条（冲突、保存失败）：`role="alert"`，读屏器立刻打断说。
-   * 其余照旧 `role="status"`。role 只是给读屏器的，**用例不认它**（web/AGENTS.md），认 `data-doc-banner`。
-   */
-  urgent?: boolean
-  icon?: Parameters<typeof Notice>[0]['icon']
-} & Record<`data-${string}`, string | undefined>) {
-  return (
-    <Notice
-      {...rest}
-      tone={tone}
-      icon={icon}
-      role={urgent ? 'alert' : 'status'}
-      data-doc-banner={urgent ? 'urgent' : ''}
-      className="shrink-0 items-center py-1.5"
-      action={action}
-    >
-      <span className="flex min-w-0 items-baseline gap-2">
-        <span className="min-w-0 truncate">{title}</span>
-        {detail && <span className="hidden shrink-0 opacity-80 min-[900px]:inline">{detail}</span>}
-      </span>
-    </Notice>
-  )
-}
-
-/** 工作面板里那一摞提示条的容器：一条都没有时不占位 */
-export function BannerStack({ children }: { children: React.ReactNode }) {
-  return (
-    <div data-banner-stack className="flex shrink-0 flex-col gap-1.5 px-2 pt-2 empty:hidden">
-      {children}
-    </div>
-  )
 }

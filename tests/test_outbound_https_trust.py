@@ -292,6 +292,12 @@ _BANNED_MODULES = {"requests", "httpx", "urllib3", "aiohttp", "truststore.inject
 _BANNED_CALLS = {"HTTPSConnection", "HTTPConnection", "urlretrieve", "inject_into_ssl"}
 
 
+def _is_loopback_connection(call: ast.Call) -> bool:
+    """`HTTPConnection("127.0.0.1", ...)`：主机是字面量回环（HTTPSConnection / 变量主机仍被拦）。"""
+    first = call.args[0] if call.args else None
+    return isinstance(first, ast.Constant) and first.value == "127.0.0.1"
+
+
 def _modules():
     for path in sorted(SRC.rglob("*.py")):
         yield path.relative_to(SRC).as_posix(), ast.parse(path.read_text(encoding="utf-8"))
@@ -385,6 +391,8 @@ def _outbound_violations(rel: str, tree: ast.AST) -> tuple[list[str], dict[str, 
                 for lit in _scheme_literals(tree):
                     if not lit.startswith("http://127.0.0.1:"):
                         bad.append(f"{where} urlopen 所在模块里有非回环地址字面量 {lit!r}")
+        elif name == "HTTPConnection" and _is_loopback_connection(call):
+            continue  # 直连 socket、不读代理设置：带凭据的回环请求靠它保证绝不经过代理
         elif name in _BANNED_CALLS:
             bad.append(f"{where} {name}（绕开 urllib opener 的传输）")
         elif name in _TLS_BUILDERS and rel != "engine/tlstrust.py":
@@ -449,6 +457,9 @@ class TestStructure:
             ),
             ("def f():\n    urllib.request.urlopen(f'https://{H}/x')\n", "不是本机回环"),
             ("def f():\n    http.client.HTTPSConnection('api.github.com')\n", "绕开 urllib opener"),
+            ("def f():\n    http.client.HTTPConnection('example.com')\n", "绕开 urllib opener"),
+            ("def f(h):\n    http.client.HTTPConnection(h, 80)\n", "绕开 urllib opener"),
+            ("def f():\n    http.client.HTTPSConnection('127.0.0.1')\n", "绕开 urllib opener"),
             ("import requests\n", "绕开 urllib opener"),
         ],
         ids=[
@@ -457,6 +468,9 @@ class TestStructure:
             "urlopen-external",
             "urlopen-fstring",
             "http-client",
+            "http-conn-external",
+            "http-conn-variable-host",
+            "https-conn-loopback",
             "requests",
         ],
     )
@@ -470,6 +484,7 @@ class TestStructure:
             "def f(req):\n    ctx = tlstrust.client_context()\n"
             "    opener = urllib.request.build_opener(tlstrust.https_handler(ctx))\n"
             "def g(port):\n    urllib.request.urlopen(f'http://127.0.0.1:{port}/api/version')\n"
+            "def h(port):\n    http.client.HTTPConnection('127.0.0.1', port, timeout=1)\n"
         )
         bad, openers = _outbound_violations("engine/x.py", ast.parse(ok))
         assert bad == [] and openers == {"engine/x.py": "f"}

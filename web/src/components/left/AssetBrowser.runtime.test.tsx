@@ -154,6 +154,11 @@ describe('RuntimeAssetCard', () => {
     await mount()
     const card = host.querySelector<HTMLElement>('[data-card="runtime:show.py#show"]')!
     expect(card.querySelector('[data-runtime-stale]')?.textContent).toContain('可能有变')
+    // 颜色只在 14px 图标上：整行文字是 ink-3，不是红字
+    const stale = card.querySelector('[data-runtime-stale]')!
+    expect(stale.className).toContain('text-ink-3')
+    expect(stale.className).not.toMatch(/text-danger/)
+    expect(stale.querySelector('svg')!.getAttribute('class')).toContain('text-danger')
     // option 里不嵌可 Tab 控件（axe nested-interactive）
     expect(card.querySelector('button, input, select, textarea, a[href]')).toBeNull()
     expect(document.querySelector('[data-asset-rerun]')).toBeNull()
