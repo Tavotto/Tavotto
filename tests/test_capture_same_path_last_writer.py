@@ -229,8 +229,9 @@ class TestSharedFunction:
 
     def test_unclaimed_stem_is_not_displaced(self):
         a = _Fig()
-        w, cap, src = {}, {}, {}
+        w, cap, src = {}, {}, {"x": SAVEFIG}
         figcapture.note_savefig_writer(w, cap, src, {}, {}, "x", a, "/p/x.pdf")
+        figcapture.note_savefig_writer(w, cap, src, {}, {}, "x", _Fig(), "/p/x.pdf")
         assert cap == {}
 
 
