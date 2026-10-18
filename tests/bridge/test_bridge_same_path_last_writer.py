@@ -79,6 +79,12 @@ def test_native_alternating_writers_keep_all_winner_calls(tmp_path, bridge_sessi
         sess.wait_event("exit")
 
 
+BAD_SAVES = [
+    'format="bogus"',
+    'backend="nonexistent"',
+    'backend="agg", format="bogus"',
+    'dpi="not-a-number"',
+]
 FAILED_SAVE = """\
 import matplotlib
 matplotlib.use("Agg")
@@ -94,7 +100,7 @@ plt.show()
 """
 
 
-@pytest.mark.parametrize("bad", ['format="bogus"', 'backend="nonexistent"'])
+@pytest.mark.parametrize("bad", BAD_SAVES)
 def test_native_failed_save_does_not_displace(tmp_path, bridge_session, bad):
     proj = tmp_path / "proj"
     write(proj / "bad.py", FAILED_SAVE.format(bad=bad))
@@ -123,7 +129,7 @@ plt.show()
 """
 
 
-@pytest.mark.parametrize("bad", ['format="bogus"', 'backend="nonexistent"'])
+@pytest.mark.parametrize("bad", BAD_SAVES)
 def test_native_failed_first_claimant_is_replaced(tmp_path, bridge_session, bad):
     proj = tmp_path / "proj"
     write(proj / "first.py", FAILED_FIRST.format(bad=bad))

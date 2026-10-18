@@ -315,15 +315,16 @@ def _patched_savefig(self, fname, *args, **kwargs):
         SESSION.note_artifact(observation, stem, self, kwargs.get("bbox_extra_artists"))
     if stem and SESSION is not None:
         SESSION.add_figure(stem, self, figcapture.SOURCE_SAVEFIG)
-        # 这次保存在真实语义下会失败的（目录不存在 / 格式或 backend 不认）不记账、不顶替
-        if figcapture.savefig_would_succeed(fname, kwargs, getattr(self, "canvas", None)):
-            SESSION.note_savefig(
-                stem,
-                self,
-                call,
-                kwargs.get("bbox_extra_artists"),
-                target=figcapture.savefig_target_key(fname, kwargs, getattr(self, "canvas", None)),
-            )
+        SESSION.note_savefig(
+            stem,
+            self,
+            call,
+            kwargs.get("bbox_extra_artists"),
+            target=figcapture.savefig_target_key(fname, kwargs, getattr(self, "canvas", None)),
+            verify=lambda: figcapture.savefig_verify_render(
+                _REAL_SAVEFIG, self, fname, args, kwargs
+            ),
+        )
     if not to_path:
         if SESSION is not None:
             SESSION.passthrough_figures.add(id(self))

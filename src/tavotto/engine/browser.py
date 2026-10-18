@@ -119,9 +119,7 @@ def _patched_savefig(self, fname, *args, **kwargs):
         # 来源记账与 worker.CAPTURE_SOURCE 同语义：savefig 认领的 stem
         # **可能**有原始产物（在桌面上；这里的虚拟 FS 里永远没有）。
         _session_sources().setdefault(stem, figcapture.SOURCE_SAVEFIG)
-        # 这次保存在真实语义下会失败的（目录不存在 / 格式或 backend 不认）不记账、不顶替
-        ok = figcapture.savefig_would_succeed(fname, kwargs, getattr(self, "canvas", None))
-        if _ACTIVE is not None and ok:
+        if _ACTIVE is not None:
             figcapture.note_savefig_writer(
                 _ACTIVE.savefig_writers,
                 _ACTIVE.capture,
@@ -133,6 +131,9 @@ def _patched_savefig(self, fname, *args, **kwargs):
                 figcapture.savefig_target_key(fname, kwargs, getattr(self, "canvas", None)),
                 call,
                 kwargs.get("bbox_extra_artists"),
+                verify=lambda: figcapture.savefig_verify_render(
+                    _REAL_SAVEFIG, self, fname, args, kwargs
+                ),
             )
     return None
 

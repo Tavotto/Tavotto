@@ -186,7 +186,7 @@ class _State:
         self.cap.setdefault(stem, fig)
         self.src.setdefault(stem, SAVEFIG)
 
-    def save(self, fig, target, call=PDF, extra=None, stem="x", locked=False):
+    def save(self, fig, target, call=PDF, extra=None, stem="x", locked=False, verify=None):
         return figcapture.note_savefig_writer(
             self.w,
             self.cap,
@@ -199,6 +199,7 @@ class _State:
             call,
             extra,
             locked,
+            verify,
         )
 
 
@@ -553,54 +554,155 @@ try:
 except Exception:
     pass
 """
-BAD_SAVES = ['format="bogus"', 'backend="nonexistent"']
+BAD_SAVES = [
+    'format="bogus"',
+    'backend="nonexistent"',
+    'backend="agg", format="bogus"',
+    'dpi="not-a-number"',
+]
 
 
-class TestWouldSucceed:
-    def test_definite_failures(self, tmp_path, monkeypatch):
-        import matplotlib.backend_bases  # noqa: F401 — 判格式要它已载入
+class TestVerifyRender:
+    """`savefig_verify_render`：用未打补丁的 savefig 不落盘真渲染，原生会抛的就是失败。"""
 
+    @staticmethod
+    def _fig(**kw):
+        from matplotlib.figure import Figure
+
+        fig = Figure(figsize=(3, 2), **kw)
+        fig.add_subplot().plot([1, 2, 3])
+        return fig, Figure.savefig
+
+    def test_valid_save_passes(self):
+        fig, real = self._fig()
+        assert figcapture.savefig_verify_render(real, fig, "a.pdf", (), {})
+        assert figcapture.savefig_verify_render(real, fig, "a", (), {"format": "png"})
+
+    @pytest.mark.parametrize(
+        "kwargs",
+        [
+            {"format": "bogus"},
+            {"backend": "nonexistent"},
+            {"backend": "agg", "format": "bogus"},
+            {"dpi": "not-a-number"},
+            {"bbox_inches": "bogus"},
+        ],
+    )
+    def test_saves_that_raise_natively_fail(self, kwargs):
+        fig, real = self._fig()
+        assert not figcapture.savefig_verify_render(real, fig, "a.pdf", (), kwargs)
+
+    def test_unknown_suffix_fails(self):
+        fig, real = self._fig()
+        assert not figcapture.savefig_verify_render(real, fig, "a.bogus", (), {})
+
+    def test_figure_state_is_unchanged(self):
+        fig, real = self._fig(layout="constrained")
+        before = (tuple(fig.get_size_inches()), fig.dpi, type(fig.get_layout_engine()))
+        for kw in ({"bbox_inches": "tight"}, {"dpi": 300}, {"transparent": True}):
+            assert figcapture.savefig_verify_render(real, fig, "a.png", (), kw)
+        assert (tuple(fig.get_size_inches()), fig.dpi, type(fig.get_layout_engine())) == before
+
+    def test_does_not_go_through_the_patched_hook(self):
+        fig, _ = self._fig()
+        seen = []
+
+        def spy(f, *a, **k):
+            seen.append(1)
+
+        figcapture.savefig_verify_render(spy, fig, "a.pdf", (), {})
+        assert seen == [1]  # 只调传进去的那个“真”函数一次
+
+
+class TestVerifyOnlyWhenTakingOver:
+    @staticmethod
+    def _run(verdict):
+        calls = []
+
+        def verify():
+            calls.append(1)
+            return verdict
+
+        return calls, verify
+
+    def test_holder_writing_itself_never_verifies(self):
+        st, a = _State(), _Fig()
+        st.claim(a)
+        n, v = self._run(False)
+        st.save(a, "/p/x.pdf", verify=v)
+        st.save(a, "/p/x.png", {"format": "png"}, verify=v)
+        assert n == [] and st.calls["x"] == [PDF, {"format": "png"}]
+
+    def test_non_taking_foreign_write_never_verifies(self):
+        st, a, b = _State(), _Fig(), _Fig()
+        st.claim(a)
+        st.save(a, "/p/x.pdf")
+        st.save(a, "/p/x.png", {"format": "png"})
+        n, v = self._run(False)
+        assert st.save(b, "/p/x.pdf", verify=v) is False  # a 在 png 上仍是最近写入者
+        assert n == []
+
+    def test_taking_over_verifies_once_and_commits_on_success(self):
+        st, a, b = _State(), _Fig(), _Fig()
+        st.claim(a)
+        st.save(a, "/p/x.pdf")
+        n, v = self._run(True)
+        assert st.save(b, "/p/x.pdf", PDF, "art", verify=v) is True
+        assert n == [1] and st.cap["x"] is b and st.extras["x"] == ["art"]
+
+    def test_failed_verification_ignores_the_write_entirely(self):
+        st, a, b = _State(), _Fig(), _Fig()
+        st.claim(a)
+        st.save(a, "/p/x.pdf")
+        n, v = self._run(False)
+        assert st.save(b, "/p/x.pdf", {"format": "pdf", "dpi": 1}, verify=v) is False
+        assert n == [1] and st.cap["x"] is a and st.calls["x"] == [PDF]
+        assert id(b) not in st.w["x"]["by"] and st.w["x"]["files"]["/p/x.pdf"]() is a
+
+
+class TestFileIdentity:
+    def test_case_variants_follow_the_directory_filesystem(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
-        assert figcapture.savefig_would_succeed("a.pdf", {}, None)
-        assert not figcapture.savefig_would_succeed("a.pdf", {"format": "bogus"}, None)
-        assert not figcapture.savefig_would_succeed("a.bogus", {}, None)
-        assert not figcapture.savefig_would_succeed("a.pdf", {"backend": "nonexistent"}, None)
-        assert figcapture.savefig_would_succeed("a.pdf", {"backend": "module://x.y"}, None)
-        assert figcapture.savefig_would_succeed("a.pdf", {"backend": "Agg"}, None)
-        assert figcapture.savefig_would_succeed("a.pdf", {"backend": "pdf"}, None)
-
-    def test_alternate_backend_formats_are_not_judged_by_the_current_canvas(
-        self, tmp_path, monkeypatch
-    ):
-        """`backend="module://my_backend"` 可以提供当前 canvas 没有的格式（`out.dat`）：原生会写盘，
-        判据不能拿当前 canvas 的格式集合否决它（Codex #1141 r4305600962）。"""
-        import matplotlib.backend_bases  # noqa: F401
-
-        monkeypatch.chdir(tmp_path)
-        assert not figcapture.savefig_would_succeed("out.dat", {}, None)
-        assert figcapture.savefig_would_succeed(
-            "out.dat", {"backend": "module://my_backend", "format": "dat"}, None
+        d = str(tmp_path.resolve())
+        monkeypatch.setitem(figcapture._CASE_FOLD_CACHE, d, True)
+        assert figcapture.savefig_target_key("Plot.pdf", {}) == figcapture.savefig_target_key(
+            "plot.pdf", {}
         )
-        assert figcapture.savefig_would_succeed("out.dat", {"backend": "module://my_backend"}, None)
-
-    def test_missing_directory_is_not_a_failure(self, tmp_path, monkeypatch):
-        """safe 下 `os.makedirs` 可能被拦：目录不存在不代表原生会失败，合法的 format / backend 仍记账。"""
-        import matplotlib.backend_bases  # noqa: F401
-
-        monkeypatch.chdir(tmp_path)
-        assert figcapture.savefig_would_succeed("nodir/a.pdf", {}, None)
-        assert figcapture.savefig_would_succeed(
-            "nodir/a.png", {"format": "png", "backend": "agg"}, None
+        monkeypatch.setitem(figcapture._CASE_FOLD_CACHE, d, False)
+        assert figcapture.savefig_target_key("Plot.pdf", {}) != figcapture.savefig_target_key(
+            "plot.pdf", {}
         )
 
-    def test_save_into_missing_directory_still_records_calls(self, tmp_path, monkeypatch):
+    def test_probe_matches_the_real_filesystem(self, tmp_path):
+        d = tmp_path.resolve() / "CaseProbe"
+        d.mkdir()
+        expected = (d.parent / "caseprobe").exists()
+        figcapture._CASE_FOLD_CACHE.pop(str(d), None)
+        assert figcapture._dir_folds_case(str(d)) is expected
+
+    def test_probe_falls_back_to_platform_default(self, tmp_path, monkeypatch):
+        gone = str(tmp_path / "Nope")
+        figcapture._CASE_FOLD_CACHE.pop(gone, None)
+        monkeypatch.setattr(figcapture.sys, "platform", "linux")
+        assert figcapture._dir_folds_case(gone) is False
+        figcapture._CASE_FOLD_CACHE.pop(gone, None)
+        monkeypatch.setattr(figcapture.sys, "platform", "darwin")
+        assert figcapture._dir_folds_case(gone) is True
+        figcapture._CASE_FOLD_CACHE.pop(gone, None)
+
+    def test_on_disk_key_is_the_inode(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
-        s, a = _session(), _Fig()
-        s.add_figure("a", a, SAVEFIG)
-        name = "nodir/a.pdf"
-        if figcapture.savefig_would_succeed(name, {}, None):
-            s.note_savefig("a", a, PDF, None, target=figcapture.savefig_target_key(name, {}))
-        assert s.savefig_calls["a"] == [PDF]
+        (tmp_path / "a.pdf").write_bytes(b"x")
+        try:
+            (tmp_path / "link.pdf").hardlink_to(tmp_path / "a.pdf")
+        except OSError:
+            pytest.skip("文件系统不支持硬链接")
+        k1 = figcapture.savefig_target_key("a.pdf", {}, on_disk=True)
+        assert k1.startswith("ino:") and k1 == figcapture.savefig_target_key(
+            "link.pdf", {}, on_disk=True
+        )
+        # 文件不存在（stat 不了）回退到路径键
+        assert not figcapture.savefig_target_key("new.pdf", {}, on_disk=True).startswith("ino:")
 
 
 @needs_worker

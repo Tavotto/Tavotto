@@ -146,7 +146,6 @@ import builtins
 import contextlib
 import dataclasses
 import hashlib
-import importlib.util
 import inspect
 import io
 import itertools
@@ -174,7 +173,7 @@ __all__ = [
     "savefig_call",
     "record_savefig_call",
     "savefig_target_key",
-    "savefig_would_succeed",
+    "savefig_verify_render",
     "note_savefig_writer",
     "MAX_SAVEFIG_WRITERS",
     "savefig_calls_of",
@@ -1459,62 +1458,84 @@ def record_savefig_call(calls: dict, capture: dict, stem: str, fig, call: dict |
     return True
 
 
-def savefig_target_key(fname, kwargs: dict, canvas=None) -> str | None:
+_CASE_FOLD_CACHE: dict = {}
+
+
+def _dir_folds_case(directory: str) -> bool:
+    """这个目录所在的文件系统是否不区分大小写：目录存在时探测（翻转路径里最后一个有大小写的字母，
+    翻转后的路径仍指向同一目录 = 不区分），探测不了（目录不存在 / 路径里没有大小写字母 / 出错）按平台默认
+    （darwin / win32 不区分，其余区分；Pyodide 虚拟 FS 区分）。结果按目录缓存。"""
+    if directory in _CASE_FOLD_CACHE:
+        return _CASE_FOLD_CACHE[directory]
+    result = sys.platform in ("darwin", "win32")
+    try:
+        if os.path.isdir(directory):
+            for i in range(len(directory) - 1, -1, -1):
+                ch = directory[i]
+                if ch.lower() != ch.upper():
+                    flipped = (
+                        directory[:i]
+                        + (ch.lower() if ch.isupper() else ch.upper())
+                        + directory[i + 1 :]
+                    )
+                    result = os.path.exists(flipped) and os.path.samefile(flipped, directory)
+                    break
+    except OSError:
+        pass
+    _CASE_FOLD_CACHE[directory] = result
+    return result
+
+
+def savefig_target_key(fname, kwargs: dict, canvas=None, on_disk: bool = False) -> str | None:
     """`savefig(fname)` 真正写的那个**磁盘文件**的可比较身份；写不出路径（缓冲区 / 认不出文件名）时 None。
 
-    「同一路径多个写入者」（`note_savefig_writer`）的键：文件名经 `savefig_effective_names`
-    （显式 `format=` 不改文件名、无后缀补 canvas 缺省格式——与 matplotlib 一致），再按调用那一刻的
-    cwd 取 `realpath` + `normcase`。所以 `savefig("a.pdf")` 与 `savefig("a.pdf", format="png")` 是同一个文件，
-    `a.pdf` 与 `a.svg` 不是。
+    「同一路径多个写入者」（`note_savefig_writer`）的键。文件名经 `savefig_effective_names`（显式 `format=`
+    不改文件名、无后缀补 canvas 缺省格式——与 matplotlib 一致），所以 `savefig("a.pdf")` 与
+    `savefig("a.pdf", format="png")` 是同一个文件，`a.pdf` 与 `a.svg` 不是。
+
+    * `on_disk=True`（native：保存已成功，文件真在磁盘上）：优先用 `(st_dev, st_ino)`——硬链接、符号链接、
+      大小写别名都天然是同一个文件；`stat` 不了回退到路径键。
+    * 路径键（safe worker / 浏览器，不落盘）：目录取 `realpath`，文件名是否折叠大小写按**该目录所在文件系统**
+      判（`_dir_folds_case`），不是一刀切的 `normcase`——macOS 默认卷上 `Plot.pdf` / `plot.pdf` 是同一个文件，
+      区分大小写的卷（Linux、Windows 的区分目录）上是两个。
     """
     names = savefig_effective_names(fname, kwargs, canvas)
     if len(names) != 1:
         return None
     try:
-        return os.path.normcase(os.path.realpath(os.fsdecode(names[0])))
+        path = os.path.abspath(os.fsdecode(names[0]))
+        if on_disk:
+            try:
+                st = os.stat(path)
+                return f"ino:{st.st_dev}:{st.st_ino}"
+            except OSError:
+                pass
+        directory, base = os.path.split(path)
+        directory = os.path.realpath(directory)
+        if _dir_folds_case(directory):
+            base = base.casefold()
+        return os.path.join(directory, base)
     except (OSError, ValueError, TypeError):
         return None
 
 
-def savefig_would_succeed(fname, kwargs: dict, canvas=None) -> bool:
-    """这次 `savefig(fname, **kwargs)` 在**真实语义下会不会成功**——safe worker / 浏览器不真写盘，
-    拿不到「是否成功」，写入者记账（`note_savefig_writer`）只能先判这个：native 里一次失败的保存磁盘上没动，
-    不能顶掉上一个写入者，safe / 浏览器里同一场景也不能（三条入口同源）。
-
-    只在**确定会失败**时返回 False：没给 `backend=` 时，格式（显式 `format=` 或后缀）不在该 canvas /
-    matplotlib 认的集合里；给了 `backend=` 时，它不是 `module://…` 且 `matplotlib.backends.backend_<名字>`
-    找不到模块（给了 backend 就不再按当前 canvas 判格式——格式集合属于那个 backend）。**不判目标目录**：
-    safe 下脚本的 `os.makedirs` 可能被拦或落在别处，磁盘上没有目录不代表原生会失败，误判会丢掉
-    本来成功的保存的 `savefig_calls`。判不清、过程抛任何异常一律按成功算。永不抛。
-    """
+def savefig_verify_render(real_savefig, fig, fname, args, kwargs: dict) -> bool:
+    """用**未打补丁**的 `Figure.savefig` 把这次保存同一组参数不落盘地真渲染进 `io.BytesIO()`：成功 = 原生下这次保存
+    不会抛。safe worker / 浏览器不真写盘，拿不到成败，又没法穷举所有会让 savefig 抛的参数（格式 × backend ×
+    dpi × …），所以只在**这次写入会改变捕获**（`note_savefig_writer` 要顶替）的那一刻交给 matplotlib 自己判。
+    格式取显式 `format=`，否则取 `savefig_effective_names` 解出的后缀；解不出格式按成功算。Figure 的状态
+    （dpi / 尺寸 / 布局）matplotlib 的 savefig 自己会还原。抛任何异常 = 失败。"""
     try:
-        backend = kwargs.get("backend")
-        if backend is not None:
-            if not isinstance(backend, str):
-                return False
-            if not backend.startswith("module://") and (
-                importlib.util.find_spec("matplotlib.backends.backend_" + backend.lower()) is None
-            ):
-                return False
-            # 显式换了 backend：支持哪些格式由**那个** backend 的 canvas 决定，当前 canvas 的集合不作数
-            # （`module://my_backend` 可以提供当前 canvas 没有的格式）——判不清按成功算
-            return True
-        names = savefig_effective_names(fname, kwargs, canvas)
-        bases = sys.modules.get("matplotlib.backend_bases")
-        if not names or bases is None:
-            return True
-        try:
-            filetypes = canvas.get_supported_filetypes()
-        except Exception:  # noqa: BLE001
-            filetypes = bases.FigureCanvasBase.filetypes
-        supported = {str(k).lower() for k in filetypes}
-        fmt = kwargs.get("format")
-        for name in names:
-            ext = os.path.splitext(os.fsdecode(name))[1][1:]
-            if str(fmt or ext or "").lower() not in supported:
-                return False
-    except Exception:  # noqa: BLE001 —— 判不清按成功算
-        return True
+        kw = dict(kwargs)
+        if kw.get("format") is None:
+            names = savefig_effective_names(fname, kwargs, getattr(fig, "canvas", None))
+            ext = os.path.splitext(os.fsdecode(names[0]))[1][1:].lower() if names else ""
+            if not ext:
+                return True
+            kw["format"] = ext
+        real_savefig(fig, io.BytesIO(), *args, **kw)
+    except Exception:  # noqa: BLE001 —— 原生下这次保存会抛
+        return False
     return True
 
 
@@ -1534,22 +1555,25 @@ def note_savefig_writer(
     call: dict | None = None,
     extra=None,
     locked: bool = False,
+    verify=None,
 ) -> bool:
-    """一次**成功的** savefig 的写入者记账与「同一路径最后写入者胜」——三条入口（safe worker、native
-    bridge、浏览器）的同一份实现，也是 `calls` / `extras`（`savefig_calls[stem]` / `savefig_extras[stem]`）的
-    唯一写入点。调用方须在 `capture` 已按先到先得认领之后、**保存成功之后**调用（native 在
-    `_REAL_SAVEFIG` 返回后；safe / 浏览器在 `savefig_would_succeed` 为真时）；失败的保存不调用。
+    """一次 savefig 的写入者记账与「同一路径最后写入者胜」——三条入口（safe worker、native bridge、浏览器）的同一份
+    实现，也是 `calls` / `extras`（`savefig_calls[stem]` / `savefig_extras[stem]`）的唯一写入点。调用方须在
+    `capture` 已按先到先得认领之后调用。native 在 `_REAL_SAVEFIG` **成功返回之后**才调用（失败的保存不进任何表）；
+    safe / 浏览器不真写盘、拿不到成败，传 `verify`（`savefig_verify_render` 的闭包）：本函数**只在这次写入会
+    顶替持有者的那一刻**调用它，返回 False（原生下这次保存会抛）就整次忽略——不顶替、不更新 `files`、不记该
+    写入者的调用。不会顶替的写入（持有者自己写、持有者仍是别的目标最近写入者时的非持有者写……）不验证、照常
+    记账，所以常规路径没有额外渲染；持有者自己的一次失败保存因此沿用「照记」的老行为。
 
-    每个 stem 一份状态 `writers[stem]` = `{"files": {目标文件键 -> 最近成功写它的 Figure（弱引用）},
+    每个 stem 一份状态 `writers[stem]` = `{"files": {目标文件键 -> 最近写它的 Figure（弱引用）},
     "by": {id(fig) -> [弱引用, 该写入者自己的调用表（None = 不知道）, extras]}}`：
 
     * 调用按**写入者**分表记，规则与 `record_savefig_call` 完全一致（上限、新格式第一次照记、
       `call is None` 整份变「不知道」），与其它写入者交替多少次互不影响；
     * 持有者（`capture[stem]`）的调用表同步成 `calls[stem]` / `extras[stem]` 的副本；
-    * 顶替：`fig` 不是持有者，且持有者**不是本 stem 任何目标文件的最近成功写入者**（含持有者从未成功写过），
-      则 `capture[stem] = fig`，`calls` / `extras` 换成 `fig` 自己的表。护栏（任一不满足都不顶）：
-      `target` 或 `call` 为 None（不知道写的是哪个文件）、`locked`（stem 已进入编辑或已记失败）、
-      来源不是 savefig（pyplot 认领永不被顶）、持有者在别的目标文件上仍是最近写入者（它的文件还在磁盘上）；
+    * 顶替：`fig` 不是持有者，且持有者**不是本 stem 任何目标文件的最近写入者**（含持有者从未写过）。
+      护栏（任一不满足都不顶）：`target` 或 `call` 为 None（不知道写的是哪个文件）、`locked`（stem 已进入编辑或已记
+      失败）、来源不是 savefig（pyplot 认领永不被顶）、持有者在别的目标文件上仍是最近写入者（它的文件还在磁盘上）；
     * 有界：最多 `MAX_SAVEFIG_WRITERS` 个写入者表，被淘汰者日后重新成为写入者就从新调用开始。
 
     返回是否顶替了。
@@ -1558,24 +1582,26 @@ def note_savefig_writer(
         return False
     entry = writers.setdefault(stem, {"files": {}, "by": {}})
     files, by = entry["files"], entry["by"]
+    held = capture.get(stem)
+    takes = (
+        target is not None
+        and call is not None
+        and held is not None
+        and held is not fig
+        and not locked
+        and capture_source.get(stem) == SOURCE_SAVEFIG
+        and not any(ref() is held for t, ref in files.items() if t != target)
+    )
+    if takes and verify is not None and not verify():
+        return False
     mine = by.get(id(fig))
     if mine is None or mine[0]() is not fig:
         mine = by[id(fig)] = [weakref.ref(fig), [], []]
     _record_writer_call(mine, call, extra)
-
-    held = capture.get(stem)
-    replaced = False
     if target is not None and call is not None:
         files[target] = weakref.ref(fig)
-        if (
-            held is not None
-            and held is not fig
-            and not locked
-            and capture_source.get(stem) == SOURCE_SAVEFIG
-            and not any(ref() is held for ref in files.values())
-        ):
-            capture[stem] = held = fig
-            replaced = True
+    if takes:
+        capture[stem] = held = fig
     if held is fig:
         calls[stem] = None if mine[1] is None else list(mine[1])
         if mine[1] is None:
@@ -1583,7 +1609,7 @@ def note_savefig_writer(
         else:
             extras[stem] = list(mine[2])
     _trim_writers(entry, held)
-    return replaced
+    return takes
 
 
 def _record_writer_call(mine: list, call: dict | None, extra) -> None:

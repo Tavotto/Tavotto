@@ -230,13 +230,18 @@
 （desktop worker 经 `LiveFigureSession.note_savefig`、浏览器钩子、native 的 `_patched_savefig`），也是 `savefig_calls[stem]` /
 `savefig_extras[stem]` 的**唯一写入点**（钩子里不再另调 `record_savefig_call`）。`add_figure` / `setdefault` 的先到先得认领不动。
 
-* **只记成功的保存**：native 在 `_REAL_SAVEFIG` 成功返回之后调用；safe / 浏览器不真写盘，由
-  `figcapture.savefig_would_succeed` 判（只在**确定失败**时为 False：没给 `backend=` 时格式不被 canvas / matplotlib 认；给了
-  `backend=` 时它不是 `module://…` 且 `importlib.util.find_spec("matplotlib.backends.backend_<名字>")` 找不到，此时不再按当前
-  canvas 判格式。**不判目标目录**——safe 下 `os.makedirs` 可能被拦；判不清、抛异常按成功算）。失败的保存不进任何表。
-* **每个 stem 一份状态** `writers[stem] = {"files": {目标文件键 -> 最近成功写它的 Figure 弱引用}, "by": {id(fig) -> [弱引用,
-  该写入者自己的调用表, extras]}}`。目标文件键 `figcapture.savefig_target_key`：文件名经 `savefig_effective_names`（显式 `format=`
-  不改文件名）取 `realpath` + `normcase`；缓冲区 / 认不出文件名 = `None`。
+* **成败怎么知道**：不预判（参数组合穷举不完）。native 在 `_REAL_SAVEFIG` **成功返回之后**才调用，失败的保存不进任何表。
+  safe worker / 浏览器不真写盘，钩子传 `verify` 闭包（`figcapture.savefig_verify_render`：用未打补丁的 `Figure.savefig` 把同一组
+  参数写进 `io.BytesIO()`，格式取显式 `format=` 或后缀）；共享函数**只在这次写入会顶替持有者的那一刻**调用它，抛异常 =
+  原生下这次保存会失败 → 整次忽略（不顶替、不更新 `files`、不记该写入者的调用）。其余写入（持有者自己写、不会顶替的非持有者写）
+  不验证、照常记账——常规路径没有额外渲染，代价是持有者自己的失败保存（如 `dpi="bad"`）沿用「照记」的老行为。matplotlib 的
+  savefig 自己会还原 dpi / 尺寸 / 布局（`TestVerifyRender::test_figure_state_is_unchanged` 钉着）。
+* **每个 stem 一份状态** `writers[stem] = {"files": {目标文件键 -> 最近写它的 Figure 弱引用}, "by": {id(fig) -> [弱引用,
+  该写入者自己的调用表, extras]}}`。**文件身份** `figcapture.savefig_target_key`：文件名经 `savefig_effective_names`（显式
+  `format=` 不改文件名）；native（保存已成功，`on_disk=True`）用 `os.stat` 的 `(st_dev, st_ino)`，硬链接 / 符号链接 / 大小写别名
+  天然同一文件；safe / 浏览器（不落盘）用「目录 `realpath` + 文件名」，文件名折叠大小写与否按**该目录所在文件系统**判
+  （`_dir_folds_case`：目录存在时翻转路径里最后一个有大小写的字母探测，探测不了按平台默认 darwin / win32 不区分、其余区分，
+  按目录缓存；Pyodide 虚拟 FS 区分）。缓冲区 / 认不出文件名 = `None`。
 * **调用按写入者分表**，规则就是 `record_savefig_call` 的（上限、新格式第一次照记、`call is None` 整份「不知道」），与别的写入者
   交替多少次互不影响（交替 100 次，胜者的首次 `bbox_inches="tight"` 仍在）。持有者（`capture[stem]`）的表同步成
   `calls[stem]` / `extras[stem]` 的副本。
@@ -250,7 +255,7 @@
   还超就按先来后到淘汰非持有者（连同它名下的目标记录）。持有者永不淘汰；被淘汰者日后重新成为写入者就从新调用开始——这是有界的
   代价。每个写入者的调用表本身由 `record_savefig_call` 的 HARD 上限约束。
 * safe worker 的捕获发生在 instrument 之前，规则只在脚本执行期生效；写回重放起新 worker 重跑脚本，同一规则再走一遍。
-* 已知未覆盖：`paper_style.save` 捷径不经 savefig 钩子，不参与；Windows 大小写 / 盘符 / 符号链接的 `realpath` 归一化只在 CI 编译，没有真机验过。
+* 已知未覆盖：`paper_style.save` 捷径不经 savefig 钩子，不参与；Windows 上的 `st_ino` 与大小写探测只在 CI 编译，没有真机验过。
 
 看护 `tests/test_capture_same_path_last_writer.py`（共享函数 + 会话规则 + 目标键 + 真 worker / 浏览器端到端）、
 `tests/bridge/test_bridge_same_path_last_writer.py`（native）。
