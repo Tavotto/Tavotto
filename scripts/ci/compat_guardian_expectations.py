@@ -16,6 +16,7 @@ Nothing here is a skip list: an undeclared case keeps its computed status.
 
 from __future__ import annotations
 
+import ast
 import hashlib
 import json
 import re
@@ -51,8 +52,31 @@ def _check_reference(ref: dict) -> None:
     target = cg.ROOT / path
     if cg.contained(cg.ROOT, path) != target or not target.is_file():
         raise cg.EvidenceError(f"test reference points at a missing file: {ref['ref']}")
-    if name and name.split("[")[0] not in target.read_text(encoding="utf-8"):
+    if name and not _defines(target, name.split("[")[0]):
         raise cg.EvidenceError(f"test reference names something absent from the file: {ref['ref']}")
+
+
+def _defines(target: Path, name: str) -> bool:
+    """`name`（pytest 节点路径 `Class::method` / `func`，不含参数化后缀）在 `target` 里是否**确有其定义**——按 AST
+    逐级找 class / def，不在源码里搜子串（改名成更长的名字后旧引用不得仍然成立）。"""
+    try:
+        scope = ast.parse(target.read_text(encoding="utf-8")).body
+    except SyntaxError:
+        return False
+    for part in name.split("::"):
+        found = next(
+            (
+                node
+                for node in scope
+                if isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef))
+                and node.name == part
+            ),
+            None,
+        )
+        if found is None:
+            return False
+        scope = found.body
+    return True
 
 
 def load_entries(path: Path | None = None, *, check_cases: bool = True) -> list[dict]:

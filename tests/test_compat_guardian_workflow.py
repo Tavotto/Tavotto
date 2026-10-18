@@ -39,6 +39,8 @@ FILES_THE_PR_FILTER_MAY_NAME = (
     "scripts/ci/compat_driver.py",
     "scripts/ci/compat_corpus.py",
     "scripts/ci/compat_matrix.py",
+    "scripts/ci/package_smoke.py",
+    "tests/test_package_smoke.py",
     "tests/compat/",
     "tests/fixtures/compat_v2/",
     "tests/support/compat_v2_scenarios.py",
@@ -107,6 +109,7 @@ def test_pull_request_filter_covers_every_input_the_workflow_executes():
         "tests/support/compatbench_v2.py",
         "scripts/ci/compat_corpus.py",
         "scripts/ci/compat_matrix.py",
+        "scripts/ci/package_smoke.py",
     ):
         assert needed in paths, f"PR filter misses an executed input: {needed}"
 
