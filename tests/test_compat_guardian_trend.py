@@ -205,6 +205,15 @@ class Trend(GuardianBase):
         )
         self.assertEqual(fixed["transitions"], [])
 
+    def test_a_passing_case_becoming_inconclusive_withholds_no_regression(self):
+        """passed → unknown 不是「无回归」：本次对这个 case 没有结论（Codex #1139 r4312231434）。"""
+        previous = self.baseline()
+        for status in ("unknown", "not_run", "environment_unavailable", "invalid_fixture"):
+            current = self.summary([("a", status), ("b",)], previous)
+            fixed = current["comparison"]["fixed_set"]
+            self.assertEqual(fixed["verdict"], "inconclusive", status)
+            self.assertEqual(fixed["transitions"][0]["kind"], "inconclusive", status)
+
     def test_a_different_environment_gives_no_regression_verdict(self):
         previous = self.baseline()
         env = copy.deepcopy(self.row["environment_before"])

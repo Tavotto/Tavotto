@@ -345,6 +345,10 @@ def compare(previous: dict | None, current: dict, required_suites: tuple[str, ..
             if before in GOOD and after == "failed"
             else "improvement"
             if before == "failed" and after in GOOD
+            # an endpoint without a conclusion (unknown, not_run, environment_unavailable,
+            # invalid_fixture): the fixed set cannot be called regression-free
+            else "inconclusive"
+            if not {before, after} <= {*GOOD, "failed"}
             else "changed"
         )
         transitions.append({"case": key, "from": before, "to": after, "kind": kind})
@@ -355,7 +359,11 @@ def compare(previous: dict | None, current: dict, required_suites: tuple[str, ..
         "incomparable"
         if not comparable
         else (
-            "regression" if any(t["kind"] == "regression" for t in transitions) else "no_regression"
+            "regression"
+            if any(t["kind"] == "regression" for t in transitions)
+            else "inconclusive"
+            if any(t["kind"] == "inconclusive" for t in transitions)
+            else "no_regression"
         )
     )
     return {
