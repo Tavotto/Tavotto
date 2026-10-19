@@ -1011,7 +1011,10 @@ def stage_product_routes(group: list[dict], root: Path, results: dict) -> None:
 
         for ca in group:
             declared = ca.get("product_routes") or {}
+            # 逐条持久化：同一个 dict 对象挂上 results，每条路由算完立刻可见；
+            # 后一条路由抛错时前面已观察到的结果（含产品失败）不会丢（Codex #1178）
             routes: dict = {}
+            results[ca["id"]]["routes"] = routes
             for name, want in declared.items():
                 if want == "not_implemented":
                     routes[name] = {"status": "not_implemented"}
@@ -1052,7 +1055,6 @@ def stage_product_routes(group: list[dict], root: Path, results: dict) -> None:
                             },
                             ca,
                         )
-            results[ca["id"]]["routes"] = routes
     finally:
         shutil.rmtree(workdir, ignore_errors=True)
 
@@ -1481,11 +1483,11 @@ def run_group(
             tb = traceback.format_exc()
             for ca in group:
                 if ca.get("product_routes"):
-                    # stage_product_routes 每个 case 的 routes 在该 case 的循环
-                    # 结束时才整体写回 results；所以「声明的路由名全部已在
-                    # results 里」= 该 case 的路由检查已完整做完，崩溃发生在
-                    # 之后别的 case 上，不能把它改判成 runner_error。
-                    # 部分完成的 case（循环中途崩溃）根本没写回，天然算未完成。
+                    # stage_product_routes 逐条把路由结果写进 results；
+                    # 「声明的路由名全部已在 results 里」= 该 case 的路由检查
+                    # 已完整做完，崩溃发生在之后别的 case 上，不能改判成
+                    # runner_error。中途崩溃的 case 键不全，算未完成：保留已有
+                    # 条目并追加崩溃条目。
                     done = results[ca["id"]].get("routes")
                     if isinstance(done, dict) and set(ca["product_routes"]) <= set(done):
                         continue

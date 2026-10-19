@@ -1256,6 +1256,46 @@ class TestRunGroupCrashKeepsPartialResults:
         report = CM.build_report([a, b], results, {}, "current", "all")
         assert [e["id"] for e in report["summary"]["runner_errors"]] == ["b"]
 
+    def test_later_route_crash_keeps_earlier_failed_route_of_same_case(self, monkeypatch, tmp_path):
+        """真实 stage_product_routes：同一 case 的 desktop_project 已失败、native_run 抛 OSError → 仍是 product_bug（r4310730061）。"""
+        from tavotto import app as tavotto_app
+
+        self._patch_pipeline(monkeypatch, tmp_path, override_boom=False)
+        monkeypatch.setattr(CM, "stage_replay", lambda *a, **k: {"ok": True, "detail": {}})
+        monkeypatch.setattr(CM, "stage_export", lambda *a, **k: {"ok": True, "detail": {}})
+        monkeypatch.setattr(
+            CM,
+            "route_probe_via_app",
+            lambda *a, **k: {"ok": True, "via": "http", "pj": object(), "detail": {}},
+        )
+        monkeypatch.setattr(
+            CM,
+            "route_desktop_project",
+            lambda *a, **k: {"ok": False, "code": "desktop_project_failed", "detail": {}},
+        )
+        monkeypatch.setattr(CM, "route_cli_open", lambda *a, **k: {"ok": True, "via": "cli"})
+        monkeypatch.setattr(tavotto_app, "close_project", lambda pj: None)
+
+        def native_boom(*a, **k):
+            raise OSError("spawn native_run boom")
+
+        monkeypatch.setattr(CM, "route_native_run", native_boom)
+        a = case("a", product_routes={"desktop_project": True, "native_run": True})
+        results = self._run([a], tmp_path)
+
+        ra = results["a"]
+        assert ra["routes"]["desktop_project"]["status"] == "fail"
+        assert ra["routes"]["desktop_project"]["classification"] == "product_bug"
+        assert ra["routes"]["runner_error"]["code"] == "route_runner_crashed"
+        assert "spawn native_run boom" in ra["routes"]["runner_error"]["detail"]
+        assert ra["classification"] == "product_bug"
+
+        report = CM.build_report([a], results, {}, "current", "all")
+        assert [x["id"] for x in report["summary"]["product_bugs"]] == ["a"]
+        assert [x["id"] for x in report["summary"]["runner_errors"]] == ["a"]
+        ok, fails = CM.evaluate_gate("pr", [a], results, {"cases": {}})
+        assert not ok and any("新出现的 product_bug" in f for f in fails)
+
 
 class TestMalformedProductResponseIsProductBug:
     """产品返回不合契约的响应 = 路由失败（product_bug），不是 runner 崩溃（Codex #1178 r4310660485）。"""
