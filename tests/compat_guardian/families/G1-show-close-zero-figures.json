@@ -40,7 +40,7 @@
     "after": {
       "statements": 5,
       "lines": 5,
-      "bytes": 128,
+      "bytes": 129,
       "files": 1
     },
     "reproducibility": {

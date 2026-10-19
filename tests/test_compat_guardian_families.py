@@ -15,6 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts/ci"))
 import compat_explore as ex  # noqa: E402
 import compat_guardian as cg  # noqa: E402
 import compat_guardian_expectations as ex_decl  # noqa: E402
+import compat_minimize as cmz  # noqa: E402
 
 FAMILIES = cg.ROOT / "tests/compat_guardian/families"
 SCHEMA = cg.ROOT / "tests/compat_guardian/families.schema.json"
@@ -67,6 +68,12 @@ class Records(unittest.TestCase):
                 hashlib.sha256(path.read_bytes()).hexdigest(), record["repro"]["sha256"]
             )
             compile(path.read_text(encoding="utf-8"), str(path), "exec")
+            # the recorded `after` metrics are recomputed from the committed bytes, never trusted
+            # from the JSON alone (Codex #1136 r4312234096)
+            script = Path(record["repro"]["script"]).name
+            self.assertEqual(
+                record["repro"]["after"], cmz.measure({script: path.read_bytes()}, script)
+            )
             self.assertLess(
                 record["repro"]["after"]["statements"], record["repro"]["before"]["statements"]
             )
