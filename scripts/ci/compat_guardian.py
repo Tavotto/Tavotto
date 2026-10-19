@@ -497,7 +497,11 @@ def _native_status(result: dict) -> str:
 
 
 def v2_stages(
-    observed: dict, native: dict, ideal_missing: list, designed_stop: bool = False
+    observed: dict,
+    native: dict,
+    ideal_missing: list,
+    designed_stop: bool = False,
+    designed_partial: bool = False,
 ) -> dict:
     """Project actual outcomes, keeping invocation counts distinct from success.
 
@@ -514,8 +518,10 @@ def v2_stages(
     invoked = observed["ran"] and observed["exec_count"] > 0
     if not invoked:
         return stages
+    # `partial` + `succeeded` is the honest projection of a run that finished but kept only
+    # some figures (G3): the execution itself finished; the missing figures are a capture fact.
     finished = (
-        observed["final_phase"] == "completed"
+        observed["final_phase"] in ("completed", "partial")
         and observed["outcome_kind"] == "succeeded"
         and observed["facts"].get("facts", {}).get("execution_finished") is True
     )
@@ -523,12 +529,23 @@ def v2_stages(
         "passed" if finished else "failed" if observed["outcome_kind"] == "failed" else "unknown"
     )
     stages["execute"] = stage(
-        execution, "actual script invocation AND completed/succeeded terminal execution facts"
+        execution, "actual script invocation AND succeeded terminal execution facts"
     )
     captured, opened = observed["figures_captured"] > 0, observed["figures_valid"] > 0
-    if finished or captured:
+    native_figs = native.get("figure_count")
+    fewer = captured and type(native_figs) is int and observed["figures_captured"] < native_figs
+    if fewer and designed_partial and not ideal_missing:
+        # The V2 partial oracle was met exactly (phase=partial, the uncaptured figures named):
+        # fewer figures than native is reported honestly, a declared limitation, never a pass.
         stages["capture"] = stage(
-            "passed" if captured else "failed", "actual captured figure count"
+            "expected_limitation",
+            "designed partial: fewer figures than native, reported as partial with the "
+            "uncaptured figures named (V2 partial oracle met)",
+        )
+    elif finished or captured:
+        stages["capture"] = stage(
+            "passed" if captured and not fewer else "failed",
+            "actual captured figure count against the native figure count",
         )
     if captured:
         stages["open"] = stage("passed" if opened else "failed", "actual rendered manifest")
@@ -772,6 +789,7 @@ def _execute(request: dict) -> dict:
             native,
             row["raw"]["ideal_missing"],
             designed_stop=cs.SCENARIOS[cid].ideal_outcome == "stop_no_fallback",
+            designed_partial=cs.SCENARIOS[cid].ideal_outcome == "partial_figure",
         )
         row["figures"]["tavotto_captured"] = obs.figures_captured
         row["figures"]["tavotto_valid"] = obs.figures_valid
