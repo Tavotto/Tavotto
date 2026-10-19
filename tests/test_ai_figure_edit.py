@@ -262,3 +262,65 @@ def test_script_changed_between_precommit_and_commit_is_not_overwritten(env, mon
     assert (
         sess["status"] == "failed" and ai_history.get(sid)["error"] == "script_changed_since_start"
     )
+
+
+def _symlink_or_skip(target, link, *, is_dir):
+    try:
+        os.symlink(target, link, target_is_directory=is_dir)
+    except (OSError, NotImplementedError):
+        pytest.skip("本机建不了符号链接（Windows 无权限）")
+
+
+def test_swapped_directory_symlink_in_project_fails_untouched(env, tmp_path):
+    """目录符号链接被换指向：`os.walk` 不进入它，指纹要把链接本身（目标）记下来。"""
+    a, b = tmp_path / "out_a", tmp_path / "out_b"
+    a.mkdir()
+    b.mkdir()
+    _symlink_or_skip(a, env["figs"] / "datalink", is_dir=True)
+    env["code"] = (
+        EDIT
+        + f"; import os; l = proj / 'datalink'; os.unlink(l); os.symlink({str(b)!r}, l, target_is_directory=True)"
+    )
+    sid, _ = _run(env)
+    sess = _wait(sid)
+    row = ai_history.get(sid)
+    assert row["outcome"] == "failed" and sess["status"] == "failed"
+    check = row["verification"]["persistence"]["checks"][-1]
+    assert check["id"] == "project.untouched" and "datalink" in check["observed"]["files"]
+    assert _project_text(env) == SCRIPT, "提交前检查不过：项目里的脚本逐字节不变"
+
+
+def test_retargeted_file_symlink_in_project_fails_untouched(env, tmp_path):
+    """文件符号链接被改指向（lstat 的 size / mtime 可能碰巧相同）：目标写进指纹。"""
+    a, b = tmp_path / "x_a.csv", tmp_path / "x_b.csv"
+    a.write_text("1", encoding="utf-8")
+    b.write_text("2", encoding="utf-8")
+    _symlink_or_skip(a, env["figs"] / "filelink.csv", is_dir=False)
+    env["code"] = (
+        EDIT + f"; import os; l = proj / 'filelink.csv'; os.unlink(l); os.symlink({str(b)!r}, l)"
+    )
+    sid, _ = _run(env)
+    sess = _wait(sid)
+    row = ai_history.get(sid)
+    assert row["outcome"] == "failed" and sess["status"] == "failed"
+    check = row["verification"]["persistence"]["checks"][-1]
+    assert check["id"] == "project.untouched" and "filelink.csv" in check["observed"]["files"]
+    assert _project_text(env) == SCRIPT
+
+
+def test_interrupt_all_leaves_a_committing_task_alone(env, monkeypatch):
+    """进入提交后 `interrupt_all` 不得把会话标成 interrupted：任务照常写完，终态按真实结局收尾。"""
+    seen = []
+    real = scriptlock.write_script
+
+    def write_and_interrupt(path, data, *, mode=None):
+        seen.append(ai_bridge.interrupt_all())
+        real(path, data, mode=mode)
+
+    monkeypatch.setattr(scriptlock, "write_script", write_and_interrupt)
+    env["code"] = EDIT + "; time.sleep(0.3)"
+    sid, _ = _run(env)
+    sess = _wait(sid)
+    assert seen == [0], "提交中的会话不计入被中断数"
+    assert sess["status"] == "done" and '"new"' in _project_text(env)
+    assert ai_history.get(sid)["status"] == "done"

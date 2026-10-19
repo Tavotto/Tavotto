@@ -51,14 +51,42 @@ def _sha256(data: bytes) -> str:
 
 
 # --------------------------------------------------------------------------- 有界指纹
+def _readlink(p: Path) -> str | None:
+    try:
+        return os.readlink(p)
+    except OSError:
+        return None
+
+
 def project_fingerprint(root: Path, *, exclude: frozenset[str] = frozenset()) -> dict:
-    """原项目目录的有界文件指纹：`{"status": "ok", "files": {相对路径: [size, mtime_ns, sha256 | None]}}`，
-    超出文件数上限回 `{"status": "over_budget"}`。不跟随符号链接（链接本身按 lstat 记），`exclude` 是 posix 相对路径。"""
+    """原项目目录的有界文件指纹：`{"status": "ok", "files": {相对路径: [size, mtime_ns, sha256 | None, 链接目标?]}}`，
+    超出文件数上限回 `{"status": "over_budget"}`。`exclude` 是 posix 相对路径。
+
+    不跟随符号链接，链接本身按 lstat + `readlink` 目标记：文件链接是 `[size, mtime_ns, None, 目标]`（被换指向会变，
+    即使 lstat 的 size / mtime 碰巧相同）；目录链接（`os.walk` 把它放进 `dirnames`）是 `["link", 目标, mtime_ns]`，
+    不进入。命中 `_SKIP_DIRS` / `tavottofile` 的名字照旧跳过（即使它是链接）。
+
+    边界：经链接写进**链接目标**（在项目外）的内容不在指纹里——cwd 之外的写入由 CLI 沙盒负责，指纹只兜项目内。"""
     root = Path(root)
     skip_names = _SKIP_DIRS | {config.PROJECT_STORE_DIRNAME}
     files: dict[str, list] = {}
     for dirpath, dirnames, filenames in os.walk(root, followlinks=False):
         dirnames[:] = sorted(d for d in dirnames if d not in skip_names)
+        for d in list(dirnames):
+            p = Path(dirpath) / d
+            if not p.is_symlink():
+                continue
+            dirnames.remove(d)  # 不进入链接目录
+            rel = p.relative_to(root).as_posix()
+            if rel in exclude:
+                continue
+            if len(files) >= FINGERPRINT_MAX_FILES:
+                return {"status": "over_budget"}
+            try:
+                mtime = p.lstat().st_mtime_ns
+            except OSError:
+                mtime = None
+            files[rel] = ["link", _readlink(p), mtime]
         for name in sorted(filenames):
             p = Path(dirpath) / name
             rel = p.relative_to(root).as_posix()
@@ -69,12 +97,16 @@ def project_fingerprint(root: Path, *, exclude: frozenset[str] = frozenset()) ->
             try:
                 st = p.lstat()
                 digest = None
-                if not p.is_symlink() and st.st_size <= FINGERPRINT_HASH_MAX_BYTES:
+                is_link = p.is_symlink()
+                if not is_link and st.st_size <= FINGERPRINT_HASH_MAX_BYTES:
                     digest = _sha256(p.read_bytes())
             except OSError:
                 files[rel] = [None, None, None]  # 读不了也是一个可比较的事实：前后都读不了才算没变
                 continue
-            files[rel] = [st.st_size, st.st_mtime_ns, digest]
+            entry = [st.st_size, st.st_mtime_ns, digest]
+            if is_link:
+                entry.append(_readlink(p))
+            files[rel] = entry
     return {"status": "ok", "files": files}
 
 

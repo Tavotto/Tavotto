@@ -1446,7 +1446,10 @@ def interrupt_all() -> int:
             if "taf" in sess:
                 from . import ai_tasks
 
-                ai_tasks.cancel(sess["id"])  # 提交中的照常提交完（回 False）；之前的一律不提交
+                if not ai_tasks.cancel(sess["id"]):
+                    # 已进入提交（或已收尾）：取消未被接受，任务照常写完并由泵线程按真实结局收尾——
+                    # 不终止、不改 status、不更新历史库、不计数（与 `cancel` 同一口径）
+                    continue
             _terminate(sess)
             sess["status"] = "interrupted"
             ai_history.update_status(sess["id"], "interrupted")

@@ -187,7 +187,8 @@
   预留仍是同一次 `record_start`）：提交前 L1 = 候选里只有目标脚本变了（新建的辅助文件不提交、不算）、语法、静态输出名不变、项目里
   的目标脚本仍是起跑那一版、原项目指纹没变（超限 = unknown = 不提交）；提交 = `ai_figure_edit.commit` 持脚本锁再核一次基线 →
   `write_script` → 统一刷新一次（之后不再刷第二遍）。改前快照仍是 `run()` 起跑时拍的那份，回滚照旧走 `revert`。`cancel` /
-  `interrupt_all` 先问 `ai_tasks.cancel`：进入提交后取消回 False、不改状态。提交后渲染层验证 Phase 3a 未接（`render.figure` 记
+  `interrupt_all` 先问 `ai_tasks.cancel`：进入提交后取消回 False、不改状态（`interrupt_all` 对该会话 `continue`，不计数）。
+  原项目指纹对符号链接（文件 / 目录）记 lstat + `readlink` 目标、不进入；经链接写到项目外的内容不在指纹里（CLI 沙盒负责）。提交后渲染层验证 Phase 3a 未接（`render.figure` 记
   unknown → 结局最高 partial）。`ai.done` 与会话详情多一个 `task`（类型、结局、未满足项、文案键），终态与 `task_result` 同一条
   `record_end`。R-03（CLI 不写 cwd 外）是 CLI 的行为，指纹兜底只能发现、不能阻止。看护 `tests/test_ai_figure_edit.py`。
 
