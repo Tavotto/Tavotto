@@ -205,6 +205,17 @@ def matches_head(root: Path, rel: str, path: Path | None = None) -> bool:
     return work == head
 
 
+def staged_source_hashes(root: Path, fixture: dict[str, str], script: str) -> list[str]:
+    """执行观测器（`CG_EXEC_HASHES`）要认的入口脚本摘要：按**实际拷进沙盒的工作区字节**算，不用 `fixture` 里按 HEAD blob
+    记的语料身份——materialize / V2 staging 原样拷工作区文件，Windows `core.autocrlf` checkout 下是 CRLF，两者不同
+    （Codex #1118 r4310318506）。内容与 HEAD 等价已由 `fixture_files` 核过。"""
+    return [
+        digest(contained(root, k).read_bytes())
+        for k in fixture
+        if k.endswith(".py") and Path(k).name == Path(script).name
+    ]
+
+
 def registered(suite: str) -> dict[str, dict]:
     metadata = (
         ["tests/compat/manifest.json"]
@@ -1111,12 +1122,11 @@ def run(args) -> int:
             work = Path(tmp)
             req = {"suite": args.suite, "case": cid, "work": str(work), "evidence": str(dest)}
             (work / "request.json").write_text(json.dumps(req), encoding="utf-8")
-            source_hashes = [
-                v
-                for k, v in fixtures[cid].items()
-                if k.endswith(".py")
-                and Path(k).name == Path(registry[cid].get("script", "script.py")).name
-            ]
+            # 观测器认的是**实际拷进沙盒的字节**（materialize / V2 staging 原样拷工作区文件）：Windows checkout 下是 CRLF，
+            # 与报告里按 HEAD blob 记的语料身份（跨平台一致）不同。内容与 HEAD 等价已由 fixture_files 核过（Codex r4310318506）
+            source_hashes = staged_source_hashes(
+                ROOT, fixtures[cid], registry[cid].get("script", "script.py")
+            )
             env = isolated_env(work, work / "adapter-execs.jsonl", source_hashes)
             try:
                 launch_adapter(
