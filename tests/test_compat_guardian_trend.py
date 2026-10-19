@@ -280,17 +280,14 @@ class Trend(GuardianBase):
 
 
 BANNED_CALLS = {"open", "eval", "exec", "compile", "__import__", "builtins.open"}
-BANNED_OS = {
-    "system",
-    "popen",
-    "remove",
-    "unlink",
-    "rename",
-    "replace",
-    "makedirs",
-    "putenv",
-    "kill",
-}
+#: os 下唯一允许的调用：读环境变量与纯路径运算（不触盘的 os.path 函数之外一律不许）
+OS_ALLOWED = (
+    "os.environ.get",
+    "os.path.join",
+    "os.path.basename",
+    "os.path.dirname",
+    "os.path.splitext",
+)
 
 
 def confinement_violations(tree: ast.AST) -> tuple[list[str], list[str]]:
@@ -321,10 +318,10 @@ def confinement_violations(tree: ast.AST) -> tuple[list[str], list[str]]:
         name = target(node.func)
         if name in BANNED_CALLS:
             violations.append(name)
-        if name.startswith("os."):
-            attr = name.split(".", 1)[1]
-            if attr in BANNED_OS or attr.startswith(("exec", "spawn")):
-                violations.append(name)
+        if name.startswith("os.") and not name.startswith(OS_ALLOWED):
+            # 白名单而不是黑名单：os 下任何会动文件系统 / 进程的调用（rmdir、chmod、symlink、truncate、write……）
+            # 都不用逐个列出（Codex #1139 r4310373945）。triage 只读 os.environ
+            violations.append(name)
         if isinstance(node.func, ast.Attribute) and node.func.attr in PATH_MUTATORS:
             # 接收者与（rename / replace / *_to 的）目标都是被改动的路径（Codex #1139 r4306432457）
             writes.append(f"{node.func.attr}:{ast.unparse(node.func.value)}")
@@ -361,6 +358,11 @@ class ConfinementCheckerSelfTest(unittest.TestCase):
             ("from os import system as s\ns('x')", "os.system"),
             ("import os\nos.execv('x', [])", "os.execv"),
             ("import builtins as b\nb.open('x')", "builtins.open"),
+            ("import os\nos.rmdir('x')", "os.rmdir"),
+            ("import os\nos.chmod('x', 0)", "os.chmod"),
+            ("from os import symlink\nsymlink('a', 'b')", "os.symlink"),
+            ("import os\nos.truncate('x', 0)", "os.truncate"),
+            ("import os as o\no.write(1, b'x')", "os.write"),
         ):
             self.assertIn(hit, confinement_violations(ast.parse(snippet))[0], snippet)
         self.assertEqual(confinement_violations(ast.parse("# os.system('x')\n'os.system'"))[0], [])
