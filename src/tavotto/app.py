@@ -3161,6 +3161,55 @@ def _after_ai_change(ctx: "ProjectCtx", script: str) -> dict:
     return result
 
 
+def _ai_task_hooks(ctx: "ProjectCtx", script: str, entry: str) -> dict:
+    """TAF 改图（ADR 0138 Phase 3b）提交前后的渲染层事实，注入给 AI 桥；**只在实验开关打开时**被调用。
+
+    * `before`：池里**已经 build 过**的那个 safe 会话（`pool.peek`，不建、不执行）落盘的 manifest；没有 → None
+      （这次会话里没渲染过这张图，桥据此不做改后渲染）；
+    * `after`：提交并统一刷新之后，按磁盘面板的同一扇门（`enginesession.resolve`、safe、同一份运行配置）取会话并
+      build——就是前端收到 `panel.file_changed` 后本来就要做的那次重渲染；前端随后来时会话已 built，不再执行第二次。
+
+    两边都按这个脚本此刻登记的全部 stem 读 `<out_dir>/<stem>.json`。"""
+
+    def run_selection():
+        return engine_runconfig.default_selection(ctx.path, script)
+
+    def manifests(worker) -> dict:
+        out = {}
+        for stem in ctx.registry.stems_of(script):
+            try:
+                out[stem] = json.loads(
+                    Path(
+                        engine_figcapture.usable_preview_path(worker.out_dir, stem, ".json")
+                    ).read_text(encoding="utf-8")
+                )
+            except (OSError, ValueError):
+                continue
+        return out
+
+    def before():
+        worker = engine_pool.peek(script, str(ctx.path), run=run_selection())
+        if worker is None or not worker.built:
+            return None
+        return manifests(worker) or None
+
+    def after():
+        run = run_selection()
+        stems = ctx.registry.stems_of(script)
+        worker = engine_enginesession.resolve(
+            project_root=str(ctx.path),
+            script=script,
+            entry=entry,
+            stem=stems[0] if stems else "",
+            execution_profile=engine_enginesession.PROFILE_SAFE,
+            **({"run": run} if run is not None else {}),
+        )
+        worker.ensure_built()
+        return manifests(worker)
+
+    return {"before": before, "after": after}
+
+
 def project_status(ctx: "ProjectCtx | None") -> dict:
     if ctx is None:
         return {"open": False}
@@ -10665,6 +10714,7 @@ def _ai_run_impl():
             endpoint_id=body.get("endpoint"),
             # 文件变了就接统一刷新（reason=ai），在 ai.done 之前做完（ADR 0041）
             on_changed=lambda script: _after_ai_change(ctx, script),
+            task_hooks=_ai_task_hooks(ctx, info["script"], info["entry"]),
         )
     except engine_ai.DuplicateRequest as dup:
         # 同一条请求已经登记过：返回既有会话，不 spawn、不重复记遥测

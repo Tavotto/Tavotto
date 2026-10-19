@@ -731,6 +731,7 @@ def run(
     endpoint_id: str | None = None,
     on_changed=None,
     client_request_id: str | None = None,
+    task_hooks: dict | None = None,
 ) -> str:
     """启动一次 AI 修改任务，返回 session id。事件经 on_event(name, data) 回调。
 
@@ -741,6 +742,9 @@ def run(
     （app 层接的是统一刷新，ADR 0025）。本模块不 import app、不知道刷新长什么
     样——注入而不是回头 import，边界与 `project_refresh.RefreshSink` 相同。
     它的结局进 `ai.done.refresh` 与历史库的 `refresh` 列，见 `refresh_outcome()`。
+
+    `task_hooks`（只在 TAF 开关打开时用）：`{"before": () -> {stem: manifest} | None, "after": () -> {stem: manifest}}`，
+    app 注入的渲染层事实（改前取自已经 build 的 worker、改后取自前端本来就要做的那次重渲染），同样是注入而不是回头 import。
 
     `client_request_id`：前端点发送时生成的 UUID。同 (项目, id) 已登记过就抛 `DuplicateRequest`、
     **不 spawn**——「任何操作都不得让同一条 AI 修改被无意执行两次」。去重先于忙检查：
@@ -804,6 +808,7 @@ def run(
             try:
                 ai_figure_edit.ensure_registered()
                 cand = ai_figure_edit.create_candidate(sid, script_path, Path(figures_dir), script)
+                cand.extras.update(task_hooks or {})
                 envelope = ai_figure_edit.envelope_for(
                     agent=agent,
                     project_key=project_key,
