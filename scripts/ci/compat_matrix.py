@@ -1051,7 +1051,7 @@ def _route_cli_verdict(case: dict, group: list[dict], bare: dict, selected: dict
 
 
 # --------------------------------------------------------------------------
-# 分类：把阶段结果折成六选一
+# 分类：把阶段结果折成六选一（外加一个只在一次运行里出现的 `runner_error`）
 # --------------------------------------------------------------------------
 def classify(
     case: dict, stages: dict, skipped: dict, routes: dict | None = None
@@ -1070,9 +1070,20 @@ def classify(
     declared_reason = str(case.get("reason", "")).strip()
     expected = case.get("expected", {})
 
-    failed_routes = [
-        n for n, e in (routes or {}).items() if isinstance(e, dict) and e.get("status") == "fail"
+    failed_entries = {
+        n: e for n, e in (routes or {}).items() if isinstance(e, dict) and e.get("status") == "fail"
+    }
+    # 路由 runner 自己崩了：没有裁决，不是产品路由没走通（#1133）。
+    crashed_routes = [
+        n for n, e in failed_entries.items() if e.get("classification") == CC.RUNNER_ERROR
     ]
+    if crashed_routes:
+        return (
+            CC.RUNNER_ERROR,
+            "路由 runner 崩溃（基础设施故障，不是产品缺陷）",
+            f"{crashed_routes}",
+        )
+    failed_routes = list(failed_entries)
     if failed_routes:
         return ("product_bug", declared_reason or "", f"产品路由未通过：{failed_routes}")
 
@@ -1110,6 +1121,23 @@ def classify(
     if declared == "invalid_fixture":
         return declared, declared_reason, f"未通过：{failed}"
     return "product_bug", declared_reason or "", f"未通过：{failed}"
+
+
+def runner_crash_result(case: dict, tb: str) -> dict:
+    """runner 自己崩了 → 这个 case 没有裁决，**不是**产品缺陷（#1133）。
+
+    基础设施故障记成 product_bug 会污染基线与趋势，还会让门禁把它当
+    「新出现的产品缺陷」去判；但也不能悄悄吞掉——它以独立分类
+    `runner_error` 出现在报告、汇总与门禁理由里。
+    """
+    r = _blank(case)
+    r["stages"]["discover"] = False
+    r["detail"]["runner_error"] = tb[-2000:]
+    r["classification"] = CC.RUNNER_ERROR
+    r["stage"] = "discover"
+    r["reason"] = "runner 在这个 case 上崩溃（基础设施故障，不是产品缺陷）"
+    r["follow_up"] = "读 detail.runner_error 里的 traceback，修 runner 后重跑"
+    return r
 
 
 def product_bug_stage(stages: dict, expected: dict) -> str:
@@ -1360,7 +1388,7 @@ def run_group(
                         "runner_error": {
                             "status": "fail",
                             "code": "route_runner_crashed",
-                            "classification": "product_bug",
+                            "classification": CC.RUNNER_ERROR,
                             "reason": "路由 runner 崩溃",
                             "follow_up": "读 detail 里的 traceback",
                             "detail": tb[-2000:],
@@ -1653,6 +1681,10 @@ def build_report(
         }
         for cid in by_cls.get("product_bug", [])
     ]
+    runner_errors = [
+        {"id": cid, "detail": (results[cid].get("detail") or {}).get("runner_error", "")[-400:]}
+        for cid in by_cls.get(CC.RUNNER_ERROR, [])
+    ]
     parity = [
         {"id": cid, **(results[cid]["browser"] or {})}
         for cid in sorted(results)
@@ -1691,6 +1723,8 @@ def build_report(
             "funnel": funnel(cases, results),
             "classification": {k: len(v) for k, v in sorted(by_cls.items())},
             "product_bugs": bugs,
+            # runner 自身崩溃：不算产品缺陷，但必须逐条可见（静默 = 空门禁）。
+            "runner_errors": runner_errors,
             "worker_crashes": sum(
                 1
                 for c in cases
@@ -1738,7 +1772,7 @@ def render_summary(report: dict) -> str:
         rate = "—" if row["rate"] is None else f"{row['rate'] * 100:.1f}%"
         out.append(f"| {row['label']} | {row['passed']} | {row['total']} | {rate} |")
     out.append("\n| Classification | Cases |\n|---|---:|")
-    for cls in CC.CLASSIFICATIONS:
+    for cls in CC.RESULT_CLASSIFICATIONS:
         n = s["classification"].get(cls, 0)
         if n:
             out.append(f"| {cls} | {n} |")
@@ -1748,6 +1782,10 @@ def render_summary(report: dict) -> str:
             out.append(f"- `{b['id']}` — {b['stage'] or '?'} （tier {b['tier']}）{b['detail']}")
     else:
         out.append("\n**Product bugs: 0**\n")
+    if s.get("runner_errors"):
+        out.append("\n### Runner errors（基础设施故障，不计入产品缺陷）\n")
+        for e in s["runner_errors"]:
+            out.append(f"- `{e['id']}` — runner 崩溃，见 detail.runner_error")
     census = report["artist_census"][:10]
     if census:
         out.append("\n### Top unrecognized / partially recognized artists\n")
@@ -1859,6 +1897,13 @@ def evaluate_gate(
     if bugs and not spec["allow_baseline_bugs"]:
         fails.append(f"{gate} 档不接受任何 product_bug（含基线里已知的）：{bugs}")
 
+    # runner 自身崩溃：不是产品缺陷（上面不算），但这些 case **没有裁决**，
+    # 不能当通过——否则 runner 整个挂了门禁反而全绿（#1133）。以基础设施
+    # 理由单独报红，措辞里写明不是产品回归。
+    crashed = [c["id"] for c in cases if results[c["id"]]["classification"] == CC.RUNNER_ERROR]
+    if crashed:
+        fails.append(f"runner 自身崩溃，这些 case 没有裁决（基础设施故障，非产品回归）：{crashed}")
+
     # 桌面/浏览器语义分叉：任何档位一律红（见 docstring 第 4 条）
     parity_bad = [
         c["id"] for c in cases if (results[c["id"]].get("browser") or {}).get("ok") is False
@@ -1887,6 +1932,8 @@ def evaluate_gate(
         for c in cases:
             was = baseline.get("cases", {}).get(c["id"], {}).get("classification")
             now = results[c["id"]]["classification"]
+            if now == CC.RUNNER_ERROR:
+                continue  # 已在上面按基础设施故障单独报，不是分类退步
             if was and rank.get(now, 99) > rank.get(was, 99):
                 fails.append(f"{c['id']} 比基线退步：{was} → {now}")
     return (not fails), fails
@@ -2177,14 +2224,7 @@ def main(argv: list[str] | None = None) -> int:
                 # runner 自己崩了也要如实记账，绝不让整轮消失。
                 tb = traceback.format_exc()
                 for ca in group:
-                    r = _blank(ca)
-                    r["stages"]["discover"] = False
-                    r["detail"]["runner_error"] = tb[-2000:]
-                    r["classification"] = "product_bug"
-                    r["stage"] = "discover"
-                    r["reason"] = "runner 在这个 case 上崩溃"
-                    r["follow_up"] = "读 detail.runner_error 里的 traceback"
-                    results[ca["id"]] = r
+                    results[ca["id"]] = runner_crash_result(ca, tb)
             for ca in group:
                 r = results[ca["id"]]
                 mark = {
@@ -2194,6 +2234,7 @@ def main(argv: list[str] | None = None) -> int:
                     "environment_dependency": "🌤",
                     "product_bug": "❌",
                     "invalid_fixture": "🛠",
+                    CC.RUNNER_ERROR: "💥",
                 }.get(r["classification"], "?")
                 print(
                     f"    {mark} {ca['id']:<38} {r['classification']}"

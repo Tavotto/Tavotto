@@ -99,6 +99,9 @@ def _detail(name: str, data: dict) -> str:
             )
         else:
             parts.append("产品缺陷 0")
+        # runner 自身崩溃不算产品缺陷，但也不能从这一行消失。
+        if s2.get("runner_errors"):
+            parts.append(f"runner 崩溃 {len(s2['runner_errors'])}（非产品缺陷）")
         return "，".join(parts)
     if name == "soak.json":
         a = data.get("analysis", {})

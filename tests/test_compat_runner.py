@@ -853,3 +853,81 @@ def test_browser_verdict_without_desktop_capture_detail_is_not_penalised():
         "semantics": {"s": {"roles": ["axes"], "editable": []}},
     }
     assert CM._browser_verdict(c, ok, desktop)["ok"]
+
+
+# ============================================================ runner 自身崩溃（#1133）
+class TestRunnerError:
+    """runner 自己崩了 ≠ 产品缺陷：独立分类 `runner_error`，报告可见、门禁不当产品回归。"""
+
+    def _crashed(self, cid="x"):
+        return CM.runner_crash_result(case(cid), "Traceback: boom")
+
+    def test_runner_crash_is_runner_error_not_product_bug(self):
+        r = self._crashed()
+        assert r["classification"] == "runner_error"
+        assert r["classification"] != "product_bug"
+        assert "boom" in r["detail"]["runner_error"]
+
+    def test_runner_error_is_not_a_declarable_classification(self):
+        """清单/基线只能声明闭集里的状态，runner_error 只是一次运行的观测。"""
+        assert "runner_error" not in CC.CLASSIFICATIONS
+        assert "runner_error" in CC.RESULT_CLASSIFICATIONS
+
+    def test_real_product_error_is_still_product_bug(self):
+        cls, _r, _d = CM.classify(case("p"), stages(execute=False), {})
+        assert cls == "product_bug"
+
+    def test_crashed_route_runner_is_runner_error(self):
+        routes = {
+            "r": {
+                "status": "fail",
+                "code": "route_runner_crashed",
+                "classification": "runner_error",
+            }
+        }
+        cls, _r, _d = CM.classify(case(), stages(execute=True), {}, routes)
+        assert cls == "runner_error"
+        # 真正走不通的路由仍是 product_bug
+        routes = {"r": {"status": "fail", "code": "x", "classification": "product_bug"}}
+        assert CM.classify(case(), stages(execute=True), {}, routes)[0] == "product_bug"
+
+    def test_gate_does_not_judge_runner_error_as_product_regression_but_reports_it(self):
+        cases = [case("x")]
+        results = {"x": self._crashed("x")}
+        baseline = {"cases": {"x": {"classification": "full_support", "stages": {}}}}
+        for gate in ("pr", "release"):
+            ok, fails = CM.evaluate_gate(gate, cases, results, baseline)
+            text = "\n".join(fails)
+            assert "新出现的 product_bug" not in text
+            assert "product_bug（含基线" not in text
+            assert "退步" not in text
+            # 但不能静默放行：没有裁决的 case 要以基础设施理由报出来
+            assert not ok and "runner 自身崩溃" in text and "非产品回归" in text
+
+    def test_runner_error_never_counts_as_a_product_bug_in_the_report(self):
+        cases = [case("x"), case("y")]
+        results = {"x": self._crashed("x")}
+        results["y"] = {
+            "id": "y",
+            "category": "core_artists",
+            "tier": "expected",
+            "classification": "full_support",
+            "stages": stages(discover=True, execute=True),
+            "detail": {},
+            "skipped": {},
+            "census": {},
+            "browser": None,
+        }
+        report = CM.build_report(cases, results, {}, "current", "all")
+        s = report["summary"]
+        assert s["product_bugs"] == []
+        assert s["classification"] == {"full_support": 1, "runner_error": 1}
+        assert [e["id"] for e in s["runner_errors"]] == ["x"]
+        text = CM.render_summary(report)
+        assert "runner_error | 1" in text and "Runner errors" in text
+        assert "Product bugs: 0" in text
+
+    def test_baseline_refuses_to_freeze_a_runner_error(self):
+        with pytest.raises(CC.CorpusError) as ei:
+            CC.baseline_payload({"x": self._crashed("x")})
+        assert ei.value.code == "baseline_runner_error"

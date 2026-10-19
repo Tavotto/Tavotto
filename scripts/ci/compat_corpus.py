@@ -82,6 +82,14 @@ CLASSIFICATIONS = (
     "invalid_fixture",  # case 自己写错了
 )
 
+#: runner 自身崩溃（不是被测脚本、不是产品）。**刻意不在 `CLASSIFICATIONS` 里**：
+#: 那张闭集是 manifest / 基线允许**声明**的状态，而 runner 崩溃只能是一次运行
+#: 的观测——写进清单或基线都等于把基础设施故障冻成「已知状态」（#1133）。
+RUNNER_ERROR = "runner_error"
+
+#: 一次运行的结果里可能出现的全部分类（报告/汇总用）。
+RESULT_CLASSIFICATIONS = (*CLASSIFICATIONS, RUNNER_ERROR)
+
 #: 需要写明理由的分类（`full_support` 之外全都要）。
 NEEDS_REASON = tuple(c for c in CLASSIFICATIONS if c != "full_support")
 
@@ -607,6 +615,13 @@ def baseline_payload(results: dict, generated_for: dict | None = None) -> dict:
     这里把环境如实写进基线，两条路殊途同归。
     """
     cases = {}
+    crashed = sorted(cid for cid, r in results.items() if r["classification"] == RUNNER_ERROR)
+    if crashed:
+        raise CorpusError(
+            "baseline_runner_error",
+            f"这些 case 的结果是 runner 自身崩溃，不能写进基线（会把基础设施故障冻成已知状态）："
+            f"{crashed}。先修 runner 再重建基线",
+        )
     for cid in sorted(results):
         r = results[cid]
         entry = {
