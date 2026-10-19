@@ -137,7 +137,7 @@ explicitly opts in**, either in the one-time first-run prompt or under
 * **What is sent.** Broad product events (application started, a figure opened
   for editing, an edit committed, a canvas created, a preflight run finished, how an
   export ended (done, partly done, failed or cancelled — with which formats were
-  requested, never a file name or error text), the assistant started, an update installed; since consent
+  requested (PDF, PNG, EPS, TIFF, SVG), never a file name or error text), the assistant started, an update installed; since consent
   version 2 also: a project refresh completed and which entry point triggered it,
   the readiness view opened and from where, which tutorial step was completed,
   which kind of multi-selection arrange button was used, how a save / recovery /
@@ -148,7 +148,7 @@ explicitly opts in**, either in the one-time first-run prompt or under
   [`docs/analytics/telemetry-events.md`](analytics/telemetry-events.md).
 * **Export outcome (consent version 3).** The `export_result` event reports how an
   accepted export ended: done, partly done, failed or cancelled, which formats were
-  requested, how many image files were written, at which coarse stage it stopped and a
+  requested (PDF, PNG, EPS, TIFF, SVG), how many image files were written, at which coarse stage it stopped and a
   coarse error class. No file name, path, error text or figure content is included.
 * **Consent version 2 (2026-09-02).** Adding those events widened the scope, so the
   consent version was raised: consent given for version 1 stopped being sufficient

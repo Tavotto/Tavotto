@@ -79,6 +79,7 @@ EVENTS: dict[str, dict[str, dict]] = {
         "png": BOOL,
         "eps": BOOL,
         "tiff": BOOL,
+        "svg": BOOL,
         "with_report": BOOL,
         "delivered": integer(8),
         "stage": enum(

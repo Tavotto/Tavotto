@@ -8,7 +8,7 @@
 
 本批带来两个新的采集范围：
 
-1. **`export_result`**：每个被受理的导出作业终局时一条（done / partial / failed / cancelled，加请求格式布尔与阶段 / 粗错误类闭集）。
+1. **`export_result`**：每个被受理的导出作业终局时一条（done / partial / failed / cancelled，加请求格式布尔（`pdf` / `png` / `eps` / `tiff` / `svg`；`svg` 随直接 SVG 导出在 v3 内补入——v3 尚未随任何版本发布，不再升版）与阶段 / 粗错误类闭集）。
 2. **可选错误摘要**：用户在诊断报告上**明确点了发送**时，若匿名统计开着，报告服务可把一条不含内容的摘要
    （同意快照 + 内部组件 / 操作 / 稳定错误码）转成第三方错误追踪事件。它走报告服务（`engine/diagsummary.py` →
    `POST /v1/reports/init` 的 `error_summary`），**不走**遥测事件通道。

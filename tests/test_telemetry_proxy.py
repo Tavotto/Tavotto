@@ -561,6 +561,7 @@ def test_every_client_event_is_accepted_end_to_end(upstream):
             "png": True,
             "eps": False,
             "tiff": False,
+            "svg": False,
             "with_report": False,
             "delivered": 1,
             "stage": "raster",

@@ -59,7 +59,7 @@
   轮询都不另发。**被拒（`prepare` 抛）与 `conflict` 不发**；用户重新提交 = 新作业 = 新尝试。
   不新增 `export_started`（无可安全联结的尝试标识，分母会诱导错误的 start/result 比较）。
   `export_completed` 语义不变（`done` 或 `partial` 才发），**不得**把它补读成 `export_result`。
-  属性只含请求格式布尔 / `delivered` / `stage` / `error_class` 闭集，不含错误码原文。
+  属性只含请求格式布尔（`pdf` / `png` / `eps` / `tiff` / `svg`，新增导出格式要同步这张表与代理契约）/ `delivered` / `stage` / `error_class` 闭集，不含错误码原文。
   它是 **CONSENT_VERSION 3** 的新范围之一（ADR 0134）：v2 的同意不再授权它，重新同意之前
   它和所有老事件一样一个字节都不发。
 - **编辑埋点只有一个调用点**：`documentStore.pushHistory`（commit 与 endTxn

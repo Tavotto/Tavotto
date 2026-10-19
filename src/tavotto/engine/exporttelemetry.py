@@ -8,7 +8,7 @@
 
 - `outcome`：作业的终局 status 原样（done / partial / failed / cancelled）；
 - `scope`：`exportreq.SCOPES`；
-- `pdf` / `png` / `eps` / `tiff` / `with_report`：**请求**了什么（不是写成了什么——
+- `pdf` / `png` / `eps` / `tiff` / `svg` / `with_report`：**请求**了什么（不是写成了什么——
   失败的导出没有"写成"可言，而"哪个格式的请求在失败"正是要看的）；
 - `delivered`：真正落盘的图文件数；
 - `stage`（非 done 才有）：轨迹上坏在 / 停在哪一步（`trace.PHASES` 里导出那几步）；
@@ -114,6 +114,7 @@ def properties(job: exportjob.ExportJob) -> dict | None:
         "png": exportreq.FORMAT_PNG in req.formats,
         "eps": exportreq.FORMAT_EPS in req.formats,
         "tiff": exportreq.FORMAT_TIFF in req.formats,
+        "svg": exportreq.FORMAT_SVG in req.formats,
         "with_report": bool(req.include_report),
         "delivered": min(sum(1 for o in job.outputs if o.status == exportjob.STATUS_DONE), 8),
     }

@@ -23,6 +23,7 @@ EXPORT_RESULT = {
     "png": False,
     "eps": False,
     "tiff": False,
+    "svg": False,
     "with_report": False,
     "delivered": 1,
 }

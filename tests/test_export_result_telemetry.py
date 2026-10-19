@@ -91,6 +91,27 @@ def test_sync_done_emits_one_result_and_keeps_export_completed(env):
     assert len(_completed(box)) == 1, "旧事件 export_completed 的发出逻辑不变"
 
 
+def test_pure_svg_export_reports_only_the_svg_bit(env):
+    """格式位记的是**请求**：静态 PDF 面板直出 SVG 按设计失败，svg 位照样是 True。"""
+    client, box = env
+    resp = client.post("/api/export", json=_canvas(formats=["svg"], include_report=False))
+    assert resp.get_json()["status"] == "failed"
+    (ev,) = _results(box)
+    props = ev["properties"]
+    assert props["svg"] is True
+    assert [props[k] for k in ("pdf", "png", "eps", "tiff")] == [False] * 4
+
+
+def test_mixed_formats_report_each_requested_bit(env):
+    client, box = env
+    resp = client.post("/api/export", json=_canvas(formats=["pdf", "svg"], include_report=False))
+    assert resp.get_json()["status"] in ("failed", "partial")
+    (ev,) = _results(box)
+    props = ev["properties"]
+    assert (props["pdf"], props["svg"]) == (True, True)
+    assert [props[k] for k in ("png", "eps", "tiff")] == [False] * 3
+
+
 def test_sync_partial_is_partial_and_old_event_stays(env, monkeypatch):
     client, box = env
     from tavotto.rendercore import job as rc_job
