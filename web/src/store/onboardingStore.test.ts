@@ -350,6 +350,19 @@ describe('持久化与迁移', () => {
     ).toBe('demo_import')
   })
 
+  it('跳着完成的历史（手改 / 半截写入）在第一个缺口处截断：后面那一步不能被「下一步」直接绕过', () => {
+    const base = { schemaVersion: 1, flowVersion: ONBOARDING_FLOW_VERSION, status: 'active' }
+    const m = migratePersisted({ ...base, currentStep: 'demo_import', completedSteps: ['demo_move_legend'] })
+    expect(m.completedSteps).toEqual([])
+    expect(m.currentStep).toBe('demo_import')
+    const m2 = migratePersisted({ ...base, currentStep: 'demo_change_title', completedSteps: ['demo_import', 'demo_change_title'] })
+    expect(m2.completedSteps).toEqual(['demo_import'])
+    expect(m2.currentStep).toBe('demo_move_legend')
+    // 连续的历史原样
+    const m3 = migratePersisted({ ...base, currentStep: 'demo_change_title', completedSteps: ['demo_move_legend', 'demo_import'] })
+    expect(m3.completedSteps).toEqual(['demo_import', 'demo_move_legend'])
+  })
+
   it('同一版里的进行中用户：状态与步骤原样（重启后接着来）', () => {
     const m = migratePersisted({
       schemaVersion: 1,

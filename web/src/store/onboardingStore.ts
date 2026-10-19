@@ -248,9 +248,19 @@ export function migratePersisted(raw: unknown): OnboardingPersisted {
   let status = STATUSES.includes(v.status as OnboardingStatus)
     ? (v.status as OnboardingStatus)
     : 'not_started'
-  const completedSteps = Array.isArray(v.completedSteps)
-    ? (v.completedSteps.filter(isStepId) as StepId[])
-    : []
+  const recorded = Array.isArray(v.completedSteps) ? (v.completedSteps.filter(isStepId) as StepId[]) : []
+  // 还在流程里（进行中 / 暂停）的完成历史只认「从第一步起连续完成」的那一段，在第一个缺口处截断：
+  // 步骤只能按顺序完成（「下一步」只在当前步骤完成时才挪），跳着完成的历史只能来自手改 / 半截写入——
+  // 留着它，用户做完前一步就会落到一个「已完成」的步骤上，「下一步」直接可点，那一步的交互被绕过去。
+  // 已完成 / 已跳过的不再走流程，历史原样（v2 迁来的 `done` 照旧保留）
+  const inFlowStatus = v.status === 'active' || v.status === 'paused'
+  const completedSteps: StepId[] = inFlowStatus ? [] : recorded
+  if (inFlowStatus) {
+    for (const id of STEP_IDS) {
+      if (!recorded.includes(id)) break
+      completedSteps.push(id)
+    }
+  }
   // v1 的 blob 没有这一项：那时跳过与完成记在同一份账里，分不出来——按「都是
   // 完成」读（旧数据没说过谁被跳过，不替它编）。只认同时也在 completedSteps 里的
   const passed = new Set<string>(completedSteps)
