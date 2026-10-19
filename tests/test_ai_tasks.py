@@ -636,3 +636,11 @@ def test_interrupted_task_clears_its_stale_phase(db):
         )
     finally:
         con.close()
+    # 老行：终态却残留 phase（修复之前写下的）——load 也不能把它当进行中的阶段报出去
+    con = sqlite3.connect(db)
+    try:
+        con.execute("UPDATE sessions SET phase='executing' WHERE id='deadbeef0002'")
+        con.commit()
+    finally:
+        con.close()
+    assert ai_tasks.load("deadbeef0002", db_path=db)["phase"] is None
