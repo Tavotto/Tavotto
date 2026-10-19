@@ -322,6 +322,13 @@ def confinement_violations(tree: ast.AST) -> tuple[list[str], list[str]]:
 
     violations, writes = [], []
     for node in ast.walk(tree):
+        if isinstance(node, ast.Attribute):
+            # 经白名单模块转手的危险模块（`cg.subprocess.run`、`cg.os.remove`、`GS.shutil`……）：
+            # 不管调不调用、拼成什么别名，链上中段出现危险模块就算越界（Codex #1139 r4312274849）
+            through = target(node).split(".")[1:]
+            hit = [seg for seg in through if seg in REACHABLE_BANNED_MODULES]
+            if hit:
+                violations.append(target(node))
         if not isinstance(node, ast.Call):
             continue
         name = target(node.func)
@@ -337,6 +344,25 @@ def confinement_violations(tree: ast.AST) -> tuple[list[str], list[str]]:
             if node.func.attr in PATH_MOVERS and node.args:
                 writes.append(f"{node.func.attr}->{ast.unparse(node.args[0])}")
     return violations, writes
+
+
+#: 经另一个模块的属性转手也不许碰的模块（进程、文件系统、网络、动态导入、解释器）
+REACHABLE_BANNED_MODULES = {
+    "os",
+    "subprocess",
+    "shutil",
+    "socket",
+    "urllib",
+    "http",
+    "builtins",
+    "importlib",
+    "ctypes",
+    "sys",
+    "signal",
+    "multiprocessing",
+    "tempfile",
+    "io",
+}
 
 
 #: 所有会改文件系统的 `Path` 方法（写、建、删、改名、链接、改权限）
@@ -375,6 +401,17 @@ class ConfinementCheckerSelfTest(unittest.TestCase):
         ):
             self.assertIn(hit, confinement_violations(ast.parse(snippet))[0], snippet)
         self.assertEqual(confinement_violations(ast.parse("# os.system('x')\n'os.system'"))[0], [])
+
+    def test_side_effects_reached_through_an_allowlisted_module_are_violations(self):
+        for snippet in (
+            "import compat_guardian as cg\ncg.subprocess.run(['x'])",
+            "import compat_guardian as cg\ncg.os.remove('x')",
+            "import compat_guardian_summary as GS\nf = GS.shutil.rmtree\nf('x')",
+            "from compat_guardian import os as o\no.remove('x')",
+        ):
+            self.assertTrue(confinement_violations(ast.parse(snippet))[0], snippet)
+        ok = "import compat_guardian as cg\ncg.SCHEMA_PATH.read_text(encoding='utf-8')"
+        self.assertEqual(confinement_violations(ast.parse(ok))[0], [])
 
     def test_every_mutating_path_call_is_tracked_with_its_destination(self):
         _, writes = confinement_violations(
