@@ -585,3 +585,18 @@ class EvidenceRefsArePosix(unittest.TestCase):
             (root / "case" / "sub" / "process.json").write_text("{}", encoding="utf-8")
             (ref,) = cg.evidence_refs(root)
             self.assertEqual(ref["path"], "case/sub/process.json")
+
+
+class StagedSourceHashes(unittest.TestCase):
+    """观测器认的是实际拷进沙盒的字节，不是 HEAD blob 的摘要（Windows CRLF checkout，Codex r4310318506）。"""
+
+    def test_hashes_follow_the_working_tree_bytes_not_the_head_identity(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "c").mkdir()
+            (root / "c" / "plot.py").write_bytes(b"print(1)\r\n")
+            (root / "c" / "data.csv").write_bytes(b"1\r\n")
+            head_identity = {"c/plot.py": cg.digest(b"print(1)\n"), "c/data.csv": "x"}
+            got = cg.staged_source_hashes(root, head_identity, "plot.py")
+            self.assertEqual(got, [cg.digest(b"print(1)\r\n")])
+            self.assertNotIn(head_identity["c/plot.py"], got)
