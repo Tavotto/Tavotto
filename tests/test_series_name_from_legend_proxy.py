@@ -221,6 +221,17 @@ def main():
     ax.legend(handles=[proxy], labels=["red"], handler_map={Line2D: TwoLines(), proxy: HandlerLine2D()})
     fig.savefig("Fig.pdf")
 """,
+    # 代理 visible=False：图例里只有字没有示意，与看得见的线长相不同，不借名
+    "invisible_proxy": """\
+import matplotlib.pyplot as plt
+from matplotlib.lines import Line2D
+
+def main():
+    fig, ax = plt.subplots(figsize=(4, 3))
+    ax.plot([0, 1], [0, 1], color="r")
+    ax.legend(handles=[Line2D([], [], color="r", visible=False, label="ghost")])
+    fig.savefig("Fig.pdf")
+""",
     # 有自己 label 的线与普通 ax.legend()：行为不变
     "own_label": """\
 import matplotlib.pyplot as plt
@@ -329,3 +340,7 @@ def test_marker_last_legend_still_reads_cells(figs):
 
 def test_multi_artist_source_cell_borrows_no_name(figs):
     assert _labels(figs, "source_multi_cell") == {"axes_0.lines_0": "曲线 1"}
+
+
+def test_invisible_proxy_lends_no_name(figs):
+    assert _labels(figs, "invisible_proxy") == {"axes_0.lines_0": "曲线 1"}

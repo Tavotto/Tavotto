@@ -1109,7 +1109,7 @@ def legend_proxy_names(ax) -> dict[int, str]:
     return out
 
 
-#: `artist.properties()` 里**与示意长相无关**的键：数据 / 位置 / 变换 / 裁剪 / 交互 / 身份 / 由数据
+#: `artist.properties()` 里**与示意长相无关**的键（`visible` 不在其中：`visible=False` 的代理在图例里只有字没有示意，长相不同）：数据 / 位置 / 变换 / 裁剪 / 交互 / 身份 / 由数据
 #: 派生的映射输入（映射结果已在 facecolor / edgecolor 里）。其余键一律参与比对——
 #: matplotlib 以后新增的样式属性自动纳入，不用再逐维补（#1162 评审连报散点形状、半填充、
 #: gapcolor / 线帽三轮后换成这个口径）。
@@ -1146,7 +1146,6 @@ _NON_GLYPH_PROPS = frozenset(
         "transforms",
         "url",
         "urls",
-        "visible",
         "window_extent",
         "xdata",
         "xydata",
