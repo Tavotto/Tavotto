@@ -508,7 +508,12 @@ def test_task_core_imports_without_the_scientific_stack():
     )
     env = {k: v for k, v in os.environ.items() if not k.startswith("PYTHON")}
     proc = subprocess.run(
-        [sys.executable, "-c", code], capture_output=True, text=True, timeout=60, env=env
+        [sys.executable, "-c", code],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=60,
+        env=env,
     )
     assert proc.returncode == 0, proc.stderr[-2000:]
     assert proc.stdout.strip() == "1"
