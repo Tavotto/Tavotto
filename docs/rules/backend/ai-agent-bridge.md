@@ -188,8 +188,13 @@
   的目标脚本仍是起跑那一版、原项目指纹没变（超限 = unknown = 不提交）；提交 = `ai_figure_edit.commit` 持脚本锁再核一次基线 →
   `write_script` → 统一刷新一次（之后不再刷第二遍）。改前快照仍是 `run()` 起跑时拍的那份，回滚照旧走 `revert`。`cancel` /
   `interrupt_all` 先问 `ai_tasks.cancel`：进入提交后取消回 False、不改状态（`interrupt_all` 对该会话 `continue`，不计数）。
-  原项目指纹对符号链接（文件 / 目录）记 lstat + `readlink` 目标、不进入；经链接写到项目外的内容不在指纹里（CLI 沙盒负责）。提交后渲染层验证 Phase 3a 未接（`render.figure` 记
-  unknown → 结局最高 partial）。`ai.done` 与会话详情多一个 `task`（类型、结局、未满足项、文案键），终态与 `task_result` 同一条
+  原项目指纹对符号链接（文件 / 目录）记 lstat + `readlink` 目标、不进入；经链接写到项目外的内容不在指纹里（CLI 沙盒负责）。提交后渲染层验证（Phase 3b）：app 经 `task_hooks` 注入两个钩子——
+  `before` 在**写入之前**从 `pool.peek` 到的、已 build 的 safe 会话读改前 manifest（不执行；没有 = 这次会话没渲染过这张图 →
+  `render.figure` unknown `no_baseline`，**也不做改后渲染**，不为验证多跑脚本）；`after` 在提交 + 刷新之后经磁盘面板同一扇门
+  （`enginesession.resolve`、safe、`runconfig.default_selection`）取会话并 build——就是前端随后要做的那次重渲染，前端来时会话
+  已 built（`tests/test_ai_figure_edit_app.py` 用执行计数钉住）。比对只取数据指纹（`figureverify.data_unchanged`：改前每个数据
+  元素改后同 gid 且 identity 不冲突、逐部件相同），改前 manifest 带用户 override 而改后 build 不带，坐标范围 / 版式不比、列进
+  not_covered；改后渲染失败或少了 stem 记 failed（已提交的改动不自动回滚）。没注入钩子（纯引擎调用方）仍是 `render_not_wired`。`ai.done` 与会话详情多一个 `task`（类型、结局、未满足项、文案键），终态与 `task_result` 同一条
   `record_end`。R-03（CLI 不写 cwd 外）是 CLI 的行为，指纹兜底只能发现、不能阻止。看护 `tests/test_ai_figure_edit.py`。
 
 ## 速查表原要点（2026-09-25 迁入，#608）
