@@ -145,6 +145,7 @@ census()：既没登记、也不是结构件的 → manifest 的 `unsupported` �
 | Collection·网格型 | `QuadMesh` `TriMesh` | `axes_i.collections_j` | cmap/vmin/vmax + 描边（边色 / 线宽，可加网格线）；**不给 facecolor**，也**不给花纹与线型**——它们走 `renderer.draw_quad_mesh` / `draw_gouraud_triangles`，那两个渲染原语只接边色与线宽（实测 hatch/linestyle 各 0 像素，判据 `overrides.honours_stroke_style`） |
 | Collection·网格型（通用路径） | `PolyQuadMesh`（`pcolor`） | `axes_i.fill_j` | 与填充型相同——它走 Collection 的通用绘制路径，花纹与线型**都认**（实测 10692 / 1100）。`pcolor` 与 `pcolormesh` 落在两侧，所以这不是「网格图不支持」，是「那个渲染原语不支持」 |
 | 散点 | `PathCollection` | `axes_i.scatter_j` | 再加 size / marker 整体替换 |
+| 3D 数据图元（ADR 0135） | `Poly3DCollection`（surface / trisurf / bar3d）`Path3DCollection` `Line3DCollection` `QuadContourSet3D` `Line3D` | `fill_j` / `scatter_j` / `linecoll_j` / `collections_j` / `lines_j`（与 2D 同族同规则） | 样式同 2D 同族（颜色 / 色图 / 线宽 / 线型 / 花纹 / marker / 大小 / alpha / visible）；**不给 zorder**（`computed_zorder` 每帧覆盖）、位置 / 数据偏移 / 逐点颜色；不可拖；独立 `ScalarMappable` 色条与共用 Norm 的曲面 / contourf 是色阶兄弟；3D 容器与 `Patch3D` 留在 `unsupported` |
 
 > **`cmap` / `vmin` / `vmax` 只在「映射此刻真的在决定颜色」时出现**
 > （`overrides.color_mapping_is_live`，照抄 matplotlib 的
@@ -235,12 +236,20 @@ artist——这是已知代价，产品侧靠「脚本 sha1 变了就重建会�
 | `legendmodel._legend_rebuild_setter` | `leg._ncols`、`leg._legend_box`、`leg._findoffset` | 改列数没有公开的就地 setter | `tests/test_legend_text.py` |
 | `tickmodel.tick_cfg` / `apply_tick_model` | `axis._mm_tick_cfg`（我们自己挂的）、locator/formatter 的实况读数 | 「用户没表态就保持脚本原样」需要记住原样 | `tests/test_axes_ticks_scale.py` |
 | `overrides._AxisArrow3D` | `axis3d._get_coord_info` / `_get_axis_line_edge_points` | 3D 轴线落边每帧现算，没有公开接口 | `tests/test_worker_roundtrip.py` |
+| `overrides.collection_sizes` / `collection_linewidths` | `Path3DCollection._sizes3d` / `_linewidths3d`（脚本顺序的未排序缓存；`get_sizes()` / `get_linewidths()` 读到每帧重排后的深度序） | 公开 getter 回的是深度序的上一帧，拿它当「脚本原样」撤销会打乱逐点大小 | `tests/test_invariants_engine.py::test_exact_restore_is_pixel_and_manifest_identical[Inv3DP]`、`tests/test_mplot3d_data_artists.py` |
+| `overrides.collection_face_rgba` / `collection_edge_rgba` | `Collection.get_facecolor`（绕开 3D 子类的深度排序 + `depthshade` 重写）、`_edgecolors` | 3D 子类的 `get_facecolor()[0]` 随视角变 | 同上 |
+| `overrides._canonical_poly3d_colors` | `Poly3DCollection._facecolor3d` / `_edgecolor3d`、`Collection._set_facecolor` / `_set_edgecolor`、`_original_facecolor` / `_original_edgecolor` | `set_alpha(None)` 清不掉烤进去的 alpha、边色按当时的 alpha 合成（顺序相关）；没有公开接口重建 | `tests/test_mplot3d_data_artists.py::test_poly3d_edgecolor_and_alpha_do_not_depend_on_which_came_first` |
+| `overrides._heal_zero_dashes` | `Collection._linestyles`（缩放后的 dash） | 线宽 0 + 虚线缩放成全 0，SVG / PDF 的 `set_dashes` 抛 ValueError；没有公开 setter 只改缩放后的那份 | `tests/test_mplot3d_data_artists.py::test_dashed_zero_width_edges_do_not_break_the_vector_preview` |
+| `manifest._refresh_hidden_3d_projections` / `pathgeom._drawn_offsets` | `Axes3D.M`（`get_proj()`）、各集合的 `do_3d_projection()`、`Path3DCollection._offset_zordered` | 隐藏的集合 `draw` 不重投影；深度序的偏移只有私有属性 | `tests/test_mplot3d_data_artists.py::test_hidden_3d_artists_follow_the_view_like_a_cold_replay`、`test_per_point_sizes_land_on_their_own_points` |
 | `manifest` / `pathgeom` | `FancyArrowPatch._posA_posB` | 端点没有公开 getter | `tests/test_manifest_geometry.py` |
 | `overrides._arrowstyle_name` | `ArrowStyle._style_list` | 反查注册名没有公开接口 | 同上 |
 | `preview_complexity._materialised_paths` | `Collection._paths` **是不是 None**（只读状态，不调方法） | 要区分「paths 已经建好」与「按需现建」。后者上调一次 `get_paths()` 就是当场造出 M×N 个 `Path`（`TriMesh` 实测 75 ms / 8 万三角形），而它的 draw 走 `draw_gouraud_triangles`、**根本不经过 paths**——那笔钱连 render 自己都不付。公开 API 里没有「便宜地问一句建没建」的办法 | `tests/test_preview_complexity.py::test_unbuilt_lazy_collection_is_reported_not_priced_as_zero` |
 
 **能力层本身一个私有 API 都没用**：`collection_caps` / `_COLLECTION_CAPS` /
 `_PATCH_CAPS` 里全是公开 getter/setter。这是刻意的——family 抽象要能扛升级。
+**3D 数据图元是例外**（ADR 0135，上表里新增的几行）：mplot3d 把逐点量另存一份、每帧重排，公开 getter 读到的是深度序的上一帧，
+撤销要回的「脚本原样」只能从它的缓存里取。这几处私有依赖集中在 `overrides.collection_*` 一个出口，失效方向都选过
+（`getattr` 缺席 → 退回公开 getter，退化成「逐点量撤销后顺序乱」，不崩）。
 
 复杂度分析器（`preview_complexity`）同样只用公开 getter，上表那一条是唯一
 例外，而且它的**失效方向是选过的**：`_paths` 改名之后 `getattr` 回 None →

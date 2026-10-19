@@ -37,7 +37,7 @@ from matplotlib.offsetbox import AnchoredOffsetbox, AnnotationBbox
 from matplotlib.patches import BoxStyle, FancyArrowPatch, FancyBboxPatch, Patch, Rectangle
 from matplotlib.text import Annotation, Text
 from matplotlib.transforms import ScaledTranslation
-from mpl_toolkits.mplot3d import proj3d
+from mpl_toolkits.mplot3d import art3d, proj3d
 
 import colorbarmodel
 import legendmodel
@@ -2775,6 +2775,152 @@ def _set_image_origin(im: AxesImage, v) -> None:
     im.stale = True
 
 
+def on_axes3d(artist) -> bool:
+    """这个 artist 住在 3D 轴上。**唯一出处**——manifest 的 3D 分支（zorder / 面状代理 / 取色）
+    与 handler 的 3D 分支问的是同一件事（ADR 0135）。"""
+    return getattr(getattr(artist, "axes", None), "name", "") == "3d"
+
+
+def collection_sizes(coll):
+    """Collection 的标记大小（pt²）**按脚本给的顺序**。
+
+    `Path3DCollection.do_3d_projection` 每帧把 `_sizes` 重排成深度序（多于一个值时），所以 `get_sizes()`
+    读到的是上一帧的排序、不是脚本的顺序：拿它当「脚本原样」撤销，逐点大小会被打乱。mplot3d 为此另存
+    了一份 `_sizes3d`（`set_sizes` 在 draw 之外都会更新它），读它。2D 与不带这份缓存的一律走
+    `get_sizes()`。manifest 的字段值与 handler 的 getter 共用这一个函数。"""
+    if isinstance(coll, art3d.Path3DCollection):
+        return np.array(coll._sizes3d, dtype=float).ravel()  # noqa: SLF001
+    return coll.get_sizes().copy()
+
+
+def collection_linewidths(coll):
+    """同 `collection_sizes`：`Path3DCollection` 的 `_linewidths` 每帧被重排，脚本顺序在 `_linewidths3d`。"""
+    if isinstance(coll, art3d.Path3DCollection):
+        return np.array(coll._linewidths3d, dtype=float).ravel()  # noqa: SLF001
+    return coll.get_linewidths().copy()
+
+
+def _refresh_mapped_colors(coll) -> None:
+    """映射中的集合先让色图把颜色算出来（`update_scalarmappable`，draw 里同一句）。
+
+    `Axes3D.draw` 不画**隐藏**的集合，隐藏期间 `set_cmap` 改了、`_facecolors` 还停在上一次画它时的映射色，
+    边色是 `'face'` 时读到的面色就是过期的——热态（隐藏前换过色图）与冷启动读出两个颜色。"""
+    if getattr(coll, "_A", None) is not None:
+        coll.update_scalarmappable()
+
+
+def collection_face_rgba(coll):
+    """面色数组，**脚本的顺序、没有深度着色**。
+
+    3D 集合的 `get_facecolor()` 返回的是按深度排好序、再乘过深度 alpha（`depthshade`）的数组，
+    `[0]` 随视角变；读 `Collection.get_facecolor` 拿到的是未排序的原始 `_facecolors`。
+    2D 集合原样走 `get_facecolor()`。"""
+    if isinstance(coll, (art3d.Path3DCollection, art3d.Poly3DCollection)):
+        _refresh_mapped_colors(coll)
+        return Collection.get_facecolor(coll)
+    return coll.get_facecolor()
+
+
+def collection_edge_rgba(coll):
+    """边色数组，口径同 `collection_face_rgba`（边色是 `'face'` 时跟着面色走）。"""
+    if isinstance(coll, (art3d.Path3DCollection, art3d.Poly3DCollection)):
+        _refresh_mapped_colors(coll)
+        if isinstance(coll._edgecolors, str) and coll._edgecolors == "face":  # noqa: SLF001
+            return collection_face_rgba(coll)
+        return np.asarray(coll._edgecolors)  # noqa: SLF001
+    return coll.get_edgecolor()
+
+
+def _set_member_cmap(a, v, state) -> None:
+    """色阶组里**任一成员**改色图 = 整组改（ADR 0135 修订，用户裁决 2026-10-18）。
+
+    组 = 与它共用同一份 norm 对象的全部已登记 mappable（`colorbarmodel.scale_siblings`）；
+    登记不了的独立 `ScalarMappable` 色条在 `_sync_standalone_colorbars` 里跟上。写的是
+    各成员自己的 `set_cmap`（cmap 是各拿各的引用，共用 norm 不会让它们自动一起换）。
+    vmin / vmax 本来就经共用的 norm 联动，不在这里。"""
+    a.set_cmap(v)
+    for sib in colorbarmodel.scale_siblings(state, a):
+        sib.set_cmap(v)
+
+
+_set_member_cmap._needs_state = True  # noqa: SLF001
+
+
+def _restore_member_cmap(a, orig, state) -> None:
+    """撤销：自己放回自己的原样；**被这次广播带着变、却没有自己 override 的兄弟**也放回各自的原样
+    （原样由别名组在动手之前代采，`alias_seeded`）。兄弟若有自己的 override，轮到它时它自己还原
+    （或随脏组重放），这里不碰——否则会把别人的编辑踩掉。"""
+    a.set_cmap(orig)
+    for el in state.elements:
+        sib = el["artist"]
+        key = (el["gid"], "cmap")
+        if (
+            sib in colorbarmodel.scale_siblings(state, a)
+            and key in state.originals
+            and key not in state.applied
+        ):
+            sib.set_cmap(state.originals[key])
+
+
+_restore_member_cmap._needs_state = True  # noqa: SLF001
+
+
+def _standalone_sm_of(state, gid):
+    """这个 gid 若是独立 `ScalarMappable` 的色条，返回那个 mappable（带 `_mm_orig_cmap` 的）。"""
+    p = state.index.get(gid)
+    if not isinstance(p, ColorbarProxy):
+        return None
+    sm = p.cb.mappable
+    if isinstance(sm, Artist) or not hasattr(sm, "_mm_orig_cmap"):
+        return None
+    return sm
+
+
+def _sync_standalone_colorbars(state, *, record_only: bool = False) -> None:
+    """独立 `ScalarMappable` 的色条跟着它所在的色阶组走。
+
+    它不是 Artist、没有 gid，成员改色图时 `_set_member_cmap` 够不着它。规矩只有一条：组里**有任何
+    一条 cmap override 在生效**时，它的色图 = 组里已登记成员此刻的色图（成员已按文档序「后者胜」
+    落定，见 `ALIAS_GROUPS`）；一条都没有时放回脚本原样（首次应用前记在 `_mm_orig_cmap` 上）。
+    `record_only` 只记原样，在这一轮任何 setter 动手之前调。"""
+    for el in state.elements:
+        p = el["artist"]
+        if not isinstance(p, ColorbarProxy):
+            continue
+        sm = p.cb.mappable
+        if isinstance(sm, Artist) or not hasattr(sm, "set_cmap"):
+            continue
+        if not hasattr(sm, "_mm_orig_cmap"):
+            sm._mm_orig_cmap = sm.get_cmap()  # noqa: SLF001
+        if record_only:
+            continue
+        norm = getattr(sm, "norm", None)
+        members = [
+            e
+            for e in state.elements
+            if norm is not None
+            and not isinstance(e["artist"], ColorbarProxy)
+            and getattr(e["artist"], "norm", None) is norm
+            and state.has_handler(e["artist"], "cmap")
+        ]
+        gids = {e["gid"] for e in members} | {
+            c_el["gid"]
+            for c_el in state.elements
+            if isinstance(c_el["artist"], ColorbarProxy)
+            and getattr(c_el["artist"].cb.mappable, "norm", None) is norm
+        }
+        if not any((g, "cmap") in state.applied for g in gids):
+            sm.set_cmap(sm._mm_orig_cmap)  # noqa: SLF001
+            # 回到脚本原样就丢掉这份缓存：它只在有 override 作用时才有意义。native 屏障放行时的
+            # `apply(state, [])` 正好走到这里，下一个屏障再碰它时采到的才是脚本**此刻**的色图——
+            # 留着的话，脚本在两个屏障之间换的色图会在清掉编辑时被换回旧值（#1159 评审）
+            del sm._mm_orig_cmap  # noqa: SLF001
+        elif members:
+            sm.set_cmap(members[0]["artist"].get_cmap())
+        # 组里只有几条独立色条（没有已登记图元）：色图已由 `_set_cb_cmap` 按文档序写到组里每条色条上，
+        # 最后一条生效的就是终值，这里不用再动（#1159 评审）
+
+
 def _set_collection_sizes(coll, v) -> None:
     coll.set_sizes([float(v)] if isinstance(v, (int, float)) else v)
 
@@ -2801,6 +2947,32 @@ def _restore_scatter_marker(coll, orig) -> None:
 
 def _set_collection_lw(coll, v) -> None:
     coll.set_linewidth(float(v) if isinstance(v, (int, float)) else v)
+    _heal_zero_dashes(coll)
+
+
+def _heal_zero_dashes(coll) -> None:
+    """线宽为 0 的集合上，虚线按线宽缩放成全 0，矢量后端的 `set_dashes` 当场抛 ValueError。
+
+    `Collection._bcast_lwls` 把 dash 乘以线宽：`linewidth=0` + `linestyle="--"` 得到 `(0, (0, 0))`。
+    Agg 的 C++ 路径不检查，**SVG / PDF 的 `draw_path_collection` 走 `gc.set_dashes`，
+    "At least one value in the dash list must be positive"**——预览 SVG 画不出来，整张图的渲染失败。
+    必须有花纹 + 边色 + 虚线 + 线宽 0 才触发（plain mpl 里 2D 的 `fill_between` 与 3D 曲面逐位同样复现），
+    但 3D 曲面惯用 `linewidth=0`，用户在检查器里先选虚线、再调线宽就会踩到。
+
+    线宽 0 时那条边本来就不画，虚线没有可见效果：把缩放成全 0 的 dash 退成实线。`_us_linestyles`
+    （未缩放规格）原样保留，线宽再设回正数时 matplotlib 自己重新缩放，撤销回的还是脚本原样。"""
+    ls = getattr(coll, "_linestyles", None)
+    if not ls:
+        return
+    healed = [
+        (0, None)
+        if seq is not None and len(seq) and not any(float(x) > 0 for x in seq)
+        else (off, seq)
+        for off, seq in ls
+    ]
+    if any(a is not b and a != b for a, b in zip(healed, ls)):
+        coll._linestyles = healed  # noqa: SLF001
+        coll.stale = True
 
 
 def _set_linestyle(a, v) -> None:
@@ -2887,6 +3059,7 @@ def _set_linecoll_ls(coll, v) -> None:
     两种形状都要认——`originals` 里存的正是 `_get_linecoll_ls` 回的那份。
     """
     coll.set_linestyle(v)
+    _heal_zero_dashes(coll)
 
 
 class PinnedTightLayoutEngine(TightLayoutEngine):
@@ -3368,6 +3541,14 @@ def _get_coll_edgecolor(coll):
     return getattr(coll, "_original_edgecolor", coll.get_edgecolor())
 
 
+def _set_coll_color(coll, setter: str, v) -> None:
+    """Collection 面色 / 边色的唯一 setter 入口：3D 曲面改完要按「原始设定 + 此刻 alpha」重建，
+    不依赖它与 alpha 谁先谁后（`_canonical_poly3d_colors`）。2D 与别的 3D 集合原样透传。"""
+    _remember_poly3d_native(coll)
+    getattr(coll, setter)(v)
+    _canonical_poly3d_colors(coll)
+
+
 def _get_coll_facecolor(coll):
     """面色的可回灌表示。理由同 `_get_coll_edgecolor`：`_set_mappable_flags()`
     读的是 `_original_facecolor`，回灌解析后的数组会让 `'none'` 这个**字符串
@@ -3477,7 +3658,86 @@ def _with_hatch_pinned(a, fn) -> None:
 def _set_alpha_pinned(a, v) -> None:
     """所有 Patch / Collection 的 alpha 编辑唯一入口（#874 / #956）：新增 alpha handler 若作用于
     可能带花纹的 artist，必须走这里，不得直接 `set_alpha`（`tests/test_hatch_alpha_consumers.py` 扫源码）。"""
+    _remember_poly3d_native(a)
     _with_hatch_pinned(a, lambda: a.set_alpha(None if v is None else float(v)))
+    _canonical_poly3d_colors(a)
+
+
+#: 记在 `Poly3DCollection` 上的「脚本原样」：首次被我们的 setter 碰之前的原始设定 + 四份颜色数组。
+_POLY3D_NATIVE = "_mm_poly3d_native"
+
+
+def _remember_poly3d_native(a) -> None:
+    """首次改面色 / 边色 / alpha **之前**，记下 mplot3d 此刻（脚本留下的）原样。"""
+    if not isinstance(a, art3d.Poly3DCollection) or hasattr(a, _POLY3D_NATIVE):
+        return
+
+    def dup(v):
+        return v.copy() if isinstance(v, np.ndarray) else v
+
+    setattr(
+        a,
+        _POLY3D_NATIVE,
+        {
+            "alpha": dup(a.get_alpha()),
+            "face": dup(getattr(a, "_original_facecolor", None)),
+            "edge": dup(getattr(a, "_original_edgecolor", None)),
+            "arrays": {
+                k: dup(getattr(a, k, None))
+                for k in ("_facecolors", "_edgecolors", "_facecolor3d", "_edgecolor3d")
+            },
+        },
+    )
+
+
+def _canonical_poly3d_colors(a) -> None:
+    """`Poly3DCollection` 的面色 / 边色 / alpha **与应用顺序无关**，且撤干净就是脚本原样（ADR 0135）。
+
+    mplot3d 把颜色另存一份 `_facecolor3d` / `_edgecolor3d`（深度排序前的原序），而三个 setter 各动
+    各的，结果依赖谁先谁后：
+
+    * `set_alpha(a)` 把 alpha 烤进 `_facecolor3d`、**不碰** `_edgecolor3d`；`set_alpha(None)` 清不掉
+      已烤进去的 alpha（`to_rgba_array(旧数组, None)` 保留数组自带的 alpha 列）；
+    * `set_edgecolor(c)` 用**当时的** `_alpha` 合成边色——先 alpha 后边色，边是半透明的；先边色后
+      alpha，边仍不透明（3.8.4 / 3.10.9 / 3.11.2 同一份代码，实测像素差 3431）。
+
+    热会话逐步累加（边色早就落了、alpha 后来才加）与冷启动一次性重放（按列表序）因此画出两张图，
+    写回的像素门会 409。规范化分两档：
+
+    * **三者的设定都回到脚本原样**（原始设定与 alpha 都与首次触碰前相同）：把首次触碰前记下的四份数组
+      原样放回——撤销**逐位**回到 mplot3d 自己留下的状态，哪怕那状态带着 mplot3d 的怪癖（脚本事后
+      `set_alpha` 留下的不透明边、`set_edgecolor("face")` 抄来的深度序面色）；
+    * 否则按 2D `Collection.set_alpha` 的口径从**原始设定**重建——`_set_facecolor(_original_facecolor)` /
+      `_set_edgecolor(_original_edgecolor)`（都按当前 `_alpha` 合成，alpha 同时落在面与边上，与 2D
+      一致），再回写 `_facecolor3d` / `_edgecolor3d`。重建只依赖「原始设定 + 此刻的 alpha」，不依赖历史；
+      alpha 变回 None 也就真的清干净。映射中的面色每帧由 `do_3d_projection` 回写，与 2D 同一做法。"""
+    if not isinstance(a, art3d.Poly3DCollection):
+        return
+    snap = getattr(a, _POLY3D_NATIVE, None)
+    if (
+        snap is not None
+        and _same_value(a.get_alpha(), snap["alpha"])
+        and _same_value(getattr(a, "_original_facecolor", None), snap["face"])
+        and _same_value(getattr(a, "_original_edgecolor", None), snap["edge"])
+    ):
+        for k, v in snap["arrays"].items():
+            setattr(a, k, v.copy() if isinstance(v, np.ndarray) else v)
+        a.stale = True
+        # 三项设定都回到脚本原样 = 不再有我们的编辑：丢掉快照，下次被碰时按脚本**此刻**的状态重新记。
+        # native 屏障放行时的 `apply(state, [])` 正好走到这里——留着的话，脚本在两个屏障之间改的
+        # alpha / 颜色会在下次清掉编辑时被这份旧快照覆盖（#1159 评审）
+        delattr(a, _POLY3D_NATIVE)
+        return
+    try:
+        Collection._set_facecolor(a, a._original_facecolor)  # noqa: SLF001
+        Collection._set_edgecolor(a, a._original_edgecolor)  # noqa: SLF001
+    except Exception:  # noqa: BLE001 — 私有重建失败就保留 mplot3d 自己的结果（旧行为）
+        return
+    a._facecolor3d = Collection.get_facecolor(a)  # noqa: SLF001
+    # 边色是 `'face'` 时 `Collection.get_edgecolor` 会回 3D 子类的 `get_facecolor()`——深度排序后的
+    # `_facecolors2d`，与 `_edgecolor3d` 要的脚本顺序对不上（逐面着色的曲面上边色会被打乱）
+    a._edgecolor3d = collection_edge_rgba(a)  # noqa: SLF001
+    a.stale = True
 
 
 # 图例族模块是叶子、不能 import 本模块：把钉住入口交给它（#956）
@@ -3652,18 +3912,18 @@ _COLLECTION_CAPS: dict[str, tuple] = {
     # face / edge 的 getter 回的是**原始设定**（`_original_*`），不是解析出来
     # 的 RGBA 数组：matplotlib 判「这条通道归不归 colormap 管」只看那两个值，
     # 回灌数组会把映射永久关掉（详见 `_get_coll_edgecolor`）。
-    "facecolor": (_get_coll_facecolor, lambda a, v: a.set_facecolor(v)),
-    "edgecolor": (_get_coll_edgecolor, lambda a, v: a.set_edgecolor(v)),
-    "linewidth": (lambda a: a.get_linewidths().copy(), _set_collection_lw),
+    "facecolor": (_get_coll_facecolor, lambda a, v: _set_coll_color(a, "set_facecolor", v)),
+    "edgecolor": (_get_coll_edgecolor, lambda a, v: _set_coll_color(a, "set_edgecolor", v)),
+    "linewidth": (collection_linewidths, _set_collection_lw),
     # 线型的 getter 走**未缩放**规格（`_us_linestyles`）而不是
     # `get_linestyle()`：后者回的是按线宽缩放过的 dash，`set_linestyle()` 会
     # 把喂进去的值再缩放一遍，撤销一次线型就疏一档、复利放大。整个
     # Collection 族都是这个毛病，不只线组——判据与理由见 `_get_linecoll_ls`。
     "linestyle": (_get_linecoll_ls, _set_linecoll_ls),
     "hatch": _CAP_HATCH,
-    "size": (lambda a: a.get_sizes().copy(), _set_collection_sizes),
+    "size": (collection_sizes, _set_collection_sizes),
     "marker": (lambda a: list(a.get_paths()), _set_scatter_marker),
-    "cmap": _CAP_CMAP,
+    "cmap": (lambda a: a.get_cmap(), _set_member_cmap),
     "vmin": _CAP_VMIN,
     "vmax": _CAP_VMAX,
     "alpha": _CAP_ALPHA,
@@ -4262,7 +4522,7 @@ HANDLERS: dict[tuple[str, str], tuple] = {
         "head", lambda p, v: p.set_mutation_scale(float(v))
     ),
     # ---- image: 颜色映射 / 显示 ----
-    ("image", "cmap"): (lambda a: a.get_cmap(), lambda a, v: a.set_cmap(v)),
+    ("image", "cmap"): (lambda a: a.get_cmap(), _set_member_cmap),
     ("image", "vmin"): (
         lambda a: a.get_clim()[0],
         lambda a, v: a.set_clim(vmin=(None if v is None else float(v))),
@@ -4497,6 +4757,8 @@ _RESTORE: dict[tuple[str, str], object] = {
 }
 _RESTORE.update(tickmodel.RESTORE)
 _RESTORE.update(colorbarmodel.RESTORE)
+_RESTORE[("collection", "cmap")] = _restore_member_cmap
+_RESTORE[("image", "cmap")] = _restore_member_cmap
 _RESTORE.update(legendmodel.RESTORE)
 _RESTORE.update(spinemodel.RESTORE)
 
@@ -4715,6 +4977,16 @@ def _alias_colorbar_mappable(narrow_prop: str):
             for sib in colorbarmodel.scale_siblings(state, m)
             if (sg := rev.get(id(sib))) is not None
         ]
+        if narrow_prop == "cmap":
+            # 组里**其它色条**也是组员：色条的 cmap 由 `_set_cb_cmap` 写到组里每条色条的 mappable 上。
+            # 组里一个已登记图元都没有（只有几条独立 ScalarMappable 色条共用 norm）时它们是唯一的
+            # 同伴——不进组的话，热态先有 B 的 override、再加 A 的，A 动手后 B 不会被重放，
+            # 文档序靠后的 B 反而输了（#1159 评审）
+            siblings += [
+                (pg, narrow_prop)
+                for peer in colorbarmodel.scale_colorbars(state, m)
+                if peer is not artist and (pg := rev.get(id(peer))) is not None
+            ]
         gid = rev.get(id(m))
         if gid is None:
             # **独立 mappable**（`fig.colorbar(ScalarMappable(...), ax=ax)`）：
@@ -4742,6 +5014,25 @@ def _alias_colorbar_mappable(narrow_prop: str):
     # 中间态；先改兄弟 vmin 再改色条 vmin、全撤，norm 停在 0.2）。
     resolve._shared_value = "primary" if narrow_prop == "cmap" else "all"  # noqa: SLF001
     return resolve
+
+
+def _alias_scale_group(state: "FigState", rev: dict, artist) -> list[tuple]:
+    """色阶组里的成员改 cmap = 整组改（用户裁决 2026-10-18，ADR 0135 修订）：这条 cmap 会盖掉
+    组里**其它**已登记成员与全部色条（含独立 `ScalarMappable` 的）上的 cmap override。
+
+    与 `_alias_colorbar_mappable` 互为镜像——两个方向都是广播，所以组里任何两条 cmap override
+    谁在**文档序**里靠后谁赢（同一档位、`sorted` 稳定；见 `_rank`），热态逐步累加与冷启动重放
+    同序。原样由动手之前的代采兜住，撤销各回各的（`_restore_member_cmap` / `_restore_cb_cmap`）。"""
+    out = [
+        (gid, "cmap")
+        for sib in colorbarmodel.scale_siblings(state, artist)
+        if (gid := rev.get(id(sib))) is not None
+    ]
+    for p in colorbarmodel.scale_colorbars(state, artist):
+        gid = rev.get(id(p))
+        if gid is not None:
+            out.append((gid, "cmap"))
+    return out
 
 
 def _alias_colorbar_ticks(narrow_prop: str):
@@ -4850,6 +5141,9 @@ for _sprop in ("linewidth", "linestyle"):
 # 图元自己那条说了算——色条是 mappable 的一个视图，不是反过来。
 for _cprop in ("cmap", "vmin", "vmax"):
     ALIAS_GROUPS[("colorbar", _cprop)] = _alias_colorbar_mappable(_cprop)
+# 反方向：色阶组的成员改 cmap 也是广播（只有 cmap；vmin / vmax 经共用 norm 本来就联动）
+for _mkey in ("collection", "image"):
+    ALIAS_GROUPS[(_mkey, "cmap")] = _alias_scale_group
 
 # ---------------------------------------------------------------------------
 # **同一个元素上的重叠**（广播端与窄端同 gid）。全部实测过，三条各有各的机制：
@@ -5039,6 +5333,7 @@ def _apply(state: FigState, patches: list[dict]) -> list[str]:
     # 出口处一定要清掉（下面 try/finally），不然下一次 apply 会拿着上一批的
     # patch 表去算落位
     state.pending = new
+    _sync_standalone_colorbars(state, record_only=True)
     # 图幅语义这一轮换没换（ADR 0098）：要在下面的还原循环把它从 applied 里摘掉**之前**比
     _frame_key = ("figure", "frame")
     frame_toggled = state.applied.get(_frame_key, _NOTHING) != new.get(_frame_key, _NOTHING)
@@ -5188,10 +5483,18 @@ def _apply(state: FigState, patches: list[dict]) -> list[str]:
     def _snapshot(gid: str) -> dict:
         fields = _field_snap.get(gid)
         if fields is None:
+            sm, shown = _standalone_sm_of(state, gid), None
             try:
+                if sm is not None and (gid, "cmap") not in state.applied:
+                    # 独立 ScalarMappable 被组广播同步改过色图：「脚本原样」要按它的原样读
+                    shown = sm.get_cmap()
+                    sm.set_cmap(sm._mm_orig_cmap)  # noqa: SLF001
                 fields = _ORIGINAL_READER(state, gid) if _ORIGINAL_READER is not None else {}
             except Exception:  # noqa: BLE001 — 读不出 = 不知道，前端按保守路径走
                 fields = {}
+            finally:
+                if shown is not None:
+                    sm.set_cmap(shown)
             _field_snap[gid] = fields
         return fields
 
@@ -5391,6 +5694,7 @@ def _apply(state: FigState, patches: list[dict]) -> list[str]:
 
     # 图例项跟随源对象（派生显示，不进 applied）。放在整轮之后：源对象的
     # 改动与还原都已落定，此刻派生出来的才是「这一次改完之后」的样子。
+    _sync_standalone_colorbars(state)
     legendmodel.sync_legends(state)
 
     # 矩形尺寸和位置是同一个几何模型。xlim / invert 与它们同档、顺序可能在后：

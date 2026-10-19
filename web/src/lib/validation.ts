@@ -34,10 +34,12 @@ import type { PanelRender } from '@/store/renderStore'
 import { fixOptions, fixRoute, planFix } from './issueFix'
 import { severityOf, type PublicationProfile, type Severity } from './profile'
 import {
+  buildOriginalSpec,
   buildSpec,
   runSpec,
   type PreflightIssue,
   type PreflightOccurrence,
+  type PreflightSpec,
 } from './preflight'
 import type { CanvasData, CanvasObject, FigureDocument } from '@/types/document'
 import { subplotLookup, type SubplotPart } from './subplotParts'
@@ -277,8 +279,43 @@ export function validateCanvas(
   assets: Record<string, PanelInfo>,
   render: { byKey: Record<string, PanelRender>; latest: Record<string, string> },
 ): CanvasResult {
+  return resultOf(input, documentId, buildSpec(input.doc, assets, render))
+}
+
+/** 原图范围的目标：那张图（画布对象 id）与它按原图导出时的图幅（mm） */
+export interface OriginalTarget {
+  objectId: string
+  widthMm: number
+  heightMm: number
+}
+
+/**
+ * **按原图导出**那份产物的检查（同一个求值器，换成原图口径的输入，`buildOriginalSpec`）。
+ *
+ * 画布那一份（`validateCanvas`）量的是「这张图摆在这页上」：字号乘了画布缩放、PPI 按摆放
+ * 宽度算。原图导出的文件里没有那次缩放，拿那一份去裁原图范围，缩小摆放的图会被假阻断、
+ * 放大摆放的图会被假放行。结果仍要经 `summaryFor({ objectId })` / `rawIssuesForObject()`
+ * 裁那一刀（页面级、画布摆放类不算），与从前同一把尺子。图不在这张画布上回 `null`。
+ */
+export function validateOriginal(
+  input: CanvasInput,
+  documentId: string,
+  assets: Record<string, PanelInfo>,
+  render: { byKey: Record<string, PanelRender>; latest: Record<string, string> },
+  target: OriginalTarget,
+): CanvasResult | null {
+  const panel = input.doc.objects.find((o) => o.id === target.objectId)
+  if (panel?.type !== 'panel') return null
+  return resultOf(
+    input,
+    documentId,
+    buildOriginalSpec(panel, assets, render, { widthMm: target.widthMm, heightMm: target.heightMm }),
+  )
+}
+
+/** 一份 spec 的求值结果 → 可定位问题。画布范围与原图范围共用，接法只有这一份 */
+function resultOf(input: CanvasInput, documentId: string, spec: PreflightSpec): CanvasResult {
   const { doc, canvasId, canvasName, profile } = input
-  const spec = buildSpec(doc, assets, render)
   const raw = runSpec(spec, profile)
   const manifests = new Map(spec.panels.map((p) => [p.id, p.manifest]))
   const manifestOf = (objectId: string) => manifests.get(objectId) ?? null

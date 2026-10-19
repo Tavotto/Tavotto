@@ -62,15 +62,17 @@
 - **打开 = 备包，发送 = 确认。** `components/settings/DiagnosticsSendDialog.tsx`：打开时只 `prepareDiagSend`（载荷现采，同导出），列「将发送的内容」类别、大小、保留期，
   「保存这份诊断包」取的是备好的**同一份**字节（按 id，不重新生成）；点「发送」才 `startDiagSend`。关窗 / 卸载 = `discardDiagSend`（发送中等于取消）；备包响应晚于关窗到达也要丢弃。
   未确认 / 关窗 / 取消时 `startDiagSend` 调用次数为 0（`DiagnosticsSendDialog.test.tsx`）。**不许**把说明文字、报告编号以外的任何东西放进遥测。
-- **布局不跳（#797）。** 入口行是「诊断报告」组的最后一行；对话框页脚两颗按钮始终在原位只换字 / disabled；状态文字住在页脚左侧、与按钮同一行（Dialog `footer.start` 槽，固定 `h-8`、最多两行、超出截断，完整文字在 `title`），不为它预留大块空白——收起态对话框紧凑（e2e 量高度 < 230px），异步结果只换这一格里的字，e2e 量发送前后「发送」按钮坐标不变。
+- **布局不跳（#797）。** 入口行是「诊断报告」组的最后一行；对话框页脚两颗按钮始终在原位只换字 / disabled；状态文字住在页脚左侧、与按钮同一行（Dialog `footer.start` 槽，固定 `h-8`、最多两行、超出截断，完整文字在 `title`），不为它预留大块空白——收起态对话框紧凑（e2e 量高度；2026-10-19 说明框在前之后上限 500px），异步结果只换这一格里的字，e2e 量发送前后「发送」按钮坐标不变。
   发送中 `blockDismiss`，Esc = 取消发送；取消回到可编辑表单并说明「没有发送」。
 - **失败文案与引擎同源。** `settings.diagnostics.send.failure.*` 的键集 = `engine/diagsend.py` 的 `FAILURES`；问题类型 `category.*` = `CATEGORIES`（服务端契约闭集）；
   `kind.*` ⊇ `ENTRY_KINDS` 的值。三条都由 `DiagnosticsSendDialog.test.tsx` 读 Python 源码对拍；码不认识时按 `unexpected_response` 说，不空白。
 - **故障卡入口与轻确认框（用户 10-10 要求）。** 对话框全应用只挂一处（`components/DiagnosticsSendHost.tsx`，状态 `diagSendStore.open`）；设置页入口行与故障卡的 `components/SendReportButton.tsx` 都只是 `setOpen(true)`
   （打开 = 本机备包，不发送），开关判据同一个（`diagSendStore.capability`，关着完全不渲染）。覆盖的故障卡（都经 `TaskDiagnostic` 或点名处理）：导出失败卡（`ExportDialog.ResultBlock`：可重试时在折叠的「本次问题的诊断」里；
   不可恢复、没有任何修复动作时**就是主按钮**）、导出部分失败（折叠详情）、准备卡失败态（`PreparationCard`：有主按钮时在详情里；失败且没有任何可执行动作时是主按钮）、脚本行「详情」里的运行失败、依赖准备失败。
-  **不带故障上下文进对话框**（note 只由用户自己写；没有现成的闭集字段可带）。确认框默认只露一句话（「将发送诊断包，含报错详情和日志（日志里可能有脚本打印出的内容），不附带你的脚本文件和数据文件。」——必须如实提醒日志里可能有脚本输出，#1012 4，文案测试钉住）+「发送」+「关闭」，其余
-  （内容类别、保存 ZIP、类型、说明、保存期、隐私政策链接、「脱敏尽力而为」）全在默认收起的「查看详情」里；用户在说明框写的字会原样附上，框旁写明。那句承诺由
+  **不带故障上下文进对话框**（note 只由用户自己写；没有现成的闭集字段可带）。**说明框在前**（用户 2026-10-19 裁决，取代 10-10 的「默认只露一句话」——用户嫌展开后太臃肿、说明框反被折起来）：默认可见 = 对话框副标题那一句（`Dialog description`：「将发送诊断包，含报错详情和日志（日志里可能有脚本打印出的内容），不附带你的脚本文件和数据文件。」——
+  必须如实提醒日志里可能有脚本输出，#1012 4，文案测试钉住，**这句不许折进去**）+ 表单（参照 OpenBitFun 的表单语言：标签在字段上方、间距 6；提示与字数同一行、提示左字数右；框只给可编辑的控件）：「补充说明（可选）」textarea、「问题类型」`Select`；
+  + 一组（`FieldGroup`，3% 底、无边）里的一行可展开项「附带诊断包 · 大小 … 查看内容」（展开内容与标题文字对齐缩进）+「发送」「关闭」（一颗主按钮）。其余（内容类别、额外勾选项、包内文件、保存 ZIP、保存期、隐私政策链接、「脱敏尽力而为」）
+  全在默认收起的「查看内容」里（`DiagnosticsSendDialog.test.tsx`「说明框在前」一条钉可见集合；e2e 量收起态高度 < 500px）。那句承诺由
   `tests/test_diagnostics_bundle.py` / `test_diagnostics_log_privacy.py` 的金丝雀全文搜索撑着（源码行略去、异常 message 不出门、路径哈希化）；这两处任何一处放松，那句话就得先改。
 - **项目代次与引擎丢会话（Codex #923）。** 备包流程绑定当前项目：`DiagnosticsSendDialog` 订阅 `onCurrentProjectChange`，对话框开着时项目一换（外部 `tavotto open`、切项目）就让备包重来——
   旧包随清理 `discardDiagSend`（发送中等于取消）、在途的旧备包响应按代号丢弃并通知引擎释放；`send()` 还会在发那一刻核对备包时的项目，不一致就不发、重新备包。
@@ -104,15 +106,18 @@
 - **顺序固定**：分类（忽略的不记任何东西）→ 先 `recordDiagnosticEvent`（吞异常）→ 补环 → 仅当 `capability !== null` 且非 boundary 来源、发送对话框没开、栈不指回诊断模块，才进去重 / 上界 / 登记卡片。
 - **分类按结构**：`ApiError`、原型不是内建错误原型的业务错误类、AbortError、`ResizeObserver loop…`、`Script error.`、pyodide / worker 来源、非 Error 的拒绝 → 忽略。**不准凭消息关键词判严重度**；要新增一类忽略，加结构判据与一条看护。
 - **上界**：`MAX_FINGERPRINTS`（64，LRU）、`MAX_PROMPTS_PER_SESSION`（5）、轨上同时 1 张；指纹同一会话只提示一次，关掉后不再提示。
-- **卡片**：`NotificationRail` 的 `data-unexpected-error-card` 槽位（`Toast tone="error" plain`），一句话 + 「发送问题反馈」+ ×；主动作只 `setOpen(true)`（并收起这张卡），prepare / start 调用次数为 0（`notificationRail.test.tsx`）。仲裁：低于「刚为编辑加入」、高于全部提示类；提示类的让位判据数的是「更高档在场条数」。**绝不往工作面板的文档流里加提示条（`BannerStack` 已于 2026-10-16 删除）。**
+- **卡片**（2026-10-19 起，用户：「一键反馈只出现在胶囊内，很多人不知道点」）：**窗口右下角**的 `components/FeedbackCorner.tsx`（`data-feedback-corner`，`fixed` + `z-drawer`——在画布浮层之上、任何对话框的遮罩与对话框之下，哪个对话框开着都自然盖住它，Codex #1184；宽 320），不在通知轨里、不占轨的三条名额。
+  `data-unexpected-error-card`：红色图标 + 标题（`unexpectedError.text`）+ 一句为什么（`.body`）+ 主按钮「发送问题反馈」+ ×；主动作只 `setOpen(true)`（并收起这张卡），prepare / start 调用次数为 0（`feedbackCorner.test.tsx`、e2e `diagnostics-send.spec.ts`「右下角反馈卡」）。
+  **只认意外错误**（用户 10-19 裁决）：可预期的失败（用户脚本报错、导出失败）不弹这张卡，它们的入口仍在各自故障卡的折叠详情里。同时只有一张：意外错误在前，「上次没有正常退出」在它关掉后才出。点「发送问题反馈」两类一起收起（一份包已覆盖），确认框开着时整个角落不渲染（Codex #1184）。与准备引导卡（`PreparationCard`，画布右下）不叠：卡显示期间观察 `[data-prep-card]`，水平相交时按序挑一个整张都在窗口里的位置：上方 8px（放得下实测高度）→ 左侧 8px 贴底 → 都放不下就留在默认位置（宁可叠也不推出窗口）；属性栏收起时两张卡同在右下角（Codex #1184，e2e「不盖住准备引导卡」在 1024×768 / 1024×560 实量）。准备卡两种形态（`data-prep-card` 展开卡 / `data-prep-pill` 收起角标）都避让；观察面含准备卡的各级定位祖先（属性栏变窄时准备卡自己尺寸不变、是画布把它带走的）；e2e「属性栏变窄」量的是行为——它在不观察祖先时也绿，因为画布视口一变缩放读数就重渲染、MutationObserver 先触发了。
+  App 两个分支（项目选择页 / 工作区）各挂一份，互斥。**绝不往工作面板的文档流里加提示条（`BannerStack` 已于 2026-10-16 删除）。**
 - **ErrorBoundary 崩溃页**：「重新加载」仍是唯一主按钮；`SendReportButton`（secondary）在折叠「详情」里；崩溃页自己渲染 `DiagnosticsSendHost`（`TooltipProvider` + 内层 `SendHostBoundary`，对话框出错退回空）。**放宽的边界仅限 `diagSendStore` 与发送对话框**；关着时元素序列与改动前一致（`errorBoundary.test.tsx` 锚定）。**只有主应用入口 `main.tsx` 传 `<ErrorBoundary diagnostics>`**：playground / mcp 复用该边界但没有 Flask 诊断 API，默认不取能力说明、不渲染入口与对话框（测试锚定「不发 `/api/diagnostics/send`」）。
-- 看护：`lib/unexpectedErrors.test.ts`、`store/unexpectedErrorStore.test.ts`、`diagnostics/privacy.test.ts`（新事件一组）、`components/notificationRail.test.tsx`、`components/errorBoundary.test.tsx`、`tests/test_diagnostics_bundle.py`。
+- 看护：`lib/unexpectedErrors.test.ts`、`store/unexpectedErrorStore.test.ts`、`diagnostics/privacy.test.ts`（新事件一组）、`components/feedbackCorner.test.tsx`、`components/errorBoundary.test.tsx`、`tests/test_diagnostics_bundle.py`。
 
 ## 退出相关入口（PR B，ADR 0129）
 
-- **两张通知轨卡，纯内存 store** `store/exitNoticeStore.ts`，接线只在 `lib/exitNotices.ts`（`App` 挂载时 `initExitNotices(diagSendStore.load() 的 promise)`）。**绝不往工作面板的文档流里加提示条（`BannerStack` 已于 2026-10-16 删除）。**
+- **两张卡，纯内存 store** `store/exitNoticeStore.ts`，接线只在 `lib/exitNotices.ts`（`App` 挂载时 `initExitNotices(diagSendStore.load() 的 promise)`）。**绝不往工作面板的文档流里加提示条（`BannerStack` 已于 2026-10-16 删除）。**
 - **修复卡**（`data-engine-exited-card`）：壳事件 `tavotto:engine-exited` / 回读 `getEngineExited()` 驱动；一句话「渲染服务意外退出了」+ 主按钮「重新启动」（`restartEngineFromCard()`：转圈期间幂等，壳没动手就把按钮还回去），折叠的一句「重启后可以发送问题反馈」只放在 `title`。**不受发送开关控制、不含发送入口**；在通知轨里从不让位。
-- **「上次没有正常退出」卡**（`data-previous-exit-card`）：`diagSendStore.load()` 完成后、且 `capability !== null` 才 `takePreviousExit()`（取走即清空，关着时不取）；取到才登记。一句话 + 主按钮「发送问题反馈」+ ×，主动作只 `setOpen(true)` 并收起这张卡，prepare / start 调用次数为 0。仲裁：与意外错误卡同档、排在其后。
+- **「上次没有正常退出」卡**（`data-previous-exit-card`）：`diagSendStore.load()` 完成后、且 `capability !== null` 才 `takePreviousExit()`（取走即清空，关着时不取）；取到才登记。住在右下角 `FeedbackCorner`（同意外错误卡）：标题 + 一句为什么（`exitNotice.previous.body`）+ 主按钮「发送问题反馈」+ ×，主动作只 `setOpen(true)` 并收起这张卡，prepare / start 调用次数为 0。排在意外错误卡之后。
 - **假重连**：`PrepContext.engineExited`（`exitNoticeStore.engineExit !== null`）为真时，准备卡断线一句用 `prep.line.engineStopped`（「渲染服务已停止」）而不是「连接断了，正在重连…」；其它原因断线保持原样。
 - **`lib/desktop.ts` 是唯一桌面感知点**：`onEngineExited` / `getEngineExited` / `takePreviousExit` / `restartEngine`；浏览器 / 远程窗口 / try 一律 null / false / 空取消函数。事件名与两个闭集与 `src-tauri/src/{main,exit_marker}.rs` 严格同源（`tests/test_desktop_engine_exit.py`）。
-- 看护：`store/exitNoticeStore.test.ts`、`lib/desktop.test.ts`、`lib/preparationText.test.ts`、`components/notificationRail.test.tsx`（「引擎退出两张卡」一组）。
+- 看护：`store/exitNoticeStore.test.ts`、`lib/desktop.test.ts`、`lib/preparationText.test.ts`、`components/notificationRail.test.tsx`（「引擎退出修复卡」一组）、`components/feedbackCorner.test.tsx`。
