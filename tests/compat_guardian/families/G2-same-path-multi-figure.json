@@ -49,8 +49,10 @@
     "runs": 30
   },
   "key_regression_tests": [
-    "tests/test_compat_explore.py::RealDiscovery::test_g2_same_path_in_a_loop_is_found_by_exploration",
-    "tests/test_compat_guardian_families.py::RealRepro::test_g2_minimal_repro_still_shows_the_gap"
+    "tests/test_compat_explore.py::RealDiscovery::test_g2_same_path_in_a_loop_no_longer_differs_after_the_fix",
+    "tests/test_compat_guardian_families.py::RealRepro::test_g2_minimal_repro_is_fixed",
+    "tests/test_capture_same_path_last_writer.py",
+    "tests/bridge/test_bridge_same_path_last_writer.py"
   ],
   "environments": {
     "verified": [
@@ -72,7 +74,7 @@
   },
   "recurrence": "16 of 100 candidates in the CG-02 run (seed 42)",
   "in_corpus": false,
-  "fix_pr": null,
+  "fix_pr": 1141,
   "promoted": false,
   "issues": []
 }

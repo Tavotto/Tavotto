@@ -462,13 +462,17 @@ class RealDiscovery(unittest.TestCase):
         row = {"candidate_id": manifest["candidate_id"], "chain": ["show_close"], "differences": []}
         self.assertFalse(ex.known_gap_findings([row])["G1"]["found"])
 
-    def test_g2_same_path_in_a_loop_is_found_by_exploration(self):
+    def test_g2_same_path_in_a_loop_no_longer_differs_after_the_fix(self):
+        """G2 已由 #1141 修复：同一路径循环写多张图的派生候选现在原生 / Tavotto 一致（曾经是 same_path_content_mismatch）。"""
         manifest, record = self.run_chain("same_path_loop")
-        diff = record["judgment"]["differences"]
-        self.assertEqual(record["judgment"]["outcome"], "difference_found", record)
-        self.assertEqual(diff[0]["kind"], "same_path_content_mismatch")
-        self.assertIn("native last figure written to", diff[0]["summary"])
-        self.assertIn("Tavotto kept", diff[0]["summary"])
+        self.assertEqual(record["judgment"]["outcome"], "no_difference", record)
+        self.assertGreaterEqual(record["executions"]["native"], 1)
+        row = {
+            "candidate_id": manifest["candidate_id"],
+            "chain": ["same_path_loop"],
+            "differences": [],
+        }
+        self.assertFalse(ex.known_gap_findings([row])["G2"]["found"])
 
     def test_shape_preserving_transforms_on_a_passing_parent_make_no_fake_difference(self):
         for chain in (("import_alias",), ("argparse_out",), ("inline_to_file",)):
