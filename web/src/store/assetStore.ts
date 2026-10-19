@@ -59,6 +59,9 @@ let applied = 0
  * 这会儿才到的那份」（它属于 A，却早于这次进入 A 的清空）。
  */
 let epoch = 0
+/** 最新清单请求与统一刷新各持有自己的忙碌态，旧请求不能替刷新收尾。 */
+let loadingRequest: number | null = null
+const refreshHolds = new Set<symbol>()
 /** 同项目可复用的在途请求；`force` 不看它，也不写它 */
 let inflight: {
   pj: string | null
@@ -95,6 +98,8 @@ interface AssetState {
   load: (opts?: { force?: boolean }) => Promise<PanelsResponse | null>
   /** 事件驱动的刷新入口：与同一批里的其它调用合并成一次请求 */
   refresh: () => Promise<PanelsResponse | null>
+  /** 统一刷新在扫描之前认领忙碌态；返回的释放函数只属于这一项目代际，且可重复调用。 */
+  beginRefresh: () => () => void
   markUsed: (id: string) => void
   /**
    * 切项目：清掉属于上一个项目的**全部**清单派生（面板、`unsupported`、目录），并换代——
@@ -131,6 +136,7 @@ export const useAssetStore = create<AssetState>((set, get) => ({
     const mine = ++seq
     const pj = currentProjectId()
     const born = epoch
+    loadingRequest = mine
     set({ loading: true })
     const promise = fetchPanels()
       .then((data) => {
@@ -159,8 +165,11 @@ export const useAssetStore = create<AssetState>((set, get) => ({
       })
       .finally(() => {
         if (inflight?.promise === promise) inflight = null
-        // 还有更新的请求在途时不要收掉 loading：收掉了转圈会闪一下又转回来
-        if (mine === seq) set({ loading: false })
+        // 清单请求只释放自己的忙碌态，扫描与后续强制清单仍由统一刷新持有。
+        if (loadingRequest === mine) {
+          loadingRequest = null
+          set({ loading: refreshHolds.size > 0 })
+        }
       })
 
     if (!opts?.force) inflight = { pj, promise, trailing: null }
@@ -169,9 +178,22 @@ export const useAssetStore = create<AssetState>((set, get) => ({
 
   refresh: () => get().load(),
 
+  beginRefresh: () => {
+    const token = Symbol()
+    refreshHolds.add(token)
+    set({ loading: true })
+    return () => {
+      // clear() 丢弃这一代全部 token；旧释放函数在新项目里没有所有权。
+      if (!refreshHolds.delete(token)) return
+      set({ loading: refreshHolds.size > 0 || loadingRequest !== null })
+    }
+  },
+
   clear: () => {
     epoch += 1
     inflight = null
+    loadingRequest = null
+    refreshHolds.clear()
     set({
       panels: [],
       byId: {},
@@ -206,6 +228,8 @@ export function resetAssetLoadBookkeeping(): void {
   seq = 0
   applied = 0
   inflight = null
+  loadingRequest = null
+  refreshHolds.clear()
 }
 
 /**

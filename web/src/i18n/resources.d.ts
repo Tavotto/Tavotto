@@ -1313,6 +1313,7 @@ export default interface Resources {
         "telemetry": {
           "autoProps": "每条记录只带应用版本、操作系统、CPU 架构和安装渠道。",
           "detailsTitle": "会发送哪些数据",
+          "errorSummary": "你主动点“发送问题反馈”时，若已同意匿名统计，会另附一条不含内容的错误摘要：出错的内部环节与固定错误码，不含文字、路径、附言或匿名标识。点发送不代表同意今后自动上报。",
           "hardDisabled": "已由本机配置关闭，此开关不可用",
           "hardDisabledDetail": "环境变量 {{env}} 在起作用；去掉它之后开关才可用",
           "needsReconsent": "采集范围有变化，待重新确认",
@@ -1326,6 +1327,7 @@ export default interface Resources {
             "context_bar_multi_used": "多选浮动栏：按钮类型与选中数量档位。",
             "document_saved": "排版保存：手动还是自动、结果如何。",
             "export_completed": "导出完成：格式、是否带报告、图的数量。",
+            "export_result": "导出结果：成功、部分成功、失败或取消，请求的格式、写成几个文件、停在哪一步与错误的大类；不含文件名、路径与错误原文。",
             "figure_edit_completed": "完成编辑：改动类别与数量。",
             "figure_opened": "打开图内编辑：PDF 还是位图、是否可编辑。",
             "package_action": "包操作：类型与结果，不含包名。",
@@ -1609,6 +1611,7 @@ export default interface Resources {
           "doneAfterCancel": "取消时报告已经送达，这次发送算成功",
           "doneBody": "在 GitHub Issues 或群里提到这个编号，维护者就能找到这份诊断。",
           "doneTitle": "已发送",
+          "errorSummaryNote": "若已同意匿名统计，会另附一条不含内容的错误摘要（出错的内部环节与固定错误码）。点发送不代表同意今后自动上报。",
           "extra": {
             "corrupt_sessions": "会话损坏副本的内容",
             "crash_reports": "系统崩溃报告",
@@ -2128,8 +2131,10 @@ export default interface Resources {
       "neverScripts": "脚本与源码",
       "neverTitle": "绝不发送",
       "policy": "隐私政策",
+      "reconsentDelta": "比你上次同意时多了两项：导出怎样结束（含失败 / 取消），以及你主动发送问题反馈时附带的一条不含内容的错误摘要。",
+      "sendsErrorSummary": "你主动发送问题反馈时，随附一条不含内容的错误摘要",
       "sendsFeatures": "你使用了哪些功能",
-      "sendsOutcome": "预检与导出是否成功",
+      "sendsOutcome": "预检与导出的结果（成功、失败或取消）",
       "sendsPlatform": "操作系统与处理器架构",
       "sendsTitle": "会发送",
       "sendsVersion": "Tavotto 的版本号",
@@ -5137,6 +5142,7 @@ export default interface Resources {
         "argsReused_other": "沿用上次成功的 {{count}} 个参数",
         "errorFull": "完整错误信息",
         "errorTruncated": "太长，只保留了最后一部分。",
+        "failedFigures": "没画出来的图：{{names}}（{{codes}}）。其余的图可以照常编辑。",
         "history": {
           "attempt": "第 {{n}} 次",
           "declined": {
@@ -5226,6 +5232,7 @@ export default interface Resources {
         "checkFailed": "没能开始检查",
         "checking": "正在检查…",
         "completedNoList": "跑完了，图在素材库",
+        "completedPartial": "只画好了 {{done}}/{{total}} 张图，{{names}} 没画出来",
         "completed_other": "画好了 {{count}} 张图",
         "depsCancelled": "安装已停止",
         "depsFailed": "没装好，原有文件没动",
@@ -5339,6 +5346,7 @@ export default interface Resources {
       "row": {
         "attention": "需要处理",
         "cancelled": "已停止",
+        "capturedPartial": "只捕获 {{done}}/{{total}} 张图",
         "captured_other": "已捕获 {{count}} 张图",
         "checking": "检查中",
         "input": "等你回答",

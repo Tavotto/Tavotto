@@ -16,7 +16,8 @@ Companion files:
 |---|---|---|
 | **opted-in anonymous install** | one random UUIDv4 that has sent ≥1 event | a person, an account, a company |
 | **observed user** | shorthand for "opted-in anonymous install" — only use it if the opt-in caveat is stated in the same breath | every user |
-| **successful exporter** | an opted-in anonymous install with ≥1 `export_completed` in the window | someone who *tried* to export |
+| **successful exporter** | an opted-in anonymous install with ≥1 `export_completed` in the window (the job ended `done` or `partial` — at least one image written, not necessarily every requested format) | someone who *tried* to export; an install whose export was entirely `failed` / `cancelled` |
+| **export outcome mix** | share of received `export_result` events by `outcome` (since 2026-10-15) | a crash rate, or a per-attempt success rate — events can be lost, and `export_completed` cannot be joined to it |
 | **distribution download** | one increment of a GitHub asset counter or one PyPI download | an install, a user, a retained user |
 | **engaged** | performed ≥1 meaningful event (not merely started the app) | opened the app |
 

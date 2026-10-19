@@ -24,6 +24,7 @@ import type {
   PreparationRequirement,
   WorkdirConfirmation,
 } from '@/lib/api'
+import { listJoin } from '@/i18n/format'
 import { originFactsOf } from '@/lib/importOrigin'
 import type { PrepEntry } from '@/store/projectPreparationStore'
 
@@ -277,6 +278,8 @@ function fromReport(report: PreparationReport, entry: PrepEntry, ctx: PrepContex
     case 'completed':
       return completed(report, entry, ctx, script)
     case 'partial':
+      // 部分捕获（#1134）：成功那几张照常可进入编辑，失败的图在标题里点名；不是 completed，也不是没出图
+      if (report.outcome.kind === 'succeeded') return completed(report, entry, ctx, script)
       if (report.outcome.kind === 'execution_finished_no_figure') {
         const raster = report.no_figure_hint?.kind === 'raster_script' ? report.no_figure_hint : null
         if (raster) {
@@ -311,6 +314,16 @@ function completed(report: PreparationReport, entry: PrepEntry, ctx: PrepContext
   if (count === 0) return view('completed', 'completedNoList', v, null, { tone: 'ok', step: 2 })
   // 无参数运行整条替换了这个脚本的图名（T03 已知缺口，T09b）：标题照旧，详情里说清哪些旧图不再关联、怎么恢复。
   // 名字来自后端报告（`unlinked_stems`），这里不比对任何清单
+  const failed = (report.failed_figures ?? []).map((f) => f.stem)
+  if (failed.length > 0) {
+    return view(
+      'completed_partial',
+      'completedPartial',
+      { script, done: count, total: count + failed.length, names: listJoin(failed) },
+      { kind: 'enter_edit', count },
+      { tone: 'bad', slot: 'figures', step: 2 },
+    )
+  }
   const unlinked = (report.unlinked_stems ?? []).length > 0
   return view(unlinked ? 'completed_unlinked' : 'completed', 'completed', { script, count }, { kind: 'enter_edit', count }, {
     tone: 'ok',
@@ -462,6 +475,10 @@ export function prepRowKey(entry: PrepEntry | undefined): { key: string; values:
         ? { key: 'captured', values: { count: (report.captured ?? []).length } }
         : { key: 'static', values: {} }
     case 'partial':
+      if (report.outcome.kind === 'succeeded') {
+        const done = (report.captured ?? []).length
+        return { key: 'capturedPartial', values: { done, total: done + (report.failed_figures ?? []).length } }
+      }
       return { key: report.outcome.kind === 'execution_finished_no_figure' ? 'noFigure' : 'attention', values: {} }
     case 'cancelled':
       return { key: 'cancelled', values: {} }
@@ -471,13 +488,20 @@ export function prepRowKey(entry: PrepEntry | undefined): { key: string; values:
 }
 
 /**
+ * 这次运行跑完并捕获到了图：`completed`（全部拿到），或 `partial` + `succeeded`（部分捕获：成功那几张照常可用，失败的在
+ * `failed_figures` 里——后端 #1134 起不再把它投影成 completed）。其余 partial（没出图 / 登记被拒）不算
+ */
+export const finishedWithFigures = (report: PreparationReport | null | undefined): report is PreparationReport =>
+  !!report && (report.phase === 'completed' || report.phase === 'partial') && report.outcome.kind === 'succeeded'
+
+/**
  * safe → native 静默回退**成功**之后，详情里补的那一行（默认句子与主按钮不变，ADR 0127 裁决静默）。
  * 事实全在后端：账本（`attempt_history`）里本次 run 最后一次尝试是 native 且相对上一次换了执行语义，且这次捕获到的图确实是
  * native 的；`noWriteback` 读描述符自己的 `can_writeback_source`，不在前端推。老后端没有账本 = 不说。
  */
 export function nativeFallbackNote(report: PreparationReport | null): { noWriteback: boolean } | null {
-  if (!report || report.phase !== 'completed' || report.outcome.kind !== 'succeeded') return null
-  const history = report.attempt_history ?? []
+  if (!finishedWithFigures(report)) return null
+  const history = report?.attempt_history ?? []
   if (history.length === 0) return null
   const run = Math.max(...history.map((a) => a.run))
   const last = history.filter((a) => a.run === run).at(-1)

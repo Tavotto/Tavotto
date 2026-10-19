@@ -24,6 +24,7 @@ export const TELEMETRY_DISCLOSED_EVENTS = [
   'canvas_created',
   'preflight_completed',
   'export_completed',
+  'export_result',
   'ai_assistant_invoked',
   'update_completed',
   'project_refresh_completed',

@@ -16,6 +16,7 @@
  * 判据，而第三份总会漏掉——本仓库已经在别处付过这个学费。
  */
 import { refreshProject } from '@/lib/api'
+import { captureProjectEpoch } from '@/lib/projectEpoch'
 import { msg } from '@/i18n'
 import { useAssetStore } from './assetStore'
 import { useDocumentStore } from './documentStore'
@@ -145,12 +146,17 @@ export async function refreshAssetsAndSync(opts?: {
  * 这一条是普通用户的「我刚在外面改了东西，看一眼」。
  */
 export async function refreshProjectNow(): Promise<void> {
+  const owner = captureProjectEpoch()
+  const release = useAssetStore.getState().beginRefresh()
   try {
-    await refreshProject('manual')
+    try {
+      await refreshProject('manual')
+    } finally {
+      // 后端失败时也取清单；换项目后不再替旧刷新向新项目发请求。
+      if (owner.still()) await refreshAssetsAndSync({ force: true })
+    }
   } finally {
-    // 后端失败时也要刷一次素材：失败的可能只是静态扫描那一步，而磁盘上的
-    // 素材清单照样读得到。刷不出来的话按钮点完界面毫无变化。
-    await refreshAssetsAndSync({ force: true })
+    release()
   }
 }
 

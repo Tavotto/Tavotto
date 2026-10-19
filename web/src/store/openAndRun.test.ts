@@ -261,6 +261,22 @@ describe('一次点击：检查 → 认领 run_when_ready（回显授权摘要�
     expect(entry().armed).toBe(false)
   })
 
+  it('部分捕获（partial + succeeded + failed_figures，#1134）：成功那张图照常留在卡上，但不自动进入——没画出来的图是用户必须看到的', async () => {
+    mockCreate.mockResolvedValueOnce(report())
+    claimed(running())
+    await open()
+    mockGet.mockResolvedValueOnce(
+      done(['a'], 'att-1', 3, { phase: 'partial', failed_figures: [{ stem: 'bad', code: 'preview_capture_failed' }] }),
+    )
+    await store().refresh(KEY)
+    await flush()
+    await flush()
+    expect(openFastEdit).not.toHaveBeenCalled()
+    expect(entry().editing).toEqual([])
+    expect(entry().armed).toBe(false)
+    expect(entry().report?.captured).toHaveLength(1)
+  })
+
   it.each(['pill', 'closed'] as const)('用户把卡放到后台 / 收起（%s）之后才跑完：不抢他的工作区，角标 / 卡上仍有「进入编辑」', async (mode) => {
     mockCreate.mockResolvedValueOnce(report())
     claimed(running())

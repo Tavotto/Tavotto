@@ -208,6 +208,11 @@ class ExportJob:
     project_id: str | None = field(default=None, repr=False)
     #: 终局快照只写一次（`_emit` 在每个终局都会走到，这里去重）。
     _diag_recorded: bool = field(default=False, repr=False)
+    #: 终局回调（导出终态遥测 `export_result`）。由**接受了这次导出的路由**在 `prepare` 之后挂上；
+    #: 没挂的调用方（测试 / MCP 桥）一个字节都不发。`_emit` 在作业走到终局时调它**最多一次**
+    #: （`_terminal_notified` 去重）：内部的重复 `_emit`、SSE 补拉、`/state` 轮询都不会再触发。
+    on_terminal: Callable[["ExportJob"], None] | None = field(default=None, repr=False)
+    _terminal_notified: bool = field(default=False, repr=False)
 
     # -- 取消 ---------------------------------------------------------------
     @property
@@ -722,6 +727,11 @@ def run(
 
         job.outputs = outputs
         guard.close()
+        # 图的失败在进报告那一步**之前**记：不然轨迹的当前步已是 `report`，图没落盘会被记成
+        # 报告坏了（Codex #1103 P2）。生产者早先记过的不盖掉（`failed_phase` 只认第一次）
+        failed_outputs = [o for o in outputs if o.status != STATUS_DONE]
+        if failed_outputs and job.trace.failed_phase is None:
+            job.trace.fail(_last_phase(job), failed_outputs[0].error_code or "partial")
 
         if req.include_report:
             job.phase = "report"
@@ -869,11 +879,23 @@ def _fail(
 def _emit(job: ExportJob, publish: Callable[[dict], None] | None) -> None:
     if job.status in _TERMINAL_STATUSES:
         _record_terminal(job)
+        _notify_terminal(job)
     if publish is None:
         return
     try:
         publish(job.to_payload())
     except Exception:  # noqa: BLE001 —— 推送失败不影响导出本身
+        pass
+
+
+def _notify_terminal(job: ExportJob) -> None:
+    """终局回调，每个作业最多一次；回调的失败不许影响导出本身。"""
+    if job._terminal_notified or job.on_terminal is None:
+        return
+    job._terminal_notified = True
+    try:
+        job.on_terminal(job)
+    except Exception:  # noqa: BLE001 —— 遥测不是导出的一部分
         pass
 
 
