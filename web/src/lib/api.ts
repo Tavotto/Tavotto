@@ -2414,6 +2414,8 @@ export interface Manifest {
 
 export interface EngineRenderResponse {
   artifact_source?: unknown
+  /** 无 source_policy 的 PNG 渲染：产物未与已存字节核对（#1145，只标记不拒绝） */
+  source_unverified?: { reason: string; kind: string }
   rev: number
   manifest: Manifest
   warnings?: string[]

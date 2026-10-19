@@ -4882,6 +4882,16 @@ def _artifact_source(rel_id: str, policy, expected=None, patches=()):
     return engine_figcapture.selected_artifact_context({**context, "render_policy": policy})
 
 
+def _is_unverified_png_render(rel_id, policy) -> bool:
+    """无 source_policy 的渲染落在一张 PNG 源图上：产物未与已存字节核对（只标记，不拒绝）。"""
+    return (
+        policy is None
+        and isinstance(rel_id, str)
+        and rel_id.lower().endswith(".png")
+        and not engine_runtimeasset.is_runtime_id(rel_id)
+    )
+
+
 def _artifact_path(rel_id):
     try:
         return safe_resolve(rel_id)
@@ -5324,6 +5334,11 @@ def api_engine_render():
         out["unrestored"] = resp["unrestored"]
     if artifact_source is not None:
         out["artifact_source"] = artifact_source
+    elif _is_unverified_png_render(rel_id, body.get("source_policy")):
+        # 受守 PNG 源（selected-artifact）是显式选择，省略 policy 的旧请求语义不变（docs/rules/backend/
+        # figure-capture-and-execution.md「选择具体产物的受限源图上下文」），所以不拒绝；但这次渲染重跑了脚本、
+        # 产物没与已存 PNG 字节核对——机器可读地标出，调用方不得把它当作已验证（#1145）。
+        out["source_unverified"] = {"reason": "source_policy_missing", "kind": "png"}
     switched = g.pop("environment_switched", None)
     if switched:
         # 同上：加字段不改老形状。只在**真的发生了自动切换**的那一次响应里出现。

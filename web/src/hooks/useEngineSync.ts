@@ -68,6 +68,10 @@ export function renderTargets(
     // 带着 overrides 重开的文档先显示 cache 占位，进入编辑 / 显式重跑那一刻
     // 才 build 并重放。tracked（脚本变更）对 runtime 只表达 stale 提示，
     // 不构成自动重跑的理由。
+    // 未采用的 PNG 源图（#1145）：styleBound / 邻居 / tracked 这三条「顺手补渲染」的理由都只能发
+    // 无 source_policy 的 patches=[]，让脚本重跑出一张没对过字节的图。它的唯一合法首渲染是
+    // admitPngEntry 的带策略采用请求（进编辑才走）；采用后 artifactValidation 在，照旧参与同步。
+    const unadopted = !Object.hasOwn(o, 'artifactValidation') && isUnadoptedPngSource(o)
     const wants =
       o.fileKind === 'runtime'
         ? o.id === editingId || latest[o.fileId] != null
@@ -75,9 +79,7 @@ export function renderTargets(
           // 「只带基线、还没动过」的面板不渲染：磁盘文件本身就是那个样子，
           // 白跑一次引擎（heavy 脚本要几分钟）没有意义。
           o.id === editingId ||
-          styleBound ||
-          neighbours.has(o.id) ||
-          !!tracked[o.fileId] ||
+          (!unadopted && (styleBound || neighbours.has(o.id) || !!tracked[o.fileId])) ||
           (o.overrides.length > 0 && !isJustBakedBaselineOf(o.overrides, assets[o.fileId]))
     if (!wants) continue
     const key = renderKeyOf(o)
