@@ -233,3 +233,50 @@ test('意外错误 → 右下角反馈卡：贴窗口右下角、一颗主按钮
     sink.close()
   }
 })
+
+test('右下角反馈卡不盖住准备引导卡：属性栏收起、窗口小，两张卡不相交且反馈卡整张在窗口里', async ({ app, page }) => {
+  test.setTimeout(180_000)
+  const project = mkdtempSync(path.join(os.tmpdir(), 'tavotto-diag-prep-'))
+  writeFileSync(
+    path.join(project, 'plot.py'),
+    'import matplotlib\nmatplotlib.use("Agg")\nimport matplotlib.pyplot as plt\n' +
+      'fig, ax = plt.subplots()\nax.plot([1, 2, 3])\nraise RuntimeError("boom")\nfig.savefig("out.png")\n',
+    'utf-8',
+  )
+  const a = await app({
+    figures: project,
+    env: {
+      TAVOTTO_NO_DIAG_UPLOAD: '0',
+      TAVOTTO_DIAG_DEV_LOOPBACK: '1',
+      TAVOTTO_DIAG_ENDPOINT: 'https://127.0.0.1:9', // 不会被连：本条不点发送
+    },
+  })
+  // 一次加载（准备卡关掉后重载不会再自动出现），之后只改窗口大小：避让要跟着窗口重算
+  await page.setViewportSize({ width: 1024, height: 768 })
+  await page.goto(a.baseURL)
+  const prep = page.locator('[data-prep-card]')
+  await expect(prep).toHaveAttribute('data-prep-state', 'discover', { timeout: 60_000 })
+  const close = page.locator('[data-inspector-close]')
+  if (await close.isVisible()) await close.click()
+  await page.evaluate(() => {
+    setTimeout(() => {
+      throw new TypeError('prep overlap e2e')
+    }, 0)
+  })
+  const card = page.locator('[data-unexpected-error-card]')
+  await expect(card).toBeVisible({ timeout: 10_000 })
+  for (const [w, h] of [
+    [1024, 768],
+    [1024, 560],
+  ] as const) {
+    await page.setViewportSize({ width: w, height: h })
+    await page.waitForTimeout(500) // 入场动画与避让落定
+    const c = (await card.boundingBox())!
+    const p = (await prep.boundingBox())!
+    const intersects = c.x < p.x + p.width && p.x < c.x + c.width && c.y < p.y + p.height && p.y < c.y + c.height
+    expect(intersects, `${w}×${h}：反馈卡 ${JSON.stringify(c)} 与准备卡 ${JSON.stringify(p)} 相交`).toBe(false)
+    expect(c.y, '整张在窗口里（上）').toBeGreaterThanOrEqual(0)
+    expect(c.x, '整张在窗口里（左）').toBeGreaterThanOrEqual(0)
+    if (SHOTS) await page.screenshot({ path: `${SHOTS}/feedback-corner-vs-prep-${w}x${h}.png` })
+  }
+})

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type RefObject } from 'react'
 import { useTranslation } from 'react-i18next'
 import { CircleAlert, X } from '@/components/ui/icons'
 import { Button } from '@/components/ui/Button'
@@ -13,31 +13,45 @@ const EDGE_PX = 16
 const CARD_W_PX = 320
 const GAP_PX = 8
 
+type Clearance = { bottom: number } | { right: number } | null
+
 /**
  * 与准备引导卡（`PreparationCard`，画布右下角）不叠（Codex #1184）：属性栏收起时两张卡都在右下角，
- * 这张 `z-toast` 会盖住准备卡底部的按钮。只在这张卡显示时观察 `[data-prep-card]`（出现 / 消失 / 尺寸），
- * 水平方向与这张卡的位置相交就抬到它上方，返回 `bottom` 像素；不相交返回 null（默认 `bottom-4`）。
+ * 这张 `z-toast` 会盖住准备卡底部的按钮。只在这张卡显示时观察 `[data-prep-card]`（出现 / 消失 / 尺寸）与自己的高度，
+ * 水平相交时按序挑一个**整张都在窗口里**的位置：① 准备卡上方 8px（上面放得下这张卡的实测高度）；
+ * ② 准备卡左侧 8px、贴底（左边放得下卡宽）；③ 都放不下（窗口太小）就留在默认位置——宁可叠，也不把卡推出窗口。
  */
-function usePrepCardClearance(active: boolean): number | null {
-  const [bottom, setBottom] = useState<number | null>(null)
+function usePrepCardClearance(active: boolean, self: RefObject<HTMLElement | null>): Clearance {
+  const [clearance, setClearance] = useState<Clearance>(null)
   useEffect(() => {
     if (!active || typeof document === 'undefined') {
-      setBottom(null)
+      setClearance(null)
       return
     }
-    let observed: Element | null = null
+    const observed = new Set<Element>()
     const ro = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(() => measure())
+    const watch = (el: Element | null | undefined) => {
+      if (el && !observed.has(el)) {
+        observed.add(el)
+        ro?.observe(el)
+      }
+    }
     function measure() {
       const prep = document.querySelector('[data-prep-card]')
-      if (prep !== observed) {
-        if (observed) ro?.unobserve(observed)
-        if (prep) ro?.observe(prep)
-        observed = prep
-      }
+      watch(prep)
+      watch(self.current)
       const r = prep?.getBoundingClientRect()
-      const left = window.innerWidth - EDGE_PX - CARD_W_PX
-      const overlaps = !!r && r.width > 0 && r.height > 0 && r.right > left && r.left < window.innerWidth - EDGE_PX
-      setBottom(overlaps ? Math.max(EDGE_PX, Math.round(window.innerHeight - r.top + GAP_PX)) : null)
+      const vw = window.innerWidth
+      const vh = window.innerHeight
+      const left = vw - EDGE_PX - CARD_W_PX
+      const overlaps = !!r && r.width > 0 && r.height > 0 && r.right > left && r.left < vw - EDGE_PX
+      let next: Clearance = null
+      if (overlaps) {
+        const h = self.current?.getBoundingClientRect().height ?? 0
+        if (r.top - GAP_PX - h >= EDGE_PX) next = { bottom: Math.round(vh - r.top + GAP_PX) }
+        else if (r.left - GAP_PX - CARD_W_PX >= EDGE_PX) next = { right: Math.round(vw - r.left + GAP_PX) }
+      }
+      setClearance((cur) => (JSON.stringify(cur) === JSON.stringify(next) ? cur : next))
     }
     measure()
     const mo = new MutationObserver(measure)
@@ -48,8 +62,8 @@ function usePrepCardClearance(active: boolean): number | null {
       ro?.disconnect()
       window.removeEventListener('resize', measure)
     }
-  }, [active])
-  return bottom
+  }, [active, self])
+  return clearance
 }
 
 type Prompt =
@@ -90,7 +104,8 @@ export function FeedbackCorner() {
   if (current) last.current = current
   const presence = usePresence(!!current, DURATION.fast)
   const shown = current ?? last.current
-  const clearance = usePrepCardClearance(presence.mounted)
+  const cardRef = useRef<HTMLElement | null>(null)
+  const clearance = usePrepCardClearance(presence.mounted, cardRef)
 
   const dismiss = (p: Prompt) => {
     if (p.slot === 'unexpected') useUnexpectedErrorStore.getState().dismiss()
@@ -109,7 +124,7 @@ export function FeedbackCorner() {
   return (
     <div
       data-feedback-corner
-      style={clearance != null ? { bottom: clearance } : undefined}
+      style={clearance ?? undefined}
       className="pointer-events-none fixed bottom-4 right-4 z-toast flex w-80 max-w-[calc(100vw-2rem)] flex-col items-end"
     >
       <div aria-live="polite" className="sr-only">
@@ -117,6 +132,7 @@ export function FeedbackCorner() {
       </div>
       {presence.mounted && shown && (
         <section
+          ref={cardRef}
           key={`${shown.slot}-${shown.token}`}
           aria-label={title(shown)}
           data-state={presence.state}
