@@ -11,7 +11,7 @@ import { card, expectPageNotShifted, openDetails, pill, workPanelRect } from './
  *     工作台照常可用，已有的静态素材立即可见；**用户脚本一次都没被执行**（哨兵文件在项目之外），弹出时也没建准备会话；
  *   * 静态项目：卡片与角标都不出现；
  *   * 目录读不动：角标说「没能检查完」，而不是静悄悄当成没有脚本；
- *   * 教程：教程进行中 coachmark 独占，引导卡不出现、也没有第二个抢焦点的东西。
+ *   * 教程：教程进行中教程层独占，引导卡不出现、也没有第二个抢焦点的东西。
  *
  * 全程不联网；哨兵与项目都在临时目录。
  */
@@ -199,22 +199,25 @@ test('目录读不动：角标说「没能检查完」，而不是当成没有�
   }
 })
 
-test('教程进行中：coachmark 独占，引导卡不出现也不抢第二份焦点', async ({ app, page }) => {
+test('教程进行中：教程层独占，引导卡不出现也不抢第二份焦点', async ({ app, page }) => {
   test.setTimeout(240_000)
-  const a = await app({ noProject: true })
+  // 工作台里从「更多」菜单打开三步新手教程（ADR 0136）：教程层盖住工作台，准备引导卡不出现，
+  // 焦点在教程层里，没有第二个抢焦点的东西
+  const a = await app()
   await page.setViewportSize({ width: 1400, height: 900 })
   await page.goto(a.baseURL)
-  const entry = page.locator('[data-onboarding-anchor="tutorial-entry"]')
-  await expect(entry).toHaveText(/用示例学一遍（带引导）/)
-  await entry.click()
-  const coachmark = page.locator('[data-onboarding-coachmark]')
-  await expect(coachmark).toBeVisible({ timeout: 60_000 })
-  await expect(coachmark).toContainText('双击这张图')
+  await page.locator('[data-more-menu]').click()
+  await page.locator('[data-onboarding-anchor="help-tutorial"]').click()
+  const layer = page.locator('[data-native-tutorial]')
+  await expect(layer).toBeVisible({ timeout: 60_000 })
+  await expect(page.locator('[data-tutorial-step]')).toHaveAttribute('data-tutorial-step', 'demo_import')
   await page.waitForTimeout(1500)
-  await expect(coachmark).toHaveCount(1)
+  await expect(layer).toHaveCount(1)
   await expect(card(page)).toHaveCount(0)
   await expect(pill(page)).toHaveCount(0)
-  // 焦点没有落进任何引导卡相关的东西
-  const inScan = await page.evaluate(() => !!document.activeElement?.closest('[data-prep-card], [data-prep-pill]'))
-  expect(inScan).toBe(false)
+  const focus = await page.evaluate(() => ({
+    inScan: !!document.activeElement?.closest('[data-prep-card], [data-prep-pill]'),
+    inTutorial: !!document.activeElement?.closest('[data-native-tutorial]'),
+  }))
+  expect(focus).toEqual({ inScan: false, inTutorial: true })
 })

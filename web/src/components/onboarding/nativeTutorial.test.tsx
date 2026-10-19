@@ -196,6 +196,15 @@ describe('什么时候自己出现', () => {
 /* -------------------------------- 教程层边界 ------------------------------- */
 
 describe('教程层的边界', () => {
+  it('从步骤页打开（不经欢迎页）：焦点进到教程层里，不留在底下 inert 的界面上', async () => {
+    const outside = document.createElement('button')
+    host.appendChild(outside)
+    outside.focus()
+    await openAt('demo_import')
+    await flush()
+    expect(layer()!.contains(document.activeElement)).toBe(true)
+  })
+
   it('开着时应用根 inert；收起后还原', async () => {
     await openAt('demo_import')
     expect(host.hasAttribute('inert')).toBe(true)

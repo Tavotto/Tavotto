@@ -60,7 +60,17 @@ function TutorialLayer({ surface }: { surface: 'welcome' | 'tutorial' }) {
   }, [externalNotice])
   useEffect(() => setExternalNotice(false), [surface])
 
-  // 打开时焦点进来（落在这一屏的标题上）；收起时还给打开前的那个元素
+  // 打开时焦点进来：这一屏自己会把焦点放到标题 / 主控件上；没放（步骤页、从菜单打开）就落在
+  // 整层上——焦点绝不留在底下那个已经 inert 的界面里。收起时还给打开前的那个元素
+  useEffect(() => {
+    const raf = requestAnimationFrame(() => {
+      if (layer.current && !layer.current.contains(document.activeElement)) {
+        layer.current.focus({ preventScroll: true })
+      }
+    })
+    return () => cancelAnimationFrame(raf)
+    // 换屏（欢迎页 → 第一步）时点下去的那颗按钮跟着卸载，焦点会掉回 body：每次换屏都再核一次
+  }, [surface])
   useEffect(() => {
     const before = document.activeElement as HTMLElement | null
     return () => {
@@ -92,7 +102,8 @@ function TutorialLayer({ surface }: { surface: 'welcome' | 'tutorial' }) {
       aria-label={t('onboarding.shell.label', { product: PRODUCT_NAME })}
       data-native-tutorial=""
       data-surface={surface}
-      className="fixed inset-0 z-overlay flex flex-col bg-bg text-ink"
+      tabIndex={-1}
+      className="fixed inset-0 z-overlay flex flex-col bg-bg text-ink outline-none"
       onDragEnter={refuseFiles}
       onDragOver={refuseFiles}
       onDrop={refuseFiles}
