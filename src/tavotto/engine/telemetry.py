@@ -313,6 +313,19 @@ def endpoint() -> str:
 # ---------------------------------------------------------------------------
 # 设置（跟着 config.json 走）
 # ---------------------------------------------------------------------------
+def _saved_version(raw) -> int:
+    """保存的同意版本；手改 / 旧版遗留的怪形状（`"v2"`、浮点、负数）一律当 0——即「同意的是旧范围」，
+    会被重新征求，绝不当成当前版本的同意。不许抛：`settings()` 挂在发送诊断报告、设置页等路径上
+    （Codex #1103 P2：`"v2"` 曾让「发送问题反馈」直接 500）。"""
+    if isinstance(raw, bool):
+        return 0
+    if isinstance(raw, int):
+        return max(raw, 0)
+    if isinstance(raw, str) and raw.strip().isdigit():
+        return int(raw.strip())
+    return 0
+
+
 def settings() -> dict:
     """**内部**视图，含 install_id。绝不整体交给前端或诊断包。"""
     cfg = config.load().get("telemetry") or {}
@@ -325,7 +338,7 @@ def settings() -> dict:
     return {
         "consent": consent,
         "install_id": install_id,
-        "consent_version": int(cfg.get("consent_version") or 0),
+        "consent_version": _saved_version(cfg.get("consent_version")),
         "ever_enabled": bool(cfg.get("ever_enabled")),
     }
 

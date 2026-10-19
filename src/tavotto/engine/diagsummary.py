@@ -105,7 +105,17 @@ def _facts(project_id: str) -> dict | None:
 
 
 def build(project_id: str) -> dict | None:
-    """最终发送时的 `error_summary` 声明；没有同意或没有合格的内部事实 = None（不带这个字段）。"""
+    """最终发送时的 `error_summary` 声明；没有同意或没有合格的内部事实 = None（不带这个字段）。
+
+    摘要是可选增强：构建过程里**任何**异常都按「不带摘要」处理，绝不让它挡住诊断报告本身（Codex #1103 P2）。
+    """
+    try:
+        return _build(project_id)
+    except Exception:  # noqa: BLE001 — 可选字段，失败即省略
+        return None
+
+
+def _build(project_id: str) -> dict | None:
     consent = consent_snapshot()
     if consent is None or not project_id:
         return None

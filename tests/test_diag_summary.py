@@ -300,3 +300,30 @@ def test_withdrawing_consent_between_attempts_drops_the_summary_without_a_409(sr
     a, b = _inits(srv)[:2]
     assert "error_summary" in a and "error_summary" not in b
     assert a["client_request_id"] != b["client_request_id"]
+
+
+# --------------------------------------------------------------------------- 摘要坏了不挡报告（Codex #1103 P2）
+def test_malformed_saved_consent_version_still_sends_the_report_without_summary(srv):
+    """真实形状：手改 / 旧版遗留的 `consent_version: "v2"`。报告照发，只是不带摘要。"""
+    srv.accepts_error_summary = True
+    _fail()
+    with telemetry.config.transaction() as cfg:
+        cfg["telemetry"]["consent_version"] = "v2"
+    pid = _send()
+    _wait(pid, {"done"})
+    (init,) = _inits(srv)
+    assert "error_summary" not in init
+
+
+def test_any_failure_while_building_the_summary_is_omission_not_an_error(srv, monkeypatch):
+    srv.accepts_error_summary = True
+    _fail()
+
+    def boom(project_id):
+        raise RuntimeError("summary exploded")
+
+    monkeypatch.setattr(diagsummary, "_facts", boom)
+    pid = _send()
+    _wait(pid, {"done"})
+    (init,) = _inits(srv)
+    assert "error_summary" not in init
