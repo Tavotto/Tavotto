@@ -310,6 +310,13 @@ class GuardianContract(GuardianBase):
             )
             self.assertEqual(stages["capture"]["status"], "failed", kwargs)
 
+    def test_v2_open_needs_every_captured_figure_to_render(self):
+        native = {"figure_count": 2, "semantics": {}}
+        observed = self.v2_observation(figures_captured=2, figures_valid=1)
+        self.assertEqual(cg.v2_stages(observed, native, [])["open"]["status"], "failed")
+        observed = self.v2_observation(figures_captured=2, figures_valid=2)
+        self.assertEqual(cg.v2_stages(observed, native, [])["open"]["status"], "passed")
+
     def test_v2_zero_invocations_do_not_reach_downstream_stages(self):
         stages = cg.v2_stages(self.v2_observation(exec_count=0), {}, [])
         for name in ("execute", "capture", "open", "semantic"):
