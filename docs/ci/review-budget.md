@@ -34,10 +34,12 @@ Files:
 - scripts/ci/review_budget.py — Python stdlib audit and JSON ledger generator.
 - tests/test_review_budget.py — deterministic tests for floors, spoofing, repeated calls,
   quota replies, pagination failure, and the workflow trust boundary.
-- .github/workflows/review-budget.yml — hosted, read-only advisory run on PR events
-  whose base is main, plus optional manual dispatch. It checks out **default branch**
-  so a fork PR cannot replace the audit program. Until this PR lands on main, its
-  bootstrap run must record status=unknown rather than silently trusting PR code.
+- .github/workflows/review-budget.yml — hosted, read-only advisory run on main-bound
+  PR lifecycle events, review submissions/edits/dismissals, review-comment changes,
+  Codex replies and review-request comments, plus optional manual dispatch.
+  It checks out **default branch** so a fork PR cannot replace the audit program.
+  Until this PR lands on main, its bootstrap run must record status=unknown
+  rather than silently trusting PR code.
 
 Observed data: GitHub Pull Request metadata, all changed file pages, all issue comment
 pages, and all review pages. Only the exact chatgpt-codex-connector[bot] author can supply
@@ -78,6 +80,29 @@ and a GitHub job summary. Artifacts are kept for 30 days and are not committed t
 All API calls are GET; data/history truncation and API errors emit status=unknown and
 never state that a review is complete. A green advisory workflow must never be read as
 approval. No user code, figure data, token, or full comment text enters the ledger.
+
+## Event-driven ledger refresh (after merge)
+
+A PR commit is not the only time review evidence changes. The advisory workflow
+also listens to `pull_request_review` (`submitted`, `edited`, `dismissed`),
+`pull_request_review_comment` (`created`, `edited`, `deleted`), and
+`issue_comment` (`created`, `edited`, `deleted`). Review events are
+limited to PRs targeting main. Issue-comment jobs require a PR (not an issue)
+and a Codex bot response, a comment mentioning Codex, or a deletion that might
+invalidate recorded evidence; unrelated comments are skipped before any runner
+is allocated. The runner gets the numeric PR identifier from the event's
+`pull_request.number` or `issue.number`.
+
+These events **re-read existing evidence only**; they never request Code Review
+or Security Review. GitHub runs `issue_comment` workflows only after their
+workflow file is present on the default branch. All triggers checkout trusted
+main, use a read-only `GITHUB_TOKEN`, and never execute PR-head code or
+evaluate comment bodies in a shell. A single advisory-only concurrency group
+per PR cancels stale audit attempts, not CI or CodeQL. `workflow_dispatch`
+remains the manual recovery route for webhook delays, missed review events,
+or review-thread resolution that produces no supported event. GitHub may
+suppress some events created with its own `GITHUB_TOKEN`; automatic refresh
+is best effort, and stale or unknown evidence is never approval.
 
 ## Usage
 

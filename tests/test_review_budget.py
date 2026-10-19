@@ -369,7 +369,13 @@ def test_advisory_workflow_does_not_elevate_permissions_or_touch_required_gates(
     event_section, sep, _ = on_section.partition("\npermissions:\n")
     assert sep, "Expected an explicit top-level permissions: block"
     event_keys = set(re.findall(r"(?m)^  ([a-z_]+):\s*$", event_section))
-    assert event_keys == {"pull_request", "workflow_dispatch"}
+    assert event_keys == {
+        "pull_request",
+        "pull_request_review",
+        "pull_request_review_comment",
+        "issue_comment",
+        "workflow_dispatch",
+    }
     assert "review_budget.py" in body
     assert "default_branch" in body
     assert "contents: read" in body
@@ -384,3 +390,35 @@ def test_advisory_workflow_does_not_elevate_permissions_or_touch_required_gates(
     assert "CI fast gate" not in body
     assert "CI integration gate" not in body
     assert "CodeQL gate" not in body
+
+
+def test_review_budget_refreshes_for_review_and_pr_comment_evidence_only():
+    body = (ROOT / ".github/workflows/review-budget.yml").read_text(encoding="utf-8")
+    on_section = body.split("\non:\n", 1)[1].split("\npermissions:\n", 1)[0]
+    event_actions = {
+        "pull_request_review": {"submitted", "edited", "dismissed"},
+        "pull_request_review_comment": {"created", "edited", "deleted"},
+        "issue_comment": {"created", "edited", "deleted"},
+    }
+    for event, expected in event_actions.items():
+        match = re.search(rf"(?m)^  {event}:\n    types: \[([^\]\n]+)\]$", on_section)
+        assert match is not None, event
+        assert {a.strip() for a in match.group(1).split(",")} == expected, event
+
+    # Relevant PR-only webhook events must not run untrusted fork code or issue jobs.
+    guard = body.split("\njobs:\n", 1)[1].split("\n    runs-on:", 1)[0]
+    assert "if: >-" in guard
+    assert "github.event.pull_request.base.ref == 'main'" in guard
+    assert "github.event.issue.pull_request" in guard
+    assert "github.event.comment.user.login == 'chatgpt-codex-connector[bot]'" in guard
+    assert "contains(github.event.comment.body, '@codex')" in guard
+    assert "github.event.action == 'deleted'" in guard
+
+    # All event families resolve the correct PR and cancel only older advisory audits.
+    pr_selector = "github.event.pull_request.number || github.event.issue.number || inputs.pr_number"
+    assert f"PR_NUMBER: ${{{{ {pr_selector} }}}}" in body
+    assert f"group: review-budget-${{{{ github.workflow }}}}-${{{{ {pr_selector} || github.ref }}}}" in body
+    assert "cancel-in-progress: true" in body
+    assert "ref: ${{ github.event.repository.default_branch }}" in body
+    assert "persist-credentials: false" in body
+    assert "pull_request_target:" not in on_section

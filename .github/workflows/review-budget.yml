@@ -6,6 +6,14 @@ on:
   pull_request:
     branches: [main]
     types: [opened, synchronize, reopened, ready_for_review, labeled, unlabeled]
+  # Reviews and review comments are separate webhook events from PR synchronizations.
+  # issue_comment runs from main; a job-level guard excludes ordinary issues.
+  pull_request_review:
+    types: [submitted, edited, dismissed]
+  pull_request_review_comment:
+    types: [created, edited, deleted]
+  issue_comment:
+    types: [created, edited, deleted]
   workflow_dispatch:
     inputs:
       pr_number:
@@ -18,10 +26,11 @@ permissions:
   pull-requests: read
   issues: read
 
-# Never cancel CI / CodeQL / merge_group: this workflow owns a separate group.
+# This concurrency group is PR-local and advisory-only. An updated review supersedes
+# an older ledger, but cannot cancel CI, CodeQL, or merge_group workflows.
 concurrency:
-  group: review-budget-${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || inputs.pr_number || github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: review-budget-${{ github.workflow }}-${{ github.event.pull_request.number || github.event.issue.number || inputs.pr_number || github.ref }}
+  cancel-in-progress: true
 
 env:
   TAVOTTO_NO_TELEMETRY: "1"
@@ -29,6 +38,18 @@ env:
 jobs:
   review-budget:
     name: Review budget (advisory)
+    # Issue comments cover issues AND PRs; do not spend runners on ordinary issues
+    # or unrelated conversation. Never evaluate user-controlled text in a shell.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main') ||
+      ((github.event_name == 'pull_request_review' || github.event_name == 'pull_request_review_comment') &&
+       github.event.pull_request.base.ref == 'main') ||
+      (github.event_name == 'issue_comment' &&
+       github.event.issue.pull_request &&
+       (github.event.action == 'deleted' ||
+        github.event.comment.user.login == 'chatgpt-codex-connector[bot]' ||
+        contains(github.event.comment.body, '@codex')))
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -40,7 +61,7 @@ jobs:
       - name: Observe existing review evidence without requesting any review
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          PR_NUMBER: ${{ github.event.pull_request.number || inputs.pr_number }}
+          PR_NUMBER: ${{ github.event.pull_request.number || github.event.issue.number || inputs.pr_number }}
         run: |
           set -euo pipefail
           OUTPUT="$RUNNER_TEMP/review-budget.json"
