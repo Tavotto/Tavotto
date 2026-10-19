@@ -94,6 +94,8 @@ export default defineConfig({
       use: { ...devices['Desktop Chrome'], locale: 'en-US' },
       // inspector-overflow：英文标签更长，撑破的多半是它——两种语言各量一遍
       testMatch: [
+        // 助手草稿与提交可靠性（ADR 0132）：状态说明是中英两套文案，定位走 data-*，两种语言各走一遍
+        'ai-draft.spec.ts',
         'a11y.spec.ts',
         // 说明条 + 不推挤（UI 2.0 PR10）：构建不一致芯片不位移、刷新失败 Notice 顺着滑出；英文文案更长，两种语言各量
         'notice-no-push.spec.ts',

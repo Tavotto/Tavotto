@@ -34,7 +34,7 @@ import { listJoin } from '@/i18n/format'
 import { markAutoShown, wasAutoShown } from '@/lib/guideCardSeen'
 import { preparationPanelEnabled } from '@/lib/preparationFlag'
 import { originFactsOf, originViewOfCard } from '@/lib/importOrigin'
-import { dialogKinds, nativeFallbackNote, prepRowKey, prepView, targetName, type PrepPrimary, type PrepTone, type PrepView } from '@/lib/preparationText'
+import { dialogKinds, finishedWithFigures, nativeFallbackNote, prepRowKey, prepView, targetName, type PrepPrimary, type PrepTone, type PrepView } from '@/lib/preparationText'
 import { dependenciesLine, issueLine, roleLabel, scanCard, scanLine, type ScanCardKind } from '@/lib/projectScanText'
 import { missingRequirements, readTokens, type ScriptArgsSchema } from '@/lib/scriptArgsForm'
 import { cn } from '@/lib/utils'
@@ -589,6 +589,7 @@ const ARGS_FOLDED = new Set([
   'no_figure_raster',
   'completed',
   'completed_unlinked',
+  'completed_partial',
   'cancelled',
 ])
 
@@ -1245,7 +1246,15 @@ function SessionDetails({ entry, view }: { entry: PrepEntry; view: PrepView }) {
       )}
       {view.state === 'no_figure' && <p data-prep-nofigure-why>{pt('detail.noFigureWhy')}</p>}
       {view.state === 'no_figure_raster' && <p data-prep-nofigure-raster-why>{pt('rasterHint.why')}</p>}
-      {(report?.unlinked_stems ?? []).length > 0 && report?.phase === 'completed' && (
+      {(report?.failed_figures ?? []).length > 0 && report?.phase === 'partial' && (
+        <p data-prep-failed-figures>
+          {pt('detail.failedFigures', {
+            names: listJoin((report.failed_figures ?? []).map((f) => f.stem)),
+            codes: listJoin([...new Set((report.failed_figures ?? []).map((f) => f.code).filter((c): c is string => !!c))]),
+          })}
+        </p>
+      )}
+      {(report?.unlinked_stems ?? []).length > 0 && finishedWithFigures(report) && (
         <p data-prep-unlinked>{pt('detail.unlinked', { names: listJoin(report.unlinked_stems ?? []) })}</p>
       )}
       {(report?.attempt_history?.length ?? 0) > 0 && <RunHistory history={report?.attempt_history ?? []} />}

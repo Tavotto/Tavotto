@@ -897,6 +897,7 @@
       "dialogBoth": "脚本会弹窗选文件和询问，这里弹不出来，请把路径和答案写进脚本",
       "completed_other": "画好了 {{count}} 张图",
       "completedNoList": "跑完了，图在素材库",
+      "completedPartial": "只画好了 {{done}}/{{total}} 张图，{{names}} 没画出来",
       "static": "可以直接排版",
       "editReady": "已进入编辑",
       "editOpening": "正在打开编辑…",
@@ -1042,6 +1043,7 @@
       },
       "errorFull": "完整错误信息",
       "errorTruncated": "太长，只保留了最后一部分。",
+      "failedFigures": "没画出来的图：{{names}}（{{codes}}）。其余的图可以照常编辑。",
       "unlinked": "此前带其他参数生成的 {{names}} 已不再关联，用原参数再运行一次即可恢复。",
       "history": {
         "title": "运行记录",
@@ -1103,6 +1105,7 @@
       "preparing": "准备依赖中",
       "ready": "待运行",
       "captured_other": "已捕获 {{count}} 张图",
+      "capturedPartial": "只捕获 {{done}}/{{total}} 张图",
       "static": "没有脚本",
       "noFigure": "运行完成，没有图",
       "cancelled": "已停止",

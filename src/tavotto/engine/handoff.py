@@ -34,15 +34,14 @@ mac/CI 上单测 Windows 的安装路径（同 `engine/runtime.py`；看护用�
 from __future__ import annotations
 
 import argparse
+import http.client
 import json
 import math
 import os
 import subprocess
 import sys
 import time
-import urllib.error
 import urllib.parse
-import urllib.request
 import webbrowser
 from pathlib import Path
 from typing import NamedTuple
@@ -281,6 +280,19 @@ PROBE_HTTP_TIMEOUT = 1800.0
 _PROBE_CODE_MAP = {"missing_dependency": "native_run_required"}
 
 
+def _loopback_target(url: str) -> tuple[int, str] | None:
+    """`http://127.0.0.1:<端口>/路径?查询` → (端口, 路径+查询)；没有端口 / 端口非法回 None。
+    主机部分不读：请求固定发往 127.0.0.1（`session_client.loopback_request`），不经代理。"""
+    try:
+        parts = urllib.parse.urlsplit(url)
+        port = parts.port
+    except ValueError:
+        return None
+    if not port:
+        return None
+    return port, (parts.path or "/") + (f"?{parts.query}" if parts.query else "")
+
+
 def _http_json_status(
     url: str, payload: dict | None = None, timeout: float = 10.0
 ) -> tuple[int | None, dict | None]:
@@ -297,17 +309,20 @@ def _http_json_status(
     except ValueError:
         pass
     data = None if payload is None else json.dumps(payload).encode()
-    req = urllib.request.Request(url, data=data, headers=headers)
-    try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            return resp.status, json.loads(resp.read().decode("utf-8", "replace"))
-    except urllib.error.HTTPError as exc:
-        try:
-            return exc.code, json.loads(exc.read().decode("utf-8", "replace"))
-        except (OSError, ValueError):
-            return exc.code, None
-    except (urllib.error.URLError, OSError, ValueError):
+    target = _loopback_target(url)
+    if target is None:
         return None, None
+    try:
+        status, raw = session_client.loopback_request(
+            target[0], target[1], payload=data, headers=headers, timeout=timeout
+        )
+    except (http.client.HTTPException, OSError, ValueError):
+        return None, None
+    try:
+        return status, json.loads(raw.decode("utf-8", "replace"))
+    except ValueError:
+        # 2xx 读不懂 = 连不上口径；错误响应读不懂只交状态码（同原 HTTPError 分支）
+        return (status, None) if status >= 400 else (None, None)
 
 
 def _script_figures(project: str, script: str) -> list[dict]:
@@ -1146,11 +1161,17 @@ def _http_json(url: str, payload: dict | None = None, timeout: float = 1.0) -> d
     except ValueError:
         pass
     data = None if payload is None else json.dumps(payload).encode()
-    req = urllib.request.Request(url, data=data, headers=headers)
+    target = _loopback_target(url)
+    if target is None:
+        return None
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            return json.loads(resp.read().decode("utf-8", "replace"))
-    except (urllib.error.URLError, OSError, ValueError):
+        status, raw = session_client.loopback_request(
+            target[0], target[1], payload=data, headers=headers, timeout=timeout
+        )
+        if not 200 <= status < 300:
+            return None
+        return json.loads(raw.decode("utf-8", "replace"))
+    except (http.client.HTTPException, OSError, ValueError):
         return None
 
 

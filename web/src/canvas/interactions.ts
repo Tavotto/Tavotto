@@ -23,7 +23,7 @@ import {
   type Rect,
   type ResizeDir,
 } from '@/lib/geometry'
-import type { Manifest, ManifestElement } from '@/lib/api'
+import type { ElementGeometry, Manifest, ManifestElement } from '@/lib/api'
 import { flipY, resizeGroup, round4, sameAfterRound4, unionBox, type Rect4 } from '@/lib/axesLayout'
 import { contentToPageVec, pageToContentVec, panelContentTransform } from '@/lib/panelTransform'
 import {
@@ -67,6 +67,8 @@ import {
   geomDistMm,
   geomHitTolMm,
   geomInkAreaFrac,
+  geomIsOpaqueFill,
+  strokeDistBucket,
 } from '@/lib/pathGeom'
 import {
   createScaleHold,
@@ -1061,21 +1063,56 @@ export function pickElementStack(
 ): ManifestElement[] {
   if (!manifest) return []
   const PAD = 0.004
-  const hits: { el: ManifestElement; score: number; i: number }[] = []
+  /**
+   * 分层（ADR 0086 修订，「看得见的墨迹在哪，就选谁」）：
+   *  0 = 描边命中——在容差内的曲线 / 空心路径 / 填充元素的边线 / 箭头 / 字（字本身就是墨迹），
+   *      且没有被画在它上面的**不透明**填充盖住；
+   *  1 = 其余按旧规则（面积评分）：仅落在填充内部、bbox 命中的背景类元素（子图、图像、色条…）；
+   *  2 = 被上层不透明填充盖住的候选（线或填充）：看不见，只留给 ⌥ 轮换。
+   */
+  type Tier = 0 | 1 | 2
+  interface Hit {
+    el: ManifestElement
+    i: number
+    tier: Tier
+    /** 旧评分（面积），tier 1/2 用它排；tier 0 里作为墨迹面积 */
+    score: number
+    /** tier 0：光标离可见墨迹边缘的量化档（mm 档，0 = 落在墨迹上） */
+    bucket: number
+    /** 真实绘制次序；未知 = -1 */
+    order: number
+    /** 被盖判据的两个输入：是否参与遮挡检查，以及有效的盖住者 */
+    geom?: ElementGeometry
+    inside: boolean
+  }
+  const hits: Hit[] = []
+  // 能盖住别人的不透明填充：光标落在它里面。锁定的也算——它在画面上照样盖着
+  // （只是不参与被选）；隐藏的不算（画面上没有）
+  const covers: { gid: string; order: number }[] = []
   for (const [i, el] of manifest.elements.entries()) {
     if (el.gid === 'figure') continue
     if (isElementHidden(el)) continue // 隐藏的元素不该再挡住点击
-    if (lockedGids?.includes(el.gid)) continue // 锁定元素只能从元素树选中
+    const locked = lockedGids?.includes(el.gid) ?? false // 锁定元素只能从元素树选中
     // 图内独立箭头按线本身命中（与画布箭头同语义，见 hitTest.test 的沿线命中）：
     // 斜箭头的 bbox 是一大块空白矩形，按矩形命中会让远离线的点击也选中箭头、
     // 还把底下元素的点击偷走。评分用线的「墨迹面积」（长 × 2×容差，换算回
     // 分数系），与其余元素的 bbox 面积同一量纲。
     if (el.arrow_endpoints && el.arrow_endpoints.length >= 2) {
+      if (locked) continue
       const [a, b] = el.arrow_endpoints
       const [sw, sh] = manifest.size_mm
-      if (arrowDistMm(manifest.size_mm, fx, fy, a, b) > PATH_HIT_MM) continue
+      const d = arrowDistMm(manifest.size_mm, fx, fy, a, b)
+      if (d > PATH_HIT_MM) continue
       const lenMm = Math.hypot((b[0] - a[0]) * sw, (b[1] - a[1]) * sh)
-      hits.push({ el, score: (lenMm * 2 * PATH_HIT_MM) / (sw * sh), i })
+      hits.push({
+        el,
+        i,
+        tier: 0,
+        score: (lenMm * 2 * PATH_HIT_MM) / (sw * sh),
+        bucket: strokeDistBucket(null, d),
+        order: el.paint_order ?? -1,
+        inside: false,
+      })
       continue
     }
     // 有真实路径的元素（曲线 / 填充 / 独立形状）按**路径**命中，不用 bbox：
@@ -1088,26 +1125,87 @@ export function pickElementStack(
       // 粗线的边缘像素会落在容差之外（geomHitTolMm 的注释里有账）
       const tol = geomHitTolMm(geom, PATH_HIT_MM)
       const inside = geomContains(geom, fx, fy)
-      const dist = inside ? 0 : geomDistMm(geom, manifest.size_mm, fx, fy)
-      if (!inside && dist > tol) continue
-      // 评分与 bbox 面积同一量纲：填充按真实面积（小的赢），空心按墨迹面积
-      // （一条线的墨迹极小，因此总能从子图容器手里把点击拿回来）
-      const score = inside
-        ? geomAreaFrac(geom) * (HIT_PENALTY[el.role] ?? 1)
-        : geomInkAreaFrac(geom, manifest.size_mm, tol)
-      hits.push({ el, score, i })
+      const order = geom.paint_order ?? -1
+      if (inside && geomIsOpaqueFill(geom) && order >= 0) covers.push({ gid: el.gid, order })
+      if (locked) continue
+      // 离路径多远：填充内部且自己没画边线的，不需要算（只有 `inside` 才是命中）
+      const dist =
+        inside && geom.fill && !geom.stroke ? Infinity : geomDistMm(geom, manifest.size_mm, fx, fy)
+      const near = dist <= tol
+      if (!inside && !near) continue
+      // 描边命中：空心路径靠近路径；填充元素只有**自己画了边线**才算（没边线的半透明幕墙，
+      // 边界上什么也看不到）。填充外沿的容差带照旧是命中，但只算「填充类」（tier 1，
+      // 旧的墨迹面积评分），不升到描边层
+      if (near && (!geom.fill || geom.stroke)) {
+        // 描边命中：墨迹面积评分（一条线的墨迹极小，因此总能从子图容器手里把点击拿回来），
+        // 同一量纲；再按离墨迹的远近分档
+        hits.push({
+          el,
+          i,
+          tier: 0,
+          score: geomInkAreaFrac(geom, manifest.size_mm, tol),
+          bucket: strokeDistBucket(geom, dist),
+          order,
+          geom,
+          inside,
+        })
+      } else {
+        // 仅落在填充内部（或外沿容差带）：评分用真实面积（小的赢），沿用旧规则
+        hits.push({
+          el,
+          i,
+          tier: 1,
+          score: inside
+            ? geomAreaFrac(geom) * (HIT_PENALTY[el.role] ?? 1)
+            : geomInkAreaFrac(geom, manifest.size_mm, tol),
+          bucket: 0,
+          order,
+          geom,
+          inside,
+        })
+      }
       continue
     }
+    if (locked) continue
     const [x, y, w, h] = el.bbox
     if (fx < x - PAD || fx > x + w + PAD || fy < y - PAD || fy > y + h + PAD) continue
-    hits.push({ el, score: w * h * (HIT_PENALTY[el.role] ?? 1), i })
+    // 字 / 图例本身就是墨迹：命中它的框 = 点在可见的东西上，和线同一层（落在 0 档、按面积比，
+    // 与旧评分逐位相同）。背景类（子图、图像、色条、刻度外壳、散点退回的 bbox…）留在 tier 1
+    // 只有**次序已知**的字 / 图例才升到 tier 0：次序未知就没法判它是否被后画的不透明填充
+    // 盖住，留在 tier 1 按旧面积评分（逐位回到旧行为）
+    const order = el.paint_order ?? -1
+    hits.push({
+      el,
+      i,
+      tier: INK_BBOX_ROLES.has(el.role) && order >= 0 ? 0 : 1,
+      score: w * h * (HIT_PENALTY[el.role] ?? 1),
+      bucket: 0,
+      order,
+      inside: false,
+    })
   }
-  // 评分打平时按登记序：这一条就是 twin 与宿主的次序，也是「不轮换时行为不变」
+  // 被上层不透明填充盖住的候选（几何元素与端点箭头）降到 tier 2（次序未知不判遮挡）
+  for (const h of hits) {
+    if (h.order < 0 || h.tier === 2) continue
+    if (covers.some((c) => c.gid !== h.el.gid && c.order > h.order)) h.tier = 2
+  }
+  // 次序：先分层。tier 0 里先比离墨迹的远近档，再比墨迹面积（短网格段不能因为面积小就
+  // 抢走正落在长曲线上的点击），同档再看谁画在上层；其余层按旧面积评分。
+  // 全部打平时按登记序：这一条就是 twin 与宿主的次序，也是「不轮换时行为不变」
   // 的兑现点。别改成纯 `a.score - b.score` 靠 sort 的稳定性兜着——那是隐含依赖，
   // 而这里正是重叠候选唯一的次序来源。
-  hits.sort((a, b) => a.score - b.score || a.i - b.i)
+  hits.sort((a, b) => {
+    if (a.tier !== b.tier) return a.tier - b.tier
+    if (a.tier === 0) {
+      return a.bucket - b.bucket || a.score - b.score || b.order - a.order || a.i - b.i
+    }
+    return a.score - b.score || a.i - b.i
+  })
   return hits.map((h) => h.el)
 }
+
+/** 本身就是墨迹的 bbox 元素（字、图例）：点中它们的框就是点在可见的东西上 */
+const INK_BBOX_ROLES = new Set(['text', 'title', 'axis_label', 'legend', 'legend_text'])
 
 export function pickElement(
   manifest: Manifest | null | undefined,

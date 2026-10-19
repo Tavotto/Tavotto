@@ -155,7 +155,9 @@ def test_telemetry_agent_falls_back_to_the_enum_not_the_registry(client, monkeyp
 
     from tavotto import app as m
 
-    src = inspect.getsource(m.api_ai_run)
+    src = inspect.getsource(
+        m._ai_run_impl
+    )  # 路由函数只是包了一层「拒绝时后端删账本行」，真身在 _ai_run_impl
     # 判据必须来自 EVENTS 表；拿注册表当白名单是被这条用例挡住的写法
     assert 'EVENTS["ai_assistant_invoked"]["agent"]["values"]' in src
     assert "agent_ids()" not in src

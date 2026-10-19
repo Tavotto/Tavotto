@@ -51,9 +51,10 @@ import weakref
 
 import numpy as np
 from matplotlib import cbook
+from matplotlib.axes import Axes
 from matplotlib.collections import Collection, PathCollection, PolyCollection, QuadMesh
 from matplotlib.colors import to_rgba
-from matplotlib.figure import SubFigure
+from matplotlib.figure import FigureBase, SubFigure
 from matplotlib.layout_engine import TightLayoutEngine
 from matplotlib.lines import Line2D, _mark_every_path
 from matplotlib.markers import MarkerStyle
@@ -1379,6 +1380,224 @@ def patch_group_geometry(patches, W: float, H: float, budget: Budget) -> dict | 
     except Exception as exc:  # noqa: BLE001 — 取几何失败只是少一条轮廓，不拦渲染
         print(f"[geometry] 柱形系列取路径失败: {exc}", file=sys.stderr)
     return None
+
+
+def paint_ranks(fig) -> dict[int, int]:
+    """图里每个 artist 的**真实绘制次序**：`id(artist)` → 序号（越大越晚画、越在上层）。
+
+    主语：**此刻的 `fig` 对象，在 manifest 测量那一刻**——与同一轮量出来的 geometry 同一个
+    进程、同一份状态，不是脚本里的 zorder 字面值，也不是 manifest 的登记序。
+
+    次序的来源与 matplotlib 的 draw 同一条路：`Figure.draw` 与 `Axes.draw` 都是
+    「`get_children()` 按 zorder **稳定**升序再依次画」，所以 zorder 相同按添加次序、
+    不同 axes 按 axes 的 zorder（twin 轴在宿主之后）。这里按同样的规则递归展开
+    Figure / SubFigure / Axes（含 inset 等子轴，它们在父轴的 children 里按自己的 zorder
+    排位），按**先序**给每个节点一个序号：一个 axes 里的全部内容都落在它自己和下一个
+    同级 artist 之间，跨 axes 的比较因此天然正确。
+
+    不给序号的情形（字段缺席，前端当「次序未知」）：3D 子轴里的内容（按深度而非 zorder 画）、
+    `computed_zorder=False` 的子轴按它自己的 children 原序（matplotlib 同样不排序）。
+    """
+    ranks: dict[int, int] = {}
+    counter = [0]
+
+    def take(a) -> None:
+        ranks[id(a)] = counter[0]
+        counter[0] += 1
+
+    def kids(a) -> list:
+        try:
+            children = list(a.get_children())
+        except Exception:
+            return []
+        patch = getattr(a, "patch", None)
+        if getattr(a, "computed_zorder", True):
+            children = sorted(children, key=lambda c: c.get_zorder())
+        # 背景 patch 总是最先画（Figure.draw / Axes.draw 都先画它再画 children）
+        return [c for c in children if c is not patch]
+
+    def inherit(a, r: int) -> None:
+        # 叶子的**全部后代**与叶子同序：它们由叶子自己的 draw 一并画出（图例里的文字与标题、
+        # Axis 的轴标签、注解的箭头……），在别的 artist 看来就是叶子那一笔。一条规则盖住
+        # 「子元素没次序」整族，不按角色逐个去找所属者（#1158 评审连着三次撞到这一族）。
+        # `Annotation.get_children()` 不含 `arrow_patch`（箭头在 Annotation.draw 里单独画，
+        # 3.8.4 / 3.10.9 实测），这里显式补上——它是唯一的例外，别在调用方另找所属者。
+        try:
+            children = list(a.get_children())
+        except Exception:
+            children = []
+        arrow = getattr(a, "arrow_patch", None)
+        if arrow is not None:
+            children.append(arrow)
+        for c in children:
+            if id(c) not in ranks:
+                ranks[id(c)] = r
+                inherit(c, r)
+
+    def visit(a) -> None:
+        take(a)
+        if getattr(a, "name", "") == "3d":
+            return
+        for c in kids(a):
+            if id(c) in ranks:
+                continue
+            if isinstance(c, (FigureBase, Axes)):
+                visit(c)
+            else:
+                take(c)
+                inherit(c, ranks[id(c)])
+
+    try:
+        visit(root_figure(fig))
+    except Exception as exc:  # 次序是附加事实，量不出来就不给，不拖垮 manifest
+        print(f"[geometry] 绘制次序取不到: {exc}", file=sys.stderr)
+        return {}
+    return ranks
+
+
+def _face_alpha(a) -> float | None:
+    """一个 artist 的**填充此刻画出来的不透明度**（0..1）；根本不填充 / 取不到返回 None。
+
+    区分两件事：「根本不填充」（facecolor 'none'、markerfacecolor 为 none、没有
+    get_facecolor）返回 None；「填充了但 alpha=0」返回 0.0。后者要留在保守最小值里
+    ——一组柱子里有一根全透明的，整组就不能被报成不透明。
+
+    直接读 artist 画的那份 RGBA，而不是自己去乘「facecolor alpha × artist alpha」：
+    matplotlib 的 `set_alpha` 是**替换**颜色里的 alpha 而不是相乘（Patch._set_facecolor /
+    Collection._set_facecolor 都是 `to_rgba(color, alpha)`），自己乘会把 0.5 算成 0.25。
+    `get_facecolor()` 已经是画的那一份（含 artist alpha、含 colormap 映射后的逐元素色）。
+
+    逐元素色（多色 PolyCollection、逐柱不同 alpha）取**最小值**：这个数用来回答「它能不能
+    盖住下面的线」，保守 = 宁可认为盖不住，下面的线仍可选。
+    """
+    try:
+        if isinstance(a, Line2D):
+            # 半填充 marker（fillstyle left / right / top / bottom）两半各用一种面色：
+            # 主面色与 `markerfacecoloralt`，两半都在几何里（`_line_marker_subpaths`），
+            # 所以两半都要算进保守最小值——备用面色是 'none' 时那一半是空的，整颗
+            # marker 盖不住透过它看得见的线（#1158 评审）。两半都不填才算「根本不填充」。
+            faces = [a.get_markerfacecolor()]
+            if a.get_fillstyle() not in ("full", "none"):
+                faces.append(a.get_markerfacecoloralt())
+            unfilled = [
+                fc is None or (isinstance(fc, str) and fc.lower() == "none") for fc in faces
+            ]
+            if all(unfilled):
+                return None
+            return min(
+                0.0 if empty else float(to_rgba(fc, a.get_alpha())[3])
+                for fc, empty in zip(faces, unfilled, strict=True)
+            )
+        if isinstance(a, Patch):
+            # Patch 的 facecolor='none' / fill=False 不是空数组：`get_facecolor()` 回的是
+            # (r,g,b,0) 的 RGBA（实测 3.11.2：Rectangle(fc='none') → (0,0,0,0)，fill=False →
+            # 默认色带 alpha 0），和显式 alpha=0 的真透明填充**撞形**，先按「根本不填充」判掉。
+            # 依赖：公开的 `get_fill()`，以及私有的 `_original_facecolor`（Patch._set_facecolor
+            # 存的用户原值，'none' 字面量只在这里留得住；缺该属性时只靠 get_fill，当作「不是 'none'」）。
+            # 版本核实：只在本机 3.11.2 实测过，3.8 / 3.10 未在本机核。
+            if not a.get_fill():
+                return None
+            orig = getattr(a, "_original_facecolor", None)
+            if isinstance(orig, str) and orig.lower() == "none":
+                return None
+        get = getattr(a, "get_facecolor", None)
+        if get is None:
+            return None
+        arr = np.atleast_2d(np.asarray(get(), dtype=float))
+        if arr.size == 0:
+            return None  # Collection 族 facecolor='none'：空数组（实测 3.11.2：PolyCollection / scatter 均为 shape (0,4)），根本不填充
+        if arr.shape[-1] < 4:
+            return 1.0
+        return float(np.min(arr[:, 3]))
+    except Exception:
+        return None
+
+
+def _paint_members(artist) -> list:
+    """伪元素（柱形系列 / 误差棒 / 茎叶）背后**此刻真画出来**的那些 artist；普通元素就是它自己。
+
+    只收 `_member_draws` 为真的成员——与组几何（`series_group_geometry` / 柱组几何）跳过
+    隐藏 / 空成员是同一个判据。绘制事实必须描述 geometry 里实际有的那些路径：隐藏的一根
+    alpha=0 柱没进几何，却把整组 `fill_alpha` 拉成 0，看得见的不透明柱就盖不住它下面的线了
+    （#1158 评审）。
+    """
+    kind = getattr(artist, "kind", None)
+    try:
+        if kind == "bar_series":
+            return [m for m in artist.artists if m is not None and _member_draws(m)]
+        if kind in ("errorbar", "stem_series"):
+            return [m for m in artist.members() if m is not None and _member_draws(m)]
+    except Exception:
+        return []
+    return [artist]
+
+
+def paint_order_of(artist, ranks: dict[int, int]) -> int | None:
+    """一个元素（含伪元素）在真实 draw 顺序里的序号；给不出就返回 None（= 次序未知，前端不判遮挡）。
+
+    伪元素（柱形系列 / 误差棒 / 茎叶）有多个成员：**只有成员同处一「层」才给**——成员的 rank
+    区间 `[min, max]` 里没有任何**非成员**的 artist 夹在中间。成员 zorder 不同（一根柱
+    `set_zorder(5)`、其余默认，中间还画着别的线）时，一个数字说不清整组「在谁上面」：
+    取最大会把整组报成在线之上，`covers` 就把线降到看不见的层。次序未知 = 既不盖别人也不被盖，
+    保守落在「下面的线仍可选」。不用「成员 zorder 全相同」做判据：误差棒的误差线与数据线
+    zorder 天然差 0.1，却是紧挨着画的一层。
+    """
+    got = [ranks[id(m)] for m in _paint_members(artist) if id(m) in ranks]
+    if not got:
+        return None
+    lo, hi = min(got), max(got)
+    if hi > lo:
+        mine = set(got)
+        if any(lo < r < hi and r not in mine for r in ranks.values()):
+            return None
+    return int(hi)
+
+
+def _clip_key(m):
+    """一个成员此刻**实际生效的裁剪**：None = 不裁；"custom" = 任意形状（`set_clip_path` 非矩形，
+    geometry 表达不了；矩形裁剪 matplotlib 自己转成 clip box）；否则是 clip box 的范围。"""
+    if not m.get_clip_on():
+        return None
+    if m.get_clip_path() is not None:
+        return "custom"
+    bb = m.get_clip_box()
+    return None if bb is None else tuple(round(float(v), 3) for v in bb.bounds)
+
+
+def _clip_represented(members) -> bool:
+    """geometry 里那**一份**裁剪（`_clip_rect`，组几何取第一个成员的）能否代表每个成员的实际裁剪。
+
+    「能盖住」（`fill_alpha`）是 geometry 对**画出来的填充范围**的担保：有成员被裁成任意形状，或
+    成员之间的矩形裁剪框不一致，geometry 就表达不了真实范围——被裁掉、看不见的那块也会被当成
+    盖着，把底下看得见的线降层。担保不了就不给（前端即不判遮挡），与 `_clip_rect`「表达不了就
+    不给」同一条纪律。裁剪一族（任意形状、成员框不一）在这一处收口（#1158 评审两轮）。
+    """
+    keys = {_clip_key(m) for m in members}
+    return "custom" not in keys and len(keys) <= 1
+
+
+def stamp_paint(geom: dict, artist, ranks: dict[int, int]) -> None:
+    """给一份 geometry 补两项**绘制事实**（加字段协议，老前端忽略）：
+
+    * `paint_order`：该元素在真实 draw 顺序里的序号（`paint_order_of`）。伪元素成员同处
+      一层才给，取最晚画的那个；成员被别的 artist 隔开则不给（次序未知）。
+    * `fill_alpha`：有填充的 geometry 才给，填充此刻的有效不透明度（`_face_alpha`）；
+      多个成员取最小（不算根本没填充的成员；填充了但 alpha=0 的成员算，值为 0）。
+      所有成员都没填充就不写这个字段（前端 `fill_alpha ?? 0` 即判不透明为否）。
+
+    两项都是**渲染派生数据**，和 geometry 同生同灭，不进文档、不是 override。
+    端点箭头不出 geometry，它的次序由 manifest 写在元素级 `paint_order` 上（同一个 `paint_order_of`）。
+    """
+    members = _paint_members(artist)
+    order = paint_order_of(artist, ranks)
+    if order is not None:
+        geom["paint_order"] = order
+    if geom.get("fill") and _clip_represented(members):
+        alphas = [al for m in members if (al := _face_alpha(m)) is not None]
+        if alphas:
+            # None（误差线的 LineCollection、空心 patch）= 根本没填充，已在上面滤掉，不会把
+            # 有实心 marker 的整组拉成 0；alpha=0 的真填充成员保留，整组按最保守的算
+            geom["fill_alpha"] = round(min(alphas), 3)
 
 
 def _member_draws(m) -> bool:

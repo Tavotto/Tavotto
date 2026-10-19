@@ -438,6 +438,14 @@ const STATES: Record<string, Partial<PreparationReport>> = {
     unlinked_stems: ['a_scaled', 'b_scaled'],
     actions: [action('run'), action('recheck')],
   },
+  completedPartial: {
+    phase: 'partial',
+    outcome: { kind: 'succeeded' },
+    facts: { execution_finished: true, figure_captured: true },
+    captured: [fig('good')],
+    failed_figures: [{ stem: 'bad', code: 'preview_capture_failed' }],
+    actions: [action('run'), action('recheck')],
+  },
   cancelled: { phase: 'cancelled', outcome: { kind: 'cancelled' }, actions: [action('run'), action('recheck')] },
 }
 
@@ -549,6 +557,17 @@ describe('safe → native 回退成功：默认句子不变，详情里补一行
     expect(details()!.textContent).toContain('不会写回脚本')
     expect(panel().querySelector('[data-prep-line]')!.textContent).toBe(line) // 默认句子没动
     expect(note()).not.toBeNull()
+  })
+
+  it('部分捕获（partial + succeeded）也是回退成功：详情里同样补这一行（#1134 Codex r4310249719）', async () => {
+    await mount()
+    useUiStore.setState({ guideCard: 'card' })
+    await openWith(
+      report({ ...STATES.completedFallback, phase: 'partial', failed_figures: [{ stem: 'bad', code: 'preview_capture_failed' }] }),
+    )
+    await toggleDetails()
+    expect(note()).not.toBeNull()
+    expect(details()!.textContent).toContain('已自动换成按真实文件运行')
   })
 
   it('描述符说能写回就不说「不会写回」（事实读后端，不在前端推）', async () => {
@@ -1297,6 +1316,25 @@ describe('执行结束、捕获到图、首次编辑渲染是三件事', () => {
     await toggleDetails()
     expect(details()?.querySelector('[data-prep-unlinked]')?.textContent).toBe(
       '此前带其他参数生成的 a_scaled 和 b_scaled 已不再关联，用原参数再运行一次即可恢复。',
+    )
+  })
+
+  it('部分捕获同时替换掉了带参数产出的图名：详情里照样说清哪些已不再关联（#1134 Codex r4310249719）', async () => {
+    await mount()
+    await openWith(report({ ...STATES.completedPartial, unlinked_stems: ['a_scaled'] }))
+    await toggleDetails()
+    expect(details()?.querySelector('[data-prep-unlinked]')).not.toBeNull()
+  })
+
+  it('部分捕获（#1134）：不叫画好了——标题说 N/M 张并点名失败的图，主按钮仍是进入编辑，原因码折叠在详情里', async () => {
+    await mount()
+    await openWith(report(STATES.completedPartial))
+    expect(panel().dataset.prepState).toBe('completed_partial')
+    expect(panel().querySelector('[data-prep-line]')?.textContent).toBe('只画好了 1/2 张图，bad 没画出来')
+    expect(primary()?.dataset.prepPrimary).toBe('enter_edit')
+    await toggleDetails()
+    expect(details()?.querySelector('[data-prep-failed-figures]')?.textContent).toBe(
+      '没画出来的图：bad（preview_capture_failed）。其余的图可以照常编辑。',
     )
   })
 

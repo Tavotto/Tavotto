@@ -951,6 +951,7 @@
       "completed_one": "Drew 1 figure",
       "completed_other": "Drew {{count}} figures",
       "completedNoList": "Done, figures are in the library",
+      "completedPartial": "Drew only {{done}} of {{total}} figures; {{names}} failed",
       "static": "Ready to lay out",
       "editReady": "Editing",
       "editOpening": "Opening the editor…",
@@ -1106,6 +1107,7 @@
       "errorFull": "Full error output",
       "errorTruncated": "Too long; only the last part is kept.",
       "noFigureWhy": "It never called savefig and left no Figure open.",
+      "failedFigures": "Figures that failed: {{names}} ({{codes}}). The others can be edited as usual.",
       "unlinked": "{{names}}, made earlier with other arguments, is no longer linked. Run again with those arguments to restore it.",
       "history": {
         "title": "Run history",
@@ -1168,6 +1170,7 @@
       "ready": "Waiting to run",
       "captured_one": "Captured 1 figure",
       "captured_other": "Captured {{count}} figures",
+      "capturedPartial": "Captured {{done}} of {{total}} figures",
       "static": "No script",
       "noFigure": "Finished, no figure",
       "cancelled": "Stopped",
