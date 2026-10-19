@@ -161,3 +161,41 @@ describe('同时只有一张', () => {
     expect(previousCard()).not.toBeNull()
   })
 })
+
+describe('不盖住准备引导卡（Codex #1184）', () => {
+  const rect = (r: Partial<DOMRect>) => ({ x: 0, y: 0, top: 0, left: 0, right: 0, bottom: 0, width: 0, height: 0, toJSON: () => ({}), ...r }) as DOMRect
+  afterEach(() => document.querySelectorAll('[data-prep-card]').forEach((e) => e.remove()))
+
+  it('准备卡在右下角：卡抬到它上方；准备卡消失后回到默认位置', async () => {
+    Object.assign(window, { innerWidth: 1024, innerHeight: 768 })
+    act(() => void useUnexpectedErrorStore.getState().show())
+    const corner = container.querySelector<HTMLElement>('[data-feedback-corner]')!
+    expect(corner.style.bottom).toBe('')
+    const prep = document.createElement('div')
+    prep.setAttribute('data-prep-card', '')
+    prep.getBoundingClientRect = () => rect({ left: 612, right: 1012, top: 500, bottom: 756, width: 400, height: 256 })
+    await act(async () => {
+      document.body.appendChild(prep)
+      await Promise.resolve()
+    })
+    expect(corner.style.bottom).toBe(`${768 - 500 + 8}px`)
+    await act(async () => {
+      prep.remove()
+      await Promise.resolve()
+    })
+    expect(corner.style.bottom).toBe('')
+  })
+
+  it('准备卡不在这张卡的水平范围里（属性栏开着、画布在左边）：不动', async () => {
+    Object.assign(window, { innerWidth: 1400, innerHeight: 900 })
+    act(() => void useUnexpectedErrorStore.getState().show())
+    const prep = document.createElement('div')
+    prep.setAttribute('data-prep-card', '')
+    prep.getBoundingClientRect = () => rect({ left: 600, right: 1000, top: 600, bottom: 880, width: 400, height: 280 })
+    await act(async () => {
+      document.body.appendChild(prep)
+      await Promise.resolve()
+    })
+    expect(container.querySelector<HTMLElement>('[data-feedback-corner]')!.style.bottom).toBe('')
+  })
+})

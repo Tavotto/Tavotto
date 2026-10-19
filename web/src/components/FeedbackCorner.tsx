@@ -1,4 +1,4 @@
-import { useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { CircleAlert, X } from '@/components/ui/icons'
 import { Button } from '@/components/ui/Button'
@@ -7,6 +7,50 @@ import { DURATION, usePresence } from '@/lib/motion'
 import { useDiagSendStore } from '@/store/diagSendStore'
 import { useExitNoticeStore } from '@/store/exitNoticeStore'
 import { useUnexpectedErrorStore } from '@/store/unexpectedErrorStore'
+
+/** 卡离窗口右 / 下边的距离（`right-4` / `bottom-4`）与卡宽（`w-80`），避让计算用 */
+const EDGE_PX = 16
+const CARD_W_PX = 320
+const GAP_PX = 8
+
+/**
+ * 与准备引导卡（`PreparationCard`，画布右下角）不叠（Codex #1184）：属性栏收起时两张卡都在右下角，
+ * 这张 `z-toast` 会盖住准备卡底部的按钮。只在这张卡显示时观察 `[data-prep-card]`（出现 / 消失 / 尺寸），
+ * 水平方向与这张卡的位置相交就抬到它上方，返回 `bottom` 像素；不相交返回 null（默认 `bottom-4`）。
+ */
+function usePrepCardClearance(active: boolean): number | null {
+  const [bottom, setBottom] = useState<number | null>(null)
+  useEffect(() => {
+    if (!active || typeof document === 'undefined') {
+      setBottom(null)
+      return
+    }
+    let observed: Element | null = null
+    const ro = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(() => measure())
+    function measure() {
+      const prep = document.querySelector('[data-prep-card]')
+      if (prep !== observed) {
+        if (observed) ro?.unobserve(observed)
+        if (prep) ro?.observe(prep)
+        observed = prep
+      }
+      const r = prep?.getBoundingClientRect()
+      const left = window.innerWidth - EDGE_PX - CARD_W_PX
+      const overlaps = !!r && r.width > 0 && r.height > 0 && r.right > left && r.left < window.innerWidth - EDGE_PX
+      setBottom(overlaps ? Math.max(EDGE_PX, Math.round(window.innerHeight - r.top + GAP_PX)) : null)
+    }
+    measure()
+    const mo = new MutationObserver(measure)
+    mo.observe(document.body, { childList: true, subtree: true })
+    window.addEventListener('resize', measure)
+    return () => {
+      mo.disconnect()
+      ro?.disconnect()
+      window.removeEventListener('resize', measure)
+    }
+  }, [active])
+  return bottom
+}
 
 type Prompt =
   | { slot: 'unexpected'; token: number }
@@ -46,6 +90,7 @@ export function FeedbackCorner() {
   if (current) last.current = current
   const presence = usePresence(!!current, DURATION.fast)
   const shown = current ?? last.current
+  const clearance = usePrepCardClearance(presence.mounted)
 
   const dismiss = (p: Prompt) => {
     if (p.slot === 'unexpected') useUnexpectedErrorStore.getState().dismiss()
@@ -64,6 +109,7 @@ export function FeedbackCorner() {
   return (
     <div
       data-feedback-corner
+      style={clearance != null ? { bottom: clearance } : undefined}
       className="pointer-events-none fixed bottom-4 right-4 z-toast flex w-80 max-w-[calc(100vw-2rem)] flex-col items-end"
     >
       <div aria-live="polite" className="sr-only">
