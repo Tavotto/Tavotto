@@ -1034,29 +1034,45 @@ def sync_legends(state: RebuildState) -> None:
                 print(f"[legend] {model.gid_of(j)} 同步示意线失败: {exc}", file=sys.stderr)
 
 
-def legend_proxy_names(ax) -> dict[int, str]:
+def legend_proxy_names(fig) -> dict[int, str]:
     """{id(图中系列对象): 图例里与它**画得一模一样**的那个代理句柄的文字}（只用于显示名）。
 
     科研脚本常见写法：系列线 `ax.plot(..., color=c, marker=m)` 不写 label，图例另用
-    `Line2D([], [], color=c, marker=m, label="pH=1")` 做代理句柄再 `ax.legend(handles=...)`。
-    线自己没有可显示的 label，元素树里就是一串「曲线 N」。这里在 instrument 时（脚本原样）
-    把图例条目的文字借给样式精确一致的那条线当显示名。
+    `Line2D([], [], color=c, marker=m, label="pH=1")` 做代理句柄再 `ax.legend(handles=...)`
+    （或多子图共用的 `fig.legend(handles=...)`）。线自己没有可显示的 label，元素树里就是一串
+    「曲线 N」。这里在 instrument 时（脚本原样）把图例条目的文字借给样式精确一致的那条线。
 
-    主语：被命名的是 `ax` 里的曲线 / 散点（按 `ax.lines` / `ax.collections` 的活对象），
-    判据取自 `ax.get_legend()` 此刻画出来的示意线与「matplotlib 自己的 handler 从这条
-    线派生出来的示意线」的**全部可见样式**（`_glyph_style`：`properties()` 去掉与长相无关的键，
-    规范化后的值比，不比对象身份；认不出的值恒不相等）。
+    主语：**整张图**。图例 = 各子图的 `ax.get_legend()` + `fig.legends`；候选系列 = 全图所有子图里
+    的曲线 / 散点（`ax.lines` / `ax.collections` 的活对象，按 `ordered_axes` 遍历）。任一张图例都可给
+    任一子图里的系列命名（多子图常把共用图例挂在第一个子图上），**歧义一律按全图计数**——别的
+    子图里有同样长相的系列（例如图例里那个句柄其实就是另一子图里带 label 的线），就说不清这个
+    条目指的是谁（#1162 评审）。判据是两侧示意的 `_proxy_fingerprint`。
 
     保守到宁缺毋滥：
-      - 同一指纹被图中多个系列对象命中（**含有自己 label 的**——图例里它自己的条目
-        长得和它一样，不能借给样式相同的无名线）→ 歧义，都不命名；
-      - 同一系列命中多个条目（含同指纹同文字）→ 歧义，不命名；
+      - 同一指纹被全图多个系列对象命中（**含有自己 label 的**）→ 歧义，都不命名；
+      - 同一系列在一张图例里命中多个条目、或撞上一格画了多个 artist 的条目 → 不命名；
+      - 两张图例给同一系列的文字不同 → 不命名；
       - 不按位置 / 相邻猜。
     只改显示名，不动 gid、不动任何字段。
     """
-    leg = ax.get_legend()
-    if leg is None:
-        return {}
+    axes, _, _ = ordered_axes(fig)  # 与 instrument 同一个遍历权威
+    series = [
+        art
+        for ax in axes
+        for art in [*ax.lines, *ax.collections]
+        if isinstance(art, Line2D | PathCollection)
+    ]
+    legends = [ax.get_legend() for ax in axes if ax.get_legend() is not None]
+    legends += list(getattr(fig, "legends", []))
+    named: dict[int, set[str]] = {}
+    for leg in legends:
+        for sid, text in _names_from_legend(leg, series).items():
+            named.setdefault(sid, set()).add(text)
+    return {sid: next(iter(texts)) for sid, texts in named.items() if len(texts) == 1}
+
+
+def _names_from_legend(leg, series: list) -> dict[int, str]:
+    """一张图例对全图候选系列的借名结果（歧义按全部候选计数）；`legend_proxy_names` 的单图例步。"""
     handles = [h for h in getattr(leg, "legend_handles", []) if h is not None]
     texts = [t.get_text() for t in leg.get_texts()]
     n = min(len(handles), len(texts))
@@ -1067,7 +1083,6 @@ def legend_proxy_names(ax) -> dict[int, str]:
     counts = _legend_cell_artist_counts(leg)
     if counts is None or len(counts) < n:
         return {}
-    series = [*ax.lines, *ax.collections]
     entries: list[tuple[tuple, str, bool]] = []
     for h, text, k in zip(handles[:n], texts[:n], counts[:n], strict=True):
         entries.append((_proxy_fingerprint(h), text, k != 1))
@@ -1079,8 +1094,6 @@ def legend_proxy_names(ax) -> dict[int, str]:
     multi_src: set[int] = set()
     width, height, descent = _legend_handle_box_geometry(leg)
     for art in series:
-        if not isinstance(art, Line2D | PathCollection):
-            continue
         # 派生进一个**自己的**格子再数：系列这一侧的 handler 也可能一格画多个 artist，
         # `legend_fresh_handle` 只回第一个。两侧都恰好一个 artist 才可能借名（#1162 评审）
         box = DrawingArea(width=width, height=height, xdescent=0.0, ydescent=descent)
@@ -1102,10 +1115,9 @@ def legend_proxy_names(ax) -> dict[int, str]:
         # 撞上一个多 artist 的格子 = 说不清它是不是这条系列的条目：歧义，不借名
         if len(matched) != 1 or matched[0][1]:
             continue
-        hits = [matched[0][0]]
         if sum(1 for other in fp_of.values() if other == fp) != 1:
             continue
-        out[id(art)] = hits[0]
+        out[id(art)] = matched[0][0]
     return out
 
 
@@ -1158,15 +1170,16 @@ _NON_GLYPH_PROPS = frozenset(
 def _glyph_value(key: str, v):
     """把一个样式属性值规范成可比较的不可变值；认不出的对象回一个按身份的值（= 恒不相等，
     宁可不命名也不借错）。"""
-    if v is None or isinstance(v, bool | str | int):
-        return v
-    if isinstance(v, float):
-        return round(v, 4)
-    if "color" in key:
+    # 颜色先规范成 RGBA 再比：`"red"` 与 `"#ff0000"` 画出来一样（#1162 评审）
+    if "color" in key and v is not None and not isinstance(v, bool):
         try:
             return tuple(np.round(mcolors.to_rgba_array(v), 4).ravel().tolist())
         except (ValueError, TypeError):
             pass
+    if v is None or isinstance(v, bool | str | int):
+        return v
+    if isinstance(v, float):
+        return round(v, 4)
     if isinstance(v, np.ndarray):
         return (v.shape, tuple(np.round(v.astype(float), 4).ravel().tolist()))
     if isinstance(v, list | tuple):

@@ -172,10 +172,10 @@ def _snippet(text: str, n: int = 18) -> str:
     return text if len(text) <= n else text[: n - 1] + "…"
 
 
-def _legend_proxy_names_safe(ax) -> dict[int, str]:
+def _legend_proxy_names_safe(fig) -> dict[int, str]:
     """`legendmodel.legend_proxy_names` 的护栏：显示名是锦上添花，算不出就当没有。"""
     try:
-        return legend_proxy_names(ax)
+        return legend_proxy_names(fig)
     except Exception as exc:  # noqa: BLE001
         print(f"[legend] 代理句柄显示名推断失败: {exc}", file=sys.stderr)
         return {}
@@ -526,6 +526,8 @@ def instrument(state: FigState) -> None:
     # 色条的内部件（`cb.solids` / `cb.dividers`）会被当成用户图元登记，而它们
     # 每次 `_draw_all()` 都被删掉重建。遍历的权威只有 `axestraversal.ordered_axes` 一处。
     _all_axes_for_cbar, _, _ = ordered_axes(fig)
+    # 图例代理句柄借来的显示名：按整张图算一次（图例与歧义计数都跨子图，见 legend_proxy_names）
+    proxy_names = _legend_proxy_names_safe(fig)
     cbar_of_ax, host_of_cbax = colorbar_maps(fig, _all_axes_for_cbar)
     # 独立 mappable 的色条 ↔ 它画的那张已成色位图（`RasterField`）。绑上之后色条
     # 才有宿主（`cax=` 建的独立色条两条宿主判据都落空），所以绑完重查一遍——
@@ -757,7 +759,6 @@ def instrument(state: FigState) -> None:
                     # 别名只进 index、不进 elements（ColorbarProxy 同样思路）。
                     for _m in grp.members():
                         _alias_consumed_member(state, ax, f"axes_{i}", _m)
-            proxy_names = _legend_proxy_names_safe(ax)
             for j, ln in enumerate(ax.lines):
                 if id(ln) in skip_ids:
                     continue

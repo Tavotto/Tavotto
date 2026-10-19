@@ -232,6 +232,61 @@ def main():
     ax.legend(handles=[Line2D([], [], color="r", visible=False, label="ghost")])
     fig.savefig("Fig.pdf")
 """,
+    # 颜色写法不同但画出来一样（"red" vs "#ff0000"）：照常借名
+    "color_spelling": """\
+import matplotlib.pyplot as plt
+from matplotlib.lines import Line2D
+
+def main():
+    fig, ax = plt.subplots(figsize=(4, 3))
+    ax.plot([0, 1], [0, 1], color="red")
+    ax.legend(handles=[Line2D([], [], color="#ff0000", label="r")])
+    fig.savefig("Fig.pdf")
+""",
+    # 多子图共用的 fig.legend：两个子图里的线都按图级图例借名
+    "fig_legend": """\
+import matplotlib.pyplot as plt
+from matplotlib.lines import Line2D
+
+def main():
+    fig, (a1, a2) = plt.subplots(1, 2, figsize=(6, 3))
+    a1.plot([0, 1], [0, 1], color="r", marker="o")
+    a2.plot([0, 1], [1, 0], color="b", marker="s")
+    fig.legend(handles=[
+        Line2D([], [], color="r", marker="o", label="red"),
+        Line2D([], [], color="b", marker="s", label="blue"),
+    ])
+    fig.savefig("Fig.pdf")
+""",
+    # a1 的图例句柄其实是 a2 里带 label 的线；a1 里同样长相的无名线不能借它的字
+    "cross_axes_source": """\
+import matplotlib.pyplot as plt
+
+def main():
+    fig, (a1, a2) = plt.subplots(1, 2, figsize=(6, 3))
+    a1.plot([0, 1], [0, 1], color="g")
+    (other,) = a2.plot([0, 1], [1, 0], color="g", label="from a2")
+    a1.legend(handles=[other])
+    fig.savefig("Fig.pdf")
+""",
+    # 共用图例挂在第一个子图上，描述两个子图里的线；两张图例对同一条线给不同的字则不命名
+    "shared_axes_legend": """\
+import matplotlib.pyplot as plt
+from matplotlib.lines import Line2D
+
+def main():
+    fig, (a1, a2, a3) = plt.subplots(1, 3, figsize=(8, 3))
+    a1.plot([0, 1], [0, 1], color="r", marker="o")
+    a2.plot([0, 1], [1, 0], color="b", marker="s")
+    a3.plot([0, 1], [0, 1], color="m", marker="^")
+    a1.legend(handles=[
+        Line2D([], [], color="r", marker="o", label="red"),
+        Line2D([], [], color="b", marker="s", label="blue"),
+        Line2D([], [], color="m", marker="^", label="one"),
+    ])
+    a3.legend(handles=[Line2D([], [], color="m", marker="^", label="two")])
+    fig.savefig("Fig.pdf")
+""",
     # 有自己 label 的线与普通 ax.legend()：行为不变
     "own_label": """\
 import matplotlib.pyplot as plt
@@ -344,3 +399,28 @@ def test_multi_artist_source_cell_borrows_no_name(figs):
 
 def test_invisible_proxy_lends_no_name(figs):
     assert _labels(figs, "invisible_proxy") == {"axes_0.lines_0": "曲线 1"}
+
+
+def test_equivalent_color_spelling_still_borrows(figs):
+    assert _labels(figs, "color_spelling") == {"axes_0.lines_0": "曲线 “r”"}
+
+
+def test_figure_legend_names_series_in_every_axes(figs):
+    assert _labels(figs, "fig_legend") == {
+        "axes_0.lines_0": "曲线 “red”",
+        "axes_1.lines_0": "曲线 “blue”",
+    }
+
+
+def test_handle_from_another_axes_is_not_lent(figs):
+    got = _labels(figs, "cross_axes_source")
+    assert got["axes_0.lines_0"] == "曲线 1"
+    assert got["axes_1.lines_0"] == "曲线 “from a2”"
+
+
+def test_shared_legend_on_first_axes_names_other_axes(figs):
+    assert _labels(figs, "shared_axes_legend") == {
+        "axes_0.lines_0": "曲线 “red”",
+        "axes_1.lines_0": "曲线 “blue”",
+        "axes_2.lines_0": "曲线 1",  # 两张图例给了 one / two：冲突不命名
+    }
