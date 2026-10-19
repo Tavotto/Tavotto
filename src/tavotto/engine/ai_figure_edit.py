@@ -153,7 +153,8 @@ def create_candidate(sid: str, script_path: Path, project_root: Path, script_rel
     try:
         cdir.mkdir(parents=True, exist_ok=False)
         base = script_path.read_bytes()
-        (cdir / Path(script_rel).name).write_bytes(base)
+        copy_path = cdir / Path(script_rel).name  # 候选副本（不是用户脚本：用户脚本只经 write_script 写）
+        copy_path.write_bytes(base)
         style = project_root / SHARED_STYLE
         if Path(script_rel).name != SHARED_STYLE and style.is_file() and not style.is_symlink():
             (cdir / SHARED_STYLE).write_bytes(style.read_bytes())
