@@ -2,7 +2,6 @@ import { create } from 'zustand'
 import { emitActivity } from '@/lib/activity'
 import { newId } from '@/lib/id'
 import {
-  ApiError,
   armNoProjectRecovery,
   backendErrorMsg,
   fetchOpenProjects,
@@ -25,7 +24,7 @@ import {
 } from '@/lib/projectDocs'
 import { isForeignDocument } from '@/lib/docOwnership'
 import { currentProjectId, setCurrentProjectId } from '@/lib/session'
-import { retryOnConnectFailure, STARTUP_PROBE_CANCELLED } from '@/lib/startupProbe'
+import { isConnectFailure, retryOnConnectFailure, STARTUP_PROBE_CANCELLED } from '@/lib/startupProbe'
 import { pushPickerEntry } from '@/lib/pickerHistory'
 import { cancelActivePointerGesture, finishActiveGesture } from '@/store/gestureCoordinator'
 import { markMoment } from '@/lib/timelineCheckpoint'
@@ -357,7 +356,7 @@ let pinnedRev = 0
 let listSeq = 0
 
 const fetchProjectOnConnect = (): Promise<ProjectStatus> =>
-  retryOnConnectFailure(fetchProject, (e) => e instanceof ApiError)
+  retryOnConnectFailure(fetchProject, (e) => !isConnectFailure(e))
 
 export const useProjectStore = create<ProjectState>((set, get) => {
   /** 切项目的前端换代本体；对外的两个入口都经 `switchQueue` 串行地调它 */
@@ -488,7 +487,8 @@ export const useProjectStore = create<ProjectState>((set, get) => {
         // 被取代（组件卸载 / 重新 init）：静默退出，不把 phase 落到 none
         if (e === STARTUP_PROBE_CANCELLED) return
         // 连接层重试用尽：后端就是没起来，忘掉项目 id 也救不了，交给外层落到 Picker
-        if (!(e instanceof ApiError)) throw e
+        if (isConnectFailure(e)) throw e
+        // 收到了响应但失败（ApiError / 非 JSON 体等）：
         // 本标签页记着的项目在后端已不存在（进程重启/项目已关闭）：
         // 忘掉它退回默认项目，绝不继续拿一个失效 id 去请求
         if (!currentProjectId()) throw e

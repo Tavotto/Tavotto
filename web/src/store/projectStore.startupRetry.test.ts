@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { setCurrentProjectId } from '@/lib/session'
+import { currentProjectId, setCurrentProjectId } from '@/lib/session'
 import { PROJECT_CONNECT_RETRY_DELAYS_MS } from '@/lib/startupProbe'
 import { useProjectStore } from './projectStore'
 
@@ -67,6 +67,25 @@ describe('开局读当前项目：连接层失败有界重试', () => {
     await useProjectStore.getState().init()
     expect(projectCalls).toBe(1)
     expect(useProjectStore.getState().phase).toBe('none')
+  })
+
+  it('200 但响应体不是 JSON（代理回 HTML）：收到了响应，只请求 1 次不重试', async () => {
+    projectReply = () => new Response('<html>proxy</html>', { status: 200 })
+    await useProjectStore.getState().init()
+    expect(projectCalls).toBe(1)
+    expect(useProjectStore.getState().phase).toBe('none')
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
+  it('记着旧项目 id、首次返回非 JSON → 清 id 后再请求默认项目', async () => {
+    setCurrentProjectId('stale-id')
+    projectReply = () =>
+      projectCalls === 1 ? new Response('<html>proxy</html>', { status: 200 }) : NONE()
+    await useProjectStore.getState().init()
+    expect(projectCalls).toBe(2)
+    expect(currentProjectId()).toBeNull()
+    expect(useProjectStore.getState().phase).toBe('none')
+    expect(useProjectStore.getState().project).toEqual({ open: false })
   })
 
   it('等待中被取消（卸载）→ 不再请求、不落 phase、没有残留定时器', async () => {

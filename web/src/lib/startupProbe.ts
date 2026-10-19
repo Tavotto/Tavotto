@@ -12,6 +12,12 @@
 export const PROJECT_CONNECT_RETRY_DELAYS_MS: readonly number[] = [500, 1000, 1500, 2000, 3000, 4000]
 export const STARTUP_PROBE_CANCELLED = new Error('startup probe cancelled')
 
+/**
+ * 真正的连接层失败：浏览器 `fetch` 没拿到任何响应时 reject 的是 `TypeError`。
+ * 收到了响应但体不是 JSON（代理回 HTML → `SyntaxError`）、或带 HTTP 状态的 ApiError 都不算。
+ */
+export const isConnectFailure = (e: unknown): boolean => e instanceof TypeError
+
 /** 在等的重试循环各登记一个唤醒函数（并发两个循环互不覆盖）；取消时全部清掉。 */
 const waiters = new Set<() => void>()
 let epoch = 0
