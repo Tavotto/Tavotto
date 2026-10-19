@@ -310,6 +310,11 @@ class GuardianContract(GuardianBase):
             )
             self.assertEqual(stages["capture"]["status"], "failed", kwargs)
 
+    def test_v2_more_figures_than_native_never_passes_capture(self):
+        native = {"figure_count": 1, "semantics": {}}
+        observed = self.v2_observation(figures_captured=2, figures_valid=2)
+        self.assertEqual(cg.v2_stages(observed, native, [])["capture"]["status"], "failed")
+
     def test_v2_open_needs_every_captured_figure_to_render(self):
         native = {"figure_count": 2, "semantics": {}}
         observed = self.v2_observation(figures_captured=2, figures_valid=1)
