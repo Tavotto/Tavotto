@@ -20,6 +20,15 @@ preflight.runSpec()      规则求值（两份求值器，golden vectors 对齐�
   画布），报告那份用 `rawIssuesForObject()` 裁同一刀（审计 T33）。**画布摆放类
   规则**（目录里 `placement: true`：`out-of-page` / `outside-margin` / `overlap`，
   判的是对象在画布页面上的摆法）按原图也不算（`appliesToOriginal()`，QA FLAG-B1）；
+  **原图范围裁的不是画布那份结果**（2026-10-19）：画布那份的字号乘了画布缩放、位图 PPI 按摆放宽度算，
+  而原图导出不带那次缩放（ADR 0028）——160 mm 的图缩到 80 mm 摆着，9 pt 会被说成 4.5 pt 的阻断。
+  原图范围是**同一个求值器**对原图口径输入的一次求值：`preflight.buildOriginalSpec()`（页面 = 图幅、
+  margin 0、面板铺满、scale 1，与后端 MCP 入口 `spec_from_manifest()` 同口径）→
+  `validation.validateOriginal()` → `validationStore.originalValidationFor()`，摘要与报告再经上面
+  那一刀（`summaryFor({ objectId })` / `rawIssuesForObject()`）；图幅取 `useOriginalSpec` 那一份
+  （摘要与报告的 `page_mm` 同一个数）。对话框只调 store、不自己求值；看护 `lib/validation.test.ts`
+  「原图范围检查的是原图那份产物」与 `ExportDialog.test.tsx`「画布上缩小摆放的图」。问题面板仍按画布那份列
+  （它说的是「这页上的图」），按原图导出时两边的数可以不同；
   原图范围的报告 `page_mm` = 图幅、`objects` 只有那张图（`buildProofPayload` 的
   `settings.original` 直接交那张图本身）。原图范围的检查**按那张图所在的画布**裁
   （`findFigurePanel()` 的 `canvasId`），它不一定在当前画布上；**规范也从那张画布的绑定

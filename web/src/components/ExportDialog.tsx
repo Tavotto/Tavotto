@@ -146,6 +146,7 @@ import { useWorkspaceStore } from "@/store/workspace";
 import type { FigureDocument, PanelObject } from "@/types/document";
 import {
   getValidationSummary,
+  originalValidationFor,
   rawIssuesFor,
   runValidation,
   useValidationStore,
@@ -563,16 +564,43 @@ export function ExportDialog() {
    * 范围的裁法在 `summaryFor()` 一处，对话框不自己筛。
    */
   const targetObjectId = scope === "original" && panel ? panel.id : undefined;
+  /** 原图导出的图幅（mm）：摘要的原图口径检查与留档的 `page_mm` 认同一份 */
+  const originalWidthMm = targetObjectId
+    ? (availability.spec?.widthMm ?? panel?.nativeW)
+    : undefined;
+  const originalHeightMm = targetObjectId
+    ? (availability.spec?.heightMm ?? panel?.nativeH)
+    : undefined;
+  /**
+   * 原图范围检查的是**原图那份产物**（scale 1、页面 = 图幅），不是图在画布上的摆法：
+   * 画布那份字号乘了画布缩放，160 mm 的图缩到 80 mm 摆着时，8 pt 会被说成 4 pt
+   * 的阻断，而导出的文件里它仍是 8 pt（ADR 0028）。同一个求值器、同一份输入，
+   * 由 store 给出（`originalValidationFor`），对话框不自己求值；`validationIssues`
+   * 只作为「检查刚重跑过」的信号进依赖。
+   */
+  const original = useMemo(
+    () =>
+      targetObjectId && originalWidthMm && originalHeightMm
+        ? originalValidationFor(checkCanvasId, {
+            objectId: targetObjectId,
+            widthMm: originalWidthMm,
+            heightMm: originalHeightMm,
+          })
+        : null,
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [validationIssues, checkCanvasId, targetObjectId, originalWidthMm, originalHeightMm],
+  );
   const summary = useMemo(
     () =>
-      summaryFor(validationIssues, {
+      summaryFor(original?.result?.issues ?? validationIssues, {
         canvasId: checkCanvasId,
         objectId: targetObjectId,
         extra: exportIssues,
         ready: validationReady,
-        failed: validationFailed,
+        failed: validationFailed || !!original?.failed,
       }),
     [
+      original,
       validationIssues,
       checkCanvasId,
       targetObjectId,
@@ -774,7 +802,7 @@ export function ExportDialog() {
               // 报告里的条目集合与界面上的摘要裁同一刀（按原图 = 只有那张图的）
               ...(targetObjectId
                 ? rawIssuesForObject(
-                    rawIssuesFor(checkCanvasId),
+                    original?.result?.raw ?? rawIssuesFor(checkCanvasId),
                     targetObjectId,
                   )
                 : rawIssuesFor(checkCanvasId)),
@@ -787,11 +815,11 @@ export function ExportDialog() {
               // 原图范围：报告的页面 = 这张图的图幅，不写画布页面与摆放（QA FLAG-B1）
               // 直接交那张图本身：它可能不在当前画布（`doc`）上
               original:
-                targetObjectId && panel
+                targetObjectId && panel && originalWidthMm && originalHeightMm
                   ? {
                       panel,
-                      widthMm: availability.spec?.widthMm ?? panel.nativeW,
-                      heightMm: availability.spec?.heightMm ?? panel.nativeH,
+                      widthMm: originalWidthMm,
+                      heightMm: originalHeightMm,
                     }
                   : undefined,
             },
@@ -859,6 +887,9 @@ export function ExportDialog() {
       canStart,
       targetObjectId,
       checkCanvasId,
+      original,
+      originalWidthMm,
+      originalHeightMm,
     ],
   );
 

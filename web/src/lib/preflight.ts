@@ -1023,6 +1023,45 @@ export function panelScale(o: PanelObject): number {
   return full.w / o.nativeW
 }
 
+/**
+ * 一张面板 → 求值器的面板输入。画布范围（`buildSpec`）与原图范围（`buildOriginalSpec`）
+ * **共用这一份**：两者只在「落位」与「缩放」上不同，面板自己的状态（缺失 / 过期 /
+ * 渲染失败 / 未应用的 override）是同一件事，不许各写一份。
+ */
+function panelSpec(
+  o: PanelObject,
+  assets: Record<string, PanelInfo>,
+  render: { byKey: Record<string, PanelRender>; latest: Record<string, string> },
+  rect_mm: [number, number, number, number],
+  scale: number,
+): PreflightPanelSpec {
+  const r = panelRender(render, o)
+  return {
+    id: o.id,
+    name: o.name ?? o.fileId,
+    // 预检的 kind 只区分「矢量 / 位图」：runtime 面板由引擎出矢量 SVG，
+    // 按 pdf 档判（golden vectors 的枚举不为它扩张——语义上就是矢量）
+    kind: o.fileKind === 'raster' ? ('raster' as const) : ('pdf' as const),
+    rect_mm,
+    scale,
+    manifest: r?.manifest ?? null,
+    px_w: o.pxW ?? null,
+    // runtime 素材不在磁盘素材表里，这不是「缺失」——它的可用性由
+    // stale/rerun 那套状态表达
+    missing: o.fileKind === 'runtime' ? false : !assets[o.fileId],
+    stale: !!r?.stale,
+    render_error: o.overrides.length > 0 && r?.status === 'error'
+      ? (formatMessage(r.error) || 'error')
+      : null,
+    // 有 override 但引擎那边还没画出这一版：成图会与画布不一致
+    unapplied_overrides:
+      o.overrides.length > 0 && r?.lastPatches !== JSON.stringify(o.overrides)
+        ? o.overrides.length
+        : 0,
+    hidden: !!o.hidden,
+  }
+}
+
 export function buildSpec(
   doc: FigureDocument,
   assets: Record<string, PanelInfo>,
@@ -1050,33 +1089,7 @@ export function buildSpec(
   }
   const panels: PreflightPanelSpec[] = doc.objects
     .filter((o): o is PanelObject => o.type === 'panel')
-    .map((o) => {
-      const r = panelRender(render, o)
-      return {
-        id: o.id,
-        name: o.name ?? o.fileId,
-        // 预检的 kind 只区分「矢量 / 位图」：runtime 面板由引擎出矢量 SVG，
-        // 按 pdf 档判（golden vectors 的枚举不为它扩张——语义上就是矢量）
-        kind: o.fileKind === 'raster' ? ('raster' as const) : ('pdf' as const),
-        rect_mm: rect(o),
-        scale: panelScale(o),
-        manifest: r?.manifest ?? null,
-        px_w: o.pxW ?? null,
-        // runtime 素材不在磁盘素材表里，这不是「缺失」——它的可用性由
-        // stale/rerun 那套状态表达
-        missing: o.fileKind === 'runtime' ? false : !assets[o.fileId],
-        stale: !!r?.stale,
-        render_error: o.overrides.length > 0 && r?.status === 'error'
-          ? (formatMessage(r.error) || 'error')
-          : null,
-        // 有 override 但引擎那边还没画出这一版：成图会与画布不一致
-        unapplied_overrides:
-          o.overrides.length > 0 && r?.lastPatches !== JSON.stringify(o.overrides)
-            ? o.overrides.length
-            : 0,
-        hidden: !!o.hidden,
-      }
-    })
+    .map((o) => panelSpec(o, assets, render, rect(o), panelScale(o)))
   return {
     page: { w_mm: doc.page.w, h_mm: doc.page.h, margin_mm: doc.page.margin ?? 0 },
     panels,
@@ -1100,6 +1113,32 @@ export function buildSpec(
       rect_mm: rect(o),
       hidden: !!o.hidden,
     })),
+  }
+}
+
+/**
+ * **按原图导出**时那份产物的 spec：页面 = 这张图的图幅、margin 0、面板铺满、**scale = 1**。
+ *
+ * 原图导出不带画布上的缩放 / 裁剪 / 旋转（ADR 0028：画布变换只进 `spec.ignored`），
+ * 读者量到的就是脚本里写的那个字号。拿画布那份 spec（`scale = panelScale()`）去判原图，
+ * 160 mm 的图在画布上缩到 80 mm 时，8 pt 的刻度会被报成 4 pt 的阻断——而导出的文件里
+ * 它仍是 8 pt。位图 PPI 同理：按图幅算，不按画布上的摆放宽度。
+ *
+ * 与后端 MCP 那条入口 `engine/preflight.py` 的 `spec_from_manifest()`（页面 = figure 自己、
+ * scale 1）同一口径；求值器仍是同一个 `runSpec()`，这里只换输入。
+ */
+export function buildOriginalSpec(
+  panel: PanelObject,
+  assets: Record<string, PanelInfo>,
+  render: { byKey: Record<string, PanelRender>; latest: Record<string, string> },
+  size: { widthMm: number; heightMm: number },
+): PreflightSpec {
+  const rect_mm: [number, number, number, number] = [0, 0, size.widthMm, size.heightMm]
+  return {
+    page: { w_mm: size.widthMm, h_mm: size.heightMm, margin_mm: 0 },
+    panels: [panelSpec(panel, assets, render, rect_mm, 1)],
+    texts: [],
+    objects: [{ id: panel.id, type: panel.type, rect_mm, hidden: !!panel.hidden }],
   }
 }
 
