@@ -85,3 +85,51 @@ def test_the_bridge_reports_the_files_and_local_modules_the_script_read(user_pyt
 def test_a_terminal_owned_run_observes_nothing(user_python, tmp_path):
     _proj, data = _run(user_python, tmp_path, observe=False)
     assert data["observed_inputs"] is None
+
+
+SHOW_SCRIPT = """\
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+import helper
+plt.plot([1, 2, helper.SCALE])
+plt.show()
+{after}
+"""
+
+
+def _run_show(user_python, tmp_path, *, after: str):
+    proj = tmp_path / "proj"
+    write(proj / "fig.py", SHOW_SCRIPT.format(after=after))
+    write(proj / "helper.py", "SCALE = 2.0\n")
+    report = tmp_path / "report.json"
+    r = run_runner(
+        user_python,
+        bridge.RUNNER_PY,
+        target=proj / "fig.py",
+        cwd=str(proj),
+        report=report,
+        out_dir=tmp_path / "out",
+        bridge_args=["--project-root", str(proj), "--observe-inputs"],
+    )
+    assert r.returncode == 0, r.stderr
+    return json.loads(report.read_text(encoding="utf-8"))
+
+
+def test_a_helper_changed_while_the_script_sat_on_the_show_barrier_is_not_reported(
+    user_python, tmp_path
+):
+    """脚本停在 `show()` 屏障上时 helper 被改：进程执行的是旧内容，定格却会哈希到新字节——不报观察（Codex #1180 P2）。"""
+    data = _run_show(
+        user_python,
+        tmp_path,
+        after='with open("helper.py", "w") as f:\n    f.write("SCALE = 3.0\\n")',
+    )
+    assert data["observed_inputs"] is None
+
+
+def test_an_untouched_helper_across_the_show_barrier_is_still_reported(user_python, tmp_path):
+    data = _run_show(user_python, tmp_path, after="")
+    inputs = data["observed_inputs"]
+    assert inputs is not None
+    assert "helper.py" in {m["path"] for m in inputs["local_modules"]}

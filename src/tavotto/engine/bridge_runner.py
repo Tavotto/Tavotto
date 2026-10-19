@@ -150,6 +150,8 @@ _REAL_SHOW = None
 #: 桌面拥有的运行的输入观察（`figcapture.InputObserver`，`--observe-inputs`；#1047）：与 safe worker 同一个观察器、同一份
 #: 报告形状，脚本结束那一刻定格（`BridgeRun.freeze_inputs`）。钩子要在引擎自己读文件时暂停它，所以放模块级
 _INPUTS = None
+#: `_digests_of` 里「这条 path 没了」的哨兵（与 sha256 = None 区分）
+_GONE = object()
 
 
 # ---------------------------------------------------------------------------
@@ -865,6 +867,9 @@ class BridgeRun:
         #: 脚本结束那一刻定格的输入观察（`figcapture.InputObserver.report()`，#1047）；没观察 / 脚本还没跑完 = None。
         #: `show()` 屏障上脚本还没跑完，之后还可能再读——那时的观察不是这次运行的全部输入，不报
         self.inputs_report: dict | None = None
+        #: 项目相对路径 → 进 `show()` 屏障那一刻的 sha256（先见者赢）。脚本停在屏障上时用户可能改了 helper / 数据，
+        #: 进程执行的是旧内容；`freeze_inputs` 拿它跟最终定格的摘要比对，不一致就不报观察（Codex #1180 P2）
+        self._input_digests: dict[str, str | None] = {}
 
     # ---- 第二阶段装载 ----
     def _ensure_engine(self):
@@ -1134,9 +1139,39 @@ class BridgeRun:
                 print(f"[tavotto] 回到编辑态时重放 {stem} 出错: {exc}", file=sys.stderr)
 
     # ---- 屏障 ----
+    @staticmethod
+    def _digests_of(report: dict) -> dict[str, str | None]:
+        return {
+            e["path"]: e.get("sha256")
+            for key in ("files", "local_modules")
+            for e in report.get(key) or []
+            if isinstance(e, dict) and "path" in e
+        }
+
+    def _snapshot_inputs(self) -> None:
+        """进屏障前记一份依据摘要（只记还没记过的 path：先见者赢，记的是用户代码最早可能用到的那份）。"""
+        observer = _INPUTS
+        if observer is None:
+            return
+        try:
+            with observer.paused():
+                report = observer.report(
+                    local_modules=figcapture.observed_local_modules(
+                        self.args.project_root, sys.modules, exclude_dir=_HERE
+                    )
+                )
+            for path, sha in self._digests_of(report).items():
+                self._input_digests.setdefault(path, sha)
+        except Exception:  # noqa: BLE001 — 观察器绝不影响脚本
+            pass
+
     def freeze_inputs(self) -> None:
         """脚本跑完：输入观察定格（与 safe worker 在 build 那一刻定格同一口径：观察到的数据文件 + `sys.modules` 里
-        项目内的本地模块，各带 sha256），然后卸掉观察器——之后再没有用户代码要看，引擎自己的读不该记账。"""
+        项目内的本地模块，各带 sha256），然后卸掉观察器——之后再没有用户代码要看，引擎自己的读不该记账。
+
+        屏障期间依据变了就不报观察（Codex #1180 P2）：脚本停在 `show()` 屏障上时用户改了 helper / 数据，进程执行的
+        是旧内容，这里哈希到的却是新字节——把从没执行过的内容记成依据，下次重开会误判沿用 native。
+        所以进屏障时记过的每条摘要，最终那份里缺了或不同 → `inputs_report = None`，记录保持不沿用。"""
         global _INPUTS
         observer = _INPUTS
         if observer is None:
@@ -1148,6 +1183,9 @@ class BridgeRun:
                         self.args.project_root, sys.modules, exclude_dir=_HERE
                     )
                 )
+            final = self._digests_of(self.inputs_report)
+            if any(final.get(path, _GONE) != sha for path, sha in self._input_digests.items()):
+                self.inputs_report = None
         except Exception:  # noqa: BLE001 — 观察器绝不影响脚本：算不出就是「没观察」
             self.inputs_report = None
         finally:
@@ -1156,6 +1194,8 @@ class BridgeRun:
 
     def barrier(self, reason: str) -> None:
         """屏障期间不跑用户代码：引擎自己的读（预览 / 导出）不进输入观察。"""
+        if reason != "script_end":  # script_end 在 freeze 之后，观察器已卸
+            self._snapshot_inputs()
         with _engine_reads():
             self._barrier(reason)
 
