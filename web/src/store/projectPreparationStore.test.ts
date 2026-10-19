@@ -505,6 +505,22 @@ describe('同一目标再次打开不抹掉飞行中的动作', () => {
     expect(mockAct).toHaveBeenCalledTimes(1)
   })
 
+  it('首次检查在飞时 SSE 重连触发 refreshAll：不另发创建请求，认领仍只一次（#1137，Windows 分片 trace：第二个 POST 与重连后的补拉 GET 同一毫秒）', async () => {
+    let finish!: (r: PreparationReport) => void
+    mockCreate.mockImplementation(() => new Promise((res) => { finish = res as never }) as never)
+    mockAct.mockResolvedValue({ claimed: true, report: prepReport({ phase: 'running', actions: [action('cancel')], observation_seq: 2 }) })
+    const a = useProjectPreparationStore.getState().open(scriptTarget('plot.py', { reuse: true }), { run: true })
+    // 第一趟检查还没回来（条目还没有报告）：事件流刚连上，useServerEvents 的重连回调调 refreshAll
+    useProjectPreparationStore.getState().refreshAll()
+    await flush()
+    expect(mockCreate).toHaveBeenCalledTimes(1)
+    finish(prepReport({ actions: [action('run_when_ready'), action('recheck')] }))
+    await a
+    await flush()
+    expect(mockCreate).toHaveBeenCalledTimes(1)
+    expect(mockAct).toHaveBeenCalledTimes(1)
+  })
+
   it('对照：换了参数再打开是另一份会话，pending 不带过去', async () => {
     mockCreate.mockResolvedValue(prepReport())
     await useProjectPreparationStore.getState().open(scriptTarget('plot.py'))

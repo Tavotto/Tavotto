@@ -410,6 +410,10 @@ export const useProjectPreparationStore = create<PreparationState>((set, get) =>
 
   /** 检查会话（新建 / 复用 / 重建）。只读：后端不执行任何用户代码 */
   const check = (key: string, target: PreparationTarget, restarted: boolean): Promise<void> => {
+    // 同一键上已有检查在飞（目标换了会在 open 里先清掉登记）：搭它，不另发创建请求。入口不止 open——事件流重连的 `refreshAll`
+    // 在第一趟检查回来前（条目还没有报告）也会落到这里（#1137 Windows 分片 trace：第二个 POST 与重连后的补拉 GET 同一毫秒）
+    const flying = checkFlight.get(key)
+    if (flying) return flying
     const p = runCheck(key, target, restarted).finally(() => {
       if (checkFlight.get(key) === p) checkFlight.delete(key)
     })
@@ -494,9 +498,8 @@ export const useProjectPreparationStore = create<PreparationState>((set, get) =>
         inflight.delete(key)
         checkFlight.delete(key)
       }
-      // 同一目标的首次检查还在飞（慢机器上同一次点击落成两次 open）：搭这一趟，不再发第二个创建请求。
+      // 同一目标的首次检查还在飞（慢机器上同一次点击落成两次 open）：下面的 `check` 会搭这一趟，不再发第二个创建请求。
       // 否则两趟检查先后回来，后一趟把先一趟已置上的 `pending`（run_when_ready 在飞）清掉，防连点的闸就开了，认领发两次（#1137）
-      const joined = sameTarget && prev?.pending === 'check' ? checkFlight.get(key) : undefined
       set((s) => ({
         focus: key,
         entries: {
@@ -536,7 +539,7 @@ export const useProjectPreparationStore = create<PreparationState>((set, get) =>
       // 同一目标上有动作在飞：它的回包自带最新报告，这里再 `check` 一次既多余，又会把 `pending` 改写成 'check'
       // 再清空——防连点的闸就开了
       if (sameTarget && prev?.pending && prev.pending !== 'check') return
-      await (joined ?? check(key, target, false))
+      await check(key, target, false)
       if (opts?.run) await armIfReady(key, entry(key)?.allowRerun !== false)
     },
 
