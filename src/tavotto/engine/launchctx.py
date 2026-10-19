@@ -112,20 +112,28 @@ def _basis_of(rcpt) -> dict[str, str | None] | None:
     """回执自报里的 helper 依据：本地模块 + 观察到的数据文件 → {项目相对路径: sha256|None}。
 
     依据不完整（观察器已截断，或条数超过 `MAX_BASIS`）→ None：存不全的依据不能冒充充分证据，调用方不记录、不复用。"""
-    return _basis_from_inputs(rcpt.inputs)
+    # 数据文件取回执自己的 `observed_files()`：回执是 safe 这一侧「观察到了哪些文件」的唯一出处
+    return _basis_from_inputs(rcpt.inputs or {}, files=rcpt.observed_files())
 
 
-def _basis_from_inputs(inputs: dict | None) -> dict[str, str | None] | None:
-    """`figcapture.InputObserver.report()` 的形状 → helper 依据（safe 回执与 native bridge 的观察是同一份报告，同一个口径）。"""
+def _basis_from_inputs(
+    inputs: dict | None, *, files: dict[str, str | None] | None = None
+) -> dict[str, str | None] | None:
+    """`figcapture.InputObserver.report()` 的形状 → helper 依据（safe 回执与 native bridge 的观察是同一份报告，同一个口径）。
+    `files` 给了就用它（safe：回执的 `observed_files()`），否则从报告的 `files` 段取（native bridge 的观察）。"""
     if not isinstance(inputs, dict) or inputs.get("truncated"):
         return None
     out: dict[str, str | None] = {}
     for m in inputs.get("local_modules") or []:
         if isinstance(m, dict) and isinstance(m.get("path"), str):
             out[m["path"]] = m.get("sha256") if isinstance(m.get("sha256"), str) else None
-    for f in inputs.get("files") or []:
-        if isinstance(f, dict) and isinstance(f.get("path"), str):
-            out[f["path"]] = f.get("sha256") if isinstance(f.get("sha256"), str) else None
+    if files is None:
+        files = {
+            f["path"]: f.get("sha256") if isinstance(f.get("sha256"), str) else None
+            for f in inputs.get("files") or []
+            if isinstance(f, dict) and isinstance(f.get("path"), str)
+        }
+    out.update(files)
     if len(out) > MAX_BASIS or any(v is None for v in out.values()):
         # 条数存不全，或有输入没算出摘要（过大）：核验只能看「还在不在」，内容原地改了发现不了——这样的依据不充分
         return None
