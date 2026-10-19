@@ -167,6 +167,7 @@ class SummaryAndPromote(GuardianBase):
             cg.ROOT / "tests/compat/manifest.json",
             cg.ROOT / "tests/compat/new-case.json",
             cg.ROOT / "tests/fixtures/compat_v2/s99/script.py",
+            cg.ROOT / "tests/compat_guardian/expectations.json",
         ):
             with self.assertRaises(cg.EvidenceError, msg=str(target)):
                 sm.promote(report, self.cid, target)

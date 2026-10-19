@@ -19,6 +19,7 @@ import os
 from pathlib import Path
 
 import compat_guardian as cg
+import compat_guardian_summary as GS
 import compat_guardian_taxonomy as TX
 
 SCHEMA = "tavotto-guardian-triage/1"
@@ -382,7 +383,9 @@ def triage(report_paths: list[Path], rules: list[dict] | None = None) -> dict:
             findings = list(_explore_findings(report, Path(path).resolve()))
             kind = "explore"
         elif report.get("schema_version") == cg.SCHEMA_VERSION and "cases" in report:
-            cg.schema_check(report, json.loads(cg.SCHEMA_PATH.read_text(encoding="utf-8")))
+            # 与汇总同一道结构校验（schema + verdict/coverage 由 cases 推出 + 逐行证明不变量）：
+            # 被改过或自相矛盾的报告不能产出看似权威的根因归类（Codex #1136 r4311781508）
+            GS.load_report(Path(path))
             findings = list(_guardian_findings(report))
             kind = "run"
         else:
