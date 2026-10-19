@@ -8,6 +8,7 @@
   "height": 132.66
  },
  "fontFamily": "STIX",
+ "matplotlib": "3.11",
  "axes": {
   "box": [
    35.01,

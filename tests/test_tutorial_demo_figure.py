@@ -47,26 +47,60 @@ def test_measurement_ignores_rcparams_left_by_earlier_code():
 
 
 def test_check_is_not_hollow():
+    """校对本身不是空门禁。拿「此刻量出来的」自己当基准做变异，不依赖磁盘那份是哪个版本生成的。"""
     gen = _gen()
     built = gen.build()
-    on_disk = json.loads(gen.OUT.read_text(encoding="utf-8"))
-    assert gen._diff(built, on_disk) == []
+    assert gen._diff(built, copy.deepcopy(built)) == []
 
-    renamed = copy.deepcopy(on_disk)
+    renamed = copy.deepcopy(built)
     renamed["title"]["text"] = "Reaction kinetics at 35 °C"
     assert any("title.text" in p for p in gen._diff(built, renamed))
 
-    moved = copy.deepcopy(on_disk)
+    moved = copy.deepcopy(built)
     moved["legend"]["box"][0] += gen.TOLERANCE_PT * 2
     assert any("legend.box[0]" in p for p in gen._diff(built, moved))
 
-    nudged = copy.deepcopy(on_disk)
+    nudged = copy.deepcopy(built)
     nudged["legend"]["box"][0] += gen.TOLERANCE_PT / 2
     assert gen._diff(built, nudged) == []
 
-    recolored = copy.deepcopy(on_disk)
+    recolored = copy.deepcopy(built)
     recolored["lines"][1]["color"] = "#c0562b"
     assert any("lines[1].color" in p for p in gen._diff(built, recolored))
+
+
+def test_other_matplotlib_versions_only_loosen_glyph_metrics():
+    """生成物来自另一版 matplotlib 时：字形度量量（文字 / 图例外框、图例句柄）放宽，其余照样严格。
+
+    CI 的 Python 3.10 腿只装得上 matplotlib 3.10，文字外框与本机 3.11 差几个 pt——那不是脚本变了。
+    """
+    gen = _gen()
+    built = gen.build()
+    other = copy.deepcopy(built)
+    other["matplotlib"] = "0.0"
+    other["xlabel"]["box"][3] += 3
+    other["legend"]["box"][1] -= 3
+    other["legend"]["entries"][0]["handle"][0][1] += 2
+    assert gen.compare(built, other) == []
+    # 同版本时同样的偏差要红
+    same = copy.deepcopy(other)
+    same["matplotlib"] = built["matplotlib"]
+    assert gen.compare(built, same)
+    # 版本不同也不放过：曲线、坐标轴、文字内容、颜色
+    for mutate, needle in (
+        (
+            lambda d: d["lines"][0]["points"][10].__setitem__(
+                1, d["lines"][0]["points"][10][1] + 3
+            ),
+            "lines[0].points",
+        ),
+        (lambda d: d["axes"]["box"].__setitem__(0, d["axes"]["box"][0] + 3), "axes.box"),
+        (lambda d: d["title"].__setitem__("text", "x"), "title.text"),
+        (lambda d: d["lines"][1].__setitem__("color", "#000000"), "lines[1].color"),
+    ):
+        broken = copy.deepcopy(other)
+        mutate(broken)
+        assert any(needle in p for p in gen.compare(built, broken)), needle
 
 
 def test_snippet_lines_are_verbatim_script_lines_in_order():

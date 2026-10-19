@@ -28,6 +28,7 @@ from __future__ import annotations
 import argparse
 import importlib
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -204,6 +205,9 @@ def _build() -> dict:
         "stem": "Fig1_kinetics",
         "figure": {"width": _r(width), "height": _r(height)},
         "fontFamily": "STIX",
+        # 生成时的 matplotlib 主.次版本：字形度量（文字外框高度、图例行距）随版本差几个 pt，
+        # 校对在版本不同的环境里只放宽这些量，其余照样逐项比（见 compare）
+        "matplotlib": _mpl_minor(),
         "axes": {"box": ax_box, "spineWidthPt": _r(ax.spines["left"].get_linewidth())},
         "ticks": {"style": tick_style, "x": ticks(ax.xaxis, "x"), "y": ticks(ax.yaxis, "y")},
         "xlabel": text(ax.xaxis.label),
@@ -220,28 +224,52 @@ def _build() -> dict:
     }
 
 
-def _diff(want, got, path: str = "$") -> list[str]:
+def _mpl_minor() -> str:
+    import matplotlib
+
+    return ".".join(matplotlib.__version__.split(".")[:2])
+
+
+# 由字形度量决定的量：文字（刻度标签、轴标签、标题、图例条目）的外框，以及由条目高度排出来的
+# 图例外框与图例句柄位置。坐标轴框、曲线、刻度位置、标题锚点、文字内容、颜色都不在此列
+_METRIC_PATH = re.compile(r"\.box\[\d+\]$|\.handle\[\d+\]\[\d+\]$")
+_STRICT_PREFIX = ("$.axes.",)
+
+
+def _metric_dependent(path: str) -> bool:
+    return bool(_METRIC_PATH.search(path)) and not path.startswith(_STRICT_PREFIX)
+
+
+def compare(built: dict, on_disk: dict) -> list[str]:
+    """按版本选比法：生成物的 matplotlib 主.次版本与此刻相同 → 逐项严格比；不同 → 只放宽字形度量量。"""
+    loose = built.get("matplotlib") != on_disk.get("matplotlib")
+    return _diff(built, on_disk, loose=loose)
+
+
+def _diff(want, got, path: str = "$", *, loose: bool = False) -> list[str]:
     if isinstance(want, dict) and isinstance(got, dict):
         out: list[str] = []
         for key in sorted(set(want) | set(got)):
-            if key == "comment":
+            if key in ("comment", "matplotlib"):
                 continue
             if key not in want or key not in got:
                 out.append(f"{path}.{key}: 只在一侧")
                 continue
-            out += _diff(want[key], got[key], f"{path}.{key}")
+            out += _diff(want[key], got[key], f"{path}.{key}", loose=loose)
         return out
     if isinstance(want, list) and isinstance(got, list):
         if len(want) != len(got):
             return [f"{path}: 长度 {len(want)} ≠ {len(got)}"]
         out = []
         for i, (a, b) in enumerate(zip(want, got, strict=True)):
-            out += _diff(a, b, f"{path}[{i}]")
+            out += _diff(a, b, f"{path}[{i}]", loose=loose)
         return out
     if isinstance(want, bool) or isinstance(got, bool) or not isinstance(want, int | float):
         return [] if want == got else [f"{path}: {want!r} ≠ {got!r}"]
     if not isinstance(got, int | float):
         return [f"{path}: {want!r} ≠ {got!r}"]
+    if loose and _metric_dependent(path):
+        return []
     return (
         []
         if abs(want - got) <= TOLERANCE_PT
@@ -255,7 +283,7 @@ def check() -> list[str]:
         on_disk = json.loads(OUT.read_text(encoding="utf-8"))
     except FileNotFoundError:
         return [f"{OUT} 不存在：先 --write"]
-    return _diff(build(), on_disk)
+    return compare(build(), on_disk)
 
 
 def main() -> int:
