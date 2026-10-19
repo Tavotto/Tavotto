@@ -20,7 +20,6 @@ from __future__ import annotations
 import json
 import os
 import shutil
-import subprocess
 import sys
 import tempfile
 import time
@@ -424,12 +423,9 @@ EXECUTION_CODE = "scripts/ci"
 
 
 def dirty_execution_code() -> list[str]:
-    out = subprocess.check_output(
-        ["git", "status", "--porcelain", "--untracked-files=all", "--", EXECUTION_CODE],
-        cwd=cg.ROOT,
-        text=True,
-    )
-    return sorted(line[3:] for line in out.splitlines() if line.strip())
+    out = cg.git("status", "--porcelain", "--untracked-files=all", "--", EXECUTION_CODE)
+    # `cg.git` strips the output, so the first line may have lost its leading status space
+    return sorted(line.split(maxsplit=1)[1] for line in out.splitlines() if line.strip())
 
 
 def explore(args) -> int:
