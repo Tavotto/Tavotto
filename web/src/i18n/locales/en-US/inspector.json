@@ -269,6 +269,7 @@
     "editProp": "Change {{label}}",
     "figureSize": "Figure {{w}} × {{h}} mm",
     "foldBackground": "Background & more",
+    "foldBboxDetail": "Background details",
     "foldCoords": "Axes, flip, aspect",
     "foldCount_one": "{{count}} item",
     "foldCount_other": "{{count}} items",

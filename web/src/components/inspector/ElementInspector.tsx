@@ -1056,6 +1056,7 @@ function FieldList({
       const f = element.editable.find((x) => x.prop === prop)
       return f ? currentValue(panel, element.gid, f) : undefined
     },
+    isOverridden: (prop) => panel.overrides.some((o) => o.gid === element.gid && o.prop === prop),
   }
 
   const rows = (fields: PresentedField[], heads?: Map<string, string>) => {

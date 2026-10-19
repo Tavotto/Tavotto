@@ -228,6 +228,7 @@ function PropertiesPage() {
    * 变换之后，每次都得往下找。折叠不减能力，展开还是同一批字段。
    */
   const textsOnly = onlyType(texts.length)
+  const arrowsOnly = onlyType(arrows.length)
 
   if (elementPanel) {
     return (
@@ -255,12 +256,13 @@ function PropertiesPage() {
       <IdentityHeader objs={objs} />
       <div className="min-h-0 flex-1 overflow-y-auto pb-2">
         {/* 第一层：位置与尺寸等高频属性（文字除外，见下） */}
-        {!panelsOnly && !textsOnly && <TransformSection objs={objs} />}
+        {!panelsOnly && !textsOnly && !arrowsOnly && <TransformSection objs={objs} />}
         {/* 第二层：类型专属 */}
         {onlyType(panels.length) && <PanelSection objs={panels} />}
         {textsOnly && <TextSection objs={texts} />}
         {textsOnly && <TransformSection objs={objs} foldKey="text-transform" />}
         {onlyType(arrows.length) && <ArrowSection objs={arrows} />}
+        {arrowsOnly && <TransformSection objs={objs} foldKey="arrow-transform" />}
         {onlyType(shapes.length) && <ShapeSection objs={shapes} />}
         {/* 第三层：排列（对齐 + 层级）。单选面板的排列由 PanelSection 自己摆在
             图片适配之后、更多之前（变换 → 内容适配 → 排列 → 源文件，审计 B09） */}

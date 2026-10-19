@@ -3469,6 +3469,7 @@ export default interface Resources {
       "editProp": "修改{{label}}",
       "figureSize": "整图 {{w}} × {{h}} mm",
       "foldBackground": "背景和其他",
+      "foldBboxDetail": "背景细项",
       "foldCoords": "坐标轴、翻转、长宽比",
       "foldCount_other": "{{count}} 项",
       "foldGrid": "网格线",
