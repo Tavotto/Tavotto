@@ -13,6 +13,12 @@ import pytest
 from tavotto.engine import executionfact, patchspec, pool, runtime, workerd_client
 
 
+@pytest.fixture(autouse=True)
+def _isolated_pending_retirements(monkeypatch):
+    """未确认的退役登记是进程级全局（`MAX_ALIVE` 条就拒绝一切冷启动）：用例之间不许漏到别的文件。"""
+    monkeypatch.setattr(pool, "_pending_retirements", {})
+
+
 def _command_payload(payload):
     """Check the request-bound observation token separately from command semantics."""
     payload = dict(payload)
