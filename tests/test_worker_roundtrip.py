@@ -1427,13 +1427,15 @@ def test_peer_colorbars_on_a_shared_scale_keep_their_own_originals(tmp_path):
         assert _field_value(man, cb_b["gid"], "cmap") == "paper_c"
         assert _cmap_original_name(man, cb_b["gid"]) is None
 
-        # 只改兄弟自己的（窄 override 从没动过 A）：A 与它的色条**不**报「脚本原样」——
-        # 否则 A 的选择器会拿 B 的原样当 A 的、点回去清的却是 B（#474 评审第五轮）
+        # 只改兄弟自己的（窄 override）：**整组一起换**（用户裁决 2026-10-18，ADR 0135 修订：
+        # 色阶组任一成员改 cmap = 整组改）。每个成员仍各报**自己**的脚本原样——A 与它的色条报
+        # paper_b、B 与它的色条报 paper_c，谁也不拿对方的当自己的（#474 评审第五轮的初衷保留）
         narrow = [{"gid": "axes_1.collections_0", "prop": "cmap", "value": "cividis"}]
         man = _rpc(proc, {"cmd": "override", "stem": "Shared", "patches": narrow})["manifest"]
-        assert _field_value(man, "axes_0.collections_0", "cmap") == "paper_b"
-        assert _cmap_original_name(man, "axes_0.collections_0") is None
-        assert _cmap_original_name(man, cb_a["gid"]) is None
+        for gid in ("axes_0.collections_0", "axes_1.collections_0", cb_a["gid"], cb_b["gid"]):
+            assert _field_value(man, gid, "cmap") == "cividis", gid
+        assert _cmap_original_name(man, "axes_0.collections_0") == "paper_b"
+        assert _cmap_original_name(man, cb_a["gid"]) == "paper_b"
         assert _cmap_original_name(man, "axes_1.collections_0") == "paper_c"
         assert _cmap_original_name(man, cb_b["gid"]) == "paper_c"
     finally:

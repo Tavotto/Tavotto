@@ -105,7 +105,7 @@
     "presetGroup": "Page presets",
     "presets": {
       "double": {
-        "hint": "150 mm — full width",
+        "hint": "{{w}} mm — double-column width of the current publication spec",
         "label": "Double"
       },
       "full": {
@@ -113,7 +113,7 @@
         "label": "Full page"
       },
       "single": {
-        "hint": "85 mm — single-column width in most journals",
+        "hint": "{{w}} mm — single-column width of the current publication spec",
         "label": "Single"
       },
       "square": {

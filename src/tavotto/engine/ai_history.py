@@ -415,6 +415,7 @@ def mark_interrupted_running(db_path: Path | None = None) -> int:
         _immediate(db_path) as con
     ):  # 读出死的 → 逐个标：同一个事务，期间别的进程把某行 record_end 了也不会被我们改回 interrupted
         interrupted = 0
+        # `OPEN_SESSION_SQL` 已含 `interrupt_all`（/api/shutdown）写了 interrupted 却没来得及写 `ended_ms` 进程就退出的行——补上结束时刻
         for r in con.execute(
             f"SELECT id, status, owner_pid, started_ms FROM sessions WHERE {OPEN_SESSION_SQL}"
         ).fetchall():
@@ -486,7 +487,11 @@ def list_sessions(
     if query:
         where.append("(prompt LIKE ? OR target LIKE ?)")
         args += [f"%{query}%", f"%{query}%"]
-    if status:
+    if status == "open":
+        # 「还没结束」：running，或已取消但 `_pump` 还没收尾（`cancel` 只改 status、不写 ended_ms，此时 changed / diff / refresh
+        # 还没算出来）。恢复占位要的是这一集合，只查 running 会漏掉后者——它没有占位、没有轮询，之后到的 `ai.done` 被丢掉
+        where.append(OPEN_SESSION_SQL)  # 与跨进程忙碌判定同一个定义
+    elif status:
         where.append("status = ?")
         args.append(status)
     if pinned_only:

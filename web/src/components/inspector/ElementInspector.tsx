@@ -61,6 +61,8 @@ import {
   detachLegendEntry,
   disableTextEffect,
   setLegendPlacement,
+  setColormapOverride,
+  setColormapOverrides,
   setOverride,
   setOverrides,
   unhideElement,
@@ -1789,12 +1791,26 @@ function BatchFieldRow({
     }
     // 只要有一个成员没预览成功就照旧走后端：宁可多渲染一次，
     // 也不能让画布上一部分元素显示新值、另一部分停在旧值
-    setOverrides(
-      panel.id,
-      elMsg('batchEdit', { label }),
-      elements.map((item) => ({ gid: item.gid, prop: field.prop, value: v })),
-      previewed ? 'none' : immediate,
-    )
+    if (field.prop === 'cmap') {
+      // 色阶组整组换色：每个被写的元素清掉它所在组里其它成员的 cmap override（同一次 commit）
+      setColormapOverrides(
+        panel.id,
+        elMsg('batchEdit', { label }),
+        elements.map((item) => ({
+          gid: item.gid,
+          value: v,
+          aliasGids: colormapAliasGids(batchManifest, item),
+        })),
+        previewed ? 'none' : immediate,
+      )
+    } else {
+      setOverrides(
+        panel.id,
+        elMsg('batchEdit', { label }),
+        elements.map((item) => ({ gid: item.gid, prop: field.prop, value: v })),
+        previewed ? 'none' : immediate,
+      )
+    }
     gesture.touch()
   }
 
@@ -2025,7 +2041,12 @@ function BatchFieldRow({
                 clearOverrides(
                   panel.id,
                   elMsg('resetProp', { label }),
-                  overridden.map((item) => ({ gid: item.gid, prop: field.prop })),
+                  field.prop === 'cmap'
+                    ? // 色阶组：与色图选择器的「恢复到脚本」同一口径，整组清
+                      elements
+                        .flatMap((item) => colormapAliasGids(batchManifest, item))
+                        .map((gid) => ({ gid, prop: field.prop }))
+                    : overridden.map((item) => ({ gid: item.gid, prop: field.prop })),
                 )
               }
             />
@@ -2140,6 +2161,15 @@ function FieldRow({
   const resettable = !(element.gid === 'figure' && field.prop === 'transparent' &&
     backgroundOriginal !== undefined && value === backgroundOriginal)
   const resetOwned = () => {
+    // 色阶组整组换色：回到脚本原样也要整组清——同组别的成员（例如多选时一起写过的那个）还留着
+    // cmap override 的话，它会立刻把改过的色图广播回来，重置看起来没生效（#1159 评审）
+    if (field.prop === 'cmap') {
+      return clearOverrides(
+        panel.id,
+        elMsg('resetProp', { label }),
+        colormapAliasGids(rowManifest, element).map((gid) => ({ gid, prop: 'cmap' })),
+      )
+    }
     if (ownedProps.length === 1) return clearOverride(panel.id, element.gid, field.prop)
     clearOverrides(
       panel.id,
@@ -2174,7 +2204,18 @@ function FieldRow({
     const v = lens.toScript(field.prop, pageValue)
     if (previewable && !gesture.isOpen()) gesture.start()
     const previewed = previewable && previewStyle(element.gid, element.role, field.prop, v)
-    setOverride(panel.id, element.gid, field.prop, v, previewed ? 'none' : immediate)
+    if (field.prop === 'cmap') {
+      // 色阶组任一成员改 cmap = 整组改：同一次 commit 清掉同组其它成员的 cmap override（文档里只留一条）
+      setColormapOverride(
+        panel.id,
+        element.gid,
+        v,
+        colormapAliasGids(rowManifest, element),
+        previewed ? 'none' : immediate,
+      )
+    } else {
+      setOverride(panel.id, element.gid, field.prop, v, previewed ? 'none' : immediate)
+    }
     gesture.touch()
   }
 

@@ -1,0 +1,26 @@
+{
+  "protocol": "cla-offline-deployment-plan-v1",
+  "ready_to_deploy": false,
+  "network_operations": 0,
+  "resources_created": 0,
+  "manifest_sha256": "f97d079c4231187b4f8a55cf2e94d04f9a17b9e0a2edf2638ba69aee2532f830",
+  "required_secret_names": [
+    "CLA_EVIDENCE_KEY",
+    "CLA_CLIENT_SECRET",
+    "CLA_APP_PKCS8",
+    "CLA_WEBHOOK_SECRET"
+  ],
+  "proposed_separate_crons": {
+    "recovery": "*/2 * * * *",
+    "head_observation_or_dispatch": "7-59/15 * * * *"
+  },
+  "pending": [
+    "independently review existing resource IDs, limits, plan quota and origin",
+    "register actual holder identity and public key outside this tool",
+    "obtain real limited grant and enable control outside this tool",
+    "validate reviewed config, schema and exact pinned agreement asset",
+    "verify D1 batch/backup/single-authority migration",
+    "complete independent live acceptance including excluded publication scenario",
+    "separate trusted-main CI/merge-group rollout approval"
+  ]
+}

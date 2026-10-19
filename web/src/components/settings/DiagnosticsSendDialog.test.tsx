@@ -207,18 +207,25 @@ describe('未确认 → 零远程请求', () => {
 })
 
 describe('先看再发', () => {
-  it('轻确认框：默认只露一句话 + 「发送」（+ 关闭）；其余全在默认收起的「查看详情」里', async () => {
+  it('说明框在前（2026-10-19）：默认可见 = 副标题那一句 + 说明（标签在上、提示与字数一行）+ 问题类型 + 一行附件 + 「发送」「关闭」；清单 / 保存 / 额外项 / 政策都折在「查看内容」里', async () => {
     await mount()
     expect(q('[data-diag-send-sentence]')!.textContent).toBe(ds('sentence'))
+    expect(q('[data-diag-send-sentence]')!.closest('details'), '如实说明的那一句常显，不在折叠里').toBeNull()
+    const note = q<HTMLTextAreaElement>('[data-diag-send-note]')!
+    expect(note.closest('details'), '说明框不折叠').toBeNull()
+    expect(document.body.querySelector(`label[for="${note.id}"]`)?.textContent, '标签在字段上方').toBe(ds('noteLabel'))
+    const category = q('[data-diag-send-category]')!
+    expect(category.closest('details'), '问题类型不折叠').toBeNull()
+    expect(category.querySelector(`[aria-label="${ds('categoryLabel')}"]`)).not.toBeNull()
     const det = q<HTMLDetailsElement>('[data-diag-send-details]')!
     expect(det.open).toBe(false)
-    // 默认可见的交互元素：页脚两颗 + 折叠标题；清单 / 保存 / 说明 / 类型 / 政策链接都在折叠里
-    const folded = ['[data-diag-send-kinds]', '[data-diag-send-save]', '[data-diag-send-note]', '[data-diag-send-policy]', '[data-diag-send-error-summary-note]']
+    const folded = ['[data-diag-send-kinds]', '[data-diag-send-save]', '[data-diag-send-extras]', '[data-diag-send-policy]', '[data-diag-send-error-summary-note]']
     for (const sel of folded) expect(q(sel)?.closest('details')).toBe(det)
     const footer = Array.from(document.body.querySelectorAll<HTMLButtonElement>('[data-diag-send-confirm],[data-diag-send-dismiss]'))
     expect(footer.map((b) => b.textContent)).toEqual([ds('close'), ds('send')])
+    expect(document.body.querySelectorAll('[data-dialog-footer] [data-variant="primary"]'), '一颗主按钮').toHaveLength(1)
     expect(det.textContent).toContain(ds('bestEffort'))
-    expect(det.textContent).toContain(ds('noteAttached'))
+    expect(document.body.textContent).toContain(ds('noteAttached'))
     // 错误摘要的披露只在折叠里（不新增可见段落）；不暗示同意今后自动上报
     expect(det.textContent).toContain(ds('errorSummaryNote'))
     expect(q('[data-diag-send-sentence]')!.textContent).not.toContain(ds('errorSummaryNote'))

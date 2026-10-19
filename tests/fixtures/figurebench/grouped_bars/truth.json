@@ -1,0 +1,31 @@
+{
+  "fixture": "grouped_bars",
+  "stem": "grouped_bars",
+  "size_in": [
+    3.5,
+    2.6
+  ],
+  "series": [],
+  "bars": [
+    {
+      "axes": 0,
+      "index": 0,
+      "heights": [
+        3.2,
+        4.5,
+        2.9,
+        5.1
+      ]
+    },
+    {
+      "axes": 0,
+      "index": 1,
+      "heights": [
+        2.8,
+        4.9,
+        3.6,
+        4.4
+      ]
+    }
+  ]
+}

@@ -40,6 +40,7 @@ export interface Proof extends Binding {
 export interface CheckProposal {
   name: string; appId: number; appSlug: string; headSha: string;
   conclusion: 'success' | 'failure'; proof: Proof; text: string;
+  authorityExpires?: number;
 }
 export interface CheckReceipt { id: number; appId: number; appSlug: string; name: string; headSha: string }
 // The frozen prototype selects mock/disabled; the isolated native candidate adds real.

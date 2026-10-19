@@ -85,8 +85,9 @@ def main():
     fig = plt.figure()
     ax = fig.add_subplot(projection="3d")
     gx, gy = np.meshgrid(np.linspace(0, 1, 6), np.linspace(0, 1, 6))
-    # Poly3DCollection：instrument 不登记，只有普查报得出来
-    ax.plot_surface(gx, gy, gx * gy)
+    # Patch3D（3D 的 ax.bar）：instrument 不登记，只有普查报得出来。
+    # 曲面（Poly3DCollection）从前用作这个「缺口」，ADR 0135 起它进了元素表
+    ax.bar([1.0, 2.0, 3.0], [1.0, 2.0, 3.0], zs=0, zdir="y")
     fig.savefig("gap_probe.pdf")
 
 
@@ -126,7 +127,7 @@ def test_a_census_that_lists_gaps_must_not_exit_zero(tmp_path):
     assert gap.returncode != 0, (
         "普查列出了漏掉的 artist，退出码却是 0——调用方会把它当成审计通过：\n" + gap.stdout[-1500:]
     )
-    assert "Poly3DCollection" in gap.stdout, gap.stdout[-1500:]
+    assert "Patch3D" in gap.stdout, gap.stdout[-1500:]
 
     # JSON 模式把判定交给调用方，照旧回 0
     js = run(tmp_path / "gap.py", "--json")

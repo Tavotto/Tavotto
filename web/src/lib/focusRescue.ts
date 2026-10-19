@@ -62,6 +62,10 @@ export function rescueFocus(
   { within = 2_000 }: { within?: number } = {},
 ): void {
   if (typeof document === 'undefined' || typeof MutationObserver === 'undefined') return
+  // 抓住这一刻的 document：救援可能在用例的 afterEach 之后才发起（异步续体里的状态切换），
+  // 文件跑完 jsdom 拆掉、全局 `document` 没了之后，定时器 / observer 醒来仍只碰这个对象，
+  // 不再 `document is not defined`（openRequestRestore.test.ts 在 CI 上 7 天 5 次）
+  const doc = document
 
   let done = false
   const stop = () => {
@@ -70,13 +74,13 @@ export function rescueFocus(
     active.delete(stop)
     observer.disconnect()
     clearTimeout(timer)
-    document.removeEventListener('focusin', onFocusIn, true)
+    doc.removeEventListener('focusin', onFocusIn, true)
   }
 
   /** 焦点掉了没？掉了就接管。返回「这件事已经了结」。 */
   const settle = (): boolean => {
-    const now = document.activeElement
-    if (alive(now) && now !== document.body) return false // 焦点还在，继续等
+    const now = doc.activeElement
+    if (alive(now) && now !== doc.body) return false // 焦点还在，继续等
     const next = pick()
     if (!alive(next)) return false // 接手者还没出现（或本来就没有）
     next.focus()
@@ -85,7 +89,7 @@ export function rescueFocus(
 
   // 别人主动拿走焦点：撤，不跟用户抢
   const onFocusIn = () => {
-    if (document.activeElement !== document.body) stop()
+    if (doc.activeElement !== doc.body) stop()
   }
 
   const observer = new MutationObserver(() => {
@@ -94,8 +98,8 @@ export function rescueFocus(
   const timer = setTimeout(stop, within)
 
   active.add(stop)
-  document.addEventListener('focusin', onFocusIn, true)
-  observer.observe(document.body, { childList: true, subtree: true })
+  doc.addEventListener('focusin', onFocusIn, true)
+  observer.observe(doc.body, { childList: true, subtree: true })
   // 也可能这一刻就已经掉了（同步卸载）
   if (settle()) stop()
 }

@@ -4,6 +4,12 @@
 
 ## Current status
 
+The default-off engineering candidate for limited holder delegation and new-head
+observations is described in [ADR 0137](../adr/0137-limited-cla-countersigning-authority.md).
+It supplies no real authorization, provider activation, deployment or CI wiring.
+The [activation checklist](../implementation/cla-delegated-authority/README.md)
+remains outstanding; observations cannot satisfy the live CLA gate.
+
 **The agreements are final and signable; no signature service is connected
 yet.** The check qualifies the rights holder and the two exempt bots, and blocks
 everyone else **with an explanation** — it never treats an unsigned contributor

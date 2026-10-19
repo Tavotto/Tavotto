@@ -225,12 +225,40 @@ def scale_gids(state: FollowState, mappable) -> list[str]:
     return [el["gid"] for el in state.elements if el["artist"] in sibs]
 
 
+def scale_colorbars(state: FollowState, mappable) -> list:
+    """给「`mappable` 所在色阶组」上色的全部色条代理：它们的 mappable 就是它，或与它共用同一份
+    norm 对象（独立 `ScalarMappable` 的色条属于这一种）。"""
+    norm = getattr(mappable, "norm", None)
+    out = []
+    for el in state.elements:
+        p = el["artist"]
+        if not isinstance(p, ColorbarProxy):
+            continue
+        m = p.cb.mappable
+        if m is mappable or (norm is not None and getattr(m, "norm", None) is norm):
+            out.append(p)
+    return out
+
+
+def _get_cb_cmap(p: "ColorbarProxy"):
+    """色条色图的「脚本原样」读数。独立 `ScalarMappable` 会被色阶组的广播同步改色
+    （`overrides._sync_standalone_colorbars`），此刻的实况不是原样；首次应用前记下的那份才是
+    （`_mm_orig_cmap`）。有登记图元的 mappable 不受影响，照读实况。"""
+    m = p.cb.mappable
+    return getattr(m, "_mm_orig_cmap", None) or m.get_cmap()
+
+
 def _set_cb_cmap(p: "ColorbarProxy", v, state: FollowState) -> None:
-    """色条的色图写到它的 mappable **和全部色阶兄弟**上（见 `scale_siblings`）。"""
+    """色条的色图写到它的 mappable、**全部色阶兄弟**（`scale_siblings`），以及组里**其它色条**的
+    mappable 上（`scale_colorbars`）——组里一个已登记图元都没有、只有几条独立 `ScalarMappable`
+    色条共用 norm 时，兄弟是空的，不写到别的色条上它们就各自为政（#1159 评审）。"""
     m = p.cb.mappable
     m.set_cmap(v)
     for sib in scale_siblings(state, m):
         sib.set_cmap(v)
+    for other in scale_colorbars(state, m):
+        if other is not p:
+            other.cb.mappable.set_cmap(v)
 
 
 _set_cb_cmap._needs_state = True  # noqa: SLF001
@@ -1514,7 +1542,7 @@ HANDLERS: dict[tuple[str, str], tuple] = {
     ),
     # 色图写到 mappable 与它的色阶兄弟（共用 norm 对象的那些，`scale_siblings`）；
     # 原样仍是 mappable 自己那张 Colormap（`manifest._cmap_original` 读它）
-    ("colorbar", "cmap"): (lambda p: p.cb.mappable.get_cmap(), _set_cb_cmap),
+    ("colorbar", "cmap"): (_get_cb_cmap, _set_cb_cmap),
     # vmin / vmax 写的是 norm，而 norm 是兄弟们共用的那一份——不必逐个写，
     # 但别名组要把兄弟算进来（`overrides._alias_colorbar_mappable`），否则兄弟的
     # 「脚本原样」会在色条动过之后才采
