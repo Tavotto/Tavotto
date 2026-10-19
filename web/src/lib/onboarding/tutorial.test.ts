@@ -500,6 +500,35 @@ describe('openSampleProject（示例项目，ADR 0039）', () => {
     expect(isAutosaveSuspendedFor('tavotto-tutorial')).toBe(false)
   })
 
+  it('示例项目里开着的是另一份排版、元数据没取到：先取齐元数据，只挂起真正的示例画布（不挂这份）', async () => {
+    await openSampleProject()
+    useTutorialStore.setState({ meta: null, status: null })
+    useDocumentStore.setState({ documentId: 'd_user_draft' } as never)
+    let draftSuspended: boolean | null = null
+    let tutorialSuspended: boolean | null = null
+    stubFetch({
+      '/api/tutorial/open': () => {
+        draftSuspended = isAutosaveSuspendedFor('d_user_draft')
+        tutorialSuspended = isAutosaveSuspendedFor('tavotto-tutorial')
+        return json({ project: PROJECT, tutorial: META, reset: false, created: false, repaired: [], cleared: [] })
+      },
+    })
+    await openSampleProject()
+    expect(calls.some((c) => c.url === '/api/tutorial' && c.method === 'GET')).toBe(true)
+    expect(draftSuspended).toBe(false)
+    expect(tutorialSuspended).toBe(false)
+  })
+
+  it('示例项目开着、元数据怎么也取不到：不开（不猜哪份是示例画布），按失败返回', async () => {
+    await openSampleProject()
+    useTutorialStore.setState({ meta: null, status: null })
+    calls = []
+    stubFetch({ '/api/tutorial': () => json({ error: 'boom' }, 500) })
+    const out = await openSampleProject()
+    expect(out.ok).toBe(false)
+    expect(calls.filter((c) => c.url === '/api/tutorial/open')).toEqual([])
+  })
+
   it('升级换副本时 open 失败：挂起被接回，旧教程的画布不晾在不保存的状态', async () => {
     stubFetch({
       '/api/tutorial/open': () =>

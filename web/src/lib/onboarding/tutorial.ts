@@ -213,6 +213,14 @@ function mutating(): boolean {
  */
 async function openSample(): Promise<TutorialOutcome> {
   if (mutating()) return fail('open_failed')
+  // 示例项目开着、却不知道哪份是示例画布（升级后重启：元数据还没取到，三步教程也不再在
+  // onboarding 里记它的 id）：先取齐元数据再开——挂起自动保存只能挂在**真正的**示例画布上，
+  // 挂错了（用户正在示例项目里改另一份排版）切文档时它的未存改动会被丢掉；不挂又会让认领把
+  // 旧排版写回固定槽位。取不到就不开，按失败返回
+  if (useProjectStore.getState().project?.tutorial === true && knownTutorialDocumentId() === null) {
+    await loadTutorialStatus()
+    if (knownTutorialDocumentId() === null) return fail('unavailable')
+  }
   // 请求 + 认领是一次切换：请求在路上时别的打开就得排在它后面（Codex #550）
   return useProjectStore.getState().switchTransaction((adopt) => openSampleNow(adopt))
 }
@@ -248,13 +256,17 @@ async function openSampleNow(adopt: AdoptProject): Promise<TutorialOutcome> {
  */
 function currentTutorialDocumentId(): string | null {
   const current = useDocumentStore.getState().documentId
-  const known =
-    useTutorialStore.getState().meta?.document_id ?? useOnboardingStore.getState().tutorialDocumentId
-  if (known !== null) return current === known ? current : null
-  // 两处都没有：三步教程（ADR 0136）不再写 onboarding 里那份，升级后重启 + 元数据还没取到时就是这种
-  // 情形。此时只能看项目：当前项目是示例项目，手里这份文档就当作示例画布——宁可多挂起一次自动保存
-  // （紧接着的 resume / switchDocument 会接回），也不能漏摘，让认领把旧排版写回刚清掉的固定槽位
-  return useProjectStore.getState().project?.tutorial === true ? current : null
+  const known = knownTutorialDocumentId()
+  return known !== null && current === known ? current : null
+}
+
+/**
+ * 示例画布固定的 documentId（元数据，其次 onboarding 记着的旧值）；都没有回 null。三步教程
+ * （ADR 0136）不再写 onboarding 那份，所以升级后重启、元数据还没取到时是 null——调用方
+ * （`openSample`）先取齐元数据，**不拿「当前项目是示例项目」去猜**哪份文档是示例画布。
+ */
+function knownTutorialDocumentId(): string | null {
+  return useTutorialStore.getState().meta?.document_id ?? useOnboardingStore.getState().tutorialDocumentId
 }
 
 /**
