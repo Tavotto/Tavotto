@@ -115,6 +115,12 @@ export interface PrepEntry {
   armMaybeFrom: { session_id: string; config_revision: number; observation_seq: number } | null
   /** 这个条目是从明确的「打开并运行」入口打开的：卡片上的「继续 / 再试一次」（重新打开）沿用这份意图，不让用户为同一个目的点两次 */
   wantsRun: boolean
+  /**
+   * 这次 `open` 是否允许在已跑完的同配置会话上认领 `run` 重跑（`opts.rerun !== false`）。卡上「继续」是 `false`：这条策略要活过它自己的恢复路径
+   * （首次检查断线后 `refresh` 的无会话恢复），否则恢复后落到已跑完的会话会把用户脚本再跑一遍（Codex #1152 补评 r4305863214）。
+   * 每次 `open` 重新设定、不继承：新的明确「打开并运行」入口（`rerun` 未设）仍允许重跑
+   */
+  allowRerun: boolean
   /** 同一脚本换了参数（另一份运行配置）时，旧会话里还在等的运行意图：「打开并运行」带它去后端原子转移，不并存两份 */
   transferFrom: string | null
 }
@@ -504,6 +510,7 @@ export const useProjectPreparationStore = create<PreparationState>((set, get) =>
             armMaybeBaseline: keepArm ? prev.armMaybeBaseline : null,
             armMaybeFrom: keepArm ? prev.armMaybeFrom : null,
             wantsRun: !!opts?.run,
+            allowRerun: opts?.rerun !== false,
             transferFrom: sameTarget
               ? (prev?.transferFrom ?? null)
               : prev?.report?.intent?.status === 'active'
@@ -517,7 +524,7 @@ export const useProjectPreparationStore = create<PreparationState>((set, get) =>
       // 再清空——防连点的闸就开了
       if (sameTarget && prev?.pending && prev.pending !== 'check') return
       await check(key, target, false)
-      if (opts?.run) await armIfReady(key, opts.rerun !== false)
+      if (opts?.run) await armIfReady(key, entry(key)?.allowRerun !== false)
     },
 
     refresh: (key) => {
@@ -531,7 +538,7 @@ export const useProjectPreparationStore = create<PreparationState>((set, get) =>
         // 代认领——用户的一键意图不因第一次请求超时而丢（Codex #1044 r4290881812）；`armIfReady` 的其余前提照旧
         const g = guardOf(key)
         return check(key, e.target, false).then(() => {
-          if (live(key, g) && entry(key)?.wantsRun) return armIfReady(key)
+          if (live(key, g) && entry(key)?.wantsRun) return armIfReady(key, entry(key)?.allowRerun !== false)
         })
       }
       const g = guardOf(key)

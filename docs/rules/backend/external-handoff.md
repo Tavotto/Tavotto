@@ -78,6 +78,15 @@
   进程存在且活过稳定窗（或单实例转发完成）才算成功；起来就死回
   `launch_failed` + `exit_code`/`signal`/`log_path`/`retryable`（HandoffError
   的 `extra`，`--json` 逐键并入输出），限期内没出现回 `launch_timeout`。
+  **受限沙箱不拉进程（#1149）**：Windows 桌面路径在 spawn **之前**用 ctypes 查进程令牌
+  （`_windows_token_sandbox`：`GetTokenInformation(TokenIsAppContainer)` / `IsTokenRestricted`，只看操作系统令牌，
+  **不认 `CODEX_*` 之类宿主私有环境变量**），命中就回 `sandboxed_launch`
+  （`sandbox` + `retryable: true`），一次 spawn 都不做；查不出来（ctypes / OSError）按原样走。
+  **绝不借 explorer.exe / 计划任务等手段代为启动——那是逃逸沙箱**，出路只有调用方在沙箱外重跑。
+  **转发卡住不算起来了**：spawn 之前 `_pids_of`（Windows 经 ctypes 枚举进程、按**完整路径**精确比对，不按映像名——sidecar 同名 `Tavotto.exe`，孤儿 sidecar 会被误当成已有实例）已有实例、
+  新进程却活过观察窗口不退，且**复查**时旧 pid 仍在（排除新进程自己；复查抛错 / None 保守放行，误杀健康的新实例比假成功更糟）→ 先 terminate / kill（kill 后有界等退出，不留僵尸）再回 `launch_failed` + `reason: "forward_stuck"`；
+  原本没有实例的 `process_alive` 与查不出实例（None）的旧行为不变。
+  看护同在 `tests/test_desktop_launch.py`。
   sidecar 日志路径由 `handoff.sidecar_log_path()` 按 `brand.DESKTOP_BUNDLE_ID`
   推导（与 tauri 的 app_log_dir 同源）。看护 `tests/test_desktop_launch.py`。
 - **前端交接三条纪律**（`applyOpenRequest`）：① 同项目**绝不**调

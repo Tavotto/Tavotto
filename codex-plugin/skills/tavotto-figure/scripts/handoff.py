@@ -547,8 +547,10 @@ def run_script(python: str, script: str) -> tuple[bool, str]:
 
 
 #: `tavotto open` 失败时随 code 一起透传的结构化细节（桌面启动失败的分诊线索：
-#: 是「装坏了」还是「这个环境起不了 GUI」，只有 `signal` / `log_path` 说得清）
-_FAILURE_DETAIL_KEYS = ("app", "exit_code", "signal", "log_path", "retryable")
+#: 是「装坏了」还是「这个环境起不了 GUI」，只有 `signal` / `log_path` 说得清；
+#: `sandbox`（`sandboxed_launch`：受限令牌 / AppContainer）与 `reason`
+#: （`launch_failed` 的 `forward_stuck`：转发给已开窗口时卡住）同理）
+_FAILURE_DETAIL_KEYS = ("app", "exit_code", "signal", "log_path", "retryable", "sandbox", "reason")
 
 
 def _open_failure(result: dict, tavotto: dict, **extra) -> dict:
