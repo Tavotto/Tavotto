@@ -234,6 +234,46 @@
   会拿到 worker 的 `--script/--out-dir/--entry`，存出一堆叫 `--entry` 的图
   （试运行探测时当场撞见过，`test_script_sees_its_own_argv_not_the_workers` 看护）。
 
+## 同一路径多个写入者（Compatibility Guardian G2）
+
+脚本在循环里让不同的 Figure 反复写同一个路径（`fig.savefig("a.pdf"); plt.close(fig)`），原生 Python 下磁盘上留下的是
+**最后一次成功写入**的那张；捕获表按 stem 记账，必须与之一致。**唯一实现 `figcapture.note_savefig_writer`**，三条入口同源
+（desktop worker 经 `LiveFigureSession.note_savefig`、浏览器钩子、native 的 `_patched_savefig`），也是 `savefig_calls[stem]` /
+`savefig_extras[stem]` 的**唯一写入点**（钩子里不再另调 `record_savefig_call`）。`add_figure` / `setdefault` 的先到先得认领不动。
+
+* **成败怎么知道**：不预判（参数组合穷举不完）。native 在 `_REAL_SAVEFIG` **成功返回之后**才调用，失败的保存不进任何表。
+  safe worker / 浏览器不真写盘，钩子传 `verify` 闭包（`figcapture.savefig_verify_render`：用未打补丁的 `Figure.savefig` 把同一组
+  参数写进 `io.BytesIO()`，格式取显式 `format=` 或后缀）；共享函数：
+  * **非持有者**写入（`fig` 不是 `capture[stem]`，`target` / `call` 非 None——顶不顶替都会更新 `files`）先 `verify`，失败整次忽略
+    （不顶替、不更新 `files`、不记该写入者的调用）；
+  * **持有者自己的写入**照常记账、不立刻验证，但它在 `files` 里的登记带着 `verify` 当惰性验证（`_FileEntry`，弱引用 Figure + args /
+    kwargs 浅拷贝；Figure 已死 = 失败）。只有当它要**挡住一次顶替**（「持有者在别的目标上仍是最近写入者」）时才对挡路的登记验证：
+    成功 = 确认落盘，标已验证、以后不再验；失败 = 那次保存从未落盘，删掉登记并重算。native 的登记都是已成功保存，不带 thunk。
+  常规路径零渲染，只有同 stem 多图才有额外渲染。matplotlib 的
+  savefig 自己会还原 dpi / 尺寸 / 布局（`TestVerifyRender::test_figure_state_is_unchanged` 钉着）。
+* **每个 stem 一份状态** `writers[stem] = {"files": {目标文件键 -> 最近写它的 Figure 弱引用}, "by": {id(fig) -> [弱引用,
+  该写入者自己的调用表, extras]}}`。**文件身份** `figcapture.savefig_target_key`：文件名经 `savefig_effective_names`（显式
+  `format=` 不改文件名）；三条入口同一个**路径**键：`realpath`（符号链接解到目标）拆成目录 + 文件名，文件名折叠大小写与否按**该目录所在文件系统**判
+  （`_dir_folds_case`：目录存在时翻转路径里最后一个有大小写的那一级名字——父目录 `listdir` 里字面存在该变体 = 独立条目（区分），否则翻转路径 `samefile` = 不区分；探测不了按平台默认 darwin / win32 不区分、其余区分，
+  按目录缓存；Pyodide 虚拟 FS 区分）。缓冲区 / 认不出文件名 = `None`。
+* **调用按写入者分表**，规则就是 `record_savefig_call` 的（上限、新格式第一次照记、`call is None` 整份「不知道」），与别的写入者
+  交替多少次互不影响（交替 100 次，胜者的首次 `bbox_inches="tight"` 仍在）。持有者（`capture[stem]`）的表同步成
+  `calls[stem]` / `extras[stem]` 的副本。
+* **顶替**：`fig` 不是持有者，且**持有者不是本 stem 任何目标文件的最近成功写入者**（含持有者从未成功写过——先认领的图保存失败、
+  第一个成功写入者取代它）→ `capture[stem] = fig`，`calls` / `extras` 换成 `fig` 自己的表（跨格式交替后顶回来的图带着它的全部
+  调用，如 `["pdf","png","pdf"]`）。护栏：`target` 或 `call` 为 None 不参与顶替（`paper_style.save` 捷径不知道路径）；
+  `locked`（stem 已进入编辑 `states` 或已记失败 `failures`；native 的同义是第一个屏障处被会话接走的 `_CAPTURE_LOCKED`）不换图；
+  **pyplot 认领永不被顶**；持有者在别的目标文件上仍是最近写入者时不顶（甲写 `a.pdf` + `a.png`，乙再写 `a.pdf` → 仍是甲，
+  磁盘上 `a.png` 还是甲）；不同目标文件互不顶替（`a.pdf` 甲 / `a.svg` 乙 → 甲，TIGHT 用例钉着）；不同 stem 互不影响。
+* **有界**：每个 stem 最多 `MAX_SAVEFIG_WRITERS`（16）个写入者表；先淘汰已死的与「不是持有者也不是任何目标最近写入者」的，
+  还超就按先来后到淘汰非持有者（连同它名下的目标记录）。持有者永不淘汰；被淘汰者日后重新成为写入者就从新调用开始——这是有界的
+  代价。每个写入者的调用表本身由 `record_savefig_call` 的 HARD 上限约束。
+* safe worker 的捕获发生在 instrument 之前，规则只在脚本执行期生效；写回重放起新 worker 重跑脚本，同一规则再走一遍。
+* 已知未覆盖：`paper_style.save` 捷径不经 savefig 钩子，不参与；**持有者的惰性验证**用的是「验证那一刻的 Figure + 当时的参数」，保存后 Figure 被改成渲染不出、又恰好要挡住一次顶替时会误判（Codex r4305796141）——曾改为每次 savefig 当场验证，但那次额外渲染会改变 Figure 状态（首开 SVG、保真度判定），维护者裁决回到惰性验证，见 #1150；**文件系统自己的文件名比较规则**（不区分大小写时只做 `lower()` 折叠；NTFS 大写表 / APFS 的 Unicode 归一化等更细的等价不模拟，见 #1150）；**硬链接别名**（两个不同路径指向同一 inode）按两个文件算——故意不用 inode 作键，删掉再重建同一路径必须仍是同一目标；Windows 上的大小写探测只在 CI 跑，没有真机验过。
+
+看护 `tests/test_capture_same_path_last_writer.py`（共享函数 + 会话规则 + 目标键 + 真 worker / 浏览器端到端）、
+`tests/bridge/test_bridge_same_path_last_writer.py`（native）。
+
 ## 运行参数（T03，ADR 0014 §2 修订）
 
 用户手动给的**精确 argv** 贯通 探测 → 热编辑 → 冷重放 → 导出 → 重开；自动 argparse 表单是 T07，不在这里。

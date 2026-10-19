@@ -13,13 +13,8 @@
 
 from __future__ import annotations
 
-import contextlib
 import json
-import os
-import subprocess
-import sys
 import time
-import urllib.request
 from pathlib import Path
 
 from support import foundation_app as fa, nativekit
@@ -30,73 +25,7 @@ ROOT = Path(__file__).resolve().parent.parent
 pytestmark = nativekit.needs_user_python
 
 ENV = {"TAVOTTO_USER_ENV_DISCOVERY": "0", "PYTHONPATH": str(ROOT / "src")}
-NONCE = "e2e-desktop-nonce-0123456789"
-
-
-@contextlib.contextmanager
-def sidecar_app(project: Path, work: Path, *, env_overrides: dict | None = None):
-    """真的 `tavotto --desktop-sidecar`（Tauri 壳启动它的方式）：启动 nonce 走 stdin，窗口用它兑换会话 cookie。
-    回退只授权给这条来源（桌面用户主动发起）——浏览器模式的 `fa.running_app` 在这里是反例。"""
-    data_dir, config_dir, home = work / "data", work / "config", work / "home"
-    for d in (data_dir, config_dir, home):
-        d.mkdir(parents=True, exist_ok=True)
-    handshake = work / "handshake.json"
-    env = {
-        **os.environ,
-        "TAVOTTO_DATA_DIR": str(data_dir),
-        "TAVOTTO_CONFIG_DIR": str(config_dir),
-        "HOME": str(home),
-        "TAVOTTO_NO_UPDATE_CHECK": "1",
-        "TAVOTTO_NO_TELEMETRY": "1",
-        "TAVOTTO_DESKTOP_HANDSHAKE": str(handshake),
-        **(env_overrides or {}),
-    }
-    for name in ("TAVOTTO_INSECURE_NO_AUTH", "TAVOTTO_WORKER_PYTHON", "MM_WORKER_PYTHON"):
-        env.pop(name, None)
-    log_path = work / "server.log"
-    log = log_path.open("w", encoding="utf-8")
-    proc = subprocess.Popen(  # noqa: S603
-        [sys.executable, "-m", "tavotto", "--figures", str(project), "--desktop-sidecar"],
-        env=env,
-        stdin=subprocess.PIPE,
-        stdout=log,
-        stderr=subprocess.STDOUT,
-        cwd=str(work),
-        text=True,
-        encoding="utf-8",
-    )
-    try:
-        proc.stdin.write(json.dumps({"nonce": NONCE}) + "\n")
-        proc.stdin.flush()
-        deadline = time.time() + 120
-        port = None
-        while time.time() < deadline:
-            assert proc.poll() is None, log_path.read_text("utf-8")[-2000:]
-            with contextlib.suppress(OSError, ValueError):
-                shake = json.loads(handshake.read_text("utf-8"))
-                if shake.get("ready"):
-                    port = shake["port"]
-                    break
-            time.sleep(0.2)
-        assert port, "sidecar 没有就绪"
-        base = f"http://127.0.0.1:{port}"
-        req = urllib.request.Request(
-            base + "/api/session/bootstrap",
-            data=json.dumps({"nonce": NONCE}).encode(),
-            headers={"Content-Type": "application/json"},
-        )
-        with urllib.request.urlopen(req, timeout=30) as resp:  # noqa: S310
-            cookie = resp.headers["Set-Cookie"].split(";", 1)[0]
-        yield fa.RunningApp(base, {"Cookie": cookie}, proc, log_path, work)
-    finally:
-        with contextlib.suppress(Exception):
-            proc.stdin.close()  # EOF = 父进程没了 → sidecar 跟随关闭
-        try:
-            proc.wait(timeout=60)
-        except subprocess.TimeoutExpired:
-            proc.kill()
-            proc.wait(timeout=30)
-        log.close()
+sidecar_app = fa.sidecar_app  # 真 sidecar 夹具在 support/foundation_app.py（别的 e2e 也要桌面来源）
 
 
 SESSIONS = "/api/engine/preparation-sessions"
