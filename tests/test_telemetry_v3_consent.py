@@ -121,7 +121,7 @@ def test_no_telemetry_env_wins_and_never_prompts(sent, monkeypatch):
     assert sent == []
 
 
-@pytest.mark.parametrize("raw", ["v2", "3.0", 2.5, -1, True, None, [3]])
+@pytest.mark.parametrize("raw", ["v2", "3.0", 2.5, -1, True, None, [3], "²", "3" * 5000])
 def test_malformed_saved_version_is_stale_consent_not_a_crash(sent, raw):
     """手改 / 旧版遗留的 `consent_version` 怪形状：不抛、不当成当前版本的同意（Codex #1103 P2）。"""
     telemetry._save({"consent": "enabled", "install_id": V2_ID, "ever_enabled": True})

@@ -327,3 +327,44 @@ def test_any_failure_while_building_the_summary_is_omission_not_an_error(srv, mo
     _wait(pid, {"done"})
     (init,) = _inits(srv)
     assert "error_summary" not in init
+
+
+# --------------------------------------------------------------------------- 部分成功的导出（Codex #1103 第二轮 P2）
+def _partial(ref: str, *, failed_code=None, output_code=None, now=None):
+    """`exportjob.diagnostic_projection` 的部分成功形状：没有顶层 error，码在 stages / outputs。"""
+    snap = {
+        "snapshot_version": 1,
+        "kind": "export",
+        "outcome": "partial",
+        "stages": {"events": [], "truncated": False, "dropped": 0, "failed_code": failed_code},
+        "outputs": [
+            {"format": "pdf", "status": "done", "error_code": None},
+            {"format": "png", "status": "failed", "error_code": output_code},
+        ],
+    }
+    taskdiag.STORE.record(
+        PJ, taskdiag.KIND_EXPORT, ref, snap, outcome="partial", failed=True,
+        **({"now": now} if now is not None else {}),
+    )  # fmt: skip
+
+
+@pytest.mark.parametrize(
+    ("failed_code", "output_code", "expected"),
+    [("raster_failed", None, "raster_failed"), (None, "png_encode_failed", "png_encode_failed")],
+)
+def test_partial_export_snapshot_yields_its_stable_code(srv, failed_code, output_code, expected):
+    srv.accepts_error_summary = True
+    _partial("p1", failed_code=failed_code, output_code=output_code)
+    _wait(_send(), {"done"})
+    assert _inits(srv)[0]["error_summary"]["facts"]["error_code"] == expected
+
+
+def test_newest_failure_without_a_code_falls_back_to_an_older_one(srv):
+    srv.accepts_error_summary = True
+    taskdiag.STORE.record(
+        PJ, taskdiag.KIND_EXPORT, "old", {"kind": "export", "error": {"code": "export_old"}},
+        outcome="failed", failed=True, now=time.time() - 100,
+    )  # fmt: skip
+    _partial("new")  # 最新的这条一个合格的码都没有
+    _wait(_send(), {"done"})
+    assert _inits(srv)[0]["error_summary"]["facts"]["error_code"] == "export_old"

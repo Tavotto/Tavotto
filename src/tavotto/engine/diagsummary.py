@@ -79,21 +79,38 @@ def consent_snapshot() -> dict | None:
     }
 
 
-def _facts(project_id: str) -> dict | None:
-    best = None
-    for kind in _SOURCES:
-        entry = taskdiag.STORE.latest_failure(project_id, kind)
-        if entry is not None and (best is None or entry.recorded_at > best.recorded_at):
-            best = entry
-    if best is None:
-        return None
+def _snapshot_code(blob: str) -> str | None:
+    """失败快照里的稳定错误码。整单失败在顶层 `error.code`；**部分成功**（PDF 写成、PNG 失败）没有顶层
+    `error`，码在 `stages.failed_code` 或失败产物的 `outputs[].error_code`（Codex #1103 P2）。按这个顺序取第一个合格的。"""
     try:
-        snap = json.loads(best.blob)
+        snap = json.loads(blob)
     except ValueError:
         return None
-    err = snap.get("error") if isinstance(snap, dict) else None
-    error_code = err.get("code") if isinstance(err, dict) else None
-    if not isinstance(error_code, str) or not ERROR_CODE_RE.fullmatch(error_code):
+    if not isinstance(snap, dict):
+        return None
+    candidates = []
+    err = snap.get("error")
+    if isinstance(err, dict):
+        candidates.append(err.get("code"))
+    stages = snap.get("stages")
+    if isinstance(stages, dict):
+        candidates.append(stages.get("failed_code"))
+    outputs = snap.get("outputs")
+    if isinstance(outputs, list):
+        candidates += [o.get("error_code") for o in outputs if isinstance(o, dict)]
+    for code in candidates:
+        if isinstance(code, str) and ERROR_CODE_RE.fullmatch(code):
+            return code
+    return None
+
+
+def _facts(project_id: str) -> dict | None:
+    # 新的在前；最新那条取不出合格的码（快照形状不认识）就退回更早一条，而不是整份摘要放弃
+    for best in taskdiag.STORE.failures(project_id, tuple(_SOURCES)):
+        error_code = _snapshot_code(best.blob)
+        if error_code is not None:
+            break
+    else:
         return None
     component, operation = _SOURCES[best.kind]
     return {

@@ -41,6 +41,7 @@ import logging
 import os
 import platform
 import queue
+import re
 import sys
 import threading
 import urllib.error
@@ -321,7 +322,8 @@ def _saved_version(raw) -> int:
         return 0
     if isinstance(raw, int):
         return max(raw, 0)
-    if isinstance(raw, str) and raw.strip().isdigit():
+    # 只认有界的 ASCII 数字：`str.isdigit()` 也认 "²" 这类转不了 int 的字符、且不限长度（Codex #1103 P2）
+    if isinstance(raw, str) and re.fullmatch(r"[0-9]{1,6}", raw.strip()):
         return int(raw.strip())
     return 0
 
