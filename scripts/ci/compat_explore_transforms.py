@@ -29,6 +29,10 @@ from pathlib import Path
 
 import compat_guardian as cg
 
+#: 父用例的 `__main__` 守卫的规范文本。放成常量：这个模块只**识别**守卫，自己不是入口脚本，
+#: 不能让入口扫描（tests/test_windows_regressions.py）把这里的判断误认作 `if __name__ == ...`
+MAIN_GUARD = '__name__ == "__main__"'
+
 VERSION = "1.0.0"
 #: Reviewed executable parents (engine corpus) and static-only parents (V2 fixtures).
 ENGINE_PARENTS = (
@@ -125,9 +129,7 @@ class Ctx:
                     return (node.body, start, len(node.body)) if len(node.body) > start else None
             return None
         for node in body:
-            if isinstance(node, ast.If) and ast.unparse(node.test).replace("'", '"') == (
-                '__name__ == "__main__"'
-            ):
+            if isinstance(node, ast.If) and ast.unparse(node.test).replace("'", '"') == MAIN_GUARD:
                 return node.body, 0, len(node.body)
         first = next(
             (
