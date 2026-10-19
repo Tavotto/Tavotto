@@ -115,13 +115,12 @@ def build_figure():
     ins.plot([0.0, 1.0], [0.0, 1.0], color="#804000")
     ins.add_artist(GhostArtist())  # 插图里也放一个量不出几何的
     ax3.secondary_xaxis("top")
-    # **3D 插图**：`plot_surface` 出的 `Poly3DCollection` 是普查真正报得出来
-    # 的那一类（CompatBench 的「Top unrecognized artists」里排第一）。放在
+    # **3D 插图**：3D 的 `ax.bar` 出的 `Patch3D` 是 instrument **不登记**、只有普查报得出来
+    # 的那一类（曲面 `Poly3DCollection` 从前扮这个角色，ADR 0135 起它进了元素表）。放在
     # 子 axes 里，是为了让「普查走不走 child_axes」这件事**有用例可证**——
     # 少了它，插图里能被普查抓到的东西一个都没有，那条遍历就成了没人验的代码。
     d3 = ax2.inset_axes([0.05, 0.55, 0.38, 0.4], projection="3d")
-    gx, gy = np.meshgrid(np.linspace(0, 1, 6), np.linspace(0, 1, 6))
-    d3.plot_surface(gx, gy, gx * gy)
+    d3.bar([1.0, 2.0, 3.0], [1.0, 2.0, 3.0], zs=0, zdir="y")
 
     # **插图上的色条**：宿主只存在于 `child_axes` 里。`colorbar_maps` 只扫
     # `fig.axes` 的时候，这条色条整个不被认出来——不但没有 ColorbarProxy，

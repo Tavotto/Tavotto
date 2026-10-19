@@ -225,5 +225,6 @@ gid、对象 id、属性名、量化字段只出现在每行**默认收起**的�
 | 修完真的能过 / 事务 / 跨画布 | `lib/issueFix.test.ts` |
 | 界面不出现内部标识 / 空态 / 筛选 / 键盘 / 角标 | `components/left/problemPanel.test.tsx` |
 | 措辞与双语 | `lib/validationText.test.ts` |
+| 原图范围按原图口径求值（scale 1、页面 = 图幅；2026-10-19 补：此前裁的是画布那份，缩小摆放的图被假阻断） | `lib/validation.test.ts`「原图范围检查的是原图那份产物」、`components/ExportDialog.test.tsx`「画布上缩小摆放的图」 |
 | 导出上下文跨语言同源 | `tests/test_preflight.py::test_the_export_context_rule_is_one_rule_on_both_sides` |
 | 求值器 / 界面不写字号字面量 | `tests/test_profile_store.py::test_no_evaluator_or_ui_hardcodes_a_minimum_font_size`（本轮新增四个消费点） |

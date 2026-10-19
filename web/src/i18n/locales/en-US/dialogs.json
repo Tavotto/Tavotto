@@ -1224,7 +1224,7 @@
           "other": "Other"
         },
         "noteLabel": "Notes (optional)",
-        "noteHint": "Please don't include names, emails, paths or data.",
+        "noteHint": "Please leave out names, emails, paths and data.",
         "noteCount": "{{count}} / {{max}}",
         "retention": "Reports are kept for {{days}} days, readable only by the Tavotto maintainers, and are not linked to the anonymous-statistics identifier.",
         "preparing": "Building the bundle…",
@@ -1280,10 +1280,10 @@
         },
         "packageGone": "This bundle is no longer held by the engine (the app may have restarted). Prepare it again before sending, or use Export diagnostics in Settings to save one locally.",
         "sentence": "A diagnostic bundle will be sent, with error details and logs (the logs may contain output printed by your script), but without your script files or data files.",
-        "details": "Show details",
+        "details": "Show contents",
         "bestEffort": "Redaction is best-effort and not guaranteed; you can save and inspect the bundle before sending.",
         "errorSummaryNote": "If you have agreed to anonymous statistics, a content-free error summary (the internal area that failed and a fixed error code) is attached as well. Sending does not consent to automatic reporting later.",
-        "noteAttached": "Anything you write here is sent as typed, together with the bundle.",
+        "noteAttached": "What you write is attached as is. ",
         "policy": "Privacy policy",
         "cardButton": "Send problem report",
         "reprepare": "Prepare again",
@@ -1335,7 +1335,9 @@
           "qrAlt": "WeCom QR code for the Tavotto maintainer; scan it with WeChat on your phone",
           "row": "Contact the maintainer",
           "rowHint": "For a direct conversation, add us on WeCom (shown in Chinese only)."
-        }
+        },
+        "attachmentTitle": "Diagnostics bundle attached",
+        "notePlaceholder": "What happened? For example, what you clicked and what you saw."
       }
     },
     "export": {

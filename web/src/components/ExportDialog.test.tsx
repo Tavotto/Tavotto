@@ -821,6 +821,38 @@ describe('原图范围不被画布摆放阻断（FLAG-B1）', () => {
   })
 
   /**
+   * 画布上的**缩放**同样不进原图导出（ADR 0028）：9 pt 的图在画布上缩到一半，读者在那页上
+   * 量到 4.5 pt——按画布导出这是阻断；按原图导出，文件里仍是 9 pt，不许被这次缩放阻断，
+   * 报告里也不许出现这条。画布范围那半边是前提（否则「不阻断」恒成立）。
+   */
+  it('画布上缩小摆放的图：画布范围按缩放后的字号阻断，原图范围按原图字号放行', async () => {
+    writeExportDefaults({ withProof: true })
+    await setup(9, { w: 80, h: 60 })
+    useDocumentStore.getState().commit(literal('缩到一半'), (d) => {
+      ;(d.objects[0] as PanelObject).w = 40
+      ;(d.objects[0] as PanelObject).h = 30
+    })
+    await reopen()
+    expect(button('开始导出')!.hasAttribute('disabled'), '前提：画布范围下 4.5 pt 是阻断').toBe(true)
+    expect(confirmBox()).toBeTruthy()
+
+    useWorkspaceStore.setState({ mode: 'fast_edit', activePanelId: 'p1' })
+    await reopen()
+    expect(document.body.querySelectorAll('[role="radio"]')[0].getAttribute('aria-checked')).toBe(
+      'true',
+    )
+    expect(confirmBox(), '原图里是 9 pt，没有要确认的阻断').toBeNull()
+    expect(button('开始导出')!.hasAttribute('disabled')).toBe(false)
+    await click(button('开始导出')!)
+    expect(exportBodies).toHaveLength(1)
+    expect(exportBodies[0].scope).toBe('original')
+    const report = exportBodies[0].style_check_report as Record<string, unknown>
+    expect(report, '夹具开了报告').toBeTruthy()
+    expect((report.checks as { id: string }[]).map((c) => c.id).filter((id) => id.startsWith('font-'))).toEqual([])
+    expect(report.page_mm).toEqual({ w: 80, h: 60, margin: 0 })
+  })
+
+  /**
    * 那张图**不在当前画布上**（Codex 评审 #596 P2）：`findFigurePanel()` 会跨画布找到它，
    * 检查与报告就都得按**它所在的那张画布**算——拿当前画布去裁，摘要里一条都剩不下
    * （8 pt 的阻断被说成没问题），报告的 `objects` 也是空的。
