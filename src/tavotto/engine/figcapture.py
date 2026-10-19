@@ -172,6 +172,11 @@ __all__ = [
     "savefig_stem",
     "savefig_call",
     "record_savefig_call",
+    "savefig_target_key",
+    "savefig_verify_render",
+    "savefig_verifier",
+    "note_savefig_writer",
+    "MAX_SAVEFIG_WRITERS",
     "savefig_calls_of",
     "SavefigObservations",
     "savefig_metadata_reader",
@@ -1476,6 +1481,273 @@ def record_savefig_call(calls: dict, capture: dict, stem: str, fig, call: dict |
             return False
     seq.append(call)
     return True
+
+
+_CASE_FOLD_CACHE: dict = {}
+
+
+#: 模块加载时的 `os.listdir`：大小写探测是 Tavotto 自己的簿记，不能经保真度账本的 `watched_listdir`
+#: （否则自己的探测会把图标成「脚本列过受影响目录」= suspect）
+_UNWATCHED_LISTDIR = os.listdir
+
+
+def _dir_folds_case(directory: str) -> bool:
+    """这个目录所在的文件系统是否不区分大小写：目录存在时探测——翻转路径里最后一个有大小写的字母所在的那一级名字，
+    父目录的 `os.listdir` 里**字面存在**这个变体名 → 它是独立条目（符号链接别名或另一个目录）→ 区分大小写；
+    不存在，而翻转后的路径存在且 `samefile` → 不区分。探测不了（目录不存在 / 路径里没有大小写字母 / 出错）按平台默认
+    （darwin / win32 不区分，其余区分；Pyodide 虚拟 FS 区分）。结果按目录缓存。"""
+    if directory in _CASE_FOLD_CACHE:
+        return _CASE_FOLD_CACHE[directory]
+    result = sys.platform in ("darwin", "win32")
+    try:
+        if os.path.isdir(directory):
+            parts = os.path.normpath(directory).split(os.sep)
+            for k in range(len(parts) - 1, -1, -1):
+                name = parts[k]
+                if name.lower() == name.upper():
+                    continue
+                flipped_name = name.swapcase()
+                parent = os.sep.join(parts[:k]) or os.sep
+                if flipped_name in _UNWATCHED_LISTDIR(parent):
+                    result = False
+                else:
+                    flipped = os.sep.join(parts[:k] + [flipped_name] + parts[k + 1 :]) or os.sep
+                    result = os.path.exists(flipped) and os.path.samefile(flipped, directory)
+                break
+    except OSError:
+        pass
+    _CASE_FOLD_CACHE[directory] = result
+    return result
+
+
+def savefig_target_key(fname, kwargs: dict, canvas=None) -> str | None:
+    """`savefig(fname)` 真正写的那个**磁盘文件**的可比较身份；写不出路径（缓冲区 / 认不出文件名）时 None。
+
+    「同一路径多个写入者」（`note_savefig_writer`）的键。文件名经 `savefig_effective_names`（显式 `format=`
+    不改文件名、无后缀补 canvas 缺省格式——与 matplotlib 一致），所以 `savefig("a.pdf")` 与
+    `savefig("a.pdf", format="png")` 是同一个文件，`a.pdf` 与 `a.svg` 不是。
+
+    * 三条入口同一个**路径**键（不用 inode：脚本删掉再重建同一路径时 inode 会变，而磁盘上那个路径留下的仍是
+      最后写入者——Codex #1141 r4305717514）：路径取 `realpath`（符号链接解到目标），文件名是否折叠大小写按**该目录所在文件系统**
+      判（`_dir_folds_case`），不是一刀切的 `normcase`——macOS 默认卷上 `Plot.pdf` / `plot.pdf` 是同一个文件，
+      区分大小写的卷（Linux、Windows 的区分目录）上是两个。
+    """
+    names = savefig_effective_names(fname, kwargs, canvas)
+    if len(names) != 1:
+        return None
+    try:
+        path = os.path.abspath(os.fsdecode(names[0]))
+        directory, base = os.path.split(os.path.realpath(path))
+        if _dir_folds_case(directory):
+            # 只折叠大小写（`lower`），不做 `casefold` 的全 Unicode 折叠：NTFS / APFS 的不区分大小写比较不把
+            # `ß` 当 `ss`（Codex #1141 r4305745044）；更细的文件系统排序规则 / Unicode 归一化见细则「已知未覆盖」与 #1150
+            base = base.lower()
+        return os.path.join(directory, base)
+    except Exception:  # noqa: BLE001 —— 簿记尽力而为：认不出路径就不参与顶替，绝不改变用户 savefig 的结果
+        return None
+
+
+def savefig_verify_render(real_savefig, fig, fname, args, kwargs: dict) -> bool:
+    """用**未打补丁**的 `Figure.savefig` 把这次保存同一组参数不落盘地真渲染进 `io.BytesIO()`：成功 = 原生下这次保存
+    不会抛。safe worker / 浏览器不真写盘，拿不到成败，又没法穷举所有会让 savefig 抛的参数（格式 × backend ×
+    dpi × …），所以只在**这次写入会改变捕获**（`note_savefig_writer` 要顶替）的那一刻交给 matplotlib 自己判。
+    格式取显式 `format=`，否则取 `savefig_effective_names` 解出的后缀；解不出格式按成功算。Figure 的状态
+    （dpi / 尺寸 / 布局）matplotlib 的 savefig 自己会还原。抛任何异常 = 失败。"""
+    try:
+        kw = dict(kwargs)
+        if kw.get("format") is None:
+            names = savefig_effective_names(fname, kwargs, getattr(fig, "canvas", None))
+            ext = os.path.splitext(os.fsdecode(names[0]))[1][1:].lower() if names else ""
+            if not ext:
+                return True
+            kw["format"] = ext
+        # tight 量包围盒失败在原生下同样会抛、文件不会写出：与 native 同源判失败（Codex #1141 r4306180020）。
+        # 这里只决定**顶替**，持有者自己的保存不经验证，ADR 0098 的 frame_unavailable 报告不受影响
+        real_savefig(fig, io.BytesIO(), *args, **kw)
+    except Exception:  # noqa: BLE001 —— 原生下这次保存会抛
+        return False
+    return True
+
+
+def savefig_verifier(real_savefig, fig, fname, args, kwargs: dict):
+    """`note_savefig_writer` 的 `verify` 闭包：只持有 Figure 的弱引用与 args / kwargs 的浅拷贝（登记会活得比这次调用久，
+    不能把 Figure 或调用方后来改动的 kwargs 拖住）；Figure 已死 = 失败。"""
+    ref, a, kw = weakref.ref(fig), tuple(args), dict(kwargs)
+
+    def verify() -> bool:
+        target = ref()
+        return target is not None and savefig_verify_render(real_savefig, target, fname, a, kw)
+
+    return verify
+
+
+class _FileEntry:
+    """`writers[stem]["files"][目标键]`：最近写它的 Figure（弱引用，调用即取）+ 这次保存是否已确认真能成功。
+    持有者自己的写入先不验证（常规路径零渲染），带上 `thunk` 惰性验证；native 与已验证过的 `verified=True`。
+    未验证的登记保留它覆盖掉的那条（`prev`）作后备：验证失败 = 那次保存从未落盘，磁盘上仍是上一条的产物
+    （Codex #1141 r4306209189）。后备链有界（`_MAX_PREV`），已验证的登记之后不再需要更早的后备。"""
+
+    __slots__ = ("ref", "thunk", "verified", "prev")
+
+    def __init__(self, fig, thunk=None, prev=None):
+        self.ref = weakref.ref(fig)
+        self.thunk = thunk
+        self.verified = thunk is None
+        self.prev = None if self.verified else _bounded_prev(prev)
+
+    def __call__(self):
+        return self.ref()
+
+
+_MAX_PREV = 8
+
+
+def _bounded_prev(prev):
+    """截断后备链：遇到已验证的登记就到此为止；未验证的最多留 `_MAX_PREV` 层。"""
+    head, node, depth = prev, prev, 0
+    while node is not None:
+        depth += 1
+        if node.verified or depth >= _MAX_PREV:
+            node.prev = None
+            break
+        node = node.prev
+    return head
+
+
+def _resolve_entry(entry):
+    """把一条（可能未验证的）登记解析成磁盘上真实的那条：未验证就跑 thunk，失败退到 `prev`；全都不成立 = None。"""
+    while entry is not None:
+        if entry() is None:
+            return None
+        if entry.verified:
+            return entry
+        if entry.thunk():
+            entry.verified, entry.thunk, entry.prev = True, None, None
+            return entry
+        entry = entry.prev
+    return None
+
+
+def _held_still_on_disk(files: dict, held, target) -> bool:
+    """持有者在**别的**目标文件上是否仍是最近成功写入者。未验证的登记只在它要挡住一次顶替时才验证
+    （`_resolve_entry`）：失败退回它覆盖掉的那条，再看磁盘上的那条是不是持有者。"""
+    for t, entry in list(files.items()):
+        if t == target:
+            continue
+        if entry() is not held and entry.verified:
+            continue
+        real = _resolve_entry(entry)
+        if real is None:
+            del files[t]
+            continue
+        files[t] = real
+        if real() is held:
+            return True
+    return False
+
+
+#: 每个 stem 最多同时记几个写入者的调用表；超出时先淘汰不是持有者、也不是任何目标最近成功写入者的（或已死的）
+MAX_SAVEFIG_WRITERS = 16
+
+
+def note_savefig_writer(
+    writers: dict,
+    capture: dict,
+    capture_source: dict,
+    calls: dict,
+    extras: dict,
+    stem: str,
+    fig,
+    target: str | None,
+    call: dict | None = None,
+    extra=None,
+    locked: bool = False,
+    verify=None,
+) -> bool:
+    """一次 savefig 的写入者记账与「同一路径最后写入者胜」——三条入口（safe worker、native bridge、浏览器）的同一份
+    实现，也是 `calls` / `extras`（`savefig_calls[stem]` / `savefig_extras[stem]`）的唯一写入点。调用方须在
+    `capture` 已按先到先得认领之后调用。native 在 `_REAL_SAVEFIG` **成功返回之后**才调用（失败的保存不进任何表）；
+    safe / 浏览器不真写盘、拿不到成败，传 `verify`（`savefig_verify_render` 的闭包）：本函数对每次**非持有者**
+    的写入（`fig` 不是 `capture[stem]`，且 `target` / `call` 都非 None——不管最终顶不顶替，它都会更新 `files`）
+    先调用它，返回 False（原生下这次保存会抛）就整次忽略——不顶替、不更新 `files`、不记该写入者的调用。持有者
+    自己的写入照常记账、不立刻验证，但它在 `files` 里的登记带着 `verify` 作为惰性验证：只有当它要**挡住一次顶替**
+    （持有者在别的目标上「仍是最近写入者」）时才对挡路的登记验证，成功 = 确认落盘，失败 = 从未落盘，删掉登记。
+    所以常规路径零渲染，只有同 stem 多图时才有额外渲染。
+
+    每个 stem 一份状态 `writers[stem]` = `{"files": {目标文件键 -> 最近写它的 Figure（弱引用）},
+    "by": {id(fig) -> [弱引用, 该写入者自己的调用表（None = 不知道）, extras]}}`：
+
+    * 调用按**写入者**分表记，规则与 `record_savefig_call` 完全一致（上限、新格式第一次照记、
+      `call is None` 整份变「不知道」），与其它写入者交替多少次互不影响；
+    * 持有者（`capture[stem]`）的调用表同步成 `calls[stem]` / `extras[stem]` 的副本；
+    * 顶替：`fig` 不是持有者，且持有者**不是本 stem 任何目标文件的最近写入者**（含持有者从未写过）。
+      护栏（任一不满足都不顶）：`target` 或 `call` 为 None（不知道写的是哪个文件）、`locked`（stem 已进入编辑或已记
+      失败）、来源不是 savefig（pyplot 认领永不被顶）、持有者在别的目标文件上仍是最近写入者（它的文件还在磁盘上）；
+    * 有界：最多 `MAX_SAVEFIG_WRITERS` 个写入者表，被淘汰者日后重新成为写入者就从新调用开始。
+
+    返回是否顶替了。
+    """
+    if not stem:
+        return False
+    entry = writers.setdefault(stem, {"files": {}, "by": {}})
+    files, by = entry["files"], entry["by"]
+    held = capture.get(stem)
+    foreign = target is not None and call is not None and held is not None and held is not fig
+    if foreign and verify is not None and not verify():
+        return False
+    takes = (
+        foreign
+        and not locked
+        and capture_source.get(stem) == SOURCE_SAVEFIG
+        and not _held_still_on_disk(files, held, target)
+    )
+    mine = by.get(id(fig))
+    if mine is None or mine[0]() is not fig:
+        mine = by[id(fig)] = [weakref.ref(fig), [], []]
+    _record_writer_call(mine, call, extra)
+    if target is not None and call is not None:
+        # 外来写入前面已验证；持有者自己的写入带上 thunk 惰性验证（verify 为 None = native，保存已成功）
+        files[target] = _FileEntry(fig, None if foreign else verify, prev=files.get(target))
+    if takes:
+        capture[stem] = held = fig
+    if held is fig:
+        calls[stem] = None if mine[1] is None else list(mine[1])
+        if mine[1] is None:
+            extras.pop(stem, None)
+        else:
+            extras[stem] = list(mine[2])
+    _trim_writers(entry, held)
+    return takes
+
+
+def _record_writer_call(mine: list, call: dict | None, extra) -> None:
+    """把一次调用记进某个写入者自己的表（`record_savefig_call` 同一条规则，`mine[1] is None` = 不知道）。"""
+    if mine[1] is None:
+        return
+    if call is None:
+        mine[1], mine[2] = None, []
+        return
+    tmp = {"k": mine[1]}
+    if record_savefig_call(tmp, {"k": mine[0]()}, "k", mine[0](), call):
+        mine[2].append(extra)
+
+
+def _trim_writers(entry: dict, held) -> None:
+    """写入者表有界：先淘汰已死的、不是持有者也不是任何目标最近写入者的；还超就按先来后到淘汰非持有者
+    （连同它名下的目标记录——有界的代价：它的文件之后算「没人写过」）。持有者永不淘汰。"""
+    by, files = entry["by"], entry["files"]
+    if len(by) <= MAX_SAVEFIG_WRITERS:
+        return
+    latest = {id(ref()) for ref in files.values() if ref() is not None}
+    for hard in (False, True):
+        for key in list(by):
+            if len(by) <= MAX_SAVEFIG_WRITERS:
+                return
+            fig = by[key][0]()
+            if fig is None or (fig is not held and (hard or id(fig) not in latest)):
+                del by[key]
+                for t in [t for t, ref in files.items() if ref() is fig]:
+                    del files[t]
 
 
 def _norm_format(fmt) -> str:

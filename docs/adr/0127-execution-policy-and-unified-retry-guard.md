@@ -81,3 +81,7 @@ CLI 与 MCP 的确认合同**不变**：`tavotto run` 仍由用户亲手敲，�
   面板身份（资产 id）不含执行语义所以不多开标签页；桌面拥有的 native 会话由准备会话独占展示面；`file_ops_blocked` 只剩「后端明确没回退」一种成因，一句话按 `declined` 闭集码说原因、没有主按钮，
   回退也失败时一句话 + 再试一次、`attempt_history` 在详情「运行记录」。规则全文 `docs/rules/frontend/readiness-and-left-shell.md`「准备引导卡」。
 * 未做（如实）：项目设置的读写端点与界面开关（改 `app.py` + 前端，列后续）；磁盘面板跟随权威 profile、旧 safe 热 worker 让位（PR3b）；运行前路由（PR2）；资产目标（已有图）的回退（本轮只覆盖脚本目标）；`worker.py` 里「没有换环境重跑」的过期文案与 `errors.json`（PR3a 持有）。
+
+## 修订（显式 native 的来源闸门）
+
+D1 的授权边界（桌面用户发起）原本只拦「路由选的 native」与「回退到 native」，请求体显式写 `execution: "native"` 的会话在任何已认证来源都能认领 `run`。修订：显式 native 与路由 native 走同一道 `_desktop_initiated()` 判据，非桌面来源**拒绝**（403 `native_requires_desktop`）而不降级——显式请求是客户端的明确意图，静默换成 safe 会误导；路由 native 仍按原样降 safe。拒绝点在创建会话端点（最早）与 `prepsession._claim_run`（认领时再核，含 `run_when_ready` 推进）。前端永不发 `execution`，CLI `tavotto run` 走 nativeperm，均不受影响。

@@ -1123,6 +1123,27 @@ def test_plugin_end_to_end_non_parameterizable_still_exits_four(tmp_path):
 
 
 @posix_only
+@pytest.mark.parametrize(
+    "failure",
+    [
+        {"code": "sandboxed_launch", "sandbox": "restricted_token", "retryable": True},
+        {"code": "launch_failed", "reason": "forward_stuck", "retryable": False},
+    ],
+)
+def test_sandbox_and_stuck_forward_failures_are_not_a_launch_success(tmp_path, failure):
+    """#1149：沙箱拒绝 / 转发卡住——launch_success=false、render 未知，细节逐键透传。"""
+    resp = {"ok": False, "error": "x", "app": "C:\\T\\Tavotto.exe", **failure}
+    proc, out = _run_plugin(tmp_path, resp)
+    assert proc.returncode == 2
+    assert out["error_code"] == failure["code"]
+    assert out["launch_success"] is False
+    assert out["render_success"] is None and out["verified_success"] is False
+    for key in ("sandbox", "reason", "retryable"):
+        if key in failure:
+            assert out[key] == failure[key]
+
+
+@posix_only
 def test_every_failure_payload_still_carries_the_three_fields(tmp_path):
     """没走到唤起的失败出口：launch 未成功、渲染未知、未确认——字段齐全，不缺键。"""
     proc, out = _run_plugin(tmp_path, {"ok": False, "code": "registry_write_failed", "error": "x"})

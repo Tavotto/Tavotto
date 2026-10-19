@@ -145,6 +145,9 @@ ERROR_IMPACT_CHANGED = "preparation_impact_changed"
 #: 会改用户自己环境的动作必须回显它看到的 `impact_digest`（不能只靠"点了一下"）
 ERROR_IMPACT_UNCONFIRMED = "preparation_impact_unconfirmed"
 ERROR_BAD_REQUEST = "bad_request"
+#: 显式要 native 的动作 / 会话不是桌面窗口发起的（ADR 0127 D1：native 的授权边界是桌面用户）。路由选的 native 在同一来源判据下
+#: 静默降 safe（路由只是偏好）；显式 native 是客户端明确的要求，换语义会误导，所以拒绝
+ERROR_NATIVE_REQUIRES_DESKTOP = "native_requires_desktop"
 #: 同一脚本在本项目里已有另一个在等的运行意图（别的运行配置）：两条意图并存会让合计多跑一次，要显式 `transfer_from`
 ERROR_INTENT_CONFLICT = "preparation_run_intent_conflict"
 #: 想转移的旧意图不在「还没认领任何执行」的状态（已执行 / 在执行 / 已取消 / 已撤销 / 不存在）：零副作用
@@ -1602,6 +1605,13 @@ class SessionService:
                 {"reason": stale[0], "executed": False},
             )
         base = sess.plan
+        if base.execution == execspec.PROFILE_NATIVE and not base.route and not desktop:
+            # 显式 native（无路由决定）与路由 native 同一道来源闸门：非桌面来源拿不到 native。拒绝而不降级——一行用户代码都不跑
+            raise SessionError(
+                ERROR_NATIVE_REQUIRES_DESKTOP,
+                "native 执行只能由桌面窗口发起",
+                403,
+            )
         if base.route and base.execution == execspec.PROFILE_NATIVE and not desktop:
             # 路由（ADR 0133）选了 native，但这次动作不是桌面窗口发起的（浏览器 / 本机凭据客户端 / 无认证入口）：授权边界与回退
             # 完全一致，非桌面来源不能被路由到 native。检查时拿不到来源，所以在认领这一刻按 safe 重新规划（只读）
