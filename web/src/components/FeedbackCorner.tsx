@@ -17,7 +17,8 @@ type Clearance = { bottom: number } | { right: number } | null
 
 /**
  * 与准备引导卡（`PreparationCard`，画布右下角）不叠（Codex #1184）：属性栏收起时两张卡都在右下角，
- * 这张 `z-toast` 会盖住准备卡底部的按钮。只在这张卡显示时观察 `[data-prep-card]`（出现 / 消失 / 尺寸）与自己的高度，
+ * 这张 `z-toast` 会盖住准备卡底部的按钮。只在这张卡显示时观察 `[data-prep-card]`（出现 / 消失 / 尺寸）、它的各级定位祖先的尺寸
+ * （拖窄属性栏时准备卡自己尺寸不变、是画布变宽把它带走的，Codex #1184）与自己的高度，
  * 水平相交时按序挑一个**整张都在窗口里**的位置：① 准备卡上方 8px（上面放得下这张卡的实测高度）；
  * ② 准备卡左侧 8px、贴底（左边放得下卡宽）；③ 都放不下（窗口太小）就留在默认位置——宁可叠，也不把卡推出窗口。
  */
@@ -39,6 +40,9 @@ function usePrepCardClearance(active: boolean, self: RefObject<HTMLElement | nul
     function measure() {
       const prep = document.querySelector('[data-prep-card]')
       watch(prep)
+      // 准备卡贴着定位祖先的右下角：祖先变宽 / 变高它就跟着挪，自己尺寸不变、DOM 也没增删
+      for (let a = (prep as HTMLElement | null)?.offsetParent; a && a !== document.body; a = (a as HTMLElement).offsetParent)
+        watch(a)
       watch(self.current)
       const r = prep?.getBoundingClientRect()
       const vw = window.innerWidth

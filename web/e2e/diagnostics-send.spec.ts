@@ -280,3 +280,56 @@ test('右下角反馈卡不盖住准备引导卡：属性栏收起、窗口小�
     if (SHOTS) await page.screenshot({ path: `${SHOTS}/feedback-corner-vs-prep-${w}x${h}.png` })
   }
 })
+
+test('属性栏变窄、准备卡被画布带着右移时，反馈卡跟着避让（只有布局变化、没有 DOM 增删）', async ({ app, page }) => {
+  test.setTimeout(180_000)
+  const project = mkdtempSync(path.join(os.tmpdir(), 'tavotto-diag-prep-drag-'))
+  writeFileSync(
+    path.join(project, 'plot.py'),
+    'import matplotlib\nmatplotlib.use("Agg")\nimport matplotlib.pyplot as plt\n' +
+      'fig, ax = plt.subplots()\nax.plot([1, 2, 3])\nfig.savefig("out.png")\n',
+    'utf-8',
+  )
+  const a = await app({
+    figures: project,
+    env: { TAVOTTO_NO_DIAG_UPLOAD: '0', TAVOTTO_DIAG_DEV_LOOPBACK: '1', TAVOTTO_DIAG_ENDPOINT: 'https://127.0.0.1:9' },
+  })
+  await page.setViewportSize({ width: 1280, height: 800 })
+  await page.goto(a.baseURL)
+  const prep = page.locator('[data-prep-card]')
+  await expect(prep).toHaveAttribute('data-prep-state', 'discover', { timeout: 60_000 })
+  // 只改属性栏的宽度（style 属性变化，没有 DOM 增删）——拖动把手的每一帧就是这种变化；
+  // 用键盘 Home / End 换档会让属性栏里的内容重排出增删，做不成「只有布局变化」的对照
+  const setInspectorWidth = (px: number) =>
+    page.evaluate((w) => {
+      // 外层宽度由抽屉动效（drawerMotion）写在 style 上，内层再写一份：两层都改
+      const aside = document.querySelector<HTMLElement>('[data-inspector-panel]')
+      const inner = aside?.querySelector<HTMLElement>(':scope > div')
+      if (!aside || !inner) throw new Error('找不到属性栏')
+      aside.style.width = `${w}px`
+      inner.style.width = `${w}px`
+    }, px)
+  await setInspectorWidth(520) // 属性栏很宽：准备卡在左边，不与反馈卡相交
+  await page.waitForTimeout(400)
+  await page.evaluate(() => {
+    setTimeout(() => {
+      throw new TypeError('prep drag e2e')
+    }, 0)
+  })
+  const card = page.locator('[data-unexpected-error-card]')
+  await expect(card).toBeVisible({ timeout: 10_000 })
+  const overlap = async () => {
+    const c = (await card.boundingBox())!
+    const p = (await prep.boundingBox())!
+    return c.x < p.x + p.width && p.x < c.x + c.width && c.y < p.y + p.height && p.y < c.y + c.height
+  }
+  await page.waitForTimeout(400)
+  expect(await overlap(), '属性栏最宽时不相交').toBe(false)
+  const before = (await prep.boundingBox())!.x
+  await setInspectorWidth(240) // 属性栏变窄：画布变宽，准备卡右移
+  await page.waitForTimeout(600)
+  expect((await prep.boundingBox())!.x, '准备卡确实被带着右移了（否则本条是空对照）').toBeGreaterThan(before + 20)
+  expect(await overlap(), '拖窄后仍不相交').toBe(false)
+  if (SHOTS) await page.screenshot({ path: `${SHOTS}/feedback-corner-after-inspector-drag.png` })
+})
+
