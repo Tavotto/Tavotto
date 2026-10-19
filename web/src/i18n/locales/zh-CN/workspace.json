@@ -137,7 +137,8 @@
     "textMenu": "文字"
   },
   "unexpectedError": {
-    "text": "Tavotto 出了点意外，可以把诊断发给我们"
+    "text": "Tavotto 出了点意外",
+    "body": "发一份诊断给我们，能帮我们更快找到原因、修好它。"
   },
   "exitNotice": {
     "engine": {
@@ -146,7 +147,8 @@
       "note": "重启后可以发送问题反馈"
     },
     "previous": {
-      "text": "上次 Tavotto 没有正常退出"
+      "text": "上次 Tavotto 没有正常退出",
+      "body": "如果是闪退或卡死，发一份诊断给我们能帮忙找到原因。"
     }
   },
   "crash": {

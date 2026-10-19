@@ -155,13 +155,14 @@ test('故障卡 → 打开 → 发送：脚本运行失败卡里入口在折叠�
     const dialog = page.locator('[data-dialog="diagnostics-send"]')
     await expect(dialog).toBeVisible()
     await expect(dialog.locator('[data-diag-send-confirm]')).toBeEnabled({ timeout: 60_000 })
-    // 轻确认框：默认只有一句话，详情收起
+    // 说明框在前（2026-10-19）：副标题那一句 + 输入框常显，附件内容收起
+    await expect(dialog.locator('[data-diag-send-note]')).toBeVisible()
     await expect(dialog.locator('[data-diag-send-sentence]')).toBeVisible()
     await expect(dialog.locator('[data-diag-send-details]')).not.toHaveAttribute('open', '')
     expect(connections).toBe(0)
-    // 收起态紧凑：标题 + 一句话 + 「查看详情」 + 按钮行，中间没有预留的大块空白
+    // 收起态紧凑：标题 + 副标题一句 + 说明（标签 + 框 + 提示行）+ 问题类型 + 一行附件 + 按钮行
     const compact = await dialog.boundingBox()
-    expect(compact!.height).toBeLessThan(230)
+    expect(compact!.height).toBeLessThan(500) // 1400×900 下实测约 466
     if (SHOTS) {
       await page.screenshot({ path: `${SHOTS}/send-dialog-collapsed.png` })
       await dialog.locator('[data-diag-send-details] > summary').click()
@@ -180,6 +181,54 @@ test('故障卡 → 打开 → 发送：脚本运行失败卡里入口在折叠�
     expect(after!.x).toBeCloseTo(before!.x, 0)
     expect(after!.y).toBeCloseTo(before!.y, 0)
     if (SHOTS) await page.screenshot({ path: `${SHOTS}/send-dialog-failed.png` })
+  } finally {
+    sink.close()
+  }
+})
+
+test('意外错误 → 右下角反馈卡：贴窗口右下角、一颗主按钮；点了只打开确认框（零连接），× 关掉', async ({ app, page }) => {
+  test.setTimeout(120_000)
+  let connections = 0
+  const sink = net.createServer((sock) => {
+    connections += 1
+    sock.destroy()
+  })
+  await new Promise<void>((r) => sink.listen(0, '127.0.0.1', r))
+  const port = (sink.address() as net.AddressInfo).port
+  const project = mkdtempSync(path.join(os.tmpdir(), 'tavotto-diag-corner-'))
+  try {
+    const a = await app({
+      figures: project,
+      env: {
+        TAVOTTO_NO_DIAG_UPLOAD: '0',
+        TAVOTTO_DIAG_DEV_LOOPBACK: '1',
+        TAVOTTO_DIAG_ENDPOINT: `https://127.0.0.1:${port}`,
+      },
+    })
+    await page.setViewportSize({ width: 1400, height: 900 })
+    await page.goto(a.baseURL)
+    await expect(page.locator('[data-work-panel]')).toBeVisible({ timeout: 60_000 })
+    // 一条未捕获的内建错误（不是业务错误类、不是 ApiError）：走 window error → 意外错误入口
+    await page.evaluate(() => {
+      setTimeout(() => {
+        throw new TypeError('corner card e2e')
+      }, 0)
+    })
+    const card = page.locator('[data-unexpected-error-card]')
+    await expect(card).toBeVisible({ timeout: 10_000 })
+    await page.waitForTimeout(400) // 等入场动画落定再量
+    const box = (await card.boundingBox())!
+    expect(1400 - (box.x + box.width), '贴右边').toBeLessThan(32)
+    expect(900 - (box.y + box.height), '贴底边').toBeLessThan(32)
+    await expect(card.locator('[data-variant="primary"]')).toHaveCount(1)
+    if (SHOTS) await page.screenshot({ path: `${SHOTS}/feedback-corner-card.png` })
+
+    await card.locator('[data-feedback-corner-send]').click()
+    await expect(card).toHaveCount(0)
+    const dialog = page.locator('[data-dialog="diagnostics-send"]')
+    await expect(dialog).toBeVisible()
+    await expect(dialog.locator('[data-diag-send-confirm]')).toBeEnabled({ timeout: 60_000 })
+    expect(connections).toBe(0)
   } finally {
     sink.close()
   }

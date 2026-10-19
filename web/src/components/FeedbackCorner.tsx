@@ -1,0 +1,104 @@
+import { useRef } from 'react'
+import { useTranslation } from 'react-i18next'
+import { CircleAlert, X } from '@/components/ui/icons'
+import { Button } from '@/components/ui/Button'
+import { ICON_SIZE } from '@/components/ui/Icon'
+import { DURATION, usePresence } from '@/lib/motion'
+import { useDiagSendStore } from '@/store/diagSendStore'
+import { useExitNoticeStore } from '@/store/exitNoticeStore'
+import { useUnexpectedErrorStore } from '@/store/unexpectedErrorStore'
+
+type Prompt =
+  | { slot: 'unexpected'; token: number }
+  | { slot: 'previous'; token: number; kind: string }
+
+/**
+ * 右下角的问题反馈卡（2026-10-19，用户：「一键反馈只出现在胶囊内，很多人不知道点」）。
+ *
+ * 此前「出了点意外」与「上次没有正常退出」是底部通知轨里的两条胶囊，「发送问题反馈」是胶囊里一颗 ghost 按钮——
+ * 一行高、和「渲染完成」长得一样，用户读不出它在请自己做点什么。现在单独成卡、贴窗口右下角：
+ * 红色图标 + 一句标题 + 一句为什么 + 一颗主按钮「发送问题反馈」+ ×。
+ *
+ * - **只认意外错误**（用户 10-19 裁决）：来源仍是 `unexpectedErrorStore`（判据在 `lib/unexpectedErrors.ts`）与
+ *   `exitNoticeStore.previous`；用户脚本报错、导出失败这类可预期的失败不弹这张卡。
+ * - **同时只有一张**：两类都在时先说意外错误（刚发生的事），它关掉后才轮到「上次没有正常退出」。
+ * - **主动作只打开确认框**（`diagSendStore.setOpen(true)`，本机备包）并收起这张卡；上传要等用户在框里点「发送」。
+ * - 发送入口关着（`capability === null`）时整张卡不渲染，与此前的判据相同。
+ */
+export function FeedbackCorner() {
+  const { t } = useTranslation('workspace')
+  const diagEnabled = useDiagSendStore((s) => s.capability !== null)
+  const unexpected = useUnexpectedErrorStore((s) => s.card)
+  const previous = useExitNoticeStore((s) => s.previous)
+
+  const current: Prompt | null = !diagEnabled
+    ? null
+    : unexpected
+      ? { slot: 'unexpected', token: unexpected.token }
+      : previous
+        ? { slot: 'previous', token: previous.token, kind: previous.kind }
+        : null
+  // 退场那一小段时间 store 已经清空了：留最后一张播完退场，不出现空壳
+  const last = useRef<Prompt | null>(null)
+  if (current) last.current = current
+  const presence = usePresence(!!current, DURATION.fast)
+  const shown = current ?? last.current
+
+  const dismiss = (p: Prompt) => {
+    if (p.slot === 'unexpected') useUnexpectedErrorStore.getState().dismiss()
+    else useExitNoticeStore.getState().dismissPrevious()
+  }
+  const openSend = (p: Prompt) => {
+    dismiss(p)
+    useDiagSendStore.getState().setOpen(true)
+  }
+
+  const title = (p: Prompt | null) =>
+    p ? t(p.slot === 'unexpected' ? 'unexpectedError.text' : 'exitNotice.previous.text') : ''
+  const body = (p: Prompt) => t(p.slot === 'unexpected' ? 'unexpectedError.body' : 'exitNotice.previous.body')
+
+  return (
+    <div
+      data-feedback-corner
+      className="pointer-events-none fixed bottom-4 right-4 z-toast flex w-80 max-w-[calc(100vw-2rem)] flex-col items-end"
+    >
+      <div aria-live="polite" className="sr-only">
+        {current ? title(current) : ''}
+      </div>
+      {presence.mounted && shown && (
+        <section
+          key={`${shown.slot}-${shown.token}`}
+          aria-label={title(shown)}
+          data-state={presence.state}
+          inert={presence.state === 'closed'}
+          {...(shown.slot === 'unexpected'
+            ? { 'data-unexpected-error-card': '' }
+            : { 'data-previous-exit-card': shown.kind })}
+          className="pointer-events-auto relative flex w-full gap-3 rounded-lg bg-surface p-3.5 pr-10 shadow-pop data-[state=open]:animate-rise-in data-[state=closed]:animate-rise-out"
+        >
+          <span aria-hidden className="flex size-8 shrink-0 items-center justify-center rounded-full bg-danger-surface text-danger">
+            <CircleAlert size={ICON_SIZE.md} />
+          </span>
+          <div className="flex min-w-0 flex-1 flex-col gap-1">
+            <p className="text-sm font-medium text-ink">{title(shown)}</p>
+            <p className="text-sm leading-5 text-ink-2">{body(shown)}</p>
+            <div className="mt-2 flex">
+              <Button variant="primary" size="sm" onClick={() => openSend(shown)} data-feedback-corner-send>
+                {t('settings.diagnostics.send.cardButton', { ns: 'dialogs' })}
+              </Button>
+            </div>
+          </div>
+          <Button
+            size="icon-xs"
+            onClick={() => dismiss(shown)}
+            aria-label={t('actions.close', { ns: 'common' })}
+            data-feedback-corner-close
+            className="absolute right-2 top-2 text-ink-3 hover:text-ink"
+          >
+            <X size={ICON_SIZE.sm} />
+          </Button>
+        </section>
+      )}
+    </div>
+  )
+}

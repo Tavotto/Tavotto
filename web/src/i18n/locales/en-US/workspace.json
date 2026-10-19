@@ -146,7 +146,8 @@
     "textMenu": "Text"
   },
   "unexpectedError": {
-    "text": "Something unexpected happened. You can send us the diagnostics."
+    "text": "Something went wrong in Tavotto",
+    "body": "Sending us the diagnostics helps us find the cause and fix it faster."
   },
   "exitNotice": {
     "engine": {
@@ -155,7 +156,8 @@
       "note": "After restarting you can send a problem report"
     },
     "previous": {
-      "text": "Tavotto did not exit normally last time"
+      "text": "Tavotto did not exit normally last time",
+      "body": "If it crashed or froze, sending us the diagnostics helps us find out why."
     }
   },
   "crash": {
