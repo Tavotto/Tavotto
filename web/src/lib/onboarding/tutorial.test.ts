@@ -566,6 +566,33 @@ describe('resetTutorial', () => {
     expect(calls.filter((c) => c.url === '/api/tutorial/reset')).toEqual([])
   })
 
+  it('示例项目不是当前项目：确认框列出重置前现取的 /api/tutorial copy.layouts', async () => {
+    useProjectStore.setState({ phase: 'open', project: { ...PROJECT, tutorial: false, id: 'p_other' } })
+    useTutorialStore.setState({ meta: META })
+    stubFetch({
+      '/api/tutorial': () =>
+        json({ available: true, problems: [], metadata: META, copy: { exists: true, complete: true, missing: [], registry_ok: true, layouts: ['MyDraft'] } }),
+    })
+    const p = resetTutorial()
+    await vi.waitFor(() => expect(useUiStore.getState().confirm).not.toBeNull())
+    const req = useUiStore.getState().confirm!
+    expect(req.body.key).toBe('onboarding.reset.bodyWithLayouts')
+    expect(req.body.values?.names).toBe('MyDraft')
+    expect(calls.some((c) => c.url === '/api/layouts')).toBe(false) // 不读别的项目的列表
+    req.resolve(false)
+    await p
+  })
+
+  it('示例项目不是当前项目且现取状态失败：不弹确认、不发重置，按失败返回', async () => {
+    useProjectStore.setState({ phase: 'open', project: { ...PROJECT, tutorial: false, id: 'p_other' } })
+    useTutorialStore.setState({ meta: META })
+    stubFetch({ '/api/tutorial': () => json({ error: 'boom' }, 500) })
+    const out = await resetTutorial()
+    expect(out.ok).toBe(false)
+    expect(useUiStore.getState().confirm).toBeNull()
+    expect(calls.filter((c) => c.url === '/api/tutorial/reset')).toEqual([])
+  })
+
   it('元数据还没取到（重启后示例项目开着）：先取齐再确认——另存的画布照样列出，重置期间照样挂起自动保存', async () => {
     await openSampleProject()
     useTutorialStore.setState({ meta: null, status: null })

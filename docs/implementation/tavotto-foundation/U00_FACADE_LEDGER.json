@@ -1003,7 +1003,7 @@
         {
           "file": "src/tavotto/engine/tutorial.py",
           "symbol": "validate_tutorial_resources",
-          "line": 573,
+          "line": 579,
           "role": "教程资源静态校验：PDF 打得开、尺寸合理"
         },
         {

@@ -310,6 +310,31 @@ def _write_state(version_dir: Path, meta: dict, digest: str, manifest: dict[str,
     )
 
 
+def saved_layouts(dest: Path, meta: dict) -> list[str]:
+    """副本里用户另存的画布名（不含教程画布本身）。只读，永不抛。
+
+    重置会把整份副本目录换掉，所以这里列的正是重置会一并删除的：项目收纳目录
+    `tavottofile/` + 旧位置 `canvases/`（与 `api_layouts` 对该项目的取法一致）。
+    数据目录 `layouts/` 不在副本里、重置不删它，故不列。单个文件 stat 失败就跳过。"""
+    own = str(meta.get("document_name") or "")
+    names: set[str] = set()
+    for d in (config.project_store_dir(dest), dest / "canvases"):
+        try:
+            if not d.is_dir():
+                continue
+            for p in d.glob("*.json"):
+                if p.stem == own or not documents.is_user_document_stem(p.stem):
+                    continue
+                try:
+                    if p.is_file():
+                        names.add(p.stem)
+                except OSError:
+                    continue
+        except OSError:
+            continue
+    return sorted(names)
+
+
 def copy_status(meta: dict | None = None) -> dict:
     """副本此刻的状态：在不在、全不全、缺什么。只读。"""
     meta = meta if meta is not None else tutorial_metadata()
@@ -322,6 +347,7 @@ def copy_status(meta: dict | None = None) -> dict:
             "complete": False,
             "missing": sorted(manifest),
             "registry_ok": False,
+            "layouts": [],
             "version": int(meta["tutorial_version"]),
             "resource_digest": digest,
         }
@@ -332,6 +358,7 @@ def copy_status(meta: dict | None = None) -> dict:
         "complete": not missing and registry_ok,
         "missing": missing,
         "registry_ok": registry_ok,
+        "layouts": saved_layouts(dest, meta),
         "version": int(meta["tutorial_version"]),
         "resource_digest": digest,
     }

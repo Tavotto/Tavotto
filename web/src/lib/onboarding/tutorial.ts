@@ -253,7 +253,13 @@ export async function resetTutorial(): Promise<TutorialOutcome> {
   // 元数据可能还没取到（重启后示例项目开着、设置页 / 命令面板的探测还在路上）：先取齐再确认。
   // 拿着 null 往下走，确认框会漏掉要被删的另存画布，重置窗口里也不会挂起示例画布的自动保存
   const meta = useTutorialStore.getState().meta ?? (await loadTutorialStatus())?.metadata ?? null
-  const extras = await savedLayoutsInTutorial(meta)
+  // 现取失败就不弹确认：确认框不能假装「没有另存排版」去让用户放心点删除
+  let extras: string[]
+  try {
+    extras = await savedLayoutsInTutorial(meta)
+  } catch (e) {
+    return fail(classify(e), e)
+  }
   const ok = await askConfirm({
     title: msg('onboarding.reset.title', undefined, 'dialogs'),
     body: extras.length
@@ -294,15 +300,24 @@ async function resetTutorialNow(
   return out
 }
 
-/** 教程项目里除教程画布之外、用户自己另存的画布文件名 */
+/**
+ * 教程项目里除教程画布之外、用户自己另存的画布文件名。示例项目是当前项目时读当前项目的
+ * 排版列表（含还没落到状态里的最新保存）；不是当前项目时（设置页 / 命令面板也能触发重置）
+ * `/api/layouts` 取的是别的项目，改为**重置前现取**后端 `copy.layouts`（不用缓存的旧状态，
+ * 用户可能刚另存过）。不是当前项目时现取失败会抛，由调用方按失败路径返回。
+ */
 async function savedLayoutsInTutorial(meta: TutorialMetadata | null): Promise<string[]> {
-  if (!meta || useProjectStore.getState().project?.tutorial !== true) return []
-  try {
-    const names = await fetchLayoutNames()
-    return names.filter((n) => n !== meta.document_name)
-  } catch {
-    return []
+  if (!meta) return []
+  if (useProjectStore.getState().project?.tutorial === true) {
+    try {
+      const names = await fetchLayoutNames()
+      return names.filter((n) => n !== meta.document_name)
+    } catch {
+      return []
+    }
   }
+  const status = await fetchTutorialStatus()
+  return (status.copy?.layouts ?? []).filter((n) => n !== meta.document_name)
 }
 
 /** 事务里用的认领：直接执行、不再排切换队列（见 `projectStore.switchTransaction`） */

@@ -662,7 +662,14 @@ export interface TutorialStatus {
   problems: string[]
   tutorial_version?: number
   metadata?: TutorialMetadata
-  copy?: { exists: boolean; complete: boolean; missing: string[]; registry_ok: boolean }
+  copy?: {
+    exists: boolean
+    complete: boolean
+    missing: string[]
+    registry_ok: boolean
+    /** 副本里用户另存的画布名（不含教程画布本身）；重置会一并删掉。老后端没有这个字段 */
+    layouts?: string[]
+  }
   project?: { open: boolean; id: string | null }
 }
 

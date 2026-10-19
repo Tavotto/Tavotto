@@ -327,6 +327,27 @@ def test_reset_restores_pristine_copy_and_leaves_no_leftovers(data_dir):
     assert leftovers == [], leftovers
 
 
+def test_copy_status_lists_only_user_saved_layouts(data_dir, client):
+    """`copy.layouts` = 重置会一并删掉的、用户另存的画布：不含教程画布本身与 `_styles`。"""
+    assert tutorial.copy_status()["layouts"] == []  # 副本不存在
+    first = tutorial.ensure_tutorial_copy()
+    own = tutorial.tutorial_metadata()["document_name"]
+    assert (first.path / "tavottofile" / f"{own}.json").is_file()  # 教程画布本身在
+    assert tutorial.copy_status()["layouts"] == []  # 刚复制出来：没有另存
+    (first.path / "tavottofile" / "MyDraft.json").write_text("{}", encoding="utf-8")
+    (first.path / "tavottofile" / "_styles.json").write_text("{}", encoding="utf-8")
+    (first.path / "canvases").mkdir()
+    (first.path / "canvases" / "OldCanvas.json").write_text("{}", encoding="utf-8")
+    (first.path / "canvases" / "MyDraft.json").write_text("{}", encoding="utf-8")  # 重名只算一次
+    assert tutorial.copy_status()["layouts"] == ["MyDraft", "OldCanvas"]
+    # 数据目录 layouts/ 不在副本里，重置不删它，不列
+    (data_dir / "layouts").mkdir(exist_ok=True)
+    (data_dir / "layouts" / "Elsewhere.json").write_text("{}", encoding="utf-8")
+    assert client.get("/api/tutorial").get_json()["copy"]["layouts"] == ["MyDraft", "OldCanvas"]
+    tutorial.ensure_tutorial_copy(reset=True)
+    assert tutorial.copy_status()["layouts"] == []
+
+
 def test_stale_leftovers_from_an_interrupted_reset_are_swept(data_dir):
     first = tutorial.ensure_tutorial_copy()
     stale_old = first.path.parent / f".{tutorial.PROJECT_DIRNAME}-deadbeef.old"
@@ -481,6 +502,7 @@ def test_get_reports_availability_without_leaking_package_paths(client):
         "complete": False,
         "missing": sorted(tutorial.resource_files()),
         "registry_ok": False,
+        "layouts": [],
         "version": body["tutorial_version"],
         "resource_digest": body["copy"]["resource_digest"],
     }
