@@ -219,6 +219,20 @@ describe('不盖住准备引导卡（Codex #1184）', () => {
     expect(corner().style.right).toBe('')
   })
 
+  it('准备卡收起成角标（data-prep-pill）也避让', async () => {
+    Object.assign(window, { innerWidth: 1024, innerHeight: 768 })
+    act(() => void useUnexpectedErrorStore.getState().show())
+    const pill = document.createElement('div')
+    pill.setAttribute('data-prep-pill', '')
+    pill.getBoundingClientRect = () => rect({ left: 800, right: 1012, top: 716, bottom: 756, width: 212, height: 40 })
+    await act(async () => {
+      document.body.appendChild(pill)
+      await Promise.resolve()
+    })
+    expect(corner().style.bottom).toBe(`${768 - 716 + 8}px`)
+    pill.remove()
+  })
+
   it('准备卡不在这张卡的水平范围里（属性栏开着、画布在左边）：不动', async () => {
     Object.assign(window, { innerWidth: 1400, innerHeight: 900 })
     act(() => void useUnexpectedErrorStore.getState().show())

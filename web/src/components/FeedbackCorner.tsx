@@ -15,9 +15,20 @@ const GAP_PX = 8
 
 type Clearance = { bottom: number } | { right: number } | null
 
+/** 几个矩形的外包框（没有就是 undefined） */
+type Box = { left: number; top: number; right: number; bottom: number }
+function union(rects: DOMRect[]): Box | undefined {
+  if (rects.length === 0) return undefined
+  const left = Math.min(...rects.map((r) => r.left))
+  const top = Math.min(...rects.map((r) => r.top))
+  const right = Math.max(...rects.map((r) => r.right))
+  const bottom = Math.max(...rects.map((r) => r.bottom))
+  return { left, top, right, bottom }
+}
+
 /**
  * 与准备引导卡（`PreparationCard`，画布右下角）不叠（Codex #1184）：属性栏收起时两张卡都在右下角，
- * 这张 `z-toast` 会盖住准备卡底部的按钮。只在这张卡显示时观察 `[data-prep-card]`（出现 / 消失 / 尺寸）、它的各级定位祖先的尺寸
+ * 这张卡会盖住准备卡底部的按钮。只在这张卡显示时观察 `[data-prep-card]` / `[data-prep-pill]`（出现 / 消失 / 尺寸）、它的各级定位祖先的尺寸
  * （拖窄属性栏时准备卡自己尺寸不变、是画布变宽把它带走的，Codex #1184）与自己的高度，
  * 水平相交时按序挑一个**整张都在窗口里**的位置：① 准备卡上方 8px（上面放得下这张卡的实测高度）；
  * ② 准备卡左侧 8px、贴底（左边放得下卡宽）；③ 都放不下（窗口太小）就留在默认位置——宁可叠，也不把卡推出窗口。
@@ -38,17 +49,19 @@ function usePrepCardClearance(active: boolean, self: RefObject<HTMLElement | nul
       }
     }
     function measure() {
-      const prep = document.querySelector('[data-prep-card]')
-      watch(prep)
+      // 准备引导卡有两种形态：展开的卡与收起后的角标（`data-prep-pill`），都住在同一个角上
+      const preps = Array.from(document.querySelectorAll('[data-prep-card], [data-prep-pill]'))
+      const prep = preps[0] ?? null
+      preps.forEach(watch)
       // 准备卡贴着定位祖先的右下角：祖先变宽 / 变高它就跟着挪，自己尺寸不变、DOM 也没增删
       for (let a = (prep as HTMLElement | null)?.offsetParent; a && a !== document.body; a = (a as HTMLElement).offsetParent)
         watch(a)
       watch(self.current)
-      const r = prep?.getBoundingClientRect()
+      const r = union(preps.map((el) => el.getBoundingClientRect()).filter((b) => b.width > 0 && b.height > 0))
       const vw = window.innerWidth
       const vh = window.innerHeight
       const left = vw - EDGE_PX - CARD_W_PX
-      const overlaps = !!r && r.width > 0 && r.height > 0 && r.right > left && r.left < vw - EDGE_PX
+      const overlaps = !!r && r.right > left && r.left < vw - EDGE_PX
       let next: Clearance = null
       if (overlaps) {
         const h = self.current?.getBoundingClientRect().height ?? 0
@@ -129,7 +142,9 @@ export function FeedbackCorner() {
     <div
       data-feedback-corner
       style={clearance ?? undefined}
-      className="pointer-events-none fixed bottom-4 right-4 z-toast flex w-80 max-w-[calc(100vw-2rem)] flex-col items-end"
+      // 层级 z-drawer：在画布浮层 / 准备卡之上，但在任何对话框的遮罩（z-overlay）与对话框（z-dialog）之下——
+      // 哪个对话框开着都自然盖住它，不用逐个登记（Codex #1184；此前 z-toast 会压在设置等对话框上）
+      className="pointer-events-none fixed bottom-4 right-4 z-drawer flex w-80 max-w-[calc(100vw-2rem)] flex-col items-end"
     >
       <div aria-live="polite" className="sr-only">
         {current ? title(current) : ''}

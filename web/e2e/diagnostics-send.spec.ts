@@ -223,6 +223,19 @@ test('意外错误 → 右下角反馈卡：贴窗口右下角、一颗主按钮
     await expect(card.locator('[data-variant="primary"]')).toHaveCount(1)
     if (SHOTS) await page.screenshot({ path: `${SHOTS}/feedback-corner-card.png` })
 
+    // 任何对话框都盖在它上面（层级在遮罩之下）：打开设置，反馈卡左上角点到的不是反馈卡
+    await page.locator('[data-rail="settings"]').click()
+    await expect(page.locator('[data-section="diagnostics"]')).toBeVisible()
+    const onTop = await page.evaluate(() => {
+      const el = document.querySelector('[data-unexpected-error-card]')!
+      const r = el.getBoundingClientRect()
+      const hit = document.elementFromPoint(r.left + 8, r.top + 8)
+      return !!hit && el.contains(hit)
+    })
+    expect(onTop, '对话框开着时反馈卡不在最上层').toBe(false)
+    await page.keyboard.press('Escape')
+    await expect(page.locator('[data-section="diagnostics"]')).toBeHidden()
+
     await card.locator('[data-feedback-corner-send]').click()
     await expect(card).toHaveCount(0)
     const dialog = page.locator('[data-dialog="diagnostics-send"]')
