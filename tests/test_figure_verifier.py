@@ -302,13 +302,17 @@ def test_renumbered_axes_do_not_stand_in_for_a_deleted_axes(kind):
     # 同一个对象（身份没变）：照常 verified
     same = _man(_with_identity(_axes(0), "l1:aaa"))
     assert figureverify.check(a, same, before, role="preserve").verdict == "verified"
-    # 任一侧缺身份：不比，维持按位置匹配
+    # 任一侧缺身份、轴的个数又变了：按位置得到的「成立」不可信 → unknown（默认 plt.subplots 的轴没有 identity）
     for b, af in (
         (_man(_axes(0), _axes(1)), after),
         (before, _man(_axes(0))),
         (_man(_axes(0), _axes(1)), _man(_axes(0))),
     ):
-        assert figureverify.check(a, af, b, role="preserve").verdict == "verified"
+        c = figureverify.check(a, af, b, role="preserve")
+        assert (c.verdict, c.reason_code) == ("unknown", "subject_renumbered")
+    # 缺身份但轴数没变：没有重编号，照常按位置
+    two = _man(_axes(0), _axes(1))
+    assert figureverify.check(a, two, two, role="preserve").verdict == "verified"
 
 
 def test_renumbered_series_do_not_stand_in_for_a_deleted_series():

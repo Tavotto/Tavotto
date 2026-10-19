@@ -15,6 +15,8 @@ L3 的「这次修改新引入的版式问题」只复用 `interference.detect` 
 
 from __future__ import annotations
 
+import re
+
 from . import interference, preflight, profiles
 from .ai_tasks import FAILED, UNKNOWN, VERIFIED, CheckResult
 
@@ -194,6 +196,33 @@ def _subject_replaced(a: dict, after: dict, before: dict) -> bool:
     return False
 
 
+_AXES_GID = re.compile(r"axes_\d+")
+
+
+def _axes_count(man: dict) -> int:
+    return sum(1 for g in _elements(man) if _AXES_GID.fullmatch(g))
+
+
+def _identity_confirms(a: dict, after: dict, before: dict) -> bool:
+    """改前主体在改后同 gid 处、两侧 identity 都有且相等——位置之外有独立证据说它还是同一个对象。"""
+    after_els, before_els = _elements(after), _elements(before)
+    gids = _subject_gids(a, before)
+    for gid in gids:
+        o = (before_els.get(gid) or {}).get("identity")
+        n = (after_els.get(gid) or {}).get("identity")
+        if not (isinstance(o, str) and o and o == n):
+            return False
+    return bool(gids)
+
+
+def _positions_shifted(a: dict, after: dict, before: dict) -> bool:
+    """按轴序号定位的断言，而轴的个数前后不同：没有显式 label 的轴没有 identity（ADR 0083 §二），删掉前面的子图后
+    后面的轴会顶上同一个 `axes_N`——这时按位置得到的「成立」不可信，记 unknown（不是 verified，也不臆断 failed）。"""
+    if "axes" not in a or _axes_count(after) == _axes_count(before):
+        return False
+    return not _identity_confirms(a, after, before)
+
+
 def _holds(a: dict, after: dict, before: dict) -> bool:
     """断言在 `after` 上成立吗（`before` 是改前）。对象找不到抛 `_Missing`，量不出抛 `_Unobservable`。"""
     k = a["kind"]
@@ -326,6 +355,7 @@ def check(
     if _subject_replaced(a, after, before):
         # 位置式 gid 在删前面的子图 / 曲线后会重编号，后面的对象顶上同一个 gid：gid 在不等于主体还在
         return CheckResult(**base, verdict=FAILED, reason_code="subject_removed")
+    shifted = _positions_shifted(a, after, before)
     try:
         ok = _holds(a, after, before)
     except _Unobservable as exc:
@@ -340,6 +370,8 @@ def check(
             verdict=FAILED if existed else UNKNOWN,
             reason_code="subject_removed" if existed else "subject_not_found",
         )
+    if shifted:
+        return CheckResult(**base, verdict=UNKNOWN, reason_code="subject_renumbered")
     return CheckResult(
         **base, verdict=VERIFIED if ok else FAILED, reason_code=None if ok else "assertion_failed"
     )
