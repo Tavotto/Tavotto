@@ -112,6 +112,10 @@ expected_cases, corpus_sha256, cases[], evidence[], verdict, coverage, unverifie
 - `passed` 的必要条件：原生参照通过；两侧计数 > 0；环境可比；九格全部 `passed`。
 - `expected_limitation`：来源——CompatBench 清单里**显式声明**期望为假的阶段；以及 V2「设计停止」场景
   （`ideal_outcome == stop_no_fallback` 且 V2 停止判据逐项满足：一次执行、明确原因码、无图、不回退）。
+  以及 V2「设计内 partial」场景（`ideal_outcome == partial_figure` 且 V2 判据逐项满足：phase=partial、
+  失败的图在 `failed_figures` 里指认）：执行层 `passed`（`partial`+`succeeded` 就是跑完了），捕获层
+  `expected_limitation`。其余情况下捕获张数少于原生张数，捕获层一律 `failed`（`partial_capture`），
+  不会因为「至少捕获了一张」判过。
 - `control_met`：见 §3.2，只由已提交的声明文件产生。
 - `failed` 必须有独立证据（阶段失败 / 路由失败 / 浏览器失败）；遗留的 `product_bug` 标签单独只给 `unknown`。
 - 聚合 `verdict`：有 `failed` → `failed`；全 `passed` → `passed`；其余全在 {passed, partial_coverage,
