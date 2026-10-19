@@ -256,6 +256,21 @@ export async function waitForFigureEdit(page: Page): Promise<void> {
 }
 
 /**
+ * 刷新后（工作区把图恢复在画布上、没选中）点一下画布上唯一的图选中它。
+ *
+ * 点**画布对象容器** `[data-object-id]`，不要点里面的 `<img>`：预览刷新时同一个容器里新旧两张 `<img>` 会短暂叠放，
+ * 叠放顺序（z 序）与 DOM 顺序不一致——`getByRole('img').first()` / `.last()` 都可能选中被盖住的那张，点击一直卡在
+ * 「<img> intercepts pointer events」（负载高时 30 s 超时，ai-draft / ai-restore 反复出现）。容器的中心点由命中测试落到
+ * 最上面那张图上，那张图是它的后代，Playwright 认作命中自己。取景补间（`data-view-tweening`）期间图在动，先等它落定。
+ */
+export async function selectCanvasFigure(page: Page): Promise<void> {
+  await expect(page.locator('[data-view-tweening]')).toHaveCount(0, { timeout: 30_000 })
+  const figure = page.locator('[data-canvas-stage] [data-object-id]')
+  await expect(figure).toHaveCount(1, { timeout: 30_000 })
+  await figure.click({ timeout: 30_000 })
+}
+
+/**
  * 幂等地打开左栏「图内元素」。rail 按钮是 **toggle**（对已激活 tab 再点
  * 一次 = 收起），而 `enterElementEdit` 在 wide 布局下会自动把左栏切到
  * 元素树——盲点击会在时序上把刚自动打开的面板关掉：树在收起动画

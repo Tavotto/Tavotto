@@ -260,6 +260,20 @@ USER_VISIBLE_CODES = {
     "ai_revert_failed": {"reason"},
     # QA STATE-09：脚本在这次 AI 修改之后又变过，回滚被拒（409，AgentError 漏斗）
     "ai_revert_conflict": {"script"},
+    # PR4：同一脚本上已有 AI 任务在跑（后端并发保护）/ 前端按请求 id 查询时后端没登记过
+    "ai_script_busy": {"script"},
+    "ai_request_not_found": set(),
+    # 这个请求 id 已被新指令取代（改写后再发），不会再执行 / 取代时发现旧请求其实已经开始
+    "ai_request_superseded": set(),
+    "ai_supersede_conflict": set(),
+    # 同面板 / 同脚本上还有没落定的待确认提交，这次又没显式取代它（409，后端在写账本的事务里判）
+    "ai_pending_unresolved": set(),
+    # 拒绝之后清待确认行也失败了：状态不确定（503），客户端保持同一个 rid
+    "ai_request_unresolved": set(),
+    # ADR 0132：助手草稿单稿超过 20 KB（413，不截断）
+    "ai_draft_too_large": {"limit_kb"},
+    # 同一面板未解决的待确认提交已满（409，拒绝新的、不淘汰旧的）
+    "ai_pending_limit": {"count"},
     # --- 编码 Agent 注册表（ADR 0013）：全部经 AgentError 抛出、
     #     由 app.py 的 _agent_error 一个漏斗转成 JSON ---
     "ai_agent_unknown": {"agent"},
