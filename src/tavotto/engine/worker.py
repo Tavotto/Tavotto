@@ -281,6 +281,39 @@ def _source_stamp(path: Path) -> tuple[int, int, int, str] | None:
     return (st.st_mtime_ns, st.st_size, st.st_ino, digest)
 
 
+@contextlib.contextmanager
+def _capture_entry_sha(script: Path, captured: list[str]):
+    """import 期间让入口脚本由 loader **只从源码编译**并记下所编译字节的 sha256（不读任何 .pyc）。
+
+    临时包 `SourceFileLoader.get_code`（try/finally 恢复；沿用 `_tavotto_real` 约定避免叠包）。其他模块走原函数；
+    `get_code` 之外的 import 流程（spec、`__file__`、`__cached__`、执行）不变——`source_to_code` 与
+    `get_data` 都是 `SourceFileLoader` 自己的方法。
+    """
+    from importlib.machinery import SourceFileLoader  # noqa: PLC0415
+
+    target = _norm_path(script)
+    original = SourceFileLoader.get_code
+    real_get_code = getattr(original, "_tavotto_real", original)
+
+    def get_code(self, fullname):
+        try:
+            hit = _norm_path(self.path) == target
+        except (OSError, TypeError, ValueError):
+            hit = False
+        if not hit:
+            return real_get_code(self, fullname)
+        data = self.get_data(self.path)
+        captured.append(hashlib.sha256(data).hexdigest())
+        return self.source_to_code(data, self.path)
+
+    get_code._tavotto_real = real_get_code
+    SourceFileLoader.get_code = get_code
+    try:
+        yield
+    finally:
+        SourceFileLoader.get_code = original
+
+
 class SafeSession(figsession.LiveFigureSession):
     """safe 档的 LiveFigureSession：引擎自己写盘时摘掉 savefig 拦截。
 
@@ -1155,12 +1188,18 @@ class Worker(wireproto.V1Handler):
 
         capture_threads = set(threading.enumerate())
         t_script = time.perf_counter()
-        # `source_sha256`（TAF 改图验证的判据：这次 build 执行的是哪一版源码）用执行前后括号：Python 的 loader
-        # （runpy / import_module）读源码那一刻必落在 pre 与 post 之间；两端 (mtime_ns, size, inode, sha) 完全
-        # 相同 ⇒ 这段时间里文件没被写过（任何写入都推进 mtime；刻意 utime 回拨属对抗性，不设防），loader 读到的
-        # 就是这份字节。两端不同 → None（验证记 unknown，不猜）。已知边界：import_module 路径若命中项目外遗留的、
-        # 与源码 mtime / size 恰好一致的过期 .pyc（项目内 worker 不写 .pyc，`_suppress_project_bytecode`）。
-        pre = _source_stamp(self.script)
+        # `source_sha256`（TAF 改图验证的判据：这次 build 执行的是哪一版源码）。两条路径各自成立的理由不同：
+        # - entry != "__main__"（`import_module`）：由**实际加载源码的 loader 报摘要**。`_capture_entry_sha` 在这次
+        #   import 期间临时包 `SourceFileLoader.get_code`：入口脚本一律 `get_data` 读源码字节、记 sha256、
+        #   `source_to_code` 编译——完全不读 `__pycache__`（外部运行遗留的 timestamp / unchecked-hash .pyc 过期也
+        #   不会被执行），所以「报的摘要」与「编译执行的字节」是同一份，判据是定义上的，不靠前后戳。
+        # - entry == "__main__"（`runpy.run_path`）：CPython runpy（3.10–3.14 同形）`_get_code_from_file` 对 .py 文件
+        #   只做 `read_code(f)`（仅当文件本身以 .pyc magic 开头才当字节码）、否则 `compile(f.read(), ...)`，
+        #   从不查 `__pycache__`，读的就是源码本身。故沿用执行前后括号：读源码那一刻必落在 pre 与 post 之间，
+        #   两端 (mtime_ns, size, inode, sha) 完全相同 ⇒ 期间没被写过（刻意 utime 回拨属对抗性，不设防）；不同 → None。
+        #   `_source_stamp` 只给这条路径用。
+        pre = _source_stamp(self.script) if self.entry == "__main__" else None
+        entry_shas: list[str] = []
         # `SystemExit` 不是 `Exception`：脚本末尾的 `sys.exit(main())` / `exit()` /
         # `quit()` 会一路穿过 `ensure_built` 的 `except Exception`，落到主循环
         # 那条给协议 `shutdown` 用的 `except SystemExit: break` 上——worker 悄无
@@ -1187,7 +1226,8 @@ class Worker(wireproto.V1Handler):
 
                     runpy.run_path(str(self.script), run_name="__main__")
                 else:
-                    module = importlib.import_module(self.script.stem)
+                    with _capture_entry_sha(self.script, entry_shas):
+                        module = importlib.import_module(self.script.stem)
                     getattr(module, self.entry)()
             except SystemExit as exc:
                 if exc.code not in (None, 0):
@@ -1222,8 +1262,12 @@ class Worker(wireproto.V1Handler):
                 channel.closed = True
                 ledger.stop()
                 # 无论正常结束 / SystemExit / 异常都在这里收括号（finally 不改变原有异常传播）
-                post = _source_stamp(self.script)
-                self._source_sha256 = pre[3] if pre is not None and pre == post else None
+                if self.entry == "__main__":
+                    post = _source_stamp(self.script)
+                    self._source_sha256 = pre[3] if pre is not None and pre == post else None
+                else:
+                    # 恰好一次加载才可信；零次（入口模块此前已在 sys.modules，如被 paper_style 提前 import）或多次 → None
+                    self._source_sha256 = entry_shas[0] if len(entry_shas) == 1 else None
         script_ms = _ms(t_script)
         # 脚本跑到了末尾，但被守卫拦下的关键操作之后它观察过受影响的路径（用户 `except Exception`
         # 吞掉什么都不影响这条带外事实）：结果可能与直接 Python 不同，不记成完整成功（P01a，AC-02）
