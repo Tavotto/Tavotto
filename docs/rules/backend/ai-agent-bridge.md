@@ -115,6 +115,39 @@
   旧的 `ai.codex_path` / `ai.claude_path` 由 `config._migrate_ai_agents()`
   一次性迁移并**立刻删掉旧键**（两份权威并存 = 一边改路径另一边不知道）；
   规则写成正则而不是列举两个名字。不认识的 agent id 原样留着。
+- **幂等与并发（ADR 0132）**：`POST /api/ai/run` 可带前端点发送时生成的 `client_request_id`（UUID，
+  `[A-Za-z0-9_-]{8,64}`，格式不对 400，不静默当没带）。`run()` 在 `script_guard` + `_REQUEST_LOCK` 里先按
+  **(项目, id)** 查内存会话与历史库（`ai_history` 的 `client_request_id` 列 + 部分唯一索引），命中抛
+  `DuplicateRequest`、app 层返回既有 `{session, script, deduped: true}`，**不 spawn、不重复记遥测**；
+  去重先于忙检查。同脚本上另一个请求还在跑（`script_busy`）→ 409 `ai_script_busy`——并发保护在后端，
+  不再只靠前端的 `runningHere`。`GET /api/ai/requests/<id>` 只读、按当前项目隔离，回
+  `{session,status,changed,script}` 或 404 `ai_request_not_found`（前端判「已发出未确认」要不要重发的唯一依据）。
+  `ai.*` 事件带 `client_request_id`。**请求 id 与提示词一样不进日志 / 遥测 / 诊断包**
+  （`tests/test_ai_idempotency.py::test_prompt_and_request_id_never_reach_the_log`）。
+- **草稿与待确认账本（ADR 0132）**：助手输入框的未发送草稿与「已发出、等确认」的提交存 `ai_history.sqlite3`
+  的 `ai_drafts` / `ai_pending`（主语 (项目, fileId[, rid])，按项目隔离，不进项目目录 / 日志 / 遥测 / 诊断包）。
+  端点 `GET|PUT|DELETE /api/ai/drafts`（PUT 全文覆盖、>20 KB 413 `ai_draft_too_large` 不截断；DELETE 带 `if_text`
+  条件删除）、`PUT` 带单调写入戳 `stamp`（旧戳 → `{stale:true,stamp}` 不覆盖；空文本 / 超限留墓碑；条件删除与 accept 推进戳；`ai_drafts.stamp` 旧表补列），`PUT|DELETE /api/ai/drafts/pending/<rid>`、`POST /api/ai/drafts/pending/<rid>/accept`（事务内清账本，
+  仅当草稿当前的写入戳仍等于账本记的 `draft_stamp`（提交时草稿的戳；自提交后没被改过）才删草稿，**不比文本**——提交文本是 trim 过的；账本没记戳就不动草稿；`GET /api/ai/drafts` 回行戳 `stamp`（含墓碑）供客户端抬高戳下限）。每项目 30 份、每面板 8 条未解决账本（满了拒绝新提交 409 `ai_pending_limit`，不淘汰旧的）、30 天过期（启动与写入时有界清理）。
+  **`run()` 先写幂等记录再 spawn**：写库失败不 spawn，spawn 失败标 `failed`。
+  **读-判-写一律在一个写事务里**：`put_draft`（比戳）、`put_pending`（数名额）、`accept_pending`（读账本再按戳删草稿）、
+  `mark_interrupted_running` 都走 `BEGIN IMMEDIATE`（`ai_history._immediate`），两个连接 / 两个服务进程不会各拿着过期的视图互相覆盖。
+  `_connect` 打开后即提交迁移回填，连接不会因为迁移的写语句而碰巧占着写锁。`POST /api/ai/run` 在 rid 格式校验之后**立刻**
+  查 (项目, rid)，命中直接按去重语义回既有会话，再往后才解析面板与注册表（可变目标：原请求登记后映射变了，同 id 重发也不能 404）。
+  **`supersedes` 与墓碑**：`PUT /api/ai/drafts/pending/<rid>` 带 `supersedes` 时，同一个事务里先给每个旧 rid 写墓碑预留（`ai_requests.session='~superseded'`）再删旧行；
+  晚到的旧 rid 在 `run()` 的原子预留处被 409 `ai_request_superseded` 拒绝，`GET /api/ai/requests/<rid>` 回 `status: superseded`；
+  旧 rid 已被真实预留则回滚并 409 `ai_supersede_conflict`。取代处理完之后、写新行之前（同一个事务），同 (项目, 面板) 或 `same_script`
+  认作同一份脚本的面板上还有待确认行 → 409 `ai_pending_unresolved`（带 `rids`，不写）：「同一修改不执行两次」由这道闸保证，不靠客户端的本地视图。
+  每面板 8 条的名额先判；闸守住之后同面板最多一条，名额只对守住之前留下的旧数据起作用。路由包装层对 spawn 之前的任何异常也删该 rid 的待确认行，spawn 之后的绝不删。
+  **请求预留是跨进程原子的**：进程内的查找只是快速路径（两个 Tavotto 进程共用同一数据目录时管不到对方）。真正的闸门是
+  `ai_history.record_start`——`BEGIN IMMEDIATE` 事务里对 `ai_requests` 做**普通 INSERT**（不加 OR IGNORE / OR REPLACE），
+  唯一约束冲突 = 别人已预留，回 `(False, 既有会话 id)`，`run()` 清掉为这次尝试备好的快照 / sidecar、不 spawn、按去重回既有会话；
+  预留与会话行同一事务，会话行用普通 INSERT，不再顶替同请求 id 的行。
+  **「同一脚本忙」同样跨进程**：`sessions.owner_pid` 记登记它的服务进程；`record_start` 在**同一个 `BEGIN IMMEDIATE` 事务**里，
+  预留之后再查同 (项目, 脚本) 上 `status='running'` 且**属主进程还活着**（`procalive.pid_alive`，POSIX `os.kill(pid, 0)` / Windows
+  `OpenProcess`；量不了按活着算；行超过 24 h 当属主已死，防 pid 复用造僵尸锁）的行，命中抛 `ScriptBusy`（整个事务回滚，请求 id 不被消耗），
+  `run()` 回 409 `ai_script_busy`、清掉半成品、不 spawn。属主未知 / 就是本进程 / 已死的 running 行不算忙。
+  **启动清理 `mark_interrupted_running` 只标属主已死的行**，不碰共用同一数据目录的另一个仍活着的服务进程里的会话。spawn 失败仍保留 `failed` 记录（同 rid 去重到它，明确没执行；前端换新 id 重发）。看护 `tests/test_ai_drafts.py`。
 - 会话历史在 `engine/ai_history.py`（SQLite `cache/ai_history.sqlite3`，
   按 project 列过滤）；启动时 running→interrupted + purge(180d，pinned 豁免)；
   历史 API：list（分页/搜索/筛选）/delete/pin。前端默认只显示人类可读目标，

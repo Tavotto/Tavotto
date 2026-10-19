@@ -13,7 +13,7 @@
  */
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { t } from '@/i18n'
 import { TooltipProvider } from '@/components/ui/Tooltip'
@@ -71,6 +71,7 @@ const q = <T extends Element = HTMLElement>(sel: string) => host.querySelector<T
 const qa = <T extends Element = HTMLElement>(sel: string) => Array.from(host.querySelectorAll<T>(sel))
 const typeDraft = async (text: string) => {
   const box = q<HTMLTextAreaElement>('[data-ai-input]')!
+  await vi.waitFor(() => expect(box.readOnly).toBe(false), { timeout: 8000 }) // 草稿读取结束前输入框只读
   const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!
   await act(async () => {
     setter.call(box, text)

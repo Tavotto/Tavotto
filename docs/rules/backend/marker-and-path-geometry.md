@@ -168,3 +168,11 @@
   色条，Patch 无缩放手柄），bbox 只被选中框 / 命中 / 吸附 / 对齐消费，它们要的正是看得见的部分。
   副作用：把 Patch 拖到子图边上时 bbox 尺寸会随裁剪收窄——`tests/test_geometry_reference.py`
   GEO-01 对 Patch 改为「bbox = 平移后的框 ∩ 子图框（完全在外则不折）」，其余元素仍要求尺寸不变。
+- geometry 带两项**绘制事实**（命中分层的输入，ADR 0086 修订）：`paint_order` = 该元素在真实 draw 顺序里
+  的序号（`pathgeom.paint_ranks`：Figure / Axes 的 `get_children()` 按 zorder 稳定升序递归，与
+  matplotlib draw 同一规则；主语是 manifest 测量那一刻的 `fig` 对象，不是 zorder 字面值也不是登记序；
+  伪元素取成员里最晚画的，且仅当成员 rank 区间内没有非成员 artist 夹着（否则不给，次序未知；`pathgeom.paint_order_of`）；端点箭头与按 bbox 命中的墨迹类（text / title / axis_label / legend / legend_text）把次序写在元素级 `paint_order`（`paint_ranks` 让叶子的全部后代继承叶子的次序：legend_text 即所属图例、axis_label 即所属 Axis、注解箭头即所属 Annotation——`Annotation.get_children()` 不含 `arrow_patch`，在那里显式补上；拿不到不写，前端据此只让次序已知的进描边层）；3D 子轴内容不给）；`fill_alpha` = 填充此刻的有效不透明度（读
+  `get_facecolor()` 的 alpha——matplotlib 的 `set_alpha` 是**替换**不是相乘，实测 fc alpha .5 + alpha .8
+  画出来是 .8；逐元素色与成员取最小，根本没填充的成员不计，填充了但 alpha=0 的成员计为 0；全无填充则不给该字段）。盖章在 `manifest._measure_manifest` 所有
+  geometry 分支之后统一做（`pathgeom.stamp_paint`）。严格同源：`web/src/lib/api.ts` 的 `ElementGeometry`、
+  `web/src/lib/pathGeom.ts` 的 `OPAQUE_FILL_ALPHA`。看护 `tests/test_paint_facts_geometry.py`。
