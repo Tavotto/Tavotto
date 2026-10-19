@@ -207,6 +207,13 @@ def compare(candidate_class: str, native: dict, tavotto: dict, parent_native: di
                         {"title": title},
                     )
                 )
+    if not diffs and tavotto.get("error") and stems:
+        # 观察到一部分图之后 Tavotto 报错（后面的图没观察到）：不是「无差异」，是没比完（Codex #1135 r4310366048）
+        return {
+            "outcome": "unknown",
+            "differences": [],
+            "note": f"Tavotto error after partial observation: {tavotto['error'].get('code')}",
+        }
     return {"outcome": "difference_found" if diffs else "no_difference", "differences": diffs}
 
 

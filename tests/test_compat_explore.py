@@ -293,6 +293,16 @@ class Judgment(unittest.TestCase):
         self.assertEqual(kinds, ["same_path_content_mismatch"])
         self.assertIn("Tavotto kept ['t0']", wrong["differences"][0]["summary"])
 
+    def test_tavotto_error_after_partial_observation_is_never_clean(self):
+        """部分图观察成功后 worker 报错：已观察部分与原生一致也不得判 no_difference（Codex #1135 r4310366048）。"""
+        tav = {
+            "stems": {"o": {"titles": ["t2"]}, "a": {"titles": ["t0"]}, "b": {"titles": ["t1"]}},
+            "error": {"code": "override_failed"},
+        }
+        verdict = ex.compare("axis_changing", self.NATIVE, tav, None)
+        self.assertEqual(verdict["outcome"], "unknown", verdict)
+        self.assertIn("override_failed", verdict["note"])
+
     def test_extra_tavotto_figures_are_a_difference_even_with_matching_titles(self):
         """原生 3 张、Tavotto 4 张（多出的那张标题与原生重复）：不能判 clean（Codex #1135 r4305973918）。"""
         extra = ex.compare(
