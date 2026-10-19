@@ -25,7 +25,7 @@ separately approved, signed, narrowly scoped holder authorization and current
 signed enable control. It records a distinct system receipt, never a personal
 signature. No real authorization is shipped. GitHub authentication does not
 establish legal identity, ownership or authority. Corporate/guardian/unresolved
-cases remain outside this route. See [ADR 0134](../../docs/adr/0134-limited-cla-countersigning-authority.md)
+cases remain outside this route. See [ADR 0137](../../docs/adr/0137-limited-cla-countersigning-authority.md)
 and the [outstanding activation gates](../../docs/implementation/cla-delegated-authority/README.md).
 
 The native entry is src/entry.ts. Each capability requires its explicit environment flag; omitted flags keep it off. No credentials, account bindings, worker IDs, queues or resource names are shipped. Agreement version 1.0 remains the only supported configuration; changing the same version's digest fails closed. A future version rollout needs separate review.

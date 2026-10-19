@@ -5,7 +5,7 @@
 ## Current status
 
 The default-off engineering candidate for limited holder delegation and new-head
-observations is described in [ADR 0134](../adr/0134-limited-cla-countersigning-authority.md).
+observations is described in [ADR 0137](../adr/0137-limited-cla-countersigning-authority.md).
 It supplies no real authorization, provider activation, deployment or CI wiring.
 The [activation checklist](../implementation/cla-delegated-authority/README.md)
 remains outstanding; observations cannot satisfy the live CLA gate.

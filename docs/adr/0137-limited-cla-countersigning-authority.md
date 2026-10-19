@@ -1,4 +1,4 @@
-# ADR 0134 — Explicit limited authority for candidate CLA countersigning
+# ADR 0137 — Explicit limited authority for candidate CLA countersigning
 
 Status: engineering candidate, default disabled; real authority and deployment pending approval.
 
