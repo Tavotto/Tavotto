@@ -566,6 +566,26 @@ describe('resetTutorial', () => {
     expect(calls.filter((c) => c.url === '/api/tutorial/reset')).toEqual([])
   })
 
+  it('元数据还没取到（重启后示例项目开着）：先取齐再确认——另存的画布照样列出，重置期间照样挂起自动保存', async () => {
+    await openSampleProject()
+    useTutorialStore.setState({ meta: null, status: null })
+    let suspendedDuringReset: boolean | null = null
+    stubFetch({
+      '/api/tutorial/reset': () => {
+        suspendedDuringReset = isAutosaveSuspendedFor('tavotto-tutorial')
+        return json({ project: PROJECT, tutorial: META, reset: true, cleared: ['tavotto-tutorial.json'] })
+      },
+    })
+    const p = resetTutorial()
+    await vi.waitFor(() => expect(useUiStore.getState().confirm).not.toBeNull())
+    const req = useUiStore.getState().confirm!
+    expect(req.body.key).toBe('onboarding.reset.bodyWithLayouts')
+    expect(req.body.values?.names).toBe('MyDraft')
+    req.resolve(true)
+    expect((await p).ok).toBe(true)
+    expect(suspendedDuringReset).toBe(true)
+  })
+
   it('确认后：POST reset → 忘掉本机那格 → 换成干净画布；三步教程的进度不归它管', async () => {
     await openSampleProject()
     runTutorialEntry('picker')

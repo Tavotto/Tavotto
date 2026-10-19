@@ -250,7 +250,9 @@ function currentTutorialDocumentId(): string | null {
  */
 export async function resetTutorial(): Promise<TutorialOutcome> {
   if (mutating()) return fail('open_failed')
-  const meta = useTutorialStore.getState().meta
+  // 元数据可能还没取到（重启后示例项目开着、设置页 / 命令面板的探测还在路上）：先取齐再确认。
+  // 拿着 null 往下走，确认框会漏掉要被删的另存画布，重置窗口里也不会挂起示例画布的自动保存
+  const meta = useTutorialStore.getState().meta ?? (await loadTutorialStatus())?.metadata ?? null
   const extras = await savedLayoutsInTutorial(meta)
   const ok = await askConfirm({
     title: msg('onboarding.reset.title', undefined, 'dialogs'),
