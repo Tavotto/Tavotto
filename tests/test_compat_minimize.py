@@ -7,6 +7,7 @@ import json
 import sys
 import tempfile
 import unittest
+from argparse import Namespace
 from pathlib import Path
 from unittest import mock
 
@@ -366,12 +367,11 @@ class Search(unittest.TestCase):
             mock.patch.object(mn.ex, "dirty_execution_code", return_value=dirty),
             mock.patch.object(mn.ex, "run_one", side_effect=AssertionError("executed")),
         ):
-            for argv in (
-                ["minimize", "--replay", "a.json", "--out", scratch],
-                ["minimize", "--report", "r.json", "--candidate", "c", "--out", scratch],
-            ):
+            for mode in ({"replay": "a.json"}, {"report": "r.json", "candidate": "c"}):
+                args = Namespace(out=scratch, timeout=5, replay=None, report=None, candidate=None)
+                vars(args).update(mode)
                 with self.assertRaisesRegex(cg.EvidenceError, "compat_driver"):
-                    cg.main(argv)
+                    mn.run(args)
 
     def test_minimize_modes_are_exclusive_and_one_is_required(self):
         for argv in (
