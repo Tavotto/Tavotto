@@ -681,10 +681,14 @@ export async function openRecentDocument(id: string): Promise<void> {
 
 /* --------------------------------- 页面 ----------------------------------- */
 
+/** 页面宽高能取的范围（mm）；`setPageSize` 按它夹取，预设也只摆得进这个范围的尺寸 */
+export const PAGE_MM_MIN = 10
+export const PAGE_MM_MAX = 1000
+
 export function setPageSize(w: number, h: number) {
   commit(hist('setPageSize'), (d) => {
-    d.page.w = clamp(w, 10, 1000)
-    d.page.h = clamp(h, 10, 1000)
+    d.page.w = clamp(w, PAGE_MM_MIN, PAGE_MM_MAX)
+    d.page.h = clamp(h, PAGE_MM_MIN, PAGE_MM_MAX)
   })
 }
 

@@ -9,7 +9,7 @@ import { msg, t as translate, type UiMessage } from '@/i18n'
 import { DEFAULT_PROFILE_ID, loadProfile } from '@/lib/profile'
 import { resolveDocumentSpec } from '@/lib/specBinding'
 import { cn, MOD } from '@/lib/utils'
-import { clearGuides, removeGuide, setPageSetup, setPageSize } from '@/store/actions'
+import { clearGuides, PAGE_MM_MAX, PAGE_MM_MIN, removeGuide, setPageSetup, setPageSize } from '@/store/actions'
 import { useDocumentStore } from '@/store/documentStore'
 import { useInspectorPrefs } from '@/store/inspectorPrefs'
 import { toCatalog, useProfileStore } from '@/store/profileStore'
@@ -31,7 +31,8 @@ import { MmField } from './MmField'
  * 「单栏 / 双栏」的**宽度不是这里的常量**：出版规范（`profiles/publication.json` 的
  * `widths_mm`）是唯一权威，预检 `page-width` 也读它，所以预设宽度由 `pagePresets()` 从当前画布
  * 绑定的规范取（与 `validationStore.collectCanvases` 同一条 `resolveDocumentSpec` 路径）。
- * 绑定的规范缺 `widths_mm` / 值不是正数时退回**内置默认规范**的那一档（仍是 `publication.json`，
+ * 绑定的规范缺 `widths_mm` / 值不在页面能取的范围（`PAGE_MM_MIN`–`PAGE_MM_MAX`，`setPageSize` 按它夹取——
+ * 摆一个夹完就对不上的预设，选了之后页面立刻变成「自定义」）时退回**内置默认规范**的那一档（仍是 `publication.json`，
  * 不在这里写第二个数）；高度只是常见起点，不是规范字段。「整页」「正方形」不在规范里，保持常量。
  */
 const FALLBACK_WIDTHS = loadProfile(DEFAULT_PROFILE_ID).widths_mm
@@ -43,7 +44,7 @@ interface PagePreset {
 }
 
 const positive = (v: unknown, fallback: number): number =>
-  typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : fallback
+  typeof v === 'number' && Number.isFinite(v) && v >= PAGE_MM_MIN && v <= PAGE_MM_MAX ? v : fallback
 
 function pagePresets(widths: { single?: unknown; double?: unknown } | undefined): PagePreset[] {
   return [
@@ -108,6 +109,12 @@ export function CanvasPage() {
   // 预设宽度跟着当前画布绑定的规范走：订阅绑定与规范清单，换规范 / 同步新版后立刻跟随
   const binding = useDocumentStore((s) => s.doc.profile)
   const specs = useProfileStore((s) => s.specs)
+  // 跟随全局清单的绑定（`follow` / 只有 id 的旧绑定）要先有那份清单：没打开过样式 / 规范 / 导出界面时
+  // store 里只有内置规范，自定义规范会被当成缺席、退到快照或默认规范（与 StylePanel 同一个做法）
+  const specsLoaded = useProfileStore((s) => s.loaded)
+  useEffect(() => {
+    if (!specsLoaded) void useProfileStore.getState().load()
+  }, [specsLoaded])
   const widths = useMemo(
     () => resolveDocumentSpec(binding, toCatalog(specs)).profile.widths_mm,
     [binding, specs],

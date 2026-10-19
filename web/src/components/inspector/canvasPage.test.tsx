@@ -17,6 +17,8 @@ import { ROW_GRID_COLS } from '../ui/Field'
 import { CanvasPage } from './CanvasPage'
 import { hydrateExportDefaults } from '@/lib/exportDefaults'
 import { DEFAULT_PROFILE_ID, loadProfile } from '@/lib/profile'
+import { PAGE_MM_MAX, PAGE_MM_MIN } from '@/store/actions'
+import { useProfileStore } from '@/store/profileStore'
 
 globalThis.fetch = (async () => new Response('{}', { status: 200 })) as typeof fetch
 declare global {
@@ -296,5 +298,42 @@ describe('CanvasPage 页面预设宽度读当前出版规范', () => {
     bind({ ...defaults(), widths_mm: { ...defaults().widths_mm, single: 0, double: -3 } })
     await pick('double')
     expect(useDocumentStore.getState().doc.page.w).toBe(builtin.double)
+  })
+
+  it('规范宽度超出页面能取的范围：不摆一个夹取后就对不上的预设，退回内置默认规范（#1190 评审 P2）', async () => {
+    const builtin = loadProfile(DEFAULT_PROFILE_ID).widths_mm
+    bind({ ...defaults(), widths_mm: { ...defaults().widths_mm, single: PAGE_MM_MAX + 200, double: PAGE_MM_MIN - 5 } })
+    await pick('single')
+    expect(useDocumentStore.getState().doc.page.w).toBe(builtin.single)
+    await pick('double')
+    expect(useDocumentStore.getState().doc.page.w).toBe(builtin.double)
+    // 选完之后页面就是那一档，不是「自定义」
+    expect(container.querySelector('[data-page-preset="custom"]')).toBeNull()
+  })
+
+  it('规范清单还没取回时由画布页发起取回：跟随全局清单的绑定不停在内置规范上（#1190 评审 P1）', async () => {
+    const real = useProfileStore.getState().load
+    let calls = 0
+    const remount = () => {
+      act(() => root.unmount())
+      root = createRoot(container)
+      act(() =>
+        root.render(
+          <TooltipProvider>
+            <CanvasPage />
+          </TooltipProvider>,
+        ),
+      )
+    }
+    try {
+      useProfileStore.setState({ loaded: false, load: async () => void calls++ })
+      remount()
+      expect(calls, '没取回过：要发起一次').toBe(1)
+      useProfileStore.setState({ loaded: true })
+      remount()
+      expect(calls, '已经取回过：不重复发起').toBe(1)
+    } finally {
+      useProfileStore.setState({ load: real })
+    }
   })
 })
