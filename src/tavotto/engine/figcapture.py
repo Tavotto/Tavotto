@@ -2282,8 +2282,9 @@ class InputObserver:
         #: numpy 通道的还原（装上了才有）：`install()` 时已载入就当场装，否则由调用方在 numpy 载入那一刻补
         #: （`observe_numpy_datasource`，native bridge 的 import 钩子）
         self._restore_numpy = None
-        #: `paused()` 的嵌套深度：引擎自己读文件（savefig 簿记算摘要、屏障里出预览）的那一段不是脚本的输入
-        self._paused = 0
+        #: `paused()` 的嵌套深度，按线程记：只有进入 `paused()` 的那个线程自己的读（savefig 簿记算摘要、
+        #: 屏障里出预览）不是脚本的输入；屏障期间用户脚本自己起的后台线程仍在跑，它的读是输入，不能一并压掉
+        self._pause = threading.local()
         #: 解释器自己落在项目根里的目录（项目 `.venv`）：库文件不是数据输入，也不占预算（PATH-B2）
         try:
             self._interpreter_dirs = interpreter_dirs_within(os.path.realpath(self.project_root))
@@ -2292,7 +2293,7 @@ class InputObserver:
 
     # ---- 记账 ----
     def _note(self, file) -> None:
-        if self._paused:
+        if getattr(self._pause, "depth", 0):
             return
         try:
             if not isinstance(file, (str, os.PathLike)):
@@ -2393,12 +2394,14 @@ class InputObserver:
 
     @contextlib.contextmanager
     def paused(self):
-        """这一段里的打开不记账：引擎自己读文件（不是脚本的输入）。可嵌套；只影响记账，open 照常。"""
-        self._paused += 1
+        """这一段里的打开不记账：引擎自己读文件（不是脚本的输入）。可嵌套；只影响记账，open 照常。
+
+        按线程生效：只压掉进入本上下文的这个线程；用户脚本的其他线程在此期间的读照常记账。"""
+        self._pause.depth = getattr(self._pause, "depth", 0) + 1
         try:
             yield
         finally:
-            self._paused -= 1
+            self._pause.depth -= 1
 
     # ---- 报告 ----
     def report(self, *, local_modules: list[dict] | None = None) -> dict:
