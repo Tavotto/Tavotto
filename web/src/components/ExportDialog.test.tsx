@@ -1468,6 +1468,31 @@ describe('T33 · 检查摘要按导出目标取范围', () => {
     expect(button('开始导出')!.hasAttribute('disabled')).toBe(true)
   })
 
+  it('换界面语言后结论行里的规范名跟着换（#1194 评审 P2）', async () => {
+    await stage({
+      panels: [{ ...panel, h: 40 }],
+      renders: { 'Fig1.pdf': manifestWithTicks(1, 9) },
+      page: { w: 80, h: 40 },
+    })
+    useWorkspaceStore.setState({ mode: 'fast_edit', activePanelId: 'p1' })
+    await mountDialogs()
+    await openDialog()
+    const record = useProfileStore.getState().specs.find((r) => r.id === DEFAULT_PROFILE_ID)!
+    const ok = () => document.body.querySelector('[data-export-check-ok]')
+    expect(ok(), '前提：没查出问题，有结论行').toBeTruthy()
+    const zh = profileName(record)
+    expect(ok()!.textContent).toContain(zh)
+    try {
+      await act(async () => { await i18n.changeLanguage('en-US') })
+      const en = profileName(record)
+      expect(en, '前提：内置规范的名字两种语言不同').not.toBe(zh)
+      expect(ok()!.textContent).toContain(en)
+      expect(ok()!.textContent).not.toContain(zh)
+    } finally {
+      await act(async () => { await i18n.changeLanguage('zh-CN') })
+    }
+  })
+
   it('按原图时这张图自己的阻断项照样拦住，并且报告里只有它的条目', async () => {
     await stage({
       panels: [panel, second],

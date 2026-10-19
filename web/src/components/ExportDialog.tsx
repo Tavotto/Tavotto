@@ -116,6 +116,7 @@ import {
 import type { OverwritePolicy } from "@/lib/exportRequest";
 import { DEFAULT_PROFILE_ID, type PublicationProfile } from "@/lib/profile";
 import { profileName } from "@/lib/profileText";
+import { useLocale } from "@/i18n/react";
 import {
   bindingFor,
   resolveDocumentSpec,
@@ -441,12 +442,16 @@ export function ExportDialog() {
   const checkProfileId =
     resolved.profileId ?? (checkOnActive ? profileId : DEFAULT_PROFILE_ID);
   /** 这次按哪套规范查的（检查结论里说出来）；取名与问题面板的证据句同一做法 */
+  const locale = useLocale();
   const checkSpecName = useMemo(() => {
     const record = resolved.profileId
       ? specRecords.find((r) => r.id === resolved.profileId)
       : undefined;
     return record ? profileName(record) : resolved.profile.label;
-  }, [resolved, specRecords]);
+    // 内置规范的名字（`profileName`）在调用时按当前语言成文：换语言要重算，否则结论行换了语言、
+    // 规范名还是旧的（#1194 评审 P2；问题面板 NoneEvidence 同一条，Codex #832）
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [resolved, specRecords, locale]);
   /** 别的画布上的规范在这里改不了（`applyProfile` 写的是当前画布）——说出原因，不静默改错画布 */
   const checkCanvasName = checkOnActive
     ? null
