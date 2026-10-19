@@ -943,18 +943,22 @@ class TestRunnerError:
         report = CM.build_report([case("y")], {"y": crashed}, {}, "current", "all")
         assert report["summary"]["runner_errors"][0]["detail"] == "Traceback: boom"
 
-    def test_gate_does_not_judge_runner_error_as_product_regression_but_reports_it(self):
+    def test_gate_warns_but_does_not_fail_on_runner_error(self):
+        """维护者裁决（#1178）：runner 崩溃门禁只告警不致红，但告警里逐条可见。"""
         cases = [case("x")]
         results = {"x": self._crashed("x")}
         baseline = {"cases": {"x": {"classification": "full_support", "stages": {}}}}
         for gate in ("pr", "release"):
-            ok, fails = CM.evaluate_gate(gate, cases, results, baseline)
+            warns: list[str] = []
+            ok, fails = CM.evaluate_gate(gate, cases, results, baseline, warns)
             text = "\n".join(fails)
             assert "新出现的 product_bug" not in text
             assert "product_bug（含基线" not in text
             assert "退步" not in text
-            # 但不能静默放行：没有裁决的 case 要以基础设施理由报出来
-            assert not ok and "runner 自身崩溃" in text and "非产品回归" in text
+            assert ok and fails == []
+            # 不能静默：没有裁决的 case 以基础设施理由出现在告警里
+            wtext = "\n".join(warns)
+            assert "runner 自身崩溃" in wtext and "非产品回归" in wtext and "x" in wtext
 
     def test_runner_error_never_counts_as_a_product_bug_in_the_report(self):
         cases = [case("x"), case("y")]

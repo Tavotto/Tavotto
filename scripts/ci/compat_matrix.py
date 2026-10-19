@@ -1150,7 +1150,7 @@ def runner_crash_result(case: dict, tb: str) -> dict:
 
     基础设施故障记成 product_bug 会污染基线与趋势，还会让门禁把它当
     「新出现的产品缺陷」去判；但也不能悄悄吞掉——它以独立分类
-    `runner_error` 出现在报告、汇总与门禁理由里。
+    `runner_error` 出现在报告、汇总与门禁告警里（只告警、不致红）。
     """
     r = _blank(case)
     r["stages"]["discover"] = False
@@ -1872,9 +1872,13 @@ GATES = {
 
 
 def evaluate_gate(
-    gate: str, cases: list[dict], results: dict, baseline: dict | None
+    gate: str,
+    cases: list[dict],
+    results: dict,
+    baseline: dict | None,
+    warnings: list[str] | None = None,
 ) -> tuple[bool, list[str]]:
-    """门禁判定。返回 (通过?, 失败理由)。
+    """门禁判定。返回 (通过?, 失败理由)；只告警不致红的理由追加进 `warnings`（传了的话）。
 
     分三条，每条都对应一种「benchmark 会退化成摆设」的方式：
 
@@ -1923,12 +1927,14 @@ def evaluate_gate(
     if bugs and not spec["allow_baseline_bugs"]:
         fails.append(f"{gate} 档不接受任何 product_bug（含基线里已知的）：{bugs}")
 
-    # runner 自身崩溃：不是产品缺陷（上面不算），但这些 case **没有裁决**，
-    # 不能当通过——否则 runner 整个挂了门禁反而全绿（#1133）。以基础设施
-    # 理由单独报红，措辞里写明不是产品回归。
+    # runner 自身崩溃：不是产品缺陷（上面不算），这些 case 没有裁决。维护者裁决
+    # （#1178）：门禁只告警、不致红——基础设施故障不该挡住产品改动；但必须可见
+    # （告警 + 报告里的 Runner errors 一节），不能静默（#1133）。
     crashed = [c["id"] for c in cases if results[c["id"]]["classification"] == CC.RUNNER_ERROR]
-    if crashed:
-        fails.append(f"runner 自身崩溃，这些 case 没有裁决（基础设施故障，非产品回归）：{crashed}")
+    if crashed and warnings is not None:
+        warnings.append(
+            f"runner 自身崩溃，这些 case 没有裁决（基础设施故障，非产品回归）：{crashed}"
+        )
 
     # 桌面/浏览器语义分叉：任何档位一律红（见 docstring 第 4 条）
     parity_bad = [
@@ -2317,7 +2323,10 @@ def main(argv: list[str] | None = None) -> int:
         json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8", newline="\n"
     )
 
-    ok, fails = evaluate_gate(args.gate, cases, results, baseline)
+    gate_warnings: list[str] = []
+    ok, fails = evaluate_gate(args.gate, cases, results, baseline, gate_warnings)
+    for w in gate_warnings:
+        print(f"::warning::{w}", file=sys.stderr)
     if delta["new"]:
         print(
             f"\n基线里没有这些 case（新加的？先跑一次 --update-baseline）：{delta['new']}",
