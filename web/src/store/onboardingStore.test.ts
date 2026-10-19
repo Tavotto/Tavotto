@@ -5,7 +5,7 @@
  * 『下一步』不能替用户声称完成」这几件靠读代码证明不了的事。
  */
 import { beforeEach, describe, expect, it } from 'vitest'
-import { TITLE_SIZE } from '@/lib/onboarding/demoFigure'
+import { clampLegendOffset, TITLE_SIZE } from '@/lib/onboarding/demoFigure'
 import { REAL_STEP_IDS, STEP_IDS } from '@/lib/onboarding/stepIds'
 import {
   configureOnboardingPersistence,
@@ -225,6 +225,14 @@ describe('持久化与迁移', () => {
     expect(migrateDemo({ titleSizePt: TITLE_SIZE.max }).titleSizePt).toBe(TITLE_SIZE.max)
     expect(migrateDemo({ titleSizePt: TITLE_SIZE.min }).titleSizePt).toBe(TITLE_SIZE.min)
     expect(migrateDemo({ titleSizePt: 9.3 }).titleSizePt).toBe(9.5)
+  })
+
+  it('持久化的图例位移夹进拖动控件的边界（clampLegendOffset）：图例不会被画到指针够不着的地方', () => {
+    const out = migrateDemo({ legendOffset: [400, 400] }).legendOffset
+    expect(out).toEqual(clampLegendOffset([400, 400]))
+    expect(out).not.toEqual([400, 400])
+    expect(migrateDemo({ legendOffset: [-400, -400] }).legendOffset).toEqual(clampLegendOffset([-400, -400]))
+    expect(migrateDemo({ legendOffset: [0, -20] }).legendOffset).toEqual([0, -20])
   })
 
   it('演示改动逐项校验：NaN / Infinity / 字符串 / 离谱的数一律丢掉，好的那项保住', () => {

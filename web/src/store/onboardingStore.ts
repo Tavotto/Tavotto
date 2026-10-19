@@ -37,7 +37,7 @@
  * 提供自己的 adapter。核心状态机不分叉。
  */
 import { create } from 'zustand'
-import { normalizeTitleSize, TITLE_SIZE } from '@/lib/onboarding/demoFigure'
+import { clampLegendOffset, normalizeTitleSize, TITLE_SIZE } from '@/lib/onboarding/demoFigure'
 import { firstIncomplete, isStepId, nextStepId, STEP_IDS, type StepId } from '@/lib/onboarding/stepIds'
 
 export const ONBOARDING_SCHEMA_VERSION = 1
@@ -209,7 +209,8 @@ const strOrNull = (v: unknown): string | null => (typeof v === 'string' && v ? v
 
 /**
  * 演示改动的校验：只认有限数、且落在演示图能画的范围里（位移不超过图幅）。
- * 位移的范围是格式校验，不是交互约束，只挡手改 / 半截写入的坏值（NaN、Infinity、字符串、离谱的数）。
+ * 位移先过格式校验（挡 NaN、Infinity、字符串、离谱的数），再夹进拖动控件同一套边界
+ * （`clampLegendOffset`）：夹不进去的值会把图例画到视口外，指针够不着、第二步永远完成不了。
  * 字号**不**用宽松范围：标题控件真实的区间是 `demoFigure.TITLE_SIZE`，落在它之外的值任何编辑都
  * 产生不了，却会被第三步当成「进入时的字号」，使「调大」永远达不到——见 `migrateDemo`。
  */
@@ -223,7 +224,7 @@ export function migrateDemo(raw: unknown): DemoEdits {
     Array.isArray(off) &&
     off.length === 2 &&
     off.every((n) => typeof n === 'number' && Number.isFinite(n) && Math.abs(n) <= DEMO_LIMITS.offsetPt)
-      ? ([off[0], off[1]] as [number, number])
+      ? clampLegendOffset([off[0], off[1]])
       : null
   const size = numOrNull(v.titleSizePt)
   // 区间外 → 丢掉（回默认字号），不夹到边界：夹成 max 会让第三步一进来就站在上限、无法再「调大」；
