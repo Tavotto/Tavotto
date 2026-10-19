@@ -552,13 +552,35 @@ class TestRunWiresRefresh:
         got = ai_bridge.get(sid)
         assert got["refresh"]["status"] == "ok"
 
+    def test_get_after_snapshot_pruned_still_returns_history_with_refresh(self, tmp_path, fake_cli):
+        """重启后快照被按份数清掉、历史还在：详情不能是 404（前端会凭摘要收尾、丢掉 refresh 警告）。"""
+        figs = _project(tmp_path)
+
+        def on_changed(script):
+            raise engine_refresh.RefreshError("scan_failed", "扫描失败", {"reason": "x"})
+
+        sid = ai_bridge.run("codex", "fig1.py", "p", str(figs), on_changed=on_changed)
+        _wait_done(sid)
+        ai_bridge.SESSIONS.pop(sid)  # 模拟后端重启
+        pruned = list(ai_bridge.SNAP_DIR.glob(f"{sid}*"))
+        assert any(f.name == f"{sid}.json" for f in pruned), "前提：这次会话确实有 sidecar 可清"
+        for f in pruned:
+            f.unlink()  # 模拟 `_prune_snapshots()` 清掉了这次的快照
+        got = ai_bridge.get(sid)
+        assert got is not None
+        assert got["status"] == "done" and got["changed"] is True
+        assert got["refresh"] == {"status": "failed", "code": "scan_failed"}
+        assert got["revert_available"] is False
+
 
 def test_api_ai_run_wires_the_backend_refresh(client, tmp_path, monkeypatch, fake_cli):
     """端点把 `on_changed` 接到 `_after_ai_change`——判据看源码里的接线，
     不看 agent 是否真的装着（那是另一批用例的事）。"""
     import inspect
 
-    src = inspect.getsource(m.api_ai_run)
+    src = inspect.getsource(
+        m._ai_run_impl
+    )  # 路由函数只是包了一层「拒绝时后端删账本行」，真身在 _ai_run_impl
     assert "on_changed=" in src and "_after_ai_change(ctx, script)" in src
     # 老的 `str(require_project())` 换成了 ctx.path：同一个 ctx 既给 run 也给刷新
     assert "str(ctx.path)" in src
