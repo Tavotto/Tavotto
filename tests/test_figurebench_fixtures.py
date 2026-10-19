@@ -374,6 +374,7 @@ def probe_results(tmp_path_factory):
         [python, "-B", str(ROOT / "_probe.py"), str(work / "jobs.json"), str(work / "out.json")],
         capture_output=True,
         text=True,
+        encoding="utf-8",
         timeout=300,
         env={**_clean_env(), "PYTHONDONTWRITEBYTECODE": "1"},
     )
