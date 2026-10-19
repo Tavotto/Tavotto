@@ -5,7 +5,7 @@
   "generated_on": "2026-09-20",
   "facade_module": "src/tavotto/pdfbackend/__init__.py",
   "implementation_module": "src/tavotto/rendercore/facade.py",
-  "note": "一个真值：本文件。`U00_FACADE_LEDGER.md` 由 `tools/generate_facade_ledger.py` 派生，手改无效。callers 里的 file:line 按 source_sha 采样；`tests/test_foundation_facade_ledger.py` 逐条核对那一行仍含该名字、`__all__` 的每一项都在这里、这里没有重复项。产品调用方只列 src/ scripts/ codex-plugin/（tests 单独列并分「用户合同 / 实现特定」）。 调用点 / 用例按 `symbol`（AST 限定名，模块级 `<module>`）锚定，`line` 只作信息。",
+  "note": "一个真值：本文件。`U00_FACADE_LEDGER.md` 由 `tools/generate_facade_ledger.py` 派生，手改无效。callers / tests 只用 `file` + `symbol` 定位，**不记行号**（行号随无关 PR 漂移，会让每个改 app.py 的 PR 都撞这份清单）；`tests/test_foundation_facade_ledger.py` 逐条核对那个符号存在且唯一、其体内仍含该名字、`__all__` 的每一项都在这里、这里没有重复项。产品调用方只列 src/ scripts/ codex-plugin/（tests 单独列并分「用户合同 / 实现特定」）。 调用点 / 用例按 `symbol`（AST 限定名 `f` / `Class.method`，模块级 `<module>`）锚定；`source_sha` / `generated_on` 只是首次采样的历史标记，不被任何测试或脚本要求与当前 HEAD 一致。",
   "categories": {
     "probe": "素材探测（尺寸 / alpha / 字体名），只读",
     "preview_cache": "画布预览位图（带磁盘缓存，缓存键含 BACKEND_NAME/VERSION）",
@@ -34,13 +34,11 @@
         {
           "file": "src/tavotto/rendercore/preview.py",
           "symbol": "cache_key",
-          "line": 87,
           "role": "/api/render 预览缓存键（U10 起唯一一条路）：后端名-版本那一维"
         },
         {
           "file": "scripts/gen_canvas_coverage.py",
           "symbol": "build",
-          "line": 50,
           "role": "覆盖表 header"
         }
       ],
@@ -71,25 +69,21 @@
         {
           "file": "src/tavotto/rendercore/preview.py",
           "symbol": "cache_key",
-          "line": 87,
           "role": "/api/render 预览缓存键：后端名-版本那一维"
         },
         {
           "file": "scripts/gen_canvas_coverage.py",
           "symbol": "build",
-          "line": 51,
           "role": "覆盖表 header"
         },
         {
           "file": "scripts/gen_canvas_coverage.py",
           "symbol": "main",
-          "line": 97,
           "role": "--check 的报告文字"
         },
         {
           "file": "scripts/gen_glyph_plan_vectors.py",
           "symbol": "build",
-          "line": 95,
           "role": "golden 向量 header"
         }
       ],
@@ -97,7 +91,6 @@
         {
           "file": "tests/test_glyph_plan.py",
           "symbol": "test_coverage_table_matches_the_live_fonts",
-          "line": 217,
           "contains": "BACKEND_VERSION",
           "class": "implementation_specific",
           "note": "覆盖表 header 的 backend_version == 当前后端版本（表随后端换）"
@@ -129,7 +122,6 @@
         {
           "file": "scripts/gen_glyph_plan_vectors.py",
           "symbol": "<module>",
-          "line": 59,
           "role": "向量按族枚举"
         }
       ],
@@ -137,7 +129,6 @@
         {
           "file": "tests/test_typography_families.py",
           "symbol": "test_the_family_set_is_one_closed_set_on_both_sides",
-          "line": 45,
           "contains": "CANVAS_TEXT_FAMILIES",
           "class": "user_contract",
           "note": "严格同源对：前端 typography.ts 的闭集 == 后端闭集（顺序也比）"
@@ -145,7 +136,6 @@
         {
           "file": "tests/test_glyph_plan.py",
           "symbol": "test_plan_matches_the_faces_the_pdf_actually_uses",
-          "line": 177,
           "contains": "CANVAS_TEXT_FAMILIES",
           "class": "user_contract",
           "note": "三个族的 plan 覆盖一致"
@@ -153,7 +143,6 @@
         {
           "file": "tests/test_font_provenance.py",
           "symbol": "test_every_offered_family_can_actually_be_drawn",
-          "line": 144,
           "contains": "CANVAS_TEXT_FAMILIES",
           "class": "user_contract",
           "note": "本仓库不分发字体；每个族的 Sample 全在 primary 层"
@@ -161,7 +150,6 @@
         {
           "file": "tests/test_scientific_text_matrix.py",
           "symbol": "test_canvas_families_all_draw_the_matrix",
-          "line": 155,
           "contains": "CANVAS_TEXT_FAMILIES",
           "class": "user_contract",
           "note": "三族 × 粗斜四态：科学文本矩阵 missing_glyphs 为空"
@@ -202,7 +190,6 @@
         {
           "file": "scripts/gen_canvas_coverage.py",
           "symbol": "build",
-          "line": 52,
           "role": "覆盖表扫描上界"
         }
       ],
@@ -233,7 +220,6 @@
         {
           "file": "src/tavotto/app.py",
           "symbol": "_write_source_files",
-          "line": 6406,
           "role": "写回 verify 阶段：把画布标注画进 staging 的 PDF，再由同一份 PDF 栅格化 PNG（incremental save）"
         }
       ],
@@ -241,7 +227,6 @@
         {
           "file": "tests/test_annotate_asset.py",
           "symbol": "test_annotate_pdf_draws_vector_annotations",
-          "line": 26,
           "contains": "annotate_asset",
           "class": "user_contract",
           "note": "标注写进 PDF 后文本可检索、几何在位；PNG 与 PDF 逐像素同源"
@@ -249,7 +234,6 @@
         {
           "file": "tests/test_annotate_asset.py",
           "symbol": "test_annotate_rotated_text_direction_is_css_clockwise",
-          "line": 115,
           "contains": "annotate_asset",
           "class": "implementation_specific",
           "note": "用 pymupdf.open + get_drawings() 读回几何（读取器换成独立读取栈即可，断言意图保留）"
@@ -257,7 +241,6 @@
         {
           "file": "tests/test_retirement_scan.py",
           "symbol": "test_every_main_path_runs_in_a_clean_process_with_the_blocker_installed",
-          "line": 125,
           "class": "user_contract",
           "contains": "def test_every_main_path_runs_in_a_clean_process_with_the_blocker_installed",
           "note": "U10：干净新进程装 pymupdf 阻断器后这一项仍跑通（scripts/ci/retirement_scan.py 的 block 尺子）"
@@ -300,7 +283,6 @@
         {
           "file": "src/tavotto/app.py",
           "symbol": "_replay_pixel_diff",
-          "line": 6203,
           "role": "写回像素门（ADR 0049，issue #81）：热态 vs 一次性 worker 重放的 render_png 逐 RGBA 比，阈值 app.REPLAY_PIXEL_TOL"
         }
       ],
@@ -308,7 +290,6 @@
         {
           "file": "tests/test_pixel_compare.py",
           "symbol": "test_identical_images_report_zero_difference",
-          "line": 45,
           "contains": "compare_png",
           "class": "user_contract",
           "note": "等亮度换色 / 纯 alpha 差异必须被看见；尺寸不同判最大差异"
@@ -316,7 +297,6 @@
         {
           "file": "tests/test_pixel_compare.py",
           "symbol": "test_backend_comparator_matches_the_ci_implementation",
-          "line": 163,
           "contains": "compare_png",
           "class": "user_contract",
           "note": "与 scripts/ci/pixelcompare.py 在灰度等值图上逐指标一致（对拍）"
@@ -324,7 +304,6 @@
         {
           "file": "tests/test_pixel_compare.py",
           "symbol": "test_backend_comparator_matches_the_ci_implementation",
-          "line": 192,
           "contains": "pixelmetrics.PNG_NOISE_FLOOR",
           "class": "implementation_specific",
           "note": "读 pymupdf_backend.PNG_NOISE_FLOOR 常量 U10：底噪常量搬到 pixelmetrics（两个后端共用的尺子）。"
@@ -332,7 +311,6 @@
         {
           "file": "tests/test_mcp_normalize.py",
           "symbol": "test_zero_edit_roundtrip_keeps_page_size_and_pixels",
-          "line": 287,
           "contains": "compare_png",
           "class": "user_contract",
           "note": "规范化前后预览像素差用它量"
@@ -340,7 +318,6 @@
         {
           "file": "tests/test_retirement_scan.py",
           "symbol": "test_every_main_path_runs_in_a_clean_process_with_the_blocker_installed",
-          "line": 125,
           "class": "user_contract",
           "contains": "def test_every_main_path_runs_in_a_clean_process_with_the_blocker_installed",
           "note": "U10：干净新进程装 pymupdf 阻断器后这一项仍跑通（scripts/ci/retirement_scan.py 的 block 尺子）"
@@ -372,7 +349,6 @@
         {
           "file": "tests/test_typography_families.py",
           "symbol": "test_the_family_reaches_the_pdf_font_resources",
-          "line": 128,
           "contains": "compose",
           "class": "user_contract",
           "note": "三个族各画一段文字，PDF 里嵌的字体族不同"
@@ -380,7 +356,6 @@
         {
           "file": "tests/test_glyph_plan.py",
           "symbol": "_place",
-          "line": 89,
           "contains": "compose",
           "class": "user_contract",
           "note": "文字落笔与 text_plan 同一份计划（x 推进 == text_width）"
@@ -388,7 +363,6 @@
         {
           "file": "tests/test_export_pipeline.py",
           "symbol": "test_canvas_tiff_with_transparent_background_carries_alpha",
-          "line": 1338,
           "contains": "def test_canvas_tiff_with_transparent_background_carries_alpha",
           "class": "user_contract",
           "note": "透明画布 TIFF 带 alpha"
@@ -396,7 +370,6 @@
         {
           "file": "tests/test_retirement_scan.py",
           "symbol": "test_every_main_path_runs_in_a_clean_process_with_the_blocker_installed",
-          "line": 125,
           "class": "user_contract",
           "contains": "def test_every_main_path_runs_in_a_clean_process_with_the_blocker_installed",
           "note": "U10：干净新进程装 pymupdf 阻断器后这一项仍跑通（scripts/ci/retirement_scan.py 的 block 尺子）"
@@ -480,7 +453,6 @@
         {
           "file": "scripts/gen_canvas_coverage.py",
           "symbol": "build",
-          "line": 53,
           "role": "生成 pdfbackend/canvas_coverage.json（前端「导出后是不是方框」的唯一依据）"
         }
       ],
@@ -488,7 +460,6 @@
         {
           "file": "tests/test_glyph_plan.py",
           "symbol": "test_coverage_table_matches_the_live_fonts",
-          "line": 218,
           "contains": "coverage_ranges",
           "class": "user_contract",
           "note": "磁盘上的覆盖表 == 当前后端现算的区间表（漂移即红）"
@@ -496,7 +467,6 @@
         {
           "file": "tests/test_retirement_scan.py",
           "symbol": "test_every_main_path_runs_in_a_clean_process_with_the_blocker_installed",
-          "line": 125,
           "class": "user_contract",
           "contains": "def test_every_main_path_runs_in_a_clean_process_with_the_blocker_installed",
           "note": "U10：干净新进程装 pymupdf 阻断器后这一项仍跑通（scripts/ci/retirement_scan.py 的 block 尺子）"
@@ -541,7 +511,6 @@
         {
           "file": "tests/test_paths_and_baked.py",
           "symbol": "test_hex2rgb",
-          "line": 325,
           "contains": "hex2rgb",
           "class": "user_contract",
           "note": "#rgb / #rrggbb / 垃圾 / None 四种输入的取值"
@@ -574,7 +543,6 @@
         {
           "file": "scripts/gen_glyph_plan_vectors.py",
           "symbol": "build",
-          "line": 84,
           "role": "golden 向量的 missing 字段"
         }
       ],
@@ -582,7 +550,6 @@
         {
           "file": "tests/test_glyph_plan.py",
           "symbol": "test_golden_vectors_match_python_side",
-          "line": 103,
           "contains": "missing_glyphs",
           "class": "user_contract",
           "note": "golden 向量：哪些字符画不出来"
@@ -590,7 +557,6 @@
         {
           "file": "tests/test_glyph_plan.py",
           "symbol": "test_unrenderable_character_is_missing_not_silently_dropped",
-          "line": 161,
           "contains": "missing_glyphs",
           "class": "user_contract",
           "note": "阿拉伯问号 ؟ 是 missing"
@@ -598,14 +564,13 @@
         {
           "file": "tests/test_scientific_text_matrix.py",
           "symbol": "test_canvas_families_all_draw_the_matrix",
-          "line": 159,
           "contains": "missing_glyphs",
           "class": "user_contract",
           "note": "科学文本矩阵（拉丁 / 希腊 / 上下标 / 单位）三族四态全部画得出"
         }
       ],
       "status": "public_contract",
-      "note": "engine/manifest.py:1194 有同名函数 missing_glyphs(text, families)——那是 worker 侧问 matplotlib 字体的判据，与本项不同源、不同进程，不是第二份实现。",
+      "note": "engine/manifest.py 有同名函数 missing_glyphs(text, families)——那是 worker 侧问 matplotlib 字体的判据，与本项不同源、不同进程，不是第二份实现。",
       "migration_criterion": "U06：新字体集合下 tests/test_scientific_text_matrix.py 必须仍为空缺字；golden 向量按 D07 批准一次迁移（缺字集合可以变小，不许变大而不说）。",
       "migration_evidence": [
         {
@@ -639,13 +604,11 @@
         {
           "file": "src/tavotto/app.py",
           "symbol": "_original_page_pt",
-          "line": 1473,
           "role": "请求里已解析的物理尺寸 → 页面 pt"
         },
         {
           "file": "src/tavotto/app.py",
           "symbol": "_original_page_pt",
-          "line": 1473,
           "role": "originalspec 现算的逻辑尺寸 → 页面 pt"
         }
       ],
@@ -653,7 +616,6 @@
         {
           "file": "tests/test_export_endpoint.py",
           "symbol": "test_export_vector_text_and_page_size",
-          "line": 116,
           "contains": "mm2pt",
           "class": "user_contract",
           "note": "画布导出页面尺寸 = mm2pt(文档页面)"
@@ -661,7 +623,6 @@
         {
           "file": "tests/test_compose_text.py",
           "symbol": "test_mixed_script_single_line_advances",
-          "line": 120,
           "contains": "mm2pt",
           "class": "implementation_specific",
           "note": "文字基线位置用 base-14 的 asc/desc 反算期望（钉 PyMuPDF 度量）"
@@ -669,7 +630,6 @@
         {
           "file": "tests/test_compose_arrow.py",
           "symbol": "<module>",
-          "line": 41,
           "contains": "mm2pt",
           "class": "implementation_specific",
           "note": "箭头端点坐标经 get_drawings() 读回"
@@ -705,7 +665,6 @@
         {
           "file": "src/tavotto/app.py",
           "symbol": "_export_produce_original",
-          "line": 1371,
           "role": "scope=original 的 PDF：矢量源 insert_pdf 整页搬运（只搬第一页）；位图源装进 page_pt 大小的页面，vector=False"
         }
       ],
@@ -713,7 +672,6 @@
         {
           "file": "tests/test_export_pipeline.py",
           "symbol": "test_original_pdf_stays_vector",
-          "line": 129,
           "contains": "def test_original_pdf_stays_vector",
           "class": "user_contract",
           "note": "原图 PDF 仍是矢量（经端点）"
@@ -721,7 +679,6 @@
         {
           "file": "tests/test_export_pipeline.py",
           "symbol": "test_original_export_ignores_the_layout_scale",
-          "line": 100,
           "contains": "def test_original_export_ignores_the_layout_scale",
           "class": "user_contract",
           "note": "画布缩放不进原图导出（RC-003）"
@@ -729,7 +686,6 @@
         {
           "file": "tests/test_export_pipeline.py",
           "symbol": "test_raster_original_pdf_honours_the_resolved_physical_size",
-          "line": 758,
           "contains": "def test_raster_original_pdf_honours_the_resolved_physical_size",
           "class": "user_contract",
           "note": "位图源页面尺寸来自 originalspec（pHYs / 假定两档必须不同）"
@@ -737,7 +693,6 @@
         {
           "file": "tests/test_export_pipeline.py",
           "symbol": "test_transparent_background_reaches_the_original_vector_path",
-          "line": 948,
           "contains": "def test_transparent_background_reaches_the_original_vector_path",
           "class": "user_contract",
           "note": "透明背景到达原图矢量路径"
@@ -745,7 +700,6 @@
         {
           "file": "tests/test_export_request.py",
           "symbol": "test_original_scope_has_no_layout_fields_at_all",
-          "line": 169,
           "contains": "def test_original_scope_has_no_layout_fields_at_all",
           "class": "user_contract",
           "note": "original 段结构上没有 x/y/w/h"
@@ -753,7 +707,6 @@
         {
           "file": "tests/test_retirement_scan.py",
           "symbol": "test_every_main_path_runs_in_a_clean_process_with_the_blocker_installed",
-          "line": 125,
           "class": "user_contract",
           "contains": "def test_every_main_path_runs_in_a_clean_process_with_the_blocker_installed",
           "note": "U10：干净新进程装 pymupdf 阻断器后这一项仍跑通（scripts/ci/retirement_scan.py 的 block 尺子）"
@@ -786,7 +739,6 @@
         {
           "file": "src/tavotto/app.py",
           "symbol": "_export_produce_original",
-          "line": 1398,
           "role": "scope=original 的 PNG：PNG 源逐字节复制；JPEG 换容器不换像素；矢量源按 ppi 栅格化（transparent 带 alpha）"
         }
       ],
@@ -794,7 +746,6 @@
         {
           "file": "tests/test_export_pipeline.py",
           "symbol": "test_original_png_of_a_raster_source_keeps_the_native_pixel_grid",
-          "line": 140,
           "contains": "def test_original_png_of_a_raster_source_keeps_the_native_pixel_grid",
           "class": "user_contract",
           "note": "位图源保源像素网格"
@@ -802,7 +753,6 @@
         {
           "file": "tests/test_export_pipeline.py",
           "symbol": "test_original_png_of_a_vector_source_rasterizes_at_the_requested_ppi",
-          "line": 161,
           "contains": "def test_original_png_of_a_vector_source_rasterizes_at_the_requested_ppi",
           "class": "user_contract",
           "note": "矢量源按 ppi 栅格化"
@@ -810,7 +760,6 @@
         {
           "file": "tests/test_export_pipeline.py",
           "symbol": "test_a_png_source_is_copied_byte_for_byte",
-          "line": 927,
           "contains": "def test_a_png_source_is_copied_byte_for_byte",
           "class": "user_contract",
           "note": "PNG 源逐字节复制（03 §6 必须精确）"
@@ -818,7 +767,6 @@
         {
           "file": "tests/test_export_pipeline.py",
           "symbol": "test_a_jpeg_source_is_transcoded_not_copied_into_a_png_name",
-          "line": 916,
           "contains": "def test_a_jpeg_source_is_transcoded_not_copied_into_a_png_name",
           "class": "user_contract",
           "note": "JPEG 源换容器不换像素"
@@ -826,7 +774,6 @@
         {
           "file": "tests/test_retirement_scan.py",
           "symbol": "test_every_main_path_runs_in_a_clean_process_with_the_blocker_installed",
-          "line": 125,
           "class": "user_contract",
           "contains": "def test_every_main_path_runs_in_a_clean_process_with_the_blocker_installed",
           "note": "U10：干净新进程装 pymupdf 阻断器后这一项仍跑通（scripts/ci/retirement_scan.py 的 block 尺子）"
@@ -858,7 +805,6 @@
         {
           "file": "src/tavotto/app.py",
           "symbol": "_export_produce_original",
-          "line": 1390,
           "role": "scope=original 的 TIFF（ADR 0046）：位图源保源像素网格、分辨率标签只写 originalspec 读到的声明密度（_declared_density）；矢量源按 ppi 栅格化"
         }
       ],
@@ -866,7 +812,6 @@
         {
           "file": "tests/test_export_pipeline.py",
           "symbol": "test_original_tiff_of_a_vector_source_rasterizes_at_the_requested_ppi",
-          "line": 1341,
           "contains": "def test_original_tiff_of_a_vector_source_rasterizes_at_the_requested_ppi",
           "class": "user_contract",
           "note": "矢量源按 ppi 栅格化"
@@ -874,7 +819,6 @@
         {
           "file": "tests/test_export_pipeline.py",
           "symbol": "test_original_tiff_of_a_raster_source_keeps_the_grid_and_only_declared_density",
-          "line": 1363,
           "contains": "def test_original_tiff_of_a_raster_source_keeps_the_grid_and_only_declared_density",
           "class": "user_contract",
           "note": "位图源保网格；分辨率标签只写声明过的密度"
@@ -882,7 +826,6 @@
         {
           "file": "tests/test_export_pipeline.py",
           "symbol": "test_canvas_tiff_is_the_same_page_as_png_pixel_for_pixel",
-          "line": 1313,
           "contains": "def test_canvas_tiff_is_the_same_page_as_png_pixel_for_pixel",
           "class": "user_contract",
           "note": "画布 TIFF 与 PNG 逐像素相同（Canvas.save_tiff）"
@@ -890,7 +833,6 @@
         {
           "file": "tests/test_retirement_scan.py",
           "symbol": "test_every_main_path_runs_in_a_clean_process_with_the_blocker_installed",
-          "line": 125,
           "class": "user_contract",
           "contains": "def test_every_main_path_runs_in_a_clean_process_with_the_blocker_installed",
           "note": "U10：干净新进程装 pymupdf 阻断器后这一项仍跑通（scripts/ci/retirement_scan.py 的 block 尺子）"
@@ -919,7 +861,6 @@
         {
           "file": "src/tavotto/engine/artifactcheck.py",
           "symbol": "check_pdf",
-          "line": 82,
           "role": "最终产物验收（ADR 0051 §8）：PDF 首页真正用到的字体名 vs 规范化请求的字体族"
         }
       ],
@@ -927,7 +868,6 @@
         {
           "file": "tests/test_mcp_normalize.py",
           "symbol": "test_font_only_change_reaches_ticks_and_touches_nothing_else",
-          "line": 325,
           "contains": "pdf_fonts",
           "class": "user_contract",
           "note": "规范化导出的 PDF 首页字体 == [\"DejaVuSerif\"]（worker 写的 PDF，读取器换即可）"
@@ -935,7 +875,6 @@
         {
           "file": "tests/test_retirement_scan.py",
           "symbol": "test_every_main_path_runs_in_a_clean_process_with_the_blocker_installed",
-          "line": 125,
           "class": "user_contract",
           "contains": "def test_every_main_path_runs_in_a_clean_process_with_the_blocker_installed",
           "note": "U10：干净新进程装 pymupdf 阻断器后这一项仍跑通（scripts/ci/retirement_scan.py 的 block 尺子）"
@@ -967,55 +906,46 @@
         {
           "file": "src/tavotto/app.py",
           "symbol": "scan_panels",
-          "line": 548,
           "role": "/api/panels：素材原始尺寸 → originalspec.asset_spec（native_*_mm 与 original_spec 同一次计算）"
         },
         {
           "file": "src/tavotto/app.py",
           "symbol": "_original_page_pt",
-          "line": 1474,
           "role": "老客户端 / MCP 没带尺寸时现算位图页面"
         },
         {
           "file": "src/tavotto/app.py",
           "symbol": "_declared_density",
-          "line": 1490,
           "role": "TIFF 分辨率标签的来源判据（只认 dpi_source == metadata）"
         },
         {
           "file": "src/tavotto/app.py",
           "symbol": "_post_check_size",
-          "line": 6560,
           "role": "写回 commit 后自检：PDF 页面尺寸 vs 重放 manifest 的 size_mm（容差 0.5mm，不回滚）"
         },
         {
           "file": "src/tavotto/engine/artifactcheck.py",
           "symbol": "check_pdf",
-          "line": 80,
           "role": "最终产物验收：页面物理尺寸"
         },
         {
           "file": "src/tavotto/engine/artifactcheck.py",
           "symbol": "check_raster",
-          "line": 149,
           "role": "最终产物验收：位图像素尺寸"
         },
         {
           "file": "src/tavotto/engine/tutorial.py",
           "symbol": "validate_tutorial_resources",
-          "line": 573,
           "role": "教程资源静态校验：PDF 打得开、尺寸合理"
         },
         {
           "file": "codex-plugin/mcp/tavotto_mcp/bridge.py",
           "symbol": "_original_artifact_facts",
-          "line": 2851,
           "role": "MCP 规范化：原始产物事实（页面尺寸）"
         },
         {
           "file": "codex-plugin/mcp/tavotto_mcp/bridge.py",
           "symbol": "_probe_asset",
-          "line": 2742,
           "function": "_probe_asset",
           "role": "MCP 导出的产物检查（U08 C，ADR 0068）：没有 pikepdf 时 PDF 的基本观测经契约层 probe，按需 import"
         }
@@ -1024,7 +954,6 @@
         {
           "file": "tests/test_original_spec.py",
           "symbol": "_spec",
-          "line": 122,
           "contains": "probe_asset",
           "class": "user_contract",
           "note": "probe → originalspec：密度先量后猜、没测量的维度是 None"
@@ -1032,7 +961,6 @@
         {
           "file": "tests/test_export_pipeline.py",
           "symbol": "test_raster_page_size_follows_the_file_not_a_constant",
-          "line": 828,
           "contains": "probe_asset",
           "class": "user_contract",
           "note": "位图源导出页面尺寸"
@@ -1040,7 +968,6 @@
         {
           "file": "tests/test_mcp_normalize.py",
           "symbol": "test_zero_edit_roundtrip_keeps_page_size_and_pixels",
-          "line": 293,
           "contains": "probe_asset",
           "class": "user_contract",
           "note": "规范化前后页面尺寸对比"
@@ -1048,7 +975,6 @@
         {
           "file": "tests/test_retirement_scan.py",
           "symbol": "test_every_main_path_runs_in_a_clean_process_with_the_blocker_installed",
-          "line": 125,
           "class": "user_contract",
           "contains": "def test_every_main_path_runs_in_a_clean_process_with_the_blocker_installed",
           "note": "U10：干净新进程装 pymupdf 阻断器后这一项仍跑通（scripts/ci/retirement_scan.py 的 block 尺子）"
@@ -1086,7 +1012,6 @@
         {
           "file": "tests/test_mcp_normalize.py",
           "symbol": "test_zero_edit_roundtrip_keeps_page_size_and_pixels",
-          "line": 287,
           "contains": "render_preview_png",
           "class": "user_contract",
           "note": "规范化前后预览像素差"
@@ -1094,7 +1019,6 @@
         {
           "file": "tests/test_retirement_scan.py",
           "symbol": "test_every_main_path_runs_in_a_clean_process_with_the_blocker_installed",
-          "line": 125,
           "class": "user_contract",
           "contains": "def test_every_main_path_runs_in_a_clean_process_with_the_blocker_installed",
           "note": "U10：干净新进程装 pymupdf 阻断器后这一项仍跑通（scripts/ci/retirement_scan.py 的 block 尺子）"
@@ -1151,7 +1075,6 @@
         {
           "file": "scripts/gen_glyph_plan_vectors.py",
           "symbol": "build",
-          "line": 82,
           "role": "golden 向量的 runs 字段"
         }
       ],
@@ -1159,7 +1082,6 @@
         {
           "file": "tests/test_glyph_plan.py",
           "symbol": "test_golden_vectors_match_python_side",
-          "line": 104,
           "contains": "text_plan",
           "class": "user_contract",
           "note": "golden 向量：分段与层"
@@ -1167,7 +1089,6 @@
         {
           "file": "tests/test_glyph_plan.py",
           "symbol": "test_subscript_two_is_primary_and_the_layers_have_no_fallback",
-          "line": 131,
           "contains": "text_plan",
           "class": "implementation_specific",
           "note": "₂ 落在 fallback 层（PyMuPDF 隐式回退到 Noto Serif 的事实）"
@@ -1175,7 +1096,6 @@
         {
           "file": "tests/test_glyph_plan.py",
           "symbol": "test_box_drawing_is_rescued_by_the_fourth_step",
-          "line": 142,
           "contains": "text_plan",
           "class": "implementation_specific",
           "note": "━ 落在 cjk 层（Droid Sans Fallback 有它）"
@@ -1183,7 +1103,6 @@
         {
           "file": "tests/test_glyph_plan.py",
           "symbol": "test_unrenderable_character_is_missing_not_silently_dropped",
-          "line": 160,
           "contains": "text_plan",
           "class": "user_contract",
           "note": "؟ 是 missing 层"
@@ -1191,7 +1110,6 @@
         {
           "file": "tests/test_font_provenance.py",
           "symbol": "test_every_offered_family_can_actually_be_drawn",
-          "line": 154,
           "contains": "text_plan",
           "class": "user_contract",
           "note": "Sample 全在 primary"
@@ -1233,7 +1151,6 @@
         {
           "file": "tests/test_typography_families.py",
           "symbol": "test_measuring_uses_the_same_family_as_writing",
-          "line": 147,
           "contains": "text_width",
           "class": "user_contract",
           "note": "等宽 > 衬线 ≠ 无衬线；认不出的族按默认（衬线）量"
@@ -1241,7 +1158,6 @@
         {
           "file": "tests/test_retirement_scan.py",
           "symbol": "test_every_main_path_runs_in_a_clean_process_with_the_blocker_installed",
-          "line": 125,
           "class": "user_contract",
           "contains": "def test_every_main_path_runs_in_a_clean_process_with_the_blocker_installed",
           "note": "U10：干净新进程装 pymupdf 阻断器后这一项仍跑通（scripts/ci/retirement_scan.py 的 block 尺子）"
@@ -1320,13 +1236,11 @@
         "callers": [
           {
             "file": "tests/test_typography_families.py",
-            "symbol": "test_the_family_reaches_the_pdf_font_resources",
-            "line": 117
+            "symbol": "test_the_family_reaches_the_pdf_font_resources"
           },
           {
             "file": "tests/test_glyph_plan.py",
-            "symbol": "_place",
-            "line": 73
+            "symbol": "_place"
           }
         ],
         "role": "测试里的 with 形态；app.py 用显式 close()",
@@ -1340,12 +1254,12 @@
     "note": "这些路径**不经 facade**，替换 PyMuPDF 时它们不变——但它们是 facade 边界之外「谁还碰 PDF/位图」的完整名单，U10 的退役扫描主语要把它们分清。",
     "items": [
       {
-        "path": "src/tavotto/app.py:943 _serialize_figure",
+        "path": "src/tavotto/app.py::_serialize_figure",
         "category": "worker_direct",
         "detail": "worker 的 matplotlib savefig：SVG / EPS 只从这里出；要了 EPS 时 PDF/PNG/TIFF 也让 worker 现画（_resolve_panel_source(rerender=True)），四个格式出自同一次脚本运行。"
       },
       {
-        "path": "src/tavotto/app.py:1214 _produce_original_eps",
+        "path": "src/tavotto/app.py::_produce_original_eps",
         "category": "worker_direct",
         "detail": "scope=original 的 EPS；没有脚本报 eps_needs_script。"
       },
