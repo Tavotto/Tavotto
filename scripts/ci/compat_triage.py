@@ -560,6 +560,12 @@ def run(args) -> int:
     out = Path(args.out).resolve()
     if out.is_relative_to(cg.ROOT):
         raise cg.EvidenceError("--out must be outside the source worktree")
+    # same containment as --out, checked before anything is written: the observation-only
+    # command never overwrites its own inputs (Codex #1139 r4312412195)
+    if getattr(args, "markdown_out", None) and Path(args.markdown_out).resolve().is_relative_to(
+        cg.ROOT
+    ):
+        raise cg.EvidenceError("--markdown-out must be outside the source worktree")
     out.parent.mkdir(parents=True, exist_ok=True)
     tmp = out.with_suffix(out.suffix + ".tmp")
     tmp.write_text(json.dumps(result, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import argparse
 import copy
 import json
 import sys
@@ -415,6 +416,20 @@ class RunReportProof(GuardianBase):
         self.report["verdict"] = "failed"
         with self.assertRaises(cg.EvidenceError):
             tg.triage([self.write()])
+
+
+class TriageCliContainment(unittest.TestCase):
+    def test_markdown_out_inside_the_worktree_is_refused_before_any_write(self):
+        target = cg.ROOT / "tests/compat_guardian/expectations.json"
+        before = target.read_bytes()
+        with tempfile.TemporaryDirectory() as tmp:
+            args = argparse.Namespace(
+                reports=[], out=str(Path(tmp) / "t.json"), markdown_out=str(target)
+            )
+            with self.assertRaisesRegex(cg.EvidenceError, "markdown-out"):
+                tg.run(args)
+            self.assertFalse((Path(tmp) / "t.json").exists(), "nothing written at all")
+        self.assertEqual(target.read_bytes(), before)
 
 
 if __name__ == "__main__":

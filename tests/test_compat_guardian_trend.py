@@ -332,6 +332,17 @@ def confinement_violations(tree: ast.AST) -> tuple[list[str], list[str]]:
         if not isinstance(node, ast.Call):
             continue
         name = target(node.func)
+        if name in DYNAMIC_ACCESS:
+            # `vars(cg)`、`globals()`：拿到命名空间就能取到任何模块（Codex #1139 r4312412189）
+            violations.append(name)
+        if name == "getattr" and node.args:
+            # `getattr(cg, "subprocess")`：取的是已导入模块的属性，或属性名不是字面量——都可能
+            # 拿到危险模块；只放行对普通对象（如 args）按字面量名取属性
+            obj, attr = node.args[0], node.args[1] if len(node.args) > 1 else None
+            on_module = isinstance(obj, ast.Name) and obj.id in alias
+            literal = isinstance(attr, ast.Constant) and isinstance(attr.value, str)
+            if on_module or not literal or attr.value in REACHABLE_BANNED_MODULES:
+                violations.append(f"getattr:{ast.unparse(obj)}")
         if name in BANNED_CALLS:
             violations.append(name)
         if name.startswith("os.") and not name.startswith(OS_ALLOWED):
@@ -345,6 +356,9 @@ def confinement_violations(tree: ast.AST) -> tuple[list[str], list[str]]:
                 writes.append(f"{node.func.attr}->{ast.unparse(node.args[0])}")
     return violations, writes
 
+
+#: 拿到整个命名空间的内建函数：经它们可以取到任何模块
+DYNAMIC_ACCESS = {"vars", "globals", "locals", "setattr", "delattr"}
 
 #: 经另一个模块的属性转手也不许碰的模块（进程、文件系统、网络、动态导入、解释器）
 REACHABLE_BANNED_MODULES = {
@@ -411,6 +425,18 @@ class ConfinementCheckerSelfTest(unittest.TestCase):
         ):
             self.assertTrue(confinement_violations(ast.parse(snippet))[0], snippet)
         ok = "import compat_guardian as cg\ncg.SCHEMA_PATH.read_text(encoding='utf-8')"
+        self.assertEqual(confinement_violations(ast.parse(ok))[0], [])
+
+    def test_dynamically_retrieved_modules_are_violations(self):
+        for snippet in (
+            "import compat_guardian as cg\ngetattr(cg, 'subprocess').run(['x'])",
+            "import compat_guardian as cg\nx = getattr(cg, 'os')\nx.remove('y')",
+            "name = 'os'\ngetattr(object(), name)",
+            "import compat_guardian as cg\nvars(cg)['os'].remove('y')",
+            "globals()['cg']",
+        ):
+            self.assertTrue(confinement_violations(ast.parse(snippet))[0], snippet)
+        ok = "getattr(args, 'markdown_out', None)"
         self.assertEqual(confinement_violations(ast.parse(ok))[0], [])
 
     def test_every_mutating_path_call_is_tracked_with_its_destination(self):
