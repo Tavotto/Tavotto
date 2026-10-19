@@ -38,7 +38,7 @@ def records() -> list[dict]:
 
 
 #: 已修复的族 → 修复 PR 号（家族记录的 fix_pr 必须与之一致）
-FIXED = {"G1-show-close-zero-figures": 1138}
+FIXED = {"G1-show-close-zero-figures": 1138, "G2-same-path-multi-figure": 1141}
 
 
 class Records(unittest.TestCase):
@@ -158,7 +158,7 @@ class RealRepro(unittest.TestCase):
     """The minimal scripts against the current product code.
 
     An unfixed gap must still show; when a gap is fixed its test goes red on purpose and is
-    turned into a regression case here (G1 fixed by #1138).
+    turned into a regression case here (G1 fixed by #1138, G2 by #1141).
     """
 
     def run_family(self, family_id):
@@ -177,13 +177,11 @@ class RealRepro(unittest.TestCase):
         self.assertEqual(len(tavotto["stems"]), 1)
         self.assertEqual(verdict["outcome"], "no_difference", verdict)
 
-    def test_g2_minimal_repro_still_shows_the_gap(self):
+    def test_g2_minimal_repro_is_fixed(self):
+        """G2 已由 #1141 修复：同一路径循环写多张图，Tavotto 捕获的是最后写入的那张，原生 / Tavotto 无差异。"""
         verdict, native, tavotto = self.run_family("G2-same-path-multi-figure")
         self.assertEqual(native["same_path_distinct_figures"], ["shape_oo.pdf"])
-        self.assertEqual(
-            [d["kind"] for d in verdict["differences"]], ["same_path_content_mismatch"]
-        )
-        self.assertIn("Tavotto kept ['cg_pass_0']", verdict["differences"][0]["summary"])
+        self.assertEqual(verdict["outcome"], "no_difference", verdict)
 
 
 if __name__ == "__main__":
