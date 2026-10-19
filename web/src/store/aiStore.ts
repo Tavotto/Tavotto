@@ -855,8 +855,8 @@ async function doRestore(): Promise<void> {
     // 仍在运行的）。`limit` 只是给不认这个约定的老后端的兜底。
     let list: AiHistoryEntry[]
     try {
-      // `open` = 还没结束：running，或已取消但后端 `_pump` 还没收尾（status 是 cancelled、ended_ms 为空）——后者没有占位、没有轮询，
-      // 之后到的 `ai.done` 会被丢掉
+      // `open` = 还没结束：running，或已取消 / 已中断但后端 `_pump` 还没收尾（status 是 cancelled / interrupted、ended_ms 为空）——
+      // 后两者没有占位、没有轮询，之后到的 `ai.done` 会被丢掉
       const res = await fetchAiHistory({ status: 'open', limit: 100 }, pj)
       if (!Array.isArray(res?.sessions)) return
       list = res.sessions
@@ -867,7 +867,10 @@ async function doRestore(): Promise<void> {
     if (born !== get().generation || pj !== currentProjectId()) return
     const caps = get().caps
     for (const e of list) {
-      if (e.status !== 'running' && e.status !== 'cancelled') continue
+      // interrupted 且还开着：另一个共用数据目录的服务进程刚 `interrupt_all()`、它的 pump 还没收尾。本页连着的是另一个进程，
+      // 收不到那边的 `ai.done`、也不会再有启动清理——只能靠对账：接回成临时快照（`provisional`，本地映射成 failed，不给「停止」），
+      // 直到详情 `final: true` 才收尾
+      if (e.status !== 'running' && e.status !== 'cancelled' && e.status !== 'interrupted') continue
       if (get().sessions.some((x) => x.id === e.id)) continue
       const session: AiSession = {
         id: e.id,
@@ -882,7 +885,8 @@ async function doRestore(): Promise<void> {
         scope: (['element', 'axes', 'figure'].includes(e.scope ?? '') ? e.scope : 'figure') as AiScope,
         target: e.target ?? '',
         entries: [],
-        status: e.status === 'cancelled' ? 'cancelled' : 'running',
+        status: e.status === 'cancelled' ? 'cancelled' : e.status === 'interrupted' ? 'failed' : 'running',
+        ...(e.status === 'interrupted' ? { provisional: true } : {}),
         changed: false,
         diff: '',
         startedAt: e.started_ms,

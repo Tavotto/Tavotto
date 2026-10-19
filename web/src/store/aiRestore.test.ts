@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { handleServerEvent } from '@/hooks/useServerEvents'
 import { currentProjectId, setCurrentProjectId } from '@/lib/session'
-import { isSessionOf, mergeTranscript, SAFETY_NET_MS, setAiSubmissionLedger, submissionBlocks, useAiStore } from './aiStore'
+import { isOpenSession, isSessionOf, mergeTranscript, SAFETY_NET_MS, setAiSubmissionLedger, submissionBlocks, useAiStore } from './aiStore'
 import { useUiStore } from './uiStore'
 
 const json = (b: unknown, status = 200) =>
@@ -94,6 +94,23 @@ describe('接回运行中的会话', () => {
     expect(s).toMatchObject({ id: 's-run', status: 'running', restored: true, startedAt: 1000, script: 'fig1.py', prompt: '把线条加粗', project: 'pa' })
     expect(isSessionOf(s, panel)).toBe(true) // 同脚本的面板都看得到它 → runningHere 为真 → 发送被锁
     expect(isSessionOf(s, { id: 'p9', fileId: 'Other.pdf', script: 'other.py' })).toBe(false) // 别的脚本不受影响
+  })
+
+  it('「还没结束」清单里的 interrupted（另一个服务进程 interrupt_all 了、pump 还没收尾）：接回成临时快照、锁发送，之后的对账拿到 final 才收尾', async () => {
+    history.pa = [row({ status: 'interrupted' })]
+    detail['s-run'] = { status: 'interrupted', final: false, changed: false, diff: '', transcript: [] }
+    await useAiStore.getState().restoreRunning()
+    const [s] = sessions()
+    expect(s).toMatchObject({ id: 's-run', restored: true, provisional: true })
+    expect(s.finalized).toBeFalsy()
+    expect(isOpenSession(s)).toBe(true) // 继续对账，面板的发送照旧锁着（finishingHere）
+    history.pa = []
+    detail['s-run'] = { status: 'interrupted', final: true, changed: true, diff: '@@ d', transcript: [{ kind: 'message', text: '改好了' }] }
+    await useAiStore.getState().settleRunningSessions()
+    const [t] = sessions()
+    expect(t.finalized).toBe(true)
+    expect(t.changed).toBe(true)
+    expect(isOpenSession(t)).toBe(false)
   })
 
   it('重复调用（重连 + 面板挂载）不会造出第二个占位', async () => {
