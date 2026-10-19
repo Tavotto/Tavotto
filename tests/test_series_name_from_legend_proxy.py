@@ -187,6 +187,21 @@ def main():
     ax.legend(handles=[(k, r), b], labels=["tup", "blue"])
     fig.savefig("Fig.pdf")
 """,
+    # markerfirst=False（文字在示意前）：照常借名，tuple 格照常不借
+    "marker_last": """\
+import matplotlib.pyplot as plt
+from matplotlib.lines import Line2D
+
+def main():
+    fig, ax = plt.subplots(figsize=(4, 3))
+    ax.plot([0, 1], [0, 1], color="k")
+    ax.plot([0, 1], [1, 2], color="b", marker="s")
+    k = Line2D([], [], color="k")
+    r = Line2D([], [], color="r")
+    b = Line2D([], [], color="b", marker="s")
+    ax.legend(handles=[(k, r), b], labels=["tup", "blue"], markerfirst=False)
+    fig.savefig("Fig.pdf")
+""",
     # 有自己 label 的线与普通 ax.legend()：行为不变
     "own_label": """\
 import matplotlib.pyplot as plt
@@ -281,6 +296,13 @@ def test_custom_handler_legend_lends_no_names(figs):
 
 def test_multi_artist_cell_lends_no_name(figs):
     assert _labels(figs, "tuple_handler") == {
+        "axes_0.lines_0": "曲线 1",
+        "axes_0.lines_1": "曲线 “blue”",
+    }
+
+
+def test_marker_last_legend_still_reads_cells(figs):
+    assert _labels(figs, "marker_last") == {
         "axes_0.lines_0": "曲线 1",
         "axes_0.lines_1": "曲线 “blue”",
     }

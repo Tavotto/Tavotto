@@ -1189,15 +1189,20 @@ def _legend_cell_artist_counts(leg) -> list[int] | None:
     """图例每一格（按条目顺序）画出来的 artist 个数；结构说不清返回 None。
 
     matplotlib 把条目按列依次排进 `_legend_handle_box`（HPacker → 每列一个 VPacker → 每项
-    HPacker[DrawingArea, TextArea]），按列展开即条目顺序；DrawingArea 的 children 就是 handler
-    为这一格画的全部 artist（3.8.4 / 3.10.9 实测结构一致）。"""
+    HPacker，内含一个 DrawingArea 与一个 TextArea——`markerfirst=False` 时文字在前），按列展开即
+    条目顺序；DrawingArea 的 children 就是 handler 为这一格画的全部 artist（3.8.4 / 3.10.9 实测
+    结构一致）。按**类型**取 DrawingArea，不按位置（#1162 评审）；一项里不是恰好一个就当说不清。"""
+    from matplotlib.offsetbox import DrawingArea  # noqa: PLC0415 — worker 侧有科学栈
+
     try:
-        cells = [
-            item.get_children()[0]
-            for col in leg._legend_handle_box.get_children()
-            for item in col.get_children()
-        ]
-        return [len(c.get_children()) for c in cells]
+        counts = []
+        for col in leg._legend_handle_box.get_children():
+            for item in col.get_children():
+                areas = [c for c in item.get_children() if isinstance(c, DrawingArea)]
+                if len(areas) != 1:
+                    return None
+                counts.append(len(areas[0].get_children()))
+        return counts
     except Exception:  # noqa: BLE001 — 私有布局变了就当说不清
         return None
 
