@@ -224,6 +224,32 @@ export function geomHitTolMm(geom: ElementGeometry, baseMm: number): number {
   return Math.max(baseMm, (pt * 25.4) / 72 / 2)
 }
 
+/**
+ * 「不透明填充」的阈值（ADR 0086 修订）：填充此刻的有效不透明度 ≥ 它，才算能把下面的线**盖住**。
+ * 0.5 是肉眼分界：半透明幕墙（alpha 0.1–0.3）下面的线依然看得清、用户点它就是要选线；
+ * 过半之后底下的东西已经退成背景。取值改动要同步 ADR。
+ */
+export const OPAQUE_FILL_ALPHA = 0.5
+
+/** 描边层里「离光标多远」的量化档宽（mm）：同一档内再比墨迹面积 / 绘制次序 */
+export const STROKE_DIST_BUCKET_MM = 0.5
+
+/** 这份 geometry 的填充能不能盖住画在它**下面**的东西：有填充、有效不透明度达阈值 */
+export function geomIsOpaqueFill(geom: ElementGeometry): boolean {
+  return geom.fill && (geom.fill_alpha ?? 0) >= OPAQUE_FILL_ALPHA
+}
+
+/**
+ * 光标离**可见墨迹边缘**的距离（mm）量化成的档号：落在墨迹上 = 0，每多 `STROKE_DIST_BUCKET_MM`
+ * 加一档。入参 `distMm` 是到中心线的距离；粗线的半宽先扣掉（点在画出来的粗线上就是 0 档，
+ * 不因为中心线远而吃亏）。
+ */
+export function strokeDistBucket(geom: ElementGeometry | null, distMm: number): number {
+  const half = geom && geom.stroke ? ((geom.stroke_pt ?? 0) * 25.4) / 72 / 2 : 0
+  const edge = distMm - half
+  return edge <= 1e-9 ? 0 : Math.ceil(edge / STROKE_DIST_BUCKET_MM - 1e-9)
+}
+
 /** 闭合路径的面积（分数²，取绝对值之和）；命中评分与 bbox 面积同一量纲 */
 export function geomAreaFrac(geom: ElementGeometry): number {
   let total = 0
