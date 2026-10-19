@@ -476,6 +476,14 @@ def run(args) -> int:
     out = Path(args.out).resolve()
     if out.is_relative_to(cg.ROOT):
         raise cg.EvidenceError("--out must be outside the source worktree")
+    # minimize 与 replay 都会执行派生候选：执行 / 取证代码必须是 HEAD 那份（与 explore 同一道核对，
+    # Codex #1136 r4312326669）
+    dirty = ex.dirty_execution_code()
+    if dirty:
+        raise cg.EvidenceError(
+            f"execution code under {ex.EXECUTION_CODE}/ differs from reviewed HEAD: {dirty}; "
+            "commit it before minimizing or replaying"
+        )
     if getattr(args, "replay", None):
         return replay(Path(args.replay), out, rules, args.timeout)
     if not args.report or not args.candidate:

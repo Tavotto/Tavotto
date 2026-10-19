@@ -57,6 +57,7 @@ python scripts/ci/compat_guardian.py minimize --replay DIR/repro.json --out DIR2
 - 省略 `--case` = 跑该 suite 的全部登记 case。
 - `explore` 不带 `--static-only` 时，执行前要求整个 `scripts/ci/` 与 HEAD 一致（`git status --porcelain`，含未跟踪文件）：
   生成、执行、取证的代码（变换、driver、matrix、执行观测器……）都在这里，脏工作区里改过的不会被当作评审过的模板执行。
+  `minimize` 与 `minimize --replay` 执行前做同一道核对。
 - `promote` 只写一个候选记录（`proposal_only: true, applied: false`），**拒绝**写入
   `tests/compat/`、`tests/compat_guardian/`（含期望声明）、`tests/fixtures/`、`tests/support/`，也拒绝写任何名为 `manifest.json` /
   `baseline.json` 的仓库内文件；基线与 manifest 的改动只能是人写的、过 CODEOWNERS 的普通 PR。

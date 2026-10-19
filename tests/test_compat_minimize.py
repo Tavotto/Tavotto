@@ -7,6 +7,7 @@ import json
 import sys
 import tempfile
 import unittest
+from argparse import Namespace
 from pathlib import Path
 from unittest import mock
 
@@ -358,6 +359,19 @@ class Search(unittest.TestCase):
                 code = cg.main(["minimize", "--replay", str(repro), "--out", scratch])
             self.assertEqual(code, cg.EXIT_PASSED)
             self.assertEqual(run_one.call_args.args[-1], "replay")
+
+    def test_dirty_execution_code_is_refused_before_minimizing_or_replaying(self):
+        dirty = ["scripts/ci/compat_driver.py"]
+        with (
+            tempfile.TemporaryDirectory() as scratch,
+            mock.patch.object(mn.ex, "dirty_execution_code", return_value=dirty),
+            mock.patch.object(mn.ex, "run_one", side_effect=AssertionError("executed")),
+        ):
+            for mode in ({"replay": "a.json"}, {"report": "r.json", "candidate": "c"}):
+                args = Namespace(out=scratch, timeout=5, replay=None, report=None, candidate=None)
+                vars(args).update(mode)
+                with self.assertRaisesRegex(cg.EvidenceError, "compat_driver"):
+                    mn.run(args)
 
     def test_minimize_modes_are_exclusive_and_one_is_required(self):
         for argv in (
