@@ -783,3 +783,44 @@ describe('色阶组整组换色：只有独立色条共用 norm（#1159 评审�
     expect(overrideOf('axes_2.colorbar', 'cmap')).toBeUndefined()
   })
 })
+
+describe('色阶组整组换色：回到脚本原样也整组清（#1159 评审）', () => {
+  it('单选图像点 cmap 行的恢复按钮：同组色条上的 cmap override 一并清掉', async () => {
+    await mount('axes_0.images_0', {
+      overrides: [
+        { gid: 'axes_0.images_0', prop: 'cmap', value: 'plasma' },
+        { gid: 'axes_1.colorbar', prop: 'cmap', value: 'plasma' },
+      ],
+    })
+    await click(rowOf('cmap')!.querySelector('[data-reset-prop]'))
+    expect(overrideOf('axes_0.images_0', 'cmap')).toBeUndefined()
+    // 不清的话色条那条立刻把 plasma 广播回来，重置看起来没生效
+    expect(overrideOf('axes_1.colorbar', 'cmap')).toBeUndefined()
+  })
+
+  it('多选批量行点 cmap 的恢复按钮：被选中成员所在组的其它成员一并清掉', async () => {
+    const otherImage = { ...imageEl, gid: 'axes_0.images_1', label: '图像 2' } as unknown as ManifestElement
+    const manifest = {
+      rev: 1,
+      size_mm: [101.6, 76.2],
+      elements: [axesEl, imageEl, otherImage, colorbarEl()],
+    } as unknown as Manifest
+    await mount('axes_0.images_0', {
+      manifest,
+      overrides: [
+        { gid: 'axes_0.images_0', prop: 'cmap', value: 'plasma' },
+        { gid: 'axes_1.colorbar', prop: 'cmap', value: 'plasma' },
+      ],
+    })
+    await act(async () => {
+      useUiStore.setState({ selectedGids: ['axes_0.images_0', 'axes_0.images_1'] })
+    })
+    expect(rowOf('cmap')).toBeNull() // 前提：多选 = 批量表单
+    await click(buttons().find((b) => b.textContent?.trim().startsWith('颜色映射')))
+    const resets = Array.from(host.querySelectorAll('[data-reset-prop]'))
+    expect(resets).toHaveLength(1) // 只有 cmap 改过
+    await click(resets[0])
+    expect(overrideOf('axes_0.images_0', 'cmap')).toBeUndefined()
+    expect(overrideOf('axes_1.colorbar', 'cmap')).toBeUndefined()
+  })
+})

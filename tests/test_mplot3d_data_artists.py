@@ -457,6 +457,34 @@ def test_hidden_3d_artists_follow_the_view_like_a_cold_replay(hot, library, stem
     assert _man(hot, stem) == base
 
 
+@pytest.mark.parametrize("stem", ["Inv3D", "Inv3DP", "Inv3DS"])
+def test_line3d_on_a_hidden_axis_follows_the_view_like_a_cold_replay(hot, library, stem):
+    """先转视角（轴可见）、再把**整条 3D 轴**藏起来、再转视角：热态 == 冷启动重放（#1159 评审）。
+
+    Line3D 没有 `do_3d_projection`，投影在它自己的 `draw` 里；整条轴隐藏时 `Axes3D.draw` 不访问它。
+    热会话里它停在第一次转动的投影，冷启动重放里停在脚本原样的投影——曲线 bbox 两套，写回 409。"""
+    base = _man(hot, stem)
+    lines = [e["gid"] for e in base["elements"] if e["role"] == "line"]
+    if not lines:
+        pytest.skip(f"{stem} 里没有 3D 曲线")
+    first = [{"gid": "axes_0", "prop": "azim", "value": 20.0}]
+    hot.override(stem, first)
+    seq = [
+        {"gid": "axes_0", "prop": "visible", "value": False},
+        {"gid": "axes_0", "prop": "azim", "value": -80.0},
+    ]
+    hot.override(stem, [seq[0], first[0]])  # 藏起整条轴（视角仍是第一次转动）
+    hot_man = _man(hot, stem, seq)  # 再转视角
+    fresh_man, fresh_png = _fresh(library, stem, seq)
+    box = {e["gid"]: e["bbox"] for e in hot_man["elements"] if e["gid"] in lines}
+    assert box != {e["gid"]: e["bbox"] for e in base["elements"] if e["gid"] in lines}, (
+        "转视角没动曲线几何，用例是空的"
+    )
+    assert hot_man == fresh_man, f"{stem}：隐藏轴上的 Line3D 停在旧视角（热态 ≠ 冷启动重放）"
+    assert _png(hot, stem, seq, "hidden-axis") == fresh_png
+    assert _man(hot, stem) == base
+
+
 # ---------------------------------------------------------------------------
 # 单色曲面 / 柱的 alpha：撤销要把烘进面色的 alpha 也还回去
 # ---------------------------------------------------------------------------

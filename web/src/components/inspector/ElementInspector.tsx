@@ -2041,7 +2041,12 @@ function BatchFieldRow({
                 clearOverrides(
                   panel.id,
                   elMsg('resetProp', { label }),
-                  overridden.map((item) => ({ gid: item.gid, prop: field.prop })),
+                  field.prop === 'cmap'
+                    ? // 色阶组：与色图选择器的「恢复到脚本」同一口径，整组清
+                      elements
+                        .flatMap((item) => colormapAliasGids(batchManifest, item))
+                        .map((gid) => ({ gid, prop: field.prop }))
+                    : overridden.map((item) => ({ gid: item.gid, prop: field.prop })),
                 )
               }
             />
@@ -2156,6 +2161,15 @@ function FieldRow({
   const resettable = !(element.gid === 'figure' && field.prop === 'transparent' &&
     backgroundOriginal !== undefined && value === backgroundOriginal)
   const resetOwned = () => {
+    // 色阶组整组换色：回到脚本原样也要整组清——同组别的成员（例如多选时一起写过的那个）还留着
+    // cmap override 的话，它会立刻把改过的色图广播回来，重置看起来没生效（#1159 评审）
+    if (field.prop === 'cmap') {
+      return clearOverrides(
+        panel.id,
+        elMsg('resetProp', { label }),
+        colormapAliasGids(rowManifest, element).map((gid) => ({ gid, prop: 'cmap' })),
+      )
+    }
     if (ownedProps.length === 1) return clearOverride(panel.id, element.gid, field.prop)
     clearOverrides(
       panel.id,

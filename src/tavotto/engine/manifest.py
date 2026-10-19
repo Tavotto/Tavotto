@@ -4542,13 +4542,31 @@ def _refresh_hidden_3d_projections(state: FigState) -> None:
     热会话里「先隐藏、再转视角」与冷启动重放（从未在新视角下投影过）量出两套 bbox / 轮廓，
     写回自检比的正是这个几何——会话于是 409，而用户什么都没做错。隐藏的元素仍在元素树里、
     要能点着把它取消隐藏，所以几何要真，不能丢。"""
+    scratch = None
     for el in state.elements:
         art = el["artist"]
         if el["role"] not in _DATA_ROLES_3D or not on_axes3d(art):
             continue
         ax = art.axes
         project = getattr(art, "do_3d_projection", None)
-        if project is None or (art.get_visible() and ax.get_visible()):
+        if project is None:
+            # Line3D 没有 `do_3d_projection`：投影在它自己的 `draw` 里、不看自己可不可见，但**整条轴
+            # 隐藏**时 `Axes3D.draw` 根本不访问它（#1159 评审）。三个 matplotlib 版本的投影写法各不相同
+            # （3.8 `proj_transform` / 3.10 `_proj_transform_clip` / 3.11 `_scale_proj_transform_clip`
+            # 加缩放掩码），不照抄：让它自己的 `draw` 在一张一次性的 Agg renderer 上走一遍，真 canvas
+            # 一个像素都不碰（与隐藏图例现排同一个做法）
+            if not isinstance(art, Line2D) or ax.get_visible():
+                continue
+            if scratch is None:
+                from matplotlib.backends.backend_agg import RendererAgg  # noqa: PLC0415
+
+                fig = state.fig
+                scratch = RendererAgg(int(fig.bbox.width), int(fig.bbox.height), fig.dpi)
+
+            def project(art=art, scratch=scratch):
+                art.draw(scratch)
+
+        elif art.get_visible() and ax.get_visible():
             continue
         try:
             ax.M = ax.get_proj()  # Axes3D.draw 每帧开头就是这么刷的
