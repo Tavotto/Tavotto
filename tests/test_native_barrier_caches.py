@@ -99,6 +99,7 @@ def test_caches_take_the_new_baseline_after_a_barrier():
         [str(WORKER_PY), "-c", PROBE, str(ENGINE_DIR)],
         capture_output=True,
         text=True,
+        encoding="utf-8",
         timeout=180,
         check=False,
     )
