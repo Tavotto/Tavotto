@@ -334,6 +334,22 @@ describe('持久化与迁移', () => {
     expect(m.status).toBe('paused')
   })
 
+  it('记的步骤越过了没完成的步骤（手改 / 半截写入）：回到第一个未完成的，往回翻的位置照常保留', () => {
+    const base = { schemaVersion: 1, flowVersion: ONBOARDING_FLOW_VERSION, status: 'active' }
+    expect(migratePersisted({ ...base, currentStep: 'done', completedSteps: [] }).currentStep).toBe('demo_import')
+    expect(
+      migratePersisted({ ...base, currentStep: 'done', completedSteps: ['demo_import', 'demo_move_legend'] }).currentStep,
+    ).toBe('demo_change_title')
+    // 合法：三步都做完停在完成页；做完前两步又翻回第一步
+    expect(
+      migratePersisted({ ...base, currentStep: 'done', completedSteps: ['demo_import', 'demo_move_legend', 'demo_change_title'] })
+        .currentStep,
+    ).toBe('done')
+    expect(
+      migratePersisted({ ...base, currentStep: 'demo_import', completedSteps: ['demo_import', 'demo_move_legend'] }).currentStep,
+    ).toBe('demo_import')
+  })
+
   it('同一版里的进行中用户：状态与步骤原样（重启后接着来）', () => {
     const m = migratePersisted({
       schemaVersion: 1,

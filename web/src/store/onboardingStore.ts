@@ -277,6 +277,12 @@ export function migratePersisted(raw: unknown): OnboardingPersisted {
     if (flowVersion < ONBOARDING_FLOW_VERSION || currentStep === null) {
       currentStep = firstIncomplete(done)
     }
+    // 停在前面还有没完成的步骤之后（手改 / 半截写入：如完成页 + 一步没做）：回到第一个未完成的。
+    // 「下一步」只在当前步骤完成时才挪，所以合法的进度永远不会越过它；往回翻（停在已完成的步骤）照常保留
+    const reachable = firstIncomplete(done)
+    if (currentStep !== null && STEP_IDS.indexOf(currentStep) > STEP_IDS.indexOf(reachable)) {
+      currentStep = reachable
+    }
     // 上一版的教程正进行到一半：换成了另一套教程，不在启动时把人直接拉进新的那套——
     // 记成用户暂停，入口显示「继续」，点不点由他（ADR 0136：不因升级强迫老用户重新学）
     if (flowVersion < ONBOARDING_FLOW_VERSION && status === 'active') status = 'paused'
