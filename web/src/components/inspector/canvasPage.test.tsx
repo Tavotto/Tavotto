@@ -16,6 +16,7 @@ import { literal } from '@/i18n'
 import { ROW_GRID_COLS } from '../ui/Field'
 import { CanvasPage } from './CanvasPage'
 import { hydrateExportDefaults } from '@/lib/exportDefaults'
+import { DEFAULT_PROFILE_ID, loadProfile } from '@/lib/profile'
 
 globalThis.fetch = (async () => new Response('{}', { status: 200 })) as typeof fetch
 declare global {
@@ -147,7 +148,8 @@ describe('CanvasPage', () => {
       })
       return found
     }
-    const preset = { id: 'single', w: 85, h: 60 } // 单栏预设
+    // 单栏预设的宽度读规范（不在测试里写死数字）
+    const preset = { id: 'single', w: loadProfile(DEFAULT_PROFILE_ID).widths_mm.single, h: 60 }
     act(() => useDocumentStore.getState().commit(literal('预设尺寸'), (d) => {
       d.page.w = preset.w
       d.page.h = preset.h
@@ -241,5 +243,58 @@ describe('CanvasPage', () => {
     const before = useUiStore.getState().snapToGuides
     act(() => label.click())
     expect(useUiStore.getState().snapToGuides).toBe(!before)
+  })
+})
+
+describe('CanvasPage 页面预设宽度读当前出版规范', () => {
+  const defaults = () => loadProfile(DEFAULT_PROFILE_ID)
+  const bind = (snapshot: Record<string, unknown>) =>
+    act(() =>
+      useDocumentStore.getState().commit(literal('绑定规范'), (d) => {
+        d.profile = { id: 'custom-test-spec', snapshot }
+      }),
+    )
+  /** 打开下拉、返回各档（id → 选项节点），再关上 */
+  const openOptions = async () => {
+    await act(async () => container.querySelector<HTMLElement>('[role="combobox"]')!.click())
+    const found = [...document.body.querySelectorAll<HTMLElement>('[role="option"]')]
+    return found
+  }
+  const pick = async (id: string) => {
+    const opts = await openOptions()
+    const o = opts.find((x) => x.querySelector(`[data-page-preset="${id}"]`))!
+    expect(o).toBeDefined()
+    await act(async () => o.click())
+    return o
+  }
+
+  it('默认规范下选「单栏 / 双栏」写入的页面宽度 = 规范 widths_mm', async () => {
+    const w = defaults().widths_mm
+    await pick('single')
+    expect(useDocumentStore.getState().doc.page.w).toBe(w.single)
+    await pick('double')
+    expect(useDocumentStore.getState().doc.page.w).toBe(w.double)
+  })
+
+  it('绑定自定义规范（单栏 90）：预设跟着变，hint 文案含该宽度', async () => {
+    const d = defaults()
+    bind({ ...d, widths_mm: { ...d.widths_mm, single: 90 } })
+    const opts = await openOptions()
+    const single = opts.find((x) => x.querySelector('[data-page-preset="single"]'))!
+    expect(single.textContent).toContain('90 mm')
+    await act(async () => single.click())
+    expect(useDocumentStore.getState().doc.page.w).toBe(90)
+  })
+
+  it('规范缺 widths_mm 或值不是正数：退回内置默认规范的宽度，预设仍可用', async () => {
+    const builtin = loadProfile(DEFAULT_PROFILE_ID).widths_mm
+    const { widths_mm: _drop, ...rest } = defaults()
+    void _drop
+    bind(rest)
+    await pick('single')
+    expect(useDocumentStore.getState().doc.page.w).toBe(builtin.single)
+    bind({ ...defaults(), widths_mm: { ...defaults().widths_mm, single: 0, double: -3 } })
+    await pick('double')
+    expect(useDocumentStore.getState().doc.page.w).toBe(builtin.double)
   })
 })

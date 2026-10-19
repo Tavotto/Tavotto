@@ -3304,7 +3304,7 @@ export default interface Resources {
       "presetGroup": "页面预设",
       "presets": {
         "double": {
-          "hint": "150 mm，通栏",
+          "hint": "{{w}} mm，按当前出版规范的双栏宽",
           "label": "双栏"
         },
         "full": {
@@ -3312,7 +3312,7 @@ export default interface Resources {
           "label": "整页"
         },
         "single": {
-          "hint": "85 mm，多数期刊单栏宽",
+          "hint": "{{w}} mm，按当前出版规范的单栏宽",
           "label": "单栏"
         },
         "square": {
