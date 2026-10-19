@@ -163,6 +163,14 @@ def _subject_gids(a: dict, man: dict) -> list[str]:
             return [_el(man, f"axes_{a['axes']}.images_0")["gid"]]
         if k == "legend_loc":
             return [_el(man, f"axes_{a['axes']}.legend")["gid"]]
+        # 只按轴 / 图定位的断言：主语就是 `_holds` 里 `_el` 查的那个元素，同一个查找函数
+        if k in ("axis_scale", "axis_scale_unchanged"):
+            return [_el(man, f"axes_{a['axes']}")["gid"]]
+        if k in ("fig_size", "fig_size_unchanged"):
+            return [_el(man, "figure")["gid"]]
+        if k == "label_alignment":
+            # 对齐的是多个轴上的标签：改前要全都在才算主语（有一个改前就没有 = 本来就量不了），否则空
+            return [_el(man, f"axes_{i}.{_WHICH[a['which']]}")["gid"] for i in a["axes"]]
     except (_Missing, KeyError, TypeError):
         return []
     return []

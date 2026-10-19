@@ -32,6 +32,7 @@ from matplotlib.collections import (
 )
 from matplotlib.container import BarContainer, ErrorbarContainer, StemContainer
 from matplotlib.contour import ContourSet
+from matplotlib.image import AxesImage
 from matplotlib.lines import Line2D
 from matplotlib.markers import MarkerStyle
 from matplotlib.offsetbox import AnchoredOffsetbox, AnnotationBbox
@@ -4205,9 +4206,11 @@ def _fingerprint_parts(artist) -> list[tuple[str, object]] | None:
             verts = [np.asarray(p.vertices, dtype=float) for p in artist.get_paths()]
             parts.append(("paths", np.concatenate(verts) if verts else np.zeros((0, 2))))
         return parts
-    get_array = getattr(artist, "get_array", None)
-    if get_array is not None and type(artist).__name__ == "AxesImage":
-        array = get_array()
+    # 图像：用 isinstance 而不是精确类名——用户子类化的 AxesImage、NonUniformImage、PcolorImage 都是
+    # `ax.images` 里的图像，数据同样是 `get_array()`。FigureImage / BboxImage 派生自 `_ImageBase`、不是
+    # AxesImage（也不在 `ax.images` 里、不会被登记成元素），isinstance 同样把它们排除在外。
+    if isinstance(artist, AxesImage):
+        array = artist.get_array()
         return [("array", array)] if array is not None else None
     return None
 

@@ -245,6 +245,57 @@ def test_removed_subject_is_failed_but_never_seen_subject_is_unknown():
     assert figureverify.check(SERIES, _man(), _man(), role="preserve").verdict == "unknown"
 
 
+def _axes(i, xscale="linear"):
+    return {
+        "gid": f"axes_{i}",
+        "role": "axes",
+        "editable": [{"prop": "xscale", "value": xscale}, {"prop": "yscale", "value": "linear"}],
+    }
+
+
+def _label(i, which="xlabel"):
+    return {
+        "gid": f"axes_{i}.{which}",
+        "role": "text",
+        "editable": [{"prop": "text", "value": "t"}],
+        "bbox": [0.1, 0.9, 0.1, 0.05],
+    }
+
+
+_AXIS_KIND_ASSERTIONS = [
+    {"id": "a", "kind": "axis_scale", "axes": 1, "axis": "x", "expected": "linear"},
+    {"id": "b", "kind": "axis_scale_unchanged", "axes": 1, "axis": "x"},
+    {
+        "id": "c",
+        "kind": "label_alignment",
+        "axes": [0, 1],
+        "which": "xlabel",
+        "edge": "x0",
+        "tol": 0.01,
+    },
+]
+
+
+@pytest.mark.parametrize("a", _AXIS_KIND_ASSERTIONS, ids=lambda a: a["kind"])
+def test_axis_scoped_kinds_register_their_subject(a):
+    before = _man(_axes(0), _label(0), _axes(1), _label(1))
+    after = _man(_axes(0), _label(0))  # 改动删掉了 axes_1（连同它的标签）
+    c = figureverify.check(a, after, before, role="preserve")
+    assert (c.verdict, c.reason_code) == ("failed", "subject_removed")
+    # 改前就没有这个轴：量不了，不是被删
+    c = figureverify.check(a, _man(_axes(0), _label(0)), _man(_axes(0), _label(0)), role="preserve")
+    assert (c.verdict, c.reason_code) == ("unknown", "subject_not_found")
+
+
+def test_fig_size_kinds_register_the_figure_as_subject():
+    a = {"id": "f", "kind": "fig_size_unchanged", "dim": "width"}
+    before = _man()
+    before["elements"][0]["editable"] = [{"prop": "size_mm", "value": [80, 60]}]
+    after = {"elements": []}
+    c = figureverify.check(a, after, before, role="preserve")
+    assert (c.verdict, c.reason_code) == ("failed", "subject_removed")
+
+
 def test_data_change_is_failed_and_same_data_is_verified():
     before = _man(_line("s", sha="a" * 64))
     assert (
@@ -303,8 +354,25 @@ c, = ax.plot([0, 1, 2], [1.0, 2.0, 3.0])
 fig3 = plt.figure()
 ax3 = fig3.add_subplot(projection="3d")
 l3, = ax3.plot([0, 1], [0, 1], [5, 6])
+from matplotlib.image import AxesImage, NonUniformImage
+
+
+class MyImage(AxesImage):
+    pass
+
+
+plain = ax.imshow([[1.0, 2.0], [3.0, 4.0]])
+sub = MyImage(ax)
+sub.set_data(np.array([[1.0, 2.0], [3.0, 4.0]]))
+ax.add_image(sub)
+nu = NonUniformImage(ax)
+nu.set_data([0.0, 1.0], [0.0, 1.0], np.array([[1.0, 2.0], [3.0, 4.0]]))
+ax.add_image(nu)
 budget = [8]
 out = {
+    "image_plain": manifest.data_fingerprint(plain, [100]),
+    "image_subclass": manifest.data_fingerprint(sub, [100]),
+    "image_nonuniform": manifest.data_fingerprint(nu, [100]),
     "nan": manifest.data_fingerprint(a, [100]),
     "image_nan": manifest.data_fingerprint(im_nan, [100]),
     "image_masked": manifest.data_fingerprint(im_masked, [100]),
@@ -335,6 +403,11 @@ def test_fingerprint_rules_in_the_worker_interpreter():
     # 掩码值与 NaN 是同一种「缺失」：同一位置缺失的两张图像指纹相同（掩码下面藏的 2.0 不进指纹）
     assert out["image_masked"]["parts"]["array"] == out["image_nan"]["parts"]["array"]
     assert out["image_nan"]["parts"]["array"]["finite"] == 3
+    # 子类（用户自定义 / NonUniformImage）与普通 AxesImage 同样量得到，且同数组摘要相同
+    assert out["image_subclass"]["status"] == "ok"
+    assert out["image_subclass"]["parts"]["array"] == out["image_plain"]["parts"]["array"]
+    assert out["image_nonuniform"]["status"] == "ok"
+    assert set(out["image_nonuniform"]["parts"]) == {"array"}
     # 超预算的那一个（10 个数 > 8）不扣配额：排在它后面、装得下的那一个照样量（6 个数）
     assert out["big"] == {"status": "over_budget"} and out["small"]["status"] == "ok"
     assert out["budget_left"] == 2
