@@ -23,6 +23,7 @@ import { dirTail } from '@/lib/pathDisplay'
 import { useProjectStore } from '@/store/projectStore'
 import { useUiStore } from '@/store/uiStore'
 import { useOnboardingStore } from '@/store/onboardingStore'
+import { useTutorialStore } from '@/lib/onboarding/tutorial'
 
 declare global {
   // eslint-disable-next-line no-var
@@ -155,6 +156,18 @@ describe('T38 常规：说明改成动作与结果', () => {
     expect(byText(st('tutorial.reset'))).toBeUndefined()
     const items = await menuItems(document.querySelector('[data-settings-tutorial-more]'))
     expect(itemText(items, st('tutorial.reset'))).toBeTruthy()
+  })
+
+  it('示例副本还在探测（/api/tutorial 慢或不可用）：教程入口照样能点——三步教程不碰后端', async () => {
+    useTutorialStore.setState({ busy: 'status', status: null } as never)
+    try {
+      await open('general')
+      const btn = document.querySelector<HTMLButtonElement>('[data-onboarding-anchor="settings-tutorial"]')
+      expect(btn).toBeTruthy()
+      expect(btn!.disabled).toBe(false)
+    } finally {
+      useTutorialStore.setState({ busy: null } as never)
+    }
   })
 
   it('没有示例项目时 ⋯ 里没有重置', async () => {

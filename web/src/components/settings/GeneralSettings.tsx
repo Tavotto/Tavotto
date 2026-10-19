@@ -227,7 +227,9 @@ function Learning({ close }: { close: () => void }) {
   const recent = useProjectStore((s) => s.recent)
   const project = useProjectStore((s) => s.project)
   const hasTutorial = hasSampleProject({ status: tutorialStatus }, { recent, project })
-  const busy = useTutorialStore((s) => s.busy)
+  // 只挡「重置示例项目」：开着 / 正在重置示例项目时不能再重置。教程入口不看它——三步教程不碰后端，
+  // 不该被设置页刚发出去的那次副本探测（busy = 'status'）或示例项目的操作挡住
+  const sampleBusy = useTutorialStore((s) => s.busy === 'open' || s.busy === 'reset')
   const entry = tutorialEntry(status)
   return (
     <FormSection title={st('general.groupLearning')}>
@@ -236,7 +238,6 @@ function Learning({ close }: { close: () => void }) {
           <Button
             variant="secondary"
             size="sm"
-            disabled={busy != null}
             data-onboarding-anchor="settings-tutorial"
             onClick={() => {
               // 先关设置：教程层盖在工作台上，设置对话框不该叠在它上面
@@ -258,7 +259,7 @@ function Learning({ close }: { close: () => void }) {
             {hasTutorial && (
               <MenuItem
                 icon={RotateCcw}
-                disabled={busy != null}
+                disabled={sampleBusy}
                 onSelect={() => {
                   close()
                   void resetTutorial()
