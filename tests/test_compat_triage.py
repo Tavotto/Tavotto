@@ -16,7 +16,7 @@ import compat_explore_transforms as xt  # noqa: E402
 import compat_guardian as cg  # noqa: E402
 import compat_guardian_taxonomy as tx  # noqa: E402
 import compat_triage as tg  # noqa: E402
-from test_compat_guardian import native_result  # noqa: E402
+from test_compat_guardian import GuardianBase, native_result  # noqa: E402
 
 
 def explore_facts(**over) -> dict:
@@ -373,6 +373,35 @@ class Case14SemanticsDiffer(unittest.TestCase):
             )["family"],
             "manifest_semantics",
         )
+
+
+class RunReportProof(GuardianBase):
+    """Run reports enter triage only through the summary's structural validation."""
+
+    def write(self):
+        path = self.root / "guardian.json"
+        path.write_text(json.dumps(self.report), encoding="utf-8")
+        return path
+
+    def test_a_consistent_run_report_is_accepted(self):
+        self.assertEqual(tg.triage([self.write()])["sources"][0]["kind"], "run")
+
+    def test_a_row_relabelled_failed_against_its_own_proof_is_rejected(self):
+        self.row["status"] = "failed"
+        self.row["failure_category"] = {
+            "category": "figure_capture",
+            "source_code": "edited",
+            "basis": "x",
+        }
+        self.report["verdict"] = "failed"
+        self.report["coverage"] = cg.coverage_table([self.row])
+        with self.assertRaises(cg.EvidenceError):
+            tg.triage([self.write()])
+
+    def test_a_verdict_that_does_not_follow_from_its_cases_is_rejected(self):
+        self.report["verdict"] = "failed"
+        with self.assertRaises(cg.EvidenceError):
+            tg.triage([self.write()])
 
 
 if __name__ == "__main__":
