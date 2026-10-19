@@ -2911,6 +2911,10 @@ def _sync_standalone_colorbars(state, *, record_only: bool = False) -> None:
         }
         if not any((g, "cmap") in state.applied for g in gids):
             sm.set_cmap(sm._mm_orig_cmap)  # noqa: SLF001
+            # 回到脚本原样就丢掉这份缓存：它只在有 override 作用时才有意义。native 屏障放行时的
+            # `apply(state, [])` 正好走到这里，下一个屏障再碰它时采到的才是脚本**此刻**的色图——
+            # 留着的话，脚本在两个屏障之间换的色图会在清掉编辑时被换回旧值（#1159 评审）
+            del sm._mm_orig_cmap  # noqa: SLF001
         elif members:
             sm.set_cmap(members[0]["artist"].get_cmap())
         # 组里只有几条独立色条（没有已登记图元）：色图已由 `_set_cb_cmap` 按文档序写到组里每条色条上，
@@ -3719,6 +3723,10 @@ def _canonical_poly3d_colors(a) -> None:
         for k, v in snap["arrays"].items():
             setattr(a, k, v.copy() if isinstance(v, np.ndarray) else v)
         a.stale = True
+        # 三项设定都回到脚本原样 = 不再有我们的编辑：丢掉快照，下次被碰时按脚本**此刻**的状态重新记。
+        # native 屏障放行时的 `apply(state, [])` 正好走到这里——留着的话，脚本在两个屏障之间改的
+        # alpha / 颜色会在下次清掉编辑时被这份旧快照覆盖（#1159 评审）
+        delattr(a, _POLY3D_NATIVE)
         return
     try:
         Collection._set_facecolor(a, a._original_facecolor)  # noqa: SLF001
