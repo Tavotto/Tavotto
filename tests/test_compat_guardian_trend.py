@@ -474,7 +474,7 @@ class ExploreOptions(unittest.TestCase):
             (run,) = Path(tmp).iterdir()
             report = json.loads((run / "reports/explore-report.json").read_text(encoding="utf-8"))
             self.assertTrue(report["candidates"])
-            self.assertTrue(all("import_alias" in c["chain"] for c in report["candidates"]))
+            self.assertTrue(all(c["chain"] == ["import_alias"] for c in report["candidates"]))
 
     def test_confirmation_reruns_one_candidate_per_shape_and_records_reproduction(self):
         diff = {

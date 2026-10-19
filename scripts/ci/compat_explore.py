@@ -479,7 +479,8 @@ def explore(args) -> int:
         known = {t.family for t in XT.TRANSFORMS}
         if not wanted_families <= known:
             raise cg.EvidenceError(f"unknown transform family: {sorted(wanted_families - known)}")
-        pool = [c for c in pool if any(s["family"] in wanted_families for s in c["chain"])]
+        # 每一步都要在所选族里：混入未选族的两因子链会让差异来自操作者排除掉的变换（Codex #1139 r4311734919）
+        pool = [c for c in pool if all(s["family"] in wanted_families for s in c["chain"])]
     chosen = select(pool, args.limit)
     if getattr(args, "candidates", None):
         wanted_ids = set(args.candidates.split(","))
