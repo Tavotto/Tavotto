@@ -1864,6 +1864,7 @@
       "unavailable": "The sample project resources are incomplete. Reinstall Tavotto.",
       "open_failed": "The sample project couldn’t be opened. Try again, or open your own project.",
       "locked": "A file in the sample project is in use by another program. Close it and try again.",
+      "layouts_changed": "The sample project has new saved layouts, so nothing was reset. Open Reset sample project again and re-confirm.",
       "document_failed": "The sample layout couldn’t be read (incompatible version or missing file). Try “Reset sample project”.",
       "cancelled": "Cancelled.",
       "no_api": "This environment doesn’t provide the sample project."

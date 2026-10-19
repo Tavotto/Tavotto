@@ -54,6 +54,8 @@ export type TutorialFailure =
   | 'open_failed'
   /** 文件被占用（409 tutorial_locked） */
   | 'locked'
+  /** 确认之后示例项目里的另存排版变了（409 tutorial_layouts_changed）：重置未执行 */
+  | 'layouts_changed'
   /** 画布文档读不出来（schema 不兼容 / 缺文件） */
   | 'document_failed'
   /** 用户在确认框里取消 */
@@ -118,7 +120,12 @@ export function ensureTutorialStatus(): void {
 }
 
 function failureMessage(reason: TutorialFailure, e?: unknown): UiMessage {
-  if (reason === 'open_failed' || reason === 'locked' || reason === 'unavailable') {
+  if (
+    reason === 'open_failed' ||
+    reason === 'locked' ||
+    reason === 'unavailable' ||
+    reason === 'layouts_changed'
+  ) {
     // 后端带 code 的错误按 code 翻（`errors:backend.tutorial_*`），没有就原文透出
     if (e instanceof ApiError && typeof e.body.code === 'string') return backendErrorMsg(e)
   }
@@ -129,6 +136,7 @@ function classify(e: unknown): TutorialFailure {
   if (e instanceof ApiError) {
     const code = typeof e.body.code === 'string' ? e.body.code : ''
     if (code === 'tutorial_locked') return 'locked'
+    if (code === 'tutorial_layouts_changed') return 'layouts_changed'
     if (code === 'tutorial_resources_missing' || code === 'tutorial_resources_invalid') {
       return 'unavailable'
     }
@@ -242,7 +250,11 @@ function currentTutorialDocumentId(): string | null {
   const current = useDocumentStore.getState().documentId
   const known =
     useTutorialStore.getState().meta?.document_id ?? useOnboardingStore.getState().tutorialDocumentId
-  return known !== null && current === known ? current : null
+  if (known !== null) return current === known ? current : null
+  // 两处都没有：三步教程（ADR 0136）不再写 onboarding 里那份，升级后重启 + 元数据还没取到时就是这种
+  // 情形。此时只能看项目：当前项目是示例项目，手里这份文档就当作示例画布——宁可多挂起一次自动保存
+  // （紧接着的 resume / switchDocument 会接回），也不能漏摘，让认领把旧排版写回刚清掉的固定槽位
+  return useProjectStore.getState().project?.tutorial === true ? current : null
 }
 
 /**
@@ -256,8 +268,9 @@ export async function resetTutorial(): Promise<TutorialOutcome> {
   const meta = useTutorialStore.getState().meta ?? (await loadTutorialStatus())?.metadata ?? null
   // 现取失败就不弹确认：确认框不能假装「没有另存排版」去让用户放心点删除
   let extras: string[]
+  let inventory: string[]
   try {
-    extras = await savedLayoutsInTutorial(meta)
+    ;({ extras, inventory } = await savedLayoutsInTutorial(meta))
   } catch (e) {
     return fail(classify(e), e)
   }
@@ -272,12 +285,13 @@ export async function resetTutorial(): Promise<TutorialOutcome> {
   if (!ok) return { ok: false, reason: 'cancelled', message: failureMessage('cancelled') }
   // 确认框等用户的那段不算切换；点了确认之后「重置请求 + 认领」是一次切换
   if (mutating()) return fail('open_failed')
-  return useProjectStore.getState().switchTransaction((adopt) => resetTutorialNow(adopt, meta))
+  return useProjectStore.getState().switchTransaction((adopt) => resetTutorialNow(adopt, meta, inventory))
 }
 
 async function resetTutorialNow(
   adopt: AdoptProject,
   meta: TutorialMetadata | null,
+  inventory: string[],
 ): Promise<TutorialOutcome> {
   useTutorialStore.setState({ busy: 'reset', failure: null })
   // 先把手里这份教程画布从自动保存链路上摘下来，再让后端清槽位、换目录：重置窗口里
@@ -289,7 +303,7 @@ async function resetTutorialNow(
   if (suspended) suspendAutosaveFor(current)
   let res: TutorialOpenResult
   try {
-    res = await resetTutorialApi({ default: true })
+    res = await resetTutorialApi({ default: true, expected_layouts: inventory })
   } catch (e) {
     if (suspended) resumeAutosave()
     return fail(classify(e), e)
@@ -307,15 +321,19 @@ async function resetTutorialNow(
  * 混进数据目录 `layouts/` 里与示例无关、重置也不删的画布；示例项目不开着时则是别的项目。
  * 不用缓存的旧状态（用户可能刚另存过）。「不知道」一律抛，由调用方按失败路径返回。
  */
-async function savedLayoutsInTutorial(meta: TutorialMetadata | null): Promise<string[]> {
+async function savedLayoutsInTutorial(
+  meta: TutorialMetadata | null,
+): Promise<{ extras: string[]; inventory: string[] }> {
   // 元数据（教程画布名）取不到：分不清哪份是教程画布、哪份是另存的——「不知道」不是「没有」
   if (!meta) throw new Error('tutorial metadata unavailable')
   const status = await fetchTutorialStatus()
   const copy = status.copy
-  if (copy && !copy.exists) return [] // 副本不在：没有东西会被删
+  if (copy && !copy.exists) return { extras: [], inventory: [] } // 副本不在：没有东西会被删
   // 清点不全（null）或后端没给：不知道有没有另存排版——按失败处理，不弹「没有另存」的确认
   if (!Array.isArray(copy?.layouts)) throw new Error('tutorial layout inventory unavailable')
-  return copy.layouts.filter((n) => n !== meta.document_name)
+  // `inventory` 是后端原样的清单（后端已不含教程画布），随重置请求发回：后端持锁后重核，
+  // 确认之后别处又另存了一份就拒绝重置，不会静默删掉用户没看到的排版
+  return { extras: copy.layouts.filter((n) => n !== meta.document_name), inventory: copy.layouts }
 }
 
 /** 事务里用的认领：直接执行、不再排切换队列（见 `projectStore.switchTransaction`） */

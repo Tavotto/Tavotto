@@ -987,6 +987,49 @@ def test_reset_keeps_tutorial_as_default_only_if_it_was(client, tmp_path):
     assert client.get("/api/project").get_json()["id"] == tut["project"]["id"]
 
 
+def test_reset_with_expected_layouts_is_checked_under_the_lock(client, data_dir, monkeypatch):
+    """确认框看到的清单随重置请求发来：与持锁时的现状一致才换副本；确认之后别处又另存了一份、
+    或清点不了，一律 409 `tutorial_layouts_changed` 且副本原样（新画布还在）。"""
+    tut = client.post("/api/tutorial/open", json={}).get_json()
+    tpath = Path(tut["project"]["figures_dir"])
+    store = engine_config.project_store_dir(tpath)
+    store.mkdir(parents=True, exist_ok=True)
+    (store / "MyDraft.json").write_text("{}", encoding="utf-8")
+    seen = client.get("/api/tutorial").get_json()["copy"]["layouts"]
+    assert seen == ["MyDraft"]
+    # 确认之后、重置之前：另一个标签页 / 进程又另存了一份
+    (store / "Late.json").write_text("{}", encoding="utf-8")
+    resp = client.post("/api/tutorial/reset", json={"expected_layouts": seen})
+    assert resp.status_code == 409
+    assert resp.get_json()["code"] == "tutorial_layouts_changed"
+    assert (store / "Late.json").is_file() and (store / "MyDraft.json").is_file()
+    proj = client.get("/api/project").get_json()  # 项目重新打开还给用户
+    assert proj["open"] and proj["id"] == tut["project"]["id"]
+    # 清点不了（None）也拒绝，同样不动副本
+    with monkeypatch.context() as mp:
+        mp.setattr(tutorial, "saved_layouts", lambda dest, meta: None)
+        resp = client.post("/api/tutorial/reset", json={"expected_layouts": ["Late", "MyDraft"]})
+    assert resp.status_code == 409 and resp.get_json()["code"] == "tutorial_layouts_changed"
+    assert (store / "Late.json").is_file()
+    # 清单与现状一致（顺序无关）：重置成功，另存排版随副本一起没了
+    resp = client.post("/api/tutorial/reset", json={"expected_layouts": ["MyDraft", "Late"]})
+    assert resp.status_code == 200 and resp.get_json()["reset"] is True
+    assert tutorial.copy_status()["layouts"] == []
+
+
+def test_reset_without_expected_layouts_keeps_legacy_behaviour(client):
+    """没带清单的是老前端（没有清单确认这一步）：照旧重置，拒绝只会让它永远重置不了。"""
+    tut = client.post("/api/tutorial/open", json={}).get_json()
+    tpath = Path(tut["project"]["figures_dir"])
+    store = engine_config.project_store_dir(tpath)
+    store.mkdir(parents=True, exist_ok=True)
+    (store / "MyDraft.json").write_text("{}", encoding="utf-8")
+    assert client.post("/api/tutorial/reset", json={}).status_code == 200
+    assert tutorial.copy_status()["layouts"] == []
+    bad = client.post("/api/tutorial/reset", json={"expected_layouts": "x"})
+    assert bad.status_code == 400
+
+
 def test_reset_when_locked_reopens_the_old_copy(client, monkeypatch):
     tut = client.post("/api/tutorial/open", json={}).get_json()
     tpath = Path(tut["project"]["figures_dir"])

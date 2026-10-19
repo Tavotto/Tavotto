@@ -214,6 +214,7 @@
     "sync_different_scripts": "These two figures belong to different scripts and can’t be synced",
     "tmp_dir_failed": "Couldn't create a temporary file in the export folder: {{error}}.",
     "tutorial_copy_failed": "Couldn’t prepare the tutorial project. Your previous tutorial copy is untouched: {{reason}}",
+    "tutorial_layouts_changed": "Your tutorial project has new saved layouts since you confirmed, so nothing was reset. Open Reset tutorial again and re-confirm.",
     "tutorial_locked": "A file in the tutorial project is in use by another program. Close it and try again: {{reason}}",
     "tutorial_reset_incomplete": "The tutorial now has a clean copy, but your previous tutorial layout couldn’t be cleared yet (another Tavotto is using the session record). Please try Reset again in a moment.",
     "tutorial_resources_invalid": "Tutorial files are incomplete. Reinstall Tavotto: {{reason}}",

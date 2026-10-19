@@ -528,6 +528,7 @@ export default interface Resources {
       "failure": {
         "cancelled": "已取消。",
         "document_failed": "示例排版读不出来，版本不兼容或文件缺失。试试「重置示例项目」。",
+        "layouts_changed": "示例项目里刚有新的排版，重置没有执行。请重新打开「重置示例项目」再确认一次。",
         "locked": "示例项目里有文件正被其他程序占用，关掉后再试。",
         "no_api": "这个环境没有提供示例项目。",
         "open_failed": "示例项目打不开。再试一次，或打开自己的项目。",
@@ -2521,6 +2522,7 @@ export default interface Resources {
       "tiff_unreadable": "{{file}} 读不出来：不是完整的 TIFF 文件。",
       "tmp_dir_failed": "无法在导出目录中创建临时文件：{{error}}。",
       "tutorial_copy_failed": "无法准备教程项目。之前的教程副本未受影响：{{reason}}",
+      "tutorial_layouts_changed": "示例项目里刚有新的排版，重置没有执行。请重新打开「重置示例项目」，确认后再试一次。",
       "tutorial_locked": "教程项目中有文件正被其他程序占用。请关闭后重试：{{reason}}",
       "tutorial_reset_incomplete": "教程已换成干净的副本，但上次的教程排版暂时清不掉（本机另一个 Tavotto 正在用会话记录），请稍后再点一次重置。",
       "tutorial_resources_invalid": "安装里的教程资源不完整。请重新安装 Tavotto：{{reason}}",

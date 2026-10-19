@@ -381,6 +381,8 @@ USER_VISIBLE_CODES = {
     "tutorial_locked": {"reason"},
     # 重置时新副本已就位、但旧教程排版因会话状态被另一个进程占着没清掉（500）：文案固定、不带参数
     "tutorial_reset_incomplete": set(),
+    # 重置确认之后示例副本里的另存排版变了 / 清点不了（409）：文案固定、不带参数，重置未执行
+    "tutorial_layouts_changed": set(),
     # --- #264：版本时间线读不出来时拒绝整份写回（写入侧那道闸）---
     "versions_unreadable": set(),
     # --- ADR 0101：排版时间线。命名节点超出字节上限时拒绝再命名（已有的一条不删）；

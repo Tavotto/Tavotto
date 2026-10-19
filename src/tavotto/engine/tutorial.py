@@ -454,7 +454,9 @@ def tutorial_lock_path() -> Path:
     return layoutsession.canonical_state_dir() / "tutorial.lock"
 
 
-def ensure_tutorial_copy(*, reset: bool = False) -> TutorialProject:
+def ensure_tutorial_copy(
+    *, reset: bool = False, expected_layouts: list[str] | None = None
+) -> TutorialProject:
     """`_ensure_tutorial_copy_locked`，在**跨进程**教程锁里跑。
 
     共用一个数据目录的两个后端进程同时首次打开 / 重置教程时，副本发布（rename）与清理意图标记
@@ -471,13 +473,15 @@ def ensure_tutorial_copy(*, reset: bool = False) -> TutorialProject:
             "tutorial_locked", f"另一个 Tavotto 正在准备教程副本，稍后再试：{exc}"
         ) from exc
     try:
-        return _ensure_tutorial_copy_locked(reset=reset)
+        return _ensure_tutorial_copy_locked(reset=reset, expected_layouts=expected_layouts)
     finally:
         if fd is not None:
             layoutsession.release_file_lock(fd)
 
 
-def _ensure_tutorial_copy_locked(*, reset: bool = False) -> TutorialProject:
+def _ensure_tutorial_copy_locked(
+    *, reset: bool = False, expected_layouts: list[str] | None = None
+) -> TutorialProject:
     """确保数据目录里有一份可用的教程副本，返回它的位置。
 
     * 没有 → 复制一份（`created=True`）；
@@ -485,6 +489,9 @@ def _ensure_tutorial_copy_locked(*, reset: bool = False) -> TutorialProject:
     * 有但缺文件 / 注册表读不了 → **只补缺的那几个文件**（`repaired=[...]`），
       其余仍是用户的；
     * `reset=True` → 原子换成干净副本（`reset=True`），旧副本整个丢掉。
+      `expected_layouts` 给了就是用户在确认框里看到的另存排版清单：**持锁后、替换前**重新清点，
+      清点不了或与清单不同（确认之后别的标签页 / 进程又另存了一份）→ `tutorial_layouts_changed`，
+      什么都不动。None = 没有清单可核（老前端 / 内部调用），照旧重置。
 
     从不删除版本目录之外的任何东西；旧版本目录（资源升级之后）留着不动。
     """
@@ -498,6 +505,14 @@ def _ensure_tutorial_copy_locked(*, reset: bool = False) -> TutorialProject:
     version_dir = tutorial_version_dir(meta, digest)
     dest = version_dir / PROJECT_DIRNAME
     _sweep_leftovers(version_dir)
+
+    if reset and expected_layouts is not None:
+        # 与下面的 rename 在同一把教程锁里：确认之后到换副本之前新出现的排版不会被静默删掉
+        now = saved_layouts(dest, meta)
+        if now is None or now != sorted(expected_layouts):
+            raise TutorialError(
+                "tutorial_layouts_changed", "示例项目里的另存排版在确认之后有变化，重置未执行"
+            )
 
     result = TutorialProject(path=dest, version=version, resource_digest=digest, metadata=meta)
 

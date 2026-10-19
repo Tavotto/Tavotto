@@ -696,8 +696,10 @@ export const openTutorialApi = (opts: { default?: boolean } = {}) =>
     body: JSON.stringify(opts),
   })
 
-/** 「重新开始教程」：原子换成干净副本，只清教程自己的自动保存与写回基线。锁住时 409 `tutorial_locked`。 */
-export const resetTutorialApi = (opts: { default?: boolean } = {}) =>
+/** 「重新开始教程」：原子换成干净副本，只清教程自己的自动保存与写回基线。锁住时 409 `tutorial_locked`。
+ * `expected_layouts` = 确认框里列给用户看的另存排版清单（后端原样的 `copy.layouts`）；后端持锁后重核，
+ * 确认之后又变了就 409 `tutorial_layouts_changed`、什么都不动。 */
+export const resetTutorialApi = (opts: { default?: boolean; expected_layouts?: string[] } = {}) =>
   jsonFetch<TutorialOpenResult>('/api/tutorial/reset', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },

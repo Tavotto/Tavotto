@@ -3466,8 +3466,11 @@ def api_projects_remove():
 
 
 def _tutorial_error(exc: engine_tutorial.TutorialError):
-    status = 409 if exc.code == "tutorial_locked" else 500
-    if exc.code == "tutorial_reset_incomplete":  # 固定文案，没有占位符，不带 reason
+    status = 409 if exc.code in ("tutorial_locked", "tutorial_layouts_changed") else 500
+    if exc.code in (
+        "tutorial_reset_incomplete",
+        "tutorial_layouts_changed",
+    ):  # 固定文案，没有占位符，不带 reason
         return jsonify({"error": exc.message, "code": exc.code}), status
     return jsonify(
         {"error": exc.message, "code": exc.code, "params": {"reason": exc.message}}
@@ -3637,6 +3640,15 @@ def _clear_tutorial_local_state(
 def api_tutorial_reset():
     """重新开始教程：关掉打开着的教程项目 → 原子换成干净副本 → 重新打开。"""
     body = request.get_json(silent=True) or {}
+    # 确认框里列给用户看的另存排版清单；带了就在教程锁内重核（不一致 → 409 tutorial_layouts_changed）。
+    # 没带的是老前端（它没有清单确认这一步）：照旧重置，拒绝只会让它永远重置不了
+    expected = body.get("expected_layouts")
+    if expected is not None and not (
+        isinstance(expected, list) and all(isinstance(n, str) for n in expected)
+    ):
+        return jsonify(
+            {"error": "expected_layouts 必须是字符串数组", "code": "bad_request", "params": {}}
+        ), 400
     try:
         meta = engine_tutorial.tutorial_metadata()
     except engine_tutorial.TutorialError as exc:
@@ -3648,7 +3660,7 @@ def api_tutorial_reset():
         # 否则下一步 rename 会撞上占用。
         close_project(ctx.id, wait=True)
     try:
-        tp = engine_tutorial.ensure_tutorial_copy(reset=True)
+        tp = engine_tutorial.ensure_tutorial_copy(reset=True, expected_layouts=expected)
     except engine_tutorial.TutorialError as exc:
         # 副本换不掉时旧副本仍在（tutorial 模块保证），把项目重新打开还给用户
         if ctx is not None and ctx.path.is_dir():

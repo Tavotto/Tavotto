@@ -481,6 +481,25 @@ describe('openSampleProject（示例项目，ADR 0039）', () => {
     expect(isAutosaveSuspendedFor('tavotto-tutorial')).toBe(false)
   })
 
+  it('升级后重启（元数据没取到、onboarding 也没记教程文档 id）：示例项目开着时点「示例」，open 期间照样摘下自动保存', async () => {
+    await openSampleProject()
+    expect(useDocumentStore.getState().documentId).toBe('tavotto-tutorial')
+    // v3 用户：持久化后备（tutorialDocumentId）是 null；内存里的元数据也还没取回
+    expect(useOnboardingStore.getState().tutorialDocumentId).toBeNull()
+    useTutorialStore.setState({ meta: null, status: null })
+    let suspendedDuringOpen: boolean | null = null
+    stubFetch({
+      '/api/tutorial/open': () => {
+        suspendedDuringOpen = isAutosaveSuspendedFor('tavotto-tutorial')
+        return json({ project: PROJECT, tutorial: META, reset: false, created: false, repaired: [], cleared: [] })
+      },
+    })
+    const out = await openSampleProject()
+    expect(out.ok).toBe(true)
+    expect(suspendedDuringOpen).toBe(true)
+    expect(isAutosaveSuspendedFor('tavotto-tutorial')).toBe(false)
+  })
+
   it('升级换副本时 open 失败：挂起被接回，旧教程的画布不晾在不保存的状态', async () => {
     stubFetch({
       '/api/tutorial/open': () =>
@@ -705,6 +724,34 @@ describe('resetTutorial', () => {
     // 之前那份文档仍在最近文档索引里——别的文档一个没动
     // （切进干净画布时会重新落一次快照——那是新的，不是旧进度）
     expect(useDocumentStore.getState().recentDocs.some((e) => e.id === 'd_before')).toBe(true)
+  })
+
+  it('POST reset 带上确认时看到的清单（后端原样的 copy.layouts），后端据此在锁内重核', async () => {
+    await openSampleProject()
+    const p = resetTutorial()
+    await vi.waitFor(() => expect(useUiStore.getState().confirm).not.toBeNull())
+    useUiStore.getState().confirm!.resolve(true)
+    expect((await p).ok).toBe(true)
+    const post = calls.find((c) => c.url === '/api/tutorial/reset' && c.method === 'POST')!
+    expect(JSON.parse(post.body!)).toEqual({ default: true, expected_layouts: ['MyDraft'] })
+  })
+
+  it('确认之后后端发现清单变了（409 tutorial_layouts_changed）：按失败返回、给出对应提示，挂起被接回', async () => {
+    await openSampleProject()
+    stubFetch({
+      '/api/tutorial/reset': () =>
+        json({ error: 'changed', code: 'tutorial_layouts_changed' }, 409),
+    })
+    const p = resetTutorial()
+    await vi.waitFor(() => expect(useUiStore.getState().confirm).not.toBeNull())
+    useUiStore.getState().confirm!.resolve(true)
+    const out = await p
+    expect(out.ok).toBe(false)
+    if (!out.ok) {
+      expect(out.reason).toBe('layouts_changed')
+      expect(out.message.key).toBe('backend.tutorial_layouts_changed')
+    }
+    expect(isAutosaveSuspendedFor('tavotto-tutorial')).toBe(false)
   })
 
   it('重置期间教程画布被挂起：后端清槽位时前端一个字节都不写；装回干净画布后恢复', async () => {
