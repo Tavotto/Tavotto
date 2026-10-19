@@ -1434,3 +1434,38 @@ def test_docs_describe_the_http_query_and_not_a_receipt_file():
     for text in (doc, adr):
         assert "/api/handoff/render-status" in text
         assert "session/handoff/" not in text
+
+
+def _dotted_gallery(client, tmp_path, monkeypatch, worker):
+    """文件名主干自己带点（`Fig.v2.pdf` → stem `Fig.v2`）：注册表只认完整主干。"""
+    figs = tmp_path / "d"
+    figs.mkdir()
+    doc = pymupdf.open()
+    doc.new_page(width=100, height=50)
+    doc.save(figs / "Fig.v2.pdf")
+    doc.close()
+    client.post("/api/projects/open", json={"path": str(figs)})
+    monkeypatch.setattr(
+        m.engine_registry.Registry,
+        "for_stem",
+        lambda self, s: (
+            {"script": "x.py", "entry": "main", "cost": "light"} if s == "Fig.v2" else None
+        ),
+    )
+    monkeypatch.setattr(m.engine_pool, "get", lambda *a, **kw: worker)
+    return figs
+
+
+def test_dotted_stem_is_looked_up_whole_on_render(client, tmp_path, monkeypatch):
+    figs = _dotted_gallery(client, tmp_path, monkeypatch, _Worker())
+    assert (
+        client.post("/api/engine/render", json={"id": "Fig.v2.pdf", "patches": []}).status_code
+        == 200
+    )
+    assert _summary(figs, "Fig.v2")["verified"] is True
+
+
+def test_dotted_stem_is_looked_up_whole_on_ack(client, tmp_path, monkeypatch):
+    figs = _dotted_gallery(client, tmp_path, monkeypatch, _Worker())
+    assert _ack(client, id="Fig.v2.pdf", status="ok", manifest_elements=3).status_code == 200
+    assert _summary(figs, "Fig.v2")["verified"] is True
