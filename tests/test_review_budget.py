@@ -415,9 +415,14 @@ def test_review_budget_refreshes_for_review_and_pr_comment_evidence_only():
     assert "github.event.action == 'deleted'" in guard
 
     # All event families resolve the correct PR and cancel only older advisory audits.
-    pr_selector = "github.event.pull_request.number || github.event.issue.number || inputs.pr_number"
+    pr_selector = (
+        "github.event.pull_request.number || github.event.issue.number || inputs.pr_number"
+    )
     assert f"PR_NUMBER: ${{{{ {pr_selector} }}}}" in body
-    assert f"group: review-budget-${{{{ github.workflow }}}}-${{{{ {pr_selector} || github.ref }}}}" in body
+    assert (
+        f"group: review-budget-${{{{ github.workflow }}}}-${{{{ {pr_selector} || github.ref }}}}"
+        in body
+    )
     assert "cancel-in-progress: true" in body
     assert "ref: ${{ github.event.repository.default_branch }}" in body
     assert "persist-credentials: false" in body
