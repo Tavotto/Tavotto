@@ -286,14 +286,16 @@ jobs:
           set -euo pipefail
           # 最近几次「已完成」的定时运行（成功或失败都算：V2 步骤会因故意不声明的用例退出 1，
           # 但趋势 artifact 仍然有效）；取消/跳过的不算。以「能下载到 trend artifact」为准，
-          # 往前最多找 5 次，找不到就 not_computed。
+          # 往前最多找 5 次，找不到就 not_computed。gh 用 --pattern 时每个 artifact 各占一个子目录，
+          # 只按名字下单个 artifact 时直接解在 --dir 下：两种布局都认（下面 summarize 的 ** 也覆盖根目录）。
           candidates="$(gh run list --workflow compat-guardian.yml --branch main --event schedule --status completed --limit 10 --json databaseId,conclusion --jq '[.[] | select(.conclusion == "success" or .conclusion == "failure")][:5][] | .databaseId')"
           found=""
           for prev in $candidates; do
             if [[ "$prev" == "$GITHUB_RUN_ID" ]]; then continue; fi
             rm -rf "$RUNNER_TEMP/prev"
             if gh run download "$prev" --pattern 'compat-guardian-trend-*' --dir "$RUNNER_TEMP/prev" 2>/dev/null \
-              && compgen -G "$RUNNER_TEMP/prev/*/compat-guardian-trend.json" > /dev/null; then
+              && { compgen -G "$RUNNER_TEMP/prev/compat-guardian-trend.json" \
+                   || compgen -G "$RUNNER_TEMP/prev/*/compat-guardian-trend.json"; } > /dev/null; then
               found="$prev"
               break
             fi

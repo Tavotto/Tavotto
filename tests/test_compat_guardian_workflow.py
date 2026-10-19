@@ -180,6 +180,9 @@ def test_previous_trend_comes_from_the_latest_completed_run_that_has_the_artifac
     # selection is by downloadable artifact, searching back a bounded number of runs
     assert "[:5]" in step and "for prev in" in step and "break" in step
     assert "compat-guardian-trend.json" in step and "gh run download" in step
+    # both extraction layouts: directly under --dir, or one subdirectory per artifact
+    assert '"$RUNNER_TEMP/prev/compat-guardian-trend.json"' in step
+    assert '"$RUNNER_TEMP/prev/*/compat-guardian-trend.json"' in step
     assert "not_computed" in step
 
 
