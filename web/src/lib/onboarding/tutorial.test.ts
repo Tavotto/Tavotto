@@ -519,6 +519,31 @@ describe('openSampleProject（示例项目，ADR 0039）', () => {
     expect(tutorialSuspended).toBe(false)
   })
 
+  it('补取元数据在切换事务里：取的那段时间项目处于「切换中」，别的打开排在这次后面', async () => {
+    await openSampleProject()
+    useTutorialStore.setState({ meta: null, status: null })
+    let release: (() => void) | null = null
+    const slow = new Promise<void>((r) => (release = r))
+    const realFetch = globalThis.fetch
+    let switchingDuringProbe: boolean | null = null
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (new URL(String(input), 'http://x').pathname === '/api/tutorial') {
+        switchingDuringProbe = useProjectStore.getState().switching
+        await slow
+      }
+      return realFetch(input, init)
+    }) as typeof fetch
+    try {
+      const p = openSampleProject()
+      await vi.waitFor(() => expect(switchingDuringProbe).not.toBeNull())
+      expect(switchingDuringProbe).toBe(true)
+      release!()
+      expect((await p).ok).toBe(true)
+    } finally {
+      globalThis.fetch = realFetch
+    }
+  })
+
   it('示例项目开着、元数据怎么也取不到：不开（不猜哪份是示例画布），按失败返回', async () => {
     await openSampleProject()
     useTutorialStore.setState({ meta: null, status: null })

@@ -213,19 +213,20 @@ function mutating(): boolean {
  */
 async function openSample(): Promise<TutorialOutcome> {
   if (mutating()) return fail('open_failed')
-  // 示例项目开着、却不知道哪份是示例画布（升级后重启：元数据还没取到，三步教程也不再在
-  // onboarding 里记它的 id）：先取齐元数据再开——挂起自动保存只能挂在**真正的**示例画布上，
-  // 挂错了（用户正在示例项目里改另一份排版）切文档时它的未存改动会被丢掉；不挂又会让认领把
-  // 旧排版写回固定槽位。取不到就不开，按失败返回
-  if (useProjectStore.getState().project?.tutorial === true && knownTutorialDocumentId() === null) {
-    await loadTutorialStatus()
-    if (knownTutorialDocumentId() === null) return fail('unavailable')
-  }
   // 请求 + 认领是一次切换：请求在路上时别的打开就得排在它后面（Codex #550）
   return useProjectStore.getState().switchTransaction((adopt) => openSampleNow(adopt))
 }
 
 async function openSampleNow(adopt: AdoptProject): Promise<TutorialOutcome> {
+  // 示例项目开着、却不知道哪份是示例画布（升级后重启：元数据还没取到，三步教程也不再在
+  // onboarding 里记它的 id）：先取齐元数据再开——挂起自动保存只能挂在**真正的**示例画布上，
+  // 挂错了（用户正在示例项目里改另一份排版）切文档时它的未存改动会被丢掉；不挂又会让认领把
+  // 旧排版写回固定槽位。取不到就不开，按失败返回。**在切换事务里取**：取的那段时间里用户
+  // 另开的项目会排在这次后面，不会先落地、再被这次过时的点击切回示例项目
+  if (useProjectStore.getState().project?.tutorial === true && knownTutorialDocumentId() === null) {
+    await loadTutorialStatus()
+    if (knownTutorialDocumentId() === null) return fail('unavailable')
+  }
   useTutorialStore.setState({ busy: 'open', failure: null })
   // 手里这份就是教程画布时先把它从自动保存链路上摘下来（与重置同一条路）。open 可能换
   // 副本（资源升级换了目录 = 新项目 id），换副本要走认领，而认领的第一步就是把当前文档
