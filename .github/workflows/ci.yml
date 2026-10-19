@@ -431,7 +431,10 @@ jobs:
     # （见文件抬头的分工表）。
     if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    # 30 而不是 20：语料加了三张 3D 图（ADR 0135）后「结构性不变式」一步在 ubuntu
+    # runner 上 12–19 分钟，20 分钟的整 job 上限会把后面的 U01 harness 砍成 cancelled
+    # （#1159 合并组）。超时只防挂死，不是速度预算。
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-python@v6
