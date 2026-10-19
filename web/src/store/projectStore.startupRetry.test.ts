@@ -81,4 +81,36 @@ describe('开局读当前项目：连接层失败有界重试', () => {
     expect(useProjectStore.getState().phase).toBe('loading')
     expect(vi.getTimerCount()).toBe(0)
   })
+
+  it('请求在飞时被取消、随后请求成功 → init 不落 phase、不再拉列表', async () => {
+    const { cancelStartupProbe } = await import('@/lib/startupProbe')
+    let release!: () => void
+    const gate = new Promise<void>((r) => {
+      release = r
+    })
+    let listCalls = 0
+    const inner = globalThis.fetch
+    globalThis.fetch = (async (url: unknown, init?: RequestInit) => {
+      const u = String(url)
+      if (u.includes('/api/projects')) listCalls += 1
+      if (u.includes('/api/project') && !u.includes('/api/projects') && !u.includes('/readiness')) {
+        projectCalls += 1
+        await gate
+        return NONE()
+      }
+      return inner(url as RequestInfo, init)
+    }) as typeof fetch
+    const done = useProjectStore.getState().init()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(projectCalls).toBe(1)
+    cancelStartupProbe()
+    release()
+    await done
+    await vi.advanceTimersByTimeAsync(60_000)
+    expect(projectCalls).toBe(1)
+    expect(listCalls).toBe(0)
+    expect(useProjectStore.getState().phase).toBe('loading')
+    expect(useProjectStore.getState().project).toBeNull()
+    expect(vi.getTimerCount()).toBe(0)
+  })
 })

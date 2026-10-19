@@ -12,17 +12,13 @@
 export const PROJECT_CONNECT_RETRY_DELAYS_MS: readonly number[] = [500, 1000, 1500, 2000, 3000, 4000]
 export const STARTUP_PROBE_CANCELLED = new Error('startup probe cancelled')
 
-let timer: ReturnType<typeof setTimeout> | null = null
-let wake: (() => void) | null = null
+/** 在等的重试循环各登记一个唤醒函数（并发两个循环互不覆盖）；取消时全部清掉。 */
+const waiters = new Set<() => void>()
 let epoch = 0
 
 export function cancelStartupProbe(): void {
   epoch += 1
-  if (timer != null) clearTimeout(timer)
-  timer = null
-  const w = wake
-  wake = null
-  w?.()
+  for (const w of [...waiters]) w()
 }
 
 export async function retryOnConnectFailure<T>(
@@ -33,17 +29,22 @@ export async function retryOnConnectFailure<T>(
   const mine = epoch
   for (let attempt = 0; ; attempt += 1) {
     try {
-      return await fn()
+      const value = await fn()
+      // 请求在飞时被取消（卸载 / 被替换挂载取代）：成功也不能再往下走，否则会覆盖新状态
+      if (mine !== epoch) throw STARTUP_PROBE_CANCELLED
+      return value
     } catch (e) {
+      if (e === STARTUP_PROBE_CANCELLED) throw e
       if (mine !== epoch) throw STARTUP_PROBE_CANCELLED
       if (hasResponse(e) || attempt >= delays.length) throw e
       await new Promise<void>((resolve) => {
-        wake = resolve
-        timer = setTimeout(() => {
-          timer = null
-          wake = null
+        const done = (): void => {
+          clearTimeout(t)
+          waiters.delete(done)
           resolve()
-        }, delays[attempt])
+        }
+        const t = setTimeout(done, delays[attempt])
+        waiters.add(done)
       })
       if (mine !== epoch) throw STARTUP_PROBE_CANCELLED
     }
