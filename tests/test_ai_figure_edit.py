@@ -297,7 +297,8 @@ def test_retargeted_file_symlink_in_project_fails_untouched(env, tmp_path):
     b.write_text("2", encoding="utf-8")
     _symlink_or_skip(a, env["figs"] / "filelink.csv", is_dir=False)
     env["code"] = (
-        EDIT + f"; import os; l = proj / 'filelink.csv'; os.unlink(l); os.symlink({str(b)!r}, l)"
+        EDIT
+        + f"; import os; l = proj / 'filelink.csv'; st = os.lstat(l); os.unlink(l); os.symlink({str(b)!r}, l); os.utime(l, ns=(st.st_atime_ns, st.st_mtime_ns), follow_symlinks=False)"
     )
     sid, _ = _run(env)
     sess = _wait(sid)
