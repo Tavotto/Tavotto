@@ -176,6 +176,24 @@ def _subject_gids(a: dict, man: dict) -> list[str]:
     return []
 
 
+def _subject_replaced(a: dict, after: dict, before: dict) -> bool:
+    """改前主体的 gid 在改后还在，但身份（ADR 0083）变了 = 主体被删、后面的对象重编号顶了上来。
+
+    两侧都有 identity 且不同才算；任一侧缺 identity（没有显式 label 的对象，ADR 0083 §二「已知边界」）
+    不比，维持按位置匹配的现状——不因缺字段把结论变严或变松。
+    """
+    after_els = _elements(after)
+    before_els = _elements(before)
+    for gid in _subject_gids(a, before):
+        new, old = after_els.get(gid), before_els.get(gid)
+        if new is None or old is None:
+            continue
+        o, n = old.get("identity"), new.get("identity")
+        if isinstance(o, str) and isinstance(n, str) and o and n and o != n:
+            return True
+    return False
+
+
 def _holds(a: dict, after: dict, before: dict) -> bool:
     """断言在 `after` 上成立吗（`before` 是改前）。对象找不到抛 `_Missing`，量不出抛 `_Unobservable`。"""
     k = a["kind"]
@@ -305,6 +323,9 @@ def check(
             reason_code="not_observable",
             not_covered=(NOT_OBSERVABLE[kind],),
         )
+    if _subject_replaced(a, after, before):
+        # 位置式 gid 在删前面的子图 / 曲线后会重编号，后面的对象顶上同一个 gid：gid 在不等于主体还在
+        return CheckResult(**base, verdict=FAILED, reason_code="subject_removed")
     try:
         ok = _holds(a, after, before)
     except _Unobservable as exc:

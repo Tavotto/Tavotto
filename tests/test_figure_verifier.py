@@ -287,6 +287,43 @@ def test_axis_scoped_kinds_register_their_subject(a):
     assert (c.verdict, c.reason_code) == ("unknown", "subject_not_found")
 
 
+def _with_identity(el: dict, ident: str | None) -> dict:
+    return {**el, "identity": ident} if ident is not None else dict(el)
+
+
+@pytest.mark.parametrize("kind", ["axis_scale", "axis_scale_unchanged"])
+def test_renumbered_axes_do_not_stand_in_for_a_deleted_axes(kind):
+    a = {"id": "a", "kind": kind, "axes": 0, "axis": "x", "expected": "linear"}
+    before = _man(_with_identity(_axes(0), "l1:aaa"), _with_identity(_axes(1), "l1:bbb"))
+    # 删掉第一个子图：原 axes_1 重编号成 axes_0，身份是 bbb
+    after = _man(_with_identity(_axes(0), "l1:bbb"))
+    c = figureverify.check(a, after, before, role="preserve")
+    assert (c.verdict, c.reason_code) == ("failed", "subject_removed")
+    # 同一个对象（身份没变）：照常 verified
+    same = _man(_with_identity(_axes(0), "l1:aaa"))
+    assert figureverify.check(a, same, before, role="preserve").verdict == "verified"
+    # 任一侧缺身份：不比，维持按位置匹配
+    for b, af in (
+        (_man(_axes(0), _axes(1)), after),
+        (before, _man(_axes(0))),
+        (_man(_axes(0), _axes(1)), _man(_axes(0))),
+    ):
+        assert figureverify.check(a, af, b, role="preserve").verdict == "verified"
+
+
+def test_renumbered_series_do_not_stand_in_for_a_deleted_series():
+    # 同 label、同 gid，但身份不同 = 不是同一条曲线（比如被删后另一个子图里的同名曲线顶替）
+    before = _man(_with_identity(_line("s"), "l1:aaa"))
+    other = _man(_with_identity(_line("s"), "l1:bbb"))
+    c = figureverify.check(SERIES, other, before, role="preserve")
+    assert (c.verdict, c.reason_code) == ("failed", "subject_removed")
+    same = _man(_with_identity(_line("s"), "l1:aaa"))
+    assert figureverify.check(SERIES, same, before, role="preserve").verdict == "verified"
+    assert (
+        figureverify.check(SERIES, _man(_line("s")), before, role="preserve").verdict == "verified"
+    )
+
+
 def test_fig_size_kinds_register_the_figure_as_subject():
     a = {"id": "f", "kind": "fig_size_unchanged", "dim": "width"}
     before = _man()
