@@ -286,6 +286,19 @@
 新加任何网址形字段：键名以 url/uri/endpoint 结尾即自动受益；叫别的名字就在构造处显式过 `_url_fact`。看护：`tests/test_diagnostics_bundle.py` 的网址金丝雀用例（导出包与发送包全文搜）。
 - **取消与「其实已送达」**（Codex #923）：`complete` 响应丢了、用户在退避里取消时，服务端 cancel 回 409 `already_complete`——`_cancel_remote` 回 True，`_finish` 按**成功**收尾（保留报告编号、`cancel_raced`，界面说「取消时报告已经送达」），不发布 cancelled；`in_progress` 再问一次。契约里 cancel 的错误码只有 `already_complete` 带「已完成」语义。失败态里取消走异步路径，同样在回来后把会话改成 done。
 
+### 可选错误摘要（`engine/diagsummary.py`，ADR 0134，CONSENT_VERSION 3）
+
+- **时机**：只在 `diagsend.start`（用户最终点「发送」）里生成，存进会话的 `summary`；它是 init 不可变提交的一部分，
+  所以与 `params` 一起决定能否复用 `client_request_id`（摘要变了 = 新 id，走既有的对账路径）。
+- **带的条件**：`telemetry.enabled()`（同意是当前这一版、硬开关没设）**且**有合格内部事实；否则不带该字段，只走自有报告。
+  快照四个键 `telemetry_consent` / `no_telemetry_env` / `scope_version` / `purposes`，**没有 install_id 与时间戳**。
+- **事实来源**：`taskdiag.STORE` 里最近一次失败的 `export` / `dependency` 快照的稳定错误码（组件 / 操作由类别查表）；
+  `script_run` / `preparation` 不取（用户脚本不是内部故障）。`frames` 恒为空：没有结构化的内部帧来源，不从日志文本里抠。
+  形状正则镜像服务端 `contract.ERRSUM_*`。
+- **部署顺序**：先部署 infra #28，再发客户端。保险：带摘要的 init 被拒为 `bad_request` → 去掉摘要重发一次并在本会话不再带
+  （`summary_refused`）。点发送**不表示**同意未来自动上报；已提交的摘要不保证撤回，界面 / 文档不承诺实时撤销。
+- 看护：`tests/test_diag_summary.py`。
+
 ### 取消与完成的竞态表（`engine/diagsend.py`，Codex #923）
 
 取消结果是**三态**（`_cancel_remote`）：确认已取消（2xx 含幂等重放；404 = 服务端没有这份）/ 确认已送达（409 `already_complete`）/ **无法确认**（传输错误、超时、5xx、429、其他 4xx、`in_progress` 重问一次后仍不定）。

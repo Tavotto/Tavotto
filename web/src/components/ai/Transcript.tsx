@@ -77,6 +77,13 @@ export function Turn({
     <div data-ai-session={session.status} className="flex animate-settle-in flex-col gap-(--item-gap)">
       <UserBubble session={session} onResend={onResend} canResend={canResend} />
 
+      {/* 接回来的运行中会话（刷新 / 重连 / 回切）：说清为什么没有过程输出，别让人以为卡住了 */}
+      {session.restored && running && session.entries.length === 0 && (
+        <p data-ai-restored className="text-sm text-ink-3">
+          {ai('session.restoredNote')}
+        </p>
+      )}
+
       {groups.map((g, i) =>
         g.type === 'message' ? (
           <Markdown key={i} text={g.text} streaming={!!g.streaming} />

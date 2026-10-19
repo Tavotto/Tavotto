@@ -133,18 +133,14 @@ test('未确认：请求没到后端 → 只有「查询结果」；查到没收
   await expect(page.locator('[data-ai-submission-text]')).toHaveText(prompt)
   expect(runRids).toHaveLength(1)
 
-  // 刷新之后仍是「已发出未确认」，不会变回一条可以普通重发的草稿
+  // 刷新之后不会变回一条可以普通重发的草稿：还原出「已发出」的提交，并自动（只读）去后端查——
+  // 后端从没见过这个 id → 自动进入「没收到」，给「重新发送」；全程不用点「查询结果」，也没有悄悄再发
   await page.reload()
   await openAssistant(page, a.baseURL, { reloaded: true })
-  await expect(page.locator('[data-ai-submission="unconfirmed"]')).toBeVisible()
+  await expect(page.locator('[data-ai-submission="not_received"]')).toBeVisible()
   await expect(page.locator('[data-ai-input]')).toHaveValue(prompt)
   await expect(page.locator('[data-ai-send]')).toBeDisabled()
-  expect(runRids).toHaveLength(1) // 刷新没有悄悄再发
-
-  // 查询：后端从没见过这个 id → 才给「重新发送」
-  await page.locator('[data-ai-check]').click()
-  await expect(page.locator('[data-ai-submission="not_received"]')).toBeVisible()
-  expect(runRids).toHaveLength(1)
+  expect(runRids).toHaveLength(1) // 自动查询只读，没有再发
 
   // 同一个 id 重发，这回放行
   blocking = false

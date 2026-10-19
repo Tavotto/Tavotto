@@ -84,6 +84,7 @@ from .engine import (
     execspec as engine_execspec,
     exportjob as engine_exportjob,
     exportreq as engine_exportreq,
+    exporttelemetry as engine_exporttelemetry,
     figcapture as engine_figcapture,
     handoff as engine_handoff,
     handoffreceipt as engine_handoffreceipt,
@@ -1671,6 +1672,15 @@ def _export_telemetry(job) -> None:
     )
 
 
+def _export_result_telemetry(job) -> None:
+    """导出终态 `export_result`：挂在作业的 `on_terminal` 上，由 `exportjob._emit` 在终局调**一次**。
+    同步 / 后台两条路、预运行后失败、取消、`run()` 早退的失败都经同一个 `_emit`；
+    请求被拒（`prepare` 抛）与 `overwrite=ask` 撞名（conflict）不到这里。"""
+    props = engine_exporttelemetry.properties(job)
+    if props is not None:
+        engine_telemetry.capture("export_result", props)
+
+
 def _legacy_export_response(job) -> tuple:
     """旧契约的回执形状（`files[] / export_dir / warnings`）。
 
@@ -1781,6 +1791,8 @@ def _prepare_export_job(spec: dict):
     # 上一次进程被 kill 时留下的临时目录：**在这里顺手扫掉**，
     # 不然它们会一直躺在用户的导出目录里，看起来像是我们弄脏的
     engine_exportjob.sweep_stale_tmp_dirs(out_dir)
+    # 作业已被受理：此后无论怎么结束都记一条终态（`export_result`）
+    job.on_terminal = _export_result_telemetry
     return job, None
 
 
@@ -9721,15 +9733,38 @@ def api_ai_pending_accept(rid):
     return jsonify(engine_ai_history.accept_pending(project, _draft_file_id(body.get("file")), rid))
 
 
+#: `GET /api/ai/history?status=running` 一次返回全部运行中会话的硬上限（防失控；实际不会触及）
+RUNNING_HISTORY_HARD_LIMIT = 2000
+
+
 @app.get("/api/ai/history")
 def api_ai_history():
     """当前项目的 AI 会话历史：分页 / 搜索 / 状态筛选 / 只看固定。"""
     project = str(require_project().resolve())
+    status = request.args.get("status", "")
+    query = request.args.get("q", "")
+    pinned_only = request.args.get("pinned") == "1"
+    if status == "open" and not query and not pinned_only:
+        # 运行中的会话天然有上限（一个脚本同时只有一个，项目里的脚本有限）：**一次返回全部，不分页**——翻页期间集合会变，
+        # offset 翻页会漏掉仍在运行的会话。只设一个很高的硬上限防失控，超过时带 `truncated: true`（实际不会发生）
+        data = engine_ai_history.list_sessions(
+            project, status=status, limit=RUNNING_HISTORY_HARD_LIMIT, offset=0
+        )
+        data["truncated"] = data["total"] > len(data["sessions"])
+        if data["truncated"]:
+            LOG.warning(
+                "运行中的 AI 会话 %s 条，超过硬上限 %s，已截断",
+                data["total"],
+                RUNNING_HISTORY_HARD_LIMIT,
+            )
+        resp = jsonify(data)
+        resp.headers["Cache-Control"] = "no-store"
+        return resp
     data = engine_ai_history.list_sessions(
         project,
-        query=request.args.get("q", ""),
-        status=request.args.get("status", ""),
-        pinned_only=request.args.get("pinned") == "1",
+        query=query,
+        status=status,
+        pinned_only=pinned_only,
         limit=min(int(request.args.get("limit", 20)), 100),
         offset=max(int(request.args.get("offset", 0)), 0),
     )

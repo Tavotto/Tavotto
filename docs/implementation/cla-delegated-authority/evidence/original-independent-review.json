@@ -1,0 +1,143 @@
+{
+  "recorded_at_utc": "2026-10-18T05:34:35.163479+00:00",
+  "review_scope": "independent read-only PR 1151 evidence audit and isolated three-read budget probes; no workspace source changes",
+  "pr": {
+    "number": 1151,
+    "state": "open",
+    "draft": true,
+    "merged": false,
+    "updated_at": "2026-10-18T05:24:35Z"
+  },
+  "base_sha": "7e58f04d510951c9088224bb75cb68fcaaf9594d",
+  "head_sha": "fe22f4b15cbe1b97fc4fe5662ec34f3042ed37f3",
+  "tree_sha": "af90531841ea341caaa2262144b37c4483eb8afb",
+  "tested_merge_commit": "3fe205d7b35258db4d0bd95043fa9ffd5210c591",
+  "local_remote_and_ci_tree_equal": true,
+  "github_offline_job": {
+    "id": 117595152296,
+    "success": true,
+    "observed": "npm ci then npm run check: tsc, 236 tests, 3 migrations, bundled build, 28 mutations"
+  },
+  "review_comments": [],
+  "reviews": [],
+  "workflow_runs": [
+    {
+      "id": 39100369849,
+      "name": "CI",
+      "status": "in_progress",
+      "conclusion": null,
+      "run_number": 5681,
+      "jobs_url": "https://api.github.com/repos/Tavotto/Tavotto/actions/runs/39100369849/jobs",
+      "logs_url": "https://api.github.com/repos/Tavotto/Tavotto/actions/runs/39100369849/logs",
+      "workflow_id": 335434599
+    },
+    {
+      "id": 39100342637,
+      "name": "CLA Cloudflare offline checks",
+      "status": "completed",
+      "conclusion": "success",
+      "run_number": 8,
+      "jobs_url": "https://api.github.com/repos/Tavotto/Tavotto/actions/runs/39100342637/jobs",
+      "logs_url": "https://api.github.com/repos/Tavotto/Tavotto/actions/runs/39100342637/logs",
+      "workflow_id": 384497464
+    },
+    {
+      "id": 39100342633,
+      "name": "PR conflict domains",
+      "status": "completed",
+      "conclusion": "success",
+      "run_number": 2915,
+      "jobs_url": "https://api.github.com/repos/Tavotto/Tavotto/actions/runs/39100342633/jobs",
+      "logs_url": "https://api.github.com/repos/Tavotto/Tavotto/actions/runs/39100342633/logs",
+      "workflow_id": 342064656
+    },
+    {
+      "id": 39100342640,
+      "name": "CI",
+      "status": "completed",
+      "conclusion": "cancelled",
+      "run_number": 5679,
+      "jobs_url": "https://api.github.com/repos/Tavotto/Tavotto/actions/runs/39100342640/jobs",
+      "logs_url": "https://api.github.com/repos/Tavotto/Tavotto/actions/runs/39100342640/logs",
+      "workflow_id": 335434599
+    },
+    {
+      "id": 39100342676,
+      "name": "CodeQL",
+      "status": "completed",
+      "conclusion": "success",
+      "run_number": 4802,
+      "jobs_url": "https://api.github.com/repos/Tavotto/Tavotto/actions/runs/39100342676/jobs",
+      "logs_url": "https://api.github.com/repos/Tavotto/Tavotto/actions/runs/39100342676/logs",
+      "workflow_id": 337730867
+    }
+  ],
+  "committed_reruns": {
+    "recorded_at_utc": "2026-10-18T05:31:23.228999+00:00",
+    "records": [
+      {
+        "command": [
+          "npm",
+          "test"
+        ],
+        "source_sha": "fe22f4b15cbe1b97fc4fe5662ec34f3042ed37f3",
+        "exit": 0,
+        "output": "/tmp/cla-pr1151-review/committed-node-tests.txt",
+        "sha256": "35d53a101a3de11586f32a5d13d8cc598d2ea26a14a1aedc8027e82b3f8003ee"
+      },
+      {
+        "command": [
+          "npm",
+          "run",
+          "test:migration"
+        ],
+        "source_sha": "fe22f4b15cbe1b97fc4fe5662ec34f3042ed37f3",
+        "exit": 0,
+        "output": "/tmp/cla-pr1151-review/committed-migration.txt",
+        "sha256": "a95c8802a285441bacd7f11445acdc3015595a5fb6cca1151991875a0ba48f67"
+      },
+      {
+        "command": [
+          "npm",
+          "run",
+          "test:mutation"
+        ],
+        "source_sha": "fe22f4b15cbe1b97fc4fe5662ec34f3042ed37f3",
+        "exit": 0,
+        "output": "/tmp/cla-pr1151-review/committed-mutations.txt",
+        "sha256": "a07d80fa7be7cedcd164888744b53aad642c9dd1e3e482d593dbdd0108714845"
+      }
+    ]
+  },
+  "optimization": {
+    "note": "Uncommitted three-read source snapshot; source hashes in optimization-manifest.json; independent temporary tests only",
+    "test_count": 9,
+    "exit": 0,
+    "one_person_evaluate_sql": 6,
+    "two_person_evaluate_sql": 9,
+    "one_person_same_head_dispatch_work_sql": 16,
+    "failed_dispatch_total_sql": 20,
+    "read_only_confirmation_work_sql": 17,
+    "confirmation_including_withdrawal_reserve": 19,
+    "two_people_same_head": "blocked before send or fresh journal; 16 + 3*2 exceeds 20",
+    "control_history": "100 signed events accepted, 101 raw rows rejected",
+    "negative_cases": [
+      "hold after candidate read",
+      "tampered control signature",
+      "revocation preserves personal holder route",
+      "failed send journals unknown without replay"
+    ]
+  },
+  "findings": [
+    "No newly demonstrated fail-open in PR 1151 or three-read source snapshot",
+    "verification.json historical local typecheck/build blockers are now independently covered by successful remote same-tree job; keep local-vs-remote provenance separate",
+    "Whole-repository latest CI remains in_progress; do not claim all required checks passed",
+    "New-head dispatcher design requires target/outbox enrollment, all pre-reads before issued, exact remote owned-run absence before single POST, target-wide unresolved blocking, independent reconciliation and one shared invocation budget"
+  ],
+  "not_executed": [
+    "No dependency download retry",
+    "No real authorization, identity-key registration, credentials, deployment or signing",
+    "No real external write",
+    "No previously rejected cross-proof-expiry successful-publication test"
+  ]
+}
