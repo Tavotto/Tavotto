@@ -165,4 +165,76 @@ describe('开局读当前项目：连接层失败有界重试', () => {
     expect(startSpy).not.toHaveBeenCalled()
     startSpy.mockRestore()
   })
+
+  const B = { open: true, id: 'proj-b', name: 'B', path: '/b' } as never
+
+  it('重试等待中切到项目 B → 旧 init 不覆盖 B（project 仍是 B、不启动旧项目扫描）', async () => {
+    const { useProjectScanStore } = await import('./projectScanStore')
+    const startSpy = vi.spyOn(useProjectScanStore.getState(), 'start').mockResolvedValue(undefined as never)
+    projectReply = () => new TypeError('Failed to fetch')
+    const done = useProjectStore.getState().init()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(projectCalls).toBe(1)
+    await useProjectStore.getState().adoptOpenedProject(B)
+    await done
+    await vi.advanceTimersByTimeAsync(60_000)
+    expect(projectCalls).toBe(1)
+    expect(useProjectStore.getState().project).toEqual(B)
+    expect(useProjectStore.getState().phase).toBe('open')
+    expect(currentProjectId()).toBe('proj-b')
+    expect(startSpy.mock.calls.every(([o]) => (o as { reason: string }).reason !== 'restore')).toBe(true)
+    startSpy.mockRestore()
+  })
+
+  it('列表请求在飞时切到项目 B → 旧 init 返回后不覆盖 B、不以旧项目启动恢复扫描', async () => {
+    const { useProjectScanStore } = await import('./projectScanStore')
+    const startSpy = vi.spyOn(useProjectScanStore.getState(), 'start').mockResolvedValue(undefined as never)
+    let release!: () => void
+    const gate = new Promise<void>((r) => {
+      release = r
+    })
+    let listGated = true
+    const inner = globalThis.fetch
+    globalThis.fetch = (async (url: unknown, init?: RequestInit) => {
+      const u = String(url)
+      if (u.includes('/api/projects') && listGated) await gate
+      return inner(url as RequestInfo, init)
+    }) as typeof fetch
+    projectReply = () =>
+      new Response(JSON.stringify({ open: true, id: 'proj-a', name: 'A', path: '/a' }), { status: 200 })
+    const done = useProjectStore.getState().init()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(projectCalls).toBe(1)
+    listGated = false
+    await useProjectStore.getState().adoptOpenedProject(B)
+    release()
+    await done
+    await vi.advanceTimersByTimeAsync(60_000)
+    expect(useProjectStore.getState().project).toEqual(B)
+    expect(useProjectStore.getState().phase).toBe('open')
+    expect(currentProjectId()).toBe('proj-b')
+    expect(startSpy.mock.calls.every(([o]) => (o as { reason: string }).reason !== 'restore')).toBe(true)
+    startSpy.mockRestore()
+  })
+
+  it('重试等待中 open(B) 且打开失败 → phase 落到 none（Picker），不停在 loading、无残留定时器', async () => {
+    const inner = globalThis.fetch
+    globalThis.fetch = (async (url: unknown, init?: RequestInit) => {
+      if (String(url).includes('/api/projects/open')) {
+        return new Response(JSON.stringify({ error: 'boom' }), { status: 500 })
+      }
+      return inner(url as RequestInfo, init)
+    }) as typeof fetch
+    projectReply = () => new TypeError('Failed to fetch')
+    const done = useProjectStore.getState().init()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(projectCalls).toBe(1)
+    await expect(useProjectStore.getState().open('/b')).rejects.toBeDefined()
+    await done
+    await vi.advanceTimersByTimeAsync(60_000)
+    expect(projectCalls).toBe(1)
+    expect(useProjectStore.getState().phase).toBe('none')
+    expect(useProjectStore.getState().project).toBeNull()
+    expect(vi.getTimerCount()).toBe(0)
+  })
 })

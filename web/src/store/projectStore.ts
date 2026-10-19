@@ -24,7 +24,13 @@ import {
 } from '@/lib/projectDocs'
 import { isForeignDocument } from '@/lib/docOwnership'
 import { currentProjectId, setCurrentProjectId } from '@/lib/session'
-import { isConnectFailure, retryOnConnectFailure, STARTUP_PROBE_CANCELLED, startupProbeEpoch } from '@/lib/startupProbe'
+import {
+  cancelStartupProbe,
+  isConnectFailure,
+  retryOnConnectFailure,
+  STARTUP_PROBE_CANCELLED,
+  startupProbeEpoch,
+} from '@/lib/startupProbe'
 import { pushPickerEntry } from '@/lib/pickerHistory'
 import { cancelActivePointerGesture, finishActiveGesture } from '@/store/gestureCoordinator'
 import { markMoment } from '@/lib/timelineCheckpoint'
@@ -436,9 +442,19 @@ export const useProjectStore = create<ProjectState>((set, get) => {
   /** 排进切换队列；排队 + 执行期间 `switching` 一直亮着 */
   let inFlight = 0
   const runSwitch = <T,>(fn: () => Promise<T>): Promise<T> => {
+    // 切项目一开始就作废在飞的开局 init（它捕获的是旧项目与 phase，返回后会覆盖新打开的项目）。
+    // 三个入口（open / adoptOpenedProject / switchTransaction）都经此；init 自己不走 runSwitch
+    cancelStartupProbe()
     inFlight += 1
     set({ switching: true })
-    return switchQueue(fn).finally(() => {
+    return switchQueue(fn)
+      .catch((e: unknown) => {
+        // 开局 init 已被上面作废：切换又失败、phase 仍是 loading 时没有别的路径会落定它，
+        // 落到 Picker（现有的可恢复界面），否则界面永远停在 loading
+        if (get().phase === 'loading') set({ phase: 'none' })
+        throw e
+      })
+      .finally(() => {
       inFlight -= 1
       if (inFlight === 0) set({ switching: false })
     })
