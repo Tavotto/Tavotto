@@ -614,10 +614,14 @@ def runner_error_detail(r: dict) -> str:
     d = (r.get("detail") or {}).get("runner_error")
     if d:
         return str(d)
-    entry = (r.get("routes") or {}).get("runner_error")
-    if isinstance(entry, dict):
-        return str(entry.get("detail") or "")
-    return ""
+    # 任一路由条目的崩溃分类都算（逐路由隔离后崩溃记在该路由自己的条目上，
+    # 外层兜底仍写 routes["runner_error"] 汇总条目）。
+    parts = [
+        str(e.get("detail") or "")
+        for e in (r.get("routes") or {}).values()
+        if isinstance(e, dict) and e.get("classification") == RUNNER_ERROR and e.get("detail")
+    ]
+    return "\n---\n".join(parts)
 
 
 def has_runner_crash(r: dict) -> bool:

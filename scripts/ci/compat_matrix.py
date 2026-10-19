@@ -612,6 +612,26 @@ def _as_dict(obj, *, route: str, what: str) -> dict:
     return obj
 
 
+def _isolated(fn, *args, **kwargs):
+    """共享探测的崩溃隔离：成功 → 原结果；harness 异常 → 「runner 崩溃」标记结果。
+
+    在 `_contract_guarded`（产品响应不合契约 → product_bug 失败结果）**外层**：
+    契约问题先被内层转成失败结果，这里只接真正的 harness 异常。
+    """
+    try:
+        return fn(*args, **kwargs)
+    except Exception:  # noqa: BLE001
+        return {
+            "ok": False,
+            "code": "route_runner_crashed",
+            "runner_crash": traceback.format_exc()[-2000:],
+        }
+
+
+def _is_crash(res) -> bool:
+    return isinstance(res, dict) and "runner_crash" in res
+
+
 def _contract_guarded(fn):
     """路由 helper 装饰器：产品响应不合契约 → 该路由失败结果（product_bug），不冒成崩溃。"""
 
@@ -980,34 +1000,56 @@ def stage_product_routes(group: list[dict], root: Path, results: dict) -> None:
         return
     stems = [ca["stem"] for ca in group]
     workdir = Path(tempfile.mkdtemp(prefix="compat-routes-", dir=str(root)))
+    # 每个共享探测各自隔离：harness 异常只让依赖它的路由记「runner 崩溃」，
+    # 不从这里冒出去整组改判，也不会让已观察到的产品失败丢失（Codex #1178）。
+    close_crash: str | None = None
     try:
         # ── app 侧（safe_probe + desktop_project）：一个全新项目 ──
-        app_project, script_rel, _entry = materialize(group, workdir / "app")
-        probe_res = route_probe_via_app(app_project, script_rel)
-        desktop_res = None
-        pj = probe_res.pop("pj", None)
-        try:
-            if probe_res["ok"] and pj:
-                desktop_res = route_desktop_project(app_project, script_rel, pj, stems)
-        finally:
-            if pj:
-                tavotto_app.close_project(pj)
+        app_mat = _isolated(materialize, group, workdir / "app")
+        pj = None
+        if _is_crash(app_mat):
+            probe_res = desktop_res = app_mat
+        else:
+            app_project, script_rel, _entry = app_mat
+            probe_res = _isolated(route_probe_via_app, app_project, script_rel)
+            desktop_res = None
+            pj = probe_res.pop("pj", None)
+            try:
+                if probe_res["ok"] and pj:
+                    desktop_res = _isolated(
+                        route_desktop_project, app_project, script_rel, pj, stems
+                    )
+            finally:
+                if pj:
+                    # 收尾崩溃只记为崩溃事实，不抹掉上面已得到的路由结论
+                    try:
+                        tavotto_app.close_project(pj)
+                    except Exception:  # noqa: BLE001
+                        close_crash = traceback.format_exc()[-2000:]
 
         # ── CLI 侧：另一个全新项目（CLI 自己 probe，子进程） ──
-        cli_project, cli_script, _ = materialize(group, workdir / "cli")
-        cli_bare = route_cli_open(cli_project, cli_script)
+        cli_selected = None
+        cli_mat = _isolated(materialize, group, workdir / "cli")
+        if _is_crash(cli_mat):
+            cli_bare = cli_mat
+        else:
+            cli_project, cli_script, _ = cli_mat
+            cli_bare = _isolated(route_cli_open, cli_project, cli_script)
         # native 侧再要一个全新项目：`tavotto run` 会**透传** savefig（native
         # 的 passthrough 语义），跟别的路由共用一个目录会让那些文件混进
         # safe 侧的判据里。
-        native_project, native_script, _ = materialize(group, workdir / "native")
-        native_res = None
-        cli_selected = None
+        native_mat = _isolated(materialize, group, workdir / "native")
+        native_res = native_mat if _is_crash(native_mat) else None
+        if native_res is None:
+            native_project, native_script, _ = native_mat
         # 「多 Figure」看的是**脚本产出几张图**，不是组里有几个 case：
         # shape_loop_figures 一个 case 循环存三张，同样走多图契约
         multi = len(group) > 1 or int(group[0].get("expected_figures") or 1) > 1
-        if multi:
+        if multi and not _is_crash(cli_mat):
             # 多 Figure：裸调必须显式拒绝（不静默选第一张），--stem 必须选中
-            cli_selected = route_cli_open(cli_project, cli_script, stem=group[-1]["stem"])
+            cli_selected = _isolated(
+                route_cli_open, cli_project, cli_script, stem=group[-1]["stem"]
+            )
 
         for ca in group:
             declared = ca.get("product_routes") or {}
@@ -1034,10 +1076,17 @@ def stage_product_routes(group: list[dict], root: Path, results: dict) -> None:
                     }
                     routes[name] = _route_entry(res, ca)
                 elif name == "cli_open":
-                    routes[name] = _route_cli_verdict(ca, group, cli_bare, cli_selected)
+                    crash = next((x for x in (cli_bare, cli_selected) if _is_crash(x)), None)
+                    routes[name] = (
+                        _route_entry(crash, ca)
+                        if crash
+                        else _route_cli_verdict(ca, group, cli_bare, cli_selected)
+                    )
                 elif name == "native_run":
                     if native_res is None:
-                        native_res = route_native_run(native_project, native_script, stems)
+                        native_res = _isolated(
+                            route_native_run, native_project, native_script, stems
+                        )
                     routes[name] = _route_entry(native_res, ca)
                 elif name == "browser_playground":
                     br = results[ca["id"]].get("browser")
@@ -1055,12 +1104,25 @@ def stage_product_routes(group: list[dict], root: Path, results: dict) -> None:
                             },
                             ca,
                         )
+            if close_crash and declared:
+                routes["runner_error"] = _route_entry(
+                    {"runner_crash": "close_project: " + close_crash}, ca
+                )
     finally:
         shutil.rmtree(workdir, ignore_errors=True)
 
 
 def _route_entry(res: dict, case: dict) -> dict:
     """路由结果 → 报告条目。失败必须带 stage/code/classification/reason。"""
+    if _is_crash(res):
+        return {
+            "status": "fail",
+            "code": "route_runner_crashed",
+            "classification": CC.RUNNER_ERROR,
+            "reason": f"路由 runner 崩溃（case {case['id']}）",
+            "follow_up": "读 detail 里的 traceback，修 runner 后重跑",
+            "detail": res["runner_crash"],
+        }
     if res.get("ok"):
         return {"status": "pass", "via": res.get("via"), "detail": res.get("detail")}
     return {

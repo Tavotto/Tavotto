@@ -1249,8 +1249,10 @@ class TestRunGroupCrashKeepsPartialResults:
         assert not CC.has_runner_crash(ra)
 
         rb = results["b"]
-        assert rb["routes"]["runner_error"]["code"] == "route_runner_crashed"
-        assert "native boom" in rb["routes"]["runner_error"]["detail"]
+        # 逐路由隔离：崩溃记在 native_run 自己的条目上（不再是汇总键）
+        assert rb["routes"]["native_run"]["code"] == "route_runner_crashed"
+        assert "native boom" in rb["routes"]["native_run"]["detail"]
+        assert "native boom" in CC.runner_error_detail(rb)
         assert rb["classification"] == "runner_error"
 
         report = CM.build_report([a, b], results, {}, "current", "all")
@@ -1286,8 +1288,9 @@ class TestRunGroupCrashKeepsPartialResults:
         ra = results["a"]
         assert ra["routes"]["desktop_project"]["status"] == "fail"
         assert ra["routes"]["desktop_project"]["classification"] == "product_bug"
-        assert ra["routes"]["runner_error"]["code"] == "route_runner_crashed"
-        assert "spawn native_run boom" in ra["routes"]["runner_error"]["detail"]
+        assert ra["routes"]["native_run"]["code"] == "route_runner_crashed"
+        assert ra["routes"]["native_run"]["classification"] == "runner_error"
+        assert "spawn native_run boom" in ra["routes"]["native_run"]["detail"]
         assert ra["classification"] == "product_bug"
 
         report = CM.build_report([a], results, {}, "current", "all")
@@ -1295,6 +1298,95 @@ class TestRunGroupCrashKeepsPartialResults:
         assert [x["id"] for x in report["summary"]["runner_errors"]] == ["a"]
         ok, fails = CM.evaluate_gate("pr", [a], results, {"cases": {}})
         assert not ok and any("新出现的 product_bug" in f for f in fails)
+
+    def _isolation_pipeline(self, monkeypatch, tmp_path, *, probe, cli, close=None):
+        from tavotto import app as tavotto_app
+
+        self._patch_pipeline(monkeypatch, tmp_path, override_boom=False)
+        monkeypatch.setattr(CM, "stage_replay", lambda *a, **k: {"ok": True, "detail": {}})
+        monkeypatch.setattr(CM, "stage_export", lambda *a, **k: {"ok": True, "detail": {}})
+        monkeypatch.setattr(CM, "route_probe_via_app", probe)
+        monkeypatch.setattr(CM, "route_cli_open", cli)
+        monkeypatch.setattr(tavotto_app, "close_project", close or (lambda pj: None))
+
+    def test_shared_probe_failure_survives_later_cli_crash(self, monkeypatch, tmp_path):
+        """safe_probe 已是产品失败，随后 route_cli_open 起不来 → 仍 product_bug，门禁致红（r4310776661）。"""
+
+        def cli_boom(*a, **k):
+            raise OSError("cli spawn boom")
+
+        self._isolation_pipeline(
+            monkeypatch,
+            tmp_path,
+            probe=lambda *a, **k: {
+                "ok": False,
+                "code": "probe_failed",
+                "via": "http",
+                "pj": "pj1",
+                "detail": {},
+            },
+            cli=cli_boom,
+        )
+        a = case("a", product_routes={"safe_probe": True, "cli_open": True})
+        results = self._run([a], tmp_path)
+        ra = results["a"]
+        assert ra["routes"]["safe_probe"]["status"] == "fail"
+        assert ra["routes"]["safe_probe"]["classification"] == "product_bug"
+        assert ra["routes"]["cli_open"]["code"] == "route_runner_crashed"
+        assert ra["routes"]["cli_open"]["classification"] == "runner_error"
+        assert "cli spawn boom" in ra["routes"]["cli_open"]["detail"]
+        assert ra["classification"] == "product_bug"
+        assert CC.has_runner_crash(ra)
+        report = CM.build_report([a], results, {}, "current", "all")
+        assert [x["id"] for x in report["summary"]["runner_errors"]] == ["a"]
+        ok, fails = CM.evaluate_gate("pr", [a], results, {"cases": {}})
+        assert not ok and any("新出现的 product_bug" in f for f in fails)
+
+    def test_close_project_crash_keeps_route_verdicts_and_records_fact(self, monkeypatch, tmp_path):
+        def close_boom(pj):
+            raise RuntimeError("close boom")
+
+        self._isolation_pipeline(
+            monkeypatch,
+            tmp_path,
+            probe=lambda *a, **k: {
+                "ok": False,
+                "code": "probe_failed",
+                "via": "http",
+                "pj": "pj1",
+                "detail": {},
+            },
+            cli=lambda *a, **k: {"ok": True, "via": "cli", "payload": {"stem": "s"}},
+            close=close_boom,
+        )
+        a = case("a", product_routes={"safe_probe": True, "cli_open": True})
+        results = self._run([a], tmp_path)
+        ra = results["a"]
+        assert ra["routes"]["safe_probe"]["classification"] == "product_bug"
+        assert ra["routes"]["cli_open"]["status"] == "pass"
+        assert ra["routes"]["runner_error"]["code"] == "route_runner_crashed"
+        assert "close boom" in CC.runner_error_detail(ra)
+        assert ra["classification"] == "product_bug"
+        assert CC.has_runner_crash(ra)
+
+    def test_only_one_route_crashing_is_runner_error(self, monkeypatch, tmp_path):
+        def cli_boom(*a, **k):
+            raise OSError("cli only boom")
+
+        self._isolation_pipeline(
+            monkeypatch,
+            tmp_path,
+            probe=lambda *a, **k: {"ok": True, "via": "http", "detail": {}},
+            cli=cli_boom,
+        )
+        a = case("a", product_routes={"safe_probe": True, "cli_open": True})
+        results = self._run([a], tmp_path)
+        ra = results["a"]
+        assert ra["routes"]["safe_probe"]["status"] == "pass"
+        assert ra["routes"]["cli_open"]["code"] == "route_runner_crashed"
+        assert ra["classification"] == "runner_error"
+        ok, fails = CM.evaluate_gate("pr", [a], results, {"cases": {}})
+        assert not any("新出现的 product_bug" in f for f in fails)
 
 
 class TestMalformedProductResponseIsProductBug:
@@ -1389,7 +1481,7 @@ class TestMalformedProductResponseIsProductBug:
         ok, fails = CM.evaluate_gate("pr", [c], {"a": res}, {"cases": {}})
         assert not ok and any("新出现的 product_bug" in f for f in fails)
 
-    def test_harness_crash_in_materialize_is_still_runner_error(self, monkeypatch, tmp_path):
+    def test_harness_crash_in_materialize_is_a_route_runner_error(self, monkeypatch, tmp_path):
         self._patch(monkeypatch, tmp_path, open_body={"id": "p"}, cli_stdout=self.GOOD_CLI)
 
         def boom(*a, **k):
@@ -1397,5 +1489,8 @@ class TestMalformedProductResponseIsProductBug:
 
         monkeypatch.setattr(CM, "materialize", boom)
         c = case("a", product_routes={"safe_probe": True})
-        with pytest.raises(OSError):
-            CM.stage_product_routes([c], tmp_path, {"a": CM._blank(c)})
+        results = {"a": CM._blank(c)}
+        CM.stage_product_routes([c], tmp_path, results)
+        e = results["a"]["routes"]["safe_probe"]
+        assert e["code"] == "route_runner_crashed" and e["classification"] == "runner_error"
+        assert "materialize boom" in e["detail"]
