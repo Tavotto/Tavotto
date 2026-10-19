@@ -27,7 +27,6 @@ import {
   ApiError,
   backendErrorMsg,
   fetchLayout,
-  fetchLayoutNames,
   fetchTutorialStatus,
   openTutorialApi,
   resetTutorialApi,
@@ -303,19 +302,14 @@ async function resetTutorialNow(
 }
 
 /**
- * 教程项目里除教程画布之外、用户自己另存的画布文件名。示例项目是当前项目时读当前项目的
- * 排版列表（含还没落到状态里的最新保存）；不是当前项目时（设置页 / 命令面板也能触发重置）
- * `/api/layouts` 取的是别的项目，改为**重置前现取**后端 `copy.layouts`（不用缓存的旧状态，
- * 用户可能刚另存过）。两路取失败都会抛，由调用方按失败路径返回。
+ * 重置会一并删掉的、用户在示例项目里另存的画布名（不含教程画布本身）。**一律重置前现取**后端对
+ * 示例副本的清点 `copy.layouts`：不读 `/api/layouts`——它是当前项目的列表，示例项目开着时还会
+ * 混进数据目录 `layouts/` 里与示例无关、重置也不删的画布；示例项目不开着时则是别的项目。
+ * 不用缓存的旧状态（用户可能刚另存过）。「不知道」一律抛，由调用方按失败路径返回。
  */
 async function savedLayoutsInTutorial(meta: TutorialMetadata | null): Promise<string[]> {
   // 元数据（教程画布名）取不到：分不清哪份是教程画布、哪份是另存的——「不知道」不是「没有」
   if (!meta) throw new Error('tutorial metadata unavailable')
-  if (useProjectStore.getState().project?.tutorial === true) {
-    // 失败照样抛：取不到清单不等于没有另存排版（调用方按失败返回，不弹「没有另存」的确认）
-    const names = await fetchLayoutNames()
-    return names.filter((n) => n !== meta.document_name)
-  }
   const status = await fetchTutorialStatus()
   const copy = status.copy
   if (copy && !copy.exists) return [] // 副本不在：没有东西会被删

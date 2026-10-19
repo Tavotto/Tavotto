@@ -92,7 +92,14 @@ function stubFetch(over: Record<string, () => Response> = {}) {
   responses = {
     '/api/tutorial/open': () => json({ project: PROJECT, tutorial: META, reset: false, created: true, repaired: [] }),
     '/api/tutorial/reset': () => json({ project: PROJECT, tutorial: META, reset: true, cleared: ['tavotto-tutorial.json'] }),
-    '/api/tutorial': () => json({ available: true, problems: [], tutorial_version: 1, metadata: META }),
+    '/api/tutorial': () =>
+      json({
+        available: true,
+        problems: [],
+        tutorial_version: 1,
+        metadata: META,
+        copy: { exists: true, complete: true, missing: [], registry_ok: true, layouts: ['MyDraft'] },
+      }),
     '/api/layouts/Tutorial': () => json(LAYOUT),
     '/api/layouts': () => json({ layouts: ['Tutorial', 'MyDraft'] }),
     '/api/autosave/tavotto-tutorial': () => json({ error: 'nope' }, 404),
@@ -593,9 +600,20 @@ describe('resetTutorial', () => {
     await p
   })
 
-  it('示例项目是当前项目但排版清单取不到：不弹「没有另存」的确认、不发重置，按失败返回', async () => {
+  it('示例项目开着：确认框只列示例副本里的另存画布，不列 /api/layouts 混进来的数据目录画布（重置不删它们）', async () => {
     await openSampleProject()
-    stubFetch({ '/api/layouts': () => json({ error: 'boom' }, 500) })
+    stubFetch({ '/api/layouts': () => json({ layouts: ['Tutorial', 'MyDraft', 'GlobalSketch'] }) })
+    const p = resetTutorial()
+    await vi.waitFor(() => expect(useUiStore.getState().confirm).not.toBeNull())
+    const req = useUiStore.getState().confirm!
+    expect(req.body.values?.names).toBe('MyDraft')
+    req.resolve(false)
+    await p
+  })
+
+  it('示例项目是当前项目但副本清点取不到：不弹「没有另存」的确认、不发重置，按失败返回', async () => {
+    await openSampleProject()
+    stubFetch({ '/api/tutorial': () => json({ error: 'boom' }, 500) })
     const out = await resetTutorial()
     expect(out.ok).toBe(false)
     expect(useUiStore.getState().confirm).toBeNull()
