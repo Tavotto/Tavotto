@@ -1074,24 +1074,34 @@ def classify(
         n: e for n, e in (routes or {}).items() if isinstance(e, dict) and e.get("status") == "fail"
     }
     # 路由 runner 自己崩了：没有裁决，不是产品路由没走通（#1133）。
+    # 但只有「没有独立观察到的产品失败」时才整体判 runner_error：引擎阶段
+    # 已经红了（或别的路由真失败）时，崩溃不能把这条真回归抹掉。
     crashed_routes = [
         n for n, e in failed_entries.items() if e.get("classification") == CC.RUNNER_ERROR
     ]
-    if crashed_routes:
-        return (
-            CC.RUNNER_ERROR,
-            "路由 runner 崩溃（基础设施故障，不是产品缺陷）",
-            f"{crashed_routes}",
-        )
-    failed_routes = list(failed_entries)
+    failed_routes = [n for n in failed_entries if n not in crashed_routes]
+    crash_note = (
+        f"；路由 runner 崩溃（基础设施故障，另行处理）：{crashed_routes}" if crashed_routes else ""
+    )
     if failed_routes:
-        return ("product_bug", declared_reason or "", f"产品路由未通过：{failed_routes}")
+        return (
+            "product_bug",
+            declared_reason or "",
+            f"产品路由未通过：{failed_routes}{crash_note}",
+        )
 
     failed = [s for s in CC.STAGES if s in stages and not stages[s] and expected.get(s, True)]
     # 期望里写着 false 的阶段失败了 —— 那是**声明过的**边界，不是缺陷。
     by_design = [
         s for s in CC.STAGES if s in stages and not stages[s] and not expected.get(s, True)
     ]
+
+    if crashed_routes and not failed:
+        return (
+            CC.RUNNER_ERROR,
+            "路由 runner 崩溃（基础设施故障，不是产品缺陷）",
+            f"{crashed_routes}",
+        )
 
     if not failed:
         if by_design or declared != "full_support":
@@ -1117,10 +1127,22 @@ def classify(
     # `sci_sns_bar` 的 replay 分歧被这一档吸收掉，而真实原因是 corpus 自己
     # 用了 bootstrap 置信区间（随机）——两件事都该被看见。
     if declared == "environment_dependency" and not stages.get("execute", True):
-        return declared, declared_reason, f"未通过：{failed}（依赖缺失）"
+        return declared, declared_reason, f"未通过：{failed}（依赖缺失）{crash_note}"
     if declared == "invalid_fixture":
-        return declared, declared_reason, f"未通过：{failed}"
-    return "product_bug", declared_reason or "", f"未通过：{failed}"
+        return declared, declared_reason, f"未通过：{failed}{crash_note}"
+    return "product_bug", declared_reason or "", f"未通过：{failed}{crash_note}"
+
+
+def _runner_error_detail(r: dict) -> str:
+    """崩溃详情按来源取：run_group 崩溃在 detail.runner_error，
+    路由 runner 崩溃在 routes.runner_error.detail。"""
+    d = (r.get("detail") or {}).get("runner_error")
+    if d:
+        return str(d)
+    entry = (r.get("routes") or {}).get("runner_error")
+    if isinstance(entry, dict):
+        return str(entry.get("detail") or "")
+    return ""
 
 
 def runner_crash_result(case: dict, tb: str) -> dict:
@@ -1542,7 +1564,9 @@ def _finish(results: dict, group: list[dict], t0: float) -> dict:
                 bad_routes = [
                     n
                     for n, e in (r.get("routes") or {}).items()
-                    if isinstance(e, dict) and e.get("status") == "fail"
+                    if isinstance(e, dict)
+                    and e.get("status") == "fail"
+                    and e.get("classification") != CC.RUNNER_ERROR
                 ]
                 stage = f"route:{bad_routes[0]}" if bad_routes else ""
             r["stage"] = stage
@@ -1682,7 +1706,7 @@ def build_report(
         for cid in by_cls.get("product_bug", [])
     ]
     runner_errors = [
-        {"id": cid, "detail": (results[cid].get("detail") or {}).get("runner_error", "")[-400:]}
+        {"id": cid, "detail": _runner_error_detail(results[cid])[-400:]}
         for cid in by_cls.get(CC.RUNNER_ERROR, [])
     ]
     parity = [
@@ -1785,7 +1809,9 @@ def render_summary(report: dict) -> str:
     if s.get("runner_errors"):
         out.append("\n### Runner errors（基础设施故障，不计入产品缺陷）\n")
         for e in s["runner_errors"]:
-            out.append(f"- `{e['id']}` — runner 崩溃，见 detail.runner_error")
+            out.append(
+                f"- `{e['id']}` — runner 崩溃，见报告 JSON 的 detail.runner_error（run_group 崩溃）或 routes.runner_error.detail（路由 runner 崩溃）"
+            )
     census = report["artist_census"][:10]
     if census:
         out.append("\n### Top unrecognized / partially recognized artists\n")

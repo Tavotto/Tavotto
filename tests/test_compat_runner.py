@@ -891,6 +891,58 @@ class TestRunnerError:
         routes = {"r": {"status": "fail", "code": "x", "classification": "product_bug"}}
         assert CM.classify(case(), stages(execute=True), {}, routes)[0] == "product_bug"
 
+    def _crashed_routes(self):
+        return {
+            "runner_error": {
+                "status": "fail",
+                "code": "route_runner_crashed",
+                "classification": "runner_error",
+                "detail": "Traceback: route boom",
+            }
+        }
+
+    def test_stage_failure_plus_route_runner_crash_stays_product_bug(self):
+        """引擎阶段已独立失败，随后路由 runner 崩溃：真回归不能被抹成 runner_error。"""
+        routes = self._crashed_routes()
+        cls, _r, detail = CM.classify(case(), stages(execute=True, replay=False), {}, routes)
+        assert cls == "product_bug"
+        assert "replay" in detail and "runner_error" in detail  # 崩溃信息仍可见
+        # 经 _finish 落到结果里：分类 product_bug、stage 为失败阶段
+        res = CM._blank(case("z"))
+        res["stages"].update(execute=True, replay=False)
+        res["routes"] = routes
+        out = CM._finish({"z": res}, [case("z")], 0.0)["z"]
+        assert out["classification"] == "product_bug"
+        assert out["stage"] == "replay"
+        assert "runner_error" in out["detail_note"]
+        assert out["routes"]["runner_error"]["detail"] == "Traceback: route boom"
+
+    def test_other_failed_route_plus_route_runner_crash_stays_product_bug(self):
+        routes = {
+            "bad": {"status": "fail", "code": "x", "classification": "product_bug"},
+            **self._crashed_routes(),
+        }
+        cls, _r, detail = CM.classify(case(), stages(execute=True), {}, routes)
+        assert cls == "product_bug" and "bad" in detail
+
+    def test_route_runner_crash_detail_reaches_summary_at_documented_path(self):
+        c = case("x")
+        res = CM._blank(c)
+        res["stages"].update(execute=True)
+        res["routes"] = self._crashed_routes()
+        results = CM._finish({"x": res}, [c], 0.0)
+        assert results["x"]["classification"] == "runner_error"
+        report = CM.build_report([c], results, {}, "current", "all")
+        (e,) = report["summary"]["runner_errors"]
+        assert e["detail"] and e["detail"] == results["x"]["routes"]["runner_error"]["detail"]
+        text = CM.render_summary(report)
+        assert "routes.runner_error.detail" in text
+        # run_group 崩溃的位置同样存在
+        crashed = self._crashed("y")
+        assert crashed["detail"]["runner_error"]
+        report = CM.build_report([case("y")], {"y": crashed}, {}, "current", "all")
+        assert report["summary"]["runner_errors"][0]["detail"] == "Traceback: boom"
+
     def test_gate_does_not_judge_runner_error_as_product_regression_but_reports_it(self):
         cases = [case("x")]
         results = {"x": self._crashed("x")}
