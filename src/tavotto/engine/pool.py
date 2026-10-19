@@ -2847,6 +2847,7 @@ class WorkerdWorker:
         self.child_pid: int | None = None
         self.last_used = time.time()
         self._dead = False
+        self._fenced = False  # 强制关闭未确认（见 force_kill）：池里保留、acquire 不得复用
         self._client = client or workerd_client.client()
         if self._client is None:
             raise WorkerdUnavailable("workerd 不可用")
@@ -3196,8 +3197,12 @@ class WorkerdWorker:
                 slack=2.0,
             )
         except workerd_client.WorkerdError:
+            # 关停未确认：workerd 那头的会话 / by_hash 可能还在。标「已围栏」——池里保留这个句柄，
+            # `acquire()` 不得把它当「已死」丢掉再按同一规格重开（#837），要等重试关闭被确认
+            self._fenced = True
             return False
         else:
+            self._fenced = False  # close_session 对已关的会话是幂等成功，重试一次即可确认
             return True
         finally:
             self._dead = True
@@ -3805,6 +3810,14 @@ def acquire(
         with _lock:
             w = _workers.get(key)
             why = ""
+            if w is not None and is_fenced(w):
+                # 上一次强制关闭未确认而保留的句柄（#837）：不能当「已死」丢掉再按同一规格重开——
+                # close 若没到达 workerd，open_session 会按 by_hash 复用旧会话和旧的已构建图。
+                # 先重试关闭（有界；对已关的会话是幂等成功），确认了才放行；仍未确认就如实拒绝。
+                if w.force_kill() is False:
+                    raise WorkerError("无法确认旧渲染会话已关闭，请重试", code="session_dead")
+                _workers.pop(key, None)
+                w = None
             if w is not None:
                 if not w.alive():
                     why = "已死"
@@ -3900,6 +3913,11 @@ def acquire(
 #: 本线程最近一次 `acquire()` 的结果 `(worker, created)`（T09b）。只经 `get()` 取会话的老入口（`build()`、试运行）
 #: 据此在**同一线程**、取到之后立刻问「这条是不是我建的」——不拿 `peek()` 的快照去猜（两个调用方都会以为是自己）。
 _last_acquired = threading.local()
+
+
+def is_fenced(worker) -> bool:
+    """这条会话的强制关闭未被确认（`WorkerdWorker.force_kill()` 回过 False）——必须先重试关闭才能换新。"""
+    return getattr(worker, "_fenced", False) is True
 
 
 def acquired_here(worker) -> bool | None:
@@ -4360,7 +4378,13 @@ def force_cancel(
     if w is None:
         return False
     LOG.info("强制取消 worker 会话: %s", script_name)
-    w.force_kill()
+    if w.force_kill() is False:
+        # 关停未确认（workerd 的 close_session 超时 / 出错）：脚本可能还在跑。不报「已杀」——
+        # 调用方据此走各自的兜底硬杀；句柄放回池里（键空着时）保持围栏，acquire 重试关闭前不会再分配它（#875 / #837）
+        LOG.warning("强制取消未被确认，会话保持围栏: %s", script_name)
+        with _lock:
+            _workers.setdefault(key, w)
+        return False
     return True
 
 
