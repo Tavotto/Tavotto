@@ -491,8 +491,11 @@ class RealDiscovery(unittest.TestCase):
         def lost(path):
             return None if path.name == "tavotto-execs.jsonl" else real(path)
 
+        manifest, _ = xt.build(self.parent, ("import_alias",), 7)
+        out = Path(self.tmp.name) / "lost_tavotto_log"
+        out.mkdir()
         with mock.patch.object(ex, "_count", side_effect=lost):
-            _, record = self.run_chain("import_alias")
+            record = ex.run_one(manifest, 7, out, 200)
         self.assertIsNone(record["executions"]["tavotto"])
         self.assertEqual(record["judgment"]["outcome"], "unknown", record)
         self.assertIn("tavotto", record["judgment"]["note"])
