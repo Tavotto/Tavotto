@@ -6,11 +6,11 @@
 
 | 项 | 状态 |
 | --- | --- |
-| 阶段 | **Phase 0**（审计、设计、基准夹具）——本分支 `feat/taf-phase0`，基线 main `494d147db` |
-| 产品行为变化 | 无（只有文档与测试） |
-| 已实测 | `tests/test_figurebench_fixtures.py` 本机 32 passed；六个手工变异全部按预期变红（见 `01-existing-system-audit.md` §七） |
-| 未运行 | 全量 pytest / 前端 / e2e（本 PR 不触及产品代码，交给 CI）；Windows / Linux 上的夹具自证（交给 CI） |
-| 下一步 | 维护者审 ADR 0138 与下面三件待决定事项 → Phase 1（Task Core） |
+| Phase 0 | PR #1187（`feat/taf-phase0`）：审计、ADR、实施包、FigureBench 夹具。`tests/test_figurebench_fixtures.py` 本机 32 passed，六个手工变异全红 |
+| Phase 1 | 分支 `feat/taf-phase1-task-core`（叠在 Phase 0 上）：`engine/ai_tasks.py` + `ai_history` 加七列 + `tests/test_ai_tasks.py`（48 条）。AI 相关与架构门禁 13 个文件本机 355 passed / 1 skipped（真 CLI 冒烟，需 `TAVOTTO_REAL_CLI_SMOKE=1`）；十个手工变异全红（PR 正文附表） |
+| 产品行为变化 | 无：`ADAPTERS` 为空、`/api/ai/*` 未接入；旧会话的新列全 NULL |
+| 未运行 | 全量 pytest / 前端 / e2e（交给 CI，high 档加 `full-ci`）；Windows / Linux |
+| 下一步 | Phase 2：Figure Verifier + worker 侧 `data_fingerprint` + FigureBench 接验证器 |
 
 ## 待维护者决定
 
