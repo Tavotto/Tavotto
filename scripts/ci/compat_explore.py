@@ -259,6 +259,21 @@ def derive(
     return parent, manifest, files
 
 
+def audited_judgment(candidate_class: str, judgment: dict, executions: dict) -> dict:
+    """「无差异」要有审计到的子进程执行（python_exec_audit）作证；计数缺失 = 观测器失效，不是 clean。"""
+    audited = ("native", "tavotto") + (
+        ("parent_native",) if candidate_class == "shape_preserving" else ()
+    )
+    missing = [k for k in audited if not (executions.get(k) or 0) > 0]
+    if judgment["outcome"] != "no_difference" or not missing:
+        return judgment
+    return {
+        "outcome": "unknown",
+        "differences": [],
+        "note": "no audited child execution for: " + ", ".join(missing),
+    }
+
+
 def _count(path: Path) -> int | None:
     return cg._count(path)
 
@@ -319,6 +334,9 @@ def execute_request(request: dict) -> dict:
         "basis": "python_exec_audit",
     }
     result["judgment"] = compare(manifest["class"], native, result["tavotto"], parent_native)
+    result["judgment"] = audited_judgment(
+        manifest["class"], result["judgment"], result["executions"]
+    )
     for name in ("native", "parent", "tavotto"):
         log = work / f"{name}-execs.jsonl"
         if log.exists():
