@@ -5,6 +5,7 @@
  * 『下一步』不能替用户声称完成」这几件靠读代码证明不了的事。
  */
 import { beforeEach, describe, expect, it } from 'vitest'
+import { TITLE_SIZE } from '@/lib/onboarding/demoFigure'
 import { REAL_STEP_IDS, STEP_IDS } from '@/lib/onboarding/stepIds'
 import {
   configureOnboardingPersistence,
@@ -214,6 +215,16 @@ describe('持久化与迁移', () => {
       remove: () => {},
     })
     expect(s().status).toBe('not_started')
+  })
+
+  it('持久化的标题字号只认控件真实区间（TITLE_SIZE）：区间外丢掉，区间内吸附 0.5pt', () => {
+    // 12 / 100 曾被宽松范围收下，第三步会把它当「进入时字号」而永远调不大
+    for (const bad of [TITLE_SIZE.max + 1, 12, 100, TITLE_SIZE.min - 0.5, 1]) {
+      expect(migrateDemo({ titleSizePt: bad }).titleSizePt, String(bad)).toBeNull()
+    }
+    expect(migrateDemo({ titleSizePt: TITLE_SIZE.max }).titleSizePt).toBe(TITLE_SIZE.max)
+    expect(migrateDemo({ titleSizePt: TITLE_SIZE.min }).titleSizePt).toBe(TITLE_SIZE.min)
+    expect(migrateDemo({ titleSizePt: 9.3 }).titleSizePt).toBe(9.5)
   })
 
   it('演示改动逐项校验：NaN / Infinity / 字符串 / 离谱的数一律丢掉，好的那项保住', () => {

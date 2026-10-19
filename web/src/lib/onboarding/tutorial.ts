@@ -105,6 +105,17 @@ export async function loadTutorialStatus(): Promise<TutorialStatus | null> {
   }
 }
 
+/**
+ * 按需探测：只在需要判断「示例项目副本在不在」的界面（设置页 › 学习、命令面板）打开时调，
+ * 已有结论或正在探测就不再问。**不放在选择器 / 主页挂载时**——教程层打开期间不许发任何
+ * 教程资源请求（P0，e2e `tutorial.spec` 的 FORBIDDEN 含 `/api/tutorial`）。
+ */
+export function ensureTutorialStatus(): void {
+  const { status, busy } = useTutorialStore.getState()
+  if (status || busy) return
+  void loadTutorialStatus()
+}
+
 function failureMessage(reason: TutorialFailure, e?: unknown): UiMessage {
   if (reason === 'open_failed' || reason === 'locked' || reason === 'unavailable') {
     // 后端带 code 的错误按 code 翻（`errors:backend.tutorial_*`），没有就原文透出

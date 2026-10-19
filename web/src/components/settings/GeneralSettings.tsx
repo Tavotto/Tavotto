@@ -1,7 +1,9 @@
+import { useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 import { msg, setLocale, SUPPORTED_LOCALES, LOCALE_LABELS, t as translate } from '@/i18n'
 import { useLocale } from '@/i18n/react'
 import {
+  ensureTutorialStatus,
   hasSampleProject,
   resetHints,
   resetTutorial,
@@ -216,6 +218,10 @@ function CanvasGroup({ close }: { close: () => void }) {
  */
 function Learning({ close }: { close: () => void }) {
   const status = useOnboardingStore((s) => s.status)
+  // 副本可能在磁盘上却不在最近列表里：设置页打开才问一次
+  useEffect(() => {
+    ensureTutorialStatus()
+  }, [])
   // 「重置示例项目」只在示例项目真的存在时出现（三步教程本身不建项目，ADR 0136）
   const tutorialStatus = useTutorialStore((s) => s.status)
   const recent = useProjectStore((s) => s.recent)

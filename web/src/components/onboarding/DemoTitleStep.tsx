@@ -30,8 +30,9 @@ export function DemoTitleStep() {
   const done = useOnboardingStore((s) => s.completedSteps.includes('demo_change_title'))
   const fb = useStepFeedback()
   const size = demo.titleSizePt ?? TITLE_SIZE.initial
-  // 进入这一步时的字号：「调大」是相对它说的
-  const [entrySize] = useState(size)
+  // 进入这一步时的字号：「调大」是相对它说的。封顶在「上限再退一步」：已经站在上限的
+  // 进入值（坏数据 / 旧存档）会让「大于进入时」永远不成立，第三步卡死
+  const [entrySize] = useState(() => Math.min(size, TITLE_SIZE.max - TITLE_SIZE.step))
   const [selected, setSelected] = useState(false)
   const [focused, setFocused] = useState(false)
   const title = useRef<SVGGElement>(null)
@@ -81,7 +82,8 @@ export function DemoTitleStep() {
   }
 
   const onControlsKey = (e: KeyboardEvent<HTMLDivElement>) => {
-    // NumberField 的 Esc 先还原框里的字；再按一次（框里没在改）收起选中、焦点回到标题
+    // 框里的 Esc 走 NumberField 的 `onEscape`（它自己 stopPropagation，这里收不到）；
+    // 这里只接加减按钮上的 Esc：收起选中、焦点回到标题
     if (e.key === 'Escape' && !e.defaultPrevented && (e.target as HTMLElement).tagName !== 'INPUT') {
       e.preventDefault()
       deselect()
@@ -130,6 +132,7 @@ export function DemoTitleStep() {
               unit="pt"
               ariaLabel={t('onboarding.title.sizeAria', { min: TITLE_SIZE.min, max: TITLE_SIZE.max })}
               dataProp="tutorial-title-size"
+              onEscape={deselect}
             />
             <IconButton
               label={t('onboarding.title.increase')}

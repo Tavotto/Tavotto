@@ -37,6 +37,7 @@
  * 提供自己的 adapter。核心状态机不分叉。
  */
 import { create } from 'zustand'
+import { normalizeTitleSize, TITLE_SIZE } from '@/lib/onboarding/demoFigure'
 import { firstIncomplete, isStepId, nextStepId, STEP_IDS, type StepId } from '@/lib/onboarding/stepIds'
 
 export const ONBOARDING_SCHEMA_VERSION = 1
@@ -207,11 +208,12 @@ const numOrNull = (v: unknown): number | null =>
 const strOrNull = (v: unknown): string | null => (typeof v === 'string' && v ? v : null)
 
 /**
- * 演示改动的校验：只认有限数、且落在演示图能画的范围里（位移不超过图幅、字号在
- * 输入框允许的区间）。范围是格式校验，不是交互约束——交互的夹取在 `demoFigure`，
- * 这里只挡手改 / 半截写入的坏值（NaN、Infinity、字符串、离谱的数）。
+ * 演示改动的校验：只认有限数、且落在演示图能画的范围里（位移不超过图幅）。
+ * 位移的范围是格式校验，不是交互约束，只挡手改 / 半截写入的坏值（NaN、Infinity、字符串、离谱的数）。
+ * 字号**不**用宽松范围：标题控件真实的区间是 `demoFigure.TITLE_SIZE`，落在它之外的值任何编辑都
+ * 产生不了，却会被第三步当成「进入时的字号」，使「调大」永远达不到——见 `migrateDemo`。
  */
-export const DEMO_LIMITS = { offsetPt: 500, minSizePt: 1, maxSizePt: 100 } as const
+export const DEMO_LIMITS = { offsetPt: 500 } as const
 
 export function migrateDemo(raw: unknown): DemoEdits {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return { ...DEMO_EDITS_EMPTY }
@@ -224,8 +226,10 @@ export function migrateDemo(raw: unknown): DemoEdits {
       ? ([off[0], off[1]] as [number, number])
       : null
   const size = numOrNull(v.titleSizePt)
+  // 区间外 → 丢掉（回默认字号），不夹到边界：夹成 max 会让第三步一进来就站在上限、无法再「调大」；
+  // 丢掉则回到初始字号，教程可以正常走。区间内再吸附到 0.5 pt（与输入框的提交同一套）
   const titleSizePt =
-    size !== null && size >= DEMO_LIMITS.minSizePt && size <= DEMO_LIMITS.maxSizePt ? size : null
+    size !== null && size >= TITLE_SIZE.min && size <= TITLE_SIZE.max ? normalizeTitleSize(size) : null
   return { legendOffset, titleSizePt }
 }
 

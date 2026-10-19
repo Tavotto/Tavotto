@@ -441,6 +441,34 @@ describe('第三步：标题字号（演示层）', () => {
     expect(q<HTMLButtonElement>('[data-tutorial-size-increase]')!.disabled).toBe(true)
   })
 
+  it('带着上限字号进来（旧存档 / 手改）也能完成：进入基线封顶在上限再退一步，不卡死', async () => {
+    await openAt('demo_move_legend')
+    // 进第三步之前存档里就是上限（迁移之外的旁路 / 旧版本写入）
+    await act(async () => {
+      ob().setDemo({ titleSizePt: TITLE_SIZE.max })
+      ob().markStep('demo_move_legend')
+      ob().next()
+    })
+    await flush()
+    await click(title())
+    await click(q('[data-tutorial-size-decrease]'))
+    await click(q('[data-tutorial-size-increase]'))
+    expect(ob().demo.titleSizePt).toBe(TITLE_SIZE.max)
+    expect(ob().completedSteps).toContain('demo_change_title')
+  })
+
+  it('字号框里按 Esc：收起选中、焦点回到标题（框自己吞掉了冒泡，靠 onEscape）', async () => {
+    await openAt('demo_change_title')
+    await click(title())
+    const input = q<HTMLInputElement>('[data-tutorial-font-controls] input')!
+    await act(async () => input.focus())
+    expect(document.activeElement).toBe(input)
+    await key(input, 'Escape')
+    expect(q('[data-tutorial-font-controls]')).toBeNull()
+    expect(document.activeElement).toBe(title())
+    expect(layer()).not.toBeNull() // 只收起选中，不关教程
+  })
+
   it('图例的改动带到这一步（同一张图）', async () => {
     await openAt('demo_change_title')
     const initial = q('[data-demo-legend]')!.getAttribute('transform')
