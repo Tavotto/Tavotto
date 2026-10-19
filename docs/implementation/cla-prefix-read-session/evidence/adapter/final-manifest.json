@@ -1,0 +1,302 @@
+{
+  "scope": "Synthetic in-process actual native GitHub adapter/RSA installation-token handshake and SQLite. NOT real GitHub E2E, real schema/authorization or deployment acceptance.",
+  "base": "6f309ec896e0a4a786cc2775e79e76210abe480a",
+  "frozen": true,
+  "test_count": 37,
+  "test_exit": 0,
+  "mutant_count": 15,
+  "mutant_runner_exit": 0,
+  "each_mutant_unique_location": true,
+  "each_selected_exit": 1,
+  "each_selected_AssertionError": true,
+  "each_mutant_source_matches_final_pins": true,
+  "accounting": [
+    {
+      "prefix": 2,
+      "withCoauthor": false,
+      "personalContributors": 0,
+      "budget": {
+        "sql": 6,
+        "external": 28
+      },
+      "installationGET": 2,
+      "tokenPOST": 1,
+      "metadataGET": 2,
+      "mainGET": 4,
+      "queueQueries": 4,
+      "identityGET": 0,
+      "databaseUnchanged": true,
+      "defaultNetworkCalls": 0,
+      "publicationCalls": 0,
+      "eligible": true,
+      "error": null,
+      "publication": "not_attempted"
+    },
+    {
+      "prefix": 3,
+      "withCoauthor": false,
+      "personalContributors": 0,
+      "budget": {
+        "sql": 6,
+        "external": 34
+      },
+      "installationGET": 2,
+      "tokenPOST": 1,
+      "metadataGET": 2,
+      "mainGET": 4,
+      "queueQueries": 4,
+      "identityGET": 0,
+      "databaseUnchanged": true,
+      "defaultNetworkCalls": 0,
+      "publicationCalls": 0,
+      "eligible": true,
+      "error": null,
+      "publication": "not_attempted"
+    },
+    {
+      "prefix": 4,
+      "withCoauthor": false,
+      "personalContributors": 0,
+      "budget": {
+        "sql": 5,
+        "external": 35
+      },
+      "installationGET": 2,
+      "tokenPOST": 1,
+      "metadataGET": 2,
+      "mainGET": 3,
+      "queueQueries": 3,
+      "identityGET": 0,
+      "databaseUnchanged": true,
+      "defaultNetworkCalls": 0,
+      "publicationCalls": 0,
+      "eligible": null,
+      "error": "budget_deferred",
+      "publication": null
+    },
+    {
+      "prefix": 2,
+      "withCoauthor": true,
+      "personalContributors": 0,
+      "budget": {
+        "sql": 7,
+        "external": 32
+      },
+      "installationGET": 4,
+      "tokenPOST": 1,
+      "metadataGET": 2,
+      "mainGET": 4,
+      "queueQueries": 4,
+      "identityGET": 2,
+      "databaseUnchanged": true,
+      "defaultNetworkCalls": 0,
+      "publicationCalls": 0,
+      "eligible": false,
+      "error": null,
+      "publication": "not_attempted"
+    },
+    {
+      "prefix": 3,
+      "withCoauthor": true,
+      "personalContributors": 0,
+      "budget": {
+        "sql": 6,
+        "external": 35
+      },
+      "installationGET": 3,
+      "tokenPOST": 1,
+      "metadataGET": 2,
+      "mainGET": 3,
+      "queueQueries": 4,
+      "identityGET": 1,
+      "databaseUnchanged": true,
+      "defaultNetworkCalls": 0,
+      "publicationCalls": 0,
+      "eligible": null,
+      "error": "budget_deferred",
+      "publication": null
+    },
+    {
+      "prefix": 2,
+      "withCoauthor": false,
+      "personalContributors": 2,
+      "budget": {
+        "sql": 7,
+        "external": 28
+      },
+      "installationGET": 2,
+      "tokenPOST": 1,
+      "metadataGET": 2,
+      "mainGET": 4,
+      "queueQueries": 4,
+      "identityGET": 0,
+      "databaseUnchanged": true,
+      "defaultNetworkCalls": 0,
+      "publicationCalls": 0,
+      "eligible": true,
+      "error": null,
+      "publication": "not_attempted"
+    }
+  ],
+  "frozen_files": {
+    "services/cla-cloudflare/tests/prefix-read-session-fixture.mjs": "93aa78e885251983b47d7c1d498c0baa4d580aa19dd9e384d61597f1fed21e08",
+    "services/cla-cloudflare/tests/prefix-read-session.test.mjs": "afe3c7e0df96a6c24b8a224fb5909665ddda7487a75e755fab7f4618cbe912a2",
+    "services/cla-cloudflare/tests/prefix-read-session-mutation-cases.json": "f80524aabd879e59164bf02fc27b73390b0f0c587e8e841ed0aec6c13c5beefc"
+  },
+  "raw_members": {
+    "accounting.raw.log": {
+      "sha256": "61c5f6fe7f7b06a80276628ba752f703d485fad5433795a7010c8bd44481cb23",
+      "bytes": 67178
+    },
+    "expanded-tests.raw.log": {
+      "sha256": "40deb1527003c5e1b746dc887abdc4a43a0c97519330e0abb63a2792b740445a",
+      "bytes": 3537
+    },
+    "final-tests.raw.log": {
+      "sha256": "41bbfbbe48c811abdd401d2203f85a0c47085ac38d68be07926550220ef87ab7",
+      "bytes": 3542
+    },
+    "initial-14/mutation-01.raw.log": {
+      "sha256": "1287b59742c152795b6e2b33afd26855e59aca44c055d42bc938968e1a6fcbfa",
+      "bytes": 1680
+    },
+    "initial-14/mutation-02.raw.log": {
+      "sha256": "cd00f9c4af0c6c59bd1bc32db2f2c64c05d988e258f3c88b77db12a325fe5889",
+      "bytes": 1974
+    },
+    "initial-14/mutation-03.raw.log": {
+      "sha256": "cb16756a1c16a1003cf2aed3a25de7669b1f28ab3c957074bf347b40d5133042",
+      "bytes": 964
+    },
+    "initial-14/mutation-04.raw.log": {
+      "sha256": "f8ca2d419a691406415dbf0e515de8197c99e58a183d60c4944e64c6b5ba6832",
+      "bytes": 959
+    },
+    "initial-14/mutation-05.raw.log": {
+      "sha256": "db6d418cc1a4bbad7bb19de8b011467a14c434610d45a993cea7e11be91544ee",
+      "bytes": 935
+    },
+    "initial-14/mutation-06.raw.log": {
+      "sha256": "d428ac95fb770b50a89887c9f891bb4bee3dacaae915251f33fa28f47cc32cda",
+      "bytes": 1013
+    },
+    "initial-14/mutation-07.raw.log": {
+      "sha256": "3b43f9429c0fe6e5ac60e2875317783f5af0d0c1c6c52abdfcc5bea4595c011c",
+      "bytes": 970
+    },
+    "initial-14/mutation-08.raw.log": {
+      "sha256": "beaae887ce23011d3ed026fa4e7c91ada759623a7401edd1e486df9209c8720e",
+      "bytes": 2104
+    },
+    "initial-14/mutation-09.raw.log": {
+      "sha256": "ac97d5d7cde739d347cb110902274a246e459cf599d76d1fe828ac4696c1b826",
+      "bytes": 1526
+    },
+    "initial-14/mutation-10.raw.log": {
+      "sha256": "497e28bf7571045be30a0fb3613582c299c0a9d82ee712bdb7aa5517c731fcfb",
+      "bytes": 2235
+    },
+    "initial-14/mutation-11.raw.log": {
+      "sha256": "5721a51dd36cd1562cad7c3aa72b8777214ec469f079c334e2b83eef3d1cb3a9",
+      "bytes": 898
+    },
+    "initial-14/mutation-12.raw.log": {
+      "sha256": "fad2767d3f5002833bc0c29334ee66afa8fdf8391eec0f99765a61b9a29243f5",
+      "bytes": 989
+    },
+    "initial-14/mutation-13.raw.log": {
+      "sha256": "bcf1257651fd3b98ba5cf9a3e14fd77dec79c6d196cae74edb26817998bb9d2d",
+      "bytes": 1010
+    },
+    "initial-14/mutation-14.raw.log": {
+      "sha256": "a59d172aac90ea294377e7956c5309af3d4fbd11a47c692fd1e686c7348fe800",
+      "bytes": 988
+    },
+    "initial-14/mutations-run.raw.log": {
+      "sha256": "a0c77a6af959c5504173d372bf2bb99971dad3bfda69b8a5ecdc030e4eaa71ae",
+      "bytes": 9423
+    },
+    "initial-accounting.raw.log": {
+      "sha256": "0e8e9971f658a8a61ee23a74e8fa0be5035794f1da7b8f115e2901db4feee3bb",
+      "bytes": 56464
+    },
+    "initial-tests.raw.log": {
+      "sha256": "c7e9e84d908ed1402b39daa43959b2cbc49eb5ddab6622d095b2eebcb760d8bd",
+      "bytes": 3335
+    },
+    "mutation-01.raw.log": {
+      "sha256": "d43a809aa1841f7033e8a297c818a199dc5074f619059a2a078d0ce69dfd0e63",
+      "bytes": 1681
+    },
+    "mutation-02.raw.log": {
+      "sha256": "36aa38b9bfb8b12804b96c8c301075107055716a4dc0cdd61d109ce541852efe",
+      "bytes": 1974
+    },
+    "mutation-03.raw.log": {
+      "sha256": "9a7f2ded786873a528cf4579f8904634e1226aeffef5f1fc1bd64d5937406570",
+      "bytes": 963
+    },
+    "mutation-04.raw.log": {
+      "sha256": "1d2f722f2df9254b49ba92140ce5fe57c46907c49ccf89ca2601fadcc73a536b",
+      "bytes": 959
+    },
+    "mutation-05.raw.log": {
+      "sha256": "4a4796c8f49fbbced3d47a025e28bd1860b7d95a2953594601aecfd5f94497a1",
+      "bytes": 931
+    },
+    "mutation-06.raw.log": {
+      "sha256": "16510355734bcb860d2899f6a621c63f9826b32bf24b137db1aafd2b02a7f238",
+      "bytes": 1013
+    },
+    "mutation-07.raw.log": {
+      "sha256": "3dab364ea2cd230c6337e5a03949132b998804db732e2a0713b6037e2dd2dfc1",
+      "bytes": 973
+    },
+    "mutation-08.raw.log": {
+      "sha256": "142398be1b02c604531723b6fa488e459141128f5a3c204dcaab0caed95a2faa",
+      "bytes": 2104
+    },
+    "mutation-09.raw.log": {
+      "sha256": "4fa1f372d38f4ffcf6aa8dca81f8d097931845a6343f35a9eedf07ff616686fb",
+      "bytes": 1530
+    },
+    "mutation-10.raw.log": {
+      "sha256": "eaa35d3b86f7c8f214402c504c9ab2cb43f0cfd82f27e7480695385ec37d9b43",
+      "bytes": 2233
+    },
+    "mutation-11.raw.log": {
+      "sha256": "00f0534661ac8449e65523ca4ef0707a04866d8822f9f72e7b26e4fe77000e54",
+      "bytes": 896
+    },
+    "mutation-12.raw.log": {
+      "sha256": "7828bea53719158dcfc93fa571a6789af78977e81ba21e1b7e423fb4455ade13",
+      "bytes": 987
+    },
+    "mutation-13.raw.log": {
+      "sha256": "b39dfeb668f1c8ca802e351a810a3fcc27b5b6f0521eaba9b53cb90725dc0598",
+      "bytes": 1012
+    },
+    "mutation-14.raw.log": {
+      "sha256": "3bbacf01ae65a0bb72eb6730961d2bb4f0c1ed34db6e85fb9c413e712fbc5f5c",
+      "bytes": 989
+    },
+    "mutation-15.raw.log": {
+      "sha256": "520f9f65e35628b23543f6f1448bca0b960172b2b243aa92306e062fcebb3e26",
+      "bytes": 1161
+    },
+    "mutations-run.raw.log": {
+      "sha256": "367f7f5831be3e470f452b2fea3f9c8686c67317816f3968214f434d8c5616bc",
+      "bytes": 10120
+    }
+  },
+  "artifacts": {
+    "source-manifest.json": "bd8061372c720ecbe03861cb581d4207b30a7867488cfe10cf35902ed98d0c5b",
+    "commands.json": "cfae12ccb59c2dae670c2423c8866ea1db2eff2d38bb1c24bce516f65ccb5d98",
+    "mutations.json": "ddf72ede35bc0dfc84cce305f887e3dbffd82b5a71d62bcaee2f91284216e5a3",
+    "raw-logs.json": "8b4c461682707c5899edde680fef9d8c6bc4e1ad6db65f3bf4448a843055f843",
+    "review.md": "8d2abfb66f426173fb5fa7057fbdc2ff53be88e3f3785d031701ee182aa0e18b"
+  },
+  "remaining_blockers": [
+    "Real GitHub GraphQL schema and queue read authorization remain unverified; no production/resource/permission activation was performed."
+  ]
+}

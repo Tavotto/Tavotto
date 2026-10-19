@@ -15,9 +15,12 @@ export interface LiveConfig extends Config {
   agreementActivationHash?: string;
   confirmationSlotEnabled?: boolean;
   mergePrefixAssessmentEnabled?: boolean;
+  mergePrefixReadSessionEnabled?: boolean;
 }
 export interface Secrets { clientSecret: string; pkcs8: string; evidenceKey: string }
 export function validateLive(c: LiveConfig): void {
+  if(c.mergePrefixReadSessionEnabled!==undefined && typeof c.mergePrefixReadSessionEnabled!=='boolean')throw new Rejected('live_configuration_invalid');
+  if(c.mergePrefixReadSessionEnabled===true && c.mergePrefixAssessmentEnabled!==true)throw new Rejected('merge_prefix_disabled');
   if(c.mergePrefixAssessmentEnabled!==undefined && typeof c.mergePrefixAssessmentEnabled!=='boolean')throw new Rejected('live_configuration_invalid');
   if(c.mergePrefixAssessmentEnabled===true && !c.githubEnabled)throw new Rejected('network_disabled');
   if(c.confirmationSlotEnabled!==undefined && typeof c.confirmationSlotEnabled!=='boolean')throw new Rejected('live_configuration_invalid');

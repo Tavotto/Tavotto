@@ -1,0 +1,256 @@
+{
+  "main_sha": "0991bb9501489395a38542c94867fcfeffbdf196",
+  "main_commit_date": "2026-10-18T08:58:51Z",
+  "open_prs": [
+    {
+      "number": 1172,
+      "title": "feat(cla): 默认关闭的完整队列前缀成员与资格评估",
+      "head": "6f309ec896e0a4a786cc2775e79e76210abe480a",
+      "base": "feat/cla-ci-wait-integration-20261018",
+      "base_sha": "f73a4b17b89f58e4595f3581afd2fe8ecaf6a90b",
+      "draft": true
+    },
+    {
+      "number": 1171,
+      "title": "feat(cla): 将默认关闭的有界CI等待收敛到恢复栈",
+      "head": "f73a4b17b89f58e4595f3581afd2fe8ecaf6a90b",
+      "base": "feat/cla-slot-negative-recovery-20261018",
+      "base_sha": "56aca50844ecd85aefe9818d8f9e4be0df063d8c",
+      "draft": true
+    },
+    {
+      "number": 1170,
+      "title": "fix(cla): 以新失败见证恢复持槽 manual 和耗尽记录",
+      "head": "56aca50844ecd85aefe9818d8f9e4be0df063d8c",
+      "base": "feat/cla-v2-upgrade-offline-20261018",
+      "base_sha": "7324a2d0541d79b90f106aed74991b22b8af60ae",
+      "draft": true
+    },
+    {
+      "number": 1169,
+      "title": "feat(cla): 默认关闭的既有 v2 原地升级离线候选",
+      "head": "7324a2d0541d79b90f106aed74991b22b8af60ae",
+      "base": "feat/cla-confirmation-slot-20261018",
+      "base_sha": "a5cf3549818f14c97c9c05f7aff6f14853a27f91",
+      "draft": true
+    },
+    {
+      "number": 1168,
+      "title": "feat(cla): 默认关闭的持久确认单槽与负向见证释放",
+      "head": "a5cf3549818f14c97c9c05f7aff6f14853a27f91",
+      "base": "feat/cla-agreement-activation-20261018",
+      "base_sha": "a4695f830d321ffa03184595afd895d2055db3b3",
+      "draft": true
+    },
+    {
+      "number": 1167,
+      "title": "feat(cla): 默认关闭的原子协议活动锚点与历史证据保留",
+      "head": "a4695f830d321ffa03184595afd895d2055db3b3",
+      "base": "feat/cla-historical-revocation-20261018",
+      "base_sha": "0510d055aaf7adec1f6c3592887eb073cbcf03fc",
+      "draft": true
+    },
+    {
+      "number": 1166,
+      "title": "feat(handoff): #1154 重复交接已显示的图时前端回显示确认，CLI 不再白等 20 s",
+      "head": "c9d9ff7f9d902d5ab5a19299f6e9f379d8fb1f9e",
+      "base": "main",
+      "base_sha": "78a12af161cd95d02aeb62c7ab23780a9a57bc83",
+      "draft": false
+    },
+    {
+      "number": 1165,
+      "title": "fix(prep): #1137 首次检查在飞时同一目标再 open 搭同一趟——不再建第二个准备会话、不再认领两次",
+      "head": "5226fcc2b8ac328712f0971fc4bd2e23ad3df27f",
+      "base": "main",
+      "base_sha": "78a12af161cd95d02aeb62c7ab23780a9a57bc83",
+      "draft": false
+    },
+    {
+      "number": 1164,
+      "title": "fix(session): #1132 带凭据的本机回环请求改用 HTTPConnection 直连，不再经 urlopen 走系统代理",
+      "head": "610f9d5e6e63f49c459fb22feedb917b5a582dae",
+      "base": "main",
+      "base_sha": "78a12af161cd95d02aeb62c7ab23780a9a57bc83",
+      "draft": false
+    },
+    {
+      "number": 1163,
+      "title": "feat(cla): 离线核验确认期限、CI轮询与恢复容量假设",
+      "head": "a7fa9cefe696b2def3e9cccd91e552f5d9fa0bcf",
+      "base": "feat/cla-ci-bounded-wait-20261018",
+      "base_sha": "907af3f3920a62bbc52712c1e9fcf9da371f54d5",
+      "draft": true
+    },
+    {
+      "number": 1162,
+      "title": "fix(engine): 无 label 的曲线按图例代理句柄的样式精确匹配取显示名",
+      "head": "b0cdf42c2d176b9ac929e1ca878e0e7fd547ecf5",
+      "base": "main",
+      "base_sha": "78a12af161cd95d02aeb62c7ab23780a9a57bc83",
+      "draft": false
+    },
+    {
+      "number": 1161,
+      "title": "feat(cla): 轮换后仅允许原登记密钥终止历史授权",
+      "head": "0510d055aaf7adec1f6c3592887eb073cbcf03fc",
+      "base": "feat/cla-delegated-authority-20261018",
+      "base_sha": "d2b0ba59340761b61f7ac5b8b534d43bcdd731f4",
+      "draft": true
+    },
+    {
+      "number": 1160,
+      "title": "feat(cla): 默认关闭的 CI 有界等待与期限保护",
+      "head": "907af3f3920a62bbc52712c1e9fcf9da371f54d5",
+      "base": "feat/cla-delegated-authority-20261018",
+      "base_sha": "d2b0ba59340761b61f7ac5b8b534d43bcdd731f4",
+      "draft": true
+    },
+    {
+      "number": 1159,
+      "title": "fix(engine): 3D 轴上的数据图元进元素表——曲面 / 3D contourf / 散点 / 曲线可改样式，独立色条与曲面成色阶兄弟（ADR 0135）",
+      "head": "2eca133ed0edbd3f42c3a1fc08876b0f5d193088",
+      "base": "main",
+      "base_sha": "64295badb190bee7002612397f7730a849603829",
+      "draft": false
+    },
+    {
+      "number": 1158,
+      "title": "fix(web,engine): 命中分层——半透明填充下的曲线点得中（ADR 0086 修订）",
+      "head": "6419d754f73efcb60ee04a0369e37792fc7cfa6d",
+      "base": "main",
+      "base_sha": "44c38822a5955c6c8fc0feef46ec8a39c693859f",
+      "draft": false
+    },
+    {
+      "number": 1157,
+      "title": "feat(mcp): MCP 工具调用匿名用量事件 mcp_tool_call——闭集属性、不带参数与返回内容，并入 CONSENT_VERSION 3（叠在 #1103 上）",
+      "head": "3d3afcb69710d127b76151b60fb4e61ee6998ece",
+      "base": "feat/telemetry-export-result",
+      "base_sha": "1c96daf33b912cd90b98f1f3355c9c730e925edf",
+      "draft": false
+    },
+    {
+      "number": 1156,
+      "title": "feat(assets): preview static SVG images and place them on the canvas",
+      "head": "8f16dce44880cfd2c3abeff90de1083ab37abb58",
+      "base": "feat/direct-svg-export-1054",
+      "base_sha": "721e96c7ffab4b648cdcb76e52505f99f13834a6",
+      "draft": false
+    },
+    {
+      "number": 1151,
+      "title": "feat(cla): 默认关闭的限定授权会签、审计与自动核验候选",
+      "head": "d2b0ba59340761b61f7ac5b8b534d43bcdd731f4",
+      "base": "main",
+      "base_sha": "7e58f04d510951c9088224bb75cb68fcaaf9594d",
+      "draft": true
+    },
+    {
+      "number": 1146,
+      "title": "ci: add read-only review budget controller and regression evidence",
+      "head": "1c50356ce014ee87c3af7641d898deec0c55a5f8",
+      "base": "main",
+      "base_sha": "0991bb9501489395a38542c94867fcfeffbdf196",
+      "draft": false
+    },
+    {
+      "number": 1139,
+      "title": "feat(compat): Compatibility Guardian CG-05——定时探索 + 自动归因 + 趋势报告与维护者提醒（只观察）",
+      "head": "a3971362f792af602cf03c1ff4e9db8ad1991d24",
+      "base": "compat/guardian-cg03-v2",
+      "base_sha": "b0205bb12ac9a1a4f9390b9ecc2b0b5b21314057",
+      "draft": false
+    },
+    {
+      "number": 1136,
+      "title": "feat(compat): Compatibility Guardian CG-03——triage 根因归因与聚类 + 有界最小化，G1/G2 各得稳定最小复现",
+      "head": "b0205bb12ac9a1a4f9390b9ecc2b0b5b21314057",
+      "base": "compat/guardian-cg02-v2",
+      "base_sha": "e154406d2eb194758bc4427e39bb8f25dfd2c48f",
+      "draft": false
+    },
+    {
+      "number": 1135,
+      "title": "feat(compat): Compatibility Guardian CG-02——explore：已评审父本的确定性 AST 变换 + 真实差分执行，主动发现 G1/G2",
+      "head": "e154406d2eb194758bc4427e39bb8f25dfd2c48f",
+      "base": "compat/guardian-cg01",
+      "base_sha": "2484535a763eb35d5203b94ac3e8bcca87b68565",
+      "draft": false
+    },
+    {
+      "number": 1118,
+      "title": "feat(compat): Compatibility Guardian CG-01——Agent 可调用的兼容性运行器 + 绑定 SHA 的版本化报告 + 独立观察 workflow",
+      "head": "2484535a763eb35d5203b94ac3e8bcca87b68565",
+      "base": "main",
+      "base_sha": "44c38822a5955c6c8fc0feef46ec8a39c693859f",
+      "draft": false
+    },
+    {
+      "number": 1111,
+      "title": "fix(ai): 刷新 / 重连后接回后端仍在运行的 AI 会话（只读占位、可中止），收尾与 #1098 共用一条路径",
+      "head": "55bc53d4e8dd700b4a44554358d78dc89aec4e86",
+      "base": "fix/ai-draft-recovery",
+      "base_sha": "86e058e8f301fedacfece798705267f57f630893",
+      "draft": false
+    },
+    {
+      "number": 1103,
+      "title": "feat(telemetry): CONSENT_VERSION 3——导出终态事件 export_result + 诊断报告可选错误摘要（同意快照），一次升版",
+      "head": "1c96daf33b912cd90b98f1f3355c9c730e925edf",
+      "base": "main",
+      "base_sha": "fb556e1290246a5649d1e7e5c2fb81c5dac211ee",
+      "draft": false
+    },
+    {
+      "number": 1098,
+      "title": "fix(ai): 同一条 AI 修改不会被无意执行两次——client_request_id 幂等、已发出未确认只给查询、草稿按项目×面板缓存（ADR 0132）",
+      "head": "29316f1235bafc6282968ac88a9b215043c4f9b1",
+      "base": "main",
+      "base_sha": "4a7643dbac5aecc52b1199cddebac80124e1f426",
+      "draft": false
+    },
+    {
+      "number": 1081,
+      "title": "fix(frontend): 保留素材刷新忙碌态并修正注册表快照顺序",
+      "head": "f0ac85131c64ef59ed82300c833b551d070180a0",
+      "base": "main",
+      "base_sha": "64295badb190bee7002612397f7730a849603829",
+      "draft": false
+    },
+    {
+      "number": 1079,
+      "title": "fix(deps): 保留动态导入保护并记账 hash 声明根",
+      "head": "4385bd2f13c428aeabd723256e86f637641ab6f4",
+      "base": "main",
+      "base_sha": "64295badb190bee7002612397f7730a849603829",
+      "draft": false
+    },
+    {
+      "number": 1055,
+      "title": "feat(export): add direct SVG export with verified Figure snapshots",
+      "head": "721e96c7ffab4b648cdcb76e52505f99f13834a6",
+      "base": "main",
+      "base_sha": "4a7643dbac5aecc52b1199cddebac80124e1f426",
+      "draft": false
+    },
+    {
+      "number": 826,
+      "title": "fix: keep redacted pip evidence when lab bootstrap install fails",
+      "head": "732b0c932784a2e476dcbc46394bc1e20071b88b",
+      "base": "main",
+      "base_sha": "36b39031305e18df6a1b2217ddd1c5a67bb309ac",
+      "draft": true
+    }
+  ],
+  "base_pr": 1172,
+  "base_sha": "6f309ec896e0a4a786cc2775e79e76210abe480a",
+  "base_tree": "5a19dfe0b3a98e87c16a0d4e8e48c073f7572404",
+  "read_method": "Authorized GitHub connector GET; prior denied CLI Git transport not retried",
+  "source_urls": [
+    "https://api.github.com/repos/Tavotto/Tavotto/commits/main",
+    "https://api.github.com/repos/Tavotto/Tavotto/pulls?state=open&per_page=100"
+  ],
+  "duplicate_capacity_work": false,
+  "quota_rejection_observed": false
+}

@@ -17,6 +17,7 @@ export interface QueueEntry {
   pullRequest:{number:number;headRefOid:string;baseRefName:string};
 }
 export interface MergePrefixSnapshot extends Candidate {queueEntries:QueueEntry[];trustedSourceSha:string}
+export interface MergePrefixReader {snapshot():Promise<MergePrefixSnapshot>;resolveLogin(login:string):ReturnType<GitHubPort['resolveLogin']>}
 export interface MergePrefixBinding {
   binding:Binding;strategy:'queue-prefix-v1';prefix_sha256:string;queue_sha256:string;trusted_source_sha:string;
 }
@@ -80,7 +81,7 @@ export async function readQueue(repository:string,repositoryId:number,query:(que
   }
   throw new Rejected('merge_prefix_incomplete');
 }
-export async function mergePrefixBinding(c:Config,port:GitHubPort,target:MergePrefixTarget,snapshot:MergePrefixSnapshot):Promise<MergePrefixBinding> {
+export async function mergePrefixBinding(c:Config,port:Pick<GitHubPort,'resolveLogin'>,target:MergePrefixTarget,snapshot:MergePrefixSnapshot):Promise<MergePrefixBinding> {
   const entries=queueEntries(snapshot.queueEntries),prefix=prefixFor(entries,target);
   if(!validSha(snapshot.trustedSourceSha) || canonical(snapshot.members)!==canonical(prefix.map(e=>({pr:e.pullRequest.number,headSha:e.pullRequest.headRefOid}))))
     throw new Rejected('merge_prefix_changed');

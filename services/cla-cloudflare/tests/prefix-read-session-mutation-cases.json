@@ -1,0 +1,152 @@
+[
+  {
+    "name": "prefix read session read-token POST is shared",
+    "file": "src/native/github.ts",
+    "before": "    if(readLease?.token!==undefined)return readLease.token;",
+    "after": "",
+    "pattern": "prefix\\ read\\ session\\ actual\\ P2\\ costs\\ 28\\ with\\ all\\ dynamic\\ facts\\ fresh",
+    "selectedTitle": "prefix read session actual P2 costs 28 with all dynamic facts fresh",
+    "testFile": "tests/prefix-read-session.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "prefix read session pinned three content reads are shared",
+    "file": "src/native/github.ts",
+    "before": "      if(readLease)readLease.source={sha:trusted.sha,policy:structuredClone(policy)};",
+    "after": "",
+    "pattern": "prefix\\ read\\ session\\ actual\\ P3\\ costs\\ 34\\ with\\ all\\ dynamic\\ facts\\ fresh",
+    "selectedTitle": "prefix read session actual P3 costs 34 with all dynamic facts fresh",
+    "testFile": "tests/prefix-read-session.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "prefix read session cached token cannot bypass fresh installation check",
+    "file": "src/native/github.ts",
+    "before": "    const authorization=await this.#validAppJwt(material,appId,now,context);",
+    "after": "    const authorization=await this.#validAppJwt(material,appId,now,context);if(readLease?.token!==undefined)return readLease.token;",
+    "pattern": "prefix\\ read\\ session\\ fresh\\ installation\\ rejects\\ suspended_at\\ at\\ second\\ identity",
+    "selectedTitle": "prefix read session fresh installation rejects suspended_at at second identity",
+    "testFile": "tests/prefix-read-session.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "prefix read session identity GET stays fresh",
+    "file": "src/native/github.ts",
+    "before": "        const user=identity(await this.api('/users/'+encodeURIComponent(login),token) as Identity);lease.guard();",
+    "after": "        const user=identity({id:3,login,type:'User'});lease.guard();",
+    "pattern": "prefix\\ read\\ session\\ second\\ coauthor\\ lookup\\ detects\\ changed\\ numeric\\ identity",
+    "selectedTitle": "prefix read session second coauthor lookup detects changed numeric identity",
+    "testFile": "tests/prefix-read-session.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "prefix read session metadata stays fresh",
+    "file": "src/native/github.ts",
+    "before": "    readLease?.guard();const metadata=await this.api(repo,token);readLease?.guard();",
+    "after": "    readLease?.guard();const metadata=readLease?.source?{id:this.c.repositoryId,full_name:this.c.repository,default_branch:'main'}:await this.api(repo,token);readLease?.guard();",
+    "pattern": "prefix\\ read\\ session\\ second\\ metadata\\ response\\ is\\ actually\\ checked",
+    "selectedTitle": "prefix read session second metadata response is actually checked",
+    "testFile": "tests/prefix-read-session.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "prefix read session new main tip refuses immediately",
+    "file": "src/native/github.ts",
+    "before": "      if(trusted.sha!==readLease.source.sha)throw new Rejected('merge_prefix_changed');",
+    "after": "",
+    "pattern": "prefix\\ read\\ session\\ fresh\\ main\\ read3\\ rejects\\ changed\\ tip\\ despite\\ identical\\ legal\\ bytes",
+    "selectedTitle": "prefix read session fresh main read3 rejects changed tip despite identical legal bytes",
+    "testFile": "tests/prefix-read-session.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "prefix read session fourth queue read still binds current state",
+    "file": "src/native/github.ts",
+    "before": "canonical(entries)!==canonical(await queue())",
+    "after": "(await queue(),false)",
+    "pattern": "prefix\\ read\\ session\\ fourth\\ queue\\ read\\ rejects\\ a\\ change\\ after\\ second\\ PR\\ enumeration",
+    "selectedTitle": "prefix read session fourth queue read rejects a change after second PR enumeration",
+    "testFile": "tests/prefix-read-session.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "prefix read session second full snapshot remains mandatory",
+    "file": "src/native/service.ts",
+    "before": "    const last=await mergePrefixBinding(this.c,reader,target,await reader.snapshot());",
+    "after": "    const last=first;",
+    "pattern": "prefix\\ read\\ session\\ actual\\ P3\\ costs\\ 34\\ with\\ all\\ dynamic\\ facts\\ fresh",
+    "selectedTitle": "prefix read session actual P3 costs 34 with all dynamic facts fresh",
+    "testFile": "tests/prefix-read-session.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "prefix read session all commit pages remain mandatory",
+    "file": "src/native/github.ts",
+    "before": "page <= Math.ceil(pr.commits/100)",
+    "after": "page <= 1",
+    "pattern": "prefix\\ read\\ session\\ commit\\ page101\\ is\\ read\\ anew\\ in\\ each\\ snapshot\\ and\\ costs30",
+    "selectedTitle": "prefix read session commit page101 is read anew in each snapshot and costs30",
+    "testFile": "tests/prefix-read-session.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "prefix read session disabled flag keeps old runtime",
+    "file": "src/native/service.ts",
+    "before": "    if(this.c.mergePrefixReadSessionEnabled===true)return this.github.withMergePrefixReads",
+    "after": "    if(true)return this.github.withMergePrefixReads",
+    "pattern": "prefix\\ read\\ session\\ false\\ retains\\ exact\\ previous32\\ call\\ behavior",
+    "selectedTitle": "prefix read session false retains exact previous32 call behavior",
+    "testFile": "tests/prefix-read-session.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "prefix read session config flag remains boolean",
+    "file": "src/native/config.ts",
+    "before": "  if(c.mergePrefixReadSessionEnabled!==undefined && typeof c.mergePrefixReadSessionEnabled!=='boolean')throw new Rejected('live_configuration_invalid');",
+    "after": "",
+    "pattern": "prefix\\ read\\ session\\ config\\ rejects\\ nonboolean\\ \"true\"",
+    "selectedTitle": "prefix read session config rejects nonboolean \"true\"",
+    "testFile": "tests/prefix-read-session.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "prefix read session explicit Worker opt-in",
+    "file": "src/native/worker.ts",
+    "before": "mergePrefixReadSessionEnabled:env.CLA_MERGE_PREFIX_READ_SESSION_ENABLED==='true'",
+    "after": "mergePrefixReadSessionEnabled:!!env.CLA_MERGE_PREFIX_READ_SESSION_ENABLED",
+    "pattern": "prefix\\ read\\ session\\ Worker\\ enables\\ only\\ exact\\ explicit\\ environment\\ flag",
+    "selectedTitle": "prefix read session Worker enables only exact explicit environment flag",
+    "testFile": "tests/prefix-read-session.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "prefix read session external budget never resets",
+    "file": "src/native/github.ts",
+    "before": "    const budget=this.budget;if(!budget)throw new Rejected('invocation_budget_required');",
+    "after": "    const budget=this.budget;if(!budget)throw new Rejected('invocation_budget_required');budget.external=0;",
+    "pattern": "prefix\\ read\\ session\\ existing\\ invocation\\ charge7\\ is\\ preserved\\ through\\ both\\ snapshots",
+    "selectedTitle": "prefix read session existing invocation charge7 is preserved through both snapshots",
+    "testFile": "tests/prefix-read-session.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "prefix read session 35 work cap remains unchanged",
+    "file": "src/native/budget.ts",
+    "before": "externalWork:35",
+    "after": "externalWork:40",
+    "pattern": "prefix\\ read\\ session\\ P4\\ refuses\\ at\\ unchanged35\\ external\\ cap\\ with\\ no\\ result\\ or\\ write",
+    "selectedTitle": "prefix read session P4 refuses at unchanged35 external cap with no result or write",
+    "testFile": "tests/prefix-read-session.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "prefix read session every contributor retains real qualification reads",
+    "file": "src/native/service.ts",
+    "before": "    for(const person of people)if(!await this.qualified(person.id,ceiling,now))eligible=false;",
+    "after": "    for(const person of people.slice(0,1))if(!await this.qualified(person.id,ceiling,now))eligible=false;",
+    "pattern": "prefix\\ read\\ session\\ two\\ personally\\ completed\\ contributors\\ cost28\\ external\\ and7\\ SQL",
+    "selectedTitle": "prefix read session two personally completed contributors cost28 external and7 SQL",
+    "testFile": "tests/prefix-read-session.test.mjs",
+    "assertionError": true
+  }
+]

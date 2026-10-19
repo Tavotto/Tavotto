@@ -1,0 +1,212 @@
+[
+  {
+    "name": "independent session environment exact true",
+    "file": "src/native/worker.ts",
+    "before": "mergePrefixReadSessionEnabled:env.CLA_MERGE_PREFIX_READ_SESSION_ENABLED==='true'",
+    "after": "mergePrefixReadSessionEnabled:!!env.CLA_MERGE_PREFIX_READ_SESSION_ENABLED",
+    "pattern": "^independent read session switch uses exact environment true$",
+    "selectedTitle": "independent read session switch uses exact environment true",
+    "testFile": "tests/independent-prefix-read-session.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "independent session canonical configuration pin",
+    "file": "src/native/github.ts",
+    "before": "canonical(JSON.parse(JSON.stringify(this.c)))!==context ||",
+    "after": "",
+    "pattern": "^independent read session callback closing context pin provider$",
+    "selectedTitle": "independent read session callback closing context pin provider",
+    "testFile": "tests/independent-prefix-read-session.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "independent session key material pin",
+    "file": "src/native/github.ts",
+    "before": "this.secrets.pkcs8!==material || !Number.isSafeInteger(now)",
+    "after": "!Number.isSafeInteger(now)",
+    "pattern": "^independent read session callback closing context pin key$",
+    "selectedTitle": "independent read session callback closing context pin key",
+    "testFile": "tests/independent-prefix-read-session.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "independent session budget identity pin",
+    "file": "src/native/github.ts",
+    "before": "this.budget!==budget ||",
+    "after": "",
+    "pattern": "^independent read session callback closing context pin budget$",
+    "selectedTitle": "independent read session callback closing context pin budget",
+    "testFile": "tests/independent-prefix-read-session.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "independent session closed capability before I/O",
+    "file": "src/native/github.ts",
+    "before": "!active || failed ||",
+    "after": "failed ||",
+    "pattern": "^independent read session escaped reader cannot restart after close$",
+    "selectedTitle": "independent read session escaped reader cannot restart after close",
+    "testFile": "tests/independent-prefix-read-session.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "independent session failures are terminal",
+    "file": "src/native/github.ts",
+    "before": "!active || failed ||",
+    "after": "!active ||",
+    "pattern": "^independent read session caught semantic failure cannot return success$",
+    "selectedTitle": "independent read session caught semantic failure cannot return success",
+    "testFile": "tests/independent-prefix-read-session.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "independent session concurrent read is forbidden",
+    "file": "src/native/github.ts",
+    "before": "if(busy){failed=true;throw new Rejected('prefix_read_session_invalid');}busy=true;",
+    "after": "busy=true;",
+    "pattern": "^independent read session concurrent identity operations poison whole session$",
+    "selectedTitle": "independent read session concurrent identity operations poison whole session",
+    "testFile": "tests/independent-prefix-read-session.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "independent session callback cannot finish with pending I/O",
+    "file": "src/native/github.ts",
+    "before": "if(busy || snapshots!==2)",
+    "after": "if(snapshots!==2)",
+    "pattern": "^independent read session callback cannot return with an in-flight read$",
+    "selectedTitle": "independent read session callback cannot return with an in-flight read",
+    "testFile": "tests/independent-prefix-read-session.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "independent session monotonic expiry with stalled wall",
+    "file": "src/native/github.ts",
+    "before": "deadline!==undefined && at>=deadline",
+    "after": "false",
+    "pattern": "^independent read session frozen wall cannot extend monotonic token deadline$",
+    "selectedTitle": "independent read session frozen wall cannot extend monotonic token deadline",
+    "testFile": "tests/independent-prefix-read-session.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "independent session provider actual token expiry",
+    "file": "src/native/github.ts",
+    "before": "lease.expires!==undefined && now>=lease.expires",
+    "after": "false",
+    "pattern": "^independent read session expired actual token refuses before second I/O$",
+    "selectedTitle": "independent read session expired actual token refuses before second I/O",
+    "testFile": "tests/independent-prefix-read-session.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "independent session clock never rolls back",
+    "file": "src/native/github.ts",
+    "before": "now<last ||",
+    "after": "false ||",
+    "pattern": "^independent read session observed clock rollback closes wall$",
+    "selectedTitle": "independent read session observed clock rollback closes wall",
+    "testFile": "tests/independent-prefix-read-session.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "independent session monotonic clock never rolls back",
+    "file": "src/native/github.ts",
+    "before": "at<lastTick ||",
+    "after": "false ||",
+    "pattern": "^independent read session observed clock rollback closes monotonic$",
+    "selectedTitle": "independent read session observed clock rollback closes monotonic",
+    "testFile": "tests/independent-prefix-read-session.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "independent session mint delay cannot renew lifetime",
+    "file": "src/native/github.ts",
+    "before": "deadline=startedTick+Math.max(0,(lease.expires-startedAt-1)*1000);",
+    "after": "deadline=lastTick+Math.max(0,(lease.expires-last-1)*1000);",
+    "pattern": "^independent read session mint transit consumes token monotonic lifetime$",
+    "selectedTitle": "independent read session mint transit consumes token monotonic lifetime",
+    "testFile": "tests/independent-prefix-read-session.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "independent session expiry rounds down",
+    "file": "src/native/github.ts",
+    "before": "readLease.expires=Math.floor(Date.parse(data.expires_at)/1000);",
+    "after": "readLease.expires=Math.ceil(Date.parse(data.expires_at)/1000);",
+    "pattern": "^independent read session fractional expiry is not rounded upward$",
+    "selectedTitle": "independent read session fractional expiry is not rounded upward",
+    "testFile": "tests/independent-prefix-read-session.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "independent session cache hit pins live source",
+    "file": "src/native/github.ts",
+    "before": "if(trusted.sha!==readLease.source.sha)throw new Rejected('merge_prefix_changed');",
+    "after": "// mutation: ignore live source change",
+    "pattern": "^independent read session source SHA changes on cache hit reject before content fetch$",
+    "selectedTitle": "independent read session source SHA changes on cache hit reject before content fetch",
+    "testFile": "tests/independent-prefix-read-session.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "independent session cached policy never escapes",
+    "file": "src/native/github.ts",
+    "before": "policy:structuredClone(policy),\n      members:prefix.map",
+    "after": "policy:readLease?.source?.policy??policy,\n      members:prefix.map",
+    "pattern": "^independent read session cached policy cannot be changed through first snapshot$",
+    "selectedTitle": "independent read session cached policy cannot be changed through first snapshot",
+    "testFile": "tests/independent-prefix-read-session.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "independent session installation pause remains fresh",
+    "file": "src/native/github.ts",
+    "before": "unchanged();readLease?.guard();const jwt=authorization.jwt;",
+    "after": "unchanged();readLease?.guard();if(readLease?.token!==undefined)return readLease.token;const jwt=authorization.jwt;",
+    "pattern": "^independent read session installation pause is still observed snapshot$",
+    "selectedTitle": "independent read session installation pause is still observed snapshot",
+    "testFile": "tests/independent-prefix-read-session.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "independent session reuses exactly one narrow token",
+    "file": "src/native/github.ts",
+    "before": "if(readLease?.token!==undefined)return readLease.token;",
+    "after": "if(false && readLease?.token!==undefined)return readLease.token;",
+    "pattern": "^independent read session complete prefix measured cost 2$",
+    "selectedTitle": "independent read session complete prefix measured cost 2",
+    "testFile": "tests/independent-prefix-read-session.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "independent session three validated immutable contents reused",
+    "file": "src/native/github.ts",
+    "before": "if(readLease?.source) {",
+    "after": "if(false && readLease?.source) {",
+    "pattern": "^independent read session complete prefix measured cost 2$",
+    "selectedTitle": "independent read session complete prefix measured cost 2",
+    "testFile": "tests/independent-prefix-read-session.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "independent session final SQL remains inside lease guard",
+    "file": "src/native/github.ts",
+    "before": "lease.guard();const result=await work(reader);lease.guard();",
+    "after": "lease.guard();const result=await work(reader);",
+    "pattern": "^independent read session final SQL completion cannot hide time$",
+    "selectedTitle": "independent read session final SQL completion cannot hide time",
+    "testFile": "tests/independent-prefix-read-session.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "independent session unchanged external budget",
+    "file": "src/native/budget.ts",
+    "before": "externalWork:35",
+    "after": "externalWork:40",
+    "pattern": "^independent read session fourth prefix member cannot exceed unchanged35 work cap$",
+    "selectedTitle": "independent read session fourth prefix member cannot exceed unchanged35 work cap",
+    "testFile": "tests/independent-prefix-read-session.test.mjs",
+    "assertionError": true
+  }
+]

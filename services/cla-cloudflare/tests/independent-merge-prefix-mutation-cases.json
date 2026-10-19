@@ -22,7 +22,7 @@
   {
     "name": "independent prefix shared invocation budget",
     "file": "src/native/service.ts",
-    "before": "if(!this.store.budget || this.github.budget!==this.store.budget)throw new Rejected('invocation_budget_required');",
+    "before": "if(!budget || this.github.budget!==budget)throw new Rejected('invocation_budget_required');",
     "after": "// mutation: omit shared budget check",
     "pattern": "^independent merge prefix requires shared budget different$",
     "selectedTitle": "independent merge prefix requires shared budget different",
@@ -192,7 +192,7 @@
   {
     "name": "independent final shared work deadline",
     "file": "src/native/service.ts",
-    "before": "this.store.budget.checkWork();",
+    "before": "budget.checkWork();",
     "after": "// mutation: omit final work deadline",
     "pattern": "^independent merge prefix final cryptographic work cannot outlive shared work deadline$",
     "selectedTitle": "independent merge prefix final cryptographic work cannot outlive shared work deadline",

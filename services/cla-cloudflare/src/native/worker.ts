@@ -27,6 +27,7 @@ export interface Env {
   CLA_AGREEMENT_ACTIVATION_ENABLED?:string;
   CLA_CONFIRMATION_SLOT_ENABLED?:string;
   CLA_MERGE_PREFIX_ASSESSMENT_ENABLED?:string;
+  CLA_MERGE_PREFIX_READ_SESSION_ENABLED?:string;
   CLA_WEBHOOK_SECRET?:string;
   CLA_WEBHOOK_LIMITER?:{limit(input:{key:string}):Promise<{success:boolean}>};
 }
@@ -77,7 +78,7 @@ export function config(env:Env):LiveConfig {
     signingEnabled:env.CLA_SIGNING_ENABLED==='true',checkPublishingEnabled:env.CLA_CHECK_PUBLISHING_ENABLED==='true',backgroundEnabled:env.CLA_BACKGROUND_ENABLED==='true',
     delegatedCountersigningEnabled:env.CLA_DELEGATED_COUNTERSIGNING_ENABLED==='true',automaticVerificationEnabled:env.CLA_AUTOMATIC_VERIFICATION_ENABLED==='true',
     automaticPublishingEnabled:env.CLA_AUTOMATIC_PUBLISHING_ENABLED==='true',agreementActivationEnabled:env.CLA_AGREEMENT_ACTIVATION_ENABLED==='true',
-    confirmationSlotEnabled:env.CLA_CONFIRMATION_SLOT_ENABLED==='true',mergePrefixAssessmentEnabled:env.CLA_MERGE_PREFIX_ASSESSMENT_ENABLED==='true'};
+    confirmationSlotEnabled:env.CLA_CONFIRMATION_SLOT_ENABLED==='true',mergePrefixAssessmentEnabled:env.CLA_MERGE_PREFIX_ASSESSMENT_ENABLED==='true',mergePrefixReadSessionEnabled:env.CLA_MERGE_PREFIX_READ_SESSION_ENABLED==='true'};
 }
 export async function service(env:Env,budget?:InvocationBudget):Promise<LiveService> {
   const c=config(env),secrets:Secrets={clientSecret:env.CLA_CLIENT_SECRET ?? '',pkcs8:env.CLA_APP_PKCS8 ?? '',evidenceKey:env.CLA_EVIDENCE_KEY ?? ''};
