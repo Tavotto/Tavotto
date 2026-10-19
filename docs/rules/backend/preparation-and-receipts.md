@@ -318,6 +318,7 @@ input 协议，前端也没有 readiness 计算器。端点 `POST /api/engine/pr
 - **闸门**：`decide_fallback` 固定优先级 开关 → 策略 → 取消 → 过期 → 原因 → `RetryGuard`（native 之后不回 safe、一次 run 至多一次、同执行身份同根因不重复）。回退在锁外规划（只读）、**在锁内最后一刻再核**取消标记 / 闸门，再接第二个 attempt；取消动作落在最新一次尝试上。
 - **只在桌面用户发起的运行里**：`app._desktop_initiated()` = `--desktop-sidecar` 进程 + 无本机凭据 + 窗口 cookie，服务端验证；`SESSIONS.act(desktop_initiated=)` 默认 False，意图创建时记下。`decide_fallback` 默认拒（`not_desktop_initiated`）。会话 safe 尝试开始前上一次桌面 native 会话让位（`_launch_session_attempt`）。
 - **只在会话 `run` / `run_when_ready` 认领之后**：CLI（`runcli`）与 MCP 不 import `execpolicy` / `prepsession`（`tests/test_execution_policy.py` 钉）；旧 `/api/engine/preparation` 不回退；前端永不发 `execution`。
+- **显式 `execution: "native"` 与路由 native 同一道来源闸门**：非桌面来源（浏览器 cookie / 本机凭据 API 客户端 / 无认证入口）显式要 native → 403 `native_requires_desktop`，不降级（客户端明确要求，换语义会误导）；创建会话端点（`app.api_engine_preparation_session_create`）先拒，`prepsession._claim_run` 认领时再核一次（含 `run_when_ready` 推进）。路由 native 在非桌面来源仍静默降 safe 并记 `declined: not_desktop_initiated`。`tests/test_explicit_native_origin_gate.py` 钉。
 - **解释器沿用 safe 当时那一个**；native 计划算出的解释器 / 源码修订 / 检查项与 safe 当时不一致 → 不回退，闭集理由进 `attempt_history[].declined`。
 - **账本**：`Session.ledger`（有界 16、线程安全、按 run 分组，新的用户运行重算预算）；`attempt_history` 每条 = run · seq · attempt_id · profile · interpreter / launch 摘要 · cause · changed ∈ {profile, interpreter, launch_context} · outcome · code · declined。**无路径 / argv / env 值**。回退不是意图步数（`intent.attempts` 记名下全部尝试）。
 - **诊断**：native 尝试的任务诊断快照多 `retry:{of, cause, changed, execution}`（`PreparationPlan.retry_*`，全是闭集码 / plan id）。

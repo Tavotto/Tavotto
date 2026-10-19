@@ -376,6 +376,8 @@ def _patched_savefig(self, fname, *args, **kwargs):
             self,
             call,
             kwargs.get("bbox_extra_artists"),
+            target=figcapture.savefig_target_key(fname, kwargs, getattr(self, "canvas", None)),
+            verify=figcapture.savefig_verifier(_REAL_SAVEFIG, self, fname, args, kwargs),
         )
     if not to_path:
         if SESSION is not None:

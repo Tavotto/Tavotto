@@ -216,6 +216,9 @@ Roman」「文字不小于 8 pt」「出 300 dpi 的 PNG」这类规范化修改
 python3 scripts/handoff.py <脚本路径>
 ```
 
+**Windows 版 Codex 里这条命令要申请在沙箱外运行**（`sandbox_permissions: "require_escalated"` + 一句理由）；
+遇到 `error_code: "sandboxed_launch"` 就用沙箱外权限重跑同一条命令，不要让用户手动打开 Tavotto。
+
 **退出码非零就是没做完**；输出是一行 JSON，你必须读——`parameterizable`
 的判定与全部 `error_code` 的分诊在 `references/desktop-handoff.md`。退出码 0 只说交接成了，
 **不说图画出来了**：再读 `render_success`（`false` = 界面明确渲染失败，`null` = 还不知道，

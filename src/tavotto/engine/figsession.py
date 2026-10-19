@@ -510,6 +510,8 @@ class LiveFigureSession:
         #: stem -> 与 `savefig_calls[stem]` 逐项对齐的 `bbox_extra_artists` **对象**（进不了 JSON，
         #: 只活在这个进程里；算图幅时要把同一批 artist 交回 savefig，ADR 0098 §一）
         self.savefig_extras: dict[str, list] = {}
+        #: stem -> {files: 目标文件键 -> 最近写它的 Figure（弱引用）, log: 影子日志}，见 `figcapture.note_savefig_writer`
+        self.savefig_writers: dict[str, dict] = {}
         # Safe capture normally suppresses savefig. File-object saves really draw
         # during the script; do not treat their later state as an undrawn seed.
         self.passthrough_figures: set[int] = set()
@@ -558,10 +560,33 @@ class LiveFigureSession:
         self.capture_source[stem] = source
         return True
 
-    def note_savefig(self, stem: str, fig, call: dict | None, extra_artists=None) -> None:
-        """记一次 savefig 调用（规则在 `figcapture.record_savefig_call`）。"""
-        if figcapture.record_savefig_call(self.savefig_calls, self.capture, stem, fig, call):
-            self.savefig_extras.setdefault(stem, []).append(extra_artists)
+    def note_savefig(
+        self,
+        stem: str,
+        fig,
+        call: dict | None,
+        extra_artists=None,
+        target: str | None = None,
+        verify=None,
+    ) -> None:
+        """记一次**成功的** savefig 调用（规则在 `figcapture.note_savefig_writer`）。
+
+        同一路径换了写入者的规则唯一实现在 `figcapture.note_savefig_writer`（三条入口同源）。
+        """
+        figcapture.note_savefig_writer(
+            self.savefig_writers,
+            self.capture,
+            self.capture_source,
+            self.savefig_calls,
+            self.savefig_extras,
+            stem,
+            fig,
+            target,
+            call,
+            extra_artists,
+            locked=stem in self.states or stem in self.failures,
+            verify=verify,
+        )
 
     def note_artifact(self, observation, stem, fig, extra_artists):
         if self.artifact_source is None:
@@ -805,6 +830,7 @@ class LiveFigureSession:
                 self.capture_source.pop(stem, None)
                 self.savefig_calls.pop(stem, None)
                 self.savefig_extras.pop(stem, None)
+                self.savefig_writers.pop(stem, None)
                 self.failures.pop(stem, None)
                 self._failed_states.pop(stem, None)
                 self.live_captured_at.pop(stem, None)
@@ -849,6 +875,7 @@ class LiveFigureSession:
             self.capture_source,
             self.savefig_calls,
             self.savefig_extras,
+            self.savefig_writers,
             self.failures,
             self._failed_states,
             self.live_captured_at,
