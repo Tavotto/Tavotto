@@ -449,6 +449,29 @@ class Cli(unittest.TestCase):
             ex.explore(args)
 
 
+class AuditedJudgment(unittest.TestCase):
+    """观测器没写出执行日志（计数为 None / 0）时，比对一致也只能是 unknown（Codex #1135 r4311521396）。"""
+
+    CLEAN = {"outcome": "no_difference", "differences": []}
+
+    def test_agreement_without_an_audited_tavotto_execution_is_never_clean(self):
+        got = ex.audited_judgment("shape_changing", self.CLEAN, {"native": 1, "tavotto": None})
+        self.assertEqual(got["outcome"], "unknown")
+        self.assertIn("tavotto", got["note"])
+
+    def test_shape_preserving_also_needs_the_parent_native_execution(self):
+        counts = {"native": 1, "tavotto": 1, "parent_native": 0}
+        got = ex.audited_judgment("shape_preserving", self.CLEAN, counts)
+        self.assertEqual(got["outcome"], "unknown")
+        self.assertIn("parent_native", got["note"])
+
+    def test_audited_agreement_and_differences_pass_through(self):
+        counts = {"native": 1, "tavotto": 1, "parent_native": 1}
+        self.assertIs(ex.audited_judgment("shape_preserving", self.CLEAN, counts), self.CLEAN)
+        diff = {"outcome": "difference_found", "differences": [{}]}
+        self.assertIs(ex.audited_judgment("shape_changing", diff, {}), diff)
+
+
 class RealDiscovery(unittest.TestCase):
     """Real execution against the current product code (needs the scientific stack)."""
 
