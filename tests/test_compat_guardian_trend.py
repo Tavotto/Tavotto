@@ -420,6 +420,8 @@ class Alerts(unittest.TestCase):
             "os",
             "pathlib",
             "compat_guardian",
+            # read-only `load_report` (the summary's structural validation, Codex #1136 r4311781508)
+            "compat_guardian_summary",
             "compat_guardian_taxonomy",
         }
         imported = set()
