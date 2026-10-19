@@ -537,6 +537,7 @@ export default interface Resources {
         "keyboardHelp": "按空格拿起卡片，方向键移动，回车放下，Esc 取消。",
         "leftZone": "离开了投放框。",
         "missed": "没有放进投放框，卡片已放回。再试一次。",
+        "or": "或",
         "overZone": "在投放框上方，回车放下。",
         "picked": "已拿起 {{name}}，用方向键移到投放框上，回车放下。",
         "success": "示例图已载入",

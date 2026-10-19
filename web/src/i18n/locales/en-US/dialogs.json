@@ -1909,6 +1909,7 @@
       "cardLabel": "Drag {{name}} into the drop area",
       "cardHint": "Built-in sample, no file needed",
       "useSample": "Just use the sample",
+      "or": "or",
       "keyboardHelp": "Press Space to pick up the card, arrow keys to move it, Enter to drop, Esc to cancel.",
       "zoneLabel": "Script drop area",
       "zoneTitle": "Drop the script here",

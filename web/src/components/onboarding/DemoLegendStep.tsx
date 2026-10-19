@@ -48,7 +48,6 @@ export function DemoLegendStep() {
   const stage = useRef<HTMLDivElement>(null)
   const [drag, setDragState] = useState<Drag | null>(null)
   const dragRef = useRef<Drag | null>(null)
-  const [hover, setHover] = useState(false)
   const [focused, setFocused] = useState(false)
   const committed: [number, number] = demo.legendOffset ?? [0, 0]
 
@@ -174,9 +173,10 @@ export function DemoLegendStep() {
   const live = drag?.offset ?? committed
   const rect = useTrackedRect(legend, stage, [live[0], live[1]])
   const entries = DEMO_FIGURE.legend.entries.map((e) => plainText(e.text)).join('；')
-  // 没做完、也没在拖：聚焦环 + 「拖动这里」；其余时候只在悬停 / 键盘聚焦 / 拖动中画一圈选中框
+  // 没做完、也没在拖：聚焦环 + 「拖动这里」。其余时候图例就是图例：鼠标悬停 / 拖动不画框（框跟着拖
+  // 只会显得图例被套在一个盒子里），只有键盘聚焦时画一圈选中框——那是键盘用户唯一的位置提示
   const guiding = !done && !drag
-  const outlined = !guiding && (hover || focused || !!drag)
+  const outlined = !guiding && focused
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -220,8 +220,6 @@ export function DemoLegendStep() {
               onPointerCancel: onLost,
               onLostPointerCapture: onLost,
               onKeyDown,
-              onPointerEnter: () => setHover(true),
-              onPointerLeave: () => setHover(false),
               onFocus: (e) => setFocused(isFocusVisible(e.currentTarget)),
               onBlur: () => setFocused(false),
             }}

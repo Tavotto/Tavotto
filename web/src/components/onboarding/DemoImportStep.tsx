@@ -261,6 +261,13 @@ export function DemoImportStep() {
               <Image size={ICON_SIZE.lg} className="mb-3 h-12 w-12 text-ink-faint" aria-hidden="true" />
               <p className="type-display">{t('onboarding.import.zoneTitle')}</p>
               <p className="mt-2 type-heading font-normal text-ink-3">{t('onboarding.import.zoneBody', { product: PRODUCT_NAME })}</p>
+              {/* 拖不动的人（触控板 / 读屏 / 不想拖）的等价入口：放在投放框里、拖动时淡出，不和卡片抢位置 */}
+              <div className={cn('mt-5 flex items-center gap-3 transition-opacity', lifted ? 'opacity-0' : 'pointer-events-auto')}>
+                <span className="text-base text-ink-3">{t('onboarding.import.or')}</span>
+                <Button variant="secondary" size="lg" data-tutorial-use-sample="" tabIndex={lifted ? -1 : undefined} onClick={succeed}>
+                  {t('onboarding.import.useSample')}
+                </Button>
+              </div>
             </div>
           </div>
           <HintArrow from={cardRect} to={zoneRect} hidden={lifted} />
@@ -296,18 +303,15 @@ export function DemoImportStep() {
               <span className="grid h-14 w-14 shrink-0 place-items-center rounded-lg bg-field text-ink-2">
                 <FileCodeCorner size={ICON_SIZE.lg} className="h-7 w-7" />
               </span>
-              <span className="type-title min-w-0 truncate font-mono font-medium">{name}</span>
+              <span className="flex min-w-0 flex-col gap-0.5">
+                <span className="type-title truncate font-mono font-medium">{name}</span>
+                <span className="truncate text-sm text-ink-3">{t('onboarding.import.cardHint')}</span>
+              </span>
               <GripVertical size={ICON_SIZE.lg} className="ml-auto shrink-0 text-ink-faint" aria-hidden="true" />
             </div>
             <span id="tutorial-card-help" className="sr-only">
               {t('onboarding.import.keyboardHelp')}
             </span>
-            <div className={cn('flex items-center gap-1 pl-1 transition-opacity', lifted && 'opacity-0')}>
-              <span className="text-base text-ink-3">{t('onboarding.import.cardHint')}</span>
-              <Button size="sm" className="text-ink-2 underline-offset-2 hover:underline" data-tutorial-use-sample="" onClick={succeed}>
-                {t('onboarding.import.useSample')}
-              </Button>
-            </div>
           </div>
         </>
       )}

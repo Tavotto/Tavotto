@@ -84,7 +84,7 @@ export function Spotlight({ rect, tip, dim = true }: { rect: Rect | null; tip?: 
       <div
         data-tutorial-ring={dim ? 'guide' : 'outline'}
         className={cn(
-          'absolute rounded-md border border-border-control transition-[left,top,width,height] duration-fast',
+          'absolute rounded-md border border-border-control',
           dim
             ? 'shadow-[0_0_0_4px_var(--color-paper),0_0_0_9999px_color-mix(in_srgb,var(--color-shadow)_12%,transparent)]'
             : 'shadow-[0_0_0_4px_var(--color-paper)]',

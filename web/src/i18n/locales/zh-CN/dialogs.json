@@ -1889,6 +1889,7 @@
       "cardLabel": "拖动 {{name}} 到投放框",
       "cardHint": "内置示例，无需准备文件",
       "useSample": "直接使用示例",
+      "or": "或",
       "keyboardHelp": "按空格拿起卡片，方向键移动，回车放下，Esc 取消。",
       "zoneLabel": "脚本投放框",
       "zoneTitle": "拖拽脚本到这里",
