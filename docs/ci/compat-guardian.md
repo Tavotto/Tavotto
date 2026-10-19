@@ -56,7 +56,7 @@ python scripts/ci/compat_guardian.py {triage|minimize}                      # �
 - `triage / minimize` 仍是**显式的桩**：退出码 2，stderr 写
   `not implemented in CG-01`，不产出任何结果。它们不被伪装成已实现。
 - `promote` 只写一个候选记录（`proposal_only: true, applied: false`），**拒绝**写入
-  `tests/compat/`、`tests/fixtures/`、`tests/support/`，也拒绝写任何名为 `manifest.json` /
+  `tests/compat/`、`tests/compat_guardian/`（含期望声明）、`tests/fixtures/`、`tests/support/`，也拒绝写任何名为 `manifest.json` /
   `baseline.json` 的仓库内文件；基线与 manifest 的改动只能是人写的、过 CODEOWNERS 的普通 PR。
 
 **退出码（`run`）**
