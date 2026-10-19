@@ -446,11 +446,28 @@ def run_one(
     return record
 
 
+#: 生成并执行派生候选的代码；执行前必须与 HEAD 一致
+EXECUTION_CRITICAL = (
+    "scripts/ci/compat_explore.py",
+    "scripts/ci/compat_explore_transforms.py",
+    "scripts/ci/compat_guardian.py",
+)
+
+
 def explore(args) -> int:
     initial = cg.source_state()
     expected = args.expected_sha or initial["commit"]
     if expected != initial["commit"]:
         raise cg.EvidenceError("expected SHA is not actual HEAD")
+    if not args.static_only:
+        # 候选标「评审过的模板派生、继承父用例信任」，前提是生成 / 执行它的代码就是 HEAD 那份：
+        # 脏工作区里改过的变换会被当成已评审代码执行（Codex #1135 r4311941518）
+        dirty = [rel for rel in EXECUTION_CRITICAL if not cg.matches_head(cg.ROOT, rel)]
+        if dirty:
+            raise cg.EvidenceError(
+                f"execution-critical files differ from reviewed HEAD: {dirty}; "
+                "commit them or run --static-only"
+            )
     parents = XT.default_parents()
     if args.parent:
         requested = args.parent.split(",")

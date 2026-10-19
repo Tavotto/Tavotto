@@ -406,6 +406,27 @@ class Cli(unittest.TestCase):
             for run in Path(tmp).iterdir():
                 self.assertFalse((run / "reports").exists())
 
+    def test_modified_execution_critical_code_is_refused_before_any_execution(self):
+        """脏工作区里改过的变换 / 执行器不得被当成评审过的模板执行（Codex #1135 r4311941518）。"""
+        dirty = "scripts/ci/compat_explore_transforms.py"
+        with tempfile.TemporaryDirectory() as tmp:
+            args = Namespace(
+                seed=9,
+                out=tmp,
+                limit=1,
+                parent="shape_oo_savefig",
+                static_only=False,
+                expected_sha=None,
+                timeout=5,
+            )
+            with (
+                mock.patch.object(cg, "matches_head", side_effect=lambda root, rel: rel != dirty),
+                mock.patch.object(ex, "run_one", side_effect=AssertionError("executed")),
+            ):
+                with self.assertRaisesRegex(cg.EvidenceError, "compat_explore_transforms"):
+                    ex.explore(args)
+            self.assertEqual(list(Path(tmp).iterdir()), [])
+
     def test_static_only_explore_writes_candidates_executes_nothing_and_touches_no_corpus(self):
         before = {p: hashlib.sha256((cg.ROOT / p).read_bytes()).hexdigest() for p in CORPUS_FILES}
         with tempfile.TemporaryDirectory() as tmp:
