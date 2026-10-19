@@ -287,6 +287,23 @@ def main():
     a3.legend(handles=[Line2D([], [], color="m", marker="^", label="two")])
     fig.savefig("Fig.pdf")
 """,
+    # 自定义单 artist handler：线一律黑色，走向随源（蓝 → 水平、红 → 斜线）——长相不同，不借名
+    "custom_geometry": """\
+import matplotlib.pyplot as plt
+from matplotlib.legend_handler import HandlerBase
+from matplotlib.lines import Line2D
+
+class Slant(HandlerBase):
+    def create_artists(self, legend, orig, x0, y0, w, h, fs, trans):
+        y1 = y0 + h if orig.get_color() == "r" else y0
+        return [Line2D([x0, x0 + w], [y0, y1], color="k", transform=trans)]
+
+def main():
+    fig, ax = plt.subplots(figsize=(4, 3))
+    ax.plot([0, 1], [0, 1], color="b")
+    ax.legend(handles=[Line2D([], [], color="r", label="red")], handler_map={Line2D: Slant()})
+    fig.savefig("Fig.pdf")
+""",
     # 有自己 label 的线与普通 ax.legend()：行为不变
     "own_label": """\
 import matplotlib.pyplot as plt
@@ -424,3 +441,7 @@ def test_shared_legend_on_first_axes_names_other_axes(figs):
         "axes_1.lines_0": "曲线 “blue”",
         "axes_2.lines_0": "曲线 1",  # 两张图例给了 one / two：冲突不命名
     }
+
+
+def test_custom_handler_cell_geometry_off_stays_unnamed(figs):
+    assert _labels(figs, "custom_geometry") == {"axes_0.lines_0": "曲线 1"}
