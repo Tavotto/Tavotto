@@ -2,8 +2,8 @@
 
 真服务子进程 + 真 worker：上次成功的 argv 来自一次真实运行（记录由成功收口写），再次打开时请求明确带
 `reuse_last_success: true` 才沿用；执行了什么 argv 以脚本自己写在项目外的日志为准（回显不算证据）。
-不沿用的情形：没有带标志（省略 argv = 无参数，与 P09 之前逐字节一致）、给了 argv、敏感参数、上次是 native 成功
-（`basis_observed: false`，核验覆盖不全）、脚本字节变了。
+不沿用的情形：没有带标志（省略 argv = 无参数，与 P09 之前逐字节一致）、给了 argv、敏感参数、上次是没观察全输入的
+native 成功（`basis_observed: false`，核验覆盖不全）、脚本字节变了。
 """
 
 from __future__ import annotations

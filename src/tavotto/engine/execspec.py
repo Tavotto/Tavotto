@@ -740,6 +740,10 @@ def bridge_argv(
         # 桌面拥有、stdin 走输入桥：脚本的 input / stdin / getpass 变成控制通道上的提问（P07，ADR 0126）。
         # 其余通道（terminal 的真 stdin、桌面的 pipe / null）命令行逐字节不变（golden）
         out.append("--input-bridge")
+    if spec.owner == OWNER_DESKTOP:
+        # 桌面拥有的启动：runner 观察脚本读到的项目内文件与 import 的本地模块（与 safe 同口径），native 成功记录据此
+        # 带上 helper / 数据依据、可被沿用（#1047）。terminal 拥有的命令行逐字节不变（golden）
+        out.append("--observe-inputs")
     out.append("--")
     out.extend(spec.argv)
     return out

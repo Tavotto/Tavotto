@@ -308,7 +308,7 @@ input 协议，前端也没有 readiness 计算器。端点 `POST /api/engine/pr
 
 `POST /api/engine/preparation-sessions` 的脚本目标可带 `reuse_last_success: true`（布尔，别的类型 400 `bad_request`；只对脚本目标；给了 `argv` 时被忽略）。消费端只有
 `launchctx.reusable_run_config`（`app._last_success_selection` 解析此刻的解释器后调用）：上次成功的 `launches[脚本]` 记录里的运行配置引用，**全部依据仍成立**才沿用
-（`launchctx.verify` 全部 facet；敏感配置不沿用；`source.basis_observed: false`——桌面 native 成功，没有 helper / 数据观察——不沿用，证据不全不假装可复用；上次是无参数运行 = 没有可沿用的）。
+（`launchctx.verify` 全部 facet；敏感配置不沿用；`source.basis_observed: false`——桌面 native 成功但没有完整的 helper / 数据观察——不沿用，证据不全不假装可复用；上次是无参数运行 = 没有可沿用的）。
 不满足一律当没有（无参数），不报错。**只有省略（或 null）argv 才考虑沿用**：显式给的 `argv: []`（明确要无参数运行）与任何显式 argv 都赢，不被上次的参数覆盖。沿用了几个参数在会话报告 `target.argv_count`（值不进公开投影）。省略标志 = 无参数运行，与 P09 之后逐字节一致。
 看护：`tests/test_reuse_last_success.py`（真服务子进程 + 真 worker：执行的 argv 以脚本日志为准）。
 
@@ -334,12 +334,13 @@ input 协议，前端也没有 readiness 计算器。端点 `POST /api/engine/pr
 桌面准备会话里，脚本目标不给 `execution` 时是 `auto`：`preparation.plan_for` 调 `runroute.route_for_file`，**静态**（一次 `ast.parse`，零执行）在 safe / native 之间先选一次。裁决处只有 `engine/runroute.py`（纯标准库）。要点：
 
 - **优先级**：`safe_only` 策略 → 运维开关（`TAVOTTO_EXECUTION_FALLBACK=0`，同一个开关也关回退）→ 上次成功沿用（`launchctx` 记录 `profile`，仍成立才算）→ 静态高置信 → 默认 safe。显式 `execution=safe|native`（CLI / MCP / 回退自己的 native 计划）不经路由，`plan.route` 为 None。
-- **high 的结构性门槛**：证据点必须在无条件执行的位置（模块 / 可达函数体顶层语句序列；`__main__` 守卫 body 与 `with` 的 item 表达式算无条件），不在 if / 循环 / try / with 体 / match / lambda / 推导式 / 三元里；函数靠无条件按名调用才算可达。沿用上次成功还要求运行配置（argv 引用）一致，且 native 记录 `basis_observed:false` 不沿用（同 #982）。
+- **high 的结构性门槛**：证据点必须在无条件执行的位置（模块 / 可达函数体顶层语句序列；`__main__` 守卫 body 与 `with` 的 item 表达式算无条件），不在 if / 循环 / try / with 体 / match / lambda / 推导式 / 三元里；函数靠无条件按名调用才算可达。沿用上次成功还要求运行配置（argv 引用）一致，且 native 记录 `basis_observed:false` 不沿用（同 #982；`true` 时与 safe 记录一样核 helper / 数据摘要，#1047）。
 - **只有 high 才直达 native**：R1 同函数内 `savefig(P)` 后读 P；R3 写 T → `replace/rename/move(T,F)` → 读 F 且 T 在真实图库内（cwd 相对路径看 cwd 档：`sandbox` 不在）。R2（savefig 后只 `exists`）、R3_partial、跨函数读回是 medium；动态路径 R4 是 low——都走 safe，由 0127 回退兜底。**低、中置信度永不升级**。
 - **按 import 绑定解析限定名**（`from os import replace as r`、`import PIL.Image as I` 都认；`cache.replace(...)` / 字符串 `.replace` 不认）；路径折叠规则与 blind spots 见 ADR 0133，`Route.blind_spots` 随结果带出，不得宣称覆盖跨函数 / helper / 反射 / subprocess。
 - **只在用户发起的路径里**：`runroute` 只被 `preparation` / `prepsession` import；被动扫描、CLI、MCP 不 import（`tests/test_runroute_boundary.py` 钉，含零执行：Popen / exec / connect / find_spec / import_module 全炸 + 会写哨兵的脚本）。
 - **`PreparationPlan.route`** = `Route.public()`（闭集原因 / 置信度 / 规则 / 行号 / 耗时，无路径与源码），**不入指纹**；日志 `run route …`；任务诊断 `route:{…}`。没有解释器 → 回 safe 且 `declined: no_interpreter`。
-- **cwd 确认不短路**（0057）；native 成功也写 `launchctx` 记录（v2，`profile` 字段，v1 读作 safe；`source.basis_observed:false` = 不含 helper / 数据观察依据），由 `prepsession` 在尝试成功后调 `record_native_success`。
+- **cwd 确认不短路**（0057）；native 成功也写 `launchctx` 记录（v2，`profile` 字段，v1 读作 safe），由 app 的成功收口经 `record_success`（`NativeBasis`）写。
+- **native 的输入依据（#1047）**：桌面拥有的 bridge 带 `--observe-inputs`（`execspec.bridge_argv` 唯一出处，终端拥有的不带），与 safe 同一个 `InputObserver` 在脚本跑完那一刻定格，经 build 响应 `observed_inputs`（`NativeSession.observed_inputs`，不进 `runtime` / 公开状态 / 事件）交给收口：完整 → `basis_observed:true`；收口在 `show()` 屏障上 → 先 `false`，结束屏障上的 build（`app._note_native_inputs`）经 `launchctx.observe_native_basis` 按 `launch_id` 补齐。引擎自己的读（savefig 簿记、屏障）暂停记账（`InputObserver.paused`）。看护：`tests/bridge/test_bridge_input_observation.py`、`tests/test_native_launch_basis.py`、`test_run_routing_e2e.py`。
 - 同源对：`runroute` 的词汇镜像 `worker.REQUIRED_EXECUTION_FILE_SEMANTICS` / `BlockedFileOps.KIND_*` / `execpolicy.MODE_*` / `workdir.MODE_*`（`tests/test_runroute.py` 钉相等）；静态 high ↔ 真 safe worker 被拦、静态 safe ↔ 实跑成功（`tests/test_runroute_consistency.py`）。
 - 看护：`tests/test_runroute.py`（规则向量 / 优先级 / 缓存）、`test_runroute_wiring.py`（假 pool + 假 native：直达 native safe 不跑、动态路径回退、safe_only、开关、上次成功沿用、改脚本失效）、`test_run_routing_e2e.py`（真服务子进程 + 真用户 Python + 脚本自写的执行计数）。
 

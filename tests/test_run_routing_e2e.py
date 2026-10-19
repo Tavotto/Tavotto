@@ -8,7 +8,8 @@
 * 临时文件 → `os.replace` → 读回：含守卫操作，伤害闸门留在 safe，被拦后同会话回退 native，共 2 次，`os.replace` 最终真实发生；
 * 动态路径（路由看不出）→ safe 被拦 → 同会话回退 native，共 2 次；
 * `safe_only` 项目 → 不走 native；
-* 上次 native 成功的脚本再次运行 → 不沿用 native（记录没观察过 helper / 数据），回到静态路由。
+* 上次 native 成功的脚本再次运行 → 沿用 native、只执行 1 次（bridge 观察过 helper / 数据，#1047）；helper / 数据 / 脚本
+  任一变了 → 回到静态路由；成功收口在 `show()` 屏障上时，脚本跑完后的那次 build 才补齐依据。
 """
 
 from __future__ import annotations
@@ -74,6 +75,17 @@ fig.savefig(name)
 Image.open(name).load()
 """
 )
+
+
+#: 动态路径 + 本地 helper 模块 + 项目内数据文件：native 成功记录的依据（#1047）要覆盖后两样
+DYNAMIC_INPUTS = (
+    COUNT
+    + HEAD
+    + 'import helper\nscale = helper.SCALE * float((here / "data.csv").read_text())\n'
+    + DYNAMIC[len(COUNT + HEAD) :]
+)
+#: 同样的动态路径，最后 `plt.show()`：bridge 停在 show 屏障上时脚本还没跑完
+DYNAMIC_SHOW = DYNAMIC + "plt.show()\n"
 
 
 def _project(tmp_path, body: str):
@@ -182,33 +194,84 @@ def test_a_safe_only_project_never_goes_native(tmp_path, monkeypatch):
         assert _native_sessions(app, proj) == []
 
 
-def test_a_native_success_is_not_reused_while_its_helper_inputs_were_never_observed(tmp_path):
-    """V2 PR2（Codex #1034 r6）：native 成功的记录 `basis_observed:false`，与 #982 同样保守——重开不沿用 native，回到静态路由
-    （动态路径 → safe 被拦 → 回退 native），而不是静默直接 native。"""
-    proj, log = _project(tmp_path, DYNAMIC)
+def _wait_runs(log, n: int, timeout: float = 150.0) -> None:
+    deadline = time.time() + timeout
+    while _runs(log) < n and time.time() < deadline:
+        time.sleep(0.3)
+    time.sleep(3)  # 给「偷偷再跑」留出发生的时间
+
+
+def test_a_native_success_with_observed_inputs_is_reused_until_a_helper_or_data_file_changes(
+    tmp_path,
+):
+    """#1047：桌面拥有的 bridge 观察 helper 导入与数据读取（与 safe 同口径），native 成功记录 `basis_observed:true`——
+    重开直达 native、脚本只执行 1 次；helper / 数据 / 脚本任一变了，记录对不上，回到静态路由（动态路径 → safe 先跑）。"""
+    proj, log = _project(tmp_path, DYNAMIC_INPUTS)
+    (proj / "helper.py").write_text("SCALE = 1.0\n", encoding="utf-8")
+    (proj / "data.csv").write_text("2\n", encoding="utf-8")
     with sidecar_app(proj, tmp_path / "work", env_overrides=ENV) as app:
         first = _create(app)
+        assert first["plan"]["route"]["execution"] == "safe"
         final = _settled(app, _run(app, first))
         assert _history(final) == [("safe", "blocked"), ("native", "succeeded")]
         assert _runs(log) == 2
 
         again = _reopen(app)
         route = again["plan"]["route"]
-        assert (route["execution"], route["reason"]) == ("safe", "ordinary_plot")
+        assert (route["execution"], route["reason"]) == ("native", "previous_successful_profile")
         _run(app, again)
-        deadline = time.time() + 150
-        while _runs(log) < 4 and time.time() < deadline:
-            time.sleep(0.3)
-        time.sleep(3)
-        assert _runs(log) == 4, "这一次又是 safe 一次（被拦）+ native 一次"
+        _wait_runs(log, 3)
+        assert _runs(log) == 3, "沿用 native：safe 不白跑，只执行 1 次"
         settled = _settled(app, again["session_id"])
-        assert [h["profile"] for h in settled["attempt_history"]][-2:] == ["safe", "native"]
+        assert _history(settled)[-1] == ("native", "succeeded")
+
+        helper = proj / "helper.py"
+        helper.write_text("SCALE = 3.0\n", encoding="utf-8")
+        assert _reopen(app)["plan"]["route"]["reason"] == "ordinary_plot", "helper 变了"
+        helper.write_text("SCALE = 1.0\n", encoding="utf-8")
+        assert _reopen(app)["plan"]["route"]["reason"] == "previous_successful_profile"
+
+        (proj / "data.csv").write_text("5\n", encoding="utf-8")
+        assert _reopen(app)["plan"]["route"]["reason"] == "ordinary_plot", "数据变了"
+        (proj / "data.csv").write_text("2\n", encoding="utf-8")
+        assert _reopen(app)["plan"]["route"]["reason"] == "previous_successful_profile"
 
         # 改了脚本：照旧回到静态判断
         (proj / "fig.py").write_text(
             (proj / "fig.py").read_text(encoding="utf-8") + "\n# edit\n", encoding="utf-8"
         )
         assert _reopen(app)["plan"]["route"]["reason"] == "ordinary_plot"
+
+
+def test_a_native_success_settled_at_a_show_barrier_is_reusable_only_after_the_script_finished(
+    tmp_path,
+):
+    """#1047：成功收口在 `plt.show()` 屏障上——脚本还没跑完，之后还可能再读，那时的观察不是全部输入，记录先不沿用；
+    界面放行、脚本跑完后在结束屏障上 build 一次，按计划号补齐依据，之后重开才直达 native。"""
+    proj, log = _project(tmp_path, DYNAMIC_SHOW)
+    with sidecar_app(proj, tmp_path / "work", env_overrides=ENV) as app:
+        final = _settled(app, _run(app, _create(app)))
+        assert _history(final) == [("safe", "blocked"), ("native", "succeeded")]
+        (live,) = [s for s in _native_sessions(app, proj) if s["state"] not in ("ended", "failed")]
+        assert live["barrier_reason"] == "show"
+        sid = live["session_id"]
+        assert _reopen(app)["plan"]["route"]["reason"] == "ordinary_plot", "脚本还没跑完"
+
+        app.call(f"/api/native/sessions/{sid}/continue", {}, timeout=60)
+
+        def _at_script_end():
+            (sess,) = [s for s in _native_sessions(app, proj) if s["session_id"] == sid]
+            return sess if sess["barrier_reason"] == "script_end" else None
+
+        deadline = time.time() + 60
+        while not _at_script_end() and time.time() < deadline:
+            time.sleep(0.2)
+        assert _at_script_end(), "脚本没有跑到结束屏障"
+        assert _reopen(app)["plan"]["route"]["reason"] == "ordinary_plot", "还没在结束屏障上 build"
+
+        app.call(f"/api/native/sessions/{sid}/build", {}, timeout=60)
+        route = _reopen(app)["plan"]["route"]
+        assert (route["execution"], route["reason"]) == ("native", "previous_successful_profile")
 
 
 def test_a_browser_mode_session_is_never_routed_to_native(tmp_path):

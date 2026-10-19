@@ -4661,6 +4661,7 @@ def api_native_session_build(session_id: str):
         # `_worker_error_payload` 都必须带 `, 500`——native 这两处曾经漏过
         # （issue #191），现在由 `test_native_api.py` 逐个端点钉着。
         return jsonify(_worker_error_payload(exc)), 500
+    _note_native_inputs(session)
     rejected = engine_nativesession.REGISTRY.bind_assets(session)
     # 发布决定只有这一处,且全有或全无:任一张图的路由被另一条活会话占着,这一轮 build 的图一张都不物化、不回给前端、
     # 不绑路由——否则预览是这次运行的、编辑 / 导出却仍落在旧会话上（静默错图,ADR 0021 §9.2），而准备 runner 对同一结果
@@ -4782,6 +4783,22 @@ def api_native_forget_permission():
     root = body.get("project_root") or str(require_project())
     removed = engine_nativeperm.forget(root, body.get("permission_key", "") or "")
     return jsonify({"ok": True, "removed": removed})
+
+
+def _note_native_inputs(session) -> None:
+    """桌面拥有的运行跑完之后的 build 带着输入观察：补齐这次运行的 native 成功记录的 helper / 数据依据（#1047）。
+
+    成功收口若在 `show()` 屏障上，那时脚本还没跑完、记录先记成「没观察过」；脚本跑完、界面在结束屏障上再 build 一次，
+    这里按计划号（`launch_id`）补上。终端拥有的会话不观察；补不上（观察不全、记录已被别的成功换掉）就保持不沿用。"""
+    if session.owned is None or not session.launch_id:
+        return
+    inputs = session.observed_inputs
+    if inputs is None:
+        return
+    try:
+        engine_launchctx.observe_native_basis(session.project_root, session.launch_id, inputs)
+    except Exception:  # noqa: BLE001 — 补依据是尽力而为：失败只是下次不沿用，不影响这次 build
+        LOG.info("native 记录补依据失败: %s", session.session_id, exc_info=True)
 
 
 def _materialize_native(session, skip=()) -> None:
@@ -8060,6 +8077,7 @@ def _finalize_script_attempt(ctx: "ProjectCtx", plan, result) -> dict:
         }
     # 物化在刷新之前：刷新会发 `registry.changed`，前端收到就去取 runtime 清单与预览
     run = getattr(plan, "run", None)
+    native = None
     if getattr(plan, "execution", None) == engine_execspec.PROFILE_NATIVE:
         # 桌面拥有的 native：预览从那条活会话的产物目录来（不是 safe 池里的热 worker）；活图路由已在 runner 里绑好
         native = next(
@@ -8087,7 +8105,13 @@ def _finalize_script_attempt(ctx: "ProjectCtx", plan, result) -> dict:
     engine_launchctx.record_success(
         ctx.path,
         plan.script,
-        engine_launchctx.basis_of(result, plan, bool(captured.get("failed_figures"))),
+        engine_launchctx.basis_of(
+            result,
+            plan,
+            bool(captured.get("failed_figures")),
+            # 脚本已跑完（收口在结束屏障上）才有；停在 `show()` 屏障上时由之后的 build 补（#1047，`_note_native_inputs`）
+            native_inputs=native.observed_inputs if native is not None else None,
+        ),
         run=run,
         update_default=True,
     )
