@@ -322,7 +322,7 @@ class GuardianContract(GuardianBase):
         raw = '{"contract_fixture":"partial native execution"}\n'
 
         def interrupted(command, *, work, evidence, env, timeout):
-            (work / "native-execs.jsonl").write_text(raw, encoding="utf-8")
+            (work / "native-execs.jsonl").write_bytes(raw.encode())
             raise cg.EvidenceError("simulated adapter interruption")
 
         args = Namespace(
@@ -337,7 +337,7 @@ class GuardianContract(GuardianBase):
         report_path = next((self.root / "runs").glob("*/reports/guardian.json"))
         report = json.loads(report_path.read_text(encoding="utf-8"))
         retained = report_path.parent.parent / "evidence" / self.cid / "native-execs.jsonl"
-        self.assertEqual(retained.read_text(encoding="utf-8"), raw)
+        self.assertEqual(retained.read_bytes(), raw.encode())
         refs = {item["path"]: item for item in report["evidence"]}
         self.assertEqual(refs[f"{self.cid}/native-execs.jsonl"]["sha256"], cg.digest(raw.encode()))
 
