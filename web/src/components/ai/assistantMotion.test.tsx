@@ -205,9 +205,48 @@ describe('发送 ↔ 中止同一颗按钮', () => {
     await act(async () => btn.click())
     // 第二个参数是会话所属的项目（#589：中止钉在会话自己的项目上）；夹具的会话不属于任何项目
     expect(aiCancel).toHaveBeenCalledWith('s1', null)
-    // cancel 之后会话不再 running → 同一颗按钮回到发送（输入框空着，所以禁用）
+    // cancel 之后会话不再 running，但后端还没给最终结果（cancelled 未 finalize）：不再是「中止」，而是禁用的发送 +「正在结束上一次修改」
     expect(sendButton().dataset.aiSend).toBe('send')
+    expect(sendButton().getAttribute('aria-label')).toBe(ai('panel.finishing'))
+    expect(sendButton().disabled).toBe(true)
+    // 真正结束（ai.done）后回到发送（输入框空着，所以仍禁用）
+    await act(async () => {
+      useAiStore.getState().finish({ session: 's1', status: 'cancelled', changed: false, diff: '' })
+    })
     expect(sendButton().getAttribute('aria-label')).toBe(ai('panel.sendAria'))
+    expect(sendButton().disabled).toBe(true)
+  })
+
+  it('取消后、最终结果到来之前按钮是禁用的「正在结束上一次修改」（输入框有字也一样）；final 之后回到发送', async () => {
+    await mount([session()])
+    await act(async () => sendButton().click())
+    const ta = host.querySelector<HTMLTextAreaElement>('[data-ai-input]')!
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!
+      setter.call(ta, '下一条指令')
+      ta.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    expect(sendButton().disabled).toBe(true) // 对照：只认 running 时这里已解锁，点发送会撞 ai_script_busy
+    expect(sendButton().getAttribute('aria-label')).toBe(ai('panel.finishing'))
+    await act(async () => {
+      useAiStore.getState().finish({ session: 's1', status: 'cancelled', changed: true, diff: 'D' })
+    })
+    expect(sendButton().getAttribute('aria-label')).toBe(ai('panel.sendAria')) // 回到「发送」（这个夹具没有账本，是否可点另有用例）
+  })
+
+  it('运行中最后一个可用 agent 被停用（noAgent）：「中止」仍可点、点了发出 cancel；没在跑时 noAgent 照样禁掉「发送」', async () => {
+    await mount([session()])
+    await act(async () => useAiStore.setState({ caps: capsOf([agentCaps({ usable: false })]) }))
+    const btn = sendButton()
+    expect(btn.dataset.aiSend).toBe('stop')
+    expect(btn.disabled).toBe(false) // 任务就在跑，这是唯一的停止入口
+    await act(async () => btn.click())
+    expect(aiCancel).toHaveBeenCalledWith('s1', null)
+    await act(async () => {
+      useAiStore.getState().finish({ session: 's1', status: 'cancelled', changed: false, diff: '' })
+    })
+    // 跑完之后回到「发送」：noAgent 只影响发送，这时被禁掉
+    expect(sendButton().dataset.aiSend).toBe('send')
     expect(sendButton().disabled).toBe(true)
   })
 

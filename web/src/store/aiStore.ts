@@ -11,6 +11,8 @@ import {
   ApiError,
   effectiveAgent,
   fetchAiCapabilities,
+  fetchAiHistory,
+  type AiHistoryEntry,
   fetchAiRequest,
   fetchAiSession,
   isDefiniteRunFailure,
@@ -72,6 +74,19 @@ export interface AiSession {
    * 本地先标的 `cancelled` 不算——真正的结局（diff、changed）还要靠随后那条 `ai.done` 补上。
    */
   finalized?: boolean
+  /**
+   * 查询接回时拿到的是**临时快照**（非 running / cancelled，却还不是终态：如另一个服务进程的 `interrupt_all()` 刚写了
+   * `interrupted`、pump 还没收尾）。本地 status 按 `toStatus` 映射（interrupted → failed），这个标志让它照样留在
+   * `isOpenSession` 里继续对账，直到拿到终态（`finish` 置 finalized）
+   */
+  provisional?: boolean
+  /**
+   * 刷新 / 重连 / 回切之后从后端历史**接回来**的运行中会话（只读占位，PR4b）：此前的输出不再回放，
+   * 之后的 `ai.delta` / `ai.done` 按 session id 认领到它上面；它同样锁住同一脚本的发送、可中止。
+   */
+  restored?: boolean
+  /** 接回的占位对应的请求 id（来自历史库）：与未落定的提交按它对上，**对上就等于已被接受**，不必再让用户去查 */
+  requestId?: string
 }
 
 /**
@@ -192,6 +207,11 @@ interface AiState {
     /** 提交时草稿的写入戳（发送前已把草稿写成功拿到的）；确认后后端按「草稿戳没变」清草稿，不比文本 */
     draftStamp?: number | null
   }) => Promise<SubmitOutcome>
+  /**
+   * 把后端此刻仍在跑的会话接回来（只读占位），并把本地还当它在跑、后端却已结束的会话收尾
+   * （断线期间的 `ai.done` 没收到）。刷新 / SSE 重连 / 面板挂载时调用；只读，按项目隔离，失败静默。
+   */
+  restoreRunning: () => Promise<void>
   /** 问后端「这个请求 id 你登记过吗」：只读，不会让任何东西被执行 */
   queryRequest: (rid: string) => Promise<QueryOutcome>
   /**
@@ -224,30 +244,9 @@ interface AiState {
 const MAX_LINES = 600
 
 /** 早到事件缓冲的上限：只为「事件比 HTTP 响应先到」的那几十毫秒，不是日志 */
-const EARLY_MAX_SIDS = 16
+const EARLY_MAX_SIDS = 32
 const EARLY_MAX_EVENTS = 500
 const early = new Map<string, EarlyEvent[]>()
-
-/**
- * **非终态会话的谓词**：还没拿到后端确定的终态（`!finalized`）。本地 `cancel` 成功后状态先标成 `cancelled`，但那只是「中止请求被接受」，
- * 后端的最终结局（changed / diff / refresh）还没到——所以 running 和「cancelled 但未 finalized」都要继续对账；
- * 查询接回的临时快照（`interrupted` 还没有 `ended_ms`：另一个服务进程的 `interrupt_all()` 刚写了 status、pump 还没收尾）
- * 在本地映射成 `failed` 但同样没 finalized，也要继续对账。会话只在 `accept` 里建，没 finalized = 还没拿到终态，所以只看这一个标志，
- * 否则 `ai.done` 在 SSE 断线期间丢了，会话永远停在 cancelled、结果（脚本其实被改了）也看不到。
- */
-export const isOpenSession = (x: Pick<AiSession, 'status' | 'finalized'>): boolean => !x.finalized
-
-/**
- * 一份会话快照是不是**终态**：非 running；而 `cancelled` / `interrupted` 必须带着后端写下的 `ended_ms`（pump 收尾之后才有；
- * `interrupt_all()` 与 cancel 一样只先写 status，进程组可能还在退出、changed / diff / refresh 还没算出来）。
- * 没有详情（404）时无从判断，按 status 走。
- */
-export function snapshotIsFinal(d: Pick<AiSessionDetail, 'status' | 'ended_ms'> | null | undefined, fallbackStatus: string): boolean {
-  const status = typeof d?.status === 'string' && d.status ? d.status : fallbackStatus
-  if (status === 'running') return false
-  if ((status === 'cancelled' || status === 'interrupted') && d) return typeof d.ended_ms === 'number'
-  return true
-}
 /** 账本写入「不知道」写没写成的那条指令（按 项目×文件）：重试沿用同一个 rid */
 const ledgerUnknown = new Map<string, { sub: AiSubmission; sentJson: string }>()
 /**
@@ -262,6 +261,86 @@ const supersedeQueue = new Map<string, AiSubmission>()
 const queueSupersede = (sub: AiSubmission): void => {
   supersedeQueue.set(sub.rid, sub)
 }
+/**
+ * **非终态会话的唯一谓词**：还没拿到后端确定的终态快照 / `ai.done`（`!finalized`）。
+ * 本地 `cancel` 成功后状态先标成 `cancelled`，但那只是「请求中止已被接受」，后端的最终结局（changed / diff / 是否真的停下）
+ * 还没到——所以 running 和「cancelled 但未 finalized」都要继续对账，直到后端给出确定的终态；查询接回的临时快照
+ * （`interrupted` 还没收尾：另一个服务进程的 `interrupt_all()` 刚写了 status）在本地映射成 `failed` 但同样没 finalized，也要继续。
+ * 那种会话由 `accept` 标 `provisional`（本地 status 已不是 running / cancelled，靠这个标志留在谓词里）。
+ * `settleRunningSessions` 与安全网轮询都调它，不各写一份。
+ */
+export const isOpenSession = (x: Pick<AiSession, 'status' | 'finalized' | 'provisional'>): boolean =>
+  !x.finalized && (x.status === 'running' || x.status === 'cancelled' || x.provisional === true)
+
+/**
+ * 一份会话快照是不是**终态**：优先认后端明确给的 `final`（`_pump` 收尾、changed / diff / refresh 都确定之后）。
+ * 没有 `final` 字段的后端退回 #1098 的判据：非 running；而 `cancelled` / `interrupted` 必须带着 `ended_ms`（pump 收尾后才写；
+ * `interrupt_all()` 与 cancel 一样只先写 status）。
+ * 没有详情（404）时无从判断，按 status 走。
+ * `cancel` 之后后端内存里的 status 立刻是 `cancelled`、但结果还没算出来——那不是终态，过早收尾会把之后真正的 `ai.done` 当重复丢掉。
+ */
+export function snapshotIsFinal(
+  d: Pick<AiSessionDetail, 'status' | 'final' | 'ended_ms'> | null | undefined,
+  fallbackStatus: string,
+): boolean {
+  if (typeof d?.final === 'boolean') return d.final
+  const status = typeof d?.status === 'string' && d.status ? d.status : fallbackStatus
+  if (status === 'running') return false
+  if ((status === 'cancelled' || status === 'interrupted') && d) return typeof d.ended_ms === 'number'
+  return true
+}
+
+/**
+ * 终态快照是转录的**权威来源**：用快照的条目替换本地 entries（断线期间丢掉的补回来，按顺序对齐、不重复）。
+ * 本地有快照里没有的条目（不在流式中、也不是快照某条的前缀）保留，按它在本地的相对位置插回。
+ */
+export function mergeTranscript(local: AiEntry[], snapshot: { kind: string; text: string }[]): AiEntry[] {
+  const snap: AiEntry[] = snapshot.map((t) => ({ kind: t.kind as AiDeltaKind, text: t.text }))
+  const out: AiEntry[] = []
+  let sp = 0
+  for (const l of local) {
+    let k = -1
+    for (let i = sp; i < snap.length; i++) {
+      if (snap[i].kind === l.kind && snap[i].text === l.text) {
+        k = i
+        break
+      }
+    }
+    if (k >= 0) {
+      for (let i = sp; i < k; i++) out.push({ ...snap[i], at: l.at })
+      out.push({ ...snap[k], ...(l.at !== undefined ? { at: l.at } : {}) }) // 本地已有的那条保留它到达的时刻
+      sp = k + 1
+      continue
+    }
+    // 没对上：只有快照里**确实有**一条同类、以它开头的完整条目时，它（流式半截 / 前缀）才算被取代；
+    // 否则保留——后端不持久化 delta，断线前已看到的半截在快照里本来就没有，丢掉就是让用户看过的输出消失
+    const superseded = snap.some((s) => s.kind === l.kind && s.text.startsWith(l.text))
+    if (!superseded) out.push({ ...l, streaming: false })
+  }
+  for (let i = sp; i < snap.length; i++) out.push(snap[i])
+  return out
+}
+
+/** `settleRunningSessions` 在途的会话（代次 + 项目 + id），同一个会话同一时刻只读一次详情 */
+const settling = new Set<string>()
+
+/**
+ * 把一个**已存在**的会话按后端的终态快照收尾（补转录、`finish`、收尾提示）。按会话 id 工作，不依赖提交是否还在：
+ * `settleRunningSessions` 与「快照查询回来时提交已被占位认领删掉」（`accept` 找不到提交）共用这一处。
+ */
+function settleSessionTo(sid: string, done: DonePayload, transcript: AiSessionDetail['transcript'] | undefined): void {
+  const { get, set } = { get: useAiStore.getState, set: useAiStore.setState }
+  const cur = get().sessions.find((y) => y.id === sid)
+  if (!cur || cur.finalized) return
+  if (transcript?.length) {
+    // 终态快照是权威：替换本地 entries（断线期间丢的补回来），不是只在本地为空时才应用
+    set((s) => ({
+      sessions: s.sessions.map((y) => (y.id === sid ? { ...y, entries: mergeTranscript(y.entries, transcript) } : y)),
+    }))
+  }
+  if (get().finish(done)) settledNotifier?.(done)
+}
+
 const supersedesFor = (project: string | null, fileId: string, script: string | null): string[] =>
   [...supersedeQueue.values()]
     .filter((o) => (o.project ?? null) === (project ?? null) && submissionBlocks(o, fileId, script))
@@ -536,7 +615,16 @@ export const useAiStore = create<AiState>((set, get) => ({
     const pj = currentProjectId()
     for (const x of get().sessions) {
       if (!isOpenSession(x) || x.project !== pj) continue
-      const snap = await readSessionDetail(x.id, x.project)
+      // 在途去重：同一代次 + 项目 + 会话只读一次详情（对账入口与安全网轮询可能同时到）
+      const key = `${born}\u0000${x.project ?? ''}\u0000${x.id}`
+      if (settling.has(key)) continue
+      settling.add(key)
+      let snap
+      try {
+        snap = await readSessionDetail(x.id, x.project)
+      } finally {
+        settling.delete(key)
+      }
       const d = snap.ok ? snap.detail : null
       if (born !== get().generation || typeof d?.status !== 'string' || !snapshotIsFinal(d, d.status)) continue
       const done: DonePayload = {
@@ -544,16 +632,10 @@ export const useAiStore = create<AiState>((set, get) => ({
         status: d.status,
         changed: !!d.changed,
         diff: d.diff ?? '',
+        ...(d.error ? { error: d.error } : {}),
         ...(d.refresh ? { refresh: d.refresh } : {}),
       }
-      if (x.entries.length === 0 && d.transcript?.length) {
-        set((s) => ({
-          sessions: s.sessions.map((y) =>
-            y.id === x.id ? { ...y, entries: d.transcript.map((t) => ({ kind: t.kind as AiDeltaKind, text: t.text })) } : y,
-          ),
-        }))
-      }
-      if (get().finish(done)) settledNotifier?.(done)
+      settleSessionTo(x.id, done, d.transcript)
     }
   },
 
@@ -570,8 +652,19 @@ export const useAiStore = create<AiState>((set, get) => ({
   },
 
   restoreSubmission: (sub) => {
-    if (get().submissions[sub.rid]) return
+    const existing = get().submissions[sub.rid]
+    if (existing) {
+      // 对账再次带来同一条（焦点 / 重连）：还停在「未确认」就再自动按快照收尾一次（有上限，在途去重）
+      if (existing.phase === 'unconfirmed') autoSettleRestored(sub.rid)
+      return
+    }
     set((s) => ({ submissions: { ...s.submissions, [sub.rid]: { ...sub, phase: 'unconfirmed' } } }))
+    // 这条请求对应的运行中会话已经作为占位接回来了（`restoreRunning` 先到）：后端的运行中记录就是它被接受的证据，
+    // 走**同一个**「已被接受」函数 `accept`（与 `settleFromSnapshot` 的收尾同一处），不再摆「未确认」
+    const placeholder = get().sessions.find((x) => x.requestId === sub.rid)
+    if (placeholder) acceptRunning(sub.rid, placeholder)
+    // 没有占位：别等用户手动点「查询结果」——自动对它按快照收尾（刷新期间任务可能已经结束，运行中历史是空的、事件也没有）
+    else autoSettleRestored(sub.rid)
   },
 
   appendDelta: (sid, kind, text, rid) => {
@@ -667,21 +760,172 @@ export const useAiStore = create<AiState>((set, get) => ({
     }))
   },
 
+  restoreRunning: async () => {
+    // 在途的恢复按**项目代次 + 项目 id** 分键：A 的请求还在途时切到 B，B 要发起自己的请求，不能拿到 A 的 promise
+    // （A 的结果按代次丢弃后，B 就再也不会恢复了）
+    const gen = get().generation
+    const pj = currentProjectId()
+    if (restoring && restoring.gen === gen && restoring.pj === pj) return restoring.p
+    const mine: { gen: number; pj: string | null; p: Promise<void> } = {
+      gen,
+      pj,
+      p: doRestore().finally(() => {
+        if (restoring === mine) restoring = null
+      }),
+    }
+    restoring = mine
+    return mine.p
+  },
+
   clear: () => {
     ledgerUnknown.clear()
     supersedeQueue.clear()
     // 提交记录也属于旧项目：在途请求回来时代际对不上，不落会话（但接受了的仍会删草稿，见 `accept`）。
     // 草稿文件里的 rid 还在——切回 A 会还原成「已发出未确认」，由用户查询，而不是盲目重发
     early.clear()
+    autoSettle.attempts.clear()
+    restoring = null // 旧代次的在途恢复作废（它回来时代次对不上、结果会被丢弃）；新项目挂载时发起自己的
     set((s) => ({ sessions: [], submissions: {}, generation: s.generation + 1 }))
   },
 }))
 
+/**
+ * **自动收尾还原出来的未确认提交**：不再等用户手动点「查询结果」，更不依赖暂存事件与并行请求的时序。
+ * 只读：`settleFromSnapshot` 只问后端、绝不 `aiRun`；后端回 404（没登记过）也只是进入 `not_received`——
+ * 允许同 rid 重发这一步**仍然需要用户点击**。所以自动做是安全的（不会让任何东西被执行）。
+ * 有上限（每个 rid 最多 `AUTO_SETTLE_MAX` 次，换代清零）并去重（同一个 rid 在途时只查一次）；「查询结果」按钮保留作手动兜底。
+ */
+const AUTO_SETTLE_MAX = 5
+const autoSettle = { inflight: new Set<string>(), attempts: new Map<string, number>() }
+function autoSettleRestored(rid: string): void {
+  const st = useAiStore.getState()
+  const sub = st.submissions[rid]
+  if (!sub || sub.phase !== 'unconfirmed') return
+  // 去重 / 计数的键带上**项目代次 + 项目 id**（同 `restoring`）：A→B→A 之后新一代的 A 不被上一代还在途的标记挡住
+  const key = `${st.generation}\u0000${sub.project ?? ''}\u0000${rid}`
+  if (autoSettle.inflight.has(key)) return
+  const n = autoSettle.attempts.get(key) ?? 0
+  if (n >= AUTO_SETTLE_MAX) return
+  autoSettle.attempts.set(key, n + 1)
+  autoSettle.inflight.add(key)
+  settleFromSnapshot(rid)
+    .catch(() => undefined) // 自动的后台收尾：任何意外都只是留在「未确认」，手动按钮兜底，不抛未处理的拒绝
+    .finally(() => autoSettle.inflight.delete(key))
+}
+
+/**
+ * 一条未落定的提交遇到了带同一个请求 id 的运行中会话（占位）= 这条请求**已被后端接受**，仍在运行。
+ * 判断「已被接受」只有 `accept` 一处：这里不另写一套，只是把占位当作「请求快照说 running」交给它——
+ * 它清账本（草稿按「草稿戳没变」才删，不比文本）、把提交的归属并到已有的同 id 会话上、去掉未确认状态。
+ * 两个入口（`restoreRunning` 与 `reconcile`→`restoreSubmission`）谁先到都走这里。
+ */
+function acceptRunning(rid: string, session: AiSession): void {
+  accept(rid, session.id, session.script, {
+    kind: 'queried',
+    status: session.status, // 占位自己的状态：running，或已取消但后端还没收尾的 cancelled，不覆盖成 running
+    changed: false,
+    detail: null,
+    adopt: true,
+  })
+}
+
+let restoring: { gen: number; pj: string | null; p: Promise<void> } | null = null
+/** 恢复进行中暂存过的 session id → 它带的 request id：恢复结束时没被任何会话认领的要清掉（有未落定提交关心的除外） */
+const restoreBuffered = new Map<string, string | undefined>()
+/** 正在拉历史的那一小段里到的事件也要留着：占位还没建，它们不是「别人的」 */
+let restoringActive = 0
+
+/** 恢复结束：暂存了却没被任何会话认领的事件清掉（只留有未落定提交关心的，那是 accept 的回放用的） */
+function dropUnclaimedRestoreBuffer(): void {
+  const subs = useAiStore.getState().submissions
+  for (const [sid, rid] of restoreBuffered) {
+    const wanted = rid ? !!subs[rid] : Object.keys(subs).length > 0
+    if (!wanted) early.delete(sid)
+  }
+  restoreBuffered.clear()
+}
+
+async function doRestore(): Promise<void> {
+  const { get, set } = { get: useAiStore.getState, set: useAiStore.setState }
+  const born = get().generation
+  const pj = currentProjectId()
+  restoringActive++
+  try {
+    // 运行中清单**一次请求取全**：后端对 `status=running` 不分页（运行中的会话天然有上限，翻页期间集合会变，offset 翻页会漏掉
+    // 仍在运行的）。`limit` 只是给不认这个约定的老后端的兜底。
+    let list: AiHistoryEntry[]
+    try {
+      // `open` = 还没结束：running，或已取消 / 已中断但后端 `_pump` 还没收尾（status 是 cancelled / interrupted、ended_ms 为空）——
+      // 后两者没有占位、没有轮询，之后到的 `ai.done` 会被丢掉
+      const res = await fetchAiHistory({ status: 'open', limit: 100 }, pj)
+      if (!Array.isArray(res?.sessions)) return
+      list = res.sessions
+    } catch {
+      return // 联系不上 / 老后端：什么都不动，下一次重连再来
+    }
+    // 拉的过程中换了项目：这些会话属于旧项目，不落
+    if (born !== get().generation || pj !== currentProjectId()) return
+    const caps = get().caps
+    for (const e of list) {
+      // interrupted 且还开着：另一个共用数据目录的服务进程刚 `interrupt_all()`、它的 pump 还没收尾。本页连着的是另一个进程，
+      // 收不到那边的 `ai.done`、也不会再有启动清理——只能靠对账：接回成临时快照（`provisional`，本地映射成 failed，不给「停止」），
+      // 直到详情 `final: true` 才收尾
+      if (e.status !== 'running' && e.status !== 'cancelled' && e.status !== 'interrupted') continue
+      if (get().sessions.some((x) => x.id === e.id)) continue
+      const session: AiSession = {
+        id: e.id,
+        project: pj,
+        agent: e.provider,
+        agentLabel: agentDisplayName(caps, e.provider),
+        prompt: e.prompt,
+        script: e.script ?? '',
+        panelId: null,
+        fileId: null,
+        gid: null,
+        scope: (['element', 'axes', 'figure'].includes(e.scope ?? '') ? e.scope : 'figure') as AiScope,
+        target: e.target ?? '',
+        entries: [],
+        status: e.status === 'cancelled' ? 'cancelled' : e.status === 'interrupted' ? 'failed' : 'running',
+        ...(e.status === 'interrupted' ? { provisional: true } : {}),
+        changed: false,
+        diff: '',
+        startedAt: e.started_ms,
+        restored: true,
+        ...(e.client_request_id ? { requestId: e.client_request_id } : {}),
+      }
+      set((s) => ({ sessions: [...s.sessions, session] }))
+      const pending = early.get(e.id)
+      early.delete(e.id)
+      for (const ev of pending ?? []) {
+        if (ev.t === 'delta') get().appendDelta(e.id, ev.kind, ev.text)
+        else if (get().finish(ev.p)) settledNotifier?.(ev.p)
+      }
+      // 对应的提交（`reconcile` 先到、占位后到）已在列表里：后端的运行中记录就是它被接受的证据——直接并上去
+      const rid = e.client_request_id
+      const sub = rid ? get().submissions[rid] : undefined
+      if (rid && sub) acceptRunning(rid, get().sessions.find((x) => x.id === e.id) as AiSession)
+    }
+    // 本地还当它在跑、后端的运行中清单里却没有：它在断线期间结束了，`ai.done` 没收到——以后端为准收尾。
+    // 与 `reconcile` 各入口走的是**同一个** `settleRunningSessions`，不再留第二条收尾路径。
+    // **不跳过刚建的占位**：历史是个比事件流早的快照，任务可能在事件流就绪之前就结束了——建完一律读一次详情按快照收尾（多一次请求）
+    await get().settleRunningSessions()
+  } finally {
+    restoringActive--
+    if (restoringActive === 0) dropUnclaimedRestoreBuffer()
+  }
+}
+
 function bufferEarly(sid: string, rid: string | undefined, ev: EarlyEvent): void {
   const subs = useAiStore.getState().submissions
-  const pending = Object.keys(subs).length > 0
-  // 没有任何在途提交 = 这是别人的 / 已经丢弃的会话的事件，不留；带了 rid 的必须对得上一条提交
-  if (!pending || (rid && !subs[rid])) return
+  if (restoringActive > 0) {
+    // 恢复进行中（历史请求在途）：账本可能还没加载，带 request id 但此刻对不上任何提交的事件**也要留着**——
+    // 之后历史响应里若还有这条 running 记录，要回放给它（否则 ai.done 被丢、界面永远停在运行中、脚本被锁）。
+    // 恢复完成后只回放与返回会话匹配的，其余清掉（`dropUnclaimedRestoreBuffer`）
+    restoreBuffered.set(sid, rid)
+  } else {
+    // 没有任何在途提交 = 这是别人的 / 已经丢弃的会话的事件，不留；带了 rid 的必须对得上一条提交
+    if (Object.keys(subs).length === 0 || (rid && !subs[rid])) return
+  }
   let list = early.get(sid)
   if (!list) {
     if (early.size >= EARLY_MAX_SIDS) early.delete(early.keys().next().value as string)
@@ -862,11 +1106,42 @@ function accept(
   script: string,
   how:
     | { kind: 'fresh'; agent: AiAgentId; agentLabel: string }
-    | { kind: 'queried'; status: string; changed: boolean; detail: AiSessionDetail | null },
+    | {
+        kind: 'queried'
+        status: string
+        changed: boolean
+        detail: AiSessionDetail | null
+        /**
+         * 认领一个已存在的占位（还没有终态快照）：**保持占位自己的非终态**（running，或 cancelled 但后端还没收尾），
+         * 只并入提交的归属——不能因为「请求已被接受」就把已经取消的占位改回 running（按钮会重新亮起「中止」，后端又拒绝第二次取消）
+         */
+        adopt?: boolean
+      },
 ): void {
   const { get, set } = { get: useAiStore.getState, set: useAiStore.setState }
   const sub = get().submissions[rid]
-  if (!sub) return
+  if (!sub) {
+    // 提交已经没了（快照查询在途期间，占位被认领、提交被删）：但这份快照可能是终态——会话还在列表里、没收尾的，
+    // 按会话 id 把终态应用上去，否则它永远停在 running、脚本被锁
+    if (how.kind === 'queried') {
+      const d = how.detail
+      const st = typeof d?.status === 'string' && d.status ? d.status : how.status
+      if (snapshotIsFinal(d, st))
+        settleSessionTo(
+          sid,
+          {
+            session: sid,
+            status: st,
+            changed: !!(how.changed || d?.changed),
+            diff: d?.diff ?? '',
+            ...(d?.error ? { error: d.error } : {}),
+            ...(d?.refresh ? { refresh: d.refresh } : {}),
+          },
+          d?.transcript,
+        )
+    }
+    return
+  }
   removeAccepted(sub.project, sub.fileId, rid)
   const caps = get().caps
   const detail = how.kind === 'queried' ? how.detail : null
@@ -879,7 +1154,7 @@ function accept(
         ? detail.status
         : how.status
       : 'running'
-  const settled = how.kind === 'queried' && snapshotIsFinal(detail, status)
+  const settled = how.kind === 'queried' && !how.adopt && snapshotIsFinal(detail, status)
   const session: AiSession = {
     id: sid,
     project: sub.project,
@@ -898,9 +1173,48 @@ function accept(
     diff: detail?.diff ?? '',
     startedAt: Date.now(),
     ...(settled ? { finalized: true, finishedAt: Date.now() } : {}),
+    ...(!settled && status !== 'running' && status !== 'cancelled' ? { provisional: true } : {}),
+    ...(settled && detail?.error ? { error: detail.error } : {}),
   }
   set((s) => {
     const { [rid]: _gone, ...rest } = s.submissions
+    // 同一个会话 id 已经作为「接回的占位」（刷新后 `restoreRunning`）在列表里：不能再 push 一份（两份同 id 会让
+    // 列表重复、事件只认第一份）。把提交带来的归属（面板 / 目标 / 原文）并上去，保留占位已累积的过程输出与状态
+    const prev = s.sessions.find((x) => x.id === sid)
+    if (prev) {
+      return {
+        submissions: rest,
+        sessions: s.sessions.map((x) =>
+          x.id === sid
+            ? {
+                ...x,
+                panelId: session.panelId,
+                fileId: session.fileId,
+                gid: session.gid,
+                scope: session.scope,
+                target: session.target,
+                prompt: session.prompt,
+                restored: false,
+                entries: settled && detail?.transcript?.length
+                  ? mergeTranscript(x.entries, detail.transcript)
+                  : x.entries.length
+                    ? x.entries
+                    : session.entries,
+                ...(x.finalized
+                  ? {}
+                  : {
+                      status: session.status,
+                      changed: session.changed || x.changed,
+                      diff: session.diff || x.diff,
+                      ...(session.finalized
+                        ? { finalized: true, finishedAt: session.finishedAt, ...(session.error ? { error: session.error } : {}) }
+                        : {}),
+                    }),
+              }
+            : x,
+        ),
+      }
+    }
     return { submissions: rest, sessions: [...s.sessions, session] }
   })
   const pending = early.get(sid)
@@ -917,6 +1231,7 @@ function accept(
       status: session.status,
       changed: session.changed,
       diff: session.diff,
+      ...(session.error ? { error: session.error } : {}),
       ...(detail?.refresh ? { refresh: detail.refresh } : {}),
     })
   }
@@ -983,4 +1298,34 @@ export function isSessionOf(
 ): boolean {
   if (s.panelId === panel.id || s.fileId === panel.fileId) return true
   return !!panel.script && sameScript(s.script, panel.script)
+}
+
+/**
+ * **安全网轮询**：终态的来源有三个——事件（`ai.done`）、对账入口（挂载 / 焦点 / 可见 / 重连 / 接受）、本轮询；任何一个都足以收尾。
+ * 事件和对账都可能错过（SSE 还没连上任务就结束了、断线期间结束……），逐个补时序只会越补越多——所以只要本地还有
+ * 非终态会话（running 或接回的占位），就每 15 s 走一次 `settleRunningSessions`（只读快照）：任何错过的 `ai.done`
+ * 最多 15 s 后被收尾、发送锁随之解开。没有非终态会话时不轮询；页面不可见时暂停，恢复可见时立即跑一次；
+ * 换项目（`clear()`）后会话清空，轮询自然停。
+ */
+export const SAFETY_NET_MS = 15_000
+let netTimer: ReturnType<typeof setInterval> | null = null
+const hasOpenSessions = (): boolean => useAiStore.getState().sessions.some(isOpenSession)
+const pageHidden = (): boolean => typeof document !== 'undefined' && document.visibilityState === 'hidden'
+function safetyNetTick(): void {
+  if (pageHidden()) return
+  void useAiStore.getState().settleRunningSessions()
+}
+function syncSafetyNet(): void {
+  const need = hasOpenSessions()
+  if (need && netTimer === null) netTimer = setInterval(safetyNetTick, SAFETY_NET_MS)
+  else if (!need && netTimer !== null) {
+    clearInterval(netTimer)
+    netTimer = null
+  }
+}
+useAiStore.subscribe(syncSafetyNet)
+if (typeof document !== 'undefined') {
+  document.addEventListener('visibilitychange', () => {
+    if (!pageHidden() && hasOpenSessions()) safetyNetTick()
+  })
 }

@@ -207,3 +207,16 @@ for(const interrupted of [false,true])test('contributor to holder on the same au
   assert.equal(b.elements.get('create').disabled,true);
   assert.ok(b.calls.every(call=>call.options.method==='GET'));
 });
+
+for(const current of [true,false])test('delegated UI distinguishes system receipt from personal holder signature current='+current,async()=>{
+  const b=await browser({states:{[ID(1)]:status(ID(1),{current:true,completed:current,signatures:[{role:'contributor'}],delegated:{recorded:true,current,state:current?'current':'revoked',canAudit:true,expiresAt:1000}})}});
+  assert.match(b.elements.get('holder-state').textContent,current ? /限定授权自动会签/ : /授权已撤销/);
+  assert.equal(b.elements.get('download-audit').disabled,false);assert.equal(b.elements.get('download-holder').disabled,true);
+  assert.ok(!b.elements.get('holder-state').textContent.includes('本人已签署'));assert.ok(b.inputs().every(input=>!input.checked));
+  assert.ok(b.calls.every(call=>call.options.method==='GET'));assert.equal(b.elements.get('signature').value,'');
+});
+test('unverifiable delegated material remains manual with audit download unavailable',async()=>{
+  const b=await browser({states:{[ID(1)]:status(ID(1),{current:true,canSign:true,signatures:[{role:'contributor'}],delegated:{recorded:true,current:false,state:'unverifiable',canAudit:false}})}});
+  assert.match(b.elements.get('holder-state').textContent,/暂不可验证/);assert.equal(b.elements.get('download-audit').disabled,true);
+  assert.equal(b.elements.get('sign').disabled,false);assert.ok(b.calls.every(call=>call.options.method==='GET'));
+});

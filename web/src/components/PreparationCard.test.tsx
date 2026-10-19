@@ -23,6 +23,14 @@ vi.mock('@/lib/api', async (importOriginal) => ({
   fetchEngineEnvironment: vi.fn().mockResolvedValue({}),
   fetchDependencyOffer: vi.fn(),
   fetchScriptArguments: vi.fn().mockResolvedValue({ ok: true, script: 'plot.py', arguments: { status: 'none', arguments: [] } }),
+  fetchPanels: vi.fn(),
+  fetchReadiness: vi.fn().mockResolvedValue({
+    project_id: 'project-a', fingerprint: 'empty-readiness', generated_at: 0,
+    panels: [], conflicts: [], issues: [],
+    summary: { total: 0, editable: 0, auto_linkable: 0, needs_probe: 0, conflict: 0, source_missing: 0, layout_only: 0 },
+    project: { writable: true, registry_valid: true, scan_ok: true, can_rescan: true },
+  }),
+  refreshProject: vi.fn(),
   cancelNativeSession: vi.fn().mockResolvedValue({ confirmed: true, session: {} }),
 }))
 vi.mock('@/store/liveSync', async (importOriginal) => ({
@@ -42,6 +50,8 @@ import {
   createPreparationSession,
   fetchDependencyOffer,
   fetchPreparationSession,
+  fetchPanels,
+  refreshProject,
   probeScript,
   type CapturedFigureDescriptor,
   type PreparationAction,
@@ -495,6 +505,8 @@ beforeEach(() => {
   vi.mocked(addRuntimePanelToCanvas).mockReset()
   vi.mocked(openFastEdit).mockClear()
   vi.mocked(refreshProjectNow).mockClear()
+  vi.mocked(fetchPanels).mockReset()
+  vi.mocked(refreshProject).mockReset()
   useRuntimeAssetStore.setState({ assets: [], loadAssets: async () => {} })
   vi.mocked(probeScript).mockReset()
   setCurrentProjectId('pj-a')
@@ -1204,25 +1216,25 @@ describe('执行结束、捕获到图、首次编辑渲染是三件事', () => {
     await mount()
     useUiStore.setState({ guideCard: 'card', leftTab: 'layers' })
     let finish: () => void = () => {}
-    vi.mocked(refreshProjectNow).mockImplementationOnce(() => new Promise<void>((r) => (finish = r)))
+    const actual = await vi.importActual<typeof import('@/store/liveSync')>('@/store/liveSync')
+    vi.mocked(refreshProjectNow).mockImplementationOnce(actual.refreshProjectNow)
+    vi.mocked(refreshProject).mockImplementationOnce(() => new Promise((resolve) => {
+      finish = () => resolve({} as Awaited<ReturnType<typeof refreshProject>>)
+    }))
+    vi.mocked(fetchPanels).mockResolvedValueOnce({ panels: [], figures_dir: '/figures' })
     const loadAssets = vi.fn(async () => {})
     useRuntimeAssetStore.setState({ assets: [], loadAssets })
-    // `AssetBrowser` 的忙碌态 / 磁盘素材面板读的是 useAssetStore.loading（不是 runtime 的 assetsLoading）
-    const load = vi.fn(async () => {
-      useAssetStore.setState({ loading: false })
-      return null
-    })
-    useAssetStore.setState({ loading: false, load })
+    useAssetStore.getState().clear()
     await openWith(report({ ...STATES.noFigure, no_figure_hint: { kind: 'raster_script', library: 'pillow', in_project: true } }))
     await act(async () => primary()!.click())
     expect(useUiStore.getState().leftTab).toBe('assets')
     expect(useAssetStore.getState().loading).toBe(true)
-    expect(load).not.toHaveBeenCalled()
+    expect(fetchPanels).not.toHaveBeenCalled()
     expect(loadAssets).not.toHaveBeenCalled()
     await act(async () => finish())
     expect(loadAssets).toHaveBeenCalledTimes(1)
-    // 刷新结束后若 loading 还挂着（没人去取清单）就补一次强制取清单，不让素材库一直转圈
-    expect(load).toHaveBeenCalledWith({ force: true })
+    // 卡片委派真实统一刷新，强制清单只取一次，不再自己用 loading 猜是否补跑。
+    expect(fetchPanels).toHaveBeenCalledTimes(1)
     expect(useAssetStore.getState().loading).toBe(false)
   })
 

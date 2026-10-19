@@ -135,8 +135,9 @@ explicitly opts in**, either in the one-time first-run prompt or under
   this is pseudonymous rather than anonymised, and the sections below describe
   exactly what that pseudonym is attached to.
 * **What is sent.** Broad product events (application started, a figure opened
-  for editing, an edit committed, a canvas created, a preflight run finished, an
-  export succeeded, the assistant started, an update installed; since consent
+  for editing, an edit committed, a canvas created, a preflight run finished, how an
+  export ended (done, partly done, failed or cancelled — with which formats were
+  requested, never a file name or error text), the assistant started, an update installed; since consent
   version 2 also: a project refresh completed and which entry point triggered it,
   the readiness view opened and from where, which tutorial step was completed,
   which kind of multi-selection arrange button was used, how a save / recovery /
@@ -145,10 +146,20 @@ explicitly opts in**, either in the one-time first-run prompt or under
   how Tavotto was installed (desktop/pipx/pip/source/unknown). Every value is a
   fixed enumeration or a bucketed count; the full list is in
   [`docs/analytics/telemetry-events.md`](analytics/telemetry-events.md).
+* **Export outcome (consent version 3).** The `export_result` event reports how an
+  accepted export ended: done, partly done, failed or cancelled, which formats were
+  requested, how many image files were written, at which coarse stage it stopped and a
+  coarse error class. No file name, path, error text or figure content is included.
 * **Consent version 2 (2026-09-02).** Adding those events widened the scope, so the
   consent version was raised: consent given for version 1 stopped being sufficient
   at that moment, no event is transmitted until the user is asked again, and the
   existing identifier is kept.
+* **Consent version 3 (2026-10-16).** Two things were added at once, so the consent
+  version was raised a single time: the export outcome event above, and the optional
+  error summary described under [Diagnostics bundle](#diagnostics-bundle). Consent given
+  for version 2 stopped being sufficient at that moment: no event is transmitted until
+  the user is asked again, the existing identifier is kept, and anyone who had declined
+  is not asked again.
 * **How to turn it off.** The toggle under *Settings → Privacy, diagnostics &
   About* takes effect immediately; already-queued events are dropped. Setting
   `TAVOTTO_NO_TELEMETRY=1` disables transmission entirely regardless of the saved
@@ -221,7 +232,20 @@ Offering the option uploads nothing; sending does:
   there is no automatic, background, crash-triggered or scheduled sending, and a
   cancelled, closed or failed send is never resumed on its own — after a restart
   nothing is retried. Telemetry consent is a separate decision and does not imply
-  this one (nor the reverse).
+  this one (nor the reverse). Pressing *Send* does not consent to any future automatic
+  reporting.
+* **Optional error summary (only if anonymous statistics are on, consent version 3).**
+  If, at the moment you press *Send*, anonymous usage statistics are enabled under the
+  current consent version and `TAVOTTO_NO_TELEMETRY` is not set, the send request also
+  carries a small summary of the most recent failed export or environment repair: the
+  internal component and operation, a fixed internal error code, and a snapshot of that
+  consent. It contains no message text, path, file name, script content, note, contact
+  detail or anonymous telemetry identifier. If enabled on the server side (off by
+  default), the diagnostics service may turn it into one error-tracking event at
+  PostHog under a random one-time reference that is unrelated to the telemetry
+  identifier. Turning statistics off stops summaries for later sends; a summary that was
+  already submitted is not guaranteed to be withdrawn. Without statistics consent only
+  the bundle itself is sent.
 * **You see what you send.** The dialog lists the kinds of content in the bundle, each
   file with its size, and lets you save the exact file that would be uploaded and read
   it first. Figures, project files and data files are not part of the bundle.

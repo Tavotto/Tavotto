@@ -1,0 +1,183 @@
+[
+  {
+    "name": "baseline",
+    "command": [
+      "node",
+      "--test",
+      "tests/independent-review-boundaries.test.mjs"
+    ],
+    "verified_original_targets": 0,
+    "exit": 0,
+    "selected_assertion_failed": false,
+    "output": "/tmp/cla-followup-review/replayed/baseline.txt"
+  },
+  {
+    "name": "archive-current-binding",
+    "command": [
+      "node",
+      "--test",
+      "--test-name-pattern=independent archive remains verifiable and inactive after current id changes",
+      "tests/independent-review-boundaries.test.mjs"
+    ],
+    "verified_original_targets": 1,
+    "exit": 1,
+    "selected_assertion_failed": true,
+    "output": "/tmp/cla-followup-review/replayed/archive-current-binding.txt"
+  },
+  {
+    "name": "audit-final-session",
+    "command": [
+      "node",
+      "--test",
+      "--test-name-pattern=independent private audit rechecks session after evidence construction",
+      "tests/independent-review-boundaries.test.mjs"
+    ],
+    "verified_original_targets": 1,
+    "exit": 1,
+    "selected_assertion_failed": true,
+    "output": "/tmp/cla-followup-review/replayed/audit-final-session.txt"
+  },
+  {
+    "name": "audit-subject-hold",
+    "command": [
+      "node",
+      "--test",
+      "--test-name-pattern=independent audit marks subject-wide hold inactive without deleting historical receipt",
+      "tests/independent-review-boundaries.test.mjs"
+    ],
+    "verified_original_targets": 1,
+    "exit": 1,
+    "selected_assertion_failed": true,
+    "output": "/tmp/cla-followup-review/replayed/audit-subject-hold.txt"
+  },
+  {
+    "name": "dispatch-final-binding",
+    "command": [
+      "node",
+      "--test",
+      "--test-name-pattern=independent new head binding change before journal leaves no send or durable attempt",
+      "tests/independent-review-boundaries.test.mjs"
+    ],
+    "verified_original_targets": 1,
+    "exit": 1,
+    "selected_assertion_failed": true,
+    "output": "/tmp/cla-followup-review/replayed/dispatch-final-binding.txt"
+  },
+  {
+    "name": "journal-revision",
+    "command": [
+      "node",
+      "--test",
+      "--test-name-pattern=independent journal rejects a stale evidence revision despite a fresh matching request lease",
+      "tests/independent-review-boundaries.test.mjs"
+    ],
+    "verified_original_targets": 1,
+    "exit": 1,
+    "selected_assertion_failed": true,
+    "output": "/tmp/cla-followup-review/replayed/journal-revision.txt"
+  },
+  {
+    "name": "journal-proof-expiry",
+    "command": [
+      "node",
+      "--test",
+      "--test-name-pattern=independent journal rejects fixed-time expired proof before durable dispatch",
+      "tests/independent-review-boundaries.test.mjs"
+    ],
+    "verified_original_targets": 1,
+    "exit": 1,
+    "selected_assertion_failed": true,
+    "output": "/tmp/cla-followup-review/replayed/journal-proof-expiry.txt"
+  },
+  {
+    "name": "journal-unresolved-other-head",
+    "command": [
+      "node",
+      "--test",
+      "--test-name-pattern=independent unreconciled publication on another head blocks new head journal",
+      "tests/independent-review-boundaries.test.mjs"
+    ],
+    "verified_original_targets": 1,
+    "exit": 1,
+    "selected_assertion_failed": true,
+    "output": "/tmp/cla-followup-review/replayed/journal-unresolved-other-head.txt"
+  },
+  {
+    "name": "dispatch-external-reserve",
+    "command": [
+      "node",
+      "--test",
+      "--test-name-pattern=independent external budget exhaustion stops before committing the send journal",
+      "tests/independent-review-boundaries.test.mjs"
+    ],
+    "verified_original_targets": 1,
+    "exit": 1,
+    "selected_assertion_failed": true,
+    "output": "/tmp/cla-followup-review/replayed/dispatch-external-reserve.txt"
+  },
+  {
+    "name": "adapter-existing-owned-run",
+    "command": [
+      "node",
+      "--test",
+      "--test-name-pattern=independent existing owned remote check is rejected before durable journal or POST",
+      "tests/independent-review-boundaries.test.mjs"
+    ],
+    "verified_original_targets": 1,
+    "exit": 1,
+    "selected_assertion_failed": true,
+    "output": "/tmp/cla-followup-review/replayed/adapter-existing-owned-run.txt"
+  },
+  {
+    "name": "recovery-required",
+    "command": [
+      "node",
+      "--test",
+      "--test-name-pattern=independent automatic publication configuration requires the recovery capability",
+      "tests/independent-review-boundaries.test.mjs"
+    ],
+    "verified_original_targets": 1,
+    "exit": 1,
+    "selected_assertion_failed": true,
+    "output": "/tmp/cla-followup-review/replayed/recovery-required.txt"
+  },
+  {
+    "name": "status-captured-revision",
+    "command": [
+      "node",
+      "--test",
+      "--test-name-pattern=independent status returns captured revision when a hold commits after the last revision read",
+      "tests/independent-review-boundaries.test.mjs"
+    ],
+    "verified_original_targets": 1,
+    "exit": 1,
+    "selected_assertion_failed": true,
+    "output": "/tmp/cla-followup-review/replayed/status-captured-revision.txt"
+  },
+  {
+    "name": "journal-request-head",
+    "command": [
+      "node",
+      "--test",
+      "--test-name-pattern=independent journal refuses proof for a different expected request head",
+      "tests/independent-review-boundaries.test.mjs"
+    ],
+    "verified_original_targets": 1,
+    "exit": 1,
+    "selected_assertion_failed": true,
+    "output": "/tmp/cla-followup-review/replayed/journal-request-head.txt"
+  },
+  {
+    "name": "journal-lease-boundary",
+    "command": [
+      "node",
+      "--test",
+      "--test-name-pattern=independent journal refuses lease at exact expiry with a still fresh proof",
+      "tests/independent-review-boundaries.test.mjs"
+    ],
+    "verified_original_targets": 1,
+    "exit": 1,
+    "selected_assertion_failed": true,
+    "output": "/tmp/cla-followup-review/replayed/journal-lease-boundary.txt"
+  }
+]

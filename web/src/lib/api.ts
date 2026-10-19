@@ -3063,6 +3063,8 @@ export const fetchAiInstallStatus = (agent: AiAgentId) =>
 
 export interface AiHistoryEntry {
   id: string
+  /** 发起它的请求 id（点发送时生成）；老记录 / 老前端发起的没有 */
+  client_request_id?: string | null
   provider: AiAgentId
   model: string | null
   effort: string | null
@@ -3098,7 +3100,7 @@ export const fetchAiHistory = (
   if (opts.pinned) params.set('pinned', '1')
   params.set('limit', String(opts.limit ?? 20))
   params.set('offset', String(opts.offset ?? 0))
-  return jsonFetch<{ total: number; sessions: AiHistoryEntry[] }>(
+  return jsonFetch<{ total: number; sessions: AiHistoryEntry[]; truncated?: boolean }>(
     `/api/ai/history?${params}`,
     undefined,
     pj,
@@ -3262,6 +3264,14 @@ export interface AiSessionDetail {
   status: string
   /** 后端写下的结束时刻（`_pump` 收尾之后）；`cancelled` 但没有它 = 取消已被接受、结果还没算出来，不是终态快照 */
   ended_ms?: number | null
+  /**
+   * 后端明确说这是不是终态快照：`_pump` 收尾（changed / diff / refresh 都确定）之后才为 true。
+   * `cancel` 之后 status 立刻是 `cancelled`，但 changed / diff / refresh 还没算出来——**不是 final**。
+   * 老后端没有这个字段（`undefined`）：退回按 `status !== 'running'` 判。
+   */
+  final?: boolean
+  /** 失败 / 超时的原因（后端给的一句话）；失败的会话没有它，恢复后的失败提示就是空白的 */
+  error?: string | null
   changed: boolean | null
   diff: string
   transcript: { kind: string; text: string }[]

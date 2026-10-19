@@ -1,0 +1,30 @@
+{
+  "previous_head": "1983564d69ac7bdafb6bfcfb7853d77e484c276c",
+  "hosted_ruff_job": "https://github.com/Tavotto/Tavotto/actions/runs/39105757800/job/117611117581",
+  "failure": "ruff format --check requested two whitespace-only changes; ruff check passed",
+  "ast_delta": {
+    "services/cla-cloudflare/migrations/migrate-local-snapshot.py": {
+      "before_sha256": "1d15a0451a7a624bd731f726dfa415380ff146fa04e10162c6cf2d9aa697a65a",
+      "after_sha256": "51e5dfd4c4b7aa413e146f7ee5993e737d1e5f77ee65e0a58851d85034327e6f",
+      "ast_unchanged": true
+    },
+    "services/cla-cloudflare/tests/migration.test.py": {
+      "before_sha256": "8588b3353ad8ef860ce01156d4fba96c50584ca5eb169dce705656748029bbf7",
+      "after_sha256": "feda51827666e3db738003ef4a67140bf36b8c318a9ed513048801c409f7ec13",
+      "ast_unchanged": true
+    }
+  },
+  "migration": {
+    "command": "python3 tests/migration.test.py",
+    "exit_code": 0,
+    "passed": 4
+  },
+  "mutations": {
+    "command": "node tests/mutation-smoke.mjs",
+    "exit_code": 0,
+    "detected": 54
+  },
+  "local_ruff": "unavailable; no dependency download retried",
+  "hosted_next_head": "pending",
+  "independent_semantic_review": "inflight-independent-review.json binds the pre-format source; Python ASTs identical, all other source files unchanged"
+}

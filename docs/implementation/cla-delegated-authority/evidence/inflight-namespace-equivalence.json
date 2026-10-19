@@ -1,0 +1,15 @@
+{
+  "exit_code": 0,
+  "runtime_vs_migration_exact_sqlite_schema_equal": true,
+  "named_object_count": 55,
+  "tables": 24,
+  "foreign_key_count": 20,
+  "all_objects_and_foreign_keys_namespaced": true,
+  "send_until_type_notnull_default": [
+    "INTEGER",
+    1,
+    "0"
+  ],
+  "source_columns_plus_rowid": "covered by full copied-source projection and corrupted-source test",
+  "live_d1_acceptance": false
+}

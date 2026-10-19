@@ -376,6 +376,8 @@ export function useServerEvents() {
         catchUpInputRemap()
         // 依赖安装 / 引擎 bootstrap 的进度也只走 SSE：丢了终态事件就以实况为准收尾
         reconcileInstalls()
+        // 后端仍在跑的 AI 会话接回来；断线期间结束的收尾（`ai.done` 没收到）
+        void useAiStore.getState().restoreRunning()
       }),
     [],
   )
