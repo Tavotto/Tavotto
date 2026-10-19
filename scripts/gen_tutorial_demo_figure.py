@@ -91,6 +91,19 @@ def _r(v: float) -> float:
 
 
 def build() -> dict:
+    """在 matplotlib 默认 rcParams 上量（= 新进程里跑脚本），量完还原调用方的 rcParams。
+
+    同一进程里先跑过的代码（pytest 的其它用例、调用方自己的样式）改过的 rcParams 会漏进
+    脚本没显式设的那几项（`text.hinting`、`legend.labelspacing`……），把文字外框量偏几个 pt。
+    """
+    import matplotlib
+
+    with matplotlib.rc_context():
+        matplotlib.rcdefaults()
+        return _build()
+
+
+def _build() -> dict:
     import matplotlib.colors as mcolors
     import numpy as np
 

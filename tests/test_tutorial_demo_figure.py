@@ -32,6 +32,20 @@ def test_generated_figure_matches_the_shipped_script():
     assert gen.check() == []
 
 
+def test_measurement_ignores_rcparams_left_by_earlier_code():
+    """同一进程里别的代码改过的 rcParams 不漏进测量，测完调用方的 rcParams 原样还回去。
+
+    CI 上这条曾只在某一片红：同片前面的用例改了 `text.hinting` / `legend.labelspacing`。
+    """
+    import matplotlib as mpl
+
+    gen = _gen()
+    polluted = {"text.hinting": "none", "legend.labelspacing": 0.8, "font.weight": "bold"}
+    with mpl.rc_context(polluted):
+        assert gen.check() == []
+        assert {k: mpl.rcParams[k] for k in polluted} == polluted
+
+
 def test_check_is_not_hollow():
     gen = _gen()
     built = gen.build()
