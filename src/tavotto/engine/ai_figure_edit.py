@@ -407,6 +407,8 @@ class FigureEditAdapter:
 
         * `before`：提交写入之前从**已经 build 过**的那个 worker 读（不执行任何东西）；没有 = 这次会话里没渲染过这张图，
           没有基线 → unknown（`no_baseline`），**也不去渲染改后**——不为了验证多跑一次用户脚本（R-06）；
+        * `retire`（可选）：写入之后、刷新之前同步退役该脚本的全部旧会话；没确认（`retired` 不是 True）→ unknown
+          （`session_not_retired`），**不调 after**；
         * `after`：提交并刷新之后取同一个 safe 会话（同一份运行配置）并 build——就是前端随后本来要做的那次重渲染，前端
           来时会话已经 built，不再执行第二次。渲染失败（改前同一会话能渲染、改后不能）→ failed。
 
@@ -421,6 +423,11 @@ class FigureEditAdapter:
         before = cand.extras.get("before_manifests")
         if not before:
             return [_render(st, UNKNOWN, "no_baseline", not_covered=("数据指纹", *not_covered))]
+        if cand.extras.get("retire") is not None and cand.extras.get("retired") is not True:
+            # 旧会话没确认退役：workerd 按 by_hash 会把 after 去重回仍已 built 的旧会话，比出来的是两份改前 manifest
+            return [
+                _render(st, UNKNOWN, "session_not_retired", not_covered=("数据指纹", *not_covered))
+            ]
         run.charge("renders")
         try:
             after = hooks_after() or {}
@@ -479,6 +486,15 @@ class BridgeExecutor:
             cand.extras["before_manifests"] = _call_hook(cand.extras.get("before"))
             scriptlock.write_script(cand.script_path, cand.new_bytes, mode=cand.base_mode)
             cand.committed = True
+        # 退役旧会话必须在统一刷新之前、锁之外（force 关停可能要等 workerd）：刷新里那次普通 invalidate 才会找不到会话，
+        # 前端收到 panel.file_changed 与 after 钩子拿到的才都是新脚本 spawn 的会话。没注入钩子（纯引擎调用方）不记 retired。
+        retire = cand.extras.get("retire")
+        if retire is not None:
+            try:
+                retire()
+                cand.extras["retired"] = True
+            except Exception:  # noqa: BLE001 —— 确认不了就如实记 False，提交本身已落盘、不因旁路失败
+                cand.extras["retired"] = False
         cand.refresh = self._refresh()
 
     def discard(self, run, cand: Candidate) -> None:

@@ -169,3 +169,46 @@ def test_without_a_prior_render_nothing_extra_runs(project):
     assert _runs(runs) == 0, "没有改前基线：不为验证执行脚本"
     assert _checks(sid)["render.figure"] == ("unknown", "no_baseline")
     assert sess["task"]["outcome"] == "partial"
+
+
+def test_session_built_from_an_older_script_is_not_a_baseline(project):
+    m, client, figs, runs, state = project
+    _render(client)
+    assert _runs(runs) == 1
+    # 用户刚编辑了脚本、watcher 还没来得及作废那条会话：停掉 watcher 把这个窗口固定住
+    project_watch.stop(str(figs))
+    p = figs / "fig1.py"
+    p.write_text(p.read_text(encoding="utf-8") + "\n# edited by the user\n", encoding="utf-8")
+    sid, sess = _ai(client)
+    assert sess["status"] == "done"
+    assert _checks(sid)["render.figure"] == ("unknown", "no_baseline")
+    assert _runs(runs) == 1, "旧会话不是基线，也不为验证多跑一次脚本"
+
+
+def test_ai_commit_retires_old_sessions_synchronously_before_the_refresh(project, monkeypatch):
+    m, client, figs, runs, state = project
+    _render(client)
+    events: list = []
+    real_invalidate, real_refresh = pool.invalidate, m.refresh_project
+
+    def invalidate(script, figures_dir=None, run=None, **kw):
+        events.append(
+            (
+                "invalidate",
+                script,
+                bool(kw.get("force")),
+                '"new"' in (figs / script).read_text(encoding="utf-8"),
+            )
+        )
+        return real_invalidate(script, figures_dir, run, **kw)
+
+    def refresh(*a, **kw):
+        events.append(("refresh",))
+        return real_refresh(*a, **kw)
+
+    monkeypatch.setattr(pool, "invalidate", invalidate)
+    monkeypatch.setattr(m, "refresh_project", refresh)
+    _ai(client)
+    first_refresh = events.index(("refresh",))
+    forced = [e for e in events[:first_refresh] if e[:3] == ("invalidate", "fig1.py", True)]
+    assert forced and forced[0][3] is True, events  # 刷新之前、写入之后、force=True（同步确认退役）

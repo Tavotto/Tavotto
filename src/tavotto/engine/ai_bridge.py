@@ -743,7 +743,7 @@ def run(
     样——注入而不是回头 import，边界与 `project_refresh.RefreshSink` 相同。
     它的结局进 `ai.done.refresh` 与历史库的 `refresh` 列，见 `refresh_outcome()`。
 
-    `task_hooks`（只在 TAF 开关打开时用）：`{"before": () -> {stem: manifest} | None, "after": () -> {stem: manifest}}`，
+    `task_hooks`（只在 TAF 开关打开时用）：`{"before": () -> {stem: manifest} | None, "retire": () -> None, "after": () -> {stem: manifest}}`，
     app 注入的渲染层事实（改前取自已经 build 的 worker、改后取自前端本来就要做的那次重渲染），同样是注入而不是回头 import。
 
     `client_request_id`：前端点发送时生成的 UUID。同 (项目, id) 已登记过就抛 `DuplicateRequest`、

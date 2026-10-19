@@ -450,3 +450,37 @@ def test_unchanged_copy_never_renders(env):
     )
     _wait(sid)
     assert log == [], "没改动：不取改前、不渲染"
+
+
+def test_retire_runs_after_the_write_and_before_refresh_and_after(env):
+    log: list = []
+    hooks = _hooks(env, {"Fig1": _manifest("a" * 64)}, {"Fig1": _manifest("a" * 64)}, log)
+    hooks["retire"] = lambda: log.append(("retire", _project_text(env)))
+
+    def changed(script):
+        log.append(("refresh", _project_text(env)))
+        return {"registry": {}, "assets": {}, "published": []}
+
+    sid, _ = _run(env, on_changed=changed, task_hooks=hooks)
+    sess = _wait(sid)
+    assert [k for k, _ in log] == ["before", "retire", "refresh", "after"], log
+    assert log[0][1] == SCRIPT and all('"new"' in t for _, t in log[1:]), (
+        "retire 时项目脚本已是新内容"
+    )
+    assert sess["task"]["outcome"] == "completed", sess["task"]
+
+
+def test_unconfirmed_retire_is_unknown_and_never_renders_after(env):
+    log: list = []
+    hooks = _hooks(env, {"Fig1": _manifest("a" * 64)}, {"Fig1": _manifest("a" * 64)}, log)
+
+    def boom():
+        raise RuntimeError("无法确认旧渲染会话已关闭")
+
+    hooks["retire"] = boom
+    sid, _ = _run(env, task_hooks=hooks)
+    sess = _wait(sid)
+    assert [k for k, _ in log] == ["before"], "旧会话没退役：after 会被去重回旧会话，不能调"
+    assert _render_checks(sid)["render.figure"] == ("unknown", "session_not_retired")
+    assert sess["status"] == "done" and '"new"' in _project_text(env), "提交不因旁路失败而失败"
+    assert sess["task"]["outcome"] == "partial"

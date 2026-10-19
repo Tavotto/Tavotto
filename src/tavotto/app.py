@@ -3166,6 +3166,8 @@ def _ai_task_hooks(ctx: "ProjectCtx", script: str, entry: str) -> dict:
 
     * `before`：池里**已经 build 过**的那个 safe 会话（`pool.peek`，不建、不执行）落盘的 manifest；没有 → None
       （这次会话里没渲染过这张图，桥据此不做改后渲染）；
+    * `retire`：写入之后、刷新之前同步确认退役该脚本的全部旧会话（`invalidate(force=True)`）——没退役干净 after 会被
+      workerd 去重回仍已 built 的旧会话，比出两份改前 manifest；
     * `after`：提交并统一刷新之后，按磁盘面板的同一扇门（`enginesession.resolve`、safe、同一份运行配置）取会话并
       build——就是前端收到 `panel.file_changed` 后本来就要做的那次重渲染；前端随后来时会话已 built，不再执行第二次。
 
@@ -3191,7 +3193,18 @@ def _ai_task_hooks(ctx: "ProjectCtx", script: str, entry: str) -> dict:
         worker = engine_pool.peek(script, str(ctx.path), run=run_selection())
         if worker is None or not worker.built:
             return None
+        # 桥在持脚本锁核过基线之后、写入之前调这里：此刻磁盘上的脚本就是起跑基线。`script_sha1` 是这个会话
+        # **spawn 那一刻**记的（池里已有的对象，可信）；对不上 = 它是旧版脚本建出来的（用户刚编辑、watcher
+        # 还没作废），它的 manifest 不是「改前」的事实，按没有可用基线处理。
+        if worker.script_sha1 != engine_pool.script_sha1(str(ctx.path), script):
+            return None
         return manifests(worker) or None
+
+    def retire():
+        # 同步、确认式退役该脚本全部会话（`force=True`，确认不了抛 WorkerError）。不能靠改后会话的 `script_sha1`
+        # 判新旧：workerd 按 by_hash 去重时，Python 侧新包装对象在构造时（`WorkerdWorker.__init__`）按**新**文件算
+        # sha1，底下却还是旧进程，那个判据永远「新」。普通 invalidate 是先摘池再异步关，紧接着的 resolve 会被去重回旧会话。
+        engine_pool.invalidate(script, str(ctx.path), force=True)
 
     def after():
         run = run_selection()
@@ -3207,7 +3220,7 @@ def _ai_task_hooks(ctx: "ProjectCtx", script: str, entry: str) -> dict:
         worker.ensure_built()
         return manifests(worker)
 
-    return {"before": before, "after": after}
+    return {"before": before, "retire": retire, "after": after}
 
 
 def project_status(ctx: "ProjectCtx | None") -> dict:
