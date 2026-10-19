@@ -34,7 +34,7 @@ import { listJoin } from '@/i18n/format'
 import { markAutoShown, wasAutoShown } from '@/lib/guideCardSeen'
 import { preparationPanelEnabled } from '@/lib/preparationFlag'
 import { originFactsOf, originViewOfCard } from '@/lib/importOrigin'
-import { dialogKinds, nativeFallbackNote, prepRowKey, prepView, targetName, type PrepPrimary, type PrepTone, type PrepView } from '@/lib/preparationText'
+import { dialogKinds, finishedWithFigures, nativeFallbackNote, prepRowKey, prepView, targetName, type PrepPrimary, type PrepTone, type PrepView } from '@/lib/preparationText'
 import { dependenciesLine, issueLine, roleLabel, scanCard, scanLine, type ScanCardKind } from '@/lib/projectScanText'
 import { missingRequirements, readTokens, type ScriptArgsSchema } from '@/lib/scriptArgsForm'
 import { cn } from '@/lib/utils'
@@ -1254,7 +1254,7 @@ function SessionDetails({ entry, view }: { entry: PrepEntry; view: PrepView }) {
           })}
         </p>
       )}
-      {(report?.unlinked_stems ?? []).length > 0 && report?.phase === 'completed' && (
+      {(report?.unlinked_stems ?? []).length > 0 && finishedWithFigures(report) && (
         <p data-prep-unlinked>{pt('detail.unlinked', { names: listJoin(report.unlinked_stems ?? []) })}</p>
       )}
       {(report?.attempt_history?.length ?? 0) > 0 && <RunHistory history={report?.attempt_history ?? []} />}

@@ -34,7 +34,7 @@ import {
   type PreparationReport,
   type PreparationTarget,
 } from '@/lib/api'
-import { currentAttempt, prepView } from '@/lib/preparationText'
+import { currentAttempt, finishedWithFigures, prepView } from '@/lib/preparationText'
 import { visiblePrepSurface } from '@/lib/prepSurface'
 import { currentProjectId } from '@/lib/session'
 import { captureProjectEpoch, type ProjectEpochGuard } from '@/lib/projectEpoch'
@@ -227,12 +227,8 @@ export function missingArgsFor(entry: PrepEntry, tokens: readonly string[]): num
 export const capturedOf = (report: PreparationReport | null): CapturedFigureDescriptor[] =>
   finishedWithFigures(report) ? (report?.captured ?? []) : []
 
-/**
- * 这次运行跑完并捕获到了图：`completed`（全部拿到），或 `partial` + `succeeded`（部分捕获：成功那几张照常可用，失败的在
- * `failed_figures` 里——后端 #1134 起不再把它投影成 completed）。其余 partial（没出图 / 登记被拒）不算
- */
-export const finishedWithFigures = (report: PreparationReport | null | undefined): boolean =>
-  !!report && (report.phase === 'completed' || report.phase === 'partial') && report.outcome.kind === 'succeeded'
+/** 判据唯一出处在 `lib/preparationText`（store 与卡片同一份，#1134 Codex r4310249719） */
+export { finishedWithFigures }
 
 /* ---------------------------------------------------------- 模块级账本（活得比一次 setState 长） */
 
