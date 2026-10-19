@@ -296,17 +296,20 @@ import manifest
 
 fig, ax = plt.subplots()
 a, = ax.plot([0, 1, 2], [1.0, np.nan, 3.0])
-b, = ax.plot(np.ma.masked_array([0, 1, 2], mask=[0, 0, 0]), np.ma.masked_array([1.0, 2.0, 3.0], mask=[0, 1, 0]))
+im_nan = ax.imshow([[1.0, np.nan], [3.0, 4.0]])
+im_masked = ax.imshow(np.ma.masked_array([[1.0, 2.0], [3.0, 4.0]], mask=[[0, 1], [0, 0]]))
+big, = ax.plot(range(5), range(5))
 c, = ax.plot([0, 1, 2], [1.0, 2.0, 3.0])
 fig3 = plt.figure()
 ax3 = fig3.add_subplot(projection="3d")
 l3, = ax3.plot([0, 1], [0, 1], [5, 6])
-budget = [6]
+budget = [8]
 out = {
     "nan": manifest.data_fingerprint(a, [100]),
-    "masked": manifest.data_fingerprint(b, [100]),
-    "first": manifest.data_fingerprint(c, budget),
-    "second": manifest.data_fingerprint(c, budget),
+    "image_nan": manifest.data_fingerprint(im_nan, [100]),
+    "image_masked": manifest.data_fingerprint(im_masked, [100]),
+    "big": manifest.data_fingerprint(big, budget),
+    "small": manifest.data_fingerprint(c, budget),
     "budget_left": budget[0],
     "line3d": manifest.data_fingerprint(l3, [100]),
     "text": manifest.data_fingerprint(ax.title, [100]),
@@ -328,10 +331,12 @@ def test_fingerprint_rules_in_the_worker_interpreter():
     assert proc.returncode == 0, proc.stderr[-2000:]
     out = json.loads(proc.stdout.strip().splitlines()[-1])
     assert out["nan"]["parts"]["xy"]["finite"] == 5
-    # 掩码值与 NaN 是同一种「缺失」：同一位置缺失的两条曲线指纹相同
-    assert out["masked"]["parts"]["xy"] == out["nan"]["parts"]["xy"]
-    assert out["first"]["status"] == "ok" and out["second"] == {"status": "over_budget"}
-    assert out["budget_left"] == 0, "超预算的那一个不扣配额"
+    # 掩码值与 NaN 是同一种「缺失」：同一位置缺失的两张图像指纹相同（掩码下面藏的 2.0 不进指纹）
+    assert out["image_masked"]["parts"]["array"] == out["image_nan"]["parts"]["array"]
+    assert out["image_nan"]["parts"]["array"]["finite"] == 3
+    # 超预算的那一个（10 个数 > 8）不扣配额：排在它后面、装得下的那一个照样量（6 个数）
+    assert out["big"] == {"status": "over_budget"} and out["small"]["status"] == "ok"
+    assert out["budget_left"] == 2
     assert set(out["line3d"]["parts"]) == {"xyz"} and out["line3d"]["parts"]["xyz"]["shape"] == [
         2,
         3,
