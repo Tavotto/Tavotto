@@ -48,17 +48,32 @@
   零网络探针因此截 `urllib.request.OpenerDirector.open`（`urlopen` 与现建 opener 都经过它），
   用例替换传输层也换这一个。看护：`tests/test_outbound_https_trust.py`（缺根 / 主机名不符 / 注入
   测试根投递成功 / 断网与协议层 SSLError 不记日志 / AST 钉「出站 HTTPS 只经 tlstrust」）。
-- **成功边界埋点，不是点击埋点**：`export_completed` 在 `/api/export` 文件
-  全部写完之后、正常响应之前（服务端）；`ai_assistant_invoked` 在
+- **成功边界埋点，不是点击埋点**：`export_completed` 在导出作业以 `done` / `partial`
+  结束时（至少写成一个请求的图；**不是**「全部请求的文件都写完」，服务端）；`ai_assistant_invoked` 在
   `engine_ai.run()` 真的回了 session 之后（服务端）；pip/pipx 的
   `update_completed` 在升级命令成功之后。前端记的是「点了」，点了还会失败。
+- **`export_result`（2026-10-15 引入）是终态事件，出处只有一个**：`exportjob._emit` 在作业走到
+  终局时调 `ExportJob.on_terminal`（`_terminal_notified` 去重，**每个作业最多一次**），回调由
+  `_prepare_export_job` 在作业被受理后挂上（`app._export_result_telemetry` →
+  `engine/exporttelemetry.properties`）。同步 / 后台 / `run()` 早退 / 取消 / SSE 补拉与 `/state`
+  轮询都不另发。**被拒（`prepare` 抛）与 `conflict` 不发**；用户重新提交 = 新作业 = 新尝试。
+  不新增 `export_started`（无可安全联结的尝试标识，分母会诱导错误的 start/result 比较）。
+  `export_completed` 语义不变（`done` 或 `partial` 才发），**不得**把它补读成 `export_result`。
+  属性只含请求格式布尔 / `delivered` / `stage` / `error_class` 闭集，不含错误码原文。
+  它是 **CONSENT_VERSION 3** 的新范围之一（ADR 0134）：v2 的同意不再授权它，重新同意之前
+  它和所有老事件一样一个字节都不发。
 - **编辑埋点只有一个调用点**：`documentStore.pushHistory`（commit 与 endTxn
   的共同漏斗）。一次拖动 = 一条事务 = 一条历史 = **一个事件**，不是 120 次
   pointermove；预览平面不 commit，因此天然不产生事件。`edit_kind` 由**历史
   标签的 key**（开发者写死的稳定标识）经闭表映射，查不到落 `other`——
   标签**文案**绝不能用，它被翻译过、还插值了用户的文件名与属性名。
-- **CONSENT_VERSION 现在是 2**（2026-09-02，Session 22 加了九条：刷新 / 接入状态 /
-  教程三条 / 多选栏 / 保存 / 恢复 / 包操作）。再加事件仍照这条纪律：两侧 `EVENTS`
+- **CONSENT_VERSION 现在是 3**（2026-10-16，ADR 0134：导出终态事件 `export_result` + 诊断报告的可选错误摘要，
+  **两个范围一次升版**；2 是 2026-09-02 Session 22 加的九条：刷新 / 接入状态 /
+  教程三条 / 多选栏 / 保存 / 恢复 / 包操作）。升版三条保证各有用例：旧同意不再授权任何发送（含
+  `export_result`）；重新同意不换 `install_id`；说过「不」的人不被再问、`unset` 仍 `unset` 且无 id、
+  `TAVOTTO_NO_TELEMETRY=1` 压过一切且不弹框（`tests/test_telemetry.py` / `tests/test_telemetry_v3_consent.py`）。
+  v3 的第二个范围**不走本模块的事件通道**：`engine/diagsummary.py` 在用户明确点发送时给 `POST /v1/reports/init`
+  带 `error_summary`（同意快照 + 稳定错误码事实，规则见 `diagnostics.md`「错误摘要」）。再加事件仍照这条纪律：两侧 `EVENTS`
   表都登记、`tests/test_telemetry_proxy.py` 的样例表补一条、文档三处（events /
   privacy / README）一起改、范围扩大就再升版。`package_action` **没有包名**、
   `project_refresh_completed` 只发桶不发条数、教程只发 step id 与流程版本——
@@ -84,6 +99,8 @@
   算进去会让「装过的人」随老用户升级不断膨胀）。分类规则从真实发布工作流推出，
   不靠「.exe 就是安装包」的直觉。**桌面遥测丢事件必须无声，采集器丢数据必须
   有人看见**——所以采集器失败就让 workflow 红。
+- **部署顺序（v3）**：先部署 infra #28（diagnostics-api 1.1.0，认识 `error_summary`；旧服务端 `extra="forbid"`），
+  再发 v3 客户端。客户端保险：带摘要的 init 被拒为 `bad_request` 时去掉摘要重发一次，报告照送达。
 - **部署顺序**：先发代理（它拒绝不认识的事件与 schema_version）→ 验 PostHog
   收得到 → 配采集器 → 再发客户端。反过来的话新事件会被静默 400，而且全绿。
 - 验证：`tests/test_telemetry.py`、`tests/test_telemetry_api.py`、
