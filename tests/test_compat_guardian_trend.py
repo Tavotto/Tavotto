@@ -352,6 +352,11 @@ def confinement_violations(tree: ast.AST) -> tuple[list[str], list[str]]:
             literal = isinstance(attr, ast.Constant) and isinstance(attr.value, str)
             if on_module or not literal or attr.value in REACHABLE_BANNED_MODULES:
                 violations.append(f"getattr:{ast.unparse(obj)}")
+            elif attr.value in PATH_MUTATORS:
+                # `getattr(Path(t), "write_text")(x)` 就是一次写入（Codex #1139 r4312538531）
+                writes.append(f"getattr:{attr.value}:{ast.unparse(obj)}")
+        if name.split(".")[-1] in INDIRECT_ATTRIBUTE_ACCESS:
+            violations.append(name)
         if name in BANNED_CALLS:
             violations.append(name)
         if name.startswith("os.") and not name.startswith(OS_ALLOWED):
@@ -365,6 +370,9 @@ def confinement_violations(tree: ast.AST) -> tuple[list[str], list[str]]:
                 writes.append(f"{node.func.attr}->{ast.unparse(node.args[0])}")
     return violations, writes
 
+
+#: 绕过 getattr 检查的等价取属性方式
+INDIRECT_ATTRIBUTE_ACCESS = {"__getattribute__", "attrgetter", "methodcaller"}
 
 #: 拿到整个命名空间的内建函数：经它们可以取到任何模块
 DYNAMIC_ACCESS = {"vars", "globals", "locals", "setattr", "delattr"}
@@ -447,6 +455,12 @@ class ConfinementCheckerSelfTest(unittest.TestCase):
                 ),
                 snippet,
             )
+
+    def test_literal_getattr_of_a_mutator_is_a_write_and_indirect_access_is_banned(self):
+        _, writes = confinement_violations(ast.parse("getattr(Path(t), 'write_text')(d)"))
+        self.assertIn("getattr:write_text:Path(t)", writes)
+        for snippet in ("Path(t).__getattribute__('write_text')(d)", "attrgetter('unlink')(p)()"):
+            self.assertTrue(confinement_violations(ast.parse(snippet))[0], snippet)
 
     def test_dynamically_retrieved_modules_are_violations(self):
         for snippet in (
