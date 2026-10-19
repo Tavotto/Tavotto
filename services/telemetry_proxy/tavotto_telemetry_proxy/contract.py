@@ -45,8 +45,22 @@ AUTO_PROPS: dict[str, dict] = {
 # 代理白名单里比当前客户端多出的枚举值：只收不发的旧值，逐条写死、写明来由。
 # 跨侧对拍测试（tests/test_telemetry_proxy.py）把它当唯一放行清单——代理多出这里以外的任何值都会红。
 LEGACY_ENUM_VALUES: dict[str, dict[str, tuple[str, ...]]] = {
-    # 2026-09-30 教程取消欢迎步骤；0.17.0 及更早的客户端仍会发 welcome
-    "tutorial_step_completed": {"step_id": ("welcome",)},
+    # 2026-09-30 教程取消欢迎步骤；0.17.0 及更早的客户端仍会发 welcome。
+    # 2026-10-19（ADR 0136）八步 coachmark 教程换成三步原生教程：flow v2 的八个步骤 id
+    # 已发布的客户端仍会发（tutorial_version=2），代理照收；新客户端只发 demo_* 与 done
+    "tutorial_step_completed": {
+        "step_id": (
+            "welcome",
+            "open_fast_edit",
+            "select_text",
+            "change_typography",
+            "locate_problem",
+            "export_original",
+            "add_to_layout",
+            "multi_select_align",
+            "export_canvas",
+        )
+    },
 }
 
 EVENTS: dict[str, dict[str, dict]] = {
@@ -88,9 +102,9 @@ EVENTS: dict[str, dict[str, dict]] = {
     },
     "tutorial_step_completed": {
         "step_id": enum(
-            # 只收不发：客户端自 2026-09-30 起没有欢迎步骤（不再发 welcome），但代理要服务
-            # 已发布的旧客户端（0.17.0 等），删掉它们的教程漏斗数据会一直被丢到升级为止。
-            # 见 LEGACY_ENUM_VALUES；跨侧对拍只放行那张显式清单
+            # 只收不发：客户端自 2026-09-30 起没有欢迎步骤（不再发 welcome）、自 2026-10-19 起
+            # 没有八步 coachmark 教程（ADR 0136），但代理要服务已发布的旧客户端，删掉它们的教程
+            # 漏斗数据会一直被丢到升级为止。见 LEGACY_ENUM_VALUES；跨侧对拍只放行那张显式清单
             "welcome",
             "open_fast_edit",
             "select_text",
@@ -100,6 +114,10 @@ EVENTS: dict[str, dict[str, dict]] = {
             "add_to_layout",
             "multi_select_align",
             "export_canvas",
+            # 当前客户端（flow v3，ADR 0136）
+            "demo_import",
+            "demo_move_legend",
+            "demo_change_title",
             "done",
         ),
         "tutorial_version": integer(1000),

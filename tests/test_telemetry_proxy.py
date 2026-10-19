@@ -519,7 +519,19 @@ def test_client_and_proxy_contracts_match():
     # 代理 = 客户端 ∪ 显式的 LEGACY（只收不发的旧值，服务已发布的旧客户端）。清单本身写死在这里：
     # 它不能悄悄变成「任意超集」——多一个 LEGACY 以外的值、或清单被改，都要红
     assert proxy_contract.LEGACY_ENUM_VALUES == {
-        "tutorial_step_completed": {"step_id": ("welcome",)}
+        "tutorial_step_completed": {
+            "step_id": (
+                "welcome",
+                "open_fast_edit",
+                "select_text",
+                "change_typography",
+                "locate_problem",
+                "export_original",
+                "add_to_layout",
+                "multi_select_align",
+                "export_canvas",
+            )
+        }
     }
     proxy_shape = shape(proxy_contract.EVENTS)
     for event, props in proxy_contract.LEGACY_ENUM_VALUES.items():
@@ -560,7 +572,7 @@ def test_every_client_event_is_accepted_end_to_end(upstream):
         "project_refresh_completed": {"source": "codex", "changed_bucket": "one"},
         "project_readiness_opened": {"source": "palette", "status_bucket": "mixed"},
         "tutorial_started": {"source": "picker", "tutorial_version": 1},
-        "tutorial_step_completed": {"step_id": "select_text", "tutorial_version": 1},
+        "tutorial_step_completed": {"step_id": "demo_import", "tutorial_version": 3},
         "tutorial_completed": {"tutorial_version": 1},
         "context_bar_multi_used": {"action_id": "distribute_h", "selection_size_bucket": "3_5"},
         "document_saved": {"trigger": "autosave", "outcome": "ok"},

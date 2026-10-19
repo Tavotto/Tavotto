@@ -186,6 +186,9 @@ function useScriptImport(openPath: (path: string) => Promise<boolean>) {
   const openDropped = (drop: NativeFileDrop) => {
     // 壳的事件不经过页面的 onDrop，切换中的闸要在这里再挡一次（与主页其它入口的 disabled 同一个判据）
     if (useProjectStore.getState().switching) return
+    // 新手教程层盖在主页上时，系统拖进来的文件一律不认（教程层自己拒收并说明，ADR 0136）：
+    // 壳本来只在页面接受了拖动时才发这条事件，这里是第二道闸
+    if (useOnboardingStore.getState().surface !== 'none') return
     if (drop.kind === 'unsupported') {
       setNotice({ tone: 'error', text: t('home.import.dropNotScript', { name: drop.name }) })
       return
@@ -394,7 +397,6 @@ function DropZone({ importer, dragging }: { importer: Importer; dragging: boolea
 
 function Newcomer({ importer, dragging }: { importer: Importer; dragging: boolean }) {
   const { t } = useTranslation('project')
-  const sample = useSampleAvailability()
   const entry = useOnboardingStore((s) => tutorialEntry(s.status))
   const switching = useProjectStore((s) => s.switching)
   return (
@@ -419,28 +421,18 @@ function Newcomer({ importer, dragging }: { importer: Importer; dragging: boolea
           <FolderOpen size={ICON_SIZE.md} />
           {t('home.newcomer.import')}
         </Button>
-        {!sample.hidden && (
-          <Button
-            variant="secondary"
-            size="lg"
-            disabled={sample.disabled}
-            loading={sample.opening}
-            loadingLabel={t('picker.tutorialOpening')}
-            data-onboarding-anchor="tutorial-entry"
-            onClick={() => void runTutorialEntry('picker')}
-          >
-            <Play size={ICON_SIZE.md} />
-            {t(entry === 'resume' ? 'home.newcomer.tryResume' : 'home.newcomer.tryStart')}
-          </Button>
-        )}
+        {/* 三步原生教程（ADR 0136）：内置演示、不依赖后端的教程资源，所以总是可用 */}
+        <Button
+          variant="secondary"
+          size="lg"
+          disabled={switching}
+          data-onboarding-anchor="tutorial-entry"
+          onClick={() => void runTutorialEntry('picker')}
+        >
+          <Play size={ICON_SIZE.md} />
+          {t(entry === 'resume' ? 'home.newcomer.tryResume' : 'home.newcomer.tryStart')}
+        </Button>
       </div>
-      {/* 只在示例用不了（要重新安装）时说话：正常时那句「已内置」不影响任何决定 */}
-      {!sample.hidden && sample.unavailable && (
-        <p className="mt-3 text-center text-sm text-ink-3" data-home-sample-note="unavailable">
-          {t('picker.tutorialUnavailable')}
-        </p>
-      )}
-      <SampleFailure failure={sample.failure} />
     </>
   )
 }
@@ -479,7 +471,7 @@ function Returning({
             loading={sample.opening}
             loadingLabel={t('picker.tutorialOpening')}
             data-home-sample
-            onClick={() => void openSampleProject('picker')}
+            onClick={() => void openSampleProject()}
           >
             <FileCodeCorner size={ICON_SIZE.md} />
             {t('home.returning.sample')}

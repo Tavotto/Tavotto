@@ -1,15 +1,20 @@
 /**
- * 新手教程 / 一次性提示的**本机状态**（Prompt 21，ADR 0040）。
+ * 新手教程 / 一次性提示的**本机状态**（Prompt 21，ADR 0040；三步原生教程 ADR 0136）。
  *
  * ### 它记什么、不记什么
  *
  * 记：状态机（未开始 / 进行中 / 已暂停 / 已完成 / 已跳过）、当前步骤 id、
- * 完成过的步骤 id、每类提示看过没有、起止时间、教程项目与文档的 id。
+ * 完成过的步骤 id、每类提示看过没有、起止时间、欢迎页出现过没有、教程演示图上的
+ * 两处改动（图例相对初始位置挪了多少 pt、标题字号 pt——演示图自己的模型坐标，
+ * 不是 DOM 坐标，见 `lib/onboarding/demoFigure`）。
  *
  * 不记：DOM 节点、翻译好的字符串、文件路径、对象 id / gid、用户内容。
- * 「教程里那张图是哪个对象」由 `lib/onboarding/steps` 在需要的那一刻按
- * `tutorial_meta.json` 的 `file` / role 现找——对象 id 会随重置 / 重建变化，
- * 记下来只会连错。
+ *
+ * 三步教程（ADR 0136）**不打开任何项目**：它只用内置的演示图，不执行 Python。
+ * `tutorialProjectId` / `tutorialDocumentId` 是 v2 的 coachmark 教程留下的格式字段，
+ * 读旧数据时原样保留、新流程写 null。
+ *
+ * 不持久化的只有 `surface`：教程层此刻显示哪一屏（没有 / 欢迎页 / 教程）。
  *
  * ### 与项目文档分离
  *
@@ -32,7 +37,7 @@
  * 提供自己的 adapter。核心状态机不分叉。
  */
 import { create } from 'zustand'
-import { firstIncomplete, isStepId, STEP_IDS, type StepId } from '@/lib/onboarding/stepIds'
+import { firstIncomplete, isStepId, nextStepId, STEP_IDS, type StepId } from '@/lib/onboarding/stepIds'
 
 export const ONBOARDING_SCHEMA_VERSION = 1
 /**
@@ -40,8 +45,11 @@ export const ONBOARDING_SCHEMA_VERSION = 1
  *
  * v2（2026-09-06，审计 T36）：每步多了前置校验与行动按钮、`add_to_layout` 按文档里
  * 实际有几张教程图出变体、结束页按「完成 / 跳过」分别计数（`skippedSteps`）。
+ *
+ * v3（2026-10-19，ADR 0136）：八步工作台 coachmark 教程换成三步原生演示教程
+ * （`demo_import` / `demo_move_legend` / `demo_change_title`）。
  */
-export const ONBOARDING_FLOW_VERSION = 2
+export const ONBOARDING_FLOW_VERSION = 3
 
 export const ONBOARDING_KEY = 'tavotto.onboarding'
 
@@ -85,7 +93,28 @@ export interface OnboardingPersisted {
   tutorialDocumentId: string | null
   /** 暂停是用户按的（关掉 coachmark / Esc）还是系统按的（切走了项目） */
   pausedBy: 'user' | 'system' | null
+  /** 欢迎页第一次出现的时间：首启自动弹欢迎页只弹这一次（之后从入口进） */
+  welcomeSeenAt: number | null
+  /** 教程演示图上的改动（模型坐标，pt）；重新开始清掉 */
+  demo: DemoEdits
 }
+
+/**
+ * 教程演示图上用户做过的两处改动。单位都是演示图自己的 pt（`lib/onboarding/demoFigure`），
+ * 与窗口大小、缩放、DPI 无关——返回上一步、重启之后按它把图画回来，前后对比的「后」就是它。
+ * `null` = 没改过（画脚本里的原样）。
+ */
+export interface DemoEdits {
+  /** 图例相对脚本里原位置的位移 [dx, dy]（pt，向右 / 向下为正） */
+  legendOffset: [number, number] | null
+  /** 标题字号（pt） */
+  titleSizePt: number | null
+}
+
+export const DEMO_EDITS_EMPTY: DemoEdits = { legendOffset: null, titleSizePt: null }
+
+/** 教程层此刻显示哪一屏（不持久化） */
+export type OnboardingSurface = 'none' | 'welcome' | 'tutorial'
 
 export const ONBOARDING_DEFAULTS: OnboardingPersisted = {
   schemaVersion: ONBOARDING_SCHEMA_VERSION,
@@ -100,6 +129,8 @@ export const ONBOARDING_DEFAULTS: OnboardingPersisted = {
   tutorialProjectId: null,
   tutorialDocumentId: null,
   pausedBy: null,
+  welcomeSeenAt: null,
+  demo: DEMO_EDITS_EMPTY,
 }
 
 /* ------------------------------ 持久化 adapter ------------------------------ */
@@ -159,6 +190,8 @@ const PERSISTED_KEYS: (keyof OnboardingPersisted)[] = [
   'tutorialProjectId',
   'tutorialDocumentId',
   'pausedBy',
+  'welcomeSeenAt',
+  'demo',
 ]
 
 function pick(state: OnboardingPersisted): OnboardingPersisted {
@@ -174,6 +207,29 @@ const numOrNull = (v: unknown): number | null =>
 const strOrNull = (v: unknown): string | null => (typeof v === 'string' && v ? v : null)
 
 /**
+ * 演示改动的校验：只认有限数、且落在演示图能画的范围里（位移不超过图幅、字号在
+ * 输入框允许的区间）。范围是格式校验，不是交互约束——交互的夹取在 `demoFigure`，
+ * 这里只挡手改 / 半截写入的坏值（NaN、Infinity、字符串、离谱的数）。
+ */
+export const DEMO_LIMITS = { offsetPt: 500, minSizePt: 1, maxSizePt: 100 } as const
+
+export function migrateDemo(raw: unknown): DemoEdits {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return { ...DEMO_EDITS_EMPTY }
+  const v = raw as Record<string, unknown>
+  const off = v.legendOffset
+  const legendOffset =
+    Array.isArray(off) &&
+    off.length === 2 &&
+    off.every((n) => typeof n === 'number' && Number.isFinite(n) && Math.abs(n) <= DEMO_LIMITS.offsetPt)
+      ? ([off[0], off[1]] as [number, number])
+      : null
+  const size = numOrNull(v.titleSizePt)
+  const titleSizePt =
+    size !== null && size >= DEMO_LIMITS.minSizePt && size <= DEMO_LIMITS.maxSizePt ? size : null
+  return { legendOffset, titleSizePt }
+}
+
+/**
  * 任何来路的 blob → 一份合法状态。**坏数据回安全默认（未开始），绝不抛。**
  *
  * 逐字段校验而不是整份信任：手改过 / 半截写入 / 旧版本的 blob 里可能只有
@@ -184,7 +240,7 @@ export function migratePersisted(raw: unknown): OnboardingPersisted {
   const v = raw as Record<string, unknown>
   if (v.schemaVersion !== ONBOARDING_SCHEMA_VERSION) return { ...ONBOARDING_DEFAULTS }
 
-  const status = STATUSES.includes(v.status as OnboardingStatus)
+  let status = STATUSES.includes(v.status as OnboardingStatus)
     ? (v.status as OnboardingStatus)
     : 'not_started'
   const completedSteps = Array.isArray(v.completedSteps)
@@ -205,10 +261,10 @@ export function migratePersisted(raw: unknown): OnboardingPersisted {
   }
   const flowVersion = numOrNull(v.flowVersion) ?? 0
   const done = new Set<string>(completedSteps)
-  // 「欢迎」步骤已于 2026-09-30 取消（教程直接从 open_fast_edit 开始）：停在它上面的
-  // 进行中 / 暂停用户落到新的第一步；它在 completedSteps 里的记录已被 isStepId 滤掉
-  let currentStep: StepId | null =
-    v.currentStep === 'welcome' ? STEP_IDS[0] : isStepId(v.currentStep) ? v.currentStep : null
+  // 「欢迎」步骤已于 2026-09-30 取消；v2 的八个 coachmark 步骤于 2026-10-19 换成三步演示
+  // （ADR 0136）。停在认不出的步骤上的进行中 / 暂停用户一律落到第一个未完成的新步骤；
+  // 旧 id 在 completedSteps 里的记录已被 isStepId 滤掉——跳过过的旧步骤不会被当成新步骤的完成
+  let currentStep: StepId | null = isStepId(v.currentStep) ? v.currentStep : null
   const inFlow = status === 'active' || status === 'paused'
   if (inFlow) {
     // 步骤内容升了版，或记的步骤已经不存在：回到第一个未完成的步骤。
@@ -216,6 +272,9 @@ export function migratePersisted(raw: unknown): OnboardingPersisted {
     if (flowVersion < ONBOARDING_FLOW_VERSION || currentStep === null) {
       currentStep = firstIncomplete(done)
     }
+    // 上一版的教程正进行到一半：换成了另一套教程，不在启动时把人直接拉进新的那套——
+    // 记成用户暂停，入口显示「继续」，点不点由他（ADR 0136：不因升级强迫老用户重新学）
+    if (flowVersion < ONBOARDING_FLOW_VERSION && status === 'active') status = 'paused'
   } else {
     currentStep = null
   }
@@ -238,28 +297,43 @@ export function migratePersisted(raw: unknown): OnboardingPersisted {
     tutorialProjectId: strOrNull(v.tutorialProjectId),
     tutorialDocumentId: strOrNull(v.tutorialDocumentId),
     pausedBy,
+    welcomeSeenAt: numOrNull(v.welcomeSeenAt),
+    // 步骤内容换了版：上一版的演示改动不属于这一版的图
+    demo: flowVersion < ONBOARDING_FLOW_VERSION ? { ...DEMO_EDITS_EMPTY } : migrateDemo(v.demo),
   }
 }
 
 /* --------------------------------- store ---------------------------------- */
 
 interface OnboardingState extends OnboardingPersisted {
-  /** 从头开始一轮教程（绑到这份教程项目 / 文档）。提示看过的记录不动 */
-  start: (ids: { projectId: string | null; documentId: string }) => void
-  /** 暂停：`user` = 用户关掉了 coachmark / 按了 Esc；`system` = 切走了项目 */
-  pause: (by: 'user' | 'system') => void
-  resume: () => void
-  skip: () => void
-  complete: () => void
+  /** 教程层此刻显示哪一屏（不持久化：重启之后由 `NativeTutorial` 按状态重新判） */
+  surface: OnboardingSurface
+  /** 从头开始一轮教程：第一步、清进度与演示改动。提示看过的记录不动 */
+  start: () => void
+  /** 打开欢迎页（记下它出现过：首启自动弹只弹这一次） */
+  openWelcome: () => void
   /**
-   * 走过一步：`done` = 真实完成条件满足了；`skipped` = 用户点了「跳过此步」。
-   * 两者都推进状态机，只有后者进 `skippedSteps`；返回再真的做完会把它移出来。
+   * 进教程：进行中 / 暂停的接着上次那一步，其余从头开始。回 `started` / `resumed`
+   * 让入口决定记不记 `tutorial_started`（继续不是开始）。
    */
-  markStep: (id: StepId, via?: 'done' | 'skipped') => void
-  /** 把当前步骤挪到这里（前进 / 返回都经它） */
+  openTutorial: () => 'started' | 'resumed'
+  /** 收起教程层（状态不变：进行中的下次打开接着来） */
+  closeSurface: () => void
+  resume: () => void
+  /** 跳过整个教程（终态，不是完成）；教程层一起收起 */
+  skip: () => void
+  /** 走完教程（终态）；教程层一起收起 */
+  complete: () => void
+  /** 这一步的任务真的做到了（由教程界面在真实交互成功的那一刻调） */
+  markStep: (id: StepId) => void
+  /** 当前步骤做到了才前进一步；没做到是 no-op（「下一步」不能替用户声称完成） */
+  next: () => void
+  /** 把当前步骤挪到这里 */
   goTo: (id: StepId) => void
-  /** 返回上一步；已在第一步就什么都不做。**不撤销**完成记录 */
+  /** 返回上一步；已在第一步就什么都不做。**不撤销**完成记录与演示改动 */
   back: () => void
+  /** 记下演示图上的改动（合并） */
+  setDemo: (patch: Partial<DemoEdits>) => void
   markHintSeen: (kind: HintKind) => void
   /** 只清提示记录 */
   resetHints: () => void
@@ -272,26 +346,43 @@ function commitState(patch: Partial<OnboardingPersisted>) {
   writePersisted(useOnboardingStore.getState())
 }
 
+const freshRun = (): Partial<OnboardingPersisted> => ({
+  status: 'active',
+  currentStep: STEP_IDS[0],
+  completedSteps: [],
+  skippedSteps: [],
+  startedAt: Date.now(),
+  completedAt: null,
+  tutorialProjectId: null,
+  tutorialDocumentId: null,
+  pausedBy: null,
+  demo: { ...DEMO_EDITS_EMPTY },
+})
+
 export const useOnboardingStore = create<OnboardingState>((set, get) => ({
   ...readPersisted(),
+  surface: 'none',
 
-  start: ({ projectId, documentId }) =>
-    commitState({
-      status: 'active',
-      currentStep: STEP_IDS[0],
-      completedSteps: [],
-      skippedSteps: [],
-      startedAt: Date.now(),
-      completedAt: null,
-      tutorialProjectId: projectId,
-      tutorialDocumentId: documentId,
-      pausedBy: null,
-    }),
+  start: () => commitState(freshRun()),
 
-  pause: (by) => {
-    if (get().status !== 'active') return
-    commitState({ status: 'paused', pausedBy: by })
+  openWelcome: () => {
+    set({ surface: 'welcome' })
+    if (get().welcomeSeenAt === null) commitState({ welcomeSeenAt: Date.now() })
   },
+
+  openTutorial: () => {
+    const s = get().status
+    if (s === 'active' || s === 'paused') {
+      get().resume()
+      set({ surface: 'tutorial' })
+      return 'resumed'
+    }
+    get().start()
+    set({ surface: 'tutorial' })
+    return 'started'
+  },
+
+  closeSurface: () => set({ surface: 'none' }),
 
   resume: () => {
     if (get().status !== 'paused') return
@@ -301,14 +392,15 @@ export const useOnboardingStore = create<OnboardingState>((set, get) => ({
   skip: () => {
     const s = get().status
     if (s !== 'active' && s !== 'paused') return
+    set({ surface: 'none' })
     commitState({ status: 'skipped', currentStep: null, pausedBy: null })
   },
 
   complete: () => {
     const s = get().status
     if (s !== 'active' && s !== 'paused') return
-    // 全部步骤记成走过；**跳过的那份账原样保留**——结束之后入口、设置页仍要
-    // 说得出这轮是做完的还是跳完的
+    set({ surface: 'none' })
+    // 全部步骤记成走过；**跳过的那份账原样保留**（v2 的数据里可能有）
     commitState({
       status: 'completed',
       currentStep: null,
@@ -318,21 +410,20 @@ export const useOnboardingStore = create<OnboardingState>((set, get) => ({
     })
   },
 
-  markStep: (id, via = 'done') => {
+  markStep: (id) => {
     const passed = get().completedSteps
     const skipped = get().skippedSteps
-    const wasSkipped = skipped.includes(id)
     const nextPassed = passed.includes(id) ? passed : [...passed, id]
-    const nextSkipped =
-      via === 'skipped'
-        ? wasSkipped
-          ? skipped
-          : [...skipped, id]
-        : wasSkipped
-          ? skipped.filter((s) => s !== id)
-          : skipped
+    const nextSkipped = skipped.includes(id) ? skipped.filter((x) => x !== id) : skipped
     if (nextPassed === passed && nextSkipped === skipped) return
     commitState({ completedSteps: nextPassed, skippedSteps: nextSkipped })
+  },
+
+  next: () => {
+    const cur = get().currentStep
+    if (!cur || !get().completedSteps.includes(cur)) return
+    const to = nextStepId(cur)
+    if (to) commitState({ currentStep: to })
   },
 
   goTo: (id) => {
@@ -348,6 +439,8 @@ export const useOnboardingStore = create<OnboardingState>((set, get) => ({
     commitState({ currentStep: STEP_IDS[i - 1] })
   },
 
+  setDemo: (patch) => commitState({ demo: { ...get().demo, ...patch } }),
+
   markHintSeen: (kind) => {
     if (get().hintSeen[kind]) return
     commitState({ hintSeen: { ...get().hintSeen, [kind]: Date.now() } })
@@ -356,7 +449,7 @@ export const useOnboardingStore = create<OnboardingState>((set, get) => ({
   resetHints: () => commitState({ hintSeen: {} }),
 
   resetOnboarding: () => {
-    set({ ...ONBOARDING_DEFAULTS })
+    set({ ...ONBOARDING_DEFAULTS, surface: 'none' })
     try {
       persistence?.remove()
     } catch {

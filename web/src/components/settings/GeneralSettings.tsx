@@ -2,6 +2,7 @@ import { useTranslation } from 'react-i18next'
 import { msg, setLocale, SUPPORTED_LOCALES, LOCALE_LABELS, t as translate } from '@/i18n'
 import { useLocale } from '@/i18n/react'
 import {
+  hasSampleProject,
   resetHints,
   resetTutorial,
   runTutorialEntry,
@@ -9,6 +10,7 @@ import {
   useTutorialStore,
 } from '@/lib/onboarding/tutorial'
 import { useOnboardingStore } from '@/store/onboardingStore'
+import { useProjectStore } from '@/store/projectStore'
 import { THEME_PREFS, type ThemePref } from '@/lib/theme'
 import { useUiStore } from '@/store/uiStore'
 import { Ellipsis, Lightbulb, RotateCcw } from '@/components/ui/icons'
@@ -214,7 +216,11 @@ function CanvasGroup({ close }: { close: () => void }) {
  */
 function Learning({ close }: { close: () => void }) {
   const status = useOnboardingStore((s) => s.status)
-  const hasTutorial = useOnboardingStore((s) => s.tutorialProjectId != null)
+  // 「重置示例项目」只在示例项目真的存在时出现（三步教程本身不建项目，ADR 0136）
+  const tutorialStatus = useTutorialStore((s) => s.status)
+  const recent = useProjectStore((s) => s.recent)
+  const project = useProjectStore((s) => s.project)
+  const hasTutorial = hasSampleProject({ status: tutorialStatus }, { recent, project })
   const busy = useTutorialStore((s) => s.busy)
   const entry = tutorialEntry(status)
   return (
@@ -227,7 +233,7 @@ function Learning({ close }: { close: () => void }) {
             disabled={busy != null}
             data-onboarding-anchor="settings-tutorial"
             onClick={() => {
-              // 先关设置：coachmark 要挂的目标都在工作台上，不在这个对话框里
+              // 先关设置：教程层盖在工作台上，设置对话框不该叠在它上面
               close()
               void runTutorialEntry('settings')
             }}

@@ -807,14 +807,14 @@
       "status": "active",
       "platform": "both",
       "summary": {
-        "zh-CN": "交互式教程：从入口进入并完整走完",
-        "en-US": "Interactive tutorial: start from its entry and finish it"
+        "zh-CN": "三步新手教程：从首启欢迎页进入并完整走完（拖入示例脚本、拖动图例、改标题字号、前后对比）",
+        "en-US": "Three-step tutorial: from the first-run welcome page to the finish (drop the sample script, drag the legend, enlarge the title, compare before/after)"
       },
-      "entry": "项目选择器 / 更多菜单「教程」",
+      "entry": "首次启动欢迎页 / 主页「用示例学一遍」/ 更多菜单「教程」",
       "e2e": [
         {
           "spec": "tutorial.spec.ts",
-          "title": "完整走完教程：每一步都由真实动作完成"
+          "title": "完整走完新手教程：欢迎页 → 拖入示例脚本 → 拖动图例 → 改标题字号 → 前后对比 → 开始使用"
         }
       ]
     },

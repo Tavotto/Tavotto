@@ -47,9 +47,8 @@ import { useServerEvents } from '@/hooks/useServerEvents'
 import { usePickerHistory } from '@/hooks/usePickerHistory'
 import { subscribePruneSelection } from '@/hooks/usePruneSelection'
 import { ProjectPicker } from '@/components/ProjectPicker'
-import { OnboardingLayer } from '@/components/onboarding/OnboardingLayer'
+import { NativeTutorial } from '@/components/onboarding/NativeTutorial'
 import { startActivityTelemetry } from '@/lib/activityTelemetry'
-import { startOnboardingEngine } from '@/lib/onboarding/flow'
 import { startHintEngine } from '@/lib/onboarding/hints'
 import { useAiStore } from '@/store/aiStore'
 import { useAssetStore } from '@/store/assetStore'
@@ -116,6 +115,8 @@ export function App() {
     return (
       <>
         <ProjectPicker />
+        {/* 新手教程也挂在这一层：首启的欢迎页就出现在还没打开项目的主页上 */}
+        <NativeTutorial />
         <TelemetryConsentDialog />
         <DiagnosticsSendHost />
         {/* 「有新版本」也在这一层问：还没开项目的人一样该知道 */}
@@ -196,9 +197,8 @@ function Workspace() {
     // 只有用户点「导出诊断包」时这些事件才会进一个 zip
     const stopDiagnostics = installDiagnosticsWiring()
     installDiagnosticsDevHook()
-    // 新手教程引擎 + 一次性提示引擎：订阅本地活动信号与 store，随工作台生命周期
-    // 清理。它们不碰文档、不发请求（ADR 0040）
-    const stopOnboarding = startOnboardingEngine()
+    // 一次性提示引擎：订阅本地活动信号与 store，随工作台生命周期清理。不碰文档、不发请求（ADR 0040）。
+    // 新手教程不再有引擎：三步原生教程（ADR 0136）的完成由教程界面在交互成功时直接记
     const stopHints = startHintEngine()
     // 活动信号 → 遥测的白名单映射（只有多选栏那一条；经同意态与后端白名单）
     const stopActivityTelemetry = startActivityTelemetry()
@@ -242,7 +242,6 @@ function Workspace() {
       stopWorkspace()
       stopValidation()
       stopDiagnostics()
-      stopOnboarding()
       stopHints()
       stopActivityTelemetry()
       window.removeEventListener('mm:sse-open', syncNative)
@@ -348,8 +347,8 @@ function Workspace() {
         <DependencyPrepareDialog />
         <ImportOriginDialog />
         <CloseGuardDialog />
-        {/* 新手教程的 coachmark 层：没有遮罩，只在教程进行中出现 */}
-        <OnboardingLayer />
+        {/* 三步原生新手教程（ADR 0136）：盖在工作台上的一整层，只在打开时出现 */}
+        <NativeTutorial />
         <EngineRenderSync />
       </div>
     </TooltipProvider>

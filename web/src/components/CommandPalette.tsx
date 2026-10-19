@@ -60,7 +60,7 @@ import {
   startNamedNode,
 } from '@/store/actions'
 import { canCycleOverlapSelection, cycleOverlapSelection } from '@/canvas/interactions'
-import { resetHints, resetTutorial, runTutorialEntry, tutorialEntry } from '@/lib/onboarding/tutorial'
+import { hasSampleProject, resetHints, resetTutorial, runTutorialEntry, tutorialEntry } from '@/lib/onboarding/tutorial'
 import { useDocumentStore } from '@/store/documentStore'
 import { refreshProjectNow } from '@/store/liveSync'
 import { useOnboardingStore } from '@/store/onboardingStore'
@@ -155,7 +155,7 @@ const COMMANDS: Command[] = [
   },
   {
     id: 'tutorial-reset',
-    available: () => useOnboardingStore.getState().tutorialProjectId != null,
+    available: () => hasSampleProject(),
     run: () => void resetTutorial(),
   },
   { id: 'hints-reset', run: () => resetHints() },

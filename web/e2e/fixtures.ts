@@ -208,8 +208,31 @@ export function writeRuntimeNamedProject(dir: string): void {
                 JSON.stringify({ version: 1, scripts: {} }), 'utf-8')
 }
 
+/**
+ * 新手教程的欢迎页（ADR 0136）在「第一次打开、停在主页、没有自己的项目」时会自己盖上来——
+ * `noProject` 启动的用例每一条都是这个形状。默认替它们记成「欢迎页已经出现过」（只在
+ * `tavotto.onboarding` 那一格还不存在时写，用例自己摆的、应用后来写的都不覆盖），
+ * 测欢迎页 / 教程的用例 `test.use({ firstRunWelcome: true })` 要回真实的首次启动。
+ */
+const WELCOME_SEEN = JSON.stringify({ schemaVersion: 1, flowVersion: 3, status: 'not_started', welcomeSeenAt: 1 })
+
 /** 每个用例自带一个干净实例；用例里按需 `await app()` 拿到它。 */
-export const test = base.extend<{ app: (o?: AppOptions) => Promise<RunningApp> }>({
+export const test = base.extend<{ app: (o?: AppOptions) => Promise<RunningApp>; firstRunWelcome: boolean }>({
+  firstRunWelcome: [false, { option: true }],
+  page: async ({ page, firstRunWelcome }, provide) => {
+    if (!firstRunWelcome) {
+      await page.addInitScript((blob) => {
+        try {
+          if (window.localStorage.getItem('tavotto.onboarding') === null) {
+            window.localStorage.setItem('tavotto.onboarding', blob)
+          }
+        } catch {
+          /* about:blank 之类没有 localStorage 的页面 */
+        }
+      }, WELCOME_SEEN)
+    }
+    await provide(page)
+  },
   // 第二个参数是 Playwright 的「交出去再收回来」回调。名字不叫 use 是因为
   // lint 会把 `use(...)` 当成 React Hook 调用（它是位置参数，随便起名）。
   // 第一参必须写成对象解构（哪怕不取任何内置 fixture）——Playwright 靠这个

@@ -121,6 +121,7 @@ beforeEach(() => {
   project()
   useUiStore.setState({ layout: 'wide', leftPinned: false, rightPinned: true })
   useOnboardingStore.setState({ status: 'not_started', tutorialProjectId: null } as never)
+  useProjectStore.setState({ recent: [] })
 })
 
 afterEach(async () => {
@@ -144,8 +145,10 @@ describe('T38 常规：说明改成动作与结果', () => {
     expect(kbd?.textContent?.trim()).toBe('?')
   })
 
-  it('教程是一行：主动作 + ⋯；有教程项目时「重置教程项目」在 ⋯ 里（2026-10-07 设计审计 §9.1）', async () => {
-    useOnboardingStore.setState({ status: 'completed', tutorialProjectId: 'p1' } as never)
+  it('教程是一行：主动作 + ⋯；有示例项目时「重置示例项目」在 ⋯ 里（2026-10-07 设计审计 §9.1）', async () => {
+    useOnboardingStore.setState({ status: 'completed' } as never)
+    // 示例项目在最近列表里 = 磁盘上有副本可重置（三步教程本身不建项目，ADR 0136）
+    useProjectStore.setState({ recent: [{ path: '/data/tutorial/Tutorial', name: 'Tutorial', tutorial: true }] } as never)
     await open('general')
     // 进入教程与重置是两件事：主入口是这一行唯一的钮，重置是 ⋯ 里的一项——不再并排两颗同权重的钮
     expect(byText(st('tutorial.restart'))).toBeTruthy()
@@ -154,7 +157,7 @@ describe('T38 常规：说明改成动作与结果', () => {
     expect(itemText(items, st('tutorial.reset'))).toBeTruthy()
   })
 
-  it('没有教程项目时 ⋯ 里没有重置', async () => {
+  it('没有示例项目时 ⋯ 里没有重置', async () => {
     await open('general')
     const items = await menuItems(document.querySelector('[data-settings-tutorial-more]'))
     expect(items.length).toBeGreaterThan(0) // 菜单真的打开了：下面那条反向断言不是恒真
