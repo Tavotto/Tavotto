@@ -627,6 +627,31 @@ describe('空查询时的顺序（审计 T50）', () => {
     useTutorialStore.setState({ status: null })
   })
 
+  it('缓存的「副本不在」会过时（之后打开示例项目建出了副本）：面板打开时再问一次，重置照样出现', async () => {
+    useTutorialStore.setState({ status: { available: true, problems: [], copy: { exists: false } } as never, busy: null, failure: null })
+    useProjectStore.setState({ recent: [] } as never)
+    vi.mocked(fetchTutorialStatus).mockClear()
+    vi.mocked(fetchTutorialStatus).mockResolvedValue({ available: true, problems: [], copy: { exists: true } } as never)
+    mount()
+    await act(async () => {
+      await Promise.resolve()
+    })
+    expect(fetchTutorialStatus).toHaveBeenCalledTimes(1)
+    expect(cmdIds()).toContain('tutorial-reset')
+    useTutorialStore.setState({ status: null })
+  })
+
+  it('缓存说副本在：不再重复问', async () => {
+    useTutorialStore.setState({ status: { available: true, problems: [], copy: { exists: true } } as never, busy: null, failure: null })
+    vi.mocked(fetchTutorialStatus).mockClear()
+    mount()
+    await act(async () => {
+      await Promise.resolve()
+    })
+    expect(fetchTutorialStatus).not.toHaveBeenCalled()
+    useTutorialStore.setState({ status: null })
+  })
+
   it('跑过一条就进「最近使用」，并排在常用之前', () => {
     useUiStore.setState({ recentCommands: [] })
     mount()

@@ -107,12 +107,14 @@ export async function loadTutorialStatus(): Promise<TutorialStatus | null> {
 
 /**
  * 按需探测：只在需要判断「示例项目副本在不在」的界面（设置页 › 学习、命令面板）打开时调，
- * 已有结论或正在探测就不再问。**不放在选择器 / 主页挂载时**——教程层打开期间不许发任何
+ * 已知副本在、或正在探测就不再问。**不放在选择器 / 主页挂载时**——教程层打开期间不许发任何
  * 教程资源请求（P0，e2e `tutorial.spec` 的 FORBIDDEN 含 `/api/tutorial`）。
  */
 export function ensureTutorialStatus(): void {
   const { status, busy } = useTutorialStore.getState()
-  if (status || busy) return
+  // 只信「副本在」的缓存：「不在」会过时（之后打开示例项目就建出了副本，那次打开不回写这份状态），
+  // 照它判会把「重置示例项目」藏起来——所以没有正面结论就再问一次（只读 GET，很便宜）
+  if (busy || status?.copy?.exists === true) return
   void loadTutorialStatus()
 }
 
