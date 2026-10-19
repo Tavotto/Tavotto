@@ -39,9 +39,8 @@ let root: Root
 let host: HTMLDivElement
 const q = <T extends Element>(sel: string) => host.querySelector<T>(sel)
 const all = (sel: string) => [...host.querySelectorAll(sel)]
-const headings = () => all('h3, button[aria-expanded]').map((el) => el.textContent?.trim() ?? '')
-const disclosure = () =>
-  all('button[aria-expanded]').find((b) => b.textContent?.startsWith('位置与尺寸')) as HTMLButtonElement | undefined
+/** 稳定锚点 `data-fold`（= foldKey），不认文案 */
+const disclosure = () => q<HTMLButtonElement>('[data-fold="arrow-transform"] > button') ?? undefined
 const past = () => useDocumentStore.getState().past.length
 
 async function mount(obj: CanvasObject) {
@@ -85,10 +84,13 @@ describe('箭头：位置与尺寸折叠', () => {
 
   it('外观分组排在折叠行之前', async () => {
     await mount(arrow)
-    const hs = headings()
-    const transform = hs.findIndex((h) => h.startsWith('位置与尺寸'))
-    const first = hs.findIndex((h) => !h.startsWith('位置与尺寸'))
-    expect(transform).toBeGreaterThan(first)
+    const fold = q('[data-fold="arrow-transform"]')!
+    expect(fold).toBeTruthy()
+    // 折叠行之前至少有一个分组（箭头外观）：按文档顺序判，不认标题文案
+    const before = all('[data-section]').filter(
+      (s) => !fold.contains(s) && s.compareDocumentPosition(fold) & Node.DOCUMENT_POSITION_FOLLOWING,
+    )
+    expect(before.length).toBeGreaterThan(0)
   })
 
   it('展开后 X / Y / W / H / 旋转一条不少；展开收起不写文档、不进历史', async () => {
@@ -111,6 +113,6 @@ describe('形状：位置与尺寸不折叠', () => {
     await mount(shape)
     expect(disclosure()).toBeUndefined()
     expect(q('[data-transform-folded]')).toBeNull()
-    expect(headings().some((h) => h.startsWith('位置与尺寸'))).toBe(true)
+    expect(q('[data-transform-section]')).toBeTruthy()
   })
 })
