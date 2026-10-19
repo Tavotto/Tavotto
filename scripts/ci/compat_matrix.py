@@ -1399,16 +1399,19 @@ def run_group(
             tb = traceback.format_exc()
             for ca in group:
                 if ca.get("product_routes"):
-                    results[ca["id"]]["routes"] = {
-                        "runner_error": {
-                            "status": "fail",
-                            "code": "route_runner_crashed",
-                            "classification": CC.RUNNER_ERROR,
-                            "reason": "路由 runner 崩溃",
-                            "follow_up": "读 detail 里的 traceback",
-                            "detail": tb[-2000:],
-                        }
+                    # 合并而非替换：较早已存下的路由结果（可能含独立观察到的
+                    # 产品失败）必须保留，只追加崩溃条目（Codex #1178）。
+                    existing = results[ca["id"]].get("routes")
+                    merged = dict(existing) if isinstance(existing, dict) else {}
+                    merged["runner_error"] = {
+                        "status": "fail",
+                        "code": "route_runner_crashed",
+                        "classification": CC.RUNNER_ERROR,
+                        "reason": "路由 runner 崩溃",
+                        "follow_up": "读 detail 里的 traceback",
+                        "detail": tb[-2000:],
                     }
+                    results[ca["id"]]["routes"] = merged
     except Exception:  # noqa: BLE001
         # run_group 自己崩了：保留 results 里已记录的部分结果，不整条替换。
         return _finish(results, group, t0, crash_tb=traceback.format_exc())

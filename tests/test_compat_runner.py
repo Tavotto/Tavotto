@@ -1146,3 +1146,44 @@ class TestRunGroupCrashKeepsPartialResults:
         results = self._run([case("a")], tmp_path)
         assert results["a"]["classification"] == "runner_error"
         assert "discover boom" in results["a"]["detail"]["runner_error"]
+
+    def test_route_runner_crash_keeps_completed_routes_and_appends_crash(
+        self, monkeypatch, tmp_path
+    ):
+        """stage_product_routes 抛错：A 已存下的失败路由保留（product_bug），B 只有崩溃 → runner_error。"""
+        self._patch_pipeline(monkeypatch, tmp_path, override_boom=False)
+        monkeypatch.setattr(CM, "stage_replay", lambda *a, **k: {"ok": True, "detail": {}})
+        monkeypatch.setattr(CM, "stage_export", lambda *a, **k: {"ok": True, "detail": {}})
+        failed = {
+            "status": "fail",
+            "via": "http",
+            "code": "route_failed",
+            "classification": "product_bug",
+            "reason": "产品路由未走通（case a）",
+            "follow_up": "x",
+            "detail": {},
+        }
+
+        def routes_then_boom(group, root, results):
+            results["a"]["routes"] = {"http": dict(failed), "cli": {"status": "pass"}}
+            raise RuntimeError("routes boom")
+
+        monkeypatch.setattr(CM, "stage_product_routes", routes_then_boom)
+        a = case("a", product_routes={"http": True, "cli": True})
+        b = case("b", product_routes={"http": True})
+        results = self._run([a, b], tmp_path)
+
+        ra = results["a"]
+        assert ra["classification"] == "product_bug"
+        assert ra["routes"]["http"] == failed
+        assert ra["routes"]["cli"] == {"status": "pass"}
+        assert ra["routes"]["runner_error"]["code"] == "route_runner_crashed"
+        assert CC.has_runner_crash(ra)
+
+        rb = results["b"]
+        assert rb["classification"] == "runner_error"
+        assert list(rb["routes"]) == ["runner_error"]
+
+        report = CM.build_report([a, b], results, {}, "current", "all")
+        assert [x["id"] for x in report["summary"]["product_bugs"]] == ["a"]
+        assert {x["id"] for x in report["summary"]["runner_errors"]} >= {"a", "b"}
