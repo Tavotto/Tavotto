@@ -162,7 +162,7 @@ EVENTS: dict[str, dict[str, dict]] = {
     # 教程：只有步骤 id（开发者写死的闭集，`web/src/lib/onboarding/stepIds.ts`）
     # 与流程版本号；教程项目 / 文档 id、提示记录一个都不发。
     "tutorial_started": {
-        "source": _enum("picker", "help", "settings", "palette", "canvas"),
+        "source": _enum("picker", "help", "settings", "palette", "canvas", "replay"),
         "tutorial_version": _int(1000),
     },
     "tutorial_step_completed": {

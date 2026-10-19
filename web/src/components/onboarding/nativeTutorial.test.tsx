@@ -63,7 +63,7 @@ beforeEach(() => {
   localStorage.clear()
   configureOnboardingPersistence(null)
   useOnboardingStore.getState().resetOnboarding()
-  useProjectStore.setState({ phase: 'none', recent: [], pinned: [], project: null } as never)
+  useProjectStore.setState({ phase: 'none', recent: [], pinned: [], project: null, listsLoaded: true } as never)
   resetTutorialAutoOpenForTest()
   vi.stubGlobal('ResizeObserver', NoopResizeObserver)
   vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) => setTimeout(() => cb(0), 0))
@@ -170,6 +170,27 @@ describe('什么时候自己出现', () => {
     useProjectStore.setState({ recent: [], phase: 'open' } as never)
     await mount()
     expect(layer()).toBeNull()
+  })
+
+  it('启动时项目列表没取到（后端暂时不可达，列表也是空的）：先不判、不记 welcomeSeenAt；取到了再判', async () => {
+    useProjectStore.setState({ listsLoaded: false } as never)
+    await mount()
+    expect(layer()).toBeNull()
+    expect(ob().welcomeSeenAt).toBeNull()
+    // 后端回来、列表取到：有自己的项目 → 照样不打扰
+    act(() => useProjectStore.setState({ recent: [{ path: '/me/paper', name: 'paper' }], listsLoaded: true } as never))
+    await flush()
+    expect(layer()).toBeNull()
+    expect(ob().welcomeSeenAt).toBeNull()
+  })
+
+  it('列表取到之后确实没有自己的项目：这时才出欢迎页', async () => {
+    useProjectStore.setState({ listsLoaded: false } as never)
+    await mount()
+    expect(layer()).toBeNull()
+    act(() => useProjectStore.setState({ listsLoaded: true } as never))
+    await flush()
+    expect(layer()?.dataset.surface).toBe('welcome')
   })
 
   it('示例项目不算「自己的项目」', async () => {

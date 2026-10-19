@@ -304,17 +304,14 @@ async function resetTutorialNow(
  * 教程项目里除教程画布之外、用户自己另存的画布文件名。示例项目是当前项目时读当前项目的
  * 排版列表（含还没落到状态里的最新保存）；不是当前项目时（设置页 / 命令面板也能触发重置）
  * `/api/layouts` 取的是别的项目，改为**重置前现取**后端 `copy.layouts`（不用缓存的旧状态，
- * 用户可能刚另存过）。不是当前项目时现取失败会抛，由调用方按失败路径返回。
+ * 用户可能刚另存过）。两路取失败都会抛，由调用方按失败路径返回。
  */
 async function savedLayoutsInTutorial(meta: TutorialMetadata | null): Promise<string[]> {
   if (!meta) return []
   if (useProjectStore.getState().project?.tutorial === true) {
-    try {
-      const names = await fetchLayoutNames()
-      return names.filter((n) => n !== meta.document_name)
-    } catch {
-      return []
-    }
+    // 失败照样抛：取不到清单不等于没有另存排版（调用方按失败返回，不弹「没有另存」的确认）
+    const names = await fetchLayoutNames()
+    return names.filter((n) => n !== meta.document_name)
   }
   const status = await fetchTutorialStatus()
   return (status.copy?.layouts ?? []).filter((n) => n !== meta.document_name)
@@ -421,9 +418,10 @@ export function skipTutorial(): void {
   useOnboardingStore.getState().skip()
 }
 
-/** 完成页「重新体验」：从第一步重来，演示改动清空（不记 tutorial_started：来源说不出来就不编） */
+/** 完成页「重新体验」：从第一步重来，演示改动清空；是一次新的开始，记 `tutorial_started`（来源 `replay`） */
 export function restartTutorial(): void {
   useOnboardingStore.getState().start()
+  captureTelemetry('tutorial_started', { source: 'replay', tutorial_version: ONBOARDING_FLOW_VERSION })
 }
 
 /**

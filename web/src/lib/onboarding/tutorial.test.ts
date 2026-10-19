@@ -231,6 +231,16 @@ describe('教程遥测（ADR 0041）：开始 / 每步完成一次 / 完成', ()
     })
   })
 
+  it('完成页「重新体验」是一次新的开始：记 tutorial_started（来源 replay）', () => {
+    setTelemetryEnabled(true)
+    runTutorialEntry('picker')
+    calls = []
+    restartTutorial()
+    const started = telemetryEvents().filter((e) => e.event === 'tutorial_started')
+    expect(started).toHaveLength(1)
+    expect(started[0]).toMatchObject({ properties: { source: 'replay', tutorial_version: ONBOARDING_FLOW_VERSION } })
+  })
+
   it('继续不是开始：进行中再进入口不记', () => {
     setTelemetryEnabled(true)
     runTutorialEntry('help')
@@ -581,6 +591,15 @@ describe('resetTutorial', () => {
     expect(calls.some((c) => c.url === '/api/layouts')).toBe(false) // 不读别的项目的列表
     req.resolve(false)
     await p
+  })
+
+  it('示例项目是当前项目但排版清单取不到：不弹「没有另存」的确认、不发重置，按失败返回', async () => {
+    await openSampleProject()
+    stubFetch({ '/api/layouts': () => json({ error: 'boom' }, 500) })
+    const out = await resetTutorial()
+    expect(out.ok).toBe(false)
+    expect(useUiStore.getState().confirm).toBeNull()
+    expect(calls.filter((c) => c.url === '/api/tutorial/reset')).toEqual([])
   })
 
   it('示例项目不是当前项目且现取状态失败：不弹确认、不发重置，按失败返回', async () => {

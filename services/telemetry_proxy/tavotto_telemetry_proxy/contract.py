@@ -97,7 +97,7 @@ EVENTS: dict[str, dict[str, dict]] = {
         "status_bucket": enum("all_editable", "mixed", "layout_only"),
     },
     "tutorial_started": {
-        "source": enum("picker", "help", "settings", "palette", "canvas"),
+        "source": enum("picker", "help", "settings", "palette", "canvas", "replay"),
         "tutorial_version": integer(1000),
     },
     "tutorial_step_completed": {
