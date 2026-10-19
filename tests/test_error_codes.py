@@ -566,6 +566,8 @@ NON_UI_CODES = {
     "desktop_auth_required",
     # `GET /api/handoff/render-status` 的参数错误：只有 `tavotto open` 的轮询客户端会调，界面不展示（ADR 0131 §六）
     "bad_handoff_query",
+    # `POST /api/handoff/display-ack`（重复交接的显示确认）的参数错误：调用方是前端自己的静默 fire-and-forget，不展示（ADR 0131）
+    "bad_handoff_ack",
     # 一键安装的**进度**状态码，不是错误响应：它们的文案在
     # dialogs:settings.agents.install.error.*（由 pnpm i18n:check
     # 守双语齐全），不该也不能进 errors.backend 那张表。

@@ -423,6 +423,12 @@ describe('applyOpenRequest：重复交接的显示确认', () => {
     expect(acks()).toEqual([{ id: 'Fig1.pdf', status: 'failed', code: 'engine_files_incomplete' }])
   })
 
+  it('失败但已过期（源文件改过、替换渲染未开始）：不发，等替换渲染自己写结论', async () => {
+    await landWithRender({ status: 'error', code: 'engine_files_incomplete', stale: true })
+    await applyOpenRequest({ stem: 'Fig1' })
+    expect(acks()).toEqual([])
+  })
+
   it('失败却没有 code：落成 render_failed，不发空串', async () => {
     await landWithRender({ status: 'error', code: '' })
     await applyOpenRequest({ stem: 'Fig1' })
