@@ -1072,8 +1072,10 @@ def _drive_task(sess: dict, task_run, cand, consume, on_changed, script: str) ->
         consume()
         if sess["status"] == "timeout":
             raise ai_tasks.TaskError("timeout", "agent")
-        if sess["status"] in ("cancelled", "interrupted"):
-            return  # 取消已经挂在任务上（`cancel` / `interrupt_all` 先问 Task Core），编排器随即丢弃候选
+        if task_run.cancelled() or sess["status"] in ("cancelled", "interrupted"):
+            # 取消已经挂在任务上（`cancel` / `interrupt_all` 先问 Task Core、再杀进程），编排器随即丢弃候选。先看任务的取消标记
+            # 再看退出码：Windows 上被杀的进程退出码非零，且这一刻 `cancel` 可能还没来得及把会话改成 cancelled
+            return
         if sess["proc"].returncode != 0:
             raise ai_tasks.TaskError("agent_exit_nonzero", str(sess["proc"].returncode))
 

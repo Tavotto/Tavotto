@@ -292,6 +292,8 @@ def test_swapped_directory_symlink_in_project_fails_untouched(env, tmp_path):
 
 def test_retargeted_file_symlink_in_project_fails_untouched(env, tmp_path):
     """文件符号链接被改指向（lstat 的 size / mtime 可能碰巧相同）：目标写进指纹。"""
+    if os.utime not in os.supports_follow_symlinks:
+        pytest.skip("本平台不能不跟随链接地改 mtime（Windows），量不出「只有目标变」这一形状")
     a, b = tmp_path / "x_a.csv", tmp_path / "x_b.csv"
     a.write_text("1", encoding="utf-8")
     b.write_text("2", encoding="utf-8")
@@ -325,3 +327,25 @@ def test_interrupt_all_leaves_a_committing_task_alone(env, monkeypatch):
     assert seen == [0], "提交中的会话不计入被中断数"
     assert sess["status"] == "done" and '"new"' in _project_text(env)
     assert ai_history.get(sid)["status"] == "done"
+
+
+def test_cancel_wins_even_if_the_killed_process_is_seen_before_the_status_flips(env, monkeypatch):
+    """`cancel` 先挂取消、再杀进程、最后才改会话状态：泵线程可能先看到被杀进程的非零退出码（Windows 上常见）。
+    结局仍须是 cancelled，不能当成「Agent 运行失败」。"""
+    real = ai_bridge._terminate
+
+    def slow_terminate(sess):
+        real(sess)
+        time.sleep(1.0)  # 进程已死、会话还没改成 cancelled 的那个窗口
+
+    monkeypatch.setattr(ai_bridge, "_terminate", slow_terminate)
+    env["code"] = EDIT + "; time.sleep(30)"
+    sid, _ = _run(env)
+    deadline = time.monotonic() + 10
+    while '"new"' not in (Path(env["cwd"][0]) / "fig1.py").read_text(encoding="utf-8"):
+        assert time.monotonic() < deadline
+        time.sleep(0.05)
+    assert ai_bridge.cancel(sid) is True
+    sess = _wait(sid)
+    assert sess["status"] == "cancelled" and _project_text(env) == SCRIPT
+    assert ai_history.get(sid)["outcome"] == "cancelled"
