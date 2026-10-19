@@ -61,7 +61,7 @@
 | 逻辑名 | 回答什么 |
 | --- | --- |
 | `c1_tutorial_funnel_by_version` | `tutorial_started → tutorial_completed`，按 `tutorial_version` 拆分 |
-| `c2_tutorial_steps_by_step_id` | 当前版本（`tutorial_version = 2`，对应 `web/src/store/onboardingStore.ts` 的 `ONBOARDING_FLOW_VERSION`）各步骤到达的安装数，用来看跳步/流失 |
+| `c2_tutorial_steps_by_step_id` | 当前版本（`tutorial_version = 3`，对应 `web/src/store/onboardingStore.ts` 的 `ONBOARDING_FLOW_VERSION`）各步骤到达的安装数，用来看跳步/流失 |
 | `c3_export_return_weekly` | 首次导出后每周再导出（「完成有用操作的留存」，W1–W4） |
 | `c4_engaged_d7_return` | 启动队列的第 7 天（精确日）有效使用回访 |
 

@@ -351,22 +351,51 @@ def test_copy_status_lists_only_user_saved_layouts(data_dir, client):
 def test_copy_status_layouts_is_none_when_the_inventory_is_incomplete(
     data_dir, client, monkeypatch
 ):
-    """遍历 / stat 出错不能少列一项冒充完整清单：回 None（「不知道」），前端据此中止重置。"""
+    """遍历 / stat 出错不能少列一项冒充完整清单：回 None（「不知道」），前端据此中止重置。
+
+    不能靠 `Path.glob()` / `Path.is_file()` 抛错——它们会把权限 / I/O 错误吞成「没有」/ False
+    （Python 3.14 起 glob 也是），所以这里打桩的是实现真正依赖的 `os.stat` / `os.scandir`。
+    """
     first = tutorial.ensure_tutorial_copy()
     store = engine_config.project_store_dir(first.path)
     store.mkdir(parents=True, exist_ok=True)
     (store / "MyDraft.json").write_text("{}", encoding="utf-8")
     (store / "Locked.json").write_text("{}", encoding="utf-8")
-    real_is_file = Path.is_file
+    meta = tutorial.tutorial_metadata()
+    assert tutorial.saved_layouts(first.path, meta) == ["Locked", "MyDraft"]
 
-    def flaky_is_file(self):
-        if self.name == "Locked.json":
+    real_stat = os.stat
+
+    def flaky_stat(path, *a, **kw):
+        if os.fspath(path).endswith("Locked.json"):
             raise PermissionError("acl")
-        return real_is_file(self)
+        return real_stat(path, *a, **kw)
 
-    monkeypatch.setattr(Path, "is_file", flaky_is_file)
-    assert tutorial.saved_layouts(first.path, tutorial.tutorial_metadata()) is None
-    assert client.get("/api/tutorial").get_json()["copy"]["layouts"] is None
+    with monkeypatch.context() as mp:
+        mp.setattr(tutorial.os, "stat", flaky_stat)
+        assert tutorial.saved_layouts(first.path, meta) is None
+        assert client.get("/api/tutorial").get_json()["copy"]["layouts"] is None
+
+    real_scandir = os.scandir
+
+    def flaky_scandir(path, *a, **kw):
+        if os.fspath(path) == os.fspath(store):
+            raise PermissionError("acl")
+        return real_scandir(path, *a, **kw)
+
+    with monkeypatch.context() as mp:
+        mp.setattr(tutorial.os, "scandir", flaky_scandir)
+        assert tutorial.saved_layouts(first.path, meta) is None
+
+    # 条目在列举与 stat 之间被删掉：不算清点不全
+    def vanished_stat(path, *a, **kw):
+        if os.fspath(path).endswith("Locked.json"):
+            raise FileNotFoundError(path)
+        return real_stat(path, *a, **kw)
+
+    with monkeypatch.context() as mp:
+        mp.setattr(tutorial.os, "stat", vanished_stat)
+        assert tutorial.saved_layouts(first.path, meta) == ["MyDraft"]
 
 
 def test_stale_leftovers_from_an_interrupted_reset_are_swept(data_dir):

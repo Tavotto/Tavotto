@@ -47,6 +47,7 @@ import json
 import os
 import re
 import shutil
+import stat
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -315,21 +316,33 @@ def saved_layouts(dest: Path, meta: dict) -> list[str] | None:
 
     重置会把整份副本目录换掉，所以这里列的正是重置会一并删除的：项目收纳目录
     `tavottofile/` + 旧位置 `canvases/`（与 `api_layouts` 对该项目的取法一致）。
-    数据目录 `layouts/` 不在副本里、重置不删它，故不列。任何一处遍历 / stat 失败都回
-    None 而不是少列一项：调用方（重置确认）拿「不知道」当「没有」，就会删掉没告诉用户的排版。"""
+    数据目录 `layouts/` 不在副本里、重置不删它，故不列。
+
+    任何一处遍历 / stat 失败都回 None 而不是少列一项：调用方（重置确认）拿「不知道」当
+    「没有」，就会删掉没告诉用户的排版。所以**不用** `Path.glob()` / `Path.is_file()`——
+    它们（Python 3.14 起 glob 也是）会把权限 / I/O 错误吞成「没有」或 False。用 `os.scandir`
+    与 `os.stat`，只有「不存在」（目录本来就没有、条目在列举与 stat 之间被删）算正常。"""
     own = str(meta.get("document_name") or "")
     names: set[str] = set()
-    try:
-        for d in (config.project_store_dir(dest), dest / "canvases"):
-            if not d.is_dir():
+    for d in (config.project_store_dir(dest), dest / "canvases"):
+        try:
+            entries = list(os.scandir(d))
+        except FileNotFoundError:
+            continue
+        except OSError:
+            return None
+        for entry in entries:
+            stem, ext = os.path.splitext(entry.name)
+            if ext != ".json" or stem == own or not documents.is_user_document_stem(stem):
                 continue
-            for p in d.glob("*.json"):
-                if p.stem == own or not documents.is_user_document_stem(p.stem):
-                    continue
-                if p.is_file():
-                    names.add(p.stem)
-    except OSError:
-        return None
+            try:
+                st = os.stat(entry.path)
+            except FileNotFoundError:
+                continue  # 刚被删掉 / 断开的链接：重置也删不掉什么
+            except OSError:
+                return None
+            if stat.S_ISREG(st.st_mode):
+                names.add(stem)
     return sorted(names)
 
 
