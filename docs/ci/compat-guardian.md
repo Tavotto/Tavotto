@@ -337,10 +337,11 @@ CG-02 的 27 条真实差异聚成恰好两簇：G1（show 后 close，11 条）
 输出 `DIR/repro.json`（最小脚本全文、必要数据哈希、运行命令、环境身份、原生行为、Tavotto 行为、可复现性、缩减前后、归因证据、
 预算与全部试验）、`DIR/minimal/`、`DIR/work/evidence/`。`minimize --replay` 用记录的缩减重跑并核对签名。
 
-首批真实结果与家族记录：`families/G1-show-close-zero-figures.json`（11 → 5 条语句；已由 #1138 修复，`fix_pr` 记录在案，`RealRepro` / `RealDiscovery` 的 G1 用例已转为「修复后无差异」的回归）、
-`families/G2-same-path-multi-figure.json`（已由 #1141 修复，`fix_pr` 记录在案，G2 用例转为回归）（13 → 7 条）；记录里写明根因、关键回归测试、已验证/未验证环境，
-`in_corpus: false`、`fix_pr: null`。`tests/test_compat_guardian_families.py::RealRepro` 钉着这两个最小复现**目前仍然失败**：
-缺口修好时它们会红，那是更新记录、把复现转成正式回归用例的信号。
+首批真实结果与家族记录：`families/G1-show-close-zero-figures.json`（11 → 5 条语句）、`families/G2-same-path-multi-figure.json`
+（13 → 7 条）；记录里写明根因、关键回归测试、已验证/未验证环境。两族都已修复：G1 由 #1138、G2 由 #1141，记录里 `fix_pr` 分别是
+1138 / 1141，`in_corpus` / `promoted` 仍是 `false`（进语料要维护者决定）。`tests/test_compat_guardian_families.py::RealRepro` 与
+`tests/test_compat_explore.py::RealDiscovery` 的 G1 / G2 用例已转为「修复后原生 / Tavotto 无差异」的回归；尚未修复的族仍按
+「最小复现目前仍然失败」钉住——缺口修好时那条会红，那是更新记录（`fix_pr`）、把复现转成正式回归用例的信号。
 
 最小化过程中暴露并修掉了 explore 比较里的一个误报：无标题的图（原生 `[""]` vs Tavotto `[]`）曾被当作同路径内容差异；
 最小化签名因此新增「原生确有多图写同一路径」这一条，缩减不能漂移到别的原因上。
