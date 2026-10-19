@@ -1705,9 +1705,16 @@ def build_report(
         }
         for cid in by_cls.get("product_bug", [])
     ]
+    # 按崩溃事实收集，不看最终分类：阶段/别的路由已失败 + 路由 runner 崩溃时
+    # 分类仍是 product_bug，但基础设施故障不能因此从汇总里消失。
     runner_errors = [
-        {"id": cid, "detail": _runner_error_detail(results[cid])[-400:]}
-        for cid in by_cls.get(CC.RUNNER_ERROR, [])
+        {
+            "id": c["id"],
+            "classification": results[c["id"]]["classification"],
+            "detail": _runner_error_detail(results[c["id"]])[-400:],
+        }
+        for c in cases
+        if _runner_error_detail(results[c["id"]])
     ]
     parity = [
         {"id": cid, **(results[cid]["browser"] or {})}
@@ -1810,7 +1817,7 @@ def render_summary(report: dict) -> str:
         out.append("\n### Runner errors（基础设施故障，不计入产品缺陷）\n")
         for e in s["runner_errors"]:
             out.append(
-                f"- `{e['id']}` — runner 崩溃，见报告 JSON 的 detail.runner_error（run_group 崩溃）或 routes.runner_error.detail（路由 runner 崩溃）"
+                f"- `{e['id']}`（最终分类 {e.get('classification', '?')}）— runner 崩溃，见报告 JSON 的 detail.runner_error（run_group 崩溃）或 routes.runner_error.detail（路由 runner 崩溃）"
             )
     census = report["artist_census"][:10]
     if census:
@@ -1930,7 +1937,7 @@ def evaluate_gate(
     # runner 自身崩溃：不是产品缺陷（上面不算），这些 case 没有裁决。维护者裁决
     # （#1178）：门禁只告警、不致红——基础设施故障不该挡住产品改动；但必须可见
     # （告警 + 报告里的 Runner errors 一节），不能静默（#1133）。
-    crashed = [c["id"] for c in cases if results[c["id"]]["classification"] == CC.RUNNER_ERROR]
+    crashed = [c["id"] for c in cases if _runner_error_detail(results[c["id"]])]
     if crashed and warnings is not None:
         warnings.append(
             f"runner 自身崩溃，这些 case 没有裁决（基础设施故障，非产品回归）：{crashed}"

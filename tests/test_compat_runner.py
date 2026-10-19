@@ -943,6 +943,32 @@ class TestRunnerError:
         report = CM.build_report([case("y")], {"y": crashed}, {}, "current", "all")
         assert report["summary"]["runner_errors"][0]["detail"] == "Traceback: boom"
 
+    def test_crash_alongside_product_bug_still_listed_in_runner_errors(self):
+        """stage 失败 + 路由崩溃 → 仍是 product_bug，但崩溃按事实进 runner_errors。"""
+        c = case("z")
+        res = CM._blank(c)
+        res["stages"].update(execute=True, replay=False)
+        res["routes"] = self._crashed_routes()
+        results = CM._finish({"z": res}, [c], 0.0)
+        assert results["z"]["classification"] == "product_bug"
+        report = CM.build_report([c], results, {}, "current", "all")
+        s = report["summary"]
+        assert s["classification"].get("runner_error", 0) == 0  # 分类计数不重复
+        assert [b["id"] for b in s["product_bugs"]] == ["z"]
+        (e,) = s["runner_errors"]
+        assert e["id"] == "z" and e["classification"] == "product_bug"
+        assert e["detail"] == "Traceback: route boom"
+        text = CM.render_summary(report)
+        assert "Runner errors" in text and "`z`" in text
+        import summarize as SUM
+
+        detail = SUM._detail("compat.json", {"target": "bundled", "summary": report["summary"]})
+        assert "runner 崩溃 1" in detail
+        warns: list[str] = []
+        CM.evaluate_gate("pr", [c], results, {"cases": {}}, warns)
+        wtext = "\n".join(warns)
+        assert "runner 自身崩溃" in wtext and "z" in wtext
+
     def test_gate_warns_but_does_not_fail_on_runner_error(self):
         """维护者裁决（#1178）：runner 崩溃门禁只告警不致红，但告警里逐条可见。"""
         cases = [case("x")]
