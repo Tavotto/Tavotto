@@ -271,6 +271,16 @@ ProtocolError = wireproto.ProtocolError
 _ms = figsession.ms_since
 
 
+def _source_stamp(path: Path) -> tuple[int, int, int, str] | None:
+    """`(mtime_ns, size, inode, sha256)`；读不了回 None。"""
+    try:
+        st = os.stat(path)
+        digest = hashlib.sha256(Path(path).read_bytes()).hexdigest()
+    except OSError:
+        return None
+    return (st.st_mtime_ns, st.st_size, st.st_ino, digest)
+
+
 class SafeSession(figsession.LiveFigureSession):
     """safe 档的 LiveFigureSession：引擎自己写盘时摘掉 savefig 拦截。
 
@@ -1115,14 +1125,11 @@ class Worker(wireproto.V1Handler):
         # 脚本 import 了却从未用到、又没装的包不挡图（ADR 0061 §二 2026-09-24 修订）：判据与
         # 父进程的联合计划同一份（`figcapture.unused_imports`）——计划没要求装它，这里就得让
         # 那一行 import 过得去。读不了 / 解析不了就不装：脚本随后会以它自己的错误结束。
-        # 同一份字节还算 `source_sha256`（TAF 改图验证的判据：这次 build 执行的是哪一版源码）。读一次、复用：
-        # 下面紧跟着就是 import 用户脚本，且同一进程只 build 一次（`self.built` 早退），所以这就是被执行的版本。
-        # 已知边界：外部写者恰好在这次读与 import 的读之间改文件（微秒级）——不再设防。
+        # 这份字节只给 ast.parse 用；`source_sha256` 另走执行前后括号（见下面 `pre` / `post`）。
         try:
             import ast  # noqa: PLC0415
 
             source_bytes = self.script.read_bytes()
-            self._source_sha256 = hashlib.sha256(source_bytes).hexdigest()
             unused = figcapture.unused_imports(ast.parse(source_bytes))
         except (OSError, SyntaxError, ValueError):
             unused = frozenset()
@@ -1148,6 +1155,12 @@ class Worker(wireproto.V1Handler):
 
         capture_threads = set(threading.enumerate())
         t_script = time.perf_counter()
+        # `source_sha256`（TAF 改图验证的判据：这次 build 执行的是哪一版源码）用执行前后括号：Python 的 loader
+        # （runpy / import_module）读源码那一刻必落在 pre 与 post 之间；两端 (mtime_ns, size, inode, sha) 完全
+        # 相同 ⇒ 这段时间里文件没被写过（任何写入都推进 mtime；刻意 utime 回拨属对抗性，不设防），loader 读到的
+        # 就是这份字节。两端不同 → None（验证记 unknown，不猜）。已知边界：import_module 路径若命中项目外遗留的、
+        # 与源码 mtime / size 恰好一致的过期 .pyc（项目内 worker 不写 .pyc，`_suppress_project_bytecode`）。
+        pre = _source_stamp(self.script)
         # `SystemExit` 不是 `Exception`：脚本末尾的 `sys.exit(main())` / `exit()` /
         # `quit()` 会一路穿过 `ensure_built` 的 `except Exception`，落到主循环
         # 那条给协议 `shutdown` 用的 `except SystemExit: break` 上——worker 悄无
@@ -1208,6 +1221,9 @@ class Worker(wireproto.V1Handler):
                 # 脚本跑完了：之后再有谁读 stdin 一律 EOF，绝不再发问（也绝不再碰协议管道）
                 channel.closed = True
                 ledger.stop()
+                # 无论正常结束 / SystemExit / 异常都在这里收括号（finally 不改变原有异常传播）
+                post = _source_stamp(self.script)
+                self._source_sha256 = pre[3] if pre is not None and pre == post else None
         script_ms = _ms(t_script)
         # 脚本跑到了末尾，但被守卫拦下的关键操作之后它观察过受影响的路径（用户 `except Exception`
         # 吞掉什么都不影响这条带外事实）：结果可能与直接 Python 不同，不记成完整成功（P01a，AC-02）

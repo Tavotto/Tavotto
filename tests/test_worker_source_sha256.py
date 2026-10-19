@@ -46,3 +46,43 @@ def test_build_reports_the_sha256_of_the_executed_source_and_a_second_build_keep
         assert executed != hashlib.sha256(script.read_bytes()).hexdigest()
     finally:
         pool.discard(w)
+
+
+SELF_REWRITING = SCRIPT.replace(
+    "    fig.savefig",
+    "    import os, pathlib\n"
+    "    p = pathlib.Path(__file__)\n"
+    "    p.write_bytes(p.read_bytes() + b'\\n# rewritten\\n')\n"
+    "    os.utime(p, ns=(2_000_000_000_000_000_000, 2_000_000_000_000_000_000))\n"
+    "    fig.savefig",
+)
+
+
+def test_rewrite_during_execution_reports_none(tmp_path):
+    (tmp_path / "fig1.py").write_bytes(SELF_REWRITING.encode())
+    w = pool.one_shot("fig1.py", str(tmp_path), "main")
+    try:
+        resp = w.ensure_built()
+        assert resp["source_sha256"] is None
+        assert w.last_build_source_sha256 is None
+    finally:
+        pool.discard(w)
+
+
+def test_rewrite_by_paper_style_import_before_execution_reports_none(tmp_path):
+    script = tmp_path / "fig1.py"
+    script.write_bytes(SCRIPT.encode())
+    (tmp_path / "paper_style.py").write_text(
+        "import pathlib\n"
+        "p = pathlib.Path(__file__).with_name('fig1.py')\n"
+        "p.write_bytes(p.read_bytes() + b'\\n# edited by import\\n')\n"
+        "def save(*a, **k):\n    pass\n",
+        encoding="utf-8",
+    )
+    w = pool.one_shot("fig1.py", str(tmp_path), "main")
+    try:
+        resp = w.ensure_built()
+        assert resp["source_sha256"] is None
+        assert w.last_build_source_sha256 is None
+    finally:
+        pool.discard(w)
