@@ -38,6 +38,8 @@ import { renderKey, useRenderStore } from '@/store/renderStore'
 import { useUiStore } from '@/store/uiStore'
 import { runValidation, useValidationStore } from '@/store/validationStore'
 import { bindingFor } from '@/lib/specBinding'
+import { DEFAULT_PROFILE_ID } from '@/lib/profile'
+import { profileName } from '@/lib/profileText'
 import { toCatalog, useProfileStore } from '@/store/profileStore'
 import { applyExportJob, cancelCurrentExport, refreshExportStatus, resetExportState, runExport, useExportStore } from '@/store/exportStore'
 import { currentFigureOf } from '@/lib/problemContext'
@@ -1446,8 +1448,17 @@ describe('T33 · 检查摘要按导出目标取范围', () => {
     await mountDialogs()
     await openDialog()
     expect(radios()[0].getAttribute('aria-checked')).toBe('true')
-    expect(text()).toContain('导出前检查通过')
-    expect(text()).toContain('仅此图')
+    // 没查出问题时说的是「按哪套规范、查的哪个范围没查出」，不是一句「检查通过」
+    const ok = document.body.querySelector('[data-export-check-ok]')
+    expect(ok, '没查出问题时给出结论行').toBeTruthy()
+    const record = useProfileStore.getState().specs.find((r) => r.id === DEFAULT_PROFILE_ID)
+    expect(record, '夹具里有默认规范').toBeTruthy()
+    const specName = profileName(record!)
+    expect(ok!.textContent).toContain(`按「${specName}」未发现问题`)
+    expect(ok!.textContent).toContain('仅此图')
+    expect(ok!.textContent).not.toContain('检查通过')
+    // 覆盖范围说在明处：识别不出的内容不在检查之内
+    expect(ok!.querySelector('[data-export-check-coverage]')?.textContent).toContain('不在检查之内')
     expect(button('开始导出')!.hasAttribute('disabled')).toBe(false)
 
     await click(radios()[1])
