@@ -517,6 +517,9 @@ export function DiagnosticsSendDialog({
                   <p className="type-caption">{ds('preparing')}</p>
                 )}
                 <p className="type-caption">{ds('notIncluded')}</p>
+                <p className="type-caption" data-diag-send-error-summary-note>
+                  {ds('errorSummaryNote')}
+                </p>
               </section>
 
               {/* 额外内容：默认不勾、不记忆（每次打开从头来）；勾选变化 = 重新备包 */}

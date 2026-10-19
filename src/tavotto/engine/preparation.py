@@ -1134,11 +1134,12 @@ class PreparationService:
                     expected_worker=worker,
                     **({"run": plan.run} if plan.run is not None else {}),
                 )
-                note = (
-                    "build 期间取消：本计划新起的会话已关闭；脚本已经产生的外部副作用不撤销"
-                    if closed
-                    else "build 期间取消：本计划的会话已被替换，未关闭后来的会话；脚本已经产生的外部副作用不撤销"
-                )
+                if closed:
+                    note = "build 期间取消：本计划新起的会话已关闭；脚本已经产生的外部副作用不撤销"
+                elif pool.is_fenced(worker):
+                    note = "build 期间取消：会话的强制关闭尚未确认，已围栏、下次使用前会重试；脚本可能仍在运行，已产生的外部副作用不撤销"
+                else:
+                    note = "build 期间取消：本计划的会话已被替换，未关闭后来的会话；脚本已经产生的外部副作用不撤销"
 
             else:
                 note = "build 期间取消：会话属于别的消费者，未关闭；本计划不再等它"

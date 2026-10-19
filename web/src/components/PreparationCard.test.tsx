@@ -23,6 +23,14 @@ vi.mock('@/lib/api', async (importOriginal) => ({
   fetchEngineEnvironment: vi.fn().mockResolvedValue({}),
   fetchDependencyOffer: vi.fn(),
   fetchScriptArguments: vi.fn().mockResolvedValue({ ok: true, script: 'plot.py', arguments: { status: 'none', arguments: [] } }),
+  fetchPanels: vi.fn(),
+  fetchReadiness: vi.fn().mockResolvedValue({
+    project_id: 'project-a', fingerprint: 'empty-readiness', generated_at: 0,
+    panels: [], conflicts: [], issues: [],
+    summary: { total: 0, editable: 0, auto_linkable: 0, needs_probe: 0, conflict: 0, source_missing: 0, layout_only: 0 },
+    project: { writable: true, registry_valid: true, scan_ok: true, can_rescan: true },
+  }),
+  refreshProject: vi.fn(),
   cancelNativeSession: vi.fn().mockResolvedValue({ confirmed: true, session: {} }),
 }))
 vi.mock('@/store/liveSync', async (importOriginal) => ({
@@ -42,6 +50,8 @@ import {
   createPreparationSession,
   fetchDependencyOffer,
   fetchPreparationSession,
+  fetchPanels,
+  refreshProject,
   probeScript,
   type CapturedFigureDescriptor,
   type PreparationAction,
@@ -438,6 +448,14 @@ const STATES: Record<string, Partial<PreparationReport>> = {
     unlinked_stems: ['a_scaled', 'b_scaled'],
     actions: [action('run'), action('recheck')],
   },
+  completedPartial: {
+    phase: 'partial',
+    outcome: { kind: 'succeeded' },
+    facts: { execution_finished: true, figure_captured: true },
+    captured: [fig('good')],
+    failed_figures: [{ stem: 'bad', code: 'preview_capture_failed' }],
+    actions: [action('run'), action('recheck')],
+  },
   cancelled: { phase: 'cancelled', outcome: { kind: 'cancelled' }, actions: [action('run'), action('recheck')] },
 }
 
@@ -487,6 +505,8 @@ beforeEach(() => {
   vi.mocked(addRuntimePanelToCanvas).mockReset()
   vi.mocked(openFastEdit).mockClear()
   vi.mocked(refreshProjectNow).mockClear()
+  vi.mocked(fetchPanels).mockReset()
+  vi.mocked(refreshProject).mockReset()
   useRuntimeAssetStore.setState({ assets: [], loadAssets: async () => {} })
   vi.mocked(probeScript).mockReset()
   setCurrentProjectId('pj-a')
@@ -549,6 +569,17 @@ describe('safe → native 回退成功：默认句子不变，详情里补一行
     expect(details()!.textContent).toContain('不会写回脚本')
     expect(panel().querySelector('[data-prep-line]')!.textContent).toBe(line) // 默认句子没动
     expect(note()).not.toBeNull()
+  })
+
+  it('部分捕获（partial + succeeded）也是回退成功：详情里同样补这一行（#1134 Codex r4310249719）', async () => {
+    await mount()
+    useUiStore.setState({ guideCard: 'card' })
+    await openWith(
+      report({ ...STATES.completedFallback, phase: 'partial', failed_figures: [{ stem: 'bad', code: 'preview_capture_failed' }] }),
+    )
+    await toggleDetails()
+    expect(note()).not.toBeNull()
+    expect(details()!.textContent).toContain('已自动换成按真实文件运行')
   })
 
   it('描述符说能写回就不说「不会写回」（事实读后端，不在前端推）', async () => {
@@ -1185,25 +1216,25 @@ describe('执行结束、捕获到图、首次编辑渲染是三件事', () => {
     await mount()
     useUiStore.setState({ guideCard: 'card', leftTab: 'layers' })
     let finish: () => void = () => {}
-    vi.mocked(refreshProjectNow).mockImplementationOnce(() => new Promise<void>((r) => (finish = r)))
+    const actual = await vi.importActual<typeof import('@/store/liveSync')>('@/store/liveSync')
+    vi.mocked(refreshProjectNow).mockImplementationOnce(actual.refreshProjectNow)
+    vi.mocked(refreshProject).mockImplementationOnce(() => new Promise((resolve) => {
+      finish = () => resolve({} as Awaited<ReturnType<typeof refreshProject>>)
+    }))
+    vi.mocked(fetchPanels).mockResolvedValueOnce({ panels: [], figures_dir: '/figures' })
     const loadAssets = vi.fn(async () => {})
     useRuntimeAssetStore.setState({ assets: [], loadAssets })
-    // `AssetBrowser` 的忙碌态 / 磁盘素材面板读的是 useAssetStore.loading（不是 runtime 的 assetsLoading）
-    const load = vi.fn(async () => {
-      useAssetStore.setState({ loading: false })
-      return null
-    })
-    useAssetStore.setState({ loading: false, load })
+    useAssetStore.getState().clear()
     await openWith(report({ ...STATES.noFigure, no_figure_hint: { kind: 'raster_script', library: 'pillow', in_project: true } }))
     await act(async () => primary()!.click())
     expect(useUiStore.getState().leftTab).toBe('assets')
     expect(useAssetStore.getState().loading).toBe(true)
-    expect(load).not.toHaveBeenCalled()
+    expect(fetchPanels).not.toHaveBeenCalled()
     expect(loadAssets).not.toHaveBeenCalled()
     await act(async () => finish())
     expect(loadAssets).toHaveBeenCalledTimes(1)
-    // 刷新结束后若 loading 还挂着（没人去取清单）就补一次强制取清单，不让素材库一直转圈
-    expect(load).toHaveBeenCalledWith({ force: true })
+    // 卡片委派真实统一刷新，强制清单只取一次，不再自己用 loading 猜是否补跑。
+    expect(fetchPanels).toHaveBeenCalledTimes(1)
     expect(useAssetStore.getState().loading).toBe(false)
   })
 
@@ -1297,6 +1328,25 @@ describe('执行结束、捕获到图、首次编辑渲染是三件事', () => {
     await toggleDetails()
     expect(details()?.querySelector('[data-prep-unlinked]')?.textContent).toBe(
       '此前带其他参数生成的 a_scaled 和 b_scaled 已不再关联，用原参数再运行一次即可恢复。',
+    )
+  })
+
+  it('部分捕获同时替换掉了带参数产出的图名：详情里照样说清哪些已不再关联（#1134 Codex r4310249719）', async () => {
+    await mount()
+    await openWith(report({ ...STATES.completedPartial, unlinked_stems: ['a_scaled'] }))
+    await toggleDetails()
+    expect(details()?.querySelector('[data-prep-unlinked]')).not.toBeNull()
+  })
+
+  it('部分捕获（#1134）：不叫画好了——标题说 N/M 张并点名失败的图，主按钮仍是进入编辑，原因码折叠在详情里', async () => {
+    await mount()
+    await openWith(report(STATES.completedPartial))
+    expect(panel().dataset.prepState).toBe('completed_partial')
+    expect(panel().querySelector('[data-prep-line]')?.textContent).toBe('只画好了 1/2 张图，bad 没画出来')
+    expect(primary()?.dataset.prepPrimary).toBe('enter_edit')
+    await toggleDetails()
+    expect(details()?.querySelector('[data-prep-failed-figures]')?.textContent).toBe(
+      '没画出来的图：bad（preview_capture_failed）。其余的图可以照常编辑。',
     )
   })
 

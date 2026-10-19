@@ -1021,3 +1021,45 @@ def test_recheck_revises_changed_dependency_authorization_with_the_same_status(
     assert unchanged["config_revision"] == changed["config_revision"]
     assert _action(unchanged, "recheck")["id"] == _action(changed, "recheck")["id"]
     assert fake_pool["build_calls"] == 0
+
+
+def test_partial_capture_is_partial_with_the_failed_figures_named_not_completed():
+    """#1134（G3）：一张图捕获成功、另一张预览捕获失败——phase 是 partial（不是 completed），outcome 仍是 succeeded
+    （成功那张照常可用），失败的图由 `failed_figures_of` 从同一份登记收口事实里读出（稳定码，不带原因文字）。"""
+    facts = next(
+        v["facts"]
+        for v in json.loads(VECTORS.read_text("utf-8"))["vectors"]
+        if v["name"].startswith("captured one figure, another one failed")
+    )
+    derived = prepsession.derive(facts)
+    assert derived["phase"] == prepsession.PHASE_PARTIAL
+    assert derived["outcome"] == {"kind": prepsession.OUTCOME_SUCCEEDED}
+    assert derived["figure_captured"] is True
+    assert prepsession.failed_figures_of(facts["attempt"]["finalize"]) == [
+        {"stem": "bad", "code": "preview_capture_failed"}
+    ]
+
+
+@pytest.mark.parametrize(
+    "finalize",
+    [
+        None,
+        {"registered": True},
+        {"registered": True, "failed_figures": []},
+        {"registered": False, "failed_figures": [{"stem": "bad", "code": "x"}]},
+        {"registered": True, "failed_figures": [{"code": "x"}, "junk"]},
+    ],
+)
+def test_no_failed_figures_means_completed_not_partial(finalize):
+    """全部成功（或没有可读的失败事实）保持 completed；登记被拒仍走原来的 failed 分支。"""
+    assert prepsession.failed_figures_of(finalize) == []
+    facts = next(
+        v["facts"]
+        for v in json.loads(VECTORS.read_text("utf-8"))["vectors"]
+        if v["name"] == "script target captured and registered"
+    )
+    facts["attempt"]["finalize"] = finalize
+    if finalize and finalize.get("registered") is False:
+        assert prepsession.derive(facts)["outcome"]["kind"] == prepsession.OUTCOME_FAILED
+    else:
+        assert prepsession.derive(facts)["phase"] == prepsession.PHASE_COMPLETED

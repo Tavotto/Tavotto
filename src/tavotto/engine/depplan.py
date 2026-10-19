@@ -1575,8 +1575,10 @@ def plan(
         if arbitrated.get(c.module, c.distribution) in installing
         and c.module not in missing_imports
     )
-    if roots_active:
+    if target_kind == TARGET_MANAGED:
         # 没有任何 import 条目指到的声明 root：照样进账（重建时装得回来）与装后核验（发行包 / 版本），import 名未知就留空
+        # hash 锁会重装整份集合，但这里只登记既有判据选中的相关声明，不把无关锁条目抬成 roots（#963）。
+        recorded_roots = (relevant & installing) if hash_mode else to_install
         covered = {m["distribution"] for m in (*missing, *install_only)}
         modules_of = {
             arbitrated.get(c.module, c.distribution): c.module
@@ -1594,7 +1596,7 @@ def plan(
                     "specifiers": sorted({it.specifier for it in by_name[name] if it.specifier}),
                     "via": [],
                 }
-                for name in sorted(to_install)
+                for name in sorted(recorded_roots)
                 if name in by_name and name not in covered
             ),
         )

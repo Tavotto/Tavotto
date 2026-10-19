@@ -84,6 +84,7 @@ from .engine import (
     execspec as engine_execspec,
     exportjob as engine_exportjob,
     exportreq as engine_exportreq,
+    exporttelemetry as engine_exporttelemetry,
     figcapture as engine_figcapture,
     handoff as engine_handoff,
     handoffreceipt as engine_handoffreceipt,
@@ -1671,6 +1672,15 @@ def _export_telemetry(job) -> None:
     )
 
 
+def _export_result_telemetry(job) -> None:
+    """导出终态 `export_result`：挂在作业的 `on_terminal` 上，由 `exportjob._emit` 在终局调**一次**。
+    同步 / 后台两条路、预运行后失败、取消、`run()` 早退的失败都经同一个 `_emit`；
+    请求被拒（`prepare` 抛）与 `overwrite=ask` 撞名（conflict）不到这里。"""
+    props = engine_exporttelemetry.properties(job)
+    if props is not None:
+        engine_telemetry.capture("export_result", props)
+
+
 def _legacy_export_response(job) -> tuple:
     """旧契约的回执形状（`files[] / export_dir / warnings`）。
 
@@ -1781,6 +1791,8 @@ def _prepare_export_job(spec: dict):
     # 上一次进程被 kill 时留下的临时目录：**在这里顺手扫掉**，
     # 不然它们会一直躺在用户的导出目录里，看起来像是我们弄脏的
     engine_exportjob.sweep_stale_tmp_dirs(out_dir)
+    # 作业已被受理：此后无论怎么结束都记一条终态（`export_result`）
+    job.on_terminal = _export_result_telemetry
     return job, None
 
 

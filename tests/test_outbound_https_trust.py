@@ -428,17 +428,25 @@ class TestStructure:
         offenders: list[str] = []
         openers: dict[str, str] = {}
         urlopen_modules: set[str] = set()
+        loopback_conn_modules: set[str] = set()
         for rel, tree in _modules():
             bad, found = _outbound_violations(rel, tree)
             offenders += bad
             openers.update(found)
             if any(_callee(c) == "urlopen" for c, _ in _calls_with_owner(tree)):
                 urlopen_modules.add(rel)
+            if any(
+                _callee(c) == "HTTPConnection" and _is_loopback_connection(c)
+                for c, _ in _calls_with_owner(tree)
+            ):
+                loopback_conn_modules.add(rel)
         assert not offenders, "\n".join(offenders)
         assert openers == OUTBOUND, openers
-        # 对照：三个回环模块真的被扫到了（扫描器不是空转）
-        assert {"app.py", "engine/handoff.py", "engine/session_client.py"} <= urlopen_modules, (
-            urlopen_modules
+        # 对照：回环模块真的被扫到了（扫描器不是空转）。带凭据的回环请求（#1132）已全部改走字面量
+        # `HTTPConnection("127.0.0.1", ...)`，只剩不带凭据的 app.py 探测还用模块级 `urlopen`
+        assert {"app.py"} <= urlopen_modules, urlopen_modules
+        assert {"engine/session_client.py", "engine/handoffreceipt.py"} <= loopback_conn_modules, (
+            loopback_conn_modules
         )
         assert not urlopen_modules & set(OUTBOUND), "出站各处不许再留模块级 urlopen"
 

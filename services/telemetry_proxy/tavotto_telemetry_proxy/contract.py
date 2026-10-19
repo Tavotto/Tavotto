@@ -71,6 +71,29 @@ EVENTS: dict[str, dict[str, dict]] = {
         "with_proof": BOOL,
         "panel_count": integer(1000),
     },
+    # 导出终态（2026-10-15）：与客户端表逐字对拍。stage / error_class 只在非 done / 出错时才带
+    "export_result": {
+        "outcome": enum("done", "partial", "failed", "cancelled"),
+        "scope": enum("canvas", "original"),
+        "pdf": BOOL,
+        "png": BOOL,
+        "eps": BOOL,
+        "tiff": BOOL,
+        "with_report": BOOL,
+        "delivered": integer(8),
+        "stage": enum(
+            "prepare", "source", "compile", "compose", "raster", "inspect", "publish", "report"
+        ),
+        "error_class": enum(
+            "request",
+            "environment",
+            "backend",
+            "artifact_rejected",
+            "source_changed",
+            "report",
+            "other",
+        ),
+    },
     "ai_assistant_invoked": {"agent": enum("codex", "claude", "other")},
     "update_completed": {"update_kind": enum("desktop", "pip", "pipx"), "target_version": VERSION},
     # ---- 客户端 CONSENT_VERSION 2（Session 22）新增的九条；与客户端表逐字对拍 ----

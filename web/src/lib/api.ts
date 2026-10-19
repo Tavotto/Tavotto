@@ -2166,6 +2166,19 @@ export interface ElementGeometry {
   stroke_pt?: number
   /** 裁剪框（figure 分数、y 向下）；只有矩形裁剪才给，非矩形裁剪不给 */
   clip?: [number, number, number, number]
+  /**
+   * 真实绘制次序（ADR 0086 修订）：越大越晚画、越在上层，跨 axes 也可比。主语是 manifest 测量那一刻
+   * 的 figure 对象（`pathgeom.paint_ranks`：Figure/Axes 的 children 按 zorder 稳定升序，与
+   * matplotlib draw 同一规则），不是 zorder 字面值也不是登记序。伪元素取成员里最晚画的，成员被别的 artist 隔开则不给。
+   * 缺席 = 次序未知（老引擎、3D 子轴），前端不据此判遮挡。
+   */
+  paint_order?: number
+  /**
+   * 填充此刻画出来的有效不透明度（0..1）；只有 `fill` 的 geometry 才有。matplotlib 的 artist alpha
+   * 是**替换**颜色里的 alpha 而非相乘，所以这就是 `get_facecolor()` 的 alpha；逐元素色取最小
+   * （保守：宁可认为盖不住）。缺席 = 未知，前端按「盖不住」处理。
+   */
+  fill_alpha?: number
 }
 
 /**
@@ -2338,6 +2351,11 @@ export interface ManifestElement {
    * 写 endpoints_frac override（[ax, ay, bx, by]）。
    */
   arrow_endpoints?: [number, number][]
+  /**
+   * 端点箭头（有 `arrow_endpoints`、不出 geometry）与按 bbox 命中的文字 / 图例类的真实绘制次序，语义同 `ElementGeometry.paint_order`。
+   * 缺席 = 次序未知，不判遮挡。
+   */
+  paint_order?: number
   /**
    * 直角坐标轴四条边框**画出来的那条线**（figure 分数、y 向下），供画布建立
    * 「边框内侧 / 外侧」的语义命中区（Prompt 16，`lib/tickSides.ts`）。
@@ -5710,6 +5728,8 @@ export interface PreparationReport {
   runtime_input?: { id: string; index: number; input_kind: string; secret: boolean } | null
   /** 这次尝试成功时真正捕获到的图（与试运行响应同一份描述符）；老后端没有 */
   captured?: CapturedFigureDescriptor[]
+  /** 部分捕获（phase `partial` + outcome `succeeded`）：这次运行里预览捕获失败的图，`code` 是稳定码；全部成功 / 老后端没有 = 空或缺省 */
+  failed_figures?: { stem: string; code?: string }[]
   /** 这次（无参数）运行替换掉的旧图名（T09b，与 `ProbeResult.unlinked_stems` 同一口径）；老后端没有 */
   unlinked_stems?: string[]
   /** 跑完没出图时的原因（`rasterhint`）：脚本自己用位图库把图片写成了文件，不是 Matplotlib 图；只是提示，不改 outcome / facts。老后端没有 */

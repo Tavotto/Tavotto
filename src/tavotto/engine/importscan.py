@@ -693,7 +693,7 @@ class _Visitor(ast.NodeVisitor):
             else:
                 self.dynamic.append(
                     ImportUse(
-                        "", arg, CONTEXT_DYNAMIC, node.lineno, self.via, enclosing=self._context()
+                        "", arg, CONTEXT_DYNAMIC, node.lineno, self.via, enclosing=self._enclosing()
                     )
                 )
         fn = node.func
@@ -1591,7 +1591,6 @@ class _Scanner:
                 self.main_reachable = True
             else:
                 self.main_queue += targets
-            self.dynamic += parsed.dynamic
             self.process(
                 _Job(self.script_p, "", entry_pkg, CONTEXT_UNCONDITIONAL, 0, "", None), parsed
             )
@@ -1603,6 +1602,17 @@ class _Scanner:
     # ------------------------------------------------------------ 处理
     def process(self, job: _Job, parsed: _Parsed) -> None:
         """把一个文件里的 import 变成 uses（继承来路的上下文），并把它们指向的本地文件排进队列。"""
+        # 与 named import 同在重放路径：同一文件经另一种保护抵达时不重读源码，但动态相关性也必须重算。
+        for d in parsed.dynamic:
+            self.dynamic.append(
+                dataclasses.replace(
+                    d,
+                    via=job.via,
+                    enclosing=_join_enclosing(
+                        job.enclosing or job.ctx, d.enclosing or CONTEXT_UNCONDITIONAL
+                    ),
+                )
+            )
         for su in parsed.uses:
             if job.depth == 0:
                 use = su
@@ -1656,10 +1666,6 @@ class _Scanner:
             self.main_reachable = True
         else:
             self.main_queue += targets
-        for d in parsed.dynamic:
-            self.dynamic.append(
-                ImportUse("", d.full, CONTEXT_DYNAMIC, d.lineno, job.via, enclosing=d.enclosing)
-            )
         self.process(job, parsed)
 
     # ---- 一条 import 指向哪些本地文件 ----

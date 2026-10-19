@@ -15,7 +15,8 @@
 > `readiness-and-left-shell.md`「准备引导卡」。
 
 - **数据源三件套**：`scriptLibraryStore`（`/api/registry` 全视图，缓存 +
-  幂等去重）、`runtimeAssetStore.assets`（`GET /api/runtime/assets`，只读
+  同批通知合并、在途期间来的刷新共用一次补问；`loadedAt` 记录这份已落地快照的**请求发出时刻**，
+  不把响应晚到当成比准备结局更新，#902）、`runtimeAssetStore.assets`（`GET /api/runtime/assets`，只读
   清单 + `previewNonce` 预览换代）、`scriptRunStore`（运行状态机）。
   三者都在 `registry.changed` SSE 时重取**已经取过的**，项目切换全清。
 - **SSE 断线对账**：依赖安装 / 引擎 bootstrap 的进度只走 SSE（`/api/events` 无重放，队列满会丢），丢了终态事件卡片会永停「正在安装」。
@@ -160,6 +161,9 @@
   **同一项目**刷新失败不清空 `panels` / `byId` / `unsupported`（#561）；同项目的在途请求被合并、在途期间
   的调用共用一次补问，`force: true` 永远另起一次（手动刷新不许被在途请求吞掉）。`recentlyUsed` 是按
   文件 id 记的本机偏好，不清。看护 `store/assetStore.test.ts`、`store/projectSwitchAssets.test.ts`。
+  `refreshProjectNow()` 从扫描开始到强制清单落地一直持有 `assetStore.beginRefresh()` 的忙碌态，
+  清单请求的 finally 只释放自己的那一份；并发刷新各自释放，`clear()` 作废旧代全部持有者（#904）。
+  卡片不直接写 `loading`，不据它猜是否另发清单。看护 `store/libraryRefreshRace.test.ts`、`PreparationCard.test.tsx`。
 - **`scriptRunStore` 的四条纪律**（vitest 看护）：同脚本防并发（busy 即
   no-op，后端另有 409）；cancel 走后端取消端点（置标志 + 硬杀 worker），
   行内状态等**原请求**以 `execution_cancelled` 落地——绝不「界面装停了、
