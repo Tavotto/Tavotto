@@ -1356,3 +1356,167 @@ def _ended(db):
     with _sq.connect(db) as raw:
         raw.row_factory = _sq.Row
         return list(raw.execute("SELECT id, status, ended_ms FROM sessions"))
+
+
+# 会话详情的 `final`：cancel 之后 status 立刻是 cancelled，但 changed / diff / refresh 要等 _pump 收尾才算出来
+# ---------------------------------------------------------------------------
+def test_session_detail_is_not_final_until_the_pump_finishes(tmp_path, cli, monkeypatch):
+    state, _ = cli
+    state["delay"] = 2.0
+    figs = _project(tmp_path)
+    gate = threading.Event()
+    real_refresh = ai_bridge.refresh_outcome
+
+    def slow_refresh(*a, **k):
+        gate.wait(10)  # 把 pump 钉在「changed / diff 已算、refresh 还没出」的位置
+        return real_refresh(*a, **k)
+
+    monkeypatch.setattr(ai_bridge, "refresh_outcome", slow_refresh)
+    sid = ai_bridge.run("codex", "fig1.py", "p", str(figs))
+    assert ai_bridge.get(sid)["final"] is False  # 刚起：不是终态
+    assert ai_bridge.cancel(sid) is True
+    detail = ai_bridge.get(sid)
+    assert (
+        detail["status"] == "cancelled" and detail["final"] is False
+    )  # cancel 之后、pump 结束之前
+    time.sleep(0.5)  # 进程已被终止，pump 卡在 refresh 上：仍不是终态
+    assert ai_bridge.get(sid)["final"] is False
+    gate.set()
+    deadline = time.time() + 15
+    while time.time() < deadline and not ai_bridge.SESSIONS[sid].get("final"):
+        time.sleep(0.05)
+    done = ai_bridge.get(sid)
+    assert done["final"] is True and done["status"] in ("cancelled", "done", "failed")
+    _wait_idle()
+    engine_watch.stop()
+
+
+def test_detail_from_history_is_final_only_when_the_row_was_ended(tmp_path, cli):
+    figs = _project(tmp_path)
+    project_key = str(figs.resolve())
+
+    def start(sid, rid, owner, script="fig1.py"):
+        ai_history.record_start(
+            {
+                "id": sid,
+                "project": project_key,
+                "provider": "codex",
+                "script": script,
+                "client_request_id": rid,
+                "owner_pid": owner,
+            }
+        )
+
+    start("histdone0001", "rid-hist-000001", 0)
+    ai_history.record_end("histdone0001", "done", diff="D", changed=True)
+    assert ai_bridge.get("histdone0001")["final"] is True  # 历史库里的终态行
+    start("histcancel01", "rid-hist-000002", _live_other_pid(), "fig2.py")
+    ai_history.update_status(
+        "histcancel01", "cancelled"
+    )  # cancel 只改 status、不写 ended_ms：属主（另一个活着的服务进程）的 pump 还没收尾
+    assert ai_bridge.get("histcancel01")["final"] is False
+    ai_history.record_end("histcancel01", "cancelled")  # 那边的 pump 收尾：写了 ended_ms
+    assert ai_bridge.get("histcancel01")["final"] is True
+    # 属主已不在（owner_pid=0 → 未知 / 进程没了）：不会再有 pump 补结果——不等启动清理就是终态，前端不会永远轮询
+    start("histcancel02", "rid-hist-000003", 0, "fig3.py")
+    ai_history.update_status("histcancel02", "cancelled")
+    assert ai_bridge.get("histcancel02")["final"] is True
+    assert ai_history.mark_interrupted_running() >= 0  # 启动清理补上 ended_ms 之后照旧
+    assert ai_bridge.get("histcancel02")["final"] is True
+
+
+def test_session_detail_endpoint_carries_final(client, tmp_path, cli):
+    figs = _project(tmp_path)
+    _open(client, figs)
+    ai_history.record_start(
+        {
+            "id": "endpoint0001",
+            "project": str(figs.resolve()),
+            "provider": "codex",
+            "script": "fig1.py",
+            "owner_pid": 0,
+        }
+    )
+    ai_history.record_end("endpoint0001", "done")
+    body = client.get("/api/ai/sessions/endpoint0001").get_json()
+    assert body["final"] is True
+
+
+def test_interrupted_rows_are_final_even_without_ended_ms(tmp_path, cli):
+    """/api/shutdown 的 `interrupt_all` 写 interrupted 却不写 ended_ms，进程可能在 `_pump` 的 record_end 之前就退出：
+    属主已不在 → 不会再有结果，算 final；属主（另一个共用数据目录的服务进程）还活着 → 它的 pump 之后还会补 changed / diff / refresh，
+    不是 final（与 `OPEN_SESSION_SQL` 同一个概念，cancelled 同理）。确定终态的 status 直接算 final。"""
+    figs = _project(tmp_path)
+    project_key = str(figs.resolve())
+
+    def start(sid, rid, owner):
+        ai_history.record_start(
+            {
+                "id": sid,
+                "project": project_key,
+                "provider": "codex",
+                "script": f"{sid}.py",
+                "client_request_id": rid,
+                "owner_pid": owner,
+            }
+        )
+
+    dead, live = _dead_pid(), _live_other_pid()
+    for status in ("interrupted", "cancelled"):
+        start(f"{status[:4]}-dead1", f"rid-{status[:4]}-dead01", dead)
+        ai_history.update_status(f"{status[:4]}-dead1", status)  # 没有 ended_ms
+        assert ai_bridge.get(f"{status[:4]}-dead1")["final"] is True, status
+        start(f"{status[:4]}-live1", f"rid-{status[:4]}-live01", live)
+        ai_history.update_status(f"{status[:4]}-live1", status)
+        assert ai_bridge.get(f"{status[:4]}-live1")["final"] is False, (
+            status
+        )  # 属主的 pump 还会补结果
+    for status in ("done", "failed", "timeout"):
+        start(f"{status}-1", f"rid-{status}-000001", dead)
+        ai_history.update_status(f"{status}-1", status)
+        assert ai_bridge.get(f"{status}-1")["final"] is True, status
+    assert ai_history.mark_interrupted_running() >= 0
+    # 启动清理给属主已死、ended_ms 为空的 interrupted / cancelled 行补上 ended_ms
+    ended = {
+        r["id"]: r["ended_ms"] for r in ai_history.list_sessions(project_key, limit=100)["sessions"]
+    }
+    assert ended["inte-dead1"] is not None and ended["canc-dead1"] is not None
+    assert ended["inte-live1"] is None and ended["canc-live1"] is None  # 属主活着：不动
+    assert ai_bridge.get("canc-dead1")["final"] is True  # 补上之后照旧收尾
+
+
+def test_pump_exception_puts_the_error_on_the_in_memory_session_too(tmp_path, cli, monkeypatch):
+    """_pump 抛异常的分支：error 必须同时写进内存会话和历史库。`get()` 优先返回内存会话——只写历史库的话，
+    对账拿到的是 final:true 却没有 error 的快照，恢复后的失败提示是空白的。"""
+    figs = _project(tmp_path)
+
+    def boom(*_a, **_k):
+        raise RuntimeError("刷新炸了：scan 失败")
+
+    monkeypatch.setattr(ai_bridge, "refresh_outcome", boom)
+    sid = ai_bridge.run("codex", "fig1.py", "p", str(figs))
+    deadline = time.time() + 15
+    while time.time() < deadline and not ai_bridge.SESSIONS[sid].get("final"):
+        time.sleep(0.05)
+    detail = ai_bridge.get(sid)  # 内存会话仍在
+    assert detail["final"] is True and detail["status"] == "failed"
+    assert detail["error"] == "刷新炸了：scan 失败"  # 对照：以前这里没有 error
+    hist = ai_history.get(sid)
+    assert hist["error"] == "刷新炸了：scan 失败"  # 历史库是同一份
+    assert hist["changed"] == detail["changed"] and hist["diff"] == detail["diff"]  # 两边不分叉
+    _wait_idle()
+    engine_watch.stop()
+
+
+def test_finishing_a_live_session_sets_every_terminal_field(tmp_path, cli):
+    """内存会话和历史库同一份终态字段清单：`_finish_session` 收尾之后，清单里的每个键在内存会话上都有（与合并路径用的清单一致）。"""
+    figs = _project(tmp_path)
+    sid = ai_bridge.run("codex", "fig1.py", "p", str(figs))
+    deadline = time.time() + 15
+    while time.time() < deadline and not ai_bridge.SESSIONS[sid].get("final"):
+        time.sleep(0.05)
+    sess = ai_bridge.SESSIONS[sid]
+    missing = [k for k in ai_bridge.SESSION_TERMINAL_FIELDS if k not in sess]
+    assert missing == [], missing
+    _wait_idle()
+    engine_watch.stop()

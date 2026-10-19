@@ -4,7 +4,7 @@ import type { Job, Proof } from '../core/types.ts';
 import { Rejected } from '../core/types.ts';
 import type { LiveService } from './service.ts';
 import type { Publication, RefreshRequest } from './store.ts';
-import { BudgetDeferred, FREE_BUDGET } from './budget.ts';
+import { BudgetDeferred, FREE_BUDGET, qualificationSQL } from './budget.ts';
 
 async function one(s:LiveService,job:Job,p:Publication,revision:number,pr:number):Promise<string> {
   let previous:Proof;try{previous=JSON.parse(p.proof_text.split('\n').slice(1).join('\n'));}catch{throw new Rejected('stored_proof_unavailable');}
@@ -50,7 +50,7 @@ async function refreshOne(s:LiveService,job:Job,request:RefreshRequest):Promise<
     // Confirmation uses 14 fixed work statements; reserve two additional
     // reads to authorize withdrawal if revalidation fails, plus two per actor.
     const exemptions=new Set(Object.values(s.c.exemptionIds));
-    if(16+2*check.proof.contributors.filter(person=>!exemptions.has(person.id)).length>FREE_BUDGET.sqlWork)
+    if(16+qualificationSQL(s.c)*check.proof.contributors.filter(person=>!exemptions.has(person.id)).length>FREE_BUDGET.sqlWork)
       throw new BudgetDeferred('sql');
     const predecessor=await s.store.refreshPredecessor(job.target_key,check.headSha);
     if(!predecessor || predecessor.id!==request.source_attempt)throw new Rejected('refresh_predecessor_unavailable');
@@ -59,7 +59,8 @@ async function refreshOne(s:LiveService,job:Job,request:RefreshRequest):Promise<
       // Mint an independent proof, then commit the send intent before HTTP.
       const fresh=await s.freshBinding(target.number);
       if(!sameBinding(check.proof,fresh))throw new Rejected('state_changed');
-      const now=await s.store.databaseNow();check.proof.issued_at=now;check.proof.expires_at=now+120;
+      const now=await s.store.databaseNow();check.proof.issued_at=now;check.proof.expires_at=Math.min(now+120,check.authorityExpires ?? Number.MAX_SAFE_INTEGER);
+      if(check.proof.expires_at<=now)throw new Rejected('authorization_expired');
       check.text='tavotto-cla-v1\n'+canonical(check.proof);
       attempt=await s.store.beginFreshPublication(job,request,check,predecessor);return attempt;
     });

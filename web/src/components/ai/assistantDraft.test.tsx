@@ -114,6 +114,7 @@ beforeEach(async () => {
   setCurrentProjectId('pa')
   vi.mocked(aiRun).mockReset()
   vi.mocked(fetchAiRequest).mockReset()
+  vi.mocked(fetchAiRequest).mockRejectedValue(new TypeError('down')) // 默认读不到：还原出的未确认提交自动收尾时保持未确认（各用例按需改写）
   vi.mocked(fetchAiSession).mockReset()
   vi.mocked(fetchAiSession).mockRejectedValue(new ApiError('nf', 404, {})) // 后端明确没有详情：凭摘要往下走
   useUiStore.setState({ status: null, confirm: null, elementPanelId: null, selectedGids: [] } as never)
@@ -1254,6 +1255,22 @@ describe('同步状态机：单一 reconcile + 写入版本（#1098）', () => {
     }
   })
 
+  it('刷新期间任务结束（运行中历史是空的、账本稍后到）：挂载对账还原出未确认后自动收尾成终态，有通知、发送解锁，全程没点「查询结果」', async () => {
+    be.pendings.set('pa\u0000Fig1.pdf', [{ rid: 'rid-auto-end-001', text: '把线条加粗', sent: SENT, script: 'p1.py' }])
+    vi.mocked(fetchAiRequest).mockResolvedValue({ session: 's-end', status: 'done', changed: true, script: 'p1.py' })
+    vi.mocked(fetchAiSession).mockResolvedValue({
+      agent: 'codex', status: 'done', changed: true, diff: 'D', transcript: [], refresh: { status: 'failed', code: 'scan_failed' },
+    })
+    await mount()
+    await settle()
+    expect(q('[data-ai-submission]')).toBeNull() // 不停在「未确认」
+    expect(q('[data-ai-session="done"]')).toBeTruthy()
+    expect(JSON.stringify(useUiStore.getState().status)).toContain('aiChangedRefreshFailed')
+    expect(aiRun).not.toHaveBeenCalled() // 只读，没有重发
+    await typeText('再来一条')
+    expect(q<HTMLButtonElement>('[data-ai-send]')!.disabled).toBe(false) // 发送解锁
+  })
+
   it('没有未落定的本地写入时，对账读回的文本照常应用（另一个标签页的新稿进来）', async () => {
     await mount()
     be.put('pa', 'Fig1.pdf', '别的标签页写的')
@@ -1532,6 +1549,59 @@ describe('已发出未确认：不能盲目重发', () => {
     expect(q('[data-ai-error="send"]')?.textContent).toContain('还有 8 条已发出的指令没确认')
     expect(q('[data-ai-submission]')).toBeNull()
     expect(input().value).toBe('新指令') // 草稿还在，用户可以等一等再发
+  })
+
+  it('同脚本有运行中的会话（含接回的占位）又有未确认的提交：按钮是「中止」且可点，不被未确认禁掉', async () => {
+    useAiStore.setState({
+      sessions: [failedSession({ id: 's-run', status: 'running', finalized: false, restored: true, script: 'p1.py', finishedAt: undefined, panelId: null, fileId: null, changed: false })],
+    })
+    be.pendings.set('pa\u0000Fig1.pdf', [{ rid: 'rid-both-00001', text: '加粗线条', sent: SENT }])
+    await mount()
+    expect(q('[data-ai-submission="unconfirmed"]')).toBeTruthy()
+    const stop = q<HTMLButtonElement>('[data-ai-send="stop"]')
+    expect(stop).toBeTruthy()
+    expect(stop!.disabled).toBe(false) // 任务就在跑，用户要能停它
+    expect(aiRun).not.toHaveBeenCalled()
+  })
+
+  it('占位已取消（cancelled 未 final）、同 rid 的未确认提交这时才对账回来：认领后「中止」仍不可用——保持禁用的发送，提交不再是未确认', async () => {
+    const rid = 'rid-adopt-cancel-02'
+    useAiStore.setState({
+      sessions: [
+        failedSession({ id: 's-canc', status: 'cancelled', finalized: false, restored: true, requestId: rid, script: 'p1.py', finishedAt: undefined, panelId: null, fileId: null, changed: false }),
+      ],
+    })
+    be.pendings.set('pa\u0000Fig1.pdf', [{ rid, text: '加粗线条', sent: SENT, script: 'p1.py' }])
+    await mount()
+    expect(q('[data-ai-submission="unconfirmed"]')).toBeNull() // 提交已被认领
+    expect(useAiStore.getState().sessions[0]).toMatchObject({ id: 's-canc', status: 'cancelled' })
+    expect(q('[data-ai-send="stop"]')).toBeNull() // 没有「中止」按钮
+    const btn = q<HTMLButtonElement>('[data-ai-send]')!
+    expect(btn.dataset.aiSend).toBe('send')
+    expect(btn.disabled).toBe(true)
+    expect(btn.getAttribute('aria-label')).toBe('正在结束上一次修改…')
+  })
+
+  it('取消后刷新恢复出「cancelled 但未 final」的会话：发送锁住、不显示「中止」而是禁用的发送；final 到了才解锁', async () => {
+    useAiStore.setState({
+      sessions: [failedSession({ id: 's-canc', status: 'cancelled', finalized: false, restored: true, script: 'p1.py', finishedAt: undefined, panelId: null, fileId: null, changed: false })],
+    })
+    await mount()
+    await typeText('下一条指令')
+    const btn = q<HTMLButtonElement>('[data-ai-send]')!
+    expect(btn.dataset.aiSend).toBe('send') // 已经取消了，不再显示「中止」
+    expect(btn.disabled).toBe(true) // 对照：只认 running 时这里是可点的，点了再记一条提交然后撞 ai_script_busy
+    expect(btn.getAttribute('aria-label')).toBe('正在结束上一次修改…')
+    await click(btn)
+    await act(async () => {
+      input().dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', ctrlKey: true, bubbles: true })) // ⌘↵ 也不能绕过锁
+    })
+    await settle()
+    expect(aiRun).not.toHaveBeenCalled()
+    await act(async () => {
+      useAiStore.getState().finish({ session: 's-canc', status: 'cancelled', changed: true, diff: 'D' })
+    })
+    expect(q<HTMLButtonElement>('[data-ai-send]')!.disabled).toBe(false) // final 之后解锁
   })
 
   it('「改写后再发」：放弃这条等待、输入框可改，下一次发送是新 rid', async () => {

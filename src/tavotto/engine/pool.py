@@ -2847,6 +2847,8 @@ class WorkerdWorker:
         self.child_pid: int | None = None
         self.last_used = time.time()
         self._dead = False
+        self._fenced = False  # 强制关闭未确认（见 force_kill）：池里保留、acquire 不得复用
+        self._closing = False  # 另一线程正在强制关闭它（`force_cancel` 在池锁内置、关完清）：acquire 不得阻塞等它
         self._client = client or workerd_client.client()
         if self._client is None:
             raise WorkerdUnavailable("workerd 不可用")
@@ -3196,8 +3198,12 @@ class WorkerdWorker:
                 slack=2.0,
             )
         except workerd_client.WorkerdError:
+            # 关停未确认：workerd 那头的会话 / by_hash 可能还在。标「已围栏」——池里保留这个句柄，
+            # `acquire()` 不得把它当「已死」丢掉再按同一规格重开（#837），要等重试关闭被确认
+            self._fenced = True
             return False
         else:
+            self._fenced = False  # close_session 对已关的会话是幂等成功，重试一次即可确认
             return True
         finally:
             self._dead = True
@@ -3695,7 +3701,7 @@ def shutdown_workers_using(python: str) -> int:
     """
     with _lock:
         keys = [k for k, w in _workers.items() if same_python(w.python, python)]
-        victims = [_workers.pop(k) for k in keys]
+        victims = _detach_unfenced(keys)
     for w in victims:
         threading.Thread(target=w.shutdown, daemon=True).start()
     return len(victims)
@@ -3805,6 +3811,17 @@ def acquire(
         with _lock:
             w = _workers.get(key)
             why = ""
+            if w is not None and is_fenced(w):
+                # 上一次强制关闭未确认而保留的句柄（#837）：不能当「已死」丢掉再按同一规格重开——
+                # close 若没到达 workerd，open_session 会按 by_hash 复用旧会话和旧的已构建图。
+                # 先重试关闭（有界；对已关的会话是幂等成功），确认了才放行；仍未确认就如实拒绝。
+                # 关闭正由另一线程（force_cancel）进行中：不在池锁里阻塞等它，直接拒绝，让调用方稍后重试。
+                if getattr(w, "_closing", False):
+                    raise WorkerError("旧渲染会话正在关闭，请重试", code="session_dead")
+                if w.force_kill() is False:
+                    raise WorkerError("无法确认旧渲染会话已关闭，请重试", code="session_dead")
+                _workers.pop(key, None)
+                w = None
             if w is not None:
                 if not w.alive():
                     why = "已死"
@@ -3886,7 +3903,7 @@ def acquire(
             if len(alive) > MAX_ALIVE:
                 stale = sorted(alive, key=lambda kv: kv[1].last_used)
                 for vkey, victim in stale[: len(alive) - MAX_ALIVE]:
-                    if victim is not w:
+                    if victim is not w and not _is_fence_holder(victim):
                         LOG.info("worker LRU 淘汰: %s", victim.script_name)
                         _workers.pop(vkey, None)
                         threading.Thread(target=victim.shutdown, daemon=True).start()
@@ -3900,6 +3917,32 @@ def acquire(
 #: 本线程最近一次 `acquire()` 的结果 `(worker, created)`（T09b）。只经 `get()` 取会话的老入口（`build()`、试运行）
 #: 据此在**同一线程**、取到之后立刻问「这条是不是我建的」——不拿 `peek()` 的快照去猜（两个调用方都会以为是自己）。
 _last_acquired = threading.local()
+
+
+def _is_fence_holder(worker) -> bool:
+    """围栏占位：强制关闭未确认（`_fenced`）或另一线程正在关（`_closing`）。表里有它，键就不是空的。"""
+    return getattr(worker, "_fenced", False) is True or getattr(worker, "_closing", False) is True
+
+
+def _detach_unfenced(keys) -> list:
+    """（须持 `_lock`）把 `keys` 里**非围栏**的 worker 摘出表并返回；围栏 / 正在关闭的留在表里。
+
+    所有「从 `_workers` 摘 worker 再异步 shutdown」的路径共用它（Codex #1177 r4310523510）：摘掉围栏占位
+    会让键变空，下一次 `acquire` 按同一规格重开，workerd 按 by_hash 去重到仍在跑的旧会话。围栏由在飞的
+    `force_cancel` 确认后摘，或由下一次 `acquire` 的有界重试关闭退役。"""
+    victims = []
+    for k in keys:
+        w = _workers.get(k)
+        if w is None or _is_fence_holder(w):
+            continue
+        del _workers[k]
+        victims.append(w)
+    return victims
+
+
+def is_fenced(worker) -> bool:
+    """这条会话的强制关闭未被确认（`WorkerdWorker.force_kill()` 回过 False）——必须先重试关闭才能换新。"""
+    return getattr(worker, "_fenced", False) is True
 
 
 def acquired_here(worker) -> bool | None:
@@ -4310,13 +4353,15 @@ def invalidate(
         if force:
             for key in keys:
                 worker = _workers[key]
+                if getattr(worker, "_closing", False) is True:
+                    raise WorkerError("旧渲染会话正在关闭，请重试", code="session_dead")
                 # force_kill bypasses the worker request lock and is bounded.
                 # Keep acquisition fenced until workerd has removed by_hash.
                 if worker.force_kill() is False:
                     raise WorkerError("无法确认旧渲染会话已关闭，请重试", code="session_dead")
                 _workers.pop(key, None)
             return
-        victims = [_workers.pop(k) for k in keys]
+        victims = _detach_unfenced(keys)
     for w in victims:
         threading.Thread(target=w.shutdown, daemon=True).start()
 
@@ -4334,7 +4379,7 @@ def invalidate_project(figures_dir: str | Path) -> None:
     target = _norm_dir(figures_dir)
     with _lock:
         keys = [k for k in _workers if k[0] == target]
-        victims = [_workers.pop(k) for k in keys]
+        victims = _detach_unfenced(keys)
     for w in victims:
         threading.Thread(target=w.shutdown, daemon=True).start()
 
@@ -4348,19 +4393,49 @@ def force_cancel(
     `w.lock`——被一个正在 build 的慢脚本占着时要等到超时才走到 kill，
     「取消」等于没取消。这里直接 `force_kill()`（两条控制面都有：Python
     池是 `proc.kill()`，workerd 是当场关会话），被阻塞在 `request()` 里的
-    调用方立刻收到 EOF → WorkerError；worker 先从表里摘掉，别的线程不会
-    再复用一个正在死的会话。
+    调用方立刻收到 EOF → WorkerError。
+
+    **并发保证（Codex #1177 r4310498006）**：支持围栏的 worker（workerd 会话）在整个关闭尝试期间
+    **留在表里并标为已围栏**——`force_kill()` 可能等到超时，期间键若是空的，并发 `acquire` 会按同一规格
+    新开会话（workerd 按 by_hash 去重到仍在跑的旧会话），之后放回的围栏句柄就被静默丢掉。
+    占位期间 `acquire` 看到 `_closing` 直接拒绝（`session_dead`），不在池锁里阻塞；确认关闭后才摘表，
+    未确认则保持围栏，下一次 `acquire` 有界重试关闭。不支持围栏的 worker（Python 池进程）维持先摘后杀。
     """
     key = _worker_key(figures_dir, script_name, artifact_source, run)
     with _lock:
         w = _workers.get(key)
         if expected_worker is not None and w is not expected_worker:
             return False
-        _workers.pop(key, None)
-    if w is None:
-        return False
+        if w is None:
+            return False
+        fenceable = hasattr(w, "_fenced")
+        if fenceable:
+            if getattr(w, "_closing", False):
+                return False  # 另一线程正在关它：此刻没有确认，不报「已杀」
+            w._fenced = True  # 关闭进行中 / 未确认：占位不摘，acquire 不得复用也不得重开
+            w._closing = True
+        else:
+            _workers.pop(key, None)
     LOG.info("强制取消 worker 会话: %s", script_name)
-    w.force_kill()
+    try:
+        confirmed = w.force_kill() is not False
+    except BaseException:
+        if fenceable:
+            with _lock:
+                w._closing = False
+        raise
+    if fenceable:
+        with _lock:
+            w._closing = False
+            if confirmed:
+                w._fenced = False
+                if _workers.get(key) is w:
+                    _workers.pop(key, None)
+    if not confirmed:
+        # 关停未确认（workerd 的 close_session 超时 / 出错）：脚本可能还在跑。不报「已杀」——
+        # 调用方据此走各自的兜底硬杀；句柄仍在池里保持围栏，acquire 重试关闭前不会再分配它（#875 / #837）
+        LOG.warning("强制取消未被确认，会话保持围栏: %s", script_name)
+        return False
     return True
 
 
@@ -4378,7 +4453,12 @@ def force_cancel_input(directory, figures_dir: str) -> bool:
             ),
             None,
         )
-        worker = _workers.pop(key, None)
+        worker = _workers.get(key)
+        if worker is not None:
+            if getattr(worker, "_closing", False) is True:
+                return False  # 另一线程正在关它：没有确认，不报「已杀」
+            if not _is_fence_holder(worker):
+                del _workers[key]
     if worker is None:
         return False
     worker.force_kill()
@@ -4401,12 +4481,14 @@ def shutdown_all(figures_dir: str | None = None, wait: bool = False) -> None:
     """
     with _lock:
         if figures_dir is None:
+            # 进程退出路径：不会再 acquire，围栏占位也一并收（wait=True 时还会硬杀兜底）
             victims = list(_workers.values())
             _workers.clear()
         else:
+            # 项目关闭：同一项目可能重开再 acquire，围栏占位必须留在表里（由 acquire 重试关闭退役）
             target = _norm_dir(figures_dir)
             keys = [k for k in _workers if k[0] == target]
-            victims = [_workers.pop(k) for k in keys]
+            victims = _detach_unfenced(keys)
     threads = [threading.Thread(target=w.shutdown, daemon=True) for w in victims]
     for t in threads:
         t.start()

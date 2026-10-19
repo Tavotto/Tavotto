@@ -82,6 +82,14 @@ CLASSIFICATIONS = (
     "invalid_fixture",  # case 自己写错了
 )
 
+#: runner 自身崩溃（不是被测脚本、不是产品）。**刻意不在 `CLASSIFICATIONS` 里**：
+#: 那张闭集是 manifest / 基线允许**声明**的状态，而 runner 崩溃只能是一次运行
+#: 的观测——写进清单或基线都等于把基础设施故障冻成「已知状态」（#1133）。
+RUNNER_ERROR = "runner_error"
+
+#: 一次运行的结果里可能出现的全部分类（报告/汇总用）。
+RESULT_CLASSIFICATIONS = (*CLASSIFICATIONS, RUNNER_ERROR)
+
 #: 需要写明理由的分类（`full_support` 之外全都要）。
 NEEDS_REASON = tuple(c for c in CLASSIFICATIONS if c != "full_support")
 
@@ -597,6 +605,41 @@ def validate_baseline(data: dict) -> None:
             )
 
 
+def runner_error_detail(r: dict) -> str:
+    """runner 崩溃详情（崩溃**事实**，与最终分类无关）。
+
+    来源两处：run_group 崩溃在 `detail.runner_error`，路由 runner 崩溃在
+    `routes.runner_error.detail`。无崩溃返回空串。
+    """
+    d = (r.get("detail") or {}).get("runner_error")
+    if d:
+        return str(d)
+    # 任一路由条目的崩溃分类都算（逐路由隔离后崩溃记在该路由自己的条目上，
+    # 外层兜底仍写 routes["runner_error"] 汇总条目）。
+    parts = [
+        str(e.get("detail") or "")
+        for e in (r.get("routes") or {}).values()
+        if isinstance(e, dict) and e.get("classification") == RUNNER_ERROR and e.get("detail")
+    ]
+    return "\n---\n".join(parts)
+
+
+def has_runner_crash(r: dict) -> bool:
+    """这个 case 的结果里是否出现过 runner 崩溃（按事实判，不看最终分类）。
+
+    阶段/别的路由先失败、随后路由 runner 崩溃时，最终分类是 product_bug，
+    但那次路由检查没跑完。报告、门禁告警、基线拒绝都必须按这个事实判。
+    """
+    if r.get("classification") == RUNNER_ERROR:
+        return True
+    if runner_error_detail(r):
+        return True
+    return any(
+        isinstance(e, dict) and e.get("classification") == RUNNER_ERROR
+        for e in (r.get("routes") or {}).values()
+    )
+
+
 def baseline_payload(results: dict, generated_for: dict | None = None) -> dict:
     """把一次运行的结果整理成可提交的基线（确定性：键全排序，无时间戳）。
 
@@ -607,6 +650,13 @@ def baseline_payload(results: dict, generated_for: dict | None = None) -> dict:
     这里把环境如实写进基线，两条路殊途同归。
     """
     cases = {}
+    crashed = sorted(cid for cid, r in results.items() if has_runner_crash(r))
+    if crashed:
+        raise CorpusError(
+            "baseline_runner_error",
+            f"这些 case 的结果是 runner 自身崩溃，不能写进基线（会把基础设施故障冻成已知状态）："
+            f"{crashed}。先修 runner 再重建基线",
+        )
     for cid in sorted(results):
         r = results[cid]
         entry = {

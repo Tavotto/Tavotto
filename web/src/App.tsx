@@ -78,6 +78,7 @@ import { applyOpenRequest, claimUrlOpenRequest } from '@/lib/openRequest'
 import { msg } from '@/i18n'
 import { hydrateExportDefaults } from '@/lib/exportDefaults'
 import { initExitNotices } from '@/lib/exitNotices'
+import { cancelStartupProbe } from '@/lib/startupProbe'
 
 export function App() {
   const phase = useProjectStore((s) => s.phase)
@@ -100,7 +101,10 @@ export function App() {
     // 导出默认值以后端为准（#715 PR-B）：换了 origin 的本机缓存是空的，先从数据目录取回来。
     // 导出对话框 / 设置页同步读本机缓存，这一步在它们打开之前就落地了
     void hydrateExportDefaults()
-    return stopExitNotices
+    return () => {
+      stopExitNotices()
+      cancelStartupProbe()
+    }
   }, [])
   useDesktopMenu()
   useWindowChrome()
