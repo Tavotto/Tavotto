@@ -2820,6 +2820,92 @@ def collection_edge_rgba(coll):
     return coll.get_edgecolor()
 
 
+def _set_member_cmap(a, v, state) -> None:
+    """色阶组里**任一成员**改色图 = 整组改（ADR 0135 修订，用户裁决 2026-10-18）。
+
+    组 = 与它共用同一份 norm 对象的全部已登记 mappable（`colorbarmodel.scale_siblings`）；
+    登记不了的独立 `ScalarMappable` 色条在 `_sync_standalone_colorbars` 里跟上。写的是
+    各成员自己的 `set_cmap`（cmap 是各拿各的引用，共用 norm 不会让它们自动一起换）。
+    vmin / vmax 本来就经共用的 norm 联动，不在这里。"""
+    a.set_cmap(v)
+    for sib in colorbarmodel.scale_siblings(state, a):
+        sib.set_cmap(v)
+
+
+_set_member_cmap._needs_state = True  # noqa: SLF001
+
+
+def _restore_member_cmap(a, orig, state) -> None:
+    """撤销：自己放回自己的原样；**被这次广播带着变、却没有自己 override 的兄弟**也放回各自的原样
+    （原样由别名组在动手之前代采，`alias_seeded`）。兄弟若有自己的 override，轮到它时它自己还原
+    （或随脏组重放），这里不碰——否则会把别人的编辑踩掉。"""
+    a.set_cmap(orig)
+    for el in state.elements:
+        sib = el["artist"]
+        key = (el["gid"], "cmap")
+        if (
+            sib in colorbarmodel.scale_siblings(state, a)
+            and key in state.originals
+            and key not in state.applied
+        ):
+            sib.set_cmap(state.originals[key])
+
+
+_restore_member_cmap._needs_state = True  # noqa: SLF001
+
+
+def _standalone_sm_of(state, gid):
+    """这个 gid 若是独立 `ScalarMappable` 的色条，返回那个 mappable（带 `_mm_orig_cmap` 的）。"""
+    p = state.index.get(gid)
+    if not isinstance(p, ColorbarProxy):
+        return None
+    sm = p.cb.mappable
+    if isinstance(sm, Artist) or not hasattr(sm, "_mm_orig_cmap"):
+        return None
+    return sm
+
+
+def _sync_standalone_colorbars(state, *, record_only: bool = False) -> None:
+    """独立 `ScalarMappable` 的色条跟着它所在的色阶组走。
+
+    它不是 Artist、没有 gid，成员改色图时 `_set_member_cmap` 够不着它。规矩只有一条：组里**有任何
+    一条 cmap override 在生效**时，它的色图 = 组里已登记成员此刻的色图（成员已按文档序「后者胜」
+    落定，见 `ALIAS_GROUPS`）；一条都没有时放回脚本原样（首次应用前记在 `_mm_orig_cmap` 上）。
+    `record_only` 只记原样，在这一轮任何 setter 动手之前调。"""
+    for el in state.elements:
+        p = el["artist"]
+        if not isinstance(p, ColorbarProxy):
+            continue
+        sm = p.cb.mappable
+        if isinstance(sm, Artist) or not hasattr(sm, "set_cmap"):
+            continue
+        if not hasattr(sm, "_mm_orig_cmap"):
+            sm._mm_orig_cmap = sm.get_cmap()  # noqa: SLF001
+        if record_only:
+            continue
+        norm = getattr(sm, "norm", None)
+        members = [
+            e
+            for e in state.elements
+            if norm is not None
+            and not isinstance(e["artist"], ColorbarProxy)
+            and getattr(e["artist"], "norm", None) is norm
+            and state.has_handler(e["artist"], "cmap")
+        ]
+        if not members:
+            continue
+        gids = {e["gid"] for e in members} | {
+            c_el["gid"]
+            for c_el in state.elements
+            if isinstance(c_el["artist"], ColorbarProxy)
+            and getattr(c_el["artist"].cb.mappable, "norm", None) is norm
+        }
+        if any((g, "cmap") in state.applied for g in gids):
+            sm.set_cmap(members[0]["artist"].get_cmap())
+        else:
+            sm.set_cmap(sm._mm_orig_cmap)  # noqa: SLF001
+
+
 def _set_collection_sizes(coll, v) -> None:
     coll.set_sizes([float(v)] if isinstance(v, (int, float)) else v)
 
@@ -3818,7 +3904,7 @@ _COLLECTION_CAPS: dict[str, tuple] = {
     "hatch": _CAP_HATCH,
     "size": (collection_sizes, _set_collection_sizes),
     "marker": (lambda a: list(a.get_paths()), _set_scatter_marker),
-    "cmap": _CAP_CMAP,
+    "cmap": (lambda a: a.get_cmap(), _set_member_cmap),
     "vmin": _CAP_VMIN,
     "vmax": _CAP_VMAX,
     "alpha": _CAP_ALPHA,
@@ -4417,7 +4503,7 @@ HANDLERS: dict[tuple[str, str], tuple] = {
         "head", lambda p, v: p.set_mutation_scale(float(v))
     ),
     # ---- image: 颜色映射 / 显示 ----
-    ("image", "cmap"): (lambda a: a.get_cmap(), lambda a, v: a.set_cmap(v)),
+    ("image", "cmap"): (lambda a: a.get_cmap(), _set_member_cmap),
     ("image", "vmin"): (
         lambda a: a.get_clim()[0],
         lambda a, v: a.set_clim(vmin=(None if v is None else float(v))),
@@ -4652,6 +4738,8 @@ _RESTORE: dict[tuple[str, str], object] = {
 }
 _RESTORE.update(tickmodel.RESTORE)
 _RESTORE.update(colorbarmodel.RESTORE)
+_RESTORE[("collection", "cmap")] = _restore_member_cmap
+_RESTORE[("image", "cmap")] = _restore_member_cmap
 _RESTORE.update(legendmodel.RESTORE)
 _RESTORE.update(spinemodel.RESTORE)
 
@@ -4899,6 +4987,25 @@ def _alias_colorbar_mappable(narrow_prop: str):
     return resolve
 
 
+def _alias_scale_group(state: "FigState", rev: dict, artist) -> list[tuple]:
+    """色阶组里的成员改 cmap = 整组改（用户裁决 2026-10-18，ADR 0135 修订）：这条 cmap 会盖掉
+    组里**其它**已登记成员与全部色条（含独立 `ScalarMappable` 的）上的 cmap override。
+
+    与 `_alias_colorbar_mappable` 互为镜像——两个方向都是广播，所以组里任何两条 cmap override
+    谁在**文档序**里靠后谁赢（同一档位、`sorted` 稳定；见 `_rank`），热态逐步累加与冷启动重放
+    同序。原样由动手之前的代采兜住，撤销各回各的（`_restore_member_cmap` / `_restore_cb_cmap`）。"""
+    out = [
+        (gid, "cmap")
+        for sib in colorbarmodel.scale_siblings(state, artist)
+        if (gid := rev.get(id(sib))) is not None
+    ]
+    for p in colorbarmodel.scale_colorbars(state, artist):
+        gid = rev.get(id(p))
+        if gid is not None:
+            out.append((gid, "cmap"))
+    return out
+
+
 def _alias_colorbar_ticks(narrow_prop: str):
     """色条的 `tick_*` 写的是 `cb.ax.tick_params(...)`（默认 axis="both"），
     盖掉的是**色条轴自己那两组刻度**的同名 prop。
@@ -5005,6 +5112,9 @@ for _sprop in ("linewidth", "linestyle"):
 # 图元自己那条说了算——色条是 mappable 的一个视图，不是反过来。
 for _cprop in ("cmap", "vmin", "vmax"):
     ALIAS_GROUPS[("colorbar", _cprop)] = _alias_colorbar_mappable(_cprop)
+# 反方向：色阶组的成员改 cmap 也是广播（只有 cmap；vmin / vmax 经共用 norm 本来就联动）
+for _mkey in ("collection", "image"):
+    ALIAS_GROUPS[(_mkey, "cmap")] = _alias_scale_group
 
 # ---------------------------------------------------------------------------
 # **同一个元素上的重叠**（广播端与窄端同 gid）。全部实测过，三条各有各的机制：
@@ -5194,6 +5304,7 @@ def _apply(state: FigState, patches: list[dict]) -> list[str]:
     # 出口处一定要清掉（下面 try/finally），不然下一次 apply 会拿着上一批的
     # patch 表去算落位
     state.pending = new
+    _sync_standalone_colorbars(state, record_only=True)
     # 图幅语义这一轮换没换（ADR 0098）：要在下面的还原循环把它从 applied 里摘掉**之前**比
     _frame_key = ("figure", "frame")
     frame_toggled = state.applied.get(_frame_key, _NOTHING) != new.get(_frame_key, _NOTHING)
@@ -5343,10 +5454,18 @@ def _apply(state: FigState, patches: list[dict]) -> list[str]:
     def _snapshot(gid: str) -> dict:
         fields = _field_snap.get(gid)
         if fields is None:
+            sm, shown = _standalone_sm_of(state, gid), None
             try:
+                if sm is not None and (gid, "cmap") not in state.applied:
+                    # 独立 ScalarMappable 被组广播同步改过色图：「脚本原样」要按它的原样读
+                    shown = sm.get_cmap()
+                    sm.set_cmap(sm._mm_orig_cmap)  # noqa: SLF001
                 fields = _ORIGINAL_READER(state, gid) if _ORIGINAL_READER is not None else {}
             except Exception:  # noqa: BLE001 — 读不出 = 不知道，前端按保守路径走
                 fields = {}
+            finally:
+                if shown is not None:
+                    sm.set_cmap(shown)
             _field_snap[gid] = fields
         return fields
 
@@ -5546,6 +5665,7 @@ def _apply(state: FigState, patches: list[dict]) -> list[str]:
 
     # 图例项跟随源对象（派生显示，不进 applied）。放在整轮之后：源对象的
     # 改动与还原都已落定，此刻派生出来的才是「这一次改完之后」的样子。
+    _sync_standalone_colorbars(state)
     legendmodel.sync_legends(state)
 
     # 矩形尺寸和位置是同一个几何模型。xlim / invert 与它们同档、顺序可能在后：

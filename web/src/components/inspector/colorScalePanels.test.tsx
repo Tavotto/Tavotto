@@ -703,3 +703,17 @@ describe('脚本自定义的色图（2026-09-13 用户反馈：图 A 显示 from
     expect(extend.style.background).toContain('rgb(207, 106, 44)')
   })
 })
+
+describe('色阶组整组换色（用户裁决 2026-10-18，ADR 0135 修订）', () => {
+  it('从图像换色图：同一次写入清掉色条上的旧 cmap override，文档里只留图像这一条', async () => {
+    await mount('axes_0.images_0', {
+      overrides: [{ gid: 'axes_1.colorbar', prop: 'cmap', value: 'plasma' }],
+    })
+    await click(cmapTrigger())
+    const greys = cmapEntries().find((e) => e.textContent?.trim() === 'Greys')!
+    await click(greys)
+    expect(overrideOf('axes_0.images_0', 'cmap')).toBe('Greys')
+    // 不清的话色条那条排在前面、被图像这条盖不住（文档序靠后的赢，原地 upsert 不挪位置）
+    expect(overrideOf('axes_1.colorbar', 'cmap')).toBeUndefined()
+  })
+})

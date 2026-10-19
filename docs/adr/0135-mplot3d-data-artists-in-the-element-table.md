@@ -70,8 +70,11 @@ contour / 线框走通用 `Collection`）。超点数预算（160×160 的 `plot
 独立 `ScalarMappable` 色条与共用同一个 Norm 对象的曲面 / 3D contourf 因为登记了而自动成组（判据仍是
 `colorbarmodel.scale_siblings`，一行没改）：**从色条改 cmap，三者一起变；vmin / vmax 经共用 norm 从任一处改
 三者一起变；撤销逐字回到脚本原样**（含没注册的自定义色图 `coolwarm_preview`：`cmap_current.custom` 照常下发）。
-**从曲面改 cmap 只改曲面**——与 2D 色阶兄弟同一条规矩（兄弟自己的窄 override 压过色条广播，`docs/rules/backend/colorbar.md`）；
-要三者一起换色图，从色条改。
+**修订（2026-10-18，用户裁决）：色阶组任一成员改 cmap 都广播整组**（曲面 / 底投影 / 色条，2D 的 imshow / pcolormesh / contourf
+兄弟同理；没有色条、只是共用 Norm 也广播——判据都是「共用 Norm 对象 = 同一色阶」）。推翻了原先「从曲面改 cmap 只改曲面、兄弟窄 override
+压过色条广播」。撤销各回各的原样（含自定义未注册色图），重做再整组变；历史文档里组内多条 cmap override：文档序靠后的赢，不报 warning、
+不阻断写回；前端写入口只留一条。原规则的修订记录在 `docs/rules/backend/colorbar.md`（色阶兄弟一段）。已接受的代价：2D 里两块共用 Norm、
+只想改其中一块的用法也会整组变。看护 `tests/test_scale_group_cmap.py`。
 
 ### 五、容器与 Patch3D 暂不做
 

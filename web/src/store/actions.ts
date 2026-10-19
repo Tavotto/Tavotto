@@ -1299,6 +1299,36 @@ export async function rebuildPanel(panelId: string): Promise<RebuildOutcome> {
 }
 
 /**
+ * 色阶组整组换色的写入口（用户裁决 2026-10-18，ADR 0135 修订）：色阶组里任一成员（图元 / 色条）
+ * 改 cmap = 整组改。引擎对文档里同组的多条 cmap override 是**文档序靠后的赢**；而 `upsertOverrides`
+ * 原地改值、不挪位置，用户先改色条、再改曲面、回头又改色条时，色条那条仍排在前面，新选的色图会被
+ * 曲面那条盖掉。所以写这一条的**同一次 commit** 里把同组其它成员上的 cmap override 清掉——文档里
+ * 始终只有一条，谁赢与顺序无关。同组 = `colormapAliasGids`（调用方传入）。
+ */
+export function setColormapOverride(
+  panelId: string,
+  gid: string,
+  value: unknown,
+  aliasGids: string[],
+  immediate: boolean | RenderPolicy = false,
+) {
+  const drop = aliasGids.filter((g) => g !== gid)
+  const current = findObject(panelId)
+  if (current?.type === 'panel') {
+    const i = effectiveOverrideIndex(current.overrides, gid, 'cmap')
+    const sameValue = i >= 0 && JSON.stringify(current.overrides[i].value) === JSON.stringify(value)
+    const others = current.overrides.some((p) => p.prop === 'cmap' && drop.includes(p.gid))
+    if (sameValue && !others) return
+  }
+  updateObject<PanelObject>(panelId, hist('setProp', { prop: propLabel('cmap') }), (o) => {
+    o.overrides = o.overrides.filter((p) => !(p.prop === 'cmap' && drop.includes(p.gid)))
+    upsertOverrides(o, [{ gid, prop: 'cmap', value }])
+  })
+  const panel = findObject(panelId)
+  if (panel?.type === 'panel') requestRender(panel, immediate)
+}
+
+/**
  * 批量 upsert：**已经存在的那条原地改值，新的才追加**。
  *
  * 旧写法是 `filter(...)` 再 `push(...)`，等于把命中的那条挪到数组末尾。

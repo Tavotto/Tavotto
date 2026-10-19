@@ -2265,9 +2265,7 @@ def _cmap_alias_gids(state: FigState, artist, gid: str) -> list[str]:
             m = other.cb.mappable
             if m is target or target in scale_siblings(state, m):
                 out.append(el["gid"])
-        elif isinstance(artist, ColorbarProxy) and (
-            other is target or other in scale_siblings(state, target)
-        ):
+        elif other is target or other in scale_siblings(state, target):
             out.append(el["gid"])
     return list(dict.fromkeys(out))
 
@@ -5159,6 +5157,18 @@ def _measure_manifest(
             geom = pathgeom.series_group_geometry(artist.members(), W, H, budget)
             if geom is not None:
                 entry["geometry"] = geom
+        # 色阶组里的映射图元也发 `scale_gids`（组里的**其它**成员）：任一成员改 cmap 都是整组改
+        # （ADR 0135 修订），前端据此清同组其它成员上的 cmap override、并在「回到脚本原样」时一起清
+        if el["role"] in ("fill", "scatter", "collection", "image") and color_mapping_is_live(
+            artist
+        ):
+            peers = [
+                g
+                for g in scale_gids(state, artist)
+                if (m := state.resolve(g)) is not None and color_mapping_is_live(m)
+            ]
+            if peers:
+                entry["scale_gids"] = peers
         # 箭头：端点（figure 分数、top-origin，[尾, 头]）随 manifest 下发，前端据此画
         # 端点手柄、整体拖动 / 单端拖动都写 endpoints_frac override。两类出端点：
         # 独立箭头（端点就是 patch 自己的 posA / posB）与**纯箭头注释**（端点是注释的

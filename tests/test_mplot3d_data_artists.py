@@ -328,14 +328,7 @@ def test_standalone_colorbar_is_the_scale_sibling_of_surface_and_contourf(hot):
     assert _png(hot, stem, [], "3d-after") == base_png
 
 
-def test_surface_cmap_edit_stays_narrow_like_every_other_scale_sibling(hot):
-    """从曲面改 cmap 只改曲面（兄弟自己的窄 override 压过色条，与 2D 色阶兄弟同一条规矩）。"""
-    stem, cb, surf, cont = "Inv3D", "axes_1.colorbar", "axes_0.fill_0", "axes_0.collections_1"
-    man = _man(hot, stem, [{"gid": surf, "prop": "cmap", "value": "cividis"}])
-    assert _fields(man, surf)["cmap"]["value"] == "cividis"
-    assert _fields(man, cont)["cmap"]["value"] == "coolwarm_preview"
-    assert _fields(man, cb)["cmap"]["value"] == "coolwarm_preview"
-    _man(hot, stem)
+# 「从曲面改 cmap」整组变的用例见 tests/test_scale_group_cmap.py（用户裁决 2026-10-18 推翻了原先「窄 override 压过广播」）
 
 
 # ---------------------------------------------------------------------------

@@ -61,6 +61,7 @@ import {
   detachLegendEntry,
   disableTextEffect,
   setLegendPlacement,
+  setColormapOverride,
   setOverride,
   setOverrides,
   unhideElement,
@@ -2174,7 +2175,18 @@ function FieldRow({
     const v = lens.toScript(field.prop, pageValue)
     if (previewable && !gesture.isOpen()) gesture.start()
     const previewed = previewable && previewStyle(element.gid, element.role, field.prop, v)
-    setOverride(panel.id, element.gid, field.prop, v, previewed ? 'none' : immediate)
+    if (field.prop === 'cmap') {
+      // 色阶组任一成员改 cmap = 整组改：同一次 commit 清掉同组其它成员的 cmap override（文档里只留一条）
+      setColormapOverride(
+        panel.id,
+        element.gid,
+        v,
+        colormapAliasGids(rowManifest, element),
+        previewed ? 'none' : immediate,
+      )
+    } else {
+      setOverride(panel.id, element.gid, field.prop, v, previewed ? 'none' : immediate)
+    }
     gesture.touch()
   }
 
