@@ -55,8 +55,10 @@ python scripts/ci/compat_guardian.py minimize --replay DIR/repro.json --out DIR2
   `reports/summary.md`（每 case 一行的表）、`evidence/<case>/…`（原始证据，按 sha256 引用）。
   校验失败时保留 `reports/guardian.unvalidated.json` 供诊断，`validate` 永不接受这个名字。
 - 省略 `--case` = 跑该 suite 的全部登记 case。
+- `explore` 不带 `--static-only` 时，执行前核对 `compat_explore.py`、`compat_explore_transforms.py`、
+  `compat_guardian.py` 与 HEAD 一致（`git hash-object --path`）；脏工作区里改过的生成 / 执行代码不会被当作评审过的模板执行。
 - `promote` 只写一个候选记录（`proposal_only: true, applied: false`），**拒绝**写入
-  `tests/compat/`、`tests/fixtures/`、`tests/support/`，也拒绝写任何名为 `manifest.json` /
+  `tests/compat/`、`tests/compat_guardian/`（含期望声明）、`tests/fixtures/`、`tests/support/`，也拒绝写任何名为 `manifest.json` /
   `baseline.json` 的仓库内文件；基线与 manifest 的改动只能是人写的、过 CODEOWNERS 的普通 PR。
 
 **退出码（`run`）**
