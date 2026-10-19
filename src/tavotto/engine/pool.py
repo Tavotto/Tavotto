@@ -2848,6 +2848,7 @@ class WorkerdWorker:
         self.last_used = time.time()
         self._dead = False
         self._fenced = False  # 强制关闭未确认（见 force_kill）：池里保留、acquire 不得复用
+        self._closing = False  # 另一线程正在强制关闭它（`force_cancel` 在池锁内置、关完清）：acquire 不得阻塞等它
         self._client = client or workerd_client.client()
         if self._client is None:
             raise WorkerdUnavailable("workerd 不可用")
@@ -3814,6 +3815,9 @@ def acquire(
                 # 上一次强制关闭未确认而保留的句柄（#837）：不能当「已死」丢掉再按同一规格重开——
                 # close 若没到达 workerd，open_session 会按 by_hash 复用旧会话和旧的已构建图。
                 # 先重试关闭（有界；对已关的会话是幂等成功），确认了才放行；仍未确认就如实拒绝。
+                # 关闭正由另一线程（force_cancel）进行中：不在池锁里阻塞等它，直接拒绝，让调用方稍后重试。
+                if getattr(w, "_closing", False):
+                    raise WorkerError("旧渲染会话正在关闭，请重试", code="session_dead")
                 if w.force_kill() is False:
                     raise WorkerError("无法确认旧渲染会话已关闭，请重试", code="session_dead")
                 _workers.pop(key, None)
@@ -4366,24 +4370,48 @@ def force_cancel(
     `w.lock`——被一个正在 build 的慢脚本占着时要等到超时才走到 kill，
     「取消」等于没取消。这里直接 `force_kill()`（两条控制面都有：Python
     池是 `proc.kill()`，workerd 是当场关会话），被阻塞在 `request()` 里的
-    调用方立刻收到 EOF → WorkerError；worker 先从表里摘掉，别的线程不会
-    再复用一个正在死的会话。
+    调用方立刻收到 EOF → WorkerError。
+
+    **并发保证（Codex #1177 r4310498006）**：支持围栏的 worker（workerd 会话）在整个关闭尝试期间
+    **留在表里并标为已围栏**——`force_kill()` 可能等到超时，期间键若是空的，并发 `acquire` 会按同一规格
+    新开会话（workerd 按 by_hash 去重到仍在跑的旧会话），之后放回的围栏句柄就被静默丢掉。
+    占位期间 `acquire` 看到 `_closing` 直接拒绝（`session_dead`），不在池锁里阻塞；确认关闭后才摘表，
+    未确认则保持围栏，下一次 `acquire` 有界重试关闭。不支持围栏的 worker（Python 池进程）维持先摘后杀。
     """
     key = _worker_key(figures_dir, script_name, artifact_source, run)
     with _lock:
         w = _workers.get(key)
         if expected_worker is not None and w is not expected_worker:
             return False
-        _workers.pop(key, None)
-    if w is None:
-        return False
+        if w is None:
+            return False
+        fenceable = hasattr(w, "_fenced")
+        if fenceable:
+            if getattr(w, "_closing", False):
+                return False  # 另一线程正在关它：此刻没有确认，不报「已杀」
+            w._fenced = True  # 关闭进行中 / 未确认：占位不摘，acquire 不得复用也不得重开
+            w._closing = True
+        else:
+            _workers.pop(key, None)
     LOG.info("强制取消 worker 会话: %s", script_name)
-    if w.force_kill() is False:
-        # 关停未确认（workerd 的 close_session 超时 / 出错）：脚本可能还在跑。不报「已杀」——
-        # 调用方据此走各自的兜底硬杀；句柄放回池里（键空着时）保持围栏，acquire 重试关闭前不会再分配它（#875 / #837）
-        LOG.warning("强制取消未被确认，会话保持围栏: %s", script_name)
+    try:
+        confirmed = w.force_kill() is not False
+    except BaseException:
+        if fenceable:
+            with _lock:
+                w._closing = False
+        raise
+    if fenceable:
         with _lock:
-            _workers.setdefault(key, w)
+            w._closing = False
+            if confirmed:
+                w._fenced = False
+                if _workers.get(key) is w:
+                    _workers.pop(key, None)
+    if not confirmed:
+        # 关停未确认（workerd 的 close_session 超时 / 出错）：脚本可能还在跑。不报「已杀」——
+        # 调用方据此走各自的兜底硬杀；句柄仍在池里保持围栏，acquire 重试关闭前不会再分配它（#875 / #837）
+        LOG.warning("强制取消未被确认，会话保持围栏: %s", script_name)
         return False
     return True
 

@@ -768,3 +768,78 @@ def test_explicit_invalidation_retains_a_fenced_worker_that_acquire_refuses(monk
     with pytest.raises(pool.WorkerError):
         pool.acquire("fig.py", str(tmp_path), "main")
     assert spawned == []
+
+
+def _force_cancel_blocked_on_close(monkeypatch, tmp_path, close_outcome):
+    """另一线程里 force_cancel，close_session 阻塞在 Event 上；返回 (worker, key, spawned, release, thread, result)。"""
+    import threading
+
+    worker, client = _worker(monkeypatch, tmp_path, [{"ok": True, "session_id": "old"}])
+    spawned = _acquire_env(monkeypatch)
+    key = pool._worker_key(str(tmp_path), "fig.py")
+    monkeypatch.setattr(pool, "_workers", {key: worker})
+    entered, release, result = threading.Event(), threading.Event(), []
+
+    def close(op, **kw):
+        assert op == "close_session"
+        entered.set()
+        assert release.wait(10)
+        if isinstance(close_outcome, Exception):
+            raise close_outcome
+        return close_outcome
+
+    monkeypatch.setattr(client, "call", close)
+    t = threading.Thread(
+        target=lambda: result.append(
+            pool.force_cancel("fig.py", str(tmp_path), expected_worker=worker)
+        )
+    )
+    t.start()
+    assert entered.wait(10)
+    return worker, key, spawned, release, t, result, client
+
+
+def test_acquire_during_an_unconfirmed_force_cancel_does_not_respawn_nor_drop_the_fence(
+    monkeypatch, tmp_path
+):
+    """Codex #1177 r4310498006：force_kill 等待期间键不能是空的——并发 acquire 会按同一规格重开，
+    之后放回的围栏句柄被静默丢掉。占位必须贯穿整个关闭尝试。"""
+    worker, key, spawned, release, t, result, client = _force_cancel_blocked_on_close(
+        monkeypatch, tmp_path, _unconfirmed_close()
+    )
+    assert pool._workers.get(key) is worker  # 占位仍在表里
+    with pytest.raises(pool.WorkerError) as caught:
+        pool.acquire("fig.py", str(tmp_path), "main")
+    assert caught.value.code == "session_dead"
+    assert spawned == []
+    release.set()
+    t.join(10)
+    assert result == [False]
+    assert pool._workers.get(key) is worker and pool.is_fenced(worker)
+    assert not worker._closing
+
+    # 之后重试关闭成功才放行重开
+    monkeypatch.setattr(client, "call", lambda op, **kw: {"ok": True, "closed": True})
+    fresh, created = pool.acquire("fig.py", str(tmp_path), "main")
+    assert created and len(spawned) == 1
+    assert pool._workers[key] is fresh
+
+
+def test_acquire_during_a_confirmed_force_cancel_is_refused_then_starts_fresh(
+    monkeypatch, tmp_path
+):
+    worker, key, spawned, release, t, result, _client = _force_cancel_blocked_on_close(
+        monkeypatch, tmp_path, {"ok": True, "closed": True}
+    )
+    with pytest.raises(pool.WorkerError) as caught:
+        pool.acquire("fig.py", str(tmp_path), "main")
+    assert caught.value.code == "session_dead"
+    assert spawned == []
+    release.set()
+    t.join(10)
+    assert result == [True]
+    assert key not in pool._workers
+    assert not pool.is_fenced(worker)
+    fresh, created = pool.acquire("fig.py", str(tmp_path), "main")
+    assert created and len(spawned) == 1
+    assert pool._workers[key] is fresh
