@@ -179,6 +179,17 @@
   规则 `canonical_digest`（形状 + 小端 float64、掩码 = NaN）与基准探针 / 标准库镜像逐字同一份；每张图 `FINGERPRINT_BUDGET`
   个数值，超出的元素记 `over_budget`（不截断、不扣配额）。指纹不进 `editable`、不参与 gid / identity（ADR 0083）、不进文档。
   L3 新版式问题只复用 `interference.detect` + `preflight.run`，只算改后新出现的。看护 `tests/test_figure_verifier.py`。
+- **TAF 改图（`engine/ai_figure_edit.py`，Phase 3a）**：只在 `config.ai_settings()["taf"]["enabled"] is True`（默认关、无界面开关）
+  时由 `ai_bridge.run` 走到；开关关着时旧路径逐字不变（cwd 是项目目录、不写任务列、`ADAPTERS` 为空）。开着时：spawn 之前在
+  `data_dir()/cache/ai_candidates/<sid>/` **字节复制**目标脚本（+ 项目根的 `paper_style.py`，绝不建链接），拍原项目有界指纹（跳过
+  `tavottofile/`、注册表、版本库 / 缓存目录）与静态输出名；Agent 的 cwd 是候选目录、提示词附原项目只读路径。候选建不起来就整条
+  拒绝（不静默退回原地修改）。进程起来之后由泵线程调 `ai_tasks.begin_registered` / `drive_registered`（会话表仍只有 `SESSIONS`、
+  预留仍是同一次 `record_start`）：提交前 L1 = 候选里只有目标脚本变了（新建的辅助文件不提交、不算）、语法、静态输出名不变、项目里
+  的目标脚本仍是起跑那一版、原项目指纹没变（超限 = unknown = 不提交）；提交 = `ai_figure_edit.commit` 持脚本锁再核一次基线 →
+  `write_script` → 统一刷新一次（之后不再刷第二遍）。改前快照仍是 `run()` 起跑时拍的那份，回滚照旧走 `revert`。`cancel` /
+  `interrupt_all` 先问 `ai_tasks.cancel`：进入提交后取消回 False、不改状态。提交后渲染层验证 Phase 3a 未接（`render.figure` 记
+  unknown → 结局最高 partial）。`ai.done` 与会话详情多一个 `task`（类型、结局、未满足项、文案键），终态与 `task_result` 同一条
+  `record_end`。R-03（CLI 不写 cwd 外）是 CLI 的行为，指纹兜底只能发现、不能阻止。看护 `tests/test_ai_figure_edit.py`。
 
 ## 速查表原要点（2026-09-25 迁入，#608）
 

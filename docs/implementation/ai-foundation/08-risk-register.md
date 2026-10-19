@@ -4,7 +4,7 @@
 | --- | --- | --- | --- | --- |
 | R-01 | 与 1.0 收敛纪律冲突 | TAF 是能力扩展 | 违反仓库纪律 | Phase 0–2 无用户可见变化；Phase 3 前维护者决定登记例外或推迟。**待决定** |
 | R-02 | 两套状态机 / 两份历史 | Task Core 自建表或自建状态枚举 | 前端与历史互不知情 | 任务 = session；只加列；状态映射见 `03-contracts.md` §八；P1 结构测试钉住「没有第二张会话表」 |
-| R-03 | CLI 的写入隔离与预期不同 | Codex workspace-write / Claude acceptEdits 在 cwd 外的实际行为随版本、用户全局配置变化 | 候选模式下仍可能改到原项目 | 不把它当保证：原项目有界指纹兜底（发现即 failed 并列文件）；P3 入口实测两 CLI 并记录版本。**未验证** |
+| R-03 | CLI 的写入隔离与预期不同 | Codex workspace-write / Claude acceptEdits 在 cwd 外的实际行为随版本、用户全局配置变化 | 候选模式下仍可能改到原项目 | 不把它当保证：原项目有界指纹兜底（发现即 failed 并列文件）；P3 入口实测两 CLI 并记录版本。**2026-10-20 实测（macOS，产品参数）**：codex-cli 0.163.0 `exec --sandbox workspace-write` 与 Claude Code 2.1.303 `-p --permission-mode acceptEdits` 都没能写到 cwd 外（codex：OS 沙盒 `operation not permitted`；claude：`permission_denials` 列出 Write 与 Bash），cwd 内文件工具与 shell 都能写。注意 codex 的 workspace-write 默认放行 /tmp。单次、单平台、本机用户配置生效下的结论，Windows / Linux / 其他版本**未验证** |
 | R-04 | 候选环境与原项目语义不同 | 相对数据路径、`__file__`、本地模块 import | 候选上验证通过、真实位置上失败 | L2–L4 放在提交后、真实位置做；候选只承担 L1；不能建立候选时降级并标注 |
 | R-05 | 数据指纹成本 / 漂移 | 大数组；脚本用随机数 | 时延上升；同一脚本两次运行指纹不同 → 误报 | 流式哈希 + 上限后记 unknown；运行间指纹不稳定时（同一脚本连跑两次不同）该项记 unknown 而不是 failed；P2 实测 |
 | R-06 | 验证渲染引入额外执行 | 每次改图多跑一次用户脚本 | 副作用脚本被多跑 | 不新增执行：用刷新本来就会触发的那次渲染；native 图不自动渲染（unknown）；预算计数 |
