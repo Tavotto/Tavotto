@@ -1146,7 +1146,8 @@ def runner_crash_result(case: dict, tb: str) -> dict:
     `runner_error` 出现在报告、汇总与门禁告警里（只告警、不致红）。
     """
     r = _blank(case)
-    r["stages"]["discover"] = False
+    # 不写任何 stage：崩溃发生在产生阶段结果之前，discover 没有真的跑过，
+    # 记 False 会被 funnel 当成一次失败的产品发现（拉低 Discovery 成功率）。
     r["detail"]["runner_error"] = tb[-2000:]
     r["classification"] = CC.RUNNER_ERROR
     r["stage"] = "discover"
@@ -1836,7 +1837,10 @@ def render_summary(report: dict) -> str:
     else:
         out.append("\n**Product bugs: 0**\n")
     if s.get("runner_errors"):
-        out.append("\n### Runner errors（基础设施故障，不计入产品缺陷）\n")
+        out.append(
+            "\n### Runner errors（基础设施故障，崩溃本身不计入产品缺陷；"
+            "最终分类为 product_bug 的 case 另有独立产品失败，仍按产品缺陷计）\n"
+        )
         for e in s["runner_errors"]:
             out.append(
                 f"- `{e['id']}`（最终分类 {e.get('classification', '?')}）— runner 崩溃，见报告 JSON 的 detail.runner_error（run_group 崩溃）或 routes.runner_error.detail（路由 runner 崩溃）"
@@ -1959,11 +1963,20 @@ def evaluate_gate(
     # runner 自身崩溃：不是产品缺陷（上面不算），这些 case 没有裁决。维护者裁决
     # （#1178）：门禁只告警、不致红——基础设施故障不该挡住产品改动；但必须可见
     # （告警 + 报告里的 Runner errors 一节），不能静默（#1133）。
+    # 按最终分类拆两类：纯 runner_error 没有裁决；混合 case 另有独立产品失败，
+    # 最终分类是 product_bug，不能再说它「没有裁决 / 非产品回归」。
     crashed = [c["id"] for c in cases if CC.has_runner_crash(results[c["id"]])]
-    if crashed and warnings is not None:
-        warnings.append(
-            f"runner 自身崩溃，这些 case 没有裁决（基础设施故障，非产品回归）：{crashed}"
-        )
+    pure = [i for i in crashed if results[i]["classification"] == CC.RUNNER_ERROR]
+    mixed = [i for i in crashed if results[i]["classification"] != CC.RUNNER_ERROR]
+    if warnings is not None:
+        if pure:
+            warnings.append(
+                f"runner 自身崩溃，这些 case 没有裁决（基础设施故障，非产品回归）：{pure}"
+            )
+        if mixed:
+            warnings.append(
+                f"runner 在这些 case 上也崩溃了（已另有产品失败裁决，按 product_bug 处理）：{mixed}"
+            )
 
     # 桌面/浏览器语义分叉：任何档位一律红（见 docstring 第 4 条）
     parity_bad = [

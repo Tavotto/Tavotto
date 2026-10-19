@@ -967,7 +967,8 @@ class TestRunnerError:
         warns: list[str] = []
         CM.evaluate_gate("pr", [c], results, {"cases": {}}, warns)
         wtext = "\n".join(warns)
-        assert "runner 自身崩溃" in wtext and "z" in wtext
+        # 混合 case：走「也崩溃了」那条，不再说它没有裁决
+        assert "也崩溃了" in wtext and "z" in wtext and "没有裁决" not in wtext
 
     def test_gate_warns_but_does_not_fail_on_runner_error(self):
         """维护者裁决（#1178）：runner 崩溃门禁只告警不致红，但告警里逐条可见。"""
@@ -985,6 +986,34 @@ class TestRunnerError:
             # 不能静默：没有裁决的 case 以基础设施理由出现在告警里
             wtext = "\n".join(warns)
             assert "runner 自身崩溃" in wtext and "非产品回归" in wtext and "x" in wtext
+
+    def test_crash_before_any_stage_records_no_stage_and_skips_funnel(self):
+        """discover 前崩溃：stages 留空，funnel 的 Discovery 分母/失败都不含它（Codex r4310627547）。"""
+        crashed = self._crashed("x")
+        assert crashed["stages"] == {}
+        ok = CM._blank(case("y"))
+        ok["stages"]["discover"] = True
+        rows = CM.funnel([case("x"), case("y")], {"x": crashed, "y": ok})
+        disc = next(r for r in rows if r["stage"] == "discover")
+        assert disc["total"] == 1 and disc["passed"] == 1 and disc["rate"] == 1.0
+
+    def test_gate_warning_splits_pure_crash_from_mixed_product_failure(self):
+        """纯 runner_error 与「已有产品失败 + 崩溃」各一条告警，措辞各自正确（Codex r4310627554）。"""
+        pure_case, mixed_case = case("pure"), case("mixed")
+        res = CM._blank(mixed_case)
+        res["stages"].update(execute=True, replay=False)
+        res["routes"] = self._crashed_routes()
+        results = CM._finish({"mixed": res}, [mixed_case], 0.0)
+        results["pure"] = self._crashed("pure")
+        assert results["mixed"]["classification"] == "product_bug"
+        warns: list[str] = []
+        CM.evaluate_gate("pr", [pure_case, mixed_case], results, {"cases": {}}, warns)
+        assert len(warns) == 2
+        (pure_w,) = [w for w in warns if "没有裁决" in w]
+        (mixed_w,) = [w for w in warns if "也崩溃了" in w]
+        assert "pure" in pure_w and "mixed" not in pure_w
+        assert "mixed" in mixed_w and "pure" not in mixed_w
+        assert "按 product_bug 处理" in mixed_w
 
     def test_runner_error_never_counts_as_a_product_bug_in_the_report(self):
         cases = [case("x"), case("y")]
