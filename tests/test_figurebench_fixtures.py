@@ -23,23 +23,22 @@ import csv
 import hashlib
 import json
 import math
-import shutil
-import subprocess
+import struct
 from pathlib import Path
 
 import pytest
 
-ROOT = Path(__file__).resolve().parent / "fixtures" / "figurebench"
-SCENARIO_FILES = {"dev": ROOT / "scenarios.json", "holdout": ROOT / "scenarios_holdout.json"}
-FIGURE_FIXTURES = (
-    "line_two_series",
-    "multi_panel",
-    "errorbar_fit",
-    "log_decay",
-    "heatmap_colorbar",
-    "cjk_labels",
-    "grouped_bars",
+from support.figurebench import (
+    FIGURE_FIXTURES,
+    ROOT,
+    SCENARIO_FILES,
+    all_scenarios,
+    probe_scenarios,
+    run_probe,
+    stage,
+    variants,
 )
+
 CATEGORIES = {"single_element", "complex_figure", "scientific", "data_to_figure", "reliability"}
 TASK_TYPES = {"figure_edit", "data_to_figure", "infrastructure"}
 CHECKS = {"probe", "policy", "input_truth", "covered_by", "gap"}
@@ -51,27 +50,16 @@ def _load(split: str) -> dict:
     return json.loads(SCENARIO_FILES[split].read_text(encoding="utf-8"))
 
 
-def _all_scenarios() -> list[dict]:
-    return [s for split in SCENARIO_FILES for s in _load(split)["scenarios"]]
-
-
-def _probe_scenarios() -> list[dict]:
-    return [s for s in _all_scenarios() if s["check"] == "probe"]
+_all_scenarios = all_scenarios
+_probe_scenarios = probe_scenarios
 
 
 def _digest(values: list, shape: tuple[int, ...]) -> str:
-    """`_probe.py::digest` 的标准库镜像：形状 + 逐值 repr，NaN / ±Inf 固定写法。"""
-    parts = []
-    for v in values:
-        v = float(v)
-        if math.isnan(v):
-            parts.append("nan")
-        elif math.isinf(v):
-            parts.append("inf" if v > 0 else "-inf")
-        else:
-            parts.append(repr(v))
-    text = "x".join(str(n) for n in shape) + ":" + ",".join(parts)
-    return hashlib.sha256(text.encode()).hexdigest()
+    """`_probe.py::digest` / `engine/manifest.py::canonical_digest` 的标准库镜像：形状 + 小端 float64 字节的 sha256，
+    NaN 统一成 Python `float("nan")` 的位型（与 numpy 的 `np.nan` 相同）。"""
+    vals = [math.nan if math.isnan(float(v)) else float(v) for v in values]
+    head = ("x".join(str(n) for n in shape) + ":").encode()
+    return hashlib.sha256(head + struct.pack(f"<{len(vals)}d", *vals)).hexdigest()
 
 
 def _xy_digest(xs: list, ys: list) -> str:
@@ -335,15 +323,6 @@ def test_every_data_to_figure_scenario_points_at_a_csv_input():
 
 
 # --------------------------------------------------------------------------- 原生执行
-def _apply(src: str, edits: list[dict], sid: str) -> str:
-    for e in edits:
-        assert e["file"] == "figure.py", sid
-        n = src.count(e["find"])
-        assert n == e["count"], f"{sid}: 编辑落点 {e['find']!r} 出现 {n} 次，登记的是 {e['count']}"
-        src = src.replace(e["find"], e["replace"])
-    return src
-
-
 @pytest.fixture(scope="module")
 def probe_results(tmp_path_factory):
     try:
@@ -354,39 +333,13 @@ def probe_results(tmp_path_factory):
         pytest.skip(f"not_run：找不到装了 matplotlib 的解释器（{type(exc).__name__}）")
     work = tmp_path_factory.mktemp("figurebench")
     before = _snapshot(ROOT)
-    jobs: list[dict] = []
-
-    def stage(job_id: str, fixture: str, edits: list[dict], sid: str) -> None:
-        dest = work / job_id
-        shutil.copytree(ROOT / fixture, dest)
-        script = dest / "figure.py"
-        script.write_text(_apply(script.read_text(encoding="utf-8"), edits, sid), encoding="utf-8")
-        jobs.append({"id": job_id, "script": str(script)})
-
-    for fixture in FIGURE_FIXTURES:
-        stage(f"base__{fixture}", fixture, [], fixture)
-    for s in _probe_scenarios():
-        stage(f"{s['id']}__ref", s["fixture"], s["reference_solution"], s["id"])
-        for n in s["negative_variants"]:
-            stage(f"{s['id']}__{n['id']}", s["fixture"], n["edits"], s["id"])
-    (work / "jobs.json").write_text(json.dumps(jobs), encoding="utf-8")
-    proc = subprocess.run(
-        [python, "-B", str(ROOT / "_probe.py"), str(work / "jobs.json"), str(work / "out.json")],
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        timeout=300,
-        env={**_clean_env(), "PYTHONDONTWRITEBYTECODE": "1"},
-    )
-    assert proc.returncode == 0, proc.stderr[-2000:]
+    jobs = [
+        {"id": job_id, "script": str(stage(work, job_id, fixture, edits, sid))}
+        for job_id, fixture, edits, sid in variants()
+    ]
+    results = run_probe(python, jobs, work)
     assert _snapshot(ROOT) == before, "夹具目录在执行后变了"
-    return json.loads((work / "out.json").read_text(encoding="utf-8"))["results"]
-
-
-def _clean_env() -> dict[str, str]:
-    import os
-
-    return {k: v for k, v in os.environ.items() if not k.startswith(("PYTHON", "MPL"))}
+    return results
 
 
 @pytest.mark.parametrize("fixture", FIGURE_FIXTURES)
