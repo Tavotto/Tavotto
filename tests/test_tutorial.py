@@ -398,6 +398,35 @@ def test_copy_status_layouts_is_none_when_the_inventory_is_incomplete(
         assert tutorial.saved_layouts(first.path, meta) == ["MyDraft"]
 
 
+def test_copy_status_unreadable_copy_dir_is_unknown_not_missing(data_dir, client, monkeypatch):
+    """副本目录本身 stat 出错（ACL / I/O）不能报成「不存在」：报「在、清点不了」，前端据此中止重置。"""
+    first = tutorial.ensure_tutorial_copy()
+    real_stat = os.stat
+
+    def flaky_stat(path, *a, **kw):
+        if os.fspath(path) == os.fspath(first.path):
+            raise PermissionError("acl")
+        return real_stat(path, *a, **kw)
+
+    with monkeypatch.context() as mp:
+        mp.setattr(tutorial.os, "stat", flaky_stat)
+        st = tutorial.copy_status()
+        assert st["exists"] is True
+        assert st["layouts"] is None
+        assert client.get("/api/tutorial").get_json()["copy"]["layouts"] is None
+
+    def missing_stat(path, *a, **kw):
+        if os.fspath(path) == os.fspath(first.path):
+            raise FileNotFoundError(path)
+        return real_stat(path, *a, **kw)
+
+    with monkeypatch.context() as mp:
+        mp.setattr(tutorial.os, "stat", missing_stat)
+        st = tutorial.copy_status()
+        assert st["exists"] is False
+        assert st["layouts"] == []
+
+
 def test_stale_leftovers_from_an_interrupted_reset_are_swept(data_dir):
     first = tutorial.ensure_tutorial_copy()
     stale_old = first.path.parent / f".{tutorial.PROJECT_DIRNAME}-deadbeef.old"

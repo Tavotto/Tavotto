@@ -352,7 +352,24 @@ def copy_status(meta: dict | None = None) -> dict:
     manifest = resource_manifest()
     digest = resource_digest(manifest)
     dest = tutorial_destination(meta, digest)
-    if not dest.is_dir():
+    # 不用 `Path.is_dir()`：它把权限 / I/O 错误吞成 False，「看不见」就成了「不存在」——
+    # 重置确认会据此说「没有另存排版」，错误一过去，重置照样换掉整份副本。只有 FileNotFoundError
+    # 才是真的不在；其余错误报「在、但清点不了」（layouts = None），前端按失败中止重置
+    try:
+        is_dir = stat.S_ISDIR(os.stat(dest).st_mode)
+    except FileNotFoundError:
+        is_dir = False
+    except OSError:
+        return {
+            "exists": True,
+            "complete": False,
+            "missing": sorted(manifest),
+            "registry_ok": False,
+            "layouts": None,
+            "version": int(meta["tutorial_version"]),
+            "resource_digest": digest,
+        }
+    if not is_dir:
         return {
             "exists": False,
             "complete": False,
