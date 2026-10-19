@@ -2321,6 +2321,12 @@ export interface ManifestElement {
    */
   scale_gids?: string[]
   /**
+   * 同一色阶组里的**其它色条**（同一个 mappable，或共用同一份 norm——独立 `ScalarMappable`
+   * 的色条属于后者）。组里没有已登记图元、只有几条独立色条共用 norm 时，`mappable_gid` /
+   * `scale_gids` 都是空的，写 cmap 时只能靠这份找到同伴（ADR 0135）。可选：没有同伴色条就不发。
+   */
+  scale_colorbar_gids?: string[]
+  /**
    * 拖动这个 axes 时该一起走的**其他 axes**（色条轴、twinx/twiny 的孪生轴）。
    * 由引擎裁决（只有那边有 matplotlib 的共享关系与落点），前端只负责把同一个
    * 位移发给它们。子图自己的标题/轴标签不在这里——它们是 Axes 的孩子，

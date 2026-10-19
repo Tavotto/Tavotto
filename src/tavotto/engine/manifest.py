@@ -56,6 +56,7 @@ from colorbarmodel import (
     declared_parents,
     field_image_of,
     follow_map,
+    scale_colorbars,
     scale_gids,
     scale_siblings,
 )
@@ -5070,6 +5071,17 @@ def _measure_manifest(
             ]
             if scale:
                 entry["scale_gids"] = scale
+            # 同一色阶组里的**其它色条**（同一个 mappable，或共用同一份 norm 对象——独立
+            # `ScalarMappable` 的色条属于后者）。组里一个已登记图元都没有时（只有几条独立色条共用
+            # norm），`mappable_gid` / `scale_gids` 都是空的，前端只能靠这份找到同伴、在写 cmap 时
+            # 清掉它们的旧 override（#1159 评审）。可选：没有同伴色条就不发。
+            cb_peers = [
+                g
+                for p in scale_colorbars(state, artist.cb.mappable)
+                if p is not artist and (g := gid_by_artist_id.get(id(p))) is not None
+            ]
+            if cb_peers:
+                entry["scale_colorbar_gids"] = cb_peers
             # **能力为什么不在，要说出来。** 少一个控件而不给理由，用户只会
             # 以为是漏了或是坏了。这里给的是稳定 code，供界面按 code 翻译成
             # 「这条色条横跨多个子图，方向切换在 1.0 里不支持」。

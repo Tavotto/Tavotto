@@ -233,3 +233,17 @@ def test_every_mapped_member_lists_its_peers_in_scale_gids(request, script, stem
         el = next(e for e in man["elements"] if e["gid"] == gid)
         want = [g for g in members if g != gid]
         assert el.get("scale_gids", []) == want, (gid, el.get("scale_gids"))
+
+
+def test_standalone_only_colorbars_list_each_other(hot2d):
+    """只有独立色条共用 norm 的色阶组：每条色条发 `scale_colorbar_gids`（组里其它色条），前端据此在写
+    cmap 时清掉同伴的旧 override（#1159 评审）；没有同伴色条的不发。"""
+    man = _man(hot2d, "TwoSm")
+    _members, cbs = _group(man)
+    assert len(cbs) == 2, cbs
+    for gid in cbs:
+        el = next(e for e in man["elements"] if e["gid"] == gid)
+        assert "mappable_gid" not in el and not el.get("scale_gids")  # 前提：独立色条、没有登记图元
+        assert el.get("scale_colorbar_gids") == [g for g in cbs if g != gid], el
+    lone = _man(hot2d, "Cf")
+    assert all("scale_colorbar_gids" not in e for e in lone["elements"])
