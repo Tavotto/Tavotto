@@ -1409,6 +1409,9 @@ def run_group(
                             "detail": tb[-2000:],
                         }
                     }
+    except Exception:  # noqa: BLE001
+        # run_group 自己崩了：保留 results 里已记录的部分结果，不整条替换。
+        return _finish(results, group, t0, crash_tb=traceback.format_exc())
     finally:
         for w in (hot, fresh):
             if w is not None:
@@ -1542,15 +1545,38 @@ def _blank(case: dict) -> dict:
     }
 
 
-def _finish(results: dict, group: list[dict], t0: float) -> dict:
+def _finish(results: dict, group: list[dict], t0: float, crash_tb: str | None = None) -> dict:
+    """折叠分类。`crash_tb` 非空 = run_group 中途崩了：保留已记录的阶段/路由结果，
+    崩溃作为事实附加（`detail.runner_error`），分类走与路由崩溃**同一套优先级**
+    （classify 里的 crashed_routes 分支）：有独立观察到的产品失败 → 仍是缺陷，
+    否则 runner_error。一个阶段结果都没有的 case 整条记 runner_error。"""
     ms = round((time.perf_counter() - t0) * 1000, 1)
     for case in group:
         r = results[case["id"]]
+        routes = r.get("routes")
+        if crash_tb is not None:
+            if not r["stages"] and not r["skipped"] and not routes:
+                results[case["id"]] = r = runner_crash_result(case, crash_tb)
+                r["duration_ms"] = ms
+                continue
+            r["detail"].setdefault("runner_error", crash_tb[-2000:])
+            # 只喂给 classify 的合成崩溃条目，不写回 r["routes"]
+            routes = {
+                **(routes or {}),
+                "runner_error": {
+                    "status": "fail",
+                    "code": "run_group_crashed",
+                    "classification": CC.RUNNER_ERROR,
+                },
+            }
         r["duration_ms"] = ms
-        cls, reason, detail = classify(case, r["stages"], r["skipped"], r.get("routes"))
+        cls, reason, detail = classify(case, r["stages"], r["skipped"], routes)
         r["classification"] = cls
         r["reason"] = reason
         r["detail_note"] = detail
+        if cls == CC.RUNNER_ERROR and crash_tb is not None:
+            r["stage"] = ""
+            r["follow_up"] = "读 detail.runner_error 里的 traceback，修 runner 后重跑"
         if cls == "product_bug":
             stage = product_bug_stage(r["stages"], case.get("expected", {}))
             if not stage:

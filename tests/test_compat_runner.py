@@ -1046,3 +1046,103 @@ class TestRunnerError:
         results = CM._finish({"z": res}, cases, 0.0)
         report = CM.build_report(cases, results, {}, "current", "all")
         assert [e["id"] for e in report["summary"]["runner_errors"]] == ["z"]
+
+
+class TestRunGroupCrashKeepsPartialResults:
+    """run_group 中途崩溃：已记录的阶段结果保留，已有产品失败时仍判 product_bug（Codex #1178）。"""
+
+    CRASH = "Traceback: hot.override boom"
+
+    def test_finish_with_crash_keeps_independent_product_failure(self):
+        c = case("a")
+        res = CM._blank(c)
+        res["stages"].update(discover=True, execute=True, replay=False)
+        out = CM._finish({"a": res}, [c], 0.0, crash_tb=self.CRASH)["a"]
+        assert out["classification"] == "product_bug"
+        assert out["stage"] == "replay"
+        assert out["stages"]["replay"] is False
+        assert out["detail"]["runner_error"] == self.CRASH
+        assert "runner_error" in out["detail_note"]
+        assert "run_group_crashed" not in json.dumps(out["routes"])  # 合成条目不外泄
+        assert CC.has_runner_crash(out)
+
+    def test_finish_with_crash_and_no_failure_is_runner_error(self):
+        c = case("a")
+        res = CM._blank(c)
+        res["stages"].update(discover=True, execute=True)
+        out = CM._finish({"a": res}, [c], 0.0, crash_tb=self.CRASH)["a"]
+        assert out["classification"] == "runner_error"
+        assert out["stages"] == {"discover": True, "execute": True}
+
+    def test_finish_with_crash_and_untouched_case_is_whole_runner_error(self):
+        c = case("a")
+        out = CM._finish({"a": CM._blank(c)}, [c], 0.0, crash_tb=self.CRASH)["a"]
+        assert out["classification"] == "runner_error"
+        assert out["detail"]["runner_error"] == self.CRASH
+
+    def _patch_pipeline(self, monkeypatch, tmp_path, *, override_boom):
+        from tavotto.engine import pool
+
+        class FakeHot:
+            def __init__(self):
+                self.calls = 0
+
+            def ensure_built(self):
+                return {"stems": {"s": {"source": "x"}}, "timings": {}}
+
+            def override(self, stem, patches):
+                self.calls += 1
+                if self.calls >= 2 and override_boom:
+                    raise RuntimeError("hot.override boom")
+                return {"manifest": {"elements": [{"gid": "g", "editable": []}]}, "timings": {}}
+
+        monkeypatch.setattr(CM, "materialize", lambda g, w: (tmp_path, "s.py", "main"))
+        monkeypatch.setattr(
+            CM, "stage_discover", lambda *a, **k: {"ok": True, "entry": "main", "detail": {}}
+        )
+        monkeypatch.setattr(CM, "_fresh_worker", lambda *a, **k: FakeHot())
+        monkeypatch.setattr(CM, "stage_semantic", lambda *a, **k: {"ok": True, "detail": {}})
+        monkeypatch.setattr(
+            CM,
+            "stage_edit",
+            lambda *a, **k: {"ok": True, "detail": {}, "full_patches": [{"gid": "g"}]},
+        )
+        monkeypatch.setattr(CM, "stage_replay", lambda *a, **k: {"ok": False, "detail": {}})
+        monkeypatch.setattr(pool, "discard", lambda w: None)
+
+    def _run(self, group, tmp_path):
+        return CM.run_group(
+            group,
+            python=sys.executable,
+            root=tmp_path,
+            out_dir=tmp_path,
+            want_fidelity=False,
+            want_browser=False,
+        )
+
+    def test_run_group_crash_after_replay_failure_stays_product_bug(self, monkeypatch, tmp_path):
+        self._patch_pipeline(monkeypatch, tmp_path, override_boom=True)
+        c = case("a", expected_figures=1)
+        results = self._run([c], tmp_path)
+        r = results["a"]
+        assert r["classification"] == "product_bug"
+        assert r["stages"]["replay"] is False
+        assert "hot.override boom" in r["detail"]["runner_error"]
+        assert CC.has_runner_crash(r)
+        report = CM.build_report([c], results, {}, "current", "all")
+        assert [b["id"] for b in report["summary"]["product_bugs"]] == ["a"]
+        assert [e["id"] for e in report["summary"]["runner_errors"]] == ["a"]
+        with pytest.raises(CC.CorpusError) as ei:
+            CC.baseline_payload(results)
+        assert ei.value.code == "baseline_runner_error"
+
+    def test_run_group_crash_before_any_stage_is_runner_error(self, monkeypatch, tmp_path):
+        self._patch_pipeline(monkeypatch, tmp_path, override_boom=False)
+
+        def boom(*a, **k):
+            raise RuntimeError("discover boom")
+
+        monkeypatch.setattr(CM, "stage_discover", boom)
+        results = self._run([case("a")], tmp_path)
+        assert results["a"]["classification"] == "runner_error"
+        assert "discover boom" in results["a"]["detail"]["runner_error"]
