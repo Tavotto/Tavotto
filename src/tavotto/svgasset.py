@@ -67,6 +67,6 @@ def read(path: Path) -> tuple[bytes, dict]:
             w = h * box[2] / box[3]
         elif h is None:
             h = w * box[3] / box[2]
-    if w is None or h is None or max(w, h) > 144000:
+    if w is None or h is None or not all(math.isfinite(v) and 0 < v <= 144000 for v in (w, h)):
         raise UnsupportedSVG("svg_dimensions")
     return data, {"kind": "svg", "w_pt": w, "h_pt": h}
