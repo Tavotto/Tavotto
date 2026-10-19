@@ -548,7 +548,12 @@ def v2_stages(
             "actual captured figure count against the native figure count",
         )
     if captured:
-        stages["open"] = stage("passed" if opened else "failed", "actual rendered manifest")
+        # every captured figure must render: one valid figure among several captured is not "open"
+        all_open = observed["figures_valid"] == observed["figures_captured"]
+        stages["open"] = stage(
+            "passed" if all_open else "failed",
+            "actual rendered manifest: every captured figure renders",
+        )
     if opened:
         titles = [
             title
