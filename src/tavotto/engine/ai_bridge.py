@@ -70,6 +70,79 @@ class AgentError(RuntimeError):
         self.params = params or {}
 
 
+#: `find_request` 的 status：请求登记过（已执行），但会话的历史记录被用户删掉了，结局不可知
+REQUEST_HISTORY_DELETED = "history_deleted"
+#: 请求被新指令取代（`supersedes` 的墓碑预留）：一定没执行，也不会再执行——不能提供同 rid 重发
+REQUEST_SUPERSEDED = "superseded"
+
+
+class DuplicateRequest(Exception):
+    """同一个 `client_request_id` 已经登记过：不 spawn，调用方返回既有会话（幂等）。"""
+
+    def __init__(self, sid: str):
+        super().__init__(sid)
+        self.sid = sid
+
+
+#: 「这个请求线程里的 run() 已经 spawn 出了 CLI 进程」的标记（线程本地，Flask 每个请求一个线程）。路由包装层据此区分
+#: spawn 之前的异常（可以安全地清掉账本行）和之后的（绝不能清：那条指令可能正在执行）
+_SPAWN_MARK = threading.local()
+
+
+def reset_spawn_mark() -> None:
+    _SPAWN_MARK.started = False
+
+
+def spawn_started() -> bool:
+    return bool(getattr(_SPAWN_MARK, "started", False))
+
+
+def _drop_attempt_files(sid: str, snap: Path) -> None:
+    """这次尝试没有真正起任务（被拒绝）：清掉为它备好的快照 / sidecar / 日志，不留半成品。"""
+    for leftover in (snap, SNAP_DIR / f"{sid}.json", SNAP_DIR / f"{sid}.stderr.log"):
+        try:
+            leftover.unlink()
+        except OSError:
+            pass
+
+
+def find_request(project: str, client_request_id: str) -> dict | None:
+    """这个项目里这个请求 id 对应的会话摘要 `{session, status, changed, script}`，没有返回 None。
+
+    先看内存（刚起、还没落库的也在），再看历史库（后端重启后）。**按项目隔离**：主语是
+    (项目, 请求 id)，不是请求 id 本身。"""
+    project = str(Path(project).resolve())
+    for sess in list(SESSIONS.values()):
+        if sess.get("client_request_id") == client_request_id and sess.get("project") == project:
+            return {
+                "session": sess["id"],
+                "status": sess["status"],
+                "changed": bool(sess.get("changed")),
+                "script": sess["script"],
+            }
+    hist = ai_history.find_by_request(project, client_request_id)
+    if hist is None:
+        # 历史行没了（用户删了任务历史）不等于没执行过：幂等账本是独立的一份。
+        # 命中就明说「执行过、记录已删」——前端据此不再放开重发
+        rec = ai_history.find_request_record(project, client_request_id)
+        if rec is None:
+            return None
+        if rec["session"] == ai_history.SUPERSEDED:
+            return {"session": "", "status": REQUEST_SUPERSEDED, "changed": False, "script": None}
+        return {
+            "session": rec["session"],
+            "status": REQUEST_HISTORY_DELETED,
+            "changed": False,
+            "script": None,
+        }
+    return {
+        "session": hist["id"],
+        "status": hist["status"],
+        "changed": hist["changed"],
+        "script": hist["script"],
+    }
+
+
 def require_agent(agent_id: str) -> ai_agents.AgentDefinition:
     """按 id 取适配器；**未知 id 一律当场拒绝**，绝不继续往下传。
 
@@ -364,6 +437,10 @@ def install_status(agent_id: str) -> dict:
 #: 按脚本的锁（ADR 0110 §五）：持有者清单与唯一写入口在 `scriptlock`
 script_guard = scriptlock.script_guard
 
+#: 「查请求 id → 登记会话」要成为一步：两个同 id 的 POST 并发到达，后者必须看见前者。
+#: 锁序固定为 script_guard → _REQUEST_LOCK，别处不反过来取。
+_REQUEST_LOCK = threading.RLock()
+
 
 def _terminate(sess: dict) -> None:
     """杀掉会话的整个进程组（POSIX `killpg`；Windows `taskkill /T`，要趁组长还活着）。只是发出终止——
@@ -617,6 +694,7 @@ def run(
     effort: str | None = None,
     endpoint_id: str | None = None,
     on_changed=None,
+    client_request_id: str | None = None,
 ) -> str:
     """启动一次 AI 修改任务，返回 session id。事件经 on_event(name, data) 回调。
 
@@ -627,14 +705,28 @@ def run(
     （app 层接的是统一刷新，ADR 0025）。本模块不 import app、不知道刷新长什么
     样——注入而不是回头 import，边界与 `project_refresh.RefreshSink` 相同。
     它的结局进 `ai.done.refresh` 与历史库的 `refresh` 列，见 `refresh_outcome()`。
+
+    `client_request_id`：前端点发送时生成的 UUID。同 (项目, id) 已登记过就抛 `DuplicateRequest`、
+    **不 spawn**——「任何操作都不得让同一条 AI 修改被无意执行两次」。去重先于忙检查：
+    重发一条已经在跑的请求得到的是既有会话，不是 409。同脚本上另一个会话还在跑（不同请求）
+    则 409 `ai_script_busy`——后端不能只靠前端的 `runningHere` 挡并发。
     """
     require_usable(agent)
     script_path = Path(figures_dir) / script
+    project_key = str(Path(figures_dir).resolve())
     # 从「脚本在不在」到登记进 SESSIONS 整段持脚本锁：改写 / 复原的事务要么在这之前落地（这里快照的
     # 就是改后的脚本），要么在这之后看到 running 的会话而让路
-    with script_guard(script_path):
+    with script_guard(script_path), _REQUEST_LOCK:
+        if client_request_id:
+            known = find_request(project_key, client_request_id)
+            if known is not None:
+                if known["status"] == REQUEST_SUPERSEDED:
+                    raise AgentError("ai_request_superseded")
+                raise DuplicateRequest(known["session"])
         if not script_path.is_file():
             raise RuntimeError(f"脚本不存在: {script}")
+        if script_busy(script_path):
+            raise AgentError("ai_script_busy", {"script": script})
         sid = uuid.uuid4().hex[:12]
         SNAP_DIR.mkdir(parents=True, exist_ok=True)
         _prune_snapshots()
@@ -682,24 +774,76 @@ def run(
         )
         # cmd[0] 是 CLI 可执行（或 node），末尾是提示词——PATH 增强按 cmd[0] 算
         env = _spawn_env(cmd[0], extra_env)
-        proc = subprocess.Popen(
-            cmd,
-            cwd=figures_dir,
-            env=env,
-            stdin=subprocess.DEVNULL,  # 桌面 sidecar 的 stdin 是父进程死亡信号管道，不外传
-            stdout=subprocess.PIPE,
-            stderr=stderr_log,  # CLI 的 hook/统计噪音不进对话
-            text=True,
-            bufsize=1,
-            # 显式 UTF-8：Windows 上 text=True 跟随系统区域编码（cp936），
-            # CLI 回来的中文/JSON 一解码就炸，表现为「任务刚起就结束」
-            encoding="utf-8",
-            errors="replace",
-            creationflags=CREATE_NO_WINDOW,
-            # POSIX 上自成一个进程组：取消 / 超时时连它起的子进程一起收掉（`_terminate` / `_await_exit`）；
-            # Windows 的 `taskkill /T` 按 pid 找子树，不需要单独的组
-            start_new_session=os.name != "nt",
-        )
+        # **先把幂等记录写进库、再启动进程**：写库失败（SQLite 被锁 / 满 / 损坏）就根本不 spawn，
+        # 调用方拿到的是「明确没执行」。反过来先 spawn 再写库，写库一抛，CLI 已经在改脚本、前端却当它
+        # 被拒绝而换新 id 重试——同一条修改执行两次（Codex #1098）。
+        ctx = context or {}
+        try:
+            started = ai_history.record_start(
+                {
+                    "id": sid,
+                    "project": project_key,
+                    "canvas": ctx.get("canvas"),
+                    "panel": ctx.get("stem"),
+                    "element": ctx.get("gid"),
+                    "provider": agent,
+                    "model": model,
+                    "effort": effort,
+                    "scope": ctx.get("scope"),
+                    "target": ctx.get("target"),
+                    "script": script,
+                    "prompt": user_prompt,
+                    "snapshot_path": str(snap),
+                    "client_request_id": client_request_id,
+                }
+            )
+        except ai_history.ScriptBusy:
+            # 另一个服务进程里同一脚本上有属主还活着的 running 会话（进程内的 `script_busy` 看不到它）
+            stderr_log.close()
+            _drop_attempt_files(sid, snap)
+            raise AgentError("ai_script_busy", {"script": script}) from None
+        except BaseException:
+            # record_start 抛了（SQLite 锁住 / 磁盘满）：什么都没登记、也不 spawn——为这次尝试备好的快照 / sidecar / 日志
+            # 一并清掉，不留半成品去挤占 `_prune_snapshots` 的保留名额
+            stderr_log.close()
+            _drop_attempt_files(sid, snap)
+            raise
+        if isinstance(started, tuple) and not started[0] and started[1] == ai_history.SUPERSEDED:
+            # 并发里被新指令取代的 rid：不 spawn（与上面的快速路径同一个结局）
+            stderr_log.close()
+            _drop_attempt_files(sid, snap)
+            raise AgentError("ai_request_superseded")
+        if isinstance(started, tuple) and not started[0]:
+            # 别的调用者（可能是另一个共用数据目录的 Tavotto 进程）已经原子预留了这个 (项目, 请求 id)：
+            # 不 spawn，清掉这次为它准备的快照 / sidecar / 日志，按去重语义回既有会话
+            stderr_log.close()
+            _drop_attempt_files(sid, snap)
+            raise DuplicateRequest(started[1])
+        try:
+            proc = subprocess.Popen(
+                cmd,
+                cwd=figures_dir,
+                env=env,
+                stdin=subprocess.DEVNULL,  # 桌面 sidecar 的 stdin 是父进程死亡信号管道，不外传
+                stdout=subprocess.PIPE,
+                stderr=stderr_log,  # CLI 的 hook/统计噪音不进对话
+                text=True,
+                bufsize=1,
+                # 显式 UTF-8：Windows 上 text=True 跟随系统区域编码（cp936），
+                # CLI 回来的中文/JSON 一解码就炸，表现为「任务刚起就结束」
+                encoding="utf-8",
+                errors="replace",
+                creationflags=CREATE_NO_WINDOW,
+                # POSIX 上自成一个进程组：取消 / 超时时连它起的子进程一起收掉（`_terminate` / `_await_exit`）；
+                # Windows 的 `taskkill /T` 按 pid 找子树，不需要单独的组
+                start_new_session=os.name != "nt",
+            )
+            _SPAWN_MARK.started = True  # 进程已经起来了：此后任何异常都不能再清账本行
+        except BaseException as exc:
+            # 记录已落库而进程没起来：标成失败，不是删掉——「查询」要查得到它，且明确是没执行
+            stderr_log.close()
+            ai_history.record_end(sid, "failed", error=str(exc))
+            raise
         sess = {
             "id": sid,
             "agent": agent,
@@ -719,26 +863,9 @@ def run(
             #: 观察到进程（连同进程组）确实退出之后才置位；之前 `script_busy` 一律算忙
             "exited": threading.Event(),
             "started": time.time(),
+            "client_request_id": client_request_id,
         }
         SESSIONS[sid] = sess
-    ctx = context or {}
-    ai_history.record_start(
-        {
-            "id": sid,
-            "project": str(Path(figures_dir).resolve()),
-            "canvas": ctx.get("canvas"),
-            "panel": ctx.get("stem"),
-            "element": ctx.get("gid"),
-            "provider": agent,
-            "model": model,
-            "effort": effort,
-            "scope": ctx.get("scope"),
-            "target": ctx.get("target"),
-            "script": script,
-            "prompt": user_prompt,
-            "snapshot_path": str(snap),
-        }
-    )
     emit = on_event or (lambda *_: None)
 
     def _pump():
@@ -796,6 +923,9 @@ def run(
                 transcript=sess["transcript"],
                 refresh=sess["refresh"],
             )
+            # 结束时刻：会话详情据此告诉前端「这是不是终态快照」——`cancel` 之后 status 立刻是 cancelled，但 changed / diff / refresh
+            # 要等 pump 收尾才算出来；没有 ended_ms 的 cancelled 快照不是终态
+            sess["ended_ms"] = int(time.time() * 1000)
             emit(
                 "ai.done",
                 {
@@ -819,6 +949,7 @@ def run(
                 transcript=sess.get("transcript") or [],
                 refresh=sess["refresh"],
             )
+            sess["ended_ms"] = int(time.time() * 1000)
             emit(
                 "ai.done",
                 {
@@ -1023,33 +1154,98 @@ def _refuse_stale_revert(sess: dict, script_path: Path, snapshot: bytes) -> None
     raise AgentError("ai_revert_conflict", {"script": sess["script"]})
 
 
+#: 会话详情（`GET /api/ai/sessions/<sid>`）对外给的字段——**显式白名单**，每个值都必须能 `json.dumps`。
+#: 内存里的会话 dict 带着不可序列化的内部对象（`proc` 子进程、`exited` 的 `threading.Event`），用黑名单排除会在下一次有人
+#: 往会话里加字段时再炸一次（曾经只排除了 `proc`，`exited` 让本进程正在运行的会话详情一律 500）。
+SESSION_DTO_KEYS: tuple[str, ...] = (
+    "id",
+    "agent",
+    "provider",
+    "script",
+    "prompt",
+    "status",
+    "changed",
+    "diff",
+    "transcript",
+    "refresh",
+    "model",
+    "effort",
+    "scope",
+    "target",
+    "started",
+    "started_ms",
+    "ended_ms",
+    "error",
+    "client_request_id",
+    "revert_available",
+    "pinned",
+    "note",
+)
+#: **终态字段清单**：会话结束时一起确定、落进历史库的那一组。服务重启后「sidecar 合并历史」的路径用它整体覆盖 sidecar，
+#: 不再逐个字段抄（漏抄一个就会出现「final 为 true 但 error 是空」这类分叉）。新增终态字段时只改这里。
+SESSION_TERMINAL_FIELDS: tuple[str, ...] = (
+    "status",
+    "transcript",
+    "diff",
+    "changed",
+    "refresh",
+    "error",
+    "ended_ms",
+)
+
+#: 会话 dict 里**有意不对外**的内部字段（含不可序列化的）。`tests/test_ai_idempotency.py` 钉住：会话 dict 的每个键
+#: 必须落在 DTO 白名单或这里——新加字段时必须表态，不会悄悄漏进响应、也不会悄悄让详情 500。
+SESSION_INTERNAL_KEYS: frozenset[str] = frozenset(
+    {"proc", "exited", "script_path", "snapshot", "project", "context", "owner_pid"}
+)
+
+
+def _session_dto(raw: dict) -> dict:
+    """把会话 dict（内存里的 / sidecar 合并历史的 / 历史行）收成可序列化的对外形状：只取白名单里有的键。"""
+    out = {k: raw[k] for k in SESSION_DTO_KEYS if k in raw}
+    if isinstance(out.get("transcript"), list):
+        out["transcript"] = [dict(t) for t in out["transcript"]]  # 拷一份：pump 线程还在往里追加
+    return out
+
+
 def get(sid: str) -> dict | None:
     sess = SESSIONS.get(sid)
     if sess is not None:
-        return {k: v for k, v in sess.items() if k not in ("proc",)}
+        live = dict(sess)  # 先浅拷：pump 线程随时在改
+        snap = live.get("snapshot")
+        live["revert_available"] = bool(snap) and Path(snap).is_file()
+        return _session_dto(live)
     side = _load_sidecar(sid)
-    if side is None:
-        return None
     # 后端已重启：以 SQLite 历史为准（启动时 running 已被标为 interrupted）
     hist = ai_history.get(sid)
+    if side is None:
+        # 改前快照（sidecar）已被 `_prune_snapshots()` 按份数清掉、历史库那一行还在：照样回历史里的终态与
+        # `refresh` 结局，不回 404——404 会被前端当成「没有详情」，凭摘要收尾、丢掉「改成了但项目没刷新」的警告（Codex #1098）
+        if hist is None:
+            return None
+        return _session_dto({**hist, "note": "改前快照已清理，记录来自历史库"})
     if hist is not None:
-        return {
+        return _session_dto(
+            {
+                **side,
+                # 终态字段**整体**以历史库为准（同一份清单，不逐个抄——逐个抄漏过 `error`：失败的会话 final 为 true 却没有原因）
+                **{k: hist.get(k) for k in SESSION_TERMINAL_FIELDS if k in hist},
+                "revert_available": hist.get("revert_available"),
+                "note": "后端已重启，记录来自历史库",
+            }
+        )
+    return _session_dto(
+        {
             **side,
-            "status": hist["status"],
-            "transcript": hist["transcript"],
-            "diff": hist["diff"],
-            "changed": hist["changed"],
-            "refresh": hist.get("refresh"),
-            "note": "后端已重启，记录来自历史库",
+            "status": "interrupted",
+            "transcript": [],
+            "diff": "",
+            "changed": None,
+            # 进程随上一个后端一起没了：这是终态。`interrupted` 与 `cancelled` 一样要带 `ended_ms` 才算终态（前端 `snapshotIsFinal`）
+            "ended_ms": side.get("ended_ms") or int(time.time() * 1000),
+            "note": "后端已重启，仅可回滚",
         }
-    return {
-        **side,
-        "status": "interrupted",
-        "transcript": [],
-        "diff": "",
-        "changed": None,
-        "note": "后端已重启，仅可回滚",
-    }
+    )
 
 
 def cancel(sid: str) -> bool:

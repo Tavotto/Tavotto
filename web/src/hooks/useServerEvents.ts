@@ -6,7 +6,7 @@ import {
   subscribeEvents,
   type ServerEvent,
 } from '@/lib/api'
-import { useAiStore } from '@/store/aiStore'
+import { setAiSettledNotifier, useAiStore, type DonePayload } from '@/store/aiStore'
 import { useDepRepairStore } from '@/store/depRepairStore'
 import { usePackageStore } from '@/store/packageStore'
 import { useDocumentStore } from '@/store/documentStore'
@@ -298,7 +298,8 @@ export function handleServerEvent(ev: ServerEvent) {
 
     case 'ai.delta':
       // 按 sid 写进自己的会话；不是本标签页此刻持有的会话就什么都不做
-      useAiStore.getState().appendDelta(ev.session, ev.kindOf ?? 'message', ev.text)
+      // 带上请求 id：事件可能比 `aiRun` 的响应先到，store 凭它认领并暂存
+      useAiStore.getState().appendDelta(ev.session, ev.kindOf ?? 'message', ev.text, ev.client_request_id)
       break
 
     case 'ai.done': {
@@ -306,38 +307,50 @@ export function handleServerEvent(ev: ServerEvent) {
       // **只对自己持有的会话起副作用**（提示、失败说明……）：老后端的 `ai.done` 不带 pj，上面那道
       // 项目判据拦不住它；切项目之后 A 的会话已不在列表里，这里就一个字都不说（#589）
       if (!ai.finish(ev)) break
-      // 这里**不再 markStale**：文件变了的话后端在 ai.done 之前已经作废 worker、
-      // 跑过统一刷新、发过 `panel.file_changed`（reason=ai），上面那个分支按
-      // stem 把画布上的面板全部转入跟踪——同一次修改只置一次 stale（ADR 0041）。
-      // 老后端（没有 refresh 字段）仍靠 watcher 的 panel.file_changed 兜底。
-      const refreshFailed = ev.changed && ev.refresh?.status === 'failed'
-      if (refreshFailed) {
-        // 代码改成了、项目没刷新：两件事都说，不把前者伪装成全部成功
-        const code = ev.refresh?.code ?? ''
-        const reason = i18n.exists(`backend.${code}`, { ns: 'errors' })
-          ? translateBackend(code)
-          : code
-        setStatus(msg('status.aiChangedRefreshFailed', { reason }, 'ai'), 'error')
-        break
-      }
-      setStatus(
-        msg(
-          ev.status === 'done'
-            ? ev.changed
-              ? 'status.aiChanged'
-              : 'status.aiNoChange'
-            : ev.status === 'timeout'
-              ? 'status.aiTimeout'
-              : 'status.aiFailed',
-          undefined,
-          'ai',
-        ),
-        ev.status === 'done' ? 'info' : 'error',
-      )
+      announceAiDone(ev)
       break
     }
   }
 }
+
+
+/**
+ * 一次 AI 会话收尾时对用户说的话（状态栏）。直达路径（`ai.done` 到的时候会话已经在）和
+ * 「事件先于 `aiRun` 响应、会话建好后才回放」的路径共用这一份。
+ */
+function announceAiDone(ev: DonePayload) {
+  const setStatus = useUiStore.getState().setStatus
+  // 这里**不再 markStale**：文件变了的话后端在 ai.done 之前已经作废 worker、
+  // 跑过统一刷新、发过 `panel.file_changed`（reason=ai），上面那个分支按
+  // stem 把画布上的面板全部转入跟踪——同一次修改只置一次 stale（ADR 0041）。
+  // 老后端（没有 refresh 字段）仍靠 watcher 的 panel.file_changed 兜底。
+  const refreshFailed = ev.changed && ev.refresh?.status === 'failed'
+  if (refreshFailed) {
+    // 代码改成了、项目没刷新：两件事都说，不把前者伪装成全部成功
+    const code = ev.refresh?.code ?? ''
+    const reason = i18n.exists(`backend.${code}`, { ns: 'errors' })
+      ? translateBackend(code)
+      : code
+    setStatus(msg('status.aiChangedRefreshFailed', { reason }, 'ai'), 'error')
+    return
+  }
+  setStatus(
+    msg(
+      ev.status === 'done'
+        ? ev.changed
+          ? 'status.aiChanged'
+          : 'status.aiNoChange'
+        : ev.status === 'timeout'
+          ? 'status.aiTimeout'
+          : 'status.aiFailed',
+      undefined,
+      'ai',
+    ),
+    ev.status === 'done' ? 'info' : 'error',
+  )
+}
+
+setAiSettledNotifier(announceAiDone)
 
 /** 后端事件 → 渲染状态 / AI 会话 / 素材库刷新 / 状态栏 */
 export function useServerEvents() {

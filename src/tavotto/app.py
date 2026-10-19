@@ -27,6 +27,7 @@ import socket
 import sys
 import threading
 import time
+import traceback
 import unicodedata
 import urllib.error
 import urllib.parse
@@ -218,6 +219,21 @@ RENDER_CACHE_MAX_BYTES = 500 * 1024 * 1024  # cache/*.png 渲染缓存总预算
 BACKUP_KEEP = 20  # 「更新原图」备份保留份数
 
 
+#: 路径里带助手请求 id 的路由（`/api/ai/requests/<request_id>`、`/api/ai/drafts/pending/<rid>[/accept]`）。
+#: werkzeug 的访问日志（`WSGIRequestHandler.log_request`）把原始请求行作为参数交给 `werkzeug` logger，
+#: 不经过 Flask 的路由——这里在写入 stderr / app.log 之前把 id 换成占位，「请求 id 不进日志」对访问日志同样成立
+_AI_RID_PATH_RE = re.compile(r"(/api/ai/(?:requests|drafts/pending)/)[^/?#\s\"]+")
+
+
+class _RedactAiRequestIds(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        if record.name == "werkzeug" and isinstance(record.args, tuple):
+            record.args = tuple(
+                _AI_RID_PATH_RE.sub(r"\1<rid>", a) if isinstance(a, str) else a for a in record.args
+            )
+        return True
+
+
 def setup_logging() -> None:
     """stderr + cache/app.log（1MB×3 轮转）。重复调用无副作用。"""
     root = logging.getLogger()
@@ -241,6 +257,9 @@ def setup_logging() -> None:
         encoding="utf-8",
     )
     export.setFormatter(engine_diagnostics.ExportLogFormatter(route_of=_route_rule_of))
+    redact = _RedactAiRequestIds()
+    for h in (stream, file):
+        h.addFilter(redact)
     root.setLevel(logging.INFO)
     root.addHandler(stream)
     root.addHandler(file)
@@ -9357,14 +9376,103 @@ def api_ai_endpoint_active():
     return jsonify(engine_ai.capabilities(refresh=True))
 
 
+_CLIENT_REQUEST_ID = re.compile(r"[A-Za-z0-9_-]{8,64}")
+
+
+def _valid_client_request_id(value) -> bool:
+    return isinstance(value, str) and _CLIENT_REQUEST_ID.fullmatch(value) is not None
+
+
 @app.post("/api/ai/run")
 def api_ai_run():
-    """启动 codex / claude 对某脚本面板的深度修改。"""
+    """启动 codex / claude 对某脚本面板的深度修改。
+
+    **明确拒绝**（任何 4xx / 5xx 响应或 abort）时，后端自己把这个 rid 的待确认行删掉——账本行的删除只发生在后端事务里，
+    客户端不单方面 DELETE（它的 DELETE 可能失败，旧行之后被还原成「未确认」，而新 rid 已经执行过）。"""
+    body = request.get_json(silent=True) or {}
+    rid = body.get("client_request_id") if isinstance(body, dict) else None
+    engine_ai.reset_spawn_mark()
+    try:
+        resp = app.make_response(_ai_run_impl())
+    except HTTPException as exc:
+        if engine_ai.spawn_started():
+            return _post_spawn_unresolved(exc)
+        if not _drop_rejected_pending(rid):
+            return _unresolved_response()
+        raise
+    except Exception as exc:
+        # spawn **之前**的非 HTTP 异常（例如 record_start 抛 OperationalError）：全局处理器会把它转成 500，前端当成明确拒绝、
+        # 换新 rid 重发——旧 rid 的账本行必须在这里由后端删掉。删除本身也失败了（SQLite 锁住 / 磁盘满）就**不能**再回
+        # 「明确拒绝」：账本行还在，换新 rid 之后它会被还原、同一条指令执行两次——回 503 `ai_request_unresolved`（不确定）
+        if engine_ai.spawn_started():
+            return _post_spawn_unresolved(exc)
+        if not _drop_rejected_pending(rid):
+            return _unresolved_response()
+        raise
+    if resp.status_code >= 400:
+        if engine_ai.spawn_started():
+            return _post_spawn_unresolved(None, status=resp.status_code)
+        if not _drop_rejected_pending(rid):
+            return _unresolved_response()
+    return resp
+
+
+def _post_spawn_unresolved(exc, status=None):
+    """进程已经起来之后的任何失败（HTTPException / 任意异常 / ≥400 响应）：那条指令可能正在改脚本，**不是**明确拒绝——
+    前端对除 `ai_request_unresolved` 之外的带码 5xx 一律当明确拒绝、换新 rid 重发，同一条修改就执行两次。
+    一律回 503 `ai_request_unresolved`（前端保持同一个 rid、按「未知」对账），账本行绝不删。只记日志（不含提示词 / 脚本内容）。"""
+    # 日志里**没有** rid（docs/rules/backend/ai-agent-bridge.md：请求 id 不进日志 / 诊断输出）也没有异常消息（消息里可能带 rid、
+    # 路径或提示词）：只留异常类型名与调用栈帧（文件:行:函数），足够定位
+    if exc is not None:
+        frames = "".join(traceback.format_list(traceback.extract_tb(exc.__traceback__)))
+        LOG.error("AI 任务已启动但随后出错: %s\n%s", type(exc).__name__, frames)
+    else:
+        LOG.error("AI 任务已启动但响应为 %s", status)
+    return _unresolved_response()
+
+
+def _unresolved_response():
+    return jsonify(
+        {"error": "这条请求的状态暂时无法确认", "code": "ai_request_unresolved", "params": {}}
+    ), 503
+
+
+def _drop_rejected_pending(rid) -> bool:
+    """删掉被明确拒绝的 rid 的待确认行。回 `True` = 删干净了（或本来就没有 / 没带 rid）；`False` = 删失败了，
+    账本行可能还在——调用方不能再把这次拒绝说成「明确拒绝」。"""
+    if not isinstance(rid, str) or not _valid_client_request_id(rid):
+        return True
+    try:
+        engine_ai_history.drop_rejected_pending(str(require_project().resolve()), rid)
+        return True
+    except Exception:  # noqa: BLE001
+        LOG.warning("清除被拒绝请求的待确认行失败", exc_info=True)
+        return False
+
+
+def _ai_run_impl():
     body = request.get_json(force=True)
     agent = body.get("agent", "codex")
     prompt = (body.get("prompt") or "").strip()
     if not prompt:
         abort(400)
+    # 前端点发送时生成的请求 id：同 (项目, id) 再 POST 返回既有会话、不再 spawn。
+    # 老前端不带 → None，行为不变。格式不对一律 400，不静默当作「没带」（那会让去重悄悄失效）。
+    request_id = body.get("client_request_id")
+    if request_id is not None and not _valid_client_request_id(request_id):
+        abort(400)
+    if request_id:
+        # **先去重、后解析面板 / 注册表**：这两样是可变目标。原请求登记之后输出文件或注册表映射变了，同 id 的重发若先走
+        # 校验就会 404——前端把 404 当「明确拒绝」、删掉账本后换新 id 重发，同一条修改执行两次
+        known = engine_ai.find_request(str(require_project().resolve()), request_id)
+        if known is not None and known["status"] == engine_ai.REQUEST_SUPERSEDED:
+            # 这个 rid 已被新指令取代（`supersedes` 的墓碑预留）：明确拒绝，不 spawn，也不是「重复」
+            return _agent_error(engine_ai.AgentError("ai_request_superseded"))
+        if known is not None:
+            LOG.info("AI 任务请求重复，返回既有会话（session %s）", known["session"])
+            return jsonify(
+                {"session": known["session"], "script": known.get("script") or "", "deduped": True}
+            )
     path = safe_resolve(body.get("id", ""))
     info = current_registry().for_stem(path.stem)
     if info is None:
@@ -9389,13 +9497,22 @@ def api_ai_run():
             str(ctx.path),
             context=context,
             # 事件带上发起它的项目：SSE 是全进程一条流，切到 B 的标签页不许接 A 的任务的话（#589）
-            on_event=lambda event, data: sse_publish(event, {**data, "pj": ctx.id}),
+            # 带上请求 id：前端按它认领早于 HTTP 响应到达的事件
+            on_event=lambda event, data: sse_publish(
+                event,
+                {**data, "pj": ctx.id, **({"client_request_id": request_id} if request_id else {})},
+            ),
+            client_request_id=request_id,
             model=body.get("model") or None,
             effort=body.get("effort") or None,
             endpoint_id=body.get("endpoint"),
             # 文件变了就接统一刷新（reason=ai），在 ai.done 之前做完（ADR 0041）
             on_changed=lambda script: _after_ai_change(ctx, script),
         )
+    except engine_ai.DuplicateRequest as dup:
+        # 同一条请求已经登记过：返回既有会话，不 spawn、不重复记遥测
+        LOG.info("AI 任务请求重复，返回既有会话（session %s）", dup.sid)
+        return jsonify({"session": dup.sid, "script": info["script"], "deduped": True})
     except engine_ai.AgentError as exc:
         # 未知 / 未安装 / 被用户在 Tavotto 里关掉——前端本该已经过滤掉，
         # 但这个端点可以被直接调，判据只有一份、在后端
@@ -9419,6 +9536,189 @@ def api_ai_run():
         "ai_assistant_invoked", {"agent": agent if agent in allowed else "other"}
     )
     return jsonify({"session": sid, "script": info["script"]})
+
+
+@app.get("/api/ai/requests/<request_id>")
+def api_ai_request(request_id):
+    """按前端的请求 id 问「这条有没有被后端接受」：`{session, status, changed, script}` 或 404。
+
+    只读，按**当前项目**隔离（别的项目用同一个 id 也查不到）。前端在「已发出、未收到确认」时
+    靠它判断要不要重发——所以 404 是一个明确的结论（`ai_request_not_found`：后端没登记过），
+    不是「查不到就当没发过」的兜底。"""
+    if not _valid_client_request_id(request_id):
+        abort(400)
+    found = engine_ai.find_request(str(require_project().resolve()), request_id)
+    if found is None:
+        return jsonify({"error": "后端没有登记过这个请求", "code": "ai_request_not_found"}), 404
+    resp = jsonify(found)
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+# --- 助手草稿与待确认账本（ADR 0132）：存后端（data_dir 的 ai_history 库），不存浏览器 -----------------
+# 主语是 (当前项目, fileId[, rid])；全部过会话认证（ADR 0008）与 `require_project` 隔离。
+# 文本是用户的指令原文：**不写日志、不发遥测、不进诊断包**——这些端点的 LOG 里只有项目无关的计数，没有文本。
+def _draft_file_id(value) -> str:
+    if not isinstance(value, str) or not value or len(value) > 1024 or "\x00" in value:
+        abort(400)
+    return value
+
+
+def _draft_too_large(exc: "engine_ai_history.DraftTooLarge"):
+    body = {
+        "error": "指令过长，没有保存",
+        "code": "ai_draft_too_large",
+        "params": {"limit_kb": exc.limit // 1024},
+    }
+    if exc.stamp is not None:
+        # 超限写入在服务端留了墓碑（旧稿也清了）：带回那一行的戳，客户端靠它抬高下限、退出「基线未知」
+        body["stamp"] = exc.stamp
+    return jsonify(body), 413
+
+
+@app.get("/api/ai/drafts")
+def api_ai_draft_get():
+    project = str(require_project().resolve())
+    resp = jsonify(engine_ai_history.get_draft(project, _draft_file_id(request.args.get("file"))))
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+@app.put("/api/ai/drafts")
+def api_ai_draft_put():
+    """全文覆盖（最后写入为准）；空文本 = 删；超过 20 KB → 413 `ai_draft_too_large`。"""
+    body = request.get_json(force=True) or {}
+    text = body.get("text")
+    if not isinstance(text, str):
+        abort(400)
+    # 写入戳（单调；跨标签页可比）：旧戳的写入被拒（200 + stale），不覆盖。老前端不带 = 视为最新
+    stamp = body.get("stamp")
+    if stamp is not None and (isinstance(stamp, bool) or not isinstance(stamp, int) or stamp < 0):
+        abort(400)
+    project = str(require_project().resolve())
+    try:
+        return jsonify(
+            engine_ai_history.put_draft(
+                project, _draft_file_id(body.get("file")), text, stamp=stamp
+            )
+        )
+    except engine_ai_history.DraftTooLarge as exc:
+        return _draft_too_large(exc)
+
+
+@app.delete("/api/ai/drafts")
+def api_ai_draft_delete():
+    """条件删除：只有库里的文本仍等于 `if_text` 才删（不删另一个标签页的新稿）。"""
+    body = request.get_json(force=True) or {}
+    if_text = body.get("if_text")
+    if not isinstance(if_text, str):
+        abort(400)
+    project = str(require_project().resolve())
+    return jsonify(
+        {
+            "deleted": engine_ai_history.delete_draft_if(
+                project, _draft_file_id(body.get("file")), if_text
+            )
+        }
+    )
+
+
+@app.get("/api/ai/drafts/pending")
+def api_ai_pending_list():
+    """本项目全部未落定的提交（跨面板，带 `script`）：发起它的面板已不在 / 换图时前端也要找得回来、查得了。"""
+    project = str(require_project().resolve())
+    resp = jsonify({"pendings": engine_ai_history.list_pendings(project)})
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+@app.put("/api/ai/drafts/pending/<rid>")
+def api_ai_pending_put(rid):
+    if not _valid_client_request_id(rid):
+        abort(400)
+    body = request.get_json(force=True) or {}
+    text, sent = body.get("text"), body.get("sent")
+    script = body.get("script")
+    draft_stamp = body.get("draft_stamp")
+    if draft_stamp is not None and (
+        isinstance(draft_stamp, bool) or not isinstance(draft_stamp, int) or draft_stamp < 0
+    ):
+        abort(400)
+    supersedes = body.get("supersedes")
+    if supersedes is not None and (
+        not isinstance(supersedes, list)
+        or len(supersedes) > 16
+        or not all(isinstance(x, str) and _valid_client_request_id(x) for x in supersedes)
+    ):
+        abort(400)
+    if not isinstance(text, str) or not isinstance(sent, dict):
+        abort(400)
+    if script is not None and (
+        not isinstance(script, str) or len(script) > 1024 or "\x00" in script
+    ):
+        abort(400)
+    project = str(require_project().resolve())
+    try:
+        engine_ai_history.put_pending(
+            project,
+            _draft_file_id(body.get("file")),
+            rid,
+            text,
+            sent,
+            script=script,
+            draft_stamp=draft_stamp,
+            supersedes=supersedes,
+        )
+    except engine_ai_history.DraftTooLarge as exc:
+        return _draft_too_large(exc)
+    except engine_ai_history.PendingLimit as exc:
+        return jsonify(
+            {
+                "error": "还有已发出的指令没确认",
+                "code": "ai_pending_limit",
+                "params": {"count": exc.count},
+            }
+        ), 409
+    except engine_ai_history.SupersedeConflict:
+        # 要取代的旧 rid 其实已经被后端登记（旧请求到达了）：不能再当成「没收到」取代它
+        return jsonify(
+            {"error": "上一次的修改其实已经开始了", "code": "ai_supersede_conflict", "params": {}}
+        ), 409
+    except engine_ai_history.PendingUnresolved as exc:
+        # 同面板 / 同脚本上还有没落定的提交：不写、不发。回它们本身（与 GET 列表同形），客户端照着还原、逐条查询之后才能发新的
+        return jsonify(
+            {
+                "error": "这份脚本还有一条已发出的指令没确认",
+                "code": "ai_pending_unresolved",
+                "params": {},
+                "rids": exc.rids,
+                "pendings": exc.pendings,
+            }
+        ), 409
+    return jsonify({"ok": True})
+
+
+@app.delete("/api/ai/drafts/pending/<rid>")
+def api_ai_pending_clear(rid):
+    if not _valid_client_request_id(rid):
+        abort(400)
+    project = str(require_project().resolve())
+    return jsonify(
+        {
+            "cleared": engine_ai_history.clear_pending(
+                project, _draft_file_id(request.args.get("file")), rid
+            )
+        }
+    )
+
+
+@app.post("/api/ai/drafts/pending/<rid>/accept")
+def api_ai_pending_accept(rid):
+    if not _valid_client_request_id(rid):
+        abort(400)
+    body = request.get_json(force=True) or {}
+    project = str(require_project().resolve())
+    return jsonify(engine_ai_history.accept_pending(project, _draft_file_id(body.get("file")), rid))
 
 
 @app.get("/api/ai/history")
@@ -11793,6 +12093,8 @@ def main():
     if n:
         LOG.info("上次运行遗留的 %d 个 AI 会话已标记为中断", n)
     engine_ai_history.purge(keep_days=180)
+    engine_ai_history.purge_requests()
+    engine_ai_history.purge_drafts()
     # 选中的 PDF 后端在起服务前装载好（契约层是惰性装载的）：第一次 probe 不再多付一次
     # import 的延迟；选了装不上的后端在这里就报出来，不静默回退（ADR 0067 / 0072）
     LOG.info("PDF 后端: %s", engine_logsafe.known(pdfbackend.warm(), pdfbackend.BACKENDS))
