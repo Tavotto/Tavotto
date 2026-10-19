@@ -365,7 +365,9 @@ def derive_outcome(
     * 没提交 → failed（提交前检查不过、执行失败都走这里）；
     * 完整性 / 保持类检查任一 failed → failed（科学内容被动了，不是「部分完成」）；
     * 目标类：全部 failed → failed；部分 failed → partial；
-    * 必检项（`required`）缺失或为 unknown → 最高 partial；
+    * 必检项（`required`）缺失 → 最高 partial；
+    * 已提交时**任何**检查为 unknown（含验证器自己崩了合成的 `verifier_error`，不论是不是必检项）→ 最高 partial：
+      `unmet` 里列着它，结局就不能是 completed；
     * 其余 → completed。"""
     checks = list(checks)
     unmet = [
@@ -387,7 +389,7 @@ def derive_outcome(
         return "failed", unmet
     if failed_goals:
         return "partial", unmet
-    if any(rid not in by_id or by_id[rid].verdict == UNKNOWN for rid in required):
+    if any(rid not in by_id for rid in required) or any(c.verdict == UNKNOWN for c in checks):
         return "partial", unmet
     return "completed", unmet
 
@@ -468,6 +470,9 @@ class TaskRun:
         self._clock = clock
         self._t0 = clock()
         self._cancel = threading.Event()
+        #: 「取消」与「进入提交」互斥的门：`cancel()` 与 `_drive` 的最后一次复查都在门内，二者只有一个先到
+        self._gate = threading.Lock()
+        self._committing = False
         self.used = dict.fromkeys(BUDGET_KEYS, 0)
 
     def charge(self, key: str, n: int = 1) -> None:
@@ -498,12 +503,18 @@ _RUNNING_LOCK = threading.Lock()
 
 
 def cancel(task_id: str) -> bool:
-    """请求取消一个本进程里正在执行的任务。编排器在每个阶段之间、以及**提交之前**复查：已取消就丢弃候选、不提交。"""
+    """请求取消一个本进程里正在执行的任务。编排器在每个阶段之间、以及**提交之前**复查：已取消就丢弃候选、不提交。
+
+    回 True = 取消被接受（任务一定不会提交）；**进入提交后回 False**（取消未被接受，候选照常提交）。判定与「进入提交」
+    在同一把门（`TaskRun._gate`）内，所以「回 True 却照样提交」不会发生。"""
     with _RUNNING_LOCK:
         run = _RUNNING.get(task_id)
     if run is None:
         return False
-    run._cancel.set()
+    with run._gate:
+        if run._committing:
+            return False
+        run._cancel.set()
     return True
 
 
@@ -517,6 +528,9 @@ def load(task_id: str, db_path=None) -> dict | None:
         return None
     status = row["status"]
     outcome = row.get("outcome")
+    phase = (
+        row.get("phase") if status == "running" else None
+    )  # 终态没有「进行中的阶段」（防老行残留）
     if outcome is None and status != "running":
         outcome = status if status in ("cancelled", "interrupted") else "interrupted"
     return {
@@ -524,7 +538,7 @@ def load(task_id: str, db_path=None) -> dict | None:
         "task_id": row["id"],
         "task_type": row["task_type"],
         "status": status,
-        "phase": row.get("phase"),
+        "phase": phase,
         "outcome": outcome,
         "verification": row.get("verification"),
         "budget_used": row.get("budget_used"),
@@ -705,7 +719,13 @@ def _drive(adapter: TaskAdapter, executor: Executor, run: TaskRun, db_path):
             )
             return outcome, checks, unmet, "precommit_not_verified", False
         phase("ready_to_commit")
-        if why := stop():  # 提交之前最后一次复查：取消之后才产生的候选不得被提交
+        with (
+            run._gate
+        ):  # 最后一次复查与「进入提交」原子：此后 cancel() 回 False，此前的取消必然被这里看到
+            why = stop()
+            if not why:
+                run._committing = True
+        if why:
             return halted(why)
         phase("committing")
         executor.commit(run, candidate)
@@ -746,4 +766,10 @@ def _drive(adapter: TaskAdapter, executor: Executor, run: TaskRun, db_path):
     outcome, unmet = derive_outcome(
         committed=True, checks=checks, required=run.envelope.required_checks
     )
+    if run.expired():
+        # 提交 / 提交后验证把墙钟预算用完了：已提交的改动撤不回，结局最高 partial（failed 保持 failed）。
+        # `timed_out` 取 False：落库 status 为 done/failed 而不是 `timeout`——`timeout` 在现有路径里意味着「没提交」，
+        # 套在已提交的任务上会让人以为什么都没发生；超时事实由 error="timeout" 与 unmet 里的 budget.max_wall_s 表达
+        unmet.append({"constraint_id": "budget.max_wall_s", "reason_code": "timeout"})
+        return ("partial" if outcome == "completed" else outcome), checks, unmet, "timeout", False
     return outcome, checks, unmet, None, False

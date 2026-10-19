@@ -192,6 +192,7 @@ def _c(cid, role, verdict, stage="postcommit"):
         (True, [_c("g", "goal", "verified")], ("p",), "partial"),
         (True, [_c("g", "goal", "verified"), _c("p", "preserve", "verified")], ("p",), "completed"),
         (True, [_c("p", "preserve", "verified")], (), "completed"),
+        (True, [_c("g", "goal", "verified"), _c("x", "preserve", "unknown")], (), "partial"),
     ],
 )
 def test_derive_outcome_never_turns_unknown_into_completed(committed, checks, required, want):
@@ -535,3 +536,103 @@ def test_cancel_after_the_candidate_exists_still_blocks_commit(db):
     finally:
         ai_tasks.unregister("fake_task")
     assert res["outcome"] == "cancelled" and ex.committed == [] and len(ex.discarded) == 1
+
+
+def test_postcommit_unknown_on_a_non_required_check_is_partial(db):
+    ai_tasks.register(
+        FakeAdapter(post=(("g", "goal", "verified"), ("x.extra", "preserve", "unknown")))
+    )
+    try:
+        res = _run(_env(), FakeExecutor(), db)
+    finally:
+        ai_tasks.unregister("fake_task")
+    assert res["outcome"] == "partial"
+    assert {"constraint_id": "x.extra", "reason_code": "unknown"} in res["verification"]["unmet"]
+
+
+def test_postcommit_verifier_crash_is_partial_not_completed(db):
+    class Crash(FakeAdapter):
+        def verify(self, stage, run, candidate):
+            if stage == "postcommit":
+                raise RuntimeError("post boom")
+            return super().verify(stage, run, candidate)
+
+    ai_tasks.register(Crash())
+    try:
+        ex = FakeExecutor()
+        res = _run(_env(), ex, db)
+    finally:
+        ai_tasks.unregister("fake_task")
+    assert len(ex.committed) == 1 and res["outcome"] == "partial"
+    assert {"constraint_id": "postcommit.verifier", "reason_code": "verifier_error"} in res[
+        "verification"
+    ]["unmet"]
+
+
+def test_cancel_once_committing_is_refused_and_the_task_is_not_cancelled(adapter, db):
+    """提交进行中（另一线程的 cancel 在 commit 里到达）：回 False、任务照常 completed。"""
+    seen: list[bool] = []
+
+    class CancelInCommit(FakeExecutor):
+        def commit(self, run, candidate):
+            seen.append(ai_tasks.cancel(run.task_id))
+            super().commit(run, candidate)
+
+    ex = CancelInCommit()
+    res = _run(_env(), ex, db)
+    assert seen == [False]
+    assert res["outcome"] == "completed" and len(ex.committed) == 1 and ex.discarded == []
+
+
+def test_cancel_before_committing_is_accepted_and_nothing_is_committed(adapter, db):
+    seen: list[bool] = []
+    ex = FakeExecutor(on_execute=lambda run: seen.append(ai_tasks.cancel(run.task_id)))
+    res = _run(_env(), ex, db)
+    assert seen == [True]
+    assert res["outcome"] == "cancelled" and ex.committed == [] and len(ex.discarded) == 1
+
+
+def test_wall_budget_spent_during_commit_is_partial_and_the_commit_stands(adapter, db):
+    now = [0.0]
+
+    class SlowCommit(FakeExecutor):
+        def commit(self, run, candidate):
+            now[0] += 31.0
+            super().commit(run, candidate)
+
+    ex = SlowCommit()
+    res = _run(_env(budget={"max_wall_s": 30}), ex, db, clock=lambda: now[0])
+    assert len(ex.committed) == 1 and ex.discarded == []
+    assert res["outcome"] == "partial" and res["error"] == "timeout"
+    assert res["status"] == "done", "已提交的任务不落成 timeout（那会读成没提交）"
+    assert {"constraint_id": "budget.max_wall_s", "reason_code": "timeout"} in res["verification"][
+        "unmet"
+    ]
+
+
+def test_interrupted_task_clears_its_stale_phase(db):
+    import sqlite3
+
+    ai_history.record_start(
+        {
+            "id": "deadbeef0002",
+            "project": "/proj/figs",
+            "provider": "deterministic",
+            "prompt": "x",
+            "task_type": "fake_task",
+            "phase": "executing",
+            "envelope": {},
+            "owner_pid": _dead_pid(),
+        },
+        db_path=db,
+    )
+    assert ai_history.mark_interrupted_running(db_path=db) == 1
+    after = ai_tasks.load("deadbeef0002", db_path=db)
+    assert after["phase"] is None and after["final"] is True and after["outcome"] == "interrupted"
+    con = sqlite3.connect(db)
+    try:
+        assert con.execute("SELECT phase FROM sessions WHERE id='deadbeef0002'").fetchone() == (
+            None,
+        )
+    finally:
+        con.close()

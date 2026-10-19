@@ -472,12 +472,12 @@ def mark_interrupted_running(db_path: Path | None = None) -> int:
                 continue
             if r["status"] == "running":
                 con.execute(
-                    "UPDATE sessions SET status='interrupted', ended_ms=? WHERE id=?",
+                    "UPDATE sessions SET status='interrupted', ended_ms=?, phase=NULL WHERE id=?",
                     (now, r["id"]),
                 )
                 interrupted += 1
             else:
-                con.execute("UPDATE sessions SET ended_ms=? WHERE id=?", (now, r["id"]))
+                con.execute("UPDATE sessions SET ended_ms=?, phase=NULL WHERE id=?", (now, r["id"]))
         return interrupted
 
 
