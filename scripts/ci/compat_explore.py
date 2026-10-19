@@ -304,6 +304,19 @@ def execute_request(request: dict) -> dict:
         "basis": "python_exec_audit",
     }
     result["judgment"] = compare(manifest["class"], native, result["tavotto"], parent_native)
+    audited = ("native", "tavotto") + (
+        ("parent_native",) if manifest["class"] == "shape_preserving" else ()
+    )
+    if result["judgment"]["outcome"] == "no_difference" and not all(
+        (result["executions"][k] or 0) > 0 for k in audited
+    ):
+        # 「无差异」要有审计到的子进程执行（python_exec_audit）作证；计数缺失 = 观测器失效，不是 clean
+        result["judgment"] = {
+            "outcome": "unknown",
+            "differences": [],
+            "note": "no audited child execution for: "
+            + ", ".join(k for k in audited if not (result["executions"][k] or 0) > 0),
+        }
     for name in ("native", "parent", "tavotto"):
         log = work / f"{name}-execs.jsonl"
         if log.exists():

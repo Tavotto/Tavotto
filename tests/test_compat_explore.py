@@ -484,6 +484,19 @@ class RealDiscovery(unittest.TestCase):
         }
         self.assertFalse(ex.known_gap_findings([row])["G2"]["found"])
 
+    def test_agreement_without_an_audited_tavotto_execution_is_never_clean(self):
+        """观测器没写出 Tavotto 执行日志（计数为 None）时，比对一致也只能是 unknown（Codex #1135 r4311521396）。"""
+        real = ex._count
+
+        def lost(path):
+            return None if path.name == "tavotto-execs.jsonl" else real(path)
+
+        with mock.patch.object(ex, "_count", side_effect=lost):
+            _, record = self.run_chain("import_alias")
+        self.assertIsNone(record["executions"]["tavotto"])
+        self.assertEqual(record["judgment"]["outcome"], "unknown", record)
+        self.assertIn("tavotto", record["judgment"]["note"])
+
     def test_shape_preserving_transforms_on_a_passing_parent_make_no_fake_difference(self):
         for chain in (("import_alias",), ("argparse_out",), ("inline_to_file",)):
             manifest, record = self.run_chain(*chain)
