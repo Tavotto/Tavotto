@@ -51,6 +51,10 @@ def _sha256(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
+class StaleSession(Exception):
+    """`after` 钩子抛它：改后取到的会话执行的不是刚提交的那一版源码（去重回旧会话 / 启动采样不等于实际执行）。"""
+
+
 # --------------------------------------------------------------------------- 有界指纹
 def _readlink(p: Path) -> str | None:
     try:
@@ -409,7 +413,9 @@ class FigureEditAdapter:
           没有基线 → unknown（`no_baseline`），**也不去渲染改后**——不为了验证多跑一次用户脚本（R-06）；
         * `retire`（可选）：写入之后、刷新之前同步退役该脚本的全部旧会话；没确认（`retired` 不是 True）→ unknown
           （`session_not_retired`），**不调 after**；
-        * `after`：提交并刷新之后取同一个 safe 会话（同一份运行配置）并 build——就是前端随后本来要做的那次重渲染，前端
+        * `after(expected_sha256)`：`expected` 是刚提交字节的 sha256；钩子须核会话**实际执行**的源码 sha256 与它一致，
+          不一致抛 `StaleSession` → unknown（`stale_session`）。正确性靠这条判据，不靠 `retire` 时序；
+          提交并刷新之后取同一个 safe 会话（同一份运行配置）并 build——就是前端随后本来要做的那次重渲染，前端
           来时会话已经 built，不再执行第二次。渲染失败（改前同一会话能渲染、改后不能）→ failed。
 
         比的只有数据（`figureverify.data_unchanged`）：改前 manifest 带着用户的 override，改后这次 build 不带，坐标范围、
@@ -430,7 +436,9 @@ class FigureEditAdapter:
             ]
         run.charge("renders")
         try:
-            after = hooks_after() or {}
+            after = hooks_after(_sha256(cand.new_bytes or b"")) or {}
+        except StaleSession:
+            return [_render(st, UNKNOWN, "stale_session", not_covered=("数据指纹", *not_covered))]
         except Exception as exc:  # noqa: BLE001 —— 渲染失败本身就是这条检查的结论
             code = getattr(exc, "code", None) or type(exc).__name__
             return [_render(st, FAILED, "render_failed", code=str(code))]
@@ -486,6 +494,7 @@ class BridgeExecutor:
             cand.extras["before_manifests"] = _call_hook(cand.extras.get("before"))
             scriptlock.write_script(cand.script_path, cand.new_bytes, mode=cand.base_mode)
             cand.committed = True
+        # 退役只是让「after 去重回旧会话」的概率变小（尽力而为）；正确性由 after 钩子核 build 实际执行的 source_sha256 保证。
         # 退役旧会话必须在统一刷新之前、锁之外（force 关停可能要等 workerd）：刷新里那次普通 invalidate 才会找不到会话，
         # 前端收到 panel.file_changed 与 after 钩子拿到的才都是新脚本 spawn 的会话。没注入钩子（纯引擎调用方）不记 retired。
         retire = cand.extras.get("retire")

@@ -40,6 +40,7 @@ import argparse
 import ast
 import contextlib
 import faulthandler
+import hashlib
 import importlib
 import importlib.util
 import json
@@ -767,6 +768,8 @@ class Worker(wireproto.V1Handler):
         self.built = False
         self.execution_id: str | None = None
         self._execution_watch: str | None = None
+        #: 本进程 build 时实际读到并执行的脚本字节的 sha256（读失败 None）；build 前 None。
+        self._source_sha256: str | None = None
         #: pyplot 兜底因上限丢掉的张数（0 = 一张没丢）。build 响应带出去。
         self.dropped_figures = 0
         #: 每张捕获 Figure 的结构化描述（figcapture.CapturedFigureDescriptor
@@ -1112,10 +1115,15 @@ class Worker(wireproto.V1Handler):
         # 脚本 import 了却从未用到、又没装的包不挡图（ADR 0061 §二 2026-09-24 修订）：判据与
         # 父进程的联合计划同一份（`figcapture.unused_imports`）——计划没要求装它，这里就得让
         # 那一行 import 过得去。读不了 / 解析不了就不装：脚本随后会以它自己的错误结束。
+        # 同一份字节还算 `source_sha256`（TAF 改图验证的判据：这次 build 执行的是哪一版源码）。读一次、复用：
+        # 下面紧跟着就是 import 用户脚本，且同一进程只 build 一次（`self.built` 早退），所以这就是被执行的版本。
+        # 已知边界：外部写者恰好在这次读与 import 的读之间改文件（微秒级）——不再设防。
         try:
             import ast  # noqa: PLC0415
 
-            unused = figcapture.unused_imports(ast.parse(self.script.read_bytes()))
+            source_bytes = self.script.read_bytes()
+            self._source_sha256 = hashlib.sha256(source_bytes).hexdigest()
+            unused = figcapture.unused_imports(ast.parse(source_bytes))
         except (OSError, SyntaxError, ValueError):
             unused = frozenset()
         figcapture.install_unused_import_placeholders(str(self.script), unused)
@@ -1292,8 +1300,12 @@ class Worker(wireproto.V1Handler):
         )
 
     def _stems_summary(self) -> dict:
-        # `source` 是加字段，不升协议版本（ADR 0003 §1：两侧容忍未知字段）。
-        return self.session.stems_summary(self.dropped_figures)
+        # `source` / `source_sha256` 是加字段，不升协议版本（ADR 0003 §1：两侧容忍未知字段）。
+        # `source_sha256` 是**本进程当初执行的版本**：去重回旧会话时二次 build 拿到的也是它，不是磁盘现状。
+        return {
+            **self.session.stems_summary(self.dropped_figures),
+            "source_sha256": self._source_sha256,
+        }
 
     def _render(
         self, stem: str, timings: dict | None = None, preview_dpi: int | None = None
@@ -1317,7 +1329,8 @@ class Worker(wireproto.V1Handler):
                 "reason": "unsupported_render_state",
             }
         if cmd == "build":
-            return {"ok": True, **self.build()}
+            # legacy 形状一字不变（test_legacy_envelope_keeps_the_old_response_shape）：`source_sha256` 只给 v1 信封
+            return {"ok": True, **{k: v for k, v in self.build().items() if k != "source_sha256"}}
         if cmd == "export" and (req.get("require_built") or req.get("snapshot_only")):
             if not self.built or req.get("stem") not in self.session.states:
                 return {

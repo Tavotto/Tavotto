@@ -212,3 +212,41 @@ def test_ai_commit_retires_old_sessions_synchronously_before_the_refresh(project
     first_refresh = events.index(("refresh",))
     forced = [e for e in events[:first_refresh] if e[:3] == ("invalidate", "fig1.py", True)]
     assert forced and forced[0][3] is True, events  # 刷新之前、写入之后、force=True（同步确认退役）
+
+
+def test_launch_sampled_sha_that_is_not_what_ran_is_no_baseline(project):
+    """A→B→A：会话启动时采样的是 A，build 实际执行的是别的版本。判据是 worker 自报执行的 sha256。"""
+    m, client, figs, runs, state = project
+    _render(client)
+    worker = pool.peek("fig1.py", str(figs))
+    assert worker is not None and worker.built
+    import hashlib
+
+    assert (
+        worker.last_build_source_sha256
+        == hashlib.sha256((figs / "fig1.py").read_bytes()).hexdigest()
+    )
+    worker.last_build_source_sha256 = "0" * 64  # 模拟「采样 A、实际执行 B」
+    sid, sess = _ai(client)
+    assert _checks(sid)["render.figure"] == ("unknown", "no_baseline")
+    assert _runs(runs) == 1
+
+
+def test_after_session_running_an_older_version_is_stale_not_verified(project, monkeypatch):
+    """P1：旧会话没退役（watcher 先做了异步 invalidate / 去重回旧会话）——after 拿到的会话执行的是旧版。"""
+    m, client, figs, runs, state = project
+    _render(client)
+    from tavotto.engine import enginesession
+
+    real_resolve = enginesession.resolve
+
+    def resolve(**kw):
+        w = real_resolve(**kw)
+        w.last_build_source_sha256 = "1" * 64  # 会话自报执行的是旧版本
+        w.built = True
+        return w
+
+    monkeypatch.setattr(enginesession, "resolve", resolve)
+    sid, sess = _ai(client)
+    assert _checks(sid)["render.figure"] == ("unknown", "stale_session")
+    assert sess["task"]["outcome"] == "partial", sess["task"]

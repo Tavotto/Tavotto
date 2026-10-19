@@ -189,11 +189,14 @@
   `write_script` → 统一刷新一次（之后不再刷第二遍）。改前快照仍是 `run()` 起跑时拍的那份，回滚照旧走 `revert`。`cancel` /
   `interrupt_all` 先问 `ai_tasks.cancel`：进入提交后取消回 False、不改状态（`interrupt_all` 对该会话 `continue`，不计数）。
   原项目指纹对符号链接（文件 / 目录）记 lstat + `readlink` 目标、不进入；经链接写到项目外的内容不在指纹里（CLI 沙盒负责）。提交后渲染层验证（Phase 3b）：app 经 `task_hooks` 注入两个钩子——
-  `before` 在**写入之前**从 `pool.peek` 到的、已 build 的 safe 会话读改前 manifest（不执行；没有 = 这次会话没渲染过这张图，或该会话的 `script_sha1`
-  与此刻磁盘脚本不符（旧版脚本建的）→ `render.figure` unknown `no_baseline`，**也不做改后渲染**，不为验证多跑脚本）；`retire` 在写入之后、
-  刷新之前 `invalidate(force=True)` 同步退役该脚本全部会话（不靠改后会话的 `script_sha1` 判新旧：workerd 去重时新包装对象按新文件算 sha1、底下仍是旧进程），
-  确认不了 → unknown `session_not_retired`、不调 `after`；`after` 在提交 + 刷新之后经磁盘面板同一扇门
-  （`enginesession.resolve`、safe、`runconfig.default_selection`）取会话并 build——就是前端随后要做的那次重渲染，前端来时会话
+  `before` 在**写入之前**从 `pool.peek` 到的、已 build 的 safe 会话读改前 manifest（不执行；没有 = 这次会话没渲染过这张图，或该会话 build
+  **实际执行**的源码 sha256 与此刻磁盘脚本不符（旧版脚本建的）→ `render.figure` unknown `no_baseline`，**也不做改后渲染**，不为验证多跑脚本）；
+  判据是「执行了哪一版源码」而不是「哪个进程 / 启动时采样」：worker 在 `build()` 里 import 用户脚本之前读一次脚本字节、算 sha256，经 build 响应与
+  `_stems_summary` 的 `source_sha256` 自报（同一进程只 build 一次，二次 build / workerd 去重回旧会话拿到的仍是当初执行的那一版；workerd 对 build 响应
+  原样转发），池侧记为 `last_build_source_sha256`（失败清空）；`retire` 在写入之后、刷新之前 `invalidate(force=True)` 尽力同步退役旧会话，只是让
+  after 少撞上旧会话、**不是正确性依据**（watcher 可能已先做过异步 invalidate，force 找不到键也算成功），确认不了 → unknown `session_not_retired`、不调
+  `after`；`after(expected_sha256)` 在提交 + 刷新之后
+（`enginesession.resolve`、safe、`runconfig.default_selection`）取会话并 build（已 built 的不再发请求）——就是前端随后要做的那次重渲染，会话执行的 sha256 须等于刚提交字节的，否则抛 `StaleSession` → unknown `stale_session`（不是 failed 也不是 verified）；剩余边界：外部写者在 worker 读字节与 import 读之间改文件（微秒级）。前端来时会话
   已 built（`tests/test_ai_figure_edit_app.py` 用执行计数钉住）。比对只取数据指纹（`figureverify.data_unchanged`：改前每个数据
   元素改后同 gid 且 identity 不冲突、逐部件相同），改前 manifest 带用户 override 而改后 build 不带，坐标范围 / 版式不比、列进
   not_covered；改后渲染失败或少了 stem 记 failed（已提交的改动不自动回滚）。没注入钩子（纯引擎调用方）仍是 `render_not_wired`。`ai.done` 与会话详情多一个 `task`（类型、结局、未满足项、文案键），终态与 `task_result` 同一条

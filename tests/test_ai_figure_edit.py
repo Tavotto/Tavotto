@@ -366,13 +366,17 @@ def _manifest(sha):
     }
 
 
+expecteds: list = []
+
+
 def _hooks(env, before, after, log):
     def b():
         log.append(("before", _project_text(env)))
         return before
 
-    def a():
+    def a(expected):
         log.append(("after", _project_text(env)))
+        expecteds.append(expected)
         if isinstance(after, Exception):
             raise after
         return after
@@ -484,3 +488,31 @@ def test_unconfirmed_retire_is_unknown_and_never_renders_after(env):
     assert _render_checks(sid)["render.figure"] == ("unknown", "session_not_retired")
     assert sess["status"] == "done" and '"new"' in _project_text(env), "提交不因旁路失败而失败"
     assert sess["task"]["outcome"] == "partial"
+
+
+def test_stale_session_is_unknown_not_failed_nor_verified(env):
+    from tavotto.engine.ai_figure_edit import StaleSession
+
+    log: list = []
+    sid, _ = _run(
+        env,
+        task_hooks=_hooks(env, {"Fig1": _manifest("a" * 64)}, StaleSession("old session"), log),
+    )
+    sess = _wait(sid)
+    assert _render_checks(sid)["render.figure"] == ("unknown", "stale_session")
+    assert sess["task"]["outcome"] == "partial", sess["task"]
+    assert sess["status"] == "done" and '"new"' in _project_text(env)
+
+
+def test_after_receives_the_sha256_of_the_committed_bytes(env):
+    import hashlib
+
+    expecteds.clear()
+    log: list = []
+    sid, _ = _run(
+        env,
+        task_hooks=_hooks(env, {"Fig1": _manifest("a" * 64)}, {"Fig1": _manifest("a" * 64)}, log),
+    )
+    _wait(sid)
+    disk = (Path(env["figs"]) / "fig1.py").read_bytes()
+    assert expecteds == [hashlib.sha256(disk).hexdigest()]

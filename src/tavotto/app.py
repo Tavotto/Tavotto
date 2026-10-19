@@ -57,6 +57,7 @@ from werkzeug.exceptions import HTTPException
 from . import pdfbackend, tiffprobe
 from .engine import (
     ai_bridge as engine_ai,
+    ai_figure_edit as engine_ai_figure_edit,
     ai_history as engine_ai_history,
     ai_providers as engine_ai_providers,
     artifactcontext as engine_artifactcontext,
@@ -3165,11 +3166,13 @@ def _ai_task_hooks(ctx: "ProjectCtx", script: str, entry: str) -> dict:
     """TAF 改图（ADR 0138 Phase 3b）提交前后的渲染层事实，注入给 AI 桥；**只在实验开关打开时**被调用。
 
     * `before`：池里**已经 build 过**的那个 safe 会话（`pool.peek`，不建、不执行）落盘的 manifest；没有 → None
-      （这次会话里没渲染过这张图，桥据此不做改后渲染）；
-    * `retire`：写入之后、刷新之前同步确认退役该脚本的全部旧会话（`invalidate(force=True)`）——没退役干净 after 会被
-      workerd 去重回仍已 built 的旧会话，比出两份改前 manifest；
-    * `after`：提交并统一刷新之后，按磁盘面板的同一扇门（`enginesession.resolve`、safe、同一份运行配置）取会话并
-      build——就是前端收到 `panel.file_changed` 后本来就要做的那次重渲染；前端随后来时会话已 built，不再执行第二次。
+      （这次会话里没渲染过这张图，桥据此不做改后渲染）；会话 build **实际执行**的源码 sha256 必须等于此刻磁盘脚本；
+    * `retire`：写入之后、刷新之前尽力同步退役该脚本的全部旧会话（`invalidate(force=True)`），让 after 少撞上旧会话；
+      **不是正确性依据**；
+    * `after(expected_sha256)`：提交并统一刷新之后，按磁盘面板的同一扇门（`enginesession.resolve`、safe、同一份运行配置）
+      取会话并 build——就是前端收到 `panel.file_changed` 后本来就要做的那次重渲染；前端随后来时会话已 built，不再执行第二次。
+      判据是「执行了哪一版源码」：会话自报的 `last_build_source_sha256` 必须等于刚提交字节的 sha256，否则抛
+      `StaleSession`（去重回旧会话、watcher 时序、启动采样 A→B→A 都落在这里）。
 
     两边都按这个脚本此刻登记的全部 stem 读 `<out_dir>/<stem>.json`。"""
 
@@ -3193,20 +3196,24 @@ def _ai_task_hooks(ctx: "ProjectCtx", script: str, entry: str) -> dict:
         worker = engine_pool.peek(script, str(ctx.path), run=run_selection())
         if worker is None or not worker.built:
             return None
-        # 桥在持脚本锁核过基线之后、写入之前调这里：此刻磁盘上的脚本就是起跑基线。`script_sha1` 是这个会话
-        # **spawn 那一刻**记的（池里已有的对象，可信）；对不上 = 它是旧版脚本建出来的（用户刚编辑、watcher
-        # 还没作废），它的 manifest 不是「改前」的事实，按没有可用基线处理。
-        if worker.script_sha1 != engine_pool.script_sha1(str(ctx.path), script):
+        # 桥在持脚本锁核过基线之后、写入之前调这里：此刻磁盘上的脚本就是起跑基线。会话 build 时 worker 自报执行的源码
+        # sha256（`last_build_source_sha256`）对不上 = 它是别的版本建出来的（用户刚编辑、watcher 还没作废，或启动采样
+        # 与实际执行不一致），它的 manifest 不是「改前」的事实，按没有可用基线处理。
+        try:
+            disk = hashlib.sha256((ctx.path / script).read_bytes()).hexdigest()
+        except OSError:
+            return None
+        if getattr(worker, "last_build_source_sha256", None) != disk:
             return None
         return manifests(worker) or None
 
     def retire():
-        # 同步、确认式退役该脚本全部会话（`force=True`，确认不了抛 WorkerError）。不能靠改后会话的 `script_sha1`
-        # 判新旧：workerd 按 by_hash 去重时，Python 侧新包装对象在构造时（`WorkerdWorker.__init__`）按**新**文件算
-        # sha1，底下却还是旧进程，那个判据永远「新」。普通 invalidate 是先摘池再异步关，紧接着的 resolve 会被去重回旧会话。
+        # 同步、确认式退役该脚本全部会话（`force=True`，确认不了抛 WorkerError）。尽力而为：监视器可能已先做过普通
+        # invalidate（异步关闭），force 找不到键也算成功，after 仍可能被 workerd 按 by_hash 去重回尚未关闭的旧会话——
+        # 所以正确性不靠它，靠 after 核会话执行的 source_sha256。
         engine_pool.invalidate(script, str(ctx.path), force=True)
 
-    def after():
+    def after(expected_sha256):
         run = run_selection()
         stems = ctx.registry.stems_of(script)
         worker = engine_enginesession.resolve(
@@ -3217,7 +3224,13 @@ def _ai_task_hooks(ctx: "ProjectCtx", script: str, entry: str) -> dict:
             execution_profile=engine_enginesession.PROFILE_SAFE,
             **({"run": run} if run is not None else {}),
         )
-        worker.ensure_built()
+        if not worker.built:  # 已 built 的会话不再发请求（多一次无意义）
+            worker.ensure_built()
+        got = getattr(worker, "last_build_source_sha256", None)
+        if got != expected_sha256:
+            raise engine_ai_figure_edit.StaleSession(
+                f"session executed {got!r}, committed {expected_sha256!r}"
+            )
         return manifests(worker)
 
     return {"before": before, "retire": retire, "after": after}
