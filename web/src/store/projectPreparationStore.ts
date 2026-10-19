@@ -234,6 +234,8 @@ export const capturedOf = (report: PreparationReport | null): CapturedFigureDesc
 const timers = new Map<string, ReturnType<typeof setTimeout>>()
 const pollStep = new Map<string, number>()
 const inflight = new Map<string, Promise<void>>()
+// 飞行中的「新建 / 复用 / 重建」检查：同一目标又来一次 open（同一次点击落成两次调用、卡开着时再点 ▶）搭这一趟，不再发第二个创建请求
+const checkFlight = new Map<string, Promise<void>>()
 
 function stopTimer(key: string): void {
   const t = timers.get(key)
@@ -419,7 +421,18 @@ export const useProjectPreparationStore = create<PreparationState>((set, get) =>
   }
 
   /** 检查会话（新建 / 复用 / 重建）。只读：后端不执行任何用户代码 */
-  const check = async (key: string, target: PreparationTarget, restarted: boolean) => {
+  const check = (key: string, target: PreparationTarget, restarted: boolean): Promise<void> => {
+    // 同一键上已有检查在飞（目标换了会在 open 里先清掉登记）：搭它，不另发创建请求。入口不止 open——事件流重连的 `refreshAll`
+    // 在第一趟检查回来前（条目还没有报告）也会落到这里（#1137 Windows 分片 trace：第二个 POST 与重连后的补拉 GET 同一毫秒）
+    const flying = checkFlight.get(key)
+    if (flying) return flying
+    const p = runCheck(key, target, restarted).finally(() => {
+      if (checkFlight.get(key) === p) checkFlight.delete(key)
+    })
+    checkFlight.set(key, p)
+    return p
+  }
+  const runCheck = async (key: string, target: PreparationTarget, restarted: boolean) => {
     const g = guardOf(key)
     const pj = g.pj
     patch(key, () => ({ pending: 'check' }))
@@ -495,7 +508,10 @@ export const useProjectPreparationStore = create<PreparationState>((set, get) =>
         stopTimer(key)
         pollStep.delete(key)
         inflight.delete(key)
+        checkFlight.delete(key)
       }
+      // 同一目标的首次检查还在飞（慢机器上同一次点击落成两次 open）：下面的 `check` 会搭这一趟，不再发第二个创建请求。
+      // 否则两趟检查先后回来，后一趟把先一趟已置上的 `pending`（run_when_ready 在飞）清掉，防连点的闸就开了，认领发两次（#1137）
       set((s) => ({
         focus: key,
         entries: {
@@ -710,6 +726,7 @@ export const useProjectPreparationStore = create<PreparationState>((set, get) =>
       stopAllTimers()
       inflight.clear()
       observedFigureExecutions.clear()
+      checkFlight.clear()
       set((s) => ({ epoch: s.epoch + 1, entries: {}, focus: null }))
     },
   }
