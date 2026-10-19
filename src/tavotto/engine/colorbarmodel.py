@@ -249,11 +249,16 @@ def _get_cb_cmap(p: "ColorbarProxy"):
 
 
 def _set_cb_cmap(p: "ColorbarProxy", v, state: FollowState) -> None:
-    """色条的色图写到它的 mappable **和全部色阶兄弟**上（见 `scale_siblings`）。"""
+    """色条的色图写到它的 mappable、**全部色阶兄弟**（`scale_siblings`），以及组里**其它色条**的
+    mappable 上（`scale_colorbars`）——组里一个已登记图元都没有、只有几条独立 `ScalarMappable`
+    色条共用 norm 时，兄弟是空的，不写到别的色条上它们就各自为政（#1159 评审）。"""
     m = p.cb.mappable
     m.set_cmap(v)
     for sib in scale_siblings(state, m):
         sib.set_cmap(v)
+    for other in scale_colorbars(state, m):
+        if other is not p:
+            other.cb.mappable.set_cmap(v)
 
 
 _set_cb_cmap._needs_state = True  # noqa: SLF001

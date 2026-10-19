@@ -1312,20 +1312,47 @@ export function setColormapOverride(
   aliasGids: string[],
   immediate: boolean | RenderPolicy = false,
 ) {
-  const drop = aliasGids.filter((g) => g !== gid)
   const current = findObject(panelId)
   if (current?.type === 'panel') {
+    const drop = aliasGids.filter((g) => g !== gid)
     const i = effectiveOverrideIndex(current.overrides, gid, 'cmap')
     const sameValue = i >= 0 && JSON.stringify(current.overrides[i].value) === JSON.stringify(value)
     const others = current.overrides.some((p) => p.prop === 'cmap' && drop.includes(p.gid))
     if (sameValue && !others) return
   }
-  updateObject<PanelObject>(panelId, hist('setProp', { prop: propLabel('cmap') }), (o) => {
-    o.overrides = o.overrides.filter((p) => !(p.prop === 'cmap' && drop.includes(p.gid)))
-    upsertOverrides(o, [{ gid, prop: 'cmap', value }])
+  setColormapOverrides(
+    panelId,
+    hist('setProp', { prop: propLabel('cmap') }),
+    [{ gid, value, aliasGids }],
+    immediate,
+  )
+}
+
+/**
+ * `setColormapOverride` 的多元素版（多选批量改 cmap，#1159 评审）：每个被写的元素各自清掉**它所在
+ * 色阶组**里其它成员的 cmap override，再 upsert 新值——全部进同一次 commit（一条撤销、一次渲染）。
+ * 不清的话，组里一个没被选中的成员若在文档里排在后面，重放时会把被选中那条盖回旧色图。
+ * 被写的 gid 自己不会被清（多选里同组的两个成员都要留下各自的新值）。
+ */
+export function setColormapOverrides(
+  panelId: string,
+  label: UiMessage,
+  entries: { gid: string; value: unknown; aliasGids: string[] }[],
+  render: boolean | RenderPolicy = false,
+) {
+  if (!entries.length) return
+  const written = new Set(entries.map((e) => e.gid))
+  const drop = new Set(entries.flatMap((e) => e.aliasGids).filter((g) => !written.has(g)))
+  updateObject<PanelObject>(panelId, label, (o) => {
+    o.overrides = o.overrides.filter((p) => !(p.prop === 'cmap' && drop.has(p.gid)))
+    upsertOverrides(
+      o,
+      entries.map((e) => ({ gid: e.gid, prop: 'cmap', value: e.value })),
+    )
   })
   const panel = findObject(panelId)
-  if (panel?.type === 'panel') requestRender(panel, immediate)
+  if (panel?.type === 'panel') requestRender(panel, render)
+  emitActivity({ kind: 'element.property_changed', prop: 'cmap' })
 }
 
 /**

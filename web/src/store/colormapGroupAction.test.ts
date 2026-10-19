@@ -7,7 +7,7 @@
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { literal } from '@/i18n'
-import { setColormapOverride } from '@/store/actions'
+import { setColormapOverride, setColormapOverrides } from '@/store/actions'
 import { useDocumentStore } from '@/store/documentStore'
 import { useRenderStore } from '@/store/renderStore'
 import { emptyProject, type PanelObject } from '@/types/document'
@@ -77,5 +77,37 @@ describe('setColormapOverride：同组只留一条', () => {
     await seed([{ gid: 'axes_0.fill_0', prop: 'cmap', value: 'viridis' }])
     setColormapOverride('p1', 'axes_0.fill_0', 'viridis', GROUP)
     expect(useDocumentStore.getState().past).toHaveLength(0)
+  })
+})
+
+describe('setColormapOverrides：多选批量改 cmap 同样整组收口', () => {
+  it('被选中成员所在组里其它成员的 cmap override 清掉；组外元素与被写的 gid 各留自己的新值', async () => {
+    // A（fill_0）在前、未选中的同组成员 B（collections_1）在后：只原地改 A 的话 B 重放时会把 A 盖回旧色图
+    await seed([
+      { gid: 'axes_0.fill_0', prop: 'cmap', value: 'plasma' },
+      { gid: 'axes_0.collections_1', prop: 'cmap', value: 'cividis' },
+      { gid: 'axes_9.images_0', prop: 'cmap', value: 'magma' },
+    ])
+    setColormapOverrides('p1', literal('批量'), [
+      { gid: 'axes_0.fill_0', value: 'viridis', aliasGids: GROUP },
+      { gid: 'axes_9.images_0', value: 'viridis', aliasGids: ['axes_9.images_0'] },
+    ])
+    expect(ov()).toEqual([
+      { gid: 'axes_0.fill_0', prop: 'cmap', value: 'viridis' },
+      { gid: 'axes_9.images_0', prop: 'cmap', value: 'viridis' },
+    ])
+    expect(useDocumentStore.getState().past).toHaveLength(1)
+  })
+
+  it('同组两个成员都被选中：两条新值都留下，不互相清掉', async () => {
+    await seed([{ gid: 'axes_1.colorbar', prop: 'cmap', value: 'plasma' }])
+    setColormapOverrides('p1', literal('批量'), [
+      { gid: 'axes_0.fill_0', value: 'turbo', aliasGids: GROUP },
+      { gid: 'axes_0.collections_1', value: 'turbo', aliasGids: GROUP },
+    ])
+    expect(ov()).toEqual([
+      { gid: 'axes_0.fill_0', prop: 'cmap', value: 'turbo' },
+      { gid: 'axes_0.collections_1', prop: 'cmap', value: 'turbo' },
+    ])
   })
 })

@@ -62,6 +62,7 @@ import {
   disableTextEffect,
   setLegendPlacement,
   setColormapOverride,
+  setColormapOverrides,
   setOverride,
   setOverrides,
   unhideElement,
@@ -1790,12 +1791,26 @@ function BatchFieldRow({
     }
     // 只要有一个成员没预览成功就照旧走后端：宁可多渲染一次，
     // 也不能让画布上一部分元素显示新值、另一部分停在旧值
-    setOverrides(
-      panel.id,
-      elMsg('batchEdit', { label }),
-      elements.map((item) => ({ gid: item.gid, prop: field.prop, value: v })),
-      previewed ? 'none' : immediate,
-    )
+    if (field.prop === 'cmap') {
+      // 色阶组整组换色：每个被写的元素清掉它所在组里其它成员的 cmap override（同一次 commit）
+      setColormapOverrides(
+        panel.id,
+        elMsg('batchEdit', { label }),
+        elements.map((item) => ({
+          gid: item.gid,
+          value: v,
+          aliasGids: colormapAliasGids(batchManifest, item),
+        })),
+        previewed ? 'none' : immediate,
+      )
+    } else {
+      setOverrides(
+        panel.id,
+        elMsg('batchEdit', { label }),
+        elements.map((item) => ({ gid: item.gid, prop: field.prop, value: v })),
+        previewed ? 'none' : immediate,
+      )
+    }
     gesture.touch()
   }
 

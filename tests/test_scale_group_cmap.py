@@ -70,6 +70,17 @@ def main():
     cf = ax.contourf(gx, gy, np.sin(gx * 5) * np.cos(gy * 4), levels=8, cmap=cm_a)
     fig.colorbar(cf, ax=ax)
     fig.savefig("Cf.pdf")
+
+    # 只有两条独立 ScalarMappable 色条共用一个 Normalize，图上没有任何图元用它（#1159 评审）
+    from matplotlib.colors import Normalize
+    from matplotlib.cm import ScalarMappable
+
+    fig, ax = plt.subplots(figsize=(3.6, 2.8))
+    ax.plot([0, 1], [0, 1])
+    shared = Normalize(0.0, 1.0)
+    fig.colorbar(ScalarMappable(norm=shared, cmap=cm_a), ax=ax)
+    fig.colorbar(ScalarMappable(norm=shared, cmap=cm_b), ax=ax)
+    fig.savefig("TwoSm.pdf")
 """
 
 
@@ -137,6 +148,7 @@ SHAPES = [
     pytest.param(SCALE2D, "Prb", id="2d-prb-two-meshes+cb"),
     pytest.param(SCALE2D, "NoCb", id="2d-two-meshes-no-cb"),
     pytest.param(SCALE2D, "Cf", id="2d-contourf+cb"),
+    pytest.param(SCALE2D, "TwoSm", id="2d-two-standalone-cbs-no-artist"),
 ]
 
 

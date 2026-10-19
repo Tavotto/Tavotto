@@ -2903,18 +2903,18 @@ def _sync_standalone_colorbars(state, *, record_only: bool = False) -> None:
             and getattr(e["artist"], "norm", None) is norm
             and state.has_handler(e["artist"], "cmap")
         ]
-        if not members:
-            continue
         gids = {e["gid"] for e in members} | {
             c_el["gid"]
             for c_el in state.elements
             if isinstance(c_el["artist"], ColorbarProxy)
             and getattr(c_el["artist"].cb.mappable, "norm", None) is norm
         }
-        if any((g, "cmap") in state.applied for g in gids):
-            sm.set_cmap(members[0]["artist"].get_cmap())
-        else:
+        if not any((g, "cmap") in state.applied for g in gids):
             sm.set_cmap(sm._mm_orig_cmap)  # noqa: SLF001
+        elif members:
+            sm.set_cmap(members[0]["artist"].get_cmap())
+        # 组里只有几条独立色条（没有已登记图元）：色图已由 `_set_cb_cmap` 按文档序写到组里每条色条上，
+        # 最后一条生效的就是终值，这里不用再动（#1159 评审）
 
 
 def _set_collection_sizes(coll, v) -> None:
@@ -4969,6 +4969,16 @@ def _alias_colorbar_mappable(narrow_prop: str):
             for sib in colorbarmodel.scale_siblings(state, m)
             if (sg := rev.get(id(sib))) is not None
         ]
+        if narrow_prop == "cmap":
+            # 组里**其它色条**也是组员：色条的 cmap 由 `_set_cb_cmap` 写到组里每条色条的 mappable 上。
+            # 组里一个已登记图元都没有（只有几条独立 ScalarMappable 色条共用 norm）时它们是唯一的
+            # 同伴——不进组的话，热态先有 B 的 override、再加 A 的，A 动手后 B 不会被重放，
+            # 文档序靠后的 B 反而输了（#1159 评审）
+            siblings += [
+                (pg, narrow_prop)
+                for peer in colorbarmodel.scale_colorbars(state, m)
+                if peer is not artist and (pg := rev.get(id(peer))) is not None
+            ]
         gid = rev.get(id(m))
         if gid is None:
             # **独立 mappable**（`fig.colorbar(ScalarMappable(...), ax=ax)`）：

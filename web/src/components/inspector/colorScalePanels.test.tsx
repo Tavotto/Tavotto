@@ -717,3 +717,38 @@ describe('色阶组整组换色（用户裁决 2026-10-18，ADR 0135 修订）',
     expect(overrideOf('axes_1.colorbar', 'cmap')).toBeUndefined()
   })
 })
+
+describe('色阶组整组换色：多选批量改 cmap（#1159 评审）', () => {
+  it('多选里一员所在组的其它成员 cmap override 同一次写入清掉；被选中的各留新值', async () => {
+    const otherImage = {
+      ...imageEl,
+      gid: 'axes_0.images_1',
+      label: '图像 2',
+    } as unknown as ManifestElement
+    const manifest = {
+      rev: 1,
+      size_mm: [101.6, 76.2],
+      elements: [axesEl, imageEl, otherImage, colorbarEl()],
+    } as unknown as Manifest
+    // 图像 1 的 cmap 在前、同组未选中的色条在后：只原地改图像 1 的话，色条那条重放时会把它盖回旧色图
+    await mount('axes_0.images_0', {
+      manifest,
+      overrides: [
+        { gid: 'axes_0.images_0', prop: 'cmap', value: 'plasma' },
+        { gid: 'axes_1.colorbar', prop: 'cmap', value: 'cividis' },
+      ],
+    })
+    await act(async () => {
+      useUiStore.setState({ selectedGids: ['axes_0.images_0', 'axes_0.images_1'] })
+    })
+    // 多选 = 批量表单（前提：单元素那行不在了）；颜色映射一组默认收起，先展开，再按 aria-label 找色图触发按钮
+    expect(rowOf('cmap')).toBeNull()
+    await click(buttons().find((b) => b.textContent?.trim().startsWith('颜色映射')))
+    await click(host.querySelector('button[aria-label="色图"]'))
+    const greys = cmapEntries().find((e) => e.textContent?.trim() === 'Greys')!
+    await click(greys)
+    expect(overrideOf('axes_0.images_0', 'cmap')).toBe('Greys')
+    expect(overrideOf('axes_0.images_1', 'cmap')).toBe('Greys')
+    expect(overrideOf('axes_1.colorbar', 'cmap')).toBeUndefined()
+  })
+})

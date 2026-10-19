@@ -74,9 +74,9 @@
   色阶组里**任一成员**（图元、色条，含独立 `ScalarMappable` 的色条）改 cmap = 整组改——「点曲面换配色」要整图一起变；
   没有色条、只是两块共用 norm 也同样（判据同一个：共用 norm 对象 = 同一色阶）。实现：`ALIAS_GROUPS[(collection|image, cmap)]`
   = `_alias_scale_group`（与色条那条互为镜像的广播）、setter `_set_member_cmap`、撤销 `_restore_member_cmap`（各回各的原样）、
-  独立 mappable 色条由 `_sync_standalone_colorbars` 每轮收尾跟上（原样记在 `_mm_orig_cmap`）。**文档里多条 cmap
+  独立 mappable 色条由 `_sync_standalone_colorbars` 每轮收尾跟上（原样记在 `_mm_orig_cmap`）；组里**只有几条独立色条、没有已登记图元**时，色条的 cmap 也写到组里其它色条（`_set_cb_cmap` → `scale_colorbars`），色条 cmap 的别名组含同组其它色条。**文档里多条 cmap
   override（历史文档 / MCP / 手写）：文档序靠后的赢**（同档位、`sorted` 稳定，热态逐步累加与冷启动同序；不报 warning、
-  不阻断写回）；前端写入口 `actions.setColormapOverride` 在同一次 commit 里清掉同组其它成员的 cmap override，文档里只留一条。
+  不阻断写回）；前端写入口 `actions.setColormapOverride`（单选）/ `setColormapOverrides`（多选批量）在同一次 commit 里清掉被写元素所在组里其它成员的 cmap override，文档里只留一条。
   被否的方案：保留「窄压过广播」（用户要整图一起变）；撤销时整组回到被点成员的原样（组员原样各是各的，会丢）。已接受的代价：
   2D 里两块共用 norm、只想改其中一块的少见用法也会整组变。vmin / vmax 本来就经共用 norm 联动，不在此列。`apply` 里「对等广播端共用一份原样」只看组员表的**第一个**（色条 → 它的
   mappable / 独立 mappable 的令牌），兄弟组员不参与——独立 mappable 的色条与登记网格共用
