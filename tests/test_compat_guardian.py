@@ -288,6 +288,28 @@ class GuardianContract(GuardianBase):
         for name in cg.V2_UNCOVERED:
             self.assertEqual(self.row["stages"][name]["status"], "not_covered")
 
+    def partial_observation(self):
+        return self.v2_observation(final_phase="partial", titles=["good"])
+
+    def partial_native(self):
+        return {"figure_count": 2, "semantics": {"a": {"titles": ["good"]}, "b": {"titles": [""]}}}
+
+    def test_v2_designed_partial_met_is_an_executed_declared_limitation(self):
+        self.row["stages"] = cg.v2_stages(
+            self.partial_observation(), self.partial_native(), [], designed_partial=True
+        )
+        self.assertEqual(self.row["stages"]["execute"]["status"], "passed")
+        self.assertEqual(self.row["stages"]["capture"]["status"], "expected_limitation")
+        self.row["figures"] = {"native": 2, "tavotto_captured": 1, "tavotto_valid": 1}
+        self.assertEqual(cg.case_status(self.row), "expected_limitation")
+
+    def test_v2_fewer_figures_than_native_never_passes_capture(self):
+        for kwargs, missing in (({}, []), ({"designed_partial": True}, ["oracle gap"])):
+            stages = cg.v2_stages(
+                self.partial_observation(), self.partial_native(), missing, **kwargs
+            )
+            self.assertEqual(stages["capture"]["status"], "failed", kwargs)
+
     def test_v2_zero_invocations_do_not_reach_downstream_stages(self):
         stages = cg.v2_stages(self.v2_observation(exec_count=0), {}, [])
         for name in ("execute", "capture", "open", "semantic"):
