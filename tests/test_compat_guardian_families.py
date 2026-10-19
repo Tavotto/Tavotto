@@ -16,6 +16,7 @@ import compat_explore as ex  # noqa: E402
 import compat_guardian as cg  # noqa: E402
 import compat_guardian_expectations as ex_decl  # noqa: E402
 import compat_minimize as cmz  # noqa: E402
+import package_smoke  # noqa: E402
 
 FAMILIES = cg.ROOT / "tests/compat_guardian/families"
 SCHEMA = cg.ROOT / "tests/compat_guardian/families.schema.json"
@@ -64,16 +65,14 @@ class Records(unittest.TestCase):
         for record in records():
             path = cg.ROOT / record["repro"]["script"]
             self.assertTrue(path.is_file(), path)
-            self.assertEqual(
-                hashlib.sha256(path.read_bytes()).hexdigest(), record["repro"]["sha256"]
-            )
+            # 记录的是仓库里的 LF 字节；Windows checkout（core.autocrlf）会写成 CRLF
+            committed = path.read_bytes().replace(b"\r\n", b"\n")
+            self.assertEqual(hashlib.sha256(committed).hexdigest(), record["repro"]["sha256"])
             compile(path.read_text(encoding="utf-8"), str(path), "exec")
             # the recorded `after` metrics are recomputed from the committed bytes, never trusted
             # from the JSON alone (Codex #1136 r4312234096)
             script = Path(record["repro"]["script"]).name
-            self.assertEqual(
-                record["repro"]["after"], cmz.measure({script: path.read_bytes()}, script)
-            )
+            self.assertEqual(record["repro"]["after"], cmz.measure({script: committed}, script))
             self.assertLess(
                 record["repro"]["after"]["statements"], record["repro"]["before"]["statements"]
             )
@@ -148,17 +147,20 @@ def _tavotto(project: Path) -> dict:
     code = "import json, sys; from pathlib import Path; import compat_explore as ex; print(json.dumps(ex.tavotto_observe(Path(sys.argv[1]), 'repro.py')))"
     work = project.parent / "iso"
     work.mkdir()
-    done = subprocess.run(
+    evidence = project.parent / "evidence"
+    evidence.mkdir()
+    # 进程树清理（Windows 用 Job Object）：引擎 worker 可能比直接子进程活得久，还占着沙盒目录，
+    # 临时目录就删不掉（WinError 32）
+    process = package_smoke.run_isolated_command(
         [sys.executable, "-c", code, str(project)],
         env=cg.isolated_env(work),
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
+        cwd=project.parent,
+        evidence=evidence,
         timeout=180,
-        stdin=subprocess.DEVNULL,
     )
-    return json.loads(done.stdout.strip().splitlines()[-1])
+    out = (evidence / "stdout.txt").read_text(errors="replace")
+    assert process["exit_code"] == 0, (evidence / "stderr.txt").read_text(errors="replace")
+    return json.loads(out.strip().splitlines()[-1])
 
 
 class RealRepro(unittest.TestCase):
