@@ -619,6 +619,17 @@ describe('resetTutorial', () => {
     }
   })
 
+  it('元数据一直取不到（探测失败 / 后端没给 metadata）：不弹确认、不发重置，按失败返回', async () => {
+    await openSampleProject()
+    useTutorialStore.setState({ meta: null, status: null })
+    calls = []
+    stubFetch({ '/api/tutorial': () => json({ error: 'boom' }, 500) })
+    const out = await resetTutorial()
+    expect(out.ok).toBe(false)
+    expect(useUiStore.getState().confirm).toBeNull()
+    expect(calls.filter((c) => c.url === '/api/tutorial/reset')).toEqual([])
+  })
+
   it('示例项目不是当前项目且现取状态失败：不弹确认、不发重置，按失败返回', async () => {
     useProjectStore.setState({ phase: 'open', project: { ...PROJECT, tutorial: false, id: 'p_other' } })
     useTutorialStore.setState({ meta: META })

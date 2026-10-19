@@ -307,7 +307,8 @@ async function resetTutorialNow(
  * 用户可能刚另存过）。两路取失败都会抛，由调用方按失败路径返回。
  */
 async function savedLayoutsInTutorial(meta: TutorialMetadata | null): Promise<string[]> {
-  if (!meta) return []
+  // 元数据（教程画布名）取不到：分不清哪份是教程画布、哪份是另存的——「不知道」不是「没有」
+  if (!meta) throw new Error('tutorial metadata unavailable')
   if (useProjectStore.getState().project?.tutorial === true) {
     // 失败照样抛：取不到清单不等于没有另存排版（调用方按失败返回，不弹「没有另存」的确认）
     const names = await fetchLayoutNames()
