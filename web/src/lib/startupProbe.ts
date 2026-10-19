@@ -22,6 +22,11 @@ export const isConnectFailure = (e: unknown): boolean => e instanceof TypeError
 const waiters = new Set<() => void>()
 let epoch = 0
 
+/** 当前探测代次：调用方开头捕获，之后每个 await 回来核对，不一致 = 已被取消 / 取代。 */
+export function startupProbeEpoch(): number {
+  return epoch
+}
+
 export function cancelStartupProbe(): void {
   epoch += 1
   for (const w of [...waiters]) w()

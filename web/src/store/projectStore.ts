@@ -24,7 +24,7 @@ import {
 } from '@/lib/projectDocs'
 import { isForeignDocument } from '@/lib/docOwnership'
 import { currentProjectId, setCurrentProjectId } from '@/lib/session'
-import { isConnectFailure, retryOnConnectFailure, STARTUP_PROBE_CANCELLED } from '@/lib/startupProbe'
+import { isConnectFailure, retryOnConnectFailure, STARTUP_PROBE_CANCELLED, startupProbeEpoch } from '@/lib/startupProbe'
 import { pushPickerEntry } from '@/lib/pickerHistory'
 import { cancelActivePointerGesture, finishActiveGesture } from '@/store/gestureCoordinator'
 import { markMoment } from '@/lib/timelineCheckpoint'
@@ -479,6 +479,9 @@ export const useProjectStore = create<ProjectState>((set, get) => {
   lastDocumentIssue: null,
 
   init: async () => {
+    // 代次贯穿整个 init：任何 await 回来发现已被取消 / 取代，就静默退出，不再写 store 或起副作用
+    const mine = startupProbeEpoch()
+    const cancelled = (): boolean => mine !== startupProbeEpoch()
     try {
       let project: ProjectStatus
       try {
@@ -495,6 +498,7 @@ export const useProjectStore = create<ProjectState>((set, get) => {
         setCurrentProjectId(null)
         project = await fetchProjectOnConnect()
       }
+      if (cancelled()) return
       if (project.open && project.id) {
         setCurrentProjectId(project.id)
         armNoProjectRecovery()
@@ -509,6 +513,7 @@ export const useProjectStore = create<ProjectState>((set, get) => {
         fetchProjectLists(),
         fetchOpenProjects().catch(() => []),
       ])
+      if (cancelled()) return
       // 列表过期（期间又发过一次、或换了项目）时项目与阶段照常认，只是不写旧列表
       const fresh = seq === listSeq && pj === currentProjectId()
       set({
@@ -522,7 +527,7 @@ export const useProjectStore = create<ProjectState>((set, get) => {
         void useProjectScanStore.getState().start({ reason: 'restore' })
       }
     } catch (e) {
-      if (e === STARTUP_PROBE_CANCELLED) return
+      if (e === STARTUP_PROBE_CANCELLED || cancelled()) return
       // 后端不可达（连接层重试用尽）时也进 Picker：它是现有的可恢复界面，用户点打开 / 新建即再试一次
       set({ phase: 'none' })
     }

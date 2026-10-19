@@ -132,4 +132,37 @@ describe('开局读当前项目：连接层失败有界重试', () => {
     expect(useProjectStore.getState().project).toBeNull()
     expect(vi.getTimerCount()).toBe(0)
   })
+
+  it('项目请求已成功返回、列表请求在飞时被取消 → 列表返回后 phase 仍 loading、project 不写、不启动扫描', async () => {
+    const { cancelStartupProbe } = await import('@/lib/startupProbe')
+    const { useProjectScanStore } = await import('./projectScanStore')
+    const startSpy = vi.spyOn(useProjectScanStore.getState(), 'start').mockResolvedValue(undefined as never)
+    let release!: () => void
+    const gate = new Promise<void>((r) => {
+      release = r
+    })
+    let listCalls = 0
+    const inner = globalThis.fetch
+    globalThis.fetch = (async (url: unknown, init?: RequestInit) => {
+      const u = String(url)
+      if (u.includes('/api/projects')) {
+        listCalls += 1
+        await gate
+      }
+      return inner(url as RequestInfo, init)
+    }) as typeof fetch
+    projectReply = NONE
+    const done = useProjectStore.getState().init()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(projectCalls).toBe(1)
+    expect(listCalls).toBeGreaterThan(0)
+    cancelStartupProbe()
+    release()
+    await done
+    await vi.advanceTimersByTimeAsync(60_000)
+    expect(useProjectStore.getState().phase).toBe('loading')
+    expect(useProjectStore.getState().project).toBeNull()
+    expect(startSpy).not.toHaveBeenCalled()
+    startSpy.mockRestore()
+  })
 })
