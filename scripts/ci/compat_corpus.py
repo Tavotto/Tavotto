@@ -605,6 +605,37 @@ def validate_baseline(data: dict) -> None:
             )
 
 
+def runner_error_detail(r: dict) -> str:
+    """runner 崩溃详情（崩溃**事实**，与最终分类无关）。
+
+    来源两处：run_group 崩溃在 `detail.runner_error`，路由 runner 崩溃在
+    `routes.runner_error.detail`。无崩溃返回空串。
+    """
+    d = (r.get("detail") or {}).get("runner_error")
+    if d:
+        return str(d)
+    entry = (r.get("routes") or {}).get("runner_error")
+    if isinstance(entry, dict):
+        return str(entry.get("detail") or "")
+    return ""
+
+
+def has_runner_crash(r: dict) -> bool:
+    """这个 case 的结果里是否出现过 runner 崩溃（按事实判，不看最终分类）。
+
+    阶段/别的路由先失败、随后路由 runner 崩溃时，最终分类是 product_bug，
+    但那次路由检查没跑完。报告、门禁告警、基线拒绝都必须按这个事实判。
+    """
+    if r.get("classification") == RUNNER_ERROR:
+        return True
+    if runner_error_detail(r):
+        return True
+    return any(
+        isinstance(e, dict) and e.get("classification") == RUNNER_ERROR
+        for e in (r.get("routes") or {}).values()
+    )
+
+
 def baseline_payload(results: dict, generated_for: dict | None = None) -> dict:
     """把一次运行的结果整理成可提交的基线（确定性：键全排序，无时间戳）。
 
@@ -615,7 +646,7 @@ def baseline_payload(results: dict, generated_for: dict | None = None) -> dict:
     这里把环境如实写进基线，两条路殊途同归。
     """
     cases = {}
-    crashed = sorted(cid for cid, r in results.items() if r["classification"] == RUNNER_ERROR)
+    crashed = sorted(cid for cid, r in results.items() if has_runner_crash(r))
     if crashed:
         raise CorpusError(
             "baseline_runner_error",

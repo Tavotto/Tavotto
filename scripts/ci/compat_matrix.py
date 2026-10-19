@@ -1134,15 +1134,8 @@ def classify(
 
 
 def _runner_error_detail(r: dict) -> str:
-    """崩溃详情按来源取：run_group 崩溃在 detail.runner_error，
-    路由 runner 崩溃在 routes.runner_error.detail。"""
-    d = (r.get("detail") or {}).get("runner_error")
-    if d:
-        return str(d)
-    entry = (r.get("routes") or {}).get("runner_error")
-    if isinstance(entry, dict):
-        return str(entry.get("detail") or "")
-    return ""
+    """崩溃详情：统一判据在 compat_corpus.runner_error_detail。"""
+    return CC.runner_error_detail(r)
 
 
 def runner_crash_result(case: dict, tb: str) -> dict:
@@ -1714,7 +1707,7 @@ def build_report(
             "detail": _runner_error_detail(results[c["id"]])[-400:],
         }
         for c in cases
-        if _runner_error_detail(results[c["id"]])
+        if CC.has_runner_crash(results[c["id"]])
     ]
     parity = [
         {"id": cid, **(results[cid]["browser"] or {})}
@@ -1937,7 +1930,7 @@ def evaluate_gate(
     # runner 自身崩溃：不是产品缺陷（上面不算），这些 case 没有裁决。维护者裁决
     # （#1178）：门禁只告警、不致红——基础设施故障不该挡住产品改动；但必须可见
     # （告警 + 报告里的 Runner errors 一节），不能静默（#1133）。
-    crashed = [c["id"] for c in cases if _runner_error_detail(results[c["id"]])]
+    crashed = [c["id"] for c in cases if CC.has_runner_crash(results[c["id"]])]
     if crashed and warnings is not None:
         warnings.append(
             f"runner 自身崩溃，这些 case 没有裁决（基础设施故障，非产品回归）：{crashed}"

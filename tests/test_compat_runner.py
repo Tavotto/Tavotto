@@ -1013,3 +1013,36 @@ class TestRunnerError:
         with pytest.raises(CC.CorpusError) as ei:
             CC.baseline_payload({"x": self._crashed("x")})
         assert ei.value.code == "baseline_runner_error"
+
+    # ---- #1178 r4310553654：基线按崩溃事实拒绝，统一判据 ----
+    def _stage_fail_plus_route_crash(self, cid="z"):
+        res = CM._blank(case(cid))
+        res["stages"].update(execute=True, replay=False)
+        res["routes"] = self._crashed_routes()
+        return CM._finish({cid: res}, [case(cid)], 0.0)[cid]
+
+    def test_baseline_refuses_when_route_crash_hidden_behind_product_bug(self):
+        out = self._stage_fail_plus_route_crash("z")
+        assert out["classification"] == "product_bug"  # 最终分类不是 runner_error
+        with pytest.raises(CC.CorpusError) as ei:
+            CC.baseline_payload({"z": out})
+        assert ei.value.code == "baseline_runner_error"
+        assert "z" in str(ei.value)
+
+    def test_has_runner_crash_is_fact_based(self):
+        assert CC.has_runner_crash(self._crashed("x"))
+        assert CC.has_runner_crash(self._stage_fail_plus_route_crash("z"))
+        clean = CM._blank(case("c"))
+        assert not CC.has_runner_crash(clean)
+        # 路由条目只有 classification、没有 detail 也算崩溃事实
+        clean["routes"] = {"r": {"status": "fail", "classification": "runner_error"}}
+        assert CC.has_runner_crash(clean)
+
+    def test_report_lists_crash_hidden_behind_product_bug_without_detail(self):
+        cases = [case("z")]
+        res = CM._blank(case("z"))
+        res["stages"].update(execute=True, replay=False)
+        res["routes"] = {"r": {"status": "fail", "classification": "runner_error"}}
+        results = CM._finish({"z": res}, cases, 0.0)
+        report = CM.build_report(cases, results, {}, "current", "all")
+        assert [e["id"] for e in report["summary"]["runner_errors"]] == ["z"]
