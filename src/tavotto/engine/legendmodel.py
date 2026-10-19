@@ -1073,20 +1073,30 @@ def legend_proxy_names(ax) -> dict[int, str]:
         entries.append((_proxy_fingerprint(h), text, k != 1))
     if not entries:
         return {}
+    from matplotlib.offsetbox import DrawingArea  # noqa: PLC0415 — worker 侧有科学栈
+
     fp_of: dict[int, tuple] = {}
+    multi_src: set[int] = set()
+    width, height, descent = _legend_handle_box_geometry(leg)
     for art in series:
         if not isinstance(art, Line2D | PathCollection):
             continue
+        # 派生进一个**自己的**格子再数：系列这一侧的 handler 也可能一格画多个 artist，
+        # `legend_fresh_handle` 只回第一个。两侧都恰好一个 artist 才可能借名（#1162 评审）
+        box = DrawingArea(width=width, height=height, xdescent=0.0, ydescent=descent)
+        box.set_figure(_owning_figure(leg))
         try:
-            fresh = legend_fresh_handle(leg, art)
+            fresh = legend_fresh_handle(leg, art, box)
         except Exception:  # noqa: BLE001 — 造不出示意线的对象不参与
             continue
         if fresh is not None:
             fp_of[id(art)] = _proxy_fingerprint(fresh)
+            if len(box.get_children()) != 1:
+                multi_src.add(id(art))  # 仍计入歧义计数，只是自己不借名
     out: dict[int, str] = {}
     for art in series:
         fp = fp_of.get(id(art))
-        if fp is None:
+        if fp is None or id(art) in multi_src:
             continue
         matched = [(text, multi) for efp, text, multi in entries if efp == fp]
         # 撞上一个多 artist 的格子 = 说不清它是不是这条系列的条目：歧义，不借名

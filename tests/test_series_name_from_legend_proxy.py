@@ -202,6 +202,25 @@ def main():
     ax.legend(handles=[(k, r), b], labels=["tup", "blue"], markerfirst=False)
     fig.savefig("Fig.pdf")
 """,
+    # 系列侧的类型级 handler 一格画两条线，代理按实例用单线 handler：两侧格子长相不同，不借名
+    "source_multi_cell": """\
+import matplotlib.pyplot as plt
+from matplotlib.legend_handler import HandlerBase, HandlerLine2D
+from matplotlib.lines import Line2D
+
+class TwoLines(HandlerBase):
+    def create_artists(self, legend, orig, x0, y0, w, h, fs, trans):
+        a = Line2D([x0, x0 + w], [y0, y0], color=orig.get_color(), transform=trans)
+        b = Line2D([x0, x0 + w], [y0 + h, y0 + h], color="m", transform=trans)
+        return [a, b]
+
+def main():
+    fig, ax = plt.subplots(figsize=(4, 3))
+    ax.plot([0, 1], [0, 1], color="r")
+    proxy = Line2D([], [], color="r")
+    ax.legend(handles=[proxy], labels=["red"], handler_map={Line2D: TwoLines(), proxy: HandlerLine2D()})
+    fig.savefig("Fig.pdf")
+""",
     # 有自己 label 的线与普通 ax.legend()：行为不变
     "own_label": """\
 import matplotlib.pyplot as plt
@@ -306,3 +325,7 @@ def test_marker_last_legend_still_reads_cells(figs):
         "axes_0.lines_0": "曲线 1",
         "axes_0.lines_1": "曲线 “blue”",
     }
+
+
+def test_multi_artist_source_cell_borrows_no_name(figs):
+    assert _labels(figs, "source_multi_cell") == {"axes_0.lines_0": "曲线 1"}
