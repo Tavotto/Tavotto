@@ -185,3 +185,61 @@ def test_stock_declaration_inside_svg_content_is_not_removed():
         b'<svg width="96" height="48"><text><![CDATA[' + _MATPLOTLIB_DOCTYPE + b"]]></text></svg>"
     )
     assert strip_matplotlib_doctype(data) == data
+
+
+def _original_eps_request(client, formats):
+    from tavotto.engine import exportjob
+
+    exportjob.reset_for_tests()
+    try:
+        response = client.post(
+            "/api/export",
+            json={
+                "scope": "original",
+                "filename": "imported",
+                "formats": formats,
+                "overwrite": "replace",
+                "original": {"figure_id": "F.svg", "overrides": [], "source_kind": "vector"},
+            },
+        )
+        assert response.status_code == 200, response.json
+        return response.json
+    finally:
+        exportjob.reset_for_tests()
+
+
+def test_scripted_svg_asset_original_eps_goes_through_the_worker(project, monkeypatch):
+    """有脚本的 SVG 素材：EPS 不被 SVG 分支提前拦截，走 `_serialize_figure`（与 epsAvailability 同源）。"""
+    client, root = project
+    calls = []
+
+    class FakeWorker:
+        export_dir = root
+
+        def export(self, stem, patches, path, fmt="pdf", dpi=600):
+            calls.append((stem, fmt))
+            from pathlib import Path
+
+            Path(path).write_bytes(
+                b"%!PS-Adobe-3.0 EPSF-3.0\n%%BoundingBox: 0 0 200 150\n%%EndComments\n%%EOF\n"
+            )
+            return {"warnings": []}
+
+    monkeypatch.setattr(m, "_safe_worker", lambda *a, **kw: FakeWorker())
+    monkeypatch.setattr(
+        m,
+        "current_registry",
+        lambda: type("R", (), {"for_stem": lambda self, s: {"script": "s.py", "entry": "main"}})(),
+    )
+    body = _original_eps_request(client, ["svg", "eps"])
+    assert body["status"] == "done", body
+    assert calls == [("F", "eps")]
+    assert {o["format"] for o in body["outputs"] if o["status"] == "done"} == {"svg", "eps"}
+
+
+def test_unscripted_svg_asset_original_eps_reports_needs_script(project):
+    client, _ = project
+    body = _original_eps_request(client, ["svg", "eps"])
+    assert body["status"] == "partial", body
+    eps = next(o for o in body["outputs"] if o["format"] == "eps")
+    assert eps["error"]["code"] == "eps_needs_script"

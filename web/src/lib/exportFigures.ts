@@ -30,7 +30,7 @@ import { useSelectionStore } from '@/store/selectionStore'
 import { useWorkspaceStore } from '@/store/workspace'
 import type { CanvasObject, PanelObject } from '@/types/document'
 
-export type ExportableFigureKind = 'pdf' | 'raster' | 'runtime' | 'unknown'
+export type ExportableFigureKind = 'pdf' | 'svg' | 'raster' | 'runtime' | 'unknown'
 
 export interface ExportableFigure {
   figureId: string
@@ -51,7 +51,7 @@ const isPanel = (o: CanvasObject): o is PanelObject => o.type === 'panel'
 
 function kindOf(panel: PanelObject | null, assetKind: string | undefined): ExportableFigureKind {
   const k = panel?.fileKind ?? assetKind
-  if (k === 'pdf' || k === 'raster' || k === 'runtime') return k
+  if (k === 'pdf' || k === 'svg' || k === 'raster' || k === 'runtime') return k
   return 'unknown'
 }
 

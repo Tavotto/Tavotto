@@ -2107,6 +2107,18 @@ def _export_produce_original(job, tmp_dir: Path, *, artifact_sources=None) -> li
                         vector=engine_artifactinspect.svg_vector(target),
                     )
                 )
+            elif fmt == engine_exportreq.FORMAT_EPS:
+                # 与前端 `epsAvailability()` 同源：有脚本的 SVG 素材走既有 worker 序列化，
+                # 没有脚本由 `_produce_original_eps` 报 `eps_needs_script`（前端标 no_script）。
+                produced.append(
+                    _produce_original_eps(
+                        job,
+                        src,
+                        req.ppi or engine_exportreq.PPI_DEFAULT,
+                        tmp_dir,
+                        artifact_source=(artifact_sources or {}).get(src.figure_id),
+                    )
+                )
             else:
                 produced.append(
                     engine_exportjob.Produced(

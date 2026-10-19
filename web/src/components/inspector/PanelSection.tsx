@@ -45,7 +45,7 @@ import { useProjectReadinessStore } from '@/store/projectReadinessStore'
 import { isBusyPhase, useScriptRunStore } from '@/store/scriptRunStore'
 import { useUiStore } from '@/store/uiStore'
 import { overrideCounts } from '@/lib/overrideCounts'
-import type { PanelObject, PanelRotation } from '@/types/document'
+import { isVectorFileKind, type PanelObject, type PanelRotation } from '@/types/document'
 import {
   panelAspectLocked,
   panelFullSize,
@@ -537,9 +537,9 @@ interface Quality {
   bad: boolean
 }
 
-function qualityOf(o: PanelObject): Quality {
+export function qualityOf(o: PanelObject): Quality {
   const fullW = panelFullSize(o).w
-  if (o.fileKind === 'pdf') {
+  if (isVectorFileKind(o.fileKind)) {
     const pt = effectivePt(fullW, o.nativeW)
     const bad = pt < 6
     return {

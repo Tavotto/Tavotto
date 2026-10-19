@@ -102,6 +102,13 @@ export type PanelRotation = 0 | 90 | 180 | 270
 export type PanelFileKind = 'pdf' | 'raster' | 'svg' | 'runtime'
 
 /**
+ * 面板素材是不是**矢量文件**（pdf / svg）：按有效字号（pt）而不是有效 DPI 评质量、
+ * 来源判「矢量」都问它。新增矢量文件形态只改这一处（runtime 是执行捕获的图，不在内）。
+ */
+export const isVectorFileKind = (kind: string | null | undefined): boolean =>
+  kind === 'pdf' || kind === 'svg'
+
+/**
  * RuntimeFigureAsset 的持久化描述块（CapturedFigureDescriptor 的子集，
  * ADR 0013 §3）。它是**恢复线索**而不是权威：渲染时后端仍以注册表为准，
  * 注册表条目丢失时才用它兜底（且 fail closed：重算 id 必须与 fileId 一致）。
