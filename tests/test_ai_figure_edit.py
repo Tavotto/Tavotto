@@ -242,3 +242,23 @@ def test_candidate_is_a_copy_not_a_link(env):
     )
     sid, _ = _run(env)
     assert _wait(sid)["status"] == "done"
+
+
+def test_script_changed_between_precommit_and_commit_is_not_overwritten(env, monkeypatch):
+    """提交前检查之后、提交之前别人写了项目里的脚本：提交时持锁再核一次基线，对不上就作废候选（不覆盖新内容）。"""
+    real = ai_figure_edit.FigureEditAdapter._precommit
+
+    def precommit_then_someone_writes(self, cand):
+        out = real(self, cand)
+        cand.script_path.write_text("# written meanwhile", encoding="utf-8")
+        return out
+
+    monkeypatch.setattr(
+        ai_figure_edit.FigureEditAdapter, "_precommit", precommit_then_someone_writes
+    )
+    sid, _ = _run(env)
+    sess = _wait(sid)
+    assert _project_text(env) == "# written meanwhile"
+    assert (
+        sess["status"] == "failed" and ai_history.get(sid)["error"] == "script_changed_since_start"
+    )
