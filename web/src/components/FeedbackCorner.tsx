@@ -22,16 +22,19 @@ type Prompt =
  * - **只认意外错误**（用户 10-19 裁决）：来源仍是 `unexpectedErrorStore`（判据在 `lib/unexpectedErrors.ts`）与
  *   `exitNoticeStore.previous`；用户脚本报错、导出失败这类可预期的失败不弹这张卡。
  * - **同时只有一张**：两类都在时先说意外错误（刚发生的事），它关掉后才轮到「上次没有正常退出」。
- * - **主动作只打开确认框**（`diagSendStore.setOpen(true)`，本机备包）并收起这张卡；上传要等用户在框里点「发送」。
+ * - **主动作只打开确认框**（`diagSendStore.setOpen(true)`，本机备包）并收起**两类**卡——一份诊断包已覆盖两件事；
+ *   只收当前那张的话，排在后面的那张会立刻冒出来，且 `z-toast` 高于 `z-dialog`，压在表单上（Codex #1184）。
+ *   上传要等用户在框里点「发送」。确认框开着时整个角落不渲染（store 不动）。
  * - 发送入口关着（`capability === null`）时整张卡不渲染，与此前的判据相同。
  */
 export function FeedbackCorner() {
   const { t } = useTranslation('workspace')
   const diagEnabled = useDiagSendStore((s) => s.capability !== null)
+  const sendOpen = useDiagSendStore((s) => s.open)
   const unexpected = useUnexpectedErrorStore((s) => s.card)
   const previous = useExitNoticeStore((s) => s.previous)
 
-  const current: Prompt | null = !diagEnabled
+  const current: Prompt | null = !diagEnabled || sendOpen
     ? null
     : unexpected
       ? { slot: 'unexpected', token: unexpected.token }
@@ -48,8 +51,9 @@ export function FeedbackCorner() {
     if (p.slot === 'unexpected') useUnexpectedErrorStore.getState().dismiss()
     else useExitNoticeStore.getState().dismissPrevious()
   }
-  const openSend = (p: Prompt) => {
-    dismiss(p)
+  const openSend = () => {
+    useUnexpectedErrorStore.getState().dismiss()
+    useExitNoticeStore.getState().dismissPrevious()
     useDiagSendStore.getState().setOpen(true)
   }
 
@@ -83,7 +87,7 @@ export function FeedbackCorner() {
             <p className="text-sm font-medium text-ink">{title(shown)}</p>
             <p className="text-sm leading-5 text-ink-2">{body(shown)}</p>
             <div className="mt-2 flex">
-              <Button variant="primary" size="sm" onClick={() => openSend(shown)} data-feedback-corner-send>
+              <Button variant="primary" size="sm" onClick={openSend} data-feedback-corner-send>
                 {t('settings.diagnostics.send.cardButton', { ns: 'dialogs' })}
               </Button>
             </div>

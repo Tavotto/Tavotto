@@ -120,6 +120,32 @@ describe('上次没有正常退出卡', () => {
   })
 })
 
+describe('确认框与排队的卡（Codex #1184）', () => {
+  it('两类都在时点发送：两张一起收起，确认框上面不再冒出第二张', () => {
+    act(() => {
+      useExitNoticeStore.getState().showPrevious('app_unclean')
+      useUnexpectedErrorStore.getState().show()
+    })
+    act(() => sendButton(unexpectedCard()!).click())
+    tick(200)
+    expect(useDiagSendStore.getState().open).toBe(true)
+    expect(useUnexpectedErrorStore.getState().card).toBeNull()
+    expect(useExitNoticeStore.getState().previous).toBeNull()
+    expect(cards()).toHaveLength(0)
+  })
+
+  it('确认框开着时不渲染（store 不动）；关掉后卡回来', () => {
+    useDiagSendStore.setState({ open: true })
+    act(() => useExitNoticeStore.getState().showPrevious('app_unclean'))
+    tick(200)
+    expect(cards()).toHaveLength(0)
+    expect(useExitNoticeStore.getState().previous).not.toBeNull()
+    act(() => useDiagSendStore.setState({ open: false }))
+    tick(200)
+    expect(previousCard()).not.toBeNull()
+  })
+})
+
 describe('同时只有一张', () => {
   it('两类都在：先说意外错误；它关掉后才轮到上次没正常退出', () => {
     act(() => {
