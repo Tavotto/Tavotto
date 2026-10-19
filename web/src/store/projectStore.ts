@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import { emitActivity } from '@/lib/activity'
 import { newId } from '@/lib/id'
 import {
+  ApiError,
   armNoProjectRecovery,
   backendErrorMsg,
   fetchOpenProjects,
@@ -24,6 +25,7 @@ import {
 } from '@/lib/projectDocs'
 import { isForeignDocument } from '@/lib/docOwnership'
 import { currentProjectId, setCurrentProjectId } from '@/lib/session'
+import { retryOnConnectFailure, STARTUP_PROBE_CANCELLED } from '@/lib/startupProbe'
 import { pushPickerEntry } from '@/lib/pickerHistory'
 import { cancelActivePointerGesture, finishActiveGesture } from '@/store/gestureCoordinator'
 import { markMoment } from '@/lib/timelineCheckpoint'
@@ -354,6 +356,9 @@ let pinnedRev = 0
  */
 let listSeq = 0
 
+const fetchProjectOnConnect = (): Promise<ProjectStatus> =>
+  retryOnConnectFailure(fetchProject, (e) => e instanceof ApiError)
+
 export const useProjectStore = create<ProjectState>((set, get) => {
   /** 切项目的前端换代本体；对外的两个入口都经 `switchQueue` 串行地调它 */
   const adoptNow: ProjectState['adoptOpenedProject'] = async (status, opts) => {
@@ -478,13 +483,17 @@ export const useProjectStore = create<ProjectState>((set, get) => {
     try {
       let project: ProjectStatus
       try {
-        project = await fetchProject()
-      } catch {
+        project = await fetchProjectOnConnect()
+      } catch (e) {
+        // 被取代（组件卸载 / 重新 init）：静默退出，不把 phase 落到 none
+        if (e === STARTUP_PROBE_CANCELLED) return
+        // 连接层重试用尽：后端就是没起来，忘掉项目 id 也救不了，交给外层落到 Picker
+        if (!(e instanceof ApiError)) throw e
         // 本标签页记着的项目在后端已不存在（进程重启/项目已关闭）：
         // 忘掉它退回默认项目，绝不继续拿一个失效 id 去请求
-        if (!currentProjectId()) throw new Error('unreachable')
+        if (!currentProjectId()) throw e
         setCurrentProjectId(null)
-        project = await fetchProject()
+        project = await fetchProjectOnConnect()
       }
       if (project.open && project.id) {
         setCurrentProjectId(project.id)
@@ -512,8 +521,9 @@ export const useProjectStore = create<ProjectState>((set, get) => {
       if (project.open && project.tutorial !== true) {
         void useProjectScanStore.getState().start({ reason: 'restore' })
       }
-    } catch {
-      // 后端不可达时也进 Picker——它会在重试里继续探测
+    } catch (e) {
+      if (e === STARTUP_PROBE_CANCELLED) return
+      // 后端不可达（连接层重试用尽）时也进 Picker：它是现有的可恢复界面，用户点打开 / 新建即再试一次
       set({ phase: 'none' })
     }
   },

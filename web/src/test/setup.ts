@@ -19,6 +19,7 @@
 import { afterEach, beforeEach } from 'vitest'
 import { DEFAULT_LOCALE, i18n, initI18n } from '@/i18n'
 import { cancelFocusRescues } from '@/lib/focusRescue'
+import { cancelStartupProbe } from '@/lib/startupProbe'
 import { forgetProjectFilesInSession } from '@/lib/projectFile'
 import { useInspectorPrefs } from '@/store/inspectorPrefs'
 
@@ -55,4 +56,6 @@ beforeEach(async () => {
 // 所以这里一刀切：每条用例结束都停掉，谁也活不过它的用例
 afterEach(() => {
   cancelFocusRescues()
+  // 开局读项目的连接层重试等待（#1175）同理：不许活过用例
+  cancelStartupProbe()
 })
