@@ -314,7 +314,11 @@ async function savedLayoutsInTutorial(meta: TutorialMetadata | null): Promise<st
     return names.filter((n) => n !== meta.document_name)
   }
   const status = await fetchTutorialStatus()
-  return (status.copy?.layouts ?? []).filter((n) => n !== meta.document_name)
+  const copy = status.copy
+  if (copy && !copy.exists) return [] // 副本不在：没有东西会被删
+  // 清点不全（null）或后端没给：不知道有没有另存排版——按失败处理，不弹「没有另存」的确认
+  if (!Array.isArray(copy?.layouts)) throw new Error('tutorial layout inventory unavailable')
+  return copy.layouts.filter((n) => n !== meta.document_name)
 }
 
 /** 事务里用的认领：直接执行、不再排切换队列（见 `projectStore.switchTransaction`） */

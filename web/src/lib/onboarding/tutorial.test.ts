@@ -602,6 +602,23 @@ describe('resetTutorial', () => {
     expect(calls.filter((c) => c.url === '/api/tutorial/reset')).toEqual([])
   })
 
+  it('示例项目不是当前项目、后端清点不全（layouts: null）或没给：不弹确认、不发重置，按失败返回', async () => {
+    for (const layouts of [null, undefined]) {
+      useProjectStore.setState({ phase: 'open', project: { ...PROJECT, tutorial: false, id: 'p_other' } })
+      useTutorialStore.setState({ meta: META })
+      useUiStore.setState({ confirm: null } as never)
+      calls = []
+      stubFetch({
+        '/api/tutorial': () =>
+          json({ available: true, problems: [], metadata: META, copy: { exists: true, complete: true, missing: [], registry_ok: true, layouts } }),
+      })
+      const out = await resetTutorial()
+      expect(out.ok).toBe(false)
+      expect(useUiStore.getState().confirm).toBeNull()
+      expect(calls.filter((c) => c.url === '/api/tutorial/reset')).toEqual([])
+    }
+  })
+
   it('示例项目不是当前项目且现取状态失败：不弹确认、不发重置，按失败返回', async () => {
     useProjectStore.setState({ phase: 'open', project: { ...PROJECT, tutorial: false, id: 'p_other' } })
     useTutorialStore.setState({ meta: META })

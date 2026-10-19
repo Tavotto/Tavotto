@@ -667,8 +667,11 @@ export interface TutorialStatus {
     complete: boolean
     missing: string[]
     registry_ok: boolean
-    /** 副本里用户另存的画布名（不含教程画布本身）；重置会一并删掉。老后端没有这个字段 */
-    layouts?: string[]
+    /**
+     * 副本里用户另存的画布名（不含教程画布本身）；重置会一并删掉。`null` = 清点不全（遍历 / stat 出错），
+     * 老后端没有这个字段——两者都是「不知道」，不是「没有」
+     */
+    layouts?: string[] | null
   }
   project?: { open: boolean; id: string | null }
 }

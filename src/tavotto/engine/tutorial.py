@@ -310,28 +310,26 @@ def _write_state(version_dir: Path, meta: dict, digest: str, manifest: dict[str,
     )
 
 
-def saved_layouts(dest: Path, meta: dict) -> list[str]:
-    """副本里用户另存的画布名（不含教程画布本身）。只读，永不抛。
+def saved_layouts(dest: Path, meta: dict) -> list[str] | None:
+    """副本里用户另存的画布名（不含教程画布本身）。只读，永不抛；**清点不全回 None**。
 
     重置会把整份副本目录换掉，所以这里列的正是重置会一并删除的：项目收纳目录
     `tavottofile/` + 旧位置 `canvases/`（与 `api_layouts` 对该项目的取法一致）。
-    数据目录 `layouts/` 不在副本里、重置不删它，故不列。单个文件 stat 失败就跳过。"""
+    数据目录 `layouts/` 不在副本里、重置不删它，故不列。任何一处遍历 / stat 失败都回
+    None 而不是少列一项：调用方（重置确认）拿「不知道」当「没有」，就会删掉没告诉用户的排版。"""
     own = str(meta.get("document_name") or "")
     names: set[str] = set()
-    for d in (config.project_store_dir(dest), dest / "canvases"):
-        try:
+    try:
+        for d in (config.project_store_dir(dest), dest / "canvases"):
             if not d.is_dir():
                 continue
             for p in d.glob("*.json"):
                 if p.stem == own or not documents.is_user_document_stem(p.stem):
                     continue
-                try:
-                    if p.is_file():
-                        names.add(p.stem)
-                except OSError:
-                    continue
-        except OSError:
-            continue
+                if p.is_file():
+                    names.add(p.stem)
+    except OSError:
+        return None
     return sorted(names)
 
 

@@ -348,6 +348,27 @@ def test_copy_status_lists_only_user_saved_layouts(data_dir, client):
     assert tutorial.copy_status()["layouts"] == []
 
 
+def test_copy_status_layouts_is_none_when_the_inventory_is_incomplete(
+    data_dir, client, monkeypatch
+):
+    """遍历 / stat 出错不能少列一项冒充完整清单：回 None（「不知道」），前端据此中止重置。"""
+    first = tutorial.ensure_tutorial_copy()
+    store = engine_config.project_store_dir(first.path)
+    store.mkdir(parents=True, exist_ok=True)
+    (store / "MyDraft.json").write_text("{}", encoding="utf-8")
+    (store / "Locked.json").write_text("{}", encoding="utf-8")
+    real_is_file = Path.is_file
+
+    def flaky_is_file(self):
+        if self.name == "Locked.json":
+            raise PermissionError("acl")
+        return real_is_file(self)
+
+    monkeypatch.setattr(Path, "is_file", flaky_is_file)
+    assert tutorial.saved_layouts(first.path, tutorial.tutorial_metadata()) is None
+    assert client.get("/api/tutorial").get_json()["copy"]["layouts"] is None
+
+
 def test_stale_leftovers_from_an_interrupted_reset_are_swept(data_dir):
     first = tutorial.ensure_tutorial_copy()
     stale_old = first.path.parent / f".{tutorial.PROJECT_DIRNAME}-deadbeef.old"
