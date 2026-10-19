@@ -398,7 +398,13 @@ def _container_member_ids(ax) -> set[int]:
             members = [line, *caps, *bars]
         elif isinstance(cont, StemContainer):
             stems = cont.stemlines
-            members = [cont.markerline, *(stems if _is_seq(stems) else [stems])]
+            # baseline（零线）也是这个容器的成员：2D 里它继续作为普通曲线单独可编辑（`instrument`
+            # 那一支），3D 里容器整体不做语义系列，成员**全部**留在 unsupported，边界才一致
+            members = [
+                cont.markerline,
+                *(stems if _is_seq(stems) else [stems]),
+                getattr(cont, "baseline", None),
+            ]
         ids.update(id(m) for m in members if m is not None)
     return ids
 
@@ -2107,13 +2113,19 @@ def _collection_fields(coll, state: FigState, gid: str, *, label: bool) -> list[
 
 
 def _computed_zorder_3d(artist) -> bool:
-    """这个 artist 住在一张**由深度算 zorder** 的 3D 轴上。
+    """这个 artist 的 `zorder` 被一张**由深度算 zorder** 的 3D 轴每帧重写。
 
-    `Axes3D.draw` 在 `computed_zorder=True`（默认）时，每帧按投影深度把所有 3D 集合 / 曲线
-    的 `zorder` 重写一遍——`set_zorder` 在屏幕上一个像素都不会变，读回来的也是上一帧被
-    覆盖的值（mpl 3.8 / 3.10 / 3.11 实测一致）。脚本自己 `computed_zorder=False` 时
-    zorder 才归用户管。判据是这条轴**此刻**的实况，不是版本号。"""
-    return on_axes3d(artist) and bool(getattr(artist.axes, "computed_zorder", True))
+    `Axes3D.draw` 在 `computed_zorder=True`（默认）时，**只对 `Collection` 与 `Patch`** 子元素按投影深度
+    重写 `zorder`（源码 `collections_and_patches = (… isinstance(artist, (Collection, Patch)) …)`，
+    mpl 3.8.4 / 3.10.9 / 3.11.2 三版读源码核实一致）——这些元素的 `set_zorder` 一个像素不变，读回来的是
+    上一帧被覆盖的值。**`Line3D` 不在其列**：它的 zorder 照常参与 `Axes` 的绘制排序，改它会把曲线放到
+    别的线 / 自动排序的集合前后（Codex #1159 P1）。脚本自己 `computed_zorder=False` 时全员的 zorder 才
+    归用户管。判据是这条轴**此刻**的实况，不是版本号。"""
+    return (
+        on_axes3d(artist)
+        and isinstance(artist, (Collection, Patch))
+        and bool(getattr(artist.axes, "computed_zorder", True))
+    )
 
 
 def _without_dead_zorder(artist, fields: list[dict]) -> list[dict]:

@@ -40,8 +40,8 @@
   `linecoll_j`、`QuadContourSet3D` → `collections_j`、`Line3D` → `lines_j`——**与 2D 共用同一段登记**
   （`_collection_gid_prefix` 唯一出处，序号仍是所属列表下标；2D 的 gid 一个没挪，3D 以前没有这些 gid）。
   **只放 3D 下真生效且重放一致的字段**：颜色 / 色图 / vmin / vmax / 透明度 / 线宽 / 线型 / 花纹 / marker / 大小（各族
-  按 2D 同一张能力表，`collection_caps()` 实况）。**不放**：`zorder`（`computed_zorder=True` 时每帧被深度覆盖，
-  `manifest._without_dead_zorder`；脚本关了 `computed_zorder` 才给）、位置 / 数据偏移 / `set_data_3d`、`depthshade`
+  按 2D 同一张能力表，`collection_caps()` 实况）。**不放**：Collection / Patch 的 `zorder`（`computed_zorder=True` 时 `Axes3D.draw` 每帧按深度重写，只对这两族，
+  三版读源码核实；`manifest._without_dead_zorder`；脚本关了 `computed_zorder` 才给）——**`Line3D` 的 zorder 是活的、照给**（Codex #1159 P1）、位置 / 数据偏移 / `set_data_3d`、`depthshade`
   下的逐点颜色与深度 alpha。**不可拖**（`draggable=False`，前端落到 ADR 0100 的 `series` 理由）；面状色图集合代理宿主
   子图那条（`_is_area_field`）对 3D 不成立。实测坑与对策（三版 matplotlib 一致）：
   * 3D 集合的 `get_facecolor` / `get_sizes` / `get_linewidths` 读到的是**深度排序后**的上一帧——字段值与 handler getter
@@ -60,7 +60,8 @@
   * 超点数预算（160×160 曲面）退回 bbox 且**早退**（不展开每个面）。
   独立 `ScalarMappable` 色条与共用 Norm 实例的曲面 / 3D contourf 因为登记了而自动是色阶兄弟（`scale_siblings` 没改）：
   从色条改 cmap 三者一起变、撤销回自定义色图；从曲面改 cmap 只改曲面（兄弟窄 override 压过广播，同 2D）。
-  3D 的容器（误差棒 / 茎 / 柱）与 `Patch3D` 暂不做：成员不当独立曲线登记，如实留在 `unsupported`。
+  3D 的容器（误差棒 / 茎 / 柱）与 `Patch3D` 暂不做：成员**全部**（含 stem 的 baseline）不当独立曲线登记，如实留在 `unsupported`；
+  2D 的 stem baseline 仍是单独可编辑的普通曲线（Codex #1159 P2）。
   看护 `tests/test_mplot3d_data_artists.py`（含 `tests/support/mplot3d_probe.py`）与 `tests/test_invariants_engine.py` 的
   `Inv3D` / `Inv3DP` / `Inv3DS` + `K-3d-*`。存量缺口（共用 Norm 的两个 mappable 各叠窄 `vmin` / `vmax`，2D 同样复现）见 ADR 0135「不做」。
 - **图内箭头（FancyArrowPatch）**：脚本 `add_patch` 的独立箭头 manifest 带

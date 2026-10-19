@@ -30,7 +30,7 @@
 
 | 事实 | 后果 |
 | --- | --- |
-| `Axes3D.draw` 在 `computed_zorder=True`（默认）时**每帧重写所有 3D 集合 / 曲线的 `zorder`**——`set_zorder` 一个像素不变，读回来的是上一帧被覆盖的值 | `zorder` 字段不放（`computed_zorder=False` 时才放，判据是这条轴**此刻**的实况） |
+| `Axes3D.draw` 在 `computed_zorder=True`（默认）时**每帧重写 3D 集合与 Patch 的 `zorder`**（不含 `Line3D`）——`set_zorder` 一个像素不变，读回来的是上一帧被覆盖的值 | Collection / Patch 的 `zorder` 字段不放（`computed_zorder=False` 时才放，判据是这条轴**此刻**的实况；`Axes3D.draw` 只重写这两族，3.8.4 / 3.10.9 / 3.11.2 读源码核实）。**`Line3D` 的 zorder 不被重写、照给**（Codex #1159 P1 修订） |
 | `Poly3DCollection.set_alpha(None)` 清不掉烤进 `_facecolor3d` 的 alpha（`to_rgba_array(旧数组, None)` 保留数组自带的 alpha 列）；`set_alpha` 不碰边色、`set_edgecolor` 却按**当时的** alpha 合成边色 | 单色曲面 / `bar3d` 设 alpha 再撤销，面色停在设过的值（像素差 3437）；边色与 alpha 谁先谁后画出两张图（像素差 3431）——热会话逐步累加与冷启动按列表序重放因此分叉，写回像素门 409。面色 / 边色 / alpha 改完一律规范化（`overrides._canonical_poly3d_colors`）：三者的设定都回到脚本原样时，把首次触碰前记下的四份数组**原样放回**（撤销逐位回到 mplot3d 自己留下的状态，含它的怪癖：脚本事后 `set_alpha` 留下的不透明边、`set_edgecolor("face")` 抄来的深度序面色）；否则按**原始设定 + 此刻 alpha** 重建，口径同 2D `Collection.set_alpha`（**alpha 同时落在面与边上**——与 mplot3d 原生「事后 `set_alpha` 不碰边」不同，但与构造时传 alpha、与 2D 一致，且不再取决于谁先谁后） |
 | `Path3DCollection.do_3d_projection` 每帧把 `_sizes` / `_linewidths` 重排成深度序，`get_facecolor()` 返回深度排序并乘过 `depthshade` alpha 的数组（`[0]` 随视角变） | 字段值与 handler getter 一律读脚本顺序的那一份（`_sizes3d` / `_linewidths3d` / 未排序的 `_facecolors`）：`overrides.collection_sizes` / `collection_linewidths` / `collection_face_rgba` / `collection_edge_rgba` 唯一出处；不放逐点颜色 / 深度 alpha |
 | 轮廓的偏移与 `get_transforms()`（来自最后一次 draw 的深度序大小）对不上号 | 逐点大小不同的 3D 散点轮廓摆到别人的位置上；`pathgeom._drawn_offsets` 用 draw 时那份 `_offset_zordered`（被遮罩的点填 NaN，`_stamp_markers` 本来就丢非有限偏移） |
@@ -52,7 +52,7 @@ gid 一个都没挪**。能改什么由 `collection_caps()` 与 `_line_fields` �
 ### 二、放出的字段 / 不放的字段
 
 放：颜色 / 色图 / vmin / vmax / 透明度 / 线宽 / 线型 / 花纹 / marker / 大小 / 可见 / 标签（各族按 2D 同一张
-能力表）。**不放**：`zorder`（`computed_zorder=True` 时）、位置 / 拖动 / 数据偏移、`depthshade` 下的逐点颜色
+能力表）。**不放**：Collection 的 `zorder`（`computed_zorder=True` 时；`Line3D` 的照给）、位置 / 拖动 / 数据偏移、`depthshade` 下的逐点颜色
 与深度 alpha、`Line3D` 的数据（`set_data_3d`）。**不可拖**：manifest `draggable=False`，前端落到 ADR 0100 的
 `series` 理由（「位置由数据决定；要挪整个子图，拖子图空白处」，3D 子图本身可拖）。面状色图集合在 2D 里
 「代理给宿主子图」那条（`_is_area_field`）对 3D 不成立（曲面是投影出来的菱形、不铺满子图），3D 不代理。
@@ -97,7 +97,7 @@ contour / 线框走通用 `Collection`）。超点数预算（160×160 的 `plot
 
 ## 看护
 
-- `tests/test_mplot3d_data_artists.py`：三张图里每个 3D 数据图元的登记 / gid / role / 字段全集（没有 `zorder`、
+- `tests/test_mplot3d_data_artists.py`：三张图里每个 3D 数据图元的登记 / gid / role / 字段全集（Collection 没有 `zorder`、Line3D 有，
   `draggable=False`、无宿主代理）；`computed_zorder=False` 时 zorder 给且改得动像素；3D 容器不重复登记；
   bbox / 轮廓对真实墨迹（`tests/support/mplot3d_probe.py` 在 worker 解释器里量）；160×160 曲面早退（展开次数）；
   逐点大小对号；独立色条 ↔ 曲面 ↔ 3D contourf 成组、撤销回自定义色图；每个图元的每条字段逐步累加后热态 ==

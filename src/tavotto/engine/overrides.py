@@ -2800,6 +2800,15 @@ def collection_linewidths(coll):
     return coll.get_linewidths().copy()
 
 
+def _refresh_mapped_colors(coll) -> None:
+    """映射中的集合先让色图把颜色算出来（`update_scalarmappable`，draw 里同一句）。
+
+    `Axes3D.draw` 不画**隐藏**的集合，隐藏期间 `set_cmap` 改了、`_facecolors` 还停在上一次画它时的映射色，
+    边色是 `'face'` 时读到的面色就是过期的——热态（隐藏前换过色图）与冷启动读出两个颜色。"""
+    if getattr(coll, "_A", None) is not None:
+        coll.update_scalarmappable()
+
+
 def collection_face_rgba(coll):
     """面色数组，**脚本的顺序、没有深度着色**。
 
@@ -2807,6 +2816,7 @@ def collection_face_rgba(coll):
     `[0]` 随视角变；读 `Collection.get_facecolor` 拿到的是未排序的原始 `_facecolors`。
     2D 集合原样走 `get_facecolor()`。"""
     if isinstance(coll, (art3d.Path3DCollection, art3d.Poly3DCollection)):
+        _refresh_mapped_colors(coll)
         return Collection.get_facecolor(coll)
     return coll.get_facecolor()
 
@@ -2814,6 +2824,7 @@ def collection_face_rgba(coll):
 def collection_edge_rgba(coll):
     """边色数组，口径同 `collection_face_rgba`（边色是 `'face'` 时跟着面色走）。"""
     if isinstance(coll, (art3d.Path3DCollection, art3d.Poly3DCollection)):
+        _refresh_mapped_colors(coll)
         if isinstance(coll._edgecolors, str) and coll._edgecolors == "face":  # noqa: SLF001
             return collection_face_rgba(coll)
         return np.asarray(coll._edgecolors)  # noqa: SLF001

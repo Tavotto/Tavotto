@@ -73,6 +73,7 @@ def main():
     ax.errorbar(t, t, t, zerr=0.1)
     ax.bar([1.0, 2.0, 3.0], [1.0, 2.0, 3.0], zs=0, zdir="y")
     ax.plot(t, t[::-1], t, color="#aa4400")
+    ax.stem(t, t, t)
     fig.savefig("C3D.pdf")
 
     # ---- U3D：单色曲面 + 柱（面色不经色图） ----
@@ -166,10 +167,11 @@ EXPECTED = {
         "axes_0.collections_1": ("collection", _STYLE | _STROKE | _MAPPED | {"hatch", "label"}),
     },
     "Inv3DP": {
+        # Line3D 的 zorder 是活的：`Axes3D.draw` 只给 Collection / Patch 重写 zorder
         "axes_0.lines_0": (
             "line",
             _STYLE
-            | {"color", "linewidth", "linestyle", "label"}
+            | {"zorder", "color", "linewidth", "linestyle", "label"}
             | {"marker", "markersize", "markerfacecolor", "markeredgecolor"},
         ),
         # depthshade 的散点：facecolor 是整组统一色（逐点颜色 / 深度 alpha 不放）
@@ -217,12 +219,38 @@ def test_3d_data_artists_are_registered_with_2d_gids_and_honest_fields(hot, stem
         assert "geom_gid" not in el and "resizable" not in el, gid
 
 
-def test_3d_data_artists_have_no_dead_zorder_field(hot):
-    """`computed_zorder=True` 的轴上，zorder 每帧被投影深度覆盖——宣称它就是个死开关。"""
+def test_only_collections_lose_zorder_on_a_computed_zorder_axes(hot):
+    """`computed_zorder=True` 的轴上，`Axes3D.draw` 每帧把 Collection / Patch 的 zorder 按深度重写——
+    宣称它就是个死开关；但 `Line3D` 不在被重写之列，它的 zorder 是活的（Codex #1159 P1）。"""
+    seen_line = False
     for stem in EXPECTED:
         for e in _man(hot, stem)["elements"]:
-            if e["role"] in _DATA_ROLES:
-                assert "zorder" not in {f["prop"] for f in e["editable"]}, (stem, e["gid"])
+            if e["role"] not in _DATA_ROLES:
+                continue
+            has = "zorder" in {f["prop"] for f in e["editable"]}
+            if e["role"] == "line":
+                seen_line = True
+                assert has, (stem, e["gid"], "Line3D 丢了一个真生效的 zorder")
+            else:
+                assert not has, (stem, e["gid"])
+    assert seen_line
+
+
+def test_line3d_zorder_changes_pixels_and_replays_exactly(hot, library):
+    """Line3D 的 zorder：set 之后像素真变（螺旋线放到散点 / 线框前面）、撤销逐字回原样、热态 == 冷重放。"""
+    stem, gid = "Inv3DP", "axes_0.lines_0"
+    base = _man(hot, stem)
+    base_png = _png(hot, stem, [], "lz-base")
+    cur = next(f["value"] for f in _el(base, gid)["editable"] if f["prop"] == "zorder")
+    patch = [{"gid": gid, "prop": "zorder", "value": cur + 50}]
+    assert _png(hot, stem, patch, "lz-up") != base_png, "Line3D 的 zorder 宣称了，画面没动"
+    man = _man(hot, stem, patch)
+    assert next(f["value"] for f in _el(man, gid)["editable"] if f["prop"] == "zorder") == cur + 50
+    fresh_man, fresh_png = _fresh(library, stem, patch)
+    assert man == fresh_man
+    assert _png(hot, stem, patch, "lz-hot") == fresh_png
+    assert _man(hot, stem) == base
+    assert _png(hot, stem, [], "lz-undo") == base_png
 
 
 def test_zorder_is_live_when_the_script_turned_computed_zorder_off(extra):
@@ -251,6 +279,11 @@ def test_3d_containers_stay_unsupported_and_are_not_double_registered(extra):
     # 误差棒的数据线是 `lines_0`（容器成员，不登记）；脚本自己 `plot` 的那条才是元素
     lines = [e["gid"] for e in man["elements"] if e["role"] == "line"]
     assert lines == ["axes_0.lines_1"], lines
+    # 3D stem 的 baseline（`ax.lines` 里的 Line3D）也是容器成员：不单独登记、留在 unsupported，
+    # 与它的 markerline / stemlines 一致（Codex #1159 P2）。Line3D 共 3 条：误差棒的数据线 1 +
+    # stem 的 markerline 1 + stem 的 baseline 1（修之前 baseline 被登记成曲线，只剩 2 条）
+    rows = {r["cls"].rsplit(".", 1)[-1]: r["count"] for r in man["unsupported"]}
+    assert rows.get("Line3D") == 3, man["unsupported"]
 
 
 # ---------------------------------------------------------------------------
@@ -544,3 +577,31 @@ def test_poly3d_scripts_own_alpha_quirk_survives_override_and_undo(extra):
     _man(extra, stem, patch)
     assert _man(extra, stem) == base
     assert _png(extra, stem, [], "q-undo") == base_png
+
+
+def test_2d_stem_baseline_is_still_an_ordinary_editable_line(hot):
+    """3D 容器把 baseline 算成员，2D 不变：stem 的 baseline 仍是单独可编辑的普通曲线（`axes_i.lines_k`）。"""
+    man = _man(hot, "InvCont")
+    lines = [e for e in man["elements"] if e["role"] == "line"]
+    assert lines, "2D stem 的 baseline 不再登记成曲线了"
+    assert all("color" in {f["prop"] for f in e["editable"]} for e in lines)
+
+
+def test_hidden_mapped_scatter_reads_fresh_edge_color_after_cmap_change(hot, library):
+    """隐藏的映射散点（边色 `'face'`）：隐藏期间换色图，`Axes3D.draw` 不画它、`_facecolors` 停在旧映射色，
+    边色字段读到的面色就是过期的（热态 '#1f77b4' vs 冷启动 '#4ac16d'）。读之前先 `update_scalarmappable`。"""
+    stem, gid = "Inv3DP", "axes_0.scatter_1"
+    base = _man(hot, stem)
+    hide = {"gid": gid, "prop": "visible", "value": False}
+    cmap = {"gid": gid, "prop": "cmap", "value": "plasma"}
+    # 历史里有过 alpha：`Collection.set_alpha` 撤销时按**原始设定**重置 `_facecolors`（映射色被冲掉、要等
+    # 下一次 draw 才算回来），而此刻它已经被藏起来、不会再画
+    hot.override(stem, [{"gid": gid, "prop": "alpha", "value": 0.9}])
+    man = _man(hot, stem, [hide, cmap])
+    fresh_man, _png_fresh = _fresh(library, stem, [hide, cmap])
+
+    def edge(m):
+        return next(f["value"] for f in _el(m, gid)["editable"] if f["prop"] == "edgecolor")
+
+    assert edge(man) == edge(fresh_man)
+    assert _man(hot, stem) == base
