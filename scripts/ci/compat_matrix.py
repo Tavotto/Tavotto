@@ -44,6 +44,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import functools
 import json
 import os
 import shutil
@@ -577,6 +578,59 @@ def _jsonable(v):
 #   看护 tests/test_compat_product_routes.py：把这里改回内部 probe，
 #   guard 当场红（app 端点会物化 runtime cache、CLI 会带 protocol 字段，
 #   内部调用两样都没有）。
+class ProductContractError(Exception):
+    """产品返回值不合契约（缺字段 / 类型不对 / 解析失败）——是产品的问题，不是 runner 的。
+
+    路由层（`_contract_guarded`）把它翻译成该路由的失败结果
+    （`malformed_product_response`），最终经 `_route_entry` 成为 product_bug；
+    harness 自己的故障（materialize、子进程起不来、我们代码的 bug）不走这条，
+    仍作为异常冒出去记 runner_error。
+    """
+
+    def __init__(self, route: str, field: str, expected: str, raw) -> None:
+        self.route, self.field, self.expected = route, field, expected
+        self.raw = repr(raw)[:300]
+        super().__init__(f"{route}: {field} 应为 {expected}")
+
+
+def _require(obj, key: str, kind, *, route: str, expected: str | None = None):
+    """从产品返回的 JSON 对象里取必需字段并校验类型；不合契约抛 ProductContractError。"""
+    want = expected or getattr(kind, "__name__", str(kind))
+    if not isinstance(obj, dict):
+        raise ProductContractError(route, "<body>", "object", obj)
+    if key not in obj or not isinstance(obj[key], kind) or obj[key] is None:
+        raise ProductContractError(route, key, want, obj.get(key, obj))
+    return obj[key]
+
+
+def _as_dict(obj, *, route: str, what: str) -> dict:
+    """产品返回的应是 JSON 对象；None → {}（沿用「空 body」旧语义），其余类型抛错。"""
+    if obj is None:
+        return {}
+    if not isinstance(obj, dict):
+        raise ProductContractError(route, what, "object", obj)
+    return obj
+
+
+def _contract_guarded(fn):
+    """路由 helper 装饰器：产品响应不合契约 → 该路由失败结果（product_bug），不冒成崩溃。"""
+
+    @functools.wraps(fn)
+    def wrapper(*args, **kwargs):
+        try:
+            return fn(*args, **kwargs)
+        except ProductContractError as exc:
+            return {
+                "ok": False,
+                "code": "malformed_product_response",
+                "via": exc.route,
+                "detail": {"field": exc.field, "expected": exc.expected, "raw": exc.raw},
+            }
+
+    return wrapper
+
+
+@_contract_guarded
 def route_probe_via_app(project: Path, script_rel: str) -> dict:
     """safe_probe 路由：产品的试运行端点（素材库「运行并发现图」按的它）。
 
@@ -589,10 +643,10 @@ def route_probe_via_app(project: Path, script_rel: str) -> dict:
     r = client.post("/api/projects/open", json={"path": str(project)})
     if r.status_code != 200:
         return {"ok": False, "code": "project_open_failed", "detail": {"status": r.status_code}}
-    pj = r.get_json()["id"]
+    pj = _require(r.get_json(), "id", str, route="POST /api/projects/open")
     # 项目留给 desktop_project 路由复用，由调用方（stage_product_routes）关闭
     r = client.post(f"/api/registry/probe?pj={pj}", json={"script": script_rel})
-    body = r.get_json() or {}
+    body = _as_dict(r.get_json(), route="POST /api/registry/probe", what="<body>")
     ok = r.status_code == 200 and bool(body.get("registered"))
     code = None
     if not ok:
@@ -612,6 +666,7 @@ def route_probe_via_app(project: Path, script_rel: str) -> dict:
     }
 
 
+@_contract_guarded
 def route_desktop_project(project: Path, script_rel: str, pj: str, stems: list[str]) -> dict:
     """desktop_project 路由：素材库两区读的端点（脚本可见 + 图区有条目）。
 
@@ -625,8 +680,12 @@ def route_desktop_project(project: Path, script_rel: str, pj: str, stems: list[s
     r = client.get(f"/api/registry?pj={pj}")
     if r.status_code != 200:
         return {"ok": False, "code": "registry_view_failed", "detail": {"status": r.status_code}}
-    view = r.get_json() or {}
-    listed = {e.get("script") for e in view.get("all_scripts") or []}
+    reg = "GET /api/registry"
+    view = _as_dict(r.get_json(), route=reg, what="<body>")
+    scripts = view.get("all_scripts") or []
+    if not isinstance(scripts, list) or not all(isinstance(e, dict) for e in scripts):
+        raise ProductContractError(reg, "all_scripts", "list of object", scripts)
+    listed = {e.get("script") for e in scripts}
     if script_rel not in listed:
         return {
             "ok": False,
@@ -635,7 +694,11 @@ def route_desktop_project(project: Path, script_rel: str, pj: str, stems: list[s
             "detail": {"all_scripts": sorted(listed)[:20]},
         }
     r = client.get(f"/api/runtime/assets?pj={pj}")
-    assets = {a["stem"]: a for a in (r.get_json() or {}).get("assets") or []}
+    rt = "GET /api/runtime/assets"
+    listing = _as_dict(r.get_json(), route=rt, what="<body>").get("assets") or []
+    if not isinstance(listing, list):
+        raise ProductContractError(rt, "assets", "list", listing)
+    assets = {_require(a, "stem", str, route=rt): a for a in listing}
     missing = [s for s in stems if s not in assets]
     uncached = [s for s in stems if s in assets and not assets[s].get("descriptor")]
     ok = r.status_code == 200 and not missing and not uncached
@@ -647,6 +710,7 @@ def route_desktop_project(project: Path, script_rel: str, pj: str, stems: list[s
     }
 
 
+@_contract_guarded
 def route_cli_open(
     project: Path, script_rel: str, *, stem: str | None = None, timeout: int = 900
 ) -> dict:
@@ -693,6 +757,8 @@ def route_cli_open(
         payload = json.loads(lines[-1]) if lines else {}
     except ValueError:
         payload = {}
+    if payload and not isinstance(payload, dict):
+        raise ProductContractError("python -m tavotto open --json", "<stdout>", "object", payload)
     if not payload:
         return {
             "ok": False,
@@ -1027,7 +1093,22 @@ def _route_cli_verdict(case: dict, group: list[dict], bare: dict, selected: dict
         )
     # 多 Figure：机器调用（--no-launch）不许静默选第一张
     payload = bare.get("payload") or {}
-    figures = [f.get("stem") for f in payload.get("figures") or []]
+    raw_figures = payload.get("figures") or []
+    if not isinstance(raw_figures, list) or not all(isinstance(f, dict) for f in raw_figures):
+        return _route_entry(
+            {
+                "ok": False,
+                "code": "malformed_product_response",
+                "via": bare.get("via"),
+                "detail": {
+                    "field": "figures",
+                    "expected": "list of object",
+                    "raw": repr(raw_figures)[:300],
+                },
+            },
+            case,
+        )
+    figures = [f.get("stem") for f in raw_figures]
     refused = (
         not bare.get("ok")
         and bare.get("code") == "multiple_figures_found"

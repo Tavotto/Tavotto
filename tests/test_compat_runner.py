@@ -1216,3 +1216,107 @@ class TestRunGroupCrashKeepsPartialResults:
         report = CM.build_report([a, b], results, {}, "current", "all")
         assert [x["id"] for x in report["summary"]["product_bugs"]] == ["a"]
         assert {x["id"] for x in report["summary"]["runner_errors"]} >= {"a", "b"}
+
+
+class TestMalformedProductResponseIsProductBug:
+    """产品返回不合契约的响应 = 路由失败（product_bug），不是 runner 崩溃（Codex #1178 r4310660485）。"""
+
+    class _Resp:
+        def __init__(self, status, body):
+            self.status_code, self._body = status, body
+
+        def get_json(self):
+            return self._body
+
+    def _patch(self, monkeypatch, tmp_path, *, open_body, cli_stdout):
+        from tavotto import app as tavotto_app
+
+        outer = self
+
+        class Client:
+            def post(self, url, json=None):
+                if url == "/api/projects/open":
+                    return outer._Resp(200, open_body)
+                return outer._Resp(200, {"registered": True, "stems": ["s"]})
+
+            def get(self, url):
+                return outer._Resp(200, {})
+
+        monkeypatch.setattr(tavotto_app.app, "test_client", lambda: Client())
+        monkeypatch.setattr(tavotto_app, "close_project", lambda pj: None)
+        monkeypatch.setattr(CM, "materialize", lambda g, w: (tmp_path, "s.py", "main"))
+        monkeypatch.setattr(
+            CM.subprocess,
+            "run",
+            lambda *a, **k: subprocess.CompletedProcess(a, 0, stdout=cli_stdout, stderr=""),
+        )
+
+    def _routes(self, monkeypatch, tmp_path, **kw):
+        self._patch(monkeypatch, tmp_path, **kw)
+        c = case("a", product_routes={"safe_probe": True, "cli_open": True})
+        results = {"a": CM._blank(c)}
+        CM.stage_product_routes([c], tmp_path, results)
+        return c, results["a"]["routes"]
+
+    GOOD_CLI = json.dumps({"ok": True, "stem": "s"})
+
+    def test_open_200_without_id_is_a_failed_route_not_a_crash(self, monkeypatch, tmp_path):
+        c, routes = self._routes(
+            monkeypatch, tmp_path, open_body={"name": "x"}, cli_stdout=self.GOOD_CLI
+        )
+        e = routes["safe_probe"]
+        assert e["status"] == "fail"
+        assert e["classification"] == "product_bug"
+        assert e["code"] == "malformed_product_response"
+        assert e["detail"]["field"] == "id"
+        assert routes["cli_open"]["status"] == "pass"
+        cls, _r, _d = CM.classify(c, stages(execute=True), {}, routes)
+        assert cls == "product_bug"
+
+    def test_open_body_not_an_object_is_a_failed_route(self, monkeypatch, tmp_path):
+        _c, routes = self._routes(monkeypatch, tmp_path, open_body=["id"], cli_stdout=self.GOOD_CLI)
+        assert routes["safe_probe"]["code"] == "malformed_product_response"
+        assert routes["safe_probe"]["classification"] == "product_bug"
+
+    def test_cli_output_not_an_object_is_a_failed_route(self, monkeypatch, tmp_path):
+        _c, routes = self._routes(
+            monkeypatch, tmp_path, open_body={"id": "p1"}, cli_stdout="[1, 2]"
+        )
+        e = routes["cli_open"]
+        assert e["status"] == "fail" and e["classification"] == "product_bug"
+        assert e["code"] == "malformed_product_response"
+
+    def test_cli_figures_malformed_is_a_failed_route(self, monkeypatch, tmp_path):
+        self._patch(
+            monkeypatch,
+            tmp_path,
+            open_body={"id": "p1"},
+            cli_stdout=json.dumps({"ok": False, "code": "multiple_figures_found", "figures": [1]}),
+        )
+        group = [case("a", product_routes={"cli_open": True}), case("b", stem="t")]
+        results = {c["id"]: CM._blank(c) for c in group}
+        CM.stage_product_routes(group, tmp_path, results)
+        e = results["a"]["routes"]["cli_open"]
+        assert e["status"] == "fail" and e["classification"] == "product_bug"
+
+    def test_gate_treats_it_as_a_new_product_bug(self, monkeypatch, tmp_path):
+        c, routes = self._routes(monkeypatch, tmp_path, open_body={}, cli_stdout=self.GOOD_CLI)
+        res = CM._blank(c)
+        res["stages"].update(discover=True, execute=True)
+        res["routes"] = routes
+        res["classification"], res["reason"], note = CM.classify(c, res["stages"], {}, routes)
+        res["detail"] = {"note": note}
+        assert res["classification"] == "product_bug"
+        ok, fails = CM.evaluate_gate("pr", [c], {"a": res}, {"cases": {}})
+        assert not ok and any("新出现的 product_bug" in f for f in fails)
+
+    def test_harness_crash_in_materialize_is_still_runner_error(self, monkeypatch, tmp_path):
+        self._patch(monkeypatch, tmp_path, open_body={"id": "p"}, cli_stdout=self.GOOD_CLI)
+
+        def boom(*a, **k):
+            raise OSError("materialize boom")
+
+        monkeypatch.setattr(CM, "materialize", boom)
+        c = case("a", product_routes={"safe_probe": True})
+        with pytest.raises(OSError):
+            CM.stage_product_routes([c], tmp_path, {"a": CM._blank(c)})
