@@ -150,6 +150,10 @@ input 协议，前端也没有 readiness 计算器。端点 `POST /api/engine/pr
   失效 / 是否在等 `input()` 这几件已观察的事实。**`unknown` 不当通过**（有一项判不出就不是 `ready_to_run`，给 `recheck`）；
   provider 状态保留原权威，旧终局 `needs_input` 投影成 `awaiting_configuration` / `awaiting_confirmation`；失败事实永远单列在
   `outcome{kind,code,reason}`。「脚本跑完了但没有图」是 `partial` + `execution_finished_no_figure`，不算首图成功。
+  **部分捕获不得投影成 `completed`（#1134）**：登记收口带 `failed_figures`（逐图隔离里预览捕获失败的图）时，phase 是 `partial`、
+  outcome 仍是 `succeeded`（成功那几张照常在 `captured`），报告顶层 `failed_figures=[{stem,code}]` 点名失败的图；判据只有
+  `prepsession.failed_figures_of`。全部成功仍是 `completed`，全部失败 / 登记被拒走原来的 `failed` 分支。前端 `finishedWithFigures`
+  把 `completed` 与 `partial`+`succeeded` 一并当「跑完且有图」，标题说「只画好了 N/M 张」，不自动进入编辑。
   `scanning`（T02）与 `preparing_environment`（T06）词汇已进闭集，本阶段不产生。前端只存这份投影，不另算。
   **执行线程收尾之前仍是 `running`（T11）**：provider 已写下 `ready` / `error`、但 `_done`（登记 / 缺包差异计划 `_observe_missing`）
   还没做完时，`attempt_running` 与 `_has_active_attempt` 同一判据——否则 `missing_dependency` 会先投影成没有待办的 `failed`、

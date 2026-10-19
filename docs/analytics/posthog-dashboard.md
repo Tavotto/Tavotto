@@ -23,7 +23,7 @@
 
 ## 主看板：四组、20 张图
 
-逻辑名即 manifest 的唯一键。「待」表示依赖尚未上 main 的 `export_result`（见后文）。
+逻辑名即 manifest 的唯一键。「无数据」表示依赖的 `export_result` 在契约里，但 v3 客户端发布前线上没有（见后文）。
 
 ### 使用与激活
 
@@ -43,9 +43,9 @@
 | 逻辑名 | 回答什么 | 状态 |
 | --- | --- | --- |
 | `b1_export_completed_by_version` | `export_completed` 次数与安装数按版本；**不是失败率** | 可建 |
-| `b2_export_result_outcomes` | 导出终态 done / partial / failed / cancelled 分布 | 待 |
-| `b3_export_done_ratio` | done 占全部终态的比例（A/B） | 待 |
-| `b4_export_failed_installs_by_version` | 导出失败的受影响安装，按版本 | 待 |
+| `b2_export_result_outcomes` | 导出终态 done / partial / failed / cancelled 分布 | 无数据（待 v3 客户端） |
+| `b3_export_done_ratio` | done 占全部终态的比例（A/B） | 无数据（待 v3 客户端） |
+| `b4_export_failed_installs_by_version` | 导出失败的受影响安装，按版本 | 无数据（待 v3 客户端） |
 | `b5_document_saved_outcomes` | 保存 ok / conflict / failed × 手动 / 自动，次数 | 可建 |
 | `b6_document_saved_affected_installs` | 保存失败、冲突各影响多少安装，对照有保存事件的安装数 | 可建 |
 
@@ -123,17 +123,15 @@ PyPI、wheel/sdist、更新轮询等其余下载口径仍留在 `yc-dashboard.js
 `SELECT min(timestamp) FROM events WHERE event = '<事件>'` 填回去。CONSENT_VERSION 2 引入的事件（`document_saved`、`package_action`、`tutorial_*`、`recovery_action` 等）
 首条时间取决于带该事件的客户端何时发布，不要用同意版本的文档日期代替。
 
-## 待办：`export_result`（草稿 PR #1103）
+## `export_result`：随 #1103 / CONSENT_VERSION 3 进入事件契约，线上仍无数据
 
-`export_result` **不在 main**。它在草稿 PR #1103，等批量 `CONSENT_VERSION` 升到 3 后才会随客户端发出。manifest 的
-`pending_events.export_result` 记录了它的属性表，来源是 PR #1103 head `aadb10ce3d442c5451b8553dfe5018675d41eb68`
-的 `engine/telemetry.py`（PR 正文提到的 head 是 `5b750a34e`，说明草稿还在变动）。**这份属性表在合并前必须对照 main 复核。**
+`export_result` 在 #1103 合入后就在 `telemetry.EVENTS` 里，所以 manifest 不再把它登记为 `pending_events`（门禁
+`test_pending_status_is_only_for_pending_events` 要求：事件在 EVENTS 里，依赖它的图就不能再标 `pending_event`），
+`b2` `b3` `b4` 和对应两个告警的 `status` 为 `not_created`。
 
-依赖它的资产（`b2` `b3` `b4` 和对应两个告警）全部标 `status: "pending_event"`、`depends_on: "#1103 + CONSENT_VERSION 3"`。
-当前数据下的回退是 `b1`（`export_completed`）。它没有 failed / cancelled，也不是「全部成功」，不要用它推失败率。
-
-解锁条件：#1103 合入 → 代理先于客户端部署 → 批量 CONSENT_VERSION 3 随客户端发布 → 线上看到第一条 `export_result` → 复核属性表与 main 一致 →
-把 `pending_events` 里的条目移除、对应资产 `status` 改为 `not_created`（或已创建则保留 `remote_id`）→ 测试里不再有待发布事件。
+**但它在线上没有数据**，直到带 `CONSENT_VERSION` 3 的客户端发布、且用户重新同意（v2 的同意不授权它，ADR 0134）。
+所以这几张图在周报里写「尚无数据」，不是 0；上线顺序：代理先于客户端部署 → 客户端发布 → 线上看到第一条 `export_result` →
+复核属性表与线上一致。当前数据下的回退是 `b1`（`export_completed`）：它没有 failed / cancelled，也不是「全部成功」，不要用它推失败率。
 
 ## 告警草稿（4 个，全部禁用）
 
@@ -143,8 +141,8 @@ PostHog 的普通告警只能挂在 **Trends insight** 上，所以每个告警�
 
 | 逻辑名 | 数据源（序列） | 条件 | 最小样本（人工） | 建议阈值 | 状态 |
 | --- | --- | --- | --- | --- | --- |
-| `alert_export_done_ratio_drop` | `b3`（A/B） | 上一个完整周 done 占比低于阈值 | 终态事件 ≥ 30，安装 ≥ 10 | 0.8 | 待 `export_result` |
-| `alert_export_failed_installs_by_version` | `b4` | 某版本一周内失败安装数高于阈值 | 该版本安装 ≥ 20 | 3 | 待 `export_result` |
+| `alert_export_done_ratio_drop` | `b3`（A/B） | 上一个完整周 done 占比低于阈值 | 终态事件 ≥ 30，安装 ≥ 10 | 0.8 | 待 `export_result` 数据 |
+| `alert_export_failed_installs_by_version` | `b4` | 某版本一周内失败安装数高于阈值 | 该版本安装 ≥ 20 | 3 | 待 `export_result` 数据 |
 | `alert_document_save_failed_installs` | `b6` 序列 B | 7 日内保存失败的唯一安装数高于阈值 | 序列 A ≥ 20 | 3 | 可建 |
 | `alert_ingest_silence` | `a1` | 7 日启动安装数低于 1 | 不适用 | 1 | 可建 |
 

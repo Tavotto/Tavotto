@@ -229,7 +229,10 @@ def test_a_writer_failure_under_the_candidate_is_a_500_and_captures_no_telemetry
     assert resp.status_code == 500
     assert resp.get_json()["code"] in ("export_failed", "format_failed")
     telemetry.flush(timeout=5)
-    assert [p for p in telemetry_sent if "export" in json.dumps(p)] == []
+    # 失败的导出不记成功事件；但它是被受理后失败，`export_result` 恰好一条 failed（2026-10-15）
+    assert [p for p in telemetry_sent if p["event"] == "export_completed"] == []
+    (result,) = [p for p in telemetry_sent if p["event"] == "export_result"]
+    assert result["properties"]["outcome"] == "failed"
 
 
 def test_export_start_under_the_candidate_streams_progress_and_finishes(client, tmp_path):

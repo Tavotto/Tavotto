@@ -360,6 +360,18 @@ class Store:
             ]
         return max(hits, key=lambda e: e.recorded_at, default=None)
 
+    def failures(self, project_id, kinds=None) -> list[Entry]:
+        """这个项目还在保留期内的失败条目，新的在前；`kinds` 给了就只要这几类。"""
+        with self._lock:
+            self._expire(time.time())
+            hits = [
+                e
+                for e in self._entries.values()
+                if e.project_id == project_id and e.failed and (kinds is None or e.kind in kinds)
+            ]
+        hits.sort(key=lambda e: -e.recorded_at)
+        return hits
+
     def recent(self, project_id, limit: int = BUNDLE_SNAPSHOTS) -> list[Entry]:
         with self._lock:
             self._expire(time.time())

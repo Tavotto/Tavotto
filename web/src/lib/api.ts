@@ -5738,6 +5738,8 @@ export interface PreparationReport {
   runtime_input?: { id: string; index: number; input_kind: string; secret: boolean } | null
   /** 这次尝试成功时真正捕获到的图（与试运行响应同一份描述符）；老后端没有 */
   captured?: CapturedFigureDescriptor[]
+  /** 部分捕获（phase `partial` + outcome `succeeded`）：这次运行里预览捕获失败的图，`code` 是稳定码；全部成功 / 老后端没有 = 空或缺省 */
+  failed_figures?: { stem: string; code?: string }[]
   /** 这次（无参数）运行替换掉的旧图名（T09b，与 `ProbeResult.unlinked_stems` 同一口径）；老后端没有 */
   unlinked_stems?: string[]
   /** 跑完没出图时的原因（`rasterhint`）：脚本自己用位图库把图片写成了文件，不是 Matplotlib 图；只是提示，不改 outcome / facts。老后端没有 */

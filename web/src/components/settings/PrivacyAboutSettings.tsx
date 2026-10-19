@@ -230,6 +230,9 @@ function TelemetryDataDisclosure() {
           </li>
         ))}
       </ul>
+      <p data-telemetry-error-summary className="type-caption">
+        {st('about.telemetry.errorSummary')}
+      </p>
       <p className="type-caption">
         <strong className="font-medium text-ink">{st('about.telemetry.neverLabel')}</strong>
         {st('about.telemetry.never')}

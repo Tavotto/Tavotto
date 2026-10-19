@@ -106,7 +106,8 @@ and answers no question we actually have.
 | `figure_edit_completed` | one semantic edit lands in the undo history | client (`store/documentStore.pushHistory`) | `edit_kind`: `text` \| `series` \| `axes` \| `annotation` \| `layout` \| `style` \| `other`; `patch_count`: int ≤ 1000 |
 | `canvas_created` | a canvas is successfully created | client (`documentStore.addCanvas` / `duplicateCanvas`) | `creation_kind`: `blank` \| `project` \| `duplicate` |
 | `preflight_completed` | preflight finished computing | client (`components/ExportDialog`) for the canvas; server (`codex-plugin/mcp/tavotto_mcp/bridge.run_preflight`) for the Codex MCP tool | `errors`, `warnings`, `not_verifiable`, `suggestions`: int ≤ 1000; `passed`: bool |
-| `export_completed` | `/api/export` wrote every requested file | server (`app.api_export`) | `pdf`, `png`, `with_proof`: bool; `panel_count`: int ≤ 1000 |
+| `export_completed` | an export job ended `done` **or** `partial` — i.e. at least one requested image was written (**not** "every requested file"; before 2026-10-15 this row said so wrongly). `pdf` / `png` say which of those two formats were really written | server (`app._export_telemetry`, called from `app.api_export` and the `export.progress` publisher of `app.api_export_start`) | `pdf`, `png`, `with_proof`: bool; `panel_count`: int ≤ 1000 |
+| `export_result` | **introduced 2026-10-15 (first release after v0.18.0)**. An *accepted* export job reached its terminal state — exactly one per job, from `exportjob._emit` via `ExportJob.on_terminal`, so sync / background / early-exit failures / user cancel all share one origin. Not sent: requests rejected before acceptance (HTTP 4xx), `overwrite=ask` name conflicts (`conflict`: nothing was done; the resubmit is the attempt) | server (`app._export_result_telemetry` → `engine/exporttelemetry.properties`) | `outcome`: `done` \| `partial` \| `failed` \| `cancelled`; `scope`: `canvas` \| `original`; `pdf`, `png`, `eps`, `tiff`, `with_report`: bool — what was **requested**; `delivered`: int ≤ 8 — image files actually written; `stage` (not on `done`): `prepare` \| `source` \| `compile` \| `compose` \| `raster` \| `inspect` \| `publish` \| `report` — where it failed or stopped; `error_class` (`failed` / `partial` only): `request` \| `environment` \| `backend` \| `artifact_rejected` \| `source_changed` \| `report` \| `other` — a coarse fold of the error code, never the code text or exception |
 | `ai_assistant_invoked` | `engine_ai.run()` returned a session | server (`app.api_ai_run`) | `agent`: `codex` \| `claude` \| `other` |
 | `update_completed` | an update finished installing | server (`engine/updater.apply_upgrade`) for pip/pipx; client (`store/updateStore.installDesktop`) for the desktop shell | `update_kind`: `desktop` \| `pip` \| `pipx`; `target_version`: version (omitted when unknown) |
 | `project_refresh_completed` | the unified project refresh **succeeded** (`app.refresh_project`, the single funnel for manual / watcher / Codex / AI) | server | `source`: `watcher` \| `manual` \| `codex` \| `ai` (refreshes caused by probe, manual registration or opening a project are **not** captured); `changed_bucket`: `none` \| `one` \| `few` (2–5) \| `many` (6+) — script + asset change count, bucketed |
@@ -122,6 +123,24 @@ and answers no question we actually have.
 The nine events in the second half were added in **`CONSENT_VERSION` 2** (2026-09-02).
 Consent stored for version 1 stopped being sufficient the moment that constant was
 raised; those installs are asked again and keep their `install_id`.
+
+### `CONSENT_VERSION` 3 (2026-10-16, ADR 0134)
+
+One bump covers two new collection scopes:
+
+1. the `export_result` event (table above);
+2. the **optional error summary** on a diagnostics report the user explicitly sends
+   (`engine/diagsummary.py` → `POST /v1/reports/init` `error_summary`). It is **not** a
+   telemetry event and never goes through the proxy: it is a consent snapshot
+   (`telemetry_consent`, `no_telemetry_env`, `scope_version`, `purposes`) plus one fact
+   (internal component / operation / stable error code). No `install_id`, no timestamps.
+
+Consent stored for version 2 stopped being sufficient the moment the constant was raised:
+no event of any kind (including `export_result`) is sent until the user is asked again;
+re-consent keeps the `install_id`; users who declined are not asked again and stay
+silent. `export_result` rows exist only from the first release that carries version 3,
+and only for installs that re-consented, so its counts are not comparable with
+`export_completed` over the same period.
 
 ### Explicitly forbidden on every event
 
@@ -142,8 +161,20 @@ be sent — not because callers remember not to. Regression tests:
 
 **Why export and AI are captured server-side.** The frontend knows when the user
 *clicked*; the backend knows when the work *succeeded*. `export_completed` fires
-immediately before `/api/export` returns its success response, after every
-requested file is on disk; a failing export produces zero events. Same for
+after the job ended `done` or `partial` (some requested file is on disk); a
+failed or cancelled export produces no `export_completed`. Since 2026-10-15 those
+outcomes are visible through `export_result` instead.
+
+**`export_result` vs `export_completed`.** `export_completed` is unchanged and must
+not be back-filled into `export_result`: events before the introduction date have no
+terminal-state counterpart, and the two are not joinable per attempt (there is no
+shared attempt id on purpose — the id would be a durable correlation key). Read them
+as two distributions: `export_result` outcome mix = "of the terminal events we
+received, how many were done / partial / failed / cancelled". It is **not** a crash
+rate: lost events (offline, sidecar down), still-running jobs and opt-out are all
+invisible. No `export_started` exists: an acceptance-count denominator would need an
+idempotent attempt id and would invite exactly the unjoinable start-vs-result
+comparison warned about above. Same for
 `ai_assistant_invoked`, which fires only after `engine_ai.run()` hands back a
 session.
 
