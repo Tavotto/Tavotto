@@ -76,6 +76,7 @@ def run_probe(python: str, jobs: list[dict], work: Path) -> dict:
         [python, "-B", str(ROOT / "_probe.py"), str(work / "jobs.json"), str(work / "out.json")],
         capture_output=True,
         text=True,
+        encoding="utf-8",
         timeout=300,
         env={**env, "PYTHONDONTWRITEBYTECODE": "1"},
     )

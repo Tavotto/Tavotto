@@ -325,6 +325,7 @@ def test_fingerprint_rules_in_the_worker_interpreter():
         [WORKER_PY, "-B", "-c", _FP_PROBE, str(ENGINE)],
         capture_output=True,
         text=True,
+        encoding="utf-8",
         timeout=120,
         env=env,
     )
@@ -358,6 +359,11 @@ def test_verifier_imports_without_the_scientific_stack():
     )
     env = {k: v for k, v in os.environ.items() if not k.startswith("PYTHON")}
     proc = subprocess.run(
-        [sys.executable, "-c", code], capture_output=True, text=True, timeout=60, env=env
+        [sys.executable, "-c", code],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=60,
+        env=env,
     )
     assert proc.returncode == 0, proc.stderr[-2000:]
