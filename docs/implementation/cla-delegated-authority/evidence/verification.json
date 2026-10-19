@@ -1,0 +1,131 @@
+{
+  "base_sha": "7e58f04d510951c9088224bb75cb68fcaaf9594d",
+  "recorded_at_utc": "2026-10-18T05:21:05.608273+00:00",
+  "environment": "selected /workspace environment; Node 24.19.0; local SQLite; no environment switching",
+  "commands": [
+    {
+      "command": "npm test",
+      "exit": 0,
+      "passed": 236,
+      "failed": 0,
+      "skipped": 0,
+      "evidence": "node-tests.txt",
+      "note": "Re-run after rebasing onto the verified latest main; same 236 passed, 0 failed/skipped."
+    },
+    {
+      "command": "npm run test:migration",
+      "exit": 0,
+      "passed": 3,
+      "evidence": "migration.txt"
+    },
+    {
+      "command": "npm run test:mutation",
+      "exit": 0,
+      "detected_mutations": 28,
+      "each_mutated_test_exit": 1,
+      "evidence": "mutations.txt"
+    },
+    {
+      "command": "node --test tests/delegation.test.mjs tests/automatic.test.mjs tests/independent-authority-contract.test.mjs tests/independent-lifecycle.test.mjs",
+      "exit": 0,
+      "passed": 87,
+      "note": "Independent reviewer run before the final two admission-cap tests; not the full-suite total."
+    },
+    {
+      "command": "node -e \"import('./src/native/worker.ts')\"",
+      "exit": 0,
+      "note": "Production module import/syntax only; not typecheck or bundled-build acceptance."
+    },
+    {
+      "command": "git diff --check",
+      "exit": 0
+    },
+    {
+      "command": "Python stdlib exact policy/document SHA-256 and provider-disabled assertions",
+      "exit": 0
+    },
+    {
+      "command": "npm ci --ignore-scripts --fetch-retries=0 --fetch-timeout=15000",
+      "exit": 1,
+      "error": "E403 GET https://registry.npmjs.org/typescript/-/typescript-7.0.2.tgz; no mirror/proxy retry"
+    },
+    {
+      "command": "npm run typecheck",
+      "exit": 127,
+      "error": "tsc: not found; dependency install blocked"
+    },
+    {
+      "command": "npm run build",
+      "exit": 1,
+      "error": "ERR_MODULE_NOT_FOUND: esbuild; dependency install blocked",
+      "evidence": "blocked-build.txt"
+    },
+    {
+      "command": "python3 -m pytest tests/test_legal_contribution_policy.py tests/test_cla_workflow_contract.py",
+      "exit": 1,
+      "error": "No module named pytest",
+      "evidence": "blocked-python-contract.txt"
+    },
+    {
+      "command": "git fetch origin main",
+      "exit": 128,
+      "error": "CONNECT tunnel failed, response 403"
+    },
+    {
+      "command": "curl -I --max-time 15 https://github.com",
+      "exit": 56,
+      "error": "CONNECT tunnel failed, response 403"
+    },
+    {
+      "command": "gh api rate_limit --jq '.resources | {core,graphql,code_search}'",
+      "exit": 1,
+      "error": "Get https://api.github.com/rate_limit: Forbidden; quota remains unread, not evidence of quota exhaustion"
+    }
+  ],
+  "remote_reads": {
+    "main": "GitHub connector rechecked main after implementation; imported exact existing Git commit/tree/five blobs and verified all Git object hashes, then rebased; no CLA files changed upstream.",
+    "open_prs": "20 open PRs inspected; no duplicate CLA implementation PR; unrelated Guardian/SVG/etc untouched",
+    "base_advance_files": [
+      "docs/rules/frontend/hit-and-selection-geometry.md",
+      "web/src/hooks/useEngineSync.test.ts",
+      "web/src/hooks/useEngineSync.ts",
+      "web/src/lib/artifactValidation.ts",
+      "web/src/store/actions.ts"
+    ]
+  },
+  "review": {
+    "mode": "independent read-only contract and reverse review",
+    "fixed": [
+      "separate receipt leaves personal holder slot available",
+      "held idempotent replay rejects",
+      "evidence revision clears/requeues observations",
+      "separate cron invocations avoid recovery starvation and split budgets",
+      "independent forged signatures and receipt tampering tests added"
+    ],
+    "independent_mutations": "independent-mutations.json",
+    "remaining_findings": "No newly reachable formal CI bypass found; live activation boundaries remain unaccepted"
+  },
+  "unverified": [
+    "pinned TypeScript check and bundled build",
+    "pytest workflow/legal contracts",
+    "real D1 migration/clock/concurrency/resource bindings",
+    "quota/account-plan acceptance",
+    "real identity-key registration and rights-holder grant/enable",
+    "delegated status/consent UI and authorized audit export",
+    "new-head GitHub publication and authoritative CI/merge_group wiring"
+  ],
+  "limits": {
+    "sql_work": 20,
+    "sql_total": 40,
+    "delegated_readonly_verification_people": 2,
+    "delegated_scheduled_observation_people": 1,
+    "delegated_same_head_publication_refresh_people": 0
+  },
+  "no_live_actions": [
+    "No real authorization or signature created",
+    "No production deploy, activation, App/OAuth/credential/branch-protection changes",
+    "No merge or publication",
+    "No previously rejected cross-proof-expiry successful-publication test run"
+  ],
+  "initial_main_sha": "77e2cab77597318859f874d9319c47f15da0e1dd"
+}

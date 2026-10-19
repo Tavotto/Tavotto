@@ -56,6 +56,7 @@ from colorbarmodel import (
     declared_parents,
     field_image_of,
     follow_map,
+    scale_colorbars,
     scale_gids,
     scale_siblings,
 )
@@ -97,6 +98,10 @@ from overrides import (
     artist_identity,
     cjk_fallback_candidates,
     collection_caps,
+    collection_edge_rgba,
+    collection_face_rgba,
+    collection_linewidths,
+    collection_sizes,
     color_mapping_is_live,
     colorbar_mapping_is_live,
     font_display_names,
@@ -109,6 +114,7 @@ from overrides import (
     legend_handle_props,
     offsetbox_draggable,
     offsetbox_frame,
+    on_axes3d,
     open_font_face,
     patch_resize_geometry,
     register_font_name_aliases,
@@ -377,6 +383,31 @@ def _is_seq(obj) -> bool:
     上可能是一个 LineCollection，也可能是一串 Line2D（`use_line_collection=False`
     的旧写法），两种都要认。"""
     return isinstance(obj, (list, tuple))
+
+
+def _container_member_ids(ax) -> set[int]:
+    """容器（柱 / 误差棒 / 茎）的成员 id。**只给 3D 轴用**：3D 里容器暂不做语义系列
+    （ADR 0135），它们的成员不当独立曲线 / 集合登记，留在 census 里如实报出来。
+    2D 轴上成员由 `SeriesGroup` 代表，走的是 `instrument` 里自己那一支。"""
+    ids: set[int] = set()
+    for cont in getattr(ax, "containers", []) or []:
+        members: list = []
+        if isinstance(cont, BarContainer):
+            members = list(cont.patches)
+        elif isinstance(cont, ErrorbarContainer):
+            line, caps, bars = cont.lines
+            members = [line, *caps, *bars]
+        elif isinstance(cont, StemContainer):
+            stems = cont.stemlines
+            # baseline（零线）也是这个容器的成员：2D 里它继续作为普通曲线单独可编辑（`instrument`
+            # 那一支），3D 里容器整体不做语义系列，成员**全部**留在 unsupported，边界才一致
+            members = [
+                cont.markerline,
+                *(stems if _is_seq(stems) else [stems]),
+                getattr(cont, "baseline", None),
+            ]
+        ids.update(id(m) for m in members if m is not None)
+    return ids
 
 
 def _collection_gid_prefix(coll) -> str:
@@ -759,79 +790,87 @@ def instrument(state: FigState) -> None:
                     # 别名只进 index、不进 elements（ColorbarProxy 同样思路）。
                     for _m in grp.members():
                         _alias_consumed_member(state, ax, f"axes_{i}", _m)
-            for j, ln in enumerate(ax.lines):
-                if id(ln) in skip_ids:
-                    continue
-                lab = str(ln.get_label())
-                if not lab or lab.startswith("_"):
-                    lab = proxy_names.get(id(ln), "")  # 图例代理句柄借来的显示名
-                nice = (
-                    f"曲线 “{_snippet(lab)}”"
-                    if lab and not lab.startswith("_")
-                    else f"曲线 {j + 1}"
-                )
-                _register(state, f"axes_{i}.lines_{j}", ln, "line", nice)
+        else:
+            # 3D 轴：容器（误差棒 / 茎 / 柱）在 3D 里暂不做语义系列。它们的成员
+            # （Line3D / Line3DCollection）既不当独立曲线登记，也不假装被代表了——
+            # 留在 census 的 `unsupported` 里，如实说出来（ADR 0135）
+            skip_ids = _container_member_ids(ax)
+        # 曲线与 Collection 家族 **2D / 3D 共用同一段登记**：gid 前缀只有
+        # `_collection_gid_prefix` 一处出处，3D 轴上的 `Poly3DCollection` /
+        # `Path3DCollection` / `Line3DCollection` / `QuadContourSet3D` / `Line3D`
+        # 与 2D 同族同前缀（它们是同一族的子类），能改什么由 `collection_caps()` 与
+        # `_line_fields` 的 3D 实况说了算（ADR 0135）。2D 的 gid 一个都没动。
+        for j, ln in enumerate(ax.lines):
+            if id(ln) in skip_ids:
+                continue
+            lab = str(ln.get_label())
+            if not lab or lab.startswith("_"):
+                lab = proxy_names.get(id(ln), "")  # 图例代理句柄借来的显示名
+            nice = f"曲线 “{_snippet(lab)}”" if lab and not lab.startswith("_") else f"曲线 {j + 1}"
+            _register(state, f"axes_{i}.lines_{j}", ln, "line", nice)
+        if not is3d:
             for j, im in enumerate(ax.images):
                 _register(state, f"axes_{i}.images_{j}", im, "image", f"图像 {j + 1}")
-            # Collection family：三条 gid 分支的**唯一理由是向后兼容**——
-            # `axes_i.scatter_j` 与 `axes_i.fill_j` 是已经发出去的名字，历史
-            # 文档里有针对它们的 override，不能换。序号 j 是 `ax.collections`
-            # 里的下标（不是每种角色各自计数），所以把从前没登记的那些补登记
-            # 进来**不会挪动**已有 gid。能改什么全部由 `collection_caps()` 按
-            # 真实 getter 实况决定，与这里挑哪个前缀无关。
-            for j, coll in enumerate(ax.collections):
-                # 色条轴上的 collection 不是用户的图元：`cb.solids` 是那条色带
-                # 本身、`cb.dividers` 是分隔线，两者每次 `_draw_all()` 都被删掉
-                # 重建（与 extend 的延伸三角同一类）。登记它们等于在元素表里放
-                # 两个随时换身份的幽灵条目，而且与色条代理重复——色条轴对外
-                # 只有一个元素，就是 `axes_i.colorbar`
-                if id(coll) in skip_ids or ax in cbar_of_ax:
-                    continue
-                # gid 前缀只有 `_collection_gid_prefix` 一处出处——
-                # `_alias_consumed_member` 要按同一条规则还原「这个成员从前
-                # 叫什么」，两边分开写会让历史 override 悄悄变成孤儿。
-                prefix = _collection_gid_prefix(coll)
-                gid = f"axes_{i}.{prefix}_{j}"
-                if prefix == "scatter":
-                    lab = str(coll.get_label())
-                    if not lab or lab.startswith("_"):
-                        lab = proxy_names.get(id(coll), "")
-                    nice = (
-                        f"散点 “{_snippet(lab)}”"
-                        if lab and not lab.startswith("_")
-                        else f"散点系列 {j + 1}"
-                    )
-                    _register(state, gid, coll, "scatter", nice)
-                elif prefix == "fill":
-                    _register(state, gid, coll, "fill", _coll_label(coll, j))
-                elif prefix == "linecoll":
-                    # 线组：`hlines`/`vlines` 的参考线、`stem` 的竖线、
-                    # `eventplot` 的事件线（EventCollection 是它的子类）、
-                    # `streamplot` 的流线、`violinplot` 的极值线。这是 artist
-                    # 普查里权重最高的缺口（8 处 / 5 个 case），2026-08-21 之前
-                    # 它们在界面上根本不存在。
-                    #
-                    # **`linecoll` 是自己一族、不并进下面的通用 collection**：
-                    # 它对外的 prop 是 `color`（Line2D 那套口径），而
-                    # Collection 族给的是 facecolor/edgecolor——两套命名已经
-                    # 发出去了，合并等于换掉存量文档里的 prop 名。
-                    #
-                    # **标量映射的一律走下面那支通用分支**：那时颜色由
-                    # colormap 每次 draw 重算，`color` 这个单值口径表达不了
-                    # 逐条颜色；通用分支按 `collection_caps()` 的实况说话，
-                    # 反而不会假装认识它。判据是 `overrides.is_linecoll_family`
-                    # ——**登记与 dispatch 共用同一个函数**，`_cls_key` 问的也
-                    # 是它。分开写必然漂开，而漂开的表现是元素表说通用、
-                    # 检查器却按线组给字段，那个控件一个像素都改不动。
-                    lab = str(coll.get_label())
-                    nice = (
-                        f"线组 “{_snippet(lab)}”"
-                        if lab and not lab.startswith("_")
-                        else f"线组 {j + 1}"
-                    )
-                    _register(state, gid, coll, "linecoll", nice)
-                else:
-                    _register(state, gid, coll, "collection", _coll_label(coll, j))
+        # Collection family：三条 gid 分支的**唯一理由是向后兼容**——
+        # `axes_i.scatter_j` 与 `axes_i.fill_j` 是已经发出去的名字，历史
+        # 文档里有针对它们的 override，不能换。序号 j 是 `ax.collections`
+        # 里的下标（不是每种角色各自计数），所以把从前没登记的那些补登记
+        # 进来**不会挪动**已有 gid。能改什么全部由 `collection_caps()` 按
+        # 真实 getter 实况决定，与这里挑哪个前缀无关。
+        for j, coll in enumerate(ax.collections):
+            # 色条轴上的 collection 不是用户的图元：`cb.solids` 是那条色带
+            # 本身、`cb.dividers` 是分隔线，两者每次 `_draw_all()` 都被删掉
+            # 重建（与 extend 的延伸三角同一类）。登记它们等于在元素表里放
+            # 两个随时换身份的幽灵条目，而且与色条代理重复——色条轴对外
+            # 只有一个元素，就是 `axes_i.colorbar`
+            if id(coll) in skip_ids or ax in cbar_of_ax:
+                continue
+            # gid 前缀只有 `_collection_gid_prefix` 一处出处——
+            # `_alias_consumed_member` 要按同一条规则还原「这个成员从前
+            # 叫什么」，两边分开写会让历史 override 悄悄变成孤儿。
+            prefix = _collection_gid_prefix(coll)
+            gid = f"axes_{i}.{prefix}_{j}"
+            if prefix == "scatter":
+                lab = str(coll.get_label())
+                if not lab or lab.startswith("_"):
+                    lab = proxy_names.get(id(coll), "")
+                nice = (
+                    f"散点 “{_snippet(lab)}”"
+                    if lab and not lab.startswith("_")
+                    else f"散点系列 {j + 1}"
+                )
+                _register(state, gid, coll, "scatter", nice)
+            elif prefix == "fill":
+                _register(state, gid, coll, "fill", _coll_label(coll, j))
+            elif prefix == "linecoll":
+                # 线组：`hlines`/`vlines` 的参考线、`stem` 的竖线、
+                # `eventplot` 的事件线（EventCollection 是它的子类）、
+                # `streamplot` 的流线、`violinplot` 的极值线。这是 artist
+                # 普查里权重最高的缺口（8 处 / 5 个 case），2026-08-21 之前
+                # 它们在界面上根本不存在。
+                #
+                # **`linecoll` 是自己一族、不并进下面的通用 collection**：
+                # 它对外的 prop 是 `color`（Line2D 那套口径），而
+                # Collection 族给的是 facecolor/edgecolor——两套命名已经
+                # 发出去了，合并等于换掉存量文档里的 prop 名。
+                #
+                # **标量映射的一律走下面那支通用分支**：那时颜色由
+                # colormap 每次 draw 重算，`color` 这个单值口径表达不了
+                # 逐条颜色；通用分支按 `collection_caps()` 的实况说话，
+                # 反而不会假装认识它。判据是 `overrides.is_linecoll_family`
+                # ——**登记与 dispatch 共用同一个函数**，`_cls_key` 问的也
+                # 是它。分开写必然漂开，而漂开的表现是元素表说通用、
+                # 检查器却按线组给字段，那个控件一个像素都改不动。
+                lab = str(coll.get_label())
+                nice = (
+                    f"线组 “{_snippet(lab)}”"
+                    if lab and not lab.startswith("_")
+                    else f"线组 {j + 1}"
+                )
+                _register(state, gid, coll, "linecoll", nice)
+            else:
+                _register(state, gid, coll, "collection", _coll_label(coll, j))
+        if not is3d:
             # 脚本直接 add_patch 的独立箭头（XPS 峰位标注这类画法）与独立形状。
             # 形状按 **Patch family** 认，不逐个列类名：`ax.fill()` 的 Polygon、
             # 手搓的 PathPatch 之外还有 pie 的 Wedge、axhspan/axvspan 的
@@ -1947,8 +1986,10 @@ def _collection_fields(coll, state: FigState, gid: str, *, label: bool) -> list[
     import numpy as np  # noqa: PLC0415 — worker 侧有科学栈
 
     caps = collection_caps(coll)
-    ec = coll.get_edgecolor()
-    lw = np.atleast_1d(coll.get_linewidths())
+    # 3D 集合的 get_*color / get_linewidths / get_sizes 读到的是深度排序后的上一帧
+    # （值随视角变），字段值与 handler 的 getter 一律走脚本顺序的那一份（ADR 0135）
+    ec = collection_edge_rgba(coll)
+    lw = np.atleast_1d(collection_linewidths(coll))
     lab = str(coll.get_label())
     fields: list[dict] = []
     if label:
@@ -1956,12 +1997,12 @@ def _collection_fields(coll, state: FigState, gid: str, *, label: bool) -> list[
             {"prop": "label", "type": "text", "value": "" if lab.startswith("_") else lab}
         )
     if "fill" in caps:
-        fc = coll.get_facecolor()
+        fc = collection_face_rgba(coll)
         fields.append(
             {"prop": "facecolor", "type": "color", "value": to_hex(fc[0]) if len(fc) else "#000000"}
         )
     if "sizes" in caps:
-        sizes = coll.get_sizes()
+        sizes = collection_sizes(coll)
         fields.append(
             {
                 "prop": "size",
@@ -2070,6 +2111,29 @@ def _collection_fields(coll, state: FigState, gid: str, *, label: bool) -> list[
         }
     )
     return fields
+
+
+def _computed_zorder_3d(artist) -> bool:
+    """这个 artist 的 `zorder` 被一张**由深度算 zorder** 的 3D 轴每帧重写。
+
+    `Axes3D.draw` 在 `computed_zorder=True`（默认）时，**只对 `Collection` 与 `Patch`** 子元素按投影深度
+    重写 `zorder`（源码 `collections_and_patches = (… isinstance(artist, (Collection, Patch)) …)`，
+    mpl 3.8.4 / 3.10.9 / 3.11.2 三版读源码核实一致）——这些元素的 `set_zorder` 一个像素不变，读回来的是
+    上一帧被覆盖的值。**`Line3D` 不在其列**：它的 zorder 照常参与 `Axes` 的绘制排序，改它会把曲线放到
+    别的线 / 自动排序的集合前后（Codex #1159 P1）。脚本自己 `computed_zorder=False` 时全员的 zorder 才
+    归用户管。判据是这条轴**此刻**的实况，不是版本号。"""
+    return (
+        on_axes3d(artist)
+        and isinstance(artist, (Collection, Patch))
+        and bool(getattr(artist.axes, "computed_zorder", True))
+    )
+
+
+def _without_dead_zorder(artist, fields: list[dict]) -> list[dict]:
+    """3D 轴上由深度定序的元素不出 `zorder`：宣称了却被每帧覆盖 = 一个死开关（ADR 0135）。"""
+    if not _computed_zorder_3d(artist):
+        return fields
+    return [f for f in fields if f.get("prop") != "zorder"]
 
 
 def _hatch_style_fields(pt) -> list[dict]:
@@ -2197,26 +2261,24 @@ def _cmap_needs_facts(facts: dict) -> bool:
 
 
 def _cmap_alias_gids(state: FigState, artist, gid: str) -> list[str]:
-    """与 `gid` 共用同一份色图状态的全部 gid（色条 ↔ 它的 mappable，
-    `overrides.ALIAS_GROUPS` 的那一对）。回答「脚本原样的色图记在谁名下」：
-    用户从图像那边换的色图，override 落在图像 gid 上；色条这边要报「脚本
-    原样」就得去图像的 originals 里找，反之亦然。"""
+    """与 `gid` 共用同一份色图状态的全部 gid——**色阶组的结构性成员表，唯一出处**。
+
+    组 = 它的 mappable（色条）或它自己（图元）、共用同一份 norm 对象的已登记兄弟
+    （`scale_siblings`，按 family 定、**不看此刻是否在映射**）、以及给这组上色的全部色条
+    （`scale_colorbars`：同一个 mappable 或共用 norm——独立 `ScalarMappable` 的色条之间只能
+    靠这一条认出彼此）。两处消费：`_cmap_original`（「脚本原样记在谁名下」）与 manifest 的
+    `cmap_group_gids`（前端写 cmap 时清同组其它成员的旧 override）。只看此刻在映射的成员会漏掉
+    映射被关掉、但旧 cmap override 仍按整组重放的那个；只看兄弟会漏掉独立色条的同伴（#1159 评审）。"""
     out = [gid]
-    if isinstance(artist, ColorbarProxy):
-        target = artist.cb.mappable
-    else:
-        target = artist
-    # 色阶兄弟（共用 norm 对象的 mappable，`colorbarmodel.scale_siblings`）也在
-    # 同一组里：色条的 cmap 写到它们身上，「脚本原样记在谁名下」同样要问到色条
+    target = artist.cb.mappable if isinstance(artist, ColorbarProxy) else artist
+    colorbars = scale_colorbars(state, target)
+    siblings = scale_siblings(state, target)
     for el in state.elements:
         other = el["artist"]
-        if isinstance(other, ColorbarProxy) and el["gid"] != gid:
-            m = other.cb.mappable
-            if m is target or target in scale_siblings(state, m):
+        if isinstance(other, ColorbarProxy):
+            if other in colorbars:
                 out.append(el["gid"])
-        elif isinstance(artist, ColorbarProxy) and (
-            other is target or other in scale_siblings(state, target)
-        ):
+        elif other is target or other in siblings:
             out.append(el["gid"])
     return list(dict.fromkeys(out))
 
@@ -4030,7 +4092,7 @@ def _fields_for(el, state: FigState) -> list[dict]:
             artist, state, gid
         )
     if key == "line":
-        return _line_fields(artist, state, gid)
+        return _without_dead_zorder(artist, _line_fields(artist, state, gid))
     if key == "legend":
         return _legend_fields(artist)
     if key == "axes":
@@ -4043,9 +4105,11 @@ def _fields_for(el, state: FigState) -> list[dict]:
         return _patch_fields(artist)
     if key == "collection":
         # 历史上「填充区域」没有 label 字段，保持原样；其余 Collection 都给
-        return _collection_fields(artist, state, gid, label=(role != "fill"))
+        return _without_dead_zorder(
+            artist, _collection_fields(artist, state, gid, label=(role != "fill"))
+        )
     if key == "linecoll":
-        return _linecoll_fields(artist)
+        return _without_dead_zorder(artist, _linecoll_fields(artist))
     if key == "artist":
         return _generic_fields(artist)
     if key == "stem_series":
@@ -4062,6 +4126,9 @@ def _fields_for(el, state: FigState) -> list[dict]:
 
 
 _MIN_HIT_PX = 4.0  # 扁平元素最小命中厚度（display 像素）
+
+#: 3D 轴上登记的数据图元的角色（ADR 0135）；`_refresh_hidden_3d_projections` 只看这几种。
+_DATA_ROLES_3D = ("line", "fill", "scatter", "collection", "linecoll")
 
 
 def _finite_geometry(entry: dict) -> bool:
@@ -4467,6 +4534,47 @@ def _ensure_agg_canvas(fig):
     return fig.canvas.get_renderer()
 
 
+def _refresh_hidden_3d_projections(state: FigState) -> None:
+    """隐藏的 3D 数据图元，几何按**此刻的视角**重投影（ADR 0135）。
+
+    `Axes3D.draw` 只对**可见**的集合调 `do_3d_projection`（Line3D 的投影在自己的 `draw` 里，
+    不看可见性），整条轴隐藏时一个都不投。隐藏的集合于是带着它**上一次**可见时的投影：
+    热会话里「先隐藏、再转视角」与冷启动重放（从未在新视角下投影过）量出两套 bbox / 轮廓，
+    写回自检比的正是这个几何——会话于是 409，而用户什么都没做错。隐藏的元素仍在元素树里、
+    要能点着把它取消隐藏，所以几何要真，不能丢。"""
+    scratch = None
+    for el in state.elements:
+        art = el["artist"]
+        if el["role"] not in _DATA_ROLES_3D or not on_axes3d(art):
+            continue
+        ax = art.axes
+        project = getattr(art, "do_3d_projection", None)
+        if project is None:
+            # Line3D 没有 `do_3d_projection`：投影在它自己的 `draw` 里、不看自己可不可见，但**整条轴
+            # 隐藏**时 `Axes3D.draw` 根本不访问它（#1159 评审）。三个 matplotlib 版本的投影写法各不相同
+            # （3.8 `proj_transform` / 3.10 `_proj_transform_clip` / 3.11 `_scale_proj_transform_clip`
+            # 加缩放掩码），不照抄：让它自己的 `draw` 在一张一次性的 Agg renderer 上走一遍，真 canvas
+            # 一个像素都不碰（与隐藏图例现排同一个做法）
+            if not isinstance(art, Line2D) or ax.get_visible():
+                continue
+            if scratch is None:
+                from matplotlib.backends.backend_agg import RendererAgg  # noqa: PLC0415
+
+                fig = state.fig
+                scratch = RendererAgg(int(fig.bbox.width), int(fig.bbox.height), fig.dpi)
+
+            def project(art=art, scratch=scratch):
+                art.draw(scratch)
+
+        elif art.get_visible() and ax.get_visible():
+            continue
+        try:
+            ax.M = ax.get_proj()  # Axes3D.draw 每帧开头就是这么刷的
+            project()
+        except Exception:  # noqa: BLE001 — 补投影失败只是几何偏旧，不拦渲染
+            pass
+
+
 def _layout_legends_for_measure(state: FigState, fig, vector_metrics: bool = True) -> None:
     """把每个图例的子项按**文档 dpi + 测量用的矢量度量**重新排一次版，manifest 才能量它的文字。
 
@@ -4521,7 +4629,13 @@ def _is_area_field(artist) -> bool:
     散点（PathCollection）与线组不算：它们是数据系列，子图里有空白可点；
     不填充的等值线（`contour`）不算：它只有线。判据要求色图**此刻在给面上色**
     （`color_mapping_is_live`），写死颜色的多边形集合不是色图场。
+
+    **3D 轴上的不算**（ADR 0135）：曲面 / 底投影等值面是投影出来的菱形，不铺满子图，
+    它的位置是数据 + 视角，拖它既不是挪子图也不是挪数据；留给 `series` 那条「拖不动」
+    的说明（ADR 0100），要挪整个 3D 子图拖 axes3d 本身。
     """
+    if on_axes3d(artist):
+        return False
     if isinstance(artist, ContourSet):
         if not getattr(artist, "filled", False):
             return False
@@ -4725,6 +4839,8 @@ def _measure_manifest(
     # draw 跳过的图例（隐藏 / 住在隐藏的 axes 里）按文档 dpi 补排一次版，否则它的
     # 文字几何是上一次画它那回的像素（#413）
     _layout_legends_for_measure(state, fig, vector_metrics)
+    # 没被这次 draw 投影到的 3D 数据图元（隐藏的、或住在隐藏的 3D 轴里）按**当前**视角补投影
+    _refresh_hidden_3d_projections(state)
     # 刻度伪元素按**当前**刻度状态对齐（必须在 draw 之后：标签的文字是 draw
     # 那一刻由 Formatter 填进去的）
     sync_tick_elements(state)
@@ -5072,6 +5188,25 @@ def _measure_manifest(
             geom = pathgeom.series_group_geometry(artist.members(), W, H, budget)
             if geom is not None:
                 entry["geometry"] = geom
+        # 色阶组里的映射图元也发 `scale_gids`（组里的**其它**成员）：任一成员改 cmap 都是整组改
+        # （ADR 0135 修订），前端据此清同组其它成员上的 cmap override、并在「回到脚本原样」时一起清
+        if el["role"] in ("fill", "scatter", "collection", "image") and color_mapping_is_live(
+            artist
+        ):
+            peers = [
+                g
+                for g in scale_gids(state, artist)
+                if (m := state.resolve(g)) is not None and color_mapping_is_live(m)
+            ]
+            if peers:
+                entry["scale_gids"] = peers
+        # 色阶组的结构性成员（`_cmap_alias_gids`，唯一出处）：任一成员改 cmap 都是整组改，前端写 cmap 时
+        # 在同一次 commit 里清掉这些 gid 上的旧 cmap override——含映射此刻被关掉、控件收起来的成员
+        # （它的旧 override 仍按整组重放）与独立色条的同伴（#1159 评审）。可选：组里只有自己就不发。
+        if any(f.get("prop") == "cmap" for f in entry.get("editable") or []):
+            group = [g for g in _cmap_alias_gids(state, artist, el["gid"]) if g != el["gid"]]
+            if group:
+                entry["cmap_group_gids"] = group
         # 箭头：端点（figure 分数、top-origin，[尾, 头]）随 manifest 下发，前端据此画
         # 端点手柄、整体拖动 / 单端拖动都写 endpoints_frac override。两类出端点：
         # 独立箭头（端点就是 patch 自己的 posA / posB）与**纯箭头注释**（端点是注释的

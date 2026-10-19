@@ -1562,13 +1562,37 @@ def _project_flags(arg: str, label: str) -> set[str]:
     return set(names)
 
 
+def _slice_flags(arg: str, label: str) -> tuple[set[str], tuple[int, int] | None]:
+    """`"--project=a --shard=1/2"` → `({a}, (1, 2))`：只认 `--project=NAME` 与至多一个 `--shard=i/n`。
+
+    与 scripts/ci/playwright_shard_check.py 的 `parse_slice` **刻意不同源**（对拍要两侧独立）。
+    """
+    names: list[str] = []
+    shard: tuple[int, int] | None = None
+    for tok in arg.split():
+        pm = re.fullmatch(r"--project=(\S+)", tok)
+        sm = re.fullmatch(r"--shard=(\d+)/(\d+)", tok)
+        if pm:
+            names.append(pm.group(1))
+        else:
+            assert sm and shard is None, (
+                f"{label}：`{tok}` 不是 `--project=NAME` / 唯一的 `--shard=i/n`"
+            )
+            shard = (int(sm.group(1)), int(sm.group(2)))
+    assert names, f"{label}：空片（一个 --project= 都没有）"
+    assert len(set(names)) == len(names), f"{label}：project 重复 {names}"
+    return set(names), shard
+
+
 class TestPlaywrightShards:
-    """`windows-exe-smoke` 的 Playwright 按 project 分两片（CI03c，2026-09-16）。
+    """`windows-exe-smoke` 的 Playwright 分三片（CI03c，2026-09-16 按 project 分两片；
+    2026-10-19 chromium 内部再用原生 `--shard=1/2`、`--shard=2/2` 拆成片 1 与片 3）。
 
     分片漏掉一个 project 的两个方向都**不会有任何用例红**：漏片时两片各自全绿，重叠时只是慢。
     漏片兜底三层里这里是第一层（源码层）：matrix include 的 `--project=` 集合与
-    `web/playwright.config.ts` 的 project 集合比——并集相等、两两不交、无空片、`others` 是
-    其余片之并、浏览器按片装的正是本片 project 要的引擎。第二层是每片 e2e 之前的自验
+    `web/playwright.config.ts` 的 project 集合比——并集相等、无空片；同一 project 被多片声称
+    时必须每片都带 `--shard=i/n`、n 相同、i 恰好 1..n 各一次，否则就是重叠或漏片；`others` 是
+    其余每一片（按 matrix 顺序、`|` 隔开）、浏览器按片装的正是本片 project 要的引擎。第二层是每片 e2e 之前的自验
     （scripts/ci/playwright_shard_check.py，对着真 `--list`），第三层是 matrix 语义 + Gate 闭集。
     另外钉住：artifact 名按片唯一（upload-artifact v4 同名会失败）、必需步骤没有 `if:`、
     两条 Playwright 步都有 step 级 timeout（job 级硬杀时 step 停在 in_progress、收集步骤
@@ -1578,13 +1602,14 @@ class TestPlaywrightShards:
     """
 
     JOB = "windows-exe-smoke"
+    SHARDS = 3
 
     def _entries(self) -> list[dict[str, str]]:
         entries = _matrix_include(_job(CI, self.JOB))
         assert [e.get("shard") for e in entries] == [str(i) for i in range(1, len(entries) + 1)], (
             f"{self.JOB} 的 include 条目的 shard 必须恰好是 1..N：{entries}"
         )
-        assert len(entries) == 2, "现在定的是 2 片；改片数要同时改这里与文档里的实测"
+        assert len(entries) == self.SHARDS, "现在定的是 3 片；改片数要同时改这里与文档里的实测"
         for e in entries:
             assert set(e) == {"shard", "browsers", "projects", "others"}, (
                 f"include 条目的字段变了：{sorted(e)}——四个字段各有消费者（自验脚本 / e2e 命令 / 装浏览器）"
@@ -1592,31 +1617,47 @@ class TestPlaywrightShards:
         return entries
 
     def test_the_shards_partition_exactly_the_configured_projects(self):
-        """并集 == 配置的 project 集、两两不交、无空片；`others` == 其余片之并。"""
+        """并集 == 配置的 project 集、无空片；同一 project 的多片必须是 `--shard=1/n..n/n` 各一次；
+        `others` == 其余每一片的 `projects`（按 matrix 顺序、`|` 隔开）。"""
         entries = self._entries()
         configured = set(_playwright_projects())
-        sets = [_project_flags(e["projects"], f"片 {e['shard']} projects") for e in entries]
-        for i, a in enumerate(sets):
-            for b in sets[i + 1 :]:
-                assert not (a & b), f"两片都要跑 {sorted(a & b)}——同一片内容跑两遍、判定却只算一次"
-        union = set().union(*sets)
+        slices = [_slice_flags(e["projects"], f"片 {e['shard']} projects") for e in entries]
+        union = set().union(*(s for s, _ in slices))
         assert union == configured, (
-            f"两片的 project 并集 {sorted(union)} ≠ 配置里的 {sorted(configured)}："
+            f"各片的 project 并集 {sorted(union)} ≠ 配置里的 {sorted(configured)}："
             f"漏 {sorted(configured - union)} / 多 {sorted(union - configured)}"
         )
+        for proj in sorted(configured):
+            owners = [sh for s, sh in slices if proj in s]
+            if len(owners) == 1:
+                assert owners[0] is None, f"{proj} 只有一片却带了 --shard={owners[0]}——另一半没人跑"
+                continue
+            assert all(o is not None for o in owners), (
+                f"{proj} 被 {len(owners)} 片声称，其中有不带 --shard 的整 project——同一内容跑两遍"
+            )
+            ns = {o[1] for o in owners if o}
+            assert len(ns) == 1 and sorted(o[0] for o in owners if o) == list(
+                range(1, next(iter(ns)) + 1)
+            ), f"{proj} 的 --shard 没凑成 1/n..n/n 各一次：{owners}"
         for i, e in enumerate(entries):
-            others = _project_flags(e["others"], f"片 {e['shard']} others")
-            rest = set().union(*(s for j, s in enumerate(sets) if j != i))
-            assert others == rest, (
-                f"片 {e['shard']} 的 others {sorted(others)} 不是其余片之并 {sorted(rest)}——"
-                "自验脚本会拿它去算「本片 ∪ 另一片 == 全集」"
+            rest = [x["projects"] for j, x in enumerate(entries) if j != i]
+            assert e["others"].split("|") == rest, (
+                f"片 {e['shard']} 的 others {e['others'].split('|')} 不是其余各片的 projects {rest}——"
+                "自验脚本会拿它去逐片跑 `--list`"
             )
 
+    def test_the_chromium_halves_are_shards_1_and_3_and_shard_2_keeps_its_meaning(self):
+        """已登记为必需检查的 check 名不许消失 / 改义：片 1 / 片 2 保持，新增的是片 3。"""
+        by = {e["shard"]: e["projects"] for e in self._entries()}
+        assert by["1"] == "--project=chromium --shard=1/2"
+        assert by["2"] == "--project=webkit --project=chromium-en"
+        assert by["3"] == "--project=chromium --shard=2/2"
+
     def test_each_shard_installs_exactly_the_engines_its_projects_need(self):
-        """片 1 只装 chromium，片 2 chromium + webkit——按 project 的设备家族推，不按名字猜。"""
+        """片 1、3 只装 chromium，片 2 chromium + webkit——按 project 的设备家族推，不按名字猜。"""
         engine_of = _playwright_projects()
         for e in self._entries():
-            need = {engine_of[p] for p in _project_flags(e["projects"], "projects")}
+            need = {engine_of[p] for p in _slice_flags(e["projects"], "projects")[0]}
             installed = set(e["browsers"].split())
             assert installed == need, (
                 f"片 {e['shard']} 装的是 {sorted(installed)}，它的 project 要的是 {sorted(need)}"
@@ -1673,8 +1714,8 @@ class TestPlaywrightShards:
         assert len(names) >= 3, f"前提：这条腿至少三个 upload-artifact：{names}"
         for n in names:
             assert "${{ matrix.shard }}" in n, f"artifact `{n}` 的名字里没有片号——两片会撞名"
-        expanded = {n.replace("${{ matrix.shard }}", k) for n in names for k in ("1", "2")}
-        assert len(expanded) == 2 * len(names)
+        expanded = {n.replace("${{ matrix.shard }}", k) for n in names for k in ("1", "2", "3")}
+        assert len(expanded) == 3 * len(names)
 
     @pytest.mark.parametrize(
         "job_id, step_minutes, job_minutes",

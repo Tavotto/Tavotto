@@ -155,13 +155,14 @@ test('故障卡 → 打开 → 发送：脚本运行失败卡里入口在折叠�
     const dialog = page.locator('[data-dialog="diagnostics-send"]')
     await expect(dialog).toBeVisible()
     await expect(dialog.locator('[data-diag-send-confirm]')).toBeEnabled({ timeout: 60_000 })
-    // 轻确认框：默认只有一句话，详情收起
+    // 说明框在前（2026-10-19）：副标题那一句 + 输入框常显，附件内容收起
+    await expect(dialog.locator('[data-diag-send-note]')).toBeVisible()
     await expect(dialog.locator('[data-diag-send-sentence]')).toBeVisible()
     await expect(dialog.locator('[data-diag-send-details]')).not.toHaveAttribute('open', '')
     expect(connections).toBe(0)
-    // 收起态紧凑：标题 + 一句话 + 「查看详情」 + 按钮行，中间没有预留的大块空白
+    // 收起态紧凑：标题 + 副标题一句 + 说明（标签 + 框 + 提示行）+ 问题类型 + 一行附件 + 按钮行
     const compact = await dialog.boundingBox()
-    expect(compact!.height).toBeLessThan(230)
+    expect(compact!.height).toBeLessThan(500) // 1400×900 下实测约 466
     if (SHOTS) {
       await page.screenshot({ path: `${SHOTS}/send-dialog-collapsed.png` })
       await dialog.locator('[data-diag-send-details] > summary').click()
@@ -184,3 +185,164 @@ test('故障卡 → 打开 → 发送：脚本运行失败卡里入口在折叠�
     sink.close()
   }
 })
+
+test('意外错误 → 右下角反馈卡：贴窗口右下角、一颗主按钮；点了只打开确认框（零连接），× 关掉', async ({ app, page }) => {
+  test.setTimeout(120_000)
+  let connections = 0
+  const sink = net.createServer((sock) => {
+    connections += 1
+    sock.destroy()
+  })
+  await new Promise<void>((r) => sink.listen(0, '127.0.0.1', r))
+  const port = (sink.address() as net.AddressInfo).port
+  const project = mkdtempSync(path.join(os.tmpdir(), 'tavotto-diag-corner-'))
+  try {
+    const a = await app({
+      figures: project,
+      env: {
+        TAVOTTO_NO_DIAG_UPLOAD: '0',
+        TAVOTTO_DIAG_DEV_LOOPBACK: '1',
+        TAVOTTO_DIAG_ENDPOINT: `https://127.0.0.1:${port}`,
+      },
+    })
+    await page.setViewportSize({ width: 1400, height: 900 })
+    await page.goto(a.baseURL)
+    await expect(page.locator('[data-work-panel]')).toBeVisible({ timeout: 60_000 })
+    // 一条未捕获的内建错误（不是业务错误类、不是 ApiError）：走 window error → 意外错误入口
+    await page.evaluate(() => {
+      setTimeout(() => {
+        throw new TypeError('corner card e2e')
+      }, 0)
+    })
+    const card = page.locator('[data-unexpected-error-card]')
+    await expect(card).toBeVisible({ timeout: 10_000 })
+    await page.waitForTimeout(400) // 等入场动画落定再量
+    const box = (await card.boundingBox())!
+    expect(1400 - (box.x + box.width), '贴右边').toBeLessThan(32)
+    expect(900 - (box.y + box.height), '贴底边').toBeLessThan(32)
+    await expect(card.locator('[data-variant="primary"]')).toHaveCount(1)
+    if (SHOTS) await page.screenshot({ path: `${SHOTS}/feedback-corner-card.png` })
+
+    // 任何对话框都盖在它上面（层级在遮罩之下）：打开设置，反馈卡左上角点到的不是反馈卡
+    await page.locator('[data-rail="settings"]').click()
+    await expect(page.locator('[data-section="diagnostics"]')).toBeVisible()
+    const onTop = await page.evaluate(() => {
+      const el = document.querySelector('[data-unexpected-error-card]')!
+      const r = el.getBoundingClientRect()
+      const hit = document.elementFromPoint(r.left + 8, r.top + 8)
+      return !!hit && el.contains(hit)
+    })
+    expect(onTop, '对话框开着时反馈卡不在最上层').toBe(false)
+    await page.keyboard.press('Escape')
+    await expect(page.locator('[data-section="diagnostics"]')).toBeHidden()
+
+    await card.locator('[data-feedback-corner-send]').click()
+    await expect(card).toHaveCount(0)
+    const dialog = page.locator('[data-dialog="diagnostics-send"]')
+    await expect(dialog).toBeVisible()
+    await expect(dialog.locator('[data-diag-send-confirm]')).toBeEnabled({ timeout: 60_000 })
+    expect(connections).toBe(0)
+  } finally {
+    sink.close()
+  }
+})
+
+test('右下角反馈卡不盖住准备引导卡：属性栏收起、窗口小，两张卡不相交且反馈卡整张在窗口里', async ({ app, page }) => {
+  test.setTimeout(180_000)
+  const project = mkdtempSync(path.join(os.tmpdir(), 'tavotto-diag-prep-'))
+  writeFileSync(
+    path.join(project, 'plot.py'),
+    'import matplotlib\nmatplotlib.use("Agg")\nimport matplotlib.pyplot as plt\n' +
+      'fig, ax = plt.subplots()\nax.plot([1, 2, 3])\nraise RuntimeError("boom")\nfig.savefig("out.png")\n',
+    'utf-8',
+  )
+  const a = await app({
+    figures: project,
+    env: {
+      TAVOTTO_NO_DIAG_UPLOAD: '0',
+      TAVOTTO_DIAG_DEV_LOOPBACK: '1',
+      TAVOTTO_DIAG_ENDPOINT: 'https://127.0.0.1:9', // 不会被连：本条不点发送
+    },
+  })
+  // 一次加载（准备卡关掉后重载不会再自动出现），之后只改窗口大小：避让要跟着窗口重算
+  await page.setViewportSize({ width: 1024, height: 768 })
+  await page.goto(a.baseURL)
+  const prep = page.locator('[data-prep-card]')
+  await expect(prep).toHaveAttribute('data-prep-state', 'discover', { timeout: 60_000 })
+  const close = page.locator('[data-inspector-close]')
+  if (await close.isVisible()) await close.click()
+  await page.evaluate(() => {
+    setTimeout(() => {
+      throw new TypeError('prep overlap e2e')
+    }, 0)
+  })
+  const card = page.locator('[data-unexpected-error-card]')
+  await expect(card).toBeVisible({ timeout: 10_000 })
+  for (const [w, h] of [
+    [1024, 768],
+    [1024, 560],
+  ] as const) {
+    await page.setViewportSize({ width: w, height: h })
+    await page.waitForTimeout(500) // 入场动画与避让落定
+    const c = (await card.boundingBox())!
+    const p = (await prep.boundingBox())!
+    const intersects = c.x < p.x + p.width && p.x < c.x + c.width && c.y < p.y + p.height && p.y < c.y + c.height
+    expect(intersects, `${w}×${h}：反馈卡 ${JSON.stringify(c)} 与准备卡 ${JSON.stringify(p)} 相交`).toBe(false)
+    expect(c.y, '整张在窗口里（上）').toBeGreaterThanOrEqual(0)
+    expect(c.x, '整张在窗口里（左）').toBeGreaterThanOrEqual(0)
+    if (SHOTS) await page.screenshot({ path: `${SHOTS}/feedback-corner-vs-prep-${w}x${h}.png` })
+  }
+})
+
+test('属性栏变窄、准备卡被画布带着右移时，反馈卡跟着避让（只有布局变化、没有 DOM 增删）', async ({ app, page }) => {
+  test.setTimeout(180_000)
+  const project = mkdtempSync(path.join(os.tmpdir(), 'tavotto-diag-prep-drag-'))
+  writeFileSync(
+    path.join(project, 'plot.py'),
+    'import matplotlib\nmatplotlib.use("Agg")\nimport matplotlib.pyplot as plt\n' +
+      'fig, ax = plt.subplots()\nax.plot([1, 2, 3])\nfig.savefig("out.png")\n',
+    'utf-8',
+  )
+  const a = await app({
+    figures: project,
+    env: { TAVOTTO_NO_DIAG_UPLOAD: '0', TAVOTTO_DIAG_DEV_LOOPBACK: '1', TAVOTTO_DIAG_ENDPOINT: 'https://127.0.0.1:9' },
+  })
+  await page.setViewportSize({ width: 1280, height: 800 })
+  await page.goto(a.baseURL)
+  const prep = page.locator('[data-prep-card]')
+  await expect(prep).toHaveAttribute('data-prep-state', 'discover', { timeout: 60_000 })
+  // 只改属性栏的宽度（style 属性变化，没有 DOM 增删）——拖动把手的每一帧就是这种变化；
+  // 用键盘 Home / End 换档会让属性栏里的内容重排出增删，做不成「只有布局变化」的对照
+  const setInspectorWidth = (px: number) =>
+    page.evaluate((w) => {
+      // 外层宽度由抽屉动效（drawerMotion）写在 style 上，内层再写一份：两层都改
+      const aside = document.querySelector<HTMLElement>('[data-inspector-panel]')
+      const inner = aside?.querySelector<HTMLElement>(':scope > div')
+      if (!aside || !inner) throw new Error('找不到属性栏')
+      aside.style.width = `${w}px`
+      inner.style.width = `${w}px`
+    }, px)
+  await setInspectorWidth(520) // 属性栏很宽：准备卡在左边，不与反馈卡相交
+  await page.waitForTimeout(400)
+  await page.evaluate(() => {
+    setTimeout(() => {
+      throw new TypeError('prep drag e2e')
+    }, 0)
+  })
+  const card = page.locator('[data-unexpected-error-card]')
+  await expect(card).toBeVisible({ timeout: 10_000 })
+  const overlap = async () => {
+    const c = (await card.boundingBox())!
+    const p = (await prep.boundingBox())!
+    return c.x < p.x + p.width && p.x < c.x + c.width && c.y < p.y + p.height && p.y < c.y + c.height
+  }
+  await page.waitForTimeout(400)
+  expect(await overlap(), '属性栏最宽时不相交').toBe(false)
+  const before = (await prep.boundingBox())!.x
+  await setInspectorWidth(240) // 属性栏变窄：画布变宽，准备卡右移
+  await page.waitForTimeout(600)
+  expect((await prep.boundingBox())!.x, '准备卡确实被带着右移了（否则本条是空对照）').toBeGreaterThan(before + 20)
+  expect(await overlap(), '拖窄后仍不相交').toBe(false)
+  if (SHOTS) await page.screenshot({ path: `${SHOTS}/feedback-corner-after-inspector-drag.png` })
+})
+

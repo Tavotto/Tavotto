@@ -11,6 +11,7 @@ import { reconcileOne } from './background.ts';
 import { verification } from './verification.ts';
 import { InvocationBudget } from './budget.ts';
 import { validId, validSha } from '../core/policy.ts';
+import {admitHead,verifyHeadOne,AUTOMATIC_CRON} from './automatic.ts';
 
 export interface Env {
   CLA_VERIFICATION_LIMITER?:{limit(input:{key:string}):Promise<{success:boolean}>};
@@ -20,6 +21,11 @@ export interface Env {
   CLA_GITHUB_ENABLED?:string; CLA_OAUTH_ENABLED?:string; CLA_SIGNING_ENABLED?:string; CLA_CHECK_PUBLISHING_ENABLED?:string;
   CLA_UI_ENABLED?:string; CLA_BACKGROUND_ENABLED?:string;
   CLA_CI_VERIFICATION_ENABLED?:string;
+  CLA_DELEGATED_COUNTERSIGNING_ENABLED?:string;
+  CLA_AUTOMATIC_VERIFICATION_ENABLED?:string;
+  CLA_AUTOMATIC_PUBLISHING_ENABLED?:string;
+  CLA_WEBHOOK_SECRET?:string;
+  CLA_WEBHOOK_LIMITER?:{limit(input:{key:string}):Promise<{success:boolean}>};
 }
 const headers = {'cache-control':'no-store','referrer-policy':'no-referrer','x-content-type-options':'nosniff',
   'content-security-policy':"default-src 'none'; frame-ancestors 'none'"};
@@ -65,14 +71,20 @@ export function config(env:Env):LiveConfig {
   let c:LiveConfig;try{c=JSON.parse(env.CLA_CONFIG ?? '');}catch{throw new Rejected('configuration_required');}
   // A JSON config cannot silently turn capabilities on. Each binding is explicit and defaults false.
   return {...c,githubEnabled:env.CLA_GITHUB_ENABLED==='true',oauthEnabled:env.CLA_OAUTH_ENABLED==='true',
-    signingEnabled:env.CLA_SIGNING_ENABLED==='true',checkPublishingEnabled:env.CLA_CHECK_PUBLISHING_ENABLED==='true',backgroundEnabled:env.CLA_BACKGROUND_ENABLED==='true'};
+    signingEnabled:env.CLA_SIGNING_ENABLED==='true',checkPublishingEnabled:env.CLA_CHECK_PUBLISHING_ENABLED==='true',backgroundEnabled:env.CLA_BACKGROUND_ENABLED==='true',
+    delegatedCountersigningEnabled:env.CLA_DELEGATED_COUNTERSIGNING_ENABLED==='true',automaticVerificationEnabled:env.CLA_AUTOMATIC_VERIFICATION_ENABLED==='true',
+    automaticPublishingEnabled:env.CLA_AUTOMATIC_PUBLISHING_ENABLED==='true'};
 }
 export async function service(env:Env,budget?:InvocationBudget):Promise<LiveService> {
   const c=config(env),secrets:Secrets={clientSecret:env.CLA_CLIENT_SECRET ?? '',pkcs8:env.CLA_APP_PKCS8 ?? '',evidenceKey:env.CLA_EVIDENCE_KEY ?? ''};
   const key=await importAes(unbase64(secrets.evidenceKey));
   return new LiveService(c,new LiveStore(env.DB,budget,c),new GitHub(c,secrets,undefined,undefined,budget),key);
 }
-export default {async scheduled(_controller:unknown,env:Env):Promise<void> {
+export default {async scheduled(controller:{cron?:string},env:Env):Promise<void> {
+  if(controller.cron===AUTOMATIC_CRON) {
+    if(env.CLA_AUTOMATIC_VERIFICATION_ENABLED==='true')await verifyHeadOne(await service(env,new InvocationBudget()));
+    return;
+  }
   if(env.CLA_BACKGROUND_ENABLED!=='true')return;
   await reconcileOne(await service(env,new InvocationBudget()));
 },async fetch(req:Request,env:Env):Promise<Response> {
@@ -82,6 +94,17 @@ export default {async scheduled(_controller:unknown,env:Env):Promise<void> {
     const c=config(env);
     validateLive(c);
     if (url.origin!==c.origin) throw new Rejected('origin_rejected');
+    if(req.method==='POST' && url.pathname==='/webhooks/github' && !url.search) {
+      if(!c.automaticVerificationEnabled)throw new Rejected('automatic_verification_disabled');
+      if(!env.CLA_WEBHOOK_LIMITER || req.headers.get('content-type')?.split(';')[0]!=='application/json')return json({error:'webhook_configuration_required'},503);
+      try{if((await env.CLA_WEBHOOK_LIMITER.limit({key:'github-webhook'})).success!==true)return json({error:'webhook_busy'},429);}
+      catch{return json({error:'webhook_abuse_control_unavailable'},503);}
+      const reader=req.body?.getReader();if(!reader)throw new Rejected('webhook_rejected');const chunks:Uint8Array[]=[];let size=0;
+      for(;;){const {done,value}=await reader.read();if(done)break;size+=value.length;if(size>262144){await reader.cancel();throw new Rejected('webhook_rejected');}chunks.push(value);}
+      const raw=new Uint8Array(size);let at=0;for(const chunk of chunks){raw.set(chunk,at);at+=chunk.length;}
+      await admitHead(await service(env,new InvocationBudget()),raw,req.headers.get('x-hub-signature-256') ?? '',req.headers.get('x-github-delivery') ?? '',req.headers.get('x-github-event') ?? '',env.CLA_WEBHOOK_SECRET ?? '');
+      return json({accepted:true,publication:'not_attempted'},202);
+    }
     if(env.CLA_UI_ENABLED==='true' && req.method==='GET') {
       const assets:Record<string,[string,string]>={'/':[uiHTML,'text/html; charset=utf-8'],'/ui.css':[uiCSS,'text/css; charset=utf-8'],'/ui.js':[uiScript(),'application/javascript; charset=utf-8']};
       const asset=assets[url.pathname];if(asset && (url.pathname==='/' || !url.search))return new Response(asset[0],{headers:{...headers,'content-type':asset[1],
@@ -132,6 +155,8 @@ export default {async scheduled(_controller:unknown,env:Env):Promise<void> {
       return json(await s.packets(token,url.searchParams.get('cursor') ?? undefined));
     }
     if(req.method==='GET' && url.pathname==='/status' && [...url.searchParams.keys()].join(',')==='packet')return json(await s.status(token,url.searchParams.get('packet')!));
+    if(req.method==='GET' && url.pathname==='/audit' && [...url.searchParams.keys()].join(',')==='packet')
+      return json(await s.audit(token,url.searchParams.get('packet')!),200,{'content-disposition':'attachment; filename="cla-private-audit.json"'});
     if(req.method==='GET' && url.pathname==='/agreement' && (!url.search || [...url.searchParams.keys()].join(',')==='packet'))return json(await s.document(token,url.searchParams.get('packet') ?? undefined));
     if(req.method==='GET' && url.pathname==='/evidence') {
       const query=[...url.searchParams.keys()];if(query.length!==2 || !query.includes('packet') || !query.includes('role')) throw new Rejected('form_rejected');

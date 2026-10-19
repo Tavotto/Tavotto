@@ -58,7 +58,7 @@ export async function verifyCI(c:CIConfig,input:Locator,read:Read,clock=()=>Math
     if(policy.agreements[kind].path!==path || await sha256(await content(path))!==policy.agreements[kind].sha256)throw new Rejected('ci_source_invalid');
   }
   const before=await get('/pulls/'+input.pr);
-  const prMatches=(p:any)=>p?.number===input.pr && p.state==='open' && p.base?.repo?.id===c.repositoryId && p.head?.sha===input.head && validSha(p.base?.sha);
+  const prMatches=(p:any)=>p?.number===input.pr && p.state==='open' && p.base?.repo?.id===c.repositoryId && p.base?.ref===meta.default_branch && p.head?.sha===input.head && validSha(p.base?.sha);
   if(!prMatches(before))throw new Rejected('ci_head_changed');
   const runs:any[]=[];let total=-1;
   for(let page=1;page<=10;page++){

@@ -28,6 +28,7 @@ import { NamedNodeQuickBox } from '@/components/NamedNodeQuickBox'
 import { LeftPanel } from '@/components/left/LeftPanel'
 import { LeftRail } from '@/components/left/LeftRail'
 import { CanvasHud, NotificationRail } from '@/components/StatusBar'
+import { FeedbackCorner } from '@/components/FeedbackCorner'
 import { PerfProbeHud } from '@/components/PerfProbeHud'
 import { TopBar } from '@/components/TopBar'
 import { UpdateNoticeDialog } from '@/components/UpdateNoticeDialog'
@@ -135,6 +136,8 @@ export function App() {
         <div data-picker-notification-host className="pointer-events-none fixed inset-0 z-canvas-chrome">
           <NotificationRail announceRole={null} />
         </div>
+        {/* 右下角的问题反馈卡同理：上次没正常退出的那张要在选择页就看得见 */}
+        <FeedbackCorner />
       </>
     )
   return <Workspace />
@@ -341,6 +344,8 @@ function Workspace() {
       <RelinkDialog />
         <TelemetryConsentDialog />
         <DiagnosticsSendHost />
+        {/* 意外错误 / 上次没正常退出的反馈卡：贴窗口右下角（不在画布的通知轨里） */}
+        <FeedbackCorner />
         <UpdateNoticeDialog />
         <CommandPalette />
         <ShortcutHelp />

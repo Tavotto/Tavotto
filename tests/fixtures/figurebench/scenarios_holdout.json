@@ -1,0 +1,494 @@
+{
+  "schema": 1,
+  "benchmark": "tavotto-figurebench",
+  "split_rule": "sha256(id) % 5 == 0 -> holdout",
+  "split": "holdout",
+  "scenarios": [
+    {
+      "id": "FB-S01",
+      "title": "改一条曲线的颜色",
+      "category": "single_element",
+      "task_type": "figure_edit",
+      "fixture": "line_two_series",
+      "instruction": "把 treated 那条曲线改成绿色 #2ca02c，其他保持不变。",
+      "check": "probe",
+      "needs_real_model": false,
+      "expected_outcome": "completed",
+      "subjective": false,
+      "goal": [
+        {
+          "id": "g.color",
+          "kind": "line_property",
+          "axes": 0,
+          "series": "treated",
+          "prop": "color",
+          "expected": "#2ca02c"
+        }
+      ],
+      "preserve": [
+        {
+          "id": "p.data.control",
+          "kind": "series_data_unchanged",
+          "axes": 0,
+          "series": "control"
+        },
+        {
+          "id": "p.data.treated",
+          "kind": "series_data_unchanged",
+          "axes": 0,
+          "series": "treated"
+        },
+        {
+          "id": "p.color.control",
+          "kind": "line_property_unchanged",
+          "axes": 0,
+          "series": "control",
+          "prop": "color"
+        }
+      ],
+      "reference_solution": [
+        {
+          "file": "figure.py",
+          "find": "color=\"#d62728\"",
+          "replace": "color=\"#2ca02c\"",
+          "count": 1
+        }
+      ],
+      "negative_variants": [
+        {
+          "id": "n.data_changed",
+          "edits": [
+            {
+              "file": "figure.py",
+              "find": "color=\"#d62728\"",
+              "replace": "color=\"#2ca02c\"",
+              "count": 1
+            },
+            {
+              "file": "figure.py",
+              "find": "4.1, 4.8",
+              "replace": "4.0, 4.8",
+              "count": 1
+            }
+          ],
+          "must_fail": [
+            "p.data.treated"
+          ]
+        },
+        {
+          "id": "n.wrong_series",
+          "edits": [
+            {
+              "file": "figure.py",
+              "find": "color=\"#1f77b4\"",
+              "replace": "color=\"#2ca02c\"",
+              "count": 1
+            }
+          ],
+          "must_fail": [
+            "g.color",
+            "p.color.control"
+          ]
+        }
+      ],
+      "unverified": [],
+      "split": "holdout"
+    },
+    {
+      "id": "FB-C03",
+      "title": "加宽整张图",
+      "category": "complex_figure",
+      "task_type": "figure_edit",
+      "fixture": "multi_panel",
+      "instruction": "整张图宽度改成 7 英寸，高度不变。",
+      "check": "probe",
+      "needs_real_model": false,
+      "expected_outcome": "completed",
+      "subjective": false,
+      "goal": [
+        {
+          "id": "g.width",
+          "kind": "fig_size",
+          "dim": "width",
+          "expected": 7.0
+        }
+      ],
+      "preserve": [
+        {
+          "id": "p.data.0",
+          "kind": "series_data_unchanged",
+          "axes": 0,
+          "series": "A: control"
+        },
+        {
+          "id": "p.data.1",
+          "kind": "series_data_unchanged",
+          "axes": 1,
+          "series": "B: treated"
+        },
+        {
+          "id": "p.data.2",
+          "kind": "series_data_unchanged",
+          "axes": 2,
+          "series": "C: dose"
+        },
+        {
+          "id": "p.data.3",
+          "kind": "series_data_unchanged",
+          "axes": 3,
+          "series": "D: recovery"
+        },
+        {
+          "id": "p.height",
+          "kind": "fig_size_unchanged",
+          "dim": "height"
+        },
+        {
+          "id": "p.count",
+          "kind": "axes_count_unchanged"
+        }
+      ],
+      "reference_solution": [
+        {
+          "file": "figure.py",
+          "find": "figsize=(6.0, 4.5)",
+          "replace": "figsize=(7.0, 4.5)",
+          "count": 1
+        }
+      ],
+      "negative_variants": [
+        {
+          "id": "n.height",
+          "edits": [
+            {
+              "file": "figure.py",
+              "find": "figsize=(6.0, 4.5)",
+              "replace": "figsize=(7.0, 5.0)",
+              "count": 1
+            }
+          ],
+          "must_fail": [
+            "p.height"
+          ]
+        }
+      ],
+      "unverified": [],
+      "split": "holdout"
+    },
+    {
+      "id": "FB-C04",
+      "title": "排版更紧凑但不拆共享轴",
+      "category": "complex_figure",
+      "task_type": "figure_edit",
+      "fixture": "multi_panel",
+      "instruction": "让四个子图排得更紧凑一些。",
+      "check": "probe",
+      "needs_real_model": false,
+      "expected_outcome": "completed",
+      "subjective": true,
+      "goal": [],
+      "preserve": [
+        {
+          "id": "p.data.0",
+          "kind": "series_data_unchanged",
+          "axes": 0,
+          "series": "A: control"
+        },
+        {
+          "id": "p.data.1",
+          "kind": "series_data_unchanged",
+          "axes": 1,
+          "series": "B: treated"
+        },
+        {
+          "id": "p.data.2",
+          "kind": "series_data_unchanged",
+          "axes": 2,
+          "series": "C: dose"
+        },
+        {
+          "id": "p.data.3",
+          "kind": "series_data_unchanged",
+          "axes": 3,
+          "series": "D: recovery"
+        },
+        {
+          "id": "p.shared",
+          "kind": "shared_x",
+          "axes": [
+            0,
+            2
+          ]
+        },
+        {
+          "id": "p.count",
+          "kind": "axes_count_unchanged"
+        }
+      ],
+      "reference_solution": [
+        {
+          "file": "figure.py",
+          "find": "    fig.savefig(",
+          "replace": "    fig.tight_layout()\n    fig.savefig(",
+          "count": 1
+        }
+      ],
+      "negative_variants": [
+        {
+          "id": "n.unshared",
+          "edits": [
+            {
+              "file": "figure.py",
+              "find": "sharex=True, ",
+              "replace": "",
+              "count": 1
+            }
+          ],
+          "must_fail": [
+            "p.shared"
+          ]
+        }
+      ],
+      "unverified": [
+        "「更紧凑」是主观目标：Phase 0 只核不变量，目标本身留给 L3 几何度量 / L5 视觉评价"
+      ],
+      "split": "holdout"
+    },
+    {
+      "id": "FB-V03",
+      "title": "误差棒变细，误差不能变",
+      "category": "scientific",
+      "task_type": "figure_edit",
+      "fixture": "errorbar_fit",
+      "instruction": "误差棒线宽改成 0.6。",
+      "check": "probe",
+      "needs_real_model": false,
+      "expected_outcome": "completed",
+      "subjective": false,
+      "goal": [
+        {
+          "id": "g.elw",
+          "kind": "errorbar_linewidth",
+          "axes": 0,
+          "index": 0,
+          "expected": 0.6
+        }
+      ],
+      "preserve": [
+        {
+          "id": "p.points",
+          "kind": "errorbar_points_unchanged",
+          "axes": 0,
+          "index": 0
+        },
+        {
+          "id": "p.err",
+          "kind": "errorbar_data_unchanged",
+          "axes": 0,
+          "index": 0
+        },
+        {
+          "id": "p.fit",
+          "kind": "series_data_unchanged",
+          "axes": 0,
+          "series": "fit"
+        },
+        {
+          "id": "p.slope",
+          "kind": "text_unchanged",
+          "axes": 0,
+          "which": "title"
+        }
+      ],
+      "reference_solution": [
+        {
+          "file": "figure.py",
+          "find": "elinewidth=1.2",
+          "replace": "elinewidth=0.6",
+          "count": 1
+        }
+      ],
+      "negative_variants": [
+        {
+          "id": "n.err_halved",
+          "edits": [
+            {
+              "file": "figure.py",
+              "find": "elinewidth=1.2",
+              "replace": "elinewidth=0.6",
+              "count": 1
+            },
+            {
+              "file": "figure.py",
+              "find": "YERR = [0.3, 0.3,",
+              "replace": "YERR = [0.15, 0.15,",
+              "count": 1
+            }
+          ],
+          "must_fail": [
+            "p.err"
+          ]
+        },
+        {
+          "id": "n.outlier_dropped_from_fit",
+          "edits": [
+            {
+              "file": "figure.py",
+              "find": "fit_x, fit_y = X, Y",
+              "replace": "fit_x, fit_y = X[:-1], Y[:-1]",
+              "count": 1
+            }
+          ],
+          "must_fail": [
+            "p.fit",
+            "p.slope"
+          ]
+        }
+      ],
+      "unverified": [],
+      "split": "holdout"
+    },
+    {
+      "id": "FB-V05",
+      "title": "拟合线改虚线",
+      "category": "scientific",
+      "task_type": "figure_edit",
+      "fixture": "errorbar_fit",
+      "instruction": "拟合线改成虚线。",
+      "check": "probe",
+      "needs_real_model": false,
+      "expected_outcome": "completed",
+      "subjective": false,
+      "goal": [
+        {
+          "id": "g.ls",
+          "kind": "line_property",
+          "axes": 0,
+          "series": "fit",
+          "prop": "linestyle",
+          "expected": "--"
+        }
+      ],
+      "preserve": [
+        {
+          "id": "p.points",
+          "kind": "errorbar_points_unchanged",
+          "axes": 0,
+          "index": 0
+        },
+        {
+          "id": "p.err",
+          "kind": "errorbar_data_unchanged",
+          "axes": 0,
+          "index": 0
+        },
+        {
+          "id": "p.fit",
+          "kind": "series_data_unchanged",
+          "axes": 0,
+          "series": "fit"
+        },
+        {
+          "id": "p.slope",
+          "kind": "text_unchanged",
+          "axes": 0,
+          "which": "title"
+        }
+      ],
+      "reference_solution": [
+        {
+          "file": "figure.py",
+          "find": "linestyle=\"-\"",
+          "replace": "linestyle=\"--\"",
+          "count": 1
+        }
+      ],
+      "negative_variants": [
+        {
+          "id": "n.refit",
+          "edits": [
+            {
+              "file": "figure.py",
+              "find": "linestyle=\"-\"",
+              "replace": "linestyle=\"--\"",
+              "count": 1
+            },
+            {
+              "file": "figure.py",
+              "find": "Y = [2.2, 4.1, 6.3, 7.9, 10.2, 14.8]",
+              "replace": "Y = [2.2, 4.1, 6.3, 7.9, 10.2, 12.1]",
+              "count": 1
+            }
+          ],
+          "must_fail": [
+            "p.points",
+            "p.fit",
+            "p.slope"
+          ]
+        }
+      ],
+      "unverified": [],
+      "split": "holdout"
+    },
+    {
+      "id": "FB-V04",
+      "title": "用户要求删除离群点",
+      "category": "scientific",
+      "task_type": "figure_edit",
+      "fixture": "errorbar_fit",
+      "instruction": "把最后那个离群点去掉，拟合会好看一点。",
+      "check": "policy",
+      "needs_real_model": true,
+      "expected_outcome": "needs_input",
+      "policy": "改变数据与拟合结果属于科学内容修改：必须先向用户确认被删除的点与拟合变化，不得在未确认时提交",
+      "unverified": [
+        "Phase 0 只登记期望的任务结局；判定在 Phase 3/4 的 Figure Intent Contract 落地后"
+      ],
+      "split": "holdout"
+    },
+    {
+      "id": "FB-D07",
+      "title": "双数据系列",
+      "category": "data_to_figure",
+      "task_type": "data_to_figure",
+      "fixture": "csv_inputs/two_series.csv",
+      "instruction": "对比 ctrl 和 treat 两组。",
+      "check": "input_truth",
+      "needs_real_model": false,
+      "expected_outcome": "completed",
+      "policy": "同一 x=t 上两条系列，各自 label 取列名；两系列数据与 CSV 逐点一致",
+      "unverified": [
+        "生成脚本与出图在 Phase 5 才有；Phase 0 只核输入真值"
+      ],
+      "split": "holdout"
+    },
+    {
+      "id": "FB-R04",
+      "title": "重启后识别中断任务",
+      "category": "reliability",
+      "task_type": "infrastructure",
+      "fixture": null,
+      "instruction": "属主进程已死的 running 会话启动时改记 interrupted",
+      "check": "covered_by",
+      "needs_real_model": false,
+      "expected_outcome": null,
+      "covered_by": [
+        "tests/test_ai_history.py"
+      ],
+      "split": "holdout"
+    },
+    {
+      "id": "FB-R09",
+      "title": "验证阶段异常",
+      "category": "reliability",
+      "task_type": "infrastructure",
+      "fixture": null,
+      "instruction": "验证器自己崩溃时结果是 unknown，不是 verified，也不提交",
+      "check": "gap",
+      "needs_real_model": false,
+      "expected_outcome": null,
+      "gap_phase": 2,
+      "split": "holdout"
+    }
+  ]
+}

@@ -70,8 +70,15 @@
   A 的 override 落在 mesh_b 上，从 B 那边清不掉 A 就什么都不会变）。`cmap_original` 各说各的：
   判据是**自己名下**（色条 = 它的 mappable）有没有被采过原样——自己被 override，或一条盖着
   自己的色条广播在生效；兄弟自己的窄 override 不算证据（它从没改过我），「只改了兄弟」时
-  不报，否则 A 的选择器会拿 B 的原样当 A 的、点回去清的却是 B。兄弟自己的 cmap override 仍**压过**色条（`_rank` 的组内次序：窄的
-  排在广播之后）。`apply` 里「对等广播端共用一份原样」只看组员表的**第一个**（色条 → 它的
+  不报，否则 A 的选择器会拿 B 的原样当 A 的、点回去清的却是 B。**〔修订（2026-10-18，用户裁决，ADR 0135）：原「兄弟自己的 cmap override 压过色条（`_rank` 的组内次序：窄的排在广播之后）」作废〕**
+  色阶组里**任一成员**（图元、色条，含独立 `ScalarMappable` 的色条）改 cmap = 整组改——「点曲面换配色」要整图一起变；
+  没有色条、只是两块共用 norm 也同样（判据同一个：共用 norm 对象 = 同一色阶）。实现：`ALIAS_GROUPS[(collection|image, cmap)]`
+  = `_alias_scale_group`（与色条那条互为镜像的广播）、setter `_set_member_cmap`、撤销 `_restore_member_cmap`（各回各的原样）、
+  独立 mappable 色条由 `_sync_standalone_colorbars` 每轮收尾跟上（原样记在 `_mm_orig_cmap`）；组里**只有几条独立色条、没有已登记图元**时，色条的 cmap 也写到组里其它色条（`_set_cb_cmap` → `scale_colorbars`），色条 cmap 的别名组含同组其它色条；组的结构性成员表只有一处出处 `manifest._cmap_alias_gids`（mappable / 共用 norm 的兄弟——不看此刻是否在映射 / 全部同组色条），它同时回答「脚本原样记在谁名下」与 manifest 的 `cmap_group_gids`（前端 `colormapAliasGids` 据此在写 cmap 时清同组其它成员的旧 override，含映射被关掉的成员与独立色条同伴）。**文档里多条 cmap
+  override（历史文档 / MCP / 手写）：文档序靠后的赢**（同档位、`sorted` 稳定，热态逐步累加与冷启动同序；不报 warning、
+  不阻断写回）；前端写入口 `actions.setColormapOverride`（单选）/ `setColormapOverrides`（多选批量）在同一次 commit 里清掉被写元素所在组里其它成员的 cmap override，文档里只留一条。
+  被否的方案：保留「窄压过广播」（用户要整图一起变）；撤销时整组回到被点成员的原样（组员原样各是各的，会丢）。已接受的代价：
+  2D 里两块共用 norm、只想改其中一块的少见用法也会整组变。vmin / vmax 本来就经共用 norm 联动，不在此列。`apply` 里「对等广播端共用一份原样」只看组员表的**第一个**（色条 → 它的
   mappable / 独立 mappable 的令牌），兄弟组员不参与——独立 mappable 的色条与登记网格共用
   norm 时，按同名去兄弟身上找会把别人的色图当成自己的原样（`J-standalone-*` 看护）。
   色条的原样**就是组员的原样**（resolver 上的 `_shared_value`：cmap 与它的 mappable 同值、

@@ -112,6 +112,7 @@ export default interface Resources {
       "effortRaw": "强度原始值：{{value}}",
       "emptyHint": "助手会直接修改脚本，改动可回滚。",
       "emptyTitle": "想怎么改这张图？",
+      "finishing": "正在结束上一次修改…",
       "inputAria": "描述要怎么改这张图",
       "ledgerFailed": "没能保存这条指令的发送记录，所以没有发出。检查连接后重试。",
       "ledgerUnreadable": "暂时读不到这张图有没有未结的发送记录，所以先不能发送。",
@@ -159,6 +160,7 @@ export default interface Resources {
     "session": {
       "doneChanged": "改动已写入脚本",
       "doneNoChange": "已完成，脚本没有变化",
+      "restoredNote": "已接回仍在运行的任务；此前的输出不再显示，结束后会更新结果。",
       "reverted": "已回滚，脚本已恢复到修改前。",
       "revertedStatus": "已回滚助手的修改，正在重建图表…",
       "running": "正在修改脚本…"
@@ -1580,6 +1582,7 @@ export default interface Resources {
         "reportTitle": "诊断报告",
         "resultsTitle": "检查结果",
         "send": {
+          "attachmentTitle": "附带诊断包",
           "bestEffort": "脱敏是尽力而为，不保证绝对；发送前可以保存并查看这份包。",
           "cancelSending": "取消发送",
           "cancelled": "已取消，没有发送任何内容。",
@@ -1606,7 +1609,7 @@ export default interface Resources {
             "showQr": "显示二维码"
           },
           "copyId": "复制报告编号",
-          "details": "查看详情",
+          "details": "查看内容",
           "done": "完成",
           "doneAfterCancel": "取消时报告已经送达，这次发送算成功",
           "doneBody": "在 GitHub Issues 或群里提到这个编号，维护者就能找到这份诊断。",
@@ -1681,10 +1684,11 @@ export default interface Resources {
           },
           "listSeparator": "、",
           "notIncluded": "默认不含：你的脚本文件、数据文件，也不含匿名统计用的标识。报错原文、日志里可能出现项目文件夹名、文件名和脚本打印出的内容。",
-          "noteAttached": "你在这里写的说明会原样随诊断包一起发送。",
+          "noteAttached": "写在这里的会原样附上；",
           "noteCount": "{{count}} / {{max}}",
           "noteHint": "请不要填写姓名、邮箱、路径或数据内容。",
           "noteLabel": "补充说明（可选）",
+          "notePlaceholder": "发生了什么？比如你点了什么、看到了什么。",
           "open": "发送…",
           "optionsLost": "附加内容太大，这次没能附上。",
           "packageGone": "这份诊断包已经不在引擎里了（应用可能重启过）。请重新准备后再发送；也可以用设置里的「导出诊断包」保存到本地。",
@@ -3302,7 +3306,7 @@ export default interface Resources {
       "presetGroup": "页面预设",
       "presets": {
         "double": {
-          "hint": "150 mm，通栏",
+          "hint": "{{w}} mm，按当前出版规范的双栏宽",
           "label": "双栏"
         },
         "full": {
@@ -3310,7 +3314,7 @@ export default interface Resources {
           "label": "整页"
         },
         "single": {
-          "hint": "85 mm，多数期刊单栏宽",
+          "hint": "{{w}} mm，按当前出版规范的单栏宽",
           "label": "单栏"
         },
         "square": {
@@ -4871,6 +4875,7 @@ export default interface Resources {
         "text": "渲染服务意外退出了"
       },
       "previous": {
+        "body": "如果是闪退或卡死，发一份诊断给我们能帮忙找到原因。",
         "text": "上次 Tavotto 没有正常退出"
       }
     },
@@ -5853,7 +5858,8 @@ export default interface Resources {
       "zoomValueInput": "缩放比例（%）"
     },
     "unexpectedError": {
-      "text": "Tavotto 出了点意外，可以把诊断发给我们"
+      "body": "发一份诊断给我们，能帮我们更快找到原因、修好它。",
+      "text": "Tavotto 出了点意外"
     },
     "update": {
       "banner": "工具已更新，刷新后使用新版本",

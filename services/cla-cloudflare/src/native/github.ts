@@ -332,6 +332,23 @@ export class GitHub implements GitHubPort {
       data.output?.summary!==check.text)throw new Rejected('check_source_mismatch');
     return this.receipt(data,check);
   }
+  // New heads only. All authentication and reads precede the durable send intent.
+  // Existing/ambiguous owned runs require reconciliation, never a second POST.
+  async publishNew(check:CheckProposal,beforeSend:()=>Promise<string>):Promise<CheckReceipt> {
+    if(!this.c.automaticPublishingEnabled || !this.c.checkPublishingEnabled)throw new Rejected('publication_disabled');
+    if(check.appId!==this.c.appId || check.appSlug!==this.c.appSlug || check.name!==this.c.checkName ||
+      check.proof.repository_id!==this.c.repositoryId || check.proof.kind!=='pr' || !validSha(check.headSha) ||
+      check.headSha!==check.proof.head_sha || !['success','failure'].includes(check.conclusion))throw new Rejected('check_invalid');
+    const token=await this.installationToken(true),runs=await this.runs(check.headSha,token);
+    if(runs.some(run=>run.app?.id===this.c.appId && run.app?.slug===this.c.appSlug && run.name===this.c.checkName && run.head_sha===check.headSha))
+      throw new Rejected('new_head_run_already_exists');
+    const attempt=await beforeSend();
+    const data=await this.json(`https://api.github.com/repos/${this.c.repository}/check-runs`,'POST',token,
+      {name:check.name,head_sha:check.headSha,status:'completed',conclusion:check.conclusion,external_id:attempt,
+        completed_at:new Date(this.now()*1000).toISOString(),output:{title:check.name,summary:check.text}});
+    if(data.external_id!==attempt || data.status!=='completed' || data.conclusion!==check.conclusion || data.output?.summary!==check.text)throw new Rejected('check_source_mismatch');
+    return this.receipt(data,check);
+  }
   async publish(check: CheckProposal,externalId?:string): Promise<CheckReceipt> {
     if (!this.c.checkPublishingEnabled) throw new Rejected('publication_disabled');
     if (check.appId !== this.c.appId || check.appSlug !== this.c.appSlug || check.name !== this.c.checkName ||

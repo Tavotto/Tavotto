@@ -19,9 +19,11 @@ import {
   filterIssues,
   summaryFor,
   validateCanvas,
+  validateOriginal,
   type CanvasInput,
   type CanvasResult,
   type IssueFilter,
+  type OriginalTarget,
   type ValidationIssue,
   type ValidationSummary,
 } from '@/lib/validation'
@@ -300,4 +302,36 @@ export function listIssues(filter?: IssueFilter): ValidationIssue[] {
  */
 export function rawIssuesFor(canvasId: string) {
   return useValidationStore.getState().results.find((r) => r.canvasId === canvasId)?.raw ?? []
+}
+
+/**
+ * **按原图导出**那份产物的检查（导出对话框的原图范围认它，ADR 0028 / 0030）。
+ *
+ * 画布那几片（`results`）量的是「图摆在页面上」——字号乘了画布缩放。原图导出不带那次缩放，
+ * 所以原图范围是同一个求值器对**原图口径**输入的一次求值（`lib/validation.validateOriginal`），
+ * 不是在画布那份结果上裁一刀。输入与画布那几片同一份（`collectCanvases()`：规范按那张画布
+ * 的绑定解析），只读、不进 store、不推进代次。`issues` / `raw` 仍要经 `summaryFor({ objectId })`
+ * 与 `rawIssuesForObject()` 裁页面级与摆放类规则。
+ *
+ * 求值抛异常回 `failed: true`——「查不了」不许变成一份空清单（与 `runValidation` 同一条）。
+ */
+export function originalValidationFor(
+  canvasId: string,
+  target: OriginalTarget,
+): { result: CanvasResult | null; failed: boolean } {
+  try {
+    const input = collectCanvases().find((c) => c.canvasId === canvasId)
+    if (!input) return { result: null, failed: false }
+    const render = useRenderStore.getState()
+    const result = validateOriginal(
+      input,
+      useDocumentStore.getState().documentId,
+      useAssetStore.getState().byId,
+      { byKey: render.byKey, latest: render.latest },
+      target,
+    )
+    return { result, failed: false }
+  } catch {
+    return { result: null, failed: true }
+  }
 }

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useId, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { t as translate } from '@/i18n'
 import { buildSendPayload, NO_DETAIL_OPTIONS, type DetailOptions } from '@/diagnostics/detail'
@@ -23,9 +23,9 @@ import { Button } from '../ui/Button'
 import { Checkbox } from '../ui/Checkbox'
 import { Details, Summary } from '../ui/Details'
 import { Dialog } from '../ui/Dialog'
+import { FieldGroup } from '../ui/FormSection'
 import { TextArea } from '../ui/Input'
 import { Select } from '../ui/Select'
-import { FormRow } from '../FormRow'
 import { CopyButton } from './CopyButton'
 import { saveDiagnosticsZip } from './diagnosticsSave'
 import { WeComContactNote } from './WeComContact'
@@ -95,6 +95,8 @@ export function DiagnosticsSendDialog({
   capability: DiagSendCapability
 }) {
   useTranslation('dialogs')
+  const noteId = useId()
+  const categoryId = useId()
   const noteMax = capability.note_max_chars ?? DEFAULT_NOTE_MAX
   const [phase, setPhase] = useState<Phase>('preparing')
   const [prepared, setPrepared] = useState<DiagSendPrepared | null>(null)
@@ -394,6 +396,11 @@ export function DiagnosticsSendDialog({
       open={open}
       onOpenChange={onOpenChange}
       title={ds('title')}
+      description={
+        <span className="block text-sm leading-5" data-diag-send-sentence>
+          {sentence}
+        </span>
+      }
       size="md"
       anchor="diagnostics-send"
       blockDismiss={sending}
@@ -432,39 +439,138 @@ export function DiagnosticsSendDialog({
           ),
       }}
     >
-      <div className="flex flex-col gap-3" data-diag-send-body>
-        {/* 默认只露这一句话 + 页脚的「发送」；其余全在折叠的「查看详情」里（卡片一句话纪律） */}
-        <p className="text-sm text-ink" data-diag-send-sentence>
-          {sentence}
-        </p>
-        {/* 结果出来后（成功 / 未知 / 失败）给一条直接找人的路；其余阶段占位不显示（按钮不跳位）；仅中文界面 */}
-        <WeComContactNote
-          active={phase === 'done' || phase === 'unknown' || phase === 'failed'}
-          withReportId={phase !== 'failed' && !!status?.report_id}
-        />
-        <Details data-diag-send-details className="text-sm">
-          <Summary className="h-6 text-ink-2 hover:text-ink">{ds('details')}</Summary>
-          <div className="mt-2 flex flex-col gap-3">
-            <section aria-label={ds('includedTitle')} className="flex flex-col gap-1">
-              <h3 className="type-section">{ds('includedTitle')}</h3>
-              {prepared ? (
-                <ul className="flex list-disc flex-col gap-0.5 pl-4 text-sm text-ink-2" data-diag-send-kinds>
-                  {kinds.map((k) => (
-                    <li key={k} data-diag-kind={k}>
-                      {translate(`settings.diagnostics.send.kind.${k}`, {
-                        ns: 'dialogs',
-                        defaultValue: translate('settings.diagnostics.send.kind.other', { ns: 'dialogs' }),
-                      })}
-                    </li>
-                  ))}
-                </ul>
-              ) : (
-                <p className="type-caption">{ds('preparing')}</p>
-              )}
-              <p className="type-caption">{ds('notIncluded')}</p>
-              <p className="type-caption">{ds('bestEffort')}</p>
-              <p className="type-caption" data-diag-send-error-summary-note>{ds('errorSummaryNote')}</p>
-              <div className="flex items-center gap-2">
+      <div className="flex flex-col gap-5" data-diag-send-body>
+        {/* 表单语言（2026-10-19，参照 OpenBitFun）：标签在字段上方、间距 6；提示与字数同一行（提示左、字数右）；
+            框只给可编辑的控件；诊断包是一组（`FieldGroup`：3% 底、无边）里的一行可展开项，展开的内容与标题文字对齐缩进。
+            如实说明要发什么的那一句是对话框副标题（常显）。 */}
+        <div className="flex flex-col gap-1.5">
+          <label htmlFor={noteId} className="type-section">
+            {ds('noteLabel')}
+          </label>
+          <TextArea
+            id={noteId}
+            aria-label={ds('noteLabel')}
+            placeholder={ds('notePlaceholder')}
+            value={note}
+            rows={4}
+            maxRows={8}
+            maxLength={noteMax}
+            disabled={!editable}
+            onChange={(e) => setNote(e.target.value)}
+            data-diag-send-note
+            className="px-3 py-2"
+          />
+          <p className="flex items-start justify-between gap-4 type-caption">
+            <span>
+              {ds('noteAttached')}
+              {ds('noteHint')}
+            </span>
+            <span className="shrink-0 tabular-nums">{ds('noteCount', { count: note.length, max: noteMax })}</span>
+          </p>
+        </div>
+
+        <div className="flex flex-col gap-1.5" data-diag-send-category>
+          <span id={categoryId} className="type-section">
+            {ds('categoryLabel')}
+          </span>
+          <Select
+            value={category}
+            onChange={setCategory}
+            options={categories.map((c) => ({
+              value: c,
+              label: translate(`settings.diagnostics.send.category.${c}`, { ns: 'dialogs', defaultValue: c }),
+            }))}
+            ariaLabel={ds('categoryLabel')}
+            disabled={!editable}
+            className="w-56"
+          />
+        </div>
+
+        <FieldGroup>
+          <Details data-diag-send-details className="px-3 py-1.5 text-sm">
+            <Summary className="h-8 text-ink hover:text-ink">
+              <span className="flex min-w-0 flex-1 items-center gap-1.5">
+                <span>{ds('attachmentTitle')}</span>
+                {prepared && (
+                  <span className="text-ink-3" data-diag-send-size>
+                    · {formatBytes(prepared.size)}
+                  </span>
+                )}
+                <span className="ml-auto text-xs text-ink-3">{ds('details')}</span>
+              </span>
+            </Summary>
+            <div className="flex flex-col gap-3 pb-2 pl-5 pt-1">
+              <section aria-label={ds('includedTitle')} className="flex flex-col gap-1">
+                <h3 className="type-section">{ds('includedTitle')}</h3>
+                {prepared ? (
+                  <ul className="flex list-disc flex-col gap-0.5 pl-4 text-xs leading-5 text-ink-2" data-diag-send-kinds>
+                    {kinds.map((k) => (
+                      <li key={k} data-diag-kind={k}>
+                        {translate(`settings.diagnostics.send.kind.${k}`, {
+                          ns: 'dialogs',
+                          defaultValue: translate('settings.diagnostics.send.kind.other', { ns: 'dialogs' }),
+                        })}
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="type-caption">{ds('preparing')}</p>
+                )}
+                <p className="type-caption">{ds('notIncluded')}</p>
+                <p className="type-caption" data-diag-send-error-summary-note>
+                  {ds('errorSummaryNote')}
+                </p>
+              </section>
+
+              {/* 额外内容：默认不勾、不记忆（每次打开从头来）；勾选变化 = 重新备包 */}
+              <section aria-label={ds('extrasTitle')} className="flex flex-col gap-1.5" data-diag-send-extras>
+                <h3 className="type-section">{ds('extrasTitle')}</h3>
+                {EXTRA_KEYS.map((key) => (
+                  <label key={key} className="flex items-start gap-2 text-sm text-ink-2">
+                    <Checkbox
+                      checked={options[key]}
+                      disabled={!editable}
+                      onChange={() => toggleOption(key)}
+                      data-diag-send-extra={key}
+                      className="mt-0.5"
+                    />
+                    <span className="flex min-w-0 flex-col">
+                      <span className="text-ink">{ds(`extra.${key}`)}</span>
+                      <span className="type-caption">{ds(`extraHint.${key}`)}</span>
+                    </span>
+                  </label>
+                ))}
+                {optionsLost && (
+                  <p className="type-caption text-warn-content" role="status" data-diag-send-options-lost>
+                    {ds('optionsLost')}
+                  </p>
+                )}
+              </section>
+
+              <section aria-label={ds('filesTitle', { count: prepared?.entries.length ?? 0 })} className="flex flex-col gap-1" data-diag-send-files-section>
+                <Details data-diag-send-files className="text-sm">
+                  <Summary className="h-6 text-ink-2 hover:text-ink">
+                    {ds('filesTitle', { count: prepared?.entries.length ?? 0 })}
+                  </Summary>
+                  <ul className="mt-1 flex flex-col gap-0.5 font-mono text-xs text-ink-3" data-diag-send-file-list>
+                    {(prepared?.entries ?? []).map((e) => (
+                      <li key={e.name} className="flex justify-between gap-3" data-diag-file={e.name}>
+                        <span className="min-w-0 truncate">{e.name}</span>
+                        <span className="shrink-0">{formatBytes(e.bytes ?? 0)}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </Details>
+                {prepared && (prepared.truncated?.length ?? 0) > 0 && (
+                  <p className="type-caption" data-diag-send-truncated>
+                    {ds('truncated', {
+                      kinds: (prepared.truncated ?? []).map((c) => ds(`short.${c.kind}`)).join(ds('listSeparator')),
+                    })}
+                  </p>
+                )}
+              </section>
+
+              <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
                 {prepared && <span className="type-caption">{ds('size', { size: formatBytes(prepared.size) })}</span>}
                 <Button
                   variant="ghost"
@@ -481,104 +587,28 @@ export function DiagnosticsSendDialog({
                   </span>
                 )}
               </div>
-            </section>
 
-            {/* 额外内容：默认不勾、不记忆（每次打开从头来）；勾选变化 = 重新备包 */}
-            <section aria-label={ds('extrasTitle')} className="flex flex-col gap-1.5" data-diag-send-extras>
-              <h3 className="type-section">{ds('extrasTitle')}</h3>
-              {EXTRA_KEYS.map((key) => (
-                <label key={key} className="flex items-start gap-2 text-sm text-ink-2">
-                  <Checkbox
-                    checked={options[key]}
-                    disabled={!editable}
-                    onChange={() => toggleOption(key)}
-                    data-diag-send-extra={key}
-                    className="mt-0.5"
-                  />
-                  <span className="flex min-w-0 flex-col">
-                    <span className="text-ink">{ds(`extra.${key}`)}</span>
-                    <span className="type-caption">{ds(`extraHint.${key}`)}</span>
-                  </span>
-                </label>
-              ))}
-            </section>
-
-            {optionsLost && (
-              <p className="type-caption text-warn-content" role="status" data-diag-send-options-lost>
-                {ds('optionsLost')}
+              <p className="type-caption">
+                {ds('bestEffort')} {ds('retention', { days: capability.retention_days ?? 30 })}{' '}
+                <a
+                  href={PRIVACY_DOC_URL}
+                  target="_blank"
+                  rel="noreferrer"
+                  data-diag-send-policy
+                  className="underline underline-offset-2 hover:text-ink"
+                >
+                  {ds('policy')}
+                </a>
               </p>
-            )}
+            </div>
+          </Details>
+        </FieldGroup>
 
-            <section aria-label={ds('filesTitle', { count: prepared?.entries.length ?? 0 })} className="flex flex-col gap-1" data-diag-send-files-section>
-              <Details data-diag-send-files className="text-sm">
-                <Summary className="h-6 text-ink-2 hover:text-ink">
-                  {ds('filesTitle', { count: prepared?.entries.length ?? 0 })}
-                </Summary>
-                <ul className="mt-1 flex flex-col gap-0.5 font-mono text-xs text-ink-3" data-diag-send-file-list>
-                  {(prepared?.entries ?? []).map((e) => (
-                    <li key={e.name} className="flex justify-between gap-3" data-diag-file={e.name}>
-                      <span className="min-w-0 truncate">{e.name}</span>
-                      <span className="shrink-0">{formatBytes(e.bytes ?? 0)}</span>
-                    </li>
-                  ))}
-                </ul>
-              </Details>
-              {prepared && (prepared.truncated?.length ?? 0) > 0 && (
-                <p className="type-caption" data-diag-send-truncated>
-                  {ds('truncated', {
-                    kinds: (prepared.truncated ?? []).map((c) => ds(`short.${c.kind}`)).join(ds('listSeparator')),
-                  })}
-                </p>
-              )}
-            </section>
-
-            <FormRow label={ds('categoryLabel')}>
-              <Select
-                value={category}
-                onChange={setCategory}
-                options={categories.map((c) => ({
-                  value: c,
-                  label: translate(`settings.diagnostics.send.category.${c}`, { ns: 'dialogs', defaultValue: c }),
-                }))}
-                ariaLabel={ds('categoryLabel')}
-                disabled={!editable}
-                className="w-full"
-              />
-            </FormRow>
-            <FormRow label={ds('noteLabel')} align="start">
-              <span className="flex min-w-0 flex-1 flex-col gap-1">
-                <TextArea
-                  aria-label={ds('noteLabel')}
-                  value={note}
-                  rows={3}
-                  maxRows={5}
-                  maxLength={noteMax}
-                  disabled={!editable}
-                  onChange={(e) => setNote(e.target.value)}
-                  data-diag-send-note
-                />
-                <span className="type-caption">{ds('noteAttached')}</span>
-                <span className="flex justify-between gap-2 type-caption">
-                  <span>{ds('noteHint')}</span>
-                  <span>{ds('noteCount', { count: note.length, max: noteMax })}</span>
-                </span>
-              </span>
-            </FormRow>
-
-            <p className="type-caption">
-              {ds('retention', { days: capability.retention_days ?? 30 })}{' '}
-              <a
-                href={PRIVACY_DOC_URL}
-                target="_blank"
-                rel="noreferrer"
-                data-diag-send-policy
-                className="underline underline-offset-2 hover:text-ink"
-              >
-                {ds('policy')}
-              </a>
-            </p>
-          </div>
-        </Details>
+        {/* 结果出来后（成功 / 未知 / 失败）给一条直接找人的路；其余阶段占位不显示（按钮不跳位）；仅中文界面 */}
+        <WeComContactNote
+          active={phase === 'done' || phase === 'unknown' || phase === 'failed'}
+          withReportId={phase !== 'failed' && !!status?.report_id}
+        />
       </div>
     </Dialog>
   )

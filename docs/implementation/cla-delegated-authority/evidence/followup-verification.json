@@ -1,0 +1,135 @@
+{
+  "stage": "followup uncommitted source snapshot; all production/source hashes below",
+  "parent_head": "fe22f4b15cbe1b97fc4fe5662ec34f3042ed37f3",
+  "merge_base_sha": "7e58f04d510951c9088224bb75cb68fcaaf9594d",
+  "latest_main_observed": "4a7643dbac5aecc52b1199cddebac80124e1f426",
+  "main_advance": "3 unrelated commits, 7 files, no CLA path overlap; branch retains review baseline",
+  "checks": [
+    {
+      "command": "npm test",
+      "exit_code": 0,
+      "passed": 307,
+      "failed": 0,
+      "skipped": 0,
+      "log": "followup-node-tests.txt"
+    },
+    {
+      "command": "python3 tests/migration.test.py",
+      "exit_code": 0,
+      "passed": 3,
+      "log": "followup-migration.txt"
+    },
+    {
+      "command": "node tests/mutation-smoke.mjs",
+      "exit_code": 0,
+      "mutants_detected": 42,
+      "each_selected_test_exit": 1,
+      "log": "followup-mutations.txt"
+    },
+    {
+      "command": "node scripts/deployment-plan.mjs deployment/wrangler.disabled.json",
+      "exit_code": 0,
+      "log": "disabled-deployment-plan.json"
+    },
+    {
+      "command": "node -e \"import('./src/entry.ts')\"",
+      "exit_code": 0
+    },
+    {
+      "command": "git diff --check",
+      "exit_code": 0
+    }
+  ],
+  "local_blockers_unchanged": {
+    "npm_dependencies": "prior E403, no download retry/proxy/mirror",
+    "typecheck": "tsc absent; original-head hosted success is not current-head validation",
+    "build": "esbuild absent; await current-head existing CI",
+    "python_contract": "pytest unavailable"
+  },
+  "source_sha256": {
+    "services/cla-cloudflare/src/base.sql": "b7c158869acbd1eb43dcbfee72f85ebf1149716082a66f9140989c56a4927e69",
+    "services/cla-cloudflare/src/ci/consumer.ts": "59cc6c4f8d214e4fa4938dfd5a7b8d16830888972232f7a5fe8cb02d3e9cd0cc",
+    "services/cla-cloudflare/src/core/crypto.ts": "17baac97c94bd6f5c892bf013dc876711b52c1538ab6b1f11a3b1d704cd4242e",
+    "services/cla-cloudflare/src/core/identity.ts": "606324b384342474f72cb2ac8338a77aa608fcfa47344f1057033bc609a1d951",
+    "services/cla-cloudflare/src/core/policy.ts": "fac3cd878af1734be0755da76af343d0858d57c2058287fae0a995a291d2a186",
+    "services/cla-cloudflare/src/core/proof.ts": "9775610725f0550110e9691fc2c63dd0df581952c0bae16452592c583f42b8d5",
+    "services/cla-cloudflare/src/core/store.ts": "9d142e35e903f2d822f7fa9947a36f42e309ae7c14620cda6a092b189dd75403",
+    "services/cla-cloudflare/src/core/types.ts": "e17c6bdd86d9c6dbd99d0e7cfd1e68f2b336f69351751b1cdd8a83b7c7dab92b",
+    "services/cla-cloudflare/src/entry.ts": "5dc8b5dbf3ac262cee252de3861a6a0372d1fb0fbd6e56fa5b1f55469615f0c0",
+    "services/cla-cloudflare/src/native/automatic.ts": "8b327ae5cb3df5f75c5c8425549aacf8629d094fb15f4ab4b79a58ce8902e161",
+    "services/cla-cloudflare/src/native/background.ts": "eb65da1bbf5060c6d1b93892b46ceba246742d01834d63a4c423d606633365b3",
+    "services/cla-cloudflare/src/native/budget.ts": "89db5eeb1fbf97e541bae54764c2fe3f85ff566577363116270f873cf25db5cd",
+    "services/cla-cloudflare/src/native/config.ts": "cf9c3352e675ee4cd0522c8e3f668ada22736443eed24142630119456386cce6",
+    "services/cla-cloudflare/src/native/delegation.ts": "fe3f0b1f9d40df4e47008d0803b0f801be41ef415b0021a0e150a2dc7dba76c2",
+    "services/cla-cloudflare/src/native/github.ts": "73b9f702463682f9fd0ede58a1dc60a13d5a9d46d2504a8e758bf02c18e236ff",
+    "services/cla-cloudflare/src/native/schema.sql": "5e1c227e2cfb8578a9eb138f91c4ef3993f5b683a3493e461e4d5fc3f86433f3",
+    "services/cla-cloudflare/src/native/service.ts": "bfcfb96d22db6c3b38573bfd24aa9f14c80ac6d838f489968e1ba4ec9db24105",
+    "services/cla-cloudflare/src/native/store.ts": "e7ca42c02ee62692f1900e96b935ab0d3fc721323c27166f6a99a4158cf843a4",
+    "services/cla-cloudflare/src/native/ui-client.ts": "5b1dc8f125f3f47ebcef86a45315efff5249df0ef277b5a06f924a0b0be003e9",
+    "services/cla-cloudflare/src/native/ui.ts": "ca19a46d246dc6f977efc5a2cb9fd821086b320c3cce1eac8f099414938a0a40",
+    "services/cla-cloudflare/src/native/verification.ts": "fed366829694544af6893a1ef3de01ce4309f9eba47d9f76c6c2c6e68a2adb9e",
+    "services/cla-cloudflare/src/native/worker.ts": "c7c9e4b63e9097167859c6a615c1e39b19cf2950926b969faeb4d6bbae34250c",
+    "services/cla-cloudflare/scripts/ci-candidate.mjs": "0abfb057a213b00fa2379940ad4f5a3fff591e11d9e9437cf3161e1d576f205e",
+    "services/cla-cloudflare/scripts/deployment-plan.mjs": "1ddc4aa08fa12dab3f3fb38df0617af46d5c00f186fa99196574886d807f5831",
+    "services/cla-cloudflare/scripts/generate-bootstrap.mjs": "6ec2da7d43a2eb8dad23ca1e1678734735ecbd0eaefdaea6b3efed2804b52473",
+    "services/cla-cloudflare/tests/audit.test.mjs": "2e374df46a5e9ff70a9400dbea6ca99e7e55339b2dfee143dd14beca258f5098",
+    "services/cla-cloudflare/tests/automatic-publication.test.mjs": "544d63d71c7adefeb74ce27619efdaab71da7a43fcb7a63e47108efb007cd82a",
+    "services/cla-cloudflare/tests/automatic.test.mjs": "445e485458ca4e583f09a111ed800e59a456b0172a4dcb56c1c00072c5754825",
+    "services/cla-cloudflare/tests/build-production.mjs": "3ca85040d1ee2c7fa3d99e546608fac8e8ba2baf1a86c1df088b2d139c04c6e6",
+    "services/cla-cloudflare/tests/ci-candidate.test.mjs": "11c6447dc9ecdb9bf154f2522e6ad8c1688adb240091a49e42f309b2426461a5",
+    "services/cla-cloudflare/tests/delegation-fixture.mjs": "8f142a2f31a125fec60008d8e91cfbfeab51d2c8b07802bfd487774e77fd033d",
+    "services/cla-cloudflare/tests/delegation.test.mjs": "06f84732ac96d3c4dcce9f81ec745b29352624ba6926a0f87d0dfaf19d425a2c",
+    "services/cla-cloudflare/tests/deployment-plan.test.mjs": "3142d5132c7053c3fb7265f70880d252a11a669fb9f5b8250a3508f4a47a1a91",
+    "services/cla-cloudflare/tests/github-installation-token.test.mjs": "f2a94552df10beea19cd85bcd1efe199542dc939658137710a92e761118f879c",
+    "services/cla-cloudflare/tests/independent-authority-contract.test.mjs": "22aca5187f93c960fcef49ab1ba89913786b9ea7b726c293ab29ee05698b2f0d",
+    "services/cla-cloudflare/tests/independent-bootstrap-budget.test.mjs": "eb2308c50d15bb19eb7652cf58434aa5ee057c38bd4f01c7f7b0540c14aaef47",
+    "services/cla-cloudflare/tests/independent-create-worker.mjs": "668aba8df19806c5af1f672f16a5c42adb1267a0ec91d2cc31c55782efddc419",
+    "services/cla-cloudflare/tests/independent-http-boundaries.test.mjs": "1488a77df7d1597ac0598779248b16df26a3979bb48bd72109a82e5b9460e36b",
+    "services/cla-cloudflare/tests/independent-identity-admission.test.mjs": "6a886b18ddc900d37cb33dd9d4d08f272525bcec2ff111c3d380c987a7756571",
+    "services/cla-cloudflare/tests/independent-lifecycle.test.mjs": "d3a83b1a65a2cffbfcc660314b834554b41563c6d29857aaac08a4f3a43f79ef",
+    "services/cla-cloudflare/tests/independent-oauth-db.mjs": "14e1882935a149240dd33694e2e8524a5749ee614af92925edfddd8c9946f004",
+    "services/cla-cloudflare/tests/independent-oauth-worker.mjs": "fd984609e7e197ace5daa16009887bae8cfc20f2b7042da17d3ff4567a39cda6",
+    "services/cla-cloudflare/tests/independent-optimized-authority.test.mjs": "9c56c5ae7bd7b924a3425a7561d5a2210479cd4b8d5ef4b55c925ad85fd314e8",
+    "services/cla-cloudflare/tests/independent-packet-pagination.test.mjs": "cc3f034c888b2a331e257461b41b59a5550c91050271105fc77ee4887363a149",
+    "services/cla-cloudflare/tests/independent-public-abuse.test.mjs": "b9325e7e0aa765b764da88a58601022417899ea2c5b2865579c65c863234107e",
+    "services/cla-cloudflare/tests/independent-refresh-boundaries.test.mjs": "461f417fdb6793e16af18c84cddd96efc52999661d687cfcf27dbb2f54a59a8c",
+    "services/cla-cloudflare/tests/independent-review-boundaries.test.mjs": "257e4546c320643035e1820631b27a15e000da753a1da10a4cdf6aa7365b85bd",
+    "services/cla-cloudflare/tests/independent-review-mutation-cases.json": "0178d3644c2e7ec94af377a3f6f37bdd660949e3b32d60adb1dddb1c1f3299d1",
+    "services/cla-cloudflare/tests/independent-ui-packets.test.mjs": "90d9470f7c0d26d43f6c6efe5ab6241ebce252942acc2c67edeef02b7ec67389",
+    "services/cla-cloudflare/tests/migration.test.py": "b3e825494933b03786bf63c7ff7cfc504e6cadb780365dfd80465614021f668e",
+    "services/cla-cloudflare/tests/mutation-smoke.mjs": "6633d0abfa52004e785c6866560ea7d7c308376ba9e9d19bd85d5cb5c42b64b9",
+    "services/cla-cloudflare/deployment/README.md": "e20d6123573ef95f498b7542b4f2feaaa2462646717b351b99c6537c1d9202cb",
+    "services/cla-cloudflare/deployment/ci-proposal.md": "e8f17a585aa4f9cb551e0d56cf888d50f2d09941f3191d832c20bce4675e61e7",
+    "services/cla-cloudflare/deployment/ci.disabled.json": "56102439cebf2b7d2bce5ab17c5bc14f33fdc628ee7ff3625a5634bda1c749e5",
+    "services/cla-cloudflare/deployment/wrangler.disabled.json": "eab97f544c6ec3665a3d630c1ec4de1e67dac268e90881ec59c345f3414d1d41"
+  },
+  "log_sha256": {
+    "followup-initial-survivor.txt": "c9d59adf7f89c412ed919ff46b38a387e42ff6ddb8ea66d2b8bbafec6df52e38",
+    "followup-migration.txt": "79897d011a1aaa76145e639592b1207fa563cb1187e00ac85c3ee31c86a0b15f",
+    "followup-mutations.txt": "149eca2fd52f4bb986cc60264ddbe6c2937fb04b9651f629f482902dbcb1a103",
+    "followup-node-tests.txt": "fe0d59710e806a4a09af1f61a872ad022f211d29652957ca5b2134ae505544b6"
+  },
+  "not_executed": [
+    "real authorization/key registration/credential configuration",
+    "production deployment/signing/publication",
+    "previously rejected dynamic successful publication across proof expiry",
+    "merge-group acceptance",
+    "live D1 or browser acceptance"
+  ],
+  "independent_review": {
+    "test_count": 17,
+    "mutation_count": 13,
+    "baseline_exit": 0,
+    "each_mutant_exit": 1,
+    "each_location_count": 1,
+    "selected_failures": "AssertionError verified independently, not SQL parser/bind failures",
+    "results": "followup-independent-mutations.json",
+    "manifest": "followup-independent-manifest.json",
+    "initial_survivor": "followup-initial-mutations.json and followup-initial-survivor.txt retain exit 0: unknown-phase was blocked by independent unique index; reconcile-phase isolates explicit unresolved-target guard",
+    "findings_fixed": [
+      "historical audit fails after id/key/agreement rotation",
+      "status combines old fields with a later revision"
+    ],
+    "remaining_new_fail_open_findings": []
+  }
+}

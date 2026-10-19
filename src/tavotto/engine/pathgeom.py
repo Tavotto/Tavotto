@@ -917,6 +917,20 @@ def _quadmesh_outline_subpaths(mesh) -> list[tuple]:
     return subs
 
 
+def _drawn_offsets(coll) -> np.ndarray:
+    """集合**此刻画出来的**那一份偏移 (N,2)。
+
+    `Path3DCollection.do_3d_projection` 把逐点的大小 / 线宽重排成深度序、`draw` 里临时换上同序的
+    `_offset_zordered`，画完再换回未排序的 `_offsets`——下一次读 `get_offsets()` 拿到的偏移与
+    `get_transforms()`（来自最后一次 draw 的深度序大小）对不上号，逐点大小不同的 3D 散点会把
+    轮廓摆到别人的位置上。有 `_offset_zordered` 时用它；被遮罩的点（`axlim_clip`）填 NaN，
+    `_stamp_markers` 本来就把非有限的偏移丢掉（ADR 0135）。"""
+    zo = getattr(coll, "_offset_zordered", None)
+    if zo is not None:
+        return np.ma.filled(np.ma.asarray(zo, dtype=float), np.nan).reshape(-1, 2)
+    return np.asarray(coll.get_offsets(), dtype=float).reshape(-1, 2)
+
+
 def _marker_subpaths(coll, budget: Budget) -> list[tuple] | None:
     """PathCollection（散点）每一颗 marker 的 display 空间轮廓。
 
@@ -945,7 +959,7 @@ def _marker_subpaths(coll, budget: Budget) -> list[tuple] | None:
         master = master.get_affine()
     per = np.asarray(coll.get_transforms(), dtype=float).reshape(-1, 3, 3)
     try:
-        offs = np.asarray(coll.get_offsets(), dtype=float).reshape(-1, 2)
+        offs = _drawn_offsets(coll)
         toffs = coll.get_offset_transform().transform(offs) if len(offs) else offs
     except Exception:  # noqa: BLE001 — 取不到偏移就按无偏移处理
         toffs = np.zeros((0, 2))
