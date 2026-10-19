@@ -127,6 +127,8 @@ def _build() -> dict:
         return {
             "text": t.get_text(),
             "box": box(t.get_window_extent(renderer)),
+            # matplotlib 放这段文字时的对齐锚点（位置经它自己的变换）：外框随字形度量伸缩，锚点不动
+            "anchor": pt(*t.get_transform().transform(t.get_position())),
             "sizePt": _r(t.get_fontsize()),
             "bold": t.get_fontweight() in ("bold", 700, "heavy"),
             "rotation": rotation,
@@ -232,7 +234,7 @@ def _mpl_minor() -> str:
 
 # 版本不同时怎么比（实测 3.10 vs 3.11：文字外框的宽高、图例的行高随字形度量变几个 pt，
 # 但文字外框的锚点（按对齐方式：顶边 / 中心……）、图例的**右下角**（脚本 loc="lower right"）两版一致）：
-#   * 文字外框 [x, y, w, h] → 每个方向上起点 / 中心 / 终点有一个对上即可（锚点随对齐方式），宽高放过；
+#   * 文字 → 比 matplotlib 实际的对齐锚点 `anchor`（严格容差），外框放过；
 #   * 图例外框 → 比右边与下边（锚定的那个角），宽高放过；
 #   * 图例条目内部（每行外框、句柄位置）→ 行距随字高变，用有界的 METRIC_TOLERANCE_PT；
 #   * 其余（坐标轴框、曲线、刻度位置、标题锚点、文字内容、颜色）照样严格。
@@ -266,20 +268,8 @@ def _loose_box(want: list, got: list, path: str) -> list[str] | None:
         return _num_diff(
             want[0] + want[2], got[0] + got[2], f"{path} 右边", TOLERANCE_PT
         ) + _num_diff(want[1] + want[3], got[1] + got[3], f"{path} 下边", TOLERANCE_PT)
-    if _LEGEND_ENTRY.match(path):
-        return None
-    out: list[str] = []
-    for axis, o, size in (("x", 0, 2), ("y", 1, 3)):
-        # 文字按对齐方式锚在起点 / 中心 / 终点之一（xlabel 顶边居中、ylabel 竖排居中……）：
-        # 字形变大变小时锚点不动；真的挪了位置，三者一起偏
-        candidates = (
-            (want[o], got[o]),
-            (want[o] + want[size] / 2, got[o] + got[size] / 2),
-            (want[o] + want[size], got[o] + got[size]),
-        )
-        if not any(abs(a - b) <= TOLERANCE_PT for a, b in candidates):
-            out.append(f"{path} {axis} 方向：起点 / 中心 / 终点都对不上（容差 {TOLERANCE_PT} pt）")
-    return out
+    # 文字外框：版本不同时不比（宽高、甚至位置都随字形度量变）；由同一条目里的 `anchor` 严格比
+    return None
 
 
 def _diff(want, got, path: str = "$", *, loose: bool = False) -> list[str]:
@@ -287,6 +277,9 @@ def _diff(want, got, path: str = "$", *, loose: bool = False) -> list[str]:
         out: list[str] = []
         for key in sorted(set(want) | set(got)):
             if key in ("comment", "matplotlib"):
+                continue
+            # 版本不同：带锚点的文字只比锚点，不比外框
+            if loose and key == "box" and "anchor" in want and "anchor" in got:
                 continue
             if key not in want or key not in got:
                 out.append(f"{path}.{key}: 只在一侧")

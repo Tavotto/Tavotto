@@ -100,10 +100,18 @@ def test_other_matplotlib_versions_only_loosen_glyph_metrics():
 
         return f
 
-    # 版本不同也不放过：位置（轴标签挪了、图例挪了）、条目超出有界容差、曲线、坐标轴、文字、颜色
+    # 版本不同也不放过：位置（轴标签 / 刻度标签的对齐锚点挪了、图例挪了）、条目超出有界容差、
+    # 曲线、坐标轴、文字、颜色。锚点哪怕只挪半个字宽也要红（不能靠「起点 / 中心 / 终点任一对上」蒙混）
+    half_width = built["xlabel"]["box"][2] / 2
     for mutate, needle in (
-        (shift(["xlabel", "box"], 0, 3), "xlabel.box"),
-        (shift(["ylabel", "box"], 1, 3), "ylabel.box"),
+        (shift(["xlabel", "anchor"], 0, half_width), "xlabel.anchor"),
+        (shift(["ylabel", "anchor"], 1, 3), "ylabel.anchor"),
+        (
+            lambda d: d["ticks"]["x"][1]["label"]["anchor"].__setitem__(
+                0, d["ticks"]["x"][1]["label"]["anchor"][0] + 2
+            ),
+            "ticks.x[1].label.anchor",
+        ),
         (shift(["legend", "box"], 1, 3), "legend.box"),
         (shift(["legend", "box"], 0, -3), "legend.box"),
         (
