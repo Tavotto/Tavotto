@@ -8131,6 +8131,15 @@ def api_engine_preparation_session_create():
     target, rejected = _session_target(ctx, body)
     if rejected is not None:
         return rejected
+    if target.get("execution") == engine_execspec.PROFILE_NATIVE and not _desktop_initiated():
+        # 显式 native 与路由 native 同一道来源闸门（ADR 0127 D1）：越早拒越干净；认领时 `_claim_run` 再核一次（纵深）
+        return _session_error(
+            engine_prepsession.SessionError(
+                engine_prepsession.ERROR_NATIVE_REQUIRES_DESKTOP,
+                "native 执行只能由桌面窗口发起",
+                403,
+            )
+        )
     try:
         sess, created = engine_prepsession.SESSIONS.check(
             project_id=ctx.id, project_root=str(ctx.path), target=target

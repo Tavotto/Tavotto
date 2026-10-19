@@ -165,7 +165,8 @@ sidecar 发布的**只读、只对这一个端点有效**的 token（`<数据目
 | `registry_write_failed` | 图库目录不可写 | 提示用户改目录权限，或把图放到可写的目录 |
 | `project_unreadable` | 图库目录读不了 | 同上 |
 | `desktop_missing` | 给了 `--desktop` 但没装桌面版 | 去装，或去掉 `--desktop` |
-| `launch_failed` | 界面在、但起不起来 / **起来就崩**（权限、杀软、可执行位丢了、SIGABRT） | 报给用户，**别当成「没装」**；随附 `app` / `exit_code` / `signal` / `log_path` / `retryable` |
+| `launch_failed` | 界面在、但起不起来 / **起来就崩**（权限、杀软、可执行位丢了、SIGABRT）；或桌面应用**已在运行**、转发这次交接的进程却卡住不退（随附 `reason: "forward_stuck"`，CLI 已结束该进程，**不再算「已唤起」**） | 报给用户，**别当成「没装」**；随附 `app` / `exit_code` / `signal` / `log_path` / `retryable`；`forward_stuck` 时多半是环境挡住了进程间转发，在沙箱外重跑同一条命令 |
+| `sandboxed_launch` | 当前进程在**受限沙箱**里（Windows：受限令牌（`IsTokenRestricted`）或 AppContainer，如 Windows 版 Codex 的默认沙箱），桌面应用在这里起不来、也转发不到已开着的窗口——CLI **不拉进程**就返回 | **在沙箱外重跑同一条命令**（Windows 版 Codex：申请 `sandbox_permissions: "require_escalated"` 并写一句理由），不要让用户手动打开 Tavotto；随附 `sandbox`（`restricted_token` / `app_container`）/ `app` / `log_path` / `retryable: true` |
 | `launch_timeout` | 唤起后进程在限期内没有出现 | 让用户看 `log_path`；`retryable: true`，可重试一次 |
 | `remote_open_failed` | 已在运行的实例打不开这个项目 | 把 `error` 转达给用户 |
 | `bad_launch_mode` | `--desktop` 与 `--browser` 同时给了 | 修调用 |
