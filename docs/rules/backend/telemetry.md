@@ -66,7 +66,8 @@
   `Server._call_tool_counted`（`tools/call` 派发处），属性只经插件 `tavotto_mcp/usage.py` 折成闭集，
   发送只经 `bridge.note_tool_call` → 本模块 `capture`。**不用 PostHog MCP SDK**、不带参数 / 返回内容 /
   错误原文 / 会话 id；同意读同一份 `config.json`，插件不弹同意框（`unset` 的纯插件用户一个字节不发）；
-  进程退出时 `flush(1.5)` 有界排空。看护：`tests/test_mcp_usage.py`。
+  进程退出时 `flush(1.5)` 有界排空。**内嵌画布发起的调用（`origin="canvas"`）不记**——画布不发遥测；
+  画布会调的工具都在 `server.CANVAS_TOOLS` 声明这个参数。看护：`tests/test_mcp_usage.py`、`web/e2e/mcp-canvas.spec.ts`。
 - **编辑埋点只有一个调用点**：`documentStore.pushHistory`（commit 与 endTxn
   的共同漏斗）。一次拖动 = 一条事务 = 一条历史 = **一个事件**，不是 120 次
   pointermove；预览平面不 commit，因此天然不产生事件。`edit_kind` 由**历史

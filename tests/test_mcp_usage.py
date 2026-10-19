@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -205,3 +206,63 @@ def test_capture_respects_consent_and_hard_switch(monkeypatch):
     assert [p["event"] for p in posted] == ["mcp_tool_call"]
     monkeypatch.setenv("TAVOTTO_NO_TELEMETRY", "1")
     tel.reset_for_tests()
+
+
+# ---------------------------------------------------------------------------
+# 内嵌画布发起的调用不计（画布不发遥测，Codex #1157 P1）
+# ---------------------------------------------------------------------------
+def test_canvas_origin_call_runs_but_is_not_counted(monkeypatch, captured):
+    seen_args: list[dict] = []
+
+    def handler(args):
+        seen_args.append(dict(args))
+        return {"content": [], "structuredContent": {"ok": True}}
+
+    monkeypatch.setitem(srv.HANDLERS, "tavotto_apply_overrides", handler)
+    result = _server().dispatch(
+        "tools/call",
+        {
+            "name": "tavotto_apply_overrides",
+            "arguments": {"session_id": "s1", "patches": [], "origin": "canvas"},
+        },
+    )
+    assert result["structuredContent"]["ok"] is True
+    assert captured == []
+    # 标记在交给处理函数之前就摘掉
+    assert seen_args == [{"session_id": "s1", "patches": []}]
+
+
+def test_other_origin_values_are_still_counted(monkeypatch, captured):
+    monkeypatch.setitem(
+        srv.HANDLERS, "tavotto_preflight", lambda args: {"content": [], "structuredContent": {}}
+    )
+    _server().dispatch(
+        "tools/call", {"name": "tavotto_preflight", "arguments": {"origin": "agent"}}
+    )
+    assert [e["properties"]["tool"] for e in captured] == ["tavotto_preflight"]
+
+
+def test_canvas_tools_declare_origin_in_their_strict_schema():
+    tools = {t["name"]: t for t in srv._tools()}
+    for name in srv.CANVAS_TOOLS:
+        schema = tools[name]["inputSchema"]
+        assert schema["additionalProperties"] is False
+        assert schema["properties"][srv.ORIGIN_ARG]["enum"] == [srv.ORIGIN_CANVAS]
+    for name in set(tools) - set(srv.CANVAS_TOOLS):
+        assert srv.ORIGIN_ARG not in tools[name]["inputSchema"]["properties"]
+
+
+def test_every_tool_the_canvas_calls_is_in_canvas_tools():
+    """画布源码里 `callTool('tavotto_…'` 的工具名 ⊆ `CANVAS_TOOLS`。
+
+    主语：web/src/mcp 下**非测试**源码里写死的工具名字面量。schema 是严格的，画布若新调一个没声明
+    `origin` 的工具，严格宿主会拒掉整个调用。盲点写在明处：名字若不是字面量（拼出来的）这里看不到。
+    """
+    web_mcp = ROOT / "web" / "src" / "mcp"
+    called: set[str] = set()
+    for path in web_mcp.glob("*.ts*"):
+        if ".test." in path.name:
+            continue
+        called |= set(re.findall(r"callTool\(\s*'(tavotto_\w+)'", path.read_text(encoding="utf-8")))
+    assert called, "一个都没找到：正则或目录失效，这条用例就成了空门禁"
+    assert called <= set(srv.CANVAS_TOOLS), called - set(srv.CANVAS_TOOLS)

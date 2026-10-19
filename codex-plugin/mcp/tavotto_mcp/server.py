@@ -159,6 +159,21 @@ def _version() -> str:
 
 
 # ------------------------------- 工具定义 -----------------------------------
+#: 内嵌画布发起的调用带 `origin="canvas"`（`web/src/mcp/appsBridge.ts` 的 `callTool` 统一加），
+#: server 据此**不记**用量事件——画布不发遥测（`docs/rules/frontend` 与 ADR 0134 §MCP），手拖一下
+#: 也不该被记成「Agent 调了 apply」。放在参数里而不是 `_meta`：宿主转发 App 的 tools/call 时参数
+#: 必须原样到达工具，`_meta` 保不保留看宿主；schema 是 additionalProperties=False，所以画布会调的
+#: 每个工具都要声明它（`tests/test_mcp_usage.py` 从画布源码对拍这份名单）。
+ORIGIN_ARG = "origin"
+ORIGIN_CANVAS = "canvas"
+CANVAS_TOOLS = (
+    "tavotto_session_state",
+    "tavotto_apply_overrides",
+    "tavotto_preflight",
+    "tavotto_export",
+)
+
+
 def _tools() -> list[dict]:
     ui = widget.available()
     tools = [
@@ -584,8 +599,14 @@ def _tools() -> list[dict]:
             },
         },
     ]
+    by_name = {t["name"]: t for t in tools}
+    for name in CANVAS_TOOLS:
+        by_name[name]["inputSchema"]["properties"][ORIGIN_ARG] = {
+            "type": "string",
+            "enum": [ORIGIN_CANVAS],
+            "description": "只有 Tavotto 内嵌画布自己发起的调用才带它；模型调用不要传。",
+        }
     if ui:
-        by_name = {t["name"]: t for t in tools}
         by_name["tavotto_open_figure"]["_meta"] = widget.tool_meta(
             invoking="正在打开 Tavotto 画布…", invoked="Tavotto 画布已就绪"
         )
@@ -1887,10 +1908,17 @@ class Server:
     def _call_tool_counted(self, name: str, args: dict) -> dict:
         """`call_tool` + 一条匿名用量事件（ADR 0134 §MCP）。
 
+        内嵌画布发起的调用（`origin="canvas"`）照常执行、**不记**：画布不发遥测。
         计时只罩住工具本身：工作区授权框在 `handle` 里、在这之前就等完了，人读路径的那几秒不算。
         事件属性全是闭集（`usage.properties`），参数与返回内容不进去；没同意 / 硬开关关着时
         `bridge.note_tool_call` 什么都不做，也永不抛。
         """
+        # 标记先摘掉：处理函数不认识它，也不该看到它
+        from_canvas = (
+            args.pop(ORIGIN_ARG, None) == ORIGIN_CANVAS if isinstance(args, dict) else False
+        )
+        if from_canvas:
+            return call_tool(name, args)
         started = time.monotonic()
         outcome = "internal_error"
         result: dict | None = None

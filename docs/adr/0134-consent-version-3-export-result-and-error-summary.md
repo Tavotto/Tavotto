@@ -45,6 +45,10 @@
   参数、返回内容、错误原文、会话 id 一概不进。
 - **同意不另设**：MCP server 读的是同一份 `config.json` 里的同意（桌面里同意过 v3 才发）；只用插件、从没打开过桌面的人
   是 `unset`，一个字节不发。插件**不弹**同意框——它没有能让人看清采集范围的界面，问了也不算知情同意。
+- **内嵌画布发起的调用不计**：画布不发遥测（`docs/rules/plugin/embedded-canvas.md`），用户在画布里拖一下也不是
+  「Agent 调了 apply」。`AppsBridge.callTool` 每次带 `origin="canvas"`，server 摘掉它、照常执行、不记事件。放参数里而不是
+  `_meta`：宿主转发 App 的 tools/call 时参数必须原样到达，`_meta` 保不保留看宿主；画布会调的工具（`server.CANVAS_TOOLS`）
+  在严格 schema 里声明它。标记丢了的方向是**少记**，不会多发。模型若误传，同样只是少记一条。
 - **计时只罩工具本身**：工作区授权框在派发之前等完，人读路径的那几秒不进 `duration_bucket`。
 - **退出时有界排空**：宿主断开 stdin 进程就退，发送线程是守护线程；`main()` 收尾时 `telemetry.flush(1.5)`，
   等不完就丢，不拖住宿主。
