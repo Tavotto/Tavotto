@@ -321,7 +321,16 @@ def confinement_violations(tree: ast.AST) -> tuple[list[str], list[str]]:
         return ""
 
     violations, writes = [], []
+    called = {id(n.func) for n in ast.walk(tree) if isinstance(n, ast.Call)}
     for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.Attribute)
+            and node.attr in PATH_MUTATORS
+            and id(node) not in called
+        ):
+            # 先绑定再调用（`w = p.write_text; w(x)`）、当回调传出去……：不是直接调用的改动方法引用
+            # 同样记成写入，精确写入清单因此会变（Codex #1139 r4312500393）
+            writes.append(f"unbound:{node.attr}:{ast.unparse(node.value)}")
         if isinstance(node, ast.Attribute):
             # 经白名单模块转手的危险模块（`cg.subprocess.run`、`cg.os.remove`、`GS.shutil`……）：
             # 不管调不调用、拼成什么别名，链上中段出现危险模块就算越界（Codex #1139 r4312274849）
@@ -426,6 +435,18 @@ class ConfinementCheckerSelfTest(unittest.TestCase):
             self.assertTrue(confinement_violations(ast.parse(snippet))[0], snippet)
         ok = "import compat_guardian as cg\ncg.SCHEMA_PATH.read_text(encoding='utf-8')"
         self.assertEqual(confinement_violations(ast.parse(ok))[0], [])
+
+    def test_a_mutator_bound_before_the_call_is_still_a_write(self):
+        for snippet in (
+            "writer = Path(target).write_text\nwriter(data)",
+            "list(map(Path.unlink, paths))",
+        ):
+            self.assertTrue(
+                any(
+                    w.startswith("unbound:") for w in confinement_violations(ast.parse(snippet))[1]
+                ),
+                snippet,
+            )
 
     def test_dynamically_retrieved_modules_are_violations(self):
         for snippet in (
