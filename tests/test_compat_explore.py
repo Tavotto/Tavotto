@@ -406,9 +406,15 @@ class Cli(unittest.TestCase):
             for run in Path(tmp).iterdir():
                 self.assertFalse((run / "reports").exists())
 
+    def test_every_file_under_scripts_ci_counts_as_execution_code(self):
+        with tempfile.NamedTemporaryFile(
+            dir=cg.ROOT / ex.EXECUTION_CODE, prefix="untracked_helper_", suffix=".py"
+        ) as f:
+            self.assertIn(f"{ex.EXECUTION_CODE}/{Path(f.name).name}", ex.dirty_execution_code())
+
     def test_modified_execution_critical_code_is_refused_before_any_execution(self):
         """脏工作区里改过的变换 / 执行器不得被当成评审过的模板执行（Codex #1135 r4311941518）。"""
-        dirty = "scripts/ci/compat_explore_transforms.py"
+        dirty = "scripts/ci/compat_driver.py"
         with tempfile.TemporaryDirectory() as tmp:
             args = Namespace(
                 seed=9,
@@ -420,10 +426,10 @@ class Cli(unittest.TestCase):
                 timeout=5,
             )
             with (
-                mock.patch.object(cg, "matches_head", side_effect=lambda root, rel: rel != dirty),
+                mock.patch.object(ex, "dirty_execution_code", return_value=[dirty]),
                 mock.patch.object(ex, "run_one", side_effect=AssertionError("executed")),
             ):
-                with self.assertRaisesRegex(cg.EvidenceError, "compat_explore_transforms"):
+                with self.assertRaisesRegex(cg.EvidenceError, "compat_driver"):
                     ex.explore(args)
             self.assertEqual(list(Path(tmp).iterdir()), [])
 

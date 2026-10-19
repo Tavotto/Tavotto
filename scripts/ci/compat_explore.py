@@ -446,12 +446,15 @@ def run_one(
     return record
 
 
-#: 生成并执行派生候选的代码；执行前必须与 HEAD 一致
-EXECUTION_CRITICAL = (
-    "scripts/ci/compat_explore.py",
-    "scripts/ci/compat_explore_transforms.py",
-    "scripts/ci/compat_guardian.py",
-)
+#: 生成 / 执行派生候选、采集证据的代码都在这里（driver、matrix、执行观测器、变换……）：
+#: 执行前整个目录必须与 HEAD 一致（含未跟踪文件），不靠逐个列名单（Codex #1135 r4312053946）
+EXECUTION_CODE = "scripts/ci"
+
+
+def dirty_execution_code() -> list[str]:
+    out = cg.git("status", "--porcelain", "--untracked-files=all", "--", EXECUTION_CODE)
+    # `cg.git` strips the output, so the first line may have lost its leading status space
+    return sorted(line.split(maxsplit=1)[1] for line in out.splitlines() if line.strip())
 
 
 def explore(args) -> int:
@@ -462,10 +465,10 @@ def explore(args) -> int:
     if not args.static_only:
         # 候选标「评审过的模板派生、继承父用例信任」，前提是生成 / 执行它的代码就是 HEAD 那份：
         # 脏工作区里改过的变换会被当成已评审代码执行（Codex #1135 r4311941518）
-        dirty = [rel for rel in EXECUTION_CRITICAL if not cg.matches_head(cg.ROOT, rel)]
+        dirty = dirty_execution_code()
         if dirty:
             raise cg.EvidenceError(
-                f"execution-critical files differ from reviewed HEAD: {dirty}; "
+                f"execution code under {EXECUTION_CODE}/ differs from reviewed HEAD: {dirty}; "
                 "commit them or run --static-only"
             )
     parents = XT.default_parents()
