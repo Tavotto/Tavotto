@@ -681,10 +681,14 @@ export async function openRecentDocument(id: string): Promise<void> {
 
 /* --------------------------------- 页面 ----------------------------------- */
 
+/** 页面宽高能取的范围（mm）；`setPageSize` 按它夹取，预设也只摆得进这个范围的尺寸 */
+export const PAGE_MM_MIN = 10
+export const PAGE_MM_MAX = 1000
+
 export function setPageSize(w: number, h: number) {
   commit(hist('setPageSize'), (d) => {
-    d.page.w = clamp(w, 10, 1000)
-    d.page.h = clamp(h, 10, 1000)
+    d.page.w = clamp(w, PAGE_MM_MIN, PAGE_MM_MAX)
+    d.page.h = clamp(h, PAGE_MM_MIN, PAGE_MM_MAX)
   })
 }
 
@@ -1296,6 +1300,63 @@ export async function rebuildPanel(panelId: string): Promise<RebuildOutcome> {
   if (useRenderStore.getState().get(key).status !== 'ready') return 'failed'
   status(note(invalidated ? 'panelRebuilt' : 'panelRerenderedNoRerun'), 'done')
   return invalidated ? 'rebuilt' : 'rerendered'
+}
+
+/**
+ * 色阶组整组换色的写入口（用户裁决 2026-10-18，ADR 0135 修订）：色阶组里任一成员（图元 / 色条）
+ * 改 cmap = 整组改。引擎对文档里同组的多条 cmap override 是**文档序靠后的赢**；而 `upsertOverrides`
+ * 原地改值、不挪位置，用户先改色条、再改曲面、回头又改色条时，色条那条仍排在前面，新选的色图会被
+ * 曲面那条盖掉。所以写这一条的**同一次 commit** 里把同组其它成员上的 cmap override 清掉——文档里
+ * 始终只有一条，谁赢与顺序无关。同组 = `colormapAliasGids`（调用方传入）。
+ */
+export function setColormapOverride(
+  panelId: string,
+  gid: string,
+  value: unknown,
+  aliasGids: string[],
+  immediate: boolean | RenderPolicy = false,
+) {
+  const current = findObject(panelId)
+  if (current?.type === 'panel') {
+    const drop = aliasGids.filter((g) => g !== gid)
+    const i = effectiveOverrideIndex(current.overrides, gid, 'cmap')
+    const sameValue = i >= 0 && JSON.stringify(current.overrides[i].value) === JSON.stringify(value)
+    const others = current.overrides.some((p) => p.prop === 'cmap' && drop.includes(p.gid))
+    if (sameValue && !others) return
+  }
+  setColormapOverrides(
+    panelId,
+    hist('setProp', { prop: propLabel('cmap') }),
+    [{ gid, value, aliasGids }],
+    immediate,
+  )
+}
+
+/**
+ * `setColormapOverride` 的多元素版（多选批量改 cmap，#1159 评审）：每个被写的元素各自清掉**它所在
+ * 色阶组**里其它成员的 cmap override，再 upsert 新值——全部进同一次 commit（一条撤销、一次渲染）。
+ * 不清的话，组里一个没被选中的成员若在文档里排在后面，重放时会把被选中那条盖回旧色图。
+ * 被写的 gid 自己不会被清（多选里同组的两个成员都要留下各自的新值）。
+ */
+export function setColormapOverrides(
+  panelId: string,
+  label: UiMessage,
+  entries: { gid: string; value: unknown; aliasGids: string[] }[],
+  render: boolean | RenderPolicy = false,
+) {
+  if (!entries.length) return
+  const written = new Set(entries.map((e) => e.gid))
+  const drop = new Set(entries.flatMap((e) => e.aliasGids).filter((g) => !written.has(g)))
+  updateObject<PanelObject>(panelId, label, (o) => {
+    o.overrides = o.overrides.filter((p) => !(p.prop === 'cmap' && drop.has(p.gid)))
+    upsertOverrides(
+      o,
+      entries.map((e) => ({ gid: e.gid, prop: 'cmap', value: e.value })),
+    )
+  })
+  const panel = findObject(panelId)
+  if (panel?.type === 'panel') requestRender(panel, render)
+  emitActivity({ kind: 'element.property_changed', prop: 'cmap' })
 }
 
 /**

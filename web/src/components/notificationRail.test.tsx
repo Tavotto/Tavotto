@@ -320,101 +320,37 @@ describe('通知轨：外形与先后', () => {
   })
 })
 
-describe('「出了点意外」卡（PR A）', () => {
-  const unexpectedCard = () => container.querySelector<HTMLElement>('[data-unexpected-error-card]')
-  const toasts = () => container.querySelectorAll('[data-toast-layout]')
-  const showCard = () => act(() => void useUnexpectedErrorStore.getState().show())
-
+describe('反馈卡不在通知轨里（2026-10-19 起是右下角的 FeedbackCorner）', () => {
   beforeEach(() => {
     useDiagSendStore.setState({ capability: { enabled: true }, open: false })
-    useUnexpectedErrorStore.getState().dismiss()
-    vi.mocked(prepareDiagSend).mockClear()
-    vi.mocked(startDiagSend).mockClear()
   })
   afterEach(() => {
-    act(() => useUnexpectedErrorStore.getState().dismiss())
+    act(() => {
+      useUnexpectedErrorStore.getState().dismiss()
+      useExitNoticeStore.setState({ engineExit: null, restarting: false, previous: null })
+    })
     useDiagSendStore.setState({ capability: null, open: false })
     useWorkspaceStore.setState({ addedForEdit: null })
   })
 
-  it('一句固定的话 + 一个主动作 + 关闭 ×；error 语气；不带错误原文，也没有「复制详情」', () => {
-    showCard()
-    const el = unexpectedCard()!
-    expect(el.dataset.toastTone).toBe('error')
-    expect(el.textContent).toContain(t('unexpectedError.text', { ns: 'workspace' }))
-    const buttons = el.querySelectorAll('button')
-    expect(buttons).toHaveLength(2) // 主动作 + 关闭
-    expect(buttons[0].textContent).toBe(t('settings.diagnostics.send.cardButton', { ns: 'dialogs' }))
-    expect(el.querySelector('[data-copy-details]')).toBeNull()
-  })
-
-  it('点主动作只 setOpen(true)（并收起这张卡）；prepare / start 的调用次数为 0', () => {
-    showCard()
-    act(() => unexpectedCard()!.querySelectorAll('button')[0].click())
-    expect(useDiagSendStore.getState().open).toBe(true)
-    expect(useUnexpectedErrorStore.getState().card).toBeNull()
-    expect(prepareDiagSend).not.toHaveBeenCalled()
-    expect(startDiagSend).not.toHaveBeenCalled()
-  })
-
-  it('× 关掉：卡片 store 清空', () => {
-    showCard()
-    act(() => unexpectedCard()!.querySelectorAll('button')[1].click())
-    expect(useUnexpectedErrorStore.getState().card).toBeNull()
-  })
-
-  it('发送功能关着：就算 store 里有卡也不渲染（不增加任何新界面）', () => {
-    useDiagSendStore.setState({ capability: null })
-    showCard()
-    expect(unexpectedCard()).toBeNull()
-    expect(toasts()).toHaveLength(0)
-  })
-
-  it('仲裁：高于提示类——加入说明 + 状态 + 意外卡占满三条时操作提示让位；状态从不让位', () => {
+  it('意外错误 / 上次没正常退出：轨里不画，也不占三条的名额（提示照出）', () => {
     act(() => {
+      useUnexpectedErrorStore.getState().show()
+      useExitNoticeStore.getState().showPrevious('app_unclean')
       showHint('multi_select')
     })
-    expect(hintToast()).not.toBeNull()
-    showCard()
-    expect(unexpectedCard()).not.toBeNull()
-    say('已导出')
+    say('正在构建')
     tick(200)
-    expect(hintToast(), '提示 + 卡 + 状态 = 三条（上限 3），都在').not.toBeNull()
-    expect(toasts()).toHaveLength(3)
-    // 第四条（加入说明，档位比提示高）来了：提示第一个让
+    expect(container.querySelector('[data-unexpected-error-card]')).toBeNull()
+    expect(container.querySelector('[data-previous-exit-card]')).toBeNull()
     act(() => useWorkspaceStore.setState({ addedForEdit: 'p1', activePanelId: 'p1', addedForEditDepth: 0 }))
-    tick(200) // 让位的那条退场保活 120ms
-    expect(toasts()).toHaveLength(3)
-    expect(unexpectedCard(), '卡不让位').not.toBeNull()
-    expect(statusToast(), '状态从不让位').not.toBeNull()
-    expect(hintToast(), '四者同在：提示第一个让').toBeNull()
-  })
-
-  it('仲裁：低于「刚为编辑加入」——加入说明 + 引擎修复卡 + 状态已占满三条时，意外卡让位；状态走后才出现', () => {
-    useWorkspaceStore.setState({ addedForEdit: 'p1', activePanelId: 'p1', addedForEditDepth: 0 })
-    act(() => useExitNoticeStore.getState().setEngineExit('nonzero'))
-    say('正在构建')
-    showCard()
-    expect(container.querySelector('[data-fast-edit-added-note]')).not.toBeNull()
-    expect(unexpectedCard(), '加入说明 + 修复卡 + 状态 = 三条，意外卡让位').toBeNull()
-    act(() => useUiStore.getState().setStatus(null))
     tick(200)
-    expect(unexpectedCard()).not.toBeNull()
-    act(() => useExitNoticeStore.setState({ engineExit: null, restarting: false, previous: null }))
-  })
-
-  it('最新的一条最靠近底边：卡出现在已有状态之后 → 排在状态后面', () => {
-    say('正在构建')
-    showCard()
-    const statusEl = container.querySelector<HTMLElement>('[data-status-tone]')!
-    expect(Number(unexpectedCard()!.style.order)).toBeGreaterThan(Number(statusEl.style.order))
+    expect(hintToast(), '加入说明 + 状态 + 提示 = 三条，反馈卡不算名额').not.toBeNull()
   })
 })
 
-describe('引擎退出两张卡（ADR 0129）', () => {
+describe('引擎退出修复卡（ADR 0129）', () => {
   const engineCard = () => container.querySelector<HTMLElement>('[data-engine-exited-card]')
-  const previousCard = () => container.querySelector<HTMLElement>('[data-previous-exit-card]')
-  const toasts = () => container.querySelectorAll('[data-toast-layout]')
 
   beforeEach(() => {
     useDiagSendStore.setState({ capability: { enabled: true }, open: false })
@@ -439,14 +375,10 @@ describe('引擎退出两张卡（ADR 0129）', () => {
     expect(el.textContent).not.toContain(t('settings.diagnostics.send.cardButton', { ns: 'dialogs' }))
   })
 
-  it('不受发送开关控制：开关 null 时修复卡照出，下次启动卡不出', () => {
+  it('不受发送开关控制：开关 null 时修复卡照出', () => {
     useDiagSendStore.setState({ capability: null })
-    act(() => {
-      useExitNoticeStore.getState().setEngineExit('signal')
-      useExitNoticeStore.getState().showPrevious('app_unclean')
-    })
+    act(() => useExitNoticeStore.getState().setEngineExit('signal'))
     expect(engineCard()).not.toBeNull()
-    expect(previousCard()).toBeNull()
   })
 
   it('点「重新启动」调 restartEngine，且转圈期间重复点击无效', async () => {
@@ -461,44 +393,5 @@ describe('引擎退出两张卡（ADR 0129）', () => {
     expect(useExitNoticeStore.getState().restarting).toBe(false)
     expect(prepareDiagSend).not.toHaveBeenCalled()
     expect(startDiagSend).not.toHaveBeenCalled()
-  })
-
-  it('下次启动卡：一句话 + 「发送问题反馈」+ ×；点主动作只 setOpen(true)，prepare / start 为 0', () => {
-    act(() => useExitNoticeStore.getState().showPrevious('engine_exited'))
-    const el = previousCard()!
-    expect(el.textContent).toContain(t('exitNotice.previous.text', { ns: 'workspace' }))
-    const buttons = el.querySelectorAll('button')
-    expect(buttons).toHaveLength(2)
-    expect(buttons[0].textContent).toBe(t('settings.diagnostics.send.cardButton', { ns: 'dialogs' }))
-    act(() => buttons[0].click())
-    expect(useDiagSendStore.getState().open).toBe(true)
-    expect(useExitNoticeStore.getState().previous).toBeNull()
-    expect(prepareDiagSend).not.toHaveBeenCalled()
-    expect(startDiagSend).not.toHaveBeenCalled()
-  })
-
-  it('previous 为空时没有卡；× 关掉只清 store', () => {
-    expect(previousCard()).toBeNull()
-    act(() => useExitNoticeStore.getState().showPrevious('app_unclean'))
-    act(() => previousCard()!.querySelectorAll('button')[1].click())
-    expect(useExitNoticeStore.getState().previous).toBeNull()
-    expect(useDiagSendStore.getState().open).toBe(false)
-  })
-
-  it('仲裁：修复卡从不让位——它 + 加入说明 + 状态占满三条时，下次启动卡与提示让位', () => {
-    act(() => {
-      useExitNoticeStore.getState().showPrevious('app_unclean')
-      useExitNoticeStore.getState().setEngineExit('nonzero')
-    })
-    expect(previousCard(), '修复卡 + 下次启动卡 = 两条').not.toBeNull()
-    act(() => useUiStore.getState().setStatus(literal('正在构建')))
-    tick(200)
-    expect(previousCard(), '修复卡 + 下次启动卡 + 状态 = 三条（上限 3），都在').not.toBeNull()
-    act(() => useWorkspaceStore.setState({ addedForEdit: 'p1', activePanelId: 'p1', addedForEditDepth: 0 }))
-    tick(200)
-    expect(engineCard()).not.toBeNull()
-    expect(previousCard(), '修复卡 + 加入说明 + 状态已满三条').toBeNull()
-    expect(toasts()).toHaveLength(3)
-    act(() => useWorkspaceStore.setState({ addedForEdit: null, addedForEditDepth: 0 }))
   })
 })

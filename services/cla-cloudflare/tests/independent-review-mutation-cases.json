@@ -1,0 +1,106 @@
+[
+  {
+    "name": "archive-current-binding",
+    "file": "src/native/delegation.ts",
+    "before": "grant.id!==this.s.c.holderAuthorizationId || g.public_key!==this.s.c.holderAuthorizationKey ||\n      p.version!==this.s.c.policy.agreements.individual.version || p.digest!==this.s.c.policy.agreements.individual.sha256?'superseded':",
+    "after": "false?'superseded':",
+    "pattern": "independent archive remains verifiable and inactive after current id changes",
+    "testFile": "tests/independent-review-boundaries.test.mjs"
+  },
+  {
+    "name": "audit-final-session",
+    "file": "src/native/service.ts",
+    "before": "await this.packetFor(await this.session(token),id);",
+    "after": "// independent mutation: omit final session check",
+    "pattern": "independent private audit rechecks session after evidence construction",
+    "testFile": "tests/independent-review-boundaries.test.mjs"
+  },
+  {
+    "name": "audit-subject-hold",
+    "file": "src/native/delegation.ts",
+    "before": "const state=blocked?'blocked':",
+    "after": "const state=",
+    "pattern": "independent audit marks subject-wide hold inactive without deleting historical receipt",
+    "testFile": "tests/independent-review-boundaries.test.mjs"
+  },
+  {
+    "name": "dispatch-final-binding",
+    "file": "src/native/automatic.ts",
+    "before": "if(!sameBinding(check.proof,fresh))throw new Rejected('automatic_head_changed');",
+    "after": "// independent mutation: omit current binding",
+    "pattern": "independent new head binding change before journal leaves no send or durable attempt",
+    "testFile": "tests/independent-review-boundaries.test.mjs"
+  },
+  {
+    "name": "journal-revision",
+    "file": "src/native/store.ts",
+    "before": "EXISTS(SELECT 1 FROM targets WHERE target_key=? AND target_json=?) AND\n        (SELECT revision FROM state WHERE id=1)=? AND",
+    "after": "EXISTS(SELECT 1 FROM targets WHERE target_key=? AND target_json=?) AND\n        (? IS NOT NULL) AND",
+    "pattern": "independent journal rejects a stale evidence revision despite a fresh matching request lease",
+    "testFile": "tests/independent-review-boundaries.test.mjs"
+  },
+  {
+    "name": "journal-proof-expiry",
+    "file": "src/native/store.ts",
+    "before": "AND ?<=${DB_NOW} AND ${DB_NOW}<? AND",
+    "after": "AND ?<=${DB_NOW} AND (? IS NOT NULL) AND",
+    "pattern": "independent journal rejects fixed-time expired proof before durable dispatch",
+    "testFile": "tests/independent-review-boundaries.test.mjs"
+  },
+  {
+    "name": "journal-unresolved-other-head",
+    "file": "src/native/store.ts",
+    "before": "NOT EXISTS(SELECT 1 FROM publication_attempts WHERE target_key=? AND (head_sha=? OR phase NOT IN ('confirmed','resolved')))",
+    "after": "NOT EXISTS(SELECT 1 FROM publication_attempts WHERE target_key=? AND head_sha=?)",
+    "pattern": "independent unreconciled publication on another head blocks new head journal",
+    "testFile": "tests/independent-review-boundaries.test.mjs"
+  },
+  {
+    "name": "dispatch-external-reserve",
+    "file": "src/native/automatic.ts",
+    "before": "s.store.budget!.reserveWorkExternal(1);",
+    "after": "// independent mutation: omit reserved send budget",
+    "pattern": "independent external budget exhaustion stops before committing the send journal",
+    "testFile": "tests/independent-review-boundaries.test.mjs"
+  },
+  {
+    "name": "adapter-existing-owned-run",
+    "file": "src/native/github.ts",
+    "before": "if(runs.some(run=>run.app?.id===this.c.appId && run.app?.slug===this.c.appSlug && run.name===this.c.checkName && run.head_sha===check.headSha))",
+    "after": "if(false)",
+    "pattern": "independent existing owned remote check is rejected before durable journal or POST",
+    "testFile": "tests/independent-review-boundaries.test.mjs"
+  },
+  {
+    "name": "recovery-required",
+    "file": "src/native/config.ts",
+    "before": "if(c.automaticPublishingEnabled===true && (!c.automaticVerificationEnabled || !c.checkPublishingEnabled || !c.backgroundEnabled))throw new Rejected('automatic_publication_recovery_required');",
+    "after": "// independent mutation: allow publication without recovery",
+    "pattern": "independent automatic publication configuration requires the recovery capability",
+    "testFile": "tests/independent-review-boundaries.test.mjs"
+  },
+  {
+    "name": "status-captured-revision",
+    "file": "src/native/service.ts",
+    "before": "actor:{id:s.actor,login:s.login,role},revision,now:observed",
+    "after": "actor:{id:s.actor,login:s.login,role},revision:await this.store.revision(),now:observed",
+    "pattern": "independent status returns captured revision when a hold commits after the last revision read",
+    "testFile": "tests/independent-review-boundaries.test.mjs"
+  },
+  {
+    "name": "journal-request-head",
+    "file": "src/native/store.ts",
+    "before": "check.headSha!==job.head || check.proof.head_sha!==job.head || ",
+    "after": " ",
+    "pattern": "independent journal refuses proof for a different expected request head",
+    "testFile": "tests/independent-review-boundaries.test.mjs"
+  },
+  {
+    "name": "journal-lease-boundary",
+    "file": "src/native/store.ts",
+    "before": "AND attempt=? AND lease_until>${DB_NOW}) AND\n        NOT EXISTS(SELECT 1 FROM publication_attempts WHERE target_key=? AND (head_sha=?",
+    "after": "AND attempt=? AND lease_until>=${DB_NOW}) AND\n        NOT EXISTS(SELECT 1 FROM publication_attempts WHERE target_key=? AND (head_sha=?",
+    "pattern": "independent journal refuses lease at exact expiry with a still fresh proof",
+    "testFile": "tests/independent-review-boundaries.test.mjs"
+  }
+]

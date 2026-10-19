@@ -9,7 +9,7 @@ Use Node 24 and Python 3.10+ with sqlite3. From this directory:
     npm ci --ignore-scripts
     npm run check
 
-The exact development versions and integrity hashes are in package-lock.json. There are no production npm dependencies. check runs TypeScript checking, Node tests, local SQLite migration tests, an esbuild production-import check and isolated mutation checks. The build writes only ignored dist/ files; there is no deployment script or resource binding configuration.
+The exact development versions and integrity hashes are in package-lock.json. There are no production npm dependencies. check runs TypeScript checking, Node tests, local SQLite migration tests, an esbuild production-import check and isolated mutation checks. The build writes only ignored dist/ files. Review-only disabled deployment inputs and an offline planner live in [deployment/](deployment/README.md); no deploy command or real binding IDs are supplied.
 
 Tests use synthetic identities, ephemeral test encryption keys, a test-only database clock and local SQLite. Outbound fetch and publication are forbidden. The concurrency test uses two worker threads with separate WAL connections and real BEGIN IMMEDIATE transactions; it is not a Cloudflare D1 concurrency claim. Test databases are removed afterward.
 
@@ -19,13 +19,26 @@ Seven days limits completion of a pending packet. Valid, independently completed
 
 Expired incomplete packets remain immutable history. A new packet requires fresh independent signatures; no old signatures or intents are transferred. Creation is transactional. A hold on any packet blocks the subject across all packets and digests, with no automatic release mechanism. A hold blocks automated qualification; it does not purport to revoke or amend a legal agreement.
 
-Both parties must personally sign. This is workflow automation, not automatic rights-holder countersigning. GitHub account authentication does not establish legal identity, ownership or authority. Corporate/guardian/unresolved-authority cases remain outside this automated route.
+The contributor must personally sign. Personal holder signing remains the default.
+The disabled delegated-authority candidate in src/native/delegation.ts requires a
+separately approved, signed, narrowly scoped holder authorization and current
+signed enable control. It records a distinct system receipt, never a personal
+signature. No real authorization is shipped. GitHub authentication does not
+establish legal identity, ownership or authority. Corporate/guardian/unresolved
+cases remain outside this route. See [ADR 0137](../../docs/adr/0137-limited-cla-countersigning-authority.md)
+and the [outstanding activation gates](../../docs/implementation/cla-delegated-authority/README.md).
 
 The native entry is src/entry.ts. Each capability requires its explicit environment flag; omitted flags keep it off. No credentials, account bindings, worker IDs, queues or resource names are shipped. Agreement version 1.0 remains the only supported configuration; changing the same version's digest fails closed. A future version rollout needs separate review.
 
 ## Offline migration rehearsal
 
 migrations/migrate-local-snapshot.py reads a canonical local v1 snapshot and creates a different local output file. It refuses unknown schemas/triggers or an existing output/v2 namespace. It creates separate cla_native_v2_* tables, retains v1, copies every declared column and rowid, and checks row equality and foreign keys. Rowid preservation matters to publication reconciliation cursors.
+
+Object names come from SQLite parsing the canonical DDL, including delegated and
+head-request tables. Comparison covers every source column and rowid; the sole
+reviewed target-only column is publication_attempts.send_until, initialized to
+zero for historical attempts. Migration grants no historical attempt an active
+send fence or technical eligibility.
 
 This is not a D1 migration command or authorization to read production evidence. source_opened_read_only means this tool does not write its input; it does not establish that external writers are absent. Copied signature rows are not automatically trusted: the service still validates cryptographic evidence.
 
@@ -38,7 +51,7 @@ This is not a D1 migration command or authorization to read production evidence.
 
 ## Validation boundary
 
-The offline regression covers 169 Node cases, 3 SQLite migration cases and 14 isolated mutation checks, including wrong/invalid encryption keys, tampered evidence, expired intents, role/order checks, exact deadline boundaries, completed qualification after eight days and subject-wide holds. Re-run the commands above for the checkout under review. Local passes do not establish legal sufficiency or live GitHub/Cloudflare behavior.
+The offline regression covers personal/delegated evidence, audit export, fixed-time CI reads, budget admission, durable uncertainty, local SQLite migration and isolated source mutations. Exact counts/commands/exit codes are recorded in the [implementation evidence](../../docs/implementation/cla-delegated-authority/README.md). Re-run the commands above for the checkout under review. Local passes do not establish legal sufficiency or live GitHub/Cloudflare behavior.
 
 
 The dedicated path-filtered PR workflow uses a GitHub-hosted Ubuntu runner, Node 24 and Python 3.12, with contents:read only, no secrets, no deployment and no dependency cache. It runs npm ci --ignore-scripts and npm run check. It adds no required context and does not change the existing aggregate gates. Local and CI passes do not establish live free-tier acceptance.
@@ -53,13 +66,27 @@ Cached packet selections are authorized again for the current account. Inaccessi
 
 The withdrawal reconciler and fresh publication execute in separate scheduled invocations. After every earlier publication for a tracked target is durably resolved, a refresh decision is deduplicated by its source attempt and evidence revision. A fresh evaluation that is still ineligible finishes without a write; subsequent evidence revisions can request another evaluation. Manual or uncertain publication records block the entire target.
 
-Refresh is limited to the same head and an existing, exactly identified owned check run. It does not create runs for new heads or automatically handle a push; the explicit rights-holder check entry remains necessary for those cases. Before refreshing, the adapter verifies the predecessor run, attempt, app, name and recorded failure. After authentication and remote pre-reads, it rereads the current binding and commits a new attempt with a new 120-second proof under lease, generation and revision guards. Earlier proof text and expiry remain unchanged. Only one PATCH is attempted. Its response leaves the new attempt awaiting reconciliation; it is not immediately confirmed. A later invocation must independently observe and revalidate it. Unknown outcomes are observed or escalated for manual review, never replayed.
+Refresh is limited to the same head and an existing, exactly identified owned check run. New-head dispatch has its own default-off capability described below. Before refreshing, the adapter verifies the predecessor run, attempt, app, name and recorded failure. After authentication and remote pre-reads, it rereads the current binding and commits a new attempt with a new 120-second proof under lease, generation and revision guards. Earlier proof text and expiry remain unchanged. Only one PATCH is attempted. Its response leaves the new attempt awaiting reconciliation; it is not immediately confirmed. A later invocation must independently observe and revalidate it. Unknown outcomes are observed or escalated for manual review, never replayed.
 
 Resource limits remain 20 work SQL statements / 40 total and 35 work external calls / 40 total per invocation. Dispatch needs 13 + 2N work SQL statements, where N is the number of non-exempt contributors. Confirmation needs 14 + 2N, plus two reserved reads if withdrawal becomes necessary. Consequently this initial automatic refresh path admits at most two non-exempt contributors. More contributors or complex remote reads can exhaust the unchanged budget: no fresh publication is sent, retries are bounded to three with 60-second backoff, then manual review is required. This is a resource/capability boundary, not a negative legal or eligibility determination. There is no automatic clearing of manual states.
 
 Dynamic success-publication-across-expiry integration validation is not part of this candidate's passing evidence. New tests are restricted to offline rejection, budget, durable deduplication and uncertainty handling with failed proposals; they do not establish successful end-to-end refresh behavior. Live GitHub/Cloudflare acceptance and the excluded integration scenario remain activation gates.
 
 ### Public endpoints: abuse limits and pinned agreement asset
+
+The two-person same-head refresh limit above applies with delegation disabled.
+With delegated countersigning enabled, qualification uses three SQL reads per
+non-exempt contributor with full evidence verification: at most four fit read-only
+verification. Same-head automatic refresh supports one contributor: dispatch
+13+3N, confirmation 14+3N plus two reserved withdrawal reads. The global flag
+conservatively applies these limits even to personal signatures. Budgets remain
+unchanged. The new-head queue defaults to observations. Its additional
+CLA_AUTOMATIC_PUBLISHING_ENABLED flag requires verification, existing publishing
+and background recovery flags; one non-exempt contributor is admitted so later
+confirmation fits. One POST follows a durable issued/dispatched/outbox transaction;
+uncertainty cannot replay. Current policy/provider remains disabled. UI/audit,
+distinct crons and disabled deployment/CI proposals are in the activation checklist.
+No trigger, credential or resource is configured here.
 
 OAuth remains off by default. Before enabling it, supply the `CLA_OAUTH_LIMITER`
 Workers Rate Limiting binding. The worker uses a fixed `oauth-start` key before

@@ -9,7 +9,7 @@
 import { describe, expect, it } from 'vitest'
 import goldenVectors from '../../../tests/golden/preflight_vectors.json'
 import { loadProfile } from './profile'
-import { buildProofPayload, buildSpec, runSpec, type PreflightSpec } from './preflight'
+import { buildOriginalSpec, buildProofPayload, buildSpec, runSpec, type PreflightSpec } from './preflight'
 import {
   appliesToOriginal,
   canvasInput,
@@ -23,6 +23,7 @@ import {
   rawIssuesForObject,
   summaryFor,
   validateCanvas,
+  validateOriginal,
   validateProject,
 } from './validation'
 import type { CanvasData, FigureDocument, PanelObject } from '@/types/document'
@@ -642,6 +643,98 @@ describe('原图范围不算画布摆放类规则（FLAG-B1）', () => {
     }
     expect(canvas.page_mm).toEqual({ w: 150, h: 100, margin: 3 })
     expect(canvas.objects).toHaveLength(2)
+  })
+})
+
+describe('原图范围检查的是原图那份产物，不是图在画布上的摆法（ADR 0028）', () => {
+  /** 一张按原图口径导出的图：图幅即 manifest 的 size_mm（与 originalSpec 第 ① 档同源） */
+  const sized = (wMm: number, hMm: number, pt: number) => ({
+    ...manifestWith([{ gid: 'axes_0.xticks', role: 'ticks', label: 'X 刻度文字', pt }]),
+    size_mm: [wMm, hMm] as [number, number],
+  })
+  const input = (doc: FigureDocument) => ({ canvasId: 'c1', canvasName: '画布 1', doc, profile })
+  const original = (doc: FigureDocument, render: ReturnType<typeof renderFor>, w: number, h: number) =>
+    validateOriginal(input(doc), 'doc-1', assets, render, { objectId: 'p1', widthMm: w, heightMm: h })
+  const fontRules = (codes: string[]) => codes.filter((c) => c.startsWith('font-'))
+
+  it('160 mm 的图缩到 80 mm 摆着：画布范围照报小字，原图范围不报（导出的文件里字号没变）', () => {
+    // 9 pt 而不是 8 pt：绝对下限不含等号（`eff <= floor`），8 pt 在两种口径下都会被报
+    const p1 = panel({ nativeW: 160, nativeH: 120, w: 80, h: 60 })
+    const doc = docWith([p1])
+    const render = renderFor(p1, sized(160, 120, 9))
+    const canvas = summaryFor(runOne(doc, render).issues, { canvasId: 'c1', ready: true, failed: false })
+    // 前提：画布上读者量到的是 4.5 pt，这一条必须真的命中，否则下面的「不报」恒成立
+    expect(canvas.issues.map((i) => i.ruleCode)).toContain('font-below-absolute-floor')
+
+    const result = original(doc, render, 160, 120)!
+    const summary = summaryFor(result.issues, { canvasId: 'c1', objectId: 'p1', ready: true, failed: false })
+    expect(fontRules(summary.issues.map((i) => i.ruleCode))).toEqual([])
+    expect(fontRules(rawIssuesForObject(result.raw, 'p1').map((i) => i.id))).toEqual([])
+  })
+
+  it('反过来：6 pt 的图放大两倍摆着，画布范围放行，原图范围仍报 6 pt（不许假放行）', () => {
+    const p1 = panel({ nativeW: 80, nativeH: 60, w: 160, h: 120 })
+    const doc = docWith([p1])
+    doc.page = { w: 170, h: 130 }
+    const render = renderFor(p1, sized(80, 60, 6))
+    const canvas = summaryFor(runOne(doc, render).issues, { canvasId: 'c1', ready: true, failed: false })
+    expect(fontRules(canvas.issues.map((i) => i.ruleCode))).not.toContain('font-below-absolute-floor')
+
+    const result = original(doc, render, 80, 60)!
+    const raw = rawIssuesForObject(result.raw, 'p1')
+    const floor = raw.find((i) => i.id === 'font-below-absolute-floor')
+    expect(floor, '原图里 6 pt 低于下限').toBeDefined()
+    // 报告里记的是原图那份的数字，不是乘过画布缩放的 12 pt
+    expect(floor!.detail.effective_pt).toBe(6)
+  })
+
+  it('位图 PPI 按图幅算：画布上放大摆着报 PPI 不足，原图范围不报', () => {
+    // 945 px / 80 mm ≈ 300 ppi；摆成 160 mm 只剩 150 ppi
+    const p1 = panel({ fileKind: 'raster', pxW: 945, nativeW: 80, nativeH: 60, w: 160, h: 120 })
+    const doc = docWith([p1])
+    doc.page = { w: 170, h: 130 }
+    const render = renderFor(p1, null)
+    const canvas = runOne(doc, render)
+    expect(canvas.raw.map((i) => i.id)).toContain('raster-dpi')
+
+    const result = original(doc, render, 80, 60)!
+    expect(rawIssuesForObject(result.raw, 'p1').map((i) => i.id)).not.toContain('raster-dpi')
+    // 位图里的文字仍是「无法核验」，不因换了口径就变成通过
+    expect(rawIssuesForObject(result.raw, 'p1').map((i) => i.id)).toContain('raster-text-not-verifiable')
+  })
+
+  it('页面级问题照旧不算：原图口径的页面就是图幅，图幅宽与规范宽的比较不在这一版', () => {
+    const p1 = panel({ nativeW: 160, nativeH: 120, w: 80, h: 60 })
+    const doc = docWith([p1])
+    const result = original(doc, renderFor(p1, sized(160, 120, 9)), 160, 120)!
+    // 前提：原图口径的页面 160 mm 不是规范宽，求值器确实报了 page-width
+    expect(result.raw.map((i) => i.id)).toContain('page-width')
+    const summary = summaryFor(result.issues, { canvasId: 'c1', objectId: 'p1', ready: true, failed: false })
+    expect(summary.issues.map((i) => i.ruleCode)).not.toContain('page-width')
+    expect(rawIssuesForObject(result.raw, 'p1').map((i) => i.id)).not.toContain('page-width')
+  })
+
+  it('同一个求值器、只换输入：结果与 runSpec(buildOriginalSpec(...)) 逐字相等', () => {
+    const p1 = panel({ nativeW: 160, nativeH: 120, w: 80, h: 60 })
+    const doc = docWith([p1])
+    const render = renderFor(p1, sized(160, 120, 6))
+    const spec = buildOriginalSpec(p1, assets, render, { widthMm: 160, heightMm: 120 })
+    expect(spec.page).toEqual({ w_mm: 160, h_mm: 120, margin_mm: 0 })
+    expect(spec.panels).toHaveLength(1)
+    expect(spec.panels[0].scale).toBe(1)
+    expect(spec.panels[0].rect_mm).toEqual([0, 0, 160, 120])
+    expect(original(doc, render, 160, 120)!.raw).toEqual(runSpec(spec, profile))
+  })
+
+  it('目标不在这张画布上回 null，不发明一张图', () => {
+    const doc = docWith([panel()])
+    expect(
+      validateOriginal(input(doc), 'doc-1', assets, renderFor(panel(), null), {
+        objectId: 'nope',
+        widthMm: 80,
+        heightMm: 60,
+      }),
+    ).toBeNull()
   })
 })
 

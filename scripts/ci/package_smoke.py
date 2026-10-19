@@ -421,6 +421,119 @@ def terminate(proc: subprocess.Popen) -> dict:
     return info
 
 
+IS_WINDOWS = os.name == "nt"
+
+
+def _open_kill_on_close_job(proc: subprocess.Popen):
+    """Windows：把进程放进 Job Object（JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE），返回 `kill()` 句柄。
+
+    直接子进程先退出时 `terminate()` 不会再 taskkill 它的后代；Job 的成员关系不随父进程退出
+    而消失，`TerminateJobObject` 杀的是整个 Job。只用标准库 ctypes；拿不到 Job 时返回 None，
+    调用方照旧只靠 `terminate()`。这条路径只能在 Windows CI 上验证。
+    """
+    import ctypes
+    from ctypes import wintypes
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.CreateJobObjectW.restype = wintypes.HANDLE
+    kernel32.CreateJobObjectW.argtypes = [wintypes.LPVOID, wintypes.LPCWSTR]
+    kernel32.SetInformationJobObject.argtypes = [
+        wintypes.HANDLE,
+        ctypes.c_int,
+        wintypes.LPVOID,
+        wintypes.DWORD,
+    ]
+    kernel32.AssignProcessToJobObject.argtypes = [wintypes.HANDLE, wintypes.HANDLE]
+    kernel32.TerminateJobObject.argtypes = [wintypes.HANDLE, wintypes.UINT]
+    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+
+    class BasicLimits(ctypes.Structure):
+        _fields_ = [
+            ("PerProcessUserTimeLimit", ctypes.c_int64),
+            ("PerJobUserTimeLimit", ctypes.c_int64),
+            ("LimitFlags", wintypes.DWORD),
+            ("MinimumWorkingSetSize", ctypes.c_size_t),
+            ("MaximumWorkingSetSize", ctypes.c_size_t),
+            ("ActiveProcessLimit", wintypes.DWORD),
+            ("Affinity", ctypes.c_size_t),
+            ("PriorityClass", wintypes.DWORD),
+            ("SchedulingClass", wintypes.DWORD),
+        ]
+
+    class IoCounters(ctypes.Structure):
+        _fields_ = [(n, ctypes.c_uint64) for n in ("r", "w", "o", "rb", "wb", "ob")]
+
+    class ExtendedLimits(ctypes.Structure):
+        _fields_ = [
+            ("BasicLimitInformation", BasicLimits),
+            ("IoInfo", IoCounters),
+            ("ProcessMemoryLimit", ctypes.c_size_t),
+            ("JobMemoryLimit", ctypes.c_size_t),
+            ("PeakProcessMemoryUsed", ctypes.c_size_t),
+            ("PeakJobMemoryUsed", ctypes.c_size_t),
+        ]
+
+    job = kernel32.CreateJobObjectW(None, None)
+    if not job:
+        return None
+    limits = ExtendedLimits()
+    limits.BasicLimitInformation.LimitFlags = 0x2000  # JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+    ok = kernel32.SetInformationJobObject(  # 9 = JobObjectExtendedLimitInformation
+        job, 9, ctypes.byref(limits), ctypes.sizeof(limits)
+    ) and kernel32.AssignProcessToJobObject(job, int(proc._handle))  # noqa: SLF001
+    if not ok:
+        kernel32.CloseHandle(job)
+        return None
+
+    class Job:
+        def kill(self) -> bool:
+            done = bool(kernel32.TerminateJobObject(job, 1))
+            kernel32.CloseHandle(job)
+            return done
+
+    return Job()
+
+
+def run_isolated_command(
+    command: list[str], *, env: dict, cwd: Path, evidence: Path, timeout: float
+) -> dict:
+    """Bound a generic harness subprocess with the existing process-tree cleanup.
+
+    Application launch/authentication stays with the calling harness. This helper
+    owns only process lifetime and retained output; it never calls an app API.
+    """
+    with (
+        (evidence / "stdout.txt").open("w") as stdout,
+        (evidence / "stderr.txt").open("w") as stderr,
+    ):
+        proc = subprocess.Popen(
+            command,
+            env=env,
+            cwd=cwd,
+            stdout=stdout,
+            stderr=stderr,
+            stdin=subprocess.DEVNULL,
+            start_new_session=os.name != "nt",
+        )
+        job = None
+        if IS_WINDOWS:
+            try:
+                job = _open_kill_on_close_job(proc)
+            except (OSError, AttributeError, ValueError):
+                job = None  # fall back to terminate() alone; reported as job_killed=None
+        timed_out = False
+        try:
+            proc.wait(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            timed_out = True
+        finally:
+            cleanup = terminate(proc)
+            if IS_WINDOWS:
+                # The direct child may already be gone while its descendants still run.
+                cleanup["job_killed"] = job.kill() if job else None
+    return {"exit_code": proc.returncode, "timed_out": timed_out, "cleanup": cleanup}
+
+
 def run_attempt(n: int, cmd: list[str], attempt_dir: Path, port: int, timeout: float) -> dict:
     """起一次、等就绪、打两条请求、终止。每次尝试各自一套 data / config / 日志。"""
     data_dir = attempt_dir / "data"

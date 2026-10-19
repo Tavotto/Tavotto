@@ -1,4 +1,4 @@
-import { useEffect, useReducer, type ReactNode } from 'react'
+import { useEffect, useMemo, useReducer, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ArrowLeftRight, ExternalLink, LayoutGrid, Trash2 } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
@@ -6,10 +6,13 @@ import { formatMm } from '@/lib/units'
 import { onExportDefaultsHydrated, readExportDefaults } from '@/lib/exportDefaults'
 import { hasRaster } from '@/lib/exportRequest'
 import { msg, t as translate, type UiMessage } from '@/i18n'
+import { DEFAULT_PROFILE_ID, loadProfile } from '@/lib/profile'
+import { resolveDocumentSpec } from '@/lib/specBinding'
 import { cn, MOD } from '@/lib/utils'
-import { clearGuides, removeGuide, setPageSetup, setPageSize } from '@/store/actions'
+import { clearGuides, PAGE_MM_MAX, PAGE_MM_MIN, removeGuide, setPageSetup, setPageSize } from '@/store/actions'
 import { useDocumentStore } from '@/store/documentStore'
 import { useInspectorPrefs } from '@/store/inspectorPrefs'
+import { toCatalog, useProfileStore } from '@/store/profileStore'
 import { useUiStore } from '@/store/uiStore'
 import { Button, IconButton } from '../ui/Button'
 import { Row, Section, ROW_GRID_COLS } from '../ui/Field'
@@ -23,15 +26,34 @@ import { INSPECTOR_LABEL_COL, INSPECTOR_LABEL_W } from './layout'
 import { MmField } from './MmField'
 
 /**
- * 期刊常用版心；宽度是硬约束，高度给个常见起点。
- * 文案按 id 查 `inspector:canvas.presets.<id>`，这里只留尺寸。
+ * 页面尺寸预设。文案按 id 查 `inspector:canvas.presets.<id>`，这里只留尺寸。
+ *
+ * 「单栏 / 双栏」的**宽度不是这里的常量**：出版规范（`profiles/publication.json` 的
+ * `widths_mm`）是唯一权威，预检 `page-width` 也读它，所以预设宽度由 `pagePresets()` 从当前画布
+ * 绑定的规范取（与 `validationStore.collectCanvases` 同一条 `resolveDocumentSpec` 路径）。
+ * 绑定的规范缺 `widths_mm` / 值不在页面能取的范围（`PAGE_MM_MIN`–`PAGE_MM_MAX`，`setPageSize` 按它夹取——
+ * 摆一个夹完就对不上的预设，选了之后页面立刻变成「自定义」）时退回**内置默认规范**的那一档（仍是 `publication.json`，
+ * 不在这里写第二个数）；高度只是常见起点，不是规范字段。「整页」「正方形」不在规范里，保持常量。
  */
-const PRESETS = [
-  { id: 'single', w: 85, h: 60 },
-  { id: 'double', w: 150, h: 100 },
-  { id: 'full', w: 180, h: 240 },
-  { id: 'square', w: 100, h: 100 },
-]
+const FALLBACK_WIDTHS = loadProfile(DEFAULT_PROFILE_ID).widths_mm
+
+interface PagePreset {
+  id: string
+  w: number
+  h: number
+}
+
+const positive = (v: unknown, fallback: number): number =>
+  typeof v === 'number' && Number.isFinite(v) && v >= PAGE_MM_MIN && v <= PAGE_MM_MAX ? v : fallback
+
+function pagePresets(widths: { single?: unknown; double?: unknown } | undefined): PagePreset[] {
+  return [
+    { id: 'single', w: positive(widths?.single, FALLBACK_WIDTHS.single), h: 60 },
+    { id: 'double', w: positive(widths?.double, FALLBACK_WIDTHS.double), h: 100 },
+    { id: 'full', w: 180, h: 240 },
+    { id: 'square', w: 100, h: 100 },
+  ]
+}
 
 /** 下拉里「自定义」那一项的取值：尺寸对不上任何预设时它就是当前值 */
 const CUSTOM = 'custom'
@@ -52,7 +74,9 @@ const hist = (key: string): UiMessage => msg(`history.${key}`, undefined, 'inspe
  */
 const THUMB_BOX = 16
 const THUMB_MIN = 5
-const THUMB_SCALE = THUMB_BOX / Math.max(...PRESETS.map((p) => p.w))
+// 比例钉在静态常量 180（整页版心宽）上，不随规范宽度变：换规范时缩略图不抖，
+// 规范宽于 180 的那档由 PageThumb 里的 BOX/max(w,h) 兜底缩进格子
+const THUMB_SCALE = THUMB_BOX / 180
 
 function PageThumb({ w, h }: { w: number; h: number }) {
   const k = Math.min(THUMB_SCALE, THUMB_BOX / Math.max(w, h))
@@ -82,6 +106,20 @@ export function CanvasPage() {
   const name = useDocumentStore((s) => s.doc.name)
   const guides = useDocumentStore((s) => s.doc.guides)
   const ui = useUiStore()
+  // 预设宽度跟着当前画布绑定的规范走：订阅绑定与规范清单，换规范 / 同步新版后立刻跟随
+  const binding = useDocumentStore((s) => s.doc.profile)
+  const specs = useProfileStore((s) => s.specs)
+  // 跟随全局清单的绑定（`follow` / 只有 id 的旧绑定）要先有那份清单：没打开过样式 / 规范 / 导出界面时
+  // store 里只有内置规范，自定义规范会被当成缺席、退到快照或默认规范（与 StylePanel 同一个做法）
+  const specsLoaded = useProfileStore((s) => s.loaded)
+  useEffect(() => {
+    if (!specsLoaded) void useProfileStore.getState().load()
+  }, [specsLoaded])
+  const widths = useMemo(
+    () => resolveDocumentSpec(binding, toCatalog(specs)).profile.widths_mm,
+    [binding, specs],
+  )
+  const PRESETS = useMemo(() => pagePresets(widths), [widths])
   const active = PRESETS.find((p) => p.w === page.w && p.h === page.h)
   // 摘要行互不排斥、各记各的（键 `canvas:<组>`）；开合跨会话记在 inspectorPrefs
   const foldOpen = useInspectorPrefs((s) => s.foldOpen)
@@ -145,7 +183,7 @@ export function CanvasPage() {
               options={[
                 ...PRESETS.map((p) => ({
                   value: p.id,
-                  hint: cv(`presets.${p.id}.hint`),
+                  hint: cv(`presets.${p.id}.hint`, { w: Math.round(p.w * 10) / 10 }),
                   label: (
                     <span data-page-preset={p.id} className="flex min-w-0 items-center gap-2">
                       <PageThumb w={p.w} h={p.h} />

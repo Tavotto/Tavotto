@@ -1,0 +1,68 @@
+{
+  "recorded_at_utc": "2026-10-18T06:54:08.427993+00:00",
+  "baseline_commit": "2cf74761ce823eb19f962235839fb0c99f0e7df9",
+  "stage": "independent read-only review of current uncommitted P1+necessary migration fixes",
+  "source_hashes": "source-hashes.json",
+  "current_workspace_hash_mismatches": [],
+  "checks": [
+    {
+      "command": "node --test tests/inflight-publication.test.mjs tests/independent-fence-review.test.mjs tests/automatic-publication.test.mjs tests/independent-refresh-boundaries.test.mjs",
+      "exit_code": 0,
+      "passed": 60,
+      "log": "targeted-node.txt"
+    },
+    {
+      "command": "python3 tests/migration.test.py",
+      "exit_code": 0,
+      "passed": 4,
+      "log": "migration.txt"
+    },
+    {
+      "command": "node tests/mutation-smoke.mjs",
+      "exit_code": 0,
+      "mutations_detected": 54,
+      "selected_exit": 1,
+      "new_cases_assertion_error_required": 12,
+      "log": "mutations.txt"
+    },
+    {
+      "command": "independent sqlite_schema exact comparison of nativeSQL vs migration.ddl(v2)",
+      "exit_code": 0,
+      "log": "namespace-equivalence.json"
+    }
+  ],
+  "initial_runner_failure": {
+    "exit_code": 1,
+    "reason": "Reviewer temporary copy omitted deployment directory; ENOENT before first mutation. Fixed isolation copy, then reran successfully. Not a production source or approval failure.",
+    "log": "mutations-initial-incomplete-copy.txt"
+  },
+  "findings": [],
+  "verified_invariants": [
+    "persisted head lease fences in-flight sender independently from proof expiry",
+    "claim and eligible cannot bypass active fence after revision/generation wake",
+    "phase CAS prevents old reconciliation/failure/defer snapshots overwriting settlement",
+    "automatic settlement atomically clears fence and wakes current revision without releasing any current outbox lease or changing generation",
+    "migration derives complete objects from actual canonical DDL; exact runtime sqlite_schema equality",
+    "all source columns plus rowid preserve exact values; injected source-column corruption rejects; only target send_until defaults0"
+  ],
+  "remaining_boundaries": [
+    "live Cloudflare/D1 execution and deployment not accepted",
+    "successful publication/confirmation/CI timing not accepted",
+    "formal main CI consumer activation disabled",
+    "real limited authority/credential/key registration/signing not performed",
+    "earlier agreement version migration boundary unchanged"
+  ],
+  "not_executed": [
+    "workspace writes by reviewer",
+    "HTTP",
+    "external review trigger",
+    "successful publication across proof expiry"
+  ],
+  "log_sha256": {
+    "targeted-node.txt": "c9d09c7f1e81ca12363fe7d43452c075efdf6b1e52424ca840519bce1e983046",
+    "migration.txt": "0cf57cbf8729980143491e1e90cf89ca373c60c2f055a0e4aa49946257c29314",
+    "mutations.txt": "cc6f2155d37c87aa26df9626977ca9fc7021a62ff473e5cb1f87b0e7101068a1",
+    "mutations-initial-incomplete-copy.txt": "0514c5f362487c7346bb2faaa4a858a28af0fb5cfdaa3a5ab2eb79253910f079",
+    "namespace-equivalence.json": "708ec6789e3ee9efae16c9121d0f32c72bd89894944657119745963cc05fe332"
+  }
+}

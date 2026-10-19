@@ -173,12 +173,13 @@ def test_sharded_display_names_map_back_to_the_job_id(live_workflow):
 def test_expression_display_names_map_back_to_the_job_id(live_workflow):
     """CI03c 起 windows-exe-smoke 的 `name:` 是 `windows-exe-smoke (${{ matrix.shard }})`
     （include 形状的 matrix 不加 name 会把四个字段全排进显示名）。API 的显示名是
-    `windows-exe-smoke (1)` / `(2)`；整格 skip 时表达式展开成空、显示成 `windows-exe-smoke ()`；
+    `windows-exe-smoke (1)` / `(2)` / `(3)`；整格 skip 时表达式展开成空、显示成 `windows-exe-smoke ()`；
     三种都要映射回 job id，否则下一轮基线采集会把这条腿的时间算丢。别的名字照样拒。"""
     assert live_workflow["windows-exe-smoke"]["name"] == "windows-exe-smoke (${{ matrix.shard }})"
     for shown in (
         "windows-exe-smoke (1)",
         "windows-exe-smoke (2)",
+        "windows-exe-smoke (3)",
         "windows-exe-smoke ()",
         "windows-exe-smoke",
     ):
