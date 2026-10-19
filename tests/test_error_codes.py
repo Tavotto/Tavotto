@@ -266,6 +266,8 @@ USER_VISIBLE_CODES = {
     # 这个请求 id 已被新指令取代（改写后再发），不会再执行 / 取代时发现旧请求其实已经开始
     "ai_request_superseded": set(),
     "ai_supersede_conflict": set(),
+    # 同面板 / 同脚本上还有没落定的待确认提交，这次又没显式取代它（409，后端在写账本的事务里判）
+    "ai_pending_unresolved": set(),
     # 拒绝之后清待确认行也失败了：状态不确定（503），客户端保持同一个 rid
     "ai_request_unresolved": set(),
     # ADR 0132：助手草稿单稿超过 20 KB（413，不截断）
@@ -562,6 +564,8 @@ NON_UI_CODES = {
     "bad_secret",
     "no_session_mode",
     "desktop_auth_required",
+    # `GET /api/handoff/render-status` 的参数错误：只有 `tavotto open` 的轮询客户端会调，界面不展示（ADR 0131 §六）
+    "bad_handoff_query",
     # 一键安装的**进度**状态码，不是错误响应：它们的文案在
     # dialogs:settings.agents.install.error.*（由 pnpm i18n:check
     # 守双语齐全），不该也不能进 errors.backend 那张表。

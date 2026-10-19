@@ -1217,11 +1217,16 @@ FINAL_STATUSES: frozenset[str] = frozenset({"done", "failed", "timeout", "interr
 
 
 def _history_final(hist: dict) -> bool:
-    """历史库里这一行是不是终态：状态本身是确定终态（`FINAL_STATUSES`），或写了 `ended_ms`（`record_end` / 启动清理才写）。
-    `cancel` 只改 status、不写 ended_ms——那一刻 changed / diff / refresh 还没算出来；若这行属于另一个仍活着的服务进程，
-    它的 `_pump` 之后才会收尾。`interrupt_all`（/api/shutdown）写 interrupted 也不写 ended_ms、进程随后就没了：
+    """历史库里这一行是不是终态：写了 `ended_ms`（`record_end` / 启动清理才写）就是；否则看状态。
+    `cancel` 与 `interrupt_all`（/api/shutdown）都只改 status、不写 ended_ms——那一刻进程组可能还在退出、changed / diff / refresh
+    还没算出来；若这行的属主（另一个共用数据目录的服务进程）还活着，它的 `_pump` 之后才会收尾，此刻不是终态（与
+    `OPEN_SESSION_SQL` 同一个概念）。属主已不在（关机后进程没了 / 未知 / 就是本进程的旧实例）则不会再有结果：终态，
     不能因此永远 `final: false`。"""
-    return hist.get("status") in FINAL_STATUSES or hist.get("ended_ms") is not None
+    if hist.get("ended_ms") is not None:
+        return True
+    if hist.get("status") in ("cancelled", "interrupted"):
+        return not ai_history.owner_alive(hist.get("owner_pid"), hist.get("started_ms"))
+    return hist.get("status") in FINAL_STATUSES
 
 
 def _session_dto(raw: dict) -> dict:
@@ -1269,6 +1274,8 @@ def get(sid: str) -> dict | None:
             "diff": "",
             "changed": None,
             "final": True,  # 后端已重启，没有进程会再产出结果了
+            # 进程随上一个后端一起没了：这是终态。`interrupted` 与 `cancelled` 一样要带 `ended_ms` 才算终态（前端 `snapshotIsFinal`）
+            "ended_ms": side.get("ended_ms") or int(time.time() * 1000),
             "note": "后端已重启，仅可回滚",
         }
     )

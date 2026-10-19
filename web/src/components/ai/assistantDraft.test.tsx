@@ -322,6 +322,24 @@ describe('同步状态机：单一 reconcile + 写入版本（#1098）', () => {
     expect(be.draft('pa', 'Fig1.pdf')).toBe('第一版加字') // 没有把旧文本写回去
   })
 
+  it('点发送后等草稿写成功的途中又改了输入框：不发（发的文本与快照的版本号 / 戳会指向两份稿），途中打的字留着；重试按当前输入框发', async () => {
+    vi.mocked(aiRun).mockResolvedValue({ session: 's-1', script: 'p1.py' })
+    await mount()
+    await typeText('把线条加粗')
+    const release = be.holdDraftPuts()
+    await click(q('[data-ai-send="send"]')) // 发送先等草稿写成功：PUT 被扣住
+    await typeText('把线条加粗，再改成虚线') // 途中继续打字
+    release()
+    await settle()
+    expect(aiRun).not.toHaveBeenCalled()
+    expect(q('[data-ai-error="send"]')?.textContent).toContain('发送途中改过了')
+    expect(input().value).toBe('把线条加粗，再改成虚线') // 途中打的字没丢
+    await click(q('[data-ai-retry]'))
+    await settle()
+    expect(aiRun).toHaveBeenCalledTimes(1)
+    expect((vi.mocked(aiRun).mock.calls[0][0] as { prompt: string }).prompt).toBe('把线条加粗，再改成虚线')
+  })
+
   it('PUT 在途时本地又有更新的写入：防抖到点时因为在途而被跳过，落地后以本地为准补写一次（不靠再来一次防抖）', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
     try {
@@ -555,6 +573,17 @@ describe('同步状态机：单一 reconcile + 写入版本（#1098）', () => {
     expect(input().value).toBe('读不到服务器时打的字')
   })
 
+  it('读成功过一次、卸载后重开时读失败：仍退出 loading、允许编辑（发件箱槽位留着 read=true 也不能让文本框一直只读）', async () => {
+    await mount()
+    await settle()
+    expect(input().readOnly).toBe(false)
+    await unmount()
+    be.setDown(true)
+    await mount()
+    await settle()
+    expect(input().readOnly).toBe(false)
+  })
+
   // —— 发件箱：未落定的写入由模块级发件箱持有，与 hook 实例 / 挂载的目标无关 ——
   const putsOf = () => be.calls.filter((c) => c.method === 'PUT' && c.path === '/api/ai/drafts')
 
@@ -658,6 +687,50 @@ describe('同步状态机：单一 reconcile + 写入版本（#1098）', () => {
     await act(async () => void (await new Promise((r) => setTimeout(r, WRITE_DEBOUNCE_MS + 50))))
     await settle()
     expect(be.draft('pa', 'Fig1.pdf')).toBe('别的标签页留下的稿，再加一句') // 基于已见的服务器版本写，不是盲写
+  })
+
+  it('本页视图过期（别的标签页刚在兄弟面板留下未确认、任务已结束，本页还没对账）就点发送：后端 409 ai_pending_unresolved——新指令不发，那条被还原并按 rid 查询接回会话', async () => {
+    useSelectionStore.setState({ ids: ['p3'] } as never)
+    await mount()
+    await typeText('新指令')
+    expect(q<HTMLButtonElement>('[data-ai-send="send"]')!.disabled).toBe(false) // 本页看来可以发
+    be.pendings.set('pa\u0000Fig1.pdf', [{ rid: 'rid-othertab-009', text: '别的标签页发出的话', sent: SENT, script: 'p1.py' }])
+    vi.mocked(fetchAiRequest).mockResolvedValue({ session: 's-other', status: 'done', changed: true, script: 'p1.py' })
+    await click(q('[data-ai-send="send"]'))
+    await settle()
+    expect(aiRun).not.toHaveBeenCalled() // 同一修改不会执行第二次
+    expect(q('[data-ai-error="send"]')?.textContent).toContain('先看它的结果')
+    expect(vi.mocked(fetchAiRequest).mock.calls.some((c) => c[0] === 'rid-othertab-009')).toBe(true)
+    expect(useAiStore.getState().sessions.map((x) => x.id)).toContain('s-other') // 接回了那次的结果
+  })
+
+  it('409 ai_pending_unresolved 之后、本页再读之前，别的标签页已确认并删掉了挡路的那一行：照着 409 带回的行还原并查询，接回会话、不放开发送', async () => {
+    useSelectionStore.setState({ ids: ['p3'] } as never)
+    await mount()
+    await typeText('新指令')
+    be.pendings.set('pa\u0000Fig1.pdf', [{ rid: 'rid-othertab-010', text: '别的标签页发出的话', sent: SENT, script: 'p1.py' }])
+    be.afterPendingUnresolved(() => be.dropRejectedPending('rid-othertab-010')) // 回 409 的同时，那一行被别的标签页 accept 掉了
+    vi.mocked(fetchAiRequest).mockResolvedValue({ session: 's-other', status: 'running', changed: false, script: 'p1.py' })
+    await click(q('[data-ai-send="send"]'))
+    await settle()
+    be.afterPendingUnresolved(null)
+    expect(aiRun).not.toHaveBeenCalled()
+    expect(vi.mocked(fetchAiRequest).mock.calls.some((c) => c[0] === 'rid-othertab-010')).toBe(true)
+    expect(useAiStore.getState().sessions.map((x) => x.id)).toContain('s-other')
+    expect(q('[data-ai-send="send"]')).toBeNull() // 那次任务还在跑：只剩「停止」
+  })
+
+  it('对账成功过一次之后，草稿读失败而项目级账本读成功：别的标签页新留在兄弟面板上的未确认提交照样还原、发送锁住', async () => {
+    useSelectionStore.setState({ ids: ['p3'] } as never)
+    await mount()
+    await typeText('一条指令')
+    expect(q<HTMLButtonElement>('[data-ai-send]')!.disabled).toBe(false)
+    be.pendings.set('pa\u0000Fig1.pdf', [{ rid: 'rid-othertab-001', text: '别的标签页发出的话', sent: SENT, script: 'p1.py' }])
+    be.setDraftGetFails(true)
+    await act(async () => window.dispatchEvent(new Event('focus')))
+    await settle()
+    expect(Object.keys(useAiStore.getState().submissions)).toEqual(['rid-othertab-001'])
+    expect(q<HTMLButtonElement>('[data-ai-send]')!.disabled).toBe(true)
   })
 
   it('对账成功过一次之后，项目级待确认读失败：ledgerState 降回 failed、发送锁住；下一次成功的项目级读取才解锁', async () => {
@@ -1090,6 +1163,24 @@ describe('同步状态机：单一 reconcile + 写入版本（#1098）', () => {
     expect(useAiStore.getState().sessions[0]).toMatchObject({ status: 'cancelled', finalized: true, changed: true, diff: 'REAL-DIFF' })
   })
 
+  it('查询接回的会话还是临时快照（interrupted、没有 ended_ms）：之后的对账继续取详情，拿到终态的 changed / diff 才收尾', async () => {
+    be.pendings.set('pa\u0000Fig1.pdf', [{ rid: 'rid-intr-0000001', text: '别的服务进程发的', sent: SENT, script: 'p1.py' }])
+    useSelectionStore.setState({ ids: ['p3'] } as never)
+    await mount()
+    vi.mocked(fetchAiRequest).mockResolvedValue({ session: 's-intr', status: 'interrupted', changed: false, script: 'p1.py' })
+    vi.mocked(fetchAiSession).mockResolvedValue({ status: 'interrupted', ended_ms: null, changed: false, diff: '', transcript: [] } as never)
+    await click(q('[data-ai-check]'))
+    await settle()
+    const s0 = useAiStore.getState().sessions.find((x) => x.id === 's-intr')
+    expect(s0 && !s0.finalized).toBe(true) // 临时快照：不当终态
+    vi.mocked(fetchAiSession).mockResolvedValue({ status: 'interrupted', ended_ms: 9, changed: true, diff: '@@ d', transcript: [] } as never)
+    await act(async () => window.dispatchEvent(new Event('mm:sse-open')))
+    await settle()
+    const s1 = useAiStore.getState().sessions.find((x) => x.id === 's-intr')
+    expect(s1?.finalized).toBe(true)
+    expect(s1?.changed).toBe(true)
+  })
+
   it('读不到快照 / 快照仍是 running：本地会话不动（不把「查不到」当结束）', async () => {
     vi.mocked(aiRun).mockResolvedValue({ session: 's-1', script: 'p1.py' })
     await mount()
@@ -1392,6 +1483,26 @@ describe('已发出未确认：不能盲目重发', () => {
     expect(q<HTMLButtonElement>('[data-ai-send]')!.disabled).toBe(true)
   })
 
+  it.each([
+    ['同一种写法', 'p1.py'],
+    ['旧数据的绝对路径（sameScript 认作同一份）', 'C:\\proj\\p1.py'],
+  ])('兄弟面板上「改写后再发」：A 面板发起的旧等待也随这个面板新行的 PUT 带进 supersedes（%s）', async (_n, oldScript) => {
+    be.pendings.set('pa\u0000Fig1.pdf', [{ rid: 'rid-sibling-0002', text: 'A 面板发出的话', sent: SENT, script: oldScript }])
+    useSelectionStore.setState({ ids: ['p3'] } as never)
+    await mount()
+    vi.mocked(fetchAiRequest).mockRejectedValue(new ApiError('nf', 404, { code: 'ai_request_not_found' }))
+    await click(q('[data-ai-check]'))
+    await settle()
+    await click(q('[data-ai-edit-resend]'))
+    vi.mocked(aiRun).mockResolvedValue({ session: 's-9', script: 'p1.py' })
+    await typeText('新指令')
+    await click(q('[data-ai-send="send"]'))
+    await settle()
+    const rid2 = (vi.mocked(aiRun).mock.calls[0][0] as { client_request_id: string }).client_request_id
+    const putOfNew = be.calls.find((c) => c.method === 'PUT' && c.path.endsWith(`/pending/${rid2}`))
+    expect(putOfNew?.body.supersedes).toEqual(['rid-sibling-0002'])
+  })
+
   it('发起请求的面板已不在（删了 / 换图）：同脚本的面板上仍还原这条未确认，说明来源不在了，且能查询', async () => {
     // Gone.pdf 这个面板文档里没有；它的账本带着 script，与 p3（脚本 p1.py）同脚本
     be.pendings.set('pa\u0000Gone.pdf', [{ rid: 'rid-gone-000001', text: '孤儿面板发出的话', sent: SENT, script: 'p1.py' }])
@@ -1514,6 +1625,27 @@ describe('已发出未确认：不能盲目重发', () => {
     expect(putOfNew?.body.supersedes).toEqual([rid1])
   })
 
+  it('「改写后再发」时旧请求其实已登记（409 ai_supersede_conflict）：放弃的那条原样还原、照旧锁住发送，并按它的 rid 查询接回会话；新指令不发', async () => {
+    await mount()
+    await sendIt('旧指令')
+    const rid1 = (vi.mocked(aiRun).mock.calls[0][0] as { client_request_id: string }).client_request_id
+    vi.mocked(fetchAiRequest).mockRejectedValue(new ApiError('nf', 404, { code: 'ai_request_not_found' }))
+    await click(q('[data-ai-check]'))
+    await settle()
+    await click(q('[data-ai-edit-resend]'))
+    // 旧请求的慢 POST 这时才到、登记成会话
+    be.markRegistered(rid1)
+    vi.mocked(fetchAiRequest).mockReset()
+    vi.mocked(fetchAiRequest).mockResolvedValue({ session: 's-old', status: 'running', changed: false, script: 'fig1.py' })
+    await typeText('新指令')
+    await click(q('[data-ai-send="send"]'))
+    await settle()
+    expect(aiRun).toHaveBeenCalledTimes(1) // 新指令没有发出
+    expect(vi.mocked(fetchAiRequest).mock.calls.some((c) => c[0] === rid1)).toBe(true) // 按旧 rid 查询
+    expect(useAiStore.getState().sessions.map((x) => x.id)).toContain('s-old') // 接回旧请求的会话
+    expect(q('[data-ai-send="send"]')).toBeNull() // 旧任务还在跑：只剩「停止」，不能再发
+  })
+
   it('查询得到 superseded（这条请求已被改写后的新指令取代）：不再提供同 rid 重发，提交被收掉，说一句', async () => {
     await mount()
     await sendIt('旧指令')
@@ -1541,6 +1673,53 @@ describe('已发出未确认：不能盲目重发', () => {
     expect(be.pendings.get('pb\u0000Fig1.pdf') ?? []).toEqual([])
     expect(Object.values(useAiStore.getState().submissions)).toEqual([])
     expect(q('[data-ai-error="send"]')).toBeNull() // 作废是静默的，不是报错
+  })
+
+  it('账本 PUT 回 409 ai_pending_unresolved 时已经切到项目 B：A 的挡路行不还原进 B、不查询、不报错（B 不被锁，A 的会话不挂到 B 上）', async () => {
+    vi.mocked(aiRun).mockResolvedValue({ session: 's-1', script: 'p1.py' })
+    await mount()
+    await typeText('新指令')
+    be.pendings.set('pa\u0000Fig1.pdf', [{ rid: 'rid-othertab-011', text: '别的标签页发出的话', sent: SENT, script: 'p1.py' }])
+    vi.mocked(fetchAiRequest).mockResolvedValue({ session: 's-a', status: 'running', changed: false, script: 'p1.py' })
+    be.afterPendingUnresolved(() => {
+      setCurrentProjectId('pb') // 响应回来之前切到项目 B（B 里也有同名脚本）
+      useAiStore.getState().clear()
+    })
+    await click(q('[data-ai-send="send"]'))
+    await settle()
+    be.afterPendingUnresolved(null)
+    expect(aiRun).not.toHaveBeenCalled()
+    expect(Object.values(useAiStore.getState().submissions)).toEqual([])
+    expect(vi.mocked(fetchAiRequest).mock.calls.some((c) => c[0] === 'rid-othertab-011')).toBe(false)
+    expect(useAiStore.getState().sessions.map((x) => x.id)).not.toContain('s-a')
+    expect(q('[data-ai-error="send"]')).toBeNull()
+  })
+
+  it('「改写后再发」的 PUT 回 409 ai_supersede_conflict 时已经切到项目 B：A 放弃的那条不还原进 B、不查询、不报错', async () => {
+    await mount()
+    await sendIt('旧指令')
+    const rid1 = (vi.mocked(aiRun).mock.calls[0][0] as { client_request_id: string }).client_request_id
+    vi.mocked(fetchAiRequest).mockRejectedValue(new ApiError('nf', 404, { code: 'ai_request_not_found' }))
+    await click(q('[data-ai-check]'))
+    await settle()
+    await click(q('[data-ai-edit-resend]'))
+    be.markRegistered(rid1)
+    vi.mocked(fetchAiRequest).mockReset()
+    vi.mocked(fetchAiRequest).mockResolvedValue({ session: 's-a', status: 'running', changed: false, script: 'fig1.py' })
+    // 两道各自成立的防线钉在这一条上：切项目的 `clear()` 清空放弃队列，`start()` 的拒绝分支先核项目代次——两者都去掉这条才红
+    be.afterSupersedeConflict(() => {
+      setCurrentProjectId('pb')
+      useAiStore.getState().clear()
+    })
+    await typeText('新指令')
+    await click(q('[data-ai-send="send"]'))
+    await settle()
+    be.afterSupersedeConflict(null)
+    expect(aiRun).toHaveBeenCalledTimes(1) // 新指令没发
+    expect(Object.values(useAiStore.getState().submissions)).toEqual([])
+    expect(vi.mocked(fetchAiRequest).mock.calls.some((c) => c[0] === rid1)).toBe(false)
+    expect(useAiStore.getState().sessions.map((x) => x.id)).not.toContain('s-a')
+    expect(q('[data-ai-error="send"]')).toBeNull()
   })
 
   it('放弃旧等待后新行的 PUT 失败：旧行还在（状态仍然一致），之后同一条指令重试成功才一起清掉旧行', async () => {
@@ -1585,6 +1764,25 @@ describe('已发出未确认：不能盲目重发', () => {
     expect(rid).toBe(written[0]) // 同一个 rid，不是换了新的
     const puts = be.calls.filter((c) => c.method === 'PUT' && c.path.includes('/pending/'))
     expect(new Set(puts.map((c) => c.path)).size).toBe(1) // 两次 PUT 都落在同一个 rid 上
+  })
+
+  it('账本写入结果未知的旧 rid 被别的标签页登记了，本页改了指令再发（409 ai_supersede_conflict）：旧 rid 还原成未确认并查询接回会话，新指令不发', async () => {
+    vi.mocked(aiRun).mockResolvedValue({ session: 's-1', script: 'p1.py' })
+    await mount()
+    await typeText('把线条加粗一点')
+    be.losePendingResponses(1)
+    await click(q('[data-ai-send="send"]'))
+    await settle()
+    const rid1 = be.pendings.get('pa\u0000Fig1.pdf')![0].rid
+    be.markRegistered(rid1) // 别的标签页还原了这条账本行、把它发了出去
+    vi.mocked(fetchAiRequest).mockResolvedValue({ session: 's-other', status: 'running', changed: false, script: 'p1.py' })
+    await typeText('改成虚线')
+    await click(q('[data-ai-send="send"]'))
+    await settle()
+    expect(aiRun).not.toHaveBeenCalled()
+    expect(vi.mocked(fetchAiRequest).mock.calls.some((c) => c[0] === rid1)).toBe(true)
+    expect(useAiStore.getState().sessions.map((x) => x.id)).toContain('s-other')
+    expect(q('[data-ai-send="send"]')).toBeNull()
   })
 
   it('账本 PUT 回 5xx 同样是「不知道」：恢复后重试沿用同一个 rid；明确的 4xx 才算确定没写', async () => {

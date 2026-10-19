@@ -207,9 +207,24 @@ describe('断线期间结束的会话收尾', () => {
         status: 'running', changed: false, diff: '', startedAt: 1,
       }],
     })
-    detail['s-local'] = { status: 'interrupted', changed: null, diff: '', transcript: [] }
+    // 后端重启后：属主（上一个后端）已不在，详情给 `final: true`
+    detail['s-local'] = { status: 'interrupted', final: true, changed: null, diff: '', transcript: [] }
     await useAiStore.getState().restoreRunning()
     expect(sessions()[0].status).toBe('failed')
+  })
+
+  it('后端说 interrupted 但还不是终态（另一个服务进程的 interrupt_all 刚写了 status，pump 还没收尾）：不收尾，继续当成在跑', async () => {
+    useAiStore.setState({
+      sessions: [{
+        id: 's-local', project: 'pa', agent: 'codex', agentLabel: 'Codex', prompt: 'p', script: 'fig1.py',
+        panelId: 'p1', fileId: 'Fig1.pdf', gid: null, scope: 'figure', target: '整张图', entries: [],
+        status: 'running', changed: false, diff: '', startedAt: 1,
+      }],
+    })
+    detail['s-local'] = { status: 'interrupted', final: false, changed: null, diff: '', transcript: [] }
+    await useAiStore.getState().restoreRunning()
+    expect(sessions()[0].status).toBe('running')
+    expect(sessions()[0].finalized).toBeFalsy()
   })
 
   it('详情读不出状态（空体 / 老后端）：不当成结束', async () => {

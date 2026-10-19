@@ -12,6 +12,7 @@ import json
 import logging
 import sqlite3
 import zipfile
+from pathlib import Path
 
 import pytest
 
@@ -59,6 +60,26 @@ def put(client, pj, file, text):
 
 def get(client, pj, file):
     return client.get("/api/ai/drafts", query_string={"file": file}, headers=H(pj)).get_json()
+
+
+def _seed_legacy_pending(project_dir, file, rid, text="t", script=None, db_path=None):
+    """直接写库：「同面板 / 同脚本一次只有一条未落定」守住之前留下的数据。API 已经写不出这种状态（见
+    `test_a_second_unresolved_submission_on_the_same_panel_or_script_is_refused`），名额、按 rid 的账本语义只能这样构造。"""
+    with ai_history._connect(db_path) as con:
+        con.execute(
+            "INSERT INTO ai_pending (project, file_id, rid, text, sent, script, draft_stamp, created_ms) "
+            "VALUES (?,?,?,?,?,?,?,?)",
+            (
+                str(project_dir.resolve()),
+                file,
+                rid,
+                text,
+                json.dumps(SENT),
+                script,
+                None,
+                ai_history._now_ms(),
+            ),
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -139,14 +160,25 @@ def test_conditional_delete_never_removes_a_newer_draft(client, two):
     assert get(client, a, "F")["draft"] is None
 
 
-def test_pending_ledger_is_per_rid_and_accept_deletes_draft_only_if_text_unchanged(client, two):
+def test_pending_ledger_is_per_rid_and_accept_deletes_draft_only_if_text_unchanged(
+    client, two, tmp_path
+):
     a, _ = two
-    for rid, text in ((RID, "A 的话"), (RID2, "B 的话")):
+    assert (
         client.put(
-            f"/api/ai/drafts/pending/{rid}",
-            json={"file": "F", "text": text, "sent": SENT},
+            f"/api/ai/drafts/pending/{RID}",
+            json={"file": "F", "text": "A 的话", "sent": SENT},
             headers=H(a),
-        )
+        ).status_code
+        == 200
+    )
+    second = client.put(
+        f"/api/ai/drafts/pending/{RID2}",
+        json={"file": "F", "text": "B 的话", "sent": SENT},
+        headers=H(a),
+    )  # 同面板第二条未落定的：API 拒绝
+    assert second.status_code == 409 and second.get_json()["rids"] == [RID]
+    _seed_legacy_pending(tmp_path / "a", "F", RID2, "B 的话")  # 守住之前留下的两条并存
     assert [p["rid"] for p in get(client, a, "F")["pendings"]] == [RID, RID2]  # 两条并存
     # B 被拒绝：只清自己那条
     assert client.delete(
@@ -236,20 +268,22 @@ def test_get_reports_the_row_stamp_even_for_a_tombstone(client, two):
     assert g["draft"] is None and g["stamp"] == 8_000
 
 
-def test_pending_cap_per_file_and_rid_validation(client, two):
+def test_pending_cap_per_file_and_rid_validation(client, two, tmp_path):
     a, _ = two
+    n = ai_history.PENDING_MAX_PER_FILE
+    for i in range(n):  # 守住之前留下的满额旧数据
+        _seed_legacy_pending(tmp_path / "a", "F", f"rid-{i:08d}")
     codes = []
-    for i in range(ai_history.PENDING_MAX_PER_FILE + 2):
+    for i in range(n, n + 2):
         rid = f"rid-{i:08d}"
         r = client.put(
             f"/api/ai/drafts/pending/{rid}",
             json={"file": "F", "text": "t", "sent": SENT},
             headers=H(a),
         )
-        codes.append(r.status_code)
+        codes.append((r.status_code, r.get_json()["code"]))
     # 满了**拒绝新的、不删旧的**：旧的可能正是后端已接受、等着被查询的那条（删了就可能被同一条指令换新 id 再执行）
-    n = ai_history.PENDING_MAX_PER_FILE
-    assert codes == [200] * n + [409] * 2
+    assert codes == [(409, "ai_pending_limit")] * 2
     rids = [p["rid"] for p in get(client, a, "F")["pendings"]]
     assert sorted(rids) == [f"rid-{i:08d}" for i in range(n)]  # 最老的那条还在，新的两条没进
     over = client.put(
@@ -269,16 +303,14 @@ def test_pending_cap_per_file_and_rid_validation(client, two):
         ).status_code
         == 200
     )
-    # 解决一条（确认 / 清掉）之后腾出名额，新的可以进
+    # 解决一条（确认 / 清掉）之后名额腾出来了；但同面板其余的仍没落定——新的照样进不来（换成「还有没落定的」）
     client.delete("/api/ai/drafts/pending/rid-00000003?file=F", headers=H(a))
-    assert (
-        client.put(
-            "/api/ai/drafts/pending/rid-99999999",
-            json={"file": "F", "text": "t", "sent": SENT},
-            headers=H(a),
-        ).status_code
-        == 200
+    after = client.put(
+        "/api/ai/drafts/pending/rid-99999999",
+        json={"file": "F", "text": "t", "sent": SENT},
+        headers=H(a),
     )
+    assert after.status_code == 409 and after.get_json()["code"] == "ai_pending_unresolved"
     assert client.put(
         "/api/ai/drafts/pending/bad rid!",
         json={"file": "F", "text": "t", "sent": SENT},
@@ -417,7 +449,8 @@ def test_pending_table_without_script_column_is_migrated(tmp_path):
         )
     got = ai_history.list_pendings("/p", db_path=db)
     assert got[0]["rid"] == "rid-aaaaaaaa" and got[0]["script"] is None
-    ai_history.put_pending("/p", "F", "rid-bbbbbbbb", "t", {}, db_path=db, script="a/plot.py")
+    # 另一个面板（同面板会被「还有没落定的」挡住）：看的是迁移出来的 script 列能写能读
+    ai_history.put_pending("/p", "G", "rid-bbbbbbbb", "t", {}, db_path=db, script="a/plot.py")
     assert {p["rid"]: p["script"] for p in ai_history.list_pendings("/p", db_path=db)} == {
         "rid-aaaaaaaa": None,
         "rid-bbbbbbbb": "a/plot.py",
@@ -620,16 +653,14 @@ def test_put_draft_read_check_write_is_one_transaction(tmp_path, monkeypatch):
     assert got["draft"]["text"] == "新戳的稿" and got["stamp"] == 200  # 旧戳没有覆盖回去
 
 
-def test_pending_cap_holds_under_concurrent_writers(tmp_path, monkeypatch):
-    """数名额与写入在同一个写事务里：只剩最后一个名额时两个连接同时提交，恰好一个成功、一个被拒（不超发）。
-    让先到的那个在「数完、写之前」卡一下，放大窗口。"""
+def test_pending_gate_holds_under_concurrent_writers(tmp_path, monkeypatch):
+    """判「同面板还有没落定的」与写入在同一个写事务里：两个连接同时给同一个面板提交，恰好一个成功、一个被拒（两条都写进去
+    就等于两条指令都放行了）。让先到的那个在「判完、写之前」卡一下，放大窗口。名额（`PENDING_MAX_PER_FILE`）与它同一个事务，
+    守住之后只对旧数据起作用，见 `test_pending_cap_per_file_and_rid_validation`。"""
     import threading
     import time as _time
 
     db = tmp_path / "hist.sqlite3"
-    cap = ai_history.PENDING_MAX_PER_FILE
-    for i in range(cap - 1):
-        ai_history.put_pending("/p", "F", f"rid-fill-{i:08d}", "t", SENT, db_path=db)
     real_connect = ai_history._connect
     first_counted = threading.Event()
 
@@ -651,8 +682,8 @@ def test_pending_cap_holds_under_concurrent_writers(tmp_path, monkeypatch):
         try:
             ai_history.put_pending("/p", "F", rid, "t", SENT, db_path=db)
             results[rid] = "ok"
-        except ai_history.PendingLimit:
-            results[rid] = "full"
+        except ai_history.PendingUnresolved:
+            results[rid] = "refused"
 
     a = threading.Thread(target=submit, args=("rid-slow-00000001",))
     a.start()
@@ -661,8 +692,8 @@ def test_pending_cap_holds_under_concurrent_writers(tmp_path, monkeypatch):
     b.start()
     a.join()
     b.join()
-    assert sorted(results.values()) == ["full", "ok"], results
-    assert len(ai_history.get_draft("/p", "F", db_path=db)["pendings"]) == cap
+    assert sorted(results.values()) == ["ok", "refused"], results
+    assert len(ai_history.get_draft("/p", "F", db_path=db)["pendings"]) == 1
 
 
 def test_concurrent_first_connections_to_a_new_database_do_not_race_on_alter(tmp_path):
@@ -713,6 +744,81 @@ def test_supersedes_deletes_the_old_row_in_the_same_transaction_as_the_new_write
     ]  # 旧行随新写入一起没了
 
 
+def test_supersedes_deletes_the_old_row_even_when_it_was_filed_under_a_sibling_panel(client, two):
+    """同一份脚本的兄弟面板：旧等待挂在面板 F 下，「改写后再发」从面板 G 发——旧行照样随新写入删掉（项目内按 rid），
+    不按新行的 file_id 删（否则旧行之后又被还原成「未确认」）。"""
+    a, _ = two
+    assert _put_pending(client, a, "rid-old-00000001", "旧", script="s.py").status_code == 200
+    r = client.put(
+        "/api/ai/drafts/pending/rid-new-00000001",
+        json={
+            "file": "G",
+            "text": "新",
+            "sent": SENT,
+            "script": "s.py",
+            "supersedes": ["rid-old-00000001"],
+        },
+        headers=H(a),
+    )
+    assert r.status_code == 200
+    assert get(client, a, "F")["pendings"] == []
+    assert [p["rid"] for p in get(client, a, "G")["pendings"]] == ["rid-new-00000001"]
+
+
+def test_a_second_unresolved_submission_on_the_same_panel_or_script_is_refused(client, two):
+    """「这份脚本有没有还没落定的指令」由后端在写账本的事务里判：同面板、或同一份脚本的兄弟面板（`same_script`：分隔符不同、
+    旧数据的绝对路径与相对后缀都算同一份）上还有未落定的提交、这次又没在 `supersedes` 里显式取代它 → 409 `ai_pending_unresolved`，
+    回它们的 rid、什么都不写。别的脚本不受影响；旧的那条被确认（accept）之后照常放行。"""
+    a, _ = two
+    old = "rid-old-00000009"
+    assert _put_pending(client, a, old, "旧", script="figs/plot.py").status_code == 200
+    for file, script in (
+        ("F", None),  # 同面板
+        ("G", "figs/plot.py"),  # 兄弟面板
+        ("G", "figs\\plot.py"),  # 分隔符不同
+        ("G", "./figs//plot.py"),
+    ):
+        r = client.put(
+            "/api/ai/drafts/pending/rid-new-00000009",
+            json={"file": file, "text": "新", "sent": SENT, "script": script},
+            headers=H(a),
+        )
+        assert r.status_code == 409, (file, script)
+        assert r.get_json()["code"] == "ai_pending_unresolved" and r.get_json()["rids"] == [old]
+        # 挡路的行本身也带回来（与 GET 列表同形）：客户端照着还原，不靠之后另读——那之前别的标签页可能已确认并删了它
+        assert r.get_json()["pendings"] == [
+            {"file": "F", "rid": old, "text": "旧", "sent": SENT, "script": "figs/plot.py"}
+        ]
+    assert get(client, a, "G")["pendings"] == []  # 被拒：什么都没写
+    # 别的脚本、别的面板：不受影响
+    other = client.put(
+        "/api/ai/drafts/pending/rid-other-0000009",
+        json={"file": "H", "text": "别的", "sent": SENT, "script": "figs/other.py"},
+        headers=H(a),
+    )
+    assert other.status_code == 200
+    # 旧的那条被确认之后：同一份脚本照常可以发新的
+    assert client.post(
+        f"/api/ai/drafts/pending/{old}/accept", json={"file": "F"}, headers=H(a)
+    ).get_json()["cleared"]
+    assert (
+        _put_pending(client, a, "rid-new-00000009", "新", script="figs/plot.py").status_code == 200
+    )
+
+
+def test_same_script_matches_the_frontend_case_table():
+    """`ai_history.same_script` ↔ `web/src/store/aiStore.ts` 的 `sameScript` 严格同源：两边跑同一张用例表。"""
+    cases = json.loads(
+        (Path(__file__).resolve().parents[1] / "web/src/store/sameScriptCases.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert len(cases) >= 8
+    for a, b, want in cases:
+        assert ai_history.same_script(a, b) is want, (a, b)
+        assert ai_history.same_script(b, a) is want, (b, a)
+
+
 def test_a_failed_new_write_keeps_the_superseded_row(client, two):
     """新 PUT 失败 = 整个事务回滚 = 旧行还在，状态仍然一致（旧行之后只能被查询 / 确认，不会凭空消失）。"""
     a, _ = two
@@ -723,16 +829,24 @@ def test_a_failed_new_write_keeps_the_superseded_row(client, two):
     assert [p["rid"] for p in get(client, a, "F")["pendings"]] == ["rid-old-00000001"]
 
 
-def test_supersedes_frees_a_slot_before_the_cap_is_counted(client, two):
+def test_supersedes_frees_a_slot_before_the_cap_is_counted(client, two, tmp_path):
     a, _ = two
     n = ai_history.PENDING_MAX_PER_FILE
-    for i in range(n):
-        assert _put_pending(client, a, f"rid-fill-{i:08d}").status_code == 200
-    assert _put_pending(client, a, "rid-over-00000001").status_code == 409  # 满了
-    r = _put_pending(client, a, "rid-over-00000001", supersedes=["rid-fill-00000000"])
+    fill = [f"rid-fill-{i:08d}" for i in range(n)]
+    for rid in fill:  # 守住之前留下的满额旧数据
+        _seed_legacy_pending(tmp_path / "a", "F", rid)
+    assert _put_pending(client, a, "rid-over-00000001").get_json()["code"] == "ai_pending_limit"
+    # 只取代一条：名额腾出来了，但其余的仍没落定——照样拒绝
+    r = _put_pending(client, a, "rid-over-00000001", supersedes=fill[:1])
+    assert r.status_code == 409 and r.get_json()["code"] == "ai_pending_unresolved"
+    assert r.get_json()["rids"] == fill[1:]  # 取代之后仍没落定的那些
+    assert [
+        p["rid"] for p in get(client, a, "F")["pendings"]
+    ] == fill  # 整个事务回滚：取代的那条也还在
+    # 全部显式取代：先删再数名额、再判，才放行
+    r = _put_pending(client, a, "rid-over-00000001", supersedes=fill)
     assert r.status_code == 200
-    rids = [p["rid"] for p in get(client, a, "F")["pendings"]]
-    assert "rid-fill-00000000" not in rids and "rid-over-00000001" in rids and len(rids) == n
+    assert [p["rid"] for p in get(client, a, "F")["pendings"]] == ["rid-over-00000001"]
 
 
 def test_supersedes_is_validated(client, two):

@@ -319,7 +319,7 @@ SCENARIOS: dict[str, Scenario] = {
             ),
             unverified=(
                 "Windows 真机：Codex（MSIX）交接后 sidecar 是否真的从 LocalCache 副本启动、副本为何缺件",
-                "交接是否确认目标 Figure 渲染成功（launch / render / verified 三态，见 ADR 0131 后续）",
+                "真桌面里交接是否确认目标 Figure 渲染成功（launch / render / verified 三态已在 ADR 0131 第六节实现，字段由 tests/test_handoff_render_receipt.py 覆盖，本场景不跑它；真窗口端到端未验）",
                 "NSIS 安装 → 升级后的真实文件集",
             ),
             owner_doc="docs/adr/0131-agent-verification-entry.md",

@@ -98,6 +98,7 @@
     "cli": "CLI：{{version}}",
     "cliPath": "路径：{{path}}",
     "draftNotSaved": "没能先保存输入框里的草稿，所以没有发出。检查连接后重试。",
+    "draftChangedWhileSending": "输入框在发送途中改过了，所以没有发出。确认内容后再点一次发送。",
     "draftRestored": "已恢复上次没发出的草稿",
     "draftReplaced": "草稿已被另一个窗口的修改替换",
     "draftStalled": "草稿还没保存到本机项目，正在重试",

@@ -12,6 +12,7 @@ from __future__ import annotations
 import contextlib
 import json
 import os
+import re
 import sqlite3
 import time
 from pathlib import Path
@@ -110,8 +111,12 @@ class DraftTooLarge(ValueError):
 
 #: 「会话还没真正结束」的 SQL 条件——**单一定义**：忙碌判定（同脚本不能再 spawn）、恢复占位的 `status=open` 查询、
 #: 历史行的 final 判断都用它的同一个概念。`cancel` 只改 status、不写 ended_ms：此刻 CLI 进程组可能还在写文件、
-#: changed / diff / refresh 还没算出来，所以 `cancelled` 且 `ended_ms` 为空仍算「没结束」。
-OPEN_SESSION_SQL = "(status = 'running' OR (status = 'cancelled' AND ended_ms IS NULL))"
+#: changed / diff / refresh 还没算出来，所以 `cancelled` 且 `ended_ms` 为空仍算「没结束」。`interrupted` 同理：`interrupt_all()`
+#: （关机 / 桌面收尾）发出终止就写 status，不等进程组退出——`ended_ms` 由 `_pump` 观察到退出后的 `record_end` 写，进程没来得及
+#: 收尾就由下次启动的 `mark_interrupted_running` 按属主存活补上。之前共用数据目录的另一个服务进程不能当这份脚本空闲
+OPEN_SESSION_SQL = (
+    "(status = 'running' OR (status IN ('cancelled', 'interrupted') AND ended_ms IS NULL))"
+)
 
 #: running 行超过这么久还没结束就当属主已死（pid 会被复用，不能只信 pid 存活）：绝不让一条僵尸行永久锁住脚本
 RUNNING_OWNER_MAX_AGE_MS = 24 * 3600 * 1000
@@ -120,6 +125,57 @@ RUNNING_OWNER_MAX_AGE_MS = 24 * 3600 * 1000
 #: `ai_requests.session` 的哨兵值：这个 (项目, rid) 被**新指令取代**（`supersedes`）——它是一个「墓碑预留」，不是真实会话。
 #: 之后带这个 rid 的 run 走原子预留必然撞上唯一约束、拿到它，被明确拒绝，不 spawn。真实会话 id 是 12 位十六进制，不会与它相撞
 SUPERSEDED = "~superseded"
+
+
+class PendingUnresolved(Exception):
+    """同一 (项目, 面板) 或同一份脚本上还有**未落定**的待确认提交（不在这次的 `supersedes` 里）：拒绝写新的一条。
+
+    「这份脚本有没有还没落定的指令」由后端在写账本的同一个事务里判，不信客户端：任何标签页、任何时机（对账还在读、
+    读失败、别的标签页刚留下一条、旧请求迟到登记）拿着过期的本地视图发新指令，都过不了这里。客户端收到后还原这些 rid、
+    逐条查询（已执行的接回会话 / 没收到的由用户「重发」或「改写后再发」显式取代），之后才能发新的。
+    `pendings` 是这些行本身（file / rid / text / sent / script）：客户端**照着它还原**，不再靠之后另读一次列表——那次读之前别的标签页
+    可能已经确认并删掉了这一行，客户端就既看不到它、也查不了它。"""
+
+    def __init__(self, pendings: list[dict]):
+        super().__init__(len(pendings))
+        self.pendings = pendings
+        self.rids = [p["rid"] for p in pendings]
+
+
+def _script_identity(p: str) -> str:
+    """脚本路径的比较身份：统一分隔符、合并重复斜杠、去掉 `./` 前缀（不改大小写）。
+    ↔ `web/src/store/aiStore.ts` 的 `scriptIdentity` 严格同源（共用用例表 `web/src/store/sameScriptCases.json`）。"""
+    p = re.sub(r"/{2,}", "/", p.replace("\\", "/"))
+    while p.startswith("./"):
+        p = p[2:]
+    return p
+
+
+def _is_absolute_script(p: str) -> bool:
+    return p.startswith("/") or re.match(r"^[A-Za-z]:/", p) is not None
+
+
+def _sent_or_empty(raw) -> dict:
+    """账本行的 `sent`（JSON）读不出来时给空对象：这一行照样挡住新提交（它没落定），只是还原时少了目标说明。"""
+    try:
+        v = json.loads(raw)
+    except (ValueError, TypeError):
+        return {}
+    return v if isinstance(v, dict) else {}
+
+
+def same_script(a: str, b: str) -> bool:
+    """两个脚本路径是不是同一份脚本：比完整的项目相对路径；一边是绝对路径（旧数据）时，另一边必须是它的路径后缀。
+    ↔ `web/src/store/aiStore.ts` 的 `sameScript` 严格同源。"""
+    x, y = _script_identity(a), _script_identity(b)
+    if x == y:
+        return True
+    xa, ya = _is_absolute_script(x), _is_absolute_script(y)
+    if xa and not ya:
+        return x.endswith("/" + y)
+    if ya and not xa:
+        return y.endswith("/" + x)
+    return False
 
 
 class SupersedeConflict(Exception):
@@ -351,19 +407,17 @@ def mark_interrupted_running(db_path: Path | None = None) -> int:
     """启动时调用：上个进程留下的「还没结束」的会话收尾。**只动属主已死的**（`owner_alive`）：共用同一数据目录的
     另一个服务进程里仍在跑的会话不能被这次启动动掉（否则它的脚本被当成空闲、再被另一个进程改写）。
     属主未知（老行）/ 就是本进程的旧实例 / pid 已死 / 行太老 → 动。
-    谓词与 `OPEN_SESSION_SQL` 一致：`running` 转为 `interrupted` 并写 `ended_ms`；已取消但 `_pump` 还没收尾的
-    （`cancelled` 且 `ended_ms` 为空，进程随即死掉）**保持 cancelled**，只补上 `ended_ms`——否则这些行永远开着、
+    谓词与 `OPEN_SESSION_SQL` 一致：`running` 转为 `interrupted` 并写 `ended_ms`；已取消 / 已中断但 `_pump` 还没收尾的
+    （`cancelled` / `interrupted` 且 `ended_ms` 为空，进程随即死掉）**保持原状态**，只补上 `ended_ms`——否则这些行永远开着、
     永远占着脚本的忙碌判定。回值是被转为 interrupted 的行数。"""
     now = int(time.time() * 1000)
     with (
         _immediate(db_path) as con
     ):  # 读出死的 → 逐个标：同一个事务，期间别的进程把某行 record_end 了也不会被我们改回 interrupted
         interrupted = 0
-        # 「还没结束」（`OPEN_SESSION_SQL`）再加一类：`interrupt_all`（/api/shutdown）写了 interrupted 却没来得及写 `ended_ms` 进程就退出的行
-        # ——状态本身是终态，只缺结束时刻，补上它（否则这些行永远收不了尾）。两类谓词合在一处，#1098 的清理与 #1111 的 final 语义一致
+        # `OPEN_SESSION_SQL` 已含 `interrupt_all`（/api/shutdown）写了 interrupted 却没来得及写 `ended_ms` 进程就退出的行——补上结束时刻
         for r in con.execute(
-            f"SELECT id, status, owner_pid, started_ms FROM sessions "
-            f"WHERE {OPEN_SESSION_SQL} OR (status = 'interrupted' AND ended_ms IS NULL)"
+            f"SELECT id, status, owner_pid, started_ms FROM sessions WHERE {OPEN_SESSION_SQL}"
         ).fetchall():
             if owner_alive(r["owner_pid"], r["started_ms"], now):
                 continue
@@ -689,9 +743,11 @@ def put_pending(
                 ).fetchone()
                 if existing is None or existing["session"] != SUPERSEDED:
                     raise SupersedeConflict(old) from None
+            # 项目内按 rid 删（同 `drop_rejected_pending`），不按本行的 file_id：同一份脚本的另一个面板放弃的旧等待挂在它自己的
+            # file_id 下，按新面板的 file_id 删就删不到，它之后又被还原成「未确认」
             con.execute(
-                "DELETE FROM ai_pending WHERE project=? AND file_id=? AND rid=?",
-                (project, file_id, old),
+                "DELETE FROM ai_pending WHERE project=? AND rid=?",
+                (project, old),
             )
         # 同 rid 的重写（重试写账本）不占新名额；其它 rid 满了就拒绝
         exists = con.execute(
@@ -704,6 +760,26 @@ def put_pending(
             ).fetchone()[0]
             if n >= PENDING_MAX_PER_FILE:
                 raise PendingLimit(n)
+            # 同面板 / 同脚本上还有没落定的提交、这次又没显式取代它：拒绝（与上面的取代同一个事务，看到的是此刻的事实）。
+            # 名额先判：守住它之后同面板最多一条，名额只对守住之前留下的旧数据还起作用
+            blockers = [
+                {
+                    "file": r["file_id"],
+                    "rid": r["rid"],
+                    "text": r["text"],
+                    "sent": _sent_or_empty(r["sent"]),
+                    "script": r["script"],
+                }
+                for r in con.execute(
+                    "SELECT rid, file_id, text, sent, script FROM ai_pending WHERE project=? AND rid != ? "
+                    "ORDER BY created_ms, rid",
+                    (project, rid),
+                ).fetchall()
+                if r["file_id"] == file_id
+                or (script and r["script"] and same_script(r["script"], script))
+            ]
+            if blockers:
+                raise PendingUnresolved(blockers)
         con.execute(
             "INSERT OR REPLACE INTO ai_pending (project, file_id, rid, text, sent, script, draft_stamp, created_ms) "
             "VALUES (?,?,?,?,?,?,?,?)",

@@ -80,6 +80,8 @@ export type ReconcileSource = 'mount' | 'focus' | 'visible' | 'reconnect' | 'acc
  * 戳的下限：每次读到服务器的戳（对账的 GET、PUT 的响应、stale 的响应）都抬高本页下限，所以墙钟回拨 / 新开页面
  * 从 0 起步，后面发出的戳也一定比库里的大；被判 stale 时本地是用户真实输入的，就以本地为准用更大的戳重写（有界）。
  */
+type Pending = { file: string; rid: string; text: string; sent: DraftTarget; script: string | null }
+
 export function useAiDraft(panel: PanelObject | null) {
   const fileId = panel?.fileId ?? null
   // 项目认领是异步到的（刷新后挂载那一刻可能还是 null）：跟着它走，到了就读
@@ -151,6 +153,34 @@ export function useAiDraft(panel: PanelObject | null) {
    * - 草稿文本：只有在没有任何未落定的本地写入、且对账期间本地没再改过时才应用（挂载来源额外亮「已恢复」提示）。
    * 读失败（`null`）= 不知道，什么都不动。
    */
+  // 待确认提交：**永远**应用（走同一条还原路径），按 rid 去重。对账与「后端说还有没落定的」（409 带回的行）共用它
+  const restorePendingsFor = useCallback((pj: string, items: Pending[]) => {
+    const p = panelRef.current
+    if (!p) return
+    const objects = useDocumentStore.getState().doc.objects
+    const seen = new Set<string>()
+    for (const item of items) {
+      if (seen.has(item.rid)) continue
+      seen.add(item.rid)
+      const sameFile = item.file === p.fileId
+      if (!sameFile && !(p.script && item.script && sameScript(item.script, p.script))) continue
+      const sourcePanel = objects.find((o) => o.type === 'panel' && (o as PanelObject).fileId === item.file) as
+        | PanelObject
+        | undefined
+      useAiStore.getState().restoreSubmission({
+        rid: item.rid,
+        project: pj,
+        fileId: item.file,
+        panelId: sourcePanel?.id ?? '',
+        script: item.script ?? (sameFile ? (p.script ?? null) : null),
+        prompt: item.text,
+        target: item.sent,
+        canvas: useDocumentStore.getState().activeCanvasId,
+        overrides: sameFile ? p.overrides : (sourcePanel?.overrides ?? []),
+      })
+    }
+  }, [])
+
   const reconcile = useCallback(async (source: ReconcileSource) => {
     const { project: pj, fileId: f, epoch } = key.current
     if (!pj || !f) return
@@ -164,8 +194,10 @@ export function useAiDraft(panel: PanelObject | null) {
       if (state) {
         outboxNoteRead(pj, f) // 读成功：基线不再未知。是否推进基线要看文本有没有被采用（见下）
         setDraftRead('ok')
-      } else if (!outboxHasSeen(pj, f)) {
-        outboxMarkUnknown(pj, f) // 一次都没读成功过：服务器版本未知，stale 按「已见」处理（用户的输入不能丢）
+      } else {
+        // 一次都没读成功过：服务器版本未知，stale 按「已见」处理（用户的输入不能丢）
+        if (!outboxHasSeen(pj, f)) outboxMarkUnknown(pj, f)
+        // 这次读失败就退出 loading：重开面板时出口槽位还留着上次的 read=true，只挡 markUnknown，否则文本框一直只读
         setDraftRead('failed')
       }
     }
@@ -173,34 +205,7 @@ export function useAiDraft(panel: PanelObject | null) {
     void useAiStore.getState().settleRunningSessions()
     // 过期：又有更新的一次对账、或目标已经换了——不动
     if (token !== reconcileToken.current || key.current.epoch !== epoch) return
-    type Pending = { file: string; rid: string; text: string; sent: DraftTarget; script: string | null }
-    // 待确认提交：**永远**应用（走同一条还原路径），按 rid 去重
-    const restorePendings = (items: Pending[]) => {
-      const p = panelRef.current
-      if (!p) return
-      const objects = useDocumentStore.getState().doc.objects
-      const seen = new Set<string>()
-      for (const item of items) {
-        if (seen.has(item.rid)) continue
-        seen.add(item.rid)
-        const sameFile = item.file === p.fileId
-        if (!sameFile && !(p.script && item.script && sameScript(item.script, p.script))) continue
-        const sourcePanel = objects.find((o) => o.type === 'panel' && (o as PanelObject).fileId === item.file) as
-          | PanelObject
-          | undefined
-        useAiStore.getState().restoreSubmission({
-          rid: item.rid,
-          project: pj,
-          fileId: item.file,
-          panelId: sourcePanel?.id ?? '',
-          script: item.script ?? (sameFile ? (p.script ?? null) : null),
-          prompt: item.text,
-          target: item.sent,
-          canvas: useDocumentStore.getState().activeCanvasId,
-          overrides: sameFile ? p.overrides : (sourcePanel?.overrides ?? []),
-        })
-      }
-    }
+    const restorePendings = (items: Pending[]) => restorePendingsFor(pj, items)
     // 本文件自己的账本（随草稿一起回来）：项目级列表理论上已含，这里兜底、按 rid 去重
     const ownPendings = (): Pending[] =>
       (state?.pendings ?? []).map((own) => ({
@@ -242,15 +247,17 @@ export function useAiDraft(panel: PanelObject | null) {
       applyDraft()
       return
     }
-    // 只有草稿读失败（项目级读成功）：什么都不动，维持已有的账本结论
+    // 只有草稿读失败（项目级读成功）：项目级列表**照样还原**——别的标签页可能刚在兄弟面板上留了未确认提交，丢掉它本页就能再发一次；
+    // 账本结论维持已有的（这次没读到本文件自己那份兜底，不因此新放开发送）
     if (!state) {
+      restorePendings(projectList)
       setLedgerState((cur) => (cur === 'ok' ? cur : 'failed'))
       return
     }
     restorePendings([...projectList, ...ownPendings()])
     setLedgerState('ok') // pendings 已还原：账本恢复完成，可以放开发送
     applyDraft()
-  }, [])
+  },[restorePendingsFor])
 
   reconcileRef.current = reconcile
 
@@ -348,6 +355,19 @@ export function useAiDraft(panel: PanelObject | null) {
 
   /** 账本读失败后的「重试」：就是再对账一次（同一个入口） */
   const retryLedger = useCallback(() => void reconcile('focus'), [reconcile])
+  /** 立即对账一次、等它做完（后端说「还有没落定的」之后：先把它们还原出来，再逐条查询） */
+  const reconcileNow = useCallback(() => reconcile('focus'), [reconcile])
+  /**
+   * 后端（写账本的事务里）回 409 `ai_pending_unresolved` 时带回的挡路行：**照着它还原**，不靠之后另读一次列表——那次读之前
+   * 别的标签页可能已经确认并删掉了这一行，本页就既看不到它、也查不了它，发送随即放开
+   */
+  const restoreBlockers = useCallback(
+    (pj: string | null, items: Pending[]) => {
+      // 项目由调用方钉住（发送时固定下来的那个），不读「当前项目」；与当前的不一致（途中切过）就什么都不动
+      if (pj && pj === key.current.project) restorePendingsFor(pj, items)
+    },
+    [restorePendingsFor],
+  )
 
   /** 输入框当前的本地版本号（失败的发送记下它；重试时据此判「输入框自那以后没改过」） */
   const draftSeq = useCallback(() => seq.current, [])
@@ -363,6 +383,8 @@ export function useAiDraft(panel: PanelObject | null) {
     project,
     ledgerState,
     retryLedger,
+    reconcileNow,
+    restoreBlockers,
     draftLoading: draftRead === 'loading',
     draftStalled,
     draftReplaced,

@@ -228,12 +228,15 @@ describe('账本按 rid 一条，删除带条件（两个标签页）', () => {
     expect(d?.pendings).toEqual([{ rid: 'rid-aaaaaaaa', text: 'A 发出去的话', sent: T }]) // 待确认原文是另一份
   })
 
-  it('两个标签页各自的 rid 并存；supersedes 只清指名的那条（在写新行的同一个事务里）', async () => {
+  it('另一个标签页在同面板留了没落定的：新 rid 被后端拒（409 ai_pending_unresolved，带它的 rid），什么都不写；supersedes 显式取代它才放行', async () => {
     await markSubmitted('pj', 'F', 'A 的话', 'rid-aaaaaaaa', T)
-    await markSubmitted('pj', 'F', 'B 的话', 'rid-bbbbbbbb', T)
-    expect((await loadDraft('pj', 'F'))?.pendings?.map((p) => p.rid)).toEqual(['rid-aaaaaaaa', 'rid-bbbbbbbb'])
-    await markSubmitted('pj', 'F', 'C 的话', 'rid-cccccccc', T, null, null, ['rid-bbbbbbbb'])
-    expect((await loadDraft('pj', 'F'))?.pendings?.map((p) => p.rid)).toEqual(['rid-aaaaaaaa', 'rid-cccccccc'])
+    await expect(markSubmitted('pj', 'F', 'B 的话', 'rid-bbbbbbbb', T)).rejects.toMatchObject({
+      status: 409,
+      body: { code: 'ai_pending_unresolved', rids: ['rid-aaaaaaaa'] },
+    })
+    expect((await loadDraft('pj', 'F'))?.pendings?.map((p) => p.rid)).toEqual(['rid-aaaaaaaa'])
+    await markSubmitted('pj', 'F', 'C 的话', 'rid-cccccccc', T, null, null, ['rid-aaaaaaaa'])
+    expect((await loadDraft('pj', 'F'))?.pendings?.map((p) => p.rid)).toEqual(['rid-cccccccc'])
   })
 
   it('deleteDraftIf：文本对不上不删', async () => {

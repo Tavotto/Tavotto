@@ -75,6 +75,12 @@ export interface AiSession {
    */
   finalized?: boolean
   /**
+   * 查询接回时拿到的是**临时快照**（非 running / cancelled，却还不是终态：如另一个服务进程的 `interrupt_all()` 刚写了
+   * `interrupted`、pump 还没收尾）。本地 status 按 `toStatus` 映射（interrupted → failed），这个标志让它照样留在
+   * `isOpenSession` 里继续对账，直到拿到终态（`finish` 置 finalized）
+   */
+  provisional?: boolean
+  /**
    * 刷新 / 重连 / 回切之后从后端历史**接回来**的运行中会话（只读占位，PR4b）：此前的输出不再回放，
    * 之后的 `ai.delta` / `ai.done` 按 session id 认领到它上面；它同样锁住同一脚本的发送、可中止。
    */
@@ -242,26 +248,34 @@ const EARLY_MAX_SIDS = 32
 const EARLY_MAX_EVENTS = 500
 const early = new Map<string, EarlyEvent[]>()
 /** 账本写入「不知道」写没写成的那条指令（按 项目×文件）：重试沿用同一个 rid */
-const ledgerUnknown = new Map<string, { rid: string; prompt: string; sentJson: string }>()
-/** 被放弃的旧等待（按 项目×文件）：下一次这个面板发新 rid 时，随新账本行的 PUT 带 `supersedes`，由后端在同一个事务里删 */
-const supersedeQueue = new Map<string, Set<string>>()
-const queueSupersede = (key: string, rid: string): void => {
-  const set = supersedeQueue.get(key) ?? new Set<string>()
-  set.add(rid)
-  supersedeQueue.set(key, set)
+const ledgerUnknown = new Map<string, { sub: AiSubmission; sentJson: string }>()
+/**
+ * 被放弃的旧等待（rid → 它属于哪个 项目×面板×脚本）：下一次发新 rid 时，随新账本行的 PUT 带 `supersedes`，由后端在同一个事务里删并写墓碑。
+ * 发送时按**与 `submissionBlocks` 同一个判据**挑：同项目，且同面板或 `sameScript`——同一份脚本的兄弟面板会被对账还原出别的面板发起的
+ * 等待，「改写后再发」之后从这个面板发也必须带上它，否则旧 rid 的慢 POST 在新指令之后登记，两条都执行。不按路径字符串做 key：
+ * `sameScript` 把分隔符不同的写法、旧数据的绝对路径与它的相对后缀都认作同一份，字符串 key 会把它们分进不同的桶。
+ * 每一项都是**完整的提交**（类型上不可省）：取代被后端拒绝（`ai_supersede_conflict`，旧请求其实已登记——可能是本页的慢 POST，
+ * 也可能是别的标签页还原账本行后发出的）时，原样还原它、继续锁住这份脚本并按它的 rid 查询，不存在「无从还原」的那一路
+ */
+const supersedeQueue = new Map<string, AiSubmission>()
+const queueSupersede = (sub: AiSubmission): void => {
+  supersedeQueue.set(sub.rid, sub)
 }
 /**
  * **非终态会话的唯一谓词**：还没拿到后端确定的终态快照 / `ai.done`（`!finalized`）。
  * 本地 `cancel` 成功后状态先标成 `cancelled`，但那只是「请求中止已被接受」，后端的最终结局（changed / diff / 是否真的停下）
- * 还没到——所以 running 和「cancelled 但未 finalized」都要继续对账，直到后端给出确定的终态。
+ * 还没到——所以 running 和「cancelled 但未 finalized」都要继续对账，直到后端给出确定的终态；查询接回的临时快照
+ * （`interrupted` 还没收尾：另一个服务进程的 `interrupt_all()` 刚写了 status）在本地映射成 `failed` 但同样没 finalized，也要继续。
+ * 那种会话由 `accept` 标 `provisional`（本地 status 已不是 running / cancelled，靠这个标志留在谓词里）。
  * `settleRunningSessions` 与安全网轮询都调它，不各写一份。
  */
-export const isOpenSession = (x: Pick<AiSession, 'status' | 'finalized'>): boolean =>
-  !x.finalized && (x.status === 'running' || x.status === 'cancelled')
+export const isOpenSession = (x: Pick<AiSession, 'status' | 'finalized' | 'provisional'>): boolean =>
+  !x.finalized && (x.status === 'running' || x.status === 'cancelled' || x.provisional === true)
 
 /**
  * 一份会话快照是不是**终态**：优先认后端明确给的 `final`（`_pump` 收尾、changed / diff / refresh 都确定之后）。
- * 没有 `final` 字段的后端退回 #1098 的判据：非 running；而 `cancelled` 必须带着 `ended_ms`（pump 收尾后才写）。
+ * 没有 `final` 字段的后端退回 #1098 的判据：非 running；而 `cancelled` / `interrupted` 必须带着 `ended_ms`（pump 收尾后才写；
+ * `interrupt_all()` 与 cancel 一样只先写 status）。
  * 没有详情（404）时无从判断，按 status 走。
  * `cancel` 之后后端内存里的 status 立刻是 `cancelled`、但结果还没算出来——那不是终态，过早收尾会把之后真正的 `ai.done` 当重复丢掉。
  */
@@ -272,7 +286,7 @@ export function snapshotIsFinal(
   if (typeof d?.final === 'boolean') return d.final
   const status = typeof d?.status === 'string' && d.status ? d.status : fallbackStatus
   if (status === 'running') return false
-  if (status === 'cancelled' && d) return typeof d.ended_ms === 'number'
+  if ((status === 'cancelled' || status === 'interrupted') && d) return typeof d.ended_ms === 'number'
   return true
 }
 
@@ -326,6 +340,11 @@ function settleSessionTo(sid: string, done: DonePayload, transcript: AiSessionDe
   }
   if (get().finish(done)) settledNotifier?.(done)
 }
+
+const supersedesFor = (project: string | null, fileId: string, script: string | null): string[] =>
+  [...supersedeQueue.values()]
+    .filter((o) => (o.project ?? null) === (project ?? null) && submissionBlocks(o, fileId, script))
+    .map((o) => o.rid)
 
 /**
  * 会话在「建好之后才到的 `ai.done`」那条路上也要有和直达路径一样的提示（状态栏）。副作用在
@@ -512,11 +531,11 @@ export const useAiStore = create<AiState>((set, get) => ({
     const ledgerKey = `${project ?? ''}\u0000${fileId}`
     const sentJson = JSON.stringify(sent)
     const prior = ledgerUnknown.get(ledgerKey)
-    const reuse = !!prior && prior.prompt === prompt && prior.sentJson === sentJson
-    const rid = reuse ? prior!.rid : newRequestId()
-    if (prior && !reuse) queueSupersede(ledgerKey, prior.rid)
+    const reuse = !!prior && prior.sub.prompt === prompt && prior.sentJson === sentJson
+    const rid = reuse ? prior!.sub.rid : newRequestId()
+    if (prior && !reuse) queueSupersede(prior.sub)
     ledgerUnknown.delete(ledgerKey)
-    const supersedes = [...(supersedeQueue.get(ledgerKey) ?? [])].filter((x) => x !== rid)
+    const supersedes = supersedesFor(project ?? null, fileId, script ?? null).filter((x) => x !== rid)
     const sub: AiSubmission = {
       rid,
       project,
@@ -542,29 +561,40 @@ export const useAiStore = create<AiState>((set, get) => ({
       recorded = marked ? await marked : undefined
     } catch (e) {
       dropSub() // 后端明确拒绝记账（如未确认的提交已满，`ai_pending_limit`）：不发，原因原样交给界面
+      // 账本写入是 await：拒绝回来时已经切了项目，它说的是那个项目的事——不还原、不查询（还原进当前 store，旧项目的会话就会
+      // 挂到新项目上、锁住同名脚本的面板）。旧项目的待确认行还在后端（整个事务回滚了），回到那个项目时对账会还原它
+      if (get().generation !== generation) throw new ProjectChangedError()
       if (e instanceof ApiError && e.body?.code === 'ai_supersede_conflict') {
-        // 要取代的旧 rid 其实已被后端登记（旧请求到达了）：它不能再被当成「没收到」取代；别让它永远卡在队列里挡住之后的每次发送
-        supersedeQueue.delete(ledgerKey)
+        // 要取代的旧 rid 其实已被后端登记（旧请求到达了）：它不能再被当成「没收到」取代，出队；但**不能就此忘掉它**——
+        // 放弃时提交已从界面收走，什么都不留的话重试按钮一放开、旧任务又恰好已结束（runningHere 不再挡），新 rid 不带 supersedes
+        // 发出去，两条都执行。所以把放弃的那条原样还原成「未确认」（照旧锁住同面板 / 同脚本），并立刻按 rid 查询接回它的会话
+        for (const x of supersedes) {
+          const restored = supersedeQueue.get(x)
+          supersedeQueue.delete(x)
+          if (!restored) continue
+          get().restoreSubmission(restored)
+          void get().queryRequest(x)
+        }
       }
       throw e
     }
     if (recorded === 'ok') {
-      for (const x of supersedes) supersedeQueue.get(ledgerKey)?.delete(x) // 后端已在同一事务里删掉它们
+      for (const x of supersedes) supersedeQueue.delete(x) // 后端已在同一事务里删掉它们
     } else if (recorded) {
       // 账本没写成：**不发**。丢了响应之后没有 rid 可查，刷新就会放行同一条指令换新 id 再执行
       dropSub()
       if (recorded === 'unknown') {
         // 不知道后端写没写：保持同一个 rid，重试时幂等重放，**不换新 rid**
-        ledgerUnknown.set(ledgerKey, { rid, prompt, sentJson })
+        ledgerUnknown.set(ledgerKey, { sub, sentJson })
       } else if (reuse) {
-        queueSupersede(ledgerKey, rid) // 明确拒绝，但上一次「不知道」的尝试可能已经写入：让之后的新写入顺手清掉它
+        queueSupersede(sub) // 明确拒绝，但上一次「不知道」的尝试可能已经写入：让之后的新写入顺手清掉它
       }
       throw new AiLedgerError()
     }
     // 账本写入是 await：期间切过项目就作废（提交的 project 是调用方固定下来的那个，不是此刻的当前项目）
     if (get().generation !== generation) {
       dropSub()
-      queueSupersede(ledgerKey, rid) // 账本可能已经写进后端、却不会发出：之后这个面板再发时随新行带 supersedes 清掉
+      queueSupersede(sub) // 账本可能已经写进后端、却不会发出：之后这个面板再发时随新行带 supersedes 清掉
       throw new ProjectChangedError()
     }
     return dispatch(rid, generation)
@@ -614,7 +644,7 @@ export const useAiStore = create<AiState>((set, get) => ({
     if (!sub) return
     // 放弃这条等待（「改写后再发」）：**不 DELETE**。「后端没收到」的判断可能是错的（原请求可能还在路上），客户端单方面删了
     // 账本行，之后它又被还原、新 rid 却已经执行过。记下这个 rid，下一次发这个面板时随新行的 PUT 带 `supersedes`，由后端在同一个事务里删
-    queueSupersede(`${sub.project ?? ''}\u0000${sub.fileId}`, rid)
+    queueSupersede(sub)
     set((s) => {
       const { [rid]: _gone, ...rest } = s.submissions
       return { submissions: rest }
@@ -1139,6 +1169,7 @@ function accept(
     diff: detail?.diff ?? '',
     startedAt: Date.now(),
     ...(settled ? { finalized: true, finishedAt: Date.now() } : {}),
+    ...(!settled && status !== 'running' && status !== 'cancelled' ? { provisional: true } : {}),
     ...(settled && detail?.error ? { error: detail.error } : {}),
   }
   set((s) => {
@@ -1215,7 +1246,11 @@ export const hasUsableAgent = (caps: AiCapabilities | null): boolean =>
 /** 作用域名；是函数不是常量表——常量在模块求值时就把语言定死了 */
 export const scopeLabel = (scope: AiScope): string => t(`scope.${scope}`, { ns: 'ai' })
 
-/** 脚本路径的比较身份：统一分隔符、去掉 `./` 前缀与重复斜杠（不改大小写，与后端 `script_busy` 的 realpath 同向保守） */
+/**
+ * 脚本路径的比较身份：统一分隔符、去掉 `./` 前缀与重复斜杠（不改大小写，与后端 `script_busy` 的 realpath 同向保守）。
+ * 它与 `sameScript` ↔ 后端 `ai_history._script_identity` / `same_script` 严格同源（后端在写账本的事务里用它判「同一份脚本还有没落定的」），
+ * 两边共用用例表 `sameScriptCases.json`
+ */
 const scriptIdentity = (p: string): string => p.replace(/\\/g, '/').replace(/\/{2,}/g, '/').replace(/^(\.\/)+/, '')
 const isAbsolutePath = (p: string): boolean => p.startsWith('/') || /^[A-Za-z]:\//.test(p)
 

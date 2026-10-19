@@ -5,6 +5,7 @@
  * 让前端用例能看见「后端此刻存着什么」，也能模拟失败。
  */
 import { textHash } from '@/lib/aiDraft'
+import { sameScript } from '@/store/aiStore'
 
 export interface DraftBackend {
   /** 命中草稿相关路由返回 Response，否则 null（调用方继续处理别的路径） */
@@ -26,6 +27,14 @@ export interface DraftBackend {
   setDraftPutFails: (fails: boolean) => void
   /** 只让「读项目级账本列表」失败（草稿的读照常成功） */
   setPendingListFails: (fails: boolean) => void
+  /** 只让「读这个文件的草稿」失败（项目级账本列表照常成功） */
+  setDraftGetFails: (fails: boolean) => void
+  /** 这个 rid 已被后端真实登记（旧请求其实到达了）：带它的 `supersedes` 一律 409 `ai_supersede_conflict`，整次写入不生效 */
+  markRegistered: (rid: string) => void
+  /** 回了 409 `ai_pending_unresolved` 之后立刻调用（带挡路的 rid）：模拟「回 409 之后、本页再读之前」别的标签页做了什么 */
+  afterPendingUnresolved: (fn: ((rids: string[]) => void) | null) => void
+  /** 回了 409 `ai_supersede_conflict` 之后立刻调用：模拟「回 409 之后、本页处理之前」发生了什么（如切项目） */
+  afterSupersedeConflict: (fn: (() => void) | null) => void
   /** 只让「写账本」失败（PUT pending 回 500），别的照常 */
   setPendingWriteFails: (fails: boolean) => void
   /** 模拟「这个面板未解决的提交已满」：新 rid 一律 409 `ai_pending_limit`（params.count = 传入的数）；null = 不限 */
@@ -55,6 +64,10 @@ export function createDraftBackend(): DraftBackend {
   let pendingLimit: number | null = null
   let loseNextPendingResponses = 0
   let pendingListFails = false
+  let draftGetFails = false
+  const registered = new Set<string>()
+  let onUnresolved: ((rids: string[]) => void) | null = null
+  let onSupersedeConflict: (() => void) | null = null
   let draftPutFails = false
   let hold: Promise<void> | null = null
   let holdNext: Promise<void> | null = null
@@ -83,6 +96,7 @@ export function createDraftBackend(): DraftBackend {
         return handle(url, init) as Response
       })
     }
+    if (method === 'GET' && !isList && draftGetFails) return json({ error: 'boom', code: 'internal_error' }, 500)
     if (u.pathname === '/api/ai/drafts/pending' && method === 'GET') {
       if (pendingListFails) return json({ error: 'boom', code: 'internal_error' }, 500)
       const prefix = key(pj, '')
@@ -115,6 +129,36 @@ export function createDraftBackend(): DraftBackend {
           return json({ error: 'full', code: 'ai_pending_limit', params: { count: pendingLimit } }, 409)
         // `supersedes`：与后端一致，在写新行的同一个「事务」里删旧行
         const gone = new Set(Array.isArray(body.supersedes) ? (body.supersedes as string[]) : [])
+        if ([...gone].some((x) => registered.has(x))) {
+          const res = json({ error: '上一次的修改其实已经开始了', code: 'ai_supersede_conflict', params: {} }, 409)
+          onSupersedeConflict?.()
+          return res
+        }
+        // 与后端 `put_pending` 同一道闸：同面板 / 同脚本上还有没落定的（且这次没取代它）→ 409 ai_pending_unresolved，什么都不写
+        const isNew = !list.some((x) => x.rid === rid)
+        if (isNew) {
+          const script = (body.script as string | null) ?? null
+          const prefix = key(pj, '')
+          const blockers = [...pendings.entries()]
+            .filter(([k]) => k.startsWith(prefix))
+            .flatMap(([k, rows]) => rows.map((r) => ({ file: k.slice(prefix.length), ...r })))
+            .filter((r) => r.rid !== rid && !gone.has(r.rid))
+            .filter((r) => r.file === file || (!!script && !!r.script && sameScript(r.script, script)))
+          if (blockers.length) {
+            const res = json(
+              {
+                error: '还有没落定的',
+                code: 'ai_pending_unresolved',
+                params: {},
+                rids: blockers.map((r) => r.rid),
+                pendings: blockers.map((r) => ({ file: r.file, rid: r.rid, text: r.text, sent: r.sent, script: r.script ?? null })),
+              },
+              409,
+            )
+            onUnresolved?.(blockers.map((r) => r.rid))
+            return res
+          }
+        }
         const next = [
           ...list.filter((x) => x.rid !== rid && !gone.has(x.rid)),
           {
@@ -231,6 +275,18 @@ export function createDraftBackend(): DraftBackend {
     },
     setPendingListFails: (f) => {
       pendingListFails = f
+    },
+    setDraftGetFails: (f) => {
+      draftGetFails = f
+    },
+    markRegistered: (rid) => {
+      registered.add(rid)
+    },
+    afterPendingUnresolved: (fn) => {
+      onUnresolved = fn
+    },
+    afterSupersedeConflict: (fn) => {
+      onSupersedeConflict = fn
     },
     setPendingLimit: (n) => {
       pendingLimit = n

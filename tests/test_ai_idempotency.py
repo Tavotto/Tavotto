@@ -367,6 +367,54 @@ def test_prompt_and_request_id_never_reach_the_log(client, tmp_path, cli, monkey
     assert SECRET not in text and RID not in text
 
 
+def test_access_log_lines_written_by_the_real_server_carry_no_request_id(tmp_path, monkeypatch):
+    """test client 不经过 werkzeug 的访问日志（`WSGIRequestHandler.log_request` 把原始请求行交给 `werkzeug` logger）：
+    起一个真的 werkzeug server、按产品的 `setup_logging` 接线，读 stderr 同源的 app.log 本身（Codex #1098 P2）。"""
+    import urllib.error
+    import urllib.request
+    from logging.handlers import RotatingFileHandler
+
+    from werkzeug.serving import make_server
+
+    monkeypatch.setattr(m, "CACHE_DIR", tmp_path)
+    root = logging.getLogger()
+    saved, level = root.handlers[:], root.level
+    root.handlers = [h for h in saved if not isinstance(h, RotatingFileHandler)]
+    try:
+        m.setup_logging()
+        srv = make_server("127.0.0.1", 0, m.app, threaded=True)
+        t = threading.Thread(target=srv.serve_forever, daemon=True)
+        t.start()
+        base = f"http://127.0.0.1:{srv.server_port}"
+        try:
+            for method, path in (
+                ("PUT", f"/api/ai/drafts/pending/{RID}"),
+                ("POST", f"/api/ai/drafts/pending/{RID}/accept"),
+                ("GET", f"/api/ai/requests/{RID}"),
+            ):
+                req = urllib.request.Request(base + path, data=b"{}", method=method)
+                if method == "GET":
+                    req = urllib.request.Request(base + path, method=method)
+                try:
+                    urllib.request.urlopen(req, timeout=10).close()
+                except urllib.error.HTTPError:
+                    pass  # 鉴权 / 校验拒绝也照样写访问日志：这里只看日志
+        finally:
+            srv.shutdown()
+            t.join(10)
+        for h in root.handlers:
+            h.flush()
+        text = (tmp_path / "app.log").read_text(encoding="utf-8")
+        assert "/api/ai/drafts/pending/<rid>" in text and "/api/ai/requests/<rid>" in text
+        assert RID not in text
+    finally:
+        for h in root.handlers:
+            if h not in saved:
+                h.close()
+        root.handlers = saved
+        root.setLevel(level)
+
+
 # ---------------------------------------------------------------------------
 # 幂等账本独立于用户可删的历史（Codex #1098 P2）
 # ---------------------------------------------------------------------------
@@ -1165,18 +1213,21 @@ def test_a_rejection_whose_cleanup_fails_is_unresolved_too(client, tmp_path, cli
     _wait_idle()
 
 
-def test_a_cancelled_but_unfinished_session_in_another_process_still_blocks_the_script(tmp_path):
-    """cancel 之后状态立刻是 cancelled，但 CLI 进程组可能还在写文件：另一个进程里属主存活、`ended_ms` 为空的 cancelled 会话
-    仍算「忙」；写了 `ended_ms`（真正结束）之后才放开。"""
+@pytest.mark.parametrize("status", ["cancelled", "interrupted"])
+def test_a_cancelled_but_unfinished_session_in_another_process_still_blocks_the_script(
+    tmp_path, status
+):
+    """cancel / `interrupt_all()`（关机收尾）之后状态立刻变了，但 CLI 进程组可能还在写文件：另一个进程里属主存活、`ended_ms`
+    为空的 cancelled / interrupted 会话仍算「忙」；写了 `ended_ms`（真正结束）之后才放开。"""
     db = tmp_path / "hist.sqlite3"
     live = _live_other_pid()
     ai_history.record_start(_sess("othercanc01", "rid-canc-000009", owner_pid=live), db_path=db)
-    ai_history.update_status("othercanc01", "cancelled", db_path=db)  # 只改 status，不写 ended_ms
+    ai_history.update_status("othercanc01", status, db_path=db)  # 只改 status，不写 ended_ms
     with pytest.raises(ai_history.ScriptBusy):
         ai_history.record_start(
             _sess("mine00000001", "rid-mine-000009", owner_pid=live), db_path=db
         )
-    ai_history.record_end("othercanc01", "cancelled", db_path=db)  # 真正结束：写了 ended_ms
+    ai_history.record_end("othercanc01", status, db_path=db)  # 真正结束：写了 ended_ms
     assert (
         ai_history.record_start(
             _sess("mine00000002", "rid-mine-000010", owner_pid=live), db_path=db
@@ -1188,7 +1239,7 @@ def test_a_cancelled_but_unfinished_session_in_another_process_still_blocks_the_
     ai_history.record_start(
         _sess("deadcanc001", "rid-dead-000009", owner_pid=_dead_pid()), db_path=db
     )
-    ai_history.update_status("deadcanc001", "cancelled", db_path=db)
+    ai_history.update_status("deadcanc001", status, db_path=db)
     assert (
         ai_history.record_start(
             _sess("mine00000003", "rid-mine-000011", owner_pid=live), db_path=db
@@ -1275,6 +1326,10 @@ def test_startup_cleanup_finalizes_cancelled_rows_of_dead_owners_and_keeps_live_
     )
     ai_history.update_status("canc-live", "cancelled", db_path=db)
     ai_history.record_start(
+        _sess("intr-dead", "rid-idead-0001", "d.py", owner_pid=_dead_pid()), db_path=db
+    )
+    ai_history.update_status("intr-dead", "interrupted", db_path=db)  # interrupt_all 只写 status
+    ai_history.record_start(
         _sess("canc-done", "rid-cdone-0001", "c.py", owner_pid=_dead_pid()), db_path=db
     )
     ai_history.record_end(
@@ -1287,6 +1342,7 @@ def test_startup_cleanup_finalizes_cancelled_rows_of_dead_owners_and_keeps_live_
         rows["canc-dead"][1], int
     )  # 补上了 ended_ms，状态保持
     assert rows["canc-live"] == ("cancelled", None)  # 属主活着：不动
+    assert rows["intr-dead"][0] == "interrupted" and isinstance(rows["intr-dead"][1], int)
     assert rows["canc-done"] == ("cancelled", before_done)  # 已收尾的不被改写
     # 死属主的 cancelled 不再占着忙碌判定：同一脚本可以再认领
     assert ai_history.record_start(
@@ -1339,29 +1395,34 @@ def test_detail_from_history_is_final_only_when_the_row_was_ended(tmp_path, cli)
     figs = _project(tmp_path)
     project_key = str(figs.resolve())
 
-    def start(sid, rid):
+    def start(sid, rid, owner, script="fig1.py"):
         ai_history.record_start(
             {
                 "id": sid,
                 "project": project_key,
                 "provider": "codex",
-                "script": "fig1.py",
+                "script": script,
                 "client_request_id": rid,
-                "owner_pid": 0,
+                "owner_pid": owner,
             }
         )
 
-    start("histdone0001", "rid-hist-000001")
+    start("histdone0001", "rid-hist-000001", 0)
     ai_history.record_end("histdone0001", "done", diff="D", changed=True)
     assert ai_bridge.get("histdone0001")["final"] is True  # 历史库里的终态行
-    start("histcancel01", "rid-hist-000002")
+    start("histcancel01", "rid-hist-000002", _live_other_pid(), "fig2.py")
     ai_history.update_status(
         "histcancel01", "cancelled"
-    )  # cancel 只改 status、不写 ended_ms（别的进程的 pump 还没收尾）
+    )  # cancel 只改 status、不写 ended_ms：属主（另一个活着的服务进程）的 pump 还没收尾
     assert ai_bridge.get("histcancel01")["final"] is False
-    assert ai_history.mark_interrupted_running() >= 0
-    # 属主已死（owner_pid=0 → 未知）的 cancelled 行启动清理补上 ended_ms，之后是终态，前端不会永远轮询
+    ai_history.record_end("histcancel01", "cancelled")  # 那边的 pump 收尾：写了 ended_ms
     assert ai_bridge.get("histcancel01")["final"] is True
+    # 属主已不在（owner_pid=0 → 未知 / 进程没了）：不会再有 pump 补结果——不等启动清理就是终态，前端不会永远轮询
+    start("histcancel02", "rid-hist-000003", 0, "fig3.py")
+    ai_history.update_status("histcancel02", "cancelled")
+    assert ai_bridge.get("histcancel02")["final"] is True
+    assert ai_history.mark_interrupted_running() >= 0  # 启动清理补上 ended_ms 之后照旧
+    assert ai_bridge.get("histcancel02")["final"] is True
 
 
 def test_session_detail_endpoint_carries_final(client, tmp_path, cli):
@@ -1383,11 +1444,12 @@ def test_session_detail_endpoint_carries_final(client, tmp_path, cli):
 
 def test_interrupted_rows_are_final_even_without_ended_ms(tmp_path, cli):
     """/api/shutdown 的 `interrupt_all` 写 interrupted 却不写 ended_ms，进程可能在 `_pump` 的 record_end 之前就退出：
-    确定终态的 status 直接算 final；只有 cancelled 才要看 ended_ms（cancel 之后 pump 还会补结果）。"""
+    属主已不在 → 不会再有结果，算 final；属主（另一个共用数据目录的服务进程）还活着 → 它的 pump 之后还会补 changed / diff / refresh，
+    不是 final（与 `OPEN_SESSION_SQL` 同一个概念，cancelled 同理）。确定终态的 status 直接算 final。"""
     figs = _project(tmp_path)
     project_key = str(figs.resolve())
 
-    def start(sid, rid):
+    def start(sid, rid, owner):
         ai_history.record_start(
             {
                 "id": sid,
@@ -1395,20 +1457,22 @@ def test_interrupted_rows_are_final_even_without_ended_ms(tmp_path, cli):
                 "provider": "codex",
                 "script": f"{sid}.py",
                 "client_request_id": rid,
-                "owner_pid": 0,
+                "owner_pid": owner,
             }
         )
 
-    start("intr-unended1", "rid-intr-000001")
-    ai_history.update_status("intr-unended1", "interrupted")  # 没有 ended_ms
-    assert ai_bridge.get("intr-unended1")["final"] is True
-    start("canc-unended1", "rid-canc-000001")
-    ai_history.update_status("canc-unended1", "cancelled")
-    assert (
-        ai_bridge.get("canc-unended1")["final"] is False
-    )  # cancelled 且 ended_ms 为空：pump 还会补结果
+    dead, live = _dead_pid(), _live_other_pid()
+    for status in ("interrupted", "cancelled"):
+        start(f"{status[:4]}-dead1", f"rid-{status[:4]}-dead01", dead)
+        ai_history.update_status(f"{status[:4]}-dead1", status)  # 没有 ended_ms
+        assert ai_bridge.get(f"{status[:4]}-dead1")["final"] is True, status
+        start(f"{status[:4]}-live1", f"rid-{status[:4]}-live01", live)
+        ai_history.update_status(f"{status[:4]}-live1", status)
+        assert ai_bridge.get(f"{status[:4]}-live1")["final"] is False, (
+            status
+        )  # 属主的 pump 还会补结果
     for status in ("done", "failed", "timeout"):
-        start(f"{status}-1", f"rid-{status}-000001")
+        start(f"{status}-1", f"rid-{status}-000001", dead)
         ai_history.update_status(f"{status}-1", status)
         assert ai_bridge.get(f"{status}-1")["final"] is True, status
     assert ai_history.mark_interrupted_running() >= 0
@@ -1416,8 +1480,9 @@ def test_interrupted_rows_are_final_even_without_ended_ms(tmp_path, cli):
     ended = {
         r["id"]: r["ended_ms"] for r in ai_history.list_sessions(project_key, limit=100)["sessions"]
     }
-    assert ended["intr-unended1"] is not None and ended["canc-unended1"] is not None
-    assert ai_bridge.get("canc-unended1")["final"] is True  # 补上之后 cancelled 也收尾了
+    assert ended["inte-dead1"] is not None and ended["canc-dead1"] is not None
+    assert ended["inte-live1"] is None and ended["canc-live1"] is None  # 属主活着：不动
+    assert ai_bridge.get("canc-dead1")["final"] is True  # 补上之后照旧收尾
 
 
 def test_pump_exception_puts_the_error_on_the_in_memory_session_too(tmp_path, cli, monkeypatch):

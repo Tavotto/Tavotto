@@ -12,7 +12,8 @@ import { AI_RUN_TIMEOUT_MS } from '@/lib/api'
 import { createDraftBackend } from '@/test/aiDraftBackend'
 import '@/lib/aiDraftLedger'
 import { currentProjectId, setCurrentProjectId } from '@/lib/session'
-import { AiLedgerError, ProjectChangedError, sameScript, useAiStore } from './aiStore'
+import { AiLedgerError, ProjectChangedError, sameScript, snapshotIsFinal, useAiStore } from './aiStore'
+import sameScriptCases from './sameScriptCases.json'
 import { useUiStore } from './uiStore'
 
 type Handler = (url: string, init: RequestInit | undefined) => Promise<Response> | Response
@@ -45,7 +46,15 @@ globalThis.fetch = (async (url: unknown, init?: RequestInit) => {
   const drafted = draftBe.handle(u, init)
   if (drafted) return drafted
   if (u.includes('/api/ai/run') && init?.body) runBodies.push(JSON.parse(String(init.body)))
-  return handler(u, init)
+  const res = await handler(u, init)
+  if (u.includes('/api/ai/run') && init?.body && !res.ok) {
+    // 与后端一致：`/api/ai/run` **明确拒绝**（带稳定 code 的错误响应；`ai_request_unresolved` 除外）时由后端自己删这个 rid 的待确认行
+    // （pytest 钉住）。没有 code 的（网关 502 / 读不出体）后端根本没见到，不删
+    const code = ((await res.clone().json().catch(() => null)) as { code?: unknown } | null)?.code
+    if (typeof code === 'string' && code !== 'ai_request_unresolved')
+      draftBe.dropRejectedPending(String(JSON.parse(String(init.body)).client_request_id))
+  }
+  return res
 }) as typeof fetch
 
 const send = (prompt = '把图例移到左上角', draftStamp: number | null = null) =>
@@ -140,6 +149,7 @@ describe('超时 → 「已发出未确认」，不是失败', () => {
       (() => new Response('bad gateway', { status: 502 })) as Handler,
     ]) {
       useAiStore.setState({ submissions: {}, sessions: [] })
+      draftBe.pendings.clear() // 每一轮是独立的场景：上一轮「未确认」留在后端的账本行会（正确地）挡住这一轮
       handler = (url) => (url.includes('/api/ai/run') ? h(url, undefined) : json({}))
       await expect(send()).resolves.toBe('unconfirmed')
       expect(onlySub().phase).toBe('unconfirmed')
@@ -462,6 +472,23 @@ describe('发送锁比完整的项目相对路径，不比文件名（Codex #109
     handler = defaultHandler
     await expect(sendOn('FigB.pdf', 'b/plot.py')).resolves.toBe('accepted') // 旧实现按文件名比，这里被误锁
     await expect(sendOn('FigC.pdf', 'a\\plot.py')).rejects.toThrow('submission-pending')
+  })
+
+  it('snapshotIsFinal：cancelled / interrupted 都要带 ended_ms 才是终态（interrupt_all 与 cancel 一样只先写 status）', () => {
+    for (const status of ['cancelled', 'interrupted']) {
+      expect(snapshotIsFinal({ status, ended_ms: null } as never, status)).toBe(false)
+      expect(snapshotIsFinal({ status, ended_ms: 5 } as never, status)).toBe(true)
+    }
+    expect(snapshotIsFinal({ status: 'done', ended_ms: null } as never, 'done')).toBe(true)
+    expect(snapshotIsFinal({ status: 'running', ended_ms: 5 } as never, 'running')).toBe(false)
+  })
+
+  it('sameScript ↔ 后端 ai_history.same_script 严格同源：两边跑同一张用例表（tests/test_ai_drafts.py 读同一份 JSON）', () => {
+    expect(sameScriptCases.length).toBeGreaterThanOrEqual(8)
+    for (const [a, b, want] of sameScriptCases as [string, string, boolean][]) {
+      expect(sameScript(a, b), `${a} ↔ ${b}`).toBe(want)
+      expect(sameScript(b, a), `${b} ↔ ${a}`).toBe(want)
+    }
   })
 
   it('sameScript：分隔符与 ./ 不影响；绝对路径只与它的路径后缀相等', () => {
