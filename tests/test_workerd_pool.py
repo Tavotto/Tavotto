@@ -843,3 +843,137 @@ def test_acquire_during_a_confirmed_force_cancel_is_refused_then_starts_fresh(
     fresh, created = pool.acquire("fig.py", str(tmp_path), "main")
     assert created and len(spawned) == 1
     assert pool._workers[key] is fresh
+
+
+def _retire_via_invalidate(figures_dir):
+    pool.invalidate("fig.py", figures_dir)
+
+
+def _retire_via_invalidate_project(figures_dir):
+    pool.invalidate_project(figures_dir)
+
+
+def _retire_via_shutdown_all_project(figures_dir):
+    pool.shutdown_all(figures_dir)
+
+
+def _retire_via_shutdown_workers_using(figures_dir):
+    pool.shutdown_workers_using("/usr/bin/python3")
+
+
+@pytest.mark.parametrize(
+    "retire",
+    [
+        _retire_via_invalidate,
+        _retire_via_invalidate_project,
+        _retire_via_shutdown_all_project,
+        _retire_via_shutdown_workers_using,
+    ],
+)
+@pytest.mark.parametrize("close_outcome", [{"ok": True, "closed": True}, "unconfirmed"])
+def test_removal_paths_keep_the_fence_placeholder_during_a_force_cancel(
+    monkeypatch, tmp_path, retire, close_outcome
+):
+    """Codex #1177 r4310523510：除 acquire 外，作废 / 项目作废 / 项目关闭 / 装包收会话也会摘表——
+    摘掉关闭中的围栏占位，键变空，下一次 acquire 按同一规格重开。它们必须保留围栏占位。"""
+    outcome = _unconfirmed_close() if close_outcome == "unconfirmed" else close_outcome
+    worker, key, spawned, release, t, result, client = _force_cancel_blocked_on_close(
+        monkeypatch, tmp_path, outcome
+    )
+    shutdowns = []
+    monkeypatch.setattr(worker, "shutdown", lambda: shutdowns.append(1))
+    retire(str(tmp_path))
+    assert pool._workers.get(key) is worker  # 占位仍在
+    with pytest.raises(pool.WorkerError) as caught:
+        pool.acquire("fig.py", str(tmp_path), "main")
+    assert caught.value.code == "session_dead"
+    assert spawned == [] and shutdowns == []
+    release.set()
+    t.join(10)
+    if close_outcome == "unconfirmed":
+        assert result == [False]
+        assert pool._workers.get(key) is worker and pool.is_fenced(worker)
+        retire(str(tmp_path))  # 关闭失败后的围栏同样不被摘
+        assert pool._workers.get(key) is worker
+
+        def failing(op, **kw):
+            raise _unconfirmed_close()
+
+        monkeypatch.setattr(client, "call", failing)
+        with pytest.raises(pool.WorkerError):
+            pool.acquire("fig.py", str(tmp_path), "main")
+        assert spawned == []
+        monkeypatch.setattr(client, "call", lambda op, **kw: {"ok": True, "closed": True})
+        fresh, created = pool.acquire("fig.py", str(tmp_path), "main")
+        assert created and len(spawned) == 1 and pool._workers[key] is fresh
+    else:
+        assert result == [True] and key not in pool._workers
+
+
+def test_lru_eviction_never_evicts_a_fence_placeholder(monkeypatch, tmp_path):
+    worker, key, spawned, release, t, result, _client = _force_cancel_blocked_on_close(
+        monkeypatch, tmp_path, _unconfirmed_close()
+    )
+    worker.last_used = 0.0  # 最久未用：LRU 的首选对象
+    shutdowns = []
+    monkeypatch.setattr(worker, "shutdown", lambda: shutdowns.append(1))
+
+    class Other:
+        entry = "main"
+        python = "/usr/bin/python3"
+        last_used = 1.0
+        script_name = "other.py"
+
+        def alive(self):
+            return True
+
+        def shutdown(self):
+            pass
+
+    for i in range(pool.MAX_ALIVE):
+        pool._workers[pool._worker_key(str(tmp_path), f"o{i}.py")] = Other()
+    monkeypatch.setattr(worker, "alive", lambda: True)  # 关闭进行中，尚未标死
+    pool.acquire("new.py", str(tmp_path), "main")
+    assert pool._workers.get(key) is worker and shutdowns == []
+    release.set()
+    t.join(10)
+
+
+def test_force_cancel_input_does_not_detach_a_closing_worker(monkeypatch, tmp_path):
+    from tavotto.engine.scriptinput import DIRNAME
+
+    worker, key, spawned, release, t, result, _client = _force_cancel_blocked_on_close(
+        monkeypatch, tmp_path, _unconfirmed_close()
+    )
+    assert pool.force_cancel_input(worker.out_dir / DIRNAME, str(tmp_path)) is False
+    assert pool._workers.get(key) is worker
+    release.set()
+    t.join(10)
+
+
+def test_force_cancel_input_keeps_an_already_fenced_worker_in_the_table(monkeypatch, tmp_path):
+    """已围栏（上次关闭未确认）但没在关闭：force_cancel_input 仍 force_kill，但不摘表；acquire 仍走重试关闭。"""
+    from tavotto.engine.scriptinput import DIRNAME
+
+    worker, client = _worker(
+        monkeypatch,
+        tmp_path,
+        [
+            {"ok": True, "session_id": "old"},
+            _unconfirmed_close(),
+            _unconfirmed_close(),
+            _unconfirmed_close(),
+        ],
+    )
+    spawned = _acquire_env(monkeypatch)
+    key = pool._worker_key(str(tmp_path), "fig.py")
+    monkeypatch.setattr(pool, "_workers", {key: worker})
+    assert pool.force_cancel("fig.py", str(tmp_path), expected_worker=worker) is False
+    assert pool.is_fenced(worker) and not worker._closing
+
+    assert pool.force_cancel_input(worker.out_dir / DIRNAME, str(tmp_path)) is True
+    assert pool._workers.get(key) is worker and pool.is_fenced(worker)
+    with pytest.raises(pool.WorkerError) as caught:
+        pool.acquire("fig.py", str(tmp_path), "main")
+    assert caught.value.code == "session_dead"
+    assert spawned == []
