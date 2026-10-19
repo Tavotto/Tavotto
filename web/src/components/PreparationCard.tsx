@@ -34,13 +34,12 @@ import { listJoin } from '@/i18n/format'
 import { markAutoShown, wasAutoShown } from '@/lib/guideCardSeen'
 import { preparationPanelEnabled } from '@/lib/preparationFlag'
 import { originFactsOf, originViewOfCard } from '@/lib/importOrigin'
-import { dialogKinds, nativeFallbackNote, prepRowKey, prepView, targetName, type PrepPrimary, type PrepTone, type PrepView } from '@/lib/preparationText'
+import { dialogKinds, finishedWithFigures, nativeFallbackNote, prepRowKey, prepView, targetName, type PrepPrimary, type PrepTone, type PrepView } from '@/lib/preparationText'
 import { dependenciesLine, issueLine, roleLabel, scanCard, scanLine, type ScanCardKind } from '@/lib/projectScanText'
 import { missingRequirements, readTokens, type ScriptArgsSchema } from '@/lib/scriptArgsForm'
 import { cn } from '@/lib/utils'
 import { useCanvasToolbarVisible } from '@/components/CanvasToolbar'
 import { refreshProjectNow } from '@/store/liveSync'
-import { useAssetStore } from '@/store/assetStore'
 import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
 import { useDepRepairStore } from '@/store/depRepairStore'
 import { useEnvStore } from '@/store/envStore'
@@ -589,6 +588,7 @@ const ARGS_FOLDED = new Set([
   'no_figure_raster',
   'completed',
   'completed_unlinked',
+  'completed_partial',
   'cancelled',
 ])
 
@@ -712,15 +712,10 @@ function useRunPrimary(entry: PrepEntry, onMany: () => void) {
         // 脚本自己写出的图片文件，素材库本来就列（不新造导入入口）；卡片收起让位给素材库
         // 素材库挂载时不重载 `/api/panels`、项目 watcher 又要等轮询+防抖：刚写出的图不主动刷新就要等几秒才出现，
         // 按钮看起来像坏了。走素材库工具栏刷新按钮用的同一条统一刷新（不 await：切标签不等它，失败也不挡路）
-        // 切标签的同一刻素材库就进加载态：`AssetBrowser` 的磁盘素材面板与忙碌态读的是 `useAssetStore.loading`
-        // （不是 runtime 素材库的 `assetsLoading`，那个标志它不订阅），所以置的是它。
-        // 刷新自己结束时会 `refreshAssetsAndSync({ force })` 重取清单并收掉 loading；兜底：刷新抛在重取之前时
-        // loading 仍为真，则在这里补一次强制取清单，不让素材库永远转圈
-        useAssetStore.setState({ loading: true })
+        // 统一刷新自己持有扫描到强制清单结束的忙碌态，旧清单的 finally 不能提前撤下它。
         void refreshProjectNow()
           .catch(() => {})
           .finally(() => {
-            if (useAssetStore.getState().loading) void useAssetStore.getState().load({ force: true })
             void useRuntimeAssetStore.getState().loadAssets()
           })
         ui.setLeftTab('assets')
@@ -1245,7 +1240,15 @@ function SessionDetails({ entry, view }: { entry: PrepEntry; view: PrepView }) {
       )}
       {view.state === 'no_figure' && <p data-prep-nofigure-why>{pt('detail.noFigureWhy')}</p>}
       {view.state === 'no_figure_raster' && <p data-prep-nofigure-raster-why>{pt('rasterHint.why')}</p>}
-      {(report?.unlinked_stems ?? []).length > 0 && report?.phase === 'completed' && (
+      {(report?.failed_figures ?? []).length > 0 && report?.phase === 'partial' && (
+        <p data-prep-failed-figures>
+          {pt('detail.failedFigures', {
+            names: listJoin((report.failed_figures ?? []).map((f) => f.stem)),
+            codes: listJoin([...new Set((report.failed_figures ?? []).map((f) => f.code).filter((c): c is string => !!c))]),
+          })}
+        </p>
+      )}
+      {(report?.unlinked_stems ?? []).length > 0 && finishedWithFigures(report) && (
         <p data-prep-unlinked>{pt('detail.unlinked', { names: listJoin(report.unlinked_stems ?? []) })}</p>
       )}
       {(report?.attempt_history?.length ?? 0) > 0 && <RunHistory history={report?.attempt_history ?? []} />}

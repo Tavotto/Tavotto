@@ -346,6 +346,100 @@ class TestBindingContextsAreOneDefinition:
         assert all("enclosing" not in d for d in scan.to_payload()["dynamic"])
 
 
+class TestNonliteralLocalContexts:
+    """#963：非字面量动态导入与 named import 沿同一份本地闭包继承实际保护。"""
+
+    @pytest.mark.parametrize(
+        "context", ["optional", "conditional", "type_checking", "unconditional", "deferred"]
+    )
+    def test_a_followed_dynamic_import_keeps_the_callers_context(self, tmp_path, context):
+        bodies = {
+            "optional": "try:\n    import helper\nexcept ImportError:\n    pass\n",
+            "conditional": "if flag:\n    import helper\n",
+            "type_checking": "from typing import TYPE_CHECKING\nif TYPE_CHECKING:\n    import helper\n",
+            "unconditional": "import helper\n",
+            "deferred": "def run():\n    import helper\n",
+        }
+        proj = _project(tmp_path, bodies[context], "auditlate==1.0\n", **{"helper.py": _VARIABLE})
+        plan = _plan(proj)
+        binding = context in {"unconditional", "deferred"}
+        assert plan.status == (depplan.STATUS_READY if binding else depplan.STATUS_NOTHING_NEEDED)
+        assert plan.requirements == (("auditlate==1.0",) if binding else ())
+        scan = importscan.scan(proj, "plot.py")
+        (use,) = scan.dynamic
+        assert (use.context, use.enclosing, use.via) == ("dynamic", context, "helper.py")
+        assert set(use.to_payload()) == {"module", "full", "context", "lineno", "via"}
+        assert not scan.needed  # 非字面量不能变成普通静态 needed。
+
+    def test_a_followed_function_keeps_its_own_outer_condition(self, tmp_path):
+        proj = _project(
+            tmp_path,
+            "import helper\n",
+            "auditlate==1.0\n",
+            **{
+                "helper.py": "import importlib\nif flag:\n    def run(name):\n        importlib.import_module(name)\n"
+            },
+        )
+        assert _plan(proj).status == depplan.STATUS_NOTHING_NEEDED
+        assert importscan.scan(proj, "plot.py").dynamic[0].enclosing == "conditional"
+
+    @pytest.mark.parametrize("binding_first", [False, True])
+    def test_cached_local_contexts_replay_dynamics_without_reading_again(
+        self, tmp_path, monkeypatch, binding_first
+    ):
+        optional = "try:\n    import helper\nexcept ImportError:\n    pass\n"
+        binding = "import helper\n"
+        proj = _project(
+            tmp_path,
+            binding + optional if binding_first else optional + binding,
+            "auditlate==1.0\n",
+            **{"helper.py": _VARIABLE},
+        )
+        reads = []
+        original = importscan._Scanner._load
+
+        def load(scan, path, *args):
+            reads.append(path.name)
+            return original(scan, path, *args)
+
+        monkeypatch.setattr(importscan._Scanner, "_load", load)
+        scan = importscan.scan(proj, "plot.py")
+        assert {u.enclosing for u in scan.dynamic} == {"optional", "unconditional"}
+        assert reads.count("helper.py") == 1
+        assert _plan(proj).requirements == ("auditlate==1.0",)
+
+    def test_relative_local_follow_preserves_the_optional_guard(self, tmp_path):
+        proj = _project(
+            tmp_path,
+            "try:\n    import helper\nexcept ImportError:\n    pass\n",
+            "auditlate==1.0\n",
+            **{"helper/__init__.py": "from . import child\n", "helper/child.py": _VARIABLE},
+        )
+        assert _plan(proj).status == depplan.STATUS_NOTHING_NEEDED
+        assert {u.enclosing for u in importscan.scan(proj, "plot.py").dynamic} == {"optional"}
+
+
+class TestHashDeclaredRootAccounting:
+    def test_a_dynamic_hash_root_is_recorded_without_an_invented_import(self, tmp_path):
+        proj = _project(tmp_path, _VARIABLE, _lock("auditlate==1"))
+        plan = _plan(proj)
+        (entry,) = [e for e in plan.install_entries if e["distribution"] == "auditlate"]
+        assert entry["import_name"] == ""
+        assert entry["resolution_source"] == depresolve.SOURCE_PROJECT_DECLARED
+        assert entry["specifiers"] == ["==1"]
+        assert plan.require_hashes and plan.status == depplan.STATUS_READY
+
+    def test_a_hash_lock_does_not_turn_unrelated_entries_into_roots(self, tmp_path):
+        proj = _project(tmp_path, "import six\n", _lock("six==1.17.0", "auditlate==1"))
+        plan = _plan(proj)
+        assert {e["distribution"] for e in plan.install_entries} == {"six"}
+        assert "auditlate==1" in plan.requirements  # 整份锁照装，只有相关 roots 记账。
+
+    def test_a_users_venv_does_not_gain_dynamic_declared_roots(self, tmp_path):
+        proj = _project(tmp_path, _VARIABLE, _lock("auditlate==1"))
+        assert not _plan(proj, target=VENV).install_entries
+
+
 _LITERAL_ALIASES = [
     ("import importlib as il\n", 'il.import_module("auditlate")'),
     ("from importlib import import_module as im\n", 'im("auditlate")'),
