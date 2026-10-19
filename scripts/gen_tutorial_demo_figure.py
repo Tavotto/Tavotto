@@ -230,20 +230,56 @@ def _mpl_minor() -> str:
     return ".".join(matplotlib.__version__.split(".")[:2])
 
 
-# 由字形度量决定的量：文字（刻度标签、轴标签、标题、图例条目）的外框，以及由条目高度排出来的
-# 图例外框与图例句柄位置。坐标轴框、曲线、刻度位置、标题锚点、文字内容、颜色都不在此列
-_METRIC_PATH = re.compile(r"\.box\[\d+\]$|\.handle\[\d+\]\[\d+\]$")
-_STRICT_PREFIX = ("$.axes.",)
+# 版本不同时怎么比（实测 3.10 vs 3.11：文字外框的宽高、图例的行高随字形度量变几个 pt，
+# 但文字外框的锚点（按对齐方式：顶边 / 中心……）、图例的**右下角**（脚本 loc="lower right"）两版一致）：
+#   * 文字外框 [x, y, w, h] → 每个方向上起点 / 中心 / 终点有一个对上即可（锚点随对齐方式），宽高放过；
+#   * 图例外框 → 比右边与下边（锚定的那个角），宽高放过；
+#   * 图例条目内部（每行外框、句柄位置）→ 行距随字高变，用有界的 METRIC_TOLERANCE_PT；
+#   * 其余（坐标轴框、曲线、刻度位置、标题锚点、文字内容、颜色）照样严格。
+METRIC_TOLERANCE_PT = 3.0
+_LEGEND_ENTRY = re.compile(r"^\$\.legend\.entries\[\d+\]\.(box|handle)")
 
 
-def _metric_dependent(path: str) -> bool:
-    return bool(_METRIC_PATH.search(path)) and not path.startswith(_STRICT_PREFIX)
+def _mpl_minor() -> str:
+    import matplotlib
+
+    return ".".join(matplotlib.__version__.split(".")[:2])
 
 
 def compare(built: dict, on_disk: dict) -> list[str]:
     """按版本选比法：生成物的 matplotlib 主.次版本与此刻相同 → 逐项严格比；不同 → 只放宽字形度量量。"""
     loose = built.get("matplotlib") != on_disk.get("matplotlib")
     return _diff(built, on_disk, loose=loose)
+
+
+def _num_diff(want, got, path: str, tol: float) -> list[str]:
+    return [] if abs(want - got) <= tol else [f"{path}: {want} ≠ {got}（容差 {tol} pt）"]
+
+
+def _loose_box(want: list, got: list, path: str) -> list[str] | None:
+    """版本不同时的外框比法；不是外框（或是坐标轴框）回 None，交给通用比法。"""
+    if not path.endswith(".box") or path.startswith("$.axes."):
+        return None
+    if len(want) != 4 or len(got) != 4:
+        return None
+    if path == "$.legend.box":
+        return _num_diff(
+            want[0] + want[2], got[0] + got[2], f"{path} 右边", TOLERANCE_PT
+        ) + _num_diff(want[1] + want[3], got[1] + got[3], f"{path} 下边", TOLERANCE_PT)
+    if _LEGEND_ENTRY.match(path):
+        return None
+    out: list[str] = []
+    for axis, o, size in (("x", 0, 2), ("y", 1, 3)):
+        # 文字按对齐方式锚在起点 / 中心 / 终点之一（xlabel 顶边居中、ylabel 竖排居中……）：
+        # 字形变大变小时锚点不动；真的挪了位置，三者一起偏
+        candidates = (
+            (want[o], got[o]),
+            (want[o] + want[size] / 2, got[o] + got[size] / 2),
+            (want[o] + want[size], got[o] + got[size]),
+        )
+        if not any(abs(a - b) <= TOLERANCE_PT for a, b in candidates):
+            out.append(f"{path} {axis} 方向：起点 / 中心 / 终点都对不上（容差 {TOLERANCE_PT} pt）")
+    return out
 
 
 def _diff(want, got, path: str = "$", *, loose: bool = False) -> list[str]:
@@ -258,6 +294,8 @@ def _diff(want, got, path: str = "$", *, loose: bool = False) -> list[str]:
             out += _diff(want[key], got[key], f"{path}.{key}", loose=loose)
         return out
     if isinstance(want, list) and isinstance(got, list):
+        if loose and (boxed := _loose_box(want, got, path)) is not None:
+            return boxed
         if len(want) != len(got):
             return [f"{path}: 长度 {len(want)} ≠ {len(got)}"]
         out = []
@@ -268,13 +306,9 @@ def _diff(want, got, path: str = "$", *, loose: bool = False) -> list[str]:
         return [] if want == got else [f"{path}: {want!r} ≠ {got!r}"]
     if not isinstance(got, int | float):
         return [f"{path}: {want!r} ≠ {got!r}"]
-    if loose and _metric_dependent(path):
-        return []
-    return (
-        []
-        if abs(want - got) <= TOLERANCE_PT
-        else [f"{path}: {want} ≠ {got}（容差 {TOLERANCE_PT} pt）"]
-    )
+    if loose and _LEGEND_ENTRY.match(path):
+        return _num_diff(want, got, path, METRIC_TOLERANCE_PT)
+    return _num_diff(want, got, path, TOLERANCE_PT)
 
 
 def check() -> list[str]:

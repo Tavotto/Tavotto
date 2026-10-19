@@ -70,31 +70,48 @@ def test_check_is_not_hollow():
 
 
 def test_other_matplotlib_versions_only_loosen_glyph_metrics():
-    """生成物来自另一版 matplotlib 时：字形度量量（文字 / 图例外框、图例句柄）放宽，其余照样严格。
+    """生成物来自另一版 matplotlib 时：只放过字形度量带来的变化，位置照样比。
 
-    CI 的 Python 3.10 腿只装得上 matplotlib 3.10，文字外框与本机 3.11 差几个 pt——那不是脚本变了。
+    CI 的 Python 3.10 腿只装得上 matplotlib 3.10：文字外框的宽高、图例行高与本机 3.11 差几个 pt，
+    但文字外框的中心、图例的右下角（loc="lower right"）两版一致——那才是「脚本有没有变」的证据。
     """
     gen = _gen()
     built = gen.build()
     other = copy.deepcopy(built)
     other["matplotlib"] = "0.0"
+    # 版本带来的变化：文字外框绕中心变高、图例往上长（右下角不动）、条目行距略变
+    other["xlabel"]["box"][1] -= 1.5
     other["xlabel"]["box"][3] += 3
     other["legend"]["box"][1] -= 3
+    other["legend"]["box"][3] += 3
     other["legend"]["entries"][0]["handle"][0][1] += 2
     assert gen.compare(built, other) == []
     # 同版本时同样的偏差要红
     same = copy.deepcopy(other)
     same["matplotlib"] = built["matplotlib"]
     assert gen.compare(built, same)
-    # 版本不同也不放过：曲线、坐标轴、文字内容、颜色
+
+    def shift(path, i, by):
+        def f(d):
+            node = d
+            for k in path:
+                node = node[k]
+            node[i] += by
+
+        return f
+
+    # 版本不同也不放过：位置（轴标签挪了、图例挪了）、条目超出有界容差、曲线、坐标轴、文字、颜色
     for mutate, needle in (
+        (shift(["xlabel", "box"], 0, 3), "xlabel.box"),
+        (shift(["ylabel", "box"], 1, 3), "ylabel.box"),
+        (shift(["legend", "box"], 1, 3), "legend.box"),
+        (shift(["legend", "box"], 0, -3), "legend.box"),
         (
-            lambda d: d["lines"][0]["points"][10].__setitem__(
-                1, d["lines"][0]["points"][10][1] + 3
-            ),
-            "lines[0].points",
+            shift(["legend", "entries", 1, "box"], 1, gen.METRIC_TOLERANCE_PT * 2),
+            "legend.entries[1].box",
         ),
-        (lambda d: d["axes"]["box"].__setitem__(0, d["axes"]["box"][0] + 3), "axes.box"),
+        (shift(["lines", 0, "points", 10], 1, 3), "lines[0].points"),
+        (shift(["axes", "box"], 0, 3), "axes.box"),
         (lambda d: d["title"].__setitem__("text", "x"), "title.text"),
         (lambda d: d["lines"][1].__setitem__("color", "#000000"), "lines[1].color"),
     ):

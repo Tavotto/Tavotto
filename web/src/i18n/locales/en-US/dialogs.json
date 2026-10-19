@@ -924,7 +924,7 @@
           "telemetry_enabled": "Turning statistics on for the first time: from the first-run prompt or from settings.",
           "tutorial_completed": "Finishing the tutorial: the flow version.",
           "tutorial_started": "The tutorial starting: which entry point, and the flow version.",
-          "tutorial_step_completed": "One finished tutorial step: which of the ten steps, and the flow version.",
+          "tutorial_step_completed": "One finished tutorial step: which of the four steps (three demo steps and the finish page), and the flow version.",
           "update_completed": "A finished update: the channel (desktop, pip, pipx) and the version."
         },
         "sendsAfter": " so we can tell whether you came back later. It isn’t tied to any account, and carries no hardware serial, MAC address or other identifier.",

@@ -912,7 +912,7 @@
           "telemetry_enabled": "首次开启统计：来自首启询问还是设置页。",
           "tutorial_completed": "教程完成：流程版本号。",
           "tutorial_started": "教程开始：入口与流程版本号。",
-          "tutorial_step_completed": "教程完成一步：步骤编号与流程版本号。",
+          "tutorial_step_completed": "教程完成一步：是四个步骤（三步演示与完成页）中的哪一步，以及流程版本号。",
           "update_completed": "更新完成：通道（桌面 / pip / pipx）与版本号。"
         },
         "sendsAfter": "的 UUID，不关联账号或设备硬件。",
