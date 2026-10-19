@@ -14,6 +14,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { aiRevert, fetchAiHistory, type AiHistoryEntry } from '@/lib/api'
 import { setCurrentProjectId } from '@/lib/session'
+import { createDraftBackend } from '@/test/aiDraftBackend'
 import { TooltipProvider } from '@/components/ui/Tooltip'
 import { agentCaps, capsOf } from '@/components/settings/testCaps'
 import { useAiStore, type AiSession } from '@/store/aiStore'
@@ -41,6 +42,10 @@ globalThis.IS_REACT_ACT_ENVIRONMENT = true
 
 let root: Root | null = null
 let host: HTMLDivElement
+
+const settle = async () => {
+  for (let i = 0; i < 20; i++) await act(async () => Promise.resolve())
+}
 
 const render = async (node: React.ReactNode) => {
   host = document.createElement('div')
@@ -109,6 +114,7 @@ afterEach(async () => {
 describe('助手面板随项目代际重挂', () => {
   const typeDraft = async (text: string) => {
     const box = host.querySelector<HTMLTextAreaElement>('[data-ai-input]')!
+    await vi.waitFor(() => expect(box.readOnly).toBe(false), { timeout: 8000 }) // 草稿读取结束前输入框只读
     const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!
     await act(async () => {
       setter.call(box, text)
@@ -118,6 +124,11 @@ describe('助手面板随项目代际重挂', () => {
   const draft = () => host.querySelector<HTMLTextAreaElement>('[data-ai-input]')!.value
 
   beforeEach(async () => {
+    // 草稿存后端（ADR 0132）：这里换成同语义的替身后端
+    const be = createDraftBackend()
+    globalThis.fetch = (async (url: unknown, init?: RequestInit) =>
+      be.handle(String(url), init) ?? new Response('{}')) as typeof fetch
+    setCurrentProjectId(null)
     await useDocumentStore.getState().switchDocument(emptyProject(), 'd_ai_scope')
     const panel = {
       id: 'p1', type: 'panel', x: 0, y: 0, w: 100, h: 75,
@@ -135,10 +146,20 @@ describe('助手面板随项目代际重挂', () => {
     expect(draft()).toBe('A 项目里写了一半')
   })
 
-  it('换代（切项目的 clear）：A 的草稿不留在 B', async () => {
-    await typeDraft('A 项目里写了一半')
+  it('换代（切项目的 clear）：A 的草稿不留在 B；切回 A 找得回来（草稿按项目分键）', async () => {
+    setCurrentProjectId('pjA')
     await act(async () => useAiStore.getState().clear())
+    await typeDraft('A 项目里写了一半')
+    // 切到 B：项目认领先换，再 clear（projectStore 的顺序）
+    setCurrentProjectId('pjB')
+    await act(async () => useAiStore.getState().clear())
+    await settle()
     expect(draft()).toBe('')
+    // 切回 A：同一份草稿还在
+    setCurrentProjectId('pjA')
+    await act(async () => useAiStore.getState().clear())
+    await settle()
+    expect(draft()).toBe('A 项目里写了一半')
   })
 })
 

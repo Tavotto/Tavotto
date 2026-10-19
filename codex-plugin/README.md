@@ -165,6 +165,8 @@ Roots 兼容状态与连接内工作区确认状态。这里不按 Codex 版本�
   handoff）。它有自己的就绪判据与失败上报（见
   [`../docs/handoff-protocol.md`](../docs/handoff-protocol.md)），
   桌面进程崩溃时你会拿到 `launch_failed` + 信号/日志路径，不会拿到假成功。
+  Windows 版 Codex 的默认沙箱里桌面应用起不来：会拿到 `sandboxed_launch`（CLI 不拉进程），
+  在沙箱外重跑同一条命令即可。
 
 ### 工作区为什么会弹一次确认
 

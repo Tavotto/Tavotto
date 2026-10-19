@@ -4713,6 +4713,8 @@ def _measure_manifest(
     # 那一刻由 Formatter 填进去的）
     sync_tick_elements(state)
     budget = pathgeom.Budget()
+    # 真实绘制次序（给 geometry 盖 `paint_order` / `fill_alpha` 用，命中评分据此分层）
+    paint_ranks = pathgeom.paint_ranks(fig)
 
     elements = []
     #: 登记了、却在这一轮 build 里被丢掉的元素（量不出几何 / 文字空了 / 刻度
@@ -5081,6 +5083,11 @@ def _measure_manifest(
                 entry["arrow_endpoints"] = [
                     [round(float(x) / W, 4), round(1.0 - float(y) / H, 4)] for x, y in disp
                 ]
+                # 端点箭头不出 geometry（前端按端点线命中），次序写在元素级：箭头画在后画的
+                # 不透明填充下面时，前端据此把它降层（ADR 0086 修订）
+                arrow_order = pathgeom.paint_order_of(artist, paint_ranks)
+                if arrow_order is not None:
+                    entry["paint_order"] = arrow_order
             else:
                 # 不出端点的箭头（带字注释的箭头、坐标系逆算不回去的）从前只有 bbox：
                 # 弯箭杆的 bbox 是一大块空白，点空白也选中它（ADR 0086）。描真实的
@@ -5088,6 +5095,17 @@ def _measure_manifest(
                 geom = pathgeom.element_geometry(artist, W, H, budget, arrow_path=True)
                 if geom is not None:
                     entry["geometry"] = geom
+        # 文字 / 标题 / 轴标签 / 图例（画布按 bbox 命中、没有 geometry）：次序写在元素级，
+        # 被后画的不透明填充盖住时前端据此降层。拿不到次序就不写（前端回到旧面积评分）
+        # （图例文字 / 轴标签不是 Axes 的直接 child：`paint_ranks` 让叶子的后代继承叶子的次序）
+        if el["role"] in ("text", "title", "axis_label", "legend", "legend_text"):
+            ink_order = pathgeom.paint_order_of(artist, paint_ranks)
+            if ink_order is not None:
+                entry["paint_order"] = ink_order
+        # 绘制事实：命中评分要知道「谁画在谁上面」与「上面那块填充盖不盖得住」
+        # （ADR 0086）。在所有 geometry 分支之后统一盖章，包括不出端点的箭头。
+        if "geometry" in entry:
+            pathgeom.stamp_paint(entry["geometry"], artist, paint_ranks)
         # 裁剪框（figure 分数、top-origin）：matplotlib 会在这个框处把这个元素
         # 切掉，框外的部分一笔都不会画。**bbox 不含这一维**——数据远超坐标轴
         # 范围的散点 / 曲线，`get_window_extent` / `get_datalim` 给的是**未裁剪的
