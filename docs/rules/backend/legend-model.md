@@ -13,7 +13,7 @@
   `handle_color/linestyle/linewidth/marker/markersize` / `binding` / `visible`），
   图例标题仍是 `text`。**代理句柄借名**（`legend_proxy_names`，只改显示名）：曲线 / 散点自己没有可显示 label、
   图例里**恰好一个**代理句柄与它的示意**全部可见样式**精确一致（`_proxy_fingerprint` = 共享指纹（含 `_dash_key` 这类 `properties()` 拿不到的私有事实）∪ `_glyph_style`：`properties()` 去掉 `_NON_GLYPH_PROPS` 里与长相无关的键后逐键比，认不出的值恒不相等；新样式属性自动纳入。只在借名这里比，不替换 `bind_legend_entries` 的 `legend_handle_fingerprint`；反向也唯一，含有 label 的系列一并计数）→ 用该条目文字
-  命名「曲线 “pH=1”」；图例里有非 matplotlib 自带的 handler（一格可能画多个 artist，`legend_handles` 只留第一个）整张图例不借名；歧义一律不命名，不按位置猜，不改 gid / 字段（看护 `tests/test_series_name_from_legend_proxy.py`）。
+  命名「曲线 “pH=1”」；撞上**一格画了多个 artist** 的条目（`HandlerTuple`、误差棒 / 茎叶、自定义 handler……；`legend_handles` 只留第一个，按 `_legend_cell_artist_counts` 实际格数判，不按 handler 类型列名单）即歧义不借名，格子结构说不清就整张不借名；歧义一律不命名，不按位置猜，不改 gid / 字段（看护 `tests/test_series_name_from_legend_proxy.py`）。
   每一项按 label + 示意线指纹绑定源对象
   （`bind_legend_entries`，并列时只认 `get_legend_handles_labels()` 的位置，
   **不伪造**）；跟随的项在 `apply()` 尾部 `sync_legends` 从源重新派生示意线

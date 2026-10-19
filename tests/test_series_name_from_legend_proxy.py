@@ -171,6 +171,22 @@ def main():
     ax.legend(handles=[Line2D([], [], color="r", label="red")], handler_map={Line2D: TwoLines()})
     fig.savefig("Fig.pdf")
 """,
+    # HandlerTuple（matplotlib 自带、一格画两条线）：第一条与无名黑线一样，整格长相不同，不借名；
+    # 同一张图例里普通的单 artist 代理照常借名
+    "tuple_handler": """\
+import matplotlib.pyplot as plt
+from matplotlib.lines import Line2D
+
+def main():
+    fig, ax = plt.subplots(figsize=(4, 3))
+    ax.plot([0, 1], [0, 1], color="k")
+    ax.plot([0, 1], [1, 2], color="b", marker="s")
+    k = Line2D([], [], color="k")
+    r = Line2D([], [], color="r")
+    b = Line2D([], [], color="b", marker="s")
+    ax.legend(handles=[(k, r), b], labels=["tup", "blue"])
+    fig.savefig("Fig.pdf")
+""",
     # 有自己 label 的线与普通 ax.legend()：行为不变
     "own_label": """\
 import matplotlib.pyplot as plt
@@ -261,3 +277,10 @@ def test_custom_dash_sequence_off_stays_unnamed(figs):
 
 def test_custom_handler_legend_lends_no_names(figs):
     assert _labels(figs, "custom_handler") == {"axes_0.lines_0": "曲线 1"}
+
+
+def test_multi_artist_cell_lends_no_name(figs):
+    assert _labels(figs, "tuple_handler") == {
+        "axes_0.lines_0": "曲线 1",
+        "axes_0.lines_1": "曲线 “blue”",
+    }

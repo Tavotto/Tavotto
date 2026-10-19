@@ -1057,21 +1057,20 @@ def legend_proxy_names(ax) -> dict[int, str]:
     leg = ax.get_legend()
     if leg is None:
         return {}
-    # 自定义 handler（类型级或按实例）可能一格画好几个 artist，而 `legend_handles` 只留第一个：
-    # 只比第一个会把长相不同的两格判成一样。说不清整格长相就整张图例不借名（#1162 评审）
-    try:
-        handler_map = leg.get_legend_handler_map()
-    except Exception:  # noqa: BLE001
-        return {}
-    if any(type(h).__module__ != "matplotlib.legend_handler" for h in handler_map.values()):
-        return {}
     handles = [h for h in getattr(leg, "legend_handles", []) if h is not None]
     texts = [t.get_text() for t in leg.get_texts()]
     n = min(len(handles), len(texts))
+    # 每一格**实际画了几个 artist**：`legend_handles` 只留每格的第一个，一格画多个（`HandlerTuple`、
+    # 误差棒 / 茎叶的 handler、用户自定义 handler）时只比第一个会把长相不同的两格判成一样。
+    # 按画出来的格数判，不按 handler 类型列名单（#1162 评审连报自定义 handler、HandlerTuple 两轮）。
+    # 格子结构说不清（数目对不上）就整张不借名。
+    counts = _legend_cell_artist_counts(leg)
+    if counts is None or len(counts) < n:
+        return {}
     series = [*ax.lines, *ax.collections]
-    entries: list[tuple[tuple, str]] = []
-    for h, text in zip(handles[:n], texts[:n], strict=True):
-        entries.append((_proxy_fingerprint(h), text))
+    entries: list[tuple[tuple, str, bool]] = []
+    for h, text, k in zip(handles[:n], texts[:n], counts[:n], strict=True):
+        entries.append((_proxy_fingerprint(h), text, k != 1))
     if not entries:
         return {}
     fp_of: dict[int, tuple] = {}
@@ -1089,9 +1088,11 @@ def legend_proxy_names(ax) -> dict[int, str]:
         fp = fp_of.get(id(art))
         if fp is None:
             continue
-        hits = [text for efp, text in entries if efp == fp]
-        if len(hits) != 1:
+        matched = [(text, multi) for efp, text, multi in entries if efp == fp]
+        # 撞上一个多 artist 的格子 = 说不清它是不是这条系列的条目：歧义，不借名
+        if len(matched) != 1 or matched[0][1]:
             continue
+        hits = [matched[0][0]]
         if sum(1 for other in fp_of.values() if other == fp) != 1:
             continue
         out[id(art)] = hits[0]
@@ -1182,6 +1183,23 @@ def _glyph_style(h) -> tuple:
         type(h).__name__,
         tuple((k, _glyph_value(k, props[k])) for k in sorted(props) if k not in _NON_GLYPH_PROPS),
     )
+
+
+def _legend_cell_artist_counts(leg) -> list[int] | None:
+    """图例每一格（按条目顺序）画出来的 artist 个数；结构说不清返回 None。
+
+    matplotlib 把条目按列依次排进 `_legend_handle_box`（HPacker → 每列一个 VPacker → 每项
+    HPacker[DrawingArea, TextArea]），按列展开即条目顺序；DrawingArea 的 children 就是 handler
+    为这一格画的全部 artist（3.8.4 / 3.10.9 实测结构一致）。"""
+    try:
+        cells = [
+            item.get_children()[0]
+            for col in leg._legend_handle_box.get_children()
+            for item in col.get_children()
+        ]
+        return [len(c.get_children()) for c in cells]
+    except Exception:  # noqa: BLE001 — 私有布局变了就当说不清
+        return None
 
 
 def _proxy_fingerprint(h) -> tuple:
