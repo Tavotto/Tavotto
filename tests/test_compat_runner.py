@@ -1198,7 +1198,8 @@ class TestRunGroupCrashKeepsPartialResults:
             raise RuntimeError("routes boom")
 
         monkeypatch.setattr(CM, "stage_product_routes", routes_then_boom)
-        a = case("a", product_routes={"http": True, "cli": True})
+        # a 还声明了一条没来得及存的 native_run → 路由检查未完成，才会被追加崩溃
+        a = case("a", product_routes={"http": True, "cli": True, "native_run": True})
         b = case("b", product_routes={"http": True})
         results = self._run([a, b], tmp_path)
 
@@ -1216,6 +1217,44 @@ class TestRunGroupCrashKeepsPartialResults:
         report = CM.build_report([a, b], results, {}, "current", "all")
         assert [x["id"] for x in report["summary"]["product_bugs"]] == ["a"]
         assert {x["id"] for x in report["summary"]["runner_errors"]} >= {"a", "b"}
+
+    def test_route_runner_crash_does_not_retag_a_case_whose_routes_finished(
+        self, monkeypatch, tmp_path
+    ):
+        """真实异常路径：A 只声明 safe_probe 且已存好；B 的 native_run 崩溃 → 只有 B 记崩溃（r4310699342）。"""
+        from tavotto import app as tavotto_app
+
+        self._patch_pipeline(monkeypatch, tmp_path, override_boom=False)
+        monkeypatch.setattr(CM, "stage_replay", lambda *a, **k: {"ok": True, "detail": {}})
+        monkeypatch.setattr(CM, "stage_export", lambda *a, **k: {"ok": True, "detail": {}})
+        monkeypatch.setattr(
+            CM, "route_probe_via_app", lambda *a, **k: {"ok": True, "via": "http", "detail": {}}
+        )
+        monkeypatch.setattr(CM, "route_cli_open", lambda *a, **k: {"ok": True, "via": "cli"})
+        monkeypatch.setattr(tavotto_app, "close_project", lambda pj: None)
+
+        def native_boom(*a, **k):
+            raise RuntimeError("native boom")
+
+        monkeypatch.setattr(CM, "route_native_run", native_boom)
+        a = case("a", product_routes={"safe_probe": True})
+        b = case("b", product_routes={"native_run": True})
+        results = self._run([a, b], tmp_path)
+
+        ra = results["a"]
+        assert ra["routes"] == {"safe_probe": ra["routes"]["safe_probe"]}
+        assert ra["routes"]["safe_probe"]["status"] == "pass"
+        assert "runner_error" not in ra["routes"]
+        assert ra["classification"] != "runner_error"
+        assert not CC.has_runner_crash(ra)
+
+        rb = results["b"]
+        assert rb["routes"]["runner_error"]["code"] == "route_runner_crashed"
+        assert "native boom" in rb["routes"]["runner_error"]["detail"]
+        assert rb["classification"] == "runner_error"
+
+        report = CM.build_report([a, b], results, {}, "current", "all")
+        assert [e["id"] for e in report["summary"]["runner_errors"]] == ["b"]
 
 
 class TestMalformedProductResponseIsProductBug:

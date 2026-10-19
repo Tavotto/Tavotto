@@ -1481,6 +1481,14 @@ def run_group(
             tb = traceback.format_exc()
             for ca in group:
                 if ca.get("product_routes"):
+                    # stage_product_routes 每个 case 的 routes 在该 case 的循环
+                    # 结束时才整体写回 results；所以「声明的路由名全部已在
+                    # results 里」= 该 case 的路由检查已完整做完，崩溃发生在
+                    # 之后别的 case 上，不能把它改判成 runner_error。
+                    # 部分完成的 case（循环中途崩溃）根本没写回，天然算未完成。
+                    done = results[ca["id"]].get("routes")
+                    if isinstance(done, dict) and set(ca["product_routes"]) <= set(done):
+                        continue
                     # 合并而非替换：较早已存下的路由结果（可能含独立观察到的
                     # 产品失败）必须保留，只追加崩溃条目（Codex #1178）。
                     existing = results[ca["id"]].get("routes")
