@@ -235,15 +235,52 @@ def test_every_mapped_member_lists_its_peers_in_scale_gids(request, script, stem
         assert el.get("scale_gids", []) == want, (gid, el.get("scale_gids"))
 
 
-def test_standalone_only_colorbars_list_each_other(hot2d):
-    """只有独立色条共用 norm 的色阶组：每条色条发 `scale_colorbar_gids`（组里其它色条），前端据此在写
-    cmap 时清掉同伴的旧 override（#1159 评审）；没有同伴色条的不发。"""
+def test_cmap_group_gids_is_the_structural_group(hot2d):
+    """`cmap_group_gids`（`_cmap_alias_gids` 唯一出处）：独立色条之间互列；色条与它的 mappable 互列
+    （#1159 评审）。前端写 cmap 时据此清同组其它成员的旧 override。"""
     man = _man(hot2d, "TwoSm")
     _members, cbs = _group(man)
     assert len(cbs) == 2, cbs
     for gid in cbs:
         el = next(e for e in man["elements"] if e["gid"] == gid)
         assert "mappable_gid" not in el and not el.get("scale_gids")  # 前提：独立色条、没有登记图元
-        assert el.get("scale_colorbar_gids") == [g for g in cbs if g != gid], el
-    lone = _man(hot2d, "Cf")
-    assert all("scale_colorbar_gids" not in e for e in lone["elements"])
+        assert el.get("cmap_group_gids") == [g for g in cbs if g != gid], el
+    cf = _man(hot2d, "Cf")
+    members, cbs = _group(cf)
+    assert len(members) == 1 and len(cbs) == 1
+    by = {e["gid"]: e for e in cf["elements"]}
+    assert by[members[0]].get("cmap_group_gids") == cbs
+    assert by[cbs[0]].get("cmap_group_gids") == members
+
+
+def test_cmap_group_keeps_a_member_whose_mapping_was_switched_off(hot2d):
+    """一块网格的映射被 facecolor override 关掉（cmap 控件收起）后，它的旧 cmap override 仍按整组重放，
+    所以另一块的 `cmap_group_gids` 里**仍有它**——只列此刻在映射的成员会让前端清不掉它（#1159 评审 P1）。"""
+    base = _man(hot2d, "NoCb")
+    members, _cbs = _group(base)
+    assert len(members) == 2, members
+    a, b = members
+    # matplotlib 的规则（`color_mapping_is_live` 照抄）：面是 'none' 且边被显式设过 → 两个映射标志都关
+    off = [
+        {"gid": a, "prop": "facecolor", "value": "none"},
+        {"gid": a, "prop": "edgecolor", "value": "#ff0000"},
+    ]
+    man = _man(hot2d, "NoCb", off)
+    by = {e["gid"]: e for e in man["elements"]}
+    assert "cmap" not in {f["prop"] for f in by[a]["editable"]}  # 前提：a 的映射确实被关掉了
+    assert a not in (by[b].get("scale_gids") or [])  # 只看在映射的那份确实漏了它
+    assert a in by[b].get("cmap_group_gids", []), by[b].get("cmap_group_gids")
+    _man(hot2d, "NoCb")
+
+
+def test_standalone_peer_change_offers_script_original(hot2d):
+    """只有独立色条共用 norm：从色条 B 改 cmap 也改了 A，A 的 cmap 字段要给出 `cmap_original`（脚本原样是
+    没注册的自定义色图，只剩「恢复到脚本」这个入口）（#1159 评审 P2）。"""
+    base = _man(hot2d, "TwoSm")
+    _members, cbs = _group(base)
+    a, b = cbs
+    man = _man(hot2d, "TwoSm", [{"gid": b, "prop": "cmap", "value": "plasma"}])
+    field = _fields(man, a)["cmap"]
+    assert field["value"] == "plasma"  # 前提：A 确实被 B 带着变了
+    assert field.get("cmap_original", {}).get("custom") is True, field
+    _man(hot2d, "TwoSm")

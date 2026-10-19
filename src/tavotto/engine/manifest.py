@@ -2261,24 +2261,24 @@ def _cmap_needs_facts(facts: dict) -> bool:
 
 
 def _cmap_alias_gids(state: FigState, artist, gid: str) -> list[str]:
-    """与 `gid` 共用同一份色图状态的全部 gid（色条 ↔ 它的 mappable，
-    `overrides.ALIAS_GROUPS` 的那一对）。回答「脚本原样的色图记在谁名下」：
-    用户从图像那边换的色图，override 落在图像 gid 上；色条这边要报「脚本
-    原样」就得去图像的 originals 里找，反之亦然。"""
+    """与 `gid` 共用同一份色图状态的全部 gid——**色阶组的结构性成员表，唯一出处**。
+
+    组 = 它的 mappable（色条）或它自己（图元）、共用同一份 norm 对象的已登记兄弟
+    （`scale_siblings`，按 family 定、**不看此刻是否在映射**）、以及给这组上色的全部色条
+    （`scale_colorbars`：同一个 mappable 或共用 norm——独立 `ScalarMappable` 的色条之间只能
+    靠这一条认出彼此）。两处消费：`_cmap_original`（「脚本原样记在谁名下」）与 manifest 的
+    `cmap_group_gids`（前端写 cmap 时清同组其它成员的旧 override）。只看此刻在映射的成员会漏掉
+    映射被关掉、但旧 cmap override 仍按整组重放的那个；只看兄弟会漏掉独立色条的同伴（#1159 评审）。"""
     out = [gid]
-    if isinstance(artist, ColorbarProxy):
-        target = artist.cb.mappable
-    else:
-        target = artist
-    # 色阶兄弟（共用 norm 对象的 mappable，`colorbarmodel.scale_siblings`）也在
-    # 同一组里：色条的 cmap 写到它们身上，「脚本原样记在谁名下」同样要问到色条
+    target = artist.cb.mappable if isinstance(artist, ColorbarProxy) else artist
+    colorbars = scale_colorbars(state, target)
+    siblings = scale_siblings(state, target)
     for el in state.elements:
         other = el["artist"]
-        if isinstance(other, ColorbarProxy) and el["gid"] != gid:
-            m = other.cb.mappable
-            if m is target or target in scale_siblings(state, m):
+        if isinstance(other, ColorbarProxy):
+            if other in colorbars:
                 out.append(el["gid"])
-        elif other is target or other in scale_siblings(state, target):
+        elif other is target or other in siblings:
             out.append(el["gid"])
     return list(dict.fromkeys(out))
 
@@ -5071,17 +5071,6 @@ def _measure_manifest(
             ]
             if scale:
                 entry["scale_gids"] = scale
-            # 同一色阶组里的**其它色条**（同一个 mappable，或共用同一份 norm 对象——独立
-            # `ScalarMappable` 的色条属于后者）。组里一个已登记图元都没有时（只有几条独立色条共用
-            # norm），`mappable_gid` / `scale_gids` 都是空的，前端只能靠这份找到同伴、在写 cmap 时
-            # 清掉它们的旧 override（#1159 评审）。可选：没有同伴色条就不发。
-            cb_peers = [
-                g
-                for p in scale_colorbars(state, artist.cb.mappable)
-                if p is not artist and (g := gid_by_artist_id.get(id(p))) is not None
-            ]
-            if cb_peers:
-                entry["scale_colorbar_gids"] = cb_peers
             # **能力为什么不在，要说出来。** 少一个控件而不给理由，用户只会
             # 以为是漏了或是坏了。这里给的是稳定 code，供界面按 code 翻译成
             # 「这条色条横跨多个子图，方向切换在 1.0 里不支持」。
@@ -5193,6 +5182,13 @@ def _measure_manifest(
             ]
             if peers:
                 entry["scale_gids"] = peers
+        # 色阶组的结构性成员（`_cmap_alias_gids`，唯一出处）：任一成员改 cmap 都是整组改，前端写 cmap 时
+        # 在同一次 commit 里清掉这些 gid 上的旧 cmap override——含映射此刻被关掉、控件收起来的成员
+        # （它的旧 override 仍按整组重放）与独立色条的同伴（#1159 评审）。可选：组里只有自己就不发。
+        if any(f.get("prop") == "cmap" for f in entry.get("editable") or []):
+            group = [g for g in _cmap_alias_gids(state, artist, el["gid"]) if g != el["gid"]]
+            if group:
+                entry["cmap_group_gids"] = group
         # 箭头：端点（figure 分数、top-origin，[尾, 头]）随 manifest 下发，前端据此画
         # 端点手柄、整体拖动 / 单端拖动都写 endpoints_frac override。两类出端点：
         # 独立箭头（端点就是 patch 自己的 posA / posB）与**纯箭头注释**（端点是注释的

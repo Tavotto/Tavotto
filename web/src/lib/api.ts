@@ -2321,11 +2321,12 @@ export interface ManifestElement {
    */
   scale_gids?: string[]
   /**
-   * 同一色阶组里的**其它色条**（同一个 mappable，或共用同一份 norm——独立 `ScalarMappable`
-   * 的色条属于后者）。组里没有已登记图元、只有几条独立色条共用 norm 时，`mappable_gid` /
-   * `scale_gids` 都是空的，写 cmap 时只能靠这份找到同伴（ADR 0135）。可选：没有同伴色条就不发。
+   * 色阶组的**结构性**成员（引擎 `_cmap_alias_gids`，唯一出处）：与这个元素共用同一份色图状态的其它
+   * gid——它的 mappable / 共用 norm 的兄弟（不看此刻是否在映射）/ 给这组上色的全部色条（含独立
+   * `ScalarMappable` 色条之间）。任一成员改 cmap = 整组改，写 cmap 时同一次 commit 清掉这些 gid 上的旧
+   * cmap override（ADR 0135）。可选：组里只有自己就不发。
    */
-  scale_colorbar_gids?: string[]
+  cmap_group_gids?: string[]
   /**
    * 拖动这个 axes 时该一起走的**其他 axes**（色条轴、twinx/twiny 的孪生轴）。
    * 由引擎裁决（只有那边有 matplotlib 的共享关系与落点），前端只负责把同一个

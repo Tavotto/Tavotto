@@ -757,12 +757,12 @@ describe('色阶组整组换色：只有独立色条共用 norm（#1159 评审�
   it('从一条色条换色图：同组另一条色条上排在后面的旧 cmap override 同一次写入清掉', async () => {
     const cbA = {
       ...colorbarEl({ mappable: false }),
-      scale_colorbar_gids: ['axes_2.colorbar'],
+      cmap_group_gids: ['axes_2.colorbar'],
     } as unknown as ManifestElement
     const cbB = {
       ...colorbarEl({ mappable: false }),
       gid: 'axes_2.colorbar',
-      scale_colorbar_gids: ['axes_1.colorbar'],
+      cmap_group_gids: ['axes_1.colorbar'],
     } as unknown as ManifestElement
     const manifest = {
       rev: 1,
