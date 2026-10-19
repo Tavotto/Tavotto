@@ -20,7 +20,7 @@ import compat_guardian as cg
 SUMMARY_SCHEMA = "tavotto-guardian-summary/1"
 PROMOTION_SCHEMA = "tavotto-guardian-promotion-candidate/1"
 #: Paths promote must never write to, resolved relative to the repository root.
-PROTECTED = ("tests/compat", "tests/fixtures", "tests/support")
+PROTECTED = ("tests/compat", "tests/compat_guardian", "tests/fixtures", "tests/support")
 
 
 def load_report(path: Path) -> dict:

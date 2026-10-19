@@ -534,6 +534,8 @@ def v2_stages(
     captured, opened = observed["figures_captured"] > 0, observed["figures_valid"] > 0
     native_figs = native.get("figure_count")
     fewer = captured and type(native_figs) is int and observed["figures_captured"] < native_figs
+    # more figures than native is no more a capture pass than fewer: the counts must agree
+    agrees = type(native_figs) is not int or observed["figures_captured"] == native_figs
     if fewer and designed_partial and not ideal_missing:
         # The V2 partial oracle was met exactly (phase=partial, the uncaptured figures named):
         # fewer figures than native is reported honestly, a declared limitation, never a pass.
@@ -544,7 +546,7 @@ def v2_stages(
         )
     elif finished or captured:
         stages["capture"] = stage(
-            "passed" if captured and not fewer else "failed",
+            "passed" if captured and agrees else "failed",
             "actual captured figure count against the native figure count",
         )
     if captured:
