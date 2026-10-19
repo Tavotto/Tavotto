@@ -53,8 +53,8 @@ python scripts/ci/compat_guardian.py {triage|minimize}                      # �
   `reports/summary.md`（每 case 一行的表）、`evidence/<case>/…`（原始证据，按 sha256 引用）。
   校验失败时保留 `reports/guardian.unvalidated.json` 供诊断，`validate` 永不接受这个名字。
 - 省略 `--case` = 跑该 suite 的全部登记 case。
-- `explore` 不带 `--static-only` 时，执行前核对 `compat_explore.py`、`compat_explore_transforms.py`、
-  `compat_guardian.py` 与 HEAD 一致（`git hash-object --path`）；脏工作区里改过的生成 / 执行代码不会被当作评审过的模板执行。
+- `explore` 不带 `--static-only` 时，执行前要求整个 `scripts/ci/` 与 HEAD 一致（`git status --porcelain`，含未跟踪文件）：
+  生成、执行、取证的代码（变换、driver、matrix、执行观测器……）都在这里，脏工作区里改过的不会被当作评审过的模板执行。
 - `triage / minimize` 仍是**显式的桩**：退出码 2，stderr 写
   `not implemented in CG-01`，不产出任何结果。它们不被伪装成已实现。
 - `promote` 只写一个候选记录（`proposal_only: true, applied: false`），**拒绝**写入
