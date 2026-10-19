@@ -8,9 +8,10 @@
 | --- | --- |
 | Phase 0 | PR #1187（`feat/taf-phase0`）：审计、ADR、实施包、FigureBench 夹具。`tests/test_figurebench_fixtures.py` 本机 32 passed，六个手工变异全红 |
 | Phase 1 | 分支 `feat/taf-phase1-task-core`（叠在 Phase 0 上）：`engine/ai_tasks.py` + `ai_history` 加七列 + `tests/test_ai_tasks.py`（48 条）。AI 相关与架构门禁 13 个文件本机 355 passed / 1 skipped（真 CLI 冒烟，需 `TAVOTTO_REAL_CLI_SMOKE=1`）；十个手工变异全红（PR 正文附表） |
-| 产品行为变化 | 无：`ADAPTERS` 为空、`/api/ai/*` 未接入；旧会话的新列全 NULL |
+| Phase 2 | 分支 `feat/taf-phase2-verifier`（叠在 Phase 1 上）：`engine/figureverify.py` + manifest 只读 `data_fingerprint` + `tests/test_figure_verifier.py`。19 个探针场景参考解全 verified、反例全 failed（唯一盲区 `FB-C04/n.unshared` 登记在 `KNOWN_BLIND`）；指纹与原生探针逐字节对拍；九个手工变异全红 |
+| 产品行为变化 | 无：`ADAPTERS` 为空、`/api/ai/*` 未接入；旧会话的新列全 NULL；manifest 只多一个只读字段 |
 | 未运行 | 全量 pytest / 前端 / e2e（交给 CI，high 档加 `full-ci`）；Windows / Linux |
-| 下一步 | Phase 2：Figure Verifier + worker 侧 `data_fingerprint` + FigureBench 接验证器 |
+| 下一步 | Phase 3：figure_edit 适配器经 AI 桥接入（实验开关）；入口条件见 `07-pr-roadmap.md`（含两 CLI 写入面实测 R-03） |
 
 ## 待维护者决定
 
