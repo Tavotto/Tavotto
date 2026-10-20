@@ -2542,6 +2542,7 @@ def _export_artifact_sources(req):
                 "source_policy": req.original.source_policy,
                 "expected_source": req.original.expected_source,
                 "overrides": req.original.overrides,
+                "confirmed_reconstruction_sha256": req.original.confirmed_reconstruction_sha256,
             }
         ]
     )
@@ -2553,7 +2554,11 @@ def _export_artifact_sources(req):
             continue
         rel_id = str(obj.get("id", ""))
         context = _artifact_source(
-            rel_id, obj.get("source_policy"), obj.get("expected_source"), obj.get("overrides")
+            rel_id,
+            obj.get("source_policy"),
+            obj.get("expected_source"),
+            obj.get("overrides"),
+            obj.get("confirmed_reconstruction_sha256"),
         )
         if rel_id in contexts and contexts[rel_id] != context:
             raise engine_artifactcontext.ArtifactContextError(
@@ -5900,7 +5905,40 @@ def _artifact_kwargs(context):
     return {"artifact_source": context} if context is not None else {}
 
 
-def _artifact_source(rel_id: str, policy, expected=None, patches=()):
+class _SourceContext(dict):
+    """`_artifact_source` 的返回值：就是那份控制面上下文（字典相等、JSON 形状、池键都不变），
+    多带两个**不进池键、不发给 worker** 的请求事实——这次请求有没有真实编辑、带的确认摘要。
+    来源驱动策略（ADR 0139 §五）在准入处用它们核对确认绑定。"""
+
+    has_edits = False
+    confirmed_sha256 = None
+
+
+_CONFIRMATION = re.compile(r"[0-9a-f]{64}")
+_CONFIRMATION_REASONS = ("confirmation_required", "reconstruction_changed")
+
+
+def _real_edits(patches) -> bool:
+    """patches 里有没有「结构性 FRAME 以外」的编辑——与前端 `originalArtifactOverrides` 同源（零编辑 = 原像素）。"""
+    if not patches:
+        return False
+    return any(
+        (p["gid"], p["prop"]) != ("figure", "frame") for p in engine_patchspec.canonicalize(patches)
+    )
+
+
+def _policy_disabled(policy):
+    if (
+        policy == engine_figcapture.SCRIPT_BACKED_POLICY
+        and not engine_artifactcontext.script_backed_enabled()
+    ):
+        raise engine_artifactcontext.ArtifactContextError(
+            "policy_disabled", "Source-backed adoption is disabled.", retryable=False
+        )
+
+
+def _artifact_source(rel_id: str, policy, expected=None, patches=(), confirmed=None):
+    _policy_disabled(policy)
     expected = engine_artifactcontext.artifact_request(policy, expected, patches)
     if policy is None:
         return None
@@ -5909,11 +5947,20 @@ def _artifact_source(rel_id: str, policy, expected=None, patches=()):
             "unsupported_render_state", "Selected artifacts require a safe disk source."
         )
     path = _artifact_path(rel_id)
-    if policy == engine_figcapture.SELECTED_FIGSIZE_POLICY and _baseline_patches(
+    if policy in engine_figcapture.FIGSIZE_FRAME_POLICIES and _baseline_patches(
         path.stem, load_baked()
     ):
         raise engine_artifactcontext.ArtifactContextError(
             "not_untouched", "This source has a saved edit baseline."
+        )
+    scripted = policy == engine_figcapture.SCRIPT_BACKED_POLICY
+    edits = _real_edits(patches) if scripted else False
+    if edits and not (isinstance(confirmed, str) and _CONFIRMATION.fullmatch(confirmed)):
+        # 没有用户确认过的那份重画，就不许在它上面做真实编辑（准入处再核与本次重画是否一致）
+        raise engine_artifactcontext.ArtifactContextError(
+            "confirmation_required",
+            "Edits on a source-backed figure need the confirmed reconstruction.",
+            retryable=False,
         )
     source_id = path.relative_to(require_project().resolve()).as_posix()
     context = engine_artifactcontext.create_context(path, source_id)
@@ -5921,7 +5968,12 @@ def _artifact_source(rel_id: str, policy, expected=None, patches=()):
         raise engine_artifactcontext.ArtifactContextError(
             "source_changed", "The selected source changed; reopen it.", retryable=False
         )
-    return engine_figcapture.selected_artifact_context({**context, "render_policy": policy})
+    result = _SourceContext(
+        engine_figcapture.selected_artifact_context({**context, "render_policy": policy})
+    )
+    if scripted:
+        result.has_edits, result.confirmed_sha256 = edits, (confirmed if edits else None)
+    return result
 
 
 def _is_unverified_png_render(rel_id, policy) -> bool:
@@ -5946,12 +5998,32 @@ def _artifact_path(rel_id):
 
 
 def _refuse_artifact_policy(policy, expected=None, *, reason="unsupported_render_state"):
+    _policy_disabled(policy)
     engine_artifactcontext.artifact_request(policy, expected)
     if policy is not None:
         raise engine_artifactcontext.ArtifactContextError(
             reason,
             "This operation does not support the selected source policy; no edit was applied.",
         )
+
+
+def _refuse_adopted_source(*rel_ids, reason="unsupported_render_state"):
+    """服务端写回闸（ADR 0139 §五.3）：这些面板的磁盘原件此刻的字节若已被来源驱动策略采用过，
+    写回类 / 历史类入口一律拒绝——**不看请求带没带 policy**（前端被绕过、旧标签页、MCP 都挡得住）。
+    原件字节变了（hash 不同）记录不再命中，由该入口原有的校验接手。"""
+    for rel_id in rel_ids:
+        if not isinstance(rel_id, str) or engine_runtimeasset.is_runtime_id(rel_id):
+            continue
+        try:
+            path = safe_resolve(rel_id)
+        except HTTPException:
+            continue  # 不存在 / 越界：交给入口自己的 404 / 403
+        if engine_artifactcontext.is_adopted(require_project(), path):
+            raise engine_artifactcontext.ArtifactContextError(
+                reason,
+                "This source is adopted from its script; the original file is never rewritten.",
+                retryable=False,
+            )
 
 
 def _assert_artifact_current(context):
@@ -5976,6 +6048,7 @@ def _admit_artifact(worker, stem, context):
         _assert_artifact_current(context)
         if not worker.built:
             worker._validated_artifact_probe = None
+            worker._artifact_admission = None
             worker.ensure_built()
         probe = getattr(worker, "last_build_artifact_probe", None)
         if (
@@ -5999,11 +6072,60 @@ def _admit_artifact(worker, stem, context):
             raise engine_artifactcontext.ArtifactContextError(
                 "capture_incomplete", "Source probe unavailable."
             ) from exc
+        scripted = context["render_policy"] == engine_figcapture.SCRIPT_BACKED_POLICY
         if getattr(worker, "_validated_artifact_probe", None) != probe:
-            engine_artifactcontext.validate_candidate(
-                _artifact_path(context["source_id"]), candidate, context
-            )
+            if scripted:
+                worker._artifact_admission = engine_artifactcontext.admit_reconstruction(
+                    _artifact_path(context["source_id"]), candidate, context
+                )
+            else:
+                engine_artifactcontext.validate_candidate(
+                    _artifact_path(context["source_id"]), candidate, context
+                )
             worker._validated_artifact_probe = json.loads(json.dumps(probe))
+        if scripted:
+            _admit_script_backed(worker, context)
+
+
+def _admit_script_backed(worker, context):
+    """来源驱动策略在准入成功之后的两件事：记服务端写回闸，核确认绑定。"""
+    verdict = getattr(worker, "_artifact_admission", None)
+    if not isinstance(verdict, dict) or not verdict.get("reconstruction_sha256"):
+        raise engine_artifactcontext.ArtifactContextError(
+            "capture_incomplete", "Source admission unavailable."
+        )
+    # 先记再放行：写不进去就整个采用失败（fail closed），不会出现「编辑了但没有写回闸」。
+    engine_artifactcontext.record_adoption(require_project(), context)
+    # 不是 `_SourceContext`（别处造出来的上下文）一律当作带编辑且没确认：宁拒不放。
+    edits = getattr(context, "has_edits", True)
+    if edits:
+        confirmed = getattr(context, "confirmed_sha256", None)
+        if confirmed is None:
+            raise engine_artifactcontext.ArtifactContextError(
+                "confirmation_required",
+                "Edits on a source-backed figure need the confirmed reconstruction.",
+                retryable=False,
+            )
+        if confirmed != verdict["reconstruction_sha256"]:
+            raise engine_artifactcontext.ArtifactContextError(
+                "reconstruction_changed",
+                "The reconstruction differs from the one that was confirmed; review it again.",
+                retryable=False,
+            )
+
+
+def _source_backed_result(worker, context):
+    """响应里的准入结论（只有来源驱动策略才有）：状态、重画摘要、差异度量。"""
+    if context is None or context["render_policy"] != engine_figcapture.SCRIPT_BACKED_POLICY:
+        return None
+    verdict = getattr(worker, "_artifact_admission", None)
+    if not isinstance(verdict, dict):
+        return None
+    return {
+        "status": verdict["status"],
+        "reconstruction_sha256": verdict["reconstruction_sha256"],
+        "metrics": verdict["metrics"],
+    }
 
 
 def _engine_attempt(
@@ -6026,7 +6148,12 @@ def _engine_attempt(
             # Supersession removes only a queued request; this admitted worker
             # may still be serving another variant of the same selected source.
             if artifact_source is not None and not (
-                isinstance(exc, engine_pool.WorkerError) and exc.code == "queue_superseded"
+                (isinstance(exc, engine_pool.WorkerError) and exc.code == "queue_superseded")
+                # 确认绑定不符是请求的问题，不是 worker 的问题：worker 与它的准入结论都还好好的
+                or (
+                    isinstance(exc, engine_artifactcontext.ArtifactContextError)
+                    and exc.reason in _CONFIRMATION_REASONS
+                )
             ):
                 engine_pool.force_cancel(
                     worker.script_name,
@@ -6262,7 +6389,11 @@ def api_engine_render():
     body = request.get_json(force=True)
     rel_id = body.get("id", "")
     artifact_source = _artifact_source(
-        rel_id, body.get("source_policy"), body.get("expected_source"), body.get("patches")
+        rel_id,
+        body.get("source_policy"),
+        body.get("expected_source"),
+        body.get("patches"),
+        body.get("confirmed_reconstruction_sha256"),
     )
     inline_svg = bool(body.get("inline_svg"))
     # 参数校验先做完再进渲染：混在下面那个 try 里的话，worker 响应的
@@ -6414,6 +6545,8 @@ def api_engine_render():
         out["unrestored"] = resp["unrestored"]
     if artifact_source is not None:
         out["artifact_source"] = artifact_source
+        if (backed := _source_backed_result(worker, artifact_source)) is not None:
+            out["source_backed"] = backed
     elif _is_unverified_png_render(rel_id, body.get("source_policy")):
         # 受守 PNG 源（selected-artifact）是显式选择，省略 policy 的旧请求语义不变（docs/rules/backend/
         # figure-capture-and-execution.md「选择具体产物的受限源图上下文」），所以不拒绝；但这次渲染重跑了脚本、
@@ -6455,6 +6588,7 @@ def api_engine_specfix():
     """
     body = request.get_json(force=True) or {}
     _refuse_artifact_policy(body.get("source_policy"), body.get("expected_source"))
+    _refuse_adopted_source(body.get("id", ""))
     rel_id = body.get("id", "")
     base = body.get("patches")
     if not isinstance(base, list):
@@ -6788,6 +6922,7 @@ def api_engine_invalidate():
     """
     body = request.get_json(force=True) or {}
     _refuse_artifact_policy(body.get("source_policy"), body.get("expected_source"))
+    _refuse_adopted_source(body.get("id", ""))
     rel_id = body.get("id", "")
     root = str(require_project())
     if engine_runtimeasset.is_runtime_id(rel_id):
@@ -6830,9 +6965,16 @@ def api_engine_preview_png():
     body = request.get_json(force=True)
     if body.get("source_policy") is not None and body.get("with_manifest") is not True:
         _refuse_artifact_policy(body.get("source_policy"), body.get("expected_source"))
+    if body.get("source_policy") is None:
+        # 没声明策略的预览不是来源驱动的重画：命中服务端采用记录就拒（它会绕过确认绑定）
+        _refuse_adopted_source(body.get("id", ""))
     rel_id = body.get("id", "")
     artifact_source = _artifact_source(
-        rel_id, body.get("source_policy"), body.get("expected_source"), body.get("patches")
+        rel_id,
+        body.get("source_policy"),
+        body.get("expected_source"),
+        body.get("patches"),
+        body.get("confirmed_reconstruction_sha256"),
     )
     worker, stem = _engine_worker(rel_id, **_artifact_kwargs(artifact_source))
     patches = body.get("patches", [])
@@ -6856,7 +6998,7 @@ def api_engine_preview_png():
         ), 400
     if with_manifest:
         try:
-            _, _, snapshot = _engine_attempt(
+            worker, _, snapshot = _engine_attempt(
                 body.get("id", ""),
                 worker,
                 stem,
@@ -6865,10 +7007,12 @@ def api_engine_preview_png():
             )
         except engine_pool.WorkerError as exc:
             return jsonify(_worker_error_payload(exc)), 500
+        backed = _source_backed_result(worker, artifact_source)
         resp = jsonify(
             png=snapshot["png"],
             manifest=snapshot["manifest"],
             **({"artifact_source": artifact_source} if artifact_source is not None else {}),
+            **({"source_backed": backed} if backed is not None else {}),
         )
         resp.headers["Cache-Control"] = "no-store"
         return resp
@@ -6897,6 +7041,7 @@ def api_engine_png():
     这个端点只为兼容保留。
     """
     _refuse_artifact_policy(request.args.get("source_policy"), request.args.get("expected_source"))
+    _refuse_adopted_source(request.args.get("id", ""))
     worker, stem = _engine_worker(request.args.get("id", ""))
     want_w = int(request.args.get("w", 800))
     w = next((b for b in RENDER_BUCKETS if b >= want_w), RENDER_BUCKETS[-1])
@@ -6923,6 +7068,7 @@ def api_engine_update_source():
     _refuse_artifact_policy(
         body.get("source_policy"), body.get("expected_source"), reason="writeback_not_supported"
     )
+    _refuse_adopted_source(body.get("id", ""), reason="writeback_not_supported")
     if err := _write_back_forbidden():
         return err
     rel_id = body.get("id", "")
@@ -7816,6 +7962,7 @@ def api_engine_sync_overrides():
     """
     body = request.get_json(force=True)
     _refuse_artifact_policy(body.get("source_policy"), body.get("expected_source"))
+    _refuse_adopted_source(body.get("from_id", ""), body.get("to_id", ""))
     src_path = safe_resolve(body.get("from_id", ""))
     dst_path = safe_resolve(body.get("to_id", ""))
     patches = body.get("patches", [])
@@ -7880,6 +8027,7 @@ def api_engine_sync_overrides():
 def api_engine_history():
     """某张图的「更新原图」版本足迹（末位 = 当前基线）。"""
     _refuse_artifact_policy(request.args.get("source_policy"), request.args.get("expected_source"))
+    _refuse_adopted_source(request.args.get("id", ""))
     worker, stem = _engine_worker(request.args.get("id", ""))
     versions = load_baked().get(stem, {}).get("versions") or []
     return jsonify(
@@ -7897,6 +8045,7 @@ def api_engine_history_preview():
     """历史版本缩略图：临时应用该版本 patches 渲染，不影响当前编辑状态。
     n=-1 表示脚本原始状态。"""
     _refuse_artifact_policy(request.args.get("source_policy"), request.args.get("expected_source"))
+    _refuse_adopted_source(request.args.get("id", ""))
     worker, stem = _engine_worker(request.args.get("id", ""))
     n = int(request.args.get("n", -1))
     w = int(request.args.get("w", 400))
@@ -7919,6 +8068,7 @@ def api_engine_history_restore():
     _refuse_artifact_policy(
         body.get("source_policy"), body.get("expected_source"), reason="writeback_not_supported"
     )
+    _refuse_adopted_source(body.get("id", ""), reason="writeback_not_supported")
     if err := _write_back_forbidden():
         return err
     if engine_runtimeasset.is_runtime_id(str(body.get("id", ""))):
@@ -7962,6 +8112,7 @@ def api_engine_history_restore():
 def api_engine_svg():
     """当前 override 状态下的预览 SVG（元素带 gid）。"""
     _refuse_artifact_policy(request.args.get("source_policy"), request.args.get("expected_source"))
+    _refuse_adopted_source(request.args.get("id", ""))
     rel_id = request.args.get("id", "")
     worker, stem = _engine_worker(rel_id)
     try:

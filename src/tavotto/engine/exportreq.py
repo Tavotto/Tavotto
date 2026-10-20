@@ -289,6 +289,8 @@ class OriginalSource:
     source_policy: str | None = None
     expected_source: dict | None = None
     figure_snapshot: dict | None = None
+    #: 来源驱动采用（ADR 0139 §五）：用户确认时那份重画的字节摘要；带真实编辑的请求必须带它
+    confirmed_reconstruction_sha256: str | None = None
 
 
 @dataclass(frozen=True)
@@ -357,6 +359,11 @@ class ExportRequest:
             **(
                 {"source_policy": self.original.source_policy}
                 if self.original and self.original.source_policy is not None
+                else {}
+            ),
+            **(
+                {"confirmed_reconstruction_sha256": (self.original.confirmed_reconstruction_sha256)}
+                if self.original and self.original.confirmed_reconstruction_sha256 is not None
                 else {}
             ),
             **(
@@ -439,6 +446,11 @@ def render_plan_ref(req: ExportRequest, resources: list[dict]) -> dict:
             **(
                 {"source_policy": req.original.source_policy}
                 if req.original.source_policy is not None
+                else {}
+            ),
+            **(
+                {"confirmed_reconstruction_sha256": (req.original.confirmed_reconstruction_sha256)}
+                if req.original.confirmed_reconstruction_sha256 is not None
                 else {}
             ),
         }
@@ -656,6 +668,7 @@ def normalize(spec: dict, *, allowed_formats: tuple[str, ...] = FORMATS) -> Expo
             source_policy=source.get("source_policy"),
             expected_source=_source_basis(source, overrides),
             figure_snapshot=_figure_snapshot(source),
+            confirmed_reconstruction_sha256=source.get("confirmed_reconstruction_sha256"),
             overrides=[o for o in overrides if isinstance(o, dict)],
             w_mm=float(source["w_mm"]) if source.get("w_mm") else None,
             h_mm=float(source["h_mm"]) if source.get("h_mm") else None,

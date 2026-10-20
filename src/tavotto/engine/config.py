@@ -187,7 +187,17 @@ def load() -> dict:
     # 都把它抹掉——表现是「同意了，但下次启动又来问一遍」。
     if isinstance(data.get("telemetry"), dict):
         out["telemetry"] = data["telemetry"]
+    # 实验开关（默认全关）：只在文件里真有这一段时才出现，缺省的 load() 形状一字不变。
+    # 同样要显式收下，否则任何一次 save() 都会把用户打开的开关抹掉。
+    if isinstance(data.get("experiments"), dict):
+        out["experiments"] = data["experiments"]
     return out
+
+
+def experiment_enabled(name: str) -> bool:
+    """实验开关：只认显式的 `True`（字符串 "true"、1 都不算），缺省 / 损坏一律关。"""
+    experiments = load().get("experiments")
+    return isinstance(experiments, dict) and experiments.get(name) is True
 
 
 def save(cfg: dict) -> None:
