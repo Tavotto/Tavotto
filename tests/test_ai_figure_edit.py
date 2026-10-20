@@ -550,8 +550,10 @@ def test_a_syntax_error_is_corrected_once_in_the_same_copy_then_committed(env):
         EDIT + "; (proj / 'stray.txt').write_text('x', encoding='utf-8')",
         # 与可修的失败混在一起也不修：只要原项目被动了，整轮不可修
         SYNTAX + "; (proj / 'stray.txt').write_text('x', encoding='utf-8')",
+        # 候选里的目标脚本被删（本身可修）+ 动了原项目：同样整轮不可修
+        "(d / 'fig1.py').unlink(); (proj / 'stray.txt').write_text('x', encoding='utf-8')",
     ],
-    ids=["project-only", "project-and-syntax"],
+    ids=["project-only", "project-and-syntax", "project-and-missing-target"],
 )
 def test_touching_the_original_project_is_never_corrected(env, first):
     env["codes"] = [first, FIX]

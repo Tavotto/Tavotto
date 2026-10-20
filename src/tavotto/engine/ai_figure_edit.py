@@ -318,6 +318,8 @@ class FigureEditAdapter:
             cand.new_bytes = None
         if cand.new_bytes is None:
             out.append(_check("candidate.target", st, "integrity", FAILED, "target_missing"))
+            # 目标丢了也得先查原项目：否则「删目标 + 动原项目」会被当成可修而进第二轮
+            out += self._project_untouched(cand, st)
             return out
         unchanged = cand.new_bytes == cand.base_bytes
         out.append(
