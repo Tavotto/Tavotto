@@ -69,6 +69,21 @@
   没有接进 `tavotto` CLI，别在文档 / 官网 / release notes 里提它。
   **产品入口是 `tavotto run`**（`docs/rules/backend/tavotto-run-control-plane.md`）。
 
+## 写入根绊线：MCP 来源的 safe 运行（#898，ADR 0141）
+
+**绊线，不是沙盒。** 只对 **MCP 来源**的 safe 运行装（桥 `_spawn_worker` 传 `write_roots=allowed_roots()`）；GUI / native / CLI 完全不动。
+worker 在脚本 build 期间用 `sys.addaudithook` 的 `open` 事件（及 `os.rename|remove|mkdir…`、`shutil.copy*|move|rmtree`）按**事件发生时的真实 cwd** 解开符号链接后比对白名单，
+根外 → `PermissionError`；脚本吞掉它，build 结束时也以稳定码 `write_outside_roots` 失败（越界的尝试发生过）。静态读源码证不了的 `os.chdir` / `contextlib.chdir` / 跨文件 helper 切目录再写，靠它在运行期兜住。
+
+- **配置唯一出处** `execspec.worker_argv` 的 `--write-roots`（JSON 数组）；`safe_spec(write_roots=)` 是唯一构造入口，三条 spawn 路径（`EngineWorker` / `WorkerdWorker` / `_spawn_spec`）同源。
+  绊线是 worker 的**身份**：workerd 规格哈希（`argv + env + cwd`）因 argv 不同而不同，Python 池键 / 缓存目录并入 `execspec.write_roots_key`——MCP 与 GUI 取同一脚本是两条会话。不用环境变量传。
+- **白名单**：授权根（= MCP `RootAuthority` 快照里可信的根，与 `check_scope` 同一份）+ 会话沙盒与会话缓存目录 + 临时目录 + `MPLCONFIGDIR` / matplotlib 缓存与配置目录 +
+  平台用户缓存目录 + seaborn / scikit-learn 数据目录（`writetripwire.infrastructure_roots`，每项带理由）。**不放行** `sys.prefix` 整体，只放行 `__pycache__` 里的 `.pyc` 形状；不放行整个用户数据目录或整个 `%LOCALAPPDATA%`。
+- **窗口**：脚本 build（`arm(True)` … `finally` 里 `arm(False)`）。窗口外引擎自己的协议请求（导出到任意临时目录）不拦。
+- **盲区（如实，用例断言「不挡」）**：ctypes、`subprocess` / `os.system`、C 层 `fopen`（h5py / netCDF / sqlite3 的 C 层）、`dir_fd` 相对打开、脚本自己关开关、build 窗口之外的线程 / `atexit`。**文案与回执里绝不称沙盒。**
+- **回滚**：引擎能力 `write-root-tripwire`（`capabilities.FEATURES`）；去掉它桥就不传参。`write_outside_roots` **不在** `execpolicy.BLOCKED_CODES`，不触发换 native 重跑。
+- 新增引擎模块 `writetripwire` 在 `worker._ENGINE_MODULES`（私有包闭包）与 `packaging/tavotto.spec`、`tests/import_architecture_baseline.json` 登记。看护 `tests/test_mcp_write_tripwire.py`。
+
 ## 速查表原要点（2026-09-25 迁入，#608）
 
 `src/tavotto/AGENTS.md` 那一行的「必守要点」从这天起只留索引（Codex 自动拼接的 32 KiB 上限，#608）。

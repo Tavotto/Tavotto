@@ -134,7 +134,12 @@ class BridgeError(RuntimeError):
 #: 这个能力，就当场以 `engine_capability_missing` 拒绝，绝不先「试着无参数跑一次」。
 SCRIPT_ARGV_FEATURE = "script-argv"
 ENVIRONMENT_ADOPTION_FEATURE = "environment-adoption"
+#: 写入根绊线（#898，ADR 0141）：不是「先问再拒绝」的能力——引擎没宣告就**不传参**（旧引擎行为照旧），
+#: 因为拒绝一次本来能跑的合法运行比没有绊线更糟。同时是引擎侧回滚开关（从 FEATURES 去掉即可）。
+WRITE_ROOT_TRIPWIRE_FEATURE = "write-root-tripwire"
 CAPABILITY_MISSING = "engine_capability_missing"
+#: worker 的写入根绊线终局码（`engine/writetripwire.CODE` 的镜像；旧引擎上 import 不到）。
+WRITE_OUTSIDE_ROOTS = "write_outside_roots"
 
 
 #: 桥**可选**使用的引擎模块：比插件的最低引擎版本新，旧引擎上不存在。它们不进 `_BRIDGE_IMPORT` /
@@ -703,8 +708,23 @@ def _spawn_worker(session: "Session", *, one_shot: bool):
     _recheck_run(run, session.project, session.script)
     # 无配置时调用形状与旧版一致（旧引擎的池函数不认识 `run=`）
     context = {"run": run} if run is not None else {}
+    roots = _tripwire_roots()
+    if roots is not None:
+        context["write_roots"] = roots
     fn = engine_pool.one_shot if one_shot else engine_pool.get
     return fn(session.script, session.project, session.entry, **context)
+
+
+def _tripwire_roots() -> tuple[str, ...] | None:
+    """MCP 来源的 safe 运行带给 worker 的写入根绊线授权根；None = 不装（引擎没宣告能力 / 已回滚）。
+
+    根就是 `allowed_roots()`（`RootAuthority` 快照：用户绑定 / 宿主 roots / 显式环境变量里**可信**的那些，
+    已拒 HOME 这类过宽的根）——与 `check_scope` 判「项目在不在范围内」的是同一份，所以脚本能写的地方不会
+    比 Agent 能指向的地方更大。根是 spawn 时烤进 worker 的：根集合变了，池键也变（另一条会话）。
+    GUI / native / CLI 不经这里，不装。"""
+    if WRITE_ROOT_TRIPWIRE_FEATURE not in engine_features():
+        return None
+    return tuple(allowed_roots())
 
 
 def _answer_workdir(project: str, mode: str) -> None:
@@ -944,6 +964,15 @@ def _bridge_error_from_worker(
             + private_note
         )
     code = exc.code or default_code
+    if code == WRITE_OUTSIDE_ROOTS:
+        # 绊线（#898）：路径已被 worker 相对化到项目根，这里不再补任何绝对路径或授权根列表
+        wanted = (getattr(exc, "extra", None) or {}).get("path")
+        if isinstance(wanted, str) and wanted:
+            extra["path"] = wanted
+        extra["recovery"] = (
+            "脚本想写已授权工作区之外的位置。改成写到项目内（相对路径要留意脚本里的 os.chdir），"
+            "或请用户在 Tavotto 窗口里自己运行这个脚本；不要换个写法绕过，也不要把路径换成别的形状重试。"
+        )
     _project_needs(code, exc, extra, project=project, script=script)
     extra["requirements"] = _requirements(code, extra)
     if not extra["requirements"]:

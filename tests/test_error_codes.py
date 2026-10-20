@@ -169,6 +169,8 @@ USER_VISIBLE_CODES = {
     # --- Compatibility Bridge Session 3：试运行路径校验的三种拒绝 ---
     # #961：Tavotto 自己的引擎文件缺了（不是缺依赖）；缺的模块名走响应的 engine_module，不进文案
     "engine_files_incomplete": set(),
+    # #898：MCP 来源的运行里脚本想写授权根之外（写入根绊线）。路径相对化后只进 MCP 的结构化载荷，不进文案
+    "write_outside_roots": set(),
     "script_not_found": {"script"},
     "script_path_outside_project": {"script"},
     "unsupported_script_type": {"script"},

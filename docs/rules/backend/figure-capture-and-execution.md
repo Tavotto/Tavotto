@@ -447,6 +447,16 @@ occurrence/figure ordinal/result。看护：`tests/bridge/test_bridge_savefig_ob
 看护：`tests/test_conda_launch_context.py`（模拟 conda + `TAVOTTO_TEST_CONDA_PREFIX` / `TAVOTTO_TEST_OLD_CONDA_EXE` 指向真 conda 环境时的真 conda 用例，
 未设则 skip）。
 
+## 写入根绊线（#898，ADR 0141）
+
+MCP 来源的 safe 运行在 worker 里多装一道**运行期**写入检查（`engine/writetripwire.py`）：脚本 build 期间，写打开与改动 / 删除文件的审计事件按真实 cwd 解析后必须落在白名单内，否则
+`PermissionError`，build 以 `write_outside_roots` 收场（脚本即使吞掉异常也一样）。它补的是 `_check_argv_scope` 静态证明的洞（`os.chdir` 之后的相对 token）；**不是沙盒**。
+
+- 与捕获 / 守卫的关系：现有守卫（真实图库的 `Path.unlink` / `write_text` 跳过、删除 / 改名账本）**一字不动**，绊线装在 `ledger.install()` 之后，不改任何一条守卫的语义；它也不属于 `safe_file_operation_blocked` 那一族，不触发 0127 的回退。
+- 配置经 `execspec.worker_argv` 的 `--write-roots`，缺省（GUI / CLI）argv 逐字节不变；池键 `_worker_key` / `_worker_base` 并入 `execspec.write_roots_key`。
+- 窗口 = 脚本 build；窗口外（导出、override、预览）是引擎自己的写，不拦。脚本留下的线程 / `atexit` 在窗口外，是盲区。
+- 盲区清单与白名单见 `docs/rules/backend/execution-entries.md`「写入根绊线」与 ADR 0141；用例 `tests/test_mcp_write_tripwire.py` 同时钉「挡得住的」和「挡不住的」。
+
 ## 速查表原要点（#815 精简时迁入，原文照搬）
 
 速查表那一格为让 Codex 自动拼接留出余量而收成索引；下面是当时的全文，与上文同等有效。

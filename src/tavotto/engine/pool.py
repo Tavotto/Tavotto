@@ -406,8 +406,11 @@ def _run_payload(run) -> dict:
     }
 
 
-def _worker_key(figures_dir, script_name, artifact_source=None, run=None):
-    """池键 = (项目, 脚本[, selected-artifact 字节身份][, 运行配置])。
+def _worker_key(figures_dir, script_name, artifact_source=None, run=None, write_roots=None):
+    """池键 = (项目, 脚本[, selected-artifact 字节身份][, 运行配置][, 写入根绊线])。
+
+    **绊线段（#898）**：MCP 来源的 safe 运行在 worker 里装写入根绊线，它是 worker 的身份——同一脚本，
+    MCP 与 GUI 取到的永远是两条会话（`execspec.write_roots_key`，没装绊线时没有这一段，键逐字节不变）。
 
     **运行配置段（T03）**：同一脚本不同 argv 是不同的执行，永不共用一条热会话（否则 A 配置的图会被当成
     B 配置的结果）。段内容是 `RunSelection.key`（带进程随机密钥的摘要），不是 argv 原文或裸 hash。
@@ -415,14 +418,23 @@ def _worker_key(figures_dir, script_name, artifact_source=None, run=None):
     key = (_norm_dir(figures_dir), script_name)
     identity = figcapture.selected_artifact_key(artifact_source)
     key = (*key, identity) if identity else key
-    return (*key, f"run:{run.key}") if run is not None else key
+    key = (*key, f"run:{run.key}") if run is not None else key
+    return (*key, execspec.write_roots_key(write_roots)) if write_roots is not None else key
 
 
-def _worker_base(figures_dir, script_name, artifact_source=None, run=None):
+def _roots_kw(write_roots) -> dict:
+    """没装绊线时调用形状与 #898 之前一致（替身 / 旧签名的 `_worker_key` 不认识第五个参数）。"""
+    return {} if write_roots is None else {"write_roots": write_roots}
+
+
+def _worker_base(figures_dir, script_name, artifact_source=None, run=None, write_roots=None):
     slug = _cache_slug(_norm_dir(figures_dir), script_name)
     identity = figcapture.selected_artifact_key(artifact_source)
     slug = f"{slug}-artifact-{identity}" if identity else slug
-    return ENGINE_CACHE / (f"{slug}-run-{run.key}" if run is not None else slug)
+    slug = f"{slug}-run-{run.key}" if run is not None else slug
+    return ENGINE_CACHE / (
+        f"{slug}-{execspec.write_roots_key(write_roots)}" if write_roots is not None else slug
+    )
 
 
 #: 一次性 worker（`one_shot()`）正在用的缓存目录。它们**不在池里**，
@@ -448,14 +460,16 @@ def _runtime_of(resp: dict) -> dict | None:
     return dict(rt) if isinstance(rt, dict) else None
 
 
-def peek(script_name: str, figures_dir: str | Path, run=None, *, artifact_source=None):
+def peek(
+    script_name: str, figures_dir: str | Path, run=None, *, artifact_source=None, write_roots=None
+):
     """池里**现在**有没有这个脚本的活会话——只读，不建、不复用判定、不淘汰。
 
     `get()` 的副作用（重建 / LRU）在这里一个都不发生；回来的可能是没 build 的
     会话（正在冷启动）。给准备接口回答「现有 runtime 正在运行」（ADR 0053）用：
     它要的是事实，不是一条新会话。
     """
-    key = _worker_key(figures_dir, script_name, artifact_source, run)
+    key = _worker_key(figures_dir, script_name, artifact_source, run, **_roots_kw(write_roots))
     with _lock:
         w = _workers.get(key)
         return w if w is not None and w.alive() else None
@@ -827,6 +841,9 @@ SCRIPT_EXITED_CODE = "script_exited"
 #: worker 侧 `worker.FILE_OPERATION_BLOCKED` 的镜像（P01a）：safe 的守卫拦下了脚本的关键文件操作、
 #: 脚本随后又观察了受影响的路径——结果可能与直接 Python 不同，不是完整成功。
 FILE_OPERATION_BLOCKED_CODE = "safe_file_operation_blocked"
+#: worker 侧 `worker.WRITE_OUTSIDE_ROOTS`（= `writetripwire.CODE`）的镜像（#898）：MCP 来源的 safe 运行里脚本想写授权根
+#: 之外。**不进** `execpolicy.BLOCKED_CODES`（不触发换 native 重跑——native 没有绊线，换过去等于放行）。
+WRITE_OUTSIDE_ROOTS_CODE = "write_outside_roots"
 
 
 def file_operation_blocked_params(extra: dict | None) -> dict[str, str]:
@@ -1624,7 +1641,12 @@ ENGINE_FILES_INCOMPLETE_CODE = "engine_files_incomplete"
 #: 面板采用的系统解释器、或为这个项目手填的那条）；界面要指到不同的设置项。
 PROJECT_PYTHON_UNUSABLE_CODE = "project_python_unusable"
 #: 给 `tests/test_error_codes.py` 门禁读的注册表（它按字面量扫源码，常量式的 code 看不见）。
-ERROR_CODES = (EXPLICIT_UNUSABLE_CODE, PROJECT_PYTHON_UNUSABLE_CODE, ENGINE_FILES_INCOMPLETE_CODE)
+ERROR_CODES = (
+    EXPLICIT_UNUSABLE_CODE,
+    PROJECT_PYTHON_UNUSABLE_CODE,
+    ENGINE_FILES_INCOMPLETE_CODE,
+    WRITE_OUTSIDE_ROOTS_CODE,
+)
 
 #: 自动记住的项目解释器被判失效并作废的记录：项目键 → {python, reason, trigger}。给准备
 #: 计划读（`invalidated_decision`），让「为什么这次重新发现了」有据可查；`reset_worker_python()`
@@ -2218,11 +2240,15 @@ class EngineWorker:
         artifact_source=None,
         run=None,
         pinned: EnvironmentDecision | None = None,
+        write_roots=None,
     ):
         self.script_name = script_name
         self.figures_dir = figures_dir
         self.entry = entry
         self.artifact_source = figcapture.selected_artifact_context(artifact_source)
+        #: #898：写入根绊线的授权根（None = 不装，GUI / CLI 的旧行为）。会话的整个生命周期里不变，
+        #: 是池键 / 缓存目录的一段（`_worker_key`），冷重放（`one_shot`）取同一份。
+        self.write_roots = None if write_roots is None else tuple(write_roots)
         #: T03：这条会话冻结的运行配置（`execspec.RunSelection`；None = 没给参数，旧行为）。会话的整个生命周期
         #: 里它不变——冷重放（`one_shot`）、导出、写回重放都从这里取，不读"项目最新配置"。
         self.run = run
@@ -2232,7 +2258,9 @@ class EngineWorker:
         # `base_dir` 只给一次性 worker（`one_shot()`）用：与热会话共用 out/
         # 会让重放的 manifest/SVG 盖掉用户正在看的那份。池里的会话永远走
         # `_cache_slug`，落点一个字节都没变。
-        base = base_dir or _worker_base(figures_dir, script_name, self.artifact_source, run)
+        base = base_dir or _worker_base(
+            figures_dir, script_name, self.artifact_source, run, self.write_roots
+        )
         self.base = base
         self.out_dir = base / "out"
         self.sandbox = base / "sandbox"
@@ -2245,7 +2273,9 @@ class EngineWorker:
         # 这一代的序号：同一 (项目, 脚本) 每重建一次 +1，随每个请求发给 worker
         # 并原样回显（worker 不理解它，校验归调用方/未来的 supervisor）。
         self.generation = _next_generation(
-            _worker_key(figures_dir, script_name, self.artifact_source, run)
+            _worker_key(
+                figures_dir, script_name, self.artifact_source, run, **_roots_kw(self.write_roots)
+            )
         )
         # spawn 那一刻脚本文件的内容指纹（写回前的「脚本变更防线」比对基准）
         self.script_sha1 = script_sha1(figures_dir, script_name)
@@ -2313,6 +2343,7 @@ class EngineWorker:
             cwd_mode=workdir.mode_for(figures_dir),
             # ADR 0106：用户指认过的只读改指表，三条 spawn 路径同一个出处（与代次同一刻取）
             input_remap=remap_rules,
+            write_roots=self.write_roots,
             **execspec.run_kwargs(run),
         )
         LOG.info(
@@ -2981,6 +3012,7 @@ def _spawn_spec(
     extra_env: dict | None = None,
     input_remap=None,
     run=None,
+    write_roots=None,
 ) -> dict:
     """交给 workerd 的**完整** spawn 规格。
 
@@ -3001,6 +3033,7 @@ def _spawn_spec(
         cwd_mode=workdir.mode_for(figures_dir),
         # 会话自己那份（与它的代次同一刻取）；不给才现取——重开会话不许换成另一代的表
         input_remap=inputremap.rules_for(figures_dir) if input_remap is None else list(input_remap),
+        write_roots=write_roots,
         **execspec.run_kwargs(run),
     )
     # 只给**增量**：workerd 继承的本来就是 Flask 自己的环境，整份传过去没有意义
@@ -3077,6 +3110,7 @@ class WorkerdWorker:
         artifact_source=None,
         run=None,
         pinned: EnvironmentDecision | None = None,
+        write_roots=None,
     ):
         from . import workerd_client
 
@@ -3085,11 +3119,14 @@ class WorkerdWorker:
         self.entry = entry
         self.artifact_source = figcapture.selected_artifact_context(artifact_source)
         self.run = run  # 与 EngineWorker 同源（T03）
+        self.write_roots = None if write_roots is None else tuple(write_roots)  # 同源（#898）
         self.execution_replaces_current = base_dir is None
         self.artifact_admission_lock = threading.Lock()
         # 目录布局与 EngineWorker 完全一致：prune_engine_cache 按 base 走，
         # 换个控制面就换个落点的话，清理会把正在用的会话目录当成垃圾删掉。
-        base = base_dir or _worker_base(figures_dir, script_name, self.artifact_source, run)
+        base = base_dir or _worker_base(
+            figures_dir, script_name, self.artifact_source, run, self.write_roots
+        )
         self.base = base
         self._extra_env = dict(extra_env or {})
         self.out_dir = base / "out"
@@ -3102,7 +3139,9 @@ class WorkerdWorker:
         self._touch()
         self.rev = 0
         self.generation = _next_generation(
-            _worker_key(figures_dir, script_name, self.artifact_source, run)
+            _worker_key(
+                figures_dir, script_name, self.artifact_source, run, **_roots_kw(self.write_roots)
+            )
         )
         # 与 EngineWorker 同源：spawn 时的脚本指纹 + 最后应用的 patch 哈希
         self.script_sha1 = script_sha1(figures_dir, script_name)
@@ -3155,6 +3194,7 @@ class WorkerdWorker:
             cwd_mode=workdir.mode_for(figures_dir),
             # ADR 0106：用户指认过的只读改指表，三条 spawn 路径同一个出处（与代次同一刻取）
             input_remap=remap_rules,
+            write_roots=self.write_roots,
             **execspec.run_kwargs(run),
         )
         self._session_id = ""
@@ -3174,6 +3214,7 @@ class WorkerdWorker:
             self._extra_env,
             input_remap=self.spec.input_remap,
             run=self.run,
+            write_roots=self.write_roots,
         )
 
     def _open(self) -> None:
@@ -3758,6 +3799,7 @@ def _new_worker(
     artifact_source=None,
     run=None,
     pinned: EnvironmentDecision | None = None,
+    write_roots=None,
 ):
     """按可用性挑控制面。**任何失败都回退 Python 池**——渲染不能因为一个
     可选的加速件起不来就整个不可用。
@@ -3781,6 +3823,8 @@ def _new_worker(
     context = {"artifact_source": artifact_source} if artifact_source is not None else {}
     if run is not None:
         context["run"] = run
+    if write_roots is not None:
+        context["write_roots"] = write_roots
     if pinned is not None and pinned.pinned:
         context["pinned"] = pinned
     if workerd_client.find_workerd():
@@ -3802,6 +3846,7 @@ def one_shot(
     artifact_source=None,
     run=None,
     pinned: EnvironmentDecision | None = None,
+    write_roots=None,
 ):
     """一次性 worker：**不进池、目录独立、用完即毁**。写回前的干净重放用。
 
@@ -3839,6 +3884,9 @@ def one_shot(
         if run is not None:
             # T03：冷重放跑的是**原来那条配置**（调用方从热会话 `worker.run` 取），不是项目此刻的任何配置
             context["run"] = run
+        if write_roots is not None:
+            # #898：冷重放也装同一份绊线（verify_replay / 写回重放跑的是「再跑一遍用户脚本」）
+            context["write_roots"] = write_roots
         if pinned is not None and pinned.pinned:
             # 写回重放钉热会话自己的解释器与环境代：项目记录可能已被同项目的另一个脚本换成别的（#820 r4221133372）
             context["pinned"] = pinned
@@ -4079,12 +4127,22 @@ def safe_workers_using(python: str) -> int:
 
 
 def get(
-    script_name: str, figures_dir: str, entry: str, *, artifact_source=None, run=None
+    script_name: str,
+    figures_dir: str,
+    entry: str,
+    *,
+    artifact_source=None,
+    run=None,
+    write_roots=None,
 ) -> EngineWorker:
-    """取（或重建）某脚本的 worker；崩溃的自动换新；超出 MAX_ALIVE 按 LRU 淘汰。"""
+    """取（或重建）某脚本的 worker；崩溃的自动换新；超出 MAX_ALIVE 按 LRU 淘汰。
+
+    `write_roots`（#898）：给了就是带写入根绊线的会话（MCP 来源），与不带的是两条（见 `_worker_key`）。"""
     context = {"artifact_source": artifact_source} if artifact_source is not None else {}
     if run is not None:
         context["run"] = run
+    if write_roots is not None:
+        context["write_roots"] = write_roots
     return acquire(script_name, figures_dir, entry, **context)[0]
 
 
@@ -4096,6 +4154,7 @@ def acquire(
     artifact_source=None,
     run=None,
     pinned: EnvironmentDecision | None = None,
+    write_roots=None,
 ) -> tuple[EngineWorker, bool]:
     """`get()` + 「这条会话是不是**这次调用**建的」——所有权在 `_lock` 里一并给出。
 
@@ -4104,7 +4163,7 @@ def acquire(
     `created` 只有一次调用拿到 True。
     """
     artifact_source = figcapture.selected_artifact_context(artifact_source)
-    key = _worker_key(figures_dir, script_name, artifact_source, run)
+    key = _worker_key(figures_dir, script_name, artifact_source, run, **_roots_kw(write_roots))
     created = False
     # 「换不换解释器」要在锁外、查租约之前决定（见下）；锁外那次「能不能复用」只是窥视——窥视说能复用、
     # 进锁时它却死了 / 换了入口，就得出锁把决定补上再来一遍（Codex #562 P2），否则锁内重建走到只读的
@@ -4244,6 +4303,8 @@ def acquire(
                 )
                 if run is not None:
                     context["run"] = run
+                if write_roots is not None:
+                    context["write_roots"] = write_roots
                 # 锁外预热之后 Conda 环境被改了（conda install / 改 activate.d）：构造函数里的激活缓存没命中。
                 # 不在池锁里跑捕获（最长 60s，期间所有项目的取会话 / 关停都被挡住）——`no_capture` 让它抛
                 # `CaptureDeferred`，出锁重新预热再来；检查与使用是同一次查找，中间没有窗口

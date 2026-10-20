@@ -2554,7 +2554,8 @@ export default interface Resources {
       "write_back_format_unsupported": "写回只支持 PDF 和 PNG 素材，这张是 {{format}}。",
       "write_back_persist_failed": "无法写回：备份或新文件没能写入磁盘（{{reason}}）。原文件未做任何改动，请检查磁盘空间与目录权限后重试。",
       "write_back_warnings": "无法写回：重放时出现了警告。",
-      "write_failed": "无法写入磁盘。本机副本仍在，可重试：{{reason}}"
+      "write_failed": "无法写入磁盘。本机副本仍在，可重试：{{reason}}",
+      "write_outside_roots": "脚本想写已授权工作区之外的位置，所以这次没有运行完。请改成写到项目内，或在 Tavotto 窗口里自己运行这个脚本。"
     },
     "engine": {
       "apply": "应用",

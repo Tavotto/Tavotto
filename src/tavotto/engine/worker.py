@@ -224,6 +224,7 @@ _ENGINE_MODULES = (
     "wireproto",
     "scriptinput",
     "runtime",
+    "writetripwire",
 )
 _PKG = bridgeboot.load_engine_modules(str(HERE), _ENGINE_MODULES)
 
@@ -244,6 +245,8 @@ scriptinput = _PKG.scriptinput
 # Windows 平台判断与 CREATE_NO_WINDOW 的唯一出处（只依赖标准库，装进私有包不拖闭包）
 runtime = _PKG.runtime
 executionfact = _PKG.executionfact
+# 写入根绊线（#898，ADR 0141）：只有命令行给了 `--write-roots`（MCP 来源）才装；纯标准库，不拖闭包
+writetripwire = _PKG.writetripwire
 
 #: 本 worker 的常驻会话。`_patched_savefig` 是模块级函数（要顶掉
 #: `Figure.savefig` 这个类属性），拿不到 Worker 实例，只能走模块级引用。
@@ -482,6 +485,9 @@ SCRIPT_EXITED = "script_exited"
 #: safe 档的守卫拦下了脚本的关键文件操作（删除 / 改名 / 写入真实图库，或被拦截不落盘的 savefig），
 #: 脚本随后又观察了受影响的路径（P01a，ADR 0003）。结果可能与直接 Python 不同：不是完整成功。
 FILE_OPERATION_BLOCKED = "safe_file_operation_blocked"
+#: MCP 来源的 safe 运行里，脚本想写授权根之外（写入根绊线，#898）。**绊线不是沙盒**，盲区见 `writetripwire`。
+#: 不属于 `execpolicy.BLOCKED_CODES`：它不会触发「换 native 重跑」的回退（native 没有绊线，换过去等于放行）。
+WRITE_OUTSIDE_ROOTS = writetripwire.CODE
 #: 载荷里的「该走哪条执行路径」：保留文件语义（native bridge / `tavotto run`）。字符串是桌面侧
 #: 接入依据；`adapter_available` 只说「这个 build 失败之后，桌面界面是否已经会自动换那条路径重跑」——
 #: 终端里的 `tavotto run` 一直可用，但自动回退没接通之前这个值保持 false（不承诺没接通的东西）。
@@ -619,6 +625,25 @@ def _blocked_operations_error(
             "required_execution": REQUIRED_EXECUTION_FILE_SEMANTICS,
             "adapter_available": False,
             **({"fidelity": fidelity} if fidelity is not None else {}),
+        },
+    )
+
+
+def _write_outside_roots_error(found: list[dict]) -> ProtocolError:
+    """写入根绊线的终局：稳定码 + 相对化的路径（项目根为基，不暴露无关的绝对路径）。
+
+    message 会进 app.log 与诊断包：只有第一条越界的相对展示，没有授权根列表；脚本源码与路径外的内容一个字都不带。"""
+    first = found[0]
+    return ProtocolError(
+        WRITE_OUTSIDE_ROOTS,
+        f"脚本想写已授权工作区之外的位置（{first['path']}），所以这次没有运行完。"
+        "经 MCP 运行的脚本只能写到工作区内——改成写到项目内，或请用户在 Tavotto 窗口里自己运行。",
+        retryable=False,
+        traceback_text=traceback.format_exc() if sys.exc_info()[0] is not None else "",
+        extra={
+            "path": first["path"],
+            "event": first["event"],
+            "attempts": [dict(v) for v in found],
         },
     )
 
@@ -828,6 +853,8 @@ class Worker(wireproto.V1Handler):
         #: 数据改指（ADR 0106）：用户指认过的只读改指表（`--input-remap`，父进程按项目给），
         #: 与本次 build 里落空的只读打开——`missing_input` 靠它说出缺的是哪个。
         self.input_remap = _parse_remap(getattr(args, "input_remap", None))
+        #: 写入根绊线的授权根（`--write-roots`，MCP 来源才有；#898）。None = 不装（GUI / CLI 旧行为）。
+        self.write_roots = _parse_write_roots(getattr(args, "write_roots", None))
         #: Only the opaque reference is on the command line. Values arrive over
         #: the private request pipe before the first execution, then stay frozen.
         self.script_argv: list[str] = []
@@ -969,6 +996,23 @@ class Worker(wireproto.V1Handler):
     def _execution_entered(self) -> None:
         self.execution_id = executionfact.new_id()
         executionfact.write(self.out_dir, self._execution_watch, self.execution_id)
+
+    def _install_write_tripwire(self) -> None:
+        """装写入根绊线（#898）：白名单 = 命令行给的授权根 + 引擎自己的会话目录 + 基础设施目录。
+
+        会话沙盒与会话缓存目录（`out/` 的上一级：out / sandbox / export / worker.log）是引擎自己的；
+        matplotlib 的缓存 / 配置目录要在 matplotlib 已 import 之后才知道。其余基础设施目录（临时目录、平台缓存、
+        seaborn / sklearn 数据目录）见 `writetripwire.infrastructure_roots`，每一项都带理由。"""
+        extra = [self.sandbox, self.out_dir.parent]
+        for getter in ("get_cachedir", "get_configdir"):
+            try:
+                extra.append(getattr(matplotlib, getter)())
+            except Exception:  # noqa: BLE001 — 取不到就少一项白名单，不让绊线的装配挡住渲染
+                pass
+        writetripwire.install(
+            [*self.write_roots, *writetripwire.infrastructure_roots(extra=extra)],
+            display_base=str(self.figures_dir),
+        )
 
     def build(self, timings: dict | None = None) -> dict:
         """跑一次用户脚本，把产出的 Figure 全部收进内存。
@@ -1139,6 +1183,8 @@ class Worker(wireproto.V1Handler):
         # 装在回退之下，沙盒里 `savefig("stage.png")` 记下的 `<沙盒>/stage.png` 永远等不到
         # 被回退改指成 `<项目>/stage.png` 的读，旧图就被静默读走了（#952 Codex P1）。
         ledger.install()
+        if self.write_roots is not None:
+            self._install_write_tripwire()
 
         # 拦截必须发生在 import 脚本之前（多数脚本 from paper_style import save）
         mfigure.Figure.savefig = _patched_savefig
@@ -1211,6 +1257,8 @@ class Worker(wireproto.V1Handler):
             contextlib.redirect_stdout(stdout_tail),
             executionfact.on_user_entry(self.script, self._execution_entered),
         ):
+            if self.write_roots is not None:
+                writetripwire.arm(True)
             try:
                 # paper_style 是某些图库的私有方言，不是引擎的依赖：没有就跳过，
                 # 靠 _patched_savefig 这条通用兜底捕获。曾经这里是无保护的 import，
@@ -1268,6 +1316,12 @@ class Worker(wireproto.V1Handler):
                 else:
                     # 恰好一次加载才可信；零次（入口模块此前已在 sys.modules，如被 paper_style 提前 import）或多次 → None
                     self._source_sha256 = entry_shas[0] if len(entry_shas) == 1 else None
+                if self.write_roots is not None:
+                    writetripwire.arm(False)
+                    # 脚本 `except PermissionError` 吞掉、或以别的错误收场，事实都在：越界的写**尝试**发生过，
+                    # 这次不算成功（取代原本的异常，原异常留在 `__context__`；traceback 指向越界的那一行）
+                    if writetripwire.violations():
+                        raise _write_outside_roots_error(writetripwire.violations())
         script_ms = _ms(t_script)
         # 脚本跑到了末尾，但被守卫拦下的关键操作之后它观察过受影响的路径（用户 `except Exception`
         # 吞掉什么都不影响这条带外事实）：结果可能与直接 Python 不同，不记成完整成功（P01a，AC-02）
@@ -1604,6 +1658,20 @@ def _json_default(o):
         return str(o)
 
 
+def _parse_write_roots(raw) -> list[str] | None:
+    """`--write-roots` 的 JSON 数组；没给 = None（不装绊线）。给了却坏了**不**当成没给：
+    绊线是安全边界，参数坏了宁可让这条会话起不来（`SystemExit`），也不静默退回不设防。"""
+    if raw is None:
+        return None
+    try:
+        roots = json.loads(raw)
+    except ValueError:
+        roots = None
+    if not isinstance(roots, list) or not all(isinstance(r, str) and r for r in roots):
+        raise SystemExit("--write-roots 必须是非空字符串的 JSON 数组")
+    return roots
+
+
 def _parse_remap(raw) -> list[dict]:
     """`--input-remap` 的 JSON → 校验过的规则；坏了就当没有（渲染照跑，只是不改道）。"""
     if not raw:
@@ -1626,6 +1694,8 @@ def main() -> None:
     ap.add_argument("--input-remap", default=None)
     # Only the opaque identity is public; exact argv arrives over the request pipe.
     ap.add_argument("--run-config", default="")
+    # #898：写入根绊线的授权根（JSON 数组）；只有 MCP 来源的运行才出现，没有它 = 不装（旧 argv 逐字节不变）
+    ap.add_argument("--write-roots", default=None)
     ap.add_argument("--entry", default="main")
     ap.add_argument("--preview-dpi", type=int, default=200)
 

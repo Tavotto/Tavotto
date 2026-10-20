@@ -32,6 +32,8 @@ _WORKSPACE = frozenset(
         "path_out_of_scope",
         "ambiguous_workspace_root",
         "argv_path_out_of_scope",
+        # 写入根绊线：脚本想写已授权工作区之外（#898）。与 argv 越界同一类问题：范围
+        "write_outside_roots",
     }
 )
 _NEEDS_INPUT = frozenset(

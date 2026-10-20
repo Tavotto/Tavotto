@@ -223,6 +223,19 @@ def run_kwargs(run: RunSelection | None) -> dict:
     return {} if run is None else {"argv": run.argv, "run_config": run.config_id}
 
 
+def write_roots_key(roots) -> str:
+    """写入根绊线的授权根 → 池键 / 缓存目录的区分段（空串 = 没装绊线）。
+
+    **唯一出处**：`pool._worker_key` / `_worker_base` 都用它。绊线是 worker 的身份——同一脚本，MCP 带绊线的
+    会话与 GUI 不带的会话必须是两条（否则 GUI 取到带绊线的会话看到「写入落在授权根之外」，MCP 取到没有绊线的
+    会话等于没装）。根集合变了（用户新绑了工作区）也是另一条：根是 spawn 时烤进 worker 的。
+    路径不是秘密，摘要只为得到定长、可进目录名的段。"""
+    if roots is None:
+        return ""
+    payload = json.dumps(sorted(roots), ensure_ascii=True, separators=(",", ":"))
+    return "wr" + hashlib.sha256(payload.encode("utf-8")).hexdigest()[:12]
+
+
 def _normalize_target(target: str, target_kind: str) -> str:
     """script 目标 → 项目相对路径（POSIX）；module 目标原样。
 
@@ -282,6 +295,12 @@ class ExecutionSpec:
     env_source: str = ""
     #: native 的 stdin 通道（`STDIN_*`）。terminal 恒 `inherit`；safe 不使用（恒 `inherit` 占位）。
     stdin: str = STDIN_INHERIT
+    #: safe 档：写入根绊线的授权根（#898，ADR 0141）。`None` = 不装绊线（GUI / CLI 的旧行为，argv 逐字节
+    #: 不变）；元组 = worker 在脚本 build 期间把根外的写打开变成 `write_outside_roots`。**它是 worker 的
+    #: 身份**：进 `--write-roots`（`worker_argv` 的唯一出处），所以 workerd 的 spawn 规格哈希天然不同，池键 /
+    #: 缓存目录再并入 `write_roots_key`——MCP 与 GUI 取同一脚本得不到同一条会话。机器相关路径，
+    #: **不进 `stable_payload()`**。native 恒 None。
+    write_roots: tuple[str, ...] | None = None
 
     def __post_init__(self) -> None:
         if self.profile not in PROFILES:
@@ -356,6 +375,13 @@ class ExecutionSpec:
             list(self.input_remap)
         ) != list(self.input_remap):
             raise ValueError(f"input_remap 必须是校验过的规则元组: {self.input_remap!r}")
+        if self.write_roots is not None:
+            if not isinstance(self.write_roots, tuple) or not all(
+                isinstance(r, str) and r for r in self.write_roots
+            ):
+                raise ValueError(f"write_roots 必须是非空字符串元组或 None: {self.write_roots!r}")
+            if self.profile != PROFILE_SAFE:
+                raise ValueError("写入根绊线只属于 safe profile（native 是用户自己的 python）")
         if self.profile == PROFILE_NATIVE:
             if self.cwd_mode != CWD_SANDBOX:
                 raise ValueError("native profile 没有 cwd_mode 这个维度（cwd 是用户的）")
@@ -381,6 +407,7 @@ class ExecutionSpec:
         out["argv"] = list(self.argv)
         out["env"] = dict(self.env) if self.env is not None else None
         out["input_remap"] = [dict(r) for r in self.input_remap]
+        out["write_roots"] = None if self.write_roots is None else list(self.write_roots)
         out["spec_version"] = SPEC_VERSION
         return out
 
@@ -501,6 +528,7 @@ def spec_from_payload(data: dict) -> ExecutionSpec:
         owner=data.get("owner", "") or "",
         env_source=data.get("env_source", "") or "",
         stdin=data.get("stdin", STDIN_INHERIT) or STDIN_INHERIT,
+        write_roots=(None if data.get("write_roots") is None else tuple(data.get("write_roots"))),
     )
 
 
@@ -539,6 +567,7 @@ def safe_spec(
     input_remap=(),
     argv: tuple[str, ...] | list[str] = (),
     run_config: str = "",
+    write_roots: tuple[str, ...] | list[str] | None = None,
 ) -> ExecutionSpec:
     """safe 档的**唯一权威构造函数**——运行时默认值只写在这里。
 
@@ -573,6 +602,7 @@ def safe_spec(
         # ADR 0106：用户指认过的只读改指表（`inputremap.rules_for`），空 = 没有
         input_remap=tuple(figcapture.clean_remap_rules(list(input_remap or ()))),
         run_config=run_config,
+        write_roots=None if write_roots is None else tuple(write_roots),
     )
 
 
@@ -796,4 +826,12 @@ def worker_argv(
         # 也不受 Windows list2cmdline 的引号膨胀影响。引用仍参与 workerd 的 spawn
         # 身份；worker 缺少匹配载荷时拒绝执行，绝不回落为空 argv。
         out += ["--run-config", spec.run_config]
+    if spec.write_roots is not None:
+        # #898：写入根绊线。只在 MCP 来源的运行里多两个 token——没有它的 argv 逐字节不变（golden）。
+        # 根进 argv（而不是环境变量）：workerd 的 spawn 规格哈希只看 argv / env / cwd，
+        # 身份天然分开；env 在 workerd 路径下只是增量，易遗漏。
+        out += [
+            "--write-roots",
+            json.dumps(list(spec.write_roots), ensure_ascii=False, separators=(",", ":")),
+        ]
     return out
