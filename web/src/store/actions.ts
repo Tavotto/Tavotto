@@ -8,7 +8,7 @@ import { isJustBakedBaselineOf } from '@/lib/bakedBaseline'
 import { engineTransport } from '@/lib/engineTransport'
 import { msg, t, type UiMessage } from '@/i18n'
 import { classifyArtifactFailure, isDefiniteRefusal, type ArtifactFailure } from '@/lib/artifactReason'
-import { pngAdmitOwner, pngRefusalOf, usePngAdmissionMemory } from '@/store/pngAdmissionMemory'
+import { pngAdmitOwner, pngRefusalOf, runPngRebuild, usePngAdmissionMemory } from '@/store/pngAdmissionMemory'
 import { rescueFocus } from '@/lib/focusRescue'
 import { newId } from '@/lib/id'
 import { flipCapture } from '@/lib/motion'
@@ -1547,8 +1547,8 @@ function showAdmissionFailure(panel: PanelObject, failure: ArtifactFailure): voi
         ? {
             action: {
               label: msg('artifact.rebuildEditable', undefined, 'errors'),
-              // 动态 import：重建链路经 workspace 回到本模块，静态 import 是个环
-              run: () => void import('@/store/pngRebuild').then((m) => m.rebuildEditableFromScript(panel.id)),
+              // 只发意图：执行者由 `pngRebuild` 登记（直接 import 会让重建链路经 workspace 回到本模块成环）
+              run: () => runPngRebuild(panel.id),
             },
           }
         : {}),

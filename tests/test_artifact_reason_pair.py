@@ -22,7 +22,12 @@ REASON_TS = ROOT / "web" / "src" / "lib" / "artifactReason.ts"
 _CTORS = {"ArtifactSourceUnavailable", "ArtifactContextError"}
 
 #: 前端本地发的 reason（`ArtifactValidationError` / 本地前置判定），后端不发
-FRONTEND_ONLY = {"frame_changed", "invalid_guard", "writeback_not_supported", "unsupported_response"}
+FRONTEND_ONLY = {
+    "frame_changed",
+    "invalid_guard",
+    "writeback_not_supported",
+    "unsupported_response",
+}
 
 #: reason 实参是变量的转发点（值来自别处已被上面收集的字面量）：文件 → 个数。个数变了说明有新的读不出的调用
 FORWARDING_SITES = {
@@ -43,13 +48,21 @@ def _backend_reasons() -> tuple[set[str], dict[str, int]]:
             name = f.attr if isinstance(f, ast.Attribute) else getattr(f, "id", None)
             if name not in _CTORS:
                 continue
-            arg = node.args[0] if node.args else next((k.value for k in node.keywords if k.arg == "reason"), None)
+            arg = (
+                node.args[0]
+                if node.args
+                else next((k.value for k in node.keywords if k.arg == "reason"), None)
+            )
             assert arg is not None, f"{path}:{node.lineno} 构造调用没有 reason 实参"
             if isinstance(arg, ast.Name):
                 key = str(path.relative_to(SRC)).replace("\\", "/")
                 forwarded[key] = forwarded.get(key, 0) + 1
                 continue
-            literals = [n.value for n in ast.walk(arg) if isinstance(n, ast.Constant) and isinstance(n.value, str)]
+            literals = [
+                n.value
+                for n in ast.walk(arg)
+                if isinstance(n, ast.Constant) and isinstance(n.value, str)
+            ]
             assert literals, f"{path}:{node.lineno} reason 实参读不出字面量，也不是已登记的转发变量"
             reasons.update(literals)
     return reasons, forwarded
@@ -59,9 +72,13 @@ def test_every_backend_reason_is_classified_by_the_frontend() -> None:
     backend, _ = _backend_reasons()
     frontend = set(exported_string_union(REASON_TS.read_text(encoding="utf-8"), "ArtifactReason"))
     assert backend, "没从后端源码里收到任何 reason——收集器空转"
-    assert "unsupported_render_state" in backend and "source_mismatch" in backend  # 抽样：收集器真读到了
+    assert (
+        "unsupported_render_state" in backend and "source_mismatch" in backend
+    )  # 抽样：收集器真读到了
     missing = backend - frontend
-    assert not missing, f"后端发出的 reason 前端没有分类：{sorted(missing)}（改 web/src/lib/artifactReason.ts 的联合与表）"
+    assert not missing, (
+        f"后端发出的 reason 前端没有分类：{sorted(missing)}（改 web/src/lib/artifactReason.ts 的联合与表）"
+    )
 
 
 def test_frontend_only_reasons_are_exactly_the_locally_emitted_ones() -> None:

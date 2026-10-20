@@ -9,6 +9,7 @@ import { useRuntimeAssetStore } from './runtimeAssetStore'
 import { useScriptRunStore } from './scriptRunStore'
 import { useUiStore } from './uiStore'
 import { useWorkspaceStore } from './workspace'
+import { runPngRebuild } from './pngAdmissionMemory'
 import { rebuildEditableFromScript } from './pngRebuild'
 
 const probe = vi.fn()
@@ -85,5 +86,11 @@ describe('rebuild as editable figure (ADR 0139 PR1)', () => {
     expect(await rebuildEditableFromScript('p')).toBe('failed')
     expect(panels()).toEqual([before])
     expect(useUiStore.getState().status).toEqual({ key: 'artifact.rebuildFailed', ns: 'errors' })
+  })
+  it('the toast button reaches this implementation through the registered runner', async () => {
+    probe.mockResolvedValue(ok([desc('same')]))
+    runPngRebuild('p')
+    await vi.waitFor(() => expect(panels()).toHaveLength(2))
+    expect(probe).toHaveBeenCalledTimes(1)
   })
 })

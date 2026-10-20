@@ -4,7 +4,7 @@ import { captureProjectEpoch } from '@/lib/projectEpoch'
 import { useDocumentStore } from '@/store/documentStore'
 import { useFigurePickerStore } from '@/store/figurePickerStore'
 import { enterEdit } from '@/store/prepEnterEdit'
-import { pngAdmitOwner } from '@/store/pngAdmissionMemory'
+import { pngAdmitOwner, registerPngRebuildRunner } from '@/store/pngAdmissionMemory'
 import { useScriptRunStore, whenScriptIdle } from '@/store/scriptRunStore'
 import { useUiStore } from '@/store/uiStore'
 import type { PanelObject } from '@/types/document'
@@ -70,3 +70,5 @@ function findPanel(panelId: string): PanelObject | null {
   }
   return null
 }
+
+registerPngRebuildRunner(rebuildEditableFromScript)

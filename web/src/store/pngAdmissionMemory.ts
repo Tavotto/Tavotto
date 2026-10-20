@@ -41,6 +41,21 @@ export function pngIdentityOf(fileId: string): string {
 /** PNG 采用失败 toast 的主人：采用成功 / 面板删除 / 切项目（`projectStore`）时按它撤掉 */
 export const pngAdmitOwner = (panelId: string): string => `png.admit:${panelId}`
 
+/**
+ * 「重建为可编辑图」的执行者由 `pngRebuild.ts` 在加载时登记，toast 的按钮只发意图。
+ * 为什么不直接 import：重建链路（`prepEnterEdit` → `workspace`）回到 `actions`，而采用失败的 toast 是
+ * `actions` 造的——`actions → pngRebuild` 一条边（含动态 import）会把一大片模块连成新的 import 环
+ * （`importArchitecture` 门禁）。登记发生在 `ElementTree` 静态 import `pngRebuild` 的那一刻，应用启动即就位。
+ */
+type RebuildRunner = (panelId: string) => unknown
+let rebuildRunner: RebuildRunner | null = null
+export const registerPngRebuildRunner = (fn: RebuildRunner): void => {
+  rebuildRunner = fn
+}
+export const runPngRebuild = (panelId: string): void => {
+  void rebuildRunner?.(panelId)
+}
+
 export const usePngAdmissionMemory = create<PngAdmissionMemory>((set) => ({
   epoch: 0,
   byFile: {},
