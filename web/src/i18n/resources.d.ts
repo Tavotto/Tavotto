@@ -278,6 +278,7 @@ export default interface Resources {
       "checkLabel": "检查",
       "checkScopeCanvasNamed": "查整个画布「{{name}}」",
       "checkScopeFigureNamed": "仅查原图「{{name}}」",
+      "checkScopeOffCanvas": "「{{name}}」不在画布上，这次导出不做规范检查",
       "checksMore_other": "还有 {{count}} 项 · 在问题面板中查看全部",
       "chipError_other": "项要改",
       "chipNotVerifiable_other": "项无法核验",
