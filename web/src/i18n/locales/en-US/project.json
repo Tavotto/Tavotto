@@ -85,7 +85,7 @@
       "restart": "Take the tutorial again"
     },
     "tutorialBadge": "Tutorial project",
-    "tutorialHint": "An offline sample project: edit freely and start over any time. Your own projects are never affected.",
+    "tutorialHint": "Three short steps to edit a figure directly. Built-in sample: no script needed, and your projects stay untouched.",
     "tutorialLabel": "Tutorial",
     "tutorialOpening": "Preparing…",
     "tutorialUnavailable": "The tutorial resources are incomplete. Reinstall Tavotto."

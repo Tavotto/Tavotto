@@ -62,13 +62,19 @@
   属性只含请求格式布尔 / `delivered` / `stage` / `error_class` 闭集，不含错误码原文。
   它是 **CONSENT_VERSION 3** 的新范围之一（ADR 0134）：v2 的同意不再授权它，重新同意之前
   它和所有老事件一样一个字节都不发。
+- **`mcp_tool_call`（2026-10-18 引入，ADR 0134 §MCP）出处只有一个**：MCP server 的
+  `Server._call_tool_counted`（`tools/call` 派发处），属性只经插件 `tavotto_mcp/usage.py` 折成闭集，
+  发送只经 `bridge.note_tool_call` → 本模块 `capture`。**不用 PostHog MCP SDK**、不带参数 / 返回内容 /
+  错误原文 / 会话 id；同意读同一份 `config.json`，插件不弹同意框（`unset` 的纯插件用户一个字节不发）；
+  进程退出时 `flush(1.5)` 有界排空。**内嵌画布发起的调用（`origin="canvas"`）不记**——画布不发遥测；
+  画布会调的工具都在 `server.CANVAS_TOOLS` 声明这个参数。看护：`tests/test_mcp_usage.py`、`web/e2e/mcp-canvas.spec.ts`。
 - **编辑埋点只有一个调用点**：`documentStore.pushHistory`（commit 与 endTxn
   的共同漏斗）。一次拖动 = 一条事务 = 一条历史 = **一个事件**，不是 120 次
   pointermove；预览平面不 commit，因此天然不产生事件。`edit_kind` 由**历史
   标签的 key**（开发者写死的稳定标识）经闭表映射，查不到落 `other`——
   标签**文案**绝不能用，它被翻译过、还插值了用户的文件名与属性名。
-- **CONSENT_VERSION 现在是 3**（2026-10-16，ADR 0134：导出终态事件 `export_result` + 诊断报告的可选错误摘要，
-  **两个范围一次升版**；2 是 2026-09-02 Session 22 加的九条：刷新 / 接入状态 /
+- **CONSENT_VERSION 现在是 3**（2026-10-16，ADR 0134：导出终态事件 `export_result` + MCP 工具调用 `mcp_tool_call`
+  + 诊断报告的可选错误摘要，**三个范围一次升版**；2 是 2026-09-02 Session 22 加的九条：刷新 / 接入状态 /
   教程三条 / 多选栏 / 保存 / 恢复 / 包操作）。升版三条保证各有用例：旧同意不再授权任何发送（含
   `export_result`）；重新同意不换 `install_id`；说过「不」的人不被再问、`unset` 仍 `unset` 且无 id、
   `TAVOTTO_NO_TELEMETRY=1` 压过一切且不弹框（`tests/test_telemetry.py` / `tests/test_telemetry_v3_consent.py`）。

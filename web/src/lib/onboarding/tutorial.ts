@@ -1,18 +1,24 @@
 /**
- * 教程的**入口动作**——项目选择器、Help、命令面板、设置四个入口都调这里，
- * 状态逻辑只有这一份（Prompt 21 §十）。
+ * 教程与示例项目的**入口动作**——项目选择器、Help、命令面板、设置、画布空态都调这里，
+ * 状态逻辑只有这一份（Prompt 21 §十）。两件事，互不牵连：
  *
  * ```text
- * startTutorial()   GET/POST /api/tutorial/open → 认领项目 → 装教程画布 → 开始 / 继续 onboarding
- * resetTutorial()   「重置教程项目」：确认 → POST /api/tutorial/reset → 忘掉本机那格 autosave → 重新装 → 从头开始
- * tutorialEntry()   四个入口该显示「开始 / 继续 / 重新开始」哪一个（纯读）
+ * runTutorialEntry()   三步原生教程（ADR 0136）：只改 onboardingStore、打开教程层——不开项目、不跑脚本、不发请求
+ * markDemoStep()       教程里一步的任务真的做到了：记完成 + 遥测（只记一次）
+ * finishTutorial()     完成页「开始使用」：记完成、收起教程层
+ * openSampleProject()  示例项目（ADR 0039）：POST /api/tutorial/open → 认领项目 → 装示例画布；onboarding 一个字段都不碰
+ * resetTutorial()      「重置示例项目」：确认 → POST /api/tutorial/reset → 忘掉本机那格 autosave → 重新装
+ * tutorialEntry()      入口该显示「开始 / 继续 / 重新开始」哪一个（纯读）
  * ```
  *
- * 三条硬约束（ADR 0039 交给 21 的）：
+ * 示例项目的三条硬约束（ADR 0039）：
  *   * 一切只从 `POST /api/tutorial/open` 的响应与 `tutorial_meta.json` 拿，
  *     不读仓库根 `examples/`（T-105）；
- *   * 教程画布的 documentId **必须**是 `metadata.document_id`（T-106）；
+ *   * 示例画布的 documentId **必须**是 `metadata.document_id`（T-106）；
  *   * 打开不执行脚本——这里只调既有的项目打开链路（T-107）。
+ *
+ * 三步教程的硬约束（ADR 0136）：完成教程**不调用任何后端接口**——没有 Python、没有依赖准备、
+ * 没有联网；那张图是 `lib/onboarding/demoFigure` 的受控演示，不是图内编辑。
  */
 import { create } from 'zustand'
 import { captureTelemetry } from '@/lib/telemetry'
@@ -21,7 +27,6 @@ import {
   ApiError,
   backendErrorMsg,
   fetchLayout,
-  fetchLayoutNames,
   fetchTutorialStatus,
   openTutorialApi,
   resetTutorialApi,
@@ -37,6 +42,7 @@ import {
   useDocumentStore,
 } from '@/store/documentStore'
 import { ONBOARDING_FLOW_VERSION, type OnboardingStatus, useOnboardingStore } from '@/store/onboardingStore'
+import type { StepId } from './stepIds'
 import { useProjectStore, type ProjectState } from '@/store/projectStore'
 import { useUiStore, askConfirm } from '@/store/uiStore'
 import { migrateToProject } from '@/types/document'
@@ -48,6 +54,8 @@ export type TutorialFailure =
   | 'open_failed'
   /** 文件被占用（409 tutorial_locked） */
   | 'locked'
+  /** 确认之后示例项目里的另存排版变了（409 tutorial_layouts_changed）：重置未执行 */
+  | 'layouts_changed'
   /** 画布文档读不出来（schema 不兼容 / 缺文件） */
   | 'document_failed'
   /** 用户在确认框里取消 */
@@ -56,8 +64,8 @@ export type TutorialFailure =
   | 'no_api'
 
 export type TutorialOutcome =
-  /** `opened` = 只打开示例项目、不带引导（`startTutorial(source, { guide: false })`） */
-  | { ok: true; kind: 'started' | 'resumed' | 'restarted' | 'opened' }
+  /** `opened` = 打开了示例项目；`restarted` = 重置了示例项目并重新打开 */
+  | { ok: true; kind: 'restarted' | 'opened' }
   | { ok: false; reason: TutorialFailure; message: UiMessage }
 
 interface TutorialState {
@@ -98,8 +106,26 @@ export async function loadTutorialStatus(): Promise<TutorialStatus | null> {
   }
 }
 
+/**
+ * 按需探测：只在需要判断「示例项目副本在不在」的界面（设置页 › 学习、命令面板）打开时调，
+ * 已知副本在、或正在探测就不再问。**不放在选择器 / 主页挂载时**——教程层打开期间不许发任何
+ * 教程资源请求（P0，e2e `tutorial.spec` 的 FORBIDDEN 含 `/api/tutorial`）。
+ */
+export function ensureTutorialStatus(): void {
+  const { status, busy } = useTutorialStore.getState()
+  // 只信「副本在」的缓存：「不在」会过时（之后打开示例项目就建出了副本，那次打开不回写这份状态），
+  // 照它判会把「重置示例项目」藏起来——所以没有正面结论就再问一次（只读 GET，很便宜）
+  if (busy || status?.copy?.exists === true) return
+  void loadTutorialStatus()
+}
+
 function failureMessage(reason: TutorialFailure, e?: unknown): UiMessage {
-  if (reason === 'open_failed' || reason === 'locked' || reason === 'unavailable') {
+  if (
+    reason === 'open_failed' ||
+    reason === 'locked' ||
+    reason === 'unavailable' ||
+    reason === 'layouts_changed'
+  ) {
     // 后端带 code 的错误按 code 翻（`errors:backend.tutorial_*`），没有就原文透出
     if (e instanceof ApiError && typeof e.body.code === 'string') return backendErrorMsg(e)
   }
@@ -110,6 +136,7 @@ function classify(e: unknown): TutorialFailure {
   if (e instanceof ApiError) {
     const code = typeof e.body.code === 'string' ? e.body.code : ''
     if (code === 'tutorial_locked') return 'locked'
+    if (code === 'tutorial_layouts_changed') return 'layouts_changed'
     if (code === 'tutorial_resources_missing' || code === 'tutorial_resources_invalid') {
       return 'unavailable'
     }
@@ -154,29 +181,9 @@ async function loadTutorialDocument(meta: TutorialMetadata): Promise<boolean> {
   return ok
 }
 
-/**
- * 把教程画布装回来（给引擎用：切回教程项目 / 重启后文档不是教程画布时）。
- * 元数据不在就先取一次；取不到就什么都不做（入口按钮那条路会说清失败）。
- */
-export async function ensureTutorialDocument(): Promise<boolean> {
-  let meta = useTutorialStore.getState().meta
-  if (!meta) meta = (await loadTutorialStatus())?.metadata ?? null
-  if (!meta) return false
-  if (useDocumentStore.getState().documentId === meta.document_id) return true
-  return loadTutorialDocument(meta)
-}
-
 const inTutorialProject = (projectId: string | undefined | null) =>
   !!projectId && useProjectStore.getState().project?.id === projectId
 
-/**
- * 「用示例了解 Tavotto」。
- *
- * 1. `POST /api/tutorial/open`（缺文件补齐、副本不在就建）；
- * 2. 走既有的项目认领链路（与打开任何项目完全相同）；
- * 3. 装教程画布；
- * 4. 上次暂停在这份教程里就继续，否则从头开始。
- */
 /**
  * 教程是从哪个入口开始的（遥测 `tutorial_started.source` 的闭集）。
  * `picker` 项目选择页；`help` 顶栏「更多」；`settings` 设置页；`palette` 命令面板。
@@ -199,28 +206,27 @@ function mutating(): boolean {
 }
 
 /**
- * `guide: false`：只把示例项目打开（同一条认领链路、同一份教程画布），**不动 onboarding
- * 状态**——主页老手版的「使用示例脚本试试看」用它。走完过教程的人点一下示例不该被重新
- * 拉进引导，更不该因此把「已完成」改回「进行中」：主页的新手 / 老手两版正是按这个状态分的
- * （`homeVariant`），派生出来的一次点击不许覆盖它。
+ * 打开示例项目（同一条认领链路、同一份示例画布），**不动 onboarding 状态**——主页老手版的
+ * 「使用示例脚本试试看」用它。走完过教程的人点一下示例不该被重新拉进引导，更不该因此把
+ * 「已完成」改回「进行中」：主页的新手 / 老手两版正是按这个状态分的（`homeVariant`），
+ * 派生出来的一次点击不许覆盖它。
  */
-export async function startTutorial(
-  source?: TutorialEntrySource,
-  opts: { guide?: boolean } = {},
-): Promise<TutorialOutcome> {
+async function openSample(): Promise<TutorialOutcome> {
   if (mutating()) return fail('open_failed')
-  const guide = opts.guide ?? true
   // 请求 + 认领是一次切换：请求在路上时别的打开就得排在它后面（Codex #550）
-  return useProjectStore
-    .getState()
-    .switchTransaction((adopt) => startTutorialNow(adopt, source, guide))
+  return useProjectStore.getState().switchTransaction((adopt) => openSampleNow(adopt))
 }
 
-async function startTutorialNow(
-  adopt: AdoptProject,
-  source: TutorialEntrySource | undefined,
-  guide: boolean,
-): Promise<TutorialOutcome> {
+async function openSampleNow(adopt: AdoptProject): Promise<TutorialOutcome> {
+  // 示例项目开着、却不知道哪份是示例画布（升级后重启：元数据还没取到，三步教程也不再在
+  // onboarding 里记它的 id）：先取齐元数据再开——挂起自动保存只能挂在**真正的**示例画布上，
+  // 挂错了（用户正在示例项目里改另一份排版）切文档时它的未存改动会被丢掉；不挂又会让认领把
+  // 旧排版写回固定槽位。取不到就不开，按失败返回。**在切换事务里取**：取的那段时间里用户
+  // 另开的项目会排在这次后面，不会先落地、再被这次过时的点击切回示例项目
+  if (useProjectStore.getState().project?.tutorial === true && knownTutorialDocumentId() === null) {
+    await loadTutorialStatus()
+    if (knownTutorialDocumentId() === null) return fail('unavailable')
+  }
   useTutorialStore.setState({ busy: 'open', failure: null })
   // 手里这份就是教程画布时先把它从自动保存链路上摘下来（与重置同一条路）。open 可能换
   // 副本（资源升级换了目录 = 新项目 id），换副本要走认领，而认领的第一步就是把当前文档
@@ -239,7 +245,7 @@ async function startTutorialNow(
   // 后端刚建了一份全新的副本（首次 / 资源升级换了目录）并清了磁盘上的槽位；
   // 本机这格不忘掉的话 readAutosaveDoc 会把上一份副本的排版推回来——与重置同一条路
   if (res.created) forgetLocalDocument(res.tutorial.document_id)
-  const out = await landTutorial(res, guide ? 'start' : 'open', adopt, source)
+  const out = await landTutorial(res, 'open', adopt)
   if (suspended) resumeAutosave()
   return out
 }
@@ -251,19 +257,36 @@ async function startTutorialNow(
  */
 function currentTutorialDocumentId(): string | null {
   const current = useDocumentStore.getState().documentId
-  const known =
-    useTutorialStore.getState().meta?.document_id ?? useOnboardingStore.getState().tutorialDocumentId
+  const known = knownTutorialDocumentId()
   return known !== null && current === known ? current : null
 }
 
 /**
- * 「重置教程项目」（换回干净副本 + 进度从头）。先确认——教程项目里如果有用户另存的画布文件，确认框会
- * 点名列出来（重置换的是整个副本目录，它们会一起没）。
+ * 示例画布固定的 documentId（元数据，其次 onboarding 记着的旧值）；都没有回 null。三步教程
+ * （ADR 0136）不再写 onboarding 那份，所以升级后重启、元数据还没取到时是 null——调用方
+ * （`openSample`）先取齐元数据，**不拿「当前项目是示例项目」去猜**哪份文档是示例画布。
+ */
+function knownTutorialDocumentId(): string | null {
+  return useTutorialStore.getState().meta?.document_id ?? useOnboardingStore.getState().tutorialDocumentId
+}
+
+/**
+ * 「重置示例项目」（换回干净副本）。先确认——示例项目里如果有用户另存的画布文件，确认框会
+ * 点名列出来（重置换的是整个副本目录，它们会一起没）。三步教程的进度不归它管（ADR 0136）。
  */
 export async function resetTutorial(): Promise<TutorialOutcome> {
   if (mutating()) return fail('open_failed')
-  const meta = useTutorialStore.getState().meta
-  const extras = await savedLayoutsInTutorial(meta)
+  // 元数据可能还没取到（重启后示例项目开着、设置页 / 命令面板的探测还在路上）：先取齐再确认。
+  // 拿着 null 往下走，确认框会漏掉要被删的另存画布，重置窗口里也不会挂起示例画布的自动保存
+  const meta = useTutorialStore.getState().meta ?? (await loadTutorialStatus())?.metadata ?? null
+  // 现取失败就不弹确认：确认框不能假装「没有另存排版」去让用户放心点删除
+  let extras: string[]
+  let inventory: string[]
+  try {
+    ;({ extras, inventory } = await savedLayoutsInTutorial(meta))
+  } catch (e) {
+    return fail(classify(e), e)
+  }
   const ok = await askConfirm({
     title: msg('onboarding.reset.title', undefined, 'dialogs'),
     body: extras.length
@@ -275,12 +298,13 @@ export async function resetTutorial(): Promise<TutorialOutcome> {
   if (!ok) return { ok: false, reason: 'cancelled', message: failureMessage('cancelled') }
   // 确认框等用户的那段不算切换；点了确认之后「重置请求 + 认领」是一次切换
   if (mutating()) return fail('open_failed')
-  return useProjectStore.getState().switchTransaction((adopt) => resetTutorialNow(adopt, meta))
+  return useProjectStore.getState().switchTransaction((adopt) => resetTutorialNow(adopt, meta, inventory))
 }
 
 async function resetTutorialNow(
   adopt: AdoptProject,
   meta: TutorialMetadata | null,
+  inventory: string[],
 ): Promise<TutorialOutcome> {
   useTutorialStore.setState({ busy: 'reset', failure: null })
   // 先把手里这份教程画布从自动保存链路上摘下来，再让后端清槽位、换目录：重置窗口里
@@ -292,7 +316,7 @@ async function resetTutorialNow(
   if (suspended) suspendAutosaveFor(current)
   let res: TutorialOpenResult
   try {
-    res = await resetTutorialApi({ default: true })
+    res = await resetTutorialApi({ default: true, expected_layouts: inventory })
   } catch (e) {
     if (suspended) resumeAutosave()
     return fail(classify(e), e)
@@ -304,15 +328,25 @@ async function resetTutorialNow(
   return out
 }
 
-/** 教程项目里除教程画布之外、用户自己另存的画布文件名 */
-async function savedLayoutsInTutorial(meta: TutorialMetadata | null): Promise<string[]> {
-  if (!meta || !inTutorialProject(useOnboardingStore.getState().tutorialProjectId)) return []
-  try {
-    const names = await fetchLayoutNames()
-    return names.filter((n) => n !== meta.document_name)
-  } catch {
-    return []
-  }
+/**
+ * 重置会一并删掉的、用户在示例项目里另存的画布名（不含教程画布本身）。**一律重置前现取**后端对
+ * 示例副本的清点 `copy.layouts`：不读 `/api/layouts`——它是当前项目的列表，示例项目开着时还会
+ * 混进数据目录 `layouts/` 里与示例无关、重置也不删的画布；示例项目不开着时则是别的项目。
+ * 不用缓存的旧状态（用户可能刚另存过）。「不知道」一律抛，由调用方按失败路径返回。
+ */
+async function savedLayoutsInTutorial(
+  meta: TutorialMetadata | null,
+): Promise<{ extras: string[]; inventory: string[] }> {
+  // 元数据（教程画布名）取不到：分不清哪份是教程画布、哪份是另存的——「不知道」不是「没有」
+  if (!meta) throw new Error('tutorial metadata unavailable')
+  const status = await fetchTutorialStatus()
+  const copy = status.copy
+  if (copy && !copy.exists) return { extras: [], inventory: [] } // 副本不在：没有东西会被删
+  // 清点不全（null）或后端没给：不知道有没有另存排版——按失败处理，不弹「没有另存」的确认
+  if (!Array.isArray(copy?.layouts)) throw new Error('tutorial layout inventory unavailable')
+  // `inventory` 是后端原样的清单（后端已不含教程画布），随重置请求发回：后端持锁后重核，
+  // 确认之后别处又另存了一份就拒绝重置，不会静默删掉用户没看到的排版
+  return { extras: copy.layouts.filter((n) => n !== meta.document_name), inventory: copy.layouts }
 }
 
 /** 事务里用的认领：直接执行、不再排切换队列（见 `projectStore.switchTransaction`） */
@@ -320,9 +354,8 @@ type AdoptProject = ProjectState['adoptOpenedProject']
 
 async function landTutorial(
   res: TutorialOpenResult,
-  how: 'start' | 'reset' | 'open',
+  how: 'reset' | 'open',
   adopt: AdoptProject,
-  source?: TutorialEntrySource,
 ): Promise<TutorialOutcome> {
   const meta = res.tutorial
   const projectId = res.project.id ?? null
@@ -332,7 +365,7 @@ async function landTutorial(
   let docOk = true
   if (alreadyHere) {
     // 同一个项目绝不再走一遍认领（那会把用户正在排的版换成空白文档——与
-    // `lib/openRequest` 同一条纪律）；只在文档不是教程画布时换过去
+    // `lib/openRequest` 同一条纪律）；只在文档不是示例画布时换过去
     if (useDocumentStore.getState().documentId !== meta.document_id || how === 'reset') {
       docOk = await loadTutorialDocument(meta)
     }
@@ -350,37 +383,9 @@ async function landTutorial(
     }
   }
   if (!docOk) return fail('document_failed')
-
-  if (how === 'open') {
-    // 不带引导：onboarding 一个字段都不碰，也不记 tutorial_started（这不是开始教程）
-    useTutorialStore.setState({ busy: null, failure: null })
-    useUiStore.getState().setStatus(msg('onboarding.landed.opened', undefined, 'dialogs'), 'done')
-    return { ok: true, kind: 'opened' }
-  }
-
-  const ob = useOnboardingStore.getState()
-  const sameRun =
-    ob.tutorialProjectId === projectId && ob.tutorialDocumentId === meta.document_id
-  let kind: 'started' | 'resumed' | 'restarted'
-  if (how === 'reset') {
-    ob.start({ projectId, documentId: meta.document_id })
-    kind = 'restarted'
-  } else if (sameRun && ob.status === 'paused') {
-    ob.resume()
-    kind = 'resumed'
-  } else if (sameRun && ob.status === 'active') {
-    kind = 'resumed'
-  } else {
-    ob.start({ projectId, documentId: meta.document_id })
-    kind = 'started'
-  }
   useTutorialStore.setState({ busy: null, failure: null })
+  const kind = how === 'reset' ? 'restarted' : 'opened'
   useUiStore.getState().setStatus(msg(`onboarding.landed.${kind}`, undefined, 'dialogs'), 'done')
-  // 遥测只记**真的开始了**的那一次（含重新开始）；继续不是开始。入口不传
-  // source（重置那条路、测试）就不记——来源说不出来就别编一个。
-  if (kind !== 'resumed' && source) {
-    captureTelemetry('tutorial_started', { source, tutorial_version: ONBOARDING_FLOW_VERSION })
-  }
   return { ok: true, kind }
 }
 
@@ -391,8 +396,8 @@ export type TutorialEntryKind = 'start' | 'resume' | 'restart'
 /**
  * 入口该说什么。**纯读**：
  *   * 进行中 / 暂停 → 「继续教程」；
- *   * 已完成 / 已跳过 → 「再看一遍教程」（走 start：副本保留进度、onboarding 从头；
- *     与「重置教程项目」是两件事，后者才换副本）；
+ *   * 已完成 / 已跳过 → 「再看一遍教程」（三步从头；与「重置示例项目」是两件事，后者换的是
+ *     磁盘上的示例项目副本）；
  *   * 没开始过 → 「开始教程」。
  */
 export function tutorialEntry(
@@ -404,18 +409,83 @@ export function tutorialEntry(
   return 'start'
 }
 
-/** 入口点下去：三种都走 `startTutorial()`——「重新开始」的语义是 onboarding 从头，副本不换 */
-export async function runTutorialEntry(source: TutorialEntrySource): Promise<TutorialOutcome> {
-  const out = await startTutorial(source)
+/**
+ * 入口点下去：打开三步原生教程。进行中 / 暂停的接着上次那一步，已完成 / 已跳过 / 没开始的
+ * 从头开始（「再看一遍」就是从头，演示改动清空）。**不打开项目、不发请求**。
+ *
+ * 遥测只记**真的开始了**的那一次；继续不是开始。
+ */
+export function runTutorialEntry(source: TutorialEntrySource): 'started' | 'resumed' {
+  const kind = useOnboardingStore.getState().openTutorial()
+  if (kind === 'started') {
+    captureTelemetry('tutorial_started', { source, tutorial_version: ONBOARDING_FLOW_VERSION })
+  }
+  return kind
+}
+
+/**
+ * 教程里一步的任务**真的做到了**（拖放成功落进投放区 / 图例真的挪开了 / 字号真的变大了）——
+ * 由教程界面在那次交互成功的那一刻调，不由「下一步」按钮调。同一步只记一次遥测：
+ * 返回上一步再做一遍不是又完成了一步。
+ */
+export function markDemoStep(id: Exclude<StepId, 'done'>): void {
+  const ob = useOnboardingStore.getState()
+  if (ob.status !== 'active' || ob.completedSteps.includes(id)) return
+  ob.markStep(id)
+  captureTelemetry('tutorial_step_completed', { step_id: id, tutorial_version: ONBOARDING_FLOW_VERSION })
+}
+
+/** 完成页「开始使用 Tavotto」：记完成、收起教程层，落回此刻底下的主页 / 工作台 */
+export function finishTutorial(): void {
+  const ob = useOnboardingStore.getState()
+  if (ob.status !== 'active' || ob.currentStep !== 'done') return
+  ob.markStep('done')
+  captureTelemetry('tutorial_step_completed', { step_id: 'done', tutorial_version: ONBOARDING_FLOW_VERSION })
+  ob.complete()
+  captureTelemetry('tutorial_completed', { tutorial_version: ONBOARDING_FLOW_VERSION })
+}
+
+/** 顶栏「跳过教程」：跳过不是完成（不记遥测），教程层收起 */
+export function skipTutorial(): void {
+  useOnboardingStore.getState().skip()
+}
+
+/** 完成页「重新体验」：从第一步重来，演示改动清空；是一次新的开始，记 `tutorial_started`（来源 `replay`） */
+export function restartTutorial(): void {
+  useOnboardingStore.getState().start()
+  captureTelemetry('tutorial_started', { source: 'replay', tutorial_version: ONBOARDING_FLOW_VERSION })
+}
+
+/**
+ * 欢迎页「直接进入工作台」：没开始过的只是收起欢迎页（状态不动，入口还在）；从第一步退回
+ * 欢迎页、再选进工作台的，是明确不走这一轮了——记成跳过，下次启动不再自己弹出来。
+ */
+export function leaveFromWelcome(): void {
+  const ob = useOnboardingStore.getState()
+  if (ob.status === 'active' || ob.status === 'paused') ob.skip()
+  else ob.closeSurface()
+}
+
+/** 主页老手版「使用示例脚本试试看」：打开示例项目，不带引导、不改 onboarding 状态 */
+export async function openSampleProject(): Promise<TutorialOutcome> {
+  const out = await openSample()
   if (!out.ok) useUiStore.getState().setStatus(out.message, 'error')
   return out
 }
 
-/** 主页老手版「使用示例脚本试试看」：打开示例项目，不带引导、不改 onboarding 状态 */
-export async function openSampleProject(source: TutorialEntrySource): Promise<TutorialOutcome> {
-  const out = await startTutorial(source, { guide: false })
-  if (!out.ok) useUiStore.getState().setStatus(out.message, 'error')
-  return out
+/**
+ * 示例项目的副本在不在（「重置示例项目」只在有东西可重置时出现）：后端探测说有，或者它在
+ * 最近列表里 / 此刻就开着。三步教程不碰它（ADR 0136）。
+ */
+export function hasSampleProject(
+  tutorial: Pick<TutorialState, 'status'> = useTutorialStore.getState(),
+  projects: Pick<ProjectState, 'recent' | 'project'> = useProjectStore.getState(),
+): boolean {
+  return (
+    tutorial.status?.copy?.exists === true ||
+    projects.project?.tutorial === true ||
+    projects.recent.some((r) => r.tutorial === true)
+  )
 }
 
 export type HomeVariant = 'newcomer' | 'returning'
@@ -426,7 +496,7 @@ export type HomeVariant = 'newcomer' | 'returning'
  *   * 没开始 / 进行中 / 中途暂停 → 新手版（暂停的人主按钮是「继续」，见 `tutorialEntry`）。
  *
  * 状态只在 `store/onboardingStore`（`tavotto.onboarding` 那一格）：清掉本机数据 = 回到
- * 没开始 = 新手版；「重置教程项目」会把状态改回进行中 = 新手版。各窗口各读各的那份
+ * 没开始 = 新手版。各窗口各读各的那份
  * store（启动时从 localStorage 读），另一个窗口里刚走完教程，这个窗口下次启动才换版。
  */
 export function homeVariant(

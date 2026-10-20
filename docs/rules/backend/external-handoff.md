@@ -101,6 +101,10 @@
   `handoff-status-<端口>.json`，只对该端点有效，ADR 0008 修订）。**CLI 不往磁盘写任何东西**。
   到点没结论 = `unverified/timeout`，没连上实例 = `unverified/channel_unavailable`，绝不记 failed；`verified` 的判据只在 `handoffreceipt.summarize` 一处，插件只搬运。看护
   `tests/test_handoff_render_receipt.py`。
+  **重复交接已显示的图（#1154）**：前端命中已显示面板只选中不渲染，会让 CLI 白等满预算；所以 `applyOpenRequest` 在那条路径上
+  经**会话认证**的 `POST /api/handoff/display-ack` 回当前渲染状态（`ok`/`failed`/`displayed`），后端按当前时间、同形状记进同一张 `LEDGER`
+  （`registry_match` 后端自己查，`verified` 仍只走 `summarize`）；`displayed` = `unverified/already_displayed`。scoped token 不能写这个入口；
+  老前端不发 = 等到超时。
 
 ## 速查表原要点（2026-09-25 迁入，#608）
 

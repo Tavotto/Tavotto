@@ -98,6 +98,11 @@ export interface ProjectState {
   /** 收藏的项目，按用户排的顺序（左栏「工作区」抽屉）；与最近列表互相独立 */
   pinned: RecentProject[]
   /**
+   * 最近 / 收藏列表至少成功取到过一次。后端暂时不可达时 `recent` / `pinned` 也是空数组——
+   * 「空」只有在这一项为 true 时才说明用户真的没有项目（新手教程据此判断第一次打开）
+   */
+  listsLoaded: boolean
+  /**
    * 正在切项目（`open` / `adoptOpenedProject` 在跑）。切换是串行的，界面据此把所有
    * 「打开项目」的入口置灰——并发的两次换代会让 A 的请求落进 B（Codex #550 P1）。
    */
@@ -490,6 +495,7 @@ export const useProjectStore = create<ProjectState>((set, get) => {
   project: null,
   recent: [],
   pinned: [],
+  listsLoaded: false,
   switching: false,
   opened: [],
   lastDocumentIssue: null,
@@ -535,7 +541,7 @@ export const useProjectStore = create<ProjectState>((set, get) => {
       set({
         project,
         phase: project.open ? 'open' : 'none',
-        ...(fresh ? { recent, opened } : {}),
+        ...(fresh ? { recent, opened, listsLoaded: true } : {}),
         ...(fresh && rev === pinnedRev ? { pinned } : {}),
       })
       // 启动恢复：应用重启 / 刷新页面后项目还开着——后端按 pj 复用或重开一轮扫描（与认领同一个入口）
@@ -559,7 +565,7 @@ export const useProjectStore = create<ProjectState>((set, get) => {
         fetchOpenProjects().catch(() => []),
       ])
       if (seq !== listSeq || pj !== currentProjectId()) return
-      set({ recent, opened, ...(rev === pinnedRev ? { pinned } : {}) })
+      set({ recent, opened, listsLoaded: true, ...(rev === pinnedRev ? { pinned } : {}) })
     } catch {
       /* 列表刷新失败不致命 */
     }

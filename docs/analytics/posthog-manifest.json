@@ -886,7 +886,7 @@
       "logical_name": "c2_tutorial_steps_by_step_id",
       "group": "引导与回访",
       "title": "教程各步骤到达（当前版本）",
-      "description": "tutorial_step_completed 按 step_id 的唯一安装数，限定 tutorial_version = 2（对应当前流程）。跳过的步骤不发事件，所以相邻步骤数量不单调正常，缺口即跳步或流失，不能区分。",
+      "description": "tutorial_step_completed 按 step_id 的唯一安装数，限定 tutorial_version = 3（对应当前流程：三步原生教程，ADR 0136）。跳过的步骤不发事件，所以相邻步骤数量不单调正常，缺口即跳步或流失，不能区分。",
       "population": "opted_in_install",
       "kind": "TrendsQuery",
       "query": {
@@ -902,7 +902,7 @@
                 "key": "tutorial_version",
                 "operator": "exact",
                 "value": [
-                  2
+                  3
                 ],
                 "type": "event"
               }

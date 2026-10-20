@@ -163,6 +163,22 @@
   按 project 列过滤）；启动时 running→interrupted + purge(180d，pinned 豁免)；
   历史 API：list（分页/搜索/筛选）/delete/pin。前端默认只显示人类可读目标，
   脚本名收在「技术详情」。
+- **TAF 任务（ADR 0138，`engine/ai_tasks.py`）**：一个任务就是一条会话——`sessions` 上追加的 `task_type` / `phase` /
+  `outcome` / `verification` / `envelope` / `budget_used` / `parent_task_id` 七列（`_ADDED_COLUMNS`，老行全 NULL = 不是任务），
+  幂等仍是 `ai_requests` 的原子预留、中断识别仍是 `mark_interrupted_running`；**不另建表、库、状态机或 Agent 名单**（执行者
+  只认 `AGENT_REGISTRY` 或 `deterministic`）。`outcome` 与 `status` 分开记，终态与结局经 `record_end(task_result=…)` **同一条
+  UPDATE** 落库；`record_task_phase` 只推进 `status='running'` 的行。验证四态只取 `rendercore.inspector.VERDICTS`，结局只由
+  `ai_tasks.derive_outcome` 推（unknown 永不算 completed，保持类 failed 是 failed 不是 partial）；提交前检查只要有一条不是
+  verified / not_applicable 就不提交，提交前最后再复查一次取消与期限。契约未知字段一律拒绝、验证渲染恒为 safe。
+  **Phase 1 的 Task Core 不写用户文件**（声明写入即 `contract_writes_unsupported`）：写已有脚本只经 AI 桥的会话，那是 Phase 3
+  的接入面（届时进程内仍只有 `SESSIONS` 一张会话表）。生产 `ADAPTERS` 只放取得资格的适配器。看护 `tests/test_ai_tasks.py`。
+- **Figure Verifier（`engine/figureverify.py`）与数据指纹**：判据只读 Tavotto worker 的 manifest（`editable` 当前值、`bbox`、
+  只读的 `data_fingerprint`），断言闭集与 FigureBench 同名（`figureverify.KINDS` == 基准的 `ASSERTION_KINDS`，用例钉住）；
+  manifest 说不出的事实列在 `NOT_OBSERVABLE`、判 unknown，对象改前在改后没了是 failed、改前就不在是 unknown。
+  `manifest.data_fingerprint` 只给数据类元素（线 / 3D 线、集合、柱组「底 + 高」、误差棒「点 + 误差线」、图像、stem），
+  规则 `canonical_digest`（形状 + 小端 float64、掩码 = NaN）与基准探针 / 标准库镜像逐字同一份；每张图 `FINGERPRINT_BUDGET`
+  个数值，超出的元素记 `over_budget`（不截断、不扣配额）。指纹不进 `editable`、不参与 gid / identity（ADR 0083）、不进文档。
+  L3 新版式问题只复用 `interference.detect` + `preflight.run`，只算改后新出现的。看护 `tests/test_figure_verifier.py`。
 
 ## 速查表原要点（2026-09-25 迁入，#608）
 

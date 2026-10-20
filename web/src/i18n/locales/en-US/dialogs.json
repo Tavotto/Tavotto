@@ -396,8 +396,8 @@
         "keywords": "tutorial onboarding resume continue"
       },
       "tutorial-reset": {
-        "label": "Reset tutorial project",
-        "keywords": "tutorial onboarding reset restart"
+        "label": "Reset sample project",
+        "keywords": "tutorial sample project reset restart"
       },
       "refresh-project": {
         "label": "Refresh project",
@@ -910,6 +910,7 @@
         "policy": "Privacy policy",
         "sends": {
           "ai_assistant_invoked": "Invoking the assistant: whether it ran Codex, Claude or something else.",
+          "mcp_tool_call": "An AI agent calling a Tavotto tool: which tool, whether it succeeded, a broad error category, a duration bucket and whether the host was Codex, Claude or something else. Never the tool's arguments or results (paths, script names, figure text).",
           "app_started": "App start: desktop or browser build.",
           "canvas_created": "A new canvas: blank, from the project, or a copy.",
           "context_bar_multi_used": "The multi-selection bar: which button, and the size bucket of the selection.",
@@ -926,7 +927,7 @@
           "telemetry_enabled": "Turning statistics on for the first time: from the first-run prompt or from settings.",
           "tutorial_completed": "Finishing the tutorial: the flow version.",
           "tutorial_started": "The tutorial starting: which entry point, and the flow version.",
-          "tutorial_step_completed": "One finished tutorial step: which of the ten steps, and the flow version.",
+          "tutorial_step_completed": "One finished tutorial step: which of the four steps (three demo steps and the finish page), and the flow version.",
           "update_completed": "A finished update: the channel (desktop, pip, pipx) and the version."
         },
         "sendsAfter": " so we can tell whether you came back later. It isn’t tied to any account, and carries no hardware serial, MAC address or other identifier.",
@@ -1589,7 +1590,7 @@
       "start": "Start tutorial",
       "resume": "Resume tutorial",
       "restart": "Take the tutorial again",
-      "reset": "Reset the tutorial project",
+      "reset": "Reset the sample project",
       "hints": "Action hints",
       "resetHints": "Show action hints again",
       "more": "More tutorial actions"
@@ -1711,7 +1712,7 @@
     "decline": "Not now",
     "intro": "Send anonymous usage statistics to show which features get used. Off by default; not tied to an account.",
     "later": "You can change this any time in Settings.",
-    "reconsentDelta": "Two things were added since you last agreed: how an export ended (including failed or cancelled), and a content-free error summary attached when you choose to send a problem report.",
+    "reconsentDelta": "Three things were added since you last agreed: how an export ended (including failed or cancelled); which Tavotto tool an AI agent called and whether it succeeded (never its arguments or content); and a content-free error summary attached when you choose to send a problem report.",
     "neverData": "Scientific data and text inside figures",
     "neverFigures": "Your figures and project files",
     "neverPaths": "Filenames and paths",
@@ -1857,119 +1858,122 @@
     "quickNameTitle": "Save this moment as a named point"
   },
   "onboarding": {
-    "pause": "Pause tutorial",
-    "back": "Back",
-    "skipStep": "Skip this step",
-    "explore": "Keep exploring",
-    "openOwnProject": "Open my own project",
-    "resolvedContinue": "Already fixed, continue",
-    "targetWaiting": "Waiting for the target to appear…",
-    "targetMissing": "The target for this step is not on screen.",
-    "precondition": {
-      "editPanelMissing": "{{name}}, the figure this tutorial edits, is not on this canvas. Open it first.",
-      "notInElementEdit": "This step happens inside the figure editor of {{name}}. Open it first.",
-      "noTextSelected": "Select text in the figure first — the title or an axis label.",
-      "editPanelNotRendered": "{{name}} has not been rendered yet, so the Problems panel has no results for it. Open it once first.",
-      "otherPanelMissing": "Only one tutorial figure is on the canvas; aligning needs at least two. Add {{name}} first.",
-      "notInLayout": "Multi-select happens in the canvas layout. Go back to the canvas first."
-    },
-    "action": {
-      "openFigure": "Open {{name}}",
-      "selectText": "Select text",
-      "addToLayout": "Add {{name}}",
-      "returnToLayout": "Back to canvas"
-    },
-    "progress": "Step {{n}} of {{total}}",
     "hintsReset": "Contextual hints reset; each will show once more",
     "landed": {
-      "started": "Tutorial started",
-      "resumed": "Resuming where you left off",
-      "restarted": "Tutorial restarted",
+      "restarted": "Sample project reset",
       "opened": "Sample project opened"
     },
     "failure": {
-      "unavailable": "Tutorial resources are incomplete. Reinstall Tavotto.",
-      "open_failed": "Couldn’t open the tutorial project. Try again, or open your own project.",
-      "locked": "A file in the tutorial project is in use by another program. Close it and try again.",
-      "document_failed": "Couldn’t read the tutorial layout — incompatible version or missing file. Try “Reset tutorial project”.",
+      "unavailable": "The sample project resources are incomplete. Reinstall Tavotto.",
+      "open_failed": "The sample project couldn’t be opened. Try again, or open your own project.",
+      "locked": "A file in the sample project is in use by another program. Close it and try again.",
+      "layouts_changed": "The sample project has new saved layouts, so nothing was reset. Open Reset sample project again and re-confirm.",
+      "document_failed": "The sample layout couldn’t be read (incompatible version or missing file). Try “Reset sample project”.",
       "cancelled": "Cancelled.",
-      "no_api": "This environment does not provide the tutorial."
+      "no_api": "This environment doesn’t provide the sample project."
     },
     "reset": {
-      "title": "Reset the tutorial project?",
-      "body": "The tutorial project goes back to how it was installed. Your edits, written-back figures, and progress are cleared; other projects are untouched.",
-      "bodyWithLayouts": "The tutorial project goes back to how it was installed, and the layouts you saved in it are cleared too: {{names}}. Export them first to keep them; other projects are untouched.",
-      "confirm": "Reset and start over"
+      "title": "Reset the sample project?",
+      "body": "The sample project goes back to how it was installed. Your edits and written-back figures in it are cleared; other projects aren’t affected.",
+      "bodyWithLayouts": "The sample project goes back to how it was installed. Layouts you saved in it are cleared too: {{names}}. Export them first to keep them; other projects aren’t affected.",
+      "confirm": "Reset sample project"
     },
-    "steps": {
-      "open_fast_edit": {
-        "title": "Double-click this figure",
-        "body": "Double-click Fig2_correlation in the “Assets” drawer on the left to edit inside the figure. This is a tutorial copy: edit freely, your own projects are untouched.",
-        "canvas": {
-          "title": "Double-click this figure",
-          "body": "Double-click Fig2_correlation on the canvas to edit inside the figure. Its card in the “Assets” drawer works too. This is a tutorial copy: edit freely, your own projects are untouched."
-        }
+    "shell": {
+      "label": "{{product}} tutorial",
+      "progress": "Tutorial progress: step {{n}} of {{total}}",
+      "count": "{{n}} / {{total}}",
+      "skip": "Skip tutorial",
+      "back": "Back",
+      "next": "Next",
+      "finish": "Finish",
+      "externalFile": "This is the sample tutorial. You can import your own scripts when you’re done."
+    },
+    "welcome": {
+      "title": "Edit right on the figure",
+      "smile": ":)",
+      "subtitle": "Import a plotting script, then click and drag to adjust what’s in the figure.",
+      "featuresLabel": "Figure elements you can adjust directly",
+      "feature": {
+        "legend": "Legends",
+        "axes": "Axes",
+        "colorbar": "Colorbars",
+        "text": "Text",
+        "align": "Alignment",
+        "layout": "Layout",
+        "more": "More"
       },
-      "select_text": {
-        "title": "Select text",
-        "body": "Click the title or an axis label inside the figure to select it."
+      "demoLabel": "From a plotting script to a figure you can edit directly",
+      "codeLabel": "Excerpt of the sample script {{name}}",
+      "figureLabel": "The reaction-kinetics figure this script draws: its title, legend and layout can be adjusted directly",
+      "callout": {
+        "title": "Edit text",
+        "legend": "Adjust the legend",
+        "position": "Move things"
       },
-      "change_typography": {
-        "title": "Change the size or font",
-        "body": "In the properties on the right, change the font size or family, for example make it larger. Every change goes into undo history."
-      },
-      "locate_problem": {
-        "title": "Locate from “Problems”",
-        "body": "Open “Problems” on the left; it lists what breaks the spec in this figure.",
-        "row": {
-          "title": "Locate from “Problems”",
-          "body": "Click a problem; Tavotto selects the object and focuses the matching property field. If it sits inside a card, open the card first."
-        }
-      },
-      "export_original": {
-        "title": "Look at the original export",
-        "body": "Open “Export”, confirm the scope is “Original size”, then close the panel.",
-        "scope": {
-          "title": "Look at the original export",
-          "body": "“Original size” outputs the figure at its own size, unaffected by canvas scaling. Close the panel to continue."
-        }
-      },
-      "add_to_layout": {
-        "title": "Add to canvas",
-        "body": "Both figures are already on the canvas. Click “Add to canvas” to go back to the layout and see them.",
-        "missing": {
-          "title": "Add to canvas",
-          "body": "{{name}} isn’t on the canvas yet. Add it from the “Assets” drawer on the left; this step completes once both figures are on the layout."
-        }
-      },
-      "multi_select_align": {
-        "title": "Shift-select",
-        "body": "Hold Shift and click the second figure to select both.",
-        "bar": {
-          "title": "Align",
-          "body": "Pick an alignment in the floating bar next to the selection, for example align top."
-        }
-      },
-      "export_canvas": {
-        "title": "Look at the canvas export",
-        "body": "Open “Export” again, confirm the scope is “Canvas”, then close the panel.",
-        "scope": {
-          "title": "Look at the canvas export",
-          "body": "“Canvas” outputs the whole page using its size and layout. Close the panel to continue."
-        }
-      },
-      "done": {
-        "title": "Tutorial complete",
-        "body": "You’ve covered quick edit, locating problems, original and canvas export, and multi-select alignment. Reopen the tutorial any time from the “More” menu.",
-        "partial": {
-          "title": "Tutorial finished",
-          "body": "{{done}} of {{total}} steps done, {{skipped}} skipped. Reopen the tutorial from the “More” menu to revisit the skipped ones."
-        },
-        "allSkipped": {
-          "title": "Tutorial ended",
-          "body": "You skipped all {{total}} steps, so you haven’t tried quick edit, locating problems, export, or multi-select alignment yet. Reopen the tutorial from the “More” menu to walk through them."
-        }
-      }
+      "begin": "Start the tutorial",
+      "openWorkspace": "Go to the workspace"
+    },
+    "import": {
+      "task": "Step 1: drag the sample script in",
+      "cardLabel": "Drag {{name}} into the drop area",
+      "cardHint": "Built-in sample, no file needed",
+      "useSample": "Just use the sample",
+      "or": "or",
+      "keyboardHelp": "Press Space to pick up the card, arrow keys to move it, Enter to drop, Esc to cancel.",
+      "zoneLabel": "Script drop area",
+      "zoneTitle": "Drop the script here",
+      "zoneBody": "{{product}} opens the figure it draws",
+      "picked": "Picked up {{name}}. Use the arrow keys to move it over the drop area, then press Enter.",
+      "overZone": "Over the drop area. Press Enter to drop.",
+      "leftZone": "Left the drop area.",
+      "cancelled": "Cancelled. The card is back in place.",
+      "missed": "That missed the drop area, so the card went back. Try again.",
+      "builtin": "Built-in sample",
+      "figureLabel": "The reaction-kinetics figure drawn by {{name}}",
+      "success": "Sample figure loaded"
+    },
+    "legend": {
+      "task": "Drag the legend somewhere else",
+      "tip": "Drag here",
+      "legendLabel": "Legend: {{entries}}. Drag it, or press Space to pick it up",
+      "keyboardHelp": "Press Space to pick up the legend, arrow keys to move it (hold Shift for fine steps), Enter to drop, Esc to cancel.",
+      "picked": "Picked up the legend. Use the arrow keys to move it, then press Enter.",
+      "dropped": "Legend dropped.",
+      "cancelled": "Cancelled. The legend is back in place.",
+      "farther": "Try dragging it a little farther.",
+      "figureLabel": "Reaction-kinetics figure with a draggable legend",
+      "success": "Nice! Elements in the figure can be dragged directly."
+    },
+    "title": {
+      "task": "Click the title and make it a little bigger",
+      "taskSelected": "Make the font size bigger",
+      "tip": "Click the title",
+      "controlTip": "Press + or type a larger size",
+      "controlsLabel": "Title font size",
+      "sizeLabel": "Size",
+      "sizeAria": "Title font size ({{min}} to {{max}} pt)",
+      "decrease": "Decrease font size",
+      "increase": "Increase font size",
+      "titleLabel": "Figure title “{{text}}”, {{size}} pt. Click to select it and change the size",
+      "figureLabel": "Reaction-kinetics figure with a selectable title",
+      "success": "Great! You changed the text without touching the code."
+    },
+    "finish": {
+      "title": "{{product}}: edit right on the figure",
+      "compareLabel": "Before and after",
+      "before": "Before",
+      "after": "Your edits",
+      "beforeAlt": "Before: the figure exactly as the script draws it, legend at the lower right, title {{size}} pt",
+      "afterAlt": "Your edits: the same data with the legend moved and the title at {{size}} pt",
+      "afterAltUnmoved": "Your edits: the same data with the title at {{size}} pt",
+      "nextHint": "You’ve learned to edit a scientific figure directly. Now try your own Python plotting script.",
+      "demoNote": "Edits in the tutorial stay in this demo and aren’t written to any file.",
+      "start": "Start using {{product}}",
+      "replay": "Replay"
+    },
+    "figureFailed": {
+      "body": "The sample figure didn’t show up. Reload it, or skip the tutorial for now.",
+      "retry": "Reload the sample"
     }
   },
   "perfProbe": {

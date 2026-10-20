@@ -673,6 +673,18 @@ class NativeSession:
         return dict(rt) if isinstance(rt, dict) else None
 
     @property
+    def observed_inputs(self) -> dict | None:
+        """桌面拥有的运行在脚本**跑完之后**的 build 才带的输入观察（`figcapture.InputObserver.report()`，#1047）：观察到的
+        项目内数据文件与本地模块（项目相对路径 + sha256）。`show()` 屏障上的 build 没有它（脚本还没跑完）= None。
+        含项目相对路径：只给启动记录用，不进 `public_state()` / 事件 / 诊断。存储仍只有 `last_build` 一份。"""
+        ins = (
+            (self.last_build or {}).get("observed_inputs")
+            if isinstance(self.last_build, dict)
+            else None
+        )
+        return dict(ins) if isinstance(ins, dict) else None
+
+    @property
     def child_pid(self) -> int | None:
         """与 `pool.EngineWorker.child_pid` 同名同义（ADR 0070）：握手帧里用户进程自报的 pid——回执核
         「自报来自这一个进程」用；没握过手就是 None（那一维不核）。存储仍只有 `process_pid` 一份。"""

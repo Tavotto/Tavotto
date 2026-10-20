@@ -1,7 +1,10 @@
+import { useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 import { msg, setLocale, SUPPORTED_LOCALES, LOCALE_LABELS, t as translate } from '@/i18n'
 import { useLocale } from '@/i18n/react'
 import {
+  ensureTutorialStatus,
+  hasSampleProject,
   resetHints,
   resetTutorial,
   runTutorialEntry,
@@ -9,6 +12,7 @@ import {
   useTutorialStore,
 } from '@/lib/onboarding/tutorial'
 import { useOnboardingStore } from '@/store/onboardingStore'
+import { useProjectStore } from '@/store/projectStore'
 import { THEME_PREFS, type ThemePref } from '@/lib/theme'
 import { useUiStore } from '@/store/uiStore'
 import { Ellipsis, Lightbulb, RotateCcw } from '@/components/ui/icons'
@@ -214,8 +218,18 @@ function CanvasGroup({ close }: { close: () => void }) {
  */
 function Learning({ close }: { close: () => void }) {
   const status = useOnboardingStore((s) => s.status)
-  const hasTutorial = useOnboardingStore((s) => s.tutorialProjectId != null)
-  const busy = useTutorialStore((s) => s.busy)
+  // 副本可能在磁盘上却不在最近列表里：设置页打开才问一次
+  useEffect(() => {
+    ensureTutorialStatus()
+  }, [])
+  // 「重置示例项目」只在示例项目真的存在时出现（三步教程本身不建项目，ADR 0136）
+  const tutorialStatus = useTutorialStore((s) => s.status)
+  const recent = useProjectStore((s) => s.recent)
+  const project = useProjectStore((s) => s.project)
+  const hasTutorial = hasSampleProject({ status: tutorialStatus }, { recent, project })
+  // 只挡「重置示例项目」（示例项目的任何操作进行中，含元数据探测：重置要拿着元数据确认）。
+  // 教程入口不看它——三步教程不碰后端，不该被这次探测或示例项目的操作挡住
+  const sampleBusy = useTutorialStore((s) => s.busy != null)
   const entry = tutorialEntry(status)
   return (
     <FormSection title={st('general.groupLearning')}>
@@ -224,10 +238,9 @@ function Learning({ close }: { close: () => void }) {
           <Button
             variant="secondary"
             size="sm"
-            disabled={busy != null}
             data-onboarding-anchor="settings-tutorial"
             onClick={() => {
-              // 先关设置：coachmark 要挂的目标都在工作台上，不在这个对话框里
+              // 先关设置：教程层盖在工作台上，设置对话框不该叠在它上面
               close()
               void runTutorialEntry('settings')
             }}
@@ -246,7 +259,7 @@ function Learning({ close }: { close: () => void }) {
             {hasTutorial && (
               <MenuItem
                 icon={RotateCcw}
-                disabled={busy != null}
+                disabled={sampleBusy}
                 onSelect={() => {
                   close()
                   void resetTutorial()

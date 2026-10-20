@@ -56,6 +56,7 @@ def run_runner(
     out_dir=None,
     env=None,
     timeout=300,
+    bridge_args=(),
 ):
     """直接 spawn bridge_runner（**不建控制通道**），返回 CompletedProcess。
 
@@ -67,6 +68,7 @@ def run_runner(
         cmd += ["--out-dir", str(out_dir)]
     if report:
         cmd += ["--report", str(report)]
+    cmd += [str(a) for a in bridge_args]
     cmd.append("--")
     cmd += [str(a) for a in argv]
     return subprocess.run(

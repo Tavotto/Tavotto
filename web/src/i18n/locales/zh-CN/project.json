@@ -84,7 +84,7 @@
       "restart": "再看一遍教程"
     },
     "tutorialBadge": "教程项目",
-    "tutorialHint": "离线示例项目，可随意修改、随时重来，不会影响你的项目。",
+    "tutorialHint": "三步体验直接在图上改：内置示例，不用准备脚本，也不会动你的项目。",
     "tutorialLabel": "新手教程",
     "tutorialOpening": "准备中…",
     "tutorialUnavailable": "教程资源不完整。请重新安装 Tavotto。"

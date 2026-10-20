@@ -163,6 +163,20 @@ def test_pdf_png_a_b_a_admits_once_and_preserves_legacy(api):
     assert "artifact_source" not in api.resolutions[-1]
 
 
+def test_legacy_png_render_without_policy_is_flagged_unverified(api):
+    """#1145：缺 source_policy 的 PNG 渲染照常走 legacy（不拒绝），但响应机器可读地标出「未核对」。"""
+    response = api.client.post("/api/engine/render", json={"id": "plot.png", "patches": []})
+    body = response.get_json()
+    assert response.status_code == 200, body
+    assert body["source_unverified"] == {"reason": "source_policy_missing", "kind": "png"}
+    assert "artifact_source" not in body and "artifact_source" not in api.resolutions[-1]
+    # 带 policy 的受守渲染不带这个标记；PDF 与其它 legacy 响应形状一字不变
+    guarded = render(api, "plot.png", expected_source=basis(api, "plot.png")).get_json()
+    assert "source_unverified" not in guarded and "artifact_source" in guarded
+    legacy_pdf = api.client.post("/api/engine/render", json={"id": "plot.pdf", "patches": []})
+    assert legacy_pdf.status_code == 200 and "source_unverified" not in legacy_pdf.get_json()
+
+
 @pytest.mark.parametrize("route", ["render", "preview_png"])
 def test_nonempty_selected_edits_require_exact_baseline(api, route):
     body = {"id": "plot.pdf", "source_policy": POLICY, "patches": PATCHES, "with_manifest": True}

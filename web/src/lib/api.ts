@@ -662,7 +662,17 @@ export interface TutorialStatus {
   problems: string[]
   tutorial_version?: number
   metadata?: TutorialMetadata
-  copy?: { exists: boolean; complete: boolean; missing: string[]; registry_ok: boolean }
+  copy?: {
+    exists: boolean
+    complete: boolean
+    missing: string[]
+    registry_ok: boolean
+    /**
+     * 副本里用户另存的画布名（不含教程画布本身）；重置会一并删掉。`null` = 清点不全（遍历 / stat 出错），
+     * 老后端没有这个字段——两者都是「不知道」，不是「没有」
+     */
+    layouts?: string[] | null
+  }
   project?: { open: boolean; id: string | null }
 }
 
@@ -686,8 +696,10 @@ export const openTutorialApi = (opts: { default?: boolean } = {}) =>
     body: JSON.stringify(opts),
   })
 
-/** 「重新开始教程」：原子换成干净副本，只清教程自己的自动保存与写回基线。锁住时 409 `tutorial_locked`。 */
-export const resetTutorialApi = (opts: { default?: boolean } = {}) =>
+/** 「重新开始教程」：原子换成干净副本，只清教程自己的自动保存与写回基线。锁住时 409 `tutorial_locked`。
+ * `expected_layouts` = 确认框里列给用户看的另存排版清单（后端原样的 `copy.layouts`）；后端持锁后重核，
+ * 确认之后又变了就 409 `tutorial_layouts_changed`、什么都不动。 */
+export const resetTutorialApi = (opts: { default?: boolean; expected_layouts?: string[] } = {}) =>
   jsonFetch<TutorialOpenResult>('/api/tutorial/reset', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -2439,6 +2451,8 @@ export interface Manifest {
 
 export interface EngineRenderResponse {
   artifact_source?: unknown
+  /** 无 source_policy 的 PNG 渲染：产物未与已存字节核对（#1145，只标记不拒绝） */
+  source_unverified?: { reason: string; kind: string }
   rev: number
   manifest: Manifest
   warnings?: string[]
@@ -2576,6 +2590,29 @@ export interface EngineRenderOptions extends ArtifactRequestFields {
    * 四分之三传输；纯矢量图上一分钱都不值（docs/perf-baseline.md）。
    */
   previewDpi?: number
+}
+
+/**
+ * 重复交接命中已显示面板时回给后端的「当前渲染状态」（ADR 0131 第六节修订 2026-10-18）。
+ * 形状与 `handoffreceipt.parse_ack` 同源：`ok` 带 manifest 元素数、`failed` 带稳定 code、
+ * `displayed` = 显示着但拿不出这一版的精确渲染。走会话 cookie，不新造凭据。
+ */
+export type HandoffDisplayAck =
+  | { id: string; status: 'ok'; manifest_elements: number }
+  | { id: string; status: 'failed'; code: string }
+  | { id: string; status: 'displayed' }
+
+/** 旁路：失败（老后端 404 / 网络）一律吞掉——CLI 那头回落到等超时，与没有这条确认时一样。 */
+export async function postHandoffDisplayAck(ack: HandoffDisplayAck): Promise<void> {
+  try {
+    await fetch(apiUrl('/api/handoff/display-ack'), withProject({
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(ack),
+    }))
+  } catch {
+    /* 旁路 */
+  }
 }
 
 export async function engineRender(

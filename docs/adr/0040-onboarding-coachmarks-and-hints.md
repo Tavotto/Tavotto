@@ -199,3 +199,11 @@ resetHints()
   `engine/telemetry.py`、`services/telemetry_proxy` 契约）同步去掉 `welcome`——**代理契约除外**：代理独立部署、要服务已发布的旧客户端（0.17.0 等，它们仍发 `step_id=welcome`），
   所以 `contract.py` 保留 `welcome` 作只收不发的旧值，登记在 `LEGACY_ENUM_VALUES`；跨侧对拍测试认「代理 = 客户端 ∪ 该清单」，
   清单写死在测试里，多出清单以外的值仍红。
+
+## 修订（2026-10-19）：coachmark 教程由三步原生教程取代
+
+八步工作台 coachmark 教程（本 ADR「决定」里的步骤表、coachmark 层、教程引擎、前置校验）由
+[ADR 0136](0136-native-three-step-onboarding.md) 的三步原生教程取代并删除：它的每一步都要执行 Python，
+不符合「新手教程不依赖用户环境」的 P0。本 ADR 里**仍然有效**的部分：本地 Activity Bus（闭集、一个 action
+一个发射点、不是遥测）、`onboardingStore` 作为唯一状态源与它的迁移纪律、一次性情境提示、
+主页两版按 onboarding 状态分（`homeVariant`）。

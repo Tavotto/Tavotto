@@ -134,7 +134,7 @@ CLI、唤起却静默退回浏览器模式——用户明明装了桌面版却�
 | --- | --- | --- |
 | `ok` | 界面对目标 stem 的那次渲染成功了 | `verified`、`stem`、`registry_match`、`manifest_elements` |
 | `failed` | 实例**明确报了渲染失败** | `code`：worker 的稳定码（`engine_files_incomplete`、`missing_dependency`…；不合规的串落成 `render_failed`） |
-| `unverified` | 没法下结论——**不是失败** | `reason`：`not_waited` / `timeout` / `channel_unavailable` / `no_target_stem` / `not_renderable` |
+| `unverified` | 没法下结论——**不是失败** | `reason`：`not_waited` / `timeout` / `channel_unavailable` / `no_target_stem` / `not_renderable` / `already_displayed` |
 
 `verified` 为 true 当且仅当：渲染成功 ∧ 结论里的 stem == 目标 stem ∧ 注册表里确有这个 stem ∧ manifest 非空
 （判据唯一在 `engine/handoffreceipt.py::summarize`，调用方不要自己再判一遍）。`waited_ms` 是实际等了多久。
@@ -147,6 +147,12 @@ sidecar 发布的**只读、只对这一个端点有效**的 token（`<数据目
 见 ADR 0131 第六节「实现」与 ADR 0008 修订）。找不到任何凭据 / 连不上实例 / 被拒落成 `unverified/channel_unavailable`；
 连上了但到点没有结论（实例在跑但没有给出结论）落成 `unverified/timeout`；
 目录级 / 多 Figure 交接没有目标 stem，落成 `unverified/no_target_stem`；登记结果已是不可参数化（`registry.parameterizable === false`，界面不会为它发起引擎渲染）时**不等待**，直接 `unverified/not_renderable`。
+
+**重复交接已显示着的同一张图（2026-10-18，#1154）**：前端只选中、不再渲染，所以结论表里没有 `since` 之后的新结论，
+CLI 过去会白等满 `--render-wait`（默认 20 秒）再报 `unverified/timeout`。现在前端命中已显示的面板时会经**会话认证**的
+`POST /api/handoff/display-ack` 回一条确认：上一次渲染成功就按当前时间记一条同形状的 `ok`（`verified` 仍只由 `summarize` 判）；
+失败记 `failed` + 稳定码；显示着的内容不是这一版的精确渲染（过期等）则记 `unverified/already_displayed`——实例明确应答了、
+但没有可凭的渲染结论，**不是失败，也不是 verified**。老前端不发确认时与从前一样等到超时。这个写入口 scoped 只读 token **不能**用。
 
 ### `tavotto open --json` 失败时
 

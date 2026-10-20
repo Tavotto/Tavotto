@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import math
 import os
 import runpy
 import sys
@@ -52,23 +51,18 @@ Figure.savefig = _spy_savefig
 
 
 def digest(values) -> dict:
-    """数值数组的规范化摘要：形状 + 逐值 repr（NaN / ±Inf / 掩码值各有固定写法）。
+    """数值数组的规范化摘要：形状 + 小端 float64 字节（NaN / 掩码值统一成同一个 NaN 位型）的 sha256。
 
-    与 `tests/test_figurebench_fixtures.py::_digest` 逐字同一规则——那边用标准库从
-    truth.json 的数字算，这边从 artist 里读出来的数组算，两边相等才说明脚本画的就是真值。"""
-    arr = np.ma.asarray(values, dtype=float)
-    filled = np.ma.filled(arr, np.nan)
-    parts = []
-    for v in filled.ravel().tolist():
-        if math.isnan(v):
-            parts.append("nan")
-        elif math.isinf(v):
-            parts.append("inf" if v > 0 else "-inf")
-        else:
-            parts.append(repr(float(v)))
-    shape = "x".join(str(n) for n in filled.shape)
-    text = shape + ":" + ",".join(parts)
-    return {"sha256": hashlib.sha256(text.encode()).hexdigest(), "shape": list(filled.shape)}
+    与产品侧 `engine/manifest.py::canonical_digest`、`tests/test_figurebench_fixtures.py::_digest` 逐字同一规则——
+    后者用标准库从 truth.json 的数字算，这边从原生 matplotlib 的 artist 读出来算，产品侧从 Tavotto worker 的 manifest
+    算；三者相等才说明画的就是真值、量的也是同一个东西。"""
+    arr = np.ma.filled(np.ma.asarray(values, dtype=float), np.nan).astype("<f8", copy=True)
+    arr[np.isnan(arr)] = np.nan
+    head = ("x".join(str(n) for n in arr.shape) + ":").encode()
+    return {
+        "sha256": hashlib.sha256(head + arr.tobytes(order="C")).hexdigest(),
+        "shape": list(arr.shape),
+    }
 
 
 def _bbox(artist, fig, renderer) -> list[float]:
