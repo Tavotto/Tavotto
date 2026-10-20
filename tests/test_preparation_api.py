@@ -1197,17 +1197,20 @@ def test_a_plan_leaning_on_a_parked_show_barrier_is_stale_once_the_hold_is_gone(
         entry="__main__",
         original_artifact="fig.pdf",
     )
-    assert plan.barrier_hold == "" and "barrier_hold" not in json.dumps(plan.to_payload())
-    held = dataclasses.replace(plan, barrier_hold="launch-1")
+    assert plan.barrier_hold == "" and plan.barrier_hold_epoch is None
+    assert "barrier_hold" not in json.dumps(plan.to_payload())
+    held = dataclasses.replace(plan, barrier_hold="launch-1", barrier_hold_epoch=3)
     asked = []
-    holding = {"v": True}
+    current = {"v": 3}
     monkeypatch.setattr(
         nativesession.REGISTRY,
-        "holds_barrier_observation",
-        lambda lid: asked.append(lid) or holding["v"],
+        "barrier_hold_epoch",
+        lambda lid: asked.append(lid) or current["v"],
     )
     assert preparation.stale_reason(plan) is None and asked == []
     assert preparation.stale_reason(held) is None and asked == ["launch-1"]
-    holding["v"] = False
+    current["v"] = 4  # 放行过：代数前进
+    assert preparation.stale_reason(held) == (preparation.STALE_DATA_BINDING, {})
+    current["v"] = None  # 不再停着
     assert preparation.stale_reason(held) == (preparation.STALE_DATA_BINDING, {})
     assert preparation.stale_reason(plan) is None

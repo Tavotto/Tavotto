@@ -140,10 +140,19 @@ _STALE_MESSAGES = {
 class _StaleBeforeRetry(Exception):
     """`before_retry` 发现计划在两次执行之间过期了（理由是 `STALE_REASONS` 之一）。"""
 
-    def __init__(self, reason: str, detail: dict | None = None) -> None:
+    def __init__(self, reason: str, detail: dict | None = None, *, executed: bool = True) -> None:
         super().__init__(reason)
         self.reason = reason
         self.detail = detail or {}
+        #: 过期时用户代码有没有跑过：缺包重试之间过期 = 第一次已跑；runner 起会话前接管失败 = 一行没跑
+        self.executed = executed
+
+
+class StaleBeforeRun(_StaleBeforeRetry):
+    """runner 在起会话之前发现计划过期（例如沿用的屏障观察被放行了，接管没成）：**一行用户代码都没跑**。"""
+
+    def __init__(self, reason: str, detail: dict | None = None) -> None:
+        super().__init__(reason, detail, executed=False)
 
 
 #: 作业保留多久（秒）——与导出作业同一口径：界面拿 plan_id 补拉要在窗口内。
@@ -231,6 +240,9 @@ class PreparationPlan:
     #: 路由因「上一次成功」沿用 native、而那条记录的依据只到 show 屏障为止时，计划依赖的那次运行的计划号（私有，不进
     #: `to_payload()` / 事件 / 诊断）。认领与起跑前 `_stale_reason` 再核它仍停着、从没放行过；"" = 不依赖（#1047）
     barrier_hold: str = ""
+    #: 路由沿用那一刻 `barrier_hold` 那次运行的放行代数（私有，同上）。`_stale_reason` 核「仍停着且代数没变」，runner 起会话前拿它做
+    #: 原子接管（`NativeSession.seize_for_takeover`）：核对与接管在同一把锁里，中间插不进放行（#1202）
+    barrier_hold_epoch: int | None = None
 
     def to_payload(self) -> dict:
         return {
@@ -268,19 +280,19 @@ class PreparationPlan:
 
 def _last_success_profile(
     root: str, script: str, *, python: str, source: str, run=None
-) -> tuple[str | None, str]:
+) -> tuple[str | None, str, int | None]:
     """这个脚本上一次成功用的执行语义（`launchctx` 记录），记录此刻仍成立才算；否则 None。
-    第二项是沿用所依赖的那次仍停在 show 屏障上的运行（计划号），不依赖任何运行时为 ""。
+    第二、三项是沿用所依赖的那次仍停在 show 屏障上的运行（计划号）与它此刻的放行代数，不依赖任何运行时为 ""、None。
 
     成立 = 解释器 / 环境 / 脚本字节 / 运行目录档都没变，**且记录的运行配置就是本次请求的运行配置**（argv 的不透明引用相同）。"""
     if not python:
-        return None, ""
+        return None, "", None
     try:
         record = runconfig.launch_record(root, script)
     except runconfig.RunConfigError:
-        return None, ""
+        return None, "", None
     if record is None:
-        return None, ""
+        return None, "", None
     facets = (
         launchctx.FACET_INTERPRETER,
         launchctx.FACET_ENVIRONMENT,
@@ -291,39 +303,39 @@ def _last_success_profile(
         record, project_root=root, script=script, python=python, python_source=source, facets=facets
     )
     if reason is not None:
-        return None, ""
+        return None, "", None
     # 记录是对**某个运行配置**的成功：本次请求的运行配置不同（或记录有而请求没有），沿用的就是别人的结论
     if record.get("run_config") != (run.config_id if run is not None else None):
-        return None, ""
+        return None, "", None
     profile = launchctx.profile_of(record)
-    hold = ""
+    hold, epoch = "", None
     if (
         profile == execspec.PROFILE_NATIVE
         and (record.get("source") or {}).get("basis_observed") is False
     ):
         hold = launchctx.barrier_basis_launch(record)
-    if (
-        profile == execspec.PROFILE_NATIVE
-        and (record.get("source") or {}).get("basis_observed") is False
         # 停在 `show()` 屏障上收口的记录：依据只到屏障为止。那条运行此刻仍停着、从没放行过，屏障之后的代码就还没执行过，
-        # 到此为止的观察即全部输入（`verify` 已按它核过摘要）；放行过 / sidecar 重启过 = 后面可能又读了别的，不沿用
-        and not nativesession.REGISTRY.holds_barrier_observation(hold)
-    ):
-        # 与 #982 的 reuse_last_success 同样保守：这条 native 记录没有完整的 helper / 数据观察（#1047），不证明它们没变，不据此沿用 native
-        return None, ""
-    return profile, hold
+        # 到此为止的观察即全部输入（`verify` 已按它核过摘要）；放行过 / sidecar 重启过 = 后面可能又读了别的，不沿用。
+        # 同时记下此刻的放行代数：认领 / 起跑前核对、runner 接管都认它
+        epoch = nativesession.REGISTRY.barrier_hold_epoch(hold)
+        if epoch is None:
+            # 与 #982 的 reuse_last_success 同样保守：这条 native 记录没有完整的 helper / 数据观察（#1047），不证明它们没变，不据此沿用 native
+            return None, "", None
+    return profile, hold, epoch
 
 
 def _route_of(
     root: str, script: str, *, python: str, source: str, decision: dict | None, run=None
-) -> tuple[runroute.Route, str | None, str]:
+) -> tuple[runroute.Route, str | None, str, int | None]:
     """`execution="auto"` 的落点：策略 / 运维开关 / 上次成功 / 静态证据 → 路由（零执行用户代码）。
     同时返回路由分析的那份字节的 sha256，`plan_for` 用它核对计划的 `script_revision`（#1034：分析与 revision 须是同一份内容）。"""
     policy = execpolicy.mode_for(root)
     enabled = execpolicy.fallback_enabled()
-    last, hold = None, ""
+    last, hold, epoch = None, "", None
     if policy != execpolicy.MODE_SAFE_ONLY and enabled:
-        last, hold = _last_success_profile(root, script, python=python, source=source, run=run)
+        last, hold, epoch = _last_success_profile(
+            root, script, python=python, source=source, run=run
+        )
     mode = decision["mode"] if decision else workdir.mode_for(root)
     path = Path(root) / figcapture.normalize_relative_script(script)
     try:
@@ -350,8 +362,13 @@ def _route_of(
         route.elapsed_ms,
     )
     # 计划只在真的因「上一次成功」沿用 native 时才依赖那次仍停着的运行
-    held = hold if route.reason == runroute.REASON_PREVIOUS_SUCCESS else ""
-    return route, (hashlib.sha256(raw).hexdigest() if raw is not None else None), held
+    reused = route.reason == runroute.REASON_PREVIOUS_SUCCESS
+    return (
+        route,
+        (hashlib.sha256(raw).hexdigest() if raw is not None else None),
+        hold if reused else "",
+        epoch if reused else None,
+    )
 
 
 def plan_for(
@@ -519,12 +536,12 @@ def plan_for(
             decision["mode"] if decision else workdir.mode_for(root),
         )
     route = None
-    barrier_hold = ""
+    barrier_hold, barrier_hold_epoch = "", None
     if execution == EXECUTION_AUTO:
         # 运行前路由（V2 PR2，ADR 0133）：只在用户发起的桌面运行里由准备会话要 `auto`；CLI / MCP 永远是显式 safe
         execution = execspec.PROFILE_SAFE
         if script is not None and target == TARGET_SCRIPT:
-            route, routed_digest, barrier_hold = _route_of(
+            route, routed_digest, barrier_hold, barrier_hold_epoch = _route_of(
                 root, script, python=python, source=source, decision=decision, run=run
             )
             if route.execution == execspec.PROFILE_NATIVE and not python:
@@ -636,6 +653,7 @@ def plan_for(
         execution=execution,
         route=route.public() if route is not None else None,
         barrier_hold=barrier_hold if execution == execspec.PROFILE_NATIVE else "",
+        barrier_hold_epoch=barrier_hold_epoch if execution == execspec.PROFILE_NATIVE else None,
         grant=grant,
         budget={
             "build_idle_timeout_s": pool.BUILD_IDLE_TIMEOUT,
@@ -1043,14 +1061,18 @@ class PreparationService:
                 "code": ERROR_PLAN_STALE,
                 "reason": exc.reason,
                 # 第一次（按计划的解释器与 cwd）已经跑过、报了缺包；换了解释器之后的那一次没跑
-                "executed": True,
+                "executed": exc.executed,
                 "message": _STALE_MESSAGES[exc.reason],
                 **exc.detail,
             }
             self._finish(
                 entry,
                 STATUS_ERROR,
-                note=f"缺包后自动换了解释器，计划随之过期（{exc.reason}）：没有按新环境重跑；请重新准备",
+                note=(
+                    f"缺包后自动换了解释器，计划随之过期（{exc.reason}）：没有按新环境重跑；请重新准备"
+                    if exc.executed
+                    else f"计划过期（{exc.reason}），没有执行任何脚本"
+                ),
             )
             return
         except pool.WorkerError as exc:
@@ -1215,8 +1237,13 @@ class PreparationService:
             and inputremap.generation(root) != plan.input_remap_generation
         ):
             return STALE_DATA_BINDING, {}
-        if plan.barrier_hold and not nativesession.REGISTRY.holds_barrier_observation(
-            plan.barrier_hold
+        # getattr：对没有这两个字段的计划替身同样容错
+        hold, hold_epoch = (
+            getattr(plan, "barrier_hold", ""),
+            getattr(plan, "barrier_hold_epoch", None),
+        )
+        if hold and (
+            hold_epoch is None or nativesession.REGISTRY.barrier_hold_epoch(hold) != hold_epoch
         ):
             # 沿用 native 凭的是旧运行停在屏障上的观察：它被放行 / 断线后可能又读了别的输入，依据作废，重新检查
             return STALE_DATA_BINDING, {}

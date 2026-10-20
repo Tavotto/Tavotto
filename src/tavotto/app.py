@@ -8730,6 +8730,14 @@ def _native_preparation_runner(pl, before_retry=None):
     # 重新运行：同一脚本更早的准备、在途启动、已登记的活图都让位（它们占着 live route 与环境租约）。
     # 顺序与关项目一致:先计划、再会话 / 票据
     engine_preparation.SERVICE.cancel_project(pl.project_id, script=pl.script, keep=pl.plan_id)
+    hold, hold_epoch = getattr(pl, "barrier_hold", ""), getattr(pl, "barrier_hold_epoch", None)
+    if hold and not (
+        hold_epoch is not None
+        and engine_nativesession.REGISTRY.seize_for_takeover(hold, hold_epoch)
+    ):
+        # 沿用 native 凭的是旧运行停在屏障上的观察，它在认领与此刻之间被放行 / 断线了（或根本不在了）：先接管再取消——核对与接管在
+        # 同一把锁里，接管成功之后旧运行不会再被放行；失败 = 依据作废，一行没跑，计划以过期收场（#1202）
+        raise engine_preparation.StaleBeforeRun(engine_preparation.STALE_DATA_BINDING)
     engine_nativesession.REGISTRY.cancel_project(
         pl.project_root, script=spec.target, older_than=pl.launch_order
     )

@@ -25,7 +25,7 @@ native 的 helper / 数据依据（#1047）：桌面拥有的 bridge 带 `--obse
 `basis_observed: true`（与 safe 记录同样可被核验、可被沿用）。收口在 `show()` 屏障上时，观察只是到此为止：磁盘上记
 `basis_observed: false` + `basis_scope: "barrier"`（依据照填）——脚本之后可能被放行（API 的继续、断线时 runner 自己放开屏障），
 落盘的记录永远不替「后面没再读」作保。只有同一个进程里那条运行**仍停在屏障上、从没放行过**时，路由才把它当成已观察
-（`preparation._last_success_profile` 问 `nativesession.REGISTRY.holds_barrier_observation`）；sidecar 重启 / 放行过 = 不沿用。
+（`preparation._last_success_profile` 问 `nativesession.REGISTRY.barrier_hold_epoch`）；sidecar 重启 / 放行过 = 不沿用。
 脚本跑完后的那次 build 由 `observe_native_basis` 按 `launch_id` 补成 `true`。观察不全（截断 / 有文件没算出摘要）一律留 `false`、不沿用。
 
 记录只是**事实**，不驱动启动决策：启动方式是解释器路径的纯函数（`launcher.launcher_for_interpreter`），与脚本、项目、记录
@@ -299,7 +299,7 @@ def observe_native_basis(project_root: str | Path, launch_id: str, inputs: dict 
 
 def barrier_basis_launch(record: dict | None) -> str:
     """停在 `show()` 屏障上收口的 native 记录（依据是到此为止的观察）→ 它的计划号；别的记录 → ""。
-    路由拿计划号去问那条运行此刻是否仍停着、从没放行过（`nativesession.REGISTRY.holds_barrier_observation`）。"""
+    路由拿计划号去问那条运行此刻是否仍停着、从没放行过（`nativesession.REGISTRY.barrier_hold_epoch`）。"""
     if not isinstance(record, dict) or profile_of(record) != PROFILE_NATIVE:
         return ""
     src = record.get("source") or {}
