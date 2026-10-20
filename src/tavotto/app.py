@@ -22,6 +22,7 @@ import math
 import os
 import queue
 import re
+import secrets
 import shutil
 import socket
 import sys
@@ -12192,7 +12193,22 @@ def api_export_defaults_put():
 VERSIONS_DIR = (
     LAYOUT_DIR / engine_documents.VERSIONS_DIRNAME
 )  # 旧位置：只读兼容（新写入进项目 tavottofile/versions/）
-_VERSIONS_LOCK = threading.Lock()
+
+
+def _versions_lock(doc_id: str) -> "_DocumentLock":
+    """版本时间线「读 → 改 → 整写」的互斥：复用**跨进程**的槽位文档锁（`_document_lock`），不新造锁。
+
+    原来是进程内的 `threading.Lock()`：两个后端进程共用一个数据目录（受支持场景，槽位文档锁已是跨进程的）时，
+    双方各自读到旧列表、各自追加、后写的整份盖掉先写的，两边都收到 200，检查点静默丢失。
+
+    **锁名用独立的 `<doc_id>.versions`，不用 `<doc_id>.json`**：`_lock_stripe` 只看文件名，用 `.json` 会与同一文档的
+    自动保存共用一个条带，版本追加（要读写几十 MB）持锁期间自动保存就被堵住。条带数只有 64，不同名字偶尔仍会撞一个
+    条带，只是多串行一点点。**锁不可重入**：持锁期间不取任何别的文档锁 / 会话锁（时间线这几个端点内部没有）。
+    拿不到（30 s）抛 `SessionStateUnavailable` → 503 `session_unavailable`，此时一个字节没写。
+    """
+    return _document_lock(_versions_path(doc_id).with_suffix(".versions"))
+
+
 #: 未命名的普通自动检查点保留数。间隔从 5 分钟调到 2 分钟（ADR 0101）之后，
 #: 40 条只盖得住约 80 分钟的连续编辑，所以提到 60（约 2 小时）；大排版照旧先被
 #: 下面的字节上限咬住。
@@ -12216,13 +12232,28 @@ VERSION_KEEP_BYTES = 24 * 1024 * 1024
 
 
 _version_seq = 0
+#: 本进程的区分段（6 位十六进制随机数，定长）：两个后端进程共用数据目录时，毫秒时间戳 + 进程内序号会撞 id，
+#: 撞了之后缩略图 / 重命名 / 删除按 id 找节点会认错人。定长所以 `(区分段, 序号)` 拼起来不会有歧义。
+_VERSION_PROC_TAG = secrets.token_hex(3)
 
 
 def _new_version_id() -> str:
-    """毫秒时间戳 + 进程内序号：同毫秒内连续创建（复制紧跟保存）也不碰撞。"""
+    """毫秒时间戳 + 进程区分段 + 进程内序号：同毫秒内连续创建（复制紧跟保存）、两个进程同毫秒创建都不碰撞。
+
+    形状仍是 `_VERSION_ID_RE`（`v<hex>-<hex>`）。调用方在版本锁内还要对已有 id 核一遍（`_fresh_version_id`）。
+    """
     global _version_seq
     _version_seq += 1
-    return f"v{int(time.time() * 1000):x}-{_version_seq:x}"
+    return f"v{int(time.time() * 1000):x}-{_VERSION_PROC_TAG}{_version_seq:x}"
+
+
+def _fresh_version_id(existing: list[dict]) -> str:
+    """锁内取一个不与现有节点重名的 id（理论上很少撞；撞了就重取，绝不覆盖别人的节点）。"""
+    taken = {v.get("id") for v in existing}
+    while True:
+        vid = _new_version_id()
+        if vid not in taken:
+            return vid
 
 
 def _versions_path(doc_id: str) -> Path:
@@ -12783,7 +12814,7 @@ def api_versions_create(doc_id):
             }
         ), 400
     ver = {
-        "id": _new_version_id(),
+        "id": "",  # 在版本锁内取（`_fresh_version_id`）：要对着锁内读到的现有节点核重名
         "name": given or time.strftime("%m-%d %H:%M"),
         "ts": int(time.time() * 1000),
         "auto": bool(body.get("auto")),
@@ -12798,8 +12829,9 @@ def api_versions_create(doc_id):
         ver["canvasId"] = str(body["canvasId"])
     if body.get("canvasName"):
         ver["canvasName"] = str(body["canvasName"])
-    with _VERSIONS_LOCK:
+    with _versions_lock(doc_id):
         versions = _load_versions(doc_id)
+        ver["id"] = _fresh_version_id(versions)
         if not versions:
             # 空历史是唯一一条「整份写回会把别人的东西盖掉」的路（rename /
             # duplicate / delete 在空列表上都先 404，一个 `_save_versions`
@@ -12833,7 +12865,7 @@ def api_versions_create(doc_id):
 @app.patch("/api/versions/<doc_id>/<vid>")
 def api_versions_rename(doc_id, vid):
     body = request.get_json(force=True)
-    with _VERSIONS_LOCK:
+    with _versions_lock(doc_id):
         versions = _load_versions(doc_id)
         for v in versions:
             if v["id"] == vid:
@@ -12873,13 +12905,13 @@ def api_versions_rename(doc_id, vid):
 
 @app.post("/api/versions/<doc_id>/<vid>/duplicate")
 def api_versions_duplicate(doc_id, vid):
-    with _VERSIONS_LOCK:
+    with _versions_lock(doc_id):
         versions = _load_versions(doc_id)
         for v in versions:
             if v["id"] == vid:
                 copy = {
                     **v,
-                    "id": _new_version_id(),
+                    "id": _fresh_version_id(versions),
                     # 副本的名字同样守长度上限（反复复制不能把名字越拼越长）
                     "name": f"{v.get('name', '')[: VERSION_NAME_MAX - 3]} 副本",
                     "ts": int(time.time() * 1000),
@@ -12899,7 +12931,7 @@ def api_versions_duplicate(doc_id, vid):
 
 @app.delete("/api/versions/<doc_id>/<vid>")
 def api_versions_delete(doc_id, vid):
-    with _VERSIONS_LOCK:
+    with _versions_lock(doc_id):
         versions = _load_versions(doc_id)
         kept = [v for v in versions if v["id"] != vid]
         if len(kept) == len(versions):
@@ -12925,7 +12957,7 @@ def api_versions_thumb_put(doc_id, vid):
         return jsonify({"error": "缩略图为空或太大", "code": "version_thumb_invalid"}), 400
     if not _VERSION_ID_RE.match(vid):
         abort(404)
-    with _VERSIONS_LOCK:
+    with _versions_lock(doc_id):
         ids = {v.get("id") for v in _load_versions(doc_id)}
         if vid not in ids:
             abort(404)

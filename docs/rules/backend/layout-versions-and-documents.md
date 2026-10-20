@@ -217,6 +217,13 @@
     `@app.errorhandler` 回 503 `session_unavailable`，此时一个字节没写；清理里等不到只是这次不清它。锁文件打不开
     **失败即关门**：锁文件打不开、文件系统拒绝咨询锁（ENOLCK / EOPNOTSUPP / EINVAL）也抛 `SessionStateUnavailable`，不退回只有线程锁。
     真两进程回归 `tests/test_layout_recovery_backend.py`（POSIX）；Windows 的 `msvcrt` 腿只有 CI 验证。
+  - **版本时间线的互斥也是跨进程的**（审计 D0，2026-10-20）：`/api/versions/<docId>` 的创建 / 改名 / 复制 / 删除 / 缩略图都是
+    「读整份 → 改 → 整写」，原来只被进程内 `threading.Lock()` 保护，两个后端进程共用数据目录时后写的整份盖掉先写的（两边都 200）。
+    现在统一经 `_versions_lock(doc_id)` = 复用 `_document_lock`，锁名取 `<doc_id>.versions`（**不用 `<doc_id>.json`**：条带只看文件名，
+    用 `.json` 会与同一文档的自动保存共用条带，版本追加几十 MB 的读写期间自动保存被堵）。不可重入，时间线端点持锁期间不取别的文档锁 / 会话锁；
+    等不到（30 s）→ 503 `session_unavailable`，历史零写入。版本 id = `v<毫秒>-<6 位随机进程区分段><序号>`（仍匹配 `_VERSION_ID_RE`），
+    并在锁内对已有 id 核重名（`_fresh_version_id`），撞了就重取、不覆盖。**这只修丢更新；整份写回的存储形状（#263）问题仍在。**
+    回归 `tests/test_versions_multiprocess.py`（真两进程 POSIX；Windows 的 `msvcrt` 腿只有 CI 验证）。
   - **`/owner` 与候选发现读的是一致的快照**：两者都在**槽位的文档锁**里同时读会话状态（owners / owner_revisions / status，只读、不拿会话锁）
     和槽位正文——别的项目的保存（正文 + `commit_slot` 都在这把锁里）插不进两次读之间，否则会拿 G 的新正文去对还没有 G 归属的旧状态，
     把别人的槽位报成 this。`/owner` 回的 `revision` 就是这份快照里正文的。候选发现**按条目**各取自己的槽位锁、各读一次状态
