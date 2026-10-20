@@ -2398,6 +2398,7 @@ export default interface Resources {
       "native_attach_cancelled": "已取消。脚本没有运行。",
       "native_attach_failed": "Tavotto 桌面没能连上这次运行。",
       "native_auth_failed": "Tavotto Run 控制通道认证失败。",
+      "native_barrier_final": "这次运行沿用了上次的结果，只运行到第一张图为止，不能继续往下运行。",
       "native_figure_inconsistent": "这张图有改动没能还原，与排版里记下的不一致。重新运行原命令后可继续编辑与导出。",
       "native_handoff_consumed": "该 Tavotto Run 交接请求已被处理。",
       "native_handoff_expired": "该 Tavotto Run 交接请求已过期。请重新运行原命令。",

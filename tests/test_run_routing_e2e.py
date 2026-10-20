@@ -9,7 +9,8 @@
 * 动态路径（路由看不出）→ safe 被拦 → 同会话回退 native，共 2 次；
 * `safe_only` 项目 → 不走 native；
 * 上次 native 成功的脚本再次运行 → 沿用 native、只执行 1 次（bridge 观察过 helper / 数据，#1047）；helper / 数据 / 脚本
-  任一变了 → 回到静态路由；成功收口在 `show()` 屏障上同样沿用，被放行后要等脚本跑完的那次 build 补齐依据。
+  任一变了 → 回到静态路由；成功收口在 `show()` 屏障上同样沿用（依据只到屏障为止），沿用的那次运行停在第一个 `show()`
+  上、不许放行；脚本跑完后的那次 build 把依据补成全部。
 """
 
 from __future__ import annotations
@@ -88,6 +89,15 @@ DYNAMIC_INPUTS = (
 )
 #: 同样的动态路径，最后 `plt.show()`：bridge 停在 show 屏障上时脚本还没跑完
 DYNAMIC_SHOW = DYNAMIC + "plt.show()\n"
+#: 同上，`show()` 之后再写一笔到项目外的 tail.log：屏障之后的代码有没有跑过，独立可观测
+DYNAMIC_SHOW_TAIL = (
+    DYNAMIC_SHOW
+    + """\
+_tail = __import__("os").path.join(__import__("os").path.dirname({log!r}), "tail.log")
+with getattr(__import__("builtins"), "op" + "en")(_tail, chr(97)) as f:
+    f.write("y")
+"""
+)
 
 
 def _project(tmp_path, body: str):
@@ -245,31 +255,88 @@ def test_a_native_success_with_observed_inputs_is_reused_until_a_helper_or_data_
         assert _reopen(app)["plan"]["route"]["reason"] == "ordinary_plot"
 
 
-def test_a_native_success_settled_at_a_show_barrier_is_reused_unless_the_script_was_released(
-    tmp_path,
-):
-    """#1047 修订：成功收口在 `plt.show()` 屏障上。那条运行仍停着、从没放行过时，屏障之后的代码还没执行，到此为止的观察就是
-    全部输入——重开直达 native。被放行（API 的继续）之后不沿用；脚本跑完后在结束屏障上 build 一次，按计划号补齐依据，又可沿用，
-    再跑只执行 1 次。"""
-    proj, log = _project(tmp_path, DYNAMIC_SHOW)
+def _tail(log) -> int:
+    tail = log.parent / "tail.log"
+    return len(tail.read_text(encoding="utf-8")) if tail.exists() else 0
+
+
+def _live(app, proj, exclude=()):
+    return [
+        s
+        for s in _native_sessions(app, proj)
+        if s["state"] not in ("ended", "failed") and s["session_id"] not in exclude
+    ]
+
+
+def _continue(app, sid):
+    return app.call(f"/api/native/sessions/{sid}/continue", {}, timeout=60)
+
+
+def test_a_show_barrier_success_is_reused_and_the_reused_run_never_passes_the_first_show(tmp_path):
+    """#1047 / #1202：成功收口在 `plt.show()` 屏障上，依据是屏障之前读过的全部。重开直达 native、只执行 1 次——不管旧运行之后
+    有没有被放行。沿用的那次运行停在第一个屏障上：放行被拒（`native_barrier_final`），屏障之后的代码一行不跑。"""
+    proj, log = _project(tmp_path, DYNAMIC_SHOW_TAIL)
     with sidecar_app(proj, tmp_path / "work", env_overrides=ENV) as app:
         final = _settled(app, _run(app, _create(app)))
         assert _history(final) == [("safe", "blocked"), ("native", "succeeded")]
         assert _runs(log) == 2
-        (live,) = [s for s in _native_sessions(app, proj) if s["state"] not in ("ended", "failed")]
-        assert live["barrier_reason"] == "show"
-        sid = live["session_id"]
-        route = _reopen(app)["plan"]["route"]
-        assert (route["execution"], route["reason"]) == ("native", "previous_successful_profile"), (
-            "停在 show() 上的运行：到此为止的观察就是全部输入"
-        )
+        (old,) = _live(app, proj)
+        assert old["barrier_reason"] == "show"
 
-        # 界面（或 API）在 show 屏障上 build：到此为止的观察不许把落盘记录补成 true
-        app.call(f"/api/native/sessions/{sid}/build", {}, timeout=60)
-        app.call(f"/api/native/sessions/{sid}/continue", {}, timeout=60)
-        assert _reopen(app)["plan"]["route"]["reason"] == "ordinary_plot", (
-            "放行了：脚本接着跑、可能再读"
+        # show 屏障上的 build 只到屏障为止：不许把记录补成全部（否则下面沿用的那次运行就不受第一个屏障约束了）
+        app.call(f"/api/native/sessions/{old['session_id']}/build", {}, timeout=60)
+        # 旧运行（不是沿用来的）照常可以放行：它跑过屏障、写了 tail，也不影响「屏障之前」的依据
+        _continue(app, old["session_id"])
+        deadline = time.time() + 60
+        while _tail(log) < 1 and time.time() < deadline:
+            time.sleep(0.2)
+        assert _tail(log) == 1
+
+        again = _reopen(app)
+        route = again["plan"]["route"]
+        assert (route["execution"], route["reason"]) == ("native", "previous_successful_profile")
+        _run(app, again)
+        _wait_runs(log, 3)
+        assert _runs(log) == 3, "沿用 native：safe 不白跑，只执行 1 次"
+        assert _history(_settled(app, again["session_id"]))[-1] == ("native", "succeeded")
+
+        (reused,) = _live(app, proj, exclude={old["session_id"]})
+        assert reused["barrier_reason"] == "show"
+        with pytest.raises(fa.HttpError) as refused:
+            _continue(app, reused["session_id"])
+        assert (refused.value.status, refused.value.body.get("code")) == (
+            409,
+            "native_barrier_final",
         )
+        time.sleep(2)
+        assert _tail(log) == 1, "沿用的那次运行不许跑过 show()"
+
+
+def test_a_show_barrier_success_stays_reusable_after_the_run_was_stopped(tmp_path):
+    """停止运行之后照样沿用：依据只替屏障之前作保，与旧运行后来的去向无关（#1202 换结构）。"""
+    proj, log = _project(tmp_path, DYNAMIC_SHOW)
+    with sidecar_app(proj, tmp_path / "work", env_overrides=ENV) as app:
+        _settled(app, _run(app, _create(app)))
+        (live,) = _live(app, proj)
+        app.call(f"/api/native/sessions/{live['session_id']}/cancel", {}, timeout=60)
+        deadline = time.time() + 60
+        while _live(app, proj) and time.time() < deadline:
+            time.sleep(0.2)
+        assert not _live(app, proj)
+        route = _reopen(app)["plan"]["route"]
+        assert (route["execution"], route["reason"]) == ("native", "previous_successful_profile")
+
+
+def test_a_run_that_finished_after_its_show_upgrades_the_record_to_the_full_basis(tmp_path):
+    """旧运行被放行、跑到结束屏障，在那里 build 一次：依据补成全部（`basis_observed: true`）。之后沿用的那次运行不再受
+    「停在第一个屏障」约束——放行它不再被拒。show 屏障上的 build 不算（只到屏障为止）。"""
+    proj, log = _project(tmp_path, DYNAMIC_SHOW)
+    with sidecar_app(proj, tmp_path / "work", env_overrides=ENV) as app:
+        _settled(app, _run(app, _create(app)))
+        (old,) = _live(app, proj)
+        sid = old["session_id"]
+        app.call(f"/api/native/sessions/{sid}/build", {}, timeout=60)  # show 屏障上的 build：不补全
+        _continue(app, sid)
 
         def _at_script_end():
             (sess,) = [s for s in _native_sessions(app, proj) if s["session_id"] == sid]
@@ -279,89 +346,16 @@ def test_a_native_success_settled_at_a_show_barrier_is_reused_unless_the_script_
         while not _at_script_end() and time.time() < deadline:
             time.sleep(0.2)
         assert _at_script_end(), "脚本没有跑到结束屏障"
-        assert _reopen(app)["plan"]["route"]["reason"] == "ordinary_plot", "还没在结束屏障上 build"
-
         app.call(f"/api/native/sessions/{sid}/build", {}, timeout=60)
+
         again = _reopen(app)
-        route = again["plan"]["route"]
-        assert (route["execution"], route["reason"]) == ("native", "previous_successful_profile")
+        assert again["plan"]["route"]["reason"] == "previous_successful_profile"
         _run(app, again)
         _wait_runs(log, 3)
-        assert _runs(log) == 3, "沿用 native：safe 不白跑，只执行 1 次"
-
-
-def test_a_show_barrier_basis_is_not_reused_once_the_run_was_stopped(tmp_path):
-    """停止运行之后，那条运行不再「仍停着」：落盘记录从不替「后面没再读」作保，路由回到静态判断（#1202）。"""
-    proj, _log = _project(tmp_path, DYNAMIC_SHOW)
-    with sidecar_app(proj, tmp_path / "work", env_overrides=ENV) as app:
-        _settled(app, _run(app, _create(app)))
-        (live,) = [s for s in _native_sessions(app, proj) if s["state"] not in ("ended", "failed")]
-        assert _reopen(app)["plan"]["route"]["reason"] == "previous_successful_profile"
-        app.call(f"/api/native/sessions/{live['session_id']}/cancel", {}, timeout=60)
-        deadline = time.time() + 60
-        while time.time() < deadline and any(
-            s["session_id"] == live["session_id"] and s["state"] not in ("ended", "failed")
-            for s in _native_sessions(app, proj)
-        ):
-            time.sleep(0.2)
-        assert _reopen(app)["plan"]["route"]["reason"] == "ordinary_plot"
-
-
-def test_a_plan_leaning_on_a_parked_show_barrier_goes_stale_once_the_old_run_is_released(
-    tmp_path,
-):
-    """Codex #1202 P1：计划沿用 native 凭的是旧运行停在 show 屏障上的观察。领它之前旧运行被放行，旧计划不许照样直达 native
-    （放行后脚本可能又读了别的输入）：认领 / 起跑前的过期核对把它作废，一次 native 也不起。"""
-    proj, log = _project(tmp_path, DYNAMIC_SHOW)
-    with sidecar_app(proj, tmp_path / "work", env_overrides=ENV) as app:
-        _settled(app, _run(app, _create(app)))
-        assert _runs(log) == 2
-        (live,) = [s for s in _native_sessions(app, proj) if s["state"] not in ("ended", "failed")]
-        again = _reopen(app)
-        route = again["plan"]["route"]
-        assert (route["execution"], route["reason"]) == ("native", "previous_successful_profile")
-
-        app.call(f"/api/native/sessions/{live['session_id']}/continue", {}, timeout=60)
-        (run,) = [a for a in again["actions"] if a["kind"] == "run"]
-        with pytest.raises(fa.HttpError) as stale:
-            app.call(
-                f"{SESSIONS}/{again['session_id']}/actions",
-                {"action_id": run["id"], "expected_config_revision": again["config_revision"]},
-                timeout=60,
-            )
-        assert (stale.value.status, stale.value.body.get("code")) == (409, "preparation_plan_stale")
-        time.sleep(2)
-        assert _runs(log) == 2, "过期的旧计划一行都不跑"
-        # 重新检查：旧运行已放行，依据作废，回到静态路由
-        assert _reopen(app)["plan"]["route"]["reason"] == "ordinary_plot"
-
-
-def test_a_plan_leaning_on_a_still_parked_show_barrier_runs_native_once(tmp_path):
-    """主路径（#1202）：旧运行仍停在 show 屏障上、没放行——重开沿用 native，领运行时 `_stale_reason` 核到仍停着，
-    不过期；脚本只再执行 1 次，新运行让位时旧会话被取消。"""
-    proj, log = _project(tmp_path, DYNAMIC_SHOW)
-    with sidecar_app(proj, tmp_path / "work", env_overrides=ENV) as app:
-        _settled(app, _run(app, _create(app)))
-        assert _runs(log) == 2
-        (live,) = [s for s in _native_sessions(app, proj) if s["state"] not in ("ended", "failed")]
-        again = _reopen(app)
-        route = again["plan"]["route"]
-        assert (route["execution"], route["reason"]) == ("native", "previous_successful_profile")
-        _run(app, again)
-        _wait_runs(log, 3)
-        assert _runs(log) == 3, "沿用 native：只执行 1 次"
-        settled = _settled(app, again["session_id"])
-        assert _history(settled)[-1] == ("native", "succeeded")
-        deadline = time.time() + 60
-        while time.time() < deadline and any(
-            s["session_id"] == live["session_id"] and s["state"] not in ("ended", "failed")
-            for s in _native_sessions(app, proj)
-        ):
-            time.sleep(0.2)
-        assert not any(
-            s["session_id"] == live["session_id"] and s["state"] not in ("ended", "failed")
-            for s in _native_sessions(app, proj)
-        ), "新运行让位：旧会话已结束"
+        assert _runs(log) == 3
+        _settled(app, again["session_id"])
+        (reused,) = _live(app, proj, exclude={sid})
+        _continue(app, reused["session_id"])  # 全部依据：不受第一个屏障约束
 
 
 def test_a_browser_mode_session_is_never_routed_to_native(tmp_path):

@@ -40,6 +40,7 @@ def launch_for(
     policy: desktopproc.OwnedPolicy = FAST,
     interpreter: str | None = None,
     launch_id: str = "",
+    final_barrier: bool = False,
 ) -> desktopproc.OwnedLaunch:
     """项目在 `tmp_path/proj`，cwd 故意放在另一个目录 `tmp_path/work`：证明 cwd 是启动身份里
     显式给的那个，不是脚本目录也不是项目根。"""
@@ -57,6 +58,7 @@ def launch_for(
         run_config="rc_p06test" if argv else "",
         env=env,
         stdin=stdin,
+        final_barrier=final_barrier,
     )
     return desktopproc.OwnedLaunch(
         spec,

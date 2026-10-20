@@ -22,11 +22,12 @@ v2（V2 PR2，ADR 0133）起记录多一个 `profile`（`safe` | `native`）：s
 
 native 的 helper / 数据依据（#1047）：桌面拥有的 bridge 带 `--observe-inputs`，用与 safe worker 同一个 `figcapture.InputObserver`
 观察脚本读到的项目内文件与 import 的本地模块，在屏障上的 build 里报给父进程。脚本跑完后的观察是全部输入 → `source.basis` 填上、
-`basis_observed: true`（与 safe 记录同样可被核验、可被沿用）。收口在 `show()` 屏障上时，观察只是到此为止：磁盘上记
-`basis_observed: false` + `basis_scope: "barrier"`（依据照填）——脚本之后可能被放行（API 的继续、断线时 runner 自己放开屏障），
-落盘的记录永远不替「后面没再读」作保。只有同一个进程里那条运行**仍停在屏障上、从没放行过**时，路由才把它当成已观察
-（`preparation._last_success_profile` 问 `nativesession.REGISTRY.barrier_hold_epoch`）；sidecar 重启 / 放行过 = 不沿用。
-脚本跑完后的那次 build 由 `observe_native_basis` 按 `launch_id` 补成 `true`。观察不全（截断 / 有文件没算出摘要）一律留 `false`、不沿用。
+`basis_observed: true`（与 safe 记录同样可被核验、可被沿用）。收口在 `show()` 屏障上时，观察是**屏障之前**读过的全部：记
+`basis_observed: false` + `basis_scope: "barrier"`（依据照填）。它只替「屏障之前」作保——那次运行之后放没放行、又读了什么都不改变
+这一点。路由据它沿用 native 时（`barrier_scoped`），那次运行带 `final_barrier`：用户进程里的 runner 停在第一个屏障上、不放行、
+离开即退出，屏障之后没被核验过的代码一行不跑（`bridge_runner.BridgeRun.barrier`）。保证在用户进程里兑现，不依赖父进程对旧运行
+状态的判断。脚本跑完后的那次 build 由 `observe_native_basis` 按 `launch_id` 补成 `true`。观察不全（截断 / 有文件没算出摘要）一律
+留 `false`、不沿用。
 
 记录只是**事实**，不驱动启动决策：启动方式是解释器路径的纯函数（`launcher.launcher_for_interpreter`），与脚本、项目、记录
 无关——所以以前裸起成功过的 Conda 脚本，今后会带上激活环境（这本来就是用户对 Conda 环境的预期）。
@@ -218,7 +219,7 @@ def build_native_record(
 
     `inputs` 是 bridge 在屏障上报的输入观察（#1047，`NativeSession.observed_inputs`）：脚本跑完后的（`complete`）→ `source.basis`
     与 safe 记录同形、`basis_observed: true`；停在 `show()` 屏障上的（`complete=False`）→ 依据照填，但 `basis_observed: false` +
-    `basis_scope: "barrier"`（只在那条运行仍停着时由路由当真，见模块说明）；没有（放行过、终端旧 runner）或不完整 → `basis` 为空且 `basis_observed: false`：
+    `basis_scope: "barrier"`（只替屏障之前作保，见模块说明）；没有（终端旧 runner）或不完整 → `basis` 为空且 `basis_observed: false`：
     核验只覆盖脚本本身，这条记录只回答「上次成功用哪种语义」，**不是**「数据与 helper 也没变」的证据，不沿用。
     `launch_id`（计划号）让脚本跑完之后的 `observe_native_basis` 认得出这是哪一次运行的记录。"""
     if getattr(plan, "execution", None) != PROFILE_NATIVE or not plan.interpreter:
@@ -297,16 +298,13 @@ def observe_native_basis(project_root: str | Path, launch_id: str, inputs: dict 
         return False
 
 
-def barrier_basis_launch(record: dict | None) -> str:
-    """停在 `show()` 屏障上收口的 native 记录（依据是到此为止的观察）→ 它的计划号；别的记录 → ""。
-    路由拿计划号去问那条运行此刻是否仍停着、从没放行过（`nativesession.REGISTRY.barrier_hold_epoch`）。"""
+def barrier_scoped(record: dict | None) -> bool:
+    """停在 `show()` 屏障上收口的 native 记录：依据是屏障之前读过的全部（`basis_scope: "barrier"`）。据它沿用 native 的那次运行
+    必须停在第一个屏障上（`ExecutionSpec.final_barrier`）。"""
     if not isinstance(record, dict) or profile_of(record) != PROFILE_NATIVE:
-        return ""
+        return False
     src = record.get("source") or {}
-    if src.get("basis_observed") is not False or src.get("basis_scope") != BASIS_SCOPE_BARRIER:
-        return ""
-    launch_id = record.get("launch_id")
-    return launch_id if isinstance(launch_id, str) else ""
+    return src.get("basis_observed") is False and src.get("basis_scope") == BASIS_SCOPE_BARRIER
 
 
 @dataclasses.dataclass(frozen=True)

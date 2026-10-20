@@ -1,8 +1,9 @@
-"""#1047 修订：桌面拥有的运行停在 `show()` 屏障上时，build 带回**到此为止**的输入观察。
+"""#1047 / #1202：桌面拥有的运行停在 `show()` 屏障上时的输入观察，与「第一个屏障即终点」（`final_barrier`）。
 
-桌面界面对桌面拥有的运行只给「停止运行」，停在屏障上、从没放行过时屏障之后的代码还没执行，这一刻读过的就是迄今全部输入
-（`NativeSession.holds_barrier_observation`，路由据此沿用）。放行（继续 / 断线）推进放行代数，观察作废——迟到的 build 回包也压不过；
-脚本跑完后在结束屏障上的 build 再给全部（`observed_inputs_complete`）。
+* `show()` 屏障上的 build 带回**屏障之前**读过的全部（`observed_inputs_complete=False`）；之后放没放行都不改变它。脚本跑完后
+  在结束屏障上的 build 给全部（`complete=True`）。停着时 helper 被改：之后的屏障 / 结束都不报（进程执行的是旧内容）。
+* 凭「只到 show() 为止」的依据沿用 native 的运行带 `final_barrier`：用户进程里的 runner 拒绝放行，断线 / 终止直接结束进程，
+  屏障之后的代码一行不跑——连吞掉 `SystemExit` 的用户代码也拦得住。
 真 spawn、真 Bridge Runner（`desktopproc.start`，命令行带 `--observe-inputs`）；记录与路由的端到端在 `test_run_routing_e2e.py`。
 """
 
@@ -11,7 +12,8 @@ from __future__ import annotations
 import pytest
 
 from support import desktopkit as dk, nativekit
-from tavotto.engine import nativesession
+from tavotto.engine import nativesession, runcodes
+from tavotto.engine.runcodes import RunError
 
 pytestmark = nativekit.needs_user_python
 
@@ -40,80 +42,54 @@ after = float((here / "after.txt").read_text())
 """
 )
 
+#: show() 之后写一个标记：屏障之后的代码有没有跑过。`try/except BaseException` 吞掉 SystemExit——`final_barrier` 不能靠它
+TAIL = (
+    dk.FIGURE_HEADER
+    + """\
+from pathlib import Path
+here = Path(__file__).resolve().parent
+plt.plot([0, 1])
+try:
+    plt.show()
+except BaseException:
+    pass
+(here / "tail.txt").write_text("ran")
+"""
+)
+
 
 def _files(inputs) -> set[str]:
     return {f["path"] for f in inputs["files"]}
 
 
-def _project(tmp_path, script=SCRIPT):
+def _project(tmp_path, script=SCRIPT, **kw):
     proj = tmp_path / "proj"
     nativekit.write(proj / "helper.py", "SCALE = 2.0\n")
     nativekit.write(proj / "before.txt", "1\n")
     nativekit.write(proj / "after.txt", "3\n")
-    return dk.start(tmp_path, script, launch_id=LAUNCH)
+    return dk.start(tmp_path, script, **kw)
 
 
-LAUNCH = "plan-show-basis"
-
-
-def _held() -> bool:
-    return nativesession.REGISTRY.holds_barrier_observation(LAUNCH)
-
-
-def test_the_show_barrier_build_reports_what_was_read_so_far_and_a_release_voids_it(tmp_path):
+def test_the_show_barrier_build_reports_what_was_read_before_it_and_the_end_build_reports_all(
+    tmp_path,
+):
     session = _project(tmp_path)
     nativekit.wait_state(session, [nativesession.BARRIER])
     assert session.barrier_reason == "show"
     built = session.ensure_built()
     assert _files(built["observed_inputs"]) == {"before.txt"}, "屏障之后才读的文件不该出现"
     assert "helper.py" in {m["path"] for m in built["observed_inputs"]["local_modules"]}
-    assert _files(session.observed_inputs) == {"before.txt"}
     assert session.observed_inputs_complete is False
-    assert _held()
 
     session.resume()
-    assert session.observed_inputs is None, "放行之后，那份观察已不是这次运行的全部输入"
-    assert not _held()
+    # 放行不改变「屏障之前读了什么」
+    assert _files(session.observed_inputs) == {"before.txt"}
     nativekit.wait_state(session, [nativesession.BARRIER])
     assert session.barrier_reason == "script_end"
-    assert session.observed_inputs is None, "结束屏障上还没 build"
     session.ensure_built()
     assert _files(session.observed_inputs) == {"before.txt", "after.txt"}
     assert session.observed_inputs_complete is True
     dk.finish(session)
-
-
-def test_a_build_answered_after_a_release_cannot_revive_the_observation(tmp_path, monkeypatch):
-    """build 已发出、回包之前另一条请求放行了（Codex #1202 P1）：迟到的回包不能把观察重新算作有效。"""
-    session = _project(tmp_path)
-    nativekit.wait_state(session, [nativesession.BARRIER])
-    real = session._request
-
-    def build_then_release(obj, timeout):
-        resp = real(obj, timeout)
-        if obj.get("cmd") == "build":
-            session._release_epoch += 1  # 等价于回包前那一刻有人放行 / 连接断开
-        return resp
-
-    monkeypatch.setattr(session, "_request", build_then_release)
-    assert session.ensure_built()["observed_inputs"] is not None
-    assert session.observed_inputs is None
-    assert not _held()
-    monkeypatch.undo()
-    dk.finish(session)
-
-
-def test_a_lost_connection_ends_the_hold(tmp_path):
-    """sidecar 断线时 runner 会自己放开屏障、脚本接着跑（Codex #1202 P1）：不再算仍停着。"""
-    session = _project(tmp_path)
-    nativekit.wait_state(session, [nativesession.BARRIER])
-    session.ensure_built()
-    assert _held()
-    session.transport.close()
-    dk.wait_until(lambda: session.state in nativesession.TERMINAL_STATES, what="会话进终态")
-    assert session.observed_inputs is None
-    assert not _held()
-    session.owned.wait(30)
 
 
 def test_a_helper_changed_while_paused_voids_the_next_barriers_observation(tmp_path):
@@ -140,4 +116,55 @@ def test_a_helper_changed_while_paused_is_not_reported_at_the_script_end_either(
     nativekit.wait_state(session, [nativesession.BARRIER])
     assert session.barrier_reason == "script_end"
     assert "observed_inputs" not in session.ensure_built()
+    dk.finish(session)
+
+
+def _parked_final(tmp_path):
+    session = dk.start(tmp_path, TAIL, final_barrier=True)
+    nativekit.wait_state(session, [nativesession.BARRIER])
+    assert session.barrier_reason == "show"
+    session.ensure_built()
+    return session, tmp_path / "proj" / "tail.txt"
+
+
+def test_a_final_barrier_run_refuses_to_be_released(tmp_path):
+    session, tail = _parked_final(tmp_path)
+    with pytest.raises(RunError) as refused:
+        session.resume()
+    assert refused.value.code == runcodes.NATIVE_BARRIER_FINAL
+    with pytest.raises(RunError):
+        session.detach()
+    assert session.state == nativesession.BARRIER
+    assert not tail.exists()
+
+
+def test_the_runner_itself_refuses_a_release_the_parent_let_through(tmp_path):
+    """保证在用户进程里兑现：父进程那一层就算漏了，runner 也不放行。"""
+    session, tail = _parked_final(tmp_path)
+    session.final_barrier = False  # 模拟父进程漏挡
+    with pytest.raises(RunError) as refused:
+        session.resume()
+    assert refused.value.code == runcodes.NATIVE_BARRIER_FINAL
+    session.final_barrier = True
+    assert not tail.exists()
+
+
+@pytest.mark.parametrize("leave", ["disconnect", "terminate"])
+def test_leaving_a_final_barrier_ends_the_process_without_running_user_code(tmp_path, leave):
+    """断线（runner 读到 EOF）/ 终止（`SystemExit`，用户代码会吞掉它）：都直接结束进程，show() 之后的标记写不出来。"""
+    session, tail = _parked_final(tmp_path)
+    if leave == "disconnect":
+        session.transport.close()
+    else:
+        session.terminate()
+    assert session.owned.wait(60)
+    assert not tail.exists(), "第一个屏障之后的用户代码跑了"
+
+
+def test_without_final_barrier_the_same_script_does_continue(tmp_path):
+    """对照：不带 `final_barrier` 时同一个脚本放行后确实写出标记（上面几条的「没写出」才有意义）。"""
+    session = dk.start(tmp_path, TAIL)
+    nativekit.wait_state(session, [nativesession.BARRIER])
+    session.resume()
+    dk.wait_until(lambda: (tmp_path / "proj" / "tail.txt").exists(), what="show() 之后的标记")
     dk.finish(session)

@@ -13,7 +13,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from tavotto.engine import launchctx, nativesession, runconfig, scriptargs
+from tavotto.engine import launchctx, runconfig, scriptargs
 
 
 @pytest.fixture
@@ -118,15 +118,15 @@ def test_an_incomplete_late_observation_does_not_upgrade(proj):
     assert runconfig.launch_record(proj, "fig.py")["source"]["basis_observed"] is False
 
 
-def test_an_observation_that_stops_at_a_show_barrier_is_stored_but_never_vouched_for_on_disk(proj):
-    """停在 `show()` 屏障上收口：依据照填、带 `basis_scope`，但落盘不是 `true`——之后可能被放行（Codex #1202 P1）。"""
+def test_an_observation_that_stops_at_a_show_barrier_is_stored_scoped_to_the_barrier(proj):
+    """停在 `show()` 屏障上收口：依据照填、带 `basis_scope`，`basis_observed` 不是 `true`——它只替屏障之前作保。"""
     record = launchctx.build_native_record(
         proj, "fig.py", _plan(proj), inputs=_inputs(), complete=False
     )
     assert record["source"]["basis_observed"] is False
     assert record["source"]["basis_scope"] == launchctx.BASIS_SCOPE_BARRIER
     assert record["source"]["basis"] == {"data.csv": "d" * 64, "helper.py": "h" * 64}
-    assert launchctx.barrier_basis_launch(record) == "plan-1"
+    assert launchctx.barrier_scoped(record) is True
     runconfig.set_launch_record(proj, "fig.py", record)
 
     # 脚本跑完后的全部观察补成 true，范围标记去掉
@@ -136,35 +136,17 @@ def test_an_observation_that_stops_at_a_show_barrier_is_stored_but_never_vouched
     assert after["source"]["basis_observed"] is True
     assert "basis_scope" not in after["source"]
     assert after["source"]["basis"] == {"late.csv": "f" * 64, "helper.py": "h" * 64}
-    assert launchctx.barrier_basis_launch(after) == ""
+    assert launchctx.barrier_scoped(after) is False
 
 
 @pytest.mark.parametrize(
     "record",
     [
         None,
-        {
-            "profile": "safe",
-            "launch_id": "plan-1",
-            "source": {"basis_observed": False, "basis_scope": "barrier"},
-        },
-        {
-            "profile": "native",
-            "launch_id": "plan-1",
-            "source": {"basis_observed": True, "basis_scope": "barrier"},
-        },
-        {"profile": "native", "launch_id": "plan-1", "source": {"basis_observed": False}},
+        {"profile": "safe", "source": {"basis_observed": False, "basis_scope": "barrier"}},
+        {"profile": "native", "source": {"basis_observed": True, "basis_scope": "barrier"}},
+        {"profile": "native", "source": {"basis_observed": False}},
     ],
 )
-def test_only_a_native_barrier_scoped_record_names_a_run_to_ask_about(record):
-    assert launchctx.barrier_basis_launch(record) == ""
-
-
-def test_only_the_run_that_wrote_the_record_can_vouch_for_it(monkeypatch):
-    """路由问的是**这条记录那一次运行**是否仍停着：同项目另一条仍停着的运行不作数。"""
-    held = SimpleNamespace(launch_id="plan-2", holds_barrier_observation=lambda: True)
-    gone = SimpleNamespace(launch_id="plan-1", holds_barrier_observation=lambda: False)
-    monkeypatch.setattr(nativesession.REGISTRY, "_sessions", {"a": held, "b": gone})
-    assert nativesession.REGISTRY.holds_barrier_observation("plan-2") is True
-    assert nativesession.REGISTRY.holds_barrier_observation("plan-1") is False
-    assert nativesession.REGISTRY.holds_barrier_observation("") is False
+def test_only_a_native_unobserved_barrier_record_is_barrier_scoped(record):
+    assert launchctx.barrier_scoped(record) is False

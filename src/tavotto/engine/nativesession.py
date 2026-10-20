@@ -381,6 +381,8 @@ class NativeSession:
         #: 桌面拥有的会话：这次运行的运行配置引用 / 回执关联键（公开，不含参数值）
         self.run_config = str(meta.get("run_config") or "")
         self.launch_id = str(meta.get("launch_id") or "")
+        #: 第一个屏障即终点（`ExecutionSpec.final_barrier`，#1047）：放行一律拒绝
+        self.final_barrier = meta.get("final_barrier") is True
         #: 这条会话是被所有者取消结束的（与脚本自己退出、崩溃分开记）
         self.cancelled = False
         #: 所属计划的登记序号（桌面拥有的会话由 `desktopproc.start` 盖；终端拥有的恒 None）
@@ -426,12 +428,7 @@ class NativeSession:
         #: 的 `cold`），它不知道自己手里是哪一种，也不该知道。
         self.built = False
         self.last_build: dict | None = None
-        #: 放行代数：每次放行（继续 / 放手）或连接断开（runner 读到 EOF 也会放开屏障）+1。build 记下**发请求那一刻**的代数，
-        #: 对不上 = 那次 build 之后脚本可能接着跑过、又读了别的，它带回的输入观察作废（迟到的 build 回包也压不过放行）
-        self._release_epoch = 0
-        self._built_epoch = -1
-        #: 已被一份新计划接管（`seize_for_takeover`）：之后拒绝放行（继续 / 放手），旧会话只剩被取消一条路。与放行代数同一把锁（`_lock`）
-        self._seized = False
+        #: 上一次 build 发出时停着的屏障（`barrier_reason`）：`script_end` 上 build 带回的输入观察才是这次运行的全部输入
         self._built_reason = ""
         self._lock = threading.Lock()
         self._changed = threading.Condition(self._lock)
@@ -626,8 +623,6 @@ class NativeSession:
             # EOF releases a runner barrier even without a continue request.
             # Its Figure may change after contact is lost; do not assert exec.
             revoked = self._revoke_pending_barrier()
-            # 同理：脚本可能接着跑、又读了别的——屏障上那份输入观察作废（#1047）。与 `seize_for_takeover` 同一把锁
-            self._release_epoch += 1
         self._release_lease()
         if self.state in TERMINAL_STATES:
             if revoked:
@@ -829,10 +824,8 @@ class NativeSession:
     @property
     def observed_inputs(self) -> dict | None:
         """桌面拥有的运行在屏障上 build 带回的输入观察（`figcapture.InputObserver.report()`，#1047）：观察到的项目内数据文件
-        与本地模块（项目相对路径 + sha256）。脚本跑完后的屏障上是全部；停在 `show()` 屏障上是到此为止的全部——那次 build
-        之后放行过（脚本接着跑、可能再读）= None。含项目相对路径：只给启动记录用，不进 `public_state()` / 事件 / 诊断。"""
-        if self._built_epoch != self._release_epoch:
-            return None
+        与本地模块（项目相对路径 + sha256）。脚本跑完后的屏障上是全部；`show()` 屏障上是到那一刻为止读过的（之后放没放行
+        都不改变它：它只回答「屏障之前读了什么」）。含项目相对路径：只给启动记录用，不进 `public_state()` / 事件 / 诊断。"""
         ins = (
             (self.last_build or {}).get("observed_inputs")
             if isinstance(self.last_build, dict)
@@ -842,38 +835,8 @@ class NativeSession:
 
     @property
     def observed_inputs_complete(self) -> bool:
-        """`observed_inputs` 是不是这次运行的**全部**输入：脚本跑完后的结束屏障上 build 的才是；`show()` 屏障上的是到此为止。"""
+        """`observed_inputs` 是不是这次运行的**全部**输入：脚本跑完后的结束屏障上 build 的才是；`show()` 屏障上的只到那里为止。"""
         return self._built_reason == "script_end" and self.observed_inputs is not None
-
-    def holds_barrier_observation(self) -> bool:
-        """这条桌面拥有的会话此刻仍停在屏障上，且收口那次 build 之后**从没放行过**：屏障之后的代码还没执行，那次的观察
-        就是这次运行到目前为止、也是迄今全部的输入（#1047）。只看进程内状态：sidecar 一重启就不成立（失败关闭）。"""
-        return (
-            self.owned is not None
-            and self.transport is not None
-            and not self._seized  # 已被新计划接管、等着被取消的，不再给别的计划作保
-            # 不另看 state / 进程是否结束：离开屏障只有放行与断线两条路（停止运行杀进程也是断线），都推进放行代数，
-            # `observed_inputs` 已是 None
-            and self.observed_inputs is not None
-        )
-
-    def barrier_hold_epoch(self) -> int | None:
-        """`holds_barrier_observation()` 成立时此刻的放行代数；不成立 = None。"""
-        with self._lock:
-            return self._release_epoch if self.holds_barrier_observation() else None
-
-    def seize_for_takeover(self, expected_epoch: int) -> bool:
-        """一份沿用这条屏障观察的新计划接管它：在 `_lock` 里核「仍停着、从没放行过、代数正是计划记下的那个」，成立就置 `_seized`
-        （此后 `_release` 拒绝放行），返回 True。放行 / 断线推进代数也在这把锁里，所以核对与接管之间不会插进放行（#1202）。"""
-        with self._lock:
-            if (
-                self._seized
-                or self._release_epoch != expected_epoch
-                or not self.holds_barrier_observation()
-            ):
-                return False
-            self._seized = True
-            return True
 
     @property
     def child_pid(self) -> int | None:
@@ -895,16 +858,25 @@ class NativeSession:
         return d
 
     def ensure_built(self) -> dict:
-        epoch, reason = self._release_epoch, self.barrier_reason
+        reason = self.barrier_reason
         resp = self._request({"cmd": "build"}, BUILD_TIMEOUT)
         self.built = True
         self.last_build = resp
-        self._built_epoch, self._built_reason = epoch, reason
+        self._built_reason = reason
         self.descriptors = list(resp.get("descriptors") or [])
         self.figure_facts = list(resp.get("figure_facts") or [])
         self.stems = list((resp.get("stems") or {}).keys())
         self.script_error = resp.get("script_error") or self.script_error
         return resp
+
+    def publish_built(self) -> None:
+        """build 出来的描述符已经绑上活路由：把带描述符的新快照推给界面（状态不变，序号 +1）。
+
+        桌面拥有的会话由准备 runner 自己 build，屏障事件在 build 之前就发出了——界面手里这条会话的 `descriptors`
+        还是空的，面板按描述符认领会话，认不到就把一张活着的图报成「会话已结束」。`GET /api/native/sessions`
+        的快照与屏障事件同序号，`refresh()` 的「序号更大才覆盖」也补不上，所以要由后端发一条序号更大的。
+        终端拥有的会话不走这里：界面在屏障处自己 build，再多一条事件只会让它再 build 一次。"""
+        self._publish(built="descriptors")
 
     def override(
         self, stem: str, patches: list, preview_dpi: int | None = None, inline_svg: bool = False
@@ -1056,14 +1028,11 @@ class NativeSession:
         continue 就离开了控制循环，锁一放、状态还停在 BARRIER 的那一瞬，等锁的渲染会通过
         `_require_barrier()` 把帧发给一个不再读它的 runner。
         """
+        if self.final_barrier and self.barrier_reason != "script_end":
+            # 第一个屏障即终点（#1047）：runner 侧同样拒绝，这里先挡，免得一条注定失败的请求
+            raise RunError(runcodes.NATIVE_BARRIER_FINAL)
         with self._figure_lock:
             self._require_consistent()
-            # 发 continue 之前就作废：回包之前脚本可能已经在读下一个文件。「已被接管则拒绝」与推进代数在 `_lock` 里一步做完，
-            # 与 `seize_for_takeover` 互斥（锁序：`_figure_lock` → `_lock`，没有反向获取）
-            with self._lock:
-                if self._seized:
-                    raise RunError(runcodes.NATIVE_SESSION_ENDED)
-                self._release_epoch += 1
             previous_epoch = self.snapshot_epoch
             try:
                 resp = self._request({"cmd": "continue"}, REQUEST_TIMEOUT)
@@ -1078,6 +1047,8 @@ class NativeSession:
             except pool.WorkerError as exc:
                 if getattr(exc, "code", "") == runcodes.NATIVE_FIGURE_INCONSISTENT:
                     raise RunError(runcodes.NATIVE_FIGURE_INCONSISTENT) from exc
+                if getattr(exc, "code", "") == runcodes.NATIVE_BARRIER_FINAL:
+                    raise RunError(runcodes.NATIVE_BARRIER_FINAL) from exc
                 raise
             with self._lock:
                 if resp.get("released") is True:
@@ -1456,33 +1427,6 @@ class NativeSessionRegistry:
         if session is None:
             raise RunError(runcodes.NATIVE_SESSION_UNKNOWN)
         return session
-
-    def holds_barrier_observation(self, launch_id: str) -> bool:
-        """计划号为 `launch_id` 的桌面运行此刻仍停在屏障上、收口之后从没放行过（`NativeSession.holds_barrier_observation`）。"""
-        if not launch_id:
-            return False
-        with self._lock:
-            sessions = list(self._sessions.values())
-        return any(s.launch_id == launch_id and s.holds_barrier_observation() for s in sessions)
-
-    def barrier_hold_epoch(self, launch_id: str) -> int | None:
-        """计划号为 `launch_id` 的桌面运行仍停在屏障上、从没放行过时此刻的放行代数；否则 None（`NativeSession.barrier_hold_epoch`）。"""
-        for s in self._sessions_of(launch_id):
-            epoch = s.barrier_hold_epoch()
-            if epoch is not None:
-                return epoch
-        return None
-
-    def seize_for_takeover(self, launch_id: str, expected_epoch: int) -> bool:
-        """原子接管计划号为 `launch_id` 的那条屏障会话（`NativeSession.seize_for_takeover`）；找不到 / 核对不过 = False。"""
-        return any(s.seize_for_takeover(expected_epoch) for s in self._sessions_of(launch_id))
-
-    def _sessions_of(self, launch_id: str) -> list[NativeSession]:
-        if not launch_id:
-            return []
-        with self._lock:
-            sessions = list(self._sessions.values())
-        return [s for s in sessions if s.launch_id == launch_id]
 
     def list(self, project_root: str = "") -> list[NativeSession]:
         with self._lock:

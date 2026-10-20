@@ -56,6 +56,8 @@ NATIVE_SESSION_OFFLINE = "native_session_offline"
 #: 活会话里这张图有改动还原不回去（`overrides.apply` 的 `unrestored`，Codex #549 第八轮）
 NATIVE_FIGURE_INCONSISTENT = "native_figure_inconsistent"
 NATIVE_SESSION_ENDED = "native_session_ended"
+#: 这次运行凭「只到 show() 为止」的依据沿用了上次 native 成功：第一个屏障即终点，不能放行（#1047）。
+NATIVE_BARRIER_FINAL = "native_barrier_final"
 NATIVE_SESSION_DISCONNECTED = "native_session_disconnected"
 NATIVE_SESSION_UNKNOWN = "native_session_unknown"
 BRIDGE_CHILD_EXITED = "bridge_child_exited"
@@ -205,6 +207,10 @@ MESSAGES: dict[str, dict[str, str]] = {
     NATIVE_SESSION_ENDED: {
         "zh": "这个 Tavotto Run 会话已经结束。",
         "en": "This Tavotto Run session has ended.",
+    },
+    NATIVE_BARRIER_FINAL: {
+        "zh": "这次运行沿用了上次的结果，只运行到第一张图为止，不能继续往下运行。",
+        "en": "This run reused the previous result and stops at the first figure, so it can’t continue.",
     },
     NATIVE_SESSION_DISCONNECTED: {
         "zh": "与 Tavotto Run 会话的连接断开了；你的脚本仍在自己继续运行。",

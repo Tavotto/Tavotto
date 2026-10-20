@@ -154,6 +154,14 @@ _INPUTS = None
 _GONE = object()
 
 
+def _hard_exit(code: int) -> None:
+    """结束进程且绝不回到用户代码（`--final-barrier`）：先把标准流写完，再 `os._exit`。"""
+    for stream in (sys.stdout, sys.stderr):
+        with contextlib.suppress(Exception):
+            stream.flush()
+    os._exit(code)
+
+
 # ---------------------------------------------------------------------------
 # 钩子
 # ---------------------------------------------------------------------------
@@ -534,6 +542,8 @@ TERMINATE_EXIT = 5
 #: 图与文档不一致、不许放行（与 `runcodes.NATIVE_FIGURE_INCONSISTENT` 同一个串；runner 在用户
 #: 的解释器里跑、import 不到 `tavotto.engine`，由 `test_native_inconsistent.py` 钉两侧相等）
 INCONSISTENT_CODE = "native_figure_inconsistent"
+#: `--final-barrier`：第一个屏障即终点，放行被拒（与 `runcodes.NATIVE_BARRIER_FINAL` 同串）
+BARRIER_FINAL_CODE = "native_barrier_final"
 
 
 def _take_token() -> str:
@@ -885,6 +895,8 @@ class BridgeRun:
         #: 被结束或重跑，后面的代码不执行——那么这就是这次运行的全部输入；放行（继续 / 放手）就作废，由父进程同时把
         #: 记录改回「没观察过」、脚本跑完后再补。离开屏障即清空；与更早屏障的摘要对不上 = None（同 `freeze_inputs`）
         self.barrier_inputs_report: dict | None = None
+        #: 此刻停着的屏障（`barrier()` 期间）；不在屏障上 = ""。`--final-barrier` 据此拒绝放行
+        self.current_barrier = ""
         #: 项目相对路径 → 进 `show()` 屏障那一刻的 sha256（先见者赢）。脚本停在屏障上时用户可能改了 helper / 数据，
         #: 进程执行的是旧内容；`freeze_inputs` 拿它跟最终定格的摘要比对，不一致就不报观察（Codex #1180 P2）
         self._input_digests: dict[str, str | None] = {}
@@ -992,6 +1004,11 @@ class BridgeRun:
                 return run.build_result()
 
             def handle_extra(self, cmd, req, payload):
+                if cmd == "continue" and run.final_barrier(run.current_barrier):
+                    # 第一个屏障即终点（`--final-barrier`，#1047）：拒绝放行，停在屏障上，还能编辑 / 导出 / 被终止
+                    raise wireproto.ProtocolError(
+                        BARRIER_FINAL_CODE, "这次运行只到第一个屏障为止，不能放行"
+                    )
                 if cmd == "continue":
                     # **先恢复、恢复干净了才放行**（ADR 0021 §8.1，Codex #549 第九轮）：
                     # 还原不回去的图会让脚本看到 Tavotto 半改的 Figure。那就不放，
@@ -1262,16 +1279,33 @@ class BridgeRun:
             observer.uninstall()
             _INPUTS = None
 
+    def final_barrier(self, reason: str) -> bool:
+        """`--final-barrier` 下，这个屏障是不是终点：脚本跑完之前的屏障（`show()`）都是。"""
+        return bool(getattr(self.args, "final_barrier", False)) and reason != "script_end"
+
     def barrier(self, reason: str) -> None:
-        """屏障期间不跑用户代码：引擎自己的读（预览 / 导出）不进输入观察。"""
+        """屏障期间不跑用户代码：引擎自己的读（预览 / 导出）不进输入观察。
+
+        `--final-barrier`（#1047）：这次运行凭「只到 show() 为止」的依据沿用了上次 native 成功，屏障之后的代码从没被核验过，
+        不许在免检的 native 里执行。放行在控制循环里就被拒；连接断开 / 关停 / 终止这些「离开屏障」的出路一律直接结束进程
+        （`os._exit`：不抛 `SystemExit`——用户代码能吞掉它，也不跑用户的 `finally` / `atexit`），回不到用户代码。"""
         if reason != "script_end":  # script_end 在 freeze 之后，观察器已卸
             self._snapshot_inputs()
+        self.current_barrier = reason
         try:
             with _engine_reads():
                 self._barrier(reason)
+        except SystemExit as exc:
+            if self.final_barrier(reason):
+                _hard_exit(exc.code if isinstance(exc.code, int) else TERMINATE_EXIT)
+            raise
         finally:
             # 离开屏障 = 脚本接着跑（或进程要走了）：这一刻的观察不再是全部输入
             self.barrier_inputs_report = None
+            self.current_barrier = ""
+        if self.final_barrier(reason):
+            # 正常返回只剩「控制通道断了 / 没有控制通道」：放行在控制循环里已被拒
+            _hard_exit(TERMINATE_EXIT)
 
     def _barrier(self, reason: str) -> None:
         """在**拥有 Figure 的这个线程**上服务控制循环，直到 continue/shutdown。
@@ -1376,6 +1410,8 @@ def _parse_args(argv: list):
     ap.add_argument("--input-bridge", action="store_true")
     # 桌面拥有的启动：观察脚本读了哪些项目内文件、import 了哪些本地模块（与 safe 同口径，#1047）；终端拥有的不带
     ap.add_argument("--observe-inputs", action="store_true")
+    # 凭「只到 show() 为止」的依据沿用 native 的启动：第一个屏障即终点，不放行、离开即退出（#1047）
+    ap.add_argument("--final-barrier", action="store_true")
     if "--" in argv:
         cut = argv.index("--")
         mine, user_argv = argv[:cut], argv[cut + 1 :]

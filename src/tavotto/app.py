@@ -57,6 +57,7 @@ from werkzeug.exceptions import HTTPException
 from . import pdfbackend, tiffprobe
 from .engine import (
     ai_bridge as engine_ai,
+    ai_figure_edit as engine_ai_figure_edit,
     ai_history as engine_ai_history,
     ai_providers as engine_ai_providers,
     artifactcontext as engine_artifactcontext,
@@ -3161,6 +3162,80 @@ def _after_ai_change(ctx: "ProjectCtx", script: str) -> dict:
     return result
 
 
+def _ai_task_hooks(ctx: "ProjectCtx", script: str, entry: str) -> dict:
+    """TAF 改图（ADR 0138 Phase 3b）提交前后的渲染层事实，注入给 AI 桥；**只在实验开关打开时**被调用。
+
+    * `before`：池里**已经 build 过**的那个 safe 会话（`pool.peek`，不建、不执行）落盘的 manifest；没有 → None
+      （这次会话里没渲染过这张图，桥据此不做改后渲染）；会话 build **实际执行**的源码 sha256 必须等于此刻磁盘脚本；
+    * `retire`：写入之后、刷新之前尽力同步退役该脚本的全部旧会话（`invalidate(force=True)`），让 after 少撞上旧会话；
+      **不是正确性依据**；
+    * `after(expected_sha256)`：提交并统一刷新之后，按磁盘面板的同一扇门（`enginesession.resolve`、safe、同一份运行配置）
+      取会话并 build——就是前端收到 `panel.file_changed` 后本来就要做的那次重渲染；前端随后来时会话已 built，不再执行第二次。
+      判据是「执行了哪一版源码」：会话自报的 `last_build_source_sha256` 必须等于刚提交字节的 sha256，否则抛
+      `StaleSession`（去重回旧会话、watcher 时序、启动采样 A→B→A 都落在这里）。
+
+    两边都按这个脚本此刻登记的全部 stem 读 `<out_dir>/<stem>.json`。"""
+
+    def run_selection():
+        return engine_runconfig.default_selection(ctx.path, script)
+
+    def manifests(worker) -> dict:
+        out = {}
+        for stem in ctx.registry.stems_of(script):
+            try:
+                out[stem] = json.loads(
+                    Path(
+                        engine_figcapture.usable_preview_path(worker.out_dir, stem, ".json")
+                    ).read_text(encoding="utf-8")
+                )
+            except (OSError, ValueError):
+                continue
+        return out
+
+    def before():
+        worker = engine_pool.peek(script, str(ctx.path), run=run_selection())
+        if worker is None or not worker.built:
+            return None
+        # 桥在持脚本锁核过基线之后、写入之前调这里：此刻磁盘上的脚本就是起跑基线。会话 build 时 worker 自报执行的源码
+        # sha256（`last_build_source_sha256`）对不上 = 它是别的版本建出来的（用户刚编辑、watcher 还没作废，或启动采样
+        # 与实际执行不一致），它的 manifest 不是「改前」的事实，按没有可用基线处理。
+        try:
+            disk = hashlib.sha256((ctx.path / script).read_bytes()).hexdigest()
+        except OSError:
+            return None
+        if getattr(worker, "last_build_source_sha256", None) != disk:
+            return None
+        return manifests(worker) or None
+
+    def retire():
+        # 同步、确认式退役该脚本全部会话（`force=True`，确认不了抛 WorkerError）。尽力而为：监视器可能已先做过普通
+        # invalidate（异步关闭），force 找不到键也算成功，after 仍可能被 workerd 按 by_hash 去重回尚未关闭的旧会话——
+        # 所以正确性不靠它，靠 after 核会话执行的 source_sha256。
+        engine_pool.invalidate(script, str(ctx.path), force=True)
+
+    def after(expected_sha256):
+        run = run_selection()
+        stems = ctx.registry.stems_of(script)
+        worker = engine_enginesession.resolve(
+            project_root=str(ctx.path),
+            script=script,
+            entry=entry,
+            stem=stems[0] if stems else "",
+            execution_profile=engine_enginesession.PROFILE_SAFE,
+            **({"run": run} if run is not None else {}),
+        )
+        if not worker.built:  # 已 built 的会话不再发请求（多一次无意义）
+            worker.ensure_built()
+        got = getattr(worker, "last_build_source_sha256", None)
+        if got != expected_sha256:
+            raise engine_ai_figure_edit.StaleSession(
+                f"session executed {got!r}, committed {expected_sha256!r}"
+            )
+        return manifests(worker)
+
+    return {"before": before, "retire": retire, "after": after}
+
+
 def project_status(ctx: "ProjectCtx | None") -> dict:
     if ctx is None:
         return {"open": False}
@@ -5441,6 +5516,7 @@ _NATIVE_STATUS = {
     engine_runcodes.NATIVE_INPUT_INVALID: 400,
     engine_runcodes.NATIVE_PROCESS_NOT_OWNED: 409,
     engine_runcodes.NATIVE_SESSION_ENDED: 409,
+    engine_runcodes.NATIVE_BARRIER_FINAL: 409,
     engine_runcodes.NATIVE_SESSION_DISCONNECTED: 409,
     engine_runcodes.NATIVE_AUTH_FAILED: 403,
     engine_runcodes.NATIVE_ATTACH_FAILED: 502,
@@ -5778,8 +5854,8 @@ def api_native_forget_permission():
 def _note_native_inputs(session) -> None:
     """桌面拥有的运行跑完之后的 build 带着输入观察：补齐这次运行的 native 成功记录的 helper / 数据依据（#1047）。
 
-    成功收口在 `show()` 屏障上的运行，记录是「到此为止、没观察全」；脚本跑完、在结束屏障上再 build 一次，这里按计划号
-    （`launch_id`）补上。终端拥有的会话不观察；不是跑完后的观察、补不上（观察不全、记录已被别的成功换掉）就保持不沿用。"""
+    成功收口在 `show()` 屏障上的运行，记录的依据只到屏障为止；脚本跑完、在结束屏障上再 build 一次，这里按计划号
+    （`launch_id`）补成全部。终端拥有的会话不观察；不是跑完后的观察、补不上（观察不全、记录已被别的成功换掉）就保持原样。"""
     if session.owned is None or not session.launch_id or not session.observed_inputs_complete:
         return
     inputs = session.observed_inputs
@@ -8730,14 +8806,6 @@ def _native_preparation_runner(pl, before_retry=None):
     # 重新运行：同一脚本更早的准备、在途启动、已登记的活图都让位（它们占着 live route 与环境租约）。
     # 顺序与关项目一致:先计划、再会话 / 票据
     engine_preparation.SERVICE.cancel_project(pl.project_id, script=pl.script, keep=pl.plan_id)
-    hold, hold_epoch = getattr(pl, "barrier_hold", ""), getattr(pl, "barrier_hold_epoch", None)
-    if hold and not (
-        hold_epoch is not None
-        and engine_nativesession.REGISTRY.seize_for_takeover(hold, hold_epoch)
-    ):
-        # 沿用 native 凭的是旧运行停在屏障上的观察，它在认领与此刻之间被放行 / 断线了（或根本不在了）：先接管再取消——核对与接管在
-        # 同一把锁里，接管成功之后旧运行不会再被放行；失败 = 依据作废，一行没跑，计划以过期收场（#1202）
-        raise engine_preparation.StaleBeforeRun(engine_preparation.STALE_DATA_BINDING)
     engine_nativesession.REGISTRY.cancel_project(
         pl.project_root, script=spec.target, older_than=pl.launch_order
     )
@@ -8787,6 +8855,7 @@ def _native_preparation_runner(pl, before_retry=None):
     rejected = engine_nativesession.REGISTRY.bind_assets(session)
     if not rejected:
         _svg_native_execution_update(session)
+        session.publish_built()  # 界面手里这条桌面会话的 descriptors 还是空的（屏障事件在 build 之前）
     if rejected:
         # 这些图的活路由还被另一条活会话占着(例如用户终端里的 `tavotto run`):继续完成会让预览换成这次运行的、
         # 编辑 / 导出却仍落在旧会话上——静默错图。不发布被拒的描述符,结束这次运行,如实报冲突(ADR 0021 §9.2)
@@ -9231,7 +9300,7 @@ def _finalize_script_attempt(ctx: "ProjectCtx", plan, result) -> dict:
             result,
             plan,
             bool(captured.get("failed_figures")),
-            # 屏障上 build 带回的观察；`show()` 屏障上只是到此为止（记录不落 true，只在那条运行仍停着时由路由当真，#1047）
+            # 屏障上 build 带回的观察；停在 `show()` 屏障上只到那里为止（记录标 `basis_scope`，#1047）
             native_inputs=native.observed_inputs if native is not None else None,
             native_complete=native.observed_inputs_complete if native is not None else True,
         ),
@@ -10674,6 +10743,7 @@ def _ai_run_impl():
             endpoint_id=body.get("endpoint"),
             # 文件变了就接统一刷新（reason=ai），在 ai.done 之前做完（ADR 0041）
             on_changed=lambda script: _after_ai_change(ctx, script),
+            task_hooks=_ai_task_hooks(ctx, info["script"], info["entry"]),
         )
     except engine_ai.DuplicateRequest as dup:
         # 同一条请求已经登记过：返回既有会话，不 spawn、不重复记遥测

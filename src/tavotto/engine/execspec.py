@@ -282,6 +282,10 @@ class ExecutionSpec:
     env_source: str = ""
     #: native 的 stdin 通道（`STDIN_*`）。terminal 恒 `inherit`；safe 不使用（恒 `inherit` 占位）。
     stdin: str = STDIN_INHERIT
+    #: 仅 `owner=desktop`：第一个屏障（`show()`）就是终点——runner 拒绝放行，断线 / 关停直接退出进程，屏障之后的用户代码
+    #: 一行不跑。凭「只到 show() 为止」的依据沿用 native 的那次运行才带（#1047，ADR 0133）：没被核验过的后半段不许在
+    #: 免检的 native 里执行。其余恒 False，命令行逐字节不变
+    final_barrier: bool = False
 
     def __post_init__(self) -> None:
         if self.profile not in PROFILES:
@@ -318,6 +322,10 @@ class ExecutionSpec:
             raise ValueError(
                 "owner / env_source / stdin 只属于 native profile（safe 不接受这些开关）"
             )
+        if self.final_barrier and not (
+            self.profile == PROFILE_NATIVE and self.owner == OWNER_DESKTOP
+        ):
+            raise ValueError("final_barrier 只属于桌面拥有的 native")
         if self.owner and self.owner not in OWNERS:
             raise ValueError(f"owner 非法: {self.owner!r}（可选 {OWNERS}）")
         if self.stdin not in STDIN_MODES:
@@ -501,6 +509,7 @@ def spec_from_payload(data: dict) -> ExecutionSpec:
         owner=data.get("owner", "") or "",
         env_source=data.get("env_source", "") or "",
         stdin=data.get("stdin", STDIN_INHERIT) or STDIN_INHERIT,
+        final_barrier=data.get("final_barrier") is True,
     )
 
 
@@ -622,6 +631,7 @@ def desktop_native_spec(
     run_config: str = "",
     env: dict[str, str] | None = None,
     stdin: str = STDIN_NULL,
+    final_barrier: bool = False,
 ) -> ExecutionSpec:
     """**桌面拥有的** native 档启动身份的唯一权威构造函数（P06，ADR 0125）。
 
@@ -646,6 +656,7 @@ def desktop_native_spec(
         env=env,
         env_source=ENV_SOURCE_SIDECAR,
         stdin=stdin,
+        final_barrier=final_barrier,
     )
 
 
@@ -662,6 +673,7 @@ def _native(
     env: dict[str, str] | None = None,
     env_source: str = "",
     stdin: str = STDIN_INHERIT,
+    final_barrier: bool = False,
 ) -> ExecutionSpec:
     if target_kind == TARGET_MODULE:
         target = raw_target
@@ -689,6 +701,7 @@ def _native(
         owner=owner,
         env_source=env_source,
         stdin=stdin,
+        final_barrier=final_barrier,
     )
 
 
@@ -744,6 +757,9 @@ def bridge_argv(
         # 桌面拥有的启动：runner 观察脚本读到的项目内文件与 import 的本地模块（与 safe 同口径），native 成功记录据此
         # 带上 helper / 数据依据、可被沿用（#1047）。terminal 拥有的命令行逐字节不变（golden）
         out.append("--observe-inputs")
+    if spec.final_barrier:
+        # 凭「只到 show() 为止」的依据沿用 native：第一个屏障即终点，runner 不放行、断线即退出（#1047）
+        out.append("--final-barrier")
     out.append("--")
     out.extend(spec.argv)
     return out
