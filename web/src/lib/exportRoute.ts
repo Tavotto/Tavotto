@@ -20,12 +20,23 @@ export type ExportRouteScope = 'canvas' | 'original'
  *   就要 worker 现画；没有脚本时后端报 `source_needs_execution` 而不是退回磁盘文件，
  *   所以画布范围下「有无脚本」不影响结论。
  *
+ * - 原图范围还受**所选格式**影响：要 EPS 且不要 SVG 时后端 `_export_produce_original` 传
+ *   `rerender=True`（`app._original_rerender`），有脚本就重画，哪怕没有 override——此时
+ *   未编辑的 PNG 嵌入的也是重画的矢量。画布范围与格式无关。
+ *
  * 有无脚本看 `assets[fileId].script`，与 `epsAvailability` 同源，不读文档里可能陈旧的 `o.script`。
  */
+/** 镜像 `app._original_rerender`：原图范围里所选格式是否让有脚本的图现画（要 EPS 且不要 SVG） */
+export function originalRerenders(formats: readonly string[]): boolean {
+  return formats.includes('eps') && !formats.includes('svg')
+}
+
 export function embedsDiskBitmap(
   o: PanelObject,
   assets: Record<string, PanelInfo>,
   scope: ExportRouteScope,
+  /** 本次所选格式；只有原图范围读它 */
+  formats: readonly string[],
 ): boolean {
   if (o.fileKind !== 'raster') return false
   if (scope === 'canvas') return o.overrides.length === 0
@@ -35,5 +46,6 @@ export function embedsDiskBitmap(
   } catch {
     return true
   }
-  return sent.length === 0 || !assets[o.fileId]?.script
+  const hasScript = !!assets[o.fileId]?.script
+  return !hasScript || (sent.length === 0 && !originalRerenders(formats))
 }

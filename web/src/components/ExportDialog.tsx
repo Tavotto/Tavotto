@@ -598,10 +598,11 @@ export function ExportDialog() {
             objectId: targetObjectId,
             widthMm: originalWidthMm,
             heightMm: originalHeightMm,
+            formats,
           })
         : null,
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [validationIssues, checkCanvasId, targetObjectId, originalWidthMm, originalHeightMm],
+    [validationIssues, checkCanvasId, targetObjectId, originalWidthMm, originalHeightMm, formats],
   );
   const summary = useMemo(
     () =>

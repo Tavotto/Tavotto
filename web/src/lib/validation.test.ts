@@ -654,7 +654,7 @@ describe('原图范围检查的是原图那份产物，不是图在画布上的�
   })
   const input = (doc: FigureDocument) => ({ canvasId: 'c1', canvasName: '画布 1', doc, profile })
   const original = (doc: FigureDocument, render: ReturnType<typeof renderFor>, w: number, h: number) =>
-    validateOriginal(input(doc), 'doc-1', assets, render, { objectId: 'p1', widthMm: w, heightMm: h })
+    validateOriginal(input(doc), 'doc-1', assets, render, { objectId: 'p1', widthMm: w, heightMm: h, formats: ['pdf'] })
   const fontRules = (codes: string[]) => codes.filter((c) => c.startsWith('font-'))
 
   it('160 mm 的图缩到 80 mm 摆着：画布范围照报小字，原图范围不报（导出的文件里字号没变）', () => {
@@ -718,7 +718,7 @@ describe('原图范围检查的是原图那份产物，不是图在画布上的�
     const p1 = panel({ nativeW: 160, nativeH: 120, w: 80, h: 60 })
     const doc = docWith([p1])
     const render = renderFor(p1, sized(160, 120, 6))
-    const spec = buildOriginalSpec(p1, assets, render, { widthMm: 160, heightMm: 120 })
+    const spec = buildOriginalSpec(p1, assets, render, { widthMm: 160, heightMm: 120 }, ['pdf'])
     expect(spec.page).toEqual({ w_mm: 160, h_mm: 120, margin_mm: 0 })
     expect(spec.panels).toHaveLength(1)
     expect(spec.panels[0].scale).toBe(1)
@@ -733,6 +733,7 @@ describe('原图范围检查的是原图那份产物，不是图在画布上的�
         objectId: 'nope',
         widthMm: 80,
         heightMm: 60,
+        formats: ['pdf'],
       }),
     ).toBeNull()
   })

@@ -2,7 +2,7 @@
 
 前端 `web/src/lib/exportRoute.ts` 的 `embedsDiskBitmap` ↔ 后端真实代码：
 
-* 原图范围：真调 `app._resolve_panel_source`（真 `_serialize_figure_with_worker`、真 `safe_resolve`），
+* 原图范围：真调 `app._resolve_panel_source`（`rerender` 取自 `app._original_rerender(所选格式)`；真 `_serialize_figure_with_worker`、真 `safe_resolve`），
   只桩两样环境：注册表（有没有脚本）与 worker（写一份空 PDF）。嵌入的是不是磁盘位图 =
   「回来的路径就是磁盘上那张非 PDF 文件」。
 * 画布范围：真调 `rendercore.sources.needs_execution`——要不要 worker 现画；不要才嵌磁盘原件。
@@ -79,6 +79,18 @@ def test_the_vectors_cover_both_scopes_and_both_outcomes():
     assert {v["scope"] for v in ORIGINAL} == {"original"} and CANVAS
     assert {v["embeds_disk_bitmap"] for v in ORIGINAL} == {True, False}
     assert {v["embeds_disk_bitmap"] for v in CANVAS} == {True, False}
+    # 原图范围的格式维度：同一个「未编辑 + 有脚本的 PNG」随所选格式两种结论都出现
+    unedited = [
+        v for v in ORIGINAL if v["name"].startswith("original/raster/script/guard-none/none")
+    ]
+    assert {v["embeds_disk_bitmap"] for v in unedited} == {True, False}
+    assert {tuple(v["formats"]) for v in unedited} >= {
+        ("pdf",),
+        ("eps", "pdf"),
+        ("eps", "svg"),
+        ("eps",),
+        ("svg", "pdf"),
+    }
     # 每个守卫无效的向量都被明确排除在后端对拍之外（盲点见模块 docstring）
     assert [v["guard"] for v in VECTORS if v["backend_overrides"] is None] == ["invalid"] * 2
 
@@ -97,7 +109,11 @@ def test_original_scope_matches_resolve_panel_source(vec, project, monkeypatch):
         )
     else:
         _install_worker(monkeypatch, has_script=vec["has_script"])
-    got = Path(m._resolve_panel_source(obj, 150, None, out_dir))
+    got = Path(
+        m._resolve_panel_source(
+            obj, 150, None, out_dir, rerender=m._original_rerender(tuple(vec["formats"]))
+        )
+    )
     embeds_disk_bitmap = (
         vec["file_kind"] != "runtime"
         and got == (figs / file_id).resolve()

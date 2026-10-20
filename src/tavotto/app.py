@@ -1099,6 +1099,14 @@ def api_file():
     return resp
 
 
+def _original_rerender(formats) -> bool:
+    """原图范围：所选格式要不要让 `_resolve_panel_source` 有脚本就重渲染（哪怕没有 override）。
+
+    要 EPS 且不要 SVG 时才重画（SVG 走快照那条路）；前端预检 `embedsDiskBitmap` 与它同源。
+    """
+    return engine_exportreq.FORMAT_EPS in formats and engine_exportreq.FORMAT_SVG not in formats
+
+
 def _resolve_panel_source(
     o: dict,
     dpi: int,
@@ -2056,7 +2064,6 @@ def _export_produce_original(job, tmp_dir: Path, *, artifact_sources=None) -> li
     req = job.request
     src = req.original
     dpi = req.ppi or engine_exportreq.PPI_DEFAULT
-    wants_eps = engine_exportreq.FORMAT_EPS in req.formats
     job.check_cancelled()
     if (
         req.formats == (engine_exportreq.FORMAT_SVG,)
@@ -2122,7 +2129,7 @@ def _export_produce_original(job, tmp_dir: Path, *, artifact_sources=None) -> li
             dpi,
             job.warnings,
             tmp_dir,
-            rerender=wants_eps and not wants_svg,
+            rerender=_original_rerender(req.formats),
             **(
                 {"artifact_source": artifact_sources[src.figure_id]}
                 if src.source_policy and artifact_sources

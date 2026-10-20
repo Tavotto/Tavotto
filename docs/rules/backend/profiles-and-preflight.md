@@ -17,8 +17,9 @@
 - **面板 `kind`（矢量 / 位图）的主语是「本次导出嵌入的产物」**，不是文件后缀（#477）：
   带 override 且有脚本的 PNG 会被脚本重画成矢量，按 pdf 档判，不报
   `raster-text-not-verifiable`。前端造输入时的唯一判据是 `web/src/lib/exportRoute.ts`
-  的 `embedsDiskBitmap(panel, assets, scope)`，它与后端真值（原图范围
-  `app._resolve_panel_source`、画布范围 `rendercore.sources.needs_execution`）是严格同源对，
+  的 `embedsDiskBitmap(panel, assets, scope, formats)`，它与后端真值（原图范围
+  `app._resolve_panel_source`，**受所选格式影响**：要 EPS 且不要 SVG 时 `app._original_rerender`
+  让有脚本的图哪怕未编辑也重画成矢量，所以格式必须一路传到预检——`OriginalTarget.formats`；、画布范围 `rendercore.sources.needs_execution`）是严格同源对，
   靠 `tests/golden/export_route_vectors.json` 对拍（`tests/test_export_route_vectors.py` 驱动
   后端真实代码求期望，`exportRoute.test.ts` 比前端）。Python 求值器与 `PreflightPanelSpec`
   不变；Python 产品代码里 `kind` 一直是 `pdf`（MCP 入口）。

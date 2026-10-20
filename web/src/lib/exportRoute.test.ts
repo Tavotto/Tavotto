@@ -21,6 +21,7 @@ interface Vector {
   overrides: PanelOverride[]
   backend_overrides: PanelOverride[] | null
   embeds_disk_bitmap: boolean
+  formats: string[]
 }
 const vectors = file.vectors as unknown as Vector[]
 
@@ -49,7 +50,7 @@ describe('embedsDiskBitmap：与共享向量一致', () => {
   })
 
   it.each(vectors.map((v) => [v.name, v] as const))('%s', (_n, v) => {
-    expect(embedsDiskBitmap(panelOf(v), assetsOf(v), v.scope)).toBe(v.embeds_disk_bitmap)
+    expect(embedsDiskBitmap(panelOf(v), assetsOf(v), v.scope, v.formats)).toBe(v.embeds_disk_bitmap)
   })
 
   // 向量里的 backend_overrides 是「这个范围实际发给后端的 overrides」：原图范围已经过守卫。

@@ -38,10 +38,10 @@ function render(p: PanelObject) {
   const key = `${p.fileId} ${JSON.stringify(p.overrides)}`
   return { byKey: { [key]: { manifest, lastPatches: JSON.stringify(p.overrides) } as never }, latest: { [p.fileId]: key } }
 }
-function check(p: PanelObject, scope: 'canvas' | 'original', script = true) {
+function check(p: PanelObject, scope: 'canvas' | 'original', script = true, formats: string[] = ['pdf']) {
   const assets = withScript(script)
   const spec = scope === 'original'
-    ? buildOriginalSpec(p, assets, render(p), { widthMm: 160, heightMm: 120 })
+    ? buildOriginalSpec(p, assets, render(p), { widthMm: 160, heightMm: 120 }, formats)
     : buildSpec({ page: { w: 180, h: 140, margin: 0 }, objects: [p] } as unknown as FigureDocument, assets, render(p))
   return { kind: spec.panels[0].kind, ids: runSpec(spec, profile).map((i) => i.id) }
 }
@@ -67,6 +67,28 @@ describe('预检的面板 kind 跟着「本次导出嵌入的产物」走', () =
       expect(r.kind).toBe('raster')
       expect(r.ids).toContain(NOT_VERIFIABLE)
     }
+  })
+
+  it('未编辑 + 有脚本 + 要 EPS 不要 SVG（原图范围）：后端 rerender 重画成矢量，不报无法核验，字号检查出场', () => {
+    for (const formats of [['eps', 'pdf'], ['eps'], ['eps', 'pdf', 'png']]) {
+      const r = check(png(), 'original', true, formats)
+      expect(r.kind).toBe('pdf')
+      expect(r.ids).not.toContain(NOT_VERIFIABLE)
+      expect(r.ids).toContain('font-below-absolute-floor')
+    }
+  })
+
+  it('未编辑 + 有脚本 + EPS 同选 SVG / 不选 EPS：仍嵌磁盘 PNG，按位图；没有脚本时 EPS 也不重画', () => {
+    for (const formats of [['eps', 'svg'], ['svg', 'pdf'], ['pdf', 'png']]) {
+      const r = check(png(), 'original', true, formats)
+      expect(r.kind).toBe('raster')
+      expect(r.ids).toContain(NOT_VERIFIABLE)
+    }
+    expect(check(png(), 'original', false, ['eps', 'pdf']).kind).toBe('raster')
+  })
+
+  it('画布范围与所选格式无关', () => {
+    expect(check(png(), 'canvas', true, ['eps', 'pdf']).kind).toBe('raster')
   })
 
   it('带 override 但素材表里没有脚本（原图范围）：后端退回磁盘文件，仍是位图', () => {

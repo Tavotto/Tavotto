@@ -1,5 +1,5 @@
 {
- "_doc": "面板在本次导出里嵌入的是不是磁盘位图（embeds_disk_bitmap）。前端 web/src/lib/exportRoute.ts embedsDiskBitmap ↔ 后端真实代码：原图范围 app._resolve_panel_source、画布范围 rendercore.sources.needs_execution。backend_overrides 是该范围实际发给后端的 overrides（原图范围已过守卫：受守卫 PNG 仅 FRAME = []；守卫无效 = null，导出本身被拒，后端判不出，约定按位图 true，只由前端侧断言）。has_script 在画布范围不影响结论（后端无脚本报 source_needs_execution，不退回磁盘文件）。",
+ "_doc": "面板在本次导出里嵌入的是不是磁盘位图（embeds_disk_bitmap）。前端 web/src/lib/exportRoute.ts embedsDiskBitmap ↔ 后端真实代码：原图范围 app._resolve_panel_source、画布范围 rendercore.sources.needs_execution。backend_overrides 是该范围实际发给后端的 overrides（原图范围已过守卫：受守卫 PNG 仅 FRAME = []；守卫无效 = null，导出本身被拒，后端判不出，约定按位图 true，只由前端侧断言）。has_script 在画布范围不影响结论（后端无脚本报 source_needs_execution，不退回磁盘文件）。 formats 是本次所选格式：原图范围里「要 EPS 且不要 SVG」让后端 _resolve_panel_source(rerender=True) 有脚本就重画（app._original_rerender），预检不能再把它当磁盘位图；画布范围与格式无关。",
  "vectors": [
   {
    "name": "canvas/raster/script/guard-none/none",
@@ -9,7 +9,65 @@
    "guard": "none",
    "overrides": [],
    "backend_overrides": [],
-   "embeds_disk_bitmap": true
+   "embeds_disk_bitmap": true,
+   "formats": [
+    "pdf"
+   ]
+  },
+  {
+   "name": "canvas/raster/script/guard-none/none/fmt=eps+pdf",
+   "scope": "canvas",
+   "file_kind": "raster",
+   "has_script": true,
+   "guard": "none",
+   "overrides": [],
+   "backend_overrides": [],
+   "embeds_disk_bitmap": true,
+   "formats": [
+    "eps",
+    "pdf"
+   ]
+  },
+  {
+   "name": "canvas/raster/script/guard-none/none/fmt=eps+svg",
+   "scope": "canvas",
+   "file_kind": "raster",
+   "has_script": true,
+   "guard": "none",
+   "overrides": [],
+   "backend_overrides": [],
+   "embeds_disk_bitmap": true,
+   "formats": [
+    "eps",
+    "svg"
+   ]
+  },
+  {
+   "name": "canvas/raster/script/guard-none/none/fmt=eps",
+   "scope": "canvas",
+   "file_kind": "raster",
+   "has_script": true,
+   "guard": "none",
+   "overrides": [],
+   "backend_overrides": [],
+   "embeds_disk_bitmap": true,
+   "formats": [
+    "eps"
+   ]
+  },
+  {
+   "name": "canvas/raster/script/guard-none/none/fmt=svg+pdf",
+   "scope": "canvas",
+   "file_kind": "raster",
+   "has_script": true,
+   "guard": "none",
+   "overrides": [],
+   "backend_overrides": [],
+   "embeds_disk_bitmap": true,
+   "formats": [
+    "svg",
+    "pdf"
+   ]
   },
   {
    "name": "canvas/raster/script/guard-none/text",
@@ -31,7 +89,10 @@
      "value": "Title EDITED"
     }
    ],
-   "embeds_disk_bitmap": false
+   "embeds_disk_bitmap": false,
+   "formats": [
+    "pdf"
+   ]
   },
   {
    "name": "canvas/raster/script/guard-none/frame_only",
@@ -53,7 +114,10 @@
      "value": "figsize"
     }
    ],
-   "embeds_disk_bitmap": false
+   "embeds_disk_bitmap": false,
+   "formats": [
+    "pdf"
+   ]
   },
   {
    "name": "canvas/raster/script/guard-none/frame_text",
@@ -85,7 +149,10 @@
      "value": "Title EDITED"
     }
    ],
-   "embeds_disk_bitmap": false
+   "embeds_disk_bitmap": false,
+   "formats": [
+    "pdf"
+   ]
   },
   {
    "name": "canvas/raster/script/guard-valid/frame_only",
@@ -107,7 +174,10 @@
      "value": "figsize"
     }
    ],
-   "embeds_disk_bitmap": false
+   "embeds_disk_bitmap": false,
+   "formats": [
+    "pdf"
+   ]
   },
   {
    "name": "canvas/raster/script/guard-valid/frame_text",
@@ -139,7 +209,10 @@
      "value": "Title EDITED"
     }
    ],
-   "embeds_disk_bitmap": false
+   "embeds_disk_bitmap": false,
+   "formats": [
+    "pdf"
+   ]
   },
   {
    "name": "canvas/raster/script/guard-invalid/frame_only",
@@ -161,7 +234,10 @@
      "value": "figsize"
     }
    ],
-   "embeds_disk_bitmap": false
+   "embeds_disk_bitmap": false,
+   "formats": [
+    "pdf"
+   ]
   },
   {
    "name": "canvas/pdf/script/guard-none/none",
@@ -171,7 +247,10 @@
    "guard": "none",
    "overrides": [],
    "backend_overrides": [],
-   "embeds_disk_bitmap": false
+   "embeds_disk_bitmap": false,
+   "formats": [
+    "pdf"
+   ]
   },
   {
    "name": "canvas/pdf/script/guard-none/text",
@@ -193,7 +272,10 @@
      "value": "Title EDITED"
     }
    ],
-   "embeds_disk_bitmap": false
+   "embeds_disk_bitmap": false,
+   "formats": [
+    "pdf"
+   ]
   },
   {
    "name": "canvas/raster/noscript/guard-none/none",
@@ -203,7 +285,10 @@
    "guard": "none",
    "overrides": [],
    "backend_overrides": [],
-   "embeds_disk_bitmap": true
+   "embeds_disk_bitmap": true,
+   "formats": [
+    "pdf"
+   ]
   },
   {
    "name": "canvas/raster/noscript/guard-none/text",
@@ -225,7 +310,10 @@
      "value": "Title EDITED"
     }
    ],
-   "embeds_disk_bitmap": false
+   "embeds_disk_bitmap": false,
+   "formats": [
+    "pdf"
+   ]
   },
   {
    "name": "canvas/raster/noscript/guard-none/frame_only",
@@ -247,7 +335,10 @@
      "value": "figsize"
     }
    ],
-   "embeds_disk_bitmap": false
+   "embeds_disk_bitmap": false,
+   "formats": [
+    "pdf"
+   ]
   },
   {
    "name": "canvas/raster/noscript/guard-none/frame_text",
@@ -279,7 +370,10 @@
      "value": "Title EDITED"
     }
    ],
-   "embeds_disk_bitmap": false
+   "embeds_disk_bitmap": false,
+   "formats": [
+    "pdf"
+   ]
   },
   {
    "name": "canvas/raster/noscript/guard-valid/frame_only",
@@ -301,7 +395,10 @@
      "value": "figsize"
     }
    ],
-   "embeds_disk_bitmap": false
+   "embeds_disk_bitmap": false,
+   "formats": [
+    "pdf"
+   ]
   },
   {
    "name": "canvas/raster/noscript/guard-valid/frame_text",
@@ -333,7 +430,10 @@
      "value": "Title EDITED"
     }
    ],
-   "embeds_disk_bitmap": false
+   "embeds_disk_bitmap": false,
+   "formats": [
+    "pdf"
+   ]
   },
   {
    "name": "canvas/raster/noscript/guard-invalid/frame_only",
@@ -355,7 +455,10 @@
      "value": "figsize"
     }
    ],
-   "embeds_disk_bitmap": false
+   "embeds_disk_bitmap": false,
+   "formats": [
+    "pdf"
+   ]
   },
   {
    "name": "canvas/pdf/noscript/guard-none/none",
@@ -365,7 +468,10 @@
    "guard": "none",
    "overrides": [],
    "backend_overrides": [],
-   "embeds_disk_bitmap": false
+   "embeds_disk_bitmap": false,
+   "formats": [
+    "pdf"
+   ]
   },
   {
    "name": "canvas/pdf/noscript/guard-none/text",
@@ -387,7 +493,10 @@
      "value": "Title EDITED"
     }
    ],
-   "embeds_disk_bitmap": false
+   "embeds_disk_bitmap": false,
+   "formats": [
+    "pdf"
+   ]
   },
   {
    "name": "canvas/runtime/script/guard-none/none",
@@ -397,7 +506,10 @@
    "guard": "none",
    "overrides": [],
    "backend_overrides": [],
-   "embeds_disk_bitmap": false
+   "embeds_disk_bitmap": false,
+   "formats": [
+    "pdf"
+   ]
   },
   {
    "name": "canvas/runtime/script/guard-none/text",
@@ -419,7 +531,10 @@
      "value": "Title EDITED"
     }
    ],
-   "embeds_disk_bitmap": false
+   "embeds_disk_bitmap": false,
+   "formats": [
+    "pdf"
+   ]
   },
   {
    "name": "original/raster/script/guard-none/none",
@@ -429,7 +544,65 @@
    "guard": "none",
    "overrides": [],
    "backend_overrides": [],
-   "embeds_disk_bitmap": true
+   "embeds_disk_bitmap": true,
+   "formats": [
+    "pdf"
+   ]
+  },
+  {
+   "name": "original/raster/script/guard-none/none/fmt=eps+pdf",
+   "scope": "original",
+   "file_kind": "raster",
+   "has_script": true,
+   "guard": "none",
+   "overrides": [],
+   "backend_overrides": [],
+   "embeds_disk_bitmap": false,
+   "formats": [
+    "eps",
+    "pdf"
+   ]
+  },
+  {
+   "name": "original/raster/script/guard-none/none/fmt=eps+svg",
+   "scope": "original",
+   "file_kind": "raster",
+   "has_script": true,
+   "guard": "none",
+   "overrides": [],
+   "backend_overrides": [],
+   "embeds_disk_bitmap": true,
+   "formats": [
+    "eps",
+    "svg"
+   ]
+  },
+  {
+   "name": "original/raster/script/guard-none/none/fmt=eps",
+   "scope": "original",
+   "file_kind": "raster",
+   "has_script": true,
+   "guard": "none",
+   "overrides": [],
+   "backend_overrides": [],
+   "embeds_disk_bitmap": false,
+   "formats": [
+    "eps"
+   ]
+  },
+  {
+   "name": "original/raster/script/guard-none/none/fmt=svg+pdf",
+   "scope": "original",
+   "file_kind": "raster",
+   "has_script": true,
+   "guard": "none",
+   "overrides": [],
+   "backend_overrides": [],
+   "embeds_disk_bitmap": true,
+   "formats": [
+    "svg",
+    "pdf"
+   ]
   },
   {
    "name": "original/raster/script/guard-none/text",
@@ -451,7 +624,10 @@
      "value": "Title EDITED"
     }
    ],
-   "embeds_disk_bitmap": false
+   "embeds_disk_bitmap": false,
+   "formats": [
+    "pdf"
+   ]
   },
   {
    "name": "original/raster/script/guard-none/frame_only",
@@ -473,7 +649,10 @@
      "value": "figsize"
     }
    ],
-   "embeds_disk_bitmap": false
+   "embeds_disk_bitmap": false,
+   "formats": [
+    "pdf"
+   ]
   },
   {
    "name": "original/raster/script/guard-none/frame_text",
@@ -505,7 +684,10 @@
      "value": "Title EDITED"
     }
    ],
-   "embeds_disk_bitmap": false
+   "embeds_disk_bitmap": false,
+   "formats": [
+    "pdf"
+   ]
   },
   {
    "name": "original/raster/script/guard-valid/frame_only",
@@ -521,7 +703,89 @@
     }
    ],
    "backend_overrides": [],
-   "embeds_disk_bitmap": true
+   "embeds_disk_bitmap": true,
+   "formats": [
+    "pdf"
+   ]
+  },
+  {
+   "name": "original/raster/script/guard-valid/frame_only/fmt=eps+pdf",
+   "scope": "original",
+   "file_kind": "raster",
+   "has_script": true,
+   "guard": "valid",
+   "overrides": [
+    {
+     "gid": "figure",
+     "prop": "frame",
+     "value": "figsize"
+    }
+   ],
+   "backend_overrides": [],
+   "embeds_disk_bitmap": false,
+   "formats": [
+    "eps",
+    "pdf"
+   ]
+  },
+  {
+   "name": "original/raster/script/guard-valid/frame_only/fmt=eps+svg",
+   "scope": "original",
+   "file_kind": "raster",
+   "has_script": true,
+   "guard": "valid",
+   "overrides": [
+    {
+     "gid": "figure",
+     "prop": "frame",
+     "value": "figsize"
+    }
+   ],
+   "backend_overrides": [],
+   "embeds_disk_bitmap": true,
+   "formats": [
+    "eps",
+    "svg"
+   ]
+  },
+  {
+   "name": "original/raster/script/guard-valid/frame_only/fmt=eps",
+   "scope": "original",
+   "file_kind": "raster",
+   "has_script": true,
+   "guard": "valid",
+   "overrides": [
+    {
+     "gid": "figure",
+     "prop": "frame",
+     "value": "figsize"
+    }
+   ],
+   "backend_overrides": [],
+   "embeds_disk_bitmap": false,
+   "formats": [
+    "eps"
+   ]
+  },
+  {
+   "name": "original/raster/script/guard-valid/frame_only/fmt=svg+pdf",
+   "scope": "original",
+   "file_kind": "raster",
+   "has_script": true,
+   "guard": "valid",
+   "overrides": [
+    {
+     "gid": "figure",
+     "prop": "frame",
+     "value": "figsize"
+    }
+   ],
+   "backend_overrides": [],
+   "embeds_disk_bitmap": true,
+   "formats": [
+    "svg",
+    "pdf"
+   ]
   },
   {
    "name": "original/raster/script/guard-valid/frame_text",
@@ -553,7 +817,10 @@
      "value": "Title EDITED"
     }
    ],
-   "embeds_disk_bitmap": false
+   "embeds_disk_bitmap": false,
+   "formats": [
+    "pdf"
+   ]
   },
   {
    "name": "original/raster/script/guard-invalid/frame_only",
@@ -569,7 +836,10 @@
     }
    ],
    "backend_overrides": null,
-   "embeds_disk_bitmap": true
+   "embeds_disk_bitmap": true,
+   "formats": [
+    "pdf"
+   ]
   },
   {
    "name": "original/pdf/script/guard-none/none",
@@ -579,7 +849,65 @@
    "guard": "none",
    "overrides": [],
    "backend_overrides": [],
-   "embeds_disk_bitmap": false
+   "embeds_disk_bitmap": false,
+   "formats": [
+    "pdf"
+   ]
+  },
+  {
+   "name": "original/pdf/script/guard-none/none/fmt=eps+pdf",
+   "scope": "original",
+   "file_kind": "pdf",
+   "has_script": true,
+   "guard": "none",
+   "overrides": [],
+   "backend_overrides": [],
+   "embeds_disk_bitmap": false,
+   "formats": [
+    "eps",
+    "pdf"
+   ]
+  },
+  {
+   "name": "original/pdf/script/guard-none/none/fmt=eps+svg",
+   "scope": "original",
+   "file_kind": "pdf",
+   "has_script": true,
+   "guard": "none",
+   "overrides": [],
+   "backend_overrides": [],
+   "embeds_disk_bitmap": false,
+   "formats": [
+    "eps",
+    "svg"
+   ]
+  },
+  {
+   "name": "original/pdf/script/guard-none/none/fmt=eps",
+   "scope": "original",
+   "file_kind": "pdf",
+   "has_script": true,
+   "guard": "none",
+   "overrides": [],
+   "backend_overrides": [],
+   "embeds_disk_bitmap": false,
+   "formats": [
+    "eps"
+   ]
+  },
+  {
+   "name": "original/pdf/script/guard-none/none/fmt=svg+pdf",
+   "scope": "original",
+   "file_kind": "pdf",
+   "has_script": true,
+   "guard": "none",
+   "overrides": [],
+   "backend_overrides": [],
+   "embeds_disk_bitmap": false,
+   "formats": [
+    "svg",
+    "pdf"
+   ]
   },
   {
    "name": "original/pdf/script/guard-none/text",
@@ -601,7 +929,10 @@
      "value": "Title EDITED"
     }
    ],
-   "embeds_disk_bitmap": false
+   "embeds_disk_bitmap": false,
+   "formats": [
+    "pdf"
+   ]
   },
   {
    "name": "original/raster/noscript/guard-none/none",
@@ -611,7 +942,65 @@
    "guard": "none",
    "overrides": [],
    "backend_overrides": [],
-   "embeds_disk_bitmap": true
+   "embeds_disk_bitmap": true,
+   "formats": [
+    "pdf"
+   ]
+  },
+  {
+   "name": "original/raster/noscript/guard-none/none/fmt=eps+pdf",
+   "scope": "original",
+   "file_kind": "raster",
+   "has_script": false,
+   "guard": "none",
+   "overrides": [],
+   "backend_overrides": [],
+   "embeds_disk_bitmap": true,
+   "formats": [
+    "eps",
+    "pdf"
+   ]
+  },
+  {
+   "name": "original/raster/noscript/guard-none/none/fmt=eps+svg",
+   "scope": "original",
+   "file_kind": "raster",
+   "has_script": false,
+   "guard": "none",
+   "overrides": [],
+   "backend_overrides": [],
+   "embeds_disk_bitmap": true,
+   "formats": [
+    "eps",
+    "svg"
+   ]
+  },
+  {
+   "name": "original/raster/noscript/guard-none/none/fmt=eps",
+   "scope": "original",
+   "file_kind": "raster",
+   "has_script": false,
+   "guard": "none",
+   "overrides": [],
+   "backend_overrides": [],
+   "embeds_disk_bitmap": true,
+   "formats": [
+    "eps"
+   ]
+  },
+  {
+   "name": "original/raster/noscript/guard-none/none/fmt=svg+pdf",
+   "scope": "original",
+   "file_kind": "raster",
+   "has_script": false,
+   "guard": "none",
+   "overrides": [],
+   "backend_overrides": [],
+   "embeds_disk_bitmap": true,
+   "formats": [
+    "svg",
+    "pdf"
+   ]
   },
   {
    "name": "original/raster/noscript/guard-none/text",
@@ -633,7 +1022,10 @@
      "value": "Title EDITED"
     }
    ],
-   "embeds_disk_bitmap": true
+   "embeds_disk_bitmap": true,
+   "formats": [
+    "pdf"
+   ]
   },
   {
    "name": "original/raster/noscript/guard-none/frame_only",
@@ -655,7 +1047,10 @@
      "value": "figsize"
     }
    ],
-   "embeds_disk_bitmap": true
+   "embeds_disk_bitmap": true,
+   "formats": [
+    "pdf"
+   ]
   },
   {
    "name": "original/raster/noscript/guard-none/frame_text",
@@ -687,7 +1082,10 @@
      "value": "Title EDITED"
     }
    ],
-   "embeds_disk_bitmap": true
+   "embeds_disk_bitmap": true,
+   "formats": [
+    "pdf"
+   ]
   },
   {
    "name": "original/raster/noscript/guard-valid/frame_only",
@@ -703,7 +1101,10 @@
     }
    ],
    "backend_overrides": [],
-   "embeds_disk_bitmap": true
+   "embeds_disk_bitmap": true,
+   "formats": [
+    "pdf"
+   ]
   },
   {
    "name": "original/raster/noscript/guard-valid/frame_text",
@@ -735,7 +1136,10 @@
      "value": "Title EDITED"
     }
    ],
-   "embeds_disk_bitmap": true
+   "embeds_disk_bitmap": true,
+   "formats": [
+    "pdf"
+   ]
   },
   {
    "name": "original/raster/noscript/guard-invalid/frame_only",
@@ -751,7 +1155,10 @@
     }
    ],
    "backend_overrides": null,
-   "embeds_disk_bitmap": true
+   "embeds_disk_bitmap": true,
+   "formats": [
+    "pdf"
+   ]
   },
   {
    "name": "original/pdf/noscript/guard-none/none",
@@ -761,7 +1168,10 @@
    "guard": "none",
    "overrides": [],
    "backend_overrides": [],
-   "embeds_disk_bitmap": false
+   "embeds_disk_bitmap": false,
+   "formats": [
+    "pdf"
+   ]
   },
   {
    "name": "original/pdf/noscript/guard-none/text",
@@ -783,7 +1193,10 @@
      "value": "Title EDITED"
     }
    ],
-   "embeds_disk_bitmap": false
+   "embeds_disk_bitmap": false,
+   "formats": [
+    "pdf"
+   ]
   },
   {
    "name": "original/runtime/script/guard-none/none",
@@ -793,7 +1206,10 @@
    "guard": "none",
    "overrides": [],
    "backend_overrides": [],
-   "embeds_disk_bitmap": false
+   "embeds_disk_bitmap": false,
+   "formats": [
+    "pdf"
+   ]
   },
   {
    "name": "original/runtime/script/guard-none/text",
@@ -815,7 +1231,10 @@
      "value": "Title EDITED"
     }
    ],
-   "embeds_disk_bitmap": false
+   "embeds_disk_bitmap": false,
+   "formats": [
+    "pdf"
+   ]
   }
  ]
 }
