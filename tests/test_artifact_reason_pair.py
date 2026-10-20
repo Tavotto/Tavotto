@@ -31,7 +31,8 @@ FRONTEND_ONLY = {
 
 #: reason 实参是变量的转发点（值来自别处已被上面收集的字面量）：文件 → 个数。个数变了说明有新的读不出的调用
 FORWARDING_SITES = {
-    "app.py": 2,
+    # 第三处是 `_refuse_adopted_source(reason=…)`（服务端写回闸，ADR 0139 PR2），转发调用方给的 reason
+    "app.py": 3,
     "engine/artifactcontext.py": 2,
 }
 

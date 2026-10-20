@@ -739,7 +739,7 @@ test('guarded PNG: an unverifiable legend gets one sentence and one rebuild butt
   // 1. The strict adoption refuses a figure with a legend: a definite refusal, not a crash.
   const refusal = await enter(page, 'a')
   expect(refusal.status()).toBe(409)
-  expect(await refusal.json()).toMatchObject({ code: 'artifact_source_unavailable', params: { reason: 'unsupported_render_state' } })
+  expect(await refusal.json()).toMatchObject({ code: 'artifact_source_unavailable', params: { reason: 'artist_profile' } })
   const toast = await only(page.locator('[data-status-tone="info"]'))
   await expect(page.locator('[data-status-live]')).toHaveAttribute('data-status-key', 'artifact.unsupportedRenderState')
   await expect(toast).toContainText('legend')
