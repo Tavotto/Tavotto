@@ -1,6 +1,6 @@
 # ADR 0140 — 版本时间线：每版一个信封文件 + 小索引
 
-状态：Proposed（D1a：存储模块 `engine/versionstore.py` 与测试；D1b：端点经 `_Timeline` 接线，读兼容新旧、默认仍写旧格式）。
+状态：Proposed（D1a：存储模块 `engine/versionstore.py` 与测试；D1b：端点经 `_Timeline` 接线，读兼容新旧、默认仍写旧格式；D2：首次写入在锁内迁移，之后写新存储，#264 出口）。
 关联：issue #263（存储形状）、#264（旧文件损坏的出路）、ADR 0101（排版时间线）、ADR 0023（`atomicio`）。
 
 **1.0 收敛纪律例外：维护者 2026-10-20 批准。** 换存储格式是对稳定模块的重写，本来落在
@@ -110,8 +110,8 @@ WAL 文件在同步盘上是老牌损坏源，且引入第二套落盘纪律）�
 
 迁移时旧文件解析失败 → **新存储开一份空历史，旧文件原样保留**，索引带 `legacy_unreadable`
 （旧文件名 / 大小 / sha）作为列表响应里可恢复的标记，不再 409 卡死。旧文件不会被覆盖，所以
-`_refuse_blind_full_overwrite` 防的风险随之消失。模块已提供 `init_empty`；**这一条在 D2 接线时实现**，
-此处记为决定。
+`_refuse_blind_full_overwrite` 防的风险随之消失。模块已提供 `init_empty`；**D2 已接线**：列表响应的标记是 `legacy_unreadable: {name, size}`
+（只有文件名与大小，不含绝对路径与 sha）。
 
 ## 六、策略
 

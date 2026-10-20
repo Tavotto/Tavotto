@@ -684,6 +684,20 @@ def _read_legacy(legacy_path: Path) -> tuple[bytes, list[dict]]:
     return raw, versions
 
 
+def read_legacy_versions(legacy_path: Path) -> list[dict]:
+    """旧单文件里的版本列表（含 `doc`），**与迁移读到的是同一份**：同一套校验，重复 id 保留先出现的一条。
+
+    读侧在迁移之前就用它——迁移前后看到的历史才一致。读不出来 / 形状不对 → `LegacyUnreadable`。"""
+    _raw, versions = _read_legacy(legacy_path)
+    seen: set[str] = set()
+    out = []
+    for v in versions:
+        if v["id"] not in seen:
+            seen.add(v["id"])
+            out.append(v)
+    return out
+
+
 def _legacy_stat(legacy_path: Path) -> dict:
     st = Path(legacy_path).stat()
     return {"size": st.st_size, "mtime_ns": st.st_mtime_ns}

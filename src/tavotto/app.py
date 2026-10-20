@@ -12654,9 +12654,8 @@ def _versions_path(doc_id: str) -> Path:
 def _versions_source_path(doc_id: str) -> Path | None:
     """时间线**此刻实际会读哪个文件**；两个候选都不在就是 `None`。
 
-    读侧（`_load_versions`）与写入侧那道闸（`_refuse_blind_full_overwrite`）
-    共用这一份，**不许各写一份**：两处对「读的是哪个文件」答得不一样的话，
-    闸门量的就是另一个文件的存在性，而它照样是绿的（判据的主语滑走了）。
+    旧单文件的读（`_LegacyTimeline`）与迁移（`_timeline_for_write`）共用这一份，
+    **不许各写一份**：两处对「读的是哪个文件」答得不一样的话，迁走的就不是用户看到的那份。
     """
     p = _versions_path(doc_id)
     if p.is_file():
@@ -12665,6 +12664,11 @@ def _versions_source_path(doc_id: str) -> Path | None:
     # 版本文件时继续可见；一旦保存过新版本，就以项目里的为准
     legacy = VERSIONS_DIR / p.name
     return legacy if legacy.is_file() else None
+
+
+# 旧单文件的读写器 `_load_versions` / `_save_versions`：D2 起**产品代码不再调用**——读走
+# `versionstore.read_legacy_versions`（与迁移同一套校验），写一律走新存储。留作迁移对拍的参照与
+# 测试造旧文件、模拟「回滚后的旧程序」用（ADR 0140 §四）；D3 清理。
 
 
 def _load_versions(doc_id: str) -> list[dict]:
@@ -12687,54 +12691,6 @@ def _load_versions(doc_id: str) -> list[dict]:
     except ValueError:
         return []
     return data.get("versions", []) if isinstance(data, dict) else []
-
-
-def _refuse_blind_full_overwrite(doc_id: str):
-    """空历史 + 整份写回之前的最后一道闸：拒了就回 409，放行回 `None`。
-
-    **判据的主语是磁盘上那个文件此刻装着什么，不是 `_load_versions` 读出来
-    是不是空的。** 这两件事正是 issue #264 的分界线：`_load_versions` 把
-    「截断 / 乱码 / 不是 JSON」静默折成 `[]`（那一档今天仍然折——读侧要连
-    旧坏文件的出路一起改，不在这一轮），于是 `api_versions_create` 在一个
-    看起来是空的历史上追加一条、`_save_versions` **整份写回**，用户之前
-    全部的检查点当场没了，而且是原子写，干干净净地没了。
-    只问「读出来是不是空的」的闸永远拦不住它——它读出来确实是空的。
-
-    「历史是空的」只有两种正当来路，这里**枚举**它们，不给新形状开白名单：
-
-    * 磁盘上根本没有这份历史（`None`）——第一次建版本，最常走的那条路。
-      整份写回不会盖掉任何东西，**行为一个字不变**。
-    * 文件在，而它装的确实是一份空历史（`{"versions": []}`，正是
-      `_save_versions` 在用户把最后一版删光之后写下的形状）。
-
-    除此之外——读不动、不是 JSON、不是对象、没有 `versions` 键——一律拒绝：
-    文件在那儿却读不出一个版本列表，说明**读侧出了问题**，此时整份写回就是
-    在拿一份读不懂的历史换一条新记录。按写回事务不变式：409，原文件零改动
-    （这条路上一个 `_save_versions` 都不会被调到）。
-
-    下一个人很容易顺手把它简化成「`versions` 为空就放行」——那正是这条 bug。
-    """
-    src = _versions_source_path(doc_id)
-    if src is None:
-        return None
-    try:
-        data = engine_documents.loads_document(src.read_bytes())
-    except engine_documents.DocumentError:
-        raise  # 非有限数那一档由 `_load_versions` 先抛掉，走不到这里；抛也别吞
-    except (OSError, ValueError):
-        data = None
-    # 「键在且是空列表」——`{}`（没有 versions 键）与 `{"versions": {}}` 都
-    # 不是 `_save_versions` 写得出的形状，它们和乱码同属「内容坏了」。
-    if isinstance(data, dict) and data.get("versions") == []:
-        return None
-    LOG.warning("版本时间线读不出来，已拒绝整份写回（原文件未动）: %s", src)
-    return jsonify(
-        {
-            "error": "这份排版的版本历史读不出来，这次的检查点没有写入——"
-            "磁盘上那份历史一个字节都没动，仍在原处。",
-            "code": "versions_unreadable",
-        }
-    ), 409
 
 
 def _version_policy(metas: list[dict], keep_id: str | None = None) -> list[dict]:
@@ -13100,9 +13056,10 @@ def _sketch_limits() -> tuple[int, int]:
 
 # ---- 时间线后端：旧单文件 / 新存储（ADR 0140）----
 # 端点只和 `_Timeline` 打交道，不关心历史躺在 `<doc_id>.json` 还是 `<doc_id>.vx/`。
-# **读**：新存储是权威（`has_store`），否则读旧文件。**写**：D1b 起新存储已存在就写它
-# （读写必须落在同一边，否则写了读不到）；没有新存储的文档仍整份写旧单文件，字节与以前一致。
-# 全部在 `_versions_lock(doc_id)` 内调用写方法；裁剪两边共用 `_version_policy`。
+# **读**：新存储是权威（`has_store`），否则读旧文件，读不写盘。**写**（D2）：版本锁内
+# `_timeline_for_write` 先把旧文件迁进新存储（旧文件冻结不改），之后一律写新存储；
+# 迁移中断下次写入重跑到一致；旧文件读不出来（#264）开一份空历史、旧文件原样保留，
+# 不再 409 卡死。裁剪两边共用 `_version_policy`。
 
 
 @app.errorhandler(engine_versionstore.IndexUnreadable)
@@ -13133,13 +13090,21 @@ class _Timeline:
 
 
 class _LegacyTimeline(_Timeline):
-    """旧单文件：读整份、改内存列表、整份写回（`_save_versions`）。"""
+    """尚未迁移的旧单文件：**只读**（读与迁移用同一套校验，迁移前后看到的历史一致）。"""
 
     store = False
 
     def __init__(self, doc_id: str):
         super().__init__(doc_id)
-        self.versions = _load_versions(doc_id)
+        self.source = _versions_source_path(doc_id)
+        self.versions: list[dict] = []
+        self.unreadable: dict | None = None
+        if self.source is not None:
+            try:
+                self.versions = engine_versionstore.read_legacy_versions(self.source)
+            except engine_versionstore.LegacyUnreadable:
+                # 旧文件在而读不出来（#264）：列表是空的，但告诉调用方「旧历史还在、可恢复」
+                self.unreadable = _legacy_unreadable_mark(self.source)
 
     def entries(self) -> list[dict]:
         return self.versions
@@ -13150,57 +13115,24 @@ class _LegacyTimeline(_Timeline):
     def get(self, vid: str) -> dict | None:
         return next((v for v in self.versions if v["id"] == vid), None)
 
-    def last(self) -> dict | None:
-        return self.versions[-1] if self.versions else None
-
-    def empty_refusal(self):
-        """空历史上追加会整份写回——先过 `_refuse_blind_full_overwrite`（#264）。"""
-        return None if self.versions else _refuse_blind_full_overwrite(self.doc_id)
+    def legacy_unreadable(self) -> dict | None:
+        return self.unreadable
 
     def budget(self) -> dict:
-        src = _versions_source_path(self.doc_id)
         try:
-            size = src.stat().st_size if src is not None else 0
+            size = self.source.stat().st_size if self.source is not None else 0
         except OSError:
             size = None
         return _versions_budget(self.versions, size)
 
-    def entry_bytes(self, vid: str, changes: dict | None = None) -> int:
-        """这一条在时间线里占的字节（`changes` 并入之后的），即 `dumps_json` 的长度。"""
-        v = self.get(vid)
-        return len(engine_atomicio.dumps_json({**v, **(changes or {})}))
 
-    def named_bytes(self, *, replace: tuple[str, dict] | None = None, extra: dict | None = None):
-        """假如 `replace=(vid, changes)` 并入、`extra` 追加之后，命名节点共占多少字节。"""
-        total = 0
-        for v in self.versions:
-            if replace is not None and v.get("id") == replace[0]:
-                v = {**v, **replace[1]}
-            if _is_named(v):
-                total += len(engine_atomicio.dumps_json(v))
-        if extra is not None and _is_named(extra):
-            total += len(engine_atomicio.dumps_json(extra))
-        return total
-
-    def append(self, ver: dict) -> None:
-        self.versions.append(ver)
-        _save_versions(self.doc_id, self.versions)
-
-    def update(self, vid: str, changes: dict) -> dict | None:
-        v = self.get(vid)
-        if v is None:
-            return None
-        v.update(changes)
-        # 取消命名 / `auto` 开关会让某一档越过条数上限：照样裁，但不裁这一条
-        _save_versions(self.doc_id, self.versions, keep=v)
-        return v
-
-    def delete(self, vid: str) -> bool:
-        kept = [v for v in self.versions if v["id"] != vid]
-        if len(kept) == len(self.versions):
-            return False
-        _save_versions(self.doc_id, kept)
-        return True
+def _legacy_unreadable_mark(src: Path) -> dict:
+    """列表响应里「旧历史读不出来但还在」的标记：只有文件名与大小，**不暴露绝对路径**。"""
+    try:
+        size = src.stat().st_size
+    except OSError:
+        size = None
+    return {"name": src.name, "size": size}
 
 
 class _StoreTimeline(_Timeline):
@@ -13236,9 +13168,6 @@ class _StoreTimeline(_Timeline):
             return self.get(self.idx["entries"][-1]["id"])
         except engine_versionstore.EnvelopeCorrupt:
             return None  # 最近一版读不出来：不拿它去重，照常建新的
-
-    def empty_refusal(self):
-        return None  # 新存储不整份写回：追加只多一个信封，盖不掉别的东西
 
     def legacy_unreadable(self) -> dict | None:
         """索引里记着「迁移时旧文件读不出来」→ 给列表一个可恢复的标记（只有文件名与大小）。"""
@@ -13338,11 +13267,31 @@ class _StoreTimeline(_Timeline):
 
 
 def _open_timeline(doc_id: str) -> _Timeline:
-    """新存储在 → 它是权威；否则旧单文件（含升级前 `layouts/_versions/` 里的那份）。"""
+    """读：新存储在 → 它是权威；否则旧单文件（含升级前 `layouts/_versions/` 里的那份）。不写盘。"""
     path = _versions_path(doc_id)
     if engine_versionstore.has_store(path.parent, path.stem):
         return _StoreTimeline(doc_id)
     return _LegacyTimeline(doc_id)
+
+
+def _timeline_for_write(doc_id: str) -> _StoreTimeline:
+    """写：**版本锁内**调用。旧文件迁进新存储（冻结，从不改）后返回新存储。
+
+    * 没有新存储：整份迁移（崩在中途下次写入重跑，读侧在索引提交前一直以旧文件为权威）；
+    * 已迁移而旧文件被回滚后的旧程序追加过：把迁移点之后新增的条目按 id 去重导入；
+    * 旧文件读不出来（#264）：开一份空历史，旧文件原样留着，索引记着 `legacy_unreadable`。
+      已有新存储时旧文件再坏也不动新存储。"""
+    path = _versions_path(doc_id)
+    src = _versions_source_path(doc_id)
+    if src is not None:
+        now = int(time.time())
+        try:
+            engine_versionstore.migrate_legacy(
+                path.parent, path.stem, src, now=now, policy=_version_policy
+            )
+        except engine_versionstore.LegacyUnreadable:
+            engine_versionstore.init_empty(path.parent, path.stem, now=now, legacy_path=src)
+    return _StoreTimeline(doc_id)
 
 
 @app.get("/api/versions/<doc_id>")
@@ -13363,7 +13312,7 @@ def api_versions_list(doc_id):
                 meta["sketch"] = sketch
         out.append(meta)
     body = {"versions": out, "budget": tl.budget()}
-    if tl.store and tl.legacy_unreadable() is not None:
+    if tl.legacy_unreadable() is not None:
         body["legacy_unreadable"] = tl.legacy_unreadable()
     return jsonify(body)
 
@@ -13413,14 +13362,8 @@ def api_versions_create(doc_id):
     if body.get("canvasName"):
         ver["canvasName"] = str(body["canvasName"])
     with _versions_lock(doc_id):
-        tl = _open_timeline(doc_id)
+        tl = _timeline_for_write(doc_id)
         ver["id"] = _fresh_version_id(tl.entries())
-        # 空历史是唯一一条「整份写回会把别人的东西盖掉」的路（rename / duplicate /
-        # delete 在空列表上都先 404，一个 `_save_versions` 都走不到）。闸在锁里：
-        # 判据与写入之间放开一瞬，就够另一个请求在这中间落盘。
-        refusal = tl.empty_refusal()
-        if refusal is not None:
-            return refusal
         # 自动检查点若与最近一版内容相同则跳过（刷新/空转不该刷版本）。
         # 关键时刻**不跳过**：「导出成功」那一刻内容没变也是一件发生过的事，
         # 它的标记正是用户要找的东西（ADR 0101）。
@@ -13446,7 +13389,7 @@ def api_versions_create(doc_id):
 def api_versions_rename(doc_id, vid):
     body = request.get_json(force=True)
     with _versions_lock(doc_id):
-        tl = _open_timeline(doc_id)
+        tl = _timeline_for_write(doc_id)
         v = next((e for e in tl.entries() if e["id"] == vid), None)
         if v is None:
             abort(404)
@@ -13488,7 +13431,7 @@ def api_versions_rename(doc_id, vid):
 @app.post("/api/versions/<doc_id>/<vid>/duplicate")
 def api_versions_duplicate(doc_id, vid):
     with _versions_lock(doc_id):
-        tl = _open_timeline(doc_id)
+        tl = _timeline_for_write(doc_id)
         v = tl.get(vid)
         if v is None:
             abort(404)
@@ -13513,7 +13456,7 @@ def api_versions_duplicate(doc_id, vid):
 @app.delete("/api/versions/<doc_id>/<vid>")
 def api_versions_delete(doc_id, vid):
     with _versions_lock(doc_id):
-        if not _open_timeline(doc_id).delete(vid):
+        if not _timeline_for_write(doc_id).delete(vid):
             abort(404)
     return jsonify({"ok": True})
 

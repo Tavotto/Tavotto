@@ -1371,6 +1371,11 @@ export interface LayoutVersionMeta {
   moment?: LayoutMoment
   /** 有缩略图时是它的格式（`/api/versions/<id>/<vid>/thumb`）；没有就缺席 */
   thumb?: 'webp' | 'png'
+  /**
+   * 新存储里这一版的信封读不出来（ADR 0140）：只赔掉这一条，别的版本照常。
+   * 本版本只认下这个字段、不画专门的 UI；行为不变——点它取正文会收到 `versions_unreadable`。
+   */
+  damaged?: boolean
   description: string
   objects: number
   page?: { w: number; h: number }
@@ -1481,7 +1486,15 @@ export const fetchTimeline = (
   sketch?: { objects: number; textChars: number },
 ) => {
   const q = sketch ? `?sketch=${sketch.objects}&sketchText=${sketch.textChars}` : ''
-  return jsonFetch<{ versions: LayoutVersionMeta[]; budget?: TimelineBudget }>(
+  return jsonFetch<{
+    versions: LayoutVersionMeta[]
+    budget?: TimelineBudget
+    /**
+     * 旧时间线文件读不出来（#264）：后端已开一份空历史、旧文件原样保留。只有文件名与大小，
+     * 没有路径。本版本只认下字段、不画 UI（也不据此删任何东西）。
+     */
+    legacy_unreadable?: { name: string; size: number | null }
+  }>(
     `/api/versions/${encodeURIComponent(docId)}${q}`,
   )
 }

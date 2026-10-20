@@ -1,7 +1,6 @@
-"""版本时间线端点经 `_Timeline` 读写旧单文件 / 新存储（ADR 0140，D1b）。
+"""版本时间线端点经 `_Timeline` 读写旧单文件 / 新存储（ADR 0140，D1b → D2）。
 
-* 同一组操作在两种存储上跑，**响应逐字段对拍**（读兼容的证据）；
-* 默认仍写旧格式：没有新存储的文档，一次写入也不会冒出 `.vx` 目录；
+* 同一组操作在「旧单文件起步（首写迁移）」与「新存储起步」两种历史上跑，**响应逐字段对拍**；
 * 新存储已存在：读它、写它，旧文件不动；
 * 裁剪两边共用 `_version_policy`（改 `m.VERSION_KEEP_*` 对新存储同样生效）；
 * 索引读不出来 → 409 `versions_unreadable` 且零改动；单个信封坏只赔那一条。
@@ -197,8 +196,6 @@ def _run_script(client, doc_id: str, monkeypatch) -> list:
 
 
 def _final_state(mode: str, doc_id: str) -> list[dict]:
-    if mode == "legacy":
-        return m._load_versions(doc_id)
     path = m._versions_path(doc_id)
     got = vs.read_all(path.parent, path.stem)
     assert got is not None
@@ -216,12 +213,14 @@ def test_the_same_operations_give_the_same_responses_on_both_storages(tmp_path, 
         store = vs.store_dir(path.parent, path.stem)
         assert store.is_dir() == (mode == "store"), "摆场景失败：存储形态不对"
         assert path.is_file() == (mode == "legacy")
+        frozen = path.read_bytes() if mode == "legacy" else None
         client = m.app.test_client()
         transcripts[mode] = _run_script(client, "cmp", monkeypatch)
         states[mode] = _final_state(mode, "cmp")
-        # 新存储在场时旧文件从不出现；旧存储在场时新存储从不出现
-        assert store.is_dir() == (mode == "store")
+        # 首次写入之后两边都在新存储里；旧文件（若有）冻结不改，新存储起步的从不冒出旧文件
+        assert store.is_dir()
         assert path.is_file() == (mode == "legacy")
+        assert path.read_bytes() == frozen if mode == "legacy" else True
         monkeypatch.undo()
     assert [t[:2] for t in transcripts["legacy"]] == [t[:2] for t in transcripts["store"]]
     for a, b in zip(transcripts["legacy"], transcripts["store"], strict=True):
@@ -239,24 +238,6 @@ def test_the_same_operations_give_the_same_responses_on_both_storages(tmp_path, 
     final_ids = [v["id"] for v in log["final-list"][2]["versions"]]
     assert len(final_ids) <= 5 + sum(1 for v in states["legacy"] if m._is_named(v)), (
         "条数上限没咬到"
-    )
-
-
-def test_no_store_means_writes_stay_in_the_legacy_file(tmp_path, monkeypatch):
-    """默认仍写旧格式：没有新存储的文档，创建 / 改名 / 复制 / 删除 / 缩略图都不会冒出 `.vx`。"""
-    _use(monkeypatch, tmp_path)
-    client = m.app.test_client()
-    path = m._versions_path("fresh")
-    created = client.post("/api/versions/fresh", json={"doc": _doc(), "name": "初稿"}).get_json()
-    vid = created["version"]["id"]
-    assert client.patch(f"/api/versions/fresh/{vid}", json={"name": "二稿"}).status_code == 200
-    dup = client.post(f"/api/versions/fresh/{vid}/duplicate").get_json()["version"]["id"]
-    client.put(f"/api/versions/fresh/{vid}/thumb", data=PNG, content_type="image/png")
-    assert client.delete(f"/api/versions/fresh/{dup}").status_code == 200
-    assert path.is_file()
-    assert not vs.store_dir(path.parent, path.stem).exists(), "默认写路径误写了新格式"
-    assert (
-        m.engine_atomicio.dumps_json({"versions": m._load_versions("fresh")}) == path.read_bytes()
     )
 
 
