@@ -287,7 +287,11 @@ def plan_mapping(summary: DataSummary, instruction: str) -> Mapping | NeedsInput
       纯文字列（备注）永不自动当 y。
     * 指令一个列都没提、列名又都没有语义（FB-D02 的 a/b/c）→ `needs_input`，带中性预览；
     * x 一个数都没有（纯文字类别）→ 柱图，只支持一个 y（多系列分组柱 v1 不画，`Unsupported`）；
-      x 是数 / 日期 / 混入坏值的数 → 折线（坏值那行由 `plotted_data` 与模板一起跳过并报告 `x_not_a_value`）。"""
+      x 是数 / 日期 → 折线；
+    * x 混有数和文字（`mixed`）→ `needs_input`（`x_column_mixed`，带按折线的中性预览）：分不清是数轴里混了坏值，还是
+      类别名恰好像数字（`A, 2, C`），不猜。先算 y 并做完 `Unsupported` 判定，再判 mixed x；`x_column_mixed` 与
+      `column_mapping_ambiguous` 同时成立时返回前者（它更具体）。
+      折线上 x 为空 / NaN 的行仍由 `plotted_data` 与模板一起跳过并报告 `x_not_a_value`。"""
     cols = summary.columns
     per = summary.per_column
     plottable = [c for c in cols if per[c].kind in ("numeric", "mixed")]
@@ -308,6 +312,8 @@ def plan_mapping(summary: DataSummary, instruction: str) -> Mapping | NeedsInput
     xk = per[x].kind
     kind = "bar" if xk == "text" else "line"
     mapping = Mapping(x=x, ys=tuple(ys), kind=kind, x_is_date=xk == "date")
+    if xk == "mixed":
+        return NeedsInput("x_column_mixed", preview=mapping)
     if not mentioned and not any(_descriptive(c) for c in cols):
         return NeedsInput("column_mapping_ambiguous", preview=mapping)
     if kind == "bar" and len(ys) > 1:

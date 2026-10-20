@@ -155,15 +155,36 @@ def test_cjk_column_names_take_the_longest_match(tmp_path):
     assert got == adf.Mapping(x="时间", ys=("温度值",), kind="line")
 
 
-def test_x_with_a_bad_value_stays_a_line_and_the_row_is_reported(tmp_path):
+def test_x_mixing_numbers_and_text_asks_instead_of_guessing(tmp_path):
+    # 「1, oops, 3」像坏值，「A, 2, C」像数字类别名：两种读法不可分，都不自行判折线或柱图
+    for name, body in (
+        ("bad", "x,y\n1,2\noops,3\n3,4\n"),
+        ("labels", "sample,value\nA,1\n2,2\nC,3\n"),
+    ):
+        p = tmp_path / f"{name}.csv"
+        p.write_text(body, encoding="utf-8")
+        s = adf.inspect_data_source(p)
+        got = adf.plan_mapping(s, "画出来")
+        assert isinstance(got, adf.NeedsInput) and got.reason == "x_column_mixed", name
+        assert got.preview == adf.Mapping(x=s.columns[0], ys=(s.columns[1],), kind="line"), name
+
+
+def test_plotted_data_reports_a_row_whose_x_is_not_a_value(tmp_path):
     p = tmp_path / "d.csv"
     p.write_text("x,y\n1,2\noops,3\n3,4\n", encoding="utf-8")
     s = adf.inspect_data_source(p)
-    m = adf.plan_mapping(s, "画出来")
-    assert m.kind == "line"
-    got = adf.plotted_data(s, m)
+    got = adf.plotted_data(s, adf.Mapping(x="x", ys=("y",), kind="line"))
     assert [(r["row"], r["reason"]) for r in got.not_plotted] == [(3, "x_not_a_value")]
     assert got.series[0][3] == (2, 2)
+    # 空 x 的行在数值列里照样可达（plan_mapping 判 numeric → 折线）
+    q = tmp_path / "e.csv"
+    q.write_text("x,y\n1,2\n,3\n3,4\n", encoding="utf-8")
+    s2 = adf.inspect_data_source(q)
+    assert adf.plan_mapping(s2, "画出来").kind == "line"
+    assert [
+        r["reason"]
+        for r in adf.plotted_data(s2, adf.Mapping(x="x", ys=("y",), kind="line")).not_plotted
+    ] == ["x_not_a_value"]
 
 
 @pytest.mark.parametrize(
