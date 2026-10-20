@@ -40,6 +40,13 @@
   不让已成功的写入回 500（前端一重试就多一个节点，#679）；换缩略图格式先原子写新图、落地后再删旧格式（删不掉只记日志；两张同时在时取较新的那张，新图胜出，#679）；PUT 的 256 KiB 上限卡在读取本身（`_read_body_capped`，
   chunked 请求没有 Content-Length）。列表端点的 `budget` 在文件没超上限时不量 `namedBytes`（缺席，
   不冒充 0）。
+- **新存储模块（未接线，ADR 0140）**：`engine/versionstore.py` 是版本时间线的替身存储——每版一个
+  自描述信封 `<doc_id>.vx/s/<vid>.json` + 小索引 `<doc_id>.vx/index.json`（唯一提交点），追加只写一个
+  信封 + 索引，与历史长度无关。**app.py 目前不调用它**，现行 `_load_versions` / `_save_versions` 一字未变。
+  铁律：新索引**绝不与旧文件 `<doc_id>.json` 同名**（旧程序整写会毁掉它）；先信封后索引、删除先索引后信封；
+  旧文件迁移后冻结，不删不改；调用方持 `<doc_id>.versions` 跨进程锁，模块内不取锁；
+  `legacy_policy` 是现行条数 + 24 MB 字节策略的镜像，与 `app._save_versions` 逐条对拍（同源对，改一侧改另一侧）。
+  看护：`tests/test_versionstore.py`。
 - **论文样式**：`/api/styles`（`layouts/_styles.json`）；前端按角色映射成
   override / 标注属性一次 commit 应用，绝不写回源文件。
 - **项目包**：`POST /api/package` 打 zip（layout+素材+脚本+sha1 清单）；
