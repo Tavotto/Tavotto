@@ -59,9 +59,12 @@ from werkzeug.exceptions import HTTPException
 from . import pdfbackend, tiffprobe
 from .engine import (
     ai_bridge as engine_ai,
+    ai_data_figure as engine_ai_data_figure,
+    ai_data_task as engine_ai_data_task,
     ai_figure_edit as engine_ai_figure_edit,
     ai_history as engine_ai_history,
     ai_providers as engine_ai_providers,
+    ai_tasks as engine_ai_tasks,
     artifactcontext as engine_artifactcontext,
     artifactinspect as engine_artifactinspect,
     atomicio as engine_atomicio,
@@ -11215,6 +11218,51 @@ def api_ai_request(request_id):
     resp = jsonify(found)
     resp.headers["Cache-Control"] = "no-store"
     return resp
+
+
+@app.post("/api/ai/data-figure")
+def api_ai_data_figure():
+    """TAF 数据出图（ADR 0138 Phase 5b，**实验开关后面**）：项目内的 CSV → 确定性映射 → 模板脚本**新建**进项目并登记 →
+    safe 渲染验证数据指纹。不调模型、不执行模型写的代码；同步返回任务结局（数据有上限，渲染就是随后画布本来要做的那一次）。
+
+    请求 `{data: 项目相对路径, instruction, client_request_id?}`；回 `{task, script?, stem?, summary, preview?}`。
+    `needs_input`（列名推不出含义 / x 列混了数与文字）什么都不写，`preview` 是中性的默认映射；数据问题回 400 + 稳定码。
+    指令与数据内容不进日志、不发遥测。"""
+    if not engine_ai_figure_edit.enabled():
+        return jsonify({"error": "实验功能未开启", "code": "taf_disabled"}), 404
+    ctx = current_ctx()
+    body = request.get_json(force=True) or {}
+    data_rel = str(body.get("data") or "").strip()
+    instruction = str(body.get("instruction") or "").strip()
+    rid = body.get("client_request_id")
+    if not data_rel or not instruction:
+        return jsonify({"error": "缺少数据文件或指令", "code": "data_figure_input_missing"}), 400
+    if rid is not None and not _valid_client_request_id(rid):
+        abort(400)
+    try:
+        prepared = engine_ai_data_task.prepare(ctx.path, data_rel, instruction)
+        env = engine_ai_data_task.envelope_for(
+            project_key=str(ctx.path.resolve()), prepared=prepared, instruction=instruction, rid=rid
+        )
+    except engine_ai_data_figure.DataSourceError as exc:
+        return jsonify({"error": str(exc), "code": exc.code}), 400
+    engine_ai_data_task.ensure_registered()
+    script_rel = prepared.placement.script_rel
+    executor = engine_ai_data_task.TemplateExecutor(
+        ctx.path,
+        refresh=lambda script: engine_ai.refresh_outcome(
+            lambda s: _after_ai_change(ctx, s), script, True
+        ),
+        render=lambda sha: _ai_task_hooks(ctx, script_rel, "main")["after"](sha),
+    )
+    res = engine_ai_tasks.run_task(env, executor)
+    cand = executor.candidate
+    out = {"task": res, "summary": prepared.summary.to_dict()}
+    if cand is not None and cand.committed:
+        out.update(script=script_rel, stem=prepared.placement.stem)
+    if isinstance(prepared.plan, engine_ai_data_figure.NeedsInput) and prepared.plan.preview:
+        out["preview"] = prepared.plan.preview.to_dict()
+    return jsonify(out)
 
 
 # --- 助手草稿与待确认账本（ADR 0132）：存后端（data_dir 的 ai_history 库），不存浏览器 -----------------

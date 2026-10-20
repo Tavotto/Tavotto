@@ -16,7 +16,9 @@
 | Phase 3c | PR #1201：前端按 `task.outcome` 翻译状态行 / 结局卡 / 状态栏；没有 `task` 的老后端逐字不变 |
 | Phase 4a | 分支 `feat/taf-phase4-bounded-correction`：提交前失败的有界修正（`ai_tasks._admit_correction` + `Executor.correct` + `ai_bridge` 同候选再起 CLI + figure_edit 可修闭集），`verification.attempts` 留证；契约见 `03-contracts.md` §五 |
 | Phase 4b | 分支 `feat/taf-phase4b-correcting-ui`：桥在修正轮起跑前发 `ai.task`（`phase: correcting`）并写进会话的 `task.phase`；收尾的 `task.corrections` 记修正轮数。前端状态行「正在自动修正…」/「已改（自动修正 N 次），数据核对一致」 |
-| 下一步 | Phase 5b/5c 数据出图接线与入口；Phase 6 Harness Lab |
+| Phase 5a | PR #1231（已合入）：`engine/ai_data_figure.py` 确定性内核（摘要 / 映射 / 模板 / 期望指纹），真 worker 对拍 FB-D01/D03–D08 |
+| Phase 5b | 分支 `feat/taf-phase5b-data-figure-task`：`engine/ai_data_task.py` + `POST /api/ai/data-figure`（开关后面）——只新建模板脚本并登记，提交后渲染核数据指纹；FB-D01/D03/D04/D07/D08 真 app + 真 worker 按期望结局，D02 `needs_input` 不写 |
+| 下一步 | Phase 5c（前端数据出图入口，助手面板里的动作）；Phase 6 Harness Lab（6a Prompt Pack、6b 基准跑分在 PR）；6c 真实模型实验需用户批准费用 |
 
 ## 维护者决定（2026-10-19 全部同意，1.0 例外 2026-10-20 登记进 ADR 0138 §五）
 

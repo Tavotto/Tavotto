@@ -58,10 +58,30 @@ _STEM_SAFE = re.compile(r"[^A-Za-z0-9_-]+")
 KINDS = ("line", "bar")
 
 
+#: `DataSourceError` 的稳定码闭集（前端 `errors:backend.<code>` 有中英文文案，`tests/test_error_codes.py` 读这张表）
+ERROR_CODES = (
+    "data_path_outside_project",
+    "data_not_found",
+    "data_not_csv",
+    "data_too_large",
+    "data_unreadable",
+    "data_decode_error",
+    "data_malformed",
+    "data_empty",
+    "data_too_wide",
+    "data_header_invalid",
+    "data_too_long",
+    "data_ragged",
+    "figure_name_exhausted",
+)
+
+
 class DataSourceError(ValueError):
-    """CSV 读不成受控摘要。`code` 是稳定码（前端按它换语言）。"""
+    """CSV 读不成受控摘要 / 放不进项目。`code` 必须在 `ERROR_CODES` 里（构造时校验：新码不登记当场抛，不会悄悄漏掉文案）。"""
 
     def __init__(self, code: str, detail: str = ""):
+        if code not in ERROR_CODES:
+            raise ValueError(f"未登记的 DataSourceError 码：{code}")
         super().__init__(f"{code}: {detail}" if detail else code)
         self.code = code
 
