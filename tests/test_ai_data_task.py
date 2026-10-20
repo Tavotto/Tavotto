@@ -239,6 +239,33 @@ def test_a_stem_registered_meanwhile_is_not_stolen(project, monkeypatch):
     assert not (figs / "data" / "standard_figure.py").exists()
 
 
+def test_a_product_written_meanwhile_is_not_stolen(project, monkeypatch):
+    """placement 之后、提交之前同目录写出了未登记的 `<stem>.png`：锁内复核完整空闲检查，什么都不写。"""
+    m, client, figs, _ = project
+    real = ai_data_task.TemplateExecutor.commit
+
+    def racing(self, run, cand):
+        (figs / "data" / "standard_figure.png").write_bytes(b"PNG")
+        return real(self, run, cand)
+
+    monkeypatch.setattr(ai_data_task.TemplateExecutor, "commit", racing)
+    task = _post(client, "data/standard.csv", "画出来").get_json()["task"]
+    assert task["outcome"] == "failed" and task["error"] == "stem_taken"
+    assert not (figs / "data" / "standard_figure.py").exists()
+    assert (figs / "data" / "standard_figure.png").read_bytes() == b"PNG"
+
+
+def test_stem_choice_is_case_insensitive(project):
+    """大小写不敏感的文件系统上 `Standard_Figure.pdf` 与 `standard_figure` 是同一个名：产物与登记都按 casefold 避开。"""
+    m, client, figs, _ = project
+    (figs / "data" / "Standard_Figure.pdf").write_bytes(b"%PDF")
+    assert ai_data_task.place(figs, "data/standard.csv").stem == "standard_figure_2"
+    (figs / "data" / "Standard_Figure.pdf").unlink()
+    assert ai_data_task.place(figs, "data/standard.csv").stem == "standard_figure"
+    discover.register(figs, "x.py", ["STANDARD_FIGURE"])
+    assert ai_data_task.place(figs, "data/standard.csv").stem == "standard_figure_2"
+
+
 # --------------------------------------------------------------------------- 写入口与 Task Core 的放行规则
 def test_create_script_never_overwrites_and_needs_the_guard(tmp_path):
     target = tmp_path / "new.py"

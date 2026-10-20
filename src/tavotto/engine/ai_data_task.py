@@ -57,11 +57,16 @@ def _registered_stems(root: Path) -> set[str]:
 
 
 def _stem_free(directory: Path, stem: str, taken: set[str]) -> bool:
-    """这个 stem 能不能用：没被登记、同目录没有 `<stem>.py`、也没有任何 `<stem>.*` 产物（不让新图冒认旧文件）。"""
-    if stem in taken or (directory / f"{stem}.py").exists():
+    """这个 stem 能不能用：没被登记、同目录没有任何 `<stem>.*`（含 `.py`）产物（不让新图冒认旧文件）。
+
+    一律按 casefold 比较（不分平台）：macOS / Windows 默认大小写不敏感，`Foo_figure.pdf` 与 `foo_figure` 是同一个磁盘名；
+    大小写敏感的系统上多避开一个名字无害。
+    """
+    key = stem.casefold()
+    if key in {t.casefold() for t in taken}:
         return False
     try:
-        return not any(p.stem == stem for p in directory.iterdir())
+        return not any(p.stem.casefold() == key for p in directory.iterdir())
     except OSError:
         return False
 
@@ -348,7 +353,8 @@ class TemplateExecutor:
     def commit(self, run, cand: Candidate) -> None:
         pl = cand.prepared.placement
         with inputremap.project_mutex(self.root):
-            if pl.stem in _registered_stems(self.root):
+            # place() 之后同目录可能又出现了未登记的 `<stem>.*`：锁内重跑完整的空闲检查
+            if not _stem_free(pl.script_path.parent, pl.stem, _registered_stems(self.root)):
                 raise TaskError("stem_taken", pl.stem)
             with scriptlock.script_guard(pl.script_path):
                 try:
