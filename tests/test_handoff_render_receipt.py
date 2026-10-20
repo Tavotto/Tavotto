@@ -934,6 +934,27 @@ def test_render_endpoint_reports_an_unverifiable_source(client, tmp_path, monkey
     }
 
 
+@pytest.mark.parametrize("where", ["_artifact_source", "_engine_worker"])
+def test_render_endpoint_reports_an_unverifiable_source_before_execution(
+    client, tmp_path, monkeypatch, where
+):
+    """原件在进渲染之前（核对期望字节 / 取 worker）就被拒，同样记结论（Codex 评 #1199 P2）。"""
+    figs = _gallery(client, tmp_path)
+    _stub(monkeypatch, _Worker())
+
+    def refuse(*a, **kw):
+        raise engine_artifactcontext.ArtifactContextError(
+            "not_untouched", "This source has a saved edit baseline."
+        )
+
+    monkeypatch.setattr(m, where, refuse)
+    assert _render(client).status_code == 409
+    assert receipt.clean_result(receipt.query(str(figs), "p1", 0)) == {
+        "status": "failed",
+        "code": "artifact_source_unavailable",
+    }
+
+
 def test_render_endpoint_leaves_a_retryable_source_change_to_the_rerender(
     client, tmp_path, monkeypatch
 ):
