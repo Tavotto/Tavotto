@@ -236,6 +236,7 @@ def test_random_sigkill_never_loses_an_acknowledged_append(vdir):
             [sys.executable, "-c", _KILL_WORKER, str(SRC), str(vdir), str(counter)],
             stdout=subprocess.PIPE,
             text=True,
+            encoding="utf-8",
             env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1", "PYTHONPATH": str(SRC)},
         )
         time.sleep(0.25 + 0.05 * rnd)
