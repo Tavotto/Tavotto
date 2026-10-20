@@ -1,13 +1,18 @@
 import { msg } from '@/i18n'
 import { stemOf } from '@/lib/openRequest'
 import { captureProjectEpoch } from '@/lib/projectEpoch'
+import { useDepRepairStore } from '@/store/depRepairStore'
 import { useDocumentStore } from '@/store/documentStore'
 import { useFigurePickerStore } from '@/store/figurePickerStore'
 import { enterEdit } from '@/store/prepEnterEdit'
 import { pngAdmitOwner, registerPngRebuildRunner } from '@/store/pngAdmissionMemory'
-import { useScriptRunStore, whenScriptIdle } from '@/store/scriptRunStore'
+import { useEnvStore } from '@/store/envStore'
+import { isGatePhase, useScriptRunStore, whenScriptIdle } from '@/store/scriptRunStore'
 import { useUiStore } from '@/store/uiStore'
 import type { PanelObject } from '@/types/document'
+
+/** 门框关掉之后等多久还没人重跑，就当用户取消了（作答到 `rerunGated` 之间隔着几个 await） */
+export const GATE_CANCEL_GRACE_MS = 1500
 
 export type RebuildOutcome = 'rebuilt' | 'picker' | 'not_entered' | 'failed' | 'stale'
 
@@ -30,11 +35,28 @@ export async function rebuildEditableFromScript(panelId: string): Promise<Rebuil
   if (!panel || !script) return 'stale'
   const stem = stemOf(panel.fileId)
   const guard = captureProjectEpoch(() => useScriptRunStore.getState().epoch)
+  // 发起时的排版身份：同项目里打开了另一份已保存的排版（documentId / loadSeq 变）或切了画布，
+  // 捕获的面板就会落进错误的排版——整个丢弃，什么都不写
+  const origin = documentOrigin(panelId)
+  const abandon = (): RebuildOutcome => {
+    useUiStore.getState().clearStatusOwnedBy(owner)
+    return 'stale'
+  }
   ui.setStatus(msg('artifact.rebuilding', undefined, 'errors'), 'progress', { owner })
 
   await useScriptRunStore.getState().run(script)
   await whenScriptIdle(script) // 同脚本已在跑时 run 是 no-op：等那一次落地再读结果
-  if (!guard.still()) return 'stale'
+  if (!guard.still() || !origin.still()) return abandon()
+
+  // 停在起会话之前的门上：弹框（作答后由作答方 `rerunGated` 重跑）。门后只续跑这一次——等那次重跑落地再读结果；
+  // 用户取消则结束且不提示
+  if (isGatePhase(useScriptRunStore.getState().byScript[script]?.phase)) {
+    if (!(await whenGateAnswered(script, () => guard.still() && origin.still()))) {
+      return guard.still() && origin.still() ? gateDeclined(owner) : abandon()
+    }
+    await whenScriptIdle(script)
+    if (!guard.still() || !origin.still()) return abandon()
+  }
 
   const row = useScriptRunStore.getState().byScript[script]
   const phase = row?.phase
@@ -53,13 +75,58 @@ export async function rebuildEditableFromScript(panelId: string): Promise<Rebuil
     useFigurePickerStore.getState().open(script)
     return 'picker'
   }
-  const outcome = await enterEdit({ epoch: () => useScriptRunStore.getState().epoch, note: () => {} }, matches[0])
+  if (!origin.still()) return abandon()
+  const outcome = await enterEdit(
+    { epoch: () => useScriptRunStore.getState().epoch, note: () => {}, stillWanted: () => origin.still() },
+    matches[0],
+  )
   if (outcome === 'entered') {
     useUiStore.getState().setStatus(msg('artifact.rebuilt', undefined, 'errors'), 'done')
     return 'rebuilt'
   }
   useUiStore.getState().clearStatusOwnedBy(owner)
   return outcome === 'stale' ? 'stale' : 'not_entered'
+}
+
+function gateDeclined(owner: string): RebuildOutcome {
+  useUiStore.getState().clearStatusOwnedBy(owner)
+  return 'failed'
+}
+
+/** 发起时的排版：文档身份 + 载入代次 + 激活画布，源面板还在 */
+function documentOrigin(panelId: string): { still: () => boolean } {
+  const at = () => {
+    const s = useDocumentStore.getState()
+    return `${s.documentId}|${s.loadSeq}|${s.activeCanvasId}`
+  }
+  const was = at()
+  return { still: () => at() === was && findPanel(panelId) !== null }
+}
+
+/**
+ * 等门被回答：行离开门相位（作答方已 `rerunGated`，或行被收起）= true；
+ * 门框都关了、行还停着、宽限期内也没人重跑 = 用户取消，false；`alive` 失效也是 false。
+ */
+function whenGateAnswered(script: string, alive: () => boolean): Promise<boolean> {
+  return new Promise((resolve) => {
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const unsubs: Array<() => void> = []
+    const finish = (v: boolean) => {
+      clearTimeout(timer)
+      unsubs.forEach((u) => u())
+      resolve(v)
+    }
+    const check = () => {
+      if (!alive()) return finish(false)
+      if (!isGatePhase(useScriptRunStore.getState().byScript[script]?.phase)) return finish(true)
+      const env = useEnvStore.getState()
+      const open = !!env.workdirConfirmation || !!env.dependencyPreparation || useDepRepairStore.getState().busy
+      clearTimeout(timer)
+      if (!open) timer = setTimeout(() => finish(false), GATE_CANCEL_GRACE_MS)
+    }
+    unsubs.push(useScriptRunStore.subscribe(check), useEnvStore.subscribe(check), useDepRepairStore.subscribe(check))
+    check()
+  })
 }
 
 function findPanel(panelId: string): PanelObject | null {

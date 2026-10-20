@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { literal } from '@/i18n'
 import type { CapturedFigureDescriptor, ProbeResult } from '@/lib/api'
 import { setCurrentProjectId } from '@/lib/session'
@@ -10,7 +10,8 @@ import { useScriptRunStore } from './scriptRunStore'
 import { useUiStore } from './uiStore'
 import { useWorkspaceStore } from './workspace'
 import { runPngRebuild } from './pngAdmissionMemory'
-import { rebuildEditableFromScript } from './pngRebuild'
+import { useEnvStore } from './envStore'
+import { GATE_CANCEL_GRACE_MS, rebuildEditableFromScript } from './pngRebuild'
 
 const probe = vi.fn()
 vi.mock('@/lib/api', async (original) => ({
@@ -44,6 +45,7 @@ beforeEach(async () => {
   useFigurePickerStore.getState().close()
   useWorkspaceStore.getState().clear()
   useUiStore.getState().setStatus(null)
+  useEnvStore.setState({ dependencyPreparation: null, workdirConfirmation: null })
   await S().switchDocument(emptyProject(), 'rebuild-test')
   S().commit(literal('seed'), (d) => { d.objects.push(pngPanel()) })
   useDocumentStore.setState({ past: [], future: [] })
@@ -92,5 +94,74 @@ describe('rebuild as editable figure (ADR 0139 PR1)', () => {
     runPngRebuild('p')
     await vi.waitFor(() => expect(panels()).toHaveLength(2))
     expect(probe).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('rebuild: setup gates and the originating layout (Codex #1204)', () => {
+  const offer = {
+    code: 'dependency_preparation_required', script: 'fig.py',
+    plan: { status: 'ready', script: 'fig.py', requirements: ['adjusttext'] },
+    target_kind: 'tavotto_managed', targets: [], rounds_remaining: 3, skipped: false,
+  }
+  const confirmation = {
+    kind: 'workdir', code: 'workdir_confirmation_required', script: 'fig.py', reason: 'script_dir_evidence',
+    recommended: 'project', options: [], conflicts: [], reads: [],
+  }
+  const gated = (code: string, extra: Record<string, unknown>): ProbeResult => ({
+    ...ok([]), error: { code, message: 'gate', ...extra } as ProbeResult['error'],
+  })
+  const row = () => useScriptRunStore.getState().byScript['fig.py']
+  afterEach(() => { vi.useRealTimers() })
+
+  const approve = (phase: 'needs_workdir' | 'needs_preparation') => {
+    useEnvStore.setState({ dependencyPreparation: null, workdirConfirmation: null })
+    useScriptRunStore.getState().rerunGated(phase, 'fig.py')
+  }
+
+  it.each([
+    ['needs_workdir', gated('workdir_confirmation_required', { confirmation })],
+    ['needs_preparation', gated('dependency_preparation_required', { dependency_preparation: offer })],
+  ] as const)('%s: after the user approves and the re-run lands, the editable panel appears with one extra run', async (phase, gate) => {
+    probe.mockResolvedValueOnce(gate)
+    const done = rebuildEditableFromScript('p')
+    await vi.waitFor(() => expect(row()?.phase).toBe(phase))
+    expect(panels()).toHaveLength(1)
+    probe.mockResolvedValueOnce(ok([desc('same')]))
+    approve(phase)
+    expect(await done).toBe('rebuilt')
+    expect(panels().map((p) => p.fileId)).toEqual(['out/same.png', 'runtime:fig.py#same'])
+    expect(probe).toHaveBeenCalledTimes(2) // 第一次撞门 + 门后唯一一次重跑
+    expect(useUiStore.getState().status).toEqual({ key: 'artifact.rebuilt', ns: 'errors' })
+  })
+
+  it('a gate the user cancels ends quietly: no panel, no error toast', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    probe.mockResolvedValueOnce(gated('workdir_confirmation_required', { confirmation }))
+    const done = rebuildEditableFromScript('p')
+    await vi.waitFor(() => expect(row()?.phase).toBe('needs_workdir'))
+    useEnvStore.getState().dismissWorkdirConfirmation()
+    await vi.advanceTimersByTimeAsync(GATE_CANCEL_GRACE_MS + 10)
+    expect(await done).toBe('failed')
+    expect(panels()).toHaveLength(1)
+    expect(useUiStore.getState().status).toBeNull()
+    expect(probe).toHaveBeenCalledTimes(1)
+  })
+
+  it('opening another saved layout mid-run adds nothing to either layout and leaves the PNG panel alone', async () => {
+    let release!: (r: ProbeResult) => void
+    probe.mockReturnValueOnce(new Promise<ProbeResult>((r) => { release = r }))
+    const before = structuredClone(panels()[0])
+    const done = rebuildEditableFromScript('p')
+    await vi.waitFor(() => expect(probe).toHaveBeenCalled())
+    // 另一份已保存的排版里恰好有同 id 的面板：只看「面板还在」会放行
+    await S().switchDocument(emptyProject(), 'other-layout')
+    S().commit(literal('seed'), (d) => { d.objects.push(pngPanel()) })
+    const other = structuredClone(panels())
+    release(ok([desc('same')]))
+    expect(await done).toBe('stale')
+    expect(panels()).toEqual(other)
+    expect(other).toHaveLength(1)
+    expect(before.fileKind).toBe('raster')
+    expect(useUiStore.getState().status).toBeNull()
   })
 })
