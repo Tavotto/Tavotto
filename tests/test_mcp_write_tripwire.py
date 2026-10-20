@@ -556,3 +556,43 @@ def test_allowed_folds_case_per_volume_not_by_platform_guess(tmp_path):
     root.mkdir()
     spelled = str(tmp_path / "WS" / "a.csv")
     assert writetripwire.allowed(spelled, (str(root),)) == _folds_case(root)
+
+
+# ---------------------------------------------------------------- Codex #1224 复核：不存在的根不许落到平台默认值
+def _probe_world(monkeypatch, *, folds: bool | None):
+    """替换探测函数来模拟卷的大小写行为（macOS 默认卷上做不出真实区分大小写的卷：这部分只能纯函数验）。"""
+    seen: list[str] = []
+
+    def probe(directory):
+        seen.append(directory)
+        return folds
+
+    writetripwire._FOLD_CACHE.clear()
+    monkeypatch.setattr(writetripwire, "_probe_existing", probe)
+    return seen
+
+
+def test_a_missing_root_on_a_case_sensitive_volume_does_not_fold(tmp_path, monkeypatch):
+    seen = _probe_world(monkeypatch, folds=False)  # 最近存在的祖先所在的卷：区分大小写
+    root = str(tmp_path / "seaborn-data")  # 不存在，和 ~/seaborn-data 一样
+    assert not os.path.exists(root)
+    assert not writetripwire.allowed(str(tmp_path / "SEABORN-DATA" / "x.csv"), (root,))
+    assert writetripwire.allowed(os.path.join(root, "x.csv"), (root,)), "同拼写照常放行"
+    assert seen == [str(tmp_path)], "探测的是最近存在的祖先，不是不存在的根"
+    writetripwire._FOLD_CACHE.clear()
+
+
+def test_a_missing_root_under_a_case_insensitive_ancestor_folds(tmp_path, monkeypatch):
+    _probe_world(monkeypatch, folds=True)
+    root = str(tmp_path / "deep" / "er" / "seaborn-data")  # 连父目录都不存在
+    assert writetripwire.allowed(str(tmp_path / "DEEP" / "er" / "SEABORN-DATA" / "x"), (root,))
+    writetripwire._FOLD_CACHE.clear()
+
+
+def test_when_the_probe_cannot_tell_the_answer_is_fail_closed(tmp_path, monkeypatch):
+    _probe_world(monkeypatch, folds=None)  # 探测不出
+    root = str(tmp_path / "ws")
+    assert not writetripwire.allowed(str(tmp_path / "WS" / "x"), (root,))
+    writetripwire._FOLD_CACHE.clear()
+    assert writetripwire.folds_case("") is False, "没有任何存在的祖先 → 不折叠"
+    writetripwire._FOLD_CACHE.clear()

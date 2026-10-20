@@ -82,34 +82,46 @@ def _real(p) -> str:
 _FOLD_CACHE: dict[str, bool] = {}
 
 
-def folds_case(directory: str) -> bool:
-    """这个目录所在的卷是否不区分大小写：翻转路径里最后一个有大小写的字母所在的那一级名字，父目录的
-    `os.listdir` 里两种写法**都字面存在** → 各是一个条目 → 区分；否则翻转后的路径存在且 `samefile` → 不区分。
-    探测不了（目录不存在 / 没有字母 / 出错）按平台默认（darwin / win32 不区分）。与 `figcapture._dir_folds_case`
-    等价的本地副本——本模块在 worker 的私有包里，不 import 兄弟模块。"""
-    if directory in _FOLD_CACHE:
-        return _FOLD_CACHE[directory]
-    result = sys.platform in ("darwin", "win32")
+def _probe_existing(directory: str) -> bool | None:
+    """对一个**存在的**目录探测它所在的卷是否不区分大小写：翻转路径里最后一个有大小写的字母所在的那一级名字，
+    父目录的 `os.listdir` 里两种写法**都字面存在** → 各是一个条目 → 区分；否则翻转后的路径存在且 `samefile`
+    → 不区分。路径里没有大小写字母 / 探测出错 → None（说不清）。与 `figcapture._dir_folds_case` 等价的本地
+    副本——本模块在 worker 的私有包里，不 import 兄弟模块；用例可替换它来模拟区分大小写的卷。"""
     try:
-        if os.path.isdir(directory):
-            parts = os.path.normpath(directory).split(os.sep)
-            for k in range(len(parts) - 1, -1, -1):
-                name = parts[k]
-                if name.lower() == name.upper():
-                    continue
-                flipped_name = name.swapcase()
-                parent = os.sep.join(parts[:k]) or os.sep
-                listed = os.listdir(parent)
-                if name in listed and flipped_name in listed:
-                    result = (
-                        False  # 两种写法各是一个条目 → 区分大小写（给的拼写不一定是盘上的拼写）
-                    )
-                else:
-                    flipped = os.sep.join(parts[:k] + [flipped_name] + parts[k + 1 :]) or os.sep
-                    result = os.path.exists(flipped) and os.path.samefile(flipped, directory)
-                break
+        parts = os.path.normpath(directory).split(os.sep)
+        for k in range(len(parts) - 1, -1, -1):
+            name = parts[k]
+            if name.lower() == name.upper():
+                continue
+            flipped_name = name.swapcase()
+            parent = os.sep.join(parts[:k]) or os.sep
+            listed = os.listdir(parent)
+            if name in listed and flipped_name in listed:
+                return False
+            flipped = os.sep.join(parts[:k] + [flipped_name] + parts[k + 1 :]) or os.sep
+            return os.path.exists(flipped) and os.path.samefile(flipped, directory)
     except OSError:
         pass
+    return None
+
+
+def folds_case(directory: str) -> bool:
+    """这个根所在的卷是否不区分大小写（按目录缓存；装钩子时探测，钩子里不做文件系统探测）。
+
+    根不存在（`~/.cache`、`~/seaborn-data` 这类白名单根常常还没建）就向上找**最近存在的祖先**，在它所在的卷上
+    探测——新建的子目录与祖先同卷。找不到存在的祖先、或探测不出 → **fail closed**：按区分大小写处理（不折叠）。
+    绝不用平台默认值：区分大小写的 macOS 卷上，默认值会把 `~/SEABORN-DATA` 当成白名单根 `~/seaborn-data`
+    之下的路径放行（Codex #1224 复核）。误判成「区分」的代价只是一次可恢复的误拦。"""
+    if directory in _FOLD_CACHE:
+        return _FOLD_CACHE[directory]
+    probe = directory
+    while probe and not os.path.isdir(probe):
+        parent = os.path.dirname(probe)
+        if parent == probe:
+            probe = ""
+            break
+        probe = parent
+    result = bool(probe) and _probe_existing(probe) is True
     _FOLD_CACHE[directory] = result
     return result
 
