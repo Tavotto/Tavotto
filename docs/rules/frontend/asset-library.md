@@ -150,6 +150,7 @@
      （恢复可见立即跑一次）、换项目会话清空后自然停；详情读取按「代次 + 项目 + 会话 id」在途去重。
      **快照只有 `final === true` 才算终态**（`snapshotIsFinal`；`cancel` 之后 status 是 cancelled 但 changed / diff 还没算出来，不是终态；
      老后端没有该字段时退回按 status 判），终态快照的转录是权威来源——收尾时按顺序与本地 entries 合并（补回断线期间丢的、不重复、本地独有的保留）。
+     **任务结局（TAF，ADR 0138）只翻译 `task.outcome`**：`ai.done` 与会话详情的可选 `task` 与 `refresh` 走同一几处（`finish` / 详情恢复 / 对账 / 建占位），状态行、结局卡（`data-ai-task-outcome`）、状态栏按它选文案，前端不判断检查本身；`status` 与 `outcome` 分开记（done + partial / failed = 改了但核对没通过），老后端没有 `task` 时全部走原逻辑。
   **「首个 POST 不确定」引出的所有分支**（用户点查询、同 id 重发返回 `deduped:true`）都收在 `aiStore.settleFromSnapshot`：
   向后端要请求 + 会话快照（详情只在 `readSessionDetail` 一处读），按快照的真实状态收尾（终态走正常完成路径含 refresh
   警告，仍在跑才是 running，读不到保持未确认、绝不凭摘要或 deduped 响应建 running 会话）。看护
