@@ -102,6 +102,39 @@ def test_ui_build_endpoint_never_publishes_a_route_conflict(tmp_path, monkeypatc
     assert nativesession.REGISTRY.route_for(str(proj), "fig.py", stem) is holder
 
 
+def test_a_desktop_run_publishes_a_snapshot_with_descriptors_after_it_builds(tmp_path, monkeypatch):
+    """屏障事件在准备 runner 的 build 之前发出：界面手里的 `descriptors` 是空的，面板按描述符认领会话，
+    认不到就把一张活着的图挂成「会话已结束」。build + 绑路由成功后要再推一条序号更大、带描述符的快照。"""
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    (proj / "fig.py").write_text(SCRIPT, encoding="utf-8")
+    plan = preparation.plan_for(
+        project_id="p",
+        project_root=str(proj),
+        asset_id="",
+        stem="",
+        script="fig.py",
+        entry="__main__",
+        original_artifact=None,
+        target=preparation.TARGET_SCRIPT,
+        execution="native",
+    )
+    seen = []
+    monkeypatch.setattr(
+        nativesession.REGISTRY,
+        "on_change",
+        lambda session, entry: seen.append(session.public_state()),
+    )
+    session, _resp, _ = m._native_preparation_runner(plan)
+    barrier = [s for s in seen if s["state"] == nativesession.BARRIER]
+    assert barrier and not barrier[0]["descriptors"], "屏障事件发出时还没 build"
+    built = [s for s in barrier if s["descriptors"]]
+    assert built, "build 之后没有推带描述符的快照：界面认不到这条会话"
+    assert built[-1]["sequence"] > barrier[0]["sequence"], "同序号的快照会被界面的序号判断丢掉"
+    assert built[-1]["sequence"] == session.sequence
+    session.cancel_owned()
+
+
 def test_a_build_that_captures_no_figure_ends_the_process(tmp_path):
     """脚本跑完却没有图:进程停在 script_end 屏障上,不收的话它一直活着占着环境租约(Codex #1022 P2)。"""
     from tavotto import app as m

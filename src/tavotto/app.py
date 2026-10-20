@@ -8779,6 +8779,7 @@ def _native_preparation_runner(pl, before_retry=None):
     rejected = engine_nativesession.REGISTRY.bind_assets(session)
     if not rejected:
         _svg_native_execution_update(session)
+        session.publish_built()  # 界面手里这条桌面会话的 descriptors 还是空的（屏障事件在 build 之前）
     if rejected:
         # 这些图的活路由还被另一条活会话占着(例如用户终端里的 `tavotto run`):继续完成会让预览换成这次运行的、
         # 编辑 / 导出却仍落在旧会话上——静默错图。不发布被拒的描述符,结束这次运行,如实报冲突(ADR 0021 §9.2)
