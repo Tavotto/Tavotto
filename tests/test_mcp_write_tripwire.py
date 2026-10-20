@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import os
 import sys
 import types
 from pathlib import Path
@@ -81,6 +82,10 @@ def world(tmp_path, monkeypatch):
     monkeypatch.setenv("TMPDIR", str(tmpdir))
     monkeypatch.setenv("TEMP", str(tmpdir))
     monkeypatch.setenv("TMP", str(tmpdir))
+    # Windows 上 pytest 的 tmp_path 在 %LOCALAPPDATA%\\Temp 之下，而白名单放行了那里的 Temp（临时文件的家）：
+    # 不挪走它，「根外」目录就落在白名单里，用例的主语错了（CI 上 DID NOT RAISE）。macOS / Linux 的白名单
+    # 是 ~/Library/Caches 与 ~/.cache，pytest 的 tmp_path 不在其中，所以同一个主语错误在那里咬不到
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "localappdata"))
     # 默认的 seaborn / sklearn 数据目录也别落进真实 HOME
     monkeypatch.setenv("SEABORN_DATA", str(tmp_path / "seaborn-data"))
     monkeypatch.setenv("SCIKIT_LEARN_DATA", str(tmp_path / "scikit_learn_data"))
@@ -464,15 +469,90 @@ def test_infrastructure_roots_are_derived_per_platform_with_reasons(tmp_path):
 
 def test_allowed_is_the_roots_plus_bytecode_plus_devices_and_nothing_else(tmp_path):
     root = str(tmp_path / "ws")
-    assert writetripwire.allowed(root + "/a/b.csv", (root,))
+    assert writetripwire.allowed(os.path.join(root, "a", "b.csv"), (root,))
     assert not writetripwire.allowed(str(tmp_path / "ws2" / "a"), (root,)), "前缀相同的兄弟目录不算"
     assert not writetripwire.allowed(str(tmp_path / "x.txt"), (root,))
-    pyc = str(tmp_path / "site" / "__pycache__" / "m.cpython-313.pyc")
+    pyc = os.path.join(str(tmp_path), "site", "__pycache__", "m.cpython-313.pyc")
     assert writetripwire.allowed(pyc, (root,)) and writetripwire.allowed(pyc + ".123456", (root,))
     assert not writetripwire.allowed(str(tmp_path / "site" / "__pycache__" / "m.txt"), (root,))
     assert not writetripwire.allowed(str(tmp_path / "site" / "m.pyc"), (root,)), (
         "不在 __pycache__ 里的 .pyc 不放行"
     )
-    assert writetripwire.allowed(str(tmp_path / "site" / "__pycache__"), (root,)), (
-        "建缓存目录本身放行"
+    cache_dir = str(tmp_path / "site" / "__pycache__")
+    assert writetripwire.allowed(cache_dir, (root,), event="os.mkdir"), "建缓存目录本身放行"
+    for event in ("open", "os.rmdir", "os.remove", "os.rename", "shutil.rmtree"):
+        assert not writetripwire.allowed(cache_dir, (root,), event=event), event
+    assert writetripwire.allowed(pyc, (root,), event="os.rename")
+    assert writetripwire.allowed(pyc, (root,), event="os.remove")
+    assert not writetripwire.allowed(pyc, (root,), event="os.rmdir")
+    assert not writetripwire.allowed(pyc, (root,), event="shutil.rmtree")
+
+
+# ============================================================ Codex #1224 的三条
+@needs_worker
+def test_hardlinking_an_outside_file_into_the_roots_is_refused_and_the_file_is_untouched(world):
+    victim = world.outside / "victim.txt"
+    victim.write_text("original", encoding="utf-8")
+    alias = world.ws / "alias.txt"
+    world.script(
+        "link.py",
+        f"import os\nos.link({str(victim)!r}, {str(alias)!r})\n"
+        f"open({str(alias)!r}, 'w').write('overwritten')\n" + PLOT,
     )
+    assert _refused(world, "link.py").code == CODE
+    assert victim.read_text(encoding="utf-8") == "original"
+    assert not alias.exists()
+
+
+@needs_worker
+@pytest.mark.parametrize(
+    "op",
+    [
+        "import shutil; shutil.rmtree({d!r})",
+        "import os; os.rmdir({d!r})",
+        "open({f!r}, 'w').write('x')",
+        "import os; os.remove({f!r})",
+        "import os; os.rename({f!r}, {g!r})",
+    ],
+    ids=["rmtree", "rmdir", "overwrite-non-pyc", "remove-non-pyc", "rename-non-pyc"],
+)
+def test_a_directory_named_pycache_outside_the_roots_is_not_a_free_pass(world, op):
+    cache = world.outside / "lib" / "__pycache__"
+    cache.mkdir(parents=True)
+    keep = cache / "keep.txt"
+    keep.write_text("data", encoding="utf-8")
+    empty = world.outside / "lib2" / "__pycache__"
+    empty.mkdir(parents=True)
+    target = empty if "rmdir" in op else cache
+    world.script(
+        "pyc.py",
+        op.format(d=str(target), f=str(keep), g=str(world.outside / "moved.txt")) + "\n" + PLOT,
+    )
+    assert _refused(world, "pyc.py").code == CODE
+    assert target.exists()
+    assert keep.read_text(encoding="utf-8") == "data"
+
+
+def _folds_case(directory: Path) -> bool:
+    flipped = directory.parent / directory.name.swapcase()
+    return flipped.exists() and os.path.samefile(flipped, directory)
+
+
+@needs_worker
+def test_a_root_spelled_in_another_case_on_a_case_insensitive_volume_is_not_a_false_refusal(world):
+    if not _folds_case(world.ws):
+        pytest.skip("这个卷区分大小写（Linux 等）：没有这条误拦")
+    other = world.ws / "other"
+    other.mkdir()
+    spelled = world.ws.parent / world.ws.name.swapcase()
+    world.monkeypatch.setattr(bridge, "allowed_roots", lambda: [str(spelled)])
+    world.script("case.py", f"open({str(other / 'ok.txt')!r}, 'w').write('x')\n" + PLOT)
+    world.mcp_worker("case.py").ensure_built()
+    assert (other / "ok.txt").exists()
+
+
+def test_allowed_folds_case_per_volume_not_by_platform_guess(tmp_path):
+    root = tmp_path / "ws"
+    root.mkdir()
+    spelled = str(tmp_path / "WS" / "a.csv")
+    assert writetripwire.allowed(spelled, (str(root),)) == _folds_case(root)
