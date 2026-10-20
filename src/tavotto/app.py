@@ -13068,33 +13068,63 @@ class _StoreTimeline(_Timeline):
             total += len(engine_atomicio.dumps_json(extra))
         return total
 
-    def _settle(self) -> None:
-        """写完之后：刷新索引，缩略图只留还在时间线上的节点。"""
-        self.idx = engine_versionstore.list_index(self.vdir, self.sid) or {"entries": []}
-        _sweep_version_thumbs(self.doc_id, {m.get("id") for m in self.idx["entries"]})
+    def _settle(self, committed: dict) -> None:
+        """写完之后（写已经持久化）：用写操作交回的索引刷新，缩略图只留还在时间线上的节点。
+
+        **不再读盘**：这一步在提交之后，额外读取失败（瞬时 I/O 错误）不能让请求报错——
+        写已经落了，客户端一重试就多一个检查点。缩略图清理本身也只记日志。"""
+        if "entries" in committed:
+            self.idx = committed
+        try:
+            _sweep_version_thumbs(self.doc_id, {m.get("id") for m in self.idx["entries"]})
+        except Exception:  # noqa: BLE001 —— 提交之后的收尾，失败只记日志
+            LOG.warning("版本缩略图收尾失败（下次写入再清）", exc_info=True)
 
     def append(self, ver: dict) -> None:
+        committed: dict = {}
         engine_versionstore.append(
-            self.vdir, self.sid, ver, now=int(time.time()), policy=_version_policy
+            self.vdir,
+            self.sid,
+            ver,
+            now=int(time.time()),
+            policy=_version_policy,
+            out_index=committed,
         )
-        self._settle()
+        self._settle(committed)
 
     def update(self, vid: str, changes: dict) -> dict | None:
+        before = self.get(vid)  # 提交之前取正文：改名不动正文，提交之后不必再读盘
+        if before is None:
+            return None
+        committed: dict = {}
         entry = engine_versionstore.update(
-            self.vdir, self.sid, vid, changes, now=int(time.time()), policy=_version_policy
+            self.vdir,
+            self.sid,
+            vid,
+            changes,
+            now=int(time.time()),
+            policy=_version_policy,
+            out_index=committed,
         )
         if entry is None:
             return None
-        self._settle()
-        return self.get(vid)
+        self._settle(committed)
+        return {**entry, "doc": before["doc"]}
 
     def delete(self, vid: str) -> bool:
         now = int(time.time())
-        if not engine_versionstore.delete(self.vdir, self.sid, vid, now=now):
+        committed: dict = {}
+        if not engine_versionstore.delete(self.vdir, self.sid, vid, now=now, out_index=committed):
             return False
-        # 旧实现每次写入都过一遍策略；删除之后也过（最新一条换人、护着的一条变了）
-        engine_versionstore.prune(self.vdir, self.sid, _version_policy, now=now)
-        self._settle()
+        # 旧实现每次写入都过一遍策略；删除之后也过（最新一条换人、护着的一条变了）。
+        # 删除已经提交：这一步失败只记日志，下一次写入会再过一遍策略
+        try:
+            engine_versionstore.prune(
+                self.vdir, self.sid, _version_policy, now=now, out_index=committed
+            )
+        except (OSError, engine_versionstore.VersionStoreError, engine_atomicio.AtomicWriteError):
+            LOG.warning("删除之后的策略收尾失败（下次写入再过）", exc_info=True)
+        self._settle(committed)
         return True
 
 

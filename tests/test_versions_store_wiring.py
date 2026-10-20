@@ -377,3 +377,149 @@ def test_store_writes_are_inside_the_versions_lock(tmp_path, monkeypatch):
     finally:
         os.close(fd)
     assert sorted((p.name, p.read_bytes()) for p in root.rglob("*") if p.is_file()) == before
+
+
+# --------------------------------------------------------------- Codex #1215
+
+
+def _seeded_store(doc_id: str = "cx") -> tuple[Path, Path]:
+    path = m._versions_path(doc_id)
+    for i, v in enumerate(_seed_versions()[:3]):
+        vs.append(path.parent, path.stem, v, now=i)
+    return path, vs.store_dir(path.parent, path.stem)
+
+
+def _tree(root: Path) -> list[tuple[str, bytes]]:
+    return sorted(
+        (str(p.relative_to(root)), p.read_bytes()) for p in root.rglob("*") if p.is_file()
+    )
+
+
+@pytest.mark.parametrize("how", ["index-stat", "envelope-listing"])
+def test_a_store_that_cannot_be_probed_fails_closed_and_never_falls_back_to_legacy_writes(
+    tmp_path, monkeypatch, how
+):
+    """P1：`.vx` 在而探测不了（权限变化 / 网络盘瞬时 I/O 错误）不是「没有新存储」。
+    折成没有的话 POST 会写 `<doc_id>.json`，`.vx` 恢复后新存储重新成为权威，刚确认的检查点就没了。
+    读写一律 409 `versions_unreadable`，旧格式文件一个也不许冒出来。注入 OSError，不依赖 chmod。"""
+    _use(monkeypatch, tmp_path)
+    path, root = _seeded_store()
+    if how == "envelope-listing":
+        (root / "index.json").unlink()  # 索引丢了：是否有存储要靠列信封目录判断
+    before = _tree(root)
+    real_stat, real_listdir = os.stat, os.listdir
+
+    def stat(p, *a, **kw):
+        if str(p).endswith(os.path.join(".vx", "index.json")):
+            raise PermissionError(13, "injected")
+        return real_stat(p, *a, **kw)
+
+    def listdir(p="."):
+        if str(p).endswith(os.path.join(".vx", "s")):
+            raise PermissionError(13, "injected")
+        return real_listdir(p)
+
+    client = m.app.test_client()
+    vid = _seed_versions()[0]["id"]
+    real_read_bytes = Path.read_bytes
+
+    def read_bytes(self):  # 真实的权限丢失连读都读不了；D2 的写路径不探测、直接读索引
+        if how == "index-stat" and str(self).endswith(os.path.join(".vx", "index.json")):
+            raise PermissionError(13, "injected")
+        return real_read_bytes(self)
+
+    with monkeypatch.context() as inj:
+        inj.setattr(Path, "read_bytes", read_bytes)
+        inj.setattr(
+            os,
+            "stat" if how == "index-stat" else "listdir",
+            stat if how == "index-stat" else listdir,
+        )
+        for r in (
+            client.get("/api/versions/cx"),
+            client.get(f"/api/versions/cx/{vid}"),
+            client.post("/api/versions/cx", json={"doc": _doc(), "name": "不能落旧格式"}),
+            client.patch(f"/api/versions/cx/{vid}", json={"name": "x"}),
+            client.post(f"/api/versions/cx/{vid}/duplicate"),
+            client.delete(f"/api/versions/cx/{vid}"),
+        ):
+            assert r.status_code == 409, r.get_json()
+            assert r.get_json()["code"] == "versions_unreadable"
+        assert not path.exists(), "判不了就退回旧格式写——这正是 P1"
+    assert _tree(root) == before
+    # 恢复之后历史完好
+    assert len(client.get("/api/versions/cx").get_json()["versions"]) == 3
+
+
+def test_a_missing_envelope_is_corrupt_not_a_500_for_every_write_that_reads_it(
+    tmp_path, monkeypatch
+):
+    """P2：索引里有、信封文件没了。`update()` 读旧信封的 FileNotFoundError 不许漏成 500。"""
+    _use(monkeypatch, tmp_path)
+    path, root = _seeded_store()
+    vid = _seed_versions()[1]["id"]
+    (root / "s" / f"{vid}.json").unlink()
+    before = _tree(root)
+    with pytest.raises(vs.EnvelopeCorrupt):
+        vs.update(path.parent, path.stem, vid, {"name": "x"}, now=0)
+    client = m.app.test_client()
+    r = client.patch(f"/api/versions/cx/{vid}", json={"name": "x"})
+    assert r.status_code == 409 and r.get_json()["code"] == "versions_unreadable", r.get_json()
+    assert client.post(f"/api/versions/cx/{vid}/duplicate").status_code == 409
+    assert _tree(root) == before, "失败的写动了磁盘"
+    # 别的版本不受影响，坏的这一条仍可删（用户的出口）
+    other = _seed_versions()[0]["id"]
+    assert client.patch(f"/api/versions/cx/{other}", json={"name": "好的"}).status_code == 200
+    assert client.delete(f"/api/versions/cx/{vid}").status_code == 200
+
+
+def test_a_failure_after_the_commit_does_not_turn_a_persisted_write_into_an_error(
+    tmp_path, monkeypatch
+):
+    """P2：写已经提交，收尾的额外读取遇到瞬时错误不能让请求报错——否则客户端重试 append 就多一个检查点。"""
+    _use(monkeypatch, tmp_path)
+    path, _root = _seeded_store()
+    client = m.app.test_client()
+    vid = _seed_versions()[0]["id"]
+
+    # 追加：提交之后不许再读索引
+    real_list = vs.list_index
+    calls = {"n": 0}
+
+    def list_once(*a, **kw):
+        calls["n"] += 1
+        if calls["n"] > 1:  # 构造时那一次之后，任何读索引都炸
+            raise OSError("injected transient I/O error")
+        return real_list(*a, **kw)
+
+    with monkeypatch.context() as inj:
+        inj.setattr(vs, "list_index", list_once)
+        r = client.post("/api/versions/cx", json={"doc": _doc(2, "n"), "name": "追加"})
+    assert r.status_code == 200, r.get_json()
+    assert [e["name"] for e in vs.entries(path.parent, path.stem)].count("追加") == 1
+
+    # 改名：提交之后不许再读信封
+    real_read = vs.read
+    seen = {"n": 0}
+
+    def read_once(*a, **kw):
+        seen["n"] += 1
+        if seen["n"] > 1:
+            raise OSError("injected transient I/O error")
+        return real_read(*a, **kw)
+
+    with monkeypatch.context() as inj:
+        inj.setattr(vs, "read", read_once)
+        r = client.patch(f"/api/versions/cx/{vid}", json={"name": "改过"})
+    assert r.status_code == 200 and r.get_json()["version"]["name"] == "改过"
+    assert r.get_json()["version"]["objects"] == len(_seed_versions()[0]["doc"]["objects"])
+
+    # 删除：提交之后的策略收尾失败只记日志
+    def boom(*a, **kw):
+        raise OSError("injected transient I/O error")
+
+    with monkeypatch.context() as inj:
+        inj.setattr(vs, "prune", boom)
+        r = client.delete(f"/api/versions/cx/{vid}")
+    assert r.status_code == 200
+    assert vid not in [e["id"] for e in vs.entries(path.parent, path.stem)]

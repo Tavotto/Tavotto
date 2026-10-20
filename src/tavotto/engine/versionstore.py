@@ -204,27 +204,46 @@ def has_store(versions_dir: Path, doc_id: str) -> bool:
     """新存储是否已是这份文档的权威（读侧据此决定读哪边）。
 
     索引在 → 是；索引不在但有信封、且**没有未完成的迁移记录** → 是（索引丢了，重建）；
-    其余（含「迁移进行中被打断」）→ 否，旧文件仍是权威。"""
+    其余（含「迁移进行中被打断」）→ 否，旧文件仍是权威。
+
+    **三态：确定没有 / 确定有 / 判不了。** 判不了（权限变化、网络文件系统的瞬时 I/O 错误……
+    `.vx` 在而读不了）抛 `IndexUnreadable`——绝不折成「没有」：折成「没有」调用方就会退回
+    旧格式写，`.vx` 恢复后新存储重新成为权威，刚确认的检查点就消失了。"""
     root = store_dir(versions_dir, doc_id)
-    if _index_path(root).exists():
+    if _exists(_index_path(root)):
         return True
     if _migration_pending(root):
         return False
     return _has_envelopes(root)
 
 
+def _exists(path: Path) -> bool:
+    """确定有 / 确定没有；其余错误（`PermissionError` 等）= 判不了 → `IndexUnreadable`。"""
+    try:
+        os.stat(path)
+    except (FileNotFoundError, NotADirectoryError):
+        return False
+    except OSError as exc:
+        raise IndexUnreadable(str(exc)) from exc
+    return True
+
+
 def _has_envelopes(root: Path) -> bool:
     try:
-        return any((root / ENVELOPE_DIR).glob("*.json"))
-    except OSError:
+        return any(n.endswith(".json") for n in os.listdir(root / ENVELOPE_DIR))
+    except (FileNotFoundError, NotADirectoryError):
         return False
+    except OSError as exc:
+        raise IndexUnreadable(str(exc)) from exc
 
 
 def _migration_record(root: Path) -> dict | None:
     try:
         rec = json.loads((root / MIGRATION_NAME).read_bytes())
-    except (OSError, ValueError):
+    except (FileNotFoundError, NotADirectoryError, ValueError):
         return None
+    except OSError as exc:  # 记录在而读不了：判不了「迁移是否进行中」，不当作没有
+        raise IndexUnreadable(str(exc)) from exc
     return rec if isinstance(rec, dict) else None
 
 
@@ -439,9 +458,16 @@ def _commit(
     dropped: Iterable[dict],
     now: int,
     stale: Iterable[Path] = (),
+    out_index: dict | None = None,
 ) -> None:
-    """先写索引（提交点），后删被裁的信封与被取代的旧一代。"""
-    _write_index(root, {**idx, "entries": kept}, now)
+    """先写索引（提交点），后删被裁的信封与被取代的旧一代。
+
+    `out_index` 给了就把刚提交的索引放进去：调用方不必为了拿到它再读一次盘
+    （写已经持久化之后的额外读取失败，不该让请求报错）。"""
+    written = _write_index(root, {**idx, "entries": kept}, now)
+    if out_index is not None:
+        out_index.clear()
+        out_index.update(written)
     _checkpoint("after_index")
     for path in [*(_meta_path(root, m) for m in dropped), *stale]:
         try:
@@ -466,6 +492,7 @@ def append(
     now: int,
     policy: Policy | None = None,
     keep_id: str | None = None,
+    out_index: dict | None = None,
 ) -> dict:
     """追加一版（`version` 是旧条目形状，含 `doc`）。返回新条目的公开形状（无 `doc`）。
 
@@ -491,7 +518,9 @@ def append(
     metas = [*idx["entries"], meta]
     kept = _apply_policy(metas, policy, keep_id)
     kept_ids = {m["id"] for m in kept}
-    _commit(root, idx, kept, [m for m in metas if m["id"] not in kept_ids], now)
+    _commit(
+        root, idx, kept, [m for m in metas if m["id"] not in kept_ids], now, out_index=out_index
+    )
     return public_entry(meta)
 
 
@@ -508,6 +537,7 @@ def update(
     now: int,
     remove: Iterable[str] = (),
     policy: Policy | None = None,
+    out_index: dict | None = None,
 ) -> dict | None:
     """改名 / 改说明 / 转正等元信息改动：`changes` 并入条目，`remove` 里的键删掉。
 
@@ -523,7 +553,11 @@ def update(
         return None
     old = idx["entries"][pos]
     old_path = _meta_path(root, old)
-    head, rest = _parse_envelope(old_path.read_bytes(), what=vid)
+    try:
+        raw_old = old_path.read_bytes()
+    except FileNotFoundError as exc:  # 索引有、信封没了：与 `read()` 一致，只赔这一条
+        raise EnvelopeCorrupt(f"信封缺失: {vid}") from exc
+    head, rest = _parse_envelope(raw_old, what=vid)
     gone = set(remove)
     entry = {k: v for k, v in head["entry"].items() if k not in gone}
     entry.update(changes)
@@ -537,13 +571,23 @@ def update(
     kept = _apply_policy(metas, policy, vid)
     kept_ids = {m["id"] for m in kept}
     dropped = [m for m in metas if m["id"] not in kept_ids]
-    _commit(root, idx, kept, [m for m in dropped if m["id"] != vid], now, stale=[old_path])
+    _commit(
+        root,
+        idx,
+        kept,
+        [m for m in dropped if m["id"] != vid],
+        now,
+        stale=[old_path],
+        out_index=out_index,
+    )
     if vid in {m["id"] for m in dropped}:  # 自己被裁（策略没护住）：新一代也要收
         _meta_path(root, meta).unlink(missing_ok=True)
     return public_entry(meta)
 
 
-def delete(versions_dir: Path, doc_id: str, vid: str, *, now: int) -> bool:
+def delete(
+    versions_dir: Path, doc_id: str, vid: str, *, now: int, out_index: dict | None = None
+) -> bool:
     """删一版：**先写索引，后删信封**。索引里没有返回 `False`。"""
     root = store_dir(versions_dir, doc_id)
     idx = _load_index(root, now, write=True)
@@ -552,12 +596,20 @@ def delete(versions_dir: Path, doc_id: str, vid: str, *, now: int) -> bool:
     kept = [m for m in idx["entries"] if m.get("id") != vid]
     if len(kept) == len(idx["entries"]):
         return False
-    _commit(root, idx, kept, [m for m in idx["entries"] if m.get("id") == vid], now)
+    _commit(
+        root, idx, kept, [m for m in idx["entries"] if m.get("id") == vid], now, out_index=out_index
+    )
     return True
 
 
 def prune(
-    versions_dir: Path, doc_id: str, policy: Policy, *, now: int, keep_id: str | None = None
+    versions_dir: Path,
+    doc_id: str,
+    policy: Policy,
+    *,
+    now: int,
+    keep_id: str | None = None,
+    out_index: dict | None = None,
 ) -> list[str]:
     """对现有索引单独过一遍策略，返回被裁的 id。"""
     root = store_dir(versions_dir, doc_id)
@@ -568,7 +620,7 @@ def prune(
     kept_ids = {m["id"] for m in kept}
     dropped = [m for m in idx["entries"] if m["id"] not in kept_ids]
     if dropped:
-        _commit(root, idx, kept, dropped, now)
+        _commit(root, idx, kept, dropped, now, out_index=out_index)
     return [m["id"] for m in dropped]
 
 
