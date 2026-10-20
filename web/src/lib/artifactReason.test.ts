@@ -10,6 +10,11 @@ const ENGINE = (reason: unknown, retryable?: boolean) =>
 /** reason → [可恢复性, 文案 key] 的全集（改表必须同时改这里） */
 const EXPECTED: Record<ArtifactReason, [string, string]> = {
   unsupported_render_state: ['permanent', 'artifact.unsupportedRenderState'],
+  artist_profile: ['permanent', 'artifact.unsupportedRenderState'],
+  policy_disabled: ['permanent', 'artifact.unsupported'],
+  confirmation_required: ['permanent', 'artifact.unsupported'],
+  reconstruction_changed: ['permanent', 'artifact.unsupported'],
+  adoption_store_full: ['permanent', 'artifact.unsupported'],
   source_mismatch: ['source_mismatch', 'artifact.sourceMismatch'],
   capture_incomplete: ['permanent', 'artifact.unsupported'],
   save_ambiguous: ['permanent', 'artifact.unsupported'],

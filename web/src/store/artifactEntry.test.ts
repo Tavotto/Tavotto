@@ -462,6 +462,8 @@ describe('first-adoption refusals: one sentence, one way out, remembered (ADR 01
  it.each([
   ['unsupported_render_state','artifact.unsupportedRenderState'],
   ['source_mismatch','artifact.sourceMismatch'],
+  ['artist_profile','artifact.unsupportedRenderState'],
+  ['adoption_store_full','artifact.unsupported'],
   ['capture_incomplete','artifact.unsupported'],
   ['save_ambiguous','artifact.unsupported'],
  ])('%s: no history, panel untouched, info toast with exactly one rebuild action',async(reason,key)=>{

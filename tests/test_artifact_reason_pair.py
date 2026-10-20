@@ -36,6 +36,16 @@ FORWARDING_SITES = {
 }
 
 
+#: PR2 后端才会发的 reason：前端先登记（闭集是后端的超集即可），PR2 落地后它们进入后端集合，这里不必改
+PR2_REASONS = {
+    "artist_profile",
+    "policy_disabled",
+    "confirmation_required",
+    "reconstruction_changed",
+    "adoption_store_full",
+}
+
+
 def _backend_reasons() -> tuple[set[str], dict[str, int]]:
     reasons: set[str] = set()
     forwarded: dict[str, int] = {}
@@ -84,7 +94,9 @@ def test_every_backend_reason_is_classified_by_the_frontend() -> None:
 def test_frontend_only_reasons_are_exactly_the_locally_emitted_ones() -> None:
     backend, _ = _backend_reasons()
     frontend = set(exported_string_union(REASON_TS.read_text(encoding="utf-8"), "ArtifactReason"))
-    assert frontend - backend == FRONTEND_ONLY
+    assert FRONTEND_ONLY <= frontend
+    assert not (FRONTEND_ONLY & backend)
+    assert frontend - backend - PR2_REASONS == FRONTEND_ONLY
 
 
 def test_reason_forwarding_sites_are_the_registered_ones() -> None:

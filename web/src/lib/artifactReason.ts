@@ -13,6 +13,12 @@ export type ArtifactReason =
   // 后端发
   | 'unsupported_render_state'
   | 'source_mismatch'
+  // PR2 后端新增（先登记，细化文案由 PR2 前端做）
+  | 'artist_profile'
+  | 'policy_disabled'
+  | 'confirmation_required'
+  | 'reconstruction_changed'
+  | 'adoption_store_full'
   | 'capture_incomplete'
   | 'save_ambiguous'
   | 'destination_unresolved'
@@ -51,6 +57,11 @@ interface Row {
 
 const TABLE: Record<ArtifactReason, Row> = {
   unsupported_render_state: { recoverability: 'permanent', messageKey: 'artifact.unsupportedRenderState' },
+  artist_profile: { recoverability: 'permanent', messageKey: 'artifact.unsupportedRenderState' },
+  policy_disabled: { recoverability: 'permanent', messageKey: 'artifact.unsupported' },
+  confirmation_required: { recoverability: 'permanent', messageKey: 'artifact.unsupported' },
+  reconstruction_changed: { recoverability: 'permanent', messageKey: 'artifact.unsupported' },
+  adoption_store_full: { recoverability: 'permanent', messageKey: 'artifact.unsupported' },
   source_mismatch: { recoverability: 'source_mismatch', messageKey: 'artifact.sourceMismatch' },
   capture_incomplete: { recoverability: 'permanent', messageKey: 'artifact.unsupported' },
   save_ambiguous: { recoverability: 'permanent', messageKey: 'artifact.unsupported' },
