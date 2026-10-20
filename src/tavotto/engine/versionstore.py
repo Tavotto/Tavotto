@@ -100,7 +100,7 @@ def _index_path(root: Path) -> Path:
 
 
 def _envelope_path(root: Path, vid: str) -> Path:
-    if not VERSION_ID_RE.match(vid):
+    if not VERSION_ID_RE.fullmatch(vid):
         raise VersionStoreError(f"不合法的版本 id: {vid!r}")
     return root / ENVELOPE_DIR / f"{vid}.json"
 
@@ -244,7 +244,7 @@ def _rebuild(root: Path) -> dict:
         try:
             head = _read_head(p)
             entry = head["entry"]
-            if entry.get("id") != name[: -len(".json")] or not VERSION_ID_RE.match(entry["id"]):
+            if entry.get("id") != name[: -len(".json")] or not VERSION_ID_RE.fullmatch(entry["id"]):
                 continue
             seq = int(head.get("seq", 0))
             meta = _meta(entry, p.stat().st_size, head["doc_len"], head["doc_sha"], seq)
@@ -534,7 +534,7 @@ def _read_legacy(legacy_path: Path) -> tuple[bytes, list[dict]]:
     if not isinstance(versions, list) or not all(
         isinstance(v, dict)
         and isinstance(v.get("id"), str)
-        and VERSION_ID_RE.match(v["id"])
+        and VERSION_ID_RE.fullmatch(v["id"])
         and "doc" in v
         for v in versions
     ):

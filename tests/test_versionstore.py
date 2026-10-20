@@ -136,7 +136,7 @@ def test_duplicate_id_and_bad_id_are_refused(vdir):
     _seed(vdir, "d1", 1)
     with pytest.raises(vs.VersionStoreError):
         vs.append(vdir, "d1", _ver(0), now=1)
-    for bad in ("../x", "v1-1/../../y", "V1-1", ""):
+    for bad in ("../x", "v1-1/../../y", "V1-1", "", "v1-1\n"):
         with pytest.raises(vs.VersionStoreError):
             vs.append(vdir, "d1", _ver(5, id=bad), now=1)
     assert [e["id"] for e in vs.entries(vdir, "d1")] == [_ver(0)["id"]]
