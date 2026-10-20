@@ -9,7 +9,7 @@
 * 动态路径（路由看不出）→ safe 被拦 → 同会话回退 native，共 2 次；
 * `safe_only` 项目 → 不走 native；
 * 上次 native 成功的脚本再次运行 → 沿用 native、只执行 1 次（bridge 观察过 helper / 数据，#1047）；helper / 数据 / 脚本
-  任一变了 → 回到静态路由；成功收口在 `show()` 屏障上时，脚本跑完后的那次 build 才补齐依据。
+  任一变了 → 回到静态路由；成功收口在 `show()` 屏障上同样沿用，被放行后要等脚本跑完的那次 build 补齐依据。
 """
 
 from __future__ import annotations
@@ -243,21 +243,29 @@ def test_a_native_success_with_observed_inputs_is_reused_until_a_helper_or_data_
         assert _reopen(app)["plan"]["route"]["reason"] == "ordinary_plot"
 
 
-def test_a_native_success_settled_at_a_show_barrier_is_reusable_only_after_the_script_finished(
+def test_a_native_success_settled_at_a_show_barrier_is_reused_unless_the_script_was_released(
     tmp_path,
 ):
-    """#1047：成功收口在 `plt.show()` 屏障上——脚本还没跑完，之后还可能再读，那时的观察不是全部输入，记录先不沿用；
-    界面放行、脚本跑完后在结束屏障上 build 一次，按计划号补齐依据，之后重开才直达 native。"""
+    """#1047 修订：成功收口在 `plt.show()` 屏障上。桌面界面对这条运行只给「停止运行」，停着之后只会被结束或重跑，到此为止的
+    观察就是全部输入——重开直达 native、只执行 1 次。真被放行（API 的继续）之前记录改回不沿用；脚本跑完后在结束屏障上 build
+    一次，按计划号补齐依据，又可沿用。"""
     proj, log = _project(tmp_path, DYNAMIC_SHOW)
     with sidecar_app(proj, tmp_path / "work", env_overrides=ENV) as app:
         final = _settled(app, _run(app, _create(app)))
         assert _history(final) == [("safe", "blocked"), ("native", "succeeded")]
+        assert _runs(log) == 2
         (live,) = [s for s in _native_sessions(app, proj) if s["state"] not in ("ended", "failed")]
         assert live["barrier_reason"] == "show"
         sid = live["session_id"]
-        assert _reopen(app)["plan"]["route"]["reason"] == "ordinary_plot", "脚本还没跑完"
+        route = _reopen(app)["plan"]["route"]
+        assert (route["execution"], route["reason"]) == ("native", "previous_successful_profile"), (
+            "停在 show() 上的运行：到此为止的观察就是全部输入"
+        )
 
         app.call(f"/api/native/sessions/{sid}/continue", {}, timeout=60)
+        assert _reopen(app)["plan"]["route"]["reason"] == "ordinary_plot", (
+            "放行了：脚本接着跑、可能再读"
+        )
 
         def _at_script_end():
             (sess,) = [s for s in _native_sessions(app, proj) if s["session_id"] == sid]
@@ -270,8 +278,12 @@ def test_a_native_success_settled_at_a_show_barrier_is_reusable_only_after_the_s
         assert _reopen(app)["plan"]["route"]["reason"] == "ordinary_plot", "还没在结束屏障上 build"
 
         app.call(f"/api/native/sessions/{sid}/build", {}, timeout=60)
-        route = _reopen(app)["plan"]["route"]
+        again = _reopen(app)
+        route = again["plan"]["route"]
         assert (route["execution"], route["reason"]) == ("native", "previous_successful_profile")
+        _run(app, again)
+        _wait_runs(log, 3)
+        assert _runs(log) == 3, "沿用 native：safe 不白跑，只执行 1 次"
 
 
 def test_a_browser_mode_session_is_never_routed_to_native(tmp_path):

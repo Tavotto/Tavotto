@@ -426,6 +426,8 @@ class NativeSession:
         #: 的 `cold`），它不知道自己手里是哪一种，也不该知道。
         self.built = False
         self.last_build: dict | None = None
+        #: 上一次 build 之后放行过（继续 / 放手）：那次 build 的输入观察若来自 `show()` 屏障，已不再是这次运行的全部输入
+        self._released_since_build = False
         self._lock = threading.Lock()
         self._changed = threading.Condition(self._lock)
         self._on_change = None
@@ -819,15 +821,21 @@ class NativeSession:
 
     @property
     def observed_inputs(self) -> dict | None:
-        """桌面拥有的运行在脚本**跑完之后**的 build 才带的输入观察（`figcapture.InputObserver.report()`，#1047）：观察到的
-        项目内数据文件与本地模块（项目相对路径 + sha256）。`show()` 屏障上的 build 没有它（脚本还没跑完）= None。
-        含项目相对路径：只给启动记录用，不进 `public_state()` / 事件 / 诊断。存储仍只有 `last_build` 一份。"""
+        """桌面拥有的运行在屏障上 build 带回的输入观察（`figcapture.InputObserver.report()`，#1047）：观察到的项目内数据文件
+        与本地模块（项目相对路径 + sha256）。脚本跑完后的屏障上是全部；停在 `show()` 屏障上是到此为止的全部——那次 build
+        之后放行过（脚本接着跑、可能再读）= None。含项目相对路径：只给启动记录用，不进 `public_state()` / 事件 / 诊断。"""
+        if self._released_since_build:
+            return None
         ins = (
             (self.last_build or {}).get("observed_inputs")
             if isinstance(self.last_build, dict)
             else None
         )
         return dict(ins) if isinstance(ins, dict) else None
+
+    def forget_observed_inputs(self) -> None:
+        """放行之前由父进程先调（`app._unobserve_native_inputs`）：这次 build 的观察从此不再是这次运行的全部输入。"""
+        self._released_since_build = True
 
     @property
     def child_pid(self) -> int | None:
@@ -852,6 +860,7 @@ class NativeSession:
         resp = self._request({"cmd": "build"}, BUILD_TIMEOUT)
         self.built = True
         self.last_build = resp
+        self._released_since_build = False
         self.descriptors = list(resp.get("descriptors") or [])
         self.figure_facts = list(resp.get("figure_facts") or [])
         self.stems = list((resp.get("stems") or {}).keys())
@@ -1010,6 +1019,8 @@ class NativeSession:
         """
         with self._figure_lock:
             self._require_consistent()
+            # 发 continue 之前就作废：回包之前脚本可能已经在读下一个文件
+            self._released_since_build = True
             previous_epoch = self.snapshot_epoch
             try:
                 resp = self._request({"cmd": "continue"}, REQUEST_TIMEOUT)

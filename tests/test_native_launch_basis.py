@@ -1,8 +1,8 @@
 """#1047：native 成功记录的 helper / 数据依据（`launchctx.build_native_record(inputs=…)` / `observe_native_basis`）。
 
-依据来自 bridge 在脚本跑完那一刻定格的输入观察（与 safe 同一份 `InputObserver.report()` 形状）。这里钉住纯逻辑的边：
-完整观察 → `basis_observed: true`、与 safe 同形；没有 / 截断 / 有文件没算出摘要 → `false`、不沿用；脚本跑完后的补齐只动
-**这一次运行**（同一 `launch_id`）、尚未观察过的 native 记录。真进程端到端在 `test_run_routing_e2e.py`。
+依据来自 bridge 在屏障上报的输入观察（与 safe 同一份 `InputObserver.report()` 形状）。这里钉住纯逻辑的边：
+完整观察 → `basis_observed: true`、与 safe 同形；没有 / 截断 / 有文件没算出摘要 → `false`、不沿用；放行前的作废与脚本跑完后的
+补齐只动**这一次运行**（同一 `launch_id`）的 native 记录。真进程端到端在 `test_run_routing_e2e.py`。
 """
 
 from __future__ import annotations
@@ -56,7 +56,7 @@ def test_a_complete_observation_becomes_the_same_basis_a_safe_record_carries(pro
 @pytest.mark.parametrize(
     "inputs",
     [
-        None,  # 收口在 show() 屏障上 / 终端拥有的旧 runner
+        None,  # 收口后被放行 / 终端拥有的旧 runner
         _inputs(truncated=True),  # 观察器截断：存不全
         _inputs(
             files=[{"path": "big.bin", "size": 10**9, "sha256": None}]
@@ -115,3 +115,35 @@ def test_an_incomplete_late_observation_does_not_upgrade(proj):
     assert launchctx.observe_native_basis(proj, "plan-1", _inputs(truncated=True)) is False
     assert launchctx.observe_native_basis(proj, "", _inputs()) is False
     assert runconfig.launch_record(proj, "fig.py")["source"]["basis_observed"] is False
+
+
+def test_a_release_turns_the_runs_record_back_to_unreusable_until_the_script_finished(proj):
+    """收口在 `show()` 屏障上记的是到此为止的观察；被放行（脚本接着跑、可能再读）之前改回不沿用，跑完再补齐。"""
+    observed = launchctx.build_native_record(proj, "fig.py", _plan(proj), inputs=_inputs())
+    runconfig.set_launch_record(proj, "fig.py", observed)
+    assert launchctx.unobserve_native_basis(proj, "plan-1") is True
+    voided = runconfig.launch_record(proj, "fig.py")
+    assert voided["source"]["basis_observed"] is False
+    assert voided["source"]["basis"] == {}
+    assert {k: v for k, v in voided.items() if k != "source"} == {
+        k: v for k, v in observed.items() if k != "source"
+    }
+    later = _inputs(files=[{"path": "late.csv", "size": 2, "sha256": "f" * 64}])
+    assert launchctx.observe_native_basis(proj, "plan-1", later) is True
+    assert runconfig.launch_record(proj, "fig.py")["source"]["basis"] == {
+        "late.csv": "f" * 64,
+        "helper.py": "h" * 64,
+    }
+
+
+def test_a_release_only_touches_the_same_runs_observed_native_record(proj):
+    observed = launchctx.build_native_record(
+        proj, "fig.py", _plan(proj, "plan-2"), inputs=_inputs()
+    )
+    runconfig.set_launch_record(proj, "fig.py", observed)
+    assert launchctx.unobserve_native_basis(proj, "plan-1") is False
+    assert launchctx.unobserve_native_basis(proj, "") is False
+    safe = {**observed, "profile": "safe", "launch_id": "plan-1"}
+    runconfig.set_launch_record(proj, "fig.py", safe)
+    assert launchctx.unobserve_native_basis(proj, "plan-1") is False
+    assert runconfig.launch_record(proj, "fig.py") == safe

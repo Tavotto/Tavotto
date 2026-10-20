@@ -880,8 +880,11 @@ class BridgeRun:
         self.execution_id: str | None = None
         self.execution_script: str | None = None
         #: 脚本结束那一刻定格的输入观察（`figcapture.InputObserver.report()`，#1047）；没观察 / 脚本还没跑完 = None。
-        #: `show()` 屏障上脚本还没跑完，之后还可能再读——那时的观察不是这次运行的全部输入，不报
         self.inputs_report: dict | None = None
+        #: 停在 `show()` 屏障上这一刻的输入观察：脚本到此为止读过的全部（同一口径）。桌面拥有的运行停在屏障上之后只会
+        #: 被结束或重跑，后面的代码不执行——那么这就是这次运行的全部输入；放行（继续 / 放手）就作废，由父进程同时把
+        #: 记录改回「没观察过」、脚本跑完后再补。离开屏障即清空；与更早屏障的摘要对不上 = None（同 `freeze_inputs`）
+        self.barrier_inputs_report: dict | None = None
         #: 项目相对路径 → 进 `show()` 屏障那一刻的 sha256（先见者赢）。脚本停在屏障上时用户可能改了 helper / 数据，
         #: 进程执行的是旧内容；`freeze_inputs` 拿它跟最终定格的摘要比对，不一致就不报观察（Codex #1180 P2）
         self._input_digests: dict[str, str | None] = {}
@@ -1060,10 +1063,14 @@ class BridgeRun:
         # 与 safe worker 同一份自报（ADR 0053）：native 的 prefix / cwd 正是
         # 「用户自己的解释器、用户自己的 cwd」这两条承诺的可核对证据。
         out["runtime"] = _PKG.figsession.runtime_report()
-        if self.inputs_report is not None:
-            # 桌面拥有的运行在脚本结束后的屏障上才有（#1047）：父进程据此给 native 成功记录补上 helper / 数据依据。
+        observed = (
+            self.inputs_report if self.inputs_report is not None else self.barrier_inputs_report
+        )
+        if observed is not None:
+            # 桌面拥有的运行（#1047）：脚本跑完后的屏障上是定格的全部观察；停在 `show()` 屏障上是到此为止的观察（之后
+            # 只会被结束或重跑；放行由父进程作废）。父进程据此给 native 成功记录填 helper / 数据依据。
             # 不放进 `runtime`：那一段进回执身份，同一会话前后两次 build 不该因为「跑没跑完」换身份
-            out["observed_inputs"] = self.inputs_report
+            out["observed_inputs"] = observed
         if self.script_error:
             out["script_error"] = self.script_error
         return out
@@ -1207,7 +1214,9 @@ class BridgeRun:
         }
 
     def _snapshot_inputs(self) -> None:
-        """进屏障前记一份依据摘要（只记还没记过的 path：先见者赢，记的是用户代码最早可能用到的那份）。"""
+        """进屏障前记一份依据摘要（只记还没记过的 path：先见者赢，记的是用户代码最早可能用到的那份），这一刻的报告留作
+        `barrier_inputs_report`。更早的屏障记过的摘要在这份里缺了或不同 = 上次停着时依据被改过，进程执行的是旧内容，不报。"""
+        self.barrier_inputs_report = None
         observer = _INPUTS
         if observer is None:
             return
@@ -1218,7 +1227,10 @@ class BridgeRun:
                         self.args.project_root, sys.modules, exclude_dir=_HERE
                     )
                 )
-            for path, sha in self._digests_of(report).items():
+            now = self._digests_of(report)
+            if all(now.get(path, _GONE) == sha for path, sha in self._input_digests.items()):
+                self.barrier_inputs_report = report
+            for path, sha in now.items():
                 self._input_digests.setdefault(path, sha)
         except Exception:  # noqa: BLE001 — 观察器绝不影响脚本
             pass
@@ -1254,8 +1266,12 @@ class BridgeRun:
         """屏障期间不跑用户代码：引擎自己的读（预览 / 导出）不进输入观察。"""
         if reason != "script_end":  # script_end 在 freeze 之后，观察器已卸
             self._snapshot_inputs()
-        with _engine_reads():
-            self._barrier(reason)
+        try:
+            with _engine_reads():
+                self._barrier(reason)
+        finally:
+            # 离开屏障 = 脚本接着跑（或进程要走了）：这一刻的观察不再是全部输入
+            self.barrier_inputs_report = None
 
     def _barrier(self, reason: str) -> None:
         """在**拥有 Figure 的这个线程**上服务控制循环，直到 continue/shutdown。

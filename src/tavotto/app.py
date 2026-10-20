@@ -5675,6 +5675,8 @@ def api_native_session_build(session_id: str):
 def _native_action(session_id: str, action: str):
     try:
         session = engine_nativesession.REGISTRY.get(session_id)
+        if action in ("resume", "detach"):
+            _unobserve_native_inputs(session)
         result = getattr(session, action)()
     except engine_runcodes.RunError as exc:
         return _native_error(exc)
@@ -5778,8 +5780,8 @@ def api_native_forget_permission():
 def _note_native_inputs(session) -> None:
     """桌面拥有的运行跑完之后的 build 带着输入观察：补齐这次运行的 native 成功记录的 helper / 数据依据（#1047）。
 
-    成功收口若在 `show()` 屏障上，那时脚本还没跑完、记录先记成「没观察过」；脚本跑完、界面在结束屏障上再 build 一次，
-    这里按计划号（`launch_id`）补上。终端拥有的会话不观察；补不上（观察不全、记录已被别的成功换掉）就保持不沿用。"""
+    成功收口在 `show()` 屏障上、之后被放行的运行，记录已由 `_unobserve_native_inputs` 改成「没观察过」；脚本跑完、在结束
+    屏障上再 build 一次，这里按计划号（`launch_id`）补上。终端拥有的会话不观察；补不上（观察不全、记录已被别的成功换掉）就保持不沿用。"""
     if session.owned is None or not session.launch_id:
         return
     inputs = session.observed_inputs
@@ -5789,6 +5791,19 @@ def _note_native_inputs(session) -> None:
         engine_launchctx.observe_native_basis(session.project_root, session.launch_id, inputs)
     except Exception:  # noqa: BLE001 — 补依据是尽力而为：失败只是下次不沿用，不影响这次 build
         LOG.info("native 记录补依据失败: %s", session.session_id, exc_info=True)
+
+
+def _unobserve_native_inputs(session) -> None:
+    """放行（继续 / 放手）桌面拥有的运行之前：收口时记下的是停在 `show()` 屏障那一刻的观察，脚本接着跑可能再读——这次运行的
+    native 记录改回不沿用，脚本跑完后由 `_note_native_inputs` 重新补齐（#1047）。必须在放行之前：之后才改，中间重开会误沿用。"""
+    if session.owned is None or not session.launch_id:
+        return
+    # 先作废会话手里的观察、再改记录：成功收口读观察与写记录之间被放行时，收口那边写完再看一眼观察就知道要改回
+    session.forget_observed_inputs()
+    try:
+        engine_launchctx.unobserve_native_basis(session.project_root, session.launch_id)
+    except Exception:  # noqa: BLE001 — 改不了的登记读也读不出，不会被沿用；放行照常
+        LOG.info("native 记录作废依据失败: %s", session.session_id, exc_info=True)
 
 
 def _materialize_native(session, skip=()) -> None:
@@ -8793,6 +8808,7 @@ def _native_preparation_runner(pl, before_retry=None):
 def _end_native_session(session) -> None:
     """让一条停在屏障上的桌面会话结束：先放行（脚本跑完、恢复原样），放不了就真终止。"""
     try:
+        _unobserve_native_inputs(session)
         session.resume()
         if session.owned is not None and session.owned.wait(15):
             return
@@ -9223,12 +9239,15 @@ def _finalize_script_attempt(ctx: "ProjectCtx", plan, result) -> dict:
             result,
             plan,
             bool(captured.get("failed_figures")),
-            # 脚本已跑完（收口在结束屏障上）才有；停在 `show()` 屏障上时由之后的 build 补（#1047，`_note_native_inputs`）
+            # 屏障上 build 带回的观察；`show()` 屏障上是到此为止的全部，之后被放行由 `_unobserve_native_inputs` 作废（#1047）
             native_inputs=native.observed_inputs if native is not None else None,
         ),
         run=run,
         update_default=True,
     )
+    if native is not None and native.observed_inputs is None:
+        # 读观察与写记录之间被放行了：放行那边先作废观察、再改记录——它若早于这里的写入，记录要在这里改回不沿用
+        _unobserve_native_inputs(native)
     refresh_project(ctx, reason="probe", allow_static_merge=False)
     # 无参数运行整条替换掉的旧图名（T09b）：报告里如实说，界面给「用原参数再运行」的可恢复提示
     unlinked = list(registered.get("unlinked_stems") or [])
