@@ -161,12 +161,12 @@ def test_without_final_barrier_the_same_script_does_continue(tmp_path):
 
 
 def test_the_show_barrier_build_reports_where_it_stopped_and_how_many_threads_still_run(tmp_path):
-    """屏障位置事实（#1202）：目标脚本里调用 `show()` 的那一行、是否模块层、除主线程外的活线程数。"""
+    """屏障位置事实（#1202）：目标脚本里调用 `show()` 的那一行、除主线程外的活线程数。"""
     session = _project(tmp_path)
     nativekit.wait_state(session, [nativesession.BARRIER])
     session.ensure_built()
     show_line = SCRIPT.splitlines().index("plt.show()") + 1
-    assert session.barrier_site == {"line": show_line, "module": True, "threads": 0}
+    assert session.barrier_site == {"line": show_line, "threads": 0}
     session.resume()
     nativekit.wait_state(session, [nativesession.BARRIER])
     session.ensure_built()

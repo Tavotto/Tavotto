@@ -124,7 +124,7 @@ plt.plot([1, 2])
 plt.show()
 print("tail")
 """
-SITE = {"line": 3, "module": True, "threads": 0}
+SITE = {"line": 3, "threads": 0}
 
 
 def _show_project(proj, text=SHOW_SCRIPT):
@@ -168,7 +168,7 @@ if __name__ == "__main__":
     ("text", "site", "scoped"),
     [
         (SHOW_SCRIPT, SITE, True),
-        (MAIN_GUARD, {"line": 5, "module": True, "threads": 0}, True),
+        (MAIN_GUARD, {"line": 5, "threads": 0}, True),
         # 用户线程在屏障期间接着跑（Codex #1202 P1）
         (SHOW_SCRIPT, {**SITE, "threads": 1}, False),
         # 是否停下取决于运行时：带参数的 show / 条件里的 show / 循环里的 show（Codex #1202 P1）
@@ -179,16 +179,16 @@ if __name__ == "__main__":
             False,
         ),
         ("import matplotlib.pyplot as plt\nfor _ in range(1):\n    plt.show()\n", SITE, False),
-        # 写在函数里：那一帧不是模块层
+        # 写在函数里：那一行落在 def 语句之内
         (
             "import matplotlib.pyplot as plt\ndef f():\n    plt.show()\nf()\n",
-            {"line": 3, "module": False, "threads": 0},
+            {"line": 3, "threads": 0},
             False,
         ),
         # 位置对不上 show 语句 / 事实缺失
         (SHOW_SCRIPT, {**SITE, "line": 2}, False),
         (SHOW_SCRIPT, None, False),
-        (SHOW_SCRIPT, {"line": None, "module": True, "threads": 0}, False),
+        (SHOW_SCRIPT, {"line": None, "threads": 0}, False),
     ],
 )
 def test_only_an_inevitable_bare_show_with_no_other_threads_is_barrier_scoped(

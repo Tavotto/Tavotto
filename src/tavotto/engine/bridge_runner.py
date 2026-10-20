@@ -898,7 +898,7 @@ class BridgeRun:
         #: 此刻停着的屏障（`barrier()` 期间）；不在屏障上 = ""。`--final-barrier` 据此拒绝放行
         self.current_barrier = ""
         #: 停在 `show()` 屏障上这一刻的位置事实（与 `barrier_inputs_report` 同生同灭）：目标脚本里调用 `show()` 的那一行、
-        #: 那一帧是不是模块顶层、除主线程外还有几条活线程。父进程据此判断「下次同样的脚本必然停在这里、停住之后没有别的
+        #: 除主线程外还有几条活线程。父进程据此判断「下次同样的脚本必然停在这里、停住之后没有别的
         #: 用户代码在跑」，不成立就不按屏障范围沿用（#1202）
         self.barrier_site: dict | None = None
         #: 项目相对路径 → 进 `show()` 屏障那一刻的 sha256（先见者赢）。脚本停在屏障上时用户可能改了 helper / 数据，
@@ -1239,14 +1239,14 @@ class BridgeRun:
     def _barrier_site(self) -> dict:
         """目标脚本里把执行带进这个屏障的那一帧（最内层的那一帧：`show()` 写在函数里，就是函数体里那一行）。"""
         target = os.path.normcase(os.path.abspath(self.args.source_path or ""))
-        line, module = None, False
+        line = None
         frame = sys._getframe(1)
         while frame is not None:
             if os.path.normcase(os.path.abspath(frame.f_code.co_filename)) == target:
-                line, module = frame.f_lineno, frame.f_code.co_name == "<module>"
+                line = frame.f_lineno
                 break
             frame = frame.f_back
-        return {"line": line, "module": module, "threads": threading.active_count() - 1}
+        return {"line": line, "threads": threading.active_count() - 1}
 
     def _snapshot_inputs(self) -> None:
         """进屏障前记一份依据摘要（只记还没记过的 path：先见者赢，记的是用户代码最早可能用到的那份），这一刻的报告留作

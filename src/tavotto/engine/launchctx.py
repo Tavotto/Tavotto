@@ -305,11 +305,11 @@ def _inevitable_show(path: Path, site: dict | None) -> bool:
     """屏障范围的依据只在「下次同样的脚本必然停在同一个 `show()` 上、停住之后没有别的用户代码在跑」时成立（Codex #1202 P1）：
 
     * 停住时除主线程外没有活线程（用户在 `show()` 之前开的线程会在屏障期间接着跑，Python 停不住它们）；
-    * 停在目标脚本**模块层**的一条语句上，它在模块体（或 `if __name__ == "__main__":` 体）的顶层语句序列里——不在任何条件、
-      循环、try、with、函数里；
+    * 停在目标脚本的一条语句上，它在模块体（或 `if __name__ == "__main__":` 体）的顶层语句序列里——不在任何条件、
+      循环、try、with、函数 / 类里（那一行落在 `def` / `class` 语句之内，自然不是顶层的 `show()`）；
     * 那条语句就是不带任何参数的 `show()` 调用（`plt.show()` / `show()`）：`block=...` 之类的参数可能让下次不停。
     判不了（读不出 / 解析不了 / 事实缺失）一律 False：不沿用。"""
-    if not isinstance(site, dict) or site.get("threads") != 0 or site.get("module") is not True:
+    if not isinstance(site, dict) or site.get("threads") != 0:
         return False
     line = site.get("line")
     if not isinstance(line, int):

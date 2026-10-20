@@ -833,7 +833,7 @@ class NativeSession:
 
     @property
     def barrier_site(self) -> dict | None:
-        """`show()` 屏障上 build 带回的屏障位置事实（`line` / `module` / `threads`，#1202）；脚本跑完后的 build 没有 = None。
+        """`show()` 屏障上 build 带回的屏障位置事实（`line` / `threads`，#1202）；脚本跑完后的 build 没有 = None。
         与 `observed_inputs` 同样只给启动记录用。"""
         site = (
             (self.last_build or {}).get("barrier_site")
