@@ -482,6 +482,13 @@ describe('任务结局（TAF Phase 3c）：只翻译 task.outcome', () => {
     expect(detail).toContain('axis.range')
   })
 
+  it('completed + 没改动：有意说「已完成，脚本没有变化」，不说「核对一致」（没写回就没有渲染层核对）', async () => {
+    await mount([session({ status: 'done', changed: false, task: task('completed') })])
+    expect(status()).toBe(ai('session.doneNoChange'))
+    expect(status()).not.toBe(ai('session.taskVerified'))
+    expect(qa('[data-ai-task-outcome]')).toHaveLength(0)
+  })
+
   it('未知 / null / needs_input 结局：原逻辑不变', async () => {
     await mount([
       session({ id: 'a', changed: true, diff: DIFF, task: task(null) }),

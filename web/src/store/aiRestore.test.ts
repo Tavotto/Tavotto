@@ -242,6 +242,13 @@ describe('断线期间结束的会话收尾', () => {
       expect(sessions()[0].task).toEqual(over.task)
     })
 
+    it('completed + 没改动：状态栏有意说 aiNoChange，不说核对一致', () => {
+      local()
+      done({ changed: false, diff: '', task: { task_type: 't', outcome: 'completed' } })
+      expect(bar().key).toContain('status.aiNoChange')
+      expect(bar().key).not.toContain('aiTaskVerified')
+    })
+
     it('无 task 的 ai.done：状态栏与改动前一致，会话没有 task 字段', () => {
       local()
       done({})
