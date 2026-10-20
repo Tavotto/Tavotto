@@ -60,6 +60,7 @@ def _target_parser(root) -> str | None:
 #: 导出的 PDF/PNG 落在里面，素材扫描必须剪掉，否则导出一次素材面板就多一堆成图。
 EXCLUDE_DIRS = {"__pycache__", "_cache", "_palette_ref", "scripts", ".git", "tavottofile"}
 PDF_EXT = {".pdf"}
+SVG_EXT = {".svg"}
 #: TIFF 也是素材（issue #534）。**列进来不等于用得了**：支持范围在 `tavotto/tiffprobe.py`，
 #: 范围之外的那些由 `/api/panels` 的 `unsupported` 如实报出来、`safe_resolve` 拒绝取用——
 #: 这里只管「哪些文件算素材」这一把尺，判断「这张 TIFF 能不能用」要读文件头，不放进
@@ -81,6 +82,8 @@ def asset_kind(name: str, *, pdf_twin: bool) -> str | None:
     ext = Path(name).suffix.lower()
     if ext in PDF_EXT:
         return "pdf"
+    if ext in SVG_EXT:
+        return "svg"
     if ext in IMG_EXT and not pdf_twin:
         return "raster"
     return None

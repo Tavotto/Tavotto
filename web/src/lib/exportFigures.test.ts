@@ -73,6 +73,14 @@ describe('候选清单', () => {
     expect(figs[2].sizeMm).toEqual([80, 60])
   })
 
+  it('SVG 素材的缩略图种类是 svg 而不是 unknown（有预览地址）', () => {
+    useAssetStore.setState({
+      byId: { 'v.svg': { id: 'v.svg', kind: 'svg', mtime: 4, native_w_mm: 25, native_h_mm: 12 } },
+      panels: [{ id: 'v.svg', kind: 'svg', mtime: 4, native_w_mm: 25, native_h_mm: 12 }],
+    } as never)
+    expect(listExportableFigures().map((f) => f.kind)).toEqual(['svg'])
+  })
+
   it('runtime 素材也在清单里，带着「有没有物化预览」', () => {
     useRuntimeAssetStore.setState({
       assets: [

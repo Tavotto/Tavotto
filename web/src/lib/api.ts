@@ -12,7 +12,7 @@ export interface PanelInfo {
   id: string
   name: string
   folder: string
-  kind: 'pdf' | 'raster'
+  kind: 'pdf' | 'raster' | 'svg'
   native_w_mm: number
   native_h_mm: number
   px_w?: number
@@ -797,6 +797,7 @@ export const panelSrc = (
 ): string | null => {
   if (kind === 'raster')
     return BROWSER_RASTER_EXTS.has(extOf(id)) ? fileUrl(id, mtime) : renderUrl(id, bucket, mtime)
+  if (kind === 'svg') return fileUrl(id, mtime)
   if (kind === 'pdf') return renderUrl(id, bucket, mtime)
   if (kind === 'runtime') return runtimePreviewUrl(id, mtime)
   return null

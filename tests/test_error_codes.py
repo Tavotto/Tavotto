@@ -126,6 +126,8 @@ def _declared_codes(text: str) -> set[str]:
 # code——审计 P1-02：错误尾部不许泄漏中文，所以每个 code 都要有两种语言的
 # 文案，且占位符与 params 对得上）
 USER_VISIBLE_CODES = {
+    "svg_asset_unsupported": set(),
+    "svg_asset_export_unsupported": set(),
     "no_project": set(),
     "missing_path": set(),
     "mkdir_failed": {"reason"},

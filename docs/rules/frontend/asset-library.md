@@ -394,3 +394,16 @@ BooleanOptional 仅在有长名反向选项时提供三态，短名只有「用�
 - 「编辑原图」必然加进文档并说出口、素材卡的「添加到画布」走 `addFigureToLayout`（哪个入口走加图分层链哪一层以 `canvas-objects-and-workspace.md` 为准）
 - `role="option"` 里不嵌可 Tab 控件
 - TIFF 经 `panelSrc` 走 `/api/render`
+
+## 静态 SVG 图片（2026-10-18）
+
+素材扫描返回独立 `kind=svg`，文档持久化为 `fileKind=svg`。素材卡、放大预览、画布及缩略图
+使用经过完整校验的静态 SVG，不插入内联 HTML、不先转成位图。SVG 有独立格式筛选，
+与同名 PDF 同时收录；坏文件进入 `unsupported`，不静默消失。
+
+本轮边界是整图预览与摆放、原图 SVG 导出。静态 SVG 的画布合成和跨格式导出尚未接入
+RenderCore，必须明确报 `svg_asset_export_unsupported`，不能交付空图或偷偷栅格化。
+已有关联脚本的图内编辑仍走既有执行入口，不能把 SVG DOM 当成 manifest 几何权威。
+
+看护：`tests/test_svg_assets.py`、`lib/panelSrc.test.ts`、
+`components/left/AssetBrowser.tiff.test.tsx`、`e2e/svg-assets.spec.ts`。

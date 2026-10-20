@@ -397,6 +397,49 @@ def _issue_keys(man: dict, profile: dict) -> set[tuple[str, tuple[str, ...]]]:
     }
 
 
+def data_unchanged(after: dict, before: dict, *, stage: str = "postcommit") -> list[CheckResult]:
+    """figure_edit 的默认保持断言「数据不变」（`03-contracts.md` §四）：改前每个带 `data_fingerprint` 的元素，改后同 gid
+    （且 identity 不冲突）的指纹逐部件相同 → verified；不同 → failed（`data_changed`）；改后没了 / 被别的对象顶替 →
+    failed（`subject_removed`）；任一侧这次没量（over_budget / unavailable）→ unknown。改后新出现的数据元素不在这里判
+    （新增一条曲线可以就是用户要的）。改前一个数据元素都没有 → 空列表（调用方据此记 not_applicable）。"""
+    out: list[CheckResult] = []
+    after_els = _elements(after)
+    for gid, old in sorted(_elements(before).items()):
+        bfp = old.get("data_fingerprint")
+        if not isinstance(bfp, dict):
+            continue
+        base = {
+            "id": f"data.{gid}",
+            "layer": "L2",
+            "stage": stage,
+            "role": "preserve",
+            "method": "data_fingerprint",
+        }
+        new = after_els.get(gid)
+        o, n = old.get("identity"), (new or {}).get("identity")
+        if new is None or (isinstance(o, str) and isinstance(n, str) and o and n and o != n):
+            out.append(CheckResult(**base, verdict=FAILED, reason_code="subject_removed"))
+            continue
+        afp = new.get("data_fingerprint")
+        if bfp.get("status") != "ok" or not isinstance(afp, dict) or afp.get("status") != "ok":
+            out.append(CheckResult(**base, verdict=UNKNOWN, reason_code="not_measured"))
+            continue
+        if afp.get("parts") == bfp.get("parts"):
+            out.append(CheckResult(**base, verdict=VERIFIED))
+        else:
+            changed = sorted(
+                k
+                for k in (afp.get("parts") or {}).keys() | (bfp.get("parts") or {}).keys()
+                if (afp.get("parts") or {}).get(k) != (bfp.get("parts") or {}).get(k)
+            )
+            out.append(
+                CheckResult(
+                    **base, verdict=FAILED, reason_code="data_changed", observed={"parts": changed}
+                )
+            )
+    return out
+
+
 def layout_regressions(
     after: dict, before: dict, *, profile: dict | None = None, stage: str = "postcommit"
 ) -> CheckResult:

@@ -3,7 +3,8 @@
 Only UTF-8 XML, static SVG and inert Matplotlib RDF metadata are accepted. This is
 validation, not a lossy sanitizer: rejected input never becomes a partial figure.
 The sole normalization helper removes the exact inert Matplotlib DTD declaration;
-callers must use it only at the trusted worker-generation boundary, before hashing.
+worker callers use it before hashing. Static image import may also remove this
+exact declaration, then validate the complete remaining bytes before serving.
 """
 
 from __future__ import annotations
@@ -134,7 +135,11 @@ class SVGError(ValueError):
 
 def strip_matplotlib_doctype(data: bytes) -> bytes:
     """Remove only Matplotlib's exact stock declaration, never a custom DTD/subset."""
-    return data.replace(_MATPLOTLIB_DOCTYPE, b"", 1)
+    prolog = re.match(rb"\A(?:\xef\xbb\xbf)?\s*(?:<\?xml\b[^?]*\?>\s*)?", data)
+    start = prolog.end()
+    if data.startswith(_MATPLOTLIB_DOCTYPE, start):
+        return data[:start] + data[start + len(_MATPLOTLIB_DOCTYPE) :]
+    return data
 
 
 class _BoundedBuilder(ET.TreeBuilder):

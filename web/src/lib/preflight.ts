@@ -11,6 +11,7 @@ import {
 } from './profile'
 import { effectiveCanvasFamily } from './typography'
 import { textDiagnostics } from './glyphPlan'
+import { embedsDiskBitmap, type ExportRouteScope } from './exportRoute'
 import type { CanvasObject, FigureDocument, PanelObject } from '@/types/document'
 import { panelFullSize } from '@/types/document'
 import type { Manifest, ManifestElement } from './api'
@@ -1034,14 +1035,17 @@ function panelSpec(
   render: { byKey: Record<string, PanelRender>; latest: Record<string, string> },
   rect_mm: [number, number, number, number],
   scale: number,
+  scope: ExportRouteScope,
+  formats: readonly string[],
 ): PreflightPanelSpec {
   const r = panelRender(render, o)
   return {
     id: o.id,
     name: o.name ?? o.fileId,
-    // 预检的 kind 只区分「矢量 / 位图」：runtime 面板由引擎出矢量 SVG，
-    // 按 pdf 档判（golden vectors 的枚举不为它扩张——语义上就是矢量）
-    kind: o.fileKind === 'raster' ? ('raster' as const) : ('pdf' as const),
+    // 预检的 kind 只区分「矢量 / 位图」，主语是**本次导出嵌入的产物**，不是文件后缀：
+    // 带 override 且有脚本的 PNG 会被脚本重画成矢量，按 pdf 档判；runtime 面板由引擎
+    // 出矢量 SVG，同样按 pdf 档（golden vectors 的枚举不为它扩张）。判据只在 exportRoute.ts
+    kind: embedsDiskBitmap(o, assets, scope, formats) ? ('raster' as const) : ('pdf' as const),
     rect_mm,
     scale,
     manifest: r?.manifest ?? null,
@@ -1089,7 +1093,7 @@ export function buildSpec(
   }
   const panels: PreflightPanelSpec[] = doc.objects
     .filter((o): o is PanelObject => o.type === 'panel')
-    .map((o) => panelSpec(o, assets, render, rect(o), panelScale(o)))
+    .map((o) => panelSpec(o, assets, render, rect(o), panelScale(o), 'canvas', []))
   return {
     page: { w_mm: doc.page.w, h_mm: doc.page.h, margin_mm: doc.page.margin ?? 0 },
     panels,
@@ -1132,11 +1136,13 @@ export function buildOriginalSpec(
   assets: Record<string, PanelInfo>,
   render: { byKey: Record<string, PanelRender>; latest: Record<string, string> },
   size: { widthMm: number; heightMm: number },
+  /** 本次所选格式：要 EPS 且不要 SVG 时有脚本的图会被重画成矢量（`exportRoute.originalRerenders`） */
+  formats: readonly string[],
 ): PreflightSpec {
   const rect_mm: [number, number, number, number] = [0, 0, size.widthMm, size.heightMm]
   return {
     page: { w_mm: size.widthMm, h_mm: size.heightMm, margin_mm: 0 },
-    panels: [panelSpec(panel, assets, render, rect_mm, 1)],
+    panels: [panelSpec(panel, assets, render, rect_mm, 1, 'original', formats)],
     texts: [],
     objects: [{ id: panel.id, type: panel.type, rect_mm, hidden: !!panel.hidden }],
   }

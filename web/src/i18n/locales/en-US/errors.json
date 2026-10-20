@@ -289,7 +289,9 @@
     "environment_candidate_gone": "That environment can no longer be found. Check again.",
     "environment_save_failed": "Couldn't save that environment to the project settings (read-only or disk full), so it was not adopted.",
     "environment_locked": "A globally chosen Python is in effect, so a project-level choice would not be used. Clear the global choice first.",
-    "environment_check_running": "An environment check is already running for this project."
+    "environment_check_running": "An environment check is already running for this project.",
+    "svg_asset_unsupported": "This SVG cannot be imported. Use a self-contained static SVG with explicit dimensions; scripts, external resources and DTDs are unsupported.",
+    "svg_asset_export_unsupported": "SVG assets currently support previews, placement and original SVG export. Canvas and cross-format export are not supported yet; convert this asset to PDF before importing it."
   },
   "engine": {
     "apply": "Apply",
