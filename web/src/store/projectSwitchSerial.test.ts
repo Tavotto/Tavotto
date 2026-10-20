@@ -12,7 +12,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { armNoProjectRecovery, type RecentProject } from '@/lib/api'
-import { startTutorial, useTutorialStore } from '@/lib/onboarding/tutorial'
+import { openSampleProject, useTutorialStore } from '@/lib/onboarding/tutorial'
 import { currentProjectId, setCurrentProjectId } from '@/lib/session'
 import { useProjectStore } from './projectStore'
 
@@ -88,7 +88,7 @@ beforeEach(() => {
   holdRecent = false
   holdTutorial = false
   // 上一条用例里故意喂坏形状的教程请求会在「busy 已置、清 busy 之前」抛出，busy 留在
-  // 'open'——不重置的话下一条的 startTutorial 被防重入直接挡回，替上一条背锅
+  // 'open'——不重置的话下一条的 openSampleProject 被防重入直接挡回，替上一条背锅
   useTutorialStore.setState({ busy: null, failure: null })
   useProjectStore.setState({
     phase: 'open',
@@ -273,7 +273,7 @@ describe('切换进行中点教程', () => {
   it('不发 /api/tutorial/open、不排第二次切换；切换结束后照常可开', async () => {
     const sw = useProjectStore.getState().open('/figs/A')
     await settle()
-    const out = await startTutorial('help')
+    const out = await openSampleProject()
     expect(out.ok).toBe(false)
     expect(sent.some((u) => u.includes('/api/tutorial/open'))).toBe(false)
     take('/api/projects/open').release(200, { open: true, id: 'pA', name: 'A', figures_dir: '/figs/A' })
@@ -281,7 +281,7 @@ describe('切换进行中点教程', () => {
     expect(useProjectStore.getState().switching).toBe(false)
     // 反证落点：不在切换中时它确实会去开（请求发得出去即可，结果不在本条的主语里）
     // mock 回的是空形状，后面的认领会失败——不关心，只等它跑完别漏到下一条用例里
-    await startTutorial('help').catch(() => undefined)
+    await openSampleProject().catch(() => undefined)
     expect(sent.some((u) => u.includes('/api/tutorial/open'))).toBe(true)
   })
 })
@@ -313,7 +313,7 @@ describe('失效会话里排着的收藏操作', () => {
 describe('教程与别的打开按点击顺序落地', () => {
   it('教程请求在路上时 switching 已亮；此时点的项目排在教程之后，最后停在它上面', async () => {
     holdTutorial = true
-    const tut = startTutorial('help')
+    const tut = openSampleProject()
     await settle()
     expect(useProjectStore.getState().switching).toBe(true) // 请求在路上就算切换
     const b = useProjectStore.getState().open('/figs/B')

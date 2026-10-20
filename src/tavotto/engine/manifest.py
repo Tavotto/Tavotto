@@ -10,6 +10,7 @@ build_manifest(state)：每次渲染后调用——读取元素当前属性值�
 
 from __future__ import annotations
 
+import hashlib
 import math
 import re
 import sys
@@ -31,6 +32,7 @@ from matplotlib.collections import (
 )
 from matplotlib.container import BarContainer, ErrorbarContainer, StemContainer
 from matplotlib.contour import ContourSet
+from matplotlib.image import AxesImage
 from matplotlib.lines import Line2D
 from matplotlib.markers import MarkerStyle
 from matplotlib.offsetbox import AnchoredOffsetbox, AnnotationBbox
@@ -4125,6 +4127,115 @@ def _fields_for(el, state: FigState) -> list[dict]:
     return []
 
 
+# ---------------------------------------------------------------- 数据指纹（ADR 0138 §七-2，TAF Phase 2）
+#: 一张图里参与数据指纹的数值总数上限。manifest 每次渲染都算，超出的元素记 `over_budget`——验证器据此判
+#: unknown（「没量」不是「没变」），绝不截断着算一个看起来像真的哈希
+FINGERPRINT_BUDGET = 2_000_000
+
+
+def canonical_digest(values) -> dict:
+    """数值数组的规范化摘要：形状 + 小端 float64 字节（NaN / 掩码值统一成同一个 NaN 位型）的 sha256。
+
+    与 `tests/fixtures/figurebench/_probe.py::digest`、`tests/test_figurebench_fixtures.py::_digest` **同一规则**
+    （后两者分别从原生 matplotlib 与手写真值算，对拍用例在 `tests/test_data_fingerprint.py`）。"""
+    import numpy as np  # noqa: PLC0415 — worker 侧有科学栈
+
+    arr = np.ma.filled(np.ma.asarray(values, dtype=float), np.nan).astype("<f8", copy=True)
+    arr[np.isnan(arr)] = np.nan
+    head = ("x".join(str(n) for n in arr.shape) + ":").encode()
+    return {
+        "sha256": hashlib.sha256(head + arr.tobytes(order="C")).hexdigest(),
+        "shape": [int(n) for n in arr.shape],
+        "finite": int(np.isfinite(arr).sum()),
+    }
+
+
+def _fingerprint_parts(artist) -> list[tuple[str, object]] | None:
+    """这个元素的**数据**由哪几块数组构成；不是数据类元素回 None（不出字段）。
+
+    主语是数据，不是外观：柱组只取「底 + 高」（竖柱）/「左 + 宽」（横柱），不取柱宽与位置——改柱宽是样式修改，
+    不该让「数据没变」判红；误差棒取数据点 + 误差线段；3D 线取 `get_data_3d()`（`get_xydata` 是投影后的）。"""
+    import numpy as np  # noqa: PLC0415 — worker 侧有科学栈
+
+    if isinstance(artist, SeriesGroup):
+        if artist.kind == "bar_series":
+            horizontal = getattr(artist.container, "orientation", "vertical") == "horizontal"
+            rows = [
+                (r.get_x(), r.get_width()) if horizontal else (r.get_y(), r.get_height())
+                for r in artist.artists
+            ]
+            return [("bars", np.asarray(rows, dtype=float).reshape(-1, 2))]
+        if artist.kind == "errorbar":
+            parts: list[tuple[str, object]] = []
+            line = artist.artists.get("line")
+            if line is not None:
+                parts.append(("points", line.get_xydata()))
+            segs = [
+                np.asarray(seg, dtype=float)
+                for col in artist.artists["bars"]
+                for seg in col.get_segments()
+            ]
+            parts.append(("bars", np.concatenate(segs) if segs else np.zeros((0, 2))))
+            return parts
+        if artist.kind == "stem_series":
+            marker = artist.artists.get("marker")
+            return [("xy", marker.get_xydata())] if marker is not None else None
+        return None
+    if isinstance(artist, Line2D):
+        if hasattr(artist, "get_data_3d"):
+            return [("xyz", np.column_stack(artist.get_data_3d()))]
+        return [("xy", artist.get_xydata())]
+    if isinstance(artist, Collection):
+        parts = []
+        off3d = getattr(artist, "_offsets3d", None)
+        if off3d is not None:
+            parts.append(("offsets", np.column_stack(off3d)))
+        else:
+            offsets = artist.get_offsets()
+            if (
+                offsets is not None
+                and len(offsets)
+                and not (len(offsets) == 1 and not np.any(offsets))
+            ):
+                parts.append(("offsets", offsets))
+        array = artist.get_array()
+        if array is not None:
+            parts.append(("array", array))
+        if not parts:
+            # 没有 offsets、没有映射值（fill_between 的 PolyCollection、LineCollection）：数据就是路径顶点
+            verts = [np.asarray(p.vertices, dtype=float) for p in artist.get_paths()]
+            parts.append(("paths", np.concatenate(verts) if verts else np.zeros((0, 2))))
+        return parts
+    # 图像：用 isinstance 而不是精确类名——用户子类化的 AxesImage、NonUniformImage、PcolorImage 都是
+    # `ax.images` 里的图像，数据同样是 `get_array()`。FigureImage / BboxImage 派生自 `_ImageBase`、不是
+    # AxesImage（也不在 `ax.images` 里、不会被登记成元素），isinstance 同样把它们排除在外。
+    if isinstance(artist, AxesImage):
+        array = artist.get_array()
+        return [("array", array)] if array is not None else None
+    return None
+
+
+def data_fingerprint(artist, budget: list[int]) -> dict | None:
+    """只读的数据指纹（不进 `editable`、不参与 gid / identity，ADR 0083）。`budget` 是本张图剩余的数值配额（单元素列表，
+    就地扣减）。回 None = 不是数据类元素；`{"status": "over_budget" | "unavailable"}` = 是数据，但这次没量（验证记 unknown）。"""
+    try:
+        parts = _fingerprint_parts(artist)
+    except Exception:  # noqa: BLE001 —— 自定义 artist 的 getter 什么都可能抛；量不了就说量不了
+        return {"status": "unavailable"}
+    if parts is None:
+        return None
+    try:
+        import numpy as np  # noqa: PLC0415 — worker 侧有科学栈
+
+        sizes = [int(np.size(arr)) for _, arr in parts]
+        if sum(sizes) > budget[0]:
+            return {"status": "over_budget"}
+        budget[0] -= sum(sizes)
+        return {"status": "ok", "parts": {name: canonical_digest(arr) for name, arr in parts}}
+    except Exception:  # noqa: BLE001
+        return {"status": "unavailable"}
+
+
 _MIN_HIT_PX = 4.0  # 扁平元素最小命中厚度（display 像素）
 
 #: 3D 轴上登记的数据图元的角色（ADR 0135）；`_refresh_hidden_3d_projections` 只看这几种。
@@ -4889,6 +5000,7 @@ def _measure_manifest(
     for el in state.elements:
         gid_by_artist_id.setdefault(id(el["artist"]), el["gid"])
 
+    fingerprint_budget = [FINGERPRINT_BUDGET]
     for el in state.elements:
         artist = el["artist"]
         if not _owner_axis_drawn(el):
@@ -4906,6 +5018,10 @@ def _measure_manifest(
         ident = state.identity.get(el["gid"])
         if ident is not None:
             entry["identity"] = ident
+        # 数据指纹（TAF L2「科学内容没被改」的前提）：只读事实，不是 override、不进文档
+        fingerprint = data_fingerprint(artist, fingerprint_budget)
+        if fingerprint is not None:
+            entry["data_fingerprint"] = fingerprint
         # 文字类元素的显示名跟着**当前**文字走：登记名是 build 那一刻的快照，
         # 改过字（或色条翻转把标签搬了家）之后它就成了旧内容，元素树里对不上
         if el["role"] in ("title", "axis_label", "text", "legend_text"):

@@ -559,13 +559,17 @@ class GuardianContract(GuardianBase):
         self.assertGreater(facts["distribution_count"], 0)
         self.assertLess(len(json.dumps(facts)), 4000)
 
-    def test_stub_subcommands_exit_nonzero_and_produce_nothing(self):
-        for name in ("triage", "minimize"):
-            with mock.patch("sys.stderr") as err:
-                self.assertEqual(cg.main([name]), cg.EXIT_USAGE)
-            self.assertIn(
-                "not implemented in CG-01", "".join(c.args[0] for c in err.write.call_args_list)
-            )
+    def test_every_documented_subcommand_is_implemented_not_a_stub(self):
+        import io
+
+        parser_help = io.StringIO()
+        with mock.patch("sys.stdout", parser_help), self.assertRaises(SystemExit):
+            cg.main(["--help"])
+        text = parser_help.getvalue()
+        for name in ("run", "validate", "summarize", "promote", "explore", "triage", "minimize"):
+            self.assertIn(name, text)
+        self.assertNotIn("not implemented", text)
+        self.assertFalse(hasattr(cg, "not_implemented"))
 
     def test_public_schema_independent_reader(self):
         try:

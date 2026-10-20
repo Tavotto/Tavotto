@@ -529,120 +529,123 @@ export default interface Resources {
       "title": "用你自己的 Python 运行并连接"
     },
     "onboarding": {
-      "action": {
-        "addToLayout": "加入 {{name}}",
-        "openFigure": "打开 {{name}}",
-        "returnToLayout": "回到画布",
-        "selectText": "选中一段文字"
-      },
-      "back": "返回",
-      "explore": "继续探索",
       "failure": {
         "cancelled": "已取消。",
-        "document_failed": "教程排版读不出来，版本不兼容或文件缺失。试试「重置教程项目」。",
-        "locked": "教程项目里有文件正被其他程序占用，关掉后再试。",
-        "no_api": "这个环境没有提供教程。",
-        "open_failed": "教程项目打不开。再试一次，或打开自己的项目。",
-        "unavailable": "教程资源不完整。请重新安装 Tavotto。"
+        "document_failed": "示例排版读不出来，版本不兼容或文件缺失。试试「重置示例项目」。",
+        "layouts_changed": "示例项目里刚有新的排版，重置没有执行。请重新打开「重置示例项目」再确认一次。",
+        "locked": "示例项目里有文件正被其他程序占用，关掉后再试。",
+        "no_api": "这个环境没有提供示例项目。",
+        "open_failed": "示例项目打不开。再试一次，或打开自己的项目。",
+        "unavailable": "示例项目资源不完整。请重新安装 Tavotto。"
+      },
+      "figureFailed": {
+        "body": "示例图没有显示出来。可以重新加载，或者先跳过教程。",
+        "retry": "重新加载示例"
+      },
+      "finish": {
+        "after": "你的调整成果",
+        "afterAlt": "你的调整成果：同一组数据，图例换了位置，标题 {{size}} pt",
+        "afterAltUnmoved": "你的调整成果：同一组数据，标题 {{size}} pt",
+        "before": "调整前",
+        "beforeAlt": "调整前：脚本原样画出的图，图例在右下角，标题 {{size}} pt",
+        "compareLabel": "调整前后对比",
+        "demoNote": "教程里的改动只在这个演示中，不会写进任何文件。",
+        "nextHint": "已经学会直接编辑科研图。现在可以试试自己的 Python 绘图脚本。",
+        "replay": "重新体验",
+        "start": "开始使用 {{product}}",
+        "title": "{{product}}，直接在图上改"
       },
       "hintsReset": "情境提示已重置，会再各出现一次",
+      "import": {
+        "builtin": "内置示例",
+        "cancelled": "已取消，卡片放回原处。",
+        "cardHint": "内置示例，无需准备文件",
+        "cardLabel": "拖动 {{name}} 到投放框",
+        "figureLabel": "{{name}} 画出的反应动力学图",
+        "keyboardHelp": "按空格拿起卡片，方向键移动，回车放下，Esc 取消。",
+        "leftZone": "离开了投放框。",
+        "missed": "没有放进投放框，卡片已放回。再试一次。",
+        "or": "或",
+        "overZone": "在投放框上方，回车放下。",
+        "picked": "已拿起 {{name}}，用方向键移到投放框上，回车放下。",
+        "success": "示例图已载入",
+        "task": "第一步：把示例脚本拖进来",
+        "useSample": "直接使用示例",
+        "zoneBody": "{{product}} 会打开它画出的图",
+        "zoneLabel": "脚本投放框",
+        "zoneTitle": "拖拽脚本到这里"
+      },
       "landed": {
         "opened": "已打开示例项目",
-        "restarted": "教程已重新开始",
-        "resumed": "从上次停下的地方继续",
-        "started": "教程已开始"
+        "restarted": "示例项目已重置"
       },
-      "openOwnProject": "打开自己的项目",
-      "pause": "暂停教程",
-      "precondition": {
-        "editPanelMissing": "教程要编辑的 {{name}} 不在这份画布里，先把它打开。",
-        "editPanelNotRendered": "{{name}} 还没渲染过，问题面板里不会有它的检查结果，先打开它一次。",
-        "noTextSelected": "先选中图里的一段文字（标题或坐标轴标签）。",
-        "notInElementEdit": "这一步要在 {{name}} 的图内编辑里进行，先打开它。",
-        "notInLayout": "多选要在画布上进行，先回到画布。",
-        "otherPanelMissing": "画布上只有一张教程图，多选对齐至少要两张，先把 {{name}} 加进来。"
+      "legend": {
+        "cancelled": "已取消，图例回到原处。",
+        "dropped": "图例已放下。",
+        "farther": "再拖远一点试试。",
+        "figureLabel": "反应动力学图，图例可以拖动",
+        "keyboardHelp": "按空格拿起图例，方向键移动（按住 Shift 微调），回车放下，Esc 取消。",
+        "legendLabel": "图例：{{entries}}。拖动它，或按空格拿起",
+        "picked": "已拿起图例，用方向键移动，回车放下。",
+        "success": "漂亮！图里的元素能直接拖动。",
+        "task": "拖动图例，换个位置",
+        "tip": "拖动这里"
       },
-      "progress": "第 {{n}} 步，共 {{total}} 步",
       "reset": {
-        "body": "教程项目恢复成刚安装的样子。你的改动、写回的图和进度都会清除，别的项目不受影响。",
-        "bodyWithLayouts": "教程项目恢复成刚安装的样子。你在里面另存的排版也会清除：{{names}}；要保留请先导出，别的项目不受影响。",
-        "confirm": "重置并重新开始",
-        "title": "重置教程项目？"
+        "body": "示例项目恢复成刚安装的样子，你在里面的改动和写回的图都会清除，别的项目不受影响。",
+        "bodyWithLayouts": "示例项目恢复成刚安装的样子。你在里面另存的排版也会清除：{{names}}；要保留请先导出，别的项目不受影响。",
+        "confirm": "重置示例项目",
+        "title": "重置示例项目？"
       },
-      "resolvedContinue": "问题已解决，继续",
-      "skipStep": "跳过此步",
-      "steps": {
-        "add_to_layout": {
-          "body": "两张图都已经在画布上。点「添加到画布」回到版面查看它们。",
-          "missing": {
-            "body": "画布上还缺 {{name}}。从左侧「素材」把它加进画布，两张图都在版面上才算完成。",
-            "title": "加入画布"
-          },
-          "title": "加入画布"
-        },
-        "change_typography": {
-          "body": "在右侧属性里改字号或字体，比如调大一点。每次修改都进撤销历史。",
-          "title": "改字号或字体"
-        },
-        "done": {
-          "allSkipped": {
-            "body": "你跳过了全部 {{total}} 步，快速编辑、问题定位、导出和多选对齐都还没试过。想走一遍，可在「更多」菜单重新打开教程。",
-            "title": "教程已结束"
-          },
-          "body": "你已经走过：快速编辑、问题定位、原图与画布导出、多选对齐。随时可在「更多」菜单重新打开教程。",
-          "partial": {
-            "body": "完成 {{done}} 步，跳过 {{skipped}} 步，共 {{total}} 步。跳过的部分随时可在「更多」菜单重新打开教程。",
-            "title": "教程结束"
-          },
-          "title": "教程完成"
-        },
-        "export_canvas": {
-          "body": "再次打开「导出」，确认输出范围是「画布」，然后关闭面板。",
-          "scope": {
-            "body": "「画布」按页面尺寸和摆放输出整个版面。确认后关闭面板继续。",
-            "title": "看看画布导出"
-          },
-          "title": "看看画布导出"
-        },
-        "export_original": {
-          "body": "打开「导出」，确认输出范围是「原图尺寸」，然后关闭面板。",
-          "scope": {
-            "body": "「原图尺寸」按图本身的尺寸输出，不受画布缩放影响。确认后关闭面板继续。",
-            "title": "看看原图导出"
-          },
-          "title": "看看原图导出"
-        },
-        "locate_problem": {
-          "body": "打开左侧「问题」，里面列着图里不合规范的地方。",
-          "row": {
-            "body": "点击问题，Tavotto 会选中对象并把焦点落到对应的属性字段。问题在卡片里时，先点开那张卡片。",
-            "title": "从「问题」定位"
-          },
-          "title": "从「问题」定位"
-        },
-        "multi_select_align": {
-          "bar": {
-            "body": "选区旁边的浮动栏里点一个对齐，比如顶对齐。",
-            "title": "对齐"
-          },
-          "body": "按住 Shift 点第二张图，把两张图一起选中。",
-          "title": "Shift 多选"
-        },
-        "open_fast_edit": {
-          "body": "在左侧「素材」里双击 Fig2_correlation 进入图内编辑。这是教程副本，随便改，不影响你的项目。",
-          "canvas": {
-            "body": "双击画布上的 Fig2_correlation 进入图内编辑。左侧「素材」里它的卡片也可以。这是教程副本，随便改，不影响你的项目。",
-            "title": "双击这张图"
-          },
-          "title": "双击这张图"
-        },
-        "select_text": {
-          "body": "点击图里的标题或坐标轴标签，把它选中。",
-          "title": "选中文字"
-        }
+      "shell": {
+        "back": "返回上一步",
+        "count": "{{n}} / {{total}}",
+        "externalFile": "当前为示例教程，完成后可以导入自己的脚本。",
+        "finish": "完成教程",
+        "label": "{{product}} 新手教程",
+        "next": "下一步",
+        "progress": "教程进度：第 {{n}} 步，共 {{total}} 步",
+        "skip": "跳过教程"
       },
-      "targetMissing": "找不到这一步的目标。",
-      "targetWaiting": "正在等待目标出现…"
+      "title": {
+        "controlTip": "点 + 或输入更大的字号",
+        "controlsLabel": "标题字号",
+        "decrease": "减小字号",
+        "figureLabel": "反应动力学图，标题可以选中",
+        "increase": "增大字号",
+        "sizeAria": "标题字号（{{min}} 到 {{max}} pt）",
+        "sizeLabel": "字号",
+        "success": "太棒了！不用改代码，也能调整文字。",
+        "task": "点击标题，把文字调大一点",
+        "taskSelected": "把字号调大一点",
+        "tip": "点击标题",
+        "titleLabel": "图标题「{{text}}」，{{size}} pt。点击选中后可以改字号"
+      },
+      "welcome": {
+        "begin": "开始新手教程",
+        "callout": {
+          "legend": "调整图例",
+          "position": "拖动位置",
+          "title": "修改文字"
+        },
+        "codeLabel": "示例脚本 {{name}}（节选）",
+        "demoLabel": "从绘图脚本到可以直接调整的科研图",
+        "feature": {
+          "align": "对齐",
+          "axes": "坐标轴",
+          "colorbar": "色条",
+          "layout": "整体布局",
+          "legend": "图例",
+          "more": "更多",
+          "text": "文字"
+        },
+        "featuresLabel": "可以直接调整的图表元素",
+        "figureLabel": "这份脚本画出的反应动力学图：标题、图例和位置都可以直接调整",
+        "openWorkspace": "直接进入工作台",
+        "smile": ":)",
+        "subtitle": "导入绘图脚本，点选、拖动，直观调整图中元素与布局。",
+        "title": "直接在图上改"
+      }
     },
     "palette": {
       "commands": {
@@ -759,8 +762,8 @@ export default interface Resources {
           "label": "添加 (a)(b)(c) 标签"
         },
         "tutorial-reset": {
-          "keywords": "tutorial onboarding reset restart jc jiaocheng 重置 重新开始",
-          "label": "重置教程项目"
+          "keywords": "tutorial sample reset restart jc jiaocheng shili 示例 重置",
+          "label": "重置示例项目"
         },
         "tutorial-resume": {
           "keywords": "tutorial onboarding resume jc jiaocheng 继续",
@@ -1334,6 +1337,7 @@ export default interface Resources {
             "export_result": "导出结果：成功、部分成功、失败或取消，请求的格式、写成几个文件、停在哪一步与错误的大类；不含文件名、路径与错误原文。",
             "figure_edit_completed": "完成编辑：改动类别与数量。",
             "figure_opened": "打开图内编辑：PDF 还是位图、是否可编辑。",
+            "mcp_tool_call": "AI Agent 调用 Tavotto 工具：哪个工具、成功与否、错误的大类、耗时分档、宿主是 Codex、Claude 还是其他；不含工具的参数与返回内容（路径、脚本名、图内文字）。",
             "package_action": "包操作：类型与结果，不含包名。",
             "preflight_completed": "预检完成：各级问题数与是否通过。",
             "project_readiness_opened": "打开接入状态：入口与可编辑档位。",
@@ -1342,7 +1346,7 @@ export default interface Resources {
             "telemetry_enabled": "首次开启统计：来自首启询问还是设置页。",
             "tutorial_completed": "教程完成：流程版本号。",
             "tutorial_started": "教程开始：入口与流程版本号。",
-            "tutorial_step_completed": "教程完成一步：步骤编号与流程版本号。",
+            "tutorial_step_completed": "教程完成一步：是四个步骤（三步演示与完成页）中的哪一步，以及流程版本号。",
             "update_completed": "更新完成：通道（桌面 / pip / pipx）与版本号。"
           },
           "sendsAfter": "的 UUID，不关联账号或设备硬件。",
@@ -1982,7 +1986,7 @@ export default interface Resources {
         "hints": "操作提示",
         "label": "新手教程",
         "more": "更多教程操作",
-        "reset": "重置教程项目",
+        "reset": "重置示例项目",
         "resetHints": "重新显示操作提示",
         "restart": "再看一遍教程",
         "resume": "继续教程",
@@ -2137,7 +2141,7 @@ export default interface Resources {
       "neverScripts": "脚本与源码",
       "neverTitle": "绝不发送",
       "policy": "隐私政策",
-      "reconsentDelta": "比你上次同意时多了两项：导出怎样结束（含失败 / 取消），以及你主动发送问题反馈时附带的一条不含内容的错误摘要。",
+      "reconsentDelta": "比你上次同意时多了三项：导出怎样结束（含失败 / 取消）；AI Agent 调用了哪个 Tavotto 工具、成功与否（不含参数与内容）；以及你主动发送问题反馈时附带的一条不含内容的错误摘要。",
       "sendsErrorSummary": "你主动发送问题反馈时，随附一条不含内容的错误摘要",
       "sendsFeatures": "你使用了哪些功能",
       "sendsOutcome": "预检与导出的结果（成功、失败或取消）",
@@ -2526,6 +2530,7 @@ export default interface Resources {
       "tiff_unreadable": "{{file}} 读不出来：不是完整的 TIFF 文件。",
       "tmp_dir_failed": "无法在导出目录中创建临时文件：{{error}}。",
       "tutorial_copy_failed": "无法准备教程项目。之前的教程副本未受影响：{{reason}}",
+      "tutorial_layouts_changed": "示例项目里刚有新的排版，重置没有执行。请重新打开「重置示例项目」，确认后再试一次。",
       "tutorial_locked": "教程项目中有文件正被其他程序占用。请关闭后重试：{{reason}}",
       "tutorial_reset_incomplete": "教程已换成干净的副本，但上次的教程排版暂时清不掉（本机另一个 Tavotto 正在用会话记录），请稍后再点一次重置。",
       "tutorial_resources_invalid": "安装里的教程资源不完整。请重新安装 Tavotto：{{reason}}",
@@ -4548,7 +4553,7 @@ export default interface Resources {
         "start": "用示例了解 Tavotto"
       },
       "tutorialBadge": "教程项目",
-      "tutorialHint": "离线示例项目，可随意修改、随时重来，不会影响你的项目。",
+      "tutorialHint": "三步体验直接在图上改：内置示例，不用准备脚本，也不会动你的项目。",
       "tutorialLabel": "新手教程",
       "tutorialOpening": "准备中…",
       "tutorialUnavailable": "教程资源不完整。请重新安装 Tavotto。"

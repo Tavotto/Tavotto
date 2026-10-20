@@ -26,6 +26,7 @@ export const TELEMETRY_DISCLOSED_EVENTS = [
   'export_completed',
   'export_result',
   'ai_assistant_invoked',
+  'mcp_tool_call',
   'update_completed',
   'project_refresh_completed',
   'project_readiness_opened',

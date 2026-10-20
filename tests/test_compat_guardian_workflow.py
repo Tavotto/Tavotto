@@ -33,6 +33,8 @@ FILES_THE_PR_FILTER_MAY_NAME = (
     ".github/workflows/compat-guardian.yml",
     "scripts/ci/compat_guardian",
     "scripts/ci/compat_explore",
+    "scripts/ci/compat_triage",
+    "scripts/ci/compat_minimize",
     "scripts/ci/guardian_exec_observer.py",
     "scripts/ci/compat_driver.py",
     "scripts/ci/compat_corpus.py",
@@ -45,6 +47,8 @@ FILES_THE_PR_FILTER_MAY_NAME = (
     "tests/support/compatbench_v2.py",
     "tests/test_compat_guardian",
     "tests/test_compat_explore",
+    "tests/test_compat_triage",
+    "tests/test_compat_minimize",
     "tests/compat_guardian/",
     "docs/ci/compat-guardian.md",
 )
@@ -218,9 +222,13 @@ def test_guardian_infrastructure_changes_have_code_owners():
         "/tests/fixtures/compat_v2/**",
         "/scripts/ci/compat_guardian*",
         "/scripts/ci/compat_explore*",
+        "/scripts/ci/compat_triage*",
+        "/scripts/ci/compat_minimize*",
         "/scripts/ci/guardian_exec_observer.py",
         "/tests/test_compat_guardian*",
         "/tests/test_compat_explore*",
+        "/tests/test_compat_triage*",
+        "/tests/test_compat_minimize*",
         "/tests/compat_guardian/**",
         "/.github/workflows/compat-guardian.yml",
         "/docs/ci/compat-guardian.md",
@@ -238,7 +246,7 @@ def test_any_workflow_that_references_guardian_code_is_hosted_only_and_not_lab_r
         path.name: path.read_text(encoding="utf-8")
         for path in sorted(WF.glob("*.y*ml"))
         if re.search(
-            r"compat_guardian|compat_explore|guardian_exec_observer",
+            r"compat_guardian|compat_explore|compat_triage|compat_minimize|guardian_exec_observer",
             path.read_text(encoding="utf-8"),
         )
     }

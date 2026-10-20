@@ -153,15 +153,20 @@ def test_bridge_argv_is_shared_by_both_owners():
     owned = desktop(argv=("--x",), run_config="rc_1", env=None)
     kw = {"runner_py": "/r.py", "out_dir": "/o", "control_host": "127.0.0.1", "control_port": 5}
     t_argv, o_argv = execspec.bridge_argv(terminal, **kw), execspec.bridge_argv(owned, **kw)
-    assert "--run-config" not in t_argv  # terminal 的命令行逐字节不变
-    # 桌面拥有的只多一个不透明引用，其余同一份
+    # terminal 的命令行逐字节不变
+    assert "--run-config" not in t_argv and "--observe-inputs" not in t_argv
+    # 桌面拥有的只多一个不透明引用与输入观察开关（#1047），其余同一份
     i = o_argv.index("--run-config")
     assert o_argv[i : i + 2] == ["--run-config", "rc_1"]
-    assert o_argv[:i] + o_argv[i + 2 :] == t_argv
-    # 不带配置的桌面启动与 terminal 相同
+    rest = o_argv[:i] + o_argv[i + 2 :]
+    assert rest.count("--observe-inputs") == 1 and rest.index("--observe-inputs") < rest.index("--")
+    assert [a for a in rest if a != "--observe-inputs"] == t_argv
+    # 不带配置的桌面启动与 terminal 只差输入观察开关
     plain = desktop(argv=(), run_config="", env=None)
     plain_t = execspec.native_spec(SCRIPT, interpreter=PY, cwd=CWD, project_root=ROOT)
-    assert execspec.bridge_argv(plain, **kw) == execspec.bridge_argv(plain_t, **kw)
+    assert [
+        a for a in execspec.bridge_argv(plain, **kw) if a != "--observe-inputs"
+    ] == execspec.bridge_argv(plain_t, **kw)
 
 
 # ---------------------------------------------------------------------------

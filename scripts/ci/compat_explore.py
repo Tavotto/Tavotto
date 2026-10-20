@@ -182,16 +182,18 @@ def compare(candidate_class: str, native: dict, tavotto: dict, parent_native: di
             )
         for path, writer in sorted(nat["last_writer"].items()):
             stem = Path(path).stem
-            if stem in stems and writer["titles"] and stems[stem]["titles"] != writer["titles"]:
+            native_titles = [t for t in writer["titles"] if t]
+            # An untitled figure carries no content to compare; [""] vs [] is not a difference.
+            if stem in stems and native_titles and stems[stem]["titles"] != native_titles:
                 diffs.append(
                     _diff(
                         "same_path_content_mismatch",
-                        f"native last figure written to {path}: {writer['titles']} / "
+                        f"native last figure written to {path}: {native_titles} / "
                         f"Tavotto kept {stems[stem]['titles']}",
                         "figure_capture",
                         {
                             "path": path,
-                            "native_titles": writer["titles"],
+                            "native_titles": native_titles,
                             "tavotto_titles": stems[stem]["titles"],
                         },
                     )
@@ -234,12 +236,21 @@ def _write_project(root: Path, files: dict[str, bytes]) -> Path:
     return project
 
 
-def derive(parent_spec: dict, chain: list[str], seed: int, candidate_id: str):
-    """The only way to obtain runnable candidate files: re-derive and verify the identity."""
+def derive(
+    parent_spec: dict, chain: list[str], seed: int, candidate_id: str, reduction: dict | None = None
+):
+    """The only way to obtain runnable candidate files: re-derive and verify the identity.
+
+    A reduction (CG-03) is a set of statement deletions/unwraps applied to the re-derived
+    candidate, so a reduced script is still a deterministic subset of a committed parent.
+    """
     parent = XT.load_parent(parent_spec["suite"], parent_spec["case"])
     manifest, files = XT.build(parent, tuple(chain), seed)
     if manifest["candidate_id"] != candidate_id:
         raise cg.EvidenceError("candidate identity does not follow from (parent, chain, seed)")
+    if reduction:
+        manifest, files = XT.build_reduced(parent, tuple(chain), seed, reduction)
+        manifest = {**manifest, "class": "axis_changing", "candidate_id": candidate_id}
     if manifest["execution_plan"]["status"] != "executable":
         raise cg.EvidenceError(
             "static-only candidate must not be executed: "
@@ -273,7 +284,11 @@ def execute_request(request: dict) -> dict:
 
     work, evidence = Path(request["work"]), Path(request["evidence"])
     parent, manifest, files = derive(
-        request["parent"], request["chain"], request["seed"], request["candidate_id"]
+        request["parent"],
+        request["chain"],
+        request["seed"],
+        request["candidate_id"],
+        request.get("reduction"),
     )
     result: dict = {"candidate_id": manifest["candidate_id"], "stage_errors": []}
     t0 = time.monotonic()
@@ -363,9 +378,16 @@ def write_candidates(generated: dict, out: Path) -> Path:
     return path
 
 
-def run_one(manifest: dict, seed: int, out: Path, timeout: float) -> dict:
+def run_one(
+    manifest: dict,
+    seed: int,
+    out: Path,
+    timeout: float,
+    reduction: dict | None = None,
+    tag: str | None = None,
+) -> dict:
     cid = manifest["candidate_id"]
-    evidence = out / "evidence" / cid
+    evidence = out / "evidence" / (f"{cid}-{tag}" if tag else cid)
     evidence.mkdir(parents=True)
     with tempfile.TemporaryDirectory(prefix="compat-explore-") as tmp:
         work = Path(tmp)
@@ -377,9 +399,16 @@ def run_one(manifest: dict, seed: int, out: Path, timeout: float) -> dict:
             "work": str(work),
             "evidence": str(evidence),
         }
+        if reduction:
+            request["reduction"] = reduction
         (work / "request.json").write_text(json.dumps(request), encoding="utf-8")
         parent = XT.load_parent(request["parent"]["suite"], request["parent"]["case"])
-        hashes = [manifest["files"][parent.script], cg.digest(parent.files[parent.script])]
+        script_hash = manifest["files"][parent.script]
+        if reduction:
+            script_hash = XT.build_reduced(parent, tuple(request["chain"]), seed, reduction)[0][
+                "files"
+            ][parent.script]
+        hashes = [script_hash, cg.digest(parent.files[parent.script])]
         env = cg.isolated_env(work, work / "adapter-execs.jsonl", hashes)
         try:
             cg.launch_adapter(
@@ -461,6 +490,11 @@ def explore(args) -> int:
     out.mkdir(parents=True)
     write_candidates(generated, out)
     chosen = select(generated["candidates"], args.limit)
+    if getattr(args, "candidates", None):
+        wanted_ids = set(args.candidates.split(","))
+        chosen = [c for c in generated["candidates"] if c["candidate_id"] in wanted_ids]
+        if len(chosen) != len(wanted_ids):
+            raise cg.EvidenceError("--candidates names an id this seed does not generate")
     if not chosen:
         # An empty selection observed nothing; `all([])` must never read as a clean run.
         raise cg.EvidenceError("no candidates selected (not_run); no report published")
@@ -498,6 +532,7 @@ def explore(args) -> int:
             or "; ".join(record.get("static_only_reasons", [])),
             "executions": record["executions"],
             "tavotto_route": (record.get("tavotto") or {}).get("route"),
+            "evidence": evidence_summary(record),
             "timings_s": record.get("timings_s"),
         }
         rows.append(row)
@@ -539,6 +574,31 @@ def explore(args) -> int:
     ):
         return EXIT_CLEAN
     return cg.EXIT_UNKNOWN
+
+
+def evidence_summary(record: dict) -> dict | None:
+    """The facts triage needs, trimmed: no raw logs, no full traces."""
+    native, tavotto = record.get("native"), record.get("tavotto")
+    if not native:
+        return None
+    return {
+        "native": {
+            "exit_status": native.get("exit_status"),
+            "figure_count": native.get("figure_count"),
+            "figures_shown": native.get("figures_shown"),
+            "figures_saved": native.get("figures_saved"),
+            "savefig_calls": native.get("savefig_calls"),
+            "artifacts": sorted(a["path"] for a in native.get("artifacts", [])),
+            "last_writer": native.get("savefig_last_writer") or {},
+            "same_path_distinct_figures": native.get("same_path_distinct_figures") or [],
+            "titles": [t for v in (native.get("semantics") or {}).values() for t in v["titles"]],
+        },
+        "tavotto": {
+            "route": (tavotto or {}).get("route"),
+            "error": (tavotto or {}).get("error"),
+            "stems": {k: v["titles"] for k, v in ((tavotto or {}).get("stems") or {}).items()},
+        },
+    }
 
 
 def counts(rows: list[dict]) -> dict:

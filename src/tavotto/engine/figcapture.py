@@ -2279,6 +2279,12 @@ class InputObserver:
         self._uninstall = None
         #: 实际装上了的观察通道（`report()` 的 `channels`）：numpy 没载入时就没有 `numpy_datasource`
         self._channels: list[str] = []
+        #: numpy 通道的还原（装上了才有）：`install()` 时已载入就当场装，否则由调用方在 numpy 载入那一刻补
+        #: （`observe_numpy_datasource`，native bridge 的 import 钩子）
+        self._restore_numpy = None
+        #: `paused()` 的嵌套深度，按线程记：只有进入 `paused()` 的那个线程自己的读（savefig 簿记算摘要、
+        #: 屏障里出预览）不是脚本的输入；屏障期间用户脚本自己起的后台线程仍在跑，它的读是输入，不能一并压掉
+        self._pause = threading.local()
         #: 解释器自己落在项目根里的目录（项目 `.venv`）：库文件不是数据输入，也不占预算（PATH-B2）
         try:
             self._interpreter_dirs = interpreter_dirs_within(os.path.realpath(self.project_root))
@@ -2287,6 +2293,8 @@ class InputObserver:
 
     # ---- 记账 ----
     def _note(self, file) -> None:
+        if getattr(self._pause, "depth", 0):
+            return
         try:
             if not isinstance(file, (str, os.PathLike)):
                 return
@@ -2336,12 +2344,34 @@ class InputObserver:
         io.open = _wrap(real_io_open)
         pathlib.Path.open = observed_path_open
 
-        # numpy 的 `DataSource.open`（`np.loadtxt` / `np.genfromtxt`）：它的文件打开器在 numpy
-        # 载入时就绑好了**原来的** `io.open`，上面三处包装都看不见它读了什么。记的是它**实际
-        # 打开的那个文件**（文件对象的 `.name`，gzip / bz2 也有）——相对路径由它按自己的
-        # destpath 解，拿请求里的字符串去猜会记错文件。只包已载入的 numpy，不替脚本 import。
-        datasource = getattr(sys.modules.get("numpy.lib._datasource"), "DataSource", None)
+        self._channels = ["python_open"]
+        self.observe_numpy_datasource(sys.modules.get("numpy.lib._datasource"))
+
+        def uninstall() -> None:
+            builtins.open = real_open
+            io.open = real_io_open
+            pathlib.Path.open = real_path_open
+            if self._restore_numpy is not None:
+                self._restore_numpy()
+                self._restore_numpy = None
+
+        self._uninstall = uninstall
+        return uninstall
+
+    def observe_numpy_datasource(self, module) -> None:
+        """装上 numpy 的 `DataSource.open` 通道（`np.loadtxt` / `np.genfromtxt`）；`module` 是 `numpy.lib._datasource`，None / 已装 = 什么都不做。
+
+        它的文件打开器在 numpy 载入时就绑好了**原来的** `io.open`，三处 open 包装都看不见它读了什么。记的是它**实际
+        打开的那个文件**（文件对象的 `.name`，gzip / bz2 也有）——相对路径由它按自己的 destpath 解，拿请求里的字符串去猜
+        会记错文件。只包已载入的 numpy，不替脚本 import：safe worker 装观察器时 numpy 早已载入；native bridge 装在用户代码
+        之前，由 import 钩子在 numpy 载入那一刻调这里。"""
+        if self._restore_numpy is not None:
+            return
+        datasource = getattr(module, "DataSource", None)
         real_ds_open = getattr(datasource, "open", None)
+        if real_ds_open is None:
+            return
+        observer = self
 
         def observed_datasource_open(self_ds, path, mode="r", *args, **kwargs):
             fh = real_ds_open(self_ds, path, mode, *args, **kwargs)
@@ -2349,25 +2379,29 @@ class InputObserver:
                 observer._note(getattr(fh, "name", None))
             return fh
 
-        self._channels = ["python_open"]
-        if real_ds_open is not None:
-            datasource.open = observed_datasource_open
-            self._channels.append("numpy_datasource")
+        datasource.open = observed_datasource_open
+        self._channels.append("numpy_datasource")
 
-        def uninstall() -> None:
-            builtins.open = real_open
-            io.open = real_io_open
-            pathlib.Path.open = real_path_open
-            if real_ds_open is not None:
-                datasource.open = real_ds_open
+        def restore() -> None:
+            datasource.open = real_ds_open
 
-        self._uninstall = uninstall
-        return uninstall
+        self._restore_numpy = restore
 
     def uninstall(self) -> None:
         if self._uninstall is not None:
             self._uninstall()
             self._uninstall = None
+
+    @contextlib.contextmanager
+    def paused(self):
+        """这一段里的打开不记账：引擎自己读文件（不是脚本的输入）。可嵌套；只影响记账，open 照常。
+
+        按线程生效：只压掉进入本上下文的这个线程；用户脚本的其他线程在此期间的读照常记账。"""
+        self._pause.depth = getattr(self._pause, "depth", 0) + 1
+        try:
+            yield
+        finally:
+            self._pause.depth -= 1
 
     # ---- 报告 ----
     def report(self, *, local_modules: list[dict] | None = None) -> dict:

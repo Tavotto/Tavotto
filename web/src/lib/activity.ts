@@ -3,8 +3,9 @@ import type { AlignMode } from './geometry'
 /**
  * 本地**活动信号**：某个真实的用户动作刚刚完成。
  *
- * 给谁用：新手教程（`lib/onboarding/flow.ts`）与一次性情境提示要知道「用户
+ * 给谁用：一次性情境提示（`lib/onboarding/hints.ts`）与遥测映射要知道「用户
  * 已经自己做过这件事了」——它们订阅这里，而不是 import 进 `store/actions`。
+ * （v2 的 coachmark 教程引擎也订阅过它；三步原生教程不走工作台，2026-10-19 起不再订阅，ADR 0136。）
  * 反过来也一样：核心 action 只发一声，不 import 任何 onboarding / 提示模块。
  *
  * 它**不是遥测**：只在本进程的 `window` 上派发、不落盘、不出网、不带任何用户

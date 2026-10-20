@@ -535,6 +535,27 @@ def set_launch_record(project_root: str | Path, script: str, record: dict | None
         _write(project_root, data)
 
 
+def amend_launch_records(project_root: str | Path, amend) -> bool:
+    """在同一把锁里逐条改写启动记录：`amend(记录) -> 新记录 | None`（None = 这条不动）。回「有没有写」。
+
+    给「成功之后才补齐依据」的那一类（#1047：native 在 `show()` 屏障上成功收口，脚本跑完才有输入观察）：读改写在
+    锁内完成，期间另一次成功写进来的记录不会被旧值盖掉。坏登记照常抛 `RunConfigError`、文件不改。"""
+    with _LOCK:
+        data = _read(project_root)
+        launches = data["launches"]
+        changed = False
+        for script, rec in list(launches.items()):
+            if not isinstance(rec, dict):
+                continue
+            new = amend(dict(rec))
+            if new is not None and new != rec:
+                launches[script] = new
+                changed = True
+        if changed:
+            _write(project_root, data)
+    return changed
+
+
 def commit_success(
     project_root: str | Path,
     script: str,

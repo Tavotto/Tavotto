@@ -234,7 +234,23 @@ _ADDED_COLUMNS = {
     # 登记这个会话的**服务进程**的 pid：两个 Tavotto 进程共用同一数据目录时，靠它判「同一脚本上的 running 会话属主是否还活着」
     # （进程内的 SESSIONS / 脚本锁管不到对方）。老行为 NULL = 属主未知，不算忙。
     "owner_pid": "INTEGER",
+    # TAF 任务（ADR 0138，`engine/ai_tasks.py`）：一个任务就是一条会话，任务事实是这几列——不另建表、不另建库。
+    # 老行 / 旧 AI 路径登记的会话全为 NULL（= 不是 TAF 任务）。`phase` 只在任务进行中有值（非终态阶段），
+    # 结束时清空；`outcome` 与 `status` 分开记：Agent 正常退出 ≠ 任务完成 ≠ 验证通过。
+    "task_type": "TEXT",
+    "phase": "TEXT",
+    "outcome": "TEXT",
+    # 任务结果的验证段（JSON：`{figure: {...}, persistence: {...}}`，四态取 `rendercore.inspector.VERDICTS`）
+    "verification": "TEXT",
+    # 冻结的 TaskEnvelope（JSON，**不含** `user_intent`——原话已经在 `prompt` 列，不存第二份）
+    "envelope": "TEXT",
+    # NeedsInput 之后用户的回答是一个新任务：指回上一个任务
+    "parent_task_id": "TEXT",
+    "budget_used": "TEXT",
 }
+
+#: TAF 任务那几列里存 JSON 的：读出时解码，读不出来给 None（同 `refresh`）
+_TASK_JSON_COLUMNS = ("verification", "envelope", "budget_used")
 
 #: (project, client_request_id) 唯一：部分索引，NULL 不算。建在 `_migrate` 里（列补上之后），
 #: 老库同样走这条路——判据是「索引有没有」，不是版本号。
@@ -346,8 +362,8 @@ def record_start(sess: dict, db_path: Path | None = None) -> tuple[bool, str]:
             """INSERT INTO sessions
                (id, project, canvas, panel, element, provider, model, effort,
                 scope, target, script, prompt, status, started_ms, snapshot_path,
-                client_request_id, owner_pid)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                client_request_id, owner_pid, task_type, phase, envelope, parent_task_id)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (
                 sess["id"],
                 sess.get("project", ""),
@@ -366,6 +382,12 @@ def record_start(sess: dict, db_path: Path | None = None) -> tuple[bool, str]:
                 sess.get("snapshot_path"),
                 sess.get("client_request_id"),
                 sess.get("owner_pid", os.getpid()),
+                sess.get("task_type"),
+                sess.get("phase"),
+                None
+                if sess.get("envelope") is None
+                else json.dumps(sess["envelope"], ensure_ascii=False),
+                sess.get("parent_task_id"),
             ),
         )
     return True, sess["id"]
@@ -380,11 +402,18 @@ def record_end(
     transcript: list | None = None,
     db_path: Path | None = None,
     refresh: dict | None = None,
+    task_result: dict | None = None,
 ) -> None:
+    """会话终态落库。`task_result`（TAF 任务）：`{outcome, verification, budget_used}` 与终态字段**同一条 UPDATE**
+    写入、`phase` 同时清空——崩溃不会留下「status 已终态、outcome 还空着」的半条记录。"""
+    task = task_result or {}
     with _connect(db_path) as con:
         con.execute(
             """UPDATE sessions SET status=?, diff=?, changed=?, error=?,
-               transcript=?, ended_ms=?, refresh=? WHERE id=?""",
+               transcript=?, ended_ms=?, refresh=?,
+               outcome=COALESCE(?, outcome), verification=COALESCE(?, verification),
+               budget_used=COALESCE(?, budget_used), phase=CASE WHEN ? THEN NULL ELSE phase END
+               WHERE id=?""",
             (
                 status,
                 diff,
@@ -393,8 +422,28 @@ def record_end(
                 json.dumps(transcript or [], ensure_ascii=False),
                 int(time.time() * 1000),
                 None if refresh is None else json.dumps(refresh, ensure_ascii=False),
+                task.get("outcome"),
+                None
+                if task.get("verification") is None
+                else json.dumps(task["verification"], ensure_ascii=False),
+                None
+                if task.get("budget_used") is None
+                else json.dumps(task["budget_used"], ensure_ascii=False),
+                int(task_result is not None),
                 sid,
             ),
+        )
+
+
+def record_task_phase(sid: str, phase: str, db_path: Path | None = None) -> bool:
+    """TAF 任务推进到一个非终态阶段。**只改还在跑的行**（`status='running'`）：已取消 / 已中断的任务不会被一次迟到的
+    阶段推进改回「进行中」的样子。回值：这一行确实被推进了。"""
+    with _connect(db_path) as con:
+        return (
+            con.execute(
+                "UPDATE sessions SET phase=? WHERE id=? AND status='running'", (phase, sid)
+            ).rowcount
+            > 0
         )
 
 
@@ -423,12 +472,12 @@ def mark_interrupted_running(db_path: Path | None = None) -> int:
                 continue
             if r["status"] == "running":
                 con.execute(
-                    "UPDATE sessions SET status='interrupted', ended_ms=? WHERE id=?",
+                    "UPDATE sessions SET status='interrupted', ended_ms=?, phase=NULL WHERE id=?",
                     (now, r["id"]),
                 )
                 interrupted += 1
             else:
-                con.execute("UPDATE sessions SET ended_ms=? WHERE id=?", (now, r["id"]))
+                con.execute("UPDATE sessions SET ended_ms=?, phase=NULL WHERE id=?", (now, r["id"]))
         return interrupted
 
 
@@ -467,6 +516,12 @@ def _row_to_dict(row: sqlite3.Row) -> dict:
     except (ValueError, TypeError):
         refresh = None
     d["refresh"] = refresh if isinstance(refresh, dict) else None
+    for col in _TASK_JSON_COLUMNS:
+        if col in d:
+            try:
+                d[col] = json.loads(d[col]) if d[col] is not None else None
+            except (ValueError, TypeError):
+                d[col] = None
     snap = d.get("snapshot_path")
     d["revert_available"] = bool(snap) and Path(snap).is_file()
     return d

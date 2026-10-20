@@ -296,7 +296,7 @@ def _last_success_profile(
         profile == execspec.PROFILE_NATIVE
         and (record.get("source") or {}).get("basis_observed") is False
     ):
-        # 与 #982 的 reuse_last_success 同样保守：native 没有观察过 helper / 数据文件，不证明它们没变，不据此沿用 native
+        # 与 #982 的 reuse_last_success 同样保守：这条 native 记录没有完整的 helper / 数据观察（#1047），不证明它们没变，不据此沿用 native
         return None
     return profile
 

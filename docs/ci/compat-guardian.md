@@ -46,7 +46,9 @@ python scripts/ci/compat_guardian.py validate DIR/RUN_ID/reports/guardian.json
 python scripts/ci/compat_guardian.py summarize REPORT [REPORT ...] [--json-out F] [--markdown-out F]
 python scripts/ci/compat_guardian.py promote REPORT --case ID --out FILE     # 只出提案
 python scripts/ci/compat_guardian.py explore --seed N --out DIR [--limit N] [--parent a,b] [--static-only]
-python scripts/ci/compat_guardian.py {triage|minimize}                      # 桩，退出码 2
+python scripts/ci/compat_guardian.py triage REPORT [REPORT ...] --out FILE
+python scripts/ci/compat_guardian.py minimize --report EXPLORE_REPORT --candidate ID --out DIR [--max-runs N --max-seconds S]
+python scripts/ci/compat_guardian.py minimize --replay DIR/repro.json --out DIR2
 ```
 
 - `--out` 必须在源码工作树之外；每次 `run` 建一个 UUID 目录：`reports/guardian.json`（原子写）、
@@ -55,8 +57,7 @@ python scripts/ci/compat_guardian.py {triage|minimize}                      # �
 - 省略 `--case` = 跑该 suite 的全部登记 case。
 - `explore` 不带 `--static-only` 时，执行前要求整个 `scripts/ci/` 与 HEAD 一致（`git status --porcelain`，含未跟踪文件）：
   生成、执行、取证的代码（变换、driver、matrix、执行观测器……）都在这里，脏工作区里改过的不会被当作评审过的模板执行。
-- `triage / minimize` 仍是**显式的桩**：退出码 2，stderr 写
-  `not implemented in CG-01`，不产出任何结果。它们不被伪装成已实现。
+  `minimize` 与 `minimize --replay` 执行前做同一道核对。
 - `promote` 只写一个候选记录（`proposal_only: true, applied: false`），**拒绝**写入
   `tests/compat/`、`tests/compat_guardian/`（含期望声明）、`tests/fixtures/`、`tests/support/`，也拒绝写任何名为 `manifest.json` /
   `baseline.json` 的仓库内文件；基线与 manifest 的改动只能是人写的、过 CODEOWNERS 的普通 PR。
@@ -241,7 +242,7 @@ CompatBench 的 `run_group` 之外 runner 崩溃目前会被 `compat_matrix.py:m
 | # | 案例 | CG-01 状态 |
 | --- | --- | --- |
 | 1 | 普通脚本一次运行出图 | 登记夹具 `shape_oo_savefig` / `s01_plain` 的真实运行 |
-| 2 | show-only | `shape_pyplot_show_only` 真实运行；G1（show 后 close 无 savefig 零图）是已知产品缺口，CG-02/04 |
+| 2 | show-only | `shape_pyplot_show_only` 真实运行；G1（show 后 close 无 savefig 零图）已由 #1138 修复，现为回归用例 |
 | 3 | savefig 后立即读回 | `s06`（受限入口对照 → `expected_limitation`）；Native 回退由 `tests/test_execution_fallback_e2e.py` 拥有 |
 | 4 | os.replace 后读回 | `s04b`（同上）；`s04_replace_readback` 为 `partial_coverage` |
 | 5 | 多图不能静默只留一张 | `tests/test_compat_guardian_adversarial.py::Case05MultiFigure`（原生计图数、捕获少于原生 → `partial_capture`）；`shape_multi_figure_a` 的 `expected_figures` 由 CompatBench capture 阶段判 |
@@ -305,6 +306,52 @@ Tavotto 侧走产品自己的发现链（静态注册表，不足时试运行探
 执行次数（项目外审计计数器）、差异，以及 `known_gaps`：G1/G2 是否**由探索自己**发现（AC-05）。
 退出码：0 无差异；1 发现差异（候选失败记录）；3 有候选无结论；2 错误。**差异只是记录**：不改 baseline/manifest、
 不开 issue、不 promote。
+
+## 12. Triage 与 Minimize（CG-03）
+
+### Triage
+
+`triage` 读 `run` / `explore` 的报告，对每条发现给出归因，再聚类；它不运行任何东西。归因表是数据：
+`tests/compat_guardian/triage_rules.json`（schema 同目录，加载时校验：未知事实、未知家族、不存在的模块路径、
+重复 id、操作符与取值不匹配都是加载错误，不是静默不匹配）。规则按顺序、首个命中者生效；没有规则能证明的
+一律 `unknown`（置信度 low，仍带下一步动作）。缺失的事实永远不满足正向条件。
+
+每条归因：家族（简报 §7.1 的 16 类，含 `unknown`）、阶段、稳定错误码、最相关的原始证据、原生与 Tavotto 的差异、
+置信度、可能涉及的代码模块、下一步验证动作、命中的规则 id 与理由。**「Safe 拦了 savefig 之后再读回」不会被判成缺数据**：
+`safe_file_operation_blocked`，或 `FileNotFoundError` 且原生做过 `savefig`，先于任何 `cwd_or_data_path` 规则命中
+（`safe_execution_divergence`）；`FileNotFoundError` 而没有 savefig 证据 → `unknown`。
+
+**聚类**的键：阶段、家族、稳定码、执行策略、依赖来源、可复现的行为差异签名（差异种类 + 原生 show/save 关系）、
+规范化调用位置（候选 AST 里 `figure / show / close / savefig` 的程序顺序，带循环标记，与别名/父本无关）。
+**不看 traceback 文字**。已知家族记录（`tests/compat_guardian/families/*.json`）按行为种类 + 调用位置 + Tavotto 错误码关联。
+CG-02 的 27 条真实差异聚成恰好两簇：G1（show 后 close，11 条）与 G2（同路径多图，16 条），不合并。
+
+### Minimize
+
+`minimize` 对**一条**explore 发现做有界 delta debugging。输入只是 `(报告, 候选 id)`：候选被**重新推导**并核对身份，
+报告无法提供代码。缩减 = 对推导出的候选做语句/块级**删除或展开**（地址如 `/body2/body0/body3`）与删除无人引用的数据文件，
+**只删不增**，所以缩减出来的中间脚本是父本的确定性子集，**信任级等同父本**（见 §11）；执行只走 CG-02 的受信派生路径，
+静态判定不再通过的缩减不执行。
+
+每个缩减步骤都重新验证（`accept`），必须同时满足：原生仍正常退出且预期不变（show/save/多图覆盖关系）；Tavotto 仍是**同一个**错误码
+与同一组差异种类；归因的阶段与家族不变；因此语法错误、缺包、NameError 之类「换一个错误冒充原缺陷」的缩减会被拒绝，
+原错误消失的缩减（案例 10）也会被拒绝。每次拒绝及理由都记入 `trials`。
+
+预算：执行次数与总时间，均有限且为正；超出即 `minimization_failed`，**保留原始夹具**（不输出半成品当最小复现）。
+基线（未缩减）不复现 → `not_reproduced`，什么也不编造。最终结果再独立确认运行若干次，必须次次复现，否则也是
+`minimization_failed`。
+
+输出 `DIR/repro.json`（最小脚本全文、必要数据哈希、运行命令、环境身份、原生行为、Tavotto 行为、可复现性、缩减前后、归因证据、
+预算与全部试验）、`DIR/minimal/`、`DIR/work/evidence/`。`minimize --replay` 用记录的缩减重跑并核对签名。
+
+首批真实结果与家族记录：`families/G1-show-close-zero-figures.json`（11 → 5 条语句）、`families/G2-same-path-multi-figure.json`
+（13 → 7 条）；记录里写明根因、关键回归测试、已验证/未验证环境。两族都已修复：G1 由 #1138、G2 由 #1141，记录里 `fix_pr` 分别是
+1138 / 1141，`in_corpus` / `promoted` 仍是 `false`（进语料要维护者决定）。`tests/test_compat_guardian_families.py::RealRepro` 与
+`tests/test_compat_explore.py::RealDiscovery` 的 G1 / G2 用例已转为「修复后原生 / Tavotto 无差异」的回归；尚未修复的族仍按
+「最小复现目前仍然失败」钉住——缺口修好时那条会红，那是更新记录（`fix_pr`）、把复现转成正式回归用例的信号。
+
+最小化过程中暴露并修掉了 explore 比较里的一个误报：无标题的图（原生 `[""]` vs Tavotto `[]`）曾被当作同路径内容差异；
+最小化签名因此新增「原生确有多图写同一路径」这一条，缩减不能漂移到别的原因上。
 
 ---
 

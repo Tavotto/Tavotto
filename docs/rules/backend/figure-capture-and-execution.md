@@ -376,6 +376,12 @@ occurrence/figure ordinal/result。看护：`tests/bridge/test_bridge_savefig_ob
   看护 `tests/test_selected_artifact_api.py` 的调用方/错误边界与
   `tests/test_selected_artifact_worker.py` 的真实 Python worker 在途及后续复用；后者注入队列错误，
   不替代真实 workerd / Windows 调度验证。选择子集不能重写整份脚本登记。
+- 省略 `source_policy` 的 `/api/engine/render` 落在 PNG 源图上仍走 legacy（不拒绝，旧布局语义不变），
+  但响应带 `source_unverified: {reason: "source_policy_missing", kind: "png"}`：这张图重跑了脚本、
+  未与已存字节核对，不得当作已验证产物（#1145）。前端对未采用的 PNG 面板：`renderTargets` 跳过
+  跨图邻居与 tracked 的补渲染（采用只走 `admitPngEntry` 带策略的请求）；**style-bound 例外，照发**——
+  绑定画布上 `admitPngEntry` 本就拒绝，这次渲染是它唯一的 manifest 来源，`alignNewFigures` 靠它结清
+  样式债，跳过会让面板整个会话上不了样式、进不了编辑（#1179 Codex P1）。
 - 当前 API 切片只开放 render、带 manifest 的 paired preview、导出新文件；selected GET
   SVG/PNG、binary preview、specfix/sync、写回及历史恢复明确拒绝，不能退回旧坐标。
   空 overrides 原图导出仍保留磁盘像素；正常导出的字体/PPI政策独立于源图上下文。

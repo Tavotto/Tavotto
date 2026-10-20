@@ -1,0 +1,610 @@
+{
+  "schema": "tavotto-guardian-triage-rules/1",
+  "rules": [
+    {
+      "id": "x.safe_blocked",
+      "source": "explore",
+      "when": [
+        {
+          "field": "tavotto_error",
+          "op": "eq",
+          "value": "safe_file_operation_blocked"
+        }
+      ],
+      "family": "safe_execution_divergence",
+      "stage": "execute",
+      "confidence": "high",
+      "modules": [
+        "src/tavotto/engine/worker.py",
+        "src/tavotto/engine/figcapture.py"
+      ],
+      "next_action": "Run the same script natively under the desktop route (#1028 fallback) and confirm only the Safe interception differs.",
+      "why": "Tavotto itself reported the Safe guard blocked a file operation; native ran it."
+    },
+    {
+      "id": "x.readback_after_savefig",
+      "source": "explore",
+      "when": [
+        {
+          "field": "tavotto_error_message",
+          "op": "contains",
+          "value": "FileNotFoundError"
+        },
+        {
+          "field": "native_savefig_calls",
+          "op": "gt",
+          "value": 0
+        }
+      ],
+      "family": "safe_execution_divergence",
+      "stage": "execute",
+      "confidence": "medium",
+      "modules": [
+        "src/tavotto/engine/worker.py",
+        "src/tavotto/engine/figcapture.py"
+      ],
+      "next_action": "Check whether the failing path is a savefig target read back later (Safe rewrites savefig targets); if so it is the Safe divergence, not missing data.",
+      "why": "A FileNotFoundError next to a native run that wrote files with savefig is the Safe-intercepted savefig-then-read pattern, never missing input data by default."
+    },
+    {
+      "id": "x.missing_input",
+      "source": "explore",
+      "when": [
+        {
+          "field": "tavotto_error_message",
+          "op": "contains",
+          "value": "FileNotFoundError"
+        },
+        {
+          "field": "native_savefig_calls",
+          "op": "eq",
+          "value": 0
+        },
+        {
+          "field": "native_ok",
+          "op": "true"
+        }
+      ],
+      "family": "cwd_or_data_path",
+      "stage": "execute",
+      "confidence": "low",
+      "modules": [
+        "src/tavotto/engine/worker.py",
+        "src/tavotto/engine/workdir.py"
+      ],
+      "next_action": "Compare the script's working directory and relative inputs between native and the Tavotto run before concluding anything.",
+      "why": "FileNotFoundError while native succeeded without any savefig: probably cwd/data path, but unproven."
+    },
+    {
+      "id": "x.filenotfound_unprovable",
+      "source": "explore",
+      "when": [
+        {
+          "field": "tavotto_error_message",
+          "op": "contains",
+          "value": "FileNotFoundError"
+        }
+      ],
+      "family": "unknown",
+      "stage": "execute",
+      "confidence": "low",
+      "modules": [
+        "src/tavotto/engine/worker.py"
+      ],
+      "next_action": "Collect native savefig/readback evidence; without it Safe divergence and missing data cannot be told apart.",
+      "why": "FileNotFoundError without evidence about savefig/readback: refuse to guess."
+    },
+    {
+      "id": "x.module_missing",
+      "source": "explore",
+      "when": [
+        {
+          "field": "tavotto_error_message",
+          "op": "contains",
+          "value": "ModuleNotFoundError"
+        }
+      ],
+      "family": "dependency_provider",
+      "stage": "execute",
+      "confidence": "medium",
+      "modules": [
+        "src/tavotto/engine/importscan.py",
+        "src/tavotto/engine/depplan.py"
+      ],
+      "next_action": "Check which interpreter each side used and whether the import name maps to the same distribution.",
+      "why": "A missing module on the Tavotto side while native passed points at the provider/interpreter, not the script."
+    },
+    {
+      "id": "x.timeout",
+      "source": "explore",
+      "when": [
+        {
+          "field": "tavotto_error",
+          "op": "in",
+          "value": [
+            "adapter_timeout",
+            "timeout",
+            "worker_timeout"
+          ]
+        }
+      ],
+      "family": "timeout_or_process_crash",
+      "stage": "execute",
+      "confidence": "medium",
+      "modules": [
+        "src/tavotto/engine/pool.py"
+      ],
+      "next_action": "Re-run with a larger budget and a process-tree log.",
+      "why": "The Tavotto side timed out or was killed."
+    },
+    {
+      "id": "x.show_without_save",
+      "source": "explore",
+      "when": [
+        {
+          "field": "kind",
+          "op": "eq",
+          "value": "zero_figures"
+        },
+        {
+          "field": "tavotto_error",
+          "op": "eq",
+          "value": "script_no_figure"
+        },
+        {
+          "field": "native_figures_shown",
+          "op": "gt",
+          "value": 0
+        },
+        {
+          "field": "native_savefig_calls",
+          "op": "eq",
+          "value": 0
+        }
+      ],
+      "family": "figure_capture",
+      "stage": "capture",
+      "confidence": "high",
+      "modules": [
+        "src/tavotto/engine/worker.py",
+        "src/tavotto/engine/figcapture.py"
+      ],
+      "next_action": "Run the minimized repro: the figure exists only between show() and close(); check whether capture registers figures at show/close time (today only savefig is patched).",
+      "why": "Native showed a figure and never saved one; Tavotto's worker captured none and said so with script_no_figure."
+    },
+    {
+      "id": "x.zero_figures_probable_show",
+      "source": "explore",
+      "when": [
+        {
+          "field": "kind",
+          "op": "eq",
+          "value": "zero_figures"
+        },
+        {
+          "field": "tavotto_error",
+          "op": "eq",
+          "value": "script_no_figure"
+        },
+        {
+          "field": "native_figures_shown",
+          "op": "absent"
+        },
+        {
+          "field": "chain",
+          "op": "contains",
+          "value": "show_close"
+        }
+      ],
+      "family": "figure_capture",
+      "stage": "capture",
+      "confidence": "medium",
+      "modules": [
+        "src/tavotto/engine/worker.py",
+        "src/tavotto/engine/figcapture.py"
+      ],
+      "next_action": "Re-run explore on this candidate to collect native show/savefig counts and upgrade the confidence.",
+      "why": "The chain removed savefig and ends with show/close, but the report predates show/savefig counters."
+    },
+    {
+      "id": "x.zero_figures_other",
+      "source": "explore",
+      "when": [
+        {
+          "field": "kind",
+          "op": "eq",
+          "value": "zero_figures"
+        }
+      ],
+      "family": "figure_capture",
+      "stage": "capture",
+      "confidence": "low",
+      "modules": [
+        "src/tavotto/engine/worker.py",
+        "src/tavotto/engine/figcapture.py"
+      ],
+      "next_action": "Read the native/Tavotto evidence and the Tavotto error code before attributing.",
+      "why": "Native produced figures, Tavotto none, without a mapped reason."
+    },
+    {
+      "id": "x.same_path",
+      "source": "explore",
+      "when": [
+        {
+          "field": "kind",
+          "op": "eq",
+          "value": "same_path_content_mismatch"
+        }
+      ],
+      "family": "figure_capture",
+      "stage": "capture",
+      "confidence": "high",
+      "modules": [
+        "src/tavotto/engine/figsession.py",
+        "src/tavotto/engine/worker.py"
+      ],
+      "next_action": "Run the minimized repro: several figures saved to one path; native disk keeps the last, Tavotto keeps the first (first-wins in the savefig registry).",
+      "why": "The Tavotto figure for a path differs from the figure native left on disk at that path."
+    },
+    {
+      "id": "x.fewer",
+      "source": "explore",
+      "when": [
+        {
+          "field": "kind",
+          "op": "eq",
+          "value": "fewer_figures"
+        }
+      ],
+      "family": "partial_capture",
+      "stage": "capture",
+      "confidence": "high",
+      "modules": [
+        "src/tavotto/engine/figsession.py",
+        "src/tavotto/engine/worker.py"
+      ],
+      "next_action": "Diff the captured stems against native savefig/show events to find which figure was dropped.",
+      "why": "Tavotto captured fewer figures than native produced."
+    },
+    {
+      "id": "x.title_missing",
+      "source": "explore",
+      "when": [
+        {
+          "field": "kind",
+          "op": "eq",
+          "value": "title_missing"
+        }
+      ],
+      "family": "manifest_semantics",
+      "stage": "semantic",
+      "confidence": "medium",
+      "modules": [
+        "src/tavotto/engine/manifest.py"
+      ],
+      "next_action": "Compare the native axes titles with the manifest title role for the missing figure.",
+      "why": "A native figure title is absent from every Tavotto manifest."
+    },
+    {
+      "id": "x.invalid_candidate",
+      "source": "explore",
+      "when": [
+        {
+          "field": "outcome",
+          "op": "eq",
+          "value": "invalid_candidate"
+        }
+      ],
+      "family": "invalid_fixture",
+      "stage": "execute",
+      "confidence": "high",
+      "modules": [
+        "scripts/ci/compat_explore_transforms.py"
+      ],
+      "next_action": "Fix the transform template: a shape-preserving transform changed the native output.",
+      "why": "The generator broke its own preservation contract; not a product signal."
+    },
+    {
+      "id": "x.invalid_fixture",
+      "source": "explore",
+      "when": [
+        {
+          "field": "outcome",
+          "op": "eq",
+          "value": "invalid_fixture"
+        }
+      ],
+      "family": "invalid_fixture",
+      "stage": "execute",
+      "confidence": "high",
+      "modules": [
+        "scripts/ci/compat_explore.py"
+      ],
+      "next_action": "Inspect the native error; the candidate is not a valid reference.",
+      "why": "Native itself failed."
+    },
+    {
+      "id": "x.env",
+      "source": "explore",
+      "when": [
+        {
+          "field": "outcome",
+          "op": "eq",
+          "value": "environment_unavailable"
+        }
+      ],
+      "family": "environment_resolution",
+      "stage": "execute",
+      "confidence": "medium",
+      "modules": [
+        "scripts/ci/compat_guardian.py"
+      ],
+      "next_action": "Install or select the missing prerequisite outside Guardian and re-run.",
+      "why": "A prerequisite was missing before any product code ran."
+    },
+    {
+      "id": "g.native_invalid",
+      "source": "row",
+      "when": [
+        {
+          "field": "native_status",
+          "op": "eq",
+          "value": "invalid_fixture"
+        }
+      ],
+      "family": "invalid_fixture",
+      "stage": "execute",
+      "confidence": "high",
+      "modules": [
+        "scripts/ci/compat_driver.py"
+      ],
+      "next_action": "Fix or retire the fixture.",
+      "why": "The native reference failed; Tavotto is not at fault."
+    },
+    {
+      "id": "g.runner_crash",
+      "source": "row",
+      "when": [
+        {
+          "field": "raw_runner_error",
+          "op": "true"
+        }
+      ],
+      "family": "unknown",
+      "stage": "execute",
+      "confidence": "low",
+      "modules": [
+        "scripts/ci/compat_guardian.py"
+      ],
+      "next_action": "Read the retained adapter stderr; a crashed runner is evidence about the runner only.",
+      "why": "Runner crashed or produced no terminal evidence."
+    },
+    {
+      "id": "g.timeout",
+      "source": "row",
+      "when": [
+        {
+          "field": "raw_adapter_timeout",
+          "op": "true"
+        }
+      ],
+      "family": "timeout_or_process_crash",
+      "stage": "execute",
+      "confidence": "medium",
+      "modules": [
+        "src/tavotto/engine/pool.py"
+      ],
+      "next_action": "Re-run with a larger budget.",
+      "why": "Adapter exceeded its time budget."
+    },
+    {
+      "id": "g.env",
+      "source": "row",
+      "when": [
+        {
+          "field": "raw_missing_prerequisites",
+          "op": "true"
+        }
+      ],
+      "family": "environment_resolution",
+      "stage": "execute",
+      "confidence": "medium",
+      "modules": [
+        "scripts/ci/compat_guardian.py"
+      ],
+      "next_action": "Provide the missing module/font outside Guardian.",
+      "why": "A prerequisite was missing before any product code ran."
+    },
+    {
+      "id": "g.safe_blocked",
+      "source": "row",
+      "when": [
+        {
+          "field": "problem_codes",
+          "op": "contains",
+          "value": "safe_file_operation_blocked"
+        }
+      ],
+      "family": "safe_execution_divergence",
+      "stage": "execute",
+      "confidence": "high",
+      "modules": [
+        "src/tavotto/engine/worker.py",
+        "src/tavotto/engine/figcapture.py"
+      ],
+      "next_action": "Confirm the desktop route would run this natively (#1028) and that browser mode must not upgrade (case 13).",
+      "why": "Tavotto's own session code says the Safe guard blocked a file operation."
+    },
+    {
+      "id": "g.fewer",
+      "source": "row",
+      "when": [
+        {
+          "field": "failed_stage",
+          "op": "in",
+          "value": [
+            "capture",
+            "open"
+          ]
+        },
+        {
+          "field": "tavotto_captured",
+          "op": "gt",
+          "value": 0
+        },
+        {
+          "field": "native_figures",
+          "op": "gt",
+          "value": 0
+        },
+        {
+          "field": "captured_lt_native",
+          "op": "true"
+        }
+      ],
+      "family": "partial_capture",
+      "stage": "capture",
+      "confidence": "high",
+      "modules": [
+        "src/tavotto/engine/figsession.py",
+        "src/tavotto/engine/worker.py"
+      ],
+      "next_action": "Find which figure was dropped.",
+      "why": "Tavotto captured some, not all, of the native figures."
+    },
+    {
+      "id": "g.zero",
+      "source": "row",
+      "when": [
+        {
+          "field": "failed_stage",
+          "op": "in",
+          "value": [
+            "capture",
+            "open"
+          ]
+        },
+        {
+          "field": "tavotto_captured",
+          "op": "eq",
+          "value": 0
+        },
+        {
+          "field": "native_figures",
+          "op": "gt",
+          "value": 0
+        }
+      ],
+      "family": "figure_capture",
+      "stage": "capture",
+      "confidence": "medium",
+      "modules": [
+        "src/tavotto/engine/worker.py",
+        "src/tavotto/engine/figcapture.py"
+      ],
+      "next_action": "Read the problem codes and the Tavotto error.",
+      "why": "Native produced figures, Tavotto captured none."
+    },
+    {
+      "id": "g.semantic",
+      "source": "row",
+      "when": [
+        {
+          "field": "failed_stage",
+          "op": "in",
+          "value": [
+            "semantic",
+            "open"
+          ]
+        }
+      ],
+      "family": "manifest_semantics",
+      "stage": "$failed_stage",
+      "confidence": "medium",
+      "modules": [
+        "src/tavotto/engine/manifest.py"
+      ],
+      "next_action": "Compare titles/roles against the oracle.",
+      "why": "The figure opened but its semantics differ from the oracle."
+    },
+    {
+      "id": "g.edit",
+      "source": "row",
+      "when": [
+        {
+          "field": "failed_stage",
+          "op": "eq",
+          "value": "edit"
+        }
+      ],
+      "family": "editing_capability",
+      "stage": "edit",
+      "confidence": "medium",
+      "modules": [
+        "src/tavotto/engine/overrides.py"
+      ],
+      "next_action": "Replay the failing mutation.",
+      "why": "An edit did not land or did not restore."
+    },
+    {
+      "id": "g.replay",
+      "source": "row",
+      "when": [
+        {
+          "field": "failed_stage",
+          "op": "eq",
+          "value": "replay"
+        }
+      ],
+      "family": "replay_inconsistency",
+      "stage": "replay",
+      "confidence": "medium",
+      "modules": [
+        "src/tavotto/engine/pool.py"
+      ],
+      "next_action": "Compare hot and fresh replay.",
+      "why": "Fresh replay differs from the hot state."
+    },
+    {
+      "id": "g.export",
+      "source": "row",
+      "when": [
+        {
+          "field": "failed_stage",
+          "op": "in",
+          "value": [
+            "export",
+            "fidelity"
+          ]
+        }
+      ],
+      "family": "export_or_fidelity",
+      "stage": "$failed_stage",
+      "confidence": "medium",
+      "modules": [
+        "src/tavotto/engine/manifest.py"
+      ],
+      "next_action": "Compare exported bytes with the native render.",
+      "why": "Export or fidelity differs from native."
+    },
+    {
+      "id": "g.execute",
+      "source": "row",
+      "when": [
+        {
+          "field": "failed_stage",
+          "op": "eq",
+          "value": "execute"
+        }
+      ],
+      "family": "safe_execution_divergence",
+      "stage": "execute",
+      "confidence": "low",
+      "modules": [
+        "src/tavotto/engine/worker.py"
+      ],
+      "next_action": "Check whether native passed the same script under the same interpreter.",
+      "why": "Execution failed while native passed; no finer evidence."
+    }
+  ]
+}

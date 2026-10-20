@@ -576,6 +576,96 @@ def build(parent: Parent, chain: tuple[str, ...], seed: int) -> dict:
     return {"candidate_id": cg.canonical(core)[:20], **core}, files
 
 
+# ---------------------------------------------------------------- reductions (CG-03)
+
+
+def statement_addresses(tree: ast.Module) -> list[str]:
+    """Stable addresses of every statement in pre-order: `/body3/body0/orelse1`.
+
+    Indices refer to the tree as derived (before any reduction), so a reduction is a plain
+    set of addresses and does not depend on the order edits are applied in.
+    """
+    found: list[str] = []
+
+    def walk(node, prefix):
+        for fld in ("body", "orelse", "finalbody"):
+            items = getattr(node, fld, None)
+            if isinstance(items, list):
+                for i, child in enumerate(items):
+                    if isinstance(child, ast.stmt):
+                        addr = f"{prefix}/{fld}{i}"
+                        found.append(addr)
+                        walk(child, addr)
+
+    walk(tree, "")
+    return found
+
+
+_UNWRAPPABLE = (ast.For, ast.While, ast.With, ast.If)
+
+
+def apply_reduction(source: str, reduction: dict) -> str:
+    """Delete / unwrap statements by address. Only removes code; never adds any."""
+    delete, unwrap = set(reduction.get("delete", [])), set(reduction.get("unwrap", []))
+    tree = ast.parse(source)
+    known = set(statement_addresses(tree))
+    if not (delete | unwrap) <= known:
+        raise cg.EvidenceError("reduction names a statement that does not exist")
+
+    def rebuild(node, prefix):
+        for fld in ("body", "orelse", "finalbody"):
+            items = getattr(node, fld, None)
+            if not isinstance(items, list):
+                continue
+            out = []
+            for i, child in enumerate(items):
+                addr = f"{prefix}/{fld}{i}"
+                if not isinstance(child, ast.stmt):
+                    out.append(child)
+                    continue
+                if addr in delete:
+                    continue
+                rebuild(child, addr)
+                if addr in unwrap:
+                    if not isinstance(child, _UNWRAPPABLE):
+                        raise cg.EvidenceError("only loops, with and if blocks can be unwrapped")
+                    out.extend(child.body)
+                else:
+                    out.append(child)
+            if not out and fld == "body" and not isinstance(node, ast.Module):
+                out = [ast.Pass()]
+            setattr(node, fld, out)
+
+    rebuild(tree, "")
+    ast.fix_missing_locations(tree)
+    return ast.unparse(tree) + "\n"
+
+
+def build_reduced(parent: Parent, chain: tuple[str, ...], seed: int, reduction: dict):
+    """Candidate files after a reduction: a deterministic subset of the derived candidate.
+
+    The trust level is the candidate's (hence the parent's): nothing is added, so no new
+    behavior can enter, and the result must still compile and pass the static plan.
+    """
+    manifest, files = build(parent, chain, seed)
+    files = dict(files)
+    files[parent.script] = apply_reduction(files[parent.script].decode(), reduction).encode()
+    for rel in reduction.get("drop_files", []):
+        if rel == parent.script or rel not in files:
+            raise cg.EvidenceError("drop_files must name an existing non-script file")
+        del files[rel]
+    for rel, data in files.items():
+        if rel.endswith(".py"):
+            compile(data.decode("utf-8"), rel, "exec", dont_inherit=True)
+    plan = execution_plan(files, parent.executable)
+    manifest = {
+        **manifest,
+        "files": {r: cg.digest(d) for r, d in sorted(files.items())},
+        "execution_plan": plan,
+    }
+    return manifest, files
+
+
 def generator_digest() -> str:
     return cg.digest(Path(__file__).read_bytes())
 
