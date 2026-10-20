@@ -120,6 +120,8 @@ export default defineConfig({
         'export-preview.spec.ts',
         // 素材卡 / 属性栏底部：英文文案更长，量盒子位置两种语言各一遍
         'inspector-assets.spec.ts',
+        // 新手黄金路径（渐进式编辑 P06）：只认 data-* 锚点与落盘产物，不认显示文案——两种语言各走一遍
+        'newcomer-golden-path.spec.ts',
       ],
     },
   ],
