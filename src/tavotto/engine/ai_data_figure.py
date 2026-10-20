@@ -312,7 +312,8 @@ def plan_mapping(summary: DataSummary, instruction: str) -> Mapping | NeedsInput
     xk = per[x].kind
     kind = "bar" if xk == "text" else "line"
     mapping = Mapping(x=x, ys=tuple(ys), kind=kind, x_is_date=xk == "date")
-    if xk == "mixed":
+    if xk == "mixed" or 0 < per[x].dates < per[x].text_count:
+        # 后一种：大部分是日期、夹着几个不是日期的值——当成文字类别画柱图同样会悄悄改掉坐标含义
         return NeedsInput("x_column_mixed", preview=mapping)
     if not mentioned and not any(_descriptive(c) for c in cols):
         return NeedsInput("column_mapping_ambiguous", preview=mapping)

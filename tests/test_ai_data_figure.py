@@ -169,6 +169,13 @@ def test_x_mixing_numbers_and_text_asks_instead_of_guessing(tmp_path):
         assert got.preview == adf.Mapping(x=s.columns[0], ys=(s.columns[1],), kind="line"), name
 
 
+def test_a_date_column_with_a_bad_date_asks_instead_of_becoming_categories(tmp_path):
+    p = tmp_path / "d.csv"
+    p.write_text("date,temp_C\n2026-01-01,1\n2026-01-02,2\nlater,3\n", encoding="utf-8")
+    got = adf.plan_mapping(adf.inspect_data_source(p), "画出来")
+    assert isinstance(got, adf.NeedsInput) and got.reason == "x_column_mixed"
+
+
 def test_plotted_data_reports_a_row_whose_x_is_not_a_value(tmp_path):
     p = tmp_path / "d.csv"
     p.write_text("x,y\n1,2\noops,3\n3,4\n", encoding="utf-8")
