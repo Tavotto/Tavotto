@@ -1223,6 +1223,7 @@ def _serialize_figure(
     *,
     artifact_source=None,
     existing_only: bool = False,
+    expect_receipt_id: str | None = None,
 ) -> Path | None:
     """让引擎按 `fmt` **直接序列化**一张图（matplotlib `savefig`，worker 侧）。
 
@@ -1245,8 +1246,13 @@ def _serialize_figure(
         out_dir,
         **_artifact_kwargs(artifact_source),
         **({"existing_only": True} if existing_only else {}),
+        **({"expect_receipt_id": expect_receipt_id} if expect_receipt_id else {}),
     )
     return rendered[0] if rendered is not None else None
+
+
+class FigureIdentityChanged(Exception):
+    """导出要用的活 Figure 已经不是调用方核过的那一次执行（期间重跑了脚本）：不交出去，不换 Figure 凑数。"""
 
 
 class _FigureSerialization(tuple):
@@ -1270,6 +1276,7 @@ def _serialize_figure_with_worker(
     include_svg: bool = False,
     snapshot_only: bool = False,
     existing_only: bool = False,
+    expect_receipt_id: str | None = None,
 ) -> tuple[Path, object, str] | None:
     """`_serialize_figure` 的本体：多回 `(路径, worker-like, 脚本)`——候选后端的执行侧源解析器要拿
     worker 装配回执（`engine/receipt`），旧调用方只取路径。"""
@@ -1296,6 +1303,17 @@ def _serialize_figure_with_worker(
         stem = path.stem
         script = str(info["script"])
         worker = _safe_worker(info["script"], info["entry"], stem)
+
+    def assert_expected_execution() -> None:
+        # 调用方（SVG 素材的 EPS）核过的是「某一次执行」的绑定：拿到 worker 之后、导出前后各核一次回执，
+        # 期间发生过重跑就不是那张图了（回执含 execution id，同一 worker 的再次 build 也不同）
+        if (
+            expect_receipt_id is not None
+            and _execution_receipt(worker, script).receipt_id != expect_receipt_id
+        ):
+            raise FigureIdentityChanged(rel_id)
+
+    assert_expected_execution()
     tmp = _panel_render_target(worker, stem, out_dir, fmt)
     svg_path = tmp.with_suffix(".svg") if include_svg else None
     companion_args = (
@@ -1330,6 +1348,7 @@ def _serialize_figure_with_worker(
             lambda wk, st: wk.export(st, overrides, str(tmp), fmt, dpi, **companion_args),
             artifact_source=artifact_source,
         )
+    assert_expected_execution()
     if (
         native_receipt is not None
         and _execution_receipt(worker, script).receipt_id != native_receipt.receipt_id
@@ -2394,7 +2413,14 @@ def _declared_density(source_path: Path) -> float | None:
 
 
 def _produce_original_eps(
-    job, src, dpi: int, tmp_dir: Path, *, artifact_source=None, existing_only: bool = False
+    job,
+    src,
+    dpi: int,
+    tmp_dir: Path,
+    *,
+    artifact_source=None,
+    existing_only: bool = False,
+    expect_receipt_id: str | None = None,
 ):
     """`scope=original` 的 EPS：由 worker 的 matplotlib 直接序列化（ADR 0046）。
 
@@ -2412,6 +2438,7 @@ def _produce_original_eps(
         tmp_dir,
         **_artifact_kwargs(artifact_source),
         **({"existing_only": True} if existing_only else {}),
+        **({"expect_receipt_id": expect_receipt_id} if expect_receipt_id else {}),
     )
     if path is None or not path.is_file():
         # `existing_only` 下 `None` 有两种成因：没有脚本，或脚本在但没有活 Figure（冷 worker）。
@@ -2439,8 +2466,11 @@ def _has_runnable_script(rel_id: str) -> bool:
     return current_registry().for_stem(Path(rel_id).stem) is not None
 
 
-def _svg_asset_binding(src, tmp_dir: Path) -> str | None:
-    """SVG 素材的活 Figure 是否被证明出自这份文件的字节：是则回那份被绑定的 sha256，否则 `None`。
+def _svg_asset_binding(src, tmp_dir: Path) -> tuple[str, str] | None:
+    """SVG 素材的活 Figure 是否被证明出自这份文件的字节：是则回 `(被绑定的 sha256, 绑定时那次执行的回执 id)`，否则 `None`。
+
+    回执 id 钉的是「哪一次 build 的活 Figure」：之后拿到 worker 要再核它（`expect_receipt_id`），
+    期间重跑过就不能把新 Figure 画的 EPS 挂上旧绑定的基准。
 
     与 PDF 路径同一个先例（`svgstore.load(…, static_sha256=…)`，由 `_load_svg_snapshot` 的
     `static_source` 走）：只认「独立接纳、绑定到**当前精确字节**」的配对；同名脚本、预览、
@@ -2451,7 +2481,10 @@ def _svg_asset_binding(src, tmp_dir: Path) -> str | None:
     path = safe_resolve(src.figure_id)
     static = rc_sources.FrozenSource(rc_sources.static_artifact(path, src.figure_id), path)
     saved = _load_svg_snapshot(src.figure_id, [], tmp_dir, static_source=static)
-    return saved.svg_source_sha256 if saved is not None else None
+    if saved is None or not saved.svg_source_sha256:
+        return None
+    receipt_id = (saved.receipt or {}).get("receipt_id")
+    return (saved.svg_source_sha256, receipt_id) if receipt_id else None
 
 
 def _produce_svg_asset_eps(job, src, dpi: int, tmp_dir: Path, *, artifact_source=None):
@@ -2473,11 +2506,26 @@ def _produce_svg_asset_eps(job, src, dpi: int, tmp_dir: Path, *, artifact_source
             error_code="eps_source_unverified",
             error_params=failure,
         )
-    result = _produce_original_eps(
-        job, src, dpi, tmp_dir, artifact_source=artifact_source, existing_only=True
-    )
+    bound_sha, bound_receipt_id = bound
+    try:
+        result = _produce_original_eps(
+            job,
+            src,
+            dpi,
+            tmp_dir,
+            artifact_source=artifact_source,
+            existing_only=True,
+            expect_receipt_id=bound_receipt_id,
+        )
+    except FigureIdentityChanged:
+        # 绑定核过之后又重跑了：现在的活 Figure 没被证明出自这份文件，不挂旧基准
+        return engine_exportjob.Produced(
+            format=engine_exportreq.FORMAT_EPS,
+            error_code="eps_source_unverified",
+            error_params=failure,
+        )
     if result.tmp_path is not None:
-        result.basis = engine_exportjob.Basis(engine_exportjob.BASIS_REDRAW, bound)
+        result.basis = engine_exportjob.Basis(engine_exportjob.BASIS_REDRAW, bound_sha)
     return result
 
 

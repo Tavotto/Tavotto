@@ -341,11 +341,19 @@ def test_svg_asset_without_script_keeps_the_no_script_reason(project):
 
 
 def _bind(monkeypatch, sha):
+    """绑定桩：返回给定 sha、回执 id 取此刻活 Figure 的（冷 worker 则没有）。"""
     from tavotto.rendercore import sources as rc_sources
 
     def load(rel_id, overrides, out_dir, *, static_source=None, reference=None):
+        worker, stem = m._engine_worker(rel_id, existing_only=True)
+        receipt = {}
+        if worker is not None:
+            script = str(m.current_registry().for_stem(stem)["script"])
+            receipt = {"receipt_id": m._execution_receipt(worker, script).receipt_id}
+        else:
+            receipt = {"receipt_id": "cold"}
         return rc_sources.FrozenSource(
-            static_source.artifact, static_source.path, None, None, svg_source_sha256=sha
+            static_source.artifact, static_source.path, receipt, None, svg_source_sha256=sha
         )
 
     monkeypatch.setattr(m, "_load_svg_snapshot", load)
@@ -424,6 +432,29 @@ def test_svg_asset_saved_by_the_live_figure_gets_svg_and_eps_from_one_basis(proj
         m._svg_asset_binding(type("S", (), {"figure_id": "F.svg"})(), root)
         == hashlib.sha256(disk).hexdigest()
     )
+
+
+def test_a_rerun_between_the_binding_check_and_the_worker_never_keeps_the_old_basis(
+    project, monkeypatch
+):
+    """Codex P1（#1230）：绑定校验通过后、拿到 worker 之前跑完一次显式重跑——EPS 会从**新的**活 Figure 画出，
+    不能再挂旧绑定的基准。"""
+    client, root = project
+    _disk_svg_from_script(root, (3, 2))
+    run_script(client)
+    real = m._svg_asset_binding
+
+    def binding_then_rerun(src, tmp_dir):
+        bound = real(src, tmp_dir)
+        assert bound is not None
+        run_script(client)  # 显式重跑：同一个脚本，新的一次 build
+        return bound
+
+    monkeypatch.setattr(m, "_svg_asset_binding", binding_then_rerun)
+    body, outputs = output(client, spec("F.svg", scope="original", formats=("svg", "eps")))
+    assert outputs["svg"]["status"] == "done"
+    assert outputs["eps"]["status"] == "failed", body
+    assert outputs["eps"]["error"]["code"] == "eps_source_unverified"
 
 
 def test_svg_asset_that_differs_from_the_live_figure_is_never_bound(project, monkeypatch):
