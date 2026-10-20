@@ -77,6 +77,7 @@ AiPanel.send（不改：草稿快照 → 提交账本 → aiRun，rid 原样）
 | 原项目防护 | spawn 前后对项目目录做一次有界的文件指纹（大小 + mtime + 小文件 sha256），发现非目标文件变化 → L1 failed、结局 failed、明确列出被动过的文件 | 防的是 CLI 沙盒失效或 Agent 绕路；有界（文件数 / 字节上限），超限记 unknown 而不是 verified |
 | 提交 | 持 `script_guard`，比对原脚本当前 sha256 == `base_sha256`（否则 409 冲突、候选作废）→ `scriptbackup.replace`（两处备份后原子替换）→ 记 `after_sha256` → 统一刷新 | 写脚本字节只经 `write_script`；过期候选不覆盖新内容；回滚沿用 `ai_bridge.revert` |
 | 提交后验证 | 刷新后的 manifest vs 改前 manifest：目标断言、保持断言（数据指纹、xlim / ylim / scale、文字）；失败 → 结局 failed / partial，并按任务策略**提示**一键回滚（默认不自动回滚：回滚本身也是一次写） | 候选在原位置之外运行会改变 `__file__`、相对数据路径、本地模块 import 的语义，所以 L2–L4 放在提交之后、在真实位置上做——这是诚实的「提交 + 可回滚」，不是「提交前已验证」，UI 文案必须一致 |
+| Phase 3a 实现差异 | 提交用 `scriptlock.write_script`（持锁核基线后原子替换），备份沿用 AI 桥起跑时拍的改前快照（回滚走 `ai_bridge.revert`），没有再走 `scriptbackup.replace` 的两处备份；候选建不起来时整条拒绝，下面的「降级」未实现 | 与今天的 AI 路径同一个备份权威，不出现两套回滚入口 |
 | 降级 | 候选无法建立（脚本 import 了同目录多个本地模块、目标不是单文件……）→ 退回今天的原地修改 + 快照回滚，并把「提交前隔离」记为 not_applicable、原项目指纹照做 | 不为形式上的 Stage–Verify–Commit 牺牲兼容性 |
 
 ## 四、流程 B：从数据出图（data_to_figure，Phase 5）

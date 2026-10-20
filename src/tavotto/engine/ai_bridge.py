@@ -97,7 +97,9 @@ def spawn_started() -> bool:
     return bool(getattr(_SPAWN_MARK, "started", False))
 
 
-def _finish_session(sess: dict, *, error: str | None = None) -> None:
+def _finish_session(
+    sess: dict, *, error: str | None = None, task_result: dict | None = None
+) -> None:
     """**终态字段的唯一写入点**：`SESSION_TERMINAL_FIELDS` 里的那一组同时落到内存会话和历史库，再置 `final`。
     `get()` 优先返回内存会话、重启后的合并路径整体以历史库为准——两边分叉（比如异常分支只把 error 写进历史库）会让对账拿到
     `final: true` 但没有 error 的快照，恢复后的失败提示就是空白的。清单只有一份：这里按它写、`get()` 按它读。"""
@@ -113,19 +115,31 @@ def _finish_session(sess: dict, *, error: str | None = None) -> None:
         error=sess["error"],
         transcript=sess["transcript"] or [],
         refresh=sess["refresh"],
+        task_result=task_result,
     )
     # 结束时刻：详情的 `ended_ms`（#1098 单独合入时前端靠它判 cancelled 快照是不是终态；这里与 `final` 同时置位）
     sess["ended_ms"] = int(time.time() * 1000)
     sess["final"] = True
 
 
-def _drop_attempt_files(sid: str, snap: Path) -> None:
-    """这次尝试没有真正起任务（被拒绝）：清掉为它备好的快照 / sidecar / 日志，不留半成品。"""
+def _drop_attempt_files(sid: str, snap: Path, cand=None) -> None:
+    """这次尝试没有真正起任务（被拒绝）：清掉为它备好的快照 / sidecar / 日志（TAF：连同候选目录），不留半成品。"""
     for leftover in (snap, SNAP_DIR / f"{sid}.json", SNAP_DIR / f"{sid}.stderr.log"):
         try:
             leftover.unlink()
         except OSError:
             pass
+    if cand is not None:
+        from . import ai_figure_edit
+
+        ai_figure_edit.remove_candidate(cand.dir)
+
+
+def _taf_enabled() -> bool:
+    """TAF 改图（ADR 0138 Phase 3）的实验开关。开关关着时 `ai_figure_edit` 只被 import 来读这个布尔值，旧路径逐字不变。"""
+    from . import ai_figure_edit
+
+    return ai_figure_edit.enabled()
 
 
 def find_request(project: str, client_request_id: str) -> dict | None:
@@ -717,6 +731,7 @@ def run(
     endpoint_id: str | None = None,
     on_changed=None,
     client_request_id: str | None = None,
+    task_hooks: dict | None = None,
 ) -> str:
     """启动一次 AI 修改任务，返回 session id。事件经 on_event(name, data) 回调。
 
@@ -728,6 +743,9 @@ def run(
     样——注入而不是回头 import，边界与 `project_refresh.RefreshSink` 相同。
     它的结局进 `ai.done.refresh` 与历史库的 `refresh` 列，见 `refresh_outcome()`。
 
+    `task_hooks`（只在 TAF 开关打开时用）：`{"before": () -> {stem: manifest} | None, "retire": () -> None, "after": () -> {stem: manifest}}`，
+    app 注入的渲染层事实（改前取自已经 build 的 worker、改后取自前端本来就要做的那次重渲染），同样是注入而不是回头 import。
+
     `client_request_id`：前端点发送时生成的 UUID。同 (项目, id) 已登记过就抛 `DuplicateRequest`、
     **不 spawn**——「任何操作都不得让同一条 AI 修改被无意执行两次」。去重先于忙检查：
     重发一条已经在跑的请求得到的是既有会话，不是 409。同脚本上另一个会话还在跑（不同请求）
@@ -736,6 +754,7 @@ def run(
     require_usable(agent)
     script_path = Path(figures_dir) / script
     project_key = str(Path(figures_dir).resolve())
+    taf = _taf_enabled()
     # 从「脚本在不在」到登记进 SESSIONS 整段持脚本锁：改写 / 复原的事务要么在这之前落地（这里快照的
     # 就是改后的脚本），要么在这之后看到 running 的会话而让路
     with script_guard(script_path), _REQUEST_LOCK:
@@ -780,11 +799,41 @@ def run(
             encoding="utf-8",
         )
 
-        prompt = _build_prompt(script, user_prompt, context, figures_dir)
+        cand = envelope = None
+        if taf:
+            # TAF：Agent 在候选工作区里改副本，过了提交前检查才写回（`ai_figure_edit` 模块说明）。候选建不起来就整条
+            # 拒绝（还没 spawn、没登记），不静默退回原地修改——开关打开时用户要的就是隔离
+            from . import ai_figure_edit
+
+            try:
+                ai_figure_edit.ensure_registered()
+                cand = ai_figure_edit.create_candidate(sid, script_path, Path(figures_dir), script)
+                cand.extras.update(task_hooks or {})
+                envelope = ai_figure_edit.envelope_for(
+                    agent=agent,
+                    project_key=project_key,
+                    script_rel=script,
+                    prompt=user_prompt,
+                    rid=client_request_id,
+                    base_sha256=cand.base_sha256,
+                )
+                # 契约在 spawn 之前就验完：进程起来之后 `begin_registered` 不能再因为契约不合格而抛
+                problems = ai_figure_edit.ADAPTER.validate(envelope)
+                if problems:
+                    raise RuntimeError(f"改图任务契约不合格: {','.join(problems)}")
+            except BaseException:
+                _drop_attempt_files(sid, snap, cand)
+                raise
+        agent_cwd = str(cand.dir) if cand is not None else figures_dir
+        prompt = _build_prompt(
+            cand.target_name if cand is not None else script, user_prompt, context, figures_dir
+        )
+        if cand is not None:
+            prompt += "\n\n" + ai_figure_edit.prompt_note(cand)
         stderr_log = open(SNAP_DIR / f"{sid}.stderr.log", "wb", buffering=0)
         endpoint = ai_providers.resolve(agent, endpoint_id)
         cmd, extra_env = _cmd(
-            agent, prompt, figures_dir, model=model, effort=effort, endpoint=endpoint
+            agent, prompt, agent_cwd, model=model, effort=effort, endpoint=endpoint
         )
         # 提示词按**值**从日志里摘掉（它在命令行里的位置各家不同：codex 在末尾、
         # claude 在 `-p` 后面）。按 agent 写死下标那种做法，加第三个 Agent 时
@@ -817,34 +866,43 @@ def run(
                     "prompt": user_prompt,
                     "snapshot_path": str(snap),
                     "client_request_id": client_request_id,
+                    **(
+                        {
+                            "task_type": envelope.task_type,
+                            "phase": "executing",
+                            "envelope": envelope.to_dict(include_intent=False),
+                        }
+                        if envelope is not None
+                        else {}
+                    ),
                 }
             )
         except ai_history.ScriptBusy:
             # 另一个服务进程里同一脚本上有属主还活着的 running 会话（进程内的 `script_busy` 看不到它）
             stderr_log.close()
-            _drop_attempt_files(sid, snap)
+            _drop_attempt_files(sid, snap, cand)
             raise AgentError("ai_script_busy", {"script": script}) from None
         except BaseException:
             # record_start 抛了（SQLite 锁住 / 磁盘满）：什么都没登记、也不 spawn——为这次尝试备好的快照 / sidecar / 日志
             # 一并清掉，不留半成品去挤占 `_prune_snapshots` 的保留名额
             stderr_log.close()
-            _drop_attempt_files(sid, snap)
+            _drop_attempt_files(sid, snap, cand)
             raise
         if isinstance(started, tuple) and not started[0] and started[1] == ai_history.SUPERSEDED:
             # 并发里被新指令取代的 rid：不 spawn（与上面的快速路径同一个结局）
             stderr_log.close()
-            _drop_attempt_files(sid, snap)
+            _drop_attempt_files(sid, snap, cand)
             raise AgentError("ai_request_superseded")
         if isinstance(started, tuple) and not started[0]:
             # 别的调用者（可能是另一个共用数据目录的 Tavotto 进程）已经原子预留了这个 (项目, 请求 id)：
             # 不 spawn，清掉这次为它准备的快照 / sidecar / 日志，按去重语义回既有会话
             stderr_log.close()
-            _drop_attempt_files(sid, snap)
+            _drop_attempt_files(sid, snap, cand)
             raise DuplicateRequest(started[1])
         try:
             proc = subprocess.Popen(
                 cmd,
-                cwd=figures_dir,
+                cwd=agent_cwd,
                 env=env,
                 stdin=subprocess.DEVNULL,  # 桌面 sidecar 的 stdin 是父进程死亡信号管道，不外传
                 stdout=subprocess.PIPE,
@@ -865,7 +923,15 @@ def run(
             # 记录已落库而进程没起来：标成失败，不是删掉——「查询」要查得到它，且明确是没执行
             stderr_log.close()
             ai_history.record_end(sid, "failed", error=str(exc))
+            if cand is not None:
+                ai_figure_edit.remove_candidate(cand.dir)
             raise
+        task_run = None
+        if envelope is not None:
+            # 进程起来之后、会话进 SESSIONS 之前挂进 Task Core 的运行表：`cancel()` 能看到会话时，一定也能取消这个任务
+            from . import ai_tasks
+
+            task_run = ai_tasks.begin_registered(sid, envelope)
         sess = {
             "id": sid,
             "agent": agent,
@@ -889,27 +955,38 @@ def run(
             #: `_pump` 收尾（changed / diff / refresh 都确定、已落库）之后才为 True；会话详情据此告诉前端「这是不是终态快照」
             "final": False,
         }
+        if task_run is not None:
+            #: 对外：任务类型与结局摘要（收尾时补全）；对内：候选与 Task Core 的运行对象（`SESSION_INTERNAL_KEYS`）
+            sess["task"] = {"task_type": envelope.task_type, "outcome": None}
+            sess["taf"] = {"cand": cand, "run": task_run}
         SESSIONS[sid] = sess
     emit = on_event or (lambda *_: None)
 
-    def _pump():
+    def _consume():
         st: dict = {}
-        try:
-            for line in proc.stdout:
-                line = line.rstrip("\n")
-                if not line.strip():
+        for line in proc.stdout:
+            line = line.rstrip("\n")
+            if not line.strip():
+                continue
+            for kind, text in _classify(agent, line, st):
+                if not text:
                     continue
-                for kind, text in _classify(agent, line, st):
-                    if not text:
-                        continue
-                    if kind != "delta":  # delta 只走 SSE，transcript 存终稿
-                        sess["transcript"].append({"kind": kind, "text": text})
-                    emit("ai.delta", {"session": sid, "kind": kind, "text": text})
-                if time.time() - sess["started"] > TIMEOUT_S:
-                    _terminate(sess)
-                    sess["status"] = "timeout"
-            _await_exit(sess)
-            stderr_log.close()
+                if kind != "delta":  # delta 只走 SSE，transcript 存终稿
+                    sess["transcript"].append({"kind": kind, "text": text})
+                emit("ai.delta", {"session": sid, "kind": kind, "text": text})
+            if time.time() - sess["started"] > TIMEOUT_S:
+                _terminate(sess)
+                sess["status"] = "timeout"
+        _await_exit(sess)
+        stderr_log.close()
+
+    def _pump():
+        task = None
+        try:
+            if task_run is None:
+                _consume()
+            else:
+                task = _drive_task(sess, task_run, cand, _consume, on_changed, script)
             # 「这次 AI 改完的那一版」：回滚只认它（STATE-09）。在 `ai.done` 之前记下，
             # 前端收到完成事件后立刻点回滚也有据可查；sidecar 一并记，重启后照样认。
             _record_after(sess, script_path.read_bytes())
@@ -925,12 +1002,18 @@ def run(
                     n=3,
                 )
             )
-            if sess["status"] == "running":
+            if task is not None:
+                _settle_task(sess, task)
+            elif sess["status"] == "running":
                 sess["status"] = "done" if proc.returncode == 0 else "failed"
             # 文件变了就接统一刷新——**不看 status**：CLI 超时 / 非零退出但文件
             # 已经改了，磁盘上的事实就是改了，watcher 迟早也会看到它。刷新在
             # `ai.done` 之前做完，前端收到那条事件时后端的注册表已经是新的。
-            sess["refresh"] = refresh_outcome(on_changed, script, sess["changed"])
+            # TAF 提交时已经刷新过（`BridgeExecutor.commit`），用那一次的结局，不刷两遍
+            if task is not None and cand.committed:
+                sess["refresh"] = cand.refresh or {"status": REFRESH_NOT_WIRED}
+            else:
+                sess["refresh"] = refresh_outcome(on_changed, script, sess["changed"])
             LOG.info(
                 "AI 会话结束: %s %s status=%s changed=%s refresh=%s",
                 agent,
@@ -940,7 +1023,7 @@ def run(
                 sess["refresh"]["status"],
             )
             # changed / diff / refresh 此刻才全部确定：`final` 之前的快照（包括 cancel 之后立刻变成 cancelled 的）不是终态
-            _finish_session(sess)
+            _finish_session(sess, task_result=task["task_result"] if task else None)
             emit(
                 "ai.done",
                 {
@@ -950,6 +1033,7 @@ def run(
                     "diff": sess["diff"],
                     "script": script,
                     "refresh": sess["refresh"],
+                    **({"task": dict(sess["task"])} if task is not None else {}),
                 },
             )
         except Exception as exc:  # noqa: BLE001
@@ -972,9 +1056,72 @@ def run(
                     "refresh": sess["refresh"],
                 },
             )
+        finally:
+            if cand is not None:
+                from . import ai_figure_edit
+
+                ai_figure_edit.remove_candidate(cand.dir)
 
     threading.Thread(target=_pump, daemon=True, name=f"ai-{sid}").start()
     return sid
+
+
+def _drive_task(sess: dict, task_run, cand, consume, on_changed, script: str) -> dict:
+    """TAF 改图：把这次 CLI 运行交给 Task Core 推进（执行 → 提交前检查 → 提交 → 提交后检查），回 `drive_registered` 的结果。"""
+    from . import ai_figure_edit, ai_tasks
+
+    consumed: list[bool] = []
+
+    def wait() -> None:
+        consumed.append(True)
+        consume()
+        if sess["status"] == "timeout":
+            raise ai_tasks.TaskError("timeout", "agent")
+        if task_run.cancelled() or sess["status"] in ("cancelled", "interrupted"):
+            # 取消已经挂在任务上（`cancel` / `interrupt_all` 先问 Task Core、再杀进程），编排器随即丢弃候选。先看任务的取消标记
+            # 再看退出码：Windows 上被杀的进程退出码非零，且这一刻 `cancel` 可能还没来得及把会话改成 cancelled
+            return
+        if sess["proc"].returncode != 0:
+            raise ai_tasks.TaskError("agent_exit_nonzero", str(sess["proc"].returncode))
+
+    executor = ai_figure_edit.BridgeExecutor(
+        sess["agent"],
+        cand,
+        wait=wait,
+        refresh=lambda: refresh_outcome(on_changed, script, True),
+    )
+    try:
+        return ai_tasks.drive_registered(task_run, executor)
+    finally:
+        if not consumed:
+            # 起跑前就被取消 / 超时：编排器没调 execute。进程（已被 `_terminate`）照样要读空输出、等到退出——否则
+            # `exited` 永远不置位，`script_busy` 把这份脚本一直判成忙
+            consume()
+
+
+def _settle_task(sess: dict, task: dict) -> None:
+    """按任务结局定会话 status，并把结局摘要挂到会话上（`ai.done.task` / 详情的 `task`）。
+
+    已提交 → `done`（结局可能是 partial / failed：脚本确实改了，回滚入口照旧）；没提交时取消 / 超时 / 失败各归其位。
+    取消一旦被接受就不会提交（`ai_tasks.cancel` 与进入提交同一把门），所以不会出现「cancelled 却已改」。"""
+    if sess["taf"]["cand"].committed:
+        sess["status"] = "done"
+    elif sess["status"] == "running":
+        if task["outcome"] == "cancelled":
+            sess["status"] = "cancelled"
+        elif task["timed_out"] or task["error"] == "timeout":
+            sess["status"] = "timeout"
+        else:
+            sess["status"] = "failed" if task["outcome"] == "failed" else "done"
+    if task["error"] and sess["status"] != "done":
+        sess["error"] = task["error"]
+    verification = task["task_result"]["verification"]
+    sess["task"] = {
+        **sess["task"],
+        "outcome": task["outcome"],
+        "unmet": verification["unmet"],
+        "explain": verification["explain"],
+    }
 
 
 #: `ai.done.refresh.status` 的闭集。前端与历史页按它分支，别再加自由文本。
@@ -1191,6 +1338,7 @@ SESSION_DTO_KEYS: tuple[str, ...] = (
     "revert_available",
     "pinned",
     "note",
+    "task",
 )
 #: **终态字段清单**：会话结束时一起确定、落进历史库的那一组。服务重启后「sidecar 合并历史」的路径用它整体覆盖 sidecar，
 #: 不再逐个字段抄（漏抄一个就会出现「final 为 true 但 error 是空」这类分叉）。新增终态字段时只改这里。
@@ -1207,7 +1355,7 @@ SESSION_TERMINAL_FIELDS: tuple[str, ...] = (
 #: 会话 dict 里**有意不对外**的内部字段（含不可序列化的）。`tests/test_ai_idempotency.py` 钉住：会话 dict 的每个键
 #: 必须落在 DTO 白名单或这里——新加字段时必须表态，不会悄悄漏进响应、也不会悄悄让详情 500。
 SESSION_INTERNAL_KEYS: frozenset[str] = frozenset(
-    {"proc", "exited", "script_path", "snapshot", "project", "context", "owner_pid"}
+    {"proc", "exited", "script_path", "snapshot", "project", "context", "owner_pid", "taf"}
 )
 
 
@@ -1284,6 +1432,11 @@ def get(sid: str) -> dict | None:
 def cancel(sid: str) -> bool:
     sess = SESSIONS.get(sid)
     if sess and sess["status"] == "running":
+        if "taf" in sess:
+            from . import ai_tasks
+
+            if not ai_tasks.cancel(sid):
+                return False  # 已经在提交（或已收尾）：取消未被接受，候选照常提交，状态不改
         _terminate(sess)
         sess["status"] = "cancelled"  # 界面立刻显示取消；脚本仍算忙，直到 `_await_exit` 观察到退出
         ai_history.update_status(sid, "cancelled")
@@ -1297,6 +1450,13 @@ def interrupt_all() -> int:
     n = 0
     for sess in SESSIONS.values():
         if sess["status"] == "running":
+            if "taf" in sess:
+                from . import ai_tasks
+
+                if not ai_tasks.cancel(sess["id"]):
+                    # 已进入提交（或已收尾）：取消未被接受，任务照常写完并由泵线程按真实结局收尾——
+                    # 不终止、不改 status、不更新历史库、不计数（与 `cancel` 同一口径）
+                    continue
             _terminate(sess)
             sess["status"] = "interrupted"
             ai_history.update_status(sess["id"], "interrupted")

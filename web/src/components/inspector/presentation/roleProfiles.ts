@@ -47,7 +47,13 @@ const TEXT_PROFILE: RoleProfile = {
   primary: [
     'text', 'fontfamily', 'fontsize', 'weight', 'style', 'color', 'ha',
     'bbox_visible', 'bbox_facecolor', 'bbox_alpha', 'bbox_edgecolor',
-    'bbox_linewidth', 'bbox_pad', 'bbox_rounded',
+  ],
+  // 背景的细项（边框线宽 / 内边距 / 圆角）是低频调参：收成一行摘要，背景开关与
+  // 颜色 / 不透明度 / 边框颜色仍在首屏（上面那条 2026-09-11 的反馈只要求这几项）。
+  // 认领先于分桶、可见性仍由 `visibleWhen`（背景开关）先判：背景关着不出现；
+  // 用户改过的字段永远可见，但此刻在收起的行里——行的右值报「n 项已修改」
+  folds: [
+    { id: 'bboxDetail', labelKey: 'foldBboxDetail', props: ['bbox_linewidth', 'bbox_pad', 'bbox_rounded'] },
   ],
   more: [
     'va', 'rotation', 'linespacing', 'alpha',
@@ -80,9 +86,12 @@ export const ROLE_PROFILES: Record<string, RoleProfile> = {
   // 最可能要改的正是它的线型 / 线宽 / 标记。图例标题没有条目字段，模板里
   // 点名的属性 manifest 没给就自动跳过。
   legend_text: {
+    // 链接开关紧跟文字样式、排在背景之前：它决定下面示意线样式出不出现，
+    // 不该被六条背景参数压到最下面
     primary: [
-      ...TEXT_PROFILE.primary,
+      ...TEXT_PROFILE.primary.slice(0, TEXT_PROFILE.primary.indexOf('bbox_visible')),
       'binding',
+      ...TEXT_PROFILE.primary.slice(TEXT_PROFILE.primary.indexOf('bbox_visible')),
       'handle_color',
       'handle_linestyle',
       'handle_linewidth',
@@ -90,6 +99,7 @@ export const ROLE_PROFILES: Record<string, RoleProfile> = {
       'handle_markersize',
     ],
     more: [...(TEXT_PROFILE.more ?? [])],
+    folds: TEXT_PROFILE.folds,
     visibleWhen: {
       ...TEXT_EFFECT_VISIBILITY,
       // 示意线的样式只在**断开链接后**出现（审计 T18）：链接中它由图中对象

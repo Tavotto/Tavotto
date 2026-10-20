@@ -56,15 +56,16 @@
 
 ## 判据的主语（写判据之前）
 
-写门禁 / 断言最常犯的错**不是实现写错，是判据问错了主语**——它量的不是你以为
-的那个对象，于是恒真或恒假，而测试一直是绿的。这是个会连着犯的家族。
-**动键盘之前先把主语说出口：谁的、哪个进程、哪个时刻、哪个维度**——哪一问
-答不上来，先答上来再写。配套三条：**判源码结构用 AST 不用子串**，判据写成
-正面形式（否定断言会被解释它的那句话咬到）；**判不出就别判**，把盲点写在
-明处、收窄被判对象，假装覆盖比不覆盖更坏；**反证先验落点**——目标串在 →
-变异落在预期位置 → 才看红不红，结论用退出码，每写一条用例立刻变异一次。
-判据与豁免都带着它成立的前提，把前提写在判据旁边。八个「问错主语」的实例与
-全文在 `docs/rules/repo/predicate-subject.md`。
+门禁 / 断言最常错在**判据问错了主语**：量的不是你以为的对象，恒真或恒假而测试一直绿。
+**动键盘之前先说出主语：谁的、哪个进程、哪个时刻、哪个维度。** 判源码结构用 AST 不用子串、
+写成正面形式；判不出就别判；反证先验落点、结论用退出码。全文在 `docs/rules/repo/predicate-subject.md`。
+
+## 第三路径审查
+
+方案要禁用 / 置灰能力、让用户在两个有缺陷的选项间选、降保真换性能、错误降成警告或只改文档、加白
+名单 / 特例、复刻外部系统的规则，或同类问题修过两轮仍冒新边界时：先写出用户要保持的不变量、找冲突
+根因，提出改结构的候选并实验反证，之后才把真取舍交维护者。不放松安全、验证、审查与 1.0 纪律；
+临时缓解不关根 issue。全文：`docs/rules/repo/third-path-review.md`。
 
 ## 最常用验证
 
@@ -81,9 +82,8 @@ python scripts/smoke_app.py --python .venv/bin/python   # 端到端冒烟
   与 CI 那一格逐字相同；`--unsafe-fixes` 会动语义，要逐条看过再用。规则集在
   `pyproject.toml` 的 `[tool.ruff]`，细节与取舍在 `docs/ci/ruff.md`。示例图库 /
   playground 示例 / CompatBench 语料**不参与格式化**。**Ruff 不替代任何语义门禁。**
-- **新增一处会被塞进 `sys.path` 的仓库内源码根时，必须同步审查 `[tool.ruff]`
-  的 `src`**——否则从那个目录平铺 import 的模块会被判成第三方。在已有源码根
-  下新增模块不用动它。
+- **新增 `sys.path` 源码根要同步审查 `[tool.ruff]` 的 `src`**，否则平铺 import 被判成第三方
+  （`docs/rules/ci/ruff-lint-lane.md`）。
 - 改了 `src/tavotto/rendercore/` 里字体 / 字形归属相关的东西、或换了批准字体集合
   （`rendercore/fonts_allowlist.json`，先改 ADR 0060）：`python scripts/gen_canvas_coverage.py --write`
   与 `python scripts/gen_glyph_plan_vectors.py --write`——那张覆盖表是前端「这个字
@@ -122,5 +122,5 @@ python scripts/smoke_app.py --python .venv/bin/python   # 端到端冒烟
 | `packaging/` | `packaging/AGENTS.md` | wheel/sdist、内置渲染 runtime、PyInstaller、macOS 签名 |
 | `codex-plugin/` | `codex-plugin/AGENTS.md` → `docs/rules/plugin/` | Codex 插件、技能、MCP server、内嵌画布、首次使用契约 |
 | `.github/` | `.github/AGENTS.md`（速查表）→ `docs/rules/ci/` | CI 分层、门禁纪律、验证链、发布链 |
-| 跨仓库 | `docs/rules/repo/` | 同源对总表、判据的主语 |
+| 跨仓库 | `docs/rules/repo/` | 同源对总表、判据的主语、第三路径审查 |
 | 架构决策 | `docs/adr/` | 改动前先读对应 ADR |

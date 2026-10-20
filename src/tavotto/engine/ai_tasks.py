@@ -623,6 +623,49 @@ def run_task(
     return {**load(task_id, db_path=db_path), "deduped": False}
 
 
+def begin_registered(task_id: str, envelope: TaskEnvelope, *, clock=time.monotonic) -> TaskRun:
+    """AI 桥（Phase 3）已经替这个任务做完原子预留与会话登记（`ai_bridge.run` 的 `record_start` 带着任务字段）：这里只
+    建 `TaskRun` 并挂进本进程的运行表——此后 `cancel(task_id)` 才有对象可取消。与 `drive_registered` 成对使用。
+
+    桥是**唯一**允许带写用户文件的执行器走编排的调用方：同一进程只有一张会话表（`ai_bridge.SESSIONS`）、同一把脚本锁、
+    同一份改前快照（回滚沿用 `ai_bridge.revert`）。`run_task` 对写文件的契约照旧拒绝。"""
+    adapter = get_adapter(envelope.task_type)
+    problems = adapter.validate(envelope)
+    if problems:
+        raise ContractError("task_input_invalid", ",".join(problems))
+    run = TaskRun(task_id, envelope, Plan(steps=()), clock=clock)
+    with _RUNNING_LOCK:
+        _RUNNING[task_id] = run
+    return run
+
+
+def drive_registered(run: TaskRun, executor: Executor, *, db_path=None) -> dict:
+    """在 `begin_registered` 挂好的任务上推进阶段，回 `{outcome, error, timed_out, task_result}`。
+
+    **不写终态**：终态与 `task_result` 由桥的 `_finish_session` 在同一条 `record_end` UPDATE 里落库（桥还要补 diff /
+    changed / refresh，分两次写会留下「outcome 有了、diff 还没」的半条记录）。返回之前从运行表摘下：此后 cancel 回 False。"""
+    adapter = get_adapter(run.envelope.task_type)
+    try:
+        outcome, checks, unmet, error, timed_out = _drive(adapter, executor, run, db_path)
+    finally:
+        with _RUNNING_LOCK:
+            _RUNNING.pop(run.task_id, None)
+    return {
+        "outcome": outcome,
+        "error": error,
+        "timed_out": timed_out,
+        "task_result": {
+            "outcome": outcome,
+            "verification": {
+                **verification_summary(checks),
+                "unmet": unmet,
+                "explain": _explain(adapter, outcome, unmet),
+            },
+            "budget_used": run.budget_used(),
+        },
+    }
+
+
 def _explain(adapter: TaskAdapter, outcome: str, unmet: list[dict]) -> dict:
     try:
         out = adapter.explain(outcome, unmet)

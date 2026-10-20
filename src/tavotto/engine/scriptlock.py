@@ -13,6 +13,8 @@
 * `scriptbackup.replace`：校验和 → 两处备份 → 替换（改写与复原共用）。
 * `app.api_script_edit_commit`：锁内复判 `script_busy` → 重算 → `scriptbackup.replace`。
 * `app.api_script_backups_restore`：锁内复判 `script_busy` → 算复原字节 → `scriptbackup.replace`。
+* `ai_figure_edit.commit`（TAF 改图，ADR 0138 Phase 3）：锁内核项目里的脚本仍是起跑时那一版 → `write_script` 写回
+  候选；会话此刻仍是 `running`，别的改写 / 复原照旧按 `script_busy` 让路。
 
 写脚本字节只经 `write_script()`：没持有这份脚本的锁就抛——门禁落在写的那一刻，不靠调用方记得。
 纯标准库 + `atomicio`；Flask 父进程 import。

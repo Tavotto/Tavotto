@@ -481,3 +481,75 @@ def test_verifier_imports_without_the_scientific_stack():
         env=env,
     )
     assert proc.returncode == 0, proc.stderr[-2000:]
+
+
+# --------------------------------------------------------------------------- 默认保持断言「数据不变」（figure_edit，Phase 3b）
+_DATA_KINDS = {
+    "series_data_unchanged",
+    "errorbar_data_unchanged",
+    "errorbar_points_unchanged",
+    "image_data_unchanged",
+}
+
+
+@needs_worker
+@pytest.mark.parametrize("scenario", probe_scenarios(), ids=lambda s: s["id"])
+def test_data_unchanged_agrees_with_the_benchmark(built, scenario):
+    """真 worker manifest 上对拍：参考解（只改样式 / 版式）不触发 `data_changed`；凡是登记了「数据类断言必须失败」的反例，
+    `data_unchanged` 至少报一条 failed——默认保持断言抓得住基准里每一个改数据的反例。"""
+    manifests, _ = built
+    base = _ok(manifests, f"base__{scenario['fixture']}")
+    ref = _ok(manifests, f"{scenario['id']}__ref")
+    by_id = {a["id"]: a for a in scenario["goal"] + scenario["preserve"]}
+    if not any(a["kind"] in _DATA_KINDS for a in scenario["goal"]):
+        bad = [c.id for c in figureverify.data_unchanged(ref, base) if c.verdict == "failed"]
+        assert bad == [], f"{scenario['id']} 参考解被判改了数据：{bad}"
+    for n in scenario["negative_variants"]:
+        if not any(by_id[aid]["kind"] in _DATA_KINDS for aid in n["must_fail"]):
+            continue
+        man = _ok(manifests, f"{scenario['id']}__{n['id']}")
+        verdicts = {c.id: c.verdict for c in figureverify.data_unchanged(man, base)}
+        assert "failed" in verdicts.values(), (
+            f"{scenario['id']}/{n['id']} 改了数据却没抓住：{verdicts}"
+        )
+
+
+def test_data_unchanged_rules_on_synthetic_manifests():
+    before = _man(_line("s", sha="a" * 64))
+    [same] = figureverify.data_unchanged(_man(_line("s", sha="a" * 64)), before)
+    assert (same.id, same.verdict, same.role, same.layer) == (
+        "data.axes_0.lines_0",
+        "verified",
+        "preserve",
+        "L2",
+    )
+    [changed] = figureverify.data_unchanged(_man(_line("s", sha="b" * 64)), before)
+    assert (changed.verdict, changed.reason_code, changed.observed) == (
+        "failed",
+        "data_changed",
+        {"parts": ["xy"]},
+    )
+    [gone] = figureverify.data_unchanged(_man(), before)
+    assert (gone.verdict, gone.reason_code) == ("failed", "subject_removed")
+    [swapped] = figureverify.data_unchanged(
+        _man(_with_identity(_line("s"), "l1:bbb")), _man(_with_identity(_line("s"), "l1:aaa"))
+    )
+    assert (swapped.verdict, swapped.reason_code) == ("failed", "subject_removed")
+    for b, a in (
+        (_man(_line("s", status="over_budget")), before),
+        (before, _man(_line("s", status="unavailable"))),
+    ):
+        [c] = figureverify.data_unchanged(a, b)
+        assert (c.verdict, c.reason_code) == ("unknown", "not_measured")
+    # 改后新出现的数据元素不判（新增一条曲线可以就是目标）；改前没有数据元素 → 空
+    assert (
+        figureverify.data_unchanged(_man(_line("s"), _line("t", gid="axes_0.lines_1")), before)[
+            0
+        ].verdict
+        == "verified"
+    )
+    assert (
+        len(figureverify.data_unchanged(_man(_line("s"), _line("t", gid="axes_0.lines_1")), before))
+        == 1
+    )
+    assert figureverify.data_unchanged(_man(_line("s")), _man()) == []
