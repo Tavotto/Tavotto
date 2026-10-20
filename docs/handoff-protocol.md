@@ -133,7 +133,7 @@ CLI、唤起却静默退回浏览器模式——用户明明装了桌面版却�
 | `render.status` | 含义 | 附带字段 |
 | --- | --- | --- |
 | `ok` | 界面对目标 stem 的那次渲染成功了 | `verified`、`stem`、`registry_match`、`manifest_elements` |
-| `failed` | 实例**明确报了渲染失败** | `code`：worker 的稳定码（`engine_files_incomplete`、`missing_dependency`…；不合规的串落成 `render_failed`） |
+| `failed` | 实例**明确报了渲染失败** | `code`：worker 的稳定码（`engine_files_incomplete`、`missing_dependency`、选中原件核对不上的 `artifact_source_unavailable`…；不合规的串落成 `render_failed`） |
 | `unverified` | 没法下结论——**不是失败** | `reason`：`not_waited` / `timeout` / `channel_unavailable` / `no_target_stem` / `not_renderable` / `already_displayed` |
 
 `verified` 为 true 当且仅当：渲染成功 ∧ 结论里的 stem == 目标 stem ∧ 注册表里确有这个 stem ∧ manifest 非空

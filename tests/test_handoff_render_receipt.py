@@ -34,6 +34,7 @@ import pytest
 
 from tavotto import app as m, desktop, security
 from tavotto.engine import (
+    artifactcontext as engine_artifactcontext,
     handoff,
     handoffreceipt as receipt,
     locate,
@@ -917,6 +918,31 @@ def test_render_endpoint_reports_a_worker_startup_error(client, tmp_path, monkey
         "status": "failed",
         "code": "engine_files_incomplete",
     }
+
+
+def test_render_endpoint_reports_an_unverifiable_source(client, tmp_path, monkeypatch):
+    """选中的原件核对不上（409）也是这次渲染的终局（Win11 真机 line.png 白等 20 s）。"""
+    figs = _gallery(client, tmp_path)
+    err = engine_artifactcontext.ArtifactContextError(
+        "unsupported_render_state", "The selected source cannot be reproduced; no edit was applied."
+    )
+    _stub(monkeypatch, _Worker(error=err))
+    assert _render(client).status_code == 409
+    assert receipt.clean_result(receipt.query(str(figs), "p1", 0)) == {
+        "status": "failed",
+        "code": "artifact_source_unavailable",
+    }
+
+
+def test_render_endpoint_leaves_a_retryable_source_change_to_the_rerender(
+    client, tmp_path, monkeypatch
+):
+    """源文件在渲染途中变了：前端会重排，那次渲染才是结论，这里不抢记失败。"""
+    figs = _gallery(client, tmp_path)
+    err = engine_artifactcontext.ArtifactContextError("source_changed", "changed")
+    _stub(monkeypatch, _Worker(error=err))
+    assert _render(client).status_code == 409
+    assert receipt.clean_result(receipt.query(str(figs), "p1", 0)) is None
 
 
 def test_render_endpoint_ignores_a_query_for_another_stem(client, tmp_path, monkeypatch):

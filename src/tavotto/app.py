@@ -6340,6 +6340,13 @@ def api_engine_render():
             "figure_snapshot_invalidation", evidence.get("figure_snapshot_invalidation")
         )
         return jsonify(_worker_error_payload(exc, figure_snapshot_invalidation=fact)), 500
+    except engine_artifactcontext.ArtifactContextError as exc:
+        # 选中的原件核对不上（409）同样是这次渲染的终局：不记结论 CLI 会白等到 timeout（ADR 0131 §六）。
+        # 可重试的（源文件在渲染途中变了）不记——前端重排后的那次渲染才是结论，抢记一个失败会把它挡住
+        if not exc.retryable:
+            _note_handoff_render(stem, code=exc.code)
+        sse_publish("render.failed", {"pj": pj, "id": rel_id, "error": str(exc)})
+        raise
     except Exception as exc:
         # 事件契约是「render.started 之后必有 done 或 failed」，与异常类型无关：
         # 前端文件级 building 表只由这两个事件清（#478）。重试路上的
