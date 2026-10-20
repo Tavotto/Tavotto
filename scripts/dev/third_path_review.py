@@ -143,6 +143,11 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("body", nargs="?", help="PR 正文文件；- 或省略 = 读 stdin")
     ap.add_argument("--pr", type=int, help="经 gh 取这个 PR 的正文")
     args = ap.parse_args(argv)
+    # Windows 上管道 / 重定向会退回系统区域编码（cp1252/cp936），而正文与报告全是中文。
+    # 放在 main 里：被 import（用例）时不去动调用方的流。
+    for stream in (sys.stdin, sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="replace")
     try:
         body = _read_body(args.body, args.pr)
     except (OSError, RuntimeError) as exc:
