@@ -228,6 +228,9 @@ class PreparationPlan:
     #: 登记序号（私有，仅桌面拥有的 native 计划；`PreparationService.register` 盖章，单调递增）。启动的票据与会话都带着它：
     #: 同脚本重跑只取消序号**更小**（更早登记）的启动，序号是唯一的先后依据——和准备层的取消同一个顺序
     launch_order: int | None = None
+    #: 路由因「上一次成功」沿用 native、而那条记录的依据只到 show 屏障为止时，计划依赖的那次运行的计划号（私有，不进
+    #: `to_payload()` / 事件 / 诊断）。认领与起跑前 `_stale_reason` 再核它仍停着、从没放行过；"" = 不依赖（#1047）
+    barrier_hold: str = ""
 
     def to_payload(self) -> dict:
         return {
@@ -265,18 +268,19 @@ class PreparationPlan:
 
 def _last_success_profile(
     root: str, script: str, *, python: str, source: str, run=None
-) -> str | None:
+) -> tuple[str | None, str]:
     """这个脚本上一次成功用的执行语义（`launchctx` 记录），记录此刻仍成立才算；否则 None。
+    第二项是沿用所依赖的那次仍停在 show 屏障上的运行（计划号），不依赖任何运行时为 ""。
 
     成立 = 解释器 / 环境 / 脚本字节 / 运行目录档都没变，**且记录的运行配置就是本次请求的运行配置**（argv 的不透明引用相同）。"""
     if not python:
-        return None
+        return None, ""
     try:
         record = runconfig.launch_record(root, script)
     except runconfig.RunConfigError:
-        return None
+        return None, ""
     if record is None:
-        return None
+        return None, ""
     facets = (
         launchctx.FACET_INTERPRETER,
         launchctx.FACET_ENVIRONMENT,
@@ -287,35 +291,39 @@ def _last_success_profile(
         record, project_root=root, script=script, python=python, python_source=source, facets=facets
     )
     if reason is not None:
-        return None
+        return None, ""
     # 记录是对**某个运行配置**的成功：本次请求的运行配置不同（或记录有而请求没有），沿用的就是别人的结论
     if record.get("run_config") != (run.config_id if run is not None else None):
-        return None
+        return None, ""
     profile = launchctx.profile_of(record)
+    hold = ""
+    if (
+        profile == execspec.PROFILE_NATIVE
+        and (record.get("source") or {}).get("basis_observed") is False
+    ):
+        hold = launchctx.barrier_basis_launch(record)
     if (
         profile == execspec.PROFILE_NATIVE
         and (record.get("source") or {}).get("basis_observed") is False
         # 停在 `show()` 屏障上收口的记录：依据只到屏障为止。那条运行此刻仍停着、从没放行过，屏障之后的代码就还没执行过，
         # 到此为止的观察即全部输入（`verify` 已按它核过摘要）；放行过 / sidecar 重启过 = 后面可能又读了别的，不沿用
-        and not nativesession.REGISTRY.holds_barrier_observation(
-            launchctx.barrier_basis_launch(record)
-        )
+        and not nativesession.REGISTRY.holds_barrier_observation(hold)
     ):
         # 与 #982 的 reuse_last_success 同样保守：这条 native 记录没有完整的 helper / 数据观察（#1047），不证明它们没变，不据此沿用 native
-        return None
-    return profile
+        return None, ""
+    return profile, hold
 
 
 def _route_of(
     root: str, script: str, *, python: str, source: str, decision: dict | None, run=None
-) -> tuple[runroute.Route, str | None]:
+) -> tuple[runroute.Route, str | None, str]:
     """`execution="auto"` 的落点：策略 / 运维开关 / 上次成功 / 静态证据 → 路由（零执行用户代码）。
     同时返回路由分析的那份字节的 sha256，`plan_for` 用它核对计划的 `script_revision`（#1034：分析与 revision 须是同一份内容）。"""
     policy = execpolicy.mode_for(root)
     enabled = execpolicy.fallback_enabled()
-    last = None
+    last, hold = None, ""
     if policy != execpolicy.MODE_SAFE_ONLY and enabled:
-        last = _last_success_profile(root, script, python=python, source=source, run=run)
+        last, hold = _last_success_profile(root, script, python=python, source=source, run=run)
     mode = decision["mode"] if decision else workdir.mode_for(root)
     path = Path(root) / figcapture.normalize_relative_script(script)
     try:
@@ -341,7 +349,9 @@ def _route_of(
         ",".join(sorted({e["rule"] for e in route.evidence})) or "-",
         route.elapsed_ms,
     )
-    return route, (hashlib.sha256(raw).hexdigest() if raw is not None else None)
+    # 计划只在真的因「上一次成功」沿用 native 时才依赖那次仍停着的运行
+    held = hold if route.reason == runroute.REASON_PREVIOUS_SUCCESS else ""
+    return route, (hashlib.sha256(raw).hexdigest() if raw is not None else None), held
 
 
 def plan_for(
@@ -509,11 +519,12 @@ def plan_for(
             decision["mode"] if decision else workdir.mode_for(root),
         )
     route = None
+    barrier_hold = ""
     if execution == EXECUTION_AUTO:
         # 运行前路由（V2 PR2，ADR 0133）：只在用户发起的桌面运行里由准备会话要 `auto`；CLI / MCP 永远是显式 safe
         execution = execspec.PROFILE_SAFE
         if script is not None and target == TARGET_SCRIPT:
-            route, routed_digest = _route_of(
+            route, routed_digest, barrier_hold = _route_of(
                 root, script, python=python, source=source, decision=decision, run=run
             )
             if route.execution == execspec.PROFILE_NATIVE and not python:
@@ -624,6 +635,7 @@ def plan_for(
         launch_context=launch_context,
         execution=execution,
         route=route.public() if route is not None else None,
+        barrier_hold=barrier_hold if execution == execspec.PROFILE_NATIVE else "",
         grant=grant,
         budget={
             "build_idle_timeout_s": pool.BUILD_IDLE_TIMEOUT,
@@ -1202,6 +1214,11 @@ class PreparationService:
             plan.input_remap_generation is not None
             and inputremap.generation(root) != plan.input_remap_generation
         ):
+            return STALE_DATA_BINDING, {}
+        if plan.barrier_hold and not nativesession.REGISTRY.holds_barrier_observation(
+            plan.barrier_hold
+        ):
+            # 沿用 native 凭的是旧运行停在屏障上的观察：它被放行 / 断线后可能又读了别的输入，依据作废，重新检查
             return STALE_DATA_BINDING, {}
         if plan.interpreter:
             try:

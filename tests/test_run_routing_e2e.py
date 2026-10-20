@@ -16,6 +16,8 @@ from __future__ import annotations
 
 import time
 
+import pytest
+
 from support import foundation_app as fa, nativekit
 from tavotto.engine import execpolicy
 from test_execution_fallback_e2e import (
@@ -303,6 +305,63 @@ def test_a_show_barrier_basis_is_not_reused_once_the_run_was_stopped(tmp_path):
         ):
             time.sleep(0.2)
         assert _reopen(app)["plan"]["route"]["reason"] == "ordinary_plot"
+
+
+def test_a_plan_leaning_on_a_parked_show_barrier_goes_stale_once_the_old_run_is_released(
+    tmp_path,
+):
+    """Codex #1202 P1：计划沿用 native 凭的是旧运行停在 show 屏障上的观察。领它之前旧运行被放行，旧计划不许照样直达 native
+    （放行后脚本可能又读了别的输入）：认领 / 起跑前的过期核对把它作废，一次 native 也不起。"""
+    proj, log = _project(tmp_path, DYNAMIC_SHOW)
+    with sidecar_app(proj, tmp_path / "work", env_overrides=ENV) as app:
+        _settled(app, _run(app, _create(app)))
+        assert _runs(log) == 2
+        (live,) = [s for s in _native_sessions(app, proj) if s["state"] not in ("ended", "failed")]
+        again = _reopen(app)
+        route = again["plan"]["route"]
+        assert (route["execution"], route["reason"]) == ("native", "previous_successful_profile")
+
+        app.call(f"/api/native/sessions/{live['session_id']}/continue", {}, timeout=60)
+        (run,) = [a for a in again["actions"] if a["kind"] == "run"]
+        with pytest.raises(fa.HttpError) as stale:
+            app.call(
+                f"{SESSIONS}/{again['session_id']}/actions",
+                {"action_id": run["id"], "expected_config_revision": again["config_revision"]},
+                timeout=60,
+            )
+        assert (stale.value.status, stale.value.body.get("code")) == (409, "preparation_plan_stale")
+        time.sleep(2)
+        assert _runs(log) == 2, "过期的旧计划一行都不跑"
+        # 重新检查：旧运行已放行，依据作废，回到静态路由
+        assert _reopen(app)["plan"]["route"]["reason"] == "ordinary_plot"
+
+
+def test_a_plan_leaning_on_a_still_parked_show_barrier_runs_native_once(tmp_path):
+    """主路径（#1202）：旧运行仍停在 show 屏障上、没放行——重开沿用 native，领运行时 `_stale_reason` 核到仍停着，
+    不过期；脚本只再执行 1 次，新运行让位时旧会话被取消。"""
+    proj, log = _project(tmp_path, DYNAMIC_SHOW)
+    with sidecar_app(proj, tmp_path / "work", env_overrides=ENV) as app:
+        _settled(app, _run(app, _create(app)))
+        assert _runs(log) == 2
+        (live,) = [s for s in _native_sessions(app, proj) if s["state"] not in ("ended", "failed")]
+        again = _reopen(app)
+        route = again["plan"]["route"]
+        assert (route["execution"], route["reason"]) == ("native", "previous_successful_profile")
+        _run(app, again)
+        _wait_runs(log, 3)
+        assert _runs(log) == 3, "沿用 native：只执行 1 次"
+        settled = _settled(app, again["session_id"])
+        assert _history(settled)[-1] == ("native", "succeeded")
+        deadline = time.time() + 60
+        while time.time() < deadline and any(
+            s["session_id"] == live["session_id"] and s["state"] not in ("ended", "failed")
+            for s in _native_sessions(app, proj)
+        ):
+            time.sleep(0.2)
+        assert not any(
+            s["session_id"] == live["session_id"] and s["state"] not in ("ended", "failed")
+            for s in _native_sessions(app, proj)
+        ), "新运行让位：旧会话已结束"
 
 
 def test_a_browser_mode_session_is_never_routed_to_native(tmp_path):

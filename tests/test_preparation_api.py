@@ -1177,3 +1177,37 @@ def test_auto_adopting_a_user_environment_does_not_stale_the_first_preparation(
     assert result["status"] == preparation.STATUS_READY
     assert fake_pool["build_calls"] == 1
     assert str(lab) not in json.dumps(body), "公开投影不带用户环境的路径"
+
+
+def test_a_plan_leaning_on_a_parked_show_barrier_is_stale_once_the_hold_is_gone(
+    tmp_path, fake_pool, monkeypatch
+):
+    """`barrier_hold`（#1202）：非空时 `_stale_reason` 核那次运行仍停着；空 = 不依赖，不核。"""
+    import dataclasses
+
+    from tavotto.engine import nativesession
+
+    root = _project(tmp_path, "p")
+    plan = preparation.plan_for(
+        project_id="pj",
+        project_root=str(root),
+        asset_id="fig.pdf",
+        stem="fig",
+        script="fig.py",
+        entry="__main__",
+        original_artifact="fig.pdf",
+    )
+    assert plan.barrier_hold == "" and "barrier_hold" not in json.dumps(plan.to_payload())
+    held = dataclasses.replace(plan, barrier_hold="launch-1")
+    asked = []
+    holding = {"v": True}
+    monkeypatch.setattr(
+        nativesession.REGISTRY,
+        "holds_barrier_observation",
+        lambda lid: asked.append(lid) or holding["v"],
+    )
+    assert preparation.stale_reason(plan) is None and asked == []
+    assert preparation.stale_reason(held) is None and asked == ["launch-1"]
+    holding["v"] = False
+    assert preparation.stale_reason(held) == (preparation.STALE_DATA_BINDING, {})
+    assert preparation.stale_reason(plan) is None
