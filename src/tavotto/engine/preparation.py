@@ -295,6 +295,11 @@ def _last_success_profile(
     if (
         profile == execspec.PROFILE_NATIVE
         and (record.get("source") or {}).get("basis_observed") is False
+        # 停在 `show()` 屏障上收口的记录：依据只到屏障为止。那条运行此刻仍停着、从没放行过，屏障之后的代码就还没执行过，
+        # 到此为止的观察即全部输入（`verify` 已按它核过摘要）；放行过 / sidecar 重启过 = 后面可能又读了别的，不沿用
+        and not nativesession.REGISTRY.holds_barrier_observation(
+            launchctx.barrier_basis_launch(record)
+        )
     ):
         # 与 #982 的 reuse_last_success 同样保守：这条 native 记录没有完整的 helper / 数据观察（#1047），不证明它们没变，不据此沿用 native
         return None

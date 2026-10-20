@@ -21,11 +21,12 @@ v2（V2 PR2，ADR 0133）起记录多一个 `profile`（`safe` | `native`）：s
 （`NativeBasis`，由 app 成功收口经 `record_success` 同一事务写入）。运行前路由读它回答「上次成功用哪种执行语义」。
 
 native 的 helper / 数据依据（#1047）：桌面拥有的 bridge 带 `--observe-inputs`，用与 safe worker 同一个 `figcapture.InputObserver`
-观察脚本读到的项目内文件与 import 的本地模块，在屏障上的 build 里报给父进程。成功收口时已有完整观察 → `source.basis` 填上、
-`basis_observed: true`（与 safe 记录同样可被核验、可被沿用）。收口在 `show()` 屏障上时，观察是脚本到此为止读过的全部：桌面拥有的
-运行停在屏障上之后只会被结束或重跑，后面的代码不执行，所以同样记 `true`；之后真被放行（继续 / 放手）→ `unobserve_native_basis`
-改回 `false`，脚本跑完后的那次 build 由 `observe_native_basis` 按 `launch_id` 重新补齐。观察不全（截断 / 有文件没算出摘要）一律留
-`false`、不沿用。
+观察脚本读到的项目内文件与 import 的本地模块，在屏障上的 build 里报给父进程。脚本跑完后的观察是全部输入 → `source.basis` 填上、
+`basis_observed: true`（与 safe 记录同样可被核验、可被沿用）。收口在 `show()` 屏障上时，观察只是到此为止：磁盘上记
+`basis_observed: false` + `basis_scope: "barrier"`（依据照填）——脚本之后可能被放行（API 的继续、断线时 runner 自己放开屏障），
+落盘的记录永远不替「后面没再读」作保。只有同一个进程里那条运行**仍停在屏障上、从没放行过**时，路由才把它当成已观察
+（`preparation._last_success_profile` 问 `nativesession.REGISTRY.holds_barrier_observation`）；sidecar 重启 / 放行过 = 不沿用。
+脚本跑完后的那次 build 由 `observe_native_basis` 按 `launch_id` 补成 `true`。观察不全（截断 / 有文件没算出摘要）一律留 `false`、不沿用。
 
 记录只是**事实**，不驱动启动决策：启动方式是解释器路径的纯函数（`launcher.launcher_for_interpreter`），与脚本、项目、记录
 无关——所以以前裸起成功过的 Conda 脚本，今后会带上激活环境（这本来就是用户对 Conda 环境的预期）。
@@ -59,6 +60,8 @@ PROFILES = (PROFILE_SAFE, PROFILE_NATIVE)
 FACET_INTERPRETER = "interpreter"
 FACET_ENVIRONMENT = "environment"
 FACET_SOURCE = "source"
+#: native 记录的依据只到 `show()` 屏障为止（`source.basis_scope`，#1047）
+BASIS_SCOPE_BARRIER = "barrier"
 FACET_CWD = "cwd"
 FACET_RUN_CONFIG = "run_config"
 FACET_BINDING = "binding"
@@ -202,13 +205,20 @@ def profile_of(record: dict | None) -> str | None:
 
 
 def build_native_record(
-    project_root: str | Path, script: str, plan, *, run=None, inputs: dict | None = None
+    project_root: str | Path,
+    script: str,
+    plan,
+    *,
+    run=None,
+    inputs: dict | None = None,
+    complete: bool = True,
 ) -> dict | None:
     """桌面 native 成功（V2 PR2）→ 启动上下文记录。解释器 / 环境代 / 运行目录档 / 数据绑定取**计划那一刻**的快照，脚本字节要与
     计划的 `script_revision` 仍一致（执行期间被改了就不记）。
 
-    `inputs` 是 bridge 在屏障上报的输入观察（#1047，`NativeSession.observed_inputs`；`show()` 屏障上是到此为止的全部）：完整 →
-    `source.basis` 与 safe 记录同形、`basis_observed: true`；没有（放行过、终端旧 runner）或不完整 → `basis` 为空且 `basis_observed: false`：
+    `inputs` 是 bridge 在屏障上报的输入观察（#1047，`NativeSession.observed_inputs`）：脚本跑完后的（`complete`）→ `source.basis`
+    与 safe 记录同形、`basis_observed: true`；停在 `show()` 屏障上的（`complete=False`）→ 依据照填，但 `basis_observed: false` +
+    `basis_scope: "barrier"`（只在那条运行仍停着时由路由当真，见模块说明）；没有（放行过、终端旧 runner）或不完整 → `basis` 为空且 `basis_observed: false`：
     核验只覆盖脚本本身，这条记录只回答「上次成功用哪种语义」，**不是**「数据与 helper 也没变」的证据，不沿用。
     `launch_id`（计划号）让脚本跑完之后的 `observe_native_basis` 认得出这是哪一次运行的记录。"""
     if getattr(plan, "execution", None) != PROFILE_NATIVE or not plan.interpreter:
@@ -232,6 +242,13 @@ def build_native_record(
     decision = plan.workdir_decision if isinstance(plan.workdir_decision, dict) else {}
     binding = plan.binding if isinstance(plan.binding, dict) else {}
     basis = _basis_from_inputs(inputs)
+    source = {
+        "script_sha1": sha1,
+        "basis": basis or {},
+        "basis_observed": basis is not None and complete,
+    }
+    if basis is not None and not complete:
+        source["basis_scope"] = BASIS_SCOPE_BARRIER
     return {
         "version": RECORD_VERSION,
         "profile": PROFILE_NATIVE,
@@ -248,19 +265,14 @@ def build_native_record(
         "cwd_mode": decision.get("mode") or workdir.mode_for(project_root),
         "run_config": run.config_id if run is not None else None,
         "run_sensitive": bool(run.sensitive) if run is not None else False,
-        "source": {
-            "script_sha1": sha1,
-            "basis": basis or {},
-            "basis_observed": basis is not None,
-        },
+        "source": source,
         "binding_revision": binding.get("revision") or "",
     }
 
 
 def observe_native_basis(project_root: str | Path, launch_id: str, inputs: dict | None) -> bool:
-    """脚本跑完之后补齐 native 记录的依据（#1047）：收口在 `show()` 屏障上、之后被放行的运行，记录已由
-    `unobserve_native_basis` 改回 `basis_observed: false`，这里按 `launch_id` 找到**这一次运行**的那条、填上 `basis` 并置 `true`。
-    回「有没有补」。
+    """脚本跑完之后补齐 native 记录的依据（#1047）：收口在 `show()` 屏障上的运行，记录是 `basis_observed: false`；`inputs` 必须是
+    脚本跑完后的全部观察。按 `launch_id` 找到**这一次运行**的那条、换上 `basis` 并置 `true`。回「有没有补」。
 
     只动 native、同一个 `launch_id`、尚未观察过的那条：之后又有别的成功（另一次运行 / safe）写进来，`launch_id` 就对不上，
     不会把这次的观察盖到别人的记录上。观察不完整 / 登记读不出 → 不补（记录保持「不沿用」）。"""
@@ -276,7 +288,8 @@ def observe_native_basis(project_root: str | Path, launch_id: str, inputs: dict 
             or src.get("basis_observed") is not False
         ):
             return None
-        return {**record, "source": {**src, "basis": basis, "basis_observed": True}}
+        rest = {k: v for k, v in src.items() if k != "basis_scope"}
+        return {**record, "source": {**rest, "basis": basis, "basis_observed": True}}
 
     try:
         return runconfig.amend_launch_records(project_root, amend)
@@ -284,27 +297,16 @@ def observe_native_basis(project_root: str | Path, launch_id: str, inputs: dict 
         return False
 
 
-def unobserve_native_basis(project_root: str | Path, launch_id: str) -> bool:
-    """这次运行停在屏障上之后被放行（继续 / 放手）：脚本接着跑、可能再读，收口时那份观察不再是全部输入——把同一 `launch_id`
-    的 native 记录改回 `basis_observed: false`（不沿用），等脚本跑完后的 build 经 `observe_native_basis` 重新补齐。回「有没有改」。
-    **必须在放行之前调**：之后才改，中间那一刻重开会按不全的依据沿用。"""
-    if not launch_id:
-        return False
-
-    def amend(record: dict) -> dict | None:
-        src = record.get("source") or {}
-        if (
-            profile_of(record) != PROFILE_NATIVE
-            or record.get("launch_id") != launch_id
-            or src.get("basis_observed") is not True
-        ):
-            return None
-        return {**record, "source": {**src, "basis": {}, "basis_observed": False}}
-
-    try:
-        return runconfig.amend_launch_records(project_root, amend)
-    except runconfig.RunConfigError:
-        return False
+def barrier_basis_launch(record: dict | None) -> str:
+    """停在 `show()` 屏障上收口的 native 记录（依据是到此为止的观察）→ 它的计划号；别的记录 → ""。
+    路由拿计划号去问那条运行此刻是否仍停着、从没放行过（`nativesession.REGISTRY.holds_barrier_observation`）。"""
+    if not isinstance(record, dict) or profile_of(record) != PROFILE_NATIVE:
+        return ""
+    src = record.get("source") or {}
+    if src.get("basis_observed") is not False or src.get("basis_scope") != BASIS_SCOPE_BARRIER:
+        return ""
+    launch_id = record.get("launch_id")
+    return launch_id if isinstance(launch_id, str) else ""
 
 
 @dataclasses.dataclass(frozen=True)
@@ -314,14 +316,23 @@ class NativeBasis:
     plan: object
     #: `NativeSession.observed_inputs`：屏障上 build 带回的观察；None = 放行过 / 没观察（#1047）
     inputs: dict | None = None
+    #: 观察是不是全部输入（脚本跑完后的结束屏障）；False = 停在 `show()` 屏障上、到此为止
+    complete: bool = True
 
 
-def basis_of(result, plan, partial: bool, *, native_inputs: dict | None = None):
+def basis_of(
+    result,
+    plan,
+    partial: bool,
+    *,
+    native_inputs: dict | None = None,
+    native_complete: bool = True,
+):
     """成功收口的启动记录依据：有图失败（partial）= None（清旧记录）；native 计划 = `NativeBasis`；其余取 safe 的回执。"""
     if partial:
         return None
     if getattr(plan, "execution", None) == PROFILE_NATIVE:
-        return NativeBasis(plan, native_inputs)
+        return NativeBasis(plan, native_inputs, native_complete)
     return getattr(result, "receipt", None)
 
 
@@ -368,7 +379,9 @@ def record_success(
     依据不全（`build_record` 回 None）也要提交：它**清掉**旧记录，不让上一次成功的 A 在这次成功的 B 之后继续冒充
     「最近成功」。`update_default=True` 时磁盘面板默认配置同一事务里一起更新（`run` 的引用；无参数 = 清掉）。"""
     if isinstance(rcpt, NativeBasis):
-        record = build_native_record(project_root, script, rcpt.plan, run=run, inputs=rcpt.inputs)
+        record = build_native_record(
+            project_root, script, rcpt.plan, run=run, inputs=rcpt.inputs, complete=rcpt.complete
+        )
     else:
         record = build_record(project_root, script, rcpt, run=run)
     try:

@@ -246,9 +246,9 @@ def test_a_native_success_with_observed_inputs_is_reused_until_a_helper_or_data_
 def test_a_native_success_settled_at_a_show_barrier_is_reused_unless_the_script_was_released(
     tmp_path,
 ):
-    """#1047 修订：成功收口在 `plt.show()` 屏障上。桌面界面对这条运行只给「停止运行」，停着之后只会被结束或重跑，到此为止的
-    观察就是全部输入——重开直达 native、只执行 1 次。真被放行（API 的继续）之前记录改回不沿用；脚本跑完后在结束屏障上 build
-    一次，按计划号补齐依据，又可沿用。"""
+    """#1047 修订：成功收口在 `plt.show()` 屏障上。那条运行仍停着、从没放行过时，屏障之后的代码还没执行，到此为止的观察就是
+    全部输入——重开直达 native。被放行（API 的继续）之后不沿用；脚本跑完后在结束屏障上 build 一次，按计划号补齐依据，又可沿用，
+    再跑只执行 1 次。"""
     proj, log = _project(tmp_path, DYNAMIC_SHOW)
     with sidecar_app(proj, tmp_path / "work", env_overrides=ENV) as app:
         final = _settled(app, _run(app, _create(app)))
@@ -284,6 +284,23 @@ def test_a_native_success_settled_at_a_show_barrier_is_reused_unless_the_script_
         _run(app, again)
         _wait_runs(log, 3)
         assert _runs(log) == 3, "沿用 native：safe 不白跑，只执行 1 次"
+
+
+def test_a_show_barrier_basis_is_not_reused_once_the_run_was_stopped(tmp_path):
+    """停止运行之后，那条运行不再「仍停着」：落盘记录从不替「后面没再读」作保，路由回到静态判断（#1202）。"""
+    proj, _log = _project(tmp_path, DYNAMIC_SHOW)
+    with sidecar_app(proj, tmp_path / "work", env_overrides=ENV) as app:
+        _settled(app, _run(app, _create(app)))
+        (live,) = [s for s in _native_sessions(app, proj) if s["state"] not in ("ended", "failed")]
+        assert _reopen(app)["plan"]["route"]["reason"] == "previous_successful_profile"
+        app.call(f"/api/native/sessions/{live['session_id']}/cancel", {}, timeout=60)
+        deadline = time.time() + 60
+        while time.time() < deadline and any(
+            s["session_id"] == live["session_id"] and s["state"] not in ("ended", "failed")
+            for s in _native_sessions(app, proj)
+        ):
+            time.sleep(0.2)
+        assert _reopen(app)["plan"]["route"]["reason"] == "ordinary_plot"
 
 
 def test_a_browser_mode_session_is_never_routed_to_native(tmp_path):
