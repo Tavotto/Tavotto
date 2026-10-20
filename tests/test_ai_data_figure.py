@@ -10,6 +10,8 @@ from __future__ import annotations
 import ast
 import json
 import math
+import os
+import subprocess
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -138,6 +140,32 @@ def test_categorical_x_with_several_series_is_unsupported_not_guessed(tmp_path):
     assert got == adf.Unsupported("grouped_bars_unsupported")
 
 
+def test_named_y_that_cannot_be_plotted_is_refused_not_swapped():
+    s = _summary("FB-D08")  # x,value,note
+    for ins in ("画 note 随 x 的变化", "画 value 和 note 随 x 的变化"):
+        assert adf.plan_mapping(s, ins) == adf.Unsupported("requested_column_not_numeric"), ins
+    # x 被点名不算 y
+    assert adf.plan_mapping(s, "画 x") == adf.Mapping(x="x", ys=("value",), kind="line")
+
+
+def test_cjk_column_names_take_the_longest_match(tmp_path):
+    p = tmp_path / "d.csv"
+    p.write_text("时间,温度,温度值\n1,2,3\n2,3,4\n", encoding="utf-8")
+    got = adf.plan_mapping(adf.inspect_data_source(p), "画温度值随时间的变化")
+    assert got == adf.Mapping(x="时间", ys=("温度值",), kind="line")
+
+
+def test_x_with_a_bad_value_stays_a_line_and_the_row_is_reported(tmp_path):
+    p = tmp_path / "d.csv"
+    p.write_text("x,y\n1,2\noops,3\n3,4\n", encoding="utf-8")
+    s = adf.inspect_data_source(p)
+    m = adf.plan_mapping(s, "画出来")
+    assert m.kind == "line"
+    got = adf.plotted_data(s, m)
+    assert [(r["row"], r["reason"]) for r in got.not_plotted] == [(3, "x_not_a_value")]
+    assert got.series[0][3] == (2, 2)
+
+
 @pytest.mark.parametrize(
     ("col", "label"),
     [
@@ -239,6 +267,14 @@ def test_stem_is_sanitised():
     assert adf.stem_for("数据.csv") == "data_figure"
 
 
+def test_date_scripts_pin_the_epoch_and_others_do_not():
+    d = _summary("FB-D05")
+    text = adf.render_script(d, _plan("FB-D05"), data_rel=d.path_name, stem="t_figure")
+    assert 'set_epoch("1970-01-01T00:00:00")' in text
+    n = _summary("FB-D03")
+    assert "set_epoch" not in adf.render_script(n, _plan("FB-D03"), data_rel=n.path_name, stem="t")
+
+
 # --------------------------------------------------------------------------- 真 worker 对拍
 def _labelled(man: dict) -> dict[str, dict]:
     out = {}
@@ -284,13 +320,65 @@ def test_worker_draws_exactly_the_expected_data(tmp_path):
     extra = tmp_path / "_extra"
     extra.mkdir()
     (extra / "bars.csv").write_text("sample,value\nA,1\nB,\nC,nan\nD,2\n", encoding="utf-8")
-    BAR_MISSING = "bars.csv"
+    (extra / "dups.csv").write_text("sample,value\nA,1\nA,2\nB,3\n", encoding="utf-8")
+    BAR_MISSING, BAR_DUPS = "bars.csv", "dups.csv"
 
     with ThreadPoolExecutor(max_workers=4) as ex:
-        results = list(ex.map(build, [*MAPPED, BAR_MISSING]))
+        results = list(ex.map(build, [*MAPPED, BAR_MISSING, BAR_DUPS]))
     for sid, expected, man in results:
         got = _labelled(man)
         for e in expected:
             fp = got.get(e["label"])
             assert fp is not None and fp.get("status") == "ok", (sid, e["label"], sorted(got))
             assert fp["parts"][e["part"]] == e["digest"], (sid, e["label"])
+
+
+def _run_main(tmp_path, csv_text, instruction, pre=""):
+    """在 worker 解释器的子进程里跑生成脚本的 main()（不真存盘），返回 `(summary, mapping, 子进程打印的 JSON)`。"""
+    (tmp_path / "d.csv").write_text(csv_text, encoding="utf-8")
+    s = adf.inspect_data_source(tmp_path / "d.csv")
+    m = adf.plan_mapping(s, instruction)
+    script = tmp_path / "d_figure.py"
+    script.write_text(adf.render_script(s, m, data_rel="d.csv", stem="d_figure"), encoding="utf-8")
+    code = (
+        "import json, runpy, matplotlib\n"
+        "matplotlib.use('Agg')\n"
+        f"{pre}\n"
+        "import matplotlib.pyplot as plt\n"
+        "plt.Figure.savefig = lambda *a, **k: None\n"
+        f"ns = runpy.run_path({str(script)!r})\n"
+        "ns['main']()\n"
+        "ax = plt.gcf().axes[0]\n"
+        "print(json.dumps({'x': [p.get_x() for p in ax.patches],"
+        " 'xy': [list(map(float, r)) for r in ax.lines[0].get_xydata()] if ax.lines else []}))\n"
+    )
+    out = subprocess.run(
+        [WORKER_PY, "-c", code],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
+        check=True,
+    ).stdout
+    return s, m, json.loads(out.strip().splitlines()[-1])
+
+
+@pytest.mark.skipif(WORKER_PY is None, reason="not_run：找不到装有 matplotlib 的解释器")
+def test_duplicate_categories_are_drawn_at_distinct_positions(tmp_path):
+    _, m, got = _run_main(tmp_path, "sample,value\nA,1\nA,2\nB,3\n", "画 value")
+    assert m.kind == "bar" and len(got["x"]) == 3 and len(set(got["x"])) == 3, got
+
+
+@pytest.mark.skipif(WORKER_PY is None, reason="not_run：找不到装有 matplotlib 的解释器")
+def test_date_axis_ignores_a_configured_epoch(tmp_path):
+    csv_text = "date,v\n2024-01-01,1\n2024-01-03,2\n"
+    s, m, got = _run_main(
+        tmp_path,
+        csv_text,
+        "画 v",
+        pre="matplotlib.rcParams['date.epoch'] = '2000-01-01T00:00:00'",
+    )
+    assert m.x_is_date
+    flat = tuple(c for pt in got["xy"] for c in pt)
+    ((_, _, want, shape),) = adf.plotted_data(s, m).series
+    assert adf.digest(flat, shape) == adf.digest(want, shape)

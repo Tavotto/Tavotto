@@ -10,7 +10,8 @@ v1 的硬边界（`02-architecture.md` §四、`04-security-model.md`）：被�
 
 * 空单元格、`nan`（`float()` 认得的 NaN 写法）= **缺失**：折线在那里断开，不填 0、不插值；
 * 有限浮点数 = 数值；`inf` 与其它文字 = **不是数**：不画（折线上记作断开、柱图里整行不画），并逐行报告原因；
-* x 列全部是 ISO 日期（`YYYY-MM-DD`）= 时间轴，不当成类别字符串；
+* x 列全部是 ISO 日期（`YYYY-MM-DD`）= 时间轴，不当成类别字符串；日期数值的纪元固定为 1970-01-01（生成的脚本在画图前
+  `set_epoch`，不受用户 matplotlibrc 的 `date.epoch` 影响）；
 * 单位只取自列名后缀，且只认闭集 `UNITS`（`time_s` → `time (s)`、`temperature_C` → `temperature (°C)`）；不认识就原样写列名，
   **绝不补单位**。
 """
@@ -92,7 +93,7 @@ def parse_date(s: str) -> _dt.date | None:
         return None
 
 
-#: matplotlib 默认 `date.epoch`（1970-01-01）下的日期数值：自纪元起的天数
+#: 日期数值 = 自 1970-01-01 起的天数；生成的日期脚本会把 matplotlib 的纪元固定成它（见 `_EPOCH_SETUP`）
 _EPOCH = _dt.date(1970, 1, 1)
 
 
@@ -239,12 +240,25 @@ class Unsupported:
 
 
 def _mentioned(instruction: str, columns: list[str]) -> list[str]:
-    """指令里**按词**提到的列名，按出现位置排序（`ab` 不算提到 `a`）。"""
-    hits = []
+    """指令里**按词**提到的列名，按出现位置排序（`ab` 不算提到 `a`）。
+
+    收集每个列名的全部出现区间；某个命中区间被**另一个更长列名**的命中区间完全覆盖就丢掉（`温度值` 里的 `温度` 不算
+    提到 `温度`）。一个列名只要还有一处未被覆盖的出现就算提到。"""
+    spans: dict[str, list[tuple[int, int]]] = {}
     for c in columns:
-        m = re.search(rf"(?<![A-Za-z0-9_]){re.escape(c)}(?![A-Za-z0-9_])", instruction)
-        if m:
-            hits.append((m.start(), c))
+        for m in re.finditer(rf"(?<![A-Za-z0-9_]){re.escape(c)}(?![A-Za-z0-9_])", instruction):
+            spans.setdefault(c, []).append((m.start(), m.end()))
+    hits = []
+    for c, ss in spans.items():
+        for a, b in ss:
+            covered = any(
+                len(o) > len(c) and oa <= a and b <= ob
+                for o, oss in spans.items()
+                for oa, ob in oss
+            )
+            if not covered:
+                hits.append((a, c))
+                break
     return [c for _, c in sorted(hits)]
 
 
@@ -268,9 +282,12 @@ def plan_mapping(summary: DataSummary, instruction: str) -> Mapping | NeedsInput
     """确定性列映射（不调模型）。规则：
 
     * x：指令里「随 X 的变化」/「vs X」→ X；否则唯一的日期列；否则第一列。
-    * y：指令里提到的、可画的（numeric / mixed）列，去掉 x；一个都没提 → 其余全部可画列。纯文字列（备注）永不当 y。
+    * y：指令里提到的列（去掉 x，x 被点名不算 y）都必须可画（numeric / mixed）才画；点名的 y 里有任何一个画不了 →
+      `Unsupported("requested_column_not_numeric")`，不打折、不静默换成别的列；一个 y 都没点名 → 其余全部可画列。
+      纯文字列（备注）永不自动当 y。
     * 指令一个列都没提、列名又都没有语义（FB-D02 的 a/b/c）→ `needs_input`，带中性预览；
-    * x 是文字类别 → 柱图，只支持一个 y（多系列分组柱 v1 不画，`Unsupported`）；x 是数 / 日期 → 折线。"""
+    * x 一个数都没有（纯文字类别）→ 柱图，只支持一个 y（多系列分组柱 v1 不画，`Unsupported`）；
+      x 是数 / 日期 / 混入坏值的数 → 折线（坏值那行由 `plotted_data` 与模板一起跳过并报告 `x_not_a_value`）。"""
     cols = summary.columns
     per = summary.per_column
     plottable = [c for c in cols if per[c].kind in ("numeric", "mixed")]
@@ -279,13 +296,17 @@ def plan_mapping(summary: DataSummary, instruction: str) -> Mapping | NeedsInput
     if x is None:
         dates = [c for c in cols if per[c].kind == "date"]
         x = dates[0] if len(dates) == 1 else cols[0]
-    ys = [c for c in mentioned if c != x and c in plottable]
-    if not ys:
+    requested = [c for c in mentioned if c != x]
+    if requested:
+        if any(c not in plottable for c in requested):
+            return Unsupported("requested_column_not_numeric")
+        ys = requested
+    else:
         ys = [c for c in plottable if c != x]
     if not ys:
         return Unsupported("no_numeric_column")
     xk = per[x].kind
-    kind = "bar" if xk in ("text", "mixed") else "line"
+    kind = "bar" if xk == "text" else "line"
     mapping = Mapping(x=x, ys=tuple(ys), kind=kind, x_is_date=xk == "date")
     if not mentioned and not any(_descriptive(c) for c in cols):
         return NeedsInput("column_mapping_ambiguous", preview=mapping)
@@ -423,7 +444,7 @@ def _cell(s):
 {x_parser}
 
 def main():
-    with open(DATA, newline="", encoding="utf-8-sig") as fh:
+{setup}    with open(DATA, newline="", encoding="utf-8-sig") as fh:
         rows = [r for r in csv.reader(fh) if any(c.strip() for c in r)]
     header = [h.strip() for h in rows[0]]
     body = rows[1:]
@@ -456,6 +477,15 @@ def _x(s):
         return None
 """
 
+_EPOCH_SETUP = """\
+    import matplotlib.dates
+
+    try:  # 日期数值按 1970 纪元算（与 Tavotto 的期望值一致）；本进程已用过别的纪元时 matplotlib 会拒绝，保持原状
+        matplotlib.dates.set_epoch("1970-01-01T00:00:00")
+    except RuntimeError:
+        pass
+"""
+
 _LINE_BODY = """\
     xs = []
     cols = {y: [] for y in YS}
@@ -482,7 +512,7 @@ _BAR_BODY = """\
             continue
         cats.append(r[xi].strip())
         heights.append(v)
-    ax.bar(cats, heights, label=y)"""
+    ax.bar(range(len(heights)), heights, tick_label=cats, label=y)  # 按行位置画：同名类别不叠在一起"""
 
 
 def render_script(summary: DataSummary, mapping: Mapping, *, data_rel: str, stem: str) -> str:
@@ -509,6 +539,7 @@ def render_script(summary: DataSummary, mapping: Mapping, *, data_rel: str, stem
         x=mapping.x,
         ys=list(mapping.ys),
         x_parser=_X_DATE if mapping.x_is_date else _X_NUMBER,
+        setup=_EPOCH_SETUP if mapping.x_is_date else "",
         plot_body=_LINE_BODY if mapping.kind == "line" else _BAR_BODY,
         xlabel=axis_label(mapping.x),
         ylabel=ylabel,
