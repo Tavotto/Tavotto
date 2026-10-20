@@ -398,6 +398,24 @@ occurrence/figure ordinal/result。看护：`tests/bridge/test_bridge_savefig_ob
 它只确认策略和磁盘字节、不启动 worker，也不宣称场景已经准入。看护：
 `tests/test_selected_figsize_policy.py`、`tests/test_selected_artifact_api.py`。
 
+`script-backed-figure-v1`（来源驱动采用，ADR 0139 / #1200）是第三条策略，**实验开关
+`config.experiments.script_backed_figure` 后面、默认关**（`artifactcontext.script_backed_enabled`；只认显式 `True`）：
+关着时请求带它一律 409 `policy_disabled`，其余行为逐字节不变。要点：① 安全条件分两档——
+`figsession._require_static_artifact_figure`（像素档，精确策略，白名单原样；白名单是**唯一**拒绝原因时报
+`artist_profile`，否则仍是 `unsupported_render_state`）与 `_require_editable_artifact_figure`（编辑档：类型须来自
+matplotlib 本体、实例 / 类 / 被 monkeypatch 的方法都不能是用户代码，另查集合偏移变换、标注坐标回调、norm / cmap；其余
+回调 / filter / path_effects / 非标准 transform·ticks·scale·canvas / usetex / 字体文件 / 子图·寄生轴 / 布局引擎 / draw_event /
+存活线程 / `unregistered` 闸全部保留）；② 保存唯一性、`capture.get(stem) is fig`、PNG + `bbox_inches is None`、图幅（尺寸与
+pHYs）、native 拒绝与精确策略相同；只收 PNG（PDF 的重画摘要含时间戳，没法当确认绑定）；③ 准入走
+`artifactcontext.admit_reconstruction`：像素**逐字节**相等 `exact`、否则 `needs_confirmation` 并带差异度量
+（`pdfbackend.compare_png_extent`，无底噪无阈值），**没有任何自动接受的容差**；响应带 `source_backed:{status,
+reconstruction_sha256, metrics}`；④ 真实编辑（结构性 `figure.frame` 之外的 patch，render / preview_png / 导出同口径）必须带
+`confirmed_reconstruction_sha256`，缺 → `confirmation_required`，与本次重画不等 → `reconstruction_changed`（均不可重试，不杀 worker）；
+⑤ 采用成功时 `record_adoption` 在 `data_dir()/source-backed/adoptions.json` 原子记（项目 × source_id × bytes_sha256，≤4096 条，
+满了只清已失效的、仍满就 `adoption_store_full`），写回类 / 历史类 / 同步 / specfix / invalidate / 老 GET 入口经
+`app._refuse_adopted_source` 命中即拒——**不看请求带没带 policy**；原件字节变了记录不再命中；记录文件**存在但损坏 / 版本不认识**是「状态未知」，fail closed：PNG 写回类入口一律拒、新采用被拒（绝不覆盖损坏文件），恢复方法是确认无人使用后删除 `data_dir()/source-backed/adoptions.json`（日志里有路径）。池键、out_dir、witness、
+`_validated_artifact_probe` 随 `render_policy` 与精确策略永不共享。看护：`tests/test_script_backed_policy.py`。
+
 ## 成功启动上下文与 Conda 激活（P09，EX07 / EX11，AC-11 / AC-19）
 
 - **成功事实只有一份登记**：`runconfig` 的 `launches[脚本]`，由 `app._finalize_script_attempt`（已有的成功收口）经

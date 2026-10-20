@@ -1078,7 +1078,15 @@ ORIGIN_STATIC = "static"
 _ORIGINS = (ORIGIN_EXECUTION, ORIGIN_STATIC)
 SELECTED_ARTIFACT_POLICY = "selected-artifact-v1"
 SELECTED_FIGSIZE_POLICY = "selected-figsize-v1"
-SELECTED_ARTIFACT_POLICIES = (SELECTED_ARTIFACT_POLICY, SELECTED_FIGSIZE_POLICY)
+#: 来源驱动采用（ADR 0139）：编辑档安全条件 + 准入结论（exact / needs_confirmation），与上面两条永不共享 worker / 缓存 / witness。
+SCRIPT_BACKED_POLICY = "script-backed-figure-v1"
+SELECTED_ARTIFACT_POLICIES = (
+    SELECTED_ARTIFACT_POLICY,
+    SELECTED_FIGSIZE_POLICY,
+    SCRIPT_BACKED_POLICY,
+)
+#: 要求「整图 figsize 图幅」的两条策略：编辑请求必须带 `figure.frame == "figsize"`，且只收 PNG。
+FIGSIZE_FRAME_POLICIES = (SELECTED_FIGSIZE_POLICY, SCRIPT_BACKED_POLICY)
 ARTIFACT_VALIDATION_MAX_BYTES = 32 * 1024 * 1024
 ARTIFACT_VALIDATION_MAX_PIXELS = 16_000_000
 
@@ -1103,7 +1111,7 @@ def artifact_request(policy, expected_source=None, patches=()):
         return None
     if policy not in SELECTED_ARTIFACT_POLICIES:
         raise ArtifactContextError("unsupported_render_state", "Unsupported source policy.")
-    if policy == SELECTED_FIGSIZE_POLICY and patches:
+    if policy in FIGSIZE_FRAME_POLICIES and patches:
         frame = next(
             (
                 p["value"]
@@ -1155,7 +1163,7 @@ def selected_artifact_context(value):
     if artifact.kind not in ("pdf", "png"):
         raise ValueError("selected artifact rendering supports PDF and PNG")
     policy = value["render_policy"]
-    if policy == SELECTED_FIGSIZE_POLICY and artifact.kind != "png":
+    if policy in FIGSIZE_FRAME_POLICIES and artifact.kind != "png":
         raise ArtifactContextError(
             "unsupported_render_state", "Selected figsize requires a PNG source."
         )

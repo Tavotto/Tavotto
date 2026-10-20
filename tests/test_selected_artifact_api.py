@@ -714,8 +714,10 @@ def test_selected_source_aliases_share_canonical_identity(api, alias):
 @pytest.mark.parametrize("canvas", [False, True])
 @pytest.mark.parametrize("edited", [False, True])
 def test_export_validate_acknowledges_policy_and_disk_identity_without_worker(
-    api, policy, canvas, edited
+    api, policy, canvas, edited, monkeypatch
 ):
+    # 来源驱动策略在实验开关后面（默认关）；开关关着的行为由 test_script_backed_policy.py 看护。
+    monkeypatch.setattr(ac, "script_backed_enabled", lambda: True)
     spec = export_spec(api, canvas=canvas)
     source = spec["canvas"]["objects"][0] if canvas else spec["original"]
     source.update(source_policy=policy, expected_source=basis(api, "plot.png"))

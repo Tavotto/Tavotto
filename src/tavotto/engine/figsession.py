@@ -217,7 +217,88 @@ def _standard_stale_callback(callback):
     )
 
 
+def _pixel_artist_profile(art) -> bool:
+    """像素档（精确策略）：类型必须在 `_ARTIFACT_ARTISTS` 白名单里，且绘制方法与导入时快照一致。
+
+    返回 True = 「类型不在白名单、但它是 matplotlib 本体的类型且没有覆写绘制方法」：这一项**只是**
+    像素证据拿不到（Legend / Collection / Annotation …）。调用方把整张图的其余安全条件都查完，
+    **只有它是唯一的拒绝原因时**才报 `artist_profile`（来源驱动策略可以接手）；同一张图上
+    还有任何真正的不安全状态，报的仍是 `unsupported_render_state`。用户自己的类型是真的不安全，
+    当场 `unsupported_render_state`。"""
+    names = _ARTIST_METHODS
+    methods = _ARTIFACT_ARTISTS.get(type(art))
+    if methods is None:
+        _edit_artist_profile(art)  # 非 matplotlib 本体 / 有覆写：当场 unsupported_render_state
+        return True
+    if any(name in vars(art) for name in names) or methods != tuple(
+        getattr(type(art), name, None) for name in names
+    ):
+        raise ArtifactSourceUnavailable("unsupported_render_state")
+    return False
+
+
+def _matplotlib_source_file(function):
+    """方法的真实定义文件是否在 matplotlib 包内（`__module__` 可以伪造，`co_filename` 不行）。"""
+    function = inspect.unwrap(function) if callable(function) else function
+    code = getattr(function, "__code__", None)
+    package = os.path.dirname(os.path.abspath(matplotlib.__file__))
+    return code is not None and os.path.abspath(code.co_filename).startswith(package + os.sep)
+
+
+def _edit_artist_profile(art) -> bool:
+    """编辑档（来源驱动策略）：去掉「类型必须在白名单」，判据改为「类型来自 matplotlib 本体，
+    实例与类（含被 monkeypatch 的）都没有覆写绘制方法」。其余安全条件由调用方统一保留。"""
+    cls = type(art)
+    if not cls.__module__.startswith("matplotlib."):
+        raise ArtifactSourceUnavailable("unsupported_render_state")
+    for name in _ARTIST_METHODS:
+        if name in vars(art):
+            raise ArtifactSourceUnavailable("unsupported_render_state")
+        defined = next((c for c in cls.__mro__ if name in vars(c)), None)
+        if (
+            defined is None
+            or not defined.__module__.startswith("matplotlib.")
+            or not _matplotlib_source_file(vars(defined)[name])
+        ):
+            raise ArtifactSourceUnavailable("unsupported_render_state")
+    # 白名单类型没有、而放开类型后才出现的用户代码入口（集合的偏移变换、标注的坐标回调、
+    # 色阶映射的 norm / cmap）：与白名单档对 transform / formatter 的要求同一口径。
+    offset = getattr(art, "get_offset_transform", None)
+    if offset is not None and not _static_transform(offset()):
+        raise ArtifactSourceUnavailable("unsupported_render_state")
+    if isinstance(art, Annotation):
+        pending = [art.xycoords, art.get_anncoords()]
+        while pending:
+            coord = pending.pop()
+            if isinstance(coord, tuple):
+                pending.extend(coord)
+            elif isinstance(coord, transforms.Transform):
+                if not _static_transform(coord):
+                    raise ArtifactSourceUnavailable("unsupported_render_state")
+            elif not isinstance(coord, str):
+                raise ArtifactSourceUnavailable("unsupported_render_state")
+    if hasattr(art, "norm") and hasattr(art, "cmap"):
+        norm, cmap = art.norm, art.cmap
+        if (
+            type(norm).__module__ != "matplotlib.colors"
+            or type(norm).__name__ == "FuncNorm"
+            or type(cmap).__module__ != "matplotlib.colors"
+        ):
+            raise ArtifactSourceUnavailable("unsupported_render_state")
+    return False
+
+
 def _require_static_artifact_figure(fig):
+    """像素档：精确策略（`selected-figsize-v1` / `selected-artifact-v1`）专用。"""
+    _require_artifact_figure(fig, _pixel_artist_profile)
+
+
+def _require_editable_artifact_figure(fig):
+    """编辑档：来源驱动策略（`script-backed-figure-v1`）专用，ADR 0139 §三。"""
+    _require_artifact_figure(fig, _edit_artist_profile)
+
+
+def _require_artifact_figure(fig, artist_profile):
     if type(fig) is not Figure or not _standard_methods(
         fig.canvas, _STATIC_CANVASES, _CANVAS_METHODS
     ):
@@ -253,20 +334,13 @@ def _require_static_artifact_figure(fig):
                     isinstance(item, ScalarFormatter) and item.get_useLocale()
                 ):
                     raise ArtifactSourceUnavailable("unsupported_render_state")
-    pending, seen = [fig], set()
+    pending, seen, outside_profile = [fig], set(), False
     while pending:
         art = pending.pop()
         if id(art) in seen:
             continue
         seen.add(id(art))
-        names = _ARTIST_METHODS
-        methods = _ARTIFACT_ARTISTS.get(type(art))
-        if (
-            methods is None
-            or any(name in vars(art) for name in names)
-            or methods != tuple(getattr(type(art), name, None) for name in names)
-        ):
-            raise ArtifactSourceUnavailable("unsupported_render_state")
+        outside_profile |= artist_profile(art)
         if art.get_agg_filter() is not None or art.get_path_effects():
             raise ArtifactSourceUnavailable("unsupported_render_state")
         if not _standard_stale_callback(art.stale_callback) or art._callbacks.callbacks:
@@ -283,6 +357,8 @@ def _require_static_artifact_figure(fig):
         if isinstance(art, Text) and (art.get_usetex() or art.get_fontproperties().get_file()):
             raise ArtifactSourceUnavailable("unsupported_render_state")
         pending.extend(art.get_children())
+    if outside_profile:
+        raise ArtifactSourceUnavailable("artist_profile")
 
 
 def _materialize_artifact_background(fig, options):
@@ -868,7 +944,8 @@ class LiveFigureSession:
             or row["options"].get("format") != self.artifact_source["kind"]
         ):
             raise ArtifactSourceUnavailable("unsupported_render_state")
-        if self.artifact_source["render_policy"] == figcapture.SELECTED_FIGSIZE_POLICY and (
+        policy = self.artifact_source["render_policy"]
+        if policy in figcapture.FIGSIZE_FRAME_POLICIES and (
             self.artifact_source["kind"] != "png"
             or "bbox_inches" not in row["options"]
             or row["options"]["bbox_inches"] is not None
@@ -876,7 +953,10 @@ class LiveFigureSession:
             raise ArtifactSourceUnavailable("unsupported_render_state")
         if extras is not None and (type(extras) is not tuple or len(extras)):
             raise ArtifactSourceUnavailable("unsupported_render_state")
-        _require_static_artifact_figure(fig)
+        if policy == figcapture.SCRIPT_BACKED_POLICY:
+            _require_editable_artifact_figure(fig)
+        else:
+            _require_static_artifact_figure(fig)
         self._artifact_background_hidden = _materialize_artifact_background(fig, row["options"])
         if type(fig.canvas) is FigureCanvasBase:
             # Matplotlib 3.11 close() detaches Agg; bind it without another draw.
