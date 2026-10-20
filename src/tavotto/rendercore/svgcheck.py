@@ -110,6 +110,7 @@ _MATPLOTLIB_DOCTYPE = (
     b'<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN"\n'
     b'  "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">'
 )
+_MATPLOTLIB_DOCTYPE_ANY_EOL = re.compile(re.escape(_MATPLOTLIB_DOCTYPE).replace(b"\\\n", rb"\r?\n"))
 
 
 @dataclass(frozen=True)
@@ -137,8 +138,10 @@ def strip_matplotlib_doctype(data: bytes) -> bytes:
     """Remove only Matplotlib's exact stock declaration, never a custom DTD/subset."""
     prolog = re.match(rb"\A(?:\xef\xbb\xbf)?\s*(?:<\?xml\b[^?]*\?>\s*)?", data)
     start = prolog.end()
-    if data.startswith(_MATPLOTLIB_DOCTYPE, start):
-        return data[:start] + data[start + len(_MATPLOTLIB_DOCTYPE) :]
+    # 声明里的换行只认 LF 或 CRLF：Windows 上 matplotlib 以文本模式写文件，换行变成 CRLF（同一个声明）
+    found = _MATPLOTLIB_DOCTYPE_ANY_EOL.match(data, start)
+    if found:
+        return data[:start] + data[found.end() :]
     return data
 
 
