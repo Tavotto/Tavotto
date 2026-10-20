@@ -6037,14 +6037,20 @@ def _refuse_adopted_source(*rel_ids, reason="unsupported_render_state"):
     """服务端写回闸（ADR 0139 §五.3）：这些面板的磁盘原件此刻的字节若已被来源驱动策略采用过，
     写回类 / 历史类入口一律拒绝——**不看请求带没带 policy**（前端被绕过、旧标签页、MCP 都挡得住）。
     原件字节变了（hash 不同）记录不再命中，由该入口原有的校验接手。"""
+    if not engine_artifactcontext.adoption_store_exists():
+        return  # 从没采用过任何东西：与没有这道闸时逐字节相同的行为、错误顺序
+    try:
+        project = require_project()
+    except Exception:  # noqa: BLE001 —— 没有项目：交给入口原有的校验 / 错误码
+        return
     for rel_id in rel_ids:
         if not isinstance(rel_id, str) or engine_runtimeasset.is_runtime_id(rel_id):
             continue
         try:
             path = safe_resolve(rel_id)
-        except HTTPException:
-            continue  # 不存在 / 越界：交给入口自己的 404 / 403
-        if engine_artifactcontext.is_adopted(require_project(), path):
+        except Exception:  # noqa: BLE001 —— 不存在 / 越界 / 范围外格式：交给入口自己的 404 / 403 / 专用错误
+            continue
+        if engine_artifactcontext.is_adopted(project, path):
             raise engine_artifactcontext.ArtifactContextError(
                 reason,
                 "This source is adopted from its script; the original file is never rewritten.",
