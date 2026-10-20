@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/Button'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { SwapText } from '@/components/ui/SwapText'
 import { runUndoRedo } from '@/hooks/useKeyboard'
-import { hintDismissTimer, useHintStore } from '@/lib/onboarding/hints'
+import { ANCHORED_HINTS, hintDismissTimer, useHintStore } from '@/lib/onboarding/hints'
 import { literal, msg, t as translate, type UiMessage } from '@/i18n'
 import { useFormatMessage } from '@/i18n/react'
 import type { DismissTimer } from '@/lib/dismissTimer'
@@ -294,7 +294,8 @@ export function NotificationRail({ announceRole = 'alert' }: { announceRole?: 'a
   const liveText = fmt(status)
   const statusPresence = usePresence(!!status, DURATION.fast)
 
-  const hint = useHintStore((s) => s.current)
+  // 带锚点的提示（`ANCHORED_HINTS`）由锚点所在组件自己画，不进这条轨；它仍占 current 的槽位
+  const hint = useHintStore((s) => (s.current && ANCHORED_HINTS.has(s.current) ? null : s.current))
   const hintToken = useHintStore((s) => s.token)
   const dismissHint = useHintStore((s) => s.dismiss)
   const hintText = hint ? t(`hints.${hint}`) : ''

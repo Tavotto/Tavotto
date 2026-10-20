@@ -34,6 +34,8 @@ export type ActivityDetail =
   | { kind: 'project.opened'; tutorial: boolean }
   /** 工作区在快速编辑 / 画布排版之间切换 */
   | { kind: 'workspace.mode_changed'; mode: 'fast_edit' | 'layout' }
+  /** 用户**主动**从快速编辑回到画布排版（`returnToLayout` 一处发；换文档 / 修剪 / 定位问题的被动退出不发） */
+  | { kind: 'workspace.returned_to_layout' }
   /** `openFastEdit()` 真的把一张图开进了快速编辑（`layout_only` 也算打开，只是进不了图内） */
   | { kind: 'figure.opened_fast_edit'; outcome: 'editing' | 'layout_only' }
   /** 进入图内元素编辑态（快速编辑与画布排版两条路都经过它；此刻在哪条工作流问 workspace store） */
@@ -73,6 +75,7 @@ export const ACTIVITY_KINDS: readonly ActivityKind[] = [
   'selection.ungrouped',
   'project.opened',
   'workspace.mode_changed',
+  'workspace.returned_to_layout',
   'figure.opened_fast_edit',
   'figure.element_edit_entered',
   'selection.changed',
