@@ -912,3 +912,25 @@ describe('useServerEvents 的 SSE 重连回调', () => {
     await act(async () => { root.unmount() })
   })
 })
+
+describe('PNG 采用被拒的说明不被后端原句顶掉（ADR 0139 PR1）', () => {
+  const seedPanel = () =>
+    useDocumentStore.getState().commit(literal('seed'), (d) => {
+      d.objects.push({
+        id: 'pp', type: 'panel', fileId: 'plot.png', fileKind: 'raster', script: 'f.py', figureFrame: 1,
+        nativeW: 50, nativeH: 40, x: 0, y: 0, w: 50, h: 40, overrides: [],
+      } as PanelObject)
+    })
+  it('同一张图的 render.failed 在采用失败说明还挂着时让位；别的图 / 没有说明时照常报', () => {
+    seedPanel()
+    useUiStore.getState().setStatus(literal('原因 + 出路'), 'info', { owner: 'png.admit:pp' })
+    handleServerEvent(ev({ kind: 'render.failed', pj: 'p1', id: 'plot.png', error: '后端原句' }))
+    expect(useUiStore.getState().statusOwner).toBe('png.admit:pp')
+    expect(useUiStore.getState().statusTone).toBe('info')
+    handleServerEvent(ev({ kind: 'render.failed', pj: 'p1', id: 'other.png', error: '后端原句' }))
+    expect(statusKey()).toBe('status.renderFailedWithError')
+    useUiStore.getState().setStatus(null)
+    handleServerEvent(ev({ kind: 'render.failed', pj: 'p1', id: 'plot.png', error: '后端原句' }))
+    expect(statusKey()).toBe('status.renderFailedWithError')
+  })
+})

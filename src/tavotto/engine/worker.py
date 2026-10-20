@@ -40,6 +40,7 @@ import argparse
 import ast
 import contextlib
 import faulthandler
+import hashlib
 import importlib
 import importlib.util
 import json
@@ -268,6 +269,49 @@ PROTOCOL_VERSION = wireproto.PROTOCOL_VERSION
 V1_COMMANDS = wireproto.V1_COMMANDS
 ProtocolError = wireproto.ProtocolError
 _ms = figsession.ms_since
+
+
+def _source_stamp(path: Path) -> tuple[int, int, int, str] | None:
+    """`(mtime_ns, size, inode, sha256)`；读不了回 None。"""
+    try:
+        st = os.stat(path)
+        digest = hashlib.sha256(Path(path).read_bytes()).hexdigest()
+    except OSError:
+        return None
+    return (st.st_mtime_ns, st.st_size, st.st_ino, digest)
+
+
+@contextlib.contextmanager
+def _capture_entry_sha(script: Path, captured: list[str]):
+    """import 期间让入口脚本由 loader **只从源码编译**并记下所编译字节的 sha256（不读任何 .pyc）。
+
+    临时包 `SourceFileLoader.get_code`（try/finally 恢复；沿用 `_tavotto_real` 约定避免叠包）。其他模块走原函数；
+    `get_code` 之外的 import 流程（spec、`__file__`、`__cached__`、执行）不变——`source_to_code` 与
+    `get_data` 都是 `SourceFileLoader` 自己的方法。
+    """
+    from importlib.machinery import SourceFileLoader  # noqa: PLC0415
+
+    target = _norm_path(script)
+    original = SourceFileLoader.get_code
+    real_get_code = getattr(original, "_tavotto_real", original)
+
+    def get_code(self, fullname):
+        try:
+            hit = _norm_path(self.path) == target
+        except (OSError, TypeError, ValueError):
+            hit = False
+        if not hit:
+            return real_get_code(self, fullname)
+        data = self.get_data(self.path)
+        captured.append(hashlib.sha256(data).hexdigest())
+        return self.source_to_code(data, self.path)
+
+    get_code._tavotto_real = real_get_code
+    SourceFileLoader.get_code = get_code
+    try:
+        yield
+    finally:
+        SourceFileLoader.get_code = original
 
 
 class SafeSession(figsession.LiveFigureSession):
@@ -767,6 +811,8 @@ class Worker(wireproto.V1Handler):
         self.built = False
         self.execution_id: str | None = None
         self._execution_watch: str | None = None
+        #: 本进程 build 时实际读到并执行的脚本字节的 sha256（读失败 None）；build 前 None。
+        self._source_sha256: str | None = None
         #: pyplot 兜底因上限丢掉的张数（0 = 一张没丢）。build 响应带出去。
         self.dropped_figures = 0
         #: 每张捕获 Figure 的结构化描述（figcapture.CapturedFigureDescriptor
@@ -1112,10 +1158,12 @@ class Worker(wireproto.V1Handler):
         # 脚本 import 了却从未用到、又没装的包不挡图（ADR 0061 §二 2026-09-24 修订）：判据与
         # 父进程的联合计划同一份（`figcapture.unused_imports`）——计划没要求装它，这里就得让
         # 那一行 import 过得去。读不了 / 解析不了就不装：脚本随后会以它自己的错误结束。
+        # 这份字节只给 ast.parse 用；`source_sha256` 另走执行前后括号（见下面 `pre` / `post`）。
         try:
             import ast  # noqa: PLC0415
 
-            unused = figcapture.unused_imports(ast.parse(self.script.read_bytes()))
+            source_bytes = self.script.read_bytes()
+            unused = figcapture.unused_imports(ast.parse(source_bytes))
         except (OSError, SyntaxError, ValueError):
             unused = frozenset()
         figcapture.install_unused_import_placeholders(str(self.script), unused)
@@ -1140,6 +1188,18 @@ class Worker(wireproto.V1Handler):
 
         capture_threads = set(threading.enumerate())
         t_script = time.perf_counter()
+        # `source_sha256`（TAF 改图验证的判据：这次 build 执行的是哪一版源码）。两条路径各自成立的理由不同：
+        # - entry != "__main__"（`import_module`）：由**实际加载源码的 loader 报摘要**。`_capture_entry_sha` 在这次
+        #   import 期间临时包 `SourceFileLoader.get_code`：入口脚本一律 `get_data` 读源码字节、记 sha256、
+        #   `source_to_code` 编译——完全不读 `__pycache__`（外部运行遗留的 timestamp / unchecked-hash .pyc 过期也
+        #   不会被执行），所以「报的摘要」与「编译执行的字节」是同一份，判据是定义上的，不靠前后戳。
+        # - entry == "__main__"（`runpy.run_path`）：CPython runpy（3.10–3.14 同形）`_get_code_from_file` 对 .py 文件
+        #   只做 `read_code(f)`（仅当文件本身以 .pyc magic 开头才当字节码）、否则 `compile(f.read(), ...)`，
+        #   从不查 `__pycache__`，读的就是源码本身。故沿用执行前后括号：读源码那一刻必落在 pre 与 post 之间，
+        #   两端 (mtime_ns, size, inode, sha) 完全相同 ⇒ 期间没被写过（刻意 utime 回拨属对抗性，不设防）；不同 → None。
+        #   `_source_stamp` 只给这条路径用。
+        pre = _source_stamp(self.script) if self.entry == "__main__" else None
+        entry_shas: list[str] = []
         # `SystemExit` 不是 `Exception`：脚本末尾的 `sys.exit(main())` / `exit()` /
         # `quit()` 会一路穿过 `ensure_built` 的 `except Exception`，落到主循环
         # 那条给协议 `shutdown` 用的 `except SystemExit: break` 上——worker 悄无
@@ -1166,7 +1226,8 @@ class Worker(wireproto.V1Handler):
 
                     runpy.run_path(str(self.script), run_name="__main__")
                 else:
-                    module = importlib.import_module(self.script.stem)
+                    with _capture_entry_sha(self.script, entry_shas):
+                        module = importlib.import_module(self.script.stem)
                     getattr(module, self.entry)()
             except SystemExit as exc:
                 if exc.code not in (None, 0):
@@ -1200,6 +1261,13 @@ class Worker(wireproto.V1Handler):
                 # 脚本跑完了：之后再有谁读 stdin 一律 EOF，绝不再发问（也绝不再碰协议管道）
                 channel.closed = True
                 ledger.stop()
+                # 无论正常结束 / SystemExit / 异常都在这里收括号（finally 不改变原有异常传播）
+                if self.entry == "__main__":
+                    post = _source_stamp(self.script)
+                    self._source_sha256 = pre[3] if pre is not None and pre == post else None
+                else:
+                    # 恰好一次加载才可信；零次（入口模块此前已在 sys.modules，如被 paper_style 提前 import）或多次 → None
+                    self._source_sha256 = entry_shas[0] if len(entry_shas) == 1 else None
         script_ms = _ms(t_script)
         # 脚本跑到了末尾，但被守卫拦下的关键操作之后它观察过受影响的路径（用户 `except Exception`
         # 吞掉什么都不影响这条带外事实）：结果可能与直接 Python 不同，不记成完整成功（P01a，AC-02）
@@ -1292,8 +1360,12 @@ class Worker(wireproto.V1Handler):
         )
 
     def _stems_summary(self) -> dict:
-        # `source` 是加字段，不升协议版本（ADR 0003 §1：两侧容忍未知字段）。
-        return self.session.stems_summary(self.dropped_figures)
+        # `source` / `source_sha256` 是加字段，不升协议版本（ADR 0003 §1：两侧容忍未知字段）。
+        # `source_sha256` 是**本进程当初执行的版本**：去重回旧会话时二次 build 拿到的也是它，不是磁盘现状。
+        return {
+            **self.session.stems_summary(self.dropped_figures),
+            "source_sha256": self._source_sha256,
+        }
 
     def _render(
         self, stem: str, timings: dict | None = None, preview_dpi: int | None = None
@@ -1317,7 +1389,8 @@ class Worker(wireproto.V1Handler):
                 "reason": "unsupported_render_state",
             }
         if cmd == "build":
-            return {"ok": True, **self.build()}
+            # legacy 形状一字不变（test_legacy_envelope_keeps_the_old_response_shape）：`source_sha256` 只给 v1 信封
+            return {"ok": True, **{k: v for k, v in self.build().items() if k != "source_sha256"}}
         if cmd == "export" and (req.get("require_built") or req.get("snapshot_only")):
             if not self.built or req.get("stem") not in self.session.states:
                 return {

@@ -459,26 +459,60 @@ def mark_interrupted_running(db_path: Path | None = None) -> int:
     谓词与 `OPEN_SESSION_SQL` 一致：`running` 转为 `interrupted` 并写 `ended_ms`；已取消 / 已中断但 `_pump` 还没收尾的
     （`cancelled` / `interrupted` 且 `ended_ms` 为空，进程随即死掉）**保持原状态**，只补上 `ended_ms`——否则这些行永远开着、
     永远占着脚本的忙碌判定。回值是被转为 interrupted 的行数。"""
-    now = int(time.time() * 1000)
     with (
         _immediate(db_path) as con
     ):  # 读出死的 → 逐个标：同一个事务，期间别的进程把某行 record_end 了也不会被我们改回 interrupted
-        interrupted = 0
-        # `OPEN_SESSION_SQL` 已含 `interrupt_all`（/api/shutdown）写了 interrupted 却没来得及写 `ended_ms` 进程就退出的行——补上结束时刻
-        for r in con.execute(
-            f"SELECT id, status, owner_pid, started_ms FROM sessions WHERE {OPEN_SESSION_SQL}"
-        ).fetchall():
-            if owner_alive(r["owner_pid"], r["started_ms"], now):
-                continue
-            if r["status"] == "running":
-                con.execute(
-                    "UPDATE sessions SET status='interrupted', ended_ms=?, phase=NULL WHERE id=?",
-                    (now, r["id"]),
-                )
-                interrupted += 1
-            else:
-                con.execute("UPDATE sessions SET ended_ms=?, phase=NULL WHERE id=?", (now, r["id"]))
-        return interrupted
+        return _close_dead_owner_rows(con, int(time.time() * 1000))
+
+
+def _close_dead_owner_rows(
+    con: sqlite3.Connection, now: int, *, project: str | None = None, skip_own_pid: bool = False
+) -> int:
+    """把 `OPEN_SESSION_SQL` 里属主已死的行收尾（须在 `_immediate` 事务里调）。启动清理与读路径收尾共用这一个判据。
+    `skip_own_pid`：`owner_alive` 对本进程 pid 回 False（那是给启动清理用的：磁盘上本进程 pid 的行是上一实例留下的），
+    读路径上本进程的行可能正处在「已 `record_start`、尚未进 `SESSIONS`」的窗口，不能收——读路径一律置 True。"""
+    sql = f"SELECT id, status, owner_pid, started_ms FROM sessions WHERE {OPEN_SESSION_SQL}"
+    args: tuple = ()
+    if project is not None:
+        sql += " AND project=?"
+        args = (project,)
+    interrupted = 0
+    # `OPEN_SESSION_SQL` 已含 `interrupt_all`（/api/shutdown）写了 interrupted 却没来得及写 `ended_ms` 进程就退出的行——补上结束时刻
+    for r in con.execute(sql, args).fetchall():
+        if skip_own_pid and r["owner_pid"] == os.getpid():
+            continue
+        if owner_alive(r["owner_pid"], r["started_ms"], now):
+            continue
+        if r["status"] == "running":
+            con.execute(
+                "UPDATE sessions SET status='interrupted', ended_ms=?, phase=NULL WHERE id=?",
+                (now, r["id"]),
+            )
+            interrupted += 1
+        else:
+            con.execute("UPDATE sessions SET ended_ms=?, phase=NULL WHERE id=?", (now, r["id"]))
+    return interrupted
+
+
+def reap_dead_owners(project: str | None = None, db_path: Path | None = None) -> int:
+    """读路径上的收尾（#1113 的一半）：open 行的属主进程已死，任何进程在列 open / 取详情时就把它收掉，不必等重启。
+    先**无写锁探测**，没有死属主就不拿写锁（列表轮询不该每次抢写锁）；有才 `_immediate` 持锁重读再收（幂等：两个进程同时收
+    不会互相改回）。**不收本进程的行**（见 `_close_dead_owner_rows`）。回值是被转为 interrupted 的行数。"""
+    now = int(time.time() * 1000)
+    sql = f"SELECT owner_pid, started_ms FROM sessions WHERE {OPEN_SESSION_SQL}"
+    args: tuple = ()
+    if project is not None:
+        sql += " AND project=?"
+        args = (project,)
+    with contextlib.closing(_connect(db_path)) as con:
+        rows = con.execute(sql, args).fetchall()
+    if not any(
+        r["owner_pid"] != os.getpid() and not owner_alive(r["owner_pid"], r["started_ms"], now)
+        for r in rows
+    ):
+        return 0
+    with _immediate(db_path) as con:
+        return _close_dead_owner_rows(con, now, project=project, skip_own_pid=True)
 
 
 def set_pinned(sid: str, pinned: bool, db_path: Path | None = None) -> bool:

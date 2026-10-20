@@ -63,6 +63,7 @@ export const HINT_KINDS = [
   'fast_edit_entered',
   'multi_select',
   'problem_found',
+  'layout_page_bounds',
 ] as const
 export type HintKind = (typeof HINT_KINDS)[number]
 export const isHintKind = (v: unknown): v is HintKind =>

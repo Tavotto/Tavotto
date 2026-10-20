@@ -34,7 +34,7 @@
  */
 import type { PanelInfo, AssetOriginalSpec } from '@/lib/api'
 import type { PanelObject } from '@/types/document'
-import { panelFullSize } from '@/types/document'
+import { isVectorFileKind, panelFullSize } from '@/types/document'
 import { useAssetStore } from '@/store/assetStore'
 import { useRenderStore, renderKeyOf, exactPanelRender } from '@/store/renderStore'
 import { artifactValidationIssue, originalArtifactOverrides } from './artifactValidation'
@@ -210,7 +210,7 @@ const isRuntime = (figureId: string) => figureId.startsWith('runtime:')
 
 function sourceKind(panel: PanelObject | null, asset: AssetOriginalSpec | null) {
   if (panel?.fileKind === 'runtime') return 'figure'
-  if (panel?.fileKind === 'pdf' || asset?.source_kind === 'vector') return 'vector'
+  if (isVectorFileKind(panel?.fileKind) || asset?.source_kind === 'vector') return 'vector'
   if (panel?.fileKind === 'raster' || asset?.source_kind === 'raster') return 'raster'
   return 'unknown'
 }

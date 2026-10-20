@@ -293,13 +293,24 @@ print(json.dumps({"result": result, "saves": saves, "svg_opens": svg_opens}))
 """
 
 
+@pytest.fixture(scope="module", autouse=True)
+def _shared_mplconfig(tmp_path_factory):
+    # One MPLCONFIGDIR per module: a fresh one makes every probe rebuild Matplotlib's
+    # font cache (~12 s per subprocess on macOS), which pushed a backend-platforms
+    # shard past its timeout. The cache only indexes installed fonts, so sharing it
+    # changes no font resolution.
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setenv("MPLCONFIGDIR", str(tmp_path_factory.mktemp("mpl")))
+        yield
+
+
 def _probe(tmp_path, mode):
     completed = subprocess.run(
         [USER_PYTHON, "-c", PROBE, str(pool.WORKER_PY.parent), str(tmp_path), mode],
         capture_output=True,
         text=True,
         encoding="utf-8",
-        env=child_env({"MPLCONFIGDIR": str(tmp_path / "mpl")}),
+        env=child_env(),
         timeout=120,
     )
     assert completed.returncode == 0, completed.stdout + completed.stderr

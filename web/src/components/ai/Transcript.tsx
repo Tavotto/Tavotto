@@ -35,6 +35,16 @@ const ai = (key: string, values?: Record<string, unknown>) => translate(key, { n
 /** 改动是直接落盘的，措辞不能像「待应用的预览」 */
 function statusText(s: AiSession): string {
   if (s.status === 'running') return ai('session.running')
+  // 带任务结局时只翻译 `task.outcome`（检查本身在后端）；其余组合与无 task 一律走原逻辑。
+  // completed + 没改动（Agent 判定不必改，后端 `test_unchanged_copy_commits_nothing`）**有意**落到 `doneNoChange`：
+  // 「已完成，脚本没有变化」就是这个结局的准确翻译；没写回就没有渲染层核对，说「数据核对一致」反而是假话
+  const outcome = s.task?.outcome
+  if (s.status === 'done' && s.changed) {
+    if (outcome === 'completed') return ai('session.taskVerified')
+    if (outcome === 'partial') return ai('session.taskPartial')
+    if (outcome === 'failed') return ai('session.taskFailedChanged')
+  }
+  if (s.status === 'failed' && !s.changed && outcome === 'failed') return ai('session.taskRejected')
   if (s.status === 'done') return ai(s.changed ? 'session.doneChanged' : 'session.doneNoChange')
   if (s.status === 'reverted') return ai('session.reverted')
   return statusLabel(s.status)
@@ -72,6 +82,18 @@ export function Turn({
     if (g.type === 'process') lastProcess = i
   })
 
+  // 任务结局卡（TAF）：只翻译 `task.outcome`。done+partial 是 warn，done+failed+changed 是 danger（回滚用 DiffView 上的按钮）
+  const outcome = session.task?.outcome
+  const outcomeCard: 'partial' | 'failed' | null =
+    session.status === 'done' && outcome === 'partial'
+      ? 'partial'
+      : session.status === 'done' && outcome === 'failed' && session.changed
+        ? 'failed'
+        : null
+  const rejected = session.status === 'failed' && outcome === 'failed' && !session.changed
+  const unmetIds = (session.task?.unmet ?? []).map((u) => u.constraint_id)
+  const unmetDetail = unmetIds.length ? [ai('notice.unmetHeading'), ...unmetIds].join('\n') : null
+
   return (
     // 新的一轮落位：淡入 + 4px 上浮 + 0.985 缩放，弹簧收尾（settle-in，宪法第十八节）
     <div data-ai-session={session.status} className="flex animate-settle-in flex-col gap-(--item-gap)">
@@ -104,13 +126,30 @@ export function Turn({
         </div>
       )}
 
-      {(failed || session.error) && (
+      {outcomeCard && (
+        <Notice
+          tone={outcomeCard === 'partial' ? 'warn' : 'danger'}
+          data-ai-task-outcome={session.task?.outcome}
+          detail={unmetDetail}
+        >
+          {ai(outcomeCard === 'partial' ? 'notice.taskPartial' : 'notice.taskFailedChanged')}
+        </Notice>
+      )}
+
+      {!outcomeCard && (failed || session.error) && (
         <Notice
           tone="danger"
           data-ai-error="session"
-          title={statusLabel(session.status)}
+          {...(rejected ? { 'data-ai-task-outcome': 'failed' } : {})}
+          title={rejected ? undefined : statusLabel(session.status)}
           // 一句话留在正文；长的 / 多行的整段进「详情」（带复制）
-          detail={splitNoticeText(session.error).detail}
+          detail={
+            rejected
+              ? [unmetDetail, splitNoticeText(session.error).detail ?? splitNoticeText(session.error).inline]
+                  .filter(Boolean)
+                  .join('\n\n') || null
+              : splitNoticeText(session.error).detail
+          }
           action={
             canRetry ? (
               <Button data-ai-retry size="sm" onClick={() => onRetry(session)}>
@@ -119,7 +158,7 @@ export function Turn({
             ) : undefined
           }
         >
-          {splitNoticeText(session.error).inline}
+          {rejected ? ai('notice.taskRejected') : splitNoticeText(session.error).inline}
         </Notice>
       )}
 

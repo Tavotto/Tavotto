@@ -17,13 +17,14 @@ not_applicable 才提交；提交 = 持脚本锁、核原脚本仍是起跑时�
 
 from __future__ import annotations
 
+import dataclasses
 import hashlib
 import os
 import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import ai_tasks, config, discover, registry, scriptlock
+from . import ai_tasks, config, discover, figureverify, registry, scriptlock
 from .ai_tasks import FAILED, NOT_APPLICABLE, UNKNOWN, VERIFIED, CheckResult, TaskError
 
 TASK_TYPE = "figure_edit"
@@ -48,6 +49,10 @@ def enabled() -> bool:
 
 def _sha256(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
+
+
+class StaleSession(Exception):
+    """`after` 钩子抛它：改后取到的会话执行的不是刚提交的那一版源码（去重回旧会话 / 启动采样不等于实际执行）。"""
 
 
 # --------------------------------------------------------------------------- 有界指纹
@@ -238,6 +243,22 @@ def prompt_note(cand: Candidate) -> str:
 
 
 # --------------------------------------------------------------------------- 适配器
+def _render(
+    st: str, verdict: str, reason: str | None, *, cid="render.figure", not_covered=(), **observed
+):
+    return CheckResult(
+        id=cid,
+        layer="L2",
+        stage=st,
+        role="integrity" if cid == "render.figure" else "preserve",
+        verdict=verdict,
+        reason_code=reason,
+        method="safe worker manifest",
+        observed=observed,
+        not_covered=tuple(not_covered),
+    )
+
+
 def _check(cid: str, stage: str, role: str, verdict: str, reason: str | None = None, **observed):
     return CheckResult(
         id=cid,
@@ -268,7 +289,7 @@ class FigureEditAdapter:
         return ai_tasks.Plan(steps=("execute",))
 
     def verify(self, stage: str, run, cand: Candidate) -> list[CheckResult]:
-        return self._precommit(cand) if stage == "precommit" else self._postcommit(cand)
+        return self._precommit(cand) if stage == "precommit" else self._postcommit(run, cand)
 
     def _precommit(self, cand: Candidate) -> list[CheckResult]:
         st = "precommit"
@@ -371,7 +392,7 @@ class FigureEditAdapter:
             out.append(_check("project.untouched", st, "integrity", VERIFIED))
         return out
 
-    def _postcommit(self, cand: Candidate) -> list[CheckResult]:
+    def _postcommit(self, run, cand: Candidate) -> list[CheckResult]:
         st = "postcommit"
         if not cand.committed:
             return [_check("commit.refresh", st, "integrity", NOT_APPLICABLE, "no_change")]
@@ -383,21 +404,55 @@ class FigureEditAdapter:
                 "commit.refresh", st, "integrity", UNKNOWN, f"refresh_{status or 'missing'}"
             )
         ]
-        verify = cand.extras.get("on_verify")
-        if verify is None:
-            out.append(
-                CheckResult(
-                    id="render.figure",
-                    layer="L2",
-                    stage=st,
-                    role="preserve",
-                    verdict=UNKNOWN,
-                    reason_code="render_not_wired",
-                    not_covered=("数据指纹", "坐标范围与刻度", "新出现的版面问题"),
-                )
-            )
-        else:
-            out += list(verify(cand))
+        return out + self._render_checks(run, cand, st)
+
+    def _render_checks(self, run, cand: Candidate, st: str) -> list[CheckResult]:
+        """渲染层（L2）：改后 manifest 与改前比数据指纹。两份 manifest 都由调用方（app）注入的钩子取：
+
+        * `before`：提交写入之前从**已经 build 过**的那个 worker 读（不执行任何东西）；没有 = 这次会话里没渲染过这张图，
+          没有基线 → unknown（`no_baseline`），**也不去渲染改后**——不为了验证多跑一次用户脚本（R-06）；
+        * `retire`（可选）：写入之后、刷新之前同步退役该脚本的全部旧会话；没确认（`retired` 不是 True）→ unknown
+          （`session_not_retired`），**不调 after**；
+        * `after(expected_sha256)`：`expected` 是刚提交字节的 sha256；钩子须核会话**实际执行**的源码 sha256 与它一致，
+          不一致抛 `StaleSession` → unknown（`stale_session`）。正确性靠这条判据，不靠 `retire` 时序；
+          提交并刷新之后取同一个 safe 会话（同一份运行配置）并 build——就是前端随后本来要做的那次重渲染，前端
+          来时会话已经 built，不再执行第二次。渲染失败（改前同一会话能渲染、改后不能）→ failed。
+
+        比的只有数据（`figureverify.data_unchanged`）：改前 manifest 带着用户的 override，改后这次 build 不带，坐标范围、
+        刻度、版式在两边不同口径，不比（列进 not_covered）。"""
+        not_covered = ("坐标范围与刻度", "新出现的版面问题", "用户点名的目标")
+        hooks_after = cand.extras.get("after")
+        if hooks_after is None:
+            return [
+                _render(st, UNKNOWN, "render_not_wired", not_covered=("数据指纹", *not_covered))
+            ]
+        before = cand.extras.get("before_manifests")
+        if not before:
+            return [_render(st, UNKNOWN, "no_baseline", not_covered=("数据指纹", *not_covered))]
+        if cand.extras.get("retire") is not None and cand.extras.get("retired") is not True:
+            # 旧会话没确认退役：workerd 按 by_hash 会把 after 去重回仍已 built 的旧会话，比出来的是两份改前 manifest
+            return [
+                _render(st, UNKNOWN, "session_not_retired", not_covered=("数据指纹", *not_covered))
+            ]
+        run.charge("renders")
+        try:
+            after = hooks_after(_sha256(cand.new_bytes or b"")) or {}
+        except StaleSession:
+            return [_render(st, UNKNOWN, "stale_session", not_covered=("数据指纹", *not_covered))]
+        except Exception as exc:  # noqa: BLE001 —— 渲染失败本身就是这条检查的结论
+            code = getattr(exc, "code", None) or type(exc).__name__
+            return [_render(st, FAILED, "render_failed", code=str(code))]
+        out = [_render(st, VERIFIED, None, stems=sorted(after), not_covered=not_covered)]
+        for stem, man in sorted(before.items()):
+            if stem not in after:
+                out.append(_render(st, FAILED, "stem_not_rendered", cid=f"render.{stem}"))
+                continue
+            out += [
+                dataclasses.replace(c, id=f"{stem}.{c.id}")
+                for c in figureverify.data_unchanged(after[stem], man, stage=st)
+            ]
+        if len(out) == 1:
+            out.append(_render(st, NOT_APPLICABLE, "no_data_elements", cid="data"))
         return out
 
     def explain(self, outcome: str, unmet: list[dict]) -> dict:
@@ -435,12 +490,34 @@ class BridgeExecutor:
                 now = None
             if now != cand.base_bytes:
                 raise TaskError("script_changed_since_start", cand.script_rel)
+            # 改前的渲染事实只能在写之前拿：写完刷新就会作废那个 worker
+            cand.extras["before_manifests"] = _call_hook(cand.extras.get("before"))
             scriptlock.write_script(cand.script_path, cand.new_bytes, mode=cand.base_mode)
             cand.committed = True
+        # 退役只是让「after 去重回旧会话」的概率变小（尽力而为）；正确性由 after 钩子核 build 实际执行的 source_sha256 保证。
+        # 退役旧会话必须在统一刷新之前、锁之外（force 关停可能要等 workerd）：刷新里那次普通 invalidate 才会找不到会话，
+        # 前端收到 panel.file_changed 与 after 钩子拿到的才都是新脚本 spawn 的会话。没注入钩子（纯引擎调用方）不记 retired。
+        retire = cand.extras.get("retire")
+        if retire is not None:
+            try:
+                retire()
+                cand.extras["retired"] = True
+            except Exception:  # noqa: BLE001 —— 确认不了就如实记 False，提交本身已落盘、不因旁路失败
+                cand.extras["retired"] = False
         cand.refresh = self._refresh()
 
     def discard(self, run, cand: Candidate) -> None:
         remove_candidate(cand.dir)
+
+
+def _call_hook(hook):
+    """调 app 注入的取事实钩子；没有 / 抛异常 → None（这项量不了，不让提交因为旁路失败）。"""
+    if hook is None:
+        return None
+    try:
+        return hook()
+    except Exception:  # noqa: BLE001
+        return None
 
 
 def envelope_for(

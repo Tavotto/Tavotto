@@ -23,6 +23,7 @@ import math
 import os
 import queue
 import re
+import secrets
 import shutil
 import socket
 import sys
@@ -58,6 +59,7 @@ from werkzeug.exceptions import HTTPException
 from . import pdfbackend, tiffprobe
 from .engine import (
     ai_bridge as engine_ai,
+    ai_figure_edit as engine_ai_figure_edit,
     ai_history as engine_ai_history,
     ai_providers as engine_ai_providers,
     artifactcontext as engine_artifactcontext,
@@ -145,6 +147,7 @@ DATA_ROOT = engine_config.data_dir()  # 可写：运行时产物（装成包后 
 # 这里只是别名，别在本文件里另写一份集合。
 EXCLUDE_DIRS = engine_refresh.EXCLUDE_DIRS
 PDF_EXT = engine_refresh.PDF_EXT
+SVG_EXT = engine_refresh.SVG_EXT
 IMG_EXT = engine_refresh.IMG_EXT
 TIFF_EXT = engine_refresh.TIFF_EXT
 #: 写回重写的产物格式（顺序即写的顺序：PDF 在前，PNG 由它的同一次重放出）
@@ -475,7 +478,7 @@ def safe_resolve(rel_id: str) -> Path:
         abort(403)
     if not p.is_file():
         abort(404)
-    if p.suffix.lower() not in PDF_EXT | IMG_EXT:
+    if p.suffix.lower() not in PDF_EXT | IMG_EXT | SVG_EXT:
         abort(403)
     if p.suffix.lower() in TIFF_EXT:
         tiffprobe.check(p)
@@ -564,7 +567,12 @@ def scan_panels(unsupported: list[dict] | None = None) -> list[dict]:
             "mtime": int(p.stat().st_mtime),
         }
         try:
-            probe = pdfbackend.probe_asset(p, kind)
+            if kind == "svg":
+                from . import svgasset
+
+                _, probe = svgasset.read(p)
+            else:
+                probe = pdfbackend.probe_asset(p, kind)
             # 「这张图有多大」只算一次（`engine/originalspec`，ADR 0028）。
             # `native_*_mm` 是那份 spec 的投影而不是第二次计算——改造前位图那一
             # 档在这里现猜一个 ppi（`600 if png else 300`），猜完既不说也没有
@@ -600,6 +608,10 @@ def scan_panels(unsupported: list[dict] | None = None) -> list[dict]:
             if cap is not None:
                 entry["capability"] = cap
         except Exception:
+            if kind == "svg" and unsupported is not None:
+                unsupported.append(
+                    {"id": rel, "name": p.name, "folder": folder, "code": "svg_asset_unsupported"}
+                )
             # 单个素材坏了不拖垮整个列表，但绝不静默——用户丢面板时
             # app.log 里要能看到是哪个文件、为什么
             LOG.warning("素材扫描跳过 %s（probe 失败）", p, exc_info=True)
@@ -1057,6 +1069,8 @@ def api_render():
     want_w = int(request.args.get("w", 400))
     w = next((b for b in RENDER_BUCKETS if b >= want_w), RENDER_BUCKETS[-1])
     path = safe_resolve(rel_id)
+    if path.suffix.lower() in SVG_EXT:
+        return _svg_asset_response(path)
     cache = rc_facade.preview_cache(CACHE_DIR, max_bytes=RENDER_CACHE_MAX_BYTES)
     try:
         # hold：交出来的文件一直钉到响应关闭——从 get() 返回到 send_file 打开它之间，别的请求发布新预览触发的
@@ -1091,13 +1105,39 @@ def api_render():
     return resp
 
 
+def _svg_asset_response(path):
+    from . import svgasset
+
+    try:
+        data, _ = svgasset.read(path)
+    except svgasset.UnsupportedSVG as exc:
+        return jsonify({"code": exc.code, "error": str(exc), "params": exc.params}), 422
+    resp = app.response_class(data, mimetype="image/svg+xml")
+    resp.headers["Content-Security-Policy"] = (
+        "sandbox; default-src 'none'; img-src data:; style-src 'unsafe-inline'"
+    )
+    resp.headers["X-Content-Type-Options"] = "nosniff"
+    resp.headers["Cache-Control"] = "no-cache"
+    return resp
+
+
 @app.get("/api/file")
 def api_file():
-    """位图面板直接回传原文件（浏览器自行缩放显示）。"""
+    """静态图片直接回传；SVG 先校验同一份字节，禁止活动内容与外部引用。"""
     path = safe_resolve(request.args.get("id", ""))
+    if path.suffix.lower() in SVG_EXT:
+        return _svg_asset_response(path)
     resp = send_file(path, conditional=True)
     resp.headers["Cache-Control"] = "no-cache"
     return resp
+
+
+def _original_rerender(formats) -> bool:
+    """原图范围：所选格式要不要让 `_resolve_panel_source` 有脚本就重渲染（哪怕没有 override）。
+
+    要 EPS 且不要 SVG 时才重画（SVG 走快照那条路）；前端预检 `embedsDiskBitmap` 与它同源。
+    """
+    return engine_exportreq.FORMAT_EPS in formats and engine_exportreq.FORMAT_SVG not in formats
 
 
 def _resolve_panel_source(
@@ -2056,8 +2096,49 @@ def _export_produce_original(job, tmp_dir: Path, *, artifact_sources=None) -> li
     """
     req = job.request
     src = req.original
+    if (
+        Path(src.figure_id).suffix.lower() in SVG_EXT
+        and not src.overrides
+        and src.figure_snapshot is None
+    ):
+        from . import svgasset
+
+        data, probe = svgasset.read(safe_resolve(src.figure_id))
+        produced = []
+        for fmt in req.formats:
+            job.check_cancelled()
+            if fmt == engine_exportreq.FORMAT_SVG:
+                target = tmp_dir / "original.svg"
+                target.write_bytes(data)
+                produced.append(
+                    engine_exportjob.Produced(
+                        format=fmt,
+                        tmp_path=target,
+                        width_mm=probe["w_pt"] * 25.4 / 72,
+                        height_mm=probe["h_pt"] * 25.4 / 72,
+                        vector=engine_artifactinspect.svg_vector(target),
+                    )
+                )
+            elif fmt == engine_exportreq.FORMAT_EPS:
+                # 与前端 `epsAvailability()` 同源：有脚本的 SVG 素材走既有 worker 序列化，
+                # 没有脚本由 `_produce_original_eps` 报 `eps_needs_script`（前端标 no_script）。
+                produced.append(
+                    _produce_original_eps(
+                        job,
+                        src,
+                        req.ppi or engine_exportreq.PPI_DEFAULT,
+                        tmp_dir,
+                        artifact_source=(artifact_sources or {}).get(src.figure_id),
+                    )
+                )
+            else:
+                produced.append(
+                    engine_exportjob.Produced(
+                        format=fmt, error_code="svg_asset_export_unsupported", error_params={}
+                    )
+                )
+        return produced
     dpi = req.ppi or engine_exportreq.PPI_DEFAULT
-    wants_eps = engine_exportreq.FORMAT_EPS in req.formats
     job.check_cancelled()
     if (
         req.formats == (engine_exportreq.FORMAT_SVG,)
@@ -2123,7 +2204,7 @@ def _export_produce_original(job, tmp_dir: Path, *, artifact_sources=None) -> li
             dpi,
             job.warnings,
             tmp_dir,
-            rerender=wants_eps and not wants_svg,
+            rerender=_original_rerender(req.formats),
             **(
                 {"artifact_source": artifact_sources[src.figure_id]}
                 if src.source_policy and artifact_sources
@@ -2338,6 +2419,13 @@ def _export_produce_rendercore(job, tmp_dir: Path, *, artifact_sources=None) -> 
         项目——与旧路 `safe_resolve` 只在碰面板时才要项目同一语义。"""
 
         def resolve(self, obj: dict):
+            if Path(str(obj.get("id", ""))).suffix.lower() in SVG_EXT:
+                safe_resolve(obj["id"])
+                raise engine_exportreq.ExportRequestError(
+                    "svg_asset_export_unsupported",
+                    "Static SVG canvas conversion is not available",
+                    {},
+                )
             fs = rc_sources.StaticSourceResolver(require_project()).resolve(obj)
             # 这条路不经 `safe_resolve`（它自己做包含检查与存在性），TIFF 的支持范围得在这里补上：
             # 漏掉它，范围之外的 TIFF 在候选后端下会被画成一张错图交付（issue #534）。先让解析器把
@@ -3168,6 +3256,80 @@ def _after_ai_change(ctx: "ProjectCtx", script: str) -> dict:
         _script_change_handler(ctx, reason="ai")([script])
     result["panel_event"] = bool(first)
     return result
+
+
+def _ai_task_hooks(ctx: "ProjectCtx", script: str, entry: str) -> dict:
+    """TAF 改图（ADR 0138 Phase 3b）提交前后的渲染层事实，注入给 AI 桥；**只在实验开关打开时**被调用。
+
+    * `before`：池里**已经 build 过**的那个 safe 会话（`pool.peek`，不建、不执行）落盘的 manifest；没有 → None
+      （这次会话里没渲染过这张图，桥据此不做改后渲染）；会话 build **实际执行**的源码 sha256 必须等于此刻磁盘脚本；
+    * `retire`：写入之后、刷新之前尽力同步退役该脚本的全部旧会话（`invalidate(force=True)`），让 after 少撞上旧会话；
+      **不是正确性依据**；
+    * `after(expected_sha256)`：提交并统一刷新之后，按磁盘面板的同一扇门（`enginesession.resolve`、safe、同一份运行配置）
+      取会话并 build——就是前端收到 `panel.file_changed` 后本来就要做的那次重渲染；前端随后来时会话已 built，不再执行第二次。
+      判据是「执行了哪一版源码」：会话自报的 `last_build_source_sha256` 必须等于刚提交字节的 sha256，否则抛
+      `StaleSession`（去重回旧会话、watcher 时序、启动采样 A→B→A 都落在这里）。
+
+    两边都按这个脚本此刻登记的全部 stem 读 `<out_dir>/<stem>.json`。"""
+
+    def run_selection():
+        return engine_runconfig.default_selection(ctx.path, script)
+
+    def manifests(worker) -> dict:
+        out = {}
+        for stem in ctx.registry.stems_of(script):
+            try:
+                out[stem] = json.loads(
+                    Path(
+                        engine_figcapture.usable_preview_path(worker.out_dir, stem, ".json")
+                    ).read_text(encoding="utf-8")
+                )
+            except (OSError, ValueError):
+                continue
+        return out
+
+    def before():
+        worker = engine_pool.peek(script, str(ctx.path), run=run_selection())
+        if worker is None or not worker.built:
+            return None
+        # 桥在持脚本锁核过基线之后、写入之前调这里：此刻磁盘上的脚本就是起跑基线。会话 build 时 worker 自报执行的源码
+        # sha256（`last_build_source_sha256`）对不上 = 它是别的版本建出来的（用户刚编辑、watcher 还没作废，或启动采样
+        # 与实际执行不一致），它的 manifest 不是「改前」的事实，按没有可用基线处理。
+        try:
+            disk = hashlib.sha256((ctx.path / script).read_bytes()).hexdigest()
+        except OSError:
+            return None
+        if getattr(worker, "last_build_source_sha256", None) != disk:
+            return None
+        return manifests(worker) or None
+
+    def retire():
+        # 同步、确认式退役该脚本全部会话（`force=True`，确认不了抛 WorkerError）。尽力而为：监视器可能已先做过普通
+        # invalidate（异步关闭），force 找不到键也算成功，after 仍可能被 workerd 按 by_hash 去重回尚未关闭的旧会话——
+        # 所以正确性不靠它，靠 after 核会话执行的 source_sha256。
+        engine_pool.invalidate(script, str(ctx.path), force=True)
+
+    def after(expected_sha256):
+        run = run_selection()
+        stems = ctx.registry.stems_of(script)
+        worker = engine_enginesession.resolve(
+            project_root=str(ctx.path),
+            script=script,
+            entry=entry,
+            stem=stems[0] if stems else "",
+            execution_profile=engine_enginesession.PROFILE_SAFE,
+            **({"run": run} if run is not None else {}),
+        )
+        if not worker.built:  # 已 built 的会话不再发请求（多一次无意义）
+            worker.ensure_built()
+        got = getattr(worker, "last_build_source_sha256", None)
+        if got != expected_sha256:
+            raise engine_ai_figure_edit.StaleSession(
+                f"session executed {got!r}, committed {expected_sha256!r}"
+            )
+        return manifests(worker)
+
+    return {"before": before, "retire": retire, "after": after}
 
 
 def project_status(ctx: "ProjectCtx | None") -> dict:
@@ -6355,6 +6517,16 @@ def _note_handoff_render(stem: str, *, code: str | None = None, **facts) -> None
         LOG.debug("交接渲染结论记录失败", exc_info=True)
 
 
+def _note_handoff_failure(stem: str, exc: BaseException) -> None:
+    """渲染路上的失败里，哪些是这次渲染的终局（ADR 0131 §六）：worker 的 `WorkerError`，以及选中原件
+    核对不上的 `ArtifactContextError`（409）。可重试的不记——前端重排后的那次渲染才是结论，抢记一个失败会把它挡住。
+    """
+    if isinstance(exc, engine_pool.WorkerError) or (
+        isinstance(exc, engine_artifactcontext.ArtifactContextError) and not exc.retryable
+    ):
+        _note_handoff_render(stem, code=exc.code)
+
+
 def _handoff_target_stem(rel_id: str) -> str:
     """面板 id → 结论表匹配用的 stem，判据与 `_resolve_engine_worker` 一致（runtime 素材查注册表，磁盘面板取文件名主干）。"""
     try:
@@ -6426,13 +6598,18 @@ def api_engine_render():
     """
     body = request.get_json(force=True)
     rel_id = body.get("id", "")
-    artifact_source = _artifact_source(
-        rel_id,
-        body.get("source_policy"),
-        body.get("expected_source"),
-        body.get("patches"),
-        body.get("confirmed_reconstruction_sha256"),
-    )
+    try:
+        artifact_source = _artifact_source(
+            rel_id,
+            body.get("source_policy"),
+            body.get("expected_source"),
+            body.get("patches"),
+            body.get("confirmed_reconstruction_sha256"),
+        )
+    except engine_artifactcontext.ArtifactContextError as exc:
+        # 原件在进渲染之前就核对不上（期望字节过期、读不了、已有编辑基线）：同样是这次渲染的终局
+        _note_handoff_failure(_handoff_target_stem(rel_id), exc)
+        raise
     inline_svg = bool(body.get("inline_svg"))
     # 参数校验先做完再进渲染：混在下面那个 try 里的话，worker 响应的
     # JSONDecodeError（也是 ValueError）会被当成「preview_dpi 写错了」
@@ -6469,11 +6646,10 @@ def api_engine_render():
         info = current_registry().for_stem(stem) or {}
         cold = not worker.built
     except Exception as exc:
-        # worker 启动 / 环境解析失败（WorkerError）也是「那一次渲染」的失败结论：
+        # worker 启动 / 环境解析失败（WorkerError、原件核对不上）也是「那一次渲染」的失败结论：
         # 不记结论 CLI 会白等到 timeout（ADR 0131 §六）。此时 stem 还没拿到，按
         # `_resolve_engine_worker` 同一判据反推（旁路，任何失败都不影响原异常）。
-        if isinstance(exc, engine_pool.WorkerError):
-            _note_handoff_render(_handoff_target_stem(rel_id), code=exc.code)
+        _note_handoff_failure(_handoff_target_stem(rel_id), exc)
         # 准备态同样须有终局；原异常留给原有 Flask handler，HTTP/code 不变。
         sse_publish("render.failed", {"pj": pj, "id": rel_id, "error": str(exc)})
         raise
@@ -6509,6 +6685,10 @@ def api_engine_render():
             "figure_snapshot_invalidation", evidence.get("figure_snapshot_invalidation")
         )
         return jsonify(_worker_error_payload(exc, figure_snapshot_invalidation=fact)), 500
+    except engine_artifactcontext.ArtifactContextError as exc:
+        _note_handoff_failure(stem, exc)
+        sse_publish("render.failed", {"pj": pj, "id": rel_id, "error": str(exc)})
+        raise
     except Exception as exc:
         # 事件契约是「render.started 之后必有 done 或 failed」，与异常类型无关：
         # 前端文件级 building 表只由这两个事件清（#478）。重试路上的
@@ -8970,6 +9150,7 @@ def _native_preparation_runner(pl, before_retry=None):
     rejected = engine_nativesession.REGISTRY.bind_assets(session)
     if not rejected:
         _svg_native_execution_update(session)
+        session.publish_built()  # 界面手里这条桌面会话的 descriptors 还是空的（屏障事件在 build 之前）
     if rejected:
         # 这些图的活路由还被另一条活会话占着(例如用户终端里的 `tavotto run`):继续完成会让预览换成这次运行的、
         # 编辑 / 导出却仍落在旧会话上——静默错图。不发布被拒的描述符,结束这次运行,如实报冲突(ADR 0021 §9.2)
@@ -10856,6 +11037,7 @@ def _ai_run_impl():
             endpoint_id=body.get("endpoint"),
             # 文件变了就接统一刷新（reason=ai），在 ai.done 之前做完（ADR 0041）
             on_changed=lambda script: _after_ai_change(ctx, script),
+            task_hooks=_ai_task_hooks(ctx, info["script"], info["entry"]),
         )
     except engine_ai.DuplicateRequest as dup:
         # 同一条请求已经登记过：返回既有会话，不 spawn、不重复记遥测
@@ -11083,6 +11265,8 @@ def api_ai_history():
     if status == "open" and not query and not pinned_only:
         # 运行中的会话天然有上限（一个脚本同时只有一个，项目里的脚本有限）：**一次返回全部，不分页**——翻页期间集合会变，
         # offset 翻页会漏掉仍在运行的会话。只设一个很高的硬上限防失控，超过时带 `truncated: true`（实际不会发生）
+        # 属主已死的僵尸行先收尾，别让它永远留在 open 清单里
+        engine_ai_history.reap_dead_owners(project)
         data = engine_ai_history.list_sessions(
             project, status=status, limit=RUNNING_HISTORY_HARD_LIMIT, offset=0
         )
@@ -12383,7 +12567,22 @@ def api_export_defaults_put():
 VERSIONS_DIR = (
     LAYOUT_DIR / engine_documents.VERSIONS_DIRNAME
 )  # 旧位置：只读兼容（新写入进项目 tavottofile/versions/）
-_VERSIONS_LOCK = threading.Lock()
+
+
+def _versions_lock(doc_id: str) -> "_DocumentLock":
+    """版本时间线「读 → 改 → 整写」的互斥：复用**跨进程**的槽位文档锁（`_document_lock`），不新造锁。
+
+    原来是进程内的 `threading.Lock()`：两个后端进程共用一个数据目录（受支持场景，槽位文档锁已是跨进程的）时，
+    双方各自读到旧列表、各自追加、后写的整份盖掉先写的，两边都收到 200，检查点静默丢失。
+
+    **锁名用独立的 `<doc_id>.versions`，不用 `<doc_id>.json`**：`_lock_stripe` 只看文件名，用 `.json` 会与同一文档的
+    自动保存共用一个条带，版本追加（要读写几十 MB）持锁期间自动保存就被堵住。条带数只有 64，不同名字偶尔仍会撞一个
+    条带，只是多串行一点点。**锁不可重入**：持锁期间不取任何别的文档锁 / 会话锁（时间线这几个端点内部没有）。
+    拿不到（30 s）抛 `SessionStateUnavailable` → 503 `session_unavailable`，此时一个字节没写。
+    """
+    return _document_lock(_versions_path(doc_id).with_suffix(".versions"))
+
+
 #: 未命名的普通自动检查点保留数。间隔从 5 分钟调到 2 分钟（ADR 0101）之后，
 #: 40 条只盖得住约 80 分钟的连续编辑，所以提到 60（约 2 小时）；大排版照旧先被
 #: 下面的字节上限咬住。
@@ -12407,13 +12606,28 @@ VERSION_KEEP_BYTES = 24 * 1024 * 1024
 
 
 _version_seq = 0
+#: 本进程的区分段（6 位十六进制随机数，定长）：两个后端进程共用数据目录时，毫秒时间戳 + 进程内序号会撞 id，
+#: 撞了之后缩略图 / 重命名 / 删除按 id 找节点会认错人。定长所以 `(区分段, 序号)` 拼起来不会有歧义。
+_VERSION_PROC_TAG = secrets.token_hex(3)
 
 
 def _new_version_id() -> str:
-    """毫秒时间戳 + 进程内序号：同毫秒内连续创建（复制紧跟保存）也不碰撞。"""
+    """毫秒时间戳 + 进程区分段 + 进程内序号：同毫秒内连续创建（复制紧跟保存）、两个进程同毫秒创建都不碰撞。
+
+    形状仍是 `_VERSION_ID_RE`（`v<hex>-<hex>`）。调用方在版本锁内还要对已有 id 核一遍（`_fresh_version_id`）。
+    """
     global _version_seq
     _version_seq += 1
-    return f"v{int(time.time() * 1000):x}-{_version_seq:x}"
+    return f"v{int(time.time() * 1000):x}-{_VERSION_PROC_TAG}{_version_seq:x}"
+
+
+def _fresh_version_id(existing: list[dict]) -> str:
+    """锁内取一个不与现有节点重名的 id（理论上很少撞；撞了就重取，绝不覆盖别人的节点）。"""
+    taken = {v.get("id") for v in existing}
+    while True:
+        vid = _new_version_id()
+        if vid not in taken:
+            return vid
 
 
 def _versions_path(doc_id: str) -> Path:
@@ -12974,7 +13188,7 @@ def api_versions_create(doc_id):
             }
         ), 400
     ver = {
-        "id": _new_version_id(),
+        "id": "",  # 在版本锁内取（`_fresh_version_id`）：要对着锁内读到的现有节点核重名
         "name": given or time.strftime("%m-%d %H:%M"),
         "ts": int(time.time() * 1000),
         "auto": bool(body.get("auto")),
@@ -12989,8 +13203,9 @@ def api_versions_create(doc_id):
         ver["canvasId"] = str(body["canvasId"])
     if body.get("canvasName"):
         ver["canvasName"] = str(body["canvasName"])
-    with _VERSIONS_LOCK:
+    with _versions_lock(doc_id):
         versions = _load_versions(doc_id)
+        ver["id"] = _fresh_version_id(versions)
         if not versions:
             # 空历史是唯一一条「整份写回会把别人的东西盖掉」的路（rename /
             # duplicate / delete 在空列表上都先 404，一个 `_save_versions`
@@ -13024,7 +13239,7 @@ def api_versions_create(doc_id):
 @app.patch("/api/versions/<doc_id>/<vid>")
 def api_versions_rename(doc_id, vid):
     body = request.get_json(force=True)
-    with _VERSIONS_LOCK:
+    with _versions_lock(doc_id):
         versions = _load_versions(doc_id)
         for v in versions:
             if v["id"] == vid:
@@ -13064,13 +13279,13 @@ def api_versions_rename(doc_id, vid):
 
 @app.post("/api/versions/<doc_id>/<vid>/duplicate")
 def api_versions_duplicate(doc_id, vid):
-    with _VERSIONS_LOCK:
+    with _versions_lock(doc_id):
         versions = _load_versions(doc_id)
         for v in versions:
             if v["id"] == vid:
                 copy = {
                     **v,
-                    "id": _new_version_id(),
+                    "id": _fresh_version_id(versions),
                     # 副本的名字同样守长度上限（反复复制不能把名字越拼越长）
                     "name": f"{v.get('name', '')[: VERSION_NAME_MAX - 3]} 副本",
                     "ts": int(time.time() * 1000),
@@ -13090,7 +13305,7 @@ def api_versions_duplicate(doc_id, vid):
 
 @app.delete("/api/versions/<doc_id>/<vid>")
 def api_versions_delete(doc_id, vid):
-    with _VERSIONS_LOCK:
+    with _versions_lock(doc_id):
         versions = _load_versions(doc_id)
         kept = [v for v in versions if v["id"] != vid]
         if len(kept) == len(versions):
@@ -13116,7 +13331,7 @@ def api_versions_thumb_put(doc_id, vid):
         return jsonify({"error": "缩略图为空或太大", "code": "version_thumb_invalid"}), 400
     if not _VERSION_ID_RE.match(vid):
         abort(404)
-    with _VERSIONS_LOCK:
+    with _versions_lock(doc_id):
         ids = {v.get("id") for v in _load_versions(doc_id)}
         if vid not in ids:
             abort(404)

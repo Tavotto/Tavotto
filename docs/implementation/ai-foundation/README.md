@@ -12,7 +12,8 @@
 | Phase 3a | 分支 `feat/taf-phase3-figure-edit`（叠在 Phase 2 上）：`engine/ai_figure_edit.py` + `ai_bridge.run` 候选分支 + `ai_tasks.begin_registered` / `drive_registered` + `tests/test_ai_figure_edit.py`（14 条）。R-03 实测见 `08-risk-register.md`；九个手工变异全红 |
 | 产品行为变化 | 开关 `ai.taf.enabled` 关（默认）时无：旧路径逐字不变、`ADAPTERS` 为空；旧会话的新列全 NULL；manifest 只多一个只读字段 |
 | 未运行 | 全量 pytest / 前端 / e2e（交给 CI，high 档加 `full-ci`）；Windows / Linux |
-| 下一步 | Phase 3b：提交后渲染层验证（`on_verify`：改前 manifest 取自已有 worker、改后取自本来就会发生的那次重渲染）+ 前端阶段与结局文案 |
+| Phase 3b | 分支 `feat/taf-phase3b-render-verify`（叠在 3a 上）：提交后渲染层验证（`ai_figure_edit._render_checks` + app `_ai_task_hooks` + `figureverify.data_unchanged`）。真 worker 用例：样式改动 completed、改数据 failed、无基线不执行；FigureBench 19 个探针场景参考解不误报、8 个改数据反例全抓住；六个手工变异全红 |
+| 下一步 | Phase 3c：前端阶段与结局文案（`ai.done.task`）；之后 Phase 4 有界修正 |
 
 ## 待维护者决定
 

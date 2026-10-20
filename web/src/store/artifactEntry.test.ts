@@ -19,6 +19,7 @@ import { useSelectionStore } from './selectionStore'
 import { useWorkspaceStore } from './workspace'
 import { useMountedPngStore } from './mountedPngStore'
 import { useEnvStore } from './envStore'
+import { usePngAdmissionMemory } from './pngAdmissionMemory'
 const render = vi.fn()
 const addRemap = vi.fn()
 const pendingStyle = vi.fn(()=>false)
@@ -449,5 +450,95 @@ describe('explicit selected background recovery', () => {
   expect(useRenderStore.getState().byKey[renderKeyOf(bad)].error?.key).toBe('artifact.backgroundVisibilityRequired')
   rejectArtifactRenders(good.fileId,guard,new ArtifactValidationError('source_changed'),renderKeyOf(bad))
   expect(exactPanelRender(useRenderStore.getState(),good)).toBeNull()
+ })
+})
+
+describe('first-adoption refusals: one sentence, one way out, remembered (ADR 0139 PR1)',()=>{
+ const refused=(reason:string,retryable?:boolean)=>new EngineError('refused','','artifact_source_unavailable','',undefined,undefined,{params:{reason},retryable})
+ const ui=()=>useUiStore.getState()
+ const text=(key:string)=>({key,ns:'errors'})
+ const admissions=()=>render.mock.calls.filter(c=>(c[1] as unknown[]).length===0).length
+ beforeEach(()=>{usePngAdmissionMemory.getState().clear();ui().setStatus(null)})
+ it.each([
+  ['unsupported_render_state','artifact.unsupportedRenderState'],
+  ['source_mismatch','artifact.sourceMismatch'],
+  ['artist_profile','artifact.unsupportedRenderState'],
+  ['adoption_store_full','artifact.unsupported'],
+  ['capture_incomplete','artifact.unsupported'],
+  ['save_ambiguous','artifact.unsupported'],
+ ])('%s: no history, panel untouched, info toast with exactly one rebuild action',async(reason,key)=>{
+  render.mockRejectedValueOnce(refused(reason))
+  const before=structuredClone(P())
+  expect(await enterElementEdit('p')).toBe(false)
+  expect(P()).toEqual(before);expect(S().past).toHaveLength(0);expect(useUiStore.getState().elementPanelId).toBeNull()
+  expect(ui().status).toEqual(text(key));expect(ui().statusTone).toBe('info');expect(ui().statusOwner).toBe('png.admit:p')
+  expect(ui().statusAction?.label).toEqual(text('artifact.rebuildEditable'))
+  expect(useRenderStore.getState().tracked['plot.png']).toBeUndefined()
+ })
+ it('a permanent refusal is remembered: the second click re-shows it without running the script again',async()=>{
+  render.mockRejectedValueOnce(refused('unsupported_render_state'))
+  expect(await enterElementEdit('p')).toBe(false)
+  ui().setStatus(null)
+  expect(await enterElementEdit('p')).toBe(false)
+  expect(render).toHaveBeenCalledTimes(1)
+  expect(ui().status).toEqual(text('artifact.unsupportedRenderState'));expect(ui().statusAction?.label).toEqual(text('artifact.rebuildEditable'))
+  expect(S().past).toHaveLength(0);expect(useRenderStore.getState().byKey[renderKeyOf(P())]).toBeUndefined()
+ })
+ it('the memory belongs to this file identity and this project',async()=>{
+  useAssetStore.setState({byId:{'plot.png':{id:'plot.png',mtime:1} as never}})
+  render.mockRejectedValueOnce(refused('source_mismatch'))
+  await enterElementEdit('p')
+  useAssetStore.setState({byId:{'plot.png':{id:'plot.png',mtime:2} as never}}) // the file changed on disk
+  render.mockRejectedValueOnce(refused('source_mismatch'))
+  await enterElementEdit('p')
+  expect(render).toHaveBeenCalledTimes(2)
+  usePngAdmissionMemory.getState().clear() // project switch
+  render.mockResolvedValueOnce(response())
+  expect(await enterElementEdit('p')).toBe(true)
+  expect(admissions()).toBe(3)
+ })
+ it('only a retryable reason offers Try again, and Try again runs admission once more',async()=>{
+  render.mockRejectedValueOnce(refused('source_unreadable'))
+  await enterElementEdit('p')
+  expect(ui().statusTone).toBe('error');expect(ui().statusAction?.label).toEqual(text('artifact.retryAdmission'))
+  render.mockResolvedValueOnce(response())
+  ui().statusAction!.run()
+  await vi.waitFor(()=>expect(useUiStore.getState().elementPanelId).toBe('p'))
+  expect(admissions()).toBe(2);expect(ui().status).toBeNull()
+ })
+ it.each(['unsupported_render_state','source_mismatch','capture_incomplete'])('%s never offers Try again',async reason=>{
+  render.mockRejectedValueOnce(refused(reason))
+  await enterElementEdit('p')
+  expect(ui().statusAction?.label).not.toEqual(text('artifact.retryAdmission'))
+ })
+ it('script failures keep the plain error toast, are not remembered, and are retried next time',async()=>{
+  render.mockRejectedValueOnce(new EngineError('boom','Traceback\nValueError: boom','script_error',''))
+  await enterElementEdit('p')
+  expect(ui().statusTone).toBe('error');expect(ui().statusAction).toBeNull();expect(ui().statusOwner).toBeNull()
+  render.mockResolvedValueOnce(response())
+  expect(await enterElementEdit('p')).toBe(true)
+  expect(admissions()).toBe(2)
+ })
+ it.each(['source_changed','frame_changed'])('%s keeps its existing wording and rule: error toast, no action, not remembered',async reason=>{
+  render.mockRejectedValueOnce(refused(reason))
+  await enterElementEdit('p')
+  expect(ui().status).toEqual(text(reason==='source_changed'?'artifact.sourceChanged':'artifact.frameChanged'))
+  expect(ui().statusTone).toBe('error');expect(ui().statusAction).toBeNull()
+  render.mockResolvedValueOnce(response())
+  expect(await enterElementEdit('p')).toBe(true)
+ })
+ it('a successful adoption retires the refusal toast and its memory',async()=>{
+  render.mockRejectedValueOnce(refused('source_mismatch'))
+  await enterElementEdit('p')
+  usePngAdmissionMemory.getState().forget('plot.png')
+  render.mockResolvedValueOnce(response())
+  expect(await enterElementEdit('p')).toBe(true)
+  expect(ui().status).toBeNull()
+ })
+ it('deleting the panel retires its refusal toast',async()=>{
+  render.mockRejectedValueOnce(refused('unsupported_render_state'))
+  await enterElementEdit('p')
+  S().commit(literal('delete'),d=>{d.objects=d.objects.filter(o=>o.id!=='p')})
+  expect(ui().status).toBeNull()
  })
 })

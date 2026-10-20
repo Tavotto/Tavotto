@@ -320,6 +320,17 @@ describe('EPS 与 TIFF（ADR 0046）', () => {
     expect(epsAvailability('original', 'runtime:abc')).toEqual({ ok: true, reason: 'none' })
   })
 
+  it('SVG 素材与 PDF 同一判据：有脚本可用、没脚本 no_script（与后端 _produce_original_eps 同源）', () => {
+    useAssetStore.setState({
+      byId: {
+        'S1.svg': { id: 'S1.svg', mtime: 1, kind: 'svg', script: 's1.py' },
+        'S2.svg': { id: 'S2.svg', mtime: 1, kind: 'svg' },
+      },
+    } as never)
+    expect(epsAvailability('original', 'S1.svg')).toEqual({ ok: true, reason: 'none' })
+    expect(epsAvailability('original', 'S2.svg')).toEqual({ ok: false, reason: 'no_script' })
+  })
+
   it('EPS 不可用时请求里**不带**它（后端会逐项报失败，但界面已经说过一遍了）', () => {
     const canvas = buildExportRequest(inputOf({ scope: 'canvas', formats: ['pdf', 'eps'] }))
     expect(canvas.request.formats).toEqual(['pdf'])

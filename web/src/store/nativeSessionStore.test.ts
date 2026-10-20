@@ -970,6 +970,18 @@ describe('面板与会话的关系（角标判据）', () => {
     expect(nativePanelState(s, 'Fig1.pdf', 'safe', true)).toBeNull()
   })
 
+  it('桌面会话：屏障事件先到（还没 build、descriptors 为空），build 后同状态更大序号的快照把角标认回来', () => {
+    const id = `native-${ID}`
+    store().applyEvent(session({ owner: 'desktop', state: 'barrier', editable: true, descriptors: [], sequence: 4 }))
+    // 空 descriptors 时面板认领不到会话：一张活着的图被说成「会话已结束」（修复前的现象）
+    expect(nativePanelState(store().sessions, 'runtime:fig.py#Fig1', 'native')).toBe('offline')
+    store().applyEvent(
+      session({ owner: 'desktop', state: 'barrier', editable: true, descriptors: [desc('Fig1')], sequence: 5 }),
+    )
+    expect(store().sessions[id]?.descriptors).toHaveLength(1)
+    expect(nativePanelState(store().sessions, 'runtime:fig.py#Fig1', 'native')).toBeNull()
+  })
+
   it('一条会话都没有、但这张图出自 native：同样是 offline', () => {
     expect(nativePanelState({}, 'runtime:fig.py#Fig1', 'native')).toBe('offline')
   })

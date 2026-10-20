@@ -40,6 +40,13 @@
   不让已成功的写入回 500（前端一重试就多一个节点，#679）；换缩略图格式先原子写新图、落地后再删旧格式（删不掉只记日志；两张同时在时取较新的那张，新图胜出，#679）；PUT 的 256 KiB 上限卡在读取本身（`_read_body_capped`，
   chunked 请求没有 Content-Length）。列表端点的 `budget` 在文件没超上限时不量 `namedBytes`（缺席，
   不冒充 0）。
+- **新存储模块（未接线，ADR 0140）**：`engine/versionstore.py` 是版本时间线的替身存储——每版一个
+  自描述信封 `<doc_id>.vx/s/<vid>.json` + 小索引 `<doc_id>.vx/index.json`（唯一提交点），追加只写一个
+  信封 + 索引，与历史长度无关。**app.py 目前不调用它**，现行 `_load_versions` / `_save_versions` 一字未变。
+  铁律：新索引**绝不与旧文件 `<doc_id>.json` 同名**（旧程序整写会毁掉它）；先信封后索引、删除先索引后信封；
+  旧文件迁移后冻结，不删不改；调用方持 `<doc_id>.versions` 跨进程锁，模块内不取锁；
+  `legacy_policy` 是现行条数 + 24 MB 字节策略的镜像，与 `app._save_versions` 逐条对拍（同源对，改一侧改另一侧）。
+  看护：`tests/test_versionstore.py`。
 - **论文样式**：`/api/styles`（`layouts/_styles.json`）；前端按角色映射成
   override / 标注属性一次 commit 应用，绝不写回源文件。
 - **项目包**：`POST /api/package` 打 zip（layout+素材+脚本+sha1 清单）；
@@ -217,6 +224,13 @@
     `@app.errorhandler` 回 503 `session_unavailable`，此时一个字节没写；清理里等不到只是这次不清它。锁文件打不开
     **失败即关门**：锁文件打不开、文件系统拒绝咨询锁（ENOLCK / EOPNOTSUPP / EINVAL）也抛 `SessionStateUnavailable`，不退回只有线程锁。
     真两进程回归 `tests/test_layout_recovery_backend.py`（POSIX）；Windows 的 `msvcrt` 腿只有 CI 验证。
+  - **版本时间线的互斥也是跨进程的**（审计 D0，2026-10-20）：`/api/versions/<docId>` 的创建 / 改名 / 复制 / 删除 / 缩略图都是
+    「读整份 → 改 → 整写」，原来只被进程内 `threading.Lock()` 保护，两个后端进程共用数据目录时后写的整份盖掉先写的（两边都 200）。
+    现在统一经 `_versions_lock(doc_id)` = 复用 `_document_lock`，锁名取 `<doc_id>.versions`（**不用 `<doc_id>.json`**：条带只看文件名，
+    用 `.json` 会与同一文档的自动保存共用条带，版本追加几十 MB 的读写期间自动保存被堵）。不可重入，时间线端点持锁期间不取别的文档锁 / 会话锁；
+    等不到（30 s）→ 503 `session_unavailable`，历史零写入。版本 id = `v<毫秒>-<6 位随机进程区分段><序号>`（仍匹配 `_VERSION_ID_RE`），
+    并在锁内对已有 id 核重名（`_fresh_version_id`），撞了就重取、不覆盖。**这只修丢更新；整份写回的存储形状（#263）问题仍在。**
+    回归 `tests/test_versions_multiprocess.py`（真两进程 POSIX；Windows 的 `msvcrt` 腿只有 CI 验证）。
   - **`/owner` 与候选发现读的是一致的快照**：两者都在**槽位的文档锁**里同时读会话状态（owners / owner_revisions / status，只读、不拿会话锁）
     和槽位正文——别的项目的保存（正文 + `commit_slot` 都在这把锁里）插不进两次读之间，否则会拿 G 的新正文去对还没有 G 归属的旧状态，
     把别人的槽位报成 this。`/owner` 回的 `revision` 就是这份快照里正文的。候选发现**按条目**各取自己的槽位锁、各读一次状态

@@ -66,7 +66,7 @@ def env(monkeypatch, tmp_path):
     ai_tasks.unregister(ai_figure_edit.TASK_TYPE)  # 生产注册表开关关着时为空（test_ai_tasks 钉着）
 
 
-def _run(env, on_changed=None, events=None):
+def _run(env, on_changed=None, events=None, task_hooks=None):
     calls = []
 
     def changed(script):
@@ -80,6 +80,7 @@ def _run(env, on_changed=None, events=None):
         str(env["figs"]),
         on_event=(lambda n, d: events.append((n, d))) if events is not None else None,
         on_changed=on_changed or changed,
+        task_hooks=task_hooks,
     )
     return sid, calls
 
@@ -349,3 +350,169 @@ def test_cancel_wins_even_if_the_killed_process_is_seen_before_the_status_flips(
     sess = _wait(sid)
     assert sess["status"] == "cancelled" and _project_text(env) == SCRIPT
     assert ai_history.get(sid)["outcome"] == "cancelled"
+
+
+# --------------------------------------------------------------------------- 渲染层验证（Phase 3b，钩子由 app 注入）
+def _fp(sha):
+    return {"status": "ok", "parts": {"xy": {"sha256": sha, "shape": [3, 2]}}}
+
+
+def _manifest(sha):
+    return {
+        "elements": [
+            {"gid": "figure", "role": "figure", "editable": []},
+            {"gid": "axes_0.lines_0", "role": "line", "editable": [], "data_fingerprint": _fp(sha)},
+        ]
+    }
+
+
+expecteds: list = []
+
+
+def _hooks(env, before, after, log):
+    def b():
+        log.append(("before", _project_text(env)))
+        return before
+
+    def a(expected):
+        log.append(("after", _project_text(env)))
+        expecteds.append(expected)
+        if isinstance(after, Exception):
+            raise after
+        return after
+
+    return {"before": b, "after": a}
+
+
+def _render_checks(sid):
+    row = ai_history.get(sid)
+    return {
+        c["id"]: (c["verdict"], c["reason_code"]) for c in row["verification"]["figure"]["checks"]
+    }
+
+
+def test_data_preserved_after_render_completes(env):
+    log: list = []
+    sid, _ = _run(
+        env,
+        task_hooks=_hooks(env, {"Fig1": _manifest("a" * 64)}, {"Fig1": _manifest("a" * 64)}, log),
+    )
+    sess = _wait(sid)
+    assert sess["task"]["outcome"] == "completed", sess["task"]
+    checks = _render_checks(sid)
+    assert checks["render.figure"] == ("verified", None)
+    assert checks["Fig1.data.axes_0.lines_0"] == ("verified", None)
+    # 改前取在写之前、改后取在写之后
+    assert log[0] == ("before", SCRIPT) and log[1][0] == "after" and '"new"' in log[1][1]
+
+
+def test_changed_data_after_render_fails_and_the_commit_stands(env):
+    log: list = []
+    sid, _ = _run(
+        env,
+        task_hooks=_hooks(env, {"Fig1": _manifest("a" * 64)}, {"Fig1": _manifest("b" * 64)}, log),
+    )
+    sess = _wait(sid)
+    assert sess["task"]["outcome"] == "failed" and sess["status"] == "done"
+    assert '"new"' in _project_text(env), "已提交的改动不自动回滚（回滚本身也是一次写，由用户点）"
+    assert _render_checks(sid)["Fig1.data.axes_0.lines_0"] == ("failed", "data_changed")
+
+
+def test_no_baseline_means_no_extra_render(env):
+    log: list = []
+    sid, _ = _run(env, task_hooks=_hooks(env, None, {"Fig1": _manifest("a" * 64)}, log))
+    sess = _wait(sid)
+    assert [k for k, _ in log] == ["before"], "没有改前基线就不做改后渲染（不为验证多跑一次脚本）"
+    assert sess["task"]["outcome"] == "partial"
+    assert _render_checks(sid)["render.figure"] == ("unknown", "no_baseline")
+
+
+def test_render_failure_after_commit_is_failed(env):
+    class Boom(RuntimeError):
+        code = "script_error"
+
+    log: list = []
+    sid, _ = _run(env, task_hooks=_hooks(env, {"Fig1": _manifest("a" * 64)}, Boom("x"), log))
+    sess = _wait(sid)
+    assert sess["task"]["outcome"] == "failed"
+    assert _render_checks(sid)["render.figure"] == ("failed", "render_failed")
+
+
+def test_missing_stem_after_render_is_failed(env):
+    log: list = []
+    sid, _ = _run(env, task_hooks=_hooks(env, {"Fig1": _manifest("a" * 64)}, {}, log))
+    _wait(sid)
+    assert _render_checks(sid)["render.Fig1"] == ("failed", "stem_not_rendered")
+
+
+def test_unchanged_copy_never_renders(env):
+    env["code"] = NOOP
+    log: list = []
+    sid, _ = _run(
+        env,
+        task_hooks=_hooks(env, {"Fig1": _manifest("a" * 64)}, {"Fig1": _manifest("a" * 64)}, log),
+    )
+    _wait(sid)
+    assert log == [], "没改动：不取改前、不渲染"
+
+
+def test_retire_runs_after_the_write_and_before_refresh_and_after(env):
+    log: list = []
+    hooks = _hooks(env, {"Fig1": _manifest("a" * 64)}, {"Fig1": _manifest("a" * 64)}, log)
+    hooks["retire"] = lambda: log.append(("retire", _project_text(env)))
+
+    def changed(script):
+        log.append(("refresh", _project_text(env)))
+        return {"registry": {}, "assets": {}, "published": []}
+
+    sid, _ = _run(env, on_changed=changed, task_hooks=hooks)
+    sess = _wait(sid)
+    assert [k for k, _ in log] == ["before", "retire", "refresh", "after"], log
+    assert log[0][1] == SCRIPT and all('"new"' in t for _, t in log[1:]), (
+        "retire 时项目脚本已是新内容"
+    )
+    assert sess["task"]["outcome"] == "completed", sess["task"]
+
+
+def test_unconfirmed_retire_is_unknown_and_never_renders_after(env):
+    log: list = []
+    hooks = _hooks(env, {"Fig1": _manifest("a" * 64)}, {"Fig1": _manifest("a" * 64)}, log)
+
+    def boom():
+        raise RuntimeError("无法确认旧渲染会话已关闭")
+
+    hooks["retire"] = boom
+    sid, _ = _run(env, task_hooks=hooks)
+    sess = _wait(sid)
+    assert [k for k, _ in log] == ["before"], "旧会话没退役：after 会被去重回旧会话，不能调"
+    assert _render_checks(sid)["render.figure"] == ("unknown", "session_not_retired")
+    assert sess["status"] == "done" and '"new"' in _project_text(env), "提交不因旁路失败而失败"
+    assert sess["task"]["outcome"] == "partial"
+
+
+def test_stale_session_is_unknown_not_failed_nor_verified(env):
+    from tavotto.engine.ai_figure_edit import StaleSession
+
+    log: list = []
+    sid, _ = _run(
+        env,
+        task_hooks=_hooks(env, {"Fig1": _manifest("a" * 64)}, StaleSession("old session"), log),
+    )
+    sess = _wait(sid)
+    assert _render_checks(sid)["render.figure"] == ("unknown", "stale_session")
+    assert sess["task"]["outcome"] == "partial", sess["task"]
+    assert sess["status"] == "done" and '"new"' in _project_text(env)
+
+
+def test_after_receives_the_sha256_of_the_committed_bytes(env):
+    import hashlib
+
+    expecteds.clear()
+    log: list = []
+    sid, _ = _run(
+        env,
+        task_hooks=_hooks(env, {"Fig1": _manifest("a" * 64)}, {"Fig1": _manifest("a" * 64)}, log),
+    )
+    _wait(sid)
+    disk = (Path(env["figs"]) / "fig1.py").read_bytes()
+    assert expecteds == [hashlib.sha256(disk).hexdigest()]
