@@ -9303,6 +9303,7 @@ def _finalize_script_attempt(ctx: "ProjectCtx", plan, result) -> dict:
             # 屏障上 build 带回的观察；停在 `show()` 屏障上只到那里为止（记录标 `basis_scope`，#1047）
             native_inputs=native.observed_inputs if native is not None else None,
             native_complete=native.observed_inputs_complete if native is not None else True,
+            native_site=native.barrier_site if native is not None else None,
         ),
         run=run,
         update_default=True,

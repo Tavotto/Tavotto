@@ -41,6 +41,7 @@ native 的 helper / 数据依据（#1047）：桌面拥有的 bridge 带 `--obse
 
 from __future__ import annotations
 
+import ast
 import dataclasses
 import hashlib
 import os
@@ -213,6 +214,7 @@ def build_native_record(
     run=None,
     inputs: dict | None = None,
     complete: bool = True,
+    site: dict | None = None,
 ) -> dict | None:
     """桌面 native 成功（V2 PR2）→ 启动上下文记录。解释器 / 环境代 / 运行目录档 / 数据绑定取**计划那一刻**的快照，脚本字节要与
     计划的 `script_revision` 仍一致（执行期间被改了就不记）。
@@ -248,7 +250,8 @@ def build_native_record(
         "basis": basis or {},
         "basis_observed": basis is not None and complete,
     }
-    if basis is not None and not complete:
+    if basis is not None and not complete and _inevitable_show(root / script, site):
+        # 只有「下次同样的脚本必然停在这里、停住之后没有别的用户代码在跑」时才按屏障范围记；否则这条记录不沿用（#1202）
         source["basis_scope"] = BASIS_SCOPE_BARRIER
     return {
         "version": RECORD_VERSION,
@@ -298,6 +301,64 @@ def observe_native_basis(project_root: str | Path, launch_id: str, inputs: dict 
         return False
 
 
+def _inevitable_show(path: Path, site: dict | None) -> bool:
+    """屏障范围的依据只在「下次同样的脚本必然停在同一个 `show()` 上、停住之后没有别的用户代码在跑」时成立（Codex #1202 P1）：
+
+    * 停住时除主线程外没有活线程（用户在 `show()` 之前开的线程会在屏障期间接着跑，Python 停不住它们）；
+    * 停在目标脚本**模块层**的一条语句上，它在模块体（或 `if __name__ == "__main__":` 体）的顶层语句序列里——不在任何条件、
+      循环、try、with、函数里；
+    * 那条语句就是不带任何参数的 `show()` 调用（`plt.show()` / `show()`）：`block=...` 之类的参数可能让下次不停。
+    判不了（读不出 / 解析不了 / 事实缺失）一律 False：不沿用。"""
+    if not isinstance(site, dict) or site.get("threads") != 0 or site.get("module") is not True:
+        return False
+    line = site.get("line")
+    if not isinstance(line, int):
+        return False
+    try:
+        tree = ast.parse(Path(path).read_bytes())
+    except (OSError, SyntaxError, ValueError):
+        return False
+    body = tree.body
+    for _ in range(2):  # 模块体，至多再进一层 `if __name__ == "__main__":` 体
+        stmt = next((st for st in body if st.lineno <= line <= (st.end_lineno or st.lineno)), None)
+        if stmt is None:
+            return False
+        if _is_main_guard(stmt) and any(
+            st.lineno <= line <= (st.end_lineno or st.lineno) for st in stmt.body
+        ):
+            body = stmt.body
+            continue
+        return _is_bare_show(stmt)
+    return False
+
+
+def _is_main_guard(stmt: ast.stmt) -> bool:
+    if not isinstance(stmt, ast.If):
+        return False
+    test = stmt.test
+    return (
+        isinstance(test, ast.Compare)
+        and isinstance(test.left, ast.Name)
+        and test.left.id == "__name__"
+        and len(test.ops) == 1
+        and isinstance(test.ops[0], ast.Eq)
+        and len(test.comparators) == 1
+        and isinstance(test.comparators[0], ast.Constant)
+        and test.comparators[0].value == "__main__"
+    )
+
+
+def _is_bare_show(stmt: ast.stmt) -> bool:
+    if not isinstance(stmt, ast.Expr) or not isinstance(stmt.value, ast.Call):
+        return False
+    call = stmt.value
+    func = call.func
+    named = (isinstance(func, ast.Attribute) and func.attr == "show") or (
+        isinstance(func, ast.Name) and func.id == "show"
+    )
+    return named and not call.args and not call.keywords
+
+
 def barrier_scoped(record: dict | None) -> bool:
     """停在 `show()` 屏障上收口的 native 记录：依据是屏障之前读过的全部（`basis_scope: "barrier"`）。据它沿用 native 的那次运行
     必须停在第一个屏障上（`ExecutionSpec.final_barrier`）。"""
@@ -316,6 +377,8 @@ class NativeBasis:
     inputs: dict | None = None
     #: 观察是不是全部输入（脚本跑完后的结束屏障）；False = 停在 `show()` 屏障上、到此为止
     complete: bool = True
+    #: 停在 `show()` 屏障上时的位置事实（`NativeSession.barrier_site`）
+    site: dict | None = None
 
 
 def basis_of(
@@ -325,12 +388,13 @@ def basis_of(
     *,
     native_inputs: dict | None = None,
     native_complete: bool = True,
+    native_site: dict | None = None,
 ):
     """成功收口的启动记录依据：有图失败（partial）= None（清旧记录）；native 计划 = `NativeBasis`；其余取 safe 的回执。"""
     if partial:
         return None
     if getattr(plan, "execution", None) == PROFILE_NATIVE:
-        return NativeBasis(plan, native_inputs, native_complete)
+        return NativeBasis(plan, native_inputs, native_complete, native_site)
     return getattr(result, "receipt", None)
 
 
@@ -378,7 +442,13 @@ def record_success(
     「最近成功」。`update_default=True` 时磁盘面板默认配置同一事务里一起更新（`run` 的引用；无参数 = 清掉）。"""
     if isinstance(rcpt, NativeBasis):
         record = build_native_record(
-            project_root, script, rcpt.plan, run=run, inputs=rcpt.inputs, complete=rcpt.complete
+            project_root,
+            script,
+            rcpt.plan,
+            run=run,
+            inputs=rcpt.inputs,
+            complete=rcpt.complete,
+            site=rcpt.site,
         )
     else:
         record = build_record(project_root, script, rcpt, run=run)

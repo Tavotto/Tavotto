@@ -158,3 +158,30 @@ def test_without_final_barrier_the_same_script_does_continue(tmp_path):
     session.resume()
     dk.wait_until(lambda: (tmp_path / "proj" / "tail.txt").exists(), what="show() 之后的标记")
     dk.finish(session)
+
+
+def test_the_show_barrier_build_reports_where_it_stopped_and_how_many_threads_still_run(tmp_path):
+    """屏障位置事实（#1202）：目标脚本里调用 `show()` 的那一行、是否模块层、除主线程外的活线程数。"""
+    session = _project(tmp_path)
+    nativekit.wait_state(session, [nativesession.BARRIER])
+    session.ensure_built()
+    show_line = SCRIPT.splitlines().index("plt.show()") + 1
+    assert session.barrier_site == {"line": show_line, "module": True, "threads": 0}
+    session.resume()
+    nativekit.wait_state(session, [nativesession.BARRIER])
+    session.ensure_built()
+    assert session.barrier_site is None, "脚本跑完后的 build 不带屏障位置"
+    dk.finish(session)
+
+
+def test_a_thread_started_before_show_is_counted(tmp_path):
+    session = _project(
+        tmp_path,
+        SCRIPT.replace(
+            "plt.show()",
+            "import threading, time\nthreading.Thread(target=time.sleep, args=(30,), daemon=True).start()\nplt.show()",
+        ),
+    )
+    nativekit.wait_state(session, [nativesession.BARRIER])
+    session.ensure_built()
+    assert session.barrier_site["threads"] >= 1

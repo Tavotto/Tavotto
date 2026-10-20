@@ -832,6 +832,17 @@ class NativeSession:
         return dict(ins) if isinstance(ins, dict) else None
 
     @property
+    def barrier_site(self) -> dict | None:
+        """`show()` 屏障上 build 带回的屏障位置事实（`line` / `module` / `threads`，#1202）；脚本跑完后的 build 没有 = None。
+        与 `observed_inputs` 同样只给启动记录用。"""
+        site = (
+            (self.last_build or {}).get("barrier_site")
+            if isinstance(self.last_build, dict)
+            else None
+        )
+        return dict(site) if isinstance(site, dict) else None
+
+    @property
     def observed_inputs_complete(self) -> bool:
         """`observed_inputs` 是不是这次运行的**全部**输入：脚本跑完后的结束屏障上 build 的才是；`show()` 屏障上的只到那里为止。"""
         return self._built_reason == "script_end" and self.observed_inputs is not None

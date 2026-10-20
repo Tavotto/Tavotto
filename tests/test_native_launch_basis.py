@@ -118,10 +118,25 @@ def test_an_incomplete_late_observation_does_not_upgrade(proj):
     assert runconfig.launch_record(proj, "fig.py")["source"]["basis_observed"] is False
 
 
+SHOW_SCRIPT = """\
+import matplotlib.pyplot as plt
+plt.plot([1, 2])
+plt.show()
+print("tail")
+"""
+SITE = {"line": 3, "module": True, "threads": 0}
+
+
+def _show_project(proj, text=SHOW_SCRIPT):
+    (proj / "fig.py").write_text(text, encoding="utf-8")
+    return _plan(proj)
+
+
 def test_an_observation_that_stops_at_a_show_barrier_is_stored_scoped_to_the_barrier(proj):
     """停在 `show()` 屏障上收口：依据照填、带 `basis_scope`，`basis_observed` 不是 `true`——它只替屏障之前作保。"""
+    plan = _show_project(proj)
     record = launchctx.build_native_record(
-        proj, "fig.py", _plan(proj), inputs=_inputs(), complete=False
+        proj, "fig.py", plan, inputs=_inputs(), complete=False, site=SITE
     )
     assert record["source"]["basis_observed"] is False
     assert record["source"]["basis_scope"] == launchctx.BASIS_SCOPE_BARRIER
@@ -137,6 +152,54 @@ def test_an_observation_that_stops_at_a_show_barrier_is_stored_scoped_to_the_bar
     assert "basis_scope" not in after["source"]
     assert after["source"]["basis"] == {"late.csv": "f" * 64, "helper.py": "h" * 64}
     assert launchctx.barrier_scoped(after) is False
+
+
+MAIN_GUARD = """\
+import matplotlib.pyplot as plt
+
+if __name__ == "__main__":
+    plt.plot([1, 2])
+    plt.show()
+    print("tail")
+"""
+
+
+@pytest.mark.parametrize(
+    ("text", "site", "scoped"),
+    [
+        (SHOW_SCRIPT, SITE, True),
+        (MAIN_GUARD, {"line": 5, "module": True, "threads": 0}, True),
+        # 用户线程在屏障期间接着跑（Codex #1202 P1）
+        (SHOW_SCRIPT, {**SITE, "threads": 1}, False),
+        # 是否停下取决于运行时：带参数的 show / 条件里的 show / 循环里的 show（Codex #1202 P1）
+        (SHOW_SCRIPT.replace("plt.show()", "plt.show(block=True)"), SITE, False),
+        (
+            "import os\nimport matplotlib.pyplot as plt\nif os.getenv('X'):\n    plt.show()\n",
+            {**SITE, "line": 4},
+            False,
+        ),
+        ("import matplotlib.pyplot as plt\nfor _ in range(1):\n    plt.show()\n", SITE, False),
+        # 写在函数里：那一帧不是模块层
+        (
+            "import matplotlib.pyplot as plt\ndef f():\n    plt.show()\nf()\n",
+            {"line": 3, "module": False, "threads": 0},
+            False,
+        ),
+        # 位置对不上 show 语句 / 事实缺失
+        (SHOW_SCRIPT, {**SITE, "line": 2}, False),
+        (SHOW_SCRIPT, None, False),
+        (SHOW_SCRIPT, {"line": None, "module": True, "threads": 0}, False),
+    ],
+)
+def test_only_an_inevitable_bare_show_with_no_other_threads_is_barrier_scoped(
+    proj, text, site, scoped
+):
+    plan = _show_project(proj, text)
+    record = launchctx.build_native_record(
+        proj, "fig.py", plan, inputs=_inputs(), complete=False, site=site
+    )
+    assert launchctx.barrier_scoped(record) is scoped
+    assert record["source"]["basis_observed"] is False
 
 
 @pytest.mark.parametrize(

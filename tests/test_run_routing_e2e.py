@@ -327,6 +327,28 @@ def test_a_show_barrier_success_stays_reusable_after_the_run_was_stopped(tmp_pat
         assert (route["execution"], route["reason"]) == ("native", "previous_successful_profile")
 
 
+@pytest.mark.parametrize(
+    "variant",
+    [
+        # 用户线程在屏障期间接着跑：停住的不是全部用户代码
+        DYNAMIC_SHOW.replace(
+            "plt.show()",
+            "import threading\nthreading.Thread(target=__import__('time').sleep, args=(60,), daemon=True).start()\nplt.show()",
+        ),
+        # 是否停下取决于运行时
+        DYNAMIC_SHOW.replace("plt.show()", 'plt.show(block=os.environ.get("BLOCK", "1") == "1")'),
+    ],
+    ids=["thread", "conditional_block"],
+)
+def test_a_show_that_may_not_stop_everything_next_time_is_not_reused(tmp_path, variant):
+    """Codex #1202 P1：屏障范围的依据只在「下次必然停在同一个 show()、停住后没有别的用户代码在跑」时成立，否则不沿用。"""
+    proj, _log = _project(tmp_path, variant)
+    with sidecar_app(proj, tmp_path / "work", env_overrides=ENV) as app:
+        final = _settled(app, _run(app, _create(app)))
+        assert _history(final) == [("safe", "blocked"), ("native", "succeeded")]
+        assert _reopen(app)["plan"]["route"]["reason"] == "ordinary_plot"
+
+
 def test_a_run_that_finished_after_its_show_upgrades_the_record_to_the_full_basis(tmp_path):
     """旧运行被放行、跑到结束屏障，在那里 build 一次：依据补成全部（`basis_observed: true`）。之后沿用的那次运行不再受
     「停在第一个屏障」约束——放行它不再被拒。show 屏障上的 build 不算（只到屏障为止）。"""

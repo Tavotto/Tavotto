@@ -897,6 +897,10 @@ class BridgeRun:
         self.barrier_inputs_report: dict | None = None
         #: 此刻停着的屏障（`barrier()` 期间）；不在屏障上 = ""。`--final-barrier` 据此拒绝放行
         self.current_barrier = ""
+        #: 停在 `show()` 屏障上这一刻的位置事实（与 `barrier_inputs_report` 同生同灭）：目标脚本里调用 `show()` 的那一行、
+        #: 那一帧是不是模块顶层、除主线程外还有几条活线程。父进程据此判断「下次同样的脚本必然停在这里、停住之后没有别的
+        #: 用户代码在跑」，不成立就不按屏障范围沿用（#1202）
+        self.barrier_site: dict | None = None
         #: 项目相对路径 → 进 `show()` 屏障那一刻的 sha256（先见者赢）。脚本停在屏障上时用户可能改了 helper / 数据，
         #: 进程执行的是旧内容；`freeze_inputs` 拿它跟最终定格的摘要比对，不一致就不报观察（Codex #1180 P2）
         self._input_digests: dict[str, str | None] = {}
@@ -1084,10 +1088,12 @@ class BridgeRun:
             self.inputs_report if self.inputs_report is not None else self.barrier_inputs_report
         )
         if observed is not None:
-            # 桌面拥有的运行（#1047）：脚本跑完后的屏障上是定格的全部观察；停在 `show()` 屏障上是到此为止的观察（之后
-            # 只会被结束或重跑；放行由父进程作废）。父进程据此给 native 成功记录填 helper / 数据依据。
+            # 桌面拥有的运行（#1047）：脚本跑完后的屏障上是定格的全部观察；停在 `show()` 屏障上是屏障之前的观察，连同
+            # 屏障位置事实（`barrier_site`）。父进程据此给 native 成功记录填 helper / 数据依据。
             # 不放进 `runtime`：那一段进回执身份，同一会话前后两次 build 不该因为「跑没跑完」换身份
             out["observed_inputs"] = observed
+            if self.inputs_report is None and self.barrier_site is not None:
+                out["barrier_site"] = dict(self.barrier_site)
         if self.script_error:
             out["script_error"] = self.script_error
         return out
@@ -1230,13 +1236,28 @@ class BridgeRun:
             if isinstance(e, dict) and "path" in e
         }
 
+    def _barrier_site(self) -> dict:
+        """目标脚本里把执行带进这个屏障的那一帧（最内层的那一帧：`show()` 写在函数里，就是函数体里那一行）。"""
+        target = os.path.normcase(os.path.abspath(self.args.source_path or ""))
+        line, module = None, False
+        frame = sys._getframe(1)
+        while frame is not None:
+            if os.path.normcase(os.path.abspath(frame.f_code.co_filename)) == target:
+                line, module = frame.f_lineno, frame.f_code.co_name == "<module>"
+                break
+            frame = frame.f_back
+        return {"line": line, "module": module, "threads": threading.active_count() - 1}
+
     def _snapshot_inputs(self) -> None:
         """进屏障前记一份依据摘要（只记还没记过的 path：先见者赢，记的是用户代码最早可能用到的那份），这一刻的报告留作
         `barrier_inputs_report`。更早的屏障记过的摘要在这份里缺了或不同 = 上次停着时依据被改过，进程执行的是旧内容，不报。"""
         self.barrier_inputs_report = None
+        self.barrier_site = None
         observer = _INPUTS
         if observer is None:
             return
+        with contextlib.suppress(Exception):  # 观察器绝不影响脚本
+            self.barrier_site = self._barrier_site()
         try:
             with observer.paused():
                 report = observer.report(
@@ -1302,6 +1323,7 @@ class BridgeRun:
         finally:
             # 离开屏障 = 脚本接着跑（或进程要走了）：这一刻的观察不再是全部输入
             self.barrier_inputs_report = None
+            self.barrier_site = None
             self.current_barrier = ""
         if self.final_barrier(reason):
             # 正常返回只剩「控制通道断了 / 没有控制通道」：放行在控制循环里已被拒
