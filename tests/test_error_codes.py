@@ -384,6 +384,8 @@ USER_VISIBLE_CODES = {
     "tutorial_locked": {"reason"},
     # 重置时新副本已就位、但旧教程排版因会话状态被另一个进程占着没清掉（500）：文案固定、不带参数
     "tutorial_reset_incomplete": set(),
+    # 重置确认之后示例副本里的另存排版变了 / 清点不了（409）：文案固定、不带参数，重置未执行
+    "tutorial_layouts_changed": set(),
     # --- #264：版本时间线读不出来时拒绝整份写回（写入侧那道闸）---
     "versions_unreadable": set(),
     # --- ADR 0101：排版时间线。命名节点超出字节上限时拒绝再命名（已有的一条不删）；
@@ -569,6 +571,8 @@ NON_UI_CODES = {
     "desktop_auth_required",
     # `GET /api/handoff/render-status` 的参数错误：只有 `tavotto open` 的轮询客户端会调，界面不展示（ADR 0131 §六）
     "bad_handoff_query",
+    # `POST /api/handoff/display-ack`（重复交接的显示确认）的参数错误：调用方是前端自己的静默 fire-and-forget，不展示（ADR 0131）
+    "bad_handoff_ack",
     # 一键安装的**进度**状态码，不是错误响应：它们的文案在
     # dialogs:settings.agents.install.error.*（由 pnpm i18n:check
     # 守双语齐全），不该也不能进 errors.backend 那张表。

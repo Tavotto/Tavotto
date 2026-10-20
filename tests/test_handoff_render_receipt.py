@@ -969,6 +969,246 @@ def test_cli_and_endpoint_agree_end_to_end(client, tmp_path, monkeypatch):
     assert result["launch"]["render"]["verified"] is True
 
 
+# ------------- 显示确认：重复交接命中已显示面板（#1154，ADR 0131 §六修订） ------------
+ACK_PATH = "/api/handoff/display-ack"
+
+
+def _ack(client, **body):
+    return client.post(ACK_PATH, json=body)
+
+
+def test_ack_ok_is_recorded_with_the_render_shape_and_verified_by_summarize(
+    client, tmp_path, monkeypatch
+):
+    figs = _gallery(client, tmp_path)
+    _stub(monkeypatch, _Worker())
+    r = _ack(client, id="p1.pdf", status="ok", manifest_elements=7)
+    assert r.status_code == 200
+    got = receipt.clean_result(receipt.query(str(figs), "p1", 0))
+    assert got == {"status": "ok", "stem": "p1", "registry_match": True, "manifest_elements": 7}
+    assert receipt.summarize("p1", got, 0, reason="x")["verified"] is True
+
+
+def test_ack_ok_for_an_unregistered_stem_is_ok_but_not_verified(client, tmp_path, monkeypatch):
+    """registry_match 由后端自己查，前端说了不算。"""
+    figs = _gallery(client, tmp_path)
+    _stub(monkeypatch, _Worker(), registered=False)
+    assert _ack(client, id="p1.pdf", status="ok", manifest_elements=7).status_code == 200
+    out = _summary(figs)
+    assert out["status"] == "ok" and out["verified"] is False
+
+
+def test_ack_with_an_empty_manifest_is_not_verified(client, tmp_path, monkeypatch):
+    figs = _gallery(client, tmp_path)
+    _stub(monkeypatch, _Worker())
+    _ack(client, id="p1.pdf", status="ok", manifest_elements=0)
+    assert _summary(figs)["verified"] is False
+
+
+def test_ack_failed_carries_the_stable_code(client, tmp_path, monkeypatch):
+    figs = _gallery(client, tmp_path)
+    _stub(monkeypatch, _Worker())
+    assert _ack(client, id="p1.pdf", status="failed", code="missing_dependency").status_code == 200
+    assert receipt.clean_result(receipt.query(str(figs), "p1", 0)) == {
+        "status": "failed",
+        "code": "missing_dependency",
+    }
+    receipt.LEDGER.clear()
+    _ack(client, id="p1.pdf", status="failed", code="../../etc/passwd")
+    assert receipt.clean_result(receipt.query(str(figs), "p1", 0))["code"] == "render_failed"
+
+
+def test_ack_displayed_is_unverified_already_displayed_and_never_verified(
+    client, tmp_path, monkeypatch
+):
+    figs = _gallery(client, tmp_path)
+    _stub(monkeypatch, _Worker())
+    assert _ack(client, id="p1.pdf", status="displayed").status_code == 200
+    got = receipt.clean_result(receipt.query(str(figs), "p1", 0))
+    assert got == {"status": "unverified", "reason": "already_displayed"}
+    out = receipt.summarize("p1", got, 5, reason=receipt.REASON_TIMEOUT)
+    assert out == {
+        "status": "unverified",
+        "reason": "already_displayed",
+        "verified": False,
+        "waited_ms": 5,
+    }
+    assert "already_displayed" in receipt.REASONS
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {},
+        {"id": "p1.pdf"},
+        {"id": "p1.pdf", "status": "nope"},
+        {"id": "", "status": "displayed"},
+        {"id": 7, "status": "displayed"},
+        {"id": "x" * 2000, "status": "displayed"},
+        {"id": "p1.pdf", "status": "ok"},
+        {"id": "p1.pdf", "status": "ok", "manifest_elements": -1},
+        {"id": "p1.pdf", "status": "ok", "manifest_elements": True},
+        {"id": "p1.pdf", "status": "ok", "manifest_elements": "3"},
+        {"id": "p1.pdf", "status": "failed"},
+        {"id": "p1.pdf", "status": "failed", "code": 5},
+        {"id": "runtime:missing.py#nope", "status": "displayed"},
+    ],
+)
+def test_ack_validates_its_body(client, tmp_path, monkeypatch, body):
+    figs = _gallery(client, tmp_path)
+    _stub(monkeypatch, _Worker())
+    r = _ack(client, **body)
+    assert r.status_code == 400 and r.get_json()["code"] == "bad_handoff_ack"
+    assert receipt.query(str(figs), "p1", 0) == {"status": "pending"}
+
+
+def test_ack_with_a_non_object_body_is_400(client, tmp_path, monkeypatch):
+    _gallery(client, tmp_path)
+    assert client.post(ACK_PATH, json=[1, 2]).status_code == 400
+    assert client.post(ACK_PATH, data="not json").status_code == 400
+
+
+def test_ack_is_recorded_at_the_current_time_so_since_finds_it(client, tmp_path, monkeypatch):
+    import time as _t
+
+    figs = _gallery(client, tmp_path)
+    _stub(monkeypatch, _Worker())
+    since = _t.time() - receipt.SINCE_SKEW_S
+    _ack(client, id="p1.pdf", status="ok", manifest_elements=3)
+    assert receipt.query(str(figs), "p1", since)["status"] == "ok"
+    assert receipt.query(str(figs), "p1", _t.time() + 100) == {"status": "pending"}
+
+
+def test_ack_and_an_older_render_conclusion_coexist_first_after_since_wins(
+    client, tmp_path, monkeypatch
+):
+    import time as _t
+
+    figs = _gallery(client, tmp_path)
+    _stub(monkeypatch, _Worker())
+    long_ago = _t.time() - 100
+    receipt.record_failed(str(figs), "p1", "old_err", now=lambda: long_ago)
+    since = _t.time() - receipt.SINCE_SKEW_S
+    _ack(client, id="p1.pdf", status="ok", manifest_elements=2)
+    # 旧结论在 since 之前：不算；确认是 since 之后的第一条
+    assert receipt.query(str(figs), "p1", since)["status"] == "ok"
+    # 之后又来一条渲染结论：first-wins，仍是确认那条
+    receipt.record_failed(str(figs), "p1", "later_err")
+    assert receipt.query(str(figs), "p1", since)["status"] == "ok"
+
+
+def test_acks_cannot_outgrow_the_ledger_bound(client, tmp_path, monkeypatch):
+    _gallery(client, tmp_path)
+    _stub(monkeypatch, _Worker())
+    for _ in range(receipt.MAX_ENTRIES + 40):
+        assert _ack(client, id="p1.pdf", status="displayed").status_code == 200
+    assert len(receipt.LEDGER._entries) == receipt.MAX_ENTRIES
+
+
+@pytest.fixture
+def acking(client, tmp_path, monkeypatch):
+    """项目已打开 + 装上会话认证状态（桌面形态，带完整 secret 以覆盖浏览器模式）。"""
+    figs = _gallery(client, tmp_path)
+    _stub(monkeypatch, _Worker())
+    state = security.SessionState("boot")
+    state.port = PORT
+    state.api_secret = "full-secret"
+    m.app.config[security.STATE_KEY] = state
+    yield figs, state
+    m.app.config.pop(security.STATE_KEY, None)
+
+
+def _post_ack(headers=None, base=f"http://127.0.0.1:{PORT}"):
+    return m.app.test_client().post(
+        ACK_PATH,
+        json={"id": "p1.pdf", "status": "displayed"},
+        headers=headers or {},
+        base_url=base,
+    )
+
+
+def test_ack_rejects_the_scoped_status_token_and_missing_credentials(acking):
+    figs, state = acking
+    assert _post_ack().status_code == 401
+    assert _post_ack({session_client.AUTH_HEADER: state.status_token}).status_code == 401
+    assert _post_ack({session_client.AUTH_HEADER: "wrong"}).status_code == 401
+    assert receipt.query(str(figs), "p1", 0) == {"status": "pending"}
+
+
+def test_ack_accepts_the_full_secret_and_the_session_cookie(acking):
+    figs, state = acking
+    assert _post_ack({session_client.AUTH_HEADER: "full-secret"}).status_code == 200
+    receipt.LEDGER.clear()
+    c = m.app.test_client()
+    cookie = state.redeem("boot")
+    assert cookie
+    c.set_cookie(security.COOKIE_NAME, cookie, domain="127.0.0.1")
+    r = c.post(
+        ACK_PATH,
+        json={"id": "p1.pdf", "status": "displayed"},
+        base_url=f"http://127.0.0.1:{PORT}",
+    )
+    assert r.status_code == 200
+    assert receipt.query(str(figs), "p1", 0)["status"] == "unverified"
+
+
+def test_ack_enforces_host_and_origin(acking):
+    h = {session_client.AUTH_HEADER: "full-secret"}
+    assert _post_ack(h, base="http://localhost:%d" % PORT).status_code == 403
+    assert _post_ack({**h, "Origin": "http://evil.example"}).status_code == 403
+
+
+def test_cli_gets_a_conclusion_after_forwarded_without_waiting_for_the_budget(
+    client, tmp_path, monkeypatch
+):
+    """重复交接：界面不渲染、只回确认——CLI 在 forwarded 之后立刻拿到结论，不是等满 20 秒。"""
+    figs = _gallery(client, tmp_path)
+    _stub(monkeypatch, _Worker())
+    monkeypatch.setattr(receipt, "candidates", lambda port: [(1, "t")])
+
+    def fake_fetch(port, cred, project, stem, since):
+        return receipt.clean_result(receipt.query(project, stem, since)) or {"status": "pending"}
+
+    monkeypatch.setattr(receipt, "fetch", fake_fetch)
+    ack = {"id": "p1.pdf", "status": "ok", "manifest_elements": 4}
+    monkeypatch.setattr(
+        handoff,
+        "launch",
+        FakeLaunch(lambda t: assert_ack_ok(client, ack)),
+    )
+    clock = Clock()
+    result = handoff.open_target(
+        str(figs / "p1.pdf"), render_wait=20, receipt_clock=clock, receipt_sleep=clock.sleep
+    )
+    render = result["launch"]["render"]
+    assert render["status"] == "ok" and render["verified"] is True
+    assert clock.sleeps == [] and render["waited_ms"] < 1000  # 远小于 20 秒预算
+
+
+def assert_ack_ok(client, ack):
+    assert client.post(ACK_PATH, json=ack).status_code == 200
+
+
+def test_an_old_frontend_that_never_acks_still_times_out(client, tmp_path, monkeypatch):
+    """兼容：没有确认 = 与改动前一样等到超时、报 unverified/timeout。"""
+    figs = _gallery(client, tmp_path)
+    _stub(monkeypatch, _Worker())
+    monkeypatch.setattr(receipt, "candidates", lambda port: [(1, "t")])
+    monkeypatch.setattr(
+        receipt,
+        "fetch",
+        lambda port, cred, project, stem, since: (
+            receipt.clean_result(receipt.query(project, stem, since)) or {"status": "pending"}
+        ),
+    )
+    monkeypatch.setattr(handoff, "launch", FakeLaunch())
+    clock = Clock()
+    result = handoff.open_target(
+        str(figs / "p1.pdf"), render_wait=20, receipt_clock=clock, receipt_sleep=clock.sleep
+    )
+    assert result["launch"]["render"]["reason"] == "timeout"
+
+
 # ------------------------------- 插件三字段 -------------------------------
 @pytest.fixture(scope="module")
 def plugin():
@@ -1194,3 +1434,38 @@ def test_docs_describe_the_http_query_and_not_a_receipt_file():
     for text in (doc, adr):
         assert "/api/handoff/render-status" in text
         assert "session/handoff/" not in text
+
+
+def _dotted_gallery(client, tmp_path, monkeypatch, worker):
+    """文件名主干自己带点（`Fig.v2.pdf` → stem `Fig.v2`）：注册表只认完整主干。"""
+    figs = tmp_path / "d"
+    figs.mkdir()
+    doc = pymupdf.open()
+    doc.new_page(width=100, height=50)
+    doc.save(figs / "Fig.v2.pdf")
+    doc.close()
+    client.post("/api/projects/open", json={"path": str(figs)})
+    monkeypatch.setattr(
+        m.engine_registry.Registry,
+        "for_stem",
+        lambda self, s: (
+            {"script": "x.py", "entry": "main", "cost": "light"} if s == "Fig.v2" else None
+        ),
+    )
+    monkeypatch.setattr(m.engine_pool, "get", lambda *a, **kw: worker)
+    return figs
+
+
+def test_dotted_stem_is_looked_up_whole_on_render(client, tmp_path, monkeypatch):
+    figs = _dotted_gallery(client, tmp_path, monkeypatch, _Worker())
+    assert (
+        client.post("/api/engine/render", json={"id": "Fig.v2.pdf", "patches": []}).status_code
+        == 200
+    )
+    assert _summary(figs, "Fig.v2")["verified"] is True
+
+
+def test_dotted_stem_is_looked_up_whole_on_ack(client, tmp_path, monkeypatch):
+    figs = _dotted_gallery(client, tmp_path, monkeypatch, _Worker())
+    assert _ack(client, id="Fig.v2.pdf", status="ok", manifest_elements=3).status_code == 200
+    assert _summary(figs, "Fig.v2")["verified"] is True

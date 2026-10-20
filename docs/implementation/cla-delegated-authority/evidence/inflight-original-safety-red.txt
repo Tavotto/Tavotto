@@ -1,0 +1,29 @@
+✖ desired safety: recovery must not permanently manualize a known in-flight issued intent (40.795715ms)
+ℹ tests 1
+ℹ suites 0
+ℹ pass 0
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 233.401649
+
+✖ failing tests:
+
+test at tests/independent-inflight-review.test.mjs:34:1
+✖ desired safety: recovery must not permanently manualize a known in-flight issued intent (40.795715ms)
+  AssertionError [ERR_ASSERTION]: a missing run during active send must remain recoverable without terminal manual
+
+  'manual' !== 'issued'
+
+      at file:///tmp/cla-p1-inflight-review/services/cla-cloudflare/tests/independent-inflight-review.test.mjs:35:35
+      at async iso (file:///tmp/cla-p1-inflight-review/services/cla-cloudflare/tests/delegation-fixture.mjs:37:79)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: 'manual',
+    expected: 'issued',
+    operator: 'strictEqual',
+    diff: 'simple'
+  }

@@ -70,6 +70,7 @@ import matplotlib.container as c
 | 色条 `_inside` / `_reset_locator_formatter_scale` / `_draw_all` 还在 | 翻转方向 / 开 extend 当场抛异常 |
 | `_ColorbarAxesLocator` 仍在 `extend=="neither"` 时不收回 `box_aspect` | 「开了又关」的色条比从没开过的宽 10% |
 | `axis3d._get_coord_info` / `_get_axis_line_edge_points` 还在 | 3D 轴箭头落错边 |
+| `Path3DCollection._sizes3d` / `_linewidths3d` / `_offset_zordered`、`Poly3DCollection._facecolor3d` / `_edgecolor3d`、`Axes3D.computed_zorder`、集合的 `do_3d_projection()` 还在、语义没变（ADR 0135） | 3D 散点撤销后逐点大小被打乱、曲面 alpha / 边色热态 ≠ 冷启动、zorder 宣称了却被覆盖、隐藏的 3D 图元写回 409 |
 
 ## 5. 私有 API 清单
 

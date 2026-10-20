@@ -3401,6 +3401,7 @@
         "roles_present": [
           "axes3d",
           "axis_label",
+          "line",
           "title"
         ],
         "editable": [
@@ -3410,6 +3411,10 @@
           ],
           [
             "axes_0.zlabel",
+            "color"
+          ],
+          [
+            "axes_0.lines_0",
             "color"
           ]
         ]
@@ -3424,13 +3429,16 @@
           "gid": "axes_0.zlabel",
           "prop": "color",
           "value": "#804000"
+        },
+        {
+          "gid": "axes_0.lines_0",
+          "prop": "color",
+          "value": "#c04000"
         }
       ],
       "browser_eligible": false,
       "smoke": false,
-      "notes": "3D 曲线。",
-      "classification": "unsupported_by_design",
-      "reason": "3D 的产品边界是「文字类元素 + 视角 + 轴线/网格可编辑，盒内数据属性（spines / lim / scale）禁用」——曲线（Line3D） 属于**数据**，改它等于改数据，那该回代码而不是在编辑器里点。这条 case 验的是这条边界本身没有漂移，不是「3D 不好用」：标题 / 轴标签 / 刻度 / 视角照常可编辑，渲染、重放、导出全部正确。"
+      "notes": "3D 曲线（Line3D）：颜色可改，进元素表。（ADR 0135 起 3D 数据图元进元素表；此前是 unsupported_by_design）"
     },
     {
       "id": "art_3d_scatter",
@@ -3445,6 +3453,7 @@
       "semantic_expectations": {
         "roles_present": [
           "axes3d",
+          "scatter",
           "title"
         ],
         "editable": [
@@ -3455,6 +3464,10 @@
           [
             "axes_0.title",
             "color"
+          ],
+          [
+            "axes_0.scatter_0",
+            "facecolor"
           ]
         ]
       },
@@ -3468,13 +3481,16 @@
           "gid": "axes_0.title",
           "prop": "color",
           "value": "#804000"
+        },
+        {
+          "gid": "axes_0.scatter_0",
+          "prop": "facecolor",
+          "value": "#2a6f3c"
         }
       ],
       "browser_eligible": false,
       "smoke": false,
-      "notes": "",
-      "classification": "unsupported_by_design",
-      "reason": "3D 的产品边界是「文字类元素 + 视角 + 轴线/网格可编辑，盒内数据属性（spines / lim / scale）禁用」——散点（Path3DCollection） 属于**数据**，改它等于改数据，那该回代码而不是在编辑器里点。这条 case 验的是这条边界本身没有漂移，不是「3D 不好用」：标题 / 轴标签 / 刻度 / 视角照常可编辑，渲染、重放、导出全部正确。"
+      "notes": "3D 散点（Path3DCollection）：面色可改。（ADR 0135 起 3D 数据图元进元素表；此前是 unsupported_by_design）"
     },
     {
       "id": "art_3d_surface",
@@ -3489,6 +3505,7 @@
       "semantic_expectations": {
         "roles_present": [
           "axes3d",
+          "fill",
           "title"
         ],
         "editable": [
@@ -3499,6 +3516,10 @@
           [
             "axes_0.title",
             "color"
+          ],
+          [
+            "axes_0.fill_0",
+            "cmap"
           ]
         ]
       },
@@ -3512,13 +3533,16 @@
           "gid": "axes_0.title",
           "prop": "color",
           "value": "#804000"
+        },
+        {
+          "gid": "axes_0.fill_0",
+          "prop": "cmap",
+          "value": "plasma"
         }
       ],
       "browser_eligible": false,
       "smoke": false,
-      "notes": "",
-      "classification": "unsupported_by_design",
-      "reason": "3D 的产品边界是「文字类元素 + 视角 + 轴线/网格可编辑，盒内数据属性（spines / lim / scale）禁用」——曲面（Poly3DCollection） 属于**数据**，改它等于改数据，那该回代码而不是在编辑器里点。这条 case 验的是这条边界本身没有漂移，不是「3D 不好用」：标题 / 轴标签 / 刻度 / 视角照常可编辑，渲染、重放、导出全部正确。"
+      "notes": "3D 曲面（Poly3DCollection，映射）：色图可改。（ADR 0135 起 3D 数据图元进元素表；此前是 unsupported_by_design）"
     },
     {
       "id": "art_3d_wireframe",
@@ -3533,6 +3557,7 @@
       "semantic_expectations": {
         "roles_present": [
           "axes3d",
+          "linecoll",
           "title"
         ],
         "editable": [
@@ -3542,6 +3567,10 @@
           ],
           [
             "axes_0.title",
+            "color"
+          ],
+          [
+            "axes_0.linecoll_0",
             "color"
           ]
         ]
@@ -3556,13 +3585,16 @@
           "gid": "axes_0.title",
           "prop": "color",
           "value": "#804000"
+        },
+        {
+          "gid": "axes_0.linecoll_0",
+          "prop": "color",
+          "value": "#c04000"
         }
       ],
       "browser_eligible": false,
       "smoke": false,
-      "notes": "",
-      "classification": "unsupported_by_design",
-      "reason": "3D 的产品边界是「文字类元素 + 视角 + 轴线/网格可编辑，盒内数据属性（spines / lim / scale）禁用」——线框（Line3DCollection） 属于**数据**，改它等于改数据，那该回代码而不是在编辑器里点。这条 case 验的是这条边界本身没有漂移，不是「3D 不好用」：标题 / 轴标签 / 刻度 / 视角照常可编辑，渲染、重放、导出全部正确。"
+      "notes": "3D 线框（Line3DCollection）：颜色可改。（ADR 0135 起 3D 数据图元进元素表；此前是 unsupported_by_design）"
     },
     {
       "id": "art_3d_bar",
@@ -3577,6 +3609,7 @@
       "semantic_expectations": {
         "roles_present": [
           "axes3d",
+          "fill",
           "title"
         ],
         "editable": [
@@ -3587,6 +3620,10 @@
           [
             "axes_0.title",
             "color"
+          ],
+          [
+            "axes_0.fill_0",
+            "facecolor"
           ]
         ]
       },
@@ -3600,13 +3637,16 @@
           "gid": "axes_0.title",
           "prop": "color",
           "value": "#804000"
+        },
+        {
+          "gid": "axes_0.fill_0",
+          "prop": "facecolor",
+          "value": "#c04000"
         }
       ],
       "browser_eligible": false,
       "smoke": false,
-      "notes": "",
-      "classification": "unsupported_by_design",
-      "reason": "3D 的产品边界是「文字类元素 + 视角 + 轴线/网格可编辑，盒内数据属性（spines / lim / scale）禁用」——立体柱（bar3d 的 Poly3DCollection） 属于**数据**，改它等于改数据，那该回代码而不是在编辑器里点。这条 case 验的是这条边界本身没有漂移，不是「3D 不好用」：标题 / 轴标签 / 刻度 / 视角照常可编辑，渲染、重放、导出全部正确。"
+      "notes": "3D 柱（bar3d 的 Poly3DCollection）：面色可改。（ADR 0135 起 3D 数据图元进元素表；此前是 unsupported_by_design）"
     },
     {
       "id": "art_polar",

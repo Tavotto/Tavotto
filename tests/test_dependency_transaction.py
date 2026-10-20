@@ -1684,6 +1684,47 @@ class TestRunEnvOwnership:
 @needs_worker
 @pytest.mark.usefixtures("tavotto_owned_run_env")
 class TestDeclaredRootsTransaction:
+    def test_a_hash_dynamic_root_survives_the_next_nonhash_generation(
+        self, tmp_path, house, offline_managed_env
+    ):
+        """#963：hash 首代实际装成的动态 root 必须记账，换回普通声明后重建仍能 import。"""
+        import hashlib
+
+        wheel = next(house.glob(f"{BETA[0].replace('-', '_')}-1.0-*.whl"))
+        digest = hashlib.sha256(wheel.read_bytes()).hexdigest()
+        dynamic = (
+            f'import importlib\nname = "{BETA[1]}"\nprint(importlib.import_module(name).VALUE)\n'
+        )
+        project = _project(
+            tmp_path,
+            requirements=f"{BETA[0]}==1.0 --hash=sha256:{digest}\n",
+            script=dynamic,
+        )
+        first = deprepair.create_joint_plan(project, "figure.py")
+        assert first.require_hashes and first.needed_imports == ()
+        first_rec = _prepare_with(first)
+        assert first_rec["state"] == deprepair.STATE_DONE, first_rec
+        assert _run_script(managedenv.python_of(project), project) == "42"
+        first_ledger = managedenv.ledger_entries(project)
+
+        (project / "requirements.txt").write_text(
+            f"{BETA[0]}==1.0\n{GAMMA[0]}==1.0\n", encoding="utf-8"
+        )
+        (project / "figure.py").write_text(
+            dynamic + f"import {GAMMA[1]}\nprint({GAMMA[1]}.VALUE)\n", encoding="utf-8"
+        )
+        second = deprepair.create_joint_plan(project, "figure.py")
+        assert second.require_hashes is False
+        second_rec = _prepare_with(second)
+        assert second_rec["state"] == deprepair.STATE_DONE, second_rec
+        assert second_rec["result"]["generation"] != first_rec["result"]["generation"]
+        assert _run_script(managedenv.python_of(project), project) == "42\n42"
+        assert {e["distribution"] for e in first_ledger} == {BETA[0]}
+        assert {e["distribution"] for e in managedenv.ledger_entries(project)} == {
+            BETA[0],
+            GAMMA[0],
+        }
+
     def test_a_declared_root_reached_only_by_a_dynamic_import_is_installed_with_its_dependency(
         self, tmp_path, audit_house, offline_managed_env
     ):

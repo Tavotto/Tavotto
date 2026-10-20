@@ -15,7 +15,8 @@
 > `readiness-and-left-shell.md`「准备引导卡」。
 
 - **数据源三件套**：`scriptLibraryStore`（`/api/registry` 全视图，缓存 +
-  幂等去重）、`runtimeAssetStore.assets`（`GET /api/runtime/assets`，只读
+  同批通知合并、在途期间来的刷新共用一次补问；`loadedAt` 记录这份已落地快照的**请求发出时刻**，
+  不把响应晚到当成比准备结局更新，#902）、`runtimeAssetStore.assets`（`GET /api/runtime/assets`，只读
   清单 + `previewNonce` 预览换代）、`scriptRunStore`（运行状态机）。
   三者都在 `registry.changed` SSE 时重取**已经取过的**，项目切换全清。
 - **SSE 断线对账**：依赖安装 / 引擎 bootstrap 的进度只走 SSE（`/api/events` 无重放，队列满会丢），丢了终态事件卡片会永停「正在安装」。
@@ -142,6 +143,13 @@
      不是空账本；成功过之后一次读失败不降级。
      对账里的两个读（草稿 GET、项目账本 GET）**各自带 5 秒超时**（中止请求并不再等它）：半开连接上的读不会自己结束，
      超时等同读失败（`ledgerState=failed`、重试提示可达，`draftRead` 的失败也由这个结局驱动，不另设计时）；迟到的旧响应按代次丢弃。
+  6. **会话终态的来源有三个：事件（`ai.done`）、对账入口（挂载 / 焦点 / 可见 / 重连 / 接受，含建完占位后一律读一次详情）、
+     安全网轮询；任何一个都足以收尾。** 事件和对账都可能错过（SSE 没连上任务就结束、断线期间结束），逐个补时序只会越补越多，
+     所以只要本地还有非终态会话（running 或接回的占位），`aiStore` 每 15 s（`SAFETY_NET_MS`）对它们走一次
+     `settleRunningSessions`（只读快照）：错过的 `ai.done` 最多 15 s 后被收尾、发送锁解开。没有非终态会话不轮询、页面不可见暂停
+     （恢复可见立即跑一次）、换项目会话清空后自然停；详情读取按「代次 + 项目 + 会话 id」在途去重。
+     **快照只有 `final === true` 才算终态**（`snapshotIsFinal`；`cancel` 之后 status 是 cancelled 但 changed / diff 还没算出来，不是终态；
+     老后端没有该字段时退回按 status 判），终态快照的转录是权威来源——收尾时按顺序与本地 entries 合并（补回断线期间丢的、不重复、本地独有的保留）。
   **「首个 POST 不确定」引出的所有分支**（用户点查询、同 id 重发返回 `deduped:true`）都收在 `aiStore.settleFromSnapshot`：
   向后端要请求 + 会话快照（详情只在 `readSessionDetail` 一处读），按快照的真实状态收尾（终态走正常完成路径含 refresh
   警告，仍在跑才是 running，读不到保持未确认、绝不凭摘要或 deduped 响应建 running 会话）。看护
@@ -160,6 +168,9 @@
   **同一项目**刷新失败不清空 `panels` / `byId` / `unsupported`（#561）；同项目的在途请求被合并、在途期间
   的调用共用一次补问，`force: true` 永远另起一次（手动刷新不许被在途请求吞掉）。`recentlyUsed` 是按
   文件 id 记的本机偏好，不清。看护 `store/assetStore.test.ts`、`store/projectSwitchAssets.test.ts`。
+  `refreshProjectNow()` 从扫描开始到强制清单落地一直持有 `assetStore.beginRefresh()` 的忙碌态，
+  清单请求的 finally 只释放自己的那一份；并发刷新各自释放，`clear()` 作废旧代全部持有者（#904）。
+  卡片不直接写 `loading`，不据它猜是否另发清单。看护 `store/libraryRefreshRace.test.ts`、`PreparationCard.test.tsx`。
 - **`scriptRunStore` 的四条纪律**（vitest 看护）：同脚本防并发（busy 即
   no-op，后端另有 409）；cancel 走后端取消端点（置标志 + 硬杀 worker），
   行内状态等**原请求**以 `execution_cancelled` 落地——绝不「界面装停了、

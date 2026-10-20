@@ -12,13 +12,12 @@ import sqlite3
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-OBJECTS = "authority_update authority_delete oauth_expiry packets_subject_digest authority agreements state sessions oauth_states packets intents signatures eligibility_blocks audit targets outbox outbox_due deliveries published_checks _guards revision_outbox delivery_outbox agreements_update agreements_delete packets_update packets_delete signatures_update signatures_delete blocks_update blocks_delete audit_update audit_delete publication_attempts publication_unresolved reconciliation_progress refresh_requests agreement_documents documents_update documents_delete".split()
 
 
-def namespace(s, version):
+def namespace(s, version, objects):
     return re.sub(
         r"\b[A-Za-z_][A-Za-z_0-9]*\b",
-        lambda m: "cla_native_" + version + "_" + m[0] if m[0] in OBJECTS else m[0],
+        lambda m: "cla_native_" + version + "_" + m[0] if m[0] in objects else m[0],
         s,
     )
 
@@ -29,7 +28,18 @@ def ddl(version):
         if version == "v1"
         else [ROOT / "src/base.sql", ROOT / "src/native/schema.sql"]
     )
-    return "\n".join(namespace(f.read_text(), version) for f in files)
+    raw = "\n".join(f.read_text() for f in files)
+    # SQLite parses the actual canonical DDL; a hand-copied object list must not
+    # silently omit newly added tables/triggers from the namespaced migration.
+    parsed = sqlite3.connect(":memory:")
+    try:
+        parsed.executescript(raw)
+        objects = {
+            r[0] for r in parsed.execute("SELECT name FROM sqlite_schema WHERE sql IS NOT NULL")
+        }
+    finally:
+        parsed.close()
+    return namespace(raw, version, objects)
 
 
 def schema(db, version):
@@ -39,14 +49,16 @@ def schema(db, version):
     ).fetchall()
 
 
-def rows(db, table):
-    # Snapshot comparison includes every column; blobs are encoded without disclosure.
+def rows(db, table, columns=None):
+    # Every source column plus rowid is compared. Target-only reviewed defaults
+    # are checked separately; blobs are encoded without disclosure.
     def encode(v):
         return {"blob": v.hex()} if isinstance(v, bytes) else v
 
+    selected = ",".join(columns) if columns else "*"
     return sorted(
         json.dumps([encode(v) for v in row], separators=(",", ":"), ensure_ascii=False)
-        for row in db.execute("SELECT rowid,* FROM " + table)
+        for row in db.execute("SELECT rowid," + selected + " FROM " + table)
     )
 
 
@@ -81,6 +93,9 @@ def migrate(source, output):
     ):
         raise ValueError("unknown triggers require review")
     tables = [r[1] for r in schema(expected, "v1") if r[0] == "table"]
+    source_columns = {
+        t: [r[1] for r in old.execute("PRAGMA table_info(" + t + ")")] for t in tables
+    }
     before = {t: rows(old, t) for t in tables}
     new = sqlite3.connect(output)
     old.backup(new)
@@ -97,18 +112,26 @@ def migrate(source, output):
                 new.execute(sql)
         for t in tables:
             target = t.replace("cla_native_v1_", "cla_native_v2_", 1)
-            columns = [row[1] for row in new.execute("PRAGMA table_info(" + t + ")")]
+            columns = source_columns[t]
             names = ",".join(["rowid"] + columns)
             new.execute("INSERT INTO " + target + " (" + names + ") SELECT " + names + " FROM " + t)
         for typ, name, table, sql in definitions:
             if typ != "table":
                 new.execute(sql)
         for t in tables:
-            if (
-                rows(new, t) != before[t]
-                or rows(new, t.replace("cla_native_v1_", "cla_native_v2_", 1)) != before[t]
-            ):
+            target = t.replace("cla_native_v1_", "cla_native_v2_", 1)
+            if rows(new, t) != before[t] or rows(new, target, source_columns[t]) != before[t]:
                 raise ValueError("row preservation mismatch")
+            target_columns = {r[1] for r in new.execute("PRAGMA table_info(" + target + ")")}
+            added = target_columns - set(source_columns[t])
+            expected_added = {"send_until"} if t == "cla_native_v1_publication_attempts" else set()
+            if added != expected_added:
+                raise ValueError("unreviewed target column defaults")
+        active_historical = new.execute(
+            "SELECT 1 FROM cla_native_v2_publication_attempts WHERE send_until!=0 LIMIT 1"
+        ).fetchone()
+        if active_historical:
+            raise ValueError("historical publication has an active send fence")
         if new.execute("PRAGMA foreign_key_check").fetchall():
             raise ValueError("foreign key check failed")
         # No eligibility is asserted by migration. LiveService still decrypts/checks evidence.
@@ -117,7 +140,8 @@ def migrate(source, output):
             "offline_only": True,
             "source_opened_read_only": True,
             "v1_preserved": True,
-            "v2_exact_row_copy": True,
+            "v2_exact_source_row_copy": True,
+            "target_column_defaults": {"publication_attempts.send_until": 0},
             "legal_or_cryptographic_validation": False,
             "deployment_authorized": False,
             "tables": {t: {"rows": len(before[t]), "sha256": digest(before[t])} for t in tables},

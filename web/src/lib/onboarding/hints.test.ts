@@ -66,7 +66,7 @@ describe('showHint', () => {
   })
 
   it('教程进行中不出提示；一条在显示时另一条不叠', () => {
-    useOnboardingStore.getState().start({ projectId: 'p', documentId: 'd' })
+    useOnboardingStore.getState().start()
     expect(showHint('multi_select')).toBe(false)
     useOnboardingStore.getState().skip()
     expect(showHint('multi_select')).toBe(true)

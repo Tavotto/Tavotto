@@ -1,0 +1,9 @@
+
+> tavotto-cla-cloudflare@0.0.0 test:migration
+> python3 tests/migration.test.py
+
+...
+----------------------------------------------------------------------
+Ran 3 tests in 0.038s
+
+OK

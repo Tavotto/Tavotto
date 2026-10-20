@@ -85,6 +85,7 @@ from .engine import (
     execspec as engine_execspec,
     exportjob as engine_exportjob,
     exportreq as engine_exportreq,
+    exporttelemetry as engine_exporttelemetry,
     figcapture as engine_figcapture,
     handoff as engine_handoff,
     handoffreceipt as engine_handoffreceipt,
@@ -2558,6 +2559,15 @@ def _export_telemetry(job) -> None:
     )
 
 
+def _export_result_telemetry(job) -> None:
+    """导出终态 `export_result`：挂在作业的 `on_terminal` 上，由 `exportjob._emit` 在终局调**一次**。
+    同步 / 后台两条路、预运行后失败、取消、`run()` 早退的失败都经同一个 `_emit`；
+    请求被拒（`prepare` 抛）与 `overwrite=ask` 撞名（conflict）不到这里。"""
+    props = engine_exporttelemetry.properties(job)
+    if props is not None:
+        engine_telemetry.capture("export_result", props)
+
+
 def _legacy_export_response(job) -> tuple:
     """旧契约的回执形状（`files[] / export_dir / warnings`）。
 
@@ -2668,6 +2678,8 @@ def _prepare_export_job(spec: dict):
     # 上一次进程被 kill 时留下的临时目录：**在这里顺手扫掉**，
     # 不然它们会一直躺在用户的导出目录里，看起来像是我们弄脏的
     engine_exportjob.sweep_stale_tmp_dirs(out_dir)
+    # 作业已被受理：此后无论怎么结束都记一条终态（`export_result`）
+    job.on_terminal = _export_result_telemetry
     return job, None
 
 
@@ -4415,8 +4427,11 @@ def api_projects_remove():
 
 
 def _tutorial_error(exc: engine_tutorial.TutorialError):
-    status = 409 if exc.code == "tutorial_locked" else 500
-    if exc.code == "tutorial_reset_incomplete":  # 固定文案，没有占位符，不带 reason
+    status = 409 if exc.code in ("tutorial_locked", "tutorial_layouts_changed") else 500
+    if exc.code in (
+        "tutorial_reset_incomplete",
+        "tutorial_layouts_changed",
+    ):  # 固定文案，没有占位符，不带 reason
         return jsonify({"error": exc.message, "code": exc.code}), status
     return jsonify(
         {"error": exc.message, "code": exc.code, "params": {"reason": exc.message}}
@@ -4586,6 +4601,15 @@ def _clear_tutorial_local_state(
 def api_tutorial_reset():
     """重新开始教程：关掉打开着的教程项目 → 原子换成干净副本 → 重新打开。"""
     body = request.get_json(silent=True) or {}
+    # 确认框里列给用户看的另存排版清单；带了就在教程锁内重核（不一致 → 409 tutorial_layouts_changed）。
+    # 没带的是老前端（它没有清单确认这一步）：照旧重置，拒绝只会让它永远重置不了
+    expected = body.get("expected_layouts")
+    if expected is not None and not (
+        isinstance(expected, list) and all(isinstance(n, str) for n in expected)
+    ):
+        return jsonify(
+            {"error": "expected_layouts 必须是字符串数组", "code": "bad_request", "params": {}}
+        ), 400
     try:
         meta = engine_tutorial.tutorial_metadata()
     except engine_tutorial.TutorialError as exc:
@@ -4597,7 +4621,7 @@ def api_tutorial_reset():
         # 否则下一步 rename 会撞上占用。
         close_project(ctx.id, wait=True)
     try:
-        tp = engine_tutorial.ensure_tutorial_copy(reset=True)
+        tp = engine_tutorial.ensure_tutorial_copy(reset=True, expected_layouts=expected)
     except engine_tutorial.TutorialError as exc:
         # 副本换不掉时旧副本仍在（tutorial 模块保证），把项目重新打开还给用户
         if ctx is not None and ctx.path.is_dir():
@@ -5704,6 +5728,7 @@ def api_native_session_build(session_id: str):
         # `_worker_error_payload` 都必须带 `, 500`——native 这两处曾经漏过
         # （issue #191），现在由 `test_native_api.py` 逐个端点钉着。
         return jsonify(_worker_error_payload(exc)), 500
+    _note_native_inputs(session)
     rejected = engine_nativesession.REGISTRY.bind_assets(session)
     if not rejected:
         _svg_native_execution_update(session)
@@ -5827,6 +5852,22 @@ def api_native_forget_permission():
     root = body.get("project_root") or str(require_project())
     removed = engine_nativeperm.forget(root, body.get("permission_key", "") or "")
     return jsonify({"ok": True, "removed": removed})
+
+
+def _note_native_inputs(session) -> None:
+    """桌面拥有的运行跑完之后的 build 带着输入观察：补齐这次运行的 native 成功记录的 helper / 数据依据（#1047）。
+
+    成功收口若在 `show()` 屏障上，那时脚本还没跑完、记录先记成「没观察过」；脚本跑完、界面在结束屏障上再 build 一次，
+    这里按计划号（`launch_id`）补上。终端拥有的会话不观察；补不上（观察不全、记录已被别的成功换掉）就保持不沿用。"""
+    if session.owned is None or not session.launch_id:
+        return
+    inputs = session.observed_inputs
+    if inputs is None:
+        return
+    try:
+        engine_launchctx.observe_native_basis(session.project_root, session.launch_id, inputs)
+    except Exception:  # noqa: BLE001 — 补依据是尽力而为：失败只是下次不沿用，不影响这次 build
+        LOG.info("native 记录补依据失败: %s", session.session_id, exc_info=True)
 
 
 def _materialize_native(session, skip=()) -> None:
@@ -5960,6 +6001,16 @@ def _artifact_source(rel_id: str, policy, expected=None, patches=()):
             "source_changed", "The selected source changed; reopen it.", retryable=False
         )
     return engine_figcapture.selected_artifact_context({**context, "render_policy": policy})
+
+
+def _is_unverified_png_render(rel_id, policy) -> bool:
+    """无 source_policy 的渲染落在一张 PNG 源图上：产物未与已存字节核对（只标记，不拒绝）。"""
+    return (
+        policy is None
+        and isinstance(rel_id, str)
+        and rel_id.lower().endswith(".png")
+        and not engine_runtimeasset.is_runtime_id(rel_id)
+    )
 
 
 def _artifact_path(rel_id):
@@ -6246,6 +6297,25 @@ def api_handoff_render_status():
     return jsonify(engine_handoffreceipt.query(project, stem, since))
 
 
+@app.post("/api/handoff/display-ack")
+def api_handoff_display_ack():
+    """重复交接命中已显示面板时，前端回一条「这张图当前的渲染状态」（ADR 0131 第六节修订 2026-10-18）。
+
+    只有会话 cookie / 完整 secret 能写（guard 的 scoped 只读 token 只认 GET render-status）；
+    结论按**当前时间**记进 `LEDGER`，键与形状同 `_note_handoff_render`，`verified` 仍由 `summarize` 判。
+    """
+    ack = engine_handoffreceipt.parse_ack(request.get_json(silent=True))
+    stem = _handoff_target_stem(ack["id"]) if ack else ""
+    if ack is None or not stem:
+        return jsonify({"error": "参数无效", "code": "bad_handoff_ack"}), 400
+    try:
+        registry_match = bool(current_registry().for_stem(stem))
+    except Exception:  # noqa: BLE001 —— 结论表是旁路，查不到注册表按不匹配（verified=false）
+        registry_match = False
+    engine_handoffreceipt.record_ack(current_ctx().path, stem, ack, registry_match=registry_match)
+    return jsonify({"ok": True})
+
+
 @app.post("/api/engine/render")
 def api_engine_render():
     """应用全量 override 列表并重渲染，返回新 manifest 与版本号。
@@ -6306,7 +6376,7 @@ def api_engine_render():
         worker, stem = _engine_worker(rel_id, **_artifact_kwargs(artifact_source))
         # 取会话的时间不在 worker 的 timings/build 里，单独保留原有计时。
         get_ms = round((time.perf_counter() - t_get) * 1000, 3)
-        info = current_registry().for_stem(Path(stem).stem) or {}
+        info = current_registry().for_stem(stem) or {}
         cold = not worker.built
     except Exception as exc:
         # worker 启动 / 环境解析失败（WorkerError）也是「那一次渲染」的失败结论：
@@ -6336,7 +6406,7 @@ def api_engine_render():
         )
     except engine_pool.WorkerError as exc:
         LOG.error("引擎渲染失败: %s: %s", stem, exc)
-        _note_handoff_render(Path(stem).stem, code=exc.code)
+        _note_handoff_render(stem, code=exc.code)
         # 按新改指表 build 过、只是图名变了（stems 由数据决定，`unknown_stem`）：注册表按这次 build 的真实
         # 产出重新登记，新图在素材库里出现（ADR 0106 §五）
         # 一张都没出（`unknown_stem` 被换成 `no_figures_captured*`）同样是按新表跑出的权威结果：旧 stems 要摘掉
@@ -6386,7 +6456,7 @@ def api_engine_render():
         raise
     sse_publish("render.done", {"pj": pj, "id": rel_id, "rev": worker.rev})
     _note_handoff_render(
-        Path(stem).stem,
+        stem,
         registry_match=bool(info),
         manifest_elements=len((resp.get("manifest") or {}).get("elements") or []),
     )
@@ -6423,6 +6493,11 @@ def api_engine_render():
         out["unrestored"] = resp["unrestored"]
     if artifact_source is not None:
         out["artifact_source"] = artifact_source
+    elif _is_unverified_png_render(rel_id, body.get("source_policy")):
+        # 受守 PNG 源（selected-artifact）是显式选择，省略 policy 的旧请求语义不变（docs/rules/backend/
+        # figure-capture-and-execution.md「选择具体产物的受限源图上下文」），所以不拒绝；但这次渲染重跑了脚本、
+        # 产物没与已存 PNG 字节核对——机器可读地标出，调用方不得把它当作已验证（#1145）。
+        out["source_unverified"] = {"reason": "source_policy_missing", "kind": "png"}
     switched = g.pop("environment_switched", None)
     if switched:
         # 同上：加字段不改老形状。只在**真的发生了自动切换**的那一次响应里出现。
@@ -9195,6 +9270,7 @@ def _finalize_script_attempt(ctx: "ProjectCtx", plan, result) -> dict:
         }
     # 物化在刷新之前：刷新会发 `registry.changed`，前端收到就去取 runtime 清单与预览
     run = getattr(plan, "run", None)
+    native = None
     if getattr(plan, "execution", None) == engine_execspec.PROFILE_NATIVE:
         # 桌面拥有的 native：预览从那条活会话的产物目录来（不是 safe 池里的热 worker）；活图路由已在 runner 里绑好
         native = next(
@@ -9222,7 +9298,13 @@ def _finalize_script_attempt(ctx: "ProjectCtx", plan, result) -> dict:
     engine_launchctx.record_success(
         ctx.path,
         plan.script,
-        engine_launchctx.basis_of(result, plan, bool(captured.get("failed_figures"))),
+        engine_launchctx.basis_of(
+            result,
+            plan,
+            bool(captured.get("failed_figures")),
+            # 脚本已跑完（收口在结束屏障上）才有；停在 `show()` 屏障上时由之后的 build 补（#1047，`_note_native_inputs`）
+            native_inputs=native.observed_inputs if native is not None else None,
+        ),
         run=run,
         update_default=True,
     )
@@ -10875,15 +10957,38 @@ def api_ai_pending_accept(rid):
     return jsonify(engine_ai_history.accept_pending(project, _draft_file_id(body.get("file")), rid))
 
 
+#: `GET /api/ai/history?status=running` 一次返回全部运行中会话的硬上限（防失控；实际不会触及）
+RUNNING_HISTORY_HARD_LIMIT = 2000
+
+
 @app.get("/api/ai/history")
 def api_ai_history():
     """当前项目的 AI 会话历史：分页 / 搜索 / 状态筛选 / 只看固定。"""
     project = str(require_project().resolve())
+    status = request.args.get("status", "")
+    query = request.args.get("q", "")
+    pinned_only = request.args.get("pinned") == "1"
+    if status == "open" and not query and not pinned_only:
+        # 运行中的会话天然有上限（一个脚本同时只有一个，项目里的脚本有限）：**一次返回全部，不分页**——翻页期间集合会变，
+        # offset 翻页会漏掉仍在运行的会话。只设一个很高的硬上限防失控，超过时带 `truncated: true`（实际不会发生）
+        data = engine_ai_history.list_sessions(
+            project, status=status, limit=RUNNING_HISTORY_HARD_LIMIT, offset=0
+        )
+        data["truncated"] = data["total"] > len(data["sessions"])
+        if data["truncated"]:
+            LOG.warning(
+                "运行中的 AI 会话 %s 条，超过硬上限 %s，已截断",
+                data["total"],
+                RUNNING_HISTORY_HARD_LIMIT,
+            )
+        resp = jsonify(data)
+        resp.headers["Cache-Control"] = "no-store"
+        return resp
     data = engine_ai_history.list_sessions(
         project,
-        query=request.args.get("q", ""),
-        status=request.args.get("status", ""),
-        pinned_only=request.args.get("pinned") == "1",
+        query=query,
+        status=status,
+        pinned_only=pinned_only,
         limit=min(int(request.args.get("limit", 20)), 100),
         offset=max(int(request.args.get("offset", 0)), 0),
     )

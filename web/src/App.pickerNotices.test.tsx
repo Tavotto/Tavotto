@@ -4,6 +4,7 @@
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { useOnboardingStore } from '@/store/onboardingStore'
 
 vi.mock('@/components/ProjectPicker', () => ({ ProjectPicker: () => <div data-fake-picker /> }))
 vi.mock('@/components/TelemetryConsentDialog', () => ({ TelemetryConsentDialog: () => null }))
@@ -29,6 +30,8 @@ let root: Root
 beforeEach(() => {
   vi.stubGlobal('fetch', vi.fn(() => Promise.reject(new Error('offline'))))
   useProjectStore.setState({ phase: 'none', init: vi.fn(() => Promise.resolve()) } as never)
+  // 首启欢迎页（ADR 0136）会盖在选择页上：这里测的是选择页自己的通知轨，记成欢迎页已经出现过
+  useOnboardingStore.setState({ welcomeSeenAt: 1 })
   host = document.createElement('div')
   document.body.appendChild(host)
   root = createRoot(host)

@@ -96,3 +96,10 @@ Origin 仍只认 `127.0.0.1:<实际端口>` 一种写法（`state.port` 取自�
 guard 只在「`GET /api/handoff/render-status`」上认它，换不到 nonce / cookie，带去任何其它端点都是拒绝。用途仅是让 `tavotto open`
 查「某项目某 stem 最近一次渲染成败」。威胁模型与上文同一个论证（能读该目录的同用户进程本来就能读用户的任何文件；
 网页读不到；Host / Origin 钉死），泄露的后果仅是看到那一条渲染结论。浏览器模式不变（已有完整凭据文件）。
+
+## 修订（2026-10-18，[ADR 0131](0131-agent-verification-entry.md) 第六节修订，#1154）
+
+上一条修订的 scoped token 边界**一个字不放宽**：它仍只对 `GET /api/handoff/render-status` 有效。新增的显示确认写入口
+`POST /api/handoff/display-ack`（重复交接已显示的图时由前端回当前渲染状态）走会话 cookie / 完整 secret，
+带 scoped token 去访问是 401（`tests/test_handoff_render_receipt.py::test_ack_rejects_the_scoped_status_token_and_missing_credentials`）。
+写入量受 `LEDGER` 的 128 条 / 10 分钟上限约束，确认不绕过它。

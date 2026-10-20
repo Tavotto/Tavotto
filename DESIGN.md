@@ -30,6 +30,12 @@ colors:
   syntax-builtin: "#86520a"
   shadow: "#1b1b18"
 typography:
+  hero:
+    fontFamily: "-apple-system, BlinkMacSystemFont, 'SF Pro Text', 'PingFang SC', 'Helvetica Neue', 'Microsoft YaHei', system-ui, sans-serif"
+    fontSize: "44px"
+    fontWeight: 650
+    lineHeight: "52px"
+    letterSpacing: "0.02em"
   display:
     fontFamily: "-apple-system, BlinkMacSystemFont, 'SF Pro Text', 'PingFang SC', 'Helvetica Neue', 'Microsoft YaHei', system-ui, sans-serif"
     fontSize: "24px"
@@ -240,7 +246,7 @@ Dialog 页脚三槽——全文在 **宪法第二十六节**。
 **Character:** 一套字体；层级由**角色**决定，不由页面自己挑组合。
 
 ### Hierarchy
-十个角色 `type-display / type-heading / type-title / type-reading / type-section / type-body / type-control / type-caption / type-meta / type-number`，
+十一个角色 `type-hero / type-display / type-heading / type-title / type-reading / type-section / type-body / type-control / type-caption / type-meta / type-number`，
 值与用途见 **宪法第六节**；`text-[Npx]` 不许出现。`type-title` 15 / 600、`type-heading` 17 / 600 / -0.01em、`type-display` 24 / 600 / -0.02em
 （17 与 24 只经角色出现，不进字号阶梯）；`type-reading` 13 / 1.6 给阅读面（助手、对话框正文、设置说明）；`type-caption` 12 / ink-3；`type-meta` 11 / ink-3。
 

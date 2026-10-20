@@ -184,3 +184,22 @@ pytest 的假设进去会扩大攻击面）。纯标准库，复用 `_common.run
 - `perf.macos_window.selftest`（selftest）：`tests/test_perf_macos_window.py`。
   `perf_macos_window.py record / compare` 需要真实 macOS 窗口与人工拖动，Agent 无法无人值守，**不登记**；
   `diagnostic_only` 用场景上新增的 `semantics` 标注（不是结果状态）表达。
+
+## 修订（2026-10-18，第六节，#1154：重复交接已显示的图）
+
+**问题**：桌面已开着且正在显示某张图时再交接同一张，前端纪律「重复交接同一张只选中，不叠第二份」不触发
+`/api/engine/render`，结论表没有 `since` 之后的新结论，CLI 每次白等满 20 秒再报 `unverified/timeout`，
+也拿不到「图其实已经好好显示着」的确认。
+
+**决定**（加性，`ok`、退出码、`protocol: 1` 不变）：
+- 新增**经会话认证的写入口** `POST /api/handoff/display-ack`，请求体 `{id, status, manifest_elements?, code?}`，
+  `status` 闭集 `ok | failed | displayed`。键沿用 `_note_handoff_render` 的 (项目, stem)，stem 由 `_handoff_target_stem(id)` 解析；
+  时间戳取**当前时间**，故 CLI 的 `since` 能查到；与渲染结论同一张有界 `LEDGER`（128 条 / 10 分钟），确认不绕过它。
+- 结论形状与渲染收尾处写入的一致：`ok` 的 `registry_match` 由**后端**查注册表（前端的话不算），`verified` 仍只在
+  `handoffreceipt.summarize`；`failed` 的 code 过 `_safe_code`。
+- **闭集新增一条 `unverified.reason = already_displayed`**：前端命中了已显示面板，但拿不出这一版的精确渲染（过期 / 非精确变体）时用，
+  语义是「实例应答了，但没有可凭的渲染结论」，与 `timeout`（没信号）区分；绝不 verified。正在渲染中（结论在路上）或还没渲染过的面板不发确认，
+  交给它自己的渲染结论。
+- **安全**：不改 `security.py`——guard 原本只在「GET 且路径恰为 render-status」时认 scoped token，POST 新入口带它是 401（用例钉着）；
+  新入口只认会话 cookie / 完整 secret，Host / Origin 照旧。请求体校验失败 / 解析不出 stem 一律 `400 bad_handoff_ack`。
+- **兼容**：老前端不发确认 = 行为与从前一致（等到超时 `unverified/timeout`）；插件三态映射不改（`unverified` → `render_success: null`）。

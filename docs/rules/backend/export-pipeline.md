@@ -89,3 +89,4 @@
 - X03 原图仅 SVG：请求未带明确快照引用时，runtime / 有修改或显式已接纳的 Figure 可单次原生序列化，
   `require_built=True`，不需要 PDF 配对 guard。无修改静态文件仍须同源 hash 绑定；
   不把单份原生 SVG 写入配对存储，不启动或重建 worker。
+- Figure 引用的约束同样覆盖 PDF-only 导出（见 `layout-versions-and-documents.md` 的引用一节）

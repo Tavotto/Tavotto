@@ -34,7 +34,7 @@ import {
   type PreparationReport,
   type PreparationTarget,
 } from '@/lib/api'
-import { currentAttempt, prepView } from '@/lib/preparationText'
+import { currentAttempt, finishedWithFigures, prepView } from '@/lib/preparationText'
 import { visiblePrepSurface } from '@/lib/prepSurface'
 import { currentProjectId } from '@/lib/session'
 import { captureProjectEpoch, type ProjectEpochGuard } from '@/lib/projectEpoch'
@@ -61,7 +61,7 @@ function rerunnableView(v: ReturnType<typeof prepView>): boolean {
   // `edit_opening` / `edit_ready` 是已完成会话叠上「本地已进入过编辑」的视图：后端那边同样是可重跑的 completed，
   // 本地编辑记录不能把再点一次 ▶ 变成只重开旧结果（Codex #1044 r4285899694）
   if (
-    ['completed', 'completed_unlinked', 'no_figure', 'no_figure_raster', 'not_registered', 'edit_opening', 'edit_ready'].includes(
+    ['completed', 'completed_unlinked', 'completed_partial', 'no_figure', 'no_figure_raster', 'not_registered', 'edit_opening', 'edit_ready'].includes(
       v.state,
     )
   )
@@ -227,7 +227,10 @@ export function missingArgsFor(entry: PrepEntry, tokens: readonly string[]): num
 
 /** 成功的报告里这次尝试真正捕获到的图（老后端没有这个字段 → 空） */
 export const capturedOf = (report: PreparationReport | null): CapturedFigureDescriptor[] =>
-  report?.phase === 'completed' && report.outcome.kind === 'succeeded' ? (report.captured ?? []) : []
+  finishedWithFigures(report) ? (report?.captured ?? []) : []
+
+/** 判据唯一出处在 `lib/preparationText`（store 与卡片同一份，#1134 Codex r4310249719） */
+export { finishedWithFigures }
 
 /* ---------------------------------------------------------- 模块级账本（活得比一次 setState 长） */
 
@@ -356,7 +359,7 @@ export const useProjectPreparationStore = create<PreparationState>((set, get) =>
     // 已跑完的报告：只有 `armMaybe`（本窗口刚点过、响应丢了）且意图是点击之后才出现的（id 与点击时不同）才算这次点击的——
     // 快脚本在第一次补拉前就跑完了；`wantsRun`（刷新后重新打开）读到的 completed 是旧运行，不重开自动编辑
     const thisClick = !!cur?.armMaybe && report.intent?.id !== cur.armMaybeBaseline
-    if (cur && !cur.armed && intentLive && (report.phase !== 'completed' ? cur.wantsRun || cur.armMaybe : thisClick)) {
+    if (cur && !cur.armed && intentLive && (!finishedWithFigures(report) ? cur.wantsRun || cur.armMaybe : thisClick)) {
       patch(key, () => ({ armed: true, armMaybe: false }))
     } else if (cur?.armMaybe && report.actions.some((a) => a.kind === 'run_when_ready')) {
       // 认领没落地：别留着——但补拉赢了 POST 的提交竞态时报告还是点击前的样子：观察越过点击前那份才算数，否则继续不确定
@@ -368,7 +371,7 @@ export const useProjectPreparationStore = create<PreparationState>((set, get) =>
         report.observation_seq > from.observation_seq
       if (passed) patch(key, () => ({ armMaybe: false, armMaybeFrom: null }))
     }
-    if (report.phase === 'completed' && (before?.phase !== 'completed' || attemptChanged)) {
+    if (finishedWithFigures(report) && (!finishedWithFigures(before) || attemptChanged)) {
       void onCompleted(report, owner)
       if (entry(key)?.armed) {
         // 「打开并运行」认领过：这一轮到头了——恰好一张图就直接进入编辑（多张要用户挑；没有图 / 静态不进）。
@@ -377,7 +380,13 @@ export const useProjectPreparationStore = create<PreparationState>((set, get) =>
         patch(key, () => ({ armed: false }))
         const figures = capturedOf(report)
         const watching = get().focus === key && useUiStore.getState().guideCard === 'card'
-        if (watching && figures.length === 1 && (report.unlinked_stems ?? []).length === 0) {
+        // 部分捕获同理：有图没捕获到（`failed_figures`）是用户必须看到的，不自动进入把卡片盖掉
+        if (
+          watching &&
+          figures.length === 1 &&
+          (report.unlinked_stems ?? []).length === 0 &&
+          (report.failed_figures ?? []).length === 0
+        ) {
           void autoEnterEdit(key, figures[0], owner, report)
         }
       }

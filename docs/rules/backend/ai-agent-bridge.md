@@ -139,6 +139,17 @@
   旧 rid 已被真实预留则回滚并 409 `ai_supersede_conflict`。取代处理完之后、写新行之前（同一个事务），同 (项目, 面板) 或 `same_script`
   认作同一份脚本的面板上还有待确认行 → 409 `ai_pending_unresolved`（带 `rids`，不写）：「同一修改不执行两次」由这道闸保证，不靠客户端的本地视图。
   每面板 8 条的名额先判；闸守住之后同面板最多一条，名额只对守住之前留下的旧数据起作用。路由包装层对 spawn 之前的任何异常也删该 rid 的待确认行，spawn 之后的绝不删。
+  **`GET /api/ai/history?status=open`（无搜索 / 固定筛选，恢复专用）一次返回全部「还没结束」的行，不分页**——集合是「running，或已取消 / 已中断但
+  `_pump` 还没收尾（status IN (cancelled, interrupted) 且 ended_ms 为空）」，即 `OPEN_SESSION_SQL`（运行中的会话天然有上限；翻页期间集合会变，offset 翻页会漏掉
+  仍在运行的），硬上限 2000，超过时响应带 `truncated: true` 并记一条日志（实际不会发生）。取消后刷新时后者没有占位、没有轮询，
+  之后到的 `ai.done` 会被丢掉，所以恢复要这一集合。**其余查询（含任务历史面板的 `status=running` 筛选）照常分页**，`status=running` 不再有一次取全的特例。
+  前端 `doRestore` 因此一次请求取全。
+  会话详情 `GET /api/ai/sessions/<sid>` 是**显式白名单 DTO**（`SESSION_DTO_KEYS`），会话 dict 里的内部对象（`proc`、`exited` 的 Event 等）
+  列在 `SESSION_INTERNAL_KEYS`，新增字段必须在两者之一表态（有用例钉住）。
+  **会话详情 `GET /api/ai/sessions/<sid>` 带 `final`**：只有 `_pump` 收尾（changed / diff / refresh 都确定、已落库）之后才为 true。
+  `cancel` 之后 status 立刻是 `cancelled`，但结果还没算出来——那份快照 `final: false`，前端不得当终态。历史库里的行以 `ended_ms`
+  是否已写判（`cancel` / `interrupt_all` 只改 status、不写 ended_ms；没写时属主进程已不在才算终态），重启后的 sidecar 回退路径恒为 true；启动清理给死掉的 cancelled 行补 `ended_ms`。
+  迁移补列吞掉 `duplicate column name`（两个连接同时迁移同一个库时后到的会撞上）。
   **请求预留是跨进程原子的**：进程内的查找只是快速路径（两个 Tavotto 进程共用同一数据目录时管不到对方）。真正的闸门是
   `ai_history.record_start`——`BEGIN IMMEDIATE` 事务里对 `ai_requests` 做**普通 INSERT**（不加 OR IGNORE / OR REPLACE），
   唯一约束冲突 = 别人已预留，回 `(False, 既有会话 id)`，`run()` 清掉为这次尝试备好的快照 / sidecar、不 spawn、按去重回既有会话；
@@ -152,6 +163,22 @@
   按 project 列过滤）；启动时 running→interrupted + purge(180d，pinned 豁免)；
   历史 API：list（分页/搜索/筛选）/delete/pin。前端默认只显示人类可读目标，
   脚本名收在「技术详情」。
+- **TAF 任务（ADR 0138，`engine/ai_tasks.py`）**：一个任务就是一条会话——`sessions` 上追加的 `task_type` / `phase` /
+  `outcome` / `verification` / `envelope` / `budget_used` / `parent_task_id` 七列（`_ADDED_COLUMNS`，老行全 NULL = 不是任务），
+  幂等仍是 `ai_requests` 的原子预留、中断识别仍是 `mark_interrupted_running`；**不另建表、库、状态机或 Agent 名单**（执行者
+  只认 `AGENT_REGISTRY` 或 `deterministic`）。`outcome` 与 `status` 分开记，终态与结局经 `record_end(task_result=…)` **同一条
+  UPDATE** 落库；`record_task_phase` 只推进 `status='running'` 的行。验证四态只取 `rendercore.inspector.VERDICTS`，结局只由
+  `ai_tasks.derive_outcome` 推（unknown 永不算 completed，保持类 failed 是 failed 不是 partial）；提交前检查只要有一条不是
+  verified / not_applicable 就不提交，提交前最后再复查一次取消与期限。契约未知字段一律拒绝、验证渲染恒为 safe。
+  **Phase 1 的 Task Core 不写用户文件**（声明写入即 `contract_writes_unsupported`）：写已有脚本只经 AI 桥的会话，那是 Phase 3
+  的接入面（届时进程内仍只有 `SESSIONS` 一张会话表）。生产 `ADAPTERS` 只放取得资格的适配器。看护 `tests/test_ai_tasks.py`。
+- **Figure Verifier（`engine/figureverify.py`）与数据指纹**：判据只读 Tavotto worker 的 manifest（`editable` 当前值、`bbox`、
+  只读的 `data_fingerprint`），断言闭集与 FigureBench 同名（`figureverify.KINDS` == 基准的 `ASSERTION_KINDS`，用例钉住）；
+  manifest 说不出的事实列在 `NOT_OBSERVABLE`、判 unknown，对象改前在改后没了是 failed、改前就不在是 unknown。
+  `manifest.data_fingerprint` 只给数据类元素（线 / 3D 线、集合、柱组「底 + 高」、误差棒「点 + 误差线」、图像、stem），
+  规则 `canonical_digest`（形状 + 小端 float64、掩码 = NaN）与基准探针 / 标准库镜像逐字同一份；每张图 `FINGERPRINT_BUDGET`
+  个数值，超出的元素记 `over_budget`（不截断、不扣配额）。指纹不进 `editable`、不参与 gid / identity（ADR 0083）、不进文档。
+  L3 新版式问题只复用 `interference.detect` + `preflight.run`，只算改后新出现的。看护 `tests/test_figure_verifier.py`。
 
 ## 速查表原要点（2026-09-25 迁入，#608）
 

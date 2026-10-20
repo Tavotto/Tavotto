@@ -11,7 +11,7 @@
   },
   "cases": {
     "art_3d_bar": {
-      "classification": "unsupported_by_design",
+      "classification": "full_support",
       "stages": {
         "discover": true,
         "execute": true,
@@ -22,11 +22,10 @@
         "replay": true,
         "export": true,
         "fidelity": true
-      },
-      "reason": "3D 的产品边界是「文字类元素 + 视角 + 轴线/网格可编辑，盒内数据属性（spines / lim / scale）禁用」——立体柱（bar3d 的 Poly3DCollection） 属于**数据**，改它等于改数据，那该回代码而不是在编辑器里点。这条 case 验的是这条边界本身没有漂移，不是「3D 不好用」：标题 / 轴标签 / 刻度 / 视角照常可编辑，渲染、重放、导出全部正确。"
+      }
     },
     "art_3d_line": {
-      "classification": "unsupported_by_design",
+      "classification": "full_support",
       "stages": {
         "discover": true,
         "execute": true,
@@ -37,11 +36,10 @@
         "replay": true,
         "export": true,
         "fidelity": true
-      },
-      "reason": "3D 的产品边界是「文字类元素 + 视角 + 轴线/网格可编辑，盒内数据属性（spines / lim / scale）禁用」——曲线（Line3D） 属于**数据**，改它等于改数据，那该回代码而不是在编辑器里点。这条 case 验的是这条边界本身没有漂移，不是「3D 不好用」：标题 / 轴标签 / 刻度 / 视角照常可编辑，渲染、重放、导出全部正确。"
+      }
     },
     "art_3d_scatter": {
-      "classification": "unsupported_by_design",
+      "classification": "full_support",
       "stages": {
         "discover": true,
         "execute": true,
@@ -52,11 +50,10 @@
         "replay": true,
         "export": true,
         "fidelity": true
-      },
-      "reason": "3D 的产品边界是「文字类元素 + 视角 + 轴线/网格可编辑，盒内数据属性（spines / lim / scale）禁用」——散点（Path3DCollection） 属于**数据**，改它等于改数据，那该回代码而不是在编辑器里点。这条 case 验的是这条边界本身没有漂移，不是「3D 不好用」：标题 / 轴标签 / 刻度 / 视角照常可编辑，渲染、重放、导出全部正确。"
+      }
     },
     "art_3d_surface": {
-      "classification": "unsupported_by_design",
+      "classification": "full_support",
       "stages": {
         "discover": true,
         "execute": true,
@@ -67,11 +64,10 @@
         "replay": true,
         "export": true,
         "fidelity": true
-      },
-      "reason": "3D 的产品边界是「文字类元素 + 视角 + 轴线/网格可编辑，盒内数据属性（spines / lim / scale）禁用」——曲面（Poly3DCollection） 属于**数据**，改它等于改数据，那该回代码而不是在编辑器里点。这条 case 验的是这条边界本身没有漂移，不是「3D 不好用」：标题 / 轴标签 / 刻度 / 视角照常可编辑，渲染、重放、导出全部正确。"
+      }
     },
     "art_3d_wireframe": {
-      "classification": "unsupported_by_design",
+      "classification": "full_support",
       "stages": {
         "discover": true,
         "execute": true,
@@ -82,8 +78,7 @@
         "replay": true,
         "export": true,
         "fidelity": true
-      },
-      "reason": "3D 的产品边界是「文字类元素 + 视角 + 轴线/网格可编辑，盒内数据属性（spines / lim / scale）禁用」——线框（Line3DCollection） 属于**数据**，改它等于改数据，那该回代码而不是在编辑器里点。这条 case 验的是这条边界本身没有漂移，不是「3D 不好用」：标题 / 轴标签 / 刻度 / 视角照常可编辑，渲染、重放、导出全部正确。"
+      }
     },
     "art_arrow_patch": {
       "classification": "full_support",

@@ -1,0 +1,150 @@
+[
+  {
+    "mutation": "baseline",
+    "verified_original_targets": 0,
+    "exit": 0,
+    "failed_tests": [],
+    "output": "/tmp/cla-followup-review/baseline.txt"
+  },
+  {
+    "mutation": "archive-current-binding",
+    "verified_original_targets": 1,
+    "exit": 1,
+    "failed_tests": [
+      "✖ independent archive remains verifiable and inactive after current id changes (40.293621ms)",
+      "✖ independent archive remains verifiable and inactive after current key changes (20.316437ms)",
+      "✖ independent archive remains verifiable and inactive after current agreement changes (17.375683ms)",
+      "✖ failing tests:",
+      "✖ independent archive remains verifiable and inactive after current id changes (40.293621ms)"
+    ],
+    "output": "/tmp/cla-followup-review/archive-current-binding.txt"
+  },
+  {
+    "mutation": "audit-final-session",
+    "verified_original_targets": 1,
+    "exit": 1,
+    "failed_tests": [
+      "✖ independent private audit rechecks session after evidence construction (19.424857ms)",
+      "✖ failing tests:",
+      "✖ independent private audit rechecks session after evidence construction (19.424857ms)"
+    ],
+    "output": "/tmp/cla-followup-review/audit-final-session.txt"
+  },
+  {
+    "mutation": "audit-subject-hold",
+    "verified_original_targets": 1,
+    "exit": 1,
+    "failed_tests": [
+      "✖ independent audit marks subject-wide hold inactive without deleting historical receipt (19.741335ms)",
+      "✖ failing tests:",
+      "✖ independent audit marks subject-wide hold inactive without deleting historical receipt (19.741335ms)"
+    ],
+    "output": "/tmp/cla-followup-review/audit-subject-hold.txt"
+  },
+  {
+    "mutation": "dispatch-final-binding",
+    "verified_original_targets": 1,
+    "exit": 1,
+    "failed_tests": [
+      "✖ independent new head binding change before journal leaves no send or durable attempt (22.49506ms)",
+      "✖ failing tests:",
+      "✖ independent new head binding change before journal leaves no send or durable attempt (22.49506ms)"
+    ],
+    "output": "/tmp/cla-followup-review/dispatch-final-binding.txt"
+  },
+  {
+    "mutation": "journal-revision",
+    "verified_original_targets": 1,
+    "exit": 1,
+    "failed_tests": [
+      "✖ independent journal rejects a stale evidence revision despite a fresh matching request lease (30.340857ms)",
+      "✖ failing tests:",
+      "✖ independent journal rejects a stale evidence revision despite a fresh matching request lease (30.340857ms)"
+    ],
+    "output": "/tmp/cla-followup-review/journal-revision.txt"
+  },
+  {
+    "mutation": "journal-proof-expiry",
+    "verified_original_targets": 1,
+    "exit": 1,
+    "failed_tests": [
+      "✖ independent journal rejects fixed-time expired proof before durable dispatch (10.902325ms)",
+      "✖ failing tests:",
+      "✖ independent journal rejects fixed-time expired proof before durable dispatch (10.902325ms)"
+    ],
+    "output": "/tmp/cla-followup-review/journal-proof-expiry.txt"
+  },
+  {
+    "mutation": "journal-unresolved-other-head",
+    "verified_original_targets": 1,
+    "exit": 0,
+    "failed_tests": [],
+    "output": "/tmp/cla-followup-review/journal-unresolved-other-head.txt"
+  },
+  {
+    "mutation": "dispatch-external-reserve",
+    "verified_original_targets": 1,
+    "exit": 1,
+    "failed_tests": [
+      "✖ independent external budget exhaustion stops before committing the send journal (23.468622ms)",
+      "✖ failing tests:",
+      "✖ independent external budget exhaustion stops before committing the send journal (23.468622ms)"
+    ],
+    "output": "/tmp/cla-followup-review/dispatch-external-reserve.txt"
+  },
+  {
+    "mutation": "adapter-existing-owned-run",
+    "verified_original_targets": 1,
+    "exit": 1,
+    "failed_tests": [
+      "✖ independent existing owned remote check is rejected before durable journal or POST (9.573912ms)",
+      "✖ failing tests:",
+      "✖ independent existing owned remote check is rejected before durable journal or POST (9.573912ms)"
+    ],
+    "output": "/tmp/cla-followup-review/adapter-existing-owned-run.txt"
+  },
+  {
+    "mutation": "recovery-required",
+    "verified_original_targets": 1,
+    "exit": 1,
+    "failed_tests": [
+      "✖ independent automatic publication configuration requires the recovery capability (5.971822ms)",
+      "✖ failing tests:",
+      "✖ independent automatic publication configuration requires the recovery capability (5.971822ms)"
+    ],
+    "output": "/tmp/cla-followup-review/recovery-required.txt"
+  },
+  {
+    "mutation": "status-captured-revision",
+    "verified_original_targets": 1,
+    "exit": 1,
+    "failed_tests": [
+      "✖ independent status returns captured revision when a hold commits after the last revision read (24.788409ms)",
+      "✖ failing tests:",
+      "✖ independent status returns captured revision when a hold commits after the last revision read (24.788409ms)"
+    ],
+    "output": "/tmp/cla-followup-review/status-captured-revision.txt"
+  },
+  {
+    "mutation": "journal-request-head",
+    "verified_original_targets": 1,
+    "exit": 1,
+    "failed_tests": [
+      "✖ independent journal refuses proof for a different expected request head (7.338555ms)",
+      "✖ failing tests:",
+      "✖ independent journal refuses proof for a different expected request head (7.338555ms)"
+    ],
+    "output": "/tmp/cla-followup-review/journal-request-head.txt"
+  },
+  {
+    "mutation": "journal-lease-boundary",
+    "verified_original_targets": 1,
+    "exit": 1,
+    "failed_tests": [
+      "✖ independent journal refuses lease at exact expiry with a still fresh proof (7.079645ms)",
+      "✖ failing tests:",
+      "✖ independent journal refuses lease at exact expiry with a still fresh proof (7.079645ms)"
+    ],
+    "output": "/tmp/cla-followup-review/journal-lease-boundary.txt"
+  }
+]

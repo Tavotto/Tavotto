@@ -24,6 +24,13 @@ import {
 } from '@/lib/projectDocs'
 import { isForeignDocument } from '@/lib/docOwnership'
 import { currentProjectId, setCurrentProjectId } from '@/lib/session'
+import {
+  cancelStartupProbe,
+  isConnectFailure,
+  retryOnConnectFailure,
+  STARTUP_PROBE_CANCELLED,
+  startupProbeEpoch,
+} from '@/lib/startupProbe'
 import { pushPickerEntry } from '@/lib/pickerHistory'
 import { cancelActivePointerGesture, finishActiveGesture } from '@/store/gestureCoordinator'
 import { markMoment } from '@/lib/timelineCheckpoint'
@@ -90,6 +97,11 @@ export interface ProjectState {
   recent: RecentProject[]
   /** 收藏的项目，按用户排的顺序（左栏「工作区」抽屉）；与最近列表互相独立 */
   pinned: RecentProject[]
+  /**
+   * 最近 / 收藏列表至少成功取到过一次。后端暂时不可达时 `recent` / `pinned` 也是空数组——
+   * 「空」只有在这一项为 true 时才说明用户真的没有项目（新手教程据此判断第一次打开）
+   */
+  listsLoaded: boolean
   /**
    * 正在切项目（`open` / `adoptOpenedProject` 在跑）。切换是串行的，界面据此把所有
    * 「打开项目」的入口置灰——并发的两次换代会让 A 的请求落进 B（Codex #550 P1）。
@@ -354,6 +366,9 @@ let pinnedRev = 0
  */
 let listSeq = 0
 
+const fetchProjectOnConnect = (): Promise<ProjectStatus> =>
+  retryOnConnectFailure(fetchProject, (e) => !isConnectFailure(e))
+
 export const useProjectStore = create<ProjectState>((set, get) => {
   /** 切项目的前端换代本体；对外的两个入口都经 `switchQueue` 串行地调它 */
   const adoptNow: ProjectState['adoptOpenedProject'] = async (status, opts) => {
@@ -432,9 +447,19 @@ export const useProjectStore = create<ProjectState>((set, get) => {
   /** 排进切换队列；排队 + 执行期间 `switching` 一直亮着 */
   let inFlight = 0
   const runSwitch = <T,>(fn: () => Promise<T>): Promise<T> => {
+    // 切项目一开始就作废在飞的开局 init（它捕获的是旧项目与 phase，返回后会覆盖新打开的项目）。
+    // 三个入口（open / adoptOpenedProject / switchTransaction）都经此；init 自己不走 runSwitch
+    cancelStartupProbe()
     inFlight += 1
     set({ switching: true })
-    return switchQueue(fn).finally(() => {
+    return switchQueue(fn)
+      .catch((e: unknown) => {
+        // 开局 init 已被上面作废：切换又失败、phase 仍是 loading 时没有别的路径会落定它，
+        // 落到 Picker（现有的可恢复界面），否则界面永远停在 loading
+        if (get().phase === 'loading') set({ phase: 'none' })
+        throw e
+      })
+      .finally(() => {
       inFlight -= 1
       if (inFlight === 0) set({ switching: false })
     })
@@ -470,22 +495,32 @@ export const useProjectStore = create<ProjectState>((set, get) => {
   project: null,
   recent: [],
   pinned: [],
+  listsLoaded: false,
   switching: false,
   opened: [],
   lastDocumentIssue: null,
 
   init: async () => {
+    // 代次贯穿整个 init：任何 await 回来发现已被取消 / 取代，就静默退出，不再写 store 或起副作用
+    const mine = startupProbeEpoch()
+    const cancelled = (): boolean => mine !== startupProbeEpoch()
     try {
       let project: ProjectStatus
       try {
-        project = await fetchProject()
-      } catch {
+        project = await fetchProjectOnConnect()
+      } catch (e) {
+        // 被取代（组件卸载 / 重新 init）：静默退出，不把 phase 落到 none
+        if (e === STARTUP_PROBE_CANCELLED) return
+        // 连接层重试用尽：后端就是没起来，忘掉项目 id 也救不了，交给外层落到 Picker
+        if (isConnectFailure(e)) throw e
+        // 收到了响应但失败（ApiError / 非 JSON 体等）：
         // 本标签页记着的项目在后端已不存在（进程重启/项目已关闭）：
         // 忘掉它退回默认项目，绝不继续拿一个失效 id 去请求
-        if (!currentProjectId()) throw new Error('unreachable')
+        if (!currentProjectId()) throw e
         setCurrentProjectId(null)
-        project = await fetchProject()
+        project = await fetchProjectOnConnect()
       }
+      if (cancelled()) return
       if (project.open && project.id) {
         setCurrentProjectId(project.id)
         armNoProjectRecovery()
@@ -500,20 +535,22 @@ export const useProjectStore = create<ProjectState>((set, get) => {
         fetchProjectLists(),
         fetchOpenProjects().catch(() => []),
       ])
+      if (cancelled()) return
       // 列表过期（期间又发过一次、或换了项目）时项目与阶段照常认，只是不写旧列表
       const fresh = seq === listSeq && pj === currentProjectId()
       set({
         project,
         phase: project.open ? 'open' : 'none',
-        ...(fresh ? { recent, opened } : {}),
+        ...(fresh ? { recent, opened, listsLoaded: true } : {}),
         ...(fresh && rev === pinnedRev ? { pinned } : {}),
       })
       // 启动恢复：应用重启 / 刷新页面后项目还开着——后端按 pj 复用或重开一轮扫描（与认领同一个入口）
       if (project.open && project.tutorial !== true) {
         void useProjectScanStore.getState().start({ reason: 'restore' })
       }
-    } catch {
-      // 后端不可达时也进 Picker——它会在重试里继续探测
+    } catch (e) {
+      if (e === STARTUP_PROBE_CANCELLED || cancelled()) return
+      // 后端不可达（连接层重试用尽）时也进 Picker：它是现有的可恢复界面，用户点打开 / 新建即再试一次
       set({ phase: 'none' })
     }
   },
@@ -528,7 +565,7 @@ export const useProjectStore = create<ProjectState>((set, get) => {
         fetchOpenProjects().catch(() => []),
       ])
       if (seq !== listSeq || pj !== currentProjectId()) return
-      set({ recent, opened, ...(rev === pinnedRev ? { pinned } : {}) })
+      set({ recent, opened, listsLoaded: true, ...(rev === pinnedRev ? { pinned } : {}) })
     } catch {
       /* 列表刷新失败不致命 */
     }

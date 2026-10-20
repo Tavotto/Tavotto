@@ -39,7 +39,7 @@ const desktop = vi.hoisted(() => {
 vi.mock('@/lib/desktop', async (orig) => ({ ...(await orig<Record<string, unknown>>()), ...desktop }))
 
 const tutorial = vi.hoisted(() => ({
-  runTutorialEntry: vi.fn(async () => ({ ok: true, kind: 'started' })),
+  runTutorialEntry: vi.fn(() => 'started'),
   openSampleProject: vi.fn(async () => ({ ok: true, kind: 'opened' })),
 }))
 vi.mock('@/lib/onboarding/tutorial', async (orig) => ({
@@ -174,36 +174,20 @@ describe('新手版', () => {
     expect(host.querySelector('[data-onboarding-anchor="tutorial-entry"]')!.textContent).toContain('继续示例教程')
   })
 
-  it('资源坏了说重新安装（禁用示例按钮）；没有教程 API 时示例按钮不出现；正常时不多说一句', async () => {
-    await mount()
-    expect(host.textContent).not.toContain('已随安装包内置示例脚本')
-    expect(host.querySelector('[data-home-sample-note]')).toBeNull()
-    act(() => root.unmount())
-    host.remove()
-
-    tutorialApi = 'broken'
-    useTutorialStore.setState({ status: null, failure: null })
-    await mount()
-    expect(host.textContent).not.toContain('已随安装包内置示例脚本')
-    expect(host.textContent).toContain('请重新安装')
-    expect(host.querySelector<HTMLButtonElement>('[data-onboarding-anchor="tutorial-entry"]')!.disabled).toBe(true)
-    act(() => root.unmount())
-    host.remove()
-
-    tutorialApi = 'none'
-    useTutorialStore.setState({ status: null, failure: null })
-    await mount()
-    expect(host.querySelector('[data-onboarding-anchor="tutorial-entry"]')).toBeNull()
-    expect(host.textContent).not.toContain('已随安装包内置示例脚本')
-    // 导入入口不受影响
-    expect(host.querySelector('[data-home-import]')).not.toBeNull()
-  })
-
-  it('资源探测还没回来：示例按钮在、不带任何说明句', async () => {
-    tutorialApi = 'pending'
-    await mount()
-    expect(host.querySelector('[data-onboarding-anchor="tutorial-entry"]')).not.toBeNull()
-    expect(host.textContent).not.toContain('已随安装包内置示例脚本')
+  it('教程入口不依赖后端的教程资源（三步教程是内置演示，ADR 0136）：资源坏了 / 没有教程 API / 探测没回来，入口都在且可点', async () => {
+    for (const api of ['broken', 'none', 'pending'] as const) {
+      tutorialApi = api
+      useTutorialStore.setState({ status: null, failure: null })
+      await mount()
+      const entry = host.querySelector<HTMLButtonElement>('[data-onboarding-anchor="tutorial-entry"]')
+      expect(entry, api).not.toBeNull()
+      expect(entry!.disabled, api).toBe(false)
+      expect(host.textContent).not.toContain('请重新安装')
+      // 导入入口不受影响
+      expect(host.querySelector('[data-home-import]')).not.toBeNull()
+      act(() => root.unmount())
+      host.remove()
+    }
   })
 
   it('「导入我的脚本」：桌面壳原生选 .py → 打开它所在的目录', async () => {
@@ -243,7 +227,7 @@ describe('老手版', () => {
   it('示例按钮只打开示例项目（不重开教程）', async () => {
     await mount()
     await click(host.querySelector<HTMLButtonElement>('[data-home-sample]')!)
-    expect(tutorial.openSampleProject).toHaveBeenCalledWith('picker')
+    expect(tutorial.openSampleProject).toHaveBeenCalledTimes(1)
     expect(tutorial.runTutorialEntry).not.toHaveBeenCalled()
   })
 

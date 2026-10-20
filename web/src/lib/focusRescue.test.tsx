@@ -137,6 +137,21 @@ describe('救援活不过用例（#679 CI：用例全绿、vitest 记一个 Unha
     expect(document.activeElement).not.toBe(successor)
   })
 
+  it('afterEach 之后才发起的救援（异步续体）：环境拆掉后定时器醒来也不碰全局 document', () => {
+    // openRequestRestore.test.ts 在 CI 上反复：救援在用例的 afterEach 之后才由异步状态切换发起，
+    // 全局 afterEach 够不着它；jsdom 拆掉后它的超时 stop() 再跑就是 `document is not defined`
+    vi.useFakeTimers()
+    mk('button', 'trigger').focus()
+    rescueFocus(() => successor, { within: 50 })
+    vi.stubGlobal('document', undefined)
+    try {
+      expect(() => vi.advanceTimersByTime(60)).not.toThrow()
+    } finally {
+      vi.unstubAllGlobals()
+    }
+    expect(pendingFocusRescues()).toBe(0)
+  })
+
   describe('全局 afterEach（src/test/setup.ts）', () => {
     it('（前一条）留下一个还在盯着的救援就结束', () => {
       mk('button', 'trigger').focus()

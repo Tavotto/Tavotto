@@ -5,16 +5,19 @@ import { binding, sameBinding } from '../core/identity.ts';
 import { currentPacket, packetAgreementMatches, validId } from '../core/policy.ts';
 import type { LiveConfig } from './config.ts';
 import { attestations, validateLive } from './config.ts';
-import { MAX_SUCCESS_CONTRIBUTORS } from './budget.ts';
 import { GitHub } from './github.ts';
 import { LiveStore, type SignatureRow } from './store.ts';
+import { Delegation } from './delegation.ts';
+import { qualificationSQL, successCapacity } from './budget.ts';
 
 const TOKEN = /^[A-Za-z0-9_-]{43}$/;
 export interface EvidenceInput { name:string; address:string; signature:string; attestations:Record<string,boolean> }
 export class LiveService {
   readonly c:LiveConfig; readonly store:LiveStore; readonly github:GitHub; private readonly key:CryptoKey;
+  readonly delegation:Delegation;
   constructor(c:LiveConfig,store:LiveStore,github:GitHub,key:CryptoKey) {
     validateLive(c); this.c=c; this.store=store; this.github=github; this.key=key;
+    this.delegation=new Delegation(this,key);
   }
   sameOrigin(origin:string|null):void { if (origin !== this.c.origin) throw new Rejected('origin_rejected'); }
   async session(token:string):Promise<Session> {
@@ -80,7 +83,7 @@ export class LiveService {
         !input.attestations || canonical(Object.keys(input.attestations).sort()) !== canonical(attestations(role).sort()) ||
         attestations(role).some(k=>input.attestations[k]!==true)) throw new Rejected('personal_evidence_required');
   }
-  async sign(token:string,csrf:string,origin:string|null,packet:string,nonce:string,role:unknown,input:EvidenceInput):Promise<{revision:number}> {
+  async sign(token:string,csrf:string,origin:string|null,packet:string,nonce:string,role:unknown,input:EvidenceInput):Promise<{revision:number;countersignature?:'recorded'|'pending_manual_review'}> {
     this.signing(); if (!TOKEN.test(nonce) || !['contributor','holder'].includes(role as string)) throw new Rejected('intent_rejected');
     const requested=role as Role,s=await this.authorize(token,csrf,origin),p=await this.packetFor(s,packet);
     const now=await this.store.databaseNow(); if (!currentPacket(this.c,p,now)) throw new Rejected('packet_ineligible');
@@ -92,7 +95,15 @@ export class LiveService {
     const raw=canonical(record),cipher=await seal(this.key,raw,`signature:${p.id}:${requested}:${p.digest}`);
     await this.store.assertReady();
     const committed=await this.store.signAtomic({session:s,packet:p,intentHash:await sha256(nonce),role:requested,cipher,
-      evidenceHash:await sha256(raw),created:now,revision}); return {revision:committed};
+      evidenceHash:await sha256(raw),created:now,revision});
+    if(requested==='contributor' && this.c.delegatedCountersigningEnabled===true) {
+      // Contributor consent is already committed. A failed delegated operation never replays or fabricates it.
+      try {
+        const contributor=(await this.store.signatures(p.id)).find(row=>row.role==='contributor')!;
+        return {revision:await this.delegation.countersign(p,contributor),countersignature:'recorded'};
+      }catch{return {revision:committed,countersignature:'pending_manual_review'};}
+    }
+    return {revision:committed};
   }
   async hold(token:string,csrf:string,origin:string|null,packet:string,nonce:string):Promise<{revision:number}> {
     this.signing(); if (!TOKEN.test(nonce)) throw new Rejected('intent_rejected');
@@ -123,18 +134,42 @@ export class LiveService {
     const row=(await this.store.signatures(p.id)).find(x=>x.role===role);
     if (!row) throw new Rejected('evidence_unavailable'); return this.evidenceRecord(p,row);
   }
+  async audit(token:string,id:string):Promise<unknown> {
+    const p=await this.packetFor(await this.session(token),id),revision=await this.store.revision(),d=await this.store.document(p.digest);
+    if(!d || d.kind!==p.kind || d.version!==p.version || await sha256(d.content)!==p.digest)throw new Rejected('agreement_unavailable');
+    const rows=await this.store.signatures(p.id),personal=[];
+    for(const row of rows)personal.push(await this.evidenceRecord(p,row));
+    const contributor=rows.find(row=>row.role==='contributor' && row.actor===p.subject);
+    const delegated=contributor?await this.delegation.audit(p,contributor,await this.store.subjectBlocked(p.subject)):null;
+    // Expiry/account changes during the bounded export cannot retain an old authorization to read.
+    await this.packetFor(await this.session(token),id);
+    if(await this.store.revision()!==revision)throw new Rejected('state_changed');
+    if(delegated?.current && await this.store.databaseNow()>=delegated.expires_at){delegated.current=false;delegated.state='expired';}
+    return {protocol:'cla-private-audit-v1',packet:p,agreement:d,personal_signatures:personal,delegated,
+      legal_effect:'not_determined',github_or_merge_eligibility:'not_asserted'};
+  }
   async document(token:string,packet?:string):Promise<unknown> {
     if(!packet)throw new Rejected('public_agreement_asset_required');
     const p=await this.packetFor(await this.session(token),packet),d=await this.store.document(p.digest);
     if(!d || d.version!==p.version || d.kind!==p.kind || await sha256(d.content)!==p.digest)throw new Rejected('agreement_unavailable');return d;
   }
   async status(token:string,id:string):Promise<unknown> {
-    const s=await this.session(token),p=await this.packetFor(s,id),rows=await this.store.signatures(p.id),now=await this.store.databaseNow(),blocked=await this.store.subjectBlocked(p.subject);
+    const s=await this.session(token),p=await this.packetFor(s,id);
+    const revision=await this.store.revision(),rows=await this.store.signatures(p.id),blocked=await this.store.subjectBlocked(p.subject);
     for(const row of rows)await this.evidenceRecord(p,row);
-    const completed=await this.store.completed(p.id),current=packetAgreementMatches(this.c,p) && (completed || currentPacket(this.c,p,now)),role=s.actor===this.c.holderId?'holder':'contributor';
-    return {packet:p,completed,signingDeadline:p.valid_until,actor:{id:s.actor,login:s.login,role},revision:await this.store.revision(),now,blocked,current,
+    const personalCompleted=await this.store.completed(p.id),contributor=rows.find(row=>row.role==='contributor' && row.actor===p.subject);
+    let delegated={recorded:false,current:false,state:'none',canAudit:false,executedAt:0,expiresAt:0};
+    if(contributor)try {
+      const audit=await this.delegation.audit(p,contributor,blocked);
+      if(audit)delegated={recorded:true,current:audit.current,state:audit.state,canAudit:true,executedAt:audit.executed_at,expiresAt:audit.expires_at};
+    }catch(error){if(!(error instanceof Rejected))throw error;delegated={...delegated,recorded:true,state:'unverifiable'};}
+    const observed=await this.store.databaseNow();
+    if(delegated.current && observed>=delegated.expiresAt)delegated={...delegated,current:false,state:'expired'};
+    if(await this.store.revision()!==revision)throw new Rejected('state_changed');
+    const completed=personalCompleted || delegated.current,current=packetAgreementMatches(this.c,p) && (completed || currentPacket(this.c,p,observed)),role=s.actor===this.c.holderId?'holder':'contributor';
+    return {packet:p,completed,personalCompleted,delegated,signingDeadline:p.valid_until,actor:{id:s.actor,login:s.login,role},revision,now:observed,blocked,current,
       signatures:rows.map(r=>({role:r.role,actor:r.actor,created:r.created})),
-      canSign:this.c.signingEnabled && currentPacket(this.c,p,now) && !completed && !blocked && !rows.some(r=>r.role===role) && (role==='contributor' || rows.some(r=>r.role==='contributor')),
+      canSign:this.c.signingEnabled && currentPacket(this.c,p,observed) && !personalCompleted && !blocked && !rows.some(r=>r.role===role) && (role==='contributor' || rows.some(r=>r.role==='contributor')),
       canHold:this.c.signingEnabled && !blocked};
   }
   async packets(token:string,cursor?:string):Promise<unknown> {
@@ -150,7 +185,17 @@ export class LiveService {
     return {actor:{id:s.actor,login:s.login,role:s.actor===this.c.holderId?'holder':'contributor'},packets,
       nextCursor:rows.length>20?packets[packets.length-1]!.id:null};
   }
-  private async qualified(subject:number):Promise<boolean> {
+  private async qualified(subject:number,ceiling?:{expires:number},now?:number):Promise<boolean> {
+    if(this.c.delegatedCountersigningEnabled===true) {
+      const candidate=await this.store.delegatedCandidate(subject,this.c.policy.agreements.individual.sha256,this.c.holderAuthorizationId!);
+      if(!candidate || !packetAgreementMatches(this.c,candidate.packet))return false;
+      const {packet:p,rows}=candidate,contributor=rows.find(row=>row.role==='contributor' && row.actor===subject),holder=rows.find(row=>row.role==='holder');
+      if(!contributor || rows.length>(holder?2:1) || holder && (holder.actor!==this.c.holderId || holder.actor===subject || holder.created<contributor.created))throw new Rejected('evidence_binding_mismatch');
+      for(const row of rows)await this.evidenceRecord(p,row);
+      if(holder)return true;
+      const expires=await this.delegation.qualified(p,contributor,now ?? await this.store.databaseNow());
+      if(ceiling)ceiling.expires=Math.min(ceiling.expires,expires);return true;
+    }
     const p=await this.store.qualification(subject,this.c.policy.agreements.individual.sha256);
     if (!p || !packetAgreementMatches(this.c,p)) return false;
     const rows=await this.store.signatures(p.id);
@@ -168,26 +213,30 @@ export class LiveService {
     const revision=await this.store.revision(),bound=await this.freshBinding(pr),now=await this.store.databaseNow();
     let good=this.c.policy.provider.configured===true,expires=now+120;
     const exempt=new Set(Object.values(this.c.exemptionIds));
-    if(bound.contributors.filter(person=>!exempt.has(person.id)).length>MAX_SUCCESS_CONTRIBUTORS)
+    if(bound.contributors.filter(person=>!exempt.has(person.id)).length>successCapacity(this.c))
       throw new Rejected('contributor_capacity_exceeded');
     // Background callers reserve their remaining journal/CAS statements before
     // starting per-person reads. Qualification uses two SQL statements per actor.
     if(reservedSQL!==undefined)this.store.budget?.reserveWorkSQL(
-      2*bound.contributors.filter(person=>!exempt.has(person.id)).length+1+reservedSQL);
+      qualificationSQL(this.c)*bound.contributors.filter(person=>!exempt.has(person.id)).length+1+reservedSQL);
+    const ceiling={expires:Number.MAX_SAFE_INTEGER};
     for (const person of bound.contributors) if (!exempt.has(person.id)) {
-      if (!await this.qualified(person.id)) good=false;
+      if (!await this.qualified(person.id,ceiling,now)) good=false;
     }
     if (await this.store.revision()!==revision) throw new Rejected('state_changed');
+    expires=Math.min(expires,ceiling.expires);
+    if(expires<=now)throw new Rejected('authorization_expired');
     const proof={...bound,protocol:'tavotto-cla-v1' as const,revision,issued_at:now,expires_at:expires};
     return {name:this.c.checkName,appId:this.c.appId,appSlug:this.c.appSlug,headSha:bound.head_sha,
-      conclusion:good?'success':'failure',proof,text:'tavotto-cla-v1\n'+canonical(proof)};
+      conclusion:good?'success':'failure',proof,text:'tavotto-cla-v1\n'+canonical(proof),
+      ...(ceiling.expires<Number.MAX_SAFE_INTEGER?{authorityExpires:ceiling.expires}:{})};
   }
-  async check(pr:number):Promise<{disposition:string;check:CheckProposal}> {
+  async check(pr:number,expectedHead?:string):Promise<{disposition:string;check:CheckProposal}> {
     // Track before evaluation: each later evidence/hold revision enqueues a durable notification intent.
     await this.store.assertReady();
     await this.store.track(this.c.repositoryId,{kind:'pr',number:pr});
     const check=await this.evaluate(pr),fresh=await this.freshBinding(pr);
-    if (!sameBinding(check.proof,fresh) || await this.store.revision()!==check.proof.revision ||
+    if (expectedHead!==undefined && check.headSha!==expectedHead || !sameBinding(check.proof,fresh) || await this.store.revision()!==check.proof.revision ||
         await this.store.databaseNow()>=check.proof.expires_at) throw new Rejected('state_changed');
     if (!this.c.checkPublishingEnabled) return {disposition:'dry_run',check};
     const key=this.store.targetKey(this.c.repositoryId,{kind:'pr',number:pr});

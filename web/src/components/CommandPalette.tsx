@@ -60,7 +60,15 @@ import {
   startNamedNode,
 } from '@/store/actions'
 import { canCycleOverlapSelection, cycleOverlapSelection } from '@/canvas/interactions'
-import { resetHints, resetTutorial, runTutorialEntry, tutorialEntry } from '@/lib/onboarding/tutorial'
+import {
+  ensureTutorialStatus,
+  hasSampleProject,
+  resetHints,
+  resetTutorial,
+  runTutorialEntry,
+  tutorialEntry,
+  useTutorialStore,
+} from '@/lib/onboarding/tutorial'
 import { useDocumentStore } from '@/store/documentStore'
 import { refreshProjectNow } from '@/store/liveSync'
 import { useOnboardingStore } from '@/store/onboardingStore'
@@ -155,7 +163,7 @@ const COMMANDS: Command[] = [
   },
   {
     id: 'tutorial-reset',
-    available: () => useOnboardingStore.getState().tutorialProjectId != null,
+    available: () => hasSampleProject(),
     run: () => void resetTutorial(),
   },
   { id: 'hints-reset', run: () => resetHints() },
@@ -279,6 +287,8 @@ export function CommandPalette() {
   // 教程状态变了要重算可用命令（三条互斥）；项目开合决定项目命令出不出现
   const onboardingStatus = useOnboardingStore((s) => s.status)
   const projectPhase = useProjectStore((s) => s.phase)
+  // 「重置示例项目」看示例副本探测结果；探测在面板打开时按需发（见下），回来要重算
+  const sampleStatus = useTutorialStore((s) => s.status)
   // 「缩放到选中」的可用判据看的是选区里**可见**的对象：隐藏 / 换选不一定改 ids 的长度
   const docObjects = useDocumentStore((s) => s.doc.objects)
   const selectionIds = useSelectionStore((s) => s.ids)
@@ -300,6 +310,7 @@ export function CommandPalette() {
     if (!open) return
     setQuery('')
     setCursor(null)
+    ensureTutorialStatus()
   }, [open])
 
   // 搜索按**当前语言**的文案与关键词来：英文界面下输 "export" 能中，
@@ -324,9 +335,9 @@ export function CommandPalette() {
         })
       : pool
     return rankCommands(hit, { hasSelection, recent })
-    // `onboardingStatus` / `projectPhase` / `docObjects` / `selectionIds` / `fastEditPanelId` 是让 memo 在状态变化时重算的信号，不是入参
+    // `onboardingStatus` / `projectPhase` / `sampleStatus` / `docObjects` / `selectionIds` / `fastEditPanelId` 是让 memo 在状态变化时重算的信号，不是入参
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [q, hasSelection, recent, t, onboardingStatus, projectPhase, docObjects, selectionIds, fastEditPanelId])
+  }, [q, hasSelection, recent, t, onboardingStatus, projectPhase, sampleStatus, docObjects, selectionIds, fastEditPanelId])
   const matches = useMemo(() => sections.flatMap((s) => s.items), [sections])
   const showHeaders = !q
 

@@ -625,7 +625,23 @@ def derive(facts: dict) -> dict:
         )
     if facts.get("target_kind") == TARGET_SCRIPT and int(attempt.get("captured_count") or 0) == 0:
         return _result(PHASE_PARTIAL, OUTCOME_NO_FIGURE, finished=True, captured=False)
+    if failed_figures_of(finalize):
+        # 逐图隔离：捕获到了一部分图、另一些图预览捕获失败。保留成功的图（outcome 仍是 succeeded，captured 照给），
+        # 但不能叫 `completed`——那等于告诉用户「全拿到了」，少的那张图在报告里不可见
+        return _result(PHASE_PARTIAL, OUTCOME_SUCCEEDED, finished=True, captured=True)
     return _result(PHASE_COMPLETED, OUTCOME_SUCCEEDED, finished=True, captured=True)
+
+
+def failed_figures_of(finalize: object) -> list[dict]:
+    """登记收口里带出的逐图失败（`_finalize_script_attempt` 的 `failed_figures`）→ 只留 `{stem, code}`（稳定码，不带原因文字 /
+    路径）。没有失败 = 空表；`partial` 的判据只有这一处，phase 投影与报告字段读同一份。"""
+    if not isinstance(finalize, dict) or finalize.get("registered") is False:
+        return []
+    out: list[dict] = []
+    for f in finalize.get("failed_figures") or ():
+        if isinstance(f, dict) and f.get("stem"):
+            out.append({"stem": str(f["stem"]), "code": str(f.get("code") or "")})
+    return out
 
 
 def attempt_running(attempt: dict) -> bool:
@@ -2358,6 +2374,13 @@ class SessionService:
                     self._no_figure_hint(sess, plan, result)
                     if plan is not None and derived["outcome"]["kind"] == OUTCOME_NO_FIGURE
                     else None
+                ),
+                # 部分捕获：这次成功的尝试里预览捕获失败的图（`{stem, code}`，稳定码）。phase 是 `partial` 而 outcome 仍是
+                # `succeeded`（成功那几张照常在 `captured` 里）；全部成功 / 全部失败时是空表
+                "failed_figures": (
+                    failed_figures_of(attempt_fact.get("finalize"))
+                    if attempt_fact is not None and derived["outcome"]["kind"] == OUTCOME_SUCCEEDED
+                    else []
                 ),
                 # 运行意图（P05b）：None = 从没有过；终结后保留，说明是怎么结束的（reason 是闭集码，不带路径与参数）
                 "intent": sess.intent.public() if sess.intent is not None else None,

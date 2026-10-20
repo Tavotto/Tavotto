@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   ArrowLeft,
@@ -15,14 +15,11 @@ import { AppMenuButton } from './AppMenuButton'
 import { useRovingList } from './left/rovingList'
 import { ProjectRow } from './ProjectPickerRow'
 import { dragRegionProps, isDesktop, pickDirectory } from '@/lib/desktop'
-import { useFormatMessage } from '@/i18n/react'
 import { PRODUCT_NAME } from '@/lib/brand'
 import {
   homeVariant,
-  loadTutorialStatus,
   runTutorialEntry,
   tutorialEntry,
-  useTutorialStore,
 } from '@/lib/onboarding/tutorial'
 import { disambiguateRecent, splitRecent, submitTargetFor } from '@/lib/recentProjects'
 import { cn } from '@/lib/utils'
@@ -357,30 +354,14 @@ export function useProjectEntry(
 }
 
 /**
- * 「用示例了解 Tavotto」——低干扰的一行入口（ADR 0040）。
- *
- * 状态三档：宿主没有 Tutorial API（GET 失败）→ 整行不出现；资源坏了
- * （`available:false`）→ 按钮禁用 + 一句「请重新安装」；正常 → 按钮。
+ * 新手教程的一行入口（ADR 0040；三步原生教程 ADR 0136）。教程是内置演示、不依赖后端的
+ * 教程资源，所以总是可用；切项目进行中时置灰（教程层会盖住正在切换的界面）。
  * 点下去的全部逻辑在 `lib/onboarding/tutorial.ts`，这里只显示结果。
  */
 function TutorialEntry() {
   const { t } = useTranslation('project')
-  const fmt = useFormatMessage()
-  const status = useTutorialStore((s) => s.status)
-  const busy = useTutorialStore((s) => s.busy)
-  const failure = useTutorialStore((s) => s.failure)
   const entry = useOnboardingStore((s) => tutorialEntry(s.status))
-  // 教程也是一次切项目（adoptOpenedProject）：切换进行中不再排第二次
   const switching = useProjectStore((s) => s.switching)
-
-  useEffect(() => {
-    void loadTutorialStatus()
-  }, [])
-
-  // 宿主没提供 Tutorial API（embedded / 老后端）：入口整行不出现
-  if (failure?.reason === 'no_api' && !status) return null
-  const unavailable = !!status && !status.available
-
   return (
     <section aria-label={t('picker.tutorialLabel')} className="mt-5 flex flex-col gap-1">
       <div className="flex items-center gap-2">
@@ -388,9 +369,7 @@ function TutorialEntry() {
           variant="ghost"
           size="md"
           className="-ml-2.5 text-ink-2"
-          disabled={unavailable || busy === 'open' || switching}
-          loading={busy === 'open'}
-          loadingLabel={t('picker.tutorialOpening')}
+          disabled={switching}
           data-onboarding-anchor="tutorial-entry"
           onClick={() => void runTutorialEntry('picker')}
         >
@@ -398,14 +377,7 @@ function TutorialEntry() {
           {t(`picker.tutorial.${entry}`)}
         </Button>
       </div>
-      <p className="text-xs leading-relaxed text-ink-3">
-        {unavailable ? t('picker.tutorialUnavailable') : t('picker.tutorialHint')}
-      </p>
-      {failure && failure.reason !== 'no_api' && failure.reason !== 'cancelled' && (
-        <p role="alert" className="text-xs leading-relaxed text-danger">
-          {fmt(failure.message)}
-        </p>
-      )}
+      <p className="text-xs leading-relaxed text-ink-3">{t('picker.tutorialHint')}</p>
     </section>
   )
 }

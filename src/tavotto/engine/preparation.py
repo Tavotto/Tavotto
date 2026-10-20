@@ -296,7 +296,7 @@ def _last_success_profile(
         profile == execspec.PROFILE_NATIVE
         and (record.get("source") or {}).get("basis_observed") is False
     ):
-        # 与 #982 的 reuse_last_success 同样保守：native 没有观察过 helper / 数据文件，不证明它们没变，不据此沿用 native
+        # 与 #982 的 reuse_last_success 同样保守：这条 native 记录没有完整的 helper / 数据观察（#1047），不证明它们没变，不据此沿用 native
         return None
     return profile
 
@@ -1149,11 +1149,12 @@ class PreparationService:
                     expected_worker=worker,
                     **({"run": plan.run} if plan.run is not None else {}),
                 )
-                note = (
-                    "build 期间取消：本计划新起的会话已关闭；脚本已经产生的外部副作用不撤销"
-                    if closed
-                    else "build 期间取消：本计划的会话已被替换，未关闭后来的会话；脚本已经产生的外部副作用不撤销"
-                )
+                if closed:
+                    note = "build 期间取消：本计划新起的会话已关闭；脚本已经产生的外部副作用不撤销"
+                elif pool.is_fenced(worker):
+                    note = "build 期间取消：会话的强制关闭尚未确认，已围栏、下次使用前会重试；脚本可能仍在运行，已产生的外部副作用不撤销"
+                else:
+                    note = "build 期间取消：本计划的会话已被替换，未关闭后来的会话；脚本已经产生的外部副作用不撤销"
 
             else:
                 note = "build 期间取消：会话属于别的消费者，未关闭；本计划不再等它"
