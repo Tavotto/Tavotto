@@ -742,3 +742,41 @@ def test_adoption_writes_are_serialized(sb_env):
     [t.start() for t in threads]
     [t.join() for t in threads]
     assert all(ac.is_adopted(root, root / f"g{i}.png") for i in range(12))
+
+
+@needs_worker
+def test_admission_rechecks_the_disk_identity_before_during_and_after(sb_env, monkeypatch):
+    """身份复核两层都要有：请求入口之后原件被换（assert_current），以及验证快照被换（快照重算 hash）。"""
+    root = project(sb_env, PLAIN)
+    ctx = context(root, SB)
+    worker, probe = build(root, ctx)
+    candidate = Path(probe["initialized"])
+    try:
+        # 1) 上下文建好之后磁盘字节变了：准入当场 source_changed，不产出任何结论
+        original = (root / "same.png").read_bytes()
+        (root / "same.png").write_bytes(original + b"x")
+        with pytest.raises(ac.ArtifactContextError) as error:
+            ac.admit_reconstruction(root / "same.png", candidate, ctx)
+        assert error.value.reason == "source_changed" and error.value.retryable
+        (root / "same.png").write_bytes(original)
+        # 2) 磁盘上的字节没变，但被快照走的那份被换成了另一张同图幅的图：快照 hash 对不上
+        from PIL import Image
+
+        swapped = root.parent / "swapped.png"
+        Image.open(root / "same.png").convert("RGBA").point(lambda v: 255 - v).save(
+            swapped, dpi=(100, 100)
+        )
+        snapshot = ac._snapshot
+
+        def racy(path, out):
+            data = snapshot(path, out)
+            if Path(path) == root / "same.png":
+                out.write_bytes(swapped.read_bytes())
+            return data
+
+        monkeypatch.setattr(ac, "_snapshot", racy)
+        with pytest.raises(ac.ArtifactContextError) as error:
+            ac.admit_reconstruction(root / "same.png", candidate, ctx)
+        assert error.value.reason == "source_changed"
+    finally:
+        pool.discard(worker)
