@@ -1922,10 +1922,38 @@ def _capture_svg_snapshot_best_effort(worker, desc) -> None:
                     project_root=root,
                     execution_owner=identity,
                 )
+            _bind_svg_asset(freeze, root, stem, svg, identity)
         except Exception:
             # An unsupported SVG or a non-matching static artifact does not
             # invalidate a successful explicit script run. Export reports the gap.
             LOG.info("Export-grade SVG snapshot unavailable for captured Figure", exc_info=True)
+
+
+def _bind_svg_asset(freeze, root, stem, candidate_svg: Path, identity) -> None:
+    """SVG 素材 `<stem>.svg` 与活 Figure 的字节绑定（#1185，PDF 路径 `static_sha256` 的同一机制）。
+
+    只在**内容**证明「活 Figure 此刻的序列化就是这份文件」时才写：候选 SVG（刚由这张活 Figure 导出）与磁盘
+    上的 `<stem>.svg` 抹平 matplotlib 每次都变的日期 / 随机 id 后摘要相同（`svgcheck.canonical_digest`）。
+    文件名只用来提名候选，不构成证明；不同（脚本改过没重跑、保存参数不同）就不写，导出时 eps 如实失败。
+    配对写进现有 `svgstore`（`static_sha256` = 磁盘文件**原始**字节的 sha256），读它的是 `_svg_asset_binding`。
+    """
+    from .rendercore import svgcheck
+
+    if not engine_figcapture.project_relative_stem(stem):
+        return
+    path = Path(root) / (stem + ".svg")
+    if not path.is_file() or path.is_symlink():
+        return
+    asset_id = path.relative_to(Path(root)).as_posix()
+    raw = path.read_bytes()
+    if svgcheck.canonical_digest(raw) != svgcheck.canonical_digest(candidate_svg.read_bytes()):
+        return
+    _save_svg_snapshot(
+        freeze(asset_id),
+        static_sha256=hashlib.sha256(raw).hexdigest(),
+        project_root=root,
+        execution_owner=identity,
+    )
 
 
 def _freeze_document_svg_sources(document: dict) -> list[str]:
@@ -2106,7 +2134,7 @@ def _export_produce_original(job, tmp_dir: Path, *, artifact_sources=None) -> li
         # 一张图一个基准（#1185 / #1209）：SVG 素材的基准就是这份文件的字节。svg = 这份字节；
         # eps 只有「活 Figure 被证明出自这份字节」才给（`_produce_svg_asset_eps`），否则逐项失败，
         # **绝不**为 eps 重新执行脚本换一个来源。最后由 `enforce_one_basis` 对作业结果再断言一遍。
-        source_sha = hashlib.sha256(data).hexdigest()
+        source_sha = engine_figcapture.hash_file(safe_resolve(src.figure_id))[0]
         produced = []
         for fmt in req.formats:
             job.check_cancelled()

@@ -60,7 +60,7 @@
     "environment_in_use_by_native_session": "This Python environment is in use by Tavotto Run. Stop the running script before installing dependencies.",
     "environment_mutating": "That Python environment is installing dependencies. Try again shortly.",
     "eps_needs_script": "{{figure}} has no script that can be re-run, so EPS can’t be produced. The other formats were exported as usual.",
-    "eps_source_unverified": "EPS for {{figure}} can’t be confirmed to match this SVG file (the script may have changed), so it wasn’t exported. The SVG was exported from the original file.",
+    "eps_source_unverified": "EPS for {{figure}} can’t be confirmed to match this SVG file (the script may have changed or hasn’t been run), so it wasn’t exported. To get EPS, run this figure’s script first and export again. The SVG was exported from the original file.",
     "eps_needs_live_figure": "To export EPS for {{figure}}, open and run this figure on the canvas first. The other formats were exported as usual.",
     "export_basis_mismatch": "{{format}} doesn’t come from the same source as the other formats in this batch, so it wasn’t exported to avoid handing you inconsistent files. The other formats were exported as usual.",
     "eps_not_for_canvas": "EPS isn’t available for canvas export. For EPS, export a single figure with a script at its original size; the other formats were exported as usual.",

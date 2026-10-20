@@ -387,3 +387,41 @@ def parse_svg(data: bytes, *, budget: SVGBudget | None = None) -> ET.Element:
             raise SVGError("svg_missing_reference")
     _references(nodes, edges, refs, ids, budget)
     return root
+
+
+_ID_REF = re.compile(r"#([A-Za-z_][\w.:-]*)")
+
+
+def canonical_digest(data: bytes, *, budget: SVGBudget | None = None) -> str:
+    """Matplotlib 每次保存都不同的两处（`<metadata>` 里的日期、随机盐生成的元素 id）抹平后的 SVG 摘要。
+
+    用来回答「这份 SVG 与活 Figure 此刻的序列化是不是同一张图」：解析走严格解析器（拒 DTD / 活动内容，
+    先只去掉 matplotlib 的惰性声明）；`<metadata>` 子树丢弃；`id` 按首次出现的顺序重编号，所有
+    `#id` 引用（`href` / `url(#…)` / 样式）同步改写；其余字节（路径数据、坐标、样式）一个不动。
+    相等 = 画出来的内容相同，不是「文件名对得上」。
+    """
+    root = parse_svg(strip_matplotlib_doctype(data), budget=budget)
+    meta = f"{{{SVG_NS}}}metadata"
+    for parent in root.iter():
+        for child in list(parent):
+            if child.tag == meta:
+                parent.remove(child)
+    ids: dict[str, str] = {}
+    for node in root.iter():
+        value = node.get("id")
+        if value is not None and value not in ids:
+            ids[value] = f"i{len(ids)}"
+
+    def rewrite(text: str) -> str:
+        return _ID_REF.sub(lambda m: "#" + ids.get(m.group(1), m.group(1)), text)
+
+    for node in root.iter():
+        for key, value in list(node.attrib.items()):
+            node.set(key, ids[value] if key == "id" else rewrite(value))
+        if node.text:
+            node.text = rewrite(node.text)
+        if node.tail:
+            node.tail = rewrite(node.tail)
+    import hashlib
+
+    return hashlib.sha256(ET.tostring(root, encoding="utf-8")).hexdigest()

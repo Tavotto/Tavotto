@@ -70,16 +70,19 @@
     看护：`tests/test_export_svg.py`、`tests/test_svg_execution_lifecycle.py`、`tests/test_worker_svg_pair.py`、`tests/test_svgstore.py`。
   * **一次作业里，同一张图的所有格式出自同一个基准（#1185 / #1209，A3）**：做不到的格式逐项失败并给出
     真实原因，**不得悄悄换来源、不得为某个格式重新执行脚本换来源**。SVG 素材（`scope=original`、无编辑）的
-    基准是**文件字节**：svg = 这份字节；eps 只有「活 Figure 被证明出自这份字节」（`_svg_asset_binding`，
+    基准是**文件字节**（sha256 取磁盘原始字节）：svg = 这份字节；eps 只有「活 Figure 被证明出自这份字节」（`_svg_asset_binding`，
     与 PDF 路径同一个 `svgstore.load(…static_sha256=…)` 先例）才给，且只走 `existing_only`（不启动 worker）。
     断言写在**作业汇总处**而不是各格式路径里：`Produced.basis`（`copy`/`convert`/`redraw` + 基准 sha256）由生产路径
     如实声明，`exportjob.enforce_one_basis` 对结果核一遍，基准身份与参照不同（含无证明的 `None`）的那一项改成
     `export_basis_mismatch`，其余照常交付；没声明 `basis` 的路径尚不受约束（#1209 A2 把其余路径接进来）。
     失败原因三档、互不混用：`eps_needs_script`（注册表里确实没有脚本）/ `eps_source_unverified`（有脚本，
-    但没有字节绑定的证明——目前没有任何路径写下 SVG 素材的绑定，所以实际恒为此码）/ `eps_needs_live_figure`
-    （有脚本、没有活 Figure，即冷 worker：先在画布上打开并运行这张图）。前端 `epsAvailability` 对 `.svg` 素材
-    按同一事实预先禁用（`source_unverified`），后端断言仍是权威。看护：`tests/test_export_svg.py`
-    （`never_come_from_two_bases` / `byte_bound` / `asserts_one_basis` / `cold_worker_eps`）。
+    但没有字节绑定的证明）/ `eps_needs_live_figure`
+    （有脚本、没有活 Figure，即冷 worker：先在画布上打开并运行这张图）。前端 `epsAvailability` 拿不到绑定事实，不预先禁用，
+    由后端逐项失败并显示真实原因。看护：`tests/test_export_svg.py`
+    （`never_come_from_two_bases` / `byte_bound` / `asserts_one_basis` / `cold_worker_eps` / `saved_by_the_live` / `differs_from_the_live`）。
+    **绑定的写入**（`_bind_svg_asset`，在 `_capture_svg_snapshot_best_effort` 里，与 PDF 的 `static_sha256` 同一机制、同一个 `svgstore`）：
+    脚本运行后，项目根下 `<stem>.svg` 与活 Figure 刚导出的候选 SVG 抹平 matplotlib 每次都变的日期 / 随机 id 后
+    摘要相同（`svgcheck.canonical_digest`）才写；文件名只提名候选、不构成证明；不同就不写。
   * **有限产物验证（U08，ADR 0068）**：`exportjob.run(inspect=…)` 在 `produce` 之后、提交点之前重新打开
     每个封口的临时文件（接线层 `engine/artifactinspect.py`，两个入口共用；检查器 `rendercore/inspector.py`），拒绝的那一项 `artifact_rejected` 不发布（partial 语义不变），合格的
     带 `Output.manifest`（`inspector.summary()` 投影，旧字段一个不动）。请求可带 `inspection: {mode: standard|strict,

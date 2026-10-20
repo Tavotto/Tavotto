@@ -148,16 +148,17 @@ function canValidateOriginalSource(figureId: string, panel?: PanelObject | null)
  * 所以它只在「按原图导出一张**有脚本**的图」时存在：
  *
  * * `canvas_scope`：画布合成走 RenderCore（PDF / PNG / TIFF），给不出 EPS；
- * * `no_script`：这张图在注册表里没有脚本（runtime 素材天生有），引擎没法重画；
- * * `source_unverified`：SVG 素材的原图导出是文件字节，EPS 只有「活 Figure 被证明出自这份字节」才给
- *   （后端 `_produce_svg_asset_eps`，#1185）。这种字节绑定目前没有任何路径写下，前端按保守口径预先禁用，
- *   不再把它显示成可用再让后端逐项失败；后端的断言（`enforce_one_basis`）仍是权威。
+ * * `no_script`：这张图在注册表里没有脚本（runtime 素材天生有），引擎没法重画。
+ *
+ * 前端只判「有没有脚本」这一条；SVG 素材的 EPS 另需后端的字节绑定证明（`_produce_svg_asset_eps`，#1185），
+ * 前端拿不到这个事实，**不预先禁用**——后端逐项失败并给真实原因（`eps_source_unverified` /
+ * `eps_needs_live_figure`），界面显示逐项失败。
  *
  * 与后端 `_serialize_figure()` 的前提逐条对应：runtime id 放行，磁盘面板看
  * 素材清单里的 `script`（那正是「注册表声明了映射没有」）。**不可用时不隐藏
  * 选项、不静默丢掉它**：禁用并说原因，发出去的请求里也不带它。
  */
-export type EpsBlockReason = 'none' | 'canvas_scope' | 'no_script' | 'source_unverified'
+export type EpsBlockReason = 'none' | 'canvas_scope' | 'no_script'
 
 export function epsAvailability(
   scope: ExportScope,
@@ -168,7 +169,6 @@ export function epsAvailability(
   if (figureId.startsWith('runtime:')) return { ok: true, reason: 'none' }
   const asset = useAssetStore.getState().byId[figureId]
   if (!asset?.script) return { ok: false, reason: 'no_script' }
-  if (figureId.toLowerCase().endsWith('.svg')) return { ok: false, reason: 'source_unverified' }
   return { ok: true, reason: 'none' }
 }
 

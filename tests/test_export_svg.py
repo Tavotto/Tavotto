@@ -386,6 +386,66 @@ def test_job_asserts_one_basis_even_if_a_format_path_drifts(project, monkeypatch
     assert outputs["eps"]["error"]["code"] == "export_basis_mismatch"
 
 
+def _script_saving_svg(size):
+    return SCRIPT.replace('savefig("F.pdf")', 'savefig("F.svg")').replace(
+        "figsize=(3, 2)", f"figsize={size}"
+    )
+
+
+def _disk_svg_from_script(root, size):
+    """用户自己跑脚本（非 Tavotto）落在磁盘上的 `F.svg`。"""
+    import os
+    import subprocess
+
+    (root / "plot.py").write_text(_script_saving_svg(size), encoding="utf-8")
+    subprocess.run(
+        [sys.executable, "-c", "import runpy; runpy.run_path('plot.py')['main']()"],
+        cwd=root,
+        env={**os.environ, "MPLBACKEND": "agg"},
+        check=True,
+    )
+
+
+def test_svg_asset_saved_by_the_live_figure_gets_svg_and_eps_from_one_basis(project, monkeypatch):
+    """磁盘 `F.svg` 正是脚本保存出的那张图：运行后写下字节绑定，svg 与 eps 同一基准、都交付、不重跑。"""
+    import hashlib
+
+    client, root = project
+    _disk_svg_from_script(root, (3, 2))
+    disk = (root / "F.svg").read_bytes()
+    source = run_script(client)
+    assert source
+    monkeypatch.setattr(pool, "get", lambda *a, **k: pytest.fail("EPS reran the script"))
+    body, outputs = output(client, spec("F.svg", scope="original", formats=("svg", "eps")))
+    assert body["status"] == "done", body
+    assert outputs["eps"]["status"] == "done"
+    assert hashlib.sha256(disk).hexdigest()
+    assert (
+        m._svg_asset_binding(type("S", (), {"figure_id": "F.svg"})(), root)
+        == hashlib.sha256(disk).hexdigest()
+    )
+
+
+def test_svg_asset_that_differs_from_the_live_figure_is_never_bound(project, monkeypatch):
+    """磁盘 `F.svg` 是脚本另一个版本存的（改过脚本没重跑 / 保存参数不同）：不写绑定，eps 如实失败。"""
+    client, root = project
+    _disk_svg_from_script(root, (4, 2))
+    (root / "plot.py").write_text(_script_saving_svg((3, 2)), encoding="utf-8")
+    run_script(client)
+    monkeypatch.setattr(pool, "get", lambda *a, **k: pytest.fail("EPS reran the script"))
+    body, outputs = output(client, spec("F.svg", scope="original", formats=("svg", "eps")))
+    assert outputs["svg"]["status"] == "done"
+    assert outputs["eps"]["error"]["code"] == "eps_source_unverified"
+
+
+def test_svg_asset_never_run_has_no_binding(project, monkeypatch):
+    client, root = project
+    _disk_svg_from_script(root, (3, 2))
+    monkeypatch.setattr(pool, "get", lambda *a, **k: pytest.fail("EPS reran the script"))
+    body, outputs = output(client, spec("F.svg", scope="original", formats=("svg", "eps")))
+    assert outputs["eps"]["error"]["code"] == "eps_source_unverified"
+
+
 def test_cold_worker_eps_with_an_existing_script_is_not_reported_as_no_script(project):
     """A3b：脚本存在、只是没有活 Figure（冷 worker）——原因码不能是 `eps_needs_script`。"""
     client, root = project
