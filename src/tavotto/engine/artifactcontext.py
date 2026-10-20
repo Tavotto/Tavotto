@@ -288,6 +288,11 @@ def _store_unknown_error(exc) -> ArtifactContextError:
     )
 
 
+def adoption_store_exists() -> bool:
+    """记录文件在不在（存在但坏的也算在：交给 `is_adopted` 按未知处理）。不读内容，供热路径早退。"""
+    return _adoption_path().exists()
+
+
 def _project_key(project_root) -> str:
     # 与项目系统（app._project_id / pool._norm_dir）同一个规范化身份：大小写不敏感的卷上换个大小写重开
     # 同一项目，不能因此绕过写回闸。
