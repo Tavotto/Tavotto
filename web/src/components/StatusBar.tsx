@@ -295,10 +295,13 @@ export function NotificationRail({ announceRole = 'alert' }: { announceRole?: 'a
   const statusPresence = usePresence(!!status, DURATION.fast)
 
   // 带锚点的提示（`ANCHORED_HINTS`）由锚点所在组件自己画，不进这条轨；它仍占 current 的槽位
-  const hint = useHintStore((s) => (s.current && ANCHORED_HINTS.has(s.current) ? null : s.current))
+  // live region 仍取 current（锚点提示的画面由锚点组件画，但读屏照样要听见；锚点组件自己不加 aria-live，免得播两遍）
+  const current = useHintStore((s) => s.current)
+  const hint = current && ANCHORED_HINTS.has(current) ? null : current
   const hintToken = useHintStore((s) => s.token)
   const dismissHint = useHintStore((s) => s.dismiss)
   const hintText = hint ? t(`hints.${hint}`) : ''
+  const liveHintText = current ? t(`hints.${current}`) : ''
   const toolbarUp = useCanvasToolbarVisible()
 
   // 「编辑原图」这一次把图加进了文档（此前不在）：说出口，并给撤销；回排版 / 撤销即消失
@@ -421,7 +424,7 @@ export function NotificationRail({ announceRole = 'alert' }: { announceRole?: 'a
         {tone === 'error' ? liveText : ''}
       </div>
       <div aria-live="polite" className="sr-only">
-        {hintText}
+        {liveHintText}
       </div>
       <div aria-live="polite" className="sr-only">
         {adopted ? adoptedText : ''}

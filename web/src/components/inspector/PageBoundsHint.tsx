@@ -1,9 +1,10 @@
-import { useEffect, useRef, type FocusEvent } from 'react'
+import { useEffect, useLayoutEffect, useRef, type FocusEvent } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/Button'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { Lightbulb, X } from '@/components/ui/icons'
 import { t as translate } from '@/i18n'
+import { rescueFocus } from '@/lib/focusRescue'
 import { hintDismissTimer, useHintStore } from '@/lib/onboarding/hints'
 import { DURATION, usePresence } from '@/lib/motion'
 import { cn } from '@/lib/utils'
@@ -30,6 +31,20 @@ export function PageBoundsHint() {
     held.current.delete(r)
     hintDismissTimer.release(r)
   }
+  // 焦点在卡片里吗：卡片收起（按钮、× 或 9 秒兜底）会把它摘掉，焦点落 body 在 WebKit 里让 Tab 卡死
+  // （`lib/focusRescue.ts`）。鼠标点击不抢焦点的卡片，焦点不在里面就什么都不做。
+  const focusInside = useRef(false)
+  // layout 阶段：赶在浏览器因 inert / 卸载做焦点修正之前读到「焦点还在卡片里」
+  useLayoutEffect(() => {
+    if (open) return
+    if (focusInside.current) {
+      focusInside.current = false
+      // 接手者：右栏页签条里当前选中的页签（「打开画布页」之后正是「画布」）
+      rescueFocus(() =>
+        document.querySelector<HTMLElement>('[data-inspector-tab][aria-selected="true"]'),
+      )
+    }
+  }, [open])
   useEffect(
     () => () => {
       for (const r of held.current) hintDismissTimer.release(r)
@@ -46,9 +61,15 @@ export function PageBoundsHint() {
       inert={presence.state === 'closed'}
       onPointerEnter={() => grip('pointer')}
       onPointerLeave={() => drop('pointer')}
-      onFocus={() => grip('focus')}
+      onFocus={() => {
+        focusInside.current = true
+        grip('focus')
+      }}
       onBlur={(e: FocusEvent<HTMLDivElement>) => {
-        if (!e.currentTarget.contains(e.relatedTarget as Node | null)) drop('focus')
+        if (!e.currentTarget.contains(e.relatedTarget as Node | null)) {
+          focusInside.current = false
+          drop('focus')
+        }
       }}
       className={cn(
         'absolute inset-x-3 top-12 z-popover flex items-start gap-2 rounded-lg bg-surface px-3 py-2 text-sm text-ink shadow-pop',

@@ -60,6 +60,17 @@ describe('PageBoundsHint', () => {
     expect(note()!.textContent).toContain('Figure')
   })
 
+  it('通知轨的 polite live region 照样播报这条提示（可见 toast 不画），且只播一遍（#1220 评审 P2）', () => {
+    act(() => void showHint('layout_page_bounds'))
+    const live = [...container.querySelectorAll<HTMLElement>('[aria-live="polite"]')].filter((el) =>
+      el.textContent?.includes('Figure'),
+    )
+    expect(live).toHaveLength(1)
+    expect(live[0].classList.contains('sr-only')).toBe(true)
+    expect(container.querySelectorAll('[data-onboarding-hint]').length).toBe(1) // 可见的只有锚点那份
+    expect(note()!.closest('[aria-live]')).toBeNull() // 锚点组件自己不再 live
+  })
+
   it('不抢键盘焦点', () => {
     act(() => void showHint('layout_page_bounds'))
     expect(note()!.contains(document.activeElement)).toBe(false)
@@ -116,5 +127,70 @@ describe('PageBoundsHint', () => {
     act(() => void showHint('layout_page_bounds'))
     act(() => useHintStore.getState().dismiss())
     expect(note()).toBeNull() // 没有 tick：立即卸载
+  })
+
+  describe('焦点救援（#1220 评审 P1）', () => {
+    let tabs: HTMLElement[]
+    let unsub: () => void
+    beforeEach(() => {
+      tabs = ['properties', 'canvas'].map((id) => {
+        const b = document.createElement('button')
+        b.setAttribute('data-inspector-tab', id)
+        b.setAttribute('aria-selected', String(useUiStore.getState().rightTab === id))
+        b.getClientRects = (() => [{}] as unknown as DOMRectList) as HTMLElement['getClientRects']
+        document.body.appendChild(b)
+        return b
+      })
+      // 页签随 rightTab 变（真 Inspector 的 aria-selected 同源）
+      unsub = useUiStore.subscribe((s) =>
+        tabs.forEach((b) =>
+          b.setAttribute('aria-selected', String(b.getAttribute('data-inspector-tab') === s.rightTab)),
+        ),
+      )
+    })
+    afterEach(() => {
+      unsub()
+      tabs.forEach((b) => b.remove())
+    })
+
+    it('键盘激活「打开画布页」后焦点落在「画布」页签，不是 body', async () => {
+      act(() => void showHint('layout_page_bounds'))
+      const open = note()!.querySelector<HTMLButtonElement>('button')!
+      act(() => open.focus())
+      await act(async () => {
+        open.click()
+        await Promise.resolve()
+      })
+      tick(300)
+      expect(document.activeElement).toBe(tabs[1])
+    })
+
+    it('× 关闭后焦点落在当前选中的页签', async () => {
+      act(() => void showHint('layout_page_bounds'))
+      const buttons = note()!.querySelectorAll<HTMLButtonElement>('button')
+      const close = buttons[buttons.length - 1]
+      act(() => close.focus())
+      await act(async () => {
+        close.click()
+        await Promise.resolve()
+      })
+      tick(300)
+      expect(document.activeElement).toBe(tabs[0])
+    })
+
+    it('焦点不在卡片里时点击不移动焦点', async () => {
+      const other = document.createElement('input')
+      document.body.appendChild(other)
+      act(() => void showHint('layout_page_bounds'))
+      act(() => other.focus())
+      const open = note()!.querySelector<HTMLButtonElement>('button')!
+      await act(async () => {
+        open.click()
+        await Promise.resolve()
+      })
+      tick(300)
+      expect(document.activeElement).toBe(other)
+      other.remove()
+    })
   })
 })
