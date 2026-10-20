@@ -10,6 +10,7 @@
   | --- | --- |
   | `engine/patchspec.py` ↔ `workerd/src/patchspec.rs`+`pyfloat.rs` | `tests/golden/patch_vectors.json`（逐字节） |
   | `engine/preflight.py` ↔ `web/src/lib/preflight.ts` | `tests/golden/preflight_vectors.json`（只比判据不比措辞） |
+  | `web/src/lib/exportRoute.ts` `embedsDiskBitmap`（面板在本次导出里嵌入的是不是磁盘位图，预检面板 `kind` 的唯一判据，#477）↔ 后端真值：原图范围 `app._resolve_panel_source`、画布范围 `rendercore.sources.needs_execution` | 两侧各读 `tests/golden/export_route_vectors.json`：`tests/test_export_route_vectors.py`（驱动后端真实代码求期望；守卫无效等后端判不出的向量在 docstring 写明盲点）+ `web/src/lib/exportRoute.test.ts`；预检用了它由 `preflight.originSource.test.ts` 钉。其余前端谓词（`copiesSourceVerbatim` / `originalSpec` / `exportFigures.kindOf`）尚未改读它 |
   | `src/tavotto/richtext.py` ↔ `web/src/lib/richText.ts` | pytest 真 PDF 几何看护 |
   | `src/tavotto/glyphplan.py` ↔ `web/src/lib/glyphPlan.ts` | `tests/golden/glyph_plan_vectors.json`（**算法同源、oracle 刻意不同源**：Python 问真字体（批准字体集合，ADR 0060），浏览器读生成的`pdfbackend/canvas_coverage.json`；表的漂移由 `scripts/gen_canvas_coverage.py --check` 单独看住；与退役前旧表的差异闭集由 `tests/test_rendercore_glyph_vectors.py` 对着 `evidence/u10/*.pymupdf.json` 钉着） |
   | `web/src/lib/shapeGeometry.ts` ↔ `rendercore/geometry.py` `polygon_points`/`dash_pattern`（U06 起的宿主，ADR 0059；旧 `pdfbackend` 的 `_polygon_points`/`_dash_pattern` 随 U10 删除） | 共享向量 `tests/golden/shape_geometry_vectors.json`（退役前从旧 facade 记下）：`tests/test_rendercore_geometry.py` 与 `web/src/lib/shapeGeometry.golden.test.ts` 各跑一遍；`tests/test_compose_arrow.py` 从合成 PDF 的内容流抽坐标做几何级看护 |
