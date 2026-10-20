@@ -117,6 +117,10 @@ def _finish_session(
         refresh=sess["refresh"],
         task_result=task_result,
     )
+    if (
+        sess["status"] != "cancelled"
+    ):  # 被意图取消的由执行入口记 `ok`（两者会竞态）；这里只收"意图到得太晚"的
+        ai_history.record_cancel_result(sess["id"], "finished")  # 结果与终态一致，不悬挂
     # 结束时刻：详情的 `ended_ms`（#1098 单独合入时前端靠它判 cancelled 快照是不是终态；这里与 `final` 同时置位）
     sess["ended_ms"] = int(time.time() * 1000)
     sess["final"] = True
@@ -924,6 +928,7 @@ def run(
             # 记录已落库而进程没起来：标成失败，不是删掉——「查询」要查得到它，且明确是没执行
             stderr_log.close()
             ai_history.record_end(sid, "failed", error=str(exc))
+            ai_history.record_cancel_result(sid, "failed")  # 窗口里到的取消意图随终态收尾，不悬挂
             if cand is not None:
                 ai_figure_edit.remove_candidate(cand.dir)
             raise
@@ -961,6 +966,12 @@ def run(
             sess["task"] = {"task_type": envelope.task_type, "outcome": None}
             sess["taf"] = {"cand": cand, "run": task_run}
         SESSIONS[sid] = sess
+    # `record_start` 提交之后、上一行之前，别的进程可能已经写了取消意图（tick 看到会话不在内存里就不消费它）：入内存后立刻补一次，
+    # 不等下一个 tick。用户已被告知"取消已接受"，任务不能因为这个窗口跑完
+    try:
+        _execute_cancel_intent(sid)
+    except Exception:  # noqa: BLE001 — 进程已起来，这里不能让 run() 抛；下一个 tick 仍会再试
+        LOG.exception("入内存后检查取消意图失败（session %s）", sid)
     emit = on_event or (lambda *_: None)
 
     def _consume():
@@ -1512,12 +1523,28 @@ def _owner_tick() -> list[str]:
     done = []
     for sid in ai_history.owner_tick():
         if sid not in SESSIONS:
-            result = "gone"  # 行说是本进程的，内存里却没有（收尾与意图擦肩而过）
-        else:
-            result = "ok" if _cancel_local(sid) else "refused_committing"
-        ai_history.record_cancel_result(sid, result)
-        done.append(sid)
+            # 本进程登记的 running 行、还没进内存（`record_start` 之后、`SESSIONS[sid] = …` 之前隔着 Popen / Task Core 登记）：
+            # **不消费意图**——`run()` 放进内存后会立刻再查一次。行若已是终态，`owner_tick` 本来就不会回它
+            continue
+        if _execute_cancel_intent(sid):
+            done.append(sid)
     return done
+
+
+#: 执行意图的互斥：心跳线程的 tick 与 `run()` 入内存后的那次检查是同一件事的两个入口，不能对同一条意图各取消一次
+#: （重复取消虽然幂等，但第二次的 `_cancel_local` 返回 False，会把结果误记成 refused）。锁序：`_REQUEST_LOCK` → 本锁，本锁内不再拿 `_REQUEST_LOCK`
+_INTENT_LOCK = threading.Lock()
+
+
+def _execute_cancel_intent(sid: str) -> bool:
+    """会话在本进程内存里时，执行别的进程写下的待执行取消意图（走进程内同一条 `_cancel_local`），结果记 `cancel_result`。
+    持锁重查"意图仍待执行"——另一个入口可能刚做完。回值：这次确实执行了。"""
+    with _INTENT_LOCK:
+        if sid not in SESSIONS or not ai_history.pending_cancel(sid):
+            return False
+        result = "ok" if _cancel_local(sid) else "refused_committing"
+        ai_history.record_cancel_result(sid, result)
+        return True
 
 
 def _owner_loop() -> None:

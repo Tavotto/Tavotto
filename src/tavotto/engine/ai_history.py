@@ -613,15 +613,32 @@ def owner_tick(token: str | None = None, db_path: Path | None = None) -> list[st
     ]
 
 
+def pending_cancel(sid: str, token: str | None = None, db_path: Path | None = None) -> bool:
+    """这个 sid 上有没有**待执行**的取消意图：行仍 `running`、属本代属主、`cancel_token` 等于它、`cancel_result` 还没写。
+    `run()` 把会话放进 `SESSIONS` 之后立刻问一次（意图可能写在「登记」与「进内存」之间）。"""
+    token = OWNER_TOKEN if token is None else token
+    with contextlib.closing(_connect(db_path)) as con:
+        return (
+            con.execute(
+                "SELECT 1 FROM sessions WHERE id=? AND status='running' AND owner_token=? AND cancel_token=? "
+                "AND cancel_requested_ms IS NOT NULL AND cancel_result IS NULL",
+                (sid, token, token),
+            ).fetchone()
+            is not None
+        )
+
+
 def record_cancel_result(
     sid: str, result: str, token: str | None = None, db_path: Path | None = None
 ) -> bool:
-    """属主执行完一个取消意图后记结果（`ok` / `refused_committing` / `gone`）。只写本代属主名下、还没有结果的行。"""
+    """记取消意图的结果（`ok` / `refused_committing` / `finished` / `failed` / `owner_gone`）。只写本代属主名下、**确有意图**且还没有结果的行
+    （没人请求过取消的行不留结果）。"""
     token = OWNER_TOKEN if token is None else token
     with _connect(db_path) as con:
         return (
             con.execute(
-                "UPDATE sessions SET cancel_result=? WHERE id=? AND owner_token=? AND cancel_result IS NULL",
+                "UPDATE sessions SET cancel_result=? WHERE id=? AND owner_token=? AND cancel_result IS NULL "
+                "AND cancel_requested_ms IS NOT NULL",
                 (result, sid, token),
             ).rowcount
             > 0

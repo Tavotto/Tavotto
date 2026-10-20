@@ -452,3 +452,104 @@ def test_new_columns_are_added_to_an_old_database(tmp_path):
         assert row[col] is None
     with sqlite3.connect(old) as raw:
         assert raw.execute("PRAGMA user_version").fetchone()[0] == before
+
+
+# ----------------------------------------------------------------------------------- 登记与入内存之间的窗口（Codex #1229 P1）
+@pytest.fixture
+def window_env(db, tmp_path, monkeypatch):
+    """`record_start` 已提交、`SESSIONS[sid]` 还没放进去的窗口：用 Popen 桩停在里面，让"另一个进程"在此刻写意图并让 tick 跑一次。"""
+    figs = tmp_path / "figs"
+    figs.mkdir()
+    (figs / "fig1.py").write_text("print('x')\n", encoding="utf-8")
+    monkeypatch.setattr(ai_bridge, "SNAP_DIR", tmp_path / "snapshots")
+    monkeypatch.setattr(ai_bridge, "require_usable", lambda agent: None)
+    monkeypatch.setattr(ai_bridge.ai_providers, "resolve", lambda *a, **k: None)
+    monkeypatch.setattr(
+        ai_bridge,
+        "_cmd",
+        lambda *a, **k: ([sys.executable, "-c", "import time; time.sleep(60)"], {}),
+    )
+    monkeypatch.setattr(ai_bridge, "OWNER_TICK_S", 3600.0)  # 后台线程不抢 tick：用例自己驱动
+    real_popen = subprocess.Popen
+    state = {"in_window": None}
+
+    def intent_arrives(sid):
+        with sqlite3.connect(db) as raw:  # 别的进程写下的意图（针对本进程这一代）
+            raw.execute(
+                "UPDATE sessions SET cancel_requested_ms=1, cancel_token=? WHERE id=?",
+                (ai_history.OWNER_TOKEN, sid),
+            )
+
+    def popen_in_window(*a, **k):
+        proc = real_popen(*a, **k)
+        with sqlite3.connect(db) as raw:
+            sid = raw.execute("SELECT id FROM sessions ORDER BY started_ms DESC").fetchone()[0]
+        intent_arrives(sid)
+        state["in_window"] = ai_bridge._owner_tick()  # 此刻会话不在 SESSIONS 里
+        return proc
+
+    monkeypatch.setattr(ai_bridge.subprocess, "Popen", popen_in_window)
+    yield figs, state
+    ai_bridge.stop_owner_loop()
+    for sid in list(ai_bridge.SESSIONS):
+        sess = ai_bridge.SESSIONS.pop(sid)
+        ai_bridge._terminate(sess)
+
+
+def test_intent_arriving_between_register_and_memory_is_not_swallowed(window_env, db):
+    figs, state = window_env
+    sid = ai_bridge.run("codex", "fig1.py", "p", str(figs), client_request_id="rid-window-0000001")
+    assert state["in_window"] == []  # tick 在窗口里看到的是"不在内存"：既没执行也没消费
+    # 不等下一个 tick（它被调成 1 小时）：入内存后 run() 自己补查，会话已经被取消
+    assert ai_bridge.SESSIONS[sid]["status"] == "cancelled"
+    assert _row(db, sid)["cancel_result"] == "ok"
+    assert _wait(lambda: _row(db, sid)["ended_ms"] is not None)
+    assert _row(db, sid)["status"] == "cancelled"
+
+
+def test_tick_in_the_window_leaves_the_intent_pending(window_env, db, monkeypatch):
+    """去掉 run() 的补查也不丢：tick 不消费，意图仍待执行，下一个 tick 照样执行。"""
+    figs, state = window_env
+    real = ai_bridge._execute_cancel_intent
+    monkeypatch.setattr(
+        ai_bridge, "_execute_cancel_intent", lambda sid: False
+    )  # run() 的补查被拿掉
+    sid = ai_bridge.run("codex", "fig1.py", "p", str(figs), client_request_id="rid-window-0000002")
+    assert _row(db, sid)["cancel_result"] is None and ai_bridge.SESSIONS[sid]["status"] == "running"
+    monkeypatch.setattr(ai_bridge, "_execute_cancel_intent", real)  # 下一个 tick 用真实的执行入口
+    assert ai_bridge._owner_tick() == [sid]
+    assert (
+        ai_bridge.SESSIONS[sid]["status"] == "cancelled" and _row(db, sid)["cancel_result"] == "ok"
+    )
+
+
+def test_intent_in_the_window_settles_with_the_terminal_state_when_spawn_fails(
+    db, tmp_path, monkeypatch
+):
+    figs = tmp_path / "figs"
+    figs.mkdir()
+    (figs / "fig1.py").write_text("print('x')\n", encoding="utf-8")
+    monkeypatch.setattr(ai_bridge, "SNAP_DIR", tmp_path / "snapshots")
+    monkeypatch.setattr(ai_bridge, "require_usable", lambda agent: None)
+    monkeypatch.setattr(ai_bridge.ai_providers, "resolve", lambda *a, **k: None)
+    monkeypatch.setattr(ai_bridge, "_cmd", lambda *a, **k: ([sys.executable, "-c", "pass"], {}))
+    monkeypatch.setattr(ai_bridge, "OWNER_TICK_S", 3600.0)
+
+    def boom(*a, **k):
+        with sqlite3.connect(db) as raw:
+            sid = raw.execute("SELECT id FROM sessions").fetchone()[0]
+            raw.execute(
+                "UPDATE sessions SET cancel_requested_ms=1, cancel_token=? WHERE id=?",
+                (ai_history.OWNER_TOKEN, sid),
+            )
+        raise OSError("spawn failed")
+
+    monkeypatch.setattr(ai_bridge.subprocess, "Popen", boom)
+    with pytest.raises(OSError):
+        ai_bridge.run("codex", "fig1.py", "p", str(figs), client_request_id="rid-window-0000003")
+    ai_bridge.stop_owner_loop()
+    with sqlite3.connect(db) as raw:
+        raw.row_factory = sqlite3.Row
+        row = dict(raw.execute("SELECT * FROM sessions").fetchone())
+    assert row["status"] == "failed" and row["cancel_result"] == "failed"  # 意图随终态收尾，不悬挂
+    assert ai_history.owner_tick() == []

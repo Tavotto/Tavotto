@@ -176,7 +176,7 @@
   **`cancel_token` 等于本进程 token** 的意图，走进程内同一条 `_cancel_local`，结果记 `cancel_result`。**属主死活只有一个判据 `ai_history.row_owner_alive`**
   （忙碌判定 / 启动清理 / 读路径收尾 / `final` 共用）：pid 存活，且（有 token+beat 的行）心跳不超过 `OWNER_BEAT_DEAD_MS`（10 分钟，只兜 pid 复用：复用 pid 的新进程不会续心跳）；无 token / 无 beat 的老行按原语义
   （pid + 24 h）。**两个阈值分开**：`request_cancel` 另看 `OWNER_BEAT_STALE_MS`（30 s，tick 的 15 倍）——属主活着但心跳超过它 = `owner_unresponsive`（`ok:false`），不写会悬挂的意图、
-  **不收尾、不改行**：高负载下心跳线程被饿住很常见，此时 pid 活着、CLI 可能仍在写脚本，不能把行收成终态。属主死亡时尚未执行的意图：收尾把 `running` 行转 `cancelled`（用户要的是取消）而不是 `interrupted`。
+  **不收尾、不改行**：高负载下心跳线程被饿住很常见，此时 pid 活着、CLI 可能仍在写脚本，不能把行收成终态。**登记与入内存之间的窗口**：`record_start` 提交之后、`SESSIONS[sid]` 放进去之前（隔着 Popen / `begin_registered`），别的进程已能写意图——tick 遇到"属本进程 token、仍 running、不在 `SESSIONS`"**不消费意图**（不写 `cancel_result`），`run()` 放进内存后立刻 `_execute_cancel_intent`（与 tick 同一函数、`_INTENT_LOCK` 互斥，锁序 `_REQUEST_LOCK` → `_INTENT_LOCK`）补查一次；spawn 失败 / 会话自己先收尾时意图随终态记 `failed` / `finished`。属主死亡时尚未执行的意图：收尾把 `running` 行转 `cancelled`（用户要的是取消）而不是 `interrupted`。
   **盲区**：pid 复用后最长 `OWNER_BEAT_DEAD_MS` 内仍按活着算（忙碌判定会多挡一阵）；属主真卡死而 pid 活着时，行一直开到判死线；这两条与启动清理一样只改状态、不杀孤儿 CLI。
   取消延迟最坏 ≈ `OWNER_TICK_S`。
 - 会话历史在 `engine/ai_history.py`（SQLite `cache/ai_history.sqlite3`，
