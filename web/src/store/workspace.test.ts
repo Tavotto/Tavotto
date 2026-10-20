@@ -334,6 +334,34 @@ describe('快编 ⇄ 排版往返与「从哪里来」（P01）', () => {
     returnToLayout()
     expect(ws().fastEditFromLayout).toBe(false)
   })
+
+  it('显式来源优先：A 在快编（来源=排版），再 enterFastEdit(B, { fromLayout:false }) → 来源 false', () => {
+    openFastEdit('a.pdf')
+    expect(ws().fastEditFromLayout).toBe(true)
+    openFastEdit('b.pdf')
+    ws().enterFastEdit(panelOf('b.pdf').id, { fromLayout: false })
+    expect(ws().fastEditFromLayout).toBe(false)
+  })
+
+  it('不传 opts 在快编里换图：保持原来源', () => {
+    openFastEdit('b.pdf') // 先把 b 放进文档
+    returnToLayout()
+    openFastEdit('a.pdf')
+    ws().enterFastEdit(panelOf('b.pdf').id)
+    expect(ws().fastEditFromLayout).toBe(true)
+  })
+
+  it('快编里直接换到另一份也恢复进快编的文档：新文档来源 = 无（真实 startWorkspacePersistence 路径）', async () => {
+    const stop = startWorkspacePersistence()
+    openFastEdit('a.pdf') // 文档 A：从排版进快编，来源 = 排版
+    expect(ws().fastEditFromLayout).toBe(true)
+    const panelId = ws().activePanelId!
+    localStorage.setItem('tavotto.workspace.d_b', JSON.stringify({ mode: 'fast_edit', panelId }))
+    await s().switchDocument(structuredClone(s().doc), 'd_b')
+    stop()
+    expect(ws().mode).toBe('fast_edit')
+    expect(ws().fastEditFromLayout).toBe(false)
+  })
 })
 
 describe('模式是工作区状态，不是文档', () => {

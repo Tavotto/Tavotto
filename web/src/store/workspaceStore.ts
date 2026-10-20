@@ -87,7 +87,15 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     // 记下排版视口**在这里**，不在 `openFastEdit` 里：问题面板的定位
     // （`lib/issueFocus.ts`）也是从排版进快速编辑的，它调的是这个 action
     parkLayoutView()
-    const fromLayout = get().mode === 'fast_edit' ? get().fastEditFromLayout : opts?.fromLayout !== false
+    // 显式传入的来源优先（会话恢复传 `false`）：快编里直接换文档、新文档也恢复进快编时，
+    // store 还停在上一份的 `fast_edit`，不能把上一份的来源带过来。没传才按原样——
+    // 已在快编里换图保持原来源，从排版进来默认 true
+    const fromLayout =
+      opts?.fromLayout !== undefined
+        ? opts.fromLayout
+        : get().mode === 'fast_edit'
+          ? get().fastEditFromLayout
+          : true
     // 换了一张图：上一张的「刚加入」说明不跟过来
     set({ mode: 'fast_edit', activePanelId: panelId, fastEditFromLayout: fromLayout, ...(changed ? { addedForEdit: null } : {}) })
     if (changed) emitActivity({ kind: 'workspace.mode_changed', mode: 'fast_edit' })
