@@ -1094,6 +1094,8 @@ test(
     // 让标记露出来（用户也是这么做的），再断言它点得到
     const inspectorClose = page.locator('[data-inspector-close]')
     if (await inspectorClose.count()) await inspectorClose.click()
+    // 收起要隔一帧才提交：先等右侧面板真的卸载，否则命中检查会抢在它前面被面板挡住
+    await expect(inspectorClose, '右侧面板收起后画布才会露出标记').toHaveCount(0)
     // 这一屏只有那张两联图一个对象 → 恰好一枚标记，等级是阻断
     await expect(pins, '打开之后那张有问题的图上应当有一枚标记').toHaveCount(1, { timeout: 30_000 })
     const pin = pins.first()
