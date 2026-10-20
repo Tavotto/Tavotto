@@ -928,7 +928,9 @@
     "panel_layout_only": "Lay out this figure; connect its source script to edit its elements.",
     "fast_edit_entered": "Your changes are saved to this layout. The original file stays untouched.",
     "multi_select": "Use the floating bar by the selection to align and distribute.",
-    "problem_found": "“Problems” on the left locates the object and its property field."
+    "problem_found": "“Problems” on the left locates the object and its property field.",
+    "layout_page_bounds": "The white page is the size of the exported figure. Single- and double-column widths follow the current spec; adjust them on the Canvas tab on the right.",
+    "pageBoundsOpen": "Open Canvas tab"
   },
   "prep": {
     "aria": "Prepare {{script}}",

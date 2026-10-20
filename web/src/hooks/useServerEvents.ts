@@ -343,6 +343,23 @@ function announceAiDone(ev: DonePayload) {
     setStatus(msg('status.aiChangedRefreshFailed', { reason }, 'ai'), 'error')
     return
   }
+  // 任务结局（TAF）：只翻译 `task.outcome`；刷新失败那条优先级最高，在上面已经返回。
+  // completed + 没改动有意走下面的 `aiNoChange`（没写回 = 没做渲染层核对，不能说「核对一致」；转录 `statusText` 同一口径）
+  const outcome = ev.task?.outcome
+  const taskKey =
+    ev.status === 'done' && ev.changed && outcome === 'completed'
+      ? 'status.aiTaskVerified'
+      : ev.status === 'done' && outcome === 'partial'
+        ? 'status.aiTaskPartial'
+        : ev.status === 'done' && ev.changed && outcome === 'failed'
+          ? 'status.aiTaskFailedChanged'
+          : ev.status === 'failed' && !ev.changed && outcome === 'failed'
+            ? 'status.aiTaskRejected'
+            : null
+  if (taskKey) {
+    setStatus(msg(taskKey, undefined, 'ai'), taskKey === 'status.aiTaskVerified' || taskKey === 'status.aiTaskPartial' ? 'info' : 'error')
+    return
+  }
   setStatus(
     msg(
       ev.status === 'done'

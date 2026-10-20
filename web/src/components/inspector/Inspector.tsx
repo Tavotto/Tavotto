@@ -25,6 +25,7 @@ import { useDocumentColors } from './documentColors'
 import { PanelElementPage } from './GroupPage'
 import { IdentityHeader } from './IdentityHeader'
 import { INSPECTOR_CONTAINER } from './layout'
+import { PageBoundsHint } from './PageBoundsHint'
 import { PanelSection } from './PanelSection'
 import { ArrowSection, ShapeSection } from './StrokeSection'
 import { TextSection } from './TextSection'
@@ -165,6 +166,7 @@ export function Inspector({
         </span>
       </div>
 
+      <PageBoundsHint />
       {tab === 'assistant' ? (
         <TabPanel id={PANEL_ID.assistant} className="flex min-h-0 flex-1 flex-col">
           <AssistantPanel />

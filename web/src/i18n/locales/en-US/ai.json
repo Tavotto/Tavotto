@@ -90,6 +90,12 @@
     "expand": "Show more",
     "resend": "Send again"
   },
+  "notice": {
+    "taskFailedChanged": "The edit is saved, but the checks found the data or output changed. If that’s wrong, revert to the previous version.",
+    "taskPartial": "The edit is saved, but some checks couldn’t run, so the result isn’t fully verified.",
+    "taskRejected": "The edit didn’t pass the pre-write checks and wasn’t written to your project.",
+    "unmetHeading": "Checks not met"
+  },
   "panel": {
     "abort": "Stop",
     "finishing": "Finishing the previous change…",
@@ -164,15 +170,23 @@
     "restoredNote": "Reconnected to a task that is still running. Earlier output isn’t shown; the result appears when it finishes.",
     "reverted": "Reverted. The script is back to its previous state.",
     "revertedStatus": "Reverted the assistant’s change. Rebuilding the figure…",
-    "running": "Editing the script…"
+    "running": "Editing the script…",
+    "taskFailedChanged": "Edited, but the checks didn’t pass",
+    "taskPartial": "Edited; some checks couldn’t be completed",
+    "taskRejected": "The edit didn’t pass the pre-write checks; your project is unchanged",
+    "taskVerified": "Edited; the data checks out unchanged"
   },
   "status": {
-    "aiSuperseded": "This instruction was replaced by the rewritten one and will not run.",
     "aiAlreadyRan": "This request already ran (its task record was deleted), so it won’t be sent again.",
     "aiChanged": "The assistant edited the script; re-rendering the figure…",
     "aiChangedRefreshFailed": "The assistant edited the script, but the project couldn’t refresh: {{reason}}. Your edit is saved, and Tavotto will retry automatically.",
     "aiFailed": "The assistant failed",
     "aiNoChange": "The assistant finished; the script is unchanged",
+    "aiSuperseded": "This instruction was replaced by the rewritten one and will not run.",
+    "aiTaskFailedChanged": "The assistant edited the script, but the checks didn’t pass. You can revert it.",
+    "aiTaskPartial": "The assistant edited the script; some checks couldn’t be completed",
+    "aiTaskRejected": "The assistant’s edit didn’t pass the checks; your project is unchanged",
+    "aiTaskVerified": "The assistant edited the script and the data checks out; re-rendering…",
     "aiTimeout": "The assistant timed out",
     "cancelled": "Cancelled",
     "done": "Done",

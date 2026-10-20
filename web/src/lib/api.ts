@@ -3316,8 +3316,23 @@ export const acceptAiPending = (rid: string, file: string, pj: string | null) =>
     pj,
   )
 
+/**
+ * 改图任务的结局（TAF，ADR 0138）。**与 `status` 分开记**：`status: 'done'` + `outcome: 'partial' | 'failed'`
+ * 是「脚本确实改了，但核对没通过」。前端只翻译这里的值，不判断检查本身。
+ * 老后端 / `ai.taf.enabled` 关着时整个字段都没有（`undefined`），界面照旧逻辑。
+ */
+export interface AiTaskSummary {
+  task_type: string
+  outcome: 'completed' | 'partial' | 'needs_input' | 'failed' | 'cancelled' | 'interrupted' | null
+  /** 没满足的检查（技术 id + 稳定原因码）；界面只在详情里列 id */
+  unmet?: { constraint_id: string; reason_code: string }[]
+  explain?: { message_key: string; params: Record<string, unknown> }
+}
+
 /** 会话详情（转录 + diff）；查询到已登记的会话后补全界面用 */
 export interface AiSessionDetail {
+  /** 任务结局；老后端没有 */
+  task?: AiTaskSummary
   agent?: string
   /** 文件变了之后项目刷新的结局（`changed:true` + `failed` = 改成了、项目没刷新） */
   refresh?: AiRefreshOutcome | null
@@ -3550,6 +3565,8 @@ export type ServerEvent =
       error?: string
       /** 文件变了之后后端统一刷新的结局（ADR 0041）；老后端没有这个字段 */
       refresh?: AiRefreshOutcome
+      /** 任务结局（TAF）；与 `status` 分开记，老后端没有这个字段 */
+      task?: AiTaskSummary
     } & ProjectScoped)
 
 /**

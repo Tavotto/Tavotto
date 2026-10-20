@@ -22,6 +22,7 @@ import {
   type AiCapabilities,
   type AiDeltaKind,
   type AiRefreshOutcome,
+  type AiTaskSummary,
 } from '@/lib/api'
 import type { DraftTarget, LedgerWrite } from '@/lib/aiDraft'
 
@@ -66,6 +67,8 @@ export interface AiSession {
   changed: boolean
   diff: string
   error?: string
+  /** 任务结局（TAF）：与 `status` 分开记，老后端没有；只翻译不判断 */
+  task?: AiTaskSummary
   startedAt: number
   /** 会话结束（done / failed / timeout / cancelled）的时刻：状态行的总耗时与最后一步的耗时以它收尾 */
   finishedAt?: number
@@ -132,6 +135,8 @@ export interface DonePayload {
   error?: string
   client_request_id?: string
   refresh?: AiRefreshOutcome
+  /** 任务结局（TAF）；老后端没有 */
+  task?: AiTaskSummary
 }
 
 /** 发送前要先把提交记进后端账本；没记成就不发（界面一句话 + 重试） */
@@ -634,6 +639,7 @@ export const useAiStore = create<AiState>((set, get) => ({
         diff: d.diff ?? '',
         ...(d.error ? { error: d.error } : {}),
         ...(d.refresh ? { refresh: d.refresh } : {}),
+        ...(d.task ? { task: d.task } : {}),
       }
       settleSessionTo(x.id, done, d.transcript)
     }
@@ -717,6 +723,7 @@ export const useAiStore = create<AiState>((set, get) => ({
               changed,
               diff,
               error,
+              ...(p.task ? { task: p.task } : {}),
               finishedAt: x.finishedAt ?? Date.now(),
               // 会话结束，光标不该继续闪
               entries: x.entries.map((e) => (e.streaming ? { ...e, streaming: false } : e)),
@@ -1136,6 +1143,7 @@ function accept(
             diff: d?.diff ?? '',
             ...(d?.error ? { error: d.error } : {}),
             ...(d?.refresh ? { refresh: d.refresh } : {}),
+            ...(d?.task ? { task: d.task } : {}),
           },
           d?.transcript,
         )
@@ -1175,6 +1183,7 @@ function accept(
     ...(settled ? { finalized: true, finishedAt: Date.now() } : {}),
     ...(!settled && status !== 'running' && status !== 'cancelled' ? { provisional: true } : {}),
     ...(settled && detail?.error ? { error: detail.error } : {}),
+    ...(settled && detail?.task ? { task: detail.task } : {}),
   }
   set((s) => {
     const { [rid]: _gone, ...rest } = s.submissions
@@ -1207,7 +1216,12 @@ function accept(
                       changed: session.changed || x.changed,
                       diff: session.diff || x.diff,
                       ...(session.finalized
-                        ? { finalized: true, finishedAt: session.finishedAt, ...(session.error ? { error: session.error } : {}) }
+                        ? {
+                            finalized: true,
+                            finishedAt: session.finishedAt,
+                            ...(session.error ? { error: session.error } : {}),
+                            ...(session.task ? { task: session.task } : {}),
+                          }
                         : {}),
                     }),
               }
@@ -1233,6 +1247,7 @@ function accept(
       diff: session.diff,
       ...(session.error ? { error: session.error } : {}),
       ...(detail?.refresh ? { refresh: detail.refresh } : {}),
+      ...(session.task ? { task: session.task } : {}),
     })
   }
 }
