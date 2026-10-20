@@ -262,6 +262,8 @@ def test_a_native_success_settled_at_a_show_barrier_is_reused_unless_the_script_
             "停在 show() 上的运行：到此为止的观察就是全部输入"
         )
 
+        # 界面（或 API）在 show 屏障上 build：到此为止的观察不许把落盘记录补成 true
+        app.call(f"/api/native/sessions/{sid}/build", {}, timeout=60)
         app.call(f"/api/native/sessions/{sid}/continue", {}, timeout=60)
         assert _reopen(app)["plan"]["route"]["reason"] == "ordinary_plot", (
             "放行了：脚本接着跑、可能再读"
