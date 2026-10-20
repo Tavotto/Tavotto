@@ -540,13 +540,15 @@ def test_index_never_shares_a_name_with_the_legacy_file(legacy_app, monkeypatch,
 # --------------------------------------------------------------- 现行策略对拍
 
 
-def test_constants_mirror_app():
-    assert vs.KEEP_AUTO == m.VERSION_KEEP_AUTO
-    assert vs.KEEP_TOTAL == m.VERSION_KEEP_TOTAL
-    assert vs.KEEP_BYTES == m.VERSION_KEEP_BYTES
-    assert vs.MOMENTS == m.VERSION_MOMENTS
-    assert vs.VERSION_ID_RE.pattern == m._VERSION_ID_RE.pattern
-    assert vs._DEFAULT_NAME.pattern == m._DEFAULT_VERSION_NAME.pattern
+def test_app_constants_are_aliases_of_the_single_source():
+    """策略常量与判据只有 `versionstore` 一处出处；app 侧是别名，不是镜像（D1b）。"""
+    assert m.VERSION_KEEP_AUTO is vs.KEEP_AUTO
+    assert m.VERSION_KEEP_TOTAL is vs.KEEP_TOTAL
+    assert m.VERSION_KEEP_BYTES is vs.KEEP_BYTES
+    assert m.VERSION_MOMENTS is vs.MOMENTS
+    assert m._VERSION_ID_RE is vs.VERSION_ID_RE
+    assert m._DEFAULT_VERSION_NAME is vs.DEFAULT_NAME
+    assert m._is_named is vs.is_named and m._version_kind is vs.kind
 
 
 def _random_versions(rng: random.Random, n: int) -> list[dict]:
@@ -579,7 +581,7 @@ def test_legacy_size_equals_dumps_and_kind_matches_app():
     for v in _random_versions(rng, 80):
         meta = _meta_of(v, 1)
         assert meta["_legacy_bytes"] == len(atomicio.dumps_json(v))
-        assert vs.kind(v) == m._version_kind(v) and vs.is_named(v) == m._is_named(v)
+        assert vs.kind(v) in {"named", "moment", "auto", "manual"}
 
 
 @pytest.mark.parametrize("seed", range(12))

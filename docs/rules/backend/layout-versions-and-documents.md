@@ -40,13 +40,22 @@
   不让已成功的写入回 500（前端一重试就多一个节点，#679）；换缩略图格式先原子写新图、落地后再删旧格式（删不掉只记日志；两张同时在时取较新的那张，新图胜出，#679）；PUT 的 256 KiB 上限卡在读取本身（`_read_body_capped`，
   chunked 请求没有 Content-Length）。列表端点的 `budget` 在文件没超上限时不量 `namedBytes`（缺席，
   不冒充 0）。
-- **新存储模块（未接线，ADR 0140）**：`engine/versionstore.py` 是版本时间线的替身存储——每版一个
+- **新存储与读兼容（ADR 0140，D1b）**：`engine/versionstore.py` 是版本时间线的替身存储——每版一个
   自描述信封 `<doc_id>.vx/s/<vid>.json` + 小索引 `<doc_id>.vx/index.json`（唯一提交点），追加只写一个
-  信封 + 索引，与历史长度无关。**app.py 目前不调用它**，现行 `_load_versions` / `_save_versions` 一字未变。
+  信封 + 索引，与历史长度无关。`app.py` 的 `/api/versions/*` 全部经 `_Timeline`（`_LegacyTimeline` /
+  `_StoreTimeline`，`_open_timeline` 选边）：**读**——`versionstore.has_store` 为真读新存储，否则读旧单文件；
+  **写**——新存储已存在就写它（读写必须同边），否则**仍整份写旧单文件，字节与以前一致**（D2 才翻默认，
+  回滚到上一个版本因此仍读得到新历史）。响应形状两边逐字段相同（`tests/test_versions_store_wiring.py` 同一组
+  操作在两种存储上对拍）；新增的只有：信封坏的那一条在列表里带 `damaged: true`（只赔掉自己），索引读不出来 /
+  来自更新的格式回 409 `versions_unreadable`（零改动，复用旧错误码）。
+  **策略只有一处**：`versionstore.legacy_policy`（现行条数 + 24 MB 字节策略）与常量 `KEEP_*` / `MOMENTS` /
+  `VERSION_ID_RE` / `is_named` / `kind` 是唯一出处，`app` 的 `VERSION_KEEP_*` 等是别名（按 `is` 钉死）、
+  `_save_versions` 与新存储共用 `app._version_policy`；上限按调用时刻的 `app.VERSION_KEEP_*` 传入，测试仍可改写。
   铁律：新索引**绝不与旧文件 `<doc_id>.json` 同名**（旧程序整写会毁掉它）；先信封后索引、删除先索引后信封；
-  旧文件迁移后冻结，不删不改；调用方持 `<doc_id>.versions` 跨进程锁，模块内不取锁；
-  `legacy_policy` 是现行条数 + 24 MB 字节策略的镜像，与 `app._save_versions` 逐条对拍（同源对，改一侧改另一侧）。
-  看护：`tests/test_versionstore.py`。
+  旧文件迁移后冻结，不删不改；所有写在 `<doc_id>.versions` 跨进程锁内，模块内不取锁；
+  列表的 `budget` 在新存储上按「旧文件会占的字节」（`_legacy_bytes`）算，与旧实现同值。
+  项目归属旁证（`_project_owner_evidence`）认旧文件也认 `<doc_id>.vx/`。
+  看护：`tests/test_versionstore.py`、`tests/test_versions_store_wiring.py`。
 - **论文样式**：`/api/styles`（`layouts/_styles.json`）；前端按角色映射成
   override / 标注属性一次 commit 应用，绝不写回源文件。
 - **项目包**：`POST /api/package` 打 zip（layout+素材+脚本+sha1 清单）；
