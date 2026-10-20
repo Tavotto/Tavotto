@@ -116,3 +116,15 @@
 - 子命令分派在 import Flask 之前
 - 桌面契约 `desktop_argv()` ↔ `parse_open_args()`
 - macOS 走 `open -na … --args`
+
+## 来源记录（ADR 0139 PR3 第一片）
+
+- `engine/originrecord.py`：插件交接跑过脚本之后写的**弱线索**，键是原件字节 sha256，落
+  `data_dir()/origin/<sha>.json`；有界（`MAX_RECORDS`，满了先清字节已变 / 文件已没的）、`atomicio` 原子写、
+  白名单校验（形似路径的值拒收）、**读坏了 = 无记录（fail-open）**——与写回闸 / 采用记录
+  （`artifactcontext`，fail-closed）相反：它只用于展示，**绝不进任何判定**。
+- 写：只有插件 `handoff.py` 在 `ran: true` 时经 `tavotto open --origin-json`（仅记录模式）写；
+  不存解释器路径 / argv / 环境变量。读：`app._source_backed_result` 在响应的 `source_backed.origin`
+  只读展示（含本次重画的 `redraw` 版本）；不触发换解释器、不放宽校验。
+- 看护：`tests/test_origin_record.py`（记录有界 / 原子 / fail-open / 隐私；插件真跑脚本记的是脚本进程的实际值、
+  只在 ran:true 写；准入 origin 在场判定不变）。

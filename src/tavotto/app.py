@@ -104,6 +104,7 @@ from .engine import (
     nativesession as engine_nativesession,
     normalize as engine_normalize,
     originalspec as engine_originalspec,
+    originrecord as engine_originrecord,
     patchspec as engine_patchspec,
     perfprobe as engine_perfprobe,
     pool as engine_pool,
@@ -6153,10 +6154,34 @@ def _source_backed_result(worker, context):
     verdict = getattr(worker, "_artifact_admission", None)
     if not isinstance(verdict, dict):
         return None
-    return {
+    out = {
         "status": verdict["status"],
         "reconstruction_sha256": verdict["reconstruction_sha256"],
         "metrics": verdict["metrics"],
+    }
+    # 来源记录（ADR 0139 PR3 第一片）：**只读展示**。不进上面的任何判定，不触发换解释器，不放宽校验；
+    # 查不到 / 读不了 = 字段缺省。「这次重画」的版本取自 worker 本次构建自报的 runtime（同一份回执事实）。
+    if (origin := _origin_display(worker, context)) is not None:
+        out["origin"] = origin
+    return out
+
+
+def _origin_display(worker, context):
+    try:
+        recorded = engine_originrecord.lookup(context["bytes_sha256"], require_project())
+    except Exception:  # noqa: BLE001 - 展示线索，任何问题都当没有
+        return None
+    if recorded is None:
+        return None
+    rt = getattr(worker, "last_build_runtime", None)
+    packages = rt.get("packages") if isinstance(rt, dict) else None
+    redraw = {
+        "python_version": rt.get("python_version") if isinstance(rt, dict) else None,
+        "matplotlib_version": packages.get("matplotlib") if isinstance(packages, dict) else None,
+    }
+    return {
+        **recorded,
+        "redraw": {k: v for k, v in redraw.items() if isinstance(v, str) and v},
     }
 
 
