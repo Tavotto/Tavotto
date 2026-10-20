@@ -428,10 +428,9 @@ def test_svg_asset_saved_by_the_live_figure_gets_svg_and_eps_from_one_basis(proj
     assert body["status"] == "done", body
     assert outputs["eps"]["status"] == "done"
     assert hashlib.sha256(disk).hexdigest()
-    assert (
-        m._svg_asset_binding(type("S", (), {"figure_id": "F.svg"})(), root)
-        == hashlib.sha256(disk).hexdigest()
-    )
+    sha, receipt_id = m._svg_asset_binding(type("S", (), {"figure_id": "F.svg"})(), root)
+    assert sha == hashlib.sha256(disk).hexdigest()
+    assert receipt_id
 
 
 def test_a_rerun_between_the_binding_check_and_the_worker_never_keeps_the_old_basis(
