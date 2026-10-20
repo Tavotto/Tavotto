@@ -37,7 +37,7 @@ import type { PanelObject } from '@/types/document'
 import { panelFullSize } from '@/types/document'
 import { useAssetStore } from '@/store/assetStore'
 import { useRenderStore, renderKeyOf, exactPanelRender } from '@/store/renderStore'
-import { artifactValidationIssue, originalArtifactOverrides } from './artifactValidation'
+import { artifactValidationIssue, isAdoptedPanel, originalArtifactOverrides } from './artifactValidation'
 import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
 import { findFigurePanel } from '@/store/workspace'
 
@@ -289,7 +289,7 @@ export function getOriginalOutputSpec(
   const renders = useRenderStore.getState()
   // Guarded metadata must belong to this exact, still-valid variant. FRAME alone
   // still exports the original PNG, whose pixel grid and density remain authoritative.
-  const guarded = panel != null && Object.hasOwn(panel, 'artifactValidation')
+  const guarded = panel != null && isAdoptedPanel(panel)
   const originalPng = guarded && !artifactValidationIssue(panel) &&
     originalArtifactOverrides(panel).length === 0
   const render = panel && !originalPng

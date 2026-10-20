@@ -1,5 +1,5 @@
 import { classifyArtifactFailure } from '@/lib/artifactReason'
-import { ArtifactValidationError, validationFromSource, type ArtifactRequestFields } from '@/lib/artifactValidation'
+import { ArtifactValidationError, FIGSIZE_SOURCE_POLICY, verifiedSource, type ArtifactRequestFields } from '@/lib/artifactValidation'
 import { apiUrl, apiUrlFor, currentProjectId, withProject, withProjectFor } from '@/lib/session'
 import { formatMessage, i18n, literal, msg, t, type UiMessage } from '@/i18n'
 import type { FigureDocument, FigureSnapshot, ProjectDocument } from '@/types/document'
@@ -1931,7 +1931,7 @@ async function requireExportArtifactAck(req: ExportRequest, pj: string | null): 
   if (!guarded.length) return
   const checked = await validateExport(req, pj)
   for (const s of guarded) {
-    const context = validationFromSource(checked.artifact_sources?.[s.id],s.id)
+    const context = verifiedSource(checked.artifact_sources?.[s.id], s.id, s.source_policy ?? FIGSIZE_SOURCE_POLICY)
     if (!s.expected_source || context.bytesSha256 !== s.expected_source.bytes_sha256 || context.sizeBytes !== s.expected_source.size_bytes) throw new ArtifactValidationError('source_changed')
   }
 }
@@ -2459,6 +2459,8 @@ export interface Manifest {
 export interface EngineRenderResponse {
   figure_snapshot_invalidation?: FigureSnapshotInvalidation
   artifact_source?: unknown
+  /** 来源驱动策略（`script-backed-figure-v1`）的准入结论：状态、重画摘要、差异度量（ADR 0139） */
+  source_backed?: unknown
   /** 无 source_policy 的 PNG 渲染：产物未与已存字节核对（#1145，只标记不拒绝） */
   source_unverified?: { reason: string; kind: string }
   rev: number
@@ -2641,6 +2643,7 @@ export async function engineRender(
       inline_svg: true,
       source_policy: opts.source_policy,
       expected_source: opts.expected_source,
+      ...(opts.confirmed_reconstruction_sha256 ? { confirmed_reconstruction_sha256: opts.confirmed_reconstruction_sha256 } : {}),
       ...(opts.previewDpi ? { preview_dpi: opts.previewDpi } : {}),
     }),
     signal: opts.signal,
@@ -2670,7 +2673,7 @@ export async function engineRender(
     )
   }
   if (opts.source_policy) {
-    const g = validationFromSource(body.artifact_source, id)
+    const g = verifiedSource(body.artifact_source, id, opts.source_policy)
     if (opts.expected_source && (g.bytesSha256 !== opts.expected_source.bytes_sha256 || g.sizeBytes !== opts.expected_source.size_bytes)) throw new ArtifactValidationError('source_changed')
   }
   return body as EngineRenderResponse
@@ -2803,7 +2806,7 @@ export async function enginePreviewPngSnapshot(
   const res = await previewPngResponse(id, patches, bucket, signal, true, source)
   const frame = await res.json() as { png: string; manifest: Manifest; artifact_source?: unknown }
   if (source.source_policy) {
-    const g = validationFromSource(frame.artifact_source, id)
+    const g = verifiedSource(frame.artifact_source, id, source.source_policy)
     if (!source.expected_source || g.bytesSha256 !== source.expected_source.bytes_sha256 || g.sizeBytes !== source.expected_source.size_bytes) throw new ArtifactValidationError('source_changed')
   }
   return { url: `data:image/png;base64,${frame.png}`, manifest: frame.manifest }
@@ -3715,6 +3718,19 @@ export const restoreHistory = (id: string, n: number, expectedMtime?: number) =>
 
 /** 服务器上 dist/index.html 当前引用的 bundle 名（如 index-DaQsrMg2） */
 export const fetchBuildVersion = () => jsonFetch<{ build: string; version?: string }>('/api/version')
+
+/**
+ * 「按脚本重画并编辑 PNG」实验开关（ADR 0139 PR2）是否开着：问后端、不缓存（用户改 config.json 后不必重启）。
+ * 只认显式 `true`；老后端没有这个端点、请求失败都当关着——此时前端不尝试来源驱动策略，行为与 PR1 一致。
+ */
+export async function fetchScriptBackedEnabled(): Promise<boolean> {
+  try {
+    const v = await jsonFetch<{ script_backed_figure?: unknown }>('/api/experiments')
+    return v.script_backed_figure === true
+  } catch {
+    return false
+  }
+}
 
 /**
  * 本页面自己跑的是哪个 bundle——直接从 <script src> 提取，

@@ -2028,5 +2028,16 @@
     "hint": "只含这一次的步骤、阶段和错误码，不含文件名、路径或参数。",
     "notFound": "找不到这次的记录（应用可能重启过），没法生成当时的诊断。",
     "title": "本次问题的诊断"
+  },
+  "sourceReview": {
+    "title": "对照原图与重画",
+    "description": "重画与原图有 {{percent}}% 像素不同。确认后以重画为编辑基础；原 PNG 不会被改动。",
+    "descriptionChanged": "脚本、数据或环境变了：重画与原图有 {{percent}}% 像素不同。确认后以新的重画为基础，你的修改会保留；原 PNG 不会被改动。",
+    "original": "原图",
+    "redrawn": "重画",
+    "originalAlt": "磁盘上的原 PNG",
+    "redrawnAlt": "按脚本重画的图",
+    "confirm": "以重画为基础编辑",
+    "keepOriginal": "保留原图"
   }
 }

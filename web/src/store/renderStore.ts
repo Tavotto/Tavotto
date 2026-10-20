@@ -1,4 +1,4 @@
-import { artifactKeySuffix, artifactRequestFields, artifactValidationIssue, ArtifactValidationError, validationFromSource, retryArtifactEntry, type ArtifactValidation } from '@/lib/artifactValidation'
+import { artifactKeySuffix, artifactRequestFields, artifactValidationIssue, ArtifactValidationError, verifiedSource, policyOfGuard, retryArtifactEntry, subjectOf, type AdoptionGuard, isAdoptedPanel, adoptionGuardOf } from '@/lib/artifactValidation'
 import { useMemo } from 'react'
 import { perfRenderApplied, perfRenderBegin, perfRenderResponse } from '@/perf/core'
 import { msg, type UiMessage } from '@/i18n'
@@ -30,6 +30,8 @@ import { useEnvStore } from '@/store/envStore'
 import { useUiStore } from '@/store/uiStore'
 import type { PanelObject } from '@/types/document'
 import { fileHash, recordDiagnosticEvent, variantHash } from '@/diagnostics'
+import { notifyReconstructionReview } from '@/store/sourceBackedReview'
+import { classifyArtifactFailure } from '@/lib/artifactReason'
 
 export type RenderStatus = 'idle' | 'rendering' | 'ready' | 'error'
 
@@ -44,7 +46,7 @@ export interface BuildingInfo {
 export interface PanelRender {
   /** 这份渲染态属于哪个素材文件（文件级操作靠它反查，见 markStale / reset） */
   fileId: string
-  artifactValidation?: ArtifactValidation
+  artifactValidation?: AdoptionGuard
   rev: number
   manifest: Manifest | null
   /** 已处理好的 SVG 文本（去掉 width/height，铺满容器） */
@@ -194,7 +196,7 @@ export function renderKey(fileId: string, patches: unknown[], guard?: unknown): 
 
 /** 面板 → 它自己那份渲染态的键（唯一出处，消费方一律用它取状态） */
 export function renderKeyOf(panel: PanelObject): string {
-  return renderKey(panel.fileId, panel.overrides, Object.hasOwn(panel, 'artifactValidation') ? panel.artifactValidation ?? null : undefined)
+  return renderKey(panel.fileId, panel.overrides, adoptionGuardOf(panel))
 }
 
 /**
@@ -301,7 +303,7 @@ interface RenderState {
     previewDpi?: number,
     policy?: RenderRequestPolicy,
     epoch?: number,
-    artifactValidation?: ArtifactValidation,
+    artifactValidation?: AdoptionGuard | null,
   ) => Promise<void>
   /** 脚本变更：转入引擎跟踪并清掉该文件**全部变体**的 lastPatches */
   markStale: (fileIds: string[]) => void
@@ -622,7 +624,7 @@ export const useRenderStore = create<RenderState>((set, get) => ({
       for (;;) {
         patch(key, {
           fileId,
-          artifactValidation,
+          artifactValidation: artifactValidation ?? undefined,
           status: 'rendering',
           error: null,
           traceback: '',
@@ -654,7 +656,7 @@ export const useRenderStore = create<RenderState>((set, get) => ({
           // 装了替代传输就走它（Codex 内嵌画布 → MCP 的 tools/call），
           // 否则还是原来那条 HTTP。两侧最终落到同一个 worker.override，
           // 这里以下的逻辑一行都不分叉
-          const source = artifactValidation === undefined ? {} : artifactRequestFields({ fileId, overrides: current as PanelObject['overrides'], artifactValidation })
+          const source = artifactValidation === undefined ? {} : artifactRequestFields(subjectOf(fileId, current as PanelObject['overrides'], artifactValidation))
           const opts = { signal: ctrl.signal, previewDpi: dpi, ...source }
           const transport = engineTransport()
           if (artifactValidation && transport) throw new ArtifactValidationError('unsupported_render_state')
@@ -663,7 +665,7 @@ export const useRenderStore = create<RenderState>((set, get) => ({
           const res = transport
             ? await transport.render(fileId, current, opts)
             : await engineRender(fileId, current, opts)
-          if (artifactValidation) validationFromSource(res.artifact_source, fileId, artifactValidation)
+          if (artifactValidation) verifiedSource(res.artifact_source, fileId, policyOfGuard(artifactValidation), artifactValidation)
           perfRenderResponse(perfHandle, true, res.timings, res.svg?.length)
           // 在途期间换过项目：这份图属于旧项目，一个字都不落进当前项目（STATE-06）。
           // 性能探针照记「回包到了」，`applied` 留空——它确实没上屏
@@ -681,7 +683,7 @@ export const useRenderStore = create<RenderState>((set, get) => ({
           }
           const next: Partial<PanelRender> = {
             fileId,
-            artifactValidation,
+            artifactValidation: artifactValidation ?? undefined,
             rev: res.rev,
             manifest: res.manifest,
             status: 'ready',
@@ -1041,7 +1043,7 @@ export const useRenderStore = create<RenderState>((set, get) => ({
 }))
 
 /** Source failures revoke saved bytes; a visibility choice belongs only to its full variant key. */
-export function rejectArtifactRenders(fileId: string, guard: ArtifactValidation, error: unknown, ownerKey?: string): void {
+export function rejectArtifactRenders(fileId: string, guard: AdoptionGuard, error: unknown, ownerKey?: string): void {
   const store = useRenderStore.getState()
   const message = engineErrorMsg(error)
   const variantOnly = message.key === 'artifact.backgroundVisibilityRequired'
@@ -1056,6 +1058,9 @@ export function rejectArtifactRenders(fileId: string, guard: ArtifactValidation,
       if (png.key === key) useMountedPngStore.getState().clear(id)
     }
   }
+  // 来源驱动面板的确认失效：编辑保留、不自动换基，给「重新对照确认」这一个出路
+  const failure = classifyArtifactFailure(error)
+  if (failure.recoverability === 'needs_review') notifyReconstructionReview(fileId, guard, failure.reason)
 }
 
 export const emptyRender = EMPTY
@@ -1089,7 +1094,7 @@ export function panelRender(
   const own = state.byKey[renderKeyOf(panel)]
   const issue = artifactValidationIssue(panel)
   if (issue) return invalidArtifactRender(issue, own)
-  if (panel.artifactValidation) return own
+  if (isAdoptedPanel(panel)) return own
   if (own?.manifest) return own
   const prev = state.byKey[state.latest[panel.fileId] ?? '']
   return mergeRender(own, prev)
@@ -1265,7 +1270,7 @@ export function panelDisplayView(
       render: exact,
     }
   }
-  if (Object.hasOwn(panel, 'artifactValidation')) return { kind: 'empty', currentKey, sourceKey: null, svg: null, render: own }
+  if (isAdoptedPanel(panel)) return { kind: 'empty', currentKey, sourceKey: null, svg: null, render: own }
   const sourceKey = own?.svg ? currentKey : (state.latest[panel.fileId] ?? '')
   const prev = state.byKey[sourceKey]
   if (prev?.svg) {
@@ -1294,7 +1299,7 @@ export function activeRenderKey(
 export function usePanelRender(panel: PanelObject | null | undefined): PanelRender | undefined {
   const own = useRenderStore((s) => (panel ? s.byKey[renderKeyOf(panel)] : undefined))
   const prev = useRenderStore((s) =>
-    panel && !Object.hasOwn(panel, 'artifactValidation') ? s.byKey[s.latest[panel.fileId] ?? ''] : undefined,
+    panel && !isAdoptedPanel(panel) ? s.byKey[s.latest[panel.fileId] ?? ''] : undefined,
   )
   const issue = panel ? artifactValidationIssue(panel) : null
   return useMemo(() => issue ? invalidArtifactRender(issue, own) : (own?.manifest ? own : mergeRender(own, prev)), [own, prev, issue])
@@ -1327,7 +1332,7 @@ export function usePanelDisplayView(panel: PanelObject | null | undefined): Pane
     () => (panel ? panelDisplayView({ byKey, latest }, panel) : null),
     // variant 表达 overrides 的内容变化（panel 每次 commit 都是新引用）
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [byKey, latest, panel?.id, panel?.fileId, panel?.artifactValidation, variant],
+    [byKey, latest, panel?.id, panel?.fileId, adoptionGuardOf(panel ?? {}), variant],
   )
 }
 

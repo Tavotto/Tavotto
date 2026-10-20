@@ -1,4 +1,4 @@
-import { artifactValidationIssue, isUnadoptedPngSource, artifactEntryPending, artifactEditIntentChanged } from '@/lib/artifactValidation'
+import { artifactValidationIssue, isUnadoptedPngSource, artifactEntryPending, artifactEditIntentChanged, isAdoptedPanel, isSourceBackedZeroEdit } from '@/lib/artifactValidation'
 /**
  * 引擎渲染的**订阅与生命周期装配**。调度（防抖 / 立即 / 占位 / 定稿）在
  * `store/renderScheduler.ts`，「只带基线、还没动过」的判据在 `lib/bakedBaseline.ts`；
@@ -74,7 +74,10 @@ export function renderTargets(
     // 绑定画布上 admitPngEntry 因「挂着样式 / 有样式债」拒绝进入，采用请求永远发不出；而样式债只有
     // 这张图拿到 manifest 才能由 `alignNewFigures` 结清——这次渲染是它唯一的 manifest 来源。后端对缺
     // policy 的 PNG 渲染只标 `source_unverified`、不拒绝（旧请求语义不变），所以这条路本来合法。
-    const unadopted = !Object.hasOwn(o, 'artifactValidation') && isUnadoptedPngSource(o)
+    const unadopted = !isAdoptedPanel(o) && isUnadoptedPngSource(o)
+    // 来源驱动采用且零编辑（ADR 0139 §五.1）：显示的是磁盘原像素，重开文档 / 脚本变更 / 邻居补渲染都不去跑脚本；
+    // 只有正在编辑它（需要几何权威）才渲染。有真实编辑的面板照常渲染（与别的带 override 的面板一致）。
+    if (isSourceBackedZeroEdit(o) && o.id !== editingId && !styleBound) continue
     const wants =
       o.fileKind === 'runtime'
         ? o.id === editingId || latest[o.fileId] != null
@@ -114,7 +117,7 @@ export function crossFigureNeighbours(
     if (o.fileKind === 'runtime' || o.cost === 'heavy') continue
     // 未采用的 PNG 源图没有权威 manifest 可补：补渲染只能发无策略的 patches=[]，让脚本重跑出一张
     // 没对过字节的图，还会和它自己的采用请求抢同一份首渲染。要先走 admitPngEntry（带 source_policy）。
-    if (!Object.hasOwn(o, 'artifactValidation') && isUnadoptedPngSource(o)) continue
+    if (!isAdoptedPanel(o) && isUnadoptedPngSource(o)) continue
     if (panelRotation(o) || o.flipH || o.flipV) continue
     if (
       visible &&

@@ -1,4 +1,4 @@
-import { artifactValidationIssue, ArtifactValidationError } from '@/lib/artifactValidation'
+import { artifactValidationIssue, ArtifactValidationError, adoptionGuardOf } from '@/lib/artifactValidation'
 import { engineErrorMsg } from '@/lib/api'
 /**
  * 引擎渲染的**调度器**：把「什么时候麻烦 matplotlib」这件事从 React 里拿出来。
@@ -101,7 +101,7 @@ export function requestRender(panel: PanelObject, immediate: boolean | RenderPol
   const epoch = renderEpoch()
   const fire = () => {
     timers.delete(panel.id)
-    void store.render(fileId, patches, dpi, policy, epoch, panel.artifactValidation)
+    void store.render(fileId, patches, dpi, policy, epoch, adoptionGuardOf(panel))
   }
   cancelScheduledRender(panel.id)
   if (policy === 'none') return

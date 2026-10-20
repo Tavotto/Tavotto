@@ -9,6 +9,7 @@ import { clearOverrides, resetOverrides } from '@/store/actions'
 import type { PanelObject } from '@/types/document'
 import { Menu, MenuItem } from '../ui/Menu'
 import { Tip } from '../ui/Tooltip'
+import { isAdoptedPanel } from '@/lib/artifactValidation'
 
 const el = (key: string, values?: Record<string, unknown>) =>
   translate(`element.${key}`, { ns: 'inspector', ...(values ?? {}) })
@@ -37,7 +38,7 @@ export function RestoreMenu({
   count: number
 }) {
   useTranslation('inspector')
-  if (count <= 0 && !Object.hasOwn(panel, 'artifactValidation')) return null
+  if (count <= 0 && !isAdoptedPanel(panel)) return null
   const counts = overrideCounts(panel.overrides, gid)
 
   return (

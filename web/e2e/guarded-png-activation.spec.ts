@@ -3,7 +3,7 @@ import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
-import { expect, test } from './fixtures'
+import { expect, openElementsTab, test } from './fixtures'
 
 /** Real saved PNGs, real UI admission, and real disk identity. No injected stores or mocked routes. */
 const FILE = 'same.png'
@@ -46,7 +46,7 @@ type RenderRecord = { endpoint: string; request: RenderRequest; body: RenderBody
 const workerPython = () => process.env.TAVOTTO_WORKER_PYTHON || (process.platform === 'win32' ? 'python' : 'python3')
 const sha256 = (bytes: Buffer) => createHash('sha256').update(bytes).digest('hex')
 
-function sourceProject(root: string, tightLayout: boolean, legend = false) {
+function sourceProject(root: string, tightLayout: boolean, legend = false, editAfterSave = false) {
   const figures = path.join(root, 'figures')
   const staging = path.join(root, 'staging')
   mkdirSync(figures, { recursive: true })
@@ -70,6 +70,8 @@ function sourceProject(root: string, tightLayout: boolean, legend = false) {
     tightLayout ? '    fig.tight_layout()' : '    fig.subplots_adjust(left=0.18, bottom=0.20, right=0.92, top=0.82)',
     '    fig.savefig("same.pdf", bbox_inches="tight", pad_inches=0.02)',
     `    fig.savefig("same.png", bbox_inches=None, dpi=${tightLayout ? 100 : 72}, transparent=${tightLayout ? 'False' : 'True'})`,
+    // 保存之后脚本又改了 Figure：原件与 Tavotto 重画之间有可见差异（ADR 0139 §八）
+    editAfterSave ? '    ax.set_title("Edited after save", fontsize=12)' : '',
     '    plt.close(fig)',
     '',
   ].join('\n')
@@ -739,9 +741,9 @@ test('guarded PNG: an unverifiable legend gets one sentence and one rebuild butt
   // 1. The strict adoption refuses a figure with a legend: a definite refusal, not a crash.
   const refusal = await enter(page, 'a')
   expect(refusal.status()).toBe(409)
-  expect(await refusal.json()).toMatchObject({ code: 'artifact_source_unavailable', params: { reason: 'unsupported_render_state' } })
+  expect(await refusal.json()).toMatchObject({ code: 'artifact_source_unavailable', params: { reason: 'artist_profile' } })
   const toast = await only(page.locator('[data-status-tone="info"]'))
-  await expect(page.locator('[data-status-live]')).toHaveAttribute('data-status-key', 'artifact.unsupportedRenderState')
+  await expect(page.locator('[data-status-live]')).toHaveAttribute('data-status-key', 'artifact.artistProfile')
   await expect(toast).toContainText('legend')
   const rebuild = await only(page.locator('[data-toast-action]'))
   await expect(rebuild).toHaveText('Rebuild as editable figure')
@@ -752,7 +754,7 @@ test('guarded PNG: an unverifiable legend gets one sentence and one rebuild butt
   expect(admissions()).toBe(1)
   await (await only(object(page, 'a'))).click({ button: 'right' })
   await (await only(page.locator('[data-quick-item="edit-elements"]'))).click()
-  await expect(page.locator('[data-status-live]')).toHaveAttribute('data-status-key', 'artifact.unsupportedRenderState')
+  await expect(page.locator('[data-status-live]')).toHaveAttribute('data-status-key', 'artifact.artistProfile')
   await page.waitForTimeout(500)
   expect(admissions()).toBe(1)
 
@@ -776,4 +778,145 @@ test('guarded PNG: an unverifiable legend gets one sentence and one rebuild butt
   await (await only(page.locator('[data-context-back]'))).click()
   await paintedOriginal(page, 'a', source.png)
   source.expectUnchanged(source.png, { registry: false })
+})
+
+
+const SB_POLICY = 'script-backed-figure-v1'
+type SourceBackedGuard = {
+  version: 1; policy: string; sourceId: string; bytesSha256: string; sizeBytes: number
+  status: 'exact' | 'reconstructed'; reconstructionSha256: string; confirmedAt?: string
+}
+
+/** 把图里某块归一化区域的「墨迹量」（不透明且不白的像素占比）量出来：原图与引擎图用同一把尺 */
+async function inkIn(page: Page, src: string, rel: { x: number; y: number; w: number; h: number }) {
+  return page.evaluate(async ({ src, rel }) => {
+    const img = new Image()
+    img.src = src
+    await img.decode()
+    const c = document.createElement('canvas')
+    c.width = img.naturalWidth; c.height = img.naturalHeight
+    const ctx = c.getContext('2d')!
+    ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, c.width, c.height)
+    ctx.drawImage(img, 0, 0)
+    const x = Math.floor(rel.x * c.width), y = Math.floor(rel.y * c.height)
+    const w = Math.max(1, Math.floor(rel.w * c.width)), h = Math.max(1, Math.floor(rel.h * c.height))
+    const d = ctx.getImageData(x, y, w, h).data
+    let ink = 0
+    for (let i = 0; i < d.length; i += 4) if (d[i] + d[i + 1] + d[i + 2] < 3 * 200) ink++
+    return ink / (w * h)
+  }, { src, rel })
+}
+
+test('source-backed PNG: legend + pixel difference → compare dialog → confirm → edit shows the engine redraw with no old legend → undo returns the disk pixels',
+  { tag: '@feature:assets.source-backed-adoption' }, async ({ app, page }, testInfo) => {
+  test.setTimeout(420_000)
+  const source = sourceProject(testInfo.outputPath('source'), false, true, true)
+  const config = testInfo.outputPath('config')
+  mkdirSync(config, { recursive: true })
+  // 实验开关（默认关）：与 `config.experiment_enabled` 同一个键，只认显式 true
+  writeFileSync(path.join(config, 'config.json'), JSON.stringify({ experiments: { script_backed_figure: true } }))
+  const a = await app({ figures: source.figures, env: { TAVOTTO_CONFIG_DIR: config } })
+  const data = await seed(page.request, a.baseURL, ['a'], 'source-backed-png')
+  const traffic = watchRenders(page)
+  await page.goto(`${a.baseURL}/${data.query}`)
+  await expect(await only(object(page, 'a'))).toBeVisible({ timeout: 60_000 })
+  await paintedOriginal(page, 'a', source.png)
+  expect(traffic.requests).toEqual([])
+  expect(await (await page.request.get(`${a.baseURL}/api/experiments${data.query}`)).json()).toEqual({ script_backed_figure: true })
+
+  // 1. Entering edit: the strict policy refuses (legend), the source-backed one finds a visible difference → the compare dialog.
+  await (await only(object(page, 'a'))).click({ button: 'right' })
+  await (await only(page.locator('[data-quick-item="edit-elements"]'))).click()
+  const review = page.locator('[data-source-review="adopt"]')
+  await expect(review).toHaveCount(1, { timeout: 120_000 })
+  await expect(review).toBeVisible()
+  const policies = traffic.requests.filter(r => r.request.patches.length === 0).map(r => r.request.source_policy)
+  expect(policies.slice(0, 2)).toEqual([POLICY, SB_POLICY])
+  await expect(page.getByRole('dialog')).toContainText(/\d% of pixels/)
+  await expect(page.getByRole('dialog')).toContainText('the original PNG is never changed')
+  const left = await only(review.locator('[data-source-review-pane="original"] img'))
+  const right = await only(review.locator('[data-source-review-pane="redrawn"] img'))
+  expect(new URL((await left.getAttribute('src'))!, page.url()).pathname).toBe('/api/file')
+  expect(await right.getAttribute('src')).toMatch(/^data:image\/png;base64,/)
+  await expect(page.locator('[data-source-review-diff="original"]')).toHaveCount(1)
+  // Nothing is written until the user confirms.
+  expect(await data.savedPanel('a')).toEqual(data.objects[0])
+  const confirm = await only(page.locator('[data-source-review-confirm]'))
+  await confirm.click()
+
+  // 2. One commit: figure.frame + guard; page geometry untouched; the original is still the displayed pixels.
+  await expect.poll(async () => (await data.savedPanel('a') as unknown as { sourceBackedFigure?: SourceBackedGuard }).sourceBackedFigure?.status).toBe('reconstructed')
+  const adopted = await data.savedPanel('a') as unknown as Panel & { sourceBackedFigure: SourceBackedGuard }
+  expect(adopted.artifactValidation).toBeUndefined()
+  expect(adopted.overrides).toEqual([FRAME])
+  expect(adopted.sourceBackedFigure).toMatchObject({
+    version: 1, policy: SB_POLICY, sourceId: FILE, bytesSha256: sha256(source.png), sizeBytes: source.png.length, status: 'reconstructed',
+  })
+  expect(adopted.sourceBackedFigure.reconstructionSha256).toMatch(/^[0-9a-f]{64}$/)
+  expect(adopted.sourceBackedFigure.confirmedAt).toBeTruthy()
+  expect(placement(adopted)).toEqual(placement(data.objects[0]))
+  const host = await only(object(page, 'a'))
+  await expect(host.locator('img[data-original-pixels="a"]')).toHaveCount(1, { timeout: 120_000 })
+  await paintedOriginal(page, 'a', source.png)
+
+  // 3. A real edit (legend moved with Shift+arrows): whole-figure redraw, carrying the confirmed digest.
+  const legend = host.locator(`[data-element-svg="a"] [id="axes_0.legend"]`)
+  const stageBox = async () => (await only(host.locator('[data-element-svg="a"] > svg'))).boundingBox()
+  const svgBox = (await stageBox())!
+  const legendBefore = (await (await only(legend)).boundingBox())!
+  const rel = {
+    x: (legendBefore.x - svgBox.x) / svgBox.width, y: (legendBefore.y - svgBox.y) / svgBox.height,
+    w: legendBefore.width / svgBox.width, h: legendBefore.height / svgBox.height,
+  }
+  await openElementsTab(page)
+  const row = page.locator('[data-el="axes_0.legend"]')
+  await expect(row).toHaveCount(1, { timeout: 30_000 })
+  await row.click()
+  await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur())
+  for (let i = 0; i < 3; i++) await page.keyboard.press('Shift+ArrowRight')
+  for (let i = 0; i < 2; i++) await page.keyboard.press('Shift+ArrowDown')
+  await expect.poll(async () => (await data.savedPanel('a')).overrides.length, { timeout: 60_000 }).toBeGreaterThan(1)
+  const edited = await data.savedPanel('a') as unknown as Panel & { sourceBackedFigure: SourceBackedGuard }
+  expect(edited.sourceBackedFigure).toEqual(adopted.sourceBackedFigure) // 编辑不换基
+  await expect.poll(() => traffic.records.some(r => r.endpoint === '/api/engine/render' && r.status === 200 &&
+    JSON.stringify(r.request.patches) === JSON.stringify(edited.overrides)), { timeout: 120_000 }).toBe(true)
+  const editRequest = traffic.records.filter(r => r.endpoint === '/api/engine/render' && r.status === 200 &&
+    JSON.stringify(r.request.patches) === JSON.stringify(edited.overrides)).at(-1)!.request as RenderRequest & { confirmed_reconstruction_sha256?: string }
+  expect(editRequest).toMatchObject({
+    source_policy: SB_POLICY, expected_source: { bytes_sha256: sha256(source.png), size_bytes: source.png.length },
+    confirmed_reconstruction_sha256: adopted.sourceBackedFigure.reconstructionSha256,
+  })
+  // The engine redraw is on screen (visible SVG, no original on top), and the legend really moved.
+  await expect(host.locator('img[data-original-pixels]')).toHaveCount(0, { timeout: 60_000 })
+  await expect(host.locator(`[data-element-svg="a"]`)).not.toHaveCSS('visibility', 'hidden')
+  await expect(host.locator(`[data-element-svg="a"] [id="axes_0.legend"]`)).toHaveCount(1)
+  await expect.poll(async () => Math.abs((await (await only(legend)).boundingBox())!.x - legendBefore.x), { timeout: 60_000 }).toBeGreaterThan(5)
+
+  // 4. Outside edit mode the engine PNG is shown; the old legend spot is empty (no ghost of the original legend).
+  await exitEdit(page)
+  const img = await only(currentImage(page, 'a'))
+  await expect.poll(async () => (await img.getAttribute('src')) ?? '', { timeout: 120_000 }).toMatch(/^data:image\/png;base64,/)
+  const engineSrc = (await img.getAttribute('src'))!
+  const originalSrc = `${a.baseURL}/api/file?id=${encodeURIComponent(FILE)}&pj=${encodeURIComponent(data.pj)}`
+  const originalInk = await inkIn(page, originalSrc, rel)
+  const engineInk = await inkIn(page, engineSrc, rel)
+  expect(originalInk, 'the original has the legend at its old spot').toBeGreaterThan(0.08)
+  expect(engineInk, 'the redraw has no ghost of the old legend').toBeLessThan(originalInk * 0.5)
+
+  // 5. Undo back to zero edits → the disk pixels again, and the file was never touched.
+  await (await only(object(page, 'a'))).click()
+  await (await only(page.locator('[data-canvas-stage]'))).focus()
+  // One undo at a time, waiting for the autosave to show it: never run past the adoption commit itself.
+  for (let i = 0; i < 12; i++) {
+    const now = JSON.stringify((await data.savedPanel('a')).overrides)
+    if (now === JSON.stringify([FRAME])) break
+    await page.keyboard.press('ControlOrMeta+z')
+    await expect.poll(async () => JSON.stringify((await data.savedPanel('a')).overrides), { timeout: 20_000 }).not.toBe(now)
+  }
+  await expect.poll(async () => (await data.savedPanel('a')).overrides, { timeout: 60_000 }).toEqual([FRAME])
+  expect((await data.savedPanel('a') as unknown as { sourceBackedFigure?: SourceBackedGuard }).sourceBackedFigure).toEqual(adopted.sourceBackedFigure)
+  await paintedOriginal(page, 'a', source.png)
+  // The original PNG (and the script) are byte-identical to what the user had: adoption and editing never write the source.
+  expect(readFileSync(path.join(source.figures, FILE))).toEqual(source.png)
+  expect(readFileSync(path.join(source.figures, 'figure.py'), 'utf8')).toContain('Edited after save')
 })

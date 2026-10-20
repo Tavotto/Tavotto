@@ -70,6 +70,7 @@ import { Dialog } from './ui/Dialog'
 import { focusOrigin } from './ui/focusOrigin'
 import { Segmented } from './ui/Segmented'
 import { Tip } from './ui/Tooltip'
+import { isAdoptedPanel, adoptionGuardOf } from '@/lib/artifactValidation'
 
 /**
  * 排版时间线（ADR 0101）—— 右侧抽屉形态，画布保持可见；点一个节点打开**模态**
@@ -1358,9 +1359,9 @@ function SnapshotPanel({
     panel.fileId,
     panel.overrides,
     200,
-    renderOverrides && (panel.overrides.length > 0 || Object.hasOwn(panel, 'artifactValidation')),
+    renderOverrides && (panel.overrides.length > 0 || isAdoptedPanel(panel)),
     mtime ?? 0,
-    Object.hasOwn(panel, 'artifactValidation') ? panel.artifactValidation ?? null : undefined,
+    adoptionGuardOf(panel),
   )
   useEffect(() => {
     if (renderOverrides) onApproximate?.(variant.approximate)

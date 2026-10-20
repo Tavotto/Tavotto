@@ -1,5 +1,5 @@
 import { svgSnapshotWarning } from '@/lib/svgSnapshotWarning'
-import { artifactBackgroundOriginal, artifactRequestFields, isUnadoptedPngSource, artifactValidationIssue, ArtifactValidationError, FIGSIZE_SOURCE_POLICY, validationFromSource, beginArtifactEntry, artifactEntryCurrent, cancelArtifactEntry, deferArtifactEntry, refuseArtifactOperation, rememberArtifactEdit } from '@/lib/artifactValidation'
+import { adoptionGuardOf, adoptionOf, clearAdoption, isAdoptedPanel, SCRIPT_BACKED_SOURCE_POLICY, sourceBackedGuard, verdictFromResponse, verifiedSource, type AdoptionGuard, type SourceBackedFigure, type SourceBackedVerdict, artifactBackgroundOriginal, artifactRequestFields, isUnadoptedPngSource, artifactValidationIssue, ArtifactValidationError, FIGSIZE_SOURCE_POLICY, validationFromSource, beginArtifactEntry, artifactEntryCurrent, cancelArtifactEntry, deferArtifactEntry, refuseArtifactOperation, rememberArtifactEdit } from '@/lib/artifactValidation'
 import { currentProjectId } from '@/lib/session'
 import '@/store/figureSnapshotInvalidation'
 import { captureProjectEpoch } from '@/lib/projectEpoch'
@@ -7,7 +7,8 @@ import { requestRender, type RenderPolicy } from '@/store/renderScheduler'
 import { isJustBakedBaselineOf } from '@/lib/bakedBaseline'
 import { engineTransport } from '@/lib/engineTransport'
 import { msg, t, type UiMessage } from '@/i18n'
-import { classifyArtifactFailure, isDefiniteRefusal, type ArtifactFailure } from '@/lib/artifactReason'
+import { classifyArtifactFailure, classifyArtifactReason, isDefiniteRefusal, sourceBackedEligible, type ArtifactFailure } from '@/lib/artifactReason'
+import { registerReconstructionNotifier, registerSourceBackedReviewRunner, runSourceBackedReview, sourceReviewOwner, useSourceBackedReview } from '@/store/sourceBackedReview'
 import { pngAdmitOwner, pngRefusalOf, runPngRebuild, usePngAdmissionMemory } from '@/store/pngAdmissionMemory'
 import { rescueFocus } from '@/lib/focusRescue'
 import { newId } from '@/lib/id'
@@ -29,6 +30,9 @@ import { captureTelemetry } from '@/lib/telemetry'
 import {
   engineInvalidate,
   engineRender,
+  enginePreviewPngSnapshot,
+  fetchScriptBackedEnabled,
+  panelSrc,
   engineErrorMsg,
   EngineError,
   type CapturedFigureDescriptor,
@@ -1044,7 +1048,7 @@ export function clearOverrides(
   const panel = findObject(panelId)
   if (panel?.type !== 'panel') return
   const hit = targets.filter((t) =>
-    !(panel.artifactValidation && t.gid === 'figure' && t.prop === 'frame') &&
+    !(isAdoptedPanel(panel) && t.gid === 'figure' && t.prop === 'frame') &&
     panel.overrides.some((p) => p.gid === t.gid && p.prop === t.prop),
   )
   if (!hit.length) return
@@ -1187,12 +1191,12 @@ export function resolveArtifactBackground(panelId: string, key: string, transpar
 export function resetOverrides(panelId: string) {
   finishActiveGesture()
   const panel = findObject(panelId)
-  if (panel?.type !== 'panel' || (!panel.overrides.length && !Object.hasOwn(panel, 'artifactValidation'))) return
+  if (panel?.type !== 'panel' || (!panel.overrides.length && !isAdoptedPanel(panel))) return
   updateObject<PanelObject>(panelId, hist('resetOverrides'), (o) => {
     o.overrides = []
-    delete o.artifactValidation
+    clearAdoption(o)
   })
-  if (Object.hasOwn(panel, 'artifactValidation')) {
+  if (isAdoptedPanel(panel)) {
     useUiStore.getState().setElementPanel(null)
     status(note('overridesCleared'), 'done')
     return
@@ -1216,7 +1220,7 @@ export function resetOverrides(panelId: string) {
  */
 export async function resetOverridesConfirmed(panelId: string): Promise<boolean> {
   const panel = findObject(panelId)
-  if (panel?.type !== 'panel' || (!panel.overrides.length && !Object.hasOwn(panel, 'artifactValidation'))) return false
+  if (panel?.type !== 'panel' || (!panel.overrides.length && !isAdoptedPanel(panel))) return false
   const baked = isJustBakedBaseline(panel)
   const ok = await askConfirm({
     title: msg('confirm.resetOverridesTitle', undefined, 'workspace'),
@@ -1308,7 +1312,7 @@ export async function rebuildPanel(panelId: string): Promise<RebuildOutcome> {
   // 登记 wantPatches、清掉挂着的防抖计时器；真正的发送在下一行，要等它的结果
   requestRender(fresh, 'none')
   const key = renderKeyOf(fresh)
-  await store.render(fileId, fresh.overrides, undefined, 'immediate', undefined, fresh.artifactValidation)
+  await store.render(fileId, fresh.overrides, undefined, 'immediate', undefined, adoptionGuardOf(fresh))
   await settledRender(key)
   const succeeded = useRenderStore.getState().get(key).status === 'ready'
   // renderStore consumes trusted execution evidence even for failed/zero-output runs.
@@ -1553,6 +1557,19 @@ function showAdmissionFailure(panel: PanelObject, failure: ArtifactFailure): voi
           }
         : {}),
     })
+  } else if (failure.recoverability === 'needs_review') {
+    // 来源驱动面板的确认失效：编辑保留、不自动换基，出路只有「重新对照确认」
+    const reviewOwner = sourceReviewOwner(panel.id)
+    ui.setStatus(message, 'info', {
+      owner: reviewOwner,
+      action: {
+        label: msg('artifact.reviewReconstruction', undefined, 'errors'),
+        run: () => {
+          useUiStore.getState().clearStatusOwnedBy(reviewOwner)
+          void reviewSourceBackedPanel(panel.id)
+        },
+      },
+    })
   } else {
     status(message, 'error')
   }
@@ -1591,26 +1608,83 @@ async function admitPngEntry(panel: PanelObject, leftTab: 'elements' | 'keep'): 
         !(useAssetStore.getState().byId[panel.fileId]?.baked_overrides?.length) && !engineTransport()
     }
     if (!current()) return false
+    const adopted = isAdoptedPanel(panel)
     const fields = artifactRequestFields(panel)
-    if (!panel.artifactValidation && (!eligible() || panel.overrides.length)) {
+    if (!adopted && (!eligible() || panel.overrides.length)) {
       throw new ArtifactValidationError('not_untouched')
     }
     if (engineTransport()) throw new ArtifactValidationError('unsupported_render_state')
-    const res = await engineRender(panel.fileId, [],
-      panel.artifactValidation ? fields : { source_policy: FIGSIZE_SOURCE_POLICY })
+    // 严格策略（精确）永远先试；只有它被拒、且原因是「像素证据拿不到」时才转来源驱动（ADR 0139 §四）
+    let strictRefusal: unknown = null
+    let res: Awaited<ReturnType<typeof engineRender>>
+    if (adopted) {
+      res = await engineRender(panel.fileId, [], fields)
+    } else {
+      try {
+        res = await engineRender(panel.fileId, [], { source_policy: FIGSIZE_SOURCE_POLICY })
+      } catch (refusal) {
+        if (!(refusal instanceof EngineError) || refusal.code !== 'artifact_source_unavailable' ||
+            !sourceBackedEligible(classifyArtifactFailure(refusal).reason)) throw refusal
+        strictRefusal = refusal
+        // 开关关着（默认）：不尝试新策略，原样走 PR1 的失败出路
+        if (!(await fetchScriptBackedEnabled())) throw refusal
+        if (!current()) return false
+        try {
+          // 开关刚被关掉的竞态：后端在执行任何东西之前就回 `policy_disabled`，同样当作没有这条路
+          res = await engineRender(panel.fileId, [], { source_policy: SCRIPT_BACKED_SOURCE_POLICY })
+        } catch (second) {
+          if (classifyArtifactFailure(second).reason === 'policy_disabled') throw refusal
+          throw second
+        }
+      }
+    }
     if (!current()) return false
-    if (!panel.artifactValidation && !eligible()) return false
-    const guard = validationFromSource(res.artifact_source, panel.fileId, panel.artifactValidation)
+    if (!adopted && !eligible()) return false
     const [w, h] = res.manifest.size_mm
     if (![w, h].every(n => Number.isFinite(n) && n > 0)) throw new ArtifactValidationError('unsupported_response')
-    if (!panel.artifactValidation) {
-      commit(msg('artifact.adoptFrame', undefined, 'errors'), d => {
-        const p = d.objects.find(o => o.id === panel.id) as PanelObject
-        p.overrides = [structuredClone(LEGACY_FRAME_OVERRIDE)]
-        p.artifactValidation = guard
-        p.nativeW = w
-        p.nativeH = h
-      })
+    const guardNow = adoptionGuardOf(panel)
+    if (strictRefusal || (guardNow && 'policy' in guardNow)) {
+      const verdict = verdictFromResponse(res.source_backed)
+      const source = verifiedSource(res.artifact_source, panel.fileId, SCRIPT_BACKED_SOURCE_POLICY, guardNow ?? undefined)
+      if (!adopted) {
+        let confirmedAt: string | undefined
+        if (verdict.status === 'needs_confirmation') {
+          // 差异要用户亲眼对照过才算数；取消 = 什么都不写，回到 PR1 的失败出路
+          const ok = await reviewReconstruction({ mode: 'adopt', panel, fileId: panel.fileId, source, verdict, still: current })
+          if (!ok) {
+            if (current()) reportAdmissionFailure(panel, strictRefusal)
+            return false
+          }
+          confirmedAt = new Date().toISOString()
+        }
+        const guard = sourceBackedGuard(source, verdict, confirmedAt)
+        commit(msg(confirmedAt ? 'artifact.adoptReconstructed' : 'artifact.adoptFrame', undefined, 'errors'), d => {
+          const p = d.objects.find(o => o.id === panel.id) as PanelObject
+          p.overrides = [structuredClone(LEGACY_FRAME_OVERRIDE)]
+          p.sourceBackedFigure = guard
+          p.nativeW = w
+          p.nativeH = h
+        })
+      } else {
+        // 重开 / 再次进入：重画摘要若与确认过的不同，确认作废——不自动换基，重新对照
+        const settled = await settleReconstruction(panel, source, verdict, current)
+        if (settled === 'cancelled') {
+          if (current()) notifyReconstructionPanel(panel.fileId, guardNow as SourceBackedFigure, 'reconstruction_changed')
+          return false
+        }
+        if (settled === 'stale') return false
+      }
+    } else {
+      const guard = validationFromSource(res.artifact_source, panel.fileId, panel.artifactValidation)
+      if (!adopted) {
+        commit(msg('artifact.adoptFrame', undefined, 'errors'), d => {
+          const p = d.objects.find(o => o.id === panel.id) as PanelObject
+          p.overrides = [structuredClone(LEGACY_FRAME_OVERRIDE)]
+          p.artifactValidation = guard
+          p.nativeW = w
+          p.nativeH = h
+        })
+      }
     }
     // 采用成功：这张图之前被拒的 toast 与会话记忆都不再成立
     useUiStore.getState().clearStatusOwnedBy(pngAdmitOwner(panel.id))
@@ -1640,11 +1714,12 @@ async function admitPngEntry(panel: PanelObject, leftTab: 'elements' | 'keep'): 
       if (error.missingInput) env.requestMissingInput(error.missingInput, pj)
       return false
     }
-    if (ownsRenderContext() && panel.artifactValidation &&
+    const adoptedGuard = adoptionGuardOf(panel)
+    if (ownsRenderContext() && adoptedGuard &&
         (error instanceof ArtifactValidationError || (error instanceof EngineError && error.code === 'artifact_source_unavailable'))) {
-      rejectArtifactRenders(panel.fileId, panel.artifactValidation, error, renderKeyOf(panel))
+      rejectArtifactRenders(panel.fileId, adoptedGuard, error, renderKeyOf(panel))
     }
-    if (ownsRenderContext() && !panel.artifactValidation && error instanceof EngineError &&
+    if (ownsRenderContext() && !isAdoptedPanel(panel) && error instanceof EngineError &&
         error.code === 'artifact_source_unavailable') {
       // 后端明确拒绝（脚本已经为此跑过一遍）：记下，同一张 PNG 再点「进入编辑」不再重跑
       usePngAdmissionMemory.getState().remember(panel.fileId, classifyArtifactFailure(error))
@@ -1655,6 +1730,143 @@ async function admitPngEntry(panel: PanelObject, leftTab: 'elements' | 'keep'): 
     if (artifactEntryCurrent(attempt) && !awaitingEnvironment) cancelArtifactEntry()
   }
 }
+
+/* ------------------------- 来源驱动采用：对照确认 -------------------------- */
+
+const REVIEW_BUCKET = 1600
+
+interface ReviewArgs {
+  mode: 'adopt' | 'changed'
+  panel: PanelObject
+  fileId: string
+  source: { bytesSha256: string; sizeBytes: number }
+  verdict: SourceBackedVerdict
+  /** 取到图之后、打开对话框之前再核一次：发起时的上下文还在不在 */
+  still: () => boolean
+}
+
+/**
+ * 打开「对照确认」：左原 PNG（磁盘原像素）、右重画。返回用户是否确认。
+ * 任何一步失败（取不到重画图、上下文已变）都按「没确认」处理——**不写任何东西**。
+ */
+async function reviewReconstruction(a: ReviewArgs): Promise<boolean> {
+  let reconstructionSrc: string
+  try {
+    const snap = await enginePreviewPngSnapshot(a.fileId, [], REVIEW_BUCKET, undefined, {
+      source_policy: SCRIPT_BACKED_SOURCE_POLICY,
+      expected_source: { bytes_sha256: a.source.bytesSha256, size_bytes: a.source.sizeBytes },
+    })
+    reconstructionSrc = snap.url
+  } catch {
+    if (a.still()) status(msg('artifact.rebuildFailed', undefined, 'errors'), 'error')
+    return false
+  }
+  if (!a.still()) return false
+  const originalSrc = panelSrc(a.fileId, 'raster', REVIEW_BUCKET, useAssetStore.getState().byId[a.fileId]?.mtime)
+  if (!originalSrc) return false
+  return useSourceBackedReview.getState().ask({
+    mode: a.mode, panelId: a.panel.id, fileId: a.fileId, verdict: a.verdict, originalSrc, reconstructionSrc,
+  })
+}
+
+type Settled = 'unchanged' | 'updated' | 'cancelled' | 'stale'
+
+/**
+ * 已采用的来源驱动面板重新核对重画摘要（进入编辑 / 「重新对照确认」）：
+ * - 与确认过的相同：什么都不做；
+ * - 都是 `exact`（逐像素等于原件，字节摘要因元数据不同而变）：无可对照的差异，静默更新摘要；
+ * - 其余：确认作废，**不自动换基**——打开对照，确认才更新 guard（一次提交，编辑原样保留），取消什么都不写。
+ */
+async function settleReconstruction(
+  panel: PanelObject,
+  source: { sourceId: string; bytesSha256: string; sizeBytes: number },
+  verdict: SourceBackedVerdict,
+  still: () => boolean,
+): Promise<Settled> {
+  const old = panel.sourceBackedFigure
+  if (!old) return 'stale'
+  if (old.reconstructionSha256 === verdict.reconstructionSha256) return 'unchanged'
+  let confirmedAt: string | undefined
+  if (!(old.status === 'exact' && verdict.status === 'exact')) {
+    const ok = await reviewReconstruction({ mode: 'changed', panel, fileId: panel.fileId, source, verdict, still })
+    if (!ok) return still() ? 'cancelled' : 'stale'
+    confirmedAt = new Date().toISOString()
+  }
+  if (!still()) return 'stale'
+  const guard = sourceBackedGuard(source, verdict, confirmedAt)
+  commit(msg(confirmedAt ? 'artifact.adoptReconstructed' : 'artifact.refreshReconstruction', undefined, 'errors'), d => {
+    const p = d.objects.find(o => o.id === panel.id) as PanelObject
+    p.sourceBackedFigure = guard
+  })
+  useUiStore.getState().clearStatusOwnedBy(sourceReviewOwner(panel.id))
+  return 'updated'
+}
+
+/**
+ * 「重新对照确认」（渲染被 `reconstruction_changed` 拒绝后的唯一出路）：零编辑重画一次拿到新摘要，
+ * 走同一个对照；确认后更新 guard 并重发渲染。编辑始终保留。
+ */
+export async function reviewSourceBackedPanel(panelId: string): Promise<boolean> {
+  const panel = findObject(panelId)
+  if (panel?.type !== 'panel' || adoptionOf(panel).kind !== 'source' || artifactValidationIssue(panel)) return false
+  finishActiveGesture()
+  const initial = useDocumentStore.getState()
+  const epoch = renderEpoch()
+  const pj = currentProjectId()
+  const snapshot = JSON.stringify(panel)
+  const still = () => {
+    const now = useDocumentStore.getState()
+    return renderEpoch() === epoch && currentProjectId() === pj && now.documentId === initial.documentId &&
+      now.loadSeq === initial.loadSeq && now.activeCanvasId === initial.activeCanvasId && !now.txn &&
+      JSON.stringify(findObject(panelId)) === snapshot
+  }
+  try {
+    // 零编辑的重画只为拿摘要与差异度量：patches [] 不需要确认摘要，也不会带着编辑跑
+    const res = await engineRender(panel.fileId, [], artifactRequestFields({ ...panel, overrides: [structuredClone(LEGACY_FRAME_OVERRIDE)] }))
+    if (!still()) return false
+    const guard = panel.sourceBackedFigure!
+    const source = verifiedSource(res.artifact_source, panel.fileId, SCRIPT_BACKED_SOURCE_POLICY, guard)
+    const verdict = verdictFromResponse(res.source_backed)
+    const settled = await settleReconstruction(panel, source, verdict, still)
+    if (settled === 'updated') {
+      const fresh = findObject(panelId)
+      if (fresh?.type === 'panel') requestRender(fresh, true)
+    }
+    return settled === 'updated' || settled === 'unchanged'
+  } catch (error) {
+    if (still()) reportAdmissionFailure(panel, error)
+    return false
+  }
+}
+registerSourceBackedReviewRunner(reviewSourceBackedPanel)
+
+/**
+ * 确认失效的一句话 + 「重新对照确认」：命中的是同一文件、同一份来源身份的来源驱动面板。
+ * 渲染被拒（`renderStore.rejectArtifactRenders`）经 `sourceBackedReview` 登记的通道来到这里。
+ */
+function notifyReconstructionPanel(fileId: string, guard: AdoptionGuard, reason: unknown): void {
+  if (!('policy' in guard)) return
+  const failure = classifyArtifactReason(reason)
+  if (failure.recoverability !== 'needs_review') return
+  const s = useDocumentStore.getState()
+  for (const objects of [s.doc.objects, ...s.canvases.map((c) => c.objects)]) {
+    const hit = objects.find((o) => o.type === 'panel' && o.fileId === fileId && o.sourceBackedFigure?.bytesSha256 === guard.bytesSha256)
+    if (hit?.type !== 'panel') continue
+    const owner = sourceReviewOwner(hit.id)
+    useUiStore.getState().setStatus(msg(failure.messageKey, undefined, 'errors'), 'info', {
+      owner,
+      action: {
+        label: msg('artifact.reviewReconstruction', undefined, 'errors'),
+        run: () => {
+          useUiStore.getState().clearStatusOwnedBy(owner)
+          runSourceBackedReview(hit.id)
+        },
+      },
+    })
+    return
+  }
+}
+registerReconstructionNotifier(notifyReconstructionPanel)
 
 export function enterElementEdit(
   panelId: string,
@@ -1669,10 +1881,10 @@ export function enterElementEdit(
     return false
   }
   // Existing edited/baked PNG panels keep their established legacy semantics.
-  const sourceEntry = Object.hasOwn(panel, 'artifactValidation') || isUnadoptedPngSource(panel)
+  const sourceEntry = isAdoptedPanel(panel) || isUnadoptedPngSource(panel)
   if (sourceEntry) {
     // 这张 PNG 本次会话里已被后端明确拒绝过：同一句话 + 同一出路，不再重跑脚本
-    const refused = panel.artifactValidation ? null : pngRefusalOf(panel.fileId)
+    const refused = isAdoptedPanel(panel) ? null : pngRefusalOf(panel.fileId)
     if (refused) {
       showAdmissionFailure(panel, refused.failure)
       return false
@@ -1689,10 +1901,10 @@ export function enterElementEdit(
 function finishElementEntry(panelId: string, leftTab: 'elements' | 'keep'): boolean {
   const panel = findObject(panelId)
   if (panel?.type !== 'panel') return false
-  const seeded = panel.artifactValidation ? 0 : seedBakedOverrides(panelId)
+  const seeded = isAdoptedPanel(panel) ? 0 : seedBakedOverrides(panelId)
   const ui = useUiStore.getState()
   ui.setElementPanel(panelId)
-  if (panel.artifactValidation) {
+  if (isAdoptedPanel(panel)) {
     const owner = useDocumentStore.getState()
     const epoch = renderEpoch()
     const pj = currentProjectId()
@@ -2563,7 +2775,7 @@ export function adoptScriptFrame(panelId: string): boolean {
     const o = d.objects.find((x) => x.id === panelId)
     if (o?.type !== 'panel') return
     o.overrides = patch.overrides
-    delete o.artifactValidation
+    clearAdoption(o)
     o.x = patch.x
     o.y = patch.y
     o.w = patch.w
@@ -2605,7 +2817,7 @@ export async function replacePanelAsset(panelId: string, info: PanelInfo): Promi
     useUiStore.getState().setElementPanel(null)
   }
   updateObject<PanelObject>(panelId, hist('replaceAsset', { name: info.name }), (o) => {
-    delete o.artifactValidation
+    clearAdoption(o)
     o.fileId = info.id
     o.fileKind = info.kind
     o.nativeW = info.native_w_mm

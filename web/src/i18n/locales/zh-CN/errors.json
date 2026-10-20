@@ -6,7 +6,7 @@
     "writebackUnsupported": "这张图暂不支持重新构建、写回或同步源图。可以继续编辑并导出新文件。",
     "legacyEdits": "这张图已有编辑或写回基线，暂不能自动改用所选 PNG 图幅。现有修改保持原样。",
     "unsupported": "这张 PNG 暂时不能安全进入编辑，已保留原图。",
-    "unsupportedRenderState": "这张 PNG 里有暂时无法逐像素核对的元素（比如图例），已保留原图。",
+    "unsupportedRenderState": "这张 PNG 的绘图里有暂时无法安全重画的内容（比如自定义绘制或回调），已保留原图。",
     "sourceMismatch": "当前环境重画出的图与这张 PNG 不完全一致（多半是 matplotlib 版本不同），已保留原图。",
     "rebuildEditable": "重建为可编辑图",
     "rebuilding": "正在用脚本重画这张图…",
@@ -16,7 +16,15 @@
     "backgroundVisibilityRequired": "请选择保留透明背景，还是显示背景颜色。现有修改已保留。",
     "chooseBackground": "选择背景",
     "keepTransparent": "保留透明背景",
-    "showBackground": "显示背景颜色"
+    "showBackground": "显示背景颜色",
+    "artistProfile": "这张 PNG 里有暂时无法逐像素核对的元素（比如图例），已保留原图。",
+    "policyDisabled": "按脚本重画并编辑这张 PNG 的功能当前未开启，已保留原图。",
+    "confirmationRequired": "编辑前需要先对照确认重画结果。你的修改已保留。",
+    "reconstructionChanged": "脚本、数据或环境变了，重画出的图和你确认过的不同。你的修改已保留。",
+    "adoptionStoreFull": "已采用的 PNG 记录已满，暂时不能再采用新的。已保留原图。",
+    "reviewReconstruction": "重新对照确认",
+    "adoptReconstructed": "以重画为基础编辑",
+    "refreshReconstruction": "更新重画对照"
   },
   "backend": {
     "artifact_source_unavailable": "当前操作无法使用所选源图模式，未应用本次修改。请保留原图显示。",

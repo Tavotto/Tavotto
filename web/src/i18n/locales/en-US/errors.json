@@ -6,7 +6,7 @@
     "writebackUnsupported": "Rebuilding, source writeback and synchronization are not yet supported for this figure. You can edit and export a new file.",
     "legacyEdits": "This figure already has edits or a baked baseline, so its PNG frame cannot be adopted automatically. Existing edits are unchanged.",
     "unsupported": "This PNG can't safely enter editing yet. The original is kept.",
-    "unsupportedRenderState": "This PNG contains elements that can't be checked pixel by pixel yet (such as a legend). The original is kept.",
+    "unsupportedRenderState": "This PNG's drawing contains content that can't be safely redrawn yet (such as custom drawing or callbacks). The original is kept.",
     "sourceMismatch": "The figure redrawn in this environment doesn't exactly match this PNG (often a different matplotlib version). The original is kept.",
     "rebuildEditable": "Rebuild as editable figure",
     "rebuilding": "Redrawing this figure from its script…",
@@ -16,7 +16,15 @@
     "backgroundVisibilityRequired": "Choose whether to keep this figure transparent or show its background color. Your edits are preserved.",
     "chooseBackground": "Choose background",
     "keepTransparent": "Keep transparent",
-    "showBackground": "Show background"
+    "showBackground": "Show background",
+    "artistProfile": "This PNG contains elements that can't be checked pixel by pixel yet (such as a legend). The original is kept.",
+    "policyDisabled": "Redrawing and editing this PNG from its script is turned off. The original is kept.",
+    "confirmationRequired": "Compare and confirm the redrawn figure before editing. Your edits are preserved.",
+    "reconstructionChanged": "The script, data or environment changed, so the redrawn figure differs from the one you confirmed. Your edits are preserved.",
+    "adoptionStoreFull": "The record of adopted PNGs is full, so no new one can be adopted. The original is kept.",
+    "reviewReconstruction": "Compare again",
+    "adoptReconstructed": "Edit from the redrawn figure",
+    "refreshReconstruction": "Update redraw comparison"
   },
   "backend": {
     "artifact_source_unavailable": "Selected-source mode cannot complete this operation. No edit was applied; keep the original view.",

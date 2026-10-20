@@ -2048,5 +2048,16 @@
     "hint": "Only this attempt's steps, stages and error codes — no file names, paths or arguments.",
     "notFound": "This attempt's record can't be found (the app may have restarted), so its diagnostics can't be produced.",
     "title": "Diagnostics for this problem"
+  },
+  "sourceReview": {
+    "title": "Compare the original and the redraw",
+    "description": "The redraw differs from the original in {{percent}}% of pixels. After you confirm, editing is based on the redraw; the original PNG is never changed.",
+    "descriptionChanged": "The script, data or environment changed: the redraw differs from the original in {{percent}}% of pixels. After you confirm, editing is based on the new redraw and your edits are kept; the original PNG is never changed.",
+    "original": "Original",
+    "redrawn": "Redrawn",
+    "originalAlt": "The original PNG on disk",
+    "redrawnAlt": "The figure redrawn from its script",
+    "confirm": "Edit from the redraw",
+    "keepOriginal": "Keep the original"
   }
 }

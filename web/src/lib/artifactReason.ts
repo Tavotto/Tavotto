@@ -13,7 +13,7 @@ export type ArtifactReason =
   // 后端发
   | 'unsupported_render_state'
   | 'source_mismatch'
-  // PR2 后端新增（先登记，细化文案由 PR2 前端做）
+  // PR2 后端新增（来源驱动采用，实验开关后面）
   | 'artist_profile'
   | 'policy_disabled'
   | 'confirmation_required'
@@ -39,9 +39,17 @@ export type ArtifactReason =
  * - `source_mismatch`：像素与原件不一致（多半是 matplotlib 版本 / 运行环境不同），重试不会变好；
  * - `retry`：可能因并发 / 环境波动而成功，才允许显示「再试一次」；
  * - `source_conflict`：已采用面板的保存数据问题，沿用原文案与规则；
- * - `user_choice`：等用户选（背景可见性），由 `BackgroundChoice` 承接。
+ * - `user_choice`：等用户选（背景可见性），由 `BackgroundChoice` 承接；
+ * - `needs_review`：来源驱动采用的确认失效（重画与确认过的那份不同）：编辑保留、不自动换基，
+ *   出路是「重新对照确认」。
  */
-export type ArtifactRecoverability = 'permanent' | 'source_mismatch' | 'retry' | 'source_conflict' | 'user_choice'
+export type ArtifactRecoverability =
+  | 'permanent'
+  | 'source_mismatch'
+  | 'retry'
+  | 'source_conflict'
+  | 'user_choice'
+  | 'needs_review'
 
 export interface ArtifactFailure {
   reason: ArtifactReason | 'unknown'
@@ -57,11 +65,11 @@ interface Row {
 
 const TABLE: Record<ArtifactReason, Row> = {
   unsupported_render_state: { recoverability: 'permanent', messageKey: 'artifact.unsupportedRenderState' },
-  artist_profile: { recoverability: 'permanent', messageKey: 'artifact.unsupportedRenderState' },
-  policy_disabled: { recoverability: 'permanent', messageKey: 'artifact.unsupported' },
-  confirmation_required: { recoverability: 'permanent', messageKey: 'artifact.unsupported' },
-  reconstruction_changed: { recoverability: 'permanent', messageKey: 'artifact.unsupported' },
-  adoption_store_full: { recoverability: 'permanent', messageKey: 'artifact.unsupported' },
+  artist_profile: { recoverability: 'permanent', messageKey: 'artifact.artistProfile' },
+  policy_disabled: { recoverability: 'permanent', messageKey: 'artifact.policyDisabled' },
+  confirmation_required: { recoverability: 'needs_review', messageKey: 'artifact.confirmationRequired' },
+  reconstruction_changed: { recoverability: 'needs_review', messageKey: 'artifact.reconstructionChanged' },
+  adoption_store_full: { recoverability: 'permanent', messageKey: 'artifact.adoptionStoreFull' },
   source_mismatch: { recoverability: 'source_mismatch', messageKey: 'artifact.sourceMismatch' },
   capture_incomplete: { recoverability: 'permanent', messageKey: 'artifact.unsupported' },
   save_ambiguous: { recoverability: 'permanent', messageKey: 'artifact.unsupported' },
@@ -77,6 +85,14 @@ const TABLE: Record<ArtifactReason, Row> = {
   invalid_guard: { recoverability: 'source_conflict', messageKey: 'artifact.frameChanged' },
   background_visibility_required: { recoverability: 'user_choice', messageKey: 'artifact.backgroundVisibilityRequired' },
 }
+
+/**
+ * 严格策略被拒后，哪些 reason 可以转来源驱动（ADR 0139 §四，与后端同口径）：像素证据拿不到
+ * （`source_mismatch`）与仅由白名单触发的 `artist_profile`。其余（保存不唯一、自定义绘制、来源不完整……）
+ * 都是「可编辑对应证明不了」，不转。
+ */
+export const sourceBackedEligible = (reason: ArtifactFailure['reason']): boolean =>
+  reason === 'artist_profile' || reason === 'source_mismatch'
 
 /** 表里的全部 reason（给测试与同源对拍用；顺序无意义） */
 export const ARTIFACT_REASONS = Object.keys(TABLE) as ArtifactReason[]

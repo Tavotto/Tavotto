@@ -319,3 +319,21 @@
 已带 guard 的记录不再过 legacy FRAME 自动迁移。畸形/未知/不匹配 guard 原样保存并拒绝，
 不能把它删掉来获得 legacy 退路。完整重置/确认换素材才按既有丢弃语义原子移除 guard。
 看护：`store/artifactEntry.test.ts`、`lib/artifactValidation.test.ts`、`lib/artifactApi.test.ts`。
+
+### 来源驱动采用的并列 guard（ADR 0139 PR2）
+
+`sourceBackedFigure`（`{version, policy: 'script-backed-figure-v1', sourceId, bytesSha256, sizeBytes, status:
+'exact'|'reconstructed', reconstructionSha256, confirmedAt?}`）是 `artifactValidation` 的**并列且互斥**字段，
+不复用它的形状或字段名；判据同在 `lib/artifactValidation.ts`。**「这块面板处于哪种选中上下文」只有一个出处**
+`adoptionOf()`（`strict` / `source` / `none` / `invalid`），其余一律经它派生（`isAdoptedPanel` / `adoptionGuardOf` /
+`refuseArtifactOperation` / `artifactRequestFields` / `clearAdoption`）——不再各处写
+`Object.hasOwn(panel, 'artifactValidation')`。未知键 / 畸形 / 版本不对 / 两种 guard 并存都是 `invalid`，不当 legacy。
+- 严格策略先试；仅当它因 `artist_profile` / `source_mismatch` 被拒、且 `GET /api/experiments` 说开关开着，才用来源驱动策略再准入
+  一次。`exact` 直接一次提交；`needs_confirmation` 先开对照确认（`SourceBackedReviewDialog`），**取消什么都不写**，确认才
+  提交 `reconstructed` + `confirmedAt`。采用 / 确认各是一次提交，只写 FRAME、nativeW/H、guard，不改页面 x/y/w/h/crop。
+- 零编辑（只有结构性 `figure.frame`）= 磁盘原像素：显示与原图导出都不出引擎图，重开 / 脚本变更 / 邻居补渲染不跑脚本
+  （`isSourceBackedZeroEdit`）。有真实编辑 = 整图重渲染，请求带 `confirmed_reconstruction_sha256`（缺失 409
+  `confirmation_required`，不等 409 `reconstruction_changed`）。
+- `reconstruction_changed`：编辑与 guard 原样保留、不自动换基，一句话 + 「重新对照确认」；确认后一次提交更新摘要。
+看护：`lib/sourceBackedFigure.test.ts`、`store/sourceBackedAdoption.test.ts`、`canvas/sourceBackedPreview.test.tsx`、
+`components/SourceBackedReviewDialog.test.tsx`、`e2e/guarded-png-activation.spec.ts`。

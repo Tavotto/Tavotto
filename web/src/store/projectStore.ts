@@ -76,6 +76,7 @@ import { useScriptLibraryStore } from '@/store/scriptLibraryStore'
 import { useScriptInputStore } from '@/store/scriptInputStore'
 import { useScriptRunStore } from '@/store/scriptRunStore'
 import { usePngAdmissionMemory } from '@/store/pngAdmissionMemory'
+import { useSourceBackedReview } from '@/store/sourceBackedReview'
 import { resetPreview } from '@/store/svgPreviewStore'
 import { clearDiagnosticTrace } from '@/diagnostics'
 import { useSelectionStore } from '@/store/selectionStore'
@@ -296,6 +297,8 @@ async function resetForNewProject(pj: string | null): Promise<RestoreToken> {
   // 「当前项目关过哪一版」这个投影。
   // PNG 采用被拒的会话记忆属于旧项目：不清的话，B 项目里同名 fileId 会被误判成「已被拒过」
   usePngAdmissionMemory.getState().clear()
+  // 开着的「对照确认」属于旧项目：按取消收掉（什么都不写）
+  useSourceBackedReview.getState().clear()
   useProjectReadinessStore.getState().clear()
   // 导入即扫描（T02）：快照与「条被关掉」都属于旧项目；在途的补拉按换代失去落地资格。
   // **后端那一笔账不取消**——它在项目关闭时才收；切回来时 `start()` 会复用或增量重扫
@@ -304,7 +307,7 @@ async function resetForNewProject(pj: string | null): Promise<RestoreToken> {
   useUiStore.getState().setGuideCard('closed')
   // 通知轨上说旧项目的事的 toast 撤掉：错误 toast 不会自己消失，而它们的撤销事件（`render.done` 等）按 pj 过滤、
   // 新项目收不到。事件按项目过滤，此刻挂着的只可能是旧项目的
-  for (const prefix of ['render.failed:', 'project.error:', 'export.result', 'png.admit:']) ui.clearStatusOwnedByPrefix(prefix)
+  for (const prefix of ['render.failed:', 'project.error:', 'export.result', 'png.admit:', 'source.review:']) ui.clearStatusOwnedByPrefix(prefix)
   // 导出作业的**前端状态**跟着丢：结果里的 `/exports/<name>` 是裸路径，
   // 渲染时由 `apiUrl()` 补上**当前**项目的 pj——不清的话，切完项目再打开
   // 导出面板会看到旧项目的结果，而那些链接指向的是新项目的导出目录（不是

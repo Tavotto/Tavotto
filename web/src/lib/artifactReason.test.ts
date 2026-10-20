@@ -10,11 +10,11 @@ const ENGINE = (reason: unknown, retryable?: boolean) =>
 /** reason → [可恢复性, 文案 key] 的全集（改表必须同时改这里） */
 const EXPECTED: Record<ArtifactReason, [string, string]> = {
   unsupported_render_state: ['permanent', 'artifact.unsupportedRenderState'],
-  artist_profile: ['permanent', 'artifact.unsupportedRenderState'],
-  policy_disabled: ['permanent', 'artifact.unsupported'],
-  confirmation_required: ['permanent', 'artifact.unsupported'],
-  reconstruction_changed: ['permanent', 'artifact.unsupported'],
-  adoption_store_full: ['permanent', 'artifact.unsupported'],
+  artist_profile: ['permanent', 'artifact.artistProfile'],
+  policy_disabled: ['permanent', 'artifact.policyDisabled'],
+  confirmation_required: ['needs_review', 'artifact.confirmationRequired'],
+  reconstruction_changed: ['needs_review', 'artifact.reconstructionChanged'],
+  adoption_store_full: ['permanent', 'artifact.adoptionStoreFull'],
   source_mismatch: ['source_mismatch', 'artifact.sourceMismatch'],
   capture_incomplete: ['permanent', 'artifact.unsupported'],
   save_ambiguous: ['permanent', 'artifact.unsupported'],
@@ -56,6 +56,8 @@ describe('artifact failure classification (single source of truth)', () => {
     for (const r of ARTIFACT_REASONS) {
       const k = classifyArtifactReason(r).recoverability
       expect(isDefiniteRefusal(k)).toBe(k === 'permanent' || k === 'source_mismatch')
+      // 确认失效不是「被拒绝」：不记忆、不当永久失败，出路是重新对照确认
+      if (k === 'needs_review') expect(['confirmation_required', 'reconstruction_changed']).toContain(r)
     }
   })
   it('a backend retryable flag upgrades only permanent reasons, and unknown reasons fall back to the old wording', () => {
@@ -74,7 +76,8 @@ describe('artifact failure classification (single source of truth)', () => {
       expect(engineErrorMsg(ENGINE(reason)).key).toBe(key)
       expect(backendErrorMsg(new ApiError('x', 409, { code: 'artifact_source_unavailable', params })).key).toBe(key)
     }
-    expect(formatMessage(engineErrorMsg(ENGINE('unsupported_render_state')))).toMatch(/图例|legend/)
+    expect(formatMessage(engineErrorMsg(ENGINE('artist_profile')))).toMatch(/图例|legend/)
+    expect(formatMessage(engineErrorMsg(ENGINE('unsupported_render_state')))).not.toMatch(/图例|legend/)
     expect(formatMessage(engineErrorMsg(ENGINE('source_mismatch')))).toMatch(/matplotlib/)
   })
 })

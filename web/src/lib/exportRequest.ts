@@ -1,5 +1,5 @@
 import { figureSnapshotFor } from './figureSnapshot'
-import { artifactRequestFields, artifactValidationIssue, originalArtifactOverrides } from './artifactValidation'
+import { artifactRequestFields, artifactValidationIssue, isAdoptedPanel, originalArtifactOverrides } from './artifactValidation'
 /**
  * 统一导出请求的构造 —— **全产品只有这一份**（ADR 0031）。
  *
@@ -137,7 +137,7 @@ function canValidateOriginalSource(figureId: string, panel?: PanelObject | null)
   }
   // /panels prefers a same-stem PDF; absence is not proof that this PNG is missing.
   // This permits validation, not a source-existence or fresh-metadata claim.
-  if (panel?.fileId === figureId && panel.artifactValidation && !artifactValidationIssue(panel)) return true
+  if (panel?.fileId === figureId && isAdoptedPanel(panel) && !artifactValidationIssue(panel)) return true
   return useAssetStore.getState().byId[figureId] != null
 }
 

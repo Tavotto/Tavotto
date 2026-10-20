@@ -1022,6 +1022,19 @@ def api_version():
     return resp
 
 
+@app.get("/api/experiments")
+def api_experiments():
+    """实验开关的只读投影（ADR 0139 PR2）：前端据此决定要不要在严格策略被拒后再试来源驱动策略。
+
+    **不放进公开的 `/api/version`**（它只说「这一版会什么」）：开关是用户的设置，要会话认证。
+    只认显式 True（`config.experiment_enabled`），每次现读配置——用户改 `config.json` 后不必重启。"""
+    resp = jsonify(
+        {engine_artifactcontext.EXPERIMENT: engine_artifactcontext.script_backed_enabled()}
+    )
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
 @app.get("/api/panels")
 def api_panels():
     unsupported: list[dict] = []

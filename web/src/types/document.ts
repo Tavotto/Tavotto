@@ -1,6 +1,6 @@
 /** 文档模型 —— 单位一律 mm，数组顺序即 z 序（末尾在最上）。 */
 import { t } from '@/i18n'
-import type { ArtifactValidation } from '@/lib/artifactValidation'
+import type { ArtifactValidation, SourceBackedFigure } from '@/lib/artifactValidation'
 import { newId } from '@/lib/id'
 import { migrateFigureFrames } from '@/lib/figureFrameMigration'
 
@@ -158,6 +158,11 @@ export interface PanelObject extends ObjectBase {
   figureSnapshot?: FigureSnapshot
   /** Nonsemantic source/frame guard. Never changes the meaning of overrides. */
   artifactValidation?: ArtifactValidation
+  /**
+   * 来源驱动采用 guard（ADR 0139 PR2），与 `artifactValidation` **并列且互斥**、形状不同。
+   * 旧前端读到它会忽略，把面板当未采用 PNG 显示原像素；老项目不会获得这个字段。
+   */
+  sourceBackedFigure?: SourceBackedFigure
   /**
    * 锁定的图内元素 gid：画布命中测试跳过它们，避免误选误拖。
    * 只影响交互，不影响渲染与导出；元素树里仍可选中（用于解锁）。

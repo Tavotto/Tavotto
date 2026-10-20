@@ -79,6 +79,7 @@ import { msg } from '@/i18n'
 import { hydrateExportDefaults } from '@/lib/exportDefaults'
 import { initExitNotices } from '@/lib/exitNotices'
 import { cancelStartupProbe } from '@/lib/startupProbe'
+import { SourceBackedReviewDialog } from '@/components/SourceBackedReviewDialog'
 
 export function App() {
   const phase = useProjectStore((s) => s.phase)
@@ -337,6 +338,8 @@ function Workspace() {
         <EngineEnvironmentDialog />
         <FigurePickerDialog />
         <NativeConfirmDialog />
+        {/* 来源驱动采用的对照确认（ADR 0139）：左原图右重画，确认才以重画为编辑基础 */}
+        <SourceBackedReviewDialog />
         {/* 脚本里的 input()（ADR 0099）：等作答的问 + 记住的答案 */}
         <ScriptInputDialog />
         <ScriptAnswersDialog />

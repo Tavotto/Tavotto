@@ -23,7 +23,8 @@ import { usePngAdmissionMemory } from './pngAdmissionMemory'
 const render = vi.fn()
 const addRemap = vi.fn()
 const pendingStyle = vi.fn(()=>false)
-vi.mock('@/lib/api',async original=>({...await original<typeof import('@/lib/api')>(),engineRender:(...args:unknown[])=>render(...args),addInputRemap:(...args:unknown[])=>addRemap(...args)}))
+vi.mock('@/lib/api',async original=>({...await original<typeof import('@/lib/api')>(),engineRender:(...args:unknown[])=>render(...args),fetchScriptBackedEnabled:async()=>false, // 实验开关默认关：PR1 行为
+  addInputRemap:(...args:unknown[])=>addRemap(...args)}))
 vi.mock('./styleWork',()=>({hasPendingStyleWork:(...args:unknown[])=>pendingStyle(...args as [])}))
 const FRAME={gid:'figure',prop:'frame',value:'figsize'}
 const guard={version:1 as const,requiredFrame:'figsize' as const,sourceId:'plot.png',bytesSha256:'a'.repeat(64),sizeBytes:10}
@@ -462,8 +463,8 @@ describe('first-adoption refusals: one sentence, one way out, remembered (ADR 01
  it.each([
   ['unsupported_render_state','artifact.unsupportedRenderState'],
   ['source_mismatch','artifact.sourceMismatch'],
-  ['artist_profile','artifact.unsupportedRenderState'],
-  ['adoption_store_full','artifact.unsupported'],
+  ['artist_profile','artifact.artistProfile'],
+  ['adoption_store_full','artifact.adoptionStoreFull'],
   ['capture_incomplete','artifact.unsupported'],
   ['save_ambiguous','artifact.unsupported'],
  ])('%s: no history, panel untouched, info toast with exactly one rebuild action',async(reason,key)=>{

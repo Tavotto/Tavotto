@@ -2054,6 +2054,17 @@ export default interface Resources {
         "upgrading": "升级中…"
       }
     },
+    "sourceReview": {
+      "confirm": "以重画为基础编辑",
+      "description": "重画与原图有 {{percent}}% 像素不同。确认后以重画为编辑基础；原 PNG 不会被改动。",
+      "descriptionChanged": "脚本、数据或环境变了：重画与原图有 {{percent}}% 像素不同。确认后以新的重画为基础，你的修改会保留；原 PNG 不会被改动。",
+      "keepOriginal": "保留原图",
+      "original": "原图",
+      "originalAlt": "磁盘上的原 PNG",
+      "redrawn": "重画",
+      "redrawnAlt": "按脚本重画的图",
+      "title": "对照原图与重画"
+    },
     "style": {
       "annotationGroup": "标注与页面",
       "annotationText": "标注文字",
@@ -2281,21 +2292,29 @@ export default interface Resources {
   "errors": {
     "artifact": {
       "adoptFrame": "采用 PNG 原图图幅",
+      "adoptReconstructed": "以重画为基础编辑",
+      "adoptionStoreFull": "已采用的 PNG 记录已满，暂时不能再采用新的。已保留原图。",
+      "artistProfile": "这张 PNG 里有暂时无法逐像素核对的元素（比如图例），已保留原图。",
       "backgroundVisibilityRequired": "请选择保留透明背景，还是显示背景颜色。现有修改已保留。",
       "chooseBackground": "选择背景",
+      "confirmationRequired": "编辑前需要先对照确认重画结果。你的修改已保留。",
       "frameChanged": "保存的图幅标记不匹配，已保留修改与位置。请使用兼容的历史版本；不会自动换算。",
       "keepTransparent": "保留透明背景",
       "legacyEdits": "这张图已有编辑或写回基线，暂不能自动改用所选 PNG 图幅。现有修改保持原样。",
+      "policyDisabled": "按脚本重画并编辑这张 PNG 的功能当前未开启，已保留原图。",
       "rebuildEditable": "重建为可编辑图",
       "rebuildFailed": "没能用脚本重画出这张图，原 PNG 保持不变。",
       "rebuilding": "正在用脚本重画这张图…",
       "rebuilt": "已用脚本重画出一张可编辑的图，原 PNG 保持不变。",
+      "reconstructionChanged": "脚本、数据或环境变了，重画出的图和你确认过的不同。你的修改已保留。",
+      "refreshReconstruction": "更新重画对照",
       "retryAdmission": "再试一次",
+      "reviewReconstruction": "重新对照确认",
       "showBackground": "显示背景颜色",
       "sourceChanged": "源文件已变化，已保留你的修改。请恢复匹配的源文件或选择兼容的历史版本。",
       "sourceMismatch": "当前环境重画出的图与这张 PNG 不完全一致（多半是 matplotlib 版本不同），已保留原图。",
       "unsupported": "这张 PNG 暂时不能安全进入编辑，已保留原图。",
-      "unsupportedRenderState": "这张 PNG 里有暂时无法逐像素核对的元素（比如图例），已保留原图。",
+      "unsupportedRenderState": "这张 PNG 的绘图里有暂时无法安全重画的内容（比如自定义绘制或回调），已保留原图。",
       "writebackUnsupported": "这张图暂不支持重新构建、写回或同步源图。可以继续编辑并导出新文件。"
     },
     "backend": {

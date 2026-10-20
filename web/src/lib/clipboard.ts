@@ -25,6 +25,7 @@ import { modKey } from '@/lib/utils'
  */
 
 import { CLIPBOARD_FORMAT } from '@/lib/brand'
+import { clearAdoption } from '@/lib/artifactValidation'
 
 /**
  * 只认一个魔数。改名到 Tavotto 时旧魔数（`magplot/objects@1` 与更早的
@@ -220,7 +221,7 @@ export function materializeRelink(resolved: MissingAsset[]): void {
       if (o.type !== 'panel') continue
       const info = byFileId.get(o.fileId)
       if (!info) continue
-      delete o.artifactValidation
+      clearAdoption(o)
       o.fileId = info.id
       o.fileKind = info.kind
       o.nativeW = info.native_w_mm
@@ -369,7 +370,7 @@ export function materializePaste(payload: ClipPayload, resolved: MissingAsset[])
       if (target) {
         const info = assets[target]
         if (info) {
-          delete copy.artifactValidation
+          clearAdoption(copy)
           copy.fileId = info.id
           copy.fileKind = info.kind
           copy.nativeW = info.native_w_mm

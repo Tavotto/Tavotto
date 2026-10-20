@@ -583,6 +583,19 @@ def test_flag_off_rejects_the_new_policy_and_keeps_legacy_bytes(sb_env, opened, 
     assert "source_backed" not in strict.get_json()
 
 
+def test_experiments_endpoint_exposes_only_the_boolean_projection(sb_env):
+    """前端据此决定要不要在严格策略被拒后再试来源驱动策略：只认显式 True，现读配置，不带别的东西；
+    不进公开的 /api/version（那里只说这一版会什么，tests/test_engine_capabilities.py 钉着键集）。"""
+    m.app.config["TESTING"] = True
+    client = m.app.test_client()
+    assert client.get("/api/experiments").get_json() == {ac.EXPERIMENT: True}
+    config.save({**config._defaults()})
+    assert client.get("/api/experiments").get_json() == {ac.EXPERIMENT: False}
+    for value in ("true", 1):
+        config.save({**config._defaults(), "experiments": {ac.EXPERIMENT: value}})
+        assert client.get("/api/experiments").get_json() == {ac.EXPERIMENT: False}
+
+
 @needs_worker
 def test_zero_edit_export_copies_disk_bytes_and_edited_export_needs_confirmation(sb_env, opened):
     root = project(
