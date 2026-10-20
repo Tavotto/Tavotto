@@ -10892,6 +10892,8 @@ def api_ai_history():
     if status == "open" and not query and not pinned_only:
         # 运行中的会话天然有上限（一个脚本同时只有一个，项目里的脚本有限）：**一次返回全部，不分页**——翻页期间集合会变，
         # offset 翻页会漏掉仍在运行的会话。只设一个很高的硬上限防失控，超过时带 `truncated: true`（实际不会发生）
+        # 属主已死的僵尸行先收尾，别让它永远留在 open 清单里
+        engine_ai_history.reap_dead_owners(project)
         data = engine_ai_history.list_sessions(
             project, status=status, limit=RUNNING_HISTORY_HARD_LIMIT, offset=0
         )

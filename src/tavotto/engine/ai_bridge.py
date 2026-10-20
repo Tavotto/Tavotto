@@ -1390,6 +1390,11 @@ def get(sid: str) -> dict | None:
     side = _load_sidecar(sid)
     # 后端已重启：以 SQLite 历史为准（启动时 running 已被标为 interrupted）
     hist = ai_history.get(sid)
+    if hist is not None and hist.get("ended_ms") is None:
+        # 属主进程已死的 open 行在读路径上收尾（不再只在启动时）：否则永远 final:false
+        # （cancelled / interrupted 行只补 ended_ms、返回 0，所以不看回值，一律重读）
+        ai_history.reap_dead_owners(hist.get("project"))
+        hist = ai_history.get(sid) or hist
     if side is None:
         # 改前快照（sidecar）已被 `_prune_snapshots()` 按份数清掉、历史库那一行还在：照样回历史里的终态与
         # `refresh` 结局，不回 404——404 会被前端当成「没有详情」，凭摘要收尾、丢掉「改成了但项目没刷新」的警告（Codex #1098）

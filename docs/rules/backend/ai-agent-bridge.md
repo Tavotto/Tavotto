@@ -159,6 +159,9 @@
   `OpenProcess`；量不了按活着算；行超过 24 h 当属主已死，防 pid 复用造僵尸锁）的行，命中抛 `ScriptBusy`（整个事务回滚，请求 id 不被消耗），
   `run()` 回 409 `ai_script_busy`、清掉半成品、不 spawn。属主未知 / 就是本进程 / 已死的 running 行不算忙。
   **启动清理 `mark_interrupted_running` 只标属主已死的行**，不碰共用同一数据目录的另一个仍活着的服务进程里的会话。spawn 失败仍保留 `failed` 记录（同 rid 去重到它，明确没执行；前端换新 id 重发）。看护 `tests/test_ai_drafts.py`。
+  **读路径也收尾属主已死的 open 行**（#1113 的一半）：`api_ai_history?status=open` 与 `ai_bridge.get()` 先调 `ai_history.reap_dead_owners`
+  （与启动清理共用 `_close_dead_owner_rows`；先无写锁探测，有死属主才 `_immediate` 持锁重读；**读路径不收本进程 pid 的行**——
+  `record_start` 与进 `SESSIONS` 之间隔着一次 Popen）。跨进程取消仍未做：别的进程里的会话，本进程 `cancel` 仍回 `False`。看护 `tests/test_ai_owner_reap.py`。
 - 会话历史在 `engine/ai_history.py`（SQLite `cache/ai_history.sqlite3`，
   按 project 列过滤）；启动时 running→interrupted + purge(180d，pinned 豁免)；
   历史 API：list（分页/搜索/筛选）/delete/pin。前端默认只显示人类可读目标，
