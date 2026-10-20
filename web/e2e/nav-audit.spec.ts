@@ -155,8 +155,8 @@ test('T01：一条上下文栏、一个返回入口，回来时画布不意外�
   await expect(bar).toHaveCount(1)
   await expect(bar).toBeVisible()
 
-  // 整屏可见的「返回画布」只有这一个（此前顶栏徽章、浮动条、右栏各有一个）
-  await expect(page.getByRole('button', { name: /返回画布/ })).toHaveCount(1)
+  // 整屏可见的出口按钮（`[data-context-back]`，快编里按来源叫「返回排版」/「排版与出版」，不按文案找）只有这一个（此前顶栏徽章、浮动条、右栏各有一个）
+  await expect(page.locator('[data-context-back]')).toHaveCount(1)
 
   // 上下文栏放得进画布，不横向溢出
   const stage = (await page.locator('[data-canvas-stage]').boundingBox())!
@@ -173,7 +173,7 @@ test('T01：一条上下文栏、一个返回入口，回来时画布不意外�
 
   /* ---- 验收：切换模式时画布不意外移动 ---- */
   const world = page.locator('[data-world-transform]')
-  await page.getByRole('button', { name: /返回画布/ }).click()
+  await page.locator('[data-context-back]').click()
   await expect(bar).toHaveCount(0)
   await page.waitForTimeout(400) // 视口补间 180ms：不等就量在半路上
 
@@ -196,8 +196,54 @@ test('T01：一条上下文栏、一个返回入口，回来时画布不意外�
   expect(await world.evaluate((e) => getComputedStyle(e).transform)).not.toBe(layoutView)
 
   // 回来：还是进去之前那一片，一个像素都不差
-  await page.getByRole('button', { name: /返回画布/ }).click()
+  await page.locator('[data-context-back]').click()
   await expect(bar).toHaveCount(0)
   await page.waitForTimeout(400)
   expect(await world.evaluate((e) => getComputedStyle(e).transform)).toBe(layoutView)
+})
+
+/**
+ * P01：快编上下文栏只有一颗出口按钮、按来源换文案（kind 稳定锚点，不按文案找）；Esc 与它同一个动作；
+ * 「添加到画布」已删。三个宽度下按钮完整可见、不被侧栏盖住。
+ */
+test('P01：快编单按钮 + Esc 回排版，三个宽度都放得下', async ({ app, page }, testInfo) => {
+  const a = await app()
+  const shots = process.env.PE_D_SHOTS
+  await openFigure(page, a)
+  const bar = page.locator('[data-workspace-context-bar]')
+  const back = page.locator('[data-context-back]')
+  // 空文档里「编辑原图」把图加了进来：没有排版来源 → 前进
+  await expect(bar).toHaveCount(1)
+  await expect(back).toHaveCount(1)
+  await expect(back).toHaveAttribute('data-context-back-kind', 'forward')
+  await expect(page.locator('[data-onboarding-anchor="add-to-layout"]')).toHaveCount(0)
+  await expect(page.locator('[data-onboarding-anchor="to-layout"]')).toHaveCount(1)
+
+  for (const w of [1440, 1024, 900]) {
+    await page.setViewportSize({ width: w, height: 800 })
+    await page.waitForTimeout(300)
+    const bb = (await back.boundingBox())!
+    expect(bb.x, `${w}`).toBeGreaterThanOrEqual(0)
+    expect(bb.x + bb.width, `${w}`).toBeLessThanOrEqual(w)
+    if (shots) await page.screenshot({ path: `${shots}/${testInfo.project.name}-forward-${w}.png` })
+  }
+
+  // Esc = 同一动作（焦点在页面上、不在输入框里）
+  await page.locator('body').click({ position: { x: 5, y: 5 } }).catch(() => {})
+  await page.keyboard.press('Escape')
+  await expect(bar).toHaveCount(0)
+
+  // 图已经在排版上，再从素材库打开：有排版来源 → 返回
+  await page.setViewportSize({ width: 1440, height: 800 })
+  await page.getByRole('navigation').getByRole('button', { name: '素材', exact: true }).click()
+  await page.getByText('Fig1_kinetics.pdf').dblclick()
+  await expect(back).toHaveCount(1)
+  await expect(back).toHaveAttribute('data-context-back-kind', 'return')
+  for (const w of [1440, 1024, 900]) {
+    await page.setViewportSize({ width: w, height: 800 })
+    await page.waitForTimeout(300)
+    if (shots) await page.screenshot({ path: `${shots}/${testInfo.project.name}-return-${w}.png` })
+  }
+  await back.click()
+  await expect(bar).toHaveCount(0)
 })

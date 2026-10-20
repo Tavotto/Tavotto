@@ -85,7 +85,7 @@ test('打开项目 → 发现图片 → 渲染 → 修改 → 撤销 → 重启�
   // Prompt 09：双击 = 打开（快速编辑）。标注工具画的是**画布对象**，
   // 只在画布排版模式下有落点——先回排版再用它们。返回入口自审计 T01 起
   // 收成了上下文栏上唯一那颗「返回画布」。
-  await page.getByRole('button', { name: /返回画布/ }).first().click()
+  await page.locator('[data-context-back]').first().click()
 
   // 文字工具加一段带上标的标注，验证行内标记在画布上真的渲染成上标
   await page.getByRole('button', { name: '文字' }).click()
