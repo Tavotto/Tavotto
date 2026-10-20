@@ -644,3 +644,209 @@ def test_interrupted_task_clears_its_stale_phase(db):
     finally:
         con.close()
     assert ai_tasks.load("deadbeef0002", db_path=db)["phase"] is None
+
+
+# --------------------------------------------------------------------------- 有界修正（Phase 4）
+class CorrectingAdapter(FakeAdapter):
+    """提交前每轮按 `rounds` 依次给出 `(检查 id, 结论, 原因)`；`correctable=False` 时适配器判不可修。"""
+
+    def __init__(self, rounds, correctable=True):
+        super().__init__()
+        self.rounds, self.correctable = list(rounds), correctable
+        self.offers: list[list[str]] = []
+
+    def verify(self, stage, run, candidate):
+        if stage == "precommit":
+            self.verify_calls.append(stage)
+            cid, verdict, reason = self.rounds.pop(0)
+            return [
+                ai_tasks.CheckResult(
+                    cid, "L1", "precommit", "integrity", verdict, reason_code=reason
+                )
+            ]
+        return super().verify(stage, run, candidate)
+
+    def correction(self, run, failed):
+        self.offers.append([c.id for c in failed])
+        return (
+            {"prompt": "fix " + ",".join(c.reason_code for c in failed)}
+            if self.correctable
+            else None
+        )
+
+
+class CorrectingExecutor(FakeExecutor):
+    executor_id = "codex"
+    kind = "agent"
+
+    def __init__(self, on_correct=None):
+        super().__init__()
+        self.corrections: list[dict] = []
+        self.on_correct = on_correct
+
+    def correct(self, run, candidate, feedback):
+        self.corrections.append(feedback)
+        if self.on_correct:
+            self.on_correct(run)
+        return candidate
+
+
+SYNTAX_FAIL = ("L1.syntax", "failed", "syntax_error")
+STEMS_FAIL = ("L1.stems", "failed", "stems_changed")
+OK = ("L1.syntax", "verified", None)
+
+
+def _corr_env(**budget):
+    return _env(
+        execution_policy={"executor": "codex"},
+        budget={"max_agent_runs": 2, "max_corrections": 1, **budget},
+    )
+
+
+@pytest.fixture
+def corr():
+    made = []
+
+    def make(rounds, **kw):
+        a = CorrectingAdapter(rounds, **kw)
+        ai_tasks.register(a)
+        made.append(a)
+        return a
+
+    yield make
+    ai_tasks.unregister("fake_task")
+
+
+def test_a_correctable_precommit_failure_is_fixed_once_then_committed(corr, db):
+    a = corr([SYNTAX_FAIL, OK])
+    ex = CorrectingExecutor()
+    res = _run(_corr_env(), ex, db)
+    assert res["outcome"] == "completed" and len(ex.committed) == 1
+    assert [f["prompt"] for f in ex.corrections] == ["fix syntax_error"]
+    assert res["budget_used"]["agent_runs"] == 2 and res["budget_used"]["corrections"] == 1
+    v = res["verification"]
+    assert v["attempts"] == [
+        {"round": 1, "failed": [["L1.syntax", "syntax_error"]], "next": "correct"}
+    ]
+    # 结局只按最后一轮的提交前检查判：被修好的那一轮只作为证据留在 attempts
+    assert [c["verdict"] for c in v["figure"]["checks"] if c["stage"] == "precommit"] == [
+        "verified"
+    ]
+    assert a.verify_calls == ["precommit", "precommit", "postcommit"]
+
+
+def test_the_same_failure_after_a_correction_is_not_retried(corr, db):
+    corr([SYNTAX_FAIL, SYNTAX_FAIL])
+    ex = CorrectingExecutor()
+    res = _run(_corr_env(max_corrections=3, max_agent_runs=4), ex, db)
+    assert res["outcome"] == "failed" and ex.committed == [] and len(ex.discarded) == 1
+    assert len(ex.corrections) == 1, "失败集合没变 = 没有新根因，不再修第二次（0127）"
+    assert {"constraint_id": "correction", "reason_code": "no_new_failure"} in res["verification"][
+        "unmet"
+    ]
+    assert [a["next"] for a in res["verification"]["attempts"]] == ["correct", "no_new_failure"]
+
+
+def test_a_different_failure_may_be_corrected_again_within_budget(corr, db):
+    corr([SYNTAX_FAIL, STEMS_FAIL, OK])
+    ex = CorrectingExecutor()
+    res = _run(_corr_env(max_corrections=2, max_agent_runs=3), ex, db)
+    assert res["outcome"] == "completed" and len(ex.corrections) == 2
+
+
+def test_correction_budget_is_enforced_before_running(corr, db):
+    corr([SYNTAX_FAIL, STEMS_FAIL])
+    ex = CorrectingExecutor()
+    res = _run(_corr_env(), ex, db)  # 修正 ≤ 1
+    assert res["outcome"] == "failed" and len(ex.corrections) == 1 and ex.committed == []
+    assert {"constraint_id": "budget.corrections", "reason_code": "budget_exhausted"} in res[
+        "verification"
+    ]["unmet"]
+    assert res["budget_used"]["corrections"] == 1, "被拒的修正没执行，不记账"
+
+
+def test_agent_run_budget_also_bounds_corrections(corr, db):
+    corr([SYNTAX_FAIL])
+    ex = CorrectingExecutor()
+    res = _run(_corr_env(max_agent_runs=1), ex, db)
+    assert ex.corrections == [] and res["outcome"] == "failed"
+    assert {"constraint_id": "budget.agent_runs", "reason_code": "budget_exhausted"} in res[
+        "verification"
+    ]["unmet"]
+
+
+def test_unknown_precommit_results_are_never_corrected(corr, db):
+    a = corr([("L1.tree", "unknown", "candidate_over_budget")])
+    ex = CorrectingExecutor()
+    res = _run(_corr_env(), ex, db)
+    assert ex.corrections == [] and a.offers == [], "量不出来就没有能告诉 Agent 的失败条件"
+    assert {"constraint_id": "correction", "reason_code": "not_correctable"} in res["verification"][
+        "unmet"
+    ]
+
+
+def test_adapter_refusal_means_no_correction(corr, db):
+    corr([SYNTAX_FAIL], correctable=False)
+    ex = CorrectingExecutor()
+    res = _run(_corr_env(), ex, db)
+    assert ex.corrections == [] and res["outcome"] == "failed"
+    assert res["verification"]["attempts"][0]["next"] == "not_correctable"
+
+
+def test_without_a_correction_budget_behaviour_is_unchanged(corr, db):
+    corr([SYNTAX_FAIL])
+    ex = CorrectingExecutor()
+    res = _run(_env(execution_policy={"executor": "codex"}), ex, db)  # 默认 max_corrections=0
+    assert ex.corrections == [] and res["outcome"] == "failed"
+    unmet = res["verification"]["unmet"]
+    assert unmet == [{"constraint_id": "L1.syntax", "reason_code": "syntax_error"}], unmet
+    assert res["verification"]["attempts"][0]["next"] is None
+
+
+def test_an_executor_that_cannot_correct_is_not_asked_to(corr, db):
+    a = corr([SYNTAX_FAIL])
+    ex = CorrectingExecutor()
+    ex.correct = None
+    res = _run(_corr_env(), ex, db)
+    assert res["outcome"] == "failed" and a.offers == []
+
+
+def test_cancel_during_a_correction_never_commits(corr, db):
+    corr([SYNTAX_FAIL, OK])
+    started, release = threading.Event(), threading.Event()
+
+    def block(run):
+        started.set()
+        release.wait(5)
+
+    ex = CorrectingExecutor(on_correct=block)
+    out: list[dict] = []
+    t = threading.Thread(target=lambda: out.append(_run(_corr_env(), ex, db)))
+    t.start()
+    assert started.wait(5)
+    (task_id,) = list(ai_tasks._RUNNING)
+    assert ai_history.get(task_id, db_path=db)["phase"] == "correcting"
+    assert ai_tasks.cancel(task_id) is True
+    release.set()
+    t.join(10)
+    assert out[0]["outcome"] == "cancelled" and ex.committed == [] and len(ex.discarded) == 1
+
+
+def test_a_failing_correction_run_fails_the_task_without_committing(corr, db):
+    corr([SYNTAX_FAIL, OK])
+
+    def boom(run):
+        raise ai_tasks.TaskError("agent_exit_nonzero", "1")
+
+    ex = CorrectingExecutor(on_correct=boom)
+    res = _run(_corr_env(), ex, db)
+    assert res["outcome"] == "failed" and ex.committed == [] and len(ex.discarded) == 1
+    assert res["error"] == "agent_exit_nonzero"
+
+
+def test_budget_contract_bounds_corrections():
+    with pytest.raises(ai_tasks.ContractError) as e:
+        ai_tasks.TaskEnvelope.from_dict(_env(budget={"max_corrections": 11}))
+    assert e.value.code == "contract_budget"
+    env = ai_tasks.TaskEnvelope.from_dict(_env())
+    assert env.budget.max_corrections == 0 and env.to_dict()["budget"]["max_corrections"] == 0

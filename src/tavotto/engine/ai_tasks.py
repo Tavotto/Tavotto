@@ -30,7 +30,7 @@ SCHEMA_VERSION = 1
 #: 不让会话长时间挂着占用脚本
 OUTCOMES = ("completed", "partial", "needs_input", "failed", "cancelled", "interrupted")
 #: 进行中的阶段（非终态，落 `sessions.phase`；结束时清空）
-PHASES = ("planning", "executing", "verifying", "ready_to_commit", "committing")
+PHASES = ("planning", "executing", "verifying", "correcting", "ready_to_commit", "committing")
 LAYERS = ("L1", "L2", "L3", "L4", "L5")
 #: 图验证 / 持久化验证分开汇总；开发验证（ADR 0131）不在任务结果里
 VERIFICATION_KINDS = ("figure", "persistence")
@@ -38,8 +38,8 @@ VERIFICATION_KINDS = ("figure", "persistence")
 STAGES = ("precommit", "postcommit")
 #: 检查的角色：`goal` = 用户要求的变化；`preserve` = 不该变的科学内容；`integrity` = 完整性（L1）
 ROLES = ("goal", "preserve", "integrity")
-#: 预算的计数项
-BUDGET_KEYS = ("agent_runs", "renders")
+#: 预算的计数项。`corrections` 是 `agent_runs` 里「为修正提交前失败而再跑一次」的那部分（两边都记）
+BUDGET_KEYS = ("agent_runs", "renders", "corrections")
 
 #: ↔ `app._CLIENT_REQUEST_ID`：与 `/api/ai/run` 同一个格式（任务就是一次 AI 请求）
 _CLIENT_REQUEST_ID = re.compile(r"[A-Za-z0-9_-]{8,64}")
@@ -97,12 +97,16 @@ class Budget:
     max_agent_runs: int = 1
     max_renders: int = 2
     max_wall_s: float = 900.0
+    #: 有界修正（Phase 4）：默认 0 = 不修正，提交前检查不过即失败；适配器的契约显式放开
+    max_corrections: int = 0
 
     @classmethod
     def from_dict(cls, d: dict) -> Budget:
-        _strict(d, {"max_agent_runs", "max_renders", "max_wall_s"}, set(), "budget")
+        _strict(
+            d, {"max_agent_runs", "max_renders", "max_wall_s", "max_corrections"}, set(), "budget"
+        )
         b = cls(**d)
-        for name in ("max_agent_runs", "max_renders"):
+        for name in ("max_agent_runs", "max_renders", "max_corrections"):
             v = getattr(b, name)
             if not isinstance(v, int) or isinstance(v, bool) or not 0 <= v <= 10:
                 raise ContractError("contract_budget", f"{name}={v!r}")
@@ -111,7 +115,11 @@ class Budget:
         return b
 
     def limit(self, key: str) -> int:
-        return {"agent_runs": self.max_agent_runs, "renders": self.max_renders}[key]
+        return {
+            "agent_runs": self.max_agent_runs,
+            "renders": self.max_renders,
+            "corrections": self.max_corrections,
+        }[key]
 
 
 _REF_KINDS = {
@@ -279,6 +287,7 @@ class TaskEnvelope:
                 "max_agent_runs": self.budget.max_agent_runs,
                 "max_renders": self.budget.max_renders,
                 "max_wall_s": self.budget.max_wall_s,
+                "max_corrections": self.budget.max_corrections,
             },
             "privacy_policy": {"send_to_model": list(self.send_to_model)},
             "parent_task_id": self.parent_task_id,
@@ -417,6 +426,9 @@ class TaskAdapter(Protocol):
 
     def explain(self, outcome: str, unmet: list[dict]) -> dict: ...
 
+    # 可选：`correction(run, failed_checks) -> {"prompt": str} | None`——提交前检查失败时给出修正指令；不可修
+    # （例如原项目被动了、只有 unknown）回 None。准不准修正、预算够不够由编排器判（`_admit_correction`），适配器不判
+
 
 class Executor(Protocol):
     """产生候选并负责提交 / 丢弃。`kind == "agent"` 的执行器每次 `execute` 计一次 `agent_runs`。
@@ -432,6 +444,9 @@ class Executor(Protocol):
     def commit(self, run: TaskRun, candidate: Any) -> None: ...
 
     def discard(self, run: TaskRun, candidate: Any) -> None: ...
+
+    # 可选：`correct(run, candidate, feedback) -> candidate`——在**同一个**候选上按 `feedback["prompt"]` 再跑一次
+    # Agent（不提交、不碰用户文件）；与 `execute` 同样以 TaskError 表示这次运行本身没成
 
 
 #: 任务类型 → 适配器。**生产注册表只放真的能跑起来的**（同 `AGENT_REGISTRY` 的纪律）：Phase 1 为空，适配器随
@@ -474,6 +489,8 @@ class TaskRun:
         self._gate = threading.Lock()
         self._committing = False
         self.used = dict.fromkeys(BUDGET_KEYS, 0)
+        #: 没过提交前检查的每一轮（证据）：`{round, failed: [[id, reason]], next}`，`next` = `correct` 或拒绝修正的原因
+        self.attempts: list[dict] = []
 
     def charge(self, key: str, n: int = 1) -> None:
         """记一笔预算；超出上限抛 `BudgetExceeded`，**不记**超出的那一笔（它没被执行）。"""
@@ -616,6 +633,7 @@ def run_task(
                 **verification_summary(checks),
                 "unmet": unmet,
                 "explain": _explain(adapter, outcome, unmet),
+                "attempts": list(run.attempts),
             },
             "budget_used": run.budget_used(),
         },
@@ -660,6 +678,7 @@ def drive_registered(run: TaskRun, executor: Executor, *, db_path=None) -> dict:
                 **verification_summary(checks),
                 "unmet": unmet,
                 "explain": _explain(adapter, outcome, unmet),
+                "attempts": list(run.attempts),
             },
             "budget_used": run.budget_used(),
         },
@@ -692,6 +711,47 @@ def _guarded_verify(adapter: TaskAdapter, stage: str, run: TaskRun, candidate) -
                 observed={"error": type(exc).__name__},
             )
         ]
+
+
+def _failure_signature(checks) -> frozenset[tuple[str, str]]:
+    """一轮提交前检查的失败集合：没过的每条 `(id, reason_code)`。同一任务内执行配置不变，这就是「根因」的指纹。"""
+    return frozenset(
+        (c.id, c.reason_code or c.verdict)
+        for c in checks
+        if c.stage == "precommit" and c.verdict not in (VERIFIED, NOT_APPLICABLE)
+    )
+
+
+def _admit_correction(adapter, executor, run: TaskRun, pre) -> tuple[dict | None, dict | None]:
+    """修正准入（`03-contracts.md` §五），回 `(feedback, None)` 或 `(None, 拒绝原因 | None)`。规则只写在这一处：
+
+    * 契约没放开（`max_corrections == 0`）或执行器 / 适配器不支持修正 → 不修正、不加原因（与 Phase 3 逐字相同）；
+    * 每条没过的检查都必须是**具体的 failed**——有 unknown（量不出来）就没有可以告诉 Agent 的失败条件；
+    * 适配器判可修（原项目被动了之类的失败不可修，见各适配器）；
+    * 失败集合与之前任何一轮都不同（0127「无新根因不重试」：同样的失败再来一轮只会再失败一次）；
+    * `corrections` 与（Agent 执行器的）`agent_runs` 都还有余量（先判、不记账：被拒的修正没有执行）。"""
+    budget = run.envelope.budget
+    offer = getattr(adapter, "correction", None)
+    if budget.max_corrections == 0 or offer is None or getattr(executor, "correct", None) is None:
+        return None, None
+    failing = [
+        c for c in pre if c.stage == "precommit" and c.verdict not in (VERIFIED, NOT_APPLICABLE)
+    ]
+    if any(c.verdict != FAILED for c in failing):
+        return None, {"constraint_id": "correction", "reason_code": "not_correctable"}
+    try:
+        feedback = offer(run, failing)
+    except Exception:  # noqa: BLE001 —— 写不出修正指令就不修正，结局照旧是提交前检查不过
+        feedback = None
+    if not isinstance(feedback, dict) or not isinstance(feedback.get("prompt"), str):
+        return None, {"constraint_id": "correction", "reason_code": "not_correctable"}
+    signature = [list(k) for k in sorted(_failure_signature(pre))]
+    if any(a["failed"] == signature for a in run.attempts):
+        return None, {"constraint_id": "correction", "reason_code": "no_new_failure"}
+    for key in ("corrections", "agent_runs") if executor.kind == "agent" else ("corrections",):
+        if run.used[key] >= budget.limit(key):
+            return None, {"constraint_id": f"budget.{key}", "reason_code": "budget_exhausted"}
+    return feedback, None
 
 
 def _drive(adapter: TaskAdapter, executor: Executor, run: TaskRun, db_path):
@@ -754,13 +814,42 @@ def _drive(adapter: TaskAdapter, executor: Executor, run: TaskRun, db_path):
         if why := stop():
             return halted(why)
         phase("verifying")
-        checks += _guarded_verify(adapter, "precommit", run, candidate)
-        if not precommit_admits(checks):
-            discard()
-            outcome, unmet = derive_outcome(
-                committed=False, checks=checks, required=run.envelope.required_checks
+        pre = _guarded_verify(adapter, "precommit", run, candidate)
+        while not precommit_admits(pre):
+            # 有界修正（Phase 4）：只在提交前、只在同一个候选上；被拒的那一轮连同拒绝原因记进 attempts
+            feedback, refused = _admit_correction(adapter, executor, run, pre)
+            run.attempts.append(
+                {
+                    "round": len(run.attempts) + 1,
+                    "failed": [list(k) for k in sorted(_failure_signature(pre))],
+                    "next": "correct"
+                    if feedback is not None
+                    else (refused or {}).get("reason_code"),
+                }
             )
-            return outcome, checks, unmet, "precommit_not_verified", False
+            if feedback is None:
+                checks += pre
+                discard()
+                outcome, unmet = derive_outcome(
+                    committed=False, checks=checks, required=run.envelope.required_checks
+                )
+                if refused:
+                    unmet.append(refused)
+                return outcome, checks, unmet, "precommit_not_verified", False
+            if why := stop():
+                checks += pre
+                return halted(why)
+            phase("correcting")
+            if executor.kind == "agent":
+                run.charge("agent_runs")
+            run.charge("corrections")
+            candidate = executor.correct(run, candidate, feedback)
+            if why := stop():
+                checks += pre
+                return halted(why)
+            phase("verifying")
+            pre = _guarded_verify(adapter, "precommit", run, candidate)
+        checks += pre
         phase("ready_to_commit")
         with (
             run._gate

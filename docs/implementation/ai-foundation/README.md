@@ -13,7 +13,9 @@
 | 产品行为变化 | 开关 `ai.taf.enabled` 关（默认）时无：旧路径逐字不变、`ADAPTERS` 为空；旧会话的新列全 NULL；manifest 只多一个只读字段 |
 | 未运行 | 全量 pytest / 前端 / e2e（交给 CI，high 档加 `full-ci`）；Windows / Linux |
 | Phase 3b | 分支 `feat/taf-phase3b-render-verify`（叠在 3a 上）：提交后渲染层验证（`ai_figure_edit._render_checks` + app `_ai_task_hooks` + `figureverify.data_unchanged`）。真 worker 用例：样式改动 completed、改数据 failed、无基线不执行；FigureBench 19 个探针场景参考解不误报、8 个改数据反例全抓住；六个手工变异全红 |
-| 下一步 | Phase 3c：前端阶段与结局文案（`ai.done.task`）；之后 Phase 4 有界修正 |
+| Phase 3c | PR #1201：前端按 `task.outcome` 翻译状态行 / 结局卡 / 状态栏；没有 `task` 的老后端逐字不变 |
+| Phase 4a | 分支 `feat/taf-phase4-bounded-correction`：提交前失败的有界修正（`ai_tasks._admit_correction` + `Executor.correct` + `ai_bridge` 同候选再起 CLI + figure_edit 可修闭集），`verification.attempts` 留证；契约见 `03-contracts.md` §五 |
+| 下一步 | Phase 4b：前端显示「正在修正」阶段与修正轮次；之后 Phase 5 数据出图 |
 
 ## 维护者决定（2026-10-19 全部同意，1.0 例外 2026-10-20 登记进 ADR 0138 §五）
 

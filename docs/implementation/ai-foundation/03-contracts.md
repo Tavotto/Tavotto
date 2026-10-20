@@ -20,7 +20,7 @@
 | `output_contract` | obj | `{allowed_writes: [path_rel…], new_figures: bool, max_files: int}`——**适配器声明、后端强制**，Agent 不能扩大 |
 | `execution_policy` | obj | `{executor: agent_id|deterministic, render: "safe"}`——验证渲染恒为 safe；native 不在此契约内 |
 | `verification_policy` | obj | 必做层（L1…L4）与各层不可降级项 |
-| `budget` | obj | `{max_agent_runs, max_wall_s, max_renders, max_cost_usd?}`——见 §五 |
+| `budget` | obj | `{max_agent_runs, max_wall_s, max_renders, max_corrections, max_cost_usd?}`——见 §五（`max_corrections` 默认 0 = 不修正） |
 | `privacy_policy` | obj | `{send_to_model: [字段名…]}`——明列哪些上下文会进提示词（例：脚本路径、gid、用户原话；数据摘要只在 data_to_figure） |
 
 ## 二、TaskResult
@@ -36,7 +36,7 @@
   },
   "unmet": [{"constraint_id": "…", "reason_code": "…"}],
   "candidates": [{"id": "…", "status": "committed|discarded|stale", "evidence_ref": "…"}],
-  "budget_used": {"agent_runs": 1, "renders": 1, "wall_s": 42.0},
+  "budget_used": {"agent_runs": 1, "renders": 1, "corrections": 0, "wall_s": 42.0},
   "explain": {"message_key": "…", "params": {}}
 }
 ```
@@ -92,6 +92,17 @@
 
 预算由 orchestrator 记账（会话行上的计数列 + 内存），超出即停并返回 `partial` + 未完成条件。修正准入：上一轮确定
 结束 + 有具体失败的 CheckResult + 「失败条件集合 + 执行配置」与之前任何一轮不同。
+
+**Phase 4 实现（`ai_tasks._admit_correction`，规则只在这一处）**：修正只发生在**提交前**、只在**同一个候选**上
+（`Executor.correct`），所以修正中途取消 / 失联 / 失败都不碰用户文件。准入依次要求：契约 `max_corrections > 0` 且
+执行器与适配器都支持修正；没过的检查**全是 failed**（有 unknown 不修）；适配器给得出修正指令（figure_edit 只修
+`candidate.syntax` / `candidate.stems` / `candidate.tree` / `candidate.target` 四类，原项目被动了的 `project.*`
+一律不修）；失败集合 `{(id, reason_code)}` 与之前每一轮都不同（同一任务内执行配置不变）；`corrections` 与
+`agent_runs` 都有余量。被拒的一轮在 `verification.attempts[]` 里记 `{round, failed, next}`，`next` 是拒绝原因
+（`not_correctable` / `no_new_failure` / `budget_exhausted`；契约没放开时为 null，结局与 Phase 3 逐字相同），
+并在 `unmet` 里补一条 `correction` / `budget.*`。结局只按**最后一轮**的提交前检查判；提交后的失败（例如数据被改）
+不修正——那要在提交前渲染候选，等于为验证多执行一次用户脚本（R-06）。figure_edit 的契约是 normal 档
+（`max_agent_runs=2, max_corrections=1`）。
 
 ## 六、Task Adapter 接口
 
