@@ -1,6 +1,6 @@
 # Tavotto AI Foundation（TAF）实施包
 
-决定：`docs/adr/0138-tavotto-ai-foundation.md`（Proposed）。本 README 是**交接页**：换一个会话也能从这里准确接着做。
+决定：`docs/adr/0138-tavotto-ai-foundation.md`（Accepted，2026-10-20）。本 README 是**交接页**：换一个会话也能从这里准确接着做。
 
 ## 当前状态（2026-10-19）
 
@@ -14,14 +14,14 @@
 | 未运行 | 全量 pytest / 前端 / e2e（交给 CI，high 档加 `full-ci`）；Windows / Linux |
 | 下一步 | Phase 3b：提交后渲染层验证（`on_verify`：改前 manifest 取自已有 worker、改后取自本来就会发生的那次重渲染）+ 前端阶段与结局文案 |
 
-## 待维护者决定
+## 维护者决定（2026-10-19 全部同意，1.0 例外 2026-10-20 登记进 ADR 0138 §五）
 
-1. **1.0 收敛纪律**：Phase 3 起有用户可见变化（在默认关闭的开关后面）。登记为与统一实施包同类的例外，还是推迟到 1.0 之后？
+1. **1.0 收敛纪律**：Phase 3 起有用户可见变化（在默认关闭的开关后面）。**已登记为与统一实施包同类的例外**（ADR 0138 §五）。
    Phase 1–2 不受影响（内部契约 + 只读事实）。
 2. **数据指纹进 manifest**：Phase 2 要在 worker 侧 manifest 加只读字段 `data_fingerprint`（不参与 gid / identity，
-   不进文档与诊断公开面）。这是 manifest 协议的加字段，按 high 档走。是否同意这个落点？
+   不进文档与诊断公开面）。这是 manifest 协议的加字段，按 high 档走。**同意**（Phase 2 已落地）。
 3. **数据出图 v1 不执行模型写的代码**（模型只给列映射 JSON，脚本由模板生成）。这会限制 v1 能画的图形种类
-   （折线 / 散点），但避免把 safe 档当沙盒用。是否接受这个边界？
+   （折线 / 散点），但避免把 safe 档当沙盒用。**接受**。
 
 ## 文件
 
