@@ -34,13 +34,16 @@ const ai = (key: string, values?: Record<string, unknown>) => translate(key, { n
 
 /** 改动是直接落盘的，措辞不能像「待应用的预览」 */
 function statusText(s: AiSession): string {
-  if (s.status === 'running') return ai('session.running')
+  if (s.status === 'running') return ai(s.task?.phase === 'correcting' ? 'session.correcting' : 'session.running')
   // 带任务结局时只翻译 `task.outcome`（检查本身在后端）；其余组合与无 task 一律走原逻辑。
   // completed + 没改动（Agent 判定不必改，后端 `test_unchanged_copy_commits_nothing`）**有意**落到 `doneNoChange`：
   // 「已完成，脚本没有变化」就是这个结局的准确翻译；没写回就没有渲染层核对，说「数据核对一致」反而是假话
   const outcome = s.task?.outcome
   if (s.status === 'done' && s.changed) {
-    if (outcome === 'completed') return ai('session.taskVerified')
+    if (outcome === 'completed') {
+      const n = s.task?.corrections ?? 0
+      return n > 0 ? ai('session.taskVerifiedCorrected', { count: n }) : ai('session.taskVerified')
+    }
     if (outcome === 'partial') return ai('session.taskPartial')
     if (outcome === 'failed') return ai('session.taskFailedChanged')
   }

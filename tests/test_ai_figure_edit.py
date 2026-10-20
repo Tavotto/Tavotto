@@ -618,3 +618,35 @@ def test_after_cancelling_the_correction_run_the_script_stays_busy_until_that_pr
     gate.set()
     _wait(sid)
     assert not ai_bridge.script_busy(env["figs"] / "fig1.py")
+
+
+def test_correction_is_announced_and_the_final_summary_counts_it(env):
+    """界面要能说「正在自动修正」（`ai.task`）与「自动修正过一次」（`ai.done.task.corrections`）；终态不留进行中的阶段。"""
+    env["codes"] = [SYNTAX, FIX]
+    events: list = []
+    sid, _ = _run(env, events=events)
+    sess = _wait(sid)
+    names = [n for n, _ in events]
+    assert ("ai.task", {"session": sid, "phase": "correcting"}) in events
+    assert names.index("ai.task") < names.index("ai.done")
+    done = next(d for n, d in events if n == "ai.done")
+    assert done["task"]["corrections"] == 1 and "phase" not in done["task"]
+    assert sess["task"]["corrections"] == 1 and "phase" not in sess["task"]
+
+
+def test_without_a_correction_no_phase_event_is_sent(env):
+    events: list = []
+    sid, _ = _run(env, events=events)
+    _wait(sid)
+    assert "ai.task" not in [n for n, _ in events]
+    done = next(d for n, d in events if n == "ai.done")
+    assert done["task"]["corrections"] == 0
+
+
+def test_the_phase_event_is_a_kind_the_frontend_listens_for():
+    api_ts = Path(__file__).resolve().parents[1] / "web" / "src" / "lib" / "api.ts"
+    if not api_ts.is_file():
+        pytest.skip("没有 web/（wheel/sdist 里不含前端源码）")
+    source = api_ts.read_text(encoding="utf-8")
+    block = source[source.index("const EVENT_KINDS = [") :]
+    assert "'ai.task'" in block[: block.index("] as const")]

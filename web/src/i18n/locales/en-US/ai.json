@@ -174,7 +174,10 @@
     "taskFailedChanged": "Edited, but the checks didn’t pass",
     "taskPartial": "Edited; some checks couldn’t be completed",
     "taskRejected": "The edit didn’t pass the pre-write checks; your project is unchanged",
-    "taskVerified": "Edited; the data checks out unchanged"
+    "taskVerified": "Edited; the data checks out unchanged",
+    "correcting": "The first attempt didn’t pass the pre-write checks; fixing it automatically…",
+    "taskVerifiedCorrected_one": "Changed after one automatic fix; data checks match",
+    "taskVerifiedCorrected_other": "Changed after {{count}} automatic fixes; data checks match"
   },
   "status": {
     "aiAlreadyRan": "This request already ran (its task record was deleted), so it won’t be sent again.",

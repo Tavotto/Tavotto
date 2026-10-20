@@ -996,6 +996,9 @@ def run(
         两边总有一边看到对方：要么 `cancel` 杀的就是新进程，要么这里看到取消标记自己杀掉。"""
         if task_run.cancelled():
             return  # 已取消：不起新进程；随后的 wait 读空输出、编排器按取消收尾
+        # 界面的「正在自动修正」：会话详情（刷新后接回）读 `task.phase`，在线的标签页收 `ai.task`
+        sess["task"] = {**sess["task"], "phase": "correcting"}
+        emit("ai.task", {"session": sid, "phase": "correcting"})
         again = prompt + "\n\n" + note
         cmd2, extra2 = _cmd(agent, again, agent_cwd, model=model, effort=effort, endpoint=endpoint)
         LOG.info(
@@ -1150,10 +1153,12 @@ def _settle_task(sess: dict, task: dict) -> None:
         sess["error"] = task["error"]
     verification = task["task_result"]["verification"]
     sess["task"] = {
-        **sess["task"],
+        **{k: v for k, v in sess["task"].items() if k != "phase"},  # 终态没有进行中的阶段
         "outcome": task["outcome"],
         "unmet": verification["unmet"],
         "explain": verification["explain"],
+        # 自动修正了几轮（有界修正，Phase 4）：界面据此说「自动修正过一次」
+        "corrections": int((task["task_result"].get("budget_used") or {}).get("corrections") or 0),
     }
 
 

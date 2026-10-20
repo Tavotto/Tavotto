@@ -3324,6 +3324,10 @@ export interface AiTaskSummary {
   /** 没满足的检查（技术 id + 稳定原因码）；界面只在详情里列 id */
   unmet?: { constraint_id: string; reason_code: string }[]
   explain?: { message_key: string; params: Record<string, unknown> }
+  /** 进行中的阶段：只在 Agent 正在自动修正上一版时为 `correcting`（有界修正，Phase 4）；终态没有 */
+  phase?: 'correcting' | null
+  /** 收尾时：自动修正了几轮（0 = 一次就过了检查）；老后端没有 */
+  corrections?: number
 }
 
 /** 会话详情（转录 + diff）；查询到已登记的会话后补全界面用 */
@@ -3549,6 +3553,14 @@ export type ServerEvent =
       text: string
       kindOf?: AiDeltaKind
     }
+  /** 任务进入新阶段（TAF 有界修正：上一版没过写回前检查，Agent 正在副本里修正）；老后端不发 */
+  | ({
+      kind: 'ai.task'
+      pj?: string
+      client_request_id?: string
+      session: string
+      phase: 'correcting'
+    } & ProjectScoped)
   | ({
       kind: 'ai.done'
       /** 发起这次任务的项目（#589）；老后端没有这个字段 */
@@ -3601,6 +3613,7 @@ const EVENT_KINDS = [
   'engine.package',
   'export.progress',
   'ai.delta',
+  'ai.task',
   'ai.done',
   'script.input_requested',
   'script.input_closed',

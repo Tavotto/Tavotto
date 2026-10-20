@@ -440,6 +440,33 @@ describe('任务结局（TAF Phase 3c）：只翻译 task.outcome', () => {
     expect(q('[data-ai-error="session"]')).toBeNull()
   })
 
+  const withTask = (outcome: NonNullable<AiSession['task']>['outcome']) =>
+    task(outcome) as NonNullable<AiSession['task']>
+
+  it('自动修正过：completed 的状态行带上修正次数；没修正（0 / 老后端没有字段）照旧', async () => {
+    await mount([
+      session({ id: 'a', changed: true, diff: DIFF, task: { ...withTask('completed'), corrections: 1 } }),
+      session({ id: 'b', changed: true, diff: DIFF, task: { ...withTask('completed'), corrections: 0 } }),
+      session({ id: 'c', changed: true, diff: DIFF, task: task('completed') }),
+    ])
+    expect(qa('[data-ai-status]').map((e) => e.textContent)).toEqual([
+      ai('session.taskVerifiedCorrected', { count: 1 }),
+      ai('session.taskVerified'),
+      ai('session.taskVerified'),
+    ])
+  })
+
+  it('正在自动修正：运行中的状态行换成「正在自动修正」；没有阶段时仍是「正在修改脚本」', async () => {
+    await mount([
+      session({ id: 'a', status: 'running', task: { ...withTask(null), phase: 'correcting' } }),
+      session({ id: 'b', status: 'running', task: task(null) }),
+    ])
+    expect(qa('[data-ai-status]').map((e) => e.textContent)).toEqual([
+      ai('session.correcting'),
+      ai('session.running'),
+    ])
+  })
+
   it('partial：warn 卡（不是 danger 失败卡）+ 状态行 + 详情列出 unmet id', async () => {
     await mount([session({ changed: true, diff: DIFF, task: task('partial', true) })])
     expect(status()).toBe(ai('session.taskPartial'))

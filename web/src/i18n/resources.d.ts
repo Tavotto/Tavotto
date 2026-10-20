@@ -164,6 +164,7 @@ export default interface Resources {
       "figure": "整张图"
     },
     "session": {
+      "correcting": "上一版没通过写回前检查，正在自动修正…",
       "doneChanged": "改动已写入脚本",
       "doneNoChange": "已完成，脚本没有变化",
       "restoredNote": "已接回仍在运行的任务；此前的输出不再显示，结束后会更新结果。",
@@ -173,7 +174,8 @@ export default interface Resources {
       "taskFailedChanged": "已改，但核对没通过",
       "taskPartial": "已改，部分检查没能完成",
       "taskRejected": "修改没通过写回前检查，项目未改动",
-      "taskVerified": "已改，数据核对一致"
+      "taskVerified": "已改，数据核对一致",
+      "taskVerifiedCorrected_other": "已改（自动修正 {{count}} 次），数据核对一致"
     },
     "status": {
       "aiAlreadyRan": "这条指令已经执行过（任务记录已被删除），不会再次发送。",

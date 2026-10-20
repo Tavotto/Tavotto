@@ -15,7 +15,8 @@
 | Phase 3b | 分支 `feat/taf-phase3b-render-verify`（叠在 3a 上）：提交后渲染层验证（`ai_figure_edit._render_checks` + app `_ai_task_hooks` + `figureverify.data_unchanged`）。真 worker 用例：样式改动 completed、改数据 failed、无基线不执行；FigureBench 19 个探针场景参考解不误报、8 个改数据反例全抓住；六个手工变异全红 |
 | Phase 3c | PR #1201：前端按 `task.outcome` 翻译状态行 / 结局卡 / 状态栏；没有 `task` 的老后端逐字不变 |
 | Phase 4a | 分支 `feat/taf-phase4-bounded-correction`：提交前失败的有界修正（`ai_tasks._admit_correction` + `Executor.correct` + `ai_bridge` 同候选再起 CLI + figure_edit 可修闭集），`verification.attempts` 留证；契约见 `03-contracts.md` §五 |
-| 下一步 | Phase 4b：前端显示「正在修正」阶段与修正轮次；之后 Phase 5 数据出图 |
+| Phase 4b | 分支 `feat/taf-phase4b-correcting-ui`：桥在修正轮起跑前发 `ai.task`（`phase: correcting`）并写进会话的 `task.phase`；收尾的 `task.corrections` 记修正轮数。前端状态行「正在自动修正…」/「已改（自动修正 N 次），数据核对一致」 |
+| 下一步 | Phase 5b/5c 数据出图接线与入口；Phase 6 Harness Lab |
 
 ## 维护者决定（2026-10-19 全部同意，1.0 例外 2026-10-20 登记进 ADR 0138 §五）
 

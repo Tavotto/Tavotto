@@ -732,6 +732,30 @@ describe('AI 修改之后（ADR 0041）', () => {
     expect(statusKey()).toBe('status.aiNoChange')
   })
 
+  it('ai.task 只改本标签页持有、还没收尾、带任务的会话的 task.phase', () => {
+    useAiStore.setState({
+      sessions: [
+        { id: 's1', status: 'running', entries: [], task: { task_type: 'figure_edit', outcome: null } },
+        { id: 's2', status: 'running', entries: [] },
+        { id: 's3', status: 'done', entries: [], finalized: true, task: { task_type: 'figure_edit', outcome: 'completed' } },
+      ] as never,
+    })
+    for (const sid of ['s1', 's2', 's3', 'nope']) {
+      handleServerEvent(ev({ kind: 'ai.task', pj: 'p1', session: sid, phase: 'correcting' }))
+    }
+    const byId = Object.fromEntries(useAiStore.getState().sessions.map((s) => [s.id, s.task?.phase]))
+    expect(byId).toEqual({ s1: 'correcting', s2: undefined, s3: undefined })
+    // 收尾的 ai.done 带回的 task（后端已去掉 phase）整体替换
+    handleServerEvent(
+      ev({
+        kind: 'ai.done', pj: 'p1', session: 's1', status: 'done', changed: true, diff: '+x', script: 'fig1.py',
+        task: { task_type: 'figure_edit', outcome: 'completed', corrections: 1 },
+      }),
+    )
+    const s1 = useAiStore.getState().sessions.find((s) => s.id === 's1')!
+    expect(s1.task).toEqual({ task_type: 'figure_edit', outcome: 'completed', corrections: 1 })
+  })
+
   it('老后端没有 refresh 字段：行为不变', () => {
     handleServerEvent(
       ev({ kind: 'ai.done', pj: 'p1', session: 's1', status: 'done', changed: true, diff: '+x', script: 'fig1.py' }),

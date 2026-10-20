@@ -311,6 +311,11 @@ export function handleServerEvent(ev: ServerEvent) {
       useAiStore.getState().appendDelta(ev.session, ev.kindOf ?? 'message', ev.text, ev.client_request_id)
       break
 
+    case 'ai.task':
+      // 阶段提示（「正在自动修正」）；不是本标签页持有的会话就什么都不做
+      useAiStore.getState().setTaskPhase(ev.session, ev.phase)
+      break
+
     case 'ai.done': {
       const ai = useAiStore.getState()
       // **只对自己持有的会话起副作用**（提示、失败说明……）：老后端的 `ai.done` 不带 pj，上面那道
