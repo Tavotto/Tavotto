@@ -307,6 +307,96 @@ def test_svg_with_eps_does_not_start_a_cold_worker(project, monkeypatch):
     assert outputs["eps"]["status"] == "failed"
 
 
+SVG_ASSET = (
+    b'<svg xmlns="http://www.w3.org/2000/svg" width="96" height="48" viewBox="0 0 96 48">'
+    b'<path d="M0 0L96 48" stroke="red"/></svg>'
+)
+
+
+def _scripted_svg_asset(client, root):
+    """有脚本（stem F）的 SVG 素材 `F.svg`，脚本已运行、活 Figure 在 worker 里。"""
+    (root / "F.svg").write_bytes(SVG_ASSET)
+    run_script(client)
+    return "F.svg"
+
+
+def test_svg_asset_svg_and_eps_never_come_from_two_bases(project, monkeypatch):
+    """#1185：SVG = 文件字节；EPS 没有字节绑定的证明就逐项失败，且**绝不**为它再跑一次脚本。"""
+    client, root = project
+    figure = _scripted_svg_asset(client, root)
+    monkeypatch.setattr(pool, "get", lambda *a, **k: pytest.fail("EPS reran the script"))
+    body, outputs = output(client, spec(figure, scope="original", formats=("svg", "eps")))
+    assert body["status"] == "partial", body
+    assert (Path(body["export_dir"]) / outputs["svg"]["name"]).read_bytes() == SVG_ASSET
+    assert outputs["eps"]["status"] == "failed"
+    assert outputs["eps"]["error"]["code"] == "eps_source_unverified"
+    assert outputs["eps"]["error"]["params"] == {"figure": "F.svg"}
+
+
+def test_svg_asset_without_script_keeps_the_no_script_reason(project):
+    client, root = project
+    (root / "G.svg").write_bytes(SVG_ASSET)
+    body, outputs = output(client, spec("G.svg", scope="original", formats=("svg", "eps")))
+    assert outputs["eps"]["error"]["code"] == "eps_needs_script"
+
+
+def _bind(monkeypatch, sha):
+    from tavotto.rendercore import sources as rc_sources
+
+    def load(rel_id, overrides, out_dir, *, static_source=None, reference=None):
+        return rc_sources.FrozenSource(
+            static_source.artifact, static_source.path, None, None, svg_source_sha256=sha
+        )
+
+    monkeypatch.setattr(m, "_load_svg_snapshot", load)
+
+
+def test_svg_asset_eps_is_delivered_only_with_a_byte_bound_live_figure(project, monkeypatch):
+    import hashlib
+
+    client, root = project
+    figure = _scripted_svg_asset(client, root)
+    _bind(monkeypatch, hashlib.sha256(SVG_ASSET).hexdigest())
+    monkeypatch.setattr(pool, "get", lambda *a, **k: pytest.fail("EPS reran the script"))
+    body, outputs = output(client, spec(figure, scope="original", formats=("svg", "eps")))
+    assert body["status"] == "done", body
+    assert outputs["eps"]["status"] == "done"
+
+
+def test_svg_asset_bound_eps_on_a_cold_worker_says_it_needs_the_live_figure(project, monkeypatch):
+    import hashlib
+
+    client, root = project
+    figure = _scripted_svg_asset(client, root)
+    pool.shutdown_all(figures_dir=str(root), wait=True)
+    _bind(monkeypatch, hashlib.sha256(SVG_ASSET).hexdigest())
+    monkeypatch.setattr(pool, "get", lambda *a, **k: pytest.fail("EPS reran the script"))
+    body, outputs = output(client, spec(figure, scope="original", formats=("svg", "eps")))
+    assert outputs["eps"]["error"]["code"] == "eps_needs_live_figure"
+
+
+def test_job_asserts_one_basis_even_if_a_format_path_drifts(project, monkeypatch):
+    """作业级断言：哪怕某条格式路径自认为有证明，基准身份与 SVG 不同也逐项失败。"""
+    client, root = project
+    figure = _scripted_svg_asset(client, root)
+    _bind(monkeypatch, "0" * 64)
+    body, outputs = output(client, spec(figure, scope="original", formats=("svg", "eps")))
+    assert outputs["svg"]["status"] == "done"
+    assert outputs["eps"]["status"] == "failed"
+    assert outputs["eps"]["error"]["code"] == "export_basis_mismatch"
+
+
+def test_cold_worker_eps_with_an_existing_script_is_not_reported_as_no_script(project):
+    """A3b：脚本存在、只是没有活 Figure（冷 worker）——原因码不能是 `eps_needs_script`。"""
+    client, root = project
+    source = run_script(client)
+    pool.shutdown_all(figures_dir=str(root), wait=True)
+    body, outputs = output(client, spec(source, scope="original", formats=("svg", "eps")))
+    assert outputs["eps"]["status"] == "failed"
+    assert outputs["eps"]["error"]["code"] == "eps_needs_live_figure"
+    assert outputs["eps"]["error"]["params"] == {"figure": source}
+
+
 def test_project_package_contains_only_referenced_portable_snapshots(project, monkeypatch):
     import zipfile
 
