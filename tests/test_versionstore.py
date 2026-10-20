@@ -736,3 +736,20 @@ def test_index_with_a_malformed_entry_is_treated_as_corrupt_and_rebuilt(vdir, ba
     vs.append(vdir, "d1", _ver(9), now=9)  # 写路径：留副本并重建
     assert len(vs.entries(vdir, "d1")) == 4
     assert len(list(vs.store_dir(vdir, "d1").glob("index.corrupt-*.json"))) == 1
+
+
+def test_rebuild_takes_the_highest_generation_of_each_id(vdir, crash_at):
+    """索引丢失时取每个 id 最高的一代（ADR 0140 §三：最后一次尝试过的元数据可能被采用）。"""
+    vers = _seed(vdir, "d1", 2)
+    vid = vers[0]["id"]
+    crash_at("after_envelope")
+    with pytest.raises(Crash):
+        vs.update(vdir, "d1", vid, {"name": "尝试过"}, now=6)
+    s = vs.store_dir(vdir, "d1") / "s"
+    assert sorted(p.name for p in s.iterdir()) == sorted(
+        [f"{vid}.json", f"{vid}.1.json", f"{vers[1]['id']}.json"]
+    )
+    (vs.store_dir(vdir, "d1") / "index.json").unlink()
+    got = vs.entries(vdir, "d1")
+    assert [e["id"] for e in got] == [v["id"] for v in vers] and got[0]["name"] == "尝试过"
+    assert vs.read(vdir, "d1", vid)["doc"] == vers[0]["doc"]
