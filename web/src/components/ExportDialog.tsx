@@ -1263,6 +1263,8 @@ export function ExportDialog() {
             doc={doc}
             asset={figureId ? assets[figureId] : undefined}
             transparent={transparent && transparentApplies}
+            // 写不出来的名字不报：文件名不合法、或原图范围下这张图此刻导不出
+            files={filenameIssue || (scope === "original" && !availability.ok) ? [] : names}
           />
         )
       }
@@ -1540,7 +1542,13 @@ export function ExportDialog() {
                 <CheckRow
                   summary={summary}
                   specName={checkSpecName}
-                  scopeHint={ex(scope === "original" && panel ? "checkScopeFigure" : "checkScopeCanvas")}
+                  scopeHint={
+                    scope === "original" && panel
+                      ? ex("checkScopeFigureNamed", {
+                          name: figure?.name ?? defaultExportName(scope, panel, doc),
+                        })
+                      : ex("checkScopeCanvasNamed", { name: doc.name })
+                  }
                   onOpenPanel={(opts) => {
                     park();
                     openProblems({ severities: opts?.severities, target: problemsTarget });
@@ -1917,6 +1925,7 @@ function TargetHeader({
   doc,
   asset,
   transparent,
+  files,
 }: {
   scope: ExportScope;
   /** 原图范围下这次导的那张（候选清单里的那一条；还没上画布的素材 `panel` 为 null 也是它） */
@@ -1927,6 +1936,12 @@ function TargetHeader({
   asset: PanelInfo | undefined;
   /** 这次导出实际会出透明背景（已含 `transparentApplies`）：画布范围的缩略图画成棋盘格 */
   transparent: boolean;
+  /**
+   * 这次会写出的文件名（含扩展名，也就是勾选的格式）。**直接是 `prepareExport().names`**
+   * ——`buildExportRequest` 发给后端的同一份，这里不自己拼、不自己剥扩展名。
+   * 文件名不合法 / 没有可导的格式时调用方传空数组：不报一个写不出来的名字。
+   */
+  files: readonly string[];
 }) {
   useTranslation("dialogs");
   const original = scope === "original";
@@ -1991,6 +2006,15 @@ function TargetHeader({
           )}
         </p>
         {originNote && <p className="type-caption">{originNote}</p>}
+        {files.length > 0 && (
+          <p
+            data-export-target-files
+            className="type-meta truncate"
+            title={files.join(" · ")}
+          >
+            {files.join(" · ")}
+          </p>
+        )}
         {/* 缩略图不是最终文件（画布缩略图不含图内修改与页面合成、位图格式的像素也不在这里），
             说一句，克制：中性灰，不是警告 */}
         <p data-export-thumb-note className="type-caption text-ink-3">
@@ -2136,7 +2160,7 @@ function CheckRow({
           />
           <span className="min-w-0">
             {ex("preflightOk", { spec: specName })}
-            <span className="text-xs text-ink-3">{` · ${scopeHint}`}</span>
+            <span data-export-check-scope className="text-xs text-ink-3">{` · ${scopeHint}`}</span>
           </span>
         </span>
         <span data-export-check-coverage className="pl-6 text-xs text-ink-3">
@@ -2158,7 +2182,7 @@ function CheckRow({
   return (
     <div className="flex items-center justify-between gap-3">
       {/* 范围（整个画布 / 仅此图）不再是一段内联灰字：悬停说明，读屏照读 */}
-      <span title={scopeHint} className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">
+      <span data-export-check-scope title={scopeHint} className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">
         {CHIPS.filter((c) => summary.counts[c.sev] > 0).map((c) => (
           <CountChip
             key={c.sev}

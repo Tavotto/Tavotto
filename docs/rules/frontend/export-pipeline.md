@@ -84,6 +84,12 @@ cancelCurrentExport()  取消（清临时文件；最终目录一个字节没动
   「关闭 / 取消导出」（关闭不取消作业）、撞名「取消 …… 另存一份 / 覆盖」（覆盖是危险浅底胶囊，Esc = 另存一份）、
   完成（见上）。状态区里的回应一律是 `Notice`，进度是阶段句 + 不定态 `ProgressBar`。位置读 `project.export_dir`
   （后端说了算），界面不拼路径。
+  对象头（P02，不折叠）依次说：缩略图 · 对象名 · 范围与最终尺寸（尺寸只在这里报一次）· **将写出的文件**
+  （`data-export-target-files`，即 `prepareExport().names`——与 `buildExportRequest` 发给后端的 `filename` + 格式
+  同一份，含扩展名，不在组件里另拼；文件名不合法或原图范围下这张图导不出时不报）。检查行的范围句
+  （`data-export-check-scope`）点名检查的是哪份产物：原图范围 =「仅查原图「名」」（原图口径那份），画布范围 =
+  「查整个画布「名」」，只带名字不带尺寸。「无法核验」已有芯片（`chipNotVerifiable`）、知情确认与 0 问题时的
+  覆盖说明（`data-export-check-coverage`）三处，不重复。
 - **关窗之后的终局通知**（PR2 任务状态统一）：`ExportDialog` 里的终局 effect 以「作业 + 终态」为键只报一次。对话框开着
   （且没被设置 / 样式压住）时结果就在结果块里，**不弹第二份**；关着时走通知轨——`done` / `cancelled` 一句话自己消失，
   `failed` / `partial` / `unknown`（错误语气）与 `conflict`（作业停下等你决定，info 语气）带「查看」动作、**不自己消失**

@@ -1529,6 +1529,82 @@ describe('T33 · 导出对象头部：名字 · 范围 · 尺寸只出现一次'
   })
 })
 
+describe('P02 · 对象头说清「写出哪些文件」与「检查的是哪份产物」', () => {
+  const files = () =>
+    document.body.querySelector('[data-export-target] [data-export-target-files]')?.textContent ?? null
+  const checkScope = () => document.body.querySelector('[data-export-check-scope]')?.textContent ?? ''
+
+  async function openFast() {
+    await stage({ panels: [panel], renders: { 'Fig1.pdf': manifestWithTicks(1, 9) } })
+    useWorkspaceStore.setState({ mode: 'fast_edit', activePanelId: 'p1' })
+    await mountDialogs()
+    await openDialog()
+  }
+
+  it('文件名与格式跟表单走，且就是发出去的请求里的那一份（同源，不另算）', async () => {
+    await openFast()
+    expect(files()).toBe('Fig1.pdf · Fig1.png')
+    await typeFilename('mine')
+    expect(files()).toBe('mine.pdf · mine.png')
+    await click(formatBox('PNG'))
+    expect(files()).toBe('mine.pdf')
+    await click(formatBox('SVG'))
+    // 顺手打上的扩展名被 `buildExportRequest` 剥掉：头部报的也是剥过的
+    await typeFilename('Fig 1.pdf')
+    expect(files()).toBe('Fig 1.pdf · Fig 1.svg')
+    await click(button('开始导出')!)
+    const body = exportBodies.at(-1)!
+    const sent = (body.formats as string[]).map((f) => `${body.filename as string}.${f}`)
+    expect(files()).toBe(sent.join(' · '))
+  })
+
+  it('文件名不合法（或空）时头部不报一个写不出来的名字', async () => {
+    await openFast()
+    await typeFilename('Fig?1')
+    expect(files()).toBeNull()
+    await typeFilename('Fig1')
+    expect(files()).toBe('Fig1.pdf · Fig1.png')
+  })
+
+  it('仅 PDF：头部只报 .pdf，且没有 DPI 一行；加上位图才出现', async () => {
+    await openFast()
+    await click(formatBox('PNG'))
+    expect(files()).toBe('Fig1.pdf')
+    expect(ppiSelect()).toBeNull()
+    await click(formatBox('TIFF'))
+    expect(files()).toBe('Fig1.pdf · Fig1.tiff')
+    expect(ppiSelect()).toBeTruthy()
+  })
+
+  it('原图 ↔ 画布：头部文件名、检查对象各归各，不串', async () => {
+    await openFast()
+    const canvasName = useDocumentStore.getState().doc.name
+    expect(files()).toBe('Fig1.pdf · Fig1.png')
+    expect(checkScope()).toContain('仅查原图「Fig1」')
+    expect(checkScope()).not.toContain(canvasName)
+    await click(radios()[1])
+    expect(files()).toBe(`${canvasName}.pdf · ${canvasName}.png`)
+    expect(checkScope()).toContain(`查整个画布「${canvasName}」`)
+    // 尺寸仍只在头部报一次，检查行不报数
+    expect(checkScope()).not.toMatch(/mm/)
+  })
+
+  it('原图不可用（源文件不见了）：头部不报文件名，也不拿画布的名字冒充', async () => {
+    await stage({ panels: [panel], renders: { 'Fig1.pdf': manifestWithTicks(1, 9) } })
+    useAssetStore.setState({ byId: {} } as never)
+    useWorkspaceStore.setState({ mode: 'fast_edit', activePanelId: 'p1' })
+    await mountDialogs()
+    await openDialog()
+    expect(radios()[0].getAttribute('aria-checked')).toBe('true')
+    expect(files()).toBeNull()
+    expect(document.body.querySelector('[data-export-target]')?.textContent ?? '').not.toContain(
+      useDocumentStore.getState().doc.name,
+    )
+    expect(button('开始导出')!.hasAttribute('disabled')).toBe(true)
+    expect(exportBodies).toHaveLength(0)
+  })
+})
+
 describe('T33 · 检查摘要按导出目标取范围', () => {
   const second: PanelObject = { ...panel, id: 'p2', fileId: 'Fig2.pdf', x: 0, y: 60, script: 'fig2.py' }
 
@@ -1550,7 +1626,7 @@ describe('T33 · 检查摘要按导出目标取范围', () => {
     expect(record, '夹具里有默认规范').toBeTruthy()
     const specName = profileName(record!)
     expect(ok!.textContent).toContain(`按「${specName}」未发现问题`)
-    expect(ok!.textContent).toContain('仅此图')
+    expect(ok!.textContent).toContain('仅查原图「Fig1」')
     expect(ok!.textContent).not.toContain('检查通过')
     // 覆盖范围说在明处：识别不出的内容不在检查之内
     expect(ok!.querySelector('[data-export-check-coverage]')?.textContent).toContain('不在检查之内')
@@ -1559,7 +1635,7 @@ describe('T33 · 检查摘要按导出目标取范围', () => {
     await click(radios()[1])
     expect(text()).toMatch(/\d+ 项要改/)
     expect(text()).toContain('1 项留意')
-    expect(text()).toContain('整个画布')
+    expect(text()).toContain('查整个画布「')
     expect(button('开始导出')!.hasAttribute('disabled')).toBe(true)
   })
 
