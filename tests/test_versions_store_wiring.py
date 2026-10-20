@@ -256,7 +256,8 @@ def test_an_existing_store_is_read_and_written_and_the_legacy_file_is_left_alone
     r = client.post("/api/versions/both", json={"doc": _doc(2, "z"), "name": "追加"})
     assert r.status_code == 200
     names = [v["name"] for v in client.get("/api/versions/both").get_json()["versions"]]
-    assert names == ["新0", "新1", "追加"]
+    # 旧文件按基线为空的分叉处理：新存储里没有的 id 被导入（"旧2".."旧5"），已有的（旧0/旧1 的 id）不覆盖
+    assert names == ["新0", "新1", "旧2", "旧3", "旧4", "旧5", "追加"]
     assert path.read_bytes() == frozen, "旧文件被写了"
     assert [e["name"] for e in vs.entries(path.parent, path.stem)] == names
 

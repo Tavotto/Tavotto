@@ -716,7 +716,8 @@ def migrate_legacy(
     返回 `{"status": …, "imported": n}`，status 取：
 
     * `migrated`：首次迁移完成；
-    * `already`：已迁移且旧文件自迁移后没有变化；
+    * `already`：已迁移且旧文件自迁移后没有变化（新存储里出生、没有迁移记录的文档，旧文件按基线为空处理，
+      首次见到时同样走 `imported`）；
     * `imported`：旧文件在迁移后被旧版程序追加过（降级后又升级）——把迁移点**之后**新增
       的条目按 id 去重导入，不覆盖、不丢；迁移时已有的 id（哪怕已在新存储里被删）不再复活；
     * `no_legacy`：没有旧文件，什么也没做。
@@ -735,7 +736,20 @@ def migrate_legacy(
     rec = _migration_record(root)
     if idx is not None:
         if rec is None:
-            return {"status": "already", "imported": 0}  # 不是从旧文件迁来的，没有可比的基线
+            # 新存储里出生的文档（或迁移记录丢了）：没有可比的基线，把旧文件当成基线为空的分叉——
+            # 降级后旧程序写出的旧文件在再升级时不能被漏掉（用户看不到降级期间的检查点）。
+            # 按 id 去重导入，已在新存储里的不覆盖；没有记录可判「已删」，宁可多一条也不丢。
+            rec = {
+                "format": FORMAT,
+                "state": "committed",
+                "name": legacy_path.name,
+                "size": None,
+                "mtime_ns": None,
+                "sha": None,
+                "count": 0,
+                "dropped_duplicates": 0,
+                "ids": [],
+            }
         if rec.get("state") == "pending":
             rec = {**rec, "state": "committed"}  # 上次死在「索引已提交、记录未收尾」
             atomicio.write_bytes(root / MIGRATION_NAME, atomicio.dumps_json(rec))
@@ -836,6 +850,7 @@ def _import_fork(
         **rec,
         **st,
         "sha": _sha(raw),
+        "sha_full": hashlib.sha256(raw).hexdigest(),
         "count": len(versions),
         # 这次观察到的**全部**旧文件 id（含重试时已经在索引里的）：崩在提交与记录之间后重试，
         # fresh 为空，只并 fresh 的话这些 id 永远进不了记录，删掉后会再次导入（已删版本复活）

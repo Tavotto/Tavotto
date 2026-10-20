@@ -267,3 +267,30 @@ def test_thumbnails_survive_the_migration(client):
     assert row["thumb"] == "png"
     assert client.get(f"/api/versions/d/{vid}/thumb").data == PNG
     assert vs.has_store(path.parent, path.stem)
+
+
+def test_a_store_born_document_imports_what_a_rolled_back_program_wrote_to_a_fresh_legacy_file(
+    client,
+):
+    """新存储里出生的文档没有迁移记录；降级后旧程序在 `<doc>.json` 里写了版本，再升级时不能漏掉。"""
+    first = _post(client, "born", name="新1")["version"]
+    second = _post(client, "born", name="新2")["version"]
+    assert not m._versions_path("born").exists()
+    # 旧程序：不知道 `.vx`，从空起步写旧文件；其中一条与新存储同 id 但内容不同
+    old_program = [
+        _ver(60, name="旧程序一"),
+        _ver(61, name="旧程序二"),
+        {**_ver(62, name="撞id"), "id": first["id"]},
+    ]
+    m._save_versions("born", old_program)
+    rolled_back = m._versions_path("born").read_bytes()
+
+    _post(client, "born", name="再升级")
+    names = {v["id"]: v["name"] for v in _list(client, "born")["versions"]}
+    assert names[_ver(60)["id"]] == "旧程序一" and names[_ver(61)["id"]] == "旧程序二"
+    assert names[first["id"]] == "新1", "导入覆盖了新存储里已有的条目"
+    assert second["id"] in names
+    assert m._versions_path("born").read_bytes() == rolled_back, "导入改了旧文件"
+    n = len(names)
+    _post(client, "born", name="再写一次")
+    assert len(_list(client, "born")["versions"]) == n + 1, "旧文件被重复导入"
