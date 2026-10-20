@@ -47,6 +47,19 @@
   「下一步」只挪指针（`onboardingStore.next` 在当前步骤没完成时是 no-op）。拖动在 pointercancel /
   lostpointercapture / 失焦 / 缩放 / 切后台 / 卸载时作废、监听随卸载摘掉；键盘（空格 / 方向键 / 回车 / Esc）
   与「直接使用示例」是等价入口。
+* **按任务触发的提示 `layout_page_bounds`（P04，2026-10-20）**：第一次**用户主动**从快速编辑回到排版
+  （`store/workspace.returnToLayout` 发唯一一枪 `workspace.returned_to_layout`，无 payload；`exitToLayout` 的被动退出——
+  换文档 / 修剪 / 定位问题 / 启动恢复——不发，所以「启动时恢复到 layout」不触发）→ 一条非模态说明「白色纸面就是导出的
+  Figure 尺寸，单栏 / 双栏宽按当前规范」，**锚在右栏页签条下**（`components/inspector/PageBoundsHint`，一颗「打开画布页」）。
+  规则：① 带锚点的提示（`hints.ANCHORED_HINTS`）不进通知轨，仍占 `useHintStore.current` 这一个槽位，与轨上的提示互斥不叠；
+  ② 锚点判据读 store（`hints.anchorAvailable` = `uiStore.rightOpen`），不读 DOM；锚点不在（右栏收起 / 窄屏抽屉互斥收掉）
+  **不出现、也不记看过**，已出的随右栏收起一并收掉（`startHintEngine` 订阅 uiStore）；③ 看过记在 `onboardingStore.hintSeen`
+  （本机、跨项目、跨重启；`resetHints` 清）→ 每台机器一次，关掉后不重现；④ 教程进行中不出；⑤ 发射点在重新选中那张图**之前**，
+  先到先占槽位（否则 `panel_editable` 抢走）；⑥ 悬停 / 聚焦不走表，reduced-motion 下关闭即卸载。**没有新增遥测**。
+  看护：`lib/onboarding/hints.test.ts`、`components/inspector/pageBoundsHint.test.tsx`、`activity.test.ts`。
+  已评估**不做**：「选中多张 → 组合成 Figure / 进入排版」——活动信号里「多选」与「导入多个文件」不可区分
+  （`selection.changed` 只有 count；导入是 `figure.added_to_layout` / `project.opened`，不带来源），P04 明说导入多文件≠组合意图，
+  没有干净信号就不做；多选对齐 / 分布由既有 `multi_select` 覆盖，问题定位 / 修复入口由既有 `problem_found` + 问题抽屉覆盖。
 * **教程层的边界**：portal 到 `body`、`z-overlay`（对话框压在它上面），打开期间 `#root` 加 `inert`；层里的按键
   不冒泡到 window（工作台快捷键不在看不见的画布上生效）；系统拖进来的文件拒收（`dropEffect = 'none'`，不读
   `DataTransfer.files`）只说一句，主页的 `onNativeFileDrop` 在教程层开着时也不认（第二道闸）。首次打开（没开始过、

@@ -88,6 +88,12 @@
     "expand": "展开",
     "resend": "重新发送"
   },
+  "notice": {
+    "taskFailedChanged": "改动已写入，但核对发现数据或输出变了；不对的话可以回滚到修改前。",
+    "taskPartial": "改动已写入，但有检查没能完成，结果未经完整核对。",
+    "taskRejected": "改动没通过写回前检查，没有写入项目。",
+    "unmetHeading": "未满足的检查"
+  },
   "panel": {
     "abort": "中止",
     "finishing": "正在结束上一次修改…",
@@ -161,15 +167,23 @@
     "restoredNote": "已接回仍在运行的任务；此前的输出不再显示，结束后会更新结果。",
     "reverted": "已回滚，脚本已恢复到修改前。",
     "revertedStatus": "已回滚助手的修改，正在重建图表…",
-    "running": "正在修改脚本…"
+    "running": "正在修改脚本…",
+    "taskFailedChanged": "已改，但核对没通过",
+    "taskPartial": "已改，部分检查没能完成",
+    "taskRejected": "修改没通过写回前检查，项目未改动",
+    "taskVerified": "已改，数据核对一致"
   },
   "status": {
-    "aiSuperseded": "这条指令已被改写后的新指令取代，不会再执行。",
     "aiAlreadyRan": "这条指令已经执行过（任务记录已被删除），不会再次发送。",
     "aiChanged": "助手已修改脚本，正在重新渲染…",
     "aiChangedRefreshFailed": "AI 已修改脚本，但项目刷新失败：{{reason}}。改动已保存，Tavotto 会自动重试。",
     "aiFailed": "AI 任务失败",
     "aiNoChange": "助手已完成，脚本没有改动",
+    "aiSuperseded": "这条指令已被改写后的新指令取代，不会再执行。",
+    "aiTaskFailedChanged": "助手已修改脚本，但核对没通过，可以回滚",
+    "aiTaskPartial": "助手已修改脚本，部分检查没能完成",
+    "aiTaskRejected": "助手的修改没通过检查，项目未改动",
+    "aiTaskVerified": "助手已修改脚本，数据核对一致，正在重新渲染…",
     "aiTimeout": "AI 任务超时",
     "cancelled": "已取消",
     "done": "完成",

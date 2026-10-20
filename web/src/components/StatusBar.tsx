@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/Button'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { SwapText } from '@/components/ui/SwapText'
 import { runUndoRedo } from '@/hooks/useKeyboard'
-import { hintDismissTimer, useHintStore } from '@/lib/onboarding/hints'
+import { ANCHORED_HINTS, hintDismissTimer, useHintStore } from '@/lib/onboarding/hints'
 import { literal, msg, t as translate, type UiMessage } from '@/i18n'
 import { useFormatMessage } from '@/i18n/react'
 import type { DismissTimer } from '@/lib/dismissTimer'
@@ -170,6 +170,7 @@ function Toast({
           variant="ghost"
           size="sm"
           className="shrink-0 text-ink"
+          data-toast-action=""
           onClick={action.onClick}
           loading={action.loading}
         >
@@ -294,10 +295,14 @@ export function NotificationRail({ announceRole = 'alert' }: { announceRole?: 'a
   const liveText = fmt(status)
   const statusPresence = usePresence(!!status, DURATION.fast)
 
-  const hint = useHintStore((s) => s.current)
+  // 带锚点的提示（`ANCHORED_HINTS`）由锚点所在组件自己画，不进这条轨；它仍占 current 的槽位
+  // live region 仍取 current（锚点提示的画面由锚点组件画，但读屏照样要听见；锚点组件自己不加 aria-live，免得播两遍）
+  const current = useHintStore((s) => s.current)
+  const hint = current && ANCHORED_HINTS.has(current) ? null : current
   const hintToken = useHintStore((s) => s.token)
   const dismissHint = useHintStore((s) => s.dismiss)
   const hintText = hint ? t(`hints.${hint}`) : ''
+  const liveHintText = current ? t(`hints.${current}`) : ''
   const toolbarUp = useCanvasToolbarVisible()
 
   // 「编辑原图」这一次把图加进了文档（此前不在）：说出口，并给撤销；回排版 / 撤销即消失
@@ -420,7 +425,7 @@ export function NotificationRail({ announceRole = 'alert' }: { announceRole?: 'a
         {tone === 'error' ? liveText : ''}
       </div>
       <div aria-live="polite" className="sr-only">
-        {hintText}
+        {liveHintText}
       </div>
       <div aria-live="polite" className="sr-only">
         {adopted ? adoptedText : ''}

@@ -287,6 +287,8 @@ export interface OriginalTarget {
   objectId: string
   widthMm: number
   heightMm: number
+  /** 本次所选格式：影响原图范围里面板嵌入的是位图还是重画的矢量 */
+  formats: readonly string[]
 }
 
 /**
@@ -309,7 +311,7 @@ export function validateOriginal(
   return resultOf(
     input,
     documentId,
-    buildOriginalSpec(panel, assets, render, { widthMm: target.widthMm, heightMm: target.heightMm }),
+    buildOriginalSpec(panel, assets, render, { widthMm: target.widthMm, heightMm: target.heightMm }, target.formats),
   )
 }
 

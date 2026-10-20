@@ -6,6 +6,7 @@ import {
   defaultDocumentName,
   docToCanvas,
   emptyDocument,
+  isVectorFileKind,
   emptyProject,
   isRuntimePanel,
   legacyHead,
@@ -196,5 +197,18 @@ describe('arrowHeads ↔ legacyHead：新旧端型字段互逆', () => {
       start: 'none',
       end: 'bar',
     })
+  })
+})
+
+describe('isVectorFileKind', () => {
+  it('pdf 与 svg 是矢量文件，位图 / runtime / 未知不是', () => {
+    expect(['pdf', 'svg', 'raster', 'runtime', 'x', undefined].map(isVectorFileKind)).toEqual([
+      true,
+      true,
+      false,
+      false,
+      false,
+      false,
+    ])
   })
 })

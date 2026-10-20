@@ -96,6 +96,7 @@ describe('卡片上的格式名', () => {
       panel('c.jpg'),
       panel('d.png'),
       panel('e.pdf', { kind: 'pdf' }),
+      panel('f.svg', { kind: 'svg' }),
     ])
     expect(cardOf('a.tif').textContent).toContain('TIFF')
     expect(cardOf('b.TIFF').textContent).toContain('TIFF')
@@ -103,6 +104,8 @@ describe('卡片上的格式名', () => {
     expect(cardOf('c.jpg').textContent).not.toContain('PNG')
     expect(cardOf('d.png').textContent).toContain('PNG')
     expect(cardOf('e.pdf').textContent).toContain('PDF')
+    expect(cardOf('f.svg').textContent).toContain('SVG')
+    expect(cardOf('f.svg').querySelector('img')?.getAttribute('src')).toContain('/api/file?id=f.svg')
   })
 })
 

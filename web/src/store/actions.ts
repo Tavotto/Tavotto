@@ -7,6 +7,8 @@ import { requestRender, type RenderPolicy } from '@/store/renderScheduler'
 import { isJustBakedBaselineOf } from '@/lib/bakedBaseline'
 import { engineTransport } from '@/lib/engineTransport'
 import { msg, t, type UiMessage } from '@/i18n'
+import { classifyArtifactFailure, isDefiniteRefusal, type ArtifactFailure } from '@/lib/artifactReason'
+import { pngAdmitOwner, pngRefusalOf, runPngRebuild, usePngAdmissionMemory } from '@/store/pngAdmissionMemory'
 import { rescueFocus } from '@/lib/focusRescue'
 import { newId } from '@/lib/id'
 import { flipCapture } from '@/lib/motion'
@@ -1501,6 +1503,61 @@ export function seedBakedOverrides(panelId: string): number {
   return baked.length
 }
 
+const isArtifactFailure = (error: unknown): boolean =>
+  error instanceof ArtifactValidationError || (error instanceof EngineError && error.code === 'artifact_source_unavailable')
+
+/**
+ * PNG 采用失败的**唯一出口**（ADR 0139 PR1）。脚本真故障（`script_error` / `worker_timeout` / 渲染失败……）
+ * 不是「采用被拒」，保持原来的错误 toast；采用被拒按 `classifyArtifactFailure` 分类：
+ * - 明确拒绝（permanent / source_mismatch）：一句话 + 至多一个主按钮「重建为可编辑图」（有脚本时），`info` 色调——
+ *   这不是意外错误；带 action 的 toast 常驻到用户处理；
+ * - 可重试（retry）：一句话 + 「再试一次」，只有这一类才出现「再试」；
+ * - 已采用面板的保存数据冲突 / 等用户选的背景：原文案原规则，`error` 色调，不加按钮。
+ * toast 挂 `png.admit:<panelId>` 主人：采用成功 / 面板删除 / 切项目时撤掉。提醒只走浮动 toast，不往页面加横条。
+ */
+function reportAdmissionFailure(panel: PanelObject, error: unknown): void {
+  if (!isArtifactFailure(error)) {
+    status(engineErrorMsg(error), 'error')
+    return
+  }
+  showAdmissionFailure(panel, classifyArtifactFailure(error))
+}
+
+function showAdmissionFailure(panel: PanelObject, failure: ArtifactFailure): void {
+  const ui = useUiStore.getState()
+  const owner = pngAdmitOwner(panel.id)
+  const message = msg(failure.messageKey, undefined, 'errors')
+  if (failure.recoverability === 'retry') {
+    ui.setStatus(message, 'error', {
+      owner,
+      action: {
+        label: msg('artifact.retryAdmission', undefined, 'errors'),
+        run: () => {
+          useUiStore.getState().clearStatusOwnedBy(owner)
+          void enterElementEdit(panel.id)
+        },
+      },
+    })
+  } else if (isDefiniteRefusal(failure.recoverability)) {
+    // `not_untouched` 是本地前置判定（已有编辑 / 写回基线），不是采用能力问题：重画一张新图不是它的出路
+    const rebuild = panel.script && failure.reason !== 'not_untouched'
+    ui.setStatus(message, 'info', {
+      owner,
+      ...(rebuild
+        ? {
+            action: {
+              label: msg('artifact.rebuildEditable', undefined, 'errors'),
+              // 只发意图：执行者由 `pngRebuild` 登记（直接 import 会让重建链路经 workspace 回到本模块成环）
+              run: () => runPngRebuild(panel.id),
+            },
+          }
+        : {}),
+    })
+  } else {
+    status(message, 'error')
+  }
+}
+
 /**
  * 进入图内编辑的统一入口：先补基线再进编辑态，避免双击回到脚本原始状态。
  *
@@ -1555,6 +1612,9 @@ async function admitPngEntry(panel: PanelObject, leftTab: 'elements' | 'keep'): 
         p.nativeH = h
       })
     }
+    // 采用成功：这张图之前被拒的 toast 与会话记忆都不再成立
+    useUiStore.getState().clearStatusOwnedBy(pngAdmitOwner(panel.id))
+    usePngAdmissionMemory.getState().forget(panel.fileId)
     return finishElementEntry(panel.id, leftTab)
   } catch (error) {
     if (current() && error instanceof EngineError &&
@@ -1584,7 +1644,12 @@ async function admitPngEntry(panel: PanelObject, leftTab: 'elements' | 'keep'): 
         (error instanceof ArtifactValidationError || (error instanceof EngineError && error.code === 'artifact_source_unavailable'))) {
       rejectArtifactRenders(panel.fileId, panel.artifactValidation, error, renderKeyOf(panel))
     }
-    if (current()) status(engineErrorMsg(error), 'error')
+    if (ownsRenderContext() && !panel.artifactValidation && error instanceof EngineError &&
+        error.code === 'artifact_source_unavailable') {
+      // 后端明确拒绝（脚本已经为此跑过一遍）：记下，同一张 PNG 再点「进入编辑」不再重跑
+      usePngAdmissionMemory.getState().remember(panel.fileId, classifyArtifactFailure(error))
+    }
+    if (current()) reportAdmissionFailure(panel, error)
     return false
   } finally {
     if (artifactEntryCurrent(attempt) && !awaitingEnvironment) cancelArtifactEntry()
@@ -1605,7 +1670,15 @@ export function enterElementEdit(
   }
   // Existing edited/baked PNG panels keep their established legacy semantics.
   const sourceEntry = Object.hasOwn(panel, 'artifactValidation') || isUnadoptedPngSource(panel)
-  if (sourceEntry) return admitPngEntry(panel, leftTab)
+  if (sourceEntry) {
+    // 这张 PNG 本次会话里已被后端明确拒绝过：同一句话 + 同一出路，不再重跑脚本
+    const refused = panel.artifactValidation ? null : pngRefusalOf(panel.fileId)
+    if (refused) {
+      showAdmissionFailure(panel, refused.failure)
+      return false
+    }
+    return admitPngEntry(panel, leftTab)
+  }
   const entered = finishElementEntry(panelId, leftTab)
   if (panel.fileKind === 'raster' && /\.png$/i.test(panel.fileId) && panel.overrides.length) {
     status(engineErrorMsg(new ArtifactValidationError('not_untouched')), 'info')

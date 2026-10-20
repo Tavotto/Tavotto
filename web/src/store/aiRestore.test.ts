@@ -216,6 +216,63 @@ describe('断线期间结束的会话收尾', () => {
     expect(JSON.stringify(useUiStore.getState().status)).toContain('aiChangedRefreshFailed')
   })
 
+  describe('任务结局（TAF Phase 3c）', () => {
+    const local = () =>
+      useAiStore.setState({
+        sessions: [{
+          id: 's-local', project: 'pa', agent: 'codex', agentLabel: 'Codex', prompt: 'p', script: 'fig1.py',
+          panelId: 'p1', fileId: 'Fig1.pdf', gid: null, scope: 'figure', target: '整张图', entries: [],
+          status: 'running', changed: false, diff: '', startedAt: 1,
+        }],
+      })
+    const done = (over: Record<string, unknown>) =>
+      handleServerEvent({ kind: 'ai.done', pj: 'pa', session: 's-local', status: 'done', changed: true, diff: 'D', script: 'fig1.py', ...over } as never)
+    const bar = () => ({ key: JSON.stringify(useUiStore.getState().status), tone: useUiStore.getState().statusTone })
+    const cases: [string, Record<string, unknown>, string, string][] = [
+      ['completed+changed', { task: { task_type: 't', outcome: 'completed' } }, 'aiTaskVerified', 'info'],
+      ['partial', { task: { task_type: 't', outcome: 'partial' } }, 'aiTaskPartial', 'info'],
+      ['failed+changed', { task: { task_type: 't', outcome: 'failed' } }, 'aiTaskFailedChanged', 'error'],
+      ['failed+!changed', { status: 'failed', changed: false, diff: '', task: { task_type: 't', outcome: 'failed' } }, 'aiTaskRejected', 'error'],
+    ]
+    it.each(cases)('ai.done %s：状态栏键与语气，task 存进会话', (_n, over, key, tone) => {
+      local()
+      done(over)
+      expect(bar().key).toContain(key)
+      expect(bar().tone).toBe(tone)
+      expect(sessions()[0].task).toEqual(over.task)
+    })
+
+    it('completed + 没改动：状态栏有意说 aiNoChange，不说核对一致', () => {
+      local()
+      done({ changed: false, diff: '', task: { task_type: 't', outcome: 'completed' } })
+      expect(bar().key).toContain('status.aiNoChange')
+      expect(bar().key).not.toContain('aiTaskVerified')
+    })
+
+    it('无 task 的 ai.done：状态栏与改动前一致，会话没有 task 字段', () => {
+      local()
+      done({})
+      expect(bar().key).toContain('status.aiChanged')
+      expect(bar().key).not.toContain('aiTask')
+      expect(sessions()[0]).not.toHaveProperty('task')
+    })
+
+    it('刷新失败优先级最高：带 task 也先说刷新失败', () => {
+      local()
+      done({ refresh: { status: 'failed', code: 'scan_failed' }, task: { task_type: 't', outcome: 'completed' } })
+      expect(bar().key).toContain('aiChangedRefreshFailed')
+      expect(bar().key).not.toContain('aiTask')
+    })
+
+    it('恢复路径（断线收尾读会话详情）也合并 task，并按结局提示', async () => {
+      local()
+      detail['s-local'] = { status: 'done', changed: true, diff: 'D', transcript: [], task: { task_type: 't', outcome: 'partial', unmet: [{ constraint_id: 'c1', reason_code: 'r' }] } }
+      await useAiStore.getState().restoreRunning()
+      expect(sessions()[0].task).toMatchObject({ outcome: 'partial', unmet: [{ constraint_id: 'c1' }] })
+      expect(bar().key).toContain('aiTaskPartial')
+    })
+  })
+
   it('后端说 interrupted（重启被中断）：按失败收尾，不再当成在跑', async () => {
     useAiStore.setState({
       sessions: [{

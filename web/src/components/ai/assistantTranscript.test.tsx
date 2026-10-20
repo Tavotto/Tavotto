@@ -404,6 +404,102 @@ describe('会话失败的重试', () => {
   })
 })
 
+describe('任务结局（TAF Phase 3c）：只翻译 task.outcome', () => {
+  const status = () => q('[data-ai-status]')!.textContent
+  const unmet = [
+    { constraint_id: 'data.unchanged', reason_code: 'data_changed' },
+    { constraint_id: 'axis.range', reason_code: 'out_of_range' },
+  ]
+  const task = (outcome: NonNullable<AiSession['task']>['outcome'], withUnmet = false): AiSession['task'] => ({
+    task_type: 'edit_figure',
+    outcome,
+    ...(withUnmet ? { unmet } : {}),
+  })
+  const openDetail = async () => {
+    await act(async () => q('[data-notice-detail-toggle]')!.click())
+    return q('[data-notice-detail]')!.textContent ?? ''
+  }
+
+  it('无 task 的 done / failed：状态行与卡片与改动前逐字一致', async () => {
+    await mount([
+      session({ id: 'a', changed: true, diff: DIFF }),
+      session({ id: 'b', changed: false }),
+      session({ id: 'c', status: 'failed', error: 'boom' }),
+    ])
+    const rows = qa('[data-ai-status]').map((e) => e.textContent)
+    expect(rows).toEqual([ai('session.doneChanged'), ai('session.doneNoChange'), t('status.failed', { ns: 'ai' })])
+    expect(qa('[data-ai-task-outcome]')).toHaveLength(0)
+    expect(qa('[data-ai-error="session"]')).toHaveLength(1)
+    expect(q('[data-ai-error="session"]')!.dataset.notice).toBe('danger')
+  })
+
+  it('completed + changed：状态行说「数据核对一致」，不出结局卡', async () => {
+    await mount([session({ changed: true, diff: DIFF, task: task('completed') })])
+    expect(status()).toBe(ai('session.taskVerified'))
+    expect(q('[data-ai-task-outcome]')).toBeNull()
+    expect(q('[data-ai-error="session"]')).toBeNull()
+  })
+
+  it('partial：warn 卡（不是 danger 失败卡）+ 状态行 + 详情列出 unmet id', async () => {
+    await mount([session({ changed: true, diff: DIFF, task: task('partial', true) })])
+    expect(status()).toBe(ai('session.taskPartial'))
+    const card = q('[data-ai-task-outcome="partial"]')!
+    expect(card.dataset.notice).toBe('warn')
+    expect(card.textContent).toContain(ai('notice.taskPartial'))
+    expect(q('[data-ai-error="session"]')).toBeNull()
+    expect(qa('[data-notice="danger"]')).toHaveLength(0)
+    const detail = await openDetail()
+    expect(detail.startsWith(`${ai('notice.unmetHeading')}\ndata.unchanged\naxis.range`)).toBe(true)
+  })
+
+  it('done + partial 即使带着 error 文本也不进 danger 失败卡', async () => {
+    await mount([session({ changed: true, diff: DIFF, error: 'stale', task: task('partial') })])
+    expect(q('[data-ai-error="session"]')).toBeNull()
+    expect(q('[data-ai-task-outcome="partial"]')!.dataset.notice).toBe('warn')
+  })
+
+  it('failed + changed：danger 卡、无重试按钮（回滚在 diff 卡上），详情列出 unmet id', async () => {
+    await mount([session({ changed: true, diff: DIFF, task: task('failed', true) })])
+    expect(status()).toBe(ai('session.taskFailedChanged'))
+    const card = q('[data-ai-task-outcome="failed"]')!
+    expect(card.dataset.notice).toBe('danger')
+    expect(card.textContent).toContain(ai('notice.taskFailedChanged'))
+    expect(card.querySelector('button:not([data-notice-detail-toggle])')).toBeNull()
+    expect(q('[data-ai-error="session"]')).toBeNull()
+    expect(q('[data-ai-diff]')).not.toBeNull()
+    expect(await openDetail()).toContain('data.unchanged')
+  })
+
+  it('status failed + outcome failed + 未改动：正文是 taskRejected，错误码与 unmet 进详情，仍可重试', async () => {
+    await mount([session({ status: 'failed', changed: false, error: 'plan_rejected', task: task('failed', true) })])
+    expect(status()).toBe(ai('session.taskRejected'))
+    const card = q('[data-ai-error="session"]')!
+    expect(card.dataset.aiTaskOutcome).toBe('failed')
+    expect(card.textContent).toContain(ai('notice.taskRejected'))
+    expect(card.querySelector('[data-ai-retry]')).not.toBeNull()
+    const detail = await openDetail()
+    expect(detail).toContain('plan_rejected')
+    expect(detail).toContain('axis.range')
+  })
+
+  it('completed + 没改动：有意说「已完成，脚本没有变化」，不说「核对一致」（没写回就没有渲染层核对）', async () => {
+    await mount([session({ status: 'done', changed: false, task: task('completed') })])
+    expect(status()).toBe(ai('session.doneNoChange'))
+    expect(status()).not.toBe(ai('session.taskVerified'))
+    expect(qa('[data-ai-task-outcome]')).toHaveLength(0)
+  })
+
+  it('未知 / null / needs_input 结局：原逻辑不变', async () => {
+    await mount([
+      session({ id: 'a', changed: true, diff: DIFF, task: task(null) }),
+      session({ id: 'b', changed: true, diff: DIFF, task: task('needs_input') }),
+      session({ id: 'c', changed: true, diff: DIFF, task: task('weird' as never) }),
+    ])
+    expect(qa('[data-ai-status]').map((e) => e.textContent)).toEqual(Array(3).fill(ai('session.doneChanged')))
+    expect(qa('[data-ai-task-outcome]')).toHaveLength(0)
+  })
+})
+
 describe('改了脚本 = 显著卡（§6.2 / §6.4）', () => {
   it('文件头：已修改 · 文件名 · +N −N；回滚在文件头里', async () => {
     await mount([session({ changed: true, diff: DIFF })])

@@ -28,6 +28,7 @@ import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
 import { useScriptLibraryStore } from '@/store/scriptLibraryStore'
 import { useScriptInputStore } from '@/store/scriptInputStore'
 import { useScriptRunStore } from '@/store/scriptRunStore'
+import { admissionToastCovers } from '@/store/pngAdmissionMemory'
 import { useUiStore } from '@/store/uiStore'
 
 const short = (id: string) => id.split('/').pop()?.replace(/\.[^.]+$/, '') ?? id
@@ -140,6 +141,8 @@ export function handleServerEvent(ev: ServerEvent) {
       break
     case 'render.failed':
       render.noteBuilding(ev.id, null)
+      // 同一次 PNG 采用被拒：采用失败的那句说明（原因 + 出路）才是权威报告，后端原句不再顶掉它
+      if (admissionToastCovers(ev.id)) break
       setStatus(
         msg(
           ev.error ? 'status.renderFailedWithError' : 'status.renderFailed',
@@ -338,6 +341,23 @@ function announceAiDone(ev: DonePayload) {
       ? translateBackend(code)
       : code
     setStatus(msg('status.aiChangedRefreshFailed', { reason }, 'ai'), 'error')
+    return
+  }
+  // 任务结局（TAF）：只翻译 `task.outcome`；刷新失败那条优先级最高，在上面已经返回。
+  // completed + 没改动有意走下面的 `aiNoChange`（没写回 = 没做渲染层核对，不能说「核对一致」；转录 `statusText` 同一口径）
+  const outcome = ev.task?.outcome
+  const taskKey =
+    ev.status === 'done' && ev.changed && outcome === 'completed'
+      ? 'status.aiTaskVerified'
+      : ev.status === 'done' && outcome === 'partial'
+        ? 'status.aiTaskPartial'
+        : ev.status === 'done' && ev.changed && outcome === 'failed'
+          ? 'status.aiTaskFailedChanged'
+          : ev.status === 'failed' && !ev.changed && outcome === 'failed'
+            ? 'status.aiTaskRejected'
+            : null
+  if (taskKey) {
+    setStatus(msg(taskKey, undefined, 'ai'), taskKey === 'status.aiTaskVerified' || taskKey === 'status.aiTaskPartial' ? 'info' : 'error')
     return
   }
   setStatus(

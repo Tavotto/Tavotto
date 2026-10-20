@@ -331,6 +331,10 @@ export function returnToLayout(): void {
   const panel = activeFigurePanel()
   useWorkspaceStore.getState().exitToLayout()
   useUiStore.getState().setElementPanel(null)
+  // 用户主动回排版的一枪（一个 action 一个发射点）；本来就在排版上的「空切换」不算。
+  // 发在「重新选中那张图」之前：下面那一下选区变化会触发「双击进入图内编辑」，而刚从图内回来的人
+  // 此刻更该先看到纸面说明——先到先占那一个提示槽位
+  if (wasFastEdit) emitActivity({ kind: 'workspace.returned_to_layout' })
   if (panel) useSelectionStore.getState().set([panel.id])
   // **先还原用户进来之前看的那一片**（审计 T01）：他没缩放没平移，画面就不该变。
   // 记录对不上（换过画布 / 会话恢复时本来就在快速编辑里）才现算一个落点。

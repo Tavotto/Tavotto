@@ -211,11 +211,14 @@ is safe on the public health endpoint.
 
 ## Deploying to Tencent Cloud SCF (mainland China reachability)
 
-`*.vercel.app` and anything CNAME'd to Vercel is unreachable from mainland China.
-The client fails **silently** there (events are dropped, the user notices
-nothing), which means mainland users would be invisible in the data rather than
-producing errors. If that matters for your numbers, run a second instance on
-Tencent Cloud SCF.
+**Not needed as of 2026-10-20.** The bare `*.vercel.app` domain is commonly
+blocked in mainland China, but `telemetry.tavotto.com` measured reachable from all
+321 itdog mainland monitoring points (HTTPS mean ≈ 1.3 s, a slow tail up to ~10 s;
+details and the remaining bias in `docs/analytics/yc-metrics.md`). The client
+fails **silently** when it cannot reach the proxy (events are dropped, the user
+notices nothing), so re-measure before trusting that this still holds. If it
+stops holding, a second instance on Tencent Cloud SCF is one option; the existing
+mainland node is another.
 
 The proxy needs no code changes: SCF's **Web function** type just wants a process
 listening on `0.0.0.0:9000`, and `scf_bootstrap` in this directory does exactly

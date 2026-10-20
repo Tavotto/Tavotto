@@ -858,6 +858,15 @@ class NativeSession:
         self.script_error = resp.get("script_error") or self.script_error
         return resp
 
+    def publish_built(self) -> None:
+        """build 出来的描述符已经绑上活路由：把带描述符的新快照推给界面（状态不变，序号 +1）。
+
+        桌面拥有的会话由准备 runner 自己 build，屏障事件在 build 之前就发出了——界面手里这条会话的 `descriptors`
+        还是空的，面板按描述符认领会话，认不到就把一张活着的图报成「会话已结束」。`GET /api/native/sessions`
+        的快照与屏障事件同序号，`refresh()` 的「序号更大才覆盖」也补不上，所以要由后端发一条序号更大的。
+        终端拥有的会话不走这里：界面在屏障处自己 build，再多一条事件只会让它再 build 一次。"""
+        self._publish(built="descriptors")
+
     def override(
         self, stem: str, patches: list, preview_dpi: int | None = None, inline_svg: bool = False
     ) -> dict:

@@ -77,7 +77,9 @@ DEFAULT_ENDPOINT = "https://telemetry.tavotto.com/v1/events"
 #: 有界内存队列。满了就丢——阻塞调用方是绝对不允许的，而无界队列在代理长时间
 #: 不可达时会把内存吃光。
 QUEUE_MAX = 128
-NETWORK_TIMEOUT_S = 3
+#: 单次 socket 操作的超时（建连 / TLS / 等响应各自计时）。投递在后台线程里，放宽不阻塞任何界面；
+#: 3 s 时 2026-10-20 itdog 国内 321 个监测点里有少数慢网络整段 >3 s（均值约 1.3 s），会被静默丢掉
+NETWORK_TIMEOUT_S = 5
 
 CONSENT_UNSET = "unset"
 CONSENT_ENABLED = "enabled"

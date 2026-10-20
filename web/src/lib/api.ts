@@ -1,3 +1,4 @@
+import { classifyArtifactFailure } from '@/lib/artifactReason'
 import { ArtifactValidationError, validationFromSource, type ArtifactRequestFields } from '@/lib/artifactValidation'
 import { apiUrl, apiUrlFor, currentProjectId, withProject, withProjectFor } from '@/lib/session'
 import { formatMessage, i18n, literal, msg, t, type UiMessage } from '@/i18n'
@@ -11,7 +12,7 @@ export interface PanelInfo {
   id: string
   name: string
   folder: string
-  kind: 'pdf' | 'raster'
+  kind: 'pdf' | 'raster' | 'svg'
   native_w_mm: number
   native_h_mm: number
   px_w?: number
@@ -237,18 +238,14 @@ export function backendErrorText(e: unknown): string {
  * 原文，按 i18n 纪律不翻，也不依赖后端消息的中文前缀格式）；没有文案的
  * code 照旧原文透出。两条控制面（Python 池 / workerd）走的都是同一形状。
  */
-function artifactErrorMsg(reason: unknown): UiMessage {
-  if (reason === 'background_visibility_required') return msg('artifact.backgroundVisibilityRequired', undefined, 'errors')
-  if (reason === 'source_changed') return msg('artifact.sourceChanged', undefined, 'errors')
-  if (reason === 'frame_changed' || reason === 'invalid_guard') return msg('artifact.frameChanged', undefined, 'errors')
-  if (reason === 'writeback_not_supported') return msg('artifact.writebackUnsupported', undefined, 'errors')
-  if (reason === 'not_untouched') return msg('artifact.legacyEdits', undefined, 'errors')
-  return msg('artifact.unsupported', undefined, 'errors')
+function artifactErrorMsg(err: unknown): UiMessage {
+  // reason → 文案 key 的映射只在 `artifactReason.ts` 的那张表里
+  return msg(classifyArtifactFailure(err).messageKey, undefined, 'errors')
 }
 
 export function engineErrorMsg(err: unknown): UiMessage {
   if (err instanceof ArtifactValidationError || (err instanceof EngineError && err.code === 'artifact_source_unavailable')) {
-    return artifactErrorMsg(err instanceof ArtifactValidationError ? err.reason : err.params?.reason)
+    return artifactErrorMsg(err)
   }
   if (err instanceof EngineError && err.installRoute === 'unsupported_platform') {
     return msg('prep.line.depsPlatform', { module: err.module }, 'workspace')
@@ -291,7 +288,7 @@ export function backendCodeMsg(
   // 用 exists 而不是 defaultValue 判「有没有这条」：i18n 那边的
   // parseMissingKeyHandler 会把缺失的 key 原样吐回来（界面上看得见是哪条），
   // 那样 defaultValue 永远轮不到，缺文案时用户看到的就是 `backend.xxx`。
-  if (code === 'artifact_source_unavailable') return artifactErrorMsg(params?.reason)
+  if (code === 'artifact_source_unavailable') return artifactErrorMsg({ params })
   // T03：用户给了精确参数、脚本自己的解析器仍然拒绝——同一个稳定码，文案不能再说"没带参数"
   if (code === 'script_needs_arguments' && Number(params?.argv_count) > 0) {
     return msg('backend.script_rejected_arguments', params ?? {}, 'errors')
@@ -800,6 +797,7 @@ export const panelSrc = (
 ): string | null => {
   if (kind === 'raster')
     return BROWSER_RASTER_EXTS.has(extOf(id)) ? fileUrl(id, mtime) : renderUrl(id, bucket, mtime)
+  if (kind === 'svg') return fileUrl(id, mtime)
   if (kind === 'pdf') return renderUrl(id, bucket, mtime)
   if (kind === 'runtime') return runtimePreviewUrl(id, mtime)
   return null
@@ -3315,8 +3313,23 @@ export const acceptAiPending = (rid: string, file: string, pj: string | null) =>
     pj,
   )
 
+/**
+ * 改图任务的结局（TAF，ADR 0138）。**与 `status` 分开记**：`status: 'done'` + `outcome: 'partial' | 'failed'`
+ * 是「脚本确实改了，但核对没通过」。前端只翻译这里的值，不判断检查本身。
+ * 老后端 / `ai.taf.enabled` 关着时整个字段都没有（`undefined`），界面照旧逻辑。
+ */
+export interface AiTaskSummary {
+  task_type: string
+  outcome: 'completed' | 'partial' | 'needs_input' | 'failed' | 'cancelled' | 'interrupted' | null
+  /** 没满足的检查（技术 id + 稳定原因码）；界面只在详情里列 id */
+  unmet?: { constraint_id: string; reason_code: string }[]
+  explain?: { message_key: string; params: Record<string, unknown> }
+}
+
 /** 会话详情（转录 + diff）；查询到已登记的会话后补全界面用 */
 export interface AiSessionDetail {
+  /** 任务结局；老后端没有 */
+  task?: AiTaskSummary
   agent?: string
   /** 文件变了之后项目刷新的结局（`changed:true` + `failed` = 改成了、项目没刷新） */
   refresh?: AiRefreshOutcome | null
@@ -3549,6 +3562,8 @@ export type ServerEvent =
       error?: string
       /** 文件变了之后后端统一刷新的结局（ADR 0041）；老后端没有这个字段 */
       refresh?: AiRefreshOutcome
+      /** 任务结局（TAF）；与 `status` 分开记，老后端没有这个字段 */
+      task?: AiTaskSummary
     } & ProjectScoped)
 
 /**

@@ -2357,6 +2357,9 @@ class EngineWorker:
     script_input_policy = None
     #: 最近一次 build 实际用到的每一问（build 响应的 `script_inputs`；口令那一问没有值，T08）。
     last_build_script_inputs: list = []
+    #: 最近一次成功 build **实际读到并执行**的脚本字节的 sha256（worker 自报，build 响应的 `source_sha256`）；
+    #: 没 build / build 失败 / 老 worker 没带 = None。TAF 改图验证比的是它，不是 spawn 时采样的 `script_sha1`。
+    last_build_source_sha256: str | None = None
     #: 最近一次 build 每一问的去向计数（`inputbroker.InputFacts`）与它绑定的执行转录（只有 id 与计数）。
     last_input_facts: dict | None = None
     last_input_transcript: dict | None = None
@@ -2715,9 +2718,11 @@ class EngineWorker:
                 resp = self.request({"cmd": "build"}, BUILD_HARD_TIMEOUT)
         except inputbroker.TranscriptUnavailable as exc:
             self.build_failed = True
+            self.last_build_source_sha256 = None
             raise WorkerError(str(exc), code=exc.code) from exc
         except BaseException:
             self.build_failed = True
+            self.last_build_source_sha256 = None
             raise
         self.build_failed = False
         self.built = True
@@ -2730,6 +2735,8 @@ class EngineWorker:
         self.last_build_execution_id = resp.get("execution_id")
         self.last_build_artifact_probe = resp.get("artifact_probe")
         self.last_build_script_inputs = _script_inputs_of(resp)
+        sha = resp.get("source_sha256")
+        self.last_build_source_sha256 = sha if isinstance(sha, str) else None
         try:
             inputbroker.finished(self, self.last_build_script_inputs)  # 执行转录（T08）
         except BaseException:
@@ -2737,6 +2744,7 @@ class EngineWorker:
             self.built = False
             self.build_failed = True
             self.last_build_descriptors = []
+            self.last_build_source_sha256 = None
             raise
         self.last_patch_hash = _EMPTY_PATCH_HASH
         self.last_patch_hash_by_stem.clear()  # 每个 stem 都回到脚本原样
@@ -3052,6 +3060,9 @@ class WorkerdWorker:
     #: 与 EngineWorker 同形（ADR 0099）。
     script_input_policy = None
     last_build_script_inputs: list = []
+    #: 最近一次成功 build **实际读到并执行**的脚本字节的 sha256（worker 自报，build 响应的 `source_sha256`）；
+    #: 没 build / build 失败 / 老 worker 没带 = None。TAF 改图验证比的是它，不是 spawn 时采样的 `script_sha1`。
+    last_build_source_sha256: str | None = None
     last_input_facts: dict | None = None
     last_input_transcript: dict | None = None
 
@@ -3375,9 +3386,11 @@ class WorkerdWorker:
                 resp = self._call("build", BUILD_HARD_TIMEOUT, idle_timeout=BUILD_IDLE_TIMEOUT)
         except inputbroker.TranscriptUnavailable as exc:
             self.build_failed = True
+            self.last_build_source_sha256 = None
             raise WorkerError(str(exc), code=exc.code) from exc
         except BaseException:
             self.build_failed = True  # 与 EngineWorker 同一个判据
+            self.last_build_source_sha256 = None
             raise
         self.build_failed = False
         self.built = True
@@ -3390,6 +3403,8 @@ class WorkerdWorker:
         self.last_build_execution_id = resp.get("execution_id")
         self.last_build_artifact_probe = resp.get("artifact_probe")
         self.last_build_script_inputs = _script_inputs_of(resp)
+        sha = resp.get("source_sha256")
+        self.last_build_source_sha256 = sha if isinstance(sha, str) else None
         try:
             inputbroker.finished(self, self.last_build_script_inputs)  # 执行转录（T08）
         except BaseException:
@@ -3397,6 +3412,7 @@ class WorkerdWorker:
             self.built = False
             self.build_failed = True
             self.last_build_descriptors = []
+            self.last_build_source_sha256 = None
             raise
         self.last_patch_hash = _EMPTY_PATCH_HASH
         self.last_patch_hash_by_stem.clear()  # 每个 stem 都回到脚本原样

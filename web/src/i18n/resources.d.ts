@@ -90,6 +90,12 @@ export default interface Resources {
       "expand": "展开",
       "resend": "重新发送"
     },
+    "notice": {
+      "taskFailedChanged": "改动已写入，但核对发现数据或输出变了；不对的话可以回滚到修改前。",
+      "taskPartial": "改动已写入，但有检查没能完成，结果未经完整核对。",
+      "taskRejected": "改动没通过写回前检查，没有写入项目。",
+      "unmetHeading": "未满足的检查"
+    },
     "panel": {
       "abort": "中止",
       "agentModel": "执行器与模型",
@@ -163,7 +169,11 @@ export default interface Resources {
       "restoredNote": "已接回仍在运行的任务；此前的输出不再显示，结束后会更新结果。",
       "reverted": "已回滚，脚本已恢复到修改前。",
       "revertedStatus": "已回滚助手的修改，正在重建图表…",
-      "running": "正在修改脚本…"
+      "running": "正在修改脚本…",
+      "taskFailedChanged": "已改，但核对没通过",
+      "taskPartial": "已改，部分检查没能完成",
+      "taskRejected": "修改没通过写回前检查，项目未改动",
+      "taskVerified": "已改，数据核对一致"
     },
     "status": {
       "aiAlreadyRan": "这条指令已经执行过（任务记录已被删除），不会再次发送。",
@@ -172,6 +182,10 @@ export default interface Resources {
       "aiFailed": "AI 任务失败",
       "aiNoChange": "助手已完成，脚本没有改动",
       "aiSuperseded": "这条指令已被改写后的新指令取代，不会再执行。",
+      "aiTaskFailedChanged": "助手已修改脚本，但核对没通过，可以回滚",
+      "aiTaskPartial": "助手已修改脚本，部分检查没能完成",
+      "aiTaskRejected": "助手的修改没通过检查，项目未改动",
+      "aiTaskVerified": "助手已修改脚本，数据核对一致，正在重新渲染…",
       "aiTimeout": "AI 任务超时",
       "cancelled": "已取消",
       "done": "完成",
@@ -2286,9 +2300,16 @@ export default interface Resources {
       "frameChanged": "保存的图幅标记不匹配，已保留修改与位置。请使用兼容的历史版本；不会自动换算。",
       "keepTransparent": "保留透明背景",
       "legacyEdits": "这张图已有编辑或写回基线，暂不能自动改用所选 PNG 图幅。现有修改保持原样。",
+      "rebuildEditable": "重建为可编辑图",
+      "rebuildFailed": "没能用脚本重画出这张图，原 PNG 保持不变。",
+      "rebuilding": "正在用脚本重画这张图…",
+      "rebuilt": "已用脚本重画出一张可编辑的图，原 PNG 保持不变。",
+      "retryAdmission": "再试一次",
       "showBackground": "显示背景颜色",
       "sourceChanged": "源文件已变化，已保留你的修改。请恢复匹配的源文件或选择兼容的历史版本。",
-      "unsupported": "这张 PNG 暂不能安全进入编辑。已保留原图；当前支持固定或已完成一次排版的完整 figsize 图幅。",
+      "sourceMismatch": "当前环境重画出的图与这张 PNG 不完全一致（多半是 matplotlib 版本不同），已保留原图。",
+      "unsupported": "这张 PNG 暂时不能安全进入编辑，已保留原图。",
+      "unsupportedRenderState": "这张 PNG 里有暂时无法逐像素核对的元素（比如图例），已保留原图。",
       "writebackUnsupported": "这张图暂不支持重新构建、写回或同步源图。可以继续编辑并导出新文件。"
     },
     "backend": {
@@ -2520,6 +2541,8 @@ export default interface Resources {
       "source_missing": "该图的源文件暂时不可用：{{figure}}。",
       "specfix_native_unsupported": "用 {{product}} Run 打开的图暂不支持自动修复，图没有改动。",
       "stale_write": "自动保存冲突：磁盘上已有更新的版本",
+      "svg_asset_export_unsupported": "SVG 素材目前支持预览、摆放和原图 SVG 导出；画布与跨格式导出尚未支持。请先将该素材转换为 PDF 后导入。",
+      "svg_asset_unsupported": "此 SVG 暂不支持导入。请使用尺寸明确的独立静态 SVG；不支持脚本、外部资源或 DTD。",
       "svg_source_unsupported": "{{id}} 的当前来源无法安全转换为 SVG。请改用 PDF 格式导出。",
       "sync_different_scripts": "两张图不属于同一个脚本，无法同步",
       "tiff_bigtiff": "{{file}} 是 BigTIFF，暂不支持。请另存为普通 TIFF 或 PNG。",
@@ -3478,6 +3501,7 @@ export default interface Resources {
       "editProp": "修改{{label}}",
       "figureSize": "整图 {{w}} × {{h}} mm",
       "foldBackground": "背景和其他",
+      "foldBboxDetail": "背景细项",
       "foldCoords": "坐标轴、翻转、长宽比",
       "foldCount_other": "{{count}} 项",
       "foldGrid": "网格线",
@@ -4902,7 +4926,9 @@ export default interface Resources {
     },
     "hints": {
       "fast_edit_entered": "你的改动会保存到当前排版，原始文件不动。",
+      "layout_page_bounds": "白色纸面就是导出的 Figure 尺寸；单栏、双栏宽度按当前规范，可在右侧「画布」页调整。",
       "multi_select": "用选区旁的浮动栏对齐和分布。",
+      "pageBoundsOpen": "打开画布页",
       "panel_editable": "双击进入图内编辑。",
       "panel_layout_only": "这张图可在版面上摆放；连接源脚本后能改图里的内容。",
       "problem_found": "左侧「问题」可定位对象和属性字段。"

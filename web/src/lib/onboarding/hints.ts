@@ -8,6 +8,7 @@
  * | 第一次进入快速编辑 | 修改会保存到当前文档 |
  * | 第一次多选 | 选区附近可直接对齐和分布 |
  * | 第一次出现问题 | 左侧「问题」可定位到对象和字段 |
+| 第一次**主动**从快速编辑回到排版（`returnToLayout`） | 纸面就是导出的 Figure 尺寸（锚在右栏「画布」页签，见下） |
  *
  * 判据来自活动信号 + store 现状；「看过没有」记在 onboardingStore（本机，
  * 不依赖遥测同意）。**教程进行中不出提示**——coachmark 已经在说话了。
@@ -21,6 +22,12 @@ import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
 import { useValidationStore } from '@/store/validationStore'
 import { useWorkspaceStore } from '@/store/workspace'
+
+/**
+ * 带锚点的提示：不进通知轨，由锚点所在的组件（`PageBoundsHint`，挂在右栏页签条下）自己画。
+ * 仍占 `useHintStore.current` 这一个槽位——与轨上的提示互斥，不叠。
+ */
+export const ANCHORED_HINTS: ReadonlySet<HintKind> = new Set<HintKind>(['layout_page_bounds'])
 
 /** 提示自动收起的时长；用户也可以随手关 */
 export const HINT_AUTO_DISMISS_MS = 9000
@@ -47,11 +54,21 @@ export const useHintStore = create<HintState>((set) => ({
   },
 }))
 
-/** 显示一条；已经看过 / 教程进行中 / 已经有一条在显示 → 不显示 */
+/**
+ * 锚点此刻在不在：右栏是开着的（窄屏下它是抽屉，收起时整个卸载，页签条也就不在）。
+ * 读 store 不读 DOM；不在就不出现、也**不记看过**（下一次主动回排版再来）。
+ */
+export function anchorAvailable(kind: HintKind): boolean {
+  if (kind === 'layout_page_bounds') return useUiStore.getState().rightOpen
+  return true
+}
+
+/** 显示一条；已经看过 / 教程进行中 / 已经有一条在显示 / 锚点不在 → 不显示 */
 export function showHint(kind: HintKind): boolean {
   if (hintSeen(kind)) return false
   if (useOnboardingStore.getState().status === 'active') return false
   if (useHintStore.getState().current) return false
+  if (!anchorAvailable(kind)) return false
   useOnboardingStore.getState().markHintSeen(kind)
   useHintStore.setState((s) => ({ current: kind, token: s.token + 1 }))
   hintDismissTimer.start(HINT_AUTO_DISMISS_MS, () => useHintStore.getState().dismiss())
@@ -76,6 +93,10 @@ function onSignal(d: ActivityDetail): void {
     case 'workspace.mode_changed':
       if (d.mode === 'fast_edit') showHint('fast_edit_entered')
       return
+    case 'workspace.returned_to_layout':
+      // 只认 `returnToLayout` 发的这一枪：启动恢复 / 换文档 / 修剪 / 定位问题的被动退出都不发它
+      showHint('layout_page_bounds')
+      return
     default:
       return
   }
@@ -91,9 +112,15 @@ export function startHintEngine(): () => void {
   const unsubValidation = useValidationStore.subscribe((s, prev) => {
     if (s.ready && s.issues.length > 0 && prev.issues.length === 0) showHint('problem_found')
   })
+  // 锚点跟着走：右栏收起 / 被抽屉互斥收掉时，锚在它上面的提示一并收起（不留悬浮孤岛）
+  const unsubUi = useUiStore.subscribe(() => {
+    const cur = useHintStore.getState().current
+    if (cur && ANCHORED_HINTS.has(cur) && !anchorAvailable(cur)) useHintStore.getState().dismiss()
+  })
   stop = () => {
     unsubActivity()
     unsubValidation()
+    unsubUi()
     hintDismissTimer.cancel()
     useHintStore.setState({ current: null })
     stop = null
