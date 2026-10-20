@@ -15,6 +15,7 @@ import os
 import re
 import sqlite3
 import time
+import uuid
 from pathlib import Path
 
 from . import config
@@ -194,15 +195,49 @@ class ScriptBusy(Exception):
         self.script = script
 
 
-def owner_alive(owner_pid: int | None, started_ms: int | None, now_ms: int | None = None) -> bool:
+def owner_alive(
+    owner_pid: int | None,
+    started_ms: int | None,
+    now_ms: int | None = None,
+    *,
+    owner_token: str | None = None,
+    beat_ms: int | None = None,
+) -> bool:
     """这条 running 行的属主还活着吗。属主未知（NULL）/ 就是本进程（它在内存里另有判据，磁盘上的是上一实例留下的）/
-    pid 已死 / 行太老 → False；量不了 → 保守当活着（宁可多挡一次，不让两个进程同时改同一个脚本）。"""
+    pid 已死 / 行太老 / 心跳过期 → False；量不了 → 保守当活着（宁可多挡一次，不让两个进程同时改同一个脚本）。
+    心跳判据只对带 `owner_token` 且写过 `owner_beat_ms` 的行生效（#1113）；老行没有这两个值，按原语义。"""
     if owner_pid is None or owner_pid == os.getpid():
         return False
     now_ms = int(time.time() * 1000) if now_ms is None else now_ms
+    if owner_token is not None and beat_ms is not None and now_ms - beat_ms > OWNER_BEAT_STALE_MS:
+        return False
     if started_ms is not None and now_ms - started_ms > RUNNING_OWNER_MAX_AGE_MS:
         return False
     return pid_alive(owner_pid) is not False
+
+
+#: 本服务进程的**属主代际**：进程启动时随机生成一次的常量，`record_start` 把它写进会话行的 `owner_token`。
+#: 「属主是谁」= (pid, token)——pid 会被复用，新进程拿不到旧进程的 token（#1113）。跨进程取消的意图、属主执行都认它，
+#: **绝不按 pid 对别的进程发信号**。只在内存里，不落盘、不进日志 / 遥测 / 诊断包
+OWNER_TOKEN = uuid.uuid4().hex
+
+#: 属主心跳超过这么久没更新就当属主已死（pid 存活也算死：pid 被复用，或属主线程卡死）。只对带 `owner_token` + `owner_beat_ms`
+#: 的行生效；没有这两列值的老行沿用 pid 存活 + `RUNNING_OWNER_MAX_AGE_MS`。值取心跳 tick 的 15 倍：笔记本休眠 / 短暂的 GC
+#: 停顿不至于被当成死亡
+OWNER_BEAT_STALE_MS = 30_000
+
+
+def row_owner_alive(row, now_ms: int | None = None) -> bool:
+    """一行（`sqlite3.Row` / dict）的属主还活着吗：`owner_alive` 加上心跳判据。**所有"属主死活"的调用点都走这一个**
+    （忙碌判定 / 启动清理 / 读路径收尾 / `final` 判断）——两处语义不同就是第二份定义。"""
+    keys = row.keys()
+    return owner_alive(
+        row["owner_pid"],
+        row["started_ms"],
+        now_ms,
+        owner_token=row["owner_token"] if "owner_token" in keys else None,
+        beat_ms=row["owner_beat_ms"] if "owner_beat_ms" in keys else None,
+    )
 
 
 #: 幂等账本的保留期；超龄才清（会话那时早已终态：启动时 running 一律转 interrupted）
@@ -247,6 +282,15 @@ _ADDED_COLUMNS = {
     # NeedsInput 之后用户的回答是一个新任务：指回上一个任务
     "parent_task_id": "TEXT",
     "budget_used": "TEXT",
+    # 跨进程取消（#1113）：`owner_token` 是登记它的服务进程的属主代际（`OWNER_TOKEN`），`owner_beat_ms` 是属主最近一次心跳。
+    # `cancel_requested_ms` / `cancel_token` 是别的进程写的**取消意图**（`cancel_token` = 写意图时观察到的 owner_token，
+    # 属主只执行 token 与自己相同的意图）；`cancel_result` 是属主执行后的结果（ok / refused_committing / gone）。
+    # 老行全 NULL = 没有 token 的旧属主，沿用 pid 存活判据；不另建表、不动 user_version。
+    "owner_token": "TEXT",
+    "owner_beat_ms": "INTEGER",
+    "cancel_requested_ms": "INTEGER",
+    "cancel_token": "TEXT",
+    "cancel_result": "TEXT",
 }
 
 #: TAF 任务那几列里存 JSON 的：读出时解码，读不出来给 None（同 `refresh`）
@@ -344,6 +388,10 @@ def record_start(sess: dict, db_path: Path | None = None) -> tuple[bool, str]:
     **不写会话行**，回 `(False, 既有会话 id)`，调用方不得 spawn。预留与会话行在同一个事务里，崩溃不会留下
     「账本有、会话无」的半条记录。会话行用普通 INSERT（sid 唯一），不再顶替同请求 id 的行。"""
     rid = sess.get("client_request_id")
+    owner_pid = sess.get("owner_pid", os.getpid())
+    # 登记者就是本进程才带本进程的属主代际；调用方替别的进程登记（`owner_pid` 不是自己）时不冒充它的 token
+    owner_token = sess.get("owner_token", OWNER_TOKEN if owner_pid == os.getpid() else None)
+    now_ms = int(time.time() * 1000)
     with _immediate(db_path) as con:
         if rid:
             reserved, existing = _reserve(con, sess.get("project", ""), rid, sess["id"])
@@ -353,17 +401,19 @@ def record_start(sess: dict, db_path: Path | None = None) -> tuple[bool, str]:
         # 不能只靠进程内的脚本锁：两个服务进程用不同 rid 改同一个用户脚本时它管不到对方
         if sess.get("script"):
             for other in con.execute(
-                f"SELECT owner_pid, started_ms FROM sessions WHERE project=? AND script=? AND {OPEN_SESSION_SQL}",
+                f"SELECT owner_pid, started_ms, owner_token, owner_beat_ms FROM sessions "
+                f"WHERE project=? AND script=? AND {OPEN_SESSION_SQL}",
                 (sess.get("project", ""), sess["script"]),
             ):
-                if owner_alive(other["owner_pid"], other["started_ms"]):
+                if row_owner_alive(other):
                     raise ScriptBusy(sess["script"])
         con.execute(
             """INSERT INTO sessions
                (id, project, canvas, panel, element, provider, model, effort,
                 scope, target, script, prompt, status, started_ms, snapshot_path,
-                client_request_id, owner_pid, task_type, phase, envelope, parent_task_id)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                client_request_id, owner_pid, task_type, phase, envelope, parent_task_id,
+                owner_token, owner_beat_ms)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (
                 sess["id"],
                 sess.get("project", ""),
@@ -378,16 +428,18 @@ def record_start(sess: dict, db_path: Path | None = None) -> tuple[bool, str]:
                 sess.get("script"),
                 sess.get("prompt", ""),
                 "running",
-                int(time.time() * 1000),
+                now_ms,
                 sess.get("snapshot_path"),
                 sess.get("client_request_id"),
-                sess.get("owner_pid", os.getpid()),
+                owner_pid,
                 sess.get("task_type"),
                 sess.get("phase"),
                 None
                 if sess.get("envelope") is None
                 else json.dumps(sess["envelope"], ensure_ascii=False),
                 sess.get("parent_task_id"),
+                owner_token,
+                now_ms if owner_token is not None else None,
             ),
         )
     return True, sess["id"]
@@ -465,13 +517,25 @@ def mark_interrupted_running(db_path: Path | None = None) -> int:
         return _close_dead_owner_rows(con, int(time.time() * 1000))
 
 
+def _is_own_row(r) -> bool:
+    """这一行是**本进程这一代**登记的吗（读路径不收：已 `record_start`、尚未进 `SESSIONS` 的窗口里它还活着）。
+    带 token 的行认 token——同 pid 但 token 不同是 pid 被复用的新进程，旧行属于已死的上一代；没 token 的老行认 pid。"""
+    token = r["owner_token"] if "owner_token" in r.keys() else None
+    if token is not None:
+        return token == OWNER_TOKEN
+    return r["owner_pid"] == os.getpid()
+
+
 def _close_dead_owner_rows(
     con: sqlite3.Connection, now: int, *, project: str | None = None, skip_own_pid: bool = False
 ) -> int:
     """把 `OPEN_SESSION_SQL` 里属主已死的行收尾（须在 `_immediate` 事务里调）。启动清理与读路径收尾共用这一个判据。
     `skip_own_pid`：`owner_alive` 对本进程 pid 回 False（那是给启动清理用的：磁盘上本进程 pid 的行是上一实例留下的），
     读路径上本进程的行可能正处在「已 `record_start`、尚未进 `SESSIONS`」的窗口，不能收——读路径一律置 True。"""
-    sql = f"SELECT id, status, owner_pid, started_ms FROM sessions WHERE {OPEN_SESSION_SQL}"
+    sql = (
+        "SELECT id, status, owner_pid, started_ms, owner_token, owner_beat_ms, cancel_requested_ms "
+        f"FROM sessions WHERE {OPEN_SESSION_SQL}"
+    )
     args: tuple = ()
     if project is not None:
         sql += " AND project=?"
@@ -479,11 +543,17 @@ def _close_dead_owner_rows(
     interrupted = 0
     # `OPEN_SESSION_SQL` 已含 `interrupt_all`（/api/shutdown）写了 interrupted 却没来得及写 `ended_ms` 进程就退出的行——补上结束时刻
     for r in con.execute(sql, args).fetchall():
-        if skip_own_pid and r["owner_pid"] == os.getpid():
+        if skip_own_pid and _is_own_row(r):
             continue
-        if owner_alive(r["owner_pid"], r["started_ms"], now):
+        if row_owner_alive(r, now):
             continue
-        if r["status"] == "running":
+        if r["status"] == "running" and r["cancel_requested_ms"] is not None:
+            # 别的进程已经为它写了取消意图、属主还没来得及执行就死了：用户要的结局是「取消」，不是「中断」
+            con.execute(
+                "UPDATE sessions SET status='cancelled', ended_ms=?, phase=NULL, cancel_result='owner_gone' WHERE id=?",
+                (now, r["id"]),
+            )
+        elif r["status"] == "running":
             con.execute(
                 "UPDATE sessions SET status='interrupted', ended_ms=?, phase=NULL WHERE id=?",
                 (now, r["id"]),
@@ -499,20 +569,112 @@ def reap_dead_owners(project: str | None = None, db_path: Path | None = None) ->
     先**无写锁探测**，没有死属主就不拿写锁（列表轮询不该每次抢写锁）；有才 `_immediate` 持锁重读再收（幂等：两个进程同时收
     不会互相改回）。**不收本进程的行**（见 `_close_dead_owner_rows`）。回值是被转为 interrupted 的行数。"""
     now = int(time.time() * 1000)
-    sql = f"SELECT owner_pid, started_ms FROM sessions WHERE {OPEN_SESSION_SQL}"
+    sql = f"SELECT owner_pid, started_ms, owner_token, owner_beat_ms FROM sessions WHERE {OPEN_SESSION_SQL}"
     args: tuple = ()
     if project is not None:
         sql += " AND project=?"
         args = (project,)
     with contextlib.closing(_connect(db_path)) as con:
         rows = con.execute(sql, args).fetchall()
-    if not any(
-        r["owner_pid"] != os.getpid() and not owner_alive(r["owner_pid"], r["started_ms"], now)
-        for r in rows
-    ):
+    if not any(not _is_own_row(r) and not row_owner_alive(r, now) for r in rows):
         return 0
     with _immediate(db_path) as con:
         return _close_dead_owner_rows(con, now, project=project, skip_own_pid=True)
+
+
+def owner_tick(token: str | None = None, db_path: Path | None = None) -> list[str]:
+    """属主进程的一次心跳 + 取消意图收取（#1113）：对 `token`（默认本进程的 `OWNER_TOKEN`）名下**还没结束**的行写
+    `owner_beat_ms`，并回其中带**有效取消意图**的 sid——意图有效 = 行仍 `running`、`cancel_token` 等于这个 token、
+    `cancel_result` 还没写。名下没有 open 行就不拿写锁（空闲进程每 tick 只读一次）。"""
+    token = OWNER_TOKEN if token is None else token
+    with contextlib.closing(_connect(db_path)) as con:
+        rows = con.execute(
+            f"SELECT id, status, cancel_requested_ms, cancel_token, cancel_result FROM sessions "
+            f"WHERE owner_token=? AND {OPEN_SESSION_SQL}",
+            (token,),
+        ).fetchall()
+        if not rows:
+            return []
+        con.execute(
+            f"UPDATE sessions SET owner_beat_ms=? WHERE owner_token=? AND {OPEN_SESSION_SQL}",
+            (int(time.time() * 1000), token),
+        )
+        con.commit()
+    return [
+        r["id"]
+        for r in rows
+        if r["status"] == "running"
+        and r["cancel_requested_ms"] is not None
+        and r["cancel_token"] == token
+        and r["cancel_result"] is None
+    ]
+
+
+def record_cancel_result(
+    sid: str, result: str, token: str | None = None, db_path: Path | None = None
+) -> bool:
+    """属主执行完一个取消意图后记结果（`ok` / `refused_committing` / `gone`）。只写本代属主名下、还没有结果的行。"""
+    token = OWNER_TOKEN if token is None else token
+    with _connect(db_path) as con:
+        return (
+            con.execute(
+                "UPDATE sessions SET cancel_result=? WHERE id=? AND owner_token=? AND cancel_result IS NULL",
+                (result, sid, token),
+            ).rowcount
+            > 0
+        )
+
+
+def request_cancel(
+    sid: str, project: str, *, expect_token: str | None = None, db_path: Path | None = None
+) -> str:
+    """别的进程里的会话：为它写**持久取消意图**，由属主进程在下一个 tick 执行（从不对属主的子进程发信号）。
+    整个读-判-写在一个 `_immediate` 事务里。回值（闭集）：
+
+    - `not_found`：没有这一行，或它不属于 `project`（不泄露别的项目的会话存在与否）
+    - `not_running`：已经是终态 / 已被取消并收尾，没有什么可取消的
+    - `own`：属主就是本进程这一代（该走进程内的取消，不写意图）
+    - `owner_gone`：属主已死（pid 不在 / 心跳过期）——不写意图，就地走收尾（`_close_dead_owner_rows`），行随即关闭
+    - `owner_unsupported`：属主还活着但是老行（没有 token）——对方不会轮询意图，写了也是悬挂
+    - `committing`：TAF 任务已进入提交，取消不被接受（与 `ai_tasks.cancel` 同口径）
+    - `stale`：对 `expect_token` 的 CAS 没命中——读到之后属主换了代（pid 复用的新进程 / 行被别人改了）
+    - `requested`：意图已写（或此前已写过，幂等：重复取消不重复写）
+    """
+    now = _now_ms()
+    with _immediate(db_path) as con:
+        row = con.execute("SELECT * FROM sessions WHERE id=?", (sid,)).fetchone()
+        if row is None or row["project"] != project:
+            return "not_found"
+        token = row["owner_token"]
+        if (
+            row["status"] == "cancelled"
+            and row["ended_ms"] is None
+            and row["cancel_requested_ms"] is not None
+        ):
+            return "requested"  # 意图已被属主执行（状态已翻 cancelled）、收尾中：重复点击仍是「已请求」
+        if row["status"] != "running":
+            return "not_running"
+        if (token is not None and token == OWNER_TOKEN) or (
+            token is None and row["owner_pid"] == os.getpid()
+        ):
+            return "own"
+        if not row_owner_alive(row, now):
+            _close_dead_owner_rows(con, now, project=project, skip_own_pid=True)
+            return "owner_gone"
+        if token is None:
+            return "owner_unsupported"
+        if row["phase"] == "committing":
+            return "committing"
+        if row["cancel_requested_ms"] is not None and row["cancel_token"] == token:
+            return "requested"
+        # CAS：只有行上的 owner_token 仍等于调用方先前观察到的那个才写；意图连同它针对的 token 一起落（属主只认自己的）
+        observed = token if expect_token is None else expect_token
+        cur = con.execute(
+            "UPDATE sessions SET cancel_requested_ms=?, cancel_token=?, cancel_result=NULL "
+            "WHERE id=? AND status='running' AND owner_token=?",
+            (now, observed, sid, observed),
+        )
+        return "requested" if cur.rowcount > 0 else "stale"
 
 
 def set_pinned(sid: str, pinned: bool, db_path: Path | None = None) -> bool:

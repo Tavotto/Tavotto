@@ -849,6 +849,7 @@ def run(
         # 调用方拿到的是「明确没执行」。反过来先 spawn 再写库，写库一抛，CLI 已经在改脚本、前端却当它
         # 被拒绝而换新 id 重试——同一条修改执行两次（Codex #1098）。
         ctx = context or {}
+        ensure_owner_loop()  # 行写下的那一刻就有心跳在跟（别的进程据此判属主死活、并把取消意图交给它）
         try:
             started = ai_history.record_start(
                 {
@@ -1339,6 +1340,7 @@ SESSION_DTO_KEYS: tuple[str, ...] = (
     "pinned",
     "note",
     "task",
+    "cancel_requested",
 )
 #: **终态字段清单**：会话结束时一起确定、落进历史库的那一组。服务重启后「sidecar 合并历史」的路径用它整体覆盖 sidecar，
 #: 不再逐个字段抄（漏抄一个就会出现「final 为 true 但 error 是空」这类分叉）。新增终态字段时只改这里。
@@ -1373,7 +1375,7 @@ def _history_final(hist: dict) -> bool:
     if hist.get("ended_ms") is not None:
         return True
     if hist.get("status") in ("cancelled", "interrupted"):
-        return not ai_history.owner_alive(hist.get("owner_pid"), hist.get("started_ms"))
+        return not ai_history.row_owner_alive(hist)
     return hist.get("status") in FINAL_STATUSES
 
 
@@ -1406,7 +1408,12 @@ def get(sid: str) -> dict | None:
         if hist is None:
             return None
         return _session_dto(
-            {**hist, "final": _history_final(hist), "note": "改前快照已清理，记录来自历史库"}
+            {
+                **hist,
+                "final": _history_final(hist),
+                "cancel_requested": bool(hist.get("cancel_requested_ms")),
+                "note": "改前快照已清理，记录来自历史库",
+            }
         )
     if hist is not None:
         return _session_dto(
@@ -1415,6 +1422,7 @@ def get(sid: str) -> dict | None:
                 # 终态字段**整体**以历史库为准（同一份清单，不逐个抄——逐个抄漏过 `error`：失败的会话 final 为 true 却没有原因）
                 **{k: hist.get(k) for k in SESSION_TERMINAL_FIELDS if k in hist},
                 "final": _history_final(hist),
+                "cancel_requested": bool(hist.get("cancel_requested_ms")),
                 "revert_available": hist.get("revert_available"),
                 "note": "后端已重启，记录来自历史库",
             }
@@ -1434,7 +1442,8 @@ def get(sid: str) -> dict | None:
     )
 
 
-def cancel(sid: str) -> bool:
+def _cancel_local(sid: str) -> bool:
+    """本进程内存里的会话：先问 TAF（`ai_tasks.cancel` 是「进入提交后不接受取消」的唯一权威），再终止进程组。"""
     sess = SESSIONS.get(sid)
     if sess and sess["status"] == "running":
         if "taf" in sess:
@@ -1447,6 +1456,97 @@ def cancel(sid: str) -> bool:
         ai_history.update_status(sid, "cancelled")
         return True
     return False
+
+
+#: `cancel_detailed` 的 `mode`：取消已在本进程执行 / 已把意图交给属主进程（它在 `OWNER_TICK_S` 内执行）
+CANCEL_LOCAL = "local"
+CANCEL_OWNER = "owner"
+
+
+def cancel_detailed(sid: str, project: str | None = None) -> dict:
+    """取消一个会话。回 `{"ok": bool, "mode"?: "local"|"owner", "reason"?: str}`（`ok:false` 带 `reason`，闭集见 `ai_history.request_cancel`
+    加 `not_found` / `refused_committing`）。`project` 给了就必须与会话所属项目一致，不一致一律当 `not_found`（不泄露存在与否）。
+
+    - 会话在本进程内存里：照旧 `_cancel_local`，`mode: "local"`（取消已生效）。
+    - 不在（别的服务进程里的会话，#1113）：为它写持久取消意图，`mode: "owner"`——**只是已转交属主**，属主在下一个 tick
+      （≤ `OWNER_TICK_S`）里走它自己的 `_cancel_local`；终态以会话详情的 `final` 为准。属主已死 → 就地收尾，不写意图。
+    """
+    sess = SESSIONS.get(sid)
+    if sess is not None:
+        if project is not None and sess.get("project") != project:
+            return {"ok": False, "reason": "not_found"}
+        if _cancel_local(sid):
+            return {"ok": True, "mode": CANCEL_LOCAL}
+        return {
+            "ok": False,
+            "reason": "refused_committing"
+            if "taf" in sess and sess["status"] == "running"
+            else "not_running",
+        }
+    if project is None:
+        return {
+            "ok": False,
+            "reason": "not_found",
+        }  # 跨进程取消必须带项目：没有项目就没有授权的主语
+    result = ai_history.request_cancel(sid, project)
+    if result == "requested":
+        return {"ok": True, "mode": CANCEL_OWNER}
+    return {"ok": False, "reason": result}
+
+
+def cancel(sid: str, project: str | None = None) -> bool:
+    """`cancel_detailed` 的布尔形（旧调用方）：取消已生效或已转交属主都算 True。"""
+    return bool(cancel_detailed(sid, project)["ok"])
+
+
+#: 属主进程的心跳 + 取消意图轮询间隔（秒）。取消的最坏延迟≈这个值；`ai_history.OWNER_BEAT_STALE_MS` 是它的 15 倍
+OWNER_TICK_S = 2.0
+_OWNER_LOOP_LOCK = threading.Lock()
+_OWNER_LOOP: threading.Thread | None = None
+_OWNER_STOP = threading.Event()
+
+
+def _owner_tick() -> list[str]:
+    """一次心跳 + 执行别的进程为本进程会话写下的取消意图。只执行 token 匹配本进程的意图（`ai_history.owner_tick` 已按 token 过滤）；
+    执行走进程内同一条 `_cancel_local`，结果记 `cancel_result`。回值：这一 tick 处理的 sid。"""
+    done = []
+    for sid in ai_history.owner_tick():
+        if sid not in SESSIONS:
+            result = "gone"  # 行说是本进程的，内存里却没有（收尾与意图擦肩而过）
+        else:
+            result = "ok" if _cancel_local(sid) else "refused_committing"
+        ai_history.record_cancel_result(sid, result)
+        done.append(sid)
+    return done
+
+
+def _owner_loop() -> None:
+    while not _OWNER_STOP.wait(OWNER_TICK_S):
+        try:
+            _owner_tick()
+        except Exception:  # 心跳线程不能死：库暂时锁住 / 磁盘满，下个 tick 再来
+            LOG.exception("AI 属主心跳 / 取消意图轮询失败")
+
+
+def ensure_owner_loop() -> None:
+    """起（幂等）属主心跳线程。`run()` 在登记会话**之前**调：行写下的那一刻就有心跳在跟。"""
+    global _OWNER_LOOP
+    with _OWNER_LOOP_LOCK:
+        if _OWNER_LOOP is not None and _OWNER_LOOP.is_alive():
+            return
+        _OWNER_STOP.clear()
+        _OWNER_LOOP = threading.Thread(target=_owner_loop, daemon=True, name="ai-owner-loop")
+        _OWNER_LOOP.start()
+
+
+def stop_owner_loop(timeout: float = 5.0) -> None:
+    """停心跳线程（测试 / 收尾用）。"""
+    global _OWNER_LOOP
+    with _OWNER_LOOP_LOCK:
+        t, _OWNER_LOOP = _OWNER_LOOP, None
+        _OWNER_STOP.set()
+    if t is not None:
+        t.join(timeout)
 
 
 def interrupt_all() -> int:

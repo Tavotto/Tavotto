@@ -11120,7 +11120,11 @@ def api_ai_revert(sid):
 
 @app.post("/api/ai/sessions/<sid>/cancel")
 def api_ai_cancel(sid):
-    return jsonify({"ok": engine_ai.cancel(sid)})
+    """中止一个 AI 会话。会话认证（ADR 0008）之外还按**请求者的项目**隔离：不属于当前项目的会话一律当不存在（含别的服务进程里的）。
+    回 `{ok, mode?, reason?}`——`ok` 的含义不变（取消请求被接受）；新增 `mode`：`local` = 已在本进程终止，`owner` = 已转交
+    持有它的另一个服务进程执行（≤ 数秒，终态以会话详情的 `final` 为准）。`ok:false` 带 `reason`（#1113）。"""
+    project = str(require_project().resolve())
+    return jsonify(engine_ai.cancel_detailed(sid, project))
 
 
 # ------------------------- 布局的保存 / 读取 -------------------------------
