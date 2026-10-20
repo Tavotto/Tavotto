@@ -627,7 +627,10 @@ def test_correction_is_announced_and_the_final_summary_counts_it(env):
     sid, _ = _run(env, events=events)
     sess = _wait(sid)
     names = [n for n, _ in events]
-    assert ("ai.task", {"session": sid, "phase": "correcting"}) in events
+    assert (
+        "ai.task",
+        {"session": sid, "task_type": ai_figure_edit.TASK_TYPE, "phase": "correcting"},
+    ) in events
     assert names.index("ai.task") < names.index("ai.done")
     done = next(d for n, d in events if n == "ai.done")
     assert done["task"]["corrections"] == 1 and "phase" not in done["task"]

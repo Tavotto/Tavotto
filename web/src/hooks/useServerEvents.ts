@@ -313,7 +313,7 @@ export function handleServerEvent(ev: ServerEvent) {
 
     case 'ai.task':
       // 阶段提示（「正在自动修正」）；不是本标签页持有的会话就什么都不做
-      useAiStore.getState().setTaskPhase(ev.session, ev.phase)
+      useAiStore.getState().setTaskPhase(ev.session, ev.phase, ev.task_type)
       break
 
     case 'ai.done': {

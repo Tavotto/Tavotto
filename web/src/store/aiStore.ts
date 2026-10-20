@@ -232,8 +232,8 @@ interface AiState {
   /** 刷新 / 重挂后按草稿里的 rid 还原「已发出未确认」 */
   restoreSubmission: (sub: Omit<AiSubmission, 'phase'>) => void
   appendDelta: (sid: string, kind: AiDeltaKind, text: string, rid?: string) => void
-  /** `ai.task`：任务进入新阶段（只改 `task.phase`）；会话不在本标签页 / 已经收尾 → 不动 */
-  setTaskPhase: (sid: string, phase: 'correcting') => void
+  /** `ai.task`：任务进入新阶段（并入 `task.phase`；会话还没有 task 时由事件建立）；会话不在本标签页 / 已经收尾 → 不动 */
+  setTaskPhase: (sid: string, phase: 'correcting', taskType: string) => void
   /** 回 `true` = 这是本标签页此刻持有的会话、且这是它的第一条 `ai.done`；`false` 时调用方不许再做任何副作用（#589） */
   finish: (p: DonePayload) => boolean
   /** 回 `false` = 这次撤销的结果被丢弃了（期间换过项目）：调用方不许再往别的 store 里写它的后果 */
@@ -705,10 +705,13 @@ export const useAiStore = create<AiState>((set, get) => ({
     }))
   },
 
-  setTaskPhase: (sid, phase) => {
+  setTaskPhase: (sid, phase, taskType) => {
     set((s) => ({
       sessions: s.sessions.map((x) =>
-        x.id === sid && !x.finalized && x.task ? { ...x, task: { ...x.task, phase } } : x,
+        x.id === sid && !x.finalized
+          ? // 新发起的会话本地还没有 task（只有收尾 / 接回的快照才带）：由事件建立
+            { ...x, task: { ...(x.task ?? { task_type: taskType, outcome: null }), phase } }
+          : x,
       ),
     }))
   },

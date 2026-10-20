@@ -732,7 +732,7 @@ describe('AI 修改之后（ADR 0041）', () => {
     expect(statusKey()).toBe('status.aiNoChange')
   })
 
-  it('ai.task 只改本标签页持有、还没收尾、带任务的会话的 task.phase', () => {
+  it('ai.task 只改本标签页持有、还没收尾的会话的 task.phase（没有 task 就由事件建立）', () => {
     useAiStore.setState({
       sessions: [
         { id: 's1', status: 'running', entries: [], task: { task_type: 'figure_edit', outcome: null } },
@@ -741,10 +741,10 @@ describe('AI 修改之后（ADR 0041）', () => {
       ] as never,
     })
     for (const sid of ['s1', 's2', 's3', 'nope']) {
-      handleServerEvent(ev({ kind: 'ai.task', pj: 'p1', session: sid, phase: 'correcting' }))
+      handleServerEvent(ev({ kind: 'ai.task', pj: 'p1', session: sid, task_type: 'figure_edit', phase: 'correcting' }))
     }
     const byId = Object.fromEntries(useAiStore.getState().sessions.map((s) => [s.id, s.task?.phase]))
-    expect(byId).toEqual({ s1: 'correcting', s2: undefined, s3: undefined })
+    expect(byId).toEqual({ s1: 'correcting', s2: 'correcting', s3: undefined })
     // 收尾的 ai.done 带回的 task（后端已去掉 phase）整体替换
     handleServerEvent(
       ev({
@@ -754,6 +754,28 @@ describe('AI 修改之后（ADR 0041）', () => {
     )
     const s1 = useAiStore.getState().sessions.find((s) => s.id === 's1')!
     expect(s1.task).toEqual({ task_type: 'figure_edit', outcome: 'completed', corrections: 1 })
+  })
+
+  it('新发起的会话（本地没有 task）收到 ai.task 后有 correcting 阶段，收尾的 ai.done 不带 phase 就消失', () => {
+    // 与 aiStore.accept 的 fresh 分支同形：没有 task 字段
+    useAiStore.setState({
+      sessions: [
+        {
+          id: 'fresh1', project: 'p1', agent: 'claude', agentLabel: 'Claude', prompt: 'x', script: 'fig1.py',
+          panelId: null, fileId: 'f1', entries: [], status: 'running', changed: false, diff: '', startedAt: 1,
+        },
+      ] as never,
+    })
+    expect(useAiStore.getState().sessions[0].task).toBeUndefined()
+    handleServerEvent(ev({ kind: 'ai.task', pj: 'p1', session: 'fresh1', task_type: 'figure_edit', phase: 'correcting' }))
+    expect(useAiStore.getState().sessions[0].task).toEqual({ task_type: 'figure_edit', outcome: null, phase: 'correcting' })
+    handleServerEvent(
+      ev({
+        kind: 'ai.done', pj: 'p1', session: 'fresh1', status: 'done', changed: true, diff: '+x', script: 'fig1.py',
+        task: { task_type: 'figure_edit', outcome: 'completed', corrections: 1 },
+      }),
+    )
+    expect(useAiStore.getState().sessions[0].task?.phase).toBeUndefined()
   })
 
   it('老后端没有 refresh 字段：行为不变', () => {

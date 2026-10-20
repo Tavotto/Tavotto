@@ -3559,6 +3559,7 @@ export type ServerEvent =
       pj?: string
       client_request_id?: string
       session: string
+      task_type: string
       phase: 'correcting'
     } & ProjectScoped)
   | ({

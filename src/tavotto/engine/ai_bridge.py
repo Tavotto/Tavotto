@@ -998,7 +998,10 @@ def run(
             return  # 已取消：不起新进程；随后的 wait 读空输出、编排器按取消收尾
         # 界面的「正在自动修正」：会话详情（刷新后接回）读 `task.phase`，在线的标签页收 `ai.task`
         sess["task"] = {**sess["task"], "phase": "correcting"}
-        emit("ai.task", {"session": sid, "phase": "correcting"})
+        emit(
+            "ai.task",
+            {"session": sid, "task_type": sess["task"]["task_type"], "phase": "correcting"},
+        )
         again = prompt + "\n\n" + note
         cmd2, extra2 = _cmd(agent, again, agent_cwd, model=model, effort=effort, endpoint=endpoint)
         LOG.info(
