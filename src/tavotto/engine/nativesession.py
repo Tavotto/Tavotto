@@ -848,9 +848,9 @@ class NativeSession:
         就是这次运行到目前为止、也是迄今全部的输入（#1047）。只看进程内状态：sidecar 一重启就不成立（失败关闭）。"""
         return (
             self.owned is not None
-            and not self.owned.finished
             and self.transport is not None
-            # 不另看 state：离开屏障只有放行与断线两条路，两条都推进放行代数，`observed_inputs` 已是 None
+            # 不另看 state / 进程是否结束：离开屏障只有放行与断线两条路（停止运行杀进程也是断线），都推进放行代数，
+            # `observed_inputs` 已是 None
             and self.observed_inputs is not None
         )
 
