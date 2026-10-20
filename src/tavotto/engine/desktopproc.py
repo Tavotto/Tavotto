@@ -678,7 +678,6 @@ def start(
                 "permission_key": "",
                 "run_config": spec.run_config,
                 "launch_id": launch.launch_id,
-                "final_barrier": spec.final_barrier,
             },
         },
     )

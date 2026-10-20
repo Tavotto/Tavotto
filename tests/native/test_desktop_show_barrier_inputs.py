@@ -128,6 +128,7 @@ def _parked_final(tmp_path):
 
 
 def test_a_final_barrier_run_refuses_to_be_released(tmp_path):
+    """拒绝在用户进程的 runner 里做（父进程不另挡）：继续 / 放手都被拒，脚本仍停着，show() 之后一行没跑。"""
     session, tail = _parked_final(tmp_path)
     with pytest.raises(RunError) as refused:
         session.resume()
@@ -135,17 +136,6 @@ def test_a_final_barrier_run_refuses_to_be_released(tmp_path):
     with pytest.raises(RunError):
         session.detach()
     assert session.state == nativesession.BARRIER
-    assert not tail.exists()
-
-
-def test_the_runner_itself_refuses_a_release_the_parent_let_through(tmp_path):
-    """保证在用户进程里兑现：父进程那一层就算漏了，runner 也不放行。"""
-    session, tail = _parked_final(tmp_path)
-    session.final_barrier = False  # 模拟父进程漏挡
-    with pytest.raises(RunError) as refused:
-        session.resume()
-    assert refused.value.code == runcodes.NATIVE_BARRIER_FINAL
-    session.final_barrier = True
     assert not tail.exists()
 
 

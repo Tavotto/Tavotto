@@ -381,8 +381,6 @@ class NativeSession:
         #: 桌面拥有的会话：这次运行的运行配置引用 / 回执关联键（公开，不含参数值）
         self.run_config = str(meta.get("run_config") or "")
         self.launch_id = str(meta.get("launch_id") or "")
-        #: 第一个屏障即终点（`ExecutionSpec.final_barrier`，#1047）：放行一律拒绝
-        self.final_barrier = meta.get("final_barrier") is True
         #: 这条会话是被所有者取消结束的（与脚本自己退出、崩溃分开记）
         self.cancelled = False
         #: 所属计划的登记序号（桌面拥有的会话由 `desktopproc.start` 盖；终端拥有的恒 None）
@@ -1028,9 +1026,6 @@ class NativeSession:
         continue 就离开了控制循环，锁一放、状态还停在 BARRIER 的那一瞬，等锁的渲染会通过
         `_require_barrier()` 把帧发给一个不再读它的 runner。
         """
-        if self.final_barrier and self.barrier_reason != "script_end":
-            # 第一个屏障即终点（#1047）：runner 侧同样拒绝，这里先挡，免得一条注定失败的请求
-            raise RunError(runcodes.NATIVE_BARRIER_FINAL)
         with self._figure_lock:
             self._require_consistent()
             previous_epoch = self.snapshot_epoch
@@ -1048,6 +1043,7 @@ class NativeSession:
                 if getattr(exc, "code", "") == runcodes.NATIVE_FIGURE_INCONSISTENT:
                     raise RunError(runcodes.NATIVE_FIGURE_INCONSISTENT) from exc
                 if getattr(exc, "code", "") == runcodes.NATIVE_BARRIER_FINAL:
+                    # 第一个屏障即终点（`--final-barrier`，#1047）：拒绝只在用户进程的 runner 里做，这里只翻成同一个码
                     raise RunError(runcodes.NATIVE_BARRIER_FINAL) from exc
                 raise
             with self._lock:
