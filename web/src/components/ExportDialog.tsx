@@ -117,6 +117,7 @@ import {
 import type { OverwritePolicy } from "@/lib/exportRequest";
 import { DEFAULT_PROFILE_ID, type PublicationProfile } from "@/lib/profile";
 import { profileName } from "@/lib/profileText";
+import { useLocale } from "@/i18n/react";
 import {
   bindingFor,
   resolveDocumentSpec,
@@ -442,6 +443,17 @@ export function ExportDialog() {
   /** 这次生效的那套规范的 id：规范下拉的显示值、严格核验的 `profile_id` 都认它 */
   const checkProfileId =
     resolved.profileId ?? (checkOnActive ? profileId : DEFAULT_PROFILE_ID);
+  /** 这次按哪套规范查的（检查结论里说出来）；取名与问题面板的证据句同一做法 */
+  const locale = useLocale();
+  const checkSpecName = useMemo(() => {
+    const record = resolved.profileId
+      ? specRecords.find((r) => r.id === resolved.profileId)
+      : undefined;
+    return record ? profileName(record) : resolved.profile.label;
+    // 内置规范的名字（`profileName`）在调用时按当前语言成文：换语言要重算，否则结论行换了语言、
+    // 规范名还是旧的（#1194 评审 P2；问题面板 NoneEvidence 同一条，Codex #832）
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [resolved, specRecords, locale]);
   /** 别的画布上的规范在这里改不了（`applyProfile` 写的是当前画布）——说出原因，不静默改错画布 */
   const checkCanvasName = checkOnActive
     ? null
@@ -1527,6 +1539,7 @@ export function ExportDialog() {
               <FormRow label={ex("checkLabel")}>
                 <CheckRow
                   summary={summary}
+                  specName={checkSpecName}
                   scopeHint={ex(scope === "original" && panel ? "checkScopeFigure" : "checkScopeCanvas")}
                   onOpenPanel={(opts) => {
                     park();
@@ -2082,10 +2095,13 @@ const round1 = (v: number) => Math.round(v * 10) / 10;
  */
 function CheckRow({
   summary,
+  specName,
   scopeHint,
   onOpenPanel,
 }: {
   summary: ValidationSummary;
+  /** 按哪套规范查的：没查出问题时要说清是「按它没查出」，不是「合规」 */
+  specName: string;
   /** 这份摘要算的是哪个范围（只算这张图 / 整个画布） */
   scopeHint: string;
   /**
@@ -2108,17 +2124,23 @@ function CheckRow({
     );
   }
   if (summary.total === 0) {
-    // 通过态用中性图标，不做绿色横幅：这只是「没查出问题」，不是庆祝
+    // 通过态用中性图标，不做绿色横幅：这只是「按这套规范没查出问题」，不是「合规」——
+    // 说出按哪套规范、查的是哪个范围，再用一行小字说清检查覆盖到哪（识别不出的内容不在其中）
     return (
-      <div className="flex items-center justify-between gap-3">
-        <span className="flex min-w-0 flex-1 items-center gap-2 text-sm text-ink">
+      <div data-export-check-ok className="flex min-w-0 flex-col gap-0.5">
+        <span className="flex min-w-0 items-center gap-2 text-sm text-ink">
           <Check
             size={ICON_SIZE.sm}
             className="shrink-0 text-ink-2"
             aria-hidden
           />
-          {ex("preflightOk")}
-          <span className="text-xs text-ink-3">{`· ${scopeHint}`}</span>
+          <span className="min-w-0">
+            {ex("preflightOk", { spec: specName })}
+            <span className="text-xs text-ink-3">{` · ${scopeHint}`}</span>
+          </span>
+        </span>
+        <span data-export-check-coverage className="pl-6 text-xs text-ink-3">
+          {ex("preflightCoverage")}
         </span>
       </div>
     );
