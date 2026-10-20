@@ -413,7 +413,7 @@ reconstruction_sha256, metrics}`；④ 真实编辑（结构性 `figure.frame` �
 `confirmed_reconstruction_sha256`，缺 → `confirmation_required`，与本次重画不等 → `reconstruction_changed`（均不可重试，不杀 worker）；
 ⑤ 采用成功时 `record_adoption` 在 `data_dir()/source-backed/adoptions.json` 原子记（项目 × source_id × bytes_sha256，≤4096 条，
 满了只清已失效的、仍满就 `adoption_store_full`），写回类 / 历史类 / 同步 / specfix / invalidate / 老 GET 入口经
-`app._refuse_adopted_source` 命中即拒——**不看请求带没带 policy**；原件字节变了记录不再命中。池键、out_dir、witness、
+`app._refuse_adopted_source` 命中即拒——**不看请求带没带 policy**；原件字节变了记录不再命中；记录文件**存在但损坏 / 版本不认识**是「状态未知」，fail closed：PNG 写回类入口一律拒、新采用被拒（绝不覆盖损坏文件），恢复方法是确认无人使用后删除 `data_dir()/source-backed/adoptions.json`（日志里有路径）。池键、out_dir、witness、
 `_validated_artifact_probe` 随 `render_policy` 与精确策略永不共享。看护：`tests/test_script_backed_policy.py`。
 
 ## 成功启动上下文与 Conda 激活（P09，EX07 / EX11，AC-11 / AC-19）

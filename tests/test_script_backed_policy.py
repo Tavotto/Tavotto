@@ -792,3 +792,30 @@ def test_admission_rechecks_the_disk_identity_before_during_and_after(sb_env, mo
         assert error.value.reason == "source_changed"
     finally:
         pool.discard(worker)
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        "{not json",
+        json.dumps({"version": 2, "entries": []}),
+        json.dumps({"version": 1, "entries": 5}),
+    ],
+    ids=["malformed", "unknown-version", "entries-not-list"],
+)
+def test_unknown_adoption_store_fails_closed_and_is_never_overwritten(sb_env, content):
+    root = sb_env
+    root.mkdir(parents=True)
+    (root / "a.png").write_bytes(b"png")
+    (root / "a.pdf").write_bytes(b"pdf")
+    store = ac._adoption_path()
+    store.parent.mkdir(parents=True)
+    store.write_text(content, encoding="utf-8")
+    assert ac.is_adopted(root, root / "a.png")  # PNG：状态未知按已采用，写回被拒
+    assert not ac.is_adopted(root, root / "a.pdf")  # 非 PNG 照常放行
+    with pytest.raises(ac.ArtifactContextError) as error:
+        ac.record_adoption(root, ac.create_context(root / "a.png", "a.png"))
+    assert error.value.reason == "source_unreadable"
+    assert store.read_text(encoding="utf-8") == content
+    store.unlink()  # 文件不存在 = 没有采用
+    assert not ac.is_adopted(root, root / "a.png")

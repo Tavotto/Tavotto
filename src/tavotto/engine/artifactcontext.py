@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import math
 import struct
 import tempfile
@@ -232,6 +233,7 @@ def _adoption_verdict(source, candidate, kind, frame, candidate_bytes):
 # 服务端写回闸（ADR 0139 §五.3）：采用成功时记一条「项目 × 源文件 × 字节身份」，写回类入口命中即拒，
 # 不依赖请求自带的 policy。记录在 data_dir()，原子写；磁盘原件字节变了（hash 不同）记录不再命中。
 # ---------------------------------------------------------------------------
+LOG = logging.getLogger(__name__)
 ADOPTION_MAX_ENTRIES = 4096
 _ADOPTION_LOCK = threading.RLock()
 
@@ -240,18 +242,47 @@ def _adoption_path() -> Path:
     return config.data_dir() / "source-backed" / "adoptions.json"
 
 
+class AdoptionStoreUnknown(Exception):
+    """采用记录文件存在，但读不了 / 结构不对：状态未知（不是「没有采用」）。"""
+
+
 def _adoption_entries() -> list:
+    """文件不存在 = 没有采用（`[]`）；存在但读不了 / JSON 畸形 / version 不认识 / entries 不是 list
+    = 状态未知，抛 `AdoptionStoreUnknown`。个别畸形条目照旧丢弃。"""
+    path = _adoption_path()
     try:
-        data = json.loads(_adoption_path().read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+        raw = path.read_text(encoding="utf-8")
+    except FileNotFoundError:
         return []
+    except (OSError, ValueError) as exc:
+        raise AdoptionStoreUnknown(str(exc)) from exc
+    try:
+        data = json.loads(raw)
+    except ValueError as exc:
+        raise AdoptionStoreUnknown(str(exc)) from exc
     entries = data.get("entries") if isinstance(data, dict) else None
+    if not isinstance(data, dict) or data.get("version") != 1 or not isinstance(entries, list):
+        raise AdoptionStoreUnknown("unrecognized structure")
     return [
         e
-        for e in (entries if isinstance(entries, list) else [])
+        for e in entries
         if isinstance(e, dict)
         and all(isinstance(e.get(k), str) for k in ("project", "source_id", "bytes_sha256"))
     ]
+
+
+def _store_unknown_error(exc) -> ArtifactContextError:
+    LOG.error(
+        "来源驱动采用记录损坏或读不了（%s）：%s。写回类入口对 PNG 一律拒绝、新的采用被拒；"
+        "确认没有人在用后删除该文件即可恢复（它只是个安全闸，删后已采用的原件需重新采用才会再受保护）。",
+        _adoption_path(),
+        exc,
+    )
+    return ArtifactContextError(
+        "source_unreadable",
+        "The source-backed adoption record in the Tavotto data folder is damaged; see the log.",
+        retryable=False,
+    )
 
 
 def _project_key(project_root) -> str:
@@ -266,7 +297,10 @@ def record_adoption(project_root, context: dict) -> None:
         "bytes_sha256": context["bytes_sha256"],
     }
     with _ADOPTION_LOCK:
-        entries = _adoption_entries()
+        try:
+            entries = _adoption_entries()
+        except AdoptionStoreUnknown as exc:
+            raise _store_unknown_error(exc) from exc  # 绝不覆盖损坏文件
         if entry in entries:
             return
         if len(entries) >= ADOPTION_MAX_ENTRIES:
@@ -296,7 +330,12 @@ def _adoption_live(entry) -> bool:
 def is_adopted(project_root, path: Path) -> bool:
     """这个项目里的这个文件，此刻的字节是否已被来源驱动策略采用过。读不了文件按「已采用」（拒绝更安全）。"""
     project = _project_key(project_root)
-    mine = [e for e in _adoption_entries() if e["project"] == project]
+    try:
+        entries = _adoption_entries()
+    except AdoptionStoreUnknown as exc:
+        _store_unknown_error(exc)  # 只记日志；PNG 一律当作已采用（只有 PNG 会被采用）
+        return Path(path).suffix.lower() == ".png"
+    mine = [e for e in entries if e["project"] == project]
     if not mine:
         return False
     path = Path(path)
