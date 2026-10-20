@@ -5796,7 +5796,7 @@ def _note_native_inputs(session) -> None:
 def _unobserve_native_inputs(session) -> None:
     """放行（继续 / 放手）桌面拥有的运行之前：收口时记下的是停在 `show()` 屏障那一刻的观察，脚本接着跑可能再读——这次运行的
     native 记录改回不沿用，脚本跑完后由 `_note_native_inputs` 重新补齐（#1047）。必须在放行之前：之后才改，中间重开会误沿用。"""
-    if session.owned is None or not session.launch_id:
+    if getattr(session, "owned", None) is None or not getattr(session, "launch_id", ""):
         return
     # 先作废会话手里的观察、再改记录：成功收口读观察与写记录之间被放行时，收口那边写完再看一眼观察就知道要改回
     session.forget_observed_inputs()
