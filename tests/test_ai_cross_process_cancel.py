@@ -317,45 +317,62 @@ def test_cross_project_cancel_is_rejected_and_writes_nothing(client, db, sleeper
 
 
 # ----------------------------------------------------------------------------------- 属主死活判据
-def test_stale_heartbeat_counts_as_dead_even_if_the_pid_is_alive(client, db, sleepers):
-    """pid 被复用 / 属主线程卡死：pid 还在，心跳过期 → 与 pid 已死同一语义，收尾而不是写悬挂的意图。"""
+def test_very_stale_heartbeat_counts_as_dead_even_if_the_pid_is_alive(client, db, sleepers):
+    """pid 被复用（新进程不会替我们续心跳）：pid 还在，心跳超过判死线 → 收尾而不是写悬挂的意图。"""
     owner = sleepers()
-    _start("sid-beat-0001", owner.pid, beat_age_ms=ai_history.OWNER_BEAT_STALE_MS + 5_000)
+    _start("sid-beat-0001", owner.pid, beat_age_ms=ai_history.OWNER_BEAT_DEAD_MS + 60_000)
     body = _cancel(client, "sid-beat-0001")
     assert body == {"ok": False, "reason": "owner_gone"}
     row = _row(db, "sid-beat-0001")
     assert row["status"] == "interrupted" and row["ended_ms"] is not None
 
 
-def test_stale_heartbeat_does_not_block_a_new_session_on_the_same_script(db, sleepers):
+def test_moderately_stale_heartbeat_is_unresponsive_not_dead(client, db, sleepers):
+    """pid 活 + 心跳 40 s 旧（高负载下线程被饿住）：读路径不收尾，取消不写意图、不改行。"""
     owner = sleepers()
+    _start("sid-slow-0001", owner.pid, beat_age_ms=40_000)
+    assert ai_history.reap_dead_owners(PROJECT) == 0
+    assert _row(db, "sid-slow-0001")["status"] == "running"
+    det = client.get("/api/ai/sessions/sid-slow-0001").get_json()
+    assert det["status"] == "running" and det["final"] is False
+    assert _cancel(client, "sid-slow-0001") == {"ok": False, "reason": "owner_unresponsive"}
+    row = _row(db, "sid-slow-0001")
+    assert (
+        row["status"] == "running"
+        and row["ended_ms"] is None
+        and row["cancel_requested_ms"] is None
+    )
+
+
+def test_stale_heartbeat_still_blocks_a_new_session_but_a_dead_one_does_not(db, sleepers):
+    owner = sleepers()
+    _start("sid-busy-0001", owner.pid, beat_age_ms=40_000, script="s.py")
+    with pytest.raises(ai_history.ScriptBusy):  # 40 s 旧：pid 活着，仍然忙
+        ai_history.record_start(
+            {
+                "id": "sid-busy-0002",
+                "project": PROJECT,
+                "provider": "codex",
+                "script": "s.py",
+                "client_request_id": "rid-busy-000000002",
+            }
+        )
     _start(
-        "sid-busy-0001",
+        "sid-busy-0003",
         owner.pid,
-        beat_age_ms=ai_history.OWNER_BEAT_STALE_MS + 5_000,
-        script="s.py",
+        beat_age_ms=ai_history.OWNER_BEAT_DEAD_MS + 60_000,
+        script="t.py",
     )
     ok, _ = ai_history.record_start(
         {
-            "id": "sid-busy-0002",
+            "id": "sid-busy-0004",
             "project": PROJECT,
             "provider": "codex",
-            "script": "s.py",
-            "client_request_id": "rid-busy-000000002",
+            "script": "t.py",
+            "client_request_id": "rid-busy-000000004",
         }
     )
-    assert ok  # 忙碌判定与收尾用同一个判据
-    _start("sid-busy-0003", owner.pid, script="t.py")
-    with pytest.raises(ai_history.ScriptBusy):  # 心跳新鲜 + pid 活着：仍然忙
-        ai_history.record_start(
-            {
-                "id": "sid-busy-0004",
-                "project": PROJECT,
-                "provider": "codex",
-                "script": "t.py",
-                "client_request_id": "rid-busy-000000004",
-            }
-        )
+    assert ok  # 超过判死线：忙碌判定与收尾同一个判据
 
 
 def test_pending_intent_of_a_dead_owner_resolves_to_cancelled(db, sleepers):

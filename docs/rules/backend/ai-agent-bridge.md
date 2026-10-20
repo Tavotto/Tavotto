@@ -174,10 +174,11 @@
   `UPDATE … WHERE owner_token=<先前观察到的>` 做 **CAS**（pid 复用的新属主 / 换代的行不被写，回 `stale`）。属主侧：`ai_bridge.run` 在登记之前 `ensure_owner_loop()`，
   守护线程 `ai-owner-loop` 每 `OWNER_TICK_S`（2 s）调 `ai_history.owner_tick()`——对本进程 token 名下 open 行写 `owner_beat_ms`（无 open 行不拿写锁），并收取
   **`cancel_token` 等于本进程 token** 的意图，走进程内同一条 `_cancel_local`，结果记 `cancel_result`。**属主死活只有一个判据 `ai_history.row_owner_alive`**
-  （忙碌判定 / 启动清理 / 读路径收尾 / `final` 共用）：pid 存活**且**（有 token+beat 的行）心跳不超过 `OWNER_BEAT_STALE_MS`（30 s，tick 的 15 倍）；无 token / 无 beat 的老行按原语义
-  （pid + 24 h）。属主死亡时尚未执行的意图：收尾把 `running` 行转 `cancelled`（用户要的是取消）而不是 `interrupted`。
-  **盲区**：属主卡死（线程不 tick）但 CLI 仍在写脚本时，30 s 后行被收成终态而 CLI 不会被杀——与启动清理同一个已有缺口（只改状态、不杀孤儿进程组），不是这里引入的；
-  取消延迟最坏 ≈ `OWNER_TICK_S`；`ai_history.OWNER_BEAT_STALE_MS` 内死掉的属主在忙碌判定里仍算活着。
+  （忙碌判定 / 启动清理 / 读路径收尾 / `final` 共用）：pid 存活，且（有 token+beat 的行）心跳不超过 `OWNER_BEAT_DEAD_MS`（10 分钟，只兜 pid 复用：复用 pid 的新进程不会续心跳）；无 token / 无 beat 的老行按原语义
+  （pid + 24 h）。**两个阈值分开**：`request_cancel` 另看 `OWNER_BEAT_STALE_MS`（30 s，tick 的 15 倍）——属主活着但心跳超过它 = `owner_unresponsive`（`ok:false`），不写会悬挂的意图、
+  **不收尾、不改行**：高负载下心跳线程被饿住很常见，此时 pid 活着、CLI 可能仍在写脚本，不能把行收成终态。属主死亡时尚未执行的意图：收尾把 `running` 行转 `cancelled`（用户要的是取消）而不是 `interrupted`。
+  **盲区**：pid 复用后最长 `OWNER_BEAT_DEAD_MS` 内仍按活着算（忙碌判定会多挡一阵）；属主真卡死而 pid 活着时，行一直开到判死线；这两条与启动清理一样只改状态、不杀孤儿 CLI。
+  取消延迟最坏 ≈ `OWNER_TICK_S`。
 - 会话历史在 `engine/ai_history.py`（SQLite `cache/ai_history.sqlite3`，
   按 project 列过滤）；启动时 running→interrupted + purge(180d，pinned 豁免)；
   历史 API：list（分页/搜索/筛选）/delete/pin。前端默认只显示人类可读目标，

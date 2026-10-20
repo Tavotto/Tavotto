@@ -204,12 +204,12 @@ def owner_alive(
     beat_ms: int | None = None,
 ) -> bool:
     """这条 running 行的属主还活着吗。属主未知（NULL）/ 就是本进程（它在内存里另有判据，磁盘上的是上一实例留下的）/
-    pid 已死 / 行太老 / 心跳过期 → False；量不了 → 保守当活着（宁可多挡一次，不让两个进程同时改同一个脚本）。
+    pid 已死 / 行太老 / 心跳过期（`OWNER_BEAT_DEAD_MS`，兜 pid 复用）→ False；量不了 → 保守当活着（宁可多挡一次，不让两个进程同时改同一个脚本）。
     心跳判据只对带 `owner_token` 且写过 `owner_beat_ms` 的行生效（#1113）；老行没有这两个值，按原语义。"""
     if owner_pid is None or owner_pid == os.getpid():
         return False
     now_ms = int(time.time() * 1000) if now_ms is None else now_ms
-    if owner_token is not None and beat_ms is not None and now_ms - beat_ms > OWNER_BEAT_STALE_MS:
+    if owner_token is not None and beat_ms is not None and now_ms - beat_ms > OWNER_BEAT_DEAD_MS:
         return False
     if started_ms is not None and now_ms - started_ms > RUNNING_OWNER_MAX_AGE_MS:
         return False
@@ -221,10 +221,13 @@ def owner_alive(
 #: **绝不按 pid 对别的进程发信号**。只在内存里，不落盘、不进日志 / 遥测 / 诊断包
 OWNER_TOKEN = uuid.uuid4().hex
 
-#: 属主心跳超过这么久没更新就当属主已死（pid 存活也算死：pid 被复用，或属主线程卡死）。只对带 `owner_token` + `owner_beat_ms`
-#: 的行生效；没有这两列值的老行沿用 pid 存活 + `RUNNING_OWNER_MAX_AGE_MS`。值取心跳 tick 的 15 倍：笔记本休眠 / 短暂的 GC
-#: 停顿不至于被当成死亡
+#: **两个阈值，各管各的**（#1113）。
+#: `OWNER_BEAT_STALE_MS`：心跳超过这么久没更新 = 属主"无响应"——**只**用于 `request_cancel`：不写会悬挂的取消意图，回
+#: `owner_unresponsive`；不收尾、不改行（pid 还活着，它的 CLI 可能仍在写脚本，高负载下心跳线程被饿住很常见）。值取心跳 tick 的 15 倍
 OWNER_BEAT_STALE_MS = 30_000
+#: `OWNER_BEAT_DEAD_MS`：pid 活着但心跳超过这么久 = 属主已死（兜 pid 复用：复用 pid 的新进程不会替我们续心跳）——忙碌判定 /
+#: 启动清理 / 读路径收尾 / `final` 用的 `owner_alive` 判死阈值。只对带 token + beat 的行生效；老行沿用 pid + 24 h
+OWNER_BEAT_DEAD_MS = 10 * 60 * 1000
 
 
 def row_owner_alive(row, now_ms: int | None = None) -> bool:
@@ -635,6 +638,7 @@ def request_cancel(
     - `not_running`：已经是终态 / 已被取消并收尾，没有什么可取消的
     - `own`：属主就是本进程这一代（该走进程内的取消，不写意图）
     - `owner_gone`：属主已死（pid 不在 / 心跳过期）——不写意图，就地走收尾（`_close_dead_owner_rows`），行随即关闭
+    - `owner_unresponsive`：属主还算活着（pid 在、心跳未到判死线），但心跳已超 `OWNER_BEAT_STALE_MS`——不写意图、不收尾、不改行
     - `owner_unsupported`：属主还活着但是老行（没有 token）——对方不会轮询意图，写了也是悬挂
     - `committing`：TAF 任务已进入提交，取消不被接受（与 `ai_tasks.cancel` 同口径）
     - `stale`：对 `expect_token` 的 CAS 没命中——读到之后属主换了代（pid 复用的新进程 / 行被别人改了）
@@ -663,6 +667,9 @@ def request_cancel(
             return "owner_gone"
         if token is None:
             return "owner_unsupported"
+        beat = row["owner_beat_ms"]
+        if beat is None or now - beat > OWNER_BEAT_STALE_MS:
+            return "owner_unresponsive"
         if row["phase"] == "committing":
             return "committing"
         if row["cancel_requested_ms"] is not None and row["cancel_token"] == token:
