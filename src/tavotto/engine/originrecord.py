@@ -92,24 +92,10 @@ def sanitize_process_facts(raw) -> dict | None:
     if ".." in backend:
         return None
     out: dict = {"python_version": py, "matplotlib_version": mpl, "backend": backend}
+    # figure_dpi = 脚本进程退出时刻 rcParams["figure.dpi"] 的值；不是某次 savefig 的实参（那个看不到，所以不记）
     dpi = _number(raw.get("figure_dpi"), lo=1, hi=10000)
     if dpi is not None:
         out["figure_dpi"] = dpi
-    sv = raw.get("savefig")
-    savefig: dict = {}
-    if isinstance(sv, dict):
-        sdpi = sv.get("dpi")
-        if sdpi == "figure":
-            savefig["dpi"] = "figure"
-        elif (n := _number(sdpi, lo=1, hi=10000)) is not None:
-            savefig["dpi"] = n
-        if isinstance(sv.get("bbox_inches_none"), bool):
-            savefig["bbox_inches_none"] = sv["bbox_inches_none"]
-        if isinstance(sv.get("format"), str) and _FORMAT_RE.match(sv["format"]):
-            savefig["format"] = sv["format"]
-        if isinstance(sv.get("transparent"), bool):
-            savefig["transparent"] = sv["transparent"]
-    out["savefig"] = savefig
     return out
 
 
@@ -141,8 +127,7 @@ def _read_file(path: Path):
 def lookup(sha: str, project_root=None) -> dict | None:
     """按原件字节 sha256 查记录。同 sha 多条时优先同项目的，其次最新的。没有 / 读坏了 → None。
 
-    返回**展示用**的闭集：`{python_version, matplotlib_version, backend, figure_dpi, savefig_dpi,
-    recorded_by}`（缺的键不出现）。
+    返回**展示用**的闭集：`{python_version, matplotlib_version, backend, figure_dpi, recorded_by}`（缺的键不出现）。
     """
     if not isinstance(sha, str) or not _SHA256_RE.match(sha):
         return None
@@ -169,9 +154,6 @@ def lookup(sha: str, project_root=None) -> dict | None:
     }
     if "figure_dpi" in entry:
         out["figure_dpi"] = entry["figure_dpi"]
-    sdpi = (entry.get("savefig") or {}).get("dpi")
-    if sdpi is not None:
-        out["savefig_dpi"] = sdpi
     return out
 
 

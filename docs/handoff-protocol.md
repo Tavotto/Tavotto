@@ -129,9 +129,9 @@ CLI、唤起却静默退回浏览器模式——用户明明装了桌面版却�
 插件 `handoff.py` 只在**这次真的跑了脚本**（输出 `ran: true`）时，让跑脚本的那个 Python 进程在退出时
 把「我用的环境」写进旁路 JSON（`PYTHONPATH` 前置一个临时 `sitecustomize`，先链回用户自己的；脚本、argv、cwd、
 stdout 不变），再把其中白名单字段和**这次真的重写了的 PNG**（跑前跑后 mtime/size 快照之差）交给
-`tavotto open --origin-json`。字段：python_version、matplotlib_version、backend、figure_dpi、
-savefig 的 dpi / bbox_inches 是否为 None / format / transparent（**退出时刻的 rcParams**，逐次
-`savefig(...)` 的关键字参数看不到）。**不记**解释器绝对路径、argv、环境变量。插件输出多一个
+`tavotto open --origin-json`。字段（闭集）：python_version、matplotlib_version、backend、figure_dpi
+（= 脚本进程退出时刻 `rcParams["figure.dpi"]` 的值）。**不记**savefig 的 dpi / bbox_inches 等——逐次
+`savefig(...)` 的实参探针看不到，记 rc 值会误导。**不记**解释器绝对路径、argv、环境变量。插件输出多一个
 `origin: {"recorded": N}`（或 `{"recorded": 0, "reason": ...}`）。产物没重跑、脚本失败、脚本没导入
 matplotlib 一律不写（诚实缺失）；用户在终端里直接跑出来的图没有记录。第一片只记录与展示；保存瞬间
 证据、按记录选解释器是后续，需单独 ADR 与用户授权。

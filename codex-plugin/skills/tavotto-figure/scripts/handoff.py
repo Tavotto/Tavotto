@@ -529,9 +529,8 @@ def script_env(environ: dict | None = None) -> dict:
 #: 来源探针（ADR 0139 PR3）：跑用户脚本的**那个进程**在退出时把「我是什么环境」写进旁路 JSON。
 #: 以 `sitecustomize` 注入（`PYTHONPATH` 前置一个临时目录），脚本本身、`sys.argv`、cwd、stdout 一字不动；
 #: 先链回用户原有的 `sitecustomize`，退出时（`atexit`）只读 `sys.modules` 里已有的 matplotlib——没导入
-#: matplotlib 就什么都不写，**绝不替脚本 import 它**。只写版本串 / 后端名 / rcParams 里与像素相关的几项；
-#: 不写解释器路径、argv、环境变量。读到的是**退出时刻**的 rcParams（含脚本自己改过的），逐次 savefig 的
-#: 关键字参数它看不到。与 `engine/originrecord.sanitize_process_facts` 是同源对（后者是白名单校验）。
+#: matplotlib 就什么都不写，**绝不替脚本 import 它**。只写版本串 / 后端名 / `rcParams["figure.dpi"]`（退出时刻的值，含脚本自己改过的）；
+#: 不写解释器路径、argv、环境变量。savefig 的 dpi / bbox_inches 等逐次实参它看不到，所以一概不记。与 `engine/originrecord.sanitize_process_facts` 是同源对（后者是白名单校验）。
 _ORIGIN_PROBE_SOURCE = r"""
 import os, sys
 
@@ -562,18 +561,11 @@ def _dump():
             return
         import json, platform
         rc = mpl.rcParams
-        bbox = rc["savefig.bbox"]
         data = {
             "python_version": platform.python_version(),
             "matplotlib_version": str(mpl.__version__),
             "backend": str(mpl.get_backend()),
             "figure_dpi": rc["figure.dpi"],
-            "savefig": {
-                "dpi": rc["savefig.dpi"],
-                "bbox_inches_none": bbox is None or bbox == "standard",
-                "format": str(rc["savefig.format"]),
-                "transparent": bool(rc["savefig.transparent"]),
-            },
         }
         with open(_out, "w", encoding="utf-8") as f:
             json.dump(data, f)

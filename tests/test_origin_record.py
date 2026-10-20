@@ -33,7 +33,6 @@ FACTS = {
     "matplotlib_version": "3.8.2",
     "backend": "agg",
     "figure_dpi": 100.0,
-    "savefig": {"dpi": "figure", "bbox_inches_none": True, "format": "png", "transparent": False},
 }
 
 
@@ -82,7 +81,6 @@ def test_roundtrip_is_keyed_by_the_bytes_not_the_path(data, tmp_path):
         "matplotlib_version": "3.8.2",
         "backend": "agg",
         "figure_dpi": 100.0,
-        "savefig_dpi": "figure",
         "recorded_by": "handoff",
     }
     # 同字节换个名字/目录：照样命中（键是字节，不是路径）；改一个字节：不命中
@@ -244,8 +242,9 @@ def test_plugin_probe_records_what_the_script_process_actually_used(tmp_path, mo
     assert got["python_version"] == expected["py"]
     assert got["matplotlib_version"] == expected["mpl"]
     assert got["backend"] == expected["backend"] and got["backend"].lower() == "agg"
-    assert got["figure_dpi"] == 123 and got["savefig"]["dpi"] == 150
-    assert got["savefig"]["bbox_inches_none"] is True and got["savefig"]["format"] == "png"
+    assert got["figure_dpi"] == 123
+    # 闭集：不记 savefig 任何东西（脚本里 rc 的 savefig.dpi=150 也不能冒充某次 savefig 的实参）
+    assert set(got) == {"python_version", "matplotlib_version", "backend", "figure_dpi"}
     assert originrecord.sanitize_process_facts(got) is not None  # 两侧同源：引擎白名单收得下
     # 执行语义不变：argv / cwd 与直接跑一样，旁路变量不泄给脚本
     assert expected["argv"] == [str(script)] and Path(expected["cwd"]).resolve() == proj.resolve()
@@ -420,7 +419,15 @@ def test_admission_shows_the_origin_but_the_verdict_is_identical(
     origin = shown["source_backed"]["origin"]
     assert origin["python_version"] == "3.11.4" and origin["matplotlib_version"] == "3.8.2"
     assert origin["backend"] == "agg" and origin["figure_dpi"] == 100.0
-    assert origin["savefig_dpi"] == "figure" and origin["recorded_by"] == "handoff"
+    assert origin["recorded_by"] == "handoff"
+    assert set(origin) == {
+        "python_version",
+        "matplotlib_version",
+        "backend",
+        "figure_dpi",
+        "recorded_by",
+        "redraw",
+    }
     # 本次重画实际用的环境（来自 worker 构建自报，不是记录）
     redraw = origin["redraw"]
     want = subprocess.run(
@@ -437,3 +444,11 @@ def test_admission_shows_the_origin_but_the_verdict_is_identical(
     # 判定一字不变
     assert clean_state(shown) == clean_state(bare)
     assert shown["source_backed"]["status"] == status
+
+
+def test_stored_record_fields_are_a_closed_set_without_savefig_facts(data, tmp_path):
+    root = tmp_path / "proj"
+    _, sha = put(root, "a.png", facts=FACTS | {"savefig": {"dpi": 150}, "savefig_dpi": 150})
+    entry = json.loads((data / "origin" / f"{sha}.json").read_text(encoding="utf-8"))["entries"][0]
+    assert not [k for k in entry if "savefig" in k]
+    assert "savefig_dpi" not in originrecord.lookup(sha, root)

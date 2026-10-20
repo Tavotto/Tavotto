@@ -132,7 +132,7 @@ ADR 0098 末节的「完整 PNG 的受限采用」（`selected-figsize-v1`，#78
 | PR3 | AI 交接来源捕获：交接时记录脚本、解释器与 savefig 参数（按字节摘要绑定），保存瞬间证据，同次执行多格式绑定 | high | 记录是附加数据，忽略即回 |
 
 PR3 现状（第一片）：只做「交接时记录事实 + 响应里只读展示」——插件 `handoff.py` 在真的跑了脚本时，由脚本进程退出时
-自报版本 / 后端 / dpi 与像素相关的 savefig rcParams，按原件字节 sha256 写 `data_dir()/origin/`
+自报版本 / 后端 / `rcParams["figure.dpi"]`（不记 savefig 实参，探针看不到），按原件字节 sha256 写 `data_dir()/origin/`
 （`engine/originrecord.py`，不存解释器路径），准入响应的 `source_backed.origin` 展示它与本次重画的版本。
 **不参与 exact / needs_confirmation 判定，不换解释器。** 保存瞬间证据、同次执行多格式绑定、按记录选解释器
 （审计 B §6.3 的授权与池键 pin）仍是后续，需单独 ADR 与用户授权。
