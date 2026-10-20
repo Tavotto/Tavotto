@@ -212,33 +212,24 @@ def _original_eps_request(client, formats):
         exportjob.reset_for_tests()
 
 
-def test_scripted_svg_asset_original_eps_goes_through_the_worker(project, monkeypatch):
-    """有脚本的 SVG 素材：EPS 不被 SVG 分支提前拦截，走 `_serialize_figure`（与 epsAvailability 同源）。"""
+def test_scripted_svg_asset_original_eps_without_proof_never_reaches_the_worker(
+    project, monkeypatch
+):
+    """有脚本的 SVG 素材：没有字节绑定的证明，EPS 逐项失败，不碰 worker（#1185；有证明的路径见 test_export_svg）。"""
     client, root = project
-    calls = []
-
-    class FakeWorker:
-        export_dir = root
-
-        def export(self, stem, patches, path, fmt="pdf", dpi=600):
-            calls.append((stem, fmt))
-            from pathlib import Path
-
-            Path(path).write_bytes(
-                b"%!PS-Adobe-3.0 EPSF-3.0\n%%BoundingBox: 0 0 200 150\n%%EndComments\n%%EOF\n"
-            )
-            return {"warnings": []}
-
-    monkeypatch.setattr(m, "_safe_worker", lambda *a, **kw: FakeWorker())
     monkeypatch.setattr(
         m,
         "current_registry",
         lambda: type("R", (), {"for_stem": lambda self, s: {"script": "s.py", "entry": "main"}})(),
     )
+    monkeypatch.setattr(
+        m, "_safe_worker", lambda *a, **kw: pytest.fail("EPS reached a worker without proof")
+    )
     body = _original_eps_request(client, ["svg", "eps"])
-    assert body["status"] == "done", body
-    assert calls == [("F", "eps")]
-    assert {o["format"] for o in body["outputs"] if o["status"] == "done"} == {"svg", "eps"}
+    assert body["status"] == "partial", body
+    eps = next(o for o in body["outputs"] if o["format"] == "eps")
+    assert eps["error"]["code"] == "eps_source_unverified"
+    assert {o["format"] for o in body["outputs"] if o["status"] == "done"} == {"svg"}
 
 
 def test_unscripted_svg_asset_original_eps_reports_needs_script(project):

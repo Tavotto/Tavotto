@@ -295,7 +295,8 @@ export default interface Resources {
       "epsHint": "矢量 · 不支持透明度",
       "epsUnavailable": {
         "canvas_scope": "EPS 只支持按「原图尺寸」导出单张图。",
-        "no_script": "此图没有可重新运行的脚本。EPS 只能由脚本生成。"
+        "no_script": "此图没有可重新运行的脚本。EPS 只能由脚本生成。",
+        "source_unverified": "SVG 文件按原样导出，EPS 无法确认与这份文件是同一张图。"
       },
       "exportAgain": "再次导出",
       "exported": "导出完成：{{files}}",
@@ -2347,11 +2348,14 @@ export default interface Resources {
       "environment_locked": "全局指定的 Python 正在生效，项目里的选择不会被使用。请先解除全局指定",
       "environment_mutating": "该 Python 环境正在安装依赖，请稍候再试。",
       "environment_save_failed": "没能把这个环境保存到项目设置里（设置文件只读或磁盘已满），本次没有采用",
+      "eps_needs_live_figure": "要导出 {{figure}} 的 EPS，请先在画布上打开并运行这张图。其余格式已照常导出。",
       "eps_needs_script": "{{figure}} 没有可重新运行的脚本，无法生成 EPS。其余格式已照常导出。",
       "eps_not_for_canvas": "无法按画布导出 EPS。要 EPS，请按「原图尺寸」导出单张有脚本的图；其余格式已照常导出。",
+      "eps_source_unverified": "{{figure}} 的 EPS 无法确认与这份 SVG 文件是同一张图（脚本可能已改动），所以没有导出。SVG 已按原文件导出。",
       "execution_cancelled": "试运行已中断。",
       "execution_timeout": "脚本执行超时（入口 {{entry}}）",
       "explicit_python_unusable": "你指定的渲染环境用不了；Tavotto 不会自动换成别的环境。请在设置里重新指定，或清除它回到自动选择。",
+      "export_basis_mismatch": "{{format}} 与同批其他格式不是出自同一份来源，为避免交出不一致的文件，这一项没有导出。其余格式已照常导出。",
       "export_dir_unwritable": "无法写入导出目录：{{error}}。请检查磁盘空间和目录权限。",
       "export_failed": "导出失败：{{error}}。",
       "export_render_failed": "{{id}} 重渲染失败：{{reason}}",

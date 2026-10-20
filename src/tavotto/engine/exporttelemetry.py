@@ -48,6 +48,9 @@ _REQUEST_CODES = frozenset(
     {
         "no_format",
         "eps_needs_script",
+        "eps_source_unverified",
+        "eps_needs_live_figure",
+        "export_basis_mismatch",
         "eps_not_for_canvas",
         "missing_figure",
         "missing_original",

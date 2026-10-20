@@ -79,6 +79,12 @@ ERROR_CODES = (
     # `Produced.error_code`，与 `format_failed` 同一条漏斗 `_legacy_export_response`）
     "eps_not_for_canvas",
     "eps_needs_script",
+    # 一次作业里一张图的所有格式出自同一个基准（#1185 / #1209）：有脚本但活 Figure 没被证明出自这份
+    # 文件 → `eps_source_unverified`；有脚本、有证明但现在没有活 Figure（冷 worker）→ `eps_needs_live_figure`；
+    # 作业汇总处发现基准身份对不上 → `export_basis_mismatch`。都是逐项失败，其余格式照常交付
+    "eps_source_unverified",
+    "eps_needs_live_figure",
+    "export_basis_mismatch",
     "svg_source_unsupported",
     "no_output",
     "publish_failed",
@@ -144,6 +150,46 @@ class Output:
         }
 
 
+#: 一项产物相对「基准」的做法：原件字节拷贝 / 同一基准转换 / 由活 Figure 重画。
+BASIS_COPY, BASIS_CONVERT, BASIS_REDRAW = "copy", "convert", "redraw"
+
+
+@dataclass(frozen=True)
+class Basis:
+    """一项产物出自哪个基准：做法 + 基准的字节身份（磁盘原件的 sha256）。
+
+    重画（`redraw`）的身份只能是**已被证明绑定到那份字节**的 hash；没有证明就不该有这个值
+    （生产路径应当直接逐项失败），`None` 在断言里一律不等于任何基准。
+    """
+
+    how: str
+    source_sha256: str | None
+
+
+def enforce_one_basis(produced: list[Produced], reference_sha256: str) -> list[Produced]:
+    """作业级断言（#1185 / #1209）：同一张图的所有已声明基准的格式必须出自同一个基准。
+
+    不是在每个格式的生产路径里各加一个 if，而是在作业汇总处对**结果**核一遍：声明了基准、
+    却与 `reference_sha256` 不同（含 `None`）的那一项改成逐项失败 `export_basis_mismatch`，
+    其余格式照常交付。没声明基准的项不受约束（尚未接入的路径行为不变）。
+    """
+    checked: list[Produced] = []
+    for item in produced:
+        if (
+            item.tmp_path is not None
+            and item.error_code is None
+            and item.basis is not None
+            and item.basis.source_sha256 != reference_sha256
+        ):
+            item = Produced(
+                format=item.format,
+                error_code="export_basis_mismatch",
+                error_params={"format": item.format},
+            )
+        checked.append(item)
+    return checked
+
+
 @dataclass
 class Produced:
     """`produce()` 交回来的一件东西：一个临时文件，或者一次失败。"""
@@ -160,6 +206,8 @@ class Produced:
     #: 生产者交出的**计划**半张（页面 pt / 像素 / ppi / 是否矢量 / 期望文字行 / 源与回执引用）与检查器补上的
     #: 观测 / 判据 / 政策——`run()` 里 `inspect` 钩子读写它；发布时投影进 `Output.manifest`。
     manifest: dict | None = None
+    #: 这一项出自哪个基准（`Basis`）；只有声明了的才受 `enforce_one_basis` 的断言约束。
+    basis: Basis | None = None
 
 
 class Cancelled(Exception):

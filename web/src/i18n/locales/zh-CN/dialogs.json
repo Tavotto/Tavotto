@@ -45,7 +45,8 @@
     "epsHint": "矢量 · 不支持透明度",
     "epsUnavailable": {
       "canvas_scope": "EPS 只支持按「原图尺寸」导出单张图。",
-      "no_script": "此图没有可重新运行的脚本。EPS 只能由脚本生成。"
+      "no_script": "此图没有可重新运行的脚本。EPS 只能由脚本生成。",
+      "source_unverified": "SVG 文件按原样导出，EPS 无法确认与这份文件是同一张图。"
     },
     "exported": "导出完成：{{files}}",
     "filenameError": {

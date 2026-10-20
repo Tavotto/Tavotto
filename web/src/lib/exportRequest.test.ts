@@ -320,14 +320,17 @@ describe('EPS 与 TIFF（ADR 0046）', () => {
     expect(epsAvailability('original', 'runtime:abc')).toEqual({ ok: true, reason: 'none' })
   })
 
-  it('SVG 素材与 PDF 同一判据：有脚本可用、没脚本 no_script（与后端 _produce_original_eps 同源）', () => {
+  it('SVG 素材：没脚本 no_script；有脚本也不预先显示可用（EPS 需字节绑定的证明，#1185），请求不带 eps', () => {
     useAssetStore.setState({
       byId: {
         'S1.svg': { id: 'S1.svg', mtime: 1, kind: 'svg', script: 's1.py' },
         'S2.svg': { id: 'S2.svg', mtime: 1, kind: 'svg' },
       },
     } as never)
-    expect(epsAvailability('original', 'S1.svg')).toEqual({ ok: true, reason: 'none' })
+    expect(epsAvailability('original', 'S1.svg')).toEqual({ ok: false, reason: 'source_unverified' })
+    expect(
+      buildExportRequest(inputOf({ scope: 'original', figureId: 'S1.svg', formats: ['svg', 'eps'] })).request.formats,
+    ).toEqual(['svg'])
     expect(epsAvailability('original', 'S2.svg')).toEqual({ ok: false, reason: 'no_script' })
   })
 

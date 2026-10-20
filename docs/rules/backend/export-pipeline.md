@@ -40,7 +40,7 @@
     （Deflate 无损；父进程没有 Pillow，**别为它引进 Pillow**；条带经 `tavotto/deflate.py` 并行压、产物逐字节同串行，ADR 0077）；位图源的分辨率
     标签只写源文件自己声明过的密度。EPS **只有 worker 的 matplotlib 写得出**
     （父进程没有 PostScript 写入器）：`scope=canvas` 逐项报 `eps_not_for_canvas`，
-    没有脚本的图报 `eps_needs_script`，其余格式照常交付；要了 EPS 时 PDF/PNG/TIFF
+    没有脚本的图报 `eps_needs_script`（有脚本但没有活 Figure 另报 `eps_needs_live_figure`），其余格式照常交付；要了 EPS 时 PDF/PNG/TIFF
     也让 worker 现画（`_resolve_panel_source(rerender=True)`），四个格式出自同一次
     脚本运行。**不许**用 `Pixmap.save(…, "ps")` 之类把位图裹成 PS 冒充矢量。
     「谁来渲染」在导出路上的唯一调用点是 `_serialize_figure()`。
@@ -68,6 +68,18 @@
     保存布局先冻结精确编辑变体再一次原子写正文，失败清除待保存正文的旧引用并返回来源 warning，布局仍可保存。
     持久化与旧项目恢复边界见 `layout-versions-and-documents.md`。
     看护：`tests/test_export_svg.py`、`tests/test_svg_execution_lifecycle.py`、`tests/test_worker_svg_pair.py`、`tests/test_svgstore.py`。
+  * **一次作业里，同一张图的所有格式出自同一个基准（#1185 / #1209，A3）**：做不到的格式逐项失败并给出
+    真实原因，**不得悄悄换来源、不得为某个格式重新执行脚本换来源**。SVG 素材（`scope=original`、无编辑）的
+    基准是**文件字节**：svg = 这份字节；eps 只有「活 Figure 被证明出自这份字节」（`_svg_asset_binding`，
+    与 PDF 路径同一个 `svgstore.load(…static_sha256=…)` 先例）才给，且只走 `existing_only`（不启动 worker）。
+    断言写在**作业汇总处**而不是各格式路径里：`Produced.basis`（`copy`/`convert`/`redraw` + 基准 sha256）由生产路径
+    如实声明，`exportjob.enforce_one_basis` 对结果核一遍，基准身份与参照不同（含无证明的 `None`）的那一项改成
+    `export_basis_mismatch`，其余照常交付；没声明 `basis` 的路径尚不受约束（#1209 A2 把其余路径接进来）。
+    失败原因三档、互不混用：`eps_needs_script`（注册表里确实没有脚本）/ `eps_source_unverified`（有脚本，
+    但没有字节绑定的证明——目前没有任何路径写下 SVG 素材的绑定，所以实际恒为此码）/ `eps_needs_live_figure`
+    （有脚本、没有活 Figure，即冷 worker：先在画布上打开并运行这张图）。前端 `epsAvailability` 对 `.svg` 素材
+    按同一事实预先禁用（`source_unverified`），后端断言仍是权威。看护：`tests/test_export_svg.py`
+    （`never_come_from_two_bases` / `byte_bound` / `asserts_one_basis` / `cold_worker_eps`）。
   * **有限产物验证（U08，ADR 0068）**：`exportjob.run(inspect=…)` 在 `produce` 之后、提交点之前重新打开
     每个封口的临时文件（接线层 `engine/artifactinspect.py`，两个入口共用；检查器 `rendercore/inspector.py`），拒绝的那一项 `artifact_rejected` 不发布（partial 语义不变），合格的
     带 `Output.manifest`（`inspector.summary()` 投影，旧字段一个不动）。请求可带 `inspection: {mode: standard|strict,

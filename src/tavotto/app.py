@@ -2103,6 +2103,10 @@ def _export_produce_original(job, tmp_dir: Path, *, artifact_sources=None) -> li
         from . import svgasset
 
         data, probe = svgasset.read(safe_resolve(src.figure_id))
+        # 一张图一个基准（#1185 / #1209）：SVG 素材的基准就是这份文件的字节。svg = 这份字节；
+        # eps 只有「活 Figure 被证明出自这份字节」才给（`_produce_svg_asset_eps`），否则逐项失败，
+        # **绝不**为 eps 重新执行脚本换一个来源。最后由 `enforce_one_basis` 对作业结果再断言一遍。
+        source_sha = hashlib.sha256(data).hexdigest()
         produced = []
         for fmt in req.formats:
             job.check_cancelled()
@@ -2116,13 +2120,12 @@ def _export_produce_original(job, tmp_dir: Path, *, artifact_sources=None) -> li
                         width_mm=probe["w_pt"] * 25.4 / 72,
                         height_mm=probe["h_pt"] * 25.4 / 72,
                         vector=engine_artifactinspect.svg_vector(target),
+                        basis=engine_exportjob.Basis(engine_exportjob.BASIS_COPY, source_sha),
                     )
                 )
             elif fmt == engine_exportreq.FORMAT_EPS:
-                # 与前端 `epsAvailability()` 同源：有脚本的 SVG 素材走既有 worker 序列化，
-                # 没有脚本由 `_produce_original_eps` 报 `eps_needs_script`（前端标 no_script）。
                 produced.append(
-                    _produce_original_eps(
+                    _produce_svg_asset_eps(
                         job,
                         src,
                         req.ppi or engine_exportreq.PPI_DEFAULT,
@@ -2136,7 +2139,7 @@ def _export_produce_original(job, tmp_dir: Path, *, artifact_sources=None) -> li
                         format=fmt, error_code="svg_asset_export_unsupported", error_params={}
                     )
                 )
-        return produced
+        return engine_exportjob.enforce_one_basis(produced, source_sha)
     dpi = req.ppi or engine_exportreq.PPI_DEFAULT
     job.check_cancelled()
     if (
@@ -2383,9 +2386,12 @@ def _produce_original_eps(
         **({"existing_only": True} if existing_only else {}),
     )
     if path is None or not path.is_file():
+        # `existing_only` 下 `None` 有两种成因：没有脚本，或脚本在但没有活 Figure（冷 worker）。
+        # 后者不是「没有脚本」——文案要让用户知道先打开这张图（A3b）
+        cold = existing_only and _has_runnable_script(src.figure_id)
         return engine_exportjob.Produced(
             format=engine_exportreq.FORMAT_EPS,
-            error_code="eps_needs_script",
+            error_code="eps_needs_live_figure" if cold else "eps_needs_script",
             error_params={"figure": src.figure_id},
         )
     bbox = engine_epsfile.bounding_box_pt(path)
@@ -2396,6 +2402,55 @@ def _produce_original_eps(
         height_mm=round(bbox[1] * 25.4 / 72.0, 3) if bbox else None,
         vector=True,
     )
+
+
+def _has_runnable_script(rel_id: str) -> bool:
+    """这张图有没有可重新运行的脚本（runtime 素材天生有；磁盘图看注册表按 stem 的映射）。"""
+    if engine_runtimeasset.is_runtime_id(rel_id):
+        return True
+    return current_registry().for_stem(Path(rel_id).stem) is not None
+
+
+def _svg_asset_binding(src, tmp_dir: Path) -> str | None:
+    """SVG 素材的活 Figure 是否被证明出自这份文件的字节：是则回那份被绑定的 sha256，否则 `None`。
+
+    与 PDF 路径同一个先例（`svgstore.load(…, static_sha256=…)`，由 `_load_svg_snapshot` 的
+    `static_source` 走）：只认「独立接纳、绑定到**当前精确字节**」的配对；同名脚本、预览、
+    任意旧导出都不算。读不到就是没有证明，不是错误。
+    """
+    from .rendercore import sources as rc_sources
+
+    path = safe_resolve(src.figure_id)
+    static = rc_sources.FrozenSource(rc_sources.static_artifact(path, src.figure_id), path)
+    saved = _load_svg_snapshot(src.figure_id, [], tmp_dir, static_source=static)
+    return saved.svg_source_sha256 if saved is not None else None
+
+
+def _produce_svg_asset_eps(job, src, dpi: int, tmp_dir: Path, *, artifact_source=None):
+    """SVG 素材（原图范围、无编辑）的 EPS：只在活 Figure 被证明出自这份文件时才给。
+
+    顺序：没有脚本 → `eps_needs_script`；有脚本但无字节绑定的证明 → `eps_source_unverified`
+    （**不碰 worker、不重跑脚本**）；有证明但没有活 Figure → `eps_needs_live_figure`（`existing_only`，
+    同样不启动 worker）。给出的 EPS 带 `redraw` 基准，由 `enforce_one_basis` 与 SVG 的基准对质。
+    """
+    failure = {"figure": src.figure_id}
+    if not _has_runnable_script(src.figure_id):
+        return engine_exportjob.Produced(
+            format=engine_exportreq.FORMAT_EPS, error_code="eps_needs_script", error_params=failure
+        )
+    bound = _svg_asset_binding(src, tmp_dir)
+    if bound is None:
+        return engine_exportjob.Produced(
+            format=engine_exportreq.FORMAT_EPS,
+            error_code="eps_source_unverified",
+            error_params=failure,
+        )
+    result = _produce_original_eps(
+        job, src, dpi, tmp_dir, artifact_source=artifact_source, existing_only=True
+    )
+    if result.tmp_path is not None:
+        result.basis = engine_exportjob.Basis(engine_exportjob.BASIS_REDRAW, bound)
+    return result
 
 
 def _export_produce_rendercore(job, tmp_dir: Path, *, artifact_sources=None) -> list:
