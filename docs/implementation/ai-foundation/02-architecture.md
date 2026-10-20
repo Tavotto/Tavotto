@@ -95,6 +95,13 @@ AiPanel.send（不改：草稿快照 → 提交账本 → aiRun，rid 原样）
 「不执行模型写的代码」是 v1 的硬边界：safe 档不是沙盒，CSV 里的文字可以影响模型；模板生成让被执行的代码
 完全由 Tavotto 决定。需要模型写自由代码的复杂绘图，留给后续适配器，并且先解决隔离问题（`04-security-model.md` §五）。
 
+**Phase 5a 实现**（`engine/ai_data_figure.py`，纯标准库，不执行、不写文件）：`inspect_data_source`（受控摘要，超限拒绝
+不截断）、`plan_mapping`（确定性：「随 X 的变化」/ 唯一日期列 / 第一列作 x；指令按词提到的可画列作 y；纯文字列永不作 y；
+列名无语义且指令没点名 → `needs_input` 带中性预览；类别 x 多系列 → `unsupported`）、`axis_label`（单位只认闭集后缀）、
+`render_script`（模板；CSV 来的字符串只经 `repr()`）、`plotted_data` + `expected_fingerprints`（父进程按同一解析规则算期望
+数据指纹）。`tests/test_ai_data_figure.py` 让真 safe worker 跑 FB-D01/D03–D08 的生成脚本，manifest 指纹与期望逐字节相等。
+适配器、写入项目、登记与渲染验证在 5b，前端入口在 5c。
+
 ## 五、流程 C：开发阶段自优化（Harness Lab，Phase 6）
 
 Baseline Prompt Pack（v1 = 今天的提示词逐字节）→ 候选 Pack（人写或模型提议，说明改了什么）→ 在 FigureBench **dev**

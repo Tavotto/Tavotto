@@ -1,0 +1,296 @@
+"""TAF 数据出图的确定性内核（ADR 0138 Phase 5a）：受控摘要、列映射、模板脚本、期望数据指纹。
+
+FigureBench 的 `csv_inputs`（FB-D01–D08）是输入真值：摘要逐项对 `truth.json`；映射按场景的 `policy`；生成的脚本交给
+**真 safe worker** 跑一遍，manifest 里的数据指纹与父进程按同一规则算出的期望值逐字节相等——两处实现（`plotted_data` 与
+模板里的 `_cell` / `_x`）说的是同一件事，才能拿期望值去判「画的就是这份数据」。
+"""
+
+from __future__ import annotations
+
+import ast
+import json
+import math
+from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
+
+import pytest
+
+from tavotto.engine import ai_data_figure as adf, discover, pool
+
+FIX = Path(__file__).resolve().parent / "fixtures" / "figurebench" / "csv_inputs"
+TRUTH = json.loads((FIX / "truth.json").read_text(encoding="utf-8"))["files"]
+SCENARIOS = {
+    s["id"]: s
+    for f in ("scenarios.json", "scenarios_holdout.json")
+    for s in json.loads((FIX.parent / f).read_text(encoding="utf-8"))["scenarios"]
+    if s["task_type"] == "data_to_figure"
+}
+
+try:
+    WORKER_PY = pool.find_worker_python()
+except pool.WorkerError:
+    WORKER_PY = None
+
+
+def _summary(sid: str) -> adf.DataSummary:
+    return adf.inspect_data_source(FIX.parent / SCENARIOS[sid]["fixture"])
+
+
+def _plan(sid: str):
+    return adf.plan_mapping(_summary(sid), SCENARIOS[sid]["instruction"])
+
+
+# --------------------------------------------------------------------------- 受控摘要
+@pytest.mark.parametrize("name", sorted(TRUTH))
+def test_summary_matches_the_input_truth(name):
+    s = adf.inspect_data_source(FIX / name)
+    t = TRUTH[name]
+    assert s.columns == t["columns"] and len(s.rows) == t["rows"]
+    for col, want in t["per_column"].items():
+        got = s.per_column[col].to_dict()
+        assert {k: got[k] for k in ("numeric", "empty", "nan", "text")} == want, col
+
+
+def test_summary_dict_carries_no_cell_values():
+    d = adf.inspect_data_source(FIX / "standard.csv").to_dict()
+    assert d["rows"] == 10 and "0.42" not in json.dumps(d), "摘要只带计数与类型，不带数值"
+
+
+@pytest.mark.parametrize(
+    ("content", "code"),
+    [
+        (b"", "data_empty"),
+        (b"x,y\n", "data_empty"),
+        (b"x,x\n1,2\n", "data_header_invalid"),
+        (b"x,\n1,2\n", "data_header_invalid"),
+        (b"x,y\n1\n", "data_ragged"),
+        (b"x,y\n\xff\xfe,1\n", "data_decode_error"),
+    ],
+)
+def test_bad_inputs_are_refused_with_a_stable_code(tmp_path, content, code):
+    p = tmp_path / "d.csv"
+    p.write_bytes(content)
+    with pytest.raises(adf.DataSourceError) as e:
+        adf.inspect_data_source(p)
+    assert e.value.code == code
+
+
+def test_oversized_input_is_refused_not_truncated(tmp_path, monkeypatch):
+    monkeypatch.setattr(adf, "MAX_ROWS", 3)
+    p = tmp_path / "d.csv"
+    p.write_text("x,y\n" + "".join(f"{i},{i}\n" for i in range(4)), encoding="utf-8")
+    with pytest.raises(adf.DataSourceError) as e:
+        adf.inspect_data_source(p)
+    assert e.value.code == "data_too_long"
+
+
+# --------------------------------------------------------------------------- 列映射
+@pytest.mark.parametrize(
+    ("sid", "x", "ys", "kind", "is_date"),
+    [
+        ("FB-D01", "time_s", ("voltage_mV",), "line", False),
+        ("FB-D03", "x", ("y",), "line", False),
+        ("FB-D04", "sample", ("value",), "bar", False),
+        ("FB-D05", "date", ("temperature_C",), "line", True),
+        ("FB-D06", "x", ("signal",), "line", False),
+        ("FB-D07", "t", ("ctrl", "treat"), "line", False),
+        ("FB-D08", "x", ("value",), "line", False),
+    ],
+)
+def test_mapping_follows_the_scenario_policy(sid, x, ys, kind, is_date):
+    assert _plan(sid) == adf.Mapping(x=x, ys=ys, kind=kind, x_is_date=is_date)
+
+
+def test_meaningless_headers_ask_the_user_with_a_neutral_preview():
+    got = _plan("FB-D02")
+    assert isinstance(got, adf.NeedsInput) and got.reason == "column_mapping_ambiguous"
+    assert got.preview == adf.Mapping(x="a", ys=("b", "c"), kind="line")
+    # 用户点名之后就不再问
+    named = adf.plan_mapping(_summary("FB-D02"), "画 c 随 a 的变化")
+    assert named == adf.Mapping(x="a", ys=("c",), kind="line")
+
+
+def test_a_note_column_is_never_plotted_and_its_text_never_reaches_the_script():
+    s = _summary("FB-D08")
+    m = _plan("FB-D08")
+    assert "note" not in m.ys
+    text = adf.render_script(s, m, data_rel="injection.csv", stem="injection_figure")
+    for t in s.per_column["note"].text:
+        assert t not in text
+
+
+def test_text_columns_are_never_y_even_without_a_named_column():
+    m = adf.plan_mapping(_summary("FB-D08"), "画出来")
+    assert m == adf.Mapping(x="x", ys=("value",), kind="line"), "note 是备注，不是数据"
+
+
+def test_column_mention_is_by_word():
+    s = adf.inspect_data_source(FIX / "two_series.csv")
+    assert adf.plan_mapping(s, "画 treatment 组") == adf.Mapping(
+        x="t", ys=("ctrl", "treat"), kind="line"
+    ), "treatment 不算提到 treat"
+
+
+def test_categorical_x_with_several_series_is_unsupported_not_guessed(tmp_path):
+    p = tmp_path / "d.csv"
+    p.write_text("sample,a_val,b_val\nS1,1,2\nS2,3,4\n", encoding="utf-8")
+    got = adf.plan_mapping(adf.inspect_data_source(p), "画出来")
+    assert got == adf.Unsupported("grouped_bars_unsupported")
+
+
+@pytest.mark.parametrize(
+    ("col", "label"),
+    [
+        ("time_s", "time (s)"),
+        ("voltage_mV", "voltage (mV)"),
+        ("temperature_C", "temperature (°C)"),
+        ("signal", "signal"),
+        ("x", "x"),
+        ("my_value", "my_value"),  # value 不是单位
+        ("ctrl", "ctrl"),
+    ],
+)
+def test_axis_labels_take_units_only_from_a_closed_suffix_set(col, label):
+    assert adf.axis_label(col) == label
+
+
+# --------------------------------------------------------------------------- 期望数据
+def test_missing_cells_break_the_line_and_are_counted():
+    p = adf.plotted_data(_summary("FB-D03"), _plan("FB-D03"))
+    ((label, part, values, shape),) = p.series
+    ys = values[1::2]
+    assert label == "y" and part == "xy" and shape == (8, 2)
+    assert sum(1 for v in ys if math.isfinite(v)) == 5 and p.missing == 3
+    assert p.not_plotted == ()
+
+
+def test_text_in_a_numeric_column_is_reported_not_coerced():
+    p = adf.plotted_data(_summary("FB-D04"), _plan("FB-D04"))
+    assert [(r["row"], r["reason"]) for r in p.not_plotted] == [
+        (3, "not_a_number"),
+        (5, "not_a_number"),
+    ]
+    ((_, part, values, shape),) = p.series
+    assert part == "bars" and shape == (4, 2) and 0.1 not in values[1::2]
+
+
+def test_digest_is_the_canonical_rule():
+    # 与 tests/test_figurebench_fixtures.py::_digest 同一规则：形状头 + 小端 float64，NaN 统一位型
+    import hashlib
+    import struct
+
+    vals = [0.0, 1.0, math.nan, 2.0]
+    want = hashlib.sha256(b"2x2:" + struct.pack("<4d", *vals)).hexdigest()
+    assert adf.digest(vals, (2, 2)) == {"sha256": want, "shape": [2, 2], "finite": 3}
+    neg = [0.0, 1.0, -math.nan, 2.0]  # 另一种 NaN 位型也统一
+    assert adf.digest(neg, (2, 2))["sha256"] == want
+
+
+# --------------------------------------------------------------------------- 模板
+MAPPED = ["FB-D01", "FB-D03", "FB-D04", "FB-D05", "FB-D06", "FB-D07", "FB-D08"]
+
+
+@pytest.mark.parametrize("sid", MAPPED)
+def test_generated_script_is_static_and_parseable(tmp_path, sid):
+    s = _summary(sid)
+    stem = adf.stem_for(s.path_name)
+    script = tmp_path / f"{stem}.py"
+    script.write_text(
+        adf.render_script(s, _plan(sid), data_rel=s.path_name, stem=stem), encoding="utf-8"
+    )
+    tree = ast.parse(script.read_text(encoding="utf-8"))
+    mains = [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "main"]
+    assert mains and not mains[0].args.args, "无参 main()"
+    info = discover.inspect_script(script, tmp_path, glob_disk=False)["info"]
+    assert info["stems"] == [stem], "输出名静态可读（登记不需要试运行）"
+
+
+#: 两种引号都带：不论模板用哪种引号拼，没经 repr 就会变成代码
+HOSTILE_X = "t\"); import os; os.remove('x'); (\""
+
+HOSTILE_Y = 'v"\nprint(1)'
+
+
+def test_hostile_column_names_stay_string_literals(tmp_path):
+    p = tmp_path / "d.csv"
+    with p.open("w", encoding="utf-8", newline="") as fh:
+        import csv
+
+        csv.writer(fh).writerows([[HOSTILE_X, HOSTILE_Y], [1, 2], [2, 3]])
+    s = adf.inspect_data_source(p)
+    m = adf.plan_mapping(s, "画出来")
+    assert m.x == HOSTILE_X and m.ys == (HOSTILE_Y,)
+    text = adf.render_script(s, m, data_rel="d.csv", stem="d_figure")
+    tree = ast.parse(text)
+    top = {type(n).__name__ for n in tree.body}
+    assert top <= {"Expr", "Import", "ImportFrom", "Assign", "FunctionDef"}, top
+    imports = {a.name for n in ast.walk(tree) if isinstance(n, ast.Import) for a in n.names}
+    assert imports <= {"csv", "math", "datetime", "re", "matplotlib.pyplot"}, imports
+    calls = {getattr(n.func, "id", None) for n in ast.walk(tree) if isinstance(n, ast.Call)}
+    assert "print" not in calls
+    consts = {n.value for n in ast.walk(tree) if isinstance(n, ast.Constant)}
+    assert HOSTILE_X in consts and HOSTILE_Y in consts, "列名原样以字符串字面量出现"
+    comment = next(line for line in text.splitlines() if line.startswith("# tavotto-source:"))
+    assert json.loads(comment.split(":", 1)[1])["mapping"]["y"] == [HOSTILE_Y]
+
+
+def test_stem_is_sanitised():
+    assert adf.stem_for("my data (v2).csv") == "my_data_v2_figure"
+    assert adf.stem_for("数据.csv") == "data_figure"
+
+
+# --------------------------------------------------------------------------- 真 worker 对拍
+def _labelled(man: dict) -> dict[str, dict]:
+    out = {}
+    for el in man.get("elements", []):
+        fp = el.get("data_fingerprint")
+        if not isinstance(fp, dict):
+            continue
+        label = next(
+            (f.get("value") for f in el.get("editable", []) if f.get("prop") == "label"), None
+        )
+        if label is not None:
+            out[str(label)] = fp
+    return out
+
+
+@pytest.mark.skipif(WORKER_PY is None, reason="not_run：找不到装有 matplotlib 的解释器")
+def test_worker_draws_exactly_the_expected_data(tmp_path):
+    def build(sid):
+        work = tmp_path / sid
+        work.mkdir()
+        if sid in SCENARIOS:
+            s, m = _summary(sid), _plan(sid)
+            src = FIX / s.path_name
+        else:
+            src = tmp_path / "_extra" / sid
+            s = adf.inspect_data_source(src)
+            m = adf.plan_mapping(s, "画 value")
+            assert m.kind == "bar"
+        (work / s.path_name).write_bytes(src.read_bytes())
+        stem = adf.stem_for(s.path_name)
+        (work / f"{stem}.py").write_text(
+            adf.render_script(s, m, data_rel=s.path_name, stem=stem), encoding="utf-8"
+        )
+        w = pool.one_shot(f"{stem}.py", str(work), "main")
+        try:
+            w.ensure_built()
+            man = w.override(stem, [])["manifest"]
+        finally:
+            pool.discard(w)
+        return sid, adf.expected_fingerprints(adf.plotted_data(s, m)), man
+
+    # 夹具之外再加一份「柱图里有空单元格」：缺失行整行不画，两边都不能画成 0 或 NaN 柱
+    extra = tmp_path / "_extra"
+    extra.mkdir()
+    (extra / "bars.csv").write_text("sample,value\nA,1\nB,\nC,nan\nD,2\n", encoding="utf-8")
+    BAR_MISSING = "bars.csv"
+
+    with ThreadPoolExecutor(max_workers=4) as ex:
+        results = list(ex.map(build, [*MAPPED, BAR_MISSING]))
+    for sid, expected, man in results:
+        got = _labelled(man)
+        for e in expected:
+            fp = got.get(e["label"])
+            assert fp is not None and fp.get("status") == "ok", (sid, e["label"], sorted(got))
+            assert fp["parts"][e["part"]] == e["digest"], (sid, e["label"])
