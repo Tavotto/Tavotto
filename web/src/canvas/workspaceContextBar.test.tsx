@@ -170,6 +170,64 @@ describe('返回入口只有一个', () => {
   })
 })
 
+describe('快编出口按来源换文案，动作相同（P01）', () => {
+  const kind = () => backBtns()[0].dataset.contextBackKind
+  const label = () => backBtns()[0].textContent ?? ''
+
+  it('从排版进来：return +「返回排版」，左箭头', async () => {
+    useWorkspaceStore.getState().enterFastEdit('p1')
+    await mount()
+    expect(kind()).toBe('return')
+    expect(label()).toContain(t('stage.backToLayout', { ns: 'workspace' }))
+    expect(label()).not.toContain(t('fastEdit.toLayout', { ns: 'workspace' }))
+  })
+
+  it('没有排版来源（会话恢复）：forward +「排版与出版」', async () => {
+    useWorkspaceStore.getState().enterFastEdit('p1', { fromLayout: false })
+    await mount()
+    expect(kind()).toBe('forward')
+    expect(label()).toContain(t('fastEdit.toLayout', { ns: 'workspace' }))
+  })
+
+  it('这次打开刚把图加进文档（addedForEdit）：按前进说', async () => {
+    useWorkspaceStore.getState().enterFastEdit('p1')
+    useWorkspaceStore.setState({ addedForEdit: 'p1' })
+    await mount()
+    expect(kind()).toBe('forward')
+  })
+
+  it('快编里换图保持来源；回排版后来源清掉', async () => {
+    useWorkspaceStore.getState().enterFastEdit('p1', { fromLayout: false })
+    useWorkspaceStore.getState().enterFastEdit('p1')
+    expect(useWorkspaceStore.getState().fastEditFromLayout).toBe(false)
+    useWorkspaceStore.getState().exitToLayout()
+    expect(useWorkspaceStore.getState().fastEditFromLayout).toBe(false)
+  })
+
+  it('两种来源点击都走 returnToLayout：回排版、选中该面板', async () => {
+    for (const fromLayout of [true, false]) {
+      useWorkspaceStore.getState().clear()
+      useSelectionStore.getState().clear()
+      useWorkspaceStore.getState().enterFastEdit('p1', { fromLayout })
+      await mount()
+      await act(async () => (backBtns()[0] as HTMLButtonElement).click())
+      expect(useWorkspaceStore.getState().mode).toBe('layout')
+      expect(useSelectionStore.getState().ids).toEqual(['p1'])
+      await act(async () => root.unmount())
+      host.remove()
+    }
+    await mount() // 交给 afterEach 卸载
+  })
+
+  it('排版里的图内编辑返回按钮语义不变：return + 返回画布，不走 returnToLayout', async () => {
+    useUiStore.getState().setElementPanel('p1')
+    await mount()
+    expect(kind()).toBe('return')
+    expect(label()).toContain(t('stage.backToCanvas', { ns: 'workspace' }))
+    expect(label()).not.toContain(t('stage.backToLayout', { ns: 'workspace' }))
+  })
+})
+
 describe('面包屑：图 / 当前对象', () => {
   it('图名始终在；没选元素时第二级是「整张图」（与右栏头部同一个词）', async () => {
     useUiStore.getState().setElementPanel('p1')
@@ -209,18 +267,17 @@ describe('面包屑：图 / 当前对象', () => {
 })
 
 describe('教程锚点还挂在真按钮上（ADR 0040）', () => {
-  it('快速编辑态两个锚点都在，且各挂一颗按钮', async () => {
+  it('快速编辑态只有 to-layout 一个锚点（add-to-layout 随「添加到画布」一起删了），挂在那颗出口按钮上', async () => {
     useWorkspaceStore.getState().enterFastEdit('p1')
     await mount()
-    expect(anchors().sort()).toEqual(['add-to-layout', 'to-layout'])
-    for (const a of ['add-to-layout', 'to-layout']) {
-      const node = host.querySelector(`[data-onboarding-anchor="${a}"]`)
-      expect(node?.tagName).toBe('BUTTON')
-      expect((node as HTMLButtonElement).disabled).toBe(false)
-    }
+    expect(anchors()).toEqual(['to-layout'])
+    const node = host.querySelector('[data-onboarding-anchor="to-layout"]')
+    expect(node?.tagName).toBe('BUTTON')
+    expect(node?.hasAttribute('data-context-back')).toBe(true)
+    expect((node as HTMLButtonElement).disabled).toBe(false)
   })
 
-  it('画布排版态不摆这两个锚点（那一屏没有这两个动作）', async () => {
+  it('画布排版态不摆锚点（那一屏没有这个动作）', async () => {
     useUiStore.getState().setElementPanel('p1')
     await mount()
     expect(anchors()).toEqual([])

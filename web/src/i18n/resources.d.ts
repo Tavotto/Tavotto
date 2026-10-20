@@ -4890,16 +4890,16 @@ export default interface Resources {
       }
     },
     "fastEdit": {
-      "addToCanvas": "添加到画布",
       "added": "{{name}} 已加入画布",
       "addedForEdit": "已为编辑加入本排版",
       "addedForEditLive": "已为编辑加入本排版，移除即撤销。",
       "alreadyOnCanvas": "{{name}} 已经在画布上",
       "connectSource": "连接源脚本",
-      "crumbTitle": "返回画布",
+      "crumbTitle": "回到排版（Esc）",
       "figureMissing": "项目里找不到 {{name}}",
       "layoutOnly": "未连接源脚本。可在版面上摆放，不能改图内元素。",
-      "removeAdded": "移除"
+      "removeAdded": "移除",
+      "toLayout": "排版与出版"
     },
     "hints": {
       "fast_edit_entered": "你的改动会保存到当前排版，原始文件不动。",
@@ -5635,6 +5635,7 @@ export default interface Resources {
     "stage": {
       "addFigure": "添加图",
       "backToCanvas": "返回画布",
+      "backToLayout": "返回排版",
       "contextBarLabel": "工作区位置",
       "crumbsLabel": "当前对象",
       "emptyHint": "从素材库选一张图放到画布上。",

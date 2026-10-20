@@ -95,7 +95,8 @@ const BUDGETS: Budget[] = [
   ['workspace', 'readiness.whyNotEditable', 26, '画布工具条上的解释入口'],
   // 快速编辑（Prompt 09）：模式标签在顶栏那一行里，两个出口在画布上方那条
   // 浮动条上——它必须能整条塞进窄画布，所以按钮文案压得比一般按钮还紧
-  ['workspace', 'fastEdit.addToCanvas', 16, '上下文栏上的主动作'],
+  ['workspace', 'fastEdit.toLayout', 16, '快速编辑上下文栏的出口（无排版来源时）'],
+  ['workspace', 'stage.backToLayout', 16, '快速编辑上下文栏的出口（从排版进来时）'],
   ['workspace', 'stage.backToCanvas', 16, '上下文栏上唯一的返回入口'],
   ['workspace', 'fastEdit.connectSource', 24, '降级说明条上的下一步'],
   ['workspace', 'assets.openFigure', 8, '素材卡悬停时右下角那个就近入口'],

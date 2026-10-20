@@ -286,6 +286,56 @@ describe('快速编辑 ↔ 画布排版共享同一个对象', () => {
   })
 })
 
+describe('快编 ⇄ 排版往返与「从哪里来」（P01）', () => {
+  beforeEach(reset)
+
+  it('快编 → 排版 → 快编 → 排版：面板几何、对象 id、overrides、历史长度严格不变，不新增面板', () => {
+    s().commit(literal('摆'), (d) => { d.objects = [] })
+    openFastEdit('a.pdf')
+    returnToLayout()
+    const snap = () => {
+      const p = panelOf('a.pdf')
+      return JSON.stringify({ id: p.id, x: p.x, y: p.y, w: p.w, h: p.h, o: p.overrides, n: s().doc.objects.length })
+    }
+    const before = snap()
+    const past = s().past.length
+    openFastEdit('a.pdf')
+    returnToLayout()
+    openFastEdit('a.pdf')
+    returnToLayout()
+    expect(snap()).toBe(before)
+    expect(s().past).toHaveLength(past)
+    expect(ws().mode).toBe('layout')
+    expect(useSelectionStore.getState().ids).toEqual([panelOf('a.pdf').id])
+  })
+
+  it('图已在排版上、从排版打开：来源 = 排版，且没有「刚加入」', () => {
+    openFastEdit('a.pdf') // 第一次：文档里没有，被加进来
+    returnToLayout()
+    openFastEdit('a.pdf')
+    expect(ws().fastEditFromLayout).toBe(true)
+    expect(ws().addedForEdit).toBeNull()
+  })
+
+  it('图不在文档里、这次打开才加进来：addedForEdit 非空（上下文栏据此说「排版与出版 →」）', () => {
+    openFastEdit('b.pdf')
+    expect(ws().fastEditFromLayout).toBe(true)
+    expect(ws().addedForEdit).toBe(panelOf('b.pdf').id)
+  })
+
+  it('会话恢复进快编没有排版来源；回排版后来源清掉', () => {
+    const stop = startWorkspacePersistence()
+    openFastEdit('a.pdf')
+    stop()
+    ws().clear()
+    restoreWorkspace('d_test', s().doc.objects)
+    expect(ws().mode).toBe('fast_edit')
+    expect(ws().fastEditFromLayout).toBe(false)
+    returnToLayout()
+    expect(ws().fastEditFromLayout).toBe(false)
+  })
+})
+
 describe('模式是工作区状态，不是文档', () => {
   beforeEach(reset)
 

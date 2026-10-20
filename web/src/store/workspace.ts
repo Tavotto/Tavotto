@@ -421,7 +421,7 @@ export function restoreWorkspace(documentId: string, objects: readonly CanvasObj
     store.clear()
     return
   }
-  store.enterFastEdit(o.id)
+  store.enterFastEdit(o.id, { fromLayout: false })
 }
 
 /**
