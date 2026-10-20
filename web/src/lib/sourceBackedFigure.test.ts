@@ -170,3 +170,18 @@ describe('persistence and old readers', () => {
     expect(p.overrides).toEqual([FRAME])
   })
 })
+
+describe('canvas export: every instance of the same source carries its own confirmation', () => {
+  it('two edited instances with different confirmed digests and a zero-edit one', async () => {
+    const { toExportObjects } = await import('./exportPayload')
+    const other = { ...reconstructed, reconstructionSha256: 'd'.repeat(64) }
+    const objs = [
+      panel({ id: 'a', overrides: [FRAME, TITLE] }),
+      panel({ id: 'b', overrides: [FRAME, TITLE], sourceBackedFigure: other }),
+      panel({ id: 'c' }),
+    ]
+    const out = toExportObjects(objs) as unknown as { confirmed_reconstruction_sha256?: string; source_policy?: string }[]
+    expect(out.map((o) => o.confirmed_reconstruction_sha256)).toEqual([SHA, 'd'.repeat(64), undefined])
+    expect(out.every((o) => o.source_policy === SCRIPT_BACKED_SOURCE_POLICY)).toBe(true)
+  })
+})

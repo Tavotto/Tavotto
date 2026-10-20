@@ -856,8 +856,11 @@ test('source-backed PNG: legend + pixel difference → compare dialog → confir
   expect(adopted.sourceBackedFigure.confirmedAt).toBeTruthy()
   expect(placement(adopted)).toEqual(placement(data.objects[0]))
   const host = await only(object(page, 'a'))
-  await expect(host.locator('img[data-original-pixels="a"]')).toHaveCount(1, { timeout: 120_000 })
-  await paintedOriginal(page, 'a', source.png)
+  // Entering edit shows the editable basis (the redraw's SVG + hit layer) BEFORE any drag, so a first drag preview is visible.
+  await expect(host.locator('[data-element-svg="a"] > svg')).toBeVisible({ timeout: 120_000 })
+  await expect(host.locator('[data-element-svg="a"]')).not.toHaveCSS('visibility', 'hidden')
+  await expect(host.locator('img[data-original-pixels]')).toHaveCount(0)
+  await expect(host.locator('[data-display] img:not([aria-hidden="true"])')).toHaveCount(0)
 
   // 3. A real edit (legend moved with Shift+arrows): whole-figure redraw, carrying the confirmed digest.
   const legend = host.locator(`[data-element-svg="a"] [id="axes_0.legend"]`)
@@ -915,6 +918,8 @@ test('source-backed PNG: legend + pixel difference → compare dialog → confir
   }
   await expect.poll(async () => (await data.savedPanel('a')).overrides, { timeout: 60_000 }).toEqual([FRAME])
   expect((await data.savedPanel('a') as unknown as { sourceBackedFigure?: SourceBackedGuard }).sourceBackedFigure).toEqual(adopted.sourceBackedFigure)
+  // Leaving edit while still unedited → the disk pixels again.
+  if (await page.locator('[data-exit-element-edit]').count()) await exitEdit(page)
   await paintedOriginal(page, 'a', source.png)
   // The original PNG (and the script) are byte-identical to what the user had: adoption and editing never write the source.
   expect(readFileSync(path.join(source.figures, FILE))).toEqual(source.png)

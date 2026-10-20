@@ -181,9 +181,10 @@ export function PanelView({ obj }: { obj: PanelObject }) {
   const kind = panelKind(obj)
   const runtime = kind === 'runtime'
   const tracked = useRenderStore((s) => !!s.tracked[obj.fileId])
-  // 来源驱动采用 + 零编辑（只有结构性 FRAME）：显示磁盘原像素，不出引擎图（ADR 0139 §五.1）。
-  // 唯一例外：编辑态下预览走 raster 档（没有 SVG 可挂命中层）——那时仍要引擎位图才有几何权威。
-  const originalPixels = isSourceBackedZeroEdit(obj) && !(editing && bitmapOnly)
+  // 来源驱动采用 + 零编辑（只有结构性 FRAME）且**不在图内编辑**：显示磁盘原像素，不出引擎图（ADR 0139 §五.1）。
+  // 进入图内编辑的那一刻起显示可编辑基础（重画的 SVG + 命中层），拖动预览才看得见；退出编辑且仍是零编辑就回原像素。
+  // 超大图（raster / evicted 档）同理：只有编辑态才用引擎位图，编辑外一律原像素。
+  const originalPixels = isSourceBackedZeroEdit(obj) && !editing
   const needsEngine = !originalPixels &&
     ((obj.overrides.length > 0 && !isJustBakedBaseline(obj)) || tracked || runtime)
   // raster 档下**编辑态也要位图**——否则画布上什么都没有。复用的是同一条
@@ -347,24 +348,12 @@ export function PanelView({ obj }: { obj: PanelObject }) {
         style={contentStyle}
       >
         {showSvg ? (
-          <>
-            <div
-              data-element-svg={obj.id}
-              className="absolute"
-              // 来源驱动零编辑：SVG 只为命中层 / 元素树挂着（几何权威），看到的是下面那张磁盘原图
-              style={{ ...layout, maxWidth: 'none', ...(originalPixels ? { visibility: 'hidden' as const } : {}) }}
-              dangerouslySetInnerHTML={svgMarkup}
-            />
-            {originalPixels && fileSrc && (
-              <img
-                src={fileSrc}
-                data-original-pixels={obj.id}
-                alt={obj.name ?? obj.fileId}
-                className="pointer-events-none absolute select-none"
-                style={{ ...layout, maxWidth: 'none' }}
-              />
-            )}
-          </>
+          <div
+            data-element-svg={obj.id}
+            className="absolute"
+            style={{ ...layout, maxWidth: 'none' }}
+            dangerouslySetInnerHTML={svgMarkup}
+          />
         ) : src ? (
           <CrossfadeImage
             src={retry.src}

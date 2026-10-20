@@ -51,14 +51,40 @@ describe('zero edits show the pixels on disk', () => {
     expect(preview).not.toHaveBeenCalled()
     expect(el.querySelector('[data-element-svg]')).toBeNull()
   })
-  it('in edit mode: the original is what is visible; the engine SVG stays mounted but hidden for the hit layer', async () => {
-    seed(zero); useUiStore.getState().setElementPanel('p')
-    await act(async () => root.render(<PanelView obj={zero} />))
+  it.each(['exact', 'reconstructed'] as const)('%s: outside edit → original, entering edit → the redraw (visible SVG), leaving edit still unedited → original again', async (status) => {
+    const g = status === 'exact' ? { ...guard, status: 'exact' as const, confirmedAt: undefined } : guard
+    const p: PanelObject = { ...zero, sourceBackedFigure: g as SourceBackedFigure }
+    seed(p)
+    await act(async () => root.render(<PanelView obj={p} />))
+    expect(visibleImg()!.getAttribute('src')).toMatch(/\/api\/file\?.*plot\.png/)
+    expect(el.querySelector('[data-element-svg]')).toBeNull()
+    // 进入图内编辑：可编辑基础可见，首次拖动的预览才看得见
+    await act(async () => useUiStore.getState().setElementPanel('p'))
     const svg = el.querySelector('[data-element-svg]') as HTMLElement
-    expect(svg).not.toBeNull(); expect(svg.style.visibility).toBe('hidden')
-    const original = el.querySelector('img[data-original-pixels]') as HTMLImageElement
-    expect(original.getAttribute('src')).toMatch(/\/api\/file\?.*plot\.png/)
+    expect(svg).not.toBeNull(); expect(svg.style.visibility).not.toBe('hidden')
+    expect(el.querySelector('img[data-original-pixels]')).toBeNull()
+    expect(el.querySelector('img')).toBeNull()
     expect(preview).not.toHaveBeenCalled()
+    // 退出编辑、仍是零编辑：回到磁盘原像素
+    await act(async () => useUiStore.getState().setElementPanel(null))
+    expect(el.querySelector('[data-element-svg]')).toBeNull()
+    expect(visibleImg()!.getAttribute('src')).toMatch(/\/api\/file\?.*plot\.png/)
+    expect(preview).not.toHaveBeenCalled()
+  })
+  it('a huge (raster-tier) figure: the engine bitmap exists only while editing; outside editing it is the original', async () => {
+    useRenderStore.getState().patch(renderKeyOf(zero), {
+      fileId: zero.fileId, artifactValidation: guard, rev: 1, svg: null, svgBytes: 0, manifest, status: 'ready',
+      lastPatches: JSON.stringify(zero.overrides), wantPatches: JSON.stringify(zero.overrides),
+      preview: { mode: 'raster' } as never,
+    })
+    preview.mockResolvedValue({ url: 'data:image/png;base64,ENGINE', manifest })
+    await act(async () => root.render(<PanelView obj={zero} />))
+    expect(visibleImg()!.getAttribute('src')).toMatch(/\/api\/file\?.*plot\.png/)
+    expect(preview).not.toHaveBeenCalled()
+    await act(async () => useUiStore.getState().setElementPanel('p'))
+    await vi.waitFor(() => expect(visibleImg()!.getAttribute('src')).toContain('ENGINE'))
+    await act(async () => useUiStore.getState().setElementPanel(null))
+    expect(visibleImg()!.getAttribute('src')).toMatch(/\/api\/file\?.*plot\.png/)
   })
 })
 
@@ -83,13 +109,11 @@ describe('real edits show the whole-figure redraw', () => {
     expect(svg.style.visibility).not.toBe('hidden')
     expect(el.querySelector('img[data-original-pixels]')).toBeNull()
   })
-  it('undo back to zero edits returns to the original pixels, with no engine PNG left over', async () => {
+  it('undo back to zero edits: still editing → the redraw; leaving edit → the original pixels, no engine PNG left over', async () => {
     seed(zero); seed(edited); useUiStore.getState().setElementPanel('p')
     await act(async () => root.render(<PanelView obj={edited} />))
-    expect(el.querySelector('img[data-original-pixels]')).toBeNull()
     await act(async () => root.render(<PanelView obj={zero} />))
-    expect(el.querySelector('img[data-original-pixels]')!.getAttribute('src')).toMatch(/\/api\/file\?.*plot\.png/)
-    expect((el.querySelector('[data-element-svg]') as HTMLElement).style.visibility).toBe('hidden')
+    expect((el.querySelector('[data-element-svg]') as HTMLElement).style.visibility).not.toBe('hidden')
     useUiStore.getState().setElementPanel(null)
     await act(async () => root.render(<PanelView obj={zero} />))
     expect(visibleImg()!.getAttribute('src')).toMatch(/\/api\/file\?.*plot\.png/)
