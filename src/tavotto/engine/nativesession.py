@@ -850,7 +850,7 @@ class NativeSession:
             self.owned is not None
             and not self.owned.finished
             and self.transport is not None
-            and self.state == BARRIER
+            # 不另看 state：离开屏障只有放行与断线两条路，两条都推进放行代数，`observed_inputs` 已是 None
             and self.observed_inputs is not None
         )
 

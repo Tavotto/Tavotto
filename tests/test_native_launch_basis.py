@@ -13,7 +13,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from tavotto.engine import launchctx, runconfig, scriptargs
+from tavotto.engine import launchctx, nativesession, runconfig, scriptargs
 
 
 @pytest.fixture
@@ -158,3 +158,13 @@ def test_an_observation_that_stops_at_a_show_barrier_is_stored_but_never_vouched
 )
 def test_only_a_native_barrier_scoped_record_names_a_run_to_ask_about(record):
     assert launchctx.barrier_basis_launch(record) == ""
+
+
+def test_only_the_run_that_wrote_the_record_can_vouch_for_it(monkeypatch):
+    """路由问的是**这条记录那一次运行**是否仍停着：同项目另一条仍停着的运行不作数。"""
+    held = SimpleNamespace(launch_id="plan-2", holds_barrier_observation=lambda: True)
+    gone = SimpleNamespace(launch_id="plan-1", holds_barrier_observation=lambda: False)
+    monkeypatch.setattr(nativesession.REGISTRY, "_sessions", {"a": held, "b": gone})
+    assert nativesession.REGISTRY.holds_barrier_observation("plan-2") is True
+    assert nativesession.REGISTRY.holds_barrier_observation("plan-1") is False
+    assert nativesession.REGISTRY.holds_barrier_observation("") is False
