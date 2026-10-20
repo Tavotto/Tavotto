@@ -92,3 +92,16 @@ def test_a_helper_changed_while_paused_voids_the_next_barriers_observation(tmp_p
     assert "observed_inputs" not in session.ensure_built()
     assert session.observed_inputs is None
     dk.finish(session)
+
+
+def test_a_helper_changed_while_paused_is_not_reported_at_the_script_end_either(tmp_path):
+    """同样的改动，脚本之后直接跑完：结束屏障上的定格对不上 → 不报；也不许退回去用 `show()` 那一刻的旧观察。"""
+    session = _project(tmp_path)
+    nativekit.wait_state(session, [nativesession.BARRIER])
+    assert session.ensure_built()["observed_inputs"] is not None
+    nativekit.write(tmp_path / "proj" / "helper.py", "SCALE = 5.0\n")
+    session.resume()
+    nativekit.wait_state(session, [nativesession.BARRIER])
+    assert session.barrier_reason == "script_end"
+    assert "observed_inputs" not in session.ensure_built()
+    dk.finish(session)
