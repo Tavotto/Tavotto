@@ -413,3 +413,15 @@ def test_fork_pull_requests_do_not_run_guardian():
         "github.event.pull_request.head.repo.full_name == github.repository }}"
     ) in job
     assert "pull_request_target" not in code()
+
+
+def test_trend_downloads_exactly_this_runs_two_reports_by_name():
+    """trend 不用 pattern 下载：按名字取 guardian 与 explore 两份，不会匹配到自己的 trend 上传。"""
+    text = GUARDIAN.read_text(encoding="utf-8")
+    trend = text[text.index("\n  trend:") :]
+    assert "pattern:" not in trend
+    for name in (
+        "name: compat-guardian-${{ github.run_id }}-${{ github.run_attempt }}",
+        "name: compat-guardian-explore-${{ github.run_id }}-${{ github.run_attempt }}",
+    ):
+        assert name in trend, name

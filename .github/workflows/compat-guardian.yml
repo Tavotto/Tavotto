@@ -272,11 +272,18 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: '3.13'
-      - name: Download this run's reports
+      # 按名字逐个下载这次 run 的两份报告（不用 pattern：通配会连 trend 自己的上传一起匹配，
+      # 也推不出闭集——tests/test_update_chain_gates.py 的 pattern 下载门禁）
+      - name: Download this run's Guardian report
         uses: actions/download-artifact@v5
         with:
-          pattern: compat-guardian-*
-          path: ${{ runner.temp }}/in
+          name: compat-guardian-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/in/guardian
+      - name: Download this run's explore report
+        uses: actions/download-artifact@v5
+        with:
+          name: compat-guardian-explore-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/in/explore
       - name: Previous trend summary (read-only, optional)
         env:
           GH_TOKEN: ${{ github.token }}
