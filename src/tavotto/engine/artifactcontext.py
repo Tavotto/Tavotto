@@ -236,6 +236,9 @@ def _adoption_verdict(source, candidate, kind, frame, candidate_bytes):
 LOG = logging.getLogger(__name__)
 ADOPTION_MAX_ENTRIES = 4096
 _ADOPTION_LOCK = threading.RLock()
+#: 写回类事务（整段）与采用记录（身份复核 + 落记录）共用的锁：先过闸的写回不会被随后的采用抢跑，
+#: 先记的采用会让随后的写回在闸上被拒。可重入。
+ADOPTION_GATE = threading.RLock()
 
 
 def _adoption_path() -> Path:
@@ -286,7 +289,9 @@ def _store_unknown_error(exc) -> ArtifactContextError:
 
 
 def _project_key(project_root) -> str:
-    return str(Path(project_root).resolve())
+    # 与项目系统（app._project_id / pool._norm_dir）同一个规范化身份：大小写不敏感的卷上换个大小写重开
+    # 同一项目，不能因此绕过写回闸。
+    return config.normalize_path_identity(str(Path(project_root).resolve()))
 
 
 def record_adoption(project_root, context: dict) -> None:
@@ -325,6 +330,21 @@ def _adoption_live(entry) -> bool:
         return figcapture.hash_file(path, max_bytes=MAX_BYTES)[0] == entry["bytes_sha256"]
     except (OSError, ValueError):
         return False
+
+
+def is_recorded(project_root, context: dict) -> bool:
+    """这条（项目 × source_id × 字节身份）已经记过。记录读不了按「没记」（交给 record_adoption 去拒）。"""
+    try:
+        entries = _adoption_entries()
+    except AdoptionStoreUnknown:
+        return False
+    key = _project_key(project_root)
+    return any(
+        e["project"] == key
+        and e["source_id"] == context["source_id"]
+        and e["bytes_sha256"] == context["bytes_sha256"]
+        for e in entries
+    )
 
 
 def is_adopted(project_root, path: Path) -> bool:

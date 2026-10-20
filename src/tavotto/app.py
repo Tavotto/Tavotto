@@ -15,6 +15,7 @@ from __future__ import annotations
 import argparse
 import contextlib
 import errno
+import functools
 import hashlib
 import json
 import logging
@@ -2577,6 +2578,9 @@ def _export_artifact_sources(req):
             raise engine_artifactcontext.ArtifactContextError(
                 "source_changed", "The selected source changed during export preparation."
             )
+        if rel_id in contexts and isinstance(context, _SourceContext):
+            # 同一张源的多个实例：确认状态按实例累积，零编辑的后来者不能盖掉带编辑的前者
+            context = contexts[rel_id].merged_with(context)
         contexts[rel_id] = context
     return contexts
 
@@ -5923,8 +5927,17 @@ class _SourceContext(dict):
     多带两个**不进池键、不发给 worker** 的请求事实——这次请求有没有真实编辑、带的确认摘要。
     来源驱动策略（ADR 0139 §五）在准入处用它们核对确认绑定。"""
 
-    has_edits = False
-    confirmed_sha256 = None
+    #: 每个**带真实编辑的实例**自己带的确认摘要（同一张源在画布上出现多次时按实例累积，不被后来者覆盖）
+    edit_confirmations: tuple = ()
+
+    @property
+    def has_edits(self) -> bool:
+        return bool(self.edit_confirmations)
+
+    def merged_with(self, other):
+        merged = _SourceContext(self)
+        merged.edit_confirmations = (*self.edit_confirmations, *other.edit_confirmations)
+        return merged
 
 
 _CONFIRMATION = re.compile(r"[0-9a-f]{64}")
@@ -5984,8 +5997,8 @@ def _artifact_source(rel_id: str, policy, expected=None, patches=(), confirmed=N
     result = _SourceContext(
         engine_figcapture.selected_artifact_context({**context, "render_policy": policy})
     )
-    if scripted:
-        result.has_edits, result.confirmed_sha256 = edits, (confirmed if edits else None)
+    if scripted and edits:
+        result.edit_confirmations = (confirmed,)
     return result
 
 
@@ -6018,6 +6031,18 @@ def _refuse_artifact_policy(policy, expected=None, *, reason="unsupported_render
             reason,
             "This operation does not support the selected source policy; no edit was applied.",
         )
+
+
+def _under_adoption_gate(view):
+    """写回类端点（update_source / history/restore）：「闸检查 → 写回提交」整段持 `ADOPTION_GATE`，
+    与来源驱动准入的 `record_adoption` 串行化，两者不会交错。"""
+
+    @functools.wraps(view)
+    def wrapper(*args, **kwargs):
+        with engine_artifactcontext.ADOPTION_GATE:
+            return view(*args, **kwargs)
+
+    return wrapper
 
 
 def _refuse_adopted_source(*rel_ids, reason="unsupported_render_state"):
@@ -6108,18 +6133,25 @@ def _admit_script_backed(worker, context):
             "capture_incomplete", "Source admission unavailable."
         )
     # 先记再放行：写不进去就整个采用失败（fail closed），不会出现「编辑了但没有写回闸」。
-    engine_artifactcontext.record_adoption(require_project(), context)
+    # 记录与写回事务共用 ADOPTION_GATE：写回持锁期间准入等它结束，并在新字节上重核身份（变了 → source_changed，
+    # 不记）；准入先记，写回的闸检查就看得到。绝不会出现「已记录采用 + 原件被覆盖」。
+    project = require_project()
+    if not engine_artifactcontext.is_recorded(project, context):
+        with engine_artifactcontext.ADOPTION_GATE:
+            _assert_artifact_current(context)
+            engine_artifactcontext.record_adoption(project, context)
     # 不是 `_SourceContext`（别处造出来的上下文）一律当作带编辑且没确认：宁拒不放。
     edits = getattr(context, "has_edits", True)
     if edits:
-        confirmed = getattr(context, "confirmed_sha256", None)
-        if confirmed is None:
+        confirmations = getattr(context, "edit_confirmations", ())
+        if not confirmations:
             raise engine_artifactcontext.ArtifactContextError(
                 "confirmation_required",
                 "Edits on a source-backed figure need the confirmed reconstruction.",
                 retryable=False,
             )
-        if confirmed != verdict["reconstruction_sha256"]:
+        # 每个带编辑的实例都要对得上本次重画；任何一个过期，整个请求 / 导出拒绝
+        if any(c != verdict["reconstruction_sha256"] for c in confirmations):
             raise engine_artifactcontext.ArtifactContextError(
                 "reconstruction_changed",
                 "The reconstruction differs from the one that was confirmed; review it again.",
@@ -7070,6 +7102,7 @@ def api_engine_png():
 
 
 @app.post("/api/engine/update_source")
+@_under_adoption_gate
 def api_engine_update_source():
     """把当前图内修改**写回原始单图文件**（figures 目录里的 stem.pdf / stem.png）。
 
@@ -8074,6 +8107,7 @@ def api_engine_history_preview():
 
 
 @app.post("/api/engine/history/restore")
+@_under_adoption_gate
 def api_engine_history_restore():
     """一键恢复到某个历史版本：重放该版本的 patches 重出文件，
     并把它追加为最新版本（历史不回卷、只前进）。n=-1 恢复脚本原始。"""

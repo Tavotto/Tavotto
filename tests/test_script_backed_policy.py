@@ -516,7 +516,7 @@ def test_server_side_writeback_gate_does_not_depend_on_the_request_policy(sb_env
     store = json.loads((config.data_dir() / "source-backed" / "adoptions.json").read_text())
     assert store["entries"] == [
         {
-            "project": str(root.resolve()),
+            "project": config.normalize_path_identity(str(root.resolve())),
             "source_id": "same.png",
             "bytes_sha256": ac.create_context(root / "same.png", "same.png")["bytes_sha256"],
         }
@@ -832,3 +832,161 @@ def test_unknown_adoption_store_fails_closed_and_is_never_overwritten(sb_env, co
     assert store.read_text(encoding="utf-8") == content
     store.unlink()  # 文件不存在 = 没有采用
     assert not ac.is_adopted(root, root / "a.png")
+
+
+# ----------------------------------------------------------------------------- Codex #1205 P1
+
+
+def _canvas_export(objects):
+    return {
+        "scope": "canvas",
+        "filename": "canvas",
+        "formats": ["png"],
+        "canvas": {
+            "page_w_mm": 40,
+            "page_h_mm": 20,
+            "objects": [
+                {
+                    "type": "panel",
+                    "id": "plot.png",
+                    "x_mm": 0,
+                    "y_mm": 0,
+                    "w_mm": 10,
+                    "h_mm": 10,
+                    "source_policy": SB,
+                    **o,
+                }
+                for o in objects
+            ],
+        },
+    }
+
+
+@pytest.mark.parametrize("edited_first", [True, False], ids=["edited-first", "zero-edit-first"])
+def test_canvas_instances_keep_their_own_confirmation(fake, edited_first):
+    """同一源在画布上出现多次：带编辑实例的过期摘要不能被零编辑实例盖掉（两种顺序都要拒）。"""
+    expected = basis_of(fake)
+    edited = {
+        "expected_source": expected,
+        "overrides": [FRAME, COLOR],
+        "confirmed_reconstruction_sha256": "9" * 64,
+    }  # fixture 的重画摘要是 "a"*64
+    zero = {"expected_source": expected, "overrides": []}
+    objects = [edited, zero] if edited_first else [zero, edited]
+    refused(fake.client.post("/api/export", json=_canvas_export(objects)), "reconstruction_changed")
+
+
+def test_canvas_instances_accumulate_edit_confirmations_per_object(fake):
+    expected = basis_of(fake)
+    edited = {"expected_source": expected, "overrides": [FRAME, COLOR]}
+    spec = _canvas_export(
+        [
+            {**edited, "confirmed_reconstruction_sha256": "a" * 64},
+            {"expected_source": expected, "overrides": []},
+            {**edited, "confirmed_reconstruction_sha256": "b" * 64},
+        ]
+    )
+    with m.app.test_request_context():
+        contexts = m._export_artifact_sources(m.engine_exportreq.normalize(spec))
+    assert contexts["plot.png"].edit_confirmations == ("a" * 64, "b" * 64)
+
+
+def basis_of(fake, name="plot.png"):
+    c = ac.create_context(fake.root / name, name)
+    return {k: c[k] for k in ("bytes_sha256", "size_bytes")}
+
+
+class _SpyGate:
+    """包住真实的 ADOPTION_GATE：指定线程进门前先发信号（确定性同步点，不靠 sleep）。"""
+
+    def __init__(self, real, waiting, who):
+        self.real, self.waiting, self.who = real, waiting, who
+
+    def __enter__(self):
+        if threading.current_thread().name == self.who:
+            self.waiting.set()
+        self.real.acquire()
+
+    def __exit__(self, *exc):
+        self.real.release()
+
+
+def test_admission_cannot_interleave_with_a_writeback_past_the_gate(fake, monkeypatch):
+    entered, release, waiting = threading.Event(), threading.Event(), threading.Event()
+    original = (fake.root / "plot.png").read_bytes()
+    monkeypatch.setattr(ac, "ADOPTION_GATE", _SpyGate(ac.ADOPTION_GATE, waiting, "admission"))
+
+    def slow_write(src, patches, worker, **kw):
+        entered.set()  # 已过闸、未提交
+        assert release.wait(30)
+        src.write_bytes(b"rewritten by writeback")
+        return {"file_identity": {}}
+
+    monkeypatch.setattr(m, "_write_source_files", slow_write)
+    monkeypatch.setattr(m, "append_baked", lambda *a, **k: None)
+    monkeypatch.setattr(m, "_write_back_response", lambda *a, **k: {"ok": True})
+    results = {}
+
+    def writeback():
+        results["wb"] = fake.client.post(
+            "/api/engine/update_source", json={"id": "plot.png", "patches": []}
+        )
+
+    def admission():
+        results["adm"] = fake.client.post(
+            "/api/engine/render", json={"id": "plot.png", "source_policy": SB, "patches": []}
+        )
+
+    a = threading.Thread(target=writeback, name="writeback")
+    a.start()
+    assert entered.wait(30)
+    b = threading.Thread(target=admission, name="admission")
+    b.start()
+    assert waiting.wait(30)  # 准入已到门口；写回仍持锁
+    assert not _gate_free(ac.ADOPTION_GATE.real)
+    release.set()
+    a.join(30)
+    b.join(30)
+    assert results["wb"].status_code == 200
+    # 准入要么被拒（原件已变，在新字节上重核身份），要么先于写回——绝不是「已记录 + 原件被覆盖」
+    assert results["adm"].status_code == 409
+    assert results["adm"].get_json()["params"]["reason"] == "source_changed"
+    assert (fake.root / "plot.png").read_bytes() != original
+    assert not ac.is_adopted(fake.root, fake.root / "plot.png")
+    assert not (config.data_dir() / "source-backed" / "adoptions.json").exists()
+
+
+def _gate_free(lock) -> bool:
+    got = []
+    t = threading.Thread(target=lambda: got.append(lock.acquire(False)))
+    t.start()
+    t.join()
+    if got[0]:
+        lock.release()
+    return got[0]
+
+
+def test_writeback_after_admission_is_refused_at_the_gate(fake, monkeypatch):
+    request = {"id": "plot.png", "source_policy": SB, "patches": []}
+    assert fake.client.post("/api/engine/render", json=request).status_code == 200
+    called = []
+    monkeypatch.setattr(m, "_write_source_files", lambda *a, **k: called.append(1))
+    refused(
+        fake.client.post("/api/engine/history/restore", json={"id": "plot.png", "n": -1}),
+        "writeback_not_supported",
+    )
+    assert not called
+
+
+def test_project_identity_is_the_project_systems_normalized_one(sb_env):
+    root = sb_env
+    root.mkdir(parents=True)
+    (root / "a.png").write_bytes(b"png")
+    assert ac._project_key(root) == config.normalize_path_identity(str(root.resolve()))
+    ac.record_adoption(root, ac.create_context(root / "a.png", "a.png"))
+    swapped = Path(str(root).swapcase())
+    if not config.path_is_case_insensitive(root) or not swapped.exists():
+        pytest.skip(
+            "需要大小写不敏感的卷（macOS 默认 APFS / Windows）才能用另一种大小写打开同一目录"
+        )
+    assert ac.is_adopted(swapped, swapped / "a.png")
