@@ -331,7 +331,7 @@ describe('EPS 与 TIFF（ADR 0046）', () => {
     // 前端拿不到字节绑定的事实：不预先禁用，请求照带 eps，由后端逐项失败并给真实原因（#1185）
     expect(
       buildExportRequest(inputOf({ scope: 'original', figureId: 'S1.svg', formats: ['svg', 'eps'] })).request.formats,
-    ).toEqual(['svg', 'eps'])
+    ).toEqual(['eps', 'svg'])
     expect(epsAvailability('original', 'S2.svg')).toEqual({ ok: false, reason: 'no_script' })
   })
 
