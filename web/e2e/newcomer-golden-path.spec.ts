@@ -200,6 +200,19 @@ function autosaveDocId(page: Page): Promise<string> {
 test('A：打开示例 → 首次渲染 → 双击进入编辑 → 改标题 → 撤销 / 重做 → 原图导出，产物尺寸与原图规格一致', async ({ app, page }) => {
   test.setTimeout(300_000)
   const a = await app()
+  // 引擎每次渲染回来的图幅（manifest size_mm）：「原图规格」第一档就是它（ADR 0028），
+  // 比对的锚点是引擎自己渲出来的图幅，不是仓库里随附的 PDF 文件——后者是别的平台 / 字体栈
+  // 上生成的，Linux 上 tight bbox 的图幅可以差 1–2 mm（合并队列 posix-e2e 实测 75.13 vs 73.33）。
+  const renderedSizes: Array<[number, number]> = []
+  page.on('response', async (res) => {
+    if (!res.url().includes('/api/engine/render') || res.request().method() !== 'POST') return
+    try {
+      const m = /"size_mm":\s*\[\s*([0-9.]+)\s*,\s*([0-9.]+)\s*\]/.exec(await res.text())
+      if (m) renderedSizes.push([Number(m[1]), Number(m[2])])
+    } catch {
+      /* 页面关闭时 body 取不到，忽略 */
+    }
+  })
   await openFastEdit(page, a.baseURL)
 
   // 首次渲染：精确图里是真内容，标题在
@@ -238,12 +251,13 @@ test('A：打开示例 → 首次渲染 → 双击进入编辑 → 改标题 →
   const png = await artifact(out.dir, name('.png'))
   expect(pdf.subarray(0, 5).toString('latin1')).toBe('%PDF-')
 
-  // 原图规格：请求里带的 original.w_mm/h_mm 必须是随附 PDF 自己的页面尺寸（不被画布变换、不被字号改动带偏），
-  // 导出的 PDF 页面与位图像素再与它逐项对上
+  // 原图规格：请求里带的 original.w_mm/h_mm 必须是引擎最近一次渲回来的图幅（不被画布变换带偏、
+  // 不是编出来的占位值 80×60），导出的 PDF 页面与位图像素再与它逐项对上
   const spec = (out.request as unknown as { original: { w_mm: number; h_mm: number } }).original
-  const src = mediaBoxPt(readFileSync(path.join(a.figures, 'Fig1_kinetics.pdf')))
-  expect(Math.abs(spec.w_mm - ptToMm(src.w)), '原图规格与随附 PDF 的页宽').toBeLessThan(0.5)
-  expect(Math.abs(spec.h_mm - ptToMm(src.h)), '原图规格与随附 PDF 的页高').toBeLessThan(0.5)
+  expect(renderedSizes.length, '应当捕获到引擎渲染回来的图幅').toBeGreaterThan(0)
+  const [rw, rh] = renderedSizes[renderedSizes.length - 1]
+  expect(Math.abs(spec.w_mm - rw), '原图规格与引擎渲染图幅的宽').toBeLessThan(0.05)
+  expect(Math.abs(spec.h_mm - rh), '原图规格与引擎渲染图幅的高').toBeLessThan(0.05)
   const exported = mediaBoxPt(pdf)
   expect(Math.abs(ptToMm(exported.w) - spec.w_mm)).toBeLessThan(0.05)
   expect(Math.abs(ptToMm(exported.h) - spec.h_mm)).toBeLessThan(0.05)
