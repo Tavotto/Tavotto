@@ -99,22 +99,36 @@ def _index_path(root: Path) -> Path:
     return root / INDEX_NAME
 
 
-def _envelope_path(root: Path, vid: str) -> Path:
+def _envelope_name(vid: str, gen: int = 0) -> str:
+    return f"{vid}.json" if gen == 0 else f"{vid}.{gen}.json"
+
+
+def _envelope_path(root: Path, vid: str, gen: int = 0) -> Path:
+    """信封**不可变**：内容一旦写下就不再原地改。元信息更新写新一代 `<vid>.<gen>.json`
+    （第 0 代是 `<vid>.json`），索引的 `_gen` 指向生效的那一代——索引提交是唯一的生效点。"""
     if not VERSION_ID_RE.fullmatch(vid):
         raise VersionStoreError(f"不合法的版本 id: {vid!r}")
-    return root / ENVELOPE_DIR / f"{vid}.json"
+    return root / ENVELOPE_DIR / _envelope_name(vid, gen)
+
+
+def _meta_path(root: Path, meta: dict) -> Path:
+    return _envelope_path(root, meta["id"], int(meta.get("_gen", 0)))
+
+
+_ENVELOPE_NAME = re.compile(r"^(?P<vid>v[0-9a-f]+-[0-9a-f]+)(?:\.(?P<gen>[1-9][0-9]*))?\.json$")
 
 
 # ---------------------------------------------------------------- 信封
 
 
-def _envelope(entry: dict, doc: Any, seq: int) -> tuple[bytes, int]:
+def _envelope(entry: dict, doc: Any, seq: int, gen: int = 0) -> tuple[bytes, int]:
     """信封字节与正文字节数。头不含 `doc`，重建只需读第 1 行。"""
     doc_bytes = atomicio.dumps_json(doc)
     head = atomicio.dumps_json(
         {
             "format": FORMAT,
             "seq": seq,
+            "gen": gen,
             "entry": entry,
             "doc_len": len(doc_bytes),
             "doc_sha": _sha(doc_bytes),
@@ -160,20 +174,21 @@ def _legacy_size(entry: dict, doc_len: int) -> int:
     return len(atomicio.dumps_json(entry)) + len(b', "doc": ') + doc_len
 
 
-def _meta(entry: dict, env_len: int, doc_len: int, doc_sha: str, seq: int) -> dict:
+def _meta(entry: dict, env_len: int, doc_len: int, doc_sha: str, seq: int, gen: int = 0) -> dict:
     """索引条目 = 原条目（不含 `doc`）+ 簿记字段。簿记字段名带下划线，不会撞上版本字段。
 
     `_seq` 是追加序号（单调、不必连续）：重建靠它还原顺序，不靠 ts（复制出来的版本 ts 可以相同）。"""
     return {
         **entry,
         "_seq": seq,
+        "_gen": gen,
         "_bytes": env_len,
         "_legacy_bytes": _legacy_size(entry, doc_len),
         "_doc_sha": doc_sha,
     }
 
 
-_BOOKKEEPING = ("_seq", "_bytes", "_legacy_bytes", "_doc_sha")
+_BOOKKEEPING = ("_seq", "_gen", "_bytes", "_legacy_bytes", "_doc_sha")
 
 
 def public_entry(meta: dict) -> dict:
@@ -231,26 +246,32 @@ def _write_index(root: Path, idx: dict, now: int) -> dict:
 
 def _rebuild(root: Path) -> dict:
     """从信封目录重建索引（只读每个信封的第 1 行）。灾难恢复：已被删 / 裁掉但信封
-    还在的版本会复活，所以结果带 `recovered: true` 让调用方告诉用户。"""
-    found: list[tuple[int, str, dict]] = []
+    还在的版本会复活，所以结果带 `recovered: true` 让调用方告诉用户。每个 id 取最高的一代，
+    所以最后一次**尝试过**的元数据（哪怕索引没来得及提交）可能被采用——只影响名字 / 标签，
+    不影响图内容（ADR 0140 §三）。已提交的改名不会丢。"""
+    best: dict[str, tuple[int, int, int, dict]] = {}  # vid -> (gen, seq, ...)
     try:
         names = sorted(os.listdir(root / ENVELOPE_DIR))
     except OSError:
         names = []
     for name in names:
-        if not name.endswith(".json"):
+        nm = _ENVELOPE_NAME.match(name)
+        if nm is None:
             continue
+        vid, gen = nm["vid"], int(nm["gen"] or 0)
         p = root / ENVELOPE_DIR / name
         try:
             head = _read_head(p)
             entry = head["entry"]
-            if entry.get("id") != name[: -len(".json")] or not VERSION_ID_RE.fullmatch(entry["id"]):
+            if entry.get("id") != vid:
                 continue
             seq = int(head.get("seq", 0))
-            meta = _meta(entry, p.stat().st_size, head["doc_len"], head["doc_sha"], seq)
-            found.append((seq, entry["id"], meta))
+            meta = _meta(entry, p.stat().st_size, head["doc_len"], head["doc_sha"], seq, gen)
         except (OSError, ValueError, KeyError, TypeError):
             continue  # 坏信封只赔掉自己
+        if vid not in best or gen > best[vid][0]:
+            best[vid] = (gen, seq, 0, meta)  # 每个 id 取最高的一代
+    found = [(seq, vid, meta) for vid, (_, seq, _, meta) in best.items()]
     found.sort(key=lambda t: (t[0], t[1]))
     return {
         "format": FORMAT,
@@ -259,6 +280,21 @@ def _rebuild(root: Path) -> dict:
         "recovered": True,
         "entries": [m for _, _, m in found],
     }
+
+
+def _valid_meta(m: object) -> bool:
+    """索引条目的结构自检：任何一条不合格，整份索引当损坏走重建（元数据都在信封头里）。"""
+    if not isinstance(m, dict):
+        return False
+    vid = m.get("id")
+    if not isinstance(vid, str) or not VERSION_ID_RE.fullmatch(vid):
+        return False
+    ints = ("_seq", "_bytes", "_legacy_bytes", "_gen")
+    for k in ints:
+        v = m.get(k, 0 if k == "_gen" else None)
+        if not isinstance(v, int) or isinstance(v, bool) or v < 0:
+            return False
+    return isinstance(m.get("_doc_sha"), str)
 
 
 def _load_index(root: Path, now: int, *, write: bool) -> dict | None:
@@ -286,7 +322,7 @@ def _load_index(root: Path, now: int, *, write: bool) -> dict | None:
             fmt = idx.get("format")
             if isinstance(fmt, int) and fmt > FORMAT:
                 raise IndexUnreadable(f"索引来自更新的格式 {fmt}")
-            if fmt == FORMAT:
+            if fmt == FORMAT and all(_valid_meta(m) for m in idx["entries"]):
                 return idx
     rebuilt = _rebuild(root)
     if write:
@@ -336,11 +372,11 @@ def read(versions_dir: Path, doc_id: str, vid: str) -> dict | None:
     if meta is None:
         return None
     try:
-        raw = _envelope_path(root, vid).read_bytes()
+        raw = _meta_path(root, meta).read_bytes()
     except FileNotFoundError as exc:
         raise EnvelopeCorrupt(f"信封缺失: {vid}") from exc
     head, rest = _parse_envelope(raw, what=vid)
-    if meta.get("_doc_sha") not in (None, head["doc_sha"]):
+    if meta.get("_doc_sha") != head["doc_sha"]:
         raise EnvelopeCorrupt(f"信封与索引不符: {vid}")
     return {**head["entry"], "doc": documents.loads_document(rest)}
 
@@ -354,13 +390,14 @@ def _commit(
     kept: list[dict],
     dropped: Iterable[dict],
     now: int,
+    stale: Iterable[Path] = (),
 ) -> None:
-    """先写索引（提交点），后删被裁的信封。"""
+    """先写索引（提交点），后删被裁的信封与被取代的旧一代。"""
     _write_index(root, {**idx, "entries": kept}, now)
     _checkpoint("after_index")
-    for m in dropped:
+    for path in [*(_meta_path(root, m) for m in dropped), *stale]:
         try:
-            _envelope_path(root, m["id"]).unlink()
+            path.unlink()
         except OSError:
             pass  # 孤儿信封由 gc_orphans 收
 
@@ -426,7 +463,7 @@ def update(
 ) -> dict | None:
     """改名 / 改说明 / 转正等元信息改动：`changes` 并入条目，`remove` 里的键删掉。
 
-    先原子重写这一个信封（O(单版)），再写索引；之后过一遍策略（取消命名、转正会让
+    信封不可变：写这一个版本的**新一代**信封（O(单版)），再写索引（唯一生效点），之后才删旧一代；之后过一遍策略（取消命名、转正会让
     某一档越过上限，现行 `_save_versions` 每次写入都裁，这里同样），受护的是这一条。
     索引里没有该版返回 `None`。"""
     root = store_dir(versions_dir, doc_id)
@@ -437,19 +474,24 @@ def update(
     if pos is None:
         return None
     old = idx["entries"][pos]
-    head, rest = _parse_envelope(_envelope_path(root, vid).read_bytes(), what=vid)
+    old_path = _meta_path(root, old)
+    head, rest = _parse_envelope(old_path.read_bytes(), what=vid)
     gone = set(remove)
     entry = {k: v for k, v in head["entry"].items() if k not in gone}
     entry.update(changes)
-    env, doc_len = _envelope(entry, documents.loads_document(rest), int(head.get("seq", 0)))
-    atomicio.write_bytes(_envelope_path(root, vid), env)
+    gen = int(old.get("_gen", 0)) + 1
+    env, doc_len = _envelope(entry, documents.loads_document(rest), int(old["_seq"]), gen)
+    atomicio.write_bytes(_envelope_path(root, vid, gen), env)  # 新一代；旧一代在索引提交前原样不动
     _checkpoint("after_envelope")
-    meta = _meta(entry, len(env), doc_len, head["doc_sha"], old.get("_seq", head.get("seq", 0)))
+    meta = _meta(entry, len(env), doc_len, head["doc_sha"], old["_seq"], gen)
     metas = list(idx["entries"])
     metas[pos] = meta
     kept = _apply_policy(metas, policy, vid)
     kept_ids = {m["id"] for m in kept}
-    _commit(root, idx, kept, [m for m in metas if m["id"] not in kept_ids], now)
+    dropped = [m for m in metas if m["id"] not in kept_ids]
+    _commit(root, idx, kept, [m for m in dropped if m["id"] != vid], now, stale=[old_path])
+    if vid in {m["id"] for m in dropped}:  # 自己被裁（策略没护住）：新一代也要收
+        _meta_path(root, meta).unlink(missing_ok=True)
     return public_entry(meta)
 
 
@@ -500,13 +542,13 @@ def gc_orphans(
     except IndexUnreadable:
         return removed
     if idx is not None and not idx.get("recovered"):
-        live = {m.get("id") for m in idx["entries"]}
+        live = {_envelope_name(m["id"], int(m.get("_gen", 0))) for m in idx["entries"]}
         try:
             names = os.listdir(root / ENVELOPE_DIR)
         except OSError:
             names = []
         for name in names:
-            if not name.endswith(".json") or name[: -len(".json")] in live:
+            if not name.endswith(".json") or name in live:
                 continue
             p = root / ENVELOPE_DIR / name
             try:
@@ -681,7 +723,9 @@ def _import_fork(
         **st,
         "sha": _sha(raw),
         "count": len(versions),
-        "ids": sorted(set(rec.get("ids", ())) | {v["id"] for v in fresh}),
+        # 这次观察到的**全部**旧文件 id（含重试时已经在索引里的）：崩在提交与记录之间后重试，
+        # fresh 为空，只并 fresh 的话这些 id 永远进不了记录，删掉后会再次导入（已删版本复活）
+        "ids": sorted(set(rec.get("ids", ())) | {v["id"] for v in versions}),
     }
     atomicio.write_bytes(root / MIGRATION_NAME, atomicio.dumps_json(new_rec))
     return {"status": "imported", "imported": len(fresh)}

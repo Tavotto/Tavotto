@@ -638,3 +638,101 @@ def test_update_runs_the_policy_and_protects_the_edited_entry(vdir, monkeypatch)
     vs.update(vdir, "d1", vers[0]["id"], {"named": False}, now=9, policy=vs.legacy_policy)
     ids = [e["id"] for e in vs.entries(vdir, "d1")]
     assert vers[0]["id"] in ids and vers[3]["id"] in ids and len(ids) == 2
+
+
+# --------------------------------------------------------------- Codex #1213 的三条
+
+
+def test_metadata_update_that_never_commits_is_not_visible(vdir, crash_at, monkeypatch):
+    """P1：信封不可变。改名写新一代信封，索引提交前崩溃时 read() 仍读已提交的那一代。"""
+    vers = _seed(vdir, "d1", 2)
+    vid = vers[0]["id"]
+    vs.update(vdir, "d1", vid, {"name": "已提交"}, now=5)
+    crash_at("after_envelope")
+    with pytest.raises(Crash):
+        vs.update(vdir, "d1", vid, {"name": "未提交"}, now=6)
+    assert vs.read(vdir, "d1", vid)["name"] == "已提交"
+    assert vs.entries(vdir, "d1")[0]["name"] == "已提交"
+    # 下一次成功的更新照常生效，且每个 id 只剩生效的那一代
+    monkeypatch.setattr(vs, "_checkpoint", lambda p: None)
+    vs.update(vdir, "d1", vid, {"name": "第三次"}, now=7)
+    assert vs.read(vdir, "d1", vid)["name"] == "第三次"
+    files = sorted(p.name for p in (vs.store_dir(vdir, "d1") / "s").iterdir())
+    assert files == sorted(
+        f"{x}.json" if x != vid else f"{vid}.2.json" for x in (v["id"] for v in vers)
+    )
+
+
+def test_uncommitted_generation_is_orphan_garbage_and_rebuild_keeps_committed_rename(
+    vdir, crash_at
+):
+    vers = _seed(vdir, "d1", 1)
+    vid = vers[0]["id"]
+    vs.update(vdir, "d1", vid, {"name": "已提交"}, now=5)
+    crash_at("after_envelope")
+    with pytest.raises(Crash):
+        vs.update(vdir, "d1", vid, {"name": "未提交"}, now=6)
+    s = vs.store_dir(vdir, "d1") / "s"
+    assert sorted(p.name for p in s.iterdir()) == [f"{vid}.1.json", f"{vid}.2.json"]
+    assert vs.gc_orphans(vdir, "d1", now=time.time() + 7200) == [f"{vid}.2.json"]
+    (vs.store_dir(vdir, "d1") / "index.json").unlink()
+    assert vs.entries(vdir, "d1")[0]["name"] == "已提交"
+    assert vs.read(vdir, "d1", vid)["name"] == "已提交"
+
+
+def test_fork_import_crash_between_commit_and_record_still_records_every_legacy_id(
+    legacy_app, monkeypatch
+):
+    """P2：崩在提交与迁移记录之间，重试时 fresh 为空；记录仍要含观察到的全部旧文件 id。"""
+    versions = _legacy_versions(3)
+    legacy = _write_legacy("d1", versions)
+    vd = legacy.parent
+    vs.migrate_legacy(vd, "d1", legacy, now=1)
+    m._save_versions("d1", [*m._load_versions("d1"), _ver(80), _ver(81)])
+
+    def boom(p):
+        if p == "after_index":
+            raise Crash(p)
+
+    monkeypatch.setattr(vs, "_checkpoint", boom)
+    with pytest.raises(Crash):
+        vs.migrate_legacy(vd, "d1", legacy, now=2)
+    monkeypatch.setattr(vs, "_checkpoint", lambda p: None)
+    assert vs.migrate_legacy(vd, "d1", legacy, now=3)["status"] in ("imported", "already")
+    rec = json.loads((vs.store_dir(vd, "d1") / "migration.json").read_bytes())
+    assert {_ver(80)["id"], _ver(81)["id"]} <= set(rec["ids"])
+    vs.delete(vd, "d1", _ver(80)["id"], now=4)
+    m._save_versions("d1", [*m._load_versions("d1"), _ver(82)])
+    assert vs.migrate_legacy(vd, "d1", legacy, now=5)["imported"] == 1
+    ids = [e["id"] for e in vs.entries(vd, "d1")]
+    assert _ver(80)["id"] not in ids and _ver(82)["id"] in ids
+
+
+@pytest.mark.parametrize(
+    "bad_entry",
+    [
+        None,
+        1,
+        "x",
+        {},
+        {"id": "v1-1"},
+        {"id": "../x", "_seq": 1, "_bytes": 1, "_legacy_bytes": 1, "_doc_sha": "a"},
+        {"id": "v1-1", "_seq": "1", "_bytes": 1, "_legacy_bytes": 1, "_doc_sha": "a"},
+        {"id": "v1-1", "_seq": 1, "_bytes": True, "_legacy_bytes": 1, "_doc_sha": "a"},
+        {"id": "v1-1", "_seq": 1, "_bytes": 1, "_legacy_bytes": 1, "_doc_sha": 5},
+    ],
+)
+def test_index_with_a_malformed_entry_is_treated_as_corrupt_and_rebuilt(vdir, bad_entry):
+    """P2：语法对、结构不对的索引也走重建，不让 public_entry / read 抛 AttributeError。"""
+    vers = _seed(vdir, "d1", 3)
+    idxp = vs.store_dir(vdir, "d1") / "index.json"
+    idx = json.loads(idxp.read_bytes())
+    idx["entries"].insert(1, bad_entry)
+    idxp.write_bytes(json.dumps(idx).encode())
+    got = vs.list_index(vdir, "d1")
+    assert got["recovered"] is True
+    assert [e["id"] for e in vs.entries(vdir, "d1")] == [v["id"] for v in vers]
+    assert vs.read(vdir, "d1", vers[1]["id"]) == vers[1]
+    vs.append(vdir, "d1", _ver(9), now=9)  # 写路径：留副本并重建
+    assert len(vs.entries(vdir, "d1")) == 4
+    assert len(list(vs.store_dir(vdir, "d1").glob("index.corrupt-*.json"))) == 1
