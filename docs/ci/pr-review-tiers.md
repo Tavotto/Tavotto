@@ -69,6 +69,19 @@
 7. Codex 不可用（额度用完、服务掉线）时 required checks 照常，不会卡住 PR；中高档 PR 等额度
    恢复补那一次评审，或由维护者人眼审过后在正文写明「未经 Codex 评审」。
 
+## 第三路径审查与分档（2026-10-20 起）
+
+方案形状触发第三路径审查（禁用 / 置灰能力、让用户二选一、降保真换性能、错误降警告、只改文档、
+再加特例……清单与流程见 `docs/rules/repo/third-path-review.md`）的 PR，正文要有
+`## Third-Path Review` 一节（模板里有）。它**不改分档**：风险档仍按上表的改动性质定，Codex 次数仍按
+预算；审查记录是给维护者与评审看的，不是额外一轮评审的理由。
+
+- 中 / 高档 PR 的审查包里，维护者先看这一节：结论是不是 `necessary_tradeoff` 却没有证据、是不是把
+  `temporary_mitigation` 写成了根本解决。
+- 结论是 `temporary_mitigation` / `promising_unverified` 的 PR 只能 `Refs #N`，不得用关闭关键字——
+  否则合并即关掉根 issue。推前自检：`python scripts/dev/third_path_review.py --pr <N>`（只判结构，
+  判不了审查质量，所以不是必需检查）。
+
 ## 为什么不做成自动门禁
 
 分层依据（「逐字搬家」「边界清楚」）是语义判断，写成规则只会得到一个能被措辞绕过的

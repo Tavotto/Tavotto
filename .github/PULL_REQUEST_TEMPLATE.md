@@ -31,6 +31,24 @@
 
 Fixes #
 
+## Third-Path Review
+
+<!-- 方案形状触发时才填：禁用 / 置灰能力、让用户在两个有缺陷的选项间选、降保真换性能、错误改警告或
+     只改文档、加白名单 / 特例、同类问题修过两轮仍冒新边界、两处对同一事实结论不同、复刻外部系统规则……
+     全文与触发清单：docs/rules/repo/third-path-review.md。不触发就整节删掉。
+     temporary_mitigation / promising_unverified：用 Refs #N，不写 Fixes / Closes。
+     结构自检：python scripts/dev/third_path_review.py --pr <N> -->
+
+- 结论：<structural_solution_found / promising_unverified / necessary_tradeoff / temporary_mitigation / not_applicable>
+- 用户目标：<最终希望用户能做什么>
+- 现有冲突：<为什么现有方案必须牺牲某项能力>
+- 共同前提：<现有各选项共享的那个架构前提>
+- 第三路径候选：<研究过的结构性替代，含被实测排除的>
+- 证据：<复现 / 反证用例 / 实验，标明等级：代码推断 / 本地复现 / 真实集成 / 跨平台 CI / 真机 / 未验证>
+- 最终决定：<为什么选这个>
+- 遗留限制：<仍未实现的目标与退出条件；没有写「无」>
+- 跟踪：<#根因 issue；temporary_mitigation / promising_unverified 必填>
+
 ## How it was verified
 
 <!-- Tick what you ran; delete what doesn't apply. -->
