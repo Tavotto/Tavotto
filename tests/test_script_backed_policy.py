@@ -778,5 +778,17 @@ def test_admission_rechecks_the_disk_identity_before_during_and_after(sb_env, mo
         with pytest.raises(ac.ArtifactContextError) as error:
             ac.admit_reconstruction(root / "same.png", candidate, ctx)
         assert error.value.reason == "source_changed"
+        monkeypatch.setattr(ac, "_snapshot", snapshot)
+        # 3) 比较进行中原件被换：快照没问题，只有收尾的复核能发现
+        extent = ac.pdfbackend.compare_png_extent
+
+        def during(*args):
+            (root / "same.png").write_bytes(original + b"late")
+            return extent(*args)
+
+        monkeypatch.setattr(ac.pdfbackend, "compare_png_extent", during)
+        with pytest.raises(ac.ArtifactContextError) as error:
+            ac.admit_reconstruction(root / "same.png", candidate, ctx)
+        assert error.value.reason == "source_changed"
     finally:
         pool.discard(worker)
