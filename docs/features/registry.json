@@ -150,6 +150,25 @@
       ]
     },
     {
+      "id": "assets.png-adoption-recovery",
+      "status": "active",
+      "platform": "both",
+      "summary": {
+        "zh-CN": "PNG 进不了编辑时：一句话说明原因 + 一个「重建为可编辑图」按钮，用它自己的脚本重画一张新的可编辑图放在旁边，原 PNG 一个字节不动；同一张 PNG 不会每次点击都重跑脚本",
+        "en-US": "When a PNG cannot enter editing: one sentence says why plus one \"Rebuild as editable figure\" button that redraws a new editable figure from its script beside it; the original PNG is untouched and the script is not rerun on every click"
+      },
+      "entry": "点含图例等无法逐像素核对元素的 PNG 的「编辑图内元素」→ 底部提示一句话 + 「重建为可编辑图」",
+      "e2e": [
+        {
+          "spec": "guarded-png-activation.spec.ts",
+          "title": "guarded PNG: an unverifiable legend gets one sentence and one rebuild button; the PNG stays and a new editable figure appears beside it"
+        }
+      ],
+      "desktop_manual": [
+        "打开一个脚本里带 ax.legend() 的项目，在素材库把它的 PNG 加进画布并点「编辑图内元素」：底部只出现一句话（说明有图例等暂时无法逐像素核对的元素、已保留原图）和一个「重建为可编辑图」按钮，没有「再试一次」；再点一次「编辑图内元素」不会重新跑脚本；点按钮后画布上原 PNG 旁边多出一张可进图内编辑的新图，原 PNG 的位置与像素不变"
+      ]
+    },
+    {
       "id": "assets.missing-input-relink",
       "status": "active",
       "platform": "both",

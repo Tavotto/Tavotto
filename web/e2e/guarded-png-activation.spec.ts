@@ -46,7 +46,7 @@ type RenderRecord = { endpoint: string; request: RenderRequest; body: RenderBody
 const workerPython = () => process.env.TAVOTTO_WORKER_PYTHON || (process.platform === 'win32' ? 'python' : 'python3')
 const sha256 = (bytes: Buffer) => createHash('sha256').update(bytes).digest('hex')
 
-function sourceProject(root: string, tightLayout: boolean) {
+function sourceProject(root: string, tightLayout: boolean, legend = false) {
   const figures = path.join(root, 'figures')
   const staging = path.join(root, 'staging')
   mkdirSync(figures, { recursive: true })
@@ -62,7 +62,8 @@ function sourceProject(root: string, tightLayout: boolean) {
     '',
     'def main():',
     '    fig, ax = plt.subplots(figsize=(4, 3))',
-    '    ax.plot([0, 1, 2, 3], [0.2, 0.8, 0.4, 0.9])',
+    legend ? '    ax.plot([0, 1, 2, 3], [0.2, 0.8, 0.4, 0.9], label="Response")' : '    ax.plot([0, 1, 2, 3], [0.2, 0.8, 0.4, 0.9])',
+    legend ? '    ax.legend()' : '',
     '    ax.set_title("Guarded source", fontsize=12)',
     '    ax.set_xlabel("Time")',
     '    ax.set_ylabel("Response")',
@@ -93,11 +94,12 @@ function sourceProject(root: string, tightLayout: boolean) {
     figures, png, pdf,
     guard: { version: 1, requiredFrame: 'figsize', sourceId: FILE, bytesSha256: sha256(png), sizeBytes: png.length } as Guard,
     revealPdf() { renameSync(path.join(staging, 'same.pdf'), path.join(figures, 'same.pdf')) },
-    expectUnchanged(expectedPng = png) {
+    expectUnchanged(expectedPng = png, { registry: checkRegistry = true } = {}) {
       expect(readFileSync(path.join(figures, FILE))).toEqual(expectedPng)
       expect(readFileSync(path.join(figures, 'same.pdf'))).toEqual(pdf)
       expect(readFileSync(path.join(figures, 'figure.py'), 'utf8')).toBe(script)
-      expect(readFileSync(path.join(figures, 'tavotto_registry.json'))).toEqual(registry)
+      // 显式「重建为可编辑图」会真的运行脚本，运行会把新图登记进注册表——那是预期内的写入
+      if (checkRegistry) expect(readFileSync(path.join(figures, 'tavotto_registry.json'))).toEqual(registry)
     },
   }
 }
@@ -721,4 +723,57 @@ test('guarded PNG: a dependency gate opens one-click repair and completion resum
   expect(admissions.every(r => r.request.source_policy === POLICY)).toBe(true)
   await fullRender(traffic.records, [FRAME], source.guard)
   source.expectUnchanged()
+})
+
+test('guarded PNG: an unverifiable legend gets one sentence and one rebuild button; the PNG stays and a new editable figure appears beside it', { tag: '@feature:assets.png-adoption-recovery' }, async ({ app, page }, testInfo) => {
+  test.setTimeout(300_000)
+  const source = sourceProject(testInfo.outputPath('source'), false, true)
+  const a = await app({ figures: source.figures })
+  const data = await seed(page.request, a.baseURL, ['a'], 'guarded-png-legend')
+  const traffic = watchRenders(page)
+  await page.goto(`${a.baseURL}/${data.query}`)
+  await expect(await only(object(page, 'a'))).toBeVisible({ timeout: 60_000 })
+  await paintedOriginal(page, 'a', source.png)
+  await revealCompanion(page, source)
+
+  // 1. The strict adoption refuses a figure with a legend: a definite refusal, not a crash.
+  const refusal = await enter(page, 'a')
+  expect(refusal.status()).toBe(409)
+  expect(await refusal.json()).toMatchObject({ code: 'artifact_source_unavailable', params: { reason: 'unsupported_render_state' } })
+  const toast = await only(page.locator('[data-status-tone="info"]'))
+  await expect(page.locator('[data-status-live]')).toHaveAttribute('data-status-key', 'artifact.unsupportedRenderState')
+  await expect(toast).toContainText('legend')
+  const rebuild = await only(page.locator('[data-toast-action]'))
+  await expect(rebuild).toHaveText('Rebuild as editable figure')
+  await expect(page.getByRole('button', { name: 'Try again' })).toHaveCount(0)
+  // 2. Nothing about the PNG changed, and asking again does not run the script again.
+  expect(await data.savedPanel('a')).toEqual(data.objects[0])
+  const admissions = () => traffic.requests.filter(r => r.request.patches.length === 0).length
+  expect(admissions()).toBe(1)
+  await (await only(object(page, 'a'))).click({ button: 'right' })
+  await (await only(page.locator('[data-quick-item="edit-elements"]'))).click()
+  await expect(page.locator('[data-status-live]')).toHaveAttribute('data-status-key', 'artifact.unsupportedRenderState')
+  await page.waitForTimeout(500)
+  expect(admissions()).toBe(1)
+
+  // 3. The one button redraws an editable figure from the script, beside the untouched PNG.
+  await (await only(page.locator('[data-toast-action]'))).click()
+  await expect.poll(async () => {
+    const r = await page.request.get(`${a.baseURL}/api/autosave/guarded-png-legend${data.query}`)
+    if (!r.ok()) return 0
+    return ((await r.json()) as Saved).canvases[0].objects.length
+  }, { timeout: 120_000 }).toBe(2)
+  const doc = await (await page.request.get(`${a.baseURL}/api/autosave/guarded-png-legend${data.query}`)).json() as Saved
+  const [original, rebuilt] = doc.canvases[0].objects as unknown as (Panel & { fileKind: string })[]
+  expect(original).toEqual(data.objects[0])
+  expect(rebuilt.fileKind).toBe('runtime')
+  expect(rebuilt.overrides).toEqual([])
+  expect(rebuilt.artifactValidation).toBeUndefined()
+  await exact(page, rebuilt.id)
+  await expect(page.locator('[data-status-live]')).toHaveAttribute('data-status-key', 'artifact.rebuilt')
+
+  // 4. Back on the layout the original still shows its own pixels.
+  await (await only(page.locator('[data-context-back]'))).click()
+  await paintedOriginal(page, 'a', source.png)
+  source.expectUnchanged(source.png, { registry: false })
 })

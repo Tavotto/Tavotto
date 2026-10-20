@@ -1,3 +1,4 @@
+import { classifyArtifactFailure } from '@/lib/artifactReason'
 import { ArtifactValidationError, validationFromSource, type ArtifactRequestFields } from '@/lib/artifactValidation'
 import { apiUrl, apiUrlFor, currentProjectId, withProject, withProjectFor } from '@/lib/session'
 import { formatMessage, i18n, literal, msg, t, type UiMessage } from '@/i18n'
@@ -237,18 +238,14 @@ export function backendErrorText(e: unknown): string {
  * 原文，按 i18n 纪律不翻，也不依赖后端消息的中文前缀格式）；没有文案的
  * code 照旧原文透出。两条控制面（Python 池 / workerd）走的都是同一形状。
  */
-function artifactErrorMsg(reason: unknown): UiMessage {
-  if (reason === 'background_visibility_required') return msg('artifact.backgroundVisibilityRequired', undefined, 'errors')
-  if (reason === 'source_changed') return msg('artifact.sourceChanged', undefined, 'errors')
-  if (reason === 'frame_changed' || reason === 'invalid_guard') return msg('artifact.frameChanged', undefined, 'errors')
-  if (reason === 'writeback_not_supported') return msg('artifact.writebackUnsupported', undefined, 'errors')
-  if (reason === 'not_untouched') return msg('artifact.legacyEdits', undefined, 'errors')
-  return msg('artifact.unsupported', undefined, 'errors')
+function artifactErrorMsg(err: unknown): UiMessage {
+  // reason → 文案 key 的映射只在 `artifactReason.ts` 的那张表里
+  return msg(classifyArtifactFailure(err).messageKey, undefined, 'errors')
 }
 
 export function engineErrorMsg(err: unknown): UiMessage {
   if (err instanceof ArtifactValidationError || (err instanceof EngineError && err.code === 'artifact_source_unavailable')) {
-    return artifactErrorMsg(err instanceof ArtifactValidationError ? err.reason : err.params?.reason)
+    return artifactErrorMsg(err)
   }
   if (err instanceof EngineError && err.installRoute === 'unsupported_platform') {
     return msg('prep.line.depsPlatform', { module: err.module }, 'workspace')
@@ -291,7 +288,7 @@ export function backendCodeMsg(
   // 用 exists 而不是 defaultValue 判「有没有这条」：i18n 那边的
   // parseMissingKeyHandler 会把缺失的 key 原样吐回来（界面上看得见是哪条），
   // 那样 defaultValue 永远轮不到，缺文案时用户看到的就是 `backend.xxx`。
-  if (code === 'artifact_source_unavailable') return artifactErrorMsg(params?.reason)
+  if (code === 'artifact_source_unavailable') return artifactErrorMsg({ params })
   // T03：用户给了精确参数、脚本自己的解析器仍然拒绝——同一个稳定码，文案不能再说"没带参数"
   if (code === 'script_needs_arguments' && Number(params?.argv_count) > 0) {
     return msg('backend.script_rejected_arguments', params ?? {}, 'errors')

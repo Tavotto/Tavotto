@@ -170,6 +170,7 @@ function Toast({
           variant="ghost"
           size="sm"
           className="shrink-0 text-ink"
+          data-toast-action=""
           onClick={action.onClick}
           loading={action.loading}
         >

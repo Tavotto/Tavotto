@@ -28,6 +28,7 @@ import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
 import { useScriptLibraryStore } from '@/store/scriptLibraryStore'
 import { useScriptInputStore } from '@/store/scriptInputStore'
 import { useScriptRunStore } from '@/store/scriptRunStore'
+import { admissionToastCovers } from '@/store/pngAdmissionMemory'
 import { useUiStore } from '@/store/uiStore'
 
 const short = (id: string) => id.split('/').pop()?.replace(/\.[^.]+$/, '') ?? id
@@ -140,6 +141,8 @@ export function handleServerEvent(ev: ServerEvent) {
       break
     case 'render.failed':
       render.noteBuilding(ev.id, null)
+      // 同一次 PNG 采用被拒：采用失败的那句说明（原因 + 出路）才是权威报告，后端原句不再顶掉它
+      if (admissionToastCovers(ev.id)) break
       setStatus(
         msg(
           ev.error ? 'status.renderFailedWithError' : 'status.renderFailed',
