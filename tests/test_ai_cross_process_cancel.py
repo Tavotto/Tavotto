@@ -482,6 +482,8 @@ def window_env(db, tmp_path, monkeypatch):
 
     def popen_in_window(*a, **k):
         proc = real_popen(*a, **k)
+        if state["in_window"] is not None:
+            return proc  # 只有 CLI 那一次 spawn 停在窗口里；之后的 Popen（Windows 的 taskkill 等）一律透传
         with sqlite3.connect(db) as raw:
             sid = raw.execute("SELECT id FROM sessions ORDER BY started_ms DESC").fetchone()[0]
         intent_arrives(sid)
@@ -535,7 +537,11 @@ def test_intent_in_the_window_settles_with_the_terminal_state_when_spawn_fails(
     monkeypatch.setattr(ai_bridge, "_cmd", lambda *a, **k: ([sys.executable, "-c", "pass"], {}))
     monkeypatch.setattr(ai_bridge, "OWNER_TICK_S", 3600.0)
 
+    spawned = []
+
     def boom(*a, **k):
+        spawned.append(1)
+        assert len(spawned) == 1, "只有 CLI 那一次 spawn 被替换"
         with sqlite3.connect(db) as raw:
             sid = raw.execute("SELECT id FROM sessions").fetchone()[0]
             raw.execute(
@@ -553,3 +559,33 @@ def test_intent_in_the_window_settles_with_the_terminal_state_when_spawn_fails(
         row = dict(raw.execute("SELECT * FROM sessions").fetchone())
     assert row["status"] == "failed" and row["cancel_result"] == "failed"  # 意图随终态收尾，不悬挂
     assert ai_history.owner_tick() == []
+
+
+def test_terminating_inside_the_intent_executor_cannot_deadlock(window_env, db, monkeypatch):
+    """执行意图时 `_terminate` 会 spawn 子进程（Windows 的 taskkill 就是一次 Popen）；任何在这期间重入执行入口的路径
+    （这里用 `_terminate` 里再跑一次 tick 模拟）都不能撞上自己持有的锁。"""
+    import threading
+
+    figs, state = window_env
+    state["in_window"] = []  # 这条用例不要窗口里的注入
+    sid = ai_bridge.run("codex", "fig1.py", "p", str(figs), client_request_id="rid-window-0000004")
+    with sqlite3.connect(db) as raw:
+        raw.execute(
+            "UPDATE sessions SET cancel_requested_ms=1, cancel_token=? WHERE id=?",
+            (ai_history.OWNER_TOKEN, sid),
+        )
+    real_terminate = ai_bridge._terminate
+    reentered = []
+
+    def terminate_that_reenters(sess):
+        reentered.append(ai_bridge._owner_tick())  # 重入：同一条意图此刻正在执行中
+        real_terminate(sess)
+
+    monkeypatch.setattr(ai_bridge, "_terminate", terminate_that_reenters)
+    out = []
+    t = threading.Thread(target=lambda: out.append(ai_bridge._owner_tick()), daemon=True)
+    t.start()
+    t.join(15)
+    assert not t.is_alive(), "执行意图时重入执行入口死锁了"
+    assert out == [[sid]] and reentered == [[]]  # 重入的那次什么都没做（幂等），外层执行了一次
+    assert _row(db, sid)["cancel_result"] == "ok"

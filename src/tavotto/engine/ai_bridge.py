@@ -1532,19 +1532,27 @@ def _owner_tick() -> list[str]:
 
 
 #: 执行意图的互斥：心跳线程的 tick 与 `run()` 入内存后的那次检查是同一件事的两个入口，不能对同一条意图各取消一次
-#: （重复取消虽然幂等，但第二次的 `_cancel_local` 返回 False，会把结果误记成 refused）。锁序：`_REQUEST_LOCK` → 本锁，本锁内不再拿 `_REQUEST_LOCK`
+#: （重复取消虽然幂等，但第二次的 `_cancel_local` 返回 False，会把结果误记成 refused）。锁序：`_REQUEST_LOCK` → 本锁，本锁内不再拿 `_REQUEST_LOCK`。
+#: **本锁内不执行取消**（`_cancel_local` 会 spawn 子进程 / 等待，Windows 的 `taskkill` 就是一次 Popen）——持锁只做"重查 + 标记执行中"，
+#: 取消在锁外做；"执行中"的集合挡住重入与并发的第二个入口
 _INTENT_LOCK = threading.Lock()
+_INTENT_RUNNING: set[str] = set()
 
 
 def _execute_cancel_intent(sid: str) -> bool:
     """会话在本进程内存里时，执行别的进程写下的待执行取消意图（走进程内同一条 `_cancel_local`），结果记 `cancel_result`。
-    持锁重查"意图仍待执行"——另一个入口可能刚做完。回值：这次确实执行了。"""
+    持锁重查"意图仍待执行且没人在执行"——另一个入口可能刚做完 / 正在做。回值：这次确实由本调用执行了。"""
     with _INTENT_LOCK:
-        if sid not in SESSIONS or not ai_history.pending_cancel(sid):
+        if sid in _INTENT_RUNNING or sid not in SESSIONS or not ai_history.pending_cancel(sid):
             return False
+        _INTENT_RUNNING.add(sid)
+    try:
         result = "ok" if _cancel_local(sid) else "refused_committing"
         ai_history.record_cancel_result(sid, result)
-        return True
+    finally:
+        with _INTENT_LOCK:
+            _INTENT_RUNNING.discard(sid)
+    return True
 
 
 def _owner_loop() -> None:
