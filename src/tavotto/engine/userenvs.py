@@ -430,7 +430,7 @@ CONDARC_MAX_ITEMS = 32
 
 
 def _path_exe_roots(
-    path_env: str | None = None, *, nt: bool | None = None, isfile=os.path.isfile
+    path_env: str | None = None, *, nt: bool | None = None, isfile=os.path.isfile, walker=None
 ) -> list[str]:
     """PATH 里的 `conda.exe` / `mamba.exe` / `micromamba.exe` 反推安装根（不执行它们）。
 
@@ -439,10 +439,12 @@ def _path_exe_roots(
     nt = os.name == "nt" if nt is None else nt
     mod = ntpath if nt else os.path
     raw = os.environ.get("PATH", "") if path_env is None else path_env
+    # PATH 里的目录可以是断线映射盘 / 指向 SMB 的 junction：`isfile` 之前先逐级不跟随地验（含盘类型），被拒的不探
+    walker = _walker(None, walker, nt=nt)
     out: list[str] = []
     for d in raw.split(";" if nt else os.pathsep):
         d = d.strip().strip('"')
-        if not d or not _local_hint(d):
+        if not d or not _local_hint(d) or walker.redirected(d) is not None:
             continue
         base = mod.basename(d.rstrip("/\\")).lower()
         if base not in ("scripts", "condabin", "bin"):
@@ -516,15 +518,20 @@ def _condarc_info(
     *,
     files: list[str] | None = None,
     environ: dict | None = None,
+    walker=None,
 ) -> tuple[list[str], list[str]]:
     """`.condarc`（`%CONDARC%`、`~/.condarc`）里的 `envs_dirs`（其子目录就是环境）与 `pkgs_dirs` 旁的根
     （`D:\\conda\\pkgs` → `D:\\conda`）。读不了 / 不是普通文件 = 当没有（记一条看不全），不抛。"""
     env = os.environ if environ is None else environ
     envs_dirs: list[str] = []
     roots: list[str] = []
+    walker = _walker(budget, walker)
     for f in files if files is not None else _condarc_files(env):
         if budget is not None and budget.stop_reason() is not None:
             break
+        # `%CONDARC%` 可以是 UNC / 断线映射盘 / 指向共享的 junction：打开它之前先词法 + 逐级不跟随地验，被拒的当没有
+        if not _local_hint(f) or walker.redirected(f) is not None:
+            continue
         try:
             parent, name = os.path.split(f)
             text = scanbudget.read_regular_text(parent or ".", name, max_bytes=MAX_HINT_BYTES)
@@ -642,7 +649,7 @@ def _conda_prefixes(budget: scanbudget.Budget | None = None, walker=None) -> lis
     `budget`（导入即扫描传）：`environments.txt` 有界读、`envs` 目录增量枚举，到期 / 取消返回已有的那部分。"""
     walker = _walker(budget, walker)
     out: list[str] = _conda_environments_txt(budget, walker)
-    envs_dirs, rc_roots = _condarc_info(budget)
+    envs_dirs, rc_roots = _condarc_info(budget, walker=walker)
     for root in [*_conda_roots(), *rc_roots]:
         if budget is not None and budget.stop_reason() is not None:
             break
@@ -710,12 +717,18 @@ class _WinregReader:
         flag = w.KEY_WOW64_32KEY if view == 32 else w.KEY_WOW64_64KEY
         return w.OpenKey(root, path, 0, w.KEY_READ | flag)
 
-    def subkeys(self, hive: str, view: int, path: str) -> list[str]:
+    def subkeys(
+        self, hive: str, view: int, path: str, limit: int | None = None, stop=None
+    ) -> list[str]:
+        """子键名；枚举**过程中**就受 `limit`（最多取多少个）与 `stop()`（真 = 预算到期 / 取消）约束，不先枚举完再切。"""
+        cap = REGISTRY_MAX_COMPANIES * REGISTRY_MAX_TAGS if limit is None else limit
         out: list[str] = []
         try:
             with self._open(hive, view, path) as key:
                 i = 0
-                while i < REGISTRY_MAX_COMPANIES * REGISTRY_MAX_TAGS:
+                while i < cap:
+                    if stop is not None and stop():
+                        break
                     try:
                         out.append(self._w.EnumKey(key, i))
                     except OSError:
@@ -759,13 +772,19 @@ def _windows_registry_pythons(
         except ImportError:  # pragma: no cover — nt 但没有 winreg 不会发生
             return []
     out: list[tuple[str, str]] = []
+
+    def spent() -> bool:
+        return budget is not None and budget.stop_reason() is not None
+
     for hive in ("HKCU", "HKLM"):
         for view in (64, 32):
-            for company in reader.subkeys(hive, view, "Software\\Python")[:REGISTRY_MAX_COMPANIES]:
+            for company in reader.subkeys(
+                hive, view, "Software\\Python", limit=REGISTRY_MAX_COMPANIES, stop=spent
+            ):
                 if budget is not None and not budget.charge_entry():
                     return out
                 base = f"Software\\Python\\{company}"
-                for tag in reader.subkeys(hive, view, base)[:REGISTRY_MAX_TAGS]:
+                for tag in reader.subkeys(hive, view, base, limit=REGISTRY_MAX_TAGS, stop=spent):
                     if budget is not None and not budget.charge_entry():
                         return out
                     vals = reader.values(hive, view, f"{base}\\{tag}\\InstallPath")

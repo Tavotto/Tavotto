@@ -150,9 +150,10 @@ class FakeRegistry:
         self.table = table
         self.reads = []
 
-    def subkeys(self, hive, view, path):
+    def subkeys(self, hive, view, path, limit=None, stop=None):
         self.reads.append((hive, view, path))
-        return list(self.table.get((hive, view, path), {}).get("keys", []))
+        keys = list(self.table.get((hive, view, path), {}).get("keys", []))
+        return keys if limit is None else keys[:limit]
 
     def values(self, hive, view, path):
         return dict(self.table.get((hive, view, path), {}).get("values", {}))
@@ -362,3 +363,74 @@ def test_rejections_leave_out_the_selected_one():
     b = _entry(userenvs.SOURCE_PYENV, satisfies=False, ok=True, probe_status="module_missing")
     got = userenvs.rejections([a, b], a)
     assert [g["reason"] for g in got] == [userenvs.REJECT_MISSING_IMPORTS]
+
+
+_REAL_WINREG_READER = userenvs._WinregReader  # conftest 默认把它换成空读取器；这里要真类
+
+
+# ------------------------------------------------- Codex #1274：落盘前先过守卫 / 枚举中就受限
+
+
+def _remote_walker():
+    from tavotto.engine import scanbudget
+
+    return scanbudget.PathWalker(nt=True, drive_type=lambda root: 4)  # DRIVE_REMOTE
+
+
+def test_path_exe_roots_never_probes_a_directory_on_a_remote_drive():
+    probed = []
+
+    def isfile(p):
+        probed.append(p)
+        return True
+
+    got = userenvs._path_exe_roots(
+        "Z:\\anaconda3\\Scripts", nt=True, isfile=isfile, walker=_remote_walker()
+    )
+    assert got == [] and probed == []
+
+
+def test_condarc_on_a_remote_drive_or_unc_is_never_opened(monkeypatch):
+    from tavotto.engine import scanbudget
+
+    opened = []
+    monkeypatch.setattr(
+        scanbudget,
+        "read_regular_text",
+        lambda *a, **k: opened.append(a) or "envs_dirs:\n  - D:\\e\n",
+    )
+    files = ["Z:\\share\\.condarc", "\\\\host\\share\\.condarc"]
+    assert userenvs._condarc_info(files=files, walker=_remote_walker()) == ([], [])
+    assert opened == []
+
+
+def test_winreg_subkey_enumeration_stops_at_the_cap_and_when_the_budget_is_spent():
+    calls = []
+
+    class FakeWinreg:
+        HKEY_CURRENT_USER = HKEY_LOCAL_MACHINE = 0
+        KEY_READ = KEY_WOW64_32KEY = KEY_WOW64_64KEY = 0
+
+        class _Key:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+        @classmethod
+        def OpenKey(cls, *a):
+            return cls._Key()
+
+        @staticmethod
+        def EnumKey(key, i):
+            calls.append(i)
+            if i >= 4096:
+                raise OSError
+            return f"k{i}"
+
+    reader = _REAL_WINREG_READER.__new__(_REAL_WINREG_READER)
+    reader._w = FakeWinreg
+    assert len(reader.subkeys("HKCU", 64, "x", limit=5)) == 5 and len(calls) == 5
+    calls.clear()
+    assert reader.subkeys("HKCU", 64, "x", limit=5, stop=lambda: True) == [] and calls == []
