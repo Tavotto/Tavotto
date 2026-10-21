@@ -55,6 +55,15 @@ export const ONBOARDING_FLOW_VERSION = 3
 export const ONBOARDING_KEY = 'tavotto.onboarding'
 
 export type OnboardingStatus = 'not_started' | 'active' | 'paused' | 'completed' | 'skipped'
+export const ONBOARDING_STATUSES: readonly OnboardingStatus[] = [
+  'not_started',
+  'active',
+  'paused',
+  'completed',
+  'skipped',
+]
+export const isOnboardingStatus = (v: unknown): v is OnboardingStatus =>
+  typeof v === 'string' && (ONBOARDING_STATUSES as readonly string[]).includes(v)
 
 /** 一次性情境提示的种类（闭集）；每类只出现一次 */
 export const HINT_KINDS = [

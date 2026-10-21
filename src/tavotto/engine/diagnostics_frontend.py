@@ -246,6 +246,8 @@ _ENUM_FIELDS: dict[str, frozenset[str]] = {
     "render_status": frozenset({"idle", "rendering", "ready", "error"}),
     "selection_kind": frozenset({"none", "element", "object", "mixed"}),
     "history_mode": frozenset({"gesture", "granular"}),
+    # 新手教程状态（`tavotto.onboarding`）：与前端 `OnboardingStatus` 严格同源
+    "status": frozenset({"not_started", "active", "paused", "completed", "skipped"}),
     # `ui.unexpected_error`（ADR 0118 补充 2026-10-14）：来源与内建错误名都是闭集，
     # 与前端 `UNEXPECTED_ERROR_SOURCES` / `UNEXPECTED_ERROR_NAMES` 严格同源（test_unexpected_error_enums_match_frontend）
     "source": frozenset({"boundary", "window_error", "unhandled_rejection", "engine_500"}),
@@ -546,6 +548,15 @@ _SNAPSHOT_SHAPE = {
     },
     # issue #181 Session 05：JS 侧驻留的 SVG payload 与三档表示法的分布。
     # 全是计数与常量，没有一个字段带用户内容。
+    # 新手教程状态的**结构摘要**（排查「为什么没弹新手教程」）：状态机取值、步骤内容版本、走过的步骤 id、欢迎页出现过没有、
+    # 看过哪几类提示的**键名**（闭集 id，不带时间戳）。没有任何用户内容。
+    "onboarding": {
+        "status": "enum",
+        "flow_version": "int",
+        "completed_steps": "list",
+        "welcome_seen": "scalar",
+        "hint_seen_keys": "list",
+    },
     "preview_memory": {
         "resident_svg_bytes": "int",
         "resident_svg_count": "int",

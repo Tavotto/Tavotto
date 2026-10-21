@@ -14,6 +14,7 @@
 - **只观察，不当真源**：诊断不参与任何业务判断，快照是**读**业务 store 得来的，
   不维护影子状态（影子状态会漂移，漂移的诊断比没有诊断更坏）。
   `recordDiagnosticEvent` 整体吞异常——诊断把一次编辑弄挂比没有诊断糟得多。
+- **快照里的 `onboarding` 段（新手教程状态摘要，默认收集）**：`snapshot.ts::onboardingSummary` 现读 `useOnboardingStore`——`status`（`isOnboardingStatus`）、`flow_version`、`completed_steps`（`isStepId` 滤过）、`welcome_seen`（`welcomeSeenAt != null`，不带时间戳）、`hint_seen_keys`（`isHintKind` 滤过的键名）。新字段必须同步后端 `diagnostics_frontend._SNAPSHOT_SHAPE`（按 schema 拉取，漏登记会被静默丢）。不含项目 id / 文档 id / 演示图改动 / 任何用户内容。看护 `snapshot.test.ts` 的 `onboarding 摘要`。
 - **隐私是两道判据不同的防线**：`types.ts` 的可辨识联合挡编译期手滑（事件里写
   `text: element.label` 直接 TS 报错），`sanitize.ts` 的**逐事件字段表**挡运行期。
   序列化**遍历 schema 而不是输入的键**——多出来的字段是「根本没被读过」，

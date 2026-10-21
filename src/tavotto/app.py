@@ -4269,6 +4269,7 @@ def _build_diagnostics_bundle(
     src = engine_diagdetail.Sources(
         project=status,
         scripts=ctx.registry.all_scripts() if ctx is not None else [],
+        attempted=engine_taskdiag.STORE.attempted_scripts(pid) if pid else [],
         baked=load_baked(ctx) if ctx is not None else None,
         task_section=(
             engine_taskdiag.bundle_section(engine_taskdiag.STORE, pid, limit=24) if pid else None
