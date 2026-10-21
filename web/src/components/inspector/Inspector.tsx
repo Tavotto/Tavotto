@@ -98,8 +98,10 @@ export function Inspector({
       <div className={cn('flex h-full flex-col', INSPECTOR_CONTAINER)} style={{ width }}>
       {/* 页签条（2026-09-30 重设计，学 OpenBitFun 的面板头）：与左边画布标签行同高 44、底边同一条
           hairline，两条线在工作面板里连成一条 */}
-      <div className="flex h-11 shrink-0 items-center gap-3 border-b border-border px-3">
-        <TabList label={t('tabsLabel')} className="min-w-0 self-stretch">
+      <div className="flex h-11 shrink-0 items-center gap-3 border-b border-border px-3 @max-[379px]:gap-2 @max-[379px]:px-2">
+        {/* 四个页签在 Linux（DejaVu Sans，比 macOS 字体宽）英文下要 281px；容器 < 380px 时页签间距 12→6、
+            条的左右内边距 12→8，余量才够最窄 320px（图钉另在 < 350px 让位） */}
+        <TabList label={t('tabsLabel')} className="min-w-0 self-stretch @max-[379px]:gap-1.5">
           {TABS.map((id) => (
             <Tab
               key={id}
@@ -144,9 +146,9 @@ export function Inspector({
               side="bottom"
               iconSize="sm"
               aria-pressed={pinned}
-              // 四个页签（含「时间线」）在最窄 320px 英文下排不下：容器 < 340px 时图钉让位给页签行
-              // （钉住是偏好，不丢；栏拉宽到 340 就回来）
-              className="@max-[339px]:hidden"
+              // 四个页签（含「时间线」）在英文（Linux 字体 281px）下，压缩间距后簇里带图钉要 ≥ 350px 才排得下：
+              // 容器 < 350px 时图钉让位给页签行（钉住是偏好，不丢；栏拉宽到 350 就回来）
+              className="@max-[349px]:hidden"
               onClick={() => useUiStore.getState().setRightPinned(!pinned)}
             >
               <Pin size={ICON_SIZE.sm} filled={pinned} className={pinned ? 'text-ink' : 'text-ink-3'} />
