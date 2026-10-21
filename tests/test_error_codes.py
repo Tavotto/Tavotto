@@ -177,6 +177,8 @@ USER_VISIBLE_CODES = {
     "engine_files_incomplete": set(),
     # #898：MCP 来源的运行里脚本想写授权根之外（写入根绊线）。路径相对化后只进 MCP 的结构化载荷，不进文案
     "write_outside_roots": set(),
+    # worker 直出位图超像素预算（`figcapture.check_export_raster`）；参数来自 `pool.recovery_params`
+    "export_raster_too_large": {"width", "height", "max_pixels"},
     # TeX 工具链（`texdiag`）：参数来自错误转换合同 `pool.recovery_params`；`tex_failed` 的 `{{error}}`
     # 与 `script_error` 同一来源（traceback 末行，前端 `engineErrorMsg` 填）
     "tex_command_missing": {"command"},

@@ -727,6 +727,7 @@ def _worker_error_payload(exc, stage: str = "", *, figure_snapshot_invalidation=
         *engine_pool.INPUT_ERROR_CODES,
         engine_pool.ARGUMENTS_ERROR_CODE,
         *engine_texdiag.ERROR_CODES,
+        engine_figcapture.EXPORT_RASTER_TOO_LARGE_CODE,
     ):
         # 脚本要输入（ADR 0099：提示原文 + 为什么没人能答，T08）/ 参数解析器退出（T03：个数与类别）：
         # 界面按 code 翻译，字段由错误转换合同 `pool.recovery_params` 统一给出（探测与准备会话同一份）

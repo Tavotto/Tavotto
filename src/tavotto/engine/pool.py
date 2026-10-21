@@ -734,6 +734,9 @@ def recovery_params(exc: "WorkerError") -> dict:
     if exc.code in texdiag.ERROR_CODES:
         # TeX 工具链（`texdiag`）：缺的命令 / 文件名（白名单清洗过）与 LaTeX 的那一行 `! …`
         return texdiag.params_of(extra.get("tex"))
+    if exc.code == figcapture.EXPORT_RASTER_TOO_LARGE_CODE:
+        # 宽 / 高 / 上限都是整数事实，没有路径与内容；缺字段（旧 worker 之类）就不捏造
+        return {k: int(extra[k]) for k in ("width", "height", "max_pixels") if k in extra}
     if exc.code == ARGUMENTS_ERROR_CODE:
         params = {}
         if extra.get("argv_count"):
@@ -1717,6 +1720,8 @@ ERROR_CODES = (
     PROJECT_PYTHON_UNUSABLE_CODE,
     ENGINE_FILES_INCOMPLETE_CODE,
     WRITE_OUTSIDE_ROOTS_CODE,
+    # worker 直出位图超像素预算（`figcapture.check_export_raster`）：写回事务的 PNG 目标走到这里
+    figcapture.EXPORT_RASTER_TOO_LARGE_CODE,
 )
 
 #: 自动记住的项目解释器被判失效并作废的记录：项目键 → {python, reason, trigger}。给准备

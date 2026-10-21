@@ -493,6 +493,47 @@ def preview_invalid(out_dir, stem: str) -> bool:
     return os.path.exists(_invalid_marker(out_dir, stem))
 
 
+#: worker 直出位图（`figsession.do_export` → `Figure.savefig`）的像素预算——**唯一出处**。
+#:
+#: 判据的主语是「即将分配的那块 Agg 栅格」的像素数（宽×高，bbox_inches 生效后的真实尺寸），
+#: 不是 figsize×dpi 的名义值。Agg 整幅 RGBA（4 B/px）一次分配，PNG / TIFF / JPEG 的编码器再各拷一份，
+#: 峰值约 3 倍：1 亿像素 ≈ 400 MB 栅格、峰值约 1.2 GB——worker 在这个量级仍能正常收尾，再往上
+#: 被系统 OOM 杀掉的风险就由「说不清的 session_dead」变成真实概率。
+#: 这与 RenderCore 最终导出的预算（`rendercore/renderchild.py` 的 `DEFAULT_MAX_PIXELS` /
+#: `DEFAULT_MAX_TOTAL_PIXELS`）是**两条路径、两种内存模型**：那边 PDFium 条带栅格、整页不落内存，
+#: 所以上限更高；这边没有条带，互不替代。超预算一律报错，**不降 dpi、不缩尺寸、不写文件**。
+EXPORT_RASTER_TOO_LARGE_CODE = "export_raster_too_large"
+MAX_EXPORT_RASTER_PIXELS = 100_000_000
+#: 走 Agg 整幅栅格的格式（`savefig` 的 `format`，小写）；pdf / svg / eps / ps / pgf 是矢量，不在此列。
+RASTER_EXPORT_FORMATS = frozenset(
+    {"png", "tif", "tiff", "jpg", "jpeg", "webp", "bmp", "gif", "raw", "rgba"}
+)
+
+
+class ExportRasterTooLarge(ValueError):
+    """worker 直出的位图超过像素预算。`params` 是线格式里平铺进错误信封的字段（宽 / 高 / 上限）。"""
+
+    code = EXPORT_RASTER_TOO_LARGE_CODE
+
+    def __init__(self, width: int, height: int, max_pixels: int):
+        super().__init__(
+            f"位图导出 {width}×{height} 像素（{width * height} 个），超过上限 {max_pixels} 个像素；"
+            "请降低导出分辨率或缩小图幅"
+        )
+        self.params = {"width": width, "height": height, "max_pixels": max_pixels}
+
+
+def check_export_raster(fmt: str, width_px: int, height_px: int) -> None:
+    """位图格式且宽×高超预算 → `ExportRasterTooLarge`；其余原样放行。必须在分配栅格**之前**调用。
+
+    预算在调用时读模块常量（测试可调小；产品没有对外的调参入口）。
+    """
+    if str(fmt).lower() not in RASTER_EXPORT_FORMATS:
+        return
+    if int(width_px) * int(height_px) > MAX_EXPORT_RASTER_PIXELS:
+        raise ExportRasterTooLarge(int(width_px), int(height_px), MAX_EXPORT_RASTER_PIXELS)
+
+
 #: 失效标记都写不下去时的最后一道（`PREVIEW_POISONED_CODE`，规则 worker-protocol-and-lifecycle §预览失效四级）：
 #: 写预览的是 worker / native 子进程，读的是 app 进程——磁盘标记写不下去，worker 进程内的任何
 #: 内存标记读方都看不见。所以这一级由 **读方进程**自己记：app 侧收到该错误码（会话同时被判死）
