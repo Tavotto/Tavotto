@@ -131,9 +131,9 @@ class _FileScan(ast.NodeVisitor):
         self.imports_pil = False
         self.imports_tops: set[str] = set()
         self.imports_mpl = False
-        self.libs: list[str] = []
-        #: 每处「保存位图」调用的路径实参：字面量字符串原文；不是纯字符串字面量为 None
-        self.paths: list[str | None] = []
+        #: 每处「保存位图」调用的 (库, 路径实参)：路径是字面量字符串原文；不是纯字符串字面量为 None。
+        #: 库与路径成对记，后面挑「新写出的文件」时不能把 A 库的路径安到 B 库头上
+        self.saves: list[tuple[str, str | None]] = []
         self._save_calls: list[ast.Call] = []
 
     def visit_Import(self, node: ast.Import) -> None:
@@ -182,9 +182,9 @@ class _FileScan(ast.NodeVisitor):
             func = call.func
             full = self._resolve(func)
             if full is not None and full in _SAVE_FUNCS:
-                if _path_arg_is_image(call, _exts_of(_SAVE_FUNCS[full])):
-                    self.libs.append(_SAVE_FUNCS[full])
-                    self.paths.append(_literal_path(call))
+                pos = _FUNC_FILE_POS.get(full, 0)
+                if _path_arg_is_image(call, _exts_of(_SAVE_FUNCS[full]), pos):
+                    self.saves.append((_SAVE_FUNCS[full], _literal_path(call, pos)))
                 continue
             if not isinstance(func, ast.Attribute) or func.attr not in _SAVE_METHODS:
                 continue
@@ -194,8 +194,7 @@ class _FileScan(ast.NodeVisitor):
                 and not self._receiver_is_foreign_module(func.value, tops)
                 and _path_arg_is_image(call, _exts_of(lib))
             ):
-                self.libs.append(lib)
-                self.paths.append(_literal_path(call))
+                self.saves.append((lib, _literal_path(call)))
 
     def _receiver_is_foreign_module(self, value: ast.expr, own_tops: frozenset[str]) -> bool:
         """`np.save` / `torch.save` / `joblib.dump` 之类：接收者是 import 进来的、不属于该库（`own_tops`）的名字。"""
@@ -207,17 +206,25 @@ class _FileScan(ast.NodeVisitor):
         return False
 
 
-def _path_arg(call: ast.Call) -> ast.expr | None:
-    if call.args:
-        return call.args[0]
+#: 函数形式里「输出文件」不是第一个位置参数的：`plotly.io.write_image(fig, file, ...)` 的 `file` 是第二个；
+#: `plotly.io.to_image(fig, ...)` 返回字节、没有文件实参（None = 只认关键字）。表外一律第一个。
+_FUNC_FILE_POS: dict[str, int | None] = {
+    "plotly.io.write_image": 1,
+    "plotly.io.to_image": None,
+}
+
+
+def _path_arg(call: ast.Call, pos: int | None = 0) -> ast.expr | None:
+    if pos is not None and len(call.args) > pos:
+        return call.args[pos]
     for kw in call.keywords:
         if kw.arg in ("fp", "fname", "filename", "uri", "path", "im_path", "file"):
             return kw.value
     return None
 
 
-def _literal_path(call: ast.Call) -> str | None:
-    node = _path_arg(call)
+def _literal_path(call: ast.Call, pos: int | None = 0) -> str | None:
+    node = _path_arg(call, pos)
     if isinstance(node, ast.Constant) and isinstance(node.value, str):
         return node.value
     return None
@@ -354,9 +361,11 @@ def _new_inventory_file(
     return best[1] if best else None
 
 
-def _path_arg_is_image(call: ast.Call, exts: frozenset[str] = _IMAGE_EXTS) -> bool:
-    """保存目标（这几个 API 的第一个实参）的字面量扩展名不在该库的图片 / 图形格式里就 False；不是字面量按「可能是」True。"""
-    node = _path_arg(call)
+def _path_arg_is_image(
+    call: ast.Call, exts: frozenset[str] = _IMAGE_EXTS, pos: int | None = 0
+) -> bool:
+    """保存目标（按该 API 的签名取位置，多数是第一个实参）的字面量扩展名不在该库的图片 / 图形格式里就 False；不是字面量按「可能是」True。"""
+    node = _path_arg(call, pos)
     ext = _literal_ext(node)
     return ext is None or ext in exts
 
@@ -402,8 +411,7 @@ def detect(
         return None
     if scan.truncated or scan.problems:
         return None  # 反面判据（有没有 matplotlib）看不全：不说
-    libs: list[str] = []
-    paths: list[str | None] = []
+    saves: list[tuple[str, str | None]] = []
     for rel in scan.files:
         text, problem = discover.read_source(root_p / rel)  # PEP 263 / BOM；解不出就不说
         if problem is not None or text is None:
@@ -417,17 +425,17 @@ def detect(
         if fs.imports_mpl:
             return None
         fs.finish()
-        libs += fs.libs
-        paths += fs.paths
+        saves += fs.saves
     # 扫描只读 .py；编译扩展 / 命名空间包的内部看不见，已在 scan 里记入 problems 或不进 files，这里不再猜
+    libs = [lib for lib, _p in saves]
     if not libs:
         return None
     if scan.dynamic and not set(libs) <= _DYNAMIC_TOLERANT:
         return None  # 动态 import 可能装进没扫过的 matplotlib：位图库脚本看不全就不说
     # 多个库时取先出现的；顺序按 LIBRARIES 稳定化，保证同一份脚本总给同一个答案
     fresh = [
-        p
-        for p in paths
+        (lib, p)
+        for lib, p in saves
         if _written_since(_fs_path(p, root_p, script, cwd_mode, sandbox_dir), run_started_at)
     ]
     if not fresh:
@@ -437,17 +445,24 @@ def detect(
             return (
                 None  # 没有这次运行写出文件的证据：不说（未调用的 helper / 没走到的分支 / 旧文件）
             )
+        # 新文件是哪个库写的：看扩展名属于谁（Pillow 的 PNG 与 plotly 的 PDF 不会互相冒名）；
+        # 都认才按 LIBRARIES 稳定顺序取
+        suffix = Path(found).suffix.lower()
         for lib in LIBRARIES:
-            if lib in libs:
+            if lib in libs and suffix in _exts_of(lib):
                 return {"kind": "raster_script", "library": lib, "in_project": True, "path": found}
         return None
-    rel: str | None = None
-    for p in fresh:
-        rel = _inventory_rel(p, root_p, script, cwd_mode)
-        if rel is not None:
-            break
-    in_project = rel is not None
+    # 库与路径成对：只在「确有新文件」的那几处保存里挑库，路径也取自同一库的新文件
+    fresh_libs = {lib for lib, _p in fresh}
     for lib in LIBRARIES:
-        if lib in libs:
-            return {"kind": "raster_script", "library": lib, "in_project": in_project, "path": rel}
+        if lib not in fresh_libs:
+            continue
+        rel: str | None = None
+        for fl, p in fresh:
+            if fl != lib:
+                continue
+            rel = _inventory_rel(p, root_p, script, cwd_mode)
+            if rel is not None:
+                break
+        return {"kind": "raster_script", "library": lib, "in_project": rel is not None, "path": rel}
     return None
