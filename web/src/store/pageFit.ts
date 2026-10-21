@@ -17,7 +17,7 @@ import { useWorkspaceStore } from './workspace'
  * - 整体换文档 / 载入 / 切项目：`loadSeq` 或 `documentId` 变了，`afterSwitch` /
  *   `adoptOpenedProject` / 会话恢复各自 `fit`；
  * - 快速编辑：那一屏取景的是那张图的包围盒，不是页面——此刻不动视口；停放的排版视口
- *   记着停放时的页面尺寸，回排版时 `returnToLayout` 比一比就知道要不要按新页面取景。
+ *   记着停放时的页面尺寸，第二张图进来切到多图排版时，`startWorkspaceModeSync` 按那时的页面取景「页面 ∪ 图」。
  */
 export function startPageSizeFit(): () => void {
   return useDocumentStore.subscribe((state, prev) => {

@@ -289,8 +289,8 @@ describe('快速编辑里的 ⌘1', () => {
   })
 })
 
-describe('快速编辑里 Esc = 回排版（P01，与上下文栏出口同一个 action）', () => {
-  const enter = (fromLayout = true) => useWorkspaceStore.getState().enterFastEdit(PANEL.id, { fromLayout })
+describe('单图编辑里的 Esc：只退图内编辑，没有「排版」可回（模式由图数推出）', () => {
+  const enter = () => useWorkspaceStore.getState().enterFastEdit(PANEL.id)
   const mode = () => useWorkspaceStore.getState().mode
 
   it('对照组：排版里 Esc 只是清选区，不碰模式', () => {
@@ -299,26 +299,25 @@ describe('快速编辑里 Esc = 回排版（P01，与上下文栏出口同一个
     expect(mode()).toBe('layout')
   })
 
-  it('快编里没有更内层时 Esc 回排版并选中该面板（两种来源都一样）', () => {
-    for (const fromLayout of [true, false]) {
-      useWorkspaceStore.getState().clear()
-      enter(fromLayout)
-      press('Escape')
-      expect(mode()).toBe('layout')
-      expect(useSelectionStore.getState().ids).toEqual([PANEL.id])
-    }
+  it('单图编辑里没有更内层时 Esc 什么都不做：仍是单图编辑，选区仍是该面板', () => {
+    enter()
+    useSelectionStore.getState().set([PANEL.id])
+    press('Escape')
+    expect(mode()).toBe('fast_edit')
+    expect(useSelectionStore.getState().ids).toEqual([PANEL.id])
   })
 
-  it('图内编辑有选区：第一下 Esc 只清选区，仍在快编；再一下才回排版', () => {
+  it('图内编辑有选区：第一下 Esc 只清选区；再一下退出图内编辑并选中该面板，模式不变', () => {
     enter()
     useUiStore.getState().setElementPanel(PANEL.id)
     useUiStore.getState().setSelectedGid('axes_0.yticks')
     press('Escape')
     expect(useUiStore.getState().selectedGids).toEqual([])
-    expect(mode()).toBe('fast_edit')
+    expect(useUiStore.getState().elementPanelId).toBe(PANEL.id)
     press('Escape')
-    expect(mode()).toBe('layout')
+    expect(mode()).toBe('fast_edit')
     expect(useUiStore.getState().elementPanelId).toBeNull()
+    expect(useSelectionStore.getState().ids).toEqual([PANEL.id])
   })
 
   it('输入框聚焦时不抢 Esc', () => {

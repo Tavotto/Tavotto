@@ -1,12 +1,9 @@
 /**
- * 换项目不许把**旧文档**的工作区偏好抹掉（评审 #208 的 P2）。
+ * 换项目：工作区模式只由新文档的图数决定，旧文档的「停在哪张图上」不跟过来。
  *
- * `resetForNewProject()` 里那句 `useWorkspaceStore.clear()` 上面写着「本机那
- * 一档按 documentId 存，切回去仍然作数」。它排在 `switchDocument()` 之前时那
- * 句话是假的：`startWorkspacePersistence` 的订阅此刻认的还是**旧**文档 id，
- * 于是这一清会把 `{mode:'layout'}` 写进 `tavotto.workspace.<旧 id>`，用户在
- * 那份文档里停的那张图当场被顶掉——而他只是切了个项目，从没表达过「我不要
- * 快速编辑了」。派生状态不许覆盖用户偏好。
+ * 此前模式按 documentId 存本机一档、`resetForNewProject()` 的 `clear()` 必须排在
+ * `switchDocument()` 之后，否则会把旧文档那一档抹掉（评审 #208 P2）。现在模式是文档的纯函数
+ * （`startWorkspaceModeSync`），不落本机，没有「那一档」可抹；这里钉的是切换后内存里没有旧文档的残留。
  */
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
@@ -15,7 +12,7 @@ import { canvasToDoc, type CanvasData, type PanelObject } from '@/types/document
 import { useDocumentStore } from './documentStore'
 import { useProjectStore } from './projectStore'
 import { resetExportState, useExportStore } from './exportStore'
-import { startWorkspacePersistence, useWorkspaceStore } from './workspace'
+import { startWorkspaceModeSync, useWorkspaceStore } from './workspace'
 
 const PANEL: PanelObject = {
   id: 'p1',
@@ -32,7 +29,6 @@ const PANEL: PanelObject = {
 }
 
 const OLD_DOC = 'doc-old'
-const KEY = `tavotto.workspace.${OLD_DOC}`
 
 globalThis.fetch = (async (url: unknown) => {
   const u = String(url)
@@ -68,7 +64,7 @@ beforeEach(() => {
     future: [],
     txn: null,
   })
-  stop = startWorkspacePersistence()
+  stop = startWorkspaceModeSync()
 })
 
 afterEach(() => {
@@ -79,21 +75,16 @@ afterEach(() => {
 })
 
 describe('换项目与工作区偏好', () => {
-  it('用户在旧文档里停在快速编辑上，切项目之后那一档还在', async () => {
-    useWorkspaceStore.getState().enterFastEdit(PANEL.id)
-    expect(JSON.parse(localStorage.getItem(KEY)!)).toEqual({
-      mode: 'fast_edit',
-      panelId: PANEL.id,
-    })
+  it('旧文档只有一张图 = 单图编辑；切项目之后新文档是空白排版，不带旧文档的那张图', async () => {
+    expect(useWorkspaceStore.getState().mode).toBe('fast_edit')
+    expect(useWorkspaceStore.getState().activePanelId).toBe(PANEL.id)
 
     await useProjectStore.getState().open('/new')
 
-    // 内存里当然回到排版（新项目是一份空白文档），但**旧文档那一档不许被动**
     expect(useWorkspaceStore.getState().mode).toBe('layout')
-    expect(JSON.parse(localStorage.getItem(KEY)!)).toEqual({
-      mode: 'fast_edit',
-      panelId: PANEL.id,
-    })
+    expect(useWorkspaceStore.getState().activePanelId).toBeNull()
+    // 不落本机：没有任何 `tavotto.workspace.*` 的键
+    expect(Object.keys(localStorage).filter((k) => k.startsWith('tavotto.workspace.'))).toEqual([])
   })
 
   /**

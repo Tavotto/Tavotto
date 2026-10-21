@@ -240,15 +240,14 @@
   },
   "fastEdit": {
     "added": "{{name}} added to the canvas",
+    "enteredLayout": "Multi-figure layout",
     "addedForEdit": "Added to this layout for editing",
     "addedForEditLive": "Added to this layout for editing; Remove undoes it.",
     "removeAdded": "Remove",
     "alreadyOnCanvas": "{{name}} is already on the canvas",
     "connectSource": "Link source script",
-    "crumbTitle": "Back to the layout (Esc)",
     "figureMissing": "{{name}} is not in this project",
-    "layoutOnly": "No source script linked. Lay it out, but you can’t edit inside.",
-    "toLayout": "Layout & export"
+    "layoutOnly": "No source script linked. Lay it out, but you can’t edit inside."
   },
   "history": {
     "addArrow": "Add arrow",
@@ -663,7 +662,7 @@
   "stage": {
     "addFigure": "Add a figure",
     "backToCanvas": "Back to canvas",
-    "backToLayout": "Back to layout",
+    "exitElementEdit": "Leave figure editing",
     "contextBarLabel": "Where you are",
     "crumbsLabel": "Current object",
     "emptyHint": "Pick a figure from the asset library and add it to the canvas.",

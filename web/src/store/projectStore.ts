@@ -320,14 +320,9 @@ async function resetForNewProject(pj: string | null): Promise<RestoreToken> {
   //    最近文档 / 归属 / last / 时间线，也不排自动保存——恢复落定（有历史就换回去，没有就转正）之前一直如此
   await useDocumentStore.getState().switchDocument(emptyDocument(), newId('d'), undefined, { placeholder: true })
   armRestoreToken(token)
-  // 工作区模式指着旧文档里的一个对象 id，跟着换代（本机那一档按 documentId
-  // 存，切回去仍然作数——清的是内存里"现在停在哪张图上"）。
-  //
-  // **必须排在 `switchDocument` 之后。** 排在前面的话，
-  // `startWorkspacePersistence` 的那个订阅此刻认的还是**旧**文档 id：它会把
-  // `{mode:'layout'}` 写进 `tavotto.workspace.<旧 id>`，把用户在那份文档里停
-  // 的那张图抹掉——上面这句"切回去仍然作数"就成了一句假话。派生状态不许覆盖
-  // 用户偏好，切项目这件事更不是用户在表达"我不要快速编辑了"。
+  // 工作区模式指着旧文档里的一个对象 id，跟着换代：清掉内存里"现在停在哪张图上"。
+  // 模式本身由图数推出（`workspace.startWorkspaceModeSync`，不落本机），占位文档是空白的 = 排版；
+  // 恢复落定、换进真文档时订阅会按它的图数重新判。
   useWorkspaceStore.getState().clear()
   // 4. 重载新项目素材 + 它的接入就绪度（两份是同一次后端计算的两个投影）
   await useAssetStore.getState().load()

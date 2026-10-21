@@ -71,7 +71,7 @@ import { installDiagnosticsDevHook } from '@/diagnostics'
 import { useSelectionRouting } from '@/hooks/useSelectionRouting'
 import { useUiStore } from '@/store/uiStore'
 import { startValidation } from '@/store/validationStore'
-import { startWorkspacePersistence, useWorkspaceStore } from '@/store/workspace'
+import { startWorkspaceModeSync, useWorkspaceStore } from '@/store/workspace'
 import { dragRegionProps, onDesktopMenu, onDesktopOpen } from '@/lib/desktop'
 import { DURATION, usePresence } from '@/lib/motion'
 import { applyOpenRequest, claimUrlOpenRequest } from '@/lib/openRequest'
@@ -159,6 +159,9 @@ function Workspace() {
   // 快速编辑不显示画布标签行：那是排版的语言（哪几张版、当前在哪一张），
   // 而这条工作流里用户面对的只有一张图。
   const fastEdit = useWorkspaceStore((s) => s.mode === 'fast_edit')
+  // 模式按画布各自判：单图编辑的这一张画布若还有别的画布，标签行要留着，否则切不走
+  const multiCanvas = useDocumentStore((s) => s.canvases.length > 1)
+  const showTabs = !fastEdit || multiCanvas
   const leftOpen = useUiStore((s) => s.leftOpen)
   const rightOpen = useUiStore((s) => s.rightOpen)
   const overlay = useWorkspaceLayout() === 'narrow'
@@ -195,9 +198,9 @@ function Workspace() {
     const stopReflow = startLayoutAutoReflow()
     // 换了画布尺寸 / 类型：视口按新页面重新取景（切标签、换文档各有自己的适配点）
     const stopPageFit = startPageSizeFit()
-    // 工作区模式（快速编辑 / 画布排版）按 documentId 存本机一档：一个订阅
-    // 负责恢复与写入，恢复前先验那个对象还在不在
-    const stopWorkspace = startWorkspacePersistence()
+    // 工作区模式（单图编辑 / 多图排版）由激活画布上的图数推出：一个订阅在每次文档变化后对一遍，
+    // 并在单图 ↔ 多图切换时动视口、说一句。不落本机——它是文档的纯函数
+    const stopWorkspace = startWorkspaceModeSync()
     // 统一检查（ADR 0030）：**唯一的驱动点**。防抖 + 代次在 store 里，
     // 组件一个都不许自己跑一遍求值器
     const stopValidation = startValidation()
@@ -279,7 +282,7 @@ function Workspace() {
               {/* 工作面板里不再有提示条（2026-10-16 UI 2.0）：文档的事（冲突 / 保存失败……）在顶栏的文档状态芯片里，
                   项目接入状态在项目名后面的胶囊里，「构建版本不一致」是顶栏右侧的 `BuildMismatchChip`——
                   没有任何东西会在这里插进一行把画布往下推 */}
-              {!fastEdit && <CanvasTabs />}
+              {showTabs && <CanvasTabs />}
               <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
                 <CanvasStage />
                 {/* 画布视口的浮层按角位摆（2026-10-07 设计审计 §10.1）：四个角各 12px 内距、每角一个堆叠容器。
@@ -291,7 +294,7 @@ function Workspace() {
                   data-canvas-corner="top-right"
                   className="pointer-events-none absolute right-3 top-3 z-canvas-chrome flex max-h-[calc(100%-1.5rem)] w-72 max-w-[calc(100%-1.5rem)] flex-col items-end gap-2"
                 >
-                  {fastEdit && (
+                  {!showTabs && (
                     // data-capsule：胶囊里的输入框跟着变成胶囊（fieldBox 的 in-data-capsule）
                     <div data-capsule className="pointer-events-auto rounded-full bg-surface shadow-pop">
                       <ZoomControls />

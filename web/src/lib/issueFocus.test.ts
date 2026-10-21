@@ -15,7 +15,7 @@ import { useDocumentStore } from '@/store/documentStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
 import { useViewportStore } from '@/store/viewportStore'
-import { useWorkspaceStore } from '@/store/workspace'
+import { settleMode, useWorkspaceStore } from '@/store/workspace'
 import { emptyProject, type PanelObject, type TextObject } from '@/types/document'
 
 const panel = (over: Partial<PanelObject> = {}): PanelObject => ({
@@ -64,6 +64,8 @@ async function seed(objects = [panel(), text]) {
   })
   // 视口要有尺寸，`revealRect` 才会真的动（没尺寸时它按设计什么都不做）
   useViewportStore.setState({ viewW: 800, viewH: 600 })
+  // 模式由图数推出（本文件没挂模式订阅，换完文档自己对一次，等于订阅在场时的状态）
+  settleMode()
 }
 
 beforeEach(() => {
@@ -77,9 +79,9 @@ afterEach(() => {
 })
 
 describe('画布对象：排版模式', () => {
-  it('切回排版、选中、滚进视野、开属性页', async () => {
-    await seed()
-    useWorkspaceStore.getState().enterFastEdit('p1')
+  it('选中、滚进视野、开属性页；画布上有两张图 = 排版，定位不改模式', async () => {
+    await seed([panel(), panel({ id: 'p2', fileId: 'Fig2.pdf', y: 50 }), text])
+    expect(useWorkspaceStore.getState().mode).toBe('layout')
     const reveal = vi.spyOn(useViewportStore.getState(), 'revealRect')
     const out = focusObject(refFor({ objectId: 't1' }))
     expect(out).toEqual({ ok: true, mode: 'layout', field: 'none' })
@@ -109,8 +111,8 @@ describe('画布对象：排版模式', () => {
   })
 })
 
-describe('图内元素：进快速编辑', () => {
-  it('切进快速编辑 + 图内元素编辑 + 选中那个 gid', async () => {
+describe('图内元素：进图内编辑', () => {
+  it('画布上只有这一张图 = 单图编辑；图内元素编辑 + 选中那个 gid', async () => {
     await seed()
     const out = focusObject(refFor({ gid: 'axes_0.xticks' }), 'fontsize')
     expect(out.ok).toBe(true)
@@ -125,8 +127,7 @@ describe('图内元素：进快速编辑', () => {
     await seed([panel({ script: undefined })])
     const out = focusObject(refFor({ gid: 'axes_0.xticks' }))
     expect(out).toEqual({ ok: false, reason: 'not_editable' })
-    // 失败时不许留下半个状态
-    expect(useWorkspaceStore.getState().mode).toBe('layout')
+    // 失败时不许留下半个状态（模式本来就只由图数决定，定位碰不到它）
     expect(useUiStore.getState().elementPanelId).toBeNull()
   })
 
@@ -202,7 +203,7 @@ describe('失败的四条各有各的原因', () => {
 
 describe('页面级问题', () => {
   it('没有对象可选时切到「画布」那一栏，而不是随便选一个对象', async () => {
-    await seed()
+    await seed([panel(), panel({ id: 'p2', fileId: 'Fig2.pdf', y: 50 })])
     useSelectionStore.getState().set(['p1'])
     const out = focusObject(refFor({ objectId: null }))
     expect(out).toEqual({ ok: true, mode: 'layout', field: 'none' })
@@ -235,8 +236,7 @@ describe('openProblems', () => {
   it('带导出目标（另一张图、另一张画布）：先切过去、当前图就是它、范围是「当前图」——不是工作区原来选的那张', async () => {
     await seed([panel(), panel({ id: 'p2', fileId: 'Fig2.pdf', y: 50 })])
     const first = useDocumentStore.getState().activeCanvasId
-    // 用户原来在 p1 的快速编辑里
-    useWorkspaceStore.getState().enterFastEdit('p1')
+    // 用户原来在 p1 的图内编辑里（画布上有两张图：排版里的子状态）
     useUiStore.setState({ elementPanelId: 'p1', problemScope: 'document' })
     const second = useDocumentStore.getState().addCanvas('画布 2')
     expect(useDocumentStore.getState().activeCanvasId).toBe(second)

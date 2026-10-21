@@ -11,7 +11,7 @@ import { useInteractionStore } from '@/store/interactionStore'
 import { useProjectStore } from '@/store/projectStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
-import { addPanelToCanvas, openFastEdit, useWorkspaceStore } from '@/store/workspace'
+import { addPanelToCanvas, useWorkspaceStore } from '@/store/workspace'
 import { clientToMm, mmToPx, mmToViewX, mmToViewY, mmToWorld, useViewportStore } from '@/store/viewportStore'
 import { emptyStateAnchor } from '@/lib/emptyStateAnchor'
 import { shouldFitOnDoubleClick } from '@/lib/fitGuard'
@@ -238,13 +238,14 @@ export function CanvasStage() {
           const pid = e.dataTransfer.getData('application/x-panel-id')
           if (!pid) return
           e.preventDefault()
-          if (fastEdit) {
-            // 这条工作流里"拖进来"的意思是"改看这一张"，不是"再摆一张上去"
-            openFastEdit(pid)
-            return
-          }
           const info = useAssetStore.getState().byId[pid]
           if (!info) return
+          // 单图编辑里拖进来的是第二张图：落点是按这一屏（只画那一张）换算的，页面还没画出来，换成页面坐标没有意义——
+          // 不带点，按常规规则摆放；放下去就切到多图排版（`startWorkspaceModeSync`）
+          if (fastEdit) {
+            addPanelToCanvas(info)
+            return
+          }
           const p = clientToMm(e.clientX, e.clientY)
           addPanelToCanvas(info, p.x, p.y)
         }}
