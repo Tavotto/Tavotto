@@ -23,10 +23,11 @@ import logging
 import os
 import re
 import threading
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import atomicio, config
+from . import atomicio, config, layoutsession
 
 LOG = logging.getLogger(__name__)
 
@@ -42,6 +43,8 @@ MAX_ENTRIES_PER_SHA = 8
 _LIVE_CHECK_MAX_BYTES = 256 * 1024 * 1024
 
 _LOCK = threading.Lock()
+LOCK_FILENAME = ".lock"
+LOCK_TIMEOUT_S = 5.0
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 _VERSION_RE = re.compile(r"^[0-9A-Za-z][0-9A-Za-z.+_\-]{0,63}$")
 _BACKEND_RE = re.compile(r"^[A-Za-z0-9_.\-]{1,64}(://[A-Za-z0-9_.\-]{1,96})?$")
@@ -60,6 +63,47 @@ def _record_path(sha: str) -> Path:
 def project_key(project_root) -> str:
     """与项目系统（`app._project_id` / `pool._norm_dir`）同一个规范化身份。"""
     return config.normalize_path_identity(str(Path(project_root).resolve()))
+
+
+def lock_path() -> Path:
+    return origin_dir() / LOCK_FILENAME
+
+
+class _WriteLock:
+    """线程锁 + 跨进程文件锁（`layoutsession.acquire_file_lock`，同一份 flock / msvcrt.locking 实现）。
+
+    每个 `tavotto open --origin-json` 都是独立进程，只有线程锁管不到跨进程的读改写（丢条目 / 总数超 MAX_RECORDS）。
+    与会话状态锁的取舍相反：拿不到锁（超时 / 文件系统不支持咨询锁）**不写**并记日志——来源只是弱线索，
+    丢一次记录 = 回到「没有记录」，不能为它阻断交接，也不能退回无锁的读改写去互相覆盖。
+    """
+
+    def __enter__(self) -> bool:
+        self._fd = None
+        deadline = time.monotonic() + LOCK_TIMEOUT_S
+        if not _LOCK.acquire(timeout=LOCK_TIMEOUT_S):
+            LOG.warning(
+                "来源记录被本进程的另一个线程占着超过 %s 秒（忽略，只是线索）", LOCK_TIMEOUT_S
+            )
+            self._held = False
+            return False
+        self._held = True
+        try:
+            self._fd = layoutsession.acquire_file_lock(lock_path(), deadline)
+        except layoutsession.SessionStateUnavailable as exc:
+            LOG.warning("来源记录拿不到跨进程锁（忽略，只是线索）：%s", exc)
+            return False
+        except BaseException:
+            _LOCK.release()
+            raise
+        return True
+
+    def __exit__(self, *exc: object) -> None:
+        try:
+            if self._fd is not None:
+                layoutsession.release_file_lock(self._fd)
+        finally:
+            if self._held:
+                _LOCK.release()
 
 
 def _now() -> str:
@@ -236,7 +280,9 @@ def record(
         if script_sha1 and _SHA1_RE.match(script_sha1):
             entry["script"]["sha1"] = script_sha1
     path = _record_path(bytes_sha256)
-    with _LOCK:
+    with _WriteLock() as locked:
+        if not locked:
+            return False
         try:
             prior = _read_file(path)
             others = [

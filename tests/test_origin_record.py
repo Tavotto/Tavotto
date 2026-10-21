@@ -452,3 +452,131 @@ def test_stored_record_fields_are_a_closed_set_without_savefig_facts(data, tmp_p
     entry = json.loads((data / "origin" / f"{sha}.json").read_text(encoding="utf-8"))["entries"][0]
     assert not [k for k in entry if "savefig" in k]
     assert "savefig_dpi" not in originrecord.lookup(sha, root)
+
+
+# ------------------------------------------------- 跨进程锁（Codex P2：独立进程的读改写）----
+_CHILD = r"""
+import json, os, sys, time
+from pathlib import Path
+from tavotto.engine import originrecord
+
+cfg = json.loads(sys.argv[1])
+originrecord.MAX_RECORDS = cfg.get("max_records", originrecord.MAX_RECORDS)
+if "lock_timeout" in cfg:
+    originrecord.LOCK_TIMEOUT_S = cfg["lock_timeout"]
+Path(cfg["ready"]).write_text("1")
+while not Path(cfg["go"]).exists():  # 确定性起跑线：全部就绪后主进程一次放行
+    time.sleep(0.005)
+ok = originrecord.record(
+    project_root=cfg["project"], source_id="a.png", bytes_sha256=cfg["sha"], size_bytes=1,
+    facts={"python_version": "3.11.4", "matplotlib_version": "3.8.2", "backend": "agg"},
+)
+print(json.dumps(ok))
+"""
+
+_HOLDER = r"""
+import sys, time
+from pathlib import Path
+from tavotto.engine import originrecord
+
+with originrecord._WriteLock() as locked:
+    assert locked
+    Path(sys.argv[1]).write_text("held")  # 拿到锁之后才写就绪文件
+    while not Path(sys.argv[2]).exists():
+        time.sleep(0.005)
+"""
+
+
+def _env(data: Path) -> dict:
+    env = dict(os.environ)
+    env["PYTHONPATH"] = str(ROOT / "src")
+    env["TAVOTTO_DATA_DIR"] = str(data)
+    env["TAVOTTO_NO_TELEMETRY"] = "1"
+    env.pop("PYTHONSAFEPATH", None)
+    return env
+
+
+def _wait_for(path: Path, timeout: float = 30.0) -> None:
+    import time
+
+    end = time.monotonic() + timeout
+    while not path.exists():
+        assert time.monotonic() < end, f"等不到 {path}"
+        time.sleep(0.005)
+
+
+def _sub(base: Path, name: str) -> Path:
+    (base / name).mkdir()
+    return base / name
+
+
+def _run_racers(data: Path, tmp_path: Path, cfgs: list[dict]) -> list[bool]:
+    go = tmp_path / "go"
+    procs = []
+    for i, cfg in enumerate(cfgs):
+        cfg = {**cfg, "ready": str(tmp_path / f"ready{i}"), "go": str(go)}
+        procs.append(
+            subprocess.Popen(
+                [sys.executable, "-c", _CHILD, json.dumps(cfg)],
+                env=_env(data),
+                stdout=subprocess.PIPE,
+                text=True,
+            )
+        )
+    for i in range(len(cfgs)):
+        _wait_for(tmp_path / f"ready{i}")
+    go.write_text("1")
+    outs = [p.communicate(timeout=120)[0] for p in procs]
+    assert [p.returncode for p in procs] == [0] * len(procs)
+    return [json.loads(o) for o in outs]
+
+
+def test_concurrent_processes_same_sha_keep_every_project(data, tmp_path):
+    sha = "ab" * 32
+    n = 6
+    results = _run_racers(
+        data, tmp_path, [{"project": str(tmp_path / f"p{i}"), "sha": sha} for i in range(n)]
+    )
+    assert results == [True] * n
+    parsed = originrecord._read_file(originrecord._record_path(sha))
+    assert parsed is not None
+    assert len({e["project"] for e in parsed[1]}) == n
+
+
+def test_concurrent_processes_distinct_shas_respect_max_records(data, tmp_path):
+    cap = 4
+    cfgs = [
+        {"project": str(tmp_path / f"p{i}"), "sha": f"{i:02x}" * 32, "max_records": cap}
+        for i in range(12)
+    ]
+    assert _run_racers(data, tmp_path, cfgs) == [True] * 12
+    assert len(list((data / "origin").glob("*.json"))) <= cap
+
+
+def test_write_waits_for_cross_process_lock_holder(data, tmp_path):
+    held, release = tmp_path / "held", tmp_path / "release"
+    holder = subprocess.Popen(
+        [sys.executable, "-c", _HOLDER, str(held), str(release)], env=_env(data)
+    )
+    try:
+        _wait_for(held)
+        sha = "cd" * 32
+        # 别的进程持锁：记录进程等满超时后放弃（弱线索，不记，不阻断），且一个字节都没写
+        blocked = _run_racers(
+            data,
+            _sub(tmp_path, "r1"),
+            [{"project": str(tmp_path / "p"), "sha": sha, "lock_timeout": 0.3}],
+        )
+        assert blocked == [False]
+        assert not originrecord._record_path(sha).exists()
+    finally:
+        release.write_text("1")
+        holder.wait(timeout=60)
+    assert holder.returncode == 0
+    ok = _run_racers(
+        data,
+        _sub(tmp_path, "r2"),
+        [{"project": str(tmp_path / "p"), "sha": sha, "lock_timeout": 5}],
+    )
+    assert ok == [True]
+    assert originrecord._record_path(sha).exists()
