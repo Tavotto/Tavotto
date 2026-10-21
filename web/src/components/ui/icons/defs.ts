@@ -93,7 +93,10 @@ const HEX = poly(regular(12, 12, 9.3, 6, -90), 2.4)
 // 八角（平边朝上，边心距 9 与 RING 同外沿）
 const OCT = poly(regular(12, 12, 9 / Math.cos(Math.PI / 8), 8, -67.5), 2.5)
 const TWO = (x: number, y: number) => `M${x} ${y}a2 2 0 0 1 3.5 1.3c0 1.5-3.5 2.4-3.5 4.7h4`
-const CURSOR = 'M6 5.5l11.5 4.6-5 1.9-1.9 5z'
+// 光学居中：指针 + 三道点击射线整体外接盒（含 2 单位描边）原先是 x 1.5–18.5 / y 1.5–18，中心 (10, 9.75)，
+// 离 24 网格中心 (12, 12) 偏左上约 2 单位——放进 32px 的墨色实心圆里（选中态）肉眼就是没居中。
+// 整组平移 (+2, +2.25) 把外接盒中心挪回 (12, 12)；射线与指针的相对位置不变。
+const CURSOR = 'M8 7.75l11.5 4.6-5 1.9-1.9 5z'
 const DIAMOND = poly([[12, 3], [21, 12], [12, 21], [3, 12]], 1.6)
 const CARD = rr(3, 8, 13, 13, 2.5)
 const CARD_BACK = 'M8 8V5.5A2.5 2.5 0 0 1 10.5 3h8A2.5 2.5 0 0 1 21 5.5v8a2.5 2.5 0 0 1-2.5 2.5H16'
@@ -155,7 +158,7 @@ export const ICON_DEFS = {
   // ───────── 右栏 / 助手 ─────────
   Sparkles: { s: [SPARK], f: [SPARK_SM], sel: { f: [SPARK, SPARK_SM] } },
   Pin: { s: [PIN_BODY, 'M12 14v6.5'], sel: { f: [PIN_BODY], s: ['M12 14v6.5'] } },
-  MousePointerClick: { f: [CURSOR], s: ['M4 8.5H2.5', 'M8.5 4V2.5', 'M5 5L3.9 3.9'] },
+  MousePointerClick: { f: [CURSOR], s: ['M6 10.75H4.5', 'M10.5 6.25V4.75', 'M7 7.25L5.9 6.15'] },
   SlidersHorizontal: { s: ['M3.5 7.5h8.75', 'M18.75 7.5h1.75', circ(15.5, 7.5, 2.25), 'M3.5 16.5h1.75', 'M11.75 16.5h8.75', circ(8.5, 16.5, 2.25)] },
   X: { s: ['M6 6l12 12', 'M18 6L6 18'] },
   Check: { s: ['M5 12.5l4.5 4.5L19 7'] },
