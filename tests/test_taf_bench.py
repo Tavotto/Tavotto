@@ -393,3 +393,40 @@ def test_a_leaky_candidate_pack_is_refused(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(bench, "run", lambda *a, **k: called.append(1))
     assert bench.main(["--work", str(tmp_path / "w"), "--pack", str(path)]) == 2
     assert called == [] and "泄漏" in capsys.readouterr().err
+
+
+@pytest.mark.skipif(WORKER_PY is None, reason="not_run：找不到装有 matplotlib 的解释器")
+def test_repeat_runs_each_scenario_n_times_in_separate_projects(tmp_path):
+    dev = {s["id"]: s for s in bench.load_scenarios("dev") if bench.benchable(s)}
+    report = bench.run([dev["FB-S02"]], tmp_path / "projects", repeat=2)
+    assert [(r["id"], r["rep"]) for r in report["rows"]] == [("FB-S02", 1), ("FB-S02", 2)]
+    assert all(r["outcome"] == "completed" for r in report["rows"])
+    assert (tmp_path / "projects" / "FB-S02__ref").is_dir() and (
+        tmp_path / "projects" / "FB-S02__ref__r2"
+    ).is_dir()
+
+
+def test_the_real_run_cap_counts_repeats(tmp_path, monkeypatch, capsys):
+    import os
+
+    monkeypatch.setenv("TAVOTTO_DATA_DIR", os.environ.get("TAVOTTO_DATA_DIR", str(tmp_path / "d")))
+    monkeypatch.setenv(
+        "TAVOTTO_CONFIG_DIR", os.environ.get("TAVOTTO_CONFIG_DIR", str(tmp_path / "c"))
+    )
+    called = []
+    monkeypatch.setattr(bench, "run", lambda *a, **k: called.append(1))
+    per = bench.agent_runs_per_task()
+    argv = [
+        "--work",
+        str(tmp_path / "w"),
+        "--real",
+        "codex",
+        "--model",
+        "m",
+        "--only",
+        "FB-S02",
+        "--repeat",
+        "3",
+    ]
+    assert bench.main([*argv, "--max-runs", str(3 * per - 1)]) == 2 and called == []
+    assert "重复 3" in capsys.readouterr().err

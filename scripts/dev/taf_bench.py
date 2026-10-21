@@ -50,6 +50,7 @@ ROW_FIELDS = (
     "wall_s",
     "error",
     "prompt_sha256",
+    "rep",
 )
 #: `--real` 一次最多跑多少次**实际 Agent CLI 调用**（真实模型要花用户的额度；开跑前按「场景数 × 每任务最大调用数」
 #: 拒绝，运行中按真实调用次数封顶，不悄悄截断）
@@ -232,6 +233,7 @@ def run(
     model: str | None = None,
     effort: str | None = None,
     max_runs: int | None = None,
+    repeat: int = 1,
 ) -> dict:
     """在 `work` 下逐场景跑，回 `{environment, rows, metrics}`。调用方负责 `TAVOTTO_DATA_DIR` 等已指向隔离目录。
 
@@ -311,7 +313,7 @@ def run(
             jobs = [("ref", None if real_agent else s["reference_solution"])]
             if negatives:
                 jobs += [(n["id"], n["edits"]) for n in s.get("negative_variants", [])]
-            for variant, edits in jobs:
+            for (variant, edits), rep in [(j, k) for j in jobs for k in range(1, repeat + 1)]:
                 row = _one(
                     m,
                     client,
@@ -326,7 +328,9 @@ def run(
                     replay=replay,
                     model=model,
                     effort=effort,
+                    rep=rep,
                 )
+                row["rep"] = rep
                 if edits_box.pop("blocked", False):
                     row["error"] = "max_runs_reached"
                 rows.append(row)
@@ -378,8 +382,10 @@ def _one(
     replay=True,
     model=None,
     effort=None,
+    rep=1,
 ) -> dict:
-    proj = work / f"{s['id']}__{variant}"
+    # 重复跑（`--repeat`）各用自己的项目目录；rep=1 时目录名与以前相同
+    proj = work / (f"{s['id']}__{variant}" if rep == 1 else f"{s['id']}__{variant}__r{rep}")
     if proj.exists():
         shutil.rmtree(proj)  # 本工具在 work 下建的目录；同一 --work 重跑时先清掉上次的
     shutil.copytree(FIXTURES / s["fixture"], proj)
@@ -508,8 +514,8 @@ def compare(a: dict, b: dict) -> str:
             else ""
         )
         lines.append(f"| {k} | {va} | {vb} | {diff} |")
-    ra = {(r["id"], r["variant"]): r for r in a.get("rows", [])}
-    rb = {(r["id"], r["variant"]): r for r in b.get("rows", [])}
+    ra = {(r["id"], r["variant"], r.get("rep") or 1): r for r in a.get("rows", [])}
+    rb = {(r["id"], r["variant"], r.get("rep") or 1): r for r in b.get("rows", [])}
     changed = [
         (key, ra[key], rb[key])
         for key in sorted(ra.keys() & rb.keys())
@@ -517,9 +523,9 @@ def compare(a: dict, b: dict) -> str:
         != (rb[key]["outcome"], rb[key]["goal"], rb[key]["preserve"])
     ]
     lines += ["", f"逐场景变化（{len(changed)} 个，结局 / 目标 / 保持）："]
-    for (sid, var), x, y in changed:
+    for (sid, var, rep), x, y in changed:
         lines.append(
-            f"- {sid}/{var}: {x['outcome']}/{x['goal']}/{x['preserve']} → {y['outcome']}/{y['goal']}/{y['preserve']}"
+            f"- {sid}/{var}{'' if rep == 1 else f'#{rep}'}: {x['outcome']}/{x['goal']}/{x['preserve']} → {y['outcome']}/{y['goal']}/{y['preserve']}"
         )
     return "\n".join(lines) + "\n"
 
@@ -544,6 +550,9 @@ def main(argv=None) -> int:
         type=Path,
         default=None,
         help="本次改用这份候选 Prompt Pack（JSON）；先过 holdout 防泄漏守卫",
+    )
+    ap.add_argument(
+        "--repeat", type=int, default=1, help="每个场景跑几次（估方差；真实模式按次数计入上限）"
     )
     ap.add_argument(
         "--max-runs",
@@ -593,10 +602,10 @@ def main(argv=None) -> int:
         scenarios = [s for s in scenarios if s["id"] in wanted]
     if args.real:
         per_task = agent_runs_per_task()
-        need = len(scenarios) * per_task
+        need = len(scenarios) * args.repeat * per_task
         if need > args.max_runs:
             print(
-                f"--real 最多要起 {need} 次 Agent CLI 调用（{len(scenarios)} 个场景 × 每任务最多 {per_task} 次），"
+                f"--real 最多要起 {need} 次 Agent CLI 调用（{len(scenarios)} 个场景 × 重复 {args.repeat} × 每任务最多 {per_task} 次），"
                 f"超过上限 {args.max_runs}；用 --only 缩小或显式调大 --max-runs",
                 file=sys.stderr,
             )
@@ -610,6 +619,7 @@ def main(argv=None) -> int:
         model=args.model,
         effort=args.effort,
         max_runs=args.max_runs if args.real else None,
+        repeat=args.repeat,
     )
     rows = report["rows"]
     report["split"] = split
