@@ -48,6 +48,7 @@ from pathlib import Path
 from . import localserver, security
 from .engine import (
     ai_bridge as engine_ai,
+    loginpath,
     nativesession as engine_nativesession,
     pool as engine_pool,
     project_watch as engine_watch,
@@ -352,6 +353,8 @@ class SidecarServer:
 def run(flask_app) -> int:
     """`tavotto --desktop-sidecar` 的主体。项目打开逻辑仍在 app.main（与浏览器
     模式同一套），这里只负责认证、server 生命周期与父进程跟随。"""
+    # Finder / Dock 启动只带 GUI 的最小 PATH：补上终端会有的 /etc/paths(.d)（MacTeX 等），所有子进程继承
+    loginpath.apply_to_environ()
     nonce, parent_pid, preferred_port, stdin_stream = read_launch_credentials()
     handshake_raw = os.environ.pop("TAVOTTO_DESKTOP_HANDSHAKE", None)
     handshake = Path(handshake_raw) if handshake_raw else None
