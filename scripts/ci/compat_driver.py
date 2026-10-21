@@ -85,12 +85,33 @@ def run_native(req: dict) -> int:
 
     real_savefig = mfigure.Figure.savefig
     captured: dict[str, object] = {}
+    # 同一路径多张图时谁算这个 stem 的图：产品三条入口共用的 `note_savefig_writer`（G2，#1141），
+    # 不在这里另写一套——磁盘上留下的是最后写入者，对照组必须与它同义。
+    writers: dict = {}
+    sources: dict = {}
+    calls: dict = {}
+    extras: dict = {}
 
     def recording_savefig(self, fname, *args, **kwargs):
         stem = figcapture.savefig_stem(fname)
-        if stem:
-            captured.setdefault(stem, self)
-        return real_savefig(self, fname, *args, **kwargs)  # ← 照常写出去
+        if stem and stem not in captured:
+            captured[stem] = self
+            sources[stem] = figcapture.SOURCE_SAVEFIG
+        result = real_savefig(self, fname, *args, **kwargs)  # ← 照常写出去
+        if stem:  # 成功写盘之后才记账（失败的保存不顶替任何人），与 native bridge 同序
+            figcapture.note_savefig_writer(
+                writers,
+                captured,
+                sources,
+                calls,
+                extras,
+                stem,
+                self,
+                figcapture.savefig_target_key(fname, kwargs, getattr(self, "canvas", None)),
+                figcapture.savefig_call(fname, kwargs),
+                kwargs.get("bbox_extra_artists"),
+            )
+        return result
 
     mfigure.Figure.savefig = recording_savefig
     plt.show = lambda *a, **k: None

@@ -102,6 +102,14 @@ AiPanel.send（不改：草稿快照 → 提交账本 → aiRun，rid 原样）
 数据指纹）。`tests/test_ai_data_figure.py` 让真 safe worker 跑 FB-D01/D03–D08 的生成脚本，manifest 指纹与期望逐字节相等。
 适配器、写入项目、登记与渲染验证在 5b，前端入口在 5c。
 
+**Phase 5b 实现**（`engine/ai_data_task.py` + `POST /api/ai/data-figure`，开关 `ai.taf.enabled` 后面）：确定性执行器
+`TemplateExecutor`（`creates_only`）走 `ai_tasks.run_task`——Task Core 只为「确定性执行器只新建文件 + 契约 `new_figures`」放行
+写入，改写已有文件仍只经 AI 桥。脚本放在 CSV 同目录 `<stem>.py`，stem 避开已登记的、同名脚本与任何同名产物（`_2`…）；
+提交在项目锁里复核 stem 仍空闲 → `scriptlock.create_script`（`O_EXCL`，永不覆盖、不跟随链接）→ `discover.register` →
+锁外统一刷新（`_after_ai_change`）；登记失败删掉刚建的那份。提交后渲染复用改图的 `after` 钩子（核会话执行的源码 sha256），
+`figureverify.data_matches_expected` 按 label 比数据指纹。目标检查两条：`goal.figure_created`、`goal.rows_plotted`（有不是数
+的行没画 → failed → 结局 partial）。`needs_input` 不写任何东西，回中性预览。
+
 ## 五、流程 C：开发阶段自优化（Harness Lab，Phase 6）
 
 Baseline Prompt Pack（v1 = 今天的提示词逐字节）→ 候选 Pack（人写或模型提议，说明改了什么）→ 在 FigureBench **dev**

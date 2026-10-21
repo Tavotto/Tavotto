@@ -536,16 +536,26 @@ export function renderEpoch(): number {
 
 /**
  * 渲染请求看门狗：fetch 永不 settle（服务重启留下的半开连接、代理悬挂）时
- * busy 永远不释放，该面板从此渲染不动。它按脚本 cost 取档、刻意宽松——heavy
- * 冷启动本身就是分钟级；本意是兜连接悬挂，不是性能预算。
+ * busy 永远不释放，该面板从此渲染不动。
  *
- * **但它实际裁决的不止悬挂**（#312，选定保持现状、只改文档）：冷启动 build 就在
- * 这条请求里，而三档（2 / 5 / 15 分钟）都短于引擎的静默阈值
- * `pool.BUILD_IDLE_TIMEOUT`（20 分钟）——引擎侧「会打进度的脚本不再有总时长上限」
- * （ADR 0050）到了画布上不成立，这里就是画布路径上冷启动的总时长上限。到点只
- * abort 这条 HTTP 请求：服务端 build 不停、可能仍在后台跑，所以超时文案
- * `errors:render.timeout` 说的是「服务可能仍在后台运行，可稍后重试」，而不是
- * 引擎的 `worker_build_timeout`。MCP 内嵌画布经同一个 signal 共用这份阈值。
+ * **租约，不是总时长**（#1207，取代 #312 的「保持现状」）：冷启动 build 就在这条
+ * 请求里，而引擎判「卡没卡死」看的是 worker 日志还在不在长（`pool.BUILD_IDLE_TIMEOUT`，
+ * ADR 0050）。引擎在日志增长时发 `render.progress`（节流 5 s），`noteRenderProgress`
+ * 把对应文件的租约续上：**距最近一次进度（或请求开始）`watchdogMs` 无动静才 abort**，
+ * 总上限 `RENDER_HARD_CAP_MS` 对齐 `pool.BUILD_HARD_TIMEOUT`。会持续打印进度的脚本
+ * 不论冷启动多久都等得到图；真正卡死的仍在一个窗口后被放弃。
+ *
+ * 窗口 N 仍按脚本 cost 取档（2 / 5 / 15 分钟，认不出按 medium）：它至少是进度节流
+ * 间隔的 24 倍，丢几个事件不会误判；同时它也是**没有进度通道时的退路**——
+ * SSE 断线（收不到进度）与 MCP 内嵌画布（iframe 里没有事件流）都退回「请求开始起 N
+ * 分钟」，与改动前逐字相同，所以断线不会比以前更早判死（也没有"断线期间暂停计时"那种
+ * 会让真悬挂永不释放的口子）。静默但在算的脚本（引擎允许 20 分钟静默）在窗口内
+ * 打一行进度即可续期。
+ *
+ * 到点只 abort 这条 HTTP 请求：服务端 build 不停、可能仍在后台跑，所以超时文案
+ * `errors:render.timeout` 说的是「服务可能仍在后台运行，可稍后重试」。重试若排在同一次
+ * build 后面，引擎对等锁的请求同样扇出进度（`app._relay_build_progress`），
+ * 它在窗口内收得到续期。桌面画布与 MCP 内嵌画布共用同一个 signal。
  */
 const WATCHDOG_MS: Record<string, number> = {
   light: 2 * 60_000,
@@ -553,12 +563,51 @@ const WATCHDOG_MS: Record<string, number> = {
   heavy: 15 * 60_000,
 }
 
+/** 总上限，与 `pool.BUILD_HARD_TIMEOUT`（4 小时）同源；`tests/test_build_watchdog.py` 钉着两侧相等 */
+export const RENDER_HARD_CAP_MS = 4 * 3600_000
+
 function watchdogMs(fileId: string): number {
   // 调试后门：agent-browser 实测超时链路时把阈值压到秒级
   const dev = (window as { __MM_RENDER_TIMEOUT_MS__?: unknown }).__MM_RENDER_TIMEOUT_MS__
   if (typeof dev === 'number' && dev > 0) return dev
   const cost = useAssetStore.getState().byId[fileId]?.cost ?? ''
   return WATCHDOG_MS[cost] ?? WATCHDOG_MS.medium
+}
+
+/** 文件 → 引擎最近一次说「build 还在跑」的时刻。事件只带文件（build 是文件级的），按文件续租。 */
+const lastRenderProgress = new Map<string, number>()
+
+/** `render.progress` 到达：续上该文件所有在等的渲染请求（含排在同一次 build 后面的重试） */
+export function noteRenderProgress(fileId: string): void {
+  lastRenderProgress.set(fileId, Date.now())
+}
+
+/**
+ * 给一条渲染请求挂租约看门狗；返回清除函数与「为什么断」的查询。
+ * 计时器到点先按租约重算：续过期就按新的到期点重新挂，而不是直接 abort。
+ */
+function armRenderWatchdog(fileId: string, windowMs: number, abort: () => void) {
+  const startedAt = Date.now()
+  let timer = 0
+  let cause: 'idle' | 'cap' | null = null
+  const arm = () => {
+    const last = Math.max(startedAt, lastRenderProgress.get(fileId) ?? 0)
+    const due = Math.min(last + windowMs, startedAt + RENDER_HARD_CAP_MS)
+    timer = window.setTimeout(() => {
+      const now = Date.now()
+      if (now >= startedAt + RENDER_HARD_CAP_MS) cause = 'cap'
+      else if (now - Math.max(startedAt, lastRenderProgress.get(fileId) ?? 0) >= windowMs) cause = 'idle'
+      if (cause) abort()
+      else arm()
+    }, Math.max(0, due - Date.now()))
+  }
+  arm()
+  return {
+    clear: () => window.clearTimeout(timer),
+    /** 断掉时报给用户的分钟数：租约窗口，或撞总上限时的总上限 */
+    minutes: () => Math.round((cause === 'cap' ? RENDER_HARD_CAP_MS : windowMs) / 60_000),
+    timedOut: () => cause !== null,
+  }
 }
 
 export const useRenderStore = create<RenderState>((set, get) => ({
@@ -644,12 +693,7 @@ export const useRenderStore = create<RenderState>((set, get) => ({
         let perfHandle = -1
         const ctrl = new AbortController()
         slot.abort = () => ctrl.abort()
-        const timeoutMs = watchdogMs(fileId)
-        let timedOut = false
-        const watchdog = window.setTimeout(() => {
-          timedOut = true
-          ctrl.abort()
-        }, timeoutMs)
+        const watchdog = armRenderWatchdog(fileId, watchdogMs(fileId), () => ctrl.abort())
         try {
           // SVG 与 manifest 同一响应（inline_svg）：第二跳 GET 读的是磁盘上
           // 那一份，另一个变体的渲染插进来就会与本次 manifest 错配
@@ -777,7 +821,7 @@ export const useRenderStore = create<RenderState>((set, get) => ({
             duration_ms: Date.now() - startedAt,
             // **机器可读的 code**，不是 traceback、不是报错原文——
             // 那两样里装着用户的脚本与路径
-            code: timedOut ? 'timeout' : err instanceof EngineError ? err.code : 'unknown',
+            code: watchdog.timedOut() ? 'timeout' : err instanceof EngineError ? err.code : 'unknown',
           })
           // 换过项目：旧项目的失败同样不落进当前项目（条目、确认框、排队的重试都不要）
           if (epochAtStart !== projectEpoch) return
@@ -840,9 +884,8 @@ export const useRenderStore = create<RenderState>((set, get) => ({
             confirmation,
             dependencyPreparation,
             missingInput,
-            error: timedOut
-              ? msg('render.timeout',
-                    { minutes: Math.round(timeoutMs / 60_000) }, 'errors')
+            error: watchdog.timedOut()
+              ? msg('render.timeout', { minutes: watchdog.minutes() }, 'errors')
               // code 有文案时按当前语言包装（worker 的 error 原文是中文，
               // 英文界面直接透出 = 泄漏系统文案，issue #30 实测撞见）
               : engineErrorMsg(err),
@@ -850,7 +893,7 @@ export const useRenderStore = create<RenderState>((set, get) => ({
           })
           return
         } finally {
-          window.clearTimeout(watchdog)
+          watchdog.clear()
         }
         if (slot.queued == null) break
         current = slot.queued.patches
@@ -1028,6 +1071,7 @@ export const useRenderStore = create<RenderState>((set, get) => ({
 
   clear: () => {
     projectEpoch += 1
+    lastRenderProgress.clear()
     inflight.clear()
     liveKeys.clear()
     set({

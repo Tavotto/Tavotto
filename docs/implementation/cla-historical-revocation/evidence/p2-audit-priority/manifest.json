@@ -1,0 +1,135 @@
+{
+  "recorded_at_utc": "2026-10-18T09:10:05.892278+00:00",
+  "base_commit": "6d8809f03150b762cfafeacdaf89af6c9c9bbc05",
+  "base_tree": "d41fd75664f54b40b9b1e5d960d815fec6db07a9",
+  "stage": "read-only independent verification of actual uncommitted P2 terminal-audit-summary fix",
+  "review_finding": {
+    "pr": 1161,
+    "thread": "PRRT_kwDOT51-YM6tpAP-",
+    "comment_id": 4306424012,
+    "priority": "P2"
+  },
+  "before_source": {
+    "commit": "6d8809f03150b762cfafeacdaf89af6c9c9bbc05",
+    "tree": "d41fd75664f54b40b9b1e5d960d815fec6db07a9",
+    "delegation_sha256": "249fac5bcbe95b0c6d774de4f1016a0f0f1688464bfb44afd99df254126170f0"
+  },
+  "after_source_sha256": {
+    "src/native/delegation.ts": "06010c9961b0036726f2a69e422f8ece0cb0ee223f1c7d36b231ae04964f547e",
+    "src/native/service.ts": "bfcfb96d22db6c3b38573bfd24aa9f14c80ac6d838f489968e1ba4ec9db24105",
+    "src/native/ui-client.ts": "5b1dc8f125f3f47ebcef86a45315efff5249df0ef277b5a06f924a0b0be003e9",
+    "tests/historical-revocation.test.mjs": "f9ab18a0fa25b96326c77a92ce67162fe4f331bf919e500996dfe15f262db47b"
+  },
+  "current_workspace_source_hash_mismatches": [],
+  "independent_test": {
+    "path": "/tmp/cla-historical-revocation-audit-review/fixed/services/cla-cloudflare/tests/independent-terminal-audit-priority.test.mjs",
+    "sha256": "04703983c4641f7cf532e22c9b4bb2c4f1e4816f6db32d69bb4f1ba644b24da3"
+  },
+  "checks": [
+    {
+      "argv": [
+        "node",
+        "--test",
+        "tests/independent-terminal-audit-priority.test.mjs"
+      ],
+      "before_cwd": "/tmp/cla-historical-revocation-audit-review/baseline/services/cla-cloudflare",
+      "before_exit_code": 1,
+      "before_failed": 5,
+      "before_log": "red.txt",
+      "after_cwd": "/tmp/cla-historical-revocation-audit-review/fixed/services/cla-cloudflare",
+      "after_exit_code": 0,
+      "after_passed": 5,
+      "after_log": "green.txt"
+    },
+    {
+      "argv": [
+        "node",
+        "--test",
+        "tests/historical-revocation.test.mjs"
+      ],
+      "cwd": "/tmp/cla-historical-revocation-audit-review/fixed/services/cla-cloudflare",
+      "exit_code": 0,
+      "passed": 46,
+      "failed": 0,
+      "log": "formal-tests.txt"
+    },
+    {
+      "argv": [
+        "python3",
+        "/tmp/cla-historical-revocation-audit-review/replay-reverse-mutations.py"
+      ],
+      "exit_code": 0,
+      "mutations": 2,
+      "each_location_count": 1,
+      "each_selected_exit_code": 1,
+      "each_actual_assertion_error": true,
+      "log": "reverse-mutation-execution.txt"
+    }
+  ],
+  "mutations": [
+    {
+      "name": "revert-terminal-summary-priority",
+      "before": "const state=e.action==='revoke'?'revoked':blocked?'blocked':this.s.c.delegatedCountersigningEnabled!==true || !this.s.c.signingEnabled?'disabled':\n      grant.id!==this.s.c.holderAuthorizationId || g.public_key!==this.s.c.holderAuthorizationKey ||\n      p.version!==this.s.c.policy.agreements.individual.version || p.digest!==this.s.c.policy.agreements.individual.sha256?'superseded':\n      now>=grant.expires_at?'expired':now<grant.not_before?'not_started':e.action==='suspend'?'suspended':\n      e.hash!==r.control_hash?'superseded':'current';",
+      "after": "const state=blocked?'blocked':this.s.c.delegatedCountersigningEnabled!==true || !this.s.c.signingEnabled?'disabled':\n      grant.id!==this.s.c.holderAuthorizationId || g.public_key!==this.s.c.holderAuthorizationKey ||\n      p.version!==this.s.c.policy.agreements.individual.version || p.digest!==this.s.c.policy.agreements.individual.sha256?'superseded':\n      now>=grant.expires_at?'expired':now<grant.not_before?'not_started':e.action==='revoke'?'revoked':e.action==='suspend'?'suspended':\n      e.hash!==r.control_hash?'superseded':'current';",
+      "file": "src/native/delegation.ts",
+      "location_count": 1,
+      "argv": [
+        "node",
+        "--test",
+        "tests/independent-terminal-audit-priority.test.mjs"
+      ],
+      "cwd": "/tmp/cla-historical-revocation-audit-review/mutants/revert-terminal-summary-priority",
+      "selected_exit_code": 1,
+      "actual_assertion_error": true,
+      "log": "/tmp/cla-historical-revocation-audit-review/revert-terminal-summary-priority.txt",
+      "sha256": "3bb65c4a85c6e08983b82897102ee80c0316f8aa66baf5f0f8c511e5e9541661"
+    },
+    {
+      "name": "revocation-must-remain-inactive",
+      "before": "return {current:state==='current',state,executed_at:",
+      "after": "return {current:state==='current'||state==='revoked',state,executed_at:",
+      "file": "src/native/delegation.ts",
+      "location_count": 1,
+      "argv": [
+        "node",
+        "--test",
+        "tests/independent-terminal-audit-priority.test.mjs"
+      ],
+      "cwd": "/tmp/cla-historical-revocation-audit-review/mutants/revocation-must-remain-inactive",
+      "selected_exit_code": 1,
+      "actual_assertion_error": true,
+      "log": "/tmp/cla-historical-revocation-audit-review/revocation-must-remain-inactive.txt",
+      "sha256": "1ff7230f25a0452c55a4279ef1e51022a591d7f55123e0b71384c3cf7da0f2b5"
+    }
+  ],
+  "verdict": "P2 is independently reproduced on exact committed baseline and fixed by actual workspace source. No new correctness or eligibility regression identified.",
+  "verified": [
+    "all five disabled/rotated/held/expired interactions retain state revoked and current false in the actual rotated caller audit and status",
+    "the signed final revoke remains verified before summary classification",
+    "held status.blocked remains true independently from revoked summary",
+    "personal holder canSign remains true when signing enabled and no hold, including expired old grant; disabled/held do not permit signing",
+    "reverting summary priority or marking revoked current each makes the independent assertions fail"
+  ],
+  "remaining_boundaries": [
+    "this changes historical summary precedence only, not legal effect or current qualification rules",
+    "historical control limit100 and original identity/repository/readiness boundaries remain",
+    "no HTTP/operator surface, real authorization, key/credential setup, deployment, publication or live acceptance performed",
+    "no new hosted CI or full typecheck/build independently executed in this review"
+  ],
+  "not_executed": [
+    "workspace writes by reviewer",
+    "HTTP/worker.fetch",
+    "publication or real signing",
+    "dependency download",
+    "external review trigger",
+    "previously rejected dynamic successful-publication-across-expiry test or renamed variant"
+  ],
+  "artifact_sha256": {
+    "red.txt": "b82a648a214c70159a8ccb38b00363361fb4ecb6d0023168e1de04bf57f1f5d2",
+    "green.txt": "5a26d03af44759dee81ab7912041c7e2c3bb6f0726db3d7db2498ee16c04ce66",
+    "formal-tests.txt": "a321c7f3eb8206497f4cc484f9ba9c435513dcf33c109a8d3f0183848f88a972",
+    "reverse-mutation-execution.txt": "67eb186f49a9cfbb39331377363beb4ef3ebe5c09f85b44e862f79f815f42863",
+    "reverse-mutations.json": "a586dd48043bf5ca925e73aafa662fb4524501c89d02d9bf1699291a3349cecd",
+    "replay-reverse-mutations.py": "08b46d7973768d0757a4784809b456393ea4c61111c39b2090ee629362cfdb6a"
+  }
+}

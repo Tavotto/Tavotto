@@ -219,11 +219,17 @@ describe('先看再发', () => {
     expect(category.querySelector(`[aria-label="${ds('categoryLabel')}"]`)).not.toBeNull()
     const det = q<HTMLDetailsElement>('[data-diag-send-details]')!
     expect(det.open).toBe(false)
-    const folded = ['[data-diag-send-kinds]', '[data-diag-send-save]', '[data-diag-send-extras]', '[data-diag-send-policy]', '[data-diag-send-error-summary-note]']
+    const folded = ['[data-diag-send-kinds]', '[data-diag-send-save]', '[data-diag-send-policy]', '[data-diag-send-error-summary-note]']
     for (const sel of folded) expect(q(sel)?.closest('details')).toBe(det)
     const footer = Array.from(document.body.querySelectorAll<HTMLButtonElement>('[data-diag-send-confirm],[data-diag-send-dismiss]'))
     expect(footer.map((b) => b.textContent)).toEqual([ds('close'), ds('send')])
     expect(document.body.querySelectorAll('[data-dialog-footer] [data-variant="primary"]'), '一颗主按钮').toHaveLength(1)
+    // 额外内容（2026-10-21）：三个框 + 一键全选不折叠，且排在说明框之前（紧跟副标题）
+    const extras = q('[data-diag-send-extras]')!
+    expect(extras.closest('details'), '额外内容不折叠').toBeNull()
+    expect(extras.compareDocumentPosition(note) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(extras.querySelectorAll('input[type=checkbox]')).toHaveLength(3)
+    expect(q('[data-diag-send-extras-all]')!.textContent).toBe(ds('extrasSelectAll'))
     expect(det.textContent).toContain(ds('bestEffort'))
     expect(document.body.textContent).toContain(ds('noteAttached'))
     // 错误摘要的披露只在折叠里（不新增可见段落）；不暗示同意今后自动上报
@@ -699,6 +705,32 @@ describe('引擎丢了会话（Codex #923 P2）：状态 404 是终态，不无�
   })
 })
 
+describe('换包后复位旧包状态（Codex #1263 P2）', () => {
+  it('404 置 packageGone → 改勾选换包成功 → 新包可重试失败显示普通重试而非「包已不在」', async () => {
+    startMock.mockResolvedValue(status({}))
+    statusMock.mockRejectedValue(new ApiError('gone', 404, { code: 'diag_send_not_found' }))
+    await mount()
+    await click(q('[data-diag-send-confirm]'))
+    await tick()
+    expect(q('[data-diag-send-status]')!.textContent).toContain(ds('packageGone'))
+    prepareMock.mockResolvedValue({ ...PREPARED, id: 'pid-2', gen: 0 })
+    await click(q('[data-diag-send-extra="source"]'))
+    await tick(350)
+    expect(prepareMock).toHaveBeenCalledTimes(2)
+    expect(q('[data-diag-send-status]')!.textContent).not.toContain(ds('packageGone'))
+    startMock.mockResolvedValue(status({ id: 'pid-2' }))
+    statusMock.mockReset()
+    statusMock.mockResolvedValue(status({ id: 'pid-2', state: 'failed', stage: null, code: 'rate_limited', retryable: true }))
+    await click(q('[data-diag-send-confirm]'))
+    await tick()
+    const body = q('[data-diag-send-status]')!.textContent
+    expect(body).toContain(ds('failure.rate_limited'))
+    expect(body).not.toContain(ds('packageGone'))
+    expect(q('[data-diag-send-confirm]')!.textContent).toBe(ds('retry'))
+    expect(q('[data-diag-send-reprepare]')).toBeNull()
+  })
+})
+
 describe('诊断包扩充（detail-…、勾选项）', () => {
   const lastPayload = () => prepareMock.mock.calls[prepareMock.mock.calls.length - 1][0] as Record<string, any>
   const box = (key: string) => q<HTMLInputElement>(`[data-diag-send-extra="${key}"]`)!
@@ -713,20 +745,19 @@ describe('诊断包扩充（detail-…、勾选项）', () => {
     truncated: [{ kind: 'source', original_bytes: 900000, kept_bytes: 1000 }],
   }
 
-  it('三个复选框默认不勾、住在折叠的详情里；首次备包的载荷带 detail_options 全 false 与 detail', async () => {
+  it('三个复选框默认不勾、不折叠；首次备包的载荷带 detail_options 全 false 与 detail', async () => {
     await mount(DETAIL_PREPARED)
     const det = q<HTMLDetailsElement>('[data-diag-send-details]')!
     expect(det.open).toBe(false)
     for (const key of ['source', 'crash_reports', 'corrupt_sessions']) {
       expect(box(key).checked).toBe(false)
-      expect(box(key).closest('details')).toBe(det)
+      expect(box(key).closest('details')).toBeNull()
     }
     expect(lastPayload().detail_options).toEqual({ source: false, crash_reports: false, corrupt_sessions: false })
     expect(lastPayload().detail).toBeTypeOf('object')
     expect(lastPayload().detail.display.device_pixel_ratio).toBeTypeOf('number')
-    // 默认可见仍只有一句话 + 两颗按钮：复选框不在折叠区之外
     const visibleBoxes = Array.from(document.body.querySelectorAll('input[type=checkbox]')).filter((el) => !el.closest('details'))
-    expect(visibleBoxes).toHaveLength(0)
+    expect(visibleBoxes).toHaveLength(3)
   })
 
   it('文件清单（路径 + 大小）和截断说明都在折叠区里', async () => {
@@ -758,7 +789,7 @@ describe('诊断包扩充（detail-…、勾选项）', () => {
     })
     prepareMock.mockResolvedValue({ ...DETAIL_PREPARED, id: 'pid-2', gen: 0, options: { source: true, crash_reports: false, corrupt_sessions: false } })
     await click(box('source'))
-    await act(async () => {})
+    await tick(350)
     expect(prepareMock).toHaveBeenCalledTimes(2)
     expect(lastPayload().detail_options).toEqual({ source: true, crash_reports: false, corrupt_sessions: false })
     expect(discardMock).toHaveBeenCalledWith('pid-1', null)
@@ -768,7 +799,7 @@ describe('诊断包扩充（detail-…、勾选项）', () => {
     // 再勾第二项：两项都在载荷里
     prepareMock.mockResolvedValue({ ...DETAIL_PREPARED, id: 'pid-3', options: { source: true, crash_reports: true, corrupt_sessions: false } })
     await click(box('crash_reports'))
-    await act(async () => {})
+    await tick(350)
     expect(lastPayload().detail_options).toEqual({ source: true, crash_reports: true, corrupt_sessions: false })
     // 发送用的是最新那份包
     startMock.mockResolvedValue(status({ state: 'sending' }))
@@ -776,19 +807,151 @@ describe('诊断包扩充（detail-…、勾选项）', () => {
     expect(startMock.mock.calls[0][0]).toBe('pid-3')
   })
 
+  it('勾选触发的刷新失败：旧包作废——保存与发送都不可用，不会拿到仍含已取消内容的旧包（隐私）', async () => {
+    await mount({ ...DETAIL_PREPARED, options: { source: true, crash_reports: false, corrupt_sessions: false } })
+    prepareMock.mockRejectedValue(new Error('boom'))
+    await click(box('source')) // 取消勾选源码
+    await tick(350)
+    expect(prepareMock).toHaveBeenCalledTimes(2)
+    expect(document.body.textContent).toContain(ds('prepareFailed'))
+    // 引擎里的旧包被丢弃
+    expect(discardMock).toHaveBeenCalledWith('pid-1', null)
+    // 发送不可用；保存若还在也必须是禁用的，点了也取不到旧包
+    expect(q('[data-diag-send-confirm]')).toBeNull()
+    const save = q<HTMLButtonElement>('[data-diag-send-save]')
+    if (save) {
+      expect(save.disabled).toBe(true)
+      await click(save)
+    }
+    expect(bundleMock).not.toHaveBeenCalled()
+    expect(startMock).not.toHaveBeenCalled()
+    expect(saveDiagnosticsZip).not.toHaveBeenCalled()
+  })
+
+  it('保存取包在途时取消勾选：响应回来也不写盘（旧包可能含已取消的内容，Codex #1263 P2）', async () => {
+    await mount({ ...DETAIL_PREPARED, options: { source: true, crash_reports: false, corrupt_sessions: false } })
+    let resolveBundle!: (b: Blob) => void
+    bundleMock.mockReturnValue(new Promise<Blob>((r) => (resolveBundle = r)))
+    prepareMock.mockResolvedValue({ ...DETAIL_PREPARED, id: 'pid-2' })
+    await click(q('[data-diag-send-save]'))
+    expect(bundleMock).toHaveBeenCalledWith('pid-1')
+    await click(box('source')) // 在途取消勾选源码
+    await act(async () => {
+      resolveBundle(new Blob(['old']))
+    })
+    expect(saveDiagnosticsZip).not.toHaveBeenCalled()
+  })
+
+  it('保存成功后改勾选：换包期间与换包后都不再显示「已保存」（磁盘上只有旧包，Codex #1263 P2）', async () => {
+    await mount(DETAIL_PREPARED)
+    bundleMock.mockResolvedValue(new Blob(['old']))
+    await click(q('[data-diag-send-save]'))
+    await act(async () => {})
+    expect(document.body.textContent).toContain(ds('saved'))
+    prepareMock.mockResolvedValue({ ...DETAIL_PREPARED, id: 'pid-2', options: { source: true, crash_reports: false, corrupt_sessions: false } })
+    await click(box('source'))
+    expect(document.body.textContent).not.toContain(ds('saved'))
+    await tick(350)
+    await act(async () => {})
+    expect(document.body.textContent).not.toContain(ds('saved'))
+  })
+
+  it('最新一次刷新收到 diag_stale_prepare：重试一次即恢复，不卡在刷新态（Codex #1263 P2）', async () => {
+    await mount(DETAIL_PREPARED)
+    prepareMock
+      .mockRejectedValueOnce(new ApiError('stale', 409, { code: 'diag_stale_prepare' }))
+      .mockResolvedValueOnce({ ...DETAIL_PREPARED, id: 'pid-2', options: { source: true, crash_reports: false, corrupt_sessions: false } })
+    await click(box('source'))
+    await tick(350)
+    await act(async () => {})
+    expect(prepareMock).toHaveBeenCalledTimes(3)
+    expect(lastPayload().detail_options).toEqual({ source: true, crash_reports: false, corrupt_sessions: false })
+    expect(q<HTMLButtonElement>('[data-diag-send-confirm]')!.disabled).toBe(false)
+    expect(q<HTMLButtonElement>('[data-diag-send-save]')!.disabled).toBe(false)
+  })
+
+  it('重试后仍 stale：按失败作废（进 prepareFailed，不再无限重试，旧包不可保存 / 发送）', async () => {
+    await mount(DETAIL_PREPARED)
+    prepareMock.mockRejectedValue(new ApiError('stale', 409, { code: 'diag_stale_prepare' }))
+    await click(box('source'))
+    await tick(350)
+    await act(async () => {})
+    expect(prepareMock).toHaveBeenCalledTimes(3) // 挂载 1 次 + 刷新 1 次 + 重试 1 次
+    expect(document.body.textContent).toContain(ds('prepareFailed'))
+    await tick(2000)
+    expect(prepareMock).toHaveBeenCalledTimes(3)
+  })
+
+  it('点击即时响应（卡顿回归）：勾选当场生效，不等后端、不回到「正在准备」、不禁用表单；连点只备一次', async () => {
+    await mount(DETAIL_PREPARED)
+    let release!: (p: DiagSendPrepared) => void
+    prepareMock.mockImplementation(() => new Promise<DiagSendPrepared>((r) => (release = r)))
+    await click(box('source'))
+    // 备包请求还没发出（防抖中）、更没有回来：框已经勾上，且三个框与说明框都没被禁用
+    expect(prepareMock).toHaveBeenCalledTimes(1)
+    expect(box('source').checked).toBe(true)
+    for (const k of ['source', 'crash_reports', 'corrupt_sessions']) expect(box(k).disabled, k).toBe(false)
+    expect(q<HTMLTextAreaElement>('[data-diag-send-note]')!.disabled).toBe(false)
+    expect(q('[data-diag-send-status]')!.getAttribute('data-diag-send-status')).toBe('ready')
+    // 防抖中：状态区不出「正在准备」字样（静默）
+    expect(q('[data-diag-send-status]')!.textContent).not.toContain(ds('preparing'))
+    await click(box('crash_reports'))
+    await click(box('corrupt_sessions'))
+    expect(prepareMock).toHaveBeenCalledTimes(1)
+    await tick(350)
+    // 请求在途（后端没回）：框照样可点，发送在新包到之前不可用
+    expect(prepareMock).toHaveBeenCalledTimes(2)
+    expect(lastPayload().detail_options).toEqual({ source: true, crash_reports: true, corrupt_sessions: true })
+    expect(box('source').disabled).toBe(false)
+    expect(q<HTMLButtonElement>('[data-diag-send-confirm]')!.disabled).toBe(true)
+    // 请求在途（refreshing=true）：状态区仍不出「正在准备」，发送按钮禁用即不会把旧包发出去
+    expect(q('[data-diag-send-status]')!.textContent).not.toContain(ds('preparing'))
+    await click(box('source'))
+    expect(box('source').checked).toBe(false)
+    release({ ...DETAIL_PREPARED, id: 'pid-late', options: { source: true, crash_reports: true, corrupt_sessions: true } })
+    await act(async () => {})
+    // 旧请求的结果不覆盖新勾选：不采用 pid-late、框仍是用户最后的选择，并通知引擎释放
+    expect(box('source').checked).toBe(false)
+    expect(discardMock).toHaveBeenCalledWith('pid-late', null)
+    expect(q<HTMLButtonElement>('[data-diag-send-confirm]')!.disabled).toBe(true)
+  })
+
+  it('一键全选 / 全不选：一次点击三个框全勾（只换一次包），再点全清；默认仍全不勾', async () => {
+    await mount(DETAIL_PREPARED)
+    const all = () => q<HTMLButtonElement>('[data-diag-send-extras-all]')!
+    for (const k of ['source', 'crash_reports', 'corrupt_sessions']) expect(box(k).checked).toBe(false)
+    prepareMock.mockResolvedValue({ ...DETAIL_PREPARED, id: 'pid-all', options: { source: true, crash_reports: true, corrupt_sessions: true } })
+    await click(all())
+    for (const k of ['source', 'crash_reports', 'corrupt_sessions']) expect(box(k).checked, k).toBe(true)
+    expect(all().textContent).toBe(ds('extrasSelectNone'))
+    await tick(350)
+    expect(prepareMock).toHaveBeenCalledTimes(2)
+    expect(lastPayload().detail_options).toEqual({ source: true, crash_reports: true, corrupt_sessions: true })
+    prepareMock.mockResolvedValue({ ...DETAIL_PREPARED, id: 'pid-none', options: { source: false, crash_reports: false, corrupt_sessions: false } })
+    await click(all())
+    for (const k of ['source', 'crash_reports', 'corrupt_sessions']) expect(box(k).checked, k).toBe(false)
+    await tick(350)
+    expect(lastPayload().detail_options).toEqual({ source: false, crash_reports: false, corrupt_sessions: false })
+    // 勾着其中一项时再点 = 补全，而不是清空
+    await click(box('source'))
+    expect(all().textContent).toBe(ds('extrasSelectAll'))
+    await click(all())
+    for (const k of ['source', 'crash_reports', 'corrupt_sessions']) expect(box(k).checked, k).toBe(true)
+  })
+
   it('引擎没把勾选项附上（载荷被丢）：复选框以引擎回的 options 为准，并说明「太大没能附上」', async () => {
     await mount(DETAIL_PREPARED)
     prepareMock.mockResolvedValue({ ...DETAIL_PREPARED, id: 'pid-2', options: { source: false, crash_reports: false, corrupt_sessions: false } })
     await click(box('source'))
-    await act(async () => {})
+    await tick(350)
     expect(prepareMock.mock.calls[1][1]).toEqual({ source: true, crash_reports: false, corrupt_sessions: false }) // 选项也走查询串
     expect(box('source').checked).toBe(false)
     expect(q('[data-diag-send-options-lost]')!.textContent).toBe(ds('optionsLost'))
-    expect(q('[data-diag-send-options-lost]')!.closest('details[data-diag-send-details]')).not.toBeNull()
+    expect(q('[data-diag-send-options-lost]')!.closest('details')).toBeNull()
     // 引擎照实采用时没有这句话
     prepareMock.mockResolvedValue({ ...DETAIL_PREPARED, id: 'pid-3', options: { source: true, crash_reports: false, corrupt_sessions: false } })
     await click(box('source'))
-    await act(async () => {})
+    await tick(350)
     expect(box('source').checked).toBe(true)
     expect(q('[data-diag-send-options-lost]')).toBeNull()
   })
@@ -809,7 +972,7 @@ describe('诊断包扩充（detail-…、勾选项）', () => {
       prepareMock.mockResolvedValue({ ...DETAIL_PREPARED, id: `pid-s${n++}`, options: full })
       // 点任意一个框触发重新备包；显示以引擎回的 options 为准
       await click(box('source'))
-      await act(async () => {})
+      await tick(350)
       const want = ds('sentenceExtras', {
         items: keys.map((k) => ds(`sentenceItem.${k}`)).join(ds('listSeparator')),
       })
@@ -820,7 +983,7 @@ describe('诊断包扩充（detail-…、勾选项）', () => {
     // 勾了但引擎没附上（options 全 false）：按引擎的来，回到原句
     prepareMock.mockResolvedValue({ ...DETAIL_PREPARED, id: 'pid-s9', options: { source: false, crash_reports: false, corrupt_sessions: false } })
     await click(box('crash_reports'))
-    await act(async () => {})
+    await tick(350)
     expect(sentence()).toBe(ds('sentence'))
   })
 
@@ -828,7 +991,7 @@ describe('诊断包扩充（detail-…、勾选项）', () => {
     await mount(DETAIL_PREPARED)
     prepareMock.mockResolvedValue({ ...DETAIL_PREPARED, id: 'pid-2', options: { source: false, crash_reports: false, corrupt_sessions: true } })
     await click(box('corrupt_sessions'))
-    await act(async () => {})
+    await tick(350)
     expect(box('corrupt_sessions').checked).toBe(true)
     await act(async () => root.unmount())
     root = createRoot(host)

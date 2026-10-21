@@ -250,6 +250,34 @@ enum NavDecision {
     OpenExternal,
 }
 
+/// 「新窗口请求」守卫（主窗口与远程实例窗口共用这一份）。
+///
+/// `<a target="_blank">` 与 `window.open(url, '_blank')` 不是同窗导航，**不经过**
+/// `on_navigation`：macOS 的 wry 在没装新窗口处理器时直接放弃这次请求（静默无反应），
+/// Windows 的 WebView2 则弹出自带的浏览器小窗。所以每个窗口都要另装 `on_new_window`，
+/// 并且永远不让它真的新开 webview 窗口：
+/// - 外部 http(s)/mailto → `OpenExternal`，交给系统默认程序；
+/// - 其余一律 `Deny`。这里**不能**直接用 `navigation_allowed` 的结果：它对壳自带页面与
+///   本机引擎根路径会给 `Allow`（同窗导航里是对的），放到新窗口里 `Allow` 就成了多开一个
+///   窗口，所以 `Allow` 也要折成 `Deny`；传 `port = None`，本机 127.0.0.1 因此一律 `Deny`。
+fn new_window_decision(url: &url::Url) -> NavDecision {
+    match navigation_allowed(url, None) {
+        NavDecision::OpenExternal => NavDecision::OpenExternal,
+        NavDecision::Allow | NavDecision::Deny => NavDecision::Deny,
+    }
+}
+
+/// `on_new_window` 的处理体：外链交给系统浏览器，永远返回 `Deny`（不新开 webview 窗口）。
+fn handle_new_window(
+    app: &tauri::AppHandle,
+    url: &url::Url,
+) -> tauri::webview::NewWindowResponse<tauri::Wry> {
+    if let NavDecision::OpenExternal = new_window_decision(url) {
+        let _ = app.opener().open_url(url.as_str(), None::<&str>);
+    }
+    tauri::webview::NewWindowResponse::Deny
+}
+
 /// 在导出目录里定位文件并在文件管理器中显示。前端只能传「目录 + 纯文件名」，
 /// 文件名不得含路径分隔符。暴露给（本机 sidecar 页面的）IPC 的文件类能力只有两条，
 /// 都只 reveal 不 open：这一条与下面的 `reveal_project_dir`。
@@ -774,6 +802,7 @@ fn open_remote_window(app: &tauri::AppHandle) -> tauri::Result<()> {
     let locale = *state.menu_locale.lock().unwrap();
     let slot = state.remote.clone();
     let nav_handle = app.clone();
+    let new_window_handle = app.clone();
     let win = tauri::WebviewWindowBuilder::new(
         app,
         REMOTE_WINDOW,
@@ -797,6 +826,8 @@ fn open_remote_window(app: &tauri::AppHandle) -> tauri::Result<()> {
             }
         }
     })
+    // target=_blank / window.open 不经 on_navigation（见 new_window_decision）
+    .on_new_window(move |url, _features| handle_new_window(&new_window_handle, &url))
     .build()?;
     win.set_focus()
 }
@@ -1836,6 +1867,7 @@ fn main() {
             let handle = app.handle().clone();
             let port_cell = app.state::<AppState>().port.clone();
             let nav_handle = handle.clone();
+            let new_window_handle = handle.clone();
             // 上次记下的语言。菜单与启动画面都用它——「装完第一次打开」之外
             // 每一次启动，用户看到的第一屏就已经是他选的语言。
             // 这里才是第一个能安全用 `handle.path()` 的地方（见 build_menu）
@@ -1892,6 +1924,8 @@ fn main() {
                     }
                 },
             )
+            // target=_blank / window.open 不经 on_navigation（见 new_window_decision）
+            .on_new_window(move |url, _features| handle_new_window(&new_window_handle, &url))
             .build()?;
             hide_main_menu_bar(&handle);
             // 主页拖放拿真实路径：只旁听 performDragOperation，不装 Tauri 的拖放处理器
@@ -2339,6 +2373,28 @@ mod tests {
             navigation_allowed(&u("https://example.com/"), Some(5089)),
             NavDecision::OpenExternal
         ));
+    }
+
+    /// `target=_blank` / `window.open` 的新窗口请求：只有外链交给系统浏览器，
+    /// 其余（含本机引擎同源、壳自带页面、file:/javascript:/data:）一律拒，绝不新开窗口。
+    #[test]
+    fn new_window_requests_only_open_external_links() {
+        let d = |s: &str| new_window_decision(&url::Url::parse(s).unwrap());
+        let ext = |s: &str| matches!(d(s), NavDecision::OpenExternal);
+        assert!(ext("https://example.com/support"));
+        assert!(ext("http://example.com/"));
+        assert!(ext("mailto:a@example.com"));
+        for denied in [
+            "http://127.0.0.1:5089/",
+            "http://127.0.0.1:5089/?pj=x",
+            "tauri://localhost/index.html",
+            "http://tauri.localhost/",
+            "file:///etc/passwd",
+            "javascript:alert(1)",
+            "data:text/html,hi",
+        ] {
+            assert!(matches!(d(denied), NavDecision::Deny), "{denied}");
+        }
     }
 
     /// 远程实例窗口的标记与前端读的全局名是同一个（Python 侧再比一次两侧源码）。

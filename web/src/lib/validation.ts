@@ -28,6 +28,7 @@
  * Readiness 刻意不产生 issue：「这张图还没连上脚本」与「这张图字号偏小」是
  * 两件不同的事，混进同一个清单之后用户既分不清轻重，也找不到各自的下一步。
  */
+import type { ExportRoute } from './exportRoute'
 import { formatMessage, msg, type UiMessage } from '@/i18n'
 import type { Manifest, PanelInfo } from './api'
 import type { PanelRender } from '@/store/renderStore'
@@ -289,6 +290,8 @@ export interface OriginalTarget {
   heightMm: number
   /** 本次所选格式：影响原图范围里面板嵌入的是位图还是重画的矢量 */
   formats: readonly string[]
+  /** 后端 validate 发布的 route（`lib/exportRoute`）；缺省走前端退路 */
+  route?: ExportRoute | null
 }
 
 /**
@@ -311,7 +314,7 @@ export function validateOriginal(
   return resultOf(
     input,
     documentId,
-    buildOriginalSpec(panel, assets, render, { widthMm: target.widthMm, heightMm: target.heightMm }, target.formats),
+    buildOriginalSpec(panel, assets, render, { widthMm: target.widthMm, heightMm: target.heightMm }, target.formats, target.route),
   )
 }
 

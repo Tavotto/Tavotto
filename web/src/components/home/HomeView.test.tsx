@@ -1,6 +1,6 @@
 /**
  * 主页（新手版 / 老手版）：哪一版只由 onboarding 状态决定；三个导入入口（按钮 /
- * 拖放区 / 拖放）都落到「打开脚本所在的目录」；示例入口分「开始教程」与「只打开示例」；
+ * 拖放区 / 拖放）都落到「打开脚本所在的目录」，给的是 .py 时接着「打开并运行」**那个**脚本；示例入口分「开始教程」与「只打开示例」；
  * 最近项目只摆点得开的那几条，其余功能在「全部项目」里一个不少。
  */
 import { act } from 'react'
@@ -10,6 +10,7 @@ import type { ProjectStatus, RecentProject } from '@/lib/api'
 import { ProjectPicker } from '@/components/ProjectPicker'
 import { configureOnboardingPersistence, useOnboardingStore, type OnboardingStatus } from '@/store/onboardingStore'
 import { useProjectStore } from '@/store/projectStore'
+import { useProjectPreparationStore } from '@/store/projectPreparationStore'
 import { useTutorialStore } from '@/lib/onboarding/tutorial'
 import { useUiStore } from '@/store/uiStore'
 import { PRODUCT_NAME } from '@/lib/brand'
@@ -84,6 +85,9 @@ let root: Root
 let host: HTMLDivElement
 const open = vi.fn(async (_path: string, _create?: boolean): Promise<ProjectStatus> => ({ open: true }))
 const remove = vi.fn(async (_path: string) => {})
+/** 「打开并运行」：脚本库 ▶ 同一个入口；这里只看主页有没有、对哪个脚本发起 */
+const prepOpen = vi.fn(async (..._args: unknown[]) => {})
+const ranScript = (script: string) => [{ script, reuse_last_success: true }, { run: true }]
 
 function setOnboarding(status: OnboardingStatus) {
   useOnboardingStore.setState({ status })
@@ -113,6 +117,8 @@ beforeEach(() => {
   useProjectStore.setState({ phase: 'none', project: null, recent: RECENT, opened: [], switching: false, open, remove })
   open.mockClear()
   remove.mockClear()
+  prepOpen.mockClear()
+  useProjectPreparationStore.setState({ open: prepOpen })
   desktop.isDesktop.mockReturnValue(true)
   desktop.pickScriptFile.mockClear()
   desktop.nativeFileDropAvailable.mockResolvedValue(false)
@@ -195,6 +201,8 @@ describe('新手版', () => {
     await click(host.querySelector<HTMLButtonElement>('[data-home-import]')!)
     expect(desktop.pickScriptFile).toHaveBeenCalledTimes(1)
     expect(open).toHaveBeenCalledWith('/Users/me/paper', false)
+    // 选的是哪个脚本就运行哪个：同一文件夹里换个脚本导入，不能只恢复上次的排版
+    expect(prepOpen.mock.calls).toEqual([ranScript('plot.py')])
   })
 
   it('浏览器模式：退回服务器端目录浏览器，标题说的是「脚本所在的文件夹」', async () => {
@@ -261,6 +269,7 @@ describe('老手版', () => {
     expect(ev.defaultPrevented).toBe(true)
     expect(open).toHaveBeenCalledWith('/Users/me/fig', false)
     expect(desktop.pickScriptFile).not.toHaveBeenCalled()
+    expect(prepOpen.mock.calls).toEqual([ranScript('plot.py')])
   })
 
   it('放下的 .py 没有路径（浏览器 / 桌面壳的常态）：说清是哪个文件，退回选择器', async () => {
@@ -334,12 +343,41 @@ describe('系统拖放（桌面壳交来真实路径，ADR 0092）', () => {
     expect(desktop.pickScriptFile).not.toHaveBeenCalled()
     expect(JSON.stringify(status())).toContain('home.import.openedScript')
     expect(JSON.stringify(status())).toContain('plot.py')
+    expect(prepOpen.mock.calls).toEqual([ranScript('plot.py')])
+  })
+
+  it('同一文件夹里先后拖入两个不同的 .py：各运行各的（2026-10-21 诊断包：画布上一直是第一张图）', async () => {
+    await mount()
+    await fire({ kind: 'script', folder: '/Users/me/fig', script: '/Users/me/fig/a.py', name: 'a.py', ignored: 0 })
+    await fire({ kind: 'script', folder: '/Users/me/fig', script: '/Users/me/fig/b.py', name: 'b.py', ignored: 0 })
+    expect(open.mock.calls).toEqual([
+      ['/Users/me/fig', false],
+      ['/Users/me/fig', false],
+    ])
+    expect(prepOpen.mock.calls).toEqual([ranScript('a.py'), ranScript('b.py')])
+  })
+
+  it('文件名以空白开头：只开项目、不运行（后端会 strip 脚本名，可能跑错同目录的另一个脚本，Codex #1267）', async () => {
+    await mount()
+    await fire({ kind: 'script', folder: '/Users/me/fig', script: '/Users/me/fig/ plot.py', name: ' plot.py', ignored: 0 })
+    expect(open).toHaveBeenCalledWith('/Users/me/fig', false)
+    expect(prepOpen).not.toHaveBeenCalled()
+  })
+
+  it('项目没打开成：不运行脚本', async () => {
+    open.mockRejectedValueOnce(new Error('nope'))
+    await mount()
+    await fire({ kind: 'script', folder: '/Users/me/fig', script: '/Users/me/fig/plot.py', name: 'plot.py', ignored: 0 })
+    expect(open).toHaveBeenCalledTimes(1)
+    expect(prepOpen).not.toHaveBeenCalled()
   })
 
   it('文件夹直接当项目；多拖了几个说只用了哪个', async () => {
     await mount()
     await fire({ kind: 'folder', folder: '/Users/me/paper', name: 'paper', ignored: 0 })
     expect(open).toHaveBeenCalledWith('/Users/me/paper', false)
+    // 拖进来的是文件夹：只开项目，不替用户挑脚本运行
+    expect(prepOpen).not.toHaveBeenCalled()
     expect(JSON.stringify(status())).toContain('home.import.openedFolder')
     await fire({ kind: 'script', folder: '/a', script: '/a/b.py', name: 'b.py', ignored: 2 })
     expect(JSON.stringify(status())).toContain('home.import.droppedMany')

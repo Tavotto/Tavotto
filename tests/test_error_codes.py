@@ -71,6 +71,8 @@ _CODE_REGISTRIES = (
     "tavotto.pdfbackend",
     # ADR 0106：数据改指的端点——`RemapError(code)` 由 app 的 400 漏斗转出
     "tavotto.engine.inputremap",
+    # TAF 数据出图（ADR 0138 Phase 5）：`DataSourceError(code)` 由 app 的 400 漏斗转出；码表 `ERROR_CODES`，构造时校验
+    "tavotto.engine.ai_data_figure",
     # ADR 0110：改写脚本里的数据路径与共享的备份底座——`ScriptEditError(code)` 由 app 的 409 漏斗转出
     "tavotto.engine.scriptbackup",
     "tavotto.engine.scriptedit",
@@ -78,6 +80,8 @@ _CODE_REGISTRIES = (
     "tavotto.engine.runconfig",
     # issue #534：TIFF 素材的支持范围（`UnsupportedTiff(code)` 由 app 的 422 漏斗 / 导出作业转出）
     "tavotto.tiffprobe",
+    # TeX 工具链失败（`texdiag`）：pool 的错误收口按 matplotlib 的模板把 script_error 换成这四个码
+    "tavotto.engine.texdiag",
 )
 
 
@@ -173,6 +177,12 @@ USER_VISIBLE_CODES = {
     "engine_files_incomplete": set(),
     # #898：MCP 来源的运行里脚本想写授权根之外（写入根绊线）。路径相对化后只进 MCP 的结构化载荷，不进文案
     "write_outside_roots": set(),
+    # TeX 工具链（`texdiag`）：参数来自错误转换合同 `pool.recovery_params`；`tex_failed` 的 `{{error}}`
+    # 与 `script_error` 同一来源（traceback 末行，前端 `engineErrorMsg` 填）
+    "tex_command_missing": {"command"},
+    "tex_package_missing": {"file"},
+    "tex_compile_failed": {"line"},
+    "tex_failed": {"error"},
     "script_not_found": {"script"},
     "script_path_outside_project": {"script"},
     "unsupported_script_type": {"script"},
@@ -272,6 +282,22 @@ USER_VISIBLE_CODES = {
     "ai_supersede_conflict": set(),
     # 同面板 / 同脚本上还有没落定的待确认提交，这次又没显式取代它（409，后端在写账本的事务里判）
     "ai_pending_unresolved": set(),
+    # TAF 数据出图（ADR 0138 Phase 5b）：开关关着 / 缺输入 / 数据读不成受控摘要（`ai_data_figure.DataSourceError`）
+    "taf_disabled": set(),
+    "data_figure_input_missing": set(),
+    "data_path_outside_project": set(),
+    "data_not_found": set(),
+    "data_not_csv": set(),
+    "data_too_large": set(),
+    "data_too_long": set(),
+    "data_too_wide": set(),
+    "data_unreadable": set(),
+    "data_decode_error": set(),
+    "data_malformed": set(),
+    "data_empty": set(),
+    "data_header_invalid": set(),
+    "data_ragged": set(),
+    "figure_name_exhausted": set(),
     # 拒绝之后清待确认行也失败了：状态不确定（503），客户端保持同一个 rid
     "ai_request_unresolved": set(),
     # ADR 0132：助手草稿单稿超过 20 KB（413，不截断）
@@ -381,6 +407,7 @@ USER_VISIBLE_CODES = {
     "eps_needs_live_figure": {"figure"},
     "export_basis_mismatch": {"format"},
     "svg_source_unsupported": {"id"},
+    "svg_snapshot_missing": {"id"},
     # --- Prompt 20（ADR 0039）：离线教程资源 / 副本。全部经 app._tutorial_error
     #     一个漏斗转成 JSON，`reason` 是异常里的原文 ---
     "tutorial_resources_missing": {"reason"},

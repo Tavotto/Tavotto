@@ -8,7 +8,16 @@
 import { describe, expect, it } from 'vitest'
 import file from '../../../tests/golden/export_route_vectors.json'
 import { originalArtifactOverrides } from './artifactValidation'
-import { embedsDiskBitmap } from './exportRoute'
+import {
+  copiesSourceVerbatim,
+  embedsDiskBitmap,
+  epsFromRoute,
+  panelRouteOf,
+  unavailablePanels,
+  type ExportRoute,
+  type PanelRoute,
+} from './exportRoute'
+import { epsAvailability } from './exportRequest'
 import type { PanelInfo } from './api'
 import type { PanelObject, PanelOverride } from '@/types/document'
 
@@ -69,4 +78,89 @@ describe('embedsDiskBitmap：与共享向量一致', () => {
     '画布范围原样发 overrides：%s',
     (_n, v) => expect(v.backend_overrides).toEqual(v.overrides),
   )
+})
+
+// ---------------------------- 读后端 route（#1209 / A2b） ----------------------------
+
+const pr = (over: Partial<PanelRoute> = {}): PanelRoute => ({
+  source: 'disk',
+  embeds_disk_bitmap: true,
+  formats: {},
+  ...over,
+})
+const routeOf = (
+  scope: 'canvas' | 'original',
+  formats: string[],
+  panels: Record<string, PanelRoute>,
+): ExportRoute => ({ scope, formats, panels })
+
+describe('有 route：只读它，不推算', () => {
+  it.each(vectors.filter((v) => v.backend_overrides !== null).map((v) => [v.name, v] as const))(
+    'route 与旧判据相反时以 route 为准：%s',
+    (_n, v) => {
+      const flipped = routeOf(v.scope, v.formats, {
+        [fileId(v)]: pr({ embeds_disk_bitmap: !v.embeds_disk_bitmap }),
+      })
+      expect(embedsDiskBitmap(panelOf(v), assetsOf(v), v.scope, v.formats, flipped)).toBe(!v.embeds_disk_bitmap)
+    },
+  )
+
+  it('route 对不上（范围 / 格式不同 / 实例有歧义 / 没有这张图）就是没有，走退路', () => {
+    const v = vectors.find((x) => x.scope === 'original' && x.file_kind === 'raster')!
+    const o = panelOf(v)
+    const legacy = embedsDiskBitmap(o, assetsOf(v), 'original', ['pdf'])
+    const other = pr({ embeds_disk_bitmap: !legacy })
+    const id = fileId(v)
+    expect(panelRouteOf(routeOf('canvas', ['pdf'], { [id]: other }), 'original', id, ['pdf'])).toBeNull()
+    expect(panelRouteOf(routeOf('original', ['pdf', 'eps'], { [id]: other }), 'original', id, ['pdf'])).toBeNull()
+    expect(panelRouteOf(routeOf('original', ['pdf'], { [id]: other, [`${id}#2`]: other }), 'original', id, ['pdf'])).toBeNull()
+    expect(panelRouteOf(routeOf('original', ['pdf'], {}), 'original', id, ['pdf'])).toBeNull()
+    expect(panelRouteOf(null, 'original', id, ['pdf'])).toBeNull()
+    expect(embedsDiskBitmap(o, assetsOf(v), 'original', ['pdf'], routeOf('original', ['pdf', 'eps'], { [id]: other }))).toBe(legacy)
+  })
+
+  it('画布范围：route 说画不出的面板被列出（脚本被移走的编辑过的位图）', () => {
+    const r = routeOf('canvas', ['pdf'], {
+      'a.png': pr({ source: 'unavailable', embeds_disk_bitmap: false }),
+      'b.png#2': pr({ source: 'unavailable', embeds_disk_bitmap: false }),
+      'c.png': pr(),
+    })
+    expect(unavailablePanels(r, ['pdf'])).toEqual(['a.png', 'b.png'])
+    expect(unavailablePanels(r, ['png'])).toEqual([]) // 格式对不上 = 不是这次的答案
+    expect(unavailablePanels(null, ['pdf'])).toEqual([])
+    expect(unavailablePanels({ ...r, scope: 'original' }, ['pdf'])).toEqual([])
+  })
+
+  it('照抄源位图：route 说重画就不照抄；没有 route 的退路把 EPS 重画也算进去', () => {
+    const v = vectors.find((x) => x.scope === 'original' && x.file_kind === 'raster' && x.has_script && x.overrides.length === 0 && x.guard === 'none')!
+    const o = panelOf(v)
+    const base = { scope: 'original' as const, specIsRaster: true, panel: o, assets: assetsOf(v), guardOk: true }
+    expect(copiesSourceVerbatim({ ...base, formats: ['pdf'] })).toBe(true)
+    // 旧的对话框内联判据在这里恒为 true；退路现在与后端一致：要 EPS 且不要 SVG 时有脚本的图会被重画
+    expect(copiesSourceVerbatim({ ...base, formats: ['eps', 'png'] })).toBe(false)
+    const redraw = routeOf('original', ['pdf'], { [fileId(v)]: pr({ source: 'redraw', embeds_disk_bitmap: false }) })
+    expect(copiesSourceVerbatim({ ...base, formats: ['pdf'], route: redraw })).toBe(false)
+    expect(copiesSourceVerbatim({ ...base, formats: ['pdf'], guardOk: false })).toBe(false)
+    expect(copiesSourceVerbatim({ ...base, scope: 'canvas', formats: ['pdf'] })).toBe(false)
+  })
+})
+
+describe('EPS 可用性读 route.offers', () => {
+  const withEps = (eps: PanelRoute['offers']) => routeOf('original', ['pdf'], { 'f.pdf': pr({ offers: eps }) })
+  it('后端原因码 → 界面的闭集', () => {
+    expect(epsFromRoute(withEps({ eps: { how: 'redraw' } }), 'original', 'f.pdf')).toEqual({ ok: true, reason: 'none' })
+    expect(epsFromRoute(withEps({ eps: { how: 'unavailable', reason: 'eps_needs_script' } }), 'original', 'f.pdf')).toEqual({ ok: false, reason: 'no_script' })
+    expect(epsFromRoute(withEps({ eps: { how: 'unavailable', reason: 'eps_not_for_canvas' } }), 'original', 'f.pdf')).toEqual({ ok: false, reason: 'canvas_scope' })
+  })
+  it('没有 route / 没有 offers / 范围不同：回 null，由 epsAvailability 走旧判据', () => {
+    expect(epsFromRoute(null, 'original', 'f.pdf')).toBeNull()
+    expect(epsFromRoute(withEps({}), 'original', 'f.pdf')).toBeNull()
+    expect(epsFromRoute({ ...withEps({ eps: { how: 'redraw' } }), scope: 'canvas' }, 'original', 'f.pdf')).toBeNull()
+  })
+  it('epsAvailability：route 在手时它说了算；画布范围恒不可用', () => {
+    // 素材清单里没有 f.pdf（旧判据 = 无脚本）；route 说可以
+    expect(epsAvailability('original', 'f.pdf').ok).toBe(false)
+    expect(epsAvailability('original', 'f.pdf', withEps({ eps: { how: 'redraw' } })).ok).toBe(true)
+    expect(epsAvailability('canvas', 'f.pdf', withEps({ eps: { how: 'redraw' } }))).toEqual({ ok: false, reason: 'canvas_scope' })
+  })
 })

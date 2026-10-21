@@ -33,7 +33,7 @@ import { msg, t as translate } from '@/i18n'
 import { DURATION, usePresence } from '@/lib/motion'
 import { engineLabel } from '@/components/inspector/roles/registry'
 import { ApiError } from '@/lib/api'
-import { AiLedgerError, isOpenSession, isSessionOf, ProjectChangedError, submissionBlocks, useAiStore, type AiScope, type AiSession } from '@/store/aiStore'
+import { AiLedgerError, isDataFigureSession, isOpenSession, isSessionOf, ProjectChangedError, submissionBlocks, useAiStore, type AiScope, type AiSession } from '@/store/aiStore'
 import { useDocumentStore } from '@/store/documentStore'
 import { usePanelDisplayManifest } from '@/store/renderStore'
 import { useSelectionStore } from '@/store/selectionStore'
@@ -54,6 +54,7 @@ import { INSTRUCTION_MAX_BYTES } from '@/lib/aiDraft'
 import { currentProjectId } from '@/lib/session'
 import { useAiDraft } from './useAiDraft'
 import { Turn } from './Transcript'
+import { DataFigureForm } from './DataFigureForm'
 
 export { TaskHistory }
 
@@ -373,7 +374,14 @@ function AssistantPanelBody() {
   ]
   const scope = scopes.includes(storedScope) ? storedScope : scopes[0]
 
+  // 「从数据出图」的轮次不属于任何面板（它新建脚本）：无论选没选图都在对话里，按发起时间与本面板的轮次合排
+  const dataTurns = sessions.filter(isDataFigureSession)
   const mine = panel ? sessions.filter((s) => isSessionOf(s, panel)) : []
+  const turns = dataTurns.length
+    ? [...mine, ...dataTurns].sort((a, b) => a.startedAt - b.startedAt)
+    : mine
+  const tafEnabled = !!caps?.taf_enabled
+  const [dataFormOpen, setDataFormOpen] = useState(false)
   // 只有「同一个脚本正在被改」才该挡住发送——别的面板在跑与这里无关
   const runningHere = mine.some((s) => s.status === 'running')
   // 已取消、但后端还没给出最终结果（`cancelled` 且未 finalize，含刷新后恢复出来的）：任务还没真正结束、脚本仍被占着——
@@ -604,7 +612,20 @@ function AssistantPanelBody() {
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       {/* 面板顶部只剩历史：作用目标挪到了输入框上方的上下文带（§6.5） */}
-      <div className="flex shrink-0 items-center justify-end px-3 pb-1">
+      <div className={cn('flex shrink-0 items-center px-3 pb-1', tafEnabled ? 'justify-between' : 'justify-end')}>
+        {/* 「从数据出图」（TAF 实验开关后面）：开关关着时整个不渲染，这一行与以前逐字相同（只剩右侧的历史钮） */}
+        {tafEnabled && (
+          <Button
+            data-ai-data-figure-open
+            size="sm"
+            aria-expanded={dataFormOpen}
+            className="text-ink-2"
+            onClick={() => setDataFormOpen((v) => !v)}
+          >
+            <ChartLine size={ICON_SIZE.xs} aria-hidden />
+            {ai('dataFigure.open')}
+          </Button>
+        )}
         <Popover
           width={320}
           align="end"
@@ -634,24 +655,24 @@ function AssistantPanelBody() {
           className="h-full overflow-y-auto px-3 pt-2"
           style={{ paddingBottom: 'calc(var(--composer-h, 0px) + 8px)' }}
         >
-          {!panel ? (
+          {!panel && dataTurns.length === 0 ? (
             /* 「这里没有可干的活」是真正的空状态，留在中间 */
             <EmptyState icon={FileCodeCorner} title={ai('panel.noPanelTitle')} />
-          ) : mine.length > 0 ? (
+          ) : turns.length > 0 ? (
             // 节奏由列表容器统一管（§6.1）：轮与轮 16、轮内各块 8；子组件不带外边距
             <div
               ref={contentRef}
               data-ai-transcript
               className="flex flex-col gap-(--turn-gap) [--item-gap:8px] [--turn-gap:16px]"
             >
-              {mine.map((s) => (
+              {turns.map((s) => (
                 <Turn
                   key={s.id}
                   session={s}
                   onResend={(text) => void send({ source: 'history', text })}
                   onRetry={(t) => void retrySession(t)}
-                  canResend={canSend}
-                  canRetry={canSend && s.panelId === panel?.id}
+                  canResend={canSend && !isDataFigureSession(s)}
+                  canRetry={canSend && !isDataFigureSession(s) && s.panelId === panel?.id}
                 />
               ))}
             </div>
@@ -704,6 +725,10 @@ function AssistantPanelBody() {
 
         {/* 输入区浮在对话流的底部（absolute），内容从它底下滚过；玻璃在下面那个框上 */}
         <div ref={composerRef} data-ai-composer-dock className="absolute inset-x-0 bottom-0 z-drawer px-3 pb-3 pt-1">
+          {/* 从数据出图的小表单：就地展开（Reveal 跟着内容长高，转录的底边距随 --composer-h 跟着走），不是弹窗也不是横条 */}
+          <Reveal open={tafEnabled && dataFormOpen}>
+            <DataFigureForm onClose={() => setDataFormOpen(false)} />
+          </Reveal>
           {/* 起手式（有对话之后的快捷追问）：一开始打字 / 正在跑就收起——收起是跟着内容合上（Reveal）。
               空态时它们以「示例提示」的形态在正中，这里不重复摆 */}
           <Reveal open={!!panel && mine.length > 0 && !prompt.trim() && !runningHere}>

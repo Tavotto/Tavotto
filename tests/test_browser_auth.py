@@ -103,6 +103,7 @@ def test_api_default_deny_without_session(served):
         "/api/ai/requests/11111111-2222-4333-8444-555555555555",
         "/api/ai/drafts?file=Fig1.pdf",
         "/api/ai/drafts/pending",
+        "/api/ai/sessions/changes?since=0",
         "/api/update/check",
         "/api/render?id=x&w=400",
         "/exports/whatever.pdf",

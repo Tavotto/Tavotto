@@ -108,8 +108,10 @@ async function mount(
   budget?: TimelineBudget,
   // 默认把命名输入展开（多数用例要敲名字）；`false` = 抽屉刚打开时的样子：只有「给现在存个名字…」按钮
   naming = true,
+  // 列表响应里额外的顶层字段（后端新存储带的 `legacy_unreadable` 等）
+  extra: Partial<Awaited<ReturnType<typeof fetchTimeline>>> = {},
 ) {
-  mockList.mockResolvedValue({ versions: list, budget })
+  mockList.mockResolvedValue({ versions: list, budget, ...extra })
   useUiStore.setState({ versionsOpen: true })
   useTimelineStore.setState({ namingOpen: false })
   const el = document.createElement('div')
@@ -1877,5 +1879,19 @@ describe('来自哪张画布：只在它能区分什么的时候才说', () => {
     })
     await mount([meta()])
     expect(rows()[0].textContent).toContain('Fig 1')
+  })
+})
+
+describe('后端迁移到新存储后列表多出的字段（ADR 0140）', () => {
+  it('旧文件读不出来的标记与坏信封的 damaged 不让抽屉崩，也不触发任何删除', async () => {
+    await mount(
+      [meta({ id: 'v1' }), meta({ id: 'v2', damaged: true, ts: NOW - 30_000 })],
+      undefined,
+      false,
+      { legacy_unreadable: { name: 'd_versions.json', size: 42 } },
+    )
+    expect(rows().length).toBe(2)
+    expect(vi.mocked(deleteVersion)).not.toHaveBeenCalled()
+    expect(document.body.textContent).not.toContain('d_versions.json')
   })
 })

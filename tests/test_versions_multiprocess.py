@@ -23,6 +23,7 @@ import pytest
 
 from tavotto import app as m
 from tavotto.engine import layoutsession
+from tests.support import versionfiles
 
 SRC = Path(m.__file__).resolve().parent.parent
 
@@ -94,9 +95,30 @@ os._exit(0)
 
 
 @posix_only
-def test_two_real_processes_appending_to_one_timeline_lose_no_version(tmp_path):
-    """两个真后端进程共用数据目录，各向同一份时间线追加 40 条：80 条全在、id 不重复。"""
+def test_two_real_processes_appending_to_one_timeline_lose_no_version(tmp_path, monkeypatch):
+    """两个真后端进程共用数据目录，各向同一份时间线追加 40 条：80 条全在、id 不重复。
+
+    时间线起初是**旧单文件**（3 条）：两个进程的第一次写入同时撞上迁移——迁移在版本锁内，
+    一个迁、另一个等，不会一个刚追加完就被另一个的迁移提交把索引盖回去（ADR 0140 §四）。"""
     go = tmp_path / "go"
+    legacy_seed = [
+        {
+            "id": f"v{0x100 + i:x}-{i:x}",
+            "name": f"seed{i}",
+            "ts": 1_700_000_000_000 + i,
+            "auto": False,
+            "named": False,
+            "description": "",
+            "doc": _doc(f"seed{i}"),
+        }
+        for i in range(3)
+    ]
+    monkeypatch.setenv("TAVOTTO_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setattr(m, "VERSIONS_DIR", tmp_path / "_versions")
+    monkeypatch.setattr(m, "PROJECTS", {})
+    monkeypatch.setattr(m, "DEFAULT_PROJECT", None)
+    m._save_versions("race", legacy_seed)
+    legacy_bytes = m._versions_path("race").read_bytes()
     n = 40
     env = {**os.environ, "PYTHONDONTWRITEBYTECODE": "1"}
     procs = [
@@ -125,12 +147,17 @@ def test_two_real_processes_appending_to_one_timeline_lose_no_version(tmp_path):
         assert p.returncode == 0, err.decode()
         row = json.loads(out.decode().strip().splitlines()[-1])
         assert row["ok"] == n, row
-    data = json.loads((tmp_path / "_versions" / "race.json").read_text(encoding="utf-8"))
-    names = [v["name"] for v in data["versions"]]
-    ids = [v["id"] for v in data["versions"]]
-    assert len(names) == 2 * n, f"丢了 {2 * n - len(names)} 条"
+    got = versionfiles.versions("race")
+    names = [v["name"] for v in got]
+    ids = [v["id"] for v in got]
+    assert len(names) == 2 * n + 3, f"丢了 {2 * n + 3 - len(names)} 条"
     assert len(set(ids)) == len(ids), "出现重复的版本 id"
-    assert {nm for nm in names} == {f"{t}-{i}" for t in ("A", "B") for i in range(n)}
+    assert {nm for nm in names} == {f"{t}-{i}" for t in ("A", "B") for i in range(n)} | {
+        "seed0",
+        "seed1",
+        "seed2",
+    }
+    assert m._versions_path("race").read_bytes() == legacy_bytes, "迁移改了旧文件"
 
 
 @posix_only
@@ -143,7 +170,8 @@ def test_versions_lock_held_by_another_process_times_out_with_503_and_writes_not
     assert created.status_code == 200
     vid = created.get_json()["version"]["id"]
     path = m._versions_path("d1")
-    before = path.read_bytes()
+    before = versionfiles.snapshot("d1")
+    assert before, "摆场景失败：新存储里什么都没有"
 
     monkeypatch.setattr(m, "DOCUMENT_LOCK_TIMEOUT_S", 0.3)
     lock_file = layoutsession.doclock_path(m._lock_stripe(path.with_suffix(".versions")))
@@ -159,7 +187,7 @@ def test_versions_lock_held_by_another_process_times_out_with_503_and_writes_not
         ):
             assert resp.status_code == 503, resp.get_json()
             assert resp.get_json()["code"] == "session_unavailable"
-        assert path.read_bytes() == before, "拿不到版本锁还是动了历史"
+        assert versionfiles.snapshot("d1") == before, "拿不到版本锁还是动了历史"
     finally:
         os.close(fd)
     assert (
@@ -189,9 +217,9 @@ def test_a_colliding_id_never_overwrites_an_existing_node(client, monkeypatch):
     assert b["version"]["id"] == "v1-bb", "撞了 id 没有重取"
     c = client.post(f"/api/versions/d1/{a['version']['id']}/duplicate").get_json()
     assert c["version"]["id"] == "v1-cc"
-    data = json.loads(m._versions_path("d1").read_text(encoding="utf-8"))
-    assert [v["name"] for v in data["versions"]][:2] == ["first", "second"]
-    assert len({v["id"] for v in data["versions"]}) == len(data["versions"]) == 3
+    got = versionfiles.versions("d1")
+    assert [v["name"] for v in got][:2] == ["first", "second"]
+    assert len({v["id"] for v in got}) == len(got) == 3
 
 
 def test_holding_the_versions_lock_does_not_block_autosave_of_the_same_document(

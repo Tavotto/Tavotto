@@ -440,6 +440,57 @@ def data_unchanged(after: dict, before: dict, *, stage: str = "postcommit") -> l
     return out
 
 
+def data_matches_expected(
+    man: dict, expected: list[dict], *, stage: str = "postcommit"
+) -> list[CheckResult]:
+    """data_to_figure 的保持断言「画的就是这份数据」：`expected` 的每项 `{label, part, digest}`（父进程按同一解析规则从 CSV
+    算出，`ai_data_figure.expected_fingerprints`）在 manifest 里找 **label 唯一相同**的数据元素，`data_fingerprint.parts[part]`
+    的 sha256 与形状都相等 → verified；不等 → failed（`data_mismatch`）；找不到 / 不唯一 → failed（`series_missing`）；
+    没量（over_budget / unavailable）→ unknown。"""
+    out: list[CheckResult] = []
+    for e in expected:
+        base = {
+            "id": f"data.{e['label']}",
+            "layer": "L2",
+            "stage": stage,
+            "role": "preserve",
+            "method": "data_fingerprint",
+        }
+        hits = [
+            el
+            for el in _elements(man).values()
+            if isinstance(el.get("data_fingerprint"), dict) and _label_of(el) == e["label"]
+        ]
+        if len(hits) != 1:
+            out.append(
+                CheckResult(
+                    **base,
+                    verdict=FAILED,
+                    reason_code="series_missing",
+                    observed={"matches": len(hits)},
+                )
+            )
+            continue
+        try:
+            got = _fingerprint_part(hits[0], e["part"])
+        except _Unobservable:
+            out.append(CheckResult(**base, verdict=UNKNOWN, reason_code="not_measured"))
+            continue
+        want = e["digest"]
+        same = got.get("sha256") == want.get("sha256") and got.get("shape") == want.get("shape")
+        out.append(
+            CheckResult(**base, verdict=VERIFIED)
+            if same
+            else CheckResult(
+                **base,
+                verdict=FAILED,
+                reason_code="data_mismatch",
+                observed={"shape": got.get("shape"), "expected_shape": want.get("shape")},
+            )
+        )
+    return out
+
+
 def layout_regressions(
     after: dict, before: dict, *, profile: dict | None = None, stage: str = "postcommit"
 ) -> CheckResult:

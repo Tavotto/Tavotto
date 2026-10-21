@@ -18,7 +18,7 @@ import urllib.request
 
 import pytest
 
-from support import shard as _shard
+from support import hang_watchdog as _hang, shard as _shard, system_fonts_shim as _system_fonts_shim
 
 # 模块级设置：app / engine 的路径常量在 import 时求值，必须先于用例模块被
 # import 就位，否则测试会写到真实的用户数据目录。单个用例仍各自 monkeypatch
@@ -62,6 +62,11 @@ os.environ["TAVOTTO_NO_TELEMETRY"] = "1"
 # 测试进程同样**硬关**：没设任何开关的 pytest 进程里 `diagsend.enabled()` 为 False，不可能误连生产。
 # 诊断发送自己的用例（tests/test_diag_send*.py）在 fixture 里摘掉它，再用下面的会话级探针兜底。
 os.environ["TAVOTTO_NO_DIAG_UPLOAD"] = "1"
+
+# macOS：出图子进程共用一份 `system_profiler SPFontsDataType` 输出。每个用例给子进程的新
+# `MPLCONFIGDIR` 都会让 matplotlib 重建字体缓存，而重建的开销几乎全在这一条命令上（单次约 12 s
+# CPU）；同样必须在 collection 之前就位，模块级 spawn 的子进程也要继承到。原理与边界见模块文档。
+_SYSTEM_FONTS_SHIM_DIR = _system_fonts_shim.install()
 
 # ---------------------------------------------------------------------------
 # 会话级零网络断言：遥测 endpoint 一次都不许被真的请求（#440）
@@ -288,6 +293,50 @@ def telemetry_sent(_isolated_user_config, monkeypatch):
     box.clear()  # 同意本身那两条不参与产品埋点的断言
     yield box
     telemetry.reset_for_tests()
+
+
+# ---------------------------------------------------------------------------
+# 用例级挂死看门狗（issue #1226）：默认关闭，CI 用环境变量打开
+# ---------------------------------------------------------------------------
+# 机制与取值理由见 `tests/support/hang_watchdog.py`。这里只是把它挂到每条用例的整个
+# 生命周期（setup + call + teardown）上。
+
+
+def _write_past_capture(config, text: str, *, resume: bool) -> None:
+    """绕过 pytest 的 fd 捕获往真正的 stderr 写——否则报告进了捕获缓冲，进程一退就丢。"""
+    capman = config.pluginmanager.getplugin("capturemanager")
+    try:
+        if capman is not None:
+            capman.suspend_global_capture(in_=False)
+        _hang._stderr_write(text)
+    finally:
+        if capman is not None and resume:
+            capman.resume_global_capture()
+
+
+@pytest.hookimpl(wrapper=True)
+def pytest_runtest_protocol(item, nextitem):
+    limit = _hang.hang_seconds()
+    if limit is None:
+        return (yield)
+    config = item.config
+    dog = _hang.Watchdog(
+        item.nodeid,
+        limit,
+        lambda nodeid, lim: _hang.report_and_exit(
+            nodeid, lim, write=lambda t: _write_past_capture(config, t, resume=False)
+        ),
+    )
+    started = time.monotonic()
+    dog.start()
+    try:
+        return (yield)
+    finally:
+        dog.cancel()
+        took = time.monotonic() - started
+        note = _hang.slow_note_seconds()
+        if note is not None and took >= note:
+            _write_past_capture(config, _hang.format_slow_note(item.nodeid, took), resume=True)
 
 
 # ---------------------------------------------------------------------------

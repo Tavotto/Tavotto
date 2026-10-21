@@ -66,7 +66,13 @@ async function dropSample(page: Page) {
   const card = page.locator('[data-tutorial-file-card]')
   const zone = page.locator('[data-tutorial-drop-zone]')
   await drag(page, await center(card), await center(zone))
-  await expect(page.locator('[data-tutorial-imported]')).toBeVisible()
+  await rendered(page)
+}
+
+/** 放下之后先演一段「渲染中」，走完才出图 */
+async function rendered(page: Page) {
+  await expect(page.locator('[data-demo-figure]')).toBeVisible()
+  await expect(page.locator('[data-tutorial-rendering]')).toHaveCount(0)
 }
 
 async function dragLegendUp(page: Page, dy = -140) {
@@ -102,7 +108,11 @@ test('完整走完新手教程：欢迎页 → 拖入示例脚本 → 拖动图�
   await drag(page, home, { x: home.x + 40, y: home.y + 10 })
   await expect(next(page)).toBeDisabled()
   await expect(page.locator('[data-tutorial-feedback]')).toHaveAttribute('data-tutorial-feedback', 'notice')
-  await dropSample(page)
+  await expect(page.locator('[data-tutorial-use-sample]')).toHaveCount(0) // 只教拖放，没有捷径
+  await drag(page, await center(card), await center(page.locator('[data-tutorial-drop-zone]')))
+  await expect(page.locator('[data-tutorial-rendering]')).toBeVisible()
+  await expect(next(page)).toBeDisabled()
+  await rendered(page)
   await expect(page.locator('[data-tutorial-feedback]')).toHaveAttribute('data-tutorial-feedback', 'success')
   await expect(page.locator('[data-demo-figure]')).toHaveCount(1)
   await next(page).click()
@@ -310,6 +320,28 @@ for (const size of [
       expect(box!.x + box!.width).toBeLessThanOrEqual(size.width + 0.5)
     }
     await inView(page.locator('[data-tutorial-begin]'))
+    // 欢迎页不被压扁：注释签不顶到功能行、不压到主按钮；蓝点落在图里的字外面（原型的要求）
+    await page.evaluate(() => document.fonts.ready)
+    const welcome = await page.evaluate(() => {
+      const view = document.querySelector('[data-tutorial-view="welcome"]')!
+      const r = (el: Element) => el.getBoundingClientRect()
+      const chips = [...view.querySelectorAll('[data-welcome-callout]')].map(r)
+      const dots = [...view.querySelectorAll('[data-welcome-callout-dot]')].map(r)
+      const texts = [...view.querySelectorAll('[data-demo-stage] svg text')].map(r)
+      const hit = (a: DOMRect, b: DOMRect) => a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top
+      return {
+        chips: chips.length,
+        dots: dots.length,
+        toFeatures: Math.min(...chips.map((c) => c.top)) - r(view.querySelector('ul')!).bottom,
+        toButton: r(view.querySelector('[data-tutorial-begin]')!).top - Math.max(...chips.map((c) => c.bottom)),
+        dotsOnText: dots.filter((d) => texts.some((t) => hit(d, t))).length,
+      }
+    })
+    expect(welcome.chips).toBe(3)
+    expect(welcome.dots).toBe(3)
+    expect(welcome.toFeatures).toBeGreaterThanOrEqual(16)
+    expect(welcome.toButton).toBeGreaterThanOrEqual(16)
+    expect(welcome.dotsOnText).toBe(0)
     await page.locator('[data-tutorial-begin]').click()
     await inView(page.locator('[data-tutorial-file-card]'))
     await inView(page.locator('[data-tutorial-drop-zone]'))
@@ -317,6 +349,11 @@ for (const size of [
     await dropSample(page)
     await next(page).click()
     await inView(page.locator('[data-demo-legend]'))
+    // 任务标题与图之间留出空隙（演示图按内容区取框，不吃掉上留白）
+    const gap = await page.evaluate(
+      () => document.querySelector('[data-demo-stage]')!.getBoundingClientRect().top - document.querySelector('#tutorial-task-title')!.getBoundingClientRect().bottom,
+    )
+    expect(gap).toBeGreaterThanOrEqual(24)
     await inView(next(page))
     await dragLegendUp(page, -80)
     await next(page).click()
@@ -343,7 +380,7 @@ test('axe：欢迎页、第二步、完成页无 critical / serious', async ({ a
   await expect(tut(page)).toBeVisible()
   await scan('welcome')
   await page.locator('[data-tutorial-begin]').click()
-  await page.locator('[data-tutorial-use-sample]').click()
+  await dropSample(page)
   await next(page).click()
   await scan('legend')
   await dragLegendUp(page)
@@ -352,4 +389,63 @@ test('axe：欢迎页、第二步、完成页无 critical / serious', async ({ a
   await page.locator('[data-tutorial-size-increase]').click()
   await next(page).click()
   await scan('done')
+})
+
+test('欢迎页：标注气泡不压标签行 / 图里文字 / 卡片边界，内容块不出滚动条且上下留白均衡', async ({ app, page }) => {
+  const a = await app({ noProject: true })
+  await page.goto(a.baseURL)
+  await expect(tut(page)).toHaveAttribute('data-surface', 'welcome')
+  for (const [w, h] of [
+    [1280, 800],
+    [1440, 900],
+    [1600, 1000],
+    [1280, 720],
+  ]) {
+    await page.setViewportSize({ width: w, height: h })
+    await expect(page.locator('[data-welcome-callout]')).toHaveCount(3)
+    const measure = () =>
+      page.evaluate(() => {
+        const r = (el: Element) => {
+          const b = el.getBoundingClientRect()
+          return { x: b.left, y: b.top, w: b.width, h: b.height }
+        }
+        const view = document.querySelector<HTMLElement>('[data-tutorial-view="welcome"]')!
+        const card = document.querySelector('[data-welcome-callouts]')!.closest('[class*="rounded-panel"]')!
+        const title = document.querySelector('[data-demo-title] text')!
+        return {
+          scroll: view.scrollHeight - view.clientHeight,
+          card: r(card),
+          tags: r(view.querySelector('main ul')!),
+          title: r(title),
+          begin: r(document.querySelector('[data-tutorial-begin]')!),
+          logo: r(view.querySelector('main')!.firstElementChild!),
+          link: r(document.querySelector('[data-tutorial-open-workspace]')!),
+          vh: innerHeight,
+          bubbles: [...document.querySelectorAll('[data-welcome-callout]')].map(r),
+        }
+      })
+
+    // 视口刚变时图框要等一次 ResizeObserver 才跟上：轮询到稳定，而不是量到半路的一帧
+    await expect
+      .poll(async () => {
+        const m = await measure()
+        const bad: string[] = []
+        const hit = (p: { x: number; y: number; w: number; h: number }, q: typeof p) =>
+          p.x < q.x + q.w && q.x < p.x + p.w && p.y < q.y + q.h && q.y < p.y + p.h
+        if (m.scroll !== 0) bad.push('出滚动条')
+        for (const b of m.bubbles) {
+          if (hit(b, m.title)) bad.push('气泡压标题')
+          if (hit(b, m.tags)) bad.push('气泡压标签行')
+          if (hit(b, m.begin)) bad.push('气泡压主按钮')
+          if (b.x < m.card.x || b.x + b.w > m.card.x + m.card.w || b.y < m.card.y || b.y + b.h > m.card.y + m.card.h)
+            bad.push('气泡探出卡片')
+        }
+        // 上下留白均衡：内容块（logo 顶 → 出口链接底）距窗口上沿与下沿之差不超过窗口高度的 4%
+        const top = m.logo.y
+        const bottom = m.vh - (m.link.y + m.link.h)
+        if (Math.abs(top - bottom) > m.vh * 0.04) bad.push(`上下留白 ${top}/${bottom}`)
+        return bad
+      }, { message: `${w}x${h}` })
+      .toEqual([])
+  }
 })

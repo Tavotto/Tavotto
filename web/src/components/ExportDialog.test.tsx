@@ -96,6 +96,8 @@ let exportBodies: Record<string, unknown>[]
 let jobStatus: 'done' | 'partial' | 'conflict' | 'running' = 'done'
 /** 终局回执里的 outputs（不设 = 一件没有 manifest 的 PDF） */
 let jobOutputs: Record<string, unknown>[] | null = null
+/** 后端 validate 的 `route`（#1209）：按请求体现造；null = 旧后端 / 算不出（响应里没有 route） */
+let routeOf: ((req: Record<string, any>) => Record<string, unknown>) | null = null
 
 function stubFetch() {
   exportBodies = []
@@ -130,6 +132,13 @@ function stubFetch() {
         }),
         { status: 200, headers: { 'Content-Type': 'application/json' } },
       )
+    }
+    if (url.includes('/api/export/validate') && routeOf) {
+      const req = JSON.parse(String(init?.body ?? '{}'))
+      return new Response(JSON.stringify({ ok: true, conflicts: [], writable: true, route: routeOf(req) }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
     }
     return new Response(JSON.stringify({ figures_dir: '/figs', panels: [] }), {
       status: 200,
@@ -186,7 +195,10 @@ async function setup(tickPt: number, page = { w: 80, h: 60 }, panelH = 60) {
 const text = () => document.body.textContent ?? ''
 
 /** 位图素材 + 快速编辑（原图范围）的夹具；`overrides` 决定走"照抄"还是"重画" */
-async function setupRaster(overrides: { gid: string; prop: string; value: unknown }[]) {
+async function setupRaster(
+  overrides: { gid: string; prop: string; value: unknown }[],
+  script?: string,
+) {
   await useDocumentStore.getState().switchDocument(emptyProject(), 'd_raster')
   useDocumentStore.getState().commit(literal('准备'), (d) => {
     d.page = { w: 180, h: 120 }
@@ -209,6 +221,7 @@ async function setupRaster(overrides: { gid: string; prop: string; value: unknow
       'r1.png': {
         id: 'r1.png',
         mtime: 1,
+        ...(script ? { script } : {}),
         original_spec: {
           source_kind: 'raster',
           logical_w_mm: 10.16,
@@ -1049,11 +1062,125 @@ describe('照抄源位图 vs 引擎重画', () => {
     await setupRaster([])
     expect(text(), '照抄源文件时报的就是源像素网格').toContain('120 × 80')
 
-    await setupRaster([{ gid: 'axes_0', prop: 'fontsize', value: 9 }])
+    await setupRaster([{ gid: 'axes_0', prop: 'fontsize', value: 9 }], 's.py')
     expect(
       text(),
-      '带 override = 引擎重画，拿到的是 PDF；再报源像素网格就是界面与文件各说各的',
+      '带 override 且有脚本 = 引擎重画，拿到的是 PDF；再报源像素网格就是界面与文件各说各的',
     ).not.toContain('120 × 80')
+
+    // 没有脚本就画不出：后端 `_resolve_panel_source` 退回磁盘文件，文件仍是源像素网格
+    await setupRaster([{ gid: 'axes_0', prop: 'fontsize', value: 9 }])
+    expect(text(), '带 override 但没有脚本：后端退回磁盘原件').toContain('120 × 80')
+  })
+})
+
+describe('来源读后端 route（#1209）', () => {
+  const settle = () => act(async () => { await new Promise((r) => setTimeout(r, 400)) })
+  const panelRoute = (over: Record<string, unknown>) => ({
+    source: 'disk',
+    embeds_disk_bitmap: true,
+    formats: {},
+    offers: { eps: { how: 'unavailable', reason: 'eps_needs_script' } },
+    ...over,
+  })
+  afterEach(() => { routeOf = null })
+
+  it('route 说这次会被重画：像素预览不再报源像素网格（即使前端旧判据会说照抄）', async () => {
+    routeOf = (req) => ({
+      scope: req.scope,
+      formats: req.formats,
+      panels: { 'r1.png': panelRoute({ source: 'redraw', embeds_disk_bitmap: false }) },
+    })
+    await setupRaster([])
+    expect(text(), '还没拿到 route：旧判据（无编辑 = 照抄）').toContain('120 × 80')
+    await settle()
+    expect(text(), 'route 说重画，前端不再自己推算').not.toContain('120 × 80')
+  })
+
+  it('EPS 可不可用读 route.offers，不看前端素材表里有没有 script', async () => {
+    routeOf = (req) => ({
+      scope: req.scope,
+      formats: req.formats,
+      panels: { 'r1.png': panelRoute({ offers: { eps: { how: 'redraw' } } }) },
+    })
+    await setupRaster([]) // 素材表里没有 script：旧判据 = 不可用
+    const epsDisabled = () =>
+      document.body.querySelector('[data-export-format="eps"]')?.getAttribute('aria-disabled')
+    expect(epsDisabled(), '还没拿到 route：旧判据').toBe('true')
+    await settle()
+    expect(epsDisabled(), 'route.offers.eps 可用').toBeNull()
+  })
+
+  it('画布范围：route 说某个带编辑的图画不出来，点导出之前就说', async () => {
+    routeOf = (req) => ({
+      scope: req.scope,
+      formats: req.formats,
+      panels: {
+        'Fig1.pdf': panelRoute({
+          source: 'unavailable',
+          embeds_disk_bitmap: false,
+          formats: { pdf: { how: 'unavailable', reason: 'source_needs_execution' } },
+        }),
+      },
+    })
+    await setup(9)
+    await settle()
+    expect(document.body.querySelector('[data-export-route-unavailable]')?.textContent).toContain('Fig1.pdf')
+  })
+
+  it('重开对话框：新 route 到之前读到的是「没有 route」，不拿旧 offers 禁用 / 放开 EPS', async () => {
+    routeOf = (req) => ({
+      scope: req.scope,
+      formats: req.formats,
+      panels: { 'r1.png': panelRoute({ offers: { eps: { how: 'redraw' } } }) },
+    })
+    await setupRaster([]) // 素材表里没有 script：退路 = EPS 不可用
+    const epsDisabled = () =>
+      document.body.querySelector('[data-export-format="eps"]')?.getAttribute('aria-disabled')
+    await settle()
+    expect(epsDisabled(), 'route 到了：可用').toBeNull()
+    await act(async () => { useUiStore.getState().setExportOpen(false) })
+    await act(async () => { useUiStore.getState().setExportOpen(true) })
+    expect(epsDisabled(), '重开后、响应到达前：退路，而不是关着时的旧答案').toBe('true')
+    await settle()
+    expect(epsDisabled(), '新响应到达').toBeNull()
+  })
+
+  it('对话框关着不取 route；每次重新打开都重取，哪怕输入没变', async () => {
+    let validates = 0
+    routeOf = (req) => {
+      validates += 1
+      return { scope: req.scope, formats: req.formats, panels: {} }
+    }
+    await setup(9)
+    await settle()
+    const opened = validates
+    expect(opened, '打开后取了 route').toBeGreaterThan(0)
+
+    await act(async () => { useUiStore.getState().setExportOpen(false) })
+    // 关着时编辑文档：不发 validate
+    await act(async () => {
+      useDocumentStore.getState().commit(literal('编辑'), (d) => { d.objects = [{ ...d.objects[0], h: 33 } as never] })
+    })
+    await settle()
+    expect(validates, '关着不发请求').toBe(opened)
+
+    await act(async () => { useUiStore.getState().setExportOpen(true) })
+    await settle()
+    expect(validates, '重新打开必须重取').toBeGreaterThan(opened)
+
+    const again = validates
+    await act(async () => { useUiStore.getState().setExportOpen(false) })
+    await act(async () => { useUiStore.getState().setExportOpen(true) })
+    await settle()
+    expect(validates, '输入没变的重开也重取（脚本登记可能变了）').toBeGreaterThan(again)
+  })
+
+  it('route 缺席（旧后端）：没有那条提示，行为与引入 route 前一致', async () => {
+    routeOf = null
+    await setup(9)
+    await settle()
+    expect(document.body.querySelector('[data-export-route-unavailable]')).toBeNull()
   })
 })
 

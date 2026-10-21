@@ -86,3 +86,17 @@
 
 分层依据（「逐字搬家」「边界清楚」）是语义判断，写成规则只会得到一个能被措辞绕过的
 检查；把它放在正文第一段，让审查人一眼看到作者的归类和理由，错了就改归类。
+
+## Review Budget Controller（2026-10-17，P0：只读观察）
+
+新增的 scripts/ci/review_budget.py 与 .github/workflows/review-budget.yml 只做
+**风险下限评估、Codex 审查回执/额度错误识别、重复请求提示和 JSON 证据留存**。
+完整机制、证据边界与 Codex 网页操作清单见 docs/ci/review-budget.md。
+
+它**不自动请求** Code Review / Security Review，不写 PR 评论，不是 required check，
+也不改变本页的「中档一次 / 高档一次加最多一次定向复核」规则。审查回执不等于
+零未解决问题，审查额度用尽不等于通过，纯 rebase 不会被自动证明为已审。
+路径风险下限不能被作者贴的 risk:low 降低；风险冲突必须由维护者确认。
+
+**账户侧 Codex 自动审查是否已关闭尚未通过 GitHub 验证**，需要维护者在 Codex
+网页的普通审查和安全审查设置分别核实；提交这个 PR 不会修改这些设置。

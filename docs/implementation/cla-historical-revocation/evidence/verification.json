@@ -1,0 +1,112 @@
+{
+  "base_sha": "d2b0ba59340761b61f7ac5b8b534d43bcdd731f4",
+  "latest_observed_main": "78a12af161cd95d02aeb62c7ab23780a9a57bc83",
+  "environment": {
+    "node": "v24.19.0",
+    "python": "3.12.14"
+  },
+  "commands": [
+    {
+      "command": "node --test tests/delegation.test.mjs tests/audit.test.mjs tests/independent-review-boundaries.test.mjs",
+      "exit_code": 0,
+      "passed": 72,
+      "log": "initial-regression.tap"
+    },
+    {
+      "command": "node --test tests/historical-revocation.test.mjs",
+      "exit_code": 0,
+      "passed": 41,
+      "log": "target.tap"
+    },
+    {
+      "command": "npm test",
+      "exit_code": 0,
+      "passed": 358,
+      "failed": 0,
+      "skipped": 0,
+      "log": "full.tap"
+    },
+    {
+      "command": "python3 tests/migration.test.py",
+      "exit_code": 0,
+      "passed": 4,
+      "log": "migration.txt"
+    },
+    {
+      "command": "node tests/mutation-smoke.mjs",
+      "exit_code": 0,
+      "detected": 62,
+      "new_cases": 8,
+      "new_cases_required_selected_exit": 1,
+      "new_cases_required_error": "AssertionError",
+      "log": "mutation.txt"
+    },
+    {
+      "command": "npm run typecheck",
+      "exit_code": 127,
+      "reason": "tsc missing",
+      "log": "typecheck.txt"
+    },
+    {
+      "command": "npm run build",
+      "exit_code": 1,
+      "reason": "esbuild missing",
+      "log": "build.txt"
+    }
+  ],
+  "source_sha256": {
+    "services/cla-cloudflare/src/native/delegation.ts": "249fac5bcbe95b0c6d774de4f1016a0f0f1688464bfb44afd99df254126170f0",
+    "services/cla-cloudflare/tests/historical-revocation.test.mjs": "74789eb50854053c12b54b7da572e84a829486a3a5235e0c0ea776043b640eba",
+    "services/cla-cloudflare/tests/historical-revocation-mutation-cases.json": "5b5b802f2efe2397f8ccdc5a4b414a13ac01fde87ad5e17bc44e5700de89c94f",
+    "services/cla-cloudflare/tests/mutation-smoke.mjs": "28df0549141a349ba59a9aaabdb0793ac5319471606f4aa4c2be66c53c552445"
+  },
+  "log_sha256": {
+    "initial-regression.tap": "08bcd5e464598b412194e8a98a1de95431832dbc86bc43cf292eca445126992d",
+    "build.txt": "5491709c8540fbccf45cf7b98f6fead207516c2f77146119f8e58b7458ce7e8b",
+    "mutation.txt": "41ffd40e2f0dff57e88ee281eeba4db36f8be345aaa9eed5dcc1817a66923314",
+    "migration.txt": "bd0b3a0129c340bbbda7ba9481f5a5ee2c63fbce13388e075a7285e381743b02",
+    "target.tap": "959b2bdae0f1e6e20ea32a3d96e597459560519f878960d05933bfe1479c07b2",
+    "typecheck.txt": "93eed0553081bd499f8b8cda0baee9c9c74eed7c493953de4dcad753d748bb50",
+    "full.tap": "e53a58b6d69646e16e7841c983925c50aab0ae9a3aacc4357c7418d4fe7a1f09"
+  },
+  "boundaries": {
+    "network_calls_in_new_suite": 0,
+    "real_signatures": 0,
+    "synthetic_test_signatures": true,
+    "publication_calls": 0,
+    "deployment": false,
+    "typecheck_passed": false,
+    "build_passed": false,
+    "historical_tuple_unit_test_is_production_activation": false,
+    "prior_dependency_download_denial_preserved": true,
+    "no_dependency_download_retry": true,
+    "no_dynamic_success_publication_across_expiry_test": true
+  },
+  "independent_review": {
+    "passed": 19,
+    "related_regression_passed": 55,
+    "selected_mutants": 5,
+    "all_selected_exit_codes": 1,
+    "all_assertion_errors": true,
+    "source_hashes": "independent/source-hashes.json",
+    "mutation_results": "independent/mutation-results.json",
+    "script": "independent/independent-historical-revocation.test.mjs.txt",
+    "review_receipt_pending": false,
+    "manifest": "independent/manifest.json"
+  },
+  "independent_evidence_sha256": {
+    "historical-commit-clock.txt": "0e021c955484015f88ba4d001522bc6504d7decba2df0e7f02882992b6d67f19",
+    "historical-commit-revision.txt": "8bfb5df264bd6842cfdece809c34b16a7a9fbd8ec6d47ae2e648ff8f9b45a917",
+    "historical-full-chain.txt": "5ed413a98ad2a1a2171140cd351b4eca2681130c419dd58659971d5a69b24f70",
+    "historical-only-terminal.txt": "221814ea9f277293f259f80a7eb17971553050ab68b22f0a717759f8fd8dff47",
+    "historical-original-key.txt": "584fce18515c032a1272d54a37882747f8666aec03312419746709df86377330",
+    "independent-historical-revocation.test.mjs.txt": "02ae51ff1c17ec74abdbd8bedb1c4a8b680a3fb35c29827a3abff70537b5a124",
+    "independent-tests.txt": "e47c005317d7d151991c634609b16008e5f8a8ce8cf11743150d76f8140991fc",
+    "manifest.json": "5ded8799bae7383b18c47037ec2e24dedf7c0133f849b61d1001eac955c7d120",
+    "mutation-execution.txt": "e67ba1dcf76d75aa87e9f093d6269f10dcd20646282fe1e2a0807e21abf66093",
+    "mutation-results.json": "e67ba1dcf76d75aa87e9f093d6269f10dcd20646282fe1e2a0807e21abf66093",
+    "related-tests.txt": "52bde0455c6d34e1a33b8e5cb917bca1eee9fac6c24b8a6f80bb10ec08821a85",
+    "replay-independent-mutations.py.txt": "388dcf249529a7a63136e957a9b6566083d29274ced8943ac5acb3e07ef692fe",
+    "source-hashes.json": "8f408d6f522bcdad5fb0269f1e783d630d887e18b64399cb875482c1d6a89fb2"
+  }
+}

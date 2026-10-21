@@ -18,6 +18,7 @@
   },
   "export": {
     "exportAgain": "Export again",
+    "routeNeedsScript": "These figures carry edits but their scripts can’t be found, so a canvas export can’t draw them: {{files}}. Restore the scripts or undo the edits first.",
     "showInFolder": "Show in folder",
     "finish": "Done",
     "blockedTitle": "Blocking problems or items that can’t be verified. Tick the confirmation to export.",
@@ -1295,6 +1296,8 @@
         "doneAfterCancel": "Cancelled too late — the report had already arrived",
         "unknownOutcome": "Could not confirm whether the report arrived; to have it removed, open a GitHub issue quoting only the report ID",
         "extrasTitle": "Extras (not sent by default)",
+        "extrasSelectAll": "Select all",
+        "extrasSelectNone": "Select none",
         "extra": {
           "source": "Script source",
           "crash_reports": "System crash reports",
@@ -1921,8 +1924,6 @@
       "task": "Step 1: drag the sample script in",
       "cardLabel": "Drag {{name}} into the drop area",
       "cardHint": "Built-in sample, no file needed",
-      "useSample": "Just use the sample",
-      "or": "or",
       "keyboardHelp": "Press Space to pick up the card, arrow keys to move it, Enter to drop, Esc to cancel.",
       "zoneLabel": "Script drop area",
       "zoneTitle": "Drop the script here",
@@ -1932,9 +1933,12 @@
       "leftZone": "Left the drop area.",
       "cancelled": "Cancelled. The card is back in place.",
       "missed": "That missed the drop area, so the card went back. Try again.",
+      "renderingTitle": "Generating the sample figure…",
+      "rendering": "Rendering the figure…",
+      "renderProgress": "Sample figure rendering progress",
       "builtin": "Built-in sample",
       "figureLabel": "The reaction-kinetics figure drawn by {{name}}",
-      "success": "Sample figure loaded"
+      "success": "Compiled"
     },
     "legend": {
       "task": "Drag the legend somewhere else",

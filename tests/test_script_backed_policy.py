@@ -550,7 +550,7 @@ def test_server_side_writeback_gate_does_not_depend_on_the_request_policy(sb_env
 @needs_worker
 def test_flag_off_rejects_the_new_policy_and_keeps_legacy_bytes(sb_env, opened, monkeypatch):
     root = project(sb_env, PLAIN)
-    config.save({**config._defaults()})  # 关闭（缺省）
+    config.save({**config._defaults(), "experiments": {ac.EXPERIMENT: False}})  # 应急关闭
     client = opened(root)
     for response in (
         render(client, []),
@@ -571,10 +571,11 @@ def test_flag_off_rejects_the_new_policy_and_keeps_legacy_bytes(sb_env, opened, 
     ):
         refused(response, "policy_disabled")
     assert not (config.data_dir() / "source-backed").exists()
-    # 字符串 "true" / 1 都不算打开
-    for value in ("true", 1):
+    # 字符串 "false" / 0 不算关闭：开关值不是布尔就当没写（默认开）
+    for value in ("false", 0):
         config.save({**config._defaults(), "experiments": {ac.EXPERIMENT: value}})
-        refused(render(client, []), "policy_disabled")
+        assert render(client, []).status_code != 409
+    config.save({**config._defaults(), "experiments": {ac.EXPERIMENT: False}})
     # 旧行为：不带 policy 的 PNG 渲染照旧，并标 source_unverified；精确策略照旧
     legacy = post(client, "render", id="same.png", patches=[])
     assert legacy.status_code == 200 and legacy.get_json()["source_unverified"]["kind"] == "png"
@@ -584,16 +585,18 @@ def test_flag_off_rejects_the_new_policy_and_keeps_legacy_bytes(sb_env, opened, 
 
 
 def test_experiments_endpoint_exposes_only_the_boolean_projection(sb_env):
-    """前端据此决定要不要在严格策略被拒后再试来源驱动策略：只认显式 True，现读配置，不带别的东西；
+    """前端据此决定要不要在严格策略被拒后再试来源驱动策略：默认开、只有布尔 false 关，现读配置，不带别的东西；
     不进公开的 /api/version（那里只说这一版会什么，tests/test_engine_capabilities.py 钉着键集）。"""
     m.app.config["TESTING"] = True
     client = m.app.test_client()
     assert client.get("/api/experiments").get_json() == {ac.EXPERIMENT: True}
-    config.save({**config._defaults()})
-    assert client.get("/api/experiments").get_json() == {ac.EXPERIMENT: False}
-    for value in ("true", 1):
+    config.save({**config._defaults()})  # 没写：默认开
+    assert client.get("/api/experiments").get_json() == {ac.EXPERIMENT: True}
+    for value in ("false", 0):
         config.save({**config._defaults(), "experiments": {ac.EXPERIMENT: value}})
-        assert client.get("/api/experiments").get_json() == {ac.EXPERIMENT: False}
+        assert client.get("/api/experiments").get_json() == {ac.EXPERIMENT: True}
+    config.save({**config._defaults(), "experiments": {ac.EXPERIMENT: False}})
+    assert client.get("/api/experiments").get_json() == {ac.EXPERIMENT: False}
 
 
 @needs_worker

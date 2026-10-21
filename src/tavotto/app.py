@@ -59,9 +59,12 @@ from werkzeug.exceptions import HTTPException
 from . import pdfbackend, tiffprobe
 from .engine import (
     ai_bridge as engine_ai,
+    ai_data_figure as engine_ai_data_figure,
+    ai_data_task as engine_ai_data_task,
     ai_figure_edit as engine_ai_figure_edit,
     ai_history as engine_ai_history,
     ai_providers as engine_ai_providers,
+    ai_tasks as engine_ai_tasks,
     artifactcontext as engine_artifactcontext,
     artifactinspect as engine_artifactinspect,
     atomicio as engine_atomicio,
@@ -88,6 +91,7 @@ from .engine import (
     execspec as engine_execspec,
     exportjob as engine_exportjob,
     exportreq as engine_exportreq,
+    exportroute as engine_exportroute,
     exporttelemetry as engine_exporttelemetry,
     figcapture as engine_figcapture,
     handoff as engine_handoff,
@@ -106,6 +110,7 @@ from .engine import (
     nativesession as engine_nativesession,
     normalize as engine_normalize,
     originalspec as engine_originalspec,
+    originrecord as engine_originrecord,
     patchspec as engine_patchspec,
     perfprobe as engine_perfprobe,
     pool as engine_pool,
@@ -134,6 +139,7 @@ from .engine import (
     svgexecution as engine_svgexecution,
     taskdiag as engine_taskdiag,
     telemetry as engine_telemetry,
+    texdiag as engine_texdiag,
     tutorial as engine_tutorial,
     updater as engine_updater,
     versionstore as engine_versionstore,
@@ -717,7 +723,11 @@ def _worker_error_payload(exc, stage: str = "", *, figure_snapshot_invalidation=
         body["figure_snapshot_invalidation"] = figure_snapshot_invalidation
     if stage:
         body["stage"] = stage
-    if exc.code in (*engine_pool.INPUT_ERROR_CODES, engine_pool.ARGUMENTS_ERROR_CODE):
+    if exc.code in (
+        *engine_pool.INPUT_ERROR_CODES,
+        engine_pool.ARGUMENTS_ERROR_CODE,
+        *engine_texdiag.ERROR_CODES,
+    ):
         # 脚本要输入（ADR 0099：提示原文 + 为什么没人能答，T08）/ 参数解析器退出（T03：个数与类别）：
         # 界面按 code 翻译，字段由错误转换合同 `pool.recovery_params` 统一给出（探测与准备会话同一份）
         body["params"] = engine_pool.recovery_params(exc)
@@ -1041,7 +1051,7 @@ def api_experiments():
     """实验开关的只读投影（ADR 0139 PR2）：前端据此决定要不要在严格策略被拒后再试来源驱动策略。
 
     **不放进公开的 `/api/version`**（它只说「这一版会什么」）：开关是用户的设置，要会话认证。
-    只认显式 True（`config.experiment_enabled`），每次现读配置——用户改 `config.json` 后不必重启。"""
+    默认开、只有显式 `false` 关（`artifactcontext.script_backed_enabled`），每次现读配置——用户改 `config.json` 后不必重启。"""
     resp = jsonify(
         {engine_artifactcontext.EXPERIMENT: engine_artifactcontext.script_backed_enabled()}
     )
@@ -1151,7 +1161,7 @@ def _original_rerender(formats) -> bool:
 
     要 EPS 且不要 SVG 时才重画（SVG 走快照那条路）；前端预检 `embedsDiskBitmap` 与它同源。
     """
-    return engine_exportreq.FORMAT_EPS in formats and engine_exportreq.FORMAT_SVG not in formats
+    return engine_exportroute.original_rerender(formats)
 
 
 def _resolve_panel_source(
@@ -1208,7 +1218,7 @@ def _resolve_panel_source(
         path = safe_resolve(o["id"])
     except tiffprobe.UnsupportedTiff as exc:
         raise _export_tiff_error(exc) from exc
-    if overrides or rerender:
+    if engine_exportroute.wants_execution(runtime=False, overrides=overrides, rerender=rerender):
         rendered = _serialize_figure(
             rel_id,
             overrides,
@@ -1477,11 +1487,11 @@ def _execution_source(
     rel_id = str(obj.get("id", ""))
     overrides = obj.get("overrides") or []
     reference = obj.get("figure_snapshot")
-    if reference is not None:
+    if engine_exportroute.executes_from_snapshot(has_reference=reference is not None):
         saved = _load_svg_snapshot(rel_id, overrides, out_dir, reference=reference)
         if saved is None:
             raise engine_exportreq.ExportRequestError(
-                "svg_source_unsupported",
+                "svg_snapshot_missing",
                 f"{rel_id}: the saved Figure snapshot no longer matches this source or edit.",
                 {"id": rel_id},
             )
@@ -1514,7 +1524,7 @@ def _execution_source(
             return saved
     if rendered is None and include_svg:
         raise engine_exportreq.ExportRequestError(
-            "svg_source_unsupported",
+            "svg_snapshot_missing",
             f"{rel_id}: no verified SVG snapshot; explicitly run this source before exporting SVG.",
             {"id": rel_id},
         )
@@ -2246,7 +2256,9 @@ def _export_produce_original(job, tmp_dir: Path, *, artifact_sources=None) -> li
     svg_source = None
     wants_svg = engine_exportreq.FORMAT_SVG in req.formats
     wants_snapshot = wants_svg or src.figure_snapshot is not None
-    execution_source = engine_runtimeasset.is_runtime_id(src.figure_id) or bool(src.overrides)
+    execution_source = engine_exportroute.wants_execution(
+        runtime=engine_runtimeasset.is_runtime_id(src.figure_id), overrides=src.overrides
+    )
     if wants_snapshot and execution_source:
         frozen = _execution_source(
             {
@@ -2303,6 +2315,7 @@ def _export_produce_original(job, tmp_dir: Path, *, artifact_sources=None) -> li
             )
     raster_source = source_path.suffix.lower() != ".pdf"
     page_pt = _original_page_pt(source_path, src) if raster_source else None
+    disk_source = _original_disk_source_manifest(src, source_path)
     produced: list = []
     for fmt in req.formats:
         job.check_cancelled()
@@ -2346,6 +2359,7 @@ def _export_produce_original(job, tmp_dir: Path, *, artifact_sources=None) -> li
                         width_mm=round(facts["w_pt"] * 25.4 / 72.0, 3),
                         height_mm=round(facts["h_pt"] * 25.4 / 72.0, 3),
                         vector=bool(facts["vector"]),
+                        manifest=disk_source,
                     )
                 )
             else:
@@ -2373,6 +2387,7 @@ def _export_produce_original(job, tmp_dir: Path, *, artifact_sources=None) -> li
                         width_mm=src.w_mm,
                         height_mm=src.h_mm,
                         vector=False,
+                        manifest=disk_source,
                     )
                 )
         except (engine_exportreq.ExportRequestError, engine_artifactcontext.ArtifactContextError):
@@ -2384,7 +2399,50 @@ def _export_produce_original(job, tmp_dir: Path, *, artifact_sources=None) -> li
                     format=fmt, error_code="format_failed", error_params={"error": str(exc)[:200]}
                 )
             )
+    return _keep_disk_source_only_if_unchanged(produced, src, source_path, disk_source)
+
+
+def _keep_disk_source_only_if_unchanged(
+    produced: list, src, source_path: Path, disk_source
+) -> list:
+    """转换期间原件被改写，manifest 就不能说产物出自「转换前算过 hash 的那份」：发布前再算一次，不一致就不记来源
+    （不编来源，也不让导出因此失败）。"""
+    if disk_source is None:
+        return produced
+    recorded = disk_source["provenance"]["sources"][0]["bytes_sha256"]
+    try:
+        current = engine_figcapture.hash_file(source_path)[0]
+    except OSError:
+        current = None
+    if current == recorded:
+        return produced
+    LOG.warning("原图导出期间 %s 被改写，产物 manifest 不记来源", src.figure_id)
+    for item in produced:
+        if item.manifest is disk_source:
+            item.manifest = None
     return produced
+
+
+def _original_disk_source_manifest(src, source_path: Path) -> dict | None:
+    """产物 manifest 里记「这一项实际出自哪份来源」（#1209）：这次嵌入的是磁盘原件时，给出它的 SourceArtifact。
+
+    只在 `source_path` **就是**磁盘上那份原件时才记（由脚本现画的临时 PDF 没有可被独立核对的来源回执，
+    不编一个）；经 `manifest["provenance"]` 补丁并入计划半张，不动检查器已有的页面 / 像素 / ppi 事实。
+    """
+    if engine_runtimeasset.is_runtime_id(src.figure_id):
+        return None
+    try:
+        if source_path.resolve() != safe_resolve(src.figure_id).resolve():
+            return None
+        from .rendercore import sources as rc_sources
+
+        return {
+            "provenance": {
+                "sources": [rc_sources.static_artifact(source_path, src.figure_id).to_payload()]
+            }
+        }
+    except Exception:  # noqa: BLE001 —— 记不出来源 = 不记，不让它把一次成功的导出变成失败
+        return None
 
 
 def _original_page_pt(source_path: Path, src) -> tuple[float, float]:
@@ -2989,9 +3047,57 @@ def api_export_validate():
         {
             "ok": True,
             **engine_exportjob.validate(probe),
+            **_export_route_field(req),
             **({"artifact_sources": artifact_sources} if artifact_sources else {}),
         }
     )
+
+
+def _export_route_field(req) -> dict:
+    """route 是附加事实：算不出（比如没有打开项目就查注册表）就不给，validate 本身不因此失败；前端读不到按保守口径处理。"""
+    try:
+        return {"route": _export_route(req)}
+    except Exception:  # noqa: BLE001
+        LOG.warning("export route 算不出，validate 不带 route", exc_info=True)
+        return {}
+
+
+def _panel_file_kind(rel_id: str) -> str:
+    if engine_runtimeasset.is_runtime_id(rel_id):
+        return engine_exportroute.KIND_RUNTIME
+    suffix = Path(rel_id).suffix.lower()
+    if suffix == ".pdf":
+        return engine_exportroute.KIND_PDF
+    if suffix in SVG_EXT:
+        return engine_exportroute.KIND_SVG
+    return engine_exportroute.KIND_RASTER
+
+
+def _export_route(req) -> dict:
+    """这次导出每个面板 × 每种格式的来源（`engine/exportroute.py`，只回事实）：只查注册表，不执行、不读文件。"""
+    if req.original is not None:
+        raw = [
+            {
+                "id": req.original.figure_id,
+                "overrides": req.original.overrides,
+                "has_snapshot": req.original.figure_snapshot is not None,
+            }
+        ]
+    else:
+        raw = [
+            {
+                "id": str(o.get("id", "")),
+                "overrides": o.get("overrides"),
+                "has_snapshot": o.get("figure_snapshot") is not None,
+            }
+            for o in (req.canvas.objects if req.canvas is not None else [])
+            if o.get("type") == "panel" and not o.get("hidden")
+        ]
+    panels = [
+        {**p, "file_kind": _panel_file_kind(p["id"]), "has_script": _has_runnable_script(p["id"])}
+        for p in raw
+    ]
+    return engine_exportroute.build_route(scope=req.scope, formats=req.formats, panels=panels)
 
 
 @app.get("/exports/<path:name>")
@@ -3247,6 +3353,22 @@ def sse_publish(event: str, data: dict) -> None:
             q.put_nowait((event, data))
         except queue.Full:
             pass
+
+
+@contextlib.contextmanager
+def _relay_build_progress(worker, pj: str, rel_id: str):
+    """这条渲染请求在等 build 的期间，把引擎的「日志仍在增长」转成 `render.progress`（#1207）。
+
+    前端看门狗按它续期。**等锁的重试也在这里登记**：build 线程扇出给所有订阅者，
+    所以排在同一把 `w.lock` 后面的请求同样收得到，不会因为自己没出声而再超时一次。
+    事件只带 pj + id（与 `render.preparing` 同一种关联）——build 是文件级的，没有变体维度。
+    """
+    progress = getattr(worker, "progress", None)
+    if progress is None:  # 测试替身 / 没有进度通道的 worker
+        yield
+        return
+    with progress.listen(lambda: sse_publish("render.progress", {"pj": pj, "id": rel_id})):
+        yield
 
 
 #: 此刻连着的、声明能答脚本 `input()` 的事件流（ADR 0099 §五）：流 id → 它**此刻**在看的项目 id（还没说 = None）。
@@ -6466,21 +6588,62 @@ def _source_backed_result(worker, context):
     verdict = getattr(worker, "_artifact_admission", None)
     if not isinstance(verdict, dict):
         return None
-    return {
+    out = {
         "status": verdict["status"],
         "reconstruction_sha256": verdict["reconstruction_sha256"],
         "metrics": verdict["metrics"],
     }
+    # 来源记录（ADR 0139 PR3 第一片）：**只读展示**。不进上面的任何判定，不触发换解释器，不放宽校验；
+    # 查不到 / 读不了 = 字段缺省。「这次重画」的版本取自 worker 本次构建自报的 runtime（同一份回执事实）。
+    if (origin := _origin_display(worker, context)) is not None:
+        out["origin"] = origin
+    return out
+
+
+def _origin_display(worker, context):
+    try:
+        recorded = engine_originrecord.lookup(context["bytes_sha256"], require_project())
+    except Exception:  # noqa: BLE001 - 展示线索，任何问题都当没有
+        return None
+    if recorded is None:
+        return None
+    rt = getattr(worker, "last_build_runtime", None)
+    packages = rt.get("packages") if isinstance(rt, dict) else None
+    redraw = {
+        "python_version": rt.get("python_version") if isinstance(rt, dict) else None,
+        "matplotlib_version": packages.get("matplotlib") if isinstance(packages, dict) else None,
+    }
+    return {
+        **recorded,
+        "redraw": {k: v for k, v in redraw.items() if isinstance(v, str) and v},
+    }
 
 
 def _engine_attempt(
-    rel_id: str, worker, stem: str, action, *, safe_only: bool = False, artifact_source=None
+    rel_id: str,
+    worker,
+    stem: str,
+    action,
+    *,
+    safe_only: bool = False,
+    artifact_source=None,
+    progress_pj: str | None = None,
 ):
-    """Run on the admitted source; a dependency retry carries the identical context."""
+    """Run on the admitted source; a dependency retry carries the identical context.
+
+    `progress_pj` 给了（画布渲染，#1207）就在**整次尝试**——admission + action——外登记
+    build 进度监听：带 artifact_source 的冷渲染，build 恰恰发生在 `_admit_artifact` 里。
+    换环境重试拿到的新 worker 在下一轮循环里重新登记。其它调用方没有 SSE 关联键，不传。
+    """
     for attempt in range(2):
         try:
-            _admit_artifact(worker, stem, artifact_source)
-            result = action(worker, stem)
+            with (
+                _relay_build_progress(worker, progress_pj, rel_id)
+                if progress_pj is not None
+                else contextlib.nullcontext()
+            ):
+                _admit_artifact(worker, stem, artifact_source)
+                result = action(worker, stem)
             _assert_artifact_current(artifact_source)
             execution = _svg_execution_result(worker)
             if isinstance(result, dict):
@@ -6814,6 +6977,7 @@ def api_engine_render():
                 st, body.get("patches", []), preview_dpi, inline_svg=inline_svg
             ),
             artifact_source=artifact_source,
+            progress_pj=pj,
         )
     except engine_pool.WorkerError as exc:
         LOG.error("引擎渲染失败: %s: %s", stem, exc)
@@ -8513,7 +8677,10 @@ def _agent_error(exc: "engine_ai.AgentError"):
 def api_ai_capabilities():
     """实测本机每个已注册编码 Agent（安装/版本/就绪/模型/推理强度）+ 第三方接口。"""
     refresh = request.args.get("refresh") in ("1", "true", "yes")
-    resp = jsonify(engine_ai.capabilities(refresh=refresh))
+    # `taf_enabled`（TAF 实验开关）只在这一层并入：`engine_ai.capabilities` 的缓存内容不含它，开关随时可翻
+    resp = jsonify(
+        {**engine_ai.capabilities(refresh=refresh), "taf_enabled": engine_ai_figure_edit.enabled()}
+    )
     resp.headers["Cache-Control"] = "no-store"
     return resp
 
@@ -11230,6 +11397,150 @@ def api_ai_request(request_id):
     return resp
 
 
+@app.post("/api/ai/data-figure")
+def api_ai_data_figure():
+    """TAF 数据出图（ADR 0138 Phase 5b，**实验开关后面**）：项目内的 CSV → 确定性映射 → 模板脚本**新建**进项目并登记 →
+    safe 渲染验证数据指纹。不调模型、不执行模型写的代码；同步返回任务结局（数据有上限，渲染就是随后画布本来要做的那一次）。
+
+    请求 `{data: 项目相对路径, instruction, client_request_id?}`；回 `{task, script?, stem?, summary, preview?}`。
+    `needs_input`（列名推不出含义 / x 列混了数与文字）什么都不写，`preview` 是中性的默认映射；数据问题回 400 + 稳定码。
+    指令与数据内容不进日志、不发遥测。"""
+    if not engine_ai_figure_edit.enabled():
+        return jsonify({"error": "实验功能未开启", "code": "taf_disabled"}), 404
+    ctx = current_ctx()
+    body = request.get_json(force=True) or {}
+    data_rel = str(body.get("data") or "").strip()
+    instruction = str(body.get("instruction") or "").strip()
+    rid = body.get("client_request_id")
+    if not data_rel or not instruction:
+        return jsonify({"error": "缺少数据文件或指令", "code": "data_figure_input_missing"}), 400
+    if rid is not None and not _valid_client_request_id(rid):
+        abort(400)
+    if rid:
+        # **先去重、后解析数据**（同 `/api/ai/run`）：数据文件是可变目标。首次请求已提交脚本、响应丢了，用户随后改名 /
+        # 删掉 CSV，再点「查询结果」的同 id 重发若先走 `prepare` 就是确定的 400——前端会把「未确认」翻成「失败」并放开
+        # 重发，原脚本却已经写进项目。已登记的 rid 一律直接回既有任务的结局
+        known = engine_ai.find_request(str(ctx.path.resolve()), rid)
+        if known is not None and known["status"] == engine_ai.REQUEST_SUPERSEDED:
+            return _agent_error(engine_ai.AgentError("ai_request_superseded"))
+        if known is not None:
+            sid = known["session"]
+            found = engine_ai_tasks.load(sid) or {"task_id": sid, "outcome": None, "final": None}
+            out = {"task": {**found, "deduped": True}, "summary": None}
+            recorded = _deduped_data_script(ctx.path, found.get("task_id"))
+            if recorded is not None:
+                out.update(script=recorded[0], stem=recorded[1])
+            return jsonify(out)
+    try:
+        prepared = engine_ai_data_task.prepare(ctx.path, data_rel, instruction)
+        env = engine_ai_data_task.envelope_for(
+            project_key=str(ctx.path.resolve()), prepared=prepared, instruction=instruction, rid=rid
+        )
+    except engine_ai_data_figure.DataSourceError as exc:
+        return jsonify({"error": str(exc), "code": exc.code}), 400
+    engine_ai_data_task.ensure_registered()
+    script_rel = prepared.placement.script_rel
+    executor = engine_ai_data_task.TemplateExecutor(
+        ctx.path,
+        refresh=lambda script: engine_ai.refresh_outcome(
+            lambda s: _after_ai_change(ctx, s), script, True
+        ),
+        render=lambda sha: _ai_task_hooks(ctx, script_rel, "main")["after"](sha),
+    )
+    res = engine_ai_tasks.run_task(env, executor)
+    cand = executor.candidate
+    out = {"task": res, "summary": prepared.summary.to_dict()}
+    if res.get("deduped"):
+        # 去重 = 这条请求早已执行：本次 `prepare` 算出的落点会因为文件已存在而变成 `_2`，不能用。脚本以**首次执行时
+        # 写进契约的那个**为准（历史库里的 envelope），文件此刻还在才报（没提交成功的任务没有文件）
+        recorded = _deduped_data_script(ctx.path, res.get("task_id"))
+        if recorded is not None:
+            out.update(script=recorded[0], stem=recorded[1])
+    elif cand is not None and cand.committed:
+        out.update(script=script_rel, stem=prepared.placement.stem)
+    if isinstance(prepared.plan, engine_ai_data_figure.NeedsInput) and prepared.plan.preview:
+        out["preview"] = prepared.plan.preview.to_dict()
+    return jsonify(out)
+
+
+def _deduped_data_script(root: Path, task_id) -> tuple[str, str] | None:
+    """去重响应里补上首次执行写下的脚本（项目相对路径, 文件主干）；没有 / 文件已不在 → None。"""
+    if not isinstance(task_id, str) or not task_id:
+        return None
+    row = engine_ai_history.get(task_id)
+    try:
+        rel = row["envelope"]["output_contract"]["allowed_writes"][0]
+    except (TypeError, KeyError, IndexError):
+        return None
+    if not isinstance(rel, str) or not rel:
+        return None
+    full = root / rel
+    try:
+        if (
+            full.is_symlink()
+            or not full.is_file()
+            or not full.resolve().is_relative_to(root.resolve())
+        ):
+            return None
+    except OSError:
+        return None
+    return rel, full.stem
+
+
+_DATA_FILES_MAX = 500
+#: 列表接口最多看多少个目录项（大项目里一次点击不至于无界遍历；超了就 truncated，不假装列全了）
+_DATA_FILES_SCAN_MAX = 50_000
+
+
+@app.get("/api/ai/data-files")
+def api_ai_data_files():
+    """TAF 数据出图的数据文件列表（**实验开关后面**，只读）：当前项目内的 `.csv`（后缀大小写不敏感）。
+
+    walk 剪枝与隐藏目录规则同 `discover.PRUNE_DIRS`；不跟随链接；最多 500 个，按项目相对 POSIX 路径排序；最多看
+    `_DATA_FILES_SCAN_MAX` 个目录项，超了停下并标 `truncated`。"""
+    if not engine_ai_figure_edit.enabled():
+        return jsonify({"error": "实验功能未开启", "code": "taf_disabled"}), 404
+    root = require_project()
+    found: list[tuple[str, int]] = []
+    truncated = False
+    seen = 0
+    stack = [str(root)]
+    # 手写栈 + scandir 逐项迭代：每看一项计一次数，到预算立刻停（`os.walk` 会先把整个目录枚举完才让我们数）；
+    # 已收集的保留。剪枝规则不变：隐藏目录、PRUNE_DIRS、不跟随链接、跳过链接文件
+    while stack and not truncated:
+        cur = stack.pop()
+        try:
+            it = os.scandir(cur)
+        except OSError:
+            continue
+        with it:
+            for entry in it:
+                seen += 1
+                if seen > _DATA_FILES_SCAN_MAX:
+                    truncated = True
+                    break
+                name = entry.name
+                try:
+                    if entry.is_symlink():
+                        continue
+                    if entry.is_dir(follow_symlinks=False):
+                        if not name.startswith(".") and name not in engine_discover.PRUNE_DIRS:
+                            stack.append(entry.path)
+                        continue
+                    if not name.lower().endswith(".csv") or name.startswith("."):
+                        continue
+                    size = entry.stat(follow_symlinks=False).st_size
+                except OSError:
+                    continue
+                found.append((Path(entry.path).relative_to(root).as_posix(), size))
+    found.sort()
+    if len(found) > _DATA_FILES_MAX:
+        found, truncated = found[:_DATA_FILES_MAX], True
+    resp = jsonify({"files": [{"path": p, "size": n} for p, n in found], "truncated": truncated})
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
 # --- 助手草稿与待确认账本（ADR 0132）：存后端（data_dir 的 ai_history 库），不存浏览器 -----------------
 # 主语是 (当前项目, fileId[, rid])；全部过会话认证（ADR 0008）与 `require_project` 隔离。
 # 文本是用户的指令原文：**不写日志、不发遥测、不进诊断包**——这些端点的 LOG 里只有项目无关的计数，没有文本。
@@ -11447,6 +11758,28 @@ def api_ai_history_delete(sid):
 def api_ai_history_pin(sid):
     body = request.get_json(force=True)
     return jsonify({"ok": engine_ai_history.set_pinned(sid, bool(body.get("pinned")))})
+
+
+@app.get("/api/ai/sessions/changes")
+def api_ai_session_changes():
+    """当前项目里版本号 > `since` 的会话（#1115）：断线 / 切项目 / 刷新的间隙里结束的任务，客户端凭水位对账补回。
+    不带 `since` = 只要此刻的水位（`sessions: []`），客户端用它做起点。事实以这里为准，`ai.*` 事件只是"该来拉一次"的提示。
+    认证与项目隔离同其它 `/api/ai/*`（别的项目的行不返回）。"""
+    project = str(require_project().resolve())
+    raw = request.args.get("since")
+    if raw is None or raw == "":
+        data = {"head": engine_ai_history.head_rev(), "more": False, "sessions": []}
+    else:
+        try:
+            since = int(raw)
+        except ValueError:
+            abort(400)
+        if since < 0:
+            abort(400)
+        data = engine_ai.changes(project, since)
+    resp = jsonify(data)
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
 
 
 @app.get("/api/ai/sessions/<sid>")
@@ -12802,9 +13135,8 @@ def _versions_path(doc_id: str) -> Path:
 def _versions_source_path(doc_id: str) -> Path | None:
     """时间线**此刻实际会读哪个文件**；两个候选都不在就是 `None`。
 
-    读侧（`_load_versions`）与写入侧那道闸（`_refuse_blind_full_overwrite`）
-    共用这一份，**不许各写一份**：两处对「读的是哪个文件」答得不一样的话，
-    闸门量的就是另一个文件的存在性，而它照样是绿的（判据的主语滑走了）。
+    旧单文件的读（`_LegacyTimeline`）与迁移（`_timeline_for_write`）共用这一份，
+    **不许各写一份**：两处对「读的是哪个文件」答得不一样的话，迁走的就不是用户看到的那份。
     """
     p = _versions_path(doc_id)
     if p.is_file():
@@ -12813,6 +13145,11 @@ def _versions_source_path(doc_id: str) -> Path | None:
     # 版本文件时继续可见；一旦保存过新版本，就以项目里的为准
     legacy = VERSIONS_DIR / p.name
     return legacy if legacy.is_file() else None
+
+
+# 旧单文件的读写器 `_load_versions` / `_save_versions`：D2 起**产品代码不再调用**——读走
+# `versionstore.read_legacy_versions`（与迁移同一套校验），写一律走新存储。留作迁移对拍的参照与
+# 测试造旧文件、模拟「回滚后的旧程序」用（ADR 0140 §四）；D3 清理。
 
 
 def _load_versions(doc_id: str) -> list[dict]:
@@ -12835,54 +13172,6 @@ def _load_versions(doc_id: str) -> list[dict]:
     except ValueError:
         return []
     return data.get("versions", []) if isinstance(data, dict) else []
-
-
-def _refuse_blind_full_overwrite(doc_id: str):
-    """空历史 + 整份写回之前的最后一道闸：拒了就回 409，放行回 `None`。
-
-    **判据的主语是磁盘上那个文件此刻装着什么，不是 `_load_versions` 读出来
-    是不是空的。** 这两件事正是 issue #264 的分界线：`_load_versions` 把
-    「截断 / 乱码 / 不是 JSON」静默折成 `[]`（那一档今天仍然折——读侧要连
-    旧坏文件的出路一起改，不在这一轮），于是 `api_versions_create` 在一个
-    看起来是空的历史上追加一条、`_save_versions` **整份写回**，用户之前
-    全部的检查点当场没了，而且是原子写，干干净净地没了。
-    只问「读出来是不是空的」的闸永远拦不住它——它读出来确实是空的。
-
-    「历史是空的」只有两种正当来路，这里**枚举**它们，不给新形状开白名单：
-
-    * 磁盘上根本没有这份历史（`None`）——第一次建版本，最常走的那条路。
-      整份写回不会盖掉任何东西，**行为一个字不变**。
-    * 文件在，而它装的确实是一份空历史（`{"versions": []}`，正是
-      `_save_versions` 在用户把最后一版删光之后写下的形状）。
-
-    除此之外——读不动、不是 JSON、不是对象、没有 `versions` 键——一律拒绝：
-    文件在那儿却读不出一个版本列表，说明**读侧出了问题**，此时整份写回就是
-    在拿一份读不懂的历史换一条新记录。按写回事务不变式：409，原文件零改动
-    （这条路上一个 `_save_versions` 都不会被调到）。
-
-    下一个人很容易顺手把它简化成「`versions` 为空就放行」——那正是这条 bug。
-    """
-    src = _versions_source_path(doc_id)
-    if src is None:
-        return None
-    try:
-        data = engine_documents.loads_document(src.read_bytes())
-    except engine_documents.DocumentError:
-        raise  # 非有限数那一档由 `_load_versions` 先抛掉，走不到这里；抛也别吞
-    except (OSError, ValueError):
-        data = None
-    # 「键在且是空列表」——`{}`（没有 versions 键）与 `{"versions": {}}` 都
-    # 不是 `_save_versions` 写得出的形状，它们和乱码同属「内容坏了」。
-    if isinstance(data, dict) and data.get("versions") == []:
-        return None
-    LOG.warning("版本时间线读不出来，已拒绝整份写回（原文件未动）: %s", src)
-    return jsonify(
-        {
-            "error": "这份排版的版本历史读不出来，这次的检查点没有写入——"
-            "磁盘上那份历史一个字节都没动，仍在原处。",
-            "code": "versions_unreadable",
-        }
-    ), 409
 
 
 def _version_policy(metas: list[dict], keep_id: str | None = None) -> list[dict]:
@@ -13248,9 +13537,10 @@ def _sketch_limits() -> tuple[int, int]:
 
 # ---- 时间线后端：旧单文件 / 新存储（ADR 0140）----
 # 端点只和 `_Timeline` 打交道，不关心历史躺在 `<doc_id>.json` 还是 `<doc_id>.vx/`。
-# **读**：新存储是权威（`has_store`），否则读旧文件。**写**：D1b 起新存储已存在就写它
-# （读写必须落在同一边，否则写了读不到）；没有新存储的文档仍整份写旧单文件，字节与以前一致。
-# 全部在 `_versions_lock(doc_id)` 内调用写方法；裁剪两边共用 `_version_policy`。
+# **读**：新存储是权威（`has_store`），否则读旧文件，读不写盘。**写**（D2）：版本锁内
+# `_timeline_for_write` 先把旧文件迁进新存储（旧文件冻结不改），之后一律写新存储；
+# 迁移中断下次写入重跑到一致；旧文件读不出来（#264）开一份空历史、旧文件原样保留，
+# 不再 409 卡死。裁剪两边共用 `_version_policy`。
 
 
 @app.errorhandler(engine_versionstore.IndexUnreadable)
@@ -13281,13 +13571,21 @@ class _Timeline:
 
 
 class _LegacyTimeline(_Timeline):
-    """旧单文件：读整份、改内存列表、整份写回（`_save_versions`）。"""
+    """尚未迁移的旧单文件：**只读**（读与迁移用同一套校验，迁移前后看到的历史一致）。"""
 
     store = False
 
     def __init__(self, doc_id: str):
         super().__init__(doc_id)
-        self.versions = _load_versions(doc_id)
+        self.source = _versions_source_path(doc_id)
+        self.versions: list[dict] = []
+        self.unreadable: dict | None = None
+        if self.source is not None:
+            try:
+                self.versions = engine_versionstore.read_legacy_versions(self.source)
+            except engine_versionstore.LegacyUnreadable:
+                # 旧文件在而读不出来（#264）：列表是空的，但告诉调用方「旧历史还在、可恢复」
+                self.unreadable = _legacy_unreadable_mark(self.source)
 
     def entries(self) -> list[dict]:
         return self.versions
@@ -13298,57 +13596,24 @@ class _LegacyTimeline(_Timeline):
     def get(self, vid: str) -> dict | None:
         return next((v for v in self.versions if v["id"] == vid), None)
 
-    def last(self) -> dict | None:
-        return self.versions[-1] if self.versions else None
-
-    def empty_refusal(self):
-        """空历史上追加会整份写回——先过 `_refuse_blind_full_overwrite`（#264）。"""
-        return None if self.versions else _refuse_blind_full_overwrite(self.doc_id)
+    def legacy_unreadable(self) -> dict | None:
+        return self.unreadable
 
     def budget(self) -> dict:
-        src = _versions_source_path(self.doc_id)
         try:
-            size = src.stat().st_size if src is not None else 0
+            size = self.source.stat().st_size if self.source is not None else 0
         except OSError:
             size = None
         return _versions_budget(self.versions, size)
 
-    def entry_bytes(self, vid: str, changes: dict | None = None) -> int:
-        """这一条在时间线里占的字节（`changes` 并入之后的），即 `dumps_json` 的长度。"""
-        v = self.get(vid)
-        return len(engine_atomicio.dumps_json({**v, **(changes or {})}))
 
-    def named_bytes(self, *, replace: tuple[str, dict] | None = None, extra: dict | None = None):
-        """假如 `replace=(vid, changes)` 并入、`extra` 追加之后，命名节点共占多少字节。"""
-        total = 0
-        for v in self.versions:
-            if replace is not None and v.get("id") == replace[0]:
-                v = {**v, **replace[1]}
-            if _is_named(v):
-                total += len(engine_atomicio.dumps_json(v))
-        if extra is not None and _is_named(extra):
-            total += len(engine_atomicio.dumps_json(extra))
-        return total
-
-    def append(self, ver: dict) -> None:
-        self.versions.append(ver)
-        _save_versions(self.doc_id, self.versions)
-
-    def update(self, vid: str, changes: dict) -> dict | None:
-        v = self.get(vid)
-        if v is None:
-            return None
-        v.update(changes)
-        # 取消命名 / `auto` 开关会让某一档越过条数上限：照样裁，但不裁这一条
-        _save_versions(self.doc_id, self.versions, keep=v)
-        return v
-
-    def delete(self, vid: str) -> bool:
-        kept = [v for v in self.versions if v["id"] != vid]
-        if len(kept) == len(self.versions):
-            return False
-        _save_versions(self.doc_id, kept)
-        return True
+def _legacy_unreadable_mark(src: Path) -> dict:
+    """列表响应里「旧历史读不出来但还在」的标记：只有文件名与大小，**不暴露绝对路径**。"""
+    try:
+        size = src.stat().st_size
+    except OSError:
+        size = None
+    return {"name": src.name, "size": size}
 
 
 class _StoreTimeline(_Timeline):
@@ -13384,9 +13649,6 @@ class _StoreTimeline(_Timeline):
             return self.get(self.idx["entries"][-1]["id"])
         except engine_versionstore.EnvelopeCorrupt:
             return None  # 最近一版读不出来：不拿它去重，照常建新的
-
-    def empty_refusal(self):
-        return None  # 新存储不整份写回：追加只多一个信封，盖不掉别的东西
 
     def legacy_unreadable(self) -> dict | None:
         """索引里记着「迁移时旧文件读不出来」→ 给列表一个可恢复的标记（只有文件名与大小）。"""
@@ -13486,11 +13748,31 @@ class _StoreTimeline(_Timeline):
 
 
 def _open_timeline(doc_id: str) -> _Timeline:
-    """新存储在 → 它是权威；否则旧单文件（含升级前 `layouts/_versions/` 里的那份）。"""
+    """读：新存储在 → 它是权威；否则旧单文件（含升级前 `layouts/_versions/` 里的那份）。不写盘。"""
     path = _versions_path(doc_id)
     if engine_versionstore.has_store(path.parent, path.stem):
         return _StoreTimeline(doc_id)
     return _LegacyTimeline(doc_id)
+
+
+def _timeline_for_write(doc_id: str) -> _StoreTimeline:
+    """写：**版本锁内**调用。旧文件迁进新存储（冻结，从不改）后返回新存储。
+
+    * 没有新存储：整份迁移（崩在中途下次写入重跑，读侧在索引提交前一直以旧文件为权威）；
+    * 已迁移而旧文件被回滚后的旧程序追加过：把迁移点之后新增的条目按 id 去重导入；
+    * 旧文件读不出来（#264）：开一份空历史，旧文件原样留着，索引记着 `legacy_unreadable`。
+      已有新存储时旧文件再坏也不动新存储。"""
+    path = _versions_path(doc_id)
+    src = _versions_source_path(doc_id)
+    if src is not None:
+        now = int(time.time())
+        try:
+            engine_versionstore.migrate_legacy(
+                path.parent, path.stem, src, now=now, policy=_version_policy
+            )
+        except engine_versionstore.LegacyUnreadable:
+            engine_versionstore.init_empty(path.parent, path.stem, now=now, legacy_path=src)
+    return _StoreTimeline(doc_id)
 
 
 @app.get("/api/versions/<doc_id>")
@@ -13511,9 +13793,38 @@ def api_versions_list(doc_id):
                 meta["sketch"] = sketch
         out.append(meta)
     body = {"versions": out, "budget": tl.budget()}
-    if tl.store and tl.legacy_unreadable() is not None:
+    if tl.legacy_unreadable() is not None:
         body["legacy_unreadable"] = tl.legacy_unreadable()
     return jsonify(body)
+
+
+@app.post("/api/versions/<doc_id>/rebuild")
+def api_versions_rebuild(doc_id):
+    """显式修复：从信封文件重建这份文档的版本索引（ADR 0140 §八）。
+
+    给「同步工具留下了冲突副本 / 索引与信封对不上」用。版本锁内执行，与追加 / 改名 / 删除串行；
+    只读信封、写新索引，**不删任何文件**——旧索引的原字节先留成 `index.corrupt-<sha>.json`。
+    副作用要让用户知道：已被删除 / 裁掉但信封还在的版本会复活（`added`），信封已经没了的条目会消失（`dropped`）。
+    没有新存储（还在旧单文件上）→ 404；索引读不动 / 来自更新的格式 → 409 `versions_unreadable`，零改动。"""
+    path = _versions_path(doc_id)
+    with _versions_lock(doc_id):
+        if not engine_versionstore.has_store(path.parent, path.stem):
+            abort(404)
+        # 先过一遍读侧：读不动 / 未来格式在这里抛 IndexUnreadable，绝不被重建降级覆盖
+        before = engine_versionstore.list_index(path.parent, path.stem) or {"entries": []}
+        idx = engine_versionstore.rebuild_index(
+            path.parent, path.stem, now=int(time.time()), write=True
+        )
+    old_ids = [e["id"] for e in before["entries"]]
+    new_ids = [e["id"] for e in idx["entries"]]
+    return jsonify(
+        {
+            "ok": True,
+            "count": len(new_ids),
+            "added": [i for i in new_ids if i not in old_ids],
+            "dropped": [i for i in old_ids if i not in new_ids],
+        }
+    )
 
 
 @app.get("/api/versions/<doc_id>/<vid>")
@@ -13561,14 +13872,8 @@ def api_versions_create(doc_id):
     if body.get("canvasName"):
         ver["canvasName"] = str(body["canvasName"])
     with _versions_lock(doc_id):
-        tl = _open_timeline(doc_id)
+        tl = _timeline_for_write(doc_id)
         ver["id"] = _fresh_version_id(tl.entries())
-        # 空历史是唯一一条「整份写回会把别人的东西盖掉」的路（rename / duplicate /
-        # delete 在空列表上都先 404，一个 `_save_versions` 都走不到）。闸在锁里：
-        # 判据与写入之间放开一瞬，就够另一个请求在这中间落盘。
-        refusal = tl.empty_refusal()
-        if refusal is not None:
-            return refusal
         # 自动检查点若与最近一版内容相同则跳过（刷新/空转不该刷版本）。
         # 关键时刻**不跳过**：「导出成功」那一刻内容没变也是一件发生过的事，
         # 它的标记正是用户要找的东西（ADR 0101）。
@@ -13594,7 +13899,7 @@ def api_versions_create(doc_id):
 def api_versions_rename(doc_id, vid):
     body = request.get_json(force=True)
     with _versions_lock(doc_id):
-        tl = _open_timeline(doc_id)
+        tl = _timeline_for_write(doc_id)
         v = next((e for e in tl.entries() if e["id"] == vid), None)
         if v is None:
             abort(404)
@@ -13636,7 +13941,7 @@ def api_versions_rename(doc_id, vid):
 @app.post("/api/versions/<doc_id>/<vid>/duplicate")
 def api_versions_duplicate(doc_id, vid):
     with _versions_lock(doc_id):
-        tl = _open_timeline(doc_id)
+        tl = _timeline_for_write(doc_id)
         v = tl.get(vid)
         if v is None:
             abort(404)
@@ -13661,7 +13966,7 @@ def api_versions_duplicate(doc_id, vid):
 @app.delete("/api/versions/<doc_id>/<vid>")
 def api_versions_delete(doc_id, vid):
     with _versions_lock(doc_id):
-        if not _open_timeline(doc_id).delete(vid):
+        if not _timeline_for_write(doc_id).delete(vid):
             abort(404)
     return jsonify({"ok": True})
 

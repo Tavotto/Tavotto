@@ -2,6 +2,7 @@ import { classifyArtifactFailure } from '@/lib/artifactReason'
 import { ArtifactValidationError, FIGSIZE_SOURCE_POLICY, verifiedSource, type ArtifactRequestFields } from '@/lib/artifactValidation'
 import { apiUrl, apiUrlFor, currentProjectId, withProject, withProjectFor } from '@/lib/session'
 import { formatMessage, i18n, literal, msg, t, type UiMessage } from '@/i18n'
+import type { ExportRoute } from '@/lib/exportRoute'
 import type { FigureDocument, FigureSnapshot, ProjectDocument } from '@/types/document'
 import type { ManifestFrame } from '@/lib/figureFrame'
 import type { PreviewMetadata } from '@/lib/previewBudget'
@@ -259,7 +260,9 @@ export function engineErrorMsg(err: unknown): UiMessage {
       i18n.getResource(i18n.language, 'errors', `backend.${err.code}`) ?? '',
     )
     if (detail || !template.includes('{{error}}')) {
-      return msg(`backend.${err.code}`, { error: detail }, 'errors')
+      // 结构化 params（错误转换合同 `pool.recovery_params`，如 TeX 缺的命令 / 文件）一并给文案；
+      // `error` 永远是 traceback 末行，不让 params 里的同名键盖掉
+      return msg(`backend.${err.code}`, { ...(err.params ?? {}), error: detail }, 'errors')
     }
   }
   return literal(err instanceof Error ? err.message : String(err))
@@ -850,8 +853,6 @@ export async function fetchLayout(name: string): Promise<FetchedLayout> {
 }
 
 export interface SavedLayout {
-  /** Layout saved, but these exact source edits have no durable SVG snapshot. */
-  svg_snapshot_warnings?: string[]
   /** Complete verified snapshot map for candidate panel object IDs; absent means old backend. */
   figure_snapshots?: Record<string, FigureSnapshot>
   ok: boolean
@@ -923,8 +924,6 @@ export const REVISION_ABSENT = 'absent'
  * `owner_unknown` = 这次请求的项目身份已失效，归属没记。旧后端不发 = `undefined`（不知道，不当 `ok`）。
  */
 export interface PutAutosaveResult {
-  /** Nonblocking source snapshot warnings; the layout body was saved successfully. */
-  svg_snapshot_warnings?: string[]
   /** Complete verified snapshot map for candidate panel object IDs; absent means old backend. */
   figure_snapshots?: Record<string, FigureSnapshot>
   ok: boolean
@@ -1371,6 +1370,11 @@ export interface LayoutVersionMeta {
   moment?: LayoutMoment
   /** 有缩略图时是它的格式（`/api/versions/<id>/<vid>/thumb`）；没有就缺席 */
   thumb?: 'webp' | 'png'
+  /**
+   * 新存储里这一版的信封读不出来（ADR 0140）：只赔掉这一条，别的版本照常。
+   * 本版本只认下这个字段、不画专门的 UI；行为不变——点它取正文会收到 `versions_unreadable`。
+   */
+  damaged?: boolean
   description: string
   objects: number
   page?: { w: number; h: number }
@@ -1481,7 +1485,15 @@ export const fetchTimeline = (
   sketch?: { objects: number; textChars: number },
 ) => {
   const q = sketch ? `?sketch=${sketch.objects}&sketchText=${sketch.textChars}` : ''
-  return jsonFetch<{ versions: LayoutVersionMeta[]; budget?: TimelineBudget }>(
+  return jsonFetch<{
+    versions: LayoutVersionMeta[]
+    budget?: TimelineBudget
+    /**
+     * 旧时间线文件读不出来（#264）：后端已开一份空历史、旧文件原样保留。只有文件名与大小，
+     * 没有路径。本版本只认下字段、不画 UI（也不据此删任何东西）。
+     */
+    legacy_unreadable?: { name: string; size: number | null }
+  }>(
     `/api/versions/${encodeURIComponent(docId)}${q}`,
   )
 }
@@ -1972,6 +1984,8 @@ export const cancelExport = (jobId: string) =>
   })
 
 export interface ExportValidation {
+  /** 每个面板 × 每种格式的来源（后端 `engine/exportroute.py`）；旧后端 / 算不出时缺 */
+  route?: ExportRoute
   artifact_sources?: Record<string, unknown>
   ok: boolean
   /** 会撞上的已有文件名 */
@@ -2751,6 +2765,9 @@ export async function engineSpecfix(
       (body.traceback as string) || '',
       (body.code as string) || '',
       (body.module as string) || '',
+      undefined,
+      undefined,
+      { params: body.params as Record<string, unknown> | undefined },
     )
   }
   // 形状不对 = 没拿到（代理页、别的服务占了端口、半截的响应），不是「修好了」
@@ -3026,6 +3043,8 @@ export interface AiCapabilities {
   presets: AiEndpointPreset[]
   /** 上次探测完成的时刻（毫秒；与 AiHistoryEntry 的 *_ms 同一约定） */
   checked_at_ms: number
+  /** TAF 实验开关（`ai.taf.enabled`）是否开着；老后端没有，缺省 = 关。助手面板的「从数据出图」只在它为真时出现 */
+  taf_enabled?: boolean
 }
 
 /* --- capabilities 的读取助手（前端只认后端返回的 Agent，不自己列名单）--- */
@@ -3332,7 +3351,56 @@ export interface AiTaskSummary {
   phase?: 'correcting' | null
   /** 收尾时：自动修正了几轮（0 = 一次就过了检查）；老后端没有 */
   corrections?: number
+  /** 数据出图（`data_to_figure`）：新建的脚本（项目相对路径）；没写回（needs_input / failed）时没有 */
+  script?: string
+  /** 数据出图 needs_input：后端给的中性默认映射（x / y 列名），用来举例，不当结论 */
+  preview?: AiDataFigurePreview
 }
+
+/** 数据出图的默认映射预览（`ai_data_figure.NeedsInput.preview.to_dict()`）；只读展示 */
+export interface AiDataFigurePreview {
+  x?: string
+  y?: string[]
+  [k: string]: unknown
+}
+
+/** 项目内一份可选的 CSV 数据文件（`GET /api/ai/data-files`） */
+export interface AiDataFile {
+  /** 项目相对 POSIX 路径 */
+  path: string
+  size: number
+}
+
+/** `POST /api/ai/data-figure` 的回应：`task` 是任务结局（同 `ai.done` 里的 task） */
+export interface AiDataFigureResult {
+  task: {
+    task_id?: string
+    outcome: AiTaskSummary['outcome']
+    verification?: { unmet?: { constraint_id: string; reason_code: string }[]; [k: string]: unknown }
+    error?: string | null
+    deduped?: boolean
+    [k: string]: unknown
+  }
+  script?: string
+  stem?: string
+  summary?: Record<string, unknown>
+  preview?: AiDataFigurePreview
+}
+
+/** 项目内的 CSV 列表（只读；开关关着 404 `taf_disabled`）。`pj`：发起那一刻的项目，钉住不跟着此刻的项目走 */
+export const aiDataFiles = (pj?: string | null) =>
+  jsonFetch<{ files: AiDataFile[]; truncated: boolean }>('/api/ai/data-files', undefined, pj)
+
+/** 从数据出图：同步回任务结局。数据问题 400 + 稳定 code（`ApiError.body.code`），文案走 `backendErrorMsg` */
+export const aiDataFigure = (
+  body: { data: string; instruction: string; client_request_id?: string },
+  pj?: string | null,
+) =>
+  jsonFetch<AiDataFigureResult>(
+    '/api/ai/data-figure',
+    { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) },
+    pj,
+  )
 
 /** 会话详情（转录 + diff）；查询到已登记的会话后补全界面用 */
 export interface AiSessionDetail {
@@ -3358,6 +3426,42 @@ export interface AiSessionDetail {
 }
 export const fetchAiSession = (sid: string, pj: string | null) =>
   jsonFetch<AiSessionDetail>(`/api/ai/sessions/${encodeURIComponent(sid)}`, undefined, pj)
+
+/**
+ * 增量对账里的一个会话（`GET /api/ai/sessions/changes`）：判终态 + 建只读占位的摘要列，**不含**转录 / diff / refresh——
+ * 终态详情仍用 `fetchAiSession`（后端 `CHANGE_DTO_KEYS`，不是第二份 DTO 权威）。
+ */
+export interface AiSessionChange {
+  id: string
+  /** 这个会话最后一次写的版本号（全表单调） */
+  rev: number
+  status: string
+  /** 与会话详情同一个判据：`_pump` 收尾（changed / diff / refresh 都确定）之后才为 true */
+  final: boolean
+  changed: boolean
+  error: string | null
+  started_ms: number
+  ended_ms: number | null
+  client_request_id: string | null
+  provider: AiAgentId
+  scope: string | null
+  target: string | null
+  /** AI 面板发起的会话都有脚本；没有 = TAF 任务等不进助手面板的会话 */
+  script: string | null
+  prompt: string
+  cancel_requested: boolean
+}
+
+/**
+ * 项目里版本号 > `since` 的会话（#1115）。`since` 为 `null` = 只要此刻的水位（起点）。
+ * 回 `head`：下一次的水位（全局版本号；`more` 为真时只推进到本页最后一行）。
+ */
+export const fetchAiChanges = (since: number | null, pj: string | null) =>
+  jsonFetch<{ head: number; more: boolean; sessions: AiSessionChange[] }>(
+    `/api/ai/sessions/changes${since === null ? '' : `?since=${since}`}`,
+    undefined,
+    pj,
+  )
 
 /**
  * 发送失败是不是「后端明确拒绝」：有 HTTP 响应，且 4xx、或 5xx 但带着我们自己的稳定 `code`
@@ -3446,6 +3550,7 @@ interface ProjectScoped {
 export type ServerEvent =
   | ({ kind: 'figure.snapshot_invalidated'; pj: string } & FigureSnapshotInvalidation)
   | ({ kind: 'render.preparing'; id: string } & ProjectScoped)
+  | ({ kind: 'render.progress'; id: string } & ProjectScoped)
   | ({ kind: 'render.started'; id: string; cost?: string; cold?: boolean } & ProjectScoped)
   | ({ kind: 'render.done'; id: string; rev?: number } & ProjectScoped)
   | ({ kind: 'render.failed'; id: string; error?: string } & ProjectScoped)
@@ -3581,6 +3686,8 @@ export type ServerEvent =
       refresh?: AiRefreshOutcome
       /** 任务结局（TAF）；与 `status` 分开记，老后端没有这个字段 */
       task?: AiTaskSummary
+      /** 这条终态事实在历史库里的版本号（#1115）：只是"该去对账了"的提示，事实以 `fetchAiChanges` 为准；老后端没有 */
+      rev?: number | null
     } & ProjectScoped)
 
 /**
@@ -3601,6 +3708,7 @@ export interface AiRefreshOutcome {
 const EVENT_KINDS = [
   'figure.snapshot_invalidated',
   'render.preparing',
+  'render.progress',
   'render.started',
   'render.done',
   'render.failed',

@@ -410,3 +410,23 @@ def test_date_axis_ignores_a_configured_epoch(tmp_path):
     flat = tuple(c for pt in got["xy"] for c in pt)
     ((_, _, want, shape),) = adf.plotted_data(s, m).series
     assert adf.digest(flat, shape) == adf.digest(want, shape)
+
+
+def test_every_raised_data_error_code_is_registered():
+    """`DataSourceError` 的码表是前端文案的出处：未登记的码构造时当场抛；源码里字面量抛出的每个码都在表里。"""
+    with pytest.raises(ValueError):
+        adf.DataSourceError("not_a_registered_code")
+    src = Path(adf.__file__).parent
+    raised = set()
+    for name in ("ai_data_figure.py", "ai_data_task.py"):
+        tree = ast.parse((src / name).read_text(encoding="utf-8"))
+        for n in ast.walk(tree):
+            if (
+                isinstance(n, ast.Call)
+                and getattr(n.func, "attr", getattr(n.func, "id", None)) == "DataSourceError"
+                and n.args
+                and isinstance(n.args[0], ast.Constant)
+            ):
+                raised.add(n.args[0].value)
+    assert len(raised) >= 10, raised
+    assert raised <= set(adf.ERROR_CODES), raised - set(adf.ERROR_CODES)

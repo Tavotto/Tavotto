@@ -62,7 +62,7 @@
 - **打开 = 备包，发送 = 确认。** `components/settings/DiagnosticsSendDialog.tsx`：打开时只 `prepareDiagSend`（载荷现采，同导出），列「将发送的内容」类别、大小、保留期，
   「保存这份诊断包」取的是备好的**同一份**字节（按 id，不重新生成）；点「发送」才 `startDiagSend`。关窗 / 卸载 = `discardDiagSend`（发送中等于取消）；备包响应晚于关窗到达也要丢弃。
   未确认 / 关窗 / 取消时 `startDiagSend` 调用次数为 0（`DiagnosticsSendDialog.test.tsx`）。**不许**把说明文字、报告编号以外的任何东西放进遥测。
-- **布局不跳（#797）。** 入口行是「诊断报告」组的最后一行；对话框页脚两颗按钮始终在原位只换字 / disabled；状态文字住在页脚左侧、与按钮同一行（Dialog `footer.start` 槽，固定 `h-8`、最多两行、超出截断，完整文字在 `title`），不为它预留大块空白——收起态对话框紧凑（e2e 量高度；2026-10-19 说明框在前之后上限 500px），异步结果只换这一格里的字，e2e 量发送前后「发送」按钮坐标不变。
+- **布局不跳（#797）。** 设置页「诊断报告」组自上而下（2026-10-21 起）：发送问题反馈 / 诊断摘要 / 联系维护者（仅中文）/ 诊断包（`DiagnosticsSettingsSend.test.tsx` 钉首尾）；对话框页脚两颗按钮始终在原位只换字 / disabled；状态文字住在页脚左侧、与按钮同一行（Dialog `footer.start` 槽，固定 `h-8`、最多两行、超出截断，完整文字在 `title`），不为它预留大块空白——收起态对话框紧凑（e2e 量高度；2026-10-19 说明框在前之后上限 500px，2026-10-21 三个额外内容框移出折叠区后放宽到 760px），异步结果只换这一格里的字，e2e 量发送前后「发送」按钮坐标不变。
   发送中 `blockDismiss`，Esc = 取消发送；取消回到可编辑表单并说明「没有发送」。
 - **失败文案与引擎同源。** `settings.diagnostics.send.failure.*` 的键集 = `engine/diagsend.py` 的 `FAILURES`；问题类型 `category.*` = `CATEGORIES`（服务端契约闭集）；
   `kind.*` ⊇ `ENTRY_KINDS` 的值。三条都由 `DiagnosticsSendDialog.test.tsx` 读 Python 源码对拍；码不认识时按 `unexpected_response` 说，不空白。
@@ -93,8 +93,8 @@
 - **焦点面板的顺序**（#1012 1）：没有正在编辑的面板时，`overrides[0]` 必须是主选（最后选中的面板），其余按文档顺序——引擎拿它当焦点面板去探环境。
   `main.tsx` 里 `installConsoleCapture()` 越早装越好；包装函数**吞掉自身所有异常**且一定调用原方法，幂等、可卸载。
 - **detail 里还有**：显示环境（缩放 / 窗口 / 屏幕 / 语言 / 主题）、壳信息（Tauri `getVersion` / `getTauriVersion`、UA 里的 WebView 版本；`lib/desktop.ts` 的 `getUpdateOutcome()` 记本窗口会话内最近一次检查 / 安装的结果：来源 mirror/github、稳定码、attempts，没发生过 = 引擎写 unknown）、正在编辑（没有就取选中）面板的 overrides 热态至多 3 张。
-- **三个复选框**（`DiagnosticsSendDialog`，在折叠的「查看详情」里）：**默认不勾、不记忆**——每次打开（以及切项目）从全不勾开始；勾选变化 = 内容变了 = 推进 epoch 重新备包（旧包 `discardDiagSend`，新包换新 `client_request_id`），用 `keepForm` 让这次重备不清掉已填的类型与说明；备包中 / 发送中复选框 disabled。
-  折叠里还有「包内文件（N 个）」逐项清单（路径 + 大小）与一句「因体积被截短」说明；默认可见仍只有一句话 + 发送 + 关闭。
+- **三个复选框**（`DiagnosticsSendDialog`，2026-10-21 起**不折叠**、排在表单最上面紧跟副标题那一句，标题行右侧一枚「全选 / 全不选」切换 `data-diag-send-extras-all`；各框的风险短句留在各自下面；beta 0.19.0b1 反馈：埋在「查看内容」里要滚才看得到）：**默认不勾、不记忆**——每次打开（以及切项目）从全不勾开始；勾选变化 = 内容变了 = 要换一份包，但**点击即时生效、不等后端**（beta 0.19.0b1 反馈：每点一个框卡一下——原先每次勾选都推进 epoch，整个对话框回到「正在准备」、表单全禁用、同步等一次备包往返）：框的状态本地立刻更新，换包走 300 ms 防抖的静默刷新（`scheduleRefresh`：不回「正在准备」、不禁用表单与框、不清已填内容；`refreshSeq` 请求序号只认最新一次，旧响应丢弃并 `discardDiagSend`）；刷新期间只有「发送」「保存」暂不可用。调度刷新即把「已保存」复位（磁盘上只有旧包）；最新一次刷新收到 `diag_stale_prepare` 时重试一次，再 stale 就按失败作废（`prepareFailed`），不得无条件 return 把 `refreshing` 卡死。发送中框 disabled。
+  折叠的「查看内容」里仍有「将发送的内容」类别、「包内文件（N 个）」逐项清单（路径 + 大小）与一句「因体积被截短」说明；默认可见 = 副标题一句 + 三个框（含一键全选）+ 说明框 + 问题类型 + 一行附件 + 发送 + 关闭。
 - 文案键 `settings.diagnostics.send.{kind.detail_*, extra.*, extraHint.*, short.*, filesTitle, truncated}`；`short.*` 的键集 = `diagdetail.PRIORITY`，`extra.*` = `OPTION_KEYS`（`DiagnosticsSendDialog.test.tsx` 读 Python 源码对拍）。
 - 看护：`diagnostics/detail.test.ts`、`DiagnosticsSendDialog.test.tsx`「诊断包扩充」一组。
 

@@ -189,7 +189,7 @@ export function DemoLegendStep() {
       <FigureBoundary>
         <FigureStage
           ref={stage}
-          className="mx-auto w-full max-w-[900px] flex-1 px-6 pt-5 pb-1 [@media(min-height:760px)]:max-h-[540px]"
+          className="mx-auto w-full max-w-[900px] flex-1 px-6 pt-8 pb-1 [@media(min-height:760px)]:max-h-[540px]"
           frameClassName="rounded-xs inset-ring inset-ring-border"
           overlay={
             guiding ? (

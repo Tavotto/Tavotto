@@ -3543,10 +3543,72 @@ def _get_coll_edgecolor(coll):
 
 def _set_coll_color(coll, setter: str, v) -> None:
     """Collection 面色 / 边色的唯一 setter 入口：3D 曲面改完要按「原始设定 + 此刻 alpha」重建，
-    不依赖它与 alpha 谁先谁后（`_canonical_poly3d_colors`）。2D 与别的 3D 集合原样透传。"""
+    不依赖它与 alpha 谁先谁后（`_canonical_poly3d_colors`）。2D 集合只改 RGB 时保留源颜色自带的
+    逐元素 alpha（`_rgb_keeping_source_alpha`）；3D 集合原样透传。"""
     _remember_poly3d_native(coll)
-    getattr(coll, setter)(v)
+    spec = _get_coll_facecolor(coll) if setter == "set_facecolor" else _get_coll_edgecolor(coll)
+    getattr(coll, setter)(_rgb_keeping_source_alpha(coll, spec, v))
     _canonical_poly3d_colors(coll)
+
+
+def _rgb_only(v) -> bool:
+    """`v` 是不是一个**不带 alpha** 的单色：`'#rrggbb'` / `'#rgb'` / 颜色名 / `(r, g, b)`。
+
+    `'#rrggbbaa'`、`(r, g, b, a)`、`(颜色, alpha)`、`'none'` 与任何数组都算用户**显式**给了透明度
+    （或给了一整套逐元素颜色），原样交给 matplotlib。"""
+    if isinstance(v, str):
+        s = v.strip().lower()
+        hex_alpha = s.startswith("#") and len(s) in (5, 9)
+        return s != "none" and not hex_alpha and mcolors.is_color_like(s)
+    return (
+        isinstance(v, (tuple, list))
+        and len(v) == 3
+        and all(isinstance(c, numbers.Real) for c in v)
+        and mcolors.is_color_like(tuple(v))
+    )
+
+
+def _rgb_keeping_source_alpha(coll, spec, v):
+    """用户只换 RGB 时，把源颜色设定 `spec` 自带的逐元素 alpha 留下来。
+
+    matplotlib 的 `set_color` / `set_facecolor` / `set_edgecolor` 是**整体替换**：
+    `to_rgba_array('#d62728', self._alpha)` 在 `_alpha is None` 时把每一段都补成不透明。于是
+    `LineCollection(segs, colors=[(r,g,b,.25),(r,g,b,.6),(r,g,b,1)])` 改一次颜色，三段一起变实心——
+    用户只想换色，透明度被顺手抹了（科研绘图仓库实测，3.11.2）。
+
+    三种透明度各归各位，与 matplotlib 语义一致：
+      * **源 RGBA 的 alpha**（`spec` 的 alpha 列）：保留，只换 RGB；
+      * **Artist 全局 alpha**（`_alpha`）：不碰。它照常在合成时覆盖颜色自带的 alpha——用户改
+        alpha 滑块改的就是它，清掉 alpha 编辑后逐元素透明度原样回来；`alpha=数组` 时 matplotlib
+        本来就按数组广播，这里同样不插手；
+      * **用户显式给的 alpha**（`v` 带 alpha，见 `_rgb_only`）：原样用，不保留源的。
+
+    结果成为新的 `_original_*` 设定，热态累加与冷启动一次重放走同一个函数、同一个输入；撤销靠
+    getter 回灌的源设定。源颜色全不透明 / 是 `'none'` / `'face'` / 没有设定（映射中）/ 3D 集合
+    （mplot3d 自己按深度改写颜色，见 `_canonical_poly3d_colors`）时原样透传，行为与以前逐字相同。
+    """
+    if not _rgb_only(v) or spec is None:
+        return v
+    if isinstance(
+        coll,
+        (
+            art3d.Poly3DCollection,
+            art3d.Line3DCollection,
+            art3d.Path3DCollection,
+            art3d.Patch3DCollection,
+        ),
+    ):
+        return v
+    if isinstance(spec, str) and spec.lower() in ("none", "face"):
+        return v
+    try:
+        src = np.array(mcolors.to_rgba_array(spec), dtype=float)
+    except (TypeError, ValueError):
+        return v
+    if src.ndim != 2 or len(src) == 0 or bool(np.all(src[:, 3] == 1.0)):
+        return v
+    src[:, :3] = mcolors.to_rgb(tuple(v) if isinstance(v, list) else v)
+    return src
 
 
 def _get_coll_facecolor(coll):
@@ -4575,7 +4637,14 @@ HANDLERS: dict[tuple[str, str], tuple] = {
     # 实现细节、不是它承诺的契约（那个数组 `flags.writeable` 是 True），而
     # `originals` 存错一次的后果是撤销回不到原样。拷一份的代价是几个浮点数。
     # 与 `_COLLECTION_CAPS` 那一族的 `.copy()` 同一个理由。
-    ("linecoll", "color"): (lambda a: a.get_color().copy(), lambda a, v: a.set_color(v)),
+    #
+    # 只改 RGB 时保留源颜色的逐段 alpha（`_rgb_keeping_source_alpha`）。它读的是颜色**设定**
+    # （`_original_edgecolor`），所以 getter 回灌的也必须是设定而不是解析后的数组：脚本带标量
+    # alpha 时 `get_color()` 已被 `_alpha` 抹平，回灌它，撤销后逐段 alpha 就再也找不回来了。
+    ("linecoll", "color"): (
+        lambda a: _fresh_copy(_get_coll_edgecolor(a)),
+        lambda a, v: a.set_color(_rgb_keeping_source_alpha(a, _get_coll_edgecolor(a), v)),
+    ),
     ("linecoll", "linewidth"): (lambda a: a.get_linewidths().copy(), _set_collection_lw),
     ("linecoll", "linestyle"): (_get_linecoll_ls, _set_linecoll_ls),
     # LineCollection 是 Collection：`set_alpha` 同样重解析花纹色（#956）
