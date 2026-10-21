@@ -72,7 +72,7 @@ def semver_of(version: str) -> str:
 
 
 #: beta 分支专用（不合进 main）：与正式版并排安装、互不覆盖——独立的应用名与 bundle id
-BETA_OVERLAY = {"productName": "Tavotto Beta", "identifier": "com.tavotto.tavotto.beta"}
+BETA_OVERLAY = {"productName": "Tavotto beta", "identifier": "com.tavotto.tavotto.beta"}
 
 
 def sync_version(version: str) -> None:
