@@ -1,6 +1,6 @@
 # ADR 0142：Windows 上的 Conda 激活捕获——与 POSIX 同构的“激活一次、捕获环境、直接启动”
 
-日期：2026-10-21 · 状态：**Proposed**（risk:high；**Win11 真机验收后才合入**）
+日期：2026-10-21 · 状态：**Proposed**（risk:high；Win11 真机验收：第 1/2/4/5/6/8 项已通过，第 7 项近似通过（真「开始菜单」启动未验），第 3 项改由 #1282 承接）
 相关：规则全文 `docs/rules/backend/figure-capture-and-execution.md`「成功启动上下文与 Conda 激活」（P09，#975）；
 [0021 tavotto run 产品契约](0021-tavotto-run-product-contract.md)；[0125 桌面拥有的 native 进程](0125-desktop-owned-native-process.md)。
 
@@ -47,7 +47,7 @@
 2. activate.d 设变量 / 横幅不干扰——**已通过**。
 3. ROOT——改由 #1282 承接（conda-forge 无 win-64 ROOT，Windows ROOT 走官方包叠加，已真机通过）。
 4. activate.d 卡住 → 约 60 s 后 `conda_launcher_unavailable`，无遗留进程、`probe-results` 为空——**已通过**。
-5. 改名 `Scripts\conda.exe`：应得到瞬时 `conda_launcher_unavailable`（不是“可用”）——首次真机**未通过**（体检 ok:true、运行时崩），已按决策 8 修复，**待真机复验**。
+5. 改名 `Scripts\conda.exe`：应得到瞬时 `conda_launcher_unavailable`（不是“可用”）——首次真机**未通过**（体检 ok:true、运行时崩），已按决策 8 修复，**已通过**（2026-10-21 Win11 真机复验：改名后瞬时 `conda_launcher_unavailable`、改回后恢复）。
 6. 代码页 936 / 65001——**已通过**。
 7. 无 `CONDA_EXE`、PATH 只留 System32 下经注册表找到根——**近似通过**（真“开始菜单启动”未验）。
 8. `conda install` / 增删 activate.d 后重新捕获——**已通过**（缓存命中 0.07 s，重新捕获 1.75 s）。
