@@ -141,6 +141,8 @@ def reap_orphan_tmps(directory: Path, *, now: float | None = None) -> list[str]:
 #: 每次等待如下，累计最长 0.62 s；仍失败照旧抛（调用方转成 `replace_failed`，旧文件完好）。
 #: 只在 Windows 上重试；POSIX 的 `os.replace` 不会因共享冲突失败，其它错误（ENOSPC、EXDEV、
 #: 目标是目录……）立即抛，不重试。
+#: **重试的前提是目标在等待期间没被别人改过**（`_replace` 用 stat 指纹核对）：否则退避会盖掉
+#: 编辑器 / 同步客户端刚写完的更新，并绕过调用方之前做的修订号检查。
 _REPLACE_RETRY_DELAYS_S = (0.02, 0.04, 0.08, 0.16, 0.32)
 _WINDOWS_SHARING_ERRORS = {5, 32}
 
@@ -149,9 +151,35 @@ def _is_windows() -> bool:
     return os.name == "nt"
 
 
+def _fingerprint(dest: Path) -> tuple[int, int, int] | None:
+    """目标文件内容变更的指纹；不存在记为 None。`os.stat` 失败（含共享冲突）原样抛 `OSError`。"""
+    try:
+        st = os.stat(dest)
+    except FileNotFoundError:
+        return None
+    return (st.st_mtime_ns, st.st_size, st.st_ino)
+
+
 def _replace(src: Path, dest: Path) -> None:
-    """`os.replace`，Windows 共享冲突时有界重试（见 `_REPLACE_RETRY_DELAYS_S`）。其它错误原样抛。"""
+    """`os.replace`，Windows 共享冲突时有界重试（见 `_REPLACE_RETRY_DELAYS_S`）。其它错误原样抛。
+
+    **重试只在「能证明目标在等待期间没被别人改过」时发生。** 调用方（`/api/layouts`、autosave）
+    在 `write_json()` 之前用 `existing_revision()` 做过修订号检查；若第一次冲突恰是编辑器 / 同步
+    客户端正在更新目标，退避期间它写完关闭，下一次 `os.replace` 会成功并盖掉它的字节，且不会
+    重跑那次检查。所以：第一次 replace 之前先给 dest 取指纹（mtime_ns / size / ino，不存在为
+    None），每次 sleep 之后、再次 replace 之前重取；指纹变了（含从无到有、从有到无），或取指纹
+    本身失败（无法证明没变），一律不再重试，按原错误抛出（调用方转成 `replace_failed`，外部
+    文件不动，tmp 丢弃）。仍有与原实现相同的 check→replace 窗口，不比原来更大。
+    """
     delays = iter(_REPLACE_RETRY_DELAYS_S)
+    before: tuple[int, int, int] | None = None
+    baseline_ok = False  # 取不到基线指纹 = 无法证明没变，第一次冲突就直接抛
+    if _is_windows():
+        try:
+            before = _fingerprint(dest)
+            baseline_ok = True
+        except OSError:
+            pass
     while True:
         try:
             os.replace(src, dest)
@@ -163,6 +191,12 @@ def _replace(src: Path, dest: Path) -> None:
             if delay is None:
                 raise
             time.sleep(delay)
+            try:
+                unchanged = _fingerprint(dest) == before
+            except OSError:
+                unchanged = False
+            if not (unchanged and baseline_ok):
+                raise
 
 
 def _discard(tmp: Path) -> None:
