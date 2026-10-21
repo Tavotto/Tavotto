@@ -153,6 +153,54 @@ class TestUnicodeNormalization:
         assert figcapture._dir_folds_unicode(d) is True
         figcapture._UNICODE_FOLD_CACHE.pop(d, None)
 
+    @pytest.mark.skipif(
+        sys.platform == "darwin", reason="darwin 的文件系统本身归一化，建不出两个独立的目录项"
+    )
+    def test_hardlinked_nfc_nfd_entries_are_aliases_not_normalization(self, tmp_path):
+        """区分归一化的文件系统上，NFC / NFD 两个名字互为硬链接：samefile 为真，但那是别名，不是归一化。"""
+        d = str(tmp_path.resolve())
+        nfc, nfd = (unicodedata.normalize(f, "é.pdf") for f in ("NFC", "NFD"))
+        (tmp_path / nfc).write_bytes(b"x")
+        os.link(tmp_path / nfc, tmp_path / nfd)
+        figcapture._UNICODE_FOLD_CACHE.pop(d, None)
+        assert figcapture._dir_folds_unicode(d, nfc) is False
+        assert figcapture._dir_folds_unicode(d) is False
+        assert figcapture._dir_folds_unicode(d, nfd) is False
+        assert d not in figcapture._UNICODE_FOLD_CACHE or figcapture._UNICODE_FOLD_CACHE[d] is False
+        figcapture._UNICODE_FOLD_CACHE.pop(d, None)
+
+    def test_two_listed_spellings_are_never_normalization(self, tmp_path, monkeypatch):
+        """注入目录列表：两种写法都是独立目录项 -> 不归一（即使 samefile 为真）。"""
+        d = str(tmp_path.resolve())
+        nfc, nfd = (unicodedata.normalize(f, "é.pdf") for f in ("NFC", "NFD"))
+        figcapture._UNICODE_FOLD_CACHE.pop(d, None)
+        monkeypatch.setattr(figcapture, "_UNWATCHED_LISTDIR", lambda p: [nfc, nfd])
+        monkeypatch.setattr(figcapture.os.path, "lexists", lambda p: True)
+        monkeypatch.setattr(figcapture.os.path, "samefile", lambda a, b: True)
+        assert figcapture._dir_folds_unicode(d, nfc) is False
+
+    def test_one_listed_spelling_that_opens_under_both_is_normalization(
+        self, tmp_path, monkeypatch
+    ):
+        d = str(tmp_path.resolve())
+        nfc = unicodedata.normalize("NFC", "é.pdf")
+        figcapture._UNICODE_FOLD_CACHE.pop(d, None)
+        monkeypatch.setattr(figcapture, "_UNWATCHED_LISTDIR", lambda p: [nfc])
+        monkeypatch.setattr(figcapture.os.path, "lexists", lambda p: True)
+        monkeypatch.setattr(figcapture.os.path, "samefile", lambda a, b: True)
+        assert figcapture._dir_folds_unicode(d, nfc) is True
+        figcapture._UNICODE_FOLD_CACHE.pop(d, None)
+
+    def test_symlink_is_not_evidence(self, tmp_path):
+        d = str(tmp_path.resolve())
+        nfc, nfd = (unicodedata.normalize(f, "é.pdf") for f in ("NFC", "NFD"))
+        (tmp_path / nfc).write_bytes(b"x")
+        if os.path.lexists(tmp_path / nfd):
+            pytest.skip("文件系统本身归一化，建不出独立的符号链接项")
+        os.symlink(tmp_path / nfc, tmp_path / nfd)
+        figcapture._UNICODE_FOLD_CACHE.pop(d, None)
+        assert figcapture._dir_folds_unicode(d, nfc) is False
+
     def test_probe_error_means_no_normalization(self, tmp_path, monkeypatch):
         d = str(tmp_path.resolve())
         figcapture._UNICODE_FOLD_CACHE.pop(d, None)
@@ -228,6 +276,45 @@ class TestPostSaveFigureBreakage:
         assert v() is False and v.deferred() is None
         bad = figcapture.savefig_verifier(real, a, str(tmp_path / "x.pdf"), (), {"dpi": "bad"})
         assert bad.deferred() is False
+
+    @pytest.mark.parametrize(
+        "kw",
+        [
+            {"bbox_extra_artists": 5},
+            {"bbox_extra_artists": [object()]},
+            {"bbox_extra_artists": "x"},
+        ],
+    )
+    def test_irreproducible_arguments_are_a_failed_save_not_unknown(self, tmp_path, kw):
+        """非法 / 引用原 Figure 内对象的参数在空白 Figure 上无法原样复现：回两值的 False，失败的保存不持有。"""
+        import matplotlib.pyplot as plt
+
+        real, a = plt.Figure.savefig, self._fig()
+        v = figcapture.savefig_verifier(
+            real, a, str(tmp_path / "x.pdf"), (), {**kw, "bbox_inches": "tight"}
+        )
+        assert v() is False  # native 下同样抛
+        assert v.deferred() is False
+
+    def test_artist_valued_arguments_are_never_replayed_on_a_blank_figure(self, tmp_path):
+        import matplotlib.pyplot as plt
+
+        real, a = plt.Figure.savefig, self._fig()
+        t = a.text(0.5, 0.5, "x")
+        a.text(0.2, 0.2, r"$\badmathtext{$")
+        v = figcapture.savefig_verifier(
+            real, a, str(tmp_path / "x.pdf"), (), {"bbox_extra_artists": [t]}
+        )
+        assert v.deferred() is False
+        assert figcapture._replayable_on_blank((), {"foo": [t]}) is False
+        assert figcapture._replayable_on_blank((), {"dpi": 100, "bbox_inches": "tight"}) is True
+
+    def test_invalid_extra_artists_holder_does_not_block_a_valid_writer(self, tmp_path):
+        st, a, b, real, tgt_y = self._setup(
+            tmp_path, {"bbox_extra_artists": 5, "bbox_inches": "tight"}
+        )
+        took = st.save(b, tgt_y, verify=figcapture.savefig_verifier(real, b, tgt_y, (), {}))
+        assert took is True
 
     def test_deferred_check_leaves_the_figure_and_pyplot_alone(self, tmp_path):
         import matplotlib.pyplot as plt

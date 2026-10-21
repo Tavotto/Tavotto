@@ -1535,19 +1535,30 @@ _UNICODE_FOLD_CACHE: dict = {}
 _UNICODE_PROBE_SCAN = 200
 
 
-def _unicode_evidence(directory: str, name: str) -> bool | None:
-    """用目录里一个**真实存在**的名字当证据：它的另一种归一形式（NFC <-> NFD）能不能打开同一个文件。
-    True = 能（该目录不区分 NFC / NFD）；False = 另一种形式不存在（区分）；None = 没有证据（名字是纯 ASCII、两种
-    形式相同、或这个名字本身在盘上不存在）。"""
+def _unicode_evidence(directory: str, name: str, listing=None) -> bool | None:
+    """用目录里一个**真实存在**的名字当证据：它的另一种归一形式（NFC <-> NFD）是不是**同一个名字**。
+    True = 是；False = 不是（另一种写法不存在，或是独立的目录项）；None = 没有证据（名字是纯 ASCII、两种形式相同、
+    或这个名字本身在盘上不存在）。
+
+    `samefile` 只能证明同一个 inode——硬链接 / 符号链接别名也满足，区分归一化的文件系统上 NFC / NFD 两个
+    名字互为硬链接时同样为真，那不是「文件系统把两种写法当同一个名字」。所以要同时满足：另一种写法打得开
+    同一个文件、它不是符号链接、**且目录列表里只出现一种写法**（归一化的文件系统一个文件只有一个目录项；
+    两种写法都作为独立目录项出现 = 别名，不归一）。不在用户目录里写探针文件。"""
     nfc, nfd = (unicodedata.normalize(f, name) for f in ("NFC", "NFD"))
     if nfc == nfd:
         return None
     here = os.path.join(directory, name)
     if not os.path.lexists(here):
         return None
-    other = os.path.join(directory, nfd if name != nfd else nfc)
+    other_name = nfd if name != nfd else nfc
+    other = os.path.join(directory, other_name)
     if not os.path.lexists(other):
         return False
+    if os.path.islink(here) or os.path.islink(other):
+        return False  # 链接本身不算证据
+    listing = set(_UNWATCHED_LISTDIR(directory)) if listing is None else listing
+    if (nfc in listing) and (nfd in listing):
+        return False  # 两种写法都是独立目录项：别名，不是归一化
     return os.path.samefile(here, other)
 
 
@@ -1566,10 +1577,11 @@ def _dir_folds_unicode(directory: str, base: str | None = None) -> bool:
         verdict = _unicode_evidence(directory, base) if base else None
         if verdict is None:
             seen = 0
-            for entry in _UNWATCHED_LISTDIR(directory):
+            listing = set(_UNWATCHED_LISTDIR(directory))
+            for entry in listing:
                 if entry.isascii():
                     continue
-                verdict = _unicode_evidence(directory, entry)
+                verdict = _unicode_evidence(directory, entry, listing)
                 seen += 1
                 if verdict is not None or seen >= _UNICODE_PROBE_SCAN:
                     break
@@ -1634,15 +1646,36 @@ def savefig_verify_render(real_savefig, fig, fname, args, kwargs: dict) -> bool:
     return True
 
 
+def _replayable_on_blank(args, kwargs: dict) -> bool:
+    """这组保存参数能不能在空白 Figure 上**原样**复现。引用原 Figure 内对象的参数（`bbox_extra_artists`，以及任何值里
+    带 Artist 的参数）在空白 Figure 上要么没法复现、要么被剔除后换了含义：非法的 `bbox_extra_artists` 在 native 下会
+    抛，空白 Figure 上去掉它却成功。不能原样复现就不能拿空白 Figure 的成功当「失败只来自内容」的证据。"""
+    from matplotlib.artist import Artist
+
+    def refers_to_figure(value, depth=0) -> bool:
+        if isinstance(value, Artist):
+            return True
+        if depth < 2 and isinstance(value, (list, tuple, set, frozenset)):
+            return any(refers_to_figure(v, depth + 1) for v in value)
+        if depth < 2 and isinstance(value, dict):
+            return any(refers_to_figure(v, depth + 1) for v in value.values())
+        return False
+
+    if kwargs.get("bbox_extra_artists") is not None:
+        return False
+    return not any(refers_to_figure(v) for v in (*args, *kwargs.values()))
+
+
 def _content_only_failure(real_savefig, fname, args, kwargs: dict) -> bool:
-    """同一组保存参数在**空白 Figure** 上能渲染：此时 Figure 那一次渲染不出，原因只在它的内容。
-    不碰用户的 Figure、不进 pyplot 的图表（`Figure()` 直接建，不经 `plt.figure`）；`bbox_extra_artists`
-    指向的是别的 Figure 的 artist，不带。任何异常按「不是」算（保持原有的失败判定）。"""
+    """同一组保存参数在**空白 Figure** 上能原样渲染：此时 Figure 那一次渲染不出，原因只在它的内容。
+    参数不能原样复现（`_replayable_on_blank`）一律 False；不碰用户的 Figure、不进 pyplot 的图表
+    （`Figure()` 直接建，不经 `plt.figure`）。任何异常按「不是」算（保持原有的失败判定）。"""
     try:
         from matplotlib.figure import Figure
 
-        kw = {k: v for k, v in kwargs.items() if k != "bbox_extra_artists"}
-        return savefig_verify_render(real_savefig, Figure(), fname, args, kw)
+        if not _replayable_on_blank(args, kwargs):
+            return False
+        return savefig_verify_render(real_savefig, Figure(), fname, args, dict(kwargs))
     except Exception:  # noqa: BLE001
         return False
 
