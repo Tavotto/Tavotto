@@ -36,6 +36,8 @@ const ds = (key: string, values?: Record<string, unknown>) =>
 const EXTRA_KEYS = ['source', 'crash_reports', 'corrupt_sessions'] as const
 
 const POLL_MS = 350
+/** 勾选变化后等多久才重新备包：连点几个框只备一次，点击本身从不等后端 */
+const REFRESH_DEBOUNCE_MS = 300
 const DEFAULT_NOTE_MAX = 1000
 const DEFAULT_CATEGORY = 'other'
 /** 引擎拒绝「迟到的 start」的两个码（`diagsend.start`）：取消已先被处理，不是发送失败 */
@@ -121,12 +123,16 @@ export function DiagnosticsSendDialog({
   const [epoch, setEpoch] = useState(0)
   /**
    * 三个勾选项（脚本源码 / 系统崩溃报告 / 会话损坏副本内容）：**每次打开对话框都从全不勾开始、不记忆**。
-   * 勾选变化 = 内容变了 = 重新备包（旧包随清理被丢弃，新包换新 `client_request_id`）；备包流程从 ref 读，
-   * 所以改选项只需要记一笔 + 把 epoch 推进一格。`keepForm` 让这一次重备不清掉用户已填的问题类型与说明。
+   * 勾选变化 = 内容变了 = 要换一份包，但**点击即时生效、不等后端**：框的状态本地立刻更新，换包走防抖的
+   * 静默刷新（`scheduleRefresh`：不回到「正在准备」、不禁用表单、不清已填内容；请求序号认最新一次，旧结果丢弃）。
+   * 刷新期间发送 / 保存禁用（旧包不含新勾选），新包到了才放开。
    */
   const [options, setOptions] = useState<DetailOptions>(NO_DETAIL_OPTIONS)
   const optionsRef = useRef<DetailOptions>(NO_DETAIL_OPTIONS)
-  const keepForm = useRef(false)
+  const refreshTimer = useRef<number | undefined>(undefined)
+  const refreshSeq = useRef(0)
+  /** 勾选已变、新包还没到：发送 / 保存暂不可用（框本身不受影响） */
+  const [refreshing, setRefreshing] = useState(false)
   /** 勾了但引擎没附上（引擎侧丢了载荷 / 老引擎）：折叠区里一句话说明 */
   const [optionsLost, setOptionsLost] = useState(false)
 
@@ -137,6 +143,20 @@ export function DiagnosticsSendDialog({
     if (id) void discardDiagSend(id, packagePj.current).catch(() => {})
   }, [])
 
+  /** 采用一份新备好的包；以引擎实际采用的选项为准：勾着的框不能在引擎没附上内容时仍显示勾着 */
+  const adoptPrepared = useCallback((p: DiagSendPrepared, asked: DetailOptions) => {
+    setPrepared(p)
+    const applied = { ...NO_DETAIL_OPTIONS, ...(p.options ?? {}) }
+    if (p.options) {
+      optionsRef.current = applied
+      setOptions(applied)
+      setOptionsLost(EXTRA_KEYS.some((k) => asked[k] && !applied[k]))
+    } else setOptionsLost(false)
+    idRef.current = p.id
+    actionGen.current = p.gen
+    setPhase(p.too_large ? 'tooLarge' : 'ready')
+  }, [])
+
   // 打开 → 备包（只在打开那一刻采一次载荷）；关闭 / 卸载 → 丢弃
   useEffect(() => {
     if (!open) return
@@ -144,12 +164,12 @@ export function DiagnosticsSendDialog({
     setPhase('preparing')
     setPrepared(null)
     setStatus(null)
-    const opts = keepForm.current ? optionsRef.current : NO_DETAIL_OPTIONS
-    if (!keepForm.current) {
-      setCategory(DEFAULT_CATEGORY)
-      setNote('')
-    }
-    keepForm.current = false
+    window.clearTimeout(refreshTimer.current)
+    refreshSeq.current++
+    setRefreshing(false)
+    const opts = NO_DETAIL_OPTIONS
+    setCategory(DEFAULT_CATEGORY)
+    setNote('')
     optionsRef.current = opts
     setOptions(opts)
     setSaveState('idle')
@@ -170,17 +190,7 @@ export function DiagnosticsSendDialog({
           if (p.id) void discardDiagSend(p.id, pj).catch(() => {})
           return
         }
-        setPrepared(p)
-        // 以引擎实际采用的为准：勾着的框不能在引擎没附上内容时仍显示勾着
-        const applied = { ...NO_DETAIL_OPTIONS, ...(p.options ?? {}) }
-        if (p.options) {
-          optionsRef.current = applied
-          setOptions(applied)
-          setOptionsLost(EXTRA_KEYS.some((k) => opts[k] && !applied[k]))
-        } else setOptionsLost(false)
-        idRef.current = p.id
-        actionGen.current = p.gen
-        setPhase(p.too_large ? 'tooLarge' : 'ready')
+        adoptPrepared(p, opts)
       })
       .catch((e) => {
         if (isStalePrepare(e)) return // 被更新的备包取代：不是失败，界面由那份新请求更新
@@ -188,9 +198,11 @@ export function DiagnosticsSendDialog({
       })
     return () => {
       gen.current++
+      window.clearTimeout(refreshTimer.current)
+      refreshSeq.current++
       discard()
     }
-  }, [open, epoch, discard])
+  }, [open, epoch, discard, adoptPrepared])
 
   // 对话框开着时项目被换掉（外部 `tavotto open`、切项目）：旧项目的包（含在途的备包响应、发送中的会话）
   // 一律丢弃，并重新备包——绝不拿 A 项目的诊断包在 B 项目的界面上发出去（Codex #923 P1）
@@ -249,17 +261,49 @@ export function DiagnosticsSendDialog({
     }
   }, [phase])
 
+  /** 防抖的静默换包：只在「没有更新的勾选 / 没换代 / 没换项目」时才采用结果，旧响应丢弃并通知引擎释放 */
+  const scheduleRefresh = () => {
+    const mineGen = gen.current
+    const seq = ++refreshSeq.current
+    window.clearTimeout(refreshTimer.current)
+    setRefreshing(true)
+    refreshTimer.current = window.setTimeout(() => {
+      const opts = optionsRef.current
+      const pj = packagePj.current
+      const current = () => gen.current === mineGen && refreshSeq.current === seq
+      void buildSendPayload(opts)
+        .then((payload) => (current() && currentProjectId() === pj ? prepareDiagSend(payload, opts, pj) : null))
+        .then((p) => {
+          if (!p) return
+          if (!current()) {
+            if (p.id && p.id !== idRef.current) void discardDiagSend(p.id, pj).catch(() => {})
+            return
+          }
+          const old = idRef.current
+          if (old && old !== p.id) void discardDiagSend(old, pj).catch(() => {})
+          adoptPrepared(p, opts)
+          setRefreshing(false)
+        })
+        .catch((e) => {
+          if (isStalePrepare(e)) return // 被更新的备包取代：由那份新请求更新界面
+          if (current()) {
+            setRefreshing(false)
+            setPhase('prepareFailed')
+          }
+        })
+    }, REFRESH_DEBOUNCE_MS)
+  }
+
   const toggleOption = (key: keyof DetailOptions) => {
     if (phase !== 'ready' && phase !== 'failed') return
-    keepForm.current = true
     optionsRef.current = { ...optionsRef.current, [key]: !optionsRef.current[key] }
     setOptions(optionsRef.current)
-    setEpoch((e) => e + 1)
+    scheduleRefresh()
   }
 
   const send = () => {
     const id = idRef.current
-    if (!id || (phase !== 'ready' && phase !== 'failed')) return
+    if (!id || refreshing || (phase !== 'ready' && phase !== 'failed')) return
     if (useProjectStore.getState().switching || packagePj.current !== currentProjectId()) {
       // 项目已换而监听还没来得及重渲：不发旧包，重新备包
       setEpoch((e) => e + 1)
@@ -297,7 +341,7 @@ export function DiagnosticsSendDialog({
 
   const save = () => {
     const id = idRef.current
-    if (!id) return
+    if (!id || refreshing) return
     const mine = gen.current
     fetchDiagSendBundle(id)
       .then((blob) => {
@@ -354,7 +398,7 @@ export function DiagnosticsSendDialog({
     .join(' ')
   const statusNode = (
     <div className="flex h-8 min-w-0 grow-[100] items-center gap-1" data-diag-send-status={phase}>
-      {phase === 'preparing' && line('plain', ds('preparing'))}
+      {(phase === 'preparing' || (refreshing && phase === 'ready')) && line('plain', ds('preparing'))}
       {phase === 'prepareFailed' && line('danger', ds('prepareFailed'))}
       {phase === 'tooLarge' &&
         prepared &&
@@ -430,7 +474,7 @@ export function DiagnosticsSendDialog({
               variant="primary"
               size="lg"
               loading={phase === 'sending'}
-              disabled={phase === 'preparing' || phase === 'cancelling' || phase === 'sending'}
+              disabled={phase === 'preparing' || phase === 'cancelling' || phase === 'sending' || refreshing}
               onClick={send}
               data-diag-send-confirm
             >
@@ -576,7 +620,7 @@ export function DiagnosticsSendDialog({
                   variant="ghost"
                   size="sm"
                   onClick={save}
-                  disabled={!prepared?.id || phase === 'done'}
+                  disabled={!prepared?.id || phase === 'done' || refreshing}
                   data-diag-send-save
                 >
                   {ds('save')}

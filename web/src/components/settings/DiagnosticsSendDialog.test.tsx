@@ -758,7 +758,7 @@ describe('诊断包扩充（detail-…、勾选项）', () => {
     })
     prepareMock.mockResolvedValue({ ...DETAIL_PREPARED, id: 'pid-2', gen: 0, options: { source: true, crash_reports: false, corrupt_sessions: false } })
     await click(box('source'))
-    await act(async () => {})
+    await tick(350)
     expect(prepareMock).toHaveBeenCalledTimes(2)
     expect(lastPayload().detail_options).toEqual({ source: true, crash_reports: false, corrupt_sessions: false })
     expect(discardMock).toHaveBeenCalledWith('pid-1', null)
@@ -768,7 +768,7 @@ describe('诊断包扩充（detail-…、勾选项）', () => {
     // 再勾第二项：两项都在载荷里
     prepareMock.mockResolvedValue({ ...DETAIL_PREPARED, id: 'pid-3', options: { source: true, crash_reports: true, corrupt_sessions: false } })
     await click(box('crash_reports'))
-    await act(async () => {})
+    await tick(350)
     expect(lastPayload().detail_options).toEqual({ source: true, crash_reports: true, corrupt_sessions: false })
     // 发送用的是最新那份包
     startMock.mockResolvedValue(status({ state: 'sending' }))
@@ -776,11 +776,41 @@ describe('诊断包扩充（detail-…、勾选项）', () => {
     expect(startMock.mock.calls[0][0]).toBe('pid-3')
   })
 
+  it('点击即时响应（卡顿回归）：勾选当场生效，不等后端、不回到「正在准备」、不禁用表单；连点只备一次', async () => {
+    await mount(DETAIL_PREPARED)
+    let release!: (p: DiagSendPrepared) => void
+    prepareMock.mockImplementation(() => new Promise<DiagSendPrepared>((r) => (release = r)))
+    await click(box('source'))
+    // 备包请求还没发出（防抖中）、更没有回来：框已经勾上，且三个框与说明框都没被禁用
+    expect(prepareMock).toHaveBeenCalledTimes(1)
+    expect(box('source').checked).toBe(true)
+    for (const k of ['source', 'crash_reports', 'corrupt_sessions']) expect(box(k).disabled, k).toBe(false)
+    expect(q<HTMLTextAreaElement>('[data-diag-send-note]')!.disabled).toBe(false)
+    expect(q('[data-diag-send-status]')!.getAttribute('data-diag-send-status')).toBe('ready')
+    await click(box('crash_reports'))
+    await click(box('corrupt_sessions'))
+    expect(prepareMock).toHaveBeenCalledTimes(1)
+    await tick(350)
+    // 请求在途（后端没回）：框照样可点，发送在新包到之前不可用
+    expect(prepareMock).toHaveBeenCalledTimes(2)
+    expect(lastPayload().detail_options).toEqual({ source: true, crash_reports: true, corrupt_sessions: true })
+    expect(box('source').disabled).toBe(false)
+    expect(q<HTMLButtonElement>('[data-diag-send-confirm]')!.disabled).toBe(true)
+    await click(box('source'))
+    expect(box('source').checked).toBe(false)
+    release({ ...DETAIL_PREPARED, id: 'pid-late', options: { source: true, crash_reports: true, corrupt_sessions: true } })
+    await act(async () => {})
+    // 旧请求的结果不覆盖新勾选：不采用 pid-late、框仍是用户最后的选择，并通知引擎释放
+    expect(box('source').checked).toBe(false)
+    expect(discardMock).toHaveBeenCalledWith('pid-late', null)
+    expect(q<HTMLButtonElement>('[data-diag-send-confirm]')!.disabled).toBe(true)
+  })
+
   it('引擎没把勾选项附上（载荷被丢）：复选框以引擎回的 options 为准，并说明「太大没能附上」', async () => {
     await mount(DETAIL_PREPARED)
     prepareMock.mockResolvedValue({ ...DETAIL_PREPARED, id: 'pid-2', options: { source: false, crash_reports: false, corrupt_sessions: false } })
     await click(box('source'))
-    await act(async () => {})
+    await tick(350)
     expect(prepareMock.mock.calls[1][1]).toEqual({ source: true, crash_reports: false, corrupt_sessions: false }) // 选项也走查询串
     expect(box('source').checked).toBe(false)
     expect(q('[data-diag-send-options-lost]')!.textContent).toBe(ds('optionsLost'))
@@ -788,7 +818,7 @@ describe('诊断包扩充（detail-…、勾选项）', () => {
     // 引擎照实采用时没有这句话
     prepareMock.mockResolvedValue({ ...DETAIL_PREPARED, id: 'pid-3', options: { source: true, crash_reports: false, corrupt_sessions: false } })
     await click(box('source'))
-    await act(async () => {})
+    await tick(350)
     expect(box('source').checked).toBe(true)
     expect(q('[data-diag-send-options-lost]')).toBeNull()
   })
@@ -809,7 +839,7 @@ describe('诊断包扩充（detail-…、勾选项）', () => {
       prepareMock.mockResolvedValue({ ...DETAIL_PREPARED, id: `pid-s${n++}`, options: full })
       // 点任意一个框触发重新备包；显示以引擎回的 options 为准
       await click(box('source'))
-      await act(async () => {})
+      await tick(350)
       const want = ds('sentenceExtras', {
         items: keys.map((k) => ds(`sentenceItem.${k}`)).join(ds('listSeparator')),
       })
@@ -820,7 +850,7 @@ describe('诊断包扩充（detail-…、勾选项）', () => {
     // 勾了但引擎没附上（options 全 false）：按引擎的来，回到原句
     prepareMock.mockResolvedValue({ ...DETAIL_PREPARED, id: 'pid-s9', options: { source: false, crash_reports: false, corrupt_sessions: false } })
     await click(box('crash_reports'))
-    await act(async () => {})
+    await tick(350)
     expect(sentence()).toBe(ds('sentence'))
   })
 
@@ -828,7 +858,7 @@ describe('诊断包扩充（detail-…、勾选项）', () => {
     await mount(DETAIL_PREPARED)
     prepareMock.mockResolvedValue({ ...DETAIL_PREPARED, id: 'pid-2', options: { source: false, crash_reports: false, corrupt_sessions: true } })
     await click(box('corrupt_sessions'))
-    await act(async () => {})
+    await tick(350)
     expect(box('corrupt_sessions').checked).toBe(true)
     await act(async () => root.unmount())
     root = createRoot(host)

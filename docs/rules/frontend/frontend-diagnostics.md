@@ -93,7 +93,7 @@
 - **焦点面板的顺序**（#1012 1）：没有正在编辑的面板时，`overrides[0]` 必须是主选（最后选中的面板），其余按文档顺序——引擎拿它当焦点面板去探环境。
   `main.tsx` 里 `installConsoleCapture()` 越早装越好；包装函数**吞掉自身所有异常**且一定调用原方法，幂等、可卸载。
 - **detail 里还有**：显示环境（缩放 / 窗口 / 屏幕 / 语言 / 主题）、壳信息（Tauri `getVersion` / `getTauriVersion`、UA 里的 WebView 版本；`lib/desktop.ts` 的 `getUpdateOutcome()` 记本窗口会话内最近一次检查 / 安装的结果：来源 mirror/github、稳定码、attempts，没发生过 = 引擎写 unknown）、正在编辑（没有就取选中）面板的 overrides 热态至多 3 张。
-- **三个复选框**（`DiagnosticsSendDialog`，在折叠的「查看详情」里）：**默认不勾、不记忆**——每次打开（以及切项目）从全不勾开始；勾选变化 = 内容变了 = 推进 epoch 重新备包（旧包 `discardDiagSend`，新包换新 `client_request_id`），用 `keepForm` 让这次重备不清掉已填的类型与说明；备包中 / 发送中复选框 disabled。
+- **三个复选框**（`DiagnosticsSendDialog`，在折叠的「查看详情」里）：**默认不勾、不记忆**——每次打开（以及切项目）从全不勾开始；勾选变化 = 内容变了 = 要换一份包，但**点击即时生效、不等后端**（beta 0.19.0b1 反馈：每点一个框卡一下——原先每次勾选都推进 epoch，整个对话框回到「正在准备」、表单全禁用、同步等一次备包往返）：框的状态本地立刻更新，换包走 300 ms 防抖的静默刷新（`scheduleRefresh`：不回「正在准备」、不禁用表单与框、不清已填内容；`refreshSeq` 请求序号只认最新一次，旧响应丢弃并 `discardDiagSend`）；刷新期间只有「发送」「保存」暂不可用。发送中框 disabled。
   折叠里还有「包内文件（N 个）」逐项清单（路径 + 大小）与一句「因体积被截短」说明；默认可见仍只有一句话 + 发送 + 关闭。
 - 文案键 `settings.diagnostics.send.{kind.detail_*, extra.*, extraHint.*, short.*, filesTitle, truncated}`；`short.*` 的键集 = `diagdetail.PRIORITY`，`extra.*` = `OPTION_KEYS`（`DiagnosticsSendDialog.test.tsx` 读 Python 源码对拍）。
 - 看护：`diagnostics/detail.test.ts`、`DiagnosticsSendDialog.test.tsx`「诊断包扩充」一组。
