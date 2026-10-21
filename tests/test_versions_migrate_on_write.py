@@ -294,3 +294,49 @@ def test_a_store_born_document_imports_what_a_rolled_back_program_wrote_to_a_fre
     n = len(names)
     _post(client, "born", name="再写一次")
     assert len(_list(client, "born")["versions"]) == n + 1, "旧文件被重复导入"
+
+
+def test_an_unserializable_legacy_file_leaves_no_trace_and_the_repaired_file_is_fully_imported(
+    client,
+):
+    """旧文件读得进、写不出（`1e400` 读成 inf）：迁移零写入，开空历史；修好旧文件后再写，旧 id 必须全数导入。"""
+    path, good = _legacy("bad", n=4)
+    data = json.loads(good)
+    broken = good.replace(b'"sizePt": 9', b'"sizePt": 1e400', 1)
+    assert broken != good
+    path.write_bytes(broken)
+    _post(client, "bad", name="空历史上的第一条")
+    root = vs.store_dir(path.parent, "bad")
+    assert not (root / "migration.json").exists(), "失败的迁移留下了 pending 记录"
+    assert path.read_bytes() == broken, "旧文件被动了"
+    assert [v["name"] for v in _list(client, "bad")["versions"]] == ["空历史上的第一条"]
+
+    path.write_bytes(good)  # 用户修好旧文件
+    _post(client, "bad", name="修好后再写")
+    ids = {v["id"] for v in _list(client, "bad")["versions"]}
+    assert {v["id"] for v in data["versions"]} <= ids, "修好的旧历史被静默丢弃"
+    assert path.read_bytes() == good
+
+
+def test_a_stale_pending_record_is_not_committed_when_it_describes_another_legacy_file(client):
+    """pending 记录里的 sha 与当前旧文件不一致：不能被标成 committed 当作「已导入」，旧条目要全数导入。"""
+    path, good = _legacy("stale", n=4)
+    ids = [v["id"] for v in json.loads(good)["versions"]]
+    root = vs.store_dir(path.parent, "stale")
+    # 过期现场：空索引 + 一条记着全部旧 id、但 sha 属于别的文件的 pending 记录
+    vs.init_empty(path.parent, "stale", now=1)
+    stale = {
+        "format": vs.FORMAT,
+        "state": "pending",
+        "name": path.name,
+        "size": 1,
+        "mtime_ns": 1,
+        "sha": "0" * 16,
+        "count": 4,
+        "dropped_duplicates": 0,
+        "ids": ids,
+    }
+    atomicio.write_bytes(root / "migration.json", atomicio.dumps_json(stale))
+    _post(client, "stale", name="触发")
+    got = {v["id"] for v in _list(client, "stale")["versions"]}
+    assert set(ids) <= got, "过期 pending 被当成已导入，旧历史丢了"
