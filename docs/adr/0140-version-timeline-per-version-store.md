@@ -136,7 +136,7 @@ Windows（`os.replace` 共享冲突、`msvcrt` 锁；热点是 `index.json`，at
 单独评审）；旧程序与新程序同时共用数据目录；同步工具（Dropbox 冲突副本）对索引的影响（需要显式「修复」入口，D3）；
 真实文档的压缩比；磁盘满。D1a 未接线，以上都不在本 PR 的行为面内。
 
-## 九、D3（本 PR）：显式修复入口 + atomicio 的 Windows 有界重试
+## 九、D3：显式修复入口
 
 **修复入口** `POST /api/versions/<docId>/rebuild`：版本锁内调用 `versionstore.rebuild_index(write=True)`，
 从信封文件重建索引。只读信封、写新索引，**不删任何文件**；旧索引的原字节先存成 `index.corrupt-<sha>.json`，
@@ -144,9 +144,8 @@ Windows（`os.replace` 共享冲突、`msvcrt` 锁；热点是 `index.json`，at
 `added`（已被删 / 裁掉但信封还在、因此复活的 id）与 `dropped`（信封已不在的条目）。没有新存储 404；索引读不动 /
 来自更新的格式 409 `versions_unreadable`，零改动（先过一遍读侧，重建绝不降级覆盖未来格式）。
 
-**`atomicio` 的 Windows 有界重试**（共享代码，单独评审）：`os.replace` 遇 `PermissionError` 且 `winerror` 为 5 / 32
-时重试，最多 5 次，等待 20/40/80/160/320 ms（累计 ≤ 0.62 s），仍失败照旧抛 `replace_failed`、旧文件完好；
-其它错误与非 Windows 平台立即抛。作用面是 `write_bytes` 与 `publish_file` 的全部调用方，只在 Windows 的共享冲突这
-一条失败路径上多等至多 0.62 s（调用方持锁时锁多持这么久）；成功路径与非 Windows 行为逐字不变。
+**不做 `atomicio` 的 Windows 有界重试**（#1241 关闭不合入）：重试等待期间外部进程完成的写入会被下一次
+`os.replace` 覆盖，绕过调用方先前的修订号检查；共享层只有元数据可看，证明不了内容未变，读全文件算摘要代价过大，而
+共享冲突导致保存失败没有用户报告。若出现真实报告，在具体调用方带修订号重核处做。
 
 **遗留（需维护者裁决，本 PR 不做）**：磁盘预算（保持 24 MB 语义）、旧格式文件清理、压缩 / CAS、sketch 旁路缓存。

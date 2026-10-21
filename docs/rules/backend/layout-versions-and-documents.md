@@ -55,8 +55,7 @@
   新增的响应字段只有：`legacy_unreadable`，以及信封坏的那一条在列表里带 `damaged: true`（只赔掉自己，其余照常；
   取它的正文回 409 `versions_unreadable`）；索引读不出来 / 来自更新的格式同样回 409 `versions_unreadable`，零改动。
   **显式修复**（D3）：`POST /api/versions/<docId>/rebuild` 在版本锁内从信封重建索引，只写新索引、不删任何文件，
-  响应带 `added` / `dropped`（见 ADR 0140 §九）。`atomicio._replace` 在 Windows 上对 `os.replace` 的共享冲突
-  （`winerror` 5 / 32）有界重试（≤5 次、累计 ≤0.62 s），其它错误立即抛；不要在调用方再包一层重试。
+  响应带 `added` / `dropped`（见 ADR 0140 §九）。`atomicio` 不对 `os.replace` 做重试（会覆盖外部写入，#1241）。
   **策略只有一处**：`versionstore.legacy_policy`（现行条数 + 24 MB 字节策略，D2 不改语义）与常量 `KEEP_*` / `MOMENTS` /
   `VERSION_ID_RE` / `is_named` / `kind` 是唯一出处，`app` 的 `VERSION_KEEP_*` 等是别名（按 `is` 钉死），新存储经
   `app._version_policy` 调用，上限按调用时刻的 `app.VERSION_KEEP_*` 传入（测试仍可改写）；列表的 `budget` 按
