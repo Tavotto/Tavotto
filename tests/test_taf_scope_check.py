@@ -267,7 +267,7 @@ def test_shared_axes_peers_count_as_the_same_axes():
     def man(w, lim):
         ax = lambda g, p: {  # noqa: E731
             **_el(g, "axes", xlim=lim),
-            "autoscale": {"x": True, "y": True, "peers": {"x": [p]}},
+            "autoscale": {"x": True, "y": True, "peers": {"x": [p]}, "datalim": {"x": lim}},
         }
         return _m(
             ax("axes_0", "axes_1"),
@@ -278,6 +278,92 @@ def test_shared_axes_peers_count_as_the_same_axes():
     c = _only(
         after=man(0.3, [0, 2]), before=man(0.8, [0, 1]), scope="element", gid="axes_0.barseries_0"
     )
+    assert c.verdict == "verified", c.observed
+
+
+def _line_axes(lw, lim, *, datalim, autoscale=True):
+    ax = {
+        **_el("axes_0", "axes", xlim=lim),
+        "autoscale": {
+            "x": autoscale,
+            "y": True,
+            **({"datalim": {"x": datalim}} if datalim else {}),
+        },
+    }
+    return _m(ax, _el("axes_0.lines_0", "line", linewidth=lw))
+
+
+def test_autoscale_flag_alone_is_not_evidence_the_range_was_not_written():
+    """Codex #1266 第二轮 P1：两侧 autoscale 都是 True、选中线变了、xlim 变了、数据范围没动——xlim 是被显式写的。"""
+    before = _line_axes(1, [0, 1], datalim=[0, 1])
+    after = _line_axes(4, [0, 5], datalim=[0, 1])
+    c = _only(after=after, before=before, scope="element", gid="axes_0.lines_0")
+    assert c.verdict == "unknown" and c.observed["elements"] == ["axes_0"], c.observed
+
+
+def test_datalim_moved_and_enclosed_is_autoscale():
+    before = _line_axes(1, [0, 1], datalim=[0, 1])
+    after = _line_axes(4, [0, 5], datalim=[0, 4.5])
+    c = _only(after=after, before=before, scope="element", gid="axes_0.lines_0")
+    assert c.verdict == "verified", c.observed
+
+
+def test_new_range_that_does_not_enclose_the_new_data_is_not_autoscale():
+    before = _line_axes(1, [0, 1], datalim=[0, 1])
+    after = _line_axes(4, [0, 2], datalim=[0, 4.5])
+    c = _only(after=after, before=before, scope="element", gid="axes_0.lines_0")
+    assert c.verdict == "unknown", c.observed
+
+
+def test_missing_datalim_is_not_evidence():
+    before = _line_axes(1, [0, 1], datalim=None)
+    after = _line_axes(4, [0, 5], datalim=None)
+    c = _only(after=after, before=before, scope="element", gid="axes_0.lines_0")
+    assert c.verdict == "unknown", c.observed
+
+
+@needs_worker
+def test_set_xlim_auto_true_with_a_line_width_change_is_not_waived(tmp_path):
+    before = _two(tmp_path, "a")
+    after = _two(tmp_path, "b", lw=4, extra="a.set_xlim(-3, 9, auto=True)")
+    c = _only(after=after, before=before, scope="element", gid="axes_0.lines_0")
+    assert c.verdict == "unknown" and "axes_0" in c.observed["elements"], c.observed
+
+
+@needs_worker
+def test_set_xlim_then_reenabling_autoscale_is_not_waived(tmp_path):
+    before = _two(tmp_path, "a")
+    after = _two(tmp_path, "b", lw=4, extra="a.set_xlim(-3, 9); a.set_autoscalex_on(True)")
+    c = _only(after=after, before=before, scope="element", gid="axes_0.lines_0")
+    assert c.verdict == "unknown" and "axes_0" in c.observed["elements"], c.observed
+
+
+def _colorbar_stem(vmax, ylim, *, other_lw):
+    cb_ax = {
+        **_el("axes_1", "axes", ylim=ylim),
+        "is_colorbar": True,
+        "autoscale": {"x": False, "y": False},
+    }
+    return _m(
+        {**_el("axes_0", "axes", xlim=[0, 1]), "autoscale": {"x": True, "y": True}},
+        cb_ax,
+        {**_el("axes_1.colorbar", "colorbar", vmin=0, vmax=vmax), "geom_gid": "axes_1"},
+        _el("axes_0.lines_0", "line", linewidth=other_lw),
+    )
+
+
+def test_colorbar_axis_range_needs_a_vmin_vmax_cause():
+    """色条轴被 Agent 显式 set_ylim、同时目标线宽变了：范围起因不是色条的 vmin/vmax，不放过。"""
+    before = _colorbar_stem(1, [0, 1], other_lw=1)
+    after = _colorbar_stem(1, [0, 3], other_lw=4)
+    c = _only(after=after, before=before, scope="element", gid="axes_0.lines_0")
+    assert c.verdict == "unknown" and "axes_1" in c.observed["elements"], c.observed
+
+
+def test_colorbar_axis_range_follows_its_own_vmax_change():
+    before = _colorbar_stem(1, [0, 1], other_lw=1)
+    after = _colorbar_stem(3, [0, 3], other_lw=1)
+    c = _only(after=after, before=before, scope="element", gid="axes_1.colorbar")
     assert c.verdict == "verified", c.observed
 
 

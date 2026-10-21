@@ -5089,8 +5089,30 @@ def _measure_manifest(
                 )
                 if names:
                     peers[axis] = names
+            # `datalim`：这根轴数据的真实范围（`ax.dataLim`，读不改图）。autoscale 开关只是最终状态——`set_xlim(auto=True)`、
+            # 先设再 `set_autoscalex_on(True)` 都会让它为 True 而范围其实是显式写的；所以「范围是自动缩放算的」要有数据证据：
+            # 数据范围真的动了、新范围仍包得住它（figureverify._auto_kind）。取不到 / 非有限 = 不发 = 没证据。
+            datalim: dict[str, list[float]] = {}
+            # 色条轴（范围来自映射对象，判据不看 dataLim）与 3D 轴（dataLim 是投影出来的）不发：它们的 dataLim 在撤销 / 重放后会
+            # 漂（Inv Cbar / 3D 的「撤销后 manifest 逐位一致」不变式），发了就破坏可还原性。
+            raw = (
+                None
+                if (artist in state.colorbar_axes or el["role"] == "axes3d")
+                else getattr(artist, "dataLim", None)
+            )
+            for axis, (i0, i1) in (("x", ("x0", "x1")), ("y", ("y0", "y1"))):
+                try:
+                    lo, hi = float(getattr(raw, i0)), float(getattr(raw, i1))
+                except Exception:  # noqa: BLE001 —— 没有 dataLim（非常规 axes）：不发
+                    continue
+                if math.isfinite(lo) and math.isfinite(hi):
+                    datalim[axis] = [min(lo, hi), max(lo, hi)]
             if autoscale:
-                entry["autoscale"] = {**autoscale, **({"peers": peers} if peers else {})}
+                entry["autoscale"] = {
+                    **autoscale,
+                    **({"peers": peers} if peers else {}),
+                    **({"datalim": datalim} if datalim else {}),
+                }
         elif el["role"] == "image" or _is_area_field(artist):
             # imshow 位图铺满宿主 axes，会在命中测试里盖住它——把几何编辑
             # 代理回宿主 axes（前端对 geom_gid 发 position override）。

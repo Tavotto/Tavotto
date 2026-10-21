@@ -15,6 +15,7 @@ L3 的「这次修改新引入的版式问题」只复用 `interference.detect` 
 
 from __future__ import annotations
 
+import math
 import re
 
 from . import interference, preflight, profiles
@@ -560,14 +561,69 @@ _AXES_PREFIX = re.compile(r"axes_\d+")
 _TICK_AXIS = re.compile(r"\.([xyz])tick")
 
 
+def _datalim_union(
+    ax: dict, axis: str, side_els: dict[str, dict] | None
+) -> tuple[float, float] | None:
+    """这根轴（连同共享这根轴范围的兄弟轴）数据范围的并集；任何一个拿不到 = None（没证据）。"""
+    names = [ax.get("gid")] + list(
+        (((ax.get("autoscale") or {}).get("peers") or {}).get(axis)) or []
+    )
+    lo, hi = math.inf, -math.inf
+    for n in names:
+        e = ax if n == ax.get("gid") else (side_els or {}).get(n)
+        dl = (((e or {}).get("autoscale") or {}).get("datalim") or {}).get(axis)
+        if not (isinstance(dl, (list, tuple)) and len(dl) == 2):
+            return None
+        if not all(isinstance(v, (int, float)) and not isinstance(v, bool) for v in dl):
+            return None
+        lo, hi = min(lo, dl[0]), max(hi, dl[1])
+    return (lo, hi) if lo <= hi else None
+
+
+def _range_is_autoscaled(
+    prop: str,
+    new: dict,
+    old: dict,
+    after_els: dict[str, dict] | None,
+    before_els: dict[str, dict] | None,
+) -> bool:
+    """自动缩放的数据证据。`autoscale` 开关证明不了范围没被显式写（`set_xlim(auto=True)`、先设再重开自动缩放，两侧都是 True）。
+    所以要三条同时成立：两侧自动缩放开着；这个方向的数据范围（`datalim`，含 sharex / twinx 兄弟）真的变了；新范围仍包得住新数据。
+    线宽之类不动数据的改动 + 显式 set_xlim(auto=True) → 数据没变 → 不免责。
+    已知宽松：数据范围真变了、同时脚本又显式放宽了范围，仍被当自动（最终状态里分不开）。"""
+    axis = prop[0]
+    if [((e or {}).get("autoscale") or {}).get(axis) for e in (new, old)] != [True, True]:
+        return False
+    d_new, d_old = _datalim_union(new, axis, after_els), _datalim_union(old, axis, before_els)
+    if d_new is None or d_old is None:
+        return False
+    if _num_eq(d_new[0], d_old[0]) and _num_eq(d_new[1], d_old[1]):
+        return False
+    lim = _editable_values(new).get(prop)
+    if not (isinstance(lim, (list, tuple)) and len(lim) == 2):
+        return False
+    try:
+        lo, hi = sorted(float(v) for v in lim)
+    except (TypeError, ValueError):
+        return False
+    tol = 1e-9 * max(1.0, abs(hi - lo))
+    return lo <= d_new[0] + tol and hi >= d_new[1] - tol
+
+
 def _auto_kind(
-    gid: str, prop: str | None, new: dict | None, old: dict | None, els: dict[str, dict]
+    gid: str,
+    prop: str | None,
+    new: dict | None,
+    old: dict | None,
+    els: dict[str, dict],
+    after_els: dict[str, dict] | None = None,
+    before_els: dict[str, dict] | None = None,
 ) -> tuple[str, str | None] | None:
     """这条改动是不是「自动算出来的量」。返回 `("range", 轴字母)`、`("layout", None)` 或 None（不是）。
 
     * `range`：轴的自动缩放范围、自动刻度器给出的刻度值、刻度文字（刻度器 + 格式化器的输出）。**范围只有在改前改后两侧都还
-      开着自动缩放时才算自动**（manifest 的 `autoscale` 只读事实；`set_[xy]lim` 会把它关掉）——显式设过的范围是脚本 / Agent
-      写的，不是缩放算的；manifest 没发这个事实（旧版本 / 合成输入）= 没证据，不免责；
+      开着自动缩放、且数据范围真的动了、新范围仍包住它时才算自动**（`_range_is_autoscaled`：manifest 的 `autoscale` 开关加
+      `datalim` 数据证据；开关本身证明不了范围没被显式写）；manifest 没发这些事实（旧版本 / 合成输入）= 没证据，不免责；
     * `layout`：轴的 `position`（tight_layout / constrained 随文字尺寸重排）。
     色条轴的范围由映射对象的 vmin/vmax 经 `set_ylim` 写入（自动缩放是关的），是派生量：照旧算自动。"""
     role = (new or old or {}).get("role")
@@ -592,8 +648,11 @@ def _auto_kind(
         axis = prop[0]
         if (new or {}).get("is_colorbar") and (old or {}).get("is_colorbar"):
             return ("range", axis)
-        flags = [((e or {}).get("autoscale") or {}).get(axis) for e in (new, old)]
-        return ("range", axis) if flags == [True, True] else None
+        if new is None or old is None:
+            return None
+        return (
+            ("range", axis) if _range_is_autoscaled(prop, new, old, after_els, before_els) else None
+        )
     return None
 
 
@@ -662,12 +721,12 @@ def changes_outside_target(
     1. **跟随目标的对象**：`_owners`——图例项的 `handle_*` 跟着它代表的那条曲线 / 柱组；图像与色条共享 `cmap/vmin/vmax`；色条
        的 `label` 与所在轴的轴标题是同一个文字。它们的账记在 manifest 明说的那个主人名下，主人在范围内就在范围内。
        柱子（`barseries_N.bar_M`）是柱组的后代，已被前缀覆盖。
-    2. **自动算出来的量**（`_auto_kind`）：轴的 `xlim / ylim`（**改前改后都开着自动缩放才算**；显式 `set_[xy]lim` 不是缩放算的）、
+    2. **自动算出来的量**（`_auto_kind`）：轴的 `xlim / ylim`（**两侧自动缩放开着 + 数据范围真变了 + 新范围包住它才算**；显式 `set_[xy]lim` 不是缩放算的）、
        `major_mode / minor_mode` 都是 `auto` 时刻度器的输出（`major_values / major_step / minor_*`）、刻度文字元素（刻度器 +
        格式化器的输出，格式字段在 `ticks` 元素上另算）、轴的版面 `position`（tight_layout / constrained 随文字尺寸重排）。
        它们**只在有起因时**免责：范围类（范围 / 刻度 / 刻度文字）的起因必须在**同一个 `axes_N`**（或与它共享这根轴范围的
        sharex / twinx 兄弟轴，manifest `autoscale.peers`）里，是范围内一条非「只有文字」角色（`_TEXT_ONLY_ROLES`）元素的真改动
-       （线宽 / 色图范围 / 柱宽 / 刻度类型……）；色条轴的范围来自映射对象，起因可在别的轴里。`position` 是全图重排，起因是范围内
+       （线宽 / 色图范围 / 柱宽 / 刻度类型……）；色条轴的范围来自映射对象的 vmin/vmax：起因必须是这个色条（或其映射对象 / 同色图组）的 `vmin/vmax` 真改动，可在别的轴里；Agent 单独 `cbar.ax.set_ylim` 不被放过（已知宽松：同时改了 vmin/vmax 又显式写色条轴范围）。`position` 是全图重排，起因是范围内
        任一真改动（已知宽松：目标内有真改动时，别处显式 `set_position` 也被当重排放过）。没有起因的、或显式设的范围变化照常算范围外。
     3. **不比** `bbox / geometry / paint_order` 等只读几何：它们不在 `editable` 里，是渲染结果，随上面任一类改动而变。
     """
@@ -690,19 +749,36 @@ def changes_outside_target(
     kind = {
         c: k
         for c in changes
-        if (k := _auto_kind(*c, after_els.get(c[0]), before_els.get(c[0]), els))
+        if (
+            k := _auto_kind(
+                *c, after_els.get(c[0]), before_els.get(c[0]), els, after_els, before_els
+            )
+        )
     }
     real_in = [c for c in changes if c not in kind and owned(*c)]
     cause_any = bool(real_in)
     #: 范围起因：范围内一条非「只有文字」角色元素的真改动，按它所在的 axes_N 记
     cause_axes: set[str] = set()
-    cause_somewhere = False
     for g, _ in real_in:
         if (els.get(g) or {}).get("role") in _TEXT_ONLY_ROLES:
             continue
-        cause_somewhere = True
         if m := _AXES_PREFIX.match(g):
             cause_axes.add(m.group(0))
+
+    def colorbar_cause(axes_gid: str) -> bool:
+        """色条轴的范围是映射对象的 vmin/vmax 经 set_ylim 写进去的；Agent 自己 `cbar.ax.set_ylim` 也是同一个量，不能凭「别处有
+        任何真改动」放过。要求：这个色条（或它的映射对象 / 同色图组）的 vmin/vmax 在范围内真的变了。"""
+        rel: set[str] = set()
+        for g, e in els.items():
+            if e.get("role") == "colorbar" and e.get("geom_gid") == axes_gid:
+                rel.add(g)
+                if isinstance(e.get("mappable_gid"), str):
+                    rel.add(e["mappable_gid"])
+                rel |= {x for x in e.get("cmap_group_gids") or () if isinstance(x, str)}
+        return any(
+            p in ("vmin", "vmax") and g in rel and owned(g, p) for g, p in changes if g in rel
+        )
+
     outside: list[str] = []
     for g, prop in changes:
         k = kind.get((g, prop))
@@ -711,7 +787,10 @@ def changes_outside_target(
                 exempt = cause_any
             else:
                 need = _range_cause_axes(g, k[1], els)
-                exempt = cause_somewhere if need is None else bool(need & cause_axes)
+                if need is None:
+                    exempt = colorbar_cause(_AXES_PREFIX.match(g).group(0))  # type: ignore[union-attr]
+                else:
+                    exempt = bool(need & cause_axes)
             if exempt or owned(g, prop):
                 continue
         elif owned(g, prop):
