@@ -1936,7 +1936,7 @@
       "renderProgress": "Sample figure rendering progress",
       "builtin": "Built-in sample",
       "figureLabel": "The reaction-kinetics figure drawn by {{name}}",
-      "success": "Rendered. Next, adjust it right on the figure"
+      "success": "Compiled"
     },
     "legend": {
       "task": "Drag the legend somewhere else",

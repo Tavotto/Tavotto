@@ -320,6 +320,28 @@ for (const size of [
       expect(box!.x + box!.width).toBeLessThanOrEqual(size.width + 0.5)
     }
     await inView(page.locator('[data-tutorial-begin]'))
+    // 欢迎页不被压扁：注释签不顶到功能行、不压到主按钮；蓝点落在图里的字外面（原型的要求）
+    await page.evaluate(() => document.fonts.ready)
+    const welcome = await page.evaluate(() => {
+      const view = document.querySelector('[data-tutorial-view="welcome"]')!
+      const r = (el: Element) => el.getBoundingClientRect()
+      const chips = [...view.querySelectorAll('[data-welcome-callout]')].map(r)
+      const dots = [...view.querySelectorAll('[data-welcome-callout-dot]')].map(r)
+      const texts = [...view.querySelectorAll('[data-demo-stage] svg text')].map(r)
+      const hit = (a: DOMRect, b: DOMRect) => a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top
+      return {
+        chips: chips.length,
+        dots: dots.length,
+        toFeatures: Math.min(...chips.map((c) => c.top)) - r(view.querySelector('ul')!).bottom,
+        toButton: r(view.querySelector('[data-tutorial-begin]')!).top - Math.max(...chips.map((c) => c.bottom)),
+        dotsOnText: dots.filter((d) => texts.some((t) => hit(d, t))).length,
+      }
+    })
+    expect(welcome.chips).toBe(3)
+    expect(welcome.dots).toBe(3)
+    expect(welcome.toFeatures).toBeGreaterThanOrEqual(16)
+    expect(welcome.toButton).toBeGreaterThanOrEqual(16)
+    expect(welcome.dotsOnText).toBe(0)
     await page.locator('[data-tutorial-begin]').click()
     await inView(page.locator('[data-tutorial-file-card]'))
     await inView(page.locator('[data-tutorial-drop-zone]'))

@@ -1916,7 +1916,7 @@
       "renderProgress": "示例图渲染进度",
       "builtin": "内置示例",
       "figureLabel": "{{name}} 画出的反应动力学图",
-      "success": "渲染完成，接下来在图上调整"
+      "success": "编译完成"
     },
     "legend": {
       "task": "拖动图例，换个位置",

@@ -615,7 +615,7 @@ export default interface Resources {
         "renderProgress": "示例图渲染进度",
         "rendering": "正在渲染图表…",
         "renderingTitle": "正在生成示例图…",
-        "success": "渲染完成，接下来在图上调整",
+        "success": "编译完成",
         "task": "第一步：把示例脚本拖进来",
         "zoneBody": "{{product}} 会打开它画出的图",
         "zoneLabel": "脚本投放框",
