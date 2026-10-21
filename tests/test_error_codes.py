@@ -399,6 +399,7 @@ USER_VISIBLE_CODES = {
     "eps_needs_live_figure": {"figure"},
     "export_basis_mismatch": {"format"},
     "svg_source_unsupported": {"id"},
+    "svg_snapshot_missing": {"id"},
     # --- Prompt 20（ADR 0039）：离线教程资源 / 副本。全部经 app._tutorial_error
     #     一个漏斗转成 JSON，`reason` 是异常里的原文 ---
     "tutorial_resources_missing": {"reason"},

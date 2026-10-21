@@ -1486,7 +1486,7 @@ def _execution_source(
         saved = _load_svg_snapshot(rel_id, overrides, out_dir, reference=reference)
         if saved is None:
             raise engine_exportreq.ExportRequestError(
-                "svg_source_unsupported",
+                "svg_snapshot_missing",
                 f"{rel_id}: the saved Figure snapshot no longer matches this source or edit.",
                 {"id": rel_id},
             )
@@ -1519,7 +1519,7 @@ def _execution_source(
             return saved
     if rendered is None and include_svg:
         raise engine_exportreq.ExportRequestError(
-            "svg_source_unsupported",
+            "svg_snapshot_missing",
             f"{rel_id}: no verified SVG snapshot; explicitly run this source before exporting SVG.",
             {"id": rel_id},
         )

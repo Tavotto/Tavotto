@@ -175,6 +175,31 @@ def test_opaque_pdf_failure_is_per_format_and_names_source(project):
         assert "external.pdf" in json.dumps(outputs["svg"]["error"])
 
 
+def test_raster_original_has_no_svg_and_does_not_ask_for_a_script_rerun(project):
+    import struct
+    import zlib
+
+    client, root = project
+
+    def chunk(kind, data):
+        body = kind + data
+        return struct.pack(">I", len(data)) + body + struct.pack(">I", zlib.crc32(body))
+
+    png = (
+        b"\x89PNG\r\n\x1a\n"
+        + chunk(b"IHDR", struct.pack(">IIBBBBB", 1, 1, 8, 2, 0, 0, 0))
+        + chunk(b"IDAT", zlib.compress(b"\x00\xff\x00\x00"))
+        + chunk(b"IEND", b"")
+    )
+    (root / "scan.png").write_bytes(png)
+    value = spec("scan.png", scope="original", formats=("svg",))
+    value["original"]["source_kind"] = "raster"
+    rejected = client.post("/api/export", json=value)
+    # 位图没有脚本可重跑：中性的 svg_source_unsupported，不是 svg_snapshot_missing
+    assert rejected.status_code >= 400, rejected.get_json()
+    assert rejected.get_json()["code"] == "svg_source_unsupported", rejected.get_json()
+
+
 def test_svg_companion_safety_failure_preserves_pdf(project, monkeypatch):
     client, root = project
     source = run_script(client)
@@ -641,6 +666,8 @@ def test_failed_generation_marker_never_authorizes_an_unknown_current_snapshot(
     rejected = client.post("/api/export", json=spec(source, scope=scope, reference=reference))
     assert rejected.status_code >= 400, rejected.get_json()
     assert rejected.get_json()["status"] == "failed", rejected.get_json()
+    # 执行来源缺与当前执行匹配的快照：说「先重新运行脚本」的专用码，不是共用的 svg_source_unsupported
+    assert rejected.get_json()["code"] == "svg_snapshot_missing", rejected.get_json()
     # The established PDF-only path remains usable with no snapshot reference.
     body, outputs = output(client, spec(source, scope=scope, formats=("pdf",)))
     assert outputs["pdf"]["status"] == "done", body
