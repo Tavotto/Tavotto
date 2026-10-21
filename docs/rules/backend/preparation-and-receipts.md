@@ -91,7 +91,8 @@
 - **数据绑定与旧计划失效（U09，ADR 0071 / FO30）**：`databinding.binding_for(script, root, mode)` 按 cwd 档记「会读哪些
   文件、内容 sha256、修订」进 `PreparationPlan.binding`；执行线程起会话之前把授权 / 解释器决策 / 数据绑定三样与此刻各比
   一次，不一致就 `preparation_plan_stale` + `reason ∈ {grant_changed, environment_changed, data_binding_changed}` +
-  `executed=False`，一行不跑；build 之后按观察到的输入再核（`receipt.binding_check()`），不一致就作废且 `executed=True`。
+  `executed=False`，一行不跑（**唯一的授权例外**：未决定过 → 本次运行自动采用用户自己的 Python 派生出脚本目录默认授权，
+  `preparation.implied_grant_absorbable` 判定后就地吸收、接着跑，trace `check` 记 `grant_absorbed`；显式授权 / 其他原因变化仍 stale，ADR 0107 §二之补）；build 之后按观察到的输入再核（`receipt.binding_check()`），不一致就作废且 `executed=True`。
   **复用热态会话时不一致不是错误**：`ready` + `binding_check.matched=False` + note「旧快照」——不自动重算、不清编辑，
   用户要重算走既有 `/api/engine/invalidate`。`matched=None` = 一条都没观察到（原生读），不冒充核过。导出路的回执与准备
   接口同一份账（`_execution_receipt` 带 grant 与 binding）。

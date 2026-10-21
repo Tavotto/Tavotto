@@ -652,6 +652,38 @@ def _kill_owned_worker(worker) -> None:
         worker.force_kill()
 
 
+def implied_grant_absorbable(project_root: str, old: dict, new: dict) -> bool:
+    """授权从 `old`（计划记下的）变成 `new`（此刻重算的），是不是**只**因为本次运行自动采用了用户自己的 Python
+    （ADR 0107 §二修订，2026-10-22 用户裁决）——是才可以就地吸收，不让用户再点一次。
+
+    四条同时成立，缺一不可：① 计划时没决定过、没有任何授权、也没有派生理由（用户从未表过态）；② 此刻仍没决定过
+    （没人在这期间设过工作目录）；③ 此刻的授权恰是派生默认：`granted=True / granted_at=None / mode=project`、
+    `implied_by=user_interpreter`——范围与用户第一次手动点同一个环境时 `workdir.grant_for` 给出的一字不差；
+    ④ 吸收的只是这一种变化，别的（用户改了设置、别的会话改了）一律不吸收，照旧 `grant_changed`。"""
+    zero = {"granted": False, "granted_at": None, "mode": None}
+    if (
+        old.get("decided") is not False
+        or old.get("implied_by") is not None
+        or old.get("cwd_write") != zero
+    ):
+        return False
+    if workdir.decided(project_root):
+        return False
+    derived = {
+        "cwd_write": {"granted": True, "granted_at": None, "mode": workdir.MODE_PROJECT},
+        "decided": False,
+        "implied_by": workdir.IMPLIED_BY_USER_INTERPRETER,
+    }
+    return new == derived and workdir.grant_for(project_root) == derived
+
+
+def _binding_sans_mode(binding: dict | None) -> dict | None:
+    """数据绑定去掉随 cwd 档变的 `mode` / `revision` 之后的内容（吸收派生授权时比「数据是否真变了」）。"""
+    if binding is None:
+        return None
+    return {k: v for k, v in binding.items() if k not in ("mode", "revision")}
+
+
 def _script_revision(root: str, script: str | None) -> str | None:
     if script is None:
         return None
@@ -885,11 +917,20 @@ class PreparationService:
             **({"run": plan.run} if plan.run is not None else {}),
         )
         # 只吸收「采用换了环境」带来的变化：授权档 / 数据绑定 / 源码 / 改指表任何一个也变了，就是别的过期原因，不就地
-        # 换计划（交回 None，由对账给出过期结局）
+        # 换计划（交回 None，由对账给出过期结局）。唯一的授权例外：「没决定过 → 自动采用用户自己的 Python 派生出的
+        # 默认授权（脚本目录）」（ADR 0107 §二修订，2026-10-22 用户裁决），见 `implied_grant_absorbable`
+        absorbed = fresh.grant != plan.grant
+        if absorbed:
+            if not implied_grant_absorbable(plan.project_root, plan.grant, fresh.grant):
+                return None
+            # 授权档变了，绑定里的 `mode`（及随它变的 `revision`）必然跟着变；其余（读哪些文件、内容 sha、
+            # 基准目录）一字不差才算同一份数据——数据真变了仍是别的过期原因
+            if _binding_sans_mode(fresh.binding) != _binding_sans_mode(plan.binding):
+                return None
+        elif (fresh.binding or {}).get("revision") != (plan.binding or {}).get("revision"):
+            return None
         if (
-            fresh.grant != plan.grant
-            or (fresh.binding or {}).get("revision") != (plan.binding or {}).get("revision")
-            or fresh.script_revision != plan.script_revision
+            fresh.script_revision != plan.script_revision
             or fresh.input_remap_generation != plan.input_remap_generation
         ):
             return None
@@ -902,6 +943,13 @@ class PreparationService:
             launch_order=plan.launch_order,
         )
         entry.plan = fresh
+        if absorbed:
+            # 审计：这次运行吸收了一次派生授权（不是用户点头的授权）。facts 只收标量，随 `trace` 进回执旁的诊断
+            entry.result.trace.mark(
+                "check",
+                grant_absorbed=workdir.IMPLIED_BY_USER_INTERPRETER,
+                grant_mode=(fresh.grant.get("cwd_write") or {}).get("mode"),
+            )
         return fresh
 
     def _execute(self, entry: _Entry, runner) -> None:
@@ -957,8 +1005,9 @@ class PreparationService:
                 return
             if decision.adopted is not None:
                 before = self._stale_reason(plan)
-                if before is None or before[0] == STALE_ENVIRONMENT:
-                    # 只吸收环境变化。工作目录授权档（用户确认过的）变了不吸收：照旧走下面的过期结局，让用户重新检查、看到新档
+                if before is None or before[0] in (STALE_ENVIRONMENT, STALE_GRANT):
+                    # 吸收环境变化，以及「没决定过 → 派生默认授权」那一种授权变化（`_replan_in_place` 里逐条核；
+                    # 用户确认过的授权档变了、或授权因别的原因变了，它交回 None，下面照旧报过期）
                     plan = self._replan_in_place(entry, plan) or plan
         stale = self._stale_reason(plan) if plan.script is not None else None
         if stale is not None:
@@ -1008,7 +1057,12 @@ class PreparationService:
             # 缺包后自动接手换了解释器（项目 venv / ADR 0107 的系统解释器，后者还把默认工作目录改成脚本
             # 目录）：计划记下的授权 / 解释器 / 数据绑定与此刻再比一次——与起会话之前同一份判据。第二次执行
             # 会在计划没写过的解释器或 cwd 里跑、回执却挂在这份不可变计划上——不跑，作废（Codex #713 P1 ×2）
+            nonlocal plan
             stale = self._stale_reason(plan)
+            if stale is not None and stale[0] == STALE_GRANT:
+                # 缺包后自动接手了用户自己的 Python：同一种「本次运行自己带来的派生授权」，同样就地吸收
+                plan = self._replan_in_place(entry, plan) or plan
+                stale = self._stale_reason(plan)
             if stale is not None:
                 raise _StaleBeforeRetry(*stale)
 
@@ -1119,6 +1173,7 @@ class PreparationService:
         if result.status in TERMINAL:
             # 本计划是共享会话的等待者、已被取消放手（T09）：会话不是我们的，回执 / 捕获都不归这份计划
             return
+        plan = entry.plan  # before_retry 可能就地换过计划（吸收派生授权）：回执挂换后的那份
         tr.mark("execute", created=bool(created))
         result.created_runtime = bool(created)
         result.input_facts = getattr(worker, "last_input_facts", None)

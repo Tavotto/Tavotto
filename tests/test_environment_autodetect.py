@@ -45,6 +45,7 @@ from tavotto.engine import (
     projectenv,
     taskdiag,
     userenvs,
+    workdir,
 )
 from test_preparation_session_dependencies import (  # noqa: F401 — 同一套夹具与工具，不写第二份
     ALPHA,
@@ -1343,19 +1344,14 @@ def test_when_the_pending_project_env_cannot_run_the_next_candidate_is_used(
     assert _act(client, report, "run").status_code == 202
     final = _wait(client, report["session_id"], lambda r: r["phase"] not in ("running",))
 
-    # 落到下一个候选（项目外的用户环境）：采用了它，同时默认工作目录档变成「在脚本目录里跑」（ADR 0107 §二）——授权档变了
-    # 不就地吸收（那是用户没确认过的写入范围），照旧报过期、让用户重新检查看到新档；重新检查之后一次运行就出图
+    # 落到下一个候选（项目外的用户环境）：采用了它，同时默认工作目录档变成「在脚本目录里跑」（ADR 0107 §二）。
+    # 项目没决定过工作目录，这一变化只是本次自动采用派生出来的默认——就地吸收、接着跑完（2026-10-22 用户裁决），
+    # 不报 grant_changed、不让用户再点一次
     assert _env_root(projectenv.remembered_record(proj)["path"]) == _env_root(lab)
-    assert final["outcome"]["kind"] == "stale" and final["outcome"]["reason"] == "grant_changed", (
-        final
-    )
-    again = _act(client, final, "recheck")
-    assert again.status_code in (200, 202)
-    fresh = _get(client, report["session_id"])
-    assert "run" in _kinds(fresh)
-    assert _act(client, fresh, "run").status_code == 202
-    done = _wait(client, report["session_id"], lambda r: r["phase"] not in ("running",))
-    assert done["phase"] == "completed", done
+    assert final["phase"] == "completed", final
+    assert final["outcome"]["kind"] != "stale", final
+    assert workdir.decided(proj) is False  # 吸收的是派生授权，没有替用户写下任何设置
+    assert workdir.grant_for(proj)["implied_by"] == "user_interpreter"
 
 
 @needs_worker
@@ -2234,13 +2230,8 @@ def test_pythonpath_candidate_keeps_the_run_action_and_is_adopted_only_after_run
     final = _wait(client, report["session_id"], lambda r: r["phase"] != "running", timeout=60)
     assert marker.exists()
     assert _env_root(projectenv.remembered_record(proj)["path"]) == _env_root(py), final
-    if final["outcome"]["kind"] == "stale":
-        # 沿用环境采用后的工作目录授权纪律：确认新计划，才在新 cwd 下真正跑脚本。
-        assert final["outcome"]["reason"] == "grant_changed", final
-        assert _act(client, final, "recheck").status_code in (200, 202)
-        fresh = _get(client, report["session_id"])
-        assert _act(client, fresh, "run").status_code == 202
-        final = _wait(client, report["session_id"], lambda r: r["phase"] != "running", timeout=60)
+    # 自动采用带来的派生授权（脚本目录）就地吸收，不再 grant_changed（ADR 0107 §二修订，2026-10-22）
+    assert final["outcome"]["kind"] != "stale", final
     assert final["phase"] == "completed" and final["captured"], final
 
 
