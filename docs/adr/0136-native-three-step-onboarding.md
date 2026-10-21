@@ -148,7 +148,7 @@ macOS 先不做（拖进废纸篓没有钩子）。
   记号还在，下次启动接着来。只在 Windows 生效（`os.name == "nt"`），其它平台即使有同名文件也不读不删。
 * **前端**（`components/onboarding/autoOpen.ts`）：启动时问一次；`true` → `onboardingStore.resetToNewcomer()`
   （与上一节迁移同一状态：`not_started`、`welcomeSeenAt` 清空、`hintSeen` 保留，并落盘）→ 自动弹欢迎页的判定重跑
-  → ack。同一页面会话只问一次；取不到（浏览器 / 旧后端）当没有。内嵌宿主不挂 `useAutoOpen`，不受影响。
+  → ack。同一页面会话只问一次；只有桌面客户端（`isDesktop()`）消费：浏览器模式（pip / 源码安装、远程窗口）不取、不 ack，免得耗掉记号；取不到（旧后端）当没有。内嵌宿主不挂 `useAutoOpen`，不受影响。
 * **不碰**：EBWebView、用户的项目 / 配置 / 最近项目；只有 onboarding 一格回到新手态。勾了「删除应用数据」的卸载本来就清掉
   localStorage，记号随之多余但无害。
 * **局限**：记号在卸载时写；若用户手动删安装目录而没跑卸载器（无钩子），不触发。

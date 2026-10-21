@@ -15,6 +15,12 @@ vi.mock('@/lib/api', async (importOriginal) => ({
   ackReinstallMarker: () => ackMarker(),
 }))
 
+let desktop = true
+vi.mock('@/lib/desktop', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/desktop')>()),
+  isDesktop: () => desktop,
+}))
+
 import { configureOnboardingPersistence, useOnboardingStore } from '@/store/onboardingStore'
 import { useProjectStore } from '@/store/projectStore'
 import { resetTutorialAutoOpenForTest, useAutoOpen } from './autoOpen'
@@ -41,6 +47,7 @@ beforeEach(() => {
   ob().resetOnboarding()
   useProjectStore.setState({ phase: 'none', recent: [], pinned: [], project: null, listsLoaded: true } as never)
   resetTutorialAutoOpenForTest()
+  desktop = true
   fetchMarker.mockReset()
   ackMarker.mockReset()
   ackMarker.mockResolvedValue({ consumed: true })
@@ -74,6 +81,17 @@ describe('卸载后重装的记号', () => {
     expect(ob().hintSeen).toEqual({ layout_page_bounds: 5 })
     expect(ob().surface).toBe('welcome')
     expect(ackMarker).toHaveBeenCalledTimes(1)
+  })
+
+  it('浏览器模式（非桌面客户端）：不取、不 ack、不重置——记号留给真正重装的桌面客户端（Codex #1272）', async () => {
+    desktop = false
+    finishedUser()
+    fetchMarker.mockResolvedValue({ reinstalled: true })
+    await mount()
+    expect(fetchMarker).not.toHaveBeenCalled()
+    expect(ackMarker).not.toHaveBeenCalled()
+    expect(ob().status).toBe('completed')
+    expect(ob().welcomeSeenAt).toBe(111)
   })
 
   it('没有记号（应用内更新 / 非 Windows）：状态一字不动、不 ack', async () => {
