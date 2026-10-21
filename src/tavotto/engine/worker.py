@@ -225,6 +225,7 @@ _ENGINE_MODULES = (
     "scriptinput",
     "runtime",
     "writetripwire",
+    "texdiag",
 )
 _PKG = bridgeboot.load_engine_modules(str(HERE), _ENGINE_MODULES)
 
@@ -950,6 +951,9 @@ class Worker(wireproto.V1Handler):
                 )
                 if k in err
             }
+            tex = self._sensitive_tex_fact(err)
+            if tex:
+                safe["tex"] = tex
             safe.update(
                 message="Sensitive run failed; script diagnostics were omitted.",
                 traceback=_PRIVATE_OUTPUT_NOTICE.strip(),
@@ -1609,6 +1613,23 @@ class Worker(wireproto.V1Handler):
             cur = cur.__cause__ or cur.__context__
             seen += 1
         return {}
+
+    def _sensitive_tex_fact(self, err: dict) -> dict:
+        """敏感运行丢掉自由文本**之前**，先把 TeX 工具链失败的结构化事实（`texdiag`）留下来——否则父进程
+        只剩一句占位，缺 latex / 缺宏包又退回成笼统的脚本错误。只带闭集与白名单清洗过的值：`line`（LaTeX
+        的 `! …` 一行，可能引到图内文字）一律不带；文件名与任一敏感 token 有关（casefold 子串，任一方向，
+        与缺依赖模块名同一判据）也不带。build / render / export 的失败都经这里，与阶段无关。"""
+        fact = _PKG.texdiag.classify(f"{err.get('message') or ''}\n{err.get('traceback') or ''}")
+        if fact is None:
+            return {}
+        out = fact.as_fact()
+        out.pop("line", None)
+        name = str(out.get("file") or "").casefold()
+        if name and any(
+            (t := str(token).casefold()) and (t in name or name in t) for token in self.script_argv
+        ):
+            out.pop("file", None)
+        return out
 
     def _module_attributable_to_script(self, name: str) -> bool:
         folded = name.casefold()
