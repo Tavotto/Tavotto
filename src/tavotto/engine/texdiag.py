@@ -179,10 +179,6 @@ def classify(text: str | None) -> TexFailure | None:
 KINDS = frozenset(_CODE_OF)
 
 
-def code_of(kind: str) -> str:
-    return _CODE_OF[kind]
-
-
 def clean_fact(fact: dict) -> dict:
     """跨进程收到的 `tex` 事实再过一遍闭集 / 白名单（不信任对端拼的值）。"""
     out = {"kind": fact["kind"]}

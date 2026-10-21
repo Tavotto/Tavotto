@@ -370,7 +370,8 @@ def test_parent_does_not_trust_a_forged_tex_fact():
         "",
         {"tex": {"kind": "package_missing", "file": "../x y", "command": "rm -rf"}},
     )
-    assert err.code == "tex_package_missing"
+    # 清洗后没有文件名：缺必需占位符，按 `texdiag.code_for` 降级成 tex_failed
+    assert err.code == "tex_failed"
     assert err.extra["tex"] == {"kind": "package_missing", "command": "other"}
     assert (
         pool._worker_error("x", "script_error", "", {"tex": {"kind": "bogus"}}).code
