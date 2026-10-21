@@ -1,5 +1,18 @@
 # 平台后端线四片：2026-10-20 诊断与模型
 
+## 2026-10-21 基线同步
+
+#1161 接续时重放到 `main @ 2af1d27f78dd1e8972b57ec089e2120d13a5e87a`。唯一文本冲突是
+`tests/test_worker_svg_canvas.py`：main 的 #1219 同样复用模块字体缓存；保留本 PR
+显式传给子进程的私有缓存及双进程回归，避免叠加两个同用途 fixture。探针、oracle、
+原断言与本 PR 同步前逐字相同；main 的 `test_worker_svg_pair.py` 缓存修复也完整保留。
+
+main 已通过 #1219 将 `shard_weights.json` 更新为 run 39422084539 的完整 macOS
+三片 JUnit（528 文件）。这张新表原样保留，不用下文旧 Linux 权重或文本近似覆盖它。
+下文与配套 CSV/JSON 是旧 head `209c59c8` 的诊断快照；其中「现役权重」和三/四片负载
+只描述当时的输入，不代表此次同步后的估计或验证资格。平台四片、完整覆盖与 90 分钟
+上限继续保留；当前 head 仍须取得全新 full-ci、CodeQL 及最终 Merge Queue 组合验证。
+
 ## 问题与范围
 
 PR #1161 head `209c59c80d64f3f3bb0af83e2eb88b0c0c1f2429` 的
