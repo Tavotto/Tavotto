@@ -705,6 +705,32 @@ describe('引擎丢了会话（Codex #923 P2）：状态 404 是终态，不无�
   })
 })
 
+describe('换包后复位旧包状态（Codex #1263 P2）', () => {
+  it('404 置 packageGone → 改勾选换包成功 → 新包可重试失败显示普通重试而非「包已不在」', async () => {
+    startMock.mockResolvedValue(status({}))
+    statusMock.mockRejectedValue(new ApiError('gone', 404, { code: 'diag_send_not_found' }))
+    await mount()
+    await click(q('[data-diag-send-confirm]'))
+    await tick()
+    expect(q('[data-diag-send-status]')!.textContent).toContain(ds('packageGone'))
+    prepareMock.mockResolvedValue({ ...PREPARED, id: 'pid-2', gen: 0 })
+    await click(q('[data-diag-send-extra="source"]'))
+    await tick(350)
+    expect(prepareMock).toHaveBeenCalledTimes(2)
+    expect(q('[data-diag-send-status]')!.textContent).not.toContain(ds('packageGone'))
+    startMock.mockResolvedValue(status({ id: 'pid-2' }))
+    statusMock.mockReset()
+    statusMock.mockResolvedValue(status({ id: 'pid-2', state: 'failed', stage: null, code: 'rate_limited', retryable: true }))
+    await click(q('[data-diag-send-confirm]'))
+    await tick()
+    const body = q('[data-diag-send-status]')!.textContent
+    expect(body).toContain(ds('failure.rate_limited'))
+    expect(body).not.toContain(ds('packageGone'))
+    expect(q('[data-diag-send-confirm]')!.textContent).toBe(ds('retry'))
+    expect(q('[data-diag-send-reprepare]')).toBeNull()
+  })
+})
+
 describe('诊断包扩充（detail-…、勾选项）', () => {
   const lastPayload = () => prepareMock.mock.calls[prepareMock.mock.calls.length - 1][0] as Record<string, any>
   const box = (key: string) => q<HTMLInputElement>(`[data-diag-send-extra="${key}"]`)!

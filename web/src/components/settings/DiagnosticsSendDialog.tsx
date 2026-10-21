@@ -154,6 +154,9 @@ export function DiagnosticsSendDialog({
     } else setOptionsLost(false)
     idRef.current = p.id
     actionGen.current = p.gen
+    // 旧包的「已不在引擎里」与失败说明只属于旧包：换上新包就一并复位，否则新包的普通失败仍显示过期文案
+    setPackageGone(false)
+    setStatus(null)
     setPhase(p.too_large ? 'tooLarge' : 'ready')
   }, [])
 
