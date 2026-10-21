@@ -7219,10 +7219,7 @@
       ],
       "browser_eligible": false,
       "smoke": false,
-      "notes": "两张不同的 Figure 写同一个 stem 的不同格式：panel.png（第一张）与 panel.pdf（第二张，随后 plt.close）。原生脚本留下 2 张图，expected_figures 如实写原生真实图数 2。",
-      "classification": "product_bug",
-      "reason": "同 stem 不同格式写出的两张不同 Figure，后写且被 close 的那张从捕获中丢失：原生 2 张，Tavotto 只捕获到 1 张（stem=panel），用户看到的少一张图。",
-      "follow_up": "产品侧修同 stem 捕获账本（已知缺口，修复另行跟踪）；修复合入后把本条的 classification / reason / follow_up 一并删掉并更新基线。"
+      "notes": "两张不同的 Figure 写同一个 stem 的不同格式：panel.png（第一张）与 panel.pdf（第二张，随后 plt.close）。原生留下 2 张图；Tavotto 捕获 panel 与 panel-2（`figcapture.adopt_displaced_writers`），原件各归各的。"
     },
     {
       "id": "art_3d_surface_scatter",

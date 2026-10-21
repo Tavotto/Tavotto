@@ -2183,16 +2183,18 @@
       }
     },
     "shape_same_stem_formats": {
-      "classification": "product_bug",
+      "classification": "full_support",
       "stages": {
         "discover": true,
         "execute": true,
-        "capture": false
-      },
-      "reason": "同 stem 不同格式写出的两张不同 Figure，后写且被 close 的那张从捕获中丢失：原生 2 张，Tavotto 只捕获到 1 张（stem=panel），用户看到的少一张图。",
-      "follow_up": "产品侧修同 stem 捕获账本（已知缺口，修复另行跟踪）；修复合入后把本条的 classification / reason / follow_up 一并删掉并更新基线。",
-      "stage": "capture",
-      "note": "未通过：['capture']"
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
     },
     "shape_sandbox_write": {
       "classification": "full_support",
