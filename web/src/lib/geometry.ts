@@ -201,6 +201,13 @@ export interface SnapNearestResult extends SnapResult {
 export const SNAP_HOLD_FACTOR = 1.75
 
 /**
+ * hold 的让位比例（ADR 0128 §一修订，2026-10-21 用户裁决）：已吸住一对时，若另一对（同档或更高档、
+ * 且在容差内）的距离 < 被保持那一对当前距离的这个倍数，就让给更近的那条；其余情况 hold 照旧——
+ * 两条线远近相近时不来回跳。前提：距离都是同一帧里「未吸附的原始框」到线的距离，所以可直接比。
+ */
+export const SNAP_HOLD_YIELD_RATIO = 0.25
+
+/**
  * 三线吸附的「就近」版：左/中/右（上/中/下）里**离候选线最近**的那条边胜出，
  * 而不是按顺序第一个进入容差的。图内元素挨得近（相邻两行字、刻度与轴标题），
  * 按顺序取会让左边先吸到一条不相干的线上，想对齐的中线反而永远吸不到。
@@ -224,13 +231,6 @@ export function snapMoveNearest(
     const offs = [0, size / 2, size]
     const ok = (e: SnapEdge, l: SnapLine) => !pair || pair(e, l)
     const held = hold?.[axis]
-    if (held) {
-      const line = lines[held.idx]
-      if (line && ok(held.selfEdge, line)) {
-        const d = line.v - (start + offs[held.selfEdge])
-        if (Math.abs(d) < tol * SNAP_HOLD_FACTOR) return { d, pick: { selfEdge: held.selfEdge, line } }
-      }
-    }
     let best: { d: number; r: number; idx: number; e: SnapEdge } | null = null
     for (const e of [0, 1, 2] as const) {
       for (let idx = 0; idx < lines.length; idx++) {
@@ -240,6 +240,23 @@ export function snapMoveNearest(
         const r = rank ? rank(e, line) : 0
         if (!best || r < best.r || (r === best.r && Math.abs(d) < Math.abs(best.d)))
           best = { d, r, idx, e }
+      }
+    }
+    if (held) {
+      const line = lines[held.idx]
+      if (line && ok(held.selfEdge, line)) {
+        const d = line.v - (start + offs[held.selfEdge])
+        if (Math.abs(d) < tol * SNAP_HOLD_FACTOR) {
+          // 让位（2026-10-21 用户裁决）：另一条线（不同的一对）已经近到被保持线距离的 0.25 倍以内，
+          // 且档位不更差，就让给它——否则子图已经差 0.6 px 就能对准目标，却被远处一条 hold 线拽住
+          const heldRank = rank ? rank(held.selfEdge, line) : 0
+          const yields =
+            best &&
+            (best.idx !== held.idx || best.e !== held.selfEdge) &&
+            best.r <= heldRank &&
+            Math.abs(best.d) < Math.abs(d) * SNAP_HOLD_YIELD_RATIO
+          if (!yields) return { d, pick: { selfEdge: held.selfEdge, line } }
+        }
       }
     }
     if (hold) hold[axis] = best ? { selfEdge: best.e, idx: best.idx } : null

@@ -13,7 +13,7 @@ import {
   isElementHidden,
   snapKindOf,
 } from '@/lib/elementGeom'
-import { rectsIntersect, SNAP_HOLD_FACTOR, visualBounds } from '@/lib/geometry'
+import { rectsIntersect, SNAP_HOLD_FACTOR, SNAP_HOLD_YIELD_RATIO, visualBounds } from '@/lib/geometry'
 import type { Rect, ResizeDir, SnapLine, SnapLineCandidates, SnapTargets } from '@/lib/geometry'
 import type { CanvasObject, PanelObject } from '@/types/document'
 import { panelRotation } from '@/types/document'
@@ -105,13 +105,6 @@ export function snapScaleNearest(p: ScaleSnapParams): ScalePick | null {
     return { s, dist: Math.abs(a.f + off * s0 - line.v), jump, anchor, line }
   }
 
-  const held = hold?.held
-  if (held) {
-    const r = evalPair(held.axis, held.ai, held.li)
-    if (r && r.dist < tol * HOLD_FACTOR && r.jump < tol * SCALE_JUMP_FACTOR * HOLD_FACTOR)
-      return { s: r.s, axis: held.axis, anchor: r.anchor, line: r.line }
-  }
-
   let best: { tier: number; dist: number; axis: 'x' | 'y'; ai: number; li: number; s: number } | null = null
   for (const { axis, as, ls } of axes) {
     for (let ai = 0; ai < as.length; ai++) {
@@ -122,6 +115,22 @@ export function snapScaleNearest(p: ScaleSnapParams): ScalePick | null {
         if (!best || tier < best.tier || (tier === best.tier && r.dist < best.dist))
           best = { tier, dist: r.dist, axis, ai, li, s: r.s }
       }
+    }
+  }
+
+  const held = hold?.held
+  if (held) {
+    const r = evalPair(held.axis, held.ai, held.li)
+    if (r && r.dist < tol * HOLD_FACTOR && r.jump < tol * SCALE_JUMP_FACTOR * HOLD_FACTOR) {
+      // 让位（与图内吸附同一比例 SNAP_HOLD_YIELD_RATIO，ADR 0128 §一修订 2026-10-21）：
+      // 另一对档位不更差、且距离 < 被保持那对的 0.25 倍时让给它
+      const heldTier = scaleTier(axes[held.axis === 'x' ? 0 : 1].as[held.ai].frame, r.line)
+      const yields =
+        best &&
+        (best.axis !== held.axis || best.ai !== held.ai || best.li !== held.li) &&
+        best.tier <= heldTier &&
+        best.dist < r.dist * SNAP_HOLD_YIELD_RATIO
+      if (!yields) return { s: r.s, axis: held.axis, anchor: r.anchor, line: r.line }
     }
   }
   if (hold) hold.held = best && { axis: best.axis, ai: best.ai, li: best.li }

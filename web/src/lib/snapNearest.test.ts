@@ -99,8 +99,40 @@ describe('snapMoveNearest：吸住后保持', () => {
       snapMoveNearest(box(101), cands([a, b]), TOL, { hold })
       return snapMoveNearest(box(x), cands([a, b]), TOL, { hold }).x?.line
     }
-    expect(at(103.4)).toBe(a) // 离 a 3.4 < 3.5（b 只差 0.6，仍保持 a）
-    expect(at(103.6)).toBe(b) // 3.6 ≥ 3.5：放开，改挑 b
+    // 规格变更（2026-10-21，ADR 0128 §一修订）：b 已近到 a 的 0.25 倍以内就让位，所以这里换用
+    // 不会触发让位的 b（a 距 3.4 时 b 差 0.6 ＝ 0.18 倍，会让位；用 3.2 / 0.8 对照 1.75× 边界本身）
+    const at2 = (x: number, bb: SnapLine) => {
+      const hold = createSnapHold()
+      snapMoveNearest(box(101), cands([a, bb]), TOL, { hold })
+      return snapMoveNearest(box(x), cands([a, bb]), TOL, { hold }).x?.line
+    }
+    const far = line(130) // 远在容差外，不参与让位
+    expect(at2(103.4, far)).toBe(a) // 离 a 3.4 < 3.5：仍保持
+    expect(at2(103.6, far)).toBeUndefined() // 3.6 ≥ 3.5：放开，且 far 也在容差外
+    expect(at(103.6)).toBe(b) // 放开后重挑最近的 b
+  })
+
+  it('更近的候选 < 被保持线距离的 0.25 倍：让位（教程里差 0.6 px 对不上 Fig1 底边）', () => {
+    const a = line(100)
+    const b = line(104)
+    const hold = createSnapHold()
+    snapMoveNearest(box(101), cands([a, b]), TOL, { hold })
+    // 框 103.4：a 3.4（仍在 1.75× 内）、b 0.6 = 0.176 倍 < 0.25 → 让给 b
+    const r = snapMoveNearest(box(103.4), cands([a, b]), TOL, { hold })
+    expect(r.x?.line).toBe(b)
+    expect(r.dx).toBeCloseTo(0.6)
+    expect(hold.x?.idx).toBe(1)
+  })
+
+  it('更近的候选 ≥ 0.25 倍：仍保持，不来回跳', () => {
+    const a = line(100)
+    const b = line(104)
+    const hold = createSnapHold()
+    snapMoveNearest(box(101), cands([a, b]), TOL, { hold })
+    // 框 103：a 3.0、b 1.0 = 0.33 倍 ≥ 0.25 → 仍吸 a
+    expect(snapMoveNearest(box(103), cands([a, b]), TOL, { hold }).x?.line).toBe(a)
+    // 临界之外：a 3.1、b 0.9 = 0.29 倍，仍吸 a
+    expect(snapMoveNearest(box(103.1), cands([a, b]), TOL, { hold }).x?.line).toBe(a)
   })
 
   it('超过 1.75 倍容差放开，重挑最近的', () => {

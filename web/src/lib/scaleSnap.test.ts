@@ -164,6 +164,18 @@ describe('snapScaleNearest', () => {
     expect(snapScaleNearest({ ...common, s0: (70.9 - 10) / 40 })?.line.v).toBe(70.6)
   })
 
+  it('hold 让位（ADR 0128 §一修订 2026-10-21）：另一对近到被保持距离的 0.25 倍以内才让，否则保持', () => {
+    const near = (second: number) => {
+      const hold = createScaleHold()
+      const cands = { xs: [line(70, 'frame'), line(second, 'frame')], ys: [] }
+      const common = { ...base, anchors: anchorsOf(), cands, hold }
+      snapScaleNearest({ ...common, s0: 1.49 }) // 先吸住 70
+      return snapScaleNearest({ ...common, s0: (70.8 - 10) / 40 })?.line.v
+    }
+    expect(near(70.7)).toBe(70.7) // 距 0.1 < 0.8 × 0.25：让位
+    expect(near(70.5)).toBe(70) // 距 0.3 ≥ 0.2：仍保持
+  })
+
   it('没有 hold 时同样的位置按最近挑（对照上一条）', () => {
     const cands = { xs: [line(70, 'frame'), line(70.6, 'frame')], ys: [] }
     const hit = snapScaleNearest({ ...base, s0: (70.8 - 10) / 40, anchors: anchorsOf(), cands })
