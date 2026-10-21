@@ -15,6 +15,7 @@ import {
   selectAll,
   startNamedNode,
   toggleTimeline,
+  closeTimeline,
 } from '@/store/actions'
 import { finishNudge, nudgeKeyDown, nudgeKeyUp } from '@/canvas/nudge'
 import { useDocumentStore } from '@/store/documentStore'
@@ -27,7 +28,7 @@ import { useInteractionStore } from '@/store/interactionStore'
 import { panelRender, useRenderStore } from '@/store/renderStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useTimelineStore } from '@/store/timelineStore'
-import { useUiStore, type Tool } from '@/store/uiStore'
+import { isTimelineOpen, useUiStore, type Tool } from '@/store/uiStore'
 import { useViewportStore } from '@/store/viewportStore'
 import { returnToLayout, useWorkspaceStore } from '@/store/workspace'
 import { fitStage, zoomToSelection } from '@/store/zoomToSelection'
@@ -318,9 +319,9 @@ export function useKeyboard() {
       if (e.key === 'Escape') {
         e.preventDefault()
         // 最上层浮层优先：时间线在预览就先退预览，再关抽屉
-        if (ui.versionsOpen && useTimelineStore.getState().preview) {
+        if (isTimelineOpen(ui) && useTimelineStore.getState().preview) {
           useTimelineStore.getState().setPreview(null)
-        } else if (ui.versionsOpen) ui.setVersionsOpen(false)
+        } else if (isTimelineOpen(ui)) closeTimeline()
         else if (ui.editingTextId) ui.setEditingText(null)
         else if (ui.elementPanelId) {
           // 先退选中的图内元素，再退整个图内编辑态；

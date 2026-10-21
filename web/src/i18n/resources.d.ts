@@ -2204,7 +2204,6 @@ export default interface Resources {
     "versions": {
       "beforeRestore": "恢复前（{{time}}）",
       "budgetOver": "命名节点已占用 {{used}} MB，超过 {{limit}} MB 的上限。它们不会被自动删除，但删掉几个之前不能再命名新节点。",
-      "close": "关闭排版时间线",
       "delete": "删除节点",
       "deleteBody": "删除后无法找回，当前排版不受影响。",
       "deleteTitle": "删除节点「{{name}}」？",
@@ -2293,7 +2292,6 @@ export default interface Resources {
         "resized": "图幅 {{fromW}} × {{fromH}} → {{toW}} × {{toH}} mm",
         "sameMetrics": "对象数与图幅未变"
       },
-      "title": "排版时间线",
       "today": "今天",
       "unname": "删除名字",
       "versionName": "节点名称",
@@ -4277,7 +4275,8 @@ export default interface Resources {
     },
     "tab": {
       "canvas": "画布",
-      "properties": "属性"
+      "properties": "属性",
+      "timeline": "时间线"
     },
     "tabsLabel": "右侧面板模式",
     "text": {

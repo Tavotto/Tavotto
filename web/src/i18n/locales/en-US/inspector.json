@@ -1002,7 +1002,8 @@
   },
   "tab": {
     "canvas": "Canvas",
-    "properties": "Properties"
+    "properties": "Properties",
+    "timeline": "Timeline"
   },
   "tabsLabel": "Right panel mode",
   "text": {

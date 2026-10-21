@@ -11,6 +11,7 @@ import { useInteractionStore } from '@/store/interactionStore'
 import { useExactPanelManifest, usePanelDisplayManifest } from '@/store/renderStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
+import { useTimelineStore } from '@/store/timelineStore'
 import { useViewportStore, type ViewTransform } from '@/store/viewportStore'
 import type { CanvasObject, PanelObject } from '@/types/document'
 import { useQuickEdit } from '../quickEditStore'
@@ -78,17 +79,19 @@ export function ContextBar() {
   const tool = useUiStore((s) => s.tool)
   // 模态浮层（导出 / 设置 / 确认框…）与命令面板盖着画布时让位：它们的遮罩与
   // 工具条同一层（z-overlay），后挂进 DOM 的那个会压在上面
-  const modalOpen = useUiStore(
+  const timelinePreviewing = useTimelineStore((s) => s.preview != null)
+  const modalUi = useUiStore(
     (s) =>
       s.exportOpen ||
       s.layoutOpen ||
-      s.versionsOpen ||
       s.stylesOpen ||
       s.registryOpen ||
       s.shortcutHelpOpen ||
       s.settingsOpen ||
       s.confirm != null,
   )
+  // 时间线预览是模态对话框（原先由 versionsOpen 一并覆盖）
+  const modalOpen = modalUi || timelinePreviewing
   const paletteOpen = usePalette((s) => s.open)
   const quickOpen = useQuickEdit((s) => s.target)
   const kind = useInteractionStore((s) => s.kind)

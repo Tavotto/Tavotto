@@ -1738,7 +1738,6 @@
   },
   "versions": {
     "beforeRestore": "恢复前（{{time}}）",
-    "close": "关闭排版时间线",
     "delete": "删除节点",
     "deleteBody": "删除后无法找回，当前排版不受影响。",
     "deleteTitle": "删除节点「{{name}}」？",
@@ -1798,7 +1797,6 @@
       "resized": "图幅 {{fromW}} × {{fromH}} → {{toW}} × {{toH}} mm",
       "sameMetrics": "对象数与图幅未变"
     },
-    "title": "排版时间线",
     "versionName": "节点名称",
     "viewLabel": "怎么看",
     "emptyBody": "编辑停顿后，最多每 2 分钟会自动留一个节点；导出、写回、保存、打开和离开项目时也会留一个。",

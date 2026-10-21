@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Bookmark, Copy, Eye, Minus, Pencil, Plus, RotateCcw, RotateCcwClock, Trash2, X } from '@/components/ui/icons'
+import { Bookmark, Copy, Eye, Minus, Pencil, Plus, RotateCcw, RotateCcwClock, Trash2 } from '@/components/ui/icons'
 import { FIELD_BOX, FIELD_FOCUS } from '@/components/ui/fieldBox'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { RetryImg } from '@/components/ui/RetryImg'
@@ -36,7 +36,7 @@ import { groupTimeline, versionKind, type TimelineGroup } from '@/lib/timelineGr
 import { saveNamedNode, takeCheckpoint } from '@/lib/timelineCheckpoint'
 import { formatMessage, msg, t as translate } from '@/i18n'
 import { formatDate, formatTime } from '@/i18n/format'
-import { restoreLayoutVersion } from '@/store/actions'
+import { closeTimeline, restoreLayoutVersion } from '@/store/actions'
 import { useAssetStore } from '@/store/assetStore'
 import { useDocumentStore } from '@/store/documentStore'
 import { finishActiveGesture } from '@/store/gestureCoordinator'
@@ -57,7 +57,6 @@ import {
   THUMB_OBJECT_LIMIT,
   THUMB_TEXT_CHARS,
 } from './CanvasThumb'
-import { DrawerCount } from './left/DrawerCount'
 import { Badge } from './ui/Badge'
 import { Card } from './ui/Card'
 import { Notice } from './ui/Notice'
@@ -87,10 +86,9 @@ import { isAdoptedPanel, adoptionGuardOf } from '@/lib/artifactValidation'
 const vd = (key: string, values?: Record<string, unknown>) =>
   translate(`versions.${key}`, { ns: 'dialogs', ...(values ?? {}) })
 
-export function VersionDrawer() {
+export function TimelinePanel() {
   useTranslation(['dialogs', 'common'])
-  const open = useUiStore((s) => s.versionsOpen)
-  const setOpen = useUiStore((s) => s.setVersionsOpen)
+  // 挂载 = 页签亮着（`Inspector` 只在「时间线」页签下渲染它；ADR 0101 2026-10-21 修订）
   const docId = useDocumentStore((s) => s.documentId)
   // 版本行第三行「来自画布 X」只在它能区分什么的时候才说（左栏审计 L21）
   const canvases = useDocumentStore((s) => s.canvases)
@@ -219,36 +217,41 @@ export function VersionDrawer() {
   }, [ctx, docId, setLoadError])
 
   useEffect(() => {
-    if (!open) return
     setSaveName('')
     setRenaming(null)
     // 打开时记住触发点，关闭后把焦点还回去（从命令面板打开时是面板的打开者，见 `focusOrigin`）
     restoreFocus.current = focusOrigin()
-    // 焦点交进抽屉（2026-10-07 设计审计 §10.2：此前打开后焦点还留在顶栏，Tab 要走一圈才进来）。
-    // 落在抽屉本身：读屏念出「排版时间线」，下一下 Tab 进第一个控件；Esc 在抽屉上才收得到
-    const id = requestAnimationFrame(() => asideRef.current?.focus({ preventScroll: true }))
+    // 焦点交进面板（2026-10-07 设计审计 §10.2：此前打开后焦点还留在顶栏，Tab 要走一圈才进来）。
+    // 落在面板本身：读屏念出「排版时间线」，下一下 Tab 进第一个控件；Esc 在面板上才收得到。
+    // 用户是点页签进来的就不抢：焦点留在页签上，方向键还能继续换页
+    const id = requestAnimationFrame(() => {
+      if (document.activeElement?.closest('[data-inspector-tab]')) return
+      asideRef.current?.focus({ preventScroll: true })
+    })
     return () => {
       cancelAnimationFrame(id)
       // 抽屉关了，命名输入跟着收起：下次打开是「给现在存个名字…」按钮，不是一直开着的输入框
       setNaming(false)
       // 抽屉关了，预览跟着退出：没有抽屉的只读大图没有出口
       useTimelineStore.getState().setPreview(null)
-      restoreFocus.current?.focus?.()
+      // 只在焦点没有去别处时还：用户点了别的页签 / 控件，焦点已经在那儿，不能抢回触发点
+      const a = document.activeElement
+      if (!a || a === document.body || asideRef.current?.contains(a)) restoreFocus.current?.focus?.()
     }
-  }, [open])
+  }, [])
 
   // 命名输入展开就把焦点交给它；落在别处的话，关闭钮的气泡
   // 会一直挂在抽屉头上
   useEffect(() => {
-    if (!open || !naming) return
+    if (!naming) return
     const id = requestAnimationFrame(() => nameRef.current?.focus())
     return () => cancelAnimationFrame(id)
-  }, [open, naming])
+  }, [naming])
 
   // 打开、换排版 / 换项目、节点有变（新拍 / 改名 / 删除 / 挂上缩略图）时重取
   useEffect(() => {
-    if (open) void reload()
-  }, [open, reload, rev])
+    void reload()
+  }, [reload, rev])
 
   // 换了上下文：别的排版的预览一并作废（列表、草稿、改名框按上下文记账，见上）
   useEffect(() => {
@@ -341,44 +344,23 @@ export function VersionDrawer() {
     [versions, filter],
   )
 
-  if (!open) return null
-
   return (
-    <aside
+    <section
       ref={asideRef}
-      role="dialog"
       aria-label={vd('drawerLabel')}
       tabIndex={-1}
-      data-timeline-drawer
+      data-timeline-panel
       onKeyDown={(e) => {
         if (e.key === 'Escape' && !locked) {
           e.stopPropagation()
-          // 逐层退出：先退预览，再关抽屉
+          // 逐层退出：先退预览，再收起时间线页签（回属性页）
           if (useTimelineStore.getState().preview) useTimelineStore.getState().setPreview(null)
-          else setOpen(false)
+          else closeTimeline()
         }
       }}
-      // 覆盖在画布上的浮板只留投影：`shadow-pop` 自带 1px 环，再画一条实色 border
-      // 就是双描边（宪法第一节；左栏审计 L20，左抽屉 overlay 态同改）
-      className="absolute inset-y-0 right-0 z-overlay flex w-[400px] max-w-[92vw] flex-col bg-surface shadow-pop outline-none"
+      className="flex min-h-0 flex-1 flex-col outline-none"
     >
-      {/* 抽屉头与左抽屉同一副骨架：36 高、type-section 标题、DrawerCount 计数、IconButton
-          关闭钮（左栏审计 L20 / L01 / L13 / L14） */}
-      <div className="flex h-9 shrink-0 items-center gap-1.5 px-3">
-        <h2 className="type-section">{vd('title')}</h2>
-        {versions.length > 0 && <DrawerCount value={versions.length} />}
-        <span className="flex-1" />
-        <IconButton
-          label={vd('close')}
-          className="-mr-1.5"
-          disabled={locked}
-          data-timeline-close
-          onClick={() => setOpen(false)}
-        >
-          <X size={ICON_SIZE.md} className="text-ink-3" />
-        </IconButton>
-      </div>
-      <div className="flex shrink-0 gap-1.5 px-3 pb-2">
+      <div className="flex shrink-0 gap-1.5 px-3 pb-2 pt-2">
         {naming ? (
           <>
             <TextInput
@@ -502,7 +484,7 @@ export function VersionDrawer() {
         )}
       </div>
       <TimelinePreviewDialog />
-    </aside>
+    </section>
   )
 }
 

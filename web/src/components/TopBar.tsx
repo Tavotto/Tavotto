@@ -22,6 +22,7 @@ import {
   openRecentDocument,
   setDocumentName,
   toggleTimeline,
+  openTimeline,
 } from '@/store/actions'
 import { requestRelinkMissing } from '@/lib/clipboard'
 import { runUndoRedo } from '@/hooks/useKeyboard'
@@ -49,7 +50,7 @@ import {
   useDocumentStore,
 } from '@/store/documentStore'
 import { useOnboardingStore } from '@/store/onboardingStore'
-import { useUiStore } from '@/store/uiStore'
+import { isTimelineOpen, useUiStore } from '@/store/uiStore'
 import { useUpdateStore } from '@/store/updateStore'
 import { BrandMark } from './ui/BrandMark'
 import { Button, IconButton } from './ui/Button'
@@ -660,7 +661,7 @@ function IssueBody({ issue, close }: { issue: DocIssue; close: () => void }) {
  */
 function TimelineButton() {
   const { t } = useTranslation('workspace')
-  const open = useUiStore((s) => s.versionsOpen)
+  const open = useUiStore(isTimelineOpen)
   return (
     <IconButton
       label={t('topbar.timelineButton')}
@@ -774,7 +775,7 @@ export function DocumentMenu() {
       <MenuItem onSelect={() => useUiStore.getState().setLayoutOpen(true, 'load')}>
         {t('topbar.openDocument')}
       </MenuItem>
-      <MenuItem onSelect={() => useUiStore.getState().setVersionsOpen(true)} shortcut={keyOf('timeline')}>
+      <MenuItem onSelect={openTimeline} shortcut={keyOf('timeline')}>
         {t('topbar.versionTimeline')}
       </MenuItem>
       <MenuItem onSelect={() => void exportPackage()}>{t('topbar.exportPackage')}</MenuItem>

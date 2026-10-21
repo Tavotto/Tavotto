@@ -27,7 +27,7 @@ import { useProjectScanStore } from '@/store/projectScanStore'
 import { useDocumentStore } from '@/store/documentStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import { emptyProject, type PanelObject, type TextObject } from '@/types/document'
-import { useUiStore } from '@/store/uiStore'
+import { isTimelineOpen, useUiStore } from '@/store/uiStore'
 import { useViewportStore } from '@/store/viewportStore'
 import { useWorkspaceStore } from '@/store/workspace'
 import { CommandPalette, usePalette } from './CommandPalette'
@@ -245,7 +245,7 @@ describe('命令集', () => {
 
   it('排版时间线（ADR 0101）：「排版时间线…」打开抽屉；「把现在存为命名节点…」就地弹出命名小框（不开抽屉）', async () => {
     const { useTimelineStore } = await import('@/store/timelineStore')
-    useUiStore.setState({ versionsOpen: false })
+    useUiStore.setState({ rightTab: 'properties' })
     useTimelineStore.setState({ namingOpen: false })
     mount()
     const find = (t: string) =>
@@ -254,13 +254,13 @@ describe('命令集', () => {
       ) as HTMLElement
     act(() => find('把现在存为命名节点').click())
     expect(useTimelineStore.getState().namingOpen).toBe(true)
-    expect(useUiStore.getState().versionsOpen).toBe(false)
-    useUiStore.setState({ versionsOpen: false })
+    expect(isTimelineOpen(useUiStore.getState())).toBe(false)
+    useUiStore.setState({ rightTab: 'properties' })
     act(() => root?.unmount())
     usePalette.setState({ open: true })
     mount()
     act(() => find('排版时间线').click())
-    expect(useUiStore.getState().versionsOpen).toBe(true)
+    expect(isTimelineOpen(useUiStore.getState())).toBe(true)
   })
 
   it('英文界面下按英文关键词能搜到', async () => {

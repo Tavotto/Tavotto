@@ -80,7 +80,7 @@ import { captureSaveContext, reportSaveSkipped, stillCurrent } from './saveConte
 import { useInteractionStore } from './interactionStore'
 import { exactPanelManifest, rejectArtifactRenders, renderEpoch, renderKeyOf, useRenderStore } from './renderStore'
 import { useSelectionStore } from './selectionStore'
-import { askConfirm, useUiStore, type StatusTone } from './uiStore'
+import { askConfirm, isTimelineOpen, useUiStore, type StatusTone } from './uiStore'
 import { useViewportStore } from './viewportStore'
 import { fastEditPanelOf, useWorkspaceStore } from './workspaceStore'
 import { rectOf, visualBounds, type Rect } from '@/lib/geometry'
@@ -618,10 +618,20 @@ export async function runManualSave(): Promise<void> {
   // 顶栏的状态会继续往下走，这里不再多说一句话。
 }
 
-/** 打开 / 关闭排版时间线（顶栏时钟钮、⇧⌘H、命令面板共用；ADR 0101） */
+/** 打开排版时间线 = 右栏切到「时间线」页签（顶栏、排版菜单、命令面板共用；ADR 0101 2026-10-21 修订） */
+export function openTimeline(): void {
+  useUiStore.getState().setRightTab('timeline')
+}
+
+/** 收起时间线 = 右栏回到属性页（右栏本身不关） */
+export function closeTimeline(): void {
+  useUiStore.getState().setRightTab('properties')
+}
+
+/** 打开 / 关闭排版时间线（顶栏时钟钮、⇧⌘H 共用；ADR 0101） */
 export function toggleTimeline(): void {
-  const ui = useUiStore.getState()
-  ui.setVersionsOpen(!ui.versionsOpen)
+  if (isTimelineOpen(useUiStore.getState())) closeTimeline()
+  else openTimeline()
 }
 
 /**

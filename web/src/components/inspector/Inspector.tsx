@@ -13,6 +13,7 @@ import { useDocumentStore } from '@/store/documentStore'
 import { RIGHT_DEFAULT, RIGHT_MAX, RIGHT_MIN, useUiStore, type RightTab } from '@/store/uiStore'
 import type { ArrowObject, PanelObject, ShapeObject, TextObject } from '@/types/document'
 import { useAiStore } from '@/store/aiStore'
+import { TimelinePanel } from '../VersionDialog'
 import { assistantTabLabel, AssistantPanel } from '../ai/AiPanel'
 import { Button, IconButton } from '../ui/Button'
 import { Notice } from '../ui/Notice'
@@ -41,12 +42,13 @@ import { useSelectedObjects } from './common'
  * ADR 0010 要的两件事都还在：选中对象一律切回属性页（`autoShowProperties`）、助手会话状态
  * 在 aiStore 里切走不丢；运行状态点留在助手页签上。
  */
-const TABS: RightTab[] = ['properties', 'canvas', 'assistant']
+const TABS: RightTab[] = ['properties', 'canvas', 'timeline', 'assistant']
 /** 内容区 id（`TabPanel`）：`<id>-tab` 是对应页签的 id */
 const PANEL_ID: Record<RightTab, string> = {
   properties: 'inspector-panel-properties',
   assistant: 'inspector-panel-assistant',
   canvas: 'inspector-panel-canvas',
+  timeline: 'inspector-panel-timeline',
 }
 
 const tabLabel = (id: RightTab): string =>
@@ -142,6 +144,9 @@ export function Inspector({
               side="bottom"
               iconSize="sm"
               aria-pressed={pinned}
+              // 四个页签（含「时间线」）在最窄 320px 英文下排不下：容器 < 340px 时图钉让位给页签行
+              // （钉住是偏好，不丢；栏拉宽到 340 就回来）
+              className="@max-[339px]:hidden"
               onClick={() => useUiStore.getState().setRightPinned(!pinned)}
             >
               <Pin size={ICON_SIZE.sm} filled={pinned} className={pinned ? 'text-ink' : 'text-ink-3'} />
@@ -170,6 +175,11 @@ export function Inspector({
       {tab === 'assistant' ? (
         <TabPanel id={PANEL_ID.assistant} className="flex min-h-0 flex-1 flex-col">
           <AssistantPanel />
+        </TabPanel>
+      ) : tab === 'timeline' ? (
+        // 排版时间线（ADR 0101 2026-10-21 修订）：右栏的一个页签，不再是盖在画布上的浮卡
+        <TabPanel id={PANEL_ID.timeline} className="flex min-h-0 flex-1 flex-col">
+          <TimelinePanel />
         </TabPanel>
       ) : tab === 'canvas' ? (
         <TabPanel id={PANEL_ID.canvas} className="min-h-0 flex-1 overflow-y-auto">

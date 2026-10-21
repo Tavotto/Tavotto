@@ -12,7 +12,7 @@ import { applyTheme, isThemePref, type ThemePref } from '@/lib/theme'
 
 export type LeftTab = 'workspace' | 'canvases' | 'assets' | 'layers' | 'elements' | 'style' | 'problems'
 /** 右栏三模式：属性 / 改图助手 / 画布设置 */
-export type RightTab = 'properties' | 'assistant' | 'canvas'
+export type RightTab = 'properties' | 'assistant' | 'canvas' | 'timeline'
 export type Tool = 'select' | 'text' | 'arrow' | 'rect' | 'ellipse' | 'line'
 /** 工作区断点：≥1440 可双栏钉住 / 1024–1439 左右互斥 / <1024 覆盖式抽屉 */
 export type WorkspaceLayout = 'wide' | 'medium' | 'narrow'
@@ -207,6 +207,8 @@ function readPersisted(): Persisted {
     }
     state = { ...state, prefsVersion: PREFS_VERSION }
   }
+  // 时间线页签依赖「打开了哪份排版」，是会话态：刷新后不带着它启动（落回属性页）
+  if (state.rightTab === 'timeline') state = { ...state, rightTab: 'properties' }
   // 版本号相同也要收进合法区间：手工改过 localStorage / 未来回滚都不该让
   // 界面拿到一个画不出来的宽度
   state = {
@@ -365,8 +367,6 @@ interface UiState extends Persisted {
   tool: Tool
   exportOpen: boolean
   layoutOpen: boolean
-  /** 布局版本时间线抽屉 */
-  versionsOpen: boolean
   /** 论文样式弹窗 */
   stylesOpen: boolean
   /**
@@ -500,7 +500,6 @@ interface UiState extends Persisted {
   ) => void
   /** 弹窗预填的名字（⌘S 写回撞上冲突时是绑定的那个文件名）；null = 用排版名 */
   layoutName: string | null
-  setVersionsOpen: (v: boolean) => void
   /** `presetId`：打开时预选哪一条已存样式（设置页「应用到当前图」带过来的） */
   setStylesOpen: (v: boolean, opts?: { presetId?: string | null }) => void
   setRegistryOpen: (v: boolean) => void
@@ -591,7 +590,6 @@ export const useUiStore = create<UiState>((set, get) => ({
   tool: 'select',
   exportOpen: false,
   layoutOpen: false,
-  versionsOpen: false,
   stylesOpen: false,
   stylesPresetId: null,
   dialogStack: [],
@@ -866,7 +864,6 @@ export const useUiStore = create<UiState>((set, get) => ({
       layoutConflict: layoutOpen ? (opts?.conflict ?? null) : null,
       layoutName: layoutOpen ? (opts?.name ?? null) : null,
     }),
-  setVersionsOpen: (versionsOpen) => set({ versionsOpen }),
   setStylesOpen: (stylesOpen, opts = undefined) =>
     set((s) => ({
       stylesOpen,
@@ -909,3 +906,7 @@ export function askConfirm(
     useUiStore.getState().setConfirm({ ...req, resolve })
   })
 }
+
+/** 排版时间线此刻是否在右栏里亮着（ADR 0101 2026-10-21 修订：它是右栏的一个页签，不再是浮卡） */
+export const isTimelineOpen = (s: Pick<UiState, 'rightOpen' | 'rightTab'>): boolean =>
+  s.rightOpen && s.rightTab === 'timeline'

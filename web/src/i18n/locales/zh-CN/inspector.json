@@ -979,7 +979,8 @@
   },
   "tab": {
     "canvas": "画布",
-    "properties": "属性"
+    "properties": "属性",
+    "timeline": "时间线"
   },
   "tabsLabel": "右侧面板模式",
   "text": {

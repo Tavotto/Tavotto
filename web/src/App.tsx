@@ -23,7 +23,6 @@ import { DiagnosticsSendHost } from '@/components/DiagnosticsSendHost'
 import { ShortcutHelp } from '@/components/ShortcutHelp'
 import { StyleDialog } from '@/components/StyleDialog'
 import { PreparationCard } from '@/components/PreparationCard'
-import { VersionDrawer } from '@/components/VersionDialog'
 import { NamedNodeQuickBox } from '@/components/NamedNodeQuickBox'
 import { LeftPanel } from '@/components/left/LeftPanel'
 import { LeftRail } from '@/components/left/LeftRail'
@@ -327,7 +326,6 @@ function Workspace() {
               className="absolute inset-0 z-canvas-chrome cursor-default bg-shadow/10 data-[state=open]:animate-fade-in data-[state=closed]:animate-fade-out"
             />
           )}
-          <VersionDrawer />
         </div>
         <ExportDialog />
         <SettingsDialog />

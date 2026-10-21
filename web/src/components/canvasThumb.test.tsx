@@ -32,10 +32,10 @@ import { literal } from '@/i18n'
 import { TooltipProvider } from '@/components/ui/Tooltip'
 import { CanvasThumb } from '@/components/CanvasThumb'
 import { CanvasList } from '@/components/left/CanvasList'
-import { VersionDrawer } from '@/components/VersionDialog'
+import { TimelinePanel } from '@/components/VersionDialog'
 import { useAssetStore } from '@/store/assetStore'
 import { useDocumentStore } from '@/store/documentStore'
-import { useUiStore } from '@/store/uiStore'
+import { isTimelineOpen, useUiStore } from '@/store/uiStore'
 import { emptyProject, type CanvasObject } from '@/types/document'
 
 declare global {
@@ -43,6 +43,12 @@ declare global {
   var IS_REACT_ACT_ENVIRONMENT: boolean
 }
 globalThis.IS_REACT_ACT_ENVIRONMENT = true
+
+/** 右栏只在「时间线」页签亮着时才挂时间线面板（同 `Inspector`） */
+function TimelineHost() {
+  const open = useUiStore(isTimelineOpen)
+  return open ? <TimelinePanel /> : null
+}
 Element.prototype.scrollIntoView ??= function scrollIntoView() {}
 globalThis.fetch = vi.fn(async () => new Response('{}', { status: 200 })) as typeof fetch
 
@@ -131,7 +137,7 @@ beforeEach(async () => {
   vi.mocked(fetchTimeline).mockResolvedValue({ versions: [version] })
   vi.mocked(fetchVersionDoc).mockResolvedValue({ ...version, doc: emptyProject().canvases[0] as never })
   useAssetStore.setState({ byId: { 'a.pdf': { id: 'a.pdf', mtime: 7 } } } as never)
-  useUiStore.setState({ versionsOpen: true })
+  useUiStore.setState({ rightOpen: true, rightTab: 'timeline' })
   await useDocumentStore.getState().switchDocument(emptyProject(), 'd_thumbpair')
   useDocumentStore.getState().commit(literal('准备'), (d) => {
     d.page = { ...d.page, ...PAGE }
@@ -141,19 +147,19 @@ beforeEach(async () => {
 
 afterEach(async () => {
   await teardown()
-  useUiStore.setState({ versionsOpen: false })
+  useUiStore.setState({ rightTab: 'properties' })
 })
 
 describe('两处缩略图是同一份组件', () => {
   it('同样的内容，画布列表与版本列表画出来的 DOM 逐字相同', async () => {
     const fromCanvas = (await render(<CanvasList />)).outerHTML
     await teardown()
-    const fromVersion = (await render(<VersionDrawer />)).outerHTML
+    const fromVersion = (await render(<TimelineHost />)).outerHTML
     expect(fromVersion).toBe(fromCanvas)
   })
 
   it('面板挂的是素材库同一条预览链路（草图只带素材身份，URL 由组件拼）', async () => {
-    const svg = await render(<VersionDrawer />)
+    const svg = await render(<TimelineHost />)
     const href = svg.querySelector('[data-thumb-panel]')?.getAttribute('href') ?? ''
     expect(href).toContain('a.pdf')
     // mtime 来自素材库、不在草图里 —— 草图带上它才是把 /api/panels 的职责抄一份

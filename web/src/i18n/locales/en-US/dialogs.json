@@ -1755,7 +1755,6 @@
   },
   "versions": {
     "beforeRestore": "Before restore ({{time}})",
-    "close": "Close layout timeline",
     "delete": "Delete point",
     "deleteBody": "Deleted points can’t be recovered. Your current layout isn’t affected.",
     "deleteTitle": "Delete point “{{name}}”?",
@@ -1818,7 +1817,6 @@
       "resized": "Figure size {{fromW}} × {{fromH}} → {{toW}} × {{toH}} mm",
       "sameMetrics": "Same object count and figure size"
     },
-    "title": "Layout timeline",
     "versionName": "Point name",
     "viewLabel": "View",
     "emptyBody": "When you pause editing, a point is saved at most every 2 minutes. Exporting, writing back, saving, and opening or leaving the project each save one too.",
