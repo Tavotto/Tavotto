@@ -127,6 +127,7 @@ import { useRuntimeAssetStore } from "@/store/runtimeAssetStore";
 import { useSelectionStore } from "@/store/selectionStore";
 import {
   beginExportBatch,
+  recordBatchPrepared,
   cancelCurrentExport,
   recordBatchJob,
   recordBatchStartFailure,
@@ -792,6 +793,7 @@ export function ExportDialog() {
   const batchMode = !single && scope === "original";
   const canStartBatch = batchMode && figures.length > 0 && formats.length > 0 && !busy;
   const startBatch = () => {
+    writeExportDefaults({ formats, dpi: String(ppi), withProof: withReport, strictInspection: strict });
     beginExportBatch(
       figures.map((f) => f.figureId),
       figures.map((f) => f.name),
@@ -833,6 +835,67 @@ export function ExportDialog() {
     );
   };
 
+  /**
+   * 这一张此刻的完整请求输入（含各自按原图口径做的检查与留档）。单张导出的 `start()` 与一批作业的
+   * 「冻结」阶段读的是同一份——批的每张在点「导出」那一刻就冻结成这样一份，之后不再读活的表单。
+   */
+  const buildRequestInput = (overwrite: OverwritePolicy): ExportRequestInput => {
+    const report = reportOn
+      ? buildProofPayload(
+          doc,
+          assets,
+          [
+            // 报告里的条目集合与界面上的摘要裁同一刀（按原图 = 只有那张图的）
+            ...(uncheckedOffCanvas
+              ? []
+              : targetObjectId
+              ? rawIssuesForObject(
+                  original?.result?.raw ?? rawIssuesFor(checkCanvasId),
+                  targetObjectId,
+                )
+              : rawIssuesFor(checkCanvasId)),
+            ...exportContextRaw({ formats, dpi: Number(ppi) }, profile),
+          ],
+          {
+            dpi: Number(ppi),
+            formats,
+            stem: filename,
+            // 原图范围：报告的页面 = 这张图的图幅，不写画布页面与摆放（QA FLAG-B1）
+            // 直接交那张图本身：它可能不在当前画布（`doc`）上
+            original:
+              targetObjectId && panel && originalWidthMm && originalHeightMm
+                ? {
+                    panel,
+                    widthMm: originalWidthMm,
+                    heightMm: originalHeightMm,
+                  }
+                : undefined,
+          },
+          profile,
+          {
+            forced: errors.length > 0,
+            acknowledged: hasUnhandled
+              ? [
+                  ...new Set(
+                    [...errors, ...notVerifiable].map((i) => i.ruleCode),
+                  ),
+                ]
+              : [],
+            // 「这一次没查成，仍然导出了」是**独立的一档**：
+            // 只看 forced / acknowledged 的话，它与"干干净净跑过一遍"
+            // 在报告里长得一模一样
+            checkFailed: summary.failed || !summary.ready,
+            acknowledgedCheckFailed:
+              (summary.failed || !summary.ready) && hasUnhandled,
+          },
+        )
+      : undefined;
+    return inputOf({
+      overwrite,
+      report: report as Record<string, unknown> | undefined,
+    });
+  };
+
   const start = useCallback(
     async (overwrite: OverwritePolicy) => {
       /*
@@ -853,68 +916,13 @@ export function ExportDialog() {
       // 这一回在对话框里起的作业：它跑完就该给完成态脚部（不论 job_id 是否与上一回重号）
       setSettledJobId(null);
       setRevealError(null);
-      const report = reportOn
-        ? buildProofPayload(
-            doc,
-            assets,
-            [
-              // 报告里的条目集合与界面上的摘要裁同一刀（按原图 = 只有那张图的）
-              ...(uncheckedOffCanvas
-                ? []
-                : targetObjectId
-                ? rawIssuesForObject(
-                    original?.result?.raw ?? rawIssuesFor(checkCanvasId),
-                    targetObjectId,
-                  )
-                : rawIssuesFor(checkCanvasId)),
-              ...exportContextRaw({ formats, dpi: Number(ppi) }, profile),
-            ],
-            {
-              dpi: Number(ppi),
-              formats,
-              stem: filename,
-              // 原图范围：报告的页面 = 这张图的图幅，不写画布页面与摆放（QA FLAG-B1）
-              // 直接交那张图本身：它可能不在当前画布（`doc`）上
-              original:
-                targetObjectId && panel && originalWidthMm && originalHeightMm
-                  ? {
-                      panel,
-                      widthMm: originalWidthMm,
-                      heightMm: originalHeightMm,
-                    }
-                  : undefined,
-            },
-            profile,
-            {
-              forced: errors.length > 0,
-              acknowledged: hasUnhandled
-                ? [
-                    ...new Set(
-                      [...errors, ...notVerifiable].map((i) => i.ruleCode),
-                    ),
-                  ]
-                : [],
-              // 「这一次没查成，仍然导出了」是**独立的一档**：
-              // 只看 forced / acknowledged 的话，它与"干干净净跑过一遍"
-              // 在报告里长得一模一样
-              checkFailed: summary.failed || !summary.ready,
-              acknowledgedCheckFailed:
-                (summary.failed || !summary.ready) && hasUnhandled,
-            },
-          )
-        : undefined;
       writeExportDefaults({
         formats,
         dpi: String(ppi),
         withProof: withReport,
         strictInspection: strict,
       });
-      await runExport(
-        inputOf({
-          overwrite,
-          report: report as Record<string, unknown> | undefined,
-        }),
-      );
+      await runExport(buildRequestInput(overwrite));
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [
@@ -949,27 +957,32 @@ export function ExportDialog() {
   /** 主按钮 / 再次导出 / 重试的同一个入口：一批或单张 */
   const startExport = () => (batchMode ? startBatch() : void start("ask"));
 
-  /** 这一张没起来的原因，一句话（记进汇总，批结束后仍可见） */
-  const startFailureReason = (): string => {
-    const st = useExportStore.getState().startError;
-    if (st) return st.code === "bad_filename" ? ex(`filenameError.${st.message}`) : formatMessage(st.message);
+  /** 冻结不了这一张的原因，一句话（记进汇总，批结束后仍可见） */
+  const prepFailureReason = (): string => {
     if (prepared.error) return formatMessage(engineErrorMsg(prepared.error));
     if (filenameIssue) return ex(`filenameError.${filenameIssue}`);
     if (!availability.ok) return ex(`scopeUnavailable.${availability.reason}`);
     return "";
   };
+  /** 起作业本身失败的原因（store 里的 `startError`） */
+  const sendFailureReason = (): string => {
+    const st = useExportStore.getState().startError;
+    if (!st) return "";
+    return st.code === "bad_filename" ? ex(`filenameError.${st.message}`) : formatMessage(st.message);
+  };
 
-  /* ------------------------ 一批作业的驱动（每张图依次） ------------------------ */
+  /* ------------------------ 一批作业的驱动（先冻结、再依次发） ------------------------ */
   const launched = useRef<{ ids: string[] | null; index: number }>({ ids: null, index: -1 });
   const lastRecorded = useRef<unknown>(null);
   const [routeWaited, setRouteWaited] = useState<string | null>(null);
-  // 对准：把对话框摆到「这一张」（范围 = 原图、要导的图、文件名 = 图名），摆好了再发
+  // 冻结（prepare）：逐张把对话框摆到「这一张」（范围 = 原图、要导的图、文件名 = 图名），
+  // 摆好了就用 `buildRequestInput` 生成它**完整的请求输入**记进批里。这一段不发任何请求；
+  // 之后发的就是这些冻结好的输入，不再读活的表单 / 文档（Codex #1295 P1）
   useEffect(() => {
-    if (!batch || batch.done || batch.cancelRequested || running) return;
-    const here = launched.current.ids === batch.ids && launched.current.index === batch.index;
-    if (here) return; // 已发出：等终局（effect B）或撞名决定
-    const id = batch.ids[batch.index];
-    const name = batch.names[batch.index];
+    if (!batch || batch.done || batch.cancelRequested || batch.phase !== "prepare") return;
+    const pos = batch.prepIndex;
+    const id = batch.ids[pos];
+    const name = batch.names[pos];
     if (scopeState !== "original" || figureId !== id || filename !== name) {
       setScope("original");
       setPickedFigureId(id);
@@ -979,28 +992,39 @@ export function ExportDialog() {
     }
     // 这一张导不出（文件名不合法 / 原图此刻导不出）：记一笔失败，继续下一张
     if (!canStart) {
-      recordBatchStartFailure(startFailureReason());
+      recordBatchStartFailure(prepFailureReason());
       return;
     }
-    // 等后端的 route 回答（来源判据以它为准）；迟迟不来就按退路发，不卡住整批
-    const token = `${batch.ids.length}:${batch.index}:${id}`;
+    // 等后端的 route 回答（来源判据以它为准）；迟迟不来就按退路冻结，不卡住整批
+    const token = `${batch.ids.length}:${pos}:${id}`;
     if (!routeAnswered && routeWaited !== token) {
       const timer = setTimeout(() => setRouteWaited(token), 1500);
       return () => clearTimeout(timer);
     }
-    launched.current = { ids: batch.ids, index: batch.index };
-    void start("ask");
-    // 同步路径上就没起来（请求成形被拒）：不会有终局，直接记失败
-    if (!useExportStore.getState().running) recordBatchStartFailure(startFailureReason());
+    recordBatchPrepared(buildRequestInput("ask"));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [batch, running, scopeState, figureId, filename, canStart, routeAnswered, routeWaited]);
+  }, [batch, scopeState, figureId, filename, canStart, routeAnswered, routeWaited]);
+  // 发（send）：只按冻结的输入依次发
+  useEffect(() => {
+    if (!batch || batch.done || batch.cancelRequested || batch.phase !== "send" || running) return;
+    if (launched.current.ids === batch.ids && launched.current.index === batch.index) return; // 已发出：等终局或撞名决定
+    const cur = batch.prepared[batch.index];
+    if (!cur) return;
+    launched.current = { ids: batch.ids, index: batch.index };
+    setSettledJobId(null);
+    setRevealError(null);
+    void runExport(cur.input);
+    // 同步路径上就没起来（请求成形被拒）：不会有终局，直接记失败
+    if (!useExportStore.getState().running) recordBatchStartFailure(sendFailureReason());
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [batch, running]);
   // 收尾：这一张落了终局（撞名除外——停在冲突条上等用户选覆盖 / 另存，再发出的是新作业）
   useEffect(() => {
-    if (!batch || batch.done || running) return;
+    if (!batch || batch.done || batch.phase !== "send" || running) return;
     if (launched.current.ids !== batch.ids || launched.current.index !== batch.index) return;
     // 起作业本身失败了（先校验被拒 / 网络断）：不会有终局，记一笔失败，继续下一张
     if (!storeJob) {
-      if (startError) recordBatchStartFailure(startFailureReason());
+      if (startError) recordBatchStartFailure(sendFailureReason());
       return;
     }
     // 认快照对象而不是 job_id：同一个终局只记一次，不依赖 id 在两张之间一定不同
@@ -1008,6 +1032,18 @@ export function ExportDialog() {
     lastRecorded.current = storeJob;
     recordBatchJob(storeJob);
   }, [batch, running, storeJob, startError]);
+  /** 撞名后的「覆盖 / 另存一份」：一批里重发的是这一张**冻结的**输入，不读活的表单 */
+  const restart = (overwrite: OverwritePolicy) => {
+    if (batch && !batch.done && batch.phase === "send") {
+      const cur = batch.prepared[batch.index];
+      if (!cur) return;
+      setSettledJobId(null);
+      setRevealError(null);
+      void runExport({ ...cur.input, overwrite });
+      return;
+    }
+    void start(overwrite);
+  };
 
   /* ------------------------------ 让开与回来 ------------------------------ */
   /** 关掉对话框去别处（定位 / 问题面板），但把填过的东西留下 */
@@ -1306,7 +1342,7 @@ export function ExportDialog() {
             </Button>
           ),
           secondary: (
-            <Button variant="secondary" size="lg" data-export-conflict-rename onClick={() => void start("rename")}>
+            <Button variant="secondary" size="lg" data-export-conflict-rename onClick={() => restart("rename")}>
               {ex("conflictRename")}
             </Button>
           ),
@@ -1315,7 +1351,7 @@ export function ExportDialog() {
               variant="danger-tinted"
               size="lg"
               data-export-conflict-replace
-              onClick={() => void start("replace")}
+              onClick={() => restart("replace")}
             >
               {ex("conflictReplace")}
             </Button>
@@ -1364,7 +1400,7 @@ export function ExportDialog() {
       open={open}
       onOpenChange={setOpen}
       // Esc 的安全答案：撞名时 = 另存一份（绝不是覆盖）；其余 = 关（关掉不取消作业）
-      onEscape={conflicts.length > 0 ? () => void start("rename") : close}
+      onEscape={conflicts.length > 0 ? () => restart("rename") : close}
       title={ex("title")}
       // 对象头（缩略图 · 名字 · 范围 · 尺寸）就是这个对话框的说明：要导的是什么
       description={
@@ -1406,7 +1442,11 @@ export function ExportDialog() {
         pageFlagged={pageFlagged}
         onShow={showPreview}
       />
-      <div className="flex min-w-0 flex-col gap-5">
+      {/* 点「导出」之后的冻结阶段（逐张摆好、生成请求输入）里表单整块禁用：这几百毫秒里改动不会只落进一部分图 */}
+      <fieldset
+        disabled={batchActive && batch?.phase === "prepare"}
+        className="m-0 flex min-w-0 flex-col gap-5 border-0 p-0"
+      >
         <FormSection title={ex("groupOutput")} data-export-group="output">
           <FieldGroup>
             {/* 0. 范围 —— 一组互斥取值 → `Segmented`（宪法第五节；2026-09-14 审计 B1 / S3）。
@@ -1708,7 +1748,7 @@ export function ExportDialog() {
             </label>
           </FieldGroup>
         </FormSection>
-      </div>
+      </fieldset>
       </div>
     </Dialog>
   );
@@ -2305,9 +2345,11 @@ function ProgressRow({ job, batch }: { job: ExportJob | null; batch: ExportBatch
   // 一批：先说第几张（k/N · 图名），再说这一张走到哪一步
   const text = batch
     ? ex("batchProgress", {
-        k: Math.min(batch.index + 1, batch.ids.length),
+        // 冻结阶段数的是正在冻结的那张；发的阶段数的是冻结好的第几张在 `ids` 里的位置
+        k: Math.min((batch.phase === "send" ? (batch.prepared[batch.index]?.pos ?? batch.index) : batch.prepIndex) + 1, batch.ids.length),
         n: batch.ids.length,
-        name: batch.names[batch.index] ?? "",
+        name:
+          (batch.phase === "send" ? batch.prepared[batch.index]?.name : batch.names[batch.prepIndex]) ?? "",
         phase: ex(`phase.${phase}`, { step, total }),
       })
     : ex(`phase.${phase}`, { step, total });

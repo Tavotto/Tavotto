@@ -78,7 +78,17 @@ export interface ExportBatch {
   ids: string[]
   /** 各张的显示名（与 `ids` 对齐；进度句与失败行用） */
   names: string[]
-  /** 正在导 / 即将导的是第几张（0 起） */
+  /**
+   * 两个阶段：**prepare** 把每张图的完整请求输入（格式 / PPI / 透明 / 严格核验 / 规范 / 文档快照 / 各自的原图口径检查与留档）
+   * 在点「导出」那一刻一次冻结下来；**send** 只按冻结的输入依次发——之后用户改控件、改排版、关了对话框，
+   * 同一次点击里后面的图也还是点击那一刻的设置和内容（Codex #1295 P1）。
+   */
+  phase: 'prepare' | 'send'
+  /** prepare 阶段走到第几张（0 起，指 `ids`） */
+  prepIndex: number
+  /** 已冻结的各张：`pos` = 它在 `ids` 里的位置（进度句用） */
+  prepared: { pos: number; name: string; input: ExportRequestInput }[]
+  /** send 阶段正在导 / 即将导的是 `prepared` 里第几张（0 起） */
   index: number
   /** 已收尾的各张作业（落了终局的；撞名停住的那一张不在里面，等用户决定后重发） */
   results: ExportJob[]
@@ -216,29 +226,72 @@ export function beginExportBatch(ids: string[], names: string[]): boolean {
   const s = useExportStore.getState()
   if (s.running || (s.batch && !s.batch.done) || ids.length === 0) return false
   useExportStore.setState({
-    batch: { ids, names, index: 0, results: [], resultNames: [], failedStarts: [], cancelRequested: false, done: false, aggregate: null },
+    batch: {
+      ids,
+      names,
+      phase: 'prepare',
+      prepIndex: 0,
+      prepared: [],
+      index: 0,
+      results: [],
+      resultNames: [],
+      failedStarts: [],
+      cancelRequested: false,
+      done: false,
+      aggregate: null,
+    },
   })
   return true
 }
 
-/** 当前这张落了终局（撞名停住的不走这里）：记下结果、换下一张；取消了或已是最后一张就收尾 */
-export function recordBatchJob(job: ExportJob): void {
+/** prepare 阶段：这一张的完整请求输入冻结好了，换下一张；都冻结完就转 send（一张都没有就直接收尾） */
+export function recordBatchPrepared(input: ExportRequestInput): void {
   const b = useExportStore.getState().batch
-  if (!b || b.done) return
-  advance({ ...b, results: [...b.results, job], resultNames: [...b.resultNames, b.names[b.index] ?? ''] })
+  if (!b || b.done || b.phase !== 'prepare') return
+  const pos = b.prepIndex
+  moveOn({
+    ...b,
+    prepared: [...b.prepared, { pos, name: b.names[pos] ?? b.ids[pos], input }],
+    prepIndex: pos + 1,
+  })
 }
 
-/** 当前这张根本没起来：记下名字，继续下一张 */
+function moveOn(b: ExportBatch): void {
+  if (b.cancelRequested || (b.phase === 'prepare' && b.prepIndex >= b.ids.length && b.prepared.length === 0)) {
+    useExportStore.setState({ batch: finishedBatch(b) })
+  } else if (b.phase === 'prepare' && b.prepIndex >= b.ids.length) {
+    useExportStore.setState({ batch: { ...b, phase: 'send', index: 0 } })
+  } else {
+    useExportStore.setState({ batch: b })
+  }
+}
+
+/** send 阶段：当前这张落了终局（撞名停住的不走这里）：记下结果、换下一张；取消了或已是最后一张就收尾 */
+export function recordBatchJob(job: ExportJob): void {
+  const b = useExportStore.getState().batch
+  if (!b || b.done || b.phase !== 'send') return
+  advanceSend({ ...b, results: [...b.results, job], resultNames: [...b.resultNames, b.prepared[b.index]?.name ?? ''] })
+}
+
+/**
+ * 这一张没起来：记下名字和那条报错的一句话，继续下一张。prepare 阶段 = 冻结不了（文件名不合法 / 原图导不出）；
+ * send 阶段 = 起作业本身失败（校验被拒 / 网络断）。
+ */
 export function recordBatchStartFailure(reason = ''): void {
   const b = useExportStore.getState().batch
   if (!b || b.done) return
-  advance({ ...b, failedStarts: [...b.failedStarts, { name: b.names[b.index] ?? b.ids[b.index], reason }] })
+  if (b.phase === 'prepare') {
+    const pos = b.prepIndex
+    moveOn({ ...b, failedStarts: [...b.failedStarts, { name: b.names[pos] ?? b.ids[pos], reason }], prepIndex: pos + 1 })
+  } else {
+    advanceSend({ ...b, failedStarts: [...b.failedStarts, { name: b.prepared[b.index]?.name ?? '', reason }] })
+  }
 }
 
-function advance(b: ExportBatch): void {
+function advanceSend(b: ExportBatch): void {
   const next = { ...b, index: b.index + 1 }
   useExportStore.setState({
-    batch: next.index >= next.ids.length || next.cancelRequested ? finishedBatch(next) : next,
+    batch: next.index >= next.prepared.length || next.cancelRequested ? finishedBatch(next) : next,
   })
 }
 
@@ -248,7 +301,7 @@ export function requestBatchCancel(): void {
   const b = s.batch
   if (!b || b.done) return
   const next = { ...b, cancelRequested: true }
-  // 此刻没有作业在飞（两张之间 / 撞名停住）：直接收尾，已写出的如实报
+  // 此刻没有作业在飞（冻结阶段 / 两张之间 / 撞名停住）：直接收尾，已写出的如实报
   useExportStore.setState({ batch: s.running ? next : finishedBatch(next) })
 }
 

@@ -251,11 +251,14 @@ describe('exact original export variant', () => {
       }), { status: 409, headers: { 'Content-Type': 'application/json' } })
     }))
     await click('[data-export-start]')
-    await until(() => exportCalls.some(call => call.url.includes('/api/export/validate')) && !!document.querySelector('[data-export-start-error]'))
+    await until(() => exportCalls.some(call => call.url.includes('/api/export/validate')) && useExportStore.getState().batch?.done === true)
     expect(exportCalls.some(call => call.url.includes('/api/export/validate'))).toBe(true)
-    expect(exportCalls.some(call => call.url.includes('/api/export/start'))).toBe(false)
-    expect(document.querySelector('[data-export-start-error]')?.textContent)
-      .toContain(formatMessage(engineErrorMsg(new ArtifactValidationError('source_changed'))))
+    // 被拒的这张（plot.png，字节变了）一个 start 都没发出去
+    expect(exportCalls.some(call => call.url.includes('/api/export/start') && call.body.original?.figure_id === 'plot.png')).toBe(false)
+    // 批里每张各自走一遍：被拒的原因随汇总保留，批结束后仍可见（不被后面一张的 startError 复位冲掉）
+    const refused = useExportStore.getState().batch!.failedStarts[0]
+    expect(refused.reason).toContain(formatMessage(engineErrorMsg(new ArtifactValidationError('source_changed'))))
+    expect(document.querySelector('[data-export-result]')?.textContent).toContain(refused.reason)
     expect(exactPanelRender(useRenderStore.getState(), chosen)).toBeNull()
     expect(state().doc).toEqual(before)
   })
@@ -304,6 +307,7 @@ describe('exact original export variant', () => {
       const before = sent()
       await click('[data-export-start]')
       await until(() => sent() > before)
+      await until(() => useExportStore.getState().batch?.done === true)
       const request = exportCalls.filter((call) => call.url.includes('/api/export/start')).at(-1)!.body
       expect(request.original?.overrides).toEqual(currentPanel(id).overrides)
       expect(request.original?.w_mm).toBe(id === 'a' ? 70 : 90)

@@ -2548,6 +2548,33 @@ describe('每张图单独导出：依次发多个作业（后端协议不变）'
     expect(useExportStore.getState().batch?.aggregate?.status).toBe('done')
   })
 
+  it('批开始后改格式 / PPI / 排版、甚至关掉对话框：后面每张的请求仍是点击那一刻冻结的（Codex #1295 P1）', async () => {
+    jobStatusSeq = ['running', 'done']
+    await setupTwo({ select: [] })
+    await click(originalRadio())
+    const before = { formats: ['pdf', 'png'], ppi: 600 }
+    await start()
+    await until(() => exportBodies.length === 1)
+    expect(exportBodies[0].formats).toEqual(before.formats)
+    expect(exportBodies[0].ppi).toBe(before.ppi)
+    // 第一张在跑：用户改格式（去掉 PNG）、改 PPI、改排版，再关掉对话框
+    await click(formatBox('PNG'))
+    await act(async () => {
+      useDocumentStore.getState().commit(literal('批进行中改排版'), (d) => {
+        d.page = { w: 99, h: 77 }
+      })
+      useUiStore.getState().setExportOpen(false)
+    })
+    await act(async () => {
+      applyExportJob({ job_id: 'j1', status: 'done', outputs: [], warnings: [], conflicts: [], error: null } as never)
+    })
+    await batchDone()
+    expect(exportBodies).toHaveLength(2)
+    expect(exportBodies[1].formats, '第二张用点击那一刻的格式，不是后来改的').toEqual(before.formats)
+    expect(exportBodies[1].ppi).toBe(before.ppi)
+    expect(exportBodies.map((b) => b.filename)).toEqual(['Fig1', 'Fig2'])
+  })
+
   it('取消 = 停掉剩余：第二张不再发，已写出的如实报', async () => {
     jobStatusSeq = ['done', 'running']
     await setupTwo({ select: [] })

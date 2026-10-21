@@ -29,6 +29,7 @@ import { usePanelRender } from '@/store/renderStore'
 import { useUiStore } from '@/store/uiStore'
 import type { PanelObject } from '@/types/document'
 import type { AppsBridge } from './appsBridge'
+import { exportNeedsConfirm, exportWithAutoConfirm } from './exportConfirm'
 import {
   sessionIdFor,
   unwrap,
@@ -114,16 +115,18 @@ export function McpApp({
       setBusy('export')
       setNotice(null)
       try {
-        const body = unwrap(
-          await bridge.callTool('tavotto_export', {
-            session_id: sessionId,
-            formats,
-            // 永远可导出、不警告（与桌面端一致）：有阻断 / 无法核验项时自动带上确认，由后端记进回执，
-            // 不再让用户先勾一个框
-            explicit_confirm:
-              !!preflight &&
-              ((preflight.errors ?? []).length > 0 || (preflight.not_verifiable ?? []).length > 0),
-          }),
+        // 永远可导出、不警告（与桌面端一致）：预检过期或有阻断 / 无法核验项时自动带上确认，由后端记进回执；
+        // 缓存说干净却被后端挡回 `preflight_blocked` 时带确认重发一次（见 `exportConfirm.ts`）
+        const body = await exportWithAutoConfirm(
+          async (explicitConfirm) =>
+            unwrap(
+              await bridge.callTool('tavotto_export', {
+                session_id: sessionId,
+                formats,
+                explicit_confirm: explicitConfirm,
+              }),
+            ),
+          exportNeedsConfirm(preflight, preflightStale),
         )
         const files = (body.files as { path: string; manifest?: ArtifactManifestSummary | null }[]) ?? []
         setPreflight((body.preflight as PreflightPayload) ?? preflight)
@@ -150,7 +153,7 @@ export function McpApp({
         setBusy(null)
       }
     },
-    [bridge, sessionId, open.stem, preflight],
+    [bridge, sessionId, open.stem, preflight, preflightStale],
   )
 
   // 手势结束后画布尺寸可能变了：告诉 host 一声（inline 模式下它据此调高度）
