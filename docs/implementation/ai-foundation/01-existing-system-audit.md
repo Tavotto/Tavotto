@@ -95,5 +95,5 @@
 
 | 命令 | 结果 |
 | --- | --- |
-| `.venv/bin/python -m pytest tests/test_figurebench_fixtures.py -q`（`PYTHONPATH=$PWD/src`，matplotlib 3.11.2，Python 3.13） | 32 passed |
+| `.venv/bin/python -m pytest tests/test_figurebench_fixtures.py -q`（`PYTHONPATH=$PWD/src`，matplotlib 3.11.2，Python 3.13） | 40 passed |
 | 六个手工变异（反例 `must_fail` 改指一条成立的断言 / 参考解改错 / CSV 改值 / 编辑落点计数改错 / 脚本数据与真值不符 / 目标在基线上已满足） | 六个全部在预期那条断言上红（退出码 1），还原后 `git status` 干净 |

@@ -17,6 +17,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { ApiError, aiRevert, fetchAiHistory } from '@/lib/api'
 import { t } from '@/i18n'
+import { PRODUCT_NAME } from '@/lib/brand'
 import { STREAM_WORD_CLASS } from '@/lib/streamMarkdown'
 import { TooltipProvider } from '@/components/ui/Tooltip'
 import { agentCaps, capsOf } from '@/components/settings/testCaps'
@@ -524,6 +525,148 @@ describe('任务结局（TAF Phase 3c）：只翻译 task.outcome', () => {
     ])
     expect(qa('[data-ai-status]').map((e) => e.textContent)).toEqual(Array(3).fill(ai('session.doneChanged')))
     expect(qa('[data-ai-task-outcome]')).toHaveLength(0)
+  })
+})
+
+describe('从数据出图的一轮（TAF Phase 5c）', () => {
+  const dataSession = (over: Partial<AiSession> = {}): AiSession =>
+    session({
+      id: 'df-1',
+      agent: 'tavotto',
+      agentLabel: 'Tavotto',
+      prompt: '画 y 随 x 的变化',
+      script: '',
+      panelId: null,
+      fileId: null,
+      target: 'data/standard.csv',
+      task: { task_type: 'data_to_figure', outcome: 'completed', unmet: [], script: 'data/standard.py' },
+      ...over,
+    })
+  const status = () => q('[data-ai-status]')!.textContent
+  const meta = () => q('[data-ai-turn-meta]')!.textContent ?? ''
+
+  it('进行中：状态行是「正在读取数据并出图」，执行者是品牌名', async () => {
+    await mount([
+      dataSession({ status: 'running', finishedAt: undefined, task: { task_type: 'data_to_figure', outcome: null } }),
+    ])
+    expect(status()).toBe(ai('session.dataFigureRunning'))
+    expect(meta()).toContain(PRODUCT_NAME)
+    expect(q('[data-ai-user]')!.textContent).toContain('画 y 随 x 的变化')
+  })
+
+  it('completed：状态行带脚本名，没有卡、没有 diff', async () => {
+    await mount([dataSession({ changed: true })])
+    expect(status()).toBe(ai('session.dataFigureDone', { script: 'data/standard.py' }))
+    expect(qa('[data-ai-task-outcome]')).toHaveLength(0)
+    expect(q('[data-ai-error="session"]')).toBeNull()
+    expect(q('[data-ai-diff]')).toBeNull()
+  })
+
+  it('partial：warn 卡（一句话）+ 详情列 unmet id，不是 danger', async () => {
+    await mount([
+      dataSession({
+        changed: true,
+        task: {
+          task_type: 'data_to_figure',
+          outcome: 'partial',
+          script: 'data/standard.py',
+          unmet: [{ constraint_id: 'data.rows', reason_code: 'non_numeric' }],
+        },
+      }),
+    ])
+    expect(status()).toBe(ai('session.dataFigurePartial', { script: 'data/standard.py' }))
+    const card = q('[data-ai-task-outcome="partial"]')!
+    expect(card.dataset.notice).toBe('warn')
+    expect(card.textContent).toContain(ai('notice.dataFigurePartial'))
+    expect(qa('[data-notice="danger"]')).toHaveLength(0)
+    await act(async () => q('[data-notice-detail-toggle]')!.click())
+    expect(q('[data-notice-detail]')!.textContent).toContain('data.rows')
+  })
+
+  it('needs_input：warn 卡教用户点名 x 和 y 列，有 preview 时给出例子', async () => {
+    await mount([
+      dataSession({
+        task: { task_type: 'data_to_figure', outcome: 'needs_input', unmet: [], preview: { x: '温度', y: ['压力'] } },
+      }),
+    ])
+    expect(status()).toBe(ai('session.dataFigureNeedsInput'))
+    const card = q('[data-ai-task-outcome="needs_input"]')!
+    expect(card.dataset.notice).toBe('warn')
+    expect(card.textContent).toContain(ai('notice.dataFigureNeedsInputExample', { x: '温度', y: '压力' }))
+    expect(q('[data-ai-diff]')).toBeNull()
+  })
+
+  it('needs_input 没有 preview：只教点名，不带例子', async () => {
+    await mount([dataSession({ task: { task_type: 'data_to_figure', outcome: 'needs_input', unmet: [] } })])
+    expect(q('[data-ai-task-outcome="needs_input"]')!.textContent).toContain(ai('notice.dataFigureNeedsInput'))
+  })
+
+  it('failed：现有失败卡，正文就是 error；没有「写回前检查」的措辞，也没有重试', async () => {
+    await mount([
+      dataSession({
+        status: 'failed',
+        error: '数据文件不存在',
+        task: { task_type: 'data_to_figure', outcome: 'failed', unmet: [] },
+      }),
+    ])
+    const card = q('[data-ai-error="session"]')!
+    expect(card.textContent).toContain('数据文件不存在')
+    expect(card.textContent).not.toContain(ai('notice.taskRejected'))
+    expect(card.querySelector('[data-ai-retry]')).toBeNull()
+    expect(status()).toBe(ai('status.failed'))
+  })
+
+  it('failed 但文件已写（task.script 在）：状态行说已生成，danger 卡说清楚，不出重试', async () => {
+    await mount([
+      dataSession({
+        status: 'done',
+        changed: true,
+        error: '核对没通过',
+        task: {
+          task_type: 'data_to_figure',
+          outcome: 'failed',
+          script: 'data/standard.py',
+          unmet: [{ constraint_id: 'data.voltage_mV', reason_code: 'data_mismatch' }],
+        },
+      }),
+    ])
+    expect(status()).toBe(ai('session.dataFigureFailedWritten', { script: 'data/standard.py' }))
+    const card = q('[data-ai-task-outcome="failed"]')!
+    expect(card.dataset.notice).toBe('danger')
+    expect(card.textContent).toContain(ai('notice.dataFigureFailedWritten'))
+    expect(q('[data-ai-error="session"]')).toBeNull()
+    expect(q('[data-ai-retry]')).toBeNull()
+    await act(async () => q('[data-notice-detail-toggle]')!.click())
+    expect(q('[data-notice-detail]')!.textContent).toContain('data.voltage_mV')
+  })
+
+  it('结果不确定：warn 卡 + 「查询结果」；点它调 reconcileDataFigure；不是失败卡', async () => {
+    const reconcile = vi.fn(async () => {})
+    useAiStore.setState({ reconcileDataFigure: reconcile } as never)
+    await mount([
+      dataSession({
+        status: 'failed',
+        unconfirmed: true,
+        requestId: 'rid-1',
+        task: { task_type: 'data_to_figure', outcome: null, unmet: [] },
+      }),
+    ])
+    useAiStore.setState({ reconcileDataFigure: reconcile } as never)
+    const card = q('[data-ai-data-figure-unconfirmed]')!
+    expect(card.dataset.notice).toBe('warn')
+    expect(card.textContent).toContain(ai('notice.dataFigureUnconfirmed'))
+    expect(q('[data-ai-error="session"]')).toBeNull()
+    expect(q('[data-ai-retry]')).toBeNull()
+    expect(status()).toBe(ai('session.dataFigureUnconfirmed'))
+    await act(async () => q('[data-ai-data-figure-reconcile]')!.click())
+    expect(reconcile).toHaveBeenCalledWith('df-1')
+  })
+
+  it('没有选中任何图时，这一轮照样显示在对话里（它不属于任何面板）', async () => {
+    await mount([dataSession({ changed: true })])
+    await act(async () => useSelectionStore.setState({ ids: [] } as never))
+    expect(q('[data-ai-transcript]')).not.toBeNull()
+    expect(qa('[data-ai-session]')).toHaveLength(1)
   })
 })
 

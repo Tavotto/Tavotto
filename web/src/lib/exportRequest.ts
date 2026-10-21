@@ -26,6 +26,7 @@ import { artifactRequestFields, artifactValidationIssue, isAdoptedPanel, origina
 import { t as translate } from '@/i18n'
 import type { ExportObject, ExportRequest } from './api'
 import { checkFilename, stripOutputExtension, type FilenameReason } from './exportName'
+import { epsFromRoute, type ExportRoute } from './exportRoute'
 import { getOriginalOutputSpec, type OriginalOutputSpec } from './originalSpec'
 import { useAssetStore } from '@/store/assetStore'
 import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
@@ -163,9 +164,13 @@ export type EpsBlockReason = 'none' | 'canvas_scope' | 'no_script'
 export function epsAvailability(
   scope: ExportScope,
   figureId: string | null,
+  /** 后端 validate 发布的 route；有就只读它（`offers.eps`），没有退回下面的旧判据 */
+  route?: ExportRoute | null,
 ): { ok: boolean; reason: EpsBlockReason } {
   if (scope !== 'original') return { ok: false, reason: 'canvas_scope' }
   if (!figureId) return { ok: false, reason: 'no_script' }
+  const fromRoute = epsFromRoute(route, scope, figureId)
+  if (fromRoute) return fromRoute
   if (figureId.startsWith('runtime:')) return { ok: true, reason: 'none' }
   const asset = useAssetStore.getState().byId[figureId]
   if (!asset?.script) return { ok: false, reason: 'no_script' }
@@ -188,6 +193,8 @@ export interface ExportRequestInput {
   figureId?: string | null
   panel?: PanelObject | null
   spec?: OriginalOutputSpec | null
+  /** 后端 validate 发布的 route（`lib/exportRoute`）；缺省走前端退路 */
+  route?: ExportRoute | null
   /** 样式检查报告的前半份（检查结果）；服务端补上版本、时间与产物事实 */
   report?: Record<string, unknown>
   /**
@@ -221,7 +228,7 @@ export function filenameProblem(raw: string, formats: readonly string[]): Filena
 export function buildExportRequest(input: ExportRequestInput): BuiltRequest {
   // EPS 在这次范围 / 这张图上给不出时**不发**它：后端会逐项报 `eps_*` 失败，
   // 但界面上那个选项已经禁用并说了原因，再发一次等于让用户为同一件事看两遍
-  const epsOk = epsAvailability(input.scope, input.figureId ?? null).ok
+  const epsOk = epsAvailability(input.scope, input.figureId ?? null, input.route).ok
   const formats = FORMATS.filter((f) => input.formats.includes(f) && (f !== 'eps' || epsOk))
   const filename = stripOutputExtension(input.filename, formats)
   const raster = hasRaster(formats)

@@ -719,6 +719,111 @@ def test_concurrent_first_connections_to_a_new_database_do_not_race_on_alter(tmp
     assert errors == []
 
 
+def _drop_ledger_rows(path):
+    """留一条带请求 id 的会话行、清空幂等账本：下次连接要走回填（一条写语句）。"""
+    import sqlite3
+
+    con = sqlite3.connect(path)
+    con.execute(
+        "INSERT INTO sessions (id, project, provider, prompt, status, started_ms, client_request_id) "
+        "VALUES ('s1', '/p', 'x', 'p', 'done', 1, 'rid-1')"
+    )
+    con.execute("DELETE FROM ai_requests")
+    con.commit()
+    con.close()
+
+
+def test_first_connection_waits_for_a_writer_instead_of_failing_with_locked(tmp_path):
+    """迁移从一开始就拿写锁（`BEGIN IMMEDIATE`），遇到别的连接持锁时走 busy handler 等待；
+    延迟事务里读后升级为写，遇到持锁者会被 SQLite 立即判 `database is locked`、不等 timeout。
+    这里让一个连接持写锁（`BEGIN IMMEDIATE`）一小会儿，首次打开这个需要回填的库必须等到它放手并成功。"""
+    import sqlite3
+    import threading
+    import time
+
+    db = tmp_path / "legacy.sqlite3"
+    ai_history.get_draft("/p", "F", db_path=db)
+    _drop_ledger_rows(db)  # 账本缺回填：迁移里的写语句得在读之后升级为写
+    holder = sqlite3.connect(db, isolation_level=None, check_same_thread=False)
+    holder.execute("BEGIN IMMEDIATE")
+    release = threading.Timer(0.5, lambda: holder.execute("COMMIT"))
+    release.start()
+    t0 = time.monotonic()
+    try:
+        ai_history.get_draft("/p", "F", db_path=db)
+    finally:
+        release.join()
+        holder.close()
+    assert time.monotonic() - t0 >= 0.4  # 真的等过
+    con = sqlite3.connect(db)
+    assert con.execute("SELECT count(*) FROM ai_requests").fetchone()[0] == 1
+    con.close()
+
+
+def test_connecting_to_a_migrated_database_does_not_take_the_write_lock(tmp_path):
+    """已迁移好的库，普通连接只读探测、不进写事务：别的连接持着写锁时 `_connect` 也立刻成功。"""
+    import sqlite3
+    import time
+
+    db = tmp_path / "ok.sqlite3"
+    ai_history.get_draft("/p", "F", db_path=db)  # 迁移一次
+    holder = sqlite3.connect(db, isolation_level=None)
+    holder.execute("BEGIN IMMEDIATE")
+    try:
+        t0 = time.monotonic()
+        con = ai_history._connect(db)
+        con.execute("SELECT count(*) FROM sessions").fetchone()
+        con.close()
+        assert time.monotonic() - t0 < 2
+    finally:
+        holder.execute("ROLLBACK")
+        holder.close()
+
+
+def test_probe_detects_every_missing_piece_of_a_migrated_database(tmp_path):
+    """探测覆盖：缺表、缺列、缺索引、缺账本回填，任何一项缺都要进写事务补齐。"""
+    import sqlite3
+
+    def fresh(name):
+        db = tmp_path / name
+        ai_history.get_draft("/p", "F", db_path=db)
+        return db
+
+    def needs(db):
+        con = sqlite3.connect(db)
+        con.row_factory = sqlite3.Row
+        try:
+            return ai_history._needs_setup(con)
+        finally:
+            con.close()
+
+    db = fresh("clean.sqlite3")
+    assert not needs(db)
+    for stmt in (
+        "DROP TABLE ai_pending",
+        "DROP INDEX idx_sessions_request",
+        "DROP INDEX idx_sessions_project",
+        "ALTER TABLE ai_drafts DROP COLUMN stamp",
+        "ALTER TABLE sessions DROP COLUMN refresh",
+    ):
+        db = fresh(
+            "x.sqlite3" if not (tmp_path / "x.sqlite3").exists() else f"x{abs(hash(stmt))}.sqlite3"
+        )
+        con = sqlite3.connect(db)
+        con.execute(stmt)
+        con.commit()
+        con.close()
+        assert needs(db), stmt
+        ai_history.get_draft("/p", "F", db_path=db)
+        assert not needs(db), stmt
+    # 回填：会话行有请求 id、账本没有
+    db = fresh("backfill.sqlite3")
+    _drop_ledger_rows(db)
+    assert needs(db)
+    ai_history.get_draft("/p", "F", db_path=db)
+    assert not needs(db)
+
+
 # ---------------------------------------------------------------------------
 # 账本行的删除只发生在后端事务里（accept、run 明确拒绝、supersedes）——客户端不单方面 DELETE
 # ---------------------------------------------------------------------------

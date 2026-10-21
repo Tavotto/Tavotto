@@ -3,7 +3,7 @@
 > 原文出自 `src/tavotto/AGENTS.md`「布局层（R18）」（2026-09-17 指导文档治理时按主题拆出，正文逐字未改）。
 > 这里是这一主题规则的**唯一全文**；`src/tavotto/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
 
-- **布局版本**：`/api/versions/<docId>` 系列，快照存 `layouts/_versions/`，
+- **布局版本**：`/api/versions/<docId>` 系列，快照存项目 `tavottofile/versions/`（旧位置 `layouts/_versions/` 只读兼容，格式见下条「新存储」），
   自动检查点去重 + 滚动清理（保手动裁自动）；恢复=前端 commit（可撤销），
   与「写回原始文件」的 baked 历史完全无关。
   **上限有两条，谁先咬到算谁的**（2026-09-03，issue #221）：条数
@@ -40,22 +40,29 @@
   不让已成功的写入回 500（前端一重试就多一个节点，#679）；换缩略图格式先原子写新图、落地后再删旧格式（删不掉只记日志；两张同时在时取较新的那张，新图胜出，#679）；PUT 的 256 KiB 上限卡在读取本身（`_read_body_capped`，
   chunked 请求没有 Content-Length）。列表端点的 `budget` 在文件没超上限时不量 `namedBytes`（缺席，
   不冒充 0）。
-- **新存储与读兼容（ADR 0140，D1b）**：`engine/versionstore.py` 是版本时间线的替身存储——每版一个
+- **新存储与首写迁移（ADR 0140，D1b → D2）**：`engine/versionstore.py` 是版本时间线的存储——每版一个
   自描述信封 `<doc_id>.vx/s/<vid>.json` + 小索引 `<doc_id>.vx/index.json`（唯一提交点），追加只写一个
-  信封 + 索引，与历史长度无关。`app.py` 的 `/api/versions/*` 全部经 `_Timeline`（`_LegacyTimeline` /
-  `_StoreTimeline`，`_open_timeline` 选边）：**读**——`versionstore.has_store` 为真读新存储，否则读旧单文件；
-  **写**——新存储已存在就写它（读写必须同边），否则**仍整份写旧单文件，字节与以前一致**（D2 才翻默认，
-  回滚到上一个版本因此仍读得到新历史）。响应形状两边逐字段相同（`tests/test_versions_store_wiring.py` 同一组
-  操作在两种存储上对拍）；新增的只有：信封坏的那一条在列表里带 `damaged: true`（只赔掉自己），索引读不出来 /
-  来自更新的格式回 409 `versions_unreadable`（零改动，复用旧错误码）。
-  **策略只有一处**：`versionstore.legacy_policy`（现行条数 + 24 MB 字节策略）与常量 `KEEP_*` / `MOMENTS` /
-  `VERSION_ID_RE` / `is_named` / `kind` 是唯一出处，`app` 的 `VERSION_KEEP_*` 等是别名（按 `is` 钉死）、
-  `_save_versions` 与新存储共用 `app._version_policy`；上限按调用时刻的 `app.VERSION_KEEP_*` 传入，测试仍可改写。
+  信封 + 索引，与历史长度无关。`app.py` 的 `/api/versions/*` 全部经 `_Timeline`：
+  **读**（`_open_timeline`，不写盘）——`versionstore.has_store` 为真读新存储，否则读旧单文件
+  （`_LegacyTimeline`，与迁移同一套校验 `read_legacy_versions`）；响应形状两边逐字段相同
+  （`tests/test_versions_store_wiring.py` 同一组操作对拍）。
+  **写**（`_timeline_for_write`，版本锁内）——旧文件先迁进新存储（`migrate_legacy`：旧文件**冻结**，从不改、
+  不删、不改名；先写迁移记录 → 逐条信封 → 读回校验 → 写索引提交），之后一律写新存储；迁移在索引提交前被打断，
+  读侧一直以旧文件为权威，下一次写入重跑到一致。回滚后的旧程序在冻结的旧文件上追加、再升级：迁移记录的 sha 不符 →
+  只把迁移点之后新增的条目按 id 去重导入（已在新存储里删掉的不复活、已有条目不覆盖；旧程序的改名 / 删除不回流）。
+  **#264**：旧文件读不出来（截断 / 乱码 / 形状不对 / 非有限数）→ 新存储开一份空历史、旧文件原样保留，
+  列表响应带 `legacy_unreadable: {name, size}`（只有文件名与大小，不含路径），写入不再 409 卡死。
+  新增的响应字段只有：`legacy_unreadable`，以及信封坏的那一条在列表里带 `damaged: true`（只赔掉自己，其余照常；
+  取它的正文回 409 `versions_unreadable`）；索引读不出来 / 来自更新的格式同样回 409 `versions_unreadable`，零改动。
+  **策略只有一处**：`versionstore.legacy_policy`（现行条数 + 24 MB 字节策略，D2 不改语义）与常量 `KEEP_*` / `MOMENTS` /
+  `VERSION_ID_RE` / `is_named` / `kind` 是唯一出处，`app` 的 `VERSION_KEEP_*` 等是别名（按 `is` 钉死），新存储经
+  `app._version_policy` 调用，上限按调用时刻的 `app.VERSION_KEEP_*` 传入（测试仍可改写）；列表的 `budget` 按
+  「旧文件会占的字节」（`_legacy_bytes`）算，与旧实现同值。`app._load_versions` / `_save_versions` 是旧格式读写器，
+  **产品代码不再调用**，留作迁移对拍参照与测试造旧文件 / 模拟回滚后的旧程序用（D3 清理）。
   铁律：新索引**绝不与旧文件 `<doc_id>.json` 同名**（旧程序整写会毁掉它）；先信封后索引、删除先索引后信封；
-  旧文件迁移后冻结，不删不改；所有写在 `<doc_id>.versions` 跨进程锁内，模块内不取锁；
-  列表的 `budget` 在新存储上按「旧文件会占的字节」（`_legacy_bytes`）算，与旧实现同值。
+  所有写在 `<doc_id>.versions` 跨进程锁内（迁移也在锁内：并发迁移会把先追加完的版本盖回去），模块内不取锁。
   项目归属旁证（`_project_owner_evidence`）认旧文件也认 `<doc_id>.vx/`。
-  看护：`tests/test_versionstore.py`、`tests/test_versions_store_wiring.py`。
+  看护：`tests/test_versionstore.py`、`tests/test_versions_store_wiring.py`、`tests/test_versions_migrate_on_write.py`。
 - **论文样式**：`/api/styles`（`layouts/_styles.json`）；前端按角色映射成
   override / 标注属性一次 commit 应用，绝不写回源文件。
 - **项目包**：`POST /api/package` 打 zip（layout+素材+脚本+sha1 清单）；

@@ -7,11 +7,15 @@ import {
   agentDisplayName,
   aiCancel,
   aiRevert,
+  aiDataFigure,
   aiRun,
   ApiError,
+  backendErrorText,
   effectiveAgent,
   fetchAiCapabilities,
+  fetchAiChanges,
   fetchAiHistory,
+  type AiSessionChange,
   type AiHistoryEntry,
   fetchAiRequest,
   fetchAiSession,
@@ -24,6 +28,7 @@ import {
   type AiRefreshOutcome,
   type AiTaskSummary,
 } from '@/lib/api'
+import { PRODUCT_NAME } from '@/lib/brand'
 import type { DraftTarget, LedgerWrite } from '@/lib/aiDraft'
 
 export type AiStatus = 'running' | 'done' | 'failed' | 'timeout' | 'cancelled' | 'reverted'
@@ -90,6 +95,11 @@ export interface AiSession {
   restored?: boolean
   /** 接回的占位对应的请求 id（来自历史库）：与未落定的提交按它对上，**对上就等于已被接受**，不必再让用户去查 */
   requestId?: string
+  /**
+   * 从数据出图：同步 HTTP 没拿到结果（断网 / 超时 / 5xx / 读不出响应），**后端可能已经建好了脚本**。
+   * 不是失败：界面给「查询结果」（`reconcileDataFigure`，同一个 `requestId`，后端按它去重），不许换新 id 重提。
+   */
+  unconfirmed?: boolean
 }
 
 /**
@@ -137,6 +147,8 @@ export interface DonePayload {
   refresh?: AiRefreshOutcome
   /** 任务结局（TAF）；老后端没有 */
   task?: AiTaskSummary
+  /** 终态事实的版本号（#1115）：只当"去对账"的提示，不当事实 */
+  rev?: number | null
 }
 
 /** 发送前要先把提交记进后端账本；没记成就不发（界面一句话 + 重试） */
@@ -217,6 +229,12 @@ interface AiState {
    * （断线期间的 `ai.done` 没收到）。刷新 / SSE 重连 / 面板挂载时调用；只读，按项目隔离，失败静默。
    */
   restoreRunning: () => Promise<void>
+  /**
+   * **按版本对账**（#1115）：拉本项目 `rev > 水位` 的会话，把"本页没呈现过的终态"补成已完成的只读轮次（并给一次完成提示），
+   * 已有的本地会话走同一个唯一收尾点 `settleSessionTo`。水位按项目放在页面内存里（A→B→A、SSE 断线都不丢）；
+   * 项目第一次对账只取起点（不补历史）。读失败 = 不知道，不动水位，下一次触发再来。`ai.done` 的 `rev` 只是触发它的提示。
+   */
+  reconcileChanges: () => Promise<void>
   /** 问后端「这个请求 id 你登记过吗」：只读，不会让任何东西被执行 */
   queryRequest: (rid: string) => Promise<QueryOutcome>
   /**
@@ -225,6 +243,13 @@ interface AiState {
    * 都会调它；读失败 = 不知道，不动。
    */
   settleRunningSessions: () => Promise<void>
+  /**
+   * 从数据出图（TAF Phase 5c）：本地先放一轮「进行中」，同步 HTTP 回来后按 `task.outcome` 收尾。
+   * 它没有脚本、没有面板、没有后端会话——不进发送锁 / 安全网轮询 / 撤销；换代后回来的结果丢弃。
+   */
+  startDataFigure: (data: string, instruction: string) => Promise<void>
+  /** 结果不确定的数据出图：用**同一个**请求 id 再问一次（后端去重，不会再执行） */
+  reconcileDataFigure: (sessionId: string) => Promise<void>
   /** 后端明确说没收到之后，用**同一个**请求 id 重发 */
   resend: (rid: string) => Promise<SubmitOutcome>
   /** 放弃等待这条提交（用户改写后重新发）：之后的发送换新 id。仅 `not_received` 时由界面提供 */
@@ -276,6 +301,11 @@ const queueSupersede = (sub: AiSubmission): void => {
  * 那种会话由 `accept` 标 `provisional`（本地 status 已不是 running / cancelled，靠这个标志留在谓词里）。
  * `settleRunningSessions` 与安全网轮询都调它，不各写一份。
  */
+/** 数据出图的本地会话：执行者固定值（= Tavotto 自身）、id 前缀、任务类型（与后端 `ai_data_task.TASK_TYPE` 同源） */
+export const DATA_FIGURE_AGENT = 'tavotto'
+const DATA_FIGURE_PREFIX = 'df-'
+export const DATA_FIGURE_TASK = 'data_to_figure'
+
 export const isOpenSession = (x: Pick<AiSession, 'status' | 'finalized' | 'provisional'>): boolean =>
   !x.finalized && (x.status === 'running' || x.status === 'cancelled' || x.provisional === true)
 
@@ -607,6 +637,51 @@ export const useAiStore = create<AiState>((set, get) => ({
     return dispatch(rid, generation)
   },
 
+  startDataFigure: async (data, instruction) => {
+    const born = get().generation
+    const pj = currentProjectId()
+    const rid = newRequestId()
+    const id = DATA_FIGURE_PREFIX + rid
+    const startedAt = Date.now()
+    set((s) => ({
+      sessions: [
+        ...s.sessions,
+        {
+          id,
+          project: pj,
+          agent: DATA_FIGURE_AGENT,
+          agentLabel: PRODUCT_NAME,
+          prompt: instruction,
+          script: '',
+          panelId: null,
+          fileId: null,
+          gid: null,
+          scope: 'figure',
+          target: data,
+          entries: [],
+          status: 'running',
+          changed: false,
+          diff: '',
+          task: { task_type: DATA_FIGURE_TASK, outcome: null },
+          startedAt,
+        },
+      ],
+    }))
+    await runDataFigure(id, born, pj, data, instruction, rid)
+  },
+
+  reconcileDataFigure: async (sessionId) => {
+    const born = get().generation
+    const x = get().sessions.find((y) => y.id === sessionId)
+    if (!x || !isDataFigureSession(x) || !x.unconfirmed || !x.requestId || x.project !== currentProjectId()) return
+    set((s) => ({
+      sessions: s.sessions.map((y) =>
+        y.id === sessionId ? { ...y, status: 'running', unconfirmed: false, finalized: false, finishedAt: undefined } : y,
+      ),
+    }))
+    await runDataFigure(sessionId, born, x.project, x.target, x.prompt, x.requestId)
+  },
+
   resend: async (rid) => {
     const sub = get().submissions[rid]
     // 只有「后端明确说没收到」才允许用同一个 id 重发；其余相位的重发就是盲目重复执行
@@ -621,7 +696,8 @@ export const useAiStore = create<AiState>((set, get) => ({
     const born = get().generation
     const pj = currentProjectId()
     for (const x of get().sessions) {
-      if (!isOpenSession(x) || x.project !== pj) continue
+      // 数据出图的本地会话没有后端会话可读：同步 HTTP 自己收尾，不进对账
+      if (!isOpenSession(x) || isDataFigureSession(x) || x.project !== pj) continue
       // 在途去重：同一代次 + 项目 + 会话只读一次详情（对账入口与安全网轮询可能同时到）
       const key = `${born}\u0000${x.project ?? ''}\u0000${x.id}`
       if (settling.has(key)) continue
@@ -726,6 +802,7 @@ export const useAiStore = create<AiState>((set, get) => ({
     }
     // 终态只认第一条 `ai.done`：重复 / 迟到的不改写（cancelled 后到的 done 改回 done 之类）
     if (cur.finalized) return false
+    notePresented(session)
     set((s) => ({
       sessions: s.sessions.map((x) =>
         x.id === session
@@ -779,6 +856,8 @@ export const useAiStore = create<AiState>((set, get) => ({
       ),
     }))
   },
+
+  reconcileChanges: () => reconcileChanges(),
 
   restoreRunning: async () => {
     // 在途的恢复按**项目代次 + 项目 id** 分键：A 的请求还在途时切到 B，B 要发起自己的请求，不能拿到 A 的 promise
@@ -865,12 +944,224 @@ function dropUnclaimedRestoreBuffer(): void {
   restoreBuffered.clear()
 }
 
+/** 一条后端历史行 / 增量行 → 接回的只读占位（刷新 / 回切后本地没有这个会话）。`doRestore` 与 `reconcileChanges` 共用 */
+function restoredPlaceholder(
+  e: Pick<AiHistoryEntry, 'id' | 'provider' | 'prompt' | 'script' | 'scope' | 'target' | 'status' | 'started_ms'> & {
+    client_request_id?: string | null
+  },
+  pj: string | null,
+): AiSession {
+  return {
+    id: e.id,
+    project: pj,
+    agent: e.provider,
+    agentLabel: agentDisplayName(useAiStore.getState().caps, e.provider),
+    prompt: e.prompt,
+    script: e.script ?? '',
+    panelId: null,
+    fileId: null,
+    gid: null,
+    scope: (['element', 'axes', 'figure'].includes(e.scope ?? '') ? e.scope : 'figure') as AiScope,
+    target: e.target ?? '',
+    entries: [],
+    status: e.status === 'cancelled' ? 'cancelled' : e.status === 'interrupted' ? 'failed' : 'running',
+    ...(e.status === 'interrupted' ? { provisional: true } : {}),
+    changed: false,
+    diff: '',
+    startedAt: e.started_ms,
+    restored: true,
+    ...(e.client_request_id ? { requestId: e.client_request_id } : {}),
+  }
+}
+
+/**
+ * **按版本对账的页面内存状态**（#1115）：不进浏览器存储、不进后端——页面一关就没有，所以覆盖断线 / 切项目 / 面板重挂，
+ * 跨刷新见下方 `sessionStorage`（D1(b)）；新开的标签页没有水位，不补别的页面呈现过的历史（面板历史列表可见）。
+ * - `revMarks`：项目 id → 对账水位（`GET /api/ai/sessions/changes` 的 `head`）。按项目分键，A→B→A 时 A 的水位不被 B 的拉取推过去；
+ *   `clear()` 不清它（换代丢的是会话列表，不是"已经对到哪"）。
+ * - `presented`：本页已经呈现过终态的会话 id。清空会话列表的 `clear()` 之后，已经看过的终态不会被再补一次、再提示一次。
+ */
+const revMemory = new Map<string, number>()
+const presented = new Set<string>()
+/**
+ * **跨刷新**（D1(b)）：水位与 `presented` 同时落 `sessionStorage`——按标签页、刷新保留、关页即无，各标签页互不吃提示。
+ * 键按项目 id；后端实例没有可区分的标识，所以读到比后端 `head` 还大的水位（换了数据目录 / 库被重建）就按 `head` 重置。
+ * 所有读写 try/catch：读不到 = 退回「首次只取起点」（不补提示，宁可漏也不重复）。
+ */
+const SS_MARK = 'tavotto.ai.revMark.'
+const SS_PRESENTED = 'tavotto.ai.presented'
+function ssGet(key: string): string | null {
+  try {
+    return sessionStorage.getItem(key)
+  } catch {
+    return null
+  }
+}
+function ssSet(key: string, value: string): void {
+  try {
+    sessionStorage.setItem(key, value)
+  } catch {
+    // 存不了：只剩页面内存
+  }
+}
+const revMarks = {
+  get(pj: string): number | undefined {
+    const m = revMemory.get(pj)
+    if (m !== undefined) return m
+    const raw = ssGet(SS_MARK + pj)
+    const n = raw === null ? NaN : Number(raw)
+    if (!Number.isInteger(n) || n < 0) return undefined
+    revMemory.set(pj, n)
+    return n
+  },
+  has(pj: string): boolean {
+    return revMarks.get(pj) !== undefined
+  },
+  set(pj: string, n: number): void {
+    revMemory.set(pj, n)
+    ssSet(SS_MARK + pj, String(n))
+  },
+}
+function loadPresented(): void {
+  const raw = ssGet(SS_PRESENTED)
+  if (!raw) return
+  try {
+    const arr = JSON.parse(raw)
+    if (Array.isArray(arr)) for (const x of arr) if (typeof x === 'string') presented.add(x)
+  } catch {
+    // 坏数据当没有
+  }
+}
+loadPresented()
+/** 测试接缝：模拟整页刷新——丢掉页面内存，留下 `sessionStorage` */
+export function resetAiRevMemoryForTests(): void {
+  revMemory.clear()
+  presented.clear()
+  loadPresented()
+}
+const PRESENTED_MAX = 1000
+function notePresented(sid: string): void {
+  presented.add(sid)
+  if (presented.size > PRESENTED_MAX) presented.delete(presented.values().next().value as string)
+  ssSet(SS_PRESENTED, JSON.stringify([...presented]))
+}
+const markKey = (pj: string | null): string => pj ?? ''
+
+/** 项目第一次对账：只取水位当起点（不补历史；刷新则读 `sessionStorage` 里的水位）。读失败不记，下次再取 */
+async function ensureRevBaseline(): Promise<void> {
+  const born = useAiStore.getState().generation
+  const pj = currentProjectId()
+  if (revMarks.has(markKey(pj))) return
+  try {
+    const res = await fetchAiChanges(null, pj)
+    if (typeof res?.head !== 'number') return
+    if (born === useAiStore.getState().generation && !revMarks.has(markKey(pj))) revMarks.set(markKey(pj), res.head)
+  } catch {
+    // 老后端（没有这个端点）/ 联系不上：不对账，其余恢复路径照旧
+  }
+}
+
+/** 一个会话的终态事实：补成已完成轮次并收尾。回 `false` = 这次没处理成（读详情失败），水位不许越过它 */
+async function applyChange(c: AiSessionChange, born: number, pj: string | null): Promise<boolean> {
+  const { get, set } = { get: useAiStore.getState, set: useAiStore.setState }
+  if (!c.final || !c.script) return true // 没结束：占位 / 安全网管，它结束时的写会带新 rev 再来；没脚本：不是助手面板的会话
+  const local = get().sessions.find((x) => x.id === c.id)
+  if (local?.finalized) return true
+  if (!local && presented.has(c.id)) return true // 本页看过这个终态了（之后只是 clear 掉了列表）
+  const snap = await readSessionDetail(c.id, pj)
+  if (!snap.ok) return false
+  const d = snap.detail
+  if (born !== get().generation || pj !== currentProjectId()) return true
+  if (!d || typeof d.status !== 'string' || !snapshotIsFinal(d, d.status)) return true
+  if (!get().sessions.some((x) => x.id === c.id)) set((s) => ({ sessions: [...s.sessions, restoredPlaceholder(c, pj)] }))
+  settleSessionTo(
+    c.id,
+    {
+      session: c.id,
+      status: d.status,
+      changed: !!d.changed,
+      diff: d.diff ?? '',
+      ...(d.error ? { error: d.error } : {}),
+      ...(d.refresh ? { refresh: d.refresh } : {}),
+    },
+    d.transcript,
+  )
+  return true
+}
+
+const RECONCILE_MAX_PAGES = 5
+const reconciling = new Map<string, { p: Promise<void>; again: boolean }>()
+
+/** `reconcileChanges` 的实现：同一代次 + 项目只有一个在途，期间再来的触发合并成"结束后再对一轮"（事件提示不会丢） */
+function reconcileChanges(): Promise<void> {
+  const born = useAiStore.getState().generation
+  const pj = currentProjectId()
+  const key = `${born}\u0000${markKey(pj)}`
+  const running = reconciling.get(key)
+  if (running) {
+    running.again = true
+    return running.p
+  }
+  const entry: { p: Promise<void>; again: boolean } = { p: Promise.resolve(), again: false }
+  entry.p = (async () => {
+    try {
+      let more = false
+      do {
+        entry.again = false
+        more = await reconcileOnce(born, pj)
+        // 一轮最多 `RECONCILE_MAX_PAGES` 页；还有剩的就让出一个 tick 再续一轮（同一个在途守卫，不重入），直到取空
+        if (more) await new Promise<void>((r) => setTimeout(r, 0))
+      } while ((entry.again || more) && born === useAiStore.getState().generation)
+    } finally {
+      reconciling.delete(key)
+    }
+  })()
+  reconciling.set(key, entry)
+  return entry.p
+}
+
+/** 回 `true` = 这一轮页数用完了、后端还说有更多：调用方续一轮 */
+async function reconcileOnce(born: number, pj: string | null): Promise<boolean> {
+  const { get } = { get: useAiStore.getState }
+  if (!revMarks.has(markKey(pj))) {
+    await ensureRevBaseline() // 还没有起点（老后端 / 此前读失败）：这一轮只取起点
+    return false
+  }
+  for (let page = 0; page < RECONCILE_MAX_PAGES; page++) {
+    const since = revMarks.get(markKey(pj)) as number
+    let res
+    try {
+      res = await fetchAiChanges(since, pj)
+    } catch {
+      return false
+    }
+    if (born !== get().generation || pj !== currentProjectId() || !Array.isArray(res?.sessions)) return false
+    for (const c of res.sessions) if (!(await applyChange(c, born, pj))) return false // 没处理成：水位不动，下次再来
+    if (born !== get().generation || pj !== currentProjectId()) return false
+    // 水位比后端 head 还大 = 换了库：重置到 head（否则永远收不到增量）
+    revMarks.set(markKey(pj), res.head < since ? res.head : Math.max(since, res.head))
+    if (!res.more) return false
+  }
+  return true
+}
+
+/** `ai.done` 带来的版本号：比水位新 = 有本页还没对过的事实，去对账一次（事件只是提示，事实以增量为准） */
+export function hintAiRev(rev: number | null | undefined): void {
+  if (typeof rev !== 'number') return
+  const mark = revMarks.get(markKey(currentProjectId()))
+  if (mark === undefined || rev <= mark) return // 还没有起点：由面板挂载 / 重连的恢复来取
+  void reconcileChanges().catch(() => undefined)
+}
+
 async function doRestore(): Promise<void> {
   const { get, set } = { get: useAiStore.getState, set: useAiStore.setState }
   const born = get().generation
   const pj = currentProjectId()
   restoringActive++
   try {
+    // 对账水位的起点与"还没结束"清单**同时发出**（起点请求先出）：清单里的会话由占位 + `settleRunningSessions` 管，起点之后才结束的
+    // 一定在增量里。新标签页起点之前结束的无从得知（见 `revMarks`），顺序不改变这一点
+    const baseline = ensureRevBaseline()
     // 运行中清单**一次请求取全**：后端对 `status=running` 不分页（运行中的会话天然有上限，翻页期间集合会变，offset 翻页会漏掉
     // 仍在运行的）。`limit` 只是给不认这个约定的老后端的兜底。
     let list: AiHistoryEntry[]
@@ -885,34 +1176,13 @@ async function doRestore(): Promise<void> {
     }
     // 拉的过程中换了项目：这些会话属于旧项目，不落
     if (born !== get().generation || pj !== currentProjectId()) return
-    const caps = get().caps
     for (const e of list) {
       // interrupted 且还开着：另一个共用数据目录的服务进程刚 `interrupt_all()`、它的 pump 还没收尾。本页连着的是另一个进程，
       // 收不到那边的 `ai.done`、也不会再有启动清理——只能靠对账：接回成临时快照（`provisional`，本地映射成 failed，不给「停止」），
       // 直到详情 `final: true` 才收尾
       if (e.status !== 'running' && e.status !== 'cancelled' && e.status !== 'interrupted') continue
       if (get().sessions.some((x) => x.id === e.id)) continue
-      const session: AiSession = {
-        id: e.id,
-        project: pj,
-        agent: e.provider,
-        agentLabel: agentDisplayName(caps, e.provider),
-        prompt: e.prompt,
-        script: e.script ?? '',
-        panelId: null,
-        fileId: null,
-        gid: null,
-        scope: (['element', 'axes', 'figure'].includes(e.scope ?? '') ? e.scope : 'figure') as AiScope,
-        target: e.target ?? '',
-        entries: [],
-        status: e.status === 'cancelled' ? 'cancelled' : e.status === 'interrupted' ? 'failed' : 'running',
-        ...(e.status === 'interrupted' ? { provisional: true } : {}),
-        changed: false,
-        diff: '',
-        startedAt: e.started_ms,
-        restored: true,
-        ...(e.client_request_id ? { requestId: e.client_request_id } : {}),
-      }
+      const session = restoredPlaceholder(e, pj)
       set((s) => ({ sessions: [...s.sessions, session] }))
       const pending = early.get(e.id)
       early.delete(e.id)
@@ -929,6 +1199,9 @@ async function doRestore(): Promise<void> {
     // 与 `reconcile` 各入口走的是**同一个** `settleRunningSessions`，不再留第二条收尾路径。
     // **不跳过刚建的占位**：历史是个比事件流早的快照，任务可能在事件流就绪之前就结束了——建完一律读一次详情按快照收尾（多一次请求）
     await get().settleRunningSessions()
+    await baseline
+    // 本页没呈现过的终态（A→B→A / 断线期间结束、本地已没有会话）：按版本对账补回，统一走 `settleSessionTo`
+    await reconcileChanges()
   } finally {
     restoringActive--
     if (restoringActive === 0) dropUnclaimedRestoreBuffer()
@@ -1037,6 +1310,85 @@ async function settleFromSnapshot(rid: string): Promise<QueryOutcome> {
       detail,
     })
     return 'accepted'
+}
+
+/**
+ * 从数据出图的一次同步请求 + 收尾（首发与「查询结果」共用）。`rid` 是后端去重的键：同一个 rid 只执行一次。
+ * 判据复用 `isDefiniteRunFailure`（与 `aiRun` 同一条）：明确拒绝 = 一定没执行 = 确定失败；其余（断网 / 超时 / 网关错 /
+ * 读不出响应）**不知道**后端写没写，会话标 `unconfirmed`，由用户用同一个 rid 查询，绝不当失败让人换新 id 重提。
+ */
+async function runDataFigure(
+  id: string,
+  born: number,
+  pj: string | null,
+  data: string,
+  instruction: string,
+  rid: string,
+): Promise<void> {
+  const { get, set } = { get: useAiStore.getState, set: useAiStore.setState }
+  const settle = (patch: Partial<AiSession>) => {
+    if (get().generation !== born) return // 期间切过项目：结果属于旧项目，不落
+    set((s) => ({
+      sessions: s.sessions.map((x) =>
+        x.id === id ? { ...x, ...patch, finalized: true, finishedAt: Date.now() } : x,
+      ),
+    }))
+  }
+  const unconfirmed = () =>
+    settle({
+      status: 'failed',
+      changed: false,
+      unconfirmed: true,
+      requestId: rid,
+      target: data,
+      prompt: instruction,
+      task: { task_type: DATA_FIGURE_TASK, outcome: null, unmet: [] },
+    })
+  try {
+    const res = await aiDataFigure({ data, instruction, client_request_id: rid }, pj)
+    const outcome = res.task?.outcome ?? null
+    // 去重回到一个还在跑的任务（final=false）：结局还没出来，仍然不确定
+    if (res.task?.final === false || (res.task?.deduped && outcome === null)) return unconfirmed()
+    const task: AiTaskSummary = {
+      task_type: DATA_FIGURE_TASK,
+      outcome,
+      unmet: res.task?.verification?.unmet ?? [],
+      ...(res.script ? { script: res.script } : {}),
+      ...(res.preview ? { preview: res.preview } : {}),
+    }
+    if (outcome === 'completed' || outcome === 'partial') {
+      settle({ status: 'done', changed: !!res.script, task, unconfirmed: false })
+    } else if (outcome === 'needs_input') {
+      settle({ status: 'done', changed: false, task, unconfirmed: false })
+    } else if (res.script) {
+      // 提交后验证失败（如数据指纹对不上）：结局是 failed，但文件已经建好并登记了——如实说出「已经写了」，
+      // 不能当成什么都没发生（用户再点一次会建出 `_2`）
+      settle({
+        status: 'done',
+        changed: true,
+        task,
+        unconfirmed: false,
+        ...(res.task?.error ? { error: res.task.error } : {}),
+      })
+    } else {
+      settle({
+        status: 'failed',
+        changed: false,
+        task,
+        unconfirmed: false,
+        ...(res.task?.error ? { error: res.task.error } : {}),
+      })
+    }
+  } catch (e) {
+    if (!isDefiniteRunFailure(e)) return unconfirmed()
+    settle({
+      status: 'failed',
+      changed: false,
+      unconfirmed: false,
+      error: backendErrorText(e),
+      task: { task_type: DATA_FIGURE_TASK, outcome: 'failed', unmet: [] },
+    })
+  }
 }
 
 /** 一次发送（新发或同 id 重发）：只回 `accepted` / `unconfirmed`，后端明确拒绝时抛 */
@@ -1176,6 +1528,7 @@ function accept(
         : how.status
       : 'running'
   const settled = how.kind === 'queried' && !how.adopt && snapshotIsFinal(detail, status)
+  if (settled) notePresented(sid)
   const session: AiSession = {
     id: sid,
     project: sub.project,
@@ -1265,11 +1618,14 @@ function accept(
   }
 }
 
-/** 会话标签：优先用当前 capabilities 的显示名，探测不可用时回退到快照。 */
+/** 会话标签：优先用当前 capabilities 的显示名，探测不可用时回退到快照。数据出图的执行者是产品自己，显示品牌名。 */
 export const sessionAgentLabel = (
   caps: AiCapabilities | null,
   session: Pick<AiSession, 'agent' | 'agentLabel'>,
-): string => agentDisplayName(caps, session.agent, session.agentLabel)
+): string => (session.agent === DATA_FIGURE_AGENT ? PRODUCT_NAME : agentDisplayName(caps, session.agent, session.agentLabel))
+
+/** 是不是「从数据出图」那一类本地会话（无脚本、无后端会话、同步 HTTP） */
+export const isDataFigureSession = (x: Pick<AiSession, 'agent'>): boolean => x.agent === DATA_FIGURE_AGENT
 
 /** 一个可用的 Agent 都没有 = AI 面板要给设置入口，而不是一个死掉的选择器 */
 export const hasUsableAgent = (caps: AiCapabilities | null): boolean =>
@@ -1337,7 +1693,7 @@ export function isSessionOf(
  */
 export const SAFETY_NET_MS = 15_000
 let netTimer: ReturnType<typeof setInterval> | null = null
-const hasOpenSessions = (): boolean => useAiStore.getState().sessions.some(isOpenSession)
+const hasOpenSessions = (): boolean => useAiStore.getState().sessions.some((x) => isOpenSession(x) && !isDataFigureSession(x))
 const pageHidden = (): boolean => typeof document !== 'undefined' && document.visibilityState === 'hidden'
 function safetyNetTick(): void {
   if (pageHidden()) return

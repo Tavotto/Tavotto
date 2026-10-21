@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useRef, type ReactNode } from 'react'
+import { Fragment, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ArrowRight, FileCodeCorner } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
@@ -12,6 +12,7 @@ import { BrandMark } from '../ui/BrandMark'
 import { Button } from '../ui/Button'
 import { Card } from '../ui/Card'
 import { DemoFigure } from './DemoFigure'
+import { CALLOUT_LEAD, estimateTextBox, placeCallouts } from './tutorialGeometry'
 import { FigureStage } from './tutorialLayout'
 
 /**
@@ -32,7 +33,7 @@ export function TutorialWelcome() {
       <div className="h-9 shrink-0" {...dragRegionProps('self')} />
       <main
         aria-labelledby="tutorial-welcome-title"
-        className="mx-auto flex w-full max-w-[1060px] flex-1 flex-col items-center justify-center px-6 pb-8 text-center"
+        className="mx-auto flex w-full max-w-[1060px] flex-1 flex-col items-center justify-center px-6 pb-9 text-center"
       >
         <div className="flex items-center gap-2.5">
           <BrandMark size={48} />
@@ -58,7 +59,7 @@ export function TutorialWelcome() {
         <div
           role="group"
           aria-label={t('onboarding.welcome.demoLabel')}
-          className="my-8 grid w-full max-w-[920px] grid-cols-[minmax(0,0.82fr)_44px_minmax(0,1fr)] items-center gap-5 pr-8 pl-3 [@media(max-height:720px)]:my-4"
+          className="my-8 grid w-full max-w-[1012px] grid-cols-[minmax(0,0.7fr)_44px_minmax(0,1fr)] items-center gap-5 pl-3 [@media(max-height:720px)]:my-4"
         >
           <ScriptCard />
           <ArrowRight size={ICON_SIZE.lg} className="justify-self-center text-ink-faint" aria-hidden="true" />
@@ -159,67 +160,93 @@ function ScriptCard() {
 
 /* -------------------------------- 图卡 --------------------------------- */
 
+/** 气泡槽的宽度（px，卡片里图框右边留给「引线 + 气泡」的地方）：够英文「Adjust the legend」放下 */
+const BUBBLE_SLOT = 184
+/** 气泡宽度上限（给碰撞计算用；真实宽度由文字撑开，不超过它） */
+const BUBBLE_MAX_W = BUBBLE_SLOT - CALLOUT_LEAD
+
 /**
  * 右边的图 + 三枚注释：「修改文字」指标题、「调整图例」指图例、「拖动位置」指横轴标签。
- * 落点按图的几何（pt）× 舞台此刻的缩放算，窗口变了跟着走，不写死像素。
+ * 气泡排在图右侧的专用槽里（卡片内），引线从被指元素右边缘外侧水平拉过去；落点由
+ * `placeCallouts` 按元素 bbox × 舞台缩放现算并做避让，窗口变了跟着走，不写死像素。
  */
 function FigureCard() {
   const { t } = useTranslation('dialogs')
-  const F = DEMO_FIGURE
-  const [lx, ly, lw, lh] = F.legend.box
-  const [xx, xy, xw, xh] = F.xlabel.box
-  const anchors = [
-    { key: 'title', at: [F.title.anchor[0] + 40, F.title.anchor[1] - 6], side: 'above' as const },
-    { key: 'legend', at: [lx + lw, ly + lh / 2], side: 'right' as const },
-    { key: 'position', at: [xx + xw, xy + xh / 2], side: 'below' as const },
-  ]
   return (
     <Card
       padding="none"
-      className="relative h-[clamp(210px,33vh,310px)] min-h-0 rounded-panel p-4 [@media(max-height:720px)]:h-[196px] [@media(max-height:720px)]:p-2.5"
+      className="relative flex h-[clamp(210px,33vh,310px)] min-h-0 items-center rounded-panel p-4 [@media(max-height:720px)]:h-[196px] [@media(max-height:720px)]:p-2.5"
     >
       <FigureStage
-        className="h-full w-full"
-        overlay={
-          <div aria-hidden="true" className="pointer-events-none absolute inset-0">
-            {anchors.map((a) => (
-              <Callout key={a.key} at={a.at as [number, number]} side={a.side}>
-                {t(`onboarding.welcome.callout.${a.key}`)}
-              </Callout>
-            ))}
-          </div>
-        }
+        className="h-full min-w-0 flex-1"
+        overlay={(size) => <Callouts size={size} />}
       >
         <DemoFigure demo={DEMO_EDITS_EMPTY} label={t('onboarding.welcome.figureLabel')} className="block h-full w-full" />
       </FigureStage>
+      {/* 气泡槽：图框右边这一块只放「引线 + 气泡」，图自己不会被挤进去 */}
+      <div aria-hidden="true" className="h-full shrink-0" style={{ width: BUBBLE_SLOT }} />
     </Card>
   )
 }
 
-/** 一枚注释：圆点落在锚点上，一条细线连到注释签。坐标是图的 pt，用舞台宽度换算 */
-function Callout({ at, side, children }: { at: [number, number]; side: 'above' | 'right' | 'below'; children: ReactNode }) {
+function Callouts({ size }: { size: { w: number; h: number } }) {
+  const { t } = useTranslation('dialogs')
   const F = DEMO_FIGURE
-  // 百分比定位：锚点 = 图幅里的比例位置，舞台怎么缩放都对得上
-  const left = `${(at[0] / F.figure.width) * 100}%`
-  const top = `${(at[1] / F.figure.height) * 100}%`
-  const line = { above: 'h-6 w-px -translate-y-full', right: 'h-px w-7', below: 'h-5 w-px' }[side]
-  const chip = {
-    above: 'bottom-6 left-0 -translate-x-1/3 -translate-y-px',
-    right: 'top-0 left-7 -translate-y-1/2',
-    below: 'top-5 left-0 -translate-x-1/2',
-  }[side]
+  const root = useRef<HTMLDivElement>(null)
+  // 标题文字此刻的外框（pt）：量得到按真实字形，量不到（jsdom）按字数估
+  const [titleBox, setTitleBox] = useState(() => estimateTextBox(F.title.text, F.title.sizePt, F.title.anchor))
+  useLayoutEffect(() => {
+    try {
+      const b = root.current?.parentElement?.querySelector<SVGTextElement>('[data-demo-title] text')?.getBBox()
+      if (b && b.width > 0) setTitleBox([b.x, b.y, b.width, b.height])
+    } catch {
+      /* 量不到就用估值 */
+    }
+  }, [size.w])
+  const placed = placeCallouts({
+    figure: F.figure,
+    stage: size,
+    bubbleW: BUBBLE_MAX_W,
+    targets: [
+      { key: 'title', box: titleBox },
+      { key: 'legend', box: F.legend.box as [number, number, number, number] },
+      { key: 'position', box: F.xlabel.box as [number, number, number, number] },
+    ],
+  })
   return (
-    <div className="absolute" style={{ left, top }}>
-      <span className="absolute -top-[3px] -left-[3px] h-1.5 w-1.5 rounded-full bg-accent" />
-      <span className={cn('absolute left-0 top-0 bg-accent/60', line, side === 'right' && '-translate-y-px')} />
-      <span
-        className={cn(
-          'absolute rounded-md border border-info-border bg-accent-subtle px-3 py-1.5 text-base font-medium whitespace-nowrap text-info-content shadow-pop',
-          chip,
-        )}
-      >
-        {children}
-      </span>
+    <div ref={root} aria-hidden="true" data-welcome-callouts="" className="pointer-events-none absolute inset-0">
+      {placed.map((p) => {
+        // 引线：从锚点到气泡左沿中点的一根细线（div 旋转，不手写内联 svg——图标只有一套）
+        const dx = p.bubble.x - p.anchor.x
+        const dy = p.bubble.y + p.bubble.h / 2 - p.anchor.y
+        return (
+          <Fragment key={p.key}>
+            <span
+              className="absolute h-px origin-left bg-accent/60"
+              style={{
+                left: p.anchor.x,
+                top: p.anchor.y,
+                width: Math.hypot(dx, dy),
+                transform: `rotate(${Math.atan2(dy, dx)}rad)`,
+              }}
+            />
+            <span
+              className="absolute h-1.5 w-1.5 rounded-full bg-accent"
+              style={{ left: p.anchor.x - 3, top: p.anchor.y - 3 }}
+            />
+          </Fragment>
+        )
+      })}
+      {placed.map((p) => (
+        <span
+          key={p.key}
+          data-welcome-callout={p.key}
+          className="absolute flex items-center rounded-md border border-info-border bg-accent-subtle px-3 text-base font-medium whitespace-nowrap text-info-content shadow-pop"
+          style={{ left: p.bubble.x, top: p.bubble.y, height: p.bubble.h, maxWidth: p.bubble.w }}
+        >
+          {t(`onboarding.welcome.callout.${p.key}`)}
+        </span>
+      ))}
     </div>
   )
 }

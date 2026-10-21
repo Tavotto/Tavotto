@@ -765,7 +765,11 @@ def test_export_validate_plain_response_remains_unchanged(api, canvas):
     source.pop("source_policy")
     response = api.client.post("/api/export/validate", json=spec)
     assert response.status_code == 200
-    assert response.get_json() == {
+    body = response.get_json()
+    # `route`（#1209 ExportRoute）是每次 validate 都带的附加事实，与采用流程无关；其余字段逐字不变
+    assert "route" in body
+    body.pop("route")
+    assert body == {
         "ok": True,
         "conflicts": [],
         "writable": True,

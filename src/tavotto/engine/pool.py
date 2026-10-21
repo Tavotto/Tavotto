@@ -99,16 +99,63 @@ BUILD_TIMEOUT = 900.0
 #: 判据换成「**多久没有任何动静**」之后：会打进度的脚本**在引擎侧**不再有总时长
 #: 上限（只剩下面 `BUILD_HARD_TIMEOUT` 兜底），完全静默的脚本仍有
 #: `BUILD_IDLE_TIMEOUT` 这一档（比换掉的那个平坦 900 秒宽）。
-#: **只在引擎侧**：画布前端另有一条按注册表 cost 取档的悬挂看门狗
-#: （`web/src/store/renderStore.ts` 的 `WATCHDOG_MS`，2 / 5 / 15 分钟），三档都
-#: 短于这里的 20 分钟——冷启动很长的脚本在画布上会先被前端断开请求，这边的 build
-#: 不受影响照常等。这是有意保留的现状（#312），改这里的阈值不会改变画布上的体验。
+#: **画布前端按同一个信号续期**（#1207）：看门狗每次 stat 看到日志长大，就经
+#: `ProgressListeners` 发一条 `render.progress`（节流 `PROGRESS_EMIT_INTERVAL`），
+#: `web/src/store/renderStore.ts` 的看门狗收到就把租约续上，总上限对齐
+#: `BUILD_HARD_TIMEOUT`——会打进度的冷启动脚本在画布上也等得到出图。
+#: 没有进度通道的消费者（MCP 内嵌画布：iframe 里没有事件流）退回按 cost 分档
+#: 的静默窗口（2 / 5 / 15 分钟），与改动前一致。
 BUILD_IDLE_TIMEOUT = 1200.0
 #: 兜底：`while True: print(i)` 这种一直有输出的死循环，看门狗永远等不到静默。
 #: 它罕见，但不能没有头——真撞上时用户看到的仍是一条说得清的超时。
 BUILD_HARD_TIMEOUT = 4 * 3600.0
 #: 看门狗多久看一眼日志。一次 `stat`，几十微秒；给得再密也没有意义。
 _PROGRESS_POLL = 2.0
+#: 「日志仍在增长」对外发进度事件的最小间隔（秒）。前端租约窗口（最短 2 分钟）
+#: 是它的二十几倍，丢几个事件不会误判；发得再密只是在刷 SSE 队列。
+PROGRESS_EMIT_INTERVAL = 5.0
+
+
+class ProgressListeners:
+    """某个 worker 的 build 进度订阅者（#1207）。
+
+    **谁等这次 build，谁就订阅**——不止触发它的那个请求：同一把 `w.lock` 后面排队的
+    重试 / 另一个变体 / 另一个面板都登记自己的回调，build 线程每次看到日志长大就
+    扇出给所有人，所以重试也能收到续期而不是再超时一次。订阅者增减与扇出各自持一把
+    只护 `_items` 的小锁，**不碰 `w.lock`**（不改池的锁结构）。
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._items: list[Callable[[], None]] = []
+        self._last_emit = 0.0
+
+    @contextlib.contextmanager
+    def listen(self, callback: Callable[[], None]):
+        with self._lock:
+            self._items.append(callback)
+        try:
+            yield
+        finally:
+            with self._lock:
+                with contextlib.suppress(ValueError):
+                    self._items.remove(callback)
+
+    def note_growth(self, now: float | None = None) -> bool:
+        """日志刚长大：距上次发出已满 `PROGRESS_EMIT_INTERVAL` 才扇出。回是否发了。"""
+        now = time.monotonic() if now is None else now
+        with self._lock:
+            if not self._items or now - self._last_emit < PROGRESS_EMIT_INTERVAL:
+                return False
+            self._last_emit = now
+            items = list(self._items)
+        for cb in items:
+            try:
+                cb()
+            except Exception:  # noqa: BLE001 —— 进度是旁路，订阅者出错不许影响 build 的看门狗
+                LOG.debug("build 进度回调失败", exc_info=True)
+        return True
+
 
 #: **build 超时有自己的稳定码**：它的下一步（读脚本自己的输出）与热态操作超时
 #: 完全不同。`override` / `export` / 预览走 `REQUEST_TIMEOUT` / `EXPORT_TIMEOUT`。
@@ -2285,6 +2332,7 @@ class EngineWorker:
         #: **按 stem** 记的同一件事，见 `stem_patch_hash()`。
         self.last_patch_hash_by_stem: dict[str, str] = {}
         self.lock = threading.Lock()
+        self.progress = ProgressListeners()
         self.built = False
         _execution_state(self)
         #: 上一次**跑完的** build 是失败的（`built=False` 分不出「还没 build / 正在 build」与「build 过但失败了」，
@@ -2494,6 +2542,7 @@ class EngineWorker:
             if grown != size:
                 # 脚本还在往前跑（worker 的 stderr 与脚本的 stdout 都落在这里）
                 size, last_progress = grown, time.monotonic()
+                self.progress.note_growth(last_progress)
 
     def _timeout_error(self, waited: float, silent_for: float, is_build: bool) -> "WorkerError":
         """超时的用户可读形态。**说的是判据本身**，不是一个抽象的秒数上限。
@@ -3151,6 +3200,7 @@ class WorkerdWorker:
         # 是哪条路径）。**绝不拿它包住一次请求**——那会把 workerd 好不容易解开的
         # 「一个慢请求占死整条会话」重新绑回来。
         self.lock = threading.Lock()
+        self.progress = ProgressListeners()
         self.built = False
         _execution_state(self)
         self.build_failed = False  # 与 EngineWorker 同一个判据
@@ -3419,12 +3469,40 @@ class WorkerdWorker:
         except OSError:
             pass
 
+    @contextlib.contextmanager
+    def _relay_log_growth(self):
+        """build 期间把「worker.log 还在长」转成进度事件（#1207）。
+
+        静默看门狗在 workerd 里（Rust 侧 stat），Python 这边只是阻塞在 `client.call`
+        里，看不到日志——所以这里**必须**有一条小线程做同一件事（一次 stat / 2 s，与
+        Python 池的 `_wait_with_watchdog` 同一个 `_PROGRESS_POLL` 与 `_log_size`）。
+        它只发事件，不裁决任何超时；build 一返回就停。
+        """
+        stop = threading.Event()
+
+        def pump() -> None:
+            size = _log_size(self.log_path)
+            while not stop.wait(_PROGRESS_POLL):
+                grown = _log_size(self.log_path)
+                if grown != size:
+                    size = grown
+                    self.progress.note_growth()
+
+        t = threading.Thread(target=pump, daemon=True, name="mm-workerd-progress")
+        t.start()
+        try:
+            yield
+        finally:
+            stop.set()
+            t.join(_PROGRESS_POLL + 1.0)
+
     def ensure_built(self) -> dict:
         # 与 Python 池同一条判据（ADR 0050）：兜底上限 + 静默看门狗，
         # 看门狗由 workerd 那侧执行（它 stat 的是同一个 worker.log）。
         try:
             with inputbroker.serving(self):  # 与 EngineWorker 同一个答题方（ADR 0099）
-                resp = self._call("build", BUILD_HARD_TIMEOUT, idle_timeout=BUILD_IDLE_TIMEOUT)
+                with self._relay_log_growth():
+                    resp = self._call("build", BUILD_HARD_TIMEOUT, idle_timeout=BUILD_IDLE_TIMEOUT)
         except inputbroker.TranscriptUnavailable as exc:
             self.build_failed = True
             self.last_build_source_sha256 = None

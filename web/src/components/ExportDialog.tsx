@@ -71,7 +71,7 @@ import {
   readExportDefaults,
   writeExportDefaults,
 } from "@/lib/exportDefaults";
-import { artifactValidationIssue, originalArtifactOverrides } from "@/lib/artifactValidation";
+import { artifactValidationIssue } from "@/lib/artifactValidation";
 import { inspectionState } from "@/lib/artifactInspection";
 import { RetryImg } from "@/components/ui/RetryImg";
 import {
@@ -114,6 +114,8 @@ import {
   type ExportScope,
   type ExportRequestInput,
 } from "@/lib/exportRequest";
+import { copiesSourceVerbatim as copiesVerbatimFromRoute, unavailablePanels } from "@/lib/exportRoute";
+import { routeKeyOf, useExportRouteStore } from "@/store/exportRouteStore";
 import type { OverwritePolicy } from "@/lib/exportRequest";
 import { DEFAULT_PROFILE_ID, type PublicationProfile } from "@/lib/profile";
 import { profileName } from "@/lib/profileText";
@@ -412,6 +414,29 @@ export function ExportDialog() {
     panel,
   });
   /**
+   * 这次导出每个面板用哪份来源——**后端回答**（`/api/export/validate` 的 `route`，#1209），
+   * 对话框与预检不再各自推算。键对不上当前输入（改了编辑 / 范围 / 格式）就当没有，走
+   * `lib/exportRoute` 的退路；请求在输入稳定 250ms 后发，失败不打扰用户。
+   */
+  const routeKey = routeKeyOf({ scope, formats, doc, panel, figureId });
+  const route = useExportRouteStore((s) => (s.key === routeKey ? s.route : null));
+  const refreshRoute = useExportRouteStore((s) => s.refresh);
+  const invalidateRoute = useExportRouteStore((s) => s.invalidate);
+  // 打开的那一刻先把上一次的答案作废：250 ms 防抖 + 往返期间界面走退路（不比现状乐观），
+  // 不拿关着时的旧 offers 去禁用 / 放开 EPS
+  useEffect(() => {
+    if (open) invalidateRoute();
+  }, [open, invalidateRoute]);
+  // 只在对话框开着时取；每次打开（`open` false→true）都重取一次，哪怕输入没变——
+  // 脚本登记可能在对话框关着的时候变了。关着不发请求
+  useEffect(() => {
+    if (!open) return;
+    const timer = setTimeout(() => void refreshRoute(inputOf()), 250);
+    return () => clearTimeout(timer);
+    // inputOf 每次渲染都是新函数；真正决定 route 的输入都在 routeKey 里
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, routeKey, refreshRoute]);
+  /**
    * 这次的检查、留档与严格核验**按哪张画布算**：原图 = 那张图所在的画布（它可能不是
    * 当前画布），画布 = 当前画布。下面的规范、摘要、导出上下文检查、报告的条目与规范戳、
    * 严格核验的 `profile_id` 全都从这一个 id 取——各取各的，就会出现「摘要按目标画布的
@@ -600,10 +625,11 @@ export function ExportDialog() {
             widthMm: originalWidthMm,
             heightMm: originalHeightMm,
             formats,
+            route,
           })
         : null,
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [validationIssues, checkCanvasId, targetObjectId, originalWidthMm, originalHeightMm, formats],
+    [validationIssues, checkCanvasId, targetObjectId, originalWidthMm, originalHeightMm, formats, route],
   );
   /**
    * 原图范围、选中的图只在素材 / 运行时清单里（`panel` 为 null）：它不在任何画布上，
@@ -684,10 +710,15 @@ export function ExportDialog() {
    * PPI 重新变得有意义。少了这一条，界面会对着一张即将被重画的图报源像素
    * 网格、还说 PPI 无关（PR #214 第四轮评审）。
    */
-  const copiesSourceVerbatim =
-    scope === "original" &&
-    availability.spec?.sourceKind === "raster" &&
-    (!panel || (!artifactValidationIssue(panel) && !originalArtifactOverrides(panel).length));
+  const copiesSourceVerbatim = copiesVerbatimFromRoute({
+    scope,
+    specIsRaster: availability.spec?.sourceKind === "raster",
+    panel,
+    assets,
+    formats,
+    route,
+    guardOk: !panel || !artifactValidationIssue(panel),
+  });
 
   /** 透明背景这次起不起作用：要有位图格式，且不是「照抄源位图」那条路 */
   const transparentApplies = raster && !copiesSourceVerbatim;
@@ -713,10 +744,14 @@ export function ExportDialog() {
    * 没有它（画布合成没有 PostScript 写入器），没有脚本的图也没有它。**不隐藏选项**：禁用并
    * 说原因；勾过它的用户切到画布时，请求里自动不带它（`buildExportRequest`）。
    */
+  const unreachable = useMemo(
+    () => (scope === "canvas" ? [...new Set(unavailablePanels(route, formats))] : []),
+    [scope, route, formats],
+  );
   const eps = useMemo(
-    () => epsAvailability(scope, figureId),
+    () => epsAvailability(scope, figureId, route),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [scope, figureId, assets, runtimeAssets],
+    [scope, figureId, assets, runtimeAssets, route],
   );
 
   function inputOf(over?: Partial<ExportRequestInput>): ExportRequestInput {
@@ -738,6 +773,7 @@ export function ExportDialog() {
       figureId,
       panel,
       spec: availability.spec,
+      route,
       ...over,
     };
   }
@@ -1461,6 +1497,14 @@ export function ExportDialog() {
                 <FormRow>
                   <p id="export-eps-reason" className="type-caption">
                     {ex(`epsUnavailable.${eps.reason}`)}
+                  </p>
+                </FormRow>
+              )}
+              {/* 画布范围：带编辑的图找不到脚本，后端画不出它——导出必然失败，点之前就说 */}
+              {unreachable.length > 0 && (
+                <FormRow>
+                  <p data-export-route-unavailable className="type-caption">
+                    {ex("routeNeedsScript", { files: unreachable.join("、") })}
                   </p>
                 </FormRow>
               )}

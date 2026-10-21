@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "pack_id": "figure_edit",
+  "version": 2,
+  "source": "候选（ADR 0138 Phase 6c 实验）：只改第 3 条——把「只修改目标脚本」收紧为「只改实现需求所必需的部分，用户没提到的文字 / 单位 / 颜色 / 线型 / 图例 / 坐标范围与刻度保持原样」；其余模板与 v1 逐字相同",
+  "templates": {
+    "intro": "你在修改一篇论文的图表脚本（Python）。",
+    "target": "目标脚本：{script}（在当前工作目录中）。",
+    "rules_heading": "硬性要求（外部系统靠这些约定解析产物，违反任何一条都会让图表无法再编辑）：",
+    "rule_matplotlib": "1. 图必须用 matplotlib 生成，并经 Figure.savefig(...)（或图库自带的保存封装）落盘。禁止改用 PIL/Pillow、plotly、bokeh、seaborn 之外叠加的其他渲染后端、手写 SVG/PDF、subprocess 调外部绘图工具等方式出图——外部系统靠拦截 matplotlib 的 savefig 实现参数化编辑，其他方式生成的图完全无法再编辑。",
+    "rule_stems": "2. 保持既有输出文件名（stem）与出图数量不变。",
+    "rule_scope": "3. 只修改目标脚本里实现用户需求所必需的部分：用户没提到的文字、单位、颜色、线型与线宽、图例、坐标范围与刻度一律保持原样；不要运行脚本（渲染由外部系统负责）；不要修改其他脚本或数据文件。",
+    "rule_fonts": "4. 设置字体用字体族名（rcParams['font.family'] 或 fontfamily= / FontProperties(family=...)），不要用 FontProperties(fname=...) 指定字体文件路径：fname 会让 matplotlib 只从那一个文件取字形，西文字体里没有的中文会画成方框；用族名时外部系统会自动给中文接上中文字体。",
+    "rule_shared_style": "5. 图库有共享样式 paper_style.py：沿用它既有的字体/字号/配色/版面规范，不要修改 paper_style.py 本身。",
+    "context_stem": "用户当前编辑的是该脚本的输出面板：{stem}。",
+    "context_element": "用户在界面上选中的元素：{gid}（{label}）。",
+    "context_overrides": "用户已在界面上做了这些非破坏性修改（渲染时叠加的 override，代表期望状态，供参考）：{overrides}",
+    "request": "用户需求：{user_prompt}",
+    "candidate_note": "注意：当前工作目录是目标脚本的工作副本；原项目目录 {project_root} 只供只读参考（数据文件、同目录模块在那里），不要在原项目目录里创建或修改任何文件——改完的副本由外部系统核对后写回。",
+    "correction_header": "上一次修改没有通过写回前的检查，原项目没有被改动。请在当前工作副本里只修正下面的问题，保留用户要求的修改，不要运行脚本：",
+    "correction_item": "- {text}",
+    "fix_syntax": "目标脚本{where}有语法错误（{detail}），改成能被 Python 解析的代码。",
+    "fix_syntax_where_line": "第 {lineno} 行",
+    "fix_syntax_where_unknown": "脚本里",
+    "fix_stems": "脚本输出的图名变了（原来 {before}，现在 {after}）；保持原来的输出文件名。",
+    "fix_other_files": "除目标脚本外还改了 {files}；把它们恢复成原样（原件在原项目目录里，只读参考），只改目标脚本。",
+    "fix_target_missing": "目标脚本在工作副本里不见了；按原项目里的同名脚本恢复它，再在它上面做用户要求的修改。"
+  }
+}
