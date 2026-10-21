@@ -18,6 +18,8 @@ import { mmToViewX, mmToViewY, getTransform, mmToWorld, useViewportStore } from 
 import { openFastEdit, useWorkspaceStore } from '@/store/workspace'
 import { emptyProject, type PanelObject } from '@/types/document'
 import { CanvasStage } from './CanvasStage'
+import { useProfileStore } from '@/store/profileStore'
+import type { ProfileRecord } from '@/lib/api'
 import { startPageSizeFit } from '@/store/pageFit'
 import { startPageEdgeResize } from './pageEdgeDrag'
 
@@ -199,6 +201,81 @@ describe('拖页面边（手势）', () => {
     fire('pointerup', 20 * PX_PER_MM(), 0)
     stop()
     fit.mockRestore()
+  })
+})
+
+describe('适应画布（fitted）', () => {
+  it('fitted 下拖右边：松手后退出适应模式，之后窗口 / 侧栏改变舞台尺寸页面不再被按旧取景挪走', () => {
+    useViewportStore.getState().setViewRect({ left: 0, top: 0, width: 1200, height: 800 })
+    useViewportStore.getState().fit(180, 120)
+    expect(useViewportStore.getState().fitted).toBe(true)
+    const before = screenPos('a')
+    startPageEdgeResize(down(0, 0), 'r')
+    fire('pointermove', 20 * PX_PER_MM(), 0)
+    fire('pointerup', 20 * PX_PER_MM(), 0)
+    expect(page().w).toBe(200)
+    expect(useViewportStore.getState().fitted).toBe(false)
+    expect(screenPos('a').x).toBeCloseTo(before.x, 6)
+    // 侧栏开合 = 舞台尺寸变了：不在适应模式里就一个字不碰
+    useViewportStore.getState().setViewRect({ left: 0, top: 0, width: 900, height: 800 })
+    expect(screenPos('a').x).toBeCloseTo(before.x, 6)
+    expect(screenPos('a').y).toBeCloseTo(before.y, 6)
+  })
+
+  it('Esc 取消：回到原值，适应模式一并恢复', () => {
+    useViewportStore.getState().setViewRect({ left: 0, top: 0, width: 1200, height: 800 })
+    useViewportStore.getState().fit(180, 120)
+    const pan = { x: useViewportStore.getState().panX, y: useViewportStore.getState().panY }
+    startPageEdgeResize(down(0, 0), 'l')
+    fire('pointermove', -30 * PX_PER_MM(), 0)
+    expect(useViewportStore.getState().fitted).toBe(false)
+    expect(cancelActivePointerGesture()).toBe(true)
+    expect(page().w).toBe(180)
+    expect(useViewportStore.getState().fitted).toBe(true)
+    expect(useViewportStore.getState().panX).toBe(pan.x)
+  })
+})
+
+describe('栏宽读自文档绑定的规范（目录没就绪不吸附）', () => {
+  const record = (id: string, single: number, double: number): ProfileRecord => ({
+    id,
+    kind: 'spec',
+    schema_version: 1,
+    revision: 1,
+    display_name: id,
+    name_key: '',
+    version: '1',
+    created_at: 0,
+    updated_at: 0,
+    built_in: false,
+    read_only: false,
+    is_default: false,
+    derived_from: '',
+    warnings: [],
+    data: { ...(useProfileStore.getState().specs[0]?.data ?? {}), widths_mm: { single, double, tolerance_mm: 0.5, allow_custom: true } },
+  })
+  const bindFollow = () =>
+    useDocumentStore.getState().commit(literal('绑规范'), (d) => {
+      d.profile = { id: 'mine', follow: true }
+    })
+
+  it('目录没加载 + 跟随自定义规范：拖到内置栏宽附近不吸附；目录加载后吸到自定义规范的栏宽', () => {
+    bindFollow()
+    useProfileStore.setState({ loaded: false, load: (async () => {}) as never })
+    const dx = (mm: number) => mm * PX_PER_MM()
+    startPageEdgeResize(down(0, 0), 'r')
+    fire('pointermove', dx(-29), 0) // 151：内置默认双栏 150 附近
+    expect(page().w).toBe(151)
+    expect(useInteractionStore.getState().pageEdge?.snapLabel).toBeNull()
+    // 目录到了：同一次手势下一帧起按自定义规范（双栏 140）吸
+    useProfileStore.setState({
+      loaded: true,
+      specs: [...useProfileStore.getState().specs, record('mine', 70, 140)],
+    })
+    fire('pointermove', dx(-39), 0) // 141 → 140
+    expect(page().w).toBe(140)
+    expect(useInteractionStore.getState().pageEdge?.snapLabel).toBeTruthy()
+    fire('pointerup', dx(-39), 0)
   })
 })
 

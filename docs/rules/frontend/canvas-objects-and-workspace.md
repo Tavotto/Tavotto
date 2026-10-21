@@ -228,4 +228,7 @@
   叠加层、只在拖动中挂，不进文档 / 导出 / SVG 预览平面；与对象拖动的对齐吸附（`snapXs`）互不相干。
   标注与属性栏画布页头的只读尺寸用会滚的数字（`@sfinterface/numbers`，宪法「只上两处」）：连续拖动 `duration={0}`，
   吸附 / ⌥ 跳变（`pageEdge.rolls`）与属性栏一步到位才滚。
+  拖边是对视口的直接操纵：每帧经 `setPan`（停补间、退出「适应画布」，右 / 下边平移量为 0 屏幕上不跳），Esc 取消时恢复原 `fitted`。
+  栏宽解析与属性栏预设同一判据 `lib/pageColumns.resolvePageColumns`：跟随全局清单的绑定在 `profileStore.loaded` 之前
+  `ready=false`，这一次手势不吸附（每帧现读，目录到了就开始吸）。
   看护：`lib/pageEdgeResize.test.ts`、`canvas/pageEdgeResize.test.tsx`。

@@ -8,8 +8,7 @@ import { formatMm } from '@/lib/units'
 import { onExportDefaultsHydrated, readExportDefaults } from '@/lib/exportDefaults'
 import { hasRaster } from '@/lib/exportRequest'
 import { msg, t as translate, type UiMessage } from '@/i18n'
-import { pageColumns } from '@/lib/pageColumns'
-import { resolveDocumentSpec } from '@/lib/specBinding'
+import { resolvePageColumns, type PageColumn } from '@/lib/pageColumns'
 import { cn, MOD } from '@/lib/utils'
 import { clearGuides, removeGuide, setPageSetup, setPageSize } from '@/store/actions'
 import { useDocumentStore } from '@/store/documentStore'
@@ -43,8 +42,7 @@ interface PagePreset {
   h: number
 }
 
-function pagePresets(widths: Parameters<typeof pageColumns>[0]): PagePreset[] {
-  const [single, double] = pageColumns(widths)
+function pagePresets([single, double]: PageColumn[]): PagePreset[] {
   return [
     { id: 'single', w: single.w, h: 60 },
     { id: 'double', w: double.w, h: 100 },
@@ -120,11 +118,11 @@ export function CanvasPage() {
   useEffect(() => {
     if (!specsLoaded) void useProfileStore.getState().load()
   }, [specsLoaded])
-  const widths = useMemo(
-    () => resolveDocumentSpec(binding, toCatalog(specs)).profile.widths_mm,
-    [binding, specs],
+  const columns = useMemo(
+    () => resolvePageColumns(binding, toCatalog(specs), specsLoaded).columns,
+    [binding, specs, specsLoaded],
   )
-  const PRESETS = useMemo(() => pagePresets(widths), [widths])
+  const PRESETS = useMemo(() => pagePresets(columns), [columns])
   const active = PRESETS.find((p) => p.w === page.w && p.h === page.h)
   // 摘要行互不排斥、各记各的（键 `canvas:<组>`）；开合跨会话记在 inspectorPrefs
   const foldOpen = useInspectorPrefs((s) => s.foldOpen)

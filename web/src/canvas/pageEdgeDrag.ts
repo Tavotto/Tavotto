@@ -1,8 +1,7 @@
 import type { PointerEvent as ReactPointerEvent } from 'react'
 import { msg, t as translate, type UiMessage } from '@/i18n'
-import { pageColumns, type PageColumn } from '@/lib/pageColumns'
+import { resolvePageColumns, type PageColumn } from '@/lib/pageColumns'
 import { resizePageEdge, type PageEdge } from '@/lib/pageEdgeResize'
-import { resolveDocumentSpec } from '@/lib/specBinding'
 import { applyPageSize } from '@/store/actions'
 import { useDocumentStore } from '@/store/documentStore'
 import { useInteractionStore } from '@/store/interactionStore'
@@ -41,8 +40,16 @@ export function startPageEdgeResize(e: ReactPointerEvent, edge: PageEdge) {
     guides: d0.guides.map((g) => g.pos),
   }
   const t0 = getTransform()
-  const spec = resolveDocumentSpec(d0.profile, toCatalog(useProfileStore.getState().specs)).profile
-  const columns = pageColumns(spec.widths_mm)
+  // 栏宽每一帧现读：规范目录没加载完时不吸附（见 `resolvePageColumns`），加载完的那一帧起就按绑定的规范吸；
+  // 与属性栏页面预设同一个判据
+  const columnsNow = () => {
+    const ps = useProfileStore.getState()
+    const r = resolvePageColumns(d0.profile, toCatalog(ps.specs), ps.loaded)
+    return { columns: r.ready ? r.columns : [], specLabel: r.specLabel }
+  }
+  if (!useProfileStore.getState().loaded) void useProfileStore.getState().load()
+  // 适应画布：拖的这一刻页面与取景脱钩（见 onMove），取消时恢复
+  const wasFitted = useViewportStore.getState().fitted
   const horizontal = edge === 'l' || edge === 'r'
   const interaction = useInteractionStore.getState()
 
@@ -55,6 +62,7 @@ export function startPageEdgeResize(e: ReactPointerEvent, edge: PageEdge) {
   let prevAlt = false
   trackPointer(e, {
     onMove: (ev, dxPx, dyPx) => {
+      const { columns, specLabel } = columnsNow()
       const res = resizePageEdge({
         edge,
         start,
@@ -65,23 +73,27 @@ export function startPageEdgeResize(e: ReactPointerEvent, edge: PageEdge) {
       store.txnUpdate((d) =>
         applyPageSize(d, res.w, res.h, { x: res.shiftX, y: res.shiftY, base }),
       )
-      if (res.shiftX || res.shiftY || edge === 'l' || edge === 't') {
-        useViewportStore
-          .getState()
-          .setPan(t0.panX - mmToWorld(res.shiftX) * t0.zoom, t0.panY - mmToWorld(res.shiftY) * t0.zoom)
-      }
+      // 每一帧都经 setPan：停掉在飞的取景补间并退出「适应画布」——页面已经不是 `lastFit` 描述的那一页，
+      // 之后开关侧栏 / 缩窗口不能再按旧取景重放把页面挪走。右 / 下边平移量为 0（屏幕上的页面不跳），左 / 上边反向补偿
+      useViewportStore
+        .getState()
+        .setPan(t0.panX - mmToWorld(res.shiftX) * t0.zoom, t0.panY - mmToWorld(res.shiftY) * t0.zoom)
       const snapId = res.snap?.id ?? null
       const rolls = snapId !== prevSnap || ev.altKey !== prevAlt
       prevSnap = snapId
       prevAlt = ev.altKey
       useInteractionStore
         .getState()
-        .setPageEdge({ edge, snapLabel: res.snap ? columnLabel(spec.label, res.snap) : null, rolls })
+        .setPageEdge({ edge, snapLabel: res.snap ? columnLabel(specLabel, res.snap) : null, rolls })
     },
     onEnd: (moved, _ev, end) => {
       if (end.cancelled || !moved) {
         store.endTxn({ discard: true })
-        if (moved) useViewportStore.getState().setPan(t0.panX, t0.panY)
+        if (moved) {
+          useViewportStore.getState().setPan(t0.panX, t0.panY)
+          // 回到原值就回到原来的取景状态：原先是适应画布的，页面又是 `lastFit` 那一页，恢复适应模式
+          if (wasFitted) useViewportStore.setState({ fitted: true })
+        }
       } else {
         store.endTxn()
       }
