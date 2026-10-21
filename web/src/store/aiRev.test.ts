@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { handleServerEvent } from '@/hooks/useServerEvents'
 import { setCurrentProjectId } from '@/lib/session'
-import { setAiSettledNotifier, useAiStore } from './aiStore'
+import { resetAiRevMemoryForTests, setAiSettledNotifier, useAiStore } from './aiStore'
 import { useUiStore } from './uiStore'
 
 const json = (b: unknown, status = 200) =>
@@ -273,10 +273,70 @@ describe('失败与边界', () => {
     expect(sessions().map((x) => x.id)).toEqual(['late'])
   })
 
-  it('已知限制（D1）：整页刷新的间隙里结束的任务本页无从得知——新页面只取起点，不补历史', async () => {
-    finishOnBackend('rv-a12', 'before-refresh')
-    await visit('rv-a12') // 全新页面（此项目还没有水位）
+  it('新开的标签页（此项目没有水位）：只取起点，不补别的页面呈现过的历史', async () => {
+    finishOnBackend('rv-a12', 'before-open')
+    await visit('rv-a12')
     expect(sessions()).toEqual([])
     expect(notified).toEqual([])
+  })
+})
+
+describe('跨刷新：水位落 sessionStorage（D1(b)）', () => {
+  /** 整页刷新：页面内存没了、sessionStorage 还在、会话列表空 */
+  const refresh = async (pj: string) => {
+    resetAiRevMemoryForTests()
+    useAiStore.setState({ sessions: [], submissions: {} })
+    await visit(pj)
+  }
+
+  it('刷新间隙里结束的任务被补成只读轮次 + 恰好一次提示；再刷新一次不重复', async () => {
+    await visit('rv-r1')
+    writeRow('rv-r1', 'gap')
+    finishOnBackend('rv-r1', 'gap') // 用户刷新的间隙里结束，没有任何事件送达
+    await refresh('rv-r1')
+    expect(sessions().map((x) => x.id)).toEqual(['gap'])
+    expect(sessions()[0]).toMatchObject({ status: 'done', finalized: true })
+    expect(notified).toEqual(['gap'])
+    await refresh('rv-r1')
+    expect(sessions()).toEqual([])
+    expect(notified).toEqual(['gap'])
+  })
+
+  it('刷新前已经经 ai.done 呈现过的终态，刷新后不再补一次', async () => {
+    await visit('rv-r2')
+    writeRow('rv-r2', 'seen2')
+    await store().restoreRunning()
+    finishOnBackend('rv-r2', 'seen2')
+    handleServerEvent({ kind: 'ai.done', pj: 'rv-r2', session: 'seen2', status: 'done', changed: true, diff: '@@ d', script: 'fig1.py' })
+    await refresh('rv-r2')
+    expect(sessions()).toEqual([])
+    expect(notified).toEqual([])
+  })
+
+  it('sessionStorage 抛错：退回「只取起点」，不崩、不补', async () => {
+    await visit('rv-r3')
+    writeRow('rv-r3', 'x3')
+    finishOnBackend('rv-r3', 'x3')
+    const boom = () => {
+      throw new Error('denied')
+    }
+    vi.spyOn(Storage.prototype, 'getItem').mockImplementation(boom)
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(boom)
+    resetAiRevMemoryForTests()
+    useAiStore.setState({ sessions: [] })
+    await visit('rv-r3')
+    expect(sessions()).toEqual([])
+    expect(notified).toEqual([])
+  })
+
+  it('库被换掉（存的水位比后端 head 还大）：按 head 重置，之后的增量照收', async () => {
+    await visit('rv-r4')
+    sessionStorage.setItem('tavotto.ai.revMark.rv-r4', '999999')
+    resetAiRevMemoryForTests()
+    useAiStore.setState({ sessions: [] })
+    await visit('rv-r4') // 水位 > head：重置
+    finishOnBackend('rv-r4', 'after-reset')
+    await store().reconcileChanges()
+    expect(sessions().map((x) => x.id)).toEqual(['after-reset'])
   })
 })

@@ -188,7 +188,7 @@
   （别的项目的写只让它变大、不泄露内容）；不带 `since` 只回此刻的 `head`（客户端取起点）；超 `CHANGES_PAGE` 行时 `more: true`、`head` 只推进到最后一行；
   先 `reap_dead_owners`（死属主的收尾也是变化）。每行是 `CHANGE_DTO_KEYS` 的精简快照（判终态 + 建占位的摘要列，**不含**转录 / diff / refresh——终态详情仍只有
   `GET /api/ai/sessions/<sid>` 一份）；`final` 与会话详情同一个判据，本进程内存里的会话认它自己的 `final`。`ai.done` 带终态那次写的 `rev`，**只是"去对账"的提示**。
-  **已知限制**：旧版本进程（不写 rev）与新版本共用数据目录时，旧进程写的行不进增量；水位只在前端页面内存里（见前端细则），整页刷新的间隙不覆盖。
+  **已知限制**：旧版本进程（不写 rev）与新版本共用数据目录时，旧进程写的行不进增量；水位在前端（页面内存 + `sessionStorage`，见前端细则），后端不存。
 - 会话历史在 `engine/ai_history.py`（SQLite `cache/ai_history.sqlite3`，
   按 project 列过滤）；启动时 running→interrupted + purge(180d，pinned 豁免)；
   历史 API：list（分页/搜索/筛选）/delete/pin。前端默认只显示人类可读目标，

@@ -910,21 +910,78 @@ function restoredPlaceholder(
 
 /**
  * **按版本对账的页面内存状态**（#1115）：不进浏览器存储、不进后端——页面一关就没有，所以覆盖断线 / 切项目 / 面板重挂，
- * **不覆盖整页刷新**（刷新后本页不知道上一页呈现过什么；见 PR 正文的裁决点）。
+ * 跨刷新见下方 `sessionStorage`（D1(b)）；新开的标签页没有水位，不补别的页面呈现过的历史（面板历史列表可见）。
  * - `revMarks`：项目 id → 对账水位（`GET /api/ai/sessions/changes` 的 `head`）。按项目分键，A→B→A 时 A 的水位不被 B 的拉取推过去；
  *   `clear()` 不清它（换代丢的是会话列表，不是"已经对到哪"）。
  * - `presented`：本页已经呈现过终态的会话 id。清空会话列表的 `clear()` 之后，已经看过的终态不会被再补一次、再提示一次。
  */
-const revMarks = new Map<string, number>()
+const revMemory = new Map<string, number>()
 const presented = new Set<string>()
+/**
+ * **跨刷新**（D1(b)）：水位与 `presented` 同时落 `sessionStorage`——按标签页、刷新保留、关页即无，各标签页互不吃提示。
+ * 键按项目 id；后端实例没有可区分的标识，所以读到比后端 `head` 还大的水位（换了数据目录 / 库被重建）就按 `head` 重置。
+ * 所有读写 try/catch：读不到 = 退回「首次只取起点」（不补提示，宁可漏也不重复）。
+ */
+const SS_MARK = 'tavotto.ai.revMark.'
+const SS_PRESENTED = 'tavotto.ai.presented'
+function ssGet(key: string): string | null {
+  try {
+    return sessionStorage.getItem(key)
+  } catch {
+    return null
+  }
+}
+function ssSet(key: string, value: string): void {
+  try {
+    sessionStorage.setItem(key, value)
+  } catch {
+    // 存不了：只剩页面内存
+  }
+}
+const revMarks = {
+  get(pj: string): number | undefined {
+    const m = revMemory.get(pj)
+    if (m !== undefined) return m
+    const raw = ssGet(SS_MARK + pj)
+    const n = raw === null ? NaN : Number(raw)
+    if (!Number.isInteger(n) || n < 0) return undefined
+    revMemory.set(pj, n)
+    return n
+  },
+  has(pj: string): boolean {
+    return revMarks.get(pj) !== undefined
+  },
+  set(pj: string, n: number): void {
+    revMemory.set(pj, n)
+    ssSet(SS_MARK + pj, String(n))
+  },
+}
+function loadPresented(): void {
+  const raw = ssGet(SS_PRESENTED)
+  if (!raw) return
+  try {
+    const arr = JSON.parse(raw)
+    if (Array.isArray(arr)) for (const x of arr) if (typeof x === 'string') presented.add(x)
+  } catch {
+    // 坏数据当没有
+  }
+}
+loadPresented()
+/** 测试接缝：模拟整页刷新——丢掉页面内存，留下 `sessionStorage` */
+export function resetAiRevMemoryForTests(): void {
+  revMemory.clear()
+  presented.clear()
+  loadPresented()
+}
 const PRESENTED_MAX = 1000
 function notePresented(sid: string): void {
   presented.add(sid)
   if (presented.size > PRESENTED_MAX) presented.delete(presented.values().next().value as string)
+  ssSet(SS_PRESENTED, JSON.stringify([...presented]))
 }
 const markKey = (pj: string | null): string => pj ?? ''
 
-/** 项目第一次对账：只取水位当起点（不补历史——整页刷新的间隙见上）。读失败不记，下次再取 */
+/** 项目第一次对账：只取水位当起点（不补历史；刷新则读 `sessionStorage` 里的水位）。读失败不记，下次再取 */
 async function ensureRevBaseline(): Promise<void> {
   const born = useAiStore.getState().generation
   const pj = currentProjectId()
@@ -1011,7 +1068,8 @@ async function reconcileOnce(born: number, pj: string | null): Promise<void> {
     if (born !== get().generation || pj !== currentProjectId() || !Array.isArray(res?.sessions)) return
     for (const c of res.sessions) if (!(await applyChange(c, born, pj))) return // 没处理成：水位不动，下次再来
     if (born !== get().generation || pj !== currentProjectId()) return
-    revMarks.set(markKey(pj), Math.max(since, res.head))
+    // 水位比后端 head 还大 = 换了库：重置到 head（否则永远收不到增量）
+    revMarks.set(markKey(pj), res.head < since ? res.head : Math.max(since, res.head))
     if (!res.more) return
   }
 }
@@ -1031,7 +1089,7 @@ async function doRestore(): Promise<void> {
   restoringActive++
   try {
     // 对账水位的起点与"还没结束"清单**同时发出**（起点请求先出）：清单里的会话由占位 + `settleRunningSessions` 管，起点之后才结束的
-    // 一定在增量里。整页刷新时起点之前结束的无从得知（见 `revMarks`），顺序不改变这一点
+    // 一定在增量里。新标签页起点之前结束的无从得知（见 `revMarks`），顺序不改变这一点
     const baseline = ensureRevBaseline()
     // 运行中清单**一次请求取全**：后端对 `status=running` 不分页（运行中的会话天然有上限，翻页期间集合会变，offset 翻页会漏掉
     // 仍在运行的）。`limit` 只是给不认这个约定的老后端的兜底。
