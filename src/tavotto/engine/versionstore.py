@@ -718,14 +718,6 @@ def _baseline_empty_record(legacy_path: Path) -> dict:
     }
 
 
-def _pending_matches_legacy(rec: dict, legacy_path: Path) -> bool:
-    """pending 记录只有在它记的 sha 就是当前旧文件时才可提交成「已迁移」。"""
-    try:
-        return _sha(Path(legacy_path).read_bytes()) == rec.get("sha")
-    except OSError:
-        return False
-
-
 def migrate_legacy(
     versions_dir: Path,
     doc_id: str,
@@ -764,13 +756,8 @@ def migrate_legacy(
             # 按 id 去重导入，已在新存储里的不覆盖；没有记录可判「已删」，宁可多一条也不丢。
             rec = _baseline_empty_record(legacy_path)
         if rec.get("state") == "pending":
-            if _pending_matches_legacy(rec, legacy_path):
-                rec = {**rec, "state": "committed"}  # 上次死在「索引已提交、记录未收尾」
-                atomicio.write_bytes(root / MIGRATION_NAME, atomicio.dumps_json(rec))
-            else:
-                # 过期的 pending：它记的 id 集合来自另一份旧文件（迁移失败后旧文件被改过），
-                # 不能当成「已导入」——按基线为空处理，旧文件里的条目按 id 去重全部导入
-                rec = _baseline_empty_record(legacy_path)
+            rec = {**rec, "state": "committed"}  # 上次死在「索引已提交、记录未收尾」
+            atomicio.write_bytes(root / MIGRATION_NAME, atomicio.dumps_json(rec))
         return _import_fork(root, idx, rec, legacy_path, now, policy)
 
     raw, versions = _read_legacy(legacy_path)

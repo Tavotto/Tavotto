@@ -318,25 +318,39 @@ def test_an_unserializable_legacy_file_leaves_no_trace_and_the_repaired_file_is_
     assert path.read_bytes() == good
 
 
-def test_a_stale_pending_record_is_not_committed_when_it_describes_another_legacy_file(client):
-    """pending 记录里的 sha 与当前旧文件不一致：不能被标成 committed 当作「已导入」，旧条目要全数导入。"""
-    path, good = _legacy("stale", n=4)
-    ids = [v["id"] for v in json.loads(good)["versions"]]
-    root = vs.store_dir(path.parent, "stale")
-    # 过期现场：空索引 + 一条记着全部旧 id、但 sha 属于别的文件的 pending 记录
-    vs.init_empty(path.parent, "stale", now=1)
-    stale = {
-        "format": vs.FORMAT,
-        "state": "pending",
-        "name": path.name,
-        "size": 1,
-        "mtime_ns": 1,
-        "sha": "0" * 16,
-        "count": 4,
-        "dropped_duplicates": 0,
-        "ids": ids,
-    }
-    atomicio.write_bytes(root / "migration.json", atomicio.dumps_json(stale))
-    _post(client, "stale", name="触发")
-    got = {v["id"] for v in _list(client, "stale")["versions"]}
-    assert set(ids) <= got, "过期 pending 被当成已导入，旧历史丢了"
+def test_a_crash_after_the_index_commit_then_a_rolled_back_append_keeps_pruned_versions_pruned(
+    client, monkeypatch
+):
+    """首次迁移在索引提交后崩溃（pending 留着，策略已裁掉一部分旧版本），重试前旧程序又追加了旧文件：
+    重试按分叉只导入新增 id，被裁掉的旧版本不复活（否则手动档会反过来挤掉较新的检查点）。"""
+    monkeypatch.setattr(m, "VERSION_KEEP_TOTAL", 3)
+    path = m._versions_path("d")
+    m._versions_path("d").parent.mkdir(parents=True, exist_ok=True)
+    olds = [_ver(i) for i in range(5)]
+    path.write_bytes(json.dumps({"versions": olds}).encode())
+
+    def hook(name):
+        if name == "mig_after_index":
+            raise Crash(name)
+
+    monkeypatch.setattr(vs, "_checkpoint", hook)
+    crashed = client.post("/api/versions/d", json={"doc": _doc(2, "new"), "name": "崩了"})
+    assert crashed.status_code == 500, "注入的崩溃没有走到（这条用例量不到东西）"
+    monkeypatch.setattr(vs, "_checkpoint", lambda name: None)
+
+    root = vs.store_dir(path.parent, path.stem)
+    rec = json.loads((root / vs.MIGRATION_NAME).read_text(encoding="utf-8"))
+    assert rec["state"] == "pending", "前置条件：崩溃点应把 pending 留在磁盘上"
+    kept = {e["id"] for e in vs.entries(path.parent, path.stem)}
+    pruned = {v["id"] for v in olds} - kept
+    assert pruned, "前置条件：策略应已裁掉一部分旧版本"
+
+    newer = [
+        _ver(10, auto=True),
+        _ver(11, auto=True),
+    ]  # 旧程序在重试前追加（自动档，先于手动档被牺牲）
+    path.write_bytes(json.dumps({"versions": olds + newer}).encode())
+    _post(client, name="重试")
+    ids = {v["id"] for v in _list(client)["versions"]}
+    assert not (ids & pruned), "被裁掉的旧版本复活了"
+    assert ids & kept, "较新的手动检查点被被裁掉的旧版本挤掉了"
