@@ -381,6 +381,8 @@ def oracle_layers(
             evidence,
         )
         stages["fidelity"] = OR.stage("fidelity", pix["status"], pix.get("note"))
+        if pix.get("unmatched"):
+            stages["fidelity"]["unmatched"] = pix["unmatched"]
         diffs += pix["differences"]
     for stem, err in sorted(tavotto.get("shot_errors", {}).items()):
         stages["fidelity"] = OR.stage("fidelity", "failed", err)

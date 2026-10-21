@@ -93,6 +93,18 @@ class PixelJudgment(unittest.TestCase):
         self.assertEqual(got["status"], "not_run")
         self.assertIn("['t']", got["note"])
 
+    def test_one_sided_stems_next_to_a_mismatch_are_still_reported(self):
+        """Codex #1255 r4334476089：另一张图已 mismatch 时，单边 stem 不能从报告里消失。"""
+        a, b = png(self.tmp / "a.png"), png(self.tmp / "b.png", dots=64)
+        got = OR.pixel_judgment({"s": a, "t": a}, {"s": b}, self.out)
+        self.assertEqual(got["status"], "failed")
+        self.assertEqual([d["kind"] for d in got["differences"]], ["pixel_mismatch"])
+        self.assertEqual(got["unmatched"], ["t"])
+        stages = {
+            "fidelity": {**OR.stage("fidelity", got["status"]), "unmatched": got["unmatched"]}
+        }
+        self.assertEqual(OR.unresolved(stages), ["fidelity: stems not compared: ['t']"])
+
     def test_only_common_stems_are_compared(self):
         a = png(self.tmp / "a.png")
         self.assertEqual(OR.pixel_judgment({"x": a}, {"y": a}, self.out)["status"], "not_run")

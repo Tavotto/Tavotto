@@ -72,11 +72,13 @@ NO_NATIVE_PIXELS = (
 
 def unresolved(stages: dict) -> list[str]:
     """In-scope layers that did not run (`not_run`): the candidate cannot be called clean."""
-    return [
-        f"{n}: {st.get('note') or 'not run'}"
-        for n, st in stages.items()
-        if st["status"] == "not_run"
-    ]
+    out = []
+    for n, st in stages.items():
+        if st["status"] == "not_run":
+            out.append(f"{n}: {st.get('note') or 'not run'}")
+        elif st.get("unmatched"):
+            out.append(f"{n}: stems not compared: {st['unmatched']}")
+    return out
 
 
 def pixel_judgment(native_shots: dict, tavotto_shots: dict, out_dir: Path) -> dict:
@@ -140,19 +142,19 @@ def pixel_judgment(native_shots: dict, tavotto_shots: dict, out_dir: Path) -> di
             }
         )
     unmatched = sorted(set(native_shots) ^ set(tavotto_shots))
-    if unmatched and not diffs:
-        # some figure on one side was never compared and nothing else explains it: no conclusion
-        return {
-            "status": "not_run",
-            "differences": [],
-            "compared": len(stems),
-            "note": f"stems present on one side only: {unmatched}",
-        }
-    return {
+    out = {
         "status": "failed" if diffs else "passed",
         "differences": diffs,
         "compared": len(stems),
     }
+    if unmatched:
+        # some figure on one side was never compared: with no other difference that is no
+        # conclusion; next to a mismatch it is still reported (`unmatched`), never dropped
+        out["unmatched"] = unmatched
+        out["note"] = f"stems present on one side only: {unmatched}"
+        if not diffs:
+            out["status"] = "not_run"
+    return out
 
 
 def structure_judgment(parent_snap: dict, cand_snap: dict) -> dict:
