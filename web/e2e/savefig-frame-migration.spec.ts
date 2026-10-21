@@ -174,6 +174,18 @@ test('升级前的排版：原样打开 → 切到原图图幅内容不动 → �
  */
 test('快速编辑：tight 存盘的 Fig1 的 X 轴标题完整、下半截点得中', async ({ app, page }) => {
   const a = await app()
+  // 最近一次 render 回包里的 manifest（命中层用的就是它）
+  let latest: { elements: { gid: string; bbox: number[] }[] } | null = null
+  page.on('response', async (res) => {
+    if (!res.url().includes('/api/engine/render') || res.request().method() !== 'POST') return
+    try {
+      const body = (await res.json()) as { manifest?: { elements: { gid: string; bbox: number[] }[] } }
+      if (body?.manifest) latest = body.manifest
+    } catch {
+      /* 不是 JSON 就跳过 */
+    }
+  })
+  const latestManifest = () => latest
   await page.goto(a.baseURL)
   await page.getByText('Fig1_kinetics.pdf').dblclick({ timeout: 30_000 })
   const svg = page.locator('[data-element-svg] svg').first()
@@ -189,10 +201,23 @@ test('快速编辑：tight 存盘的 Fig1 的 X 轴标题完整、下半截点�
   })
   expect(geo, 'SVG 里应当有 X 轴标题').not.toBeNull()
   expect(geo!.label.y + geo!.label.h).toBeLessThanOrEqual(geo!.svg.bottom + 0.5)
-  // 下半截（离下沿 1/4 高处）：修之前这一带在图幅外
-  // 横向取标题左 1/5 处而不是正中：单图编辑里图被选中、取景铺满舞台，下边中点有选择框的手柄，
-  // 正中（x 轴标题恰在图的横向正中）点下去命中手柄而不是标题
-  await page.mouse.click(geo!.label.x + geo!.label.w * 0.2, geo!.label.y + geo!.label.h * 0.75)
+  // 下半截：修之前这一带在图幅外。命中层按 **manifest 的 bbox**（图幅分数）判，所以点位也按它算——
+  // 不拿 DOM 里 SVG 字形的盒去猜（不同平台的字体度量让两者差几个像素，Linux CI 上下半截点位正好落到盒外，命中退到「整张图」）。
+  // 取 bbox 内、纵向 3/4 处、横向 30% 处：纵向是「下半截」的意图，横向避开选择框下边中点的手柄
+  await expect
+    .poll(() => latestManifest()?.elements.find((e) => e.gid === 'axes_0.xlabel')?.bbox ?? null, {
+      message: 'render 回包的 manifest 里应当有 axes_0.xlabel 的 bbox',
+    })
+    .not.toBeNull()
+  const bbox = latestManifest()!.elements.find((e) => e.gid === 'axes_0.xlabel')!.bbox as [number, number, number, number]
+  const frame = await svg.evaluate((n) => {
+    const r = n.getBoundingClientRect()
+    return { x: r.x, y: r.y, w: r.width, h: r.height }
+  })
+  await page.mouse.click(
+    frame.x + (bbox[0] + bbox[2] * 0.3) * frame.w,
+    frame.y + (bbox[1] + bbox[3] * 0.75) * frame.h,
+  )
   await expect
     .poll(() => page.evaluate(() => document.querySelector('[data-gid]')?.getAttribute('data-gid') ?? null))
     .toBe('axes_0.xlabel')
