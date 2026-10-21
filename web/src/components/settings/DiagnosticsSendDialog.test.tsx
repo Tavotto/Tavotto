@@ -816,6 +816,46 @@ describe('诊断包扩充（detail-…、勾选项）', () => {
     expect(saveDiagnosticsZip).not.toHaveBeenCalled()
   })
 
+  it('保存成功后改勾选：换包期间与换包后都不再显示「已保存」（磁盘上只有旧包，Codex #1263 P2）', async () => {
+    await mount(DETAIL_PREPARED)
+    bundleMock.mockResolvedValue(new Blob(['old']))
+    await click(q('[data-diag-send-save]'))
+    await act(async () => {})
+    expect(document.body.textContent).toContain(ds('saved'))
+    prepareMock.mockResolvedValue({ ...DETAIL_PREPARED, id: 'pid-2', options: { source: true, crash_reports: false, corrupt_sessions: false } })
+    await click(box('source'))
+    expect(document.body.textContent).not.toContain(ds('saved'))
+    await tick(350)
+    await act(async () => {})
+    expect(document.body.textContent).not.toContain(ds('saved'))
+  })
+
+  it('最新一次刷新收到 diag_stale_prepare：重试一次即恢复，不卡在刷新态（Codex #1263 P2）', async () => {
+    await mount(DETAIL_PREPARED)
+    prepareMock
+      .mockRejectedValueOnce(new ApiError('stale', 409, { code: 'diag_stale_prepare' }))
+      .mockResolvedValueOnce({ ...DETAIL_PREPARED, id: 'pid-2', options: { source: true, crash_reports: false, corrupt_sessions: false } })
+    await click(box('source'))
+    await tick(350)
+    await act(async () => {})
+    expect(prepareMock).toHaveBeenCalledTimes(3)
+    expect(lastPayload().detail_options).toEqual({ source: true, crash_reports: false, corrupt_sessions: false })
+    expect(q<HTMLButtonElement>('[data-diag-send-confirm]')!.disabled).toBe(false)
+    expect(q<HTMLButtonElement>('[data-diag-send-save]')!.disabled).toBe(false)
+  })
+
+  it('重试后仍 stale：按失败作废（进 prepareFailed，不再无限重试，旧包不可保存 / 发送）', async () => {
+    await mount(DETAIL_PREPARED)
+    prepareMock.mockRejectedValue(new ApiError('stale', 409, { code: 'diag_stale_prepare' }))
+    await click(box('source'))
+    await tick(350)
+    await act(async () => {})
+    expect(prepareMock).toHaveBeenCalledTimes(3) // 挂载 1 次 + 刷新 1 次 + 重试 1 次
+    expect(document.body.textContent).toContain(ds('prepareFailed'))
+    await tick(2000)
+    expect(prepareMock).toHaveBeenCalledTimes(3)
+  })
+
   it('点击即时响应（卡顿回归）：勾选当场生效，不等后端、不回到「正在准备」、不禁用表单；连点只备一次', async () => {
     await mount(DETAIL_PREPARED)
     let release!: (p: DiagSendPrepared) => void

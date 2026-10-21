@@ -267,34 +267,41 @@ export function DiagnosticsSendDialog({
     const seq = ++refreshSeq.current
     window.clearTimeout(refreshTimer.current)
     setRefreshing(true)
+    // 旧包即将被换掉：「已保存」说的是旧包，换包后不再成立
+    setSaveState('idle')
     refreshTimer.current = window.setTimeout(() => {
       const opts = optionsRef.current
       const pj = packagePj.current
       const current = () => gen.current === mineGen && refreshSeq.current === seq
-      void buildSendPayload(opts)
-        .then((payload) => (current() && currentProjectId() === pj ? prepareDiagSend(payload, opts, pj) : null))
-        .then((p) => {
-          if (!p) return
-          if (!current()) {
-            if (p.id && p.id !== idRef.current) void discardDiagSend(p.id, pj).catch(() => {})
-            return
-          }
-          const old = idRef.current
-          if (old && old !== p.id) void discardDiagSend(old, pj).catch(() => {})
-          adoptPrepared(p, opts)
-          setRefreshing(false)
-        })
-        .catch((e) => {
-          if (isStalePrepare(e)) return // 被更新的备包取代：由那份新请求更新界面
-          if (current()) {
+      const run = (retried: boolean): void => {
+        void buildSendPayload(opts)
+          .then((payload) => (current() && currentProjectId() === pj ? prepareDiagSend(payload, opts, pj) : null))
+          .then((p) => {
+            // null = 备包前项目已换：epoch 会推进 gen，打开 effect 重跑并复位 refreshing，这里无需处理
+            if (!p) return
+            if (!current()) {
+              if (p.id && p.id !== idRef.current) void discardDiagSend(p.id, pj).catch(() => {})
+              return
+            }
+            const old = idRef.current
+            if (old && old !== p.id) void discardDiagSend(old, pj).catch(() => {})
+            adoptPrepared(p, opts)
+            setRefreshing(false)
+          })
+          .catch((e) => {
+            if (!current()) return // 已被更新的勾选 / 换代取代：由那一份更新界面
+            // 最新一次刷新被引擎判 stale（别的窗口为同一项目备了包）：没有更新的本地回调会来清 refreshing，
+            // 不能卡死。重试一次（optionsRef 此刻仍等于 opts，否则 current() 已为假）；再 stale 就按失败作废
+            if (isStalePrepare(e) && !retried) return run(true)
             // 旧包不含用户刚改的勾选（例：刚取消勾选源码，旧包仍带源码）：失败时必须作废，
             // 否则「保存」会把用户已取消的内容下载下来。丢弃引擎里那份并清空 prepared / idRef
             discard()
             setPrepared(null)
             setRefreshing(false)
             setPhase('prepareFailed')
-          }
-        })
+          })
+      }
+      run(false)
     }, REFRESH_DEBOUNCE_MS)
   }
 
