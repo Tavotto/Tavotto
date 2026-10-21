@@ -267,7 +267,7 @@ def test_shared_axes_peers_count_as_the_same_axes():
     def man(w, lim):
         ax = lambda g, p: {  # noqa: E731
             **_el(g, "axes", xlim=lim),
-            "autoscale": {"x": True, "y": True, "peers": {"x": [p]}, "datalim": {"x": lim}},
+            "autoscale": {"x": True, "y": True, "peers": {"x": [p]}, "expected": {"x": lim}},
         }
         return _m(
             ax("axes_0", "axes_1"),
@@ -281,45 +281,106 @@ def test_shared_axes_peers_count_as_the_same_axes():
     assert c.verdict == "verified", c.observed
 
 
-def _line_axes(lw, lim, *, datalim, autoscale=True):
+def _line_axes(lw, lim, *, expected, autoscale=True):
     ax = {
         **_el("axes_0", "axes", xlim=lim),
         "autoscale": {
             "x": autoscale,
             "y": True,
-            **({"datalim": {"x": datalim}} if datalim else {}),
+            **({"expected": {"x": expected}} if expected else {}),
         },
     }
     return _m(ax, _el("axes_0.lines_0", "line", linewidth=lw))
 
 
-def test_autoscale_flag_alone_is_not_evidence_the_range_was_not_written():
-    """Codex #1266 第二轮 P1：两侧 autoscale 都是 True、选中线变了、xlim 变了、数据范围没动——xlim 是被显式写的。"""
-    before = _line_axes(1, [0, 1], datalim=[0, 1])
-    after = _line_axes(4, [0, 5], datalim=[0, 1])
+def test_range_that_differs_from_what_autoscale_would_give_is_not_autoscale():
+    """Codex #1266 第二 / 三轮 P1：autoscale 开着、线宽变了、xlim 变了，但 xlim 不是自动缩放会算出的范围——显式写的。"""
+    before = _line_axes(1, [0, 1], expected=[0, 1])
+    after = _line_axes(4, [0, 5], expected=[0, 4.5])
     c = _only(after=after, before=before, scope="element", gid="axes_0.lines_0")
     assert c.verdict == "unknown" and c.observed["elements"] == ["axes_0"], c.observed
 
 
-def test_datalim_moved_and_enclosed_is_autoscale():
-    before = _line_axes(1, [0, 1], datalim=[0, 1])
-    after = _line_axes(4, [0, 5], datalim=[0, 4.5])
+def test_range_equal_to_the_expected_autoscale_range_is_autoscale():
+    before = _line_axes(1, [0, 1], expected=[0, 1])
+    after = _line_axes(4, [0, 4.5], expected=[0, 4.5])
+    c = _only(after=after, before=before, scope="element", gid="axes_0.lines_0")
+    assert c.verdict == "verified", c.observed
+    # 反向轴（xlim 倒序）按排序后比较
+    after = _line_axes(4, [4.5, 0], expected=[0, 4.5])
     c = _only(after=after, before=before, scope="element", gid="axes_0.lines_0")
     assert c.verdict == "verified", c.observed
 
 
-def test_new_range_that_does_not_enclose_the_new_data_is_not_autoscale():
-    before = _line_axes(1, [0, 1], datalim=[0, 1])
-    after = _line_axes(4, [0, 2], datalim=[0, 4.5])
+def test_missing_expected_is_not_evidence():
+    before = _line_axes(1, [0, 1], expected=None)
+    after = _line_axes(4, [0, 5], expected=None)
     c = _only(after=after, before=before, scope="element", gid="axes_0.lines_0")
     assert c.verdict == "unknown", c.observed
 
 
-def test_missing_datalim_is_not_evidence():
-    before = _line_axes(1, [0, 1], datalim=None)
-    after = _line_axes(4, [0, 5], datalim=None)
-    c = _only(after=after, before=before, scope="element", gid="axes_0.lines_0")
+BAR_WIDTH = """
+import matplotlib.pyplot as plt
+def main():
+    fig, ax = plt.subplots(figsize=(4, 3))
+    ax.bar([0, 1, 2], [1, 2, 3], width={w}, label="a")
+    {extra}
+    fig.savefig("fig.pdf")
+if __name__ == "__main__":
+    main()
+"""
+
+
+@needs_worker
+def test_bar_width_change_with_an_explicit_enclosing_xlim_is_not_waived(tmp_path):
+    """Codex #1266 第三轮 P1：改柱宽（dataLim 变）+ set_xlim(-3, 9, auto=True)——范围是显式写的，不是自动缩放。"""
+    before = _build(tmp_path, "a", BAR_WIDTH.format(w=0.8, extra="pass"))
+    after = _build(tmp_path, "b", BAR_WIDTH.format(w=0.3, extra="ax.set_xlim(-3, 9, auto=True)"))
+    c = _only(after=after, before=before, scope="element", gid="axes_0.barseries_0")
+    assert c.verdict == "unknown" and "axes_0" in c.observed["elements"], c.observed
+
+
+def test_synthetic_bar_width_with_enclosing_explicit_xlim_is_not_waived():
+    def man(w, lim, expected):
+        ax = {
+            **_el("axes_0", "axes", xlim=lim),
+            "autoscale": {"x": True, "y": True, "expected": {"x": expected}},
+        }
+        return _m(ax, _el("axes_0.barseries_0", "bar_series", width=w))
+
+    c = _only(
+        after=man(0.3, [-3, 9], [-0.5, 2.5]),
+        before=man(0.8, [-0.6, 2.6], [-0.6, 2.6]),
+        scope="element",
+        gid="axes_0.barseries_0",
+    )
     assert c.verdict == "unknown", c.observed
+
+
+@needs_worker
+def test_probing_autoscale_does_not_touch_the_figure(monkeypatch):
+    import tavotto.engine
+
+    # engine/ 里的模块互相用裸名 import（worker 里 engine 目录在 sys.path 上）
+    monkeypatch.syspath_prepend(str(__import__("pathlib").Path(tavotto.engine.__file__).parent))
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    from manifest import _probe_autoscale_expected
+
+    fig, ax = plt.subplots()
+    ax.plot([0, 1, 2], [0, 1, 4])
+    ax.set_xlim(-3, 9, auto=True)
+    before = (ax.get_xlim(), ax.get_ylim(), ax.get_autoscalex_on(), ax.get_autoscaley_on())
+    tight, d = ax._tight, dict(ax.__dict__)
+    got = _probe_autoscale_expected(ax, {"x": True, "y": True})
+    assert (ax.get_xlim(), ax.get_ylim(), ax.get_autoscalex_on(), ax.get_autoscaley_on()) == before
+    assert ax._tight == tight and ax.__dict__.keys() == d.keys()
+    assert "set_xbound" not in ax.__dict__ and "set_ybound" not in ax.__dict__
+    assert got["x"] != [-3.0, 9.0] and got["x"][0] < 0 < 2 < got["x"][1] < 3
+    plt.close(fig)
 
 
 @needs_worker

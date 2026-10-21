@@ -4286,6 +4286,42 @@ def _finite_box(bb) -> bool:
         return False
 
 
+def _probe_autoscale_expected(ax, autoscale: dict[str, bool]) -> dict[str, list[float]]:
+    """非破坏地探出 `ax.autoscale_view()` 此刻会给 x / y 的范围（只含 autoscale 开着的方向）。
+
+    `autoscale_view` 的内部 `handle_single_axis` 在**调用时**才取 `self.set_xbound` / `self.set_ybound`，所以临时在实例上挂
+    捕获函数遮住它们，范围就被截下来而不写进图。除 `set_bound` 外它不改任何状态（matplotlib 3.8 / 3.10 / 3.11 的源码：只有
+    `tight is not None` 才写 `_tight`，这里传 None；其余是只读的 dataLim / sticky / locator 计算）。`finally` 里删掉实例属性。
+    任何一步失败、或结果非有限 → 返回空（没证据）。"""
+    got: dict[str, list[float]] = {}
+
+    def capture(axis):
+        def _set(lo, hi=None, **_kw):
+            if hi is None:  # set_xbound((lo, hi)) 的元组写法
+                lo, hi = lo
+            got[axis] = [float(lo), float(hi)]
+
+        return _set
+
+    want = {a for a, on in autoscale.items() if on and a in ("x", "y")}
+    if not want or not callable(getattr(ax, "autoscale_view", None)):
+        return {}
+    try:
+        for a in want:
+            setattr(ax, f"set_{a}bound", capture(a))
+        ax.autoscale_view(scalex="x" in want, scaley="y" in want)
+    except Exception:  # noqa: BLE001 —— 版本不支持 / 非常规 axes：没证据
+        return {}
+    finally:
+        for a in want:
+            ax.__dict__.pop(f"set_{a}bound", None)
+    out: dict[str, list[float]] = {}
+    for a, (lo, hi) in got.items():
+        if math.isfinite(lo) and math.isfinite(hi):
+            out[a] = [min(lo, hi), max(lo, hi)]
+    return out
+
+
 def _collection_datalim(artist):
     """Collection 自己不给包围盒时，用**数据范围**换算 display 框；不适用返回 None。
 
@@ -5089,29 +5125,20 @@ def _measure_manifest(
                 )
                 if names:
                     peers[axis] = names
-            # `datalim`：这根轴数据的真实范围（`ax.dataLim`，读不改图）。autoscale 开关只是最终状态——`set_xlim(auto=True)`、
-            # 先设再 `set_autoscalex_on(True)` 都会让它为 True 而范围其实是显式写的；所以「范围是自动缩放算的」要有数据证据：
-            # 数据范围真的动了、新范围仍包得住它（figureverify._auto_kind）。取不到 / 非有限 = 不发 = 没证据。
-            datalim: dict[str, list[float]] = {}
-            # 色条轴（范围来自映射对象，判据不看 dataLim）与 3D 轴（dataLim 是投影出来的）不发：它们的 dataLim 在撤销 / 重放后会
-            # 漂（Inv Cbar / 3D 的「撤销后 manifest 逐位一致」不变式），发了就破坏可还原性。
-            raw = (
-                None
-                if (artist in state.colorbar_axes or el["role"] == "axes3d")
-                else getattr(artist, "dataLim", None)
-            )
-            for axis, (i0, i1) in (("x", ("x0", "x1")), ("y", ("y0", "y1"))):
-                try:
-                    lo, hi = float(getattr(raw, i0)), float(getattr(raw, i1))
-                except Exception:  # noqa: BLE001 —— 没有 dataLim（非常规 axes）：不发
-                    continue
-                if math.isfinite(lo) and math.isfinite(hi):
-                    datalim[axis] = [min(lo, hi), max(lo, hi)]
+            # `expected`：自动缩放**此刻会算出**的范围（`autoscale_view` 的结果，不落到图上）。autoscale 开关只是最终状态——
+            # `set_xlim(auto=True)`、先设再 `set_autoscalex_on(True)` 都会让它为 True 而范围其实是显式写的，数据范围（dataLim）
+            # 的变化也分不开「自动跟着数据」与「显式写了个恰好包住的范围」；唯一分得开的事实是：实际范围 == 自动缩放会给的范围。
+            # 色条轴（范围来自映射对象）与 3D 轴不发：它们的 dataLim 在撤销 / 重放后会漂（Inv Cbar / 3D 的「撤销后 manifest
+            # 逐位一致」不变式），且判据本来也不看它。探测失败 / 非有限 = 不发 = 没证据。
+            if autoscale and not (artist in state.colorbar_axes or el["role"] == "axes3d"):
+                expected = _probe_autoscale_expected(artist, autoscale)
+            else:
+                expected = {}
             if autoscale:
                 entry["autoscale"] = {
                     **autoscale,
                     **({"peers": peers} if peers else {}),
-                    **({"datalim": datalim} if datalim else {}),
+                    **({"expected": expected} if expected else {}),
                 }
         elif el["role"] == "image" or _is_area_field(artist):
             # imshow 位图铺满宿主 axes，会在命中测试里盖住它——把几何编辑

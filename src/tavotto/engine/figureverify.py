@@ -561,53 +561,27 @@ _AXES_PREFIX = re.compile(r"axes_\d+")
 _TICK_AXIS = re.compile(r"\.([xyz])tick")
 
 
-def _datalim_union(
-    ax: dict, axis: str, side_els: dict[str, dict] | None
-) -> tuple[float, float] | None:
-    """这根轴（连同共享这根轴范围的兄弟轴）数据范围的并集；任何一个拿不到 = None（没证据）。"""
-    names = [ax.get("gid")] + list(
-        (((ax.get("autoscale") or {}).get("peers") or {}).get(axis)) or []
-    )
-    lo, hi = math.inf, -math.inf
-    for n in names:
-        e = ax if n == ax.get("gid") else (side_els or {}).get(n)
-        dl = (((e or {}).get("autoscale") or {}).get("datalim") or {}).get(axis)
-        if not (isinstance(dl, (list, tuple)) and len(dl) == 2):
-            return None
-        if not all(isinstance(v, (int, float)) and not isinstance(v, bool) for v in dl):
-            return None
-        lo, hi = min(lo, dl[0]), max(hi, dl[1])
-    return (lo, hi) if lo <= hi else None
-
-
-def _range_is_autoscaled(
-    prop: str,
-    new: dict,
-    old: dict,
-    after_els: dict[str, dict] | None,
-    before_els: dict[str, dict] | None,
-) -> bool:
-    """自动缩放的数据证据。`autoscale` 开关证明不了范围没被显式写（`set_xlim(auto=True)`、先设再重开自动缩放，两侧都是 True）。
-    所以要三条同时成立：两侧自动缩放开着；这个方向的数据范围（`datalim`，含 sharex / twinx 兄弟）真的变了；新范围仍包得住新数据。
-    线宽之类不动数据的改动 + 显式 set_xlim(auto=True) → 数据没变 → 不免责。
-    已知宽松：数据范围真变了、同时脚本又显式放宽了范围，仍被当自动（最终状态里分不开）。"""
+def _range_is_autoscaled(prop: str, new: dict, old: dict) -> bool:
+    """范围是不是自动缩放算的。`autoscale` 开关证明不了（`set_xlim(auto=True)`、先设再重开自动缩放，两侧都是 True），
+    dataLim 的变化也证明不了（改柱宽的同时显式放宽范围，新范围照样「包住」新数据）。能证明的只有一件事：manifest 记下的
+    `autoscale.expected`——自动缩放**此刻会算出**的范围——与实际范围相等。所以两条同时成立：改前改后两侧自动缩放都开着；
+    改后实际范围（排序后）与改后 `expected` 在容差内相等。manifest 没发 `expected`（旧版本 / 合成输入 / 探测失败）= 没证据。
+    sharex 兄弟轴：`autoscale_view` 本身按共享轴的数据并集算，`expected` 已含。
+    剩余宽松：脚本显式写的范围恰好等于自动缩放会给的范围——此时画面与自动缩放逐位一致，视为自动。"""
     axis = prop[0]
     if [((e or {}).get("autoscale") or {}).get(axis) for e in (new, old)] != [True, True]:
         return False
-    d_new, d_old = _datalim_union(new, axis, after_els), _datalim_union(old, axis, before_els)
-    if d_new is None or d_old is None:
-        return False
-    if _num_eq(d_new[0], d_old[0]) and _num_eq(d_new[1], d_old[1]):
-        return False
+    exp = (((new.get("autoscale") or {}).get("expected")) or {}).get(axis)
     lim = _editable_values(new).get(prop)
-    if not (isinstance(lim, (list, tuple)) and len(lim) == 2):
-        return False
     try:
+        elo, ehi = sorted(float(v) for v in exp)
         lo, hi = sorted(float(v) for v in lim)
     except (TypeError, ValueError):
         return False
-    tol = 1e-9 * max(1.0, abs(hi - lo))
-    return lo <= d_new[0] + tol and hi >= d_new[1] - tol
+    if not all(map(math.isfinite, (elo, ehi, lo, hi))):
+        return False
+    tol = 1e-9 * max(1.0, abs(ehi - elo))
+    return abs(lo - elo) <= tol and abs(hi - ehi) <= tol
 
 
 def _auto_kind(
@@ -616,14 +590,12 @@ def _auto_kind(
     new: dict | None,
     old: dict | None,
     els: dict[str, dict],
-    after_els: dict[str, dict] | None = None,
-    before_els: dict[str, dict] | None = None,
 ) -> tuple[str, str | None] | None:
     """这条改动是不是「自动算出来的量」。返回 `("range", 轴字母)`、`("layout", None)` 或 None（不是）。
 
     * `range`：轴的自动缩放范围、自动刻度器给出的刻度值、刻度文字（刻度器 + 格式化器的输出）。**范围只有在改前改后两侧都还
-      开着自动缩放、且数据范围真的动了、新范围仍包住它时才算自动**（`_range_is_autoscaled`：manifest 的 `autoscale` 开关加
-      `datalim` 数据证据；开关本身证明不了范围没被显式写）；manifest 没发这些事实（旧版本 / 合成输入）= 没证据，不免责；
+      开着自动缩放、且改后实际范围等于 manifest 记下的「自动缩放此刻会算出的范围」时才算自动**（`_range_is_autoscaled`：
+      `autoscale` 开关加 `expected`；开关与 dataLim 都证明不了范围没被显式写）；manifest 没发这些事实（旧版本 / 合成输入）= 没证据，不免责；
     * `layout`：轴的 `position`（tight_layout / constrained 随文字尺寸重排）。
     色条轴的范围由映射对象的 vmin/vmax 经 `set_ylim` 写入（自动缩放是关的），是派生量：照旧算自动。"""
     role = (new or old or {}).get("role")
@@ -650,9 +622,7 @@ def _auto_kind(
             return ("range", axis)
         if new is None or old is None:
             return None
-        return (
-            ("range", axis) if _range_is_autoscaled(prop, new, old, after_els, before_els) else None
-        )
+        return ("range", axis) if _range_is_autoscaled(prop, new, old) else None
     return None
 
 
@@ -749,11 +719,7 @@ def changes_outside_target(
     kind = {
         c: k
         for c in changes
-        if (
-            k := _auto_kind(
-                *c, after_els.get(c[0]), before_els.get(c[0]), els, after_els, before_els
-            )
-        )
+        if (k := _auto_kind(*c, after_els.get(c[0]), before_els.get(c[0]), els))
     }
     real_in = [c for c in changes if c not in kind and owned(*c)]
     cause_any = bool(real_in)
