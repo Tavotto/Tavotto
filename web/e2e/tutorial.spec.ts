@@ -328,6 +328,11 @@ for (const size of [
     await dropSample(page)
     await next(page).click()
     await inView(page.locator('[data-demo-legend]'))
+    // 任务标题与图之间留出空隙（演示图按内容区取框，不吃掉上留白）
+    const gap = await page.evaluate(
+      () => document.querySelector('[data-demo-stage]')!.getBoundingClientRect().top - document.querySelector('#tutorial-task-title')!.getBoundingClientRect().bottom,
+    )
+    expect(gap).toBeGreaterThanOrEqual(24)
     await inView(next(page))
     await dragLegendUp(page, -80)
     await next(page).click()
