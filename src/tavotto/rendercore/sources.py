@@ -35,7 +35,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Protocol
 
-from ..engine import figcapture, runtimeasset
+from ..engine import exportroute, figcapture, runtimeasset
 from .ir import FILE_KINDS
 
 SOURCE_ERROR_CODES = (
@@ -280,7 +280,9 @@ def static_artifact(path: Path, source_id: str) -> figcapture.SourceArtifact:
 def needs_execution(obj: dict) -> bool:
     """这个面板要不要 worker 现画：runtime 素材永远要；带 override 的要。"""
     rel_id = str(obj.get("id", ""))
-    return runtimeasset.is_runtime_id(rel_id) or bool(obj.get("overrides"))
+    return exportroute.wants_execution(
+        runtime=runtimeasset.is_runtime_id(rel_id), overrides=obj.get("overrides")
+    )
 
 
 @dataclass(frozen=True)

@@ -83,6 +83,16 @@
     **绑定的写入**（`_bind_svg_asset`，在 `_capture_svg_snapshot_best_effort` 里，与 PDF 的 `static_sha256` 同一机制、同一个 `svgstore`）：
     脚本运行后，项目根下 `<stem>.svg` 与活 Figure 刚导出的候选 SVG 抹平 matplotlib 每次都变的日期 / 随机 id 后
     摘要相同（`svgcheck.canonical_digest`）才写；文件名只提名候选、不构成证明；不同就不写。
+  * **来源成为值：`engine/exportroute.py`（#1209 / A2a）**：「这次导出这张图用哪份来源」只在这一个纯标准库模块里回答
+    （不执行、不读文件、只收调用方给的事实）。`wants_execution()` 是 `_resolve_panel_source`、原图范围的
+    `execution_source`、`rendercore.sources.needs_execution` 共用的唯一谓词，`original_rerender()` 是
+    `app._original_rerender` 的本体——**不许在这三处之外再写一遍「有 override / runtime / 要 EPS 就现画」**。
+    `/api/export/validate` 在响应里带 `route`（`panels[id].source / embeds_disk_bitmap / formats[fmt] = {how: copy|convert|redraw|unavailable, reason?, conditions?}`），
+    只回事实、不拦导出；`conditions`（`live_figure` / `svg_asset_binding` / `figure_snapshot`）是 route 给不出、导出时才核的前提。
+    route 算不出时响应不带 `route`（附加事实，validate 不因此失败）。原图范围里嵌入磁盘原件的 PDF / PNG / TIFF，
+    产物 manifest 的 `provenance.sources` 记那份原件的 SourceArtifact（现画的临时 PDF 没有可独立核对的回执，不编）。
+    与前端 `exportRoute.ts` 的 `embedsDiskBitmap` 同源对：`tests/golden/export_route_vectors.json`；看护 `tests/test_export_route.py`、
+    `tests/test_export_route_vectors.py`。前端 2–5 号读后端 route 是 A2b，未做。
   * **有限产物验证（U08，ADR 0068）**：`exportjob.run(inspect=…)` 在 `produce` 之后、提交点之前重新打开
     每个封口的临时文件（接线层 `engine/artifactinspect.py`，两个入口共用；检查器 `rendercore/inspector.py`），拒绝的那一项 `artifact_rejected` 不发布（partial 语义不变），合格的
     带 `Output.manifest`（`inspector.summary()` 投影，旧字段一个不动）。请求可带 `inspection: {mode: standard|strict,

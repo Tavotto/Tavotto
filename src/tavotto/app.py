@@ -88,6 +88,7 @@ from .engine import (
     execspec as engine_execspec,
     exportjob as engine_exportjob,
     exportreq as engine_exportreq,
+    exportroute as engine_exportroute,
     exporttelemetry as engine_exporttelemetry,
     figcapture as engine_figcapture,
     handoff as engine_handoff,
@@ -1138,7 +1139,7 @@ def _original_rerender(formats) -> bool:
 
     要 EPS 且不要 SVG 时才重画（SVG 走快照那条路）；前端预检 `embedsDiskBitmap` 与它同源。
     """
-    return engine_exportreq.FORMAT_EPS in formats and engine_exportreq.FORMAT_SVG not in formats
+    return engine_exportroute.original_rerender(formats)
 
 
 def _resolve_panel_source(
@@ -1195,7 +1196,7 @@ def _resolve_panel_source(
         path = safe_resolve(o["id"])
     except tiffprobe.UnsupportedTiff as exc:
         raise _export_tiff_error(exc) from exc
-    if overrides or rerender:
+    if engine_exportroute.wants_execution(runtime=False, overrides=overrides, rerender=rerender):
         rendered = _serialize_figure(
             rel_id,
             overrides,
@@ -2233,7 +2234,9 @@ def _export_produce_original(job, tmp_dir: Path, *, artifact_sources=None) -> li
     svg_source = None
     wants_svg = engine_exportreq.FORMAT_SVG in req.formats
     wants_snapshot = wants_svg or src.figure_snapshot is not None
-    execution_source = engine_runtimeasset.is_runtime_id(src.figure_id) or bool(src.overrides)
+    execution_source = engine_exportroute.wants_execution(
+        runtime=engine_runtimeasset.is_runtime_id(src.figure_id), overrides=src.overrides
+    )
     if wants_snapshot and execution_source:
         frozen = _execution_source(
             {
@@ -2290,6 +2293,7 @@ def _export_produce_original(job, tmp_dir: Path, *, artifact_sources=None) -> li
             )
     raster_source = source_path.suffix.lower() != ".pdf"
     page_pt = _original_page_pt(source_path, src) if raster_source else None
+    disk_source = _original_disk_source_manifest(src, source_path)
     produced: list = []
     for fmt in req.formats:
         job.check_cancelled()
@@ -2333,6 +2337,7 @@ def _export_produce_original(job, tmp_dir: Path, *, artifact_sources=None) -> li
                         width_mm=round(facts["w_pt"] * 25.4 / 72.0, 3),
                         height_mm=round(facts["h_pt"] * 25.4 / 72.0, 3),
                         vector=bool(facts["vector"]),
+                        manifest=disk_source,
                     )
                 )
             else:
@@ -2360,6 +2365,7 @@ def _export_produce_original(job, tmp_dir: Path, *, artifact_sources=None) -> li
                         width_mm=src.w_mm,
                         height_mm=src.h_mm,
                         vector=False,
+                        manifest=disk_source,
                     )
                 )
         except (engine_exportreq.ExportRequestError, engine_artifactcontext.ArtifactContextError):
@@ -2372,6 +2378,28 @@ def _export_produce_original(job, tmp_dir: Path, *, artifact_sources=None) -> li
                 )
             )
     return produced
+
+
+def _original_disk_source_manifest(src, source_path: Path) -> dict | None:
+    """产物 manifest 里记「这一项实际出自哪份来源」（#1209）：这次嵌入的是磁盘原件时，给出它的 SourceArtifact。
+
+    只在 `source_path` **就是**磁盘上那份原件时才记（由脚本现画的临时 PDF 没有可被独立核对的来源回执，
+    不编一个）；经 `manifest["provenance"]` 补丁并入计划半张，不动检查器已有的页面 / 像素 / ppi 事实。
+    """
+    if engine_runtimeasset.is_runtime_id(src.figure_id):
+        return None
+    try:
+        if source_path.resolve() != safe_resolve(src.figure_id).resolve():
+            return None
+        from .rendercore import sources as rc_sources
+
+        return {
+            "provenance": {
+                "sources": [rc_sources.static_artifact(source_path, src.figure_id).to_payload()]
+            }
+        }
+    except Exception:  # noqa: BLE001 —— 记不出来源 = 不记，不让它把一次成功的导出变成失败
+        return None
 
 
 def _original_page_pt(source_path: Path, src) -> tuple[float, float]:
@@ -2976,9 +3004,57 @@ def api_export_validate():
         {
             "ok": True,
             **engine_exportjob.validate(probe),
+            **_export_route_field(req),
             **({"artifact_sources": artifact_sources} if artifact_sources else {}),
         }
     )
+
+
+def _export_route_field(req) -> dict:
+    """route 是附加事实：算不出（比如没有打开项目就查注册表）就不给，validate 本身不因此失败；前端读不到按保守口径处理。"""
+    try:
+        return {"route": _export_route(req)}
+    except Exception:  # noqa: BLE001
+        LOG.warning("export route 算不出，validate 不带 route", exc_info=True)
+        return {}
+
+
+def _panel_file_kind(rel_id: str) -> str:
+    if engine_runtimeasset.is_runtime_id(rel_id):
+        return engine_exportroute.KIND_RUNTIME
+    suffix = Path(rel_id).suffix.lower()
+    if suffix == ".pdf":
+        return engine_exportroute.KIND_PDF
+    if suffix in SVG_EXT:
+        return engine_exportroute.KIND_SVG
+    return engine_exportroute.KIND_RASTER
+
+
+def _export_route(req) -> dict:
+    """这次导出每个面板 × 每种格式的来源（`engine/exportroute.py`，只回事实）：只查注册表，不执行、不读文件。"""
+    if req.original is not None:
+        raw = [
+            {
+                "id": req.original.figure_id,
+                "overrides": req.original.overrides,
+                "has_snapshot": req.original.figure_snapshot is not None,
+            }
+        ]
+    else:
+        raw = [
+            {
+                "id": str(o.get("id", "")),
+                "overrides": o.get("overrides"),
+                "has_snapshot": o.get("figure_snapshot") is not None,
+            }
+            for o in (req.canvas.objects if req.canvas is not None else [])
+            if o.get("type") == "panel" and not o.get("hidden")
+        ]
+    panels = [
+        {**p, "file_kind": _panel_file_kind(p["id"]), "has_script": _has_runnable_script(p["id"])}
+        for p in raw
+    ]
+    return engine_exportroute.build_route(scope=req.scope, formats=req.formats, panels=panels)
 
 
 @app.get("/exports/<path:name>")

@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import threading
 import time
@@ -1483,3 +1484,22 @@ def test_pdf_alone_still_uses_the_disk_file_when_nothing_forces_a_rerender(env, 
     _, body = _post(client, _original(formats=["pdf", "png"], ppi=100))
     assert body["status"] == "done", body
     assert calls == [], "没有 EPS、没有 override，不该去找 worker"
+
+
+# --------------- 产物 manifest 记下实际来源（#1209 / A2） -------------------
+@pytest.mark.parametrize(
+    ("figure", "formats"),
+    [("p1.pdf", ["pdf", "png"]), ("r1.png", ["pdf", "png", "tiff"])],
+)
+def test_original_outputs_record_the_disk_source_they_came_from(env, figure, formats):
+    client, figs = env
+    spec = _original(formats=formats)
+    spec["original"] = {**spec["original"], "figure_id": figure}
+    status, body = _post(client, spec)
+    assert status == 200 and body["status"] == "done", body
+    sha = hashlib.sha256((figs / figure).read_bytes()).hexdigest()
+    for fmt in formats:
+        sources = _out(body, fmt)["manifest"]["provenance"]["sources"]
+        assert [(s["source_id"], s["origin"], s["bytes_sha256"]) for s in sources] == [
+            (figure, "static", sha)
+        ], fmt
