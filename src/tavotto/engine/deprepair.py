@@ -1811,6 +1811,57 @@ def classify_pip_failure(text: str) -> str:
     return ERROR_FAILED
 
 
+_NOT_FOUND_NAME_RES = (
+    re.compile(r"no matching distribution found for\s+([A-Za-z0-9][A-Za-z0-9._-]*)", re.I),
+    re.compile(
+        r"could not find a version that satisfies the requirement\s+([A-Za-z0-9][A-Za-z0-9._-]*)",
+        re.I,
+    ),
+)
+
+
+def not_found_detail(
+    out: str, record: tuple[dict, ...] | list[dict], project: str | Path, script: str
+) -> dict:
+    """pip 报「找不到」时点名：是哪个分发名、来自哪个声明文件 / 哪个 import（ADR 0061 修订 2026-10-21）。
+
+    `{name, import_name, source}`；认不出名字回 `{}`（界面退回通用句，不猜）。声明文件按 `depresolve.declared_intents`
+    重新读（只读），不在 `record` 里加字段（`record` 进回执与指纹）。"""
+    name = ""
+    for rx in _NOT_FOUND_NAME_RES:
+        m = rx.search(out or "")
+        if m:
+            name = m.group(1)
+            break
+    if not name:
+        return {}
+    key = depresolve.normalize_distribution(name)
+    import_name = next(
+        (
+            str(r.get("import_name") or "")
+            for r in record or ()
+            if depresolve.normalize_distribution(str(r.get("distribution") or "")) == key
+        ),
+        "",
+    )
+    source = ""
+    try:
+        for it in depresolve.declared_intents(project, script):
+            if it.declared and it.name == key and it.source:
+                source = it.source
+                break
+    except Exception:  # noqa: BLE001 - 点名是锦上添花，读不了声明不能让失败变形
+        source = ""
+    return {"name": key, "import_name": import_name, "source": source}
+
+
+def _not_found_extra(code: str, out: str, record, project, script) -> dict:
+    if code != ERROR_NOT_FOUND:
+        return {}
+    detail = not_found_detail(out, record, project, script)
+    return {"not_found": detail} if detail else {}
+
+
 def pip_install_argv(
     python: str, requirement: str, *, upgrade: bool = False, index_url: str | None = None
 ) -> list[str]:
@@ -2556,9 +2607,15 @@ def _emit(
     pinned: dict | None = None,
     impact: dict | None = None,
     dist_reasons: list[str] | None = None,
+    not_found: dict | None = None,
 ) -> dict:
     with _lock:
         rec = dict(_progress.get(plan_id) or {"log": ""})
+        if not_found:
+            # pip 找不到的那个包（点名：分发名 / 来自哪个 import / 哪份声明文件）：界面一句话说「找不到 X（来自 Y）」
+            rec["not_found"] = {
+                k: str(v) for k, v in not_found.items() if k in ("name", "import_name", "source")
+            }
         rec.update(
             plan_id=plan_id, state=state, code=code, error=error, result=result or rec.get("result")
         )
@@ -4574,6 +4631,7 @@ def _prepare_guarded(
             code=exc.code,
             error=str(exc),
             dist_reasons=dist_reasons_of(exc),
+            not_found=(exc.extra or {}).get("not_found"),
         )
     except Exception as exc:  # noqa: BLE001
         LOG.exception("联合准备线程异常")
@@ -4718,7 +4776,11 @@ def _run_joint_in_place(plan: JointRepairPlan, on_event, cancel_ev: threading.Ev
         )
         return {"ok": False, "code": ERROR_CANCELLED, **detail}
     if code:
-        raise RepairError(code, _sanitize(out)[-800:])
+        raise RepairError(
+            code,
+            _sanitize(out)[-800:],
+            **_not_found_extra(code, out, plan.record, plan.project, plan.script),
+        )
     _emit(plan.plan_id, STATE_VERIFYING, on_event, joint=plan)
     _verify_imports(python, plan.needed_imports)
     provided = _verify_distributions(
@@ -4993,7 +5055,11 @@ def _run_generation_locked(job: _GenerationJob, cancel_ev: threading.Event, key:
         managedenv.mark_generation(
             project, generation, managedenv.GEN_STATE_INCOMPLETE, f"安装失败: {code}"
         )
-        raise RepairError(code, _sanitize(out)[-800:])
+        raise RepairError(
+            code,
+            _sanitize(out)[-800:],
+            **_not_found_extra(code, out, job.record, job.project, job.script),
+        )
     if job.attempted:
         # pip 跑成了：从这里起「再装一遍同一个需求」改变不了任何东西（验证没过也一样），
         # 防循环的黑名单这时才登记——与项目 venv 那条路 `_run_install` 的登记点同一语义

@@ -577,6 +577,8 @@
       "dependency_interpreter_pinned": "The rendering Python is pinned; remove the pin first, then try again.",
       "dependency_network_unavailable": "The download failed; check your connection, then click Retry.",
       "dependency_not_found": "The package index doesn’t have this package; check the name under Details.",
+      "notFoundNamed": "The package index has no {{name}}.",
+      "notFoundNamedFrom": "The package index has no {{name}} (from {{source}}).",
       "dependency_plan_blocked": "These dependencies can’t be installed together right now; the reason is under Details.",
       "dependency_repair_rounds_exhausted": "Automatic fixes are used up for this script; pick an environment that has the package under Details.",
       "dependency_requires_build": "This package has no ready-made build for this Python; switch environments under Details.",

@@ -2822,6 +2822,8 @@ export default interface Resources {
         "managed_env_create_failed": "没能建好运行环境，原因在详情里。",
         "managed_env_unavailable": "这台电脑缺少能用的 Python，请先从 python.org 安装。",
         "managed_env_write_failed": "磁盘写不进去（可能满了），腾出空间后点重试。",
+        "notFoundNamed": "软件源里找不到 {{name}}。",
+        "notFoundNamedFrom": "软件源里找不到 {{name}}（来自 {{source}}）。",
         "package_disk_low": "磁盘空间不足，清理后再装。",
         "package_env_missing": "项目还没有运行环境，先装一个包就会建好。",
         "package_lookup_failed": "软件源的回应看不懂，直接输入包名安装。",
@@ -5366,6 +5368,8 @@ export default interface Resources {
         "detail": {
           "alternatives": "有几个包都能提供它，先按 {{distribution}} 装；想换别的，请改用你自己的 Python 环境。",
           "listIntro": "这些库的来源还没法确定，Tavotto 不会替你装：",
+          "localMissing": "找不到本地模块 {{name}}（脚本把 {{dirs}} 加进了搜索路径，请确认这个文件夹在）。",
+          "notPip": "这个脚本需要 {{name}}，内置 Python 装不了，请用装有它的环境。",
           "trustNote": "你填的包名不算可信来源：Tavotto 没法核实它们，所以装之前会让你再确认一次。",
           "userSpecifiedBadge": "用户指定，未经核实"
         },

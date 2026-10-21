@@ -577,6 +577,8 @@
       "dependency_interpreter_pinned": "渲染用的 Python 被固定了，先取消固定再试。",
       "dependency_network_unavailable": "下载没成功，检查网络后点重试。",
       "dependency_not_found": "软件源里找不到这个包，在详情里核对包名。",
+      "notFoundNamed": "软件源里找不到 {{name}}。",
+      "notFoundNamedFrom": "软件源里找不到 {{name}}（来自 {{source}}）。",
       "dependency_plan_blocked": "这些依赖现在没法一次装好，原因在详情里。",
       "dependency_repair_rounds_exhausted": "自动修复次数用完了，在详情里换一个装好它的环境。",
       "dependency_requires_build": "这个包没有适合的预编译版本，在详情里换一个 Python 环境。",

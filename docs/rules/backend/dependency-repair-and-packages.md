@@ -687,3 +687,17 @@ PR1–PR6 的规则分散在上面各节（PR1 / PR2 在「联合依赖准备」
   hash 锁的 `provider_decisions` 与已扫描 import 的 `install_only` 按同一份实际安装集合 `installing`（整份选中锁）生成，不拿 active 环境里另一种 provider 的满足状态抵消本次安装记录（#970）；不因此增加锁外需求或改变仅声明依赖的记账规则。
 - 看护：`tests/test_dependency_origin_install.py`（计划层，四 provider × 声明 / 观察、editable / 本地 wheel / VCS、本地 helper / namespace、显式选择）、
   `tests/test_dependency_provider_scopes.py`（真 generation + 离线 pip：安装集合 = 脚本实际 provider = 回执；跨作用域切换；失败不动旧 active）。
+
+## 声明读取边界与「不送 pip」的名字（ADR 0061 §十，2026-10-21）
+
+- **声明只读到最近的项目标志**：`depresolve._decl_dirs` 从脚本目录往上，到含 `PROJECT_MARKERS`（`.git` / `pyproject.toml` / `setup.cfg` /
+  `setup.py`）的目录为止；`is_broad_folder`（家目录、桌面 / 文档 / 下载、盘符根）一律不读，遍历到就停。`project_declared()` 与
+  `declared_intents()` 共用，PEP 723 只看脚本本身。
+- **三类名字不送 pip**：`NOT_PIP_INSTALLABLE`（ROOT；声明里的同名发行包也过滤，进 `JointPlan.not_pip_installable`）、脚本字面量 `sys.path`
+  目录里找不到的 import（`origins[].local_module_missing`）、没有可信安装名的表外名（只有预填，用户确认才成 `user_specified`）。前两类不预填，
+  `user_specified` 对它们抛 `UserSpecifiedRejected(NOT_APPLICABLE)`。
+- **`importscan` 的字面量搜索根**只认 `__file__` 目录 + 字符串字面量（`_literal_dir`），至多 `_MAX_LITERAL_ROOTS` 个，词法钉在项目内；
+  新增标签 `sys_path_literal`（证据码同名）。
+- **找不到的包点名**：`deprepair.not_found_detail` → `RepairError.extra["not_found"]` → 终态进度 `not_found`；前端 `repairShortMessage(code, notFound)`。
+  不做「剔除后重试」（会破坏 `generation_atomic` 与装后核验，理由见 ADR 0061 §十）。
+- 看护：`tests/test_dependency_declaration_boundary.py`、`web/src/components/repairNotFoundNamed.test.tsx`。

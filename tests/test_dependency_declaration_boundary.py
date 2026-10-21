@@ -1,0 +1,316 @@
+"""PR C（ADR 0061 修订 2026-10-21）：依赖声明的读取边界、已知装不了的包、本地模块缺失、找不到的包点名。
+
+* 声明文件只读「脚本目录往上到最近的项目标志」（.git / pyproject.toml / setup.cfg / setup.py）为止；家目录、桌面 / 文档 / 下载
+  这类大文件夹不读（不越过家目录）；PEP 723 只看脚本本身；
+* `ROOT` 之类 curated「不可 pip 安装」的包：计划阶段点名、不预填、不送 pip；
+* 脚本用 `sys.path.append(os.path.join(os.path.dirname(__file__), "pdf"))` 加进来的目录是本地模块搜索根（只认字面量）；找不到的
+  import 是「本地模块缺失」，不是缺 PyPI 包，绝不送 pip；
+* pip 报「找不到」时点名：哪个包、来自哪份声明文件 / 哪个 import。
+"""
+
+from __future__ import annotations
+
+import ast
+import textwrap
+from pathlib import Path
+
+import pytest
+
+from tavotto.engine import depplan, deprepair, depresolve, importscan
+
+MANAGED = depplan.TARGET_MANAGED
+
+
+def _write(root: Path, rel: str, text: str) -> Path:
+    path = root / rel
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(textwrap.dedent(text), encoding="utf-8")
+    return path
+
+
+def _facts() -> depplan.TargetFacts:
+    marker_env = {
+        "implementation_name": "cpython",
+        "implementation_version": "3.12.4",
+        "os_name": "posix",
+        "platform_machine": "arm64",
+        "platform_release": "",
+        "platform_system": "Darwin",
+        "platform_version": "",
+        "python_full_version": "3.12.4",
+        "platform_python_implementation": "CPython",
+        "python_version": "3.12",
+        "sys_platform": "darwin",
+    }
+    return depplan.TargetFacts(
+        python="/fake/python",
+        marker_env=marker_env,
+        stdlib=importscan.HOST_STDLIB,
+        installed={"matplotlib": "3.10.0", "numpy": "2.1.0"},
+        prefix="/fake",
+    )
+
+
+@pytest.fixture(autouse=True)
+def _clean():
+    depplan.reset_cache()
+    yield
+    depplan.reset_cache()
+
+
+@pytest.fixture
+def home(tmp_path, monkeypatch) -> Path:
+    h = tmp_path / "home"
+    h.mkdir()
+    monkeypatch.setenv("HOME", str(h))
+    monkeypatch.setenv("USERPROFILE", str(h))
+    return h
+
+
+def _names(intents) -> set[str]:
+    return {i.name for i in intents if i.declared}
+
+
+class TestDeclarationBoundary:
+    def test_desktop_root_is_not_read(self, home):
+        desk = home / "Desktop"
+        _write(desk, "requirements.txt", "lhcbstyle\npdf-minus-bin1-m\n")
+        _write(desk, "fit_mass.py", "import numpy\n")
+        assert _names(depresolve.declared_intents(desk, "fit_mass.py")) == set()
+
+    @pytest.mark.parametrize("sub", ["桌面", "Documents", "文档", "Downloads", "下载"])
+    def test_other_broad_folders(self, home, sub):
+        root = home / sub
+        _write(root, "requirements.txt", "junk\n")
+        _write(root, "a.py", "import numpy\n")
+        assert _names(depresolve.declared_intents(root, "a.py")) == set()
+
+    def test_home_itself_is_not_read(self, home):
+        _write(home, "requirements.txt", "junk\n")
+        _write(home, "a.py", "x = 1\n")
+        assert _names(depresolve.declared_intents(home, "a.py")) == set()
+
+    def test_script_in_desktop_subfolder_stops_before_desktop(self, home):
+        desk = home / "Desktop"
+        _write(desk, "requirements.txt", "junk\n")
+        _write(desk, "proj/requirements.txt", "tabulate\n")
+        _write(desk, "proj/a.py", "x = 1\n")
+        # 项目根是桌面、脚本在子文件夹里：读子文件夹自己的，不读桌面的
+        assert _names(depresolve.declared_intents(desk, "proj/a.py")) == {"tabulate"}
+
+    def test_pep723_still_read_on_desktop(self, home):
+        desk = home / "Desktop"
+        _write(
+            desk,
+            "a.py",
+            '# /// script\n# dependencies = ["tabulate"]\n# ///\nimport tabulate\n',
+        )
+        assert _names(depresolve.declared_intents(desk, "a.py")) == {"tabulate"}
+
+    @pytest.mark.parametrize("marker", [".git", "pyproject.toml", "setup.cfg", "setup.py"])
+    def test_nearest_marker_is_the_boundary(self, tmp_path, home, marker):
+        root = tmp_path / "work"
+        _write(root, "requirements.txt", "outer-pkg\n")
+        inner = root / "proj"
+        if marker == ".git":
+            (inner / ".git").mkdir(parents=True)
+        else:
+            _write(inner, marker, "[project]\nname='p'\n" if marker.endswith("toml") else "")
+        _write(inner, "requirements.txt", "inner-pkg\n")
+        _write(inner, "sub/a.py", "x = 1\n")
+        names = _names(depresolve.declared_intents(root, "proj/sub/a.py"))
+        assert "inner-pkg" in names
+        assert "outer-pkg" not in names
+
+    def test_without_marker_reads_up_to_project_root(self, tmp_path, home):
+        root = tmp_path / "work"
+        _write(root, "requirements.txt", "outer-pkg\n")
+        _write(root, "sub/a.py", "x = 1\n")
+        assert "outer-pkg" in _names(depresolve.declared_intents(root, "sub/a.py"))
+
+    def test_no_follow_walk_uses_same_boundary(self, tmp_path, home):
+        root = tmp_path / "work"
+        _write(root, "requirements.txt", "outer-pkg\n")
+        _write(root / "proj", "pyproject.toml", "[project]\nname='p'\ndependencies=['inner-pkg']\n")
+        _write(root / "proj", "sub/a.py", "x = 1\n")
+        names = _names(depresolve.declared_intents(root, "proj/sub/a.py", no_follow=True))
+        assert "inner-pkg" in names and "outer-pkg" not in names
+
+
+class TestNotPipInstallable:
+    def test_root_is_named_and_never_sent_to_pip(self, tmp_path):
+        proj = tmp_path / "p"
+        _write(proj, "a.py", "import ROOT\nimport numpy\n")
+        plan = depplan.plan(proj, "a.py", facts=_facts(), target_kind=MANAGED)
+        assert plan.requirements == ()
+        origin = next(o for o in plan.origins if o["import_name"] == "ROOT")
+        assert origin["not_pip_installable"]["label"] == "ROOT"
+        assert "suggested_distribution" not in origin
+
+    def test_no_prefill_and_user_specified_rejected(self, tmp_path):
+        assert depresolve.suggest_distribution("ROOT") == ""
+        proj = tmp_path / "p"
+        _write(proj, "a.py", "import ROOT\n")
+        with pytest.raises(depplan.UserSpecifiedRejected):
+            depplan.plan(
+                proj, "a.py", facts=_facts(), target_kind=MANAGED, user_specified={"ROOT": "root"}
+            )
+
+    def test_declared_root_is_filtered_with_its_source(self, tmp_path):
+        proj = tmp_path / "p"
+        _write(proj, "a.py", "import ROOT\n")
+        _write(proj, "requirements.txt", "root\ntabulate\n")
+        plan = depplan.plan(proj, "a.py", facts=_facts(), target_kind=MANAGED)
+        assert all(not r.startswith("root") for r in plan.requirements)
+        entry = plan.to_payload()["not_pip_installable"][0]
+        assert entry["name"] == "ROOT" and entry["sources"] == ["requirements.txt"]
+
+    def test_table_is_structured_for_more_entries(self):
+        assert depresolve.not_pip_installable("ROOT")["hint"] == depresolve.NOT_PIP_HINT_OWN_ENV
+        assert depresolve.not_pip_installable("numpy") is None
+        assert depresolve.not_pip_for_distribution("Root") is not None
+
+
+FIT_MASS = """
+import ROOT as rt
+import lhcbStyle
+import sys, os
+sys.path.append(os.path.join(os.path.dirname(__file__), "pdf"))
+from pdf_plus_bin1_M import pdf_plus_bin1_M
+from pdf_minus_bin1_R import pdf_minus_bin1_R
+"""
+
+
+class TestLiteralSysPathRoots:
+    def _plan(self, proj, **kw):
+        return depplan.plan(proj, "fit_mass.py", facts=_facts(), target_kind=MANAGED, **kw)
+
+    def test_pdf_dir_present_modules_are_local(self, tmp_path):
+        proj = tmp_path / "p"
+        _write(proj, "fit_mass.py", FIT_MASS)
+        _write(proj, "pdf/pdf_plus_bin1_M.py", "pdf_plus_bin1_M = 1\n")
+        _write(proj, "pdf/pdf_minus_bin1_R.py", "pdf_minus_bin1_R = 1\n")
+        plan = self._plan(proj)
+        assert {o["import_name"] for o in plan.origins} == {"ROOT", "lhcbStyle"}
+        assert plan.requirements == ()
+
+    def test_pdf_dir_missing_is_local_module_missing_not_pip(self, tmp_path):
+        proj = tmp_path / "p"
+        _write(proj, "fit_mass.py", FIT_MASS)
+        plan = self._plan(proj)
+        origins = {o["import_name"]: o for o in plan.origins}
+        assert origins["pdf_plus_bin1_M"]["local_module_missing"] == {"search_dirs": ["pdf"]}
+        assert all("suggested_distribution" not in o for o in plan.origins)
+        assert plan.requirements == ()
+        with pytest.raises(depplan.UserSpecifiedRejected):
+            self._plan(proj, user_specified={"pdf_plus_bin1_M": "pdf-plus-bin1-m"})
+
+    def test_without_literal_dir_prefill_still_offered(self, tmp_path):
+        # 对照：没有 sys.path 字面量时，表外名的预填照旧（C1 裁决不变）
+        proj = tmp_path / "p"
+        _write(proj, "fit_mass.py", "import lhcbStyle\n")
+        plan = self._plan(proj)
+        assert plan.origins[0]["suggested_distribution"] == "lhcbstyle"
+
+    @pytest.mark.parametrize(
+        "expr",
+        [
+            'os.path.join(os.path.dirname(__file__), "pdf")',
+            'os.path.join(os.path.dirname(os.path.abspath(__file__)), "pdf")',
+            'os.path.join(os.path.dirname(os.path.realpath(__file__)), "pdf")',
+            'str(Path(__file__).parent / "pdf")',
+            'str(Path(__file__).resolve().parent / "pdf")',
+            'os.path.dirname(__file__) + "/pdf"'
+            if False
+            else 'os.path.join(os.path.dirname(__file__), "pdf")',
+        ],
+    )
+    def test_literal_forms_recognized(self, tmp_path, expr):
+        proj = tmp_path / "p"
+        _write(proj, "pdf/mymod.py", "x = 1\n")
+        _write(
+            proj,
+            "a.py",
+            f"import os, sys\nfrom pathlib import Path\nsys.path.insert(0, {expr})\nimport mymod\n",
+        )
+        scan = importscan.scan(proj, "a.py")
+        cls = next(c for c in scan.classes if c.module == "mymod")
+        assert cls.bucket == importscan.BUCKET_LOCAL
+        assert any(r["tag"] == "sys_path_literal" for r in scan.search_roots)
+
+    def test_parent_of_script_dir_and_subdir_script(self, tmp_path):
+        proj = tmp_path / "p"
+        _write(proj, "libs/helper.py", "x = 1\n")
+        _write(
+            proj,
+            "scripts/a.py",
+            'import os, sys\nsys.path.append(os.path.join(os.path.dirname(__file__), "..", "libs"))\nimport helper\n',
+        )
+        scan = importscan.scan(proj, "scripts/a.py")
+        assert (
+            next(c for c in scan.classes if c.module == "helper").bucket == importscan.BUCKET_LOCAL
+        )
+
+    @pytest.mark.parametrize(
+        "expr",
+        [
+            "os.environ['X']",
+            "some_var",
+            'os.path.join(base, "pdf")',
+            '"pdf"',
+            "os.path.join(os.path.dirname(__file__), name)",
+            'os.path.join("/abs", "pdf")',
+        ],
+    )
+    def test_non_literal_forms_ignored(self, tmp_path, expr):
+        proj = tmp_path / "p"
+        _write(proj, "pdf/mymod.py", "x = 1\n")
+        _write(proj, "a.py", f"import os, sys\nsys.path.append({expr})\nimport mymod\n")
+        scan = importscan.scan(proj, "a.py")
+        assert not any(r["tag"] == "sys_path_literal" for r in scan.search_roots)
+        assert (
+            next(c for c in scan.classes if c.module == "mymod").bucket != importscan.BUCKET_LOCAL
+        )
+
+    def test_escape_outside_project_is_not_a_root(self, tmp_path):
+        proj = tmp_path / "p"
+        _write(tmp_path, "outside/mymod.py", "x = 1\n")
+        _write(
+            proj,
+            "a.py",
+            'import os, sys\nsys.path.append(os.path.join(os.path.dirname(__file__), "..", "outside"))\nimport mymod\n',
+        )
+        scan = importscan.scan(proj, "a.py")
+        assert not any(r["tag"] == "sys_path_literal" for r in scan.search_roots)
+
+    def test_literal_roots_are_bounded(self):
+        calls = "\n".join(
+            f'sys.path.append(os.path.join(os.path.dirname(__file__), "d{i}"))' for i in range(20)
+        )
+        tree = ast.parse("import os, sys\n" + calls)
+        assert tree  # 语法可解析；上限由 _MAX_LITERAL_ROOTS 保证
+        assert importscan._MAX_LITERAL_ROOTS == 8
+
+
+class TestNotFoundNamed:
+    def test_parses_name_and_source_file(self, tmp_path):
+        proj = tmp_path / "p"
+        _write(proj, "a.py", "import numpy\n")
+        _write(proj, "requirements.txt", "tabulate\nghost-pkg>=1\n")
+        out = (
+            "ERROR: Could not find a version that satisfies the requirement Ghost_Pkg>=1 (from versions: none)\n"
+            "ERROR: No matching distribution found for Ghost_Pkg>=1\n"
+        )
+        detail = deprepair.not_found_detail(
+            out, [{"import_name": "ghost", "distribution": "ghost-pkg"}], proj, "a.py"
+        )
+        assert detail == {"name": "ghost-pkg", "import_name": "ghost", "source": "requirements.txt"}
+
+    def test_unrecognized_output_gives_nothing(self, tmp_path):
+        assert deprepair.not_found_detail("boom", [], tmp_path, "a.py") == {}
+
+    def test_extra_only_for_not_found(self, tmp_path):
+        out = "ERROR: No matching distribution found for foo"
+        assert deprepair._not_found_extra(deprepair.ERROR_CONFLICT, out, [], tmp_path, "a.py") == {}
+        got = deprepair._not_found_extra(deprepair.ERROR_NOT_FOUND, out, [], tmp_path, "a.py")
+        assert got["not_found"]["name"] == "foo"

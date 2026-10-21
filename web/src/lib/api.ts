@@ -4761,6 +4761,8 @@ export interface DependencyProgress {
    * 去重）。只有码、没有名字；普通 import 失败没有这个键。界面据此按原因分别说人话，不解析 `error` 文案
    */
   dist_reasons?: DistFailureReason[]
+  /** 终态 failed 且 `code = dependency_not_found`：pip 找不到的那个包（分发名 / 来自哪个 import / 哪份声明文件，相对项目路径）。认不出名字时没有这个键 */
+  not_found?: { name?: string; import_name?: string; source?: string }
 }
 
 export const createDependencyPlan = (body: {
@@ -4853,6 +4855,10 @@ export interface JointOrigin {
    * 没有这个字段 = 不给预填（curated 已有映射 / 撞上 curated 名或易混名 / 有别的来源证据 / 环境没读全）
    */
   suggested_distribution?: string
+  /** 已知装不了的包（后端 `depresolve.NOT_PIP_INSTALLABLE`，例 ROOT）：内置 Python 装不了，要用户自己装有它的环境。不预填、不送 pip */
+  not_pip_installable?: { label: string; hint: string }
+  /** 脚本把这些目录加进了 `sys.path`、里面却没有这个模块：本地模块缺失，不是缺 PyPI 包。不预填、不送 pip */
+  local_module_missing?: { search_dirs: string[] }
 }
 
 /**

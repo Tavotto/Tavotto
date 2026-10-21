@@ -350,6 +350,60 @@ MAX_DECL_FILES = 12
 MAX_DECL_BYTES = 512 * 1024
 
 
+#: 项目标志：声明文件的向上遍历到最近的含其一的目录为止（含该目录）。ADR 0061 修订（2026-10-21）
+PROJECT_MARKERS: tuple[str, ...] = (".git", "pyproject.toml", "setup.cfg", "setup.py")
+
+#: 家目录下「大文件夹」的目录名（英文 / 中文系统各一套）：把它们当项目根打开时，里面常年躺着不相干的 requirements 与脚本。
+BROAD_HOME_SUBDIRS: tuple[str, ...] = (
+    "Desktop",
+    "桌面",
+    "Documents",
+    "文档",
+    "Downloads",
+    "下载",
+)
+
+
+def broad_folders() -> frozenset[str]:
+    """不读依赖声明的「大文件夹」（规范化后的绝对路径）：家目录本身、其下的桌面 / 文档 / 下载（含 OneDrive 重定向）。"""
+    try:
+        home = Path.home()
+    except (RuntimeError, OSError):
+        return frozenset()
+    out = {home}
+    for sub in BROAD_HOME_SUBDIRS:
+        out.add(home / sub)
+        out.add(home / "OneDrive" / sub)
+    return frozenset(os.path.normcase(os.path.abspath(p)) for p in out)
+
+
+def is_broad_folder(path: Path) -> bool:
+    """`path` 是不是大文件夹：上面那组、或文件系统根（盘符根）。家目录的**祖先**同样不读（遍历不会越过家目录）。"""
+    try:
+        key = os.path.normcase(os.path.abspath(path))
+    except (OSError, ValueError):
+        return True
+    if key in broad_folders():
+        return True
+    return Path(key).parent == Path(key)
+
+
+def _bound_decl_dirs(dirs: list[Path]) -> list[Path]:
+    """把「脚本目录 → 项目根」的目录列表按用户裁决（2026-10-21）收窄：到最近的项目标志（含）为止；
+    大文件夹一律不读（它们之后的目录也不读——遍历到这里就停）。"""
+    out: list[Path] = []
+    for d in dirs:
+        if is_broad_folder(d):
+            break
+        out.append(d)
+        try:
+            if any((d / m).exists() for m in PROJECT_MARKERS):
+                break
+        except OSError:
+            continue
+    return out
+
+
 def _decl_dirs(
     figures_dir: str | Path, script: str | None, *, no_follow: bool = False
 ) -> list[Path]:
@@ -370,7 +424,7 @@ def _decl_dirs(
         dirs = [start]
         while dirs[-1] != root_real and dirs[-1].parent != dirs[-1]:
             dirs.append(dirs[-1].parent)
-        return dirs
+        return _bound_decl_dirs(dirs)
     try:
         root_real = root.resolve(strict=False)
         start = ((root / script).parent if script else root).resolve(strict=False)
@@ -386,7 +440,7 @@ def _decl_dirs(
         if cur == root_real or cur.parent == cur:
             break
         cur = cur.parent
-    return dirs
+    return _bound_decl_dirs(dirs)
 
 
 def _read_text(path: Path) -> str:
@@ -1516,7 +1570,7 @@ def suggest_distribution(import_name: str) -> str:
     name = str(import_name or "")
     if not valid_import_name(name) or name.split(".")[0] in _STDLIB_NAMES:
         return ""
-    if curated_distribution(name):
+    if curated_distribution(name) or not_pip_installable(name) is not None:
         return ""
     key = normalize_distribution(name)
     reserved = {normalize_distribution(k) for k in CURATED}
@@ -1537,6 +1591,34 @@ def suggest_distribution(import_name: str) -> str:
 # 知道「这个 import 名有不止一个发行包可以提供」，从而把候选全留着、状态报 `ambiguous`，不替用户挑。
 # 每一条都要能一眼看懂：这些发行包在 PyPI 上互相排斥地提供同一个顶级包。
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# 已知「装不了」的 import（ADR 0061 修订，2026-10-21）：这些名字的真身不在 PyPI（或 PyPI 上同名的是另一个东西），
+# 内置 Python 用 pip 装不出来，**计划阶段就标出来、不送 pip**。键 = 顶级 import 名（区分大小写）；
+# `dists` = 声明里出现这些规范化名字时同样不送 pip；`hint` 是给人看的出路类别（前端文案按它选句）。
+# 以后加 Geant4 之类，只加一行。
+# ---------------------------------------------------------------------------
+NOT_PIP_HINT_OWN_ENV = "own_env"  # 需要用户自己的（conda）环境
+
+NOT_PIP_INSTALLABLE: dict[str, dict] = {
+    # CERN ROOT：conda-forge 的 `root` 包；PyPI 上没有可用的同名发行包
+    "ROOT": {"label": "ROOT", "dists": ("root",), "hint": NOT_PIP_HINT_OWN_ENV},
+}
+
+
+def not_pip_installable(import_name: str) -> dict | None:
+    """这个顶级 import 名在「装不了」表里吗？是则回表项（含 `label` / `dists` / `hint`）。"""
+    return NOT_PIP_INSTALLABLE.get(str(import_name or "").split(".")[0])
+
+
+def not_pip_for_distribution(dist: str) -> dict | None:
+    """规范化后的发行包名撞上「装不了」表里的某个发行包名 → 表项；否则 None。"""
+    key = normalize_distribution(dist)
+    for entry in NOT_PIP_INSTALLABLE.values():
+        if key in entry["dists"]:
+            return entry
+    return None
+
+
 ALTERNATIVE_DISTRIBUTIONS: dict[str, tuple[str, ...]] = {
     "cv2": (
         "opencv-python",

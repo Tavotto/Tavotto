@@ -847,7 +847,7 @@ function RepairProgress({
         {failed ? (
           // 失败：只露一句（原因 + 下一步，`repairShortMessage`），标题、完整说明、错误码、日志都在「详情」里
           <p className="text-sm leading-relaxed text-danger" data-repair-failure>
-            {repairShortMessage(progress.code)}
+            {repairShortMessage(progress.code, progress.not_found)}
           </p>
         ) : (
           <h3 className="type-section">{en(key, { module: progressPackages(progress, module) })}</h3>
@@ -927,7 +927,17 @@ export function repairCodeMessage(code: string): string | null {
  * 完整的说明（`repairError.*` / 后端原文，可以是多句）与错误码只进「详情」（`FailureDetail`）——`repairError.*`
  * 那张表设置 › 包管理页照旧整句在用，不动它
  */
-export function repairShortMessage(code: string): string {
+export function repairShortMessage(
+  code: string,
+  notFound?: { name?: string; import_name?: string; source?: string },
+): string {
+  // 找不到的包点名（ADR 0061 修订 2026-10-21）：「软件源里找不到 X（来自 Y）」；Y = 声明文件，没有就写 import 名
+  if (code === 'dependency_not_found' && notFound?.name) {
+    const source = notFound.source || (notFound.import_name ? `import ${notFound.import_name}` : '')
+    return source
+      ? en('repairErrorShort.notFoundNamedFrom', { name: notFound.name, source })
+      : en('repairErrorShort.notFoundNamed', { name: notFound.name })
+  }
   if (code && i18n.exists(`engine.repairErrorShort.${code}`, { ns: 'errors' }))
     return en(`repairErrorShort.${code}`, { product: PRODUCT_NAME })
   return en('repairErrorShortGeneric')
