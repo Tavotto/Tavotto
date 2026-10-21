@@ -1771,14 +1771,16 @@ fn main() {
                 let _ = app.emit_to("main", "tavotto:open", req);
             }
         }))
-        // 记住窗口位置 / 大小 / 最大化，但**不管窗框**：Windows 主窗口没有系统标题栏（window_chrome.rs），
-        // 默认会把旧版本存下的 `decorated: true` 恢复回来——系统标题栏与页面窗口按钮两套并存（#1279 真机）。
+        // 记住窗口位置 / 大小 / 最大化，但**不管窗框与可见性**。可见性：非 macOS 主窗口建时不显示，由壳在
+        // 藏好菜单后亮出来（window_chrome::reveal_main_window），插件恢复 `visible: true` 会抢先显示它。
+        // 窗框：Windows 主窗口没有系统标题栏（window_chrome.rs），默认会把旧版本存下的 `decorated: true` 恢复回来——系统标题栏与页面窗口按钮两套并存（#1279 真机）。
         // 不管窗框也就不往状态文件写 false：退回旧版本时那边不会恢复出一个没有任何关闭按钮的窗口。
         .plugin(
             tauri_plugin_window_state::Builder::default()
                 .with_state_flags(
                     tauri_plugin_window_state::StateFlags::all()
-                        - tauri_plugin_window_state::StateFlags::DECORATIONS,
+                        - tauri_plugin_window_state::StateFlags::DECORATIONS
+                        - tauri_plugin_window_state::StateFlags::VISIBLE,
                 )
                 .build(),
         )
@@ -1917,6 +1919,9 @@ fn main() {
             .on_new_window(move |url, _features| handle_new_window(&new_window_handle, &url))
             .build()?;
             hide_main_menu_bar(&handle);
+            // 非 macOS 的主窗口建时不显示（window_chrome.rs）：菜单栏藏好、底色换好才亮出来
+            #[cfg(not(target_os = "macos"))]
+            window_chrome::reveal_main_window(&win);
             // 主页拖放拿真实路径：只旁听 performDragOperation，不装 Tauri 的拖放处理器
             // （上面那条注释说的 HTML5 拖放照旧归页面）。见 native_drop.rs 与 ADR 0092。
             #[cfg(target_os = "macos")]

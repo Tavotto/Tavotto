@@ -120,9 +120,40 @@ impl<'a, R: tauri::Runtime, M: tauri::Manager<R>> MainWindowChrome
                 TRAFFIC_LIGHTS.0,
                 TRAFFIC_LIGHTS.1,
             ));
+        // 先不显示：菜单栏要先藏起来、底色要先换成启动画面的颜色，再由 `reveal_main_window` 亮出来——
+        // 否则建窗那一刻会闪一下白底 + 原生菜单栏（#1279 真机连拍：0.3 s 内）
         #[cfg(not(target_os = "macos"))]
-        let builder = builder.decorations(false);
+        let builder = builder.decorations(false).visible(false);
         builder
+    }
+}
+
+/// 启动画面（`shell/splash.html`）的底色，与它的 `prefers-color-scheme` 两档同值：WebView 画出
+/// 第一帧之前，窗口与 WebView 的默认底是白的，暗色系统下就是一闪白。
+#[cfg_attr(target_os = "macos", allow(dead_code))]
+pub const SPLASH_BG_LIGHT: (u8, u8, u8) = (0xF2, 0xF2, 0xEF);
+#[cfg_attr(target_os = "macos", allow(dead_code))]
+pub const SPLASH_BG_DARK: (u8, u8, u8) = (0x16, 0x16, 0x15);
+
+/// 按系统外观挑启动画面的底色。
+#[cfg_attr(target_os = "macos", allow(dead_code))]
+pub fn splash_background(theme: tauri::Theme) -> (u8, u8, u8) {
+    if theme == tauri::Theme::Dark {
+        SPLASH_BG_DARK
+    } else {
+        SPLASH_BG_LIGHT
+    }
+}
+
+/// 非 macOS：主窗口建好、菜单栏藏好之后，把底色换成启动画面的颜色再显示（建窗时是 `visible(false)`）。
+/// 换底色失败也照样显示——宁可闪一下，不能留一个看不见的窗口。
+#[cfg(not(target_os = "macos"))]
+pub fn reveal_main_window<R: tauri::Runtime>(win: &tauri::WebviewWindow<R>) {
+    let theme = win.theme().unwrap_or(tauri::Theme::Light);
+    let (r, g, b) = splash_background(theme);
+    let _ = win.set_background_color(Some(tauri::window::Color(r, g, b, 255)));
+    if let Err(e) = win.show() {
+        eprintln!("show main window: {e}");
     }
 }
 
@@ -139,6 +170,12 @@ mod tests {
         } else {
             assert!(script.contains(CHROME_MENU_BUTTON));
         }
+    }
+
+    #[test]
+    fn splash_background_follows_the_system_theme() {
+        assert_eq!(splash_background(tauri::Theme::Dark), SPLASH_BG_DARK);
+        assert_eq!(splash_background(tauri::Theme::Light), SPLASH_BG_LIGHT);
     }
 
     #[test]
