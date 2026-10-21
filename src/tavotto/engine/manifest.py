@@ -4291,7 +4291,7 @@ def _probe_autoscale_expected(ax, autoscale: dict[str, bool]) -> dict[str, list[
 
     `autoscale_view` 的内部 `handle_single_axis` 在**调用时**才取 `self.set_xbound` / `self.set_ybound`，所以临时在实例上挂
     捕获函数遮住它们，范围就被截下来而不写进图。除 `set_bound` 外它不改任何状态（matplotlib 3.8 / 3.10 / 3.11 的源码：只有
-    `tight is not None` 才写 `_tight`，这里传 None；其余是只读的 dataLim / sticky / locator 计算）。`finally` 里删掉实例属性。
+    `tight is not None` 才写 `_tight`，这里传 None；其余是只读的 dataLim / sticky / locator 计算）。`finally` 里还原实例属性（原本就有的放回，没有的删掉）。
     任何一步失败、或结果非有限 → 返回空（没证据）。"""
     got: dict[str, list[float]] = {}
 
@@ -4306,15 +4306,27 @@ def _probe_autoscale_expected(ax, autoscale: dict[str, bool]) -> dict[str, list[
     want = {a for a, on in autoscale.items() if on and a in ("x", "y")}
     if not want or not callable(getattr(ax, "autoscale_view", None)):
         return {}
+    sentinel = object()
+    saved: dict[str, object] = {}
     try:
+        inst = ax.__dict__  # 无 __dict__（__slots__）→ AttributeError → 没证据
+        for a in want:
+            name = f"set_{a}bound"
+            saved[name] = inst.get(name, sentinel)
         for a in want:
             setattr(ax, f"set_{a}bound", capture(a))
         ax.autoscale_view(scalex="x" in want, scaley="y" in want)
     except Exception:  # noqa: BLE001 —— 版本不支持 / 非常规 axes：没证据
         return {}
     finally:
-        for a in want:
-            ax.__dict__.pop(f"set_{a}bound", None)
+        # 实例上原本挂着的自定义 set_[xy]bound 要放回去，没有才删（探测不许改图）
+        inst_dict = getattr(ax, "__dict__", None)
+        if inst_dict is not None:
+            for name, old in saved.items():
+                if old is sentinel:
+                    inst_dict.pop(name, None)
+                else:
+                    inst_dict[name] = old
     out: dict[str, list[float]] = {}
     for a, (lo, hi) in got.items():
         if math.isfinite(lo) and math.isfinite(hi):

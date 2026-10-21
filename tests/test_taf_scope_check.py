@@ -384,6 +384,32 @@ def test_probing_autoscale_does_not_touch_the_figure(monkeypatch):
 
 
 @needs_worker
+def test_probing_autoscale_restores_instance_level_set_bound(monkeypatch):
+    import tavotto.engine
+
+    monkeypatch.syspath_prepend(str(__import__("pathlib").Path(tavotto.engine.__file__).parent))
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    from manifest import _probe_autoscale_expected
+
+    fig, ax = plt.subplots()
+    ax.plot([0, 1, 2], [0, 1, 4])
+
+    def custom(*a, **kw):  # 用户实例上自己挂的覆盖
+        raise AssertionError("probe must not call the user's override")
+
+    ax.set_xbound = custom
+    got = _probe_autoscale_expected(ax, {"x": True, "y": True})
+    assert ax.__dict__["set_xbound"] is custom
+    assert "set_ybound" not in ax.__dict__
+    assert "x" in got and "y" in got
+    plt.close(fig)
+
+
+@needs_worker
 def test_set_xlim_auto_true_with_a_line_width_change_is_not_waived(tmp_path):
     before = _two(tmp_path, "a")
     after = _two(tmp_path, "b", lw=4, extra="a.set_xlim(-3, 9, auto=True)")
