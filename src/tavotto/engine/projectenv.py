@@ -1908,4 +1908,13 @@ def state(figures_dir: str | Path) -> dict:
     }
     if python:
         out["python_relative"] = project_relative(figures_dir, python)
+        # 解释器带着的叠加环境（ROOT，ADR 0079 修订）：只读事实，**只给种类 / 版本 / 标签，不带安装路径**（ADR 0053 §二：
+        # 公开投影不带机器路径）。没有叠加 = 不出现这个键
+        overlay = remembered_overlay(figures_dir, python)
+        if overlay is not None:
+            out["env_overlay"] = {
+                "kind": overlay.get("kind", ""),
+                "version": overlay.get("version", ""),
+                "label": rootenv.label_of(overlay),
+            }
     return out

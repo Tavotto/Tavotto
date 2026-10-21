@@ -75,6 +75,7 @@ from . import (
     pool,
     projectenv,
     receipt,
+    rootenv,
     runconfig,
     runroute,
     scriptargs,
@@ -214,6 +215,10 @@ class PreparationPlan:
     #: 私有。conda install / 改 activate.d、conda 从找不到变成找得到（直接启动 → 激活）都不换「代」，但跑起来的环境变了：
     #: 执行前 `_stale_reason` 比它，对不上 = 计划过期（P09）
     environment_state: str = ""
+    #: 计划那一刻解释器要带的叠加环境（ROOT，`rootenv.overlay_spec`）。私有：含安装路径，不进 `to_payload()`。
+    #: 起会话的钉下决定（`app._plan_pin`）只认它——漏了它，计划钉的 `EnvironmentDecision` 没有叠加层，worker 在同一条
+    #: 解释器里裸起、脚本报缺 ROOT（Win11 真机 2026-10-21）；执行前 `_stale_reason` 比它与项目记录此刻的那份
+    environment_overlay: dict | None = None
     #: 这份计划是对上一次尝试的**重试**（V2，ADR 0127）：上一次尝试的 plan_id / 触发它的稳定错误码 / 相对上一次变了哪几维
     #: （`execpolicy.CHANGED_DIMENSIONS`）。三者都是诊断事实：不含路径 / argv。第一次尝试全为空。
     retry_of: str | None = None
@@ -429,6 +434,11 @@ def plan_for(
         if python
         else ""
     )
+    environment_overlay = (
+        (decision.env_overlay if decision.pinned else projectenv.remembered_overlay(root, python))
+        if python
+        else None
+    )
     environment = {
         "python": _project_relative(root, python) if python else None,
         "source": source,
@@ -635,6 +645,7 @@ def plan_for(
         script_revision=script_revision,
         native_spec=native_spec,
         environment_state=environment_state,
+        environment_overlay=environment_overlay,
     )
 
 
@@ -1212,6 +1223,11 @@ class PreparationService:
             # 路径没变、环境换了一代（删了重建）：计划确认的是上一代（ADR 0114 §四）
             planned = (plan.environment or {}).get("generation")
             if planned and projectenv.environment_generation(plan.interpreter) != planned:
+                return STALE_ENVIRONMENT, {}
+            # 叠加环境（ROOT）换了 / 清了：同一个解释器带不带 ROOT 不是同一个环境（与起会话的 `_overlay_for` 同一判据）
+            if rootenv.key_of(plan.environment_overlay) != rootenv.key_of(
+                projectenv.remembered_overlay(root, plan.interpreter)
+            ):
                 return STALE_ENVIRONMENT, {}
             # Conda 环境原地变了（conda install / 改 activate.d / env config vars）：代没变，激活后的环境变了
             if plan.environment_state and (

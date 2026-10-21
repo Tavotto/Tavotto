@@ -9378,6 +9378,8 @@ def _plan_pin(pl):
         source=str(env.get("source") or ""),
         generation=str(env.get("generation") or ""),
         launch_context=str(getattr(pl, "environment_state", "") or ""),
+        # 叠加环境（ROOT）随计划一起钉：起会话只认钉下的决定，漏了它 worker 就在同一条解释器里裸起
+        env_overlay=getattr(pl, "environment_overlay", None) or None,
     )
 
 

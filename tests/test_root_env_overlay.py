@@ -1019,3 +1019,77 @@ def test_probe_script_installs_the_same_libcppyy_finder_not_a_path_entry():
     block = src[hook : src.index("def _norm(path):")]
     assert rootenv.CPPYY_DIR_ENV in block and "sys.meta_path.append" in block
     assert 'name != "libcppyy"' in block and "sys.path" not in block
+
+
+# ===========================================================================
+# 准备会话路径（Win11 真机 2026-10-21）：计划钉下的决定带着叠加环境
+# ===========================================================================
+def _plan(rig):
+    from tavotto.engine import preparation
+
+    (rig["root"] / "fig.py").write_text("import ROOT\n", encoding="utf-8")
+    return preparation.plan_for(
+        project_id="pj",
+        project_root=str(rig["root"]),
+        asset_id="",
+        stem="",
+        script="fig.py",
+        entry="__main__",
+        original_artifact=None,
+        target="script",
+    )
+
+
+@POSIX
+def test_a_preparation_plan_pins_the_remembered_overlay_and_the_worker_env_carries_it(rig):
+    """第二次运行（记录里已有 env_overlay）：计划快照带叠加层，`app._plan_pin` 钉下的决定也带，
+    `_overlay_for` 回同一份，起 worker 的 env 里有 ROOTSYS / PYTHONPATH 含 `<root>/lib`——
+    漏掉的话 worker 在 r314 里裸起、脚本报缺 ROOT。"""
+    from tavotto import app as app_mod
+
+    py311 = rig["add_python"]("py311", "3.11.9")
+    info = rig["add_root"]("root638", "6.38.02")
+    assert _decide(rig).adopted is not None  # 第一次：自动采用，记下 env_overlay
+
+    plan = _plan(rig)
+
+    assert plan.interpreter == py311
+    assert plan.environment_overlay is not None and plan.environment_overlay["root"] == info["root"]
+    # 公开投影不带安装路径
+    assert info["root"] not in str(plan.to_payload())
+    pin = app_mod._plan_pin(plan)
+    assert pin.env_overlay == plan.environment_overlay
+    overlay = engine_pool._overlay_for(str(rig["root"]), py311, pin)
+    assert overlay == plan.environment_overlay
+    popen_env = engine_pool.launch_env(None, py311, {}, overlay, bundled=False)
+    assert popen_env["ROOTSYS"] == info["root"]
+    assert popen_env["PYTHONPATH"].split(os.pathsep)[0] == str(Path(info["root"]) / "lib")
+
+
+@POSIX
+def test_a_plan_without_an_overlay_pins_none_and_a_cleared_record_makes_the_plan_stale(rig):
+    from tavotto.engine import preparation
+
+    py311 = rig["add_python"]("py311", "3.11.9")
+    rig["add_root"]("root638", "6.38.02")
+    assert _decide(rig).adopted is not None
+    plan = _plan(rig)
+    assert preparation.PreparationService._stale_reason(plan, source=False) is None
+    # 计划之后记录换成不带叠加层的同一解释器：同一路径带不带 ROOT 不是同一个环境
+    projectenv.remember(rig["root"], py311, automatic=True)
+    stale = preparation.PreparationService._stale_reason(plan, source=False)
+    assert stale == (preparation.STALE_ENVIRONMENT, {})
+    bare = _plan(rig)
+    assert bare.environment_overlay is None
+
+
+@POSIX
+def test_environment_state_exposes_the_overlay_without_a_path(rig):
+    py311 = rig["add_python"]("py311", "3.11.9")
+    info = rig["add_root"]("root638", "6.38.02")
+    assert projectenv.state(rig["root"]).get("env_overlay") is None
+    assert _decide(rig).adopted is not None
+    state = projectenv.state(rig["root"])
+    assert state["python"] == py311
+    assert state["env_overlay"] == {"kind": "root", "version": "6.38.02", "label": "ROOT 6.38"}
+    assert info["root"] not in str(state)
