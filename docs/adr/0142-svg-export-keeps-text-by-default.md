@@ -45,6 +45,13 @@
   * 字体族：批准族名（Liberation Serif / Sans / Mono、Noto Sans SC）补上与 `svgwriter` 同一条回退链（共用 `rendercore/svgfonts.py`），用户脚本自己指定的字体按 matplotlib 输出原样保留。
   * matplotlib 的 `svg.fonttype=none` 本来就是每段文字一个 x，不触发 Word 的逐字拆分问题。
 
+## Word 实测（2026-10-21，用户在 macOS Word 上「转换为形状」）
+
+* 普通文字（标题、轴标签、`25 °C`）转换后是整段文本框，可直接改字。逐字形 `x` 列表那一版会被 Word 逐字拆开（字间大空隙、每字一个段落标记），因此改为每个 run 一个起点 x。
+* **已知限制，用户裁决保持现状**：带公式的文字（mathtext 上下标、`$k=0.125\ \mathrm{min^{-1}}$`）转换后会拆成多个碎片——画布导出按 run 拆，
+  matplotlib 原样导出的 mathtext 是逐字形 `<text>`，Word 摆放会挤成一团。不转换、直接插入时显示正确。用户选择公式也保留文字（可改），不按公式转轮廓。
+* Word 深色模式下文字颜色会被 Word 自动调浅 / 调白，是 Word 的显示行为；浅色模式与打印为原色。
+
 ## 退路
 
 `write_svg(..., text_policy="outlines")` 与旧行为逐字节等价（旧用例原样钉着它）。若 Office 兼容性或字体替换投诉集中，把默认值改回 `outlines` 是一行改动，不需要迁移。
