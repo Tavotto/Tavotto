@@ -135,6 +135,36 @@ def reap_orphan_tmps(directory: Path, *, now: float | None = None) -> list[str]:
     return removed
 
 
+#: Windows 上 `os.replace` 的目标被别的进程以不共享方式短暂占着（杀毒 / 索引服务 / 同步客户端）时
+#: 报 `PermissionError`，`winerror` 是 5（拒绝访问）或 32（共享冲突）。这类占用通常是毫秒级的，
+#: 有界重试比直接失败更接近用户想要的结果。**上限写死**：最多重试 `len(_REPLACE_RETRY_DELAYS_S)` 次，
+#: 每次等待如下，累计最长 0.62 s；仍失败照旧抛（调用方转成 `replace_failed`，旧文件完好）。
+#: 只在 Windows 上重试；POSIX 的 `os.replace` 不会因共享冲突失败，其它错误（ENOSPC、EXDEV、
+#: 目标是目录……）立即抛，不重试。
+_REPLACE_RETRY_DELAYS_S = (0.02, 0.04, 0.08, 0.16, 0.32)
+_WINDOWS_SHARING_ERRORS = {5, 32}
+
+
+def _is_windows() -> bool:
+    return os.name == "nt"
+
+
+def _replace(src: Path, dest: Path) -> None:
+    """`os.replace`，Windows 共享冲突时有界重试（见 `_REPLACE_RETRY_DELAYS_S`）。其它错误原样抛。"""
+    delays = iter(_REPLACE_RETRY_DELAYS_S)
+    while True:
+        try:
+            os.replace(src, dest)
+            return
+        except PermissionError as exc:
+            if not _is_windows() or getattr(exc, "winerror", None) not in _WINDOWS_SHARING_ERRORS:
+                raise
+            delay = next(delays, None)
+            if delay is None:
+                raise
+            time.sleep(delay)
+
+
 def _discard(tmp: Path) -> None:
     """清掉半成品。失败只可能是权限/竞态，此时抛出去会掩盖真正的错误。"""
     try:
@@ -260,7 +290,7 @@ def write_bytes(path: Path, data: bytes, *, mode: int | None = None) -> None:
             raise AtomicWriteError("write_failed", f"权限位设不上：{exc}", path) from exc
 
     try:
-        os.replace(tmp, path)
+        _replace(tmp, path)
     except OSError as exc:
         _discard(tmp)
         raise AtomicWriteError("replace_failed", f"替换失败：{exc}", path) from exc
@@ -308,7 +338,7 @@ def publish_file(tmp: Path, dest: Path) -> None:
     else:
         handle.close()
     try:
-        os.replace(tmp, dest)
+        _replace(tmp, dest)
     except OSError as exc:
         _discard(tmp)
         raise AtomicWriteError("replace_failed", f"替换失败：{exc}", dest) from exc
