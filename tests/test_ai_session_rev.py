@@ -265,3 +265,57 @@ def test_counter_survives_purge_and_starts_from_existing_max(db):
     ai_history.purge(keep_days=0)
     _start("c", script="c.py")
     assert ai_history.get("c")["rev"] == 43
+
+
+def test_connecting_to_an_up_to_date_db_never_waits_for_the_write_lock(db):
+    """别的进程正持着写锁时，新连接一个已迁移好的库只读探测就够了：不能为"补计数器 / 补账本"去抢写锁。
+
+    每次连接都无条件写的话，两个进程同时打开 / 写库会互相排队，慢机器上排满 busy 超时就是 `database is locked`（Windows CI）。
+    子进程在 4 s 内必须连上；修前它会在写锁上等到 10 s 超时。"""
+    import sqlite3
+
+    _start("seed", client_request_id="rid-seed-0000001")
+    holder = sqlite3.connect(db, timeout=10, isolation_level=None)
+    holder.execute("BEGIN IMMEDIATE")  # 另一个进程里的写事务，一直不提交
+    try:
+        code = (
+            "import sys; from pathlib import Path; from tavotto.engine import ai_history;"
+            "ai_history.DB_PATH = Path(sys.argv[1]); ai_history._connect().close(); print('ok')"
+        )
+        out = subprocess.run(
+            [sys.executable, "-c", code, str(db)], capture_output=True, text=True, timeout=4
+        )
+    finally:
+        holder.execute("ROLLBACK")
+        holder.close()
+    assert out.returncode == 0 and "ok" in out.stdout, out.stderr
+
+
+def test_a_missing_counter_is_initialised_once_under_the_write_lock(db):
+    """升级前的库（没有计数器行）：初始化走显式写事务，等锁而不是抛错；之后的连接不再重复写。"""
+    import sqlite3
+    import threading
+    import time
+
+    _start("seed")
+    with ai_history._connect() as con:
+        con.execute("DELETE FROM ai_rev_counter")
+    holder = sqlite3.connect(db, timeout=10, isolation_level=None)
+    holder.execute("BEGIN IMMEDIATE")
+    result: dict = {}
+
+    def connect():
+        try:
+            ai_history._connect().close()
+            result["ok"] = True
+        except Exception as exc:  # noqa: BLE001
+            result["err"] = exc
+
+    t = threading.Thread(target=connect)
+    t.start()
+    time.sleep(0.5)
+    holder.execute("ROLLBACK")  # 释放：等锁的初始化应当接着完成
+    holder.close()
+    t.join(timeout=15)
+    assert result == {"ok": True}, result
+    assert ai_history.head_rev() == ai_history.get("seed")["rev"]
