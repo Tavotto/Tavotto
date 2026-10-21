@@ -1503,3 +1503,22 @@ def test_original_outputs_record_the_disk_source_they_came_from(env, figure, for
         assert [(s["source_id"], s["origin"], s["bytes_sha256"]) for s in sources] == [
             (figure, "static", sha)
         ], fmt
+
+
+@pytest.mark.parametrize("scope", ["original", "canvas"])
+def test_validate_route_names_the_reason_the_export_then_reports(env, scope):
+    """route 里逐项不可用的原因码，就是真导出时那一项报的码（来源判据与执行路径不各说各话）。"""
+    client, _ = env
+    spec = (
+        _original(formats=["pdf", "eps"])
+        if scope == "original"
+        else _canvas(formats=["pdf", "eps"])
+    )
+    route = _post(client, spec, "/api/export/validate")[1]["route"]
+    panel = next(iter(route["panels"].values()))
+    status, body = _post(client, spec)
+    assert status == 200, body
+    eps = _out(body, "eps")
+    assert panel["formats"]["eps"]["how"] == "unavailable"
+    assert eps["error"]["code"] == panel["formats"]["eps"]["reason"]
+    assert _out(body, "pdf")["status"] == "done" and panel["formats"]["pdf"]["how"] != "unavailable"
