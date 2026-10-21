@@ -49,8 +49,13 @@ export const ONBOARDING_SCHEMA_VERSION = 1
  *
  * v3（2026-10-19，ADR 0136）：八步工作台 coachmark 教程换成三步原生演示教程
  * （`demo_import` / `demo_move_legend` / `demo_change_title`）。
+ *
+ * v4（2026-10-21，同一教程内容，只升迁移纪元）：「老用户升级后看一次」的迁移要认得出**已经被 v3 代码读过并写回**的旧
+ * blob——v3 代码读旧 blob 时把 `flowVersion` 规范成 3 再原样存回（如 `markHintSeen`），按 `< 3` 判就认成「当前」了
+ * （Codex #1269）。升到 4 之后，凡 `flowVersion < 4`（含这些被规范成 3 的旧 blob）都迁回新手态一次。
+ * 代价：在 0.19.0b1 里真走完 v3 教程的人也会再看一次。
  */
-export const ONBOARDING_FLOW_VERSION = 3
+export const ONBOARDING_FLOW_VERSION = 4
 
 export const ONBOARDING_KEY = 'tavotto.onboarding'
 

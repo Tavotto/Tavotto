@@ -341,6 +341,25 @@ describe('持久化与迁移', () => {
     expect(m.flowVersion).toBe(ONBOARDING_FLOW_VERSION)
   })
 
+  it('被 v3 代码读过并写回的旧 completed / skipped（flowVersion 已被规范成 3）也迁回新手态一次', () => {
+    for (const status of ['completed', 'skipped'] as const) {
+      const m = migratePersisted({
+        schemaVersion: 1,
+        flowVersion: 3,
+        status,
+        completedSteps: ['done'],
+        hintSeen: { problem_found: 42 },
+        welcomeSeenAt: 5,
+      })
+      expect(m.status, status).toBe('not_started')
+      expect(m.welcomeSeenAt, status).toBeNull()
+      expect(m.hintSeen, status).toEqual({ problem_found: 42 })
+      expect(m.flowVersion, status).toBe(ONBOARDING_FLOW_VERSION)
+      expect(homeVariant(m.status), status).toBe('newcomer')
+    }
+    expect(ONBOARDING_FLOW_VERSION).toBeGreaterThanOrEqual(4)
+  })
+
   it('当前 flowVersion 的 completed / skipped 原样不动（不被重新打扰）', () => {
     for (const status of ['completed', 'skipped'] as const) {
       const m = migratePersisted({
