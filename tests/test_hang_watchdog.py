@@ -176,7 +176,25 @@ def test_exit_is_reached_even_when_the_writer_raises():
 
 @pytest.mark.skipif(os.name == "nt", reason="ps 只在 POSIX")
 def test_no_children_is_reported_as_none_not_as_the_ps_probe():
-    out = hw.describe_children()
+    # 在一个新起的、确实没有子进程的解释器里调用：pytest 进程本身可能合法地挂着同片别的
+    # 用例留下的常驻 worker（模块级 fixture），断言它「全局无子进程」会随分片组成时红时绿
+    code = textwrap.dedent(
+        f"""
+        import sys
+        sys.path.insert(0, {str(REPO / "tests")!r})
+        from support import hang_watchdog as hw
+        print(hw.describe_children())
+        """
+    )
+    done = subprocess.run(
+        [sys.executable, "-c", code],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=60,
+    )
+    out = done.stdout
+    assert done.returncode == 0, done.stderr
     assert "没有子进程" in out, out
     assert "ps -axo" not in out, out
 
