@@ -64,6 +64,12 @@ PREVIEW_NAME = "preview.svg"
 NO_FIGURE_CODES = frozenset(
     {"script_no_figure", "no_figures_captured", "no_figures_captured_silent"}
 )
+#: 绊线拦下候选写项目文件的稳定码（`writetripwire.CODE` 的镜像）与写给 Agent 的一句
+WRITE_OUTSIDE_ROOTS_CODE = "write_outside_roots"
+WRITE_OUTSIDE_HINT = (
+    "校验运行里脚本想写项目目录里的文件（例如 savefig('out.png') / to_csv），被拦下了；"
+    "新脚本只许读原数据，不要保存任何文件，让 Tavotto 自己导出图。"
+)
 _SID = re.compile(r"[0-9a-f]{12}")
 _STATES = ("ready", "adopted", "discarded")
 
@@ -290,8 +296,11 @@ def _static_uses_matplotlib(tree: ast.AST) -> bool:
 def run_validation(cand: ConvertCandidate, runner) -> dict:
     """在用户同一解释器 / 同一路由下跑候选脚本一遍。
 
-    `runner(figures_dir: str, script_rel: str) -> {"stems": [...], "size_mm": [w, h] | None, "svg": str | None,
+    `runner(figures_dir: str, script_rel: str, write_roots: tuple[str, ...]) -> {"stems": [...], "size_mm": [w, h] | None, "svg": str | None,
     "error": None | {"code": str, "message": str}}`（app 注入，走现有 probe 路径并在返回前退役它起的 worker）。
+    **隔离写入（Codex #1277 P1）**：运行带写入根绊线（ADR 0141 的 `write_roots`，现有机制）——根只有候选目录（加 worker 自己的
+    基础设施目录），所以候选脚本把相对路径输出（`out.png` / `data.csv`）写进项目目录时，在**写发生的那一刻**失败
+    （`write_outside_roots`），用户文件根本没被打开写过；跑完的指纹复核只是兜底（绊线挡不住 C 层写）。
     候选以紧挨原脚本的**临时文件**（`tavotto_convert_probe_<sid>.py`）形式存在（O_EXCL 新建、跑完即删）：相对路径的数据读取与 cwd 判据同原脚本。
     回 `{"status": "ok" | "no_figure" | "error", ...}`。"""
     stage_path = cand.script_path.parent / f"{STAGE_PREFIX}{cand.sid}.py"
@@ -300,7 +309,7 @@ def run_validation(cand: ConvertCandidate, runner) -> dict:
         with scriptlock.script_guard(stage_path):
             scriptlock.create_script(stage_path, cand.new_bytes or b"")
             try:
-                out = runner(str(cand.project_root), rel) or {}
+                out = runner(str(cand.project_root), rel, (str(cand.dir),)) or {}
             finally:
                 try:
                     stage_path.unlink()
@@ -314,6 +323,8 @@ def run_validation(cand: ConvertCandidate, runner) -> dict:
         code = str(err.get("code") or "run_failed")
         if code in NO_FIGURE_CODES:
             return {"status": "no_figure", "code": code}
+        if code == WRITE_OUTSIDE_ROOTS_CODE:
+            return {"status": "error", "code": code, "message": WRITE_OUTSIDE_HINT}
         return {"status": "error", "code": code, "message": str(err.get("message") or "")[:400]}
     if not out.get("stems"):
         return {"status": "no_figure", "code": "no_figures_captured"}

@@ -49,10 +49,19 @@ interface ConvertState {
 export const POLL_MS = 1500
 
 /**
- * 每个脚本一条的请求 id：同一次「生成」在**不确定是否已送达**（断网 / 超时 / 网关错）后重试要复用它，
+ * 每个（项目, 脚本）一条的请求 id：同一次「生成」在**不确定是否已送达**（断网 / 超时 / 网关错）后重试要复用它，
  * 后端据此去重，不会再起第二个付费 Agent；明确拒绝或已拿到会话后作废（下一次换新 id）。
+ * 键含发起那一刻的项目身份——两个项目里同名脚本的未决 id 互不相干（A 的未决 id 不会被 B 的成功删掉）。
  */
 const pendingRequestIds = new Map<string, string>()
+const scopeKey = (pj: string | null, script: string) => `${pj ?? ''}\u0000${script}`
+
+/**
+ * 每个（项目, 脚本）当前有效的“发起次序”：只有最新一次 `start` 能把失败写回条目。
+ * 停止后立刻重试时，旧 POST 晚到的失败带着旧次序，核对不上就不写（不覆盖重试后的新会话）；停止 / 清除 / 换项目时作废。
+ */
+const attempts = new Map<string, { n: number; rid: string }>()
+let attemptSeq = 0
 
 const set1 = (script: string, patch: Partial<ConvertEntry>) =>
   useConvertStore.setState((s) => ({
@@ -78,11 +87,15 @@ export const useConvertStore = create<ConvertState>((set, get) => ({
       },
     }))
     const mine = get().entries[script]
-    let rid = pendingRequestIds.get(script)
+    const key = scopeKey(pj, script)
+    const attempt = ++attemptSeq
+    let rid = pendingRequestIds.get(key)
     if (!rid) {
       rid = newRequestId()
-      pendingRequestIds.set(script, rid)
+      pendingRequestIds.set(key, rid)
     }
+    attempts.set(key, { n: attempt, rid })
+    const isCurrent = () => attempts.get(key)?.n === attempt
     try {
       // 与既有 AI 流程同一套「实际派活的 Agent」：用户选了 Claude 或 Codex 不可用时不能默认成 codex
       const ai = useAiStore.getState()
@@ -96,10 +109,13 @@ export const useConvertStore = create<ConvertState>((set, get) => ({
         { script, library, path, client_request_id: rid, ...(agent ? { agent, model, effort } : {}) },
         pj,
       )
-      pendingRequestIds.delete(script)
+      pendingRequestIds.delete(key)
       if (!guard.still()) return
-      if (get().entries[script] !== mine) {
+      if (!isCurrent() || get().entries[script] !== mine) {
         // 等 POST 期间用户点了「停止」/ 换了脚本流水：后端已起了会话，要真的取消，不能让它悄悄跑完
+        // 例外：更新的一次发起复用了同一个请求 id（停止后立刻重试）——后端去重成同一个会话，那是新一次在用的，不取消
+        const newer = attempts.get(key)
+        if (!isCurrent() && newer && newer.rid === rid) return
         try {
           await aiCancel(session, pj)
         } catch {
@@ -131,9 +147,9 @@ export const useConvertStore = create<ConvertState>((set, get) => ({
         return
       }
     } catch (e) {
-      if (isDefiniteRunFailure(e)) pendingRequestIds.delete(script)
+      if (isDefiniteRunFailure(e)) pendingRequestIds.delete(key)
       if (!guard.still()) return
-      if (get().entries[script] !== mine && !get().entries[script]?.session) return // 已被停止：别再写回
+      if (!isCurrent()) return // 已被停止 / 被更新的一次发起取代：旧 POST 的失败不能写进新会话的条目
       set1(script, { phase: 'failed', error: backendErrorText(e) })
     }
   },
@@ -179,12 +195,17 @@ export const useConvertStore = create<ConvertState>((set, get) => ({
     }
   },
 
-  clear: (script) =>
+  clear: (script) => {
+    attempts.delete(scopeKey(currentProjectId(), script))
     set((s) => {
       const { [script]: _gone, ...rest } = s.entries
       return { entries: rest }
-    }),
+    })
+  },
 }))
 
 // 换项目：上一个项目的流水一律丢弃（脚本名可能在两个项目里重名）
-onCurrentProjectChange(() => useConvertStore.setState({ entries: {} }))
+onCurrentProjectChange(() => {
+  attempts.clear()
+  useConvertStore.setState({ entries: {} })
+})

@@ -154,6 +154,31 @@ def test_a_script_that_captures_no_figure_fails_with_a_reason(project):
     assert sorted(p.name for p in figs.iterdir() if p.is_file()) == state["initial"]
 
 
+def test_candidate_that_writes_a_project_file_is_stopped_by_the_write_tripwire(
+    project, monkeypatch
+):
+    """P1（Codex #1277）：真 worker——候选在校验运行里写用户的 `out.png`（绝对路径，与 cwd 无关）在写发生时就失败，字节不变。"""
+    m, client, figs, state = project
+    # pytest 的 tmp_path 在系统临时目录之下，而绊线白名单放行系统临时目录：把 worker 的临时目录挪走（同 test_mcp_write_tripwire）
+    worker_tmp = figs.parent / "worker-tmp"
+    worker_tmp.mkdir()
+    for var in ("TMPDIR", "TEMP", "TMP"):
+        monkeypatch.setenv(var, str(worker_tmp))
+    monkeypatch.setenv("LOCALAPPDATA", str(figs.parent / "localappdata"))
+    before = (figs / "out.png").read_bytes()
+    bad = (
+        f"import pathlib\npathlib.Path({str(figs / 'out.png')!r}).write_bytes(b'clobbered')\n"
+        + GOOD
+    )
+    state["code"] = f"(d / 'fig_matplotlib.py').write_text({bad!r}, encoding='utf-8')"
+    sid = _start(client).get_json()["session"]
+    sess = _wait_final(client, sid)
+    assert sess["task"]["outcome"] == "failed"
+    assert (figs / "out.png").read_bytes() == before
+    assert any(u["reason_code"] == "run_failed" for u in sess["task"]["unmet"])
+    assert sorted(p.name for p in figs.iterdir() if p.is_file()) == state["initial"]
+
+
 def test_discard_endpoint_removes_the_candidate(project):
     m, client, figs, state = project
     sid = _start(client).get_json()["session"]

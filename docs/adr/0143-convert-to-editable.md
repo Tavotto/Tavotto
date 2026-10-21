@@ -31,7 +31,10 @@
    返回前 `invalidate(force=True)` 退役 worker）。必须捕获到 Matplotlib 图，否则判失败并给一句原因（`no_matplotlib_figure` / `run_failed`，
    一轮有界修正）。候选以紧挨原脚本的**临时文件** `tavotto_convert_probe_<sid>.py`（后端 O_EXCL 建、跑完即删；worker 按模块名 import，
    不能用点开头的隐藏名）存在几秒，使相对路径数据读取与 cwd 判据与原脚本一致——Agent 没有写它的路径。存在期里文件监视器可能看见它，
-   删除后登记不变。
+   删除后登记不变。**校验运行的写入是隔离的（Codex #1277 P1）**：运行带 ADR 0141 的写入根绊线（`probe(write_roots=)` →
+   `pool.build` / `invalidate` / `force_cancel` 同一份根，池键多一段），根只有候选目录——候选把相对路径输出（`out.png` / `data.csv`）写进
+   项目目录时在写发生的那一刻以 `write_outside_roots` 失败，用户文件不被打开写；跑完的指纹复核只是兜底。绊线的盲区同 ADR 0141
+   （C 层写、子进程、位于系统临时目录 / 用户缓存目录之下的项目）。
 5. 对照数据（`comparison`）：原图像素宽高 / 字节 / 摘要（PNG / JPEG / GIF 头部）、新版图幅 mm 与图个数、宽高比相对差、新版 SVG 预览
    （沙盒 CSP + nosniff 的 `GET /api/ai/convert/<sid>/preview.svg`，只给 `<img>`）。**不做像素差**（`pixel_diff: null`）：
    原件是位图而新版是矢量重画，逐像素差没有可辩护的含义，交给用户并排看。

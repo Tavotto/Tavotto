@@ -57,7 +57,7 @@ WRITE_PROJECT = (
 )
 
 
-def ok_runner(figures_dir, rel):
+def ok_runner(figures_dir, rel, write_roots=None):
     return {
         "stems": ["out"],
         "size_mm": [100.0, 50.0],
@@ -214,9 +214,9 @@ def test_validation_run_that_overwrites_project_files_fails_the_task(env):
     """校验运行会在原脚本旁真跑候选：它写相对路径输出（改到原图）也要被跑完后的复核抓住。"""
     figs = env["figs"]
 
-    def writing_runner(figures_dir, rel):
+    def writing_runner(figures_dir, rel, write_roots=None):
         (figs / "out.png").write_bytes(b"clobbered")
-        return ok_runner(figures_dir, rel)
+        return ok_runner(figures_dir, rel, write_roots)
 
     env["runner"] = writing_runner
     sid = _run(env)
@@ -229,8 +229,36 @@ def test_validation_run_that_overwrites_project_files_fails_the_task(env):
         ai_convert.adopt(sid, _project(env))
 
 
+def test_validation_run_is_isolated_by_write_roots_and_user_out_png_is_untouched(env):
+    """P1（Codex #1277）：隔离而不只是事后检测——校验运行拿到的写入根只有候选目录；候选写 `out.png` 在写发生时就被拦。"""
+    figs = env["figs"]
+    before = (figs / "out.png").read_bytes()
+    seen = {}
+
+    def tripwire_runner(figures_dir, rel, write_roots=None):
+        seen["roots"] = write_roots
+        # 模拟 worker 绊线：根外的写在事件发生时失败（真 worker 的端到端在 test_ai_convert_app.py）
+        target = figs / "out.png"
+        if not any(str(target.resolve()).startswith(str(Path(r).resolve())) for r in write_roots):
+            return {"error": {"code": "write_outside_roots", "message": "x"}}
+        target.write_bytes(b"clobbered")
+        return ok_runner(figures_dir, rel, write_roots)
+
+    env["runner"] = tripwire_runner
+    sid = _run(env)
+    sess = _wait(sid)
+    assert sess["task"]["outcome"] == "failed"
+    assert (figs / "out.png").read_bytes() == before
+    cdir = ai_convert.CONVERT_DIR / sid
+    assert seen["roots"] == (str(cdir),), "写入根只能是候选目录，不含项目目录"
+    assert str(figs) not in "".join(seen["roots"])
+    assert ("render.capture", "run_failed") in {
+        (u["constraint_id"], u["reason_code"]) for u in sess["task"]["unmet"]
+    }
+
+
 def test_no_figure_captured_is_a_failure_with_a_reason(env):
-    env["runner"] = lambda figures_dir, rel: {
+    env["runner"] = lambda figures_dir, rel, write_roots=None: {
         "error": {"code": "no_figures_captured", "message": "x"}
     }
     sid = _run(env)
@@ -245,7 +273,7 @@ def test_no_figure_captured_is_a_failure_with_a_reason(env):
 def test_run_error_is_a_failure_and_the_stage_file_is_gone(env):
     seen = []
 
-    def boom(figures_dir, rel):
+    def boom(figures_dir, rel, write_roots=None):
         seen.append(Path(figures_dir) / rel)
         assert (Path(figures_dir) / rel).is_file(), "校验期间候选以临时文件存在于原脚本旁"
         return {"error": {"code": "script_exception", "message": "KeyError: 'x'"}}

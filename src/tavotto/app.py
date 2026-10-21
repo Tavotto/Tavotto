@@ -11412,13 +11412,15 @@ def _convert_error(exc: "engine_ai_convert.ConvertError"):
 def _convert_runner(ctx: "ProjectCtx", source_script: str):
     """校验运行（注入 `ai_convert`）：走现有 probe 路径，**用户同一解释器 / 同一路由**；返回前退役它起的 worker。"""
 
-    def runner(figures_dir: str, rel: str) -> dict:
+    def runner(figures_dir: str, rel: str, write_roots: tuple[str, ...] | None = None) -> dict:
+        # `write_roots`：写入根绊线（ADR 0141 / 0143）——候选只许写候选目录（与 worker 基础设施目录），写项目文件在事件发生时失败
+        roots_kw = {"write_roots": tuple(write_roots)} if write_roots else {}
         try:
             run = engine_runconfig.default_selection(ctx.path, source_script)
         except Exception:  # noqa: BLE001 —— 配置读不出来就按不带参数跑
             run = None
         run_kw = {"run": run} if run is not None else {}
-        result = engine_probe.probe(figures_dir, rel, **run_kw)
+        result = engine_probe.probe(figures_dir, rel, **run_kw, **roots_kw)
         try:
             if result.get("error"):
                 err = result["error"]
@@ -11427,7 +11429,7 @@ def _convert_runner(ctx: "ProjectCtx", source_script: str):
             descs = result.get("descriptors") or []
             size = descs[0].get("size_mm") if descs and isinstance(descs[0], dict) else None
             svg = None
-            worker = engine_pool.peek(rel, figures_dir, **run_kw) if stems else None
+            worker = engine_pool.peek(rel, figures_dir, **run_kw, **roots_kw) if stems else None
             if worker is not None:
                 try:
                     p = Path(
@@ -11440,7 +11442,9 @@ def _convert_runner(ctx: "ProjectCtx", source_script: str):
             return {"stems": stems, "size_mm": size, "svg": svg}
         finally:
             try:
-                engine_pool.invalidate(rel, figures_dir, run or None, only_run=True, force=True)
+                engine_pool.invalidate(
+                    rel, figures_dir, run or None, only_run=True, force=True, **roots_kw
+                )
             except Exception:  # noqa: BLE001 —— 退役失败不改变校验结论；池会按 LRU 淘汰
                 LOG.warning("转换校验后的 worker 退役失败", exc_info=True)
 
