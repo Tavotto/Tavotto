@@ -81,6 +81,18 @@ class PixelJudgment(unittest.TestCase):
         self.assertEqual((got["status"], got["differences"]), ("not_run", []))
         self.assertIn("no numpy", got["note"])
 
+    def test_no_native_pixels_is_not_covered_not_a_failure_to_run(self):
+        a = png(self.tmp / "a.png")
+        got = OR.pixel_judgment({}, {"s": a}, self.out)
+        self.assertEqual((got["status"], got["differences"]), ("not_covered", []))
+        self.assertIn("no native pixel reference", got["note"])
+
+    def test_one_sided_stems_without_any_other_explanation_are_not_run(self):
+        a = png(self.tmp / "a.png")
+        got = OR.pixel_judgment({"s": a, "t": a}, {"s": a}, self.out)
+        self.assertEqual(got["status"], "not_run")
+        self.assertIn("['t']", got["note"])
+
     def test_only_common_stems_are_compared(self):
         a = png(self.tmp / "a.png")
         self.assertEqual(OR.pixel_judgment({"x": a}, {"y": a}, self.out)["status"], "not_run")
@@ -162,8 +174,12 @@ class Layers(unittest.TestCase):
             self.assertTrue(got["stages"][name]["criterion"])
 
     def test_no_tavotto_figures_means_every_layer_is_not_run(self):
-        got = ex.oracle_layers("shape_preserving", {"stems": {}}, {}, None, Path("/x"), None)
+        got = ex.oracle_layers(
+            "shape_preserving", {"stems": {}}, {"s": Path("/n.png")}, None, Path("/x"), None
+        )
         self.assertEqual({s["status"] for s in got["stages"].values()}, {"not_run"})
+        none = ex.oracle_layers("shape_preserving", {"stems": {}}, {}, None, Path("/x"), None)
+        self.assertEqual({s["status"] for s in none["stages"].values()}, {"not_covered"})
 
     def test_missing_parent_snapshot_is_not_a_structure_difference(self):
         tav = {"stems": {"s": {}}, "shots": {}, "snapshots": {"s": {}}, "shot_errors": {}}
@@ -209,6 +225,118 @@ class Layers(unittest.TestCase):
         for kind, family in expected.items():
             facts = TG.explore_facts(row, {"kind": kind, "evidence": {}})
             self.assertEqual(TG.attribute(facts, "explore", rules)["family"], family, kind)
+
+
+class UnresolvedLayers(unittest.TestCase):
+    """In-scope layers that did not run never read as clean; inapplicable ones never downgrade."""
+
+    CLEAN = {"outcome": "no_difference", "differences": []}
+
+    def layers(self, tmp, **over):
+        a = png(Path(tmp) / "a.png")
+        args = dict(
+            candidate_class="shape_preserving",
+            tavotto={
+                "stems": {"s": {}},
+                "shots": {"s": a},
+                "snapshots": {"s": {"g.p": 1}},
+                "shot_errors": {},
+                "inherited": {
+                    "stages": {n: OR.stage(n, "passed") for n in ("edit", "replay", "export")},
+                    "differences": [],
+                },
+            },
+            native_shots={"s": a},
+            parent_snapshot={"s": {"g.p": 1}},
+            evidence=Path(tmp) / "e",
+            native_note=None,
+        )
+        args.update(over)
+        return ex.oracle_layers(**args)
+
+    def verdict(self, layers):
+        return ex.apply_unresolved(self.CLEAN, layers["stages"])[0]
+
+    def test_everything_ran_stays_clean(self):
+        with tempfile.TemporaryDirectory() as t:
+            got = self.layers(t)
+            self.assertEqual(self.verdict(got)["outcome"], "no_difference")
+            self.assertEqual(OR.unresolved(got["stages"]), [])
+
+    def test_each_reason_a_layer_did_not_run_makes_the_candidate_unknown(self):
+        with tempfile.TemporaryDirectory() as t:
+            cases = {
+                "missing imaging deps": (
+                    mock.patch.object(
+                        pixelcompare,
+                        "_imaging",
+                        side_effect=pixelcompare.MissingImagingDeps("no numpy"),
+                    ),
+                    {},
+                    "fidelity",
+                ),
+                "native pixel render failed": (
+                    None,
+                    {"native_note": "native render failed: x"},
+                    "fidelity",
+                ),
+                "no common stem": (
+                    None,
+                    {"native_shots": {"other": Path(t) / "a.png"}},
+                    "fidelity",
+                ),
+                "parent snapshot unavailable": (None, {"parent_snapshot": None}, "structure"),
+            }
+            for label, (patch, over, stage) in cases.items():
+                if patch is None:
+                    got = self.layers(t, **over)
+                else:
+                    with patch:
+                        got = self.layers(t, **over)
+                self.assertEqual(got["stages"][stage]["status"], "not_run", label)
+                verdict = self.verdict(got)
+                self.assertEqual(verdict["outcome"], "unknown", label)
+                self.assertIn(stage, verdict["note"], label)
+
+    def test_inherited_stage_that_could_not_run_is_unknown(self):
+        with tempfile.TemporaryDirectory() as t:
+            base = self.layers(t)
+            tav = {
+                **{k: v for k, v in base.items() if False},
+                "stems": {"s": {}},
+                "shots": {"s": Path(t) / "a.png"},
+                "snapshots": {"s": {"g.p": 1}},
+                "shot_errors": {},
+                "inherited": {
+                    "stages": {},
+                    "differences": [],
+                    "note": "parent case stem not captured",
+                },
+            }
+            got = self.layers(t, tavotto=tav)
+            for name in ("edit", "replay", "export"):
+                self.assertEqual(got["stages"][name]["status"], "not_run")
+            self.assertEqual(self.verdict(got)["outcome"], "unknown")
+
+    def test_a_found_difference_is_kept_and_the_missing_layer_is_still_reported(self):
+        diff = {"outcome": "difference_found", "differences": [{"kind": "k"}]}
+        stages = {"structure": OR.stage("structure", "not_run", "why")}
+        got, missing = ex.apply_unresolved(diff, stages)
+        self.assertIs(got, diff)
+        self.assertEqual(missing, ["structure: why"])
+
+    def test_not_covered_layers_never_downgrade(self):
+        with tempfile.TemporaryDirectory() as t:
+            # axis-changing: structure / edit / replay / export are not_covered
+            got = self.layers(t, candidate_class="axis_changing")
+            self.assertEqual(self.verdict(got)["outcome"], "no_difference")
+            # no native pixel reference (show then close): fidelity is not_covered
+            got = self.layers(t, native_shots={}, candidate_class="axis_changing")
+            self.assertEqual(got["stages"]["fidelity"]["status"], "not_covered")
+            self.assertEqual(self.verdict(got)["outcome"], "no_difference")
+            # no figure on either side
+            got = self.layers(t, tavotto={"stems": {}, "shots": {}}, native_shots={})
+            self.assertEqual(self.verdict(got)["outcome"], "no_difference")
 
 
 class InheritedStages(unittest.TestCase):

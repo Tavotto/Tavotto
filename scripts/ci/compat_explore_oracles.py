@@ -64,17 +64,40 @@ def _evidence_file(src: Path, dest: Path, root: Path) -> dict:
     return {"path": dest.relative_to(root).as_posix(), "sha256": cg.digest(dest.read_bytes())}
 
 
+NO_NATIVE_PIXELS = (
+    "the native driver renders only figures saved with savefig or still open at exit; this script "
+    "leaves none (for example show() then close()), so there is no native pixel reference"
+)
+
+
+def unresolved(stages: dict) -> list[str]:
+    """In-scope layers that did not run (`not_run`): the candidate cannot be called clean."""
+    return [
+        f"{n}: {st.get('note') or 'not run'}"
+        for n, st in stages.items()
+        if st["status"] == "not_run"
+    ]
+
+
 def pixel_judgment(native_shots: dict, tavotto_shots: dict, out_dir: Path) -> dict:
     """Per common stem: native PNG vs Tavotto PNG against CompatBench's tolerance.
 
     Returns `{"status", "differences", "compared", "note"?}`. `status` is `passed`, `failed` or
-    `not_run` (nothing to compare, or the imaging dependencies are missing: no conclusion, which
-    is not a difference).
+    `not_run` (in scope but no conclusion: the imaging dependencies are missing, or the two sides
+    share no stem) or `not_covered` (structurally no native pixel reference: the native driver
+    renders figures saved with savefig or still open at exit, and this script has neither).
     """
     tol = _cm().FIDELITY_TOLERANCE
+    if not native_shots:
+        return {"status": "not_covered", "differences": [], "compared": 0, "note": NO_NATIVE_PIXELS}
     stems = sorted(set(native_shots) & set(tavotto_shots))
     if not stems:
-        return {"status": "not_run", "differences": [], "compared": 0, "note": "no common stem"}
+        return {
+            "status": "not_run",
+            "differences": [],
+            "compared": 0,
+            "note": f"no common stem: native {sorted(native_shots)} / Tavotto {sorted(tavotto_shots)}",
+        }
     diffs = []
     out_dir = Path(out_dir)
     for stem in stems:
@@ -116,6 +139,15 @@ def pixel_judgment(native_shots: dict, tavotto_shots: dict, out_dir: Path) -> di
                 "evidence": evidence,
             }
         )
+    unmatched = sorted(set(native_shots) ^ set(tavotto_shots))
+    if unmatched and not diffs:
+        # some figure on one side was never compared and nothing else explains it: no conclusion
+        return {
+            "status": "not_run",
+            "differences": [],
+            "compared": len(stems),
+            "note": f"stems present on one side only: {unmatched}",
+        }
     return {
         "status": "failed" if diffs else "passed",
         "differences": diffs,

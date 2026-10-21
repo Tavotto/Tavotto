@@ -363,6 +363,12 @@ def oracle_layers(
     """Judge the CG-06 layers of one executed candidate: `{"stages", "differences"}`."""
     stages = OR.blank_stages("not_run", "Tavotto observed nothing to judge")
     diffs: list[dict] = []
+    if not tavotto.get("stems") and not native_shots:
+        # no figure on either side: nothing for any layer to judge
+        return {
+            "stages": OR.blank_stages("not_covered", "no figure on either side"),
+            "differences": diffs,
+        }
     if not tavotto.get("stems") or "shots" not in tavotto:
         return {"stages": stages, "differences": diffs}
     # fidelity
@@ -408,6 +414,22 @@ def oracle_layers(
         for name in ("structure", "edit", "replay", "export"):
             stages[name] = OR.stage(name, "not_covered", OR.NOT_COVERED_AXIS_CHANGING)
     return {"stages": stages, "differences": diffs}
+
+
+def apply_unresolved(judgment: dict, stages: dict) -> tuple[dict, list[str]]:
+    """An in-scope layer that did not run (`not_run`) leaves a clean candidate without a verdict.
+
+    A found difference stays a difference (the missing layers are reported next to it);
+    `not_covered` layers are structurally inapplicable and never downgrade anything.
+    """
+    missing = OR.unresolved(stages)
+    if missing and judgment["outcome"] == "no_difference":
+        judgment = {
+            "outcome": "unknown",
+            "differences": [],
+            "note": "layer(s) did not run: " + "; ".join(missing),
+        }
+    return judgment, missing
 
 
 def execute_request(request: dict) -> dict:
@@ -496,9 +518,14 @@ def execute_request(request: dict) -> dict:
     result["judgment"] = audited_judgment(
         manifest["class"], result["judgment"], result["executions"]
     )
+    judged = layers and result["judgment"]["outcome"] in ("difference_found", "no_difference")
+    if judged:
+        result["judgment"], result["unresolved_layers"] = apply_unresolved(
+            result["judgment"], layers["stages"]
+        )
     result["stages"] = (
         layers["stages"]
-        if layers and result["judgment"]["outcome"] in ("difference_found", "no_difference")
+        if judged
         else OR.blank_stages("not_run", f"outcome {result['judgment']['outcome']}")
     )
     # the layer evidence belongs with the candidate; the tavotto-side shots are copied by the
@@ -766,6 +793,7 @@ def explore(args) -> int:
             "note": record["judgment"].get("note")
             or "; ".join(record.get("static_only_reasons", [])),
             "executions": record["executions"],
+            "unresolved_layers": record.get("unresolved_layers", []),
             "stages": record.get("stages")
             or OR.blank_stages(
                 "not_run", "; ".join(record.get("static_only_reasons", [])) or "not executed"
