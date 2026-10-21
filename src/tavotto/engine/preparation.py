@@ -146,6 +146,19 @@ class _StaleBeforeRetry(Exception):
         self.detail = detail or {}
 
 
+_NEEDS_INPUT_AFTER_REPLAN_NOTE = (
+    "自动采用用户的 Python 后，新环境需要先答一件事；没有执行任何脚本，答完后重新准备"
+)
+
+
+class _NeedsInputBeforeRetry(Exception):
+    """缺包后自动接手换了解释器、就地重算出的计划要用户先答一件事（依赖准备 / 运行目录）：第二次执行不能跑。"""
+
+    def __init__(self, required_input: dict) -> None:
+        super().__init__("needs_input")
+        self.required_input = dict(required_input)
+
+
 #: 作业保留多久（秒）——与导出作业同一口径：界面拿 plan_id 补拉要在窗口内。
 _TTL_S = 15 * 60
 
@@ -1009,6 +1022,16 @@ class PreparationService:
                     # 吸收环境变化，以及「没决定过 → 派生默认授权」那一种授权变化（`_replan_in_place` 里逐条核；
                     # 用户确认过的授权档变了、或授权因别的原因变了，它交回 None，下面照旧报过期）
                     plan = self._replan_in_place(entry, plan) or plan
+                    if plan.required_input:
+                        # 吸收后的新计划要用户先答一件事：发布的计划就是这份，不跑（与计划期的「需要输入」同终局）
+                        result.required_input = dict(plan.required_input)
+                        tr.mark("check", code=str(plan.required_input.get("code") or ""))
+                        self._finish(
+                            entry,
+                            STATUS_NEEDS_INPUT,
+                            note=_NEEDS_INPUT_AFTER_REPLAN_NOTE,
+                        )
+                        return
         stale = self._stale_reason(plan) if plan.script is not None else None
         if stale is not None:
             reason, detail = stale
@@ -1062,6 +1085,9 @@ class PreparationService:
             if stale is not None and stale[0] == STALE_GRANT:
                 # 缺包后自动接手了用户自己的 Python：同一种「本次运行自己带来的派生授权」，同样就地吸收
                 plan = self._replan_in_place(entry, plan) or plan
+                if plan.required_input:
+                    # 新计划（目标解释器上另一个静态依赖也缺）要先问用户：不跑第二次，回到需要用户动作的结局
+                    raise _NeedsInputBeforeRetry(plan.required_input)
                 stale = self._stale_reason(plan)
             if stale is not None:
                 raise _StaleBeforeRetry(*stale)
@@ -1072,6 +1098,18 @@ class PreparationService:
                 # asynchronous retirement is pending. Refuse if close is unknown.
                 pool.invalidate(plan.script, plan.project_root, plan.run, only_run=True, force=True)
             worker, resp, created = runner(plan, before_retry=before_retry)
+        except _NeedsInputBeforeRetry as exc:
+            if result.status in TERMINAL:
+                return  # 等待者已被取消放手（T09）：迟到的结局不写
+            tr.mark("execute", code=str(exc.required_input.get("code") or ""))
+            result.required_input = dict(exc.required_input)
+            self._finish(
+                entry,
+                STATUS_NEEDS_INPUT,
+                note="缺包后自动换了解释器，新环境还需要先授权依赖准备 / 选择运行目录；"
+                "没有按新环境重跑，答完后重新准备",
+            )
+            return
         except _StaleBeforeRetry as exc:
             if result.status in TERMINAL:
                 return  # 等待者已被取消放手（T09）：迟到的结局不写

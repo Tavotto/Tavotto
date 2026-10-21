@@ -524,6 +524,80 @@ def test_a_retry_under_a_different_interpreter_is_stale_even_when_the_grant_did_
     assert result.receipt is None
 
 
+def _plan_requiring_input(monkeypatch):
+    """替身：就地重算出的计划多了一条 `required_input`（目标解释器上另一个静态依赖缺，要先授权依赖准备）。"""
+    import dataclasses
+
+    from tavotto.engine import deprepair
+
+    real = preparation.plan_for
+    needed = {"code": deprepair.ERROR_PREPARATION_REQUIRED, "message": "x"}
+
+    def fake(**kw):
+        return dataclasses.replace(real(**kw), required_input=dict(needed))
+
+    monkeypatch.setattr(preparation, "plan_for", fake)
+    return needed
+
+
+def test_a_retry_whose_absorbed_replan_needs_input_ends_needs_input_and_does_not_run_again(
+    tmp_path, fake_pool, monkeypatch
+):
+    """Codex #1294 P2：缺包后自动接手了用户自己的 Python，吸收派生授权后的重算计划要用户先答一件事
+    （依赖准备）——第二次执行不能跑（用户代码与副作用不能在「需要输入」的计划下发生），结局是 needs_input。"""
+    from tavotto.engine import workdir
+
+    svc = preparation.PreparationService()
+    root = _project(tmp_path, "p")
+    plan = preparation.plan_for(
+        project_id="pj",
+        project_root=str(root),
+        asset_id="fig.pdf",
+        stem="fig",
+        script="fig.py",
+        entry="__main__",
+        original_artifact="fig.pdf",
+    )
+    svc.register(plan)
+    ran = []
+
+    def runner(pl, before_retry=None):
+        ran.append("first")
+        monkeypatch.setattr(workdir, "_user_interpreter_probe", lambda r: True)
+        needed = _plan_requiring_input(monkeypatch)
+        runner.needed = needed
+        before_retry()
+        ran.append("second")
+        raise AssertionError("重算计划要用户先答，还在重跑")
+
+    svc.start(plan.plan_id, runner=runner)
+    assert svc.wait(plan.plan_id, 30)
+    entry_plan, result = svc.get(plan.plan_id, "pj")
+    assert ran == ["first"]
+    assert result.status == preparation.STATUS_NEEDS_INPUT, result.error
+    assert result.required_input == runner.needed
+    assert result.receipt is None and result.error is None
+
+
+def test_auto_adoption_whose_absorbed_replan_needs_input_does_not_run(
+    client, tmp_path, fake_pool, monkeypatch
+):
+    """同一判据的另一处消费者：起会话之前吸收（`_replan_in_place`）得到的计划要用户先答 → needs_input，一次都不 build。"""
+    root = _project(tmp_path, "p")
+    _open(client, root)
+    hold = threading.Event()
+    monkeypatch.setattr(engine_pool, "peek", lambda script, root, **k: hold.wait(30) and None)
+    resp = client.post("/api/engine/preparation", json={"id": "fig.pdf"})
+    plan = resp.get_json()["plan"]
+    _adopt_during_run(monkeypatch, root)
+    needed = _plan_requiring_input(monkeypatch)
+    hold.set()
+    body = _wait(client, plan["plan_id"])
+    assert body["result"]["status"] == preparation.STATUS_NEEDS_INPUT, body["result"]
+    assert body["result"]["required_input"]["code"] == needed["code"]
+    assert fake_pool["build_calls"] == 0
+
+
 # ---------------------------------------------------------------- 项目绑定（FO-008）
 
 
