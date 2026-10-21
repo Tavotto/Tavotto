@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import contextlib
+import functools
 import json
 import os
 import re
@@ -247,16 +248,94 @@ def row_owner_alive(row, now_ms: int | None = None) -> bool:
 REQUEST_KEEP_DAYS = 30
 
 
+def _schema_statements() -> list[str]:
+    """`_SCHEMA` 逐条拆开：`executescript` 会先 COMMIT 掉当前事务，放不进 `BEGIN IMMEDIATE` 里。"""
+    out: list[str] = []
+    buf = ""
+    for line in _SCHEMA.splitlines(keepends=True):
+        buf += line
+        if sqlite3.complete_statement(buf):
+            out.append(buf)
+            buf = ""
+    return out
+
+
+def _apply_schema(con: sqlite3.Connection) -> None:
+    for stmt in _schema_statements():
+        con.execute(stmt)
+    _migrate(con)
+
+
+def _shape(con: sqlite3.Connection) -> tuple[set[tuple[str, str]], dict[str, set[str]]]:
+    """库的形状：(对象类型, 名字) 集合 + 每张表的列名。只读，不拿写锁。"""
+    objects = {
+        (row[0], row[1])
+        for row in con.execute(
+            "SELECT type, name FROM sqlite_master WHERE name NOT LIKE 'sqlite_%'"
+        )
+    }
+    cols = {
+        name: {row[1] for row in con.execute(f"PRAGMA table_info({name})")}
+        for kind, name in objects
+        if kind == "table"
+    }
+    return objects, cols
+
+
+@functools.cache
+def _target_shape() -> tuple[set[tuple[str, str]], dict[str, set[str]]]:
+    """全新库建好、迁移完之后应有的形状——探测「已迁移」的基准，由 `_apply_schema` 自己产生，
+    以后加列 / 加索引不用另改一份清单。"""
+    ref = sqlite3.connect(":memory:")
+    ref.row_factory = sqlite3.Row
+    try:
+        _apply_schema(ref)
+        return _shape(ref)
+    finally:
+        ref.close()
+
+
+_BACKFILL_PENDING = (
+    "SELECT 1 FROM sessions s WHERE s.client_request_id IS NOT NULL AND NOT EXISTS ("
+    "SELECT 1 FROM ai_requests r WHERE r.project = s.project AND r.client_request_id = s.client_request_id) LIMIT 1"
+)
+
+
+def _needs_setup(con: sqlite3.Connection) -> bool:
+    """只读探测：建表 / 补列 / 索引 / 回填有任何一项缺，就要进写事务补齐。平时（库已迁移好）返回 False，
+    连接不碰写锁。"""
+    want_objects, want_cols = _target_shape()
+    objects, cols = _shape(con)
+    if not want_objects <= objects:
+        return True
+    if any(not want <= cols.get(table, set()) for table, want in want_cols.items()):
+        return True
+    return con.execute(_BACKFILL_PENDING).fetchone() is not None
+
+
 def _connect(db_path: Path | None = None) -> sqlite3.Connection:
     path = db_path or DB_PATH
     path.parent.mkdir(parents=True, exist_ok=True)
     con = sqlite3.connect(path, timeout=10)
     con.row_factory = sqlite3.Row
-    con.executescript(_SCHEMA)
-    _migrate(con)
-    # 迁移里的回填是个写语句：不提交的话这条连接从一打开就占着写锁（所有 `with _connect()` 写入者因此被**碰巧**串行化，
-    # 而读-判-写的原子性不该靠这种巧合）。提交掉，需要原子性的写入者自己用 `_immediate`
-    con.commit()
+    if _needs_setup(con):
+        # 建表 + 迁移整个放进一个 `BEGIN IMMEDIATE`：开头就拿写锁，busy handler 才会等 timeout。
+        # 延迟事务里「先读后写」的升级遇到别的连接持锁时，SQLite 为避免死锁**立即**返回 SQLITE_BUSY、不调 busy handler，
+        # timeout=10 形同虚设（Windows CI 上多线程首次打开新库的 `database is locked`）。
+        # 迁移也不会把写锁留给调用方：事务提交后这条连接不占锁，需要原子性的写入者自己用 `_immediate`
+        con.isolation_level = None
+        try:
+            con.execute("BEGIN IMMEDIATE")
+            try:
+                _apply_schema(con)
+            except BaseException:
+                con.execute("ROLLBACK")
+                raise
+            con.execute("COMMIT")
+        except BaseException:
+            con.close()
+            raise
+        con.isolation_level = ""
     return con
 
 
