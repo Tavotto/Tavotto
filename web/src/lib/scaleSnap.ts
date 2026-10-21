@@ -105,34 +105,41 @@ export function snapScaleNearest(p: ScaleSnapParams): ScalePick | null {
     return { s, dist: Math.abs(a.f + off * s0 - line.v), jump, anchor, line }
   }
 
-  let best: { tier: number; dist: number; axis: 'x' | 'y'; ai: number; li: number; s: number } | null = null
+  type Pick = { tier: number; dist: number; axis: 'x' | 'y'; ai: number; li: number; s: number }
+  const better = (c: Pick, cur: Pick | null) =>
+    !cur || c.tier < cur.tier || (c.tier === cur.tier && c.dist < cur.dist)
+
+  // 被保持的那一对（仍在 1.75×容差内才算数）；让位对所有合格对判断，不只看总冠军：
+  // 档位更好但太远的一对不能遮住「档位不更差、且近到 0.25 倍以内」的另一对
+  const held = hold?.held
+  const heldEval = held ? evalPair(held.axis, held.ai, held.li) : null
+  const holdOk =
+    !!held && !!heldEval && heldEval.dist < tol * HOLD_FACTOR && heldEval.jump < tol * SCALE_JUMP_FACTOR * HOLD_FACTOR
+  const heldTier = held && holdOk ? scaleTier(axes[held.axis === 'x' ? 0 : 1].as[held.ai].frame, heldEval!.line) : 0
+
+  let best: Pick | null = null
+  let yieldTo: Pick | null = null
   for (const { axis, as, ls } of axes) {
     for (let ai = 0; ai < as.length; ai++) {
       for (let li = 0; li < ls.length; li++) {
         const r = evalPair(axis, ai, li)
         if (!r || r.dist >= tol || r.jump >= tol * SCALE_JUMP_FACTOR) continue
-        const tier = scaleTier(as[ai].frame, ls[li])
-        if (!best || tier < best.tier || (tier === best.tier && r.dist < best.dist))
-          best = { tier, dist: r.dist, axis, ai, li, s: r.s }
+        const c: Pick = { tier: scaleTier(as[ai].frame, ls[li]), dist: r.dist, axis, ai, li, s: r.s }
+        if (better(c, best)) best = c
+        if (
+          holdOk &&
+          !(axis === held!.axis && ai === held!.ai && li === held!.li) &&
+          c.tier <= heldTier &&
+          c.dist < heldEval!.dist * SNAP_HOLD_YIELD_RATIO &&
+          better(c, yieldTo)
+        )
+          yieldTo = c
       }
     }
   }
 
-  const held = hold?.held
-  if (held) {
-    const r = evalPair(held.axis, held.ai, held.li)
-    if (r && r.dist < tol * HOLD_FACTOR && r.jump < tol * SCALE_JUMP_FACTOR * HOLD_FACTOR) {
-      // 让位（与图内吸附同一比例 SNAP_HOLD_YIELD_RATIO，ADR 0128 §一修订 2026-10-21）：
-      // 另一对档位不更差、且距离 < 被保持那对的 0.25 倍时让给它
-      const heldTier = scaleTier(axes[held.axis === 'x' ? 0 : 1].as[held.ai].frame, r.line)
-      const yields =
-        best &&
-        (best.axis !== held.axis || best.ai !== held.ai || best.li !== held.li) &&
-        best.tier <= heldTier &&
-        best.dist < r.dist * SNAP_HOLD_YIELD_RATIO
-      if (!yields) return { s: r.s, axis: held.axis, anchor: r.anchor, line: r.line }
-    }
-  }
+  if (holdOk && !yieldTo) return { s: heldEval!.s, axis: held!.axis, anchor: heldEval!.anchor, line: heldEval!.line }
+  if (yieldTo) best = yieldTo // 让位时挑合格对里按档位 / 距离最好的（ADR 0128 §一修订）
   if (hold) hold.held = best && { axis: best.axis, ai: best.ai, li: best.li }
   if (!best) return null
   const a = axes[best.axis === 'x' ? 0 : 1]

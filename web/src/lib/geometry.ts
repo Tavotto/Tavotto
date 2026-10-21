@@ -230,35 +230,37 @@ export function snapMoveNearest(
   ): { d: number; pick: SnapPick } | null => {
     const offs = [0, size / 2, size]
     const ok = (e: SnapEdge, l: SnapLine) => !pair || pair(e, l)
+    type P = { d: number; r: number; idx: number; e: SnapEdge }
+    const better = (c: P, cur: P | null) =>
+      !cur || c.r < cur.r || (c.r === cur.r && Math.abs(c.d) < Math.abs(cur.d))
+    // 被保持的那一对（仍在 1.75×容差内才算数）；让位对所有合格对判断，不只看总冠军（Codex P2）：
+    // 档位更好但太远的一对不能遮住「档位不更差、且近到 0.25 倍以内」的另一对
     const held = hold?.[axis]
-    let best: { d: number; r: number; idx: number; e: SnapEdge } | null = null
+    const heldLine = held ? lines[held.idx] : undefined
+    const heldD = held && heldLine && ok(held.selfEdge, heldLine) ? heldLine.v - (start + offs[held.selfEdge]) : null
+    const holdOk = heldD !== null && Math.abs(heldD) < tol * SNAP_HOLD_FACTOR
+    const heldRank = holdOk && rank ? rank(held!.selfEdge, heldLine!) : 0
+    let best: P | null = null
+    let yieldTo: P | null = null
     for (const e of [0, 1, 2] as const) {
       for (let idx = 0; idx < lines.length; idx++) {
         const line = lines[idx]
         const d = line.v - (start + offs[e])
         if (Math.abs(d) >= tol || !ok(e, line)) continue
-        const r = rank ? rank(e, line) : 0
-        if (!best || r < best.r || (r === best.r && Math.abs(d) < Math.abs(best.d)))
-          best = { d, r, idx, e }
+        const c: P = { d, r: rank ? rank(e, line) : 0, idx, e }
+        if (better(c, best)) best = c
+        if (
+          holdOk &&
+          (idx !== held!.idx || e !== held!.selfEdge) &&
+          c.r <= heldRank &&
+          Math.abs(d) < Math.abs(heldD!) * SNAP_HOLD_YIELD_RATIO &&
+          better(c, yieldTo)
+        )
+          yieldTo = c
       }
     }
-    if (held) {
-      const line = lines[held.idx]
-      if (line && ok(held.selfEdge, line)) {
-        const d = line.v - (start + offs[held.selfEdge])
-        if (Math.abs(d) < tol * SNAP_HOLD_FACTOR) {
-          // 让位（2026-10-21 用户裁决）：另一条线（不同的一对）已经近到被保持线距离的 0.25 倍以内，
-          // 且档位不更差，就让给它——否则子图已经差 0.6 px 就能对准目标，却被远处一条 hold 线拽住
-          const heldRank = rank ? rank(held.selfEdge, line) : 0
-          const yields =
-            best &&
-            (best.idx !== held.idx || best.e !== held.selfEdge) &&
-            best.r <= heldRank &&
-            Math.abs(best.d) < Math.abs(d) * SNAP_HOLD_YIELD_RATIO
-          if (!yields) return { d, pick: { selfEdge: held.selfEdge, line } }
-        }
-      }
-    }
+    if (holdOk && !yieldTo) return { d: heldD!, pick: { selfEdge: held!.selfEdge, line: heldLine! } }
+    if (yieldTo) best = yieldTo
     if (hold) hold[axis] = best ? { selfEdge: best.e, idx: best.idx } : null
     return best && { d: best.d, pick: { selfEdge: best.e, line: lines[best.idx] } }
   }

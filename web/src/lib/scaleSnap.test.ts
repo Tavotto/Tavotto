@@ -176,6 +176,15 @@ describe('snapScaleNearest', () => {
     expect(near(70.5)).toBe(70) // 距 0.3 ≥ 0.2：仍保持
   })
 
+  it('hold 让位对所有合格对判断：档位更好但太远的一对不能遮住精确的同档新对（Codex P2）', () => {
+    const hold = createScaleHold()
+    const cands = { xs: [line(70, 'axes'), line(70.8, 'axes'), line(70.5, 'frame')], ys: [] }
+    const common = { ...base, anchors: anchorsOf(), cands, hold }
+    expect(snapScaleNearest({ ...common, s0: 1.49 })?.line.v).toBe(70) // 先吸住第二档的 70
+    // 70.8：第二档 70 距 0.8；第一档 70.5 距 0.3（≥ 0.2，不够让）；第二档 70.8 距 0（< 0.2，够让）
+    expect(snapScaleNearest({ ...common, s0: (70.8 - 10) / 40 })?.line.v).toBe(70.8)
+  })
+
   it('没有 hold 时同样的位置按最近挑（对照上一条）', () => {
     const cands = { xs: [line(70, 'frame'), line(70.6, 'frame')], ys: [] }
     const hit = snapScaleNearest({ ...base, s0: (70.8 - 10) / 40, anchors: anchorsOf(), cands })

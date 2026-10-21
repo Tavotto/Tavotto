@@ -128,6 +128,7 @@
   那一帧清空，⇧ 锁向时没被采用的轴也清空。画布对象层 `snapMove` 不动。
   **hold 让位（2026-10-21，用户裁决，ADR 0128 §一修订）**：另一对的距离 < 被保持那对当前距离的 0.25 倍
   （`geometry.SNAP_HOLD_YIELD_RATIO`，档位不更差）时让给它；否则 hold 照旧防抖。等比缩放吸附同比例。
+  让位对所有合格对判断（不只看档位优先的总冠军），看护 `scaleSnap.test.ts` 的「所有合格对」一条。
   看护 `lib/snapNearest.test.ts` / `lib/scaleSnap.test.ts` 的让位两条、`e2e/snap-hold-yield-tutorial.spec.ts`。
   ⑧ **跨图对齐同类元素 + 参考线 + 子图缩放手柄吸附（ADR 0128 §二，PR2）**：手势起手把本图候选、
   跨图候选（`elementGeom.crossFigureSnapCandidates`）与参考线合成**一份**数组（hold 按下标认线），
