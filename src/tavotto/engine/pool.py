@@ -3849,6 +3849,8 @@ def pin_of_worker(worker) -> EnvironmentDecision:
         source=getattr(worker, "python_source", "") or "",
         generation=getattr(worker, "python_generation", "") or "",
         launch_context=getattr(worker, "launch_context", "") or "",
+        # 热会话带着的叠加环境（ROOT）也一并钉：重放 worker 与热会话同一环境，不再回头读项目记录
+        env_overlay=getattr(worker, "env_overlay", None) or None,
     )
 
 

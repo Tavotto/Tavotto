@@ -629,3 +629,28 @@ def test_remembered_bundled_python_keeps_the_bundled_source(tmp_path, monkeypatc
     assert engine_pool.remembered_source(proj, bundled) == engine_pool.SOURCE_BUNDLED
     other = _touch(tmp_path / "o" / "bin" / "python")
     assert engine_pool.remembered_source(proj, other) != engine_pool.SOURCE_BUNDLED
+
+
+def test_pin_of_worker_carries_the_hot_sessions_overlay(tmp_path, clean_state):  # noqa: F811
+    """写回重放 / 冷重放钉的是热会话自己的环境：带 ROOT 叠加的热会话，钉下的决定也带它，
+    重放 worker 起来时 `_overlay_for` 回同一份（不是回头读项目记录，更不是 None）。"""
+    proj = tmp_path / "p"
+    proj.mkdir()
+    py = _touch(tmp_path / "e" / "bin" / "python")
+    spec = {"kind": "root", "root": str(tmp_path / "r"), "version": "6.38.02"}
+
+    class _Hot:
+        python = py
+        python_source = "system"
+        python_generation = ""
+        launch_context = ""
+        env_overlay = spec
+
+    pin = engine_pool.pin_of_worker(_Hot())
+    assert pin.env_overlay == spec
+    assert engine_pool._overlay_for(str(proj), py, pin) == spec
+
+    class _Bare(_Hot):
+        env_overlay = None
+
+    assert engine_pool.pin_of_worker(_Bare()).env_overlay is None
