@@ -243,6 +243,7 @@ def _install_savefig_hook(mfigure) -> None:
                     kwargs.get("bbox_extra_artists"),
                     locked=stem in _CAPTURE_LOCKED,
                 )
+                figcapture.mark_saved(self)
             except Exception:  # noqa: BLE001
                 pass
         if _CAPTURING:
@@ -391,6 +392,7 @@ def collect_pyplot(plt) -> None:
     figcapture.adopt_displaced_writers(
         _CAPTURE_WRITERS, _CAPTURE, _CAPTURE_SOURCE, _CAPTURE_SAVEFIG, _CAPTURE_EXTRAS
     )
+    figcapture.note_modified_after_save(_CAPTURE, _CAPTURE_SOURCE)
     stems, dropped = figcapture.collect_pyplot_figures(_CAPTURE, _SCRIPT_STEM[0], plt)
     for stem in stems:
         _CAPTURE_SOURCE[stem] = figcapture.SOURCE_PYPLOT
@@ -1476,6 +1478,7 @@ def main(argv: list | None = None) -> int:
     figcapture.adopt_displaced_writers(
         _CAPTURE_WRITERS, _CAPTURE, _CAPTURE_SOURCE, _CAPTURE_SAVEFIG, _CAPTURE_EXTRAS
     )
+    figcapture.note_modified_after_save(_CAPTURE, _CAPTURE_SOURCE)
     plt = sys.modules.get("matplotlib.pyplot")
     if plt is not None:
         collect_pyplot(plt)

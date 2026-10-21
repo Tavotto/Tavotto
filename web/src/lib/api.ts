@@ -2469,6 +2469,11 @@ export interface Manifest {
    * figsize 出图、可能切边。有它才分得清「算不出」与「脚本本来就不裁」；缺席 = 两者之外。
    */
   frame_unavailable?: string
+  /**
+   * 脚本存完盘之后又改过这张图（ADR 0139 §八）：编辑的是脚本跑完时的最终态，与磁盘上的文件不同。
+   * 只在为真时出现；老引擎不发它。
+   */
+  modified_after_save?: boolean
 }
 
 export interface EngineRenderResponse {

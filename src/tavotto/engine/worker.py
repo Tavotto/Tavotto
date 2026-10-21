@@ -1349,6 +1349,8 @@ class Worker(wireproto.V1Handler):
             self.session.savefig_extras,
             self.session.savefig_file_stem,
         )
+        # 存盘后又被脚本改过的图（ADR 0139 §八）：脚本刚跑完、Tavotto 还没碰任何一张图，此刻判
+        figcapture.note_modified_after_save(self.session.capture, self.session.capture_source)
         _plt = sys.modules.get("matplotlib.pyplot")
         if _plt is not None:
             fallback, dropped = figcapture.collect_pyplot_figures(

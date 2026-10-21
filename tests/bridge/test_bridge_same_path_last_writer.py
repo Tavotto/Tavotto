@@ -247,3 +247,32 @@ def test_native_other_figure_on_the_same_stem_is_adopted(tmp_path, bridge_sessio
         sess.wait_event("barrier")
         sess.resume()
         sess.wait_event("exit")
+
+
+MUTATED_AFTER_SAVE = """\
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+fig, ax = plt.subplots(figsize=(2, 1.5))
+ax.set_title("saved")
+fig.savefig("mut.png")
+ax.set_title("mutated")
+keep, kx = plt.subplots(figsize=(2, 1.5))
+keep.savefig("keep.png")
+plt.show()
+"""
+
+
+def test_native_reports_a_figure_the_script_changed_after_saving(tmp_path, bridge_session):
+    """真写盘的 native 入口与 safe worker 同一判据（`figcapture.mark_saved` / `note_modified_after_save`）。"""
+    proj = tmp_path / "proj"
+    write(proj / "mut.py", MUTATED_AFTER_SAVE)
+    with bridge_session(proj / "mut.py", cwd=str(proj)) as sess:
+        sess.wait_event("barrier")
+        sess.ensure_built()
+        assert sess.override("mut", [])["manifest"].get("modified_after_save") is True
+        assert "modified_after_save" not in sess.override("keep", [])["manifest"]
+        sess.resume()
+        sess.wait_event("barrier")
+        sess.resume()
+        sess.wait_event("exit")

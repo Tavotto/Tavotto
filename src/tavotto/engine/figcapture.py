@@ -1658,7 +1658,13 @@ def savefig_verify_render(real_savefig, fig, fname, args, kwargs: dict) -> bool:
             kw["format"] = ext
         # tight 量包围盒失败在原生下同样会抛、文件不会写出：与 native 同源判失败（Codex #1141 r4306180020）。
         # 这里只决定**顶替**，持有者自己的保存不经验证，ADR 0098 的 frame_unavailable 报告不受影响
-        real_savefig(fig, io.BytesIO(), *args, **kw)
+        # 验证渲染是我们的动作、不是脚本改图：`stale` 原样还回去（`mark_saved` / `note_modified_after_save` 读它）
+        stale = getattr(fig, "stale", None)
+        try:
+            real_savefig(fig, io.BytesIO(), *args, **kw)
+        finally:
+            if stale is not None:
+                fig.stale = stale
     except Exception:  # noqa: BLE001 —— 原生下这次保存会抛
         return False
     return True
@@ -1694,6 +1700,45 @@ def _content_only_failure(real_savefig, fname, args, kwargs: dict) -> bool:
         return savefig_verify_render(real_savefig, Figure(), fname, args, dict(kwargs))
     except Exception:  # noqa: BLE001
         return False
+
+
+#: 「这张图被观察到存过盘」的标记；与 `fig.stale` 一起判「存完之后脚本又改过它」（ADR 0139 §八 的告知）
+_SAVED_MARK = "_mm_saved_once"
+#: 判过一次的结论（True = 存盘后被脚本改过）；只判一次——之后 Tavotto 自己的编辑也会让 `stale` 变 True
+MODIFIED_AFTER_SAVE = "_mm_modified_after_save"
+
+
+def mark_saved(fig) -> None:
+    """一次 savefig 记完账之后调用：把 `stale` 清成 False 并打上「存过盘」的标记。
+
+    matplotlib 里任何会改变画面的 setter 都把 `stale=True` 一路回调到 Figure（实测：标题 / 颜色 / 范围 /
+    加文字 / 加轴 / `cla` / 改尺寸都会；只改 rcParams 不改已有 artist，不会）。存盘那一刻清零，脚本跑完再看：
+    仍是 False = 磁盘上的文件就是脚本跑完的样子；True = 存完又改过，Tavotto 编辑的最终态与文件不同。
+    不额外渲染、不复制 Figure（ADR 0139 §八「不声称拥有保存瞬间的快照」——这里只报一个事实）。
+    `savefig` 自己在 `print_figure` 收尾时会把 `stale` 置 True（实测 3.11），所以必须在保存**之后**清。"""
+    try:
+        fig.stale = False
+        setattr(fig, _SAVED_MARK, True)
+    except Exception:  # noqa: BLE001 —— 记账尽力而为，绝不影响用户的 savefig
+        pass
+
+
+def note_modified_after_save(capture: dict, capture_source: dict) -> list[str]:
+    """脚本跑完（或 native 第一次把图交出去）时，给存过盘、之后又被脚本改过的 savefig 图打上
+    `MODIFIED_AFTER_SAVE`；返回这些 stem。每张图只判一次：判过之后 Tavotto 自己的编辑同样会让 `stale` 变 True，
+    再判就是把我们的改动算到脚本头上。三条入口在 `adopt_displaced_writers` 之后各调一次；manifest 读这个标记。"""
+    out = []
+    for stem, fig in capture.items():
+        if capture_source.get(stem) != SOURCE_SAVEFIG or not getattr(fig, _SAVED_MARK, False):
+            continue
+        if not hasattr(fig, MODIFIED_AFTER_SAVE):
+            try:
+                setattr(fig, MODIFIED_AFTER_SAVE, bool(getattr(fig, "stale", False)))
+            except Exception:  # noqa: BLE001
+                continue
+        if getattr(fig, MODIFIED_AFTER_SAVE, False):
+            out.append(stem)
+    return out
 
 
 def savefig_verifier(real_savefig, fig, fname, args, kwargs: dict):

@@ -215,6 +215,8 @@
     "hide": "Hide (restorable)",
     "isolateBranch": "Isolate this branch",
     "isolated": "Isolated: {{label}}",
+    "modifiedAfterSave": "Differs from the saved file",
+    "modifiedAfterSaveHint": "The script changed this figure after saving it. You are editing the figure as it was when the script finished, so it can differ from the file on disk.",
     "listLabel": "Figure elements",
     "load": "Load element list",
     "lock": "Lock (canvas clicks skip it)",

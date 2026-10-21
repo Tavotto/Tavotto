@@ -911,6 +911,7 @@ class LiveFigureSession:
             locked=stem in self.states or stem in self.failures,
             verify=verify,
         )
+        figcapture.mark_saved(fig)
 
     def note_artifact(self, observation, stem, fig, extra_artists):
         if self.artifact_source is None:
