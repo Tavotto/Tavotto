@@ -38,9 +38,16 @@ Fake Executor 的形状：实现 `AgentDefinition` 的测试适配器（`tests/t
 | 时延 | 中位数 / P95（墙钟，按阶段拆） |
 | Tokens / Cost per Verified Task | 只在真实模型基准上记，来源是 CLI 自报的用量 |
 | User Intervention Rate | outcome = needs_input / partial 的比例 |
+| TAF Overclaim Rate（6b 新增） | 基准判反例违反了目标 / 保持断言、TAF 却给 completed 的比例——任务结局对用户「说多了」 |
 
 报告字段：基线 / 候选策略版本、场景集与夹具版本（git sha）、模型与 CLI 版本、OS、matplotlib 版本、执行次数、
 每个场景的 outcome 与 verdict、未运行与不可比的场景（独立状态，不并进分母）。
+
+**Phase 6b 基线**（`scripts/dev/taf_bench.py --negatives`，回放执行器，Pack v1，macOS / matplotlib 3.11.2；
+`evidence/bench-6b-baseline.json`）：dev 14 个可回放场景 + 16 个反例全部跑完（not_run 0）。参考解首发 verified 1.0、
+科学保持 1.0、非预期修改 0；反例被基准抓住 1.0。**TAF Overclaim 0.625**（16 个被抓住的反例里 10 个 TAF 自己判
+completed）：提交后验证只核数据指纹，标题 / 单位 / 配色 / 刻度类型 / 图例的改动它看不见——这是 Harness Lab 与后续
+验证层要压低的数，不是基准的问题。
 
 ## 四、防过拟合
 

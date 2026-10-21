@@ -1,0 +1,358 @@
+{
+  "environment": {
+    "git_sha": "9020667ed6de5f57833eca93cb4d7132836ed78a",
+    "pack": {
+      "id": "figure_edit",
+      "version": 1
+    },
+    "executor": "replay",
+    "os": "darwin",
+    "python": "3.13.16",
+    "matplotlib": "3.11.2"
+  },
+  "rows": [
+    {
+      "id": "FB-S02",
+      "variant": "ref",
+      "outcome": "completed",
+      "figure_verdict": "verified",
+      "goal": "verified",
+      "preserve": "verified",
+      "unintended": false,
+      "wall_s": 2.972,
+      "error": null
+    },
+    {
+      "id": "FB-S02",
+      "variant": "n.only_one",
+      "outcome": "completed",
+      "figure_verdict": "verified",
+      "goal": "failed",
+      "preserve": "verified",
+      "unintended": false,
+      "wall_s": 1.44,
+      "error": null
+    },
+    {
+      "id": "FB-S03",
+      "variant": "ref",
+      "outcome": "completed",
+      "figure_verdict": "verified",
+      "goal": "verified",
+      "preserve": "verified",
+      "unintended": false,
+      "wall_s": 1.415,
+      "error": null
+    },
+    {
+      "id": "FB-S03",
+      "variant": "n.collateral",
+      "outcome": "completed",
+      "figure_verdict": "verified",
+      "goal": "verified",
+      "preserve": "failed",
+      "unintended": false,
+      "wall_s": 1.408,
+      "error": null
+    },
+    {
+      "id": "FB-S04",
+      "variant": "ref",
+      "outcome": "completed",
+      "figure_verdict": "verified",
+      "goal": "verified",
+      "preserve": "verified",
+      "unintended": false,
+      "wall_s": 1.453,
+      "error": null
+    },
+    {
+      "id": "FB-S04",
+      "variant": "n.legend_removed",
+      "outcome": "completed",
+      "figure_verdict": "verified",
+      "goal": "failed",
+      "preserve": "verified",
+      "unintended": false,
+      "wall_s": 1.351,
+      "error": null
+    },
+    {
+      "id": "FB-S05",
+      "variant": "ref",
+      "outcome": "completed",
+      "figure_verdict": "verified",
+      "goal": "verified",
+      "preserve": "verified",
+      "unintended": false,
+      "wall_s": 1.393,
+      "error": null
+    },
+    {
+      "id": "FB-S05",
+      "variant": "n.unit_changed",
+      "outcome": "completed",
+      "figure_verdict": "verified",
+      "goal": "verified",
+      "preserve": "failed",
+      "unintended": false,
+      "wall_s": 1.405,
+      "error": null
+    },
+    {
+      "id": "FB-S06",
+      "variant": "ref",
+      "outcome": "completed",
+      "figure_verdict": "verified",
+      "goal": "verified",
+      "preserve": "verified",
+      "unintended": false,
+      "wall_s": 1.411,
+      "error": null
+    },
+    {
+      "id": "FB-S06",
+      "variant": "n.normalized",
+      "outcome": "failed",
+      "figure_verdict": "failed",
+      "goal": "verified",
+      "preserve": "failed",
+      "unintended": false,
+      "wall_s": 1.398,
+      "error": null
+    },
+    {
+      "id": "FB-S06",
+      "variant": "n.clim",
+      "outcome": "completed",
+      "figure_verdict": "verified",
+      "goal": "verified",
+      "preserve": "failed",
+      "unintended": false,
+      "wall_s": 1.4,
+      "error": null
+    },
+    {
+      "id": "FB-S07",
+      "variant": "ref",
+      "outcome": "completed",
+      "figure_verdict": "verified",
+      "goal": "verified",
+      "preserve": "verified",
+      "unintended": false,
+      "wall_s": 1.398,
+      "error": null
+    },
+    {
+      "id": "FB-S07",
+      "variant": "n.unit_invented",
+      "outcome": "completed",
+      "figure_verdict": "verified",
+      "goal": "failed",
+      "preserve": "verified",
+      "unintended": false,
+      "wall_s": 1.404,
+      "error": null
+    },
+    {
+      "id": "FB-S08",
+      "variant": "ref",
+      "outcome": "completed",
+      "figure_verdict": "verified",
+      "goal": "verified",
+      "preserve": "verified",
+      "unintended": false,
+      "wall_s": 1.333,
+      "error": null
+    },
+    {
+      "id": "FB-S08",
+      "variant": "n.retitled",
+      "outcome": "completed",
+      "figure_verdict": "verified",
+      "goal": "verified",
+      "preserve": "failed",
+      "unintended": false,
+      "wall_s": 1.318,
+      "error": null
+    },
+    {
+      "id": "FB-S09",
+      "variant": "ref",
+      "outcome": "completed",
+      "figure_verdict": "verified",
+      "goal": "verified",
+      "preserve": "verified",
+      "unintended": false,
+      "wall_s": 1.359,
+      "error": null
+    },
+    {
+      "id": "FB-S09",
+      "variant": "n.both",
+      "outcome": "completed",
+      "figure_verdict": "verified",
+      "goal": "verified",
+      "preserve": "failed",
+      "unintended": false,
+      "wall_s": 1.35,
+      "error": null
+    },
+    {
+      "id": "FB-S09",
+      "variant": "n.heights",
+      "outcome": "failed",
+      "figure_verdict": "failed",
+      "goal": "verified",
+      "preserve": "failed",
+      "unintended": false,
+      "wall_s": 1.351,
+      "error": null
+    },
+    {
+      "id": "FB-C01",
+      "variant": "ref",
+      "outcome": "completed",
+      "figure_verdict": "verified",
+      "goal": "verified",
+      "preserve": "verified",
+      "unintended": false,
+      "wall_s": 1.624,
+      "error": null
+    },
+    {
+      "id": "FB-C01",
+      "variant": "n.data",
+      "outcome": "failed",
+      "figure_verdict": "failed",
+      "goal": "verified",
+      "preserve": "failed",
+      "unintended": false,
+      "wall_s": 1.612,
+      "error": null
+    },
+    {
+      "id": "FB-C02",
+      "variant": "ref",
+      "outcome": "completed",
+      "figure_verdict": "verified",
+      "goal": "verified",
+      "preserve": "verified",
+      "unintended": false,
+      "wall_s": 1.608,
+      "error": null
+    },
+    {
+      "id": "FB-C02",
+      "variant": "n.all",
+      "outcome": "completed",
+      "figure_verdict": "verified",
+      "goal": "verified",
+      "preserve": "failed",
+      "unintended": false,
+      "wall_s": 1.592,
+      "error": null
+    },
+    {
+      "id": "FB-V01",
+      "variant": "ref",
+      "outcome": "completed",
+      "figure_verdict": "verified",
+      "goal": "not_applicable",
+      "preserve": "verified",
+      "unintended": false,
+      "wall_s": 1.453,
+      "error": null
+    },
+    {
+      "id": "FB-V01",
+      "variant": "n.dropped_point",
+      "outcome": "failed",
+      "figure_verdict": "failed",
+      "goal": "not_applicable",
+      "preserve": "failed",
+      "unintended": false,
+      "wall_s": 1.389,
+      "error": null
+    },
+    {
+      "id": "FB-V06",
+      "variant": "ref",
+      "outcome": "completed",
+      "figure_verdict": "verified",
+      "goal": "verified",
+      "preserve": "verified",
+      "unintended": false,
+      "wall_s": 1.37,
+      "error": null
+    },
+    {
+      "id": "FB-V06",
+      "variant": "n.data_transformed",
+      "outcome": "failed",
+      "figure_verdict": "failed",
+      "goal": "verified",
+      "preserve": "failed",
+      "unintended": false,
+      "wall_s": 1.374,
+      "error": null
+    },
+    {
+      "id": "FB-V07",
+      "variant": "ref",
+      "outcome": "completed",
+      "figure_verdict": "verified",
+      "goal": "verified",
+      "preserve": "verified",
+      "unintended": false,
+      "wall_s": 1.485,
+      "error": null
+    },
+    {
+      "id": "FB-V07",
+      "variant": "n.scale_lost",
+      "outcome": "completed",
+      "figure_verdict": "verified",
+      "goal": "verified",
+      "preserve": "failed",
+      "unintended": false,
+      "wall_s": 1.361,
+      "error": null
+    },
+    {
+      "id": "FB-V02",
+      "variant": "ref",
+      "outcome": "completed",
+      "figure_verdict": "verified",
+      "goal": "verified",
+      "preserve": "verified",
+      "unintended": false,
+      "wall_s": 1.347,
+      "error": null
+    },
+    {
+      "id": "FB-V02",
+      "variant": "n.dropped_bar",
+      "outcome": "failed",
+      "figure_verdict": "failed",
+      "goal": "verified",
+      "preserve": "failed",
+      "unintended": false,
+      "wall_s": 1.343,
+      "error": null
+    }
+  ],
+  "metrics": {
+    "scenarios_run": 30,
+    "not_run": [],
+    "first_attempt_verified_rate": 1.0,
+    "scientific_preservation_rate": 1.0,
+    "unintended_modification_rate": 0.0,
+    "negatives_caught_rate": 1.0,
+    "taf_overclaim_rate": 0.625,
+    "wall_s_median": 1.4,
+    "wall_s_p95": 1.624
+  },
+  "split": "dev",
+  "note": "Phase 6b 基线（回放执行器，Prompt Pack figure_edit v1）；git_sha 是跑分时的工作提交，指标按合入版本的 _metrics 重算"
+}
