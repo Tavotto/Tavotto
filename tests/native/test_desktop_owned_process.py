@@ -23,7 +23,7 @@ import pytest
 from PIL import Image
 
 from support import desktopkit as dk, nativekit, previewkit
-from tavotto.engine import desktopproc, envlease, execspec, nativesession, runcodes
+from tavotto.engine import desktopproc, envlease, execspec, executionfact, nativesession, runcodes
 from tavotto.engine.runcodes import RunError
 
 pytestmark = nativekit.needs_user_python
@@ -428,13 +428,18 @@ def test_stdin_pipe_is_owned_by_the_desktop_including_eof(tmp_path):
         tmp_path,
         """\
 import sys
+print("INPUT_READY", flush=True)
 line = input()
 print("GOT:" + line, flush=True)
 print("REST:" + repr(sys.stdin.read()), flush=True)
 """,
         stdin=execspec.STDIN_PIPE,
     )
-    nativekit.wait_state(session, [nativesession.WAITING_FOR_FIGURE])
+    # hello's WAITING_FOR_FIGURE is transient; require the actual exec boundary
+    # and user-code progress before testing the stdin pipe.
+    nativekit.wait_state(session, [nativesession.RUNNING_SCRIPT])
+    assert executionfact.valid_id(session.execution_id)
+    dk.wait_until(lambda: "INPUT_READY" in dk.tail(session), what="脚本到达 input 前哨")
     assert session.owned.write_stdin("hello\n")
     dk.wait_until(lambda: "GOT:hello" in dk.tail(session), what="脚本读到 stdin")
     assert not session.owned.finished, "还没送 EOF，脚本不该结束"

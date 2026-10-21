@@ -15,7 +15,8 @@ vi.mock('@/lib/api', async (importOriginal) => ({
   fetchTutorialStatus: vi.fn().mockResolvedValue(null),
 }))
 
-import { refreshProject } from '@/lib/api'
+import { fetchTutorialStatus, refreshProject } from '@/lib/api'
+import { useTutorialStore } from '@/lib/onboarding/tutorial'
 import { i18n } from '@/i18n'
 import zhDialogs from '@/i18n/locales/zh-CN/dialogs.json'
 import enDialogs from '@/i18n/locales/en-US/dialogs.json'
@@ -605,6 +606,50 @@ describe('空查询时的顺序（审计 T50）', () => {
       expect(ids.indexOf('export')).toBeLessThan(ids.indexOf(low))
       expect(ids.indexOf('add-text')).toBeLessThan(ids.indexOf(low))
     }
+  })
+
+  // Codex #1181：示例副本在磁盘上、却不在最近列表也没打开时，「重置示例项目」被藏——探测要在面板打开时按需发
+  it('示例副本只在磁盘上：面板打开时探测一次，「重置示例项目」才出现', async () => {
+    useTutorialStore.setState({ status: null, busy: null, failure: null })
+    useProjectStore.setState({ recent: [] } as never)
+    vi.mocked(fetchTutorialStatus).mockClear()
+    vi.mocked(fetchTutorialStatus).mockResolvedValue({
+      available: true,
+      problems: [],
+      copy: { exists: true },
+    } as never)
+    mount()
+    await act(async () => {
+      await Promise.resolve()
+    })
+    expect(fetchTutorialStatus).toHaveBeenCalledTimes(1)
+    expect(cmdIds()).toContain('tutorial-reset')
+    useTutorialStore.setState({ status: null })
+  })
+
+  it('缓存的「副本不在」会过时（之后打开示例项目建出了副本）：面板打开时再问一次，重置照样出现', async () => {
+    useTutorialStore.setState({ status: { available: true, problems: [], copy: { exists: false } } as never, busy: null, failure: null })
+    useProjectStore.setState({ recent: [] } as never)
+    vi.mocked(fetchTutorialStatus).mockClear()
+    vi.mocked(fetchTutorialStatus).mockResolvedValue({ available: true, problems: [], copy: { exists: true } } as never)
+    mount()
+    await act(async () => {
+      await Promise.resolve()
+    })
+    expect(fetchTutorialStatus).toHaveBeenCalledTimes(1)
+    expect(cmdIds()).toContain('tutorial-reset')
+    useTutorialStore.setState({ status: null })
+  })
+
+  it('缓存说副本在：不再重复问', async () => {
+    useTutorialStore.setState({ status: { available: true, problems: [], copy: { exists: true } } as never, busy: null, failure: null })
+    vi.mocked(fetchTutorialStatus).mockClear()
+    mount()
+    await act(async () => {
+      await Promise.resolve()
+    })
+    expect(fetchTutorialStatus).not.toHaveBeenCalled()
+    useTutorialStore.setState({ status: null })
   })
 
   it('跑过一条就进「最近使用」，并排在常用之前', () => {

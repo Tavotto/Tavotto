@@ -227,6 +227,9 @@ class FileResource:
     sha256: str
     origin: str  # execution | static
     semantic_identity: str
+    svg_sha256: str | None = (
+        None  # verified same-Figure companion, never an arbitrary PDF conversion
+    )
 
 
 Resource = Union[FontResource, FileResource]
@@ -370,7 +373,7 @@ OPERATIONS = (
     "imported_page",
     "flip",
 )
-CAP_FORMATS = ("pdf", "png", "tiff", "eps")
+CAP_FORMATS = ("pdf", "png", "tiff", "eps", "svg")
 CAP_SCOPES = ("canvas", "original")
 
 
@@ -425,6 +428,12 @@ CAPABILITIES: dict[str, dict[str, Capability]] = {
         "U07 render child：与 PNG 同一个 RasterBuffer（ADR 0046 / 0066）",
         OPERATIONS,
     ),
+    "svg": {
+        **_caps(CAP_NATIVE, "Native paths, outlined shaped text and embedded images", OPERATIONS),
+        "imported_page": Capability(
+            CAP_UNSUPPORTED, "A static PDF requires a verified same-Figure SVG representation"
+        ),
+    },
     "eps": _caps(
         CAP_UNSUPPORTED,
         "没有 PostScript 写入器；EPS 只有 worker 的 matplotlib 写得出（ADR 0046）",
@@ -490,6 +499,14 @@ def unsupported_for(page: Page, fmt: str) -> list[dict]:
     for node, _path in walk(page):
         for op in operations_of(node):
             cap = table[op]
+            if fmt == "svg" and op == "imported_page":
+                resource = page.resources.get(node.resource)
+                if (
+                    isinstance(resource, FileResource)
+                    and resource.svg_sha256
+                    and node.page_index == 0
+                ):
+                    continue
             if cap.level != CAP_UNSUPPORTED:
                 continue
             key = (op, getattr(node, "object_id", ""))

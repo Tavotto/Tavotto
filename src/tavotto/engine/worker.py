@@ -40,6 +40,7 @@ import argparse
 import ast
 import contextlib
 import faulthandler
+import hashlib
 import importlib
 import importlib.util
 import json
@@ -205,6 +206,7 @@ import matplotlib.figure as mfigure  # noqa: E402
 #: safe worker 要装进私有包的引擎模块——**整条平铺 import 闭包**，一次装完
 #: （safe 档不像 native 那样要分两阶段避开 matplotlib：这里 matplotlib 本来就先 import）。
 _ENGINE_MODULES = (
+    "executionfact",
     "figcapture",
     "patchspec",
     "pathgeom",
@@ -222,6 +224,7 @@ _ENGINE_MODULES = (
     "wireproto",
     "scriptinput",
     "runtime",
+    "writetripwire",
 )
 _PKG = bridgeboot.load_engine_modules(str(HERE), _ENGINE_MODULES)
 
@@ -241,6 +244,9 @@ wireproto = _PKG.wireproto
 scriptinput = _PKG.scriptinput
 # Windows 平台判断与 CREATE_NO_WINDOW 的唯一出处（只依赖标准库，装进私有包不拖闭包）
 runtime = _PKG.runtime
+executionfact = _PKG.executionfact
+# 写入根绊线（#898，ADR 0141）：只有命令行给了 `--write-roots`（MCP 来源）才装；纯标准库，不拖闭包
+writetripwire = _PKG.writetripwire
 
 #: 本 worker 的常驻会话。`_patched_savefig` 是模块级函数（要顶掉
 #: `Figure.savefig` 这个类属性），拿不到 Worker 实例，只能走模块级引用。
@@ -266,6 +272,49 @@ PROTOCOL_VERSION = wireproto.PROTOCOL_VERSION
 V1_COMMANDS = wireproto.V1_COMMANDS
 ProtocolError = wireproto.ProtocolError
 _ms = figsession.ms_since
+
+
+def _source_stamp(path: Path) -> tuple[int, int, int, str] | None:
+    """`(mtime_ns, size, inode, sha256)`；读不了回 None。"""
+    try:
+        st = os.stat(path)
+        digest = hashlib.sha256(Path(path).read_bytes()).hexdigest()
+    except OSError:
+        return None
+    return (st.st_mtime_ns, st.st_size, st.st_ino, digest)
+
+
+@contextlib.contextmanager
+def _capture_entry_sha(script: Path, captured: list[str]):
+    """import 期间让入口脚本由 loader **只从源码编译**并记下所编译字节的 sha256（不读任何 .pyc）。
+
+    临时包 `SourceFileLoader.get_code`（try/finally 恢复；沿用 `_tavotto_real` 约定避免叠包）。其他模块走原函数；
+    `get_code` 之外的 import 流程（spec、`__file__`、`__cached__`、执行）不变——`source_to_code` 与
+    `get_data` 都是 `SourceFileLoader` 自己的方法。
+    """
+    from importlib.machinery import SourceFileLoader  # noqa: PLC0415
+
+    target = _norm_path(script)
+    original = SourceFileLoader.get_code
+    real_get_code = getattr(original, "_tavotto_real", original)
+
+    def get_code(self, fullname):
+        try:
+            hit = _norm_path(self.path) == target
+        except (OSError, TypeError, ValueError):
+            hit = False
+        if not hit:
+            return real_get_code(self, fullname)
+        data = self.get_data(self.path)
+        captured.append(hashlib.sha256(data).hexdigest())
+        return self.source_to_code(data, self.path)
+
+    get_code._tavotto_real = real_get_code
+    SourceFileLoader.get_code = get_code
+    try:
+        yield
+    finally:
+        SourceFileLoader.get_code = original
 
 
 class SafeSession(figsession.LiveFigureSession):
@@ -436,6 +485,9 @@ SCRIPT_EXITED = "script_exited"
 #: safe 档的守卫拦下了脚本的关键文件操作（删除 / 改名 / 写入真实图库，或被拦截不落盘的 savefig），
 #: 脚本随后又观察了受影响的路径（P01a，ADR 0003）。结果可能与直接 Python 不同：不是完整成功。
 FILE_OPERATION_BLOCKED = "safe_file_operation_blocked"
+#: MCP 来源的 safe 运行里，脚本想写授权根之外（写入根绊线，#898）。**绊线不是沙盒**，盲区见 `writetripwire`。
+#: 不属于 `execpolicy.BLOCKED_CODES`：它不会触发「换 native 重跑」的回退（native 没有绊线，换过去等于放行）。
+WRITE_OUTSIDE_ROOTS = writetripwire.CODE
 #: 载荷里的「该走哪条执行路径」：保留文件语义（native bridge / `tavotto run`）。字符串是桌面侧
 #: 接入依据；`adapter_available` 只说「这个 build 失败之后，桌面界面是否已经会自动换那条路径重跑」——
 #: 终端里的 `tavotto run` 一直可用，但自动回退没接通之前这个值保持 false（不承诺没接通的东西）。
@@ -573,6 +625,25 @@ def _blocked_operations_error(
             "required_execution": REQUIRED_EXECUTION_FILE_SEMANTICS,
             "adapter_available": False,
             **({"fidelity": fidelity} if fidelity is not None else {}),
+        },
+    )
+
+
+def _write_outside_roots_error(found: list[dict]) -> ProtocolError:
+    """写入根绊线的终局：稳定码 + 相对化的路径（项目根为基，不暴露无关的绝对路径）。
+
+    message 会进 app.log 与诊断包：只有第一条越界的相对展示，没有授权根列表；脚本源码与路径外的内容一个字都不带。"""
+    first = found[0]
+    return ProtocolError(
+        WRITE_OUTSIDE_ROOTS,
+        f"脚本想写已授权工作区之外的位置（{first['path']}），所以这次没有运行完。"
+        "经 MCP 运行的脚本只能写到工作区内——改成写到项目内，或请用户在 Tavotto 窗口里自己运行。",
+        retryable=False,
+        traceback_text=traceback.format_exc() if sys.exc_info()[0] is not None else "",
+        extra={
+            "path": first["path"],
+            "event": first["event"],
+            "attempts": [dict(v) for v in found],
         },
     )
 
@@ -763,6 +834,10 @@ class Worker(wireproto.V1Handler):
         self.entry = args.entry
         self.preview_dpi = args.preview_dpi
         self.built = False
+        self.execution_id: str | None = None
+        self._execution_watch: str | None = None
+        #: 本进程 build 时实际读到并执行的脚本字节的 sha256（读失败 None）；build 前 None。
+        self._source_sha256: str | None = None
         #: pyplot 兜底因上限丢掉的张数（0 = 一张没丢）。build 响应带出去。
         self.dropped_figures = 0
         #: 每张捕获 Figure 的结构化描述（figcapture.CapturedFigureDescriptor
@@ -778,6 +853,8 @@ class Worker(wireproto.V1Handler):
         #: 数据改指（ADR 0106）：用户指认过的只读改指表（`--input-remap`，父进程按项目给），
         #: 与本次 build 里落空的只读打开——`missing_input` 靠它说出缺的是哪个。
         self.input_remap = _parse_remap(getattr(args, "input_remap", None))
+        #: 写入根绊线的授权根（`--write-roots`，MCP 来源才有；#898）。None = 不装（GUI / CLI 旧行为）。
+        self.write_roots = _parse_write_roots(getattr(args, "write_roots", None))
         #: Only the opaque reference is on the command line. Values arrive over
         #: the private request pipe before the first execution, then stay frozen.
         self.script_argv: list[str] = []
@@ -797,6 +874,11 @@ class Worker(wireproto.V1Handler):
         super().__init__(SESSION)
 
     def configure_run(self, payload: dict) -> None:
+        watch = payload.get("execution_watch")
+        if watch is not None:
+            if not executionfact.valid_watch(watch):
+                raise ProtocolError("bad_request", "Invalid execution observation identity")
+            self._execution_watch = watch
         run = payload.get("run")
         if run is None:
             if self.run_config and not self._run_loaded:
@@ -864,6 +946,7 @@ class Worker(wireproto.V1Handler):
                     "parse_kind",
                     "missing_module",
                     "missing_dependency",
+                    "execution_id",
                 )
                 if k in err
             }
@@ -877,6 +960,22 @@ class Worker(wireproto.V1Handler):
             "error": "Sensitive run failed; script diagnostics were omitted.",
             "traceback": _PRIVATE_OUTPUT_NOTICE.strip(),
         }
+
+    def handle_v1(self, req: dict) -> dict:
+        try:
+            result = super().handle_v1(req)
+        except ProtocolError as exc:
+            exc.extra["execution_id"] = self.execution_id
+            raise
+        except Exception as exc:  # noqa: BLE001 — same fallback as wireproto.respond
+            raise ProtocolError(
+                "internal",
+                str(exc) or exc.__class__.__name__,
+                retryable=True,
+                traceback_text=traceback.format_exc(),
+                extra={"execution_id": self.execution_id},
+            ) from exc
+        return {**result, "execution_id": self.execution_id}
 
     def select_artifact(self, context):
         try:
@@ -894,6 +993,27 @@ class Worker(wireproto.V1Handler):
         self.session.artifact_source = selected
 
     # ---------------- build ----------------
+    def _execution_entered(self) -> None:
+        self.execution_id = executionfact.new_id()
+        executionfact.write(self.out_dir, self._execution_watch, self.execution_id)
+
+    def _install_write_tripwire(self) -> None:
+        """装写入根绊线（#898）：白名单 = 命令行给的授权根 + 引擎自己的会话目录 + 基础设施目录。
+
+        会话沙盒与会话缓存目录（`out/` 的上一级：out / sandbox / export / worker.log）是引擎自己的；
+        matplotlib 的缓存 / 配置目录要在 matplotlib 已 import 之后才知道。其余基础设施目录（临时目录、平台缓存、
+        seaborn / sklearn 数据目录）见 `writetripwire.infrastructure_roots`，每一项都带理由。"""
+        extra = [self.sandbox, self.out_dir.parent]
+        for getter in ("get_cachedir", "get_configdir"):
+            try:
+                extra.append(getattr(matplotlib, getter)())
+            except Exception:  # noqa: BLE001 — 取不到就少一项白名单，不让绊线的装配挡住渲染
+                pass
+        writetripwire.install(
+            [*self.write_roots, *writetripwire.infrastructure_roots(extra=extra)],
+            display_base=str(self.figures_dir),
+        )
+
     def build(self, timings: dict | None = None) -> dict:
         """跑一次用户脚本，把产出的 Figure 全部收进内存。
 
@@ -1063,6 +1183,8 @@ class Worker(wireproto.V1Handler):
         # 装在回退之下，沙盒里 `savefig("stage.png")` 记下的 `<沙盒>/stage.png` 永远等不到
         # 被回退改指成 `<项目>/stage.png` 的读，旧图就被静默读走了（#952 Codex P1）。
         ledger.install()
+        if self.write_roots is not None:
+            self._install_write_tripwire()
 
         # 拦截必须发生在 import 脚本之前（多数脚本 from paper_style import save）
         mfigure.Figure.savefig = _patched_savefig
@@ -1082,10 +1204,12 @@ class Worker(wireproto.V1Handler):
         # 脚本 import 了却从未用到、又没装的包不挡图（ADR 0061 §二 2026-09-24 修订）：判据与
         # 父进程的联合计划同一份（`figcapture.unused_imports`）——计划没要求装它，这里就得让
         # 那一行 import 过得去。读不了 / 解析不了就不装：脚本随后会以它自己的错误结束。
+        # 这份字节只给 ast.parse 用；`source_sha256` 另走执行前后括号（见下面 `pre` / `post`）。
         try:
             import ast  # noqa: PLC0415
 
-            unused = figcapture.unused_imports(ast.parse(self.script.read_bytes()))
+            source_bytes = self.script.read_bytes()
+            unused = figcapture.unused_imports(ast.parse(source_bytes))
         except (OSError, SyntaxError, ValueError):
             unused = frozenset()
         figcapture.install_unused_import_placeholders(str(self.script), unused)
@@ -1110,6 +1234,18 @@ class Worker(wireproto.V1Handler):
 
         capture_threads = set(threading.enumerate())
         t_script = time.perf_counter()
+        # `source_sha256`（TAF 改图验证的判据：这次 build 执行的是哪一版源码）。两条路径各自成立的理由不同：
+        # - entry != "__main__"（`import_module`）：由**实际加载源码的 loader 报摘要**。`_capture_entry_sha` 在这次
+        #   import 期间临时包 `SourceFileLoader.get_code`：入口脚本一律 `get_data` 读源码字节、记 sha256、
+        #   `source_to_code` 编译——完全不读 `__pycache__`（外部运行遗留的 timestamp / unchecked-hash .pyc 过期也
+        #   不会被执行），所以「报的摘要」与「编译执行的字节」是同一份，判据是定义上的，不靠前后戳。
+        # - entry == "__main__"（`runpy.run_path`）：CPython runpy（3.10–3.14 同形）`_get_code_from_file` 对 .py 文件
+        #   只做 `read_code(f)`（仅当文件本身以 .pyc magic 开头才当字节码）、否则 `compile(f.read(), ...)`，
+        #   从不查 `__pycache__`，读的就是源码本身。故沿用执行前后括号：读源码那一刻必落在 pre 与 post 之间，
+        #   两端 (mtime_ns, size, inode, sha) 完全相同 ⇒ 期间没被写过（刻意 utime 回拨属对抗性，不设防）；不同 → None。
+        #   `_source_stamp` 只给这条路径用。
+        pre = _source_stamp(self.script) if self.entry == "__main__" else None
+        entry_shas: list[str] = []
         # `SystemExit` 不是 `Exception`：脚本末尾的 `sys.exit(main())` / `exit()` /
         # `quit()` 会一路穿过 `ensure_built` 的 `except Exception`，落到主循环
         # 那条给协议 `shutdown` 用的 `except SystemExit: break` 上——worker 悄无
@@ -1117,7 +1253,12 @@ class Worker(wireproto.V1Handler):
         # 里连一行 traceback 都没有。与 `python fig.py` 的语义对齐：退出码 0 /
         # None 就是脚本正常结束（已经画好的图照常捕获），非零才是它自己报的失败。
         # paper_style 的 import 也在这道保护里：它是用户代码，import 期间一样能 exit。
-        with contextlib.redirect_stdout(stdout_tail):
+        with (
+            contextlib.redirect_stdout(stdout_tail),
+            executionfact.on_user_entry(self.script, self._execution_entered),
+        ):
+            if self.write_roots is not None:
+                writetripwire.arm(True)
             try:
                 # paper_style 是某些图库的私有方言，不是引擎的依赖：没有就跳过，
                 # 靠 _patched_savefig 这条通用兜底捕获。曾经这里是无保护的 import，
@@ -1133,7 +1274,8 @@ class Worker(wireproto.V1Handler):
 
                     runpy.run_path(str(self.script), run_name="__main__")
                 else:
-                    module = importlib.import_module(self.script.stem)
+                    with _capture_entry_sha(self.script, entry_shas):
+                        module = importlib.import_module(self.script.stem)
                     getattr(module, self.entry)()
             except SystemExit as exc:
                 if exc.code not in (None, 0):
@@ -1167,6 +1309,19 @@ class Worker(wireproto.V1Handler):
                 # 脚本跑完了：之后再有谁读 stdin 一律 EOF，绝不再发问（也绝不再碰协议管道）
                 channel.closed = True
                 ledger.stop()
+                # 无论正常结束 / SystemExit / 异常都在这里收括号（finally 不改变原有异常传播）
+                if self.entry == "__main__":
+                    post = _source_stamp(self.script)
+                    self._source_sha256 = pre[3] if pre is not None and pre == post else None
+                else:
+                    # 恰好一次加载才可信；零次（入口模块此前已在 sys.modules，如被 paper_style 提前 import）或多次 → None
+                    self._source_sha256 = entry_shas[0] if len(entry_shas) == 1 else None
+                if self.write_roots is not None:
+                    writetripwire.arm(False)
+                    # 脚本 `except PermissionError` 吞掉、或以别的错误收场，事实都在：越界的写**尝试**发生过，
+                    # 这次不算成功（取代原本的异常，原异常留在 `__context__`；traceback 指向越界的那一行）
+                    if writetripwire.violations():
+                        raise _write_outside_roots_error(writetripwire.violations())
         script_ms = _ms(t_script)
         # 脚本跑到了末尾，但被守卫拦下的关键操作之后它观察过受影响的路径（用户 `except Exception`
         # 吞掉什么都不影响这条带外事实）：结果可能与直接 Python 不同，不记成完整成功（P01a，AC-02）
@@ -1259,8 +1414,12 @@ class Worker(wireproto.V1Handler):
         )
 
     def _stems_summary(self) -> dict:
-        # `source` 是加字段，不升协议版本（ADR 0003 §1：两侧容忍未知字段）。
-        return self.session.stems_summary(self.dropped_figures)
+        # `source` / `source_sha256` 是加字段，不升协议版本（ADR 0003 §1：两侧容忍未知字段）。
+        # `source_sha256` 是**本进程当初执行的版本**：去重回旧会话时二次 build 拿到的也是它，不是磁盘现状。
+        return {
+            **self.session.stems_summary(self.dropped_figures),
+            "source_sha256": self._source_sha256,
+        }
 
     def _render(
         self, stem: str, timings: dict | None = None, preview_dpi: int | None = None
@@ -1284,7 +1443,15 @@ class Worker(wireproto.V1Handler):
                 "reason": "unsupported_render_state",
             }
         if cmd == "build":
-            return {"ok": True, **self.build()}
+            # legacy 形状一字不变（test_legacy_envelope_keeps_the_old_response_shape）：`source_sha256` 只给 v1 信封
+            return {"ok": True, **{k: v for k, v in self.build().items() if k != "source_sha256"}}
+        if cmd == "export" and (req.get("require_built") or req.get("snapshot_only")):
+            if not self.built or req.get("stem") not in self.session.states:
+                return {
+                    "ok": False,
+                    "code": "svg_source_unavailable",
+                    "error": "An already built Figure session is required for SVG capture.",
+                }
         if not self.built:
             self.build()
 
@@ -1325,6 +1492,8 @@ class Worker(wireproto.V1Handler):
                     req["path"],
                     req.get("format", "pdf"),
                     int(req.get("dpi", 600)),
+                    **({"svg_path": req["svg_path"]} if req.get("svg_path") is not None else {}),
+                    **({"snapshot_only": True} if req.get("snapshot_only") else {}),
                 ),
             }
 
@@ -1489,6 +1658,20 @@ def _json_default(o):
         return str(o)
 
 
+def _parse_write_roots(raw) -> list[str] | None:
+    """`--write-roots` 的 JSON 数组；没给 = None（不装绊线）。给了却坏了**不**当成没给：
+    绊线是安全边界，参数坏了宁可让这条会话起不来（`SystemExit`），也不静默退回不设防。"""
+    if raw is None:
+        return None
+    try:
+        roots = json.loads(raw)
+    except ValueError:
+        roots = None
+    if not isinstance(roots, list) or not all(isinstance(r, str) and r for r in roots):
+        raise SystemExit("--write-roots 必须是非空字符串的 JSON 数组")
+    return roots
+
+
 def _parse_remap(raw) -> list[dict]:
     """`--input-remap` 的 JSON → 校验过的规则；坏了就当没有（渲染照跑，只是不改道）。"""
     if not raw:
@@ -1511,6 +1694,8 @@ def main() -> None:
     ap.add_argument("--input-remap", default=None)
     # Only the opaque identity is public; exact argv arrives over the request pipe.
     ap.add_argument("--run-config", default="")
+    # #898：写入根绊线的授权根（JSON 数组）；只有 MCP 来源的运行才出现，没有它 = 不装（旧 argv 逐字节不变）
+    ap.add_argument("--write-roots", default=None)
     ap.add_argument("--entry", default="main")
     ap.add_argument("--preview-dpi", type=int, default=200)
 

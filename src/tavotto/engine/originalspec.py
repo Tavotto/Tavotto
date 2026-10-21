@@ -215,7 +215,7 @@ def asset_spec(path: Path, kind: str, probe: dict) -> dict:
     缩放、没有页面裁切。「按原图导出」忽略哪些 layout 变换是前端那一份服务
     的事（`web/src/lib/originalSpec.ts`），本模块连文档都看不到。
     """
-    if kind == "pdf":
+    if kind in ("pdf", "svg"):
         w_pt = float(probe["w_pt"])
         h_pt = float(probe["h_pt"])
         return {

@@ -388,7 +388,8 @@ test('open 结果只剩把手（大图被 server 省略过 manifest）：画布�
   await expect(frame.locator('[data-element-svg] svg').first()).toBeVisible()
   // 恰好一次取件，而且是按 session_id；绝没有 tavotto_open_figure
   expect(await calls(page)).toEqual([
-    { name: 'tavotto_session_state', arguments: { session_id: 's-e2e' } },
+    // origin 由 AppsBridge.callTool 统一加：server 据此不把画布操作记进用量统计（ADR 0134 §MCP）
+    { name: 'tavotto_session_state', arguments: { session_id: 's-e2e', origin: 'canvas' } },
   ])
   // 取件回来的画布是活的：拖动照常走 apply（同一条既有传输）
   const svg = frame.locator('[data-element-svg]').first()

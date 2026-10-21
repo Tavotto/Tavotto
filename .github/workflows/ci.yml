@@ -36,8 +36,8 @@ name: CI
 # 真实合并组的实测（资格中位 56.9 → 26.4 分钟）也在那里。
 #
 # pytest 分片（CI03a，2026-09-16）：backend-fast / backend-platforms 的 matrix 各加一根
-# `shard` 轴，目前 backend-fast 为 `[1, 2, 3, 4]`（`--shard=K/4`）、backend-platforms 为
-# `[1, 2, 3]`（`--shard=K/3`），每档全量 pytest 拆成并行 job（按文件分、不拆文件、
+# `shard` 轴，目前 backend-fast 与 backend-platforms 都是 `[1, 2, 3, 4]`（`--shard=K/4`），
+# 每档全量 pytest 拆成并行 job（按文件分、不拆文件、
 # 每个进程先算全部各片并自验并集 == 全集）。**覆盖一条没减**：漏片在进程里
 # 就是 rc 4；任一片不 success，`needs.backend-fast.result` 就不是 success，Gate
 # 照红。理由、自验与漏片兜底链写在 `backend-fast` 那一段。lab 常规套件同机跑齐全部分片；
@@ -431,7 +431,10 @@ jobs:
     # （见文件抬头的分工表）。
     if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    # 30 而不是 20：语料加了三张 3D 图（ADR 0135）后「结构性不变式」一步在 ubuntu
+    # runner 上 12–19 分钟，20 分钟的整 job 上限会把后面的 U01 harness 砍成 cancelled
+    # （#1159 合并组）。超时只防挂死，不是速度预算。
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-python@v6
@@ -635,7 +638,14 @@ jobs:
       # conftest，tests/conftest.py 没加载，选项就「unrecognized」。`=` 形式让整个 token
       # 进 extras，不产生假路径。托管 runner 上 RUNNER_TEMP 每次都是新的，这个坑在 CI 上
       # 不会自己露头——所以合同测试钉 `=` 形式，别等 self-hosted 复用目录时才发现。
+      # 挂死看门狗（#1226）：任一用例超过 900 秒 → 打 nodeid + 所有线程栈 + 子进程并以退出码 1 结束，
+      # 变成一个点名的红灯，而不是整片跑满 90 分钟被取消。900 的取法：本仓库单条最慢的正常用例
+      # 是 native 真 spawn 那批（自带 300 秒上限），留 3 倍余量；本 lane 本来就排除 slow。
+      # 同一开关让 ≥60 秒的用例结束时往 stderr 写一行（`[slow-test …]`），取消的 job 也留得下时间线。
+      # 机制与合同：tests/support/hang_watchdog.py、tests/test_hang_watchdog.py。
       - name: pytest
+        env:
+          TAVOTTO_TEST_HANG_SECONDS: "900"
         run: >-
           python -m pytest --shard=${{ matrix.shard }}/4
           --shard-manifest="${{ runner.temp }}/shard-manifest.json"
@@ -669,6 +679,13 @@ jobs:
   # 47:45（#694 job 109764360587），余量已经很薄。上限本身是防挂死的止血阀
   # （2026-08-28 没有上限时堵过合并队列 8 小时 20 分），不该靠抬数字续命；按分片给
   # 余量，上限继续钉在 60。
+  #
+  # **2026-10-21 从 3 片改到 4 片（90 分钟上限不动）**：#1219 合入后的 6 个合并组（run
+  # 39494740923 … 39517350361）Windows 三片 46–80 分钟、单组 junit 合计 171–221 分钟，同一个
+  # 文件在不同 runner 上能差一倍（test_invariants_engine 654 s vs 1261 s）；#1219 自己的合并组
+  # Windows 1 片 82 分钟，离上限 8 分钟。按权重表重平衡只能把中位的最重片从 73.6 压到 67，
+  # 压不住 runner 快慢；runner 排队等待实测 0 分钟、每片固定开销 2–3 分钟，加片是余量最大的
+  # 做法：4 片按 Windows 中位 ≈ 50 分钟 / 片、macOS ≈ 44。
   backend-platforms:
     if: >-
       github.event_name == 'merge_group'
@@ -679,7 +696,7 @@ jobs:
       # 写成轴（`include` 不做笛卡尔积）。python 固定 3.13，写在 setup-python 上。
       matrix:
         os: [macos-latest, windows-latest]
-        shard: [1, 2, 3]
+        shard: [1, 2, 3, 4]
     runs-on: ${{ matrix.os }}
     # 2 片时实测（合入后三个真实合并组 35061049078 / 35069266028 / 35073686963）：
     # Windows 19–26 分钟（1138–1533s）、macOS 14–17 分钟（833–1006s），套件 4686 条
@@ -728,11 +745,18 @@ jobs:
       # worker 复用的决定要从这份名单来，不从猜。
       # 路径用 `${{ runner.temp }}`（runner 替换，与 shell 无关）：Windows 腿默认 pwsh、
       # macOS 腿 bash，`$RUNNER_TEMP` / `$env:RUNNER_TEMP` 两种写法只有一种能同时成立。
-      # `--shard=K/3` 的 3 与 matrix.shard 的长度必须是同一个数（合同测试对拍）；
+      # `--shard=K/4` 的 4 与 matrix.shard 的长度必须是同一个数（合同测试对拍）；
       # 两个 conftest 选项写成 `--opt=值` 的理由见 backend-fast 那一步。
+      # 挂死看门狗（#1226）：任一用例超过 900 秒 → 打 nodeid + 所有线程栈 + 子进程并以退出码 1 结束，
+      # 变成一个点名的红灯，而不是整片跑满 90 分钟被取消。900 的取法：本仓库单条最慢的正常用例
+      # 是 native 真 spawn 那批（自带 300 秒上限），留 3 倍余量；本 lane 本来就排除 slow。
+      # 同一开关让 ≥60 秒的用例结束时往 stderr 写一行（`[slow-test …]`），取消的 job 也留得下时间线。
+      # 机制与合同：tests/support/hang_watchdog.py、tests/test_hang_watchdog.py。
       - name: pytest
+        env:
+          TAVOTTO_TEST_HANG_SECONDS: "900"
         run: >-
-          python -m pytest --shard=${{ matrix.shard }}/3
+          python -m pytest --shard=${{ matrix.shard }}/4
           --shard-manifest="${{ runner.temp }}/shard-manifest.json"
           --junitxml "${{ runner.temp }}/junit.xml"
           --durations=50 -rs
@@ -1407,7 +1431,7 @@ jobs:
           && contains(github.event.pull_request.labels.*.name, 'full-ci'))
     # 只 needs frontend（短预筛），不等 backend-fast——理由与数字见 `package` 那一段（CI01）。
     needs: [frontend]
-    # **Playwright 按 project 分到两台机器**（CI03c，2026-09-16）。这条腿是 CI01 删边之后
+    # **Playwright 分到三台机器**（CI03c，2026-09-16 按 project 分两片；2026-10-19 chromium 再拆一刀成三片，见下）。这条腿是 CI01 删边之后
     # 合并资格里第二长的一条（CI00：Playwright 步 1124s 中位，其中 chromium 89 条 505s、
     # webkit 23 条 267s、chromium-en 16 条 111s）。按 project 切而不是按文件切或 `--shard`：
     # Playwright 自带的 `--shard` 按 group 顺序等分、不看时长，跨 project 平衡要自写分区器；
@@ -1419,23 +1443,41 @@ jobs:
     #      Playwright 自己的 `--list` 再比一次集合（本片 == 全集里属于本片 project 的那些、
     #      本片 ∪ 另一片 == 全集的 project 集），不成立就红在 e2e 之前；
     #   ③ matrix 语义：任一片不 success，`needs.windows-exe-smoke.result` 就不是 success，
-    #      Gate 闭集不动。job id 不变，显示名 `windows-exe-smoke (1)` / `(2)`（下面 `name:`），
+    #      Gate 闭集不动。job id 不变，显示名 `windows-exe-smoke (1)` / `(2)` / `(3)`（下面 `name:`），
     #      required contexts 仍只有三个 Gate，仓库设置不用重登记。
-    # 两片各自完整地构建产物（前端 / 画布 / workerd / runtime / PyInstaller，~4 分钟）并
+    # **chromium 再拆两半（2026-10-19）**：chromium 一个 project 涨到 ~292 条、片 1 的 e2e 一步 36–49 分钟
+    # （合并组里 5 次在 50 分钟被 interrupted，不同用例轮流被中断），按 project 切已经切不动。
+    # 做法是同一 project 内用 Playwright 原生 `--shard=i/2`（片 1 = 前半、片 3 = 后半；片 2 不变，所以
+    # 现有片号 1 / 2 的名字与含义不动，只新增片 3）。选原生 `--shard` 而不是显式文件清单 / grep 分区：
+    # 新增 spec 不需要人工维护清单；本配置 `workers: 1` + `fullyParallel: false`，分组 == 文件，原生
+    # 按文件顺序等分到「前半 151 条 / 32 个文件、后半 141 条 / 43 个文件」。拿 run 39235718807 片 1 的
+    # 日志逐文件累加用例耗时：前半 ≈ 23.4 分钟、后半 ≈ 20.0 分钟（54% / 46%，e2e 步合计 43.4 分钟 → 每片 ≈ 一半），
+    # 目标 ≤ 30 分钟。跨 project 平衡的担忧在这里不成立（只在 chromium 一个 project 内切）。
+    # 代价：`--shard` 按条数等分、不看时长，新增 / 改动的 spec 会让两半慢慢偏；偏到某半 e2e 逼近 30 分钟
+    # 再重估（回头看 playwright-shard-check 证据里的两份 `--list`）。
+    # 每片的 `projects` 现在可以带一个 `--shard=i/n`；`others` 是**其余每一片**的 `projects`，用 `|` 隔开
+    # （值里不能有逗号，`|` 可以）。自验脚本对着真 `--list` 验：各片并集 == 全集、两两不交、同一 project
+    # 的 `--shard` 是 1/n..n/n 各一次；合同测试在源码层钉同样的事。
+    # 三片各自完整地构建产物（前端 / 画布 / workerd / runtime / PyInstaller，~4 分钟）并
     # **都跑**三条断言与冒烟①②③（合计约 1 分钟）——不用 `if:` 把它们收窄到一片上：
-    # 「必需步骤条件跳过」是本仓库明令禁止的陷阱，而这 1 分钟买到的是两片各自独立成立。
-    # 浏览器按片装：片 1 只 chromium；片 2 chromium + webkit（chromium-en 用的也是 chromium）。
+    # 「必需步骤条件跳过」是本仓库明令禁止的陷阱，而这 1 分钟买到的是每片各自独立成立。
+    # 浏览器按片装：片 1、3 只 chromium；片 2 chromium + webkit（chromium-en 用的也是 chromium）。
     # 值里不能有逗号（scripts/ci/ci_baseline.py 的 matrix 解析按逗号切）；`projects` /
     # `others` 是 `--project=` 参数的字面形状，直接进 `pnpm e2e` 与自验脚本的命令行。
-    # 回退：删掉 strategy 与 name，`pnpm e2e` 去掉 `${{ matrix.projects }}`，artifact 名去掉
-    # 片号；自验步骤与 step 级 timeout 留着也无害。
+    # 回退：
+    #   · 只撤销 chromium 拆分：删掉 matrix 里 shard 3 那一行，片 1 的 `projects` 改回 `--project=chromium`、
+    #     `others` 改回 `--project=webkit --project=chromium-en`，片 2 的 `others` 改回 `--project=chromium`
+    #     （合同测试与自验都认单 project 整片的形状；片 3 的 check 名消失前，先把它从必需检查里移除）；
+    #   · 全部撤销：删掉 strategy 与 name，`pnpm e2e` 去掉 `${{ matrix.projects }}`，artifact 名去掉
+    #     片号；自验步骤与 step 级 timeout 留着也无害。
     name: windows-exe-smoke (${{ matrix.shard }})
     strategy:
       fail-fast: false
       matrix:
         include:
-          - { shard: 1, browsers: "chromium",        projects: "--project=chromium",                    others: "--project=webkit --project=chromium-en" }
-          - { shard: 2, browsers: "chromium webkit", projects: "--project=webkit --project=chromium-en", others: "--project=chromium" }
+          - { shard: 1, browsers: "chromium",        projects: "--project=chromium --shard=1/2",         others: "--project=webkit --project=chromium-en|--project=chromium --shard=2/2" }
+          - { shard: 2, browsers: "chromium webkit", projects: "--project=webkit --project=chromium-en", others: "--project=chromium --shard=1/2|--project=chromium --shard=2/2" }
+          - { shard: 3, browsers: "chromium",        projects: "--project=chromium --shard=2/2",         others: "--project=chromium --shard=1/2|--project=webkit --project=chromium-en" }
     runs-on: windows-latest
     # 分片 + 去 --with-deps 后整个 job 实测 11–14 分钟（663–824s，合并组 35069266028 /
     # 35073686963）；分片前中位 23.5 分钟（1411s，CI00）。2026-10-07 片 1 已到 34–35 分钟、
@@ -1732,9 +1774,10 @@ jobs:
       - name: Playwright 分片自验（本片 == 全集里属于本片 project 的那些）
         # 运行时那一层（上面 ③ 之前的 ②）：脚本自己起 node 跑两次 `playwright test --list`
         # （全量 + 本片），按 (project, file:line:col, title) 的**集合**比——不是条数。
-        # 本片 ∪ 另一片 ≠ 全集的 project 集、两片有交集、本片 ≠ 全集里属于本片的那些、
-        # 清单读不懂，都在这里退非零，job 红在 e2e 之前。`--projects` / `--others` 的值以
-        # `--` 开头，要写 `--opt=值`（argparse 会把空格后的 `--project=…` 当下一个选项）。
+        # 各片并集 ≠ 全集、两片有交集、同一 project 的 `--shard=i/n` 没凑齐 1..n、清单读不懂，
+        # 都在这里退非零，job 红在 e2e 之前（脚本对本片与其余每一片各跑一次 `--list`）。`--projects` /
+        # `--others` 的值以 `--` 开头，要写 `--opt=值`（argparse 会把空格后的 `--project=…` 当下一个选项）；
+        # `--others` 里各片用 `|` 隔开。
         # 两份清单 + check.json 写进 RUNNER_TEMP，下面上传作证据——只作证据，不作判定输入。
         run: >-
           python scripts/ci/playwright_shard_check.py
@@ -1754,6 +1797,8 @@ jobs:
         # PR #828 / #833 在 30.0 分钟被 step 级上限误杀（190–194 条过、约 17 条没跑到）。
         # 按 project 切的片已经切不动了（片 1 只有 chromium 一个 project），所以放到 45：
         # 约 1.5 倍余量，加上前后 ~6 分钟的构建与冒烟仍在 job 级 60 之内（挂起照样带日志失败）。
+        # 2026-10-19 chromium 再拆两半（片 1 / 片 3，各 ≈ 20–23 分钟），这一步的预期时长腰斩；
+        # 45 / 60 的上限刻意不动（它们是防挂死，不是性能预算），要不要收紧等新数据攒够再说。
         # 为什么要有 step 级：
         # PR #373 的 run 34994534095 attempt 1，这一步从 16:30:58Z 起挂着，直到 job 级上限在
         # 17:31:10Z 把整个 job 硬杀——step 停在 in_progress，后面的「大图预览内存基准」「上传」
@@ -1822,7 +1867,7 @@ jobs:
         continue-on-error: true
         uses: actions/upload-artifact@v6
         with:
-          # 按片唯一：upload-artifact v4 同名会失败。两片都出一份（基准本来就只出数据、
+          # 按片唯一：upload-artifact v4 同名会失败。每片都出一份（基准本来就只出数据、
           # 不阻塞；仓库里没有它的消费者，grep 过）。
           name: bench-large-preview-windows-shard${{ matrix.shard }}
           path: ${{ runner.temp }}/bench-large-preview-windows.json

@@ -34,10 +34,10 @@
  */
 import type { PanelInfo, AssetOriginalSpec } from '@/lib/api'
 import type { PanelObject } from '@/types/document'
-import { panelFullSize } from '@/types/document'
+import { isVectorFileKind, panelFullSize } from '@/types/document'
 import { useAssetStore } from '@/store/assetStore'
 import { useRenderStore, renderKeyOf, exactPanelRender } from '@/store/renderStore'
-import { artifactValidationIssue, originalArtifactOverrides } from './artifactValidation'
+import { artifactValidationIssue, isAdoptedPanel, originalArtifactOverrides } from './artifactValidation'
 import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
 import { findFigurePanel } from '@/store/workspace'
 
@@ -210,7 +210,7 @@ const isRuntime = (figureId: string) => figureId.startsWith('runtime:')
 
 function sourceKind(panel: PanelObject | null, asset: AssetOriginalSpec | null) {
   if (panel?.fileKind === 'runtime') return 'figure'
-  if (panel?.fileKind === 'pdf' || asset?.source_kind === 'vector') return 'vector'
+  if (isVectorFileKind(panel?.fileKind) || asset?.source_kind === 'vector') return 'vector'
   if (panel?.fileKind === 'raster' || asset?.source_kind === 'raster') return 'raster'
   return 'unknown'
 }
@@ -289,7 +289,7 @@ export function getOriginalOutputSpec(
   const renders = useRenderStore.getState()
   // Guarded metadata must belong to this exact, still-valid variant. FRAME alone
   // still exports the original PNG, whose pixel grid and density remain authoritative.
-  const guarded = panel != null && Object.hasOwn(panel, 'artifactValidation')
+  const guarded = panel != null && isAdoptedPanel(panel)
   const originalPng = guarded && !artifactValidationIssue(panel) &&
     originalArtifactOverrides(panel).length === 0
   const render = panel && !originalPng

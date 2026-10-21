@@ -77,6 +77,10 @@ const SVG_ALLOWLIST: Record<string, number> = {
   // 图例位置：子图容器边界 + 图例此刻落在哪（跟着 loc / bbox_to_anchor 走）+ 六个
   // 外侧预设的缩略示意，全在同一张 svg 里。画的是这张图自己的几何，不是图标
   '/src/components/inspector/controls/LegendPositionPicker.tsx': 1,
+  // 新手教程的演示图（ADR 0136）：按示例脚本量出来的几何画的那张科研图本身（坐标轴 / 曲线 / 图例 / 标题）
+  '/src/components/onboarding/DemoFigure.tsx': 1,
+  // 新手教程第一步从脚本卡指向投放框的那条虚线弧：两端按卡片与投放框此刻的位置现算，不是图标
+  '/src/components/onboarding/DemoImportStep.tsx': 1,
 }
 
 /** `size` 是别的意思（外框边长 / 加载器尺寸）的组件，数字字面量放行 */

@@ -1,11 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { cancelProbe, probeScript, type CapturedFigureDescriptor, type ProbeResult } from '@/lib/api'
+import { ApiError, cancelProbe, probeScript, type CapturedFigureDescriptor, type FigureSnapshotInvalidation, type ProbeResult } from '@/lib/api'
 import { setCurrentProjectId } from '@/lib/session'
 import { useUiStore } from './uiStore'
 import { useEnvStore } from './envStore'
 import { useScriptArgvStore } from './scriptArgvStore'
 import { useRenderStore } from './renderStore'
 import { useRuntimeAssetStore } from './runtimeAssetStore'
+import { registerFigureExecutionConsumer } from '@/lib/figureExecutionEvents'
 import {
   isBusyPhase,
   isGatePhase,
@@ -14,6 +15,10 @@ import {
   useScriptRunStore,
   whenScriptIdle,
 } from './scriptRunStore'
+
+// These tests cover entry admission; replay deduplication belongs to the snapshot coordinator.
+vi.mock('./figureSnapshotInvalidation', () => ({}))
+const acceptedExecution = vi.fn()
 
 vi.mock('@/lib/api', () => ({
   // scriptRunStore 直接用的三样
@@ -93,10 +98,109 @@ const flush = () => new Promise((r) => setTimeout(r, 0))
 const state = (script = 'fig.py') => useScriptRunStore.getState().byScript[script]
 
 beforeEach(() => {
+  setCurrentProjectId(null)
   useScriptRunStore.getState().clear()
   useRuntimeAssetStore.getState().clear()
   mockProbe.mockReset()
   mockCancel.mockClear()
+  acceptedExecution.mockClear()
+  registerFigureExecutionConsumer(acceptedExecution)
+})
+
+const executionFact = (over: Partial<FigureSnapshotInvalidation> = {}): FigureSnapshotInvalidation => ({
+  scope: 'owner',
+  script: 'fig.py',
+  run_config: null,
+  source_ids: ['runtime:fig.py#previous'],
+  execution_id: 'probe-execution-1',
+  ...over,
+})
+
+describe('explicit probe admits only trusted actual-execution facts', () => {
+  it('forwards the backend owner and old source identities using the initiating project', async () => {
+    setCurrentProjectId('probe-project')
+    const running = deferredProbe()
+    const run = useScriptRunStore.getState().run('fig.py')
+    expect(acceptedExecution).not.toHaveBeenCalled()
+    const fact = executionFact()
+    running.resolve({ ...ok([desc('a'), desc('b')]), figure_snapshot_invalidation: fact })
+    await run
+    expect(acceptedExecution).toHaveBeenCalledExactlyOnceWith(fact, 'probe-project')
+    setCurrentProjectId(null)
+  })
+
+  it('successful captured descriptors alone never imply that user code actually ran', async () => {
+    mockProbe.mockResolvedValueOnce(ok([desc('a'), desc('b')]))
+    await useScriptRunStore.getState().run('fig.py')
+    expect(acceptedExecution).not.toHaveBeenCalled()
+  })
+
+  it.each(['script_probe_failed', 'execution_cancelled', 'execution_timeout', 'script_no_figure'])(
+    'admits actual-start evidence even when execution ends with %s', async (code) => {
+      const fact = executionFact()
+      mockProbe.mockResolvedValueOnce({ ...failed(code), figure_snapshot_invalidation: fact })
+      await useScriptRunStore.getState().run('fig.py')
+      expect(acceptedExecution).toHaveBeenCalledExactlyOnceWith(fact, null)
+    },
+  )
+
+  it.each(['script_probe_failed', 'execution_cancelled', 'execution_timeout', 'script_no_figure'])(
+    'preserves snapshots when %s has no actual-execution fact', async (code) => {
+      mockProbe.mockResolvedValueOnce(failed(code))
+      await useScriptRunStore.getState().run('fig.py')
+      expect(acceptedExecution).not.toHaveBeenCalled()
+    },
+  )
+
+  it('an empty successful capture still forwards the owner fact', async () => {
+    const fact = executionFact({ source_ids: [] })
+    mockProbe.mockResolvedValueOnce({ ...ok([]), figure_snapshot_invalidation: fact })
+    await useScriptRunStore.getState().run('fig.py')
+    expect(acceptedExecution).toHaveBeenCalledExactlyOnceWith(fact, null)
+  })
+
+  it('an HTTP failure after execution forwards the fact from its error envelope', async () => {
+    const fact = executionFact()
+    mockProbe.mockRejectedValueOnce(new ApiError('script failed', 500, {
+      code: 'script_probe_failed', figure_snapshot_invalidation: fact,
+    }))
+    await useScriptRunStore.getState().run('fig.py')
+    expect(acceptedExecution).toHaveBeenCalledExactlyOnceWith(fact, null)
+    expect(state().phase).toBe('failed')
+  })
+
+  it('a before-start rejection has no fact to retire saved snapshots', async () => {
+    mockProbe.mockRejectedValueOnce(new ApiError('environment busy', 409, { code: 'environment_mutating' }))
+    await useScriptRunStore.getState().run('fig.py')
+    expect(acceptedExecution).not.toHaveBeenCalled()
+  })
+
+  it('keeps an exact named run configuration from the backend fact', async () => {
+    const fact = executionFact({ run_config: 'config-2', source_ids: ['runtime:fig.py#previous@config-2'] })
+    mockProbe.mockResolvedValueOnce({ ...ok([]), figure_snapshot_invalidation: fact })
+    await useScriptRunStore.getState().run('fig.py', 'config-2')
+    expect(mockProbe).toHaveBeenCalledWith('fig.py', undefined, { run_config: 'config-2' })
+    expect(acceptedExecution).toHaveBeenCalledExactlyOnceWith(fact, null)
+  })
+
+  it('missing owner configuration is not guessed as the default run', async () => {
+    const fact = { ...executionFact(), run_config: undefined } as unknown as FigureSnapshotInvalidation
+    mockProbe.mockResolvedValueOnce({ ...ok([desc('a')]), figure_snapshot_invalidation: fact })
+    await useScriptRunStore.getState().run('fig.py')
+    expect(acceptedExecution).not.toHaveBeenCalled()
+  })
+
+  it('does not accept a fact after a project A → B → A round trip while the response was pending', async () => {
+    setCurrentProjectId('probe-project')
+    const running = deferredProbe()
+    const run = useScriptRunStore.getState().run('fig.py')
+    setCurrentProjectId('other-project')
+    setCurrentProjectId('probe-project')
+    running.resolve({ ...ok([desc('a')]), figure_snapshot_invalidation: executionFact() })
+    await run
+    expect(acceptedExecution).not.toHaveBeenCalled()
+    setCurrentProjectId(null)
+  })
 })
 
 describe('scriptRunStore 状态机', () => {

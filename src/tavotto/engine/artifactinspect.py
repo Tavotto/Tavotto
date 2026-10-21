@@ -20,6 +20,64 @@ from . import databinding, exportjob, exportreq, figcapture, pool, profilestore,
 LOG = logging.getLogger(__name__)
 
 
+def normalize_worker_svg(path: Path, expected: dict | None = None) -> None:
+    """Normalize only trusted worker output before its bytes are frozen or inspected.
+
+    The parser itself always rejects DTDs. Only this producer boundary removes the
+    exact inert Matplotlib declaration; custom DTDs and active content still fail.
+    """
+    from ..rendercore import svgcheck
+
+    budget = svgcheck.SVGBudget()
+    with Path(path).open("rb") as stream:
+        data = stream.read(budget.max_bytes + 1)
+    if len(data) > budget.max_bytes:
+        raise svgcheck.SVGError("svg_resource_limit")
+    if expected is not None:
+        import hashlib
+
+        if expected.get("sha256") != hashlib.sha256(data).hexdigest() or expected.get(
+            "size_bytes"
+        ) != len(data):
+            raise exportreq.ExportRequestError(
+                "export_render_failed", "SVG companion changed", {"reason": "source_changed"}
+            )
+    normalized = svgcheck.strip_matplotlib_doctype(data)
+    svgcheck.parse_svg(normalized, budget=budget)
+    if normalized != data:
+        Path(path).write_bytes(normalized)
+
+
+def svg_vector(path: Path) -> bool:
+    """Classify generated SVG artwork without claiming that raster images are vectors.
+
+    This is a producer fact, not an inspection verdict. Nonpainted definitions do
+    not qualify; local use references are followed after bounded safe validation.
+    """
+    from ..rendercore import svgcheck
+
+    budget = svgcheck.SVGBudget()
+    with Path(path).open("rb") as stream:
+        root = svgcheck.parse_svg(stream.read(budget.max_bytes + 1), budget=budget)
+    ids = {node.get("id"): node for node in root.iter() if node.get("id")}
+    stack = [root]
+    has_image = False
+    vector_tags = {"path", "rect", "circle", "ellipse", "line", "polyline", "polygon", "text"}
+    while stack:
+        node = stack.pop()
+        tag = node.tag.removeprefix(f"{{{svgcheck.SVG_NS}}}")
+        if tag in vector_tags:
+            return True
+        if tag == "image":
+            has_image = True
+        elif tag == "use":
+            href = node.get("href") or node.get(f"{{{svgcheck.XLINK_NS}}}href")
+            stack.append(ids[href[1:]])
+        elif tag in ("svg", "g", "symbol"):
+            stack.extend(node)
+    return not has_image
+
+
 def execution_provenance(
     job: exportjob.ExportJob,
     worker,
@@ -199,7 +257,7 @@ def inspect_produced(
         if manifest["policy"]["verdict"] == inspector.REJECTED:
             # 拦住这一项的是哪些检查：失败的；严格政策下必需 unknown 也算（D08）
             blocked = list(manifest["policy"]["failed"])
-            if manifest["policy"]["mode"] == inspector.POLICY_STRICT:
+            if manifest["policy"]["mode"] == inspector.POLICY_STRICT or p.format == "svg":
                 blocked += manifest["policy"]["unknown"]
             out.append(
                 exportjob.Produced(
@@ -218,4 +276,11 @@ def inspect_produced(
     return out
 
 
-__all__ = ["execution_provenance", "inspect_produced", "inspection_profile", "plan_half"]
+__all__ = [
+    "execution_provenance",
+    "inspect_produced",
+    "inspection_profile",
+    "normalize_worker_svg",
+    "plan_half",
+    "svg_vector",
+]

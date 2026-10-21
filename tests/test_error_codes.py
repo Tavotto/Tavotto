@@ -71,6 +71,8 @@ _CODE_REGISTRIES = (
     "tavotto.pdfbackend",
     # ADR 0106：数据改指的端点——`RemapError(code)` 由 app 的 400 漏斗转出
     "tavotto.engine.inputremap",
+    # TAF 数据出图（ADR 0138 Phase 5）：`DataSourceError(code)` 由 app 的 400 漏斗转出；码表 `ERROR_CODES`，构造时校验
+    "tavotto.engine.ai_data_figure",
     # ADR 0110：改写脚本里的数据路径与共享的备份底座——`ScriptEditError(code)` 由 app 的 409 漏斗转出
     "tavotto.engine.scriptbackup",
     "tavotto.engine.scriptedit",
@@ -126,6 +128,8 @@ def _declared_codes(text: str) -> set[str]:
 # code——审计 P1-02：错误尾部不许泄漏中文，所以每个 code 都要有两种语言的
 # 文案，且占位符与 params 对得上）
 USER_VISIBLE_CODES = {
+    "svg_asset_unsupported": set(),
+    "svg_asset_export_unsupported": set(),
     "no_project": set(),
     "missing_path": set(),
     "mkdir_failed": {"reason"},
@@ -169,6 +173,8 @@ USER_VISIBLE_CODES = {
     # --- Compatibility Bridge Session 3：试运行路径校验的三种拒绝 ---
     # #961：Tavotto 自己的引擎文件缺了（不是缺依赖）；缺的模块名走响应的 engine_module，不进文案
     "engine_files_incomplete": set(),
+    # #898：MCP 来源的运行里脚本想写授权根之外（写入根绊线）。路径相对化后只进 MCP 的结构化载荷，不进文案
+    "write_outside_roots": set(),
     "script_not_found": {"script"},
     "script_path_outside_project": {"script"},
     "unsupported_script_type": {"script"},
@@ -260,6 +266,36 @@ USER_VISIBLE_CODES = {
     "ai_revert_failed": {"reason"},
     # QA STATE-09：脚本在这次 AI 修改之后又变过，回滚被拒（409，AgentError 漏斗）
     "ai_revert_conflict": {"script"},
+    # PR4：同一脚本上已有 AI 任务在跑（后端并发保护）/ 前端按请求 id 查询时后端没登记过
+    "ai_script_busy": {"script"},
+    "ai_request_not_found": set(),
+    # 这个请求 id 已被新指令取代（改写后再发），不会再执行 / 取代时发现旧请求其实已经开始
+    "ai_request_superseded": set(),
+    "ai_supersede_conflict": set(),
+    # 同面板 / 同脚本上还有没落定的待确认提交，这次又没显式取代它（409，后端在写账本的事务里判）
+    "ai_pending_unresolved": set(),
+    # TAF 数据出图（ADR 0138 Phase 5b）：开关关着 / 缺输入 / 数据读不成受控摘要（`ai_data_figure.DataSourceError`）
+    "taf_disabled": set(),
+    "data_figure_input_missing": set(),
+    "data_path_outside_project": set(),
+    "data_not_found": set(),
+    "data_not_csv": set(),
+    "data_too_large": set(),
+    "data_too_long": set(),
+    "data_too_wide": set(),
+    "data_unreadable": set(),
+    "data_decode_error": set(),
+    "data_malformed": set(),
+    "data_empty": set(),
+    "data_header_invalid": set(),
+    "data_ragged": set(),
+    "figure_name_exhausted": set(),
+    # 拒绝之后清待确认行也失败了：状态不确定（503），客户端保持同一个 rid
+    "ai_request_unresolved": set(),
+    # ADR 0132：助手草稿单稿超过 20 KB（413，不截断）
+    "ai_draft_too_large": {"limit_kb"},
+    # 同一面板未解决的待确认提交已满（409，拒绝新的、不淘汰旧的）
+    "ai_pending_limit": {"count"},
     # --- 编码 Agent 注册表（ADR 0013）：全部经 AgentError 抛出、
     #     由 app.py 的 _agent_error 一个漏斗转成 JSON ---
     "ai_agent_unknown": {"agent"},
@@ -359,6 +395,10 @@ USER_VISIBLE_CODES = {
     #     与没有脚本的图各报一条，其余格式照常交付（`partial`）---
     "eps_not_for_canvas": set(),
     "eps_needs_script": {"figure"},
+    "eps_source_unverified": {"figure"},
+    "eps_needs_live_figure": {"figure"},
+    "export_basis_mismatch": {"format"},
+    "svg_source_unsupported": {"id"},
     # --- Prompt 20（ADR 0039）：离线教程资源 / 副本。全部经 app._tutorial_error
     #     一个漏斗转成 JSON，`reason` 是异常里的原文 ---
     "tutorial_resources_missing": {"reason"},
@@ -367,6 +407,8 @@ USER_VISIBLE_CODES = {
     "tutorial_locked": {"reason"},
     # 重置时新副本已就位、但旧教程排版因会话状态被另一个进程占着没清掉（500）：文案固定、不带参数
     "tutorial_reset_incomplete": set(),
+    # 重置确认之后示例副本里的另存排版变了 / 清点不了（409）：文案固定、不带参数，重置未执行
+    "tutorial_layouts_changed": set(),
     # --- #264：版本时间线读不出来时拒绝整份写回（写入侧那道闸）---
     "versions_unreadable": set(),
     # --- ADR 0101：排版时间线。命名节点超出字节上限时拒绝再命名（已有的一条不删）；
@@ -552,6 +594,8 @@ NON_UI_CODES = {
     "desktop_auth_required",
     # `GET /api/handoff/render-status` 的参数错误：只有 `tavotto open` 的轮询客户端会调，界面不展示（ADR 0131 §六）
     "bad_handoff_query",
+    # `POST /api/handoff/display-ack`（重复交接的显示确认）的参数错误：调用方是前端自己的静默 fire-and-forget，不展示（ADR 0131）
+    "bad_handoff_ack",
     # 一键安装的**进度**状态码，不是错误响应：它们的文案在
     # dialogs:settings.agents.install.error.*（由 pnpm i18n:check
     # 守双语齐全），不该也不能进 errors.backend 那张表。

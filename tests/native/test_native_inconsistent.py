@@ -20,6 +20,7 @@ Figure 与文档不一致，这里把它挡在 offline 同一条 409 路上：
 
 from __future__ import annotations
 
+import sys
 import threading
 import time
 
@@ -41,7 +42,16 @@ class _Session(nativesession.NativeSession):
     def __init__(self, out_dir):
         super().__init__(
             session_id="native-inconsistent",
-            descriptor={"native_id": "i" * 32, "metadata": {}, "out_dir": str(out_dir)},
+            descriptor={
+                "native_id": "i" * 32,
+                "metadata": {
+                    "project_root": str(out_dir),
+                    "cwd": str(out_dir),
+                    "interpreter": sys.executable,
+                    "target_kind": "script",
+                },
+                "out_dir": str(out_dir),
+            },
         )
         self.sent: list[dict] = []
         self.unrestored = 0

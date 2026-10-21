@@ -1281,7 +1281,7 @@ def test_a_return_stops_the_function_body_and_not_the_module():
 
 def test_a_conditional_terminator_does_not_hide_real_evidence():
     tail = 'plt.savefig("x.png")\nopen("x.png", "rb").read()\n'
-    route = _route(MPL + 'if len(__import__("sys").argv) > 5:\n    raise SystemExit\n' + tail)
+    route = _route(MPL + "import sys\nif len(sys.argv) > 5:\n    raise SystemExit\n" + tail)
     assert route.execution == "native"
     route = _route(MPL + "while True:\n    break\n" + tail)
     assert route.execution == "native"

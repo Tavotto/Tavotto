@@ -34,12 +34,14 @@ import {
   type PreparationReport,
   type PreparationTarget,
 } from '@/lib/api'
-import { currentAttempt, prepView } from '@/lib/preparationText'
+import { currentAttempt, finishedWithFigures, prepView } from '@/lib/preparationText'
 import { visiblePrepSurface } from '@/lib/prepSurface'
 import { currentProjectId } from '@/lib/session'
 import { captureProjectEpoch, type ProjectEpochGuard } from '@/lib/projectEpoch'
 import { missingRequirements, readTokens, type ScriptArgsSchema } from '@/lib/scriptArgsForm'
 import { useEnvStore } from '@/store/envStore'
+import '@/store/figureSnapshotInvalidation'
+import { observeFigureExecution } from '@/lib/figureExecutionEvents'
 import { useScriptArgvStore } from '@/store/scriptArgvStore'
 import { useUiStore } from '@/store/uiStore'
 
@@ -59,7 +61,7 @@ function rerunnableView(v: ReturnType<typeof prepView>): boolean {
   // `edit_opening` / `edit_ready` 是已完成会话叠上「本地已进入过编辑」的视图：后端那边同样是可重跑的 completed，
   // 本地编辑记录不能把再点一次 ▶ 变成只重开旧结果（Codex #1044 r4285899694）
   if (
-    ['completed', 'completed_unlinked', 'no_figure', 'no_figure_raster', 'not_registered', 'edit_opening', 'edit_ready'].includes(
+    ['completed', 'completed_unlinked', 'completed_partial', 'no_figure', 'no_figure_raster', 'not_registered', 'edit_opening', 'edit_ready'].includes(
       v.state,
     )
   )
@@ -225,13 +227,18 @@ export function missingArgsFor(entry: PrepEntry, tokens: readonly string[]): num
 
 /** 成功的报告里这次尝试真正捕获到的图（老后端没有这个字段 → 空） */
 export const capturedOf = (report: PreparationReport | null): CapturedFigureDescriptor[] =>
-  report?.phase === 'completed' && report.outcome.kind === 'succeeded' ? (report.captured ?? []) : []
+  finishedWithFigures(report) ? (report?.captured ?? []) : []
+
+/** 判据唯一出处在 `lib/preparationText`（store 与卡片同一份，#1134 Codex r4310249719） */
+export { finishedWithFigures }
 
 /* ---------------------------------------------------------- 模块级账本（活得比一次 setState 长） */
 
 const timers = new Map<string, ReturnType<typeof setTimeout>>()
 const pollStep = new Map<string, number>()
 const inflight = new Map<string, Promise<void>>()
+// 飞行中的「新建 / 复用 / 重建」检查：同一目标又来一次 open（同一次点击落成两次调用、卡开着时再点 ▶）搭这一趟，不再发第二个创建请求
+const checkFlight = new Map<string, Promise<void>>()
 
 function stopTimer(key: string): void {
   const t = timers.get(key)
@@ -282,6 +289,8 @@ function newer(cur: PreparationReport | null, next: PreparationReport): boolean 
 
 /** 同一个 key 下「目标（参数）换过几次」：在途的检查 / 补拉 / 动作带着发起时的戳，参数换了就失去落地资格 */
 const targetGens = new Map<string, number>()
+/** Whether an execution token was actively observed or only a passive initial baseline. */
+const observedFigureExecutions = new Map<string, boolean>()
 
 export const useProjectPreparationStore = create<PreparationState>((set, get) => {
   /** 回包资格戳 = 代（换项目）× 目标代（同 key 换参数）；两者任一变了，在途响应都不许落地 */
@@ -325,6 +334,14 @@ export const useProjectPreparationStore = create<PreparationState>((set, get) =>
       (report.provider.attempt_id ?? null) !== (before.provider.attempt_id ?? null)
     // 动态 import 之后项目 / 代可能已经换了：回调带着发起时的归属，落地前复核
     const owner = captureProjectEpoch(() => get().epoch)
+    const execution = report.figure_snapshot_invalidation
+    if (execution) {
+      const token = JSON.stringify([report.session_id, execution.execution_id])
+      // First reading an old session is a baseline. A later real execution in an already-observed
+      // session is accepted regardless of succeeded/failed/no-figure, with replay dedup downstream.
+      if (!observedFigureExecutions.has(token)) observedFigureExecutions.set(token, before?.session_id === report.session_id)
+      if (observedFigureExecutions.get(token) && owner.still()) observeFigureExecution(execution, owner.pj)
+    }
     // `rejection` 不在这里清：被拒之后重读到的新修订正是要配着那一句看的；下一次动作 / 重新打开才收起它
     patch(key, () => ({
       report,
@@ -342,7 +359,7 @@ export const useProjectPreparationStore = create<PreparationState>((set, get) =>
     // 已跑完的报告：只有 `armMaybe`（本窗口刚点过、响应丢了）且意图是点击之后才出现的（id 与点击时不同）才算这次点击的——
     // 快脚本在第一次补拉前就跑完了；`wantsRun`（刷新后重新打开）读到的 completed 是旧运行，不重开自动编辑
     const thisClick = !!cur?.armMaybe && report.intent?.id !== cur.armMaybeBaseline
-    if (cur && !cur.armed && intentLive && (report.phase !== 'completed' ? cur.wantsRun || cur.armMaybe : thisClick)) {
+    if (cur && !cur.armed && intentLive && (!finishedWithFigures(report) ? cur.wantsRun || cur.armMaybe : thisClick)) {
       patch(key, () => ({ armed: true, armMaybe: false }))
     } else if (cur?.armMaybe && report.actions.some((a) => a.kind === 'run_when_ready')) {
       // 认领没落地：别留着——但补拉赢了 POST 的提交竞态时报告还是点击前的样子：观察越过点击前那份才算数，否则继续不确定
@@ -354,7 +371,7 @@ export const useProjectPreparationStore = create<PreparationState>((set, get) =>
         report.observation_seq > from.observation_seq
       if (passed) patch(key, () => ({ armMaybe: false, armMaybeFrom: null }))
     }
-    if (report.phase === 'completed' && (before?.phase !== 'completed' || attemptChanged)) {
+    if (finishedWithFigures(report) && (!finishedWithFigures(before) || attemptChanged)) {
       void onCompleted(report, owner)
       if (entry(key)?.armed) {
         // 「打开并运行」认领过：这一轮到头了——恰好一张图就直接进入编辑（多张要用户挑；没有图 / 静态不进）。
@@ -363,7 +380,13 @@ export const useProjectPreparationStore = create<PreparationState>((set, get) =>
         patch(key, () => ({ armed: false }))
         const figures = capturedOf(report)
         const watching = get().focus === key && useUiStore.getState().guideCard === 'card'
-        if (watching && figures.length === 1 && (report.unlinked_stems ?? []).length === 0) {
+        // 部分捕获同理：有图没捕获到（`failed_figures`）是用户必须看到的，不自动进入把卡片盖掉
+        if (
+          watching &&
+          figures.length === 1 &&
+          (report.unlinked_stems ?? []).length === 0 &&
+          (report.failed_figures ?? []).length === 0
+        ) {
           void autoEnterEdit(key, figures[0], owner, report)
         }
       }
@@ -407,7 +430,18 @@ export const useProjectPreparationStore = create<PreparationState>((set, get) =>
   }
 
   /** 检查会话（新建 / 复用 / 重建）。只读：后端不执行任何用户代码 */
-  const check = async (key: string, target: PreparationTarget, restarted: boolean) => {
+  const check = (key: string, target: PreparationTarget, restarted: boolean): Promise<void> => {
+    // 同一键上已有检查在飞（目标换了会在 open 里先清掉登记）：搭它，不另发创建请求。入口不止 open——事件流重连的 `refreshAll`
+    // 在第一趟检查回来前（条目还没有报告）也会落到这里（#1137 Windows 分片 trace：第二个 POST 与重连后的补拉 GET 同一毫秒）
+    const flying = checkFlight.get(key)
+    if (flying) return flying
+    const p = runCheck(key, target, restarted).finally(() => {
+      if (checkFlight.get(key) === p) checkFlight.delete(key)
+    })
+    checkFlight.set(key, p)
+    return p
+  }
+  const runCheck = async (key: string, target: PreparationTarget, restarted: boolean) => {
     const g = guardOf(key)
     const pj = g.pj
     patch(key, () => ({ pending: 'check' }))
@@ -483,7 +517,10 @@ export const useProjectPreparationStore = create<PreparationState>((set, get) =>
         stopTimer(key)
         pollStep.delete(key)
         inflight.delete(key)
+        checkFlight.delete(key)
       }
+      // 同一目标的首次检查还在飞（慢机器上同一次点击落成两次 open）：下面的 `check` 会搭这一趟，不再发第二个创建请求。
+      // 否则两趟检查先后回来，后一趟把先一趟已置上的 `pending`（run_when_ready 在飞）清掉，防连点的闸就开了，认领发两次（#1137）
       set((s) => ({
         focus: key,
         entries: {
@@ -624,6 +661,7 @@ export const useProjectPreparationStore = create<PreparationState>((set, get) =>
         accept(key, res.report)
       } catch (err) {
         if (!live(key, g)) return
+        if (kind === 'run' && err instanceof ApiError) observeFigureExecution(err.body.figure_snapshot_invalidation, pj)
         patch(key, () => ({ pending: null }))
         if (isRestarted(err)) {
           await check(key, e.target, true)
@@ -696,6 +734,8 @@ export const useProjectPreparationStore = create<PreparationState>((set, get) =>
     clear: () => {
       stopAllTimers()
       inflight.clear()
+      observedFigureExecutions.clear()
+      checkFlight.clear()
       set((s) => ({ epoch: s.epoch + 1, entries: {}, focus: null }))
     },
   }

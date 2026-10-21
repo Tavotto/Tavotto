@@ -1,4 +1,5 @@
 import { useEffect } from 'react'
+import { observeFigureExecution } from '@/lib/figureExecutionEvents'
 import { i18n, msg, t } from '@/i18n'
 import {
   affectedAssetIdsOf,
@@ -6,7 +7,7 @@ import {
   subscribeEvents,
   type ServerEvent,
 } from '@/lib/api'
-import { useAiStore } from '@/store/aiStore'
+import { setAiSettledNotifier, useAiStore, type DonePayload } from '@/store/aiStore'
 import { useDepRepairStore } from '@/store/depRepairStore'
 import { usePackageStore } from '@/store/packageStore'
 import { useDocumentStore } from '@/store/documentStore'
@@ -19,6 +20,7 @@ import { useProjectPreparationStore } from '@/store/projectPreparationStore'
 import { useProjectStore } from '@/store/projectStore'
 import { currentProjectId, onCurrentProjectChange } from '@/lib/session'
 import {
+  noteRenderProgress,
   renderFailureOwner,
   settleRenderFailureToast,
   useRenderStore,
@@ -27,6 +29,7 @@ import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
 import { useScriptLibraryStore } from '@/store/scriptLibraryStore'
 import { useScriptInputStore } from '@/store/scriptInputStore'
 import { useScriptRunStore } from '@/store/scriptRunStore'
+import { admissionToastCovers } from '@/store/pngAdmissionMemory'
 import { useUiStore } from '@/store/uiStore'
 
 const short = (id: string) => id.split('/').pop()?.replace(/\.[^.]+$/, '') ?? id
@@ -68,6 +71,11 @@ export function handleServerEvent(ev: ServerEvent) {
   if ('pj' in ev && ev.pj && mine && ev.pj !== mine) return
 
   switch (ev.kind) {
+    case 'figure.snapshot_invalidated':
+      // This event is live execution evidence, never an initialization/reconnect replay.
+      // Require the explicit project even while the general stream is between project adoptions.
+      if (ev.pj === currentProjectId()) observeFigureExecution(ev, ev.pj)
+      break
     case 'engine.bootstrap':
       // 渲染环境安装进度（建 venv + 装 matplotlib）
       useEnvStore.getState().onProgress(ev)
@@ -103,6 +111,10 @@ export function handleServerEvent(ev: ServerEvent) {
     case 'render.preparing':
       render.noteBuilding(ev.id, { cold: false, cost: '', phase: 'preparing' })
       break
+    case 'render.progress':
+      // 引擎说 build 还在跑（worker 日志仍在增长，#1207）：续上这个文件的看门狗租约
+      noteRenderProgress(ev.id)
+      break
     case 'render.started': {
       // 事件只带 fileId，而渲染态按变体分键：冷启动提示记在**文件级**的
       // building 表里，不写进任何一个变体条目——同文件另一个副本被盖成
@@ -134,6 +146,8 @@ export function handleServerEvent(ev: ServerEvent) {
       break
     case 'render.failed':
       render.noteBuilding(ev.id, null)
+      // 同一次 PNG 采用被拒：采用失败的那句说明（原因 + 出路）才是权威报告，后端原句不再顶掉它
+      if (admissionToastCovers(ev.id)) break
       setStatus(
         msg(
           ev.error ? 'status.renderFailedWithError' : 'status.renderFailed',
@@ -298,7 +312,13 @@ export function handleServerEvent(ev: ServerEvent) {
 
     case 'ai.delta':
       // 按 sid 写进自己的会话；不是本标签页此刻持有的会话就什么都不做
-      useAiStore.getState().appendDelta(ev.session, ev.kindOf ?? 'message', ev.text)
+      // 带上请求 id：事件可能比 `aiRun` 的响应先到，store 凭它认领并暂存
+      useAiStore.getState().appendDelta(ev.session, ev.kindOf ?? 'message', ev.text, ev.client_request_id)
+      break
+
+    case 'ai.task':
+      // 阶段提示（「正在自动修正」）；不是本标签页持有的会话就什么都不做
+      useAiStore.getState().setTaskPhase(ev.session, ev.phase, ev.task_type)
       break
 
     case 'ai.done': {
@@ -306,38 +326,67 @@ export function handleServerEvent(ev: ServerEvent) {
       // **只对自己持有的会话起副作用**（提示、失败说明……）：老后端的 `ai.done` 不带 pj，上面那道
       // 项目判据拦不住它；切项目之后 A 的会话已不在列表里，这里就一个字都不说（#589）
       if (!ai.finish(ev)) break
-      // 这里**不再 markStale**：文件变了的话后端在 ai.done 之前已经作废 worker、
-      // 跑过统一刷新、发过 `panel.file_changed`（reason=ai），上面那个分支按
-      // stem 把画布上的面板全部转入跟踪——同一次修改只置一次 stale（ADR 0041）。
-      // 老后端（没有 refresh 字段）仍靠 watcher 的 panel.file_changed 兜底。
-      const refreshFailed = ev.changed && ev.refresh?.status === 'failed'
-      if (refreshFailed) {
-        // 代码改成了、项目没刷新：两件事都说，不把前者伪装成全部成功
-        const code = ev.refresh?.code ?? ''
-        const reason = i18n.exists(`backend.${code}`, { ns: 'errors' })
-          ? translateBackend(code)
-          : code
-        setStatus(msg('status.aiChangedRefreshFailed', { reason }, 'ai'), 'error')
-        break
-      }
-      setStatus(
-        msg(
-          ev.status === 'done'
-            ? ev.changed
-              ? 'status.aiChanged'
-              : 'status.aiNoChange'
-            : ev.status === 'timeout'
-              ? 'status.aiTimeout'
-              : 'status.aiFailed',
-          undefined,
-          'ai',
-        ),
-        ev.status === 'done' ? 'info' : 'error',
-      )
+      announceAiDone(ev)
       break
     }
   }
 }
+
+
+/**
+ * 一次 AI 会话收尾时对用户说的话（状态栏）。直达路径（`ai.done` 到的时候会话已经在）和
+ * 「事件先于 `aiRun` 响应、会话建好后才回放」的路径共用这一份。
+ */
+function announceAiDone(ev: DonePayload) {
+  const setStatus = useUiStore.getState().setStatus
+  // 这里**不再 markStale**：文件变了的话后端在 ai.done 之前已经作废 worker、
+  // 跑过统一刷新、发过 `panel.file_changed`（reason=ai），上面那个分支按
+  // stem 把画布上的面板全部转入跟踪——同一次修改只置一次 stale（ADR 0041）。
+  // 老后端（没有 refresh 字段）仍靠 watcher 的 panel.file_changed 兜底。
+  const refreshFailed = ev.changed && ev.refresh?.status === 'failed'
+  if (refreshFailed) {
+    // 代码改成了、项目没刷新：两件事都说，不把前者伪装成全部成功
+    const code = ev.refresh?.code ?? ''
+    const reason = i18n.exists(`backend.${code}`, { ns: 'errors' })
+      ? translateBackend(code)
+      : code
+    setStatus(msg('status.aiChangedRefreshFailed', { reason }, 'ai'), 'error')
+    return
+  }
+  // 任务结局（TAF）：只翻译 `task.outcome`；刷新失败那条优先级最高，在上面已经返回。
+  // completed + 没改动有意走下面的 `aiNoChange`（没写回 = 没做渲染层核对，不能说「核对一致」；转录 `statusText` 同一口径）
+  const outcome = ev.task?.outcome
+  const taskKey =
+    ev.status === 'done' && ev.changed && outcome === 'completed'
+      ? 'status.aiTaskVerified'
+      : ev.status === 'done' && outcome === 'partial'
+        ? 'status.aiTaskPartial'
+        : ev.status === 'done' && ev.changed && outcome === 'failed'
+          ? 'status.aiTaskFailedChanged'
+          : ev.status === 'failed' && !ev.changed && outcome === 'failed'
+            ? 'status.aiTaskRejected'
+            : null
+  if (taskKey) {
+    setStatus(msg(taskKey, undefined, 'ai'), taskKey === 'status.aiTaskVerified' || taskKey === 'status.aiTaskPartial' ? 'info' : 'error')
+    return
+  }
+  setStatus(
+    msg(
+      ev.status === 'done'
+        ? ev.changed
+          ? 'status.aiChanged'
+          : 'status.aiNoChange'
+        : ev.status === 'timeout'
+          ? 'status.aiTimeout'
+          : 'status.aiFailed',
+      undefined,
+      'ai',
+    ),
+    ev.status === 'done' ? 'info' : 'error',
+  )
+}
+
+setAiSettledNotifier(announceAiDone)
 
 /** 后端事件 → 渲染状态 / AI 会话 / 素材库刷新 / 状态栏 */
 export function useServerEvents() {
@@ -363,6 +412,8 @@ export function useServerEvents() {
         catchUpInputRemap()
         // 依赖安装 / 引擎 bootstrap 的进度也只走 SSE：丢了终态事件就以实况为准收尾
         reconcileInstalls()
+        // 后端仍在跑的 AI 会话接回来；断线期间结束的收尾（`ai.done` 没收到）
+        void useAiStore.getState().restoreRunning()
       }),
     [],
   )

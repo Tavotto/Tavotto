@@ -1,4 +1,4 @@
-import { artifactRequestFields, artifactValidationIssue, ArtifactValidationError } from '@/lib/artifactValidation'
+import { adoptionGuardOf, artifactRequestFields, artifactValidationIssue, ArtifactValidationError, isSourceBackedZeroEdit, isAdoptedPanel } from '@/lib/artifactValidation'
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { createPortal } from 'react-dom'
 import { perfCount, perfRenderPainted } from '@/perf/core'
@@ -181,13 +181,17 @@ export function PanelView({ obj }: { obj: PanelObject }) {
   const kind = panelKind(obj)
   const runtime = kind === 'runtime'
   const tracked = useRenderStore((s) => !!s.tracked[obj.fileId])
-  const needsEngine =
-    (obj.overrides.length > 0 && !isJustBakedBaseline(obj)) || tracked || runtime
+  // 来源驱动采用 + 零编辑（只有结构性 FRAME）且**不在图内编辑**：显示磁盘原像素，不出引擎图（ADR 0139 §五.1）。
+  // 进入图内编辑的那一刻起显示可编辑基础（重画的 SVG + 命中层），拖动预览才看得见；退出编辑且仍是零编辑就回原像素。
+  // 超大图（raster / evicted 档）同理：只有编辑态才用引擎位图，编辑外一律原像素。
+  const originalPixels = isSourceBackedZeroEdit(obj) && !editing
+  const needsEngine = !originalPixels &&
+    ((obj.overrides.length > 0 && !isJustBakedBaseline(obj)) || tracked || runtime)
   // raster 档下**编辑态也要位图**——否则画布上什么都没有。复用的是同一条
   // PNG 链路（按 patches 出图、状态中立、AbortController + objectURL 生命周期），
   // 不另写第二套。
-  const useEnginePng = !artifactValidationIssue(obj) &&
-    (!obj.artifactValidation || (render?.status !== 'error' && !render?.stale && !!render?.manifest)) &&
+  const useEnginePng = !artifactValidationIssue(obj) && !originalPixels &&
+    (!isAdoptedPanel(obj) || (render?.status !== 'error' && !render?.stale && !!render?.manifest)) &&
     (bitmapOnly ? editing || needsEngine : !editing && needsEngine) && (render?.rev ?? 0) > 0
   const renderRev = render?.rev ?? 0
   const pngSource = render?.manifest ?? null
@@ -199,7 +203,7 @@ export function PanelView({ obj }: { obj: PanelObject }) {
   // 暂挂**（与 Phase F 的 latest 显示退路同一条纪律）。取图一旦失败，就不能再
   // 拿上一变体的位图冒充当前变体——那正是「预览 ≠ 当前 overrides 且不吵」。
   const enginePng =
-    pngBlob.url && !(obj.artifactValidation && pngBlob.failed) && !artifactValidationIssue(obj) && (pngIsCurrent || (!obj.artifactValidation && !pngBlob.failed)) ? pngBlob.url : null
+    pngBlob.url && !(isAdoptedPanel(obj) && pngBlob.failed) && !artifactValidationIssue(obj) && (pngIsCurrent || (!isAdoptedPanel(obj) && !pngBlob.failed)) ? pngBlob.url : null
   // 性能探针（ADR 0075）：位图这一格（raster / evicted / 非编辑态的引擎位图）没有
   // 「SVG 换进 DOM」那一刻，松手 → 图落定要一直量到**这一版自己的位图**加载完
   // （onLoad：取图、解码都已结束）。暂挂的上一变体 / 上一 rev 的那张不算——那是
@@ -427,7 +431,7 @@ function useEnginePngBlob(
     let landed = false
     const transport = engineTransport()
     const issue = artifactValidationIssue(obj)
-    const pending = issue || (obj.artifactValidation && transport)
+    const pending = issue || (isAdoptedPanel(obj) && transport)
       ? Promise.reject(new ArtifactValidationError(issue ?? 'unsupported_render_state'))
       : transport
       ? transport.previewPngSnapshot
@@ -447,9 +451,10 @@ function useEnginePngBlob(
         setState({ ...next, source, fileId, variant, rev, failed: false })
       })
       .catch((error) => {
-        if (!ctrl.signal.aborted && obj.artifactValidation &&
+        const guard = adoptionGuardOf(obj)
+        if (!ctrl.signal.aborted && guard &&
             (error instanceof ArtifactValidationError || (error instanceof EngineError && error.code === 'artifact_source_unavailable'))) {
-          rejectArtifactRenders(fileId, obj.artifactValidation, error, variant)
+          rejectArtifactRenders(fileId, guard, error, variant)
           useMountedPngStore.getState().clear(obj.id)
           setState(s => ({...s,url:null,manifest:null,failed:true}))
           return

@@ -17,6 +17,8 @@ import { rememberLayoutRevision } from '@/lib/layoutRevision'
 import { readProjectFile } from '@/lib/projectFile'
 import {
   activeProjectFile,
+  captureFigureSnapshotSave,
+  mergeSavedFigureSnapshots,
   projectFileSnapshot,
   setProjectFile,
   useDocumentStore,
@@ -25,6 +27,7 @@ import { reportSaveSkipped, stillCurrent, type SaveContext } from './saveContext
 import { useUiStore } from './uiStore'
 import { emitLayoutSaved } from '@/lib/layoutSaved'
 import { captureMoment } from '@/lib/timelineCheckpoint'
+import { svgSnapshotWarning } from '@/lib/svgSnapshotWarning'
 
 /**
  * 写回队列里的一项。`started` 之前同一个保存上下文再按 ⌘S 都并进它（它开始时现读绑定与内容）。
@@ -92,12 +95,14 @@ async function writeOnce(ctx: SaveContext): Promise<boolean> {
   const ui = useUiStore.getState()
   const edited = projectFileSnapshot()
   const pd = useDocumentStore.getState().buildProject()
+  const snapshots = captureFigureSnapshotSave(pd, ctx.pj)
   // 写出去的就是这一份：「保存」点拍它（排队期间又改过的话，入口那份已经不是写出去的内容）
   const moment = captureMoment()
   try {
     const res = await saveLayout(binding.name, pd, binding.revision ?? REVISION_ABSENT, {
       target: 'project',
     })
+    mergeSavedFigureSnapshots(snapshots, res.figure_snapshots)
     // 写成了：立刻说「排版写成了」，时间线打「保存」点（ADR 0101 §7）——在后面任何一步之前，
     // 与它们的成败无关；点拍的是写出去的那一份（`moment`），不管此刻开着的是谁
     emitLayoutSaved('project_file', { moment })
@@ -112,7 +117,8 @@ async function writeOnce(ctx: SaveContext): Promise<boolean> {
       // 写的途中又改过：项目里这份已经落后了，圆点不能灭
       setProjectFile({ ...now, name, file, revision: res.revision, dirty: edited() }, ctx.documentId)
     }
-    ui.setStatus(msg('save.doneProject', { file }, 'workspace'), 'done')
+    const warning = svgSnapshotWarning(file, res.svg_snapshot_warnings)
+    ui.setStatus(warning ?? msg('save.doneProject', { file }, 'workspace'), warning ? 'info' : 'done')
     return true
   } catch (e) {
     const revision =

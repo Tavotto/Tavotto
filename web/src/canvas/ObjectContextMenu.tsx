@@ -88,6 +88,7 @@ import { fastEditPanelOf, useWorkspaceStore } from '@/store/workspace'
 import { openArrangeInInspector } from './context-bar/openArrange'
 import type { CanvasObject, PanelObject } from '@/types/document'
 import { objectLabel, panelRotation } from '@/types/document'
+import { isAdoptedPanel } from '@/lib/artifactValidation'
 
 /**
  * 画布对象的右键菜单（Prompt 18）。
@@ -249,7 +250,7 @@ function EditablePanelItems({
       </MenuItem>
       <CropItem panelId={panel.id} rotated={rotated} run={run} />
       <FitItem panelId={panel.id} run={run} />
-      {(edits > 0 || Object.hasOwn(panel, 'artifactValidation')) && (
+      {(edits > 0 || isAdoptedPanel(panel)) && (
         <MenuItem
           icon={RotateCcw}
           data-quick-item="reset-overrides"

@@ -1,0 +1,127 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://tavotto.org/schemas/compatibility-guardian/triage-rules-1.json",
+  "title": "Guardian triage rules (data table; first match wins)",
+  "type": "object",
+  "properties": {
+    "schema": {
+      "const": "tavotto-guardian-triage-rules/1"
+    },
+    "rules": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 3
+          },
+          "source": {
+            "enum": [
+              "explore",
+              "row"
+            ]
+          },
+          "when": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "object",
+              "properties": {
+                "field": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "op": {
+                  "enum": [
+                    "eq",
+                    "ne",
+                    "in",
+                    "gt",
+                    "lt",
+                    "contains",
+                    "true",
+                    "false",
+                    "present",
+                    "absent"
+                  ]
+                },
+                "value": {}
+              },
+              "required": [
+                "field",
+                "op"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "family": {
+            "enum": [
+              "environment_resolution",
+              "dependency_provider",
+              "dependency_version",
+              "argument_or_input",
+              "cwd_or_data_path",
+              "safe_execution_divergence",
+              "figure_capture",
+              "partial_capture",
+              "product_entry_reachability",
+              "manifest_semantics",
+              "editing_capability",
+              "replay_inconsistency",
+              "export_or_fidelity",
+              "timeout_or_process_crash",
+              "invalid_fixture",
+              "unknown"
+            ]
+          },
+          "stage": {
+            "type": "string",
+            "minLength": 1
+          },
+          "confidence": {
+            "enum": [
+              "high",
+              "medium",
+              "low"
+            ]
+          },
+          "modules": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "string",
+              "minLength": 3
+            }
+          },
+          "next_action": {
+            "type": "string",
+            "minLength": 10
+          },
+          "why": {
+            "type": "string",
+            "minLength": 10
+          }
+        },
+        "required": [
+          "id",
+          "source",
+          "when",
+          "family",
+          "stage",
+          "confidence",
+          "modules",
+          "next_action",
+          "why"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": [
+    "schema",
+    "rules"
+  ],
+  "additionalProperties": false
+}

@@ -3772,3 +3772,27 @@ def test_perf_probe_finds_the_app_bundle_plist_with_windows_separators(monkeypat
     assert mod.info_plist_for_executable(exe) == PureWindowsPath(
         "C:\\x\\Tavotto.app\\Contents\\Info.plist"
     )
+
+
+def test_matplotlib_svg_with_crlf_line_endings_is_accepted_but_custom_dtds_still_fail(tmp_path):
+    """#1230 Windows 腿：matplotlib 在 Windows 以文本模式写 SVG，声明里的换行是 CRLF；
+    原先只认 LF 的固定声明失配，整份 SVG 素材被 `svg_dtd_forbidden` 误拒。"""
+    from tavotto import svgasset
+    from tavotto.rendercore import svgcheck
+
+    body = b'<svg xmlns="http://www.w3.org/2000/svg" width="96" height="48" viewBox="0 0 96 48"><path d="M0 0L96 48"/></svg>'
+    prolog = b'<?xml version="1.0" encoding="utf-8" standalone="no"?>\r\n'
+    stock = svgcheck._MATPLOTLIB_DOCTYPE.replace(b"\n", b"\r\n")
+    source = tmp_path / "F.svg"
+    source.write_bytes(prolog + stock + b"\r\n" + body)
+    data, facts = svgasset.read(source)
+    assert b"DOCTYPE" not in data and facts["w_pt"] == 72
+    # 换行不同不等于放宽：别的声明、被改过一个字的声明、带内部子集的声明仍然拒绝
+    for dtd in (
+        b'<!DOCTYPE svg SYSTEM "https://example.org/evil.dtd">',
+        stock.replace(b"1.1//EN", b"1.0//EN"),
+        stock[:-1] + b' [<!ENTITY x "y">]>',
+    ):
+        source.write_bytes(prolog + dtd + b"\r\n" + body)
+        with pytest.raises(svgasset.UnsupportedSVG):
+            svgasset.read(source)

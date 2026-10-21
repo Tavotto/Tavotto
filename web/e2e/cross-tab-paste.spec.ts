@@ -34,7 +34,7 @@ test('同一项目开两个标签页：标签 A 复制面板，标签 B 粘贴',
   // 会跟着进快速编辑，粘贴进文档的那个对象存在但根本不画出来，`[data-object-id]`
   // 永远是 1——判据量错了对象（不是「粘贴没成功」，是「这一屏不显示它」）。
   // 这条用例测的是画布上的跨标签粘贴，所以回到画布排版再往下走。
-  await tabA.getByRole('button', { name: /返回画布/ }).click()
+  await tabA.locator('[data-context-back]').click()
   await expect(tabA.locator('[data-object-id]')).toHaveCount(1)
   // 复制的前提是**选区非空**（`lib/clipboard.ts` 的 `buildClipPayload` 在选区为空时回 null，
   // `handleCopyEvent` 静默不消费——按了等于没按，之后再也等不到「已复制」）。从快速编辑回到

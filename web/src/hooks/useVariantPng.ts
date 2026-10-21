@@ -1,5 +1,5 @@
 import { rejectArtifactRenders, renderKey } from '@/store/renderStore'
-import { artifactRequestFields, artifactKeySuffix, artifactValidationIssue, ArtifactValidationError, type ArtifactValidation } from '@/lib/artifactValidation'
+import { artifactRequestFields, artifactKeySuffix, artifactValidationIssue, ArtifactValidationError, subjectOf, hasRealEdits, type AdoptionGuard } from '@/lib/artifactValidation'
 import type { PanelOverride } from '@/types/document'
 /**
  * 「按 overrides 出一张缩略图」的可复用 hook（issue #131）。
@@ -81,7 +81,7 @@ export function useVariantPng(
   enabled: boolean,
   /** 素材版本（mtime）：磁盘上那份被改过时旧缩略图必须作废 */
   rev = 0,
-  artifactValidation?: ArtifactValidation | null,
+  artifactValidation?: AdoptionGuard | null,
 ): VariantPng {
   const key = keyOf(fileId, overrides, bucket, rev) + artifactKeySuffix(artifactValidation)
   const [state, setState] = useState<VariantPng & {key?: string}>(() => ({
@@ -96,11 +96,12 @@ export function useVariantPng(
       setState({ key, url: null, loading: false, approximate: false })
       return
     }
-    const subject = {fileId,overrides:overrides as PanelOverride[],...(artifactValidation !== undefined ? {artifactValidation: artifactValidation as ArtifactValidation} : {})}
+    const subject = subjectOf(fileId, overrides as PanelOverride[], artifactValidation)
     const issue = artifactValidationIssue(subject)
     if (issue) { setState({ key,url:null,loading:false,approximate:true}); return }
     // 没有 override 的面板与磁盘图一模一样，白跑一次引擎没有意义
-    if (!overrides.length) {
+    // 来源驱动面板零编辑（只有结构性 FRAME）显示磁盘原像素，同样不出引擎图（ADR 0139 §五.1）
+    if (!overrides.length || (artifactValidation && 'policy' in artifactValidation && !hasRealEdits(overrides as PanelOverride[]))) {
       setState({ key, url: null, loading: false, approximate: false })
       return
     }

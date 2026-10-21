@@ -146,7 +146,8 @@
     "textMenu": "Text"
   },
   "unexpectedError": {
-    "text": "Something unexpected happened. You can send us the diagnostics."
+    "text": "Something went wrong in Tavotto",
+    "body": "Sending us the diagnostics helps us find the cause and fix it faster."
   },
   "exitNotice": {
     "engine": {
@@ -155,7 +156,8 @@
       "note": "After restarting you can send a problem report"
     },
     "previous": {
-      "text": "Tavotto did not exit normally last time"
+      "text": "Tavotto did not exit normally last time",
+      "body": "If it crashed or froze, sending us the diagnostics helps us find out why."
     }
   },
   "crash": {
@@ -237,16 +239,16 @@
     "locateEditable": "Select an editable figure"
   },
   "fastEdit": {
-    "addToCanvas": "Add to canvas",
     "added": "{{name}} added to the canvas",
     "addedForEdit": "Added to this layout for editing",
     "addedForEditLive": "Added to this layout for editing; Remove undoes it.",
     "removeAdded": "Remove",
     "alreadyOnCanvas": "{{name}} is already on the canvas",
     "connectSource": "Link source script",
-    "crumbTitle": "Back to canvas layout",
+    "crumbTitle": "Back to the layout (Esc)",
     "figureMissing": "{{name}} is not in this project",
-    "layoutOnly": "No source script linked. Lay it out, but you can’t edit inside."
+    "layoutOnly": "No source script linked. Lay it out, but you can’t edit inside.",
+    "toLayout": "Layout & export"
   },
   "history": {
     "addArrow": "Add arrow",
@@ -586,6 +588,8 @@
     }
   },
   "save": {
+    "svgSnapshotWarning": "Layout saved: {{name}}. SVG snapshots could not be kept for: {{sources}}. After reopening, exporting these sources as SVG may require you to explicitly rerun their scripts.",
+    "svgSnapshotPill": "SVG snapshots incomplete",
     "conflict": "This layout was changed elsewhere. Resolve the conflict first.",
     "doneLocal": "Saved on this computer (no project open)",
     "doneProject": "Saved to project: {{file}}",
@@ -659,6 +663,7 @@
   "stage": {
     "addFigure": "Add a figure",
     "backToCanvas": "Back to canvas",
+    "backToLayout": "Back to layout",
     "contextBarLabel": "Where you are",
     "crumbsLabel": "Current object",
     "emptyHint": "Pick a figure from the asset library and add it to the canvas.",
@@ -924,7 +929,9 @@
     "panel_layout_only": "Lay out this figure; connect its source script to edit its elements.",
     "fast_edit_entered": "Your changes are saved to this layout. The original file stays untouched.",
     "multi_select": "Use the floating bar by the selection to align and distribute.",
-    "problem_found": "“Problems” on the left locates the object and its property field."
+    "problem_found": "“Problems” on the left locates the object and its property field.",
+    "layout_page_bounds": "The white page is the size of the exported figure. Single- and double-column widths follow the current spec; adjust them on the Canvas tab on the right.",
+    "pageBoundsOpen": "Open Canvas tab"
   },
   "prep": {
     "aria": "Prepare {{script}}",
@@ -951,6 +958,7 @@
       "completed_one": "Drew 1 figure",
       "completed_other": "Drew {{count}} figures",
       "completedNoList": "Done, figures are in the library",
+      "completedPartial": "Drew only {{done}} of {{total}} figures; {{names}} failed",
       "static": "Ready to lay out",
       "editReady": "Editing",
       "editOpening": "Opening the editor…",
@@ -1106,6 +1114,7 @@
       "errorFull": "Full error output",
       "errorTruncated": "Too long; only the last part is kept.",
       "noFigureWhy": "It never called savefig and left no Figure open.",
+      "failedFigures": "Figures that failed: {{names}} ({{codes}}). The others can be edited as usual.",
       "unlinked": "{{names}}, made earlier with other arguments, is no longer linked. Run again with those arguments to restore it.",
       "history": {
         "title": "Run history",
@@ -1168,6 +1177,7 @@
       "ready": "Waiting to run",
       "captured_one": "Captured 1 figure",
       "captured_other": "Captured {{count}} figures",
+      "capturedPartial": "Captured {{done}} of {{total}} figures",
       "static": "No script",
       "noFigure": "Finished, no figure",
       "cancelled": "Stopped",

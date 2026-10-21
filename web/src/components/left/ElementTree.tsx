@@ -40,6 +40,8 @@ import {
 import { useDocumentStore } from '@/store/documentStore'
 import { renderKeyOf, usePanelDisplayManifest, usePanelRender } from '@/store/renderStore'
 import { useSelectionStore } from '@/store/selectionStore'
+import { pngRefusalOf, usePngAdmissionMemory } from '@/store/pngAdmissionMemory'
+import { rebuildEditableFromScript } from '@/store/pngRebuild'
 import { useUiStore } from '@/store/uiStore'
 import type { PanelObject } from '@/types/document'
 import { untruncatedLabel } from '../inspector/identityCrumbs'
@@ -318,6 +320,26 @@ export function ElementTree({ chrome = 'drawer' }: { chrome?: 'drawer' | 'bare' 
 /** 计时只更新空态叶子；已经有元素的树不订阅进度或每秒重画。 */
 function UnbuiltTree({ panel, rendering }: { panel: PanelObject; rendering: boolean }) {
   const progress = useRenderProgress(panel.fileId, rendering, et('building'))
+  // 这张 PNG 本次会话已被后端明确拒绝采用：说同一句话、给同一条出路，不再跑一次脚本（ADR 0139 PR1）
+  const byFile = usePngAdmissionMemory((s) => s.byFile)
+  const refusal = pngRefusalOf(panel.fileId, byFile)
+  if (refusal && !progress.active) {
+    return (
+      <EmptyLine
+        data-png-refusal={refusal.failure.reason}
+        action={
+          panel.script && refusal.failure.reason !== 'not_untouched'
+            ? {
+                label: translate('artifact.rebuildEditable', { ns: 'errors' }),
+                onClick: () => void rebuildEditableFromScript(panel.id),
+              }
+            : undefined
+        }
+      >
+        {translate(refusal.failure.messageKey, { ns: 'errors' })}
+      </EmptyLine>
+    )
+  }
   return (
     <EmptyLine
       data-render-progress={progress.active ? progress.phase : undefined}

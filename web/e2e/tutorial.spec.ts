@@ -1,516 +1,355 @@
 import AxeBuilder from '@axe-core/playwright'
-import { lowContrastNodes } from './contrast'
-import { expect, openWorkspace, switchProjectVia, test } from './fixtures'
-import type { Page, Response } from '@playwright/test'
+import { expect, test } from './fixtures'
+import type { Locator, Page, Request } from '@playwright/test'
 
 /**
- * 新手教程（Prompt 21，ADR 0040）——只有真浏览器 + 真后端才能回答的那几件：
+ * 三步原生新手教程（ADR 0136）——只有真浏览器 + 真后端才能回答的那几件：
  *
- *   * 从主页新手版的「用示例学一遍（带引导）」（教程入口锚点）开始，**每一步都由真实动作完成**：
- *     双击素材卡进快速编辑、选标题、改字号、从「问题」定位那条 7 pt、开导出面板
- *     确认原图、加入画布、Shift 多选 + 顶对齐、确认画布导出；
- *   * coachmark 贴着真实锚点、没有遮罩、导出面板开着时它在面板里（模态对话框外面
- *     的东西点不到）；
- *   * 刷新页面回到同一步；Esc 暂停后刷新不再出现；「更多」菜单里继续；
- *   * 「重置教程项目」把画布恢复原样、onboarding 从头；
- *   * axe 无 critical / serious。
+ *   * 第一次打开（主页、没有项目）欢迎页自己出现；从欢迎页走完三步，每一步都由**真实的
+ *     指针拖放 / 点击**完成（拖卡片进投放框、拖图例、点标题再点 +），完成页的前后对比来自
+ *     两份真实状态，「开始使用」落回真正的主页；
+ *   * **P0：完成教程不执行 Python**——整个过程里没有一个运行 / 渲染 / 依赖准备 / 打开项目 /
+ *     教程资源的请求（教程层只改本机状态）；
+ *   * 外部文件拖进教程被拒收，不打开、不运行、不算完成；
+ *   * 刷新回到同一步、演示改动还在；跳过不记完成；v2 进行中的老用户不被拽进新教程；
+ *   * 小窗口 + reduced-motion 下主操作目标不用滚动就看得见；axe 无 critical / serious。
  *
- * 全程不联网（后端本地、教程资源在包内）。
+ * **这些是演示层的端到端，不是图内编辑的端到端**：图例 / 标题改的是教程自己的状态，
+ * 编辑器的真实编辑能力由它自己的 spec 负责，这里一条都不替它作证。
  */
 
-/** coachmark 与锚点之间的间距（`lib/onboarding/position.ts` 的 COACHMARK_GAP）：挤动小于它时本来就压不上 */
-const COACHMARK_GAP_PX = 10
-const coachmark = (page: Page) => page.locator('[data-onboarding-coachmark]')
+test.use({ firstRunWelcome: true })
 
-async function openTutorialFromPicker(page: Page, baseURL: string) {
-  await page.goto(baseURL)
-  // 主页新手版的次按钮就是教程入口（锚点唯一：全部项目视图里那一行与它不同时在屏上）
-  const entry = page.locator('[data-onboarding-anchor="tutorial-entry"]')
-  await expect(entry).toHaveText(/用示例学一遍（带引导）/)
-  await entry.click()
-  // 工作台起来：第一步直接是「双击这张图」（没有欢迎卡）
-  await expect(coachmark(page)).toBeVisible({ timeout: 60_000 })
-  await expect(coachmark(page)).toContainText('双击这张图')
+const tut = (page: Page) => page.locator('[data-native-tutorial]')
+const step = (page: Page) => page.locator('[data-tutorial-step]')
+const next = (page: Page) => page.locator('[data-tutorial-next]')
+const onboarding = (page: Page) =>
+  page.evaluate(() => JSON.parse(localStorage.getItem('tavotto.onboarding') ?? '{}'))
+
+/**
+ * 教程期间不许出现的请求：运行 / 渲染 / 准备环境 / 依赖 / 打开项目 / 示例项目 / 面板扫描 / 自动保存。
+ * 判据写成正面清单（「这些路径一条都没有」），遥测与 SSE 心跳之类与教程无关的不在主语里。
+ */
+const FORBIDDEN =
+  /\/api\/(?:render|run|native|prepare|preparation|deps|dependenc|env|engine|projects\/open|tutorial|panels|figures|scan|autosave)/
+
+function watchRequests(page: Page) {
+  const seen: string[] = []
+  const on = (r: Request) => {
+    const u = new URL(r.url())
+    if (u.pathname.startsWith('/api/')) seen.push(`${r.method()} ${u.pathname}`)
+  }
+  page.on('request', on)
+  return {
+    forbidden: () => seen.filter((s) => FORBIDDEN.test(s)),
+    all: () => [...seen],
+    stop: () => page.off('request', on),
+  }
 }
 
-test('完整走完教程：每一步都由真实动作完成', async ({ app, page }) => {
-  test.setTimeout(300_000)
-  const a = await app({ noProject: true })
-  await page.setViewportSize({ width: 1400, height: 900 })
-  await openTutorialFromPicker(page, a.baseURL)
+async function center(loc: Locator) {
+  const box = await loc.boundingBox()
+  expect(box).not.toBeNull()
+  return { x: box!.x + box!.width / 2, y: box!.y + box!.height / 2 }
+}
 
-  // 没有全屏遮罩：coachmark 后面的界面照常可点
-  expect(await page.locator('[data-onboarding-mask]').count()).toBe(0)
+/** 真实的指针拖动：按下 → 分步移动 → 松开 */
+async function drag(page: Page, from: { x: number; y: number }, to: { x: number; y: number }) {
+  await page.mouse.move(from.x, from.y)
+  await page.mouse.down()
+  await page.mouse.move(from.x + 8, from.y + 8, { steps: 2 })
+  await page.mouse.move(to.x, to.y, { steps: 12 })
+  await page.mouse.up()
+}
 
-  // ---- Step 1：双击这张图（左侧素材抽屉默认开着 → 锚点是那张卡片） ----
-  await expect(coachmark(page)).toContainText('双击这张图')
-  await expect(page.locator('[data-onboarding-ring]')).toBeVisible()
-  await page.locator('[data-card="Fig2_correlation.pdf"]').dblclick()
-  // 两条分开判，超时报文才说得出**停在哪一步**（issue #267）：
-  //   第一条红 = 双击根本没进图内编辑（素材→脚本关联迟到时那次进入被丢掉）；
-  //   第二条红 = 进去了，但那一版矢量渲染没回来。
-  // 合成一条时两种都只报 "element(s) not found"，得下载 trace 才分得开——
-  // 而它恰恰是在合并队列里踢 PR 的那一条。
-  //
-  // **两条共用同一个 90 s 截止期。** 顺序执行的两个 timeout 会相加：
-  // 30 s + 90 s 意味着实际截止期变成最多 120 s——数字一个没改，判据却松了
-  // （25 s 进编辑态 + 80 s 渲染在旧断言下是红的，在"两个独立超时"下是绿的）。
-  // 诊断性拆分不该顺带买来 30 秒预算。
-  const deadline = Date.now() + 90_000
-  // **下限 1 而不是 0**：Playwright 把 `timeout: 0` 读成"不设超时"，
-  // 预算耗尽反而变成永不超时——那是本次修复要挡的事情的反面
-  const left = () => Math.max(1, deadline - Date.now())
-  await expect(
-    page.locator('[data-exit-element-edit]'),
-    '双击素材卡之后没有进入图内编辑',
-  ).toBeVisible({ timeout: Math.min(30_000, left()) })
-  await expect(
-    page.locator('[data-element-svg]').first().locator('svg'),
-    '进了图内编辑，但这一版的矢量渲染没回来',
-  ).toBeVisible({ timeout: left() })
+async function dropSample(page: Page) {
+  const card = page.locator('[data-tutorial-file-card]')
+  const zone = page.locator('[data-tutorial-drop-zone]')
+  await drag(page, await center(card), await center(zone))
+  await expect(page.locator('[data-tutorial-imported]')).toBeVisible()
+}
 
-  // ---- Step 2：选一个文字（高亮环套着图里的标题；点它的中心 = 真实选中） ----
-  await expect(coachmark(page)).toContainText('选中文字')
-  const ring = page.locator('[data-onboarding-ring]')
-  await expect(ring).toBeVisible()
-  const rb = (await ring.boundingBox())!
-  await page.mouse.click(rb.x + rb.width / 2, rb.y + rb.height / 2)
+async function dragLegendUp(page: Page, dy = -140) {
+  const from = await center(page.locator('[data-demo-legend]'))
+  await drag(page, from, { x: from.x, y: from.y + dy })
+}
 
-  // ---- Step 3：改字号（右侧属性里的真实输入框；锚点就是那一行） ----
-  await expect(coachmark(page)).toContainText('改字号或字体')
-  const inspector = page.getByLabel('右侧面板', { exact: true })
-  const size = inspector.getByRole('textbox', { name: '字号' })
-  await size.fill('12')
-  await size.press('Enter')
+const curvesOf = (l: Locator) => l.locator('polyline').evaluateAll((ps) => ps.map((p) => p.getAttribute('points')))
 
-  // ---- Step 4：从「问题」定位（那条故意的 7 pt） ----
-  await expect(coachmark(page)).toContainText('从「问题」定位')
-  await page.locator('[data-rail="problems"]').click()
-  // 那条故意的 7 pt 在第二张图（p2）上；两张图都渲染过，问题面板里两张图的问题都在
-  const row = page
-    .locator('[data-issue-row][data-issue-rule="font-below-absolute-floor"][data-issue-object="p2"]')
-    .first()
-  // 问题面板先是卡片层（2026-09-28）：那一行在它所在的卡片里；只有一张单子图的图时
-  // 没有卡片层，行直接就在。两种都认，出现的是卡片就先点开它
-  const card = page
-    .locator('li[data-problem-card][data-problem-card-rules~="font-below-absolute-floor"][data-problem-card-objects~="p2"] > button')
-    .first()
-  await expect(row.or(card).first()).toBeVisible({ timeout: 30_000 })
-  if (await card.isVisible()) {
-    // coachmark 此刻指着卡片（锚点选择器列表里行不在，就落到卡片上）
-    await expect(coachmark(page)).toContainText('先点开那张卡片')
-    await card.click()
-  }
-  await expect(row).toBeVisible()
-  await expect(coachmark(page)).toContainText('点击问题')
-  await row.click()
-
-  // ---- Step 5：原图导出（面板开着时 coachmark 在面板里） ----
-  await expect(coachmark(page)).toContainText('看看原图导出')
-  await page.getByRole('button', { name: '导出', exact: true }).click()
-  // coachmark 自己也是 role=dialog（非模态）：导出面板要按「不是 coachmark 的那个」找
-  const dialog = page.locator('[role="dialog"]:not([data-onboarding-coachmark])').first()
-  await expect(dialog).toBeVisible()
-  await expect(dialog.locator('[data-onboarding-coachmark]')).toBeVisible()
-  await dialog.getByRole('radio', { name: '原图尺寸' }).click()
-  await expect(dialog.getByRole('radio', { name: '原图尺寸' })).toHaveAttribute('aria-checked', 'true')
-  await page.keyboard.press('Escape')
-  await expect(dialog).toHaveCount(0)
-
-  // ---- Step 6：加入画布（回到版面） ----
-  await expect(coachmark(page)).toContainText('加入画布')
-  await page.locator('[data-onboarding-anchor="add-to-layout"]').click()
-
-  // ---- Step 7：Shift 多选 + 顶对齐 ----
-  await expect(coachmark(page)).toContainText('Shift 多选')
-  // 引导层会把被平移到工作区外的那张图挪回视野（只动视口）；等它真的进了画布区再点
-  const stage = page.locator('[data-canvas-stage]')
-  await expect(async () => {
-    const s = (await stage.boundingBox())!
-    const b = (await page.locator('[data-object-id="p1"]').boundingBox())!
-    expect(b.x).toBeGreaterThanOrEqual(s.x - 1)
-    expect(b.x + b.width).toBeLessThanOrEqual(s.x + s.width + 1)
-  }).toPass({ timeout: 10_000 })
-  await page.locator('[data-object-id="p1"]').click({ modifiers: ['Shift'] })
-  await expect(coachmark(page)).toContainText('对齐')
-  const bar = page.locator('[data-multi-selection-context-bar]')
-  await expect(bar).toBeVisible()
-  await bar.locator('[data-align-mode="top"]').click()
-
-  // ---- Step 8：画布导出 ----
-  await expect(coachmark(page)).toContainText('看看画布导出')
-  await page.getByRole('button', { name: '导出', exact: true }).click()
-  await expect(dialog).toBeVisible()
-  await dialog.getByRole('radio', { name: '当前画布' }).click()
-  await page.keyboard.press('Escape')
-  await expect(dialog).toHaveCount(0)
-
-  // ---- 完成 ----
-  await expect(coachmark(page)).toContainText('教程完成')
-  await coachmark(page).getByRole('button', { name: '继续探索' }).click()
-  await expect(coachmark(page)).toHaveCount(0)
-  // 状态落在本机：完成
-  expect(await page.evaluate(() => JSON.parse(localStorage.getItem('tavotto.onboarding') ?? '{}').status)).toBe(
-    'completed',
-  )
-})
-
-test('刷新回到同一步；Esc 暂停后刷新不出现；「更多」菜单里继续；axe 无 critical/serious', async ({
+test('完整走完新手教程：欢迎页 → 拖入示例脚本 → 拖动图例 → 改标题字号 → 前后对比 → 开始使用', async ({
   app,
   page,
 }) => {
-  test.setTimeout(240_000)
+  test.setTimeout(180_000)
   const a = await app({ noProject: true })
-  await page.setViewportSize({ width: 1400, height: 900 })
-  await openTutorialFromPicker(page, a.baseURL)
-  // 读屏：进度 / 标题在 aria-live 区里；coachmark 是非模态 dialog
-  await expect(coachmark(page)).toHaveAttribute('aria-modal', 'false')
-  await expect(coachmark(page)).toContainText('双击这张图')
-
-  // 键盘：Tab 顺序能到跳过 / 暂停（第一步没有「返回」）
-  await coachmark(page).focus()
-  expect(await coachmark(page).locator('[data-onboarding-back]').count()).toBe(0)
-  await page.keyboard.press('Tab')
-  expect(await page.evaluate(() => 'onboardingSkip' in (document.activeElement as HTMLElement).dataset)).toBe(true)
-  await page.keyboard.press('Tab')
-  expect(await page.evaluate(() => (document.activeElement as HTMLElement)?.getAttribute('aria-label'))).toBe('暂停教程')
-
-  // axe：无 critical / serious。`color-contrast` 交给仓库自己的尺子（`e2e/contrast.ts`）：
-  // 高亮环盖在锚点上时 axe 算不出被覆盖文字的背景色（issue #130 同一形状），
-  // 它给的结论不是「不达标」而是「没测到」
-  const axe = await new AxeBuilder({ page }).analyze()
-  const bad = axe.violations.filter(
-    (v) => (v.impact === 'critical' || v.impact === 'serious') && v.id !== 'color-contrast',
-  )
-  expect(bad.map((v) => `${v.id}: ${v.nodes.map((n) => n.target.join(' ')).join(', ')}`)).toEqual([])
-  expect(await lowContrastNodes(page, '[data-onboarding-coachmark]')).toEqual([])
-  // 高亮环套着的那张素材卡：环是透明底的边框，不该改变卡片文字的对比度结论
-  expect(await lowContrastNodes(page, '[data-card="Fig2_correlation.pdf"]')).toEqual([])
-
-  // 重启（刷新）：仍在第一步
-  await page.reload()
-  await expect(coachmark(page)).toBeVisible({ timeout: 60_000 })
-  await expect(coachmark(page)).toContainText('双击这张图')
-
-  // Esc（焦点在 coachmark 里）= 暂停；刷新后不再出现
-  await coachmark(page).focus()
-  await page.keyboard.press('Escape')
-  await expect(coachmark(page)).toHaveCount(0)
-  await page.reload()
-  await expect(page.getByRole('button', { name: '导出', exact: true })).toBeVisible({ timeout: 60_000 })
-  await page.waitForTimeout(800)
-  expect(await coachmark(page).count()).toBe(0)
-
-  // 「更多」→ 继续教程
-  await page.getByRole('button', { name: '更多', exact: true }).click()
-  await page.getByRole('menuitem', { name: '继续教程' }).click()
-  await expect(coachmark(page)).toContainText('双击这张图')
-})
-
-test('重置教程项目：画布恢复原样、onboarding 从头；最近列表里带「教程项目」标记', async ({
-  app,
-  page,
-}) => {
-  test.setTimeout(240_000)
-  const a = await app({ noProject: true })
-  await page.setViewportSize({ width: 1400, height: 900 })
-  await openTutorialFromPicker(page, a.baseURL)
-  // 先动一下画布：把第一张图拖走。判据是**图在页面上的相对位置**（与缩放 / 平移无关），
-  // 不是屏幕像素：重置前后视口会重新适配
-  // `boundingBox()` 不自动等待，元素不在 DOM 就返回 null。重置时应用先退回项目选择页、再重开
-  // 教程（#991：Windows 冒烟里 6.6 s 就死在重置后的 poll 上），这段空档里 sheet / p1 都不在：
-  // 量不到 = null，由调用方决定是继续等（poll）还是明确失败（`fracX`）
-  const fracXOrNull = async () => {
-    const sheet = await page.locator('[data-page-sheet]').boundingBox()
-    const box = await page.locator('[data-object-id="p1"]').boundingBox()
-    return sheet && box ? (box.x - sheet.x) / sheet.width : null
-  }
-  const fracX = async () => {
-    const v = await fracXOrNull()
-    expect(v, '图与页面应当在屏上').not.toBeNull()
-    return v!
-  }
-  // 先「适应画布」：两张图都完整进工作区，拖动才落在图上而不是抽屉的拖拽把手上
-  await page.getByRole('button', { name: '适应画布' }).click()
-  await page.waitForTimeout(400)
-  const p1 = page.locator('[data-object-id="p1"]')
-  const before = (await p1.boundingBox())!
-  const frac0 = await fracX()
-  await page.mouse.move(before.x + before.width / 2, before.y + before.height / 2)
-  await page.mouse.down()
-  await page.mouse.move(before.x + before.width / 2 + 120, before.y + before.height / 2 + 40, { steps: 10 })
-  await page.mouse.up()
-  await page.waitForTimeout(1500) // 自动保存防抖：让改动真的落盘，重置才有东西可恢复
-  expect((await fracX()) - frac0).toBeGreaterThan(0.05)
-
-  // ⌘K → 重置教程项目 → 确认（动作名说的是被重置的对象：副本 + 进度）
-  await page.keyboard.press('ControlOrMeta+k')
-  await page.getByRole('option', { name: '重置教程项目' }).click()
-  const confirm = page.getByRole('dialog').filter({ hasText: '重置教程项目？' })
-  await expect(confirm).toBeVisible()
-  await confirm.getByRole('button', { name: '重置并重新开始' }).click()
-  // 重置前后第一步都是「双击这张图」，coachmark 的文字不再能当「重置做完了」的信号；
-  // 拖走的那张图回到原位才是（判据本身：位置与重置前一致）
-  await expect
-    .poll(
-      async () => {
-        const v = await fracXOrNull()
-        // 过渡期（项目选择页）图不在屏上：继续轮询，不是失败
-        return v === null ? Infinity : Math.abs(v - frac0)
-      },
-      { timeout: 60_000 },
-    )
-    .toBeLessThan(0.01)
-  await expect(coachmark(page)).toContainText('双击这张图')
-
-  // 用户反馈 01：重开之后装回的是随包分发的干净 Tutorial.json，它的面板没有 `script`。
-  // 工作台此刻早已挂载，挂载那一次对账不会再来——换文档之后必须再对一次，否则
-  // **双击画布上的图**落进裁剪而不是图内编辑（第一次从选择器进教程反而是好的，
-  // 所以只测第一次的用例看不见它）。这里走的是 coachmark 自己说的那条路：双击画布上的图。
-  await expect(coachmark(page)).toContainText('双击这张图')
-  await page.getByRole('button', { name: '适应画布' }).click()
-  await page.waitForTimeout(400)
-  await page.locator('[data-object-id="p2"]').dblclick()
-  await expect(
-    page.locator('[data-exit-element-edit]'),
-    '重新开始教程之后双击画布上的图没有进入图内编辑',
-  ).toBeVisible({ timeout: 30_000 })
-  await expect(coachmark(page)).toContainText('选中文字')
-  await page.keyboard.press('Escape')
-  await expect(page.locator('[data-exit-element-edit]')).toHaveCount(0)
-
-  // 工作区抽屉里教程副本显示「教程项目」而不是数据目录路径（它此刻是当前项目）
-  await openWorkspace(page)
-  const current = page.locator('[data-workspace-section="current"]')
-  await expect(current).toContainText('Tutorial')
-  await expect(current).toContainText('教程项目')
-  await expect(current).not.toContainText(a.dataDir)
-})
-
-test('教程刚打开就拖：工作台挂载时的启动恢复晚到，也不把拖动冲掉', async ({ app, page }) => {
-  // windows-exe-smoke 上撞到过（#621 的合并组，2026-09-25）：教程文档在工作台挂载**之前**就装好了，
-  // 挂载时的 `restoreSession()` 却照样读一遍磁盘、整份替换。慢机器上那次读盘晚到，读到的是拖动
-  // 还没落盘时的旧一版，拖动被悄悄盖回去。这里把那次读盘**扣在拖动结束之后、自动保存落盘之前**
-  // 才放出去，让这个时序在任何机器上都发生；修好之后挂载时根本不再读盘，扣住的闸也就没人碰。
-  test.setTimeout(120_000)
-  let reads = 0
-  let releaseRead!: () => void
-  const dragDone = new Promise<void>((r) => (releaseRead = r))
-  await page.route('**/api/autosave/**', async (route) => {
-    // 第一次是教程自己装文档（槽位还是空的）；之后的那次就是挂载时的恢复
-    if (route.request().method() === 'GET' && ++reads > 1) await dragDone
-    await route.continue()
-  })
-  const a = await app({ noProject: true })
-  await page.setViewportSize({ width: 1400, height: 900 })
-  await openTutorialFromPicker(page, a.baseURL)
-  const fracX = async () => {
-    const sheet = (await page.locator('[data-page-sheet]').boundingBox())!
-    const box = (await page.locator('[data-object-id="p1"]').boundingBox())!
-    return (box.x - sheet.x) / sheet.width
-  }
-  await page.locator('[data-fit-canvas]').click()
-  await page.waitForTimeout(400)
-  const p1 = page.locator('[data-object-id="p1"]')
-  const before = (await p1.boundingBox())!
-  const frac0 = await fracX()
-  await page.mouse.move(before.x + before.width / 2, before.y + before.height / 2)
-  await page.mouse.down()
-  await page.mouse.move(before.x + before.width / 2 + 120, before.y + before.height / 2 + 40, { steps: 10 })
-  await page.mouse.up()
-  // 拖动已经落在内存里、还没落盘：这时才把那次恢复读盘放出去
-  releaseRead()
-  await page.waitForTimeout(1500)
-  expect((await fracX()) - frac0).toBeGreaterThan(0.05)
-})
-
-test('coachmark 落位时不从锚点上扫过：双击素材卡的第二下不会落在「跳过此步」上', async ({ app, page }) => {
-  // windows-exe-smoke 上连着踢了三个合并组（issue #581）：第 1 步的 coachmark 挂载时先在 -9999 处
-  // 量一次尺寸，随后落位与 left/top 过渡同一帧生效，于是它从屏幕外**斜着飞进来**；中途锚点量到了、
-  // 改道去卡片下方，这一段恰好扫过卡片中心。慢机器上双击的第二下落在飞过来的「跳过此步」上：
-  // 教程被推到第 2 步，图却没打开。这里把页面上的动画放慢 20 倍，让那几十毫秒的窗口在任何机器上
-  // 都够宽，逐帧量 coachmark **渲染出来的**框（过渡中途那一帧的位置）与卡片相不相交。
-  // 只看卡片中心那一点不够：落点随改道时机漂，同一份代码三次里红两次——判据要的是
-  // 「路上碰没碰到锚点」，不是「恰好压没压到某个点」
-  test.setTimeout(120_000)
-  const a = await app({ noProject: true })
-  await page.setViewportSize({ width: 1400, height: 900 })
-  await openTutorialFromPicker(page, a.baseURL)
-  const cdp = await page.context().newCDPSession(page)
-  await cdp.send('Animation.enable')
-  await cdp.send('Animation.setPlaybackRate', { playbackRate: 0.05 })
-  await page.evaluate(() => {
-    const w = window as unknown as { __covered: string[]; __frames: number }
-    w.__covered = []
-    w.__frames = 0
-    const until = performance.now() + 4000
-    const tick = () => {
-      const card = document.querySelector('[data-card="Fig2_correlation.pdf"]')
-      const cm = document.querySelector('[data-onboarding-coachmark]')
-      if (card && cm) {
-        w.__frames++
-        // 渲染出来的位置（过渡中途的那一帧），不是 style 里写的终点
-        const a = card.getBoundingClientRect()
-        const b = cm.getBoundingClientRect()
-        if (b.left < a.right && a.left < b.right && b.top < a.bottom && a.top < b.bottom) {
-          w.__covered.push(`${Math.round(b.left)},${Math.round(b.top)}`)
-        }
-      }
-      if (performance.now() < until) requestAnimationFrame(tick)
-    }
-    requestAnimationFrame(tick)
-  })
-  await expect(coachmark(page)).toContainText('双击这张图')
-  await page.waitForTimeout(4000)
-  const { covered, frames } = await page.evaluate(() => {
-    const w = window as unknown as { __covered: string[]; __frames: number }
-    return { covered: w.__covered, frames: w.__frames }
-  })
-  // 尺子是活的：采样确实跑过了（量了零帧的话「从没挡住」恒真）
-  expect(frames).toBeGreaterThan(30)
-  expect(covered, 'coachmark 在落位途中挡住了它指着的那张卡片').toEqual([])
-  await cdp.send('Animation.setPlaybackRate', { playbackRate: 1 })
-  await page.locator('[data-card="Fig2_correlation.pdf"]').dblclick()
-  await expect(page.locator('[data-exit-element-edit]')).toBeVisible({ timeout: 30_000 })
-})
-
-test('coachmark 落位途中锚点被挤动也不压上去：素材区顶上冒出「正在检查新文件…」那一行', async ({ app, page }) => {
-  // windows-exe-smoke 上连红（PR #711 三个 run、#717 一次，2026-09-28）：第 1 步的 coachmark 正从居中
-  // 滑向素材卡下方，恰在这时素材库重取（渲染完成后的刷新）在网格上方插进一行「正在检查新文件…」，
-  // 整排卡片下移约 24 px——比卡片与 coachmark 之间的 10 px 间距大。滑不滑是按**起滑那一刻**的锚点
-  // 判的，之后锚点自己挪进了路径；停着的 coachmark 也一样，要等 300 ms 的兜底重测才让开，这段时间
-  // 它压着卡片底部的文件名、还接得住点击。慢机器上那次重取落在哪一刻是运气，这里用「刷新项目」
-  // 按钮在滑行途中**亲手**把那一行派出来，并把刷新扣住 1.5 秒，让它在任何机器上都发生
-  test.setTimeout(120_000)
-  const a = await app({ noProject: true })
-  await page.setViewportSize({ width: 1400, height: 900 })
-  await openTutorialFromPicker(page, a.baseURL)
-  let release!: () => void
-  const held = new Promise<void>((r) => (release = r))
-  await page.route(/^https?:\/\/[^/]+\/api\/project\/refresh(?:\?[^#]*)?$/, async (route) => {
-    await held
-    await route.continue()
-  })
-  const cdp = await page.context().newCDPSession(page)
-  await cdp.send('Animation.enable')
-  await cdp.send('Animation.setPlaybackRate', { playbackRate: 0.05 })
-  await page.evaluate(() => {
-    const w = window as unknown as { __covered: string[]; __frames: number; __cardTops: number[] }
-    w.__covered = []
-    w.__frames = 0
-    w.__cardTops = []
-    const until = performance.now() + 8000
-    const tick = () => {
-      const card = document.querySelector('[data-card="Fig2_correlation.pdf"]')
-      const cm = document.querySelector('[data-onboarding-coachmark]')
-      if (card && cm) {
-        w.__frames++
-        const a = card.getBoundingClientRect()
-        const b = cm.getBoundingClientRect()
-        w.__cardTops.push(a.top)
-        if (b.left < a.right && a.left < b.right && b.top < a.bottom && a.top < b.bottom) {
-          w.__covered.push(`${Math.round(b.left)},${Math.round(b.top)} card ${Math.round(a.top)}-${Math.round(a.bottom)}`)
-        }
-      }
-      if (performance.now() < until) requestAnimationFrame(tick)
-    }
-    requestAnimationFrame(tick)
-  })
-  await expect(coachmark(page)).toContainText('双击这张图')
-  // 滑行放慢后约 2.4 秒；等它停稳再把刷新行派出来——停着的那种最稳：挤动之后到下一次兜底重测之间
-  // （最长 300 ms）它一直压着卡片。滑行途中的那种只在最后四分之一段才压得上，时机太窄
-  await page.waitForTimeout(3000)
-  // 「下一帧画出来之前就让开」要一把**不看帧率**的尺子：在插进刷新行的那次 DOM 变动的同一个微任务
-  // 检查点里量（这个观察者注册得比 OnboardingLayer 的晚，回调排在它后面）。重测同步提交（flushSync）
-  // 时，量到的已是让开之后的位置；交给 React 调度的话，调度任务一定晚于这个微任务——量到的就是压着的
-  // 旧位置，与机器快慢无关（Codex #731 P1：只看 rAF 帧的尺子在快机器上抓不到这条变异）
-  await page.evaluate(() => {
-    const w = window as unknown as { __syncCovered: string[]; __syncSeen: number }
-    w.__syncCovered = []
-    w.__syncSeen = 0
-    const mo = new MutationObserver(() => {
-      if (!document.querySelector('[data-asset-refreshing]')) return
-      const card = document.querySelector('[data-card="Fig2_correlation.pdf"]')
-      const cm = document.querySelector('[data-onboarding-coachmark]')
-      if (!card || !cm) return
-      w.__syncSeen++
-      const a = card.getBoundingClientRect()
-      const b = cm.getBoundingClientRect()
-      if (b.left < a.right && a.left < b.right && b.top < a.bottom && a.top < b.bottom) {
-        w.__syncCovered.push(`${Math.round(b.left)},${Math.round(b.top)} card ${Math.round(a.top)}-${Math.round(a.bottom)}`)
-      }
-      mo.disconnect() // 只量插进刷新行的那一次
-    })
-    mo.observe(document.body, { childList: true, subtree: true })
-  })
-  await page.locator('[data-asset-refresh]').click()
-  await expect(page.locator('[data-asset-refreshing]')).toBeVisible()
-  await page.waitForTimeout(1500)
-  release()
-  await expect(page.locator('[data-asset-refreshing]')).toHaveCount(0, { timeout: 30_000 })
-  await page.waitForTimeout(3000)
-  const { covered, frames, cardTops, syncCovered, syncSeen } = await page.evaluate(() => {
-    const w = window as unknown as {
-      __covered: string[]
-      __frames: number
-      __cardTops: number[]
-      __syncCovered: string[]
-      __syncSeen: number
-    }
-    return {
-      covered: w.__covered,
-      frames: w.__frames,
-      cardTops: w.__cardTops,
-      syncCovered: w.__syncCovered,
-      syncSeen: w.__syncSeen,
-    }
-  })
-  // 尺子是活的：采样跑过，而且锚点真的被挤动过（没挪的话「没压上」恒真）
-  expect(frames).toBeGreaterThan(30)
-  expect(Math.max(...cardTops) - Math.min(...cardTops)).toBeGreaterThan(COACHMARK_GAP_PX)
-  expect(syncSeen, '插进刷新行的那次变动没被量到').toBe(1)
-  expect(syncCovered, 'coachmark 没在插进刷新行的同一个微任务里让开（重测没有同步提交）').toEqual([])
-  expect(covered, 'coachmark 在锚点被挤动时压住了它指着的那张卡片').toEqual([])
-  await cdp.send('Animation.setPlaybackRate', { playbackRate: 1 })
-})
-
-test('切到别的项目自动暂停，切回来自动继续', async ({ app, page }) => {
-  test.setTimeout(240_000)
-  const a = await app()
-  await page.setViewportSize({ width: 1400, height: 900 })
+  await page.setViewportSize({ width: 1440, height: 900 })
   await page.goto(a.baseURL)
-  await expect(page.getByText('Fig1_kinetics.pdf')).toBeVisible({ timeout: 30_000 })
-  // 从「更多」开始教程（在别的项目里也能进）
-  await page.getByRole('button', { name: '更多', exact: true }).click()
-  await page.getByRole('menuitem', { name: '开始教程' }).click()
-  await expect(coachmark(page)).toBeVisible({ timeout: 60_000 })
-  await expect(coachmark(page)).toContainText('双击这张图')
 
-  // 切回原来的项目 → coachmark 消失（系统暂停）
-  let openResult: { status: number; code?: string; reason?: string } | undefined
-  const observeOpen = (response: Response) => {
-    if (response.request().method() !== 'POST'
-      || new URL(response.url()).pathname !== '/api/projects/open') return
-    const result = { status: response.status() } as NonNullable<typeof openResult>
-    openResult = result
-    void response.json().then((body) => {
-      if (typeof body?.code === 'string') result.code = body.code
-      if (typeof body?.params?.reason === 'string') result.reason = body.params.reason
-    }).catch(() => { /* 非 JSON 响应仍留 HTTP status */ })
+  // 第一次打开：欢迎页自己盖上来；代码片段来自内置示例（逐行同源由 pytest 看护）
+  await expect(tut(page)).toHaveAttribute('data-surface', 'welcome')
+  await expect(page.locator('[data-tutorial-script-card]')).toContainText('fig1_kinetics.py')
+  await expect(page.locator('[data-tutorial-script-card]')).toContainText('np.linspace(0, 60, 200)')
+  const requests = watchRequests(page)
+
+  await page.locator('[data-tutorial-begin]').click()
+  await expect(step(page)).toHaveAttribute('data-tutorial-step', 'demo_import')
+  await expect(page.locator('[data-tutorial-progress]')).toHaveAttribute('data-tutorial-progress', '1/3')
+  await expect(next(page)).toBeDisabled()
+
+  // ---- 第一步：拖错地方 → 回原位、不推进；拖进投放框 → 完成 ----
+  const card = page.locator('[data-tutorial-file-card]')
+  const home = await center(card)
+  await drag(page, home, { x: home.x + 40, y: home.y + 10 })
+  await expect(next(page)).toBeDisabled()
+  await expect(page.locator('[data-tutorial-feedback]')).toHaveAttribute('data-tutorial-feedback', 'notice')
+  await dropSample(page)
+  await expect(page.locator('[data-tutorial-feedback]')).toHaveAttribute('data-tutorial-feedback', 'success')
+  await expect(page.locator('[data-demo-figure]')).toHaveCount(1)
+  await next(page).click()
+
+  // ---- 第二步：拖动图例（只有图例动，曲线不动） ----
+  await expect(step(page)).toHaveAttribute('data-tutorial-step', 'demo_move_legend')
+  await expect(page.locator('[data-tutorial-ring="guide"]')).toBeVisible()
+  const figure = page.locator('[data-demo-figure]')
+  const curves = await curvesOf(figure)
+  const legendBefore = await page.locator('[data-demo-legend]').getAttribute('transform')
+  await dragLegendUp(page)
+  await expect(next(page)).toBeEnabled()
+  expect(await page.locator('[data-demo-legend]').getAttribute('transform')).not.toBe(legendBefore)
+  expect(await curvesOf(figure)).toEqual(curves)
+  const legendAfter = await page.locator('[data-demo-legend]').getAttribute('transform')
+  await next(page).click()
+
+  // ---- 第三步：点标题 → 字号控件 → + → 完成；图例位置带过来 ----
+  await expect(step(page)).toHaveAttribute('data-tutorial-step', 'demo_change_title')
+  expect(await page.locator('[data-demo-legend]').getAttribute('transform')).toBe(legendAfter)
+  await expect(page.locator('[data-demo-title]')).toHaveAttribute('font-size', '9')
+  await page.locator('[data-demo-title]').click()
+  await expect(page.locator('[data-tutorial-font-controls]')).toBeVisible()
+  await expect(next(page)).toBeDisabled() // 只点了标题，不算
+  await page.locator('[data-tutorial-size-increase]').click()
+  await page.locator('[data-tutorial-size-increase]').click()
+  await expect(page.locator('[data-demo-title]')).toHaveAttribute('font-size', '11')
+  await expect(next(page)).toBeEnabled()
+  await next(page).click()
+
+  // ---- 完成页：同一组曲线；只差图例位置与标题字号 ----
+  await expect(step(page)).toHaveAttribute('data-tutorial-step', 'done')
+  const before = page.locator('[data-tutorial-compare-panel="before"] [data-demo-figure]')
+  const after = page.locator('[data-tutorial-compare-panel="after"] [data-demo-figure]')
+  expect(await curvesOf(before)).toEqual(await curvesOf(after))
+  await expect(before.locator('[data-demo-title]')).toHaveAttribute('font-size', '9')
+  await expect(after.locator('[data-demo-title]')).toHaveAttribute('font-size', '11')
+  expect(await after.locator('[data-demo-legend]').getAttribute('transform')).toBe(legendAfter)
+  expect(await before.locator('[data-demo-legend]').getAttribute('transform')).toBe(legendBefore)
+
+  // P0：从「开始」到完成页，没有一个运行 / 渲染 / 准备 / 打开项目 / 教程资源的请求。
+  // 主语是**教程期间**：「开始使用」之后落回的真实主页会照常探一次示例项目的资源（只读的
+  // GET /api/tutorial，给老手版「使用示例脚本」按钮用），那已经不是教程了
+  requests.stop()
+  expect(requests.forbidden(), `教程期间的 API 请求：\n${requests.all().join('\n')}`).toEqual([])
+
+  await page.locator('[data-tutorial-start-using]').click()
+  await expect(tut(page)).toHaveCount(0)
+  // 落回真正的主页（不是占位页）：走完了教程 = 老手版
+  await expect(page.locator('main[data-home-variant="returning"]')).toBeVisible()
+  expect((await onboarding(page)).status).toBe('completed')
+})
+
+test('外部 .py 拖进教程：拒收、只提示一句，不打开、不运行、不算完成', async ({ app, page }) => {
+  const a = await app({ noProject: true })
+  await page.goto(a.baseURL)
+  await page.locator('[data-tutorial-begin]').click()
+  await expect(step(page)).toHaveAttribute('data-tutorial-step', 'demo_import')
+  const requests = watchRequests(page)
+  const outcome = await page.locator('[data-tutorial-drop-zone]').evaluate((zone) => {
+    const dt = new DataTransfer()
+    dt.items.add(new File(['import matplotlib.pyplot as plt\n'], 'my_plot.py', { type: 'text/x-python' }))
+    const fire = (type: string) => {
+      const ev = new DragEvent(type, { bubbles: true, cancelable: true, dataTransfer: dt })
+      zone.dispatchEvent(ev)
+      return { prevented: ev.defaultPrevented, effect: dt.dropEffect }
+    }
+    return { enter: fire('dragenter'), over: fire('dragover'), drop: fire('drop') }
+  })
+  expect(outcome.over.prevented).toBe(true)
+  expect(outcome.over.effect).toBe('none')
+  await expect(page.locator('[data-tutorial-external-notice]')).toContainText('完成后可以导入自己的脚本')
+  await expect(next(page)).toBeDisabled()
+  expect((await onboarding(page)).completedSteps ?? []).not.toContain('demo_import')
+  requests.stop()
+  expect(requests.forbidden()).toEqual([])
+})
+
+test('刷新回到同一步、演示改动还在；键盘完成三步；Esc 只取消拖动、不关教程', async ({ app, page }) => {
+  test.setTimeout(150_000)
+  const a = await app({ noProject: true })
+  await page.goto(a.baseURL)
+  await page.locator('[data-tutorial-begin]').click()
+
+  // 第一步：键盘拿起 → 方向键移进框 → 回车
+  const card = page.locator('[data-tutorial-file-card]')
+  await card.focus()
+  await page.keyboard.press('Space')
+  await page.keyboard.press('Escape') // 只取消这次拿起
+  await expect(tut(page)).toBeVisible()
+  await expect(card).toHaveAttribute('aria-pressed', 'false')
+  const zone = await center(page.locator('[data-tutorial-drop-zone]'))
+  const from = await center(card)
+  await page.keyboard.press('Space')
+  for (let i = 0; i < Math.ceil((zone.y - from.y) / 30); i++) await page.keyboard.press('ArrowDown')
+  for (let i = 0; i < Math.ceil((zone.x - from.x) / 30); i++) await page.keyboard.press('ArrowRight')
+  await page.keyboard.press('Enter')
+  await expect(next(page)).toBeEnabled()
+  await expect(next(page)).toBeFocused() // 焦点交给「下一步」
+  await page.keyboard.press('Enter')
+
+  // 第二步：图例键盘拿起、上移、放下
+  const legend = page.locator('[data-demo-legend]')
+  await legend.focus()
+  await page.keyboard.press('Space')
+  for (let i = 0; i < 6; i++) await page.keyboard.press('ArrowUp')
+  await page.keyboard.press('Enter')
+  await expect(next(page)).toBeEnabled()
+  const moved = await legend.getAttribute('transform')
+
+  // 刷新：回到同一步，图例位置还在
+  await page.reload()
+  await expect(step(page)).toHaveAttribute('data-tutorial-step', 'demo_move_legend')
+  await expect(page.locator('[data-demo-legend]')).toHaveAttribute('transform', moved!)
+  await expect(next(page)).toBeEnabled()
+  await next(page).click()
+
+  // 第三步：键盘选中标题 → 焦点进字号框 → 无效输入不改 → 越界的夹到上限
+  await page.locator('[data-demo-title]').focus()
+  await page.keyboard.press('Enter')
+  const input = page.locator('[data-tutorial-font-controls] input')
+  await expect(input).toBeFocused()
+  await input.fill('abc')
+  await page.keyboard.press('Enter')
+  await expect(page.locator('[data-demo-title]')).toHaveAttribute('font-size', '9')
+  // 越界的提交夹到上限（标题不会被顶出图幅），框闪一下告诉用户到头了
+  await input.fill('30')
+  await page.keyboard.press('Enter')
+  await expect(page.locator('[data-demo-title]')).toHaveAttribute('font-size', '11')
+  await expect(next(page)).toBeEnabled()
+})
+
+test('跳过不记完成；回到主页不再自己弹', async ({ app, page }) => {
+  const a = await app({ noProject: true })
+  await page.goto(a.baseURL)
+  await page.locator('[data-tutorial-begin]').click()
+  await page.locator('[data-tutorial-skip]').click()
+  await expect(tut(page)).toHaveCount(0)
+  const st = await onboarding(page)
+  expect(st.status).toBe('skipped')
+  expect(st.completedAt).toBeNull()
+  await expect(page.locator('main[data-home-variant="returning"]')).toBeVisible()
+  await page.reload()
+  await expect(page.locator('main[data-home-variant="returning"]')).toBeVisible()
+  await expect(tut(page)).toHaveCount(0)
+})
+
+test('欢迎页「直接进入工作台」：不启动教程，下次启动不再自己弹；主页入口还在', async ({ app, page }) => {
+  const a = await app({ noProject: true })
+  await page.goto(a.baseURL)
+  await page.locator('[data-tutorial-open-workspace]').click()
+  await expect(tut(page)).toHaveCount(0)
+  await expect(page.locator('main[data-home-variant="newcomer"]')).toBeVisible()
+  expect((await onboarding(page)).status).toBe('not_started')
+  await page.reload()
+  await expect(page.locator('main[data-home-variant="newcomer"]')).toBeVisible()
+  await expect(tut(page)).toHaveCount(0)
+  await page.locator('[data-onboarding-anchor="tutorial-entry"]').click()
+  await expect(step(page)).toHaveAttribute('data-tutorial-step', 'demo_import')
+})
+
+test('flow v2 进行到一半的老用户：升级后不被拽进新教程，入口显示「继续」，点了从新第一步开始', async ({
+  app,
+  page,
+}) => {
+  await page.addInitScript(() =>
+    window.localStorage.setItem(
+      'tavotto.onboarding',
+      JSON.stringify({
+        schemaVersion: 1,
+        flowVersion: 2,
+        status: 'active',
+        currentStep: 'export_canvas',
+        completedSteps: ['open_fast_edit', 'select_text'],
+        skippedSteps: [],
+        tutorialProjectId: 'p_old',
+        tutorialDocumentId: 'tavotto-tutorial',
+      }),
+    ),
+  )
+  const a = await app({ noProject: true })
+  await page.goto(a.baseURL)
+  await expect(page.locator('main[data-home-variant="newcomer"]')).toBeVisible()
+  await expect(tut(page)).toHaveCount(0)
+  const entry = page.locator('[data-onboarding-anchor="tutorial-entry"]')
+  await expect(entry).toContainText('继续')
+  await entry.click()
+  await expect(step(page)).toHaveAttribute('data-tutorial-step', 'demo_import')
+})
+
+for (const size of [
+  { width: 1024, height: 720 },
+  { width: 1280, height: 800 },
+]) {
+  test(`${size.width}×${size.height} + reduced-motion：每一步的主操作目标不用滚动就看得见`, async ({ app, page }) => {
+    await page.emulateMedia({ reducedMotion: 'reduce' })
+    await page.setViewportSize(size)
+    const a = await app({ noProject: true })
+    await page.goto(a.baseURL)
+    const inView = async (loc: Locator) => {
+      const box = await loc.boundingBox()
+      expect(box).not.toBeNull()
+      expect(box!.y).toBeGreaterThanOrEqual(0)
+      expect(box!.y + box!.height).toBeLessThanOrEqual(size.height + 0.5)
+      expect(box!.x + box!.width).toBeLessThanOrEqual(size.width + 0.5)
+    }
+    await inView(page.locator('[data-tutorial-begin]'))
+    await page.locator('[data-tutorial-begin]').click()
+    await inView(page.locator('[data-tutorial-file-card]'))
+    await inView(page.locator('[data-tutorial-drop-zone]'))
+    await inView(next(page))
+    await dropSample(page)
+    await next(page).click()
+    await inView(page.locator('[data-demo-legend]'))
+    await inView(next(page))
+    await dragLegendUp(page, -80)
+    await next(page).click()
+    await page.locator('[data-demo-title]').click()
+    await inView(page.locator('[data-tutorial-size-increase]'))
+    await page.locator('[data-tutorial-size-increase]').click()
+    await inView(next(page))
+    await next(page).click()
+    await inView(page.locator('[data-tutorial-start-using]'))
+  })
+}
+
+test('axe：欢迎页、第二步、完成页无 critical / serious', async ({ app, page }) => {
+  const a = await app({ noProject: true })
+  await page.setViewportSize({ width: 1440, height: 900 })
+  await page.goto(a.baseURL)
+  const scan = async (label: string) => {
+    // 换屏的淡入还在播时半透明的字会被量成对比度不足：等动画都落地再扫
+    await page.evaluate(() => Promise.all(document.getAnimations().map((a) => a.finished.catch(() => undefined))))
+    const res = await new AxeBuilder({ page }).include('[data-native-tutorial]').analyze()
+    const bad = res.violations.filter((v) => v.impact === 'critical' || v.impact === 'serious')
+    expect(bad.map((v) => `${label}: ${v.id} ${v.nodes.map((n) => n.target.join(' ')).join(', ')}`)).toEqual([])
   }
-  // 这段只点开一次项目，无并发 open；先旁听，再沿用原来的 30 s UI 等待。
-  // 不另等响应、不重试点击，只在失败时附这一次请求的 status / code / reason。
-  page.on('response', observeOpen)
-  try {
-    await switchProjectVia(page, { path: a.figures })
-    await expect(page.getByRole('button', { name: /当前项目 figures/ })).toBeVisible({ timeout: 30_000 })
-  } catch (error) {
-    throw new Error(`${String(error)}\nProject-open response: ${JSON.stringify(openResult ?? null)}`, { cause: error })
-  } finally {
-    page.off('response', observeOpen)
-  }
-  await expect(coachmark(page)).toHaveCount(0)
-  // 再切回教程 → 自动继续
-  await switchProjectVia(page, { tutorial: true })
-  await expect(coachmark(page)).toContainText('双击这张图', { timeout: 60_000 })
+  await expect(tut(page)).toBeVisible()
+  await scan('welcome')
+  await page.locator('[data-tutorial-begin]').click()
+  await page.locator('[data-tutorial-use-sample]').click()
+  await next(page).click()
+  await scan('legend')
+  await dragLegendUp(page)
+  await next(page).click()
+  await page.locator('[data-demo-title]').click()
+  await page.locator('[data-tutorial-size-increase]').click()
+  await next(page).click()
+  await scan('done')
 })

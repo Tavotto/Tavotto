@@ -38,6 +38,8 @@ import { renderKey, useRenderStore } from '@/store/renderStore'
 import { useUiStore } from '@/store/uiStore'
 import { runValidation, useValidationStore } from '@/store/validationStore'
 import { bindingFor } from '@/lib/specBinding'
+import { DEFAULT_PROFILE_ID } from '@/lib/profile'
+import { profileName } from '@/lib/profileText'
 import { toCatalog, useProfileStore } from '@/store/profileStore'
 import { applyExportJob, cancelCurrentExport, refreshExportStatus, resetExportState, runExport, useExportStore } from '@/store/exportStore'
 import { currentFigureOf } from '@/lib/problemContext'
@@ -91,7 +93,7 @@ let root: Root
 let exportBodies: Record<string, unknown>[]
 
 /** 后端把作业**一次跑完**就回终局：用例不必等轮询 */
-let jobStatus: 'done' | 'partial' | 'conflict' = 'done'
+let jobStatus: 'done' | 'partial' | 'conflict' | 'running' = 'done'
 /** 终局回执里的 outputs（不设 = 一件没有 manifest 的 PDF） */
 let jobOutputs: Record<string, unknown>[] | null = null
 
@@ -241,12 +243,10 @@ const button = (label: string) =>
 
 /** 格式复选框（组件工作台批次把 aria-pressed 的按钮改成了普通复选框，`FormatCheck`） */
 const formatBox = (title: string) =>
-  [...document.body.querySelectorAll('label')]
-    .find((l) => l.textContent?.trim() === title)
-    ?.querySelector('input[type="checkbox"]') as HTMLInputElement
+  document.body.querySelector<HTMLInputElement>(`[data-export-formats] [data-export-format="${title.toLowerCase()}"] input[type="checkbox"]`)!
 /** 位图分辨率下拉：只在选了位图格式时出现（工作台批次起它坐在文件名那一行右侧，没有「分辨率」文字标签） */
 const ppiSelect = () => document.body.querySelector('[role="combobox"][aria-label="位图分辨率"]')
-/** 知情确认框：格式那四颗复选框排在它前面，**不能拿页面里的第一颗**——认产品给的锚点 */
+/** 知情确认框：格式那五颗复选框排在它前面，**不能拿页面里的第一颗**——认产品给的锚点 */
 const confirmBox = () =>
   document.body.querySelector<HTMLInputElement>('input[data-export-confirm]')
 
@@ -604,6 +604,71 @@ describe('统一 ExportRequest', () => {
   })
 })
 
+describe('SVG 导出（X03）', () => {
+  it('SVG-only keeps its selection and acknowledgement gate after following an error count chip', async () => {
+    await setup(8)
+    await click(formatBox('SVG'))
+    await click(formatBox('PDF'))
+    await click(formatBox('PNG'))
+    expect(button('开始导出')!.hasAttribute('disabled')).toBe(true)
+    const chip = document.body.querySelector<HTMLElement>('[data-export-group="checks"] [data-count-chip="danger"]')!
+    expect(chip, 'the real font-floor issue must produce a blocking count chip').not.toBeNull()
+    await click(chip)
+    expect(useUiStore.getState().leftTab).toBe('problems')
+    expect(useUiStore.getState().problemFilter).toEqual(['error'])
+    expect(useUiStore.getState().exportOpen).toBe(false)
+    await act(async () => { useUiStore.getState().setExportOpen(true) })
+    expect(formatBox('SVG').checked).toBe(true)
+    expect(formatBox('PDF').checked).toBe(false)
+    expect(formatBox('PNG').checked).toBe(false)
+    expect(document.body.querySelector('[data-export-svg-note]')).not.toBeNull()
+    expect(ppiSelect()).toBeNull()
+    expect(button('开始导出')!.hasAttribute('disabled')).toBe(true)
+    expect(exportBodies).toHaveLength(0)
+    await click(confirmBox()!)
+    await click(button('开始导出')!)
+    expect(exportBodies).toHaveLength(1)
+    expect(exportBodies[0].formats).toEqual(['svg'])
+    expect(exportBodies[0].ppi).toBeNull()
+    expect((exportBodies[0].style_check_report as { acknowledged: string[] }).acknowledged).toContain('font-below-absolute-floor')
+  })
+
+  it('SVG follows the existing formats, discloses text outlines, and sends no PPI', async () => {
+    await setup(9)
+    expect([...document.body.querySelectorAll('[data-export-formats] [data-export-format]')].map((el) => el.getAttribute('data-export-format'))).toEqual(['pdf', 'png', 'eps', 'tiff', 'svg'])
+    expect(formatBox('SVG').checked).toBe(false)
+    expect(document.body.querySelector('[data-export-svg-note]')).toBeNull()
+    await click(formatBox('SVG'))
+    await click(formatBox('PDF'))
+    await click(formatBox('PNG'))
+    const note = document.body.querySelector('[data-export-svg-note]')!
+    expect(note.textContent).toContain('文字转为轮廓')
+    expect(note.textContent).toContain('Office')
+    expect(formatBox('SVG').getAttribute('aria-describedby')).toBe(note.id)
+    expect(ppiSelect()).toBeNull()
+    await click(button('开始导出')!)
+    expect(exportBodies[0].formats).toEqual(['svg'])
+    expect(exportBodies[0].ppi).toBeNull()
+    expect(readExportDefaults().formats).toEqual(['svg'])
+  })
+
+  it('restores SVG-only defaults from the backend for the next opening', async () => {
+    await setup(9)
+    await act(async () => { useUiStore.getState().setExportOpen(false) })
+    vi.mocked(fetchExportDefaultsRemote).mockResolvedValueOnce({
+      defaults: { dpi: '1200', formats: ['svg'], withProof: false, strictInspection: false },
+    })
+    await act(async () => { await hydrateExportDefaults() })
+    await act(async () => { useUiStore.getState().setExportOpen(true) })
+    expect(formatBox('SVG').checked).toBe(true)
+    expect(formatBox('PDF').checked).toBe(false)
+    expect(ppiSelect()).toBeNull()
+    await click(button('开始导出')!)
+    expect(exportBodies[0].formats).toEqual(['svg'])
+    expect(exportBodies[0].ppi).toBeNull()
+  })
+})
+
 describe('导出默认值以后端为准（#715 PR-B）', () => {
   it('对话框常驻挂载之后才取回的后端默认值：下次打开用取回的值（换 origin 首启不退回 600 ppi）', async () => {
     await setup(9) // 本机缓存是空的：挂载时读到 600
@@ -818,6 +883,38 @@ describe('原图范围不被画布摆放阻断（FLAG-B1）', () => {
     expect((report.objects as { rect_mm: number[] }[]).map((o) => o.rect_mm)).toEqual([
       [0, 0, 80, 60],
     ])
+  })
+
+  /**
+   * 画布上的**缩放**同样不进原图导出（ADR 0028）：9 pt 的图在画布上缩到一半，读者在那页上
+   * 量到 4.5 pt——按画布导出这是阻断；按原图导出，文件里仍是 9 pt，不许被这次缩放阻断，
+   * 报告里也不许出现这条。画布范围那半边是前提（否则「不阻断」恒成立）。
+   */
+  it('画布上缩小摆放的图：画布范围按缩放后的字号阻断，原图范围按原图字号放行', async () => {
+    writeExportDefaults({ withProof: true })
+    await setup(9, { w: 80, h: 60 })
+    useDocumentStore.getState().commit(literal('缩到一半'), (d) => {
+      ;(d.objects[0] as PanelObject).w = 40
+      ;(d.objects[0] as PanelObject).h = 30
+    })
+    await reopen()
+    expect(button('开始导出')!.hasAttribute('disabled'), '前提：画布范围下 4.5 pt 是阻断').toBe(true)
+    expect(confirmBox()).toBeTruthy()
+
+    useWorkspaceStore.setState({ mode: 'fast_edit', activePanelId: 'p1' })
+    await reopen()
+    expect(document.body.querySelectorAll('[role="radio"]')[0].getAttribute('aria-checked')).toBe(
+      'true',
+    )
+    expect(confirmBox(), '原图里是 9 pt，没有要确认的阻断').toBeNull()
+    expect(button('开始导出')!.hasAttribute('disabled')).toBe(false)
+    await click(button('开始导出')!)
+    expect(exportBodies).toHaveLength(1)
+    expect(exportBodies[0].scope).toBe('original')
+    const report = exportBodies[0].style_check_report as Record<string, unknown>
+    expect(report, '夹具开了报告').toBeTruthy()
+    expect((report.checks as { id: string }[]).map((c) => c.id).filter((id) => id.startsWith('font-'))).toEqual([])
+    expect(report.page_mm).toEqual({ w: 80, h: 60, margin: 0 })
   })
 
   /**
@@ -1432,6 +1529,82 @@ describe('T33 · 导出对象头部：名字 · 范围 · 尺寸只出现一次'
   })
 })
 
+describe('P02 · 对象头说清「写出哪些文件」与「检查的是哪份产物」', () => {
+  const files = () =>
+    document.body.querySelector('[data-export-target] [data-export-target-files]')?.textContent ?? null
+  const checkScope = () => document.body.querySelector('[data-export-check-scope]')?.textContent ?? ''
+
+  async function openFast() {
+    await stage({ panels: [panel], renders: { 'Fig1.pdf': manifestWithTicks(1, 9) } })
+    useWorkspaceStore.setState({ mode: 'fast_edit', activePanelId: 'p1' })
+    await mountDialogs()
+    await openDialog()
+  }
+
+  it('文件名与格式跟表单走，且就是发出去的请求里的那一份（同源，不另算）', async () => {
+    await openFast()
+    expect(files()).toBe('Fig1.pdf · Fig1.png')
+    await typeFilename('mine')
+    expect(files()).toBe('mine.pdf · mine.png')
+    await click(formatBox('PNG'))
+    expect(files()).toBe('mine.pdf')
+    await click(formatBox('SVG'))
+    // 顺手打上的扩展名被 `buildExportRequest` 剥掉：头部报的也是剥过的
+    await typeFilename('Fig 1.pdf')
+    expect(files()).toBe('Fig 1.pdf · Fig 1.svg')
+    await click(button('开始导出')!)
+    const body = exportBodies.at(-1)!
+    const sent = (body.formats as string[]).map((f) => `${body.filename as string}.${f}`)
+    expect(files()).toBe(sent.join(' · '))
+  })
+
+  it('文件名不合法（或空）时头部不报一个写不出来的名字', async () => {
+    await openFast()
+    await typeFilename('Fig?1')
+    expect(files()).toBeNull()
+    await typeFilename('Fig1')
+    expect(files()).toBe('Fig1.pdf · Fig1.png')
+  })
+
+  it('仅 PDF：头部只报 .pdf，且没有 DPI 一行；加上位图才出现', async () => {
+    await openFast()
+    await click(formatBox('PNG'))
+    expect(files()).toBe('Fig1.pdf')
+    expect(ppiSelect()).toBeNull()
+    await click(formatBox('TIFF'))
+    expect(files()).toBe('Fig1.pdf · Fig1.tiff')
+    expect(ppiSelect()).toBeTruthy()
+  })
+
+  it('原图 ↔ 画布：头部文件名、检查对象各归各，不串', async () => {
+    await openFast()
+    const canvasName = useDocumentStore.getState().doc.name
+    expect(files()).toBe('Fig1.pdf · Fig1.png')
+    expect(checkScope()).toContain('仅查原图「Fig1」')
+    expect(checkScope()).not.toContain(canvasName)
+    await click(radios()[1])
+    expect(files()).toBe(`${canvasName}.pdf · ${canvasName}.png`)
+    expect(checkScope()).toContain(`查整个画布「${canvasName}」`)
+    // 尺寸仍只在头部报一次，检查行不报数
+    expect(checkScope()).not.toMatch(/mm/)
+  })
+
+  it('原图不可用（源文件不见了）：头部不报文件名，也不拿画布的名字冒充', async () => {
+    await stage({ panels: [panel], renders: { 'Fig1.pdf': manifestWithTicks(1, 9) } })
+    useAssetStore.setState({ byId: {} } as never)
+    useWorkspaceStore.setState({ mode: 'fast_edit', activePanelId: 'p1' })
+    await mountDialogs()
+    await openDialog()
+    expect(radios()[0].getAttribute('aria-checked')).toBe('true')
+    expect(files()).toBeNull()
+    expect(document.body.querySelector('[data-export-target]')?.textContent ?? '').not.toContain(
+      useDocumentStore.getState().doc.name,
+    )
+    expect(button('开始导出')!.hasAttribute('disabled')).toBe(true)
+    expect(exportBodies).toHaveLength(0)
+  })
+})
+
 describe('T33 · 检查摘要按导出目标取范围', () => {
   const second: PanelObject = { ...panel, id: 'p2', fileId: 'Fig2.pdf', x: 0, y: 60, script: 'fig2.py' }
 
@@ -1446,15 +1619,49 @@ describe('T33 · 检查摘要按导出目标取范围', () => {
     await mountDialogs()
     await openDialog()
     expect(radios()[0].getAttribute('aria-checked')).toBe('true')
-    expect(text()).toContain('导出前检查通过')
-    expect(text()).toContain('仅此图')
+    // 没查出问题时说的是「按哪套规范、查的哪个范围没查出」，不是一句「检查通过」
+    const ok = document.body.querySelector('[data-export-check-ok]')
+    expect(ok, '没查出问题时给出结论行').toBeTruthy()
+    const record = useProfileStore.getState().specs.find((r) => r.id === DEFAULT_PROFILE_ID)
+    expect(record, '夹具里有默认规范').toBeTruthy()
+    const specName = profileName(record!)
+    expect(ok!.textContent).toContain(`按「${specName}」未发现问题`)
+    expect(ok!.textContent).toContain('仅查原图「Fig1」')
+    expect(ok!.textContent).not.toContain('检查通过')
+    // 覆盖范围说在明处：识别不出的内容不在检查之内
+    expect(ok!.querySelector('[data-export-check-coverage]')?.textContent).toContain('不在检查之内')
     expect(button('开始导出')!.hasAttribute('disabled')).toBe(false)
 
     await click(radios()[1])
     expect(text()).toMatch(/\d+ 项要改/)
     expect(text()).toContain('1 项留意')
-    expect(text()).toContain('整个画布')
+    expect(text()).toContain('查整个画布「')
     expect(button('开始导出')!.hasAttribute('disabled')).toBe(true)
+  })
+
+  it('换界面语言后结论行里的规范名跟着换（#1194 评审 P2）', async () => {
+    await stage({
+      panels: [{ ...panel, h: 40 }],
+      renders: { 'Fig1.pdf': manifestWithTicks(1, 9) },
+      page: { w: 80, h: 40 },
+    })
+    useWorkspaceStore.setState({ mode: 'fast_edit', activePanelId: 'p1' })
+    await mountDialogs()
+    await openDialog()
+    const record = useProfileStore.getState().specs.find((r) => r.id === DEFAULT_PROFILE_ID)!
+    const ok = () => document.body.querySelector('[data-export-check-ok]')
+    expect(ok(), '前提：没查出问题，有结论行').toBeTruthy()
+    const zh = profileName(record)
+    expect(ok()!.textContent).toContain(zh)
+    try {
+      await act(async () => { await i18n.changeLanguage('en-US') })
+      const en = profileName(record)
+      expect(en, '前提：内置规范的名字两种语言不同').not.toBe(zh)
+      expect(ok()!.textContent).toContain(en)
+      expect(ok()!.textContent).not.toContain(zh)
+    } finally {
+      await act(async () => { await i18n.changeLanguage('zh-CN') })
+    }
   })
 
   it('按原图时这张图自己的阻断项照样拦住，并且报告里只有它的条目', async () => {
@@ -1485,6 +1692,102 @@ describe('T33 · 检查摘要按导出目标取范围', () => {
     const floor = checks.filter((c) => c.id === 'font-below-absolute-floor')
     expect(floor.length, '报告里的阻断项只有这张图的那一条').toBe(1)
     expect(floor[0].object_ids, '别的图的对象不进这份报告').toEqual(['p1'])
+  })
+})
+
+describe('#1228 评审 P2 · 对象头文件名绑在正在跑的那次导出上', () => {
+  const files = () =>
+    document.body.querySelector('[data-export-target] [data-export-target-files]')?.textContent ?? null
+
+  afterEach(() => {
+    jobStatus = 'done'
+    resetExportState()
+  })
+
+  it('导出进行中改文件名 / 格式：头部仍报正在写的那次；回到空闲后跟表单走', async () => {
+    await stage({ panels: [panel], renders: { 'Fig1.pdf': manifestWithTicks(1, 9) } })
+    useWorkspaceStore.setState({ mode: 'fast_edit', activePanelId: 'p1' })
+    await mountDialogs()
+    await openDialog()
+    expect(files()).toBe('Fig1.pdf · Fig1.png')
+    jobStatus = 'running'
+    await click(button('开始导出')!)
+    expect(useExportStore.getState().running).toBe(true)
+    await typeFilename('other')
+    await click(formatBox('PNG'))
+    await click(formatBox('SVG'))
+    expect(files(), '正在写的是 Fig1.pdf · Fig1.png，不是表单此刻的值').toBe('Fig1.pdf · Fig1.png')
+    await act(async () => {
+      applyExportJob({ job_id: 'j1', status: 'cancelled', outputs: [], warnings: [], conflicts: [], error: null } as never)
+    })
+    expect(useExportStore.getState().running).toBe(false)
+    expect(files()).toBe('other.pdf · other.svg')
+  })
+})
+
+describe('#1228 评审 P2 · 不在画布上的原图不借画布的检查结论', () => {
+  const checkScope = () => document.body.querySelector('[data-export-check-scope]')?.textContent ?? ''
+  const offCanvas = {
+    id: 'Fig9.pdf',
+    kind: 'pdf',
+    mtime: 1,
+  }
+
+  async function setupOff() {
+    // 画布上有一张 8pt 的图（阻断项），素材里另有一张还没上画布的 Fig9
+    await stage({ panels: [panel], renders: { 'Fig1.pdf': manifestWithTicks(1, 8) } })
+    useAssetStore.setState((st) => ({
+      byId: { ...st.byId, 'Fig9.pdf': offCanvas },
+      panels: [
+        ...(st.panels ?? []),
+        { id: 'Fig1.pdf', kind: 'pdf', mtime: 1 },
+        { ...offCanvas, native_w_mm: 70, native_h_mm: 50 },
+      ],
+    }) as never)
+    useWorkspaceStore.setState({ mode: 'fast_edit', activePanelId: 'p1' })
+    await mountDialogs()
+    await openDialog()
+  }
+  const pickFig9 = async () => {
+    await click(originalRadio())
+    const opt = figureOptions().find((o) => o.textContent?.includes('Fig9'))
+    if (opt) await click(opt)
+  }
+
+  it('范围句如实说没检查；画布上的阻断项不挡这次导出；摘要是「没查成」要确认', async () => {
+    await setupOff()
+    const canvasErrors = useValidationStore.getState().issues.filter((i) => i.severity === 'error').length
+    expect(canvasErrors, '前提：当前画布上有阻断项').toBeGreaterThan(0)
+    await pickFig9()
+    expect(document.body.querySelector('[data-export-target]')!.textContent).toContain('Fig9')
+    expect(checkScope()).toBe('「Fig9」不在画布上，这次导出不做规范检查')
+    expect(document.body.querySelector('[data-export-check-ok]')).toBeNull()
+    expect(document.body.querySelector('[data-blocking-issue]'), '画布的阻断项不列给这次导出').toBeNull()
+    expect(text()).not.toMatch(/\d+ 项要改/)
+    // 门禁仍在：没查，要自己点头
+    const box = confirmBox()
+    expect(box, '没查成 = 要确认').toBeTruthy()
+    expect(button('开始导出')!.hasAttribute('disabled')).toBe(true)
+    await act(async () => {
+      box!.click()
+    })
+    expect(button('开始导出')!.hasAttribute('disabled')).toBe(false)
+    await click(button('开始导出')!)
+    const report = exportBodies[0].style_check_report as { checks?: { id: string }[] } | undefined
+    expect(
+      (report?.checks ?? []).filter((c) => c.id === 'font-below-absolute-floor'),
+      '画布上的条目不写进这张图的报告',
+    ).toHaveLength(0)
+  })
+
+  it('对照：图在画布上时仍是「仅查原图」、画布阻断项照常拦', async () => {
+    await setupOff()
+    await click(originalRadio())
+    const opt = figureOptions().find((o) => o.textContent?.includes('Fig1'))
+    if (opt) await click(opt)
+    expect(checkScope()).not.toContain('不在画布上')
+    expect(text()).toMatch(/\d+ 项要改/)
+    expect(button('开始导出')!.hasAttribute('disabled')).toBe(true)
   })
 })
 
@@ -1933,6 +2236,11 @@ describe('画布模式下选中的图就是要导的那张（用户反馈 06）'
     await openDialog()
     // 项目里只有这一张：切到原图就是它，清单不出现——对象头是唯一写着对象名与尺寸的地方
     await click(originalRadio())
+    // 不在画布上 = 这次导出没有规范检查（#1228 P2）：门禁在，要自己点头才放行
+    expect(button('开始导出')!.hasAttribute('disabled')).toBe(true)
+    await act(async () => {
+      confirmBox()!.click()
+    })
     expect(button('开始导出')!.hasAttribute('disabled')).toBe(false)
     expect(figureOptions()).toHaveLength(0)
     const header = document.body.querySelector('[data-export-target]')

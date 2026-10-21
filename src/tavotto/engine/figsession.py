@@ -41,7 +41,10 @@ safe worker 本来就是单线程串行读 stdin，这条断言对它恒真（�
 from __future__ import annotations
 
 import base64
+import functools
+import hashlib
 import importlib.metadata
+import inspect
 import io
 import json
 import math
@@ -50,21 +53,29 @@ import platform
 import sys
 import threading
 import time
+from contextlib import contextmanager, nullcontext
 from pathlib import Path
 
 import matplotlib
-from matplotlib import _tight_bbox, artist as martist, figure as mfigure, ticker, transforms
+from matplotlib import (
+    _tight_bbox,
+    artist as martist,
+    backend_bases,
+    figure as mfigure,
+    ticker,
+    transforms,
+)
 from matplotlib.axes import Axes
-from matplotlib.axis import XAxis, XTick, YAxis, YTick
+from matplotlib.axis import Axis, XAxis, XTick, YAxis, YTick
 from matplotlib.backend_bases import FigureCanvasBase
 from matplotlib.backends.backend_agg import FigureCanvasAgg
 from matplotlib.figure import Figure
 from matplotlib.layout_engine import PlaceHolderLayoutEngine
 from matplotlib.lines import Line2D
 from matplotlib.patches import Rectangle
-from matplotlib.scale import LinearScale
+from matplotlib.scale import FuncTransform, LinearScale
 from matplotlib.spines import Spine
-from matplotlib.text import Text
+from matplotlib.text import Annotation, Text
 from matplotlib.ticker import ScalarFormatter
 
 import figcapture
@@ -79,6 +90,12 @@ from axestraversal import ordered_axes
 class ArtifactSourceUnavailable(figcapture.ArtifactContextError):
     def __init__(self, reason):
         super().__init__(reason, "The selected file cannot be verified against the current figure.")
+
+
+class SvgSnapshotUnavailable(RuntimeError):
+    """Automatic SVG capture cannot safely serialize this live figure."""
+
+    protocol_code = "svg_source_unavailable"
 
 
 _ARTIST_METHODS = (
@@ -200,7 +217,88 @@ def _standard_stale_callback(callback):
     )
 
 
+def _pixel_artist_profile(art) -> bool:
+    """像素档（精确策略）：类型必须在 `_ARTIFACT_ARTISTS` 白名单里，且绘制方法与导入时快照一致。
+
+    返回 True = 「类型不在白名单、但它是 matplotlib 本体的类型且没有覆写绘制方法」：这一项**只是**
+    像素证据拿不到（Legend / Collection / Annotation …）。调用方把整张图的其余安全条件都查完，
+    **只有它是唯一的拒绝原因时**才报 `artist_profile`（来源驱动策略可以接手）；同一张图上
+    还有任何真正的不安全状态，报的仍是 `unsupported_render_state`。用户自己的类型是真的不安全，
+    当场 `unsupported_render_state`。"""
+    names = _ARTIST_METHODS
+    methods = _ARTIFACT_ARTISTS.get(type(art))
+    if methods is None:
+        _edit_artist_profile(art)  # 非 matplotlib 本体 / 有覆写：当场 unsupported_render_state
+        return True
+    if any(name in vars(art) for name in names) or methods != tuple(
+        getattr(type(art), name, None) for name in names
+    ):
+        raise ArtifactSourceUnavailable("unsupported_render_state")
+    return False
+
+
+def _matplotlib_source_file(function):
+    """方法的真实定义文件是否在 matplotlib 包内（`__module__` 可以伪造，`co_filename` 不行）。"""
+    function = inspect.unwrap(function) if callable(function) else function
+    code = getattr(function, "__code__", None)
+    package = os.path.dirname(os.path.abspath(matplotlib.__file__))
+    return code is not None and os.path.abspath(code.co_filename).startswith(package + os.sep)
+
+
+def _edit_artist_profile(art) -> bool:
+    """编辑档（来源驱动策略）：去掉「类型必须在白名单」，判据改为「类型来自 matplotlib 本体，
+    实例与类（含被 monkeypatch 的）都没有覆写绘制方法」。其余安全条件由调用方统一保留。"""
+    cls = type(art)
+    if not cls.__module__.startswith("matplotlib."):
+        raise ArtifactSourceUnavailable("unsupported_render_state")
+    for name in _ARTIST_METHODS:
+        if name in vars(art):
+            raise ArtifactSourceUnavailable("unsupported_render_state")
+        defined = next((c for c in cls.__mro__ if name in vars(c)), None)
+        if (
+            defined is None
+            or not defined.__module__.startswith("matplotlib.")
+            or not _matplotlib_source_file(vars(defined)[name])
+        ):
+            raise ArtifactSourceUnavailable("unsupported_render_state")
+    # 白名单类型没有、而放开类型后才出现的用户代码入口（集合的偏移变换、标注的坐标回调、
+    # 色阶映射的 norm / cmap）：与白名单档对 transform / formatter 的要求同一口径。
+    offset = getattr(art, "get_offset_transform", None)
+    if offset is not None and not _static_transform(offset()):
+        raise ArtifactSourceUnavailable("unsupported_render_state")
+    if isinstance(art, Annotation):
+        pending = [art.xycoords, art.get_anncoords()]
+        while pending:
+            coord = pending.pop()
+            if isinstance(coord, tuple):
+                pending.extend(coord)
+            elif isinstance(coord, transforms.Transform):
+                if not _static_transform(coord):
+                    raise ArtifactSourceUnavailable("unsupported_render_state")
+            elif not isinstance(coord, str):
+                raise ArtifactSourceUnavailable("unsupported_render_state")
+    if hasattr(art, "norm") and hasattr(art, "cmap"):
+        norm, cmap = art.norm, art.cmap
+        if (
+            type(norm).__module__ != "matplotlib.colors"
+            or type(norm).__name__ == "FuncNorm"
+            or type(cmap).__module__ != "matplotlib.colors"
+        ):
+            raise ArtifactSourceUnavailable("unsupported_render_state")
+    return False
+
+
 def _require_static_artifact_figure(fig):
+    """像素档：精确策略（`selected-figsize-v1` / `selected-artifact-v1`）专用。"""
+    _require_artifact_figure(fig, _pixel_artist_profile)
+
+
+def _require_editable_artifact_figure(fig):
+    """编辑档：来源驱动策略（`script-backed-figure-v1`）专用，ADR 0139 §三。"""
+    _require_artifact_figure(fig, _edit_artist_profile)
+
+
+def _require_artifact_figure(fig, artist_profile):
     if type(fig) is not Figure or not _standard_methods(
         fig.canvas, _STATIC_CANVASES, _CANVAS_METHODS
     ):
@@ -236,20 +334,13 @@ def _require_static_artifact_figure(fig):
                     isinstance(item, ScalarFormatter) and item.get_useLocale()
                 ):
                     raise ArtifactSourceUnavailable("unsupported_render_state")
-    pending, seen = [fig], set()
+    pending, seen, outside_profile = [fig], set(), False
     while pending:
         art = pending.pop()
         if id(art) in seen:
             continue
         seen.add(id(art))
-        names = _ARTIST_METHODS
-        methods = _ARTIFACT_ARTISTS.get(type(art))
-        if (
-            methods is None
-            or any(name in vars(art) for name in names)
-            or methods != tuple(getattr(type(art), name, None) for name in names)
-        ):
-            raise ArtifactSourceUnavailable("unsupported_render_state")
+        outside_profile |= artist_profile(art)
         if art.get_agg_filter() is not None or art.get_path_effects():
             raise ArtifactSourceUnavailable("unsupported_render_state")
         if not _standard_stale_callback(art.stale_callback) or art._callbacks.callbacks:
@@ -266,6 +357,8 @@ def _require_static_artifact_figure(fig):
         if isinstance(art, Text) and (art.get_usetex() or art.get_fontproperties().get_file()):
             raise ArtifactSourceUnavailable("unsupported_render_state")
         pending.extend(art.get_children())
+    if outside_profile:
+        raise ArtifactSourceUnavailable("artist_profile")
 
 
 def _materialize_artifact_background(fig, options):
@@ -432,15 +525,17 @@ EXPORT_FONTTYPE = 42
 
 
 def export_font_context(fmt: str):
-    """`savefig` 的 rc 上下文：PDF / PS / EPS 用 fonttype 42，其它格式什么都不改。
+    """临时导出字体策略：PDF / PS / EPS 嵌入字体，SVG 用自包含字形路径。
 
     EPS 走 matplotlib 的 PostScript 后端：**它不支持透明度**（半透明元素按不透明
     画，matplotlib 自己会打一条日志），文字按 Type 42 嵌入。ADR 0046。"""
     import contextlib
 
-    if str(fmt).lower() not in ("pdf", "ps", "eps"):
+    fmt = str(fmt).lower()
+    if fmt == "svg":
+        return matplotlib.rc_context({"svg.fonttype": "path", "svg.image_inline": True})
+    if fmt not in ("pdf", "ps", "eps"):
         return contextlib.nullcontext()
-    import matplotlib
 
     return matplotlib.rc_context({"pdf.fonttype": EXPORT_FONTTYPE, "ps.fonttype": EXPORT_FONTTYPE})
 
@@ -457,6 +552,224 @@ def export_format_kwargs(fmt: str) -> dict:
     if str(fmt).lower() in ("tif", "tiff"):
         return {"pil_kwargs": dict(TIFF_PIL_KWARGS)}
     return {}
+
+
+def _svg_pair_standard_method(method) -> bool:
+    if isinstance(method, functools.partial):
+        return _svg_pair_standard_method(method.func)
+    module = getattr(method, "__module__", "")
+    if module.startswith(("matplotlib.", "mpl_toolkits.")):
+        return True
+    # Owned wrappers only group/place the underlying artist. Inspect their captured
+    # native method as well, so wrapping a user's custom draw never certifies it.
+    wrappers = {
+        (manifest_mod.__name__, "_svg_group.<locals>.draw"): "native",
+        (
+            overrides_mod.__name__,
+            "_install_patch_resize_draw_hook.<locals>.resized_draw",
+        ): "native_draw",
+    }
+    freevar = wrappers.get((module, getattr(method, "__qualname__", "")))
+    if freevar is None:
+        return False
+    captured = dict(zip(method.__code__.co_freevars, method.__closure__ or ()))
+    cell = captured.get(freevar)
+    return cell is not None and _svg_pair_standard_method(cell.cell_contents)
+
+
+def _svg_pair_standard_transform(transform, seen) -> bool:
+    pending = [transform]
+    while pending:
+        item = pending.pop()
+        if item is None or id(item) in seen:
+            continue
+        seen.add(id(item))
+        if not type(item).__module__.startswith(("matplotlib.", "mpl_toolkits.")):
+            return False
+        if isinstance(item, FuncTransform) and not all(
+            _svg_pair_standard_method(func) for func in (item._forward, item._inverse)
+        ):
+            return False
+        for name in _TRANSFORM_METHODS:
+            method = getattr(item, name, None)
+            if method is not None and not _svg_pair_standard_method(method):
+                return False
+        pending.extend(v for v in vars(item).values() if isinstance(v, transforms.TransformNode))
+    return True
+
+
+def _svg_pair_native_canvas_method(method) -> bool:
+    if isinstance(method, (functools.partial, functools.partialmethod)):
+        return not method.keywords and _svg_pair_native_canvas_method(method.func)
+    method = getattr(method, "__func__", method)
+    code = getattr(method, "__code__", None)
+    if code is None:
+        return _svg_pair_standard_method(method)
+    if code is contextmanager(lambda: None).__code__:
+        # contextmanager copies the decorated function's module. Its actual closure,
+        # unlike arbitrary __wrapped__ metadata, tells us what this native helper calls.
+        captured = dict(zip(code.co_freevars, method.__closure__ or ()))
+        cell = captured.get("func")
+        return cell is not None and _svg_pair_native_canvas_method(cell.cell_contents)
+    namespace = method.__globals__
+    module_name = namespace.get("__name__", "")
+    module = sys.modules.get(module_name)
+    # wraps(native) only copies metadata; its code and globals still belong to the user.
+    # Module-relative filenames also work for bytecode/frozen installations, where the
+    # original build root and the module's installed absolute path need not coincide.
+    source = code.co_filename.replace("\\", "/")
+    return (
+        module_name.startswith("matplotlib.")
+        and module is not None
+        and namespace is vars(module)
+        and ("/" + source).endswith("/" + module_name.replace(".", "/") + ".py")
+    )
+
+
+def _svg_pair_native_savefig(method) -> bool:
+    return (
+        getattr(method, "__module__", None) == mfigure.__name__
+        and getattr(method, "__qualname__", None) == "Figure.savefig"
+        and getattr(method, "__globals__", None) is vars(mfigure)
+        and _svg_pair_native_canvas_method(method)
+    )
+
+
+def _svg_pair_standard_savefig(fig) -> bool:
+    if "savefig" in vars(fig):
+        return False
+    method = inspect.getattr_static(fig, "savefig", None)
+    method = getattr(method, "__func__", method)
+    if _svg_pair_native_savefig(method):
+        return True
+    # Both execution entries keep their capture wrapper installed during real_output.
+    # Trust only those owned implementations, and still verify their actual delegate.
+    wrappers = {
+        "_patched_savefig": "worker.py",
+        "_install_savefig_hook.<locals>._patched_savefig": "bridge_runner.py",
+    }
+    source = wrappers.get(getattr(method, "__qualname__", None))
+    code = getattr(method, "__code__", None)
+    return (
+        source is not None
+        and code is not None
+        and Path(code.co_filename).resolve() == Path(__file__).with_name(source).resolve()
+        and _svg_pair_native_savefig(method.__globals__.get("_REAL_SAVEFIG"))
+    )
+
+
+def _svg_pair_standard_canvas(canvas, *, canvas_class=False) -> bool:
+    cls = canvas if canvas_class else type(canvas)
+    if not isinstance(cls, type) or not cls.__module__.startswith("matplotlib."):
+        return False
+    names = (*_CANVAS_METHODS, "_switch_canvas_and_return_print_method", "print_pdf", "print_svg")
+    if canvas_class:
+        names = (*names, "__new__", "__init__")
+    elif any(name in vars(canvas) for name in names):
+        # Even wraps(native) is a custom instance hook; its copied module is not evidence.
+        return False
+    return all(
+        method is None
+        or (canvas_class and name == "__new__" and method is object.__new__)
+        or _svg_pair_native_canvas_method(method)
+        for name in names
+        for method in (inspect.getattr_static(canvas, name, None),)
+    )
+
+
+def _svg_pair_canvas_blocker(canvas) -> str | None:
+    if not _svg_pair_standard_canvas(canvas):
+        return "SVG pairing is unavailable for custom canvas drawing or printing implementations."
+    for fmt in ("pdf", "svg"):
+        if inspect.getattr_static(canvas, f"print_{fmt}", None) is not None:
+            continue
+        # Match Matplotlib's actual serializer selection without constructing a canvas
+        # or importing a user-registered backend during automatic snapshot eligibility.
+        registered = backend_bases._default_backends.get(fmt)
+        if isinstance(registered, str) and not registered.startswith("matplotlib.backends."):
+            return "SVG pairing is unavailable for custom export backends."
+        target = backend_bases.get_registered_canvas_class(fmt)
+        if not _svg_pair_standard_canvas(target, canvas_class=True):
+            return "SVG pairing is unavailable for custom export backends."
+    return None
+
+
+def _svg_pair_blocker(fig) -> str | None:
+    """Known draw-time code can change the scene between two serializers.
+
+    Never label a second draw as a frozen companion when user callbacks or custom
+    draw implementations can mutate it. The primary PDF retains its existing behavior.
+    """
+    if not _svg_pair_standard_savefig(fig):
+        return "SVG pairing is unavailable for custom Figure saving methods."
+    canvas_blocker = _svg_pair_canvas_blocker(fig.canvas)
+    if canvas_blocker is not None:
+        return canvas_blocker
+    if fig.canvas.callbacks.callbacks.get("draw_event"):
+        return "SVG pairing is unavailable for figures with draw-event callbacks."
+    pending, seen, seen_transforms = [fig], set(), set()
+    while pending:
+        artist = pending.pop()
+        if id(artist) in seen:
+            continue
+        seen.add(id(artist))
+        # Built-in artist families remain supported; a custom Artist may draw different
+        # content each time even without leaving any inspectable state on the Figure.
+        if not type(artist).__module__.startswith(("matplotlib.", "mpl_toolkits.")):
+            return "SVG pairing is unavailable for custom artist implementations."
+        for name in _ARTIST_METHODS:
+            if not _svg_pair_standard_method(getattr(artist, name)):
+                return "SVG pairing is unavailable for custom artist drawing methods."
+        if not all(
+            _svg_pair_standard_transform(transform, seen_transforms)
+            for transform in (artist.get_transform(), artist.get_clip_box(), artist.get_clip_path())
+        ):
+            return "SVG pairing is unavailable for user transform callbacks."
+        if isinstance(artist, Axis):
+            scale = artist._scale
+            if not type(scale).__module__.startswith(("matplotlib.", "mpl_toolkits.")) or not (
+                _svg_pair_standard_method(scale.get_transform)
+                and _svg_pair_standard_transform(scale.get_transform(), seen_transforms)
+            ):
+                return "SVG pairing is unavailable for user scale callbacks."
+            for component in (
+                artist.get_major_formatter(),
+                artist.get_minor_formatter(),
+                artist.get_major_locator(),
+                artist.get_minor_locator(),
+            ):
+                if not type(component).__module__.startswith(("matplotlib.", "mpl_toolkits.")):
+                    return "SVG pairing is unavailable for custom tick formatters or locators."
+                if not _svg_pair_standard_method(component.__call__):
+                    return "SVG pairing is unavailable for custom tick drawing methods."
+                if isinstance(component, ticker.FuncFormatter) and not _svg_pair_standard_method(
+                    component.func
+                ):
+                    return "SVG pairing is unavailable for user tick-formatting callbacks."
+        if isinstance(artist, Axes):
+            locator = artist.get_axes_locator()
+            if locator is not None and not _svg_pair_standard_method(locator):
+                return "SVG pairing is unavailable for user axes-location callbacks."
+        agg_filter = artist.get_agg_filter()
+        if agg_filter is not None and not _svg_pair_standard_method(agg_filter):
+            return "SVG pairing is unavailable for user image-filter callbacks."
+        if isinstance(artist, Annotation):
+            coordinates = [artist.xycoords, artist.get_anncoords()]
+            while coordinates:
+                coord = coordinates.pop()
+                if isinstance(coord, tuple):
+                    coordinates.extend(coord)
+                elif callable(coord) and not _svg_pair_standard_method(coord):
+                    return "SVG pairing is unavailable for annotation coordinate callbacks."
+        # Standard collections use None to mean no path effects.
+        effects = artist.get_path_effects()
+        for effect in () if effects is None else effects:
+            if not type(effect).__module__.startswith(("matplotlib.", "mpl_toolkits.")) or not (
+                _svg_pair_standard_method(effect.draw_path)
+            ):
+                return "SVG pairing is unavailable for custom path-effect callbacks."
+        pending.extend(artist.get_children())
+    return None
 
 
 #: 一代预览发布时在完成记录里声明的能力：SVG 与 manifest 都完整落盘（`preview`），且图在本会话里是活对象、
@@ -631,7 +944,8 @@ class LiveFigureSession:
             or row["options"].get("format") != self.artifact_source["kind"]
         ):
             raise ArtifactSourceUnavailable("unsupported_render_state")
-        if self.artifact_source["render_policy"] == figcapture.SELECTED_FIGSIZE_POLICY and (
+        policy = self.artifact_source["render_policy"]
+        if policy in figcapture.FIGSIZE_FRAME_POLICIES and (
             self.artifact_source["kind"] != "png"
             or "bbox_inches" not in row["options"]
             or row["options"]["bbox_inches"] is not None
@@ -639,7 +953,10 @@ class LiveFigureSession:
             raise ArtifactSourceUnavailable("unsupported_render_state")
         if extras is not None and (type(extras) is not tuple or len(extras)):
             raise ArtifactSourceUnavailable("unsupported_render_state")
-        _require_static_artifact_figure(fig)
+        if policy == figcapture.SCRIPT_BACKED_POLICY:
+            _require_editable_artifact_figure(fig)
+        else:
+            _require_static_artifact_figure(fig)
         self._artifact_background_hidden = _materialize_artifact_background(fig, row["options"])
         if type(fig.canvas) is FigureCanvasBase:
             # Matplotlib 3.11 close() detaches Agg; bind it without another draw.
@@ -1385,6 +1702,9 @@ class LiveFigureSession:
         fmt: str = "pdf",
         dpi: int = 600,
         timings: dict | None = None,
+        *,
+        svg_path: str | None = None,
+        snapshot_only: bool = False,
     ) -> dict:
         """全质量导出（供画布合成 / 按原图导出）。
 
@@ -1395,10 +1715,21 @@ class LiveFigureSession:
         会拿着错的 applied 表去做还原。
         """
         self._own()
+        if snapshot_only and svg_path is None:
+            raise ValueError("snapshot_only requires an SVG companion path")
+        if svg_path is not None:
+            if not isinstance(svg_path, str) or not svg_path:
+                raise ValueError("svg_path must be a nonempty string")
+            if str(fmt).lower() != "pdf":
+                raise ValueError("svg_path is only supported for PDF exports")
+            if Path(svg_path).resolve() == Path(path).resolve():
+                raise ValueError("PDF and SVG export paths must be different")
         self._require_background_choice(stem, patches)
         state = self.states[stem]
         prev = self.snapshot(stem)
         out = Path(path)
+        companion = Path(svg_path) if svg_path is not None else None
+        result = {"path": str(out)}
         # `try` 从 apply 之前起（见 do_preview_png 的同款说明）：apply 与
         # mkdir 都会抛——目标目录不可写、路径过长、Windows 上被占用——而它们
         # 恰恰是最需要还原的那两步。画布合成导出用的是**热会话**，一次没还原
@@ -1408,14 +1739,80 @@ class LiveFigureSession:
             warnings = overrides_mod.apply(state, patches)
             t1 = time.perf_counter()
             out.parent.mkdir(parents=True, exist_ok=True)
-            with self.real_output(), export_font_context(fmt):
-                state.fig.savefig(
-                    out,
-                    format=fmt,
-                    dpi=int(dpi),
-                    **export_format_kwargs(fmt),
-                    **pathgeom.output_kwargs(state.fig),
-                )
+            blocker = None
+            if companion is not None:
+                try:
+                    blocker = _svg_pair_blocker(state.fig)
+                except Exception as exc:  # noqa: BLE001 — a companion check cannot block the PDF
+                    blocker = f"SVG pairing state could not be verified: {type(exc).__name__}"
+                if snapshot_only and blocker is not None:
+                    raise SvgSnapshotUnavailable(blocker)
+            # 两份产物共用一次 override 应用和同一个 owner-thread 命令；不走编辑预览，
+            # 也不在两次独立请求之间重新应用 patches / 运行脚本。发布与失败清理由导出事务负责。
+            with self.real_output():
+                # Automatic capture witnesses the script's original output policy;
+                # forcing PDF Type 42 here would change a saved Type 3 source's pixels.
+                with _NULL_CTX if snapshot_only else export_font_context(fmt):
+                    # Matplotlib opens SVG paths in text mode with platform newline
+                    # translation. Own the UTF-8 stream so Windows writes the same bytes.
+                    with (
+                        out.open("w", encoding="utf-8", newline="")
+                        if str(fmt).lower() == "svg"
+                        else nullcontext(out)
+                    ) as fh:
+                        state.fig.savefig(
+                            fh,
+                            format=fmt,
+                            dpi=int(dpi),
+                            **export_format_kwargs(fmt),
+                            **pathgeom.output_kwargs(state.fig),
+                        )
+            if companion is not None:
+                try:
+                    if blocker is not None:
+                        raise ValueError(blocker)
+                    companion.parent.mkdir(parents=True, exist_ok=True)
+                    # The PDF draw has already established the layout. Re-running
+                    # tight/constrained layout with SVG font metrics would move axes
+                    # between the paired artifacts. Restore the script's engine after
+                    # this save, including failure; normal draw caches remain native.
+                    layout_context = (
+                        state.fig._cm_set(layout_engine="none")
+                        if state.fig.get_layout_engine() is not None
+                        else _NULL_CTX
+                    )
+                    with (
+                        self.real_output(),
+                        export_font_context("svg"),
+                        layout_context,
+                        companion.open("w", encoding="utf-8", newline="") as fh,
+                    ):
+                        state.fig.savefig(
+                            fh,
+                            format="svg",
+                            dpi=int(dpi),
+                            **pathgeom.output_kwargs(state.fig),
+                        )
+                    digest = hashlib.sha256()
+                    size_bytes = 0
+                    with companion.open("rb") as stream:
+                        for block in iter(lambda: stream.read(1024 * 1024), b""):
+                            digest.update(block)
+                            size_bytes += len(block)
+                    result["svg"] = {
+                        "path": str(companion),
+                        "sha256": digest.hexdigest(),
+                        "size_bytes": size_bytes,
+                    }
+                except Exception as exc:  # noqa: BLE001 — companion failure must not discard the PDF
+                    result["svg_error"] = {"code": "svg_export_failed", "message": str(exc)}
+                    # No SVG acknowledgement means the export transaction must never publish
+                    # this path, including when its own eventual cleanup has to retry.
+                    if blocker is None:
+                        try:
+                            companion.unlink(missing_ok=True)
+                        except OSError:
+                            result["svg_error"]["cleanup_failed"] = True
             if timings is not None:
                 timings["patch_apply_ms"] = round((t1 - t0) * 1000.0, 3)
                 # 还原那一次的耗时**不算进 export_ms**：它是状态中立这条纪律的
@@ -1425,7 +1822,7 @@ class LiveFigureSession:
             # 还原那次的 warnings 丢弃：报给调用方的必须是「这组 patches
             # 有没有写不进去的」，混进还原噪音会让写回自检误判。
             overrides_mod.apply(state, prev)
-        return {"path": str(out), "warnings": warnings}
+        return {**result, "warnings": warnings}
 
 
 class _NullCtx:

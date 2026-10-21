@@ -21,6 +21,8 @@
                                        换后端实现时这条闭集要跟着新后端画得出
                                        什么走，不能照抄——它是一句能力承诺。
   compare_png(a, b)                 → 两张 PNG 的像素差异指标（写回像素门）
+  compare_png_extent(a, b)          → 两张 PNG 的逐字节差异范围（差异像素数 / 比例 / 包围框，
+                                       无底噪无阈值；来源驱动采用 ADR 0139 的对照用）
   compose(page_w_mm, page_h_mm, transparent=False)
                                     → 合成画布；place() 逐个落对象，save_*() 出图
   original_pdf(src, out, page_pt)   → 按原图尺寸出 PDF（矢量源整页搬运，不重画；
@@ -204,6 +206,10 @@ def coverage_ranges():
 
 def compare_png(baseline, candidate):
     return _impl().compare_png(baseline, candidate)
+
+
+def compare_png_extent(baseline, candidate):
+    return _impl().compare_png_extent(baseline, candidate)
 
 
 def compose(page_w_mm, page_h_mm, transparent=False):

@@ -561,7 +561,8 @@ def test_autosave_response_always_carries_the_metadata_verdict(client, tmp_path)
     a = _project(client, tmp_path, "a", default=True)
     r = _put(client, "d_1", _doc(), a)
     assert r.get_json()["metadata"] == "ok"
-    assert set(r.get_json()) == {"ok", "saved_at", "revision", "metadata"}
+    assert set(r.get_json()) == {"ok", "saved_at", "revision", "metadata", "figure_snapshots"}
+    assert r.get_json()["figure_snapshots"] == {}
 
 
 # ============================ 1.2/A27 清理保护 ===================================

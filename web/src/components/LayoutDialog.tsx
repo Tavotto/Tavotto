@@ -1,3 +1,4 @@
+import { svgSnapshotWarning } from '@/lib/svgSnapshotWarning'
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { literal, msg } from '@/i18n'
@@ -21,7 +22,7 @@ import {
 import { normalizeLayout } from '@/lib/migrate'
 import { cn } from '@/lib/utils'
 import { openLayoutDocument } from '@/store/actions'
-import { projectFileSnapshot, setProjectFile, useDocumentStore } from '@/store/documentStore'
+import { captureFigureSnapshotSave, mergeSavedFigureSnapshots, projectFileSnapshot, setProjectFile, useDocumentStore } from '@/store/documentStore'
 import { useProjectStore } from '@/store/projectStore'
 import { captureSaveContext, ifStillCurrent, stillCurrent } from '@/store/saveContext'
 import { useUiStore } from '@/store/uiStore'
@@ -163,12 +164,15 @@ export function LayoutDialog() {
       if (!overwrite) useDocumentStore.getState().renameProject(stem)
       const edited = projectFileSnapshot()
       const baseRevision = overwrite?.revision ?? knownLayoutRevision(stem, pj) ?? REVISION_ABSENT
+      const pd = useDocumentStore.getState().buildProject()
+      const snapshots = captureFigureSnapshotSave(pd, pj)
       const res = await saveLayout(
         stem,
-        useDocumentStore.getState().buildProject(),
+        pd,
         baseRevision,
         toProject ? { target: 'project' } : undefined,
       )
+      mergeSavedFigureSnapshots(snapshots, res.figure_snapshots)
       // 写成了：立刻说「排版写成了」，时间线打「保存」点（ADR 0101 §7）——在后面任何一步
       // （关对话框、记账、状态条）之前，与它们的成败无关（Codex #679）；点属于点下另存为的
       // 那一份（`ctx.moment`：入口取的快照，与上面序列化的是同一刻）。存进项目的是项目文件，
@@ -195,13 +199,14 @@ export function LayoutDialog() {
         )
       }
       // 状态条是全局通知、话里点名了写到哪：切走了也照说（结果要说出来）
+      const warning = svgSnapshotWarning(res.file ?? stem, res.svg_snapshot_warnings)
       useUiStore
         .getState()
         .setStatus(
-          res.file
+          warning ?? (res.file
             ? msg('save.doneProject', { file: res.file }, 'workspace')
-            : msg('layout.saved', { name: stem }, 'dialogs'),
-          'done',
+            : msg('layout.saved', { name: stem }, 'dialogs')),
+          warning ? 'info' : 'done',
         )
     } catch (e) {
       const revision =

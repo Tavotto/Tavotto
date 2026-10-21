@@ -137,7 +137,8 @@
     "textMenu": "文字"
   },
   "unexpectedError": {
-    "text": "Tavotto 出了点意外，可以把诊断发给我们"
+    "text": "Tavotto 出了点意外",
+    "body": "发一份诊断给我们，能帮我们更快找到原因、修好它。"
   },
   "exitNotice": {
     "engine": {
@@ -146,7 +147,8 @@
       "note": "重启后可以发送问题反馈"
     },
     "previous": {
-      "text": "上次 Tavotto 没有正常退出"
+      "text": "上次 Tavotto 没有正常退出",
+      "body": "如果是闪退或卡死，发一份诊断给我们能帮忙找到原因。"
     }
   },
   "crash": {
@@ -226,16 +228,16 @@
     "locateEditable": "选中一张可编辑的图"
   },
   "fastEdit": {
-    "addToCanvas": "添加到画布",
     "added": "{{name}} 已加入画布",
     "addedForEdit": "已为编辑加入本排版",
     "addedForEditLive": "已为编辑加入本排版，移除即撤销。",
     "removeAdded": "移除",
     "alreadyOnCanvas": "{{name}} 已经在画布上",
     "connectSource": "连接源脚本",
-    "crumbTitle": "返回画布",
+    "crumbTitle": "回到排版（Esc）",
     "figureMissing": "项目里找不到 {{name}}",
-    "layoutOnly": "未连接源脚本。可在版面上摆放，不能改图内元素。"
+    "layoutOnly": "未连接源脚本。可在版面上摆放，不能改图内元素。",
+    "toLayout": "排版与出版"
   },
   "history": {
     "addArrow": "添加箭头",
@@ -560,6 +562,8 @@
     }
   },
   "save": {
+    "svgSnapshotWarning": "排版已保存：{{name}}。以下来源的 SVG 快照未能保留：{{sources}}。重新打开后，导出这些来源的 SVG 可能需要你明确重新运行脚本。",
+    "svgSnapshotPill": "SVG 快照未完整保留",
     "conflict": "排版已在别处改过，请先处理冲突。",
     "doneLocal": "已保存在本机（没有打开项目）",
     "doneProject": "已保存到项目：{{file}}",
@@ -629,6 +633,7 @@
   "stage": {
     "addFigure": "添加图",
     "backToCanvas": "返回画布",
+    "backToLayout": "返回排版",
     "contextBarLabel": "工作区位置",
     "crumbsLabel": "当前对象",
     "emptyHint": "从素材库选一张图放到画布上。",
@@ -872,7 +877,9 @@
     "panel_layout_only": "这张图可在版面上摆放；连接源脚本后能改图里的内容。",
     "fast_edit_entered": "你的改动会保存到当前排版，原始文件不动。",
     "multi_select": "用选区旁的浮动栏对齐和分布。",
-    "problem_found": "左侧「问题」可定位对象和属性字段。"
+    "problem_found": "左侧「问题」可定位对象和属性字段。",
+    "layout_page_bounds": "白色纸面就是导出的 Figure 尺寸；单栏、双栏宽度按当前规范，可在右侧「画布」页调整。",
+    "pageBoundsOpen": "打开画布页"
   },
   "prep": {
     "aria": "准备 {{script}}",
@@ -897,6 +904,7 @@
       "dialogBoth": "脚本会弹窗选文件和询问，这里弹不出来，请把路径和答案写进脚本",
       "completed_other": "画好了 {{count}} 张图",
       "completedNoList": "跑完了，图在素材库",
+      "completedPartial": "只画好了 {{done}}/{{total}} 张图，{{names}} 没画出来",
       "static": "可以直接排版",
       "editReady": "已进入编辑",
       "editOpening": "正在打开编辑…",
@@ -1042,6 +1050,7 @@
       },
       "errorFull": "完整错误信息",
       "errorTruncated": "太长，只保留了最后一部分。",
+      "failedFigures": "没画出来的图：{{names}}（{{codes}}）。其余的图可以照常编辑。",
       "unlinked": "此前带其他参数生成的 {{names}} 已不再关联，用原参数再运行一次即可恢复。",
       "history": {
         "title": "运行记录",
@@ -1103,6 +1112,7 @@
       "preparing": "准备依赖中",
       "ready": "待运行",
       "captured_other": "已捕获 {{count}} 张图",
+      "capturedPartial": "只捕获 {{done}}/{{total}} 张图",
       "static": "没有脚本",
       "noFigure": "运行完成，没有图",
       "cancelled": "已停止",

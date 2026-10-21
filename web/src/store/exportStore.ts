@@ -1,5 +1,5 @@
 import { effectiveOverride } from '@/lib/effectiveOverride'
-import { ArtifactValidationError } from '@/lib/artifactValidation'
+import { ArtifactValidationError, adoptionGuardOf } from '@/lib/artifactValidation'
 import { rejectArtifactRenders, renderKeyOf } from './renderStore'
 import type { PanelObject } from '@/types/document'
 /**
@@ -186,7 +186,7 @@ function rejectExportSources(input: ExportRequestInput | null, reason: string, p
   if (!input) return
   const panels = input.scope === 'original' ? (input.panel ? [input.panel] : []) : input.doc.objects.filter((o): o is PanelObject=>o.type==='panel')
   for (const p of panels) {
-    const guard = p.artifactValidation
+    const guard = adoptionGuardOf(p)
     if (!guard) continue
     if (reason === 'background_visibility_required' &&
         (params?.file_id !== p.fileId || params?.bytes_sha256 !== guard.bytesSha256 || params?.size_bytes !== guard.sizeBytes ||

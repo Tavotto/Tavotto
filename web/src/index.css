@@ -845,6 +845,7 @@
    字体角色：层级由角色决定，不由页面自己挑 font-size / font-weight 组合。
    对应 docs/ux/DESIGN_CONSTITUTION.md 第六节（2026-10-07 设计审计 §2 增补 display / heading / reading，
    title 升 600、caption 升 12 / ink-3）。
+     type-hero     新手教程欢迎页那一句     44px 650 0.02em ink（宽高窗口 56 / 矮窗口 36；只此一处，ADR 0136）
      type-display  首页 / 空态大标题        24px 600 -0.02em ink
      type-heading  属性栏对象名、设置页头    17px 600 -0.01em ink
      type-title    对话框 / 分区级标题      15px 600 ink
@@ -867,6 +868,29 @@
   font-weight: 600;
   letter-spacing: -0.02em;
   color: var(--color-ink);
+}
+/* 新手教程欢迎页那一句「直接在图上改 :)」（ADR 0136）——只此一处，不给别的页面挑。
+   44 / 52（矮窗口 34 / 42）：欢迎页是一屏只有一句话的地方，24 的 display 撑不起原型的气质 */
+@utility type-hero {
+  text-autospace: normal;
+  font-size: 44px;
+  line-height: 52px;
+  font-weight: 650;
+  letter-spacing: 0.02em;
+  color: var(--color-ink);
+}
+/* 宽而高的窗口（≥1280×760）放大到原型的比例；矮窗口（≤720）要一屏放下：只缩这一句，留白先让 */
+@media (min-width: 1280px) and (min-height: 760px) {
+  .type-hero {
+    font-size: 56px;
+    line-height: 64px;
+  }
+}
+@media (max-height: 720px) {
+  .type-hero {
+    font-size: 36px;
+    line-height: 44px;
+  }
 }
 @utility type-heading {
   text-autospace: normal;

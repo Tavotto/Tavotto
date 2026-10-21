@@ -1,11 +1,12 @@
 import { formatMessage } from '@/i18n'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { applyOpenRequest, readOpenRequestFromUrl, stemOf } from '@/lib/openRequest'
 import { useAssetStore } from '@/store/assetStore'
 import { useDocumentStore } from '@/store/documentStore'
 import { useFigurePickerStore } from '@/store/figurePickerStore'
 import { useNativeSessionStore } from '@/store/nativeSessionStore'
 import { useProjectStore } from '@/store/projectStore'
+import { emptyRender, renderKey, renderKeyOf, useRenderStore } from '@/store/renderStore'
 import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
@@ -355,5 +356,153 @@ describe('applyOpenRequest', () => {
       await applyOpenRequest({ stem: 'Fig1' })
       expect(receive).not.toHaveBeenCalled()
     })
+  })
+})
+
+
+/**
+ * 重复交接命中已显示的面板：前端只选中、不会渲染，必须显式回一条确认（#1154），
+ * 否则 CLI 白等满预算。后端的 `parse_ack` 是这份请求体的同源。
+ */
+describe('applyOpenRequest：重复交接的显示确认', () => {
+  const ACK_URL = '/api/handoff/display-ack'
+  let fetchSpy: { mock: { calls: [unknown, unknown?][] }; mockClear(): void; mockRestore(): void; mockRejectedValue(v: unknown): void }
+
+  const acks = () =>
+    fetchSpy.mock.calls
+      .filter(([url]) => String(url).includes(ACK_URL))
+      .map(([, init]) => JSON.parse(String((init as RequestInit).body)))
+
+  /** 先落一张图（首次交接），再让它的渲染态长成 `entry`，清掉首次交接发过的东西 */
+  async function landWithRender(entry: Record<string, unknown> | null) {
+    setPanels([panel('Fig1.pdf')])
+    useAssetStore.setState({ load: vi.fn(async () => {}) } as never)
+    await applyOpenRequest({ stem: 'Fig1' })
+    const obj = useDocumentStore.getState().doc.objects[0] as never
+    useRenderStore.setState({
+      byKey: entry
+        ? { [renderKeyOf(obj)]: { ...emptyRender, fileId: 'Fig1.pdf', ...entry } }
+        : {},
+    } as never)
+    fetchSpy.mockClear()
+    return obj as { overrides: unknown[] }
+  }
+
+  beforeEach(() => {
+    fetchSpy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(new Response('{"ok":true}', { status: 200 })) as never
+    useRenderStore.setState({ byKey: {}, latest: {} } as never)
+  })
+  afterEach(() => fetchSpy.mockRestore())
+
+  it('上一次渲染成功：发一次 ok + manifest 元素数', async () => {
+    const obj = await landWithRender({})
+    useRenderStore.setState({
+      byKey: {
+        [renderKeyOf(obj as never)]: {
+          ...emptyRender,
+          fileId: 'Fig1.pdf',
+          status: 'ready',
+          manifest: { elements: [{}, {}, {}] },
+          lastPatches: JSON.stringify(obj.overrides),
+        },
+      },
+    } as never)
+
+    expect(await applyOpenRequest({ stem: 'Fig1' })).toBe('selected')
+
+    expect(acks()).toEqual([{ id: 'Fig1.pdf', status: 'ok', manifest_elements: 3 }])
+    const [, init] = fetchSpy.mock.calls.find(([u]) => String(u).includes(ACK_URL))!
+    expect((init as RequestInit).method).toBe('POST')
+  })
+
+  it('上一次渲染失败：failed + 稳定 code', async () => {
+    await landWithRender({ status: 'error', code: 'engine_files_incomplete' })
+    await applyOpenRequest({ stem: 'Fig1' })
+    expect(acks()).toEqual([{ id: 'Fig1.pdf', status: 'failed', code: 'engine_files_incomplete' }])
+  })
+
+  it('失败但已过期（源文件改过、替换渲染未开始）：不发，等替换渲染自己写结论', async () => {
+    await landWithRender({ status: 'error', code: 'engine_files_incomplete', stale: true })
+    await applyOpenRequest({ stem: 'Fig1' })
+    expect(acks()).toEqual([])
+  })
+
+  it('失败却没有 code：落成 render_failed，不发空串', async () => {
+    await landWithRender({ status: 'error', code: '' })
+    await applyOpenRequest({ stem: 'Fig1' })
+    expect(acks()).toEqual([{ id: 'Fig1.pdf', status: 'failed', code: 'render_failed' }])
+  })
+
+  it('显示着但不是这一版的精确渲染（过期）：displayed，不冒充 ok', async () => {
+    const obj = await landWithRender({})
+    useRenderStore.setState({
+      byKey: {
+        [renderKeyOf(obj as never)]: {
+          ...emptyRender,
+          fileId: 'Fig1.pdf',
+          status: 'ready',
+          stale: true,
+          manifest: { elements: [{}] },
+          lastPatches: JSON.stringify(obj.overrides),
+        },
+      },
+    } as never)
+    await applyOpenRequest({ stem: 'Fig1' })
+    expect(acks()).toEqual([{ id: 'Fig1.pdf', status: 'displayed' }])
+  })
+
+  it('正在渲染 / 还没渲染过：不发（那次渲染自己会记结论）', async () => {
+    await landWithRender({ status: 'rendering' })
+    await applyOpenRequest({ stem: 'Fig1' })
+    expect(acks()).toEqual([])
+
+    useRenderStore.setState({ byKey: {} } as never)
+    await applyOpenRequest({ stem: 'Fig1' })
+    expect(acks()).toEqual([])
+  })
+
+  it('runtime 素材的重复交接同样回确认（带 runtime id）', async () => {
+    setRuntimeAssets([runtimeAsset('show.py', 'show')])
+    useAssetStore.setState({ load: vi.fn(async () => {}) } as never)
+    await applyOpenRequest({ stem: 'show' })
+    const obj = useDocumentStore.getState().doc.objects[0] as never
+    useRenderStore.setState({
+      byKey: { [renderKeyOf(obj)]: { ...emptyRender, status: 'error', code: 'missing_dependency' } },
+    } as never)
+    fetchSpy.mockClear()
+
+    expect(await applyOpenRequest({ stem: 'show' })).toBe('selected')
+
+    expect(acks()).toEqual([
+      { id: 'runtime:show.py#show', status: 'failed', code: 'missing_dependency' },
+    ])
+  })
+
+  it('不是重复交接（这次才把图放进来）：即使这张图有渲染态也不发', async () => {
+    // 同键的渲染态已在（别处画过）：若把 placed 也当重复交接，就会误发 ok/failed
+    useRenderStore.setState({
+      byKey: {
+        [renderKey('Fig1.pdf', [])]: { ...emptyRender, fileId: 'Fig1.pdf', status: 'error', code: 'x_err' },
+      },
+    } as never)
+    setPanels([panel('Fig1.pdf')])
+    useAssetStore.setState({ load: vi.fn(async () => {}) } as never)
+    expect(await applyOpenRequest({ stem: 'Fig1' })).toBe('placed')
+    expect(acks()).toEqual([])
+  })
+
+  it('找不到这张图：不发', async () => {
+    setPanels([])
+    useAssetStore.setState({ load: vi.fn(async () => {}) } as never)
+    expect(await applyOpenRequest({ stem: 'Nope' })).toBe('missing')
+    expect(acks()).toEqual([])
+  })
+
+  it('确认请求失败不影响交接结果（老后端 404 / 断网）', async () => {
+    await landWithRender({ status: 'error', code: 'x_err' })
+    fetchSpy.mockRejectedValue(new TypeError('offline'))
+    expect(await applyOpenRequest({ stem: 'Fig1' })).toBe('selected')
   })
 })

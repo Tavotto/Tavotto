@@ -143,18 +143,18 @@ def test_the_real_ci_yml_yields_the_two_gates_and_their_closed_sets(live_workflo
     assert "backend-fast" in fast["needs"] and "backend-fast" not in heavy["needs"]
     # 2026-09-25 从 40 抬到 60 止血（#636）；2026-10-09 套件继续变大、合并组每片实测近 60，再抬到 90
     assert live_workflow["backend-fast"]["timeout_minutes"] == 90
-    # backend-platforms（macOS / Windows 3 片）同档：2026-10-10 Windows 单片贴着 60 被取消，抬到 90
+    # backend-platforms（macOS / Windows 各 4 片）同档：2026-10-10 Windows 单片贴着 60 被取消，抬到 90
     assert live_workflow["backend-platforms"]["timeout_minutes"] == 90
     # CI03a 起 matrix 是轴（python × shard），解析器回的是 {轴: 值}，不再是 include 列表
     assert live_workflow["backend-fast"]["matrix"] == {
         "python": ["3.10", "3.13", "3.14"],
         "shard": ["1", "2", "3", "4"],
     }
-    # backend-platforms 2026-09-30 起 3 片、backend-fast 2026-10-12 起 4 片；两个 job
+    # backend-fast 2026-10-12 起 4 片、backend-platforms 2026-10-21 起 4 片；两个 job
     # 片数不必相同，理由见 docs/rules/ci/pytest-shards.md。
     assert live_workflow["backend-platforms"]["matrix"] == {
         "os": ["macos-latest", "windows-latest"],
-        "shard": ["1", "2", "3"],
+        "shard": ["1", "2", "3", "4"],
     }
 
 
@@ -173,12 +173,13 @@ def test_sharded_display_names_map_back_to_the_job_id(live_workflow):
 def test_expression_display_names_map_back_to_the_job_id(live_workflow):
     """CI03c 起 windows-exe-smoke 的 `name:` 是 `windows-exe-smoke (${{ matrix.shard }})`
     （include 形状的 matrix 不加 name 会把四个字段全排进显示名）。API 的显示名是
-    `windows-exe-smoke (1)` / `(2)`；整格 skip 时表达式展开成空、显示成 `windows-exe-smoke ()`；
+    `windows-exe-smoke (1)` / `(2)` / `(3)`；整格 skip 时表达式展开成空、显示成 `windows-exe-smoke ()`；
     三种都要映射回 job id，否则下一轮基线采集会把这条腿的时间算丢。别的名字照样拒。"""
     assert live_workflow["windows-exe-smoke"]["name"] == "windows-exe-smoke (${{ matrix.shard }})"
     for shown in (
         "windows-exe-smoke (1)",
         "windows-exe-smoke (2)",
+        "windows-exe-smoke (3)",
         "windows-exe-smoke ()",
         "windows-exe-smoke",
     ):

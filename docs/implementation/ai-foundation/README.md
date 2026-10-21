@@ -1,0 +1,53 @@
+# Tavotto AI Foundation（TAF）实施包
+
+决定：`docs/adr/0138-tavotto-ai-foundation.md`（Accepted，2026-10-20）。本 README 是**交接页**：换一个会话也能从这里准确接着做。
+
+## 当前状态（2026-10-19）
+
+| 项 | 状态 |
+| --- | --- |
+| Phase 0 | PR #1187（`feat/taf-phase0`）：审计、ADR、实施包、FigureBench 夹具。`tests/test_figurebench_fixtures.py` 本机 40 passed，六个手工变异全红 |
+| Phase 1 | 分支 `feat/taf-phase1-task-core`（叠在 Phase 0 上）：`engine/ai_tasks.py` + `ai_history` 加七列 + `tests/test_ai_tasks.py`（48 条）。AI 相关与架构门禁 13 个文件本机 355 passed / 1 skipped（真 CLI 冒烟，需 `TAVOTTO_REAL_CLI_SMOKE=1`）；十个手工变异全红（PR 正文附表） |
+| Phase 2 | 分支 `feat/taf-phase2-verifier`（叠在 Phase 1 上）：`engine/figureverify.py` + manifest 只读 `data_fingerprint` + `tests/test_figure_verifier.py`。19 个探针场景参考解全 verified、反例全 failed（唯一盲区 `FB-C04/n.unshared` 登记在 `KNOWN_BLIND`）；指纹与原生探针逐字节对拍；九个手工变异全红 |
+| Phase 3a | 分支 `feat/taf-phase3-figure-edit`（叠在 Phase 2 上）：`engine/ai_figure_edit.py` + `ai_bridge.run` 候选分支 + `ai_tasks.begin_registered` / `drive_registered` + `tests/test_ai_figure_edit.py`（14 条）。R-03 实测见 `08-risk-register.md`；九个手工变异全红 |
+| 产品行为变化 | 开关 `ai.taf.enabled` 关（默认）时无：旧路径逐字不变、`ADAPTERS` 为空；旧会话的新列全 NULL；manifest 只多一个只读字段 |
+| 未运行 | 全量 pytest / 前端 / e2e（交给 CI，high 档加 `full-ci`）；Windows / Linux |
+| Phase 3b | 分支 `feat/taf-phase3b-render-verify`（叠在 3a 上）：提交后渲染层验证（`ai_figure_edit._render_checks` + app `_ai_task_hooks` + `figureverify.data_unchanged`）。真 worker 用例：样式改动 completed、改数据 failed、无基线不执行；FigureBench 19 个探针场景参考解不误报、8 个改数据反例全抓住；六个手工变异全红 |
+| Phase 3c | PR #1201：前端按 `task.outcome` 翻译状态行 / 结局卡 / 状态栏；没有 `task` 的老后端逐字不变 |
+| Phase 4a | 分支 `feat/taf-phase4-bounded-correction`：提交前失败的有界修正（`ai_tasks._admit_correction` + `Executor.correct` + `ai_bridge` 同候选再起 CLI + figure_edit 可修闭集），`verification.attempts` 留证；契约见 `03-contracts.md` §五 |
+| Phase 4b | 分支 `feat/taf-phase4b-correcting-ui`：桥在修正轮起跑前发 `ai.task`（`phase: correcting`）并写进会话的 `task.phase`；收尾的 `task.corrections` 记修正轮数。前端状态行「正在自动修正…」/「已改（自动修正 N 次），数据核对一致」 |
+| Phase 5a | PR #1231（已合入）：`engine/ai_data_figure.py` 确定性内核（摘要 / 映射 / 模板 / 期望指纹），真 worker 对拍 FB-D01/D03–D08 |
+| Phase 5b | 分支 `feat/taf-phase5b-data-figure-task`：`engine/ai_data_task.py` + `POST /api/ai/data-figure`（开关后面）——只新建模板脚本并登记，提交后渲染核数据指纹；FB-D01/D03/D04/D07/D08 真 app + 真 worker 按期望结局，D02 `needs_input` 不写 |
+| 下一步 | Phase 5c（前端数据出图入口，助手面板里的动作）；Phase 6 Harness Lab（6a Prompt Pack、6b 基准跑分在 PR）；6c 真实模型实验需用户批准费用 |
+
+## 维护者决定（2026-10-19 全部同意，1.0 例外 2026-10-20 登记进 ADR 0138 §五）
+
+1. **1.0 收敛纪律**：Phase 3 起有用户可见变化（在默认关闭的开关后面）。**已登记为与统一实施包同类的例外**（ADR 0138 §五）。
+   Phase 1–2 不受影响（内部契约 + 只读事实）。
+2. **数据指纹进 manifest**：Phase 2 要在 worker 侧 manifest 加只读字段 `data_fingerprint`（不参与 gid / identity，
+   不进文档与诊断公开面）。这是 manifest 协议的加字段，按 high 档走。**同意**（Phase 2 已落地）。
+3. **数据出图 v1 不执行模型写的代码**（模型只给列映射 JSON，脚本由模板生成）。这会限制 v1 能画的图形种类
+   （折线 / 散点），但避免把 safe 档当沙盒用。**接受**。
+
+## 文件
+
+| 文件 | 内容 |
+| --- | --- |
+| `01-existing-system-audit.md` | 代码事实表（运行时 / 验证 / 产品 / 安全 / Harness² / 基准资产），带 ✅ 的已本机复核 |
+| `02-architecture.md` | 依赖图、五个子系统落点、流程 A / B / C、候选工作区、与既有 ADR 的张力 |
+| `03-contracts.md` | TaskEnvelope / TaskResult / CheckResult / Intent Contract / 预算 / 适配器 / 工具 / 状态映射 / Harness Lab 变更面 |
+| `04-security-model.md` | 资产、信任边界、safe 档能与不能、CLI 写入面、注入、路径与提交、隐私、绝不做的事 |
+| `05-verification-design.md` | L1–L5、数据指纹、判定规则、反例纪律、证据、性能预算 |
+| `06-benchmark-plan.md` | FigureBench 交付、运行方式、指标、防过拟合、不覆盖项 |
+| `07-pr-roadmap.md` | Phase 0–6 依赖、改动面、风险档、入口 / 退出标准、性能、回滚 |
+| `08-risk-register.md` | 风险登记（R-01…R-14） |
+
+## 接手须知
+
+- 改任何子系统前先读最近的 `AGENTS.md` 与它指向的细则（根 `AGENTS.md` 的子系统索引）。TAF 的后端落点读
+  `docs/rules/backend/ai-agent-bridge.md`、`script-edits.md`、`process-boundaries.md`、`writeback-transaction.md`。
+- 速查表（根 / `src/tavotto/` / `web/` 的 `AGENTS.md`）距 32 KiB 硬线不到 100 B：TAF 规则全文写进
+  `docs/rules/backend/` 新细则，速查表加行前先腾字（`python scripts/dev/agents_budget.py`）。
+- 本地跑夹具自证：`PYTHONPATH=$PWD/src .venv/bin/python -m pytest tests/test_figurebench_fixtures.py -q`
+  （worktree 里 `PYTHONPATH` 必须是绝对路径；需要一个装了 matplotlib 的解释器，否则 skip = not_run）。
+- 新 ADR 编号先查 `docs/adr/` **和在飞 PR**（2026-10-19：0135 在 #1159、0136 在 #1181、0137 已合入）。

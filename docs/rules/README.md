@@ -17,7 +17,7 @@ src/tavotto/AGENTS.md           后端速查表：本层不可破坏 + 「改到
 web/AGENTS.md                   前端速查表：同上
 .github/AGENTS.md               CI / 发布 / 验证链速查表：同上（2026-09-18 纳入）
 codex-plugin/AGENTS.md          插件 / 技能 / MCP server 速查表：同上（2026-09-25 纳入，#608）
-docs/rules/repo/                跨仓库：同源对总表、判据的主语
+docs/rules/repo/                跨仓库：同源对总表、判据的主语、第三路径审查
 docs/rules/backend/<主题>.md    后端各主题的全文（33 份，各 1–34 KB）
 docs/rules/frontend/<主题>.md   前端各主题的全文（30 份，各 2–14 KB）
 docs/rules/ci/<主题>.md         CI / 发布 / 验证链各主题的全文（13 份，各 1–7 KB）

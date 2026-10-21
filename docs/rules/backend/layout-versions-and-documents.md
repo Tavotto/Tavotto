@@ -3,7 +3,7 @@
 > 原文出自 `src/tavotto/AGENTS.md`「布局层（R18）」（2026-09-17 指导文档治理时按主题拆出，正文逐字未改）。
 > 这里是这一主题规则的**唯一全文**；`src/tavotto/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
 
-- **布局版本**：`/api/versions/<docId>` 系列，快照存 `layouts/_versions/`，
+- **布局版本**：`/api/versions/<docId>` 系列，快照存项目 `tavottofile/versions/`（旧位置 `layouts/_versions/` 只读兼容，格式见下条「新存储」），
   自动检查点去重 + 滚动清理（保手动裁自动）；恢复=前端 commit（可撤销），
   与「写回原始文件」的 baked 历史完全无关。
   **上限有两条，谁先咬到算谁的**（2026-09-03，issue #221）：条数
@@ -40,10 +40,68 @@
   不让已成功的写入回 500（前端一重试就多一个节点，#679）；换缩略图格式先原子写新图、落地后再删旧格式（删不掉只记日志；两张同时在时取较新的那张，新图胜出，#679）；PUT 的 256 KiB 上限卡在读取本身（`_read_body_capped`，
   chunked 请求没有 Content-Length）。列表端点的 `budget` 在文件没超上限时不量 `namedBytes`（缺席，
   不冒充 0）。
+- **新存储与首写迁移（ADR 0140，D1b → D2）**：`engine/versionstore.py` 是版本时间线的存储——每版一个
+  自描述信封 `<doc_id>.vx/s/<vid>.json` + 小索引 `<doc_id>.vx/index.json`（唯一提交点），追加只写一个
+  信封 + 索引，与历史长度无关。`app.py` 的 `/api/versions/*` 全部经 `_Timeline`：
+  **读**（`_open_timeline`，不写盘）——`versionstore.has_store` 为真读新存储，否则读旧单文件
+  （`_LegacyTimeline`，与迁移同一套校验 `read_legacy_versions`）；响应形状两边逐字段相同
+  （`tests/test_versions_store_wiring.py` 同一组操作对拍）。
+  **写**（`_timeline_for_write`，版本锁内）——旧文件先迁进新存储（`migrate_legacy`：旧文件**冻结**，从不改、
+  不删、不改名；先写迁移记录 → 逐条信封 → 读回校验 → 写索引提交），之后一律写新存储；迁移在索引提交前被打断，
+  读侧一直以旧文件为权威，下一次写入重跑到一致。回滚后的旧程序在冻结的旧文件上追加、再升级：迁移记录的 sha 不符 →
+  只把迁移点之后新增的条目按 id 去重导入（已在新存储里删掉的不复活、已有条目不覆盖；旧程序的改名 / 删除不回流）。
+  **#264**：旧文件读不出来（截断 / 乱码 / 形状不对 / 非有限数）→ 新存储开一份空历史、旧文件原样保留，
+  列表响应带 `legacy_unreadable: {name, size}`（只有文件名与大小，不含路径），写入不再 409 卡死。
+  新增的响应字段只有：`legacy_unreadable`，以及信封坏的那一条在列表里带 `damaged: true`（只赔掉自己，其余照常；
+  取它的正文回 409 `versions_unreadable`）；索引读不出来 / 来自更新的格式同样回 409 `versions_unreadable`，零改动。
+  **策略只有一处**：`versionstore.legacy_policy`（现行条数 + 24 MB 字节策略，D2 不改语义）与常量 `KEEP_*` / `MOMENTS` /
+  `VERSION_ID_RE` / `is_named` / `kind` 是唯一出处，`app` 的 `VERSION_KEEP_*` 等是别名（按 `is` 钉死），新存储经
+  `app._version_policy` 调用，上限按调用时刻的 `app.VERSION_KEEP_*` 传入（测试仍可改写）；列表的 `budget` 按
+  「旧文件会占的字节」（`_legacy_bytes`）算，与旧实现同值。`app._load_versions` / `_save_versions` 是旧格式读写器，
+  **产品代码不再调用**，留作迁移对拍参照与测试造旧文件 / 模拟回滚后的旧程序用（D3 清理）。
+  铁律：新索引**绝不与旧文件 `<doc_id>.json` 同名**（旧程序整写会毁掉它）；先信封后索引、删除先索引后信封；
+  所有写在 `<doc_id>.versions` 跨进程锁内（迁移也在锁内：并发迁移会把先追加完的版本盖回去），模块内不取锁。
+  项目归属旁证（`_project_owner_evidence`）认旧文件也认 `<doc_id>.vx/`。
+  看护：`tests/test_versionstore.py`、`tests/test_versions_store_wiring.py`、`tests/test_versions_migrate_on_write.py`。
 - **论文样式**：`/api/styles`（`layouts/_styles.json`）；前端按角色映射成
   override / 标注属性一次 commit 应用，绝不写回源文件。
 - **项目包**：`POST /api/package` 打 zip（layout+素材+脚本+sha1 清单）；
   `POST /api/package/open` 检视（缺失/sha1 漂移），素材永不自动写入图库。
+- **文档显式引用全质量 Figure 配对（X03，2026-10-15）**：面板 `figureSnapshot` 是版本 1 的闭集
+  `{version, sourceId, patchHash, receiptId, snapshotId}`，可选 `executionOwner={script, run_config}`；
+  owner 只从已验归档派生、纳入内容 ID，不信客户端自报。导出 wire 字段为 `figure_snapshot`。
+  后端 `svgstore.validate_reference` 核闭集、类型与 hash；引用必须与该面板的源和规范化 patch 匹配，
+  不从预览或磁盘 current marker 推造。引用指向保存时的 PDF/SVG **同一版本**，包括后来的 PDF-only 导出；
+  冷态无当前回执时可按明确引用读档，已知新回执则必须相符（授权边界见 `export-pipeline.md`）。
+  **保存先冻结、再单次原子写正文**：命名保存和自动保存都在文档锁内冻结，成功的引用随正文一起落盘，
+  不先写一份无引用正文再补写。某来源冻结失败时清掉**本次待保存正文**里的旧引用，返回
+  `svg_snapshot_warnings`，文档仍保存；成功响应的 `figure_snapshots` 是这次正文实际写下的引用表。
+  前端只把响应合回同一项目 / 文档加载轮次且源、patch 与执行代仍匹配的面板，不让晚到的保存响应复活旧引用。
+  可信 `figure_snapshot_invalidation` 的实际执行事实、源或 override 改变会清除相关引用（含非当前画布）；
+  不能从 HTTP 成功、descriptors 或 ready 猜执行；失败、零图、部分输出、开始后取消也撤该 owner 的旧输出全集，
+  未开始的依赖/权限门与取消不撤。owner 按项目内 script + opaque run_config 隔离，未知 native 配置只撤已接纳精确 receipt，不宽清后来重绑定的同名来源。
+  纯几何变化保留。实际重跑的失效属于正文变化：走普通 dirty / 自动保存队列，并标脏已绑定的项目文件；不新增撤销条目。
+  即使面板当前已无引用，也必须排一笔后续保存，避免前次在途保存把上一轮运行的引用最后写回磁盘。
+  只有已落盘保存响应的引用合并可用 `snapshotSeq` 跳过再次保存；执行失效不能共用此旁路。
+  实际执行事件先经项目/恢复归属接纳；同 execution ID 只补新增旧 receipt 事实，不反复撤本代新引用；
+  增量也只作用首次真实消费的文档安装代，后来主动打开历史文档不重放旧事件。
+  在途保存晚回旧 owner/receipt 时拒合并，并按请求之后的新代次排一次纠正保存，不自循环。
+- **项目配对存储与不可变 archive**：`engine/svgstore.py` 只有收到应用校验过的 `storage_root` 才使用
+  项目 `tavottofile/figure_snapshots/`；缺省仍是数据目录下带 TTL 的缓存，不能把二者混为永久项目资产。
+  项目身份可搬迁（不要求旧机器绝对路径相等），源 / patch / 静态原件 hash / 输入改指仍逐项核对。
+  `snapshots/` 的内容寻址 ID 覆盖完整来源 identity、执行回执身份及 generation、PDF/SVG 两份字节 hash与可选 owner；
+  归档与 blob 读回均核完整性。新运行 `activate` 只撤销旧代 current lookup，**不删除不可变 archive**，
+  历史文档的明确引用仍可在其授权条件下读到保存版本；archive 的保留不等于旧图获准冒充当前运行。
+  项目资产**没有 TTL，也不为新资产自动驱逐已有 archive**。容量先判再写，`MAX_SNAPSHOTS=256` 数的是
+  current 与 archive 元数据**合计**（首次保存一个变体通常占两条），并非 256 个都可同时激活的变体；
+  总预算 512 MiB，相同内容的 blob 共用字节成本。满额只拒新增，已有归档及其引用的字节保持原样。
+  磁盘写入沿用锁、受限路径与 `atomicio`，只读项目副本也可核验不可变引用，不因读档创建写锁文件。
+  自动捕获 / 保存 / 导出不暗中运行脚本。旧项目无明确引用时，执行源需当前进程已观察的回执，
+  否则由用户明确再运行并接纳，不能借 current marker 或 preview metadata 猜旧配对仍是当前版本。
+  无 override 静态源的精确 hash 配对授权另见 `export-pipeline.md`；项目包打开仍只检视、不自动安装资产。
+  看护：`tests/test_svgstore.py`、`tests/test_export_svg.py`、`tests/test_export_request.py`、
+  `web/src/store/figureSnapshot.test.ts`、`web/src/store/figureSnapshotInvalidation.test.ts`、
+  `web/src/store/projectSave.test.ts`、`web/src/lib/autosave/diskWriter.test.ts`。
 - **项目文件统一收纳在项目内的 `tavottofile/`（2026-08-17 定版）**：命名画布
   布局直接放 `tavottofile/`，导出默认 `tavottofile/export/`（settings.export_dir
   可覆盖；建不出来退回数据目录，测试读响应里的 export_dir 而不是猜路径），
@@ -182,6 +240,13 @@
     `@app.errorhandler` 回 503 `session_unavailable`，此时一个字节没写；清理里等不到只是这次不清它。锁文件打不开
     **失败即关门**：锁文件打不开、文件系统拒绝咨询锁（ENOLCK / EOPNOTSUPP / EINVAL）也抛 `SessionStateUnavailable`，不退回只有线程锁。
     真两进程回归 `tests/test_layout_recovery_backend.py`（POSIX）；Windows 的 `msvcrt` 腿只有 CI 验证。
+  - **版本时间线的互斥也是跨进程的**（审计 D0，2026-10-20）：`/api/versions/<docId>` 的创建 / 改名 / 复制 / 删除 / 缩略图都是
+    「读整份 → 改 → 整写」，原来只被进程内 `threading.Lock()` 保护，两个后端进程共用数据目录时后写的整份盖掉先写的（两边都 200）。
+    现在统一经 `_versions_lock(doc_id)` = 复用 `_document_lock`，锁名取 `<doc_id>.versions`（**不用 `<doc_id>.json`**：条带只看文件名，
+    用 `.json` 会与同一文档的自动保存共用条带，版本追加几十 MB 的读写期间自动保存被堵）。不可重入，时间线端点持锁期间不取别的文档锁 / 会话锁；
+    等不到（30 s）→ 503 `session_unavailable`，历史零写入。版本 id = `v<毫秒>-<6 位随机进程区分段><序号>`（仍匹配 `_VERSION_ID_RE`），
+    并在锁内对已有 id 核重名（`_fresh_version_id`），撞了就重取、不覆盖。**这只修丢更新；整份写回的存储形状（#263）问题仍在。**
+    回归 `tests/test_versions_multiprocess.py`（真两进程 POSIX；Windows 的 `msvcrt` 腿只有 CI 验证）。
   - **`/owner` 与候选发现读的是一致的快照**：两者都在**槽位的文档锁**里同时读会话状态（owners / owner_revisions / status，只读、不拿会话锁）
     和槽位正文——别的项目的保存（正文 + `commit_slot` 都在这把锁里）插不进两次读之间，否则会拿 G 的新正文去对还没有 G 归属的旧状态，
     把别人的槽位报成 this。`/owner` 回的 `revision` 就是这份快照里正文的。候选发现**按条目**各取自己的槽位锁、各读一次状态

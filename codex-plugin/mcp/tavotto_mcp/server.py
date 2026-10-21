@@ -23,7 +23,7 @@ import time
 import traceback
 from collections import deque
 
-from . import bridge, widget
+from . import bridge, usage, widget
 from .rpc import (
     INTERNAL_ERROR,
     INVALID_PARAMS,
@@ -58,6 +58,8 @@ AUTO_REVIEWER_META = ("approvals_reviewer", "auto_review")
 #: 量「宿主多久作答」的钟。单列出来是为了让用例能模拟真人的作答耗时，
 #: 不必真的睡一秒；``_client_request`` 的超时仍用 ``time.monotonic``。
 _confirmation_clock = time.monotonic
+#: 退出前等用量事件送出的上限（秒）。引擎单次投递超时是 3 s；这里只给排空一次机会。
+USAGE_FLUSH_TIMEOUT_S = 1.5
 
 #: Codex 把每个 MCP 工具结果的**事件副本**——送给桌面 UI 去喂 iframe、写进 rollout
 #: 的那一份——封顶在 1 MiB（codex-rs `core/src/mcp_tool_call.rs` 的
@@ -157,6 +159,21 @@ def _version() -> str:
 
 
 # ------------------------------- 工具定义 -----------------------------------
+#: 内嵌画布发起的调用带 `origin="canvas"`（`web/src/mcp/appsBridge.ts` 的 `callTool` 统一加），
+#: server 据此**不记**用量事件——画布不发遥测（`docs/rules/frontend` 与 ADR 0134 §MCP），手拖一下
+#: 也不该被记成「Agent 调了 apply」。放在参数里而不是 `_meta`：宿主转发 App 的 tools/call 时参数
+#: 必须原样到达工具，`_meta` 保不保留看宿主；schema 是 additionalProperties=False，所以画布会调的
+#: 每个工具都要声明它（`tests/test_mcp_usage.py` 从画布源码对拍这份名单）。
+ORIGIN_ARG = "origin"
+ORIGIN_CANVAS = "canvas"
+CANVAS_TOOLS = (
+    "tavotto_session_state",
+    "tavotto_apply_overrides",
+    "tavotto_preflight",
+    "tavotto_export",
+)
+
+
 def _tools() -> list[dict]:
     ui = widget.available()
     tools = [
@@ -582,8 +599,14 @@ def _tools() -> list[dict]:
             },
         },
     ]
+    by_name = {t["name"]: t for t in tools}
+    for name in CANVAS_TOOLS:
+        by_name[name]["inputSchema"]["properties"][ORIGIN_ARG] = {
+            "type": "string",
+            "enum": [ORIGIN_CANVAS],
+            "description": "只有 Tavotto 内嵌画布自己发起的调用才带它；模型调用不要传。",
+        }
     if ui:
-        by_name = {t["name"]: t for t in tools}
         by_name["tavotto_open_figure"]["_meta"] = widget.tool_meta(
             invoking="正在打开 Tavotto 画布…", invoked="Tavotto 画布已就绪"
         )
@@ -1682,6 +1705,7 @@ class Server:
         self._deferred: deque[dict] = deque()
         self._request_seq = {"roots": 0, "elicitation": 0}
         self._input_closed = False
+        self._client_name: str | None = None
 
     def handle(self, msg: dict) -> None:
         method = msg.get("method")
@@ -1863,7 +1887,7 @@ class Server:
             name = params.get("name")
             if not isinstance(name, str):
                 raise RpcError(INVALID_PARAMS, "tools/call 缺少 name")
-            return call_tool(name, params.get("arguments") or {})
+            return self._call_tool_counted(name, params.get("arguments") or {})
         if method == "resources/list":
             return {"resources": [widget.resource_descriptor()] if widget.available() else []}
         if method == "resources/templates/list":
@@ -1881,10 +1905,47 @@ class Server:
             return {"prompts": []}
         raise RpcError(METHOD_NOT_FOUND, f"不支持的方法: {method}")
 
+    def _call_tool_counted(self, name: str, args: dict) -> dict:
+        """`call_tool` + 一条匿名用量事件（ADR 0134 §MCP）。
+
+        内嵌画布发起的调用（`origin="canvas"`）照常执行、**不记**：画布不发遥测。
+        计时只罩住工具本身：工作区授权框在 `handle` 里、在这之前就等完了，人读路径的那几秒不算。
+        事件属性全是闭集（`usage.properties`），参数与返回内容不进去；没同意 / 硬开关关着时
+        `bridge.note_tool_call` 什么都不做，也永不抛。
+        """
+        # 标记先摘掉：处理函数不认识它，也不该看到它
+        from_canvas = (
+            args.pop(ORIGIN_ARG, None) == ORIGIN_CANVAS if isinstance(args, dict) else False
+        )
+        if from_canvas:
+            return call_tool(name, args)
+        started = time.monotonic()
+        outcome = "internal_error"
+        result: dict | None = None
+        try:
+            result = call_tool(name, args)
+            outcome = "tool_error" if result.get("isError") else "ok"
+            return result
+        except RpcError:
+            outcome = "protocol_error"
+            raise
+        finally:
+            bridge.note_tool_call(
+                usage.properties(
+                    name,
+                    outcome,
+                    seconds=time.monotonic() - started,
+                    client_name=self._client_name,
+                    result=result,
+                )
+            )
+
     def initialize(self, params: dict) -> dict:
         want = params.get("protocolVersion")
         version = want if want in SUPPORTED_PROTOCOL_VERSIONS else SUPPORTED_PROTOCOL_VERSIONS[0]
         self.initialized = True
+        info = params.get("clientInfo")
+        self._client_name = info.get("name") if isinstance(info, dict) else None
         bridge.observe_mcp_client(version, params.get("capabilities"), params.get("clientInfo"))
         caps: dict = {"tools": {"listChanged": False}}
         if widget.available():
@@ -1950,6 +2011,9 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     finally:
         bridge.shutdown_all()
+        # 宿主一断开进程就退，发送线程是守护线程：排着的用量事件给一个有界的机会送出去。
+        # 等不完就丢（与引擎「断网 = 丢事件」同一取舍），不许拖住宿主收摊。
+        bridge.flush_usage(USAGE_FLUSH_TIMEOUT_S)
 
 
 def _self_check() -> int:

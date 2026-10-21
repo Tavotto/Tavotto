@@ -586,7 +586,12 @@ mod tests {
     #[test]
     fn a_sidecar_that_dies_during_the_handshake_reports_its_exit_code_not_its_stderr() {
         let res = scratch("res");
-        bundled(&res, b"#!/bin/sh\necho SECRET_STDERR_TEXT >&2\nexit 3\n");
+        // Enter the handshake only after the parent has delivered its bootstrap line.
+        // Exiting before that races the separate launch-stage stdin failure path.
+        bundled(
+            &res,
+            b"#!/bin/sh\nIFS= read -r hello\necho SECRET_STDERR_TEXT >&2\nexit 3\n",
+        );
         let logs = scratch("logs");
         let e = start_in(&res, &logs);
         assert_eq!(

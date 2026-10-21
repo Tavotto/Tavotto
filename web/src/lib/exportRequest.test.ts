@@ -278,7 +278,7 @@ describe('像素预览：照抄源文件才报源像素网格', () => {
 
 describe('EPS 与 TIFF（ADR 0046）', () => {
   it('tiff 是位图、eps 是矢量：PPI 规则对新格式同样成立', () => {
-    expect(FORMATS).toEqual(['pdf', 'png', 'eps', 'tiff'])
+    expect(FORMATS).toEqual(['pdf', 'png', 'eps', 'tiff', 'svg'])
     expect([...RASTER_FORMATS, ...VECTOR_FORMATS].sort()).toEqual([...FORMATS].sort())
     expect(buildExportRequest(inputOf({ formats: ['tiff'] })).request.ppi).toBe(600)
     expect(buildExportRequest(inputOf({ formats: ['pdf', 'tiff'], ppi: 300 })).request.ppi).toBe(
@@ -320,6 +320,21 @@ describe('EPS 与 TIFF（ADR 0046）', () => {
     expect(epsAvailability('original', 'runtime:abc')).toEqual({ ok: true, reason: 'none' })
   })
 
+  it('SVG 素材与 PDF 同一判据：有脚本可用（字节绑定由后端逐项判，不预先禁用）、没脚本 no_script', () => {
+    useAssetStore.setState({
+      byId: {
+        'S1.svg': { id: 'S1.svg', mtime: 1, kind: 'svg', script: 's1.py' },
+        'S2.svg': { id: 'S2.svg', mtime: 1, kind: 'svg' },
+      },
+    } as never)
+    expect(epsAvailability('original', 'S1.svg')).toEqual({ ok: true, reason: 'none' })
+    // 前端拿不到字节绑定的事实：不预先禁用，请求照带 eps，由后端逐项失败并给真实原因（#1185）
+    expect(
+      buildExportRequest(inputOf({ scope: 'original', figureId: 'S1.svg', formats: ['svg', 'eps'] })).request.formats,
+    ).toEqual(['eps', 'svg'])
+    expect(epsAvailability('original', 'S2.svg')).toEqual({ ok: false, reason: 'no_script' })
+  })
+
   it('EPS 不可用时请求里**不带**它（后端会逐项报失败，但界面已经说过一遍了）', () => {
     const canvas = buildExportRequest(inputOf({ scope: 'canvas', formats: ['pdf', 'eps'] }))
     expect(canvas.request.formats).toEqual(['pdf'])
@@ -333,5 +348,26 @@ describe('EPS 与 TIFF（ADR 0046）', () => {
       inputOf({ scope: 'original', figureId: 'Fig1.pdf', formats: ['pdf', 'eps', 'tiff'] }),
     )
     expect(noScript.request.formats).toEqual(['pdf', 'tiff'])
+  })
+})
+
+
+describe('SVG（X03）', () => {
+  it.each(['canvas', 'original'] as const)('SVG is vector in %s scope with no PPI', (scope) => {
+    const built = buildExportRequest(inputOf({ scope, figureId: 'Fig1.pdf', formats: ['svg'], filename: 'Fig 1.SVG' }))
+    expect(built.request.formats).toEqual(['svg'])
+    expect(built.request.ppi).toBeNull()
+    expect(built.request.filename).toBe('Fig 1')
+    expect(built.names).toEqual(['Fig 1.svg'])
+    expect(VECTOR_FORMATS).toContain('svg')
+    expect(RASTER_FORMATS).not.toContain('svg')
+  })
+
+  it('appends SVG after the previous formats and keeps PPI for mixed raster output', () => {
+    useAssetStore.setState({ byId: { 'Fig1.pdf': { id: 'Fig1.pdf', mtime: 1, script: 'fig1.py' } } } as never)
+    const built = buildExportRequest(inputOf({ scope: 'original', figureId: 'Fig1.pdf', formats: ['svg', 'tiff', 'eps', 'png', 'pdf', 'svg'], ppi: 300 }))
+    expect(built.request.formats).toEqual(['pdf', 'png', 'eps', 'tiff', 'svg'])
+    expect(built.names).toEqual(['Fig 1.pdf', 'Fig 1.png', 'Fig 1.eps', 'Fig 1.tiff', 'Fig 1.svg'])
+    expect(built.request.ppi).toBe(300)
   })
 })

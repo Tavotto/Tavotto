@@ -34,15 +34,14 @@ mac/CI 上单测 Windows 的安装路径（同 `engine/runtime.py`；看护用�
 from __future__ import annotations
 
 import argparse
+import http.client
 import json
 import math
 import os
 import subprocess
 import sys
 import time
-import urllib.error
 import urllib.parse
-import urllib.request
 import webbrowser
 from pathlib import Path
 from typing import NamedTuple
@@ -281,6 +280,19 @@ PROBE_HTTP_TIMEOUT = 1800.0
 _PROBE_CODE_MAP = {"missing_dependency": "native_run_required"}
 
 
+def _loopback_target(url: str) -> tuple[int, str] | None:
+    """`http://127.0.0.1:<端口>/路径?查询` → (端口, 路径+查询)；没有端口 / 端口非法回 None。
+    主机部分不读：请求固定发往 127.0.0.1（`session_client.loopback_request`），不经代理。"""
+    try:
+        parts = urllib.parse.urlsplit(url)
+        port = parts.port
+    except ValueError:
+        return None
+    if not port:
+        return None
+    return port, (parts.path or "/") + (f"?{parts.query}" if parts.query else "")
+
+
 def _http_json_status(
     url: str, payload: dict | None = None, timeout: float = 10.0
 ) -> tuple[int | None, dict | None]:
@@ -297,17 +309,20 @@ def _http_json_status(
     except ValueError:
         pass
     data = None if payload is None else json.dumps(payload).encode()
-    req = urllib.request.Request(url, data=data, headers=headers)
-    try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            return resp.status, json.loads(resp.read().decode("utf-8", "replace"))
-    except urllib.error.HTTPError as exc:
-        try:
-            return exc.code, json.loads(exc.read().decode("utf-8", "replace"))
-        except (OSError, ValueError):
-            return exc.code, None
-    except (urllib.error.URLError, OSError, ValueError):
+    target = _loopback_target(url)
+    if target is None:
         return None, None
+    try:
+        status, raw = session_client.loopback_request(
+            target[0], target[1], payload=data, headers=headers, timeout=timeout
+        )
+    except (http.client.HTTPException, OSError, ValueError):
+        return None, None
+    try:
+        return status, json.loads(raw.decode("utf-8", "replace"))
+    except ValueError:
+        # 2xx 读不懂 = 连不上口径；错误响应读不懂只交状态码（同原 HTTPError 分支）
+        return (status, None) if status >= 400 else (None, None)
 
 
 def _script_figures(project: str, script: str) -> list[dict]:
@@ -1146,11 +1161,17 @@ def _http_json(url: str, payload: dict | None = None, timeout: float = 1.0) -> d
     except ValueError:
         pass
     data = None if payload is None else json.dumps(payload).encode()
-    req = urllib.request.Request(url, data=data, headers=headers)
+    target = _loopback_target(url)
+    if target is None:
+        return None
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            return json.loads(resp.read().decode("utf-8", "replace"))
-    except (urllib.error.URLError, OSError, ValueError):
+        status, raw = session_client.loopback_request(
+            target[0], target[1], payload=data, headers=headers, timeout=timeout
+        )
+        if not 200 <= status < 300:
+            return None
+        return json.loads(raw.decode("utf-8", "replace"))
+    except (http.client.HTTPException, OSError, ValueError):
         return None
 
 
@@ -1460,6 +1481,42 @@ def _report(result: dict) -> None:
         print("! 界面渲染了，但没能确认渲染的就是这张图（stem 与注册表不一致或清单为空）")
 
 
+def _record_origin_cli(args) -> int:
+    """`--origin-json` 仅记录模式。来源记录是弱线索：任何读不了 / 写不进去都报 `recorded: 0`，退出码 0。
+
+    只有「目标解析不了」才是真错误（退出 2）。不碰注册表、不起 worker、不唤起界面。
+    """
+    from . import originrecord
+
+    try:
+        target = resolve_target(args.path)
+    except HandoffError as exc:
+        print(
+            json.dumps(
+                {"protocol": engine_locate.PROTOCOL_VERSION, **exc.payload()}, ensure_ascii=False
+            )
+        )
+        return 2
+    try:
+        with open(args.origin_json, encoding="utf-8") as f:
+            payload = json.load(f)
+        summary = originrecord.record_handoff(target.project, payload)
+    except (OSError, ValueError):
+        summary = {"recorded": 0, "skipped": 0, "reason": "unreadable"}
+    print(
+        json.dumps(
+            {
+                "ok": True,
+                "protocol": engine_locate.PROTOCOL_VERSION,
+                "project": target.project,
+                "origin": summary,
+            },
+            ensure_ascii=False,
+        )
+    )
+    return 0
+
+
 def cli(argv: list[str]) -> int:
     """`tavotto open` 的入口。返回退出码。"""
     ap = argparse.ArgumentParser(
@@ -1482,6 +1539,15 @@ def cli(argv: list[str]) -> int:
         help=(
             "唤起后最多等多少秒，看界面对目标图的那一次渲染有没有结论"
             f"（默认 {DEFAULT_RENDER_WAIT:g}；0 = 不等）。到点没结论是 unverified，不是失败"
+        ),
+    )
+    ap.add_argument(
+        "--origin-json",
+        default=None,
+        metavar="FILE",
+        help=(
+            "仅记录模式（插件交接跑过脚本之后用）：读 FILE 里的来源事实，按产物字节摘要写进"
+            "来源记录（ADR 0139 PR3），不登记、不唤起、不执行任何东西。记不进去不算失败"
         ),
     )
     ap.add_argument("--json", action="store_true", help="输出机器可读结果")
@@ -1510,6 +1576,9 @@ def cli(argv: list[str]) -> int:
             print(msg, file=sys.stderr)
         return 2
     prefer = "desktop" if args.desktop else "browser" if args.browser else "auto"
+
+    if args.origin_json is not None:
+        return _record_origin_cli(args)
 
     try:
         result = open_target(

@@ -1,6 +1,6 @@
 /** 文档模型 —— 单位一律 mm，数组顺序即 z 序（末尾在最上）。 */
 import { t } from '@/i18n'
-import type { ArtifactValidation } from '@/lib/artifactValidation'
+import type { ArtifactValidation, SourceBackedFigure } from '@/lib/artifactValidation'
 import { newId } from '@/lib/id'
 import { migrateFigureFrames } from '@/lib/figureFrameMigration'
 
@@ -99,7 +99,14 @@ export type PanelRotation = 0 | 90 | 180 | 270
  * 未来新增的取值对旧构建是未知形态：消费方一律经 panelKind() 判别并对
  * unknown fail closed（当缺失素材显示，绝不猜成文件路径）。
  */
-export type PanelFileKind = 'pdf' | 'raster' | 'runtime'
+export type PanelFileKind = 'pdf' | 'raster' | 'svg' | 'runtime'
+
+/**
+ * 面板素材是不是**矢量文件**（pdf / svg）：按有效字号（pt）而不是有效 DPI 评质量、
+ * 来源判「矢量」都问它。新增矢量文件形态只改这一处（runtime 是执行捕获的图，不在内）。
+ */
+export const isVectorFileKind = (kind: string | null | undefined): boolean =>
+  kind === 'pdf' || kind === 'svg'
 
 /**
  * RuntimeFigureAsset 的持久化描述块（CapturedFigureDescriptor 的子集，
@@ -120,6 +127,23 @@ export interface RuntimePanelSource {
   runConfig?: string
 }
 
+/** Exact script/configuration ownership, derived and verified only by the backend. */
+export interface FigureExecutionOwner {
+  script: string
+  run_config: string | null
+}
+
+/** Immutable, backend-verified Figure snapshot bound to one source execution and patch set. */
+export interface FigureSnapshot {
+  version: 1
+  sourceId: string
+  patchHash: string
+  receiptId: string
+  snapshotId: string
+  /** Backend-verified archived execution ownership; absent in older snapshots, never inferred. */
+  executionOwner?: FigureExecutionOwner
+}
+
 export interface PanelObject extends ObjectBase {
   type: 'panel'
   fileId: string
@@ -138,8 +162,14 @@ export interface PanelObject extends ObjectBase {
   /** 仅 fileKind === 'runtime'：捕获来源的持久化描述（见 RuntimePanelSource） */
   source?: RuntimePanelSource
   overrides: PanelOverride[]
+  figureSnapshot?: FigureSnapshot
   /** Nonsemantic source/frame guard. Never changes the meaning of overrides. */
   artifactValidation?: ArtifactValidation
+  /**
+   * 来源驱动采用 guard（ADR 0139 PR2），与 `artifactValidation` **并列且互斥**、形状不同。
+   * 旧前端读到它会忽略，把面板当未采用 PNG 显示原像素；老项目不会获得这个字段。
+   */
+  sourceBackedFigure?: SourceBackedFigure
   /**
    * 锁定的图内元素 gid：画布命中测试跳过它们，避免误选误拖。
    * 只影响交互，不影响渲染与导出；元素树里仍可选中（用于解锁）。
@@ -270,7 +300,7 @@ export interface ShapeObject extends ObjectBase {
  * **绝不**把它当成相对路径去猜文件（那会显示出另一个面板的图）。
  */
 export function panelKind(o: Pick<PanelObject, 'fileKind'>): PanelFileKind | 'unknown' {
-  return o.fileKind === 'pdf' || o.fileKind === 'raster' || o.fileKind === 'runtime'
+  return o.fileKind === 'svg' || o.fileKind === 'pdf' || o.fileKind === 'raster' || o.fileKind === 'runtime'
     ? o.fileKind
     : 'unknown'
 }

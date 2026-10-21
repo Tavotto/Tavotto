@@ -1,7 +1,8 @@
-import { ArtifactValidationError, validationFromSource, type ArtifactRequestFields } from '@/lib/artifactValidation'
+import { classifyArtifactFailure } from '@/lib/artifactReason'
+import { ArtifactValidationError, FIGSIZE_SOURCE_POLICY, verifiedSource, type ArtifactRequestFields } from '@/lib/artifactValidation'
 import { apiUrl, apiUrlFor, currentProjectId, withProject, withProjectFor } from '@/lib/session'
 import { formatMessage, i18n, literal, msg, t, type UiMessage } from '@/i18n'
-import type { FigureDocument, ProjectDocument } from '@/types/document'
+import type { FigureDocument, FigureSnapshot, ProjectDocument } from '@/types/document'
 import type { ManifestFrame } from '@/lib/figureFrame'
 import type { PreviewMetadata } from '@/lib/previewBudget'
 import type { ScriptArgsSchema } from '@/lib/scriptArgsForm'
@@ -11,7 +12,7 @@ export interface PanelInfo {
   id: string
   name: string
   folder: string
-  kind: 'pdf' | 'raster'
+  kind: 'pdf' | 'raster' | 'svg'
   native_w_mm: number
   native_h_mm: number
   px_w?: number
@@ -237,18 +238,14 @@ export function backendErrorText(e: unknown): string {
  * 原文，按 i18n 纪律不翻，也不依赖后端消息的中文前缀格式）；没有文案的
  * code 照旧原文透出。两条控制面（Python 池 / workerd）走的都是同一形状。
  */
-function artifactErrorMsg(reason: unknown): UiMessage {
-  if (reason === 'background_visibility_required') return msg('artifact.backgroundVisibilityRequired', undefined, 'errors')
-  if (reason === 'source_changed') return msg('artifact.sourceChanged', undefined, 'errors')
-  if (reason === 'frame_changed' || reason === 'invalid_guard') return msg('artifact.frameChanged', undefined, 'errors')
-  if (reason === 'writeback_not_supported') return msg('artifact.writebackUnsupported', undefined, 'errors')
-  if (reason === 'not_untouched') return msg('artifact.legacyEdits', undefined, 'errors')
-  return msg('artifact.unsupported', undefined, 'errors')
+function artifactErrorMsg(err: unknown): UiMessage {
+  // reason → 文案 key 的映射只在 `artifactReason.ts` 的那张表里
+  return msg(classifyArtifactFailure(err).messageKey, undefined, 'errors')
 }
 
 export function engineErrorMsg(err: unknown): UiMessage {
   if (err instanceof ArtifactValidationError || (err instanceof EngineError && err.code === 'artifact_source_unavailable')) {
-    return artifactErrorMsg(err instanceof ArtifactValidationError ? err.reason : err.params?.reason)
+    return artifactErrorMsg(err)
   }
   if (err instanceof EngineError && err.installRoute === 'unsupported_platform') {
     return msg('prep.line.depsPlatform', { module: err.module }, 'workspace')
@@ -291,7 +288,7 @@ export function backendCodeMsg(
   // 用 exists 而不是 defaultValue 判「有没有这条」：i18n 那边的
   // parseMissingKeyHandler 会把缺失的 key 原样吐回来（界面上看得见是哪条），
   // 那样 defaultValue 永远轮不到，缺文案时用户看到的就是 `backend.xxx`。
-  if (code === 'artifact_source_unavailable') return artifactErrorMsg(params?.reason)
+  if (code === 'artifact_source_unavailable') return artifactErrorMsg({ params })
   // T03：用户给了精确参数、脚本自己的解析器仍然拒绝——同一个稳定码，文案不能再说"没带参数"
   if (code === 'script_needs_arguments' && Number(params?.argv_count) > 0) {
     return msg('backend.script_rejected_arguments', params ?? {}, 'errors')
@@ -662,7 +659,17 @@ export interface TutorialStatus {
   problems: string[]
   tutorial_version?: number
   metadata?: TutorialMetadata
-  copy?: { exists: boolean; complete: boolean; missing: string[]; registry_ok: boolean }
+  copy?: {
+    exists: boolean
+    complete: boolean
+    missing: string[]
+    registry_ok: boolean
+    /**
+     * 副本里用户另存的画布名（不含教程画布本身）；重置会一并删掉。`null` = 清点不全（遍历 / stat 出错），
+     * 老后端没有这个字段——两者都是「不知道」，不是「没有」
+     */
+    layouts?: string[] | null
+  }
   project?: { open: boolean; id: string | null }
 }
 
@@ -686,8 +693,10 @@ export const openTutorialApi = (opts: { default?: boolean } = {}) =>
     body: JSON.stringify(opts),
   })
 
-/** 「重新开始教程」：原子换成干净副本，只清教程自己的自动保存与写回基线。锁住时 409 `tutorial_locked`。 */
-export const resetTutorialApi = (opts: { default?: boolean } = {}) =>
+/** 「重新开始教程」：原子换成干净副本，只清教程自己的自动保存与写回基线。锁住时 409 `tutorial_locked`。
+ * `expected_layouts` = 确认框里列给用户看的另存排版清单（后端原样的 `copy.layouts`）；后端持锁后重核，
+ * 确认之后又变了就 409 `tutorial_layouts_changed`、什么都不动。 */
+export const resetTutorialApi = (opts: { default?: boolean; expected_layouts?: string[] } = {}) =>
   jsonFetch<TutorialOpenResult>('/api/tutorial/reset', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -788,6 +797,7 @@ export const panelSrc = (
 ): string | null => {
   if (kind === 'raster')
     return BROWSER_RASTER_EXTS.has(extOf(id)) ? fileUrl(id, mtime) : renderUrl(id, bucket, mtime)
+  if (kind === 'svg') return fileUrl(id, mtime)
   if (kind === 'pdf') return renderUrl(id, bucket, mtime)
   if (kind === 'runtime') return runtimePreviewUrl(id, mtime)
   return null
@@ -840,6 +850,10 @@ export async function fetchLayout(name: string): Promise<FetchedLayout> {
 }
 
 export interface SavedLayout {
+  /** Layout saved, but these exact source edits have no durable SVG snapshot. */
+  svg_snapshot_warnings?: string[]
+  /** Complete verified snapshot map for candidate panel object IDs; absent means old backend. */
+  figure_snapshots?: Record<string, FigureSnapshot>
   ok: boolean
   revision: string | null
   /** 落盘的文件名（去掉 `.json`，经后端净化）；旧后端不给 */
@@ -909,6 +923,10 @@ export const REVISION_ABSENT = 'absent'
  * `owner_unknown` = 这次请求的项目身份已失效，归属没记。旧后端不发 = `undefined`（不知道，不当 `ok`）。
  */
 export interface PutAutosaveResult {
+  /** Nonblocking source snapshot warnings; the layout body was saved successfully. */
+  svg_snapshot_warnings?: string[]
+  /** Complete verified snapshot map for candidate panel object IDs; absent means old backend. */
+  figure_snapshots?: Record<string, FigureSnapshot>
   ok: boolean
   saved_at: number
   revision: string | null
@@ -1353,6 +1371,11 @@ export interface LayoutVersionMeta {
   moment?: LayoutMoment
   /** 有缩略图时是它的格式（`/api/versions/<id>/<vid>/thumb`）；没有就缺席 */
   thumb?: 'webp' | 'png'
+  /**
+   * 新存储里这一版的信封读不出来（ADR 0140）：只赔掉这一条，别的版本照常。
+   * 本版本只认下这个字段、不画专门的 UI；行为不变——点它取正文会收到 `versions_unreadable`。
+   */
+  damaged?: boolean
   description: string
   objects: number
   page?: { w: number; h: number }
@@ -1463,7 +1486,15 @@ export const fetchTimeline = (
   sketch?: { objects: number; textChars: number },
 ) => {
   const q = sketch ? `?sketch=${sketch.objects}&sketchText=${sketch.textChars}` : ''
-  return jsonFetch<{ versions: LayoutVersionMeta[]; budget?: TimelineBudget }>(
+  return jsonFetch<{
+    versions: LayoutVersionMeta[]
+    budget?: TimelineBudget
+    /**
+     * 旧时间线文件读不出来（#264）：后端已开一份空历史、旧文件原样保留。只有文件名与大小，
+     * 没有路径。本版本只认下字段、不画 UI（也不据此删任何东西）。
+     */
+    legacy_unreadable?: { name: string; size: number | null }
+  }>(
     `/api/versions/${encodeURIComponent(docId)}${q}`,
   )
 }
@@ -1656,6 +1687,7 @@ interface ExportBox {
 export type ExportObject =
   | (ExportBox & ArtifactRequestFields & {
       type: 'panel'
+      figure_snapshot?: FigureSnapshot
       id: string
       overrides?: { gid: string; prop: string; value: unknown }[]
       /** 0–1 归一化、top-origin，与 PanelObject.crop 同构，原样直传 */
@@ -1742,6 +1774,7 @@ export interface ExportRequest {
   /** `scope=original`：那一张图自己。**没有 x/y/w/h，也没有页面尺寸** */
   original?: ArtifactRequestFields & {
     figure_id: string
+    figure_snapshot?: FigureSnapshot
     overrides?: { gid: string; prop: string; value: unknown }[]
     w_mm?: number | null
     h_mm?: number | null
@@ -1912,7 +1945,7 @@ async function requireExportArtifactAck(req: ExportRequest, pj: string | null): 
   if (!guarded.length) return
   const checked = await validateExport(req, pj)
   for (const s of guarded) {
-    const context = validationFromSource(checked.artifact_sources?.[s.id],s.id)
+    const context = verifiedSource(checked.artifact_sources?.[s.id], s.id, s.source_policy ?? FIGSIZE_SOURCE_POLICY)
     if (!s.expected_source || context.bytesSha256 !== s.expected_source.bytes_sha256 || context.sizeBytes !== s.expected_source.size_bytes) throw new ArtifactValidationError('source_changed')
   }
 }
@@ -2166,6 +2199,19 @@ export interface ElementGeometry {
   stroke_pt?: number
   /** 裁剪框（figure 分数、y 向下）；只有矩形裁剪才给，非矩形裁剪不给 */
   clip?: [number, number, number, number]
+  /**
+   * 真实绘制次序（ADR 0086 修订）：越大越晚画、越在上层，跨 axes 也可比。主语是 manifest 测量那一刻
+   * 的 figure 对象（`pathgeom.paint_ranks`：Figure/Axes 的 children 按 zorder 稳定升序，与
+   * matplotlib draw 同一规则），不是 zorder 字面值也不是登记序。伪元素取成员里最晚画的，成员被别的 artist 隔开则不给。
+   * 缺席 = 次序未知（老引擎、3D 子轴），前端不据此判遮挡。
+   */
+  paint_order?: number
+  /**
+   * 填充此刻画出来的有效不透明度（0..1）；只有 `fill` 的 geometry 才有。matplotlib 的 artist alpha
+   * 是**替换**颜色里的 alpha 而非相乘，所以这就是 `get_facecolor()` 的 alpha；逐元素色取最小
+   * （保守：宁可认为盖不住）。缺席 = 未知，前端按「盖不住」处理。
+   */
+  fill_alpha?: number
 }
 
 /**
@@ -2308,6 +2354,13 @@ export interface ManifestElement {
    */
   scale_gids?: string[]
   /**
+   * 色阶组的**结构性**成员（引擎 `_cmap_alias_gids`，唯一出处）：与这个元素共用同一份色图状态的其它
+   * gid——它的 mappable / 共用 norm 的兄弟（不看此刻是否在映射）/ 给这组上色的全部色条（含独立
+   * `ScalarMappable` 色条之间）。任一成员改 cmap = 整组改，写 cmap 时同一次 commit 清掉这些 gid 上的旧
+   * cmap override（ADR 0135）。可选：组里只有自己就不发。
+   */
+  cmap_group_gids?: string[]
+  /**
    * 拖动这个 axes 时该一起走的**其他 axes**（色条轴、twinx/twiny 的孪生轴）。
    * 由引擎裁决（只有那边有 matplotlib 的共享关系与落点），前端只负责把同一个
    * 位移发给它们。子图自己的标题/轴标签不在这里——它们是 Axes 的孩子，
@@ -2338,6 +2391,11 @@ export interface ManifestElement {
    * 写 endpoints_frac override（[ax, ay, bx, by]）。
    */
   arrow_endpoints?: [number, number][]
+  /**
+   * 端点箭头（有 `arrow_endpoints`、不出 geometry）与按 bbox 命中的文字 / 图例类的真实绘制次序，语义同 `ElementGeometry.paint_order`。
+   * 缺席 = 次序未知，不判遮挡。
+   */
+  paint_order?: number
   /**
    * 直角坐标轴四条边框**画出来的那条线**（figure 分数、y 向下），供画布建立
    * 「边框内侧 / 外侧」的语义命中区（Prompt 16，`lib/tickSides.ts`）。
@@ -2413,7 +2471,12 @@ export interface Manifest {
 }
 
 export interface EngineRenderResponse {
+  figure_snapshot_invalidation?: FigureSnapshotInvalidation
   artifact_source?: unknown
+  /** 来源驱动策略（`script-backed-figure-v1`）的准入结论：状态、重画摘要、差异度量（ADR 0139） */
+  source_backed?: unknown
+  /** 无 source_policy 的 PNG 渲染：产物未与已存字节核对（#1145，只标记不拒绝） */
+  source_unverified?: { reason: string; kind: string }
   rev: number
   manifest: Manifest
   warnings?: string[]
@@ -2459,6 +2522,7 @@ export interface EngineRenderResponse {
 }
 
 export class EngineError extends Error {
+  figureSnapshotInvalidation?: FigureSnapshotInvalidation
   params?: Record<string, unknown>
   retryable?: boolean
   traceback: string
@@ -2510,6 +2574,7 @@ export class EngineError extends Error {
     projectEnv?: ProjectEnvFailure,
     dependencyRepair?: DependencyRepairOffer,
     extra?: {
+      figureSnapshotInvalidation?: FigureSnapshotInvalidation
       params?: Record<string, unknown>
       retryable?: boolean
       installRoute?: string
@@ -2520,6 +2585,7 @@ export class EngineError extends Error {
     },
   ) {
     super(message)
+    this.figureSnapshotInvalidation = extra?.figureSnapshotInvalidation
     this.params = extra?.params
     this.retryable = extra?.retryable
     this.installRoute = extra?.installRoute
@@ -2553,6 +2619,29 @@ export interface EngineRenderOptions extends ArtifactRequestFields {
   previewDpi?: number
 }
 
+/**
+ * 重复交接命中已显示面板时回给后端的「当前渲染状态」（ADR 0131 第六节修订 2026-10-18）。
+ * 形状与 `handoffreceipt.parse_ack` 同源：`ok` 带 manifest 元素数、`failed` 带稳定 code、
+ * `displayed` = 显示着但拿不出这一版的精确渲染。走会话 cookie，不新造凭据。
+ */
+export type HandoffDisplayAck =
+  | { id: string; status: 'ok'; manifest_elements: number }
+  | { id: string; status: 'failed'; code: string }
+  | { id: string; status: 'displayed' }
+
+/** 旁路：失败（老后端 404 / 网络）一律吞掉——CLI 那头回落到等超时，与没有这条确认时一样。 */
+export async function postHandoffDisplayAck(ack: HandoffDisplayAck): Promise<void> {
+  try {
+    await fetch(apiUrl('/api/handoff/display-ack'), withProject({
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(ack),
+    }))
+  } catch {
+    /* 旁路 */
+  }
+}
+
 export async function engineRender(
   id: string,
   patches: unknown[],
@@ -2568,6 +2657,7 @@ export async function engineRender(
       inline_svg: true,
       source_policy: opts.source_policy,
       expected_source: opts.expected_source,
+      ...(opts.confirmed_reconstruction_sha256 ? { confirmed_reconstruction_sha256: opts.confirmed_reconstruction_sha256 } : {}),
       ...(opts.previewDpi ? { preview_dpi: opts.previewDpi } : {}),
     }),
     signal: opts.signal,
@@ -2583,6 +2673,7 @@ export async function engineRender(
       body.project_env as ProjectEnvFailure | undefined,
       body.dependency_repair as DependencyRepairOffer | undefined,
       {
+        figureSnapshotInvalidation: body.figure_snapshot_invalidation as FigureSnapshotInvalidation | undefined,
         params: body.params as Record<string, unknown> | undefined,
         retryable: body.retryable as boolean | undefined,
         installRoute: body.install_route as string | undefined,
@@ -2596,7 +2687,7 @@ export async function engineRender(
     )
   }
   if (opts.source_policy) {
-    const g = validationFromSource(body.artifact_source, id)
+    const g = verifiedSource(body.artifact_source, id, opts.source_policy)
     if (opts.expected_source && (g.bytesSha256 !== opts.expected_source.bytes_sha256 || g.sizeBytes !== opts.expected_source.size_bytes)) throw new ArtifactValidationError('source_changed')
   }
   return body as EngineRenderResponse
@@ -2725,14 +2816,15 @@ export async function enginePreviewPng(
 
 export async function enginePreviewPngSnapshot(
   id: string, patches: unknown[], bucket: number, signal?: AbortSignal, source: ArtifactRequestFields = {},
-): Promise<{ url: string; manifest: Manifest }> {
+): Promise<{ url: string; manifest: Manifest; sourceBacked?: unknown }> {
   const res = await previewPngResponse(id, patches, bucket, signal, true, source)
-  const frame = await res.json() as { png: string; manifest: Manifest; artifact_source?: unknown }
+  const frame = await res.json() as { png: string; manifest: Manifest; artifact_source?: unknown; source_backed?: unknown }
   if (source.source_policy) {
-    const g = validationFromSource(frame.artifact_source, id)
+    const g = verifiedSource(frame.artifact_source, id, source.source_policy)
     if (!source.expected_source || g.bytesSha256 !== source.expected_source.bytes_sha256 || g.sizeBytes !== source.expected_source.size_bytes) throw new ArtifactValidationError('source_changed')
   }
-  return { url: `data:image/png;base64,${frame.png}`, manifest: frame.manifest }
+  // 来源驱动策略：这次响应自己的准入结论（对照确认绑定的是**显示给用户的这一份**，不是更早那次 render 的）
+  return { url: `data:image/png;base64,${frame.png}`, manifest: frame.manifest, sourceBacked: frame.source_backed }
 }
 
 async function previewPngResponse(
@@ -3045,6 +3137,8 @@ export const fetchAiInstallStatus = (agent: AiAgentId) =>
 
 export interface AiHistoryEntry {
   id: string
+  /** 发起它的请求 id（点发送时生成）；老记录 / 老前端发起的没有 */
+  client_request_id?: string | null
   provider: AiAgentId
   model: string | null
   effort: string | null
@@ -3080,7 +3174,7 @@ export const fetchAiHistory = (
   if (opts.pinned) params.set('pinned', '1')
   params.set('limit', String(opts.limit ?? 20))
   params.set('offset', String(opts.offset ?? 0))
-  return jsonFetch<{ total: number; sessions: AiHistoryEntry[] }>(
+  return jsonFetch<{ total: number; sessions: AiHistoryEntry[]; truncated?: boolean }>(
     `/api/ai/history?${params}`,
     undefined,
     pj,
@@ -3117,22 +3211,179 @@ export interface AiRunRequest {
   scope?: string
   target?: string
   canvas?: string | null
+  /**
+   * 点「发送」时生成的请求 id（UUID），与后端 `api_ai_run` 的 `client_request_id` 同名同义：
+   * 同 (项目, id) 再 POST 后端返回既有会话、不再 spawn。重发「同一条」必须带同一个 id；
+   * 用户有意的新任务（含明确失败后的重试）换新 id。
+   */
+  client_request_id?: string
 }
+
+/** 发送请求的等待上限：超时 = 「已发出、未收到确认」，不是失败（后端可能已经接受了） */
+export const AI_RUN_TIMEOUT_MS = 30_000
 
 /**
  * `pj`：会话**所属**的项目（#589）。发起、撤销、中止都钉在它上面，不跟着「此刻认领的项目」走——
  * 切项目之后还能摸到的旧会话按钮，请求也绝不发往新项目。
+ *
+ * 带 `AbortController` 超时：超时与网络错误一样抛**非 `ApiError`**——调用方据此区分「后端明确拒绝了」
+ * （`ApiError`，一定没执行）与「不知道后端收到没有」（其余，不得静默重发，见 `aiStore.start`）。
  */
-export const aiRun = (req: AiRunRequest, pj: string | null) =>
-  jsonFetch<{ session: string; script: string }>(
+export const aiRun = (req: AiRunRequest, pj: string | null, timeoutMs: number = AI_RUN_TIMEOUT_MS) => {
+  const ctl = new AbortController()
+  const timer = setTimeout(() => ctl.abort(), timeoutMs)
+  return jsonFetch<{ session: string; script: string; deduped?: boolean }>(
     '/api/ai/run',
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(req),
+      signal: ctl.signal,
+    },
+    pj,
+  ).finally(() => clearTimeout(timer))
+}
+
+/** 后端按请求 id 登记的会话摘要（`GET /api/ai/requests/<id>`） */
+export interface AiRequestStatus {
+  session: string
+  status: string
+  changed: boolean
+  script: string
+}
+
+/**
+ * 「这条请求后端到底接受了没有」。404 + `ai_request_not_found` 是**明确结论**（后端没登记过）；
+ * 其余失败（网络、老后端没这个端点、5xx）都不是结论——调用方不得把它们当「没发过」。
+ */
+export const fetchAiRequest = (requestId: string, pj: string | null) =>
+  jsonFetch<AiRequestStatus>(`/api/ai/requests/${encodeURIComponent(requestId)}`, undefined, pj)
+
+export const AI_REQUEST_NOT_FOUND = 'ai_request_not_found'
+
+/* ------------------- 助手草稿与待确认账本（ADR 0132：存后端，不存浏览器） ------------------- */
+
+export interface AiDraftDoc {
+  draft: { text: string; revision: number; updated_ms: number; stamp: number } | null
+  /** 这一行（含墓碑）的写入戳：读到就抬高本页的戳下限 */
+  stamp?: number
+  /** 未落定的提交（按 rid 一条，由老到新） */
+  pendings: { rid: string; text: string; sent: unknown; created_ms: number }[]
+}
+
+const JSON_HEADERS = { 'Content-Type': 'application/json' }
+
+export const fetchAiDraft = (file: string, pj: string | null, signal?: AbortSignal) =>
+  jsonFetch<AiDraftDoc>(`/api/ai/drafts?file=${encodeURIComponent(file)}`, signal ? { signal } : undefined, pj)
+
+/**
+ * 全文覆盖（最后写入为准）；空文本 = 删。`keepalive`：页面正在关 / 刷新（pagehide）时用，浏览器会在
+ * 页面销毁后继续把这个请求发完（正文有 64 KB 的 keepalive 上限，草稿 ≤ 20 KB 够用）。
+ */
+export const putAiDraft = (file: string, text: string, pj: string | null, keepalive = false, stamp?: number) =>
+  jsonFetch<{ revision: number; stamp: number; stale?: boolean; text_hash?: string }>(
+    '/api/ai/drafts',
+    { method: 'PUT', headers: JSON_HEADERS, body: JSON.stringify({ file, text, stamp }), keepalive },
+    pj,
+  )
+
+/** 条件删除：只有后端的文本仍等于 `ifText` 才删（不删另一个标签页的新稿） */
+export const deleteAiDraftIf = (file: string, ifText: string, pj: string | null) =>
+  jsonFetch<{ deleted: boolean }>(
+    '/api/ai/drafts',
+    { method: 'DELETE', headers: JSON_HEADERS, body: JSON.stringify({ file, if_text: ifText }) },
+    pj,
+  )
+
+export const putAiPending = (
+  rid: string,
+  file: string,
+  text: string,
+  sent: unknown,
+  pj: string | null,
+  script: string | null = null,
+  draftStamp: number | null = null,
+  supersedes: string[] = [],
+) =>
+  jsonFetch<{ ok: boolean }>(
+    `/api/ai/drafts/pending/${encodeURIComponent(rid)}`,
+    {
+      method: 'PUT',
+      headers: JSON_HEADERS,
+      // `supersedes`：放弃的旧等待，后端在写这条的同一个事务里删它们（客户端不单方面 DELETE）
+      body: JSON.stringify({ file, text, sent, script, draft_stamp: draftStamp, ...(supersedes.length ? { supersedes } : {}) }),
     },
     pj,
   )
+
+/** 本项目全部未落定的提交（跨面板，带 script）：发起它的面板已不在时也找得回来 */
+export const fetchAiPendings = (pj: string | null, signal?: AbortSignal) =>
+  jsonFetch<{
+    pendings: { file: string; rid: string; text: string; sent: unknown; script: string | null; created_ms: number }[]
+  }>('/api/ai/drafts/pending', signal ? { signal } : undefined, pj)
+
+/** 请求已被接受：清这条账本；草稿文本仍等于提交时的原文才一并删（后端一个事务里判与删） */
+export const acceptAiPending = (rid: string, file: string, pj: string | null) =>
+  jsonFetch<{ cleared: boolean; draft_deleted: boolean }>(
+    `/api/ai/drafts/pending/${encodeURIComponent(rid)}/accept`,
+    { method: 'POST', headers: JSON_HEADERS, body: JSON.stringify({ file }) },
+    pj,
+  )
+
+/**
+ * 改图任务的结局（TAF，ADR 0138）。**与 `status` 分开记**：`status: 'done'` + `outcome: 'partial' | 'failed'`
+ * 是「脚本确实改了，但核对没通过」。前端只翻译这里的值，不判断检查本身。
+ * 老后端 / `ai.taf.enabled` 关着时整个字段都没有（`undefined`），界面照旧逻辑。
+ */
+export interface AiTaskSummary {
+  task_type: string
+  outcome: 'completed' | 'partial' | 'needs_input' | 'failed' | 'cancelled' | 'interrupted' | null
+  /** 没满足的检查（技术 id + 稳定原因码）；界面只在详情里列 id */
+  unmet?: { constraint_id: string; reason_code: string }[]
+  explain?: { message_key: string; params: Record<string, unknown> }
+  /** 进行中的阶段：只在 Agent 正在自动修正上一版时为 `correcting`（有界修正，Phase 4）；终态没有 */
+  phase?: 'correcting' | null
+  /** 收尾时：自动修正了几轮（0 = 一次就过了检查）；老后端没有 */
+  corrections?: number
+}
+
+/** 会话详情（转录 + diff）；查询到已登记的会话后补全界面用 */
+export interface AiSessionDetail {
+  /** 任务结局；老后端没有 */
+  task?: AiTaskSummary
+  agent?: string
+  /** 文件变了之后项目刷新的结局（`changed:true` + `failed` = 改成了、项目没刷新） */
+  refresh?: AiRefreshOutcome | null
+  status: string
+  /** 后端写下的结束时刻（`_pump` 收尾之后）；`cancelled` 但没有它 = 取消已被接受、结果还没算出来，不是终态快照 */
+  ended_ms?: number | null
+  /**
+   * 后端明确说这是不是终态快照：`_pump` 收尾（changed / diff / refresh 都确定）之后才为 true。
+   * `cancel` 之后 status 立刻是 `cancelled`，但 changed / diff / refresh 还没算出来——**不是 final**。
+   * 老后端没有这个字段（`undefined`）：退回按 `status !== 'running'` 判。
+   */
+  final?: boolean
+  /** 失败 / 超时的原因（后端给的一句话）；失败的会话没有它，恢复后的失败提示就是空白的 */
+  error?: string | null
+  changed: boolean | null
+  diff: string
+  transcript: { kind: string; text: string }[]
+}
+export const fetchAiSession = (sid: string, pj: string | null) =>
+  jsonFetch<AiSessionDetail>(`/api/ai/sessions/${encodeURIComponent(sid)}`, undefined, pj)
+
+/**
+ * 发送失败是不是「后端明确拒绝」：有 HTTP 响应，且 4xx、或 5xx 但带着我们自己的稳定 `code`
+ * （后端处理过的失败）。网关式 5xx（502/503/504，没有 code）、超时、断网、200 但读不出体——
+ * 都不确定后端收到没有。
+ */
+export function isDefiniteRunFailure(e: unknown): boolean {
+  if (!(e instanceof ApiError)) return false
+  // 后端拒绝了、但清它的待确认行也失败了（503 `ai_request_unresolved`）：状态不确定，不是「明确拒绝」——保持同一个 rid
+  if (e.body?.code === 'ai_request_unresolved') return false
+  if (e.status < 500) return true
+  return typeof e.body?.code === 'string' && e.body.code !== ''
+}
 
 export const aiRevert = (sid: string, pj: string | null) =>
   jsonFetch<{ ok: boolean; script: string }>(
@@ -3206,7 +3457,9 @@ interface ProjectScoped {
 }
 
 export type ServerEvent =
+  | ({ kind: 'figure.snapshot_invalidated'; pj: string } & FigureSnapshotInvalidation)
   | ({ kind: 'render.preparing'; id: string } & ProjectScoped)
+  | ({ kind: 'render.progress'; id: string } & ProjectScoped)
   | ({ kind: 'render.started'; id: string; cost?: string; cold?: boolean } & ProjectScoped)
   | ({ kind: 'render.done'; id: string; rev?: number } & ProjectScoped)
   | ({ kind: 'render.failed'; id: string; error?: string } & ProjectScoped)
@@ -3309,11 +3562,29 @@ export type ServerEvent =
   | ({ kind: 'engine.package' } & PackageProgress)
   /** 导出作业的进度与终局。载荷 = `ExportJob` 的全部字段（不是增量，是快照） */
   | ({ kind: 'export.progress' } & ExportJob)
-  | { kind: 'ai.delta'; pj?: string; session: string; text: string; kindOf?: AiDeltaKind }
+  | {
+      kind: 'ai.delta'
+      pj?: string
+      /** 发起这次任务的请求 id；老后端 / 老前端发起的没有 */
+      client_request_id?: string
+      session: string
+      text: string
+      kindOf?: AiDeltaKind
+    }
+  /** 任务进入新阶段（TAF 有界修正：上一版没过写回前检查，Agent 正在副本里修正）；老后端不发 */
+  | ({
+      kind: 'ai.task'
+      pj?: string
+      client_request_id?: string
+      session: string
+      task_type: string
+      phase: 'correcting'
+    } & ProjectScoped)
   | ({
       kind: 'ai.done'
       /** 发起这次任务的项目（#589）；老后端没有这个字段 */
       pj?: string
+      client_request_id?: string
       session: string
       status: string
       changed: boolean
@@ -3322,6 +3593,8 @@ export type ServerEvent =
       error?: string
       /** 文件变了之后后端统一刷新的结局（ADR 0041）；老后端没有这个字段 */
       refresh?: AiRefreshOutcome
+      /** 任务结局（TAF）；与 `status` 分开记，老后端没有这个字段 */
+      task?: AiTaskSummary
     } & ProjectScoped)
 
 /**
@@ -3340,7 +3613,9 @@ export interface AiRefreshOutcome {
 }
 
 const EVENT_KINDS = [
+  'figure.snapshot_invalidated',
   'render.preparing',
+  'render.progress',
   'render.started',
   'render.done',
   'render.failed',
@@ -3358,6 +3633,7 @@ const EVENT_KINDS = [
   'engine.package',
   'export.progress',
   'ai.delta',
+  'ai.task',
   'ai.done',
   'script.input_requested',
   'script.input_closed',
@@ -3490,6 +3766,19 @@ export const restoreHistory = (id: string, n: number, expectedMtime?: number) =>
 
 /** 服务器上 dist/index.html 当前引用的 bundle 名（如 index-DaQsrMg2） */
 export const fetchBuildVersion = () => jsonFetch<{ build: string; version?: string }>('/api/version')
+
+/**
+ * 「按脚本重画并编辑 PNG」实验开关（ADR 0139 PR2）是否开着：问后端、不缓存（用户改 config.json 后不必重启）。
+ * 只认显式 `true`；老后端没有这个端点、请求失败都当关着——此时前端不尝试来源驱动策略，行为与 PR1 一致。
+ */
+export async function fetchScriptBackedEnabled(): Promise<boolean> {
+  try {
+    const v = await jsonFetch<{ script_backed_figure?: unknown }>('/api/experiments')
+    return v.script_backed_figure === true
+  } catch {
+    return false
+  }
+}
 
 /**
  * 本页面自己跑的是哪个 bundle——直接从 <script src> 提取，
@@ -5151,6 +5440,16 @@ export const scanRegistry = () =>
     scripts: Record<string, RegistryEntry>
   }>('/api/registry/scan', { method: 'POST' })
 
+/** Backend-witnessed execution retires this owner's previous output set, even on partial failure. */
+export interface FigureSnapshotInvalidation {
+  scope: 'owner' | 'sources'
+  script: string
+  run_config: string | null
+  source_ids: string[]
+  receipt_ids?: string[]
+  execution_id: string
+}
+
 /** 一张捕获 Figure 的结构化描述（`engine/figcapture.py` 的唯一实现，原样透传） */
 export interface CapturedFigureDescriptor {
   asset_id: string
@@ -5216,6 +5515,7 @@ export interface ProbeError {
 }
 
 export interface ProbeResult {
+  figure_snapshot_invalidation?: FigureSnapshotInvalidation
   script: string
   entry: string | null
   stems: string[]
@@ -5522,6 +5822,7 @@ export type PreparationAttemptRecord = PreparationAttempt
 
 /** 会话报告（`SessionService.report`）：前端只保存这份投影，不另算「能不能跑」 */
 export interface PreparationReport {
+  figure_snapshot_invalidation?: FigureSnapshotInvalidation
   session_version: number
   session_id: string
   project_id: string
@@ -5571,6 +5872,8 @@ export interface PreparationReport {
   runtime_input?: { id: string; index: number; input_kind: string; secret: boolean } | null
   /** 这次尝试成功时真正捕获到的图（与试运行响应同一份描述符）；老后端没有 */
   captured?: CapturedFigureDescriptor[]
+  /** 部分捕获（phase `partial` + outcome `succeeded`）：这次运行里预览捕获失败的图，`code` 是稳定码；全部成功 / 老后端没有 = 空或缺省 */
+  failed_figures?: { stem: string; code?: string }[]
   /** 这次（无参数）运行替换掉的旧图名（T09b，与 `ProbeResult.unlinked_stems` 同一口径）；老后端没有 */
   unlinked_stems?: string[]
   /** 跑完没出图时的原因（`rasterhint`）：脚本自己用位图库把图片写成了文件，不是 Matplotlib 图；只是提示，不改 outcome / facts。老后端没有 */
@@ -5966,6 +6269,7 @@ export interface NativePending {
 
 /** 一条 native 会话对外的全部状态（`NativeSession.public_state()` 原样）。 */
 export interface NativeSessionInfo {
+  figure_snapshot_invalidation?: FigureSnapshotInvalidation
   session_id: string
   project_root: string
   interpreter: string
@@ -6013,6 +6317,7 @@ export interface NativePendingInput {
 
 /** 一次 build 的结果：stems + 描述符 + （如实报的）冲突。 */
 export interface NativeBuildResult {
+  figure_snapshot_invalidation?: FigureSnapshotInvalidation
   session: NativeSessionInfo
   stems: Record<string, unknown>
   descriptors: CapturedFigureDescriptor[]
@@ -6042,7 +6347,7 @@ export const fetchNativePending = (nativeId: string) =>
  * （「请求体不能替换 invocation」由后端用例看护）。
  */
 export const approveNativePending = (nativeId: string, remember: boolean) =>
-  jsonFetch<{ session: NativeSessionInfo }>(
+  jsonFetch<{ session: NativeSessionInfo; pj?: string | null }>(
     `/api/native/pending/${encodeURIComponent(nativeId)}/approve`,
     {
       method: 'POST',

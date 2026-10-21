@@ -296,7 +296,7 @@ def _last_success_profile(
         profile == execspec.PROFILE_NATIVE
         and (record.get("source") or {}).get("basis_observed") is False
     ):
-        # 与 #982 的 reuse_last_success 同样保守：native 没有观察过 helper / 数据文件，不证明它们没变，不据此沿用 native
+        # 与 #982 的 reuse_last_success 同样保守：这条 native 记录没有完整的 helper / 数据观察（#1047），不证明它们没变，不据此沿用 native
         return None
     return profile
 
@@ -923,6 +923,21 @@ class PreparationService:
             tr.cancel("check")
             self._finish(entry, STATUS_CANCELLED, note="在起会话之前取消，没有执行任何脚本")
             return
+        if plan.script is not None:
+            # An explicit preparation may reuse via peek without calling acquire.
+            # Settle source/style notifications before accepting that cached build.
+            from . import project_watch
+
+            project_watch.before_acquire(plan.project_root, plan.script)
+            if entry.cancel.is_set():
+                tr.cancel("check")
+                self._finish(entry, STATUS_CANCELLED, note="在起会话之前取消，没有执行任何脚本")
+                return
+            existing = pool.peek(
+                plan.script,
+                plan.project_root,
+                **({"run": plan.run} if plan.run is not None else {}),
+            )
         # 过期计划（FO-007 / FO30，ADR 0071）：计划之后用户撤销 / 改了工作目录决定、项目的解释器决策变了、
         # 或预检记下的数据绑定变了——计划记下的与此刻的不一致时**不跑**：按旧计划跑等于拿撤销前的许可 /
         # 旧数据的判断执行，按新设置跑等于回执与计划两张嘴。报 `preparation_plan_stale` + `reason`，
@@ -1134,11 +1149,12 @@ class PreparationService:
                     expected_worker=worker,
                     **({"run": plan.run} if plan.run is not None else {}),
                 )
-                note = (
-                    "build 期间取消：本计划新起的会话已关闭；脚本已经产生的外部副作用不撤销"
-                    if closed
-                    else "build 期间取消：本计划的会话已被替换，未关闭后来的会话；脚本已经产生的外部副作用不撤销"
-                )
+                if closed:
+                    note = "build 期间取消：本计划新起的会话已关闭；脚本已经产生的外部副作用不撤销"
+                elif pool.is_fenced(worker):
+                    note = "build 期间取消：会话的强制关闭尚未确认，已围栏、下次使用前会重试；脚本可能仍在运行，已产生的外部副作用不撤销"
+                else:
+                    note = "build 期间取消：本计划的会话已被替换，未关闭后来的会话；脚本已经产生的外部副作用不撤销"
 
             else:
                 note = "build 期间取消：会话属于别的消费者，未关闭；本计划不再等它"

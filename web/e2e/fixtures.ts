@@ -208,8 +208,31 @@ export function writeRuntimeNamedProject(dir: string): void {
                 JSON.stringify({ version: 1, scripts: {} }), 'utf-8')
 }
 
+/**
+ * 新手教程的欢迎页（ADR 0136）在「第一次打开、停在主页、没有自己的项目」时会自己盖上来——
+ * `noProject` 启动的用例每一条都是这个形状。默认替它们记成「欢迎页已经出现过」（只在
+ * `tavotto.onboarding` 那一格还不存在时写，用例自己摆的、应用后来写的都不覆盖），
+ * 测欢迎页 / 教程的用例 `test.use({ firstRunWelcome: true })` 要回真实的首次启动。
+ */
+const WELCOME_SEEN = JSON.stringify({ schemaVersion: 1, flowVersion: 3, status: 'not_started', welcomeSeenAt: 1 })
+
 /** 每个用例自带一个干净实例；用例里按需 `await app()` 拿到它。 */
-export const test = base.extend<{ app: (o?: AppOptions) => Promise<RunningApp> }>({
+export const test = base.extend<{ app: (o?: AppOptions) => Promise<RunningApp>; firstRunWelcome: boolean }>({
+  firstRunWelcome: [false, { option: true }],
+  page: async ({ page, firstRunWelcome }, provide) => {
+    if (!firstRunWelcome) {
+      await page.addInitScript((blob) => {
+        try {
+          if (window.localStorage.getItem('tavotto.onboarding') === null) {
+            window.localStorage.setItem('tavotto.onboarding', blob)
+          }
+        } catch {
+          /* about:blank 之类没有 localStorage 的页面 */
+        }
+      }, WELCOME_SEEN)
+    }
+    await provide(page)
+  },
   // 第二个参数是 Playwright 的「交出去再收回来」回调。名字不叫 use 是因为
   // lint 会把 `use(...)` 当成 React Hook 调用（它是位置参数，随便起名）。
   // 第一参必须写成对象解构（哪怕不取任何内置 fixture）——Playwright 靠这个
@@ -253,6 +276,21 @@ export async function waitForFigureEdit(page: Page): Promise<void> {
     .toHaveAttribute('data-workspace-mode', 'fast_edit', { timeout: 60_000 })
   await expect(page.locator('[data-canvas-stage] [data-display="exact"]'))
     .toHaveCount(1, { timeout: 60_000 })
+}
+
+/**
+ * 刷新后（工作区把图恢复在画布上、没选中）点一下画布上唯一的图选中它。
+ *
+ * 点**画布对象容器** `[data-object-id]`，不要点里面的 `<img>`：预览刷新时同一个容器里新旧两张 `<img>` 会短暂叠放，
+ * 叠放顺序（z 序）与 DOM 顺序不一致——`getByRole('img').first()` / `.last()` 都可能选中被盖住的那张，点击一直卡在
+ * 「<img> intercepts pointer events」（负载高时 30 s 超时，ai-draft / ai-restore 反复出现）。容器的中心点由命中测试落到
+ * 最上面那张图上，那张图是它的后代，Playwright 认作命中自己。取景补间（`data-view-tweening`）期间图在动，先等它落定。
+ */
+export async function selectCanvasFigure(page: Page): Promise<void> {
+  await expect(page.locator('[data-view-tweening]')).toHaveCount(0, { timeout: 30_000 })
+  const figure = page.locator('[data-canvas-stage] [data-object-id]')
+  await expect(figure).toHaveCount(1, { timeout: 30_000 })
+  await figure.click({ timeout: 30_000 })
 }
 
 /**

@@ -83,6 +83,6 @@
 | 放开时 `addfont` 了新字体 | 以 `fontManager` 为数据源的派生缓存（`_FONT_PRESENT`、`_CJK_TAIL`、`_FILE_FACE`、`manifest.installed_font_families`）只有一个失效点 `overrides.sync_font_caches`：注册表代次（对象 + 登记的脸数）变了就全部作废——脚本自己 `addfont`、native 会话两次 `plt.show()` 之间引入项目字体同样覆盖 |
 | 什么时候不换 | 反查解析不回**同一个文件（或字节相同的拷贝）的第 0 张脸**时原样不动：同名不同版本、字重对不上的兄弟文件（同族有 Regular 的 Light 归一成 normal 后找回的是 Regular）都会换掉拉丁字的脸，宁可留着方框也不改正文 |
 | 换不开时 manifest 怎么报 | `_resolved_font_paths(families, file)`：有 fname 就只报那一个文件——`face` 是它、缺的汉字进 `glyphs_missing`，不再按族列表说「画出来了」 |
-| 提示词 | `ai_bridge._build_prompt` 第 4 条：字体用族名设，不用 fname |
+| 提示词 | `ai_prompt_pack.V1` 的 `rule_fonts`（`ai_bridge._build_prompt` 第 4 条）：字体用族名设，不用 fname |
 
 看护：`tests/test_cjk_figure_text.py` 的 `test_fname_*` 两条（worker 端到端 + 拉丁字换前换后 PNG 逐字节相同 / 字节相同拷贝 / Oblique·Light·Black 归一后仍同一文件 / 同族有 Regular 的 Light 不换 / 相对 fname 换 cwd / `.otc` 字体集 / FontPath 第 N 张脸（mpl ≥ 3.11 真实覆盖）/ addfont 后派生缓存失效 / 换不开时照实报缺字）。

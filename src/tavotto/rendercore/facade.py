@@ -371,6 +371,16 @@ def compare_png(baseline: Path, candidate: Path) -> dict:
     return pixelmetrics.rgba_metrics(a, b, size_a, size_b)
 
 
+def compare_png_extent(baseline: Path, candidate: Path) -> dict:
+    """两张 PNG 的逐字节差异范围（差异像素数 / 比例 / 包围框，无底噪无阈值）；尺寸不同回 `ok: False`。
+    来源驱动采用（ADR 0139）用它回答「重画与原件是不是同一个像素」，判定归调用方。"""
+    a, size_a = _rgba_of(baseline)
+    b, size_b = _rgba_of(candidate)
+    if size_a != size_b:
+        return {"ok": False, "reason": "size_mismatch"}
+    return {"ok": True, **pixelmetrics.diff_extent(a, b, size_a)}
+
+
 # ---------------------------------------------------------------------------
 # Canvas 面（RC-002）
 # ---------------------------------------------------------------------------

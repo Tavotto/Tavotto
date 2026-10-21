@@ -376,6 +376,12 @@ occurrence/figure ordinal/result。看护：`tests/bridge/test_bridge_savefig_ob
   看护 `tests/test_selected_artifact_api.py` 的调用方/错误边界与
   `tests/test_selected_artifact_worker.py` 的真实 Python worker 在途及后续复用；后者注入队列错误，
   不替代真实 workerd / Windows 调度验证。选择子集不能重写整份脚本登记。
+- 省略 `source_policy` 的 `/api/engine/render` 落在 PNG 源图上仍走 legacy（不拒绝，旧布局语义不变），
+  但响应带 `source_unverified: {reason: "source_policy_missing", kind: "png"}`：这张图重跑了脚本、
+  未与已存字节核对，不得当作已验证产物（#1145）。前端对未采用的 PNG 面板：`renderTargets` 跳过
+  跨图邻居与 tracked 的补渲染（采用只走 `admitPngEntry` 带策略的请求）；**style-bound 例外，照发**——
+  绑定画布上 `admitPngEntry` 本就拒绝，这次渲染是它唯一的 manifest 来源，`alignNewFigures` 靠它结清
+  样式债，跳过会让面板整个会话上不了样式、进不了编辑（#1179 Codex P1）。
 - 当前 API 切片只开放 render、带 manifest 的 paired preview、导出新文件；selected GET
   SVG/PNG、binary preview、specfix/sync、写回及历史恢复明确拒绝，不能退回旧坐标。
   空 overrides 原图导出仍保留磁盘像素；正常导出的字体/PPI政策独立于源图上下文。
@@ -391,6 +397,24 @@ occurrence/figure ordinal/result。看护：`tests/bridge/test_bridge_savefig_ob
 旧坐标兼容采用。`/api/export/validate` 在已验证的选中源请求上附 `artifact_sources`；
 它只确认策略和磁盘字节、不启动 worker，也不宣称场景已经准入。看护：
 `tests/test_selected_figsize_policy.py`、`tests/test_selected_artifact_api.py`。
+
+`script-backed-figure-v1`（来源驱动采用，ADR 0139 / #1200）是第三条策略，**实验开关
+`config.experiments.script_backed_figure` 后面、默认关**（`artifactcontext.script_backed_enabled`；只认显式 `True`）：
+关着时请求带它一律 409 `policy_disabled`，其余行为逐字节不变。要点：① 安全条件分两档——
+`figsession._require_static_artifact_figure`（像素档，精确策略，白名单原样；白名单是**唯一**拒绝原因时报
+`artist_profile`，否则仍是 `unsupported_render_state`）与 `_require_editable_artifact_figure`（编辑档：类型须来自
+matplotlib 本体、实例 / 类 / 被 monkeypatch 的方法都不能是用户代码，另查集合偏移变换、标注坐标回调、norm / cmap；其余
+回调 / filter / path_effects / 非标准 transform·ticks·scale·canvas / usetex / 字体文件 / 子图·寄生轴 / 布局引擎 / draw_event /
+存活线程 / `unregistered` 闸全部保留）；② 保存唯一性、`capture.get(stem) is fig`、PNG + `bbox_inches is None`、图幅（尺寸与
+pHYs）、native 拒绝与精确策略相同；只收 PNG（PDF 的重画摘要含时间戳，没法当确认绑定）；③ 准入走
+`artifactcontext.admit_reconstruction`：像素**逐字节**相等 `exact`、否则 `needs_confirmation` 并带差异度量
+（`pdfbackend.compare_png_extent`，无底噪无阈值），**没有任何自动接受的容差**；响应带 `source_backed:{status,
+reconstruction_sha256, metrics}`；④ 真实编辑（结构性 `figure.frame` 之外的 patch，render / preview_png / 导出同口径）必须带
+`confirmed_reconstruction_sha256`，缺 → `confirmation_required`，与本次重画不等 → `reconstruction_changed`（均不可重试，不杀 worker）；
+⑤ 采用成功时 `record_adoption` 在 `data_dir()/source-backed/adoptions.json` 原子记（项目 × source_id × bytes_sha256，≤4096 条，
+满了只清已失效的、仍满就 `adoption_store_full`），写回类 / 历史类 / 同步 / specfix / invalidate / 老 GET 入口经
+`app._refuse_adopted_source` 命中即拒——**不看请求带没带 policy**；原件字节变了记录不再命中；记录文件**存在但损坏 / 版本不认识**是「状态未知」，fail closed：PNG 写回类入口一律拒、新采用被拒（绝不覆盖损坏文件），恢复方法是确认无人使用后删除 `data_dir()/source-backed/adoptions.json`（日志里有路径）。池键、out_dir、witness、
+`_validated_artifact_probe` 随 `render_policy` 与精确策略永不共享。看护：`tests/test_script_backed_policy.py`。
 
 ## 成功启动上下文与 Conda 激活（P09，EX07 / EX11，AC-11 / AC-19）
 
@@ -440,6 +464,16 @@ occurrence/figure ordinal/result。看护：`tests/bridge/test_bridge_savefig_ob
 
 看护：`tests/test_conda_launch_context.py`（模拟 conda + `TAVOTTO_TEST_CONDA_PREFIX` / `TAVOTTO_TEST_OLD_CONDA_EXE` 指向真 conda 环境时的真 conda 用例，
 未设则 skip）。
+
+## 写入根绊线（#898，ADR 0141）
+
+MCP 来源的 safe 运行在 worker 里多装一道**运行期**写入检查（`engine/writetripwire.py`）：脚本 build 期间，写打开与改动 / 删除文件的审计事件按真实 cwd 解析后必须落在白名单内，否则
+`PermissionError`，build 以 `write_outside_roots` 收场（脚本即使吞掉异常也一样）。它补的是 `_check_argv_scope` 静态证明的洞（`os.chdir` 之后的相对 token）；**不是沙盒**。
+
+- 与捕获 / 守卫的关系：现有守卫（真实图库的 `Path.unlink` / `write_text` 跳过、删除 / 改名账本）**一字不动**，绊线装在 `ledger.install()` 之后，不改任何一条守卫的语义；它也不属于 `safe_file_operation_blocked` 那一族，不触发 0127 的回退。
+- 配置经 `execspec.worker_argv` 的 `--write-roots`，缺省（GUI / CLI）argv 逐字节不变；池键 `_worker_key` / `_worker_base` 并入 `execspec.write_roots_key`。
+- 窗口 = 脚本 build；窗口外（导出、override、预览）是引擎自己的写，不拦。脚本留下的线程 / `atexit` 在窗口外，是盲区。
+- 盲区清单与白名单见 `docs/rules/backend/execution-entries.md`「写入根绊线」与 ADR 0141；用例 `tests/test_mcp_write_tripwire.py` 同时钉「挡得住的」和「挡不住的」。
 
 ## 速查表原要点（#815 精简时迁入，原文照搬）
 

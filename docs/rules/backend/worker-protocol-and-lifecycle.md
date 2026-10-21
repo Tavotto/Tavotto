@@ -42,10 +42,12 @@
   兜底拦一直打印的死循环。**判据两条控制面同一条**——Python 池 `stat` 日志、
   workerd 收 `idle_timeout_ms` 后 `stat` 同一个文件。注册表的 `cost` **不再参与
   引擎侧超时**（它只剩「冷启动可能要几分钟」那句预测文案）；ADR 0048 的分档已删除。
-  「会打进度的脚本不再有总时长上限」**只在引擎侧成立**：画布前端另有按 `cost`
-  取档的悬挂看门狗（`renderStore.ts` 的 `WATCHDOG_MS`，2 / 5 / 15 分钟，都短于
-  `BUILD_IDLE_TIMEOUT`），冷启动很长的脚本在画布上会先被前端断开请求，服务端 build
-  照常继续——有意保留的现状（#312，ADR 0050 补注）。
+  画布前端按同一个信号续期（#1207）：日志长大时引擎发 SSE `render.progress {pj, id}`
+  （`ProgressListeners`，节流 `PROGRESS_EMIT_INTERVAL`；订阅者含排在同一把 `w.lock` 后面
+  的重试；workerd 路径由 `_relay_log_growth` 转述），`renderStore.ts` 的看门狗是租约
+  （窗口 `WATCHDOG_MS` 2 / 5 / 15 分钟，总上限 `RENDER_HARD_CAP_MS` 对齐
+  `BUILD_HARD_TIMEOUT`）。没有进度通道的消费者（MCP 内嵌画布、SSE 断线）退回「请求开始起
+  一个窗口」。改节流或总上限要同步另一侧（`tests/test_build_watchdog.py` 钉着；ADR 0050 补注）。
   测试可 monkeypatch）：超时即 kill 并报 `code=worker_timeout`，会话由下一次
   `get()` 原地重建——**状态未知的 worker 绝不复用**。超时实现是「读线程 +
   join」而不是 select（Windows 的 select 不接管道）。无超时的 readline 会让一个
@@ -223,3 +225,13 @@ native 另带 `figure_facts`（逐图 `state` / `generation` / `capabilities` / 
    （`clear_preview_poison`：作废之后没重新发布的指针摘掉再解除）。
 
 新增会改预览发布的失败路径时，别在某一级里加 `except OSError: pass`——先问「这一级失败后读方还有没有拦截」。
+
+## 实际执行事实（X03 快照资格）
+
+`executionfact` 的 48 位不透明 ID 只在 worker 即将进入用户代码的边界产生，v1 成功/错误响应与请求级短文件为独立通道；
+marker 不含脚本、路径、argv 或输出，读写失败不阻止科学运行。owner 由父进程可信 spec 的项目/script/run_config 提供，
+不是从描述符子集、HTTP 成功或 Figure 数量推断。正常轮询早通知；导出按 owner 同步刷新关闭轮询间隔。
+两条证据都丢失时以 dispatch 时序记 unknown，不能说没执行，也不伪造 started。执行中尚无事实时旧快照导出临时拒绝，
+confirmed pre-send/排队取消/依赖门不撤旧代；unknown 的迟到结果不能污染更新执行。单次验证 `one_shot` 不替代当前图。
+safe 回执的私有 instance 含实际 execution ID，透明重开不靠未变化的 worker generation 冒充同一次执行；公开语义身份不变。
+看护：`tests/test_execution_observation.py`、`tests/test_execution_receipt.py`、`tests/test_svg_execution_lifecycle.py`。

@@ -1,4 +1,5 @@
-import { artifactRequestFields, artifactValidationIssue, originalArtifactOverrides } from './artifactValidation'
+import { figureSnapshotFor } from './figureSnapshot'
+import { artifactRequestFields, artifactValidationIssue, isAdoptedPanel, originalArtifactOverrides } from './artifactValidation'
 /**
  * 统一导出请求的构造 —— **全产品只有这一份**（ADR 0031）。
  *
@@ -33,7 +34,7 @@ import type { FigureDocument, PanelObject } from '@/types/document'
 import type { WorkspaceMode } from '@/store/workspace'
 
 export type ExportScope = 'original' | 'canvas'
-export type ExportFormat = 'pdf' | 'png' | 'eps' | 'tiff'
+export type ExportFormat = 'pdf' | 'png' | 'eps' | 'tiff' | 'svg'
 export type OverwritePolicy = 'ask' | 'replace' | 'rename'
 export type ExportBackground = 'white' | 'transparent'
 
@@ -41,11 +42,11 @@ export type ExportBackground = 'white' | 'transparent'
  * 画布这条入口认的格式，**顺序与 `engine/exportreq.FORMATS` 同源**：结果里的
  * `outputs[]` 按它排，界面上的清单也按它排。新格式追加在后面（ADR 0046）。
  */
-export const FORMATS: readonly ExportFormat[] = ['pdf', 'png', 'eps', 'tiff']
+export const FORMATS: readonly ExportFormat[] = ['pdf', 'png', 'eps', 'tiff', 'svg']
 
 /** 位图格式的判据。「PPI 有没有意义」全产品只问这一句（与 `RASTER_FORMATS` 同源） */
 export const RASTER_FORMATS: readonly ExportFormat[] = ['png', 'tiff']
-export const VECTOR_FORMATS: readonly ExportFormat[] = ['pdf', 'eps']
+export const VECTOR_FORMATS: readonly ExportFormat[] = ['pdf', 'eps', 'svg']
 
 /** 与 `engine/exportreq.py` 的 `PPI_MIN/PPI_MAX/PPI_DEFAULT` 同源 */
 export const PPI_MIN = 36
@@ -136,7 +137,7 @@ function canValidateOriginalSource(figureId: string, panel?: PanelObject | null)
   }
   // /panels prefers a same-stem PDF; absence is not proof that this PNG is missing.
   // This permits validation, not a source-existence or fresh-metadata claim.
-  if (panel?.fileId === figureId && panel.artifactValidation && !artifactValidationIssue(panel)) return true
+  if (panel?.fileId === figureId && isAdoptedPanel(panel) && !artifactValidationIssue(panel)) return true
   return useAssetStore.getState().byId[figureId] != null
 }
 
@@ -148,6 +149,10 @@ function canValidateOriginalSource(figureId: string, panel?: PanelObject | null)
  *
  * * `canvas_scope`：画布合成走 RenderCore（PDF / PNG / TIFF），给不出 EPS；
  * * `no_script`：这张图在注册表里没有脚本（runtime 素材天生有），引擎没法重画。
+ *
+ * 前端只判「有没有脚本」这一条；SVG 素材的 EPS 另需后端的字节绑定证明（`_produce_svg_asset_eps`，#1185），
+ * 前端拿不到这个事实，**不预先禁用**——后端逐项失败并给真实原因（`eps_source_unverified` /
+ * `eps_needs_live_figure`），界面显示逐项失败。
  *
  * 与后端 `_serialize_figure()` 的前提逐条对应：runtime id 放行，磁盘面板看
  * 素材清单里的 `script`（那正是「注册表声明了映射没有」）。**不可用时不隐藏
@@ -248,6 +253,9 @@ export function buildExportRequest(input: ExportRequestInput): BuiltRequest {
     const patches = input.panel ? originalArtifactOverrides(input.panel) : []
     request.original = {
       figure_id: input.figureId ?? '',
+      ...(input.panel && input.panel.fileId === input.figureId &&
+          JSON.stringify(patches) === JSON.stringify(input.panel.overrides) && figureSnapshotFor(input.panel)
+        ? { figure_snapshot: figureSnapshotFor(input.panel) } : {}),
       ...(input.panel ? artifactRequestFields(input.panel) : {}),
       overrides: patches.length ? patches : undefined,
       w_mm: spec?.widthMm ?? null,

@@ -12,6 +12,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 vi.mock('@/lib/api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/api')>()),
   fetchPanels: vi.fn(),
+  engineRender: vi.fn(),
   // 渲染 hook 的用例要拿到它交给 SSE 订阅的两个回调（事件 / 重连）；其余用例直接驱动 `handleServerEvent`
   subscribeEvents: vi.fn(() => () => {}),
   refreshProject: vi.fn().mockResolvedValue({}),
@@ -29,6 +30,7 @@ import {
   fetchPanels,
   fetchRuntimeAssets,
   refreshProject,
+  engineRender,
   type PanelInfo,
   type ServerEvent,
 } from '@/lib/api'
@@ -446,6 +448,33 @@ describe('渲染通知的语气（2026-10-07 审计 P0）', () => {
     }
   })
 
+  it('render.progress 续上看门狗租约；别的项目的同名文件不续（#1207）', async () => {
+    vi.useFakeTimers()
+    try {
+      let signal: AbortSignal | undefined
+      vi.mocked(engineRender).mockImplementation((_id, _p, opts) => {
+        signal = opts?.signal
+        return new Promise(() => {})
+      })
+      useRenderStore.getState().clear()
+      void useRenderStore.getState().render('Fig1.pdf', [])
+      await vi.advanceTimersByTimeAsync(4 * 60_000)
+      handleServerEvent(ev({ kind: 'render.progress', pj: 'other', id: 'Fig1.pdf' }))
+      await vi.advanceTimersByTimeAsync(2 * 60_000)
+      expect(signal?.aborted).toBe(true) // 别的项目的进度没续上，默认 5 分钟窗口到点
+
+      useRenderStore.getState().clear()
+      void useRenderStore.getState().render('Fig1.pdf', [])
+      await vi.advanceTimersByTimeAsync(4 * 60_000)
+      handleServerEvent(ev({ kind: 'render.progress', pj: 'p1', id: 'Fig1.pdf' }))
+      await vi.advanceTimersByTimeAsync(2 * 60_000)
+      expect(signal?.aborted).toBe(false)
+    } finally {
+      useRenderStore.getState().clear()
+      vi.useRealTimers()
+    }
+  })
+
   it('冷启动「正在构建…」是 progress，随后的「渲染完成」是 done', () => {
     handleServerEvent(ev({ kind: 'render.started', pj: 'p1', id: 'Fig1.pdf', cold: true }))
     expect(statusKey()).toBe('status.building')
@@ -732,6 +761,52 @@ describe('AI 修改之后（ADR 0041）', () => {
     expect(statusKey()).toBe('status.aiNoChange')
   })
 
+  it('ai.task 只改本标签页持有、还没收尾的会话的 task.phase（没有 task 就由事件建立）', () => {
+    useAiStore.setState({
+      sessions: [
+        { id: 's1', status: 'running', entries: [], task: { task_type: 'figure_edit', outcome: null } },
+        { id: 's2', status: 'running', entries: [] },
+        { id: 's3', status: 'done', entries: [], finalized: true, task: { task_type: 'figure_edit', outcome: 'completed' } },
+      ] as never,
+    })
+    for (const sid of ['s1', 's2', 's3', 'nope']) {
+      handleServerEvent(ev({ kind: 'ai.task', pj: 'p1', session: sid, task_type: 'figure_edit', phase: 'correcting' }))
+    }
+    const byId = Object.fromEntries(useAiStore.getState().sessions.map((s) => [s.id, s.task?.phase]))
+    expect(byId).toEqual({ s1: 'correcting', s2: 'correcting', s3: undefined })
+    // 收尾的 ai.done 带回的 task（后端已去掉 phase）整体替换
+    handleServerEvent(
+      ev({
+        kind: 'ai.done', pj: 'p1', session: 's1', status: 'done', changed: true, diff: '+x', script: 'fig1.py',
+        task: { task_type: 'figure_edit', outcome: 'completed', corrections: 1 },
+      }),
+    )
+    const s1 = useAiStore.getState().sessions.find((s) => s.id === 's1')!
+    expect(s1.task).toEqual({ task_type: 'figure_edit', outcome: 'completed', corrections: 1 })
+  })
+
+  it('新发起的会话（本地没有 task）收到 ai.task 后有 correcting 阶段，收尾的 ai.done 不带 phase 就消失', () => {
+    // 与 aiStore.accept 的 fresh 分支同形：没有 task 字段
+    useAiStore.setState({
+      sessions: [
+        {
+          id: 'fresh1', project: 'p1', agent: 'claude', agentLabel: 'Claude', prompt: 'x', script: 'fig1.py',
+          panelId: null, fileId: 'f1', entries: [], status: 'running', changed: false, diff: '', startedAt: 1,
+        },
+      ] as never,
+    })
+    expect(useAiStore.getState().sessions[0].task).toBeUndefined()
+    handleServerEvent(ev({ kind: 'ai.task', pj: 'p1', session: 'fresh1', task_type: 'figure_edit', phase: 'correcting' }))
+    expect(useAiStore.getState().sessions[0].task).toEqual({ task_type: 'figure_edit', outcome: null, phase: 'correcting' })
+    handleServerEvent(
+      ev({
+        kind: 'ai.done', pj: 'p1', session: 'fresh1', status: 'done', changed: true, diff: '+x', script: 'fig1.py',
+        task: { task_type: 'figure_edit', outcome: 'completed', corrections: 1 },
+      }),
+    )
+    expect(useAiStore.getState().sessions[0].task?.phase).toBeUndefined()
+  })
+
   it('老后端没有 refresh 字段：行为不变', () => {
     handleServerEvent(
       ev({ kind: 'ai.done', pj: 'p1', session: 's1', status: 'done', changed: true, diff: '+x', script: 'fig1.py' }),
@@ -910,5 +985,27 @@ describe('useServerEvents 的 SSE 重连回调', () => {
     act(() => onEvent(ev({ kind: 'project.error', pj: 'p1', code: '', recovered: true, seq: 1 })))
     expect(useUiStore.getState().status).toBeNull()
     await act(async () => { root.unmount() })
+  })
+})
+
+describe('PNG 采用被拒的说明不被后端原句顶掉（ADR 0139 PR1）', () => {
+  const seedPanel = () =>
+    useDocumentStore.getState().commit(literal('seed'), (d) => {
+      d.objects.push({
+        id: 'pp', type: 'panel', fileId: 'plot.png', fileKind: 'raster', script: 'f.py', figureFrame: 1,
+        nativeW: 50, nativeH: 40, x: 0, y: 0, w: 50, h: 40, overrides: [],
+      } as PanelObject)
+    })
+  it('同一张图的 render.failed 在采用失败说明还挂着时让位；别的图 / 没有说明时照常报', () => {
+    seedPanel()
+    useUiStore.getState().setStatus(literal('原因 + 出路'), 'info', { owner: 'png.admit:pp' })
+    handleServerEvent(ev({ kind: 'render.failed', pj: 'p1', id: 'plot.png', error: '后端原句' }))
+    expect(useUiStore.getState().statusOwner).toBe('png.admit:pp')
+    expect(useUiStore.getState().statusTone).toBe('info')
+    handleServerEvent(ev({ kind: 'render.failed', pj: 'p1', id: 'other.png', error: '后端原句' }))
+    expect(statusKey()).toBe('status.renderFailedWithError')
+    useUiStore.getState().setStatus(null)
+    handleServerEvent(ev({ kind: 'render.failed', pj: 'p1', id: 'plot.png', error: '后端原句' }))
+    expect(statusKey()).toBe('status.renderFailedWithError')
   })
 })

@@ -1396,6 +1396,43 @@ describe('跨图邻居补渲染（ADR 0128 §二）', () => {
     })
   })
 
+  describe('未采用 PNG 源图：tracked 路径不发无策略渲染；style-bound 画布照旧渲染（#1145，Codex #1179 r4313254705）', () => {
+    const guard = { version: 1, requiredFrame: 'figsize', sourceId: 'same.png', bytesSha256: 'a'.repeat(64), sizeBytes: 9 } as const
+    const png = (extra: Partial<PanelObject> = {}) =>
+      ({ ...panel('p', 'same.png', 0), fileKind: 'raster', ...extra }) as PanelObject
+    const edited = [{ gid: 'g', prop: 'color', value: '#000' }] as PanelObject['overrides']
+
+    it('styleBound：未采用的照旧渲染（它是结清样式债的唯一 manifest 来源）；采用过的 / 有 override 的 / 普通 PDF 面板同样入选', () => {
+      expect(renderTargets([png()], null, {}, {}, {}, true)).toHaveLength(1)
+      expect(renderTargets([png({ artifactValidation: guard })], null, {}, {}, {}, true)).toHaveLength(1)
+      expect(renderTargets([png({ overrides: edited })], null, {}, {}, {}, true)).toHaveLength(1)
+      expect(renderTargets([panel('a', 'Fig1.pdf', 0)], null, {}, {}, {}, true)).toHaveLength(1)
+    })
+
+    it('tracked（脚本已变）：未采用的不渲染；采用过的照旧', () => {
+      expect(renderTargets([png()], null, { 'same.png': true })).toEqual([])
+      expect(renderTargets([png({ artifactValidation: guard })], null, { 'same.png': true })).toHaveLength(1)
+    })
+
+    it('进编辑的那张照旧入选（采用请求由 admitPngEntry 自己发）', () => {
+      expect(renderTargets([png()], 'p', {})).toHaveLength(1)
+    })
+
+    it('syncEngine：tracked 时未采用 PNG 不发任何渲染；style-bound 画布上发一次（无 policy 的 patches=[]）', () => {
+      useRenderStore.getState().markStale(['same.png'])
+      syncEngine([png()], null)
+      expect(calls).toEqual([])
+      const before = useDocumentStore.getState().doc
+      try {
+        useDocumentStore.setState({ doc: { ...before, style: { id: 's', detached: false } } as unknown as FigureDocument })
+        syncEngine([png()], null)
+        expect(calls).toHaveLength(1)
+      } finally {
+        useDocumentStore.setState({ doc: before })
+      }
+    })
+  })
+
   it('syncEngine：进编辑时发出邻居的渲染；快速编辑不发', async () => {
     const { useWorkspaceStore } = await import('@/store/workspaceStore')
     for (const [mode, expected] of [

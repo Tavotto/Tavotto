@@ -1,0 +1,22 @@
+{
+  "status": "UNSIGNED TEMPLATE — NOT AN AUTHORIZATION",
+  "body": {
+    "protocol": "cla-holder-authorization-v1",
+    "id": "PENDING NEW AUTHORIZATION ID",
+    "holder_id": null,
+    "holder_name": "PENDING RIGHTS-HOLDER APPROVAL",
+    "repository_id": null,
+    "repository": "PENDING EXACT REPOSITORY",
+    "agreement_kind": "individual",
+    "agreement_version": "PENDING EXACT VERSION",
+    "agreement_sha256": "PENDING SHA256 OF APPROVED DOCUMENT BYTES",
+    "purpose": "countersign-after-personal-contributor-signature",
+    "scope": "adult-independent-own-rights",
+    "approved_at": null,
+    "not_before": null,
+    "expires_at": null,
+    "key_sha256": "PENDING INDEPENDENT IDENTITY-KEY REGISTRATION"
+  },
+  "signature": null,
+  "initial_control": null
+}

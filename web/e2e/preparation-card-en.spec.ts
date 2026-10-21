@@ -36,8 +36,9 @@ test('English guide card: one sentence, one primary button, through to editing',
   const project = path.join(root, 'proj')
   mkdirSync(project, { recursive: true })
   writeFileSync(path.join(project, 'plot.py'), SCRIPT, 'utf-8')
+  let a: Awaited<ReturnType<typeof app>> | undefined
   try {
-    const a = await app({ figures: project })
+    a = await app({ figures: project })
     await page.setViewportSize({ width: 1400, height: 900 })
     await page.goto(a.baseURL)
     await expect(page.locator('[data-work-panel]')).toBeVisible({ timeout: 30_000 })
@@ -64,6 +65,16 @@ test('English guide card: one sentence, one primary button, through to editing',
     await expect(pill(page)).toHaveCount(0)
     await expect(page.locator('[data-element-svg] svg').first()).toBeVisible({ timeout: 120_000 })
   } finally {
-    rmSync(root, { recursive: true, force: true })
+    // Windows 上后端仍持有 figure_snapshots/.lock 时，不能先删项目目录。
+    try {
+      await a?.stop()
+      if (a) {
+        expect(a.proc.exitCode !== null || a.proc.signalCode !== null, 'backend must exit before removing its project').toBe(true)
+      }
+    } finally {
+      if (!a || a.proc.exitCode !== null || a.proc.signalCode !== null) {
+        rmSync(root, { recursive: true, force: true })
+      }
+    }
   }
 })

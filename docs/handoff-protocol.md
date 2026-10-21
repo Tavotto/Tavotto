@@ -22,6 +22,11 @@ tavotto doctor [--json] [--write-manifest|--remove-manifest]
 * `--json` —— 输出一行机器可读 JSON。**成功和失败都有**，失败那行带稳定的 `code`。
 * `--no-probe` —— `.py` 目标静态解不出产出时**不**试运行（只按现有登记打开）。
 * `--stem <名字>` —— 脚本产出多张图时显式选哪张（只对 `.py` 目标有效）。
+* `--origin-json FILE` —— **仅记录模式**（加性，`protocol` 仍为 1；ADR 0139 PR3 第一片）：读 FILE 里
+  插件在**真的跑了脚本**之后收集的来源事实，按产物 PNG 的字节 sha256 写进 `data_dir()/origin/`，
+  输出 `{"ok": true, "origin": {"recorded": N, "skipped": M}}`；不登记、不唤起、不执行。
+  记不进去也退出 0（只是线索）；老 CLI 不认识这个参数（argparse 退出 2），插件当作没记。
+  记录只做展示：不进 exact / needs_confirmation 的判定，不用来换解释器。
 * `--render-wait SECONDS` —— 唤起后最多等多久，看界面对目标图的那一次渲染有没有结论
   （默认 20；0 = 不等；`--no-launch` 下无意义）。见下文「交接三态」。
 
@@ -119,6 +124,18 @@ macOS 上**不再直接 exec 包内二进制**：GUI 进程会继承调用方的
 最准）→ 安装清单里核实过的 `desktop` → 惯例位置。少了中间两条，发现链找得到
 CLI、唤起却静默退回浏览器模式——用户明明装了桌面版却看不到窗口。
 
+### 来源记录（ADR 0139 PR3，加性）
+
+插件 `handoff.py` 只在**这次真的跑了脚本**（输出 `ran: true`）时，让跑脚本的那个 Python 进程在退出时
+把「我用的环境」写进旁路 JSON（`PYTHONPATH` 前置一个临时 `sitecustomize`，先链回用户自己的；脚本、argv、cwd、
+stdout 不变），再把其中白名单字段和**这次真的重写了的 PNG**（跑前跑后 mtime/size 快照之差）交给
+`tavotto open --origin-json`。字段（闭集）：python_version、matplotlib_version、backend、figure_dpi
+（= 脚本进程退出时刻 `rcParams["figure.dpi"]` 的值）。**不记**savefig 的 dpi / bbox_inches 等——逐次
+`savefig(...)` 的实参探针看不到，记 rc 值会误导。**不记**解释器绝对路径、argv、环境变量。插件输出多一个
+`origin: {"recorded": N}`（或 `{"recorded": 0, "reason": ...}`）。产物没重跑、脚本失败、脚本没导入
+matplotlib 一律不写（诚实缺失）；用户在终端里直接跑出来的图没有记录。第一片只记录与展示；保存瞬间
+证据、按记录选解释器是后续，需单独 ADR 与用户授权。
+
 ### 交接三态：`launch.render`（加性字段，`protocol` 仍为 1）
 
 `ok: true` 的含义**没有变**：CLI 层 = 解析、登记、唤起成功且（桌面模式）进程活着；插件层 =
@@ -133,8 +150,8 @@ CLI、唤起却静默退回浏览器模式——用户明明装了桌面版却�
 | `render.status` | 含义 | 附带字段 |
 | --- | --- | --- |
 | `ok` | 界面对目标 stem 的那次渲染成功了 | `verified`、`stem`、`registry_match`、`manifest_elements` |
-| `failed` | 实例**明确报了渲染失败** | `code`：worker 的稳定码（`engine_files_incomplete`、`missing_dependency`…；不合规的串落成 `render_failed`） |
-| `unverified` | 没法下结论——**不是失败** | `reason`：`not_waited` / `timeout` / `channel_unavailable` / `no_target_stem` / `not_renderable` |
+| `failed` | 实例**明确报了渲染失败** | `code`：worker 的稳定码（`engine_files_incomplete`、`missing_dependency`、选中原件核对不上的 `artifact_source_unavailable`…；不合规的串落成 `render_failed`） |
+| `unverified` | 没法下结论——**不是失败** | `reason`：`not_waited` / `timeout` / `channel_unavailable` / `no_target_stem` / `not_renderable` / `already_displayed` |
 
 `verified` 为 true 当且仅当：渲染成功 ∧ 结论里的 stem == 目标 stem ∧ 注册表里确有这个 stem ∧ manifest 非空
 （判据唯一在 `engine/handoffreceipt.py::summarize`，调用方不要自己再判一遍）。`waited_ms` 是实际等了多久。
@@ -147,6 +164,12 @@ sidecar 发布的**只读、只对这一个端点有效**的 token（`<数据目
 见 ADR 0131 第六节「实现」与 ADR 0008 修订）。找不到任何凭据 / 连不上实例 / 被拒落成 `unverified/channel_unavailable`；
 连上了但到点没有结论（实例在跑但没有给出结论）落成 `unverified/timeout`；
 目录级 / 多 Figure 交接没有目标 stem，落成 `unverified/no_target_stem`；登记结果已是不可参数化（`registry.parameterizable === false`，界面不会为它发起引擎渲染）时**不等待**，直接 `unverified/not_renderable`。
+
+**重复交接已显示着的同一张图（2026-10-18，#1154）**：前端只选中、不再渲染，所以结论表里没有 `since` 之后的新结论，
+CLI 过去会白等满 `--render-wait`（默认 20 秒）再报 `unverified/timeout`。现在前端命中已显示的面板时会经**会话认证**的
+`POST /api/handoff/display-ack` 回一条确认：上一次渲染成功就按当前时间记一条同形状的 `ok`（`verified` 仍只由 `summarize` 判）；
+失败记 `failed` + 稳定码；显示着的内容不是这一版的精确渲染（过期等）则记 `unverified/already_displayed`——实例明确应答了、
+但没有可凭的渲染结论，**不是失败，也不是 verified**。老前端不发确认时与从前一样等到超时。这个写入口 scoped 只读 token **不能**用。
 
 ### `tavotto open --json` 失败时
 

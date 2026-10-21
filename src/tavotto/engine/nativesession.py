@@ -59,15 +59,16 @@ reader 线程**不碰 Figure**：Figure 只在用户进程的主线程里动（A
 from __future__ import annotations
 
 import collections
+import copy
 import hashlib
 import json
 import os
 import socket
 import threading
 import time
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
-from . import envlease, nativerelay, patchspec, pool, runcodes
+from . import envlease, executionfact, figcapture, nativerelay, patchspec, pool, runcodes
 from .runcodes import RunError
 
 #: 带外事件的键——**与 `bridge_runner.EVENT_KEY` 严格同源**。
@@ -124,6 +125,15 @@ EXPORT_TIMEOUT = pool.EXPORT_TIMEOUT
 EVENT_LOG_MAX = 200
 
 
+def _canonical_execution_script(value) -> str:
+    if not isinstance(value, str) or not value or len(value) > 16384 or "\0" in value:
+        raise ValueError("invalid native execution script")
+    path = PurePosixPath(figcapture.normalize_relative_script(value))
+    if path.as_posix() != value or not path.parts or ".." in path.parts:
+        raise ValueError("native execution script must be a canonical project path")
+    return value
+
+
 def interpreter_fingerprint(python: str) -> str:
     """解释器的稳定指纹（`realpath`）。
 
@@ -131,6 +141,15 @@ def interpreter_fingerprint(python: str) -> str:
     `/opt/…/python3.13` 可能是同一个解释器，重新 attach 时该认出来是同一个。
     """
     return hashlib.sha256(os.path.realpath(str(python)).encode("utf-8")).hexdigest()[:16]
+
+
+class _RequestOutcomeUnknown(RunError):
+    """Local transport evidence: bytes may have reached the runner, no valid reply.
+
+    This does not assert that user code resumed. It only prevents reusing a
+    pre-release Figure receipt after a possibly dispatched continue command.
+    The distinction stays local; error codes and wire payloads are unchanged.
+    """
 
 
 class NativeTransport:
@@ -251,16 +270,29 @@ class NativeTransport:
             raise RunError(runcodes.NATIVE_SESSION_DISCONNECTED)
         env = pool.build_envelope(obj, generation=generation, revision=revision)
         rid = env["request_id"]
+        data = (json.dumps(env, ensure_ascii=False) + "\n").encode("utf-8")
         slot = {"event": threading.Event(), "frame": None}
-        with self._lock:
-            self._waiters[rid] = slot
-        try:
-            with self._send_lock:
-                self.sock.sendall((json.dumps(env, ensure_ascii=False) + "\n").encode("utf-8"))
-        except OSError as exc:
+        with self._send_lock:
             with self._lock:
-                self._waiters.pop(rid, None)
-            raise RunError(runcodes.NATIVE_SESSION_DISCONNECTED) from exc
+                # Recheck after waiting for the sender lock. A known closed or
+                # poisoned channel has not dispatched this request at all.
+                if self.poison is not None:
+                    raise RunError(runcodes.NATIVE_RELAY_FAILED)
+                if self._closed:
+                    raise RunError(runcodes.NATIVE_SESSION_DISCONNECTED)
+                self._waiters[rid] = slot
+            try:
+                self.sock.sendall(data)
+            except OSError as exc:
+                with self._lock:
+                    self._waiters.pop(rid, None)
+                    if self.poison is None:
+                        self.poison = {
+                            "code": runcodes.NATIVE_SESSION_DISCONNECTED,
+                            "detail": "请求发送失败，执行结果未知",
+                        }
+                # sendall may write part or all of a frame before failing.
+                raise _RequestOutcomeUnknown(runcodes.NATIVE_SESSION_DISCONNECTED) from exc
         if not slot["event"].wait(timeout):
             with self._lock:
                 self._waiters.pop(rid, None)
@@ -271,10 +303,10 @@ class NativeTransport:
                         "code": runcodes.NATIVE_RELAY_FAILED,
                         "detail": f"请求超时（{int(timeout)}s）",
                     }
-            raise RunError(runcodes.NATIVE_RELAY_FAILED)
+            raise _RequestOutcomeUnknown(runcodes.NATIVE_RELAY_FAILED)
         frame = slot["frame"]
         if frame is None:
-            raise RunError(runcodes.NATIVE_SESSION_DISCONNECTED)
+            raise _RequestOutcomeUnknown(runcodes.NATIVE_SESSION_DISCONNECTED)
         got, ver = frame.get("request_id"), frame.get("protocol_version")
         if got != rid or ver != pool.PROTOCOL_VERSION:
             with self._lock:
@@ -282,7 +314,16 @@ class NativeTransport:
                     "code": runcodes.NATIVE_RELAY_FAILED,
                     "detail": f"回显对不上: request_id={got!r} protocol_version={ver!r}",
                 }
-            raise RunError(runcodes.NATIVE_RELAY_FAILED)
+            raise _RequestOutcomeUnknown(runcodes.NATIVE_RELAY_FAILED)
+        if not isinstance(frame.get("ok"), bool) or (
+            frame.get("ok") is False and not isinstance(frame.get("error") or {}, dict)
+        ):
+            with self._lock:
+                self.poison = {
+                    "code": runcodes.NATIVE_RELAY_FAILED,
+                    "detail": "响应缺少有效的成功或失败结果",
+                }
+            raise _RequestOutcomeUnknown(runcodes.NATIVE_RELAY_FAILED)
         if not frame.get("ok"):
             err = frame.get("error") or {}
             raise pool.WorkerError(
@@ -365,6 +406,20 @@ class NativeSession:
         self.events: collections.deque = collections.deque(maxlen=EVENT_LOG_MAX)
         self.transport: NativeTransport | None = None
         self.generation = 1
+        # Receipt identity advances when user code leaves or reaches a barrier.
+        # Wire generation remains unchanged; repeated build/render requests at
+        # the same barrier must keep a stable Figure snapshot identity.
+        self.snapshot_epoch = 0
+        # The receipt epoch at entry to this barrier. EOF and a failed release
+        # waiter can revoke it concurrently; both must count the same loss once.
+        self._barrier_snapshot_epoch: int | None = None
+        # Set only at the authenticated runner's compiled target exec boundary
+        # or successful barrier release; never hello, spawn or failed preflight.
+        self.execution_id: str | None = None
+        self.execution_script: str | None = None
+        self.execution_started_ns = 0
+        # Application-owned, public invalidation projection; no launch spec/argv.
+        self.figure_snapshot_invalidation: dict | None = None
         self.rev = 0
         #: 与 `pool.EngineWorker.built` **同名同义**——「脚本跑过了没有」。
         #: `app.py` 的渲染端点用 `not worker.built` 判冷启动（发 render.started
@@ -396,10 +451,17 @@ class NativeSession:
     # ------------------------------------------------------------------
     # 状态机
     # ------------------------------------------------------------------
-    def _set_state(self, state: str, **fields) -> None:
+    def _set_state(
+        self, state: str, *, _expected_snapshot_epoch: int | None = None, **fields
+    ) -> None:
         if state not in STATES:
             raise ValueError(f"未知的 native 会话状态: {state!r}")
         with self._changed:
+            if (
+                _expected_snapshot_epoch is not None
+                and self.snapshot_epoch != _expected_snapshot_epoch
+            ):
+                return  # A newer barrier/event has already superseded this response.
             if self.state in TERMINAL_STATES and state not in TERMINAL_STATES:
                 # 终态不回头。回头的具体形状是：脚本已经退出了，UI 却因为一条
                 # 迟到的事件又显示成"正在运行"。
@@ -442,7 +504,34 @@ class NativeSession:
             self.note_hello(frame)
             return
         name = frame.get(EVENT_KEY)
-        if name == "barrier":
+        if name == "execution_started":
+            execution_id = frame.get("execution_id")
+            if not executionfact.valid_id(execution_id):
+                return
+            try:
+                script = (
+                    _canonical_execution_script(frame["script"])
+                    if frame.get("script") is not None
+                    else None
+                )
+            except ValueError:
+                return
+            with self._lock:
+                if self.execution_id is not None or self.state not in {
+                    STARTING_PYTHON,
+                    WAITING_FOR_FIGURE,
+                    RUNNING_SCRIPT,
+                }:
+                    return
+                self.execution_id = execution_id
+                self.execution_started_ns = executionfact.started_ns(execution_id)
+                self.execution_script = script
+            self._set_state(RUNNING_SCRIPT, execution_started=True)
+        elif name == "barrier":
+            with self._lock:
+                if self.state != BARRIER:
+                    self.snapshot_epoch += 1
+                    self._barrier_snapshot_epoch = self.snapshot_epoch
             stems = frame.get("stems") or []
             facts = frame.get("figure_facts")
             if isinstance(facts, list):
@@ -456,10 +545,21 @@ class NativeSession:
                 script_error=frame.get("script_error") or None,
             )
         elif name == "released":
+            with self._lock:
+                if "execution_id" in frame:
+                    if self.state not in {BARRIER, CONTINUING} or not self._accept_release_fact(
+                        frame
+                    ):
+                        return
+                if self.state == BARRIER:
+                    self.snapshot_epoch += 1
+                self._barrier_snapshot_epoch = None  # The runner confirms release.
             self._set_state(RUNNING_SCRIPT, barrier_reason="")
         elif name == INPUT_REQUEST_EVENT:
             self._on_input_request(frame)
         elif name == "exit":
+            with self._lock:
+                self._barrier_snapshot_epoch = None
             self._release_lease()
             self._set_state(
                 ENDED,
@@ -467,8 +567,47 @@ class NativeSession:
                 figures_captured=_as_int(frame.get("figures")) or 0,
             )
         elif name == "shutdown":
+            with self._lock:
+                self._barrier_snapshot_epoch = None
             self._release_lease()
             self._set_state(ENDED)
+
+    def _accept_release_fact(self, frame: dict) -> bool:
+        """Accept one trusted release fact, under ``_lock``; both channels agree.
+
+        The runner generates the fact only after release_barrier succeeds.
+        HTTP success or a legacy response with no fact cannot create one here.
+        """
+        execution_id = frame.get("execution_id")
+        if (
+            not executionfact.valid_id(execution_id)
+            or self.execution_id is None
+            or frame.get("script") != self.execution_script
+        ):
+            return False
+        if execution_id == self.execution_id:
+            return True
+        started_ns = executionfact.started_ns(execution_id)
+        if started_ns <= self.execution_started_ns:
+            return False
+        self.execution_id = execution_id
+        self.execution_started_ns = started_ns
+        return True
+
+    def _revoke_pending_barrier(self) -> bool:
+        """Revoke one unconfirmed barrier, with ``_lock`` held.
+
+        Local terminal states (notably one-way terminate) are not runner
+        acknowledgements. Only trusted release/end frames or a successful
+        continue response clear this pending barrier without uncertainty.
+        """
+        if self._barrier_snapshot_epoch is not None:
+            changed = self.snapshot_epoch == self._barrier_snapshot_epoch
+            if changed:
+                self.snapshot_epoch += 1
+            self._barrier_snapshot_epoch = None
+            return changed
+        return False
 
     def _on_transport_closed(self, reason: dict | None) -> None:
         owned = self.owned
@@ -476,8 +615,14 @@ class NativeSession:
             # 所有者主动取消（SIGTERM / TerminateJobObject）：对端被杀，Windows 上 reader 读到的是
             # `ConnectionResetError` 而不是干净 EOF——那是取消的后果，不是「连接故障」。取消的终态是 ENDED
             reason = None
+        with self._lock:
+            # EOF releases a runner barrier even without a continue request.
+            # Its Figure may change after contact is lost; do not assert exec.
+            revoked = self._revoke_pending_barrier()
         self._release_lease()
         if self.state in TERMINAL_STATES:
+            if revoked:
+                self._publish()  # Local optimistic ENDED is not a runner acknowledgement.
             return
         if reason is None:
             self._set_state(ENDED)
@@ -673,6 +818,18 @@ class NativeSession:
         return dict(rt) if isinstance(rt, dict) else None
 
     @property
+    def observed_inputs(self) -> dict | None:
+        """桌面拥有的运行在脚本**跑完之后**的 build 才带的输入观察（`figcapture.InputObserver.report()`，#1047）：观察到的
+        项目内数据文件与本地模块（项目相对路径 + sha256）。`show()` 屏障上的 build 没有它（脚本还没跑完）= None。
+        含项目相对路径：只给启动记录用，不进 `public_state()` / 事件 / 诊断。存储仍只有 `last_build` 一份。"""
+        ins = (
+            (self.last_build or {}).get("observed_inputs")
+            if isinstance(self.last_build, dict)
+            else None
+        )
+        return dict(ins) if isinstance(ins, dict) else None
+
+    @property
     def child_pid(self) -> int | None:
         """与 `pool.EngineWorker.child_pid` 同名同义（ADR 0070）：握手帧里用户进程自报的 pid——回执核
         「自报来自这一个进程」用；没握过手就是 None（那一维不核）。存储仍只有 `process_pid` 一份。"""
@@ -700,6 +857,15 @@ class NativeSession:
         self.stems = list((resp.get("stems") or {}).keys())
         self.script_error = resp.get("script_error") or self.script_error
         return resp
+
+    def publish_built(self) -> None:
+        """build 出来的描述符已经绑上活路由：把带描述符的新快照推给界面（状态不变，序号 +1）。
+
+        桌面拥有的会话由准备 runner 自己 build，屏障事件在 build 之前就发出了——界面手里这条会话的 `descriptors`
+        还是空的，面板按描述符认领会话，认不到就把一张活着的图报成「会话已结束」。`GET /api/native/sessions`
+        的快照与屏障事件同序号，`refresh()` 的「序号更大才覆盖」也补不上，所以要由后端发一条序号更大的。
+        终端拥有的会话不走这里：界面在屏障处自己 build，再多一条事件只会让它再 build 一次。"""
+        self._publish(built="descriptors")
 
     def override(
         self, stem: str, patches: list, preview_dpi: int | None = None, inline_svg: bool = False
@@ -749,7 +915,18 @@ class NativeSession:
         if self.inconsistent if stem is None else stem in self.inconsistent:
             raise RunError(runcodes.NATIVE_FIGURE_INCONSISTENT)
 
-    def export(self, stem: str, patches: list, path: str, fmt: str = "pdf", dpi: int = 600) -> dict:
+    def export(
+        self,
+        stem: str,
+        patches: list,
+        path: str,
+        fmt: str = "pdf",
+        dpi: int = 600,
+        *,
+        svg_path: str | None = None,
+        require_built: bool = False,
+        snapshot_only: bool = False,
+    ) -> dict:
         with self._figure_lock:
             self._require_consistent(stem)
             resp = self._request(
@@ -760,6 +937,9 @@ class NativeSession:
                     "path": path,
                     "format": fmt,
                     "dpi": dpi,
+                    **({"svg_path": svg_path} if svg_path is not None else {}),
+                    **({"require_built": True} if require_built else {}),
+                    **({"snapshot_only": True} if snapshot_only else {}),
                 },
                 EXPORT_TIMEOUT,
             )
@@ -839,13 +1019,39 @@ class NativeSession:
         """
         with self._figure_lock:
             self._require_consistent()
+            previous_epoch = self.snapshot_epoch
             try:
                 resp = self._request({"cmd": "continue"}, REQUEST_TIMEOUT)
+            except _RequestOutcomeUnknown:
+                with self._lock:
+                    # The release event may already have revoked this epoch.
+                    # Never manufacture execution_id: resumption is unknown.
+                    if self.snapshot_epoch == previous_epoch:
+                        self.snapshot_epoch += 1
+                self._publish()
+                raise
             except pool.WorkerError as exc:
                 if getattr(exc, "code", "") == runcodes.NATIVE_FIGURE_INCONSISTENT:
                     raise RunError(runcodes.NATIVE_FIGURE_INCONSISTENT) from exc
                 raise
-            self._set_state(then)
+            with self._lock:
+                if resp.get("released") is True:
+                    self._accept_release_fact(resp)
+                # The released event may already have advanced it. Either way,
+                # successful continuation revokes the old Figure immediately,
+                # including when the script ends without another barrier.
+                if self.snapshot_epoch == previous_epoch:
+                    self.snapshot_epoch += 1
+                if self._barrier_snapshot_epoch == previous_epoch:
+                    self._barrier_snapshot_epoch = None
+                if then == DETACHED:
+                    # The next barrier can arrive before this response. Detach
+                    # closes that barrier too, while resume must preserve it.
+                    self._revoke_pending_barrier()
+            self._set_state(
+                then,
+                _expected_snapshot_epoch=previous_epoch + 1 if then == CONTINUING else None,
+            )
             return resp
 
     def terminate(self) -> dict:
@@ -867,6 +1073,10 @@ class NativeSession:
         放开屏障（ADR 0021 §8.1），脚本照常跑完——这正是"关掉 App 默认
         detach and continue"的机制。
         """
+        with self._lock:
+            # Controller shutdown is detach-and-continue, unlike a trusted
+            # runner "shutdown" event. Revoke before publishing DETACHED.
+            revoked = self._revoke_pending_barrier()
         self._release_lease()
         # **先标状态再关连接**：关连接会让 reader 线程走到 `_on_transport_closed`，
         # 那条路把会话记成 `ended`（对端正常收摊）。反过来做的话，我们自己
@@ -874,6 +1084,8 @@ class NativeSession:
         # 显示"会话已结束 退出码 None"，用户以为他的脚本被杀了。
         if self.state not in TERMINAL_STATES:
             self._set_state(DETACHED)
+        elif revoked:
+            self._publish()
         if self.transport is not None:
             self.transport.close()
 
@@ -912,6 +1124,11 @@ class NativeSession:
             "sequence": self.sequence,
             "editable": self.state == BARRIER,
             "pending_input": self.pending_input,
+            **(
+                {"figure_snapshot_invalidation": copy.deepcopy(self.figure_snapshot_invalidation)}
+                if self.figure_snapshot_invalidation is not None
+                else {}
+            ),
         }
 
     def diagnostics(self) -> dict:
@@ -1251,6 +1468,25 @@ class NativeSessionRegistry:
         if session is None or not session.alive():
             return None
         return session
+
+    def script_route_conflict(
+        self, project_root: str, script: str, *, exclude_session_id: str = ""
+    ) -> bool:
+        """Whether another live session already owns any route for this script.
+
+        A second terminal invocation may execute, but must not use its start
+        fact to revoke the first invocation's established source ownership.
+        This is a read-only eligibility check, not a claim or route takeover.
+        """
+        wanted = self.route_key(project_root, _canonical_execution_script(script), "")[:2]
+        with self._lock:
+            return any(
+                key[:2] == wanted
+                and session_id != exclude_session_id
+                and (session := self._sessions.get(session_id)) is not None
+                and session.alive()
+                for key, session_id in self._routes.items()
+            )
 
     def _drop_routes(self, session_id: str) -> None:
         with self._lock:

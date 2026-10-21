@@ -96,15 +96,341 @@ def host(tmp_path_factory):
     h.close()
 
 
-def _run(job: exportjob.ExportJob, project: Path, provider, host=None) -> dict:
+def _run(job: exportjob.ExportJob, project: Path, provider, host=None, *, resolver=None) -> dict:
     from tavotto.rendercore import job as rcjob
 
     def produce(j, tmp_dir):
         return rcjob.produce(
-            j, tmp_dir, sources=sources.StaticSourceResolver(project), provider=provider, host=host
+            j,
+            tmp_dir,
+            sources=resolver if resolver is not None else sources.StaticSourceResolver(project),
+            provider=provider,
+            host=host,
         )
 
     return exportjob.run(job, produce)
+
+
+@pytest.fixture
+def paired_source(project, provider):
+    """同一 IR 的真实 PDF / SVG；预算只缩小常量，不伪造文件大小或写入器。"""
+    from dataclasses import replace
+
+    from tavotto.engine import figcapture
+    from tavotto.rendercore import ir, pdfwriter, svgwriter
+
+    shape = ir.Path(
+        (("M", 10, 10), ("L", 50, 10), ("L", 50, 40), ("L", 10, 40), ("Z",)),
+        fill=ir.Paint((1, 0, 0)),
+    )
+    page = ir.Page(100, 60, (shape,))
+    pdf_path, svg_path = project / "pair.pdf", project / "pair.svg"
+    pdfwriter.write_pdf(page, pdf_path, provider)
+    svgwriter.write_svg(page, svg_path, provider)
+
+    def freeze(path):
+        return sources.FrozenSource(
+            artifact=figcapture.source_artifact_from_file(
+                path,
+                source_id="runtime:plot.py#Fig1",
+                origin=figcapture.ORIGIN_EXECUTION,
+                receipt_id="sha256:" + "1" * 64,
+                receipt_identity="sha256:" + "2" * 64,
+                generation=1,
+                patch_hash="sha1:abc",
+            ),
+            path=path,
+        )
+
+    return replace(freeze(pdf_path), svg=freeze(svg_path))
+
+
+def _run_pair(project, provider, host, tmp_path, fs, formats):
+    resolver = sources.ExecutionSourceResolver(
+        static=sources.StaticSourceResolver(project), execute=lambda _obj: fs
+    )
+    job = exportjob.prepare(
+        _spec(
+            [
+                {
+                    "type": "panel",
+                    "id": fs.artifact.source_id,
+                    "x_mm": 5,
+                    "y_mm": 5,
+                    "w_mm": 60,
+                    "h_mm": 40,
+                }
+            ],
+            formats=formats,
+            ppi=72,
+        ),
+        tmp_path,
+    )
+    return _run(job, project, provider, host, resolver=resolver)
+
+
+def _assert_real_outputs(payload, directory, formats):
+    """核最终发布的容器，而不只信 payload.status。"""
+    import xml.etree.ElementTree as ET
+
+    import pikepdf
+    from PIL import Image
+
+    outputs = {item["format"]: item for item in payload["outputs"]}
+    for fmt in formats:
+        item = outputs[fmt]
+        assert item["status"] == "done", payload
+        path = directory / item["name"]
+        if fmt == "pdf":
+            with pikepdf.open(path) as doc:
+                assert len(doc.pages) == 1
+                assert b"Do" in doc.pages[0].Contents.read_bytes()
+        elif fmt == "svg":
+            root = ET.parse(path).getroot()
+            assert root.tag == "{http://www.w3.org/2000/svg}svg"
+            assert list(root.iter("{http://www.w3.org/2000/svg}path"))
+        else:
+            with Image.open(path) as image:
+                image.load()
+                assert image.format == {"png": "PNG", "tiff": "TIFF"}[fmt]
+                assert image.size == (340, 170)
+                assert image.convert("RGB").getextrema()[1][0] < 255
+
+
+@pytest.mark.parametrize("formats", [("pdf",), ("png",), ("tiff",), ("pdf", "png", "tiff")])
+@pytest.mark.parametrize("budget", ["canonical", "pair"])
+def test_non_svg_formats_budget_and_read_only_the_canonical_source(
+    project, provider, host, tmp_path, monkeypatch, paired_source, formats, budget
+):
+    """主语：produce 消费的字节；非 SVG 在 canonical 峰值恰好够时成功，companion 零读取。"""
+    import builtins
+
+    from tavotto.rendercore import job as rcjob
+
+    size = paired_source.artifact.size_bytes
+    svg_size = paired_source.svg.artifact.size_bytes
+    limit = size * 2 if budget == "canonical" else size + svg_size + max(size, svg_size)
+    monkeypatch.setattr(rcjob, "SOURCE_BYTES_BUDGET", limit)
+    # 冻结完成以后观察整个 produce：即使绕开 read_frozen，也不能 stat / open companion。
+    for owner, name in ((builtins, "open"), (Path, "open"), (Path, "stat")):
+        original = getattr(owner, name)
+
+        def guard(path, *args, _original=original, **kwargs):
+            if isinstance(path, (str, Path)) and Path(path) == paired_source.svg.path:
+                pytest.fail("non-SVG export accessed its unused companion")
+            return _original(path, *args, **kwargs)
+
+        monkeypatch.setattr(owner, name, guard)
+    calls = []
+    real = rcjob.read_frozen
+
+    def counting(fs):
+        calls.append(fs.artifact.kind)
+        return real(fs)
+
+    monkeypatch.setattr(rcjob, "read_frozen", counting)
+    payload = _run_pair(project, provider, host, tmp_path / "out", paired_source, formats)
+    assert payload["status"] == "done", payload
+    assert calls == ["pdf"]
+    _assert_real_outputs(payload, tmp_path / "out", formats)
+
+
+@pytest.mark.parametrize("formats", [("svg",), ("pdf", "png", "tiff", "svg")])
+def test_svg_companion_budget_preserves_peak_boundary_and_other_formats(
+    project, provider, host, tmp_path, monkeypatch, paired_source, formats
+):
+    """SVG 仍计 sum + max；单 SVG 超限零读，混合请求只读/交付 canonical 那一路。"""
+    from tavotto.rendercore import job as rcjob
+
+    sizes = [paired_source.artifact.size_bytes, paired_source.svg.artifact.size_bytes]
+    peak = sum(sizes) + max(sizes)
+    monkeypatch.setattr(rcjob, "SOURCE_BYTES_BUDGET", peak - 1)
+    calls = []
+    real = rcjob.read_frozen
+
+    def counting(fs):
+        calls.append(fs.artifact.kind)
+        return real(fs)
+
+    monkeypatch.setattr(rcjob, "read_frozen", counting)
+    payload = _run_pair(project, provider, host, tmp_path / "over", paired_source, formats)
+    if formats == ("svg",):
+        assert payload["status"] == "failed", payload
+        error = payload["error"]
+        assert error["code"] == "export_render_failed"
+        assert calls == []
+    else:
+        assert payload["status"] == "partial", payload
+        error = next(item for item in payload["outputs"] if item["format"] == "svg")["error"]
+        assert error["code"] == "format_failed"
+        assert calls == ["pdf"]
+        _assert_real_outputs(payload, tmp_path / "over", ("pdf", "png", "tiff"))
+    assert "source_budget_exceeded" in error["params"]["reason"]
+    assert error["params"]["source_bytes"] == sum(sizes)
+    assert error["params"]["peak_bytes"] == peak
+    assert error["params"]["budget"] == peak - 1
+    assert not (tmp_path / "over" / "Fig 1.svg").exists()
+
+    monkeypatch.setattr(rcjob, "SOURCE_BYTES_BUDGET", peak)
+    calls.clear()
+    payload = _run_pair(project, provider, host, tmp_path / "exact", paired_source, formats)
+    assert payload["status"] == "done", payload
+    assert calls == ["pdf", "svg"]
+    _assert_real_outputs(payload, tmp_path / "exact", formats)
+
+
+@pytest.mark.parametrize("formats", [("pdf", "png", "tiff"), ("svg",), ("pdf", "svg")])
+def test_canonical_source_over_budget_still_fails_every_format_before_reading(
+    project, provider, tmp_path, monkeypatch, paired_source, formats
+):
+    from tavotto.rendercore import job as rcjob
+
+    monkeypatch.setattr(rcjob, "SOURCE_BYTES_BUDGET", paired_source.artifact.size_bytes * 2 - 1)
+    monkeypatch.setattr(rcjob, "read_frozen", lambda _fs: pytest.fail("over-budget source read"))
+    payload = _run_pair(project, provider, None, tmp_path / "out", paired_source, formats)
+    assert payload["status"] == "failed", payload
+    assert payload["error"]["code"] == "export_render_failed"
+    assert "source_budget_exceeded" in payload["error"]["params"]["reason"]
+
+
+@pytest.mark.parametrize("change", ["hash", "missing"])
+def test_unusable_canonical_source_still_fails_the_whole_mixed_request(
+    project, provider, tmp_path, monkeypatch, paired_source, change
+):
+    from tavotto.rendercore import job as rcjob
+
+    path = paired_source.path
+    if change == "hash":
+        data = path.read_bytes()
+        path.write_bytes(data[:-1] + b" ")
+    else:
+        path.unlink()
+    calls = []
+    real = rcjob.read_frozen
+
+    def read(fs):
+        calls.append(fs.artifact.kind)
+        return real(fs)
+
+    monkeypatch.setattr(rcjob, "read_frozen", read)
+    payload = _run_pair(
+        project, provider, None, tmp_path / "out", paired_source, ("pdf", "png", "tiff", "svg")
+    )
+    assert payload["status"] == "failed", payload
+    assert payload["error"]["code"] == "export_render_failed"
+    code = "source_changed" if change == "hash" else "source_missing"
+    assert code in payload["error"]["params"]["reason"]
+    assert calls == ["pdf"]
+    assert not any((tmp_path / "out").glob("Fig 1.*"))
+
+
+@pytest.mark.parametrize(
+    "formats", [("svg",), ("pdf", "png", "tiff"), ("pdf", "png", "tiff", "svg")]
+)
+@pytest.mark.parametrize("change", ["hash", "missing"])
+def test_unusable_svg_companion_only_blocks_requested_svg(
+    project, provider, host, tmp_path, monkeypatch, paired_source, formats, change
+):
+    from tavotto.rendercore import job as rcjob
+
+    path = paired_source.svg.path
+    if change == "hash":
+        data = path.read_bytes()
+        path.write_bytes(data[:-1] + b" ")  # 同长改写：一定核 hash，不能只核 size。
+        assert path.stat().st_size == paired_source.svg.artifact.size_bytes
+    else:
+        path.unlink()
+    calls = []
+    real = rcjob.read_frozen
+
+    def counting(fs):
+        calls.append(fs.artifact.kind)
+        return real(fs)
+
+    monkeypatch.setattr(rcjob, "read_frozen", counting)
+    payload = _run_pair(project, provider, host, tmp_path / "out", paired_source, formats)
+    if "svg" not in formats:
+        assert payload["status"] == "done", payload
+        assert calls == ["pdf"]
+        _assert_real_outputs(payload, tmp_path / "out", formats)
+        return
+    assert calls == ["pdf", "svg"]
+    if formats == ("svg",):
+        assert payload["status"] == "failed", payload
+        error = payload["error"]
+        assert error["code"] == "export_render_failed"
+    else:
+        assert payload["status"] == "partial", payload
+        error = next(item for item in payload["outputs"] if item["format"] == "svg")["error"]
+        assert error["code"] == "format_failed"
+        _assert_real_outputs(payload, tmp_path / "out", ("pdf", "png", "tiff"))
+    code = "source_changed" if change == "hash" else "source_missing"
+    assert code in error["params"]["reason"]
+    assert error["params"]["id"] == paired_source.artifact.source_id
+    assert not (tmp_path / "out" / "Fig 1.svg").exists()
+
+
+@pytest.mark.parametrize("cancel", [False, True])
+def test_mixed_export_stops_companion_reads_after_failure_and_propagates_cancellation(
+    project, provider, host, tmp_path, monkeypatch, paired_source, cancel
+):
+    from dataclasses import replace
+
+    from tavotto.rendercore import job as rcjob
+
+    pairs = {}
+    for n in range(3):
+        sid = f"runtime:plot.py#Fig{n}"
+        pairs[sid] = replace(
+            paired_source,
+            artifact=replace(paired_source.artifact, source_id=sid),
+            svg=replace(
+                paired_source.svg, artifact=replace(paired_source.svg.artifact, source_id=sid)
+            ),
+        )
+    calls = []
+    real = rcjob.read_frozen
+
+    def read(fs):
+        sid, kind = fs.artifact.source_id, fs.artifact.kind
+        calls.append((sid, kind))
+        if (sid, kind) == ("runtime:plot.py#Fig1", "svg"):
+            if cancel:
+                raise exportjob.Cancelled()
+            # 第一份 SVG 已缓存；第二份读取时同长篡改，第三份绝不继续读。
+            data = fs.path.read_bytes()
+            fs.path.write_bytes(data[:-1] + b" ")
+        return real(fs)
+
+    monkeypatch.setattr(rcjob, "read_frozen", read)
+    resolver = sources.ExecutionSourceResolver(
+        static=sources.StaticSourceResolver(project), execute=lambda obj: pairs[obj["id"]]
+    )
+    job = exportjob.prepare(
+        _spec(
+            [
+                {"type": "panel", "id": sid, "x_mm": 5, "y_mm": 5, "w_mm": 60, "h_mm": 40}
+                for sid in pairs
+            ],
+            formats=("pdf", "png", "tiff", "svg"),
+            ppi=72,
+        ),
+        tmp_path / "out",
+    )
+    payload = _run(job, project, provider, host, resolver=resolver)
+    assert calls == [(sid, "pdf") for sid in pairs] + [
+        ("runtime:plot.py#Fig0", "svg"),
+        ("runtime:plot.py#Fig1", "svg"),
+    ]
+    if cancel:
+        assert payload["status"] == "cancelled", payload
+        assert not any((tmp_path / "out").glob("Fig 1.*"))
+    else:
+        assert payload["status"] == "partial", payload
+        _assert_real_outputs(payload, tmp_path / "out", ("pdf", "png", "tiff"))
+        error = next(item for item in payload["outputs"] if item["format"] == "svg")["error"]
+        assert "source_changed" in error["params"]["reason"]
+        assert not (tmp_path / "out" / "Fig 1.svg").exists()
 
 
 def test_a_text_only_canvas_exports_a_vector_pdf_and_a_png_from_the_same_canonical_pdf(

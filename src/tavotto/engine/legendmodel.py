@@ -25,7 +25,7 @@ import matplotlib.colors as mcolors
 import numpy as np
 from matplotlib.artist import Artist
 from matplotlib.axes import Axes
-from matplotlib.collections import Collection, LineCollection
+from matplotlib.collections import Collection, LineCollection, PathCollection
 from matplotlib.legend import Legend
 from matplotlib.legend_handler import HandlerBase
 from matplotlib.lines import Line2D
@@ -1032,6 +1032,206 @@ def sync_legends(state: RebuildState) -> None:
                         _legend_replace_handle(leg, k, base, copy_of=base)
             except Exception as exc:  # noqa: BLE001 — 同步失败不拖垮渲染
                 print(f"[legend] {model.gid_of(j)} 同步示意线失败: {exc}", file=sys.stderr)
+
+
+def legend_proxy_names(fig) -> dict[int, str]:
+    """{id(图中系列对象): 图例里与它**画得一模一样**的那个代理句柄的文字}（只用于显示名）。
+
+    科研脚本常见写法：系列线 `ax.plot(..., color=c, marker=m)` 不写 label，图例另用
+    `Line2D([], [], color=c, marker=m, label="pH=1")` 做代理句柄再 `ax.legend(handles=...)`
+    （或多子图共用的 `fig.legend(handles=...)`）。线自己没有可显示的 label，元素树里就是一串
+    「曲线 N」。这里在 instrument 时（脚本原样）把图例条目的文字借给样式精确一致的那条线。
+
+    主语：**整张图**。图例 = 各子图的 `ax.get_legend()` + `fig.legends`；候选系列 = 全图所有子图里
+    的曲线 / 散点（`ax.lines` / `ax.collections` 的活对象，按 `ordered_axes` 遍历）。任一张图例都可给
+    任一子图里的系列命名（多子图常把共用图例挂在第一个子图上），**歧义一律按全图计数**——别的
+    子图里有同样长相的系列（例如图例里那个句柄其实就是另一子图里带 label 的线），就说不清这个
+    条目指的是谁（#1162 评审）。判据是两侧示意的 `_proxy_fingerprint`。
+
+    保守到宁缺毋滥：
+      - 同一指纹被全图多个系列对象命中（**含有自己 label 的**）→ 歧义，都不命名；
+      - 同一系列在一张图例里命中多个条目、或撞上一格画了多个 artist 的条目 → 不命名；
+      - 两张图例给同一系列的文字不同 → 不命名；
+      - 不按位置 / 相邻猜。
+    只改显示名，不动 gid、不动任何字段。
+    """
+    axes, _, _ = ordered_axes(fig)  # 与 instrument 同一个遍历权威
+    series = [
+        art
+        for ax in axes
+        for art in [*ax.lines, *ax.collections]
+        if isinstance(art, Line2D | PathCollection)
+    ]
+    legends = [ax.get_legend() for ax in axes if ax.get_legend() is not None]
+    legends += list(getattr(fig, "legends", []))
+    named: dict[int, set[str]] = {}
+    for leg in legends:
+        for sid, text in _names_from_legend(leg, series).items():
+            named.setdefault(sid, set()).add(text)
+    return {sid: next(iter(texts)) for sid, texts in named.items() if len(texts) == 1}
+
+
+def _names_from_legend(leg, series: list) -> dict[int, str]:
+    """一张图例对全图候选系列的借名结果（歧义按全部候选计数）；`legend_proxy_names` 的单图例步。"""
+    handles = [h for h in getattr(leg, "legend_handles", []) if h is not None]
+    texts = [t.get_text() for t in leg.get_texts()]
+    n = min(len(handles), len(texts))
+    # 每一格**实际画了几个 artist**：`legend_handles` 只留每格的第一个，一格画多个（`HandlerTuple`、
+    # 误差棒 / 茎叶的 handler、用户自定义 handler）时只比第一个会把长相不同的两格判成一样。
+    # 按画出来的格数判，不按 handler 类型列名单（#1162 评审连报自定义 handler、HandlerTuple 两轮）。
+    # 格子结构说不清（数目对不上）就整张不借名。
+    counts = _legend_cell_artist_counts(leg)
+    if counts is None or len(counts) < n:
+        return {}
+    entries: list[tuple[tuple, str, bool]] = []
+    for h, text, k in zip(handles[:n], texts[:n], counts[:n], strict=True):
+        entries.append((_proxy_fingerprint(h), text, k != 1))
+    if not entries:
+        return {}
+    from matplotlib.offsetbox import DrawingArea  # noqa: PLC0415 — worker 侧有科学栈
+
+    fp_of: dict[int, tuple] = {}
+    multi_src: set[int] = set()
+    width, height, descent = _legend_handle_box_geometry(leg)
+    for art in series:
+        # 派生进一个**自己的**格子再数：系列这一侧的 handler 也可能一格画多个 artist，
+        # `legend_fresh_handle` 只回第一个。两侧都恰好一个 artist 才可能借名（#1162 评审）
+        box = DrawingArea(width=width, height=height, xdescent=0.0, ydescent=descent)
+        box.set_figure(_owning_figure(leg))
+        try:
+            fresh = legend_fresh_handle(leg, art, box)
+        except Exception:  # noqa: BLE001 — 造不出示意线的对象不参与
+            continue
+        if fresh is not None:
+            fp_of[id(art)] = _proxy_fingerprint(fresh)
+            if len(box.get_children()) != 1:
+                multi_src.add(id(art))  # 仍计入歧义计数，只是自己不借名
+    out: dict[int, str] = {}
+    for art in series:
+        fp = fp_of.get(id(art))
+        if fp is None or id(art) in multi_src:
+            continue
+        matched = [(text, multi) for efp, text, multi in entries if efp == fp]
+        # 撞上一个多 artist 的格子 = 说不清它是不是这条系列的条目：歧义，不借名
+        if len(matched) != 1 or matched[0][1]:
+            continue
+        if sum(1 for other in fp_of.values() if other == fp) != 1:
+            continue
+        out[id(art)] = matched[0][0]
+    return out
+
+
+#: `artist.properties()` 里**与示意长相无关**的键（`visible` 不在其中：`visible=False` 的代理在图例里只有字没有示意，长相不同；格内几何 `xydata` / `offsets` 也不在其中：两侧画进同样尺寸的格子，标准 handler 下逐位相同，自定义 handler 按源画出不同走向时据此分得开）：数据 / 位置 / 变换 / 裁剪 / 交互 / 身份 / 由数据
+#: 派生的映射输入（映射结果已在 facecolor / edgecolor 里）。其余键一律参与比对——
+#: matplotlib 以后新增的样式属性自动纳入，不用再逐维补（#1162 评审连报散点形状、半填充、
+#: gapcolor / 线帽三轮后换成这个口径）。
+_NON_GLYPH_PROPS = frozenset(
+    {
+        "agg_filter",
+        "animated",
+        "array",
+        "axes",
+        "bbox",
+        "children",
+        "clim",
+        "clip_box",
+        "clip_on",
+        "clip_path",
+        "cmap",
+        "data",
+        "datalim",
+        "figure",
+        "gid",
+        "in_layout",
+        "label",
+        "markevery",
+        "mouseover",
+        "offset_transform",
+        "path",
+        "picker",
+        "pickradius",
+        "rasterized",
+        "tightbbox",
+        "transform",
+        "transformed_clip_path_and_affine",
+        "transforms",
+        "url",
+        "urls",
+        "window_extent",
+        "xdata",
+        "ydata",
+        "zorder",
+    }
+)
+
+
+def _glyph_value(key: str, v):
+    """把一个样式属性值规范成可比较的不可变值；认不出的对象回一个按身份的值（= 恒不相等，
+    宁可不命名也不借错）。"""
+    # 颜色先规范成 RGBA 再比：`"red"` 与 `"#ff0000"` 画出来一样（#1162 评审）
+    if "color" in key and v is not None and not isinstance(v, bool):
+        try:
+            return tuple(np.round(mcolors.to_rgba_array(v), 4).ravel().tolist())
+        except (ValueError, TypeError):
+            pass
+    if v is None or isinstance(v, bool | str | int):
+        return v
+    if isinstance(v, float):
+        return round(v, 4)
+    if isinstance(v, np.ndarray):
+        return (v.shape, tuple(np.round(v.astype(float), 4).ravel().tolist()))
+    if isinstance(v, list | tuple):
+        return tuple(_glyph_value(key, x) for x in v)
+    if hasattr(v, "vertices") and hasattr(v, "codes"):  # matplotlib Path
+        codes = None if v.codes is None else tuple(int(c) for c in v.codes)
+        return ("path", _glyph_value(key, v.vertices), codes)
+    if hasattr(v, "get_marker") and hasattr(v, "get_fillstyle"):  # MarkerStyle
+        return ("marker", _glyph_value(key, v.get_marker()), v.get_fillstyle())
+    return ("object", id(v))
+
+
+def _glyph_style(h) -> tuple:
+    """示意的**全部可见样式**：`properties()` 去掉 `_NON_GLYPH_PROPS` 后逐键规范化。只给
+    `legend_proxy_names` 用——不替换 `legend_handle_fingerprint`（它也是 `bind_legend_entries`
+    的判据，换了会挪动存量图例的绑定）。两侧都是 matplotlib 同一个 handler 派生的示意，
+    口径一致，可直接比。取不到属性就回按身份的值（恒不相等）。"""
+    try:
+        props = h.properties()
+    except Exception:  # noqa: BLE001 — 说不清长相的示意不参与借名
+        return (type(h).__name__, ("object", id(h)))
+    return (
+        type(h).__name__,
+        tuple((k, _glyph_value(k, props[k])) for k in sorted(props) if k not in _NON_GLYPH_PROPS),
+    )
+
+
+def _legend_cell_artist_counts(leg) -> list[int] | None:
+    """图例每一格（按条目顺序）画出来的 artist 个数；结构说不清返回 None。
+
+    matplotlib 把条目按列依次排进 `_legend_handle_box`（HPacker → 每列一个 VPacker → 每项
+    HPacker，内含一个 DrawingArea 与一个 TextArea——`markerfirst=False` 时文字在前），按列展开即
+    条目顺序；DrawingArea 的 children 就是 handler 为这一格画的全部 artist（3.8.4 / 3.10.9 实测
+    结构一致）。按**类型**取 DrawingArea，不按位置（#1162 评审）；一项里不是恰好一个就当说不清。"""
+    from matplotlib.offsetbox import DrawingArea  # noqa: PLC0415 — worker 侧有科学栈
+
+    try:
+        counts = []
+        for col in leg._legend_handle_box.get_children():
+            for item in col.get_children():
+                areas = [c for c in item.get_children() if isinstance(c, DrawingArea)]
+                if len(areas) != 1:
+                    return None
+                counts.append(len(areas[0].get_children()))
+        return counts
+    except Exception:  # noqa: BLE001 — 私有布局变了就当说不清
+        return None
+
+
+def _proxy_fingerprint(h) -> tuple:
+    """借名比对用的指纹 = 共享指纹 ∪ 全部可见样式。共享指纹里有 `properties()` 拿不到的私有事实
+    （`_dash_key`：自定义虚线序列被 matplotlib 规范成 "--"），`_glyph_style` 覆盖其余所有可见
+    属性；两者都相等才算长相一致（#1162 评审）。"""
+    return (legend_handle_fingerprint(h), _glyph_style(h))
 
 
 def _source_label(art) -> str:

@@ -85,6 +85,9 @@ export default defineConfig({
         // 树行键位与分栏手柄（UI 2.0 PR7）：Esc 回滚 / 双击复位靠 pointer capture 与 WebKit 的事件序列，
         // 选中加粗的字宽锁量的是 WKWebView 自己的字体度量
         'tree-list-refine.spec.ts',
+        // 三步原生新手教程（ADR 0136）：卡片 / SVG 图例的指针拖动与 pointer capture、外部文件拖放的拒收
+        // 都是引擎相关的事件序列，用户的 macOS 桌面壳就是这个引擎
+        'tutorial.spec.ts',
       ],
     },
     // 英文 locale（审计 P1-02/P1-03）：a11y spec 是语言无关写法；
@@ -94,6 +97,10 @@ export default defineConfig({
       use: { ...devices['Desktop Chrome'], locale: 'en-US' },
       // inspector-overflow：英文标签更长，撑破的多半是它——两种语言各量一遍
       testMatch: [
+        // 助手草稿与提交可靠性（ADR 0132）：状态说明是中英两套文案，定位走 data-*，两种语言各走一遍
+        'ai-draft.spec.ts',
+        // 运行中会话的恢复（PR4b）：占位与锁的文案是中英两套，定位走 data-*
+        'ai-restore.spec.ts',
         'a11y.spec.ts',
         // 说明条 + 不推挤（UI 2.0 PR10）：构建不一致芯片不位移、刷新失败 Notice 顺着滑出；英文文案更长，两种语言各量
         'notice-no-push.spec.ts',
@@ -113,6 +120,8 @@ export default defineConfig({
         'export-preview.spec.ts',
         // 素材卡 / 属性栏底部：英文文案更长，量盒子位置两种语言各一遍
         'inspector-assets.spec.ts',
+        // 新手黄金路径（渐进式编辑 P06）：只认 data-* 锚点与落盘产物，不认显示文案——两种语言各走一遍
+        'newcomer-golden-path.spec.ts',
       ],
     },
   ],

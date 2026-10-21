@@ -89,11 +89,11 @@ try:
 finally:
     sys.dont_write_bytecode = _dont_write_bytecode
 
-#: 第一阶段只装纯标准库的那两个（捕获策略 + patch 规范化）。**绝不在这里装
+#: 第一阶段只装纯标准库（捕获策略 + patch 规范化 + 执行事实）。**绝不在这里装
 #: manifest / overrides**——它们在模块层 import matplotlib 与 numpy，而
 #: `import matplotlib` 会当场读 cwd 下的 matplotlibrc、钉死 rcParams，
 #: 用户脚本自己那句 `matplotlib.use(...)` 的语义就不一样了。
-_PHASE1 = ("figcapture", "patchspec")
+_PHASE1 = ("figcapture", "patchspec", "executionfact")
 #: 第二阶段（屏障那一刻才装）：要 matplotlib/numpy 的那几个，而那时用户早就
 #: import 过了；外加只被它们平铺 import 到的纯标准库模块。
 #:
@@ -147,11 +147,22 @@ _DROPPED = 0
 _CAPTURING = True
 _REAL_SAVEFIG = None
 _REAL_SHOW = None
+#: 桌面拥有的运行的输入观察（`figcapture.InputObserver`，`--observe-inputs`；#1047）：与 safe worker 同一个观察器、同一份
+#: 报告形状，脚本结束那一刻定格（`BridgeRun.freeze_inputs`）。钩子要在引擎自己读文件时暂停它，所以放模块级
+_INPUTS = None
+#: `_digests_of` 里「这条 path 没了」的哨兵（与 sha256 = None 区分）
+_GONE = object()
 
 
 # ---------------------------------------------------------------------------
 # 钩子
 # ---------------------------------------------------------------------------
+def _engine_reads():
+    """引擎自己读文件的那一段（savefig 簿记算产物摘要、屏障里出预览 / 导出）：输入观察不记账——那不是脚本的输入，
+    记进去的话脚本自己写出的产物会冒充「数据依据」。没装观察器时什么都不做。"""
+    return _INPUTS.paused() if _INPUTS is not None else contextlib.nullcontext()
+
+
 @contextlib.contextmanager
 def _no_capture():
     """引擎自己出图的那一段：透传照旧，但不记进捕获表。"""
@@ -183,17 +194,18 @@ def _install_savefig_hook(mfigure) -> None:
         stem = None
         call = None
         if _CAPTURING:
-            stem = figcapture.savefig_stem(fname)
-            stem = _resolve_promoted(stem, self)
-            call = figcapture.savefig_call(fname, kwargs)
-            observation = _SAVEFIG_OBSERVATIONS.record(
-                self,
-                fname,
-                stem,
-                call,
-                explicit_format=kwargs.get("format") is not None,
-                backend=kwargs.get("backend"),
-            )
+            with _engine_reads():
+                stem = figcapture.savefig_stem(fname)
+                stem = _resolve_promoted(stem, self)
+                call = figcapture.savefig_call(fname, kwargs)
+                observation = _SAVEFIG_OBSERVATIONS.record(
+                    self,
+                    fname,
+                    stem,
+                    call,
+                    explicit_format=kwargs.get("format") is not None,
+                    backend=kwargs.get("backend"),
+                )
             if stem and stem not in _CAPTURE:
                 _CAPTURE[stem] = self
                 _CAPTURE_SOURCE[stem] = figcapture.SOURCE_SAVEFIG
@@ -205,8 +217,14 @@ def _install_savefig_hook(mfigure) -> None:
         try:
             result = _REAL_SAVEFIG(self, fname, *args, **kwargs)
         except BaseException:
-            _SAVEFIG_OBSERVATIONS.complete(observation, "failed")
+            with _engine_reads():
+                _SAVEFIG_OBSERVATIONS.complete(observation, "failed")
             raise
+        with _engine_reads():
+            _savefig_bookkeeping(self, fname, kwargs, stem, call, observation)
+        return result
+
+    def _savefig_bookkeeping(self, fname, kwargs, stem, call, observation) -> None:
         _SAVEFIG_OBSERVATIONS.complete(observation, "saved")
         # 写入者 / 调用记账只在这次真写盘成功之后：失败的保存磁盘上没动，不能让它顶掉别人
         if _CAPTURING and stem:
@@ -233,7 +251,6 @@ def _install_savefig_hook(mfigure) -> None:
                 _note_temp_save(self, fname, stem)
             except Exception:
                 pass
-        return result
 
     mfigure.Figure.savefig = _patched_savefig
 
@@ -391,7 +408,7 @@ _SCRIPT_STEM = ["figure"]
 # ---------------------------------------------------------------------------
 # 用户上下文（与真实 python 对拍，见 tests/bridge/test_bridge_invocation.py）
 # ---------------------------------------------------------------------------
-def run_script(target: str, argv: list) -> None:
+def run_script(target: str, argv: list, on_start=None) -> None:
     """等价于 `python <target> <argv…>`。
 
     **不用 `runpy.run_path`**：它把 `__file__` 设成传进去的原串、把
@@ -430,6 +447,8 @@ def run_script(target: str, argv: list) -> None:
     main_mod.__cached__ = None
     main_mod.__doc__ = None
     sys.modules["__main__"] = main_mod
+    if on_start is not None:
+        on_start(abspath)
     exec(code, main_mod.__dict__)
 
 
@@ -460,7 +479,7 @@ def resolve_module_origin(target: str) -> str:
     return getattr(spec, "origin", "") or ""
 
 
-def run_module(target: str, argv: list, on_origin=None) -> None:
+def run_module(target: str, argv: list, on_origin=None, on_start=None) -> None:
     """等价于 `python -m <target> <argv…>`。
 
     `runpy.run_module(..., run_name="__main__", alter_sys=True)` 在
@@ -477,6 +496,17 @@ def run_module(target: str, argv: list, on_origin=None) -> None:
 
     sys.argv = [target, *argv]  # run_module(alter_sys=True) 会把 argv[0] 换成模块文件
     sys.path.insert(0, os.getcwd())
+    if on_start is not None:
+        # These are run_module(alter_sys=True)'s own two operations, split at
+        # the compiled-code boundary. A missing/invalid target must not report
+        # target execution. Resolving it may already import parent packages:
+        # those side effects are NOT evidence that this target's code ran.
+        _, spec, code = runpy._get_module_details(target)  # noqa: SLF001
+        if on_origin is not None:
+            on_origin(spec.origin or "")
+        on_start(spec.origin or "")
+        runpy._run_module_code(code, None, "__main__", spec)  # noqa: SLF001
+        return
     if on_origin is not None:
         on_origin(resolve_module_origin(target))
     runpy.run_module(target, run_name="__main__", alter_sys=True)
@@ -847,6 +877,44 @@ class BridgeRun:
         #: （`except BaseException:` / `except SystemExit:` / 一个 `finally`
         #: 里再 return），那时"终止"就变成了一次静默的普通退出。
         self.terminated = False
+        self.execution_id: str | None = None
+        self.execution_script: str | None = None
+        #: 脚本结束那一刻定格的输入观察（`figcapture.InputObserver.report()`，#1047）；没观察 / 脚本还没跑完 = None。
+        #: `show()` 屏障上脚本还没跑完，之后还可能再读——那时的观察不是这次运行的全部输入，不报
+        self.inputs_report: dict | None = None
+        #: 项目相对路径 → 进 `show()` 屏障那一刻的 sha256（先见者赢）。脚本停在屏障上时用户可能改了 helper / 数据，
+        #: 进程执行的是旧内容；`freeze_inputs` 拿它跟最终定格的摘要比对，不一致就不报观察（Codex #1180 P2）
+        self._input_digests: dict[str, str | None] = {}
+
+    def execution_started(self, origin: str) -> None:
+        """Report the compiled target's actual exec boundary once, without argv.
+
+        External/loader-only module origins have no canonical project owner;
+        retain the execution fact but do not invent a basename-based identity.
+        """
+        if self.execution_id is not None:
+            return
+        self.execution_id = _PKG.executionfact.new_id()
+        script = None
+        if origin and os.path.isabs(origin):
+            root = os.path.abspath(self.args.project_root or os.getcwd())
+            source = os.path.abspath(origin)
+            try:
+                if (
+                    os.path.commonpath((root, source)) == root
+                    and os.path.commonpath((os.path.realpath(root), os.path.realpath(source)))
+                    == os.path.realpath(root)
+                    and source != root
+                ):
+                    # Keep the same project-relative alias as descriptors and
+                    # ExecutionSpec; realpath is a containment check, not a new
+                    # script identity which would differ across safe/native.
+                    script = os.path.relpath(source, root).replace("\\", "/")
+            except ValueError:  # Different Windows volumes have no project-relative identity.
+                pass
+        self.execution_script = script
+        if self.control is not None:
+            self.control.event("execution_started", execution_id=self.execution_id, script=script)
 
     # ---- 第二阶段装载 ----
     def _ensure_engine(self):
@@ -935,7 +1003,20 @@ class BridgeRun:
                         )
                     run._barrier_released = True
                     run.released = True
-                    return {"released": True}
+                    if run.execution_id is None:
+                        # A module's parent-package import may show a Figure
+                        # before target compilation. Its release is not proof
+                        # that the requested target has begun executing.
+                        return {"released": True}
+                    # This response is itself trusted evidence of release.
+                    # Detach can close the controller before the later event
+                    # arrives, so both channels carry the SAME execution fact.
+                    run.execution_id = _PKG.executionfact.new_id()
+                    return {
+                        "released": True,
+                        "execution_id": run.execution_id,
+                        "script": run.execution_script,
+                    }
                 if cmd == "terminate":
                     run.terminated = True
                     run.released = True
@@ -979,6 +1060,10 @@ class BridgeRun:
         # 与 safe worker 同一份自报（ADR 0053）：native 的 prefix / cwd 正是
         # 「用户自己的解释器、用户自己的 cwd」这两条承诺的可核对证据。
         out["runtime"] = _PKG.figsession.runtime_report()
+        if self.inputs_report is not None:
+            # 桌面拥有的运行在脚本结束后的屏障上才有（#1047）：父进程据此给 native 成功记录补上 helper / 数据依据。
+            # 不放进 `runtime`：那一段进回执身份，同一会话前后两次 build 不该因为「跑没跑完」换身份
+            out["observed_inputs"] = self.inputs_report
         if self.script_error:
             out["script_error"] = self.script_error
         return out
@@ -1112,7 +1197,67 @@ class BridgeRun:
                 print(f"[tavotto] 回到编辑态时重放 {stem} 出错: {exc}", file=sys.stderr)
 
     # ---- 屏障 ----
+    @staticmethod
+    def _digests_of(report: dict) -> dict[str, str | None]:
+        return {
+            e["path"]: e.get("sha256")
+            for key in ("files", "local_modules")
+            for e in report.get(key) or []
+            if isinstance(e, dict) and "path" in e
+        }
+
+    def _snapshot_inputs(self) -> None:
+        """进屏障前记一份依据摘要（只记还没记过的 path：先见者赢，记的是用户代码最早可能用到的那份）。"""
+        observer = _INPUTS
+        if observer is None:
+            return
+        try:
+            with observer.paused():
+                report = observer.report(
+                    local_modules=figcapture.observed_local_modules(
+                        self.args.project_root, sys.modules, exclude_dir=_HERE
+                    )
+                )
+            for path, sha in self._digests_of(report).items():
+                self._input_digests.setdefault(path, sha)
+        except Exception:  # noqa: BLE001 — 观察器绝不影响脚本
+            pass
+
+    def freeze_inputs(self) -> None:
+        """脚本跑完：输入观察定格（与 safe worker 在 build 那一刻定格同一口径：观察到的数据文件 + `sys.modules` 里
+        项目内的本地模块，各带 sha256），然后卸掉观察器——之后再没有用户代码要看，引擎自己的读不该记账。
+
+        屏障期间依据变了就不报观察（Codex #1180 P2）：脚本停在 `show()` 屏障上时用户改了 helper / 数据，进程执行的
+        是旧内容，这里哈希到的却是新字节——把从没执行过的内容记成依据，下次重开会误判沿用 native。
+        所以进屏障时记过的每条摘要，最终那份里缺了或不同 → `inputs_report = None`，记录保持不沿用。"""
+        global _INPUTS
+        observer = _INPUTS
+        if observer is None:
+            return
+        try:
+            with observer.paused():
+                self.inputs_report = observer.report(
+                    local_modules=figcapture.observed_local_modules(
+                        self.args.project_root, sys.modules, exclude_dir=_HERE
+                    )
+                )
+            final = self._digests_of(self.inputs_report)
+            if any(final.get(path, _GONE) != sha for path, sha in self._input_digests.items()):
+                self.inputs_report = None
+        except Exception:  # noqa: BLE001 — 观察器绝不影响脚本：算不出就是「没观察」
+            self.inputs_report = None
+        finally:
+            observer.uninstall()
+            _INPUTS = None
+
     def barrier(self, reason: str) -> None:
+        """屏障期间不跑用户代码：引擎自己的读（预览 / 导出）不进输入观察。"""
+        if reason != "script_end":  # script_end 在 freeze 之后，观察器已卸
+            self._snapshot_inputs()
+        with _engine_reads():
+            self._barrier(reason)
+
+    def _barrier(self, reason: str) -> None:
         """在**拥有 Figure 的这个线程**上服务控制循环，直到 continue/shutdown。
 
         没有控制通道时（`--report` 形态、对拍夹具）立刻返回——那时本来就
@@ -1182,7 +1327,17 @@ class BridgeRun:
             raise SystemExit(TERMINATE_EXIT)
         if self.control is None:
             return
-        self.control.event("released", reason=reason)
+        # Reuse the fact already returned by successful continue. A failed
+        # continue stays inside the barrier and never reaches this boundary.
+        self.control.event(
+            "released",
+            reason=reason,
+            **(
+                {"execution_id": self.execution_id, "script": self.execution_script}
+                if self.execution_id is not None
+                else {}
+            ),
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -1203,6 +1358,8 @@ def _parse_args(argv: list):
     )  # 桌面拥有的启动：运行配置的不透明引用（与 safe 同名同义）
     # 桌面拥有的启动：脚本的 input / stdin 读取 / getpass 变成控制通道上的提问（P07）；终端拥有的不带
     ap.add_argument("--input-bridge", action="store_true")
+    # 桌面拥有的启动：观察脚本读了哪些项目内文件、import 了哪些本地模块（与 safe 同口径，#1047）；终端拥有的不带
+    ap.add_argument("--observe-inputs", action="store_true")
     if "--" in argv:
         cut = argv.index("--")
         mine, user_argv = argv[:cut], argv[cut + 1 :]
@@ -1241,6 +1398,7 @@ def _derive_target_facts(args) -> None:
 
 
 def main(argv: list | None = None) -> int:
+    global _INPUTS
     args = _parse_args(list(sys.argv[1:] if argv is None else argv))
     if not args.out_dir:
         # **不往用户 home 里放一个 dotdir**。产物目录归 Tavotto 管
@@ -1254,13 +1412,17 @@ def main(argv: list | None = None) -> int:
     _derive_target_facts(args)
     run = BridgeRun(args)
 
+    callbacks = {
+        "matplotlib.figure": _install_savefig_hook,
+        "matplotlib.pyplot": lambda plt: _install_show_hook(plt, run.barrier),
+    }
+    if args.observe_inputs and args.project_root:
+        # 输入观察装在用户代码之前；numpy 那条通道等用户 import numpy 时补（观察器自己不 import 任何东西）
+        _INPUTS = figcapture.InputObserver(args.project_root)
+        _INPUTS.install()
+        callbacks["numpy.lib._datasource"] = _INPUTS.observe_numpy_datasource
     # 钩子：**自己不 import matplotlib**，只在用户 import 到的那一刻挂上去。
-    hook = bridgeboot.PostImportHook(
-        {
-            "matplotlib.figure": _install_savefig_hook,
-            "matplotlib.pyplot": lambda plt: _install_show_hook(plt, run.barrier),
-        }
-    )
+    hook = bridgeboot.PostImportHook(callbacks)
     hook.install()
 
     token = _take_token()
@@ -1272,9 +1434,14 @@ def main(argv: list | None = None) -> int:
     exit_code = 0
     try:
         if args.target_kind == "script":
-            run_script(args.target, args.user_argv)
+            run_script(args.target, args.user_argv, on_start=run.execution_started)
         else:
-            run_module(args.target, args.user_argv, on_origin=_set_module_source(args))
+            run_module(
+                args.target,
+                args.user_argv,
+                on_origin=_set_module_source(args),
+                on_start=run.execution_started,
+            )
     except SystemExit as exc:  # 用户脚本自己 sys.exit(...)：图仍然算数
         exit_code = exc.code if isinstance(exc.code, int) else (0 if exc.code is None else 1)
     except BaseException as exc:  # noqa: BLE001 — 脚本炸了也要把已有的图交出去
@@ -1287,6 +1454,7 @@ def main(argv: list | None = None) -> int:
         traceback.print_exc()
     finally:
         hook.uninstall()
+    run.freeze_inputs()
 
     if run.terminated:
         # **确定的退出码**，不管用户脚本对 SystemExit 做了什么。
@@ -1404,6 +1572,8 @@ def _write_report(run, args, exit_code: int) -> None:
         },
         "matplotlib_backend": _backend_name(),
         "tavotto_importable": _tavotto_importable(),
+        # `--observe-inputs` 时脚本结束那一刻定格的输入观察（与 build 响应的 `observed_inputs` 同一份，#1047）
+        "observed_inputs": run.inputs_report,
     }
     with open(args.report, "w", encoding="utf-8") as f:
         json.dump(payload, f, ensure_ascii=False, indent=1, sort_keys=True)

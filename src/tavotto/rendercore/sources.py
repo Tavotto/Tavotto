@@ -35,7 +35,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Protocol
 
-from ..engine import figcapture, runtimeasset
+from ..engine import exportroute, figcapture, runtimeasset
 from .ir import FILE_KINDS
 
 SOURCE_ERROR_CODES = (
@@ -69,6 +69,41 @@ class FrozenSource:
     artifact: figcapture.SourceArtifact
     path: Path
     receipt: dict | None = None
+    # An optional same-command, same-Figure SVG representation. A neighboring SVG
+    # file or a stale preview is never sufficient provenance.
+    svg: FrozenSource | None = None
+    # Static PDFs qualify only after an independent source/candidate comparison;
+    # the persisted binding names the exact disk bytes that were admitted.
+    svg_source_sha256: str | None = None
+
+    def svg_representation(self) -> FrozenSource | None:
+        if self.svg is None:
+            return None
+        a, b = self.artifact, self.svg.artifact
+        fields = ("source_id", "receipt_id", "generation", "patch_hash", "receipt_identity")
+        paired = (
+            a.origin == figcapture.ORIGIN_EXECUTION
+            and b.origin == figcapture.ORIGIN_EXECUTION
+            and all(getattr(a, k) == getattr(b, k) for k in fields)
+        )
+        admitted_static = (
+            a.origin == figcapture.ORIGIN_STATIC
+            and b.origin == figcapture.ORIGIN_EXECUTION
+            and a.source_id == b.source_id
+            and self.svg_source_sha256 == a.bytes_sha256
+        )
+        if (
+            a.kind != "pdf"
+            or b.kind != "svg"
+            or self.svg.svg is not None
+            or not (paired or admitted_static)
+        ):
+            raise SourceError(
+                "source_needs_execution",
+                f"{a.source_id}: SVG representation does not belong to this Figure snapshot",
+                {"figure": a.source_id},
+            )
+        return self.svg
 
 
 class SourceResolver(Protocol):
@@ -245,7 +280,9 @@ def static_artifact(path: Path, source_id: str) -> figcapture.SourceArtifact:
 def needs_execution(obj: dict) -> bool:
     """这个面板要不要 worker 现画：runtime 素材永远要；带 override 的要。"""
     rel_id = str(obj.get("id", ""))
-    return runtimeasset.is_runtime_id(rel_id) or bool(obj.get("overrides"))
+    return exportroute.wants_execution(
+        runtime=runtimeasset.is_runtime_id(rel_id), overrides=obj.get("overrides")
+    )
 
 
 @dataclass(frozen=True)

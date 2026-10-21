@@ -1,0 +1,344 @@
+name: Compatibility Guardian
+
+# 观察型证据 workflow，不是合并门禁：不在 required contexts 里，ci-fast-gate /
+# ci-integration-gate 都不 needs 它，也不监听 merge_group。
+# 只跑登记在仓库里的已提交夹具（run 子命令只收 case id，没有"跑任意脚本"的入口）；
+# 目录隔离不是 OS 隔离，所以只在 GitHub 托管的临时 runner 上跑——绝不派到
+# self-hosted / tavotto-lab（tests/test_compat_guardian_workflow.py 钉着）。
+# 失败一律可见：退出码不吞，GITHUB_STEP_SUMMARY 写结论；唯一被明确放行的非零码是 4
+# （partial_coverage / expected_limitation：没有失败，但不是干净通过——有层未覆盖或是已声明的限制，摘要里会点名）。
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened]
+    # 只在 Guardian 自己的文件变化时跑；不监听产品代码，所以不拖慢其它 PR。
+    paths:
+      - '.github/workflows/compat-guardian.yml'
+      - 'scripts/ci/compat_guardian*.py'
+      - 'scripts/ci/compat_explore*.py'
+      - 'scripts/ci/compat_triage*.py'
+      - 'scripts/ci/compat_minimize*.py'
+      - 'scripts/ci/guardian_exec_observer.py'
+      - 'scripts/ci/compat_driver.py'
+      - 'scripts/ci/compat_corpus.py'
+      - 'scripts/ci/compat_matrix.py'
+      # compat_guardian 直接 import 它跑每个 adapter（超时 / 进程树清理）
+      - 'scripts/ci/package_smoke.py'
+      - 'tests/test_package_smoke.py'
+      # 工作流实际执行的输入：引擎语料（manifest/cases/assets/schema）与 V2 场景及其夹具。
+      - 'tests/compat/**'
+      - 'tests/fixtures/compat_v2/**'
+      - 'tests/support/compat_v2_scenarios.py'
+      - 'tests/support/compatbench_v2.py'
+      - 'tests/test_compat_guardian*.py'
+      - 'tests/test_compat_explore*.py'
+      - 'tests/test_compat_triage*.py'
+      - 'tests/test_compat_minimize*.py'
+      - 'tests/compat_guardian/**'
+      - 'docs/ci/compat-guardian.md'
+  workflow_dispatch:
+    # 只有数值与家族名：没有"脚本/路径/URL/命令"输入——候选只能由已评审父本确定性推导。
+    inputs:
+      seed:
+        description: explore seed (integer)
+        type: number
+        default: 42
+      limit:
+        description: explore candidates to execute (family-balanced cap)
+        type: number
+        default: 24
+      families:
+        description: optional comma-separated transform families (default all)
+        type: string
+        default: ''
+  schedule:
+    - cron: '41 3 * * *'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: compat-guardian-${{ github.ref }}-${{ github.event_name }}
+  cancel-in-progress: true
+
+env:
+  TAVOTTO_NO_TELEMETRY: '1'
+  TAVOTTO_NO_DIAG_UPLOAD: '1'
+  TAVOTTO_NO_UPDATE_CHECK: '1'
+
+jobs:
+  guardian:
+    name: Guardian observation (hosted, not a required check)
+    # fork 的 PR 不跑：fork 代码会在这里被执行（夹具与脚本都来自 PR）。同仓库分支的 PR、
+    # dispatch、schedule 照常。fork PR 即使被放行，token 也只读且拿不到 secrets，这条是纵深防御。
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+      # 科学栈钉 packaging/runtime-lock.json 的版本，与 compat-smoke 同一套。
+      - name: Install (scientific stack pinned by the runtime lock)
+        env:
+          PIP_DEFAULT_TIMEOUT: '30'
+          PIP_RETRIES: '5'
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          pip install -e ".[dev,ci]"
+          # shellcheck disable=SC2046
+          pip install $(python scripts/ci/runtime_pins.py --include-corpus)
+      - name: Approved fonts (sha256 verified)
+        run: |
+          python scripts/fetch_fonts.py
+          python scripts/fetch_fonts.py --check
+      - name: Guardian contract tests
+        run: python -m pytest -p no:cacheprovider -q tests/test_compat_guardian*.py tests/test_compat_explore.py tests/test_compat_triage.py tests/test_compat_minimize.py
+      - name: Guardian engine suite (reviewed fixtures)
+        timeout-minutes: 8
+        shell: bash
+        run: |
+          set +e
+          python scripts/ci/compat_guardian.py run --suite compat_engine \
+            --case shape_oo_savefig,shape_pyplot_show_only,shape_relative_csv,shape_local_helper_import,shape_multi_figure_a,sci_pillow \
+            --expected-sha "$GITHUB_SHA" --timeout 60 \
+            --out "$RUNNER_TEMP/compat-guardian/engine" > "$RUNNER_TEMP/engine.out" 2>&1
+          code=$?
+          set -e
+          # 公开日志只给每个 case 一行状态；原始 stdout/stderr 留在证据目录里，不上传。
+          grep -E '^[A-Za-z0-9_]+: [a-z_]+$' "$RUNNER_TEMP/engine.out" || true
+          case "$code" in
+            0) ;;
+            4) echo "::warning::engine suite: no failure but not a clean pass (see summary)" ;;
+            *) echo "::error::engine suite exited $code"; tail -n 30 "$RUNNER_TEMP/engine.out"; exit "$code" ;;
+          esac
+      - name: Guardian server Safe suite (all V2 scenarios)
+        if: ${{ !cancelled() }}
+        timeout-minutes: 12
+        shell: bash
+        run: |
+          set +e
+          python scripts/ci/compat_guardian.py run --suite compat_v2 \
+            --expected-sha "$GITHUB_SHA" --timeout 90 \
+            --out "$RUNNER_TEMP/compat-guardian/v2" > "$RUNNER_TEMP/v2.out" 2>&1
+          code=$?
+          set -e
+          grep -E '^[A-Za-z0-9_]+: [a-z_]+$' "$RUNNER_TEMP/v2.out" || true
+          case "$code" in
+            0) ;;
+            4) echo "::warning::V2 suite: no failure but not a clean pass (edit/replay/export/fidelity not covered; declared limitations)" ;;
+            *) echo "::error::V2 suite exited $code"; tail -n 30 "$RUNNER_TEMP/v2.out"; exit "$code" ;;
+          esac
+      - name: Validate and summarize
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          reports=("$RUNNER_TEMP"/compat-guardian/*/*/reports/guardian.json)
+          if [[ ${#reports[@]} -eq 0 ]]; then
+            echo "::error::no Guardian report was produced"
+            echo "### Guardian: no report produced (see step logs)" >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          for report in "${reports[@]}"; do
+            python scripts/ci/compat_guardian.py validate "$report"
+            cat "$(dirname "$report")/summary.md" >> "$GITHUB_STEP_SUMMARY"
+          done
+          python scripts/ci/compat_guardian.py summarize "${reports[@]}" \
+            --markdown-out "$RUNNER_TEMP/guardian-summary.md" \
+            --json-out "$RUNNER_TEMP/guardian-summary.json" > /dev/null
+          cat "$RUNNER_TEMP/guardian-summary.md" >> "$GITHUB_STEP_SUMMARY"
+      # 上传成功与失败两种情况，但只传白名单：报告 JSON、汇总、图片。
+      # 不传 stdout/stderr/process.json/*-execs.jsonl 这类原始输出，也不传已装包全表
+      # （报告里的环境只有版本摘要 + 全表的 sha256）。
+      - name: Upload allowlisted evidence
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v6
+        with:
+          name: compat-guardian-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/compat-guardian/*/*/reports/guardian.json
+            ${{ runner.temp }}/compat-guardian/*/*/reports/summary.md
+            ${{ runner.temp }}/compat-guardian/*/*/reports/guardian.unvalidated.json
+            ${{ runner.temp }}/guardian-summary.json
+            ${{ runner.temp }}/guardian-summary.md
+            ${{ runner.temp }}/compat-guardian/*/*/evidence/**/*.png
+          retention-days: 7
+          if-no-files-found: warn
+
+  # nightly / dispatch：派生候选探索。候选 = 已评审父本 + 确定性 AST 变换 + seed，执行器自己重新推导，
+  # 非确定性/来源不确定的候选只做静态检查。PR 不跑（太长，且 PR 档只做 smoke）。
+  explore:
+    name: Guardian explore (nightly, hosted)
+    if: ${{ github.event_name != 'pull_request' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+      - name: Install (scientific stack pinned by the runtime lock)
+        env:
+          PIP_DEFAULT_TIMEOUT: '30'
+          PIP_RETRIES: '5'
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          pip install -e ".[dev,ci]"
+          # shellcheck disable=SC2046
+          pip install $(python scripts/ci/runtime_pins.py --include-corpus)
+      - name: Approved fonts (sha256 verified)
+        run: |
+          python scripts/fetch_fonts.py
+          python scripts/fetch_fonts.py --check
+      - name: Explore derived candidates
+        timeout-minutes: 40
+        shell: bash
+        env:
+          # 输入只经 env 进入 shell，再校验为纯数字/家族名，绝不拼进命令行文本。
+          EXPLORE_SEED: ${{ inputs.seed || '42' }}
+          EXPLORE_LIMIT: ${{ inputs.limit || '24' }}
+          EXPLORE_FAMILIES: ${{ inputs.families || '' }}
+        run: |
+          set +e
+          if ! [[ "$EXPLORE_SEED" =~ ^[0-9]+$ && "$EXPLORE_LIMIT" =~ ^[1-9][0-9]*$ ]] || ! [[ "$EXPLORE_FAMILIES" =~ ^[a-z_,]*$ ]]; then
+            echo "::error::seed must be an integer and limit a positive integer; families a comma list of names"
+            exit 2
+          fi
+          args=(--seed "$EXPLORE_SEED" --limit "$EXPLORE_LIMIT" --confirm-differences 3 --expected-sha "$GITHUB_SHA" --timeout 240 --out "$RUNNER_TEMP/compat-explore")
+          if [[ -n "$EXPLORE_FAMILIES" ]]; then args+=(--families "$EXPLORE_FAMILIES"); fi
+          python scripts/ci/compat_guardian.py explore "${args[@]}" > "$RUNNER_TEMP/explore.out" 2>&1
+          code=$?
+          set -e
+          grep -E '^[0-9a-f]{20} ' "$RUNNER_TEMP/explore.out" | cut -c1-220 || true
+          case "$code" in
+            0) ;;
+            1) echo "::warning::explore found differences (candidate failure records; triage below decides whether any is a NEW family)" ;;
+            *) echo "::error::explore exited $code"; tail -n 30 "$RUNNER_TEMP/explore.out"; exit "$code" ;;
+          esac
+      - name: Triage and maintainer alert (annotations only; no issue, no PR)
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          reports=("$RUNNER_TEMP"/compat-explore/*/reports/explore-report.json)
+          if [[ ${#reports[@]} -eq 0 ]]; then
+            echo "::error::no explore report was produced"
+            echo "### Guardian explore: no report produced (see step logs)" >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          run_dir="$(dirname "$(dirname "${reports[0]}")")"
+          python scripts/ci/compat_guardian.py triage "${reports[0]}" \
+            --out "$run_dir/reports/triage.json" --markdown-out "$run_dir/reports/triage.md"
+          cat "$run_dir/reports/explore-summary.md" >> "$GITHUB_STEP_SUMMARY"
+          cat "$run_dir/reports/triage.md" >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload allowlisted explore evidence
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v6
+        with:
+          name: compat-guardian-explore-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/compat-explore/*/reports/explore-report.json
+            ${{ runner.temp }}/compat-explore/*/reports/explore-summary.md
+            ${{ runner.temp }}/compat-explore/*/reports/triage.json
+            ${{ runner.temp }}/compat-explore/*/reports/triage.md
+            ${{ runner.temp }}/compat-explore/*/candidates.json
+          retention-days: 7
+          if-no-files-found: warn
+
+  # 趋势汇总：只读 artifact 与最近一次已完成且带趋势 artifact 的定时运行（需要 actions: read，只读）。
+  trend:
+    name: Guardian trend summary
+    needs: [guardian, explore]
+    if: ${{ !cancelled() && github.event_name != 'pull_request' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+      # 按名字逐个下载这次 run 的两份报告（不用 pattern：通配会连 trend 自己的上传一起匹配，
+      # 也推不出闭集——tests/test_update_chain_gates.py 的 pattern 下载门禁）
+      - name: Download this run's Guardian report
+        uses: actions/download-artifact@v5
+        with:
+          name: compat-guardian-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/in/guardian
+      - name: Download this run's explore report
+        uses: actions/download-artifact@v5
+        with:
+          name: compat-guardian-explore-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/in/explore
+      - name: Previous trend summary (read-only, optional)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          # 最近几次「已完成」的定时运行（成功或失败都算：V2 步骤会因故意不声明的用例退出 1，
+          # 但趋势 artifact 仍然有效）；取消/跳过的不算。以「能下载到 trend artifact」为准，
+          # 往前最多找 5 次，找不到就 not_computed。gh 用 --pattern 时每个 artifact 各占一个子目录，
+          # 只按名字下单个 artifact 时直接解在 --dir 下：两种布局都认（下面 summarize 的 ** 也覆盖根目录）。
+          candidates="$(gh run list --workflow compat-guardian.yml --branch main --event schedule --status completed --limit 10 --json databaseId,conclusion --jq '[.[] | select(.conclusion == "success" or .conclusion == "failure")][:5][] | .databaseId')"
+          found=""
+          for prev in $candidates; do
+            if [[ "$prev" == "$GITHUB_RUN_ID" ]]; then continue; fi
+            rm -rf "$RUNNER_TEMP/prev"
+            if gh run download "$prev" --pattern 'compat-guardian-trend-*' --dir "$RUNNER_TEMP/prev" 2>/dev/null \
+              && { compgen -G "$RUNNER_TEMP/prev/compat-guardian-trend.json" \
+                   || compgen -G "$RUNNER_TEMP/prev/*/compat-guardian-trend.json"; } > /dev/null; then
+              found="$prev"
+              break
+            fi
+          done
+          if [[ -n "$found" ]]; then
+            echo "previous trend from run $found"
+          else
+            rm -rf "$RUNNER_TEMP/prev"
+            echo "::notice::no completed scheduled run with a downloadable trend artifact: trend, added and removed cases will be not_computed"
+          fi
+      - name: Summarize
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob globstar
+          reports=("$RUNNER_TEMP"/in/**/guardian.json "$RUNNER_TEMP"/in/**/explore-report.json)
+          if [[ ${#reports[@]} -eq 0 ]]; then
+            echo "::error::no run or explore report to summarize"
+            exit 1
+          fi
+          previous=("$RUNNER_TEMP"/prev/**/compat-guardian-trend.json)
+          extra=()
+          if [[ ${#previous[@]} -gt 0 ]]; then extra=(--previous "${previous[0]}"); fi
+          mkdir -p "$RUNNER_TEMP/trend"
+          python scripts/ci/compat_guardian.py summarize "${reports[@]}" "${extra[@]}" \
+            --require-suites compat_engine,compat_v2 \
+            --json-out "$RUNNER_TEMP/trend/compat-guardian-trend.json" \
+            --markdown-out "$RUNNER_TEMP/trend/trend.md" > /dev/null
+          cat "$RUNNER_TEMP/trend/trend.md" >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload trend summary
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v6
+        with:
+          name: compat-guardian-trend-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/trend/compat-guardian-trend.json
+            ${{ runner.temp }}/trend/trend.md
+          retention-days: 30
+          if-no-files-found: warn

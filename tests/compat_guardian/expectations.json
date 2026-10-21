@@ -1,0 +1,173 @@
+{
+  "schema": "tavotto-guardian-expectations/1",
+  "expectations": [
+    {
+      "suite": "compat_v2",
+      "case": "s16a_zero_division",
+      "outcome": "invalid_fixture",
+      "reason": "Acceptance case 9: the script raises ZeroDivisionError on purpose; the native reference itself fails, so there is nothing to compare and no Tavotto defect to claim.",
+      "references": [
+        {
+          "kind": "test",
+          "ref": "tests/test_compat_guardian_adversarial.py::Case09NativeItselfFails"
+        },
+        {
+          "kind": "test",
+          "ref": "tests/test_compat_v2_baseline.py::test_scenario_baseline"
+        }
+      ]
+    },
+    {
+      "suite": "compat_v2",
+      "case": "s16b_name_error",
+      "outcome": "invalid_fixture",
+      "reason": "Acceptance case 9: the script raises NameError on purpose; the native reference itself fails, so there is nothing to compare and no Tavotto defect to claim.",
+      "references": [
+        {
+          "kind": "test",
+          "ref": "tests/test_compat_guardian_adversarial.py::Case09NativeItselfFails"
+        },
+        {
+          "kind": "test",
+          "ref": "tests/test_compat_v2_baseline.py::test_scenario_baseline"
+        }
+      ]
+    },
+    {
+      "suite": "compat_v2",
+      "case": "s04b_savefig_tmp_replace",
+      "outcome": "expected_limitation",
+      "reason": "Acceptance case 13: a browser-mode (restricted) source must not auto-upgrade to Native, so the Safe-only blocked outcome equal to the recorded main baseline is the intended behavior of this control.",
+      "references": [
+        {
+          "kind": "test",
+          "ref": "tests/test_execution_fallback_e2e.py::test_a_browser_mode_service_never_falls_back_to_native"
+        },
+        {
+          "kind": "test",
+          "ref": "tests/test_compat_v2_baseline.py::test_scenario_baseline"
+        }
+      ]
+    },
+    {
+      "suite": "compat_v2",
+      "case": "s05_dynamic_rename",
+      "outcome": "expected_limitation",
+      "reason": "Acceptance case 13: a browser-mode (restricted) source must not auto-upgrade to Native, so the Safe-only blocked outcome equal to the recorded main baseline is the intended behavior of this control.",
+      "references": [
+        {
+          "kind": "test",
+          "ref": "tests/test_execution_fallback_e2e.py::test_a_browser_mode_service_never_falls_back_to_native"
+        },
+        {
+          "kind": "test",
+          "ref": "tests/test_compat_v2_baseline.py::test_scenario_baseline"
+        }
+      ]
+    },
+    {
+      "suite": "compat_v2",
+      "case": "s06_savefig_pil_readback",
+      "outcome": "expected_limitation",
+      "reason": "Acceptance case 13: a browser-mode (restricted) source must not auto-upgrade to Native, so the Safe-only blocked outcome equal to the recorded main baseline is the intended behavior of this control.",
+      "references": [
+        {
+          "kind": "test",
+          "ref": "tests/test_execution_fallback_e2e.py::test_a_browser_mode_service_never_falls_back_to_native"
+        },
+        {
+          "kind": "test",
+          "ref": "tests/test_compat_v2_baseline.py::test_scenario_baseline"
+        }
+      ]
+    },
+    {
+      "suite": "compat_v2",
+      "case": "s18_readonly_dir",
+      "outcome": "expected_limitation",
+      "reason": "Designed stop: with a read-only project directory Native is no more able to write than Safe; the V2 oracle requires exactly one execution, a reason code, no figure and no fallback loop, and observed behavior meets it.",
+      "references": [
+        {
+          "kind": "test",
+          "ref": "tests/test_compat_v2_baseline.py::test_readonly_precondition_is_verified_not_assumed"
+        },
+        {
+          "kind": "test",
+          "ref": "tests/test_compat_v2_baseline.py::test_scenario_baseline"
+        }
+      ]
+    },
+    {
+      "suite": "compat_v2",
+      "case": "s21_no_figure",
+      "outcome": "expected_limitation",
+      "reason": "Designed stop: the script exits 0 and draws nothing in native too (0 figures on both sides); Tavotto reports phase partial with the explicit no_figures_captured code instead of ok:true with an empty figure, as the V2 stop oracle requires.",
+      "references": [
+        {
+          "kind": "test",
+          "ref": "tests/test_compat_v2_baseline.py::test_stop_scenarios_reject_a_success_projection"
+        },
+        {
+          "kind": "test",
+          "ref": "tests/test_compat_v2_baseline.py::test_scenario_baseline"
+        }
+      ]
+    },
+    {
+      "suite": "compat_v2",
+      "case": "s14_missing_pkg_then_limit",
+      "outcome": "environment_unavailable",
+      "reason": "The scenario needs sklearn to be absent from the worker interpreter; the CI interpreter installs the locked corpus packages, so the precondition is unmet by design and no product claim can be made.",
+      "references": [
+        {
+          "kind": "test",
+          "ref": "tests/test_compat_v2_baseline.py::test_dependency_ideal_only_expects_packages_that_are_actually_absent"
+        }
+      ]
+    },
+    {
+      "suite": "compat_v2",
+      "case": "s26_import_cv2_sklearn",
+      "outcome": "environment_unavailable",
+      "reason": "The scenario needs cv2 and sklearn to be absent from the worker interpreter; the CI interpreter installs the locked corpus packages, so the precondition is unmet by design and no product claim can be made.",
+      "references": [
+        {
+          "kind": "test",
+          "ref": "tests/test_compat_v2_baseline.py::test_dependency_ideal_only_expects_packages_that_are_actually_absent"
+        }
+      ]
+    },
+    {
+      "suite": "compat_v2",
+      "case": "s07_savefig_exists",
+      "outcome": "expected_limitation",
+      "reason": "Acceptance case 13: the failure code is safe_file_operation_blocked; on the desktop path #1028 falls back to Native, while a browser-mode source deliberately does not upgrade to Native, so the blocked outcome equal to the recorded main baseline is intended here.",
+      "references": [
+        {
+          "kind": "test",
+          "ref": "tests/test_execution_fallback_e2e.py::test_a_browser_mode_service_never_falls_back_to_native"
+        },
+        {
+          "kind": "test",
+          "ref": "tests/test_compat_v2_baseline.py::test_scenario_baseline"
+        }
+      ]
+    },
+    {
+      "suite": "compat_v2",
+      "case": "s17_side_effect_then_limit",
+      "outcome": "expected_limitation",
+      "reason": "Acceptance case 13: the failure code is safe_file_operation_blocked; on the desktop path #1028 falls back to Native, while a browser-mode source deliberately does not upgrade to Native, so the blocked outcome equal to the recorded main baseline is intended here.",
+      "references": [
+        {
+          "kind": "test",
+          "ref": "tests/test_execution_fallback_e2e.py::test_a_browser_mode_service_never_falls_back_to_native"
+        },
+        {
+          "kind": "test",
+          "ref": "tests/test_compat_v2_baseline.py::test_scenario_baseline"
+        }
+      ]
+    }
+  ]
+}

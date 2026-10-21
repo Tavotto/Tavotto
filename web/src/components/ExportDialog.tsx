@@ -110,12 +110,14 @@ import {
   pixelPreview,
   PPI_DEFAULT,
   hasRaster,
+  type ExportFormat,
   type ExportScope,
   type ExportRequestInput,
 } from "@/lib/exportRequest";
 import type { OverwritePolicy } from "@/lib/exportRequest";
 import { DEFAULT_PROFILE_ID, type PublicationProfile } from "@/lib/profile";
 import { profileName } from "@/lib/profileText";
+import { useLocale } from "@/i18n/react";
 import {
   bindingFor,
   resolveDocumentSpec,
@@ -146,6 +148,7 @@ import { useWorkspaceStore } from "@/store/workspace";
 import type { FigureDocument, PanelObject } from "@/types/document";
 import {
   getValidationSummary,
+  originalValidationFor,
   rawIssuesFor,
   runValidation,
   useValidationStore,
@@ -289,6 +292,7 @@ export function ExportDialog() {
   const validationFailed = useValidationStore((s) => s.failed);
   const job = useExportStore((s) => s.job);
   const running = useExportStore((s) => s.running);
+  const lastInput = useExportStore((s) => s.lastInput);
   const startError = useExportStore((s) => s.startError);
   const pollError = useExportStore((s) => s.pollError);
   const refreshing = useExportStore((s) => s.refreshing);
@@ -440,6 +444,17 @@ export function ExportDialog() {
   /** 这次生效的那套规范的 id：规范下拉的显示值、严格核验的 `profile_id` 都认它 */
   const checkProfileId =
     resolved.profileId ?? (checkOnActive ? profileId : DEFAULT_PROFILE_ID);
+  /** 这次按哪套规范查的（检查结论里说出来）；取名与问题面板的证据句同一做法 */
+  const locale = useLocale();
+  const checkSpecName = useMemo(() => {
+    const record = resolved.profileId
+      ? specRecords.find((r) => r.id === resolved.profileId)
+      : undefined;
+    return record ? profileName(record) : resolved.profile.label;
+    // 内置规范的名字（`profileName`）在调用时按当前语言成文：换语言要重算，否则结论行换了语言、
+    // 规范名还是旧的（#1194 评审 P2；问题面板 NoneEvidence 同一条，Codex #832）
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [resolved, specRecords, locale]);
   /** 别的画布上的规范在这里改不了（`applyProfile` 写的是当前画布）——说出原因，不静默改错画布 */
   const checkCanvasName = checkOnActive
     ? null
@@ -563,16 +578,53 @@ export function ExportDialog() {
    * 范围的裁法在 `summaryFor()` 一处，对话框不自己筛。
    */
   const targetObjectId = scope === "original" && panel ? panel.id : undefined;
+  /** 原图导出的图幅（mm）：摘要的原图口径检查与留档的 `page_mm` 认同一份 */
+  const originalWidthMm = targetObjectId
+    ? (availability.spec?.widthMm ?? panel?.nativeW)
+    : undefined;
+  const originalHeightMm = targetObjectId
+    ? (availability.spec?.heightMm ?? panel?.nativeH)
+    : undefined;
+  /**
+   * 原图范围检查的是**原图那份产物**（scale 1、页面 = 图幅），不是图在画布上的摆法：
+   * 画布那份字号乘了画布缩放，160 mm 的图缩到 80 mm 摆着时，8 pt 会被说成 4 pt
+   * 的阻断，而导出的文件里它仍是 8 pt（ADR 0028）。同一个求值器、同一份输入，
+   * 由 store 给出（`originalValidationFor`），对话框不自己求值；`validationIssues`
+   * 只作为「检查刚重跑过」的信号进依赖。
+   */
+  const original = useMemo(
+    () =>
+      targetObjectId && originalWidthMm && originalHeightMm
+        ? originalValidationFor(checkCanvasId, {
+            objectId: targetObjectId,
+            widthMm: originalWidthMm,
+            heightMm: originalHeightMm,
+            formats,
+          })
+        : null,
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [validationIssues, checkCanvasId, targetObjectId, originalWidthMm, originalHeightMm, formats],
+  );
+  /**
+   * 原图范围、选中的图只在素材 / 运行时清单里（`panel` 为 null）：它不在任何画布上，
+   * 没有对象可按原图口径求值（`originalValidationFor` 要一个画布对象），而当前画布的
+   * 问题是**别的东西**的问题——借来当结论，干净画布会被读成「这张图查过、没问题」，
+   * 画布上的阻断项也会挡住一张无关的图（#1228 评审 P2）。如实说没检查：摘要记作
+   * 「没查成」（`failed`，沿用既有的确认门禁与报告里的 checkFailed 档），不带任何画布条目。
+   */
+  const uncheckedOffCanvas = scope === "original" && !!figureId && !panel;
   const summary = useMemo(
     () =>
-      summaryFor(validationIssues, {
+      summaryFor(uncheckedOffCanvas ? [] : (original?.result?.issues ?? validationIssues), {
         canvasId: checkCanvasId,
         objectId: targetObjectId,
         extra: exportIssues,
         ready: validationReady,
-        failed: validationFailed,
+        failed: uncheckedOffCanvas || validationFailed || !!original?.failed,
       }),
     [
+      uncheckedOffCanvas,
+      original,
       validationIssues,
       checkCanvasId,
       targetObjectId,
@@ -701,6 +753,15 @@ export function ExportDialog() {
   const prepared = prepareExport(inputOf());
   const filenameIssue = prepared.filenameProblem;
   const names = prepared.names;
+  /**
+   * 对象头里「会写出的文件名」：导出进行中取**正在跑的那次请求**（`lastInput` 经同一个
+   * `prepareExport`），不取此刻的表单——运行期间文件名 / 格式 / 范围控件仍可改，头部
+   * 若跟着变，会说在写 other.svg 而实际在写 Fig1.pdf（#1228 评审 P2）。空闲时取当前表单。
+   */
+  const runningNames = useMemo(
+    () => (running && lastInput ? prepareExport(lastInput).names : null),
+    [running, lastInput],
+  );
 
   // 数的是**这次真会发出去的**格式（`names` 由 `buildExportRequest` 来，画布范围下
   // 勾着的 EPS 不在其中）：只勾 EPS 又切到画布，按钮得灰，不能发一个空格式列表
@@ -772,9 +833,11 @@ export function ExportDialog() {
             assets,
             [
               // 报告里的条目集合与界面上的摘要裁同一刀（按原图 = 只有那张图的）
-              ...(targetObjectId
+              ...(uncheckedOffCanvas
+                ? []
+                : targetObjectId
                 ? rawIssuesForObject(
-                    rawIssuesFor(checkCanvasId),
+                    original?.result?.raw ?? rawIssuesFor(checkCanvasId),
                     targetObjectId,
                   )
                 : rawIssuesFor(checkCanvasId)),
@@ -787,11 +850,11 @@ export function ExportDialog() {
               // 原图范围：报告的页面 = 这张图的图幅，不写画布页面与摆放（QA FLAG-B1）
               // 直接交那张图本身：它可能不在当前画布（`doc`）上
               original:
-                targetObjectId && panel
+                targetObjectId && panel && originalWidthMm && originalHeightMm
                   ? {
                       panel,
-                      widthMm: availability.spec?.widthMm ?? panel.nativeW,
-                      heightMm: availability.spec?.heightMm ?? panel.nativeH,
+                      widthMm: originalWidthMm,
+                      heightMm: originalHeightMm,
                     }
                   : undefined,
             },
@@ -858,7 +921,11 @@ export function ExportDialog() {
       availability.spec,
       canStart,
       targetObjectId,
+      uncheckedOffCanvas,
       checkCanvasId,
+      original,
+      originalWidthMm,
+      originalHeightMm,
     ],
   );
 
@@ -1219,6 +1286,11 @@ export function ExportDialog() {
             doc={doc}
             asset={figureId ? assets[figureId] : undefined}
             transparent={transparent && transparentApplies}
+            // 写不出来的名字不报：文件名不合法、或原图范围下这张图此刻导不出
+            files={
+              runningNames ??
+              (filenameIssue || (scope === "original" && !availability.ok) ? [] : names)
+            }
           />
         )
       }
@@ -1334,28 +1406,28 @@ export function ExportDialog() {
 
         <FormSection title={ex("groupFormat")} data-export-group="format">
           <FieldGroup>
-            {/* 格式 —— 四颗复选框均分一行（balanced），顺序与 `FORMATS` 同源 */}
+            {/* 格式 —— 五颗复选框均分一行（balanced），顺序与 `FORMATS` 同源 */}
             <section className="flex flex-col gap-1.5">
               <fieldset aria-label={ex("formatLabel")} className="m-0 min-w-0 border-0 p-0">
                 <FormRow label={ex("formatLabel")}>
-                  <div className="grid flex-1 grid-cols-4 items-center gap-2" data-export-formats>
+                  <div className="grid flex-1 grid-cols-5 items-center gap-2" data-export-formats>
                     <FormatCheck
                       checked={formats.includes("pdf")}
                       onChange={() => toggleFormat("pdf")}
-                      title="PDF"
+                      format="pdf"
                       hint={ex("pdfHint")}
                     />
                     <FormatCheck
                       checked={formats.includes("png")}
                       onChange={() => toggleFormat("png")}
-                      title="PNG"
+                      format="png"
                       hint={ex("pngHint")}
                     />
                     {/* EPS 只在「原图 + 有脚本」时给得出：不可用就禁用并说原因，不藏 */}
                     <FormatCheck
                       checked={formats.includes("eps") && eps.ok}
                       onChange={() => toggleFormat("eps")}
-                      title="EPS"
+                      format="eps"
                       hint={eps.ok ? ex("epsHint") : ex(`epsUnavailable.${eps.reason}`)}
                       disabled={!eps.ok}
                       describedBy={formats.includes("eps") && !eps.ok ? "export-eps-reason" : undefined}
@@ -1363,12 +1435,26 @@ export function ExportDialog() {
                     <FormatCheck
                       checked={formats.includes("tiff")}
                       onChange={() => toggleFormat("tiff")}
-                      title="TIFF"
+                      format="tiff"
                       hint={ex("tiffHint")}
+                    />
+                    <FormatCheck
+                      checked={formats.includes("svg")}
+                      onChange={() => toggleFormat("svg")}
+                      format="svg"
+                      hint={ex("svgHint")}
+                      describedBy={formats.includes("svg") ? "export-svg-note" : undefined}
                     />
                   </div>
                 </FormRow>
               </fieldset>
+              {formats.includes("svg") && (
+                <FormRow>
+                  <p id="export-svg-note" data-export-svg-note className="type-caption">
+                    {ex("svgNote")}
+                  </p>
+                </FormRow>
+              )}
               {/* 勾着 EPS 却给不出（切回了画布 / 这张图没有脚本）：原因摆成可见的一行，
                   不只藏在灰掉的复选框的 title 里——一个灰掉的复选框解释不了自己 */}
               {formats.includes("eps") && !eps.ok && (
@@ -1481,7 +1567,19 @@ export function ExportDialog() {
               <FormRow label={ex("checkLabel")}>
                 <CheckRow
                   summary={summary}
-                  scopeHint={ex(scope === "original" && panel ? "checkScopeFigure" : "checkScopeCanvas")}
+                  specName={checkSpecName}
+                  unchecked={uncheckedOffCanvas}
+                  scopeHint={
+                    uncheckedOffCanvas
+                      ? ex("checkScopeOffCanvas", {
+                          name: figure?.name ?? defaultExportName(scope, panel, doc),
+                        })
+                      : scope === "original" && panel
+                      ? ex("checkScopeFigureNamed", {
+                          name: figure?.name ?? defaultExportName(scope, panel, doc),
+                        })
+                      : ex("checkScopeCanvasNamed", { name: doc.name })
+                  }
                   onOpenPanel={(opts) => {
                     park();
                     openProblems({ severities: opts?.severities, target: problemsTarget });
@@ -1858,6 +1956,7 @@ function TargetHeader({
   doc,
   asset,
   transparent,
+  files,
 }: {
   scope: ExportScope;
   /** 原图范围下这次导的那张（候选清单里的那一条；还没上画布的素材 `panel` 为 null 也是它） */
@@ -1868,6 +1967,12 @@ function TargetHeader({
   asset: PanelInfo | undefined;
   /** 这次导出实际会出透明背景（已含 `transparentApplies`）：画布范围的缩略图画成棋盘格 */
   transparent: boolean;
+  /**
+   * 这次会写出的文件名（含扩展名，也就是勾选的格式）。**直接是 `prepareExport().names`**
+   * ——`buildExportRequest` 发给后端的同一份，这里不自己拼、不自己剥扩展名。
+   * 文件名不合法 / 没有可导的格式时调用方传空数组：不报一个写不出来的名字。
+   */
+  files: readonly string[];
 }) {
   useTranslation("dialogs");
   const original = scope === "original";
@@ -1932,6 +2037,15 @@ function TargetHeader({
           )}
         </p>
         {originNote && <p className="type-caption">{originNote}</p>}
+        {files.length > 0 && (
+          <p
+            data-export-target-files
+            className="type-meta truncate"
+            title={files.join(" · ")}
+          >
+            {files.join(" · ")}
+          </p>
+        )}
         {/* 缩略图不是最终文件（画布缩略图不含图内修改与页面合成、位图格式的像素也不在这里），
             说一句，克制：中性灰，不是警告 */}
         <p data-export-thumb-note className="type-caption text-ink-3">
@@ -2036,10 +2150,16 @@ const round1 = (v: number) => Math.round(v * 10) / 10;
  */
 function CheckRow({
   summary,
+  specName,
   scopeHint,
+  unchecked,
   onOpenPanel,
 }: {
   summary: ValidationSummary;
+  /** 这次导出没有可检查的对象（原图不在画布上）：只说没检查，不报任何画布结论 */
+  unchecked?: boolean;
+  /** 按哪套规范查的：没查出问题时要说清是「按它没查出」，不是「合规」 */
+  specName: string;
   /** 这份摘要算的是哪个范围（只算这张图 / 整个画布） */
   scopeHint: string;
   /**
@@ -2049,6 +2169,19 @@ function CheckRow({
   onOpenPanel: (opts?: { severities: Severity[] }) => void;
 }) {
   useTranslation(["dialogs", "errors"]);
+  if (unchecked) {
+    return (
+      <div className="flex items-center justify-between gap-3">
+        <span
+          data-export-check-scope
+          className="flex min-w-0 flex-1 items-center gap-2 text-sm text-ink-2"
+        >
+          <TriangleAlert size={ICON_SIZE.sm} className="shrink-0" aria-hidden />
+          {scopeHint}
+        </span>
+      </div>
+    );
+  }
   // 「查不了」与「没问题」是两个答案。压成一个 = 用户带着一屏静悄悄的绿投稿
   if (summary.failed || !summary.ready) {
     return (
@@ -2062,17 +2195,23 @@ function CheckRow({
     );
   }
   if (summary.total === 0) {
-    // 通过态用中性图标，不做绿色横幅：这只是「没查出问题」，不是庆祝
+    // 通过态用中性图标，不做绿色横幅：这只是「按这套规范没查出问题」，不是「合规」——
+    // 说出按哪套规范、查的是哪个范围，再用一行小字说清检查覆盖到哪（识别不出的内容不在其中）
     return (
-      <div className="flex items-center justify-between gap-3">
-        <span className="flex min-w-0 flex-1 items-center gap-2 text-sm text-ink">
+      <div data-export-check-ok className="flex min-w-0 flex-col gap-0.5">
+        <span className="flex min-w-0 items-center gap-2 text-sm text-ink">
           <Check
             size={ICON_SIZE.sm}
             className="shrink-0 text-ink-2"
             aria-hidden
           />
-          {ex("preflightOk")}
-          <span className="text-xs text-ink-3">{`· ${scopeHint}`}</span>
+          <span className="min-w-0">
+            {ex("preflightOk", { spec: specName })}
+            <span data-export-check-scope className="text-xs text-ink-3">{` · ${scopeHint}`}</span>
+          </span>
+        </span>
+        <span data-export-check-coverage className="pl-6 text-xs text-ink-3">
+          {ex("preflightCoverage")}
         </span>
       </div>
     );
@@ -2090,7 +2229,7 @@ function CheckRow({
   return (
     <div className="flex items-center justify-between gap-3">
       {/* 范围（整个画布 / 仅此图）不再是一段内联灰字：悬停说明，读屏照读 */}
-      <span title={scopeHint} className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">
+      <span data-export-check-scope title={scopeHint} className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">
         {CHIPS.filter((c) => summary.counts[c.sev] > 0).map((c) => (
           <CountChip
             key={c.sev}
@@ -2398,14 +2537,14 @@ function InspectionLine({
 function FormatCheck({
   checked,
   onChange,
-  title,
+  format,
   hint,
   disabled = false,
   describedBy,
 }: {
   checked: boolean;
   onChange: () => void;
-  title: string;
+  format: ExportFormat;
   hint: string;
   disabled?: boolean;
   /** 禁用原因那段可见文字的 id */
@@ -2413,6 +2552,7 @@ function FormatCheck({
 }) {
   return (
     <label
+      data-export-format={format}
       title={hint}
       aria-disabled={disabled || undefined}
       className={cn(
@@ -2426,7 +2566,7 @@ function FormatCheck({
         disabled={disabled}
         aria-describedby={describedBy}
       />
-      <span>{title}</span>
+      <span>{format.toUpperCase()}</span>
     </label>
   );
 }

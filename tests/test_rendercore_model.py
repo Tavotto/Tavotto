@@ -104,6 +104,7 @@ def test_native_adapters_import_candidate_packages_lazily():
     for name in (
         "hbshaper.py",
         "pdfwriter.py",
+        "svgwriter.py",
         "rasterio.py",
         "renderchild.py",
         "renderhost.py",

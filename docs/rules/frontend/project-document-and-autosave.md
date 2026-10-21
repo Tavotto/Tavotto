@@ -123,6 +123,15 @@
   绑定以本会话内存为准（`lib/projectFile.ts` 的会话层），localStorage 只是刷新后还认得的尽力而为副本——
   保存链不许只读持久副本；await 之后的落账（修订号缓存、绑定、冲突岔口）一律记在
   **发请求那一刻**的 pj 名下（`rememberLayoutRevision(name, rev, pj)`），切走之后不开冲突岔口。
+- **显式运行完成与恢复门（SVG 快照）**：`figureSnapshotInvalidation` 只接收入口已按项目代际接受的成功执行事实；
+  尚未接纳的旧回包仍由原入口拒绝。恢复中 / 待用户处理、以及尚未真正初始化的 `initial-ready` 窗口内，
+  只保留匹配来源所需的最小字段，按稳定项目 id + source / runtime asset id 覆盖去重，不保留报告或参数。
+  同 runtime asset 的新捕获只覆盖 descriptor；每次明确观察到的 original artifact 另按精确 source 累计，复用 `capturedFigureSources` 的路径规范化，不扩大配置图的 stem 匹配。
+  已接受但未消费的 A 项目事实跨 A → B → A 暂留，B 文档不得消费；恢复重试 / 等待超过 readiness 超时也不丢。
+  真正 ready 且正文安装完成后，才用恢复文档的全部画布与历史重算静态同 stem / 不同格式的来源，退役旧引用并走正常 dirty / 自动保存。
+  `supersedeRestore` 先宣布 ready 后安装正文，因此在稳定微任务点核对 gate 的 docId；`installingUnderToken` 不算恢复完成。
+  首次真实恢复消费后即删除，不永久重放到用户之后主动打开的历史文档。临时登记随应用生命周期释放；不以静默容量淘汰丢失执行事实。
+  native 图放置的旧回调仍守其原项目代际，不能因保留执行事实而在另一个项目插图；执行事实只登记一次。
 - **启动恢复判决（2026-10-11，ADR 0120，替代下面 2026-09-26 那条的前两道判断）**：「项目 ready」与「文档 ready」分开。
   documentStore 的恢复门（`restoring` / `needs_user` / `ready`，带 `gen` + `pj` 令牌）是**唯一**的「文档准备好了没有」：
   - 门关着时内存里是**占位文档**：`commit` / 事务 / 撤销重做 / 画布与标签增删改 / `renameProject` / `applyDerivedUpdate` 一律拒（状态条节流说一句），
@@ -310,3 +319,21 @@
 已带 guard 的记录不再过 legacy FRAME 自动迁移。畸形/未知/不匹配 guard 原样保存并拒绝，
 不能把它删掉来获得 legacy 退路。完整重置/确认换素材才按既有丢弃语义原子移除 guard。
 看护：`store/artifactEntry.test.ts`、`lib/artifactValidation.test.ts`、`lib/artifactApi.test.ts`。
+
+### 来源驱动采用的并列 guard（ADR 0139 PR2）
+
+`sourceBackedFigure`（`{version, policy: 'script-backed-figure-v1', sourceId, bytesSha256, sizeBytes, status:
+'exact'|'reconstructed', reconstructionSha256, confirmedAt?}`）是 `artifactValidation` 的**并列且互斥**字段，
+不复用它的形状或字段名；判据同在 `lib/artifactValidation.ts`。**「这块面板处于哪种选中上下文」只有一个出处**
+`adoptionOf()`（`strict` / `source` / `none` / `invalid`），其余一律经它派生（`isAdoptedPanel` / `adoptionGuardOf` /
+`refuseArtifactOperation` / `artifactRequestFields` / `clearAdoption`）——不再各处写
+`Object.hasOwn(panel, 'artifactValidation')`。未知键 / 畸形 / 版本不对 / 两种 guard 并存都是 `invalid`，不当 legacy。
+- 严格策略先试；仅当它因 `artist_profile` / `source_mismatch` 被拒、且 `GET /api/experiments` 说开关开着，才用来源驱动策略再准入
+  一次。`exact` 直接一次提交；`needs_confirmation` 先开对照确认（`SourceBackedReviewDialog`），**取消什么都不写**，确认才
+  提交 `reconstructed` + `confirmedAt`。采用 / 确认各是一次提交，只写 FRAME、nativeW/H、guard，不改页面 x/y/w/h/crop。
+- 零编辑（只有结构性 `figure.frame`）= 磁盘原像素：显示与原图导出都不出引擎图，重开 / 脚本变更 / 邻居补渲染不跑脚本
+  （`isSourceBackedZeroEdit`）。有真实编辑 = 整图重渲染，请求带 `confirmed_reconstruction_sha256`（缺失 409
+  `confirmation_required`，不等 409 `reconstruction_changed`）。
+- `reconstruction_changed`：编辑与 guard 原样保留、不自动换基，一句话 + 「重新对照确认」；确认后一次提交更新摘要。
+看护：`lib/sourceBackedFigure.test.ts`、`store/sourceBackedAdoption.test.ts`、`canvas/sourceBackedPreview.test.tsx`、
+`components/SourceBackedReviewDialog.test.tsx`、`e2e/guarded-png-activation.spec.ts`。

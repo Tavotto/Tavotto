@@ -179,6 +179,7 @@ class Delta:
     scripts: set[str] = field(default_factory=set)
     registry: set[str] = field(default_factory=set)
     assets: set[str] = field(default_factory=set)
+    targets: dict[str, tuple[pool.WorkerTarget, ...]] = field(default_factory=dict)
 
     def __bool__(self) -> bool:
         return bool(self.scripts or self.registry or self.assets)
@@ -187,6 +188,16 @@ class Delta:
         self.scripts |= other.scripts
         self.registry |= other.registry
         self.assets |= other.assets
+        for script, targets in other.targets.items():
+            previous = self.targets.get(script, ())
+            self.targets[script] = previous + tuple(
+                target
+                for target in targets
+                if not any(
+                    old.worker is target.worker and old.generation == target.generation
+                    for old in previous
+                )
+            )
 
     def paths(self) -> list[str]:
         """批次里全部变化路径（给 `refresh(changed_paths=…)`）。"""
@@ -307,6 +318,14 @@ class ProjectWatcher:
 
         now = self.clock()
         delta = diff_snapshots(self._snapshot, snap)
+        # Observation, target binding and baseline replacement are serialized by
+        # the watcher lock. New acquisitions settle this boundary first.
+        delta.targets = {
+            script: pool.invalidation_targets(
+                None if _is_style_module(script) else script, str(self.root)
+            )
+            for script in delta.scripts
+        }
         # **先换快照，再处理。** 处理（刷新）期间到达的写入会与这张新快照
         # 比较，于是进入下一批而不是丢失。反过来（处理完再换）会把处理期间
         # 的变化算进已经结算的这一批，下一轮 diff 为空——那正是「保存了没
@@ -359,6 +378,7 @@ class ProjectWatcher:
                     else:
                         self._snapshot.scripts[rel] = sig
                 self._pending.scripts.discard(rel)
+                self._pending.targets.pop(rel, None)
             if not self._pending:
                 self._first_seen = self._last_seen = None
         return fresh
@@ -383,10 +403,16 @@ class ProjectWatcher:
         if style_changed:
             # 共享样式变了：本项目全部作废（别的项目一个都不动）。
             LOG.info("共享样式模块变更，作废本项目全部渲染会话")
-            pool.invalidate_project(str(self.root))
+            targets = tuple(
+                target
+                for script in batch.scripts
+                if _is_style_module(script)
+                for target in batch.targets.get(script, ())
+            )
+            pool.invalidate_project(str(self.root), targets=targets)
         else:
             for rel in touched_scripts:
-                pool.invalidate(rel, str(self.root))
+                pool.invalidate(rel, str(self.root), targets=batch.targets.get(rel, ()))
 
         paths = self._refreshable_paths(batch)
         if not paths and self._errored and batch.registry:
@@ -503,6 +529,7 @@ def start(
     with _lock:
         old = _watchers.get(key)
         _watchers[key] = watcher
+        pool.set_cold_acquire_observer(before_acquire)
     if old is not None:
         old.stop()  # 放在锁外：stop 只是 set 一个 Event，但别在锁里做任何等待
     threading.Thread(
@@ -520,6 +547,8 @@ def stop(figures_dir: str | Path | None = None) -> None:
         else:
             w = _watchers.pop(_key(figures_dir), None)
             victims = [w] if w is not None else []
+        if not _watchers:
+            pool.set_cold_acquire_observer(None)
     for w in victims:
         w.stop()
 
@@ -533,6 +562,56 @@ def absorb(figures_dir: str | Path, rel_paths: Iterable[str]) -> list[str] | Non
     if w is None:
         return None
     return w.absorb(rel_paths)
+
+
+def before_acquire(figures_dir: str | Path, script: str) -> None:
+    """Settle this source/shared-style event before installing a new instance.
+
+    This is a cold-acquisition boundary only. Other scripts and assets keep their
+    debounce. No execution-source claim follows from the filesystem observation.
+    """
+    watcher = watcher_of(figures_dir)
+    if watcher is None:
+        return
+    with watcher._lock:
+        if watcher.stop_event.is_set() or watcher._snapshot is None:
+            return
+        # Style modules can affect every script, including a newly added/renamed
+        # one. Use the existing pruned walk only on this cold path, not hot gets.
+        current = take_snapshot(watcher.root)
+        if current is None:
+            return
+        relevant = {script} | {
+            rel
+            for rel in set(current.scripts) | set(watcher._snapshot.scripts)
+            if _is_style_module(rel)
+        }
+        for rel in relevant:
+            signature = current.scripts.get(rel)
+            if watcher._snapshot.scripts.get(rel) != signature:
+                delta = Delta(
+                    scripts={rel},
+                    targets={
+                        rel: pool.invalidation_targets(
+                            None if _is_style_module(rel) else rel, str(watcher.root)
+                        )
+                    },
+                )
+                if signature is None:
+                    watcher._snapshot.scripts.pop(rel, None)
+                else:
+                    watcher._snapshot.scripts[rel] = signature
+                watcher._pending.absorb(delta)
+        settled = relevant & watcher._pending.scripts
+        if not settled:
+            return
+        batch = Delta(
+            scripts=settled, targets={rel: watcher._pending.targets.pop(rel, ()) for rel in settled}
+        )
+        watcher._pending.scripts -= settled
+        if not watcher._pending:
+            watcher._first_seen = watcher._last_seen = None
+        watcher._dispatch(batch)
 
 
 def watched_dirs() -> list[str]:

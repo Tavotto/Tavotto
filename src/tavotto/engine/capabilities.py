@@ -22,9 +22,18 @@ SCRIPT_ARGV = "script-argv"
 PREPARATION_SESSIONS = "preparation-sessions"
 #: 环境建议上的显式采用：候选 id + 用户看到的环境代（T05，ADR 0114）。没有它：旧引擎在首开时静默采用。
 ENVIRONMENT_ADOPTION = "environment-adoption"
+#: 池认 `write_roots`：MCP 来源的 safe 运行可以带写入根绊线（#898，ADR 0141），越界写以 `write_outside_roots` 失败。
+#: **同时是这条防线的回滚开关**：从 `FEATURES` 去掉它，桥就不再传参（旧引擎同理没有它），其余行为不变。
+#: 没有它：桥传 `write_roots=` 给不认识的旧池会 TypeError，所以先问再传。
+WRITE_ROOT_TRIPWIRE = "write-root-tripwire"
 
 #: 本引擎会的全部标记（顺序固定，只增不改名）。
-FEATURES: tuple[str, ...] = (SCRIPT_ARGV, PREPARATION_SESSIONS, ENVIRONMENT_ADOPTION)
+FEATURES: tuple[str, ...] = (
+    SCRIPT_ARGV,
+    PREPARATION_SESSIONS,
+    ENVIRONMENT_ADOPTION,
+    WRITE_ROOT_TRIPWIRE,
+)
 
 #: 客户端没拿到所需标记时回的稳定码（HTTP 前端 / MCP 桥同一个）。
 ERROR_CAPABILITY_MISSING = "engine_capability_missing"

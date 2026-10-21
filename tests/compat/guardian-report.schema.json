@@ -1,0 +1,711 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://tavotto.org/schemas/compatibility-guardian/report-1.0.0.json",
+  "title": "Compatibility Guardian execution evidence (not product support classification)",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "const": "1.0.0"
+    },
+    "run_id": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{32}$"
+    },
+    "source": {
+      "$ref": "#/$defs/source"
+    },
+    "expected_sha": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "suite": {
+      "enum": [
+        "compat_engine",
+        "compat_v2"
+      ]
+    },
+    "expected_cases": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "minItems": 1,
+      "uniqueItems": true
+    },
+    "corpus_sha256": {
+      "$ref": "#/$defs/sha256"
+    },
+    "cases": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/case"
+      },
+      "minItems": 1
+    },
+    "evidence": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/evidence"
+      },
+      "minItems": 1
+    },
+    "verdict": {
+      "$ref": "#/$defs/row_status"
+    },
+    "unverified": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "minItems": 1
+    },
+    "duration_s": {
+      "type": "number",
+      "minimum": 0
+    },
+    "coverage": {
+      "type": "object",
+      "minProperties": 9,
+      "description": "Per stage, how many cases ended in each stage status. Names what was and was not exercised.",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "expectations_sha256": {
+      "$ref": "#/$defs/sha256"
+    }
+  },
+  "required": [
+    "schema_version",
+    "run_id",
+    "source",
+    "expected_sha",
+    "suite",
+    "expected_cases",
+    "corpus_sha256",
+    "cases",
+    "evidence",
+    "verdict",
+    "unverified",
+    "duration_s",
+    "coverage",
+    "expectations_sha256"
+  ],
+  "additionalProperties": false,
+  "$defs": {
+    "status": {
+      "type": "string",
+      "enum": [
+        "passed",
+        "failed",
+        "expected_limitation",
+        "not_reproduced",
+        "environment_unavailable",
+        "not_run",
+        "invalid_fixture",
+        "unknown"
+      ],
+      "description": "Run outcome state (brief 'Runner contract'). Distinct from CompatBench's six product classes."
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "stage": {
+      "type": "object",
+      "properties": {
+        "status": {
+          "$ref": "#/$defs/stage_status"
+        },
+        "criterion": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "status",
+        "criterion"
+      ],
+      "additionalProperties": false
+    },
+    "source": {
+      "type": "object",
+      "properties": {
+        "commit": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "tree": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "dirty": {
+          "type": "boolean"
+        },
+        "content_sha256": {
+          "$ref": "#/$defs/sha256"
+        }
+      },
+      "required": [
+        "commit",
+        "tree",
+        "dirty",
+        "content_sha256"
+      ],
+      "additionalProperties": false
+    },
+    "environment": {
+      "type": "object",
+      "properties": {
+        "fingerprint": {
+          "$ref": "#/$defs/sha256"
+        },
+        "facts": {
+          "type": "object"
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    },
+    "fixture": {
+      "type": "object",
+      "properties": {
+        "files": {
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": {
+            "$ref": "#/$defs/sha256"
+          }
+        },
+        "source_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "data_sha256": {
+          "$ref": "#/$defs/sha256"
+        }
+      },
+      "required": [
+        "files",
+        "source_sha256",
+        "data_sha256"
+      ],
+      "additionalProperties": false
+    },
+    "evidence": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "bytes": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "path",
+        "sha256",
+        "bytes"
+      ],
+      "additionalProperties": false
+    },
+    "case": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "status": {
+          "$ref": "#/$defs/row_status"
+        },
+        "layer": {
+          "type": "string",
+          "minLength": 1
+        },
+        "profile": {
+          "enum": [
+            "safe"
+          ]
+        },
+        "desktop_shell_verified": {
+          "const": false
+        },
+        "stages": {
+          "type": "object",
+          "properties": {
+            "discover": {
+              "$ref": "#/$defs/stage"
+            },
+            "execute": {
+              "$ref": "#/$defs/stage"
+            },
+            "capture": {
+              "$ref": "#/$defs/stage"
+            },
+            "open": {
+              "$ref": "#/$defs/stage"
+            },
+            "semantic": {
+              "$ref": "#/$defs/stage"
+            },
+            "edit": {
+              "$ref": "#/$defs/stage"
+            },
+            "replay": {
+              "$ref": "#/$defs/stage"
+            },
+            "export": {
+              "$ref": "#/$defs/stage"
+            },
+            "fidelity": {
+              "$ref": "#/$defs/stage"
+            }
+          },
+          "required": [
+            "discover",
+            "execute",
+            "capture",
+            "open",
+            "semantic",
+            "edit",
+            "replay",
+            "export",
+            "fidelity"
+          ],
+          "additionalProperties": false
+        },
+        "executions": {
+          "type": "object",
+          "properties": {
+            "native": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 0
+            },
+            "tavotto": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 0
+            },
+            "basis": {
+              "type": "string",
+              "minLength": 1
+            },
+            "attempt_history": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 0,
+              "description": "Session-reported attempts. Cross-check only; never a substitute for the out-of-project counter."
+            },
+            "attempt_history_agrees": {
+              "type": [
+                "boolean",
+                "null"
+              ],
+              "description": "null when either side is unavailable."
+            }
+          },
+          "required": [
+            "native",
+            "tavotto",
+            "basis",
+            "attempt_history",
+            "attempt_history_agrees"
+          ],
+          "additionalProperties": false
+        },
+        "native": {
+          "type": "object",
+          "properties": {
+            "status": {
+              "$ref": "#/$defs/status"
+            },
+            "result": {
+              "type": "object"
+            }
+          },
+          "required": [
+            "status",
+            "result"
+          ],
+          "additionalProperties": false
+        },
+        "comparable": {
+          "type": "boolean"
+        },
+        "environment_before": {
+          "$ref": "#/$defs/environment"
+        },
+        "environment_after": {
+          "$ref": "#/$defs/environment"
+        },
+        "product_classification": {
+          "enum": [
+            null,
+            "full_support",
+            "partial_support",
+            "unsupported_by_design",
+            "environment_dependency",
+            "product_bug",
+            "invalid_fixture"
+          ]
+        },
+        "raw": {
+          "type": "object"
+        },
+        "unverified": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "fixture": {
+          "$ref": "#/$defs/fixture"
+        },
+        "figures": {
+          "type": "object",
+          "properties": {
+            "native": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 0
+            },
+            "tavotto_captured": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 0
+            },
+            "tavotto_valid": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 0
+            }
+          },
+          "required": [
+            "native",
+            "tavotto_captured",
+            "tavotto_valid"
+          ],
+          "additionalProperties": false
+        },
+        "timings_s": {
+          "type": "object",
+          "properties": {
+            "total": {
+              "type": "number",
+              "minimum": 0
+            },
+            "native": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "minimum": 0
+            },
+            "tavotto": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "minimum": 0
+            },
+            "stages": {
+              "type": "object",
+              "properties": {
+                "discover": {
+                  "type": [
+                    "number",
+                    "null"
+                  ],
+                  "minimum": 0
+                },
+                "execute": {
+                  "type": [
+                    "number",
+                    "null"
+                  ],
+                  "minimum": 0
+                },
+                "capture": {
+                  "type": [
+                    "number",
+                    "null"
+                  ],
+                  "minimum": 0
+                },
+                "open": {
+                  "type": [
+                    "number",
+                    "null"
+                  ],
+                  "minimum": 0
+                },
+                "semantic": {
+                  "type": [
+                    "number",
+                    "null"
+                  ],
+                  "minimum": 0
+                },
+                "edit": {
+                  "type": [
+                    "number",
+                    "null"
+                  ],
+                  "minimum": 0
+                },
+                "replay": {
+                  "type": [
+                    "number",
+                    "null"
+                  ],
+                  "minimum": 0
+                },
+                "export": {
+                  "type": [
+                    "number",
+                    "null"
+                  ],
+                  "minimum": 0
+                },
+                "fidelity": {
+                  "type": [
+                    "number",
+                    "null"
+                  ],
+                  "minimum": 0
+                }
+              },
+              "required": [
+                "discover",
+                "execute",
+                "capture",
+                "open",
+                "semantic",
+                "edit",
+                "replay",
+                "export",
+                "fidelity"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "total",
+            "native",
+            "tavotto",
+            "stages"
+          ],
+          "additionalProperties": false,
+          "description": "Wall-clock seconds. null = not measured (never 0 for unmeasured)."
+        },
+        "needs_authorization": {
+          "type": "object",
+          "properties": {
+            "required": {
+              "type": [
+                "boolean",
+                "null"
+              ],
+              "description": "Would a real user flow need an authorization decision (install, Native). null = not determined."
+            },
+            "basis": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "required",
+            "basis"
+          ],
+          "additionalProperties": false
+        },
+        "failure_category": {
+          "type": "object",
+          "properties": {
+            "category": {
+              "enum": [
+                null,
+                "environment_resolution",
+                "dependency_provider",
+                "dependency_version",
+                "argument_or_input",
+                "cwd_or_data_path",
+                "safe_execution_divergence",
+                "figure_capture",
+                "partial_capture",
+                "product_entry_reachability",
+                "manifest_semantics",
+                "editing_capability",
+                "replay_inconsistency",
+                "export_or_fidelity",
+                "timeout_or_process_crash",
+                "invalid_fixture",
+                "unknown"
+              ]
+            },
+            "source_code": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "basis": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "category",
+            "source_code",
+            "basis"
+          ],
+          "additionalProperties": false
+        },
+        "expectation": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "properties": {
+            "declared_outcome": {
+              "type": "string",
+              "minLength": 1
+            },
+            "observed_outcome": {
+              "type": "string",
+              "minLength": 1
+            },
+            "result": {
+              "enum": [
+                "control_met",
+                "mismatch"
+              ]
+            },
+            "reason": {
+              "type": "string",
+              "minLength": 1
+            },
+            "references": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "enum": [
+                      "issue",
+                      "test"
+                    ]
+                  },
+                  "ref": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "kind",
+                  "ref"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "diff": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "declared_outcome",
+            "observed_outcome",
+            "result",
+            "reason",
+            "references",
+            "diff"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "id",
+        "status",
+        "layer",
+        "profile",
+        "desktop_shell_verified",
+        "stages",
+        "executions",
+        "native",
+        "comparable",
+        "environment_before",
+        "environment_after",
+        "product_classification",
+        "raw",
+        "unverified",
+        "fixture",
+        "figures",
+        "timings_s",
+        "needs_authorization",
+        "failure_category",
+        "expectation"
+      ],
+      "additionalProperties": false
+    },
+    "row_status": {
+      "type": "string",
+      "enum": [
+        "passed",
+        "failed",
+        "expected_limitation",
+        "not_reproduced",
+        "environment_unavailable",
+        "not_run",
+        "invalid_fixture",
+        "unknown",
+        "partial_coverage",
+        "control_met"
+      ],
+      "description": "Case/report outcome. partial_coverage = every exercised layer passed with valid proof but at least one required layer is not_covered by the adapter. It is NOT a pass: it never counts toward the passed numerator. control_met = a committed declaration (tests/compat_guardian/expectations.json) predicted exactly this observed outcome; it is neither a pass nor a failure."
+    },
+    "stage_status": {
+      "type": "string",
+      "enum": [
+        "passed",
+        "failed",
+        "expected_limitation",
+        "not_reproduced",
+        "environment_unavailable",
+        "not_run",
+        "invalid_fixture",
+        "unknown",
+        "not_covered"
+      ],
+      "description": "not_covered = the adapter does not drive this layer at all; not_run = the layer was in scope but did not execute."
+    }
+  }
+}
