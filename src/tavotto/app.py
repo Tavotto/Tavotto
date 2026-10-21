@@ -3104,6 +3104,22 @@ def sse_publish(event: str, data: dict) -> None:
             pass
 
 
+@contextlib.contextmanager
+def _relay_build_progress(worker, pj: str, rel_id: str):
+    """这条渲染请求在等 build 的期间，把引擎的「日志仍在增长」转成 `render.progress`（#1207）。
+
+    前端看门狗按它续期。**等锁的重试也在这里登记**：build 线程扇出给所有订阅者，
+    所以排在同一把 `w.lock` 后面的请求同样收得到，不会因为自己没出声而再超时一次。
+    事件只带 pj + id（与 `render.preparing` 同一种关联）——build 是文件级的，没有变体维度。
+    """
+    progress = getattr(worker, "progress", None)
+    if progress is None:  # 测试替身 / 没有进度通道的 worker
+        yield
+        return
+    with progress.listen(lambda: sse_publish("render.progress", {"pj": pj, "id": rel_id})):
+        yield
+
+
 #: 此刻连着的、声明能答脚本 `input()` 的事件流（ADR 0099 §五）：流 id → 它**此刻**在看的项目 id（还没说 = None）。
 #: 只有主界面带 `answers=1`；它是同一条 `/api/events` 的查询参数，认证与普通事件流完全相同（ADR 0008），不是新通道。
 #: **按项目认**：界面开着 A 时，B 的后台 / MCP 渲染问到 input 必须立即 `script_needs_input`——A 的界面按 `pj`
@@ -6574,6 +6590,11 @@ def api_handoff_display_ack():
     return jsonify({"ok": True})
 
 
+def _override_relaying_progress(wk, st, pj, rel_id, patches, preview_dpi, inline_svg):
+    with _relay_build_progress(wk, pj, rel_id):
+        return wk.override(st, patches, preview_dpi, inline_svg=inline_svg)
+
+
 @app.post("/api/engine/render")
 def api_engine_render():
     """应用全量 override 列表并重渲染，返回新 manifest 与版本号。
@@ -6665,8 +6686,8 @@ def api_engine_render():
             rel_id,
             worker,
             stem,
-            lambda wk, st: wk.override(
-                st, body.get("patches", []), preview_dpi, inline_svg=inline_svg
+            lambda wk, st: _override_relaying_progress(
+                wk, st, pj, rel_id, body.get("patches", []), preview_dpi, inline_svg
             ),
             artifact_source=artifact_source,
         )

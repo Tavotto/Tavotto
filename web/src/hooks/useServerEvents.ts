@@ -20,6 +20,7 @@ import { useProjectPreparationStore } from '@/store/projectPreparationStore'
 import { useProjectStore } from '@/store/projectStore'
 import { currentProjectId, onCurrentProjectChange } from '@/lib/session'
 import {
+  noteRenderProgress,
   renderFailureOwner,
   settleRenderFailureToast,
   useRenderStore,
@@ -109,6 +110,10 @@ export function handleServerEvent(ev: ServerEvent) {
 
     case 'render.preparing':
       render.noteBuilding(ev.id, { cold: false, cost: '', phase: 'preparing' })
+      break
+    case 'render.progress':
+      // 引擎说 build 还在跑（worker 日志仍在增长，#1207）：续上这个文件的看门狗租约
+      noteRenderProgress(ev.id)
       break
     case 'render.started': {
       // 事件只带 fileId，而渲染态按变体分键：冷启动提示记在**文件级**的

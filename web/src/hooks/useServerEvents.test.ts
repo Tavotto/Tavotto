@@ -12,6 +12,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 vi.mock('@/lib/api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/api')>()),
   fetchPanels: vi.fn(),
+  engineRender: vi.fn(),
   // 渲染 hook 的用例要拿到它交给 SSE 订阅的两个回调（事件 / 重连）；其余用例直接驱动 `handleServerEvent`
   subscribeEvents: vi.fn(() => () => {}),
   refreshProject: vi.fn().mockResolvedValue({}),
@@ -29,6 +30,7 @@ import {
   fetchPanels,
   fetchRuntimeAssets,
   refreshProject,
+  engineRender,
   type PanelInfo,
   type ServerEvent,
 } from '@/lib/api'
@@ -443,6 +445,33 @@ describe('渲染通知的语气（2026-10-07 审计 P0）', () => {
       expect(useRenderStore.getState().building['Fig1.pdf']).toBeUndefined()
     } finally {
       now.mockRestore()
+    }
+  })
+
+  it('render.progress 续上看门狗租约；别的项目的同名文件不续（#1207）', async () => {
+    vi.useFakeTimers()
+    try {
+      let signal: AbortSignal | undefined
+      vi.mocked(engineRender).mockImplementation((_id, _p, opts) => {
+        signal = opts?.signal
+        return new Promise(() => {})
+      })
+      useRenderStore.getState().clear()
+      void useRenderStore.getState().render('Fig1.pdf', [])
+      await vi.advanceTimersByTimeAsync(4 * 60_000)
+      handleServerEvent(ev({ kind: 'render.progress', pj: 'other', id: 'Fig1.pdf' }))
+      await vi.advanceTimersByTimeAsync(2 * 60_000)
+      expect(signal?.aborted).toBe(true) // 别的项目的进度没续上，默认 5 分钟窗口到点
+
+      useRenderStore.getState().clear()
+      void useRenderStore.getState().render('Fig1.pdf', [])
+      await vi.advanceTimersByTimeAsync(4 * 60_000)
+      handleServerEvent(ev({ kind: 'render.progress', pj: 'p1', id: 'Fig1.pdf' }))
+      await vi.advanceTimersByTimeAsync(2 * 60_000)
+      expect(signal?.aborted).toBe(false)
+    } finally {
+      useRenderStore.getState().clear()
+      vi.useRealTimers()
     }
   })
 
