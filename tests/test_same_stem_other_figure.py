@@ -10,7 +10,7 @@
    safe worker / native bridge / 浏览器三条入口产出同样的 stem（`figcapture.adopt_displaced_writers`）；
 2. 原件只在这张图自己存过的格式里找（`find_original_artifact(formats=…)`）：甲 → `panel.png`，
    乙（`panel-2`）→ `panel.pdf`；
-3. 写回只写这张图自己存过的格式；要写的文件不是它写的 → 409 `write_back_foreign_file`，原件零改动。
+3. 写回不写另一张捕获图的原件（它在这次运行里写的文件）；要写的文件是别的图写的 → 409 `write_back_foreign_file`，原件零改动。
 """
 
 from __future__ import annotations
@@ -139,20 +139,29 @@ def client(tmp_path, monkeypatch):
     project_watch.stop()
 
 
-def _fake_pair(tmp_path, monkeypatch, formats):
+def _fake_pair(tmp_path, monkeypatch, other_artifact):
+    """全量重放的描述符：Fig1 自己，加上（可选）同 stem 补认领的另一张图 `Fig1-2`，原件是 `other_artifact`。"""
     import test_write_back as wb
 
     figs = wb._figs(tmp_path)
     hot, fresh = wb._pair(figs, tmp_path)
     fresh.last_build_descriptors = [
-        {"stem": "Fig1", "savefig_calls": [{"format": f} for f in formats]}
+        {"stem": "Fig1", "original_artifact": "Fig1.png", "savefig_calls": [{"format": "png"}]}
     ]
+    if other_artifact:
+        fresh.last_build_descriptors.append(
+            {
+                "stem": "Fig1-2",
+                "original_artifact": other_artifact,
+                "savefig_calls": [{"format": "pdf"}],
+            }
+        )
     discarded = wb._use(monkeypatch, hot, fresh)
     return figs, fresh, discarded, wb
 
 
 def test_write_back_refuses_a_file_another_figure_wrote(client, tmp_path, monkeypatch):
-    figs, fresh, discarded, wb = _fake_pair(tmp_path, monkeypatch, ["png"])
+    figs, fresh, discarded, wb = _fake_pair(tmp_path, monkeypatch, "Fig1.pdf")
     before = {p: (figs / p).read_bytes() for p in ("Fig1.pdf", "Fig1.png")}
     resp = client.post("/api/engine/update_source", json={"id": "Fig1.pdf", "patches": []})
     assert resp.status_code == 409, resp.get_json()
@@ -166,7 +175,7 @@ def test_write_back_refuses_a_file_another_figure_wrote(client, tmp_path, monkey
 
 
 def test_write_back_writes_only_the_figures_own_formats(client, tmp_path, monkeypatch):
-    figs, fresh, _, wb = _fake_pair(tmp_path, monkeypatch, ["png"])
+    figs, fresh, _, wb = _fake_pair(tmp_path, monkeypatch, "Fig1.pdf")
     before_pdf = (figs / "Fig1.pdf").read_bytes()
     resp = client.post("/api/engine/update_source", json={"id": "Fig1.png", "patches": []})
     assert resp.status_code == 200, resp.get_json()
@@ -184,3 +193,13 @@ def test_write_back_without_known_formats_keeps_the_old_targets(client, tmp_path
     resp = client.post("/api/engine/update_source", json={"id": "Fig1.pdf", "patches": []})
     assert resp.status_code == 200, resp.get_json()
     assert sorted(c for c in fresh.calls if c in ("pdf", "png")) == ["pdf", "png"]
+
+
+def test_a_same_name_file_no_figure_wrote_is_still_written_back(client, tmp_path, monkeypatch):
+    """守卫的主语是「别的图写的」：这张图只存了 PNG、磁盘上另有一份没人在这次运行里写过的同名 PDF
+    （手工导出 / 旧脚本留下的）——它照旧是写回目标，打开它写回也照常成功（#874 的用例就是这种项目）。"""
+    figs, fresh, _, wb = _fake_pair(tmp_path, monkeypatch, None)
+    resp = client.post("/api/engine/update_source", json={"id": "Fig1.pdf", "patches": []})
+    assert resp.status_code == 200, resp.get_json()
+    assert (figs / "Fig1.pdf").read_bytes() == b"NEW-pdf"
+    assert (figs / "Fig1.png").read_bytes() == b"NEW-png"

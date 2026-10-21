@@ -7693,25 +7693,23 @@ class WriteBackForeignFileError(WriteBackFormatError):
 
 
 def _own_write_back_targets(worker, stem: str, src: Path, targets: list[Path]) -> list[Path]:
-    """写回目标里只留这张图**自己**存过的格式（它的 `savefig_calls`，热会话的 build 描述符）。
+    """写回目标里去掉**另一张捕获图**的原件（它在这次运行里写的文件，热会话的 build 描述符）。
 
-    不知道它存过什么（调用表没观察到 / pyplot 捕获 / 描述符里没有这个 stem）= 旧行为，目标不收窄。
-    `src` 本身不是它存过的格式 → `WriteBackForeignFileError`。"""
-    desc = next(
-        (
-            d
-            for d in (getattr(worker, "last_build_descriptors", None) or [])
-            if d.get("stem") == stem
-        ),
-        None,
-    )
-    formats = engine_figcapture.saved_formats((desc or {}).get("savefig_calls"))
-    if formats is None:
-        return targets
-    own = {engine_figcapture.normalized_format(f) for f in formats}
-    if engine_figcapture.normalized_format(src.suffix.lstrip(".")) not in own:
+    主语是「别的图写的」，不是「这张图没存过的格式」：磁盘上与它同名、但这次运行里没有任何图写过的文件
+    （手工导出 / 旧版本脚本留下的）照旧是写回目标。`src` 本身是别的图的原件 → `WriteBackForeignFileError`。"""
+    root = Path(getattr(worker, "figures_dir", None) or src.parent)
+    foreign = set()
+    for d in getattr(worker, "last_build_descriptors", None) or []:
+        art = d.get("original_artifact")
+        if d.get("stem") != stem and art:
+            foreign.add(os.path.normcase(os.path.abspath(root / art)))
+
+    def is_foreign(p: Path) -> bool:
+        return os.path.normcase(os.path.abspath(p)) in foreign
+
+    if is_foreign(src):
         raise WriteBackForeignFileError(src.name)
-    return [p for p in targets if engine_figcapture.normalized_format(p.suffix.lstrip(".")) in own]
+    return [p for p in targets if not is_foreign(p)]
 
 
 def _write_back_format_error(src: Path) -> WriteBackFormatError | None:

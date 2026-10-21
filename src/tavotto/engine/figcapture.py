@@ -2050,11 +2050,6 @@ def _trim_writers(entry: dict, held) -> None:
                     del files[t]
 
 
-def normalized_format(fmt) -> str:
-    """格式名的同一性（公开名，给父进程用；见 `_norm_format`）。"""
-    return _norm_format(fmt)
-
-
 def _norm_format(fmt) -> str:
     """格式名的同一性：大小写与 jpeg/jpg、tif/tiff 两对别名不算不同的格式。"""
     fmt = str(fmt or "").lower()
