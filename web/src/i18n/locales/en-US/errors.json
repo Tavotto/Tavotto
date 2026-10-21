@@ -83,6 +83,7 @@
     "execution_timeout": "Script execution timed out (entry {{entry}})",
     "explicit_python_unusable": "The rendering environment you specified can't be used; Tavotto won't silently switch to another one. Set it again in Settings, or clear it to return to automatic selection.",
     "export_dir_unwritable": "Can’t write to the export folder: {{error}}. Check disk space and folder permissions.",
+    "batch_start_failed": "{{message}}",
     "export_failed": "Export failed: {{error}}.",
     "export_render_failed": "Re-rendering {{id}} failed: {{reason}}",
     "external_change": "This layout changed on disk outside Tavotto. This save wasn’t written.",

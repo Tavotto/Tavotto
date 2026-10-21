@@ -84,8 +84,8 @@ export interface ExportBatch {
   results: ExportJob[]
   /** 与 `results` 对齐的图名（一张图的作业没有任何产物行却失败了时，结果里要点得出是哪张） */
   resultNames: string[]
-  /** 根本没起来的几张（文件名不合法 / 原图此刻导不出 / 起作业失败）：名字 */
-  failedStarts: string[]
+  /** 根本没起来的几张（文件名不合法 / 原图此刻导不出 / 起作业失败）：名字 + 那条报错的一句话（批结束后仍可见） */
+  failedStarts: { name: string; reason: string }[]
   /** 用户点了取消：当前这张取消、剩余的不再发 */
   cancelRequested: boolean
   /** 收尾了：`aggregate` 是汇总作业 */
@@ -161,7 +161,7 @@ export const useExportStore = create<ExportState>(() => ({
 export function aggregateBatch(
   b: Pick<ExportBatch, 'results' | 'resultNames' | 'failedStarts' | 'cancelRequested'>,
 ): ExportJob {
-  const failedRow = (name: string): ExportJob['outputs'][number] => ({
+  const failedRow = (name: string, reason?: string): ExportJob['outputs'][number] => ({
     format: '',
     name,
     url: null,
@@ -170,7 +170,8 @@ export function aggregateBatch(
     vector: false,
     status: 'failed',
     replaced: false,
-    error: { code: 'export_failed', params: {} },
+    // 有具体原因的用 `batch_start_failed`（原样显示那句话），没有的退回通用失败
+    error: reason ? { code: 'batch_start_failed', params: { message: reason } } : { code: 'export_failed', params: {} },
   })
   const outputs = [
     ...b.results.flatMap((j, i) =>
@@ -179,7 +180,7 @@ export function aggregateBatch(
         ? [failedRow(b.resultNames[i] ?? '')]
         : j.outputs,
     ),
-    ...b.failedStarts.map(failedRow),
+    ...b.failedStarts.map((f) => failedRow(f.name, f.reason)),
   ]
   const written = outputs.some((o) => o.status !== 'failed' && !!o.name)
   const bad =
@@ -228,10 +229,10 @@ export function recordBatchJob(job: ExportJob): void {
 }
 
 /** 当前这张根本没起来：记下名字，继续下一张 */
-export function recordBatchStartFailure(): void {
+export function recordBatchStartFailure(reason = ''): void {
   const b = useExportStore.getState().batch
   if (!b || b.done) return
-  advance({ ...b, failedStarts: [...b.failedStarts, b.names[b.index] ?? b.ids[b.index]] })
+  advance({ ...b, failedStarts: [...b.failedStarts, { name: b.names[b.index] ?? b.ids[b.index], reason }] })
 }
 
 function advance(b: ExportBatch): void {

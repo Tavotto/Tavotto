@@ -949,6 +949,16 @@ export function ExportDialog() {
   /** 主按钮 / 再次导出 / 重试的同一个入口：一批或单张 */
   const startExport = () => (batchMode ? startBatch() : void start("ask"));
 
+  /** 这一张没起来的原因，一句话（记进汇总，批结束后仍可见） */
+  const startFailureReason = (): string => {
+    const st = useExportStore.getState().startError;
+    if (st) return st.code === "bad_filename" ? ex(`filenameError.${st.message}`) : formatMessage(st.message);
+    if (prepared.error) return formatMessage(engineErrorMsg(prepared.error));
+    if (filenameIssue) return ex(`filenameError.${filenameIssue}`);
+    if (!availability.ok) return ex(`scopeUnavailable.${availability.reason}`);
+    return "";
+  };
+
   /* ------------------------ 一批作业的驱动（每张图依次） ------------------------ */
   const launched = useRef<{ ids: string[] | null; index: number }>({ ids: null, index: -1 });
   const lastRecorded = useRef<unknown>(null);
@@ -969,7 +979,7 @@ export function ExportDialog() {
     }
     // 这一张导不出（文件名不合法 / 原图此刻导不出）：记一笔失败，继续下一张
     if (!canStart) {
-      recordBatchStartFailure();
+      recordBatchStartFailure(startFailureReason());
       return;
     }
     // 等后端的 route 回答（来源判据以它为准）；迟迟不来就按退路发，不卡住整批
@@ -981,7 +991,7 @@ export function ExportDialog() {
     launched.current = { ids: batch.ids, index: batch.index };
     void start("ask");
     // 同步路径上就没起来（请求成形被拒）：不会有终局，直接记失败
-    if (!useExportStore.getState().running) recordBatchStartFailure();
+    if (!useExportStore.getState().running) recordBatchStartFailure(startFailureReason());
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [batch, running, scopeState, figureId, filename, canStart, routeAnswered, routeWaited]);
   // 收尾：这一张落了终局（撞名除外——停在冲突条上等用户选覆盖 / 另存，再发出的是新作业）
@@ -990,7 +1000,7 @@ export function ExportDialog() {
     if (launched.current.ids !== batch.ids || launched.current.index !== batch.index) return;
     // 起作业本身失败了（先校验被拒 / 网络断）：不会有终局，记一笔失败，继续下一张
     if (!storeJob) {
-      if (startError) recordBatchStartFailure();
+      if (startError) recordBatchStartFailure(startFailureReason());
       return;
     }
     // 认快照对象而不是 job_id：同一个终局只记一次，不依赖 id 在两张之间一定不同
@@ -2437,7 +2447,8 @@ function OutputRow({ out, dir }: { out: ExportOutput; dir: string }) {
           aria-hidden
         />
         {ex("outputFailed", {
-          format: out.format.toUpperCase(),
+          // 一批里根本没起来的那张没有格式，点名用图名
+          format: out.format ? out.format.toUpperCase() : (out.name ?? ""),
           reason: translate(`backend.${out.error?.code ?? "format_failed"}`, {
             ns: "errors",
             ...(out.error?.params ?? {}),

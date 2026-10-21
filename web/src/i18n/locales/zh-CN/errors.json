@@ -83,6 +83,7 @@
     "execution_timeout": "脚本执行超时（入口 {{entry}}）",
     "explicit_python_unusable": "你指定的渲染环境用不了；Tavotto 不会自动换成别的环境。请在设置里重新指定，或清除它回到自动选择。",
     "export_dir_unwritable": "无法写入导出目录：{{error}}。请检查磁盘空间和目录权限。",
+    "batch_start_failed": "{{message}}",
     "export_failed": "导出失败：{{error}}。",
     "export_render_failed": "{{id}} 重渲染失败：{{reason}}",
     "external_change": "排版在磁盘上被 Tavotto 之外的改动覆盖，本次保存未写入。",

@@ -2577,8 +2577,12 @@ describe('每张图单独导出：依次发多个作业（后端协议不变）'
     await batchDone()
     expect(bodiesFigureIds()).toEqual(['Fig1.pdf'])
     const b = useExportStore.getState().batch!
-    expect(b.failedStarts).toEqual(['Fig2'])
+    expect(b.failedStarts.map((f) => f.name)).toEqual(['Fig2'])
+    expect(b.failedStarts[0].reason, '那一张没起来的原因随汇总保留').not.toBe('')
     expect(b.aggregate?.status).toBe('partial')
+    // 批结束后仍可见：结果块里点名哪张 + 那条原因
+    expect(document.body.querySelector('[data-export-result]')?.textContent).toContain('Fig2')
+    expect(document.body.querySelector('[data-export-result]')?.textContent).toContain(b.failedStarts[0].reason)
   })
 })
 
