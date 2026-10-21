@@ -93,6 +93,8 @@ cancelCurrentExport()  取消（清临时文件；最终目录一个字节没动
   * **多图**：左栏顶部缩略图条「整版 / 每张图」，有检查提示（除建议级以外的问题所指的对象）的缩略图带橙点；右栏「导出内容」
     = 整版（`scope=canvas`，默认）/ 每张图单独导出（`scope=original`）。**点缩略图只换预览，不改导出内容**；仅在
     「每张图单独导出」下点图只换预览与右栏检查摘要对准的那张。
+  * **「每张图」只指当前激活画布上的图面板**（2026-10-21 用户裁决）：隐藏的图也算在画布上（与「隐藏的图也计数」一致）；素材库里还没上画布的图、别的画布上的图
+    既不在左栏缩略图条里，也不进批（`canvasFigures`）。看护：`ExportDialog.test.tsx`「素材库里另有一张还没上画布的图」、`guardedExport.test.tsx`「changed bytes」整批零 start。
   * **「每张图单独导出」= 一次点击把每张图各导一份**：后端协议不变（一次作业仍只导一张原图，`buildExportRequest` / 同源对不动），
     由对话框**依次发多个普通作业**——`exportStore.batch`（`beginExportBatch` / `recordBatchJob` / `requestBatchCancel`）只记进度与各张结果，
     驱动在 `ExportDialog` 的两个 effect：先把表单摆到「这一张」（范围 = 原图、要导的图、文件名 = 图名），摆好了再走**单张导出同一条 `start()`**，

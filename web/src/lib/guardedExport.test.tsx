@@ -253,8 +253,8 @@ describe('exact original export variant', () => {
     await click('[data-export-start]')
     await until(() => exportCalls.some(call => call.url.includes('/api/export/validate')) && useExportStore.getState().batch?.done === true)
     expect(exportCalls.some(call => call.url.includes('/api/export/validate'))).toBe(true)
-    // 被拒的这张（plot.png，字节变了）一个 start 都没发出去
-    expect(exportCalls.some(call => call.url.includes('/api/export/start') && call.body.original?.figure_id === 'plot.png')).toBe(false)
+    // 字节变了就一个文件都不写：素材库里同 stem、没上画布的 plot.pdf 不在「每张图」里，整批零 start
+    expect(exportCalls.some(call => call.url.includes('/api/export/start'))).toBe(false)
     // 用户可见：对话框里照原样渲染那条起作业失败的报错（点名哪张 + 原因），不因为是批里的一张就没了
     expect(document.querySelector('[data-dialog="export"] [data-export-start-error]')?.textContent)
       .toContain(formatMessage(engineErrorMsg(new ArtifactValidationError('source_changed'))))

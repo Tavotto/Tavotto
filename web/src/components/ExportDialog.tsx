@@ -379,6 +379,18 @@ export function ExportDialog() {
     [doc.objects, canvases, assets, assetPanels, runtimeAssets, runtimeById, runtimePreviewNonce],
   );
   /**
+   * 多图排版里「每张图」= **当前激活画布上**的图面板（用户 10-21 裁决，设计稿左栏的「整版 / 图 a / 图 b」）。
+   * 隐藏的图也算在画布上（与「隐藏的图也计数」一致）；素材库里还没上画布的图、别的画布上的图都不在其内——
+   * 左栏缩略图条、`每张图单独导出` 的批都只认它。
+   */
+  const canvasFigures = useMemo(
+    () =>
+      figures.filter((f) =>
+        doc.objects.some((o) => o.type === "panel" && o.fileId === f.figureId),
+      ),
+    [figures, doc.objects],
+  );
+  /**
    * 用户在对话框列表里点过的那张。**对话框本地状态**，打开时清空：它是这一次
    * 导出的选择，不是画布选区，也不进工作区——点缩略图不该改画布上选中了什么。
    */
@@ -791,12 +803,12 @@ export function ExportDialog() {
    * 走的就是单张导出的那条路，没有第二套。
    */
   const batchMode = !single && scope === "original";
-  const canStartBatch = batchMode && figures.length > 0 && formats.length > 0 && !busy;
+  const canStartBatch = batchMode && canvasFigures.length > 0 && formats.length > 0 && !busy;
   const startBatch = () => {
     writeExportDefaults({ formats, dpi: String(ppi), withProof: withReport, strictInspection: strict });
     beginExportBatch(
-      figures.map((f) => f.figureId),
-      figures.map((f) => f.name),
+      canvasFigures.map((f) => f.figureId),
+      canvasFigures.map((f) => f.name),
     );
   };
 
@@ -1105,7 +1117,8 @@ export function ExportDialog() {
    * 「当前这张图此刻导不导得出」是另一个问题（`availability`），它只在原图范围下
    * 说话——画布范围下同时出现「当前画布」与「还没定要导哪一张」是两个状态互相矛盾。
    */
-  const originalSelectable = figures.length > 0;
+  // 多图排版里「每张图单独导出」只导画布上的图：画布上一张都没有就没得选
+  const originalSelectable = single ? figures.length > 0 : canvasFigures.length > 0;
 
   /**
    * 左栏预览此刻显示什么。单图 = 要导的那张；多图 = 用户点的那一项，没点过就跟着导出内容走
@@ -1447,7 +1460,7 @@ export function ExportDialog() {
       <ExportPreviewPane
         single={single}
         doc={doc}
-        figures={figures}
+        figures={single ? figures : canvasFigures}
         figureId={figureId}
         shownId={shownId}
         spec={availability.spec}

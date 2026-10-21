@@ -960,13 +960,13 @@ describe('原图范围不被画布摆放阻断（FLAG-B1）', () => {
     )
     expect(home, '前提：p1 在另一张画布上').toBeTruthy()
     expect(useDocumentStore.getState().activeCanvasId).not.toBe(home!.id)
+    // 别的画布上的图不在多图排版的「每张图」里（只认当前画布）；这条检查口径只剩单图编辑一条路到得了
+    useWorkspaceStore.setState({ mode: 'fast_edit', activePanelId: 'p1' })
     await reopen()
-    await click(scopeRadios()[0])
-    expect(scopeRadios()[0].getAttribute('aria-checked')).toBe('true')
+    expect(scopeRadios(), '单图编辑固定原图').toHaveLength(0)
     // 这张图自己的阻断（8 pt）必须在；画布摆放那条不算
     expect(errorHint(), '8 pt 的阻断被裁没了').toBeTruthy()
     await click(button('开始导出')!)
-    await batchDone()
     expect(exportBodies).toHaveLength(1)
     const report = exportBodies[0].style_check_report as Record<string, unknown>
     expect(report.acknowledged).toEqual(['font-below-absolute-floor'])
@@ -1005,9 +1005,9 @@ describe('原图范围不被画布摆放阻断（FLAG-B1）', () => {
     expect(s.activeCanvasId, '前提：p1 不在当前画布上').not.toBe(home!.id)
     expect(s.doc.profile?.id, '前提：当前画布绑的是 lab-publication').toBe('lab-publication-v1')
 
+    useWorkspaceStore.setState({ mode: 'fast_edit', activePanelId: 'p1' })
     await reopen()
-    await click(scopeRadios()[0])
-    expect(scopeRadios()[0].getAttribute('aria-checked')).toBe('true')
+    expect(scopeRadios(), '单图编辑固定原图').toHaveLength(0)
     // 按 free-form 算：8 pt 合规，没有要确认的东西
     expect(anyHint(), '8 pt 在图所在画布的规范下不是阻断').toBeNull()
     expect(button('开始导出')!.hasAttribute('disabled')).toBe(false)
@@ -1016,7 +1016,6 @@ describe('原图范围不被画布摆放阻断（FLAG-B1）', () => {
       '规范下拉显示的是别的画布的规范，得说出来',
     ).toBeTruthy()
     await click(button('开始导出')!)
-    await batchDone()
     expect(exportBodies).toHaveLength(1)
     expect(exportBodies[0].scope).toBe('original')
     const report = exportBodies[0].style_check_report as Record<string, unknown>
@@ -1025,11 +1024,12 @@ describe('原图范围不被画布摆放阻断（FLAG-B1）', () => {
     expect(report.checks).toEqual([])
     expect(exportBodies[0].inspection).toEqual({ mode: 'strict', profile_id: 'free-form-v1' })
 
-    // 对照：画布范围 = 当前画布，规范跟着换成 lab-publication
-    await click(scopeRadios()[1])
+    // 对照：回到多图排版（默认整版 = 当前画布），规范跟着换成 lab-publication
+    useWorkspaceStore.setState({ mode: 'layout', activePanelId: null })
+    await reopen()
     expect(document.body.querySelector('[data-export-profile-canvas]')).toBeNull()
     // 上一次已经导完：新的一次是显式的「再次导出」
-    await click(document.body.querySelector<HTMLButtonElement>('[data-export-again]')!)
+    await click(button('开始导出')!)
     expect(exportBodies).toHaveLength(2)
     expect(exportBodies[1].scope).toBe('canvas')
     const canvasReport = exportBodies[1].style_check_report as Record<string, unknown>
@@ -1885,32 +1885,37 @@ describe('#1228 评审 P2 · 不在画布上的原图不借画布的检查结论
     mtime: 1,
   }
 
-  async function setupOff() {
-    // 画布上有一张 8pt 的图（阻断项），素材里另有一张还没上画布的 Fig9
+  /**
+   * 画布上只有一条 5 pt 的文字（一条阻断项），项目里唯一的「图」是素材库里还没上画布的 Fig9。
+   * 多图排版的「每张图」只认画布上的图，所以它只在单图编辑里到得了（项目里只有一张图时就是它）。
+   */
+  async function setupOff(opts: { withCanvasPanel?: boolean } = {}) {
     await stage({ panels: [panel], renders: { 'Fig1.pdf': manifestWithTicks(1, 8) } })
+    if (!opts.withCanvasPanel) {
+      useDocumentStore.getState().commit(literal('只留一段小字'), (d) => {
+        d.objects = [
+          { id: 't-small', type: 'text', text: '太小的说明文字', sizePt: 5, bold: false, italic: false, color: '#000000', align: 'left', x: 0, y: 70, w: 60, h: 6 } as never,
+        ]
+      })
+    }
     useAssetStore.setState((st) => ({
-      byId: { ...st.byId, 'Fig9.pdf': offCanvas },
-      panels: [
-        ...(st.panels ?? []),
-        { id: 'Fig1.pdf', kind: 'pdf', mtime: 1 },
-        { ...offCanvas, native_w_mm: 70, native_h_mm: 50 },
-      ],
+      byId: opts.withCanvasPanel ? { ...st.byId, 'Fig9.pdf': offCanvas } : { 'Fig9.pdf': offCanvas },
+      panels: opts.withCanvasPanel
+        ? [...(st.panels ?? []), { id: 'Fig1.pdf', kind: 'pdf', mtime: 1 }, { ...offCanvas, native_w_mm: 70, native_h_mm: 50 }]
+        : [{ ...offCanvas, native_w_mm: 70, native_h_mm: 50 }],
     }) as never)
-    useWorkspaceStore.setState({ mode: 'layout', activePanelId: null })
+    await act(async () => {
+      runValidation()
+    })
+    useWorkspaceStore.setState({ mode: opts.withCanvasPanel ? 'layout' : 'fast_edit', activePanelId: null })
     await mountDialogs()
     await openDialog()
-  }
-  const pickFig9 = async () => {
-    await click(originalRadio())
-    const opt = figureOptions().find((o) => o.textContent?.includes('Fig9'))
-    if (opt) await click(opt)
   }
 
   it('范围句如实说没检查；画布上的阻断项不进这次导出；摘要是「没查成」，灰色提示', async () => {
     await setupOff()
     const canvasErrors = useValidationStore.getState().issues.filter((i) => i.severity === 'error').length
     expect(canvasErrors, '前提：当前画布上有阻断项').toBeGreaterThan(0)
-    await pickFig9()
     expect(document.body.querySelector('[data-export-target]')!.textContent).toContain('Fig9')
     expect(checkScope()).toBe('「Fig9」不在画布上，这次导出不做规范检查')
     expect(document.body.querySelector('[data-export-check-ok]')).toBeNull()
@@ -1920,22 +1925,22 @@ describe('#1228 评审 P2 · 不在画布上的原图不借画布的检查结论
     expect(errorHint()).toBeNull()
     expect(button('开始导出')!.hasAttribute('disabled')).toBe(false)
     await click(button('开始导出')!)
-    await batchDone()
-    // 每张图各发一个作业：Fig9 那一份报告里没有画布上的条目
-    const body9 = exportBodies.find((b) => (b.original as { figure_id?: string } | undefined)?.figure_id === 'Fig9.pdf')
-    expect(body9, 'Fig9 也导了').toBeTruthy()
-    const report = body9!.style_check_report as { checks?: { id: string }[] } | undefined
+    expect(exportBodies).toHaveLength(1)
+    expect((exportBodies[0].original as { figure_id?: string }).figure_id).toBe('Fig9.pdf')
+    const report = exportBodies[0].style_check_report as { checks?: { id: string }[] } | undefined
     expect(
-      (report?.checks ?? []).filter((c) => c.id === 'font-below-absolute-floor'),
+      (report?.checks ?? []).filter((c) => c.id.startsWith('font-')),
       '画布上的条目不写进这张图的报告',
     ).toHaveLength(0)
   })
 
   it('对照：图在画布上时仍是「仅查原图」、画布阻断项照常给计数芯片', async () => {
-    await setupOff()
+    await setupOff({ withCanvasPanel: true })
     await click(originalRadio())
     const opt = figureOptions().find((o) => o.textContent?.includes('Fig1'))
     if (opt) await click(opt)
+    // 素材库里没上画布的 Fig9 不在缩略图条里
+    expect(figureOptions().map((o) => o.textContent)).toEqual(['Fig1'])
     expect(checkScope()).not.toContain('不在画布上')
     expect(text()).toMatch(/\d+ 项要改/)
     expect(errorHint(), '画布阻断项照常给计数芯片，但不拦').toBeTruthy()
@@ -2310,42 +2315,39 @@ describe('画布模式下选中的图就是要导的那张（用户反馈 06）'
       panels: [{ id: 'Fig9.pdf', kind: 'pdf', mtime: 1, native_w_mm: 70, native_h_mm: 50, original_spec: onDisk }],
     } as never)
     useRenderStore.setState({ byKey: {}, latest: {}, tracked: {}, building: {} })
+    // 单图编辑（多图排版的「每张图」不含没上画布的图）：项目里只有这一张，它就是要导的
+    useWorkspaceStore.setState({ mode: 'fast_edit', activePanelId: null })
     await mountDialogs()
     await openDialog()
     // 项目里只有这一张：切到原图就是它，清单不出现——对象头是唯一写着对象名与尺寸的地方
-    await click(originalRadio())
     // 不在画布上 = 这次导出没有规范检查（#1228 P2）：灰色提示，不拦导出
     expect(button('开始导出')!.hasAttribute('disabled')).toBe(false)
-    expect(figureOptions()).toHaveLength(1)
+    expect(figureOptions(), '单图编辑没有缩略图条').toHaveLength(0)
     const header = document.body.querySelector('[data-export-target]')
     expect(header, '选中了图就该有对象头').toBeTruthy()
     expect(header!.textContent).toContain('Fig9')
-    expect(header!.textContent).toContain('原图尺寸')
     expect(header!.textContent).toContain('70 × 50 mm')
     expect(header!.textContent).not.toContain('没有当前图')
     const img = document.body.querySelector('[data-export-preview-stage] img') as HTMLImageElement | null
     expect(img?.getAttribute('src'), '左栏大预览走素材同一条地址').toContain('/api/render?id=Fig9.pdf')
     await click(button('开始导出')!)
-    await batchDone()
     expect((exportBodies[0].original as { figure_id: string }).figure_id).toBe('Fig9.pdf')
   })
 
-  it('画布上有一张、素材里另有一张还没上画布：在清单里点后者，对象头换成它', async () => {
+  it('素材库里另有一张还没上画布的图：不在缩略图条里，「每张图单独导出」也不导它（Codex / 用户 10-21 裁决）', async () => {
     await setupTwo({ select: [] })
     useAssetStore.setState((st) => ({
       byId: { ...st.byId, 'Fig3.pdf': { id: 'Fig3.pdf', kind: 'pdf', mtime: 1 } },
       panels: [...st.panels, { id: 'Fig3.pdf', kind: 'pdf', mtime: 1, native_w_mm: 42, native_h_mm: 30 }],
     }) as never)
     await click(originalRadio())
-    // 还没定是哪一张：不摆对象头
-    expect(document.body.querySelector('[data-export-target]')).toBeNull()
-    const options = figureOptions()
-    expect(options.map((o) => o.textContent)).toEqual(['Fig1', 'Fig2', 'Fig3'])
-    await click(options[2])
-    const header = document.body.querySelector('[data-export-target]')
-    expect(header).toBeTruthy()
-    expect(header!.textContent).toContain('Fig3')
-    expect(header!.textContent).not.toContain('Fig1')
+    expect(figureOptions().map((o) => o.textContent)).toEqual(['Fig1', 'Fig2'])
+    await click(button('开始导出')!)
+    await batchDone()
+    expect(exportBodies.map((b) => (b.original as { figure_id: string }).figure_id).sort()).toEqual([
+      'Fig1.pdf',
+      'Fig2.pdf',
+    ])
   })
 
   it('项目里一张图都没有：说「还没有可以导的图」，不摆空列表、不说"点选下面"', async () => {
