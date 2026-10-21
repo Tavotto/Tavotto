@@ -317,6 +317,8 @@ def _needs_setup(con: sqlite3.Connection) -> bool:
         return True
     if any(not want <= cols.get(table, set()) for table, want in want_cols.items()):
         return True
+    if con.execute("SELECT 1 FROM ai_rev_counter WHERE id = 1").fetchone() is None:
+        return True  # 版本计数器缺那一行（升级前的库）：行不属于"形状"，单独探测
     return con.execute(_BACKFILL_PENDING).fetchone() is not None
 
 
@@ -425,21 +427,10 @@ def _migrate(con: sqlite3.Connection) -> None:
             _add_column(con, f"ALTER TABLE sessions ADD COLUMN {name} {kind}")
     con.execute(_REQUEST_INDEX)
     con.execute("CREATE INDEX IF NOT EXISTS idx_sessions_rev ON sessions(rev)")
-    # 计数器从现有最大版本起算（升级前没有计数器）。**每次连接都会走到这里，所以先只读探测，已有就不拿写锁**：
-    # 无条件的写会让每个新连接都去抢写锁，两个进程同时打开 / 写库时互相排队，慢机器（Windows CI）上排满 10 s 超时就是
-    # `database is locked`。真要初始化时用显式 `BEGIN IMMEDIATE`（等锁走 busy 超时，不是读锁升级时的立即失败），事务内再判一次，`OR IGNORE` 对并发迁移幂等
-    if con.execute("SELECT 1 FROM ai_rev_counter WHERE id = 1").fetchone() is None:
-        con.commit()
-        con.execute("BEGIN IMMEDIATE")
-        try:
-            con.execute(
-                "INSERT OR IGNORE INTO ai_rev_counter (id, rev) "
-                "SELECT 1, COALESCE(MAX(rev), 0) FROM sessions"
-            )
-        except BaseException:
-            con.execute("ROLLBACK")
-            raise
-        con.execute("COMMIT")
+    # 版本计数器从现有最大版本起算（升级前没有计数器行；`OR IGNORE` 对并发迁移幂等）。在 `_connect` 的外层写事务里执行
+    con.execute(
+        "INSERT OR IGNORE INTO ai_rev_counter (id, rev) SELECT 1, COALESCE(MAX(rev), 0) FROM sessions"
+    )
     # 草稿写入戳：旧表没有，补列（见 `put_draft` 的「旧戳不覆盖新戳」）
     if "stamp" not in {row["name"] for row in con.execute("PRAGMA table_info(ai_drafts)")}:
         _add_column(con, "ALTER TABLE ai_drafts ADD COLUMN stamp INTEGER NOT NULL DEFAULT 0")
@@ -450,17 +441,12 @@ def _migrate(con: sqlite3.Connection) -> None:
     # 提交时草稿的写入戳：确认之后「草稿在提交之后没被改过」按它判，不按文本比（trim / 规范化的差异无关）
     if "draft_stamp" not in pend_cols:
         _add_column(con, "ALTER TABLE ai_pending ADD COLUMN draft_stamp INTEGER")
-    # 老库 / 本改动之前登记的会话：账本补齐（幂等）。同样先只读探测有没有缺的，没缺就不拿写锁（见上）
-    missing = con.execute(
-        "SELECT 1 FROM sessions s WHERE s.client_request_id IS NOT NULL AND NOT EXISTS "
-        "(SELECT 1 FROM ai_requests r WHERE r.project = s.project AND r.client_request_id = s.client_request_id) LIMIT 1"
-    ).fetchone()
-    if missing is not None:
-        con.execute(
-            "INSERT OR IGNORE INTO ai_requests (project, client_request_id, session, created_ms) "
-            "SELECT project, client_request_id, id, started_ms FROM sessions "
-            "WHERE client_request_id IS NOT NULL"
-        )
+    # 老库 / 本改动之前登记的会话：账本补齐（幂等）
+    con.execute(
+        "INSERT OR IGNORE INTO ai_requests (project, client_request_id, session, created_ms) "
+        "SELECT project, client_request_id, id, started_ms FROM sessions "
+        "WHERE client_request_id IS NOT NULL"
+    )
 
 
 @contextlib.contextmanager
