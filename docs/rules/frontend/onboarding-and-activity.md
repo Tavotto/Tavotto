@@ -47,9 +47,9 @@
   「下一步」只挪指针（`onboardingStore.next` 在当前步骤没完成时是 no-op）。拖动在 pointercancel /
   lostpointercapture / 失焦 / 缩放 / 切后台 / 卸载时作废、监听随卸载摘掉；键盘（空格 / 方向键 / 回车 / Esc）
   与「直接使用示例」是等价入口。
-* **按任务触发的提示 `layout_page_bounds`（P04，2026-10-20）**：第一次**用户主动**从快速编辑回到排版
-  （`store/workspace.returnToLayout` 发唯一一枪 `workspace.returned_to_layout`，无 payload；`exitToLayout` 的被动退出——
-  换文档 / 修剪 / 定位问题 / 启动恢复——不发，所以「启动时恢复到 layout」不触发）→ 一条非模态说明「白色纸面就是导出的
+* **按任务触发的提示 `layout_page_bounds`（P04，2026-10-20）**：第一次因第二张图进来而**进入多图排版**
+  （`store/workspace.startWorkspaceModeSync` 发唯一一枪 `workspace.entered_layout`，无 payload；换文档 / 切画布 / 删光 / 启动恢复
+  的切换不发，所以「启动时恢复到 layout」不触发）→ 一条非模态说明「白色纸面就是导出的
   Figure 尺寸，单栏 / 双栏宽按当前规范」，**锚在右栏页签条下**（`components/inspector/PageBoundsHint`，一颗「打开画布页」）。
   规则：① 带锚点的提示（`hints.ANCHORED_HINTS`）不进通知轨，仍占 `useHintStore.current` 这一个槽位，与轨上的提示互斥不叠；
   ② 锚点判据读 store（`hints.anchorAvailable` = `uiStore.rightOpen`），不读 DOM；锚点不在（右栏收起 / 窄屏抽屉互斥收掉）
@@ -65,7 +65,7 @@
   `DataTransfer.files`）只说一句，主页的 `onNativeFileDrop` 在教程层开着时也不认（第二道闸）。首次打开（没开始过、
   `welcomeSeenAt` 空、停在主页、没有自己的项目）才自己弹欢迎页，只一次；上次停在教程中途的接着那一步。
   e2e 的 `noProject` 用例由 fixture 默认记成「欢迎页已出现过」，测教程的 spec `test.use({ firstRunWelcome: true })`。
-* **锚点是稳定的 `data-*`**：`data-onboarding-anchor="export | export-scope | to-layout
+* **锚点是稳定的 `data-*`**：`data-onboarding-anchor="export | export-scope
   | tutorial-entry | help-tutorial | settings-tutorial"`、`data-object-id`、`data-card`、`data-rail`、
   `data-issue-row[data-issue-rule][data-issue-object]`、`data-multi-selection-context-bar`、
   `data-element-svg`（+ manifest bbox）、新手教程的 `data-native-tutorial[data-surface]` / `data-tutorial-step` /
