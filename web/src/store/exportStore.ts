@@ -84,8 +84,6 @@ export interface ExportBatch {
    * 同一次点击里后面的图也还是点击那一刻的设置和内容（Codex #1295 P1）。
    */
   phase: 'prepare' | 'send'
-  /** prepare 阶段走到第几张（0 起，指 `ids`） */
-  prepIndex: number
   /** 已冻结的各张：`pos` = 它在 `ids` 里的位置（进度句用） */
   prepared: { pos: number; name: string; input: ExportRequestInput }[]
   /** send 阶段正在导 / 即将导的是 `prepared` 里第几张（0 起） */
@@ -98,8 +96,6 @@ export interface ExportBatch {
   failedStarts: { name: string; reason: string }[]
   /** 用户点了取消：当前这张取消、剩余的不再发 */
   cancelRequested: boolean
-  /** 冻结阶段发现排版 / 选区在变（点击那一刻之后被改了）：整批作废，一个请求都没发 */
-  aborted?: boolean
   /** 收尾了：`aggregate` 是汇总作业 */
   done: boolean
   aggregate: ExportJob | null
@@ -232,7 +228,6 @@ export function beginExportBatch(ids: string[], names: string[]): boolean {
       ids,
       names,
       phase: 'prepare',
-      prepIndex: 0,
       prepared: [],
       index: 0,
       results: [],
@@ -246,26 +241,21 @@ export function beginExportBatch(ids: string[], names: string[]): boolean {
   return true
 }
 
-/** prepare 阶段：这一张的完整请求输入冻结好了，换下一张；都冻结完就转 send（一张都没有就直接收尾） */
-export function recordBatchPrepared(input: ExportRequestInput): void {
+/**
+ * prepare 阶段收尾：整批的完整请求输入**在同一个同步块里**一次算好（`buildBatchInput`，中间没有任何 await），
+ * 这里一次记下——冻结好的转 send，没法冻结的（文件名不合法 / 原图导不出）记成失败；一张都冻结不了就直接收尾。
+ */
+export function recordBatchFrozen(
+  items: ({ ok: true; pos: number; name: string; input: ExportRequestInput } | { ok: false; name: string; reason: string })[],
+): void {
   const b = useExportStore.getState().batch
   if (!b || b.done || b.phase !== 'prepare') return
-  const pos = b.prepIndex
-  moveOn({
-    ...b,
-    prepared: [...b.prepared, { pos, name: b.names[pos] ?? b.ids[pos], input }],
-    prepIndex: pos + 1,
+  const prepared = items.flatMap((i) => (i.ok ? [{ pos: i.pos, name: i.name, input: i.input }] : []))
+  const failedStarts = items.flatMap((i) => (i.ok ? [] : [{ name: i.name, reason: i.reason }]))
+  const next: ExportBatch = { ...b, prepared, failedStarts: [...b.failedStarts, ...failedStarts] }
+  useExportStore.setState({
+    batch: b.cancelRequested || prepared.length === 0 ? finishedBatch(next) : { ...next, phase: 'send', index: 0 },
   })
-}
-
-function moveOn(b: ExportBatch): void {
-  if (b.cancelRequested || (b.phase === 'prepare' && b.prepIndex >= b.ids.length && b.prepared.length === 0)) {
-    useExportStore.setState({ batch: finishedBatch(b) })
-  } else if (b.phase === 'prepare' && b.prepIndex >= b.ids.length) {
-    useExportStore.setState({ batch: { ...b, phase: 'send', index: 0 } })
-  } else {
-    useExportStore.setState({ batch: b })
-  }
 }
 
 /** send 阶段：当前这张落了终局（撞名停住的不走这里）：记下结果、换下一张；取消了或已是最后一张就收尾 */
@@ -275,19 +265,11 @@ export function recordBatchJob(job: ExportJob): void {
   advanceSend({ ...b, results: [...b.results, job], resultNames: [...b.resultNames, b.prepared[b.index]?.name ?? ''] })
 }
 
-/**
- * 这一张没起来：记下名字和那条报错的一句话，继续下一张。prepare 阶段 = 冻结不了（文件名不合法 / 原图导不出）；
- * send 阶段 = 起作业本身失败（校验被拒 / 网络断）。
- */
+/** send 阶段：这一张起作业本身失败了（校验被拒 / 网络断）：记下名字和那条报错的一句话，继续下一张 */
 export function recordBatchStartFailure(reason = ''): void {
   const b = useExportStore.getState().batch
-  if (!b || b.done) return
-  if (b.phase === 'prepare') {
-    const pos = b.prepIndex
-    moveOn({ ...b, failedStarts: [...b.failedStarts, { name: b.names[pos] ?? b.ids[pos], reason }], prepIndex: pos + 1 })
-  } else {
-    advanceSend({ ...b, failedStarts: [...b.failedStarts, { name: b.prepared[b.index]?.name ?? '', reason }] })
-  }
+  if (!b || b.done || b.phase !== 'send') return
+  advanceSend({ ...b, failedStarts: [...b.failedStarts, { name: b.prepared[b.index]?.name ?? '', reason }] })
 }
 
 function advanceSend(b: ExportBatch): void {
@@ -295,13 +277,6 @@ function advanceSend(b: ExportBatch): void {
   useExportStore.setState({
     batch: next.index >= next.prepared.length || next.cancelRequested ? finishedBatch(next) : next,
   })
-}
-
-/** 冻结阶段发现点击之后排版 / 选区被改了：整批作废（此时一个请求都没发），不让一批里混进两个版本 */
-export function abortExportBatch(): void {
-  const b = useExportStore.getState().batch
-  if (!b || b.done) return
-  useExportStore.setState({ batch: finishedBatch({ ...b, aborted: true, cancelRequested: true }) })
 }
 
 /** 取消：当前这张由 `cancelCurrentExport` 取消，这里让剩余的不再发；还没起的那一刻也能收尾 */

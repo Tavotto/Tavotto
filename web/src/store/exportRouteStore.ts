@@ -49,6 +49,18 @@ export function routeKeyOf(
   return JSON.stringify([currentProjectId(), input.scope, formats, facts])
 }
 
+/**
+ * 向后端要这次输入的 route（不落进 store 的那个单槽）。「每张图单独导出」冻结前要给每张图各取一份，
+ * 不能用单槽——对话框自己的 `refresh` 会把在飞的请求作废（seq）。拿不到 / 失败 = `null`（消费者走退路）。
+ */
+export async function fetchExportRoute(input: ExportRequestInput): Promise<ExportRoute | null> {
+  const built = buildExportRequest({ ...input, filename: 'route', route: null })
+  // route 要回答「用户勾的格式各自怎么走」，包括此刻因 EPS 不可用而被请求构造器丢掉的那一个
+  const formats = FORMAT_ORDER.filter((f) => input.formats.includes(f))
+  const checked = await validateExport({ ...built.request, formats } as typeof built.request)
+  return checked.ok && checked.route ? checked.route : null
+}
+
 interface RouteState {
   key: string | null
   route: ExportRoute | null
@@ -72,12 +84,9 @@ export const useExportRouteStore = create<RouteState>((set, get) => ({
     // 发起时的项目 / 代际：A 的迟到响应不落进 B（换项目时 `clear()` 也会推进 seq）
     const guard = captureProjectEpoch()
     try {
-      const built = buildExportRequest({ ...input, filename: 'route', route: null })
-      // route 要回答「用户勾的格式各自怎么走」，包括此刻因 EPS 不可用而被请求构造器丢掉的那一个
-      const formats = FORMAT_ORDER.filter((f) => input.formats.includes(f))
-      const checked = await validateExport({ ...built.request, formats } as typeof built.request)
+      const route = await fetchExportRoute(input)
       if (mine !== seq || !guard.still()) return
-      set({ key, route: checked.ok && checked.route ? checked.route : null })
+      set({ key, route })
     } catch {
       // 拿不到答案 ≠ 有答案：清掉旧的，消费者走退路
       if (mine === seq && guard.still()) set({ key, route: null })

@@ -104,8 +104,9 @@ import {
   type ExportScope,
   type ExportRequestInput,
 } from "@/lib/exportRequest";
-import { copiesSourceVerbatim as copiesVerbatimFromRoute, unavailablePanels } from "@/lib/exportRoute";
-import { routeKeyOf, useExportRouteStore } from "@/store/exportRouteStore";
+import { copiesSourceVerbatim as copiesVerbatimFromRoute, unavailablePanels, type ExportRoute } from "@/lib/exportRoute";
+import { fetchExportRoute, routeKeyOf, useExportRouteStore } from "@/store/exportRouteStore";
+import { buildBatchInput, type BatchShared } from "@/lib/exportBatchInput";
 import type { OverwritePolicy } from "@/lib/exportRequest";
 import { DEFAULT_PROFILE_ID, type PublicationProfile } from "@/lib/profile";
 import { profileName } from "@/lib/profileText";
@@ -126,9 +127,8 @@ import { usePanelRender, useRenderStore } from "@/store/renderStore";
 import { useRuntimeAssetStore } from "@/store/runtimeAssetStore";
 import { useSelectionStore } from "@/store/selectionStore";
 import {
-  abortExportBatch,
   beginExportBatch,
-  recordBatchPrepared,
+  recordBatchFrozen,
   cancelCurrentExport,
   recordBatchJob,
   recordBatchStartFailure,
@@ -435,8 +435,6 @@ export function ExportDialog() {
    */
   const routeKey = routeKeyOf({ scope, formats, doc, panel, figureId });
   const route = useExportRouteStore((s) => (s.key === routeKey ? s.route : null));
-  /** 后端已回答过这个键（哪怕答案是「没有 route」）：一批作业据此不再等它 */
-  const routeAnswered = useExportRouteStore((s) => s.key === routeKey);
   const refreshRoute = useExportRouteStore((s) => s.refresh);
   const invalidateRoute = useExportRouteStore((s) => s.invalidate);
   // 打开的那一刻先把上一次的答案作废：250 ms 防抖 + 往返期间界面走退路（不比现状乐观），
@@ -447,12 +445,12 @@ export function ExportDialog() {
   // 只在对话框开着时取；每次打开（`open` false→true）都重取一次，哪怕输入没变——
   // 脚本登记可能在对话框关着的时候变了。关着不发请求
   useEffect(() => {
-    if (!open && !batchActive) return;
+    if (!open) return;
     const timer = setTimeout(() => void refreshRoute(inputOf()), 250);
     return () => clearTimeout(timer);
     // inputOf 每次渲染都是新函数；真正决定 route 的输入都在 routeKey 里
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, batchActive, routeKey, refreshRoute]);
+  }, [open, routeKey, refreshRoute]);
   /**
    * 这次的检查、留档与严格核验**按哪张画布算**：原图 = 那张图所在的画布（它可能不是
    * 当前画布），画布 = 当前画布。下面的规范、摘要、导出上下文检查、报告的条目与规范戳、
@@ -806,33 +804,72 @@ export function ExportDialog() {
   const batchMode = !single && scope === "original";
   const canStartBatch = batchMode && canvasFigures.length > 0 && formats.length > 0 && !busy;
   /**
-   * 冻结阶段读的、会被用户改动的**全部**活状态（`buildRequestInput` 调用链：`findExportPanel`→文档 / 各画布 / 选区 /
-   * 工作区，`getOriginalOutputSpec` / `originalAvailability`→文档 + 素材清单，`resolveDocumentSpec`→`doc.profile` +
-   * 规范目录，`originalValidationFor` / `summaryFor` / `rawIssuesFor`→由文档算出的检查结果）里，真正由用户编辑决定的是
-   * 这几份不可变引用。点「导出」那一刻同步记下；冻结段每一步（含 route 的异步等待之后）先核它们没变，变了就整批作废
-   * （此时一个请求都没发），所以一批里不可能混进两个文档版本。素材清单 / 渲染缓存 / 检查结果是后台随文档重算的派生态，
-   * 不在此列（文档不变它们的结论就不变）。
+   * 「每张图单独导出」的**冻结**：点「导出」之后分两步，且两步之间没有任何交错——
+   * ① 先 await 拿齐每张图的 export route（只取后端的回答，不读文档、不生成请求输入；用户这几秒里改了什么，
+   *    ② 都按改后的来）；
+   * ② 再在**同一个同步块里**（中间没有任何 await / then / 定时器）对整批图连着调 `buildBatchInput`——
+   *    同一个同步块里活 store 不可能被用户或后台（如 `useEngineSync` 校正图幅）改动，整批读的是同一个时刻的状态，
+   *    等价于快照，不会混进两个文档版本。route 超时（1.5 s）按退路（无 route）构建，仍在那个同步块里。
+   * 之后的发送只读冻结好的输入。表单在冻结段里整块禁用（`fieldset`）。
    */
-  const liveRefs = () => {
-    const d = useDocumentStore.getState();
-    return [
-      d.doc,
-      d.canvases,
-      d.activeCanvasId,
-      d.documentId,
-      useSelectionStore.getState().ids,
-      useWorkspaceStore.getState().activePanelId,
-      useWorkspaceStore.getState().mode,
-    ] as const;
-  };
-  const frozenRefs = useRef<ReturnType<typeof liveRefs> | null>(null);
   const startBatch = () => {
-    frozenRefs.current = liveRefs();
     writeExportDefaults({ formats, dpi: String(ppi), withProof: withReport, strictInspection: strict });
-    beginExportBatch(
-      canvasFigures.map((f) => f.figureId),
-      canvasFigures.map((f) => f.name),
-    );
+    const figs = canvasFigures;
+    if (
+      !beginExportBatch(
+        figs.map((f) => f.figureId),
+        figs.map((f) => f.name),
+      )
+    )
+      return;
+    const shared: BatchShared = {
+      formats: [...formats],
+      ppi: String(ppi),
+      transparent,
+      strict,
+      withReport,
+      profileId,
+      catalog,
+    };
+    void freezeBatch(figs, shared);
+  };
+  const freezeBatch = async (figs: readonly ExportableFigure[], shared: BatchShared) => {
+    const alive = () => {
+      const b = useExportStore.getState().batch;
+      return !!b && !b.done && b.phase === "prepare";
+    };
+    // ① 只取 route
+    const routes = new Map<string, { route: ExportRoute | null; key: string | null }>();
+    for (const f of figs) {
+      if (!alive()) return;
+      const probe = buildBatchInput(f, shared, null);
+      let route: ExportRoute | null = null;
+      if (probe.ok) {
+        route = await Promise.race([
+          fetchExportRoute(probe.input).catch(() => null),
+          new Promise<null>((r) => setTimeout(() => r(null), 1500)),
+        ]);
+      }
+      routes.set(f.figureId, { route, key: probe.ok ? routeKeyOf(probe.input) : null });
+    }
+    if (!alive()) return;
+    // ② 同一个同步块：下面到 `recordBatchFrozen` 之间没有 await
+    const items = figs.map((f, pos) => {
+      const got = routes.get(f.figureId);
+      let res = buildBatchInput(f, shared, got?.route ?? null);
+      // route 回答的是取它那一刻的面板编辑；等待期间编辑变了（键对不上）就按退路再建一次，不拿旧答案配新内容
+      if (res.ok && got?.route && routeKeyOf(res.input) !== got.key) res = buildBatchInput(f, shared, null);
+      if (res.ok) return { ok: true as const, pos, name: f.name, input: res.input };
+      const why = res.reason;
+      const reason =
+        why.kind === "unavailable"
+          ? ex(`scopeUnavailable.${why.code}`)
+          : why.kind === "filename"
+            ? ex(`filenameError.${why.code}`)
+            : formatMessage(engineErrorMsg(why.error as never));
+      return { ok: false as const, name: f.name, reason };
+    });
+    recordBatchFrozen(items);
   };
 
   /* -------------------------------- 动作 --------------------------------- */
@@ -992,13 +1029,6 @@ export function ExportDialog() {
   /** 主按钮 / 再次导出 / 重试的同一个入口：一批或单张 */
   const startExport = () => (batchMode ? startBatch() : void start("ask"));
 
-  /** 冻结不了这一张的原因，一句话（记进汇总，批结束后仍可见） */
-  const prepFailureReason = (): string => {
-    if (prepared.error) return formatMessage(engineErrorMsg(prepared.error));
-    if (filenameIssue) return ex(`filenameError.${filenameIssue}`);
-    if (!availability.ok) return ex(`scopeUnavailable.${availability.reason}`);
-    return "";
-  };
   /** 起作业本身失败的原因（store 里的 `startError`） */
   const sendFailureReason = (): string => {
     const st = useExportStore.getState().startError;
@@ -1009,43 +1039,6 @@ export function ExportDialog() {
   /* ------------------------ 一批作业的驱动（先冻结、再依次发） ------------------------ */
   const launched = useRef<{ ids: string[] | null; index: number }>({ ids: null, index: -1 });
   const lastRecorded = useRef<unknown>(null);
-  const [routeWaited, setRouteWaited] = useState<string | null>(null);
-  // 冻结（prepare）：逐张把对话框摆到「这一张」（范围 = 原图、要导的图、文件名 = 图名），
-  // 摆好了就用 `buildRequestInput` 生成它**完整的请求输入**记进批里。这一段不发任何请求；
-  // 之后发的就是这些冻结好的输入，不再读活的表单 / 文档（Codex #1295 P1）
-  useEffect(() => {
-    if (!batch || batch.done || batch.cancelRequested || batch.phase !== "prepare") return;
-    // 点击之后排版 / 选区被改了（包括 route 等待期间关了对话框去改）：整批作废，不混版本
-    const frozen = frozenRefs.current;
-    if (frozen && liveRefs().some((v, i) => v !== frozen[i])) {
-      abortExportBatch();
-      useUiStore.getState().setStatus(msg("export.batchAborted", undefined, "dialogs"), "error");
-      return;
-    }
-    const pos = batch.prepIndex;
-    const id = batch.ids[pos];
-    const name = batch.names[pos];
-    if (scopeState !== "original" || figureId !== id || filename !== name) {
-      setScope("original");
-      setPickedFigureId(id);
-      setPreviewId(id);
-      setFilename(name);
-      return;
-    }
-    // 这一张导不出（文件名不合法 / 原图此刻导不出）：记一笔失败，继续下一张
-    if (!canStart) {
-      recordBatchStartFailure(prepFailureReason());
-      return;
-    }
-    // 等后端的 route 回答（来源判据以它为准）；迟迟不来就按退路冻结，不卡住整批
-    const token = `${batch.ids.length}:${pos}:${id}`;
-    if (!routeAnswered && routeWaited !== token) {
-      const timer = setTimeout(() => setRouteWaited(token), 1500);
-      return () => clearTimeout(timer);
-    }
-    recordBatchPrepared(buildRequestInput("ask"));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [batch, scopeState, figureId, filename, canStart, routeAnswered, routeWaited]);
   // 发（send）：只按冻结的输入依次发
   useEffect(() => {
     if (!batch || batch.done || batch.cancelRequested || batch.phase !== "send" || running) return;
@@ -1190,8 +1183,6 @@ export function ExportDialog() {
     const key = `${job.job_id}:${job.status}`;
     if (announced.current === key) return;
     announced.current = key;
-    // 冻结段作废的一批已经单独报过原因（error 通知），不再叠一句「已取消」
-    if (batch?.aborted) return;
     if (resultVisible) return;
     const ui = useUiStore.getState();
     const view = {
@@ -1220,7 +1211,7 @@ export function ExportDialog() {
     } else if (job.status === "unknown") {
       ui.setStatus(msg("export.toast.unknown", undefined, "dialogs"), "error", owner);
     }
-  }, [job, busy, resultVisible, batch?.aborted]);
+  }, [job, busy, resultVisible]);
 
   // 重新打开对话框 = 用户已经看到结果：撤掉关窗期间挂着的那条
   useEffect(() => {
@@ -2405,10 +2396,10 @@ function ProgressRow({ job, batch }: { job: ExportJob | null; batch: ExportBatch
   const text = batch
     ? ex("batchProgress", {
         // 冻结阶段数的是正在冻结的那张；发的阶段数的是冻结好的第几张在 `ids` 里的位置
-        k: Math.min((batch.phase === "send" ? (batch.prepared[batch.index]?.pos ?? batch.index) : batch.prepIndex) + 1, batch.ids.length),
+        k: Math.min((batch.phase === "send" ? (batch.prepared[batch.index]?.pos ?? batch.index) : 0) + 1, batch.ids.length),
         n: batch.ids.length,
         name:
-          (batch.phase === "send" ? batch.prepared[batch.index]?.name : batch.names[batch.prepIndex]) ?? "",
+          (batch.phase === "send" ? batch.prepared[batch.index]?.name : batch.names[0]) ?? "",
         phase: ex(`phase.${phase}`, { step, total }),
       })
     : ex(`phase.${phase}`, { step, total });

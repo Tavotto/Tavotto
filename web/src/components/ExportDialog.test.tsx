@@ -98,6 +98,8 @@ let jobStatus: 'done' | 'partial' | 'conflict' | 'running' = 'done'
 let jobOutputs: Record<string, unknown>[] | null = null
 /** 后端 validate 的 `route`（#1209）：按请求体现造；null = 旧后端 / 算不出（响应里没有 route） */
 /** 逐个作业依次给的状态（一批作业里每张一个）；用完退回 `jobStatus` */
+/** 每次 `buildBatchInput` 调用时的微任务纪元（见「冻结是一个同步块」） */
+const batchBuildLog: number[] = []
 let jobStatusSeq: string[] | null = null
 /** `/api/export/validate` 回包前先等多久（模拟 route 慢：冻结段每张最多等它 1.5 s） */
 let routeDelayMs = 0
@@ -332,6 +334,22 @@ afterEach(() => {
   act(() => root.unmount())
   container.remove()
   vi.restoreAllMocks()
+})
+
+vi.mock('@/lib/exportBatchInput', async (importOriginal) => {
+  const real = await importOriginal<typeof import('@/lib/exportBatchInput')>()
+  let epoch = 0
+  return {
+    ...real,
+    buildBatchInput: (...args: Parameters<typeof real.buildBatchInput>) => {
+      batchBuildLog.push(epoch)
+      // 如果两次调用之间让出过（任何 await / 微任务），这个纪元就会推进
+      queueMicrotask(() => {
+        epoch += 1
+      })
+      return real.buildBatchInput(...args)
+    },
+  }
 })
 
 describe('信息架构：删掉的东西不许回来', () => {
@@ -2581,9 +2599,9 @@ describe('每张图单独导出：依次发多个作业（后端协议不变）'
     expect(exportBodies.map((b) => b.filename)).toEqual(['Fig1', 'Fig2'])
   })
 
-  it('冻结段 route 等待期间关掉对话框去改排版：整批作废、一个请求都没发，不混进两个文档版本（Codex #1295 复核 P1）', async () => {
+  it('冻结段 route 等待期间关掉对话框去改排版：整批一致地用改后的那一份文档，请求全部发出（不混版本、不作废）', async () => {
     routeOf = (req) => ({ scope: req.scope, formats: req.formats, panels: {} })
-    routeDelayMs = 700
+    routeDelayMs = 500
     await setupTwo({ select: [] })
     await click(originalRadio())
     await start()
@@ -2595,12 +2613,50 @@ describe('每张图单独导出：依次发多个作业（后端协议不变）'
         d.page = { w: 99, h: 77 }
       })
     })
-    await batchDone()
+    await batchDone(20_000)
     const b = useExportStore.getState().batch!
-    expect(b.aborted).toBe(true)
-    expect(exportBodies.filter((x) => x.scope === 'original'), '一张都没发').toHaveLength(0)
-    expect(b.aggregate?.status).toBe('cancelled')
-    expect(useUiStore.getState().statusTone).toBe('error')
+    expect(exportBodies).toHaveLength(2) // 全部发出，没有作废
+    const docs = b.prepared.map((p) => p.input.doc)
+    expect(docs).toHaveLength(2)
+    expect(docs[0], '两张读的是同一份文档').toBe(docs[1])
+    expect(docs[0], '且是改后的那一份（route 齐了那一刻）').toBe(useDocumentStore.getState().doc)
+    expect(docs[0].page).toEqual({ w: 99, h: 77 })
+  })
+
+  it('冻结是一个同步块：整批的 buildBatchInput 调用之间没有任何 await / 微任务间隔', async () => {
+    routeOf = (req) => ({ scope: req.scope, formats: req.formats, panels: {} })
+    routeDelayMs = 100
+    await setupTwo({ select: [] })
+    await click(originalRadio())
+    batchBuildLog.length = 0
+    await start()
+    await batchDone(20_000)
+    // 前面是逐张取 route 前的探针调用（中间隔着 await）；最后 N=2 次是冻结块里的真调用，必须在同一个微任务纪元里
+    expect(batchBuildLog.length).toBeGreaterThanOrEqual(4)
+    const last2 = batchBuildLog.slice(-2)
+    expect(last2[0]).toBe(last2[1])
+    const probes = batchBuildLog.slice(0, -2)
+    expect(probes[0], '探针之间隔着 await（纪元不同），证明这个断言能看出间隔').not.toBe(last2[0])
+  })
+
+  it('批里某张的请求体 == 同一张单张导出的请求体（冻结用的是同一条检查 / 留档链）', async () => {
+    await setupTwo({ select: [] })
+    useWorkspaceStore.setState({ mode: 'fast_edit', activePanelId: 'p1' })
+    await act(async () => useUiStore.getState().setExportOpen(false))
+    await act(async () => useUiStore.getState().setExportOpen(true))
+    await click(button('开始导出')!)
+    const single = exportBodies[0]
+    expect((single.original as { figure_id: string }).figure_id).toBe('Fig1.pdf')
+    exportBodies.length = 0
+    resetExportState()
+    useWorkspaceStore.setState({ mode: 'layout', activePanelId: null })
+    await act(async () => useUiStore.getState().setExportOpen(false))
+    await act(async () => useUiStore.getState().setExportOpen(true))
+    await click(originalRadio())
+    await click(button('开始导出')!)
+    await batchDone(20_000)
+    const inBatch = exportBodies.find((b) => (b.original as { figure_id: string }).figure_id === 'Fig1.pdf')
+    expect(inBatch).toEqual(single)
   })
 
   it('冻结段里什么都没动：route 慢也照常整批发出，且每张用同一个文档版本', async () => {
@@ -2611,7 +2667,6 @@ describe('每张图单独导出：依次发多个作业（后端协议不变）'
     await start()
     await batchDone(20_000)
     expect(exportBodies).toHaveLength(2)
-    expect(useExportStore.getState().batch?.aborted).toBeFalsy()
   })
 
   it('取消 = 停掉剩余：第二张不再发，已写出的如实报', async () => {
