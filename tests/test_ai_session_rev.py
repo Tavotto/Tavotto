@@ -283,7 +283,11 @@ def test_connecting_to_an_up_to_date_db_never_waits_for_the_write_lock(db):
             "ai_history.DB_PATH = Path(sys.argv[1]); ai_history._connect().close(); print('ok')"
         )
         out = subprocess.run(
-            [sys.executable, "-c", code, str(db)], capture_output=True, text=True, timeout=4
+            [sys.executable, "-c", code, str(db)],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            timeout=4,
         )
     finally:
         holder.execute("ROLLBACK")
