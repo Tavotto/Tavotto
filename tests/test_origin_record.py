@@ -521,6 +521,7 @@ def _run_racers(data: Path, tmp_path: Path, cfgs: list[dict]) -> list[bool]:
                 env=_env(data),
                 stdout=subprocess.PIPE,
                 text=True,
+                encoding="utf-8",
             )
         )
     for i in range(len(cfgs)):
