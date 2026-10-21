@@ -110,7 +110,8 @@ pytest 的假设进去会扩大攻击面）。纯标准库，复用 `_common.run
 `security.py` 的同一道 guard（Host / Origin / 凭据），first-wins 由时间序保证，不需要锁，CLI 不往磁盘写任何东西。
 代价是桌面 sidecar 原本没有可供 CLI 使用的凭据——见下文「scoped token」，那是对 ADR 0008 的最小放宽。
 
-- **实例侧**：`/api/engine/render` 收尾处（成功 / override 的 `WorkerError` / 取 worker 阶段的 `WorkerError`）把结论记进
+- **实例侧**：`/api/engine/render` 收尾处（成功 / override 的 `WorkerError` / 取 worker 阶段的 `WorkerError` / 选中原件核对不上的
+  `ArtifactContextError`——进渲染前核对、取 worker、执行中三处都算，可重试的 `source_changed` 除外——重排后那次渲染才是结论）把结论记进
   **进程内有界结论表**（`engine/handoffreceipt.py::LEDGER`，最多 128 条、每条保留 10 分钟，键 = 项目身份 + stem，线程安全，
   零 IO，没有交接在查时也记）。记录是旁路，任何异常不影响渲染响应。**只记录桌面端本来就会做的那次渲染，不为验证触发任何执行**；
   交接落图走 `openFastEdit → enterElementEdit`，有脚本的 Figure 会发起这次渲染。

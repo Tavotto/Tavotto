@@ -65,7 +65,7 @@
   `DataTransfer.files`）只说一句，主页的 `onNativeFileDrop` 在教程层开着时也不认（第二道闸）。首次打开（没开始过、
   `welcomeSeenAt` 空、停在主页、没有自己的项目）才自己弹欢迎页，只一次；上次停在教程中途的接着那一步。
   e2e 的 `noProject` 用例由 fixture 默认记成「欢迎页已出现过」，测教程的 spec `test.use({ firstRunWelcome: true })`。
-* **锚点是稳定的 `data-*`**：`data-onboarding-anchor="export | export-scope | add-to-layout | to-layout
+* **锚点是稳定的 `data-*`**：`data-onboarding-anchor="export | export-scope | to-layout
   | tutorial-entry | help-tutorial | settings-tutorial"`、`data-object-id`、`data-card`、`data-rail`、
   `data-issue-row[data-issue-rule][data-issue-object]`、`data-multi-selection-context-bar`、
   `data-element-svg`（+ manifest bbox）、新手教程的 `data-native-tutorial[data-surface]` / `data-tutorial-step` /

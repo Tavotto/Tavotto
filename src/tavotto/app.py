@@ -6530,6 +6530,16 @@ def _note_handoff_render(stem: str, *, code: str | None = None, **facts) -> None
         LOG.debug("交接渲染结论记录失败", exc_info=True)
 
 
+def _note_handoff_failure(stem: str, exc: BaseException) -> None:
+    """渲染路上的失败里，哪些是这次渲染的终局（ADR 0131 §六）：worker 的 `WorkerError`，以及选中原件
+    核对不上的 `ArtifactContextError`（409）。可重试的不记——前端重排后的那次渲染才是结论，抢记一个失败会把它挡住。
+    """
+    if isinstance(exc, engine_pool.WorkerError) or (
+        isinstance(exc, engine_artifactcontext.ArtifactContextError) and not exc.retryable
+    ):
+        _note_handoff_render(stem, code=exc.code)
+
+
 def _handoff_target_stem(rel_id: str) -> str:
     """面板 id → 结论表匹配用的 stem，判据与 `_resolve_engine_worker` 一致（runtime 素材查注册表，磁盘面板取文件名主干）。"""
     try:
@@ -6601,13 +6611,18 @@ def api_engine_render():
     """
     body = request.get_json(force=True)
     rel_id = body.get("id", "")
-    artifact_source = _artifact_source(
-        rel_id,
-        body.get("source_policy"),
-        body.get("expected_source"),
-        body.get("patches"),
-        body.get("confirmed_reconstruction_sha256"),
-    )
+    try:
+        artifact_source = _artifact_source(
+            rel_id,
+            body.get("source_policy"),
+            body.get("expected_source"),
+            body.get("patches"),
+            body.get("confirmed_reconstruction_sha256"),
+        )
+    except engine_artifactcontext.ArtifactContextError as exc:
+        # 原件在进渲染之前就核对不上（期望字节过期、读不了、已有编辑基线）：同样是这次渲染的终局
+        _note_handoff_failure(_handoff_target_stem(rel_id), exc)
+        raise
     inline_svg = bool(body.get("inline_svg"))
     # 参数校验先做完再进渲染：混在下面那个 try 里的话，worker 响应的
     # JSONDecodeError（也是 ValueError）会被当成「preview_dpi 写错了」
@@ -6644,11 +6659,10 @@ def api_engine_render():
         info = current_registry().for_stem(stem) or {}
         cold = not worker.built
     except Exception as exc:
-        # worker 启动 / 环境解析失败（WorkerError）也是「那一次渲染」的失败结论：
+        # worker 启动 / 环境解析失败（WorkerError、原件核对不上）也是「那一次渲染」的失败结论：
         # 不记结论 CLI 会白等到 timeout（ADR 0131 §六）。此时 stem 还没拿到，按
         # `_resolve_engine_worker` 同一判据反推（旁路，任何失败都不影响原异常）。
-        if isinstance(exc, engine_pool.WorkerError):
-            _note_handoff_render(_handoff_target_stem(rel_id), code=exc.code)
+        _note_handoff_failure(_handoff_target_stem(rel_id), exc)
         # 准备态同样须有终局；原异常留给原有 Flask handler，HTTP/code 不变。
         sse_publish("render.failed", {"pj": pj, "id": rel_id, "error": str(exc)})
         raise
@@ -6684,6 +6698,10 @@ def api_engine_render():
             "figure_snapshot_invalidation", evidence.get("figure_snapshot_invalidation")
         )
         return jsonify(_worker_error_payload(exc, figure_snapshot_invalidation=fact)), 500
+    except engine_artifactcontext.ArtifactContextError as exc:
+        _note_handoff_failure(stem, exc)
+        sse_publish("render.failed", {"pj": pj, "id": rel_id, "error": str(exc)})
+        raise
     except Exception as exc:
         # 事件契约是「render.started 之后必有 done 或 failed」，与异常类型无关：
         # 前端文件级 building 表只由这两个事件清（#478）。重试路上的

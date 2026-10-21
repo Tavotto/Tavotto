@@ -1,5 +1,5 @@
 import { useTranslation } from 'react-i18next'
-import { ArrowLeft, Plus } from '@/components/ui/icons'
+import { ArrowLeft, ArrowRight } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { t as translate } from '@/i18n'
 import { Button } from '@/components/ui/Button'
@@ -15,34 +15,34 @@ import { useProjectReadinessStore } from '@/store/projectReadinessStore'
 import { usePanelDisplayManifest } from '@/store/renderStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
-import { addFigureToLayout, returnToLayout, useWorkspaceStore } from '@/store/workspace'
+import { returnToLayout, useWorkspaceStore } from '@/store/workspace'
 import type { PanelObject } from '@/types/document'
 
 /**
- * 工作区上下文栏（审计 T01）：**「我在改哪一层」只说一遍**。
+ * 工作区上下文栏（审计 T01 / P01）：**「我在改哪一层」只说一遍，出口只有一颗按钮**。
  *
  * ```text
- * ← 返回画布   Fig2_correlation  /  Y 轴刻度                    画布排版 + 图内编辑
- * ← 返回画布   Fig1_kinetics                        │ + 添加到画布    快速编辑
- * ← 返回画布   Fig1_kinetics / 整张图               │ + 添加到画布    快速编辑 + 图内编辑（没选元素）
- * ← 返回画布   Fig1_kinetics / 标题 “…”             │ + 添加到画布    快速编辑 + 图内编辑
+ * ← 返回画布   Fig2_correlation  /  Y 轴刻度                 画布排版 + 图内编辑（退出图内编辑）
+ * ← 返回排版   Fig1_kinetics                                 快速编辑，从排版进来
+ * 排版与出版 →  Fig1_kinetics / 整张图                        快速编辑，素材库 / 首次打开 / 刚为编辑加入
  * ```
  *
- * 此前这条信息散在三处：顶栏有一个「快速编辑」标签兼返回按钮，画布上方有
- * 「图内编辑：Fig2 / 返回画布 Esc」一条，快速编辑另有一条带「画布排版」出口——
- * 三个返回入口、两种模式词、用户分不清点哪个回到哪。现在**返回只有这一个
- * 主位置**（Esc 照旧逐层退），面包屑从大到小：图 / 当前对象。模式**不再画成标签**：
- * 快速编辑靠「添加到画布」这颗按钮在场就能辨认，机器读取仍走 `data-workspace-mode`，
- * 面包屑因此把宽度全留给图名。
+ * 快速编辑里那颗按钮**按来源换文案、动作相同**（`returnToLayout()`，Esc 在快编里做同一件事）：
+ * 从排版进来的是「返回」，没有排版来源的（会话恢复，或这次打开刚把图加进文档）是「前进到排版」。
+ * 来源取自 `fastEditFromLayout` + `addedForEdit`（见 `workspaceStore`）。此前还有一颗
+ * 「+ 添加到画布」：`openFastEdit` 早已把图放进文档，它永远走「已存在→聚焦」，与回排版只差
+ * 视口处理，是近义重复，已删。测试按 `data-context-back-kind="return|forward"` 定位，不按文案。
+ * 面包屑从大到小：图 / 当前对象；模式不画成标签，机器读取走 `data-workspace-mode`。
  *
  * **说什么话不在这里判**：状态标签与那句原因取自 `lib/readinessText.ts`，对象名过
- * `engineLabel`。这里只排版。原图规格**不在这条上说**——它属于导出对话框，塞进
- * 这一行只会把面包屑和按钮挤成叠字。
+ * `engineLabel`。这里只排版。原图规格**不在这条上说**——它属于导出对话框。
  */
 export function WorkspaceContextBar() {
   const { t } = useTranslation('workspace')
   const fastEdit = useWorkspaceStore((s) => s.mode === 'fast_edit')
   const activePanelId = useWorkspaceStore((s) => s.activePanelId)
+  // 来源：从排版进来且不是「这次为编辑刚把图加进文档」→ 返回；否则 → 前进到排版
+  const fromLayout = useWorkspaceStore((s) => s.fastEditFromLayout && s.addedForEdit === null)
   const elementPanelId = useUiStore((s) => s.elementPanelId)
   const selectedGids = useUiStore((s) => s.selectedGids)
   // <1024 的覆盖式侧栏压在画布上：浮条按剩下的宽度居中，别让「添加到画布」与 Esc 出口
@@ -80,10 +80,11 @@ export function WorkspaceContextBar() {
           : null
 
   /**
-   * 唯一的返回入口。快速编辑里 = 回到画布排版（顺带退出图内编辑）；画布排版
+   * 唯一的出口。快速编辑里 = 回到画布排版（顺带退出图内编辑）；画布排版
    * 里 = 退出图内编辑并选中该面板——属性页落在面板上，「写回原始文件」就在手边。
    * 与 `useKeyboard` 里 Esc 的最后一层同一件事。
    */
+  const backKind = fastEdit ? (fromLayout ? 'return' : 'forward') : 'return'
   const back = () => {
     if (fastEdit) {
       returnToLayout()
@@ -117,13 +118,12 @@ export function WorkspaceContextBar() {
           fastEdit && !editable ? 'rounded-lg' : 'rounded-full',
         )}
       >
-        {/* 单行：返回 + 面包屑 + 添加到画布。浮条按内容量宽，这一行默认正好装下，
-            面包屑（唯一可伸缩项）完整显示；只有画布窄到装不下才 truncate。两颗
+        {/* 单行：出口按钮 + 面包屑。浮条按内容量宽，这一行默认正好装下，
+            面包屑（唯一可伸缩项）完整显示；只有画布窄到装不下才 truncate。出口
             按钮 shrink-0 + nowrap，不参与压缩——挤压等于叠字 */}
         <div className="flex min-w-0 flex-wrap items-center gap-1">
           {/* `flex-auto`（基准 = 内容宽）而不是 `flex-1`：基准为 0 的一项永远「装得下」，行不会折。
-              画布被覆盖式侧栏挤到装不下「返回画布」+ 面包屑 +「添加到画布」时，右边那颗折到第二行，
-              而不是压到返回钮上面让它点不到（合并组 e2e：顶栏 600 宽，返回钮被添加钮盖住） */}
+              面包屑是唯一可伸缩项，出口钮不参与压缩 */}
           <div className="flex min-w-0 flex-auto items-center gap-1">
             {/* `data-onboarding-anchor="to-layout"`：新手教程 Step 6 的 coachmark 挂这颗。
                 `data-exit-element-edit`：图内编辑态的**唯一**退出入口——e2e 拿它判「进了
@@ -133,13 +133,15 @@ export function WorkspaceContextBar() {
               variant="ghost"
               className="shrink-0 whitespace-nowrap"
               data-context-back
+              data-context-back-kind={backKind}
               data-exit-element-edit={editingHere ? '' : undefined}
               data-onboarding-anchor={fastEdit ? 'to-layout' : undefined}
               title={fastEdit ? t('fastEdit.crumbTitle') : t('stage.exitTitle')}
               onClick={back}
             >
-              <ArrowLeft size={ICON_SIZE.sm} />
-              {t('stage.backToCanvas')}
+              {backKind === 'return' && <ArrowLeft size={ICON_SIZE.sm} />}
+              {!fastEdit ? t('stage.backToCanvas') : fromLayout ? t('stage.backToLayout') : t('fastEdit.toLayout')}
+              {backKind === 'forward' && <ArrowRight size={ICON_SIZE.sm} />}
               {/* 键位提示只有一种：`ui/Kbd`（宪法第十三节）。此前是钮内一段手写 mono */}
               {editingHere && <Kbd>{translate('keycap.esc')}</Kbd>}
             </Button>
@@ -167,22 +169,6 @@ export function WorkspaceContextBar() {
               )}
             </ol>
           </div>
-          {fastEdit && (
-            <div className="ms-auto flex shrink-0 items-center gap-1">
-              <Sep />
-              {/* `data-onboarding-anchor`：新手教程 Step 6 的 coachmark 挂这颗按钮 */}
-              <Button
-                size="md"
-                variant="secondary"
-                className="shrink-0 whitespace-nowrap"
-                data-onboarding-anchor="add-to-layout"
-                onClick={() => void addFigureToLayout(panel.fileId)}
-              >
-                <Plus size={ICON_SIZE.sm} />
-                {t('fastEdit.addToCanvas')}
-              </Button>
-            </div>
-          )}
         </div>
 
         {/* 进不了图内编辑时诚实说明，并给出下一步——**不画成错误** */}

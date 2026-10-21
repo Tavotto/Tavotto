@@ -34,6 +34,8 @@ if __name__ == "__main__":
 EDIT = "p = d / 'fig1.py'; p.write_text(p.read_text(encoding='utf-8').replace('\"old\"', '\"new\"'), encoding='utf-8')"
 NOOP = "pass"
 SYNTAX = "(d / 'fig1.py').write_text('def main(:\\n', encoding='utf-8')"
+#: 修正轮：从原项目的脚本重新做一次正确的修改
+FIX = "p = d / 'fig1.py'; p.write_text((proj / 'fig1.py').read_text(encoding='utf-8').replace('\"old\"', '\"new\"'), encoding='utf-8')"
 RENAME_STEM = "p = d / 'fig1.py'; p.write_text(p.read_text(encoding='utf-8').replace('Fig1.pdf', 'Other.pdf'), encoding='utf-8')"
 
 
@@ -59,7 +61,8 @@ def env(monkeypatch, tmp_path):
         state["cwd"].append(cwd)
         state["prompts"].append(prompt)
         pre = f"import pathlib, sys, time; d = pathlib.Path(sys.argv[1]); proj = pathlib.Path({str(figs)!r}); "
-        return [sys.executable, "-c", pre + state["code"], cwd], {}
+        code = state["codes"].pop(0) if state.get("codes") else state["code"]
+        return [sys.executable, "-c", pre + code, cwd], {}
 
     monkeypatch.setattr(ai_bridge, "_cmd", _cmd)
     yield state
@@ -175,6 +178,9 @@ def test_precommit_failures_never_reach_the_project(env, code, failed_check):
         return
     assert row["outcome"] == "failed" and sess["status"] == "failed"
     assert failed_check in [u["constraint_id"] for u in sess["task"]["unmet"]]
+    # 副本里能自己改回来的失败修正一次（同一份代码再跑仍是同样的失败 → 不再修）；原项目被动了的一律不修
+    correctable = failed_check in ("candidate.syntax", "candidate.stems")
+    assert len(env["prompts"]) == (2 if correctable else 1), env["prompts"]
     assert calls == [] or failed_check == "project.target", (
         "没提交就不刷新（除非项目里的脚本被别人改了）"
     )
@@ -516,3 +522,99 @@ def test_after_receives_the_sha256_of_the_committed_bytes(env):
     _wait(sid)
     disk = (Path(env["figs"]) / "fig1.py").read_bytes()
     assert expecteds == [hashlib.sha256(disk).hexdigest()]
+
+
+# --------------------------------------------------------------------------- 有界修正（Phase 4）
+def test_a_syntax_error_is_corrected_once_in_the_same_copy_then_committed(env):
+    env["codes"] = [SYNTAX, FIX]
+    sid, calls = _run(env)
+    sess = _wait(sid)
+    assert sess["status"] == "done" and '"new"' in _project_text(env)
+    assert calls == ["fig1.py"], "只在最终提交时刷新一次"
+    assert env["cwd"][0] == env["cwd"][1] != str(env["figs"]), "修正在同一个候选目录里"
+    first, second = env["prompts"]
+    assert second.startswith(first), "修正轮带着原提示词"
+    assert "第 1 行有语法错误" in second and "不要运行脚本" in second
+    row = ai_history.get(sid)
+    assert row["budget_used"]["agent_runs"] == 2 and row["budget_used"]["corrections"] == 1
+    assert row["verification"]["attempts"] == [
+        {"round": 1, "failed": [["candidate.syntax", "syntax_error"]], "next": "correct"}
+    ]
+    assert sess["task"]["outcome"] == "partial"  # 没接渲染钩子：render_not_wired 是 unknown
+    assert not ai_bridge.script_busy(env["figs"] / "fig1.py")
+
+
+@pytest.mark.parametrize(
+    "first",
+    [
+        EDIT + "; (proj / 'stray.txt').write_text('x', encoding='utf-8')",
+        # 与可修的失败混在一起也不修：只要原项目被动了，整轮不可修
+        SYNTAX + "; (proj / 'stray.txt').write_text('x', encoding='utf-8')",
+        # 候选里的目标脚本被删（本身可修）+ 动了原项目：同样整轮不可修
+        "(d / 'fig1.py').unlink(); (proj / 'stray.txt').write_text('x', encoding='utf-8')",
+    ],
+    ids=["project-only", "project-and-syntax", "project-and-missing-target"],
+)
+def test_touching_the_original_project_is_never_corrected(env, first):
+    env["codes"] = [first, FIX]
+    sid, _ = _run(env)
+    sess = _wait(sid)
+    assert len(env["prompts"]) == 1 and sess["status"] == "failed"
+    assert _project_text(env) == SCRIPT
+    assert ai_history.get(sid)["verification"]["attempts"][0]["next"] == "not_correctable"
+
+
+def test_cancel_during_the_correction_run_commits_nothing_and_frees_the_script(env):
+    env["codes"] = [SYNTAX, FIX + "; time.sleep(30)"]
+    sid, _ = _run(env)
+    deadline = time.monotonic() + 15
+    while len(env["prompts"]) < 2 or '"new"' not in (Path(env["cwd"][0]) / "fig1.py").read_text(
+        encoding="utf-8"
+    ):
+        assert time.monotonic() < deadline
+        time.sleep(0.05)
+    assert ai_history.get(sid)["phase"] == "correcting"
+    assert ai_bridge.script_busy(env["figs"] / "fig1.py"), "修正轮的进程还活着：脚本算忙"
+    assert ai_bridge.cancel(sid) is True
+    sess = _wait(sid)
+    assert sess["status"] == "cancelled" and _project_text(env) == SCRIPT
+    assert ai_history.get(sid)["outcome"] == "cancelled"
+    assert not ai_bridge.script_busy(env["figs"] / "fig1.py")
+
+
+def test_a_failing_correction_run_discards_the_copy(env):
+    env["codes"] = [SYNTAX, FIX + "; sys.exit(3)"]
+    sid, _ = _run(env)
+    sess = _wait(sid)
+    assert sess["status"] == "failed" and _project_text(env) == SCRIPT
+    assert ai_history.get(sid)["error"] == "agent_exit_nonzero"
+
+
+def test_after_cancelling_the_correction_run_the_script_stays_busy_until_that_process_exits(
+    env, monkeypatch
+):
+    """首轮进程退出时 `exited` 已置位；修正轮必须先清掉它——否则取消后 status 一变，第二个进程还活着脚本就被判成空闲。"""
+    real = ai_bridge._await_exit
+    calls, gate = [], threading.Event()
+
+    def held(sess):
+        calls.append(sess["proc"].pid)
+        if len(calls) == 2:
+            gate.wait(10)  # 修正轮进程的退出确认被扣住
+        real(sess)
+
+    monkeypatch.setattr(ai_bridge, "_await_exit", held)
+    env["codes"] = [SYNTAX, FIX + "; time.sleep(30)"]
+    sid, _ = _run(env)
+    deadline = time.monotonic() + 15
+    while ai_history.get(sid)["phase"] != "correcting" or len(env["prompts"]) < 2:
+        assert time.monotonic() < deadline
+        time.sleep(0.05)
+    assert ai_bridge.cancel(sid) is True
+    while len(calls) < 2:
+        assert time.monotonic() < deadline
+        time.sleep(0.02)
+    assert ai_bridge.script_busy(env["figs"] / "fig1.py"), "修正轮的退出还没确认：脚本仍算忙"
+    gate.set()
+    _wait(sid)
+    assert not ai_bridge.script_busy(env["figs"] / "fig1.py")

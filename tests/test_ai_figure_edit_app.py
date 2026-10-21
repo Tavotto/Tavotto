@@ -57,6 +57,9 @@ REGISTRY = json.dumps(
 )
 
 RETITLE = "p = d / 'fig1.py'; p.write_text(p.read_text(encoding='utf-8').replace('\"old\"', '\"new\"'), encoding='utf-8')"
+BREAK = "p = d / 'fig1.py'; p.write_text(p.read_text(encoding='utf-8').replace('def main():', 'def main(:'), encoding='utf-8')"
+#: 修正轮：把语法错误改回去，并保留用户要的标题修改
+MEND = "p = d / 'fig1.py'; p.write_text(p.read_text(encoding='utf-8').replace('def main(:', 'def main():').replace('\"old\"', '\"new\"'), encoding='utf-8')"
 REDATA = "p = d / 'fig1.py'; p.write_text(p.read_text(encoding='utf-8').replace('4.0, 9.0', '40.0, 90.0'), encoding='utf-8')"
 
 
@@ -83,7 +86,9 @@ def project(tmp_path, monkeypatch):
 
     def _cmd(agent_id, prompt, cwd, model=None, effort=None, endpoint=None):
         pre = "import pathlib, sys; d = pathlib.Path(sys.argv[1]); "
-        return [sys.executable, "-c", pre + state["code"], cwd], {}
+        code = state["codes"].pop(0) if state.get("codes") else state["code"]
+        state.setdefault("prompts", []).append(prompt)
+        return [sys.executable, "-c", pre + code, cwd], {}
 
     monkeypatch.setattr(ai_bridge, "_cmd", _cmd)
     runs = tmp_path / "runs.txt"
@@ -250,3 +255,18 @@ def test_after_session_running_an_older_version_is_stale_not_verified(project, m
     sid, sess = _ai(client)
     assert _checks(sid)["render.figure"] == ("unknown", "stale_session")
     assert sess["task"]["outcome"] == "partial", sess["task"]
+
+
+def test_a_corrected_syntax_error_ends_verified_against_the_real_render(project):
+    """Phase 4 退出标准「可修复缺陷一次修正后 verified」：首轮写坏语法 → 修正一次 → 提交 → 渲染层数据验证通过。"""
+    m, client, figs, runs, state = project
+    _render(client)
+    state["codes"] = [BREAK, MEND]
+    sid, sess = _ai(client)
+    assert len(state["prompts"]) == 2
+    assert sess["status"] == "done" and '"new"' in (figs / "fig1.py").read_text(encoding="utf-8")
+    assert sess["task"]["outcome"] == "completed", sess["task"]
+    row = ai_history.get(sid)
+    assert row["verification"]["attempts"][0]["failed"] == [["candidate.syntax", "syntax_error"]]
+    assert _checks(sid)["render.figure"] == ("verified", None)
+    assert _runs(runs) == 2, "修正不执行用户脚本：只有改前那次与改后验证那次"

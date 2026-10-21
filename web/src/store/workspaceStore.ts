@@ -54,8 +54,18 @@ interface WorkspaceState {
    * 「移除」这颗钮；用户在图内又改了别的之后，撤销撤的是别的，钮就收起来（说明句留着）
    */
   addedForEditDepth: number
-  /** 进入快速编辑（对象必须已经在激活画布里） */
-  enterFastEdit: (panelId: string) => void
+  /**
+   * 这一次快速编辑是**从排版里进来的**（工作区视图状态：不进文档、不进撤销、不落盘）。
+   * 上下文栏据此在「← 返回排版」与「排版与出版 →」之间选一句话（P01 单按钮）。
+   *
+   * 为什么现有字段不够：`mode` 进来之后恒为 `fast_edit`，上一个 mode 没人留；停放的排版视口
+   * （`parkedLayoutView`）受 `viewW/viewH` 为 0 时不记、回排版时被 `take` 清空，不是来源的权威。
+   * 只在 layout → fast_edit 的那一次置位，快编里换图保持；会话恢复（上次就停在快编）不是
+   * 「从排版进来」。「刚为编辑把图加进文档」（`addedForEdit`）时上下文栏仍按前进说，见组件。
+   */
+  fastEditFromLayout: boolean
+  /** 进入快速编辑（对象必须已经在激活画布里）；`fromLayout: false` = 会话恢复，没有排版来源 */
+  enterFastEdit: (panelId: string, opts?: { fromLayout?: boolean }) => void
   /** 设置 / 清除「等源脚本到了再进图内编辑」的待办 */
   setPendingElementEdit: (panelId: string | null) => void
   /** 回到画布排版 */
@@ -70,14 +80,24 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   pendingElementEdit: null,
   addedForEdit: null,
   addedForEditDepth: 0,
-  enterFastEdit: (panelId) => {
+  fastEditFromLayout: false,
+  enterFastEdit: (panelId, opts) => {
     cancelArtifactEntry()
     const changed = get().mode !== 'fast_edit' || get().activePanelId !== panelId
     // 记下排版视口**在这里**，不在 `openFastEdit` 里：问题面板的定位
     // （`lib/issueFocus.ts`）也是从排版进快速编辑的，它调的是这个 action
     parkLayoutView()
+    // 显式传入的来源优先（会话恢复传 `false`）：快编里直接换文档、新文档也恢复进快编时，
+    // store 还停在上一份的 `fast_edit`，不能把上一份的来源带过来。没传才按原样——
+    // 已在快编里换图保持原来源，从排版进来默认 true
+    const fromLayout =
+      opts?.fromLayout !== undefined
+        ? opts.fromLayout
+        : get().mode === 'fast_edit'
+          ? get().fastEditFromLayout
+          : true
     // 换了一张图：上一张的「刚加入」说明不跟过来
-    set({ mode: 'fast_edit', activePanelId: panelId, ...(changed ? { addedForEdit: null } : {}) })
+    set({ mode: 'fast_edit', activePanelId: panelId, fastEditFromLayout: fromLayout, ...(changed ? { addedForEdit: null } : {}) })
     if (changed) emitActivity({ kind: 'workspace.mode_changed', mode: 'fast_edit' })
   },
   setPendingElementEdit: (panelId) => set({ pendingElementEdit: panelId }),
@@ -85,7 +105,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     cancelArtifactEntry()
     const changed = get().mode !== 'layout'
     // 回排版 = 用户改了主意，那个待办跟着作废（迟到的关联不该把他拽回去）
-    set({ mode: 'layout', activePanelId: null, pendingElementEdit: null, addedForEdit: null })
+    set({ mode: 'layout', activePanelId: null, pendingElementEdit: null, addedForEdit: null, fastEditFromLayout: false })
     if (changed) emitActivity({ kind: 'workspace.mode_changed', mode: 'layout' })
   },
   // 换文档 / 换项目的清理**不发信号**：那不是用户在表达「我要回排版」
@@ -95,7 +115,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     // `takeParkedLayoutView()` 的画布判据已经把跨文档还原挡住了（变异反证过）。
     // 留着是为了不让模块变量一直挂着上一份文档的状态；别把它当成被看住的保证。
     parkedLayoutView = null
-    set({ mode: 'layout', activePanelId: null, pendingElementEdit: null, addedForEdit: null })
+    set({ mode: 'layout', activePanelId: null, pendingElementEdit: null, addedForEdit: null, fastEditFromLayout: false })
   },
 }))
 

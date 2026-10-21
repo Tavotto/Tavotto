@@ -288,3 +288,61 @@ describe('快速编辑里的 ⌘1', () => {
     expect(spy).toHaveBeenCalledWith({ x: 10, y: 20, w: 40, h: 30 })
   })
 })
+
+describe('快速编辑里 Esc = 回排版（P01，与上下文栏出口同一个 action）', () => {
+  const enter = (fromLayout = true) => useWorkspaceStore.getState().enterFastEdit(PANEL.id, { fromLayout })
+  const mode = () => useWorkspaceStore.getState().mode
+
+  it('对照组：排版里 Esc 只是清选区，不碰模式', () => {
+    press('Escape')
+    expect(useSelectionStore.getState().ids).toEqual([])
+    expect(mode()).toBe('layout')
+  })
+
+  it('快编里没有更内层时 Esc 回排版并选中该面板（两种来源都一样）', () => {
+    for (const fromLayout of [true, false]) {
+      useWorkspaceStore.getState().clear()
+      enter(fromLayout)
+      press('Escape')
+      expect(mode()).toBe('layout')
+      expect(useSelectionStore.getState().ids).toEqual([PANEL.id])
+    }
+  })
+
+  it('图内编辑有选区：第一下 Esc 只清选区，仍在快编；再一下才回排版', () => {
+    enter()
+    useUiStore.getState().setElementPanel(PANEL.id)
+    useUiStore.getState().setSelectedGid('axes_0.yticks')
+    press('Escape')
+    expect(useUiStore.getState().selectedGids).toEqual([])
+    expect(mode()).toBe('fast_edit')
+    press('Escape')
+    expect(mode()).toBe('layout')
+    expect(useUiStore.getState().elementPanelId).toBeNull()
+  })
+
+  it('输入框聚焦时不抢 Esc', () => {
+    enter()
+    const input = document.createElement('input')
+    document.body.appendChild(input)
+    input.focus()
+    act(() => {
+      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
+    })
+    expect(mode()).toBe('fast_edit')
+  })
+
+  it('对话框打开时不抢 Esc（对话框自己关）', () => {
+    enter()
+    const dlg = document.createElement('div')
+    dlg.setAttribute('role', 'dialog')
+    const btn = document.createElement('button')
+    dlg.appendChild(btn)
+    document.body.appendChild(dlg)
+    btn.focus()
+    act(() => {
+      btn.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
+    })
+    expect(mode()).toBe('fast_edit')
+  })
+})

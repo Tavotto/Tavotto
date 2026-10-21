@@ -1,6 +1,6 @@
 # ADR 0138：Tavotto AI Foundation（TAF）——在现有 AI 桥上长出任务基座，而不是另起一套
 
-日期：2026-10-19 · 状态：**Proposed**（Phase 0：设计 + 基准夹具，交维护者审；Phase 1 起逐阶段取得资格）
+日期：2026-10-19 · 状态：**Accepted**（2026-10-20 维护者接受；Phase 0 立项，Phase 1 起逐阶段取得资格，各阶段仍按 `07-pr-roadmap.md` 的入口 / 退出标准）
 相关：[0015 Agent 注册表](0015-coding-agent-registry-and-settings.md)、[0014 safe / native](0014-safe-native-execution-profiles.md)、
 [0049 写回像素门](0049-write-back-pixel-verification.md)、[0068 ArtifactInspector](0068-artifact-inspector-and-manifest.md)、
 [0080 出版规范修复事务](0080-spec-fix-transaction.md)、[0083 override 目标身份](0083-override-target-identity.md)、
@@ -67,8 +67,17 @@ TaskResult 里三者各有字段，任务结局（completed / partial / needs_in
 ### 五、1.0 收敛纪律的登记
 
 根 `AGENTS.md` 的 1.0 纪律禁止扩大产品能力。TAF 的 Phase 0–2 只加内部契约、测试与只读的 worker 侧事实，
-**不改变任何用户可见行为**；Phase 3 起的产品接入一律在默认关闭的实验开关后面，并且**需要维护者把 TAF 登记为
-与统一实施包同类的例外**（或推迟到 1.0 之后）——这是 Phase 3 开工的前置决定，本 ADR 不替维护者做。
+**不改变任何用户可见行为**；Phase 3 起的产品接入一律在默认关闭的实验开关后面。
+
+**例外登记（维护者 2026-10-20）**：TAF 按 `AGENTS.md`「1.0 收敛纪律」登记为与统一实施包同类的例外，
+范围是本 ADR 与 `docs/implementation/ai-foundation/` 的 Phase 3–6（改图接入、有界修正、数据出图、Harness Lab）。
+理由与边界：
+
+- 产品接入全部在开关 `ai.taf.enabled` 后面，**默认关闭**；开关关时 `/api/ai/run` 走旧路径、逐字不变，
+  `ADAPTERS` 为空（`tests/test_ai_figure_edit.py` 钉住）。
+- 不重写稳定模块：会话、历史库、执行、写回、安全档全部复用现有权威（第一节），只加列、加入口、加只读事实。
+- 例外不放宽任何门禁：每个阶段仍按风险档评审、跑 CI，新增核心判据提交前手工反证。
+- 打开默认开关（让用户默认看到 TAF 行为）不在本例外内，要另行决定。
 
 ### 六、Harness² 只借思想
 

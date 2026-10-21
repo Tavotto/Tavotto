@@ -1239,6 +1239,12 @@ def run(args) -> int:
     return exit_code_for(report["verdict"])
 
 
+def SM_families() -> list[dict]:
+    import compat_triage
+
+    return compat_triage.load_families()
+
+
 def positive_int(text: str) -> int:
     """argparse type: a count of one or more (0 and negatives select nothing, never 'all')."""
     value = int(text)
@@ -1262,6 +1268,11 @@ def main(argv=None) -> int:
     summarizer.add_argument("reports", nargs="+")
     summarizer.add_argument("--json-out")
     summarizer.add_argument("--markdown-out")
+    summarizer.add_argument(
+        "--require-suites",
+        help="comma-separated suites that must each have a report, else the comparison is not_computed",
+    )
+    summarizer.add_argument("--previous", help="previous summary JSON for fixed-set comparison")
     promoter = subs.add_parser("promote", help="emit a promotion candidate record (proposal only)")
     promoter.add_argument("report")
     promoter.add_argument("--case", required=True)
@@ -1277,6 +1288,13 @@ def main(argv=None) -> int:
     explorer.add_argument("--parent", help="comma-separated parent case ids")
     explorer.add_argument("--static-only", action="store_true")
     explorer.add_argument("--candidates", help="comma-separated candidate ids to run")
+    explorer.add_argument("--families", help="comma-separated transform families to restrict to")
+    explorer.add_argument(
+        "--confirm-differences",
+        type=int,
+        default=0,
+        help="re-run up to N differing candidates once",
+    )
     explorer.add_argument("--expected-sha")
     explorer.add_argument("--timeout", type=float, default=240)
     triager = subs.add_parser(
@@ -1284,6 +1302,7 @@ def main(argv=None) -> int:
     )
     triager.add_argument("reports", nargs="+")
     triager.add_argument("--out", required=True)
+    triager.add_argument("--markdown-out")
     minimizer = subs.add_parser(
         "minimize", help="bounded, re-verified reduction of one explore finding"
     )
@@ -1334,8 +1353,32 @@ def main(argv=None) -> int:
 
             return compat_explore.private_main(args.request)
         if args.command == "summarize":
-            summary = SM.summarize([SM.load_report(Path(r)) for r in args.reports])
-            markdown = SM.render_markdown(summary)
+            import compat_guardian_trend as TR
+
+            kinds = [(TR.classify(Path(r))[0], Path(r)) for r in args.reports]
+            run_paths = [p for k, p in kinds if k == "run"]
+            explore_paths = [p for k, p in kinds if k == "explore"]
+            summary = (
+                SM.summarize([SM.load_report(p) for p in run_paths])
+                if run_paths
+                else {"groups": [], "incomparable": False, "incomparable_reasons": [], "note": ""}
+            )
+            previous = (
+                json.loads(Path(args.previous).read_text(encoding="utf-8"))
+                if args.previous and Path(args.previous).is_file()
+                else None
+            )
+            required = tuple(filter(None, (args.require_suites or "").split(",")))
+            unknown = set(required) - set(SUITES)
+            if unknown:
+                raise EvidenceError(f"--require-suites names an unknown suite: {sorted(unknown)}")
+            trend = TR.build(run_paths, explore_paths, previous, SM_families(), required)
+            summary["trend"] = trend
+            markdown = (
+                (SM.render_markdown(summary) if run_paths else "")
+                + "\n"
+                + TR.render_markdown(trend)
+            )
             if args.json_out:
                 Path(args.json_out).write_text(
                     json.dumps(summary, indent=2) + "\n", encoding="utf-8"

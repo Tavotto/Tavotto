@@ -125,12 +125,13 @@ describe('快速编辑这一屏', () => {
     expect(paper!.compareDocumentPosition(obj) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
   })
 
-  it('两个出口都在：添加到画布 / 返回画布', async () => {
+  it('出口只有一颗（P01）：快编里没有「添加到画布」', async () => {
     act(() => openFastEdit('a.pdf'))
     await mount()
+    expect(container.querySelectorAll('[data-context-back]')).toHaveLength(1)
+    expect(container.querySelector('[data-onboarding-anchor="add-to-layout"]')).toBeNull()
     const labels = [...container.querySelectorAll('button')].map((b) => b.textContent ?? '')
-    expect(labels.some((l) => l.includes('添加到画布'))).toBe(true)
-    expect(labels.some((l) => l.includes('返回画布'))).toBe(true)
+    expect(labels.some((l) => l.includes('添加到画布'))).toBe(false)
   })
 
   it('切进切出不动文档：对象、位置、历史长度全都一样', async () => {

@@ -95,6 +95,13 @@ AiPanel.send（不改：草稿快照 → 提交账本 → aiRun，rid 原样）
 「不执行模型写的代码」是 v1 的硬边界：safe 档不是沙盒，CSV 里的文字可以影响模型；模板生成让被执行的代码
 完全由 Tavotto 决定。需要模型写自由代码的复杂绘图，留给后续适配器，并且先解决隔离问题（`04-security-model.md` §五）。
 
+**Phase 5a 实现**（`engine/ai_data_figure.py`，纯标准库，不执行、不写文件）：`inspect_data_source`（受控摘要，超限拒绝
+不截断）、`plan_mapping`（确定性：「随 X 的变化」/ 唯一日期列 / 第一列作 x；指令按词提到的可画列作 y；纯文字列永不作 y；
+列名无语义且指令没点名 → `needs_input` 带中性预览；类别 x 多系列 → `unsupported`）、`axis_label`（单位只认闭集后缀）、
+`render_script`（模板；CSV 来的字符串只经 `repr()`）、`plotted_data` + `expected_fingerprints`（父进程按同一解析规则算期望
+数据指纹）。`tests/test_ai_data_figure.py` 让真 safe worker 跑 FB-D01/D03–D08 的生成脚本，manifest 指纹与期望逐字节相等。
+适配器、写入项目、登记与渲染验证在 5b，前端入口在 5c。
+
 ## 五、流程 C：开发阶段自优化（Harness Lab，Phase 6）
 
 Baseline Prompt Pack（v1 = 今天的提示词逐字节）→ 候选 Pack（人写或模型提议，说明改了什么）→ 在 FigureBench **dev**
@@ -106,7 +113,7 @@ Baseline Prompt Pack（v1 = 今天的提示词逐字节）→ 候选 Pack（人�
 
 | 既有规则 | 张力 | 处理 |
 | --- | --- | --- |
-| 根 `AGENTS.md` 1.0 收敛纪律 | TAF 是能力扩展 | Phase 0–2 无用户可见变化；Phase 3 起要维护者登记例外或推迟（README「待决定」第 1 条） |
+| 根 `AGENTS.md` 1.0 收敛纪律 | TAF 是能力扩展 | Phase 0–2 无用户可见变化；Phase 3 起已登记为例外（ADR 0138 §五，默认关闭的开关后面） |
 | ai-agent-bridge 规则：AI 结束后「不 probe、不跑脚本」 | 提交后验证需要渲染 | 不在 AI 桥里跑；验证渲染是刷新之后、前端本来就会触发的那次渲染 + 一次 worker manifest 读取，显式 safe；native 图不自动渲染，记 unknown |
 | 0094 / 0110：只有用户看过 diff、确认后才写脚本 | 今天的 AI 路径本来就不经确认直接改（有快照回滚）；候选提交延续「AI 会话 = 用户发起的改写」 | 不扩大：候选提交的语义与今天相同（同一次用户请求、同一份快照回滚），只是多了备份与过期检查；多文件提交不支持 |
 | 0127：只有桌面用户发起的运行才可回退 native | 有界修正可能想重跑 | 修正循环只重跑 **Agent**，不重跑用户脚本的 native；验证渲染显式 safe，不调用 `decide_fallback` |

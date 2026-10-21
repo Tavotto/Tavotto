@@ -207,3 +207,5 @@ resetHints()
 不符合「新手教程不依赖用户环境」的 P0。本 ADR 里**仍然有效**的部分：本地 Activity Bus（闭集、一个 action
 一个发射点、不是遥测）、`onboardingStore` 作为唯一状态源与它的迁移纪律、一次性情境提示、
 主页两版按 onboarding 状态分（`homeVariant`）。
+
+> 2026-10-20 追加（Prompt Pack P01）：快速编辑上下文栏里的「+ 添加到画布」及其锚点 `add-to-layout` 已删除（`openFastEdit` 早已把图放进文档，它与回排版是近义重复）；`to-layout` 锚点仍挂在快编里那颗唯一的出口按钮上，该按钮按来源显示「返回排版」或「排版与出版」。上表 `add_to_layout` 行描述的是已被 ADR 0136 取代的八步教程，保留作历史。

@@ -107,6 +107,14 @@
   对着那张图同一口径），不含 → 不可用（置灰 / 不出现 / ⇧2 不动视口）。菜单与面板订阅工作区模式，进出
   快编即重算。看护 `components/zoomControls.test.tsx`、`components/CommandPalette.test.tsx`、
   `hooks/useKeyboardFastEdit.test.tsx`。
+- **快速编辑的出口只有一颗按钮，Esc 与它同一个 action（Prompt Pack P01）**：`WorkspaceContextBar` 在快编里只摆一颗
+  `[data-context-back]`，都调 `returnToLayout()`；文案按来源换（`data-context-back-kind`：`return` =「← 返回排版」，
+  `forward` =「排版与出版 →」），**测试按 kind 定位、不按文案**。来源 = `useWorkspaceStore.fastEditFromLayout`
+  （layout → fast_edit 那一次置位，快编里换图保持，会话恢复为 false，回排版清）且 `addedForEdit === null`（这次打开
+  刚把图加进文档就按前进说）；它是工作区视图状态，不进文档 / 撤销 / 落盘。不要再往快编里加「添加到画布」——
+  `openFastEdit` 已把图放进文档。`useKeyboard` 的 Esc 逐层退，快编里最外层 = `returnToLayout()`：先退版本抽屉 / 文字编辑 /
+  图内元素选区 / 裁剪 / 非选择工具，再回排版；输入框与对话框聚焦时（`inEditableTarget`）不抢。排版里的图内编辑
+  （非 fast_edit）那颗「返回画布」语义不变：只退出图内编辑并选中面板。
 - **快速编辑里作用于选区 / 取景的动作只认正在编辑的那张图（Codex #833，数据丢失）**：判据只有
   `store/workspaceStore.fastEditPanelOf`（排版里 null；`store/workspace` 原样再导出。状态本体 `useWorkspaceStore` 与排版视口寄存处住在这个叶子模块里，
   因为 `store/actions` 要读它，而 `store/workspace` 的工作流动作要调 `actions`——`actions` / `clipboard` 只许 import 叶子，否则成环，`importArchitecture.test.ts` 看护）。**全选**只有 `store/actions.selectAll` → `selectAllIds`
