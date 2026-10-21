@@ -8,8 +8,8 @@
 验证四态只有一个出处：`rendercore.inspector.VERDICTS`。任务结局（`OUTCOMES`）与验证结论分开记——Agent 正常退出 ≠
 任务完成 ≠ 验证通过；`unknown` 永不折算成 `verified`（`derive_outcome`）。
 
-Phase 1 的边界：Task Core **不写用户脚本**。写已有脚本的提交只经 AI 桥的会话（Phase 3 接入，届时同一进程只有
-`ai_bridge.SESSIONS` 一张会话表）；`TaskEnvelope` 校验拒绝 Phase 1 执行器声明写入用户文件。
+边界：Task Core 自己**不改写已有用户脚本**。写已有脚本的提交只经 AI 桥的会话（Phase 3，同一进程只有
+`ai_bridge.SESSIONS` 一张会话表）；`run_task` 只放行「确定性执行器只新建文件」这一种写（Phase 5b 数据出图）。
 """
 
 from __future__ import annotations
@@ -433,7 +433,8 @@ class TaskAdapter(Protocol):
 class Executor(Protocol):
     """产生候选并负责提交 / 丢弃。`kind == "agent"` 的执行器每次 `execute` 计一次 `agent_runs`。
 
-    Phase 1 的执行器**不得**写用户文件（`writes_user_files` 必须为 False）；写已有脚本只经 AI 桥（Phase 3）。"""
+    `run_task` 下的执行器**不得**改写已有用户文件（写已有脚本只经 AI 桥，Phase 3）；`writes_user_files` 为 True 时必须同时是
+    确定性执行器、声明 `creates_only = True`，且契约 `new_figures` 为真（Phase 5b 数据出图只新建模板脚本）。"""
 
     executor_id: str
     kind: str
@@ -584,9 +585,14 @@ def run_task(
     adapter = get_adapter(envelope.task_type)
     if executor.executor_id != envelope.executor:
         raise ContractError("contract_executor", "执行器与契约不符")
-    if executor.writes_user_files or envelope.allowed_writes:
-        # Phase 1：写用户文件的提交只经 AI 桥（同一进程只有一张会话表、同一把脚本锁）；在那之前一律拒绝
-        raise ContractError("contract_writes_unsupported", "Phase 1 的 Task Core 不写用户文件")
+    creates_only = getattr(executor, "creates_only", False) is True
+    if (executor.writes_user_files or envelope.allowed_writes) and not (
+        creates_only and envelope.new_figures and executor.kind == DETERMINISTIC
+    ):
+        # **改写已有用户文件**的提交只经 AI 桥（同一进程只有一张会话表、同一把脚本锁、同一份改前快照）。唯一例外是
+        # 不调模型的确定性执行器**只新建**文件（数据出图的模板脚本，Phase 5b）：契约声明 `new_figures`，执行器声明
+        # `creates_only`，写入口是 `scriptlock.create_script`（已存在就失败，永不覆盖）
+        raise ContractError("contract_writes_unsupported", "Task Core 不改写已有用户文件")
     problems = adapter.validate(envelope)
     if problems:
         raise ContractError("task_input_invalid", ",".join(problems))

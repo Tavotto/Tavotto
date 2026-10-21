@@ -295,7 +295,22 @@
     "environment_locked": "全局指定的 Python 正在生效，项目里的选择不会被使用。请先解除全局指定",
     "environment_check_running": "这个项目的环境检查正在进行",
     "svg_asset_unsupported": "此 SVG 暂不支持导入。请使用尺寸明确的独立静态 SVG；不支持脚本、外部资源或 DTD。",
-    "svg_asset_export_unsupported": "SVG 素材目前支持预览、摆放和原图 SVG 导出；画布与跨格式导出尚未支持。请先将该素材转换为 PDF 后导入。"
+    "svg_asset_export_unsupported": "SVG 素材目前支持预览、摆放和原图 SVG 导出；画布与跨格式导出尚未支持。请先将该素材转换为 PDF 后导入。",
+    "taf_disabled": "这个实验功能还没有开启。",
+    "data_figure_input_missing": "请选一份数据文件，并说明想画什么。",
+    "data_path_outside_project": "这份数据不在当前项目里。",
+    "data_not_found": "找不到这份数据文件。",
+    "data_not_csv": "目前只支持 CSV 数据文件。",
+    "data_too_large": "数据文件太大（超过 5 MB），没有读取。",
+    "data_too_long": "数据行数太多（超过 10 万行），没有读取。",
+    "data_too_wide": "数据列数太多（超过 64 列），没有读取。",
+    "data_unreadable": "读不了这份数据文件。",
+    "data_decode_error": "这份数据不是 UTF-8 编码，读不出来。",
+    "data_malformed": "这份 CSV 格式有误，读不出来。",
+    "data_empty": "这份数据是空的。",
+    "data_header_invalid": "数据的表头有空列名或重复列名。",
+    "data_ragged": "数据里有几行的列数和表头不一致。",
+    "figure_name_exhausted": "同名的图太多了，没能给新图找到可用的名字。"
   },
   "engine": {
     "apply": "应用",

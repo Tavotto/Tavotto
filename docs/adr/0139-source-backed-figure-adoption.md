@@ -131,6 +131,12 @@ ADR 0098 末节的「完整 PNG 的受限采用」（`selected-figsize-v1`，#78
 | PR2 | `script-backed-figure-v1`：编辑档安全条件、`artist_profile` reason、对照确认、`sourceBackedFigure` guard、服务端写回闸、零编辑原像素 / 编辑整图重渲染 | high（full-ci、mutation 清单、合前维护者点头） | 功能开关默认关；关掉即回到 PR1 行为 |
 | PR3 | AI 交接来源捕获：交接时记录脚本、解释器与 savefig 参数（按字节摘要绑定），保存瞬间证据，同次执行多格式绑定 | high | 记录是附加数据，忽略即回 |
 
+PR3 现状（第一片）：只做「交接时记录事实 + 响应里只读展示」——插件 `handoff.py` 在真的跑了脚本时，由脚本进程退出时
+自报版本 / 后端 / `rcParams["figure.dpi"]`（不记 savefig 实参，探针看不到），按原件字节 sha256 写 `data_dir()/origin/`
+（`engine/originrecord.py`，不存解释器路径），准入响应的 `source_backed.origin` 展示它与本次重画的版本。
+**不参与 exact / needs_confirmation 判定，不换解释器。** 保存瞬间证据、同次执行多格式绑定、按记录选解释器
+（审计 B §6.3 的授权与池键 pin）仍是后续，需单独 ADR 与用户授权。
+
 ## 不支持
 
 - 没有脚本的 PNG：只能位图排版，不伪造 Figure。

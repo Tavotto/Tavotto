@@ -18,6 +18,7 @@
   },
   "export": {
     "exportAgain": "再次导出",
+    "routeNeedsScript": "这些图带着编辑，但找不到它们的脚本，画布导出画不出来：{{files}}。请先恢复脚本或撤销这些图的编辑。",
     "showInFolder": "在文件夹中显示",
     "finish": "完成",
     "blockedTitle": "有阻断问题或无法核验的项。勾选确认后才能导出。",

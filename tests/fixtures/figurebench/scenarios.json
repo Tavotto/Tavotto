@@ -1226,6 +1226,385 @@
       "expected_outcome": null,
       "gap_phase": 5,
       "split": "dev"
+    },
+    {
+      "id": "FB-T05",
+      "title": "只改横轴标题文字",
+      "category": "scope_discipline",
+      "task_type": "figure_edit",
+      "fixture": "cjk_labels",
+      "instruction": "把横轴标题改成「时间（秒）」。",
+      "check": "probe",
+      "needs_real_model": false,
+      "expected_outcome": "completed",
+      "subjective": false,
+      "goal": [
+        {
+          "id": "g.xlabel",
+          "kind": "text_equals",
+          "axes": 0,
+          "which": "xlabel",
+          "expected": "时间（秒）"
+        }
+      ],
+      "preserve": [
+        {
+          "id": "p.ylabel_text",
+          "kind": "text_unchanged",
+          "axes": 0,
+          "which": "ylabel"
+        },
+        {
+          "id": "p.title_text",
+          "kind": "text_unchanged",
+          "axes": 0,
+          "which": "title"
+        },
+        {
+          "id": "p.xlabel_fs",
+          "kind": "fontsize_unchanged",
+          "axes": 0,
+          "which": "xlabel"
+        }
+      ],
+      "reference_solution": [
+        {
+          "file": "figure.py",
+          "find": "ax.set_xlabel(\"时间 (s)\", fontsize=9)",
+          "replace": "ax.set_xlabel(\"时间（秒）\", fontsize=9)",
+          "count": 1
+        }
+      ],
+      "negative_variants": [
+        {
+          "id": "n.unify",
+          "edits": [
+            {
+              "file": "figure.py",
+              "find": "ax.set_xlabel(\"时间 (s)\", fontsize=9)",
+              "replace": "ax.set_xlabel(\"时间（秒）\", fontsize=9)",
+              "count": 1
+            },
+            {
+              "file": "figure.py",
+              "find": "ax.set_ylabel(\"位移 (μm)\", fontsize=9)",
+              "replace": "ax.set_ylabel(\"位移（微米）\", fontsize=9)",
+              "count": 1
+            }
+          ],
+          "must_fail": [
+            "p.ylabel_text"
+          ]
+        }
+      ],
+      "unverified": [],
+      "split": "dev"
+    },
+    {
+      "id": "FB-T06",
+      "title": "只把左下角子图的曲线改成蓝色",
+      "category": "scope_discipline",
+      "task_type": "figure_edit",
+      "fixture": "multi_panel",
+      "instruction": "只把左下角子图的曲线改成蓝色 #1f77b4。",
+      "check": "probe",
+      "needs_real_model": false,
+      "expected_outcome": "completed",
+      "subjective": false,
+      "goal": [
+        {
+          "id": "g.color.2",
+          "kind": "line_property",
+          "axes": 2,
+          "series": "C: dose",
+          "prop": "color",
+          "expected": "#1f77b4"
+        }
+      ],
+      "preserve": [
+        {
+          "id": "p.color.0",
+          "kind": "line_property_unchanged",
+          "axes": 0,
+          "series": "A: control",
+          "prop": "color"
+        },
+        {
+          "id": "p.color.1",
+          "kind": "line_property_unchanged",
+          "axes": 1,
+          "series": "B: treated",
+          "prop": "color"
+        },
+        {
+          "id": "p.color.3",
+          "kind": "line_property_unchanged",
+          "axes": 3,
+          "series": "D: recovery",
+          "prop": "color"
+        },
+        {
+          "id": "p.data.2",
+          "kind": "series_data_unchanged",
+          "axes": 2,
+          "series": "C: dose"
+        },
+        {
+          "id": "p.lw.2",
+          "kind": "line_property_unchanged",
+          "axes": 2,
+          "series": "C: dose",
+          "prop": "linewidth"
+        },
+        {
+          "id": "p.ls.2",
+          "kind": "line_property_unchanged",
+          "axes": 2,
+          "series": "C: dose",
+          "prop": "linestyle"
+        }
+      ],
+      "reference_solution": [
+        {
+          "file": "figure.py",
+          "find": "        ax.set_ylabel(ylabel, fontsize=8)\n    for ax in axes[1]:",
+          "replace": "        ax.set_ylabel(ylabel, fontsize=8)\n    axes[1][0].lines[0].set_color(\"#1f77b4\")\n    for ax in axes[1]:",
+          "count": 1
+        }
+      ],
+      "negative_variants": [
+        {
+          "id": "n.all",
+          "edits": [
+            {
+              "file": "figure.py",
+              "find": "color=\"#333333\"",
+              "replace": "color=\"#1f77b4\"",
+              "count": 1
+            }
+          ],
+          "must_fail": [
+            "p.color.0",
+            "p.color.1",
+            "p.color.3"
+          ]
+        },
+        {
+          "id": "n.also_lw",
+          "edits": [
+            {
+              "file": "figure.py",
+              "find": "        ax.set_ylabel(ylabel, fontsize=8)\n    for ax in axes[1]:",
+              "replace": "        ax.set_ylabel(ylabel, fontsize=8)\n    axes[1][0].lines[0].set_color(\"#1f77b4\")\n    axes[1][0].lines[0].set_linewidth(2.5)\n    for ax in axes[1]:",
+              "count": 1
+            }
+          ],
+          "must_fail": [
+            "p.lw.2"
+          ]
+        },
+        {
+          "id": "n.also_ls",
+          "edits": [
+            {
+              "file": "figure.py",
+              "find": "        ax.set_ylabel(ylabel, fontsize=8)\n    for ax in axes[1]:",
+              "replace": "        ax.set_ylabel(ylabel, fontsize=8)\n    axes[1][0].lines[0].set_color(\"#1f77b4\")\n    axes[1][0].lines[0].set_linestyle(\":\")\n    for ax in axes[1]:",
+              "count": 1
+            }
+          ],
+          "must_fail": [
+            "p.ls.2"
+          ]
+        }
+      ],
+      "unverified": [],
+      "split": "dev"
+    },
+    {
+      "id": "FB-T07",
+      "title": "只改一条曲线的线宽",
+      "category": "scope_discipline",
+      "task_type": "figure_edit",
+      "fixture": "line_two_series",
+      "instruction": "只把 control 曲线的线宽改成 2.5。",
+      "check": "probe",
+      "needs_real_model": false,
+      "expected_outcome": "completed",
+      "subjective": false,
+      "goal": [
+        {
+          "id": "g.lw",
+          "kind": "line_property",
+          "axes": 0,
+          "series": "control",
+          "prop": "linewidth",
+          "expected": 2.5
+        }
+      ],
+      "preserve": [
+        {
+          "id": "p.lw.treated",
+          "kind": "line_property_unchanged",
+          "axes": 0,
+          "series": "treated",
+          "prop": "linewidth"
+        },
+        {
+          "id": "p.data.control",
+          "kind": "series_data_unchanged",
+          "axes": 0,
+          "series": "control"
+        },
+        {
+          "id": "p.data.treated",
+          "kind": "series_data_unchanged",
+          "axes": 0,
+          "series": "treated"
+        },
+        {
+          "id": "p.color.control",
+          "kind": "line_property_unchanged",
+          "axes": 0,
+          "series": "control",
+          "prop": "color"
+        },
+        {
+          "id": "p.ls.control",
+          "kind": "line_property_unchanged",
+          "axes": 0,
+          "series": "control",
+          "prop": "linestyle"
+        }
+      ],
+      "reference_solution": [
+        {
+          "file": "figure.py",
+          "find": "color=\"#1f77b4\", linewidth=1.5",
+          "replace": "color=\"#1f77b4\", linewidth=2.5",
+          "count": 1
+        }
+      ],
+      "negative_variants": [
+        {
+          "id": "n.both",
+          "edits": [
+            {
+              "file": "figure.py",
+              "find": "linewidth=1.5",
+              "replace": "linewidth=2.5",
+              "count": 2
+            }
+          ],
+          "must_fail": [
+            "p.lw.treated"
+          ]
+        },
+        {
+          "id": "n.also_color",
+          "edits": [
+            {
+              "file": "figure.py",
+              "find": "color=\"#1f77b4\", linewidth=1.5",
+              "replace": "color=\"#000000\", linewidth=2.5",
+              "count": 1
+            }
+          ],
+          "must_fail": [
+            "p.color.control"
+          ]
+        },
+        {
+          "id": "n.also_ls",
+          "edits": [
+            {
+              "file": "figure.py",
+              "find": "color=\"#1f77b4\", linewidth=1.5",
+              "replace": "color=\"#1f77b4\", linewidth=2.5, linestyle=\":\"",
+              "count": 1
+            }
+          ],
+          "must_fail": [
+            "p.ls.control"
+          ]
+        }
+      ],
+      "unverified": [],
+      "split": "dev"
+    },
+    {
+      "id": "FB-T08",
+      "title": "只改标题字号",
+      "category": "scope_discipline",
+      "task_type": "figure_edit",
+      "fixture": "cjk_labels",
+      "instruction": "把标题字号改成 12。",
+      "check": "probe",
+      "needs_real_model": false,
+      "expected_outcome": "completed",
+      "subjective": false,
+      "goal": [
+        {
+          "id": "g.title_fs",
+          "kind": "fontsize",
+          "axes": 0,
+          "which": "title",
+          "expected": 12
+        }
+      ],
+      "preserve": [
+        {
+          "id": "p.xlabel_fs",
+          "kind": "fontsize_unchanged",
+          "axes": 0,
+          "which": "xlabel"
+        },
+        {
+          "id": "p.ylabel_fs",
+          "kind": "fontsize_unchanged",
+          "axes": 0,
+          "which": "ylabel"
+        },
+        {
+          "id": "p.title_text",
+          "kind": "text_unchanged",
+          "axes": 0,
+          "which": "title"
+        }
+      ],
+      "reference_solution": [
+        {
+          "file": "figure.py",
+          "find": "ax.set_title(\"响应曲线 Response\", fontsize=10)",
+          "replace": "ax.set_title(\"响应曲线 Response\", fontsize=12)",
+          "count": 1
+        }
+      ],
+      "negative_variants": [
+        {
+          "id": "n.all_fonts",
+          "edits": [
+            {
+              "file": "figure.py",
+              "find": "ax.set_title(\"响应曲线 Response\", fontsize=10)",
+              "replace": "ax.set_title(\"响应曲线 Response\", fontsize=12)",
+              "count": 1
+            },
+            {
+              "file": "figure.py",
+              "find": "fontsize=9",
+              "replace": "fontsize=12",
+              "count": 2
+            }
+          ],
+          "must_fail": [
+            "p.xlabel_fs",
+            "p.ylabel_fs"
+          ]
+        }
+      ],
+      "unverified": [],
+      "split": "dev"
     }
   ]
 }

@@ -71,6 +71,8 @@ _CODE_REGISTRIES = (
     "tavotto.pdfbackend",
     # ADR 0106：数据改指的端点——`RemapError(code)` 由 app 的 400 漏斗转出
     "tavotto.engine.inputremap",
+    # TAF 数据出图（ADR 0138 Phase 5）：`DataSourceError(code)` 由 app 的 400 漏斗转出；码表 `ERROR_CODES`，构造时校验
+    "tavotto.engine.ai_data_figure",
     # ADR 0110：改写脚本里的数据路径与共享的备份底座——`ScriptEditError(code)` 由 app 的 409 漏斗转出
     "tavotto.engine.scriptbackup",
     "tavotto.engine.scriptedit",
@@ -272,6 +274,22 @@ USER_VISIBLE_CODES = {
     "ai_supersede_conflict": set(),
     # 同面板 / 同脚本上还有没落定的待确认提交，这次又没显式取代它（409，后端在写账本的事务里判）
     "ai_pending_unresolved": set(),
+    # TAF 数据出图（ADR 0138 Phase 5b）：开关关着 / 缺输入 / 数据读不成受控摘要（`ai_data_figure.DataSourceError`）
+    "taf_disabled": set(),
+    "data_figure_input_missing": set(),
+    "data_path_outside_project": set(),
+    "data_not_found": set(),
+    "data_not_csv": set(),
+    "data_too_large": set(),
+    "data_too_long": set(),
+    "data_too_wide": set(),
+    "data_unreadable": set(),
+    "data_decode_error": set(),
+    "data_malformed": set(),
+    "data_empty": set(),
+    "data_header_invalid": set(),
+    "data_ragged": set(),
+    "figure_name_exhausted": set(),
     # 拒绝之后清待确认行也失败了：状态不确定（503），客户端保持同一个 rid
     "ai_request_unresolved": set(),
     # ADR 0132：助手草稿单稿超过 20 KB（413，不截断）

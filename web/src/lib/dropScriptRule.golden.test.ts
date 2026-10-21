@@ -53,7 +53,7 @@ describe('拖放的脚本判据 ↔ 壳的 drop_paths::classify', () => {
     (_, c) => {
       const t = dropTargetOf(data({ uris: `file://${DIR}/${encodeURIComponent(c.name)}/`, name: c.name }))
       expect(c.shell).toBe('folder')
-      expect(t).toEqual({ kind: 'path', folder: `${DIR}/${c.name}/` })
+      expect(t).toEqual({ kind: 'path', folder: `${DIR}/${c.name}/`, script: null })
     },
   )
 

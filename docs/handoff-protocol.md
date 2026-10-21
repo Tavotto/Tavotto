@@ -22,6 +22,11 @@ tavotto doctor [--json] [--write-manifest|--remove-manifest]
 * `--json` —— 输出一行机器可读 JSON。**成功和失败都有**，失败那行带稳定的 `code`。
 * `--no-probe` —— `.py` 目标静态解不出产出时**不**试运行（只按现有登记打开）。
 * `--stem <名字>` —— 脚本产出多张图时显式选哪张（只对 `.py` 目标有效）。
+* `--origin-json FILE` —— **仅记录模式**（加性，`protocol` 仍为 1；ADR 0139 PR3 第一片）：读 FILE 里
+  插件在**真的跑了脚本**之后收集的来源事实，按产物 PNG 的字节 sha256 写进 `data_dir()/origin/`，
+  输出 `{"ok": true, "origin": {"recorded": N, "skipped": M}}`；不登记、不唤起、不执行。
+  记不进去也退出 0（只是线索）；老 CLI 不认识这个参数（argparse 退出 2），插件当作没记。
+  记录只做展示：不进 exact / needs_confirmation 的判定，不用来换解释器。
 * `--render-wait SECONDS` —— 唤起后最多等多久，看界面对目标图的那一次渲染有没有结论
   （默认 20；0 = 不等；`--no-launch` 下无意义）。见下文「交接三态」。
 
@@ -118,6 +123,18 @@ macOS 上**不再直接 exec 包内二进制**：GUI 进程会继承调用方的
 `TAVOTTO_DESKTOP_APP` → 冻结产物里**自己身边那个壳**（打包时定死的相对位置，
 最准）→ 安装清单里核实过的 `desktop` → 惯例位置。少了中间两条，发现链找得到
 CLI、唤起却静默退回浏览器模式——用户明明装了桌面版却看不到窗口。
+
+### 来源记录（ADR 0139 PR3，加性）
+
+插件 `handoff.py` 只在**这次真的跑了脚本**（输出 `ran: true`）时，让跑脚本的那个 Python 进程在退出时
+把「我用的环境」写进旁路 JSON（`PYTHONPATH` 前置一个临时 `sitecustomize`，先链回用户自己的；脚本、argv、cwd、
+stdout 不变），再把其中白名单字段和**这次真的重写了的 PNG**（跑前跑后 mtime/size 快照之差）交给
+`tavotto open --origin-json`。字段（闭集）：python_version、matplotlib_version、backend、figure_dpi
+（= 脚本进程退出时刻 `rcParams["figure.dpi"]` 的值）。**不记**savefig 的 dpi / bbox_inches 等——逐次
+`savefig(...)` 的实参探针看不到，记 rc 值会误导。**不记**解释器绝对路径、argv、环境变量。插件输出多一个
+`origin: {"recorded": N}`（或 `{"recorded": 0, "reason": ...}`）。产物没重跑、脚本失败、脚本没导入
+matplotlib 一律不写（诚实缺失）；用户在终端里直接跑出来的图没有记录。第一片只记录与展示；保存瞬间
+证据、按记录选解释器是后续，需单独 ADR 与用户授权。
 
 ### 交接三态：`launch.render`（加性字段，`protocol` 仍为 1）
 

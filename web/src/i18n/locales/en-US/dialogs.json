@@ -18,6 +18,7 @@
   },
   "export": {
     "exportAgain": "Export again",
+    "routeNeedsScript": "These figures carry edits but their scripts can’t be found, so a canvas export can’t draw them: {{files}}. Restore the scripts or undo the edits first.",
     "showInFolder": "Show in folder",
     "finish": "Done",
     "blockedTitle": "Blocking problems or items that can’t be verified. Tick the confirmation to export.",

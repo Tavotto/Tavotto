@@ -65,6 +65,7 @@ import { useRenderStore } from '@/store/renderStore'
 import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
 import { useFigurePickerStore } from '@/store/figurePickerStore'
 import { resetExportState } from '@/store/exportStore'
+import { useExportRouteStore } from '@/store/exportRouteStore'
 import { useProjectReadinessStore } from '@/store/projectReadinessStore'
 import { useProjectScanStore } from '@/store/projectScanStore'
 import { useProjectPreparationStore } from '@/store/projectPreparationStore'
@@ -248,6 +249,8 @@ async function resetForNewProject(pj: string | null): Promise<RestoreToken> {
   // 新项目的 /api/panels 挂起或失败时 B 下面显示的是 A 的卡片和 A 的文件名（#577）；
   // 换代同时作废 A 还在飞的那次请求
   useAssetStore.getState().clear()
+  // 导出来源（route）说的是旧项目的脚本登记：丢掉，在飞的 validate 回来不落地
+  useExportRouteStore.getState().clear()
   // 改图助手的对话属于旧项目：会话列表丢掉并换代，在途的发起 / 撤销 / 中止回来不落地（#589）。
   // 后端任务不取消——它照样改完、记进 A 的历史，切回 A 在历史里看得到
   useAiStore.getState().clear()

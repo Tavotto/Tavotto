@@ -684,9 +684,38 @@ def _read_legacy(legacy_path: Path) -> tuple[bytes, list[dict]]:
     return raw, versions
 
 
+def read_legacy_versions(legacy_path: Path) -> list[dict]:
+    """旧单文件里的版本列表（含 `doc`），**与迁移读到的是同一份**：同一套校验，重复 id 保留先出现的一条。
+
+    读侧在迁移之前就用它——迁移前后看到的历史才一致。读不出来 / 形状不对 → `LegacyUnreadable`。"""
+    _raw, versions = _read_legacy(legacy_path)
+    seen: set[str] = set()
+    out = []
+    for v in versions:
+        if v["id"] not in seen:
+            seen.add(v["id"])
+            out.append(v)
+    return out
+
+
 def _legacy_stat(legacy_path: Path) -> dict:
     st = Path(legacy_path).stat()
     return {"size": st.st_size, "mtime_ns": st.st_mtime_ns}
+
+
+def _baseline_empty_record(legacy_path: Path) -> dict:
+    """没有可比基线时的迁移记录：size / mtime / sha 为空，保证 `_import_fork` 一定读全文去重导入。"""
+    return {
+        "format": FORMAT,
+        "state": "committed",
+        "name": Path(legacy_path).name,
+        "size": None,
+        "mtime_ns": None,
+        "sha": None,
+        "count": 0,
+        "dropped_duplicates": 0,
+        "ids": [],
+    }
 
 
 def migrate_legacy(
@@ -702,7 +731,8 @@ def migrate_legacy(
     返回 `{"status": …, "imported": n}`，status 取：
 
     * `migrated`：首次迁移完成；
-    * `already`：已迁移且旧文件自迁移后没有变化；
+    * `already`：已迁移且旧文件自迁移后没有变化（新存储里出生、没有迁移记录的文档，旧文件按基线为空处理，
+      首次见到时同样走 `imported`）；
     * `imported`：旧文件在迁移后被旧版程序追加过（降级后又升级）——把迁移点**之后**新增
       的条目按 id 去重导入，不覆盖、不丢；迁移时已有的 id（哪怕已在新存储里被删）不再复活；
     * `no_legacy`：没有旧文件，什么也没做。
@@ -721,7 +751,10 @@ def migrate_legacy(
     rec = _migration_record(root)
     if idx is not None:
         if rec is None:
-            return {"status": "already", "imported": 0}  # 不是从旧文件迁来的，没有可比的基线
+            # 新存储里出生的文档（或迁移记录丢了）：没有可比的基线，把旧文件当成基线为空的分叉——
+            # 降级后旧程序写出的旧文件在再升级时不能被漏掉（用户看不到降级期间的检查点）。
+            # 按 id 去重导入，已在新存储里的不覆盖；没有记录可判「已删」，宁可多一条也不丢。
+            rec = _baseline_empty_record(legacy_path)
         if rec.get("state") == "pending":
             rec = {**rec, "state": "committed"}  # 上次死在「索引已提交、记录未收尾」
             atomicio.write_bytes(root / MIGRATION_NAME, atomicio.dumps_json(rec))
@@ -737,6 +770,16 @@ def migrate_legacy(
             continue
         seen.add(v["id"])
         uniq.append(v)
+    # 所有可能失败的校验（含「读得进、写不出」的 1e400）都在写任何东西之前做完：
+    # 失败 = 磁盘零写入，不会留下记着一份旧 id 集合的 pending 记录
+    built: list[tuple[dict, dict, bytes, int]] = []
+    for seq, v in enumerate(uniq, start=1):
+        entry = {k: x for k, x in v.items() if k != "doc"}
+        try:
+            env, doc_len = _envelope(entry, v["doc"], seq)
+        except atomicio.AtomicWriteError as exc:
+            raise LegacyUnreadable(exc.message) from exc
+        built.append((v, entry, env, doc_len))
     record = {
         "format": FORMAT,
         "state": "pending",
@@ -751,12 +794,7 @@ def migrate_legacy(
     atomicio.write_bytes(root / MIGRATION_NAME, atomicio.dumps_json(record))
     metas: list[dict] = []
     expected: dict[str, bytes] = {}
-    for seq, v in enumerate(uniq, start=1):
-        entry = {k: x for k, x in v.items() if k != "doc"}
-        try:
-            env, doc_len = _envelope(entry, v["doc"], seq)
-        except atomicio.AtomicWriteError as exc:  # 旧文件里有 1e400 之类读得进、写不出的数
-            raise LegacyUnreadable(exc.message) from exc
+    for seq, (v, entry, env, doc_len) in enumerate(built, start=1):
         p = _envelope_path(root, v["id"])
         try:
             same = p.read_bytes() == env  # 上次迁移留下的、逐字节一致的信封直接复用
@@ -806,15 +844,18 @@ def _import_fork(
         fresh.append(v)
     metas = list(idx["entries"])
     seq = _next_seq(metas)
-    for v in fresh:
+    built = []
+    for v in fresh:  # 先把所有信封字节建好（可能失败）再落盘：失败时不留孤儿信封
         entry = {k: x for k, x in v.items() if k != "doc"}
         try:
             env, doc_len = _envelope(entry, v["doc"], seq)
         except atomicio.AtomicWriteError as exc:
             raise LegacyUnreadable(exc.message) from exc
-        atomicio.write_bytes(_envelope_path(root, v["id"]), env)
-        metas.append(_meta(entry, len(env), doc_len, _head_sha(env), seq))
+        built.append((v, entry, env, doc_len, seq))
         seq += 1
+    for v, entry, env, doc_len, at in built:
+        atomicio.write_bytes(_envelope_path(root, v["id"]), env)
+        metas.append(_meta(entry, len(env), doc_len, _head_sha(env), at))
     kept = _apply_policy(metas, policy, None)
     kept_ids = {m["id"] for m in kept}
     _commit(root, idx, kept, [m for m in metas if m["id"] not in kept_ids], now)
@@ -822,6 +863,7 @@ def _import_fork(
         **rec,
         **st,
         "sha": _sha(raw),
+        "sha_full": hashlib.sha256(raw).hexdigest(),
         "count": len(versions),
         # 这次观察到的**全部**旧文件 id（含重试时已经在索引里的）：崩在提交与记录之间后重试，
         # fresh 为空，只并 fresh 的话这些 id 永远进不了记录，删掉后会再次导入（已删版本复活）
