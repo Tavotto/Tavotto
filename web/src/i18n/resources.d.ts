@@ -1649,6 +1649,8 @@ export default interface Resources {
             "crash_reports": "最近 7 天属于 Tavotto 的系统崩溃报告。Windows 崩溃转储是程序内存快照，可能含正在打开的文件内容与路径，无法脱敏。",
             "source": "脚本会原样附上，我们会尽量抹掉能认出的密钥，但不能保证；脚本里有密钥请不要勾。"
           },
+          "extrasSelectAll": "全选",
+          "extrasSelectNone": "全不选",
           "extrasTitle": "额外内容（默认不发送）",
           "failure": {
             "api_incompatible": "诊断服务的版本与这个 Tavotto 不兼容。请更新 Tavotto 后再试。",

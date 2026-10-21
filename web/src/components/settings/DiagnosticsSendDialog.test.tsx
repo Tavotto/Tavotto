@@ -219,11 +219,17 @@ describe('先看再发', () => {
     expect(category.querySelector(`[aria-label="${ds('categoryLabel')}"]`)).not.toBeNull()
     const det = q<HTMLDetailsElement>('[data-diag-send-details]')!
     expect(det.open).toBe(false)
-    const folded = ['[data-diag-send-kinds]', '[data-diag-send-save]', '[data-diag-send-extras]', '[data-diag-send-policy]', '[data-diag-send-error-summary-note]']
+    const folded = ['[data-diag-send-kinds]', '[data-diag-send-save]', '[data-diag-send-policy]', '[data-diag-send-error-summary-note]']
     for (const sel of folded) expect(q(sel)?.closest('details')).toBe(det)
     const footer = Array.from(document.body.querySelectorAll<HTMLButtonElement>('[data-diag-send-confirm],[data-diag-send-dismiss]'))
     expect(footer.map((b) => b.textContent)).toEqual([ds('close'), ds('send')])
     expect(document.body.querySelectorAll('[data-dialog-footer] [data-variant="primary"]'), '一颗主按钮').toHaveLength(1)
+    // 额外内容（2026-10-21）：三个框 + 一键全选不折叠，且排在说明框之前（紧跟副标题）
+    const extras = q('[data-diag-send-extras]')!
+    expect(extras.closest('details'), '额外内容不折叠').toBeNull()
+    expect(extras.compareDocumentPosition(note) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(extras.querySelectorAll('input[type=checkbox]')).toHaveLength(3)
+    expect(q('[data-diag-send-extras-all]')!.textContent).toBe(ds('extrasSelectAll'))
     expect(det.textContent).toContain(ds('bestEffort'))
     expect(document.body.textContent).toContain(ds('noteAttached'))
     // 错误摘要的披露只在折叠里（不新增可见段落）；不暗示同意今后自动上报
@@ -713,20 +719,19 @@ describe('诊断包扩充（detail-…、勾选项）', () => {
     truncated: [{ kind: 'source', original_bytes: 900000, kept_bytes: 1000 }],
   }
 
-  it('三个复选框默认不勾、住在折叠的详情里；首次备包的载荷带 detail_options 全 false 与 detail', async () => {
+  it('三个复选框默认不勾、不折叠；首次备包的载荷带 detail_options 全 false 与 detail', async () => {
     await mount(DETAIL_PREPARED)
     const det = q<HTMLDetailsElement>('[data-diag-send-details]')!
     expect(det.open).toBe(false)
     for (const key of ['source', 'crash_reports', 'corrupt_sessions']) {
       expect(box(key).checked).toBe(false)
-      expect(box(key).closest('details')).toBe(det)
+      expect(box(key).closest('details')).toBeNull()
     }
     expect(lastPayload().detail_options).toEqual({ source: false, crash_reports: false, corrupt_sessions: false })
     expect(lastPayload().detail).toBeTypeOf('object')
     expect(lastPayload().detail.display.device_pixel_ratio).toBeTypeOf('number')
-    // 默认可见仍只有一句话 + 两颗按钮：复选框不在折叠区之外
     const visibleBoxes = Array.from(document.body.querySelectorAll('input[type=checkbox]')).filter((el) => !el.closest('details'))
-    expect(visibleBoxes).toHaveLength(0)
+    expect(visibleBoxes).toHaveLength(3)
   })
 
   it('文件清单（路径 + 大小）和截断说明都在折叠区里', async () => {
@@ -806,6 +811,29 @@ describe('诊断包扩充（detail-…、勾选项）', () => {
     expect(q<HTMLButtonElement>('[data-diag-send-confirm]')!.disabled).toBe(true)
   })
 
+  it('一键全选 / 全不选：一次点击三个框全勾（只换一次包），再点全清；默认仍全不勾', async () => {
+    await mount(DETAIL_PREPARED)
+    const all = () => q<HTMLButtonElement>('[data-diag-send-extras-all]')!
+    for (const k of ['source', 'crash_reports', 'corrupt_sessions']) expect(box(k).checked).toBe(false)
+    prepareMock.mockResolvedValue({ ...DETAIL_PREPARED, id: 'pid-all', options: { source: true, crash_reports: true, corrupt_sessions: true } })
+    await click(all())
+    for (const k of ['source', 'crash_reports', 'corrupt_sessions']) expect(box(k).checked, k).toBe(true)
+    expect(all().textContent).toBe(ds('extrasSelectNone'))
+    await tick(350)
+    expect(prepareMock).toHaveBeenCalledTimes(2)
+    expect(lastPayload().detail_options).toEqual({ source: true, crash_reports: true, corrupt_sessions: true })
+    prepareMock.mockResolvedValue({ ...DETAIL_PREPARED, id: 'pid-none', options: { source: false, crash_reports: false, corrupt_sessions: false } })
+    await click(all())
+    for (const k of ['source', 'crash_reports', 'corrupt_sessions']) expect(box(k).checked, k).toBe(false)
+    await tick(350)
+    expect(lastPayload().detail_options).toEqual({ source: false, crash_reports: false, corrupt_sessions: false })
+    // 勾着其中一项时再点 = 补全，而不是清空
+    await click(box('source'))
+    expect(all().textContent).toBe(ds('extrasSelectAll'))
+    await click(all())
+    for (const k of ['source', 'crash_reports', 'corrupt_sessions']) expect(box(k).checked, k).toBe(true)
+  })
+
   it('引擎没把勾选项附上（载荷被丢）：复选框以引擎回的 options 为准，并说明「太大没能附上」', async () => {
     await mount(DETAIL_PREPARED)
     prepareMock.mockResolvedValue({ ...DETAIL_PREPARED, id: 'pid-2', options: { source: false, crash_reports: false, corrupt_sessions: false } })
@@ -814,7 +842,7 @@ describe('诊断包扩充（detail-…、勾选项）', () => {
     expect(prepareMock.mock.calls[1][1]).toEqual({ source: true, crash_reports: false, corrupt_sessions: false }) // 选项也走查询串
     expect(box('source').checked).toBe(false)
     expect(q('[data-diag-send-options-lost]')!.textContent).toBe(ds('optionsLost'))
-    expect(q('[data-diag-send-options-lost]')!.closest('details[data-diag-send-details]')).not.toBeNull()
+    expect(q('[data-diag-send-options-lost]')!.closest('details')).toBeNull()
     // 引擎照实采用时没有这句话
     prepareMock.mockResolvedValue({ ...DETAIL_PREPARED, id: 'pid-3', options: { source: true, crash_reports: false, corrupt_sessions: false } })
     await click(box('source'))

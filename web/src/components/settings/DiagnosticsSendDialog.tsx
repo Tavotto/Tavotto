@@ -294,6 +294,16 @@ export function DiagnosticsSendDialog({
     }, REFRESH_DEBOUNCE_MS)
   }
 
+  const allOptionsOn = EXTRA_KEYS.every((k) => options[k])
+  /** 一键全选 / 全不选：全勾着就清空，否则全勾上；只记一笔、只换一次包 */
+  const toggleAllOptions = () => {
+    if (phase !== 'ready' && phase !== 'failed') return
+    const on = !EXTRA_KEYS.every((k) => optionsRef.current[k])
+    optionsRef.current = { ...optionsRef.current, source: on, crash_reports: on, corrupt_sessions: on }
+    setOptions(optionsRef.current)
+    scheduleRefresh()
+  }
+
   const toggleOption = (key: keyof DetailOptions) => {
     if (phase !== 'ready' && phase !== 'failed') return
     optionsRef.current = { ...optionsRef.current, [key]: !optionsRef.current[key] }
@@ -487,6 +497,38 @@ export function DiagnosticsSendDialog({
         {/* 表单语言（2026-10-19，参照 OpenBitFun）：标签在字段上方、间距 6；提示与字数同一行（提示左、字数右）；
             框只给可编辑的控件；诊断包是一组（`FieldGroup`：3% 底、无边）里的一行可展开项，展开的内容与标题文字对齐缩进。
             如实说明要发什么的那一句是对话框副标题（常显）。 */}
+        {/* 额外内容（2026-10-21，beta 0.19.0b1 反馈）：三个框不折叠、紧跟副标题那一句，别埋在「查看内容」下面要滚才看到；
+            默认全不勾、不记忆；各框的风险短句留在各自下面；右上「全选 / 全不选」一键切换（一次只换一次包）。
+            勾选变化 = 换包，但点击本身即时生效（见 `scheduleRefresh`）。 */}
+        <section aria-label={ds('extrasTitle')} className="flex flex-col gap-1.5" data-diag-send-extras>
+          <div className="flex items-center justify-between gap-2">
+            <h3 className="type-section">{ds('extrasTitle')}</h3>
+            <Button variant="ghost" size="sm" disabled={!editable} onClick={toggleAllOptions} data-diag-send-extras-all>
+              {allOptionsOn ? ds('extrasSelectNone') : ds('extrasSelectAll')}
+            </Button>
+          </div>
+          {EXTRA_KEYS.map((key) => (
+            <label key={key} className="flex items-start gap-2 text-sm text-ink-2">
+              <Checkbox
+                checked={options[key]}
+                disabled={!editable}
+                onChange={() => toggleOption(key)}
+                data-diag-send-extra={key}
+                className="mt-0.5"
+              />
+              <span className="flex min-w-0 flex-col">
+                <span className="text-ink">{ds(`extra.${key}`)}</span>
+                <span className="type-caption">{ds(`extraHint.${key}`)}</span>
+              </span>
+            </label>
+          ))}
+          {optionsLost && (
+            <p className="type-caption text-warn-content" role="status" data-diag-send-options-lost>
+              {ds('optionsLost')}
+            </p>
+          )}
+        </section>
+
         <div className="flex flex-col gap-1.5">
           <label htmlFor={noteId} className="type-section">
             {ds('noteLabel')}
@@ -564,31 +606,6 @@ export function DiagnosticsSendDialog({
                 <p className="type-caption" data-diag-send-error-summary-note>
                   {ds('errorSummaryNote')}
                 </p>
-              </section>
-
-              {/* 额外内容：默认不勾、不记忆（每次打开从头来）；勾选变化 = 重新备包 */}
-              <section aria-label={ds('extrasTitle')} className="flex flex-col gap-1.5" data-diag-send-extras>
-                <h3 className="type-section">{ds('extrasTitle')}</h3>
-                {EXTRA_KEYS.map((key) => (
-                  <label key={key} className="flex items-start gap-2 text-sm text-ink-2">
-                    <Checkbox
-                      checked={options[key]}
-                      disabled={!editable}
-                      onChange={() => toggleOption(key)}
-                      data-diag-send-extra={key}
-                      className="mt-0.5"
-                    />
-                    <span className="flex min-w-0 flex-col">
-                      <span className="text-ink">{ds(`extra.${key}`)}</span>
-                      <span className="type-caption">{ds(`extraHint.${key}`)}</span>
-                    </span>
-                  </label>
-                ))}
-                {optionsLost && (
-                  <p className="type-caption text-warn-content" role="status" data-diag-send-options-lost>
-                    {ds('optionsLost')}
-                  </p>
-                )}
               </section>
 
               <section aria-label={ds('filesTitle', { count: prepared?.entries.length ?? 0 })} className="flex flex-col gap-1" data-diag-send-files-section>
