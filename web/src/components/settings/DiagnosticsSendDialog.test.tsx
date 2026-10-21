@@ -781,6 +781,27 @@ describe('诊断包扩充（detail-…、勾选项）', () => {
     expect(startMock.mock.calls[0][0]).toBe('pid-3')
   })
 
+  it('勾选触发的刷新失败：旧包作废——保存与发送都不可用，不会拿到仍含已取消内容的旧包（隐私）', async () => {
+    await mount({ ...DETAIL_PREPARED, options: { source: true, crash_reports: false, corrupt_sessions: false } })
+    prepareMock.mockRejectedValue(new Error('boom'))
+    await click(box('source')) // 取消勾选源码
+    await tick(350)
+    expect(prepareMock).toHaveBeenCalledTimes(2)
+    expect(document.body.textContent).toContain(ds('prepareFailed'))
+    // 引擎里的旧包被丢弃
+    expect(discardMock).toHaveBeenCalledWith('pid-1', null)
+    // 发送不可用；保存若还在也必须是禁用的，点了也取不到旧包
+    expect(q('[data-diag-send-confirm]')).toBeNull()
+    const save = q<HTMLButtonElement>('[data-diag-send-save]')
+    if (save) {
+      expect(save.disabled).toBe(true)
+      await click(save)
+    }
+    expect(bundleMock).not.toHaveBeenCalled()
+    expect(startMock).not.toHaveBeenCalled()
+    expect(saveDiagnosticsZip).not.toHaveBeenCalled()
+  })
+
   it('点击即时响应（卡顿回归）：勾选当场生效，不等后端、不回到「正在准备」、不禁用表单；连点只备一次', async () => {
     await mount(DETAIL_PREPARED)
     let release!: (p: DiagSendPrepared) => void

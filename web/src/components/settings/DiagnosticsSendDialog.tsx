@@ -287,6 +287,10 @@ export function DiagnosticsSendDialog({
         .catch((e) => {
           if (isStalePrepare(e)) return // 被更新的备包取代：由那份新请求更新界面
           if (current()) {
+            // 旧包不含用户刚改的勾选（例：刚取消勾选源码，旧包仍带源码）：失败时必须作废，
+            // 否则「保存」会把用户已取消的内容下载下来。丢弃引擎里那份并清空 prepared / idRef
+            discard()
+            setPrepared(null)
             setRefreshing(false)
             setPhase('prepareFailed')
           }
