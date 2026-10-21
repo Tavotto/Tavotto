@@ -284,12 +284,22 @@ CompatBench 的 `run_group` 之外 runner 崩溃目前会被 `compat_matrix.py:m
 | import_alias | `import_alias`（pyplot/numpy 别名） | import_alias | 保型 |
 | entry_form | `wrap_main`（顶层改 `main()` + `__main__` 守卫） | entry | 保型 |
 | argparse_defaults | `argparse_out`（保存路径来自 argparse，默认值=原路径） | args | 保型 |
-| data_source | `inline_to_file`（第一个字面量数据列表改读相对 JSON） | data_source | 保型 |
+| data_source | `inline_to_file`（第一个字面量数据列表改读相对 JSON）；CG-07 读文件写法：`read_csv_pandas`、`read_csv_numpy`（`loadtxt`）、`genfromtxt_names`、`read_tsv_stdlib`、`read_npy`、`read_pickle`、`read_excel`（openpyxl）、`read_parquet`（pyarrow）、`glob_dir`（拆成 `data/*.csv` 再 `sorted(glob)`） | data_source | 保型 |
 | style_rc | `rcparams`、`style_use` | style | 改轴；现在可执行（CG-06 起 `compare` 之外还有像素判定，样式差异观察得到） |
+
+**data_source 家族（CG-07，`scripts/ci/compat_explore_data.py`）**：同轴互斥，一条链至多一个数据来源；全部以第一个字面量数值列表为数据源，
+确定性写出数据文件并把该实参改成读文件的表达式。读回的值与字面量逐值相等、元素类型一致（整数列表按整数、含浮点按浮点，
+`dtype=` / `int()` / `float()` 显式写出，pandas 用 `float_precision="round_trip"`），否则刻度会变、保型检查会把模板的锅记成假差异。
+由 `seed + 父本结构签名（规范化 AST）+ 变换名` 派生两个参数：**路径写法**（`os.path.join(os.path.dirname(__file__), 名)` / cwd 相对 / `Path(__file__).resolve().parent / "data" / 名`）和
+**编码**（仅文本格式：utf-8、utf-8-sig、gbk，或中文文件名 `实验数据`；读端显式写 encoding，表头第一列是中文所以 gbk / BOM 真的改变字节）。
+二进制逐字节确定：npy 头固定；pickle protocol 4；xlsx 重新打包（固定时间戳、不压缩、抹掉 docProps 的 created/modified）；parquet 不压缩、不写统计、不带 pandas 元数据
+（footer 的 `created_by` 带 pyarrow 版本，所以版本钉在 workflow 里）。去重口径：仅编码 / 文件名不同的候选 AST 签名相同被归一；路径写法不同是结构不同，各留一份。
+`openpyxl`、`pyarrow` **只在 Guardian workflow 的 job 里装**（版本钉在 `compat-guardian.yml`，产品依赖与 pyproject 不变）；缺失时 `read_excel` / `read_parquet`
+`applies` 为 False，原因进报告 `coverage.unavailable_transforms`。新增 import（pandas/numpy/csv/glob/os/pathlib/openpyxl/pyarrow）不在 `_UNCERTAIN_IMPORTS` 里，也没有放宽那张表。
 
 保型：native 输出（图数、标题）必须等于父本——执行器同时跑父本 native 核对，不等就是 `invalid_candidate`（模板有 bug，
 不是 Tavotto 缺陷）。改轴：只能与这个变体自己的 native 比。所有改动都是 AST 编辑，结果必须能 `compile`。
-同 seed 逐字节相同（参数由 `seed + 父本 + 变换名` 的哈希派生，不依赖其它候选）。
+同 seed 逐字节相同（参数由 `seed + 父本结构签名 + 变换名` 的哈希派生，不依赖其它候选）。
 
 **比较（`compare`，纯函数）**：`zero_figures`（原生 N 图 / Tavotto 0 图）、`fewer_figures`（partial_capture）、
 `same_path_content_mismatch`（原生最后写入该路径的图 vs Tavotto 保留的图）、`title_missing`。差异带 Guardian 失败类别。
