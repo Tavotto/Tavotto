@@ -420,6 +420,13 @@
       "title": "Stop this script?"
     }
   },
+  "pageEdge": {
+    "height": "H {{mm}} mm",
+    "heightPrefix": "H ",
+    "snapTo": "Snapped to {{name}}",
+    "width": "W {{mm}} mm",
+    "widthPrefix": "W "
+  },
   "panelBadge": {
     "approxPreview": "Approximate preview",
     "approxPreviewHint": "Showing the on-disk original for now — your figure edits aren’t reflected yet.",

@@ -5122,6 +5122,13 @@ export default interface Resources {
         "title": "终止脚本？"
       }
     },
+    "pageEdge": {
+      "height": "高 {{mm}} mm",
+      "heightPrefix": "高 ",
+      "snapTo": "吸附到 {{name}}",
+      "width": "宽 {{mm}} mm",
+      "widthPrefix": "宽 "
+    },
     "panelBadge": {
       "approxPreview": "近似预览",
       "approxPreviewHint": "画布暂显示磁盘上的原图，未反映图内修改。",
