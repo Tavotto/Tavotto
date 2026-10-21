@@ -236,7 +236,11 @@ def test_the_measured_raster_equals_what_savefig_really_writes(tmp_path):
     probe = tmp_path / "probe.py"
     probe.write_text(PROBE.format(engine=str(ENGINE)), encoding="utf-8")
     run = subprocess.run(
-        [WORKER_PY or sys.executable, str(probe)], capture_output=True, text=True, timeout=180
+        [WORKER_PY or sys.executable, str(probe)],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=180,
     )
     assert run.returncode == 0, run.stderr
     out = json.loads(run.stdout.strip().splitlines()[-1])
