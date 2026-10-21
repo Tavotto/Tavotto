@@ -59,6 +59,24 @@ _TOKEN_LIMIT = 256
 _LINE_LIMIT = 200
 
 
+#: 各类文案里**必需**的占位符（`errors:backend.<code>`）：缺了就不能发这个码，否则界面露出字面的 `{{file}}`
+_REQUIRED = {KIND_PACKAGE_MISSING: "file", KIND_COMPILE_ERROR: "line"}
+
+
+def code_for(fact: object) -> str:
+    """事实（`as_fact()` / `extra["tex"]`）→ 用户可见的码；**唯一**决定码的地方。
+
+    必需参数缺失就降级成 `tex_failed`（文案只用 `{{error}}`，由前端从 traceback 填）：LaTeX 报的文件名
+    被白名单拒掉（含空格 / 非 ASCII）、或日志里没有 `! …` 行时，宁可说「原因不明」也不露占位符。"""
+    kind = fact.get("kind") if isinstance(fact, dict) else None
+    if kind not in _CODE_OF:
+        return CODE_FAILED
+    need = _REQUIRED.get(kind)
+    if need and not (isinstance(fact.get(need), str) and fact[need]):
+        return CODE_FAILED
+    return _CODE_OF[kind]
+
+
 @dataclass(frozen=True)
 class TexFailure:
     kind: str
@@ -68,7 +86,7 @@ class TexFailure:
 
     @property
     def code(self) -> str:
-        return _CODE_OF[self.kind]
+        return code_for(self.as_fact())
 
     def as_fact(self) -> dict:
         """挂在 `WorkerError.extra["tex"]` 上的结构化事实（键全是闭集或经过白名单清洗的值）。"""

@@ -2769,6 +2769,9 @@ export async function engineSpecfix(
       (body.traceback as string) || '',
       (body.code as string) || '',
       (body.module as string) || '',
+      undefined,
+      undefined,
+      { params: body.params as Record<string, unknown> | undefined },
     )
   }
   // 形状不对 = 没拿到（代理页、别的服务占了端口、半截的响应），不是「修好了」

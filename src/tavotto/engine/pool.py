@@ -1181,7 +1181,7 @@ def _tex_error(message: str, traceback_text: str) -> "WorkerError | None":
     fact = texdiag.classify(f"{message}\n{traceback_text}")
     if fact is None:
         return None
-    err = WorkerError(message, traceback_text, code=fact.code)
+    err = WorkerError(message, traceback_text, code=texdiag.code_for(fact.as_fact()))
     err.extra = {"tex": fact.as_fact()}
     return err
 

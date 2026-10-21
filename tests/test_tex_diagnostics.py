@@ -112,7 +112,68 @@ def test_names_outside_the_closed_sets_are_not_carried_out():
     weird = "Failed to process string with tex because /opt/evil;rm could not be found"
     assert texdiag.classify(weird).command == "other"
     odd_file = STY_MISSING.replace("type1ec.sty", "../../etc/pa ss.sty")
-    assert texdiag.classify(odd_file).file == ""
+    fact = texdiag.classify(odd_file)
+    assert fact.file == ""
+    # 文案要 `{{file}}`：给不出就降级成 `tex_failed`，不发露占位符的 `tex_package_missing`
+    assert fact.code == "tex_failed"
+    assert texdiag.code_for(fact.as_fact()) == "tex_failed"
+
+
+@pytest.mark.parametrize("name", ["中文 pkg.sty", "my pkg.sty"])
+def test_unsafe_missing_file_name_degrades_to_tex_failed(name):
+    text = STY_MISSING.replace("type1ec.sty", name)
+    assert texdiag.classify(text).code == "tex_failed"
+    assert pool._worker_error("m", "script_error", text).code == "tex_failed"
+
+
+def test_compile_failure_without_a_bang_line_degrades_to_tex_failed():
+    text = COMPILE.replace("! Missing { inserted.", "no bang line here")
+    fact = texdiag.classify(text)
+    assert fact.line == ""
+    assert fact.code == "tex_failed"
+    assert pool._worker_error("m", "script_error", text).code == "tex_failed"
+
+
+def test_code_for_is_the_single_rule_for_fact_dicts():
+    assert texdiag.code_for({"kind": "package_missing", "file": "a.sty"}) == "tex_package_missing"
+    assert texdiag.code_for({"kind": "package_missing"}) == "tex_failed"
+    assert texdiag.code_for({"kind": "compile_error", "line": ""}) == "tex_failed"
+    assert (
+        texdiag.code_for({"kind": "command_missing", "command": "other"}) == "tex_command_missing"
+    )
+    assert texdiag.code_for(None) == "tex_failed"
+
+
+def test_every_code_gets_all_the_placeholders_its_text_needs():
+    import json
+    import re
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1] / "web" / "src" / "i18n" / "locales"
+    inputs = [
+        CMD_MISSING,
+        DVIPNG_MISSING,
+        STY_MISSING,
+        TFM_MISSING,
+        COMPILE,
+        COMPILE.replace("! Missing { inserted.", "no bang line"),
+        STY_MISSING.replace("type1ec.sty", "中文 pkg.sty"),
+        TEXMF,
+        TEX_FRAME_ONLY,
+    ]
+    seen = set()
+    for text in inputs:
+        fact = texdiag.classify(text)
+        code = fact.code
+        seen.add(code)
+        given = set(texdiag.params_of(fact.as_fact()))
+        for locale in ("zh-CN", "en-US"):
+            msgs = json.loads((root / locale / "errors.json").read_text(encoding="utf-8"))[
+                "backend"
+            ]
+            need = set(re.findall(r"{{\s*(\w+)\s*}}", msgs[code])) - {"error"}
+            assert need <= given, (locale, code, need, given)
+    assert seen == set(texdiag.ERROR_CODES)
 
 
 @pytest.mark.parametrize(
