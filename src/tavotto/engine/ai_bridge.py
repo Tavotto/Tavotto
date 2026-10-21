@@ -804,6 +804,15 @@ def run(
                 ai_figure_edit.ensure_registered()
                 cand = ai_figure_edit.create_candidate(sid, script_path, Path(figures_dir), script)
                 cand.extras.update(task_hooks or {})
+                # 目标范围（`figureverify.changes_outside_target`）：缺省按整张图（没选中东西 = 没有可核的范围）
+                _ctx = context or {}
+                cand.extras["target"] = {
+                    "stem": _ctx.get("stem"),
+                    "gid": _ctx.get("gid"),
+                    "scope": _ctx.get("scope")
+                    if _ctx.get("scope") in ("element", "axes")
+                    else "figure",
+                }
                 envelope = ai_figure_edit.envelope_for(
                     agent=agent,
                     project_key=project_key,
