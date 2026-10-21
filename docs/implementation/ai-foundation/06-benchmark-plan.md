@@ -49,6 +49,14 @@ Fake Executor 的形状：实现 `AgentDefinition` 的测试适配器（`tests/t
 completed）：提交后验证只核数据指纹，标题 / 单位 / 配色 / 刻度类型 / 图例的改动它看不见——这是 Harness Lab 与后续
 验证层要压低的数，不是基准的问题。
 
+**Phase 6c 真实模型实验**（维护者 2026-10-21 批准跑一次；`taf_bench.py --real codex`，codex-cli 0.163.0，每场景 1 次；
+证据 `evidence/real-6c-v1.json` / `real-6c-v2.json` / `real-6c-compare.md`）：dev 14 个可回放场景，基线 Pack v1 与候选 v2
+（`packs/figure_edit.v2-candidate.json`，只改 `rule_scope`：用户没提到的文字 / 单位 / 颜色 / 线型 / 图例 / 坐标保持原样）。
+两边**都是** 14/14 首发 verified、科学保持 1.0、非预期修改 0、修正轮 0；墙钟中位数 51.1 s vs 51.2 s，P95 76.1 s vs 64.9 s
+（n=1，噪声内）。**结论：没有可测的差别——这批 dev 场景对 codex 是天花板**，实验分辨不了「收紧修改范围」这类候选。
+不改默认 Pack（仍是 v1）。后续：给 Harness Lab 加会诱发顺手多改的场景（例如指令只点名一条线、同图里还有别的「看起来
+也该改」的元素），并每场景跑多次估方差，再比候选；跑之前照样先征得维护者同意（真实模型花用户额度）。
+
 ## 四、防过拟合
 
 - Harness Lab 只读 `scenarios.json`（dev）；`scenarios_holdout.json` 只在复核时整体运行、只出汇总分。Phase 6 加一条

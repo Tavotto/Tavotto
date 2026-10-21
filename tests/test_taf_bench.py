@@ -194,3 +194,101 @@ def test_leak_guard_flags_holdout_content_and_passes_clean_text():
         for a in [*s.get("goal", []), *s.get("preserve", [])]
         if len(a["id"]) >= 4
     )
+
+
+# --------------------------------------------------------------------------- 6c：候选 Pack / 真实执行器的护栏
+CANDIDATE = (
+    ROOT / "docs" / "implementation" / "ai-foundation" / "packs" / "figure_edit.v2-candidate.json"
+)
+
+
+def test_the_candidate_pack_is_schema_valid_and_holdout_clean():
+    from tavotto.engine import ai_prompt_pack
+
+    raw = CANDIDATE.read_text(encoding="utf-8")
+    pack = ai_prompt_pack.load(json.loads(raw))
+    assert pack.version == 2 and pack.pack_id == "figure_edit"
+    bench.assert_no_leak([raw], bench.load_scenarios("holdout"))
+    v1 = ai_prompt_pack.V1["templates"]
+    differing = [k for k, v in json.loads(raw)["templates"].items() if v != v1[k]]
+    assert differing == ["rule_scope"], "候选只改一条，实验才看得出是哪条起的作用"
+
+
+@pytest.mark.skipif(WORKER_PY is None, reason="not_run：找不到装有 matplotlib 的解释器")
+def test_a_candidate_pack_changes_the_prompt_and_the_default_is_restored(tmp_path):
+    from tavotto.engine import ai_prompt_pack
+
+    dev = {s["id"]: s for s in bench.load_scenarios("dev") if bench.benchable(s)}
+    before = ai_prompt_pack.DEFAULT
+    base = bench.run([dev["FB-S02"]], tmp_path / "a")
+    cand = bench.run(
+        [dev["FB-S02"]], tmp_path / "b", pack=json.loads(CANDIDATE.read_text(encoding="utf-8"))
+    )
+    assert ai_prompt_pack.DEFAULT is before, "工具只在本进程里临时换 Pack，跑完恢复"
+    (ra,), (rb,) = base["rows"], cand["rows"]
+    assert (
+        ra["prompt_sha256"] and rb["prompt_sha256"] and ra["prompt_sha256"] != rb["prompt_sha256"]
+    )
+    assert (
+        cand["environment"]["pack"]["version"] == 2 and base["environment"]["pack"]["version"] == 1
+    )
+
+
+def test_compare_reports_metric_deltas_and_changed_scenarios():
+    row = dict.fromkeys(bench.ROW_FIELDS)
+    a = {
+        "environment": {"pack": {"version": 1}},
+        "metrics": {"first_attempt_verified_rate": 0.5, "not_run": []},
+        "rows": [
+            {
+                **row,
+                "id": "S",
+                "variant": "ref",
+                "outcome": "failed",
+                "goal": "failed",
+                "preserve": "verified",
+            }
+        ],
+    }
+    b = {
+        "environment": {"pack": {"version": 2}},
+        "metrics": {"first_attempt_verified_rate": 1.0, "not_run": []},
+        "rows": [
+            {
+                **row,
+                "id": "S",
+                "variant": "ref",
+                "outcome": "completed",
+                "goal": "verified",
+                "preserve": "verified",
+            }
+        ],
+    }
+    md = bench.compare(a, b)
+    assert "| first_attempt_verified_rate | 0.5 | 1.0 | 0.5 |" in md
+    assert "S/ref: failed/failed/verified → completed/verified/verified" in md
+
+
+def test_real_runs_are_capped_before_anything_starts(tmp_path, monkeypatch, capsys):
+    import os
+
+    monkeypatch.setenv("TAVOTTO_DATA_DIR", os.environ.get("TAVOTTO_DATA_DIR", str(tmp_path / "d")))
+    monkeypatch.setenv(
+        "TAVOTTO_CONFIG_DIR", os.environ.get("TAVOTTO_CONFIG_DIR", str(tmp_path / "c"))
+    )
+    called = []
+    monkeypatch.setattr(bench, "run", lambda *a, **k: called.append(1))
+    assert bench.main(["--work", str(tmp_path / "w"), "--real", "codex", "--max-runs", "1"]) == 2
+    assert called == [] and "超过上限" in capsys.readouterr().err
+
+
+def test_a_leaky_candidate_pack_is_refused(tmp_path, monkeypatch, capsys):
+    holdout = bench.load_scenarios("holdout")
+    leaky = json.loads(CANDIDATE.read_text(encoding="utf-8"))
+    leaky["source"] += f"（参考了 {holdout[0]['id']}）"
+    path = tmp_path / "leaky.json"
+    path.write_text(json.dumps(leaky, ensure_ascii=False), encoding="utf-8")
+    called = []
+    monkeypatch.setattr(bench, "run", lambda *a, **k: called.append(1))
+    assert bench.main(["--work", str(tmp_path / "w"), "--pack", str(path)]) == 2
+    assert called == [] and "泄漏" in capsys.readouterr().err
