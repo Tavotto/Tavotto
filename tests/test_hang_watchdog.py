@@ -176,7 +176,21 @@ def test_exit_is_reached_even_when_the_writer_raises():
 
 @pytest.mark.skipif(os.name == "nt", reason="ps 只在 POSIX")
 def test_no_children_is_reported_as_none_not_as_the_ps_probe():
-    out = hw.describe_children()
+    # 在一个干净的子进程里量：pytest 进程本身可能还挂着同一分片里前面用例留下、尚未
+    # 退出的子进程（10-21 合并组按分片编排时红时绿，堵了队列四个多小时）。这条只钉
+    # 「ps 探针不算子进程、没有时说没有」，与这个 pytest 进程此刻有没有别的后代无关
+    code = (
+        "import sys; sys.path.insert(0, sys.argv[1]); "
+        "from support import hang_watchdog as hw; print(hw.describe_children())"
+    )
+    out = subprocess.run(
+        [sys.executable, "-c", code, str(pathlib.Path(__file__).parent)],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=60,
+        check=True,
+    ).stdout
     assert "没有子进程" in out, out
     assert "ps -axo" not in out, out
 
