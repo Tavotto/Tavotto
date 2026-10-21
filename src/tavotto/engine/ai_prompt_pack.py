@@ -8,7 +8,8 @@ schema 里**：`load()` 用白名单字段校验，任何不认识的字段（�
   （`tests/test_ai_prompt_pack.py` 用冻结的旧实现对拍）；
 * 产品只用 `DEFAULT`（= `V1`，代码里的常量）。工具（`scripts/dev/taf_bench.py`）可以加载候选 Pack 做对比，但**不能**
   改默认值——换默认 Pack 只能走普通 PR + 独立审查；
-* 占位符是闭集（每个模板各自允许哪些），渲染是单遍替换：用户原文里出现 `{script}` 之类的字样不会被再展开。
+* 占位符是闭集（每个模板各自允许哪些）：`load()` 要求每个模板恰好用全它的占位符（缺了会静默丢掉用户需求 / 目标脚本名），
+  且去掉合法占位符后不许剩任何花括号（`{user-prompt}`、`{USER_PROMPT}`、`{x!r}`、未闭合都会被拒，不会被当字面量原样输出）；渲染是单遍替换：用户原文里出现 `{script}` 之类的字样不会被再展开。
 
 纯标准库，Flask 父进程 import。
 """
@@ -100,6 +101,10 @@ def load(data: dict) -> PromptPack:
         used = set(_PLACEHOLDER.findall(text))
         if used - _TEMPLATES[name]:
             raise PackError(f"{name} 用了不允许的占位符：{sorted(used - _TEMPLATES[name])}")
+        if "{" in _PLACEHOLDER.sub("", text) or "}" in _PLACEHOLDER.sub("", text):
+            raise PackError(f"{name} 含不合法的花括号")
+        if used != _TEMPLATES[name]:
+            raise PackError(f"{name} 没用全它的占位符：缺 {sorted(_TEMPLATES[name] - used)}")
     return PromptPack(
         pack_id=data["pack_id"],
         version=version,

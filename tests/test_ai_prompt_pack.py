@@ -232,6 +232,16 @@ def _v1(**over):
             }
         ),
         _v1(templates={**ai_prompt_pack.V1["templates"], "intro": 3}),
+        _v1(templates={**ai_prompt_pack.V1["templates"], "request": "用户需求：{user-prompt}"}),
+        _v1(templates={**ai_prompt_pack.V1["templates"], "request": "用户需求：{USER_PROMPT}"}),
+        _v1(templates={**ai_prompt_pack.V1["templates"], "request": "用户需求：{user_prompt!r}"}),
+        _v1(templates={**ai_prompt_pack.V1["templates"], "request": "用户需求：{user_prompt"}),
+        _v1(templates={**ai_prompt_pack.V1["templates"], "request": "用户需求：}"}),
+        _v1(templates={**ai_prompt_pack.V1["templates"], "request": "用户需求："}),
+        _v1(
+            templates={**ai_prompt_pack.V1["templates"], "request": "用户需求：{user_prompt} {oops"}
+        ),
+        _v1(templates={**ai_prompt_pack.V1["templates"], "request": "用户需求：{user_prompt}}"}),
     ],
     ids=[
         "sandbox",
@@ -243,6 +253,14 @@ def _v1(**over):
         "missing-template",
         "foreign-placeholder",
         "non-string",
+        "brace-hyphen",
+        "brace-upper",
+        "brace-conversion",
+        "brace-unclosed",
+        "brace-stray-close",
+        "placeholder-dropped",
+        "extra-open-brace",
+        "extra-close-brace",
     ],
 )
 def test_the_loader_rejects_anything_outside_the_whitelist(bad):
