@@ -363,6 +363,13 @@ def rebuild_index(versions_dir: Path, doc_id: str, *, now: int, write: bool = Fa
                 atomicio.write_bytes(root / f"index.corrupt-{_sha(raw)}.json", raw)
             except OSError as exc:
                 raise IndexUnreadable(str(exc)) from exc
+            # 旧索引还读得动就把信封里没有的簿记带过去：#264 的「旧历史还在」标记不能因为一次修复消失
+            try:
+                old = documents.loads_document(raw)
+            except ValueError:
+                old = None
+            if isinstance(old, dict) and isinstance(old.get("legacy_unreadable"), dict):
+                idx["legacy_unreadable"] = old["legacy_unreadable"]
         idx = {**_write_index(root, idx, now), "recovered": True}
     return idx
 

@@ -13621,6 +13621,35 @@ def api_versions_list(doc_id):
     return jsonify(body)
 
 
+@app.post("/api/versions/<doc_id>/rebuild")
+def api_versions_rebuild(doc_id):
+    """显式修复：从信封文件重建这份文档的版本索引（ADR 0140 §八）。
+
+    给「同步工具留下了冲突副本 / 索引与信封对不上」用。版本锁内执行，与追加 / 改名 / 删除串行；
+    只读信封、写新索引，**不删任何文件**——旧索引的原字节先留成 `index.corrupt-<sha>.json`。
+    副作用要让用户知道：已被删除 / 裁掉但信封还在的版本会复活（`added`），信封已经没了的条目会消失（`dropped`）。
+    没有新存储（还在旧单文件上）→ 404；索引读不动 / 来自更新的格式 → 409 `versions_unreadable`，零改动。"""
+    path = _versions_path(doc_id)
+    with _versions_lock(doc_id):
+        if not engine_versionstore.has_store(path.parent, path.stem):
+            abort(404)
+        # 先过一遍读侧：读不动 / 未来格式在这里抛 IndexUnreadable，绝不被重建降级覆盖
+        before = engine_versionstore.list_index(path.parent, path.stem) or {"entries": []}
+        idx = engine_versionstore.rebuild_index(
+            path.parent, path.stem, now=int(time.time()), write=True
+        )
+    old_ids = [e["id"] for e in before["entries"]]
+    new_ids = [e["id"] for e in idx["entries"]]
+    return jsonify(
+        {
+            "ok": True,
+            "count": len(new_ids),
+            "added": [i for i in new_ids if i not in old_ids],
+            "dropped": [i for i in old_ids if i not in new_ids],
+        }
+    )
+
+
 @app.get("/api/versions/<doc_id>/<vid>")
 def api_versions_get(doc_id, vid):
     v = _open_timeline(doc_id).get(vid)
