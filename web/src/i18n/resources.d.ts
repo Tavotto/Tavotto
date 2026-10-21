@@ -2444,7 +2444,7 @@ export default interface Resources {
       "export_basis_mismatch": "{{format}} 与同批其他格式不是出自同一份来源，为避免交出不一致的文件，这一项没有导出。其余格式已照常导出。",
       "export_dir_unwritable": "无法写入导出目录：{{error}}。请检查磁盘空间和目录权限。",
       "export_failed": "导出失败：{{error}}。",
-      "export_raster_too_large": "这张图按当前设置要生成 {{width}}×{{height}} 像素的位图，超过了上限（{{max_pixels}} 像素），为避免内存耗尽没有导出，原文件也没有改动。建议降低导出分辨率，或缩小图幅后再试；Tavotto 不会自动替你降低。",
+      "export_raster_too_large": "这张图按当前设置要生成 {{width}} × {{height}} 像素的位图，超过了上限（{{max_pixels}} 像素），为避免内存耗尽没有导出，原文件也没有改动。建议降低导出分辨率，或缩小图幅后再试；Tavotto 不会自动替你降低。",
       "export_render_failed": "{{id}} 重渲染失败：{{reason}}",
       "external_change": "排版在磁盘上被 Tavotto 之外的改动覆盖，本次保存未写入。",
       "figure_name_exhausted": "同名的图太多了，没能给新图找到可用的名字。",
