@@ -27,9 +27,9 @@
  * ### 版本
  *
  * `schemaVersion` 说的是这一格的**格式**；`flowVersion` 说的是**步骤内容**。
- * 格式认不出 → 回安全默认（未开始）；步骤内容升了版 → 进行中 / 暂停的用户回到
- * 第一个未完成的步骤（新加的步骤会被提供），已完成 / 已跳过的用户**不被重新
- * 打扰**、完成历史原样保留。
+ * 格式认不出 → 回安全默认（未开始）；步骤内容升了版 → 上一版留下的已完成 / 已跳过 /
+ * 进行中 / 暂停**一律回到新手态**，把新教程自动看一次（2026-10-21 用户裁决，ADR 0136 修订；
+ * 只发生一次，见 `migratePersisted`），`hintSeen` 保留。
  *
  * ### embedded
  *
@@ -246,7 +246,7 @@ export function migratePersisted(raw: unknown): OnboardingPersisted {
   const v = raw as Record<string, unknown>
   if (v.schemaVersion !== ONBOARDING_SCHEMA_VERSION) return { ...ONBOARDING_DEFAULTS }
 
-  let status = STATUSES.includes(v.status as OnboardingStatus)
+  const status = STATUSES.includes(v.status as OnboardingStatus)
     ? (v.status as OnboardingStatus)
     : 'not_started'
   const recorded = Array.isArray(v.completedSteps) ? (v.completedSteps.filter(isStepId) as StepId[]) : []
@@ -276,6 +276,23 @@ export function migratePersisted(raw: unknown): OnboardingPersisted {
     }
   }
   const flowVersion = numOrNull(v.flowVersion) ?? 0
+  // 升级后让每个人把新教程看一次（2026-10-21 用户裁决，ADR 0136 修订，覆盖「已完成 / 已跳过的不被
+  // 重新打扰」）：上一版流程留下的 completed / skipped（也包括 active / paused——它们的步骤 id 在新流程里
+  // 本来就认不出，进度是空的）一律回到「新手态」，与一个真正的新用户同一条路径：主页显示新手版
+  // （`homeVariant`）、首次进入自动弹欢迎页（`useAutoOpen`）。**只发生一次**：返回值里的 `flowVersion`
+  // 是当前版本，之后用户在新版里完成 / 跳过就照常是老手版，下次读到时不再满足 `flowVersion < 当前`。
+  // 保留：`hintSeen`（用户已经知道的事不必再提示）。清掉：完成 / 跳过历史、起止时间（描述的是另一套
+  // 教程，留在 not_started 里自相矛盾；新一轮 `start()` 本就会重写）、`welcomeSeenAt`（它正是「自动弹一次」
+  // 的闸，不清则老用户永远不会自动弹；不另设标志位）、演示改动。`currentStep` 在未开始时恒为 null，
+  // 起点由 `start()` 设为第一步。tutorialProjectId / DocumentId 是 v2 遗留的格式字段，原样保留。
+  if (flowVersion < ONBOARDING_FLOW_VERSION && status !== 'not_started') {
+    return {
+      ...ONBOARDING_DEFAULTS,
+      hintSeen,
+      tutorialProjectId: strOrNull(v.tutorialProjectId),
+      tutorialDocumentId: strOrNull(v.tutorialDocumentId),
+    }
+  }
   const done = new Set<string>(completedSteps)
   // 「欢迎」步骤已于 2026-09-30 取消；v2 的八个 coachmark 步骤于 2026-10-19 换成三步演示
   // （ADR 0136）。停在认不出的步骤上的进行中 / 暂停用户一律落到第一个未完成的新步骤；
@@ -285,7 +302,7 @@ export function migratePersisted(raw: unknown): OnboardingPersisted {
   if (inFlow) {
     // 步骤内容升了版，或记的步骤已经不存在：回到第一个未完成的步骤。
     // 完成历史一条不抹——用户做过的事仍然做过。
-    if (flowVersion < ONBOARDING_FLOW_VERSION || currentStep === null) {
+    if (currentStep === null) {
       currentStep = firstIncomplete(done)
     }
     // 停在前面还有没完成的步骤之后（手改 / 半截写入：如完成页 + 一步没做）：回到第一个未完成的。
@@ -294,9 +311,6 @@ export function migratePersisted(raw: unknown): OnboardingPersisted {
     if (currentStep !== null && STEP_IDS.indexOf(currentStep) > STEP_IDS.indexOf(reachable)) {
       currentStep = reachable
     }
-    // 上一版的教程正进行到一半：换成了另一套教程，不在启动时把人直接拉进新的那套——
-    // 记成用户暂停，入口显示「继续」，点不点由他（ADR 0136：不因升级强迫老用户重新学）
-    if (flowVersion < ONBOARDING_FLOW_VERSION && status === 'active') status = 'paused'
   } else {
     currentStep = null
   }
@@ -320,7 +334,7 @@ export function migratePersisted(raw: unknown): OnboardingPersisted {
     tutorialDocumentId: strOrNull(v.tutorialDocumentId),
     pausedBy,
     welcomeSeenAt: numOrNull(v.welcomeSeenAt),
-    // 步骤内容换了版：上一版的演示改动不属于这一版的图
+    // 只剩 not_started 的旧版 blob 会走到这里（其余旧版已在上面回到新手态）：上一版的演示改动不属于这一版的图
     demo: flowVersion < ONBOARDING_FLOW_VERSION ? { ...DEMO_EDITS_EMPTY } : migrateDemo(v.demo),
   }
 }

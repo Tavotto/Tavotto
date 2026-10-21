@@ -209,7 +209,7 @@ export function writeRuntimeNamedProject(dir: string): void {
 }
 
 /**
- * 新手教程的欢迎页（ADR 0136）在「第一次打开、停在主页、没有自己的项目」时会自己盖上来——
+ * 新手教程的欢迎页（ADR 0136）在「新手态、欢迎页没出现过、停在主页」时会自己盖上来——
  * `noProject` 启动的用例每一条都是这个形状。默认替它们记成「欢迎页已经出现过」（只在
  * `tavotto.onboarding` 那一格还不存在时写，用例自己摆的、应用后来写的都不覆盖），
  * 测欢迎页 / 教程的用例 `test.use({ firstRunWelcome: true })` 要回真实的首次启动。

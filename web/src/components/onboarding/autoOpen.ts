@@ -13,12 +13,14 @@ export function resetTutorialAutoOpenForTest(): void {
 /**
  * 什么时候自己出现：
  *   * 上次关应用时教程正进行到一半（`active`）→ 接着那一步；
- *   * 第一次打开 Tavotto（没开始过教程、欢迎页没出现过、启动后停在主页、最近列表里没有自己的
- *     项目）→ 欢迎页，只这一次。已经在正常使用的人（有自己的项目，或启动时项目就开着）不打扰。
+ *   * 新手态（`not_started`）、欢迎页没出现过、启动后停在主页 → 欢迎页，只这一次。
+ *     **有没有自己的项目不再判**（2026-10-21 用户裁决，ADR 0136 修订）：升级前用过 Tavotto 的老用户
+ *     被 `migratePersisted` 迁回新手态（`welcomeSeenAt` 清空）后，要和新用户走同一条路径看一次新教程，
+ *     而老用户恰恰有自己的项目。之后 `welcomeSeenAt` 记下了，不会再自动出现。
  * 暂停 / 已完成 / 已跳过的一律不自己出现——入口还在主页、帮助菜单、命令面板、设置里。
+ * 启动时项目就开着（`phase !== 'none'`）也不弹：此刻用户正在工作，主页的新手版与入口仍在。
  *
- * 「没有自己的项目」要以**真的取到过**项目列表为准（`listsLoaded`）：启动时后端暂时不可达，
- * 列表也是空的，那不是新用户的证据——先不判，等列表取到再判（不把老用户的 `welcomeSeenAt` 记掉）。
+ * 仍以**真的取到过**项目列表（`listsLoaded`）为准再判：启动期的自动恢复结束后才知道是不是停在主页。
  */
 export function useAutoOpen(): void {
   const phase = useProjectStore((s) => s.phase)
@@ -34,8 +36,6 @@ export function useAutoOpen(): void {
     if (phase === 'none' && !listsLoaded) return
     autoChecked = true
     if (phase !== 'none' || ob.status !== 'not_started' || ob.welcomeSeenAt !== null) return
-    const { recent, pinned } = useProjectStore.getState()
-    if ([...recent, ...pinned].some((r) => !r.tutorial)) return
     ob.openWelcome()
   }, [phase, listsLoaded])
 }

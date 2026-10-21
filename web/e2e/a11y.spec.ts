@@ -252,7 +252,7 @@ test('主页老手版：axe 无违规、无未定性的「查不了」、自算�
   await page.addInitScript(() =>
     window.localStorage.setItem(
       'tavotto.onboarding',
-      JSON.stringify({ schemaVersion: 1, flowVersion: 2, status: 'completed', completedSteps: [], skippedSteps: [] }),
+      JSON.stringify({ schemaVersion: 1, flowVersion: 3, status: 'completed', completedSteps: [], skippedSteps: [] }),
     ),
   )
   const a = await app({ noProject: true })
