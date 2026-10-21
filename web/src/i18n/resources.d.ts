@@ -28,6 +28,20 @@ export default interface Resources {
       "copy": "复制代码",
       "plain": "代码"
     },
+    "dataFigure": {
+      "cancel": "取消",
+      "empty": "项目里没有 CSV 数据文件",
+      "fileLabel": "数据文件",
+      "filePlaceholder": "选择 CSV 文件",
+      "generate": "生成",
+      "instructionLabel": "想画什么",
+      "instructionPlaceholder": "例如：画 y 随 x 的变化",
+      "loadFailed": "没能读取数据文件列表",
+      "open": "从数据出图",
+      "title": "从数据出图",
+      "truncated": "文件太多，只列出前一部分",
+      "unconfirmedHint": "上一次的结果还没确认，请先在对话里查询结果。"
+    },
     "diff": {
       "copyPatch": "复制补丁",
       "edited": "已修改",
@@ -91,6 +105,12 @@ export default interface Resources {
       "resend": "重新发送"
     },
     "notice": {
+      "dataFigureFailedWritten": "新脚本已写进项目，但画出来的数据与 CSV 对不上；不对的话可以删掉这份新脚本。",
+      "dataFigureNeedsInput": "没能判断哪列做横轴、哪列做纵轴。请在指令里点名这两列。",
+      "dataFigureNeedsInputExample": "没能判断哪列做横轴、哪列做纵轴。请在指令里点名这两列，例如“画 {{y}} 随 {{x}} 的变化”。",
+      "dataFigurePartial": "有些行不是数字，没有画出来；脚本已新建，结果未经完整核对。",
+      "dataFigureReconcile": "查询结果",
+      "dataFigureUnconfirmed": "没收到结果，可能已经生成了；先查询结果，别重复提交。",
       "taskFailedChanged": "改动已写入，但核对发现数据或输出变了；不对的话可以回滚到修改前。",
       "taskPartial": "改动已写入，但有检查没能完成，结果未经完整核对。",
       "taskRejected": "改动没通过写回前检查，没有写入项目。",
@@ -165,6 +185,12 @@ export default interface Resources {
     },
     "session": {
       "correcting": "上一版没通过写回前检查，正在自动修正…",
+      "dataFigureDone": "已新建脚本 {{script}}",
+      "dataFigureFailedWritten": "已生成 {{script}}，但核对没通过",
+      "dataFigureNeedsInput": "没有出图，需要你指明用哪两列",
+      "dataFigurePartial": "已新建脚本 {{script}}，部分行没有画出",
+      "dataFigureRunning": "正在读取数据并出图…",
+      "dataFigureUnconfirmed": "结果未确认",
       "doneChanged": "改动已写入脚本",
       "doneNoChange": "已完成，脚本没有变化",
       "restoredNote": "已接回仍在运行的任务；此前的输出不再显示，结束后会更新结果。",
@@ -411,6 +437,7 @@ export default interface Resources {
       "retry": "重试",
       "retryStatus": "重试获取状态",
       "revealFailed": "无法在文件管理器中定位，文件在：{{path}}",
+      "routeNeedsScript": "这些图带着编辑，但找不到它们的脚本，画布导出画不出来：{{files}}。请先恢复脚本或撤销这些图的编辑。",
       "savedTo": "已保存到 {{dir}}",
       "scopeCanvas": "当前画布",
       "scopeIgnored": "画布上的{{list}}不会带进导出。",
@@ -1652,6 +1679,8 @@ export default interface Resources {
             "crash_reports": "最近 7 天属于 Tavotto 的系统崩溃报告。Windows 崩溃转储是程序内存快照，可能含正在打开的文件内容与路径，无法脱敏。",
             "source": "脚本会原样附上，我们会尽量抹掉能认出的密钥，但不能保证；脚本里有密钥请不要勾。"
           },
+          "extrasSelectAll": "全选",
+          "extrasSelectNone": "全不选",
           "extrasTitle": "额外内容（默认不发送）",
           "failure": {
             "api_incompatible": "诊断服务的版本与这个 Tavotto 不兼容。请更新 Tavotto 后再试。",
@@ -2378,6 +2407,19 @@ export default interface Resources {
       "bad_scope": "无法识别导出范围：{{value}}。",
       "bad_validation": "检查设置格式有误，请刷新页面后重试。",
       "conda_launcher_unavailable": "Conda 环境激活失败（取不到激活后的环境变量），这次没有运行任何东西。通常是暂时的：稍后再试；如果一直这样，请检查这个环境的 conda 安装和 activate.d 脚本。",
+      "data_decode_error": "这份数据不是 UTF-8 编码，读不出来。",
+      "data_empty": "这份数据是空的。",
+      "data_figure_input_missing": "请选一份数据文件，并说明想画什么。",
+      "data_header_invalid": "数据的表头有空列名或重复列名。",
+      "data_malformed": "这份 CSV 格式有误，读不出来。",
+      "data_not_csv": "目前只支持 CSV 数据文件。",
+      "data_not_found": "找不到这份数据文件。",
+      "data_path_outside_project": "这份数据不在当前项目里。",
+      "data_ragged": "数据里有几行的列数和表头不一致。",
+      "data_too_large": "数据文件太大（超过 5 MB），没有读取。",
+      "data_too_long": "数据行数太多（超过 10 万行），没有读取。",
+      "data_too_wide": "数据列数太多（超过 64 列），没有读取。",
+      "data_unreadable": "读不了这份数据文件。",
       "dependency_preparation_required": "脚本开跑就需要的包渲染环境里没有，要先准备依赖",
       "desktop_updater_disabled": "桌面版不支持 pip 自升级，请更新桌面应用。",
       "dir_fsync_failed": "内容已写入，但系统无法确认已落盘。关闭前请再保存一次：{{reason}}",
@@ -2406,6 +2448,7 @@ export default interface Resources {
       "export_failed": "导出失败：{{error}}。",
       "export_render_failed": "{{id}} 重渲染失败：{{reason}}",
       "external_change": "排版在磁盘上被 Tavotto 之外的改动覆盖，本次保存未写入。",
+      "figure_name_exhausted": "同名的图太多了，没能给新图找到可用的名字。",
       "file_locked": "文件被其他程序占用，请关闭正在打开它的程序后重试。",
       "format_failed": "无法导出该格式：{{error}}。",
       "input_remap_changed": "数据位置刚刚改过，这次结果按旧位置产出，已丢弃。请重试。",
@@ -2572,8 +2615,10 @@ export default interface Resources {
       "stale_write": "自动保存冲突：磁盘上已有更新的版本",
       "svg_asset_export_unsupported": "SVG 素材目前支持预览、摆放和原图 SVG 导出；画布与跨格式导出尚未支持。请先将该素材转换为 PDF 后导入。",
       "svg_asset_unsupported": "此 SVG 暂不支持导入。请使用尺寸明确的独立静态 SVG；不支持脚本、外部资源或 DTD。",
+      "svg_snapshot_missing": "{{id}} 暂时无法导出为 SVG：请先重新运行这张图的脚本，或改用 PDF 导出。",
       "svg_source_unsupported": "{{id}} 的当前来源无法安全转换为 SVG。请改用 PDF 格式导出。",
       "sync_different_scripts": "两张图不属于同一个脚本，无法同步",
+      "taf_disabled": "这个实验功能还没有开启。",
       "tiff_bigtiff": "{{file}} 是 BigTIFF，暂不支持。请另存为普通 TIFF 或 PNG。",
       "tiff_bit_depth": "{{file}} 的位深暂不支持。只支持 8 位或 16 位（1 位仅限黑白）。",
       "tiff_color_space": "{{file}} 的颜色模式（如 CMYK、Lab）暂不支持。请转成 RGB 或灰度后再用。",
@@ -4547,7 +4592,7 @@ export default interface Resources {
         "folderTitle": "选择脚本所在的文件夹",
         "nativeTitle": "选择 Python 绘图脚本",
         "openedFolder": "已打开项目「{{name}}」",
-        "openedScript": "已打开「{{name}}」所在的项目"
+        "openedScript": "已打开「{{name}}」所在的项目，正在运行它，出图后放进当前画布"
       },
       "menuOpen": "打开",
       "more": "更多",
@@ -5588,9 +5633,7 @@ export default interface Resources {
       "projectConflict": "项目里的 {{file}} 已在别处改过，这次没有写入。请在弹出的对话框里决定。",
       "projectFailed": "没能存进项目里的 {{file}}：{{reason}}",
       "projectSkipped": "没有写入项目里的 {{file}}：按下保存之后切换了排版或项目。回到那份排版再保存一次。",
-      "skippedSwitched": "按下保存之后切换了排版或项目，这次没有写进项目。回到那份排版再保存一次。",
-      "svgSnapshotPill": "SVG 快照未完整保留",
-      "svgSnapshotWarning": "排版已保存：{{name}}。以下来源的 SVG 快照未能保留：{{sources}}。重新打开后，导出这些来源的 SVG 可能需要你明确重新运行脚本。"
+      "skippedSwitched": "按下保存之后切换了排版或项目，这次没有写进项目。回到那份排版再保存一次。"
     },
     "scan": {
       "deps": {

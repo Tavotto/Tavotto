@@ -94,7 +94,13 @@
     "taskFailedChanged": "The edit is saved, but the checks found the data or output changed. If that’s wrong, revert to the previous version.",
     "taskPartial": "The edit is saved, but some checks couldn’t run, so the result isn’t fully verified.",
     "taskRejected": "The edit didn’t pass the pre-write checks and wasn’t written to your project.",
-    "unmetHeading": "Checks not met"
+    "unmetHeading": "Checks not met",
+    "dataFigurePartial": "Some rows aren’t numbers, so they weren’t drawn. The script was created, but the result isn’t fully verified.",
+    "dataFigureNeedsInput": "I couldn’t tell which column is x and which is y. Name the two columns in your instruction.",
+    "dataFigureNeedsInputExample": "I couldn’t tell which column is x and which is y. Name the two columns in your instruction, for example “plot {{y}} against {{x}}”.",
+    "dataFigureFailedWritten": "The new script was written to the project, but the plotted data doesn’t match the CSV. If it’s wrong, you can delete this new script.",
+    "dataFigureUnconfirmed": "No result came back; the figure may already exist. Check the result first instead of submitting again.",
+    "dataFigureReconcile": "Check result"
   },
   "panel": {
     "abort": "Stop",
@@ -177,7 +183,13 @@
     "taskVerified": "Edited; the data checks out unchanged",
     "correcting": "The first attempt didn’t pass the pre-write checks; fixing it automatically…",
     "taskVerifiedCorrected_one": "Changed after one automatic fix; data checks match",
-    "taskVerifiedCorrected_other": "Changed after {{count}} automatic fixes; data checks match"
+    "taskVerifiedCorrected_other": "Changed after {{count}} automatic fixes; data checks match",
+    "dataFigureRunning": "Reading the data and drawing…",
+    "dataFigureDone": "Created script {{script}}",
+    "dataFigurePartial": "Created script {{script}}; some rows weren’t drawn",
+    "dataFigureNeedsInput": "Nothing drawn; tell me which two columns to use",
+    "dataFigureFailedWritten": "Created {{script}}, but verification failed",
+    "dataFigureUnconfirmed": "Result unconfirmed"
   },
   "status": {
     "aiAlreadyRan": "This request already ran (its task record was deleted), so it won’t be sent again.",
@@ -199,5 +211,19 @@
     "running": "Running",
     "timeout": "Timed out"
   },
-  "tabLabel": "Assistant"
+  "tabLabel": "Assistant",
+  "dataFigure": {
+    "open": "Plot from data",
+    "title": "Plot from data",
+    "empty": "There are no CSV data files in this project",
+    "loadFailed": "Couldn’t load the data file list",
+    "truncated": "Too many files; only the first part is listed",
+    "fileLabel": "Data file",
+    "filePlaceholder": "Choose a CSV file",
+    "instructionLabel": "What to plot",
+    "instructionPlaceholder": "For example: plot y against x",
+    "generate": "Generate",
+    "cancel": "Cancel",
+    "unconfirmedHint": "The last result isn’t confirmed yet. Check it in the conversation first."
+  }
 }

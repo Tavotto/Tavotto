@@ -1,0 +1,120 @@
+{"mode":"disabled-rotated","state":"disabled","current":false,"last":"revoke"}
+✖ independent terminal audit priority disabled-rotated (49.164489ms)
+{"mode":"enabled-rotated","state":"superseded","current":false,"last":"revoke"}
+✖ independent terminal audit priority enabled-rotated (25.924539ms)
+{"mode":"held-rotated","state":"blocked","current":false,"last":"revoke"}
+✖ independent terminal audit priority held-rotated (27.652161ms)
+{"mode":"expired-current-pin","state":"expired","current":false,"last":"revoke"}
+✖ independent terminal audit priority expired-current-pin (20.277903ms)
+{"mode":"expired-disabled-rotated","state":"disabled","current":false,"last":"revoke"}
+✖ independent terminal audit priority expired-disabled-rotated (19.074938ms)
+ℹ tests 5
+ℹ suites 0
+ℹ pass 0
+ℹ fail 5
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 295.512995
+
+✖ failing tests:
+
+test at tests/independent-terminal-audit-priority.test.mjs:4:122
+✖ independent terminal audit priority disabled-rotated (49.164489ms)
+  AssertionError [ERR_ASSERTION]: terminal signed revocation must remain visible in the rotated caller
+  + actual - expected
+
+  + 'disabled'
+  - 'revoked'
+
+      at file:///tmp/cla-historical-revocation-audit-review/baseline/services/cla-cloudflare/tests/independent-terminal-audit-priority.test.mjs:16:9
+      at async iso (file:///tmp/cla-historical-revocation-audit-review/baseline/services/cla-cloudflare/tests/delegation-fixture.mjs:37:79)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: 'disabled',
+    expected: 'revoked',
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at tests/independent-terminal-audit-priority.test.mjs:4:122
+✖ independent terminal audit priority enabled-rotated (25.924539ms)
+  AssertionError [ERR_ASSERTION]: terminal signed revocation must remain visible in the rotated caller
+  + actual - expected
+
+  + 'superseded'
+  - 'revoked'
+
+      at file:///tmp/cla-historical-revocation-audit-review/baseline/services/cla-cloudflare/tests/independent-terminal-audit-priority.test.mjs:16:9
+      at async iso (file:///tmp/cla-historical-revocation-audit-review/baseline/services/cla-cloudflare/tests/delegation-fixture.mjs:37:79)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: 'superseded',
+    expected: 'revoked',
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at tests/independent-terminal-audit-priority.test.mjs:4:122
+✖ independent terminal audit priority held-rotated (27.652161ms)
+  AssertionError [ERR_ASSERTION]: terminal signed revocation must remain visible in the rotated caller
+  + actual - expected
+
+  + 'blocked'
+  - 'revoked'
+
+      at file:///tmp/cla-historical-revocation-audit-review/baseline/services/cla-cloudflare/tests/independent-terminal-audit-priority.test.mjs:16:9
+      at async iso (file:///tmp/cla-historical-revocation-audit-review/baseline/services/cla-cloudflare/tests/delegation-fixture.mjs:37:79)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: 'blocked',
+    expected: 'revoked',
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at tests/independent-terminal-audit-priority.test.mjs:4:122
+✖ independent terminal audit priority expired-current-pin (20.277903ms)
+  AssertionError [ERR_ASSERTION]: terminal signed revocation must remain visible in the rotated caller
+  + actual - expected
+
+  + 'expired'
+  - 'revoked'
+
+      at file:///tmp/cla-historical-revocation-audit-review/baseline/services/cla-cloudflare/tests/independent-terminal-audit-priority.test.mjs:16:9
+      at async iso (file:///tmp/cla-historical-revocation-audit-review/baseline/services/cla-cloudflare/tests/delegation-fixture.mjs:37:79)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: 'expired',
+    expected: 'revoked',
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at tests/independent-terminal-audit-priority.test.mjs:4:122
+✖ independent terminal audit priority expired-disabled-rotated (19.074938ms)
+  AssertionError [ERR_ASSERTION]: terminal signed revocation must remain visible in the rotated caller
+  + actual - expected
+
+  + 'disabled'
+  - 'revoked'
+
+      at file:///tmp/cla-historical-revocation-audit-review/baseline/services/cla-cloudflare/tests/independent-terminal-audit-priority.test.mjs:16:9
+      at async iso (file:///tmp/cla-historical-revocation-audit-review/baseline/services/cla-cloudflare/tests/delegation-fixture.mjs:37:79)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: 'disabled',
+    expected: 'revoked',
+    operator: 'strictEqual',
+    diff: 'simple'
+  }

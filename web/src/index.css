@@ -353,6 +353,13 @@
      --card-lift-scale 上限 1.02（门禁 foundationPrimitives.test 读这里）；--lift-halo = accent 20% 的 1px 环（描边，不是外发光），
      是 --shadow-lift 阴影串里的最后一层，不要光晕就写 0 0 0 0 transparent */
   --card-lift-scale: 1.015;
+
+  /* 首页（HomeView）的垂直节奏：随窗高在上下限之间平滑伸缩，没有断点跳变。
+     --home-gap 各段之间（Logo 块 / 拖放区 / 示例 / 最近项目）、--home-gap-tight Logo 与下一句之间（下限 16px，不挤）、
+     --home-dz-pad 拖放区上下内边距（矮窗口收缩）。上下限是 rem（跟字号设置走），伸缩量按视口高 vh。 */
+  --home-gap: clamp(1rem, 0.4rem + 2.2vh, 2.25rem);
+  --home-gap-tight: clamp(1rem, 0.55rem + 1.2vh, 1.5rem);
+  --home-dz-pad: clamp(1.25rem, 0.5rem + 3.4vh, 2.5rem);
   --lift-halo: 0 0 0 1px color-mix(in srgb, var(--color-accent) 20%, transparent);
 
   /* 层级（z-index）token（2026-10-07 设计审计 §1）：组件里只写 z-sticky / z-canvas-chrome / … 这些工具类

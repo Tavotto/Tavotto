@@ -18,6 +18,14 @@ cancelCurrentExport()  取消（清临时文件；最终目录一个字节没动
   被忽略的变换逐项进 `ignored` 并**说给用户听**。
 - **PPI 只在有位图格式时是数字**，否则 `null`。压成一个默认值的话，界面就会
   去显示一个不影响任何东西的设置（T-49 同一个形状）。
+- **「这次导出用哪份来源」前端只读后端的 route，不再自己推算**（#1209 / A2b）：`/api/export/validate` 的 `route`
+  经 `store/exportRouteStore.ts`（按 `routeKeyOf` 的键存取，键对不上 = 没有）进 `lib/exportRoute.ts` 的读取器：
+  `embedsDiskBitmap`（预检 `panelSpec` 的 kind）、`copiesSourceVerbatim`（像素预览 / 透明背景）、`epsAvailability`
+  （`offers.eps`）、`unavailablePanels`（画布范围画不出的图，点导出前就说）。**缺 route**（validate 还没回来、旧后端、
+  算不出）时退回 `exportRoute.ts` 里的 `legacyEmbedsDiskBitmap`——后端判据的镜像，金向量
+  `tests/golden/export_route_vectors.json` 看护同源——这是前端里**唯一**还在推算来源的地方，且不比旧行为乐观。
+  画布范围的问题面板（`validationStore`，不在对话框里）不带 route，走退路。看护 `lib/exportRoute.test.ts`、
+  `store/exportRouteStore.test.ts`、`components/ExportDialog.test.tsx`（「来源读后端 route」）。
 - **作业活在 `store/exportStore.ts`，不活在对话框里**：关掉弹窗不取消作业。
   进度经 SSE `export.progress`，**外加一条轮询**——SSE 是加速器不是唯一通道
   （浏览器演练场、断线、代理下必须照样拿得到终局）。两条路进同一个

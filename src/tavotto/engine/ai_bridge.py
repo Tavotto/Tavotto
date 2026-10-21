@@ -107,15 +107,17 @@ def _finish_session(
         sess["error"] = error
     for k in SESSION_TERMINAL_FIELDS:
         sess.setdefault(k, None)  # 内存会话上一定带齐清单里的每个键
-    ai_history.record_end(
-        sess["id"],
-        sess["status"],
-        diff=sess["diff"] or "",
-        changed=bool(sess["changed"]),
-        error=sess["error"],
-        transcript=sess["transcript"] or [],
-        refresh=sess["refresh"],
-        task_result=task_result,
+    sess["rev"] = (
+        ai_history.record_end(  # 终态事实的版本号：随 `ai.done` 给出，客户端据此对账（#1115）
+            sess["id"],
+            sess["status"],
+            diff=sess["diff"] or "",
+            changed=bool(sess["changed"]),
+            error=sess["error"],
+            transcript=sess["transcript"] or [],
+            refresh=sess["refresh"],
+            task_result=task_result,
+        )
     )
     if (
         sess["status"] != "cancelled"
@@ -1054,6 +1056,7 @@ def run(
                     "diff": sess["diff"],
                     "script": script,
                     "refresh": sess["refresh"],
+                    "rev": sess.get("rev"),
                     **({"task": dict(sess["task"])} if task is not None else {}),
                 },
             )
@@ -1075,6 +1078,7 @@ def run(
                     "error": str(exc),
                     "script": script,
                     "refresh": sess["refresh"],
+                    "rev": sess.get("rev"),
                 },
             )
         finally:
@@ -1364,6 +1368,7 @@ SESSION_DTO_KEYS: tuple[str, ...] = (
     "note",
     "task",
     "cancel_requested",
+    "rev",
 )
 #: **终态字段清单**：会话结束时一起确定、落进历史库的那一组。服务重启后「sidecar 合并历史」的路径用它整体覆盖 sidecar，
 #: 不再逐个字段抄（漏抄一个就会出现「final 为 true 但 error 是空」这类分叉）。新增终态字段时只改这里。
@@ -1463,6 +1468,49 @@ def get(sid: str) -> dict | None:
             "note": "后端已重启，仅可回滚",
         }
     )
+
+
+#: 增量对账（`GET /api/ai/sessions/changes`）里每个会话给的字段：判终态 + 建只读占位的摘要列。**不含**转录 / diff / refresh——
+#: 终态详情仍是 `get()` 一份（不另造第二个 DTO 权威）。`final` 与会话详情同一个判据（`_history_final`；本进程内存里的会话认它自己的 `final`）
+CHANGE_DTO_KEYS: tuple[str, ...] = (
+    "id",
+    "rev",
+    "status",
+    "final",
+    "phase",
+    "outcome",
+    "changed",
+    "error",
+    "started_ms",
+    "ended_ms",
+    "client_request_id",
+    "provider",
+    "scope",
+    "target",
+    "script",
+    "prompt",
+    "cancel_requested",
+)
+
+
+def changes(project: str, since: int) -> dict:
+    """`project` 里版本号 > `since` 的会话的精简快照（#1115）：`{head, more, sessions}`。`head` 是客户端下一次的水位。
+    先收尾属主已死的 open 行（它们的结局也是"变化"，且别的窗口只能从这里看到）。"""
+    ai_history.reap_dead_owners(project)
+    page = ai_history.changes_since(project, since)
+    out = []
+    for row in page["rows"]:
+        live = SESSIONS.get(row["id"])
+        # 本进程内存里的会话认它自己的 `final`（磁盘上本进程 pid 的行，`row_owner_alive` 一律当属主已死）
+        final = bool(live.get("final")) if live is not None else _history_final(row)
+        raw = {
+            **row,
+            "final": final,
+            "changed": bool(row["changed"]),
+            "cancel_requested": bool(row["cancel_requested_ms"]),
+        }
+        out.append({k: raw[k] for k in CHANGE_DTO_KEYS})
+    return {"head": page["head"], "more": page["more"], "sessions": out}
 
 
 def _cancel_local(sid: str) -> bool:

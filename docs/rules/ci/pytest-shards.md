@@ -50,3 +50,13 @@
   错分），从 CI 上传的 junit artifact 重算：`python tests/support/shard.py --from-junit …`。
   不许为了并行放宽任何产品断言、不加 `-n auto`。设计、本机实测、负例与已知边界：
   `docs/implementation/ci-foundation/CI03A_PYTEST_SHARDS.md`。
+- **用例级挂死看门狗（#1226，2026-10-21）**：`backend-fast` / `backend-platforms` 的 pytest 步骤设
+  `TAVOTTO_TEST_HANG_SECONDS=900`。任一用例（含 setup / teardown）超过它，`tests/conftest.py` 的
+  `pytest_runtest_protocol` 包装钩子起的 daemon 计时线程打出 nodeid、所有线程栈、本进程的子进程树，
+  `os._exit(1)`——一个点名的红灯，代替「整片跑满 90 分钟被取消、顺带踢走队列里无关的 PR」。同一开关让
+  ≥60 秒（`TAVOTTO_TEST_SLOW_NOTE_SECONDS`）的用例结束时写一行 `[slow-test …]`，被取消的 job 也留得下
+  时间线。本机不设变量 = 整个机制关闭。机制在 `tests/support/hang_watchdog.py`，合同在
+  `tests/test_hang_watchdog.py`（含「ci.yml 两条分片 pytest 步骤都设了、且 300 < 值 ≤ 1800」）。
+  不用 `faulthandler.dump_traceback_later(exit=True)`：它全进程只有一个定时器，会和 pytest 内置的
+  `faulthandler_timeout` 互相覆盖，也打不出 nodeid。10-20 的那几次取消**不是挂死**而是慢（见 #1226
+  的结论评论）：所以 900 秒只管真挂死，慢的那类由 `[slow-test]` 时间线和权重重算处理。

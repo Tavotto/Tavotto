@@ -713,19 +713,18 @@ describe('冲突岔口「仍然覆盖」', () => {
 })
 
 
-describe('SVG snapshots are a nonblocking save warning', () => {
-  it('Save As closes successfully and explains which sources may require an explicit rerun', async () => {
+describe('SVG snapshot gaps stay silent on Save As', () => {
+  it('Save As closes with the plain done message even when the backend reports snapshot gaps', async () => {
     useUiStore.setState({ layoutConflict: null, layoutName: null })
     await useDocumentStore.getState().switchDocument(LAYOUT as ProjectDocument, 'd_svg_save')
-    mockSave.mockResolvedValueOnce({ ok: true, revision: 'rev-svg', svg_snapshot_warnings: ['source.pdf'] })
+    mockSave.mockResolvedValueOnce({ ok: true, revision: 'rev-svg', svg_snapshot_warnings: ['source.pdf'] } as never)
     await open()
     await clickSave()
     expect(useUiStore.getState().layoutOpen).toBe(false)
-    expect(useUiStore.getState().statusTone).toBe('info')
+    expect(useUiStore.getState().statusTone).toBe('done')
     const message = formatMessage(useUiStore.getState().status)
-    expect(message).toContain('排版已保存')
-    expect(message).toContain('source.pdf')
-    expect(message).toContain('重新运行脚本')
+    expect(message).not.toContain('source.pdf')
+    expect(message).not.toContain('SVG')
     expect(knownLayoutRevision(mockSave.mock.calls[0][0])).toBe('rev-svg')
   })
 })

@@ -17,8 +17,11 @@
 
 /** 放下来的东西该怎么处理 */
 export type DropTarget =
-  /** 拿到了路径：打开 `folder`（放下的是 .py 就是它的上级目录，放下的是目录就是它自己） */
-  | { kind: 'path'; folder: string }
+  /**
+   * 拿到了路径：打开 `folder`（放下的是 .py 就是它的上级目录，放下的是目录就是它自己）；
+   * 放下的是 .py 时 `script` 是它在那个目录里的文件名（打开后要运行的就是它），目录是 null
+   */
+  | { kind: 'path'; folder: string; script: string | null }
   /** 是 .py，但宿主没给路径：退回选择器，并说出是哪个文件 */
   | { kind: 'no-path'; name: string }
   /** 放下的不是 .py（也不是目录；带了 file:// 路径的文件同样落在这里） */
@@ -58,6 +61,11 @@ export function parentDir(path: string): string {
 /** 选择器 / 拖放给出的一条路径 → 该打开的目录。`.py` 取上级，其余原样（当目录打开） */
 export function folderForPath(path: string): string {
   return isScriptName(path) ? parentDir(path) : path
+}
+
+/** 选择器 / 拖放给出的一条路径 → 打开 `folderForPath` 之后要运行的脚本（项目相对，即文件名）；不是 .py 就 null */
+export function scriptForPath(path: string): string | null {
+  return isScriptName(path) ? baseName(path) : null
 }
 
 /**
@@ -100,7 +108,7 @@ export function dropTargetOf(dt: DropData): DropTarget {
       .find((l) => l && !l.startsWith('#'))
     const path = first ? pathFromFileUri(first) : null
     if (path) {
-      if (isScriptName(path) || looksLikeDir(path)) return { kind: 'path', folder: folderForPath(path) }
+      if (isScriptName(path) || looksLikeDir(path)) return { kind: 'path', folder: folderForPath(path), script: scriptForPath(path) }
       // 拿到了路径但放下的是 pdf 之类：如实说不收，不拿它当项目去开（Codex #688）
       return { kind: 'not-script', name: baseName(path) }
     }

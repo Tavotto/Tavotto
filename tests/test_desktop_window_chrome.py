@@ -262,3 +262,13 @@ def test_window_state_plugin_never_restores_decorations():
         expr
         == "tauri_plugin_window_state::StateFlags::all()-tauri_plugin_window_state::StateFlags::DECORATIONS"
     ), expr
+
+
+def test_both_windows_install_on_new_window():
+    """`target=_blank` / `window.open` 不经 `on_navigation`（macOS 静默无反应、Windows 弹内置小窗）：
+    主窗口与远程实例窗口的 builder 都要装 `on_new_window`，外链才会交给系统浏览器。"""
+    code = rust_code(MAIN_RS.read_text(encoding="utf-8"))
+    sites = window_builders(code)
+    for label in ("MAIN_WINDOW", "REMOTE_WINDOW"):
+        methods = chain_methods(code, sites[label])
+        assert "on_navigation" in methods and "on_new_window" in methods, (label, methods)

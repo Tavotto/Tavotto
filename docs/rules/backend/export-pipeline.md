@@ -92,7 +92,7 @@
     route 算不出时响应不带 `route`（附加事实，validate 不因此失败）。原图范围里嵌入磁盘原件的 PDF / PNG / TIFF，
     产物 manifest 的 `provenance.sources` 记那份原件的 SourceArtifact（现画的临时 PDF 没有可独立核对的回执，不编）。
     与前端 `exportRoute.ts` 的 `embedsDiskBitmap` 同源对：`tests/golden/export_route_vectors.json`；看护 `tests/test_export_route.py`、
-    `tests/test_export_route_vectors.py`。前端 2–5 号读后端 route 是 A2b，未做。
+    `tests/test_export_route_vectors.py`。每个面板另有 `offers.eps`（不论勾没勾，EPS 给不给得出）。前端读 route 见 `docs/rules/frontend/export-pipeline.md`。
   * **有限产物验证（U08，ADR 0068）**：`exportjob.run(inspect=…)` 在 `produce` 之后、提交点之前重新打开
     每个封口的临时文件（接线层 `engine/artifactinspect.py`，两个入口共用；检查器 `rendercore/inspector.py`），拒绝的那一项 `artifact_rejected` 不发布（partial 语义不变），合格的
     带 `Output.manifest`（`inspector.summary()` 投影，旧字段一个不动）。请求可带 `inspection: {mode: standard|strict,

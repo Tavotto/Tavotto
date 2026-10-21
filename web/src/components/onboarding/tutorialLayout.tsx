@@ -23,7 +23,13 @@ const ASPECT = DEMO_FIGURE.figure.width / DEMO_FIGURE.figure.height
  */
 export const FigureStage = forwardRef<
   HTMLDivElement,
-  { children: ReactNode; overlay?: ReactNode; className?: string; frameClassName?: string }
+  {
+    children: ReactNode
+    /** 覆盖层；给函数时拿到图框此刻的像素尺寸（欢迎页的标注按它现算落点） */
+    overlay?: ReactNode | ((size: { w: number; h: number }) => ReactNode)
+    className?: string
+    frameClassName?: string
+  }
 >(function FigureStage({ children, overlay, className, frameClassName }, ref) {
   const host = useRef<HTMLDivElement>(null)
   const [size, setSize] = useState<{ w: number; h: number } | null>(null)
@@ -58,7 +64,7 @@ export const FigureStage = forwardRef<
           style={{ width: size.w, height: size.h }}
         >
           {children}
-          {overlay}
+          {typeof overlay === 'function' ? overlay(size) : overlay}
         </div>
       )}
     </div>

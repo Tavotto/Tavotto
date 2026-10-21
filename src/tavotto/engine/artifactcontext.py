@@ -23,7 +23,8 @@ MAX_PIXELS = figcapture.ARTIFACT_VALIDATION_MAX_PIXELS
 PDF_DPI = 300
 
 
-#: 实验开关（`config.experiments.script_backed_figure`，默认关）：关着时来源驱动策略一律 409 `policy_disabled`。
+#: 应急开关（`config.experiments.script_backed_figure`）：10-21 起**默认开**（Win11 真机 + macOS WebKit/Chromium 验过，
+#: 用户裁决）；只有显式写 `false` 才关，关着时来源驱动策略一律 409 `policy_disabled`。
 EXPERIMENT = "script_backed_figure"
 #: 来源驱动采用的准入结论（ADR 0139 §二）。`needs_confirmation` 永不升级为 `exact`。
 STATUS_EXACT = "exact"
@@ -31,7 +32,9 @@ STATUS_NEEDS_CONFIRMATION = "needs_confirmation"
 
 
 def script_backed_enabled() -> bool:
-    return config.experiment_enabled(EXPERIMENT)
+    """默认开；只有布尔 `False` 关（字符串 "false"、0 不算——开关值要么是布尔，要么当没写）。"""
+    experiments = config.load().get("experiments")
+    return not (isinstance(experiments, dict) and experiments.get(EXPERIMENT) is False)
 
 
 def _require(ok, reason, message):

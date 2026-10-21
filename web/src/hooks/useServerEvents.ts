@@ -7,7 +7,7 @@ import {
   subscribeEvents,
   type ServerEvent,
 } from '@/lib/api'
-import { setAiSettledNotifier, useAiStore, type DonePayload } from '@/store/aiStore'
+import { hintAiRev, setAiSettledNotifier, useAiStore, type DonePayload } from '@/store/aiStore'
 import { useDepRepairStore } from '@/store/depRepairStore'
 import { usePackageStore } from '@/store/packageStore'
 import { useDocumentStore } from '@/store/documentStore'
@@ -325,7 +325,10 @@ export function handleServerEvent(ev: ServerEvent) {
       const ai = useAiStore.getState()
       // **只对自己持有的会话起副作用**（提示、失败说明……）：老后端的 `ai.done` 不带 pj，上面那道
       // 项目判据拦不住它；切项目之后 A 的会话已不在列表里，这里就一个字都不说（#589）
-      if (!ai.finish(ev)) break
+      const handled = ai.finish(ev)
+      // 事件可能丢（或本页没有这个会话）：它带的版本号只当"去对账"的提示，事实以增量为准（#1115）
+      hintAiRev(ev.rev)
+      if (!handled) break
       announceAiDone(ev)
       break
     }

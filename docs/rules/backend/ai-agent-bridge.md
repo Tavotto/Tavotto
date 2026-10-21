@@ -179,6 +179,16 @@
   **不收尾、不改行**：高负载下心跳线程被饿住很常见，此时 pid 活着、CLI 可能仍在写脚本，不能把行收成终态。**登记与入内存之间的窗口**：`record_start` 提交之后、`SESSIONS[sid]` 放进去之前（隔着 Popen / `begin_registered`），别的进程已能写意图——tick 遇到"属本进程 token、仍 running、不在 `SESSIONS`"**不消费意图**（不写 `cancel_result`），`run()` 放进内存后立刻 `_execute_cancel_intent`（与 tick 同一函数；`_INTENT_LOCK` 只护"重查 + 标记执行中"，**取消在锁外做**——`_terminate` 会 spawn 子进程（Windows 的 taskkill 是一次 Popen），持锁取消会被任何重入自锁；重入 / 并发的第二个入口被 `_INTENT_RUNNING` 挡住，锁序 `_REQUEST_LOCK` → `_INTENT_LOCK`）补查一次；spawn 失败 / 会话自己先收尾时意图随终态记 `failed` / `finished`。属主死亡时尚未执行的意图：收尾把 `running` 行转 `cancelled`（用户要的是取消）而不是 `interrupted`。
   **盲区**：pid 复用后最长 `OWNER_BEAT_DEAD_MS` 内仍按活着算（忙碌判定会多挡一阵）；属主真卡死而 pid 活着时，行一直开到判死线；这两条与启动清理一样只改状态、不杀孤儿 CLI。
   取消延迟最坏 ≈ `OWNER_TICK_S`。
+- **会话版本号与增量对账（#1115，`tests/test_ai_session_rev.py`）**：断线 / 切项目 / 刷新的间隙里结束的任务，`ai.done` 是一条连接上的瞬时事件，
+  接受时待确认账本行已删（ADR 0132）、恢复查询又只取 open——本页没有任何锚点。事实放在库里、客户端按版本对账，不改账本生命周期、不给 SSE 做重放缓冲、不建新表：
+  `sessions.rev`（`_ADDED_COLUMNS`，看列在不在；老行 NULL = 纪元之前，不进增量）。**凡改变对外可见状态的写**（`record_start` / `record_end` / `record_task_phase` /
+  `update_status` / `_close_dead_owner_rows` / `request_cancel` 写意图）在**同一个 `BEGIN IMMEDIATE` 事务里**取版本计数器 `ai_rev_counter`（单行表，迁移时从现有 `MAX(rev)` 起算）自增后的值盖到该行（`_next_rev` / `_stamp`，只能在写锁内调；
+  所以这几个写都走 `_immediate`，跨进程严格递增、不撞号；**计数器不随会话行删除回落**——取 `MAX(rev)` 的话删掉最新行后新会话会复用 ≤ 客户端水位的 rev，错过的终态被永久忽略）。心跳 `owner_beat_ms` / `cancel_result` / 置顶 / 删除不抬 rev。`GET /api/ai/sessions/changes?since=<rev>`
+  （同 `/api/ai/*` 的会话认证，按当前项目隔离）回 `{head, more, sessions}`：先读全局计数器再读 `rev <= head` 的行，返回之后才提交的写不会被水位跳过；`head` 是全局水位
+  （别的项目的写只让它变大、不泄露内容）；不带 `since` 只回此刻的 `head`（客户端取起点）；超 `CHANGES_PAGE` 行时 `more: true`、`head` 只推进到最后一行；
+  先 `reap_dead_owners`（死属主的收尾也是变化）。每行是 `CHANGE_DTO_KEYS` 的精简快照（判终态 + 建占位的摘要列，**不含**转录 / diff / refresh——终态详情仍只有
+  `GET /api/ai/sessions/<sid>` 一份）；`final` 与会话详情同一个判据，本进程内存里的会话认它自己的 `final`。`ai.done` 带终态那次写的 `rev`，**只是"去对账"的提示**。
+  **已知限制**：旧版本进程（不写 rev）与新版本共用数据目录时，旧进程写的行不进增量；水位在前端（页面内存 + `sessionStorage`，见前端细则），后端不存。
 - 会话历史在 `engine/ai_history.py`（SQLite `cache/ai_history.sqlite3`，
   按 project 列过滤）；启动时 running→interrupted + purge(180d，pinned 豁免)；
   历史 API：list（分页/搜索/筛选）/delete/pin。前端默认只显示人类可读目标，

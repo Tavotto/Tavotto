@@ -92,7 +92,13 @@
     "taskFailedChanged": "改动已写入，但核对发现数据或输出变了；不对的话可以回滚到修改前。",
     "taskPartial": "改动已写入，但有检查没能完成，结果未经完整核对。",
     "taskRejected": "改动没通过写回前检查，没有写入项目。",
-    "unmetHeading": "未满足的检查"
+    "unmetHeading": "未满足的检查",
+    "dataFigurePartial": "有些行不是数字，没有画出来；脚本已新建，结果未经完整核对。",
+    "dataFigureNeedsInput": "没能判断哪列做横轴、哪列做纵轴。请在指令里点名这两列。",
+    "dataFigureNeedsInputExample": "没能判断哪列做横轴、哪列做纵轴。请在指令里点名这两列，例如“画 {{y}} 随 {{x}} 的变化”。",
+    "dataFigureFailedWritten": "新脚本已写进项目，但画出来的数据与 CSV 对不上；不对的话可以删掉这份新脚本。",
+    "dataFigureUnconfirmed": "没收到结果，可能已经生成了；先查询结果，别重复提交。",
+    "dataFigureReconcile": "查询结果"
   },
   "panel": {
     "abort": "中止",
@@ -173,7 +179,13 @@
     "taskRejected": "修改没通过写回前检查，项目未改动",
     "taskVerified": "已改，数据核对一致",
     "correcting": "上一版没通过写回前检查，正在自动修正…",
-    "taskVerifiedCorrected_other": "已改（自动修正 {{count}} 次），数据核对一致"
+    "taskVerifiedCorrected_other": "已改（自动修正 {{count}} 次），数据核对一致",
+    "dataFigureRunning": "正在读取数据并出图…",
+    "dataFigureDone": "已新建脚本 {{script}}",
+    "dataFigurePartial": "已新建脚本 {{script}}，部分行没有画出",
+    "dataFigureNeedsInput": "没有出图，需要你指明用哪两列",
+    "dataFigureFailedWritten": "已生成 {{script}}，但核对没通过",
+    "dataFigureUnconfirmed": "结果未确认"
   },
   "status": {
     "aiAlreadyRan": "这条指令已经执行过（任务记录已被删除），不会再次发送。",
@@ -195,5 +207,19 @@
     "running": "运行中",
     "timeout": "超时"
   },
-  "tabLabel": "改图助手"
+  "tabLabel": "改图助手",
+  "dataFigure": {
+    "open": "从数据出图",
+    "title": "从数据出图",
+    "empty": "项目里没有 CSV 数据文件",
+    "loadFailed": "没能读取数据文件列表",
+    "truncated": "文件太多，只列出前一部分",
+    "fileLabel": "数据文件",
+    "filePlaceholder": "选择 CSV 文件",
+    "instructionLabel": "想画什么",
+    "instructionPlaceholder": "例如：画 y 随 x 的变化",
+    "generate": "生成",
+    "cancel": "取消",
+    "unconfirmedHint": "上一次的结果还没确认，请先在对话里查询结果。"
+  }
 }

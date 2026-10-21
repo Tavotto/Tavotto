@@ -17,6 +17,7 @@ TAF 开关只在本进程里打开，**不碰用户的任何配置**。默认只
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import shutil
@@ -48,7 +49,27 @@ ROW_FIELDS = (
     "rounds",
     "wall_s",
     "error",
+    "prompt_sha256",
+    "rep",
 )
+#: `--real` 一次最多跑多少次**实际 Agent CLI 调用**（真实模型要花用户的额度；开跑前按「场景数 × 每任务最大调用数」
+#: 拒绝，运行中按真实调用次数封顶，不悄悄截断）
+DEFAULT_MAX_REAL_RUNS = 30
+
+
+def agent_runs_per_task() -> int:
+    """一个改图任务最多起几次 Agent CLI：读任务契约（`ai_figure_edit.envelope_for` 的 budget），不在这里写死。"""
+    from tavotto.engine import ai_figure_edit
+
+    env = ai_figure_edit.envelope_for(
+        agent="codex",
+        project_key="bench",
+        script_rel="figure.py",
+        prompt="bench",
+        rid=None,
+        base_sha256="0" * 64,
+    )
+    return env.budget.max_agent_runs
 
 
 def load_scenarios(split: str) -> list[dict]:
@@ -151,7 +172,43 @@ def _metrics(rows: list[dict], aggregate_only: bool = False) -> dict:
     }
 
 
-def _environment(app_module) -> dict:
+def _agent_resolution(agent: str):
+    """与 `ai_bridge._cmd` 同一份解析结果（`ai_agents.resolve`，带缓存）：实际启动的可执行与版本以它为准，
+    不再自己在 PATH 里 `which`（自定义路径 / 常见位置回退 / 内置都会让两者分叉）。"""
+    from tavotto.engine import ai_agents
+
+    definition = ai_agents.get_agent(agent)
+    if definition is None:
+        return None
+    try:
+        return ai_agents.resolve(definition)
+    except Exception:  # noqa: BLE001 —— 探测失败只是报告里少一项
+        return None
+
+
+def _endpoint_identity(endpoint: dict | None) -> dict:
+    """接口的**非敏感**身份：id / label / base_url 的 host / `{id, base_url}` 的 sha256 前 12 位。
+    绝不带 api_key、token、完整 URL（路径与 query 可能含凭据）。没有接口 = CLI 默认账号。"""
+    if not endpoint:
+        return {"kind": "cli_default"}
+    from urllib.parse import urlsplit
+
+    base_url = str(endpoint.get("base_url") or "")
+    try:
+        host = urlsplit(base_url).hostname
+    except ValueError:
+        host = None
+    ident = json.dumps({"id": endpoint.get("id"), "base_url": base_url}, sort_keys=True)
+    return {
+        "kind": "provider",
+        "id": endpoint.get("id"),
+        "label": endpoint.get("label"),
+        "host": host,
+        "fingerprint": hashlib.sha256(ident.encode("utf-8")).hexdigest()[:12],
+    }
+
+
+def _environment(app_module, executor: str = "replay") -> dict:
     from tavotto.engine import ai_prompt_pack, pool
 
     def git_sha():
@@ -180,7 +237,7 @@ def _environment(app_module) -> dict:
     return {
         "git_sha": git_sha(),
         "pack": {"id": ai_prompt_pack.DEFAULT.pack_id, "version": ai_prompt_pack.DEFAULT.version},
-        "executor": "replay",
+        "executor": executor,
         "os": sys.platform,
         "python": sys.version.split()[0],
         "matplotlib": mpl,
@@ -188,8 +245,25 @@ def _environment(app_module) -> dict:
 
 
 # --------------------------------------------------------------------------- 一次运行
-def run(scenarios: list[dict], work: Path, *, negatives: bool = False) -> dict:
-    """在 `work` 下逐场景跑，回 `{environment, rows, metrics}`。调用方负责 `TAVOTTO_DATA_DIR` 等已指向隔离目录。"""
+def run(
+    scenarios: list[dict],
+    work: Path,
+    *,
+    negatives: bool = False,
+    real_agent: str | None = None,
+    pack: dict | None = None,
+    model: str | None = None,
+    effort: str | None = None,
+    max_runs: int | None = None,
+    repeat: int = 1,
+) -> dict:
+    """在 `work` 下逐场景跑，回 `{environment, rows, metrics}`。调用方负责 `TAVOTTO_DATA_DIR` 等已指向隔离目录。
+
+    `real_agent`（6c）：不回放，交给真实的编码 Agent CLI（产品同一条 `/api/ai/run` 路径、同一套 sandbox 参数），只跑参考解
+    那一档（反例是回放专用）。`pack`：本次运行改用这份候选 Prompt Pack（`ai_prompt_pack.load` 校验；只在本进程里替换
+    `DEFAULT`，跑完恢复——产品默认值不由工具改）。
+    `model` / `effort`：透传进 `/api/ai/run`，两臂钉住同一个。`max_runs`：实际 Agent CLI 调用次数上限（含修正那次），
+    到了之后再来的调用不 spawn，该次任务记 `max_runs_reached`。"""
     from tavotto import app as m
     from tavotto.engine import (
         ai_bridge,
@@ -202,44 +276,124 @@ def run(scenarios: list[dict], work: Path, *, negatives: bool = False) -> dict:
         project_watch,
     )
 
+    if real_agent:
+        # 回放留下的参考解（`<base>/_replay`）不能被同一 base 下的真实运行读到：先删掉本工具建的目录，
+        # 再兜底——base 下任何残留的 `*.edits.json` 都拒绝运行（此时还没调任何 CLI）
+        shutil.rmtree(work.parent / "_replay", ignore_errors=True)
+        if work.parent.is_dir():
+            leftovers = sorted(work.parent.rglob("*.edits.json"))
+            if leftovers:
+                raise RuntimeError(
+                    f"{work.parent} 下有残留的参考解文件（{leftovers[0]} 等），真实模式拒绝运行；请换一个干净的 --work"
+                )
+
     real_settings, real_cmd = config.ai_settings, ai_bridge._cmd
     real_usable, real_resolve, real_env = (
         ai_bridge.require_usable,
         ai_bridge.ai_providers.resolve,
         ai_bridge._spawn_env,
     )
+    from tavotto.engine import ai_prompt_pack
+
+    real_pack = ai_prompt_pack.DEFAULT
     edits_box: dict = {}
 
+    calls = {"n": 0, "executable": None, "endpoint": None}
+
+    def count_call():
+        if max_runs is not None and calls["n"] >= max_runs:
+            edits_box["blocked"] = True
+            raise ai_bridge.AgentError("max_runs_reached")
+        calls["n"] += 1
+
     def replay_cmd(agent_id, prompt, cwd, model=None, effort=None, endpoint=None):
+        count_call()
+        edits_box["prompt_sha256"] = hashlib.sha256(prompt.encode("utf-8")).hexdigest()
         return [sys.executable, "-c", _REPLAY, cwd, edits_box["path"]], {}
 
-    config.ai_settings = lambda: {"taf": {"enabled": True}}  # 只在本进程里打开，不写配置
-    ai_bridge._cmd = replay_cmd
-    ai_bridge.require_usable = lambda agent: {}
-    ai_bridge.ai_providers.resolve = lambda agent, endpoint_id: None
-    ai_bridge._spawn_env = lambda cmd0, extra: dict(os.environ)
+    def real_cmd_recording(agent_id, prompt, cwd, model=None, effort=None, endpoint=None):
+        count_call()
+        edits_box["prompt_sha256"] = hashlib.sha256(prompt.encode("utf-8")).hexdigest()
+        cmd, env = real_cmd(agent_id, prompt, cwd, model=model, effort=effort, endpoint=endpoint)
+        calls["executable"] = cmd[0]  # 实际 spawn 的那一个
+        calls["endpoint"] = _endpoint_identity(endpoint)
+        return cmd, env
+
+    def overlay_settings():
+        """叠加而不是替换：用户配置的第三方接口等其余设置原样保留，只在本进程里把 TAF 打开（不写配置）。"""
+        base = real_settings() or {}
+        return {**base, "taf": {**(base.get("taf") or {}), "enabled": True}}
+
+    config.ai_settings = overlay_settings
+    if pack is not None:
+        ai_prompt_pack.DEFAULT = ai_prompt_pack.load(pack)
+    replay = real_agent is None
+    if replay:
+        ai_bridge._cmd = replay_cmd
+        ai_bridge.require_usable = lambda agent: {}
+        ai_bridge.ai_providers.resolve = lambda agent, endpoint_id: None
+        ai_bridge._spawn_env = lambda cmd0, extra: dict(os.environ)
+    else:
+        # 真实 CLI：Agent 可用性、接口选择、spawn 环境全走产品路径；只旁路记一下提示词的 sha256（不落原文）
+        ai_bridge._cmd = real_cmd_recording
+        negatives = False
+    agent = real_agent or "codex"
     m.app.config["TESTING"] = True
     client = m.app.test_client()
     rows: list[dict] = []
     try:
         for s in scenarios:
-            jobs = [("ref", s["reference_solution"])]
+            # 真实模式不把参考解带进来（`_one` 也不会为它落盘）
+            jobs = [("ref", None if real_agent else s["reference_solution"])]
             if negatives:
                 jobs += [(n["id"], n["edits"]) for n in s.get("negative_variants", [])]
-            for variant, edits in jobs:
-                rows.append(
-                    _one(m, client, s, variant, edits, work, edits_box, discover, figureverify)
+            for (variant, edits), rep in [(j, k) for j in jobs for k in range(1, repeat + 1)]:
+                row = _one(
+                    m,
+                    client,
+                    s,
+                    variant,
+                    edits,
+                    work,
+                    edits_box,
+                    discover,
+                    figureverify,
+                    agent,
+                    replay=replay,
+                    model=model,
+                    effort=effort,
+                    rep=rep,
                 )
+                row["rep"] = rep
+                if edits_box.pop("blocked", False):
+                    row["error"] = "max_runs_reached"
+                rows.append(row)
                 m.reset_projects()
                 pool.shutdown_all(wait=True)
                 project_watch.stop()
     finally:
+        ai_prompt_pack.DEFAULT = real_pack
         config.ai_settings, ai_bridge._cmd = real_settings, real_cmd
         ai_bridge.require_usable = real_usable
         ai_bridge.ai_providers.resolve = real_resolve
         ai_bridge._spawn_env = real_env
         ai_tasks.unregister(ai_figure_edit.TASK_TYPE)
-    return {"environment": _environment(m), "rows": rows, "metrics": _metrics(rows)}
+    res = _agent_resolution(agent) if real_agent else None
+    version = res.version if res is not None else None
+    env = _environment(m, f"real:{agent} {version or '?'}" if real_agent else "replay")
+    env.update(
+        {
+            "executable": calls["executable"] if real_agent else None,
+            "version": version,
+            "endpoint": calls["endpoint"] or ({"kind": "cli_default"} if real_agent else None),
+            "model": model,
+            "effort": effort,
+            "agent_calls": calls["n"],
+        }
+    )
+    if pack is not None:
+        env["pack"] = {"id": pack["pack_id"], "version": pack["version"], "source": pack["source"]}
+    return {"environment": env, "rows": rows, "metrics": _metrics(rows)}
 
 
 def _row(s, variant, **kw) -> dict:
@@ -248,8 +402,25 @@ def _row(s, variant, **kw) -> dict:
     return row
 
 
-def _one(m, client, s, variant, edits, work, edits_box, discover, figureverify) -> dict:
-    proj = work / f"{s['id']}__{variant}"
+def _one(
+    m,
+    client,
+    s,
+    variant,
+    edits,
+    work,
+    edits_box,
+    discover,
+    figureverify,
+    agent="codex",
+    *,
+    replay=True,
+    model=None,
+    effort=None,
+    rep=1,
+) -> dict:
+    # 重复跑（`--repeat`）各用自己的项目目录；rep=1 时目录名与以前相同
+    proj = work / (f"{s['id']}__{variant}" if rep == 1 else f"{s['id']}__{variant}__r{rep}")
     if proj.exists():
         shutil.rmtree(proj)  # 本工具在 work 下建的目录；同一 --work 重跑时先清掉上次的
     shutil.copytree(FIXTURES / s["fixture"], proj)
@@ -267,9 +438,14 @@ def _one(m, client, s, variant, edits, work, edits_box, discover, figureverify) 
         ),
         encoding="utf-8",
     )
-    edits_path = proj.parent / f"{proj.name}.edits.json"
-    edits_path.write_text(json.dumps(edits), encoding="utf-8")
-    edits_box["path"] = str(edits_path)
+    if replay:
+        # 参考解只在回放时落盘，且放在 work 的父目录下的 `_replay/`——不在任何项目目录里、也不在项目目录的父目录里
+        # （真实模式根本不生成这个文件：Agent 翻周边目录也读不到标准答案）
+        replay_dir = work.parent / "_replay"
+        replay_dir.mkdir(parents=True, exist_ok=True)
+        edits_path = replay_dir / f"{proj.name}.edits.json"
+        edits_path.write_text(json.dumps(edits), encoding="utf-8")
+        edits_box["path"] = str(edits_path)
     import pikepdf  # 开发侧依赖：面板要先在磁盘上有个文件，渲染接口才认（与 tests/test_ai_figure_edit_app.py 同法）
 
     for st in stems:
@@ -301,15 +477,18 @@ def _one(m, client, s, variant, edits, work, edits_box, discover, figureverify) 
     try:
         before = render()
         data_before = user_files()  # 改前渲染之后、任务之前：任务期间任何用户文件变化都算非预期修改
-        r = client.post(
-            "/api/ai/run", json={"agent": "codex", "prompt": s["instruction"], "id": f"{stem}.pdf"}
-        )
+        body = {"agent": agent, "prompt": s["instruction"], "id": f"{stem}.pdf"}
+        if model:
+            body["model"] = model
+        if effort:
+            body["effort"] = effort
+        r = client.post("/api/ai/run", json=body)
         if r.status_code != 200:
             return _row(s, variant, error=f"run {r.status_code}")
         sid = r.get_json()["session"]
         pump = next((t for t in threading.enumerate() if t.name == f"ai-{sid}"), None)
         if pump is not None:
-            pump.join(300)
+            pump.join(1200)  # 真实 CLI 最长也在桥自己的超时（TIMEOUT_S）里收尾
         from tavotto.engine import ai_bridge, ai_tasks
 
         sess = ai_bridge.SESSIONS[sid]
@@ -334,9 +513,56 @@ def _one(m, client, s, variant, edits, work, edits_box, discover, figureverify) 
         preserve=preserve,
         unintended=unintended,
         rounds=len(attempts) + 1,
+        prompt_sha256=edits_box.get("prompt_sha256"),
         wall_s=wall,
         error=sess.get("error"),
     )
+
+
+def compare(a: dict, b: dict) -> str:
+    """两份报告 → 可审查的 Markdown：环境、指标逐项差、逐场景结局变化。只比两边都跑了的场景。"""
+    ea, eb = a.get("environment", {}), b.get("environment", {})
+    lines = []
+    keys = ("model", "effort", "executable", "version", "endpoint")
+    if any(ea.get(k) != eb.get(k) for k in keys):
+        lines += ["⚠ 两臂执行配置不同，差值不可归因于 Pack", ""]
+    lines += [
+        "| | A | B |",
+        "| --- | --- | --- |",
+        f"| Pack | {ea.get('pack')} | {eb.get('pack')} |",
+        f"| 执行器 | {ea.get('executor')} | {eb.get('executor')} |",
+        f"| git | {ea.get('git_sha')} | {eb.get('git_sha')} |",
+        f"| 模型 / effort | {ea.get('model')} / {ea.get('effort')} | {eb.get('model')} / {eb.get('effort')} |",
+        f"| 可执行 / 版本 | {ea.get('executable')} {ea.get('version')} | {eb.get('executable')} {eb.get('version')} |",
+        "",
+        "| 指标 | A | B | B − A |",
+        "| --- | --- | --- | --- |",
+    ]
+    ma, mb = a.get("metrics", {}), b.get("metrics", {})
+    for k in sorted(ma.keys() | mb.keys()):
+        va, vb = ma.get(k), mb.get(k)
+        if isinstance(va, list) or isinstance(vb, list):
+            continue
+        diff = (
+            round(vb - va, 4)
+            if isinstance(va, (int, float)) and isinstance(vb, (int, float))
+            else ""
+        )
+        lines.append(f"| {k} | {va} | {vb} | {diff} |")
+    ra = {(r["id"], r["variant"], r.get("rep") or 1): r for r in a.get("rows", [])}
+    rb = {(r["id"], r["variant"], r.get("rep") or 1): r for r in b.get("rows", [])}
+    changed = [
+        (key, ra[key], rb[key])
+        for key in sorted(ra.keys() & rb.keys())
+        if (ra[key]["outcome"], ra[key]["goal"], ra[key]["preserve"])
+        != (rb[key]["outcome"], rb[key]["goal"], rb[key]["preserve"])
+    ]
+    lines += ["", f"逐场景变化（{len(changed)} 个，结局 / 目标 / 保持）："]
+    for (sid, var, rep), x, y in changed:
+        lines.append(
+            f"- {sid}/{var}{'' if rep == 1 else f'#{rep}'}: {x['outcome']}/{x['goal']}/{x['preserve']} → {y['outcome']}/{y['goal']}/{y['preserve']}"
+        )
+    return "\n".join(lines) + "\n"
 
 
 def main(argv=None) -> int:
@@ -348,7 +574,56 @@ def main(argv=None) -> int:
     ap.add_argument("--negatives", action="store_true", help="同时回放每个场景的反例")
     ap.add_argument("--only", default="", help="逗号分隔的场景 id")
     ap.add_argument("--holdout", action="store_true", help="跑 holdout，只出汇总分")
+    ap.add_argument(
+        "--real",
+        metavar="AGENT",
+        default=None,
+        help="用真实编码 Agent CLI（如 codex）代替回放；花用户的额度",
+    )
+    ap.add_argument(
+        "--pack",
+        type=Path,
+        default=None,
+        help="本次改用这份候选 Prompt Pack（JSON）；先过 holdout 防泄漏守卫",
+    )
+    ap.add_argument(
+        "--repeat", type=int, default=1, help="每个场景跑几次（估方差；真实模式按次数计入上限）"
+    )
+    ap.add_argument(
+        "--max-runs",
+        type=int,
+        default=DEFAULT_MAX_REAL_RUNS,
+        help="--real 时最多起多少次**实际 Agent CLI 调用**（含修正那次）；开跑前按 场景数 × 每任务最大调用数 检查",
+    )
+    ap.add_argument("--model", default=None, help="钉住模型（--real 必填；两臂必须相同）")
+    ap.add_argument("--effort", default=None, help="钉住推理强度（可选；两臂必须相同）")
+    ap.add_argument(
+        "--compare", nargs=2, type=Path, metavar=("A", "B"), help="比较两份报告，输出 Markdown"
+    )
     args = ap.parse_args(argv)
+    if args.compare:
+        a, b = (json.loads(p.read_text(encoding="utf-8")) for p in args.compare)
+        text = compare(a, b)
+        if args.out:
+            args.out.write_text(text, encoding="utf-8")
+        else:
+            print(text)
+        return 0
+    if args.real and not args.model:
+        print(
+            "--real 必须用 --model 钉住模型（两臂用同一个，否则差值不可归因于 Pack）",
+            file=sys.stderr,
+        )
+        return 2
+    pack = None
+    if args.pack:
+        raw = args.pack.read_text(encoding="utf-8")
+        try:
+            assert_no_leak([raw], load_scenarios("holdout"))
+        except LeakError as exc:
+            print(f"候选 Pack 泄漏守卫未通过：{exc}", file=sys.stderr)
+            return 2
+        pack = json.loads(raw)
     work = args.work or Path(tempfile.mkdtemp(prefix="taf-bench-"))
     work.mkdir(parents=True, exist_ok=True)
     # 必须在 import 任何产品模块之前：历史库、候选、快照等路径在 import 时就按数据目录算好
@@ -360,7 +635,31 @@ def main(argv=None) -> int:
     if args.only:
         wanted = set(args.only.split(","))
         scenarios = [s for s in scenarios if s["id"] in wanted]
-    report = run(scenarios, work / "projects", negatives=args.negatives)
+    if args.real:
+        per_task = agent_runs_per_task()
+        need = len(scenarios) * args.repeat * per_task
+        if need > args.max_runs:
+            print(
+                f"--real 最多要起 {need} 次 Agent CLI 调用（{len(scenarios)} 个场景 × 重复 {args.repeat} × 每任务最多 {per_task} 次），"
+                f"超过上限 {args.max_runs}；用 --only 缩小或显式调大 --max-runs",
+                file=sys.stderr,
+            )
+            return 2
+    try:
+        report = run(
+            scenarios,
+            work / "projects",
+            negatives=args.negatives,
+            real_agent=args.real,
+            pack=pack,
+            model=args.model,
+            effort=args.effort,
+            max_runs=args.max_runs if args.real else None,
+            repeat=args.repeat,
+        )
+    except RuntimeError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
     rows = report["rows"]
     report["split"] = split
     if args.holdout:

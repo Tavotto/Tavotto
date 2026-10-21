@@ -15,8 +15,10 @@
 * `app.api_script_backups_restore`：锁内复判 `script_busy` → 算复原字节 → `scriptbackup.replace`。
 * `ai_figure_edit.commit`（TAF 改图，ADR 0138 Phase 3）：锁内核项目里的脚本仍是起跑时那一版 → `write_script` 写回
   候选；会话此刻仍是 `running`，别的改写 / 复原照旧按 `script_busy` 让路。
+* `ai_data_task.commit`（TAF 数据出图，ADR 0138 Phase 5b）：项目锁内核 stem 未被占用 → `create_script` **新建**模板脚本
+  （已存在就失败，永不覆盖）→ 登记。
 
-写脚本字节只经 `write_script()`：没持有这份脚本的锁就抛——门禁落在写的那一刻，不靠调用方记得。
+写脚本字节只经 `write_script()` / `create_script()`：没持有这份脚本的锁就抛——门禁落在写的那一刻，不靠调用方记得。
 纯标准库 + `atomicio`；Flask 父进程 import。
 """
 
@@ -62,3 +64,24 @@ def write_script(script_path: str | os.PathLike, data: bytes, *, mode: int | Non
     if not held(script_path):
         raise RuntimeError(f"写用户脚本必须持有它的 script_guard：{Path(script_path).name}")
     atomicio.write_bytes(Path(script_path), data, mode=mode)
+
+
+def create_script(script_path: str | os.PathLike, data: bytes) -> None:
+    """**新建**一份用户脚本：目标已存在（文件、目录、链接）就抛 `FileExistsError`，永不覆盖；**必须**在它的 `script_guard` 里调。
+
+    `O_CREAT | O_EXCL` 由文件系统原子判定「不存在才建」（并发的两个新建只有一个成功，链接不会被跟随）。写到一半失败就删掉
+    这份**刚由自己建出来的**文件，不留半截。"""
+    if not held(script_path):
+        raise RuntimeError(f"写用户脚本必须持有它的 script_guard：{Path(script_path).name}")
+    path = Path(script_path)
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0), 0o644)
+    try:
+        with os.fdopen(fd, "wb") as fh:
+            fh.write(data)
+            fh.flush()
+            os.fsync(fh.fileno())
+        atomicio.fsync_dir(path.parent)  # 名字本身落盘；失败同样整体放弃
+    except BaseException:
+        with contextlib.suppress(OSError):
+            path.unlink()
+        raise

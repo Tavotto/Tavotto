@@ -220,25 +220,23 @@ print(json.dumps({"result": result, "calls": calls, "saves": saves, "runtime": r
 """
 
 
-@pytest.fixture(scope="module", autouse=True)
-def _shared_mplconfig(tmp_path_factory):
-    # One MPLCONFIGDIR per module: a fresh one makes every probe rebuild Matplotlib's
-    # font cache (~12 s per subprocess on macOS), which pushed a backend-platforms
-    # shard past its timeout. The cache only indexes installed fonts, so sharing it
-    # changes no font resolution.
-    with pytest.MonkeyPatch.context() as mp:
-        mp.setenv("MPLCONFIGDIR", str(tmp_path_factory.mktemp("mpl")))
-        yield
+@pytest.fixture(scope="module")
+def canvas_font_cache(tmp_path_factory):
+    # 每个探针仍是真正的新进程。这里只复用本模块、同一解释器的字体清单，
+    # 不复用 Figure / hook / rcParams，也不读写开发者的 matplotlib 配置。
+    # 这些用例验导出钩子，字体固定在该解释器的 DejaVuSans.ttf；每次清空缓存
+    # 会让 macOS 的 98 个探针重复跑 system_profiler，而不是多验一种导出行为。
+    return tmp_path_factory.mktemp("canvas-font-cache")
 
 
-def _canvas_probe(tmp_path, mode, hook):
+def _canvas_probe(tmp_path, mode, hook, font_cache):
     tmp_path.mkdir(parents=True, exist_ok=True)
     completed = subprocess.run(
         [USER_PYTHON, "-c", CANVAS_PROBE, str(pool.WORKER_PY.parent), str(tmp_path), mode, hook],
         capture_output=True,
         text=True,
         encoding="utf-8",
-        env=child_env(),
+        env=child_env({"MPLCONFIGDIR": str(font_cache)}),
         timeout=120,
     )
     assert completed.returncode == 0, completed.stdout + completed.stderr
@@ -317,8 +315,8 @@ def _svg_title(path):
 
 @needs_user_python
 @pytest.mark.parametrize("hook", CUSTOM_CANVASES)
-def test_canvas_hooks_really_change_pdf_and_svg_content(tmp_path, hook):
-    result = _canvas_probe(tmp_path, "native", hook)
+def test_canvas_hooks_really_change_pdf_and_svg_content(tmp_path, hook, canvas_font_cache):
+    result = _canvas_probe(tmp_path, "native", hook, canvas_font_cache)
     assert result["saves"] == ["pdf", "svg"]
     assert result["calls"]
     assert _pdf_title(tmp_path / "pair.pdf") != _svg_title(tmp_path / "pair.svg")
@@ -326,8 +324,10 @@ def test_canvas_hooks_really_change_pdf_and_svg_content(tmp_path, hook):
 
 @needs_user_python
 @pytest.mark.parametrize("hook", [*CUSTOM_CANVASES, "draw"])
-def test_automatic_pair_rejects_custom_canvas_before_any_serialization(tmp_path, hook):
-    result = _canvas_probe(tmp_path, "snapshot", hook)
+def test_automatic_pair_rejects_custom_canvas_before_any_serialization(
+    tmp_path, hook, canvas_font_cache
+):
+    result = _canvas_probe(tmp_path, "snapshot", hook, canvas_font_cache)
     assert result["result"]["ok"] is False
     assert result["result"]["error"]["code"] == "svg_source_unavailable"
     assert result["calls"] == result["saves"] == []
@@ -337,14 +337,14 @@ def test_automatic_pair_rejects_custom_canvas_before_any_serialization(tmp_path,
 
 @needs_user_python
 @pytest.mark.parametrize("hook", [*CUSTOM_CANVASES, "draw"])
-def test_custom_canvas_pair_preserves_canonical_pdf(tmp_path, hook):
-    result = _canvas_probe(tmp_path / "paired", "pair", hook)
+def test_custom_canvas_pair_preserves_canonical_pdf(tmp_path, hook, canvas_font_cache):
+    result = _canvas_probe(tmp_path / "paired", "pair", hook, canvas_font_cache)
     assert result["result"]["ok"] is True
     assert "svg" not in result["result"]
     assert result["result"]["svg_error"]["code"] == "svg_export_failed"
     assert result["saves"] == ["pdf"]
     assert not (tmp_path / "paired" / "pair.svg").exists()
-    _canvas_probe(tmp_path / "native", "native", hook)
+    _canvas_probe(tmp_path / "native", "native", hook, canvas_font_cache)
     assert _pdf_title(tmp_path / "paired" / "pair.pdf") == _pdf_title(
         tmp_path / "native" / "pair.pdf"
     )
@@ -352,12 +352,12 @@ def test_custom_canvas_pair_preserves_canonical_pdf(tmp_path, hook):
 
 @needs_user_python
 @pytest.mark.parametrize("hook", [*CUSTOM_CANVASES, "draw"])
-def test_standalone_svg_keeps_custom_canvas_native_behavior(tmp_path, hook):
-    result = _canvas_probe(tmp_path / "standalone", "standalone", hook)
+def test_standalone_svg_keeps_custom_canvas_native_behavior(tmp_path, hook, canvas_font_cache):
+    result = _canvas_probe(tmp_path / "standalone", "standalone", hook, canvas_font_cache)
     assert "svg_error" not in result["result"]
     assert result["saves"] == ["svg"]
     assert not (tmp_path / "standalone" / "pair.pdf").exists()
-    _canvas_probe(tmp_path / "native", "native", hook)
+    _canvas_probe(tmp_path / "native", "native", hook, canvas_font_cache)
     assert _svg_title(tmp_path / "standalone" / "pair.svg") == _svg_title(
         tmp_path / "native" / "pair.svg"
     )
@@ -368,8 +368,8 @@ def test_standalone_svg_keeps_custom_canvas_native_behavior(tmp_path, hook):
     "hook", ["native_base", "native_agg", "native_pdf", "native_svg", "native_partialmethod"]
 )
 @pytest.mark.parametrize("mode", ["pair", "snapshot"])
-def test_standard_canvases_still_export_verified_pairs(tmp_path, mode, hook):
-    result = _canvas_probe(tmp_path, mode, hook)
+def test_standard_canvases_still_export_verified_pairs(tmp_path, mode, hook, canvas_font_cache):
+    result = _canvas_probe(tmp_path, mode, hook, canvas_font_cache)
     assert result["result"]["ok"] is True
     assert "svg" in result["result"]
     assert "svg_error" not in result["result"]
@@ -379,8 +379,8 @@ def test_standard_canvases_still_export_verified_pairs(tmp_path, mode, hook):
 
 @needs_user_python
 @pytest.mark.parametrize("mutation", ["title", "outline", "missing_path", "missing_use", "color"])
-def test_svg_title_oracle_rejects_changed_rendered_content(tmp_path, mutation):
-    _canvas_probe(tmp_path, "pair", "native_agg")
+def test_svg_title_oracle_rejects_changed_rendered_content(tmp_path, mutation, canvas_font_cache):
+    _canvas_probe(tmp_path, "pair", "native_agg", canvas_font_cache)
     path = tmp_path / "pair.svg"
     assert _svg_title(path) == _pdf_title(tmp_path / "pair.pdf") == "Export title"
     oracle = json.loads((tmp_path / "font-oracle.json").read_text(encoding="utf-8"))
@@ -407,3 +407,23 @@ def test_svg_title_oracle_rejects_changed_rendered_content(tmp_path, mutation):
     tree.write(path, encoding="utf-8")
     with pytest.raises(AssertionError):
         assert _svg_title(path) == "Export title"
+
+
+@needs_user_python
+def test_fresh_probe_processes_reuse_their_private_font_inventory(tmp_path):
+    font_cache = tmp_path / "private-font-cache"
+    first = tmp_path / "first"
+    second = tmp_path / "second"
+    _canvas_probe(first, "pair", "native_agg", font_cache)
+    inventory = {
+        path.name: (path.read_bytes(), path.stat().st_mtime_ns)
+        for path in font_cache.glob("fontlist-v*.json")
+    }
+    assert inventory, "首个真实探针必须在指定的私有目录建立字体清单"
+    _canvas_probe(second, "pair", "native_agg", font_cache)
+    assert inventory == {
+        path.name: (path.read_bytes(), path.stat().st_mtime_ns)
+        for path in font_cache.glob("fontlist-v*.json")
+    }, "第二个独立进程应复用清单，不重新扫描/改写字体缓存"
+    for directory in (first, second):
+        assert _pdf_title(directory / "pair.pdf") == _svg_title(directory / "pair.svg")

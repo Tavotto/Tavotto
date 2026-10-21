@@ -39,7 +39,14 @@ from support.figurebench import (
     variants,
 )
 
-CATEGORIES = {"single_element", "complex_figure", "scientific", "data_to_figure", "reliability"}
+CATEGORIES = {
+    "single_element",
+    "complex_figure",
+    "scientific",
+    "scope_discipline",
+    "data_to_figure",
+    "reliability",
+}
 TASK_TYPES = {"figure_edit", "data_to_figure", "infrastructure"}
 CHECKS = {"probe", "policy", "input_truth", "covered_by", "gap"}
 OUTCOMES = {"completed", "partial", "needs_input", "failed", None}

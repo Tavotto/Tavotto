@@ -91,10 +91,13 @@ describe('发送问题反馈入口', () => {
     expect(vi.mocked(startDiagSend)).not.toHaveBeenCalled()
   })
 
-  it('这一行在「诊断报告」组的最后：能力说明异步到达时，上面的入口不动', async () => {
+  it('顺序（2026-10-21）：发送问题反馈第一行，诊断包最后一行', async () => {
     capMock.mockResolvedValue({ enabled: true, categories: ['other'] })
     await mount()
-    const group = document.body.querySelector('[data-diagnostics-send]')!.parentElement!
-    expect(group.lastElementChild).toBe(document.body.querySelector('[data-diagnostics-send]'))
+    const send = document.body.querySelector('[data-diagnostics-send]')!
+    const bundle = document.body.querySelector('[data-diagnostics-bundle]')!
+    const group = send.parentElement!
+    expect(group.firstElementChild).toBe(send)
+    expect(group.lastElementChild).toBe(bundle)
   })
 })

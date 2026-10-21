@@ -20,6 +20,9 @@ export interface Control {
 interface GrantRow {id:string;body:string;signature:string;hash:string;public_key:string}
 interface ControlRow {grant_id:string;sequence:number;body:string;signature:string;hash:string;action:string;issued_at:number}
 interface ReceiptRow {grant_id:string;control_hash:string;contributor_hash:string;cipher:string;hash:string;created:number}
+interface ArchiveBinding {publicKey:string;agreement:Pick<Packet,'kind'|'version'|'digest'>}
+const grantFields=['protocol','id','holder_id','holder_name','repository_id','repository','agreement_kind','agreement_version',
+  'agreement_sha256','purpose','scope','approved_at','not_before','expires_at','key_sha256'];
 const exact=(o:object,keys:string[])=>canonical(Object.keys(o).sort())===canonical(keys.sort());
 const integer=(n:number)=>Number.isSafeInteger(n) && n>=0;
 
@@ -40,15 +43,15 @@ export class Delegation {
     }catch{throw new Rejected('authorization_signature_invalid');}
     return data;
   }
-  private async grant(record:SignedAuthorization,now:number,archive?:{key:string;packet:Packet}):Promise<Grant> {
-    const g=await this.signed<Grant>(record,['protocol','id','holder_id','holder_name','repository_id','repository','agreement_kind','agreement_version',
-      'agreement_sha256','purpose','scope','approved_at','not_before','expires_at','key_sha256'],archive?.key);
-    const c=this.s.c,a=archive?{version:archive.packet.version,sha256:archive.packet.digest}:c.policy.agreements.individual;
+  private async grant(record:SignedAuthorization,now:number,archive?:ArchiveBinding):Promise<Grant> {
+    const g=await this.signed<Grant>(record,grantFields,archive?.publicKey);
+    const c=this.s.c,a=archive?{version:archive.agreement.version,sha256:archive.agreement.digest}:c.policy.agreements.individual;
     if(g.protocol!=='cla-holder-authorization-v1' || !/^[A-Za-z0-9_-]{43}$/.test(g.id) || !archive && g.id!==c.holderAuthorizationId || g.holder_id!==c.holderId || g.holder_name!==c.holderName ||
       g.repository_id!==c.repositoryId || g.repository!==c.repository || g.agreement_kind!=='individual' || g.agreement_version!==a.version || g.agreement_sha256!==a.sha256 ||
       g.purpose!=='countersign-after-personal-contributor-signature' || g.scope!=='adult-independent-own-rights' ||
       ![g.approved_at,g.not_before,g.expires_at].every(integer) || g.approved_at>now || g.approved_at>g.not_before || g.expires_at<=g.not_before ||
-      g.key_sha256!==await sha256(unbase64(archive?.key ?? c.holderAuthorizationKey!)))throw new Rejected('authorization_scope_invalid');
+      archive && archive.agreement.kind!=='individual' ||
+      g.key_sha256!==await sha256(unbase64(archive?.publicKey ?? c.holderAuthorizationKey!)))throw new Rejected('authorization_scope_invalid');
     return g;
   }
   private async control(record:SignedAuthorization,g:Grant,hash:string,now:number,key?:string):Promise<Control> {
@@ -68,12 +71,12 @@ export class Delegation {
     if(events.length>100)throw new Rejected('authorization_history_limit');
     return {g,events,e:events.at(-1) ?? null};
   }
-  private async history(g:GrantRow,events:ControlRow[],now:number,packet?:Packet):Promise<{grant:Grant;event:Control|null}> {
-    if(!packet && g.public_key!==this.s.c.holderAuthorizationKey)throw new Rejected('authorization_binding_invalid');
-    const grant=await this.grant(g,now,packet?{key:g.public_key,packet}:undefined);let previous=g.hash,event:Control|null=null;
+  private async history(g:GrantRow,events:ControlRow[],now:number,archive?:ArchiveBinding):Promise<{grant:Grant;event:Control|null}> {
+    if(archive?archive.publicKey!==g.public_key:g.public_key!==this.s.c.holderAuthorizationKey)throw new Rejected('authorization_binding_invalid');
+    const grant=await this.grant(g,now,archive);let previous=g.hash,event:Control|null=null;
     if(g.id!==grant.id || g.hash!==await sha256(g.body))throw new Rejected('authorization_binding_invalid');
     for(const [index,row] of events.entries()) {
-      const next=await this.control(row,grant,g.hash,now,packet?g.public_key:undefined);
+      const next=await this.control(row,grant,g.hash,now,archive?.publicKey);
       if(row.grant_id!==grant.id || next.sequence!==index+1 || next.previous_sha256!==previous || row.hash!==await sha256(row.body) ||
         row.sequence!==next.sequence || row.action!==next.action || row.issued_at!==next.issued_at || event?.action==='revoke' ||
         event && next.issued_at<event.issued_at)throw new Rejected('authorization_control_order');
@@ -93,6 +96,24 @@ export class Delegation {
     if(g.hash!==await sha256(g.body) || event.sequence!==(e?.sequence ?? 0)+1 || event.previous_sha256!==(e?.hash ?? g.hash) ||
       e?.action==='revoke' || e && event.issued_at<e.issued_at)throw new Rejected('authorization_control_order');
     // Recheck the predecessor and database clock at the actual commit, not only before encryption/signature verification.
+    await this.s.store.batch([...this.s.store.cas(revision),...this.s.store.guard(`${DB_NOW}>=? AND
+      coalesce((SELECT hash FROM delegated_controls WHERE grant_id=? ORDER BY sequence DESC LIMIT 1),?)=?`,event.issued_at,g.id,g.hash,event.previous_sha256),
+      this.s.store.stmt('INSERT INTO delegated_controls VALUES(?,?,?,?,?,?,?)',g.id,event.sequence,record.body,record.signature,await sha256(record.body),event.action,event.issued_at)]);
+  }
+  // Internal, terminal-only preparation API. Rotation never makes an old grant
+  // executable here. The caller cannot substitute a key or agreement binding.
+  async appendHistoricalRevocation(id:string,record:SignedAuthorization):Promise<void> {
+    if(!/^[A-Za-z0-9_-]{43}$/.test(id))throw new Rejected('authorization_missing');
+    await this.s.store.assertReady();const now=await this.s.store.databaseNow(),revision=await this.s.store.revision(),{g,e,events}=await this.rows(id);
+    if(!g)throw new Rejected('authorization_missing');
+    const original=await this.signed<Grant>(g,grantFields,g.public_key);
+    const agreement=await this.s.store.stmt("SELECT kind,version,digest FROM agreements WHERE kind='individual' AND version=? AND digest=?",
+      original.agreement_version,original.agreement_sha256).first<ArchiveBinding['agreement']>();
+    if(!agreement)throw new Rejected('authorization_historical_agreement_missing');
+    const {grant}=await this.history(g,events,now,{publicKey:g.public_key,agreement}),event=await this.control(record,grant,g.hash,now,g.public_key);
+    if(event.action!=='revoke')throw new Rejected('authorization_terminal_revocation_required');
+    if(event.sequence!==(e?.sequence ?? 0)+1 || event.previous_sha256!==(e?.hash ?? g.hash) ||
+      e?.action==='revoke' || e && event.issued_at<e.issued_at)throw new Rejected('authorization_control_order');
     await this.s.store.batch([...this.s.store.cas(revision),...this.s.store.guard(`${DB_NOW}>=? AND
       coalesce((SELECT hash FROM delegated_controls WHERE grant_id=? ORDER BY sequence DESC LIMIT 1),?)=?`,event.issued_at,g.id,g.hash,event.previous_sha256),
       this.s.store.stmt('INSERT INTO delegated_controls VALUES(?,?,?,?,?,?,?)',g.id,event.sequence,record.body,record.signature,await sha256(record.body),event.action,event.issued_at)]);
@@ -155,16 +176,16 @@ export class Delegation {
     if(!r)return null;
     const now=await this.s.store.databaseNow(),{g,e,events}=await this.rows(r.grant_id);
     if(!g || !e)throw new Rejected('authorization_missing');
-    const {grant}=await this.history(g,events,now,p),atExecution=events.find(event=>event.hash===r.control_hash);
+    const {grant}=await this.history(g,events,now,{publicKey:g.public_key,agreement:p}),atExecution=events.find(event=>event.hash===r.control_hash);
     if(!atExecution || atExecution.action!=='enable')throw new Rejected('delegated_receipt_invalid');
     const control=await this.control(atExecution,grant,g.hash,now,g.public_key);
     await this.s.stagedVerifyEvidence(p,contributor);
     const receipt=await this.receipt(p,contributor,now,{g:grant,e:control,grantHash:g.hash,controlHash:r.control_hash},r);
     // Historical cryptographic validity is distinct from current technical eligibility.
-    const state=blocked?'blocked':this.s.c.delegatedCountersigningEnabled!==true || !this.s.c.signingEnabled?'disabled':
+    const state=e.action==='revoke'?'revoked':blocked?'blocked':this.s.c.delegatedCountersigningEnabled!==true || !this.s.c.signingEnabled?'disabled':
       grant.id!==this.s.c.holderAuthorizationId || g.public_key!==this.s.c.holderAuthorizationKey ||
       p.version!==this.s.c.policy.agreements.individual.version || p.digest!==this.s.c.policy.agreements.individual.sha256?'superseded':
-      now>=grant.expires_at?'expired':now<grant.not_before?'not_started':e.action==='revoke'?'revoked':e.action==='suspend'?'suspended':
+      now>=grant.expires_at?'expired':now<grant.not_before?'not_started':e.action==='suspend'?'suspended':
       e.hash!==r.control_hash?'superseded':'current';
     return {current:state==='current',state,executed_at:r.created,expires_at:grant.expires_at,receipt,receipt_sha256:r.hash,
       authorization:{body:g.body,signature:g.signature,public_key:g.public_key,identity_assurance:'not_determined_by_this_export'},
