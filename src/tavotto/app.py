@@ -11411,6 +11411,21 @@ def api_ai_data_figure():
         return jsonify({"error": "缺少数据文件或指令", "code": "data_figure_input_missing"}), 400
     if rid is not None and not _valid_client_request_id(rid):
         abort(400)
+    if rid:
+        # **先去重、后解析数据**（同 `/api/ai/run`）：数据文件是可变目标。首次请求已提交脚本、响应丢了，用户随后改名 /
+        # 删掉 CSV，再点「查询结果」的同 id 重发若先走 `prepare` 就是确定的 400——前端会把「未确认」翻成「失败」并放开
+        # 重发，原脚本却已经写进项目。已登记的 rid 一律直接回既有任务的结局
+        known = engine_ai.find_request(str(ctx.path.resolve()), rid)
+        if known is not None and known["status"] == engine_ai.REQUEST_SUPERSEDED:
+            return _agent_error(engine_ai.AgentError("ai_request_superseded"))
+        if known is not None:
+            sid = known["session"]
+            found = engine_ai_tasks.load(sid) or {"task_id": sid, "outcome": None, "final": None}
+            out = {"task": {**found, "deduped": True}, "summary": None}
+            recorded = _deduped_data_script(ctx.path, found.get("task_id"))
+            if recorded is not None:
+                out.update(script=recorded[0], stem=recorded[1])
+            return jsonify(out)
     try:
         prepared = engine_ai_data_task.prepare(ctx.path, data_rel, instruction)
         env = engine_ai_data_task.envelope_for(

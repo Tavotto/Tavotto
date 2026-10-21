@@ -170,6 +170,27 @@ def test_a_taken_name_gets_a_suffix_and_never_overwrites(project):
 
 
 @needs_worker
+@pytest.mark.parametrize("mutate", ["delete", "rename"])
+def test_a_retried_request_reconciles_after_the_csv_is_gone(project, mutate):
+    """响应丢了、脚本已提交；用户随后删掉 / 改名 CSV，同 id 重发仍回首次的结局（不是 400，不再建新脚本）。"""
+    m, client, figs, _ = project
+    first = _post(client, "data/standard.csv", "画出来。", rid="rid-d07-0002").get_json()
+    assert first["task"]["outcome"] == "completed", first
+    before = sorted(p.name for p in (figs / "data").glob("*.py"))
+    src = figs / "data" / "standard.csv"
+    if mutate == "delete":
+        src.unlink()
+    else:
+        src.rename(figs / "data" / "renamed.csv")
+    resp = _post(client, "data/standard.csv", "画出来。", rid="rid-d07-0002")
+    assert resp.status_code == 200, resp.get_json()
+    again = resp.get_json()
+    assert again["task"]["deduped"] is True and again["task"]["task_id"] == first["task"]["task_id"]
+    assert again["script"] == first["script"]
+    assert sorted(p.name for p in (figs / "data").glob("*.py")) == before
+
+
+@needs_worker
 def test_the_same_request_runs_once(project):
     m, client, figs, _ = project
     first = _post(
