@@ -211,3 +211,53 @@ def test_rebuild_holds_the_versions_lock_and_serializes_with_writers(client, mon
     t2.join(10)
     assert out == {"rebuild": 200, "append": 200}
     assert len(_listing(client)) == 4
+
+
+def test_rebuild_aborts_when_the_envelope_directory_cannot_be_listed(client, monkeypatch):
+    """枚举失败（网络盘瞬时错误）不是「没有信封」：不写索引、旧索引逐字节不变。"""
+    _seed(client, 3)
+    before = versionfiles.snapshot("d1")
+    real = os.listdir
+
+    def flaky(path="."):
+        if str(path).endswith(os.sep + "s"):
+            raise OSError(5, "I/O error")
+        return real(path)
+
+    monkeypatch.setattr(vs.os, "listdir", flaky)
+    r = client.post("/api/versions/d1/rebuild")
+    assert r.status_code == 409 and r.get_json()["code"] == "versions_unreadable"
+    assert versionfiles.snapshot("d1") == before
+
+
+def test_rebuild_aborts_on_an_unreadable_envelope_but_skips_a_corrupt_one(client, monkeypatch):
+    ids = _seed(client, 3)
+    root = versionfiles.store_root("d1")
+    (root / "s" / f"{ids[0]}.json").write_bytes(b"not an envelope\n")  # 内容损坏：跳过
+    before = versionfiles.snapshot("d1")
+    real_head = vs._read_head
+
+    def denied(path):
+        if path.name.startswith(ids[2]):
+            raise PermissionError(13, "denied")
+        return real_head(path)
+
+    monkeypatch.setattr(vs, "_read_head", denied)
+    r = client.post("/api/versions/d1/rebuild")
+    assert r.status_code == 409 and r.get_json()["code"] == "versions_unreadable"
+    assert versionfiles.snapshot("d1") == before
+    monkeypatch.setattr(vs, "_read_head", real_head)  # I/O 恢复后：损坏的那条才被跳过
+    body = client.post("/api/versions/d1/rebuild").get_json()
+    assert body["count"] == 2 and body["dropped"] == [ids[0]]
+
+
+@pytest.mark.parametrize("shape", [{"format": 99}, {"format": 99, "entries": "x"}])
+def test_rebuild_treats_a_future_index_without_valid_entries_as_future_not_corrupt(client, shape):
+    _seed(client, 2)
+    _index_path().write_bytes(json.dumps(shape).encode())
+    before = versionfiles.snapshot("d1")
+    r = client.post("/api/versions/d1/rebuild")
+    assert r.status_code == 409 and r.get_json()["code"] == "versions_unreadable"
+    assert versionfiles.snapshot("d1") == before
+    # 读路径同一判据：列表也是未来格式 409，而不是在内存里当损坏重建
+    assert client.get("/api/versions/d1").status_code == 409

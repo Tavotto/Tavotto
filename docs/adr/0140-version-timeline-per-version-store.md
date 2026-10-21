@@ -141,7 +141,7 @@ Windows（`os.replace` 共享冲突、`msvcrt` 锁；热点是 `index.json`，at
 **修复入口** `POST /api/versions/<docId>/rebuild`：版本锁内调用 `versionstore.rebuild_index(write=True)`，
 从信封文件重建索引。只读信封、写新索引，**不删任何文件**；旧索引的原字节先存成 `index.corrupt-<sha>.json`，
 旧索引里的 `legacy_unreadable`（#264 的「旧历史还在」标记）读得动就带过去。副作用如实返回：
-`added`（已被删 / 裁掉但信封还在、因此复活的 id）与 `dropped`（信封已不在的条目）。没有新存储 404；索引读不动 /
+`added`（已被删 / 裁掉但信封还在、因此复活的 id）与 `dropped`（信封已不在的条目）。信封目录枚举失败 / 单个信封读不了（权限、I/O）= 中止，409 `versions_unreadable`、不写索引（与「内容损坏的信封」区分，后者跳过并记入 `dropped`）；未来格式先于形状判定（缺 `entries` 也是未来格式，不当损坏重建），读路径与重建同一判据。没有新存储 404；索引读不动 /
 来自更新的格式 409 `versions_unreadable`，零改动（先过一遍读侧，重建绝不降级覆盖未来格式）。
 
 **不做 `atomicio` 的 Windows 有界重试**（#1241 关闭不合入）：重试等待期间外部进程完成的写入会被下一次
@@ -149,3 +149,5 @@ Windows（`os.replace` 共享冲突、`msvcrt` 锁；热点是 `index.json`，at
 共享冲突导致保存失败没有用户报告。若出现真实报告，在具体调用方带修订号重核处做。
 
 **遗留（需维护者裁决，本 PR 不做）**：磁盘预算（保持 24 MB 语义）、旧格式文件清理、压缩 / CAS、sketch 旁路缓存。
+
+重建结果比现有索引少条目时只在响应的 `dropped` 里如实给出，本 PR 不加确认流程（遗留，待维护者裁决）。
