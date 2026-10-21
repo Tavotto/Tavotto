@@ -2059,6 +2059,7 @@
     "originalAlt": "The original PNG on disk",
     "redrawnAlt": "The figure redrawn from its script",
     "confirm": "Edit from the redraw",
-    "keepOriginal": "Keep the original"
+    "keepOriginal": "Keep the original",
+    "imageFailed": "One of the images didn't load, so they can't be compared. Choose \"Keep the original\"."
   }
 }

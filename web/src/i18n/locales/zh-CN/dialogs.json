@@ -2039,6 +2039,7 @@
     "originalAlt": "磁盘上的原 PNG",
     "redrawnAlt": "按脚本重画的图",
     "confirm": "以重画为基础编辑",
-    "keepOriginal": "保留原图"
+    "keepOriginal": "保留原图",
+    "imageFailed": "有一张图没加载出来，没法对照，请选「保留原图」。"
   }
 }

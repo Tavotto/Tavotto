@@ -1648,16 +1648,18 @@ async function admitPngEntry(panel: PanelObject, leftTab: 'elements' | 'keep'): 
       const source = verifiedSource(res.artifact_source, panel.fileId, SCRIPT_BACKED_SOURCE_POLICY, guardNow ?? undefined)
       if (!adopted) {
         let confirmedAt: string | undefined
+        let shownVerdict = verdict
         if (verdict.status === 'needs_confirmation') {
           // 差异要用户亲眼对照过才算数；取消 = 什么都不写，回到 PR1 的失败出路
-          const ok = await reviewReconstruction({ mode: 'adopt', panel, fileId: panel.fileId, source, verdict, still: current })
-          if (!ok) {
+          const review = await reviewReconstruction({ mode: 'adopt', panel, fileId: panel.fileId, source, verdict, still: current })
+          if (!review.confirmed) {
             if (current()) reportAdmissionFailure(panel, strictRefusal)
             return false
           }
           confirmedAt = new Date().toISOString()
+          shownVerdict = review.verdict // 写的是用户亲眼看到的那一份，不是第一次 render 的
         }
-        const guard = sourceBackedGuard(source, verdict, confirmedAt)
+        const guard = sourceBackedGuard(source, shownVerdict, confirmedAt)
         commit(msg(confirmedAt ? 'artifact.adoptReconstructed' : 'artifact.adoptFrame', undefined, 'errors'), d => {
           const p = d.objects.find(o => o.id === panel.id) as PanelObject
           p.overrides = [structuredClone(LEGACY_FRAME_OVERRIDE)]
@@ -1749,24 +1751,29 @@ interface ReviewArgs {
  * 打开「对照确认」：左原 PNG（磁盘原像素）、右重画。返回用户是否确认。
  * 任何一步失败（取不到重画图、上下文已变）都按「没确认」处理——**不写任何东西**。
  */
-async function reviewReconstruction(a: ReviewArgs): Promise<boolean> {
+async function reviewReconstruction(a: ReviewArgs): Promise<{ confirmed: boolean; verdict: SourceBackedVerdict }> {
+  const no = { confirmed: false, verdict: a.verdict }
   let reconstructionSrc: string
+  let shown: SourceBackedVerdict
   try {
     const snap = await enginePreviewPngSnapshot(a.fileId, [], REVIEW_BUCKET, undefined, {
       source_policy: SCRIPT_BACKED_SOURCE_POLICY,
       expected_source: { bytes_sha256: a.source.bytesSha256, size_bytes: a.source.sizeBytes },
     })
     reconstructionSrc = snap.url
+    // 确认绑定的是**显示给用户的这一份**：摘要 / 状态 / 度量都取这次响应的，不沿用第一次 render 的
+    shown = verdictFromResponse(snap.sourceBacked)
   } catch {
     if (a.still()) status(msg('artifact.rebuildFailed', undefined, 'errors'), 'error')
-    return false
+    return no
   }
-  if (!a.still()) return false
+  if (!a.still()) return no
   const originalSrc = panelSrc(a.fileId, 'raster', REVIEW_BUCKET, useAssetStore.getState().byId[a.fileId]?.mtime)
-  if (!originalSrc) return false
-  return useSourceBackedReview.getState().ask({
-    mode: a.mode, panelId: a.panel.id, fileId: a.fileId, verdict: a.verdict, originalSrc, reconstructionSrc,
+  if (!originalSrc) return no
+  const confirmed = await useSourceBackedReview.getState().ask({
+    mode: a.mode, panelId: a.panel.id, fileId: a.fileId, verdict: shown, originalSrc, reconstructionSrc,
   })
+  return { confirmed, verdict: shown }
 }
 
 type Settled = 'unchanged' | 'updated' | 'cancelled' | 'stale'
@@ -1788,9 +1795,10 @@ async function settleReconstruction(
   if (old.reconstructionSha256 === verdict.reconstructionSha256) return 'unchanged'
   let confirmedAt: string | undefined
   if (!(old.status === 'exact' && verdict.status === 'exact')) {
-    const ok = await reviewReconstruction({ mode: 'changed', panel, fileId: panel.fileId, source, verdict, still })
-    if (!ok) return still() ? 'cancelled' : 'stale'
+    const review = await reviewReconstruction({ mode: 'changed', panel, fileId: panel.fileId, source, verdict, still })
+    if (!review.confirmed) return still() ? 'cancelled' : 'stale'
     confirmedAt = new Date().toISOString()
+    verdict = review.verdict // 确认绑定显示给用户的那一份
   }
   if (!still()) return 'stale'
   const guard = sourceBackedGuard(source, verdict, confirmedAt)
@@ -1827,9 +1835,20 @@ export async function reviewSourceBackedPanel(panelId: string): Promise<boolean>
     const guard = panel.sourceBackedFigure!
     const source = verifiedSource(res.artifact_source, panel.fileId, SCRIPT_BACKED_SOURCE_POLICY, guard)
     const verdict = verdictFromResponse(res.source_backed)
-    const settled = await settleReconstruction(panel, source, verdict, still)
+    // 点到的实例若摘要已经是最新的（同一 PNG 的另一个实例已重新确认过），真正过期的是同源的另一个实例：对准它
+    let target = panel
+    if (guard.reconstructionSha256 === verdict.reconstructionSha256) {
+      const st = useDocumentStore.getState()
+      for (const objects of [st.doc.objects, ...st.canvases.map((c) => c.objects)]) {
+        const stale = objects.find((o): o is PanelObject => o.type === 'panel' && o.id !== panelId && o.fileId === panel.fileId &&
+          o.sourceBackedFigure?.bytesSha256 === guard.bytesSha256 && !artifactValidationIssue(o) &&
+          o.sourceBackedFigure.reconstructionSha256 !== verdict.reconstructionSha256)
+        if (stale) { target = stale; break }
+      }
+    }
+    const settled = await settleReconstruction(target, source, verdict, still)
     if (settled === 'updated') {
-      const fresh = findObject(panelId)
+      const fresh = findObject(target.id)
       if (fresh?.type === 'panel') requestRender(fresh, true)
     }
     return settled === 'updated' || settled === 'unchanged'
@@ -1850,7 +1869,11 @@ function notifyReconstructionPanel(fileId: string, guard: AdoptionGuard, reason:
   if (failure.recoverability !== 'needs_review') return
   const s = useDocumentStore.getState()
   for (const objects of [s.doc.objects, ...s.canvases.map((c) => c.objects)]) {
-    const hit = objects.find((o) => o.type === 'panel' && o.fileId === fileId && o.sourceBackedFigure?.bytesSha256 === guard.bytesSha256)
+    // 失败的那份 guard 对得上的实例优先（渲染路径带的就是它自己的 guard）；导出一类整批失败时退到同源的任一实例，
+    // 真正过期的那个由「重新对照确认」比对当前重画后再选（见 reviewSourceBackedPanel）
+    const same = objects.filter((o) => o.type === 'panel' && o.fileId === fileId && o.sourceBackedFigure?.bytesSha256 === guard.bytesSha256)
+    const hit = same.find((o) => o.type === 'panel' && o.sourceBackedFigure?.reconstructionSha256 === guard.reconstructionSha256) ?? same[0]
+    if (!hit) continue
     if (hit?.type !== 'panel') continue
     const owner = sourceReviewOwner(hit.id)
     useUiStore.getState().setStatus(msg(failure.messageKey, undefined, 'errors'), 'info', {

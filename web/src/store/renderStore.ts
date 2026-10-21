@@ -1050,6 +1050,10 @@ export function rejectArtifactRenders(fileId: string, guard: AdoptionGuard, erro
   for (const [key, r] of Object.entries(store.byKey)) {
     if (r.fileId !== fileId || r.artifactValidation?.bytesSha256 !== guard.bytesSha256 || r.artifactValidation?.sizeBytes !== guard.sizeBytes) continue
     if (variantOnly && key !== ownerKey) continue
+    // 来源驱动的确认失效只落在摘要对得上的那批渲染：同一 PNG 另一个实例若已重新确认（摘要不同），它的渲染不该被牵连
+    if ('policy' in guard && classifyArtifactFailure(error).recoverability === 'needs_review' &&
+        r.artifactValidation && 'policy' in r.artifactValidation &&
+        r.artifactValidation.reconstructionSha256 !== guard.reconstructionSha256) continue
     const slot = inflight.get(key)
     if (slot) { slot.queued = null; slot.abort?.() }
     store.patch(key, {status:'error',code:'artifact_source_unavailable',error:message,

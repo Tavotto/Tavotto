@@ -11,11 +11,11 @@ import { useMountedPngStore } from './mountedPngStore'
 import { useEnvStore } from './envStore'
 import { usePngAdmissionMemory } from './pngAdmissionMemory'
 import { useSourceBackedReview } from './sourceBackedReview'
-import { useRenderStore, renderKeyOf } from './renderStore'
-import { enterElementEdit, rebuildPanel, resetOverrides, restorePanelOverrides } from './actions'
+import { useRenderStore, renderKeyOf, rejectArtifactRenders } from './renderStore'
+import { enterElementEdit, rebuildPanel, resetOverrides, restorePanelOverrides, reviewSourceBackedPanel } from './actions'
 import { renderTargets } from '@/hooks/useEngineSync'
 import { setCurrentProjectId } from '@/lib/session'
-import { adoptionGuardOf, FIGSIZE_SOURCE_POLICY, SCRIPT_BACKED_SOURCE_POLICY, refuseArtifactOperation } from '@/lib/artifactValidation'
+import { adoptionGuardOf, ArtifactValidationError, FIGSIZE_SOURCE_POLICY, SCRIPT_BACKED_SOURCE_POLICY, refuseArtifactOperation } from '@/lib/artifactValidation'
 
 const world = vi.hoisted(() => ({ strictReason: 'artist_profile', flagOn: true, status: 'exact' as 'exact' | 'needs_confirmation', sha: '1'.repeat(64) }))
 const render = vi.fn()
@@ -80,7 +80,8 @@ beforeEach(async () => {
     }
     return base()
   })
-  preview.mockReset().mockResolvedValue({ url: 'data:image/png;base64,RECON', manifest: base().manifest })
+  // 对照图来自第二次请求（preview_png），带它自己的准入结论
+  preview.mockReset().mockImplementation(async () => ({ url: 'data:image/png;base64,RECON', manifest: base().manifest, sourceBacked: verdictBody() }))
   invalidate.mockReset().mockResolvedValue({ invalidated: true })
   useRenderStore.getState().clear(); ui().setElementPanel(null); ui().setStatus(null)
   useSelectionStore.getState().clear(); useWorkspaceStore.getState().clear(); useMountedPngStore.setState({ byPanel: {} })
@@ -298,5 +299,65 @@ describe('zero edits do not run the script on reopen', () => {
     expect(renderTargets([zero], 'p', {}).map((o) => o.id)).toEqual(['p'])
     const edited = { ...zero, overrides: [...zero.overrides, TITLE] }
     expect(renderTargets([edited], null, {}).map((o) => o.id)).toEqual(['p'])
+  })
+})
+
+describe('the confirmation binds to what the user was shown', () => {
+  it('the preview response differs from the first render: the guard and the dialog use the preview one', async () => {
+    world.status = 'needs_confirmation' // 第一次 render：摘要 SHA1
+    preview.mockResolvedValueOnce({
+      url: 'data:image/png;base64,SHOWN', manifest: base().manifest,
+      sourceBacked: { ...verdictBody(), reconstruction_sha256: SHA2, metrics: { differing_pixels: 77, differing_ratio: 0.07, total_pixels: 1000, bbox: [0, 0, 5, 5] } },
+    })
+    const entering = enterElementEdit('p')
+    await vi.waitFor(() => expect(review().request).not.toBeNull())
+    expect(review().request!.verdict.reconstructionSha256).toBe(SHA2)
+    expect(review().request!.verdict.metrics.differingPixels).toBe(77)
+    review().answer(true)
+    await entering
+    expect(P().sourceBackedFigure).toMatchObject({ status: 'reconstructed', reconstructionSha256: SHA2 })
+  })
+  it('a preview without a usable verdict is not confirmable: no dialog, nothing written', async () => {
+    world.status = 'needs_confirmation'
+    preview.mockResolvedValueOnce({ url: 'data:image/png;base64,X', manifest: base().manifest })
+    expect(await enterElementEdit('p')).toBe(false)
+    expect(review().request).toBeNull(); expect(Object.hasOwn(P(), 'sourceBackedFigure')).toBe(false)
+  })
+})
+
+describe('re-confirming targets the instance that is really stale', () => {
+  const guardOf = (sha: string) => ({
+    version: 1 as const, policy: SCRIPT_BACKED_SOURCE_POLICY, sourceId: 'plot.png', bytesSha256: BYTES, sizeBytes: 10,
+    status: 'reconstructed' as const, reconstructionSha256: sha, confirmedAt: '2026-10-20T10:00:00.000Z',
+  })
+  async function twoInstances() {
+    const make = (id: string, sha: string): PanelObject => ({ ...panel(), id, overrides: [FRAME, TITLE], sourceBackedFigure: guardOf(sha) })
+    await seed(make('fresh', SHA1))
+    S().commit(literal('second'), (d) => { d.objects.push(make('old', '9'.repeat(64))) })
+    useDocumentStore.setState({ past: [], future: [] })
+  }
+  it('the failing render’s own guard picks the toast owner', async () => {
+    await twoInstances()
+    rejectArtifactRenders('plot.png', guardOf('9'.repeat(64)), new ArtifactValidationError('reconstruction_changed'))
+    expect(ui().statusOwner).toBe('source.review:old')
+  })
+  it('clicking the first (already current) instance re-confirms the stale sibling, not itself', async () => {
+    await twoInstances()
+    world.status = 'needs_confirmation'; world.sha = SHA1
+    void reviewSourceBackedPanel('fresh')
+    await vi.waitFor(() => expect(review().request).not.toBeNull())
+    expect(review().request!.panelId).toBe('old')
+    review().answer(true)
+    await vi.waitFor(() => expect((S().doc.objects.find((o) => o.id === 'old') as PanelObject).sourceBackedFigure!.reconstructionSha256).toBe(SHA1))
+    expect((S().doc.objects.find((o) => o.id === 'fresh') as PanelObject).sourceBackedFigure).toEqual(guardOf(SHA1))
+  })
+  it('a rejection of one instance leaves the other instance’s renders alone', async () => {
+    await twoInstances()
+    const fresh = S().doc.objects.find((o) => o.id === 'fresh') as PanelObject
+    const old = S().doc.objects.find((o) => o.id === 'old') as PanelObject
+    for (const p of [fresh, old]) useRenderStore.getState().patch(renderKeyOf(p), { fileId: p.fileId, artifactValidation: p.sourceBackedFigure, status: 'ready', stale: false })
+    rejectArtifactRenders('plot.png', old.sourceBackedFigure!, new ArtifactValidationError('reconstruction_changed'))
+    expect(useRenderStore.getState().byKey[renderKeyOf(old)].status).toBe('error')
+    expect(useRenderStore.getState().byKey[renderKeyOf(fresh)].status).toBe('ready')
   })
 })

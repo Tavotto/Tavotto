@@ -24,15 +24,26 @@ export function percentText(ratio: number, differingPixels: number): string {
 export function SourceBackedReviewDialog() {
   useTranslation('dialogs')
   const request = useSourceBackedReview((s) => s.request)
+  // 每一次对照各有一份加载状态（key 换了整份重来）
+  return request ? <Review key={request.panelId + request.reconstructionSrc.length + request.originalSrc} request={request} /> : null
+}
+
+type Load = 'pending' | 'ok' | 'failed'
+
+function Review({ request }: { request: ReviewRequest }) {
   const answer = useSourceBackedReview((s) => s.answer)
+  const [load, setLoad] = useState<{ original: Load; redrawn: Load }>({ original: 'pending', redrawn: 'pending' })
+  // 没看到两张图就不许确认：任一张还在加载（pending）或没加载出来（failed）都 fail closed
+  const ready = load.original === 'ok' && load.redrawn === 'ok'
+  const failed = load.original === 'failed' || load.redrawn === 'failed'
   return (
     <Dialog
-      open={!!request}
+      open
       onOpenChange={(v) => !v && answer(false)}
       title={sr('title')}
-      description={request ? sr(request.mode === 'changed' ? 'descriptionChanged' : 'description', {
+      description={failed ? sr('imageFailed') : sr(request.mode === 'changed' ? 'descriptionChanged' : 'description', {
         percent: percentText(request.verdict.metrics.differingRatio, request.verdict.metrics.differingPixels),
-      }) : undefined}
+      })}
       size="xl"
       anchor="source-review"
       footer={{
@@ -42,18 +53,18 @@ export function SourceBackedReviewDialog() {
           </Button>
         ),
         primary: (
-          <Button data-source-review-confirm variant="primary" size="lg" onClick={() => answer(true)}>
+          <Button data-source-review-confirm variant="primary" size="lg" disabled={!ready} onClick={() => { if (ready) answer(true) }}>
             {sr('confirm')}
           </Button>
         ),
       }}
     >
-      {request && <Compare key={request.panelId + request.reconstructionSrc.length} request={request} />}
+      <Compare request={request} onLoad={(kind, state) => setLoad((l) => (l[kind] === state ? l : { ...l, [kind]: state }))} />
     </Dialog>
   )
 }
 
-function Compare({ request }: { request: ReviewRequest }) {
+function Compare({ request, onLoad }: { request: ReviewRequest; onLoad: (kind: 'original' | 'redrawn', state: Load) => void }) {
   // 包围框是原图像素坐标：用原图加载后的自然尺寸换成百分比
   const [size, setSize] = useState<{ w: number; h: number } | null>(null)
   const bbox = request.verdict.metrics.bbox
@@ -74,9 +85,11 @@ function Compare({ request }: { request: ReviewRequest }) {
           alt={sr(kind === 'original' ? 'originalAlt' : 'redrawnAlt')}
           className="block h-auto w-full select-none"
           draggable={false}
-          onLoad={kind === 'original'
-            ? (e) => setSize({ w: e.currentTarget.naturalWidth, h: e.currentTarget.naturalHeight })
-            : undefined}
+          onLoad={(e) => {
+            if (kind === 'original') setSize({ w: e.currentTarget.naturalWidth, h: e.currentTarget.naturalHeight })
+            onLoad(kind, 'ok')
+          }}
+          onError={() => onLoad(kind, 'failed')}
         />
         {box && (
           <div

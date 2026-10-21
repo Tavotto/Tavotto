@@ -2073,6 +2073,7 @@ export default interface Resources {
       "confirm": "以重画为基础编辑",
       "description": "重画与原图有 {{percent}}% 像素不同。确认后以重画为编辑基础；原 PNG 不会被改动。",
       "descriptionChanged": "脚本、数据或环境变了：重画与原图有 {{percent}}% 像素不同。确认后以新的重画为基础，你的修改会保留；原 PNG 不会被改动。",
+      "imageFailed": "有一张图没加载出来，没法对照，请选「保留原图」。",
       "keepOriginal": "保留原图",
       "original": "原图",
       "originalAlt": "磁盘上的原 PNG",

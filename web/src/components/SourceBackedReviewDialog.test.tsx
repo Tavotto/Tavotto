@@ -14,6 +14,10 @@ let el: HTMLDivElement, root: Root
 beforeEach(() => { el = document.createElement('div'); document.body.appendChild(el); root = createRoot(el); useSourceBackedReview.getState().clear() })
 afterEach(() => { act(() => root.unmount()); el.remove() })
 const q = (sel: string) => document.body.querySelector(sel) as HTMLElement | null
+const img = (kind: string) => q(`[data-source-review-pane="${kind}"] img`) as HTMLImageElement
+const fire = (kind: string, type: 'load' | 'error') => act(async () => { img(kind).dispatchEvent(new Event(type)) })
+const loadBoth = async () => { await fire('original', 'load'); await fire('redrawn', 'load') }
+const confirmBtn = () => q('[data-source-review-confirm]') as HTMLButtonElement
 
 describe('SourceBackedReviewDialog', () => {
   it('one sentence with the percentage, original left and redraw right, one primary button', async () => {
@@ -34,6 +38,7 @@ describe('SourceBackedReviewDialog', () => {
     await act(async () => { img.dispatchEvent(new Event('load')) })
     expect(q('[data-source-review-diff="original"]')!.style.left).toBe('10%')
     expect(q('[data-source-review-diff="redrawn"]')!.style.width).toBe('20%')
+    await loadBoth()
     await act(async () => q('[data-source-review-confirm]')!.click())
     expect(await answer!).toBe(true)
     expect(useSourceBackedReview.getState().request).toBeNull()
@@ -48,6 +53,33 @@ describe('SourceBackedReviewDialog', () => {
     await act(async () => { a = useSourceBackedReview.getState().ask(request()) })
     await act(async () => useSourceBackedReview.getState().clear())
     expect(await a!).toBe(false)
+  })
+  it('the confirm button needs BOTH images loaded; a failed image fails closed with one sentence and the keep button still works', async () => {
+    await act(async () => root.render(<SourceBackedReviewDialog />))
+    let a: Promise<boolean>
+    await act(async () => { a = useSourceBackedReview.getState().ask(request()) })
+    expect(confirmBtn().disabled).toBe(true) // 都在加载
+    await fire('original', 'load')
+    expect(confirmBtn().disabled).toBe(true) // 只加载了一张
+    await fire('redrawn', 'error')
+    expect(confirmBtn().disabled).toBe(true)
+    expect(document.body.textContent).toMatch(/没加载出来|didn't load/)
+    await act(async () => confirmBtn().click())
+    expect(useSourceBackedReview.getState().request).not.toBeNull() // 点了也不写
+    await act(async () => q('[data-source-review-keep]')!.click())
+    expect(await a!).toBe(false)
+    await act(async () => { a = useSourceBackedReview.getState().ask(request()) })
+    await fire('redrawn', 'load')
+    expect(confirmBtn().disabled).toBe(true)
+    await fire('original', 'error')
+    expect(confirmBtn().disabled).toBe(true)
+    await act(async () => useSourceBackedReview.getState().clear())
+    await a!
+    await act(async () => { a = useSourceBackedReview.getState().ask(request()) })
+    await loadBoth()
+    expect(confirmBtn().disabled).toBe(false)
+    await act(async () => useSourceBackedReview.getState().clear())
+    await a!
   })
   it('percentages never round a real difference down to zero', () => {
     expect(percentText(0.03, 30)).toBe('3')
