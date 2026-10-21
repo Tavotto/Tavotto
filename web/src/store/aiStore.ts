@@ -1039,10 +1039,13 @@ function reconcileChanges(): Promise<void> {
   const entry: { p: Promise<void>; again: boolean } = { p: Promise.resolve(), again: false }
   entry.p = (async () => {
     try {
+      let more = false
       do {
         entry.again = false
-        await reconcileOnce(born, pj)
-      } while (entry.again && born === useAiStore.getState().generation)
+        more = await reconcileOnce(born, pj)
+        // 一轮最多 `RECONCILE_MAX_PAGES` 页；还有剩的就让出一个 tick 再续一轮（同一个在途守卫，不重入），直到取空
+        if (more) await new Promise<void>((r) => setTimeout(r, 0))
+      } while ((entry.again || more) && born === useAiStore.getState().generation)
     } finally {
       reconciling.delete(key)
     }
@@ -1051,11 +1054,12 @@ function reconcileChanges(): Promise<void> {
   return entry.p
 }
 
-async function reconcileOnce(born: number, pj: string | null): Promise<void> {
+/** 回 `true` = 这一轮页数用完了、后端还说有更多：调用方续一轮 */
+async function reconcileOnce(born: number, pj: string | null): Promise<boolean> {
   const { get } = { get: useAiStore.getState }
   if (!revMarks.has(markKey(pj))) {
     await ensureRevBaseline() // 还没有起点（老后端 / 此前读失败）：这一轮只取起点
-    return
+    return false
   }
   for (let page = 0; page < RECONCILE_MAX_PAGES; page++) {
     const since = revMarks.get(markKey(pj)) as number
@@ -1063,15 +1067,16 @@ async function reconcileOnce(born: number, pj: string | null): Promise<void> {
     try {
       res = await fetchAiChanges(since, pj)
     } catch {
-      return
+      return false
     }
-    if (born !== get().generation || pj !== currentProjectId() || !Array.isArray(res?.sessions)) return
-    for (const c of res.sessions) if (!(await applyChange(c, born, pj))) return // 没处理成：水位不动，下次再来
-    if (born !== get().generation || pj !== currentProjectId()) return
+    if (born !== get().generation || pj !== currentProjectId() || !Array.isArray(res?.sessions)) return false
+    for (const c of res.sessions) if (!(await applyChange(c, born, pj))) return false // 没处理成：水位不动，下次再来
+    if (born !== get().generation || pj !== currentProjectId()) return false
     // 水位比后端 head 还大 = 换了库：重置到 head（否则永远收不到增量）
     revMarks.set(markKey(pj), res.head < since ? res.head : Math.max(since, res.head))
-    if (!res.more) return
+    if (!res.more) return false
   }
+  return true
 }
 
 /** `ai.done` 带来的版本号：比水位新 = 有本页还没对过的事实，去对账一次（事件只是提示，事实以增量为准） */

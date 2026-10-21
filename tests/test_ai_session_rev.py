@@ -230,6 +230,7 @@ def test_old_rows_without_rev_are_before_the_epoch(client, db):
     _start("old")
     with ai_history._connect() as con:
         con.execute("UPDATE sessions SET rev=NULL")
+        con.execute("UPDATE ai_rev_counter SET rev=0")  # 升级前的库：还没有任何带版本的写
     assert client.get("/api/ai/sessions/changes?since=0").get_json() == {
         "head": 0,
         "more": False,
@@ -239,3 +240,28 @@ def test_old_rows_without_rev_are_before_the_epoch(client, db):
     assert [
         s["id"] for s in client.get("/api/ai/sessions/changes?since=0").get_json()["sessions"]
     ] == ["new"]
+
+
+def test_rev_never_falls_back_after_the_newest_row_is_deleted(client):
+    """删掉最新一行（用户删历史 / 启动清理）后，新会话的 rev 仍必须大于任何客户端可能持有的水位。"""
+    _start("keep")
+    _start("newest", script="b.py")
+    assert ai_history.get("newest")["rev"] == 2
+    watermark = client.get("/api/ai/sessions/changes").get_json()["head"]
+    assert ai_history.delete("newest")
+    _start("later", script="c.py")
+    assert ai_history.get("later")["rev"] > watermark
+    page = client.get(f"/api/ai/sessions/changes?since={watermark}").get_json()
+    assert [s["id"] for s in page["sessions"]] == ["later"], "水位之后的新会话必须出现在增量里"
+
+
+def test_counter_survives_purge_and_starts_from_existing_max(db):
+    _start("a")
+    with ai_history._connect() as con:
+        con.execute("DROP TABLE ai_rev_counter")  # 升级前的库没有计数器
+        con.execute("UPDATE sessions SET rev=41")
+    _start("b", script="b.py")
+    assert ai_history.get("b")["rev"] == 42  # 从现有最大版本起算
+    ai_history.purge(keep_days=0)
+    _start("c", script="c.py")
+    assert ai_history.get("c")["rev"] == 43

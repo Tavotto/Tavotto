@@ -27,6 +27,7 @@ type Row = {
 let table: Row[] = []
 let head = 0
 let changesMode: 'ok' | 'missing' = 'ok'
+let pageSize = Infinity // 假后端每页最多回几行（超过则 more）
 let detailDown = false
 const changesCalls: string[] = []
 
@@ -60,15 +61,18 @@ globalThis.fetch = (async (url: unknown, init?: RequestInit) => {
     const raw = new URL(u, 'http://x').searchParams.get('since')
     if (raw === null) return json({ head, more: false, sessions: [] })
     const top = head
-    const sessions = table
+    const all = table
       .filter((r) => r.project === pj && r.rev > Number(raw) && r.rev <= top)
       .sort((a, b) => a.rev - b.rev)
+    const more = all.length > pageSize
+    const page = all.slice(0, pageSize)
+    const sessions = page
       .map((r) => ({
         id: r.id, rev: r.rev, status: r.status, final: r.final, changed: r.changed, error: null,
         started_ms: 1000, ended_ms: r.final ? 2000 : null, client_request_id: null, provider: 'codex',
         scope: 'figure', target: '整张图', script: r.script, prompt: r.prompt, cancel_requested: false,
       }))
-    return json({ head: top, more: false, sessions })
+    return json({ head: more ? page[page.length - 1].rev : top, more, sessions })
   }
   if (u.includes('/api/ai/history')) {
     const open = table.filter((r) => r.project === pj && !r.final)
@@ -110,6 +114,7 @@ beforeEach(() => {
   table = []
   head = 100
   changesMode = 'ok'
+  pageSize = Infinity
   detailDown = false
   changesCalls.length = 0
   notified.length = 0
@@ -252,6 +257,15 @@ describe('失败与边界', () => {
     expect(sessions().map((x) => x.id)).toEqual(['run'])
     await store().reconcileChanges()
     expect(sessions()).toHaveLength(1)
+  })
+
+  it('超过一轮页数上限（5 页）的积压：自动续轮，6 页全部补上', async () => {
+    await visit('rv-a14')
+    pageSize = 1
+    for (let i = 0; i < 6; i++) finishOnBackend('rv-a14', `bulk${i}`)
+    await store().reconcileChanges()
+    expect(sessions().map((x) => x.id).sort()).toEqual(['bulk0', 'bulk1', 'bulk2', 'bulk3', 'bulk4', 'bulk5'])
+    expect(sessions().every((x) => x.finalized)).toBe(true)
   })
 
   it('对完的行水位越过它：下一次对账从新水位起，不把旧行再拉一遍', async () => {

@@ -182,9 +182,9 @@
 - **会话版本号与增量对账（#1115，`tests/test_ai_session_rev.py`）**：断线 / 切项目 / 刷新的间隙里结束的任务，`ai.done` 是一条连接上的瞬时事件，
   接受时待确认账本行已删（ADR 0132）、恢复查询又只取 open——本页没有任何锚点。事实放在库里、客户端按版本对账，不改账本生命周期、不给 SSE 做重放缓冲、不建新表：
   `sessions.rev`（`_ADDED_COLUMNS`，看列在不在；老行 NULL = 纪元之前，不进增量）。**凡改变对外可见状态的写**（`record_start` / `record_end` / `record_task_phase` /
-  `update_status` / `_close_dead_owner_rows` / `request_cancel` 写意图）在**同一个 `BEGIN IMMEDIATE` 事务里**置 `rev = MAX(rev)+1`（`_NEXT_REV`，只能在写锁内求值；
-  所以这几个写都走 `_immediate`，跨进程严格递增、不撞号）。心跳 `owner_beat_ms` / `cancel_result` / 置顶 / 删除不抬 rev。`GET /api/ai/sessions/changes?since=<rev>`
-  （同 `/api/ai/*` 的会话认证，按当前项目隔离）回 `{head, more, sessions}`：先读全局 `MAX(rev)` 再读 `rev <= head` 的行，返回之后才提交的写不会被水位跳过；`head` 是全局水位
+  `update_status` / `_close_dead_owner_rows` / `request_cancel` 写意图）在**同一个 `BEGIN IMMEDIATE` 事务里**取版本计数器 `ai_rev_counter`（单行表，迁移时从现有 `MAX(rev)` 起算）自增后的值盖到该行（`_next_rev` / `_stamp`，只能在写锁内调；
+  所以这几个写都走 `_immediate`，跨进程严格递增、不撞号；**计数器不随会话行删除回落**——取 `MAX(rev)` 的话删掉最新行后新会话会复用 ≤ 客户端水位的 rev，错过的终态被永久忽略）。心跳 `owner_beat_ms` / `cancel_result` / 置顶 / 删除不抬 rev。`GET /api/ai/sessions/changes?since=<rev>`
+  （同 `/api/ai/*` 的会话认证，按当前项目隔离）回 `{head, more, sessions}`：先读全局计数器再读 `rev <= head` 的行，返回之后才提交的写不会被水位跳过；`head` 是全局水位
   （别的项目的写只让它变大、不泄露内容）；不带 `since` 只回此刻的 `head`（客户端取起点）；超 `CHANGES_PAGE` 行时 `more: true`、`head` 只推进到最后一行；
   先 `reap_dead_owners`（死属主的收尾也是变化）。每行是 `CHANGE_DTO_KEYS` 的精简快照（判终态 + 建占位的摘要列，**不含**转录 / diff / refresh——终态详情仍只有
   `GET /api/ai/sessions/<sid>` 一份）；`final` 与会话详情同一个判据，本进程内存里的会话认它自己的 `final`。`ai.done` 带终态那次写的 `rev`，**只是"去对账"的提示**。
