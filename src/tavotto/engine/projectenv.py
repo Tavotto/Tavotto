@@ -383,7 +383,8 @@ out["pythonpath_dirs"] = [p for p in out["pythonpath_entries"] if os.path.isabs(
 _root_dll = os.environ.get("TAVOTTO_ROOT_DLL_DIR")
 if _root_dll and os.name == "nt" and hasattr(os, "add_dll_directory") and os.path.isdir(_root_dll):
     try:
-        os.add_dll_directory(_root_dll)
+        # 句柄存进模块级变量：体检进程存活期间一直持有（与 worker 的 `_dll_dir_handles` 同一件事）
+        _dll_handle = os.add_dll_directory(_root_dll)
     except (OSError, ValueError):
         pass
     _cppyy = os.environ.get("TAVOTTO_ROOT_CPPYY_DIR")

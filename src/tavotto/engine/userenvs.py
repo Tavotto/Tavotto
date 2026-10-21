@@ -1016,8 +1016,9 @@ def _cache_key(
         how,
         # 内置 runtime 会摘掉 PYTHONPATH；用户解释器继承它，换值后旧 import / spec 结论均不可复用。
         (os.environ.get("PYTHONPATH") or "") if not bundled else "",
-        # 叠加环境（ROOT）：带叠加层量到的结论不能当裸起的用，反之亦然；也不同于另一个 ROOT 安装
-        rootenv.key_of(overlay),
+        # 叠加环境（ROOT）：带叠加层量到的结论不能当裸起的用，反之亦然；也不同于另一个 ROOT 安装，
+        # 同一安装被原地升级 / 重新解压后也不能复用（代次键 = 路径 + 内容指纹）
+        rootenv.generation_of(overlay),
         # 启动上下文（direct / conda|exe|prefix）：裸起的结论不能在激活下复用。放在末尾——前面几位有人按位置读（`key[1]` 是环境代）
         launcher.context_key(python),
     )

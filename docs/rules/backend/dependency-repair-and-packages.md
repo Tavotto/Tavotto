@@ -65,7 +65,7 @@
   与裸起候选进同一张表走 `best()`。叠加层 = `{"kind","root","version"}`，随项目记录持久化（`projectenv.remember(env_overlay=)` /
   `remembered_overlay`），环境变量每次起进程现算（`rootenv.apply_overlay`：安装根不再像 ROOT 就不叠），**最后**叠（内置 runtime
   摘了 `PYTHONPATH` 之后；`pool.launch_env`）；只进 Popen 的 env，**不进 `ExecutionSpec`**，带叠加层的解释器只走 Python 池
-  （`WorkerdWorker` 拒收）；会话复用前核对叠加层（`叠加环境已变`）。身份是 `userenvs.entry_key` / `env_id(python, overlay)`
+  （`WorkerdWorker` 拒收）；会话复用前核对叠加层（`叠加环境已变`）。**身份键 vs 代次键**：`rootenv.key_of`（只按路径）用于持久化 / pin / 候选身份 / `env_id` 对账，不随安装内容变；体检缓存键（`userenvs._cache_key`）与热 worker 复用（`env_overlay_key`）比的是 `rootenv.generation_of` = 身份键 + 安装内容指纹（`bin/thisroot.*`、版本头、`ROOT/_python_version.py`、`bin/cppyy/libcppyy*.pyd` 的 size + mtime_ns，纯 stat），原地升级 / 重新解压后旧结论与旧进程不再复用。`os.add_dll_directory` 返回的句柄必须被持有（worker 模块级 `_dll_dir_handles`、体检脚本模块变量）。身份是 `userenvs.entry_key` / `env_id(python, overlay)`
   （同一解释器裸起与叠加是两个候选）。运行之前不量叠加组合（`spec` 体检 `-I` 忽略环境变量），采用发生在用户点「运行」之后。
   落选原因多 `root_python_mismatch`（叠上仍 import 不了 ROOT：二进制包只配一个 Python 小版本）+ `root_version`（不带路径）。
   **Windows 真机修订（2026-10-21，ADR 0079 同名小节）**：`apply_overlay` 在 Windows 上设私有变量 `TAVOTTO_ROOT_DLL_DIR`（`rootenv.DLL_DIR_ENV`）与

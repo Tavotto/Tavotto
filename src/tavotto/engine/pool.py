@@ -2399,7 +2399,8 @@ class EngineWorker:
         #: 随解释器记着的叠加环境（ROOT，`rootenv`）：钉下的决定带着它就只认它，否则读项目记录。
         #: 起进程时叠在 Conda 激活之后；会话复用前核对（`acquire` 的"叠加环境已变"）
         self.env_overlay = _overlay_for(figures_dir, python, pinned)
-        self.env_overlay_key = rootenv.key_of(self.env_overlay)
+        #: 代次键（路径 + 安装内容指纹），不是身份键：同一路径的 ROOT 被原地升级后，热会话还握着旧库，不能复用
+        self.env_overlay_key = rootenv.generation_of(self.env_overlay)
         # 内置 runtime 装在安装目录里（可能是 Program Files），一个字节都不往
         # 那儿写：.pyc 与 matplotlib 字体缓存改道到数据目录。Tavotto 自己的环境
         # （受管环境 / worker-env）的缓存同样落回数据目录（`runtime.owned_env`）。
@@ -4417,7 +4418,7 @@ def acquire(
                     # 同一路径、环境却被原地重建过（r4232403630）：缓存的进程还握着旧 / 混合的包。拆掉它，
                     # 重建出来的新会话再过下面「起出来的与钉下的对不上就 environment_changed」那一道
                     why = "环境代已变"
-                elif getattr(w, "env_overlay_key", "") != rootenv.key_of(
+                elif getattr(w, "env_overlay_key", "") != rootenv.generation_of(
                     _overlay_for(figures_dir, want_python, pin)
                 ):
                     # 叠加环境（ROOT）变了：同一个解释器路径，带不带 / 带哪个 ROOT 起的进程不是同一个环境

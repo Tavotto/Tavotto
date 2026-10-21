@@ -752,12 +752,13 @@ def _worker_dll_hook():
         or (
             isinstance(n, ast.Assign)
             and any(
-                getattr(t, "id", None) in ("_ROOT_DLL_DIR_ENV", "_ROOT_CPPYY_DIR_ENV")
+                getattr(t, "id", None)
+                in ("_ROOT_DLL_DIR_ENV", "_ROOT_CPPYY_DIR_ENV", "_dll_dir_handles")
                 for t in n.targets
             )
         )
     ]
-    assert len(nodes) == 3
+    assert len(nodes) == 4
     return ast.Module(body=nodes, type_ignores=[])
 
 
@@ -793,6 +794,43 @@ def test_worker_dll_hook_name_mirrors_rootenv_and_registers_the_directory(tmp_pa
 
     fake_os.add_dll_directory = boom
     ns["_startup_dll_directory"]()
+
+
+def test_worker_keeps_the_dll_directory_handles_for_the_process_lifetime(tmp_path):
+    """Codex #1282 P2：`os.add_dll_directory()` 返回的句柄要被持有，不能当场丢掉（丢了登记可能随对象收尾撤销）。"""
+    handle = object()
+    fake_os = types.SimpleNamespace(
+        environ={rootenv.DLL_DIR_ENV: str(tmp_path)},
+        name="nt",
+        path=os.path,
+        listdir=os.listdir,
+        add_dll_directory=lambda p: handle,
+    )
+    ns: dict = {"os": fake_os, "sys": sys}
+    exec(compile(_worker_dll_hook(), "worker_hook", "exec"), ns)  # noqa: S102
+    ns["_startup_dll_directory"]()
+    assert any(h is handle for h in ns["_dll_dir_handles"])
+
+
+def test_probe_script_keeps_the_dll_directory_handle_in_a_module_variable():
+    """体检脚本（`_PROBE_SRC`）里的同一处登记：返回值必须被赋给变量，而不是一条丢弃结果的表达式语句。"""
+    tree = ast.parse(projectenv._PROBE_SRC)
+    calls = [
+        n
+        for n in ast.walk(tree)
+        if isinstance(n, ast.Call)
+        and isinstance(n.func, ast.Attribute)
+        and n.func.attr == "add_dll_directory"
+    ]
+    assert calls, "前提：体检脚本里有 add_dll_directory 调用"
+    discarded = [n for n in ast.walk(tree) if isinstance(n, ast.Expr) and n.value in calls]
+    assert not discarded
+    kept = [
+        n
+        for n in ast.walk(tree)
+        if isinstance(n, ast.Assign) and n.value in calls and isinstance(n.targets[0], ast.Name)
+    ]
+    assert len(kept) == len(calls)
 
 
 def test_probe_script_registers_the_dll_directory_before_importing_anything():
@@ -1093,3 +1131,56 @@ def test_environment_state_exposes_the_overlay_without_a_path(rig):
     assert state["python"] == py311
     assert state["env_overlay"] == {"kind": "root", "version": "6.38.02", "label": "ROOT 6.38"}
     assert info["root"] not in str(state)
+
+
+# ===========================================================================
+# 安装内容指纹（Codex #1282 P2）：身份键只按路径，代次键带指纹
+# ===========================================================================
+def _bump(path: Path, content: str = "x") -> None:
+    """原地改写：内容长度变（size 变），mtime 也往后推，规避粗时间戳。"""
+    path.write_text(content, encoding="utf-8")
+    st = path.stat()
+    os.utime(path, ns=(st.st_atime_ns, st.st_mtime_ns + 5_000_000_000))
+
+
+def test_generation_changes_when_the_install_is_upgraded_in_place_but_the_identity_key_does_not(
+    tmp_path,
+):
+    root = make_official_win_root(tmp_path)
+    spec = rootenv.overlay_spec(rootenv.inspect_root(str(root), nt=True))
+    key, gen = rootenv.key_of(spec), rootenv.generation_of(spec, nt=True)
+    assert key and gen.startswith(key + "#") and gen != key
+    assert rootenv.generation_of(spec, nt=True) == gen  # 没动：稳定
+    for rel, text in (
+        (("bin", "thisroot.bat"), "rem upgraded\n"),
+        (("include", "ROOT", "RVersion.hxx"), "#define ROOT_VERSION_MAJOR 6\n"),
+        (("bin", "ROOT", "_python_version.py"), '_root_python_version = "3.13.0"\n'),
+        (("bin", "cppyy", "libcppyy.pyd"), "new build"),
+    ):
+        before = rootenv.generation_of(spec, nt=True)
+        _bump(root.joinpath(*rel), text)
+        after = rootenv.generation_of(spec, nt=True)
+        assert after != before, rel
+        # 身份键（持久化 / pin 对账用）一字不变：已存的项目记录不会因为升级失效
+        assert rootenv.key_of(spec) == key
+    assert rootenv.generation_of(None) == "" and rootenv.key_of(None) == ""
+
+
+def test_probe_cache_key_and_hot_worker_identity_use_the_generation(tmp_path, monkeypatch):
+    monkeypatch.setattr(rootenv, "_is_nt", lambda nt: True)  # 假的官方 Windows 布局
+    root = make_official_win_root(tmp_path)
+    spec = rootenv.overlay_spec(rootenv.inspect_root(str(root), nt=True))
+    py = _touch(tmp_path / "e" / "bin" / "python")
+    mods = ("ROOT",)
+    old = userenvs._cache_key(py, mods, False, overlay=spec)
+    assert userenvs._cache_key(py, mods, False, overlay=spec) == old
+    _bump(root / "bin" / "thisroot.bat", "rem upgraded\n")
+    assert userenvs._cache_key(py, mods, False, overlay=spec) != old  # 原地升级：体检缓存不再命中
+    # 候选身份仍只按路径（持久化 / 采用对账）
+    cand = {"python": py, "source": "root_overlay", "overlay": spec}
+    assert userenvs.entry_key(cand) == (userenvs._key(py), rootenv.key_of(spec))
+    assert userenvs.env_id(py, spec) == projectenv.env_id(py, spec)
+    # 热 worker：创建时记的、复用前比的都是代次键，不是身份键
+    src = Path(engine_pool.__file__).read_text(encoding="utf-8")
+    assert "self.env_overlay_key = rootenv.generation_of(self.env_overlay)" in src
+    assert 'getattr(w, "env_overlay_key", "") != rootenv.generation_of(' in src

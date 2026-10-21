@@ -17,6 +17,7 @@ ROOT 来自官方二进制安装包，**每个包只配一个 Python 小版本**
 from __future__ import annotations
 
 import glob
+import hashlib
 import ntpath
 import os
 import re
@@ -433,10 +434,52 @@ def valid_spec(spec: object) -> dict | None:
 
 
 def key_of(spec: dict | None) -> str:
-    """缓存键 / 身份用：空串 = 没有叠加。"""
+    """**身份键**（只按路径）：空串 = 没有叠加。项目记录 / 钉下的决定 / 候选身份 / `env_id` 的对账都用它——
+    它必须不随安装内容变，否则原地升级一次 ROOT 就让已存的项目记录对不上。要判「这份安装的内容还是不是同一代」
+    用 `generation_of`。"""
     if not spec:
         return ""
     return f"{KIND}:{os.path.normcase(os.path.normpath(spec['root']))}"
+
+
+def _stat_sig(path: str) -> str:
+    try:
+        st = os.stat(path)
+    except (OSError, ValueError):
+        return "-"
+    return f"{st.st_size}:{st.st_mtime_ns}"
+
+
+def fingerprint_of(spec: dict | None, *, nt: bool | None = None) -> str:
+    """安装内容的轻量指纹（几处标志文件的 size + mtime_ns，纯 stat、不读内容、不执行）：
+    `bin/thisroot.*`、版本头文件（`include/ROOT/RVersion.hxx` 等）、`ROOT/_python_version.py`、
+    Windows 的 `bin/cppyy/libcppyy*.pyd`。原地升级 / 重新解压到同一目录后会变。没有叠加 / 根已不像 ROOT 回空串。"""
+    valid = valid_spec(spec)
+    if valid is None:
+        return ""
+    nt = _is_nt(nt)
+    root = os.path.normpath(valid["root"])
+    parts = [_stat_sig(os.path.join(root, "bin", thisroot_name(nt)))]
+    parts += [_stat_sig(os.path.join(root, *sub)) for sub in _VERSION_HEADERS]
+    pydir = _python_dir(root, nt)
+    parts.append(_stat_sig(os.path.join(pydir, "ROOT", "_python_version.py")) if pydir else "-")
+    if nt:
+        cppyy = _cppyy_dir(root)
+        try:
+            names = (
+                sorted(n for n in os.listdir(cppyy) if n.startswith("libcppyy")) if cppyy else []
+            )
+        except OSError:
+            names = []
+        parts += [f"{n}={_stat_sig(os.path.join(cppyy, n))}" for n in names if n.endswith(".pyd")]
+    return hashlib.sha1("|".join(parts).encode("utf-8")).hexdigest()[:12]
+
+
+def generation_of(spec: dict | None, *, nt: bool | None = None) -> str:
+    """**代次键** = 身份键 + 安装内容指纹：体检缓存、热 worker 复用比的是它（原地升级后换代，旧结论与旧进程不再复用）。
+    不持久化、不对外。空串 = 没有叠加。"""
+    key = key_of(spec)
+    return f"{key}#{fingerprint_of(spec, nt=nt)}" if key else ""
 
 
 def label_of(spec: dict) -> str:
