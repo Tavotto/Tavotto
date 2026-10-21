@@ -556,19 +556,58 @@ def _owners(gid: str, prop: str | None, els: dict[str, dict]) -> set[str]:
     return owners
 
 
-def _auto_prop(gid: str, prop: str | None, new: dict | None, old: dict | None) -> bool:
-    """这条改动是不是「自动算出来的量」：轴的自动缩放范围、自动刻度器给出的刻度值 / 刻度文字、轴的版面位置。"""
+_AXES_PREFIX = re.compile(r"axes_\d+")
+_TICK_AXIS = re.compile(r"\.([xyz])tick")
+
+
+def _auto_kind(
+    gid: str, prop: str | None, new: dict | None, old: dict | None, els: dict[str, dict]
+) -> tuple[str, str | None] | None:
+    """这条改动是不是「自动算出来的量」。返回 `("range", 轴字母)`、`("layout", None)` 或 None（不是）。
+
+    * `range`：轴的自动缩放范围、自动刻度器给出的刻度值、刻度文字（刻度器 + 格式化器的输出）。**范围只有在改前改后两侧都还
+      开着自动缩放时才算自动**（manifest 的 `autoscale` 只读事实；`set_[xy]lim` 会把它关掉）——显式设过的范围是脚本 / Agent
+      写的，不是缩放算的；manifest 没发这个事实（旧版本 / 合成输入）= 没证据，不免责；
+    * `layout`：轴的 `position`（tight_layout / constrained 随文字尺寸重排）。
+    色条轴的范围由映射对象的 vmin/vmax 经 `set_ylim` 写入（自动缩放是关的），是派生量：照旧算自动。"""
     role = (new or old or {}).get("role")
-    if role == "ticklabel":  # 刻度文字 = 刻度器 + 格式化器的输出；格式本身是 ticks 元素的字段，另算
-        return True
-    if role == "axes" and prop in _AUTO_AXES_PROPS | {"position"}:
-        return True
-    if role == "ticks" and prop is not None and new is not None and old is not None:
-        for props, mode in ((_AUTO_TICKS_MAJOR, "major_mode"), (_AUTO_TICKS_MINOR, "minor_mode")):
-            if prop in props:
-                got = (_editable_values(new).get(mode), _editable_values(old).get(mode))
-                return got == ("auto", "auto")
-    return False
+    if role == "ticklabel" or role == "ticks":
+        m = _TICK_AXIS.search(gid)
+        axis = m.group(1) if m else None
+        if role == "ticks":
+            if prop is None or new is None or old is None:
+                return None
+            for props, mode in (
+                (_AUTO_TICKS_MAJOR, "major_mode"),
+                (_AUTO_TICKS_MINOR, "minor_mode"),
+            ):
+                if prop in props:
+                    got = (_editable_values(new).get(mode), _editable_values(old).get(mode))
+                    return ("range", axis) if got == ("auto", "auto") else None
+            return None
+        return ("range", axis)  # 刻度文字
+    if role == "axes" and prop == "position":
+        return ("layout", None)
+    if role == "axes" and prop in _AUTO_AXES_PROPS:
+        axis = prop[0]
+        if (new or {}).get("is_colorbar") and (old or {}).get("is_colorbar"):
+            return ("range", axis)
+        flags = [((e or {}).get("autoscale") or {}).get(axis) for e in (new, old)]
+        return ("range", axis) if flags == [True, True] else None
+    return None
+
+
+def _range_cause_axes(gid: str, axis: str | None, els: dict[str, dict]) -> set[str] | None:
+    """一条自动范围改动的起因必须落在哪些 `axes_N` 里：它自己的轴，加上与它共享这根轴范围的兄弟轴（sharex / twinx）。
+    None = 任何地方的起因都行（色条轴：范围来自映射对象，映射对象可以在别的轴里）。"""
+    m = _AXES_PREFIX.match(gid)
+    if m is None:
+        return set()
+    ax = els.get(m.group(0)) or {}
+    if ax.get("is_colorbar"):
+        return None
+    peers = ((ax.get("autoscale") or {}).get("peers") or {}).get(axis or "", [])
+    return {m.group(0), *(p for p in peers if isinstance(p, str))}
 
 
 def _in_target(gid: str, *, scope: str, target: str | None) -> bool:
@@ -623,11 +662,13 @@ def changes_outside_target(
     1. **跟随目标的对象**：`_owners`——图例项的 `handle_*` 跟着它代表的那条曲线 / 柱组；图像与色条共享 `cmap/vmin/vmax`；色条
        的 `label` 与所在轴的轴标题是同一个文字。它们的账记在 manifest 明说的那个主人名下，主人在范围内就在范围内。
        柱子（`barseries_N.bar_M`）是柱组的后代，已被前缀覆盖。
-    2. **自动算出来的量**（`_auto_prop`）：轴的 `xlim / ylim`（自动缩放）、`major_mode / minor_mode` 都是 `auto` 时刻度器的
-       输出（`major_values / major_step / minor_*`）、刻度文字元素（刻度器 + 格式化器的输出，格式字段在 `ticks` 元素上另算）、
-       轴的版面 `position`（tight_layout / constrained 随文字尺寸重排）。它们**只在范围内有起因时**免责：前四类的起因是范围内
-       一条非「只有文字」角色（`_TEXT_ONLY_ROLES`）元素的真改动（线宽 / 色图范围 / 柱宽 / 刻度类型……会移动坐标范围）；
-       `position` 的起因是范围内任一真改动。没有起因的自动量变化（比如 Agent 在别的子图里直接 `set_ylim`）照常算范围外。
+    2. **自动算出来的量**（`_auto_kind`）：轴的 `xlim / ylim`（**改前改后都开着自动缩放才算**；显式 `set_[xy]lim` 不是缩放算的）、
+       `major_mode / minor_mode` 都是 `auto` 时刻度器的输出（`major_values / major_step / minor_*`）、刻度文字元素（刻度器 +
+       格式化器的输出，格式字段在 `ticks` 元素上另算）、轴的版面 `position`（tight_layout / constrained 随文字尺寸重排）。
+       它们**只在有起因时**免责：范围类（范围 / 刻度 / 刻度文字）的起因必须在**同一个 `axes_N`**（或与它共享这根轴范围的
+       sharex / twinx 兄弟轴，manifest `autoscale.peers`）里，是范围内一条非「只有文字」角色（`_TEXT_ONLY_ROLES`）元素的真改动
+       （线宽 / 色图范围 / 柱宽 / 刻度类型……）；色条轴的范围来自映射对象，起因可在别的轴里。`position` 是全图重排，起因是范围内
+       任一真改动（已知宽松：目标内有真改动时，别处显式 `set_position` 也被当重排放过）。没有起因的、或显式设的范围变化照常算范围外。
     3. **不比** `bbox / geometry / paint_order` 等只读几何：它们不在 `editable` 里，是渲染结果，随上面任一类改动而变。
     """
     base = {
@@ -646,15 +687,32 @@ def changes_outside_target(
     def owned(g: str, prop: str | None) -> bool:
         return any(_in_target(o, scope=scope, target=gid) for o in _owners(g, prop, els))
 
-    auto = {c for c in changes if _auto_prop(*c, after_els.get(c[0]), before_els.get(c[0]))}
-    real_in = [c for c in changes if c not in auto and owned(*c)]
+    kind = {
+        c: k
+        for c in changes
+        if (k := _auto_kind(*c, after_els.get(c[0]), before_els.get(c[0]), els))
+    }
+    real_in = [c for c in changes if c not in kind and owned(*c)]
     cause_any = bool(real_in)
-    cause_range = any((els.get(g) or {}).get("role") not in _TEXT_ONLY_ROLES for g, _ in real_in)
+    #: 范围起因：范围内一条非「只有文字」角色元素的真改动，按它所在的 axes_N 记
+    cause_axes: set[str] = set()
+    cause_somewhere = False
+    for g, _ in real_in:
+        if (els.get(g) or {}).get("role") in _TEXT_ONLY_ROLES:
+            continue
+        cause_somewhere = True
+        if m := _AXES_PREFIX.match(g):
+            cause_axes.add(m.group(0))
     outside: list[str] = []
     for g, prop in changes:
-        if (g, prop) in auto:
-            layout = prop == "position"
-            if (cause_any if layout else cause_range) or owned(g, prop):
+        k = kind.get((g, prop))
+        if k is not None:
+            if k[0] == "layout":
+                exempt = cause_any
+            else:
+                need = _range_cause_axes(g, k[1], els)
+                exempt = cause_somewhere if need is None else bool(need & cause_axes)
+            if exempt or owned(g, prop):
                 continue
         elif owned(g, prop):
             continue

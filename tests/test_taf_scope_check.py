@@ -198,6 +198,100 @@ def test_bar_width_moves_the_autoscaled_range_and_ticks_with_it(tmp_path):
     assert c.verdict == "verified", c.observed
 
 
+TWO_AXES = """
+import matplotlib.pyplot as plt
+def main():
+    fig, (a, b) = plt.subplots(1, 2, figsize=(6, 3){share})
+    a.plot([0, 1, 2], [0, 1, 4], linewidth={lw}, label="a")
+    b.plot([0, 1, 2], [3, 2, 1])
+    {extra}
+    fig.savefig("fig.pdf")
+if __name__ == "__main__":
+    main()
+"""
+
+
+def _two(tmp_path, name, *, lw=1, extra="pass", share=""):
+    return _build(tmp_path, name, TWO_AXES.format(lw=lw, extra=extra, share=share))
+
+
+@needs_worker
+def test_explicit_limits_on_the_targets_own_axes_are_not_autoscale(tmp_path):
+    """Codex #1266 P1：改线宽 + 同一父轴手动收窄 ylim——显式范围不是自动缩放，不能被线宽「起因」免责。"""
+    before = _two(tmp_path, "a")
+    after = _two(tmp_path, "b", lw=4, extra="a.set_ylim(0, 2)")
+    c = _only(after=after, before=before, scope="element", gid="axes_0.lines_0")
+    assert c.verdict == "unknown" and "axes_0" in c.observed["elements"], c.observed
+
+
+@needs_worker
+def test_explicit_limits_on_another_subplot_are_outside(tmp_path):
+    before = _two(tmp_path, "a")
+    after = _two(tmp_path, "b", lw=4, extra="b.set_ylim(0, 2)")
+    c = _only(after=after, before=before, scope="element", gid="axes_0.lines_0")
+    assert c.verdict == "unknown" and "axes_1" in c.observed["elements"], c.observed
+
+
+@needs_worker
+def test_line_width_alone_changes_nothing_outside(tmp_path):
+    before = _two(tmp_path, "a")
+    after = _two(tmp_path, "b", lw=4)
+    assert _only(after=after, before=before, scope="element", gid="axes_0.lines_0").verdict == (
+        "verified"
+    )
+
+
+def _autoscale_cause_in_other_axes() -> tuple[dict, dict]:
+    """合成：目标在 axes_0 的柱组，自动范围变化落在 axes_1（不共享）——起因不在同一个轴。"""
+
+    def man(lim):
+        ax1 = {
+            **_el("axes_1", "axes", xlim=lim),
+            "autoscale": {"x": True, "y": True},
+        }
+        ax0 = {**_el("axes_0", "axes", xlim=[0, 1]), "autoscale": {"x": True, "y": True}}
+        return _m(
+            ax0, ax1, _el("axes_0.barseries_0", "bar_series", width=0.8 if lim[1] == 1 else 0.3)
+        )
+
+    return man([0, 1]), man([0, 2])
+
+
+def test_auto_range_change_needs_a_cause_in_the_same_axes():
+    before, after = _autoscale_cause_in_other_axes()
+    c = _only(after=after, before=before, scope="element", gid="axes_0.barseries_0")
+    assert c.verdict == "unknown" and c.observed["elements"] == ["axes_1"]
+
+
+def test_shared_axes_peers_count_as_the_same_axes():
+    def man(w, lim):
+        ax = lambda g, p: {  # noqa: E731
+            **_el(g, "axes", xlim=lim),
+            "autoscale": {"x": True, "y": True, "peers": {"x": [p]}},
+        }
+        return _m(
+            ax("axes_0", "axes_1"),
+            ax("axes_1", "axes_0"),
+            _el("axes_0.barseries_0", "bar_series", width=w),
+        )
+
+    c = _only(
+        after=man(0.3, [0, 2]), before=man(0.8, [0, 1]), scope="element", gid="axes_0.barseries_0"
+    )
+    assert c.verdict == "verified", c.observed
+
+
+def test_missing_autoscale_fact_is_not_evidence():
+    before = _m(
+        _el("axes_0", "axes", xlim=[0, 1]), _el("axes_0.barseries_0", "bar_series", width=0.8)
+    )
+    after = _m(
+        _el("axes_0", "axes", xlim=[0, 2]), _el("axes_0.barseries_0", "bar_series", width=0.3)
+    )
+    c = _only(after=after, before=before, scope="element", gid="axes_0.barseries_0")
+    assert c.verdict == "unknown" and c.observed["elements"] == ["axes_0"]
+
+
 # --------------------------------------------------------------------------- 判据的纯逻辑（合成 manifest）
 def _el(gid, role, **props):
     return {

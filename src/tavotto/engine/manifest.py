@@ -5070,6 +5070,27 @@ def _measure_manifest(
                 entry["follow_gids"] = follow
             if el.get("inset_of"):
                 entry["inset_of"] = el["inset_of"]
+            # 只读事实（不在 editable、不进文档）：这根轴的范围此刻是不是自动缩放算出来的。`set_[xy]lim` 会把它关掉。
+            # TAF 的「目标范围外改动」靠它区分「自动缩放跟着变」与「显式改了坐标范围」（figureverify._auto_prop）。
+            # `peers`：共享这根轴范围的兄弟轴（sharex / twinx 的另一半），它们的范围会跟着这根轴的目标一起变。
+            autoscale: dict = {}
+            peers: dict[str, list[str]] = {}
+            for axis in ("x", "y"):
+                probe = getattr(artist, f"get_autoscale{axis}_on", None)
+                if not callable(probe):
+                    continue
+                autoscale[axis] = bool(probe())
+                try:
+                    sibs = getattr(artist, f"get_shared_{axis}_axes")().get_siblings(artist)
+                except Exception:  # noqa: BLE001 —— 取不到兄弟：不发，判据按「只有自己」处理
+                    sibs = []
+                names = sorted(
+                    g for a in sibs if a is not artist and (g := gid_by_artist_id.get(id(a)))
+                )
+                if names:
+                    peers[axis] = names
+            if autoscale:
+                entry["autoscale"] = {**autoscale, **({"peers": peers} if peers else {})}
         elif el["role"] == "image" or _is_area_field(artist):
             # imshow 位图铺满宿主 axes，会在命中测试里盖住它——把几何编辑
             # 代理回宿主 axes（前端对 geom_gid 发 position override）。

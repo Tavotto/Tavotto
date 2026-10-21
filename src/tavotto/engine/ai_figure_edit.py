@@ -468,6 +468,13 @@ class FigureEditAdapter:
         out = [_render(st, VERIFIED, None, stems=sorted(after), not_covered=not_covered)]
         target = cand.extras.get("target") or {}
         for stem, man in sorted(before.items()):
+            if man is None:  # 这个 stem 的改前重放失败：显式缺基线，不能被静默略过
+                out.append(
+                    _render(
+                        st, UNKNOWN, "no_baseline", cid=f"render.{stem}", not_covered=("数据指纹",)
+                    )
+                )
+                continue
             if stem not in after:
                 out.append(_render(st, FAILED, "stem_not_rendered", cid=f"render.{stem}"))
                 continue

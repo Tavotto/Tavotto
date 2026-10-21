@@ -3557,15 +3557,15 @@ def _ai_task_hooks(ctx: "ProjectCtx", script: str, entry: str) -> dict:
         这次的改动（`figureverify.changes_outside_target`）。已 built 的会话 `override` 只在捕获下来的 Figure 上重放补丁并重
         导出，**不再执行用户脚本**（`worker.py` 的 override 分支 → `figsession.do_render`）；传空补丁 = 把这个会话里叠加的
         override 全部退回脚本原样。会话随后即被 `retire` 退役，所以这次重置不会留给前端一个与真实状态错位的热会话。
-        数据指纹不随样式 override 变，`data_unchanged` 不受影响。某个 stem 重放失败就缺这一个 stem（调用方记 stem_not_rendered）。"""
+        数据指纹不随样式 override 变，`data_unchanged` 不受影响。某个 stem 重放失败 = 该 stem 的值为 None（显式缺基线，调用方记 unknown `no_baseline`），**不能静默丢掉**；全部失败时整体返回 None。"""
         out = {}
         for stem in ctx.registry.stems_of(script):
             try:
                 man = worker.override(stem, [])["manifest"]
             except Exception:  # noqa: BLE001 —— 这个 stem 量不了：缺基线，不让提交因旁路失败
+                out[stem] = None
                 continue
-            if isinstance(man, dict):
-                out[stem] = man
+            out[stem] = man if isinstance(man, dict) else None
         return out
 
     def before():
@@ -3581,7 +3581,8 @@ def _ai_task_hooks(ctx: "ProjectCtx", script: str, entry: str) -> dict:
             return None
         if getattr(worker, "last_build_source_sha256", None) != disk:
             return None
-        return baseline_manifests(worker) or None
+        base = baseline_manifests(worker)
+        return base if any(v is not None for v in base.values()) else None
 
     def retire():
         # 同步、确认式退役该脚本全部会话（`force=True`，确认不了抛 WorkerError）。尽力而为：监视器可能已先做过普通

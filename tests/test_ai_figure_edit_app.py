@@ -333,3 +333,41 @@ def test_user_overrides_on_screen_are_not_mistaken_for_the_agents_edits(project)
     assert _checks(sid)[OUTSIDE] == ("verified", None), _checks(sid)
     assert sess["task"]["outcome"] == "completed", sess["task"]
     assert _runs(runs) == 2, "取无 override 基准是重放，不再执行用户脚本"
+
+
+TWO_STEMS = SCRIPT.replace(
+    '    fig.savefig("Fig1.pdf")\n',
+    '    fig.savefig("Fig1.pdf")\n    fig2, ax2 = plt.subplots(figsize=(3.2, 2.4))\n'
+    '    ax2.plot([0, 1], [0, 1])\n    fig2.savefig("Fig2.pdf")\n',
+)
+
+
+def test_a_stem_whose_baseline_replay_fails_is_unknown_and_caps_the_outcome(project, monkeypatch):
+    """多 stem 脚本里一个 stem 的无 override 重放抛异常：它不能被静默丢掉，必须记 unknown，结局最高 partial。"""
+    m, client, figs, runs, state = project
+    import pikepdf
+
+    (figs / "fig1.py").write_text(TWO_STEMS.format(runs=str(runs)), encoding="utf-8")
+    (figs / "tavotto_registry.json").write_text(
+        REGISTRY.replace('["Fig1"]', '["Fig1", "Fig2"]'), encoding="utf-8"
+    )
+    pdf = pikepdf.new()
+    pdf.add_blank_page(page_size=(200, 100))
+    pdf.save(figs / "Fig2.pdf")
+    m.open_project(str(figs))
+    state["code"] = THICKER
+    _render(client)
+    for cls in (pool.EngineWorker, pool.WorkerdWorker):
+        real = cls.override
+
+        def flaky(self, stem, patches, *a, _real=real, **kw):
+            if stem == "Fig2" and not patches:
+                raise RuntimeError("replay failed")
+            return _real(self, stem, patches, *a, **kw)
+
+        monkeypatch.setattr(cls, "override", flaky)
+    sid, sess = _ai(client, **LINE)
+    checks = _checks(sid)
+    assert checks["render.Fig2"] == ("unknown", "no_baseline"), checks
+    assert OUTSIDE in checks, "能重放的 stem 照常检查"
+    assert sess["task"]["outcome"] == "partial", sess["task"]
