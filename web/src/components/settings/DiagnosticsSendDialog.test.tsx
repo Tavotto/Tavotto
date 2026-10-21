@@ -792,6 +792,8 @@ describe('诊断包扩充（detail-…、勾选项）', () => {
     for (const k of ['source', 'crash_reports', 'corrupt_sessions']) expect(box(k).disabled, k).toBe(false)
     expect(q<HTMLTextAreaElement>('[data-diag-send-note]')!.disabled).toBe(false)
     expect(q('[data-diag-send-status]')!.getAttribute('data-diag-send-status')).toBe('ready')
+    // 防抖中：状态区不出「正在准备」字样（静默）
+    expect(q('[data-diag-send-status]')!.textContent).not.toContain(ds('preparing'))
     await click(box('crash_reports'))
     await click(box('corrupt_sessions'))
     expect(prepareMock).toHaveBeenCalledTimes(1)
@@ -801,6 +803,8 @@ describe('诊断包扩充（detail-…、勾选项）', () => {
     expect(lastPayload().detail_options).toEqual({ source: true, crash_reports: true, corrupt_sessions: true })
     expect(box('source').disabled).toBe(false)
     expect(q<HTMLButtonElement>('[data-diag-send-confirm]')!.disabled).toBe(true)
+    // 请求在途（refreshing=true）：状态区仍不出「正在准备」，发送按钮禁用即不会把旧包发出去
+    expect(q('[data-diag-send-status]')!.textContent).not.toContain(ds('preparing'))
     await click(box('source'))
     expect(box('source').checked).toBe(false)
     release({ ...DETAIL_PREPARED, id: 'pid-late', options: { source: true, crash_reports: true, corrupt_sessions: true } })

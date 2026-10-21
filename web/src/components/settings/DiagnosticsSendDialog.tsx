@@ -408,7 +408,8 @@ export function DiagnosticsSendDialog({
     .join(' ')
   const statusNode = (
     <div className="flex h-8 min-w-0 grow-[100] items-center gap-1" data-diag-send-status={phase}>
-      {(phase === 'preparing' || (refreshing && phase === 'ready')) && line('plain', ds('preparing'))}
+      {/* 勾选触发的静默刷新（refreshing）不出字：「正在准备」只属于首次备包 */}
+      {phase === 'preparing' && line('plain', ds('preparing'))}
       {phase === 'prepareFailed' && line('danger', ds('prepareFailed'))}
       {phase === 'tooLarge' &&
         prepared &&
