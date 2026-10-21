@@ -1128,6 +1128,36 @@ describe('来源读后端 route（#1209）', () => {
     expect(document.body.querySelector('[data-export-route-unavailable]')?.textContent).toContain('Fig1.pdf')
   })
 
+  it('对话框关着不取 route；每次重新打开都重取，哪怕输入没变', async () => {
+    let validates = 0
+    routeOf = (req) => {
+      validates += 1
+      return { scope: req.scope, formats: req.formats, panels: {} }
+    }
+    await setup(9)
+    await settle()
+    const opened = validates
+    expect(opened, '打开后取了 route').toBeGreaterThan(0)
+
+    await act(async () => { useUiStore.getState().setExportOpen(false) })
+    // 关着时编辑文档：不发 validate
+    await act(async () => {
+      useDocumentStore.getState().commit(literal('编辑'), (d) => { d.objects = [{ ...d.objects[0], h: 33 } as never] })
+    })
+    await settle()
+    expect(validates, '关着不发请求').toBe(opened)
+
+    await act(async () => { useUiStore.getState().setExportOpen(true) })
+    await settle()
+    expect(validates, '重新打开必须重取').toBeGreaterThan(opened)
+
+    const again = validates
+    await act(async () => { useUiStore.getState().setExportOpen(false) })
+    await act(async () => { useUiStore.getState().setExportOpen(true) })
+    await settle()
+    expect(validates, '输入没变的重开也重取（脚本登记可能变了）').toBeGreaterThan(again)
+  })
+
   it('route 缺席（旧后端）：没有那条提示，行为与引入 route 前一致', async () => {
     routeOf = null
     await setup(9)

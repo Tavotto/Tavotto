@@ -14,6 +14,8 @@ import { validateExport } from '@/lib/api'
 import { originalArtifactOverrides } from '@/lib/artifactValidation'
 import { buildExportRequest, type ExportRequestInput } from '@/lib/exportRequest'
 import type { ExportRoute } from '@/lib/exportRoute'
+import { captureProjectEpoch } from '@/lib/projectEpoch'
+import { currentProjectId } from '@/lib/session'
 import type { PanelObject } from '@/types/document'
 
 const FORMAT_ORDER = ['pdf', 'png', 'eps', 'tiff', 'svg']
@@ -43,7 +45,8 @@ export function routeKeyOf(
     }
     facts = [input.figureId ?? '', input.panel ? panelFacts(input.panel, sent) : null]
   }
-  return JSON.stringify([input.scope, formats, facts])
+  // 项目 id 进键：同名文件、同编辑、同格式，在不同项目里脚本登记不同，route 不同
+  return JSON.stringify([currentProjectId(), input.scope, formats, facts])
 }
 
 interface RouteState {
@@ -64,18 +67,21 @@ export const useExportRouteStore = create<RouteState>((set, get) => ({
   refresh: async (input) => {
     const key = routeKeyOf(input)
     const mine = ++seq
+    // 发起时的项目 / 代际：A 的迟到响应不落进 B（换项目时 `clear()` 也会推进 seq）
+    const guard = captureProjectEpoch()
     try {
       const built = buildExportRequest({ ...input, filename: 'route', route: null })
       // route 要回答「用户勾的格式各自怎么走」，包括此刻因 EPS 不可用而被请求构造器丢掉的那一个
       const formats = FORMAT_ORDER.filter((f) => input.formats.includes(f))
       const checked = await validateExport({ ...built.request, formats } as typeof built.request)
-      if (mine !== seq) return
+      if (mine !== seq || !guard.still()) return
       set({ key, route: checked.ok && checked.route ? checked.route : null })
     } catch {
       // 拿不到答案 ≠ 有答案：清掉旧的，消费者走退路
-      if (mine === seq) set({ key, route: null })
+      if (mine === seq && guard.still()) set({ key, route: null })
     }
   },
+  /** 换项目（`projectStore.resetForNewProject`）：丢掉旧项目的答案，在飞的请求回来不落地 */
   clear: () => {
     seq++
     set({ key: null, route: null })

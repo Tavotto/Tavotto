@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { routeKeyOf, useExportRouteStore } from './exportRouteStore'
 import type { ExportRequestInput } from '@/lib/exportRequest'
+import { setCurrentProjectId } from '@/lib/session'
 
 const doc = (overrides: unknown[] = []) =>
   ({ page: { w: 100, h: 80 }, objects: [{ id: 'p', type: 'panel', fileId: 'a.png', overrides, x: 0, y: 0, w: 10, h: 10 }] }) as never
@@ -16,6 +17,7 @@ const input = (over: Partial<ExportRequestInput> = {}): ExportRequestInput => ({
 })
 
 afterEach(() => {
+  setCurrentProjectId(null)
   vi.unstubAllGlobals()
   useExportRouteStore.getState().clear()
 })
@@ -77,5 +79,52 @@ describe('refresh', () => {
     release(new Response(JSON.stringify({ ok: true, route: { scope: 'canvas', formats: ['pdf'], panels: { old: {} } } })))
     await first
     expect(Object.keys(useExportRouteStore.getState().route!.panels)).toEqual(['new'])
+  })
+})
+
+describe('换项目', () => {
+  const routeBody = (tag: string) => ({ ok: true, route: { scope: 'canvas', formats: ['pdf'], panels: { [tag]: {} } } })
+
+  it('项目 id 进键：同名文件、同编辑、同格式的两个项目，键不同', () => {
+    setCurrentProjectId('A')
+    const a = routeKeyOf(input())
+    setCurrentProjectId('B')
+    expect(routeKeyOf(input())).not.toBe(a)
+  })
+
+  it('A 的答案不被 B 复用（即便 store 没被清，键也对不上；清了就更没有）', async () => {
+    setCurrentProjectId('A')
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify(routeBody('fromA')))))
+    await useExportRouteStore.getState().refresh(input())
+    setCurrentProjectId('B')
+    expect(useExportRouteStore.getState().routeFor(routeKeyOf(input()))).toBeNull()
+    useExportRouteStore.getState().clear()
+    setCurrentProjectId('A')
+    expect(useExportRouteStore.getState().routeFor(routeKeyOf(input()))).toBeNull()
+  })
+
+  it('A 发出的请求在切到 B 之后才回来：不落进 B', async () => {
+    setCurrentProjectId('A')
+    let release: (r: Response) => void = () => {}
+    vi.stubGlobal('fetch', vi.fn(() => new Promise<Response>((r) => { release = r })))
+    const pending = useExportRouteStore.getState().refresh(input())
+    setCurrentProjectId('B')
+    useExportRouteStore.getState().clear() // projectStore.resetForNewProject 里做的那一步
+    release(new Response(JSON.stringify(routeBody('fromA'))))
+    await pending
+    expect(useExportRouteStore.getState().route).toBeNull()
+    expect(useExportRouteStore.getState().key).toBeNull()
+  })
+
+  it('即使没人调 clear，换代也让迟到响应作废（A→B→A 同 id 也已换代）', async () => {
+    setCurrentProjectId('A')
+    let release: (r: Response) => void = () => {}
+    vi.stubGlobal('fetch', vi.fn(() => new Promise<Response>((r) => { release = r })))
+    const pending = useExportRouteStore.getState().refresh(input())
+    setCurrentProjectId('B')
+    setCurrentProjectId('A')
+    release(new Response(JSON.stringify(routeBody('fromA'))))
+    await pending
+    expect(useExportRouteStore.getState().route).toBeNull()
   })
 })

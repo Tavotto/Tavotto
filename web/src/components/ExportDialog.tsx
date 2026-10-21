@@ -421,12 +421,15 @@ export function ExportDialog() {
   const routeKey = routeKeyOf({ scope, formats, doc, panel, figureId });
   const route = useExportRouteStore((s) => (s.key === routeKey ? s.route : null));
   const refreshRoute = useExportRouteStore((s) => s.refresh);
+  // 只在对话框开着时取；每次打开（`open` false→true）都重取一次，哪怕输入没变——
+  // 脚本登记可能在对话框关着的时候变了。关着不发请求
   useEffect(() => {
+    if (!open) return;
     const timer = setTimeout(() => void refreshRoute(inputOf()), 250);
     return () => clearTimeout(timer);
     // inputOf 每次渲染都是新函数；真正决定 route 的输入都在 routeKey 里
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [routeKey, refreshRoute]);
+  }, [open, routeKey, refreshRoute]);
   /**
    * 这次的检查、留档与严格核验**按哪张画布算**：原图 = 那张图所在的画布（它可能不是
    * 当前画布），画布 = 当前画布。下面的规范、摘要、导出上下文检查、报告的条目与规范戳、
