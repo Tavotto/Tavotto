@@ -161,6 +161,7 @@ import stat
 import sys
 import threading
 import time
+import unicodedata
 import weakref
 
 if __package__:
@@ -1528,6 +1529,16 @@ def _dir_folds_case(directory: str) -> bool:
     return result
 
 
+def _dir_folds_unicode(directory: str) -> bool:
+    """这个目录所在的文件系统是否把 Unicode 的 NFC / NFD 写法当同一个文件名。
+
+    APFS 不规范化存储、但比较时不区分 NFC / NFD（`é` 的两种写法打开的是同一个文件；HFS+ 则直接存成 NFD）；
+    NTFS、ext4 等按码点比较，两种写法是两个文件。所以按平台判：darwin 是，其余不是。没有按卷探测：
+    darwin 上的 exFAT / 网络卷按码点比较，会被误并（同一 stem 下 NFC / NFD 两种写法并存的情形极罕见，
+    误并的后果是少一次顶替，见规则文档「已知未覆盖」）。"""
+    return sys.platform == "darwin"
+
+
 def savefig_target_key(fname, kwargs: dict, canvas=None) -> str | None:
     """`savefig(fname)` 真正写的那个**磁盘文件**的可比较身份；写不出路径（缓冲区 / 认不出文件名）时 None。
 
@@ -1539,6 +1550,8 @@ def savefig_target_key(fname, kwargs: dict, canvas=None) -> str | None:
       最后写入者——Codex #1141 r4305717514）：路径取 `realpath`（符号链接解到目标），文件名是否折叠大小写按**该目录所在文件系统**
       判（`_dir_folds_case`），不是一刀切的 `normcase`——macOS 默认卷上 `Plot.pdf` / `plot.pdf` 是同一个文件，
       区分大小写的卷（Linux、Windows 的区分目录）上是两个。
+    * 文件系统把 NFC / NFD 当同一个名字的平台（`_dir_folds_unicode`，darwin）上先归一成 NFC 再比。
+    * 硬链接别名（两个路径同一个 inode）键里认不出，由 native 保存成功后的 `_canonical_target` 用 samefile 对账。
     """
     names = savefig_effective_names(fname, kwargs, canvas)
     if len(names) != 1:
@@ -1546,9 +1559,11 @@ def savefig_target_key(fname, kwargs: dict, canvas=None) -> str | None:
     try:
         path = os.path.abspath(os.fsdecode(names[0]))
         directory, base = os.path.split(os.path.realpath(path))
+        if _dir_folds_unicode(directory):
+            directory, base = (unicodedata.normalize("NFC", part) for part in (directory, base))
         if _dir_folds_case(directory):
             # 只折叠大小写（`lower`），不做 `casefold` 的全 Unicode 折叠：NTFS / APFS 的不区分大小写比较不把
-            # `ß` 当 `ss`（Codex #1141 r4305745044）；更细的文件系统排序规则 / Unicode 归一化见细则「已知未覆盖」与 #1150
+            # `ß` 当 `ss`（Codex #1141 r4305745044）；NTFS 的大写表等更细的排序规则不模拟（见细则「已知未覆盖」，#1150）
             base = base.lower()
         return os.path.join(directory, base)
     except Exception:  # noqa: BLE001 —— 簿记尽力而为：认不出路径就不参与顶替，绝不改变用户 savefig 的结果
@@ -1577,15 +1592,43 @@ def savefig_verify_render(real_savefig, fig, fname, args, kwargs: dict) -> bool:
     return True
 
 
+def _content_only_failure(real_savefig, fname, args, kwargs: dict) -> bool:
+    """同一组保存参数在**空白 Figure** 上能渲染：此时 Figure 那一次渲染不出，原因只在它的内容。
+    不碰用户的 Figure、不进 pyplot 的图表（`Figure()` 直接建，不经 `plt.figure`）；`bbox_extra_artists`
+    指向的是别的 Figure 的 artist，不带。任何异常按「不是」算（保持原有的失败判定）。"""
+    try:
+        from matplotlib.figure import Figure
+
+        kw = {k: v for k, v in kwargs.items() if k != "bbox_extra_artists"}
+        return savefig_verify_render(real_savefig, Figure(), fname, args, kw)
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def savefig_verifier(real_savefig, fig, fname, args, kwargs: dict):
     """`note_savefig_writer` 的 `verify` 闭包：只持有 Figure 的弱引用与 args / kwargs 的浅拷贝（登记会活得比这次调用久，
-    不能把 Figure 或调用方后来改动的 kwargs 拖住）；Figure 已死 = 失败。"""
+    不能把 Figure 或调用方后来改动的 kwargs 拖住）；Figure 已死 = 失败。
+
+    闭包本身 `verify()` 是**当场**验证（外来写入：Figure 此刻的内容就是保存时的内容，成败是真值）。
+    `verify.deferred()` 给持有者的**惰性**验证用，三值：True 成功、False 失败、None 未知——保存早已发生，
+    Figure 此后可能被脚本改坏，所以「Figure 此刻渲染不出、但同一组参数在空白 Figure 上能渲染」说不清当时成败，
+    记 None（ADR 0113 的 `intercepted` 语义：safe 没有磁盘，拿不到真值），调用方按已保存算、不推翻选择。
+    参数本身造成的失败（与内容无关）仍是 False。"""
     ref, a, kw = weakref.ref(fig), tuple(args), dict(kwargs)
 
     def verify() -> bool:
         target = ref()
         return target is not None and savefig_verify_render(real_savefig, target, fname, a, kw)
 
+    def deferred():
+        target = ref()
+        if target is None:
+            return False
+        if savefig_verify_render(real_savefig, target, fname, a, kw):
+            return True
+        return None if _content_only_failure(real_savefig, fname, a, kw) else False
+
+    verify.deferred = deferred
     return verify
 
 
@@ -1629,11 +1672,27 @@ def _resolve_entry(entry):
             return None
         if entry.verified:
             return entry
-        if entry.thunk():
+        # None = 未知（保存后 Figure 被改坏，说不清当时成败）：按已保存算，不推翻一次可能成功的保存
+        if getattr(entry.thunk, "deferred", entry.thunk)() is not False:
             entry.verified, entry.thunk, entry.prev = True, None, None
             return entry
         entry = entry.prev
     return None
+
+
+def _canonical_target(files: dict, target: str) -> str:
+    """native 保存成功之后：这个目标若与某个已登记目标是磁盘上的同一个文件（硬链接别名、符号链接之外的
+    同 inode 写法），并入那个已登记的键。**不替代路径键**——删掉再重建同一路径仍是同一目标，所以只在
+    两个键都还对应着存在的文件时才合并；任一 stat 出错 = 不合并。"""
+    if target in files:
+        return target
+    for known in list(files):
+        try:
+            if os.path.samefile(known, target):
+                return known
+        except OSError:
+            continue
+    return target
 
 
 def _held_still_on_disk(files: dict, held, target) -> bool:
@@ -1699,6 +1758,8 @@ def note_savefig_writer(
         return False
     entry = writers.setdefault(stem, {"files": {}, "by": {}})
     files, by = entry["files"], entry["by"]
+    if target is not None and verify is None:
+        target = _canonical_target(files, target)  # native：保存已落盘，磁盘上的真值胜过路径字符串
     held = capture.get(stem)
     foreign = target is not None and call is not None and held is not None and held is not fig
     if foreign and verify is not None and not verify():
