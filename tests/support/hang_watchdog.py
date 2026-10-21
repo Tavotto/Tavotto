@@ -62,6 +62,8 @@ def describe_children() -> str:
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
             text=True,
+            encoding="utf-8",
+            errors="replace",
         )
         probe_pid = proc.pid
         out, _ = proc.communicate(timeout=10)
