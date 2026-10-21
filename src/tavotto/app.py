@@ -1292,6 +1292,7 @@ def _serialize_figure_with_worker(
     snapshot_only: bool = False,
     existing_only: bool = False,
     expect_receipt_id: str | None = None,
+    svg_text: bool = False,
 ) -> tuple[Path, object, str] | None:
     """`_serialize_figure` 的本体：多回 `(路径, worker-like, 脚本)`——候选后端的执行侧源解析器要拿
     worker 装配回执（`engine/receipt`），旧调用方只取路径。"""
@@ -1350,6 +1351,14 @@ def _serialize_figure_with_worker(
             )
     if existing_only:
         companion_args["require_built"] = True
+    text_svg = tmp.with_suffix(".text.svg") if (svg_text and svg_path is not None) else None
+    if svg_text:
+        # 「按原图导出」的 SVG 默认保留文字（ADR 0142）：独立的一路 `svg.fonttype=none`，只写成品，
+        # 不碰画布预览与 #1185 等价证人的 path 基准字节。旧 worker（签名里没有这两个字段）整体回退为轮廓。
+        if fmt == engine_exportreq.FORMAT_SVG:
+            companion_args.update(_supported_export_kwargs(worker, svg_fonttype="none"))
+        elif text_svg is not None:
+            companion_args.update(_supported_export_kwargs(worker, svg_text_path=str(text_svg)))
     native_receipt = (
         _execution_receipt(worker, script) if engine_enginesession.is_native(worker) else None
     )
@@ -1399,6 +1408,18 @@ def _serialize_figure_with_worker(
                 sink.append(f"{rel_id}: SVG unavailable: {str(exc)[:200]}")
     elif fmt == engine_exportreq.FORMAT_SVG:
         _normalize_worker_svg(tmp)
+        if companion_args.get("svg_fonttype") == "none":
+            _extend_text_svg_families(tmp)
+    if text_svg is not None:
+        info = resp.get("svg_text") or {}
+        try:
+            if "svg_text_path" not in companion_args or info.get("path") != str(text_svg):
+                raise ValueError("no text variant acknowledged")
+            _normalize_worker_svg(text_svg, info)
+            _extend_text_svg_families(text_svg)
+        except (ValueError, OSError, engine_exportreq.ExportRequestError):
+            # 成品的文字版是可选的：缺了就用 path 版如实交（text_policy=outlines）
+            text_svg.unlink(missing_ok=True)
     if sink is not None:
         for w in resp.get("warnings") or []:
             msg = f"{rel_id}: {w}"
@@ -1411,6 +1432,29 @@ def _serialize_figure_with_worker(
 
 def _normalize_worker_svg(path: Path, expected: dict | None = None) -> None:
     engine_artifactinspect.normalize_worker_svg(path, expected)
+
+
+def _supported_export_kwargs(worker, **wanted) -> dict:
+    """只把 worker 的 `export` 签名里**有**的新字段带上（加字段协议：旧的 / 假的 worker 回退为轮廓）。"""
+    import inspect
+
+    try:
+        params = inspect.signature(worker.export).parameters
+    except (TypeError, ValueError):
+        return {}
+    if any(p.kind is inspect.Parameter.VAR_KEYWORD for p in params.values()):
+        return dict(wanted)
+    return {k: v for k, v in wanted.items() if k in params}
+
+
+def _extend_text_svg_families(path: Path) -> None:
+    """matplotlib 文字里的批准族名补上回退链（`rendercore/svgfonts` 唯一出处）；用户自己的字体不动。"""
+    from .rendercore import svgfonts
+
+    raw = Path(path).read_text(encoding="utf-8")
+    extended = svgfonts.extend_matplotlib_families(raw)
+    if extended != raw:
+        Path(path).write_text(extended, encoding="utf-8", newline="")
 
 
 def _execution_receipt(worker, script: str):
@@ -1464,6 +1508,7 @@ def _execution_source(
     artifact_source=None,
     include_svg: bool = False,
     snapshot_only: bool = False,
+    with_text_svg: bool = False,
 ):
     """候选后端的执行侧源：带 override / runtime 素材的面板 → 当次权威 worker 现画的 PDF +
     **回执**（`origin=execution`，`receipt_id` / `receipt_identity` / `patch_hash` 进 RenderPlan 的
@@ -1496,6 +1541,7 @@ def _execution_source(
             out_dir,
             **_artifact_kwargs(artifact_source),
             **({"include_svg": True, "snapshot_only": snapshot_only} if include_svg else {}),
+            **({"svg_text": True} if include_svg and with_text_svg else {}),
         )
     except engine_pool.WorkerError as exc:
         if include_svg and getattr(exc, "code", None) == "svg_source_unavailable":
@@ -1542,8 +1588,23 @@ def _execution_source(
             patch_hash=engine_patchspec.patch_hash(overrides),
         )
         companion = rc_sources.FrozenSource(svg_art, svg_path, rcpt.public_facts())
+    text_variant = None
+    text_path = Path(path).with_suffix(".text.svg")
+    if companion is not None and with_text_svg and text_path.is_file():
+        # 同一次命令的「保留文字」成品：同回执 / 同 generation / 同 patch_hash（`svg_text_representation` 再核）
+        text_art = engine_receipt.source_artifact_for(
+            rcpt,
+            text_path,
+            source_id=rel_id,
+            patch_hash=engine_patchspec.patch_hash(overrides),
+        )
+        text_variant = rc_sources.FrozenSource(text_art, text_path, rcpt.public_facts())
     frozen = rc_sources.FrozenSource(
-        artifact=art, path=Path(path), receipt=rcpt.public_facts(), svg=companion
+        artifact=art,
+        path=Path(path),
+        receipt=rcpt.public_facts(),
+        svg=companion,
+        svg_text=text_variant,
     )
     if companion is not None:
         try:
@@ -2228,6 +2289,7 @@ def _export_produce_original(job, tmp_dir: Path, *, artifact_sources=None) -> li
                 job.warnings,
                 tmp_dir,
                 existing_only=True,
+                svg_text=True,
                 **_artifact_kwargs((artifact_sources or {}).get(src.figure_id)),
             )
         except engine_pool.WorkerError as exc:
@@ -2247,6 +2309,7 @@ def _export_produce_original(job, tmp_dir: Path, *, artifact_sources=None) -> li
     # 要 EPS 时 PDF/PNG/TIFF 也让 worker 现画（`rerender`），四个格式才出自同一次
     # 脚本运行；没有脚本的图退回磁盘文件，EPS 那一项下面自己报 `eps_needs_script`
     svg_source = None
+    svg_text_source = None
     wants_svg = engine_exportreq.FORMAT_SVG in req.formats
     wants_snapshot = wants_svg or src.figure_snapshot is not None
     execution_source = engine_runtimeasset.is_runtime_id(src.figure_id) or bool(src.overrides)
@@ -2261,10 +2324,12 @@ def _export_produce_original(job, tmp_dir: Path, *, artifact_sources=None) -> li
             job.warnings,
             tmp_dir,
             include_svg=True,
+            with_text_svg=True,
             **_artifact_kwargs((artifact_sources or {}).get(src.figure_id)),
         )
         source_path = frozen.path
         svg_source = frozen.svg_representation()
+        svg_text_source = frozen.svg_text_representation()
     else:
         source_path = _resolve_panel_source(
             {"id": src.figure_id, "overrides": src.overrides},
@@ -2334,9 +2399,12 @@ def _export_produce_original(job, tmp_dir: Path, *, artifact_sources=None) -> li
                 else:
                     from .rendercore.sources import read_frozen
 
-                    tmp.write_bytes(read_frozen(svg_source))
+                    # 同一次命令的「保留文字」成品优先（ADR 0142）；没有（已存快照 / 旧 worker / 它写失败）
+                    # 就交 path 基准那份，text_policy 由文件里有没有 <text> 如实记。
+                    delivered = svg_text_source or svg_source
+                    tmp.write_bytes(read_frozen(delivered))
                     produced.append(
-                        _original_svg_result(tmp, svg_source.artifact, svg_source.receipt)
+                        _original_svg_result(tmp, delivered.artifact, delivered.receipt)
                     )
             elif fmt == engine_exportreq.FORMAT_PDF:
                 facts = pdfbackend.original_pdf(source_path, tmp, page_pt)

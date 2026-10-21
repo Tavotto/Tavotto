@@ -138,7 +138,7 @@
     "start": "Export",
     "targetNoFigure": "No current figure",
     "svgHint": "Vector · text stays editable by default",
-    "svgNote": "SVG keeps text as live text by default: after inserting it into Word or PowerPoint, use Convert to Shape to edit the text. If the recipient lacks the same font, text is shown in a substitute font. Matplotlib figures exported as-is keep the script’s own text setting (outlines by default). Unsupported sources are reported as export failures.",
+    "svgNote": "SVG keeps text as live text by default: after inserting it into Word or PowerPoint, use Convert to Shape to edit the text. If the recipient lacks the same font, text is shown in a substitute font. Unsupported sources are reported as export failures.",
     "thumbNote": "Thumbnail is a sketch · not the final file",
     "tiffHint": "Raster · lossless",
     "title": "Export",

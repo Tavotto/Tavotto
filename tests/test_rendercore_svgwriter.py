@@ -538,22 +538,57 @@ def test_text_run_has_unicode_family_size_style_and_baseline(tmp_path, provider)
     assert text.get(f"{{{XML}}}space") == "preserve"
     # baseline origin: translate(10, 23) with a local y-down frame (page flip already outside)
     assert text.get("transform") == "matrix(1 0 0 -1 10 23)"
-    xs = [float(v) for v in text.get("x").split()]
-    assert len(xs) == len("Ag fi 10") and xs[0] == 0
-    # per-character x is the IR advance sum (locks letter spacing independent of the renderer)
-    size = 12 / face.upem
-    expected, pen = [], 0.0
-    for g in glyphs:
-        n = max(len(g.text), 1)
-        for i in range(len(g.text)):
-            expected.append(pen + g.x_advance * size * i / n)
-        pen += g.x_advance * size
-    assert xs == pytest.approx(expected, abs=1e-6)
+    # 每个 <text> 只有一个 x：Word「转换为形状」按每个显式 x 切成独立文本段（字母散开、每字带段落标记）。
+    assert text.get("x") == "0" and len(text.get("x").split()) == 1
+    assert text.get("y") is None
     group = root.find("s:g/s:g", NS)
     assert group.get("fill") == "rgb(0%,0%,100%)" and group.get("fill-opacity") == "0.5"
     assert not root.findall("s:defs/s:path", NS)
     assert facts.text_runs == 1 and facts.text_fallback_runs == 0 and facts.outlined_glyphs == 0
     assert facts.fonts[0]["as_text"] is True and facts.fonts[0]["outlined"] is False
+
+
+def test_no_text_element_ever_carries_a_per_glyph_x_list(tmp_path, provider):
+    sans = provider.face_for("sans-serif", False, False)
+    cjk = provider.cjk_face()
+    nodes = [
+        ir.ShapedText(
+            5,
+            50,
+            (
+                ir.GlyphRun("s", 12, sans.shape("Title Bold fi ffl")),
+                ir.GlyphRun("s", 8, sans.shape("-1"), rise=4),
+                ir.GlyphRun("c", 12, cjk.shape("中文")),
+            ),
+            ir.Paint((0, 0, 0)),
+        )
+    ]
+    res = {"s": sans.resource, "c": cjk.resource}
+    _, root, _ = _write(tmp_path, nodes, resources=res, provider=provider)
+    texts = _text_nodes(root)
+    assert len(texts) == 3
+    for t in texts:
+        assert len(t.get("x").split()) == 1 and t.get("y") is None, t.attrib
+    # the second run starts where the first one's advance ends — one number, not a list
+    first_adv = sum(g.x_advance for g in sans.shape("Title Bold fi ffl")) * 12 / sans.upem
+    assert float(texts[1].get("transform").split()[4]) == pytest.approx(5 + first_adv, abs=1e-6)
+
+
+def test_vertical_glyph_offsets_are_the_only_reason_to_write_y(tmp_path, provider):
+    sans = provider.face_for("sans-serif", False, False)
+    gid = sans.shape("A")[0].gid
+    run = ir.GlyphRun("s", 10, (ir.Glyph(gid, "A", 600, 0, 100), ir.Glyph(gid, "A", 600)))
+    _, root, _ = _write(
+        tmp_path,
+        [ir.ShapedText(5, 20, (run,), ir.Paint((0, 0, 0)))],
+        resources={"s": sans.resource},
+        provider=provider,
+    )
+    (text,) = _text_nodes(root)
+    assert len(text.get("x").split()) == 1
+    assert [float(v) for v in text.get("y").split()] == pytest.approx(
+        [-100 * 10 / sans.upem, 0], abs=1e-9
+    )
 
 
 def test_text_paint_is_inherited_from_group(tmp_path, provider):

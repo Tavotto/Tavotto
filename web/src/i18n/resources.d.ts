@@ -428,7 +428,7 @@ export default interface Resources {
       "strictTitle": "按所选规范重新打开写好的文件核对；不合格或无法核验的文件不会保存。EPS 不核验。",
       "strictToggle": "严格核验产物",
       "svgHint": "矢量 · 文字默认保留为文字",
-      "svgNote": "SVG 默认保留文字：插入 Word / PowerPoint 后，选中图形并「转换为形状」即可编辑文字。对方电脑没装同款字体时，文字会换成相近字体显示。按原图原样导出的 Matplotlib 图沿用脚本自己的文字写法（默认是轮廓）。不支持的来源会明确报告导出失败。",
+      "svgNote": "SVG 默认保留文字：插入 Word / PowerPoint 后，选中图形并「转换为形状」即可编辑文字。对方电脑没装同款字体时，文字会换成相近字体显示。不支持的来源会明确报告导出失败。",
       "targetNoFigure": "当前没有图",
       "thumbNote": "缩略图仅为示意 · 非最终文件",
       "tiffHint": "位图 · 无损压缩",

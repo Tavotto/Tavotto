@@ -926,6 +926,8 @@ class NativeSession:
         svg_path: str | None = None,
         require_built: bool = False,
         snapshot_only: bool = False,
+        svg_fonttype: str | None = None,
+        svg_text_path: str | None = None,
     ) -> dict:
         with self._figure_lock:
             self._require_consistent(stem)
@@ -940,6 +942,8 @@ class NativeSession:
                     **({"svg_path": svg_path} if svg_path is not None else {}),
                     **({"require_built": True} if require_built else {}),
                     **({"snapshot_only": True} if snapshot_only else {}),
+                    **({"svg_fonttype": svg_fonttype} if svg_fonttype is not None else {}),
+                    **({"svg_text_path": svg_text_path} if svg_text_path is not None else {}),
                 },
                 EXPORT_TIMEOUT,
             )

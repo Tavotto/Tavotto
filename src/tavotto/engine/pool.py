@@ -2808,6 +2808,8 @@ class EngineWorker:
         svg_path: str | None = None,
         require_built: bool = False,
         snapshot_only: bool = False,
+        svg_fonttype: str | None = None,
+        svg_text_path: str | None = None,
     ) -> dict:
         if (require_built or snapshot_only) and not self.built:
             raise WorkerError(
@@ -2826,6 +2828,8 @@ class EngineWorker:
                 **({"svg_path": svg_path} if svg_path is not None else {}),
                 **({"require_built": True} if require_built else {}),
                 **({"snapshot_only": True} if snapshot_only else {}),
+                **({"svg_fonttype": svg_fonttype} if svg_fonttype is not None else {}),
+                **({"svg_text_path": svg_text_path} if svg_text_path is not None else {}),
             },
             EXPORT_TIMEOUT,
         )
@@ -3485,6 +3489,8 @@ class WorkerdWorker:
         svg_path: str | None = None,
         require_built: bool = False,
         snapshot_only: bool = False,
+        svg_fonttype: str | None = None,
+        svg_text_path: str | None = None,
     ) -> dict:
         if (require_built or snapshot_only) and not self.built:
             raise WorkerError(
@@ -3504,6 +3510,8 @@ class WorkerdWorker:
                 **({"svg_path": svg_path} if svg_path is not None else {}),
                 **({"require_built": True} if require_built else {}),
                 **({"snapshot_only": True} if snapshot_only else {}),
+                **({"svg_fonttype": svg_fonttype} if svg_fonttype is not None else {}),
+                **({"svg_text_path": svg_text_path} if svg_text_path is not None else {}),
             },
         )
         return _fold_build_timings(resp, build)

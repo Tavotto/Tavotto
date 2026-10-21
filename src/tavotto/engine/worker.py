@@ -1494,6 +1494,12 @@ class Worker(wireproto.V1Handler):
                     int(req.get("dpi", 600)),
                     **({"svg_path": req["svg_path"]} if req.get("svg_path") is not None else {}),
                     **({"snapshot_only": True} if req.get("snapshot_only") else {}),
+                    **({"svg_fonttype": req["svg_fonttype"]} if req.get("svg_fonttype") else {}),
+                    **(
+                        {"svg_text_path": req["svg_text_path"]}
+                        if req.get("svg_text_path") is not None
+                        else {}
+                    ),
                 ),
             }
 

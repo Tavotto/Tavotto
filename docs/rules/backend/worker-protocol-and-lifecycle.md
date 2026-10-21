@@ -29,6 +29,9 @@
 - 前端渲染态分键与假实时预览（渲染平面 / 历史平面）的规则在
   `web/AGENTS.md`——引擎侧只需知道：render 请求带 `inline_svg` 时 SVG 与
   manifest 必须同一次响应返回；SSE 的 render.started/done 只带 fileId。
+- **export 的两个可选「保留文字」字段（ADR 0142，加字段协议）**：`svg_fonttype`（`"none"`，仅 `format=svg`）与 `svg_text_path`
+  （要带 `svg_path`、不与 `snapshot_only` 同用；应答多 `svg_text` / `svg_text_error`）。只给成品用，path 基准字节与 #1185 等价证人不动；
+  旧 worker 静默忽略，父进程只对签名里有这两个参数的 worker 带上，回退为 path 版。看护 `tests/test_worker_svg_pair.py`、`tests/test_export_svg.py`。
 - **export / preview_png 都是状态中立的一次性动作**：应用自己那组 patches 出图后
   必须把 `state.applied` 还原回去（还原那次的 warnings 丢弃）。不还原的话历史版本
   恢复与画布导出（每个面板各带一套 overrides）会把别人的状态留在常驻 figure 上，

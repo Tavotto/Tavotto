@@ -32,6 +32,7 @@ from xml.etree import ElementTree as ET
 from . import ir, placement, raster, rasterio
 from .hbshaper import HbFaceProvider, require
 from .svgcheck import SVGError, parse_svg
+from .svgfonts import family_list
 
 SVG = "http://www.w3.org/2000/svg"
 XLINK = "http://www.w3.org/1999/xlink"
@@ -41,16 +42,6 @@ ET.register_namespace("xlink", XLINK)
 TEXT_POLICY_TEXT = "text"
 TEXT_POLICY_OUTLINES = "outlines"
 TEXT_POLICIES = (TEXT_POLICY_TEXT, TEXT_POLICY_OUTLINES)
-
-#: Real family name → CSS fallback chain. The first name is the approved face the layout was
-#: shaped with; the following names are metric-compatible or platform-native substitutes so a
-#: machine without the approved face (Word on Windows, Keynote on macOS) still picks a sensible one.
-_FALLBACK_CHAINS = {
-    "serif": ("'Times New Roman'", "Times", "serif"),
-    "sans-serif": ("Arial", "Helvetica", "sans-serif"),
-    "monospace": ("'Courier New'", "Courier", "monospace"),
-    "cjk": ("'Microsoft YaHei'", "'PingFang SC'", "'Noto Sans CJK SC'", "sans-serif"),
-}
 
 WRITER_ERROR_CODES = (
     "unsupported_capability",
@@ -135,10 +126,6 @@ def _text_safe(cp: int) -> bool:
     if cp < 0x20 or 0x7F <= cp <= 0x9F or 0xD800 <= cp <= 0xDFFF or cp in (0xFFFE, 0xFFFF):
         return False
     return not (0xE000 <= cp <= 0xF8FF or 0xF0000 <= cp <= 0x10FFFF or 0xFDD0 <= cp <= 0xFDEF)
-
-
-def _css_family(name: str) -> str:
-    return "'" + name.replace("\\", "").replace("'", "") + "'"
 
 
 _URL_REF = re.compile(r"url\(\s*(['\"]?)#([^\s)'\"]+)\1\s*\)", re.I)
@@ -405,42 +392,39 @@ class SvgWriter:
             self.facts.outlined_glyphs += 1
             self.facts.notdef_codes += int(glyph.gid == 0)
 
-    def _text_layout(self, run: ir.GlyphRun) -> tuple[str, list[float], list[float]] | None:
-        """Unicode string + per-character x / y (pt, relative to the run origin), or None.
+    def _text_layout(self, run: ir.GlyphRun) -> tuple[str, float, list[float] | None] | None:
+        """Unicode string + the run's single start x (pt, relative to the run origin) + optional
+        per-character y, or None.
+
+        One x per run, no per-glyph x list: Word's "Convert to Shape" cuts a new text segment at every
+        explicit x, which scatters the letters ("T i t l e") and adds a paragraph mark after each one
+        (user report, 2026-10-21). Letter spacing is left to the renderer; on a machine with the same
+        approved face it is the face's own advance, i.e. what the IR was shaped with. ``y`` is only
+        written when a glyph truly carries a vertical offset.
 
         None means this run cannot be restored to reliable Unicode and must stay outlines:
         no cluster text on the first glyph, ``.notdef``, a character the approved face does not
         cover, private-use / control / non-character code points, or no glyphs at all.
-        Glyphs without cluster text belong to the preceding cluster (ligature tails, marks).
         """
         if not run.glyphs or run.glyphs[0].text == "":
             return None
         face = self._face(run.font)
         size = run.size / face.upem
-        clusters: list[tuple[str, float, float, float]] = []  # text, x, y, advance
-        pen = 0.0
+        chars: list[str] = []
+        ys: list[float] = []
+        y = 0.0
         for glyph in run.glyphs:
             if glyph.gid == 0:
                 return None
             if glyph.text:
-                clusters.append(
-                    (glyph.text, pen + glyph.x_offset * size, -glyph.y_offset * size, 0.0)
-                )
-            text, x, y, adv = clusters[-1]
-            clusters[-1] = (text, x, y, adv + glyph.x_advance * size)
-            pen += glyph.x_advance * size
-        chars: list[str] = []
-        xs: list[float] = []
-        ys: list[float] = []
-        for text, x, y, adv in clusters:
-            for index, ch in enumerate(text):
+                y = -glyph.y_offset * size
+            for ch in glyph.text:
                 cp = ord(ch)
                 if not _text_safe(cp) or not face.covers(cp):
                     return None
                 chars.append(ch)
-                xs.append(x + adv * index / len(text))
                 ys.append(y)
-        return "".join(chars), xs, ys
+        return "".join(chars), run.glyphs[0].x_offset * size, (ys if any(ys) else None)
 
     def _text_element(
         self,
@@ -448,24 +432,23 @@ class SvgWriter:
         node: ir.ShapedText,
         run: ir.GlyphRun,
         pen_x: float,
-        layout: tuple[str, list[float], list[float]],
+        layout: tuple[str, float, list[float] | None],
     ) -> None:
-        content, xs, ys = layout
+        content, x0, ys = layout
         face = self._face(run.font)
         resource = face.resource
         self._font_facts[run.font]["as_text"] = True
         family = face.record.info.family_name or resource.postscript_name
-        chain = _FALLBACK_CHAINS.get(resource.family, ())
         attrs = {
             # y is flipped once more so the glyph-up text frame sits inside the page's y-down flip.
             "transform": _matrix((1, 0, 0, -1, pen_x, node.y + run.rise)),
-            "x": " ".join(_num(v) for v in xs),
-            "font-family": ", ".join((_css_family(family), *chain)),
+            "x": _num(x0),
+            "font-family": family_list(family, resource.family),
             "font-size": _num(run.size),
             "text-rendering": "geometricPrecision",
             f"{{{_XML}}}space": "preserve",
         }
-        if any(ys):
+        if ys is not None:
             attrs["y"] = " ".join(_num(v) for v in ys)
         if resource.bold:
             attrs["font-weight"] = "700"
