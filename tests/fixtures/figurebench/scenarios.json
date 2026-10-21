@@ -1348,6 +1348,20 @@
           "kind": "series_data_unchanged",
           "axes": 2,
           "series": "C: dose"
+        },
+        {
+          "id": "p.lw.2",
+          "kind": "line_property_unchanged",
+          "axes": 2,
+          "series": "C: dose",
+          "prop": "linewidth"
+        },
+        {
+          "id": "p.ls.2",
+          "kind": "line_property_unchanged",
+          "axes": 2,
+          "series": "C: dose",
+          "prop": "linestyle"
         }
       ],
       "reference_solution": [
@@ -1373,6 +1387,34 @@
             "p.color.0",
             "p.color.1",
             "p.color.3"
+          ]
+        },
+        {
+          "id": "n.also_lw",
+          "edits": [
+            {
+              "file": "figure.py",
+              "find": "        ax.set_ylabel(ylabel, fontsize=8)\n    for ax in axes[1]:",
+              "replace": "        ax.set_ylabel(ylabel, fontsize=8)\n    axes[1][0].lines[0].set_color(\"#1f77b4\")\n    axes[1][0].lines[0].set_linewidth(2.5)\n    for ax in axes[1]:",
+              "count": 1
+            }
+          ],
+          "must_fail": [
+            "p.lw.2"
+          ]
+        },
+        {
+          "id": "n.also_ls",
+          "edits": [
+            {
+              "file": "figure.py",
+              "find": "        ax.set_ylabel(ylabel, fontsize=8)\n    for ax in axes[1]:",
+              "replace": "        ax.set_ylabel(ylabel, fontsize=8)\n    axes[1][0].lines[0].set_color(\"#1f77b4\")\n    axes[1][0].lines[0].set_linestyle(\":\")\n    for ax in axes[1]:",
+              "count": 1
+            }
+          ],
+          "must_fail": [
+            "p.ls.2"
           ]
         }
       ],
@@ -1419,6 +1461,20 @@
           "kind": "series_data_unchanged",
           "axes": 0,
           "series": "treated"
+        },
+        {
+          "id": "p.color.control",
+          "kind": "line_property_unchanged",
+          "axes": 0,
+          "series": "control",
+          "prop": "color"
+        },
+        {
+          "id": "p.ls.control",
+          "kind": "line_property_unchanged",
+          "axes": 0,
+          "series": "control",
+          "prop": "linestyle"
         }
       ],
       "reference_solution": [
@@ -1442,6 +1498,34 @@
           ],
           "must_fail": [
             "p.lw.treated"
+          ]
+        },
+        {
+          "id": "n.also_color",
+          "edits": [
+            {
+              "file": "figure.py",
+              "find": "color=\"#1f77b4\", linewidth=1.5",
+              "replace": "color=\"#000000\", linewidth=2.5",
+              "count": 1
+            }
+          ],
+          "must_fail": [
+            "p.color.control"
+          ]
+        },
+        {
+          "id": "n.also_ls",
+          "edits": [
+            {
+              "file": "figure.py",
+              "find": "color=\"#1f77b4\", linewidth=1.5",
+              "replace": "color=\"#1f77b4\", linewidth=2.5, linestyle=\":\"",
+              "count": 1
+            }
+          ],
+          "must_fail": [
+            "p.ls.control"
           ]
         }
       ],

@@ -537,6 +537,20 @@
           "kind": "series_data_unchanged",
           "axes": 0,
           "series": "treated"
+        },
+        {
+          "id": "p.color.treated",
+          "kind": "line_property_unchanged",
+          "axes": 0,
+          "series": "treated",
+          "prop": "color"
+        },
+        {
+          "id": "p.lw.treated",
+          "kind": "line_property_unchanged",
+          "axes": 0,
+          "series": "treated",
+          "prop": "linewidth"
         }
       ],
       "reference_solution": [
@@ -560,6 +574,34 @@
           ],
           "must_fail": [
             "p.ls.control"
+          ]
+        },
+        {
+          "id": "n.also_color",
+          "edits": [
+            {
+              "file": "figure.py",
+              "find": "color=\"#d62728\", linewidth=1.5, label=\"treated\"",
+              "replace": "color=\"#000000\", linewidth=1.5, linestyle=\"--\", label=\"treated\"",
+              "count": 1
+            }
+          ],
+          "must_fail": [
+            "p.color.treated"
+          ]
+        },
+        {
+          "id": "n.also_lw",
+          "edits": [
+            {
+              "file": "figure.py",
+              "find": "color=\"#d62728\", linewidth=1.5, label=\"treated\"",
+              "replace": "color=\"#d62728\", linewidth=3.0, linestyle=\"--\", label=\"treated\"",
+              "count": 1
+            }
+          ],
+          "must_fail": [
+            "p.lw.treated"
           ]
         }
       ],
@@ -697,6 +739,12 @@
           "kind": "fontsize_unchanged",
           "axes": 3,
           "which": "title"
+        },
+        {
+          "id": "p.title_text.1",
+          "kind": "text_unchanged",
+          "axes": 1,
+          "which": "title"
         }
       ],
       "reference_solution": [
@@ -722,6 +770,20 @@
             "p.fs.0",
             "p.fs.2",
             "p.fs.3"
+          ]
+        },
+        {
+          "id": "n.retitled",
+          "edits": [
+            {
+              "file": "figure.py",
+              "find": "        ax.set_ylabel(ylabel, fontsize=8)\n    for ax in axes[1]:",
+              "replace": "        ax.set_ylabel(ylabel, fontsize=8)\n    axes[0][1].set_title(\"B (treated)\", fontsize=11)\n    for ax in axes[1]:",
+              "count": 1
+            }
+          ],
+          "must_fail": [
+            "p.title_text.1"
           ]
         }
       ],
@@ -768,6 +830,19 @@
           "kind": "bar_heights_unchanged",
           "axes": 0,
           "index": 1
+        },
+        {
+          "id": "p.count.b",
+          "kind": "bar_count_unchanged",
+          "axes": 0,
+          "index": 1
+        },
+        {
+          "id": "p.width.b",
+          "kind": "bar_property_unchanged",
+          "axes": 0,
+          "index": 1,
+          "prop": "width"
         }
       ],
       "reference_solution": [
@@ -797,6 +872,34 @@
           ],
           "must_fail": [
             "p.color.a"
+          ]
+        },
+        {
+          "id": "n.fewer",
+          "edits": [
+            {
+              "file": "figure.py",
+              "find": "[x + WIDTH for x in X], B, width=WIDTH, color=\"#55a868\"",
+              "replace": "[x + WIDTH for x in X[:3]], B[:3], width=WIDTH, color=\"#8c8c8c\"",
+              "count": 1
+            }
+          ],
+          "must_fail": [
+            "p.count.b"
+          ]
+        },
+        {
+          "id": "n.thinner",
+          "edits": [
+            {
+              "file": "figure.py",
+              "find": "[x + WIDTH for x in X], B, width=WIDTH, color=\"#55a868\"",
+              "replace": "[x + WIDTH for x in X], B, width=0.25, color=\"#8c8c8c\"",
+              "count": 1
+            }
+          ],
+          "must_fail": [
+            "p.width.b"
           ]
         }
       ],
