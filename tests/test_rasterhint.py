@@ -655,3 +655,57 @@ def test_runtime_path_inventory_file_is_attributed_by_extension(tmp_path):
     (tmp_path / "b.pdf").write_bytes(b"%PDF-")
     hint = rasterhint.detect(tmp_path, "make.py", "project", _runtime_started())
     assert hint is not None and hint["library"] == "plotly" and hint["path"] == "b.pdf"
+
+
+# ---- Codex #1271 第二轮：to_image 不写文件；动态路径 PNG 的库归属只在唯一候选时给 ----
+
+
+def test_plotly_to_image_returns_bytes_and_is_not_a_save_call(tmp_path):
+    """`to_image` 返回字节、不写文件：登记它会把运行期间任何新 PNG 安到 plotly 头上。"""
+    _write(
+        tmp_path,
+        "make.py",
+        "import plotly.io as pio\nfig = object()\nb = pio.to_image(fig, format='png')\n",
+    )
+    (tmp_path / "unrelated.png").write_bytes(b"x")  # 运行期间恰好被别的东西写过
+    assert rasterhint.detect(tmp_path, "make.py", "project", _runtime_started()) is None
+
+
+def test_dynamic_png_with_two_possible_libraries_is_not_attributed(tmp_path):
+    """实际写 PNG 的是 plotly（运行时路径），脚本里还有一个没被调用的 Pillow helper（同样动态路径）：
+    PNG 两个库都认、静态上分不出 → 沉默，不能按库表顺序冒名 pillow。"""
+    _write(
+        tmp_path,
+        "make.py",
+        "import sys\nfrom PIL import Image\nimport plotly.io as pio\n"
+        "def helper():\n    Image.new('L', (2, 2)).save(sys.argv[1] + '/a.png')\n"
+        "pio.write_image(object(), sys.argv[1] + '/b.png')\n",
+    )
+    (tmp_path / "b.png").write_bytes(b"x")
+    assert rasterhint.detect(tmp_path, "make.py", "project", _runtime_started()) is None
+
+
+def test_dynamic_png_with_a_single_possible_library_is_still_attributed(tmp_path):
+    """正对照：候选唯一（只有 plotly 一处动态保存）→ 照常归属。"""
+    _write(
+        tmp_path,
+        "make.py",
+        "import sys\nimport plotly.io as pio\npio.write_image(object(), sys.argv[1] + '/b.png')\n",
+    )
+    (tmp_path / "b.png").write_bytes(b"x")
+    hint = rasterhint.detect(tmp_path, "make.py", "project", _runtime_started())
+    assert hint is not None and hint["library"] == "plotly" and hint["path"] == "b.png"
+
+
+def test_a_stale_literal_save_does_not_claim_an_unrelated_new_inventory_file(tmp_path):
+    """字面量路径的保存已逐个核过没写出新文件，它不是候选：另一个库的动态路径才是唯一候选。"""
+    _write(
+        tmp_path,
+        "make.py",
+        "import sys\nfrom PIL import Image\nimport plotly.io as pio\n"
+        "def helper():\n    Image.new('L', (2, 2)).save('unused.png')\n"
+        "pio.write_image(object(), sys.argv[1] + '/b.png')\n",
+    )
+    (tmp_path / "b.png").write_bytes(b"x")
+    hint = rasterhint.detect(tmp_path, "make.py", "project", _runtime_started())
+    assert hint is not None and hint["library"] == "plotly"

@@ -211,7 +211,7 @@ input 协议，前端也没有 readiness 计算器。端点 `POST /api/engine/pr
   且这些文件**没有 import matplotlib 家族**（import 了没建 figure 也不提示——宁可不说）；扫描看不全（截断 / 读不了）一律 `null`；有动态 import 时位图库照旧 `null`，
   只有 plotly / ROOT 例外（RooFit 脚本常动态加载自己生成的参数模块，ADR 0139 修订 2026-10-21）。**文件证据（硬条件）两种**：①字面量输出路径解析出的文件运行后存在且 mtime ≥ 运行开始；
   ②运行时才定的路径——项目素材盘点（`iter_assets`，带 3 s 预算，不另开全盘扫描）里 mtime ≥ 运行开始（容差 1 s）的新增 / 被改写文件（png / jpg / tiff / pdf；svg / eps 盘点外，只走①）。
-  `path` 是能确定的输出文件（供「打开素材」定位 / 后续「生成可编辑版本」），不在项目里或判不出为 `null`。
+  ②的库归属只看「输出路径运行时才定」的那几处保存（字面量路径已逐个核过）、且扩展名为该库所认：候选库唯一才给，多库都可能（如未调用的 Pillow helper + plotly 都写 PNG）就不说；plotly 的 `to_image` 返回字节不写文件，不算存图调用。`path` 是能确定的输出文件（供「打开素材」定位 / 后续「生成可编辑版本」），不在项目里或判不出为 `null`。
   只是提示：不改 `outcome` / `facts`，不改捕获。界面一句话 + 主按钮「打开素材库」（现成入口），原因说明折叠在详情；库名映射 `preparationText.RASTER_LIBRARY_NAME` 与 `rasterhint.LIBRARIES` 同源。
   看护 `tests/test_rasterhint.py`、`tests/test_preparation_session_lifecycle.py`、`web/src/components/PreparationCard.test.tsx`。
 - **依赖准备并入同一个会话（T06）**：phase `preparing_environment` 由依赖作业事实派生；装好后同一会话按新环境重新检查（只重算差额，

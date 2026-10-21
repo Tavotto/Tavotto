@@ -84,7 +84,6 @@ _SAVE_FUNCS: dict[str, str] = {
     "imageio.v3.imwrite": LIB_IMAGEIO,
     "skimage.io.imsave": LIB_SKIMAGE,
     "plotly.io.write_image": LIB_PLOTLY,
-    "plotly.io.to_image": LIB_PLOTLY,
 }
 
 #: 路径字面量的扩展名：这些是位图（含 GIF 动图）；字面量扩展名不在表里就不算「存图」。
@@ -207,10 +206,9 @@ class _FileScan(ast.NodeVisitor):
 
 
 #: 函数形式里「输出文件」不是第一个位置参数的：`plotly.io.write_image(fig, file, ...)` 的 `file` 是第二个；
-#: `plotly.io.to_image(fig, ...)` 返回字节、没有文件实参（None = 只认关键字）。表外一律第一个。
+#: `to_image` 不在表里：它返回字节、不写文件，登记它会让任何新图被安到 plotly 头上（Codex #1271）。表外一律第一个。
 _FUNC_FILE_POS: dict[str, int | None] = {
     "plotly.io.write_image": 1,
-    "plotly.io.to_image": None,
 }
 
 
@@ -445,13 +443,19 @@ def detect(
             return (
                 None  # 没有这次运行写出文件的证据：不说（未调用的 helper / 没走到的分支 / 旧文件）
             )
-        # 新文件是哪个库写的：看扩展名属于谁（Pillow 的 PNG 与 plotly 的 PDF 不会互相冒名）；
-        # 都认才按 LIBRARIES 稳定顺序取
+        # 新文件是哪个库写的（ADR 0139 证据规则：证据缺失一律沉默，宁可少说不说假话）：候选只有「输出路径运行时才定」
+        # 的那几处保存（字面量路径的文件上面已逐个核过、都不是本次写的，它们不可能是这个新文件），且扩展名得是该库认的。
+        # 候选库唯一才归属；PNG 这类两个库都认、而静态上分不出哪个真被调用（未调用的 helper 也算候选）→ 不说
         suffix = Path(found).suffix.lower()
-        for lib in LIBRARIES:
-            if lib in libs and suffix in _exts_of(lib):
-                return {"kind": "raster_script", "library": lib, "in_project": True, "path": found}
-        return None
+        candidates = {lib for lib, p in saves if p is None and suffix in _exts_of(lib)}
+        if len(candidates) != 1:
+            return None
+        return {
+            "kind": "raster_script",
+            "library": next(iter(candidates)),
+            "in_project": True,
+            "path": found,
+        }
     # 库与路径成对：只在「确有新文件」的那几处保存里挑库，路径也取自同一库的新文件
     fresh_libs = {lib for lib, _p in fresh}
     for lib in LIBRARIES:
