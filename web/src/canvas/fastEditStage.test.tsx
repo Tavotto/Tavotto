@@ -108,6 +108,24 @@ describe('快速编辑这一屏', () => {
     expect(container.querySelector('[data-page-sheet]')).toBeNull()
   })
 
+  it('单图编辑里隐藏唯一的图：模式不变、不画白色背纸；取消隐藏背纸回来', async () => {
+    act(() => openFastEdit('a.pdf'))
+    await mount()
+    const id = useWorkspaceStore.getState().activePanelId!
+    const setHidden = (hidden: boolean) =>
+      act(() => {
+        useDocumentStore.getState().commit(literal('隐藏'), (d) => {
+          d.objects.find((o) => o.id === id)!.hidden = hidden
+        })
+      })
+    expect(container.querySelector('[data-fast-edit-paper]')).not.toBeNull()
+    setHidden(true)
+    expect(useWorkspaceStore.getState().mode).toBe('fast_edit')
+    expect(container.querySelector('[data-fast-edit-paper]'), '图隐藏了，背纸不该还留一块白矩形').toBeNull()
+    setHidden(false)
+    expect(container.querySelector('[data-fast-edit-paper]')).not.toBeNull()
+  })
+
   it('第二张图进来 = 多图排版：画整张版', async () => {
     act(() => {
       openFastEdit('a.pdf')

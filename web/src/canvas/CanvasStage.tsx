@@ -431,7 +431,8 @@ function FastEditPaper({
   objects: ReturnType<typeof useDocumentStore.getState>['doc']['objects']
 }) {
   const o = panelId ? objects.find((x) => x.id === panelId) : undefined
-  if (!o) return null
+  // 隐藏的图不画，背纸也不画（否则画布上留一块白矩形；取消隐藏图回来、背纸跟着回来）
+  if (!o || o.hidden) return null
   // 与 ObjectView 给面板的落位同一种写法（#836）：left / top 恒 0，位置走 translate——WebKit 会把 left / top
   // 上的小数原点吸到整像素，纸与图差半像素就露边。面板没有对象级旋转（`objectRotation` 对面板恒 0）。
   return (

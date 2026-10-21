@@ -83,7 +83,7 @@ import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
 import { setCurrentProjectLabel } from '@/lib/projectLabel'
 import { emptyDocument } from '@/types/document'
-import { useWorkspaceStore } from '@/store/workspace'
+import { settleMode, useWorkspaceStore } from '@/store/workspace'
 import { fitStageNow } from '@/store/zoomToSelection'
 
 /**
@@ -425,6 +425,10 @@ export const useProjectStore = create<ProjectState>((set, get) => {
     // （量不到视口），`fit` 会把这次适配记成待办、舞台一量到尺寸就应用——
     // 改造前新项目沿用上一个项目留下的 175%（审计 T03）。
     {
+      // 取景之前先把派生的模式对一遍：从选择器打开时 Workspace 还没挂、模式订阅没在跑，前面的 reset 把模式留在排版；
+      // 不先对的话这里按页面取景，`phase: 'open'` 之后首次对模式切成单图编辑却不再取景，停在错的缩放 / 平移。
+      // `settleMode` 仍是模式的唯一写入点
+      settleMode()
       fitStageNow()
     }
     set({

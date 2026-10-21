@@ -85,15 +85,19 @@ export function useCanZoomToSelection(): boolean {
  * 面板可能不在 (0,0)，甚至被拖到过页面左上角外面（x/y 为负）；旋转了的标注取转出去的外接盒。
  * 曾经只交出宽高、按「右下角当框」从 (0,0) 起取景——x/y 为负时图被裁在视野外、为正时左上多出一片空白
  * （Codex #833）。`page`：true = 这块就是页面（`fit*`，原点恒 0），false = 一块非页面的矩形（`fitRect*`）。
- * 正在编辑的图不在了（删除的那一拍）、或这张画布上没有可见对象，退回页面。
+ * 正在编辑的图不在了（删除的那一拍）退回页面；图被隐藏且没有别的可见对象时框它自己的外框（不退到不画的页面）。
  */
 export function stageFitFrame(
   objects: readonly CanvasObject[],
   page: { w: number; h: number },
   fastEditPanelId: string | null,
 ): Rect & { page: boolean } {
-  const has = fastEditPanelId !== null && objects.some((x) => x.id === fastEditPanelId)
-  const box = has ? boundsOf(objects.filter((o) => !o.hidden).map(visualBounds)) : null
+  const panel = fastEditPanelId === null ? undefined : objects.find((x) => x.id === fastEditPanelId)
+  if (!panel) return { x: 0, y: 0, w: page.w, h: page.h, page: true }
+  // 没隐藏对象的并集；图被隐藏时只剩标注（照样框它们），连标注都没有就框那张（看不见的）图自己的外框——
+  // 单图编辑不画页面，退到页面会让取消隐藏时视口跳一下，图回来的位置也对不上
+  const box =
+    boundsOf(objects.filter((o) => !o.hidden).map(visualBounds)) ?? boundsOf([visualBounds(panel)])
   if (!box || box.w <= 0 || box.h <= 0) return { x: 0, y: 0, w: page.w, h: page.h, page: true }
   return { x: box.x, y: box.y, w: box.w, h: box.h, page: false }
 }
