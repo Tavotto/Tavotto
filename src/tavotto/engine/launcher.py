@@ -253,9 +253,10 @@ def _is_install_root(root: str) -> bool:
     return os.path.isdir(os.path.join(root, "conda-meta")) and _is_executable(_root_conda_exe(root))
 
 
-def _user_conda_roots() -> list[str]:
-    """用户自己的 conda 安装根：`CONDA_EXE` / `PATH` 上的 conda 所在的根，加上常见安装位置里确实装着 conda 的那些。
-    全都来自用户的环境变量或固定的安装目录——项目目录里的文件改不了它们。"""
+def _raw_conda_roots() -> list[str]:
+    """用户自己的 conda 安装根的**候选**（尚未核对里面有没有可执行的 conda）：`CONDA_EXE` / `PATH` 上的 conda 所在的根，
+    常见安装位置，Windows 再加安装程序写的注册表卸载项。全都来自用户的环境变量、固定的安装目录或安装程序写的注册表——
+    项目目录里的文件改不了它们。"""
     raw: list[str] = []
     for exe in (os.environ.get("CONDA_EXE"), shutil.which("conda")):
         if exe:
@@ -270,22 +271,43 @@ def _user_conda_roots() -> list[str]:
             continue
     out: list[str] = []
     for root in raw:
-        if root and root not in out and _is_install_root(root):
+        if root and root not in out:
             out.append(root)
     return out
 
 
-def _owning_root(prefix: str) -> str | None:
-    """prefix 属于哪一个用户 conda 安装：就是安装根本身（base），或在它的 `envs/` 下一层；都不是回 None。"""
+def _user_conda_roots() -> list[str]:
+    """候选里确实是安装根的（`conda-meta/` + 可执行的 conda）。"""
+    return [r for r in _raw_conda_roots() if _is_install_root(r)]
+
+
+def _owner_among(prefix: str, roots: list[str]) -> str | None:
     try:
         real = os.path.realpath(prefix)
     except (OSError, ValueError):
         return None
     nc = os.path.normcase  # Windows 路径不分大小写
-    for root in _user_conda_roots():
+    for root in roots:
         if nc(real) == nc(root) or nc(os.path.dirname(real)) == nc(os.path.join(root, "envs")):
             return root
     return None
+
+
+def _owning_root(prefix: str) -> str | None:
+    """prefix 属于哪一个用户 conda 安装：就是安装根本身（base），或在它的 `envs/` 下一层；都不是回 None。"""
+    return _owner_among(prefix, _user_conda_roots())
+
+
+def _unusable_owning_root(prefix: str) -> str | None:
+    """prefix 属于一个**可信来源指出的安装根**（有 `conda-meta/`），但这个根里的 conda 可执行文件现在不可用（被改名 / 删除 /
+    没有执行权限）→ 回那个根；否则 None。与“项目自带 conda-meta 的克隆目录 / `conda create -p` 到任意目录”不同：那些找不到任何可信根，
+    仍直接启动。"""
+    roots = [
+        r
+        for r in _raw_conda_roots()
+        if os.path.isdir(os.path.join(r, "conda-meta")) and not _is_install_root(r)
+    ]
+    return _owner_among(prefix, roots)
 
 
 def _conda_candidates(prefix: str) -> list[str]:
@@ -442,6 +464,21 @@ def raise_if_unlocated(python: str | os.PathLike) -> None:
         raise LauncherUnavailable(
             "这是一个 Conda 环境，但找不到 conda 可执行文件，没法确认它能不能运行；请检查 Conda 安装，"
             "或设置 CONDA_EXE（或把 conda 放进 PATH）"
+        )
+
+
+def raise_if_trusted_root_unusable(python: str | os.PathLike) -> None:
+    """解释器在可信安装根下的 Conda 环境里、但那个根的 conda 可执行文件现在不可用：**不能当成非 Conda 环境裸起**——这类环境
+    不激活就会在运行时崩（缺 `Library\\bin` 的 DLL 路径之类），而裸起的体检可能偏偏过了。抛 `LauncherUnavailable`
+    （稳定码 `conda_launcher_unavailable`，瞬时，不缓存）。找不到任何可信根的 Conda 形状目录不在此列（直接启动）。"""
+    prefix = _conda_shaped(python)
+    if prefix is None or launcher_for_interpreter(python) is not None:
+        return
+    root = _unusable_owning_root(prefix)
+    if root is not None:
+        raise LauncherUnavailable(
+            "这个 Conda 环境所在的 Conda 安装里找不到可用的 conda 可执行文件（可能被改名或删除），没法激活它；"
+            "请修复或重装 Conda"
         )
 
 
@@ -773,7 +810,8 @@ def activate_within(python, base: dict | None, budget: float) -> tuple[dict | No
 
 def activate_env(python, base: dict | None = None, *, timeout: float | None = None) -> dict | None:
     """所有「用目标解释器起子进程」的地方取 env 的唯一入口：`launcher_for_interpreter` 的决策 + 合并激活增量。
-    Conda 环境捕获失败抛 `LauncherUnavailable`——**没有**“范围外降级成裸起”的分支。"""
+    Conda 环境捕获失败抛 `LauncherUnavailable`——**没有**“范围外降级成裸起”的分支；可信安装根里的 conda 不可用也一样。"""
+    raise_if_trusted_root_unusable(python)
     return merge_env(launcher_for_interpreter(python), python, base, timeout=timeout)
 
 
@@ -808,6 +846,7 @@ def no_capture():
 
 def prewarm(python, *, timeout: float | None = None) -> None:
     """（不持任何池锁时）先把这条解释器的激活增量捕获进缓存；之后锁内起会话只命中缓存。不需要激活的解释器什么都不做。"""
+    raise_if_trusted_root_unusable(python)
     lau = launcher_for_interpreter(python)
     if lau is not None:
         activated_delta(str(python), lau, timeout=timeout)

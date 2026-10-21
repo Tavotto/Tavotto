@@ -436,7 +436,7 @@ reconstruction_sha256, metrics}`；④ 真实编辑（结构性 `figure.frame` �
   launcher 只作为事实写入（回执、记录照记），**不驱动决策**。行为变化：以前裸起成功过的 Conda 脚本，今后会带上激活环境（这本来就是用户对
   Conda 环境的预期）。`TAVOTTO_CONDA_ACTIVATION=0` 关闭。**Windows 同样默认开（ADR 0142，2026-10-21 修订）**，见下一条。
 - **Windows 的捕获（ADR 0142）**：与 POSIX 同构——只换三处。①conda 可执行只认安装根的 `Scripts\conda.exe`（`CONDA_EXE`、`PATH` 上 `condabin\conda.bat` 的所在根也按「上两级」推出安装根，但**不执行** `.bat` / `.cmd`：不经 cmd.exe、不拼 shell）；
-  常见安装位置另含 `%LOCALAPPDATA%` / `%ProgramData%` 下的 miniconda3 / anaconda3 / miniforge3，以及安装程序写的注册表卸载项 / PEP 514 InstallPath（仅作候选，仍须过安装根检查；ADR 0142 决策 7），路径比较一律 `normcase`。②捕获脚本写成 `probe-results/capture-*.py`（`conda run` 在 Windows 把命令写进临时 `.bat`，
+  常见安装位置另含 `%LOCALAPPDATA%` / `%ProgramData%` 下的 miniconda3 / anaconda3 / miniforge3，以及安装程序写的注册表卸载项 / PEP 514 InstallPath（仅作候选，仍须过安装根检查；ADR 0142 决策 7）；可信根下的环境若该根的 conda 可执行不可用，`activate_env`/`prewarm` 抛 `conda_launcher_unavailable` 而不裸起（决策 8），路径比较一律 `normcase`。②捕获脚本写成 `probe-results/capture-*.py`（`conda run` 在 Windows 把命令写进临时 `.bat`，
   多行 `-c` 会被 cmd 截断），argv 里只剩路径；结果仍是 UTF-8 JSON 结果文件，不读 stdout，所以控制台代码页（chcp 936 / 65001）不影响。③超时收尾用 `taskkill /PID <conda> /T /F` 收整棵树。
   失败仍是 `LauncherUnavailable`（`conda_launcher_unavailable`），不缓存。**真机验收前不合入**（清单见 ADR 0142）。
 - **捕获失败一律 fail-closed 且不缓存**：Conda 环境捕获失败 / 超时，任何调用点都抛 `LauncherUnavailable`（稳定码 `conda_launcher_unavailable`），

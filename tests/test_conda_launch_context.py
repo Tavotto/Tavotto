@@ -2956,3 +2956,65 @@ def test_registry_is_never_read_off_windows(tmp_path, monkeypatch):
         launcher, "_read_registry_candidates", lambda: pytest.fail("POSIX 上不该读注册表")
     )
     assert launcher._registry_conda_roots() == []
+
+
+@posix_only
+def test_windows_trusted_root_with_missing_conda_exe_fails_closed_not_bare(
+    tmp_path, as_windows, monkeypatch
+):
+    """真机验收第 5 项：自定义安装根（只由注册表指出）里的 `Scripts\\conda.exe` 被改名后，环境不能当成非 Conda 环境裸起
+    （不激活会在运行时崩），而是瞬时的 `conda_launcher_unavailable`；恢复后立刻可用（失败不缓存）。"""
+    prefix, conda, log = make_fake_win_conda(tmp_path, sys.executable)
+    _FAKE_ROOTS.clear()
+    root = str(prefix.parent.parent)
+    monkeypatch.setattr(launcher, "_read_registry_candidates", lambda: [root])
+    monkeypatch.setenv("FAKE_CONDA_LOG", str(log))
+    monkeypatch.setattr(launcher.config, "data_dir", lambda: tmp_path / "data")
+    py = prefix / "python.exe"
+    assert launcher.launcher_for_interpreter(py) is not None  # 正对照
+    gone = conda.with_name("conda.exe.renamed")
+    conda.rename(gone)
+    assert launcher.launcher_for_interpreter(py) is None
+    for call in (
+        lambda: launcher.activate_env(str(py), {}),
+        lambda: launcher.prewarm(str(py)),
+    ):
+        with pytest.raises(launcher.LauncherUnavailable) as exc:
+            call()
+        assert exc.value.code == "conda_launcher_unavailable"
+    assert not launcher._captured  # 不缓存
+    # base 环境（python.exe 就在根里）同样
+    (Path(root) / "python.exe").write_text("#!/bin/sh\n", encoding="utf-8")
+    with pytest.raises(launcher.LauncherUnavailable):
+        launcher.activate_env(str(Path(root) / "python.exe"), {})
+    gone.rename(conda)
+    env = launcher.activate_env(str(py), {})
+    assert env["CONDA_PREFIX"] == str(prefix)
+
+
+@posix_only
+def test_conda_shaped_dirs_without_any_trusted_root_still_start_directly(
+    tmp_path, as_windows, monkeypatch
+):
+    """既定行为不变：克隆项目自带的 `conda-meta/` / `conda create -p` 到任意目录，找不到任何可信根 → 直接启动，不报错。"""
+    monkeypatch.setattr(launcher, "_read_registry_candidates", lambda: [])
+    clone = tmp_path / "project" / ".venv"
+    (clone / "conda-meta").mkdir(parents=True)
+    (clone / "python.exe").write_text("#!/bin/sh\n", encoding="utf-8")
+    assert launcher.activate_env(str(clone / "python.exe"), {"A": "1"}) == {"A": "1"}
+    launcher.prewarm(str(clone / "python.exe"))  # 什么都不做
+    # 可信根存在但环境在别处（不在 envs/ 下一层）：同样直接启动
+    prefix, conda, _ = make_fake_win_conda(tmp_path, sys.executable)
+    conda.unlink()
+    monkeypatch.setattr(launcher, "_read_registry_candidates", lambda: [str(prefix.parent.parent)])
+    assert launcher.activate_env(str(clone / "python.exe"), {"A": "1"}) == {"A": "1"}
+
+
+@posix_only
+def test_posix_trusted_root_with_missing_conda_also_fails_closed(tmp_path, monkeypatch):
+    prefix, conda, _ = make_fake_conda(tmp_path, sys.executable)
+    monkeypatch.delenv("CONDA_EXE", raising=False)
+    monkeypatch.setenv("PATH", str(tmp_path / "nothing"))
+    conda.unlink()
+    with pytest.raises(launcher.LauncherUnavailable):
+        launcher.activate_env(str(prefix / "bin" / "python"), {})

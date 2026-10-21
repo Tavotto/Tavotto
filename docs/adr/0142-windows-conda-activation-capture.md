@@ -32,19 +32,23 @@
    取 `InstallLocation`，没有则取 `UninstallString`（去引号）所在目录（真机上 Miniconda 的卸载项就只有后者）；另加 PEP 514 `Software\Python\ContinuumAnalytics\*\InstallPath`。
    **理由**：卸载项由用户自己运行的安装程序写在用户 / 机器注册表里，项目目录改不了它——与 `environments.txt`（项目可伪造、会过期）不同；
    且它只产出**候选**，仍必须过 `_is_install_root`（`conda-meta` + `Scripts\conda.exe`），伪造或过期的条目不会被信任。读取有界（每处最多 512 项），读取器可注入（测试用假读取器），任何读取错误只是少一个候选。
-8. **不碰**：mamba / micromamba、用户环境发现（userenvs）、depplan。
+8. **可信根里的 conda 不可用 = 瞬时失败，不是“非 Conda 环境”**（真机验收第 5 项发现）。环境在某个**可信来源指出的安装根**（`CONDA_EXE` / PATH / 标准位置 / 注册表，
+   且有 `conda-meta`）下——根本身或 `envs\<名字>`——但该根的 `Scripts\conda.exe`（POSIX `bin/conda`）不可用（改名 / 删除）时，`activate_env` 与 `prewarm` 抛
+   `LauncherUnavailable`（`conda_launcher_unavailable`，不缓存），不再落回直接启动：这类环境不激活就会在运行时崩（r314 缺 `Library\bin`，退出码 0xC06D007F），
+   而裸起的体检可能偏偏通过。找不到任何可信根的 Conda 形状目录（克隆项目自带的 `conda-meta/`、`conda create -p` 到任意目录）仍直接启动，既定行为不变。
+   判据在 `launcher.raise_if_trusted_root_unusable`；`launcher_for_interpreter` / `context_key` 仍是不抛的纯函数。
+9. **不碰**：mamba / micromamba、用户环境发现（userenvs）、depplan。
 
-## Win11 真机验收清单（合入前）
+## Win11 真机验收清单
 
-已通过（2026-10-21，Miniconda 26.9.3 / py314 装在 `C:\Users\Jiaqi\tavotto verify\miniconda3`，环境 `envs\tvt`：py3.12 + matplotlib，带空格路径）：项 1、2、4（设 `CONDA_EXE` 的情形）。
-缺口已按决策 7 补（注册表来源），需真机复验：不设 `CONDA_EXE`、conda 不在 PATH 时 `launcher_for_interpreter` 应返回 launcher。
-剩余：项 3（ROOT）、5（改名 conda.exe）、6（代码页 936 / 65001）、7（开始菜单启动）、8（`conda install` 后重新捕获）。
+状态（2026-10-21，Miniconda 26.9.3 / py314，自定义根 `C:\Users\Jiaqi\tavotto verify\miniconda3`，带空格）：
 
-1. Miniconda 装在含空格 / 中文用户名的路径下，`conda create -n t python=3.11 matplotlib`，让 Tavotto 选用该解释器运行一个出图脚本：成功。
-2. 给该环境加 `etc\conda\activate.d\x.bat`（`set TAVOTTO_PROBE=1`，并 `echo` 一行横幅）：脚本里 `os.environ["TAVOTTO_PROBE"]` 可见；横幅不污染 worker 协议。
-3. 装 ROOT（conda-forge）：`import ROOT` 成功；关掉开关（`TAVOTTO_CONDA_ACTIVATION=0`）复现失败作负对照。
-4. activate.d 里 `timeout /t 120`：约 60 s 后得到 `conda_launcher_unavailable`，任务管理器里无遗留 `conda.exe` / `cmd.exe` / `timeout.exe`；`probe-results\` 无残留。
-5. 把 `Scripts\conda.exe` 临时改名：Conda 形状的解释器得到「找不到 conda」的瞬时错误，不是“缺 matplotlib”的结论。
-6. 区域设置为中文（代码页 936）与开启“Beta：使用 UTF-8”(65001) 各跑一次 1、2。
-7. 从开始菜单 / 桌面启动 Tavotto（无 `CONDA_EXE`、`PATH` 很短）也能经标准安装位置找到 conda。
-8. `conda install` 一个包后再运行：重新捕获（`prefix_state` 变化）。
+1. 带空格路径 + 含 matplotlib 的环境出图——**已通过**。
+2. activate.d 设变量 / 横幅不干扰——**已通过**。
+3. ROOT——改由 #1282 承接（conda-forge 无 win-64 ROOT，Windows ROOT 走官方包叠加，已真机通过）。
+4. activate.d 卡住 → 约 60 s 后 `conda_launcher_unavailable`，无遗留进程、`probe-results` 为空——**已通过**。
+5. 改名 `Scripts\conda.exe`：应得到瞬时 `conda_launcher_unavailable`（不是“可用”）——首次真机**未通过**（体检 ok:true、运行时崩），已按决策 8 修复，**待真机复验**。
+6. 代码页 936 / 65001——**已通过**。
+7. 无 `CONDA_EXE`、PATH 只留 System32 下经注册表找到根——**近似通过**（真“开始菜单启动”未验）。
+8. `conda install` / 增删 activate.d 后重新捕获——**已通过**（缓存命中 0.07 s，重新捕获 1.75 s）。
+另：注册表来源（决策 7）不设 `CONDA_EXE`、conda 不在 PATH 时已由第 7 项的场景覆盖。
