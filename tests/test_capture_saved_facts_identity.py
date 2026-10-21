@@ -18,7 +18,6 @@ ENGINE_DIR = str(Path(__file__).resolve().parents[1] / "src" / "tavotto" / "engi
 if ENGINE_DIR not in sys.path:
     sys.path.insert(0, ENGINE_DIR)
 import figcapture  # noqa: E402 — figsession 平铺 import 的那一份
-
 from test_capture_same_path_last_writer import _Fig, _State  # noqa: E402
 
 
