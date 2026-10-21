@@ -80,6 +80,18 @@ UNPROVABLE = [
     ),
     ("vars_alias_value", "v = vars\nv()\n"),
     ("builtins_dict_name", "__builtins__['ex' + 'ec']\n"),
+    # 复核 r2：带实参的 vars 即 `x.__dict__`；同类反射 / 枚举入口
+    ("vars_of_module", 'import os\nvars(os)["re" + "move"]("victim")\n'),
+    ("vars_of_builtins", 'import builtins, os\nvars(builtins)["getattr"](os, NAME)\n'),
+    ("vars_of_namespace", "import argparse\nvars(argparse.Namespace())\n"),
+    ("type_dict", "type(plt).__dict__\n"),
+    ("class_dict", "plt.__class__.__dict__\n"),
+    ("object_getattribute", "object.__getattribute__(plt, NAME)\n"),
+    ("inspect_getmembers", "import inspect, os\ninspect.getmembers(os)\n"),
+    ("inspect_getattr_static", "import inspect, os\ninspect.getattr_static(os, NAME)\n"),
+    ("pydoc_locate", 'import pydoc\npydoc.locate("os.remove")\n'),
+    ("frame_globals", "import sys\nsys._getframe().f_globals\n"),
+    ("methodcaller_name_by_keyword", "import operator\noperator.methodcaller(name=NAME)\n"),
     ("inside_function_never_called", "def helper(n):\n    return getattr(plt, n)\n"),
 ]
 
@@ -103,7 +115,11 @@ PROVABLE = [
     ("attrgetter_all_literal", 'import operator\noperator.attrgetter("a", "b.c")\n'),
     ("methodcaller_literal", 'import operator\noperator.methodcaller("get_label")\n'),
     ("import_builtins_plain", "import builtins\nbuiltins.print('x')\n"),
-    ("vars_of_argparse", "import argparse\nvars(argparse.Namespace())\n"),
+    (
+        "methodcaller_with_call_kwargs",
+        'import operator\noperator.methodcaller("set_title", "X", loc="left")\n',
+    ),
+    ("methodcaller_with_call_args", 'import operator\noperator.methodcaller("set_xlim", 0, 1)\n'),
 ]
 
 
