@@ -183,7 +183,9 @@ function figureCanvasName(src: FigureSource): string {
  * 原画布一个字节不动）。
  */
 function createPanel(src: FigureSource, layer: 'toCanvas' | 'docOnly' | 'newCanvas'): PanelObject {
-  if (layer === 'newCanvas') createCanvasAndActivate(figureCanvasName(src))
+  // 当前画布还是空的就直接用它（新项目第一次打开不留一张空画布）；有内容才新建
+  if (layer === 'newCanvas' && useDocumentStore.getState().doc.objects.length > 0)
+    createCanvasAndActivate(figureCanvasName(src))
   if (layer === 'toCanvas') {
     return src.kind === 'file' ? placePanelToCanvas(src.info) : placeRuntimePanelToCanvas(src.desc)
   }
@@ -219,7 +221,7 @@ export type OpenFastEditOutcome = 'editing' | 'layout_only' | 'missing' | 'defer
  *
  * - 它已单独在某张画布上 → 切到那张画布（单图编辑）；
  * - 它在多图画布上 → 切到那张画布，选中它并对它进图内编辑（排版的子状态）；
- * - 它不在任何画布上 → 新建一张以图名命名的画布放它（单图编辑），原画布一个字节不动。
+ * - 它不在任何画布上 → 新建一张以图名命名的画布放它（单图编辑），原画布一个字节不动；当前画布本来就是空的则直接用它。
  *   新建画布不进撤销栈（`addCanvas` 全仓库都不可撤销），放图这一步是一条可撤销的历史：撤销把图撤掉，
  *   画布留着、是空的（排版），用户可以关掉它。
  * 「拖入 / 加到画布」才是加第二张（`addPanelToCanvas` / `addFigureToLayout`）。

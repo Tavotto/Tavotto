@@ -279,6 +279,28 @@ export async function waitForFigureEdit(page: Page): Promise<void> {
 }
 
 /**
+ * 单图编辑 → 多图排版：把素材库里另一张图加到画布（画布上有两张图才是排版，没有「回排版」按钮）。
+ *
+ * 模式由激活画布上的图数推出（`workflows-and-original-spec.md`）：只有一张图是单图编辑，第二张进来切成多图排版。
+ * 用悬停时出现的「添加到画布」就近入口（`[data-card-add]`），等页面纸（`[data-page-sheet]`，单图编辑里不画页面）出现。
+ * 调用前画布上已有一张图（刚 `dblclick` 打开过另一张）；`cardId` 默认 `Fig2_correlation.pdf`。
+ */
+export async function addSecondFigure(page: Page, cardId = 'Fig2_correlation.pdf'): Promise<void> {
+  // 窄屏下侧栏是盖在画布上的抽屉，开着时有一层遮罩盖住左轨：先点遮罩收起，再开素材库
+  const scrim = page.locator('[data-scrim="true"]')
+  if (await scrim.count()) await scrim.first().click({ position: { x: 4, y: 4 } })
+  // 进图内编辑后左栏自动换成元素树：素材库要先开（rail 是 toggle，已开着再点是收起，按 aria-expanded 判）
+  const rail = page.locator('[data-rail="assets"]')
+  if ((await rail.getAttribute('aria-expanded')) !== 'true') await rail.click()
+  const card = page.locator(`[data-card="${cardId}"]`)
+  await expect(card).toHaveCount(1, { timeout: 30_000 })
+  await card.hover()
+  await card.locator('[data-card-add]').click()
+  await expect(page.locator('[data-page-sheet]')).toHaveCount(1, { timeout: 30_000 })
+  await expect(page.locator('[data-view-tweening]')).toHaveCount(0, { timeout: 30_000 })
+}
+
+/**
  * 刷新后（工作区把图恢复在画布上、没选中）点一下画布上唯一的图选中它。
  *
  * 点**画布对象容器** `[data-object-id]`，不要点里面的 `<img>`：预览刷新时同一个容器里新旧两张 `<img>` 会短暂叠放，

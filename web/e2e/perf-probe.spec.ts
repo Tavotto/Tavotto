@@ -1,7 +1,7 @@
 import { readdirSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 import type { Locator, Page, Route } from '@playwright/test'
-import { expect, test } from './fixtures'
+import { addSecondFigure, expect, test } from './fixtures'
 
 const DIAGNOSTICS = /\/api\/diagnostics(?:\?|$)/
 const developerButton = (page: Page) => page.locator('[data-diagnostics-dev] > div > button')
@@ -131,9 +131,9 @@ test('性能探针：录制真实拖动 + 自动测试 + 保存报告', async ({
   )
   expect(after, '自动测试结束后被拖元素的 transform 必须复原').toBe(target!.transform)
 
-  // 普通点击动作：返回画布后打开预设面板，真实插入科学符号。
+  // 普通点击动作：进多图排版（第二张图进来）后打开预设面板，真实插入科学符号。
   // 同一份探针报告必须同时含拖动片段与符号动作，互不污染；无须新增独立 App 启动。
-  await page.locator('[data-context-back]').click()
+  await addSecondFigure(page)
   await expect(page.locator('[data-canvas-toolbar]')).toBeVisible()
   await page.locator('[data-tool-menu="annotate"]').click()
   await page.getByRole('menuitem', { name: /科研预设与符号/ }).click()

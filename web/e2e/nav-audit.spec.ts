@@ -1,4 +1,4 @@
-import { expect, test, waitForDocumentReady, type RunningApp } from './fixtures'
+import { addSecondFigure, expect, test, waitForDocumentReady, type RunningApp } from './fixtures'
 import type { Page } from '@playwright/test'
 
 /**
@@ -147,7 +147,7 @@ test('T05：长画布名不挤走行尾的菜单按钮', async ({ app, page }) =
   expect(closeBox.width).toBeGreaterThan(10)
 })
 
-test('T01：一条上下文栏、一个返回入口，回来时画布不意外移动', async ({ app, page }) => {
+test('T01：一条上下文栏、一个出口，第二张图进来 / 退出图内编辑时画布不意外移动', async ({ app, page }) => {
   const a = await app()
   await openFigure(page, a)
 
@@ -155,7 +155,7 @@ test('T01：一条上下文栏、一个返回入口，回来时画布不意外�
   await expect(bar).toHaveCount(1)
   await expect(bar).toBeVisible()
 
-  // 整屏可见的出口按钮（`[data-context-back]`，快编里按来源叫「返回排版」/「排版与出版」，不按文案找）只有这一个（此前顶栏徽章、浮动条、右栏各有一个）
+  // 整屏可见的出口按钮（`[data-context-back]`，单图编辑的图内编辑里叫「退出图内编辑」，不按文案找）只有这一个（此前顶栏徽章、浮动条、右栏各有一个）
   await expect(page.locator('[data-context-back]')).toHaveCount(1)
 
   // 上下文栏放得进画布，不横向溢出
@@ -173,51 +173,58 @@ test('T01：一条上下文栏、一个返回入口，回来时画布不意外�
 
   /* ---- 验收：切换模式时画布不意外移动 ---- */
   const world = page.locator('[data-world-transform]')
-  await page.locator('[data-context-back]').click()
+  // 单图 → 多图：第二张图进来取景「页面 ∪ 所有图」，页面纸整张落在舞台里
+  await addSecondFigure(page)
   await expect(bar).toHaveCount(0)
-  await page.waitForTimeout(400) // 视口补间 180ms：不等就量在半路上
+  const sheet = (await page.locator('[data-page-sheet]').boundingBox())!
+  const stage2 = (await page.locator('[data-canvas-stage]').boundingBox())!
+  expect(sheet.x).toBeGreaterThanOrEqual(stage2.x - 1)
+  expect(sheet.x + sheet.width).toBeLessThanOrEqual(stage2.x + stage2.width + 1)
+  expect(sheet.y).toBeGreaterThanOrEqual(stage2.y - 1)
+  expect(sheet.y + sheet.height).toBeLessThanOrEqual(stage2.y + stage2.height + 1)
 
-  // **先把视口摆成「不是把那张图居中」的样子**。不摆的话这条判据恒等成立：
-  // 退化实现（回来就把面板挪到视口中央）量到的与「面板本来就在中央」的那一片
+  // **先把视口摆成「不是居中」的样子**。不摆的话这条判据恒等成立：
+  // 退化实现（进出图内编辑就把面板挪到视口中央）量到的与「面板本来就在中央」的那一片
   // 逐位相同——第一版就是这么放走变异的。
   const centered = await world.evaluate((e) => getComputedStyle(e).transform)
-  await page.mouse.move(stage.x + stage.width / 2, stage.y + stage.height / 2)
+  await page.mouse.move(stage2.x + stage2.width / 2, stage2.y + stage2.height / 2)
   await page.mouse.wheel(220, 170)
   await page.waitForTimeout(400)
   const layoutView = await world.evaluate((e) => getComputedStyle(e).transform)
   expect(layoutView).not.toBe(centered) // 先证明尺子是活的：平移真的发生了
 
-  // 再进一次快速编辑：那一屏按图自己的图幅框住，视口必然变。
-  // 回排版时焦点救援把左栏交给了「结构」，先切回素材（`lib/focusRescue.ts`）
+  // 排版里再打开已在画布上的那张图进图内编辑（排版的子状态），再退出
+  // （回排版时焦点救援把左栏交给了「结构」，先切回素材，`lib/focusRescue.ts`）
   await page.getByRole('navigation').getByRole('button', { name: '素材', exact: true }).click()
   await page.getByText('Fig1_kinetics.pdf').dblclick()
   await expect(bar).toHaveCount(1)
   await page.waitForTimeout(400)
-  expect(await world.evaluate((e) => getComputedStyle(e).transform)).not.toBe(layoutView)
-
-  // 回来：还是进去之前那一片，一个像素都不差
+  // 打开一张已在画布上的图会把它滚进视野（revealRect，被平移出去的图当然要回来）；退出图内编辑则一个像素都不许动
+  const editing = await world.evaluate((e) => getComputedStyle(e).transform)
   await page.locator('[data-context-back]').click()
   await expect(bar).toHaveCount(0)
   await page.waitForTimeout(400)
-  expect(await world.evaluate((e) => getComputedStyle(e).transform)).toBe(layoutView)
+  expect(await world.evaluate((e) => getComputedStyle(e).transform)).toBe(editing)
 })
 
 /**
- * P01：快编上下文栏只有一颗出口按钮、按来源换文案（kind 稳定锚点，不按文案找）；Esc 与它同一个动作；
- * 「添加到画布」已删。三个宽度下按钮完整可见、不被侧栏盖住。
+ * P01：图内编辑上下文栏至多一颗出口按钮（单图编辑里叫「退出图内编辑」、多图排版里叫「返回画布」，
+ * 不按文案找）；Esc 与它同一个动作；单图编辑没有「回排版」、「添加到画布」已删。
+ * 三个宽度下按钮完整可见、不被侧栏盖住。
  */
-test('P01：快编单按钮 + Esc 回排版，三个宽度都放得下', async ({ app, page }, testInfo) => {
+test('P01：图内编辑单按钮 + Esc 退出，三个宽度都放得下', async ({ app, page }, testInfo) => {
   const a = await app()
   const shots = process.env.PE_D_SHOTS
   await openFigure(page, a)
   const bar = page.locator('[data-workspace-context-bar]')
   const back = page.locator('[data-context-back]')
-  // 空文档里「编辑原图」把图加了进来：没有排版来源 → 前进
+  // 空文档里「编辑原图」把图加了进来：画布上只有这一张 = 单图编辑，图内编辑里只有「退出图内编辑」
   await expect(bar).toHaveCount(1)
+  await expect(bar).toHaveAttribute('data-workspace-mode', 'fast_edit')
   await expect(back).toHaveCount(1)
-  await expect(back).toHaveAttribute('data-context-back-kind', 'forward')
+  await expect(back).toHaveAttribute('data-exit-element-edit', '')
   await expect(page.locator('[data-onboarding-anchor="add-to-layout"]')).toHaveCount(0)
-  await expect(page.locator('[data-onboarding-anchor="to-layout"]')).toHaveCount(1)
+  await expect(page.locator('[data-onboarding-anchor="to-layout"]')).toHaveCount(0)
 
   for (const w of [1440, 1024, 900]) {
     await page.setViewportSize({ width: w, height: 800 })
@@ -225,24 +232,26 @@ test('P01：快编单按钮 + Esc 回排版，三个宽度都放得下', async (
     const bb = (await back.boundingBox())!
     expect(bb.x, `${w}`).toBeGreaterThanOrEqual(0)
     expect(bb.x + bb.width, `${w}`).toBeLessThanOrEqual(w)
-    if (shots) await page.screenshot({ path: `${shots}/${testInfo.project.name}-forward-${w}.png` })
+    if (shots) await page.screenshot({ path: `${shots}/${testInfo.project.name}-single-${w}.png` })
   }
 
-  // Esc = 同一动作（焦点在页面上、不在输入框里）
+  // Esc = 同一动作（焦点在页面上、不在输入框里）：退出图内编辑，仍是单图编辑（没有排版可回）
   await page.locator('body').click({ position: { x: 5, y: 5 } }).catch(() => {})
   await page.keyboard.press('Escape')
-  await expect(bar).toHaveCount(0)
+  await expect(back).toHaveCount(0)
+  await expect(bar).toHaveAttribute('data-workspace-mode', 'fast_edit')
 
-  // 图已经在排版上，再从素材库打开：有排版来源 → 返回
+  // 第二张图进来 = 多图排版；再从素材库打开已在画布上的图：排版里的图内编辑 → 「返回画布」
   await page.setViewportSize({ width: 1440, height: 800 })
+  await addSecondFigure(page)
   await page.getByRole('navigation').getByRole('button', { name: '素材', exact: true }).click()
   await page.getByText('Fig1_kinetics.pdf').dblclick()
   await expect(back).toHaveCount(1)
-  await expect(back).toHaveAttribute('data-context-back-kind', 'return')
+  await expect(bar).toHaveAttribute('data-workspace-mode', 'layout')
   for (const w of [1440, 1024, 900]) {
     await page.setViewportSize({ width: w, height: 800 })
     await page.waitForTimeout(300)
-    if (shots) await page.screenshot({ path: `${shots}/${testInfo.project.name}-return-${w}.png` })
+    if (shots) await page.screenshot({ path: `${shots}/${testInfo.project.name}-layout-${w}.png` })
   }
   await back.click()
   await expect(bar).toHaveCount(0)

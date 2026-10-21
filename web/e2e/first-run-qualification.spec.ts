@@ -340,8 +340,7 @@ test(
       .toBe(true)
     expect(execs(project)).toHaveLength(1) // 编辑是热态渲染，不重跑脚本
 
-    // ---- ⌘S 存进项目：回到画布，命名「T11 首跑」
-    await page.locator('[data-context-back]').first().click()
+    // ---- ⌘S 存进项目：画布上只有这一张图（单图编辑，不需要回排版），命名「T11 首跑」
     await expect(page.locator('[data-canvas-stage] [data-object-id]')).toHaveCount(1, { timeout: 30_000 })
     await page.keyboard.press('ControlOrMeta+s')
     const dialog = page.getByRole('dialog', { name: '存进项目' })
@@ -427,8 +426,7 @@ test(
     await expect(page.locator('[data-script-input-answer]')).toHaveCount(0)
     await expect(card(page)).toHaveCount(0)
 
-    // ---- 导出 PDF（界面）：文件真的落盘、%PDF- 开头
-    await page.locator('[data-context-back]').first().click()
+    // ---- 导出 PDF（界面）：文件真的落盘、%PDF- 开头（单图编辑下导出，不需要回排版）
     await expect(page.locator('[data-canvas-stage] [data-object-id]')).toHaveCount(1, { timeout: 30_000 })
     await page.keyboard.press('ControlOrMeta+e')
     const exp = page.getByRole('dialog')
