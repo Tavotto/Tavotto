@@ -111,7 +111,7 @@ def _outside_the_target(scenario: dict, base: dict, negative: dict) -> bool:
 
 
 @needs_worker
-def test_scope_discipline_negatives_that_touch_something_else_are_caught(built, capsys):
+def test_scope_discipline_negatives_that_touch_something_else_are_caught(built):
     caught = total = inside = other_caught = other_total = 0
     lines = []
     for s in probe_scenarios():
@@ -129,12 +129,12 @@ def test_scope_discipline_negatives_that_touch_something_else_are_caught(built, 
                 assert c.verdict == "unknown", (s["id"], n["id"], c.verdict, c.observed)
             else:
                 inside += 1
-    with capsys.disabled():
-        print(
-            f"\nscope_discipline 范围外反例抓住 {caught}/{total}（另 {inside} 个改的是目标自己未点名的属性，"
-            f"不归本检查）；其它类别反例抓住 {other_caught}/{other_total}（信息，不强求）"
-        )
-        print("\n".join(lines))
+    # 统计只走被捕获的 stdout（`-s` / 失败时可见）：capsys.disabled() 会直写控制台，Windows cp1252 编码不了中文
+    print(
+        f"\nscope_discipline 范围外反例抓住 {caught}/{total}（另 {inside} 个改的是目标自己未点名的属性，"
+        f"不归本检查）；其它类别反例抓住 {other_caught}/{other_total}（信息，不强求）"
+    )
+    print("\n".join(lines))
     assert total >= 8 and caught == total
 
 
