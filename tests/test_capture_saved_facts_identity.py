@@ -191,6 +191,17 @@ class TestUnicodeNormalization:
         assert figcapture._dir_folds_unicode(d, nfc) is True
         figcapture._UNICODE_FOLD_CACHE.pop(d, None)
 
+    def test_symlink_is_not_evidence_injected(self, tmp_path, monkeypatch):
+        """目录列表里只有一种写法、samefile 为真，但另一种写法是符号链接（如隐藏条目）：链接本身不算证据。"""
+        d = str(tmp_path.resolve())
+        nfc = unicodedata.normalize("NFC", "é.pdf")
+        figcapture._UNICODE_FOLD_CACHE.pop(d, None)
+        monkeypatch.setattr(figcapture, "_UNWATCHED_LISTDIR", lambda p: [nfc])
+        monkeypatch.setattr(figcapture.os.path, "lexists", lambda p: True)
+        monkeypatch.setattr(figcapture.os.path, "samefile", lambda a, b: True)
+        monkeypatch.setattr(figcapture.os.path, "islink", lambda p: not p.endswith(nfc))
+        assert figcapture._dir_folds_unicode(d, nfc) is False
+
     def test_symlink_is_not_evidence(self, tmp_path):
         d = str(tmp_path.resolve())
         nfc, nfd = (unicodedata.normalize(f, "é.pdf") for f in ("NFC", "NFD"))
