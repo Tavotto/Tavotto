@@ -2572,18 +2572,14 @@ def declared_candidates(
     root = Path(fig).resolve()
     names: list[str] = []
     for hint in [*scripts[:DECLARED_HINT_SCRIPTS], None]:
+        seen: list[str] = []
         try:
-            intents = depresolve.declared_intents(root, hint, no_follow=True)
+            # 取遍历**真正读成功**的文件清单，而不是从 intent 的 source 反推：空文件 / 只有 `-r` 的父文件没有 intent
+            # 也要附；被 no_follow 拒读（符号链接 / 替身）的根本不在清单里，不会被下面的 resolve 再跟随一遍
+            depresolve.declared_intents(root, hint, no_follow=True, visited=seen)
         except Exception:  # noqa: BLE001 —— 声明读不出来只让这一类别少一块，不拖垮源码
             continue
-        for it in intents:
-            if not it.source or it.group.startswith(f"{depresolve.GROUP_PEP723}:"):
-                continue
-            if it.kind == depresolve.INTENT_KIND_UNSUPPORTED and it.reason in (
-                depresolve.UNSUPPORTED_MANAGER_LOCK,
-            ):
-                continue
-            names.append(it.source)
+        names.extend(seen)
     out: list[tuple[str, Path]] = []
     for rel in dict.fromkeys(names):
         if len(out) >= DECLARED_FILES:

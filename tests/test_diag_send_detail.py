@@ -729,6 +729,29 @@ class TestOptionalContent:
         assert "LOCK_CANARY" not in body and "NOT_DECLARED_CANARY" not in body
         assert all(d["file"].startswith("declared-") for d in index["declarations"])
 
+    def test_declaration_files_without_intents_are_still_attached(self, tmp_path):
+        """只有 `-r base.txt` 的父文件、空文件 / 纯注释文件没有 intent，但依赖计划读过它们：照样附。"""
+        proj = tmp_path / "p"
+        proj.mkdir()
+        (proj / "requirements.txt").write_text("-r base.txt\n", encoding="utf-8")
+        (proj / "base.txt").write_text("numpy\n", encoding="utf-8")
+        (proj / "constraints.txt").write_text("# only a comment\n", encoding="utf-8")
+        src = diagdetail.Sources(project={"figures_dir": str(proj)}, scripts=[], attempted=[])
+        got = {rel for rel, _p in diagdetail.declared_candidates(src, [])}
+        assert got == {"requirements.txt", "base.txt", "constraints.txt"}
+
+    def test_symlinked_declaration_is_not_attached(self, tmp_path):
+        """no_follow 的依赖扫描拒读的符号链接声明，附件也不跟随（哪怕链接指向项目内的文件）。"""
+        proj = tmp_path / "p"
+        proj.mkdir()
+        (proj / "real.txt").write_text("SYMLINK_TARGET_CANARY\n", encoding="utf-8")
+        try:
+            (proj / "requirements.txt").symlink_to(proj / "real.txt")
+        except (OSError, NotImplementedError):
+            pytest.skip("symlinks unavailable")
+        src = diagdetail.Sources(project={"figures_dir": str(proj)}, scripts=[], attempted=[])
+        assert diagdetail.declared_candidates(src, []) == []
+
     def test_attempted_scripts_come_from_the_task_store_and_reach_the_bundle(self, client, world):
         from tavotto.engine import taskdiag
 

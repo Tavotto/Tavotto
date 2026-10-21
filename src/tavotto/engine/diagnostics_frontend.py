@@ -553,9 +553,9 @@ _SNAPSHOT_SHAPE = {
     "onboarding": {
         "status": "enum",
         "flow_version": "int",
-        "completed_steps": "list",
+        "completed_steps": "closed_list",
         "welcome_seen": "scalar",
-        "hint_seen_keys": "list",
+        "hint_seen_keys": "closed_list",
     },
     "preview_memory": {
         "resident_svg_bytes": "int",
@@ -567,6 +567,23 @@ _SNAPSHOT_SHAPE = {
         "budget_per_file": "int",
         "budget_global": "int",
     },
+}
+
+#: `closed_list` 字段的元素闭集（按字段名）：与前端 `STEP_IDS`（lib/onboarding/stepIds.ts）/ `HINT_KINDS`
+#: （store/onboardingStore.ts）严格同源（test_onboarding_closed_sets_match_frontend）。不在闭集里的元素**逐个丢掉**：
+#: 通用 `list` 只挡「像内容的串」，挡不住 `patient_123` 这种长得像技术标识的内容——第二道隐私边界要自己认得全集。
+_CLOSED_LISTS: dict[str, frozenset[str]] = {
+    "completed_steps": frozenset({"demo_import", "demo_move_legend", "demo_change_title", "done"}),
+    "hint_seen_keys": frozenset(
+        {
+            "panel_editable",
+            "panel_layout_only",
+            "fast_edit_entered",
+            "multi_select",
+            "problem_found",
+            "layout_page_bounds",
+        }
+    ),
 }
 
 _PANEL_SHAPE = {
@@ -631,10 +648,16 @@ def _pull(src, shape, redact):
                 ]
             elif spec == "list":
                 out[key] = _value(raw, redact) if isinstance(raw, list) else []
+            elif spec == "closed_list":
+                allowed = _CLOSED_LISTS[key]
+                rows = raw[:MAX_LIST] if isinstance(raw, list) else []
+                out[key] = [v for v in rows if isinstance(v, str) and v in allowed]
             else:
                 out[key] = _scalar(raw, redact)
         except _Reject:
-            out[key] = 0 if spec == "int" else ([] if spec in ("list", "gids") else None)
+            out[key] = (
+                0 if spec == "int" else ([] if spec in ("list", "gids", "closed_list") else None)
+            )
     return out
 
 

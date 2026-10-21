@@ -1080,6 +1080,9 @@ class _Walk:
         self.no_follow = no_follow
         self.files = 0
         self.seen: set[tuple[str, str, str]] = set()
+        #: 真正**读成功**的声明文件（相对路径，按首次读到的顺序）。没产出 intent 的空文件 / 只有 `-r` 的父文件也在内；
+        #: 被拒读（链接 / 替身 / 根外）与读失败的不在。诊断包附件照这份清单取，不从 intent 的 source 反推。
+        self.visited: list[str] = []
 
     def rel(self, path: Path) -> str:
         if self.no_follow:
@@ -1130,6 +1133,7 @@ def _read_declaration_file(
     text, why = walk.read(path)
     if text is None:
         return [_unsupported(source, UNSUPPORTED_UNREADABLE, group=group, source=source)]
+    walk.visited.append(source)
     out: list[DependencyIntent] = []
     for line in _logical_lines(text):
         body = line.split("#", 1)[0].strip()
@@ -1193,7 +1197,11 @@ def _read_declaration_file(
 
 
 def declared_intents(
-    figures_dir: str | Path, script: str | None = None, *, no_follow: bool = False
+    figures_dir: str | Path,
+    script: str | None = None,
+    *,
+    no_follow: bool = False,
+    visited: list[str] | None = None,
 ) -> list[DependencyIntent]:
     """项目声明过的**全部**依赖意图（无损）：requirements 各文件（含有界跟进的 `-r` / `-c`）
     + constraints.txt + pyproject（PEP 621 / 735 / Poetry 表）+ 脚本的 PEP 723 + 管理器锁文件
@@ -1205,6 +1213,9 @@ def declared_intents(
     `no_follow=True`（导入即扫描传）：声明文件不跟随符号链接 / 路径替身（UNC 目标会触发 SMB 访问），
     且只读有上限的普通文件（FIFO 不会挂住）；被拒的记 `unsupported(unreadable)`，不是「没有依赖」。
     默认形态（准备 / 依赖门）保持跟随用户自己的符号链接，但读法同样只认有上限的普通文件。
+
+    `visited`（可选出参）：追加遍历中**读成功**的声明文件相对路径（requirements 系含 `-r` / `-c` 跟进、pyproject；
+    不含脚本的 PEP 723）。与返回的 intents 不同，没产出任何 intent 的文件（空 / 只有注释 / 只有 `-r`）也在内。
     """
     root = Path(figures_dir)
     walk = _Walk(root, no_follow=no_follow)
@@ -1291,6 +1302,8 @@ def declared_intents(
                 if path.name == PYPROJECT_NAME:
                     walk.files += 1
                     text, why = walk.read(path)
+                    if text is not None:
+                        walk.visited.append(walk.rel(path))
                     if text is None:
                         rel = walk.rel(path)
                         out.append(
@@ -1310,6 +1323,8 @@ def declared_intents(
             except (ValueError, TypeError, RecursionError) as exc:
                 LOG.debug("依赖声明解析失败（忽略）: %s: %s", path, exc)
                 continue
+    if visited is not None:
+        visited.extend(walk.visited)
     return out
 
 

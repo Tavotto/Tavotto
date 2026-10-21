@@ -1647,7 +1647,7 @@ export default interface Resources {
           "extraHint": {
             "corrupt_sessions": "默认只有损坏副本的名字和大小；勾选后附上内容。",
             "crash_reports": "最近 7 天属于 Tavotto 的系统崩溃报告。Windows 崩溃转储是程序内存快照，可能含正在打开的文件内容与路径，无法脱敏。",
-            "source": "脚本会原样附上，我们会尽量抹掉能认出的密钥，但不能保证；脚本里有密钥请不要勾。"
+            "source": "出错的脚本（即使它没在项目里登记）、项目里登记的脚本，以及参与依赖安装的 requirements / constraints / pyproject 文件会原样附上，我们会尽量抹掉能认出的密钥，但不能保证；这些文件里有密钥请不要勾。"
           },
           "extrasTitle": "额外内容（默认不发送）",
           "failure": {
@@ -1693,7 +1693,7 @@ export default interface Resources {
             "detail_requests": "最近的后端请求记录（只有方法、路由、状态码、耗时、错误码）",
             "detail_runs": "最近的渲染、导出、脚本试运行记录",
             "detail_shell": "桌面壳与安装信息（版本、系统、架构、更新结果）",
-            "detail_source": "脚本源码（你勾选了）",
+            "detail_source": "脚本源码与依赖声明文件（你勾选了）",
             "detail_state": "会话状态文件（含损坏副本清单）",
             "detail_storage": "存储环境（剩余空间、可写、是否在同步目录）",
             "environment": "运行环境与版本信息（用户名、路径已脱敏）",
@@ -1703,7 +1703,7 @@ export default interface Resources {
             "readme": "包内说明文件",
             "settings": "应用设置（密钥已替换）",
             "task": "最近几次失败任务的分类结果",
-            "ui_state": "界面状态快照（不含图内文字与文件名）",
+            "ui_state": "界面状态快照（不含图内文字与文件名；含新手教程进度：状态、步骤 id、看过哪几类提示）",
             "ui_trace": "最近的界面操作轨迹（只有操作类型）"
           },
           "listSeparator": "、",
@@ -1742,7 +1742,7 @@ export default interface Resources {
           "sentenceItem": {
             "corrupt_sessions": "会话损坏副本的内容",
             "crash_reports": "系统崩溃报告（可能含打开着的文件的内容）",
-            "source": "脚本源码"
+            "source": "脚本源码与依赖声明文件"
           },
           "short": {
             "console": "控制台",
