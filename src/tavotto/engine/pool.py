@@ -39,6 +39,7 @@ from . import (
     logsafe,
     patchspec,
     projectenv,
+    rootenv,
     runtime,
     scanbudget,
     texdiag,
@@ -1812,7 +1813,11 @@ def resolve_worker_python(
                 # 记住过不等于现在还成立。每个进程每条解释器（每个指纹）只做一次。
                 fingerprint = projectenv.interpreter_fingerprint(remembered)
                 try:
-                    ok = _has_matplotlib(remembered)
+                    # 记着的是内置 runtime（带叠加环境的组合）时按内置的那套量；其余调用形状不变
+                    if same_python(remembered, runtime.bundled_python()):
+                        ok = _has_matplotlib(remembered, bundled=True)
+                    else:
+                        ok = _has_matplotlib(remembered)
                 except launcher_mod.LauncherUnavailable as exc:
                     # 项目已选定 / 记住的环境：稳定码直接交给用户。不记体检结论、不作废记住的解释器、不静默换别的
                     raise _launcher_error(exc) from exc
@@ -1970,7 +1975,14 @@ def _project_python_unusable(python: str, reason: str, record: dict) -> "WorkerE
 
 
 #: 会话重建的原因（闭集，诊断日志按它放行明文）。
-_REBUILD_REASONS = ("已死", "入口已变", "渲染解释器已变", "环境代已变", "改指表已变")
+_REBUILD_REASONS = (
+    "已死",
+    "入口已变",
+    "渲染解释器已变",
+    "环境代已变",
+    "改指表已变",
+    "叠加环境已变",
+)
 
 
 def _invalidate_remembered(figures_dir: str | Path, python: str, reason: str, record: dict) -> None:
@@ -2002,6 +2014,10 @@ def remembered_source(figures_dir: str | Path, python: str) -> str:
     """
     from . import managedenv
 
+    # 记着的就是内置 runtime（带 ROOT 叠加层的组合，ADR 0079 修订 2026-10-21 b）：来源仍是内置——
+    # worker 按内置的那一套起（摘 `PYTHONPATH`、`-B`），叠加层在其后
+    if same_python(python, runtime.bundled_python()):
+        return SOURCE_BUNDLED
     # 受管环境按代（U04）：任何一代的解释器都是「Tavotto 替它建的」
     if managedenv.is_managed_python(figures_dir, python):
         return SOURCE_MANAGED_PROJECT
@@ -2380,6 +2396,10 @@ class EngineWorker:
         self.env_state = launcher_mod.env_state_of(python)
         #: 起会话那一刻的完整启动上下文（直接启动 / Conda 激活 + conda + prefix + 环境版本）：钉下的决定与它比
         self.launch_context = launcher_mod.context_key(python)
+        #: 随解释器记着的叠加环境（ROOT，`rootenv`）：钉下的决定带着它就只认它，否则读项目记录。
+        #: 起进程时叠在 Conda 激活之后；会话复用前核对（`acquire` 的"叠加环境已变"）
+        self.env_overlay = _overlay_for(figures_dir, python, pinned)
+        self.env_overlay_key = rootenv.key_of(self.env_overlay)
         # 内置 runtime 装在安装目录里（可能是 Program Files），一个字节都不往
         # 那儿写：.pyc 与 matplotlib 字体缓存改道到数据目录。Tavotto 自己的环境
         # （受管环境 / worker-env）的缓存同样落回数据目录（`runtime.owned_env`）。
@@ -2419,7 +2439,7 @@ class EngineWorker:
             logsafe.known(self.python_source, SOURCE_LABELS),
         )
         try:
-            popen_env = launcher_mod.merge_env(self.launcher, python, env)
+            popen_env = launch_env(self.launcher, python, env, self.env_overlay, bundled=bundled)
         except launcher_mod.CaptureDeferred:
             raise  # 持锁起会话时缓存没命中：交回 `acquire` 出锁预热再来
         except launcher_mod.LauncherUnavailable as exc:  # 激活取环境失败：稳定码，什么都没起
@@ -3248,6 +3268,9 @@ class WorkerdWorker:
         if launcher_mod.launcher_for_interpreter(python) is not None:
             # workerd 的 spawn 规格里没有激活增量：需要 Conda 激活的解释器只走 Python 池（调用方回退）
             raise WorkerdUnavailable("该解释器需要 Conda 激活启动，workerd 不接")
+        if _overlay_for(figures_dir, python, pinned):
+            # 同理：叠加环境（ROOT）不进 workerd 的 spawn 规格（规格进回执与哈希，不带安装路径），只走 Python 池
+            raise WorkerdUnavailable("该解释器需要叠加 ROOT 环境启动，workerd 不接")
         self.python_generation = projectenv.environment_generation(python)
         self.env_state = launcher_mod.env_state_of(python)
         self.launch_context = launcher_mod.context_key(python)
@@ -3770,6 +3793,8 @@ class EnvironmentDecision:
     #: 这一轮检测里**被评估但没选用**的候选各自的落选原因（`userenvs.rejection_reason` 的形状：不透明 id + 来源 + 稳定码，
     #: 不带路径）。没评估（默认链条能跑 / 确认模式 / 非检测模式）= 空。供前端卡片与诊断包读，不参与 `matches`
     rejected: tuple[dict, ...] = ()
+    #: 钉下的解释器要带的叠加环境（ROOT，`rootenv.overlay_spec`）；与解释器同一次决定，起会话时只认它。不参与 `matches`
+    env_overlay: dict | None = None
 
     @property
     def pinned(self) -> bool:
@@ -3865,6 +3890,31 @@ def _scoped_pin(figures_dir) -> EnvironmentDecision | None:
 def _launcher_error(exc: "launcher_mod.LauncherUnavailable") -> "WorkerError":
     """Conda 激活取环境失败 → 带稳定码 `conda_launcher_unavailable` 的 `WorkerError`（不降级成裸起）。"""
     return WorkerError(str(exc), code=exc.code)
+
+
+def launch_env(
+    lau, python: str, env: dict | None, overlay: dict | None, *, bundled: bool
+) -> dict | None:
+    """起 worker 子进程的完整 env：`worker_env` 的结果 + Conda 激活增量，再叠上 ROOT 之类的叠加环境（`rootenv`）。
+
+    叠加层**最后**叠：内置 runtime 已经摘掉了 shell 的 `PYTHONPATH`（`bundled` 时叠加层替换而不是前置它），
+    激活增量也不会盖掉它。叠加层只进这一次 Popen 的 env，不进 `ExecutionSpec`（spec 会进回执，不带安装路径）。"""
+    popen_env = launcher_mod.merge_env(lau, python, env)
+    if overlay:
+        popen_env = rootenv.apply_overlay(popen_env, overlay, replace_pythonpath=bundled)
+    return popen_env
+
+
+def _overlay_for(
+    figures_dir: str | Path | None, python: str, pinned: "EnvironmentDecision | None"
+) -> dict | None:
+    """起这条解释器的 worker 要叠的环境（ROOT）：钉下的决定带着就只认它（与解释器同一次决定、不再读共享的项目记录），
+    否则读项目记录里随这条解释器记着的那份。没有回 None。"""
+    if pinned is not None and pinned.pinned:
+        return pinned.env_overlay if same_python(pinned.python, python) else None
+    if figures_dir is None or not python:
+        return None
+    return projectenv.remembered_overlay(figures_dir, python)
 
 
 def _resolve_for_worker(
@@ -4365,6 +4415,11 @@ def acquire(
                     # 同一路径、环境却被原地重建过（r4232403630）：缓存的进程还握着旧 / 混合的包。拆掉它，
                     # 重建出来的新会话再过下面「起出来的与钉下的对不上就 environment_changed」那一道
                     why = "环境代已变"
+                elif getattr(w, "env_overlay_key", "") != rootenv.key_of(
+                    _overlay_for(figures_dir, want_python, pin)
+                ):
+                    # 叠加环境（ROOT）变了：同一个解释器路径，带不带 / 带哪个 ROOT 起的进程不是同一个环境
+                    why = "叠加环境已变"
                 elif not _remap_current(w, figures_dir):
                     # 会话是按旧改指表起的（ADR 0106 §五）：`shutdown_all` 摘掉之后仍在起的那条，
                     # 可能在改动之后才登记进池——复用它就是拿旧映射画图

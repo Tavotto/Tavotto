@@ -60,6 +60,7 @@ from . import (
     pool,
     privatepython,
     projectenv,
+    rootenv,
     runcodes,
     runtime,
     taskdiag,
@@ -5939,7 +5940,9 @@ def _user_env_discovery_off() -> bool:
     return projectenv.auto_adoption_off()
 
 
-def unknown_imports_missing(plan: dict, python: str, root: str = "") -> list[str]:
+def unknown_imports_missing(
+    plan: dict, python: str, root: str = "", overlay: dict | None = None
+) -> list[str]:
     """计划里映射不到包名的无条件 import，此刻的解释器里**确实** import 不到的那几个（ADR 0079 修订
     2026-09-25，QA ENV-08-B1）。
 
@@ -5954,7 +5957,16 @@ def unknown_imports_missing(plan: dict, python: str, root: str = "") -> list[str
         return []
     # 内置 runtime 由 worker 按 `runtime.child_env()` / `child_args()` 起：体检用同一套（Codex #609 P2）
     bundled = pool.same_python(python, runtime.bundled_python())
-    return userenvs.imports_missing(python, unknown, bundled=bundled, root=root)
+    return userenvs.imports_missing(python, unknown, bundled=bundled, root=root, overlay=overlay)
+
+
+def _unknown_missing_here(plan: dict, python: str, project: str, spec_root: str) -> list[str]:
+    """`unknown_imports_missing` 加上"项目记着的解释器若带叠加环境（ROOT），按带着它量"——否则每次都判成缺 ROOT、
+    重新发现一遍。没有叠加层时调用形状与以前逐字相同。"""
+    overlay = projectenv.remembered_overlay(project, python)
+    if overlay is None:
+        return unknown_imports_missing(plan, python, spec_root)
+    return unknown_imports_missing(plan, python, spec_root, overlay=overlay)
 
 
 def user_environment_offer(project: str | Path, script: str, plan: dict, python: str) -> list[dict]:
@@ -6097,7 +6109,7 @@ def _preparation_offer(project: str | Path, script: str) -> tuple[dict, list[dic
     elif joint.status == depplan.STATUS_NOTHING_NEEDED and not clean:
         # 没有能装的，但有映射不到包名、此刻又确实 import 不到的：同样的三步去找用户环境（只找、只改用，
         # 仍不装）。门不因此弹框——弹窗是「授权安装」，这里没有可装的东西；决定在 `decide_environment`
-        unknown_missing = unknown_imports_missing(plan_payload, python, root)
+        unknown_missing = _unknown_missing_here(plan_payload, python, root, root)
         if unknown_missing:
             user_envs = user_environment_offer(root, script, plan_payload, python)
     # 授权的实际影响（T06）：只有真能授权的计划才有——与 `create_joint_plan` 绑定出的计划同一个函数算出，
@@ -6253,6 +6265,54 @@ def _static_joint_plan(root: str, script: str) -> depplan.JointPlan:
     )
 
 
+def _root_overlay_entries(
+    root: str,
+    entries: list[dict],
+    current: str,
+    needed: list[dict],
+    unknown: list[str],
+    *,
+    project_exec: bool,
+) -> list[dict]:
+    """「候选解释器 × 用户装的 ROOT」的体检结果（`userenvs.evaluate` 的形状，带 `overlay`）。
+
+    底 = 此刻的解释器（内置 runtime 也算，它摘 `PYTHONPATH` 之后才叠）+ 已量过、健康、但装不齐的候选；
+    要 Conda 激活的环境不叠（激活增量会盖住 `PATH`，conda-forge 的 ROOT 本来就在环境里）、正被安装占着的不叠。
+    ROOT 至多拿最新的 2 个，组合至多 8 个，一个 ROOT 都找不到就是空表。点「运行」之前不起任何进程
+    （`cache_only`：叠加组合运行之前的体检要 import，那是明确的执行动作）。"""
+    installs = userenvs.root_installs()
+    if not installs:
+        return []
+    bases: list[dict] = []
+    seen: set = set()
+
+    def add(python: str, **extra) -> None:
+        if (
+            not python
+            or userenvs._key(python) in seen
+            or envlease.is_mutating(python)
+            or launcher.launcher_for_interpreter(python) is not None
+        ):
+            return
+        seen.add(userenvs._key(python))
+        bases.append({"python": python, **extra})
+
+    if current:
+        add(current, bundled=pool.same_python(current, runtime.bundled_python()))
+    name = Path(root).name
+    for e in sorted(
+        (e for e in entries if e.get("ok") and not e.get("satisfies") and e.get("checked", True)),
+        key=lambda e: userenvs.rank(e, name),
+    ):
+        add(e["python"], python_version=e.get("python_version", ""))
+    combos = userenvs.overlay_candidates(bases, installs)
+    if not combos:
+        return []
+    return userenvs.evaluate(
+        combos, needed, unknown, cache_only=not project_exec, project_name=name
+    )
+
+
 def _detect_environment_unlocked(
     root: str, script: str, *, project_exec: bool = True, rejected: list[dict] | None = None
 ) -> dict | None:
@@ -6302,7 +6362,7 @@ def _detect_environment_unlocked(
     runs_now = (
         not clean
         and joint.status == depplan.STATUS_NOTHING_NEEDED
-        and not unknown_imports_missing(plan, python, "" if project_exec else root)
+        and not _unknown_missing_here(plan, python, root, "" if project_exec else root)
     )
     needed, unknown = _plan_imports(plan)
     candidates = user_environment_candidates(root, script, exclude=current or python)
@@ -6338,12 +6398,22 @@ def _detect_environment_unlocked(
     entry = None
     adopted = False
     evaluated: list[dict] = []
-    if candidates and not _user_env_discovery_off():
+    wants_root = not runs_now and rootenv.wants_root(
+        [n["import_name"] for n in needed if n.get("import_name")] + unknown
+    )
+    if (candidates or wants_root) and not _user_env_discovery_off():
         entries = _evaluate_candidates(root, candidates, needed, unknown, project_exec=project_exec)
         evaluated = list(entries)
         if not project_exec and any(e.get("deferred") for e in entries):
             # 有候选的某个模块解析进了项目（可编辑安装指向项目）：运行之前不 import，它的结论延后——这一轮不采用排在后面的
             return None
+        if wants_root and userenvs.best(entries, Path(root).name) is None:
+            # 脚本 import ROOT、而没有一个候选**裸起**就导入得了它：把用户装的 ROOT 叠到候选解释器上再试
+            # （ADR 0079 修订 2026-10-21 b）。叠加组合与裸起的候选进同一张表，走同一个 best / 采用 / 落选原因
+            entries = entries + _root_overlay_entries(
+                root, entries, current or python, needed, unknown, project_exec=project_exec
+            )
+            evaluated = list(entries)
         while True:
             entry = userenvs.best(entries, Path(root).name)
             if entry is None:
@@ -6367,9 +6437,14 @@ def _detect_environment_unlocked(
                         if not fresh.get("satisfies"):
                             # 缓存说装齐、现量说不齐：落选原因以现量的为准
                             evaluated = [
-                                fresh if e["python"] == entry["python"] else e for e in evaluated
+                                fresh if userenvs.entry_key(e) == userenvs.entry_key(entry) else e
+                                for e in evaluated
                             ]
-                            entries = [e for e in entries if e["python"] != entry["python"]]
+                            entries = [
+                                e
+                                for e in entries
+                                if userenvs.entry_key(e) != userenvs.entry_key(entry)
+                            ]
                             continue
                         entry = {**entry, **fresh}
                     try:
@@ -6382,12 +6457,13 @@ def _detect_environment_unlocked(
                                 trigger=projectenv.TRIGGER_AUTO_DETECTED,
                                 health=entry,
                                 only_if=_record_allows_auto_adopt,
+                                env_overlay=entry.get("overlay"),
                             ),
                         )
                     except envlease.EnvironmentBusy:
                         return None
             except envlease.EnvironmentBusy:
-                entries = [e for e in entries if e["python"] != entry["python"]]
+                entries = [e for e in entries if userenvs.entry_key(e) != userenvs.entry_key(entry)]
                 continue
             break
     if rejected is not None and evaluated:
@@ -6408,7 +6484,12 @@ def _detect_environment_unlocked(
     if not adopted:
         return None
     pool.note_project_python_ok(entry["python"])
-    LOG.info("自动检测：改用 %s（%s）", entry["python"], entry.get("source"))
+    LOG.info(
+        "自动检测：改用 %s（%s%s）",
+        entry["python"],
+        entry.get("source"),
+        "，叠加 " + rootenv.label_of(entry["overlay"]) if entry.get("overlay") else "",
+    )
     for listener in list(_adoption_listeners):
         try:
             listener(root, userenvs.public(entry))
@@ -6437,6 +6518,7 @@ def _detect_environment_pinned(
         return pool.EnvironmentDecision(
             adopted=adopted,
             rejected=tuple(rejected),
+            env_overlay=projectenv.remembered_overlay(root, python),
             python=python,
             source=source,
             generation=projectenv.environment_generation(python),

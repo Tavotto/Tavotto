@@ -4,7 +4,8 @@
 修订：[0018 项目 Python 环境解析](0018-project-python-environment-resolution.md) §三（不做 Conda / pyenv 发现）、
 [0044 系统解释器作为修复候选](0044-system-interpreter-as-repair-candidate.md) §二（不无感切换）
 本 ADR 自身的修订：文末「修订（2026-09-25）」——映射不到包名的 import 也触发发现（QA ENV-08-B1）；
-「修订（2026-10-21）」——Windows 发现补强、确认能跑者优先、落选原因
+「修订（2026-10-21）」——Windows 发现补强、确认能跑者优先、落选原因；
+「修订（2026-10-21 b）」——脚本 `import ROOT` 时叠加用户装的 CERN ROOT 环境
 相关：[0057 首开的环境与工作目录](0057-first-open-environment-and-workdir.md)、
 [0061 联合依赖准备](0061-joint-dependency-preparation.md) §六（跑前的门）、
 [0053 准备接口的公开投影](0053-foundation-contracts-and-preparation.md) §二（投影不带机器路径）
@@ -223,3 +224,50 @@ import，就不该排在确认能跑的环境前面。`best()` 本来只在 `sat
 `Library\bin`、网络路径不碰、不执行），注册表（HKCU / HKLM / 32 位视图 / `ExecutablePath` 优先 / 非 Windows 空 / 预算耗尽），
 来源档位，`rank()` 三档确认程度，落选原因十个码与「不带路径」；`tests/test_environment_autodetect.py`「落选原因」一组：
 决定结果上的 `rejected`、都跑不了时仍逐个说明、内置能跑时为空。
+
+## 修订（2026-10-21 b）：脚本 `import ROOT` 时，把用户装的 CERN ROOT 叠到候选解释器上
+
+**动机。** 同一份 Windows 诊断包：`import ROOT as rt` / `from ROOT import RooFit`，Tavotto 用了内置 Python 而失败。上一节补足了"找得到
+装了 ROOT 的 Conda 环境"，但 **Windows 上 ROOT 根本不在 Conda 里**：conda-forge 的 `root` 没有 win-64 包，Windows 用户装的是官方二进制包
+（`root_v6.38.xx.win64.python311.vc17` / `…python314.vc18…`），**每个包只配一个 Python 小版本**；官方 `thisroot.bat` 只做
+`ROOTSYS`、`PATH` 前置 `%ROOTSYS%\bin`、`CMAKE_PREFIX_PATH`、`PYTHONPATH` 前置 `%ROOTSYS%\bin`、`ROOT_INCLUDE_PATH`。用户在终端里跑过它，
+从开始菜单启动的 Tavotto 看不到。macOS / Linux 上 ROOT 多来自 Homebrew / 自编译 + `thisroot.sh`，同样适用。
+
+**裁决：不去猜哪个 Python 里有 ROOT，而是替用户做 thisroot 做的事，再用现有体检验证。**
+
+1. **发现（`engine/rootenv.py`，叶子模块，纯 stat，不执行任何东西，包括 thisroot）。** 来源按优先级：环境变量 `ROOTSYS`；Windows 卸载项
+   （HKCU/HKLM × 64/32 位，`DisplayName` 以 `ROOT` 开头且后面是空白/分隔符/版本号/结尾——不吃 `Rootkit` 一类）；常见位置
+   （Windows：`C:\root`、`C:\root_v*`、`%ProgramFiles%\ROOT*`、`%LOCALAPPDATA%\root*`；POSIX：`/opt/root*`、`/usr/local/root*`、
+   Homebrew `…/Cellar/root/*`、`~/root*`）。**判据（唯一，各来源同用）= 安装根下有 `bin/thisroot.bat`（POSIX `bin/thisroot.sh`）
+   且 PyROOT 标志**——`bin/`、`lib/`、`lib/root/` 之一里有 `ROOT/__init__.py` 或 `ROOT.py`（官方 Windows 包把 PyROOT 放在 `bin`，
+   thisroot.bat 也把它放进 `PYTHONPATH`；POSIX 在 `lib`，Homebrew 在 `lib/root`）。名字像 ROOT 而目录没有这两样的一律不收，
+   注册表条目只提供候选位置，不单独作数。至多 8 个，按真实路径去重；版本取 `include/RVersion.h`，退一步看目录名。
+2. **叠加层只存"哪个安装根"。** `{"kind": "root", "root", "version"}`；环境变量每次起进程现算（`rootenv.apply_overlay`：`ROOTSYS`；
+   `PATH` 前置 `<root>/bin`；POSIX 的 `LD_LIBRARY_PATH`（macOS 为 `DYLD_LIBRARY_PATH`）前置 `<root>/lib`；`PYTHONPATH` 前置 PyROOT 所在目录；
+   `CMAKE_PREFIX_PATH`；`ROOT_INCLUDE_PATH`），并先复核安装根仍像 ROOT——被卸载了就不叠加，不把过期路径塞进环境。设置里不存环境变量。
+3. **何时用。** 只在 `_detect_environment_unlocked` 里同时满足：脚本 import 名单含 `ROOT`；默认链条此刻跑不了（`runs_now` 为假）；
+   所有裸起候选都没装齐。叠加组合与裸起候选进**同一张表**、同一个 `best()`——裸起能导入的永远优先。
+4. **组合有界。** 底 = 此刻的解释器（**内置 runtime 也算**）+ 已量过、健康但没装齐的候选；要 Conda 激活的环境不叠（激活增量会盖住
+   `PATH`；conda-forge 的 ROOT 本来就在环境里）；ROOT 至多取最新的 2 个；总组合至多 8 对（`rootenv.MAX_COMBOS`）；沿用 `evaluate` 的并行度与
+   超时。安装包文件名里的 Python 小版本标记（`libcppyy3_<minor>`）**只做排序提示**，认不出不排除——这条命名规则没有拿真实 Windows 包逐文件核对，
+   最终以真探测为准。
+5. **探测的顺序与"运行之前不量"。** 体检进程的环境 = 内置 runtime 摘掉 `PYTHONPATH` 之后 / Conda 激活之后**再叠**（与起 worker 同序，
+   `pool.launch_env`）；叠加层在内置 runtime 上**替换**而不是前置 `PYTHONPATH`。运行之前的 `spec` 体检以 `-I` 启动、忽略环境变量，叠加组合在那里
+   量不了，所以点「运行」之前只读缓存（`cache_only`）、不起进程、不采用；采用发生在用户点「运行」之后。叠加组合的缓存键带叠加层。
+6. **选中后真正运行。** 叠加层随 `projectenv.remember(env_overlay=)` 进项目记录（`environment.env_overlay`），`pool.EnvironmentDecision.env_overlay` 与解释器是
+   同一次决定；`EngineWorker` 起进程时叠上（只进 Popen 的 env，**不进 `ExecutionSpec`**——spec 进回执，不带安装路径）；带叠加层的解释器只走
+   Python 池（`WorkerdWorker` 拒收，与 Conda 激活同形）；会话复用前核对叠加层，变了就重建（`叠加环境已变`）。记着的是内置 runtime 时，
+   `remembered_source` 仍报内置（worker 按内置的那套起）。再次启动：记着的解释器按**带叠加层**量，仍能导入就不重新发现。
+7. **落选原因。** 新稳定码 `root_python_mismatch`：叠加组合的解释器健康、叠上这个 ROOT 后 `ROOT` 仍 import 不了（二进制包与 Python 小版本对不上是
+   最常见原因；体检拿不到异常文本，所以按"叠上了仍不行"判）。`rejections` 多带 `root_version`（只有版本，不带路径，ADR 0053 §二）；叠加候选的
+   `id` 是 (解释器, 叠加层) 的摘要，与同一解释器的裸起候选不同；公开投影多 `overlay: {kind, version}`。
+8. **依赖计划不走 pip。** ROOT 不是 pip 能装的（PR C 的不可 pip 安装表），本节只保证：有叠加候选被采用后，`unknown_imports_missing` 按带叠加层量，
+   不再因为裸起量不到 ROOT 而重新发现或把它当成待装包。
+
+**不做的事。** 不执行 thisroot / 不问 `root-config`；不往 ROOT 或用户的解释器里装任何东西；不叠加到 Conda 激活的环境；确认模式（ADR 0114）下
+候选表不列叠加组合（采用端点 `recheck_user_environment` 按 id 找回的是裸起候选，叠加组合的确认流程未做，留待需要时另开）；
+workerd 路径不接叠加层。
+
+**看护。** `tests/test_root_env_overlay.py`：各来源发现（假目录树 + 注入的注册表读取器）、判据（缺 thisroot / 缺 PyROOT 标志 / 名字像但无结构）、
+有界与去重、叠加层构造（POSIX / Windows / 内置替换 / 幂等 / 安装根消失）、只在需要时叠加、组合评估选择（假体检按 Python × ROOT 版本）、
+组合上限与最新优先、运行之前不起进程、持久化与再次启动、落选原因与身份、`launch_env` / `_overlay_for` / 体检环境。

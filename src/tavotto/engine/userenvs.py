@@ -34,7 +34,7 @@ import threading
 import time
 from pathlib import Path
 
-from . import launcher, projectenv, runtime, scanbudget
+from . import launcher, projectenv, rootenv, runtime, scanbudget
 
 LOG = logging.getLogger("tavotto.userenvs")
 
@@ -50,6 +50,9 @@ SOURCE_CONDA = "conda"
 SOURCE_PYENV = "pyenv"
 #: Windows 的 PEP 514 注册表登记（python.org / Anaconda / 商店之外的各家安装器都会写 `Software\\Python\\<公司>\\<标签>`）
 SOURCE_REGISTRY = "windows_registry"
+#: 「解释器 × ROOT 安装」的叠加组合（`rootenv`，ADR 0079 修订 2026-10-21 b）。不是 `discover()` 的来源——
+#: 它由 `deprepair` 在裸起都导入不了 ROOT 时按需构造，所以不在 `SOURCES` 里
+SOURCE_ROOT_OVERLAY = rootenv.SOURCE
 #: 顺序即优先级（`discover()` 按它拼表）
 SOURCES = (
     SOURCE_PROJECT_VENV,
@@ -928,6 +931,8 @@ _SOURCE_RANK = {
     # 注册表登记的是用户**自己装**的解释器（安装器替他登记），和 Conda / pyenv 同属"用户自己的环境"一档；
     # 但没有任何项目 / 终端线索指向它，所以不高于 3，且仍高于老链条的系统解释器
     SOURCE_REGISTRY: 3,
+    # ROOT 叠加组合：同样是"用户自己装的东西"（解释器 + 他装的 ROOT），但需要我们替他拼环境，排在其余用户环境之后、系统之前
+    SOURCE_ROOT_OVERLAY: 3,
     SOURCE_SYSTEM: 4,
 }
 
@@ -987,7 +992,12 @@ def _health_fingerprint(health: dict) -> tuple:
 
 
 def _cache_key(
-    python: str, modules: tuple[str, ...], bundled: bool, mode: str = "import", root: str = ""
+    python: str,
+    modules: tuple[str, ...],
+    bundled: bool,
+    mode: str = "import",
+    root: str = "",
+    overlay: dict | None = None,
 ) -> tuple:
     """体检缓存的键：路径 + **环境代**（`projectenv.environment_generation`，与池 / 项目记录同一个"代"的概念）+ 要量的 import
     + 是否内置 + 体检方式。同一路径上被重建的环境换代，旧结论不再命中（Codex #820 r4233884149）。
@@ -1006,6 +1016,8 @@ def _cache_key(
         how,
         # 内置 runtime 会摘掉 PYTHONPATH；用户解释器继承它，换值后旧 import / spec 结论均不可复用。
         (os.environ.get("PYTHONPATH") or "") if not bundled else "",
+        # 叠加环境（ROOT）：带叠加层量到的结论不能当裸起的用，反之亦然；也不同于另一个 ROOT 安装
+        rootenv.key_of(overlay),
         # 启动上下文（direct / conda|exe|prefix）：裸起的结论不能在激活下复用。放在末尾——前面几位有人按位置读（`key[1]` 是环境代）
         launcher.context_key(python),
     )
@@ -1018,21 +1030,24 @@ def _probe(
     bundled: bool = False,
     mode: str = "import",
     root: str = "",
+    overlay: dict | None = None,
 ) -> dict:
     from . import projectenv
 
-    key = _cache_key(python, modules, bundled, mode, root)
+    key = _cache_key(python, modules, bundled, mode, root, overlay)
     with _lock:
         hit = _probe_cache.get(key)
         if hit is None and mode == "spec":
             # 点过「运行」之后的 import 结论更强。
-            hit = _probe_cache.get(_cache_key(python, modules, bundled, "import"))
+            hit = _probe_cache.get(_cache_key(python, modules, bundled, "import", "", overlay))
     if hit is not None and _fresh(python, hit):
         return hit
     # 只在内置 runtime 时才带这个参数：用户环境的体检调用形状与以前逐字相同
     extra = {"bundled": True} if bundled else {}
     if mode == "spec":
         extra.update(import_mode="spec", project_root=root)
+    if overlay:
+        extra["env_overlay"] = overlay
     health = projectenv.probe_environment(python, modules=modules, **extra)
     health["_site_fp"] = _health_fingerprint(health)
     if launcher.is_unavailable(health):
@@ -1080,7 +1095,12 @@ def _fresh(python: str, health: dict) -> bool:
 
 
 def imports_missing(
-    python: str, modules: list[str], *, bundled: bool = False, root: str = ""
+    python: str,
+    modules: list[str],
+    *,
+    bundled: bool = False,
+    root: str = "",
+    overlay: dict | None = None,
 ) -> list[str]:
     """`modules` 里此刻这个解释器**确实** import 不到的那几个（ADR 0079 修订 2026-09-25）。
 
@@ -1093,22 +1113,30 @@ def imports_missing(
     mods = tuple(dict.fromkeys(m for m in modules if m))
     if not mods:
         return []
+    if overlay and root:
+        # 带叠加层的解释器运行之前量不了（`spec` 体检以 `-I` 启动，忽略叠加层的环境变量）：判不出不算缺
+        return []
     probed = (
         _probe(python, mods, bundled=bundled, mode="spec", root=root)
         if root
-        else _probe(python, mods, bundled=bundled)
+        else _probe(python, mods, bundled=bundled, overlay=overlay)
     )
     ok_map = probed.get("modules_ok") or {}
     return [m for m in mods if ok_map.get(m) is False]
 
 
 def cached_probe(
-    python: str, modules: tuple[str, ...], *, bundled: bool = False, root: str = ""
+    python: str,
+    modules: tuple[str, ...],
+    *,
+    bundled: bool = False,
+    root: str = "",
+    overlay: dict | None = None,
 ) -> dict | None:
     """这个候选在这组 import 上**已有**的体检结论（只读缓存，没有回 None；不起任何进程）。"""
     with _lock:
-        hit = _probe_cache.get(_cache_key(python, modules, bundled))
-        if hit is None and root:
+        hit = _probe_cache.get(_cache_key(python, modules, bundled, overlay=overlay))
+        if hit is None and root and not overlay:
             hit = _probe_cache.get(_cache_key(python, modules, bundled, "spec", root))
     return hit if hit is not None and _fresh(python, hit) else None
 
@@ -1142,26 +1170,40 @@ def evaluate(
     todo = _within_budget(candidates, project_name or (Path(root).name if root else ""))
 
     def one(cand: dict) -> dict:
+        overlay = cand.get("overlay")
+        # 内置 runtime 作为叠加组合的底（`bundled`）：按 worker 起它的同一套量（摘 PYTHONPATH、`-B`），叠加层在其后
+        bundled = bool(cand.get("bundled"))
+        unchecked = {
+            **cand,
+            "ok": None,
+            "code": "",
+            "support": "",
+            "python_version": "",
+            "matplotlib_version": "",
+            "missing": [],
+            "satisfies": None,
+            "checked": False,
+            "probe_status": PROBE_UNCHECKED,
+        }
+        # 裸起候选的调用形状与以前逐字相同（测试替身的签名也不变）：只有叠加组合才多这两个参数
+        probe_extra = {
+            **({"overlay": overlay} if overlay else {}),
+            **({"bundled": True} if bundled else {}),
+        }
+        if overlay and root:
+            # 叠加组合运行之前不量（`spec` 方式忽略叠加层）：与项目说了算的候选同一套"未检查"
+            return unchecked
         if cache_only:
-            health = cached_probe(cand["python"], imports, root=root)
+            health = cached_probe(
+                cand["python"], imports, root=root, overlay=overlay, bundled=bundled
+            )
             if health is None:
-                return {
-                    **cand,
-                    "ok": None,
-                    "code": "",
-                    "support": "",
-                    "python_version": "",
-                    "matplotlib_version": "",
-                    "missing": [],
-                    "satisfies": None,
-                    "checked": False,
-                    "probe_status": PROBE_UNCHECKED,
-                }
+                return unchecked
         elif use_cache:
             health = (
                 _probe(cand["python"], imports, mode="spec", root=root)
                 if root
-                else _probe(cand["python"], imports)
+                else _probe(cand["python"], imports, **probe_extra)
             )
         else:
             from . import projectenv
@@ -1173,6 +1215,8 @@ def evaluate(
                 cand["python"],
                 modules=imports,
                 **({"import_mode": "spec", "project_root": root} if root else {}),
+                **({"env_overlay": overlay} if overlay else {}),
+                **({"bundled": True} if bundled else {}),
             )
         ok_map = health.get("modules_ok") or {}
         if (
@@ -1255,7 +1299,80 @@ def evaluate(
     from concurrent.futures import ThreadPoolExecutor
 
     with ThreadPoolExecutor(max_workers=min(PROBE_WORKERS, len(todo))) as pool:
-        return list(pool.map(one, todo))
+        return [_label_overlay(e) for e in pool.map(one, todo)]
+
+
+def _label_overlay(entry: dict) -> dict:
+    """叠加组合的标签写清楚是哪一对：`Python 3.14 + ROOT 6.38`（版本来自这次体检；没量到就只写 ROOT 版本）。"""
+    overlay = entry.get("overlay")
+    if not overlay:
+        return entry
+    parts = (entry.get("python_version") or "").split(".")
+    py = f"Python {'.'.join(parts[:2])} + " if len(parts) >= 2 and parts[0] else ""
+    return {**entry, "label": f"{py}{rootenv.label_of(overlay)}"}
+
+
+def entry_key(entry: dict) -> tuple:
+    """候选的身份：解释器（`_key`）+ 叠加层。同一个解释器带不同 ROOT 是不同的候选，裸起与叠加也是。"""
+    return (_key(entry["python"]), rootenv.key_of(entry.get("overlay")))
+
+
+# ------------------------------------------------------------------ ROOT 叠加组合（ADR 0079 修订 2026-10-21 b）
+
+
+def root_installs(budget: scanbudget.Budget | None = None) -> list[dict]:
+    """本机的 ROOT 安装（`rootenv.discover_installs`）：纯 stat / 读注册表，不执行任何东西。
+    Windows 上注入 `_WinregReader`；`TAVOTTO_USER_ENV_DISCOVERY=0` 的总开关由调用方（`deprepair`）判。"""
+    reader = None
+    if os.name == "nt":
+        try:
+            reader = _WinregReader()
+        except ImportError:  # pragma: no cover
+            reader = None
+    return rootenv.discover_installs(registry_reader=reader, budget=budget)
+
+
+def overlay_candidates(bases: list[dict], installs: list[dict]) -> list[dict]:
+    """「候选解释器 × ROOT 安装」的组合（有界：ROOT 至多 `rootenv.MAX_USED` 个、优先最新；总数至多 `rootenv.MAX_COMBOS`）。
+
+    `bases`：`{"python", "bundled"?, "python_version"?}`，按调用方的偏好序。要叠加的 Conda 环境不在这里（调用方已滤掉：
+    Conda 激活的增量会盖住 `PATH`，而 conda-forge 的 ROOT 本来就在环境里）。
+    顺序：ROOT 自带的 Python 小版本标记（`py_tags`，只是提示）对得上的组合排前面，其余保持 底×ROOT 的偏好序；
+    认不出标记的不排除——真不真能跑由体检说了算。"""
+    roots = rootenv.newest(installs)
+    combos: list[tuple[int, int, dict]] = []
+    for i, base in enumerate(bases):
+        minor = _minor_of(base.get("python_version", ""))
+        for j, install in enumerate(roots):
+            tags = install.get("py_tags") or frozenset()
+            hint = 0 if (not tags or minor is None or minor in tags) else 1
+            combos.append(
+                (
+                    hint,
+                    i * len(roots) + j,
+                    {
+                        "python": base["python"],
+                        "source": SOURCE_ROOT_OVERLAY,
+                        "label": rootenv.label_of(rootenv.overlay_spec(install)),
+                        "overlay": rootenv.overlay_spec(install),
+                        **({"bundled": True} if base.get("bundled") else {}),
+                        **(
+                            {"python_version": base["python_version"]}
+                            if base.get("python_version")
+                            else {}
+                        ),
+                    },
+                )
+            )
+    combos.sort(key=lambda c: (c[0], c[1]))
+    return [c[2] for c in combos[: rootenv.MAX_COMBOS]]
+
+
+def _minor_of(version: str) -> int | None:
+    parts = (version or "").split(".")
+    if len(parts) >= 2 and parts[0] == "3" and parts[1].isdigit():
+        return int(parts[1])
+    return None
 
 
 def system_candidates(budget: scanbudget.Budget | None = None) -> list[dict]:
@@ -1350,6 +1467,8 @@ REJECT_PROBE_TIMEOUT = "probe_timeout"
 REJECT_UNUSABLE = "unusable"  # 解释器起不来 / 体检进程崩溃
 REJECT_NOT_CHECKED = "not_checked"  # 没量到（延后到运行时 / 项目说了算的候选运行前不起）
 REJECT_OUTRANKED = "outranked"  # 能跑，但有排序更靠前的被选用了
+#: 解释器健康、叠上了这个 ROOT，`import ROOT` 仍失败：ROOT 的二进制包只配一个 Python 小版本，多半就是版本对不上
+REJECT_ROOT_PYTHON_MISMATCH = "root_python_mismatch"
 REJECT_CODES = (
     REJECT_MISSING_IMPORTS,
     REJECT_IMPORT_FAILED,
@@ -1361,6 +1480,7 @@ REJECT_CODES = (
     REJECT_UNUSABLE,
     REJECT_NOT_CHECKED,
     REJECT_OUTRANKED,
+    REJECT_ROOT_PYTHON_MISMATCH,
 )
 
 # 健康体检的 code（`projectenv.ERROR_*` / `launcher.UNAVAILABLE_CODE`）→ 落选码。字面量写在这里是有意的：
@@ -1392,20 +1512,30 @@ def rejection_reason(entry: dict) -> dict:
         reason = REJECT_IMPORT_FAILED
     else:
         reason = REJECT_MISSING_IMPORTS
+    overlay = entry.get("overlay")
+    if (
+        overlay
+        and reason in (REJECT_MISSING_IMPORTS, REJECT_IMPORT_FAILED)
+        and rootenv.IMPORT_NAME
+        in [*(entry.get("import_failed") or []), *(entry.get("missing") or [])]
+    ):
+        reason = REJECT_ROOT_PYTHON_MISMATCH
     return {
-        "id": env_id(entry["python"]),
+        "id": env_id(entry["python"], overlay),
         "source": entry.get("source", ""),
         "label": entry.get("label", ""),
         "reason": reason,
         "missing": list(entry.get("missing") or []) if reason == REJECT_MISSING_IMPORTS else [],
         "import_failed": list(entry.get("import_failed") or []),
+        # 哪个 ROOT（只有版本，不带路径）：叠加组合才有
+        **({"root_version": overlay.get("version", "")} if overlay else {}),
     }
 
 
 def rejections(entries: list[dict], selected: dict | None = None) -> list[dict]:
     """`entries`（一轮评估的全部结果）里没被选用的，各出一条 `rejection_reason`，保持输入顺序。"""
-    skip = _key(selected["python"]) if selected else None
-    return [rejection_reason(e) for e in entries if _key(e["python"]) != skip]
+    skip = entry_key(selected) if selected else None
+    return [rejection_reason(e) for e in entries if entry_key(e) != skip]
 
 
 def best(entries: list[dict], project_name: str = "") -> dict | None:
@@ -1416,9 +1546,9 @@ def best(entries: list[dict], project_name: str = "") -> dict | None:
     return sorted(ok, key=lambda e: rank(e, project_name))[0]
 
 
-def env_id(python: str) -> str:
+def env_id(python: str, overlay: dict | None = None) -> str:
     """对外的不透明身份，实现见 `projectenv.env_id`（ADR 0053 §二：HTTP 投影不带机器路径）。"""
-    return projectenv.env_id(python)
+    return projectenv.env_id(python, overlay)
 
 
 #: 投影里保留的字段（`python` 不在其中）
@@ -1439,7 +1569,15 @@ PUBLIC_FIELDS = (
 
 
 def public(entry: dict) -> dict:
-    return {"id": env_id(entry["python"]), **{k: entry.get(k) for k in PUBLIC_FIELDS}}
+    out = {
+        "id": env_id(entry["python"], entry.get("overlay")),
+        **{k: entry.get(k) for k in PUBLIC_FIELDS},
+    }
+    overlay = entry.get("overlay")
+    if overlay:
+        # 叠加组合：只说是哪种、哪个版本，不带安装路径（ADR 0053 §二）
+        out["overlay"] = {"kind": overlay.get("kind", ""), "version": overlay.get("version", "")}
+    return out
 
 
 def _register_reset() -> None:

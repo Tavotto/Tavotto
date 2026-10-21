@@ -75,7 +75,7 @@ import threading
 import time
 from pathlib import Path
 
-from . import config, launcher, runtime, scanbudget
+from . import config, launcher, rootenv, runtime, scanbudget
 
 LOG = logging.getLogger("tavotto.projectenv")
 
@@ -850,8 +850,13 @@ def _probe_environment(
     timeout: float | None = None,
     import_mode: str = "import",
     project_root: str = "",
+    env_overlay: dict | None = None,
 ) -> dict:
     """在候选解释器里跑一次体检，回机器可读结构。
+
+    `env_overlay`（ADR 0079 修订 2026-10-21 b）：把 ROOT 之类的「叠加环境」（`rootenv`）叠到体检进程的环境上——
+    在内置 runtime 摘掉 `PYTHONPATH`、Conda 激活取环境**之后**叠，与 worker 起进程（`pool.worker_env`）同一个顺序。
+    只用于 `import` 方式：`spec` 方式的体检以 `-I` 启动，忽略 `PYTHON*` 环境变量，叠加层在那里不起作用。
 
     `import_mode="spec"`（用户点「运行」之前）：脚本要的模块**不 import**，只问顶层名的 `find_spec`，路径落在
     `project_root` 里的回 `None`（延后到运行）。体检进程本身：cwd 是空的临时目录、`-c` 的 `sys.path[0]` 就是它——项目目录
@@ -924,6 +929,8 @@ def _probe_environment(
         probe_env = launcher.activate_env(
             python, runtime.probe_env(python, bundled=bundled), timeout=probe_timeout
         )
+        if env_overlay and not isolate:
+            probe_env = rootenv.apply_overlay(probe_env, env_overlay, replace_pythonpath=bundled)
         spawned = activating  # 激活跑过 conda 与 activate.d：之后的任何失败都不许报成「什么都没跑」
         probe_timeout = deadline - time.monotonic()
         if probe_timeout <= 0:
@@ -1286,13 +1293,17 @@ def env_key(python: str) -> tuple[str, str]:
     return os.path.normcase(os.path.dirname(path)), os.path.normcase(real)
 
 
-def env_id(python: str) -> str:
+def env_id(python: str, overlay: dict | None = None) -> str:
     """对外的不透明身份：HTTP 投影不带机器路径（ADR 0053 §二），界面采用时交回这个 id，后端用自己的
-    发现结果换回路径——路径只来自 `userenvs` 的枚举，不接受调用方给（ADR 0044 的安全口径）。"""
+    发现结果换回路径——路径只来自 `userenvs` 的枚举，不接受调用方给（ADR 0044 的安全口径）。
+
+    `overlay`（ROOT 叠加层）给了，同一个解释器 + 不同叠加层是不同的候选：叠加层的键并进摘要；
+    没有叠加层时与以前逐字相同。"""
     import hashlib
 
     d, real = env_key(python)
-    return hashlib.sha1(f"{d}|{real}".encode()).hexdigest()[:16]
+    extra = rootenv.key_of(overlay)
+    return hashlib.sha1((f"{d}|{real}" + (f"|{extra}" if extra else "")).encode()).hexdigest()[:16]
 
 
 def environment_generation(python: str) -> str:
@@ -1467,6 +1478,25 @@ def remembered(figures_dir: str | Path) -> str | None:
     return path
 
 
+def remembered_overlay(figures_dir: str | Path, python: str | None = None) -> dict | None:
+    """项目记录里随解释器一起记着的叠加环境（`rootenv.valid_spec` 规整过的），没有回 None。
+
+    `python` 给了就要求它与记录里的解释器是同一个（记录换了解释器、旧叠加层就不适用）。纯读设置，不 stat 叠加层的安装根
+    （起进程时 `rootenv.apply_overlay` 会核对）。"""
+    stored = (config.project_settings(str(Path(figures_dir))) or {}).get(SETTINGS_KEY)
+    if not isinstance(stored, dict) or stored.get("mode") == MODE_DEFAULT_CHAIN:
+        return None
+    spec = rootenv.valid_spec(stored.get("env_overlay"))
+    if spec is None:
+        return None
+    if python is not None:
+        rel = stored.get("python_relative")
+        path = str(Path(figures_dir) / rel) if rel else (stored.get("python") or "")
+        if not path or env_key(path) != env_key(python):
+            return None
+    return spec
+
+
 def project_relative(figures_dir: str | Path, python: str) -> str:
     """解释器在项目内时的相对路径（**POSIX 形态**，`.venv/Scripts/python.exe` 在 Windows 上也是
     正斜杠）；在项目外（或算不出来）回空串。
@@ -1515,8 +1545,12 @@ def remember(
     module: str = "",
     health: dict | None = None,
     only_if=None,
+    env_overlay: dict | None = None,
 ) -> bool:
     """记住这个项目该用哪个解释器（进程缓存 + 项目设置持久化）；回写了没有。
+
+    `env_overlay`（`rootenv.overlay_spec`）：解释器要带着叠加环境才跑得了这个脚本（ROOT）——一并持久化，
+    `pool.worker_env` 起 worker 时叠上；不给 = 清掉先前记着的叠加层（换了解释器就不该再带旧的）。
 
     `only_if(record)`：给了就在写入锁里拿此刻的 `remembered_record()` 问一次，False 就不写（回 False）。
     项目设置写不进去（数据目录只读 / 满）同样回 False：`resolve_worker_python()` 读的是持久化的记录，
@@ -1529,10 +1563,10 @@ def remember(
     with _decision_lock:
         if only_if is not None and not only_if(remembered_record(figures_dir)):
             return False
-        return _remember(figures_dir, python, automatic, trigger, module, health)
+        return _remember(figures_dir, python, automatic, trigger, module, health, env_overlay)
 
 
-def _remember(figures_dir, python, automatic, trigger, module, health) -> bool:
+def _remember(figures_dir, python, automatic, trigger, module, health, env_overlay=None) -> bool:
     root = Path(figures_dir)
     payload = {"automatic": bool(automatic), "trigger": trigger or "", "module": module or ""}
     # 把体检当时的事实一并存下来：诊断包要回答「为什么用了这个 Python」，
@@ -1541,6 +1575,9 @@ def _remember(figures_dir, python, automatic, trigger, module, health) -> bool:
     for key in ("python_version", "matplotlib_version", "support"):
         if (health or {}).get(key):
             payload[key] = str(health[key])
+    spec = rootenv.valid_spec(env_overlay)
+    if spec is not None:
+        payload["env_overlay"] = spec
     generation = environment_generation(python)
     if generation:
         # 采用时的环境代：解析解释器时对一遍，同一路径被重建就要重新确认（ADR 0114 §四）
