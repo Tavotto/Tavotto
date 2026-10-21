@@ -50,6 +50,10 @@ def project(tmp_path, monkeypatch):
     m.reset_projects()
     project_watch.stop()
     exportjob.reset_for_tests()
+    # 画布合成走 RenderCore 共享子进程；不关会漏给同一 xdist worker 里后面的用例（hang_watchdog 的「没有子进程」断言）
+    from tavotto.rendercore import renderhost
+
+    renderhost.shutdown_shared()
 
 
 def spec(source, *, scope="canvas", formats=("svg",), patches=None, strict=False, reference=None):
