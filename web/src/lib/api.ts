@@ -3983,6 +3983,16 @@ export interface TelemetrySettings {
   needs_reconsent: boolean
 }
 
+/**
+ * Windows 卸载后重装的记号（NSIS 卸载器写、后端读，ADR 0136 修订 2026-10-21）。GET 只回布尔；
+ * 前端把 onboarding 迁回新手态之后再 ack 让后端删记号（读不删，处理失败下次启动接着来）。
+ */
+export const fetchReinstallMarker = () =>
+  jsonFetch<{ reinstalled: boolean }>('/api/onboarding/reinstall')
+
+export const ackReinstallMarker = () =>
+  jsonFetch<{ consumed: boolean }>('/api/onboarding/reinstall/ack', { method: 'POST' })
+
 export const fetchTelemetrySettings = () =>
   jsonFetch<TelemetrySettings>('/api/telemetry/settings')
 

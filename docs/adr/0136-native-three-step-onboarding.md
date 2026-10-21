@@ -132,3 +132,23 @@ ADR 0040 的教程是盖在真实工作台上的八步 coachmark：打开示例�
   用 `< 3` 判就把这些人认成「当前」。教程内容不变，只把 `ONBOARDING_FLOW_VERSION` 升到 4，凡 `< 4` 一律迁回新手态一次。
   代价：在 0.19.0b1 里真走完 v3 教程的人再看一次。PostHog 看板 `tutorial_version` 过滤相应切到 4。
 * 旧版的 `not_started`（例如看过欢迎页但没开始）同样清掉 `welcomeSeenAt`，否则这些人升级后永远不会自动弹；当前版本的任何状态不动。
+
+## 修订 2026-10-21（二）：Windows 卸载后重装也回到新手态（用户裁决）
+
+起因：用户反馈「每次卸载安装后都要被当成新手」的反面——Windows 卸载默认不删
+`%LOCALAPPDATA%\com.tavotto.tavotto\EBWebView`（前端 `localStorage` 的 `tavotto.onboarding` 在里面）和
+`%APPDATA%\Tavotto`，所以卸载再装仍是「教程已完成」的老手版；用户要的是：**卸载重装 = 新手，应用内更新不算**。
+macOS 先不做（拖进废纸篓没有钩子）。
+
+* **卸载记号**：NSIS `Section Uninstall` 在 `$UpdateMode <> 1`（非 `/UPDATE`）时写
+  `%APPDATA%\Tavotto\reinstall-marker`（与 `engine/config.py` 的 Windows `config_dir()` 同址，内容固定一句、无标识）。
+  应用内更新以 `/UPDATE` 跑安装器，`$UpdateMode = 1`，不写。写不出来静默忽略，不打断卸载。
+* **后端**（`engine/reinstall_marker.py`）：`GET /api/onboarding/reinstall` 只回 `{reinstalled: bool}`（不回路径 / 内容 /
+  install_id）；`POST /api/onboarding/reinstall/ack` 删记号。**读不删、前端处理完才 ack**：前端没加载或中途失败，
+  记号还在，下次启动接着来。只在 Windows 生效（`os.name == "nt"`），其它平台即使有同名文件也不读不删。
+* **前端**（`components/onboarding/autoOpen.ts`）：启动时问一次；`true` → `onboardingStore.resetToNewcomer()`
+  （与上一节迁移同一状态：`not_started`、`welcomeSeenAt` 清空、`hintSeen` 保留，并落盘）→ 自动弹欢迎页的判定重跑
+  → ack。同一页面会话只问一次；取不到（浏览器 / 旧后端）当没有。内嵌宿主不挂 `useAutoOpen`，不受影响。
+* **不碰**：EBWebView、用户的项目 / 配置 / 最近项目；只有 onboarding 一格回到新手态。勾了「删除应用数据」的卸载本来就清掉
+  localStorage，记号随之多余但无害。
+* **局限**：记号在卸载时写；若用户手动删安装目录而没跑卸载器（无钩子），不触发。

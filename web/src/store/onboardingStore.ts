@@ -380,6 +380,11 @@ interface OnboardingState extends OnboardingPersisted {
   resetHints: () => void
   /** 整格清掉：状态、进度、提示。教程副本（磁盘）不归这里管 */
   resetOnboarding: () => void
+  /**
+   * 回到新手态并落盘：与 `migratePersisted` 迁移旧流程同一状态（`not_started`、`welcomeSeenAt` 清空、
+   * `hintSeen` 保留）。Windows 卸载后重装（卸载记号，ADR 0136 修订 2026-10-21）用它；不碰示例项目副本。
+   */
+  resetToNewcomer: () => void
 }
 
 function commitState(patch: Partial<OnboardingPersisted>) {
@@ -488,6 +493,11 @@ export const useOnboardingStore = create<OnboardingState>((set, get) => ({
   },
 
   resetHints: () => commitState({ hintSeen: {} }),
+
+  resetToNewcomer: () => {
+    set({ surface: 'none' })
+    commitState({ ...ONBOARDING_DEFAULTS, hintSeen: { ...get().hintSeen } })
+  },
 
   resetOnboarding: () => {
     set({ ...ONBOARDING_DEFAULTS, surface: 'none' })

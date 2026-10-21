@@ -125,6 +125,7 @@ from .engine import (
     readiness as engine_readiness,
     receipt as engine_receipt,
     registry as engine_registry,
+    reinstall_marker as engine_reinstall_marker,
     runcodes as engine_runcodes,
     runconfig as engine_runconfig,
     runtime as engine_runtime,
@@ -11127,6 +11128,18 @@ def api_update_apply():
         result["command"],
     )
     return jsonify(result), (200 if result["ok"] else 500)
+
+
+# ------------------------- 卸载后重装 → 新手态（Windows，ADR 0136 修订） -----
+# 只读 + 一次性消费：GET 只回布尔（记号内容、路径都不出去），前端处理完才 POST ack 删除记号。
+@app.get("/api/onboarding/reinstall")
+def api_onboarding_reinstall():
+    return jsonify({"reinstalled": engine_reinstall_marker.is_reinstall()})
+
+
+@app.post("/api/onboarding/reinstall/ack")
+def api_onboarding_reinstall_ack():
+    return jsonify({"consumed": engine_reinstall_marker.consume()})
 
 
 # ------------------------- 匿名用量统计 -------------------------------------
