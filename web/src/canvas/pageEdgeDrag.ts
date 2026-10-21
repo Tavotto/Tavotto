@@ -39,6 +39,8 @@ export function startPageEdgeResize(e: ReactPointerEvent, edge: PageEdge) {
     objects: new Map(d0.objects.map((o) => [o.id, { x: o.x, y: o.y }] as const)),
     guides: d0.guides.map((g) => g.pos),
   }
+  // 先把视口定住（在飞的取景补间落到终点）再取快照，取消时整体还原——t0 取在补间半路上，Esc 后 zoom / pan / fitted 会互相对不上
+  const view0 = useViewportStore.getState().freezeView()
   const t0 = getTransform()
   // 栏宽每一帧现读：规范目录没加载完时不吸附（见 `resolvePageColumns`），加载完的那一帧起就按绑定的规范吸；
   // 与属性栏页面预设同一个判据
@@ -48,8 +50,6 @@ export function startPageEdgeResize(e: ReactPointerEvent, edge: PageEdge) {
     return { columns: r.ready ? r.columns : [], specLabel: r.specLabel }
   }
   if (!useProfileStore.getState().loaded) void useProfileStore.getState().load()
-  // 适应画布：拖的这一刻页面与取景脱钩（见 onMove），取消时恢复
-  const wasFitted = useViewportStore.getState().fitted
   const horizontal = edge === 'l' || edge === 'r'
   const interaction = useInteractionStore.getState()
 
@@ -89,11 +89,8 @@ export function startPageEdgeResize(e: ReactPointerEvent, edge: PageEdge) {
     onEnd: (moved, _ev, end) => {
       if (end.cancelled || !moved) {
         store.endTxn({ discard: true })
-        if (moved) {
-          useViewportStore.getState().setPan(t0.panX, t0.panY)
-          // 回到原值就回到原来的取景状态：原先是适应画布的，页面又是 `lastFit` 那一页，恢复适应模式
-          if (wasFitted) useViewportStore.setState({ fitted: true })
-        }
+        // 回到原值就回到原来的取景：zoom / pan / fitted / lastFit 四项整体还原
+        if (moved) useViewportStore.getState().restoreFrozenView(view0)
       } else {
         store.endTxn()
       }

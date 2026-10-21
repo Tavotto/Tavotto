@@ -236,6 +236,39 @@ describe('适应画布（fitted）', () => {
   })
 })
 
+describe('取景补间进行中按下拖边', () => {
+  it('拖几帧 → Esc：zoom / pan / fitted / lastFit 与按下那一刻定住后的视图一致，随后 resize 页面不跳', () => {
+    const vp = () => useViewportStore.getState()
+    vp().setViewRect({ left: 0, top: 0, width: 1200, height: 800 })
+    // 探针：fit(180,120) 的终点视图
+    vp().fit(180, 120)
+    const target = { zoom: vp().zoom, panX: vp().panX, panY: vp().panY }
+    // 回到起点后起一段补间（还没走一帧）：按下时补间在飞
+    useViewportStore.setState({ zoom: 1, panX: 0, panY: 0 })
+    vp().fitAnimated(180, 120)
+    expect(vp().tweening).toBe(true)
+    startPageEdgeResize(down(0, 0), 'l')
+    // 按下那一刻视图已定在补间终点
+    expect(vp().tweening).toBe(false)
+    expect(vp().zoom).toBeCloseTo(target.zoom, 9)
+    fire('pointermove', -30 * PX_PER_MM(), 0)
+    fire('pointermove', -40 * PX_PER_MM(), 0)
+    expect(cancelActivePointerGesture()).toBe(true)
+    expect(page().w).toBe(180)
+    expect(vp()).toMatchObject({ fitted: true, tweening: false })
+    expect(vp().zoom).toBeCloseTo(target.zoom, 9)
+    expect(vp().panX).toBeCloseTo(target.panX, 9)
+    expect(vp().panY).toBeCloseTo(target.panY, 9)
+    // lastFit 也回来了：舞台尺寸一变，按 180×120 重算，与直接 fit(180,120) 同一结果
+    vp().setViewRect({ left: 0, top: 0, width: 900, height: 800 })
+    const after = { zoom: vp().zoom, panX: vp().panX, panY: vp().panY }
+    vp().fit(180, 120)
+    expect(after.zoom).toBeCloseTo(vp().zoom, 9)
+    expect(after.panX).toBeCloseTo(vp().panX, 9)
+    expect(after.panY).toBeCloseTo(vp().panY, 9)
+  })
+})
+
 describe('栏宽读自文档绑定的规范（目录没就绪不吸附）', () => {
   const record = (id: string, single: number, double: number): ProfileRecord => ({
     id,
