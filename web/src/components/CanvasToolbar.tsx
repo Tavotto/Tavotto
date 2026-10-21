@@ -18,7 +18,8 @@ import { insertShape } from '@/lib/presets'
 import { keyOf, type KeyId } from '@/lib/keymap'
 import { cn } from '@/lib/utils'
 import { useUiStore } from '@/store/uiStore'
-import { TOOLBAR_FIT_CLEARANCE, useViewportStore } from '@/store/viewportStore'
+import { NOTICE_FIT_ROOM, TOOLBAR_FIT_CLEARANCE, useViewportStore } from '@/store/viewportStore'
+import { useWorkspaceStore } from '@/store/workspaceStore'
 import { fitStage } from '@/store/zoomToSelection'
 import { PresetsDialog } from './PresetsDialog'
 import { Button } from './ui/Button'
@@ -73,11 +74,15 @@ const INSERT_SHAPES = ['triangle', 'diamond', 'polygon', 'brace'] as const
 
 export function CanvasToolbar() {
   const visible = useCanvasToolbarVisible()
+  // 单图编辑的取景铺满舞台，底边还要给通知轨留一行（见 `NOTICE_FIT_ROOM`）；排版里页面居中，不用
+  const single = useWorkspaceStore((s) => s.mode === 'fast_edit')
   // 适应取景据此给底部让位：与显示判据是同一个值，不另判
   useEffect(() => {
-    useViewportStore.getState().setFitBottomClear(visible ? TOOLBAR_FIT_CLEARANCE : 0)
+    useViewportStore
+      .getState()
+      .setFitBottomClear(visible ? TOOLBAR_FIT_CLEARANCE + (single ? NOTICE_FIT_ROOM : 0) : 0)
     return () => useViewportStore.getState().setFitBottomClear(0)
-  }, [visible])
+  }, [visible, single])
   return visible ? <Bar /> : null
 }
 

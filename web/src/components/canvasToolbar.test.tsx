@@ -18,7 +18,7 @@ import { TopBar } from '@/components/TopBar'
 import { TooltipProvider } from '@/components/ui/Tooltip'
 import { useDocumentStore } from '@/store/documentStore'
 import { useUiStore } from '@/store/uiStore'
-import { useViewportStore } from '@/store/viewportStore'
+import { NOTICE_FIT_ROOM, TOOLBAR_FIT_CLEARANCE, useViewportStore } from '@/store/viewportStore'
 import { useWorkspaceStore } from '@/store/workspace'
 import { emptyProject } from '@/types/document'
 
@@ -92,6 +92,16 @@ describe('浮动工具条', () => {
     }
     const page = useDocumentStore.getState().doc.page
     expect(calls).toEqual([[page.w, page.h]])
+  })
+
+  it('取景给底部让位：排版 = 工具条那一档；单图编辑再多让一行通知（常驻的「已为编辑新建画布」+ 首次提示 + 渲染完成三条叠起来不盖住图下沿）', async () => {
+    useWorkspaceStore.setState({ mode: 'layout' })
+    await mount(<CanvasToolbar />)
+    expect(useViewportStore.getState().fitBottomClear).toBe(TOOLBAR_FIT_CLEARANCE)
+    await act(async () => useWorkspaceStore.setState({ mode: 'fast_edit' }))
+    expect(useViewportStore.getState().fitBottomClear).toBe(TOOLBAR_FIT_CLEARANCE + NOTICE_FIT_ROOM)
+    await act(async () => useWorkspaceStore.setState({ mode: 'layout' }))
+    expect(useViewportStore.getState().fitBottomClear).toBe(TOOLBAR_FIT_CLEARANCE)
   })
 
   it('单图编辑时工具条也在（2026-10-21：单图编辑的舞台画着标注，可以画可以选）', async () => {
