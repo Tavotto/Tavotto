@@ -599,10 +599,11 @@ def test_default_and_launch_record_commit_in_one_transaction(tmp_path, monkeypat
 # #975 第三轮评审
 # ---------------------------------------------------------------------------
 @posix_only
-def test_windows_gets_no_conda_wrapping(tmp_path, monkeypatch):
-    """本期 Windows 不做 Conda 包装（没有真机验证，回执也核不了 pid）：模拟 nt 时 detect 返回 None。"""
+def test_posix_layout_gets_no_windows_exe_lookup(tmp_path, monkeypatch):
+    """POSIX 回归：正对照是 `bin/conda`；模拟 nt 时只认 `Scripts\\conda.exe`，POSIX 布局的 `bin/conda` 不再被当成 conda。"""
     prefix, conda, _ = make_fake_conda(tmp_path, sys.executable)
     monkeypatch.delenv("CONDA_EXE", raising=False)
+    monkeypatch.setenv("PATH", str(tmp_path / "nothing"))
     assert launcher.launcher_for_interpreter(prefix / "bin" / "python") is not None  # 正对照
     monkeypatch.setattr(launcher, "_is_windows", lambda: True)
     assert launcher.launcher_for_interpreter(prefix / "bin" / "python") is None
@@ -2728,3 +2729,180 @@ def test_a_directly_launched_conda_env_still_records_its_version_in_the_context(
     with open(prefix / "conda-meta" / "history", "a", encoding="utf-8") as fh:
         fh.write("# cmd: conda install vendor-sdk\n")
     assert launcher.context_key(py) != before
+
+
+# ---------------------------------------------------------------------------
+# Windows（ADR 0142）：模拟 nt（`_is_windows` → True）+ Windows 布局的假 conda
+# （`Scripts/conda.exe` 与 `python.exe` 是 POSIX 上可执行的脚本）。证明 Tavotto 的 argv / 缓存 / fail-closed，
+# **不证明**真 conda.exe / cmd.exe / 代码页的行为（真机验收清单在 ADR 0142）。
+# ---------------------------------------------------------------------------
+def make_fake_win_conda(
+    tmp_path: Path,
+    real_python: str,
+    *,
+    root_name: str = "我的 conda 安装",
+    env_name: str = "环境 1",
+) -> tuple[Path, Path, Path]:
+    """root/Scripts/conda.exe（模拟）+ root/envs/<env>（prefix，`python.exe` 转发到 `real_python`）。回 (prefix, conda, 日志)。
+    根目录与环境名带空格和中文：路径只经 argv 列表传递，不经任何 shell 拼接。"""
+    root = tmp_path / root_name
+    prefix = root / "envs" / env_name
+    (prefix / "conda-meta").mkdir(parents=True)
+    (prefix / "conda-meta" / "history").write_text("==> 2026-10-21 <==\n", encoding="utf-8")
+    (root / "conda-meta").mkdir(exist_ok=True)
+    (root / "Scripts").mkdir(parents=True)
+    py = prefix / "python.exe"
+    py.write_text(f'#!/bin/sh\nexec "{real_python}" "$@"\n', encoding="utf-8")
+    conda = root / "Scripts" / "conda.exe"
+    conda.write_text(FAKE_CONDA.format(python=sys.executable, license=LICENSE), encoding="utf-8")
+    for p in (py, conda):
+        os.chmod(p, 0o755)
+    _FAKE_ROOTS.append(os.path.realpath(root))
+    return prefix, conda, tmp_path / "conda.log"
+
+
+@pytest.fixture
+def as_windows(monkeypatch):
+    monkeypatch.setattr(launcher, "_is_windows", lambda: True)
+    monkeypatch.delenv("CONDA_EXE", raising=False)
+    monkeypatch.setenv("PATH", "/nonexistent-tavotto-path")
+
+
+@posix_only
+def test_windows_detects_scripts_conda_exe_in_a_space_and_chinese_path(tmp_path, as_windows):
+    prefix, conda, _ = make_fake_win_conda(tmp_path, sys.executable)
+    found = launcher.launcher_for_interpreter(prefix / "python.exe")
+    assert found == launcher.CondaLauncher(conda_exe=str(conda), prefix=str(prefix))
+    # Windows 的 base 环境：python.exe 直接在安装根
+    root = prefix.parent.parent
+    (root / "python.exe").write_text("#!/bin/sh\n", encoding="utf-8")
+    base = launcher.launcher_for_interpreter(root / "python.exe")
+    assert base is not None and base.prefix == str(root)
+    # Scripts\\python.exe 之类（prefix 在上一级）
+    (prefix / "Scripts").mkdir()
+    (prefix / "Scripts" / "python.exe").write_text("#!/bin/sh\n", encoding="utf-8")
+    assert launcher.launcher_for_interpreter(prefix / "Scripts" / "python.exe").prefix == str(
+        prefix
+    )
+
+
+@posix_only
+def test_windows_never_runs_conda_bat_and_the_switch_still_disables(
+    tmp_path, as_windows, monkeypatch
+):
+    prefix, conda, _ = make_fake_win_conda(tmp_path, sys.executable)
+    bat_dir = tmp_path / "condabin"
+    bat_dir.mkdir()
+    bat = bat_dir / "conda.bat"
+    bat.write_text("@echo off\n", encoding="utf-8")
+    bat.chmod(0o755)
+    # 只有 .bat 可用（没有 Scripts\\conda.exe）：不采用、也不报错 = 直接启动
+    conda.unlink()
+    monkeypatch.setenv("CONDA_EXE", str(bat))
+    assert launcher.find_conda_exe(str(prefix)) is None
+    assert launcher.launcher_for_interpreter(prefix / "python.exe") is None
+    # 逃生口：恢复 conda.exe 后设 TAVOTTO_CONDA_ACTIVATION=0 → 不激活
+    conda.write_text(FAKE_CONDA.format(python=sys.executable, license=LICENSE), encoding="utf-8")
+    conda.chmod(0o755)
+    monkeypatch.delenv("CONDA_EXE")
+    assert launcher.launcher_for_interpreter(prefix / "python.exe") is not None
+    monkeypatch.setenv(launcher.ENV_DISABLE, "0")
+    assert launcher.launcher_for_interpreter(prefix / "python.exe") is None
+
+
+@posix_only
+def test_windows_standard_roots_use_localappdata_and_programdata(tmp_path, monkeypatch):
+    monkeypatch.undo()  # 撤掉 autouse 夹具对 `_standard_conda_roots` 的替身：这里测的就是它
+    monkeypatch.setattr(launcher, "_is_windows", lambda: True)
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "Local 应用"))
+    monkeypatch.setenv("ProgramData", str(tmp_path / "PD"))
+    roots = launcher._standard_conda_roots()
+    assert str(tmp_path / "Local 应用" / "miniconda3") in roots
+    assert str(tmp_path / "PD" / "anaconda3") in roots
+    assert not any("%" in r for r in roots)
+    monkeypatch.delenv("LOCALAPPDATA")
+    assert not any(
+        "%" in r for r in launcher._standard_conda_roots()
+    )  # 变量缺失：该项丢弃，不当字面路径
+
+
+@posix_only
+def test_windows_capture_passes_only_paths_in_argv_and_decodes_utf8(
+    tmp_path, as_windows, monkeypatch
+):
+    prefix, conda, log = make_fake_win_conda(tmp_path, sys.executable)
+    monkeypatch.setenv("FAKE_CONDA_LOG", str(log))
+    monkeypatch.setattr(launcher.config, "data_dir", lambda: tmp_path / "数据 dir")
+    site = prefix / "activated_site"  # 激活把含中文 / 空格的路径放进 PYTHONPATH
+    site.mkdir()
+    py = str(prefix / "python.exe")
+    lau = launcher.launcher_for_interpreter(py)
+    delta = launcher.activated_delta(py, lau)
+    assert delta["FAKE_SDK_LICENSE"] == LICENSE and delta["CONDA_PREFIX"] == str(prefix)
+    assert str(site) in delta["PYTHONPATH"]
+    (call,) = conda_calls(log)
+    cmd = call["cmd"]
+    # 与 POSIX 相同的前缀；Windows 不再传多行 `-c`，而是 脚本文件 + 结果文件 两个路径
+    assert call["opts"] == ["--no-capture-output", "--prefix", str(prefix)]
+    assert cmd[:3] == [py, "-I", "-S"] and "-c" not in cmd and len(cmd) == 5
+    assert cmd[3].endswith(".py") and Path(cmd[3]).parent == tmp_path / "数据 dir" / "probe-results"
+    # 脚本与结果文件用完即删，在途登记清空
+    assert not list((tmp_path / "数据 dir" / "probe-results").glob("*"))
+    assert not launcher._inflight
+
+
+@posix_only
+def test_windows_capture_failure_timeout_and_no_cache(tmp_path, as_windows, monkeypatch):
+    prefix, conda, log = make_fake_win_conda(tmp_path, sys.executable)
+    monkeypatch.setenv("FAKE_CONDA_LOG", str(log))
+    monkeypatch.setattr(launcher.config, "data_dir", lambda: tmp_path / "data")
+    py = str(prefix / "python.exe")
+    lau = launcher.launcher_for_interpreter(py)
+    results = tmp_path / "data" / "probe-results"
+    # 退出码非 0
+    monkeypatch.setenv("FAKE_CONDA_SKIP_CMD", "1")
+    with pytest.raises(launcher.LauncherUnavailable) as exc:
+        launcher.activated_delta(py, lau)
+    assert exc.value.code == "conda_launcher_unavailable"
+    monkeypatch.delenv("FAKE_CONDA_SKIP_CMD")
+    assert not list(results.glob("*"))
+    # 超时（taskkill 在 POSIX 上不存在：收尾走 Windows 分支，吞 OSError，仍杀掉 conda）
+    monkeypatch.setenv("FAKE_CONDA_SLEEP", "30")
+    t0 = time.monotonic()
+    with pytest.raises(launcher.LauncherUnavailable):
+        launcher.activated_delta(py, lau, timeout=1.0)
+    assert time.monotonic() - t0 < 10
+    monkeypatch.delenv("FAKE_CONDA_SLEEP")
+    assert not list(results.glob("*"))
+    # 失败不缓存：同一把键紧接着成功
+    delta = launcher.activated_delta(py, lau)
+    assert delta["CONDA_PREFIX"] == str(prefix)
+    # 找不到的 conda.exe：起不来 = 稳定码
+    ghost = launcher.CondaLauncher(conda_exe=str(tmp_path / "no" / "conda.exe"), prefix=str(prefix))
+    launcher.reset_captures()
+    with pytest.raises(launcher.LauncherUnavailable):
+        launcher.activated_delta(py, ghost)
+
+
+@posix_only
+def test_windows_timeout_cleanup_uses_taskkill_for_the_whole_tree(monkeypatch):
+    calls: list[list[str]] = []
+
+    class FakeProc:
+        pid = 4321
+        killed = False
+
+        def kill(self):
+            self.killed = True
+
+        def wait(self, timeout=None):
+            return 1
+
+    monkeypatch.setattr(launcher, "_is_windows", lambda: True)
+    monkeypatch.setattr(
+        launcher.subprocess, "run", lambda argv, **k: calls.append(list(argv)) or None
+    )
+    proc = FakeProc()
+    launcher._kill_tree(proc)
+    assert calls == [["taskkill", "/PID", "4321", "/T", "/F"]]
+    assert proc.killed

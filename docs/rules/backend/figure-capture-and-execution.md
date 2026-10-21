@@ -431,10 +431,14 @@ reconstruction_sha256, metrics}`；④ 真实编辑（结构性 `figure.frame` �
   诊断，日志只记变量个数）。所有「用目标解释器起子进程」的地方都**直接**起目标解释器（我们的直接子进程，取消 / 超时 / 协议 / 回执 pid
   与没有 Conda 时一样），只把 env 换成「调用方原来的 env + 激活增量」：worker（`pool.EngineWorker`）、预检探针（`launcher.activate_env`）、
   依赖门、`deprepair.worker_self_test`、`runtime.probe_packages`（app 注入 `env_for`）。
-- **启动方式是解释器路径的纯函数**：`launcher.launcher_for_interpreter(python)`——关开关 → Windows → 现场检测（Conda 环境 + 找得到 conda），
+- **启动方式是解释器路径的纯函数**：`launcher.launcher_for_interpreter(python)`——关开关 → 现场检测（Conda 环境 + 找得到 conda；Windows 同样，见下），
   不读脚本、项目、成功记录、来源标签，**没有** ContextVar 之类的“范围”，所以任何线程、任何入口对同一条解释器给出同一个 env。成功记录里的
   launcher 只作为事实写入（回执、记录照记），**不驱动决策**。行为变化：以前裸起成功过的 Conda 脚本，今后会带上激活环境（这本来就是用户对
-  Conda 环境的预期）。`TAVOTTO_CONDA_ACTIVATION=0` 关闭。**Windows 本期不启用**（没有真机验证；捕获方案本身可直接扩到 Windows）。
+  Conda 环境的预期）。`TAVOTTO_CONDA_ACTIVATION=0` 关闭。**Windows 同样默认开（ADR 0142，2026-10-21 修订）**，见下一条。
+- **Windows 的捕获（ADR 0142）**：与 POSIX 同构——只换三处。①conda 可执行只认安装根的 `Scripts\conda.exe`（`CONDA_EXE`、`PATH` 上 `condabin\conda.bat` 的所在根也按「上两级」推出安装根，但**不执行** `.bat` / `.cmd`：不经 cmd.exe、不拼 shell）；
+  常见安装位置另含 `%LOCALAPPDATA%` / `%ProgramData%` 下的 miniconda3 / anaconda3 / miniforge3，路径比较一律 `normcase`。②捕获脚本写成 `probe-results/capture-*.py`（`conda run` 在 Windows 把命令写进临时 `.bat`，
+  多行 `-c` 会被 cmd 截断），argv 里只剩路径；结果仍是 UTF-8 JSON 结果文件，不读 stdout，所以控制台代码页（chcp 936 / 65001）不影响。③超时收尾用 `taskkill /PID <conda> /T /F` 收整棵树。
+  失败仍是 `LauncherUnavailable`（`conda_launcher_unavailable`），不缓存。**真机验收前不合入**（清单见 ADR 0142）。
 - **捕获失败一律 fail-closed 且不缓存**：Conda 环境捕获失败 / 超时，任何调用点都抛 `LauncherUnavailable`（稳定码 `conda_launcher_unavailable`），
   不退回裸起。体检 / 预检遇到它返回「不可用：conda_launcher_unavailable」，**不写**任何 verdict / facts 缓存（`launcher.is_unavailable`），
   不作废记住的解释器；项目已选定 / 记住 / 显式选择的解释器把稳定码交给用户，默认链条与系统候选只跳过这一个继续试后面的

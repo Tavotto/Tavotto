@@ -17,13 +17,17 @@
 限制：只捕获环境变量。激活脚本里环境变量以外的副作用（启动 license 服务、`ulimit`、shell 函数）不会在每次启动时重放，
 `deactivate.d` 不再执行——与 IDE 的通行做法一致。
 
-**启动方式是解释器路径的纯函数**（`launcher_for_interpreter`：关开关 → Windows → 现场检测）：不看脚本、项目、成功记录、
+**启动方式是解释器路径的纯函数**（`launcher_for_interpreter`：关开关 → 现场检测）：不看脚本、项目、成功记录、
 来源标签，也没有 ContextVar 之类的“范围”——所有入口、所有线程对同一条解释器天然给出同一个答案。成功记录里的 launcher 只
 作为事实记下，不驱动决策。**激活失败一律 fail-closed**：对 Conda 环境捕获失败 / 超时，任何调用点都抛
 `LauncherUnavailable`（稳定码 `conda_launcher_unavailable`），不退回裸起，失败也不进任何缓存。
 
-不碰：Windows（本期没有真机验证，`detect()` 恒 None；捕获方案本身可直接扩到 Windows）、mamba / micromamba（选项集不同，
-另列样本门）、内置 runtime 与 Tavotto 自己的受管环境（venv，没有 `conda-meta`）。
+Windows（ADR 0142，默认开）：同一方案——`<根>\\Scripts\\conda.exe run --no-capture-output --prefix <p> <python.exe> -I -S
+<捕获脚本文件> <结果文件>`，argv 列表直接交给 CreateProcess，**不经 cmd.exe、不拼 shell、不用 `conda.bat`**；捕获脚本在 Windows 上落成
+`probe-results/` 里的临时 `.py` 文件（`conda run` 在 Windows 上把命令写进临时 `.bat`，多行 `-c` 参数会被 cmd 截断），结果仍走 UTF-8 的 JSON
+结果文件，不受控制台代码页影响。超时用 `taskkill /T /F` 收整棵树。
+
+不碰：mamba / micromamba（选项集不同，另列样本门）、内置 runtime 与 Tavotto 自己的受管环境（venv，没有 `conda-meta`）。
 
 纯标准库；Flask 父进程侧。
 """
@@ -94,8 +98,8 @@ def conda_prefix_of(python: str | os.PathLike) -> str | None:
     POSIX 解释器在 `<prefix>/bin/python*`，Windows 在 `<prefix>/python.exe`。**不 resolve 软链接**：
     我们要的是用户指给我们的那条路径所在的环境，不是它指向的基础解释器。"""
     p = Path(os.path.abspath(str(python)))
-    candidates = [p.parent] if os.name == "nt" else [p.parent.parent]
-    if os.name == "nt":
+    candidates = [p.parent] if _is_windows() else [p.parent.parent]
+    if _is_windows():
         candidates.append(p.parent.parent)  # Scripts\python.exe 之类
     for prefix in candidates:
         if (prefix / "conda-meta").is_dir():
@@ -124,14 +128,39 @@ _STANDARD_ROOTS = (
 )
 
 
+#: Windows 的常见安装位置（Miniconda / Anaconda / Miniforge 的“仅我自己”装在用户目录或 `%LOCALAPPDATA%`，“所有用户”装在 `%ProgramData%`）：
+#: （环境变量名, 子目录）；环境变量名为空 = 用户目录
+_WINDOWS_STANDARD_ROOTS = tuple(
+    (var, name)
+    for var, names in (
+        ("", ("miniconda3", "anaconda3", "miniforge3", "mambaforge")),
+        ("LOCALAPPDATA", ("miniconda3", "anaconda3", "miniforge3")),
+        ("ProgramData", ("miniconda3", "anaconda3", "miniforge3")),
+    )
+    for name in names
+)
+
+
 def _standard_conda_roots() -> list[str]:
+    if _is_windows():
+        out: list[str] = []
+        for var, name in _WINDOWS_STANDARD_ROOTS:
+            base = os.path.expanduser("~") if not var else os.environ.get(var, "")
+            if base:  # 变量缺失：该项丢弃，不当字面路径
+                out.append(os.path.join(base, name))
+        return out
     return [os.path.expanduser(r) for r in _STANDARD_ROOTS]
 
 
+def _root_conda_exe(root: str) -> str:
+    """安装根里的 conda 可执行文件：POSIX `bin/conda`，Windows `Scripts\\conda.exe`（真正的 exe，不是 `condabin\\conda.bat`）。"""
+    if _is_windows():
+        return os.path.join(root, "Scripts", "conda.exe")
+    return os.path.join(root, "bin", "conda")
+
+
 def _is_install_root(root: str) -> bool:
-    return os.path.isdir(os.path.join(root, "conda-meta")) and _is_executable(
-        os.path.join(root, "bin", "conda")
-    )
+    return os.path.isdir(os.path.join(root, "conda-meta")) and _is_executable(_root_conda_exe(root))
 
 
 def _user_conda_roots() -> list[str]:
@@ -162,8 +191,9 @@ def _owning_root(prefix: str) -> str | None:
         real = os.path.realpath(prefix)
     except (OSError, ValueError):
         return None
+    nc = os.path.normcase  # Windows 路径不分大小写
     for root in _user_conda_roots():
-        if real == root or os.path.dirname(real) == os.path.join(root, "envs"):
+        if nc(real) == nc(root) or nc(os.path.dirname(real)) == nc(os.path.join(root, "envs")):
             return root
     return None
 
@@ -173,7 +203,7 @@ def _conda_candidates(prefix: str) -> list[str]:
     out: list[str] = []
     root = _owning_root(prefix)
     if root is not None:
-        out.append(os.path.join(root, "bin", "conda"))
+        out.append(_root_conda_exe(root))
     env_exe = os.environ.get("CONDA_EXE")
     if env_exe:
         out.append(env_exe)
@@ -185,7 +215,7 @@ def _conda_candidates(prefix: str) -> list[str]:
 
 def find_conda_exe(prefix: str) -> str | None:
     for cand in _conda_candidates(prefix):
-        # Windows 的 `conda.bat` 需要 cmd.exe 引号规则，本期不支持（不拼 shell）
+        # `conda.bat` / `.cmd` 需要 cmd.exe 引号规则（不拼 shell）：Windows 只认 `Scripts\\conda.exe`
         if cand.lower().endswith((".bat", ".cmd")):
             continue
         if _is_executable(cand):
@@ -261,10 +291,6 @@ def _conda_shaped(python: str | os.PathLike) -> str | None:
     只看路径与目录，不执行任何东西；**不**代表会被激活（见 `_activation_wanted`）。"""
     if disabled():
         return None
-    if _is_windows():
-        # 本期 Windows 不做 Conda 激活：没有真机验证（conda.exe 的 DLL 搜索路径 / 进程树）。Windows 保持 P09 之前的裸起，
-        # 真机验证后再开（捕获方案本身可直接扩到 Windows）。
-        return None
     if not os.path.isabs(str(python)) or str(python).startswith("-"):
         return None  # 捕获要把解释器当 `conda run` 的可执行部分：必须是绝对路径、不以 `-` 开头
     return conda_prefix_of(python)
@@ -288,7 +314,7 @@ def _trusted_prefix(prefix: str) -> bool:
 
 
 def launcher_for_interpreter(python: str | os.PathLike) -> CondaLauncher | None:
-    """**唯一的启动决策**：解释器路径的纯函数。关开关 → Windows → 现场检测（Conda 环境 + 找得到 conda）→ launcher；
+    """**唯一的启动决策**：解释器路径的纯函数。关开关 → 现场检测（Conda 环境 + 找得到 conda）→ launcher；
     否则 None（= 直接启动，与 P09 之前一致）。不读脚本、项目、成功记录、来源标签；任何线程、任何入口结果相同。"""
     prefix = _activation_wanted(python)
     if prefix is None:
@@ -452,7 +478,26 @@ def _descendant_levels(root_pid: int, *, timeout: float = 5.0) -> list[list[int]
 
 def _kill_tree(proc: subprocess.Popen) -> None:
     """超时收尾：**叶子先死**。conda 还活着时它的子进程先被杀，由 conda（它在 wait 它们）收尸，不留僵尸；
-    最后才杀 conda 本身并 wait。整组一起 SIGKILL 会让子进程在父进程来不及收尸时变成孤儿（PID 1 不收尸的容器里就是僵尸）。"""
+    最后才杀 conda 本身并 wait。整组一起 SIGKILL 会让子进程在父进程来不及收尸时变成孤儿（PID 1 不收尸的容器里就是僵尸）。
+    Windows 没有进程组 / 信号：`taskkill /T /F` 一次收整棵树（输出丢弃，不涉及控制台代码页）。"""
+    if _is_windows():
+        try:
+            subprocess.run(
+                ["taskkill", "/PID", str(proc.pid), "/T", "/F"],
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=_KILL_TREE_BUDGET_S * 3,
+                creationflags=runtime.CREATE_NO_WINDOW,
+            )
+        except (OSError, subprocess.SubprocessError):
+            pass
+        proc.kill()
+        try:
+            proc.wait(timeout=_KILL_TREE_BUDGET_S)
+        except subprocess.TimeoutExpired:
+            LOG.warning("Conda 激活超时收尾：进程 %s 在期限内没能收掉", proc.pid)
+        return
     if os.name != "nt":
         # 整个收尾一个总期限：再深的进程链也只多花 `_KILL_TREE_BUDGET_S`，到点余下的整组一起杀（下面的 killpg 兜底）
         deadline = time.monotonic() + _KILL_TREE_BUDGET_S
@@ -483,6 +528,7 @@ def _kill_tree(proc: subprocess.Popen) -> None:
 def _capture(python: str, lau: CondaLauncher, timeout: float) -> dict[str, str | None]:
     """跑一次 `conda run … python -c <写 os.environ 到结果文件>`；任何失败 / 超时 → `LauncherUnavailable`。"""
     result_path = ""
+    script_path = ""
     sweep_results()  # 顺手清过期残留（上次删不掉的、启动之后才过期的）：只删过了过期线的，在途的都还新
     try:
         results = _results_dir()
@@ -491,6 +537,17 @@ def _capture(python: str, lau: CondaLauncher, timeout: float) -> dict[str, str |
         os.close(fd)  # mkstemp 建出来就是 0600
         with _inflight_lock:
             _inflight.add(result_path)
+        if _is_windows():
+            # `conda run` 在 Windows 上把命令行写进临时 .bat：多行 / 带引号的 `-c` 参数会被 cmd 破坏。改用脚本文件，
+            # argv 里只剩路径（Popen 列表 → CreateProcess，不经 cmd.exe）
+            sfd, script_path = tempfile.mkstemp(prefix="capture-", suffix=".py", dir=results)
+            with os.fdopen(sfd, "w", encoding="utf-8", newline="\n") as fh:
+                fh.write(_CAPTURE_SRC)
+            with _inflight_lock:
+                _inflight.add(script_path)
+            script_args = [script_path, result_path]
+        else:
+            script_args = ["-c", _CAPTURE_SRC, result_path]
         argv = [
             lau.conda_exe,
             "run",
@@ -502,9 +559,7 @@ def _capture(python: str, lau: CondaLauncher, timeout: float) -> dict[str, str |
             # 也不能把 sitecustomize 对环境的改动当成激活增量（真正的 worker 起来还会再跑一次）
             "-I",
             "-S",
-            "-c",
-            _CAPTURE_SRC,
-            result_path,
+            *script_args,
         ]
         proc = subprocess.Popen(
             argv,
@@ -532,20 +587,22 @@ def _capture(python: str, lau: CondaLauncher, timeout: float) -> dict[str, str |
     except OSError as exc:
         raise LauncherUnavailable(f"无法经 Conda 激活取环境：{exc.__class__.__name__}") from exc
     finally:
-        if result_path:
+        for leftover in (result_path, script_path):
+            if not leftover:
+                continue
             try:
-                os.unlink(result_path)
+                os.unlink(leftover)
             except FileNotFoundError:
                 gone = True
             except OSError:
-                # 删不掉（瞬时的文件系统错误）：留在在途登记里，退出时 `_cleanup_inflight` 再删一次；
-                # 下一次捕获前的 `sweep_results` 也会扫到过期的
+                # 删不掉（瞬时的文件系统错误；Windows 上进程刚死文件句柄还没放）：留在在途登记里，退出时
+                # `_cleanup_inflight` 再删一次；下一次捕获前的 `sweep_results` 也会扫到过期的
                 gone = False
             else:
                 gone = True
             if gone:
                 with _inflight_lock:
-                    _inflight.discard(result_path)
+                    _inflight.discard(leftover)
     delta: dict[str, str | None] = {
         str(k): str(v) for k, v in data.items() if k not in _VOLATILE_ENV and os.environ.get(k) != v
     }
