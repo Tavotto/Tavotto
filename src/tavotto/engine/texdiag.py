@@ -45,17 +45,17 @@ _CODE_OF = {
 #: matplotlib 的 TeX 链路会调起的命令（闭集；别的名字报 `other`，不把任意字符串带出去）
 COMMANDS = frozenset({"latex", "dvipng", "dvips", "kpsewhich", "luatex", "ps2pdf", "pdftops"})
 
-_CMD_MISSING = re.compile(r"Failed to process string with tex because (\S+) could not be found")
-_COMPILE = re.compile(r"(\S+) was not able to process the following string:")
-_LATEX_FILE = re.compile(r"! LaTeX Error: File `([^'\n]+)' not found\.")
-_TFM = re.compile(r"! Font [^\n=]*=(\S+) at [^\n]* not loadable: Metric \(TFM\) file not found")
-_TEXMF = re.compile(
-    r"Matplotlib's TeX implementation searched for a file named '([^'\n]+)' in your texmf tree"
-)
-_BANG = re.compile(r"^! (.+)$", re.M)
+#: 模板一律按**固定子串 + 逐行**认，不用跨行 / 无界的正则：LaTeX 日志是外部文本、可以很长，回溯型
+#: 正则在病态输入上是多项式时间（CodeQL py/polynomial-redos）。下面只剩一条有界的帧名正则。
+_CMD_MISSING = ("Failed to process string with tex because ", " could not be found")
+_COMPILE = " was not able to process the following string:"
+_TEXMF = ("Matplotlib's TeX implementation searched for a file named '", "' in your texmf tree")
+_LATEX_FILE = ("! LaTeX Error: File `", "' not found.")
+_TFM = ("! Font ", " not loadable: Metric (TFM) file not found")
 #: 没有模板可认、但 traceback 落在 matplotlib 的 TeX 模块里：是 TeX 这一步，原因说不清
 _TEX_FRAME = re.compile(r"matplotlib[\\/](?:texmanager|dviread)\.py")
 _SAFE_FILE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._+-]{0,80}")
+_TOKEN_LIMIT = 256
 _LINE_LIMIT = 200
 
 
@@ -92,33 +92,67 @@ def _file(raw: str) -> str:
     return name if _SAFE_FILE.fullmatch(name) else ""
 
 
+def _between(text: str, head: str, tail: str) -> str | None:
+    """`head` 之后、同一行里 `tail` 之前的那段；没有回 None。纯子串查找，线性时间。"""
+    i = text.find(head)
+    if i < 0:
+        return None
+    start = i + len(head)
+    end = text.find(tail, start)
+    nl = text.find("\n", start)
+    if end < 0 or (0 <= nl < end) or end - start > _TOKEN_LIMIT:
+        return None
+    return text[start:end]
+
+
+def _token_before(text: str, marker: str) -> tuple[str, int] | None:
+    """`marker` 前面紧挨着的那个不含空白的词与 `marker` 结束的位置；没有回 None。"""
+    i = text.find(marker)
+    if i < 0:
+        return None
+    head = text[max(0, i - _TOKEN_LIMIT) : i]
+    words = head.split()
+    if not words or head[-1:].isspace():
+        return None
+    return words[-1], i + len(marker)
+
+
+def _tex_report(report: str, command: str) -> TexFailure:
+    """`latex was not able to process …` 之后的 LaTeX 输出 → 缺文件 / 编译错误。逐行看 `! …`。"""
+    first_bang = ""
+    for raw in report.splitlines():
+        line = raw.strip()
+        if not line.startswith("! "):
+            continue
+        name = _between(line, *_LATEX_FILE)
+        if name is not None:
+            return TexFailure(KIND_PACKAGE_MISSING, command=command, file=_file(name))
+        if line.startswith(_TFM[0]) and _TFM[1] in line:
+            spec = line[len(_TFM[0]) : line.index(_TFM[1])]
+            # `T1/cmr/m/n/10=ecrm1000 at 10.0pt`：`=` 之后、` at ` 之前是字体名
+            font = spec.partition("=")[2].partition(" at ")[0]
+            if font:
+                return TexFailure(KIND_PACKAGE_MISSING, command=command, file=_file(font + ".tfm"))
+        if not first_bang:
+            first_bang = line[2:].strip()[:_LINE_LIMIT]
+    return TexFailure(KIND_COMPILE_ERROR, command=command, line=first_bang)
+
+
 def classify(text: str | None) -> TexFailure | None:
     """一次失败的 message + traceback 文本 → `TexFailure`；不是 TeX 链路的失败回 None。"""
     text = text or ""
-    m = _CMD_MISSING.search(text)
-    if m:
-        return TexFailure(KIND_COMMAND_MISSING, command=_command(m.group(1)))
-    m = _TEXMF.search(text)
-    if m:
+    cmd = _between(text, *_CMD_MISSING)
+    if cmd and not any(c.isspace() for c in cmd):
+        return TexFailure(KIND_COMMAND_MISSING, command=_command(cmd))
+    name = _between(text, *_TEXMF)
+    if name is not None:
         # `dviread.find_tex_file` 把「kpsewhich 起不来」与「文件真的不在」吞成同一句（实测：PATH 上
         # 没有 TeX、DVI 又命中了 matplotlib 的 tex 缓存时，报的正是 `cmr9.tfm` 找不到）——证据不足以
         # 判成缺宏包，归「原因不明」，文件名只作事实留着
-        return TexFailure(KIND_UNKNOWN, file=_file(m.group(1)))
-    m = _COMPILE.search(text)
-    if m:
-        command = _command(m.group(1))
-        report = text[m.end() :]
-        f = _LATEX_FILE.search(report)
-        if f:
-            return TexFailure(KIND_PACKAGE_MISSING, command=command, file=_file(f.group(1)))
-        f = _TFM.search(report)
-        if f:
-            return TexFailure(
-                KIND_PACKAGE_MISSING, command=command, file=_file(f.group(1) + ".tfm")
-            )
-        bang = _BANG.search(report)
-        line = bang.group(1).strip()[:_LINE_LIMIT] if bang else ""
-        return TexFailure(KIND_COMPILE_ERROR, command=command, line=line)
+        return TexFailure(KIND_UNKNOWN, file=_file(name))
+    hit = _token_before(text, _COMPILE)
+    if hit is not None:
+        return _tex_report(text[hit[1] :], _command(hit[0]))
     if _TEX_FRAME.search(text):
         return TexFailure(KIND_UNKNOWN)
     return None

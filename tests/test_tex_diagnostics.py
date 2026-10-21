@@ -209,3 +209,25 @@ def test_a_failure_after_build_is_classified_at_export(tmp_path):
         assert pool.recovery_params(ei.value) == {"command": "dvipng"}
     finally:
         pool.discard(w)
+
+
+@pytest.mark.parametrize(
+    "evil",
+    [
+        "!" * 200_000,
+        "! LaTeX Error: File `" * 20_000,
+        "! Font " * 30_000,
+        "! Font =! at " * 20_000,
+        "x" * 200_000 + " was not able to process the following string:",
+        "Failed to process string with tex because " + "a" * 200_000,
+    ],
+)
+def test_classification_is_linear_on_pathological_logs(evil):
+    """LaTeX 日志是外部文本：病态输入上分类必须是线性的（CodeQL py/polynomial-redos 那三条）。"""
+    import time
+
+    text = "RuntimeError: latex was not able to process the following string:\n" + evil
+    t0 = time.perf_counter()
+    texdiag.classify(text)
+    texdiag.classify(evil)
+    assert time.perf_counter() - t0 < 0.5
