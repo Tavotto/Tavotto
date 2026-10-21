@@ -227,6 +227,34 @@ class Layers(unittest.TestCase):
             self.assertEqual(TG.attribute(facts, "explore", rules)["family"], family, kind)
 
 
+class NativePixelNote(unittest.TestCase):
+    """No native pixel reference is inapplicable only when the script never used savefig."""
+
+    SAVED = {"savefig_last_writer": {"out.png": {"titles": ["t"]}}}
+
+    def test_render_failure_is_a_reason(self):
+        note = ex.native_pixel_note(native_result(**self.SAVED), {"ok": False, "code": "x"})
+        self.assertIn("native render failed", note)
+
+    def test_saved_but_nothing_rendered_did_not_run(self):
+        note = ex.native_pixel_note(native_result(**self.SAVED), {"ok": True, "shots": {}})
+        self.assertIn("out.png", note)
+
+    def test_never_saved_is_structurally_absent(self):
+        # show() then close(): native rendered nothing because nothing was saved → no reason
+        # here, so pixel_judgment reports not_covered instead of not_run
+        native = native_result(savefig_last_writer={}, savefig_calls=0)
+        self.assertIsNone(ex.native_pixel_note(native, {"ok": True, "shots": {}}))
+
+    def test_other_output_files_do_not_count_as_saved_figures(self):
+        native = native_result(savefig_last_writer={})  # artifacts still lists out.png
+        self.assertIsNone(ex.native_pixel_note(native, {"ok": True, "shots": {}}))
+
+    def test_rendered_reference_needs_no_reason(self):
+        native = native_result(**self.SAVED)
+        self.assertIsNone(ex.native_pixel_note(native, {"ok": True, "shots": {"out": "a.png"}}))
+
+
 class UnresolvedLayers(unittest.TestCase):
     """In-scope layers that did not run never read as clean; inapplicable ones never downgrade."""
 

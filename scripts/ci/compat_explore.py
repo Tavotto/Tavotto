@@ -416,6 +416,20 @@ def oracle_layers(
     return {"stages": stages, "differences": diffs}
 
 
+def native_pixel_note(native: dict, pixels: dict) -> str | None:
+    """Why the native pixel reference did not run, or None when it ran (or is structurally absent).
+
+    「没有原生像素参照」只在脚本确实没用 savefig 存过图时才是结构上不适用（`not_covered`）；
+    存过图却没渲染出来是没跑成，要让候选落到 unknown。
+    """
+    if not pixels.get("ok"):
+        return f"native render failed: {pixels.get('code')}"
+    written = sorted(native_facts(native)["last_writer"])  # savefig 写过的路径，不含别的产出文件
+    if written and not pixels.get("shots"):
+        return f"native wrote {written} but the pixel run rendered no figure"
+    return None
+
+
 def apply_unresolved(judgment: dict, stages: dict) -> tuple[dict, list[str]]:
     """An in-scope layer that did not run (`not_run`) leaves a clean candidate without a verdict.
 
@@ -480,7 +494,7 @@ def execute_request(request: dict) -> dict:
         # 出像素这次原生运行单独记审计：「原生参照执行次数」只数 native_ref 那一次
         os.environ["CG_EXEC_LOG"] = str(work / "native-pixels-execs.jsonl")
         pixels = _native_pixels(cm, native_project, parent.script, manifest["entry"], work)
-        native_note = None if pixels.get("ok") else f"native render failed: {pixels.get('code')}"
+        native_note = native_pixel_note(native, pixels)
         os.environ["CG_EXEC_LOG"] = str(work / "tavotto-execs.jsonl")
         t1 = time.monotonic()
         tavotto_project = _write_project(work / "tavotto", files)
