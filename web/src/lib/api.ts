@@ -260,7 +260,9 @@ export function engineErrorMsg(err: unknown): UiMessage {
       i18n.getResource(i18n.language, 'errors', `backend.${err.code}`) ?? '',
     )
     if (detail || !template.includes('{{error}}')) {
-      return msg(`backend.${err.code}`, { error: detail }, 'errors')
+      // 结构化 params（错误转换合同 `pool.recovery_params`，如 TeX 缺的命令 / 文件）一并给文案；
+      // `error` 永远是 traceback 末行，不让 params 里的同名键盖掉
+      return msg(`backend.${err.code}`, { ...(err.params ?? {}), error: detail }, 'errors')
     }
   }
   return literal(err instanceof Error ? err.message : String(err))

@@ -41,6 +41,7 @@ from . import (
     projectenv,
     runtime,
     scanbudget,
+    texdiag,
     workdir,
 )
 
@@ -716,6 +717,7 @@ def recovery_params(exc: "WorkerError") -> dict:
     * 输入类：`prompt`（脚本 `input()` 的提示原文）+ `reason`（为什么没人能答，闭集 `inputbroker.REASONS`）。
     * `script_needs_arguments`：`argv_count`（用户给了精确 token 才有）+ `parse_kind`（worker 有 argparse 的
       实际证据才有）。数值一律是字符串——那是已发布的线格式。
+    * TeX 工具链（`texdiag.ERROR_CODES`）：`command` / `file` / `line`，有才带。
     * 其余码：空（不为凑形状捏造字段）。
     """
     extra = getattr(exc, "extra", None) or {}
@@ -729,6 +731,9 @@ def recovery_params(exc: "WorkerError") -> dict:
         if extra.get("input_kind") in _INPUT_KINDS:
             params["input_kind"] = extra["input_kind"]
         return params
+    if exc.code in texdiag.ERROR_CODES:
+        # TeX 工具链（`texdiag`）：缺的命令 / 文件名（白名单清洗过）与 LaTeX 的那一行 `! …`
+        return texdiag.params_of(extra.get("tex"))
     if exc.code == ARGUMENTS_ERROR_CODE:
         params = {}
         if extra.get("argv_count"):
@@ -1165,6 +1170,19 @@ def _engine_files_incomplete_error(mod: str, traceback_text: str) -> "WorkerErro
         code=ENGINE_FILES_INCOMPLETE_CODE,
     )
     err.engine_module = mod
+    return err
+
+
+def _tex_error(message: str, traceback_text: str) -> "WorkerError | None":
+    """TeX 工具链的失败 → 各自的稳定码（`texdiag`）；不是 TeX 的回 None。
+
+    **先于缺依赖判**：LaTeX 日志是一大段外部文本，TeX 的失败也绝不是「pip 装个包」能修的——
+    不能让它落进 `missing_dependency` 的一键安装出口。原始消息与 traceback 原样保留。"""
+    fact = texdiag.classify(f"{message}\n{traceback_text}")
+    if fact is None:
+        return None
+    err = WorkerError(message, traceback_text, code=fact.code)
+    err.extra = {"tex": fact.as_fact()}
     return err
 
 
@@ -2647,6 +2665,10 @@ class EngineWorker:
             exc = _engine_files_incomplete_error(engine_mod, tb)
             exc.script_name = self.script_name
             return exc
+        tex = _tex_error(msg, tb)
+        if tex is not None:
+            tex.script_name = self.script_name
+            return tex
         mod = missing_module(f"{msg}\n{tb}")
         structured, structured_mod = structured_missing_dependency(err)
         mod = mod or structured_mod
@@ -3113,6 +3135,9 @@ def _worker_error(
     engine_mod = missing_engine_module(f"{message}\n{traceback_text}")
     if engine_mod:
         return _engine_files_incomplete_error(engine_mod, traceback_text)
+    tex = _tex_error(message, traceback_text)
+    if tex is not None:
+        return tex
     mod = missing_module(f"{message}\n{traceback_text}")
     structured, structured_mod = structured_missing_dependency(extra)
     mod = mod or structured_mod

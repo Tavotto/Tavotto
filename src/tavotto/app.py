@@ -139,6 +139,7 @@ from .engine import (
     svgexecution as engine_svgexecution,
     taskdiag as engine_taskdiag,
     telemetry as engine_telemetry,
+    texdiag as engine_texdiag,
     tutorial as engine_tutorial,
     updater as engine_updater,
     versionstore as engine_versionstore,
@@ -722,7 +723,11 @@ def _worker_error_payload(exc, stage: str = "", *, figure_snapshot_invalidation=
         body["figure_snapshot_invalidation"] = figure_snapshot_invalidation
     if stage:
         body["stage"] = stage
-    if exc.code in (*engine_pool.INPUT_ERROR_CODES, engine_pool.ARGUMENTS_ERROR_CODE):
+    if exc.code in (
+        *engine_pool.INPUT_ERROR_CODES,
+        engine_pool.ARGUMENTS_ERROR_CODE,
+        *engine_texdiag.ERROR_CODES,
+    ):
         # 脚本要输入（ADR 0099：提示原文 + 为什么没人能答，T08）/ 参数解析器退出（T03：个数与类别）：
         # 界面按 code 翻译，字段由错误转换合同 `pool.recovery_params` 统一给出（探测与准备会话同一份）
         body["params"] = engine_pool.recovery_params(exc)
