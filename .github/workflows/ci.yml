@@ -36,8 +36,8 @@ name: CI
 # 真实合并组的实测（资格中位 56.9 → 26.4 分钟）也在那里。
 #
 # pytest 分片（CI03a，2026-09-16）：backend-fast / backend-platforms 的 matrix 各加一根
-# `shard` 轴，目前 backend-fast 为 `[1, 2, 3, 4]`（`--shard=K/4`）、backend-platforms 为
-# `[1, 2, 3]`（`--shard=K/3`），每档全量 pytest 拆成并行 job（按文件分、不拆文件、
+# `shard` 轴，目前 backend-fast 与 backend-platforms 都是 `[1, 2, 3, 4]`（`--shard=K/4`），
+# 每档全量 pytest 拆成并行 job（按文件分、不拆文件、
 # 每个进程先算全部各片并自验并集 == 全集）。**覆盖一条没减**：漏片在进程里
 # 就是 rc 4；任一片不 success，`needs.backend-fast.result` 就不是 success，Gate
 # 照红。理由、自验与漏片兜底链写在 `backend-fast` 那一段。lab 常规套件同机跑齐全部分片；
@@ -672,6 +672,13 @@ jobs:
   # 47:45（#694 job 109764360587），余量已经很薄。上限本身是防挂死的止血阀
   # （2026-08-28 没有上限时堵过合并队列 8 小时 20 分），不该靠抬数字续命；按分片给
   # 余量，上限继续钉在 60。
+  #
+  # **2026-10-21 从 3 片改到 4 片（90 分钟上限不动）**：#1219 合入后的 6 个合并组（run
+  # 39494740923 … 39517350361）Windows 三片 46–80 分钟、单组 junit 合计 171–221 分钟，同一个
+  # 文件在不同 runner 上能差一倍（test_invariants_engine 654 s vs 1261 s）；#1219 自己的合并组
+  # Windows 1 片 82 分钟，离上限 8 分钟。按权重表重平衡只能把中位的最重片从 73.6 压到 67，
+  # 压不住 runner 快慢；runner 排队等待实测 0 分钟、每片固定开销 2–3 分钟，加片是余量最大的
+  # 做法：4 片按 Windows 中位 ≈ 50 分钟 / 片、macOS ≈ 44。
   backend-platforms:
     if: >-
       github.event_name == 'merge_group'
@@ -682,7 +689,7 @@ jobs:
       # 写成轴（`include` 不做笛卡尔积）。python 固定 3.13，写在 setup-python 上。
       matrix:
         os: [macos-latest, windows-latest]
-        shard: [1, 2, 3]
+        shard: [1, 2, 3, 4]
     runs-on: ${{ matrix.os }}
     # 2 片时实测（合入后三个真实合并组 35061049078 / 35069266028 / 35073686963）：
     # Windows 19–26 分钟（1138–1533s）、macOS 14–17 分钟（833–1006s），套件 4686 条
@@ -731,11 +738,11 @@ jobs:
       # worker 复用的决定要从这份名单来，不从猜。
       # 路径用 `${{ runner.temp }}`（runner 替换，与 shell 无关）：Windows 腿默认 pwsh、
       # macOS 腿 bash，`$RUNNER_TEMP` / `$env:RUNNER_TEMP` 两种写法只有一种能同时成立。
-      # `--shard=K/3` 的 3 与 matrix.shard 的长度必须是同一个数（合同测试对拍）；
+      # `--shard=K/4` 的 4 与 matrix.shard 的长度必须是同一个数（合同测试对拍）；
       # 两个 conftest 选项写成 `--opt=值` 的理由见 backend-fast 那一步。
       - name: pytest
         run: >-
-          python -m pytest --shard=${{ matrix.shard }}/3
+          python -m pytest --shard=${{ matrix.shard }}/4
           --shard-manifest="${{ runner.temp }}/shard-manifest.json"
           --junitxml "${{ runner.temp }}/junit.xml"
           --durations=50 -rs
