@@ -1740,7 +1740,17 @@ fn main() {
                 let _ = app.emit_to("main", "tavotto:open", req);
             }
         }))
-        .plugin(tauri_plugin_window_state::Builder::default().build())
+        // 记住窗口位置 / 大小 / 最大化，但**不管窗框**：Windows 主窗口没有系统标题栏（window_chrome.rs），
+        // 默认会把旧版本存下的 `decorated: true` 恢复回来——系统标题栏与页面窗口按钮两套并存（#1279 真机）。
+        // 不管窗框也就不往状态文件写 false：退回旧版本时那边不会恢复出一个没有任何关闭按钮的窗口。
+        .plugin(
+            tauri_plugin_window_state::Builder::default()
+                .with_state_flags(
+                    tauri_plugin_window_state::StateFlags::all()
+                        - tauri_plugin_window_state::StateFlags::DECORATIONS,
+                )
+                .build(),
+        )
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         // 应用内更新：前端经自有命令 desktop_update_check / desktop_update_install（来源编排见

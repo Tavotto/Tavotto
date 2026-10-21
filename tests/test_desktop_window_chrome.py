@@ -245,3 +245,20 @@ def test_web_window_buttons_use_only_granted_window_commands():
     for name in called:
         perm = "core:window:allow-" + re.sub(r"([A-Z])", lambda m: "-" + m.group(1).lower(), name)
         assert perm in granted, perm
+
+
+@needs_shell
+def test_window_state_plugin_never_restores_decorations():
+    """`tauri-plugin-window-state` 默认连窗框一起记 / 恢复：从带系统标题栏的旧版本升上来，存着的
+    `decorated: true` 会把 `decorations(false)` 顶掉——Windows 上系统标题栏与页面窗口按钮两套并存
+    （#1279 Win11 真机实测）。插件的状态位必须把 DECORATIONS 排除在外。"""
+    code = rust_code(MAIN_RS.read_text(encoding="utf-8"))
+    at = code.index("tauri_plugin_window_state::Builder::default()")
+    chain = code[at : code.index(".build()", at)]
+    flags = re.search(r"\.with_state_flags\((.*)\)\s*$", chain, re.S)
+    assert flags, "window-state 插件没设状态位：默认会恢复窗框"
+    expr = re.sub(r"\s", "", flags.group(1)).rstrip(",")
+    assert (
+        expr
+        == "tauri_plugin_window_state::StateFlags::all()-tauri_plugin_window_state::StateFlags::DECORATIONS"
+    ), expr
