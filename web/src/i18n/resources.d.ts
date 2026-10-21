@@ -2867,6 +2867,7 @@ export default interface Resources {
       "repairNeedsNetwork": "需要联网下载",
       "repairNotFoundNamed": "软件源里找不到 {{name}}。",
       "repairNotFoundNamedFrom": "软件源里找不到 {{name}}（来自 {{source}}）。",
+      "repairNotPipInstallable": "{{name}} 不能用 pip 安装，要在装有它的 Python 环境里运行。",
       "repairPackageAria": "要安装的包名",
       "repairPackagePlaceholder": "例如 my-lab-tools 或 my-lab-tools>=2.1",
       "repairPinnedBody": "渲染用的 Python 被固定为 {{python}}（{{source}}），在取消固定前，为这个项目装的或选的环境都不会被使用。",

@@ -454,6 +454,7 @@
     "repairSystemUnverified": "matplotlib version not verified by {{product}}",
     "repairTitle": "This project is missing {{module}}",
     "repairUnresolved": "Can’t tell which package provides “{{module}}”, so nothing will be installed. Name the package, or switch to an environment that already has it.",
+    "repairNotPipInstallable": "{{name}} can’t be installed with pip; run it in a Python environment that already has it.",
     "repairUseOtherPythonShort": "Or use a Python environment you already have",
     "repairUseProjectEnv": "Install into project environment",
     "repairUseSystemPython": "Use an environment already on this machine",

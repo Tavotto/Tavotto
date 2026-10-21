@@ -454,6 +454,7 @@
     "repairSystemUnverified": "matplotlib 版本未经 {{product}} 验证",
     "repairTitle": "项目还缺少 {{module}}",
     "repairUnresolved": "无法确定「{{module}}」对应哪个安装包，不会安装。指定安装包，或换一个已装好它的 Python 环境。",
+    "repairNotPipInstallable": "{{name}} 不能用 pip 安装，要在装有它的 Python 环境里运行。",
     "repairUseOtherPythonShort": "或者使用你已有的 Python 环境",
     "repairUseProjectEnv": "安装到项目环境",
     "repairUseSystemPython": "改用这台机器上已有的环境",

@@ -285,7 +285,8 @@ export function DependencyRepairCard({
   const primary: DependencyTarget | null = system ?? (managedReady ? managedTarget : null)
   const rest = targets.filter((tg) => tg !== primary)
   // 解析不出包名：用户可以自己指定，但那串东西同样要过后端的语法关
-  const specify = !offer.requirement && !exhausted && (
+  const notPip = offer.not_pip_installable
+  const specify = !offer.requirement && !exhausted && !notPip && (
     <div className="flex flex-col gap-1.5">
       <span className="text-xs text-ink-2">{en('repairSpecifyPackage')}</span>
       <div className="flex items-center gap-1.5">
@@ -431,6 +432,19 @@ export function DependencyRepairCard({
     )
   }
 
+  if (notPip && !exhausted) {
+    // 已知装不了的包（ROOT 等，PyPI 上没有）：一句话 + 一个主按钮（选环境），不给「指定包名」——输进去也会被后端拒
+    return (
+      <Card className="flex flex-col gap-2" data-repair-not-pip={notPip.hint}>
+        <p className="text-sm leading-relaxed text-ink" data-repair-not-pip-sentence>
+          {en('repairNotPipInstallable', { name: notPip.label })}
+        </p>
+        <OpenEnvironment primary />
+        {advanced}
+      </Card>
+    )
+  }
+
   return (
     <Card className="flex flex-col gap-2.5">
       <div>
@@ -532,11 +546,11 @@ function Rejections({ rejected, pkg }: { rejected: SystemInterpreterRejection[];
 }
 
 /** 就地打开渲染环境对话框（`EngineEnvironmentDialog`，与脚本行恢复说明同一个入口，不深链设置页） */
-function OpenEnvironment() {
+function OpenEnvironment({ primary = false }: { primary?: boolean }) {
   useTranslation('workspace')
   return (
     <Button
-      variant="secondary"
+      variant={primary ? 'primary' : 'secondary'}
       size="sm"
       className="self-start"
       data-repair-open-environment
