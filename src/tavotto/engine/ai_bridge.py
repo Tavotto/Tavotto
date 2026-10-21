@@ -760,7 +760,7 @@ def run(
     `task_hooks`（只在 TAF 开关打开时用）：`{"before": () -> {stem: manifest} | None, "retire": () -> None, "after": () -> {stem: manifest}}`，
     app 注入的渲染层事实（改前取自已经 build 的 worker、改后取自前端本来就要做的那次重渲染），同样是注入而不是回头 import。
 
-    `convert`（ADR 0142「生成可编辑版本」）：`{"library": str, "original_rel": str | None}`。给了它，这次运行是
+    `convert`（ADR 0143「生成可编辑版本」）：`{"library": str, "original_rel": str | None}`。给了它，这次运行是
     `convert_to_editable` 任务：Agent 在候选工作区里**新建**一份 Matplotlib 版脚本，`script` 只读（字节不动）；过了检查的
     候选留存待采用（`ai_convert.adopt`），本函数从不写项目文件。此时 `task_hooks` 只用 `runner`（校验运行）。**不看** TAF
     实验开关（该任务默认开，逃生口是 `ai_convert.enabled()`）。

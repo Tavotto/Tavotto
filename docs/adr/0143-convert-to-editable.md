@@ -1,4 +1,4 @@
-# ADR 0142：生成可编辑版本——位图库出的图，由改图助手另写一份 Matplotlib 新脚本
+# ADR 0143：生成可编辑版本——位图库出的图，由改图助手另写一份 Matplotlib 新脚本
 
 日期：2026-10-21 · 状态：**Accepted**（1.0 登记例外，见 `docs/1.0-release-readiness.md` §1.8）
 相关：[0138 TAF](0138-tavotto-ai-foundation.md)、[0139 来源驱动采用（对照确认）](0139-source-backed-figure-adoption.md)（含 2026-10-21

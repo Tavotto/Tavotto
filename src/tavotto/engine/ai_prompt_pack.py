@@ -249,7 +249,7 @@ CORRECTABLE = frozenset(
 )
 
 
-# --------------------------------------------------------------------------- 「生成可编辑版本」（convert_to_editable，ADR 0142）
+# --------------------------------------------------------------------------- 「生成可编辑版本」（convert_to_editable，ADR 0143）
 # 这一节不进 `_TEMPLATES` / `V1`：它是另一个任务类型，Harness Lab 的候选 Pack 契约（figure_edit 的全部键）保持不变。
 # 占位符是闭集，渲染同样是单遍替换（用户脚本文件名里出现 `{x}` 不会被再展开）。
 _CONVERT_TEMPLATES: dict[str, tuple[frozenset[str], str]] = {

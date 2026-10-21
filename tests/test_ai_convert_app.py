@@ -1,4 +1,4 @@
-"""「生成可编辑版本」端到端（ADR 0142），走真 app 与真 safe worker：`POST /api/ai/convert` → Agent（假 CLI）在候选里新建
+"""「生成可编辑版本」端到端（ADR 0143），走真 app 与真 safe worker：`POST /api/ai/convert` → Agent（假 CLI）在候选里新建
 Matplotlib 版脚本 → 后端在用户同一路由下真的跑一遍（probe）→ 对照数据 / 预览 → `adopt` 新建进项目。
 原脚本字节全程不变；校验用的临时文件跑完即删。"""
 

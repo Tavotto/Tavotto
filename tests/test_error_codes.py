@@ -40,7 +40,7 @@ _SOURCE_FILES = (
     "security.py",
     "desktop.py",
     "engine/ai_bridge.py",
-    # 「生成可编辑版本」（ADR 0142）：`ConvertError("<code>")` 由 app 的 `_convert_error` 漏斗转成 JSON
+    # 「生成可编辑版本」（ADR 0143）：`ConvertError("<code>")` 由 app 的 `_convert_error` 漏斗转成 JSON
     "engine/ai_convert.py",
     "engine/project_refresh.py",
     "engine/atomicio.py",
@@ -280,9 +280,9 @@ USER_VISIBLE_CODES = {
     # PR4：同一脚本上已有 AI 任务在跑（后端并发保护）/ 前端按请求 id 查询时后端没登记过
     "ai_script_busy": {"script"},
     "ai_request_not_found": set(),
-    # 转换会话从不改原脚本：没有可回滚的东西（ADR 0142）
+    # 转换会话从不改原脚本：没有可回滚的东西（ADR 0143）
     "ai_revert_not_applicable": set(),
-    # 「生成可编辑版本」（ADR 0142）：总开关关着 / 采用与丢弃的稳定码
+    # 「生成可编辑版本」（ADR 0143）：总开关关着 / 采用与丢弃的稳定码
     "convert_disabled": set(),
     "convert_not_found": set(),
     "convert_not_ready": set(),

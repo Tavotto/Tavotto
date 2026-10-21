@@ -1,4 +1,4 @@
-"""「生成可编辑版本」（`convert_to_editable`，ADR 0142）：适配器注册、候选只写一个新文件、提交 O_EXCL 不覆盖、原脚本字节不变、
+"""「生成可编辑版本」（`convert_to_editable`，ADR 0143）：适配器注册、候选只写一个新文件、提交 O_EXCL 不覆盖、原脚本字节不变、
 校验失败路径、总开关。
 
 Agent CLI 换成一段 python（不联网）：它在**自己的 cwd**（候选目录）里写 `<原名>_matplotlib.py`。校验运行（真实环境里走 probe）

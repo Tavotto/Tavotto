@@ -232,7 +232,7 @@
   not_covered；改后渲染失败或少了 stem 记 failed（已提交的改动不自动回滚）。没注入钩子（纯引擎调用方）仍是 `render_not_wired`。`ai.done` 与会话详情多一个 `task`（类型、结局、未满足项、文案键），终态与 `task_result` 同一条
   `record_end`。R-03（CLI 不写 cwd 外）是 CLI 的行为，指纹兜底只能发现、不能阻止。看护 `tests/test_ai_figure_edit.py`。
 
-## 生成可编辑版本（`convert_to_editable`，ADR 0142，1.0 登记例外，默认开）
+## 生成可编辑版本（`convert_to_editable`，ADR 0143，1.0 登记例外，默认开）
 
 位图库（Pillow / OpenCV / plotly / ROOT）画的图，改图助手在候选工作区 `cache/ai_convert/<sid>/` 里**新建**一份 Matplotlib 版脚本
 `<原名>_matplotlib.py`；入口仍是 `ai_bridge.run(..., convert={library, original_rel})`（同一张会话表、同一份历史、同一套取消 / 幂等），

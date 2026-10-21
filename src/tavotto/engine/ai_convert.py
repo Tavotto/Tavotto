@@ -1,4 +1,4 @@
-"""TAF 的 `convert_to_editable` 适配器（ADR 0142）：脚本出的图不是 Matplotlib（Pillow / OpenCV / plotly / ROOT 画布）时，
+"""TAF 的 `convert_to_editable` 适配器（ADR 0143）：脚本出的图不是 Matplotlib（Pillow / OpenCV / plotly / ROOT 画布）时，
 改图助手在**候选工作区**里另写一份 Matplotlib 版**新**脚本；原脚本一个字节不动，用户对照后才采用。
 
 权限边界（逐条有看护用例，`tests/test_ai_convert.py`）：

@@ -11401,7 +11401,7 @@ def _ai_run_impl():
     return jsonify({"session": sid, "script": info["script"]})
 
 
-# --- 「生成可编辑版本」（ADR 0142）：位图库画的图 → 改图助手另写一份 Matplotlib 版**新**脚本，原脚本不动 -------
+# --- 「生成可编辑版本」（ADR 0143）：位图库画的图 → 改图助手另写一份 Matplotlib 版**新**脚本，原脚本不动 -------
 _CONVERT_PROMPT = "生成可编辑的 Matplotlib 版本（{library}）"
 
 
