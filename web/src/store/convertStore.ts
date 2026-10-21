@@ -6,16 +6,20 @@
 import { create } from 'zustand'
 import {
   adoptConvert,
+  agentById,
   aiCancel,
   backendErrorText,
   discardConvert,
+  effectiveAgent,
   fetchAiSession,
   fetchConvert,
+  isDefiniteRunFailure,
   startConvert,
   type ConvertStatus,
 } from '@/lib/api'
 import { captureProjectEpoch } from '@/lib/projectEpoch'
 import { currentProjectId, onCurrentProjectChange } from '@/lib/session'
+import { newRequestId, useAiStore } from '@/store/aiStore'
 
 export type ConvertPhase = 'running' | 'ready' | 'adopting' | 'adopted' | 'failed'
 
@@ -44,6 +48,12 @@ interface ConvertState {
 
 export const POLL_MS = 1500
 
+/**
+ * 每个脚本一条的请求 id：同一次「生成」在**不确定是否已送达**（断网 / 超时 / 网关错）后重试要复用它，
+ * 后端据此去重，不会再起第二个付费 Agent；明确拒绝或已拿到会话后作废（下一次换新 id）。
+ */
+const pendingRequestIds = new Map<string, string>()
+
 const set1 = (script: string, patch: Partial<ConvertEntry>) =>
   useConvertStore.setState((s) => ({
     entries: { ...s.entries, [script]: { ...(s.entries[script] as ConvertEntry), ...patch } },
@@ -67,9 +77,36 @@ export const useConvertStore = create<ConvertState>((set, get) => ({
         [script]: { phase: 'running', session: null, error: null, reason: null, status: null, adopted: null, library, path },
       },
     }))
+    const mine = get().entries[script]
+    let rid = pendingRequestIds.get(script)
+    if (!rid) {
+      rid = newRequestId()
+      pendingRequestIds.set(script, rid)
+    }
     try {
-      const { session } = await startConvert({ script, library, path }, pj)
+      // 与既有 AI 流程同一套「实际派活的 Agent」：用户选了 Claude 或 Codex 不可用时不能默认成 codex
+      const ai = useAiStore.getState()
+      if (!ai.caps) await ai.loadCaps().catch(() => undefined)
+      const { agent: preferred, caps, models, efforts } = useAiStore.getState()
+      const agent = effectiveAgent(preferred, caps)
+      const info = agent ? agentById(caps, agent) : undefined
+      const model = agent ? (models[agent] ?? info?.default_model ?? null) : null
+      const effort = agent && info?.efforts.length ? (efforts[agent] ?? info.default_effort ?? null) : null
+      const { session } = await startConvert(
+        { script, library, path, client_request_id: rid, ...(agent ? { agent, model, effort } : {}) },
+        pj,
+      )
+      pendingRequestIds.delete(script)
       if (!guard.still()) return
+      if (get().entries[script] !== mine) {
+        // 等 POST 期间用户点了「停止」/ 换了脚本流水：后端已起了会话，要真的取消，不能让它悄悄跑完
+        try {
+          await aiCancel(session, pj)
+        } catch {
+          /* 取消失败：会话自己会收尾 */
+        }
+        return
+      }
       set1(script, { session })
       for (;;) {
         await new Promise((r) => setTimeout(r, POLL_MS))
@@ -94,7 +131,9 @@ export const useConvertStore = create<ConvertState>((set, get) => ({
         return
       }
     } catch (e) {
+      if (isDefiniteRunFailure(e)) pendingRequestIds.delete(script)
       if (!guard.still()) return
+      if (get().entries[script] !== mine && !get().entries[script]?.session) return // 已被停止：别再写回
       set1(script, { phase: 'failed', error: backendErrorText(e) })
     }
   },

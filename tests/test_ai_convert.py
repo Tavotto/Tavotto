@@ -210,6 +210,25 @@ def test_failed_prechecks_stage_nothing_and_leave_the_project_alone(env, code, f
         ai_convert.adopt(sid, _project(env))
 
 
+def test_validation_run_that_overwrites_project_files_fails_the_task(env):
+    """校验运行会在原脚本旁真跑候选：它写相对路径输出（改到原图）也要被跑完后的复核抓住。"""
+    figs = env["figs"]
+
+    def writing_runner(figures_dir, rel):
+        (figs / "out.png").write_bytes(b"clobbered")
+        return ok_runner(figures_dir, rel)
+
+    env["runner"] = writing_runner
+    sid = _run(env)
+    sess = _wait(sid)
+    assert sess["task"]["outcome"] == "failed"
+    unmet = {(u["constraint_id"], u["reason_code"]) for u in sess["task"]["unmet"]}
+    assert ("project.untouched", "project_files_changed") in unmet
+    assert not (ai_convert.CONVERT_DIR / sid).exists()
+    with pytest.raises(ai_convert.ConvertError):
+        ai_convert.adopt(sid, _project(env))
+
+
 def test_no_figure_captured_is_a_failure_with_a_reason(env):
     env["runner"] = lambda figures_dir, rel: {
         "error": {"code": "no_figures_captured", "message": "x"}

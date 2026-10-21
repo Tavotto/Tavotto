@@ -452,6 +452,8 @@ class ConvertAdapter:
         if any(c.verdict != VERIFIED for c in out):
             return out  # 静态检查都没过就不浪费一次真运行
         out += self._render(run, cand, st)
+        # 校验运行会在原脚本旁真跑候选：它写相对路径输出（out.png 之类）就会改到项目文件，所以跑完要再核一遍
+        out += [c for c in self._project_untouched(cand, st) if c.verdict != VERIFIED]
         return out
 
     def _project_untouched(self, cand: ConvertCandidate, st: str) -> list[CheckResult]:

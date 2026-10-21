@@ -92,7 +92,8 @@ import errorReports from '../../../tests/golden/preparation_error_reports.json'
 import { ORIGIN_VIEWS } from '@/lib/importOrigin'
 import { useDepRepairStore } from '@/store/depRepairStore'
 import { useConvertStore, POLL_MS } from '@/store/convertStore'
-import { adoptConvert, discardConvert, fetchAiSession, fetchConvert, startConvert } from '@/lib/api'
+import { useAiStore } from '@/store/aiStore'
+import { adoptConvert, aiCancel, discardConvert, fetchAiSession, fetchConvert, startConvert } from '@/lib/api'
 import type { DependencyPreparationOffer } from '@/lib/api'
 
 declare global {
@@ -1300,7 +1301,10 @@ describe('执行结束、捕获到图、首次编辑渲染是三件事', () => {
       useUiStore.setState({ guideCard: 'card' })
       await openWith(report({ ...STATES.noFigure, no_figure_hint: hint }))
       await act(async () => primary()!.click())
-      expect(startConvert).toHaveBeenCalledWith({ script: 'plot.py', library: 'pillow', path: 'out.png' }, expect.anything())
+      expect(startConvert).toHaveBeenCalledWith(
+        expect.objectContaining({ script: 'plot.py', library: 'pillow', path: 'out.png', client_request_id: expect.any(String) }),
+        expect.anything(),
+      )
       expect(panel().dataset.convertPhase).toBe('running')
       expect(panel().querySelector('[data-prep-progress]')).not.toBeNull()
       expect(primary()).toBeNull()
@@ -1361,6 +1365,55 @@ describe('执行结束、捕获到图、首次编辑渲染是三件事', () => {
       await act(async () => primary()!.click())
       expect(panel().dataset.convertPhase).toBe('failed')
       expect(panel().querySelector('[data-prep-line]')?.textContent).toContain('已被关闭')
+    })
+
+    it('用既有 AI 流程算出的实际 Agent（首选 Claude / Codex 不可用时不默认 codex）', async () => {
+      await mount()
+      useUiStore.setState({ guideCard: 'card' })
+      useAiStore.setState({
+        agent: null,
+        caps: {
+          agents: [
+            { id: 'codex', usable: false, models: [], efforts: [], default_model: null, default_effort: null },
+            { id: 'claude', usable: true, models: [], efforts: [], default_model: null, default_effort: null },
+          ],
+        } as never,
+      })
+      vi.mocked(fetchAiSession).mockResolvedValue({ status: 'running', final: false } as never)
+      await openWith(report({ ...STATES.noFigure, no_figure_hint: hint }))
+      await act(async () => primary()!.click())
+      expect(vi.mocked(startConvert).mock.calls.at(-1)![0]).toMatchObject({ agent: 'claude' })
+      useAiStore.setState({ caps: null })
+    })
+
+    it('不确定是否送达的失败重试复用同一个 client_request_id；明确拒绝后换新的', async () => {
+      await mount()
+      useUiStore.setState({ guideCard: 'card' })
+      await openWith(report({ ...STATES.noFigure, no_figure_hint: hint }))
+      vi.mocked(startConvert).mockRejectedValueOnce(new Error('network down'))
+      await act(async () => primary()!.click())
+      expect(panel().dataset.convertPhase).toBe('failed')
+      vi.mocked(fetchAiSession).mockResolvedValue({ status: 'running', final: false } as never)
+      await act(async () => primary()!.click())
+      const ids = vi.mocked(startConvert).mock.calls.slice(-2).map((c) => c[0].client_request_id)
+      expect(ids[0]).toBeTruthy()
+      expect(ids[1]).toBe(ids[0])
+      useConvertStore.getState().clear('plot.py')
+    })
+
+    it('POST 还没回来时点停止：回来后取消刚起的会话，不重建条目', async () => {
+      await mount()
+      useUiStore.setState({ guideCard: 'card' })
+      let resolve!: (v: { session: string; script: string }) => void
+      vi.mocked(startConvert).mockReturnValueOnce(new Promise((r) => (resolve = r)))
+      vi.mocked(aiCancel).mockClear()
+      await openWith(report({ ...STATES.noFigure, no_figure_hint: hint }))
+      await act(async () => primary()!.click())
+      await act(async () => { await useConvertStore.getState().stop('plot.py') })
+      expect(aiCancel).not.toHaveBeenCalled()
+      await act(async () => { resolve({ session: 'late1', script: 'plot.py' }) })
+      expect(aiCancel).toHaveBeenCalledWith('late1', expect.anything())
+      expect(useConvertStore.getState().entries['plot.py']).toBeUndefined()
     })
 
     it('停止：取消后端会话并回到原卡片', async () => {

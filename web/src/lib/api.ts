@@ -3514,7 +3514,7 @@ const jsonPost = (body?: unknown): RequestInit => ({
 })
 
 export const startConvert = (
-  req: { script: string; library: string; path?: string | null; agent?: string; client_request_id?: string },
+  req: { script: string; library: string; path?: string | null; agent?: string; model?: string | null; effort?: string | null; client_request_id?: string },
   pj: string | null,
 ) => jsonFetch<{ session: string; script: string; deduped?: boolean }>('/api/ai/convert', jsonPost(req), pj)
 
