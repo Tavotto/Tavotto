@@ -281,8 +281,12 @@ workerd 路径不接叠加层。
   `root\bin\ROOT\_python_version.py`（`_root_python_version` = 构建所用 Python）、`root\include\ROOT\RVersion.hxx`（`ROOT_RELEASE` 由宏拼出；
   `root\include\RVersion.h` 里**没有**版本号）。
 * **事实一：只放 `bin` 进 `PYTHONPATH` 不行。** `bin\cppyy\_cpython_cppyy.py` 在 Windows 上 `import libcppyy as _backend`（顶层名）→
-  `ModuleNotFoundError: No module named 'libcppyy'`，官方 thisroot.bat 方式同样失败。**改**：`apply_overlay` 在 Windows 上把 `<root>\bin\cppyy`
-  （存在时）也前置进 `PYTHONPATH`（排在 `bin` 前面）。
+  `ModuleNotFoundError: No module named 'libcppyy'`，官方 thisroot.bat 方式同样失败。**不能**靠把 `<root>\bin\cppyy` 加进
+  `PYTHONPATH` / `sys.path` 修（第一版这样改，Win11 真机体检崩：该目录里有 `types.py` / `ll.py` / `reflex.py` / `interactive.py` / `_version.py`，启动时遮住标准库
+  `types`，`json -> re` 导入链当场崩；手工测试通过只是因为在启动后才改 `sys.path`，标准库已缓存）。**改**：`PYTHONPATH` 只前置 `<root>\bin`（与 thisroot 一致；真机
+  `bin\*.py` 只有 cmdLineUtils / rootcp / rootdrawtree / rooteventselector / rootmkdir / rootmv / rootprint / rootrm / rootslimtree，没有与标准库同名的）；
+  `<root>\bin\cppyy` 经私有变量 `TAVOTTO_ROOT_CPPYY_DIR`（`rootenv.CPPYY_DIR_ENV`）交给启动钩子，钩子在 `os.add_dll_directory` 的同一处往 `sys.meta_path` **末尾**装一个
+  只认顶层名 `libcppyy` 的 finder（`spec_from_file_location("libcppyy", …\libcppyy.pyd, loader=ExtensionFileLoader)`），其余名字一律返回 None。
 * **事实二：`DLL load failed while importing libcppyy`。** Python >= 3.8 在 Windows 上不按 `PATH` 找扩展模块的依赖 DLL。**改**：叠加环境里多一个
   Tavotto 私有变量 `TAVOTTO_ROOT_DLL_DIR`（= `<root>\bin`，`rootenv.DLL_DIR_ENV`），worker 启动钩子（`worker._startup_dll_directory`，在装字节码守卫之后、
   引擎装载与用户脚本之前；只用 3.8 起就有的 `os.add_dll_directory`，py3.10 兼容）和体检脚本（`projectenv._PROBE_SRC`）读到就登记成 DLL 搜索目录。
@@ -304,7 +308,7 @@ workerd 路径不接叠加层。
   **改**：Conda 环境可以当底——叠加层在激活增量**之后**叠（`pool.launch_env`、`projectenv._probe_environment` 同序），激活盖不掉它；conda-forge 自带 ROOT
   的环境裸起就导入得了，根本走不到叠加。检查阶段（点「运行」之前）组合仍只读缓存、不起进程，因此是"未检查"，不是缺席。
 
-* **叠加顺序（真机补充）。** 已激活的 conda 环境（Python 3.14）+ `bin` 与 `bin\cppyy` 进 `sys.path` + `os.add_dll_directory(bin)` 后 `import ROOT` 成功
+* **叠加顺序（真机补充）。** 已激活的 conda 环境（Python 3.14）+ `bin` 进 `sys.path`、`libcppyy` 经 finder + `os.add_dll_directory(bin)` 后 `import ROOT` 成功
   （TCanvas.SaveAs 出 PDF，matplotlib 出 PNG，两种导入顺序都正常）；去掉 `add_dll_directory` 仍 `DLL load failed`（必需）；conda 环境**不激活**时 matplotlib savefig 自己就崩
   （0xc06d007f，与 ROOT 无关）——所以叠加必须在激活捕获之后（`pool.launch_env`、`projectenv._probe_environment` 已是此序，有用例看护）。
   Python 3.12 叠同一 ROOT 报 `ImportError: DLL load failed while importing libcppyy`（不是 ModuleNotFoundError）：体检归 `import_failed` -> `root_python_mismatch`；

@@ -68,8 +68,8 @@
   （`WorkerdWorker` 拒收）；会话复用前核对叠加层（`叠加环境已变`）。身份是 `userenvs.entry_key` / `env_id(python, overlay)`
   （同一解释器裸起与叠加是两个候选）。运行之前不量叠加组合（`spec` 体检 `-I` 忽略环境变量），采用发生在用户点「运行」之后。
   落选原因多 `root_python_mismatch`（叠上仍 import 不了 ROOT：二进制包只配一个 Python 小版本）+ `root_version`（不带路径）。
-  **Windows 真机修订（2026-10-21，ADR 0079 同名小节）**：`apply_overlay` 在 Windows 上多前置 `<root>\bin\cppyy` 进 `PYTHONPATH`、并设私有变量
-  `TAVOTTO_ROOT_DLL_DIR`（`rootenv.DLL_DIR_ENV`），worker 启动钩子 `worker._startup_dll_directory` 与体检脚本据此 `os.add_dll_directory`
+  **Windows 真机修订（2026-10-21，ADR 0079 同名小节）**：`apply_overlay` 在 Windows 上设私有变量 `TAVOTTO_ROOT_DLL_DIR`（`rootenv.DLL_DIR_ENV`）与
+  `TAVOTTO_ROOT_CPPYY_DIR`（`CPPYY_DIR_ENV`；`bin\cppyy` 里有 `types.py` 等同名标准库文件，**不许**进 `PYTHONPATH` / `sys.path`），worker 启动钩子 `worker._startup_dll_directory` 与体检脚本据此 `os.add_dll_directory` 并往 `sys.meta_path` 末尾装只认 `libcppyy` 的 finder
   （两处必须同做，否则体检把 DLL 没登记误判成版本不配；worker 里的变量名与 `rootenv.DLL_DIR_ENV` 对拍；py3.10 兼容）；
   `ROOT\_python_version.py` 的 `_root_python_version` 静态读出 `build_python`，与底小版本都已知且不同 → `overlay_candidates` 给组合打
   `overlay_reject`（`root_python_mismatch`），没有 C++ 工具（`rootenv.msvc_available`，vswhere，有界超时）→ `root_needs_msvc`，均不起进程；

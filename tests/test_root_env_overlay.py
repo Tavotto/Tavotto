@@ -17,6 +17,7 @@ import ast
 import ntpath
 import os
 import subprocess
+import sys
 import types
 from pathlib import Path
 
@@ -721,21 +722,23 @@ def test_build_python_is_read_statically_from_python_version_py(tmp_path):
 
 
 @POSIX
-def test_windows_overlay_puts_cppyy_dir_first_and_sets_the_dll_dir_variable(tmp_path):
+def test_windows_overlay_keeps_cppyy_out_of_pythonpath_and_passes_it_by_private_variables(tmp_path):
     root = make_official_win_root(tmp_path)
+    # bin\\cppyy 里有与标准库同名的 .py：进了 PYTHONPATH 就在启动时遮住标准库（Win11 真机：体检 json -> re 崩）
+    (root / "bin" / "cppyy" / "types.py").write_text("raise RuntimeError\n", encoding="utf-8")
     spec = rootenv.overlay_spec(rootenv.inspect_root(str(root), nt=True))
     got = rootenv.apply_overlay({"PATH": "C:\\Windows", "PYTHONPATH": "C:\\mine"}, spec, nt=True)
-    assert got["PYTHONPATH"] == f"{root / 'bin' / 'cppyy'};{root / 'bin'};C:\\mine"
+    assert got["PYTHONPATH"] == f"{root / 'bin'};C:\\mine"
+    assert str(root / "bin" / "cppyy") not in got["PYTHONPATH"]
     assert got[rootenv.DLL_DIR_ENV] == str(root / "bin")
-    # 内置 runtime：替换 PYTHONPATH，仍带 cppyy
+    assert got[rootenv.CPPYY_DIR_ENV] == str(root / "bin" / "cppyy")
     rep = rootenv.apply_overlay({}, spec, nt=True, replace_pythonpath=True)
-    assert rep["PYTHONPATH"] == f"{root / 'bin' / 'cppyy'};{root / 'bin'}"
-    # 幂等
-    assert rootenv.apply_overlay(got, spec, nt=True) == got
-    # POSIX 不设它、不加 cppyy
+    assert rep["PYTHONPATH"] == str(root / "bin")
+    assert rootenv.apply_overlay(got, spec, nt=True) == got  # 幂等
     px = make_root(tmp_path, "px", nt=False)
     pspec = rootenv.overlay_spec(rootenv.inspect_root(str(px), nt=False))
-    assert rootenv.DLL_DIR_ENV not in rootenv.apply_overlay({}, pspec, nt=False)
+    plain = rootenv.apply_overlay({}, pspec, nt=False)
+    assert rootenv.DLL_DIR_ENV not in plain and rootenv.CPPYY_DIR_ENV not in plain
 
 
 def _worker_dll_hook():
@@ -748,10 +751,13 @@ def _worker_dll_hook():
         if (isinstance(n, ast.FunctionDef) and n.name == "_startup_dll_directory")
         or (
             isinstance(n, ast.Assign)
-            and any(getattr(t, "id", None) == "_ROOT_DLL_DIR_ENV" for t in n.targets)
+            and any(
+                getattr(t, "id", None) in ("_ROOT_DLL_DIR_ENV", "_ROOT_CPPYY_DIR_ENV")
+                for t in n.targets
+            )
         )
     ]
-    assert len(nodes) == 2
+    assert len(nodes) == 3
     return ast.Module(body=nodes, type_ignores=[])
 
 
@@ -761,11 +767,13 @@ def test_worker_dll_hook_name_mirrors_rootenv_and_registers_the_directory(tmp_pa
         environ={rootenv.DLL_DIR_ENV: str(tmp_path)},
         name="nt",
         path=os.path,
+        listdir=os.listdir,
         add_dll_directory=added.append,
     )
-    ns: dict = {"os": fake_os}
+    ns: dict = {"os": fake_os, "sys": sys}
     exec(compile(_worker_dll_hook(), "worker_hook", "exec"), ns)  # noqa: S102
     assert ns["_ROOT_DLL_DIR_ENV"] == rootenv.DLL_DIR_ENV
+    assert ns["_ROOT_CPPYY_DIR_ENV"] == rootenv.CPPYY_DIR_ENV
     ns["_startup_dll_directory"]()
     assert added == [str(tmp_path)]
     # 没设 / 不是 Windows / 目录不在 / 登记抛错：什么都不做、不抛
@@ -969,3 +977,45 @@ def test_probe_overlays_after_the_conda_activation_capture(tmp_path, monkeypatch
     projectenv._probe_environment(py, env_overlay=spec)
     assert seen[0]["PATH"] == f"{root / 'bin'};ACTIVATED"
     assert seen[0]["ROOTSYS"] == str(root)
+
+
+def test_worker_hook_installs_a_finder_that_only_knows_libcppyy(tmp_path, monkeypatch):
+    cppyy = tmp_path / "cppyy"
+    cppyy.mkdir()
+    (cppyy / "libcppyy.pyd").write_text("", encoding="utf-8")
+    (cppyy / "types.py").write_text("raise RuntimeError('shadowed')\n", encoding="utf-8")
+    fake_os = types.SimpleNamespace(
+        environ={rootenv.DLL_DIR_ENV: str(tmp_path), rootenv.CPPYY_DIR_ENV: str(cppyy)},
+        name="nt",
+        path=os.path,
+        listdir=os.listdir,
+        add_dll_directory=lambda p: None,
+    )
+    ns: dict = {"os": fake_os, "sys": sys}
+    exec(compile(_worker_dll_hook(), "worker_hook", "exec"), ns)  # noqa: S102
+    monkeypatch.setattr(sys, "meta_path", list(sys.meta_path))
+    path_before = list(sys.path)
+    ns["_startup_dll_directory"]()
+    finder = sys.meta_path[-1]  # 末尾：标准库与用户模块先赢
+    assert finder.find_spec("libcppyy").origin == str(cppyy / "libcppyy.pyd")
+    for other in ("types", "cppyy", "libcppyy2", "ll", "reflex", "json", "ROOT"):
+        assert finder.find_spec(other) is None
+    assert sys.path == path_before  # 目录没进 sys.path：标准库的 types 没被遮住
+    import importlib
+
+    assert importlib.import_module("types").__file__ != str(cppyy / "types.py")
+    # 没有 libcppyy*.pyd：不装
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    fake_os.environ[rootenv.CPPYY_DIR_ENV] = str(empty)
+    n = len(sys.meta_path)
+    ns["_startup_dll_directory"]()
+    assert len(sys.meta_path) == n
+
+
+def test_probe_script_installs_the_same_libcppyy_finder_not_a_path_entry():
+    src = Path(projectenv.__file__).read_text(encoding="utf-8")
+    hook = src.index(f'os.environ.get("{rootenv.DLL_DIR_ENV}")')
+    block = src[hook : src.index("def _norm(path):")]
+    assert rootenv.CPPYY_DIR_ENV in block and "sys.meta_path.append" in block
+    assert 'name != "libcppyy"' in block and "sys.path" not in block

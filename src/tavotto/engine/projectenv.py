@@ -377,14 +377,34 @@ out["pythonpath_entries"] = (os.environ.get("PYTHONPATH") or "").split(os.pathse
 out["pythonpath_dirs"] = [p for p in out["pythonpath_entries"] if os.path.isabs(p)]
 
 
-# 叠加的 ROOT（Windows）：Python >= 3.8 不按 PATH 找 .pyd 依赖的 DLL；与 worker 启动钩子（`worker._startup_dll_directory`）同一件事，
-# 否则体检里 `import ROOT` 报 DLL load failed、被误判成「Python 版本对不上」。变量名 = `rootenv.DLL_DIR_ENV`
+# 叠加的 ROOT（Windows）：与 worker 启动钩子（`worker._startup_dll_directory`）同一件事——登记 DLL 目录（Python >= 3.8 不按 PATH
+# 找 .pyd 依赖的 DLL），并往 sys.meta_path 末尾装只认顶层名 `libcppyy` 的 finder（`bin\\cppyy` 里有 `types.py` 等同名标准库文件，
+# 不能进 sys.path）。否则体检里 `import ROOT` 失败、被误判成「Python 版本对不上」。变量名 = `rootenv.DLL_DIR_ENV` / `CPPYY_DIR_ENV`
 _root_dll = os.environ.get("TAVOTTO_ROOT_DLL_DIR")
 if _root_dll and os.name == "nt" and hasattr(os, "add_dll_directory") and os.path.isdir(_root_dll):
     try:
         os.add_dll_directory(_root_dll)
     except (OSError, ValueError):
         pass
+    _cppyy = os.environ.get("TAVOTTO_ROOT_CPPYY_DIR")
+    try:
+        _pyds = sorted(n for n in os.listdir(_cppyy) if n.startswith("libcppyy") and n.endswith(".pyd")) if _cppyy else []
+    except OSError:
+        _pyds = []
+    if _pyds:
+        _pyd = os.path.join(_cppyy, "libcppyy.pyd" if "libcppyy.pyd" in _pyds else _pyds[0])
+
+        class _LibcppyyFinder:
+            @staticmethod
+            def find_spec(name, path=None, target=None):
+                if name != "libcppyy":
+                    return None
+                from importlib.machinery import ExtensionFileLoader
+                from importlib.util import spec_from_file_location
+
+                return spec_from_file_location(name, _pyd, loader=ExtensionFileLoader(name, _pyd))
+
+        sys.meta_path.append(_LibcppyyFinder)
 
 
 def _norm(path):

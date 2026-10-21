@@ -53,6 +53,9 @@ _WINDOWS_FIXED = ("C:\\root", "C:\\root_v*")
 #: Python >= 3.8 在 Windows 上**不按 PATH** 找扩展模块（`.pyd`）依赖的 DLL，`libcppyy.pyd` 依赖 `libCPyCppyy.dll` 等
 #: 一百多个 dll——启动钩子（`worker.py` 与体检脚本）读到它就 `os.add_dll_directory`。只在 Windows 叠加时才设。
 DLL_DIR_ENV = "TAVOTTO_ROOT_DLL_DIR"
+#: `<root>\\bin\\cppyy`（里面有 `libcppyy.pyd`，也有 `types.py` 之类与标准库同名的文件，所以不能进 sys.path）。
+#: 启动钩子据此装一个只认顶层名 `libcppyy` 的 `sys.meta_path` finder。
+CPPYY_DIR_ENV = "TAVOTTO_ROOT_CPPYY_DIR"
 
 
 def _is_nt(nt: bool | None) -> bool:
@@ -93,7 +96,7 @@ def _python_dir(root: str, nt: bool) -> str | None:
 def _cppyy_dir(root: str) -> str | None:
     """Windows 官方包的 `bin\\cppyy`：`cppyy/_cpython_cppyy.py` 在 Windows 上 `import libcppyy as _backend`（顶层名），
     而 `libcppyy.pyd` 就在这个目录里——只有 `bin` 进 `PYTHONPATH`（官方 thisroot.bat 的做法）时报
-    `ModuleNotFoundError: No module named 'libcppyy'`。要这个目录也进 `PYTHONPATH`。没有这个目录就是 None。"""
+    `ModuleNotFoundError: No module named 'libcppyy'`。但这个目录**不能**进 `PYTHONPATH`（有 `types.py` 等同名标准库文件），由启动钩子的 finder 只暴露 `libcppyy`。没有这个目录就是 None。"""
     d = os.path.join(root, "bin", "cppyy")
     return d if _isdir(d) else None
 
@@ -463,8 +466,8 @@ def apply_overlay(
     """把叠加层叠到 `env`（None = 当前进程环境的拷贝）上，回**新字典**。做的就是 thisroot 做的那几件事：
     `ROOTSYS`；`PATH` 前置 `<root>/bin`；POSIX 的库路径前置 `<root>/lib`；`PYTHONPATH` 前置 PyROOT 所在目录；
     `CMAKE_PREFIX_PATH`；`ROOT_INCLUDE_PATH`。Windows 上比 thisroot.bat 多两件（2026-10-21 Win11 真机实测，官方做法不够）：
-    `<root>\\bin\\cppyy` 也进 `PYTHONPATH`；私有变量 `TAVOTTO_ROOT_DLL_DIR`（= `<root>\\bin`）交给启动钩子做
-    `os.add_dll_directory`。
+    私有变量 `TAVOTTO_ROOT_DLL_DIR`（= `<root>\\bin`）交给启动钩子做 `os.add_dll_directory`，
+    `TAVOTTO_ROOT_CPPYY_DIR`（= `<root>\\bin\\cppyy`，**不进** PYTHONPATH / sys.path）交给启动钩子装只认 `libcppyy` 的 finder。
 
     `replace_pythonpath`：内置 runtime 会摘掉 shell 带来的 `PYTHONPATH`（`runtime.child_env`），叠加在它**之后**，
     于是 `PYTHONPATH` 只有 ROOT 这一项而不是重新吃回用户 shell 里的那串。
@@ -488,18 +491,18 @@ def apply_overlay(
         )
         for lib in reversed(info["lib_dirs"]):
             _prepend(out, lib_var, lib, sep)
-    # PYTHONPATH：Windows 上 `<root>\\bin\\cppyy` 排在 `<root>\\bin` 前面（`libcppyy.pyd` 以顶层名被 import，真机实测）
-    py_dirs = [info["python_dir"]]
-    if nt and info.get("cppyy_dir"):
-        py_dirs.insert(0, info["cppyy_dir"])
+    # PYTHONPATH 只前置 PyROOT 所在目录（与 thisroot 一致）。`<root>\\bin\\cppyy` **不能**进 PYTHONPATH / sys.path：
+    # 它里面有 `types.py` 等与标准库同名的文件，启动时就遮住标准库（Win11 真机：体检 json -> re 崩）
     if replace_pythonpath:
-        out["PYTHONPATH"] = sep.join(py_dirs)
+        out["PYTHONPATH"] = info["python_dir"]
     else:
-        for d in reversed(py_dirs):
-            _prepend(out, "PYTHONPATH", d, sep)
+        _prepend(out, "PYTHONPATH", info["python_dir"], sep)
     if nt:
-        # worker / 体检的启动钩子读它做 `os.add_dll_directory`（Python >= 3.8 不按 PATH 找扩展模块的依赖 dll）
+        # worker / 体检的启动钩子读它们：`os.add_dll_directory`（Python >= 3.8 不按 PATH 找扩展模块的依赖 dll），
+        # 并往 `sys.meta_path` 末尾装一个只认顶层名 `libcppyy` 的 finder（`cppyy` 包在 Windows 上 `import libcppyy`）
         out[DLL_DIR_ENV] = os.path.join(root, "bin")
+        if info.get("cppyy_dir"):
+            out[CPPYY_DIR_ENV] = info["cppyy_dir"]
     _prepend(out, "CMAKE_PREFIX_PATH", root, sep)
     include = os.path.join(root, "include")
     if _isdir(include):

@@ -1351,8 +1351,8 @@ def overlay_candidates(bases: list[dict], installs: list[dict]) -> list[dict]:
     """「候选解释器 × ROOT 安装」的组合（有界：ROOT 至多 `rootenv.MAX_USED` 个、优先最新；要起进程的组合至多
     `rootenv.MAX_COMBOS` 个）。
 
-    `bases`：`{"python", "bundled"?, "python_version"?}`，按调用方的偏好序。要叠加的 Conda 环境不在这里（调用方已滤掉：
-    Conda 激活的增量会盖住 `PATH`，而 conda-forge 的 ROOT 本来就在环境里）。
+    `bases`：`{"python", "bundled"?, "python_version"?}`，按调用方的偏好序。Conda 环境也可以当底（叠加层在激活增量之后叠，
+    激活盖不掉它；conda-forge 自带 ROOT 的环境裸起就导入得了，走不到这里）。
     顺序：ROOT 自带的 Python 小版本标记（`py_tags`，只是提示）对得上的组合排前面，其余保持 底×ROOT 的偏好序；
     认不出标记的不排除——真不真能跑由体检说了算。
 
