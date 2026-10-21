@@ -50,7 +50,7 @@ function writeTwoPanelProject(): string {
   return dir
 }
 
-test('导出检查：计数芯片只在圆点上有色，阻断项每条一行、有「定位」，点芯片带着这一档去问题面板', async ({ app, page }) => {
+test('导出检查：计数芯片只在圆点上有色，没有逐条阻断清单与警告句，点芯片带着这一档去问题面板', async ({ app, page }) => {
   const a = await app({ figures: writeTwoPanelProject() })
   await page.setViewportSize({ width: 1440, height: 900 })
   await page.goto(a.baseURL)
@@ -79,18 +79,11 @@ test('导出检查：计数芯片只在圆点上有色，阻断项每条一行�
   expect(styles.dotW).toBeCloseTo(6, 0) // 6px 圆点；dialog 进场缩放动画的亚像素误差
   expect(styles.dotBg, '圆点是 danger 色，不是灰').not.toBe(styles.ink)
 
-  // 清单：每条一行（li 的高度不随文案折行）、先露至多 3 条、每条一个定位
-  const rows = dialog.locator('[data-blocking-issue]')
-  const shown = await rows.count()
-  expect(shown).toBe(Math.min(n, 3))
-  for (let i = 0; i < shown; i++) {
-    const r = (await rows.nth(i).boundingBox())!
-    expect(r.height, `第 ${i + 1} 条是一行`).toBeLessThan(40)
-    await expect(rows.nth(i).locator('button')).toBeVisible()
-    const b = (await rows.nth(i).locator('button').boundingBox())!
-    const dlg = (await dialog.boundingBox())!
-    expect(b.x + b.width, '定位钮没被挤出对话框').toBeLessThanOrEqual(dlg.x + dlg.width)
-  }
+  // 没有逐条阻断清单、没有「定位」钮、没有任何警告句；导出照样可点
+  await expect(dialog.locator('[data-blocking-issue]')).toHaveCount(0)
+  await expect(dialog.getByRole('button', { name: /^(定位|Locate)$/ })).toHaveCount(0)
+  await expect(dialog).not.toContainText(/投稿可能被退回|sent back/)
+  await expect(dialog.locator('[data-export-start]')).toBeEnabled()
 
   // 点「要改」芯片：对话框让开、问题面板只留阻断
   await danger.click()
