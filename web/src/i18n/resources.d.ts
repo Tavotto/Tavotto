@@ -408,6 +408,7 @@ export default interface Resources {
       "retry": "重试",
       "retryStatus": "重试获取状态",
       "revealFailed": "无法在文件管理器中定位，文件在：{{path}}",
+      "routeNeedsScript": "这些图带着编辑，但找不到它们的脚本，画布导出画不出来：{{files}}。请先恢复脚本或撤销这些图的编辑。",
       "savedTo": "已保存到 {{dir}}",
       "scopeCanvas": "当前画布",
       "scopeIgnored": "画布上的{{list}}不会带进导出。",

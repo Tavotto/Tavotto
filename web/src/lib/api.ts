@@ -2,6 +2,7 @@ import { classifyArtifactFailure } from '@/lib/artifactReason'
 import { ArtifactValidationError, FIGSIZE_SOURCE_POLICY, verifiedSource, type ArtifactRequestFields } from '@/lib/artifactValidation'
 import { apiUrl, apiUrlFor, currentProjectId, withProject, withProjectFor } from '@/lib/session'
 import { formatMessage, i18n, literal, msg, t, type UiMessage } from '@/i18n'
+import type { ExportRoute } from '@/lib/exportRoute'
 import type { FigureDocument, FigureSnapshot, ProjectDocument } from '@/types/document'
 import type { ManifestFrame } from '@/lib/figureFrame'
 import type { PreviewMetadata } from '@/lib/previewBudget'
@@ -1972,6 +1973,8 @@ export const cancelExport = (jobId: string) =>
   })
 
 export interface ExportValidation {
+  /** 每个面板 × 每种格式的来源（后端 `engine/exportroute.py`）；旧后端 / 算不出时缺 */
+  route?: ExportRoute
   artifact_sources?: Record<string, unknown>
   ok: boolean
   /** 会撞上的已有文件名 */

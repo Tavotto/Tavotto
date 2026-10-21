@@ -239,3 +239,15 @@ def test_the_snapshot_reference_check_applies_to_every_format(scope, kind):
     assert all(
         er.COND_FIGURE_SNAPSHOT not in e.get("conditions", []) for e in r["formats"].values()
     )
+
+
+def test_offers_say_whether_eps_is_available_without_it_being_requested():
+    assert route("original", ["pdf"], er.KIND_PDF)["offers"]["eps"]["how"] == "redraw"
+    assert route("original", ["pdf"], er.KIND_PDF, script=False)["offers"]["eps"] == {
+        "how": "unavailable",
+        "reason": "eps_needs_script",
+    }
+    assert route("canvas", ["pdf"], er.KIND_PDF)["offers"]["eps"]["reason"] == "eps_not_for_canvas"
+    # 勾了 eps 时 offers 与 formats 里那一项是同一个答案
+    r = route("original", ["eps", "svg"], er.KIND_PDF)
+    assert r["offers"]["eps"] == r["formats"]["eps"]

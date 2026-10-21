@@ -130,10 +130,28 @@ def panel_route(
             entry.setdefault("conditions", [])
             if COND_FIGURE_SNAPSHOT not in entry["conditions"]:
                 entry["conditions"].insert(0, COND_FIGURE_SNAPSHOT)
+    # EPS 能不能给——**不论用户这次勾没勾**：对话框要在勾之前就说清楚这个选项可不可用（禁用并说原因）。
+    # EPS 一项不依赖来源（只看范围 / 有无脚本 / 是否 SVG 素材），所以与 formats 无关
+    offers = {
+        "eps": out["eps"]
+        if "eps" in out
+        else _format_route(
+            "eps",
+            source=source,
+            file_kind=file_kind,
+            canvas=canvas,
+            static_svg_asset=static_svg_asset,
+            unedited_svg_asset=unedited_svg_asset,
+            has_script=can_draw,
+            has_snapshot=has_snapshot,
+            wants_svg="svg" in formats,
+        ),
+    }
     return {
         "source": source,
         "embeds_disk_bitmap": file_kind == KIND_RASTER and source == SOURCE_DISK,
         "formats": out,
+        "offers": offers,
     }
 
 
