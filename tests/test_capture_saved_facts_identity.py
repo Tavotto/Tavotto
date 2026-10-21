@@ -88,7 +88,7 @@ class TestUnicodeNormalization:
         self, tmp_path, monkeypatch
     ):
         monkeypatch.chdir(tmp_path)
-        monkeypatch.setattr(figcapture, "_dir_folds_unicode", lambda d: True)
+        monkeypatch.setattr(figcapture, "_dir_folds_unicode", lambda d, b=None: True)
         nfc, nfd = (unicodedata.normalize(f, "é.pdf") for f in ("NFC", "NFD"))
         assert nfc != nfd
         key = figcapture.savefig_target_key
@@ -96,7 +96,7 @@ class TestUnicodeNormalization:
 
     def test_nfc_and_nfd_stay_distinct_where_it_does_not(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
-        monkeypatch.setattr(figcapture, "_dir_folds_unicode", lambda d: False)
+        monkeypatch.setattr(figcapture, "_dir_folds_unicode", lambda d, b=None: False)
         nfc, nfd = (unicodedata.normalize(f, "é.pdf") for f in ("NFC", "NFD"))
         key = figcapture.savefig_target_key
         assert key(nfc, {}) != key(nfd, {})
@@ -106,22 +106,69 @@ class TestUnicodeNormalization:
         monkeypatch.chdir(tmp_path)
         nfc, nfd = (unicodedata.normalize(f, "é.pdf") for f in ("NFC", "NFD"))
         (tmp_path / nfc).write_bytes(b"x")
+        figcapture._UNICODE_FOLD_CACHE.pop(str(tmp_path.resolve()), None)
         fs_same = os.path.exists(tmp_path / nfd) and os.path.samefile(
             tmp_path / nfc, tmp_path / nfd
         )
         key = figcapture.savefig_target_key
         assert (key(nfc, {}) == key(nfd, {})) is fs_same
 
-    def test_platform_default(self, tmp_path, monkeypatch):
-        d = str(tmp_path)
-        for plat, expected in (("darwin", True), ("linux", False), ("win32", False)):
-            monkeypatch.setattr(figcapture.sys, "platform", plat)
-            assert figcapture._dir_folds_unicode(d) is expected
+    def test_unproven_directory_is_never_normalized(self, tmp_path, monkeypatch):
+        """目录里没有任何证据（名字不在盘上、也没有非 ASCII 条目）：宁可漏并，不按平台猜。"""
+        monkeypatch.chdir(tmp_path)
+        d = str(tmp_path.resolve())
+        figcapture._UNICODE_FOLD_CACHE.pop(d, None)
+        nfc, nfd = (unicodedata.normalize(f, "é.pdf") for f in ("NFC", "NFD"))
+        key = figcapture.savefig_target_key
+        assert key(nfc, {}) != key(nfd, {})
+        assert d not in figcapture._UNICODE_FOLD_CACHE  # 无证据的结论不缓存
+
+    @pytest.mark.parametrize(
+        "alt_exists,same,expected",
+        [(True, True, True), (True, False, False), (False, False, False)],
+    )
+    def test_probe_logic_with_a_faked_filesystem(
+        self, tmp_path, monkeypatch, alt_exists, same, expected
+    ):
+        """注入探测的两路：另一种写法能打开同一个文件 -> 归一；不存在 / 是另一个文件 -> 不归一。"""
+        d = str(tmp_path.resolve())
+        nfc = unicodedata.normalize("NFC", "é.pdf")
+        figcapture._UNICODE_FOLD_CACHE.pop(d, None)
+        monkeypatch.setattr(
+            figcapture.os.path,
+            "lexists",
+            lambda p: True if os.path.basename(p) == nfc else alt_exists,
+        )
+        monkeypatch.setattr(figcapture.os.path, "samefile", lambda a, b: same)
+        assert figcapture._dir_folds_unicode(d, nfc) is expected
+        figcapture._UNICODE_FOLD_CACHE.pop(d, None)
+
+    def test_probe_uses_a_directory_entry_as_evidence(self, tmp_path, monkeypatch):
+        d = str(tmp_path.resolve())
+        nfc = unicodedata.normalize("NFC", "é.txt")
+        figcapture._UNICODE_FOLD_CACHE.pop(d, None)
+        monkeypatch.setattr(figcapture, "_UNWATCHED_LISTDIR", lambda p: [nfc])
+        monkeypatch.setattr(figcapture.os.path, "lexists", lambda p: True)
+        monkeypatch.setattr(figcapture.os.path, "samefile", lambda a, b: True)
+        assert figcapture._dir_folds_unicode(d) is True
+        figcapture._UNICODE_FOLD_CACHE.pop(d, None)
+
+    def test_probe_error_means_no_normalization(self, tmp_path, monkeypatch):
+        d = str(tmp_path.resolve())
+        figcapture._UNICODE_FOLD_CACHE.pop(d, None)
+        nfc = unicodedata.normalize("NFC", "é.pdf")
+        (tmp_path / nfc).write_bytes(b"x")
+
+        def boom(a, b):
+            raise OSError("nope")
+
+        monkeypatch.setattr(figcapture.os.path, "samefile", boom)
+        assert figcapture._dir_folds_unicode(d, nfc) is False
 
     def test_no_unicode_case_folding_beyond_lower(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
-        monkeypatch.setattr(figcapture, "_dir_folds_case", lambda d: True)
-        monkeypatch.setattr(figcapture, "_dir_folds_unicode", lambda d: True)
+        monkeypatch.setattr(figcapture, "_dir_folds_case", lambda d, b=None: True)
+        monkeypatch.setattr(figcapture, "_dir_folds_unicode", lambda d, b=None: True)
         key = figcapture.savefig_target_key
         assert key("shape.ß", {"format": "pdf"}) != key("shape.ss", {"format": "pdf"})
 

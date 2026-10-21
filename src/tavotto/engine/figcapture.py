@@ -1529,14 +1529,56 @@ def _dir_folds_case(directory: str) -> bool:
     return result
 
 
-def _dir_folds_unicode(directory: str) -> bool:
-    """这个目录所在的文件系统是否把 Unicode 的 NFC / NFD 写法当同一个文件名。
+_UNICODE_FOLD_CACHE: dict = {}
 
-    APFS 不规范化存储、但比较时不区分 NFC / NFD（`é` 的两种写法打开的是同一个文件；HFS+ 则直接存成 NFD）；
-    NTFS、ext4 等按码点比较，两种写法是两个文件。所以按平台判：darwin 是，其余不是。没有按卷探测：
-    darwin 上的 exFAT / 网络卷按码点比较，会被误并（同一 stem 下 NFC / NFD 两种写法并存的情形极罕见，
-    误并的后果是少一次顶替，见规则文档「已知未覆盖」）。"""
-    return sys.platform == "darwin"
+#: 探测 NFC / NFD 时最多扫目录里多少个条目找证据（只看非 ASCII 的名字）
+_UNICODE_PROBE_SCAN = 200
+
+
+def _unicode_evidence(directory: str, name: str) -> bool | None:
+    """用目录里一个**真实存在**的名字当证据：它的另一种归一形式（NFC <-> NFD）能不能打开同一个文件。
+    True = 能（该目录不区分 NFC / NFD）；False = 另一种形式不存在（区分）；None = 没有证据（名字是纯 ASCII、两种
+    形式相同、或这个名字本身在盘上不存在）。"""
+    nfc, nfd = (unicodedata.normalize(f, name) for f in ("NFC", "NFD"))
+    if nfc == nfd:
+        return None
+    here = os.path.join(directory, name)
+    if not os.path.lexists(here):
+        return None
+    other = os.path.join(directory, nfd if name != nfd else nfc)
+    if not os.path.lexists(other):
+        return False
+    return os.path.samefile(here, other)
+
+
+def _dir_folds_unicode(directory: str, base: str | None = None) -> bool:
+    """这个目录所在的文件系统是否把 Unicode 的 NFC / NFD 写法当同一个文件名——**只在能证明时才算是**。
+
+    APFS 比较时不区分 NFC / NFD（HFS+ 直接存成 NFD），NTFS、ext4、exFAT、多数网络卷按码点比较。误并 =
+    把两个不同的文件当成一个（编辑到另一张图），比漏并更坏，所以不按平台猜：先拿 `base`（这次要写的名字，
+    它已经在盘上时）当证据，再扫目录里的非 ASCII 条目；探测不了（目录不存在 / 没有这样的条目 / 出错）按
+    「不归一」。native 保存成功后另有 samefile 对账兜底（`_canonical_target`）。结论按目录缓存（只缓存有证据的）。"""
+    if directory in _UNICODE_FOLD_CACHE:
+        return _UNICODE_FOLD_CACHE[directory]
+    try:
+        if not os.path.isdir(directory):
+            return False
+        verdict = _unicode_evidence(directory, base) if base else None
+        if verdict is None:
+            seen = 0
+            for entry in _UNWATCHED_LISTDIR(directory):
+                if entry.isascii():
+                    continue
+                verdict = _unicode_evidence(directory, entry)
+                seen += 1
+                if verdict is not None or seen >= _UNICODE_PROBE_SCAN:
+                    break
+    except OSError:
+        return False
+    if verdict is None:
+        return False
+    _UNICODE_FOLD_CACHE[directory] = verdict
+    return verdict
 
 
 def savefig_target_key(fname, kwargs: dict, canvas=None) -> str | None:
@@ -1550,7 +1592,7 @@ def savefig_target_key(fname, kwargs: dict, canvas=None) -> str | None:
       最后写入者——Codex #1141 r4305717514）：路径取 `realpath`（符号链接解到目标），文件名是否折叠大小写按**该目录所在文件系统**
       判（`_dir_folds_case`），不是一刀切的 `normcase`——macOS 默认卷上 `Plot.pdf` / `plot.pdf` 是同一个文件，
       区分大小写的卷（Linux、Windows 的区分目录）上是两个。
-    * 文件系统把 NFC / NFD 当同一个名字的平台（`_dir_folds_unicode`，darwin）上先归一成 NFC 再比。
+    * 目录里能**证明** NFC / NFD 是同一个名字（`_dir_folds_unicode`：拿真实存在的名字试另一种写法）时先归一成 NFC 再比；证明不了不归一。
     * 硬链接别名（两个路径同一个 inode）键里认不出，由 native 保存成功后的 `_canonical_target` 用 samefile 对账。
     """
     names = savefig_effective_names(fname, kwargs, canvas)
@@ -1559,7 +1601,7 @@ def savefig_target_key(fname, kwargs: dict, canvas=None) -> str | None:
     try:
         path = os.path.abspath(os.fsdecode(names[0]))
         directory, base = os.path.split(os.path.realpath(path))
-        if _dir_folds_unicode(directory):
+        if _dir_folds_unicode(directory, base):
             directory, base = (unicodedata.normalize("NFC", part) for part in (directory, base))
         if _dir_folds_case(directory):
             # 只折叠大小写（`lower`），不做 `casefold` 的全 Unicode 折叠：NTFS / APFS 的不区分大小写比较不把
