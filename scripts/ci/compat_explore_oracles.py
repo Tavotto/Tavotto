@@ -187,12 +187,17 @@ def _is_data_key(key: str) -> bool:
     return f".{DATA_KEY}" in key
 
 
+def _data_gid(key: str) -> str:
+    return key.partition(f".{DATA_KEY}")[0]
+
+
 def structure_judgment(parent_snap: dict, cand_snap: dict) -> dict:
     """Parent vs candidate `{stem: {"gid.prop": value}}` (shape-preserving candidates only).
 
-    A parent key missing from the candidate, or present with another value, is a mismatch. Keys
-    only the candidate has are not (a transform may add an artist). A stem the candidate lacks is
-    a figure-count matter that `compare` already reports.
+    A parent key missing from the candidate, or present with another value, is a mismatch. Editable
+    keys only the candidate has are not (a transform may add an artist); a data element only the
+    candidate has is (an extra plotted series is changed data). A stem the candidate lacks is a
+    figure-count matter that `compare` already reports.
 
     Data fingerprints (`gid.__data__.part`) are compared exactly: a shape-preserving candidate does
     not change the user's figure, so its data must not change either. A fingerprint that was not
@@ -233,6 +238,22 @@ def structure_judgment(parent_snap: dict, cand_snap: dict) -> dict:
                 bad.append({"stem": stem, "key": key, "parent": p[key], "candidate": "<missing>"})
             elif not same(p[key], c[key]):
                 bad.append({"stem": stem, "key": key, "parent": p[key], "candidate": c[key]})
+        # 数据要双向比：候选多出一条父本没有的数据元素（多画了一条序列、重叠的重复序列像素上
+        # 可能看不出来）同样是数据变了。非数据的可编辑字段仍只单向比（Codex #1256 r4335265024）
+        parent_gids = {_data_gid(k) for k in p if _is_data_key(k)}
+        for key in sorted(c):
+            if _is_data_key(key) and _data_gid(key) not in parent_gids:
+                bad.append(
+                    {
+                        "stem": stem,
+                        "key": key,
+                        "aspect": "data",
+                        "gid": _data_gid(key),
+                        "part": key.partition(f".{DATA_KEY}")[2].lstrip("."),
+                        "parent": "<missing>",
+                        "candidate": c[key],
+                    }
+                )
     base = {"compared": len(parent_snap), "data_compared": data_compared}
     if bad:
         first = bad[0]

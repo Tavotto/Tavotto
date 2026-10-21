@@ -169,6 +169,35 @@ class DataStructure(unittest.TestCase):
         self.assertEqual(snap["s"]["axes_0.lines_0.linewidth"], 1.5)
         self.assertNotIn("axes_0.title.__data__", snap["s"])
 
+    def test_a_data_element_only_the_candidate_has_is_a_data_mismatch(self):
+        """Codex #1256 r4335265024：多画一条序列（原有序列都还对得上）不能判 passed。"""
+        parent = self.snap(y=self.fp())
+        cand = self.snap(y=self.fp())
+        cand["s"]["axes_0.lines_1.__data__.y"] = self.fp("c" * 8)
+        cand["s"]["axes_0.lines_1.linewidth"] = 1.5
+        res = OR.structure_judgment(parent, cand)
+        self.assertEqual(res["status"], "failed")
+        (diff,) = res["differences"]
+        (mm,) = diff["evidence"]["mismatches"]
+        self.assertEqual(
+            (mm["aspect"], mm["gid"], mm["parent"]), ("data", "axes_0.lines_1", "<missing>")
+        )
+
+    def test_extra_editable_keys_alone_still_pass(self):
+        parent, cand = self.snap(y=self.fp()), self.snap(y=self.fp())
+        cand["s"]["axes_0.legend.visible"] = True
+        self.assertEqual(OR.structure_judgment(parent, cand)["status"], "passed")
+
+    def test_parts_of_an_unmeasured_parent_element_are_not_extra(self):
+        # 父本这个元素 over_budget、候选量出来了：是「没量到」(not_run)，不是多出一条数据
+        unmeasured = {
+            "gid": "axes_0.lines_0",
+            "editable": [],
+            "data_fingerprint": {"status": "over_budget"},
+        }
+        parent = {"s": OR.editable_snapshot({"elements": [unmeasured]})}
+        self.assertEqual(OR.structure_judgment(parent, self.snap(y=self.fp()))["status"], "not_run")
+
     def test_equal_fingerprints_pass_and_the_comparison_is_not_empty(self):
         res = OR.structure_judgment(self.snap(y=self.fp()), self.snap(y=self.fp()))
         self.assertEqual((res["status"], res["data_compared"]), ("passed", 1))
