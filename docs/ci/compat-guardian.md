@@ -285,7 +285,7 @@ CompatBench 的 `run_group` 之外 runner 崩溃目前会被 `compat_matrix.py:m
 | entry_form | `wrap_main`（顶层改 `main()` + `__main__` 守卫） | entry | 保型 |
 | argparse_defaults | `argparse_out`（保存路径来自 argparse，默认值=原路径） | args | 保型 |
 | data_source | `inline_to_file`（第一个字面量数据列表改读相对 JSON） | data_source | 保型 |
-| style_rc | `rcparams`、`style_use` | style | 改轴；**仅静态**：compare 只看图数/标题/路径，观察不到样式，执行只会得到假的 `no_difference`，所以含这两步的候选恒为 static_only 并在报告里点名 |
+| style_rc | `rcparams`、`style_use` | style | 改轴；现在可执行（CG-06 起 `compare` 之外还有像素判定，样式差异观察得到） |
 
 保型：native 输出（图数、标题）必须等于父本——执行器同时跑父本 native 核对，不等就是 `invalid_candidate`（模板有 bug，
 不是 Tavotto 缺陷）。改轴：只能与这个变体自己的 native 比。所有改动都是 AST 编辑，结果必须能 `compile`。
@@ -295,6 +295,23 @@ CompatBench 的 `run_group` 之外 runner 崩溃目前会被 `compat_matrix.py:m
 `same_path_content_mismatch`（原生最后写入该路径的图 vs Tavotto 保留的图）、`title_missing`。差异带 Guardian 失败类别。
 Tavotto 侧走产品自己的发现链（静态注册表，不足时试运行探测）再起一次性 worker 取 manifest。
 `show()` 之后 `close()` 的图原生算「出现过」（`native_ref` 记录 show 时的在开图）。
+
+**补判定（CG-06，`scripts/ci/compat_explore_oracles.py`）**：图数与标题之外再问四件事，判据全部借用 CompatBench 现成的，
+不另设一套——这样 explore 与 CompatBench 对同一张图不会给出相反结论。
+
+| 层 | 适用 | 判据 | 差异 kind（类别） |
+| --- | --- | --- | --- |
+| fidelity | 全部可执行候选 | 原生 PNG 与 Tavotto 零 patch PNG（同一 `FIDELITY_WIDTH`），`pixelcompare.verdict` 用 `FIDELITY_TOLERANCE`——与 CompatBench 同一档，不另设 | `pixel_mismatch`、`render_failed`（export_or_fidelity）；证据含三项指标、control/tavotto/diff PNG 的相对路径与 sha256 |
+| structure | 仅保型 | 父本在 Tavotto 里的 `{gid.prop: value}` 快照（每次 explore 运行每个父本只算一次）的每个键，候选里必须存在且 `_same_value`；候选多出的键不算 | `structure_mismatch`（manifest_semantics） |
+| edit / replay / export | 仅保型 | 继承父本用例已评审的 `mutations` 与 `export_formats`（缺省 pdf、png），在同一 worker 上调 `compat_matrix.stage_edit/stage_replay/stage_export` | `edit_failed`（editing_capability）、`replay_mismatch`（replay_inconsistency）、`export_failed`（export_or_fidelity） |
+
+改轴候选的 structure / edit / replay / export 记 `not_covered` 并写明判据：已评审的编辑目标按父本 gid 记，改轴之后没有已评审的目标。
+候选行的 `stages` 逐层给 `{status, criterion}`（`passed / failed / not_run / not_covered`），报告 `stage_counts` 汇总各层状态，
+没跑的层可见。缺 numpy / Pillow 时 fidelity 记 `not_run`，**不是差异**，也不是通过。
+
+**能保证**：同一候选上，原生与 Tavotto 零 patch 渲染在 CompatBench 容差内一致；保型候选的父本编辑目标仍能应用、撤销、重放、导出，
+且可编辑字段值不变。**不能保证**：容差内的一致不是逐像素相同；改轴候选的编辑 / 导出没有被验证；字体 hinting 之类的系统性微差
+被容差吃掉；只覆盖父本里已评审的那几个编辑目标，别的属性没有被改过。
 
 **结构去重与覆盖**：按「轴向量 + 规范化 AST 签名」去重（数字/字符串常量与 `cg_plt3` 之类别名数字归一，所以仅参数不同不算新结构）。
 报告 `coverage` 给出：每个家族的轴、适用父本数、候选数；每个轴的候选数；保型/改轴数；去重前后；以及父本按语料类别的分布

@@ -1281,6 +1281,8 @@
         "doneAfterCancel": "取消时报告已经送达，这次发送算成功",
         "unknownOutcome": "无法确认报告是否已送达；如需删除，可在 GitHub Issues 里只附上报告编号",
         "extrasTitle": "额外内容（默认不发送）",
+        "extrasSelectAll": "全选",
+        "extrasSelectNone": "全不选",
         "extra": {
           "source": "脚本源码",
           "crash_reports": "系统崩溃报告",

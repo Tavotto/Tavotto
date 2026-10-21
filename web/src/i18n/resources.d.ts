@@ -28,6 +28,20 @@ export default interface Resources {
       "copy": "复制代码",
       "plain": "代码"
     },
+    "dataFigure": {
+      "cancel": "取消",
+      "empty": "项目里没有 CSV 数据文件",
+      "fileLabel": "数据文件",
+      "filePlaceholder": "选择 CSV 文件",
+      "generate": "生成",
+      "instructionLabel": "想画什么",
+      "instructionPlaceholder": "例如：画 y 随 x 的变化",
+      "loadFailed": "没能读取数据文件列表",
+      "open": "从数据出图",
+      "title": "从数据出图",
+      "truncated": "文件太多，只列出前一部分",
+      "unconfirmedHint": "上一次的结果还没确认，请先在对话里查询结果。"
+    },
     "diff": {
       "copyPatch": "复制补丁",
       "edited": "已修改",
@@ -91,6 +105,12 @@ export default interface Resources {
       "resend": "重新发送"
     },
     "notice": {
+      "dataFigureFailedWritten": "新脚本已写进项目，但画出来的数据与 CSV 对不上；不对的话可以删掉这份新脚本。",
+      "dataFigureNeedsInput": "没能判断哪列做横轴、哪列做纵轴。请在指令里点名这两列。",
+      "dataFigureNeedsInputExample": "没能判断哪列做横轴、哪列做纵轴。请在指令里点名这两列，例如“画 {{y}} 随 {{x}} 的变化”。",
+      "dataFigurePartial": "有些行不是数字，没有画出来；脚本已新建，结果未经完整核对。",
+      "dataFigureReconcile": "查询结果",
+      "dataFigureUnconfirmed": "没收到结果，可能已经生成了；先查询结果，别重复提交。",
       "taskFailedChanged": "改动已写入，但核对发现数据或输出变了；不对的话可以回滚到修改前。",
       "taskPartial": "改动已写入，但有检查没能完成，结果未经完整核对。",
       "taskRejected": "改动没通过写回前检查，没有写入项目。",
@@ -165,6 +185,12 @@ export default interface Resources {
     },
     "session": {
       "correcting": "上一版没通过写回前检查，正在自动修正…",
+      "dataFigureDone": "已新建脚本 {{script}}",
+      "dataFigureFailedWritten": "已生成 {{script}}，但核对没通过",
+      "dataFigureNeedsInput": "没有出图，需要你指明用哪两列",
+      "dataFigurePartial": "已新建脚本 {{script}}，部分行没有画出",
+      "dataFigureRunning": "正在读取数据并出图…",
+      "dataFigureUnconfirmed": "结果未确认",
       "doneChanged": "改动已写入脚本",
       "doneNoChange": "已完成，脚本没有变化",
       "restoredNote": "已接回仍在运行的任务；此前的输出不再显示，结束后会更新结果。",
@@ -1650,6 +1676,8 @@ export default interface Resources {
             "crash_reports": "最近 7 天属于 Tavotto 的系统崩溃报告。Windows 崩溃转储是程序内存快照，可能含正在打开的文件内容与路径，无法脱敏。",
             "source": "脚本会原样附上，我们会尽量抹掉能认出的密钥，但不能保证；脚本里有密钥请不要勾。"
           },
+          "extrasSelectAll": "全选",
+          "extrasSelectNone": "全不选",
           "extrasTitle": "额外内容（默认不发送）",
           "failure": {
             "api_incompatible": "诊断服务的版本与这个 Tavotto 不兼容。请更新 Tavotto 后再试。",
@@ -2582,6 +2610,7 @@ export default interface Resources {
       "stale_write": "自动保存冲突：磁盘上已有更新的版本",
       "svg_asset_export_unsupported": "SVG 素材目前支持预览、摆放和原图 SVG 导出；画布与跨格式导出尚未支持。请先将该素材转换为 PDF 后导入。",
       "svg_asset_unsupported": "此 SVG 暂不支持导入。请使用尺寸明确的独立静态 SVG；不支持脚本、外部资源或 DTD。",
+      "svg_snapshot_missing": "{{id}} 暂时无法导出为 SVG：请先重新运行这张图的脚本，或改用 PDF 导出。",
       "svg_source_unsupported": "{{id}} 的当前来源无法安全转换为 SVG。请改用 PDF 格式导出。",
       "sync_different_scripts": "两张图不属于同一个脚本，无法同步",
       "taf_disabled": "这个实验功能还没有开启。",
@@ -5600,9 +5629,7 @@ export default interface Resources {
       "projectConflict": "项目里的 {{file}} 已在别处改过，这次没有写入。请在弹出的对话框里决定。",
       "projectFailed": "没能存进项目里的 {{file}}：{{reason}}",
       "projectSkipped": "没有写入项目里的 {{file}}：按下保存之后切换了排版或项目。回到那份排版再保存一次。",
-      "skippedSwitched": "按下保存之后切换了排版或项目，这次没有写进项目。回到那份排版再保存一次。",
-      "svgSnapshotPill": "SVG 快照未完整保留",
-      "svgSnapshotWarning": "排版已保存：{{name}}。以下来源的 SVG 快照未能保留：{{sources}}。重新打开后，导出这些来源的 SVG 可能需要你明确重新运行脚本。"
+      "skippedSwitched": "按下保存之后切换了排版或项目，这次没有写进项目。回到那份排版再保存一次。"
     },
     "scan": {
       "deps": {

@@ -119,7 +119,10 @@ export function HomeView({
       {...dropHandlers}
       {...dragRegionProps('self')}
     >
-      <div className="mx-auto flex w-full max-w-[1000px] flex-col px-6 pb-10 pt-4" {...dragRegionProps('self')}>
+      {/* 列宽 = 内容列 720 + 两侧内边距：顶行（返回链接）与拖放区 / 最近项目共用同一条右边界。
+          min-h-full + 下面 flex-1 / justify-center：窗口高时内容块在顶行以下的可用高度里垂直居中，
+          矮时撑高整列、由 main 滚动（不重叠、不裁切）。各段间距统一读 --home-gap（index.css，随窗高伸缩） */}
+      <div className="mx-auto flex min-h-full w-full max-w-[768px] flex-col px-6 pb-6 pt-4" {...dragRegionProps('self')}>
         {/* 从设置 / 菜单「切换项目」进来时后端仍有打开的项目——允许原路返回。
             这一行也是窗框的一部分：macOS 下空白处可拖动窗口，Windows 的应用菜单在最左 */}
         <div className="flex h-7 shrink-0 items-center justify-end" {...dragRegionProps('self')}>
@@ -127,7 +130,8 @@ export function HomeView({
           {currentOpen && (
             <Button
               size="md"
-              className="-mr-2.5 text-ink-2"
+              className="text-ink-2"
+              data-home-back-current
               disabled={switching}
               onClick={() => useProjectStore.getState().returnToCurrent()}
             >
@@ -136,22 +140,28 @@ export function HomeView({
             </Button>
           )}
         </div>
-        {variant === 'newcomer' ? (
-          <Newcomer importer={importer} dragging={dragging} />
-        ) : (
-          <Returning importer={importer} dragging={dragging} openPath={openPath} />
-        )}
-        {error && (
-          <p role="alert" className="mt-3 text-center text-sm leading-relaxed text-danger">
-            {error}
-          </p>
-        )}
-        <RecentSection
-          variant={variant}
-          busyPath={busyPath}
-          openPath={openPath}
-          onShowAll={onShowAll}
-        />
+        <div
+          data-home-content
+          className="flex flex-1 flex-col justify-center gap-(--home-gap) py-(--home-gap)"
+          {...dragRegionProps('self')}
+        >
+          {variant === 'newcomer' ? (
+            <Newcomer importer={importer} dragging={dragging} />
+          ) : (
+            <Returning importer={importer} dragging={dragging} openPath={openPath} />
+          )}
+          {error && (
+            <p role="alert" className="text-center text-sm leading-relaxed text-danger">
+              {error}
+            </p>
+          )}
+          <RecentSection
+            variant={variant}
+            busyPath={busyPath}
+            openPath={openPath}
+            onShowAll={onShowAll}
+          />
+        </div>
       </div>
       {importer.dialogs}
     </main>
@@ -295,7 +305,7 @@ function useScriptImport(openPath: (path: string) => Promise<boolean>) {
       role={notice.tone === 'error' ? 'alert' : undefined}
       aria-live={notice.tone === 'error' ? undefined : 'polite'}
       className={cn(
-        'mt-3 text-center text-sm leading-relaxed',
+        'text-center text-sm leading-relaxed',
         notice.tone === 'error' ? 'text-danger' : 'text-ink-2',
       )}
     >
@@ -372,7 +382,7 @@ function DropZone({ importer, dragging }: { importer: Importer; dragging: boolea
   const { t } = useTranslation('project')
   const switching = useProjectStore((s) => s.switching)
   return (
-    <Card interactive={!switching} padding="none" className="mx-auto mt-8 w-full max-w-[720px]">
+    <Card interactive={!switching} padding="none" className="mx-auto w-full max-w-[720px]">
       <button
         type="button"
         data-home-dropzone
@@ -381,7 +391,7 @@ function DropZone({ importer, dragging }: { importer: Importer; dragging: boolea
         onClick={importer.start}
         aria-describedby="home-dropzone-hint"
         className={cn(
-          'flex w-full flex-col items-center rounded-lg px-6 py-10',
+          'flex w-full flex-col items-center rounded-lg px-6 py-(--home-dz-pad)',
           'disabled:cursor-not-allowed disabled:opacity-40',
           dropZoneClass(dragging),
         )}
@@ -419,16 +429,16 @@ function Newcomer({ importer, dragging }: { importer: Importer; dragging: boolea
   const switching = useProjectStore((s) => s.switching)
   return (
     <>
-      <header className="flex flex-col items-center pt-4 text-center">
+      <header className="flex flex-col items-center gap-(--home-gap-tight) text-center">
         <Wordmark size="sm" />
-        <h1 className="type-display mt-6">{t('home.newcomer.title')}</h1>
+        <h1 className="type-display">{t('home.newcomer.title')}</h1>
       </header>
 
       <DropZone importer={importer} dragging={dragging} />
       {importer.noticeView}
 
       {/* 这一屏唯一的填色主动作（EmptyState v2 的约定：一屏一颗、32px） */}
-      <div className="mt-6 flex flex-wrap justify-center gap-3">
+      <div className="flex flex-wrap justify-center gap-3">
         <Button
           variant="primary"
           size="lg"
@@ -470,7 +480,7 @@ function Returning({
   const sample = useSampleAvailability()
   return (
     <>
-      <header className="flex flex-col items-center pt-6 text-center">
+      <header className="flex flex-col items-center gap-(--home-gap-tight) text-center">
         <h1>
           <Wordmark />
         </h1>
@@ -481,7 +491,7 @@ function Returning({
       {importer.noticeView}
 
       {!sample.hidden && (
-        <div className="mt-6 flex flex-col items-center">
+        <div className="flex flex-col items-center">
           <Button
             variant="secondary"
             size="lg"
@@ -536,7 +546,7 @@ function Narrative({ importer, openPath }: { importer: Importer; openPath: (path
     </NarrativeChip>
   )
   return (
-    <p className="mt-4 text-xl leading-8 text-ink-2" data-home-narrative>
+    <p className="text-xl leading-8 text-ink-2" data-home-narrative>
       {recent ? (
         <Trans
           t={t}
@@ -612,7 +622,7 @@ function RecentSection({
   const allLink = (
     <Button
       size="md"
-      className={cn('text-ink-2', recent.length > 0 && '-mr-2.5')}
+      className="text-ink-2"
       data-home-all
       onClick={onShowAll}
     >
@@ -627,13 +637,13 @@ function RecentSection({
 
   if (recent.length === 0) {
     // 还没有最近项目：只留一条通往「新建项目 / 按路径打开」的路
-    return <div className="mt-8 flex justify-center">{allLink}</div>
+    return <div className="flex justify-center">{allLink}</div>
   }
 
   return (
     <section
       aria-labelledby="home-recent-heading"
-      className={cn('mt-10', variant === 'returning' && 'mx-auto w-full max-w-[720px]')}
+      className="mx-auto w-full max-w-[720px]"
     >
       <div className="flex items-center justify-between">
         <h2 id="home-recent-heading" className="type-section flex items-baseline gap-1.5">
@@ -643,17 +653,19 @@ function RecentSection({
         {allLink}
       </div>
       {/* Card interactive 网格（2026-10-07 设计审计 §4.2 / §5）：此前新手版是三列 hover 行、老手版是带分隔线的列表 */}
+      {/* 居中的等宽卡（flex-wrap + 固定列宽，不用 grid）：1–2 个项目不再孤零零靠左、右边空一大块——
+          整页是居中的一列（Logo / 叙事句 / 拖放区 / 示例按钮），卡片跟着居中；列宽仍按 1 / 2 / 3 列等分，
+          列数随视口：窄 1 列、sm 2 列、宽 3 列 */}
       <ul
-        className={cn(
-          'mt-2 grid grid-cols-1 gap-3',
-          variant === 'newcomer' ? 'sm:grid-cols-2 lg:grid-cols-3' : 'sm:grid-cols-2 md:grid-cols-3',
-        )}
+        data-home-recent-list
+        className="mt-2 flex flex-wrap justify-center gap-3"
       >
         {shown.map((r) => (
           <RecentItem
             key={r.path}
             entry={r}
             detail={variant === 'newcomer' ? 'when' : 'path'}
+            columns={variant === 'newcomer' ? 'lg3' : 'sm3'}
             busy={busyPath === r.path}
             disabled={switching}
             onOpen={() => void openPath(r.path)}
@@ -675,6 +687,7 @@ function RecentSection({
 function RecentItem({
   entry,
   detail,
+  columns,
   busy,
   disabled,
   onOpen,
@@ -683,6 +696,8 @@ function RecentItem({
   entry: RecentProject
   /** 卡片第二行：新手版说「打开于 …」，老手版给路径（时间放在第三行） */
   detail: 'when' | 'path'
+  /** 三列在哪个断点出现：老手版 md（768），新手版 lg（1024） */
+  columns: 'sm3' | 'lg3'
   busy: boolean
   disabled: boolean
   onOpen: () => void
@@ -698,27 +713,37 @@ function RecentItem({
     <span className="block text-sm text-ink-3">{t('home.openedAgo', { when })}</span>
   ) : null
   return (
-    <li data-home-recent={entry.path} className="min-w-0">
-      <Card interactive lift disabled={busy || disabled} padding="none" className="group h-full">
+    <li
+      data-home-recent={entry.path}
+      className={cn(
+        'min-w-0 max-w-full w-full sm:w-[calc((100%-0.75rem)/2)]',
+        columns === 'sm3' ? 'md:w-[calc((100%-1.5rem)/3)]' : 'lg:w-[calc((100%-1.5rem)/3)]',
+      )}
+    >
+      <Card interactive lift disabled={busy || disabled} padding="none" className="group h-full min-w-0 max-w-full">
         <button
           type="button"
           onClick={onOpen}
           disabled={busy || disabled}
           aria-label={t('picker.openProject', { name: entry.name })}
           title={entry.tutorial ? undefined : entry.path}
-          className="flex h-full w-full flex-col gap-2 rounded-lg p-1 pb-3 text-left outline-none disabled:cursor-not-allowed disabled:opacity-40"
+          className="block h-full w-full min-w-0 max-w-full overflow-hidden rounded-lg p-1 pb-3 text-left outline-none disabled:cursor-not-allowed disabled:opacity-40"
         >
-          {/* 外 12 = 内 8 + 4：缩略图格是 md 圆角、坐在画布灰上 */}
-          <span aria-hidden className="flex h-20 items-center justify-center rounded-md bg-canvas text-ink-3">
-            <Folder size={ICON_SIZE.lg} />
-          </span>
-          <span className="flex min-w-0 flex-col gap-0.5 px-2">
-            <span className="flex items-center gap-1.5 pr-6">
-              <span className="truncate text-base font-medium text-ink">{entry.name}</span>
-              {busy && <span className="shrink-0 text-sm text-ink-3">{t('picker.opening')}</span>}
+          {/* button 只做 block 外壳，flex 排版放进里面这层：旧 WebKit（macOS 14 / Safari 17）里 <button> 当 flex 容器时
+              子项不按容器宽拉伸、按内容宽度排（缩略图格塌成细条、长路径撑出卡外） */}
+          <span className="flex h-full w-full min-w-0 max-w-full flex-col gap-2">
+            {/* 外 12 = 内 8 + 4：缩略图格是 md 圆角、坐在画布灰上 */}
+            <span aria-hidden className="flex h-20 w-full shrink-0 items-center justify-center rounded-md bg-canvas text-ink-3">
+              <Folder size={ICON_SIZE.lg} />
             </span>
-            {sub}
-            {detail === 'path' && when && <span className="type-meta">{when}</span>}
+            <span className="flex w-full min-w-0 max-w-full flex-col gap-0.5 overflow-hidden px-2">
+              <span className="flex items-center gap-1.5 pr-6">
+                <span className="truncate text-base font-medium text-ink">{entry.name}</span>
+                {busy && <span className="shrink-0 text-sm text-ink-3">{t('picker.opening')}</span>}
+              </span>
+              {sub}
+              {detail === 'path' && when && <span className="type-meta">{when}</span>}
+            </span>
           </span>
         </button>
         <div className="absolute right-1.5 top-1.5">

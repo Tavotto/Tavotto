@@ -28,6 +28,14 @@ establish legal identity, ownership or authority. Corporate/guardian/unresolved
 cases remain outside this route. See [ADR 0137](../../docs/adr/0137-limited-cla-countersigning-authority.md)
 and the [outstanding activation gates](../../docs/implementation/cla-delegated-authority/README.md).
 
+The internal `appendHistoricalRevocation(id, signedControl)` candidate can append
+only a terminal revoke signed by the original registered key after an ID/key
+rotation. It has no HTTP or activation route. It retains the exact historical
+agreement, current holder/repository identity, full signed chain and atomic
+revision checks; it cannot enable old authority. Full chains, unavailable old
+keys and identity changes fail closed. See the [historical revocation evidence
+and remaining migration work](../../docs/implementation/cla-historical-revocation/README.md).
+
 The native entry is src/entry.ts. Each capability requires its explicit environment flag; omitted flags keep it off. No credentials, account bindings, worker IDs, queues or resource names are shipped. Agreement version 1.0 remains the only supported configuration; changing the same version's digest fails closed. A future version rollout needs separate review.
 
 ## Offline migration rehearsal

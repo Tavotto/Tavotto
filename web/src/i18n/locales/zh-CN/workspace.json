@@ -562,8 +562,6 @@
     }
   },
   "save": {
-    "svgSnapshotWarning": "排版已保存：{{name}}。以下来源的 SVG 快照未能保留：{{sources}}。重新打开后，导出这些来源的 SVG 可能需要你明确重新运行脚本。",
-    "svgSnapshotPill": "SVG 快照未完整保留",
     "conflict": "排版已在别处改过，请先处理冲突。",
     "doneLocal": "已保存在本机（没有打开项目）",
     "doneProject": "已保存到项目：{{file}}",

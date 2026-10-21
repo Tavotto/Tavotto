@@ -399,8 +399,8 @@ occurrence/figure ordinal/result。看护：`tests/bridge/test_bridge_savefig_ob
 它只确认策略和磁盘字节、不启动 worker，也不宣称场景已经准入。看护：
 `tests/test_selected_figsize_policy.py`、`tests/test_selected_artifact_api.py`。
 
-`script-backed-figure-v1`（来源驱动采用，ADR 0139 / #1200）是第三条策略，**实验开关
-`config.experiments.script_backed_figure` 后面、默认关**（`artifactcontext.script_backed_enabled`；只认显式 `True`）：
+`script-backed-figure-v1`（来源驱动采用，ADR 0139 / #1200）是第三条策略，**应急开关
+`config.experiments.script_backed_figure`，10-21 起默认开**（`artifactcontext.script_backed_enabled`；只有布尔 `false` 关）：
 关着时请求带它一律 409 `policy_disabled`，其余行为逐字节不变。要点：① 安全条件分两档——
 `figsession._require_static_artifact_figure`（像素档，精确策略，白名单原样；白名单是**唯一**拒绝原因时报
 `artist_profile`，否则仍是 `unsupported_render_state`）与 `_require_editable_artifact_figure`（编辑档：类型须来自

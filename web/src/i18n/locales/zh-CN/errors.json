@@ -88,6 +88,7 @@
     "external_change": "排版在磁盘上被 Tavotto 之外的改动覆盖，本次保存未写入。",
     "file_locked": "文件被其他程序占用，请关闭正在打开它的程序后重试。",
     "svg_source_unsupported": "{{id}} 的当前来源无法安全转换为 SVG。请改用 PDF 格式导出。",
+    "svg_snapshot_missing": "{{id}} 暂时无法导出为 SVG：请先重新运行这张图的脚本，或改用 PDF 导出。",
     "format_failed": "无法导出该格式：{{error}}。",
     "internal_error": "服务器内部错误：{{reason}}",
     "interpreter_no_matplotlib": "无法从 {{path}} 导入 matplotlib",

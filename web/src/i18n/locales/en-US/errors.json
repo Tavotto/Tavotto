@@ -88,6 +88,7 @@
     "external_change": "This layout changed on disk outside Tavotto. This save wasn’t written.",
     "file_locked": "The file is locked by another program. Close whatever has it open and retry.",
     "svg_source_unsupported": "{{id}} cannot be safely converted to SVG from its current source. Export as PDF instead.",
+    "svg_snapshot_missing": "{{id}} can’t be exported as SVG yet: run its script again first, or export as PDF instead.",
     "format_failed": "This format couldn’t be produced: {{error}}.",
     "internal_error": "Internal server error: {{reason}}",
     "interpreter_no_matplotlib": "Can’t import matplotlib from {{path}}.",

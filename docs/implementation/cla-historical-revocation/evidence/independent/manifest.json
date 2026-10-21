@@ -1,0 +1,193 @@
+{
+  "recorded_at_utc": "2026-10-18T08:26:48.811794+00:00",
+  "baseline_commit": "d2b0ba59340761b61f7ac5b8b534d43bcdd731f4",
+  "baseline_tree": "617273612ca250ea776ada1ffc611b34aaf67fb0",
+  "stage": "independent read-only review of uncommitted historical-revocation change on d2b0ba59; no #1160 code included",
+  "source_sha256": {
+    "src/native/delegation.ts": "249fac5bcbe95b0c6d774de4f1016a0f0f1688464bfb44afd99df254126170f0",
+    "src/native/schema.sql": "bc8cb9f59b779690bebfffff1fb8ffa062aab12b8af1284cc1c5bd198a45ff0e",
+    "src/native/store.ts": "98d6681c2694c4b0d32cc5bb261d6164f6745a057e19a675e4189bfa0c78e22e",
+    "src/native/worker.ts": "c7c9e4b63e9097167859c6a615c1e39b19cf2950926b969faeb4d6bbae34250c",
+    "tests/delegation-fixture.mjs": "8f142a2f31a125fec60008d8e91cfbfeab51d2c8b07802bfd487774e77fd033d"
+  },
+  "current_workspace_source_hash_mismatches": [],
+  "independent_test": {
+    "path": "/tmp/cla-historical-revocation-review/service/tests/independent-historical-revocation.test.mjs",
+    "sha256": "02ae51ff1c17ec74abdbd8bedb1c4a8b680a3fb35c29827a3abff70537b5a124",
+    "count": 19,
+    "scope": "synthetic Ed25519/D1-compatible in-memory SQLite only; original keys are ephemeral test keys"
+  },
+  "checks": [
+    {
+      "argv": [
+        "node",
+        "--test",
+        "tests/independent-historical-revocation.test.mjs"
+      ],
+      "cwd": "/tmp/cla-historical-revocation-review/service",
+      "exit_code": 0,
+      "passed": 19,
+      "failed": 0,
+      "log": "independent-tests.txt"
+    },
+    {
+      "argv": [
+        "node",
+        "--test",
+        "tests/delegation.test.mjs",
+        "tests/independent-authority-contract.test.mjs",
+        "tests/independent-optimized-authority.test.mjs"
+      ],
+      "cwd": "/tmp/cla-historical-revocation-review/service",
+      "exit_code": 0,
+      "passed": 55,
+      "failed": 0,
+      "log": "related-tests.txt"
+    },
+    {
+      "argv": [
+        "python3",
+        "/tmp/cla-historical-revocation-review/replay-independent-mutations.py"
+      ],
+      "cwd": "/workspace/Tavotto-cla-historical-revocation",
+      "exit_code": 0,
+      "mutations_detected": 5,
+      "each_location_count": 1,
+      "each_selected_exit": 1,
+      "each_actual_assertion_error": true,
+      "log": "mutation-execution.txt",
+      "details": "mutation-results.json"
+    }
+  ],
+  "mutations": [
+    {
+      "name": "historical-only-terminal",
+      "before": "if(event.action!=='revoke')throw new Rejected('authorization_terminal_revocation_required');",
+      "after": "",
+      "pattern": "independent historical path rejects signed enable",
+      "file": "src/native/delegation.ts",
+      "method": "appendHistoricalRevocation",
+      "location_count": 1,
+      "argv": [
+        "node",
+        "--test",
+        "--test-name-pattern=independent historical path rejects signed enable",
+        "tests/independent-historical-revocation.test.mjs"
+      ],
+      "exit_code": 1,
+      "assertion_error": true,
+      "log": "/tmp/cla-historical-revocation-review/historical-only-terminal.txt",
+      "sha256": "221814ea9f277293f259f80a7eb17971553050ab68b22f0a717759f8fd8dff47"
+    },
+    {
+      "name": "historical-original-key",
+      "before": "event=await this.control(record,grant,g.hash,now,g.public_key);",
+      "after": "event=await this.control(record,grant,g.hash,now);",
+      "pattern": "independent historical uses registered original key even when current key signs the exact revoke body",
+      "file": "src/native/delegation.ts",
+      "method": "appendHistoricalRevocation",
+      "location_count": 1,
+      "argv": [
+        "node",
+        "--test",
+        "--test-name-pattern=independent historical uses registered original key even when current key signs the exact revoke body",
+        "tests/independent-historical-revocation.test.mjs"
+      ],
+      "exit_code": 1,
+      "assertion_error": true,
+      "log": "/tmp/cla-historical-revocation-review/historical-original-key.txt",
+      "sha256": "584fce18515c032a1272d54a37882747f8666aec03312419746709df86377330"
+    },
+    {
+      "name": "historical-full-chain",
+      "before": "const {grant}=await this.history(g,events,now,{publicKey:g.public_key,agreement}),event=",
+      "after": "const grant=original,event=",
+      "pattern": "independent historical rechecks complete stored chain metadata",
+      "file": "src/native/delegation.ts",
+      "method": "appendHistoricalRevocation",
+      "location_count": 1,
+      "argv": [
+        "node",
+        "--test",
+        "--test-name-pattern=independent historical rechecks complete stored chain metadata",
+        "tests/independent-historical-revocation.test.mjs"
+      ],
+      "exit_code": 1,
+      "assertion_error": true,
+      "log": "/tmp/cla-historical-revocation-review/historical-full-chain.txt",
+      "sha256": "5ed413a98ad2a1a2171140cd351b4eca2681130c419dd58659971d5a69b24f70"
+    },
+    {
+      "name": "historical-commit-revision",
+      "before": "...this.s.store.cas(revision),",
+      "after": "...this.s.store.guard('1'),",
+      "pattern": "independent historical revision conflict cannot consume predecessor",
+      "file": "src/native/delegation.ts",
+      "method": "appendHistoricalRevocation",
+      "location_count": 1,
+      "argv": [
+        "node",
+        "--test",
+        "--test-name-pattern=independent historical revision conflict cannot consume predecessor",
+        "tests/independent-historical-revocation.test.mjs"
+      ],
+      "exit_code": 1,
+      "assertion_error": true,
+      "log": "/tmp/cla-historical-revocation-review/historical-commit-revision.txt",
+      "sha256": "8bfb5df264bd6842cfdece809c34b16a7a9fbd8ec6d47ae2e648ff8f9b45a917"
+    },
+    {
+      "name": "historical-commit-clock",
+      "before": "${DB_NOW}>=? AND",
+      "after": "(? IS NOT NULL) AND",
+      "pattern": "independent historical database clock is checked again at commit",
+      "file": "src/native/delegation.ts",
+      "method": "appendHistoricalRevocation",
+      "location_count": 1,
+      "argv": [
+        "node",
+        "--test",
+        "--test-name-pattern=independent historical database clock is checked again at commit",
+        "tests/independent-historical-revocation.test.mjs"
+      ],
+      "exit_code": 1,
+      "assertion_error": true,
+      "log": "/tmp/cla-historical-revocation-review/historical-commit-clock.txt",
+      "sha256": "0e021c955484015f88ba4d001522bc6504d7decba2df0e7f02882992b6d67f19"
+    }
+  ],
+  "verdict": "No new reproducible fail-open or correctness regression found in reviewed change. Original-key-only terminal action, full history, registry tuple, final revision/clock checks and atomic invalidation were independently exercised.",
+  "verified": [
+    "production expectedConfig readiness survives ID/key rotation and disabled execution flags",
+    "current rotated key cannot sign a historical original-key revoke",
+    "enable/suspend, bad binding, altered history and replay reject without persistent changes",
+    "duplicate concurrent revocations commit exactly one terminal record/revision",
+    "commit revision race and DB clock rollback reject without consuming predecessor",
+    "personal signatures, receipts and holds remain immutable; revision atomically clears old observations/wakes tracked outbox",
+    "current version1.0 and exact agreement readiness are retained"
+  ],
+  "unverified_boundaries": [
+    "control chain limit100 is retained: a revoke may occupy slot100, but a full100-event chain cannot append revoke101; external stop/manual path remains necessary",
+    "rights-holder ID/name and repository identity changes are not migration support; old ID/key rotation only",
+    "fixture historical tuple verification is not a real Worker agreement version migration",
+    "this is an internal preparation method, with no authenticated HTTP/CLI/operator exposure supplied",
+    "historical cryptographic verification does not establish legal identity, authority or legal effect",
+    "real key custody/registration, authorization, live D1 acceptance and production execution remain unaccepted",
+    "tsc/build/hosted CI were not executed independently; prior dependency download denial was not retried"
+  ],
+  "not_executed": [
+    "workspace edits by reviewer",
+    "HTTP or worker.fetch",
+    "real publication/signing/deployment/credentials",
+    "dependency download",
+    "external formal review request",
+    "previously rejected dynamic successful-publication-across-expiry test or a renamed variant"
+  ],
+  "artifact_sha256": {
+    "independent-tests.txt": "e47c005317d7d151991c634609b16008e5f8a8ce8cf11743150d76f8140991fc",
+    "related-tests.txt": "52bde0455c6d34e1a33b8e5cb917bca1eee9fac6c24b8a6f80bb10ec08821a85",
+    "mutation-execution.txt": "e67ba1dcf76d75aa87e9f093d6269f10dcd20646282fe1e2a0807e21abf66093",
+    "mutation-results.json": "e67ba1dcf76d75aa87e9f093d6269f10dcd20646282fe1e2a0807e21abf66093",
+    "replay-independent-mutations.py": "388dcf249529a7a63136e957a9b6566083d29274ced8943ac5acb3e07ef692fe"
+  }
+}

@@ -7,7 +7,7 @@ import { t as translate } from '@/i18n'
 import { formatTime } from '@/i18n/format'
 import { splitNoticeText } from '@/lib/noticeText'
 import { cn } from '@/lib/utils'
-import { sessionAgentLabel, useAiStore, type AiSession } from '@/store/aiStore'
+import { DATA_FIGURE_TASK, sessionAgentLabel, useAiStore, type AiSession } from '@/store/aiStore'
 import { Button, IconButton } from '../ui/Button'
 import { Reveal } from '../ui/Field'
 import { Notice } from '../ui/Notice'
@@ -34,6 +34,7 @@ const ai = (key: string, values?: Record<string, unknown>) => translate(key, { n
 
 /** 改动是直接落盘的，措辞不能像「待应用的预览」 */
 function statusText(s: AiSession): string {
+  if (s.task?.task_type === DATA_FIGURE_TASK) return dataFigureStatusText(s)
   if (s.status === 'running') return ai(s.task?.phase === 'correcting' ? 'session.correcting' : 'session.running')
   // 带任务结局时只翻译 `task.outcome`（检查本身在后端）；其余组合与无 task 一律走原逻辑。
   // completed + 没改动（Agent 判定不必改，后端 `test_unchanged_copy_commits_nothing`）**有意**落到 `doneNoChange`：
@@ -51,6 +52,26 @@ function statusText(s: AiSession): string {
   if (s.status === 'done') return ai(s.changed ? 'session.doneChanged' : 'session.doneNoChange')
   if (s.status === 'reverted') return ai('session.reverted')
   return statusLabel(s.status)
+}
+
+/** 从数据出图（TAF Phase 5c）的状态行：只翻译 `task.outcome`；失败走通用的「失败」 */
+function dataFigureStatusText(s: AiSession): string {
+  if (s.status === 'running') return ai('session.dataFigureRunning')
+  if (s.unconfirmed) return ai('session.dataFigureUnconfirmed')
+  const script = s.task?.script ?? ''
+  switch (s.task?.outcome) {
+    case 'completed':
+      return ai('session.dataFigureDone', { script })
+    case 'partial':
+      return ai('session.dataFigurePartial', { script })
+    case 'needs_input':
+      return ai('session.dataFigureNeedsInput')
+    case 'failed':
+      // 提交后验证失败但文件已建（`script` 在）：如实说出，别让人以为什么都没发生
+      return script ? ai('session.dataFigureFailedWritten', { script }) : statusLabel(s.status)
+    default:
+      return statusLabel(s.status)
+  }
 }
 
 const failedStatus = (s: AiSession) => s.status === 'failed' || s.status === 'timeout'
@@ -87,15 +108,27 @@ export function Turn({
 
   // 任务结局卡（TAF）：只翻译 `task.outcome`。done+partial 是 warn，done+failed+changed 是 danger（回滚用 DiffView 上的按钮）
   const outcome = session.task?.outcome
-  const outcomeCard: 'partial' | 'failed' | null =
-    session.status === 'done' && outcome === 'partial'
+  const dataFigureTurn = session.task?.task_type === DATA_FIGURE_TASK
+  const outcomeCard: 'partial' | 'failed' | null = dataFigureTurn
+    ? null
+    : session.status === 'done' && outcome === 'partial'
       ? 'partial'
       : session.status === 'done' && outcome === 'failed' && session.changed
         ? 'failed'
         : null
-  const rejected = session.status === 'failed' && outcome === 'failed' && !session.changed
+  const rejected = session.status === 'failed' && outcome === 'failed' && !session.changed && !dataFigureTurn
   const unmetIds = (session.task?.unmet ?? []).map((u) => u.constraint_id)
   const unmetDetail = unmetIds.length ? [ai('notice.unmetHeading'), ...unmetIds].join('\n') : null
+  // 从数据出图：没有 diff、没有回滚；partial / needs_input 各一张 warn 卡，failed 走下面通用的失败卡（正文 = error）
+  const dataCard: 'partial' | 'needs_input' | null =
+    dataFigureTurn && session.status === 'done' && (outcome === 'partial' || outcome === 'needs_input') ? outcome : null
+  // 提交后验证失败、文件已经写进项目：danger 卡（不出重试——再来一次会建出 `_2`）；详情列 unmet id
+  const failedWritten =
+    dataFigureTurn && outcome === 'failed' && !!session.task?.script && !session.unconfirmed
+  // 结果不确定（没收到答复，可能已经生成）：warn 卡 + 「查询结果」；不是失败卡
+  const unconfirmedCard = dataFigureTurn && session.unconfirmed === true && session.status !== 'running'
+  const preview = session.task?.preview
+  const previewY = preview?.y?.[0]
 
   return (
     // 新的一轮落位：淡入 + 4px 上浮 + 0.985 缩放，弹簧收尾（settle-in，宪法第十八节）
@@ -129,6 +162,20 @@ export function Turn({
         </div>
       )}
 
+      {dataCard && (
+        <Notice
+          tone="warn"
+          data-ai-task-outcome={outcome}
+          detail={dataCard === 'partial' ? unmetDetail : null}
+        >
+          {dataCard === 'partial'
+            ? ai('notice.dataFigurePartial')
+            : preview?.x && previewY
+              ? ai('notice.dataFigureNeedsInputExample', { x: preview.x, y: previewY })
+              : ai('notice.dataFigureNeedsInput')}
+        </Notice>
+      )}
+
       {outcomeCard && (
         <Notice
           tone={outcomeCard === 'partial' ? 'warn' : 'danger'}
@@ -139,7 +186,31 @@ export function Turn({
         </Notice>
       )}
 
-      {!outcomeCard && (failed || session.error) && (
+      {failedWritten && (
+        <Notice tone="danger" data-ai-task-outcome="failed" detail={unmetDetail}>
+          {ai('notice.dataFigureFailedWritten')}
+        </Notice>
+      )}
+
+      {unconfirmedCard && (
+        <Notice
+          tone="warn"
+          data-ai-data-figure-unconfirmed
+          action={
+            <Button
+              data-ai-data-figure-reconcile
+              size="sm"
+              onClick={() => void useAiStore.getState().reconcileDataFigure(session.id)}
+            >
+              {ai('notice.dataFigureReconcile')}
+            </Button>
+          }
+        >
+          {ai('notice.dataFigureUnconfirmed')}
+        </Notice>
+      )}
+
+      {!outcomeCard && !failedWritten && !unconfirmedCard && (failed || session.error) && (
         <Notice
           tone="danger"
           data-ai-error="session"

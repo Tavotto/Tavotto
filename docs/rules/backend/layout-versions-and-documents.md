@@ -54,6 +54,8 @@
   列表响应带 `legacy_unreadable: {name, size}`（只有文件名与大小，不含路径），写入不再 409 卡死。
   新增的响应字段只有：`legacy_unreadable`，以及信封坏的那一条在列表里带 `damaged: true`（只赔掉自己，其余照常；
   取它的正文回 409 `versions_unreadable`）；索引读不出来 / 来自更新的格式同样回 409 `versions_unreadable`，零改动。
+  **显式修复**（D3）：`POST /api/versions/<docId>/rebuild` 在版本锁内从信封重建索引，只写新索引、不删任何文件，
+  响应带 `added` / `dropped`（见 ADR 0140 §九）。`atomicio` 不对 `os.replace` 做重试（会覆盖外部写入，#1241）。
   **策略只有一处**：`versionstore.legacy_policy`（现行条数 + 24 MB 字节策略，D2 不改语义）与常量 `KEEP_*` / `MOMENTS` /
   `VERSION_ID_RE` / `is_named` / `kind` 是唯一出处，`app` 的 `VERSION_KEEP_*` 等是别名（按 `is` 钉死），新存储经
   `app._version_policy` 调用，上限按调用时刻的 `app.VERSION_KEEP_*` 传入（测试仍可改写）；列表的 `budget` 按
@@ -75,7 +77,7 @@
   冷态无当前回执时可按明确引用读档，已知新回执则必须相符（授权边界见 `export-pipeline.md`）。
   **保存先冻结、再单次原子写正文**：命名保存和自动保存都在文档锁内冻结，成功的引用随正文一起落盘，
   不先写一份无引用正文再补写。某来源冻结失败时清掉**本次待保存正文**里的旧引用，返回
-  `svg_snapshot_warnings`，文档仍保存；成功响应的 `figure_snapshots` 是这次正文实际写下的引用表。
+  `svg_snapshot_warnings`，文档仍保存（该字段只是后端事实，**前端保存 / 另存为 / 顶栏都不展示**；缺快照到真正导出 SVG 时由 `svg_snapshot_missing` 一句话说明（没有脚本的来源仍报中性的 `svg_source_unsupported`））；成功响应的 `figure_snapshots` 是这次正文实际写下的引用表。
   前端只把响应合回同一项目 / 文档加载轮次且源、patch 与执行代仍匹配的面板，不让晚到的保存响应复活旧引用。
   可信 `figure_snapshot_invalidation` 的实际执行事实、源或 override 改变会清除相关引用（含非当前画布）；
   不能从 HTTP 成功、descriptors 或 ready 猜执行；失败、零图、部分输出、开始后取消也撤该 owner 的旧输出全集，

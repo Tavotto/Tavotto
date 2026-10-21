@@ -162,7 +162,7 @@ test('故障卡 → 打开 → 发送：脚本运行失败卡里入口在折叠�
     expect(connections).toBe(0)
     // 收起态紧凑：标题 + 副标题一句 + 说明（标签 + 框 + 提示行）+ 问题类型 + 一行附件 + 按钮行
     const compact = await dialog.boundingBox()
-    expect(compact!.height).toBeLessThan(500) // 1400×900 下实测约 466
+    expect(compact!.height).toBeLessThan(760) // 1400×900；2026-10-21 额外内容三框移出折叠区后上限放宽（此前 500，实测约 466）
     if (SHOTS) {
       await page.screenshot({ path: `${SHOTS}/send-dialog-collapsed.png` })
       await dialog.locator('[data-diag-send-details] > summary').click()

@@ -170,6 +170,27 @@ def test_a_taken_name_gets_a_suffix_and_never_overwrites(project):
 
 
 @needs_worker
+@pytest.mark.parametrize("mutate", ["delete", "rename"])
+def test_a_retried_request_reconciles_after_the_csv_is_gone(project, mutate):
+    """响应丢了、脚本已提交；用户随后删掉 / 改名 CSV，同 id 重发仍回首次的结局（不是 400，不再建新脚本）。"""
+    m, client, figs, _ = project
+    first = _post(client, "data/standard.csv", "画出来。", rid="rid-d07-0002").get_json()
+    assert first["task"]["outcome"] == "completed", first
+    before = sorted(p.name for p in (figs / "data").glob("*.py"))
+    src = figs / "data" / "standard.csv"
+    if mutate == "delete":
+        src.unlink()
+    else:
+        src.rename(figs / "data" / "renamed.csv")
+    resp = _post(client, "data/standard.csv", "画出来。", rid="rid-d07-0002")
+    assert resp.status_code == 200, resp.get_json()
+    again = resp.get_json()
+    assert again["task"]["deduped"] is True and again["task"]["task_id"] == first["task"]["task_id"]
+    assert again["script"] == first["script"]
+    assert sorted(p.name for p in (figs / "data").glob("*.py")) == before
+
+
+@needs_worker
 def test_the_same_request_runs_once(project):
     m, client, figs, _ = project
     first = _post(
@@ -180,7 +201,9 @@ def test_the_same_request_runs_once(project):
     ).get_json()
     assert first["task"]["outcome"] == "completed", first
     assert again["task"]["deduped"] is True and again["task"]["task_id"] == first["task"]["task_id"]
-    assert "script" not in again
+    # 去重回的是**首次**写下的脚本（本次重算的落点会是 `_2`，不能用）；项目里仍只有一份
+    assert again["script"] == first["script"] == "data/two_series_figure.py"
+    assert again["stem"] == first["stem"] == "two_series_figure"
     assert sorted(p.name for p in (figs / "data").glob("two_series_figure*.py")) == [
         "two_series_figure.py"
     ]
@@ -357,8 +380,12 @@ def test_a_render_that_does_not_match_the_data_fails_the_task(project, monkeypat
         return out
 
     monkeypatch.setattr(ai_data_figure, "expected_fingerprints", skewed)
-    task = _post(client, "data/standard.csv", "画出来").get_json()["task"]
+    body = _post(client, "data/standard.csv", "画出来").get_json()
+    task = body["task"]
     assert task["outcome"] == "failed", task
+    assert body["script"] == "data/standard_figure.py", (
+        "提交后验证失败：文件已建，响应如实带 script"
+    )
     assert _checks(task["task_id"])["data.voltage_mV"] == ("failed", "data_mismatch")
 
 
@@ -367,3 +394,65 @@ def test_an_existing_output_with_the_same_name_is_not_adopted(project):
     (figs / "data" / "standard_figure.pdf").write_bytes(b"%PDF-1.4 old\n")
     pl = ai_data_task.place(figs, "data/standard.csv")
     assert pl.stem == "standard_figure_2", "旧产物不让新图冒认"
+
+
+def test_data_files_flag_off_is_404(project):
+    m, client, figs, state = project
+    state["taf"] = False
+    r = client.get("/api/ai/data-files")
+    assert r.status_code == 404 and r.get_json()["code"] == "taf_disabled"
+
+
+def test_data_files_lists_project_csv_only(project):
+    m, client, figs, state = project
+    n = len(list(FIX.glob("*.csv")))
+    assert n == 8
+    (figs / ".hidden").mkdir()
+    (figs / ".hidden" / "secret.csv").write_text("a,b\n1,2\n", encoding="utf-8")
+    (figs / "node_modules").mkdir()
+    (figs / "node_modules" / "dep.csv").write_text("a,b\n1,2\n", encoding="utf-8")
+    (figs / "data" / "UPPER.CSV").write_text("a,b\n1,2\n", encoding="utf-8")
+    (figs / "data" / "notes.txt").write_text("x", encoding="utf-8")
+    body = client.get("/api/ai/data-files").get_json()
+    paths = [f["path"] for f in body["files"]]
+    assert body["truncated"] is False
+    assert paths == sorted(paths) and len(paths) == n + 1
+    assert "data/UPPER.CSV" in paths and "data/standard.csv" in paths
+    assert not any(".hidden" in p or "node_modules" in p for p in paths)
+    assert all(isinstance(f["size"], int) and f["size"] > 0 for f in body["files"])
+
+
+def test_data_files_truncates_at_limit(project, monkeypatch):
+    m, client, figs, state = project
+    monkeypatch.setattr(m, "_DATA_FILES_MAX", 3)
+    body = client.get("/api/ai/data-files").get_json()
+    assert len(body["files"]) == 3 and body["truncated"] is True
+
+
+def test_capabilities_carries_taf_enabled(project):
+    m, client, figs, state = project
+    assert client.get("/api/ai/capabilities").get_json()["taf_enabled"] is True
+    state["taf"] = False
+    assert client.get("/api/ai/capabilities").get_json()["taf_enabled"] is False
+
+
+def test_data_file_listing_stops_at_the_scan_budget(project, monkeypatch):
+    m, client, figs, _ = project
+    monkeypatch.setattr(m, "_DATA_FILES_SCAN_MAX", 3)
+    body = client.get("/api/ai/data-files").get_json()
+    assert body["truncated"] is True, "目录项超了预算：停下并如实标 truncated"
+
+
+def test_data_file_scan_budget_counts_entries_one_by_one(project, monkeypatch):
+    """一个目录里的项数就超预算：超预算前已看过的 csv 保留（不是整批丢弃），且如实标 truncated。"""
+    m, client, figs, _ = project
+    big = figs / "big"
+    big.mkdir()
+    for i in range(10):
+        (big / f"f{i}.csv").write_text("a,b\n1,2\n", encoding="utf-8")
+    monkeypatch.setattr(m, "_DATA_FILES_SCAN_MAX", 5)
+    body = client.get("/api/ai/data-files").get_json()
+    assert body["truncated"] is True
+    assert 0 < len(body["files"]) <= 5, body
+    paths = [f["path"] for f in body["files"]]
+    assert paths == sorted(paths)

@@ -272,8 +272,10 @@ def _rebuild(root: Path) -> dict:
     best: dict[str, tuple[int, int, int, dict]] = {}  # vid -> (gen, seq, ...)
     try:
         names = sorted(os.listdir(root / ENVELOPE_DIR))
-    except OSError:
+    except (FileNotFoundError, NotADirectoryError):
         names = []
+    except OSError as exc:  # 枚举不了 ≠ 没有信封：中止，绝不据此提交空索引
+        raise IndexUnreadable(str(exc)) from exc
     for name in names:
         nm = _ENVELOPE_NAME.match(name)
         if nm is None:
@@ -287,8 +289,12 @@ def _rebuild(root: Path) -> dict:
                 continue
             seq = int(head.get("seq", 0))
             meta = _meta(entry, p.stat().st_size, head["doc_len"], head["doc_sha"], seq, gen)
-        except (OSError, ValueError, KeyError, TypeError):
-            continue  # 坏信封只赔掉自己
+        except FileNotFoundError:
+            continue  # 枚举之后被拿走了：它已经不在
+        except OSError as exc:  # 读不了（权限 / I/O）≠ 内容损坏：中止，不能当它不存在
+            raise IndexUnreadable(str(exc)) from exc
+        except (ValueError, KeyError, TypeError):
+            continue  # 内容损坏的信封只赔掉自己
         if vid not in best or gen > best[vid][0]:
             best[vid] = (gen, seq, 0, meta)  # 每个 id 取最高的一代
     found = [(seq, vid, meta) for vid, (_, seq, _, meta) in best.items()]
@@ -338,11 +344,16 @@ def _load_index(root: Path, now: int, *, write: bool) -> dict | None:
             idx = documents.loads_document(raw)
         except ValueError:  # 含 DocumentError（非有限数）与 JSON / 编码错误
             idx = None
-        if isinstance(idx, dict) and isinstance(idx.get("entries"), list):
+        if isinstance(idx, dict):
             fmt = idx.get("format")
-            if isinstance(fmt, int) and fmt > FORMAT:
+            # 先认格式再验形状：未来格式可能改了 / 删了 entries，不能被判成「损坏」而重建覆盖
+            if isinstance(fmt, int) and not isinstance(fmt, bool) and fmt > FORMAT:
                 raise IndexUnreadable(f"索引来自更新的格式 {fmt}")
-            if fmt == FORMAT and all(_valid_meta(m) for m in idx["entries"]):
+            if (
+                fmt == FORMAT
+                and isinstance(idx.get("entries"), list)
+                and all(_valid_meta(m) for m in idx["entries"])
+            ):
                 return idx
     rebuilt = _rebuild(root)
     if write:
@@ -363,6 +374,13 @@ def rebuild_index(versions_dir: Path, doc_id: str, *, now: int, write: bool = Fa
                 atomicio.write_bytes(root / f"index.corrupt-{_sha(raw)}.json", raw)
             except OSError as exc:
                 raise IndexUnreadable(str(exc)) from exc
+            # 旧索引还读得动就把信封里没有的簿记带过去：#264 的「旧历史还在」标记不能因为一次修复消失
+            try:
+                old = documents.loads_document(raw)
+            except ValueError:
+                old = None
+            if isinstance(old, dict) and isinstance(old.get("legacy_unreadable"), dict):
+                idx["legacy_unreadable"] = old["legacy_unreadable"]
         idx = {**_write_index(root, idx, now), "recovered": True}
     return idx
 

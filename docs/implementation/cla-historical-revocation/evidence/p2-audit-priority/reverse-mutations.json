@@ -1,0 +1,36 @@
+[
+  {
+    "name": "revert-terminal-summary-priority",
+    "before": "const state=e.action==='revoke'?'revoked':blocked?'blocked':this.s.c.delegatedCountersigningEnabled!==true || !this.s.c.signingEnabled?'disabled':\n      grant.id!==this.s.c.holderAuthorizationId || g.public_key!==this.s.c.holderAuthorizationKey ||\n      p.version!==this.s.c.policy.agreements.individual.version || p.digest!==this.s.c.policy.agreements.individual.sha256?'superseded':\n      now>=grant.expires_at?'expired':now<grant.not_before?'not_started':e.action==='suspend'?'suspended':\n      e.hash!==r.control_hash?'superseded':'current';",
+    "after": "const state=blocked?'blocked':this.s.c.delegatedCountersigningEnabled!==true || !this.s.c.signingEnabled?'disabled':\n      grant.id!==this.s.c.holderAuthorizationId || g.public_key!==this.s.c.holderAuthorizationKey ||\n      p.version!==this.s.c.policy.agreements.individual.version || p.digest!==this.s.c.policy.agreements.individual.sha256?'superseded':\n      now>=grant.expires_at?'expired':now<grant.not_before?'not_started':e.action==='revoke'?'revoked':e.action==='suspend'?'suspended':\n      e.hash!==r.control_hash?'superseded':'current';",
+    "file": "src/native/delegation.ts",
+    "location_count": 1,
+    "argv": [
+      "node",
+      "--test",
+      "tests/independent-terminal-audit-priority.test.mjs"
+    ],
+    "cwd": "/tmp/cla-historical-revocation-audit-review/mutants/revert-terminal-summary-priority",
+    "selected_exit_code": 1,
+    "actual_assertion_error": true,
+    "log": "/tmp/cla-historical-revocation-audit-review/revert-terminal-summary-priority.txt",
+    "sha256": "3bb65c4a85c6e08983b82897102ee80c0316f8aa66baf5f0f8c511e5e9541661"
+  },
+  {
+    "name": "revocation-must-remain-inactive",
+    "before": "return {current:state==='current',state,executed_at:",
+    "after": "return {current:state==='current'||state==='revoked',state,executed_at:",
+    "file": "src/native/delegation.ts",
+    "location_count": 1,
+    "argv": [
+      "node",
+      "--test",
+      "tests/independent-terminal-audit-priority.test.mjs"
+    ],
+    "cwd": "/tmp/cla-historical-revocation-audit-review/mutants/revocation-must-remain-inactive",
+    "selected_exit_code": 1,
+    "actual_assertion_error": true,
+    "log": "/tmp/cla-historical-revocation-audit-review/revocation-must-remain-inactive.txt",
+    "sha256": "1ff7230f25a0452c55a4279ef1e51022a591d7f55123e0b71384c3cf7da0f2b5"
+  }
+]

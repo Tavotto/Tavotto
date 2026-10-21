@@ -27,7 +27,6 @@ import { reportSaveSkipped, stillCurrent, type SaveContext } from './saveContext
 import { useUiStore } from './uiStore'
 import { emitLayoutSaved } from '@/lib/layoutSaved'
 import { captureMoment } from '@/lib/timelineCheckpoint'
-import { svgSnapshotWarning } from '@/lib/svgSnapshotWarning'
 
 /**
  * 写回队列里的一项。`started` 之前同一个保存上下文再按 ⌘S 都并进它（它开始时现读绑定与内容）。
@@ -117,8 +116,7 @@ async function writeOnce(ctx: SaveContext): Promise<boolean> {
       // 写的途中又改过：项目里这份已经落后了，圆点不能灭
       setProjectFile({ ...now, name, file, revision: res.revision, dirty: edited() }, ctx.documentId)
     }
-    const warning = svgSnapshotWarning(file, res.svg_snapshot_warnings)
-    ui.setStatus(warning ?? msg('save.doneProject', { file }, 'workspace'), warning ? 'info' : 'done')
+    ui.setStatus(msg('save.doneProject', { file }, 'workspace'), 'done')
     return true
   } catch (e) {
     const revision =

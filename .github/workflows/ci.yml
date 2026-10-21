@@ -759,7 +759,7 @@ jobs:
           python -m pytest --shard=${{ matrix.shard }}/4
           --shard-manifest="${{ runner.temp }}/shard-manifest.json"
           --junitxml "${{ runner.temp }}/junit.xml"
-          --durations=50 -rs
+          --durations=50 -rs -vv
       # 分片证据（同 backend-fast）：只作证据与重平衡数据，不作判定输入。
       - name: 分片证据
         if: always()

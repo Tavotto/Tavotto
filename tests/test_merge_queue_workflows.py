@@ -2742,17 +2742,35 @@ _BUILTIN_SELF_HOSTED_LABELS = frozenset(
     {"self-hosted", "linux", "windows", "macos", "x64", "arm64", "arm"}
 )
 
-#: 「PR 事件」——payload 由不可信的一方决定内容的三种触发。`merge_group` 也算：
-#: 队列候选是「最新 main + 前序 PR + 当前 PR」的组合提交，PR 里的 workflow 文件
-#: 一样会随之被执行。
-_UNTRUSTED_EVENTS = frozenset({"pull_request", "pull_request_target", "merge_group"})
+#: 「不可信事件」包括 PR / merge_group 和 review / comment 载荷：
+#: issue_comment 虽在默认分支运行，其用户评论仍不可信，也可能带有更高权限。
+#: PR / merge_group 的 workflow 代码本身也可能来自尚未受信的提交。
+_UNTRUSTED_EVENTS = frozenset(
+    {
+        "pull_request",
+        "pull_request_target",
+        "pull_request_review",
+        "pull_request_review_comment",
+        "issue_comment",
+        "merge_group",
+    }
+)
 
-#: 本仓库 workflow 用到的触发事件的闭集。写成正面枚举而不是「不许出现
-#: pull_request_target」：否定式会被自己的注释咬到，而闭集在**任何**新事件进来时都红，
-#: 逼着写的人到这里登记一次——`pull_request_target` / `issue_comment` /
-#: `workflow_run` 这几种「带着更高权限跑不可信输入」的事件，就是靠这一下被拦住的。
+#: 本仓库已审查过的事件闭集。引入新事件必须评估 payload、runner、权限与 checkout；
+#: `pull_request_target` / `workflow_run` 仍明确不在闭集中。
+#: 审查与评论事件仅供 review-budget.yml 只读观察，见本类专门的闭集契约。
 _KNOWN_EVENTS = frozenset(
-    {"push", "pull_request", "merge_group", "schedule", "workflow_dispatch", "workflow_call"}
+    {
+        "push",
+        "pull_request",
+        "pull_request_review",
+        "pull_request_review_comment",
+        "issue_comment",
+        "merge_group",
+        "schedule",
+        "workflow_dispatch",
+        "workflow_call",
+    }
 )
 
 _ACTIONLINT = ROOT / ".github" / "actionlint.yaml"
@@ -2916,7 +2934,7 @@ class TestRunnerTrustZones:
       用到的自托管标签集合，多一个「预留」标签也红——预留标签是下一个人「顺手用一下」
       的入口。
 
-    四条判据一律正面形式（集合 ⊆ 枚举 / 集合 == 集合），不写「不许出现 xxx」。
+    五条判据一律正面形式（集合 ⊆ 枚举 / 集合 == 集合），不写「不许出现 xxx」。
     """
 
     @staticmethod
@@ -2924,7 +2942,7 @@ class TestRunnerTrustZones:
         return _workflow_texts()
 
     def test_untrusted_events_reach_only_hosted_runners(self):
-        """监听 pull_request / pull_request_target / merge_group 的每个 workflow，其**全部** job
+        """监听 _UNTRUSTED_EVENTS 的每个 workflow，其**全部** job
         （含矩阵展开、含经可复用 workflow 转到的）的 `runs-on` ⊆ 托管 runner 枚举。"""
         texts = self._texts()
         listening = {n for n, t in texts.items() if _events_of(t) & _UNTRUSTED_EVENTS}
@@ -2938,6 +2956,23 @@ class TestRunnerTrustZones:
                 f"{name} 监听 {sorted(_events_of(texts[name]) & _UNTRUSTED_EVENTS)}，"
                 f"却有 job 会派到 {sorted(stray)}——不可信代码将跑在常驻真机上"
             )
+
+    def test_review_comment_webhooks_are_read_only_main_audit_only(self):
+        """把已登记的高风险 webhook 限定到一个可信 checkout 的 hosted 只读审计。"""
+        review_events = {"issue_comment", "pull_request_review", "pull_request_review_comment"}
+        assert review_events <= _KNOWN_EVENTS
+        assert review_events <= _UNTRUSTED_EVENTS
+        texts = self._texts()
+        listeners = {name for name, body in texts.items() if _events_of(body) & review_events}
+        assert listeners == {"review-budget.yml"}, (
+            f"审查和评论事件只许审计 workflow 监听：{sorted(listeners)}"
+        )
+        advisory = _code(texts["review-budget.yml"])
+        assert _runners_of_workflow("review-budget.yml", texts) == {"ubuntu-latest"}
+        assert "permissions:\n  contents: read\n  pull-requests: read\n  issues: read" in advisory
+        assert "ref: ${{ github.event.repository.default_branch }}" in advisory
+        assert "persist-credentials: false" in advisory
+        assert "github.event.issue.pull_request" in advisory
 
     def test_the_lab_label_reaches_only_the_reusable_qualification_and_its_trusted_callers(self):
         """`tavotto-lab` 只出现在 `_lab-qualification.yml`（只可 `workflow_call`）。

@@ -1296,6 +1296,8 @@
         "doneAfterCancel": "Cancelled too late — the report had already arrived",
         "unknownOutcome": "Could not confirm whether the report arrived; to have it removed, open a GitHub issue quoting only the report ID",
         "extrasTitle": "Extras (not sent by default)",
+        "extrasSelectAll": "Select all",
+        "extrasSelectNone": "Select none",
         "extra": {
           "source": "Script source",
           "crash_reports": "System crash reports",

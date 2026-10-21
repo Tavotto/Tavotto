@@ -4,7 +4,7 @@ import { t as translate } from '@/i18n'
 import { Bookmark, ClipboardList, ExternalLink, FolderOpen, FolderPlus, Info } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { backendErrorMsg, type ProjectStatus } from '@/lib/api'
-import { canRevealInFileManager } from '@/lib/desktop'
+import { canRevealInFileManager, isDesktop } from '@/lib/desktop'
 import { disambiguateRecent, matchesRecent, splitRecent } from '@/lib/recentProjects'
 import { useProjectStore } from '@/store/projectStore'
 import { useUiStore } from '@/store/uiStore'
@@ -290,7 +290,8 @@ function CurrentProject({ project, pinned }: { project: ProjectStatus; pinned: b
               {pinned ? ws('unpin') : ws('pin')}
             </MenuItem>
           )}
-          {project.id && (
+          {/* 桌面壳不新开窗口（main.rs new_window_decision 一律拒绝），点了会静默无反应：桌面版不给这一项 */}
+          {project.id && !isDesktop() && (
             <MenuItem onSelect={() => openInNewTab(project.id!)} icon={ExternalLink}>
               {ws('openInNewTab')}
             </MenuItem>

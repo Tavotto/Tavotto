@@ -1046,7 +1046,7 @@ def api_experiments():
     """实验开关的只读投影（ADR 0139 PR2）：前端据此决定要不要在严格策略被拒后再试来源驱动策略。
 
     **不放进公开的 `/api/version`**（它只说「这一版会什么」）：开关是用户的设置，要会话认证。
-    只认显式 True（`config.experiment_enabled`），每次现读配置——用户改 `config.json` 后不必重启。"""
+    默认开、只有显式 `false` 关（`artifactcontext.script_backed_enabled`），每次现读配置——用户改 `config.json` 后不必重启。"""
     resp = jsonify(
         {engine_artifactcontext.EXPERIMENT: engine_artifactcontext.script_backed_enabled()}
     )
@@ -1486,7 +1486,7 @@ def _execution_source(
         saved = _load_svg_snapshot(rel_id, overrides, out_dir, reference=reference)
         if saved is None:
             raise engine_exportreq.ExportRequestError(
-                "svg_source_unsupported",
+                "svg_snapshot_missing",
                 f"{rel_id}: the saved Figure snapshot no longer matches this source or edit.",
                 {"id": rel_id},
             )
@@ -1519,7 +1519,7 @@ def _execution_source(
             return saved
     if rendered is None and include_svg:
         raise engine_exportreq.ExportRequestError(
-            "svg_source_unsupported",
+            "svg_snapshot_missing",
             f"{rel_id}: no verified SVG snapshot; explicitly run this source before exporting SVG.",
             {"id": rel_id},
         )
@@ -8672,7 +8672,10 @@ def _agent_error(exc: "engine_ai.AgentError"):
 def api_ai_capabilities():
     """实测本机每个已注册编码 Agent（安装/版本/就绪/模型/推理强度）+ 第三方接口。"""
     refresh = request.args.get("refresh") in ("1", "true", "yes")
-    resp = jsonify(engine_ai.capabilities(refresh=refresh))
+    # `taf_enabled`（TAF 实验开关）只在这一层并入：`engine_ai.capabilities` 的缓存内容不含它，开关随时可翻
+    resp = jsonify(
+        {**engine_ai.capabilities(refresh=refresh), "taf_enabled": engine_ai_figure_edit.enabled()}
+    )
     resp.headers["Cache-Control"] = "no-store"
     return resp
 
@@ -11408,6 +11411,21 @@ def api_ai_data_figure():
         return jsonify({"error": "缺少数据文件或指令", "code": "data_figure_input_missing"}), 400
     if rid is not None and not _valid_client_request_id(rid):
         abort(400)
+    if rid:
+        # **先去重、后解析数据**（同 `/api/ai/run`）：数据文件是可变目标。首次请求已提交脚本、响应丢了，用户随后改名 /
+        # 删掉 CSV，再点「查询结果」的同 id 重发若先走 `prepare` 就是确定的 400——前端会把「未确认」翻成「失败」并放开
+        # 重发，原脚本却已经写进项目。已登记的 rid 一律直接回既有任务的结局
+        known = engine_ai.find_request(str(ctx.path.resolve()), rid)
+        if known is not None and known["status"] == engine_ai.REQUEST_SUPERSEDED:
+            return _agent_error(engine_ai.AgentError("ai_request_superseded"))
+        if known is not None:
+            sid = known["session"]
+            found = engine_ai_tasks.load(sid) or {"task_id": sid, "outcome": None, "final": None}
+            out = {"task": {**found, "deduped": True}, "summary": None}
+            recorded = _deduped_data_script(ctx.path, found.get("task_id"))
+            if recorded is not None:
+                out.update(script=recorded[0], stem=recorded[1])
+            return jsonify(out)
     try:
         prepared = engine_ai_data_task.prepare(ctx.path, data_rel, instruction)
         env = engine_ai_data_task.envelope_for(
@@ -11427,11 +11445,95 @@ def api_ai_data_figure():
     res = engine_ai_tasks.run_task(env, executor)
     cand = executor.candidate
     out = {"task": res, "summary": prepared.summary.to_dict()}
-    if cand is not None and cand.committed:
+    if res.get("deduped"):
+        # 去重 = 这条请求早已执行：本次 `prepare` 算出的落点会因为文件已存在而变成 `_2`，不能用。脚本以**首次执行时
+        # 写进契约的那个**为准（历史库里的 envelope），文件此刻还在才报（没提交成功的任务没有文件）
+        recorded = _deduped_data_script(ctx.path, res.get("task_id"))
+        if recorded is not None:
+            out.update(script=recorded[0], stem=recorded[1])
+    elif cand is not None and cand.committed:
         out.update(script=script_rel, stem=prepared.placement.stem)
     if isinstance(prepared.plan, engine_ai_data_figure.NeedsInput) and prepared.plan.preview:
         out["preview"] = prepared.plan.preview.to_dict()
     return jsonify(out)
+
+
+def _deduped_data_script(root: Path, task_id) -> tuple[str, str] | None:
+    """去重响应里补上首次执行写下的脚本（项目相对路径, 文件主干）；没有 / 文件已不在 → None。"""
+    if not isinstance(task_id, str) or not task_id:
+        return None
+    row = engine_ai_history.get(task_id)
+    try:
+        rel = row["envelope"]["output_contract"]["allowed_writes"][0]
+    except (TypeError, KeyError, IndexError):
+        return None
+    if not isinstance(rel, str) or not rel:
+        return None
+    full = root / rel
+    try:
+        if (
+            full.is_symlink()
+            or not full.is_file()
+            or not full.resolve().is_relative_to(root.resolve())
+        ):
+            return None
+    except OSError:
+        return None
+    return rel, full.stem
+
+
+_DATA_FILES_MAX = 500
+#: 列表接口最多看多少个目录项（大项目里一次点击不至于无界遍历；超了就 truncated，不假装列全了）
+_DATA_FILES_SCAN_MAX = 50_000
+
+
+@app.get("/api/ai/data-files")
+def api_ai_data_files():
+    """TAF 数据出图的数据文件列表（**实验开关后面**，只读）：当前项目内的 `.csv`（后缀大小写不敏感）。
+
+    walk 剪枝与隐藏目录规则同 `discover.PRUNE_DIRS`；不跟随链接；最多 500 个，按项目相对 POSIX 路径排序；最多看
+    `_DATA_FILES_SCAN_MAX` 个目录项，超了停下并标 `truncated`。"""
+    if not engine_ai_figure_edit.enabled():
+        return jsonify({"error": "实验功能未开启", "code": "taf_disabled"}), 404
+    root = require_project()
+    found: list[tuple[str, int]] = []
+    truncated = False
+    seen = 0
+    stack = [str(root)]
+    # 手写栈 + scandir 逐项迭代：每看一项计一次数，到预算立刻停（`os.walk` 会先把整个目录枚举完才让我们数）；
+    # 已收集的保留。剪枝规则不变：隐藏目录、PRUNE_DIRS、不跟随链接、跳过链接文件
+    while stack and not truncated:
+        cur = stack.pop()
+        try:
+            it = os.scandir(cur)
+        except OSError:
+            continue
+        with it:
+            for entry in it:
+                seen += 1
+                if seen > _DATA_FILES_SCAN_MAX:
+                    truncated = True
+                    break
+                name = entry.name
+                try:
+                    if entry.is_symlink():
+                        continue
+                    if entry.is_dir(follow_symlinks=False):
+                        if not name.startswith(".") and name not in engine_discover.PRUNE_DIRS:
+                            stack.append(entry.path)
+                        continue
+                    if not name.lower().endswith(".csv") or name.startswith("."):
+                        continue
+                    size = entry.stat(follow_symlinks=False).st_size
+                except OSError:
+                    continue
+                found.append((Path(entry.path).relative_to(root).as_posix(), size))
+    found.sort()
+    if len(found) > _DATA_FILES_MAX:
+        found, truncated = found[:_DATA_FILES_MAX], True
+    resp = jsonify({"files": [{"path": p, "size": n} for p, n in found], "truncated": truncated})
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
 
 
 # --- 助手草稿与待确认账本（ADR 0132）：存后端（data_dir 的 ai_history 库），不存浏览器 -----------------
@@ -13689,6 +13791,35 @@ def api_versions_list(doc_id):
     if tl.legacy_unreadable() is not None:
         body["legacy_unreadable"] = tl.legacy_unreadable()
     return jsonify(body)
+
+
+@app.post("/api/versions/<doc_id>/rebuild")
+def api_versions_rebuild(doc_id):
+    """显式修复：从信封文件重建这份文档的版本索引（ADR 0140 §八）。
+
+    给「同步工具留下了冲突副本 / 索引与信封对不上」用。版本锁内执行，与追加 / 改名 / 删除串行；
+    只读信封、写新索引，**不删任何文件**——旧索引的原字节先留成 `index.corrupt-<sha>.json`。
+    副作用要让用户知道：已被删除 / 裁掉但信封还在的版本会复活（`added`），信封已经没了的条目会消失（`dropped`）。
+    没有新存储（还在旧单文件上）→ 404；索引读不动 / 来自更新的格式 → 409 `versions_unreadable`，零改动。"""
+    path = _versions_path(doc_id)
+    with _versions_lock(doc_id):
+        if not engine_versionstore.has_store(path.parent, path.stem):
+            abort(404)
+        # 先过一遍读侧：读不动 / 未来格式在这里抛 IndexUnreadable，绝不被重建降级覆盖
+        before = engine_versionstore.list_index(path.parent, path.stem) or {"entries": []}
+        idx = engine_versionstore.rebuild_index(
+            path.parent, path.stem, now=int(time.time()), write=True
+        )
+    old_ids = [e["id"] for e in before["entries"]]
+    new_ids = [e["id"] for e in idx["entries"]]
+    return jsonify(
+        {
+            "ok": True,
+            "count": len(new_ids),
+            "added": [i for i in new_ids if i not in old_ids],
+            "dropped": [i for i in old_ids if i not in new_ids],
+        }
+    )
 
 
 @app.get("/api/versions/<doc_id>/<vid>")

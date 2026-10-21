@@ -96,6 +96,6 @@ def test_routed_native_saves_svg_once_and_a_later_failed_execution_retires_it(tm
             app.call("/api/export", request)
         assert rejected.value.status >= 400
         assert rejected.value.body["status"] == "failed", rejected.value.body
-        assert rejected.value.body["code"] == "svg_source_unsupported", rejected.value.body
+        assert rejected.value.body["code"] == "svg_snapshot_missing", rejected.value.body
         assert rejected.value.body["outputs"] == []
         assert fallback._runs(log) == 2
