@@ -24,7 +24,7 @@ import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import ai_tasks, config, discover, figureverify, registry, scriptlock
+from . import ai_prompt_pack, ai_tasks, config, discover, figureverify, registry, scriptlock
 from .ai_tasks import FAILED, NOT_APPLICABLE, UNKNOWN, VERIFIED, CheckResult, TaskError
 
 TASK_TYPE = "figure_edit"
@@ -235,11 +235,8 @@ def remove_candidate(cdir: Path) -> None:
 
 
 def prompt_note(cand: Candidate) -> str:
-    """附在改图提示词末尾的一段：说明工作目录是副本、原项目只读。"""
-    return (
-        f"注意：当前工作目录是目标脚本的工作副本；原项目目录 {cand.project_root} 只供只读参考"
-        "（数据文件、同目录模块在那里），不要在原项目目录里创建或修改任何文件——改完的副本由外部系统核对后写回。"
-    )
+    """附在改图提示词末尾的一段：说明工作目录是副本、原项目只读（文字在 Prompt Pack 里）。"""
+    return ai_prompt_pack.candidate_note(ai_prompt_pack.DEFAULT, cand.project_root)
 
 
 # --------------------------------------------------------------------------- 适配器
@@ -475,43 +472,21 @@ class FigureEditAdapter:
 
         原项目被动了（`project.*`）不修：那是越过了只读边界，再让同一个 Agent 跑一次只会扩大面；只认闭集里的原因，
         新加的检查默认不可修。指令只写检查自己的观察（行号、stem、副本里的文件名），不回显项目路径以外的内容。"""
+        pack = ai_prompt_pack.DEFAULT
         lines = []
         for c in failed:
-            if (c.id, c.reason_code) not in _CORRECTABLE:
+            if (c.id, c.reason_code) not in ai_prompt_pack.CORRECTABLE:
                 return None
-            lines.append(_CORRECTABLE[(c.id, c.reason_code)](c.observed))
+            lines.append(ai_prompt_pack.fix_text(pack, (c.id, c.reason_code), c.observed))
         if not lines:
             return None
-        return {
-            "prompt": "上一次修改没有通过写回前的检查，原项目没有被改动。请在当前工作副本里只修正下面的问题，"
-            "保留用户要求的修改，不要运行脚本：\n" + "\n".join(f"- {s}" for s in lines)
-        }
+        return {"prompt": ai_prompt_pack.correction_prompt(pack, lines)}
 
     def explain(self, outcome: str, unmet: list[dict]) -> dict:
         return {
             "message_key": f"task.{TASK_TYPE}.{outcome}",
             "params": {"unmet": [u["constraint_id"] for u in unmet]},
         }
-
-
-def _syntax_line(o: dict) -> str:
-    where = f"第 {o['lineno']} 行" if o.get("lineno") else "脚本里"
-    return f"目标脚本{where}有语法错误（{o.get('detail') or 'SyntaxError'}），改成能被 Python 解析的代码。"
-
-
-#: 可修正的提交前失败（检查 id, 原因）→ 写给 Agent 的那一句。闭集：不在表里的失败一律不修正
-_CORRECTABLE = {
-    ("candidate.syntax", "syntax_error"): _syntax_line,
-    ("candidate.stems", "stems_changed"): lambda o: (
-        f"脚本输出的图名变了（原来 {o.get('before')}，现在 {o.get('after')}）；保持原来的输出文件名。"
-    ),
-    ("candidate.tree", "other_file_changed"): lambda o: (
-        f"除目标脚本外还改了 {o.get('files')}；把它们恢复成原样（原件在原项目目录里，只读参考），只改目标脚本。"
-    ),
-    ("candidate.target", "target_missing"): lambda o: (
-        "目标脚本在工作副本里不见了；按原项目里的同名脚本恢复它，再在它上面做用户要求的修改。"
-    ),
-}
 
 
 # --------------------------------------------------------------------------- 执行器（AI 桥的那一次 CLI 运行）

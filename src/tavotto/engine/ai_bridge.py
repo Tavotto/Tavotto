@@ -697,48 +697,15 @@ def _build_prompt(
     对助手的硬性要求，而不是含在叙述里的默认假设。
     图库细节（如 paper_style.py）按实际存在与否动态给出，不硬编码任何
     具体图库的私有规范。"""
-    lines = [
-        "你在修改一篇论文的图表脚本（Python）。",
-        f"目标脚本：{script}（在当前工作目录中）。",
-        "",
-        "硬性要求（外部系统靠这些约定解析产物，违反任何一条都会让图表无法再编辑）：",
-        "1. 图必须用 matplotlib 生成，并经 Figure.savefig(...)（或图库自带的保存封装）"
-        "落盘。禁止改用 PIL/Pillow、plotly、bokeh、seaborn 之外叠加的其他渲染后端、"
-        "手写 SVG/PDF、subprocess 调外部绘图工具等方式出图——外部系统靠拦截 "
-        "matplotlib 的 savefig 实现参数化编辑，其他方式生成的图完全无法再编辑。",
-        "2. 保持既有输出文件名（stem）与出图数量不变。",
-        "3. 只修改目标脚本；不要运行脚本（渲染由外部系统负责）；不要修改其他脚本或数据文件。",
-        # fname 锁死单个字体文件时 matplotlib 不做逐字形回退：换成 Times 之类的
-        # 西文字体后图里的中文全变方框（用户反馈）。引擎会尽量把 fname 换回族名
-        # （`overrides._release_font_file`），但提示词这一侧先别把它写出来。
-        "4. 设置字体用字体族名（rcParams['font.family'] 或 fontfamily= / "
-        "FontProperties(family=...)），不要用 FontProperties(fname=...) 指定字体文件路径："
-        "fname 会让 matplotlib 只从那一个文件取字形，西文字体里没有的中文会画成方框；"
-        "用族名时外部系统会自动给中文接上中文字体。",
-    ]
-    if figures_dir and (Path(figures_dir) / "paper_style.py").is_file():
-        lines.append(
-            "5. 图库有共享样式 paper_style.py：沿用它既有的字体/字号/配色/"
-            "版面规范，不要修改 paper_style.py 本身。"
-        )
-    ctx = context or {}
-    ctx_lines = []
-    if ctx.get("stem"):
-        ctx_lines.append(f"用户当前编辑的是该脚本的输出面板：{ctx['stem']}。")
-    if ctx.get("gid"):
-        ctx_lines.append(f"用户在界面上选中的元素：{ctx['gid']}（{ctx.get('label', '')}）。")
-    if ctx.get("overrides"):
-        ctx_lines.append(
-            "用户已在界面上做了这些非破坏性修改（渲染时叠加的 override，"
-            f"代表期望状态，供参考）：{ctx['overrides']}"
-        )
-    if ctx_lines:
-        lines += ["", *ctx_lines]
-    lines += [
-        "",
-        f"用户需求：{user_prompt}",
-    ]
-    return "\n".join(lines)
+    from . import ai_prompt_pack  # 文字在 Prompt Pack 里（ADR 0138 Phase 6）；V1 与原来逐字节相同
+
+    return ai_prompt_pack.figure_edit_prompt(
+        ai_prompt_pack.DEFAULT,
+        script=script,
+        user_prompt=user_prompt,
+        context=context,
+        shared_style=bool(figures_dir and (Path(figures_dir) / "paper_style.py").is_file()),
+    )
 
 
 def run(

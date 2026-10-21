@@ -43,7 +43,7 @@
 | Task Adapters | `ai_tasks` 内注册 `figure_edit`（Phase 3）与 `data_to_figure`（Phase 5）；首个 Fake Adapter 只在测试里 | 适配器声明：输入校验、意图契约、计划、所需工具 / 权限、候选产物类型、必做验证、结果解释 |
 | Tool Layer | 薄适配，映射到已有函数：`inspect_project`→registry / readiness，`inspect_figure`→worker manifest，`render_candidate`→`pool.build`（safe），`run_preflight`→`preflight.run`，`compare_figures`→`_compare_manifests` + 数据指纹比对，`inspect_export`→`inspector.inspect`，`stage_script_edit` / `commit_candidate` / `revert_candidate`→`scriptbackup.replace` / `ai_bridge.revert` | 每个工具的读写性、副作用、超时、错误码见 `03-contracts.md`；Phase 1 只落契约与 Fake，真实绑定随用随加 |
 | Verification | `engine/ai_tasks.py` 的 verify 段（L1–L3 判据）+ worker 侧 `manifest` 新增只读数据指纹 + 抽出的重放一致性检查（L4） | 四态沿用 `rendercore.inspector.VERDICTS`；详见 `05-verification-design.md` |
-| Harness Lab | `scripts/dev/taf_bench.py`、`scripts/dev/taf_optimize.py`（Phase 6）；Prompt Pack 版本化文件随产品发布，默认版本与今天 `_build_prompt` 的文本逐字节相同 | 离线、开发用；不得改安全面（`03-contracts.md` §六） |
+| Harness Lab | `scripts/dev/taf_bench.py`、`scripts/dev/taf_optimize.py`（Phase 6）；Prompt Pack（`engine/ai_prompt_pack.py`，Phase 6a）：白名单 schema、基线 `V1` 与 Phase 6 之前 `_build_prompt` / 副本说明 / 修正指令逐字节相同（冻结对拍），产品只用代码常量 `DEFAULT`——工具不能改默认值 | 离线、开发用；不得改安全面（`03-contracts.md` §六） |
 
 ## 三、流程 A：自然语言改图（figure_edit）
 
