@@ -1522,3 +1522,19 @@ def test_validate_route_names_the_reason_the_export_then_reports(env, scope):
     assert panel["formats"]["eps"]["how"] == "unavailable"
     assert eps["error"]["code"] == panel["formats"]["eps"]["reason"]
     assert _out(body, "pdf")["status"] == "done" and panel["formats"]["pdf"]["how"] != "unavailable"
+
+
+def test_source_rewritten_during_conversion_is_not_recorded_as_the_source(env, monkeypatch):
+    """转换期间原件被改写：manifest 不能说产物出自转换前算过 hash 的那份——不记来源，导出本身照常成功。"""
+    client, figs = env
+    real = m.pdfbackend.original_png
+
+    def rewriting(source, tmp, dpi, **kw):
+        facts = real(source, tmp, dpi, **kw)
+        Path(source).write_bytes(Path(source).read_bytes() + b"\n%rewritten")
+        return facts
+
+    monkeypatch.setattr(m.pdfbackend, "original_png", rewriting)
+    status, body = _post(client, _original(formats=["png"]))
+    assert status == 200 and body["status"] == "done", body
+    assert _out(body, "png")["manifest"]["provenance"]["sources"] == []

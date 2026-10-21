@@ -28,6 +28,8 @@ KIND_RASTER, KIND_PDF, KIND_SVG, KIND_RUNTIME = "raster", "pdf", "svg", "runtime
 
 #: 来源：磁盘原件 / 由当次 worker 现画 / 现画不了（画布范围：要现画却没有脚本）。
 SOURCE_DISK, SOURCE_REDRAW, SOURCE_UNAVAILABLE = "disk", "redraw", "unavailable"
+#: 面板带保存时的 Figure 快照引用且本来要现画：不跑脚本，加载持久化的快照；引用过期则拒绝导出。
+SOURCE_SNAPSHOT = "snapshot"
 
 #: 一种格式的做法。
 HOW_COPY, HOW_CONVERT, HOW_REDRAW, HOW_UNAVAILABLE = "copy", "convert", "redraw", "unavailable"
@@ -65,6 +67,15 @@ def wants_execution(
     return bool(runtime) or bool(overrides) or bool(rerender)
 
 
+def executes_from_snapshot(*, has_reference: bool) -> bool:
+    """要现画的面板带了快照引用时，`app._execution_source` 先查引用、加载快照，不跑脚本、不看有无脚本。
+
+    （调用方只在 `wants_execution` 成立后才问这一句；`rerender` 不算——它走 `_resolve_panel_source`，
+    不经 `_execution_source`。）
+    """
+    return bool(has_reference)
+
+
 def panel_route(
     *,
     scope: str,
@@ -84,7 +95,10 @@ def panel_route(
     rerender = (not canvas) and original_rerender(formats)
     executes = wants_execution(runtime=runtime, overrides=overrides, rerender=rerender)
     can_draw = runtime or has_script
-    if not executes:
+    edits = wants_execution(runtime=runtime, overrides=overrides)
+    if edits and executes_from_snapshot(has_reference=has_snapshot):
+        source = SOURCE_SNAPSHOT
+    elif not executes:
         source = SOURCE_DISK
     elif can_draw:
         source = SOURCE_REDRAW
@@ -145,6 +159,9 @@ def _format_route(
     if static_svg_asset and (canvas or fmt != "svg"):
         # 没有编辑的 SVG 素材：画布合成不接，原图范围只有 svg（逐字复制）与 eps（字节绑定的活 Figure）
         return _unavailable(REASON_SVG_ASSET_UNSUPPORTED)
+    if source == SOURCE_SNAPSHOT:
+        # 加载持久化快照，不跑脚本；引用过期（与源或编辑对不上）整次导出被拒
+        return {"how": HOW_CONVERT, "conditions": [COND_FIGURE_SNAPSHOT]}
     if source == SOURCE_UNAVAILABLE:
         return _unavailable(REASON_SOURCE_NEEDS_EXECUTION)
     if fmt == "svg":
@@ -157,8 +174,14 @@ def _format_route(
         return {"how": HOW_CONVERT, "conditions": [COND_FIGURE_SNAPSHOT]}
     if source == SOURCE_REDRAW:
         return {"how": HOW_REDRAW}
-    # 磁盘原件：矢量 PDF 整页搬运不重画；位图保源像素网格，装进 PDF 或原样转成 png / tiff
-    return {"how": HOW_COPY if (fmt == "pdf" and file_kind == KIND_PDF) else HOW_CONVERT}
+    # 磁盘原件。原图范围：矢量 PDF 整页搬运不重画，位图保源像素网格；画布范围：不论格式都经
+    # `rendercore.job.produce` 重新合成页面，没有逐字复制
+    copy = fmt == "pdf" and file_kind == KIND_PDF and not canvas
+    out: dict = {"how": HOW_COPY if copy else HOW_CONVERT}
+    if has_snapshot and file_kind == KIND_PDF:
+        # 静态 PDF 带快照引用：导出时按字节核引用，对不上整次拒绝
+        out["conditions"] = [COND_FIGURE_SNAPSHOT]
+    return out
 
 
 def build_route(

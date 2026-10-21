@@ -186,3 +186,38 @@ def test_validate_publishes_route_for_canvas_scope(client):
     )
     assert list(body["route"]["panels"]) == ["p1.pdf"]
     assert body["route"]["panels"]["p1.pdf"]["formats"]["eps"]["reason"] == "eps_not_for_canvas"
+
+
+def test_canvas_scope_never_claims_a_verbatim_copy():
+    """画布范围不论格式都经 RenderCore 重新合成页面，没有「逐字复制」。"""
+    r = route("canvas", ["pdf", "png"], er.KIND_PDF)
+    assert {v["how"] for v in r["formats"].values()} == {"convert"}
+    assert route("original", ["pdf"], er.KIND_PDF)["formats"]["pdf"]["how"] == "copy"
+
+
+@pytest.mark.parametrize("scope", ["original", "canvas"])
+@pytest.mark.parametrize("script", [True, False])
+def test_edited_panel_with_a_snapshot_reference_loads_the_snapshot(scope, script):
+    """`app._execution_source` 先查引用、加载快照，不跑脚本——有没有脚本都一样；引用有效是导出的前提。"""
+    r = route(
+        scope, ["pdf", "svg"], er.KIND_RASTER, overrides=[{"p": 1}], script=script, snapshot=True
+    )
+    assert r["source"] == er.SOURCE_SNAPSHOT and r["embeds_disk_bitmap"] is False
+    for fmt in ("pdf", "svg"):
+        assert r["formats"][fmt] == {"how": "convert", "conditions": [er.COND_FIGURE_SNAPSHOT]}
+    # 静态 PDF 带引用：磁盘来源，但同样要核引用
+    r = route(scope, ["pdf"], er.KIND_PDF, snapshot=True)
+    assert r["source"] == er.SOURCE_DISK
+    assert er.COND_FIGURE_SNAPSHOT in r["formats"]["pdf"]["conditions"]
+
+
+def test_execution_source_and_route_share_the_snapshot_predicate(monkeypatch):
+    seen = []
+    monkeypatch.setattr(er, "executes_from_snapshot", lambda **kw: seen.append(kw) or False)
+    monkeypatch.setattr(m, "_load_svg_snapshot", lambda *a, **k: pytest.fail("snapshot loaded"))
+    monkeypatch.setattr(m, "_serialize_figure_with_worker", lambda *a, **k: None)
+    with pytest.raises(rc_sources.SourceError):
+        m._execution_source(
+            {"id": "a.png", "overrides": [{"p": 1}], "figure_snapshot": {"x": 1}}, 150, None, None
+        )
+    assert seen == [{"has_reference": True}]

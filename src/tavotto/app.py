@@ -1465,7 +1465,7 @@ def _execution_source(
     rel_id = str(obj.get("id", ""))
     overrides = obj.get("overrides") or []
     reference = obj.get("figure_snapshot")
-    if reference is not None:
+    if engine_exportroute.executes_from_snapshot(has_reference=reference is not None):
         saved = _load_svg_snapshot(rel_id, overrides, out_dir, reference=reference)
         if saved is None:
             raise engine_exportreq.ExportRequestError(
@@ -2377,6 +2377,27 @@ def _export_produce_original(job, tmp_dir: Path, *, artifact_sources=None) -> li
                     format=fmt, error_code="format_failed", error_params={"error": str(exc)[:200]}
                 )
             )
+    return _keep_disk_source_only_if_unchanged(produced, src, source_path, disk_source)
+
+
+def _keep_disk_source_only_if_unchanged(
+    produced: list, src, source_path: Path, disk_source
+) -> list:
+    """转换期间原件被改写，manifest 就不能说产物出自「转换前算过 hash 的那份」：发布前再算一次，不一致就不记来源
+    （不编来源，也不让导出因此失败）。"""
+    if disk_source is None:
+        return produced
+    recorded = disk_source["provenance"]["sources"][0]["bytes_sha256"]
+    try:
+        current = engine_figcapture.hash_file(source_path)[0]
+    except OSError:
+        current = None
+    if current == recorded:
+        return produced
+    LOG.warning("原图导出期间 %s 被改写，产物 manifest 不记来源", src.figure_id)
+    for item in produced:
+        if item.manifest is disk_source:
+            item.manifest = None
     return produced
 
 
