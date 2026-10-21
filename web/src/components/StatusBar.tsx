@@ -25,6 +25,7 @@ import { statusDismissTimer, useUiStore, type StatusTone } from '@/store/uiStore
 import { userEnvironmentName } from '@/lib/userEnvironmentText'
 import { useWorkspaceStore } from '@/store/workspace'
 import { useExitNoticeStore } from '@/store/exitNoticeStore'
+import { useNoticeRailStore } from '@/store/noticeRailStore'
 import { restartEngineFromCard } from '@/lib/exitNotices'
 
 /**
@@ -274,6 +275,15 @@ function useArrivalOrder() {
  * 不再算作 alert——选择页自己的报错是页面上唯一的 alert（e2e 与读屏的「当前错误」都按它认）。
  */
 export function NotificationRail({ announceRole = 'alert' }: { announceRole?: 'alert' | null } = {}) {
+  const railRef = useRef<HTMLDivElement>(null)
+  // 每次渲染后量一次在场通知（退场中的不算）最上面那条的顶边，浮动胶囊据此避让（见 `noticeRailStore`）
+  useEffect(() => {
+    const tops = [...(railRef.current?.querySelectorAll('[data-toast-layout][data-state="open"]') ?? [])].map((e) =>
+      Math.round(e.getBoundingClientRect().top),
+    )
+    useNoticeRailStore.getState().setTop(tops.length ? Math.min(...tops) : null)
+  })
+  useEffect(() => () => useNoticeRailStore.getState().setTop(null), [])
   const { t } = useTranslation('workspace')
   const fmt = useFormatMessage()
   const status = useUiStore((s) => s.status)
@@ -400,6 +410,7 @@ export function NotificationRail({ announceRole = 'alert' }: { announceRole?: 'a
 
   return (
     <div
+      ref={railRef}
       // 画布底部有浮动工具条时整列抬到它上面去（toast 居中、工具条也居中，不抬就叠在一起）
       className={cn(
         'pointer-events-none absolute inset-x-0 z-canvas-chrome flex flex-col items-center gap-1.5 px-4',
