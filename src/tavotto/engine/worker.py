@@ -184,6 +184,29 @@ def _startup_bytecode_guard() -> None:
 
 _startup_bytecode_guard()
 
+
+#: 叠加的 ROOT 的 DLL 目录（`rootenv.DLL_DIR_ENV` 的镜像，`tests/test_root_env_overlay.py` 对拍；worker 是平铺 import、
+#: 不能 import `rootenv`）。
+_ROOT_DLL_DIR_ENV = "TAVOTTO_ROOT_DLL_DIR"
+
+
+def _startup_dll_directory() -> None:
+    """Windows：Python >= 3.8 不按 `PATH` 找扩展模块（`.pyd`）依赖的 DLL。叠加了 ROOT 时（`rootenv.apply_overlay` 设了
+    私有变量），在用户脚本 import `ROOT`（`libcppyy.pyd` -> `libCPyCppyy.dll` 等一百多个 dll）之前把它的 `bin` 目录登记成
+    DLL 搜索目录——没有它报 `ImportError: DLL load failed while importing libcppyy`（2026-10-21 Win11 真机）。
+    只用 3.8 起就有的 `os.add_dll_directory`（py3.10 兼容）；没设 / 不是 Windows / 目录不在就什么都不做。"""
+    path = os.environ.get(_ROOT_DLL_DIR_ENV)
+    add = getattr(os, "add_dll_directory", None)
+    if not path or add is None or os.name != "nt" or not os.path.isdir(path):
+        return
+    try:
+        add(path)
+    except (OSError, ValueError):
+        pass
+
+
+_startup_dll_directory()
+
 _boot_spec = importlib.util.spec_from_file_location(
     "tavotto_bridge_boot", os.path.join(str(HERE), "bridgeboot.py")
 )

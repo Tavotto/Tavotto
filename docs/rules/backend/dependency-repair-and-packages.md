@@ -61,13 +61,19 @@
   **ROOT 叠加环境（ADR 0079 修订 2026-10-21 b）**：脚本 import 了 `ROOT`、且没有候选**裸起**就导入得了它时，
   `deprepair._root_overlay_entries` 把用户装的 CERN ROOT（`engine/rootenv.py`：`ROOTSYS` / Windows 卸载项 / 常见位置 / Homebrew
   Cellar；判据 = `bin/thisroot.(bat|sh)` + PyROOT 标志，纯 stat，**不执行 thisroot**，至多 8 个、组合用最新 2 个、至多 8 对）
-  叠到候选解释器（含内置 runtime，Conda 激活的环境不叠）上用现有体检再量，`source=root_overlay`，标签 `Python 3.14 + ROOT 6.38`，
+  叠到候选解释器（含内置 runtime 与 Conda 环境——叠加层在激活增量之后叠）上用现有体检再量，`source=root_overlay`，标签 `Python 3.14 + ROOT 6.38`，
   与裸起候选进同一张表走 `best()`。叠加层 = `{"kind","root","version"}`，随项目记录持久化（`projectenv.remember(env_overlay=)` /
   `remembered_overlay`），环境变量每次起进程现算（`rootenv.apply_overlay`：安装根不再像 ROOT 就不叠），**最后**叠（内置 runtime
   摘了 `PYTHONPATH` 之后；`pool.launch_env`）；只进 Popen 的 env，**不进 `ExecutionSpec`**，带叠加层的解释器只走 Python 池
   （`WorkerdWorker` 拒收）；会话复用前核对叠加层（`叠加环境已变`）。身份是 `userenvs.entry_key` / `env_id(python, overlay)`
   （同一解释器裸起与叠加是两个候选）。运行之前不量叠加组合（`spec` 体检 `-I` 忽略环境变量），采用发生在用户点「运行」之后。
   落选原因多 `root_python_mismatch`（叠上仍 import 不了 ROOT：二进制包只配一个 Python 小版本）+ `root_version`（不带路径）。
+  **Windows 真机修订（2026-10-21，ADR 0079 同名小节）**：`apply_overlay` 在 Windows 上多前置 `<root>\bin\cppyy` 进 `PYTHONPATH`、并设私有变量
+  `TAVOTTO_ROOT_DLL_DIR`（`rootenv.DLL_DIR_ENV`），worker 启动钩子 `worker._startup_dll_directory` 与体检脚本据此 `os.add_dll_directory`
+  （两处必须同做，否则体检把 DLL 没登记误判成版本不配；worker 里的变量名与 `rootenv.DLL_DIR_ENV` 对拍；py3.10 兼容）；
+  `ROOT\_python_version.py` 的 `_root_python_version` 静态读出 `build_python`，与底小版本都已知且不同 → `overlay_candidates` 给组合打
+  `overlay_reject`（`root_python_mismatch`），没有 C++ 工具（`rootenv.msvc_available`，vswhere，有界超时）→ `root_needs_msvc`，均不起进程；
+  发现多 `PATH` 里含 thisroot 的 bin 与家目录 / 桌面 / 下载下一层的 `root*`（及 `root*\root`）；`RVersion.hxx` 宏合成版本。
   看护 `tests/test_root_env_overlay.py`。
   **映射不到包名的 import 也触发（ADR 0079 修订 2026-09-25，QA ENV-08-B1）**：计划 `nothing_needed` 但有无条件
   `unknown` 时，先经 `deprepair.unknown_imports_missing` → `userenvs.imports_missing` 在此刻的解释器里量一次（同一条体检、

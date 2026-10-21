@@ -247,8 +247,8 @@ import，就不该排在确认能跑的环境前面。`best()` 本来只在 `sat
    `CMAKE_PREFIX_PATH`；`ROOT_INCLUDE_PATH`），并先复核安装根仍像 ROOT——被卸载了就不叠加，不把过期路径塞进环境。设置里不存环境变量。
 3. **何时用。** 只在 `_detect_environment_unlocked` 里同时满足：脚本 import 名单含 `ROOT`；默认链条此刻跑不了（`runs_now` 为假）；
    所有裸起候选都没装齐。叠加组合与裸起候选进**同一张表**、同一个 `best()`——裸起能导入的永远优先。
-4. **组合有界。** 底 = 此刻的解释器（**内置 runtime 也算**）+ 已量过、健康但没装齐的候选；要 Conda 激活的环境不叠（激活增量会盖住
-   `PATH`；conda-forge 的 ROOT 本来就在环境里）；ROOT 至多取最新的 2 个；总组合至多 8 对（`rootenv.MAX_COMBOS`）；沿用 `evaluate` 的并行度与
+4. **组合有界。** 底 = 此刻的解释器（**内置 runtime 也算**）+ 已量过、健康但没装齐的候选；Conda 环境也可以当底（见下「真机修订」第 5 点，原先
+   「不叠 Conda」的理由不成立）；ROOT 至多取最新的 2 个；总组合至多 8 对（`rootenv.MAX_COMBOS`）；沿用 `evaluate` 的并行度与
    超时。安装包文件名里的 Python 小版本标记（`libcppyy3_<minor>`）**只做排序提示**，认不出不排除——这条命名规则没有拿真实 Windows 包逐文件核对，
    最终以真探测为准。
 5. **探测的顺序与"运行之前不量"。** 体检进程的环境 = 内置 runtime 摘掉 `PYTHONPATH` 之后 / Conda 激活之后**再叠**（与起 worker 同序，
@@ -264,10 +264,51 @@ import，就不该排在确认能跑的环境前面。`best()` 本来只在 `sat
 8. **依赖计划不走 pip。** ROOT 不是 pip 能装的（PR C 的不可 pip 安装表），本节只保证：有叠加候选被采用后，`unknown_imports_missing` 按带叠加层量，
    不再因为裸起量不到 ROOT 而重新发现或把它当成待装包。
 
-**不做的事。** 不执行 thisroot / 不问 `root-config`；不往 ROOT 或用户的解释器里装任何东西；不叠加到 Conda 激活的环境；确认模式（ADR 0114）下
+**不做的事。** 不执行 thisroot / 不问 `root-config`；不往 ROOT 或用户的解释器里装任何东西；确认模式（ADR 0114）下
 候选表不列叠加组合（采用端点 `recheck_user_environment` 按 id 找回的是裸起候选，叠加组合的确认流程未做，留待需要时另开）；
 workerd 路径不接叠加层。
 
 **看护。** `tests/test_root_env_overlay.py`：各来源发现（假目录树 + 注入的注册表读取器）、判据（缺 thisroot / 缺 PyROOT 标志 / 名字像但无结构）、
 有界与去重、叠加层构造（POSIX / Windows / 内置替换 / 幂等 / 安装根消失）、只在需要时叠加、组合评估选择（假体检按 Python × ROOT 版本）、
 组合上限与最新优先、运行之前不起进程、持久化与再次启动、落选原因与身份、`launch_env` / `_overlay_for` / 体检环境。
+
+### 真机修订（2026-10-21，Win11 + ROOT 6.38.06 官方 zip `root_v6.38.06.win64.python314.vc18` + conda-forge Python 3.14.8）
+
+上面几节按"照抄 thisroot"设计；Win11 真机跑下来**官方做法本身就不够**，以下是事实与由此改的地方（沿用上一节的发现 / 叠加 / 组合骨架）：
+
+* **包布局（事实）。** `root\bin\thisroot.bat`（只设 `ROOTSYS` / `PATH` / `PYTHONPATH=%ROOTSYS%\bin;…` 等）、`root\bin\ROOT\__init__.py`、
+  `root\bin\cppyy\libcppyy.pyd`、`root\bin\ROOT\libROOTPythonizations.pyd`、`root\bin\libCPyCppyy.dll` 等 129 个 dll、
+  `root\bin\ROOT\_python_version.py`（`_root_python_version` = 构建所用 Python）、`root\include\ROOT\RVersion.hxx`（`ROOT_RELEASE` 由宏拼出；
+  `root\include\RVersion.h` 里**没有**版本号）。
+* **事实一：只放 `bin` 进 `PYTHONPATH` 不行。** `bin\cppyy\_cpython_cppyy.py` 在 Windows 上 `import libcppyy as _backend`（顶层名）→
+  `ModuleNotFoundError: No module named 'libcppyy'`，官方 thisroot.bat 方式同样失败。**改**：`apply_overlay` 在 Windows 上把 `<root>\bin\cppyy`
+  （存在时）也前置进 `PYTHONPATH`（排在 `bin` 前面）。
+* **事实二：`DLL load failed while importing libcppyy`。** Python >= 3.8 在 Windows 上不按 `PATH` 找扩展模块的依赖 DLL。**改**：叠加环境里多一个
+  Tavotto 私有变量 `TAVOTTO_ROOT_DLL_DIR`（= `<root>\bin`，`rootenv.DLL_DIR_ENV`），worker 启动钩子（`worker._startup_dll_directory`，在装字节码守卫之后、
+  引擎装载与用户脚本之前；只用 3.8 起就有的 `os.add_dll_directory`，py3.10 兼容）和体检脚本（`projectenv._PROBE_SRC`）读到就登记成 DLL 搜索目录。
+  体检与 worker 同一件事，否则体检会把"DLL 没登记"误判成 `root_python_mismatch`。
+* **事实三：没有 Visual Studio 的 C++ 工具，cling 崩溃**（`unable to find a Visual Studio installation` / `'new' file not found`，打印 STACKTRACE）。
+  **改**：Windows 上组合评估前用 `rootenv.msvc_available()`（`vswhere.exe -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64
+  -property installationPath`，有界超时 8 秒、结论缓存 60 秒；找不到 vswhere 也算没有）判；没有 → 该组合**不起进程**直接落选，新稳定码
+  `root_needs_msvc`（进 `REJECT_CODES`，`rejection_reason` 与 `root_python_mismatch` 同通道，带 `root_version`）。不要让 worker 起来再崩。
+* **事实四：版本与配对。** `_version_of` 也读 `include\ROOT\RVersion.hxx`：有字面 `ROOT_RELEASE "x.y.z"` 用它，否则按 `ROOT_VERSION_MAJOR/MINOR/PATCH`
+  三个宏合成（补零到两位），都读不出回空串（再看目录名），不报错。`ROOT\_python_version.py` 里的 `_root_python_version` **静态读文本、正则取第一对
+  主.次、不执行**，得到 `build_python`（如 `3.14`）。底的小版本也已知且与它不同 → 组合 `overlay_reject = root_python_mismatch`，**不起进程**；
+  底的小版本未知（此刻的解释器 / 内置没量过）或 `build_python` 读不出 → 不据此排除，仍交给体检。静态落选的组合排在最后、至多 4 个，不占 8 对的名额。
+  原先的 `libcppyy3_<minor>` 文件名标记只剩排序提示。
+* **事实五：发现与"组合进不进候选流程"。** (a) 没设 `ROOTSYS` 时原先找不到解压在任意目录的 ROOT。**改**：来源多两档——`PATH` 里含 `thisroot.(bat|sh)` 的 bin 目录
+  （安装根 = 上一级，至多看 64 项），以及家目录、`Desktop`、`Downloads` 下一层的 `root*` 与 `root*\root`（官方 zip 外层带版本、里层才是安装根；每个 glob 至多 16 项）。
+  (b) 组合**不是** `userenvs.discover()` 的来源（它只给裸起候选，设计如此）；组合在 `deprepair._detect_environment_unlocked` 里、点「运行」之后
+  才生成（`_root_overlay_entries` → `userenvs.root_installs` + `overlay_candidates`）。真机上组合没出来的原因是**底**：`_root_overlay_entries` 把
+  `launcher.launcher_for_interpreter(python) is not None`（Conda 环境）一律滤掉，而 conda-forge 在 Windows 上没有 `root` 包，用户的 Python 3.14 恰是 conda-forge 的。
+  **改**：Conda 环境可以当底——叠加层在激活增量**之后**叠（`pool.launch_env`、`projectenv._probe_environment` 同序），激活盖不掉它；conda-forge 自带 ROOT
+  的环境裸起就导入得了，根本走不到叠加。检查阶段（点「运行」之前）组合仍只读缓存、不起进程，因此是"未检查"，不是缺席。
+
+* **叠加顺序（真机补充）。** 已激活的 conda 环境（Python 3.14）+ `bin` 与 `bin\cppyy` 进 `sys.path` + `os.add_dll_directory(bin)` 后 `import ROOT` 成功
+  （TCanvas.SaveAs 出 PDF，matplotlib 出 PNG，两种导入顺序都正常）；去掉 `add_dll_directory` 仍 `DLL load failed`（必需）；conda 环境**不激活**时 matplotlib savefig 自己就崩
+  （0xc06d007f，与 ROOT 无关）——所以叠加必须在激活捕获之后（`pool.launch_env`、`projectenv._probe_environment` 已是此序，有用例看护）。
+  Python 3.12 叠同一 ROOT 报 `ImportError: DLL load failed while importing libcppyy`（不是 ModuleNotFoundError）：体检归 `import_failed` -> `root_python_mismatch`；
+  底版本已知时读 `_python_version.py` 提前静态判。装了 VS 2026 Build Tools 后 vswhere 输出 `…\Microsoft Visual Studio\18\BuildTools`，`root_needs_msvc` 不再触发。
+
+**仍是外部前提（Tavotto 不替用户装）**：Windows 需要装有 Visual Studio / Build Tools 的 C++ 工作负载；Python 小版本必须等于 ROOT 包的构建版本。
+**看护。** 同 `tests/test_root_env_overlay.py`（Windows 布局 / `cppyy` 目录 / DLL 目录变量 / RVersion.hxx 宏 / `_python_version.py` / PATH 与家目录发现 / vswhere 注入 / 静态落选 / Conda 当底）。

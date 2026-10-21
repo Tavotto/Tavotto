@@ -1190,6 +1190,21 @@ def evaluate(
             **({"overlay": overlay} if overlay else {}),
             **({"bundled": True} if bundled else {}),
         }
+        if cand.get("overlay_reject"):
+            # 静态已判定落选（Python 小版本对不上 / 没有 C++ 工具）：不起进程。结论是确定的「跑不了」
+            return {
+                **cand,
+                "ok": True,
+                "code": "",
+                "support": "",
+                "python_version": cand.get("python_version", ""),
+                "matplotlib_version": "",
+                "missing": [],
+                "import_failed": [],
+                "satisfies": False,
+                "checked": True,
+                "probe_status": PROBE_MODULE_MISSING,
+            }
         if overlay and root:
             # 叠加组合运行之前不量（`spec` 方式忽略叠加层）：与项目说了算的候选同一套"未检查"
             return unchecked
@@ -1333,39 +1348,51 @@ def root_installs(budget: scanbudget.Budget | None = None) -> list[dict]:
 
 
 def overlay_candidates(bases: list[dict], installs: list[dict]) -> list[dict]:
-    """「候选解释器 × ROOT 安装」的组合（有界：ROOT 至多 `rootenv.MAX_USED` 个、优先最新；总数至多 `rootenv.MAX_COMBOS`）。
+    """「候选解释器 × ROOT 安装」的组合（有界：ROOT 至多 `rootenv.MAX_USED` 个、优先最新；要起进程的组合至多
+    `rootenv.MAX_COMBOS` 个）。
 
     `bases`：`{"python", "bundled"?, "python_version"?}`，按调用方的偏好序。要叠加的 Conda 环境不在这里（调用方已滤掉：
     Conda 激活的增量会盖住 `PATH`，而 conda-forge 的 ROOT 本来就在环境里）。
     顺序：ROOT 自带的 Python 小版本标记（`py_tags`，只是提示）对得上的组合排前面，其余保持 底×ROOT 的偏好序；
-    认不出标记的不排除——真不真能跑由体检说了算。"""
+    认不出标记的不排除——真不真能跑由体检说了算。
+
+    **静态落选**（不起进程，组合带 `overlay_reject`，排在最后、至多 4 个）：ROOT 构建所用的 Python 小版本
+    （`build_python`，静态读 `ROOT/_python_version.py`）与底的小版本都读得出且不同 -> `root_python_mismatch`；
+    Windows 上没有带 C++ 工具的 Visual Studio / Build Tools（`rootenv.msvc_available`）-> `root_needs_msvc`
+    （cling 会崩溃）。版本对不上优先于缺 VS（装 VS 救不了版本不匹配）。"""
     roots = rootenv.newest(installs)
-    combos: list[tuple[int, int, dict]] = []
+    viable: list[tuple[int, int, dict]] = []
+    rejected: list[dict] = []
+    # 没有任何组合时不去问 vswhere
+    msvc_ok = True if not (bases and roots) else rootenv.msvc_available()
     for i, base in enumerate(bases):
         minor = _minor_of(base.get("python_version", ""))
         for j, install in enumerate(roots):
             tags = install.get("py_tags") or frozenset()
             hint = 0 if (not tags or minor is None or minor in tags) else 1
-            combos.append(
-                (
-                    hint,
-                    i * len(roots) + j,
-                    {
-                        "python": base["python"],
-                        "source": SOURCE_ROOT_OVERLAY,
-                        "label": rootenv.label_of(rootenv.overlay_spec(install)),
-                        "overlay": rootenv.overlay_spec(install),
-                        **({"bundled": True} if base.get("bundled") else {}),
-                        **(
-                            {"python_version": base["python_version"]}
-                            if base.get("python_version")
-                            else {}
-                        ),
-                    },
-                )
-            )
-    combos.sort(key=lambda c: (c[0], c[1]))
-    return [c[2] for c in combos[: rootenv.MAX_COMBOS]]
+            combo = {
+                "python": base["python"],
+                "source": SOURCE_ROOT_OVERLAY,
+                "label": rootenv.label_of(rootenv.overlay_spec(install)),
+                "overlay": rootenv.overlay_spec(install),
+                **({"bundled": True} if base.get("bundled") else {}),
+                **(
+                    {"python_version": base["python_version"]} if base.get("python_version") else {}
+                ),
+            }
+            built = _minor_of(install.get("build_python", ""))
+            if built is not None and minor is not None and built != minor:
+                rejected.append({**combo, "overlay_reject": REJECT_ROOT_PYTHON_MISMATCH})
+            elif not msvc_ok:
+                rejected.append({**combo, "overlay_reject": REJECT_ROOT_NEEDS_MSVC})
+            else:
+                viable.append((hint, i * len(roots) + j, combo))
+    viable.sort(key=lambda c: (c[0], c[1]))
+    return [c[2] for c in viable[: rootenv.MAX_COMBOS]] + rejected[:_MAX_STATIC_REJECTS]
+
+
+#: 静态落选的组合最多带几个（它们不起进程，只为让落选原因说得出；与 `PROBE_LIMIT` 合起来仍在预算内）
+_MAX_STATIC_REJECTS = 4
 
 
 def _minor_of(version: str) -> int | None:
@@ -1469,6 +1496,8 @@ REJECT_NOT_CHECKED = "not_checked"  # 没量到（延后到运行时 / 项目说
 REJECT_OUTRANKED = "outranked"  # 能跑，但有排序更靠前的被选用了
 #: 解释器健康、叠上了这个 ROOT，`import ROOT` 仍失败：ROOT 的二进制包只配一个 Python 小版本，多半就是版本对不上
 REJECT_ROOT_PYTHON_MISMATCH = "root_python_mismatch"
+#: Windows 上没装带 C++ 工具的 Visual Studio / Build Tools：ROOT 的 cling 找不到头文件会崩溃，不起进程直接落选
+REJECT_ROOT_NEEDS_MSVC = "root_needs_msvc"
 REJECT_CODES = (
     REJECT_MISSING_IMPORTS,
     REJECT_IMPORT_FAILED,
@@ -1481,6 +1510,7 @@ REJECT_CODES = (
     REJECT_NOT_CHECKED,
     REJECT_OUTRANKED,
     REJECT_ROOT_PYTHON_MISMATCH,
+    REJECT_ROOT_NEEDS_MSVC,
 )
 
 # 健康体检的 code（`projectenv.ERROR_*` / `launcher.UNAVAILABLE_CODE`）→ 落选码。字面量写在这里是有意的：
@@ -1500,7 +1530,10 @@ def rejection_reason(entry: dict) -> dict:
     `{"id", "source", "label", "reason": <稳定码>, "missing": [...], "import_failed": [...]}`——没有路径
     （ADR 0053 §二），`missing` 是分发名 / import 名，与 `public()` 同口径。本候选自己能跑（`satisfies`）= `outranked`
     （能跑、只是排序在后）。"""
-    if entry.get("timed_out"):
+    if entry.get("overlay_reject") in (REJECT_ROOT_PYTHON_MISMATCH, REJECT_ROOT_NEEDS_MSVC):
+        # 叠加组合的静态判定（没起进程）：Python 小版本对不上 ROOT 的构建版本 / Windows 上没有 C++ 工具
+        reason = entry["overlay_reject"]
+    elif entry.get("timed_out"):
         reason = REJECT_PROBE_TIMEOUT
     elif entry.get("satisfies"):
         reason = REJECT_OUTRANKED

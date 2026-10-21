@@ -13,9 +13,11 @@
 
 from __future__ import annotations
 
+import ast
 import ntpath
 import os
 import subprocess
+import types
 from pathlib import Path
 
 import pytest
@@ -654,3 +656,316 @@ def test_pin_of_worker_carries_the_hot_sessions_overlay(tmp_path, clean_state): 
         env_overlay = None
 
     assert engine_pool.pin_of_worker(_Bare()).env_overlay is None
+
+
+# ===========================================================================
+# Windows 真机修订（2026-10-21，Win11 + ROOT 6.38.06 官方 zip + conda-forge Python 3.14）
+# ===========================================================================
+def make_official_win_root(base: Path, name: str = "root", *, build_python="3.14.0", macros=True):
+    """官方 Windows 包的真实布局：`bin\\cppyy\\libcppyy.pyd`、`bin\\ROOT\\_python_version.py`、
+    `include\\ROOT\\RVersion.hxx`（宏拼出版本，`include\\RVersion.h` 里没有版本号）。"""
+    root = base / name
+    (root / "bin" / "ROOT").mkdir(parents=True)
+    (root / "bin" / "cppyy").mkdir()
+    (root / "bin" / "thisroot.bat").write_text("rem\n", encoding="utf-8")
+    (root / "bin" / "ROOT" / "__init__.py").write_text("", encoding="utf-8")
+    (root / "bin" / "cppyy" / "libcppyy.pyd").write_text("", encoding="utf-8")
+    (root / "bin" / "ROOT" / "_python_version.py").write_text(
+        f'_root_python_version = "{build_python}"\n' if build_python else "# nothing\n",
+        encoding="utf-8",
+    )
+    (root / "include" / "ROOT").mkdir(parents=True)
+    (root / "include" / "RVersion.h").write_text("#include <ROOT/RVersion.hxx>\n", encoding="utf-8")
+    if macros:
+        (root / "include" / "ROOT" / "RVersion.hxx").write_text(
+            "#define ROOT_VERSION_MAJOR 6\n#define ROOT_VERSION_MINOR 38\n"
+            "#define ROOT_VERSION_PATCH 6\n"
+            '#define ROOT_RELEASE_DATE "Jun 12 2026"\n'
+            '#define ROOT_RELEASE ROOT_VERSION_MAJOR_STR "." ROOT_VERSION_MINOR_STR\n',
+            encoding="utf-8",
+        )
+    return root
+
+
+@POSIX
+def test_version_comes_from_rversion_hxx_macros_and_is_empty_not_an_error_when_unreadable(tmp_path):
+    root = make_official_win_root(tmp_path, "somewhere")
+    assert rootenv.inspect_root(str(root), nt=True)["version"] == "6.38.06"
+    # 宏读不出 -> 目录名兜底 -> 再没有就空串，不抛
+    bare = make_official_win_root(tmp_path, "bare", macros=False)
+    assert rootenv.inspect_root(str(bare), nt=True)["version"] == ""
+    named = make_official_win_root(tmp_path, "root_v6.38.06.win64.python314.vc18", macros=False)
+    assert rootenv.inspect_root(str(named), nt=True)["version"] == "6.38.06"
+    # 字面 ROOT_RELEASE 仍优先
+    lit = make_official_win_root(tmp_path, "lit", macros=False)
+    (lit / "include" / "ROOT" / "RVersion.hxx").write_text(
+        '#define ROOT_RELEASE "6.40.01"\n', encoding="utf-8"
+    )
+    assert rootenv.inspect_root(str(lit), nt=True)["version"] == "6.40.01"
+
+
+@POSIX
+def test_build_python_is_read_statically_from_python_version_py(tmp_path):
+    root = make_official_win_root(tmp_path)
+    assert rootenv.inspect_root(str(root), nt=True)["build_python"] == "3.14"
+    for text, want in (
+        ("_root_python_version = (3, 11, 9)\n", "3.11"),
+        ("_root_python_version: str = '3.12.4'\n", "3.12"),
+        ("_root_python_version = sys.version\n", ""),  # 认不出 -> 空，不执行
+        ("raise SystemExit(1)\n", ""),  # 不执行文件
+    ):
+        (root / "bin" / "ROOT" / "_python_version.py").write_text(text, encoding="utf-8")
+        assert rootenv.inspect_root(str(root), nt=True)["build_python"] == want
+    (root / "bin" / "ROOT" / "_python_version.py").unlink()
+    assert rootenv.inspect_root(str(root), nt=True)["build_python"] == ""
+
+
+@POSIX
+def test_windows_overlay_puts_cppyy_dir_first_and_sets_the_dll_dir_variable(tmp_path):
+    root = make_official_win_root(tmp_path)
+    spec = rootenv.overlay_spec(rootenv.inspect_root(str(root), nt=True))
+    got = rootenv.apply_overlay({"PATH": "C:\\Windows", "PYTHONPATH": "C:\\mine"}, spec, nt=True)
+    assert got["PYTHONPATH"] == f"{root / 'bin' / 'cppyy'};{root / 'bin'};C:\\mine"
+    assert got[rootenv.DLL_DIR_ENV] == str(root / "bin")
+    # 内置 runtime：替换 PYTHONPATH，仍带 cppyy
+    rep = rootenv.apply_overlay({}, spec, nt=True, replace_pythonpath=True)
+    assert rep["PYTHONPATH"] == f"{root / 'bin' / 'cppyy'};{root / 'bin'}"
+    # 幂等
+    assert rootenv.apply_overlay(got, spec, nt=True) == got
+    # POSIX 不设它、不加 cppyy
+    px = make_root(tmp_path, "px", nt=False)
+    pspec = rootenv.overlay_spec(rootenv.inspect_root(str(px), nt=False))
+    assert rootenv.DLL_DIR_ENV not in rootenv.apply_overlay({}, pspec, nt=False)
+
+
+def _worker_dll_hook():
+    """从 worker.py 的 AST 取出 `_startup_dll_directory` 与它的变量名常量（worker 是平铺 import，导入它会装一堆东西）。"""
+    path = Path(rootenv.__file__).with_name("worker.py")
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    nodes = [
+        n
+        for n in tree.body
+        if (isinstance(n, ast.FunctionDef) and n.name == "_startup_dll_directory")
+        or (
+            isinstance(n, ast.Assign)
+            and any(getattr(t, "id", None) == "_ROOT_DLL_DIR_ENV" for t in n.targets)
+        )
+    ]
+    assert len(nodes) == 2
+    return ast.Module(body=nodes, type_ignores=[])
+
+
+def test_worker_dll_hook_name_mirrors_rootenv_and_registers_the_directory(tmp_path):
+    added: list[str] = []
+    fake_os = types.SimpleNamespace(
+        environ={rootenv.DLL_DIR_ENV: str(tmp_path)},
+        name="nt",
+        path=os.path,
+        add_dll_directory=added.append,
+    )
+    ns: dict = {"os": fake_os}
+    exec(compile(_worker_dll_hook(), "worker_hook", "exec"), ns)  # noqa: S102
+    assert ns["_ROOT_DLL_DIR_ENV"] == rootenv.DLL_DIR_ENV
+    ns["_startup_dll_directory"]()
+    assert added == [str(tmp_path)]
+    # 没设 / 不是 Windows / 目录不在 / 登记抛错：什么都不做、不抛
+    for env, name in (
+        ({}, "nt"),
+        ({rootenv.DLL_DIR_ENV: str(tmp_path)}, "posix"),
+        ({rootenv.DLL_DIR_ENV: str(tmp_path / "gone")}, "nt"),
+    ):
+        added.clear()
+        fake_os.environ, fake_os.name = env, name
+        ns["_startup_dll_directory"]()
+        assert added == []
+    fake_os.environ, fake_os.name = {rootenv.DLL_DIR_ENV: str(tmp_path)}, "nt"
+
+    def boom(_):
+        raise OSError("nope")
+
+    fake_os.add_dll_directory = boom
+    ns["_startup_dll_directory"]()
+
+
+def test_probe_script_registers_the_dll_directory_before_importing_anything():
+    src = Path(projectenv.__file__).read_text(encoding="utf-8")
+    hook = src.index(f'os.environ.get("{rootenv.DLL_DIR_ENV}")')
+    assert "add_dll_directory" in src[hook : hook + 400]
+    # 体检脚本里：登记发生在逐个 import 被问模块（`_state(module)`）之前
+    assert hook < src.index('out["requested_module_ok"] = _state(module)')
+
+
+# ---- 发现：没设 ROOTSYS
+
+
+@POSIX
+def test_discovery_without_rootsys_finds_path_entry_home_desktop_and_downloads(tmp_path):
+    home = tmp_path / "home"
+    # 官方 zip 解出来：外层带版本、里层 root 才是安装根
+    inner = make_official_win_root(
+        home / "Downloads" / "root_v6.38.06.win64.python314.vc18", "root", build_python="3.14.0"
+    )
+    desk = make_official_win_root(home / "Desktop", "root638", build_python="3.11.0")
+    via_path = make_official_win_root(tmp_path / "apps", "cern", build_python="3.13.0")
+    got = rootenv.discover_installs(
+        {"PATH": f"C:\\Windows;{via_path / 'bin'};{tmp_path / 'nothing'}"}, nt=True, home=str(home)
+    )
+    roots = [i["root"] for i in got]
+    assert {str(via_path), str(inner), str(desk)} <= set(roots)
+    # PATH 来源优先于常见位置；每条都带版本与构建 Python
+    assert got[0]["root"] == str(via_path) and got[0]["source"] == "path"
+    assert {i["build_python"] for i in got} == {"3.13", "3.14", "3.11"}
+    assert {i["version"] for i in got} == {"6.38.06"}
+
+
+@POSIX
+def test_discovery_path_entries_without_thisroot_are_ignored_and_bounded(tmp_path):
+    plain = tmp_path / "bin"
+    plain.mkdir()
+    assert rootenv.discover_installs({"PATH": str(plain)}, nt=False, home=str(tmp_path / "h")) == []
+    assert rootenv._PATH_MAX >= 8
+
+
+# ---- 组合：静态落选（版本 / VS）与真实流程
+
+
+@pytest.fixture
+def has_msvc(monkeypatch):
+    monkeypatch.setattr(rootenv, "msvc_available", lambda *a, **k: True)
+
+
+@POSIX
+def test_msvc_probe_uses_vswhere_with_a_bounded_timeout_and_no_vswhere_means_none(tmp_path):
+    rootenv.reset_msvc_cache()
+    pf86 = tmp_path / "pf86"
+    vswhere = pf86 / "Microsoft Visual Studio" / "Installer" / "vswhere.exe"
+    seen: list = []
+
+    def runner(argv, timeout):
+        seen.append((argv, timeout))
+        return "C:\\BuildTools\n"
+
+    env = {"ProgramFiles(x86)": str(pf86)}
+    # 没有 vswhere.exe（这里用注入的 runner 时仍要求不存在也能判；真实路径不存在 = 没有）
+    assert rootenv.msvc_available(env, nt=True) is False
+    rootenv.reset_msvc_cache()
+    assert rootenv.msvc_available(env, nt=True, runner=runner) is True
+    argv, timeout = seen[0]
+    assert argv[0] == str(vswhere) and 0 < timeout <= 30
+    assert argv[1:] == [
+        "-products",
+        "*",
+        "-requires",
+        "Microsoft.VisualStudio.Component.VC.Tools.x86.x64",
+        "-property",
+        "installationPath",
+    ]
+    assert rootenv.msvc_available(env, nt=True, runner=lambda a, t: "  \n") is False
+    assert (
+        rootenv.msvc_available({}, nt=True, runner=lambda a, t: "x") is False
+    )  # 没有 ProgramFiles
+
+    def hang(argv, timeout):
+        raise subprocess.TimeoutExpired(argv, timeout)
+
+    assert rootenv.msvc_available(env, nt=True, runner=hang) is False
+    assert rootenv.msvc_available(env, nt=False) is True  # 非 Windows 不适用
+    rootenv.reset_msvc_cache()
+
+
+@POSIX
+def test_build_python_mismatch_is_rejected_statically_without_starting_a_process(rig, has_msvc):
+    rig["compat"].clear()
+    py311 = rig["add_python"]("py311", "3.11.9")
+    install = rootenv.inspect_root(
+        str(make_official_win_root(rig["root"].parent, "r314", build_python="3.14.0")), nt=True
+    )
+    rig["installs"].append(install)
+    rejected: list[dict] = []
+    with deprepair._detect_lock(str(rig["root"])):
+        entry = deprepair._detect_environment_unlocked(
+            str(rig["root"]), "fig.py", rejected=rejected
+        )
+    assert entry is None
+    # 3.11 底 x 3.14 的 ROOT：未起进程就落选；内置 3.13 的版本此刻未知，交给体检
+    static = [r for r in rejected if r["reason"] == userenvs.REJECT_ROOT_PYTHON_MISMATCH]
+    assert static and all(r["root_version"] == "6.38.06" for r in static)
+    assert not any(p["python"] == py311 and p["overlay"] for p in rig["probes"])
+
+
+@POSIX
+def test_missing_visual_studio_rejects_the_combination_without_starting_a_process(rig, monkeypatch):
+    monkeypatch.setattr(rootenv, "msvc_available", lambda *a, **k: False)
+    py314 = rig["add_python"]("py314", "3.14.8")
+    install = rootenv.inspect_root(
+        str(make_official_win_root(rig["root"].parent, "r314", build_python="3.14.0")), nt=True
+    )
+    rig["installs"].append(install)
+    rig["compat"][("3.14", "6.38")] = True  # 假体检本来会放行：证明是静态拦下的
+    rejected: list[dict] = []
+    with deprepair._detect_lock(str(rig["root"])):
+        entry = deprepair._detect_environment_unlocked(
+            str(rig["root"]), "fig.py", rejected=rejected
+        )
+    assert entry is None
+    assert not any(p["overlay"] for p in rig["probes"])
+    by_label = {r["label"]: r for r in rejected}
+    assert by_label["Python 3.14 + ROOT 6.38"]["reason"] == userenvs.REJECT_ROOT_NEEDS_MSVC
+    assert userenvs.REJECT_ROOT_NEEDS_MSVC in userenvs.REJECT_CODES
+    assert py314  # 候选在场
+
+
+@POSIX
+def test_real_flow_a_conda_python_with_a_discovered_root_forms_and_adopts_the_combination(
+    rig, monkeypatch, has_msvc
+):
+    """真机的流程：解释器是 Conda 的（`launcher_for_interpreter` 非空）、ROOT 解压在下载目录、没设 ROOTSYS——
+    真发现（不是替身）-> `_root_overlay_entries` -> `best()` -> 记入项目记录。"""
+    py314 = rig["add_python"]("py314", "3.14.8")
+    home = rig["root"].parent / "home"
+    make_official_win_root(home / "Downloads" / "root_v6.38.06.win64.python314.vc18", "root")
+    monkeypatch.setattr(
+        userenvs,
+        "root_installs",
+        lambda budget=None: rootenv.discover_installs({"PATH": ""}, nt=True, home=str(home)),
+    )
+    conda = types.SimpleNamespace(conda_exe="conda", prefix="p")
+    monkeypatch.setattr(
+        launcher, "launcher_for_interpreter", lambda python: conda if python == py314 else None
+    )
+    rig["compat"][("3.14", "6.38")] = True
+    # 裸起候选的 ROOT 导入不了，但解释器健康
+
+    decision = _decide(rig)
+
+    entry = decision.adopted
+    assert entry is not None and entry["python"] == py314
+    assert entry["source"] == userenvs.SOURCE_ROOT_OVERLAY
+    assert entry["label"] == "Python 3.14 + ROOT 6.38"
+    record = projectenv.remembered_record(rig["root"])
+    assert record["env_overlay"]["version"] == "6.38.06"
+    assert record["env_overlay"]["root"].endswith("root")
+
+
+@POSIX
+def test_probe_overlays_after_the_conda_activation_capture(tmp_path, monkeypatch):
+    """Win11 真机：Conda 环境不激活时 matplotlib savefig 自己就崩，所以叠加必须在激活捕获**之后**（激活的 PATH 在 ROOT 的后面）。"""
+    root = make_root(tmp_path, "root", nt=True)
+    spec = rootenv.overlay_spec(rootenv.inspect_root(str(root), nt=True))
+    seen: list[dict] = []
+
+    def fake_run(argv, **kw):
+        seen.append(kw["env"])
+        out = '{"version_info": [3, 14, 8], "python_version": "3.14.8", "modules_ok": {}}'
+        return subprocess.CompletedProcess(argv, 0, stdout=out, stderr="")
+
+    monkeypatch.setattr(projectenv.subprocess, "run", fake_run)
+    monkeypatch.setattr(launcher, "launcher_for_interpreter", lambda python: object())
+    monkeypatch.setattr(
+        launcher, "activate_env", lambda python, base, timeout=None: {"PATH": "ACTIVATED"}
+    )
+    py = _touch(tmp_path / "e" / "python")
+    monkeypatch.setattr(rootenv, "_is_nt", lambda nt: True)
+    projectenv._probe_environment(py, env_overlay=spec)
+    assert seen[0]["PATH"] == f"{root / 'bin'};ACTIVATED"
+    assert seen[0]["ROOTSYS"] == str(root)

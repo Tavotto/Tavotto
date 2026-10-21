@@ -377,6 +377,16 @@ out["pythonpath_entries"] = (os.environ.get("PYTHONPATH") or "").split(os.pathse
 out["pythonpath_dirs"] = [p for p in out["pythonpath_entries"] if os.path.isabs(p)]
 
 
+# 叠加的 ROOT（Windows）：Python >= 3.8 不按 PATH 找 .pyd 依赖的 DLL；与 worker 启动钩子（`worker._startup_dll_directory`）同一件事，
+# 否则体检里 `import ROOT` 报 DLL load failed、被误判成「Python 版本对不上」。变量名 = `rootenv.DLL_DIR_ENV`
+_root_dll = os.environ.get("TAVOTTO_ROOT_DLL_DIR")
+if _root_dll and os.name == "nt" and hasattr(os, "add_dll_directory") and os.path.isdir(_root_dll):
+    try:
+        os.add_dll_directory(_root_dll)
+    except (OSError, ValueError):
+        pass
+
+
 def _norm(path):
     return os.path.normcase(os.path.realpath(path))
 

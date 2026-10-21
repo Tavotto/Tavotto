@@ -20,9 +20,12 @@ import glob
 import ntpath
 import os
 import re
+import subprocess
 import sys
+import time
 
 from . import scanbudget
+from .runtime import CREATE_NO_WINDOW
 
 KIND = "root"
 #: 候选来源标签（`userenvs.SOURCE_ROOT_OVERLAY` 同值）
@@ -45,6 +48,11 @@ _SCAN_MAX = 400
 
 #: Windows 上固定位置的模式（测试 monkeypatch）
 _WINDOWS_FIXED = ("C:\\root", "C:\\root_v*")
+
+#: 叠加层里传给 worker / 体检进程的 Tavotto 私有变量：值 = ROOT 的 DLL 目录（`<root>\bin`）。
+#: Python >= 3.8 在 Windows 上**不按 PATH** 找扩展模块（`.pyd`）依赖的 DLL，`libcppyy.pyd` 依赖 `libCPyCppyy.dll` 等
+#: 一百多个 dll——启动钩子（`worker.py` 与体检脚本）读到它就 `os.add_dll_directory`。只在 Windows 叠加时才设。
+DLL_DIR_ENV = "TAVOTTO_ROOT_DLL_DIR"
 
 
 def _is_nt(nt: bool | None) -> bool:
@@ -82,25 +90,79 @@ def _python_dir(root: str, nt: bool) -> str | None:
     return None
 
 
+def _cppyy_dir(root: str) -> str | None:
+    """Windows 官方包的 `bin\\cppyy`：`cppyy/_cpython_cppyy.py` 在 Windows 上 `import libcppyy as _backend`（顶层名），
+    而 `libcppyy.pyd` 就在这个目录里——只有 `bin` 进 `PYTHONPATH`（官方 thisroot.bat 的做法）时报
+    `ModuleNotFoundError: No module named 'libcppyy'`。要这个目录也进 `PYTHONPATH`。没有这个目录就是 None。"""
+    d = os.path.join(root, "bin", "cppyy")
+    return d if _isdir(d) else None
+
+
 _RELEASE = re.compile(r'ROOT_RELEASE\s+"([^"]+)"')
 _NAME_VERSION = re.compile(r"(\d+\.\d+(?:[./]\d+)?)")
+#: 新式头文件（`include/ROOT/RVersion.hxx`，6.3x 起的 Windows 官方包）没有字面的 `ROOT_RELEASE "x.y.z"`——
+#: `ROOT_RELEASE` 由宏拼出，版本号分在 `ROOT_VERSION_MAJOR / MINOR / PATCH` 三个宏里（也兼容 `ROOT_VERSION_MAJOR_NUM`
+#: 之类的后缀写法）。只认「宏名后面直接跟整数」的行；读不出就回空，由目录名兜底
+_VERSION_PART = {
+    part: re.compile(rf"#\s*define\s+ROOT_VERSION_{part}(?:_NUM)?\s+(\d+)\b")
+    for part in ("MAJOR", "MINOR", "PATCH")
+}
+_VERSION_HEADERS = (
+    ("include", "RVersion.h"),
+    ("include", "root", "RVersion.h"),
+    ("include", "ROOT", "RVersion.hxx"),
+    ("include", "root", "ROOT", "RVersion.hxx"),
+)
+
+
+def _version_in_header(text: str) -> str:
+    m = _RELEASE.search(text)
+    if m and re.match(r"\d", m.group(1)):
+        return m.group(1).replace("/", ".")
+    parts = [_VERSION_PART[k].search(text) for k in ("MAJOR", "MINOR", "PATCH")]
+    if all(parts):
+        major, minor, patch = (int(p.group(1)) for p in parts)
+        return f"{major}.{minor}.{patch:02d}"
+    return ""
 
 
 def _version_of(root: str) -> str:
-    """`6.38.02`（新式）/ `6.26.10`（老式 `6.26/10` 折成点号）；读 `RVersion.h`，读不到就看目录名，再没有回空。"""
-    for sub in (("include", "RVersion.h"), ("include", "root", "RVersion.h")):
+    """`6.38.02`（新式）/ `6.26.10`（老式 `6.26/10` 折成点号）；读 `RVersion.h` / `ROOT/RVersion.hxx`（宏拼出的版本号
+    按 MAJOR/MINOR/PATCH 三个宏合成，补零到两位），读不到就看目录名，再没有回空。**只读文本，不执行**。"""
+    for sub in _VERSION_HEADERS:
         try:
             text = scanbudget.read_regular_text(root, *sub, max_bytes=256 * 1024)
         except (OSError, ValueError):
             continue
-        m = _RELEASE.search(text)
-        if m:
-            return m.group(1).replace("/", ".")
+        version = _version_in_header(text)
+        if version:
+            return version
     m = _NAME_VERSION.search(os.path.basename(root.rstrip("\\/")))
     if m:
         return m.group(1).replace("/", ".")
     # Homebrew：…/Cellar/root/6.38.02_1/ 的版本在目录名里（上面已处理）；opt 链接则无，留空
     return ""
+
+
+#: `ROOT/_python_version.py` 里的 `_root_python_version = …`：右边是构建所用的 Python 版本（字符串 `"3.14.0"`、元组
+#: `(3, 14, 0)` 或类似）。静态读文本、取第一对 `主.次`，**不执行**；认不出回空串
+_BUILD_PYTHON_ASSIGN = re.compile(
+    r"^\s*_root_python_version\s*(?::[^=\n]+)?=\s*(.+)$", re.MULTILINE
+)
+_MAJOR_MINOR = re.compile(r"(\d+)\s*[.,]\s*(\d+)")
+
+
+def build_python_of(python_dir: str) -> str:
+    """这个 ROOT 构建时用的 Python 小版本（`3.14`），读 `<python_dir>/ROOT/_python_version.py`；读不到 / 认不出回空串。"""
+    try:
+        text = scanbudget.read_regular_text(
+            python_dir, "ROOT", "_python_version.py", max_bytes=64 * 1024
+        )
+    except (OSError, ValueError):
+        return ""
+    m = _BUILD_PYTHON_ASSIGN.search(text)
+    mm = _MAJOR_MINOR.search(m.group(1)) if m else None
+    return f"{int(mm.group(1))}.{int(mm.group(2))}" if mm else ""
 
 
 def short_version(version: str) -> str:
@@ -157,6 +219,10 @@ def inspect_root(root: str, *, nt: bool | None = None) -> dict | None:
         "python_dir": pydir,
         "lib_dirs": libs,
         "py_tags": _python_tags(pydir, *libs),
+        # 构建所用的 Python 小版本（`3.14`，静态读 `ROOT/_python_version.py`）：配对的依据；读不到回空串（不据此排除）
+        "build_python": build_python_of(pydir),
+        # Windows 官方包：`libcppyy` 在 `bin\cppyy` 子目录里、`cppyy` 包用顶层名 `import libcppyy`
+        "cppyy_dir": _cppyy_dir(root) if nt else None,
     }
 
 
@@ -165,6 +231,22 @@ def _globbed(pattern: str) -> list[str]:
         return sorted(glob.glob(pattern))[:_GLOB_MAX]
     except OSError:
         return []
+
+
+_PATH_MAX = 64
+
+
+def _split_path(value: str, nt: bool) -> list[str]:
+    return [p.strip().strip('"') for p in value.split(";" if nt else ":") if p.strip()]
+
+
+def _home_patterns(home: str) -> list[str]:
+    """用户常见的解压位置（有界，各只往下一层）：家目录、桌面、下载下的 `root*`。官方 zip 解出来的目录常常是
+    `root_v6.38.06.win64.python314.vc18\\root`（外层带版本、里层才是安装根），所以每个位置各出外层与外层/root 两个模式。"""
+    out: list[str] = []
+    for base in (home, os.path.join(home, "Desktop"), os.path.join(home, "Downloads")):
+        out += [os.path.join(base, "root*"), os.path.join(base, "root*", "root")]
+    return out
 
 
 def _registry_roots(reader, budget: scanbudget.Budget | None) -> list[str]:
@@ -209,10 +291,14 @@ def discover_installs(
     raw: list[tuple[str, str]] = []
     if env.get("ROOTSYS"):
         raw.append((env["ROOTSYS"], "rootsys"))
+    # PATH 里含 thisroot 的 bin 目录（用户在终端里 source 过 / 手工加过 PATH）：安装根 = 它的上一级
+    for entry in _split_path(env.get("PATH") or env.get("Path") or "", nt)[:_PATH_MAX]:
+        if _isfile(os.path.join(entry, thisroot_name(nt))):
+            raw.append((os.path.dirname(entry.rstrip("\\/")), "path"))
     if nt:
         if registry_reader is not None:
             raw += [(p, "registry") for p in _registry_roots(registry_reader, budget)]
-        patterns = list(_WINDOWS_FIXED)
+        patterns = list(_WINDOWS_FIXED) + _home_patterns(home)
         for var in ("ProgramFiles", "ProgramFiles(x86)", "ProgramW6432"):
             if env.get(var):
                 patterns.append(os.path.join(env[var], "ROOT*"))
@@ -227,6 +313,7 @@ def discover_installs(
             "/home/linuxbrew/.linuxbrew/Cellar/root/*",
             os.path.join(home, "root"),
             os.path.join(home, "root_v*"),
+            *_home_patterns(home),
         ]
     for pattern in patterns:
         for hit in _globbed(pattern):
@@ -257,6 +344,70 @@ def newest(installs: list[dict], n: int = MAX_USED) -> list[dict]:
     return sorted(installs, key=lambda i: tuple(-v for v in version_tuple(i.get("version", ""))))[
         :n
     ]
+
+
+# ------------------------------------------------------------------ Visual Studio（Windows）
+
+#: vswhere 的有界超时（秒）
+VSWHERE_TIMEOUT_S = 8.0
+#: 一次检测结论的有效期（秒）：用户装好 Build Tools 之后重试不必重启 Tavotto，又不至于每个候选都起一次 vswhere
+_MSVC_TTL_S = 60.0
+_msvc_cache: tuple[float, bool] | None = None
+_VSWHERE_ARGS = (
+    "-products",
+    "*",
+    "-requires",
+    "Microsoft.VisualStudio.Component.VC.Tools.x86.x64",
+    "-property",
+    "installationPath",
+)
+
+
+def reset_msvc_cache() -> None:
+    global _msvc_cache
+    _msvc_cache = None
+
+
+def msvc_available(environ: dict | None = None, *, nt: bool | None = None, runner=None) -> bool:
+    """这台机器有没有 Visual Studio / Build Tools 的 C++ 工具（ROOT 的 cling 在 Windows 上要它的头文件：没有就报
+    `unable to find a Visual Studio installation` / `'new' file not found` 并**崩溃**，2026-10-21 Win11 真机）。
+
+    非 Windows 恒为 True（不适用）。Windows：跑 `%ProgramFiles(x86)%\\Microsoft Visual Studio\\Installer\\vswhere.exe
+    -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath`，有输出 = 有；
+    找不到 vswhere / 起不来 / 超时 / 没输出都算没有。有界超时、结论缓存 60 秒；`runner` 供测试注入
+    （`(argv, timeout) -> stdout`，抛 OSError / SubprocessError 即「没有」）。"""
+    global _msvc_cache
+    if not _is_nt(nt):
+        return True
+    now = time.monotonic()
+    if runner is None and _msvc_cache is not None and now - _msvc_cache[0] < _MSVC_TTL_S:
+        return _msvc_cache[1]
+    env = os.environ if environ is None else environ
+    found = False
+    pf86 = env.get("ProgramFiles(x86)") or env.get("ProgramFiles") or ""
+    vswhere = os.path.join(pf86, "Microsoft Visual Studio", "Installer", "vswhere.exe")
+    if pf86 and (runner is not None or _isfile(vswhere)):
+        argv = [vswhere, *_VSWHERE_ARGS]
+        try:
+            if runner is not None:
+                out = runner(argv, VSWHERE_TIMEOUT_S)
+            else:
+                out = subprocess.run(
+                    argv,
+                    capture_output=True,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    timeout=VSWHERE_TIMEOUT_S,
+                    stdin=subprocess.DEVNULL,
+                    creationflags=CREATE_NO_WINDOW,
+                ).stdout
+            found = bool((out or "").strip())
+        except (OSError, subprocess.SubprocessError):
+            found = False
+    if runner is None:
+        _msvc_cache = (now, found)
+    return found
 
 
 # ------------------------------------------------------------------ 叠加层
@@ -311,7 +462,9 @@ def apply_overlay(
 ) -> dict:
     """把叠加层叠到 `env`（None = 当前进程环境的拷贝）上，回**新字典**。做的就是 thisroot 做的那几件事：
     `ROOTSYS`；`PATH` 前置 `<root>/bin`；POSIX 的库路径前置 `<root>/lib`；`PYTHONPATH` 前置 PyROOT 所在目录；
-    `CMAKE_PREFIX_PATH`；`ROOT_INCLUDE_PATH`。
+    `CMAKE_PREFIX_PATH`；`ROOT_INCLUDE_PATH`。Windows 上比 thisroot.bat 多两件（2026-10-21 Win11 真机实测，官方做法不够）：
+    `<root>\\bin\\cppyy` 也进 `PYTHONPATH`；私有变量 `TAVOTTO_ROOT_DLL_DIR`（= `<root>\\bin`）交给启动钩子做
+    `os.add_dll_directory`。
 
     `replace_pythonpath`：内置 runtime 会摘掉 shell 带来的 `PYTHONPATH`（`runtime.child_env`），叠加在它**之后**，
     于是 `PYTHONPATH` 只有 ROOT 这一项而不是重新吃回用户 shell 里的那串。
@@ -335,10 +488,18 @@ def apply_overlay(
         )
         for lib in reversed(info["lib_dirs"]):
             _prepend(out, lib_var, lib, sep)
+    # PYTHONPATH：Windows 上 `<root>\\bin\\cppyy` 排在 `<root>\\bin` 前面（`libcppyy.pyd` 以顶层名被 import，真机实测）
+    py_dirs = [info["python_dir"]]
+    if nt and info.get("cppyy_dir"):
+        py_dirs.insert(0, info["cppyy_dir"])
     if replace_pythonpath:
-        out["PYTHONPATH"] = info["python_dir"]
+        out["PYTHONPATH"] = sep.join(py_dirs)
     else:
-        _prepend(out, "PYTHONPATH", info["python_dir"], sep)
+        for d in reversed(py_dirs):
+            _prepend(out, "PYTHONPATH", d, sep)
+    if nt:
+        # worker / 体检的启动钩子读它做 `os.add_dll_directory`（Python >= 3.8 不按 PATH 找扩展模块的依赖 dll）
+        out[DLL_DIR_ENV] = os.path.join(root, "bin")
     _prepend(out, "CMAKE_PREFIX_PATH", root, sep)
     include = os.path.join(root, "include")
     if _isdir(include):

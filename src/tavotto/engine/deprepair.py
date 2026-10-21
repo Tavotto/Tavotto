@@ -6277,7 +6277,9 @@ def _root_overlay_entries(
     """「候选解释器 × 用户装的 ROOT」的体检结果（`userenvs.evaluate` 的形状，带 `overlay`）。
 
     底 = 此刻的解释器（内置 runtime 也算，它摘 `PYTHONPATH` 之后才叠）+ 已量过、健康、但装不齐的候选；
-    要 Conda 激活的环境不叠（激活增量会盖住 `PATH`，conda-forge 的 ROOT 本来就在环境里）、正被安装占着的不叠。
+    正被安装占着的不叠。Conda 环境也可以当底（2026-10-21 Win11 真机：conda-forge 在 Windows 上没有 `root` 包，
+    用户的 Python 3.14 恰是 conda-forge 的）：叠加层在激活增量**之后**叠（`pool.launch_env` / `projectenv._probe_environment`
+    同一个顺序），激活盖不掉它；conda-forge 自带 ROOT 的环境裸起就导入得了，根本走不到这里。
     ROOT 至多拿最新的 2 个，组合至多 8 个，一个 ROOT 都找不到就是空表。点「运行」之前不起任何进程
     （`cache_only`：叠加组合运行之前的体检要 import，那是明确的执行动作）。"""
     installs = userenvs.root_installs()
@@ -6287,12 +6289,7 @@ def _root_overlay_entries(
     seen: set = set()
 
     def add(python: str, **extra) -> None:
-        if (
-            not python
-            or userenvs._key(python) in seen
-            or envlease.is_mutating(python)
-            or launcher.launcher_for_interpreter(python) is not None
-        ):
+        if not python or userenvs._key(python) in seen or envlease.is_mutating(python):
             return
         seen.add(userenvs._key(python))
         bases.append({"python": python, **extra})
