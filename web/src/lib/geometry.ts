@@ -174,8 +174,8 @@ export interface SnapPick {
  * 用下标而不是浮点值：两条坐标相同的线是两条线。候选表在手势里必须是同一份数组。
  */
 export interface SnapHold {
-  x: { selfEdge: SnapEdge; idx: number } | null
-  y: { selfEdge: SnapEdge; idx: number } | null
+  x: { selfEdge: SnapEdge; idx: number; yielded?: boolean } | null
+  y: { selfEdge: SnapEdge; idx: number; yielded?: boolean } | null
 }
 
 export function createSnapHold(): SnapHold {
@@ -238,7 +238,9 @@ export function snapMoveNearest(
     const held = hold?.[axis]
     const heldLine = held ? lines[held.idx] : undefined
     const heldD = held && heldLine && ok(held.selfEdge, heldLine) ? heldLine.v - (start + offs[held.selfEdge]) : null
-    const holdOk = heldD !== null && Math.abs(heldD) < tol * SNAP_HOLD_FACTOR
+    // 让位得来的 hold 是临时的：只在容差内保持（迟滞 1.75× 只给真正「吸住」的线），
+    // 否则快速拖动时途经的一条无关线靠让位重新武装 1.75× 迟滞，把真正的目标挡在 0.25 倍之外
+    const holdOk = heldD !== null && Math.abs(heldD) < tol * (held!.yielded ? 1 : SNAP_HOLD_FACTOR)
     const heldRank = holdOk && rank ? rank(held!.selfEdge, heldLine!) : 0
     let best: P | null = null
     let yieldTo: P | null = null
@@ -261,7 +263,7 @@ export function snapMoveNearest(
     }
     if (holdOk && !yieldTo) return { d: heldD!, pick: { selfEdge: held!.selfEdge, line: heldLine! } }
     if (yieldTo) best = yieldTo
-    if (hold) hold[axis] = best ? { selfEdge: best.e, idx: best.idx } : null
+    if (hold) hold[axis] = best ? { selfEdge: best.e, idx: best.idx, ...(yieldTo ? { yielded: true } : {}) } : null
     return best && { d: best.d, pick: { selfEdge: best.e, line: lines[best.idx] } }
   }
   const res: SnapNearestResult = { dx: 0, dy: 0, guideXs: [], guideYs: [], x: null, y: null }

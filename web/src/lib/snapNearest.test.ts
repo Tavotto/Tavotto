@@ -217,3 +217,27 @@ describe('snapKindOf：manifest 元素 → 吸附类型', () => {
     expect(k('axes_1', 'axes', false)).toBe('axes')
   })
 })
+
+describe('snapMoveNearest：让位得来的 hold 只在容差内保持（CI cross-figure-align 回归）', () => {
+  // 快速拖动途经一条无关线 b 时让位给它；之后 b 掉出容差（但仍在 1.75× 内）、真正的目标 t 进入容差，
+  // 不能再被 b 的 1.75× 迟滞挡住。普通（非让位）hold 的 1.75× 迟滞不变。
+  const a = line(100)
+  const b = line(104)
+  const t = line(105)
+  it('让位得来的 hold：距离 ≥ 容差即放开，改挑容差内最近的目标', () => {
+    const hold = createSnapHold()
+    const cs = cands([a, b, t])
+    snapMoveNearest(box(101), cs, TOL, { hold })
+    expect(snapMoveNearest(box(103.4), cs, TOL, { hold }).x?.line).toBe(b) // 让位给 b
+    expect(hold.x?.yielded).toBe(true)
+    // 框 106.5：b 距 2.5（≥ TOL，< 3.5）、t 距 1.5
+    expect(snapMoveNearest(box(106.5), cs, TOL, { hold }).x?.line).toBe(t)
+  })
+  it('普通 hold 不受影响：同样的距离仍保持到 1.75× 容差', () => {
+    const hold = createSnapHold()
+    const cs = cands([a, b, t])
+    snapMoveNearest(box(103), cs, TOL, { hold }) // 直接吸住 b（距 1），不是让位
+    expect(hold.x?.yielded).toBeUndefined()
+    expect(snapMoveNearest(box(106.5), cs, TOL, { hold }).x?.line).toBe(b)
+  })
+})
