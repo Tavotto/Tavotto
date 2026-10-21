@@ -11605,6 +11605,28 @@ def api_ai_history_pin(sid):
     return jsonify({"ok": engine_ai_history.set_pinned(sid, bool(body.get("pinned")))})
 
 
+@app.get("/api/ai/sessions/changes")
+def api_ai_session_changes():
+    """当前项目里版本号 > `since` 的会话（#1115）：断线 / 切项目 / 刷新的间隙里结束的任务，客户端凭水位对账补回。
+    不带 `since` = 只要此刻的水位（`sessions: []`），客户端用它做起点。事实以这里为准，`ai.*` 事件只是"该来拉一次"的提示。
+    认证与项目隔离同其它 `/api/ai/*`（别的项目的行不返回）。"""
+    project = str(require_project().resolve())
+    raw = request.args.get("since")
+    if raw is None or raw == "":
+        data = {"head": engine_ai_history.head_rev(), "more": False, "sessions": []}
+    else:
+        try:
+            since = int(raw)
+        except ValueError:
+            abort(400)
+        if since < 0:
+            abort(400)
+        data = engine_ai.changes(project, since)
+    resp = jsonify(data)
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
 @app.get("/api/ai/sessions/<sid>")
 def api_ai_session(sid):
     sess = engine_ai.get(sid)

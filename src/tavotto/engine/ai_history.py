@@ -373,7 +373,13 @@ _ADDED_COLUMNS = {
     "cancel_requested_ms": "INTEGER",
     "cancel_token": "TEXT",
     "cancel_result": "TEXT",
+    # 版本（#1115）：每条对外可见的写（登记 / 状态 / 阶段 / 终态 / 取消意图 / 收尾）在**同一个写事务里**置 `MAX(rev)+1`，
+    # 跨进程严格递增、无撞号。客户端凭水位 `GET /api/ai/sessions/changes?since=` 对账错过的终态。老行 NULL = 纪元之前（不出现在增量里）。
+    "rev": "INTEGER",
 }
+
+#: 下一个版本号：只能在 `_immediate` 事务里求值（写锁已持有，`MAX` 读到的就是最新的）
+_NEXT_REV = "(SELECT COALESCE(MAX(rev), 0) + 1 FROM sessions)"
 
 #: TAF 任务那几列里存 JSON 的：读出时解码，读不出来给 None（同 `refresh`）
 _TASK_JSON_COLUMNS = ("verification", "envelope", "budget_used")
@@ -402,6 +408,7 @@ def _migrate(con: sqlite3.Connection) -> None:
         if name not in have:
             _add_column(con, f"ALTER TABLE sessions ADD COLUMN {name} {kind}")
     con.execute(_REQUEST_INDEX)
+    con.execute("CREATE INDEX IF NOT EXISTS idx_sessions_rev ON sessions(rev)")
     # 草稿写入戳：旧表没有，补列（见 `put_draft` 的「旧戳不覆盖新戳」）
     if "stamp" not in {row["name"] for row in con.execute("PRAGMA table_info(ai_drafts)")}:
         _add_column(con, "ALTER TABLE ai_drafts ADD COLUMN stamp INTEGER NOT NULL DEFAULT 0")
@@ -490,12 +497,12 @@ def record_start(sess: dict, db_path: Path | None = None) -> tuple[bool, str]:
                 if row_owner_alive(other):
                     raise ScriptBusy(sess["script"])
         con.execute(
-            """INSERT INTO sessions
+            f"""INSERT INTO sessions
                (id, project, canvas, panel, element, provider, model, effort,
                 scope, target, script, prompt, status, started_ms, snapshot_path,
                 client_request_id, owner_pid, task_type, phase, envelope, parent_task_id,
-                owner_token, owner_beat_ms)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                owner_token, owner_beat_ms, rev)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,{_NEXT_REV})""",
             (
                 sess["id"],
                 sess.get("project", ""),
@@ -537,14 +544,14 @@ def record_end(
     db_path: Path | None = None,
     refresh: dict | None = None,
     task_result: dict | None = None,
-) -> None:
-    """会话终态落库。`task_result`（TAF 任务）：`{outcome, verification, budget_used}` 与终态字段**同一条 UPDATE**
+) -> int | None:
+    """会话终态落库，回这一行的新版本号 `rev`（行不存在 = None）。`task_result`（TAF 任务）：`{outcome, verification, budget_used}` 与终态字段**同一条 UPDATE**
     写入、`phase` 同时清空——崩溃不会留下「status 已终态、outcome 还空着」的半条记录。"""
     task = task_result or {}
-    with _connect(db_path) as con:
+    with _immediate(db_path) as con:
         con.execute(
-            """UPDATE sessions SET status=?, diff=?, changed=?, error=?,
-               transcript=?, ended_ms=?, refresh=?,
+            f"""UPDATE sessions SET status=?, diff=?, changed=?, error=?,
+               transcript=?, ended_ms=?, refresh=?, rev={_NEXT_REV},
                outcome=COALESCE(?, outcome), verification=COALESCE(?, verification),
                budget_used=COALESCE(?, budget_used), phase=CASE WHEN ? THEN NULL ELSE phase END
                WHERE id=?""",
@@ -567,23 +574,26 @@ def record_end(
                 sid,
             ),
         )
+        row = con.execute("SELECT rev FROM sessions WHERE id=?", (sid,)).fetchone()
+        return None if row is None else row["rev"]
 
 
 def record_task_phase(sid: str, phase: str, db_path: Path | None = None) -> bool:
     """TAF 任务推进到一个非终态阶段。**只改还在跑的行**（`status='running'`）：已取消 / 已中断的任务不会被一次迟到的
     阶段推进改回「进行中」的样子。回值：这一行确实被推进了。"""
-    with _connect(db_path) as con:
+    with _immediate(db_path) as con:
         return (
             con.execute(
-                "UPDATE sessions SET phase=? WHERE id=? AND status='running'", (phase, sid)
+                f"UPDATE sessions SET phase=?, rev={_NEXT_REV} WHERE id=? AND status='running'",
+                (phase, sid),
             ).rowcount
             > 0
         )
 
 
 def update_status(sid: str, status: str, db_path: Path | None = None) -> None:
-    with _connect(db_path) as con:
-        con.execute("UPDATE sessions SET status=? WHERE id=?", (status, sid))
+    with _immediate(db_path) as con:
+        con.execute(f"UPDATE sessions SET status=?, rev={_NEXT_REV} WHERE id=?", (status, sid))
 
 
 def mark_interrupted_running(db_path: Path | None = None) -> int:
@@ -632,17 +642,20 @@ def _close_dead_owner_rows(
         if r["status"] == "running" and r["cancel_requested_ms"] is not None:
             # 别的进程已经为它写了取消意图、属主还没来得及执行就死了：用户要的结局是「取消」，不是「中断」
             con.execute(
-                "UPDATE sessions SET status='cancelled', ended_ms=?, phase=NULL, cancel_result='owner_gone' WHERE id=?",
+                f"UPDATE sessions SET status='cancelled', ended_ms=?, phase=NULL, cancel_result='owner_gone', rev={_NEXT_REV} WHERE id=?",
                 (now, r["id"]),
             )
         elif r["status"] == "running":
             con.execute(
-                "UPDATE sessions SET status='interrupted', ended_ms=?, phase=NULL WHERE id=?",
+                f"UPDATE sessions SET status='interrupted', ended_ms=?, phase=NULL, rev={_NEXT_REV} WHERE id=?",
                 (now, r["id"]),
             )
             interrupted += 1
         else:
-            con.execute("UPDATE sessions SET ended_ms=?, phase=NULL WHERE id=?", (now, r["id"]))
+            con.execute(
+                f"UPDATE sessions SET ended_ms=?, phase=NULL, rev={_NEXT_REV} WHERE id=?",
+                (now, r["id"]),
+            )
     return interrupted
 
 
@@ -773,7 +786,7 @@ def request_cancel(
         # CAS：只有行上的 owner_token 仍等于调用方先前观察到的那个才写；意图连同它针对的 token 一起落（属主只认自己的）
         observed = token if expect_token is None else expect_token
         cur = con.execute(
-            "UPDATE sessions SET cancel_requested_ms=?, cancel_token=?, cancel_result=NULL "
+            f"UPDATE sessions SET cancel_requested_ms=?, cancel_token=?, cancel_result=NULL, rev={_NEXT_REV} "
             "WHERE id=? AND status='running' AND owner_token=?",
             (now, observed, sid, observed),
         )
@@ -896,6 +909,42 @@ def get(sid: str, db_path: Path | None = None) -> dict | None:
     with _connect(db_path) as con:
         row = con.execute("SELECT * FROM sessions WHERE id=?", (sid,)).fetchone()
     return _row_to_dict(row) if row else None
+
+
+#: 一次增量最多回多少行（超过则 `more: true`，客户端用返回的 `head` 接着取）
+CHANGES_PAGE = 200
+
+#: 增量里给的列：判终态（`status` / `ended_ms` / 属主三件套）+ 建只读占位所需的摘要列；**不含**转录 / diff / refresh（终态详情走 `get`）
+_CHANGE_COLUMNS = (
+    "id, rev, status, phase, outcome, changed, error, started_ms, ended_ms, client_request_id, "
+    "provider, scope, target, script, prompt, cancel_requested_ms, owner_pid, owner_token, owner_beat_ms"
+)
+
+
+def head_rev(db_path: Path | None = None) -> int:
+    """此刻库里最大的版本号（没有任何带版本的行 = 0）。"""
+    with contextlib.closing(_connect(db_path)) as con:
+        return con.execute("SELECT COALESCE(MAX(rev), 0) FROM sessions").fetchone()[0]
+
+
+def changes_since(
+    project: str, since: int, limit: int | None = None, db_path: Path | None = None
+) -> dict:
+    """`project` 里版本号 > `since` 的会话行（按 rev 升序）。回 `{head, more, rows}`：`head` 是客户端下一次 `since` 该用的水位——
+    先读全局 `MAX(rev)` 再读行（`rev <= head`），所以返回之后才提交的写不会被水位跳过；超过 `limit` 时 `head` 只推进到最后一行，
+    `more` 为真。别的项目的行不返回（项目隔离），但水位是全局的：别的项目的写只让 `head` 变大、不泄露内容。"""
+    limit = CHANGES_PAGE if limit is None else limit
+    with contextlib.closing(_connect(db_path)) as con:
+        top = con.execute("SELECT COALESCE(MAX(rev), 0) FROM sessions").fetchone()[0]
+        rows = con.execute(
+            f"SELECT {_CHANGE_COLUMNS} FROM sessions WHERE project=? AND rev > ? AND rev <= ? "
+            "ORDER BY rev LIMIT ?",
+            (project, since, top, limit + 1),
+        ).fetchall()
+    more = len(rows) > limit
+    rows = rows[:limit]
+    head = rows[-1]["rev"] if more else top
+    return {"head": head, "more": more, "rows": [dict(r) for r in rows]}
 
 
 # ---------------------------------------------------------------------------
