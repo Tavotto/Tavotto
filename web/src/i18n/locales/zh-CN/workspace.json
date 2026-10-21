@@ -1171,7 +1171,34 @@
         "unknown": "装上的东西和计划对不上。"
       }
     },
-    "progress": "进行中"
+    "progress": "进行中",
+    "convert": {
+      "running": "正在生成可编辑版本…",
+      "ready": "新版本生成好了，对照一下再决定",
+      "adopted": "已采用，正在打开新版本…",
+      "original": "原图",
+      "redrawn": "重画的新版本",
+      "noPreview": "暂无预览",
+      "aspectDiffers": "宽高比与原图相差约 {{pct}}%",
+      "fail": {
+        "unknown": "没能生成可编辑版本",
+        "no_matplotlib_figure": "生成的脚本跑完没有画出 Matplotlib 图",
+        "run_failed": "生成的脚本运行出错了",
+        "no_matplotlib_import": "生成的脚本没有用 Matplotlib",
+        "target_missing": "助手没有写出新脚本",
+        "syntax_error": "生成的脚本有语法错误",
+        "other_file_changed": "助手改动了不该动的文件，已丢弃",
+        "project_files_changed": "助手改动了项目文件，已丢弃",
+        "render_not_wired": "暂时无法校验新版本",
+        "budget_exhausted": "尝试次数用完了"
+      },
+      "btn": {
+        "start": "生成可编辑版本",
+        "adopt": "采用新版本",
+        "discard": "放弃",
+        "retry": "重试"
+      }
+    }
   },
   "canvasMenu": {
     "aria": "画布操作",

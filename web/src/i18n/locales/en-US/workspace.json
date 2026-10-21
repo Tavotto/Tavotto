@@ -1237,7 +1237,34 @@
         "unknown": "What was installed doesn't match the plan."
       }
     },
-    "progress": "In progress"
+    "progress": "In progress",
+    "convert": {
+      "running": "Making an editable version…",
+      "ready": "The new version is ready. Compare, then decide",
+      "adopted": "Adopted. Opening the new version…",
+      "original": "Original",
+      "redrawn": "Redrawn version",
+      "noPreview": "No preview",
+      "aspectDiffers": "Aspect ratio differs from the original by about {{pct}}%",
+      "fail": {
+        "unknown": "Couldn’t make an editable version",
+        "no_matplotlib_figure": "The generated script ran but drew no Matplotlib figure",
+        "run_failed": "The generated script failed to run",
+        "no_matplotlib_import": "The generated script doesn’t use Matplotlib",
+        "target_missing": "The assistant didn’t write the new script",
+        "syntax_error": "The generated script has a syntax error",
+        "other_file_changed": "The assistant changed files it shouldn’t have, so it was discarded",
+        "project_files_changed": "The assistant changed project files, so it was discarded",
+        "render_not_wired": "The new version can’t be checked right now",
+        "budget_exhausted": "Out of attempts"
+      },
+      "btn": {
+        "start": "Make editable version",
+        "adopt": "Use the new version",
+        "discard": "Discard",
+        "retry": "Try again"
+      }
+    }
   },
   "canvasMenu": {
     "aria": "Canvas actions",
