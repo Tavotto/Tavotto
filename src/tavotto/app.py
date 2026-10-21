@@ -8672,7 +8672,10 @@ def _agent_error(exc: "engine_ai.AgentError"):
 def api_ai_capabilities():
     """实测本机每个已注册编码 Agent（安装/版本/就绪/模型/推理强度）+ 第三方接口。"""
     refresh = request.args.get("refresh") in ("1", "true", "yes")
-    resp = jsonify(engine_ai.capabilities(refresh=refresh))
+    # `taf_enabled`（TAF 实验开关）只在这一层并入：`engine_ai.capabilities` 的缓存内容不含它，开关随时可翻
+    resp = jsonify(
+        {**engine_ai.capabilities(refresh=refresh), "taf_enabled": engine_ai_figure_edit.enabled()}
+    )
     resp.headers["Cache-Control"] = "no-store"
     return resp
 
@@ -11432,6 +11435,54 @@ def api_ai_data_figure():
     if isinstance(prepared.plan, engine_ai_data_figure.NeedsInput) and prepared.plan.preview:
         out["preview"] = prepared.plan.preview.to_dict()
     return jsonify(out)
+
+
+_DATA_FILES_MAX = 500
+#: 列表接口最多看多少个目录项（大项目里一次点击不至于无界遍历；超了就 truncated，不假装列全了）
+_DATA_FILES_SCAN_MAX = 50_000
+
+
+@app.get("/api/ai/data-files")
+def api_ai_data_files():
+    """TAF 数据出图的数据文件列表（**实验开关后面**，只读）：当前项目内的 `.csv`（后缀大小写不敏感）。
+
+    walk 剪枝与隐藏目录规则同 `discover.PRUNE_DIRS`；不跟随链接；最多 500 个，按项目相对 POSIX 路径排序；最多看
+    `_DATA_FILES_SCAN_MAX` 个目录项，超了停下并标 `truncated`。"""
+    if not engine_ai_figure_edit.enabled():
+        return jsonify({"error": "实验功能未开启", "code": "taf_disabled"}), 404
+    root = require_project()
+    found: list[tuple[str, int]] = []
+    truncated = False
+    seen = 0
+    for cur, dirs, names in os.walk(root, followlinks=False):
+        seen += len(dirs) + len(names)
+        if seen > _DATA_FILES_SCAN_MAX:
+            truncated = True
+            break
+        dirs[:] = [
+            d
+            for d in dirs
+            if not d.startswith(".")
+            and d not in engine_discover.PRUNE_DIRS
+            and not os.path.islink(os.path.join(cur, d))
+        ]
+        for name in names:
+            if not name.lower().endswith(".csv") or name.startswith("."):
+                continue
+            full = os.path.join(cur, name)
+            if os.path.islink(full):
+                continue
+            try:
+                size = os.stat(full).st_size
+            except OSError:
+                continue
+            found.append((Path(full).relative_to(root).as_posix(), size))
+    found.sort()
+    if len(found) > _DATA_FILES_MAX:
+        found, truncated = found[:_DATA_FILES_MAX], True
+    resp = jsonify({"files": [{"path": p, "size": n} for p, n in found], "truncated": truncated})
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
 
 
 # --- 助手草稿与待确认账本（ADR 0132）：存后端（data_dir 的 ai_history 库），不存浏览器 -----------------

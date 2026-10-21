@@ -3039,6 +3039,8 @@ export interface AiCapabilities {
   presets: AiEndpointPreset[]
   /** 上次探测完成的时刻（毫秒；与 AiHistoryEntry 的 *_ms 同一约定） */
   checked_at_ms: number
+  /** TAF 实验开关（`ai.taf.enabled`）是否开着；老后端没有，缺省 = 关。助手面板的「从数据出图」只在它为真时出现 */
+  taf_enabled?: boolean
 }
 
 /* --- capabilities 的读取助手（前端只认后端返回的 Agent，不自己列名单）--- */
@@ -3345,7 +3347,56 @@ export interface AiTaskSummary {
   phase?: 'correcting' | null
   /** 收尾时：自动修正了几轮（0 = 一次就过了检查）；老后端没有 */
   corrections?: number
+  /** 数据出图（`data_to_figure`）：新建的脚本（项目相对路径）；没写回（needs_input / failed）时没有 */
+  script?: string
+  /** 数据出图 needs_input：后端给的中性默认映射（x / y 列名），用来举例，不当结论 */
+  preview?: AiDataFigurePreview
 }
+
+/** 数据出图的默认映射预览（`ai_data_figure.NeedsInput.preview.to_dict()`）；只读展示 */
+export interface AiDataFigurePreview {
+  x?: string
+  y?: string[]
+  [k: string]: unknown
+}
+
+/** 项目内一份可选的 CSV 数据文件（`GET /api/ai/data-files`） */
+export interface AiDataFile {
+  /** 项目相对 POSIX 路径 */
+  path: string
+  size: number
+}
+
+/** `POST /api/ai/data-figure` 的回应：`task` 是任务结局（同 `ai.done` 里的 task） */
+export interface AiDataFigureResult {
+  task: {
+    task_id?: string
+    outcome: AiTaskSummary['outcome']
+    verification?: { unmet?: { constraint_id: string; reason_code: string }[]; [k: string]: unknown }
+    error?: string | null
+    deduped?: boolean
+    [k: string]: unknown
+  }
+  script?: string
+  stem?: string
+  summary?: Record<string, unknown>
+  preview?: AiDataFigurePreview
+}
+
+/** 项目内的 CSV 列表（只读；开关关着 404 `taf_disabled`）。`pj`：发起那一刻的项目，钉住不跟着此刻的项目走 */
+export const aiDataFiles = (pj?: string | null) =>
+  jsonFetch<{ files: AiDataFile[]; truncated: boolean }>('/api/ai/data-files', undefined, pj)
+
+/** 从数据出图：同步回任务结局。数据问题 400 + 稳定 code（`ApiError.body.code`），文案走 `backendErrorMsg` */
+export const aiDataFigure = (
+  body: { data: string; instruction: string; client_request_id?: string },
+  pj?: string | null,
+) =>
+  jsonFetch<AiDataFigureResult>(
+    '/api/ai/data-figure',
+    { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) },
+    pj,
+  )
 
 /** 会话详情（转录 + diff）；查询到已登记的会话后补全界面用 */
 export interface AiSessionDetail {

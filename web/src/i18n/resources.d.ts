@@ -28,6 +28,19 @@ export default interface Resources {
       "copy": "复制代码",
       "plain": "代码"
     },
+    "dataFigure": {
+      "cancel": "取消",
+      "empty": "项目里没有 CSV 数据文件",
+      "fileLabel": "数据文件",
+      "filePlaceholder": "选择 CSV 文件",
+      "generate": "生成",
+      "instructionLabel": "想画什么",
+      "instructionPlaceholder": "例如：画 y 随 x 的变化",
+      "loadFailed": "没能读取数据文件列表",
+      "open": "从数据出图",
+      "title": "从数据出图",
+      "truncated": "文件太多，只列出前一部分"
+    },
     "diff": {
       "copyPatch": "复制补丁",
       "edited": "已修改",
@@ -91,6 +104,9 @@ export default interface Resources {
       "resend": "重新发送"
     },
     "notice": {
+      "dataFigureNeedsInput": "没能判断哪列做横轴、哪列做纵轴。请在指令里点名这两列。",
+      "dataFigureNeedsInputExample": "没能判断哪列做横轴、哪列做纵轴。请在指令里点名这两列，例如“画 {{y}} 随 {{x}} 的变化”。",
+      "dataFigurePartial": "有些行不是数字，没有画出来；脚本已新建，结果未经完整核对。",
       "taskFailedChanged": "改动已写入，但核对发现数据或输出变了；不对的话可以回滚到修改前。",
       "taskPartial": "改动已写入，但有检查没能完成，结果未经完整核对。",
       "taskRejected": "改动没通过写回前检查，没有写入项目。",
@@ -165,6 +181,10 @@ export default interface Resources {
     },
     "session": {
       "correcting": "上一版没通过写回前检查，正在自动修正…",
+      "dataFigureDone": "已新建脚本 {{script}}",
+      "dataFigureNeedsInput": "没有出图，需要你指明用哪两列",
+      "dataFigurePartial": "已新建脚本 {{script}}，部分行没有画出",
+      "dataFigureRunning": "正在读取数据并出图…",
       "doneChanged": "改动已写入脚本",
       "doneNoChange": "已完成，脚本没有变化",
       "restoredNote": "已接回仍在运行的任务；此前的输出不再显示，结束后会更新结果。",

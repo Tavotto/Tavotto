@@ -7,8 +7,10 @@ import {
   agentDisplayName,
   aiCancel,
   aiRevert,
+  aiDataFigure,
   aiRun,
   ApiError,
+  backendErrorText,
   effectiveAgent,
   fetchAiCapabilities,
   fetchAiHistory,
@@ -24,6 +26,7 @@ import {
   type AiRefreshOutcome,
   type AiTaskSummary,
 } from '@/lib/api'
+import { PRODUCT_NAME } from '@/lib/brand'
 import type { DraftTarget, LedgerWrite } from '@/lib/aiDraft'
 
 export type AiStatus = 'running' | 'done' | 'failed' | 'timeout' | 'cancelled' | 'reverted'
@@ -225,6 +228,11 @@ interface AiState {
    * 都会调它；读失败 = 不知道，不动。
    */
   settleRunningSessions: () => Promise<void>
+  /**
+   * 从数据出图（TAF Phase 5c）：本地先放一轮「进行中」，同步 HTTP 回来后按 `task.outcome` 收尾。
+   * 它没有脚本、没有面板、没有后端会话——不进发送锁 / 安全网轮询 / 撤销；换代后回来的结果丢弃。
+   */
+  startDataFigure: (data: string, instruction: string) => Promise<void>
   /** 后端明确说没收到之后，用**同一个**请求 id 重发 */
   resend: (rid: string) => Promise<SubmitOutcome>
   /** 放弃等待这条提交（用户改写后重新发）：之后的发送换新 id。仅 `not_received` 时由界面提供 */
@@ -276,6 +284,11 @@ const queueSupersede = (sub: AiSubmission): void => {
  * 那种会话由 `accept` 标 `provisional`（本地 status 已不是 running / cancelled，靠这个标志留在谓词里）。
  * `settleRunningSessions` 与安全网轮询都调它，不各写一份。
  */
+/** 数据出图的本地会话：执行者固定值（= Tavotto 自身）、id 前缀、任务类型（与后端 `ai_data_task.TASK_TYPE` 同源） */
+export const DATA_FIGURE_AGENT = 'tavotto'
+const DATA_FIGURE_PREFIX = 'df-'
+export const DATA_FIGURE_TASK = 'data_to_figure'
+
 export const isOpenSession = (x: Pick<AiSession, 'status' | 'finalized' | 'provisional'>): boolean =>
   !x.finalized && (x.status === 'running' || x.status === 'cancelled' || x.provisional === true)
 
@@ -607,6 +620,71 @@ export const useAiStore = create<AiState>((set, get) => ({
     return dispatch(rid, generation)
   },
 
+  startDataFigure: async (data, instruction) => {
+    const born = get().generation
+    const pj = currentProjectId()
+    const rid = newRequestId()
+    const id = DATA_FIGURE_PREFIX + rid
+    const startedAt = Date.now()
+    set((s) => ({
+      sessions: [
+        ...s.sessions,
+        {
+          id,
+          project: pj,
+          agent: DATA_FIGURE_AGENT,
+          agentLabel: PRODUCT_NAME,
+          prompt: instruction,
+          script: '',
+          panelId: null,
+          fileId: null,
+          gid: null,
+          scope: 'figure',
+          target: data,
+          entries: [],
+          status: 'running',
+          changed: false,
+          diff: '',
+          task: { task_type: DATA_FIGURE_TASK, outcome: null },
+          startedAt,
+        },
+      ],
+    }))
+    const settle = (patch: Partial<AiSession>) => {
+      if (get().generation !== born) return // 期间切过项目：结果属于旧项目，不落
+      set((s) => ({
+        sessions: s.sessions.map((x) =>
+          x.id === id ? { ...x, ...patch, finalized: true, finishedAt: Date.now() } : x,
+        ),
+      }))
+    }
+    try {
+      const res = await aiDataFigure({ data, instruction, client_request_id: rid }, pj)
+      const outcome = res.task?.outcome ?? null
+      const task: AiTaskSummary = {
+        task_type: DATA_FIGURE_TASK,
+        outcome,
+        unmet: res.task?.verification?.unmet ?? [],
+        ...(res.script ? { script: res.script } : {}),
+        ...(res.preview ? { preview: res.preview } : {}),
+      }
+      if (outcome === 'completed' || outcome === 'partial') {
+        settle({ status: 'done', changed: !!res.script, task })
+      } else if (outcome === 'needs_input') {
+        settle({ status: 'done', changed: false, task })
+      } else {
+        settle({ status: 'failed', changed: false, task, ...(res.task?.error ? { error: res.task.error } : {}) })
+      }
+    } catch (e) {
+      settle({
+        status: 'failed',
+        changed: false,
+        error: backendErrorText(e),
+        task: { task_type: DATA_FIGURE_TASK, outcome: 'failed', unmet: [] },
+      })
+    }
+  },
+
   resend: async (rid) => {
     const sub = get().submissions[rid]
     // 只有「后端明确说没收到」才允许用同一个 id 重发；其余相位的重发就是盲目重复执行
@@ -621,7 +699,8 @@ export const useAiStore = create<AiState>((set, get) => ({
     const born = get().generation
     const pj = currentProjectId()
     for (const x of get().sessions) {
-      if (!isOpenSession(x) || x.project !== pj) continue
+      // 数据出图的本地会话没有后端会话可读：同步 HTTP 自己收尾，不进对账
+      if (!isOpenSession(x) || isDataFigureSession(x) || x.project !== pj) continue
       // 在途去重：同一代次 + 项目 + 会话只读一次详情（对账入口与安全网轮询可能同时到）
       const key = `${born}\u0000${x.project ?? ''}\u0000${x.id}`
       if (settling.has(key)) continue
@@ -1265,11 +1344,14 @@ function accept(
   }
 }
 
-/** 会话标签：优先用当前 capabilities 的显示名，探测不可用时回退到快照。 */
+/** 会话标签：优先用当前 capabilities 的显示名，探测不可用时回退到快照。数据出图的执行者是产品自己，显示品牌名。 */
 export const sessionAgentLabel = (
   caps: AiCapabilities | null,
   session: Pick<AiSession, 'agent' | 'agentLabel'>,
-): string => agentDisplayName(caps, session.agent, session.agentLabel)
+): string => (session.agent === DATA_FIGURE_AGENT ? PRODUCT_NAME : agentDisplayName(caps, session.agent, session.agentLabel))
+
+/** 是不是「从数据出图」那一类本地会话（无脚本、无后端会话、同步 HTTP） */
+export const isDataFigureSession = (x: Pick<AiSession, 'agent'>): boolean => x.agent === DATA_FIGURE_AGENT
 
 /** 一个可用的 Agent 都没有 = AI 面板要给设置入口，而不是一个死掉的选择器 */
 export const hasUsableAgent = (caps: AiCapabilities | null): boolean =>
@@ -1337,7 +1419,7 @@ export function isSessionOf(
  */
 export const SAFETY_NET_MS = 15_000
 let netTimer: ReturnType<typeof setInterval> | null = null
-const hasOpenSessions = (): boolean => useAiStore.getState().sessions.some(isOpenSession)
+const hasOpenSessions = (): boolean => useAiStore.getState().sessions.some((x) => isOpenSession(x) && !isDataFigureSession(x))
 const pageHidden = (): boolean => typeof document !== 'undefined' && document.visibilityState === 'hidden'
 function safetyNetTick(): void {
   if (pageHidden()) return

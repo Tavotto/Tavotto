@@ -367,3 +367,50 @@ def test_an_existing_output_with_the_same_name_is_not_adopted(project):
     (figs / "data" / "standard_figure.pdf").write_bytes(b"%PDF-1.4 old\n")
     pl = ai_data_task.place(figs, "data/standard.csv")
     assert pl.stem == "standard_figure_2", "旧产物不让新图冒认"
+
+
+def test_data_files_flag_off_is_404(project):
+    m, client, figs, state = project
+    state["taf"] = False
+    r = client.get("/api/ai/data-files")
+    assert r.status_code == 404 and r.get_json()["code"] == "taf_disabled"
+
+
+def test_data_files_lists_project_csv_only(project):
+    m, client, figs, state = project
+    n = len(list(FIX.glob("*.csv")))
+    assert n == 8
+    (figs / ".hidden").mkdir()
+    (figs / ".hidden" / "secret.csv").write_text("a,b\n1,2\n", encoding="utf-8")
+    (figs / "node_modules").mkdir()
+    (figs / "node_modules" / "dep.csv").write_text("a,b\n1,2\n", encoding="utf-8")
+    (figs / "data" / "UPPER.CSV").write_text("a,b\n1,2\n", encoding="utf-8")
+    (figs / "data" / "notes.txt").write_text("x", encoding="utf-8")
+    body = client.get("/api/ai/data-files").get_json()
+    paths = [f["path"] for f in body["files"]]
+    assert body["truncated"] is False
+    assert paths == sorted(paths) and len(paths) == n + 1
+    assert "data/UPPER.CSV" in paths and "data/standard.csv" in paths
+    assert not any(".hidden" in p or "node_modules" in p for p in paths)
+    assert all(isinstance(f["size"], int) and f["size"] > 0 for f in body["files"])
+
+
+def test_data_files_truncates_at_limit(project, monkeypatch):
+    m, client, figs, state = project
+    monkeypatch.setattr(m, "_DATA_FILES_MAX", 3)
+    body = client.get("/api/ai/data-files").get_json()
+    assert len(body["files"]) == 3 and body["truncated"] is True
+
+
+def test_capabilities_carries_taf_enabled(project):
+    m, client, figs, state = project
+    assert client.get("/api/ai/capabilities").get_json()["taf_enabled"] is True
+    state["taf"] = False
+    assert client.get("/api/ai/capabilities").get_json()["taf_enabled"] is False
+
+
+def test_data_file_listing_stops_at_the_scan_budget(project, monkeypatch):
+    m, client, figs, _ = project
+    monkeypatch.setattr(m, "_DATA_FILES_SCAN_MAX", 3)
+    body = client.get("/api/ai/data-files").get_json()
+    assert body["truncated"] is True, "目录项超了预算：停下并如实标 truncated"
