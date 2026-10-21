@@ -121,6 +121,15 @@ def panel_route(
             has_snapshot=has_snapshot,
             wants_svg="svg" in formats,
         )
+    if source == SOURCE_SNAPSHOT or (
+        source == SOURCE_DISK and file_kind == KIND_PDF and has_snapshot
+    ):
+        # 引用核验发生在任何一种格式开始之前（`_execution_source` / 静态 PDF 的快照加载），对不上整次作业被拒：
+        # 是这个面板**所有**格式的前提，不是某个格式分支的事
+        for entry in out.values():
+            entry.setdefault("conditions", [])
+            if COND_FIGURE_SNAPSHOT not in entry["conditions"]:
+                entry["conditions"].insert(0, COND_FIGURE_SNAPSHOT)
     return {
         "source": source,
         "embeds_disk_bitmap": file_kind == KIND_RASTER and source == SOURCE_DISK,
@@ -161,7 +170,7 @@ def _format_route(
         return _unavailable(REASON_SVG_ASSET_UNSUPPORTED)
     if source == SOURCE_SNAPSHOT:
         # 加载持久化快照，不跑脚本；引用过期（与源或编辑对不上）整次导出被拒
-        return {"how": HOW_CONVERT, "conditions": [COND_FIGURE_SNAPSHOT]}
+        return {"how": HOW_CONVERT}
     if source == SOURCE_UNAVAILABLE:
         return _unavailable(REASON_SOURCE_NEEDS_EXECUTION)
     if fmt == "svg":
@@ -177,11 +186,7 @@ def _format_route(
     # 磁盘原件。原图范围：矢量 PDF 整页搬运不重画，位图保源像素网格；画布范围：不论格式都经
     # `rendercore.job.produce` 重新合成页面，没有逐字复制
     copy = fmt == "pdf" and file_kind == KIND_PDF and not canvas
-    out: dict = {"how": HOW_COPY if copy else HOW_CONVERT}
-    if has_snapshot and file_kind == KIND_PDF:
-        # 静态 PDF 带快照引用：导出时按字节核引用，对不上整次拒绝
-        out["conditions"] = [COND_FIGURE_SNAPSHOT]
-    return out
+    return {"how": HOW_COPY if copy else HOW_CONVERT}
 
 
 def build_route(

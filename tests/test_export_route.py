@@ -221,3 +221,21 @@ def test_execution_source_and_route_share_the_snapshot_predicate(monkeypatch):
             {"id": "a.png", "overrides": [{"p": 1}], "figure_snapshot": {"x": 1}}, 150, None, None
         )
     assert seen == [{"has_reference": True}]
+
+
+@pytest.mark.parametrize("scope", ["original", "canvas"])
+@pytest.mark.parametrize("kind", [er.KIND_RASTER, er.KIND_PDF, er.KIND_RUNTIME])
+def test_the_snapshot_reference_check_applies_to_every_format(scope, kind):
+    """引用核验在任何格式开始前就发生，过期整次拒绝——eps（含画布范围逐项不可用的 eps）也不例外。"""
+    r = route(
+        scope, ["pdf", "png", "tiff", "eps", "svg"], kind, overrides=[{"p": 1}], snapshot=True
+    )
+    for fmt, entry in r["formats"].items():
+        assert er.COND_FIGURE_SNAPSHOT in entry.get("conditions", []), (fmt, entry)
+    if scope == "original":
+        assert r["formats"]["eps"]["how"] == "redraw"  # _produce_original_eps 仍由活 Figure 现画
+    # 没有引用就没有这条前提
+    r = route(scope, ["pdf", "eps"], kind, overrides=[{"p": 1}])
+    assert all(
+        er.COND_FIGURE_SNAPSHOT not in e.get("conditions", []) for e in r["formats"].values()
+    )
