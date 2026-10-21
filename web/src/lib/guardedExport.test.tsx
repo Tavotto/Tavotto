@@ -180,6 +180,16 @@ describe('saved guarded export refusal', () => {
   })
 })
 
+/** 「每张图单独导出」是依次发作业的（哪怕只有一张）：等条件成立 */
+const until = async (cond: () => boolean, ms = 8000) => {
+  const t0 = Date.now()
+  while (Date.now() - t0 < ms && !cond()) {
+    await act(async () => {
+      await new Promise<void>((r) => setTimeout(r, 50))
+    })
+  }
+}
+
 describe('exact original export variant', () => {
   it('a guarded PNG hidden behind PDF reaches original export preflight with honest saved metadata', async () => {
     put([panel()])
@@ -197,6 +207,7 @@ describe('exact original export variant', () => {
     if (confirm && !confirm.checked) await act(async () => confirm.click())
     expect(document.querySelector<HTMLButtonElement>('[data-export-start]')?.disabled).toBe(false)
     await click('[data-export-start]')
+    await until(() => exportCalls.some(call => call.url.includes('/api/export/start')))
     const published = exportCalls.find(call => call.url.includes('/api/export/start'))!
     expect(published.body.original).toMatchObject({
       figure_id: 'plot.png', source_policy: 'selected-figsize-v1',
@@ -240,6 +251,7 @@ describe('exact original export variant', () => {
       }), { status: 409, headers: { 'Content-Type': 'application/json' } })
     }))
     await click('[data-export-start]')
+    await until(() => exportCalls.some(call => call.url.includes('/api/export/validate')) && !!document.querySelector('[data-export-start-error]'))
     expect(exportCalls.some(call => call.url.includes('/api/export/validate'))).toBe(true)
     expect(exportCalls.some(call => call.url.includes('/api/export/start'))).toBe(false)
     expect(document.querySelector('[data-export-start-error]')?.textContent)
@@ -288,7 +300,10 @@ describe('exact original export variant', () => {
       const confirm = document.querySelector<HTMLInputElement>('[data-export-confirm]')
       if (confirm && !confirm.checked) await act(async () => confirm.click())
       expect(document.querySelector<HTMLButtonElement>('[data-export-start]')?.disabled).toBe(false)
+      const sent = () => exportCalls.filter((call) => call.url.includes('/api/export/start')).length
+      const before = sent()
       await click('[data-export-start]')
+      await until(() => sent() > before)
       const request = exportCalls.filter((call) => call.url.includes('/api/export/start')).at(-1)!.body
       expect(request.original?.overrides).toEqual(currentPanel(id).overrides)
       expect(request.original?.w_mm).toBe(id === 'a' ? 70 : 90)

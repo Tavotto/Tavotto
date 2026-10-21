@@ -37,12 +37,14 @@ test('导出对象头：缩略图有「示意」标注，勾透明背景后页�
   // 默认（含 PNG、不透明）：页面是纸白，没有棋盘格
   const png = dialog.getByRole('checkbox', { name: 'PNG', exact: true })
   if (!(await png.isChecked())) await png.check()
-  await expect(target.locator('[data-thumb-page]')).toHaveCount(1)
-  await expect(target.locator('[data-thumb-transparent]')).toHaveCount(0)
+  // 缩略图在左栏大预览里（对象头不再重复一份）
+  const stage = dialog.locator('[data-export-preview-stage]')
+  await expect(stage.locator('[data-thumb-page]')).toHaveCount(1)
+  await expect(stage.locator('[data-thumb-transparent]')).toHaveCount(0)
 
   await dialog.getByRole('switch', { name: /透明背景|transparent/i }).click()
-  await expect(target.locator('[data-thumb-transparent]')).toHaveCount(1)
-  await expect(target.locator('pattern')).toHaveCount(1)
+  await expect(stage.locator('[data-thumb-transparent]')).toHaveCount(1)
+  await expect(stage.locator('pattern')).toHaveCount(1)
   // 标注仍在（棋盘格不替代「示意」）
   await expect(note).toBeVisible()
 })

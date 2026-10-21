@@ -307,7 +307,8 @@ export default interface Resources {
       "title": "渲染环境"
     },
     "export": {
-      "blockingListLabel": "阻断性问题",
+      "batchNames": "每张图用各自的名字",
+      "batchProgress": "第 {{k}}/{{n}} 张 · {{name}} · {{phase}}",
       "cancelExport": "取消导出",
       "cancelFailed": "尚未确认取消，导出可能仍在继续",
       "cancelNotAccepted": "服务器未接受取消请求。请先检查导出状态和输出文件夹，再重试。",
@@ -320,7 +321,6 @@ export default interface Resources {
       "checkScopeCanvasNamed": "查整个画布「{{name}}」",
       "checkScopeFigureNamed": "仅查原图「{{name}}」",
       "checkScopeOffCanvas": "「{{name}}」不在画布上，这次导出不做规范检查",
-      "checksMore_other": "还有 {{count}} 项 · 在问题面板中查看全部",
       "chipError_other": "项要改",
       "chipNotVerifiable_other": "项无法核验",
       "chipSuggestion_other": "条建议",
@@ -330,7 +330,6 @@ export default interface Resources {
       "conflictReplace": "覆盖",
       "connectionFailed": "无法连接导出服务。请检查连接并确认 {{app}} 正在运行，再重试。重新导出前请先检查输出文件夹。",
       "contentEach": "每张图单独导出",
-      "contentEachNote": "目前一次导出一张：「{{name}}」。在左侧点另一张图可以换。",
       "contentLabel": "导出内容",
       "contentWhole": "整版",
       "editedDuringExport": "导出期间排版又改了。文件里是点「导出」时的内容。",
@@ -384,9 +383,6 @@ export default interface Resources {
         "verified": "已核验"
       },
       "jobLost": "找不到这次导出的作业。文件可能已写出，请检查导出目录或重新导出。",
-      "locate": "定位",
-      "locateAria": "定位到{{subject}}：{{title}}",
-      "locatedHint": "再点「导出」回到导出面板，设置还在。",
       "locationChange": "更改…",
       "locationDefault": "项目的导出目录",
       "locationLabel": "位置",
@@ -523,9 +519,6 @@ export default interface Resources {
       "saving": "正在保存…"
     },
     "mcp": {
-      "confirmBoth": "仍要导出：已知悉 {{errors}} 条阻断项与 {{notVerifiable}} 条无法核验的项。确认会记入 proof report。",
-      "confirmErrors": "仍要导出：已知悉 {{errors}} 条阻断项。确认会记入 proof report。",
-      "exportBlockedTitle": "有阻断项或无法核验项：先在下方勾选确认",
       "exportBoth": "导出 PDF+PNG",
       "exportPendingTitle": "还有改动没画上，等这一版渲染完再导出",
       "exported": "已导出 {{files}}",

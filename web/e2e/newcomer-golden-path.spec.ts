@@ -395,17 +395,14 @@ test('C：排版里选单栏页宽 + 出版规范 → 导出检查摘要 → 定
   await expect(dialog).toBeVisible()
   await expect(dialog.locator('[data-count-chip="danger"]')).toHaveCount(1, { timeout: 60_000 })
   await expect(dialog.locator('[data-export-check-ok]')).toHaveCount(0)
-  const rows = dialog.locator('[data-blocking-issue]')
-  expect(await rows.count()).toBeGreaterThanOrEqual(1)
-
-  // 定位第一条：对话框让开，工作区真的去了那个问题的位置
-  await rows.first().locator('button').click()
+  // 没有逐条阻断清单、没有警告句：芯片 + 「在问题面板中查看」；导出照样可点
+  await expect(dialog.locator('[data-blocking-issue]')).toHaveCount(0)
+  await expect(dialog.locator('[data-export-start]')).toBeEnabled()
+  // 去问题面板：对话框让开，左栏切到问题面板
+  await dialog.getByRole('button', { name: /在问题面板中查看|problems panel/i }).click()
   await expect(dialog).toHaveCount(0)
-  await expect(page.locator('[data-workspace-context-bar]')).toHaveAttribute('data-workspace-mode', 'fast_edit', { timeout: 30_000 })
-  await expect(page.locator('[data-element-svg] > svg')).toBeVisible({ timeout: 60_000 })
 
-  // 回排版导出（知情确认后）：按画布导出，请求里的页宽就是规范的单栏宽，落盘位图像素与之一致
-  await backToLayout(page)
+  // 导出（不用确认任何东西）：按画布导出，请求里的页宽就是规范的单栏宽，落盘位图像素与之一致
   await expect(objects).toHaveCount(1)
   const out = await exportWith(page, ['png'], `golden-c-${Date.now()}`)
   expect(out.request.scope).toBe('canvas')

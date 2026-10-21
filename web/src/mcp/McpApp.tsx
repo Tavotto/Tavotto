@@ -11,7 +11,6 @@ import {
 } from '@/components/ui/icons'
 import { Button, IconButton } from '@/components/ui/Button'
 import { ICON_SIZE } from '@/components/ui/Icon'
-import { Checkbox } from '@/components/ui/Checkbox'
 import { listRowClass } from '@/components/ui/listRow'
 import { Notice } from '@/components/ui/Notice'
 import { StatusPill } from '@/components/ui/StatusPill'
@@ -82,7 +81,6 @@ export function McpApp({
   const [preflightStale, setPreflightStale] = useState(false)
   const [busy, setBusy] = useState<'preflight' | 'export' | null>(null)
   const [notice, setNotice] = useState<{ tone: 'ok' | 'bad'; text: string } | null>(null)
-  const [confirmForced, setConfirmForced] = useState(false)
   const sessionId = sessionIdFor(open.stem + '.pdf') ?? open.session_id
 
   // 改过图之后旧的预检结论就不作数了——**标成过期而不是留着**，
@@ -95,7 +93,6 @@ export function McpApp({
       return
     }
     setPreflightStale(true)
-    setConfirmForced(false)
   }, [lastPatches])
 
   const runPreflight = useCallback(async () => {
@@ -121,7 +118,11 @@ export function McpApp({
           await bridge.callTool('tavotto_export', {
             session_id: sessionId,
             formats,
-            explicit_confirm: confirmForced,
+            // 永远可导出、不警告（与桌面端一致）：有阻断 / 无法核验项时自动带上确认，由后端记进回执，
+            // 不再让用户先勾一个框
+            explicit_confirm:
+              !!preflight &&
+              ((preflight.errors ?? []).length > 0 || (preflight.not_verifiable ?? []).length > 0),
           }),
         )
         const files = (body.files as { path: string; manifest?: ArtifactManifestSummary | null }[]) ?? []
@@ -149,7 +150,7 @@ export function McpApp({
         setBusy(null)
       }
     },
-    [bridge, sessionId, confirmForced, open.stem, preflight],
+    [bridge, sessionId, open.stem, preflight],
   )
 
   // 手势结束后画布尺寸可能变了：告诉 host 一声（inline 模式下它据此调高度）
@@ -173,10 +174,6 @@ export function McpApp({
         : [],
     [preflight],
   )
-  const needsConfirm =
-    !!preflight
-    && ((preflight.errors ?? []).length > 0 || (preflight.not_verifiable ?? []).length > 0)
-
   if (!panel) {
     return <div className="p-4 text-sm text-ink-2">{mc('panelGone')}</div>
   }
@@ -218,42 +215,14 @@ export function McpApp({
         <Button
           variant="primary"
           size="sm"
-          disabled={busy != null || pending || (needsConfirm && !confirmForced)}
-          title={
-            pending
-              ? mc('exportPendingTitle')
-              : needsConfirm && !confirmForced
-                ? mc('exportBlockedTitle')
-                : undefined
-          }
+          disabled={busy != null || pending}
+          title={pending ? mc('exportPendingTitle') : undefined}
           onClick={() => void runExport(['pdf', 'png'])}
         >
           {busy === 'export' ? <LoaderCircle size={ICON_SIZE.sm} className="animate-spin" /> : <Download size={ICON_SIZE.sm} />}
           {mc('exportBoth')}
         </Button>
       </WidgetHeader>
-
-      {/* 「仍要导出」的确认：一块插在桌面上的 danger 说明条（不是通栏红带），勾选框在条里 */}
-      {needsConfirm && (
-        <Notice tone="danger" className="mx-2 mb-2 shrink-0 text-xs" data-mcp-confirm>
-          <label className="flex items-start gap-1.5">
-            <Checkbox
-              checked={confirmForced}
-              onChange={(e) => setConfirmForced(e.target.checked)}
-              className="mt-0.5"
-            />
-            {/* 两种情况各是一句完整的话，不拼字符串（英文从句位置与中文不同） */}
-            <span>
-              {preflight!.not_verifiable.length > 0
-                ? mc('confirmBoth', {
-                    errors: preflight!.errors.length,
-                    notVerifiable: preflight!.not_verifiable.length,
-                  })
-                : mc('confirmErrors', { errors: preflight!.errors.length })}
-            </span>
-          </label>
-        </Notice>
-      )}
 
       {notice && (
         <Notice

@@ -67,7 +67,34 @@ export type PreparedExport = (
   filenameProblem: FilenameReason | null
 }
 
+/**
+ * 「每张图单独导出」的一批作业（2026-10-21）。**后端协议不变**：一次作业仍只导一张原图，
+ * 批 = 对话框按图依次发多个普通作业（每张各自按它自己的原图口径 preflight / proof report，
+ * 走的就是单张导出的那条路）；这里只记**进度与各张的结果**，并在收尾时合成一份汇总作业
+ * 给结果块读（`aggregateBatch`）。
+ */
+export interface ExportBatch {
+  /** 要导的图（figureId），按顺序 */
+  ids: string[]
+  /** 各张的显示名（与 `ids` 对齐；进度句与失败行用） */
+  names: string[]
+  /** 正在导 / 即将导的是第几张（0 起） */
+  index: number
+  /** 已收尾的各张作业（落了终局的；撞名停住的那一张不在里面，等用户决定后重发） */
+  results: ExportJob[]
+  /** 与 `results` 对齐的图名（一张图的作业没有任何产物行却失败了时，结果里要点得出是哪张） */
+  resultNames: string[]
+  /** 根本没起来的几张（文件名不合法 / 原图此刻导不出 / 起作业失败）：名字 */
+  failedStarts: string[]
+  /** 用户点了取消：当前这张取消、剩余的不再发 */
+  cancelRequested: boolean
+  /** 收尾了：`aggregate` 是汇总作业 */
+  done: boolean
+  aggregate: ExportJob | null
+}
+
 interface ExportState {
+  batch: ExportBatch | null
   /** 当前（或最近一次）作业的完整快照。**不是增量** */
   job: ExportJob | null
   /** 有没有作业在飞 */
@@ -115,6 +142,7 @@ interface ExportState {
 }
 
 export const useExportStore = create<ExportState>(() => ({
+  batch: null,
   job: null,
   running: false,
   startError: null,
@@ -128,6 +156,100 @@ export const useExportStore = create<ExportState>(() => ({
   ownedJobId: null,
   momentSnapshot: null,
 }))
+
+/** 把一批作业的结果合成一份汇总作业：结果块（`ResultBlock`）按一个作业的口径读它，不另起一套 */
+export function aggregateBatch(
+  b: Pick<ExportBatch, 'results' | 'resultNames' | 'failedStarts' | 'cancelRequested'>,
+): ExportJob {
+  const failedRow = (name: string): ExportJob['outputs'][number] => ({
+    format: '',
+    name,
+    url: null,
+    bytes: null,
+    dimensions: { px: null, mm: null },
+    vector: false,
+    status: 'failed',
+    replaced: false,
+    error: { code: 'export_failed', params: {} },
+  })
+  const outputs = [
+    ...b.results.flatMap((j, i) =>
+      // 作业失败 / 丢了却没有任何产物行：补一行点名是哪张，汇总的失败数才对得上
+      (j.status === 'failed' || j.status === 'unknown') && j.outputs.length === 0
+        ? [failedRow(b.resultNames[i] ?? '')]
+        : j.outputs,
+    ),
+    ...b.failedStarts.map(failedRow),
+  ]
+  const written = outputs.some((o) => o.status !== 'failed' && !!o.name)
+  const bad =
+    b.failedStarts.length > 0 || b.results.some((j) => j.status !== 'done' && j.status !== 'cancelled')
+  const status: ExportJob['status'] =
+    b.cancelRequested || b.results.some((j) => j.status === 'cancelled')
+      ? written
+        ? 'partial'
+        : 'cancelled'
+      : !bad
+        ? 'done'
+        : written
+          ? 'partial'
+          : 'failed'
+  const last = b.results[b.results.length - 1]
+  return {
+    job_id: last?.job_id ?? 'batch',
+    status,
+    outputs,
+    warnings: b.results.flatMap((j) => j.warnings ?? []),
+    conflicts: [],
+    export_dir: [...b.results].reverse().find((j) => j.export_dir)?.export_dir,
+    error: b.results.find((j) => j.error)?.error ?? null,
+  }
+}
+
+function finishedBatch(b: ExportBatch): ExportBatch {
+  return { ...b, done: true, aggregate: aggregateBatch(b) }
+}
+
+/** 开一批。已有作业在飞 / 已有一批没收尾 / 没有图 → 不开 */
+export function beginExportBatch(ids: string[], names: string[]): boolean {
+  const s = useExportStore.getState()
+  if (s.running || (s.batch && !s.batch.done) || ids.length === 0) return false
+  useExportStore.setState({
+    batch: { ids, names, index: 0, results: [], resultNames: [], failedStarts: [], cancelRequested: false, done: false, aggregate: null },
+  })
+  return true
+}
+
+/** 当前这张落了终局（撞名停住的不走这里）：记下结果、换下一张；取消了或已是最后一张就收尾 */
+export function recordBatchJob(job: ExportJob): void {
+  const b = useExportStore.getState().batch
+  if (!b || b.done) return
+  advance({ ...b, results: [...b.results, job], resultNames: [...b.resultNames, b.names[b.index] ?? ''] })
+}
+
+/** 当前这张根本没起来：记下名字，继续下一张 */
+export function recordBatchStartFailure(): void {
+  const b = useExportStore.getState().batch
+  if (!b || b.done) return
+  advance({ ...b, failedStarts: [...b.failedStarts, b.names[b.index] ?? b.ids[b.index]] })
+}
+
+function advance(b: ExportBatch): void {
+  const next = { ...b, index: b.index + 1 }
+  useExportStore.setState({
+    batch: next.index >= next.ids.length || next.cancelRequested ? finishedBatch(next) : next,
+  })
+}
+
+/** 取消：当前这张由 `cancelCurrentExport` 取消，这里让剩余的不再发；还没起的那一刻也能收尾 */
+export function requestBatchCancel(): void {
+  const s = useExportStore.getState()
+  const b = s.batch
+  if (!b || b.done) return
+  const next = { ...b, cancelRequested: true }
+  // 此刻没有作业在飞（两张之间 / 撞名停住）：直接收尾，已写出的如实报
+  useExportStore.setState({ batch: s.running ? next : finishedBatch(next) })
+}
 
 /** 请求成形 + 就地校验。**不发网络**，输入框每敲一个字都可以调。 */
 export function prepareExport(input: ExportRequestInput): PreparedExport {
@@ -421,6 +543,7 @@ export function resetExportState(): void {
     startedRevision: null,
     editedDuringExport: false,
     ownedJobId: null,
+    batch: null,
     // 上个项目 / 上一份文档的快照（整份文档 + 面板图源）不留到这里之后
     momentSnapshot: null,
   })

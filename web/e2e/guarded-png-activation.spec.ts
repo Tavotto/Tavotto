@@ -321,10 +321,10 @@ async function openOriginalExport(page: Page, id: string) {
   await expect(dialog).toBeVisible()
   await (await only(dialog.locator('[data-onboarding-anchor="export-scope"] [data-value="original"]'))).click()
   // The displayed name is a stem; identity belongs to the actual source thumbnail and request.
-  const target = await only(dialog.locator('[data-export-target]'))
-  // 对象头缩略图与清单行同一份取图：图带着图内修改（或在引擎里）时是引擎 SVG（`data-export-thumb="svg"`，
+  await only(dialog.locator('[data-export-target]'))
+  // 左栏大预览（对象头不再重复缩略图）：图带着图内修改（或在引擎里）时是引擎 SVG（`data-export-thumb="svg"`，
   // 身份由引擎渲染与下面的导出请求认），否则是磁盘原图的 <img>（身份认它 src 里的 id）。两种都只有一个、不能是占位
-  const thumb = await only(target.locator('[data-export-thumb]'))
+  const thumb = await only(dialog.locator('[data-export-preview-stage] [data-export-thumb]'))
   const kind = await thumb.getAttribute('data-export-thumb')
   expect(['file', 'svg'], `缩略图形态 ${kind}`).toContain(kind)
   if (kind === 'file') {
