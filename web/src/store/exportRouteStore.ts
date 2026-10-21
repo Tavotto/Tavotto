@@ -56,6 +56,8 @@ interface RouteState {
   routeFor: (key: string) => ExportRoute | null
   refresh: (input: ExportRequestInput) => Promise<void>
   clear: () => void
+  /** 作废当前答案并让在飞的请求回来不落地（重开对话框时：新答案到之前不显示旧答案） */
+  invalidate: () => void
 }
 
 let seq = 0
@@ -83,6 +85,10 @@ export const useExportRouteStore = create<RouteState>((set, get) => ({
   },
   /** 换项目（`projectStore.resetForNewProject`）：丢掉旧项目的答案，在飞的请求回来不落地 */
   clear: () => {
+    seq++
+    set({ key: null, route: null })
+  },
+  invalidate: () => {
     seq++
     set({ key: null, route: null })
   },

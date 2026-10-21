@@ -421,6 +421,12 @@ export function ExportDialog() {
   const routeKey = routeKeyOf({ scope, formats, doc, panel, figureId });
   const route = useExportRouteStore((s) => (s.key === routeKey ? s.route : null));
   const refreshRoute = useExportRouteStore((s) => s.refresh);
+  const invalidateRoute = useExportRouteStore((s) => s.invalidate);
+  // 打开的那一刻先把上一次的答案作废：250 ms 防抖 + 往返期间界面走退路（不比现状乐观），
+  // 不拿关着时的旧 offers 去禁用 / 放开 EPS
+  useEffect(() => {
+    if (open) invalidateRoute();
+  }, [open, invalidateRoute]);
   // 只在对话框开着时取；每次打开（`open` false→true）都重取一次，哪怕输入没变——
   // 脚本登记可能在对话框关着的时候变了。关着不发请求
   useEffect(() => {

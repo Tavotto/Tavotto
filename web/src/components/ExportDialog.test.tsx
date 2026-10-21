@@ -1128,6 +1128,24 @@ describe('来源读后端 route（#1209）', () => {
     expect(document.body.querySelector('[data-export-route-unavailable]')?.textContent).toContain('Fig1.pdf')
   })
 
+  it('重开对话框：新 route 到之前读到的是「没有 route」，不拿旧 offers 禁用 / 放开 EPS', async () => {
+    routeOf = (req) => ({
+      scope: req.scope,
+      formats: req.formats,
+      panels: { 'r1.png': panelRoute({ offers: { eps: { how: 'redraw' } } }) },
+    })
+    await setupRaster([]) // 素材表里没有 script：退路 = EPS 不可用
+    const epsDisabled = () =>
+      document.body.querySelector('[data-export-format="eps"]')?.getAttribute('aria-disabled')
+    await settle()
+    expect(epsDisabled(), 'route 到了：可用').toBeNull()
+    await act(async () => { useUiStore.getState().setExportOpen(false) })
+    await act(async () => { useUiStore.getState().setExportOpen(true) })
+    expect(epsDisabled(), '重开后、响应到达前：退路，而不是关着时的旧答案').toBe('true')
+    await settle()
+    expect(epsDisabled(), '新响应到达').toBeNull()
+  })
+
   it('对话框关着不取 route；每次重新打开都重取，哪怕输入没变', async () => {
     let validates = 0
     routeOf = (req) => {
