@@ -82,3 +82,89 @@ export function useTrackedRect(
   }, deps)
   return rect
 }
+
+/* ------------------------------ 欢迎页标注气泡 ------------------------------ */
+
+/**
+ * 欢迎页演示图旁边的三枚标注气泡（「修改文字」「调整图例」「拖动位置」）的落点。
+ *
+ * 做法：气泡一律排在**图右侧的专用槽**里（卡片内、图框之外），一条细线从被指元素的**右边缘外侧**
+ * 水平拉过去——气泡永远不压在图里的文字上、不探出卡片、不挤到卡片上方的标签行或下方的按钮。
+ * 位置全按被指元素的 bbox（图幅 pt）× 舞台此刻的缩放现算，再做竖向碰撞避让（互不重叠、不出舞台上下沿），
+ * 不写固定像素。纯函数，`tutorialGeometry.test.ts` 钉住「气泡不与标题 bbox / 彼此 / 卡片外沿相交」。
+ */
+
+/** 被指元素：图幅 pt 里的框（左上原点） */
+export interface CalloutTarget {
+  key: string
+  box: readonly [x: number, y: number, w: number, h: number]
+}
+
+export interface CalloutPlacement {
+  key: string
+  /** 引线在被指元素一侧的端点（舞台 px）：落在元素右边缘外侧，不遮挡它 */
+  anchor: { x: number; y: number }
+  /** 气泡矩形（舞台 px，左上原点；x 在图框右边之外） */
+  bubble: Rect
+}
+
+/** 引线端点离被指元素右边缘的空隙（px） */
+export const CALLOUT_ANCHOR_GAP = 4
+/** 图框右边到气泡左边的距离（引线的水平跨度，px） */
+export const CALLOUT_LEAD = 20
+/** 气泡的固定高度 / 彼此之间的最小竖向间隙（px） */
+export const CALLOUT_BUBBLE_H = 32
+export const CALLOUT_GAP = 8
+
+/** 量不到标题文字外框（jsdom / 字体未就绪）时按字数估一个：宽取偏大的 0.55 em，端点宁可离得远一点 */
+export function estimateTextBox(
+  text: string,
+  sizePt: number,
+  anchor: readonly [number, number],
+): [number, number, number, number] {
+  const w = text.length * sizePt * 0.55
+  return [anchor[0] - w / 2, anchor[1] - sizePt * 0.8, w, sizePt]
+}
+
+export function placeCallouts(opts: {
+  figure: { width: number; height: number }
+  /** 图框（舞台里那张纸）此刻的像素尺寸 */
+  stage: { w: number; h: number }
+  targets: readonly CalloutTarget[]
+  bubbleW: number
+  bubbleH?: number
+  gap?: number
+}): CalloutPlacement[] {
+  const { figure, stage, targets, bubbleW } = opts
+  const h = opts.bubbleH ?? CALLOUT_BUBBLE_H
+  const gap = opts.gap ?? CALLOUT_GAP
+  const s = stage.w / figure.width
+  const anchors = targets.map((t) => ({
+    key: t.key,
+    x: (t.box[0] + t.box[2]) * s + CALLOUT_ANCHOR_GAP,
+    y: (t.box[1] + t.box[3] / 2) * s,
+  }))
+  // 竖向：理想位置 = 与被指元素同高；自上而下互相推开，再自下而上收回舞台里（上下沿都不出）
+  const order = anchors.map((_, i) => i).sort((a, b) => anchors[a].y - anchors[b].y)
+  const ys = new Map<number, number>()
+  let prev = -Infinity
+  for (const i of order) {
+    const y = Math.max(anchors[i].y - h / 2, prev + h + gap, 0)
+    ys.set(i, y)
+    prev = y
+  }
+  let limit = Math.max(stage.h - h, 0)
+  for (const i of [...order].reverse()) {
+    const y = Math.min(ys.get(i)!, limit)
+    ys.set(i, y)
+    limit = y - h - gap
+  }
+  return anchors.map((a, i) => ({
+    key: a.key,
+    anchor: { x: a.x, y: a.y },
+    bubble: { x: stage.w + CALLOUT_LEAD, y: ys.get(i)!, w: bubbleW, h },
+  }))
+}
+
+export const rectsOverlap = (a: Rect, b: Rect) =>
+  a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h
