@@ -1911,6 +1911,7 @@
       "leftZone": "离开了投放框。",
       "cancelled": "已取消，卡片放回原处。",
       "missed": "没有放进投放框，卡片已放回。再试一次。",
+      "renderingTitle": "正在生成示例图…",
       "rendering": "正在渲染图表…",
       "renderProgress": "示例图渲染进度",
       "builtin": "内置示例",

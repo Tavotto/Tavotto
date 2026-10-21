@@ -71,7 +71,6 @@ async function dropSample(page: Page) {
 
 /** 放下之后先演一段「渲染中」，走完才出图 */
 async function rendered(page: Page) {
-  await expect(page.locator('[data-tutorial-imported]')).toBeVisible()
   await expect(page.locator('[data-demo-figure]')).toBeVisible()
   await expect(page.locator('[data-tutorial-rendering]')).toHaveCount(0)
 }

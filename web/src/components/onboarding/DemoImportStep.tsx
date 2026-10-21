@@ -246,30 +246,38 @@ export function DemoImportStep() {
       </h1>
       {imported ? (
         <>
-          <div className="flex h-14 shrink-0 items-end justify-center pb-2">
-            <span
-              data-tutorial-imported=""
-              className="inline-flex items-center gap-2.5 rounded-md bg-surface-2 py-1.5 pr-2 pl-1.5 text-base text-ink inset-ring inset-ring-border"
-            >
-              <span className="grid h-7 w-7 place-items-center rounded-sm bg-field text-ink-2">
-                <FileCodeCorner size={ICON_SIZE.sm} />
-              </span>
-              <span className="font-mono font-medium">{name}</span>
-              <span className="text-sm text-ink-3">{t('onboarding.import.builtin')}</span>
-              <span className="grid h-[18px] w-[18px] place-items-center rounded-full bg-ok text-surface">
-                <Check size={ICON_SIZE.xs} />
-              </span>
-            </span>
-          </div>
+          {/* 与第二、三步的任务标题同一位置（原型：渲染中有这句，出图后留白，图不跳） */}
+          <p
+            aria-hidden="true"
+            className={cn('type-display mt-12 shrink-0 text-center [@media(max-height:720px)]:mt-9', render === null && 'invisible')}
+          >
+            {t('onboarding.import.renderingTitle')}
+          </p>
           <FigureBoundary>
-            <FigureStage className="mx-auto w-full max-w-[900px] flex-1 animate-rise-in px-6 pt-3 pb-1 [@media(min-height:760px)]:max-h-[540px]" frameClassName="rounded-xs inset-ring inset-ring-border">
+            <FigureStage
+              className="mx-auto w-full max-w-[900px] flex-1 px-6 pt-8 pb-1 [@media(min-height:760px)]:max-h-[540px]"
+              frameClassName={cn('rounded-xs', render === null && 'inset-ring inset-ring-border')}
+            >
               {render !== null ? (
-                <div data-tutorial-rendering="" className="absolute inset-0 flex flex-col bg-surface-2 p-4">
+                <div
+                  data-tutorial-rendering=""
+                  className="absolute inset-0 flex animate-fade-in flex-col rounded-lg bg-surface p-3 shadow-[0_8px_24px_color-mix(in_srgb,var(--color-shadow)_6%,transparent)] inset-ring inset-ring-border"
+                >
+                  <span data-tutorial-imported="" className="flex items-center gap-2.5 text-base text-ink">
+                    <span className="grid h-8 w-8 place-items-center rounded-md bg-field text-ink-2">
+                      <FileCodeCorner size={ICON_SIZE.sm} />
+                    </span>
+                    <span className="font-mono font-medium">{name}</span>
+                    <span className="ml-auto text-sm text-ink-3">{t('onboarding.import.builtin')}</span>
+                    <span className="mr-1 grid h-[18px] w-[18px] place-items-center rounded-full bg-ok text-surface">
+                      <Check size={ICON_SIZE.xs} />
+                    </span>
+                  </span>
                   <div role="status" className="flex flex-1 flex-col items-center justify-center gap-3 text-base text-ink-2">
                     <LoaderCircle size={ICON_SIZE.lg} className="animate-spin text-ink-3 motion-reduce:animate-none" aria-hidden="true" />
                     {t('onboarding.import.rendering')}
                   </div>
-                  <div className="flex items-center gap-3 text-sm text-ink-3">
+                  <div className="flex items-center gap-3 px-1 text-sm text-ink-3">
                     <ProgressBar pct={render} label={t('onboarding.import.renderProgress')} className="flex-1" />
                     <span aria-hidden="true" className="w-9 text-right tabular-nums">
                       {render}%

@@ -1931,6 +1931,7 @@
       "leftZone": "Left the drop area.",
       "cancelled": "Cancelled. The card is back in place.",
       "missed": "That missed the drop area, so the card went back. Try again.",
+      "renderingTitle": "Generating the sample figure…",
       "rendering": "Rendering the figure…",
       "renderProgress": "Sample figure rendering progress",
       "builtin": "Built-in sample",

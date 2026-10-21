@@ -614,6 +614,7 @@ export default interface Resources {
         "picked": "已拿起 {{name}}，用方向键移到投放框上，回车放下。",
         "renderProgress": "示例图渲染进度",
         "rendering": "正在渲染图表…",
+        "renderingTitle": "正在生成示例图…",
         "success": "渲染完成，接下来在图上调整",
         "task": "第一步：把示例脚本拖进来",
         "zoneBody": "{{product}} 会打开它画出的图",
