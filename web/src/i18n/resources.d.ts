@@ -307,6 +307,7 @@ export default interface Resources {
       "title": "渲染环境"
     },
     "export": {
+      "batchAborted": "排版在导出准备的时候被改动了，这次没有导出任何文件。请重新点「导出」。",
       "batchNames": "每张图用各自的名字",
       "batchProgress": "第 {{k}}/{{n}} 张 · {{name}} · {{phase}}",
       "cancelExport": "取消导出",

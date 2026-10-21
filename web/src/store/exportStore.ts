@@ -98,6 +98,8 @@ export interface ExportBatch {
   failedStarts: { name: string; reason: string }[]
   /** 用户点了取消：当前这张取消、剩余的不再发 */
   cancelRequested: boolean
+  /** 冻结阶段发现排版 / 选区在变（点击那一刻之后被改了）：整批作废，一个请求都没发 */
+  aborted?: boolean
   /** 收尾了：`aggregate` 是汇总作业 */
   done: boolean
   aggregate: ExportJob | null
@@ -293,6 +295,13 @@ function advanceSend(b: ExportBatch): void {
   useExportStore.setState({
     batch: next.index >= next.prepared.length || next.cancelRequested ? finishedBatch(next) : next,
   })
+}
+
+/** 冻结阶段发现点击之后排版 / 选区被改了：整批作废（此时一个请求都没发），不让一批里混进两个版本 */
+export function abortExportBatch(): void {
+  const b = useExportStore.getState().batch
+  if (!b || b.done) return
+  useExportStore.setState({ batch: finishedBatch({ ...b, aborted: true, cancelRequested: true }) })
 }
 
 /** 取消：当前这张由 `cancelCurrentExport` 取消，这里让剩余的不再发；还没起的那一刻也能收尾 */

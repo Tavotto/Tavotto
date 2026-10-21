@@ -126,6 +126,7 @@ import { usePanelRender, useRenderStore } from "@/store/renderStore";
 import { useRuntimeAssetStore } from "@/store/runtimeAssetStore";
 import { useSelectionStore } from "@/store/selectionStore";
 import {
+  abortExportBatch,
   beginExportBatch,
   recordBatchPrepared,
   cancelCurrentExport,
@@ -804,7 +805,29 @@ export function ExportDialog() {
    */
   const batchMode = !single && scope === "original";
   const canStartBatch = batchMode && canvasFigures.length > 0 && formats.length > 0 && !busy;
+  /**
+   * 冻结阶段读的、会被用户改动的**全部**活状态（`buildRequestInput` 调用链：`findExportPanel`→文档 / 各画布 / 选区 /
+   * 工作区，`getOriginalOutputSpec` / `originalAvailability`→文档 + 素材清单，`resolveDocumentSpec`→`doc.profile` +
+   * 规范目录，`originalValidationFor` / `summaryFor` / `rawIssuesFor`→由文档算出的检查结果）里，真正由用户编辑决定的是
+   * 这几份不可变引用。点「导出」那一刻同步记下；冻结段每一步（含 route 的异步等待之后）先核它们没变，变了就整批作废
+   * （此时一个请求都没发），所以一批里不可能混进两个文档版本。素材清单 / 渲染缓存 / 检查结果是后台随文档重算的派生态，
+   * 不在此列（文档不变它们的结论就不变）。
+   */
+  const liveRefs = () => {
+    const d = useDocumentStore.getState();
+    return [
+      d.doc,
+      d.canvases,
+      d.activeCanvasId,
+      d.documentId,
+      useSelectionStore.getState().ids,
+      useWorkspaceStore.getState().activePanelId,
+      useWorkspaceStore.getState().mode,
+    ] as const;
+  };
+  const frozenRefs = useRef<ReturnType<typeof liveRefs> | null>(null);
   const startBatch = () => {
+    frozenRefs.current = liveRefs();
     writeExportDefaults({ formats, dpi: String(ppi), withProof: withReport, strictInspection: strict });
     beginExportBatch(
       canvasFigures.map((f) => f.figureId),
@@ -992,6 +1015,13 @@ export function ExportDialog() {
   // 之后发的就是这些冻结好的输入，不再读活的表单 / 文档（Codex #1295 P1）
   useEffect(() => {
     if (!batch || batch.done || batch.cancelRequested || batch.phase !== "prepare") return;
+    // 点击之后排版 / 选区被改了（包括 route 等待期间关了对话框去改）：整批作废，不混版本
+    const frozen = frozenRefs.current;
+    if (frozen && liveRefs().some((v, i) => v !== frozen[i])) {
+      abortExportBatch();
+      useUiStore.getState().setStatus(msg("export.batchAborted", undefined, "dialogs"), "error");
+      return;
+    }
     const pos = batch.prepIndex;
     const id = batch.ids[pos];
     const name = batch.names[pos];
@@ -1160,6 +1190,8 @@ export function ExportDialog() {
     const key = `${job.job_id}:${job.status}`;
     if (announced.current === key) return;
     announced.current = key;
+    // 冻结段作废的一批已经单独报过原因（error 通知），不再叠一句「已取消」
+    if (batch?.aborted) return;
     if (resultVisible) return;
     const ui = useUiStore.getState();
     const view = {
@@ -1188,7 +1220,7 @@ export function ExportDialog() {
     } else if (job.status === "unknown") {
       ui.setStatus(msg("export.toast.unknown", undefined, "dialogs"), "error", owner);
     }
-  }, [job, busy, resultVisible]);
+  }, [job, busy, resultVisible, batch?.aborted]);
 
   // 重新打开对话框 = 用户已经看到结果：撤掉关窗期间挂着的那条
   useEffect(() => {

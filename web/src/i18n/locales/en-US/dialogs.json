@@ -24,6 +24,7 @@
     "previewWhole": "Whole page",
     "previewFlagged": "Has check notes",
     "batchProgress": "Figure {{k}} of {{n}} · {{name}} · {{phase}}",
+    "batchAborted": "The layout changed while the export was being prepared, so nothing was exported. Click Export again.",
     "batchNames": "Each figure keeps its own name",
     "exportAgain": "Export again",
     "routeNeedsScript": "These figures carry edits but their scripts can’t be found, so a canvas export can’t draw them: {{files}}. Restore the scripts or undo the edits first.",

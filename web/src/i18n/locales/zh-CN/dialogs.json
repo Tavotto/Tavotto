@@ -24,6 +24,7 @@
     "previewWhole": "整版",
     "previewFlagged": "有检查提示",
     "batchProgress": "第 {{k}}/{{n}} 张 · {{name}} · {{phase}}",
+    "batchAborted": "排版在导出准备的时候被改动了，这次没有导出任何文件。请重新点「导出」。",
     "batchNames": "每张图用各自的名字",
     "exportAgain": "再次导出",
     "routeNeedsScript": "这些图带着编辑，但找不到它们的脚本，画布导出画不出来：{{files}}。请先恢复脚本或撤销这些图的编辑。",

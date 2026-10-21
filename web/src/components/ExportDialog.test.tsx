@@ -99,6 +99,8 @@ let jobOutputs: Record<string, unknown>[] | null = null
 /** 后端 validate 的 `route`（#1209）：按请求体现造；null = 旧后端 / 算不出（响应里没有 route） */
 /** 逐个作业依次给的状态（一批作业里每张一个）；用完退回 `jobStatus` */
 let jobStatusSeq: string[] | null = null
+/** `/api/export/validate` 回包前先等多久（模拟 route 慢：冻结段每张最多等它 1.5 s） */
+let routeDelayMs = 0
 let routeOf: ((req: Record<string, any>) => Record<string, unknown>) | null = null
 
 function stubFetch() {
@@ -137,6 +139,7 @@ function stubFetch() {
       )
     }
     if (url.includes('/api/export/validate') && routeOf) {
+      if (routeDelayMs) await new Promise((r) => setTimeout(r, routeDelayMs))
       const req = JSON.parse(String(init?.body ?? '{}'))
       return new Response(JSON.stringify({ ok: true, conflicts: [], writable: true, route: routeOf(req) }), {
         status: 200,
@@ -314,6 +317,7 @@ beforeEach(() => {
   localStorage.clear()
   jobStatus = 'done'
   jobStatusSeq = null
+  routeDelayMs = 0
   jobOutputs = null
   resetExportState()
   useWorkspaceStore.setState({ mode: 'layout', activePanelId: null })
@@ -2575,6 +2579,39 @@ describe('每张图单独导出：依次发多个作业（后端协议不变）'
     expect(exportBodies[1].formats, '第二张用点击那一刻的格式，不是后来改的').toEqual(before.formats)
     expect(exportBodies[1].ppi).toBe(before.ppi)
     expect(exportBodies.map((b) => b.filename)).toEqual(['Fig1', 'Fig2'])
+  })
+
+  it('冻结段 route 等待期间关掉对话框去改排版：整批作废、一个请求都没发，不混进两个文档版本（Codex #1295 复核 P1）', async () => {
+    routeOf = (req) => ({ scope: req.scope, formats: req.formats, panels: {} })
+    routeDelayMs = 700
+    await setupTwo({ select: [] })
+    await click(originalRadio())
+    await start()
+    expect(useExportStore.getState().batch?.phase).toBe('prepare')
+    // 第一张正在等 route：用户关掉对话框，去改排版
+    await act(async () => {
+      useUiStore.getState().setExportOpen(false)
+      useDocumentStore.getState().commit(literal('冻结段里改排版'), (d) => {
+        d.page = { w: 99, h: 77 }
+      })
+    })
+    await batchDone()
+    const b = useExportStore.getState().batch!
+    expect(b.aborted).toBe(true)
+    expect(exportBodies.filter((x) => x.scope === 'original'), '一张都没发').toHaveLength(0)
+    expect(b.aggregate?.status).toBe('cancelled')
+    expect(useUiStore.getState().statusTone).toBe('error')
+  })
+
+  it('冻结段里什么都没动：route 慢也照常整批发出，且每张用同一个文档版本', async () => {
+    routeOf = (req) => ({ scope: req.scope, formats: req.formats, panels: {} })
+    routeDelayMs = 300
+    await setupTwo({ select: [] })
+    await click(originalRadio())
+    await start()
+    await batchDone(20_000)
+    expect(exportBodies).toHaveLength(2)
+    expect(useExportStore.getState().batch?.aborted).toBeFalsy()
   })
 
   it('取消 = 停掉剩余：第二张不再发，已写出的如实报', async () => {
