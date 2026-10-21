@@ -680,21 +680,21 @@ function RecentItem({
     <span className="block text-sm text-ink-3">{t('home.openedAgo', { when })}</span>
   ) : null
   return (
-    <li data-home-recent={entry.path} className="min-w-0">
-      <Card interactive lift disabled={busy || disabled} padding="none" className="group h-full">
+    <li data-home-recent={entry.path} className="min-w-0 max-w-full">
+      <Card interactive lift disabled={busy || disabled} padding="none" className="group h-full min-w-0 max-w-full">
         <button
           type="button"
           onClick={onOpen}
           disabled={busy || disabled}
           aria-label={t('picker.openProject', { name: entry.name })}
           title={entry.tutorial ? undefined : entry.path}
-          className="flex h-full w-full flex-col gap-2 rounded-lg p-1 pb-3 text-left outline-none disabled:cursor-not-allowed disabled:opacity-40"
+          className="flex h-full w-full min-w-0 max-w-full flex-col gap-2 overflow-hidden rounded-lg p-1 pb-3 text-left outline-none disabled:cursor-not-allowed disabled:opacity-40"
         >
           {/* 外 12 = 内 8 + 4：缩略图格是 md 圆角、坐在画布灰上 */}
-          <span aria-hidden className="flex h-20 items-center justify-center rounded-md bg-canvas text-ink-3">
+          <span aria-hidden className="flex h-20 w-full shrink-0 items-center justify-center rounded-md bg-canvas text-ink-3">
             <Folder size={ICON_SIZE.lg} />
           </span>
-          <span className="flex min-w-0 flex-col gap-0.5 px-2">
+          <span className="flex w-full min-w-0 max-w-full flex-col gap-0.5 overflow-hidden px-2">
             <span className="flex items-center gap-1.5 pr-6">
               <span className="truncate text-base font-medium text-ink">{entry.name}</span>
               {busy && <span className="shrink-0 text-sm text-ink-3">{t('picker.opening')}</span>}

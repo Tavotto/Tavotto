@@ -34,7 +34,7 @@ const nameErrorText = (reason: ProjectNameProblem) =>
  */
 export function TailPath({ path, className }: { path: string; className?: string }) {
   return (
-    <span dir="rtl" className={cn('block truncate text-left font-mono text-xs text-ink-3', className)}>
+    <span dir="rtl" className={cn('block min-w-0 max-w-full truncate text-left font-mono text-xs text-ink-3', className)}>
       {'\u200E' + path + '\u200E'}
     </span>
   )
