@@ -3,7 +3,7 @@ import type { CanvasObject } from '@/types/document'
 import { useDocumentStore } from './documentStore'
 import { useSelectionStore } from './selectionStore'
 import { useViewportStore } from './viewportStore'
-import { fastEditPanelOf, useWorkspaceStore } from './workspace'
+import { fastEditPanelOf, useWorkspaceStore } from './workspaceStore'
 
 /**
  * 缩放到选区（⇧2 / 缩放菜单 / 命令面板，2026-10-07 设计审计 §10.1）：把选中对象的包围盒放进视野，
@@ -113,6 +113,15 @@ export function applyStageFit(frame: Rect & { page: boolean }, animated: boolean
   const rect = { x: frame.x, y: frame.y, w: frame.w, h: frame.h }
   if (frame.page) (animated ? vp.fitAnimated : vp.fit)(frame.w, frame.h)
   else (animated ? vp.fitRectAnimated : vp.fitRect)(rect)
+}
+
+/**
+ * 载入 / 切项目 / 恢复 / 切画布之后的**瞬时**取景：与 `fitStage` 同一个框（单图编辑对着那张图，其余对着页面），
+ * 不补间。模式由图数推出，订阅在文档换进来那一刻已对过，所以这些适配点读到的就是新文档该有的模式。
+ */
+export function fitStageNow(): void {
+  const doc = useDocumentStore.getState().doc
+  applyStageFit(stageFitFrame(doc.objects, doc.page, fastEditPanelOf(useWorkspaceStore.getState())), false)
 }
 
 /** 按此刻的文档与工作区模式「适应」（带补间）——所有「适应画布」入口的动作 */

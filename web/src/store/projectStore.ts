@@ -81,10 +81,10 @@ import { resetPreview } from '@/store/svgPreviewStore'
 import { clearDiagnosticTrace } from '@/diagnostics'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
-import { useViewportStore } from '@/store/viewportStore'
 import { setCurrentProjectLabel } from '@/lib/projectLabel'
 import { emptyDocument } from '@/types/document'
 import { useWorkspaceStore } from '@/store/workspace'
+import { fitStageNow } from '@/store/zoomToSelection'
 
 /**
  * 当前项目状态。'loading' 只出现在启动探测阶段；'none' = 后端没有打开的
@@ -425,8 +425,7 @@ export const useProjectStore = create<ProjectState>((set, get) => {
     // （量不到视口），`fit` 会把这次适配记成待办、舞台一量到尺寸就应用——
     // 改造前新项目沿用上一个项目留下的 175%（审计 T03）。
     {
-      const page = useDocumentStore.getState().doc.page
-      useViewportStore.getState().fit(page.w, page.h)
+      fitStageNow()
     }
     set({
       project: status,

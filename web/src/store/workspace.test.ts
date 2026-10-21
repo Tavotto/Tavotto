@@ -16,6 +16,7 @@ import {
   useWorkspaceStore,
 } from './workspace'
 import { activateCanvas, createCanvasAndActivate } from './canvasSession'
+import { fitStageNow } from './zoomToSelection'
 import { subscribePruneSelection } from '@/hooks/usePruneSelection'
 import { syncLoadedDocument } from './liveSync'
 
@@ -768,6 +769,18 @@ describe('切模式的取景', () => {
     expect(ws().mode).toBe('layout')
     expect(vp().fitFrame()).toBeNull() // 取景的是页面本身
     expect(view().panX).not.toBe(-999)
+  })
+
+  it('载入 / 切换后的瞬时取景（fitStageNow）：单图编辑对着那张图的矩形，排版对着页面', () => {
+    addFigureToLayout('a.pdf')
+    const only = panelOf('a.pdf')
+    vp().setPan(-500, -500)
+    fitStageNow()
+    expect(vp().fitFrame()).toMatchObject({ x: only.x, y: only.y, w: only.w, h: only.h })
+    addFigureToLayout('b.pdf')
+    vp().setPan(-500, -500)
+    fitStageNow()
+    expect(vp().fitFrame()).toBeNull() // 排版：取景的是页面
   })
 
   it('切画布 / 换文档不由模式订阅取景（各有各的适配点）：视口原样', async () => {

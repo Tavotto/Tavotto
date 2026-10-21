@@ -62,7 +62,6 @@ import { useTelemetryStore } from '@/store/telemetryStore'
 import { useDiagSendStore } from '@/store/diagSendStore'
 import { checkUpdateOnStartup } from '@/store/updateStore'
 import { restoreSession, startAutosave, useDocumentStore } from '@/store/documentStore'
-import { useViewportStore } from '@/store/viewportStore'
 import { startLayoutAutoReflow } from '@/store/actions'
 import { startPageSizeFit } from '@/store/pageFit'
 import { markWorkspaceOpenedAfter, startVersionCheckpoints } from '@/hooks/useVersionCheckpoints'
@@ -80,6 +79,7 @@ import { hydrateExportDefaults } from '@/lib/exportDefaults'
 import { initExitNotices } from '@/lib/exitNotices'
 import { cancelStartupProbe } from '@/lib/startupProbe'
 import { SourceBackedReviewDialog } from '@/components/SourceBackedReviewDialog'
+import { fitStageNow } from '@/store/zoomToSelection'
 
 export function App() {
   const phase = useProjectStore((s) => s.phase)
@@ -180,8 +180,7 @@ function Workspace() {
     // 磁盘恢复是异步的：恢复到文档后重新适配视口
     const loaded = Promise.all([assets, restoreSession()]).then(([, restored]) => {
       if (restored) {
-        const page = useDocumentStore.getState().doc.page
-        useViewportStore.getState().fit(page.w, page.h)
+        fitStageNow()
       }
       // 素材清单与文档**都到齐**之后再对账：两个请求谁先回来是不定的，
       // 只挂在其中一个上就会有一半的时候拿着空清单去同步（= 什么都没做）

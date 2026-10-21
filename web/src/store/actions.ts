@@ -95,6 +95,7 @@ import { contentToPageVec, panelContentTransform } from '@/lib/panelTransform'
 import { emitLayoutSaved } from '@/lib/layoutSaved'
 import { useTimelineStore } from './timelineStore'
 import { hasPendingStyleWork } from './styleWork'
+import { fitStageNow } from '@/store/zoomToSelection'
 
 /** 本文件的历史标签与状态提示都在 workspace 命名空间下 */
 const hist = (key: string, values?: Record<string, unknown>): UiMessage =>
@@ -559,8 +560,7 @@ const confirmLoss = () =>
 function afterSwitch(): void {
   useSelectionStore.getState().clear()
   useUiStore.getState().setElementPanel(null)
-  const page = useDocumentStore.getState().doc.page
-  useViewportStore.getState().fit(page.w, page.h)
+  fitStageNow()
 }
 
 /**
