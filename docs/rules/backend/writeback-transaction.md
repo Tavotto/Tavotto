@@ -90,6 +90,14 @@
     `tests/test_worker_roundtrip.py` 末节（真 matplotlib + Flask 全链路，
     含 workerd 路径的一次性会话不泄漏）+ `web` 的 `WriteBackDialog.test.tsx`。
 
+## 只写这张图自己存过的文件
+
+写回目标原本是「`src` 同名、`WRITE_BACK_EXT` 里存在的那几个」。同一 stem 下两张**不同**的图（`panel.png` 甲 /
+`panel.pdf` 乙）时，这会拿甲去覆盖乙的产物。`app._own_write_back_targets` 按 verify 段一次性 worker（刚 build）的
+描述符里这张图自己的 `savefig_calls` 收窄目标；`src` 本身不是它存过的格式 → 409 `write_back_foreign_file`（`{file}`），
+在任何临时文件产生之前、原件零改动。不知道它存过什么（调用表没观察到 / pyplot 捕获）= 旧行为。
+看护 `tests/test_same_stem_other_figure.py`。
+
 ## 速查表原要点（2026-09-25 迁入，#608）
 
 `src/tavotto/AGENTS.md` 那一行的「必守要点」从这天起只留索引（Codex 自动拼接的 32 KiB 上限，#608）。
