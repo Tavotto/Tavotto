@@ -190,6 +190,30 @@ describe('小表单', () => {
   })
 })
 
+describe('上一次的结果还没确认', () => {
+  it('有 unconfirmed 的数据出图会话：表单提示，且「生成」禁用（防重复提交）', async () => {
+    await mount(true)
+    await act(async () =>
+      useAiStore.setState({
+        sessions: [
+          {
+            id: 'df-1', agent: 'tavotto', agentLabel: 'Tavotto', prompt: '画', script: '', project: 'pa',
+            panelId: null, fileId: null, gid: null, scope: 'figure', target: 'data/a.csv', entries: [],
+            status: 'failed', changed: false, diff: '', startedAt: 1, unconfirmed: true, requestId: 'r1',
+            task: { task_type: 'data_to_figure', outcome: null },
+          },
+        ],
+      } as never),
+    )
+    await act(async () => q('[data-ai-data-figure-open]')!.click())
+    await flush()
+    await setValue(q<HTMLSelectElement>('[data-ai-data-figure-file] select')!, 'data/b.csv')
+    await setValue(q<HTMLTextAreaElement>('[data-ai-data-figure-instruction]')!, '画点什么')
+    expect(q('[data-ai-data-figure-note="unconfirmed"]')!.textContent).toBe(ai('dataFigure.unconfirmedHint'))
+    expect(q<HTMLButtonElement>('[data-ai-data-figure-submit]')!.disabled).toBe(true)
+  })
+})
+
 describe('结果是对话里的一轮', () => {
   it('没选图时，数据出图的会话也显示在对话流里（不是空状态）', async () => {
     await mount(true)

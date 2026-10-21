@@ -616,6 +616,52 @@ describe('从数据出图的一轮（TAF Phase 5c）', () => {
     expect(status()).toBe(ai('status.failed'))
   })
 
+  it('failed 但文件已写（task.script 在）：状态行说已生成，danger 卡说清楚，不出重试', async () => {
+    await mount([
+      dataSession({
+        status: 'done',
+        changed: true,
+        error: '核对没通过',
+        task: {
+          task_type: 'data_to_figure',
+          outcome: 'failed',
+          script: 'data/standard.py',
+          unmet: [{ constraint_id: 'data.voltage_mV', reason_code: 'data_mismatch' }],
+        },
+      }),
+    ])
+    expect(status()).toBe(ai('session.dataFigureFailedWritten', { script: 'data/standard.py' }))
+    const card = q('[data-ai-task-outcome="failed"]')!
+    expect(card.dataset.notice).toBe('danger')
+    expect(card.textContent).toContain(ai('notice.dataFigureFailedWritten'))
+    expect(q('[data-ai-error="session"]')).toBeNull()
+    expect(q('[data-ai-retry]')).toBeNull()
+    await act(async () => q('[data-notice-detail-toggle]')!.click())
+    expect(q('[data-notice-detail]')!.textContent).toContain('data.voltage_mV')
+  })
+
+  it('结果不确定：warn 卡 + 「查询结果」；点它调 reconcileDataFigure；不是失败卡', async () => {
+    const reconcile = vi.fn(async () => {})
+    useAiStore.setState({ reconcileDataFigure: reconcile } as never)
+    await mount([
+      dataSession({
+        status: 'failed',
+        unconfirmed: true,
+        requestId: 'rid-1',
+        task: { task_type: 'data_to_figure', outcome: null, unmet: [] },
+      }),
+    ])
+    useAiStore.setState({ reconcileDataFigure: reconcile } as never)
+    const card = q('[data-ai-data-figure-unconfirmed]')!
+    expect(card.dataset.notice).toBe('warn')
+    expect(card.textContent).toContain(ai('notice.dataFigureUnconfirmed'))
+    expect(q('[data-ai-error="session"]')).toBeNull()
+    expect(q('[data-ai-retry]')).toBeNull()
+    expect(status()).toBe(ai('session.dataFigureUnconfirmed'))
+    await act(async () => q('[data-ai-data-figure-reconcile]')!.click())
+    expect(reconcile).toHaveBeenCalledWith('df-1')
+  })
+
   it('没有选中任何图时，这一轮照样显示在对话里（它不属于任何面板）', async () => {
     await mount([dataSession({ changed: true })])
     await act(async () => useSelectionStore.setState({ ids: [] } as never))

@@ -93,6 +93,11 @@ export interface AiSession {
   restored?: boolean
   /** 接回的占位对应的请求 id（来自历史库）：与未落定的提交按它对上，**对上就等于已被接受**，不必再让用户去查 */
   requestId?: string
+  /**
+   * 从数据出图：同步 HTTP 没拿到结果（断网 / 超时 / 5xx / 读不出响应），**后端可能已经建好了脚本**。
+   * 不是失败：界面给「查询结果」（`reconcileDataFigure`，同一个 `requestId`，后端按它去重），不许换新 id 重提。
+   */
+  unconfirmed?: boolean
 }
 
 /**
@@ -233,6 +238,8 @@ interface AiState {
    * 它没有脚本、没有面板、没有后端会话——不进发送锁 / 安全网轮询 / 撤销；换代后回来的结果丢弃。
    */
   startDataFigure: (data: string, instruction: string) => Promise<void>
+  /** 结果不确定的数据出图：用**同一个**请求 id 再问一次（后端去重，不会再执行） */
+  reconcileDataFigure: (sessionId: string) => Promise<void>
   /** 后端明确说没收到之后，用**同一个**请求 id 重发 */
   resend: (rid: string) => Promise<SubmitOutcome>
   /** 放弃等待这条提交（用户改写后重新发）：之后的发送换新 id。仅 `not_received` 时由界面提供 */
@@ -650,39 +657,19 @@ export const useAiStore = create<AiState>((set, get) => ({
         },
       ],
     }))
-    const settle = (patch: Partial<AiSession>) => {
-      if (get().generation !== born) return // 期间切过项目：结果属于旧项目，不落
-      set((s) => ({
-        sessions: s.sessions.map((x) =>
-          x.id === id ? { ...x, ...patch, finalized: true, finishedAt: Date.now() } : x,
-        ),
-      }))
-    }
-    try {
-      const res = await aiDataFigure({ data, instruction, client_request_id: rid }, pj)
-      const outcome = res.task?.outcome ?? null
-      const task: AiTaskSummary = {
-        task_type: DATA_FIGURE_TASK,
-        outcome,
-        unmet: res.task?.verification?.unmet ?? [],
-        ...(res.script ? { script: res.script } : {}),
-        ...(res.preview ? { preview: res.preview } : {}),
-      }
-      if (outcome === 'completed' || outcome === 'partial') {
-        settle({ status: 'done', changed: !!res.script, task })
-      } else if (outcome === 'needs_input') {
-        settle({ status: 'done', changed: false, task })
-      } else {
-        settle({ status: 'failed', changed: false, task, ...(res.task?.error ? { error: res.task.error } : {}) })
-      }
-    } catch (e) {
-      settle({
-        status: 'failed',
-        changed: false,
-        error: backendErrorText(e),
-        task: { task_type: DATA_FIGURE_TASK, outcome: 'failed', unmet: [] },
-      })
-    }
+    await runDataFigure(id, born, pj, data, instruction, rid)
+  },
+
+  reconcileDataFigure: async (sessionId) => {
+    const born = get().generation
+    const x = get().sessions.find((y) => y.id === sessionId)
+    if (!x || !isDataFigureSession(x) || !x.unconfirmed || !x.requestId || x.project !== currentProjectId()) return
+    set((s) => ({
+      sessions: s.sessions.map((y) =>
+        y.id === sessionId ? { ...y, status: 'running', unconfirmed: false, finalized: false, finishedAt: undefined } : y,
+      ),
+    }))
+    await runDataFigure(sessionId, born, x.project, x.target, x.prompt, x.requestId)
   },
 
   resend: async (rid) => {
@@ -1116,6 +1103,85 @@ async function settleFromSnapshot(rid: string): Promise<QueryOutcome> {
       detail,
     })
     return 'accepted'
+}
+
+/**
+ * 从数据出图的一次同步请求 + 收尾（首发与「查询结果」共用）。`rid` 是后端去重的键：同一个 rid 只执行一次。
+ * 判据复用 `isDefiniteRunFailure`（与 `aiRun` 同一条）：明确拒绝 = 一定没执行 = 确定失败；其余（断网 / 超时 / 网关错 /
+ * 读不出响应）**不知道**后端写没写，会话标 `unconfirmed`，由用户用同一个 rid 查询，绝不当失败让人换新 id 重提。
+ */
+async function runDataFigure(
+  id: string,
+  born: number,
+  pj: string | null,
+  data: string,
+  instruction: string,
+  rid: string,
+): Promise<void> {
+  const { get, set } = { get: useAiStore.getState, set: useAiStore.setState }
+  const settle = (patch: Partial<AiSession>) => {
+    if (get().generation !== born) return // 期间切过项目：结果属于旧项目，不落
+    set((s) => ({
+      sessions: s.sessions.map((x) =>
+        x.id === id ? { ...x, ...patch, finalized: true, finishedAt: Date.now() } : x,
+      ),
+    }))
+  }
+  const unconfirmed = () =>
+    settle({
+      status: 'failed',
+      changed: false,
+      unconfirmed: true,
+      requestId: rid,
+      target: data,
+      prompt: instruction,
+      task: { task_type: DATA_FIGURE_TASK, outcome: null, unmet: [] },
+    })
+  try {
+    const res = await aiDataFigure({ data, instruction, client_request_id: rid }, pj)
+    const outcome = res.task?.outcome ?? null
+    // 去重回到一个还在跑的任务（final=false）：结局还没出来，仍然不确定
+    if (res.task?.final === false || (res.task?.deduped && outcome === null)) return unconfirmed()
+    const task: AiTaskSummary = {
+      task_type: DATA_FIGURE_TASK,
+      outcome,
+      unmet: res.task?.verification?.unmet ?? [],
+      ...(res.script ? { script: res.script } : {}),
+      ...(res.preview ? { preview: res.preview } : {}),
+    }
+    if (outcome === 'completed' || outcome === 'partial') {
+      settle({ status: 'done', changed: !!res.script, task, unconfirmed: false })
+    } else if (outcome === 'needs_input') {
+      settle({ status: 'done', changed: false, task, unconfirmed: false })
+    } else if (res.script) {
+      // 提交后验证失败（如数据指纹对不上）：结局是 failed，但文件已经建好并登记了——如实说出「已经写了」，
+      // 不能当成什么都没发生（用户再点一次会建出 `_2`）
+      settle({
+        status: 'done',
+        changed: true,
+        task,
+        unconfirmed: false,
+        ...(res.task?.error ? { error: res.task.error } : {}),
+      })
+    } else {
+      settle({
+        status: 'failed',
+        changed: false,
+        task,
+        unconfirmed: false,
+        ...(res.task?.error ? { error: res.task.error } : {}),
+      })
+    }
+  } catch (e) {
+    if (!isDefiniteRunFailure(e)) return unconfirmed()
+    settle({
+      status: 'failed',
+      changed: false,
+      unconfirmed: false,
+      error: backendErrorText(e),
+      task: { task_type: DATA_FIGURE_TASK, outcome: 'failed', unmet: [] },
+    })
+  }
 }
 
 /** 一次发送（新发或同 id 重发）：只回 `accepted` / `unconfirmed`，后端明确拒绝时抛 */

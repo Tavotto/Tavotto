@@ -57,6 +57,7 @@ function statusText(s: AiSession): string {
 /** 从数据出图（TAF Phase 5c）的状态行：只翻译 `task.outcome`；失败走通用的「失败」 */
 function dataFigureStatusText(s: AiSession): string {
   if (s.status === 'running') return ai('session.dataFigureRunning')
+  if (s.unconfirmed) return ai('session.dataFigureUnconfirmed')
   const script = s.task?.script ?? ''
   switch (s.task?.outcome) {
     case 'completed':
@@ -65,6 +66,9 @@ function dataFigureStatusText(s: AiSession): string {
       return ai('session.dataFigurePartial', { script })
     case 'needs_input':
       return ai('session.dataFigureNeedsInput')
+    case 'failed':
+      // 提交后验证失败但文件已建（`script` 在）：如实说出，别让人以为什么都没发生
+      return script ? ai('session.dataFigureFailedWritten', { script }) : statusLabel(s.status)
     default:
       return statusLabel(s.status)
   }
@@ -118,6 +122,11 @@ export function Turn({
   // 从数据出图：没有 diff、没有回滚；partial / needs_input 各一张 warn 卡，failed 走下面通用的失败卡（正文 = error）
   const dataCard: 'partial' | 'needs_input' | null =
     dataFigureTurn && session.status === 'done' && (outcome === 'partial' || outcome === 'needs_input') ? outcome : null
+  // 提交后验证失败、文件已经写进项目：danger 卡（不出重试——再来一次会建出 `_2`）；详情列 unmet id
+  const failedWritten =
+    dataFigureTurn && outcome === 'failed' && !!session.task?.script && !session.unconfirmed
+  // 结果不确定（没收到答复，可能已经生成）：warn 卡 + 「查询结果」；不是失败卡
+  const unconfirmedCard = dataFigureTurn && session.unconfirmed === true && session.status !== 'running'
   const preview = session.task?.preview
   const previewY = preview?.y?.[0]
 
@@ -177,7 +186,31 @@ export function Turn({
         </Notice>
       )}
 
-      {!outcomeCard && (failed || session.error) && (
+      {failedWritten && (
+        <Notice tone="danger" data-ai-task-outcome="failed" detail={unmetDetail}>
+          {ai('notice.dataFigureFailedWritten')}
+        </Notice>
+      )}
+
+      {unconfirmedCard && (
+        <Notice
+          tone="warn"
+          data-ai-data-figure-unconfirmed
+          action={
+            <Button
+              data-ai-data-figure-reconcile
+              size="sm"
+              onClick={() => void useAiStore.getState().reconcileDataFigure(session.id)}
+            >
+              {ai('notice.dataFigureReconcile')}
+            </Button>
+          }
+        >
+          {ai('notice.dataFigureUnconfirmed')}
+        </Notice>
+      )}
+
+      {!outcomeCard && !failedWritten && !unconfirmedCard && (failed || session.error) && (
         <Notice
           tone="danger"
           data-ai-error="session"

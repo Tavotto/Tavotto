@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { aiDataFiles, type AiDataFile } from '@/lib/api'
 import { t as translate } from '@/i18n'
-import { useAiStore } from '@/store/aiStore'
+import { isDataFigureSession, useAiStore } from '@/store/aiStore'
 import { Button } from '../ui/Button'
 import { TextArea } from '../ui/Input'
 import { Select } from '../ui/Select'
@@ -41,7 +41,9 @@ export function DataFigureForm({ onClose }: { onClose: () => void }) {
     }
   }, [])
 
-  const canSubmit = !!file && !!instruction.trim()
+  // 上一次的结果还没确认（可能已经生成）：先去对话里查询，别在这里再提交一次（会建出 `_2`）
+  const pending = useAiStore((s) => s.sessions.some((x) => isDataFigureSession(x) && x.unconfirmed === true))
+  const canSubmit = !!file && !!instruction.trim() && !pending
   const submit = () => {
     if (!canSubmit) return
     void useAiStore.getState().startDataFigure(file, instruction.trim())
@@ -73,6 +75,11 @@ export function DataFigureForm({ onClose }: { onClose: () => void }) {
           {truncated && (
             <p data-ai-data-figure-note="truncated" className="text-xs text-ink-3">
               {ai('dataFigure.truncated')}
+            </p>
+          )}
+          {pending && (
+            <p data-ai-data-figure-note="unconfirmed" className="text-xs text-ink-3">
+              {ai('dataFigure.unconfirmedHint')}
             </p>
           )}
           <TextArea

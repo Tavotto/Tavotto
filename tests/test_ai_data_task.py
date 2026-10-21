@@ -180,7 +180,9 @@ def test_the_same_request_runs_once(project):
     ).get_json()
     assert first["task"]["outcome"] == "completed", first
     assert again["task"]["deduped"] is True and again["task"]["task_id"] == first["task"]["task_id"]
-    assert "script" not in again
+    # 去重回的是**首次**写下的脚本（本次重算的落点会是 `_2`，不能用）；项目里仍只有一份
+    assert again["script"] == first["script"] == "data/two_series_figure.py"
+    assert again["stem"] == first["stem"] == "two_series_figure"
     assert sorted(p.name for p in (figs / "data").glob("two_series_figure*.py")) == [
         "two_series_figure.py"
     ]
@@ -357,8 +359,12 @@ def test_a_render_that_does_not_match_the_data_fails_the_task(project, monkeypat
         return out
 
     monkeypatch.setattr(ai_data_figure, "expected_fingerprints", skewed)
-    task = _post(client, "data/standard.csv", "画出来").get_json()["task"]
+    body = _post(client, "data/standard.csv", "画出来").get_json()
+    task = body["task"]
     assert task["outcome"] == "failed", task
+    assert body["script"] == "data/standard_figure.py", (
+        "提交后验证失败：文件已建，响应如实带 script"
+    )
     assert _checks(task["task_id"])["data.voltage_mV"] == ("failed", "data_mismatch")
 
 
@@ -414,3 +420,18 @@ def test_data_file_listing_stops_at_the_scan_budget(project, monkeypatch):
     monkeypatch.setattr(m, "_DATA_FILES_SCAN_MAX", 3)
     body = client.get("/api/ai/data-files").get_json()
     assert body["truncated"] is True, "目录项超了预算：停下并如实标 truncated"
+
+
+def test_data_file_scan_budget_counts_entries_one_by_one(project, monkeypatch):
+    """一个目录里的项数就超预算：超预算前已看过的 csv 保留（不是整批丢弃），且如实标 truncated。"""
+    m, client, figs, _ = project
+    big = figs / "big"
+    big.mkdir()
+    for i in range(10):
+        (big / f"f{i}.csv").write_text("a,b\n1,2\n", encoding="utf-8")
+    monkeypatch.setattr(m, "_DATA_FILES_SCAN_MAX", 5)
+    body = client.get("/api/ai/data-files").get_json()
+    assert body["truncated"] is True
+    assert 0 < len(body["files"]) <= 5, body
+    paths = [f["path"] for f in body["files"]]
+    assert paths == sorted(paths)

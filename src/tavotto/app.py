@@ -11430,11 +11430,41 @@ def api_ai_data_figure():
     res = engine_ai_tasks.run_task(env, executor)
     cand = executor.candidate
     out = {"task": res, "summary": prepared.summary.to_dict()}
-    if cand is not None and cand.committed:
+    if res.get("deduped"):
+        # 去重 = 这条请求早已执行：本次 `prepare` 算出的落点会因为文件已存在而变成 `_2`，不能用。脚本以**首次执行时
+        # 写进契约的那个**为准（历史库里的 envelope），文件此刻还在才报（没提交成功的任务没有文件）
+        recorded = _deduped_data_script(ctx.path, res.get("task_id"))
+        if recorded is not None:
+            out.update(script=recorded[0], stem=recorded[1])
+    elif cand is not None and cand.committed:
         out.update(script=script_rel, stem=prepared.placement.stem)
     if isinstance(prepared.plan, engine_ai_data_figure.NeedsInput) and prepared.plan.preview:
         out["preview"] = prepared.plan.preview.to_dict()
     return jsonify(out)
+
+
+def _deduped_data_script(root: Path, task_id) -> tuple[str, str] | None:
+    """去重响应里补上首次执行写下的脚本（项目相对路径, 文件主干）；没有 / 文件已不在 → None。"""
+    if not isinstance(task_id, str) or not task_id:
+        return None
+    row = engine_ai_history.get(task_id)
+    try:
+        rel = row["envelope"]["output_contract"]["allowed_writes"][0]
+    except (TypeError, KeyError, IndexError):
+        return None
+    if not isinstance(rel, str) or not rel:
+        return None
+    full = root / rel
+    try:
+        if (
+            full.is_symlink()
+            or not full.is_file()
+            or not full.resolve().is_relative_to(root.resolve())
+        ):
+            return None
+    except OSError:
+        return None
+    return rel, full.stem
 
 
 _DATA_FILES_MAX = 500
@@ -11454,29 +11484,35 @@ def api_ai_data_files():
     found: list[tuple[str, int]] = []
     truncated = False
     seen = 0
-    for cur, dirs, names in os.walk(root, followlinks=False):
-        seen += len(dirs) + len(names)
-        if seen > _DATA_FILES_SCAN_MAX:
-            truncated = True
-            break
-        dirs[:] = [
-            d
-            for d in dirs
-            if not d.startswith(".")
-            and d not in engine_discover.PRUNE_DIRS
-            and not os.path.islink(os.path.join(cur, d))
-        ]
-        for name in names:
-            if not name.lower().endswith(".csv") or name.startswith("."):
-                continue
-            full = os.path.join(cur, name)
-            if os.path.islink(full):
-                continue
-            try:
-                size = os.stat(full).st_size
-            except OSError:
-                continue
-            found.append((Path(full).relative_to(root).as_posix(), size))
+    stack = [str(root)]
+    # 手写栈 + scandir 逐项迭代：每看一项计一次数，到预算立刻停（`os.walk` 会先把整个目录枚举完才让我们数）；
+    # 已收集的保留。剪枝规则不变：隐藏目录、PRUNE_DIRS、不跟随链接、跳过链接文件
+    while stack and not truncated:
+        cur = stack.pop()
+        try:
+            it = os.scandir(cur)
+        except OSError:
+            continue
+        with it:
+            for entry in it:
+                seen += 1
+                if seen > _DATA_FILES_SCAN_MAX:
+                    truncated = True
+                    break
+                name = entry.name
+                try:
+                    if entry.is_symlink():
+                        continue
+                    if entry.is_dir(follow_symlinks=False):
+                        if not name.startswith(".") and name not in engine_discover.PRUNE_DIRS:
+                            stack.append(entry.path)
+                        continue
+                    if not name.lower().endswith(".csv") or name.startswith("."):
+                        continue
+                    size = entry.stat(follow_symlinks=False).st_size
+                except OSError:
+                    continue
+                found.append((Path(entry.path).relative_to(root).as_posix(), size))
     found.sort()
     if len(found) > _DATA_FILES_MAX:
         found, truncated = found[:_DATA_FILES_MAX], True

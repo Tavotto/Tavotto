@@ -97,7 +97,10 @@
     "unmetHeading": "Checks not met",
     "dataFigurePartial": "Some rows aren’t numbers, so they weren’t drawn. The script was created, but the result isn’t fully verified.",
     "dataFigureNeedsInput": "I couldn’t tell which column is x and which is y. Name the two columns in your instruction.",
-    "dataFigureNeedsInputExample": "I couldn’t tell which column is x and which is y. Name the two columns in your instruction, for example “plot {{y}} against {{x}}”."
+    "dataFigureNeedsInputExample": "I couldn’t tell which column is x and which is y. Name the two columns in your instruction, for example “plot {{y}} against {{x}}”.",
+    "dataFigureFailedWritten": "The new script was written to the project, but the plotted data doesn’t match the CSV. If it’s wrong, you can delete this new script.",
+    "dataFigureUnconfirmed": "No result came back; the figure may already exist. Check the result first instead of submitting again.",
+    "dataFigureReconcile": "Check result"
   },
   "panel": {
     "abort": "Stop",
@@ -184,7 +187,9 @@
     "dataFigureRunning": "Reading the data and drawing…",
     "dataFigureDone": "Created script {{script}}",
     "dataFigurePartial": "Created script {{script}}; some rows weren’t drawn",
-    "dataFigureNeedsInput": "Nothing drawn; tell me which two columns to use"
+    "dataFigureNeedsInput": "Nothing drawn; tell me which two columns to use",
+    "dataFigureFailedWritten": "Created {{script}}, but verification failed",
+    "dataFigureUnconfirmed": "Result unconfirmed"
   },
   "status": {
     "aiAlreadyRan": "This request already ran (its task record was deleted), so it won’t be sent again.",
@@ -218,6 +223,7 @@
     "instructionLabel": "What to plot",
     "instructionPlaceholder": "For example: plot y against x",
     "generate": "Generate",
-    "cancel": "Cancel"
+    "cancel": "Cancel",
+    "unconfirmedHint": "The last result isn’t confirmed yet. Check it in the conversation first."
   }
 }
