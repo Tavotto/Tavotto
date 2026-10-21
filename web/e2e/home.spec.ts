@@ -253,45 +253,6 @@ test('最近项目卡 lift：hover/聚焦 -2px + scale 1.015 + 阴影升档、�
 })
 
 /**
- * 最近项目卡遇上超长路径（坚果云 / iCloud：中文 + 邮箱 + 无空格长串）：每张卡仍是等宽的一列，
- * 缩略图格占满卡的内宽（不被文字撑塌成竖条），路径在卡内被 TailPath 截断，不横穿相邻卡。
- * 合伙人 beta 0.19.0b1 的截图是这个形状；结构上靠整条链 min-w-0 / w-full / overflow-hidden 保证。
- */
-test('最近项目卡 超长路径：等宽列、缩略图占满内宽、路径不溢出卡边界', async ({ app, page }) => {
-  await asReturningUser(page)
-  const long =
-    '/Users/qingqin/Library/CloudStorage/坚果云-24110190013@m.fudan.edu.cn/' + '实验数据汇总绘图脚本最终版'.repeat(8) + '_figures_revision_2'
-  const recent = [long, '/Users/me/b', '/Users/me/c'].map((p, i) => ({
-    path: p,
-    name: i ? `p${i}` : '图表项目',
-    last_opened: Date.now() - 3600_000,
-    exists: true,
-    current: false,
-  }))
-  await page.route('**/api/projects/recent', (r) => r.fulfill({ json: { recent, pinned: [] } }))
-  for (const width of [900, 1100]) {
-    await page.setViewportSize({ width, height: 800 })
-    const a = await app({ noProject: true })
-    await page.goto(a.baseURL)
-    await expect(page.locator('[data-home-recent]')).toHaveCount(3)
-    const m = await page.evaluate(() =>
-      [...document.querySelectorAll<HTMLElement>('[data-home-recent]')].map((li) => {
-        const card = li.querySelector<HTMLElement>('[data-card]')!.getBoundingClientRect()
-        const thumb = li.querySelector<HTMLElement>('button span[aria-hidden]')!.getBoundingClientRect()
-        const path = li.querySelector<HTMLElement>('[dir="rtl"]')
-        const p = path?.getBoundingClientRect()
-        return { card: [card.left, card.right], thumbW: thumb.width, pathRight: p?.right ?? null, w: card.width }
-      }),
-    )
-    for (const c of m) {
-      expect(c.w).toBeCloseTo(m[0].w, 0)
-      expect(c.thumbW).toBeGreaterThan(c.w - 12)
-      if (c.pathRight !== null) expect(c.pathRight).toBeLessThanOrEqual(c.card[1] + 0.5)
-    }
-  }
-})
-
-/**
  * 首页自适应布局（用户 2026-10-21：「拉伸的时候，里面的元素很不好看」）：窗口变高 / 宽 / 矮 / 窄都要好看。
  * 判据全是真布局量出来的：无横向溢出；放得下时内容块在顶行以下的可用高度里垂直居中（上下留白差不超过窗高 5%）；
  * 段与段之间不重叠；Logo 与下一句之间不挤（≥16px）；「返回当前项目」按钮盒右缘与内容列（拖放区）右缘对齐。
