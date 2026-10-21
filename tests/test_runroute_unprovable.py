@@ -49,6 +49,37 @@ UNPROVABLE = [
     ("getattr_passed_as_value", "import os\nfs = list(map(getattr, [os], ['re' + 'move']))\n"),
     ("methodcaller_dynamic", "import operator\noperator.methodcaller(NAME)\n"),
     ("builtins_exec", "import builtins\nbuiltins.exec('pass')\n"),
+    # Codex r1：从任何模块 import 原语（不看别名）、模块别名、多名字实参
+    (
+        "from_builtins_alias",
+        'import os\nfrom builtins import getattr as g\ng(os, NAME)("victim")\n',
+    ),
+    (
+        "from_operator_alias",
+        'import os\nfrom operator import attrgetter as ag\nag("path", NAME)(os)\n',
+    ),
+    ("from_operator_literal_alias", 'from operator import methodcaller as mc\nmc("x")\n'),
+    ("from_builtins_vars", "from builtins import vars as v\nv()\n"),
+    ("from_sys_modules", "from sys import modules as m\nm['os']\n"),
+    ("module_alias_builtins", 'import builtins as b\nimport os\nb.getattr(os, "re" + "move")\n'),
+    ("module_alias_builtins_exec", 'import builtins as b\nb.exec("pass")\n'),
+    (
+        "module_alias_operator",
+        'import operator as op\nimport os\nop.attrgetter("path", NAME)(os)\n',
+    ),
+    ("attrgetter_second_name", 'import os, operator\noperator.attrgetter("path", NAME)(os)\n'),
+    ("attrgetter_star", "import os, operator\noperator.attrgetter(*NAMES)(os)\n"),
+    ("getattr_keyword_name", 'import os\ngetattr(os, **{"name": "x"})\n'),
+    ("getattr_star_args", "import os\ngetattr(*ARGS)\n"),
+    ("getattr_one_arg", "getattr(NAME)\n"),
+    ("methodcaller_second_unused", "import operator\noperator.methodcaller(*NAMES)\n"),
+    ("partial_getattr", "import functools, os\nfunctools.partial(getattr, os)(NAME)\n"),
+    (
+        "partial_methodcaller",
+        "import functools, operator\nfunctools.partial(operator.methodcaller)\n",
+    ),
+    ("vars_alias_value", "v = vars\nv()\n"),
+    ("builtins_dict_name", "__builtins__['ex' + 'ec']\n"),
     ("inside_function_never_called", "def helper(n):\n    return getattr(plt, n)\n"),
 ]
 
@@ -68,6 +99,10 @@ PROVABLE = [
     ("hasattr_variable", "ok = hasattr(plt, NAME)\n"),
     ("re_compile", 'import re\nre.compile("a+")\n'),
     ("pandas_eval_method", "import pandas as pd\ndf = pd.DataFrame()\ndf.eval('a + b')\n"),
+    ("from_operator_itemgetter", "from operator import itemgetter\nitemgetter(1)\n"),
+    ("attrgetter_all_literal", 'import operator\noperator.attrgetter("a", "b.c")\n'),
+    ("methodcaller_literal", 'import operator\noperator.methodcaller("get_label")\n'),
+    ("import_builtins_plain", "import builtins\nbuiltins.print('x')\n"),
     ("vars_of_argparse", "import argparse\nvars(argparse.Namespace())\n"),
 ]
 

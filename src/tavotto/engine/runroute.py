@@ -935,50 +935,65 @@ class _Collector:
         {"__dict__", "__builtins__", "__globals__", "__getattribute__", "__subclasses__"}
     )
 
+    @staticmethod
+    def _literal_str(node: ast.AST | None) -> bool:
+        return isinstance(node, ast.Constant) and isinstance(node.value, str)
+
+    def _dispatch_names_provable(self, name: str, call: ast.Call) -> bool:
+        """属性分派入口的**全部**名字实参都是字面字符串（`*args` / 关键字传名 / 缺实参都算证明不了）。"""
+        if call.keywords or any(isinstance(a, ast.Starred) for a in call.args):
+            return False
+        if name in ("getattr", "setattr", "delattr"):
+            return len(call.args) >= 2 and self._literal_str(call.args[1])
+        if name == "methodcaller":
+            return bool(call.args) and self._literal_str(call.args[0])
+        return bool(call.args) and all(self._literal_str(a) for a in call.args)  # attrgetter
+
     def has_dynamic_dispatch(self) -> bool:
         """静态分析**证明不了调用目标**的形状（一条结构规则，不枚举危险函数名）：
 
-        * `getattr` / `setattr` / `delattr` / `methodcaller` / `attrgetter` 的名字实参不是字面字符串（含 `"re" + "move"`、变量），
-          或这些入口被当值传走而不是被直接调用；
+        * `getattr` / `setattr` / `delattr` / `methodcaller` / `attrgetter` 的名字实参不全是字面字符串（含 `"re" + "move"`、变量、
+          `*args`、关键字传名），或这些入口被当值传走（含 `functools.partial(getattr, os)`）；
         * `exec` / `eval` / `compile` / `__import__`（裸名或 `builtins.X`），`importlib.import_module` 等按名取模块 / 跑文件的入口；
-        * `globals()` / `locals()` / 无实参 `vars()`、`X.__dict__` 等反射面、`sys.modules`。
+        * `globals()` / `locals()` / `vars()`（无实参或被当值传走）、`X.__dict__` 等反射面、`__builtins__`、`sys.modules`；
+        * **从任何模块 import** 上述原语（不看别名）：导入原语本身就让之后的调用点只露别名，宁宽。
 
-        宁宽：命中即「没看到守卫操作」不再等于「没有守卫操作」。字面属性名（`getattr(obj, "foo")`）不算。"""
-        called = {id(n.func): n for n in ast.walk(self.tree) if isinstance(n, ast.Call)}
+        命中即「没看到守卫操作」不再等于「没有守卫操作」。字面属性名（`getattr(obj, "foo")`）不算。"""
+        primitives = (
+            self._ATTR_DISPATCH
+            | self._CODE_EXEC
+            | self._MODULE_LOADERS
+            | {"globals", "locals", "vars", "modules", "__builtins__"}
+        )
+        called = {id(n.func) for n in ast.walk(self.tree) if isinstance(n, ast.Call)}
         for n in ast.walk(self.tree):
             if isinstance(n, ast.ImportFrom):
-                if any(
-                    a.name in self._MODULE_LOADERS
-                    or a.name == "*"
-                    and n.module in ("importlib", "runpy", "pkgutil", "builtins")
-                    for a in n.names
+                if any(a.name in primitives for a in n.names):
+                    return True
+                if n.module in ("importlib", "runpy", "pkgutil") and any(
+                    a.name == "*" for a in n.names
                 ):
                     return True
-                if n.module == "builtins" and any(a.name in self._CODE_EXEC for a in n.names):
-                    return True
-                if n.module == "sys" and any(a.name == "modules" for a in n.names):
-                    return True
-                continue
-            if isinstance(n, ast.Attribute):
+            elif isinstance(n, ast.Attribute):
                 if n.attr in self._MODULE_LOADERS or n.attr in self._REFLECTION_ATTRS:
                     return True
                 q = self.qual(n) or ""
                 if q == "sys.modules" or (
-                    q.startswith("builtins.") and q.rsplit(".", 1)[1] in self._CODE_EXEC
+                    q.startswith("builtins.") and q.rsplit(".", 1)[1] in primitives
                 ):
                     return True
                 if n.attr in self._ATTR_DISPATCH and id(n) not in called:
                     return True  # `operator.attrgetter` 被当值传走
-            if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load):
+            elif isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load):
                 if (
                     n.id in self._CODE_EXEC
                     or n.id in self._MODULE_LOADERS
-                    or n.id in ("globals", "locals")
+                    or n.id in ("globals", "locals", "__builtins__")
                 ):
                     return True
-                if n.id in self._ATTR_DISPATCH and id(n) not in called:
+                if (n.id in self._ATTR_DISPATCH or n.id == "vars") and id(n) not in called:
                     return True
-            if isinstance(n, ast.Call):
+            elif isinstance(n, ast.Call):
                 f = n.func
                 name = (
                     f.id
@@ -989,20 +1004,8 @@ class _Collector:
                 )
                 if name == "vars" and isinstance(f, ast.Name) and not n.args and not n.keywords:
                     return True
-                if name in self._ATTR_DISPATCH:
-                    attr_name = n.args[1] if len(n.args) > 1 else None
-                    if name in ("methodcaller", "attrgetter"):
-                        attr_name = n.args[0] if n.args else None
-                    if (
-                        any(isinstance(a, ast.Starred) for a in n.args)
-                        or n.keywords
-                        and name not in ("methodcaller",)
-                    ):
-                        return True
-                    if not (
-                        isinstance(attr_name, ast.Constant) and isinstance(attr_name.value, str)
-                    ):
-                        return True
+                if name in self._ATTR_DISPATCH and not self._dispatch_names_provable(name, n):
+                    return True
         return False
 
     def has_guarded_ops(self) -> bool:
