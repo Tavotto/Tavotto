@@ -29,17 +29,8 @@ import { useSelectionStore } from '@/store/selectionStore'
 import { useTimelineStore } from '@/store/timelineStore'
 import { useUiStore, type Tool } from '@/store/uiStore'
 import { useViewportStore } from '@/store/viewportStore'
-import { useWorkspaceStore } from '@/store/workspace'
 import { fitStage, zoomToSelection } from '@/store/zoomToSelection'
 
-/**
- * 快速编辑里**只有这一张图**：页面纸、网格、别的对象全部让开。
- *
- * 版面动作在这一屏上没有可见的对应物——推 x/y 看不见、画一个矩形也看不见，
- * 而两者都会进文档、进历史、跟着导出。顶栏把这组按钮藏了起来，快捷键必须
- * 走同一条判据，否则藏的只是入口不是能力。
- */
-export const inFastEdit = () => useWorkspaceStore.getState().mode === 'fast_edit'
 
 const TOOL_KEYS: Record<string, Tool> = {
   v: 'select',
@@ -335,8 +326,7 @@ export function useKeyboard() {
           }
         } else if (ui.cropTargetId) cancelCrop()
         else if (ui.tool !== 'select') ui.setTool('select')
-        // 单图编辑没有「清选区」这一层（选中的永远是正在编辑的那张图），也没有更外一层可退：什么都不做
-        else if (!inFastEdit()) useSelectionStore.getState().clear()
+        else useSelectionStore.getState().clear()
         return
       }
       if (e.key === 'Enter') {
@@ -386,12 +376,6 @@ export function useKeyboard() {
 
       const tool = TOOL_KEYS[e.key.toLowerCase()]
       if (tool) {
-        // 快速编辑里没有画布标注。`openFastEdit()` 进来时把工具收回 `select`
-        // 正是因为这一屏上根本没有它们的位置；顶栏也把这组按钮藏了起来。
-        // **只藏按钮不挡快捷键等于没挡**：按一下 R，`CanvasStage` 照样
-        // `startDraw()`，用户在一个只显示这张图的画面里画出一个看不见的矩形，
-        // 而它进了文档、进了历史、还会跟着导出。
-        if (tool !== 'select' && inFastEdit()) return
         e.preventDefault()
         ui.setTool(tool)
       }

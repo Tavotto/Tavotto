@@ -137,8 +137,8 @@ describe('MeasureChip', () => {
     expect(chip()!.style.top).toBe(`${mmToWorld(74) + 8}px`)
   })
 
-  // Codex #833：快速编辑里舞台只画那一张图；从图层抽屉 ⇧ 选进来的别的对象看不见，读数与锚点都不算它
-  it('快速编辑：只量舞台上画着的那一张，选区里看不见的对象不并进来', () => {
+  // 2026-10-21：单图编辑的舞台画着这张画布上的全部对象，选区里的都看得见 → 读数与排版同口径，量选区并集
+  it('单图编辑：与排版同口径，量选区里没隐藏对象的并集', () => {
     const before = useWorkspaceStore.getState()
     try {
       act(() => {
@@ -149,8 +149,7 @@ describe('MeasureChip', () => {
         useWorkspaceStore.setState({ mode: 'fast_edit', activePanelId: 'r1' })
         useInteractionStore.getState().begin('resize')
       })
-      expect(chip()!.textContent).toBe('100.0 × 8.0 mm')
-      expect(chip()!.style.left).toBe(`${mmToWorld(10) + mmToWorld(100) / 2}px`)
+      expect(chip()!.textContent).toBe('300.0 × 200.0 mm')
     } finally {
       useWorkspaceStore.setState({ mode: before.mode, activePanelId: before.activePanelId })
     }

@@ -101,40 +101,29 @@
 - **缩放到选中（⇧2 / 缩放菜单 / 命令面板 `zoom-selection`）只有一个判据与一个盒**：`store/zoomToSelection`
   的 `selectionBoxOf`——选区里没隐藏的对象按 `visualBounds` 求并，面积为 0 算没有；可用判据（菜单置灰用
   `useCanZoomToSelection`、命令面板用 `canZoomToSelectionNow`）与动作（`zoomToSelection`，⇧2 经
-  `runZoomCommand('selection')`）算的是同一个盒，入口不许自己拼判据。**快速编辑里只认正在编辑的那张图**
-  （`workspace.activePanelId`）：这一屏只画它（`CanvasLayers only=`），⌘A 之后选区里还有一整版看不见的
-  对象，按整个选区取景会把唯一看得见的图挪走、缩小（Codex #833）；选区含它 → 只框它（与快编的「适应」
-  对着那张图同一口径），不含 → 不可用（置灰 / 不出现 / ⇧2 不动视口）。菜单与面板订阅工作区模式，进出
-  快编即重算。看护 `components/zoomControls.test.tsx`、`components/CommandPalette.test.tsx`、
+  `runZoomCommand('selection')`）算的是同一个盒，入口不许自己拼判据。**单图编辑与排版同一口径**（2026-10-21 取代 Codex #833 的「快编只认那张图」：单图编辑的舞台也画全部对象）：选区里没隐藏的对象求并，面积为 0 算没有；菜单与面板订阅选区，进出单图编辑口径不变。看护 `components/zoomControls.test.tsx`、`components/CommandPalette.test.tsx`、
   `hooks/useKeyboardFastEdit.test.tsx`。
 - **单图编辑没有「回排版」出口；图内编辑的出口至多一颗按钮，Esc 与它同一个动作（2026-10-21，取代 Prompt Pack P01 的
   「快编出口 return / forward 两种来源」）**：单图编辑 = 画布上恰好一张图（`workspaceStore.settleMode` 推出，见
   `workflows-and-original-spec.md`），没有排版可回——第二张图进来自然切成多图排版。`WorkspaceContextBar` 只在**图内编辑**
   时摆一颗 `[data-context-back]`（`data-exit-element-edit`）：单图编辑里叫「退出图内编辑」、多图排版里叫「返回画布」，
   动作相同（`setElementPanel(null)` + 选中该面板），Esc 的最外层与它同一个动作；单图编辑且不在图内编辑时没有出口按钮、
-  没有 `to-layout` 教程锚点，Esc 最外层什么都不做（单图编辑没有「清选区」这一层）。`fastEditFromLayout` /
+  没有 `to-layout` 教程锚点；Esc 最外层清选区（单图编辑里标注可选了）。`fastEditFromLayout` /
   `data-context-back-kind` / `returnToLayout` 已删。`useKeyboard` 的 Esc 逐层退：版本抽屉 / 文字编辑 / 图内元素选区 /
   图内编辑 / 裁剪 / 非选择工具；输入框与对话框聚焦时（`inEditableTarget`）不抢。不要再往单图编辑里加「添加到画布」——
   `openFastEdit` 已把图放进文档。`App` 的画布标签行在单图编辑里隐藏，**但该文档还有别的画布时留着**（模式按画布各自判，
   隐藏了就切不走）。
-- **快速编辑里作用于选区 / 取景的动作只认正在编辑的那张图（Codex #833，数据丢失）**：判据只有
-  `store/workspaceStore.fastEditPanelOf`（排版里 null；`store/workspace` 原样再导出。状态本体 `useWorkspaceStore` 与模式的唯一写入点 `settleMode` 住在这个叶子模块里，
-  因为 `store/actions` 要读它，而 `store/workspace` 的工作流动作要调 `actions`——`actions` / `clipboard` 只许 import 叶子，否则成环，`importArchitecture.test.ts` 看护）。**全选**只有 `store/actions.selectAll` → `selectAllIds`
-  一处（⌘A、命令面板 `select-all`、画布菜单「全选」同经它）：排版里收整版看得见且没锁的对象
-  （`isSelectAllTarget`），快速编辑里只收那张图（也得过 `isSelectAllTarget`，锁着就什么都不选，不退到整版）——
-  此前 ⌘A 把整版看不见的对象全选上，接着 Delete 就把它们从版上删掉。**删除**（`deleteSelected`，Delete /
-  Backspace 不在图内元素编辑时、系统菜单「删除」都到这里）在快速编辑里把选区收窄到那张图：选区里挂着的
-  旧版面对象（进单图编辑之前留下的、第二张被删后剩下的标注、图层面板点的）一个不删；删那张图本身照旧（看得见、可撤销，对象没了快速编辑
-  随之退出）。**粘贴与创建副本**在快速编辑里不落：粘贴只在 `lib/clipboard.consumePayload` 判一次（⌘V 原生 paste 事件、
-两份右键菜单的「粘贴」同经它；不拦事件，图内文字编辑器 / 输入框里的粘贴在离散动作闸门那步就让位给浏览器，照旧），
-创建副本只在 `store/actions.duplicateSelected` 判（⌘D、系统菜单、对象右键菜单、属性页「⋯」同经它）——此前对象菜单的
-「粘贴 / 创建副本」把副本落在这一屏不画的版面上、换掉选区；对象菜单与属性页「⋯」在快速编辑里不摆这两项。看护
-`lib/clipboardEvents.test.ts`、`store/actions.test.ts`、`canvas/objectContextMenu.test.tsx`（各带排版对照组）。**「适应」的取景框只有 `store/zoomToSelection.stageFitFrame` 一处**，动作 `fitStage()`：舞台双击、
-  ⌘1 / 系统菜单（`runZoomCommand('fit')`）、缩放菜单、命令面板 `fit`、画布工具条与画布菜单全走它——快速编辑里
-  框那张图**本身的矩形**（含原点，`fitRectAnimated`；曾按「(0,0) 到右下角」取景，x/y 为负时图被裁、为正时左上留白，
-  Codex #833），排版里框页面（`fitAnimated`）；首次挂载的瞬时适应与双击的「框外」判据（`lib/fitGuard`）读同一个框；此前 ⌘1 / 菜单 / 面板在快速编辑里适应这一屏根本没画的页面，
-  而双击适应那张图。看护 `hooks/useKeyboardFastEdit.test.tsx`（⌘A / Delete / ⌘1 各带排版对照组）、
-  `components/CommandPalette.test.tsx`、`canvas/stageFitRect.test.tsx`（正 / 负偏移下 ⌘1、系统菜单、`fitStage`、舞台双击的视口终点）。
+- **单图编辑与排版同一口径（2026-10-21，取代 Codex #833「快速编辑里只认正在编辑的那张图」整组不变量）**：单图编辑的舞台画这张画布上的
+  全部对象（`CanvasLayers` 不再有 `only`），所以选区里的东西都看得见，不再有「看不见的版面对象被误删 / 误取景」的前提。
+  **全选**只有 `store/actions.selectAll` → `selectAllIds` 一处（⌘A、命令面板 `select-all`、画布菜单「全选」同经它），收看得见且没锁的对象；
+  **删除**（`deleteSelected`）删选区；**粘贴**只在 `lib/clipboard.consumePayload`、**创建副本**只在 `store/actions.duplicateSelected`
+  落，单图编辑里照常——图 = 第二张 → 切多图排版，标注留在单图。**「适应」的取景框只有 `store/zoomToSelection.stageFitFrame` 一处**，动作 `fitStage()`：
+  舞台双击、⌘1 / 系统菜单、缩放菜单、命令面板 `fit`、画布工具条与画布菜单全走它——单图编辑里框「没隐藏对象的 `visualBounds` 并集」（图 ∪ 标注，
+  含原点，`fitRectAnimated`；曾按「(0,0) 到右下角」取景，x/y 为负时图被裁，Codex #833），排版里框页面（`fitAnimated`）；首次挂载的瞬时
+  适应与双击的「框外」判据（`lib/fitGuard`）读同一个框。载入 / 切项目 / 恢复 / 切画布之后的瞬时取景是 `fitStageNow`（同一个框）。
+  状态本体 `useWorkspaceStore` 与模式写入点 `settleMode` 住在叶子模块 `store/workspaceStore`（`actions` / `clipboard` 只许 import 叶子，
+  否则成环，`importArchitecture.test.ts` 看护）。看护 `hooks/useKeyboardFastEdit.test.tsx`（各带排版对照组）、`components/CommandPalette.test.tsx`、
+  `components/zoomControls.test.tsx`、`canvas/stageFitRect.test.tsx`、`lib/clipboardEvents.test.ts`、`store/actions.test.ts`。
 - **换画布尺寸就重新取景；新加的图软上限缩放；页面外画淡（2026-09-28，用户反馈）**：
   同一份文档、同一张画布的 `page.w/h` 一变（预设、手填、横竖对调、样式预设带的页面、
   以及它们的撤销 / 重做）→ `store/pageFit.startPageSizeFit` 按新页面 `fitAnimated`，

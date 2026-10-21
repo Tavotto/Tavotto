@@ -90,12 +90,20 @@ const objectIds = () =>
   )
 
 describe('快速编辑这一屏', () => {
-  it('只画当前那一张图，别的对象与页面纸都让开', async () => {
+  it('画这张画布上的全部对象（图 + 标注），页面纸让开', async () => {
     act(() => openFastEdit('a.pdf'))
+    act(() => {
+      useDocumentStore.getState().commit(literal('文字'), (d) => {
+        d.objects.push({
+          id: 't1', type: 'text', text: '图注', sizePt: 6, bold: false, color: '#000000', align: 'left', x: 5, y: 5, w: 20, h: 6,
+        })
+      })
+    })
     await mount()
 
     const active = useWorkspaceStore.getState().activePanelId
-    expect(objectIds()).toEqual([active])
+    expect(useWorkspaceStore.getState().mode).toBe('fast_edit')
+    expect(objectIds().sort()).toEqual([active, 't1'].sort())
     // 页面纸（PageSheet）是排版的语言：这一屏上不该有它
     expect(container.querySelector('[data-page-sheet]')).toBeNull()
   })

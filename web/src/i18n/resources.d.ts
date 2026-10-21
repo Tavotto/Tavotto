@@ -4941,8 +4941,8 @@ export default interface Resources {
     },
     "fastEdit": {
       "added": "{{name}} 已加入画布",
-      "addedForEdit": "已为编辑加入本排版",
-      "addedForEditLive": "已为编辑加入本排版，移除即撤销。",
+      "addedForEdit": "已为编辑新建了一张画布",
+      "addedForEditLive": "已为编辑新建了一张画布，移除即撤销放进去的图。",
       "alreadyOnCanvas": "{{name}} 已经在画布上",
       "connectSource": "连接源脚本",
       "enteredLayout": "已进入多图排版",

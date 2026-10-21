@@ -42,13 +42,14 @@ import type { CapturedFigureDescriptor, PanelInfo } from '@/lib/api'
 import { pageUnion } from '@/lib/panelPlacement'
 import { addPanel, addRuntimePanel, enterElementEdit } from '@/store/actions'
 import { useAssetStore } from '@/store/assetStore'
-import { activateCanvas } from '@/store/canvasSession'
+import { activateCanvas, createCanvasAndActivate } from '@/store/canvasSession'
 import { deferUserEntry } from '@/store/documentRestore'
 import { findFigurePanel, useDocumentStore } from '@/store/documentStore'
 import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
 import { mmToWorld, useViewportStore } from '@/store/viewportStore'
+import { applyStageFit, stageFitFrame } from '@/store/zoomToSelection'
 import { figuresOf, settleMode, useWorkspaceStore } from '@/store/workspaceStore'
 import type { CanvasObject, PanelObject } from '@/types/document'
 
@@ -170,12 +171,19 @@ function figureSource(figureId: string): FigureSource | null {
   return runtime?.descriptor ? { kind: 'runtime', desc: runtime.descriptor } : null
 }
 
+/** 新画布的名字：图名（磁盘图的 `name`，runtime 图的 `stem`），不叫「新排版」 */
+function figureCanvasName(src: FigureSource): string {
+  return src.kind === 'file' ? src.info.name : src.desc.stem
+}
+
 /**
  * 新建面板用哪一层：`toCanvas` = `addPanelToCanvas` / `addRuntimePanelToCanvas`（连取景，
- * 「添加到画布」走它）；`docOnly` = 裸 action，只给 `openFastEdit`——它要先停放排版视口、
- * 再判新加的图，取景的时机由它自己掌握。
+ * 「添加到画布」走它）；`docOnly` = 裸 action，只改文档、取景交给模式订阅；`newCanvas` = 只给 `openFastEdit`：
+ * 先新建一张以图名命名的画布并切过去，再把图放进去（「打开」是换看那一张，不是往当前画布上加第二张，
+ * 原画布一个字节不动）。
  */
-function createPanel(src: FigureSource, layer: 'toCanvas' | 'docOnly'): PanelObject {
+function createPanel(src: FigureSource, layer: 'toCanvas' | 'docOnly' | 'newCanvas'): PanelObject {
+  if (layer === 'newCanvas') createCanvasAndActivate(figureCanvasName(src))
   if (layer === 'toCanvas') {
     return src.kind === 'file' ? placePanelToCanvas(src.info) : placeRuntimePanelToCanvas(src.desc)
   }
@@ -188,7 +196,7 @@ function createPanel(src: FigureSource, layer: 'toCanvas' | 'docOnly'): PanelObj
  */
 function ensurePanel(
   figureId: string,
-  layer: 'toCanvas' | 'docOnly',
+  layer: 'toCanvas' | 'docOnly' | 'newCanvas',
 ): { panel: PanelObject; created: boolean } | null {
   const found = findFigurePanel(figureId)
   if (found) {
@@ -207,7 +215,14 @@ function ensurePanel(
 export type OpenFastEditOutcome = 'editing' | 'layout_only' | 'missing' | 'deferred' | 'blocked'
 
 /**
- * 打开一张图 → 进快速编辑工作区。
+ * 打开一张图 = **换看那一张**（2026-10-21 用户拍板），不是往当前画布上再加一张：
+ *
+ * - 它已单独在某张画布上 → 切到那张画布（单图编辑）；
+ * - 它在多图画布上 → 切到那张画布，选中它并对它进图内编辑（排版的子状态）；
+ * - 它不在任何画布上 → 新建一张以图名命名的画布放它（单图编辑），原画布一个字节不动。
+ *   新建画布不进撤销栈（`addCanvas` 全仓库都不可撤销），放图这一步是一条可撤销的历史：撤销把图撤掉，
+ *   画布留着、是空的（排版），用户可以关掉它。
+ * 「拖入 / 加到画布」才是加第二张（`addPanelToCanvas` / `addFigureToLayout`）。
  *
  * **这是普通打开行为**，不是一个需要先选模式的启动页：素材卡双击、
  * `tavotto open <stem>` 的交接、接入状态里的「打开」，走的都是它。
@@ -226,7 +241,7 @@ export function openFastEdit(figureId: string, opts?: { guard?: () => boolean })
     void openFastEdit(figureId)
   })
   if (entry !== 'run') return entry === 'deferred' ? 'deferred' : 'blocked'
-  const got = ensurePanel(figureId, 'docOnly')
+  const got = ensurePanel(figureId, 'newCanvas')
   if (!got) {
     useUiStore
       .getState()
@@ -234,17 +249,15 @@ export function openFastEdit(figureId: string, opts?: { guard?: () => boolean })
     return 'missing'
   }
   const { panel, created } = got
-  // 模式由图数推出：新建的这张让画布变成 1 张 / ≥2 张，订阅已经对过；这里再对一遍是幂等的，
-  // 订阅没挂的调用方（单元测试）也一致。停放排版视口在 `enterFastEdit` 里，仍先于下面的取景
+  // 模式由图数推出：新画布上放的这一张 = 1 张，订阅已经对过；这里再对一遍是幂等的，订阅没挂的调用方（单元测试）也一致
   settleMode()
   if (created) frameAddedPanel(panel, false)
   // 「编辑原图」把还不在文档里的图加了进来——这一步必须说出口（结构上躲不掉：
   // 单图编辑的对象只能是文档里的面板对象，见文件头；但用户点的是"编辑"，看到
   // 的却是版本预览多了一个对象、问题面板多了一批问题，UI 审计 T06）。它是一条
   // 可撤销的历史，撤销即移除。图**已经在文档里**时什么都不说——那一次零文档改动。
-  // 加进来之后画布成了多图排版的，说话的是「已进入多图排版」那条通知，不重复说
   useWorkspaceStore.setState({
-    addedForEdit: created && useWorkspaceStore.getState().mode === 'fast_edit' ? panel.id : null,
+    addedForEdit: created ? panel.id : null,
     addedForEditDepth: useDocumentStore.getState().past.length,
   })
   // 绘制工具画的是画布标注，单图编辑这一屏上根本没有它们的位置——
@@ -379,10 +392,7 @@ export function startWorkspaceModeSync(): () => void {
         useViewportStore.getState().fitAnimated(state.doc.page.w, state.doc.page.h)
       }
     } else if (now.mode === 'fast_edit' && (wasMode !== 'fast_edit' || wasPanel !== now.activePanelId)) {
-      // 单图编辑的取景框就是那张图本身的矩形（与 `zoomToSelection.stageFitFrame` 快编分支同一个框；
-      // 这里不 import 它：它读本模块的叶子，反过来 import 会成环）
-      const only = state.doc.objects.find((o) => o.id === now.activePanelId)
-      if (only) useViewportStore.getState().fitRectAnimated({ x: only.x, y: only.y, w: only.w, h: only.h })
+      applyStageFit(stageFitFrame(state.doc.objects, state.doc.page, now.activePanelId), true)
     }
   })
 }

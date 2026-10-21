@@ -69,7 +69,7 @@ export function CanvasStage() {
   /** 空白画布上的右键菜单落点（client 坐标）；null = 没开 */
   const [canvasMenu, setCanvasMenu] = useState<{ x: number; y: number } | null>(null)
   // 快速编辑这一屏只有那一张图，而画布菜单全是版面级动作（粘贴进版面、全选版面、适应页面、标尺 / 网格）——
-  // 与 useKeyboard 的 inFastEdit 同一条判据：快速编辑里不开。一处管两种来路：在快速编辑里右键（开了当场收掉、
+  // 单图编辑里不开（它不是版面级菜单的主场）。一处管两种来路：在快速编辑里右键（开了当场收掉、
   // 不会提交出来），与开着菜单切进快速编辑。是收起不是藏起：藏起的话回排版时它会在旧落点上重新冒出来
   if (fastEdit && canvasMenu) setCanvasMenu(null)
   /** 素材拖进来时的落点预览（mm，与松手后 `addPanelToCanvas` 落的是同一个框） */
@@ -281,7 +281,7 @@ export function CanvasStage() {
             />
           )}
           {fastEdit && <FastEditPaper panelId={activePanelId} objects={objects} />}
-          <CanvasLayers only={fastEdit ? activePanelId : null} />
+          <CanvasLayers />
         </div>
 
         {/* 页面外画淡、页面轮廓压在内容之上：在世界层之后、选框覆盖层之前 */}
@@ -387,7 +387,7 @@ function DropGhost({ box }: { box: { x: number; y: number; w: number; h: number 
  * 隐藏图层 display:none：无命中、无绘制成本；快照对象的 id 不在活跃 doc 里，
  * 任何按 id 回写（文字自适应高度这类）都会安静落空，不会误写。
  */
-function CanvasLayers({ only }: { only?: string | null }) {
+function CanvasLayers() {
   const objects = useDocumentStore((s) => s.doc.objects)
   const openTabs = useDocumentStore((s) => s.openTabs)
   const activeId = useDocumentStore((s) => s.activeCanvasId)
@@ -397,10 +397,7 @@ function CanvasLayers({ only }: { only?: string | null }) {
     <>
       {openTabs.map((id) => {
         const active = id === activeId
-        // 快速编辑只画那一个对象：其余标签整层不挂（它们是别的画布的排版）
-        if (only && !active) return null
-        const all = active ? objects : canvases.find((c) => c.id === id)?.objects
-        const objs = only ? all?.filter((o) => o.id === only) : all
+        const objs = active ? objects : canvases.find((c) => c.id === id)?.objects
         if (!objs) return null
         return (
           <div

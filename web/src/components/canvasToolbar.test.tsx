@@ -94,11 +94,11 @@ describe('浮动工具条', () => {
     expect(calls).toEqual([[page.w, page.h]])
   })
 
-  it('快速编辑时整条工具条不在（与搬家前顶栏同一条判据）', async () => {
+  it('单图编辑时工具条也在（2026-10-21：单图编辑的舞台画着标注，可以画可以选）', async () => {
     useWorkspaceStore.setState({ mode: 'fast_edit' })
     await mount(<CanvasToolbar />)
-    expect(q('[data-canvas-toolbar]')).toBeNull()
-    expect(q('[data-tool]')).toBeNull()
+    expect(q('[data-canvas-toolbar]')).not.toBeNull()
+    expect(q('[data-tool]')).not.toBeNull()
   })
 })
 

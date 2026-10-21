@@ -7,7 +7,7 @@ import { startAutosave, useDocumentStore } from './documentStore'
 import { useSelectionStore } from './selectionStore'
 import { useUiStore } from './uiStore'
 import { useViewportStore } from './viewportStore'
-import { beginCrop, enterElementEdit } from './actions'
+import { beginCrop, duplicateSelected, enterElementEdit } from './actions'
 import {
   addFigureToLayout,
   findFigurePanel,
@@ -118,13 +118,57 @@ describe('打开一张图 → 单图编辑', () => {
     expect(ws().activePanelId).toBe(panelOf('b.pdf').id)
   })
 
-  it('同一张画布上已有一张图时再打开另一张：画布上有两张 = 多图排版，打开的这张进图内编辑（排版的子状态）', () => {
+  it('「打开」= 换看：画布上已有一张图时再打开另一张（不在任何画布上）→ 新建一张以图名命名的画布，原画布一个字节不动', () => {
     openFastEdit('a.pdf')
+    const first = s().activeCanvasId
+    const firstObjects = JSON.stringify(s().doc.objects)
+    const canvasesBefore = s().canvases.length
     expect(openFastEdit('b.pdf')).toBe('editing')
-    expect(ws().mode).toBe('layout')
-    expect(ws().activePanelId).toBeNull()
+    expect(s().canvases).toHaveLength(canvasesBefore + 1)
+    expect(s().activeCanvasId).not.toBe(first)
+    expect(s().canvases.find((c) => c.id === s().activeCanvasId)!.name).toBe('b') // 图名，不叫「新排版」
+    expect(JSON.stringify(s().canvases.find((c) => c.id === first)!.objects)).toBe(firstObjects)
+    expect(ws().mode).toBe('fast_edit')
+    expect(ws().activePanelId).toBe(panelOf('b.pdf').id)
     expect(useUiStore.getState().elementPanelId).toBe(panelOf('b.pdf').id)
-    expect(useSelectionStore.getState().ids).toEqual([panelOf('b.pdf').id])
+  })
+
+  it('「打开」一张已单独在某张画布上的图 → 切到那张画布，仍是单图编辑，不新建画布', () => {
+    openFastEdit('a.pdf')
+    const first = s().activeCanvasId
+    openFastEdit('b.pdf') // 在第二张画布上
+    const n = s().canvases.length
+    expect(openFastEdit('a.pdf')).toBe('editing')
+    expect(s().activeCanvasId).toBe(first)
+    expect(s().canvases).toHaveLength(n)
+    expect(ws().mode).toBe('fast_edit')
+    expect(ws().activePanelId).toBe(panelOf('a.pdf').id)
+  })
+
+  it('「打开」一张在多图画布上的图 → 切到那张画布，选中它并对它进图内编辑（排版子状态）', () => {
+    addFigureToLayout('a.pdf')
+    addFigureToLayout('b.pdf')
+    const multi = s().activeCanvasId
+    useAssetStore.setState({ byId: { ...useAssetStore.getState().byId, 'c.pdf': info('c.pdf') } })
+    openFastEdit('c.pdf') // 离开：新画布
+    expect(s().activeCanvasId).not.toBe(multi)
+    expect(openFastEdit('a.pdf')).toBe('editing')
+    expect(s().activeCanvasId).toBe(multi)
+    expect(ws().mode).toBe('layout')
+    expect(useUiStore.getState().elementPanelId).toBe(panelOf('a.pdf').id)
+    expect(useSelectionStore.getState().ids).toEqual([panelOf('a.pdf').id])
+  })
+
+  it('新画布这一步的撤销：撤销把放进去的图撤掉，画布留着（空，排版）——新建画布本身全仓库都不进撤销栈', () => {
+    openFastEdit('a.pdf')
+    const created = openFastEdit('b.pdf')
+    expect(created).toBe('editing')
+    const second = s().activeCanvasId
+    s().undo()
+    expect(s().activeCanvasId).toBe(second)
+    expect(s().doc.objects.filter((o) => o.type === 'panel')).toHaveLength(0)
+    expect(ws().mode).toBe('layout')
+    expect(s().canvases.some((c) => c.id === second)).toBe(true)
   })
 
   it('进快速编辑会把绘制工具收回 select', () => {
@@ -188,7 +232,8 @@ describe('源脚本关联迟到（issue #267）', () => {
     useAssetStore.setState({
       byId: { 'late.pdf': info('late.pdf', { script: undefined }), 'a.pdf': info('a.pdf') },
     })
-    openFastEdit('a.pdf')
+    addFigureToLayout('a.pdf')
+    addFigureToLayout('late.pdf')
     expect(openFastEdit('late.pdf')).toBe('layout_only')
     expect(ws().mode).toBe('layout')
     expect(ws().pendingElementEdit).toBe(panelOf('late.pdf').id)
@@ -211,9 +256,10 @@ describe('源脚本关联迟到（issue #267）', () => {
     useAssetStore.setState({
       byId: { 'late.pdf': info('late.pdf', { script: undefined }), 'a.pdf': info('a.pdf') },
     })
-    openFastEdit('a.pdf')
+    addFigureToLayout('a.pdf')
     const other = panelOf('a.pdf').id
-    expect(openFastEdit('late.pdf')).toBe('layout_only') // 两张图 = 排版
+    addFigureToLayout('late.pdf') // 两张图 = 排版
+    expect(openFastEdit('late.pdf')).toBe('layout_only')
     expect(ws().pendingElementEdit).toBe(panelOf('late.pdf').id)
     return other
   }
@@ -371,19 +417,28 @@ describe('模式由图数推出（单图 ⇄ 多图往返）', () => {
     expect(s().doc.page).toMatchObject({ w: 183, h: 120 })
   })
 
-  it('删光 → 空画布（排版）；隐藏到只剩一张 → 单图编辑，取消隐藏 → 多图排版', () => {
+  it('隐藏的图也计数：隐藏 / 取消隐藏不改模式、不发通知；删光 → 空画布（排版）', () => {
     addFigureToLayout('a.pdf')
     addFigureToLayout('b.pdf')
-    const bId = panelOf('b.pdf').id
+    useUiStore.setState({ status: null })
     s().commit(literal('隐藏'), (d) => {
       d.objects.find((o) => o.id === panelOf('a.pdf').id)!.hidden = true
     })
-    expect(ws().mode).toBe('fast_edit')
-    expect(ws().activePanelId).toBe(bId)
+    expect(ws().mode).toBe('layout')
     s().commit(literal('显示'), (d) => {
       d.objects.find((o) => o.id === panelOf('a.pdf').id)!.hidden = false
     })
     expect(ws().mode).toBe('layout')
+    expect(useUiStore.getState().status).toBeNull()
+    // 单图 + 把它隐藏：仍是单图编辑
+    s().commit(literal('删一张'), (d) => {
+      d.objects = d.objects.filter((o) => o.id !== panelOf('a.pdf').id)
+    })
+    expect(ws().mode).toBe('fast_edit')
+    s().commit(literal('隐藏唯一一张'), (d) => {
+      d.objects.find((o) => o.type === 'panel')!.hidden = true
+    })
+    expect(ws().mode).toBe('fast_edit')
     s().commit(literal('删光'), (d) => {
       d.objects = []
     })
@@ -430,6 +485,23 @@ describe('模式由图数推出（单图 ⇄ 多图往返）', () => {
         runtime: true,
       } as unknown as PanelObject)
     })
+    expect(ws().mode).toBe('layout')
+  })
+
+  it('单图编辑里创建副本：副本是图 = 第二张 → 多图排版；副本是标注 → 留在单图编辑', () => {
+    addFigureToLayout('a.pdf')
+    s().commit(literal('文字'), (d) => {
+      d.objects.push({
+        id: 't1', type: 'text', text: '图注', sizePt: 6, bold: false, color: '#000000', align: 'left', x: 5, y: 5, w: 20, h: 6,
+      })
+    })
+    useSelectionStore.getState().set(['t1'])
+    duplicateSelected()
+    expect(s().doc.objects.filter((o) => o.type === 'text')).toHaveLength(2)
+    expect(ws().mode).toBe('fast_edit')
+    useSelectionStore.getState().set([panelOf('a.pdf').id])
+    duplicateSelected()
+    expect(s().doc.objects.filter((o) => o.type === 'panel')).toHaveLength(2)
     expect(ws().mode).toBe('layout')
   })
 
@@ -557,14 +629,14 @@ describe('对象消失就改判模式', () => {
     stop()
   })
 
-  it('把它隐藏起来同样退出——不能停在一个看不见的对象上', () => {
+  it('把它隐藏起来不改模式（隐藏的图也计数，2026-10-21）：仍是单图编辑，图内编辑态收起', () => {
     openFastEdit('a.pdf')
     const id = ws().activePanelId!
     s().commit(literal('隐藏'), (d) => {
       const o = d.objects.find((x) => x.id === id)!
       o.hidden = true
     })
-    expect(ws().mode).toBe('layout')
+    expect(ws().mode).toBe('fast_edit')
   })
 })
 
@@ -648,11 +720,11 @@ describe('素材库的两个动作：编辑原图 / 添加到画布（T06）', (
     expect(ws().addedForEdit).toBeNull()
   })
 
-  it('再打开一张刚加入的图：已是多图排版，不挂「刚加入」说明（说话的是「已进入多图排版」）', () => {
+  it('再打开另一张没在画布上的图：新画布上的单图，说明跟着换成这一张', () => {
     openFastEdit('a.pdf')
     openFastEdit('b.pdf')
-    expect(ws().mode).toBe('layout')
-    expect(ws().addedForEdit).toBeNull()
+    expect(ws().mode).toBe('fast_edit')
+    expect(ws().addedForEdit).toBe(panelOf('b.pdf').id)
   })
 
   it('没有源脚本的图同样：加进来就要说，一次撤销即移除', () => {

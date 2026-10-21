@@ -218,21 +218,15 @@ describe('openFastEdit 打开还不在画布上的图（r4129948729）', () => {
     expect(vp().zoom).toBeGreaterThan(pageFitView().zoom) // 小图被放大到铺满舞台，不是页面那一档
   })
 
-  it('已有一张时再打开一张：两张 = 多图排版，取景「页面 ∪ 所有图」并留在适应模式', () => {
+  it('已有一张时再打开一张：换看（新画布），原画布一个字节不动；取景那张新图本身', () => {
     customLayoutView()
     openFastEdit('small.pdf')
+    const first = useDocumentStore.getState().activeCanvasId
     openFastEdit('edit.pdf')
-    expect(useWorkspaceStore.getState().mode).toBe('layout')
-    expect(vp().fitted).toBe(true)
-    expect(vp().fitFrame()).toMatchObject(unionOf(...figures()))
-  })
-
-  it('再打开的是超页图：取景「页面 ∪ 所有图」', () => {
-    customLayoutView()
-    openFastEdit('small.pdf')
-    openFastEdit('big.pdf')
-    expect(useWorkspaceStore.getState().mode).toBe('layout')
-    expect(vp().fitFrame()).toMatchObject(unionOf(...figures()))
+    expect(useWorkspaceStore.getState().mode).toBe('fast_edit')
+    expect(useDocumentStore.getState().activeCanvasId).not.toBe(first)
+    expect(figures()).toHaveLength(1)
+    expect(figures()[0]).toMatchObject({ fileId: 'edit.pdf' })
   })
 })
 
