@@ -35,12 +35,15 @@ export function PageEdgeHandles() {
   const pageH = useDocumentStore((s) => s.doc.page.h)
   const tool = useUiStore((s) => s.tool)
   const cropTargetId = useUiStore((s) => s.cropTargetId)
+  // 图内编辑子状态（排版里双击某张图进图内）：画布让位给那一张图，不提供拖边
+  const inFigure = useUiStore((s) => s.elementPanelId != null)
   const kind = useInteractionStore((s) => s.kind)
   const active = useInteractionStore((s) => s.pageEdge?.edge ?? null)
   const idle = tool === 'select' && !spaceDown && cropTargetId == null && kind === 'none'
   const w = mmToWorld(pageW) * zoom
   const h = mmToWorld(pageH) * zoom
   const half = HIT_PX / 2
+  if (inFigure) return null
 
   const strip = (edge: PageEdge, style: CSSProperties, line: string, grip: string): ReactNode => (
     <div

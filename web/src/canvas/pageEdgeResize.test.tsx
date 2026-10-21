@@ -248,6 +248,15 @@ describe('画布上的拖边命中区与标注', () => {
     act(() => fire('pointerup', mm(-29.2), 0))
   })
 
+  it('图内编辑子状态（排版里双击某张图进图内）没有拖边，退出后回来', async () => {
+    await mount()
+    expect(container.querySelectorAll('[data-page-edge]')).toHaveLength(4)
+    act(() => useUiStore.getState().setElementPanel('a'))
+    expect(container.querySelector('[data-page-edge]')).toBeNull()
+    act(() => useUiStore.getState().setElementPanel(null))
+    expect(container.querySelectorAll('[data-page-edge]')).toHaveLength(4)
+  })
+
   it('单图编辑（fast_edit）没有拖边', async () => {
     useDocumentStore.getState().commit(literal('x'), () => {})
     act(() => openFastEdit('a.pdf'))

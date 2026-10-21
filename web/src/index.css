@@ -161,7 +161,7 @@
   --color-ok-subtle: var(--color-ok-surface);
   --color-sel: #4685e2;
   /* 画布尺寸标注与拖边把手（机械制图式浅蓝）：只画在画布叠加层，不进文档 / 导出；暗色里提亮一档 */
-  --color-dim: #5ea3ee;
+  --color-dim: #4a8bdf;
 
   /* 代码着色（2026-10-07 设计审计 §6.3 / §10.4）：只读代码块（/try 的 Code Sheet、助手的代码块）共用这七档，
      不在组件里写 hex。每一档在白 / 桌面 / surface-2 上都 ≥4.5:1（tokenContrast.test 守着）；

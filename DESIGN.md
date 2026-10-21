@@ -21,7 +21,7 @@ colors:
   warn: "#b07400"
   ok: "#2b7649"
   sel: "#4685e2"
-  dim: "#5ea3ee"
+  dim: "#4a8bdf"
   syntax-keyword: "#8a3350"
   syntax-function: "#5b45a8"
   syntax-string: "#7a5a2b"

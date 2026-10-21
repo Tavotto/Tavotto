@@ -16,6 +16,8 @@ async function toLayout(page: Page, baseURL: string) {
   await card.dblclick()
   await page.locator('[data-context-back]').click()
   await expect(page.locator('[data-page-sheet]')).toBeVisible()
+  // 回排版的取景补间走完再量几何（补间中途量到的是动画帧，不是拖边的结果）
+  await expect(page.locator('[data-view-tweening]')).toHaveCount(0)
 }
 
 const sheetBox = (page: Page) => page.locator('[data-page-sheet]').first().boundingBox()
