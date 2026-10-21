@@ -293,6 +293,9 @@ e2e 把间隔**注入**调小（`window.__TAVOTTO_TIMELINE_TIMING__ = { debounce
   「亮着」的唯一判据 `uiStore.isTimelineOpen`）；Esc 先退预览、再回属性页。面板组件改名 `TimelinePanel`，
   只在页签亮着时挂载（挂载 = 打开；卸载 = 预览一并退出、命名输入收起）。该页签是**会话态**：不写进偏好（刷新后落回属性页），
   选中对象时 `autoShowProperties` 照旧把右栏切回属性页。预览仍是模态对话框，不变。
+- **恢复在飞不被卸载**（Codex #1268 P1）：预览 / 恢复对话框（`TimelinePreviewDialog`）不再嵌在 `TimelinePanel` 里，
+  而是与 `Inspector` 平级挂在 `App`，由 `timelineStore.preview` 驱动；`timelineStore.restoring` 期间面板被卸载
+  （原生 View 菜单收起右栏、切页签、选中对象自动回属性页、窗口变窄挤掉右栏）也不清 `preview`，对话框仍以 `busy` 挡住画布。
 - 旧「形态」一行「右侧浮板抽屉，不做成左栏抽屉」的结论保留（时间线仍是整份排版的东西，放右栏而不是左栏）；
   被取代的是「浮板」。稳定钩子 `data-timeline-drawer` 改为 `data-timeline-panel`，面板头的标题与 × 删除
   （页签就是标题，右栏的 × 关整栏）；`versions.title` / `versions.close` 两个文案键随之删除。

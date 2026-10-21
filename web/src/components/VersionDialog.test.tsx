@@ -45,7 +45,7 @@ import {
   type LayoutVersionMeta,
   type TimelineBudget,
 } from '@/lib/api'
-import { TimelinePanel } from '@/components/VersionDialog'
+import { TimelinePanel, TimelinePreviewDialog } from '@/components/VersionDialog'
 import { startNamedNode } from '@/store/actions'
 import { NamedNodeQuickBox } from '@/components/NamedNodeQuickBox'
 import { THUMB_OBJECT_LIMIT, THUMB_TEXT_CHARS } from '@/components/CanvasThumb'
@@ -63,10 +63,15 @@ declare global {
 }
 globalThis.IS_REACT_ACT_ENVIRONMENT = true
 
-/** 右栏只在「时间线」页签亮着时才挂时间线面板（同 `Inspector`） */
+/** 右栏只在「时间线」页签亮着时才挂时间线面板（同 `Inspector`）；预览 / 恢复对话框与它平级常驻（同 `App`） */
 function TimelineHost() {
   const open = useUiStore(isTimelineOpen)
-  return open ? <TimelinePanel /> : null
+  return (
+    <>
+      {open ? <TimelinePanel /> : null}
+      <TimelinePreviewDialog />
+    </>
+  )
 }
 
 const mockList = vi.mocked(fetchTimeline)
@@ -475,6 +480,32 @@ describe('恢复锁在取正文之前就挂上、按凭据摘（Codex #831 P1）
     await flush()
     expect(ids()).toEqual(['from_vA'])
     expect(mockCreate).toHaveBeenCalledTimes(1)
+    expect(useTimelineStore.getState().restoring).toBeNull()
+  })
+
+  it('恢复在飞时收起右栏 / 切页签 / 关时间线：面板卸载了，对话框仍挂着、预览不清（Codex #1268 P1）', async () => {
+    let giveA!: (v: Awaited<ReturnType<typeof fetchVersionDoc>>) => void
+    mockDoc.mockImplementation(
+      () => new Promise((resolve) => (giveA = resolve)),
+    )
+    await mount([meta({ id: 'vA' })], undefined, false)
+    await act(async () => node('vA').querySelector<HTMLButtonElement>('[data-timeline-row-restore]')!.click())
+    await flush()
+    expect(useTimelineStore.getState().restoring).not.toBeNull()
+    expect($('[data-dialog="timeline-preview"]')).not.toBeNull()
+    for (const act1 of [
+      () => useUiStore.getState().toggleRight(),
+      () => useUiStore.getState().toggleRight(),
+      () => useUiStore.getState().setRightTab('properties'),
+    ]) {
+      await act(async () => act1())
+      await flush()
+      expect($('[data-dialog="timeline-preview"]')).not.toBeNull()
+      expect(useTimelineStore.getState().preview?.meta.id).toBe('vA')
+    }
+    expect($('[data-timeline-panel]')).toBeNull()
+    await act(async () => giveA({ ...meta({ id: 'vA' }), doc: { ...snapshot(), objects: [text('x', 'x')] } }))
+    await flush()
     expect(useTimelineStore.getState().restoring).toBeNull()
   })
 

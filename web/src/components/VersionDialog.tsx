@@ -233,7 +233,9 @@ export function TimelinePanel() {
       // 抽屉关了，命名输入跟着收起：下次打开是「给现在存个名字…」按钮，不是一直开着的输入框
       setNaming(false)
       // 抽屉关了，预览跟着退出：没有抽屉的只读大图没有出口
-      useTimelineStore.getState().setPreview(null)
+      // 例外：恢复在飞时预览对话框就是那把锁（`busy`），页签被切走 / 右栏被收起 / 选中对象自动切回
+      // 属性页都不能把它清掉（Codex #1268 P1）；对话框挂在 App 层（`TimelinePreviewDialog`），不随面板卸载
+      if (!useTimelineStore.getState().restoring) useTimelineStore.getState().setPreview(null)
       // 只在焦点没有去别处时还：用户点了别的页签 / 控件，焦点已经在那儿，不能抢回触发点
       const a = document.activeElement
       if (!a || a === document.body || asideRef.current?.contains(a)) restoreFocus.current?.focus?.()
@@ -483,7 +485,6 @@ export function TimelinePanel() {
           </div>
         )}
       </div>
-      <TimelinePreviewDialog />
     </section>
   )
 }
@@ -1038,7 +1039,7 @@ const ZOOM_STEPS = [0.5, 0.75, 1, 1.5, 2, 3]
  *   节点还没存完就让人关掉回去编辑，晚到的恢复会把这些新编辑整份盖掉（Codex #679）。
  *   忙按上下文记账：A 的恢复还在飞时换到 B，B 的预览不该被锁住。
  */
-function TimelinePreviewDialog() {
+export function TimelinePreviewDialog() {
   useTranslation(['dialogs', 'common'])
   const preview = useTimelineStore((s) => s.preview)
   const docId = useDocumentStore((s) => s.documentId)

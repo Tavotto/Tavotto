@@ -8,6 +8,7 @@ import { CloseGuardDialog } from '@/components/CloseGuardDialog'
 import { ConfirmDialog } from '@/components/ConfirmDialog'
 import { ExportDialog } from '@/components/ExportDialog'
 import { Inspector } from '@/components/inspector/Inspector'
+import { TimelinePreviewDialog } from '@/components/VersionDialog'
 import { LayoutDialog } from '@/components/LayoutDialog'
 import { CommandPalette } from '@/components/CommandPalette'
 import { FigurePickerDialog } from '@/components/FigurePickerDialog'
@@ -327,6 +328,8 @@ function Workspace() {
             />
           )}
         </div>
+        {/* 时间线预览 / 恢复对话框：与 Inspector 平级常驻，不随右栏开合、页签切换卸载（恢复在飞时它就是锁） */}
+        <TimelinePreviewDialog />
         <ExportDialog />
         <SettingsDialog />
         <LayoutDialog />
