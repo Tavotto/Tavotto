@@ -66,7 +66,14 @@ async function dropSample(page: Page) {
   const card = page.locator('[data-tutorial-file-card]')
   const zone = page.locator('[data-tutorial-drop-zone]')
   await drag(page, await center(card), await center(zone))
+  await rendered(page)
+}
+
+/** 放下之后先演一段「渲染中」，走完才出图 */
+async function rendered(page: Page) {
   await expect(page.locator('[data-tutorial-imported]')).toBeVisible()
+  await expect(page.locator('[data-demo-figure]')).toBeVisible()
+  await expect(page.locator('[data-tutorial-rendering]')).toHaveCount(0)
 }
 
 async function dragLegendUp(page: Page, dy = -140) {
@@ -102,7 +109,11 @@ test('完整走完新手教程：欢迎页 → 拖入示例脚本 → 拖动图�
   await drag(page, home, { x: home.x + 40, y: home.y + 10 })
   await expect(next(page)).toBeDisabled()
   await expect(page.locator('[data-tutorial-feedback]')).toHaveAttribute('data-tutorial-feedback', 'notice')
-  await dropSample(page)
+  await expect(page.locator('[data-tutorial-use-sample]')).toHaveCount(0) // 只教拖放，没有捷径
+  await drag(page, await center(card), await center(page.locator('[data-tutorial-drop-zone]')))
+  await expect(page.locator('[data-tutorial-rendering]')).toBeVisible()
+  await expect(next(page)).toBeDisabled()
+  await rendered(page)
   await expect(page.locator('[data-tutorial-feedback]')).toHaveAttribute('data-tutorial-feedback', 'success')
   await expect(page.locator('[data-demo-figure]')).toHaveCount(1)
   await next(page).click()
@@ -343,7 +354,7 @@ test('axe：欢迎页、第二步、完成页无 critical / serious', async ({ a
   await expect(tut(page)).toBeVisible()
   await scan('welcome')
   await page.locator('[data-tutorial-begin]').click()
-  await page.locator('[data-tutorial-use-sample]').click()
+  await dropSample(page)
   await next(page).click()
   await scan('legend')
   await dragLegendUp(page)

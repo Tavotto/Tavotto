@@ -1902,8 +1902,6 @@
       "task": "第一步：把示例脚本拖进来",
       "cardLabel": "拖动 {{name}} 到投放框",
       "cardHint": "内置示例，无需准备文件",
-      "useSample": "直接使用示例",
-      "or": "或",
       "keyboardHelp": "按空格拿起卡片，方向键移动，回车放下，Esc 取消。",
       "zoneLabel": "脚本投放框",
       "zoneTitle": "拖拽脚本到这里",
@@ -1913,9 +1911,11 @@
       "leftZone": "离开了投放框。",
       "cancelled": "已取消，卡片放回原处。",
       "missed": "没有放进投放框，卡片已放回。再试一次。",
+      "rendering": "正在渲染图表…",
+      "renderProgress": "示例图渲染进度",
       "builtin": "内置示例",
       "figureLabel": "{{name}} 画出的反应动力学图",
-      "success": "示例图已载入"
+      "success": "渲染完成，接下来在图上调整"
     },
     "legend": {
       "task": "拖动图例，换个位置",

@@ -1922,8 +1922,6 @@
       "task": "Step 1: drag the sample script in",
       "cardLabel": "Drag {{name}} into the drop area",
       "cardHint": "Built-in sample, no file needed",
-      "useSample": "Just use the sample",
-      "or": "or",
       "keyboardHelp": "Press Space to pick up the card, arrow keys to move it, Enter to drop, Esc to cancel.",
       "zoneLabel": "Script drop area",
       "zoneTitle": "Drop the script here",
@@ -1933,9 +1931,11 @@
       "leftZone": "Left the drop area.",
       "cancelled": "Cancelled. The card is back in place.",
       "missed": "That missed the drop area, so the card went back. Try again.",
+      "rendering": "Rendering the figure…",
+      "renderProgress": "Sample figure rendering progress",
       "builtin": "Built-in sample",
       "figureLabel": "The reaction-kinetics figure drawn by {{name}}",
-      "success": "Sample figure loaded"
+      "success": "Rendered. Next, adjust it right on the figure"
     },
     "legend": {
       "task": "Drag the legend somewhere else",

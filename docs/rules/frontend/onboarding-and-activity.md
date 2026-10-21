@@ -46,7 +46,9 @@
   中心在框里，悬停 / 计时都不算）、图例离原位 ≥ `LEGEND_MIN_MOVE_PT`、提交的字号大于进入这一步时的字号；
   「下一步」只挪指针（`onboardingStore.next` 在当前步骤没完成时是 no-op）。拖动在 pointercancel /
   lostpointercapture / 失焦 / 缩放 / 切后台 / 卸载时作废、监听随卸载摘掉；键盘（空格 / 方向键 / 回车 / Esc）
-  与「直接使用示例」是等价入口。
+  是等价入口，**没有「直接使用示例」捷径**（第一步只教拖放）。卡片放进去之后先演 1.8 秒「渲染中」
+  （`RENDER_MS`，按时间走、不读任何作业），走完才 `markDemoStep('demo_import')`；渲染途中离开不补记完成，
+  减少动态效果时直接落到完成（`tween` 契约）。这段是有意的产品设计（ADR 0136 §2 修订），别当假进度删掉。
 * **按任务触发的提示 `layout_page_bounds`（P04，2026-10-20）**：第一次**用户主动**从快速编辑回到排版
   （`store/workspace.returnToLayout` 发唯一一枪 `workspace.returned_to_layout`，无 payload；`exitToLayout` 的被动退出——
   换文档 / 修剪 / 定位问题 / 启动恢复——不发，所以「启动时恢复到 layout」不触发）→ 一条非模态说明「白色纸面就是导出的

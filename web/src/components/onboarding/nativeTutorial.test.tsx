@@ -66,7 +66,8 @@ beforeEach(() => {
   useProjectStore.setState({ phase: 'none', recent: [], pinned: [], project: null, listsLoaded: true } as never)
   resetTutorialAutoOpenForTest()
   vi.stubGlobal('ResizeObserver', NoopResizeObserver)
-  vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) => setTimeout(() => cb(0), 0))
+  vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) => setTimeout(() => cb(performance.now()), 0))
+  vi.stubGlobal('cancelAnimationFrame', (id: number) => clearTimeout(id))
   patch(HTMLElement.prototype, 'clientWidth', { get: () => 800 }, true)
   patch(HTMLElement.prototype, 'clientHeight', { get: () => 600 }, true)
   patch(HTMLElement.prototype, 'offsetWidth', { get: () => 800 }, true)
@@ -102,6 +103,15 @@ const layer = () => document.querySelector<HTMLElement>('[data-native-tutorial]'
 const q = <T extends Element = HTMLElement>(sel: string) => document.querySelector<T>(sel)
 const ob = () => useOnboardingStore.getState()
 const flush = () => act(async () => new Promise((r) => setTimeout(r, 5)))
+
+/** 第一步放下之后的演示渲染：把时钟拨过它的时长，让 tween 走到终点 */
+async function finishRender() {
+  const later = performance.now() + 10_000
+  const now = vi.spyOn(performance, 'now').mockReturnValue(later)
+  await flush()
+  await flush()
+  now.mockRestore()
+}
 
 async function click(el: Element | null) {
   expect(el).not.toBeNull()
@@ -297,6 +307,14 @@ describe('第一步：拖入示例脚本', () => {
     await pointer(card, 'pointermove', 400, 420)
     expect(q('[data-tutorial-drop-zone]')!.hasAttribute('data-over')).toBe(true)
     await pointer(card, 'pointerup', 400, 420)
+    // 先演一段「渲染中」：这期间还没完成、「下一步」不亮、图还没出来
+    expect(q('[data-tutorial-rendering]')).not.toBeNull()
+    expect(q('[data-tutorial-imported]')).not.toBeNull()
+    expect(q('[data-demo-figure]')).toBeNull()
+    expect(ob().completedSteps).not.toContain('demo_import')
+    expect(q<HTMLButtonElement>('[data-tutorial-next]')!.disabled).toBe(true)
+    await finishRender()
+    expect(q('[data-tutorial-rendering]')).toBeNull()
     expect(ob().completedSteps).toContain('demo_import')
     expect(q<HTMLButtonElement>('[data-tutorial-next]')!.disabled).toBe(false)
     expect(q('[data-tutorial-feedback]')!.dataset.tutorialFeedback).toBe('success')
@@ -348,12 +366,39 @@ describe('第一步：拖入示例脚本', () => {
     for (let i = 0; i < 10; i++) await key(card, 'ArrowRight')
     await flush()
     await key(card, 'Enter')
+    expect(q('[data-tutorial-rendering]')).not.toBeNull()
+    await finishRender()
     expect(ob().completedSteps).toContain('demo_import')
   })
 
-  it('「直接使用示例」是等价的辅助入口', async () => {
+  it('只教拖放：没有「直接使用示例」之类的捷径', async () => {
     await openAt('demo_import')
-    await click(q('[data-tutorial-use-sample]'))
+    expect(q('[data-tutorial-use-sample]')).toBeNull()
+    expect(q('[data-tutorial-drop-zone] button')).toBeNull()
+  })
+
+  it('渲染途中返回欢迎页：计时停掉，不在背后补记完成（教程仍是进行中）', async () => {
+    await openAt('demo_import')
+    const card = q('[data-tutorial-file-card]')!
+    await pointer(card, 'pointerdown', 100, 100)
+    await pointer(card, 'pointermove', 400, 420)
+    await pointer(card, 'pointerup', 400, 420)
+    expect(q('[data-tutorial-rendering]')).not.toBeNull()
+    await click(q('[data-tutorial-back]'))
+    expect(layer()?.dataset.surface).toBe('welcome')
+    await finishRender()
+    expect(ob().status).toBe('active')
+    expect(ob().completedSteps).not.toContain('demo_import')
+  })
+
+  it('减少动态效果：放下即完成，不演渲染', async () => {
+    vi.stubGlobal('matchMedia', (query: string) => ({ matches: query.includes('reduce'), addEventListener() {}, removeEventListener() {} }))
+    await openAt('demo_import')
+    const card = q('[data-tutorial-file-card]')!
+    await pointer(card, 'pointerdown', 100, 100)
+    await pointer(card, 'pointermove', 400, 420)
+    await pointer(card, 'pointerup', 400, 420)
+    expect(q('[data-tutorial-rendering]')).toBeNull()
     expect(ob().completedSteps).toContain('demo_import')
   })
 
