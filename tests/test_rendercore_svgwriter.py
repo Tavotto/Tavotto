@@ -725,3 +725,34 @@ def test_text_and_outline_renderings_agree_in_a_real_browser(tmp_path, provider,
     assert abs(ink["text"] - ink["outlines"]) / ink["outlines"] < 0.12
     delta = ImageChops.difference(shots["text"], shots["outlines"])
     assert sum(delta.getdata()) / (delta.width * delta.height) < 6.0
+
+
+def test_imported_text_svg_replaces_path_baseline_but_identity_stays_pinned(tmp_path):
+    data = b"pdf snapshot"
+    base = b'<svg viewBox="0 0 20 20"><path d="M0 0L1 1"/></svg>'
+    text = b'<svg viewBox="0 0 20 20"><text x="1" y="9">Live</text></svg>'
+    page = ir.Page(
+        120, 90, (ir.ImportedPage("p", (0, 0, 20, 20)),), {"p": _resource(data, svg=base)}
+    )
+    out = tmp_path / "t.svg"
+    facts = write_svg(
+        page, out, None, {"p": data}, imported_svgs={"p": base}, imported_text_svgs={"p": text}
+    )
+    assert [t.text for t in _text_nodes(ET.parse(out).getroot())] == ["Live"]
+    assert facts.imported_text_elements == 1
+    # 身份仍看 path 基准：基准字节对不上 = 拒绝，文字版救不了
+    with pytest.raises(WriterError):
+        write_svg(
+            page, tmp_path / "b.svg", None, {"p": data},
+            imported_svgs={"p": b"<svg viewBox='0 0 1 1'/>"}, imported_text_svgs={"p": text},
+        )  # fmt: skip
+    # 文字版坏掉 / 策略 outlines：回到 path 基准
+    bad = write_svg(
+        page, tmp_path / "c.svg", None, {"p": data},
+        imported_svgs={"p": base}, imported_text_svgs={"p": b"<svg"},
+    )  # fmt: skip
+    assert bad.imported_text_elements == 0
+    write_svg(
+        page, tmp_path / "d.svg", None, {"p": data},
+        imported_svgs={"p": base}, imported_text_svgs={"p": text}, text_policy="outlines",
+    )  # fmt: skip

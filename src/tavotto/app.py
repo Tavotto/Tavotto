@@ -2676,6 +2676,8 @@ def _export_produce_rendercore(job, tmp_dir: Path, *, artifact_sources=None) -> 
             job.warnings,
             tmp_dir,
             include_svg=engine_exportreq.FORMAT_SVG in job.request.formats,
+            # 画布里的 live Figure 面板也要 matplotlib 自己的 <text>（ADR 0142）；旧 worker / 已存快照回退 path 版
+            with_text_svg=engine_exportreq.FORMAT_SVG in job.request.formats,
             **(
                 {"artifact_source": artifact_sources[obj["id"]]}
                 if obj.get("source_policy") and artifact_sources

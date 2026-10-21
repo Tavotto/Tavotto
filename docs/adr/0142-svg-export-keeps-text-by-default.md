@@ -42,6 +42,8 @@
   * 加字段协议：未知键被旧 worker 静默忽略，应答里就没有 `svg_text`；父进程只对 `export` 签名里**有**这两个参数的 worker 才带上（`_supported_export_kwargs`），否则整体回退为 path 版，
     `_original_svg_result` 按文件里实际有无 `<text>` 记 `text_policy`，不预设。
   * `FrozenSource.svg_text`（同回执 / generation / patch_hash 才认）只在**当次执行**的导出里有；已存快照（svgstore）不带它，导出时回退为 path 版——存储格式没动。
+    画布里的 live Figure 面板同走这一份：`rendercore/job.py` 读到 `svg_text` 就以 `imported_text_svgs` 交给 `svgwriter`（身份仍由 path 基准的 hash 钉住，文字版解析失败 / 超读取预算 / 旧 worker / 已存快照一律回退 path 版）。
+  * `svgfonts.extend_matplotlib_families` 只改标签里的 `style` / `font-family` 属性值，不碰文本节点。
   * 字体族：批准族名（Liberation Serif / Sans / Mono、Noto Sans SC）补上与 `svgwriter` 同一条回退链（共用 `rendercore/svgfonts.py`），用户脚本自己指定的字体按 matplotlib 输出原样保留。
   * matplotlib 的 `svg.fonttype=none` 本来就是每段文字一个 x，不触发 Word 的逐字拆分问题。
 

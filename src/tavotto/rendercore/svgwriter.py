@@ -172,6 +172,7 @@ class SvgWriter:
         files: Mapping[str, bytes] | None = None,
         *,
         imported_svgs: Mapping[str, bytes] | None = None,
+        imported_text_svgs: Mapping[str, bytes] | None = None,
         text_policy: str = TEXT_POLICY_TEXT,
     ) -> None:
         if text_policy not in TEXT_POLICIES:
@@ -181,6 +182,9 @@ class SvgWriter:
         self.provider = provider
         self.files = files or {}
         self.imported_svgs = imported_svgs or {}
+        # 同一次执行的「保留文字」成品（ADR 0142）：身份仍由 path 基准 `imported_svgs` 的 hash 钉住，
+        # 这份只在 text 策略下替换写入的字节；解析失败就回退 path 版。
+        self.imported_text_svgs = imported_text_svgs or {}
         self.facts = WriteFacts(page=(page.width_pt, page.height_pt), text_policy=text_policy)
         self._counter = 0
         self._faces: dict = {}
@@ -533,7 +537,15 @@ class SvgWriter:
             )
         if node.resource not in self._sources:
             try:
-                root = parse_svg(data)
+                root = None
+                text_data = self.imported_text_svgs.get(node.resource)
+                if text_data is not None and self.text_policy == TEXT_POLICY_TEXT:
+                    try:
+                        root = parse_svg(text_data)
+                    except (SVGError, ValueError):
+                        root = None
+                if root is None:
+                    root = parse_svg(data)
                 for element in root.iter():
                     if not element.tag.startswith("{"):
                         element.tag = f"{{{SVG}}}{element.tag}"
@@ -619,9 +631,15 @@ def write_svg(
     files: Mapping[str, bytes] | None = None,
     *,
     imported_svgs: Mapping[str, bytes] | None = None,
+    imported_text_svgs: Mapping[str, bytes] | None = None,
     text_policy: str = TEXT_POLICY_TEXT,
 ) -> WriteFacts:
     """Write a validated, self-contained vector SVG. No PDF → raster fallback exists."""
     return SvgWriter(
-        page, provider, files, imported_svgs=imported_svgs, text_policy=text_policy
+        page,
+        provider,
+        files,
+        imported_svgs=imported_svgs,
+        imported_text_svgs=imported_text_svgs,
+        text_policy=text_policy,
     ).write(out)

@@ -43,12 +43,37 @@ _FAMILY_DECL = re.compile(
 )
 
 
+# 只在标签内部找属性；文本节点里的 `<` `>` 在 XML 里一定被转义，所以 `<[^<>]*>` 只会命中真标签。
+_TAG = re.compile(r"<[^<>]*>")
+_STYLE_ATTR = re.compile(r"(\sstyle\s*=\s*)(\"[^\"]*\"|'[^']*')")
+_FAMILY_ATTR = re.compile(
+    r"(\sfont-family\s*=\s*)\"\s*(?:'(" + _NAMES + r")'|(" + _NAMES + r"))\s*\""
+)
+
+
 def extend_matplotlib_families(svg: str) -> str:
     """matplotlib `svg.fonttype=none` 的 `style="font: 10px 'Liberation Sans'"` → 补上回退链。
-    只认批准族名；用户脚本自己指定的字体原样保留。"""
+    只认批准族名；用户脚本自己指定的字体原样保留。**只改标签里的 `style` / `font-family` 属性值**，
+    文本节点（用户标签文字里恰好写着 `font: 10px 'Liberation Sans'`）一个字不动。"""
 
     def fill(m: re.Match) -> str:
         name = m.group(2) or m.group(3)
         return m.group(1) + family_list(name, APPROVED_FAMILIES[name])
 
-    return _FAMILY_DECL.sub(fill, _FONT_DECL.sub(fill, svg))
+    def style(m: re.Match) -> str:
+        value = m.group(2)
+        if value[0] == "'":  # 单引号包的 style 里不可能再放带引号的族名；不碰
+            return m.group(0)
+        return m.group(1) + _FAMILY_DECL.sub(fill, _FONT_DECL.sub(fill, value))
+
+    def family_attr(m: re.Match) -> str:
+        name = m.group(2) or m.group(3)
+        return m.group(1) + '"' + family_list(name, APPROVED_FAMILIES[name]) + '"'
+
+    def tag(m: re.Match) -> str:
+        t = m.group(0)
+        if t.startswith(("<!", "<?", "</")):
+            return t
+        return _FAMILY_ATTR.sub(family_attr, _STYLE_ATTR.sub(style, t))
+
+    return _TAG.sub(tag, svg)

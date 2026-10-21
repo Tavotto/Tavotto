@@ -888,3 +888,29 @@ def test_supported_export_kwargs_only_passes_what_the_worker_signature_has():
     wanted = {"svg_fonttype": "none", "svg_text_path": "x"}
     assert m._supported_export_kwargs(Old(), **wanted) == {}
     assert m._supported_export_kwargs(New(), **wanted) == wanted
+
+
+def _canvas_panel_texts(body, outputs):
+    path = Path(body["export_dir"]) / outputs["svg"]["name"]
+    ns = "{http://www.w3.org/2000/svg}"
+    return ["".join(t.itertext()) for t in ET.fromstring(path.read_bytes()).iter(ns + "text")]
+
+
+def test_canvas_live_figure_panel_keeps_matplotlib_text(project):
+    """P1（Codex #1283）：画布里的 live Figure 面板也要带上 matplotlib 自己的 <text>，不只画布新增文字。"""
+    client, _ = project
+    source = run_script(client)
+    body, outputs = output(client, spec(source, scope="canvas"))
+    assert body["status"] == "done", body
+    assert "Source title" in _canvas_panel_texts(body, outputs)
+
+
+def test_canvas_live_figure_panel_falls_back_to_outlines_on_old_worker(project, monkeypatch):
+    client, _ = project
+    source = run_script(client)
+    monkeypatch.setattr(m, "_supported_export_kwargs", lambda worker, **wanted: {})
+    body, outputs = output(client, spec(source, scope="canvas", formats=("svg", "pdf")))
+    assert body["status"] == "done", body
+    assert outputs["pdf"]["status"] == "done"
+    texts = _canvas_panel_texts(body, outputs)
+    assert "Source title" not in texts and texts  # 画布自己的文字仍在
