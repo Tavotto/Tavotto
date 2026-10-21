@@ -2,7 +2,8 @@
 
 这是一个**测试版**，用来试「默认直接编辑一张图、需要时再进入排版与出版」这条渐进式流程。它和你电脑上的
 正式版 Tavotto 是两个独立的应用，可以同时装着，互不覆盖。**beta 与正式版的设置、最近项目和数据目录不共享**：
-beta 用自己的 `Tavotto Beta` 目录（Mac：`~/Library/Application Support/Tavotto Beta`），
+beta 用自己的 `Tavotto Beta` 目录（Mac：`~/Library/Application Support/Tavotto Beta`；
+Windows：`%APPDATA%\Tavotto Beta` 与 `%LOCALAPPDATA%\Tavotto Beta`），
 测试不会改动正式版的设置。装过 0.18.1b 系列 beta 的话，这个目录会沿用下来。
 
 本版 = 当前 main（`2af1d27f7`，渐进式编辑包 P01～P06 全部合入）+ beta 打包类提交。
@@ -10,10 +11,11 @@ P07（智能重排版）只做了设计，**不在这一版里**。
 
 ## 能不能用
 
-- 需要 **Apple 芯片的 Mac**（M1 / M2 / M3 / M4 …），**macOS 14（Sonoma）或更新**。
-- 这一版只有 Mac 包；Windows / Linux 没有提供。
+- **Mac**：需要 **Apple 芯片**（M1 / M2 / M3 / M4 …），**macOS 14（Sonoma）或更新**。
+- **Windows**：64 位 Windows 10 / 11，不需要事先装 Python。
+- Linux 这一版没有提供。
 
-## 安装
+## 安装（Mac）
 
 1. 双击 `Tavotto-beta-0.19.0b1-arm64.dmg`，把 **Tavotto beta** 拖进「应用程序」。
 2. 第一次打开会被系统拦下（只有临时签名，没有经过 Apple 公证）。任选一种放行：
@@ -24,6 +26,14 @@ P07（智能重排版）只做了设计，**不在这一版里**。
      xattr -dr com.apple.quarantine "/Applications/Tavotto beta.app"
      ```
 3. 它**不会自动更新**。测完直接拖进废纸篓。
+
+## 安装（Windows）
+
+1. 双击 `Tavotto beta_0.19.0-beta.1_x64-setup.exe`。
+2. 这个测试版**没有代码签名**，SmartScreen 会弹「Windows 已保护你的电脑」：点 **更多信息** → **仍要运行**。
+3. 按向导装完即可，不需要管理员权限（装在你自己的用户目录下）。开始菜单里叫 **Tavotto beta**。
+   卸载：设置 → 应用 → 已安装的应用 → Tavotto beta → 卸载。
+4. 和 Mac 一样：与正式版并排安装、不自动更新，设置和数据与正式版分开。
 
 ## 这一版多了什么（请帮忙试）
 
@@ -42,7 +52,7 @@ P07（智能重排版）只做了设计，**不在这一版里**。
 
 ## 已知问题
 
-- **验证范围**：新流程只在浏览器自动测试里验证过（Chromium 中 / 英文、WebKit）；打包后的桌面应用**没有实际点过**。
+- **验证范围**：新流程只在浏览器自动测试里验证过（Chromium 中 / 英文、WebKit）；打包后的桌面应用（Mac / Windows）**没有实际点过**；Windows 包只在 CI 上做过静默安装、后端冒烟与卸载。
 - 英文界面的「Layout & export」叫法、「从素材库打开一张已在排版上的图算『返回』」、快编里显示 Esc 键帽，这三处还待确认。
 - 工具认不出来的图元，导出检查不会把它列为「查不了」。
 - 教程的拖放步骤没有在真机上测过。
