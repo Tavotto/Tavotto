@@ -3591,7 +3591,12 @@ def _rgb_keeping_source_alpha(coll, spec, v):
         return v
     if isinstance(
         coll,
-        (art3d.Poly3DCollection, art3d.Line3DCollection, art3d.Path3DCollection, art3d.Patch3DCollection),
+        (
+            art3d.Poly3DCollection,
+            art3d.Line3DCollection,
+            art3d.Path3DCollection,
+            art3d.Patch3DCollection,
+        ),
     ):
         return v
     if isinstance(spec, str) and spec.lower() in ("none", "face"):

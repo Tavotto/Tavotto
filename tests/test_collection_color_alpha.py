@@ -167,9 +167,7 @@ def test_native_matplotlib_equals_the_empty_edit_export(hot, library, tmp_path):
     """主语：不带捕获钩子的独立解释器 savefig 的 PNG vs Tavotto worker 空编辑导出的 PNG。"""
     native_dir = tmp_path / "native"
     native_dir.mkdir()
-    subprocess.run(
-        [WORKER_PY, str(library / SCRIPT_NAME)], cwd=native_dir, check=True, timeout=120
-    )
+    subprocess.run([WORKER_PY, str(library / SCRIPT_NAME)], cwd=native_dir, check=True, timeout=120)
     native = Image.open(native_dir / f"{STEM}.png").convert("RGB")
     ours = _export(hot, [], tmp_path / "empty.png")
     assert native.size == ours.size == (W, H)
@@ -215,7 +213,13 @@ def test_colour_alpha_sequence_hot_equals_cold_and_undo_is_original(hot, library
     gid = _gid(_man(hot), "linecoll")
     red = {"gid": gid, "prop": "color", "value": RED_HEX}
     alpha = {"gid": gid, "prop": "alpha", "value": 0.5}
-    steps = [("orig", []), ("red", [red]), ("red+alpha", [red, alpha]), ("alpha", [alpha]), ("clear", [])]
+    steps = [
+        ("orig", []),
+        ("red", [red]),
+        ("red+alpha", [red, alpha]),
+        ("alpha", [alpha]),
+        ("clear", []),
+    ]
     hot_png = {}
     for tag, patches in steps:
         _man(hot, patches)
@@ -223,7 +227,9 @@ def test_colour_alpha_sequence_hot_equals_cold_and_undo_is_original(hot, library
     for tag, patches in steps:
         cold = _worker(library)
         try:
-            assert _export(cold, patches, tmp_path / f"cold-{tag}.png").tobytes() == hot_png[tag], tag
+            assert _export(cold, patches, tmp_path / f"cold-{tag}.png").tobytes() == hot_png[tag], (
+                tag
+            )
         finally:
             pool.discard(cold)
     assert hot_png["clear"] == hot_png["orig"]
@@ -281,7 +287,13 @@ def test_array_alpha_gets_no_scalar_alpha_control_and_recolour_keeps_it(tmp_path
         man = w.override("Arr", [])["manifest"]
         el = next(e for e in man["elements"] if e["role"] == "linecoll")
         assert "alpha" not in {f["prop"] for f in el["editable"]}
-        w.export("Arr", [{"gid": el["gid"], "prop": "color", "value": RED_HEX}], str(tmp_path / "a.png"), "png", 100)
+        w.export(
+            "Arr",
+            [{"gid": el["gid"], "prop": "color", "value": RED_HEX}],
+            str(tmp_path / "a.png"),
+            "png",
+            100,
+        )
         img = Image.open(tmp_path / "a.png").convert("RGB")
         for y, a in ((0.3, 0.3), (0.7, 0.9)):
             px = img.getpixel((100, int((1 - y) * 150)))
