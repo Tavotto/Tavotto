@@ -119,7 +119,8 @@ def test_path_conda_exe_infers_the_install_root_without_running_it():
         "E:\\mm\\Library\\bin\\micromamba.exe",
         "\\\\server\\share\\anaconda3\\Scripts\\conda.exe",
     )
-    got = userenvs._path_exe_roots(path, nt=True, isfile=isfile)
+    # 盘符类型固定为本地盘：真 Windows runner 上 E: 不存在（DRIVE_NO_ROOT_DIR），会被盘类型检查当成拒绝
+    got = userenvs._path_exe_roots(path, nt=True, isfile=isfile, walker=_local_walker())
     assert got == ["D:\\anaconda3", "D:\\anaconda3", "E:\\mm"]
 
 
@@ -369,6 +370,12 @@ _REAL_WINREG_READER = userenvs._WinregReader  # conftest 默认把它换成空�
 
 
 # ------------------------------------------------- Codex #1274：落盘前先过守卫 / 枚举中就受限
+
+
+def _local_walker():
+    from tavotto.engine import scanbudget
+
+    return scanbudget.PathWalker(nt=True, drive_type=lambda root: 3)  # DRIVE_FIXED
 
 
 def _remote_walker():
