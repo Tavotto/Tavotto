@@ -21,6 +21,14 @@ import figcapture  # noqa: E402 — figsession 平铺 import 的那一份
 from test_capture_same_path_last_writer import _Fig, _State  # noqa: E402
 
 
+@pytest.fixture(autouse=True)
+def _close_figures():
+    yield
+    import matplotlib.pyplot as plt
+
+    plt.close("all")
+
+
 class TestHardlinkAlias:
     """native：保存成功后，对已登记目标做 samefile 对账——硬链接别名写穿同一个 inode，是同一个文件。"""
 
@@ -139,7 +147,8 @@ class TestUnicodeNormalization:
             "lexists",
             lambda p: True if os.path.basename(p) == nfc else alt_exists,
         )
-        monkeypatch.setattr(figcapture.os.path, "samefile", lambda a, b: same)
+        monkeypatch.setattr(figcapture.os, "lstat", lambda p: p)
+        monkeypatch.setattr(figcapture.os.path, "samestat", lambda a, b: same)
         assert figcapture._dir_folds_unicode(d, nfc) is expected
         figcapture._UNICODE_FOLD_CACHE.pop(d, None)
 
@@ -149,7 +158,8 @@ class TestUnicodeNormalization:
         figcapture._UNICODE_FOLD_CACHE.pop(d, None)
         monkeypatch.setattr(figcapture, "_UNWATCHED_LISTDIR", lambda p: [nfc])
         monkeypatch.setattr(figcapture.os.path, "lexists", lambda p: True)
-        monkeypatch.setattr(figcapture.os.path, "samefile", lambda a, b: True)
+        monkeypatch.setattr(figcapture.os, "lstat", lambda p: p)
+        monkeypatch.setattr(figcapture.os.path, "samestat", lambda a, b: True)
         assert figcapture._dir_folds_unicode(d) is True
         figcapture._UNICODE_FOLD_CACHE.pop(d, None)
 
@@ -176,7 +186,8 @@ class TestUnicodeNormalization:
         figcapture._UNICODE_FOLD_CACHE.pop(d, None)
         monkeypatch.setattr(figcapture, "_UNWATCHED_LISTDIR", lambda p: [nfc, nfd])
         monkeypatch.setattr(figcapture.os.path, "lexists", lambda p: True)
-        monkeypatch.setattr(figcapture.os.path, "samefile", lambda a, b: True)
+        monkeypatch.setattr(figcapture.os, "lstat", lambda p: p)
+        monkeypatch.setattr(figcapture.os.path, "samestat", lambda a, b: True)
         assert figcapture._dir_folds_unicode(d, nfc) is False
 
     def test_one_listed_spelling_that_opens_under_both_is_normalization(
@@ -187,30 +198,51 @@ class TestUnicodeNormalization:
         figcapture._UNICODE_FOLD_CACHE.pop(d, None)
         monkeypatch.setattr(figcapture, "_UNWATCHED_LISTDIR", lambda p: [nfc])
         monkeypatch.setattr(figcapture.os.path, "lexists", lambda p: True)
-        monkeypatch.setattr(figcapture.os.path, "samefile", lambda a, b: True)
+        monkeypatch.setattr(figcapture.os, "lstat", lambda p: p)
+        monkeypatch.setattr(figcapture.os.path, "samestat", lambda a, b: True)
         assert figcapture._dir_folds_unicode(d, nfc) is True
         figcapture._UNICODE_FOLD_CACHE.pop(d, None)
 
-    def test_symlink_is_not_evidence_injected(self, tmp_path, monkeypatch):
-        """目录列表里只有一种写法、samefile 为真，但另一种写法是符号链接（如隐藏条目）：链接本身不算证据。"""
+    def test_single_symlink_listed_once_is_evidence(self, tmp_path, monkeypatch):
+        """归一卷上一个名字可分解的单个符号链接：目录里只列一次、两种写法 lstat 到同一项 -> 是「同一个名字」的证据。"""
         d = str(tmp_path.resolve())
         nfc = unicodedata.normalize("NFC", "é.pdf")
         figcapture._UNICODE_FOLD_CACHE.pop(d, None)
         monkeypatch.setattr(figcapture, "_UNWATCHED_LISTDIR", lambda p: [nfc])
         monkeypatch.setattr(figcapture.os.path, "lexists", lambda p: True)
-        monkeypatch.setattr(figcapture.os.path, "samefile", lambda a, b: True)
-        monkeypatch.setattr(figcapture.os.path, "islink", lambda p: not p.endswith(nfc))
+        monkeypatch.setattr(
+            figcapture.os.path, "islink", lambda p: True
+        )  # 若有人又加回 islink 一刀切，这里红
+        monkeypatch.setattr(figcapture.os, "lstat", lambda p: p)
+        monkeypatch.setattr(figcapture.os.path, "samestat", lambda a, b: True)
+        assert figcapture._dir_folds_unicode(d, nfc) is True
+        figcapture._UNICODE_FOLD_CACHE.pop(d, None)
+
+    def test_two_independent_entries_are_distinct_even_if_lstat_differs(
+        self, tmp_path, monkeypatch
+    ):
+        """另一种写法 lstat 到不同的目录项（例如两个符号链接、只列出一种写法的异常列表）-> 不归一。"""
+        d = str(tmp_path.resolve())
+        nfc = unicodedata.normalize("NFC", "é.pdf")
+        figcapture._UNICODE_FOLD_CACHE.pop(d, None)
+        monkeypatch.setattr(figcapture, "_UNWATCHED_LISTDIR", lambda p: [nfc])
+        monkeypatch.setattr(figcapture.os.path, "lexists", lambda p: True)
+        monkeypatch.setattr(figcapture.os, "lstat", lambda p: p)
+        monkeypatch.setattr(figcapture.os.path, "samestat", lambda a, b: False)
         assert figcapture._dir_folds_unicode(d, nfc) is False
 
-    def test_symlink_is_not_evidence(self, tmp_path):
+    @pytest.mark.skipif(
+        sys.platform == "darwin", reason="darwin 的文件系统本身归一化，建不出两个独立的目录项"
+    )
+    def test_two_symlinks_are_two_entries_not_normalization(self, tmp_path):
         d = str(tmp_path.resolve())
         nfc, nfd = (unicodedata.normalize(f, "é.pdf") for f in ("NFC", "NFD"))
-        (tmp_path / nfc).write_bytes(b"x")
-        if os.path.lexists(tmp_path / nfd):
-            pytest.skip("文件系统本身归一化，建不出独立的符号链接项")
-        os.symlink(tmp_path / nfc, tmp_path / nfd)
+        (tmp_path / "target.pdf").write_bytes(b"x")
+        os.symlink(tmp_path / "target.pdf", tmp_path / nfc)
+        os.symlink(tmp_path / "target.pdf", tmp_path / nfd)
         figcapture._UNICODE_FOLD_CACHE.pop(d, None)
         assert figcapture._dir_folds_unicode(d, nfc) is False
+        figcapture._UNICODE_FOLD_CACHE.pop(d, None)
 
     def test_probe_error_means_no_normalization(self, tmp_path, monkeypatch):
         d = str(tmp_path.resolve())
@@ -218,10 +250,10 @@ class TestUnicodeNormalization:
         nfc = unicodedata.normalize("NFC", "é.pdf")
         (tmp_path / nfc).write_bytes(b"x")
 
-        def boom(a, b):
+        def boom(p):
             raise OSError("nope")
 
-        monkeypatch.setattr(figcapture.os.path, "samefile", boom)
+        monkeypatch.setattr(figcapture.os, "lstat", boom)
         assert figcapture._dir_folds_unicode(d, nfc) is False
 
     def test_no_unicode_case_folding_beyond_lower(self, tmp_path, monkeypatch):
@@ -306,6 +338,18 @@ class TestPostSaveFigureBreakage:
         )
         assert v() is False  # native 下同样抛
         assert v.deferred() is False
+
+    @pytest.mark.parametrize("empty", [[], (), None, {}])
+    def test_empty_extra_artists_are_replayable_and_unknown_after_breakage(self, tmp_path, empty):
+        """`bbox_extra_artists=[]`（空容器 / None）完全可复现：保存成功、之后 Figure 坏掉 -> 未知，按已保存算。"""
+        st, a, b, real, tgt_y = self._setup(
+            tmp_path, {"bbox_extra_artists": empty, "bbox_inches": "tight"}
+        )
+        a.text(0.5, 0.5, r"$\badmathtext{$")
+        took = st.save(b, tgt_y, verify=figcapture.savefig_verifier(real, b, tgt_y, (), {}))
+        assert took is False
+        assert st.cap["x"] is a
+        assert figcapture._replayable_on_blank((), {"bbox_extra_artists": empty}) is True
 
     def test_artist_valued_arguments_are_never_replayed_on_a_blank_figure(self, tmp_path):
         import matplotlib.pyplot as plt

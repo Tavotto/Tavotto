@@ -1541,9 +1541,9 @@ def _unicode_evidence(directory: str, name: str, listing=None) -> bool | None:
     或这个名字本身在盘上不存在）。
 
     `samefile` 只能证明同一个 inode——硬链接 / 符号链接别名也满足，区分归一化的文件系统上 NFC / NFD 两个
-    名字互为硬链接时同样为真，那不是「文件系统把两种写法当同一个名字」。所以要同时满足：另一种写法打得开
-    同一个文件、它不是符号链接、**且目录列表里只出现一种写法**（归一化的文件系统一个文件只有一个目录项；
-    两种写法都作为独立目录项出现 = 别名，不归一）。不在用户目录里写探针文件。"""
+    名字互为硬链接时同样为真，那不是「文件系统把两种写法当同一个名字」。所以要同时满足：另一种写法能 `lstat` 到
+    同一个目录项、**且目录列表里只出现一种写法**（归一化的文件系统一个文件只有一个目录项；
+    两种写法都作为独立目录项出现 = 别名，不归一）；比较用 `lstat`（目录项本身，不跟随符号链接）。不在用户目录里写探针文件。"""
     nfc, nfd = (unicodedata.normalize(f, name) for f in ("NFC", "NFD"))
     if nfc == nfd:
         return None
@@ -1554,12 +1554,12 @@ def _unicode_evidence(directory: str, name: str, listing=None) -> bool | None:
     other = os.path.join(directory, other_name)
     if not os.path.lexists(other):
         return False
-    if os.path.islink(here) or os.path.islink(other):
-        return False  # 链接本身不算证据
     listing = set(_UNWATCHED_LISTDIR(directory)) if listing is None else listing
     if (nfc in listing) and (nfd in listing):
         return False  # 两种写法都是独立目录项：别名，不是归一化
-    return os.path.samefile(here, other)
+    # 比**目录项本身**（lstat，不跟随链接）：归一卷上一个名字可分解的单个符号链接，两种写法 lstat 到同一项，
+    # 是有效证据；两个独立的链接 / 硬链接是两个目录项，已被上面「列出两种写法」排除，lstat 也不同
+    return os.path.samestat(os.lstat(here), os.lstat(other))
 
 
 def _dir_folds_unicode(directory: str, base: str | None = None) -> bool:
@@ -1648,8 +1648,8 @@ def savefig_verify_render(real_savefig, fig, fname, args, kwargs: dict) -> bool:
 
 def _replayable_on_blank(args, kwargs: dict) -> bool:
     """这组保存参数能不能在空白 Figure 上**原样**复现。引用原 Figure 内对象的参数（`bbox_extra_artists`，以及任何值里
-    带 Artist 的参数）在空白 Figure 上要么没法复现、要么被剔除后换了含义：非法的 `bbox_extra_artists` 在 native 下会
-    抛，空白 Figure 上去掉它却成功。不能原样复现就不能拿空白 Figure 的成功当「失败只来自内容」的证据。"""
+    带 Artist 的参数）在空白 Figure 上没法复现：不能原样复现就不能拿空白 Figure 的成功当「失败只来自内容」的证据。
+    不含 Artist 的值（None、空容器、数、非法值）原样传过去：合法的照常复现，非法的在空白 Figure 上同样失败 -> 判 False。"""
     from matplotlib.artist import Artist
 
     def refers_to_figure(value, depth=0) -> bool:
@@ -1661,8 +1661,6 @@ def _replayable_on_blank(args, kwargs: dict) -> bool:
             return any(refers_to_figure(v, depth + 1) for v in value.values())
         return False
 
-    if kwargs.get("bbox_extra_artists") is not None:
-        return False
     return not any(refers_to_figure(v) for v in (*args, *kwargs.values()))
 
 
