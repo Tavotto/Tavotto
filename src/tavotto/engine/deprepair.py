@@ -6254,7 +6254,7 @@ def _static_joint_plan(root: str, script: str) -> depplan.JointPlan:
 
 
 def _detect_environment_unlocked(
-    root: str, script: str, *, project_exec: bool = True
+    root: str, script: str, *, project_exec: bool = True, rejected: list[dict] | None = None
 ) -> dict | None:
     """**调用方持 `_detect_lock(root)`**（见 `_detect_environment_pinned`）。检测模式（默认，ADR 0114 §六）：用户发起准备 / 运行之后，替他挑一个**能跑这个脚本**的环境。回新采用的那一条
     （`userenvs.evaluate` 的形状），不换回 None。
@@ -6271,7 +6271,10 @@ def _detect_environment_unlocked(
     * 机器先前定下的仍能跑 → 不动；不能跑 → 找别的能跑的换过去；都不能跑 → 检测自己记下的那条作废（装进 Tavotto
       管理的环境，不往用户的环境里装），历史记录（`legacy_auto`）照旧；
     * 预算：候选上限 `userenvs.PROBE_LIMIT`、每个 `projectenv.PROBE_TIMEOUT_S`；正被安装占着的环境不挑；这个项目
-      有依赖安装在跑时不改决定（`unless_installing`，与采用同一把锁）。"""
+      有依赖安装在跑时不改决定（`unless_installing`，与采用同一把锁）。
+
+    `rejected`（调用方给的空表）：本轮体检过、最终没被选用的候选各追加一条落选原因
+    （`userenvs.rejection_reason`，稳定码、不带路径）。默认链条能跑且无项目候选可比时没有体检，表保持为空。"""
     try:
         current = pool.resolve_worker_python(root, script=script, discover=False)[0]
     except pool.WorkerError as exc:
@@ -6334,8 +6337,10 @@ def _detect_environment_unlocked(
     candidates = [c for c in candidates if not envlease.is_mutating(c["python"])]
     entry = None
     adopted = False
+    evaluated: list[dict] = []
     if candidates and not _user_env_discovery_off():
         entries = _evaluate_candidates(root, candidates, needed, unknown, project_exec=project_exec)
+        evaluated = list(entries)
         if not project_exec and any(e.get("deferred") for e in entries):
             # 有候选的某个模块解析进了项目（可编辑安装指向项目）：运行之前不 import，它的结论延后——这一轮不采用排在后面的
             return None
@@ -6360,6 +6365,10 @@ def _detect_environment_unlocked(
                             **({} if project_exec else {"root": root}),
                         )[0]
                         if not fresh.get("satisfies"):
+                            # 缓存说装齐、现量说不齐：落选原因以现量的为准
+                            evaluated = [
+                                fresh if e["python"] == entry["python"] else e for e in evaluated
+                            ]
                             entries = [e for e in entries if e["python"] != entry["python"]]
                             continue
                         entry = {**entry, **fresh}
@@ -6381,6 +6390,8 @@ def _detect_environment_unlocked(
                 entries = [e for e in entries if e["python"] != entry["python"]]
                 continue
             break
+    if rejected is not None and evaluated:
+        rejected.extend(userenvs.rejections(evaluated, entry if adopted else None))
     if entry is None:
         if (
             not runs_now
@@ -6414,13 +6425,18 @@ def _detect_environment_pinned(
     锁只护住检测本身；返回之后消费方（`plan_for` 的快照、`pool.acquire` 起会话）若各自再解析共享的项目记录，
     同一项目另一个脚本就能在两次解析之间把记录换成它的解释器（Codex #820 P1）。钉下的值之后只比对、不重新解析。"""
     with _detect_lock(root):
-        adopted = _detect_environment_unlocked(root, script, project_exec=project_exec)
+        rejected: list[dict] = []
+        adopted = _detect_environment_unlocked(
+            root, script, project_exec=project_exec, rejected=rejected
+        )
         try:
             python, source = pool.resolve_worker_python(root, script=script, discover=False)
         except pool.WorkerError:
-            return pool.EnvironmentDecision(adopted=adopted)  # 解析不出来：原路径去报那条错
+            # 解析不出来：原路径去报那条错
+            return pool.EnvironmentDecision(adopted=adopted, rejected=tuple(rejected))
         return pool.EnvironmentDecision(
             adopted=adopted,
+            rejected=tuple(rejected),
             python=python,
             source=source,
             generation=projectenv.environment_generation(python),

@@ -52,6 +52,12 @@
   （`projectenv` 不 import `userenvs`：它要 import 本模块的体检）。`TAVOTTO_USER_ENV_DISCOVERY=0` 整个关掉，
   **测试进程默认关**（`tests/conftest.py`，否则用例结果随 CI 机器上碰巧装了什么而变）；`script` 可来自请求体，
   `discover()` 先过 `projectenv.contained_path()`，下游只用净化器回的值（CodeQL `py/path-injection`）。
+  **Windows 发现补强与落选原因（ADR 0079 修订 2026-10-21，用户裁决「脚本默认在它原本能跑的环境里运行」）**：
+  `.condarc`（`%CONDARC%` / `~/.condarc`）的 `envs_dirs` / `pkgs_dirs` 旁的根、PATH 里 `conda.exe` / `mamba.exe` /
+  `micromamba.exe` 反推安装根（只 `is_file`，**不执行**）、PEP 514 注册表（`userenvs._windows_registry_pythons`，来源
+  `windows_registry`，第 3 档）；`rank()` 第一把尺子是体检确认程度（确认能跑 > 没量到 > 确认跑不了），不碰「内置能跑就不换」
+  （`runs_now` 分支）；被评估没选用的候选各有稳定码原因（`userenvs.REJECT_CODES`），在 `pool.EnvironmentDecision.rejected`，不带路径。
+  看护 `tests/test_user_environment_windows_discovery.py`。
   **映射不到包名的 import 也触发（ADR 0079 修订 2026-09-25，QA ENV-08-B1）**：计划 `nothing_needed` 但有无条件
   `unknown` 时，先经 `deprepair.unknown_imports_missing` → `userenvs.imports_missing` 在此刻的解释器里量一次（同一条体检、
   同一个缓存；内置 runtime 按 worker 的 `child_env()` / `child_args()` 量，`probe_environment(bundled=True)`）；只有**确实**

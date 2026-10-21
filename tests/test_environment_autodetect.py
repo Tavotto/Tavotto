@@ -2493,3 +2493,44 @@ def test_a_dangling_pth_does_not_disable_site_cache_invalidation(tmp_path, monke
     assert userenvs._probe(py, ("pth_added_pkg",), **kwargs)["modules_ok"] == {
         "pth_added_pkg": True
     }
+
+
+# ===========================================================================
+# 落选原因（ADR 0079 修订 2026-10-21）：被评估但没选用的候选各有一句稳定码，挂在决定结果上
+# ===========================================================================
+
+
+def test_the_decision_names_why_each_evaluated_candidate_was_not_chosen(rig):
+    shell = rig["cand"]("shell-py", userenvs.SOURCE_LOGIN_SHELL)
+    conda = rig["cand"]("conda-env", userenvs.SOURCE_CONDA, "other")
+    rig["cand"]("broken", userenvs.SOURCE_PYENV)
+    rig["satisfying"] |= {shell, conda}
+
+    decision = deprepair.decide_environment_pinned(rig["root"], "fig.py")
+
+    assert decision.adopted["python"] == shell
+    by_source = {r["source"]: r for r in decision.rejected}
+    assert set(by_source) == {userenvs.SOURCE_CONDA, userenvs.SOURCE_PYENV}
+    assert by_source[userenvs.SOURCE_CONDA]["reason"] == userenvs.REJECT_OUTRANKED
+    assert by_source[userenvs.SOURCE_PYENV]["reason"] == userenvs.REJECT_MISSING_IMPORTS
+    assert by_source[userenvs.SOURCE_PYENV]["missing"] == ["alpha"]
+    assert all(
+        set(r) == {"id", "source", "label", "reason", "missing", "import_failed"}
+        for r in decision.rejected
+    )
+    assert all(str(rig["root"].parent) not in repr(r) for r in decision.rejected)
+
+
+def test_nothing_runnable_still_explains_every_candidate(rig):
+    rig["cand"]("conda-env", userenvs.SOURCE_CONDA)
+    decision = deprepair.decide_environment_pinned(rig["root"], "fig.py")
+    assert decision.adopted is None
+    assert [r["reason"] for r in decision.rejected] == [userenvs.REJECT_MISSING_IMPORTS]
+
+
+def test_a_builtin_that_runs_keeps_the_environment_and_evaluates_nothing(rig):
+    rig["runs_now"] = True
+    rig["cand"]("conda-env", userenvs.SOURCE_CONDA)
+    decision = deprepair.decide_environment_pinned(rig["root"], "fig.py")
+    assert decision.adopted is None and decision.rejected == ()
+    assert rig["probed"] == []
