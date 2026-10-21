@@ -133,6 +133,8 @@ def test_missing_package_matches_native_and_a_plain_retry_revalidates(
         cwd=native_dir,
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         timeout=180,
     )
     assert native.returncode != 0
