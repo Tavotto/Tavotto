@@ -657,6 +657,12 @@ def begin_registered(task_id: str, envelope: TaskEnvelope, *, clock=time.monoton
     return run
 
 
+def discard_registered(task_id: str) -> None:
+    """`begin_registered` 之后、`drive_registered` 之前失败（例如进程没起来）：把任务从运行表摘下，此后 cancel 回 False。"""
+    with _RUNNING_LOCK:
+        _RUNNING.pop(task_id, None)
+
+
 def drive_registered(run: TaskRun, executor: Executor, *, db_path=None) -> dict:
     """在 `begin_registered` 挂好的任务上推进阶段，回 `{outcome, error, timed_out, task_result}`。
 

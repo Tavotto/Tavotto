@@ -921,22 +921,26 @@ def run(
             stderr_log.close()
             _drop_attempt_files(sid, snap, cand)
             raise DuplicateRequest(started[1])
+        task_run = None
         try:
+            if envelope is not None:
+                # **spawn 之前**挂进 Task Core 的运行表（#1232）：它若抛，登记行与「开始」一起失败、同一处收成终态，不留
+                # 一条永远 running 的行，也没有已起来却没人管的进程。会话进 SESSIONS 之前运行表里已有它，
+                # `cancel()` 能看到会话时一定也能取消这个任务。
+                from . import ai_tasks
+
+                task_run = ai_tasks.begin_registered(sid, envelope)
             proc = _popen(cmd, agent_cwd, env, stderr_log)
             _SPAWN_MARK.started = True  # 进程已经起来了：此后任何异常都不能再清账本行
         except BaseException as exc:
             # 记录已落库而进程没起来：标成失败，不是删掉——「查询」要查得到它，且明确是没执行
             stderr_log.close()
+            if task_run is not None:
+                ai_tasks.discard_registered(sid)
             ai_history.record_end(sid, "failed", error=str(exc))
             if cand is not None:
                 ai_figure_edit.remove_candidate(cand.dir)
             raise
-        task_run = None
-        if envelope is not None:
-            # 进程起来之后、会话进 SESSIONS 之前挂进 Task Core 的运行表：`cancel()` 能看到会话时，一定也能取消这个任务
-            from . import ai_tasks
-
-            task_run = ai_tasks.begin_registered(sid, envelope)
         sess = {
             "id": sid,
             "agent": agent,
