@@ -57,19 +57,25 @@ def describe_children() -> str:
     if os.name == "nt":
         return "  （Windows：未枚举子进程）"
     try:
-        out = subprocess.run(
+        proc = subprocess.Popen(
             ["ps", "-axo", "pid=,ppid=,etime=,command="],
-            capture_output=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
             text=True,
-            timeout=10,
-            check=False,
-        ).stdout
+        )
+        probe_pid = proc.pid
+        out, _ = proc.communicate(timeout=10)
     except Exception as exc:  # noqa: BLE001 - 退出路径上不许再抛
         return f"  （枚举子进程失败：{exc!r}）"
     rows = []
     for line in out.splitlines():
         parts = line.split(None, 3)
-        if len(parts) == 4 and parts[0].isdigit() and parts[1].isdigit():
+        if (
+            len(parts) == 4
+            and parts[0].isdigit()
+            and parts[1].isdigit()
+            and int(parts[0]) != probe_pid
+        ):
             rows.append((int(parts[0]), int(parts[1]), parts[2], parts[3]))
     mine = {os.getpid()}
     grew = True
@@ -103,23 +109,38 @@ class Watchdog:
         self._timer.cancel()
 
 
-def report_and_exit(nodeid: str, limit: float, *, write, exit_fn=os._exit) -> None:
-    """打报告然后硬退出。`write` / `exit_fn` 可注入，单测不必真杀进程。"""
-    header = (
-        f"\n!!! 用例挂死：{nodeid} 运行超过 {limit:g} 秒（{HANG_ENV}），"
-        f"pid={os.getpid()}，下面是所有线程的栈与子进程；进程即将以退出码 {HANG_EXIT_CODE} 退出 !!!\n"
-    )
-    write(header)
+def _stderr_write(text: str) -> None:
+    """utf-8 + replace 写 bytes：Windows runner 的 stderr 可能是 cp1252，写中文会抛 UnicodeEncodeError。"""
+    data = text.encode("utf-8", "replace")
+    stream = sys.__stderr__
+    buf = getattr(stream, "buffer", None)
+    if buf is not None:
+        buf.write(data)
+        buf.flush()
+    else:
+        os.write(2, data)
+
+
+def report_and_exit(nodeid: str, limit: float, *, write=_stderr_write, exit_fn=os._exit) -> None:
+    """打报告然后硬退出。`write` / `exit_fn` 可注入；无论报告写出是否异常，都必须走到 exit_fn。"""
     try:
+        write(
+            f"\n!!! 用例挂死：{nodeid} 运行超过 {limit:g} 秒（{HANG_ENV}），"
+            f"pid={os.getpid()}，下面是所有线程的栈与子进程；进程即将以退出码 {HANG_EXIT_CODE} 退出 !!!\n"
+        )
+        try:
+            sys.__stderr__.flush()
+        except Exception:  # noqa: BLE001
+            pass
         faulthandler.dump_traceback(file=sys.__stderr__, all_threads=True)
-    except Exception as exc:  # noqa: BLE001
-        write(f"（打栈失败：{exc!r}）\n")
-    write("子进程：\n" + describe_children() + "\n")
-    try:
-        sys.__stderr__.flush()
-    except Exception:  # noqa: BLE001
-        pass
-    exit_fn(HANG_EXIT_CODE)
+        write("子进程：\n" + describe_children() + "\n")
+    except BaseException as exc:  # noqa: BLE001
+        try:
+            os.write(2, f"\n（挂死报告写出失败：{exc!r}）\n".encode("ascii", "replace"))
+        except Exception:  # noqa: BLE001
+            pass
+    finally:
+        exit_fn(HANG_EXIT_CODE)
 
 
 def format_slow_note(nodeid: str, seconds: float, now: float | None = None) -> str:

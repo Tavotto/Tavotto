@@ -303,8 +303,7 @@ def _write_past_capture(config, text: str, *, resume: bool) -> None:
     try:
         if capman is not None:
             capman.suspend_global_capture(in_=False)
-        sys.__stderr__.write(text)
-        sys.__stderr__.flush()
+        _hang._stderr_write(text)
     finally:
         if capman is not None and resume:
             capman.resume_global_capture()

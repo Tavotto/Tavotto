@@ -149,3 +149,44 @@ def test_ci_arms_the_watchdog_on_both_sharded_backend_lanes():
         assert match, f"{job_id} 的分片 pytest 步骤没有设置 {hw.HANG_ENV}"
         # 必须大于 pytest.ini 里 300 秒的 faulthandler 打栈线（先看到栈、再退出），且远小于 job 上限 90 分钟。
         assert 300 < int(match.group(1)) <= 1800, (job_id, match.group(1))
+
+
+def test_report_survives_a_cp1252_stderr_and_still_exits(monkeypatch):
+    """Windows runner 的 stderr 可能是 cp1252：中文表头不许让计时线程死在 os._exit 之前。"""
+    import io
+
+    raw = io.BytesIO()
+    fake = io.TextIOWrapper(raw, encoding="cp1252", errors="strict")
+    monkeypatch.setattr(sys, "__stderr__", fake)
+    codes = []
+    hw.report_and_exit("t.py::中文", 7, exit_fn=codes.append)
+    fake.flush()
+    assert codes == [hw.HANG_EXIT_CODE]
+    assert "t.py::".encode() in raw.getvalue()
+
+
+def test_exit_is_reached_even_when_the_writer_raises():
+    def boom(_text):
+        raise UnicodeEncodeError("ascii", "x", 0, 1, "boom")
+
+    codes = []
+    hw.report_and_exit("t.py::x", 7, write=boom, exit_fn=codes.append)
+    assert codes == [hw.HANG_EXIT_CODE]
+
+
+@pytest.mark.skipif(os.name == "nt", reason="ps 只在 POSIX")
+def test_no_children_is_reported_as_none_not_as_the_ps_probe():
+    out = hw.describe_children()
+    assert "没有子进程" in out, out
+    assert "ps -axo" not in out, out
+
+
+@pytest.mark.skipif(os.name == "nt", reason="ps 只在 POSIX")
+def test_real_child_is_listed():
+    child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
+    try:
+        out = hw.describe_children()
+        assert f"pid={child.pid} " in out, out
+    finally:
+        child.kill()
+        child.wait()
