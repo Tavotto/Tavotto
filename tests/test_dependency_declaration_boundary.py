@@ -283,6 +283,56 @@ class TestLiteralSysPathRoots:
         scan = importscan.scan(proj, "a.py")
         assert not any(r["tag"] == "sys_path_literal" for r in scan.search_roots)
 
+    @pytest.mark.parametrize(
+        "wrap",
+        [
+            "if False:\n    {stmt}",
+            "if FLAG:\n    pass\nelse:\n    {stmt}",
+            "try:\n    {stmt}\nexcept Exception:\n    pass",
+            "for _ in range(0):\n    {stmt}",
+            "def f():\n    {stmt}",
+        ],
+    )
+    def test_conditional_or_deferred_mutation_is_not_a_root(self, tmp_path, wrap):
+        """Codex #1276 P2：条件分支 / 函数体里的 sys.path 修改可能根本没执行，不能当搜索根。"""
+        proj = tmp_path / "p"
+        _write(proj, "pdf/mymod.py", "x = 1\n")
+        stmt = 'sys.path.append(os.path.join(os.path.dirname(__file__), "pdf"))'
+        _write(
+            proj,
+            "a.py",
+            "import os, sys\nFLAG = 1\n" + wrap.format(stmt=stmt) + "\nimport mymod\n",
+        )
+        scan = importscan.scan(proj, "a.py")
+        assert not any(r["tag"] == "sys_path_literal" for r in scan.search_roots)
+        assert (
+            next(c for c in scan.classes if c.module == "mymod").bucket != importscan.BUCKET_LOCAL
+        )
+
+    @pytest.mark.parametrize(
+        "expr",
+        [
+            'os.path.join(os.path.dirname(__file__), "/plugins")',
+            'os.path.join(os.path.dirname(__file__), "\\\\plugins")',
+            'os.path.join(os.path.dirname(__file__), "C:plugins")',
+            'Path(__file__).parent / "/plugins"',
+        ],
+    )
+    def test_absolute_component_discards_prefix_so_not_a_root(self, tmp_path, expr):
+        """Codex #1276 P2：后续分量是绝对路径时 Python 丢掉前缀；不能拼成 `<项目>/plugins` 去扫。"""
+        proj = tmp_path / "p"
+        _write(proj, "plugins/mymod.py", "x = 1\n")
+        _write(
+            proj,
+            "a.py",
+            f"import os, sys\nfrom pathlib import Path\nsys.path.append({expr})\nimport mymod\n",
+        )
+        scan = importscan.scan(proj, "a.py")
+        assert not any(r["tag"] == "sys_path_literal" for r in scan.search_roots)
+        assert (
+            next(c for c in scan.classes if c.module == "mymod").bucket != importscan.BUCKET_LOCAL
+        )
+
     def test_literal_roots_are_bounded(self):
         calls = "\n".join(
             f'sys.path.append(os.path.join(os.path.dirname(__file__), "d{i}"))' for i in range(20)
@@ -395,3 +445,47 @@ class TestCodexReview1276:
         dirs = depresolve._decl_dirs(proj, "sub/a.py", no_follow=True)
         assert not any(s.endswith(".git") for s in seen)
         assert dirs and dirs[-1].name == "sub" or proj.name in {d.name for d in dirs}
+
+
+class TestSinglePackageFallbackSkipsNotPip:
+    """Codex #1276 P1：联合计划摘掉 ROOT 后，`offer` / `create_plan` 兜底路径同样不把它当可装的包。"""
+
+    def _project(self, tmp_path):
+        proj = tmp_path / "p"
+        _write(proj, "a.py", "import ROOT\n")
+        _write(proj, "requirements.txt", "root\n")
+        return proj
+
+    def test_offer_names_own_env_and_gives_no_requirement(self, tmp_path):
+        proj = self._project(tmp_path)
+        out = deprepair.offer(proj, "a.py", "ROOT")
+        assert out["requirement"] is None
+        assert out["code"] == deprepair.ERROR_UNRESOLVED
+        assert out["not_pip_installable"] == {
+            "label": "ROOT",
+            "hint": depresolve.NOT_PIP_HINT_OWN_ENV,
+        }
+        assert not any(t["kind"] == deprepair.TARGET_MANAGED for t in out["targets"])
+
+    def test_create_plan_refuses_with_same_naming(self, tmp_path, monkeypatch):
+        proj = self._project(tmp_path)
+        monkeypatch.setattr(deprepair, "_refuse_if_pinned", lambda: None)
+        with pytest.raises(deprepair.RepairError) as ei:
+            deprepair.create_plan(proj, "a.py", "ROOT", target_kind=deprepair.TARGET_MANAGED)
+        assert ei.value.code == deprepair.ERROR_UNRESOLVED
+        assert ei.value.extra["not_pip_installable"]["label"] == "ROOT"
+
+    def test_user_typed_root_is_refused_too(self, tmp_path, monkeypatch):
+        proj = self._project(tmp_path)
+        monkeypatch.setattr(deprepair, "_refuse_if_pinned", lambda: None)
+        with pytest.raises(deprepair.RepairError) as ei:
+            deprepair.create_plan(
+                proj, "a.py", "ROOT", target_kind=deprepair.TARGET_MANAGED, user_distribution="root"
+            )
+        assert ei.value.extra["not_pip_installable"]["label"] == "ROOT"
+
+    def test_ordinary_missing_package_still_offered(self, tmp_path):
+        proj = tmp_path / "p"
+        _write(proj, "a.py", "import lmfit\n")
+        out = deprepair.offer(proj, "a.py", "lmfit")
+        assert out["requirement"] is not None and "not_pip_installable" not in out

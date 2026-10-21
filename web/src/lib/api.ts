@@ -4672,6 +4672,8 @@ export interface DependencyRepairOffer {
   managed?: ManagedEnvironment
   /** 探到了但不合格的系统解释器（老服务端没有这个字段） */
   system_rejected?: SystemInterpreterRejection[]
+  /** 缺的是已知装不了的包（例 ROOT，后端 `depresolve.NOT_PIP_INSTALLABLE`）：此时 `requirement` 为 null，要用户自己的环境；界面不给安装 */
+  not_pip_installable?: { label: string; hint: string }
   /** 支持的 Python 次版本范围（`docs/support-matrix.json` 的运行时镜像）；文案不手写版本号 */
   python_supported: { min: string; max: string }
   /** dependency_unresolved / dependency_repair_rounds_exhausted / dependency_interpreter_pinned */

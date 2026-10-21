@@ -858,6 +858,17 @@ def supported_python_range() -> dict:
     return {"min": f"{lo[0]}.{lo[1]}", "max": f"{hi[0]}.{hi[1]}"}
 
 
+def _not_pip_of(module: str, requirement: "depresolve.DependencyRequirement | None") -> dict | None:
+    """这个缺的 import / 解析出的发行包是「已知装不了」表里的吗？是则回 `{label, hint}`（与联合计划同一张表、同一口径）。
+
+    单包兜底路径（`offer` / `create_plan`）也要查：声明 `root`、`import ROOT` 时联合计划已把它从 missing 里摘掉，
+    执行后撞 import 失败才落到这里——这时 `depresolve.resolve()` 仍会解出一个「可装」的 `root`（Codex #1276 P1）。"""
+    hit = depresolve.not_pip_installable(module)
+    if hit is None and requirement is not None and requirement.distribution:
+        hit = depresolve.not_pip_for_distribution(requirement.distribution)
+    return {"label": hit["label"], "hint": hit["hint"]} if hit else None
+
+
 def offer(project: str | Path, script: str, module: str, project_env: dict | None = None) -> dict:
     """缺 `module` 时「能怎么修」——**只读判断，不装任何东西**。
 
@@ -963,6 +974,13 @@ def offer(project: str | Path, script: str, module: str, project_env: dict | Non
         for r in projectenv.rejected_system_candidates(system)
     ]
 
+    not_pip = _not_pip_of(module, requirement)
+    if not_pip is not None:
+        # 点名「需要自己的环境」：不给安装需求，也不给任何装进 Tavotto 管的环境的目标（上面采用已有环境的目标照旧）
+        out["requirement"] = None
+        out["not_pip_installable"] = not_pip
+        out["code"] = ERROR_UNRESOLVED
+        return out
     if requirement is None or not requirement.installable:
         out["code"] = ERROR_UNRESOLVED
         return out
@@ -1081,6 +1099,13 @@ def create_plan(
         requirement = depresolve.resolve(root, module, script)
         if requirement is None:
             raise RepairError(ERROR_UNRESOLVED, f"无法确定 {module} 对应哪个安装包")
+    not_pip = _not_pip_of(module, requirement)
+    if not_pip is not None:
+        raise RepairError(
+            ERROR_UNRESOLVED,
+            f"{not_pip['label']} 不在 PyPI 上，需要有它的自己的环境",
+            not_pip_installable=not_pip,
+        )
     if not requirement.installable:
         raise RepairError(ERROR_REQUIREMENT_INVALID, "这个需求不可安装")
 

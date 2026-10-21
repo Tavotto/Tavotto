@@ -567,6 +567,11 @@ _PATH_WRAPPERS = frozenset(
 )
 
 
+def _is_absolute_component(text: str) -> bool:
+    """`os.path.join` / `Path.__truediv__` 的后续分量是绝对路径（`/x`、`\\x`、`C:x`）时，Python 会丢掉前面的全部前缀。"""
+    return text.startswith(("/", "\\")) or bool(re.match(r"[A-Za-z]:", text))
+
+
 def _literal_dir(node: ast.AST):
     """`sys.path.append/insert` 的目录实参里，**只由 `__file__` 所在目录与字符串字面量拼出**的那类表达式 →
     相对于「这份文件所在目录」的路径段元组；认不出（含任何变量 / 环境 / cwd 相关）回 None。
@@ -606,8 +611,8 @@ def _dir_value(node: ast.AST, depth: int):
             segs = list(first[1])
             for a in args[1:]:
                 part = _dir_value(a, depth + 1)
-                if part is None or part[0] != "S":
-                    return None
+                if part is None or part[0] != "S" or _is_absolute_component(part[1]):
+                    return None  # 绝对 / 带盘符的分量会丢掉前面的目录（Python 语义）：不当作相对本文件的路径
                 segs += [x for x in _SEP_RE.split(part[1]) if x and x != "."]
             return ("D", tuple(segs))
         if (
@@ -623,7 +628,13 @@ def _dir_value(node: ast.AST, depth: int):
     if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Div):
         left = _dir_value(node.left, depth + 1)
         right = _dir_value(node.right, depth + 1)
-        if left is None or right is None or left[0] != "D" or right[0] != "S":
+        if (
+            left is None
+            or right is None
+            or left[0] != "D"
+            or right[0] != "S"
+            or _is_absolute_component(right[1])
+        ):
             return None
         return ("D", (*left[1], *[x for x in _SEP_RE.split(right[1]) if x and x != "."]))
     return None
@@ -809,7 +820,8 @@ class _Visitor(ast.NodeVisitor):
             )
         ):
             self.path_mutations.append(node.lineno)
-            deferred = CONTEXT_DEFERRED in self._stack
+            # 只认**无条件**的模块级执行：函数 / 类体（可能没被调用）与 if / try / for 等条件分支（可能没走到）都不算（Codex #1276 P2）
+            deferred = self._context() != CONTEXT_UNCONDITIONAL
             if (
                 not deferred
                 and fn.attr == "append"
