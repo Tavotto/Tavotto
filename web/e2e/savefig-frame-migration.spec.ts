@@ -190,7 +190,9 @@ test('快速编辑：tight 存盘的 Fig1 的 X 轴标题完整、下半截点�
   expect(geo, 'SVG 里应当有 X 轴标题').not.toBeNull()
   expect(geo!.label.y + geo!.label.h).toBeLessThanOrEqual(geo!.svg.bottom + 0.5)
   // 下半截（离下沿 1/4 高处）：修之前这一带在图幅外
-  await page.mouse.click(geo!.label.x + geo!.label.w / 2, geo!.label.y + geo!.label.h * 0.75)
+  // 横向取标题左 1/5 处而不是正中：单图编辑里图被选中、取景铺满舞台，下边中点有选择框的手柄，
+  // 正中（x 轴标题恰在图的横向正中）点下去命中手柄而不是标题
+  await page.mouse.click(geo!.label.x + geo!.label.w * 0.2, geo!.label.y + geo!.label.h * 0.75)
   await expect
     .poll(() => page.evaluate(() => document.querySelector('[data-gid]')?.getAttribute('data-gid') ?? null))
     .toBe('axes_0.xlabel')
