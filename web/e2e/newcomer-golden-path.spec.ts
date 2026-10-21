@@ -108,8 +108,6 @@ async function exportWith(page: Page, formats: string[], filename: string) {
     }
   }
   await page.locator('#export-filename').fill(filename)
-  const confirm = page.locator('input[data-export-confirm]')
-  if (await confirm.count()) await confirm.check()
   const start = page.locator('[data-export-start]')
   await expect(start).toBeEnabled()
   const started = page.waitForResponse(EXPORT_URL)

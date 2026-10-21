@@ -5,7 +5,7 @@
  *
  * ```text
  * 导出对象（缩略图 · 名字 · 范围 · 最终尺寸）→ 输出范围 → 文件名 → 格式
- *   → 分辨率（仅位图）→ 规范 → 检查（阻断项逐条 + 知情确认）→ 高级选项
+ *   → 分辨率（仅位图）→ 规范 → 检查（阻断项逐条 + 一句提示）→ 高级选项
  * ```
  *
  * 这个顺序不是排版偏好，是**用户做决定的顺序**：先看清这次导的是哪一张、
@@ -29,7 +29,7 @@
  *   `lib/validation.exportContextRaw()`（Session 11 的第 19 条）。
  * * 不列第二套问题清单。摘要 + 「查看问题」，完整清单在左侧问题面板（§四）。
  *   **唯一例外是阻断项**：它们逐条列在知情确认框上方（无筛选、无修复、一个
- *   「定位」入口）——用户在点头之前得看见自己在为什么点头。
+ *   「定位」入口），其下一句提示 +「去修改」；**不拦导出**，未处理的项自动记进报告。
  * * 不拼载荷。请求的构造只有 `lib/exportRequest.buildExportRequest()` 一处。
  * * 不出现内部标识：库名、gid、对象 id、绝对路径一个都不进这个界面（§五）。
  */
@@ -39,6 +39,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type ReactNode,
 } from "react";
 import { useTranslation } from "react-i18next";
 import {
@@ -55,7 +56,6 @@ import { ICON_SIZE } from "@/components/ui/Icon";
 import { CanvasThumb } from "./CanvasThumb";
 import { Checkbox } from "./ui/Checkbox";
 import { Segmented } from "./ui/Segmented";
-import { Details, Summary } from "@/components/ui/Details";
 import {
   engineErrorMsg,
   type AssetOriginalSpec,
@@ -166,7 +166,6 @@ import { Toggle } from "./ui/Toggle";
 import { Card } from "./ui/Card";
 import { CountChip, type CountTone } from "./ui/CountChip";
 import { FieldGroup, FormSection } from "./ui/FormSection";
-import { listRowClass } from "./ui/listRow";
 import { Notice } from "./ui/Notice";
 import { splitNoticeSentences } from "@/lib/noticeText";
 import { ProgressBar } from "./ui/ProgressBar";
@@ -231,7 +230,7 @@ const ex = (key: string, values?: Record<string, unknown>) =>
 /** 可选的位图分辨率。**没有第二份**——数字进不了组件之外的任何地方 */
 const PPI_VALUES = ["300", "600", "900", "1200"] as const;
 
-/** 知情确认框上方逐条列出的阻断项上限；再多的进问题面板 */
+/** 红字提示上方逐条列出的阻断项上限；再多的进问题面板 */
 const BLOCKING_SHOWN = 3;
 
 /**
@@ -311,7 +310,15 @@ export function ExportDialog() {
   const [filename, setFilename] = useState(doc.name);
   /** 用户亲手改过文件名（之后切范围不再替他换默认名） */
   const [filenameTouched, setFilenameTouched] = useState(false);
-  const [scope, setScope] = useState<ExportScope>(() => defaultScope(mode));
+  const [scopeState, setScope] = useState<ExportScope>(() => defaultScope(mode));
+  /**
+   * 单图 / 多图两档由工作区 mode 定（`fast_edit` = 单图，`layout` = 多图；以后改成按图数推出时
+   * 只换这一行）。单图编辑**没有「输出范围」**：固定按原图尺寸导（标注 / 序号照常带入）。
+   */
+  const single = mode === "fast_edit";
+  const scope: ExportScope = single ? "original" : scopeState;
+  /** 多图时左栏预览挑的那一项（"page" = 整版，否则是 figureId）；null = 跟着导出内容走。只换预览，不改导出内容 */
+  const [previewId, setPreviewId] = useState<string | null>(null);
   const parked = useRef<ParkedState | null>(null);
   const [withReport, setWithReport] = useState(
     () => readExportDefaults().withProof,
@@ -321,11 +328,6 @@ export function ExportDialog() {
   const [strict, setStrict] = useState(
     () => readExportDefaults().strictInspection,
   );
-  /**
-   * 用户对本次导出的显式确认：阻断项与「无法核验」项都要点过才放行。
-   * **不做成记住的偏好**——每次导出都得重新面对一次当前这批问题。
-   */
-  const [confirmed, setConfirmed] = useState(false);
   /**
    * 打开对话框那一刻已经落定的作业：它是**上一回**的结果，不是这一回刚导完的。
    * 完成态脚部（「再次导出 · 完成」）只给这一回在对话框里跑完的作业；重新打开时
@@ -511,7 +513,7 @@ export function ExportDialog() {
      * 一次重渲染）。现取只是把这件事写明白，顺便挡住以后加依赖时的走样
      */
     const snap = useDocumentStore.getState().doc;
-    setConfirmed(false);
+    setPreviewId(null);
     const prior = useExportStore.getState();
     setSettledJobId(prior.job && !prior.running ? prior.job.job_id : null);
     setRevealError(null);
@@ -668,39 +670,15 @@ export function ExportDialog() {
     [summary.issues],
   );
   /**
-   * 需要用户点头才放行的东西：阻断项 + 无法核验项 + **这一次没查成**。
-   * 查不成时那份清单可能是更早留下的，不能当成"这一版的结论"。
+   * 导出时**还没处理的项**：阻断项 + 无法核验项 + **这一次没查成**（查不成时那份清单可能是更早
+   * 留下的，不能当成「这一版的结论」）。不再要用户点头——导出永远可点，这批项自动记进
+   * 样式检查报告（`forced` / `acknowledged` / `checkFailed`）与请求的 `validation.acknowledged`。
    */
-  const needsConfirm =
+  const hasUnhandled =
     errors.length > 0 || notVerifiable.length > 0 || summary.failed;
-  /**
-   * **用户确认的是"这一批"问题，不是"以后任何一批"。**
-   *
-   * 改了格式 / PPI、文档被编辑、或者上一次导出之后问题集合变了，那个勾必须
-   * 掉——否则新出现的阻断项会**不经确认**被导出，而 `start()` 还会把它们的
-   * 规则码写进样式检查报告，写成一句"用户知悉过"（PR #214 第三轮评审）。
-   *
-   * 指纹取自**要确认的那批问题的 issueId** + 「这次没查成」这一档。
-   */
-  const confirmKey = useMemo(
-    () =>
-      [
-        summary.failed ? "failed" : "",
-        ...errors.map((i) => i.issueId),
-        ...notVerifiable.map((i) => i.issueId),
-      ]
-        .sort()
-        .join("|"),
-    [errors, notVerifiable, summary.failed],
-  );
-  useEffect(() => {
-    setConfirmed(false);
-  }, [confirmKey]);
-  // 勾了确认框就**必须**留档：确认框上写着"这次确认会记录在报告里"，
-  // 而用户可能早就把报告关掉了——那样承诺的记录一份都不会产生
-  const reportRequired = needsConfirm && confirmed;
+  // 有未处理项就**必须**留档：它是「导出时未处理的项」唯一的落点，用户关掉报告开关也不能让它消失
+  const reportRequired = hasUnhandled;
   const reportOn = withReport || reportRequired;
-  const blocked = needsConfirm && !confirmed;
 
   /**
    * 这次导出会不会**照抄源位图**（而不是让引擎重画一张）。
@@ -764,10 +742,8 @@ export function ExportDialog() {
       includeReport: reportOn,
       strictInspection: strict,
       profileId: checkProfileId,
-      acknowledged:
-        needsConfirm && confirmed
-          ? [...new Set(errors.map((i) => i.ruleCode))]
-          : [],
+      // 后端的 `acknowledged` 策略 = 「这些阻断项导出时仍未处理」：自动带上，不再靠勾选
+      acknowledged: [...new Set(errors.map((i) => i.ruleCode))],
       documentId,
       doc,
       figureId,
@@ -804,7 +780,6 @@ export function ExportDialog() {
   const canStart =
     !prepared.error &&
     names.length > 0 &&
-    !blocked &&
     !filenameIssue &&
     (scope !== "original" || availability.ok);
 
@@ -896,20 +871,20 @@ export function ExportDialog() {
             },
             profile,
             {
-              forced: errors.length > 0 && confirmed,
-              acknowledged: needsConfirm
+              forced: errors.length > 0,
+              acknowledged: hasUnhandled
                 ? [
                     ...new Set(
                       [...errors, ...notVerifiable].map((i) => i.ruleCode),
                     ),
                   ]
                 : [],
-              // 「这一次没查成，用户自己确认了继续」是**独立的一档**：
+              // 「这一次没查成，仍然导出了」是**独立的一档**：
               // 只看 forced / acknowledged 的话，它与"干干净净跑过一遍"
-              // 在报告里长得一模一样，而确认框上写着这次确认会被记下来
+              // 在报告里长得一模一样
               checkFailed: summary.failed || !summary.ready,
               acknowledgedCheckFailed:
-                (summary.failed || !summary.ready) && confirmed,
+                (summary.failed || !summary.ready) && hasUnhandled,
             },
           )
         : undefined;
@@ -919,20 +894,12 @@ export function ExportDialog() {
         withProof: withReport,
         strictInspection: strict,
       });
-      const job = await runExport(
+      await runExport(
         inputOf({
           overwrite,
           report: report as Record<string, unknown> | undefined,
         }),
       );
-      /*
-       * **每次真的导过之后都要重新确认**：一次点头只对那一次导出有效。
-       *
-       * 撞名（`conflict`）除外——那一次**什么都没写**，界面正在问的是同一次
-       * 导出的另一个问题（覆盖还是另存），不是一次新的导出。在这里清掉的话，
-       * 用户得为同一批问题点两次头，而第二次点头没有增加任何信息。
-       */
-      if (job?.status !== "conflict") setConfirmed(false);
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [
@@ -945,8 +912,7 @@ export function ExportDialog() {
       filename,
       errors,
       notVerifiable,
-      confirmed,
-      needsConfirm,
+      hasUnhandled,
       reportOn,
       withReport,
       scope,
@@ -1012,6 +978,7 @@ export function ExportDialog() {
   /** 切换输出范围：用户没碰过文件名的话，默认名跟着换 */
   const changeScope = (next: ExportScope) => {
     setScope(next);
+    setPreviewId(null);
     if (!filenameTouched) {
       setFilename(
         next === "original" && figureName
@@ -1027,6 +994,7 @@ export function ExportDialog() {
    */
   const pickFigure = (id: string) => {
     setPickedFigureId(id);
+    setPreviewId(id);
     setScope("original");
     const f = figures.find((x) => x.figureId === id);
     if (!filenameTouched && f) setFilename(f.name);
@@ -1039,6 +1007,29 @@ export function ExportDialog() {
    * 说话——画布范围下同时出现「当前画布」与「还没定要导哪一张」是两个状态互相矛盾。
    */
   const originalSelectable = figures.length > 0;
+
+  /**
+   * 左栏预览此刻显示什么。单图 = 要导的那张；多图 = 用户点的那一项，没点过就跟着导出内容走
+   * （整版 → 页面，每张图单独导出 → 选中的那张）。点缩略图**只换预览**；只有「每张图单独导出」下
+   * 点图才同时改要导的那张（后端一次作业只导一张原图，见 `pickFigure`）。
+   */
+  const shownId: string | null = single
+    ? figureId
+    : (previewId ?? (scope === "canvas" ? "page" : (figureId ?? "page")));
+  const showPreview = (id: string) => {
+    if (id !== "page" && scope === "original") pickFigure(id);
+    else setPreviewId(id);
+  };
+  /** 带检查提示的对象（缩略图上的橙点）：当前画布上除建议级以外的问题所指的对象 */
+  const flaggedObjectIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const i of validationIssues) {
+      if (i.severity === "suggestion") continue;
+      if (i.objectRef.objectId) ids.add(i.objectRef.objectId);
+    }
+    return ids;
+  }, [validationIssues]);
+  const pageFlagged = flaggedObjectIds.size > 0 || errors.length > 0 || notVerifiable.length > 0;
 
   /**
    * 导出终局报一次状态。**只在终局报一次**（作业 + 终态为键，重复快照不再报），不在每次进度推送上报。
@@ -1230,7 +1221,6 @@ export function ExportDialog() {
             data-export-again
             disabled={!canStart}
             onClick={() => void start("ask")}
-            title={blocked ? ex("blockedTitle") : undefined}
           >
             {ex("exportAgain")}
           </Button>
@@ -1297,7 +1287,6 @@ export function ExportDialog() {
               data-export-start
               disabled={!canStart}
               onClick={() => void start("ask")}
-              title={blocked ? ex("blockedTitle") : undefined}
             >
               <Download size={ICON_SIZE.sm} />
               {ex("start")}
@@ -1330,39 +1319,56 @@ export function ExportDialog() {
           />
         )
       }
-      size="lg"
+      // 左栏预览 + 右栏表单两列；比 `xl` 再宽一点，右栏的标签 + 下拉才排得下
+      width="min(920px, calc(100vw - 32px))"
       covered={covered}
       anchor="export"
       status={statusBlock}
       footer={footer}
     >
       {/* 三组（2026-10-07 设计审计 §10.2）：输出（范围 · 文件名 · 位置）/ 格式（格式 · 分辨率 · 透明背景）/
-          检查（规范 · 摘要 + 阻断项 + 知情确认 · 严格核验 · 报告）。「高级选项」拆散进各自所属的组——
+          检查（规范 · 摘要 + 阻断项 + 一句提示 · 严格核验 · 报告）。「高级选项」拆散进各自所属的组——
           折起来的开关没人看得见，而它们决定的是交出去的文件 */}
-      <div className="flex flex-col gap-5">
+      <div className="grid grid-cols-1 gap-6 md:grid-cols-[minmax(0,280px)_minmax(0,1fr)]">
+      <ExportPreviewPane
+        single={single}
+        doc={doc}
+        figures={figures}
+        figureId={figureId}
+        shownId={shownId}
+        spec={availability.spec}
+        transparent={transparent && transparentApplies}
+        flaggedObjectIds={flaggedObjectIds}
+        pageFlagged={pageFlagged}
+        onShow={showPreview}
+      />
+      <div className="flex min-w-0 flex-col gap-5">
         <FormSection title={ex("groupOutput")} data-export-group="output">
           <FieldGroup>
             {/* 0. 范围 —— 一组互斥取值 → `Segmented`（宪法第五节；2026-09-14 审计 B1 / S3）。
                 `data-onboarding-anchor`：新手教程的 coachmark 挂在这一组上（Step 5 / 8） */}
             <section aria-label={ex("scopeLabel")} className="flex flex-col gap-2">
-              <FormRow label={ex("scopeLabel")}>
-                <Segmented<ExportScope>
-                  value={scope}
-                  onChange={changeScope}
-                  ariaLabel={ex("scopeLabel")}
-                  data-onboarding-anchor="export-scope"
-                  className="w-auto shrink-0"
-                  items={[
-                    {
-                      value: "original",
-                      label: ex("scopeOriginal"),
-                      disabled: !originalSelectable,
-                      title: originalSelectable ? undefined : ex("scopeUnavailable.no_figures"),
-                    },
-                    { value: "canvas", label: ex("scopeCanvas") },
-                  ]}
-                />
-              </FormRow>
+              {/* 单图编辑没有「输出范围」：固定按原图尺寸导。多图排版才有「导出内容」 */}
+              {!single && (
+                <FormRow label={ex("contentLabel")}>
+                  <Segmented<ExportScope>
+                    value={scope}
+                    onChange={changeScope}
+                    ariaLabel={ex("contentLabel")}
+                    data-onboarding-anchor="export-scope"
+                    className="w-auto shrink-0"
+                    items={[
+                      { value: "canvas", label: ex("contentWhole") },
+                      {
+                        value: "original",
+                        label: ex("contentEach"),
+                        disabled: !originalSelectable,
+                        title: originalSelectable ? undefined : ex("scopeUnavailable.no_figures"),
+                      },
+                    ]}
+                  />
+                </FormRow>
+              )}
               <ScopeNote
                 scope={scope}
                 available={availability.ok}
@@ -1371,27 +1377,15 @@ export function ExportDialog() {
                 ignored={availability.spec?.ignored ?? []}
                 fallback={availability.spec?.fallback ?? false}
               />
-              {/* 要导的是哪一张 —— **只在原图范围下**列出项目里的图（用户反馈 06；审计 B20）：
-                  还没定 / 当前那张导不出时清单直接展开；已经选好且项目里不止一张时收进折叠项；
-                  只有一张时不出现。画布范围下一个字都不出现——那是另一个范围的事 */}
-              {scope === "original" &&
-                figures.length > 0 &&
-                (!availability.ok ? (
-                  <FormRow>
-                    <FigurePicker figures={figures} selectedId={figureId} onPick={pickFigure} />
-                  </FormRow>
-                ) : figures.length > 1 ? (
-                  <FormRow>
-                    <Details key={figureId} className="w-full rounded-md">
-                      <Summary className="rounded-md text-sm text-ink-2 hover:text-ink">
-                        {ex("figureListLabel")}
-                      </Summary>
-                      <div className="mt-2">
-                        <FigurePicker figures={figures} selectedId={figureId} onPick={pickFigure} />
-                      </div>
-                    </Details>
-                  </FormRow>
-                ) : null)}
+              {/* 多图 + 每张图单独导出：要导哪一张在左栏缩略图条里点（后端一次作业只导一张原图），
+                  这里只说当前是哪一张，不再另摆一份清单 */}
+              {!single && scope === "original" && availability.ok && figure && (
+                <FormRow>
+                  <p data-export-each-note className="type-caption">
+                    {ex("contentEachNote", { name: figure.name })}
+                  </p>
+                </FormRow>
+              )}
             </section>
 
             {/* 1. 文件名 —— 默认名跟着导出对象走；校验在**输入的那一刻**就地给出 */}
@@ -1556,7 +1550,7 @@ export function ExportDialog() {
           </FieldGroup>
         </FormSection>
 
-        {/* 检查 —— 规范 · 摘要行 + 阻断项清单 + 知情确认 · 严格核验 · 报告；
+        {/* 检查 —— 规范 · 摘要行 + 阻断项清单 + 一句提示 · 严格核验 · 报告；
             摘要按导出目标取范围，完整清单在左侧问题面板（§四） */}
         <FormSection title={ex("groupChecks")} data-export-group="checks">
           <FieldGroup>
@@ -1631,9 +1625,9 @@ export function ExportDialog() {
                 />
               </FormRow>
 
-              {/* 阻断项逐条列出，紧挨着知情确认框（确认框是清单的下一个兄弟）：点头之前先看见
-                  自己在为什么点头。只有阻断级；警告 / 建议仍只给数量（完整清单归问题面板） */}
-              {(errors.length > 0 || needsConfirm) && (
+              {/* 阻断项逐条列出。只有阻断级；警告 / 建议仍只给数量（完整清单归问题面板）。
+                  **不拦导出，也没有任何警告句**（用户 10-21 裁决）：未处理的项只自动记进报告 */}
+              {errors.length > 0 && (
                 <FormRow align="start">
                   <div className="flex min-w-0 flex-1 flex-col gap-2">
                     {errors.length > 0 && (
@@ -1645,34 +1639,6 @@ export function ExportDialog() {
                           openProblems({ severities: ["error"], target: problemsTarget });
                         }}
                       />
-                    )}
-                    {needsConfirm && (
-                      <label className="flex items-start gap-2 text-sm text-ink-2">
-                        {/* `data-export-confirm`：e2e 与用例的稳定锚点——格式那四颗复选框排在它前面，
-                            「页面里第一颗 checkbox」早就不是它了 */}
-                        <Checkbox
-                          data-export-confirm
-                          checked={confirmed}
-                          onChange={(e) => setConfirmed(e.target.checked)}
-                          className="mt-0.5"
-                        />
-                        {/* 三种情况各是一句完整的话，不拼字符串：中文能靠「与」串起来，
-                            英文的从句位置不一样，拼出来的句子读着就是机翻 */}
-                        <span className="min-w-0 flex-1">
-                          {errors.length > 0 && notVerifiable.length > 0
-                            ? ex("confirmBoth", {
-                                errors: errors.length,
-                                notVerifiable: notVerifiable.length,
-                              })
-                            : errors.length > 0
-                              ? ex("confirmErrors", { errors: errors.length })
-                              : notVerifiable.length > 0
-                                ? ex("confirmNotVerifiable", {
-                                    notVerifiable: notVerifiable.length,
-                                  })
-                                : ex("confirmCheckFailed")}
-                        </span>
-                      </label>
                     )}
                   </div>
                 </FormRow>
@@ -1697,6 +1663,7 @@ export function ExportDialog() {
           </FieldGroup>
         </FormSection>
       </div>
+      </div>
     </Dialog>
   );
 
@@ -1710,80 +1677,6 @@ export function ExportDialog() {
 
 /* --------------------------------- 子组件 ---------------------------------- */
 
-/**
- * 项目里的图，点一张就是这次「按原图尺寸」要导的那张（用户反馈 06）。
- *
- * 之前的流程要求用户关掉对话框、回画布选中、再打开——而画布模式下就算选中了，
- * 对话框也读不到（只认快速编辑的 `activePanelId`）。现在候选就摆在这里。
- *
- * 缩略图**复用已有的东西**：面板有图内修改时挂 `renderStore` 里已经画好的那份
- * SVG（与画布同一份，不再发渲染请求）；其余走素材库同一条缩略图地址
- * （`panelSrc`，磁盘文件的分档缩略图）。`role=listbox`——不是 radio，范围那一组
- * 才是 radio，两组混在一起屏幕阅读器会数出四个「范围」。
- */
-function FigurePicker({
-  figures,
-  selectedId,
-  onPick,
-}: {
-  figures: readonly ExportableFigure[];
-  selectedId: string | null;
-  onPick: (figureId: string) => void;
-}) {
-  useTranslation("dialogs");
-  // 40px 的列表行（listRowClass；2026-10-07 设计审计 §10.2）：此前是一墙 92px 的带框小卡，
-  // 名字被截成三四个字。选中 = selected 底 + 600 + 行尾一个勾（不只靠颜色）
-  return (
-    <div
-      role="listbox"
-      aria-label={ex("figureListLabel")}
-      className="-mx-1 flex max-h-[200px] w-full flex-col gap-0.5 overflow-y-auto"
-    >
-      {figures.map((f) => {
-        const selected = f.figureId === selectedId;
-        return (
-          <button
-            key={f.figureId}
-            type="button"
-            role="option"
-            aria-selected={selected}
-            title={f.name}
-            data-export-figure={f.figureId}
-            onClick={() => onPick(f.figureId)}
-            className={cn(listRowClass({ size: "md", selected }), "min-h-10 w-full gap-2.5 px-2 text-left")}
-          >
-            <FigureThumb figure={f} />
-            <span className="min-w-0 flex-1 truncate">{f.name}</span>
-            {selected && <Check size={ICON_SIZE.sm} aria-hidden className="shrink-0 text-ink" />}
-          </button>
-        );
-      })}
-    </div>
-  );
-}
-
-/**
- * 一张图的缩略图。**不发新的渲染请求**：
- *
- * * 面板需要引擎产物（有图内修改且不是刚烙下的基线 / 脚本已领先磁盘 / runtime）
- *   且 store 里有这一版（或 Phase F 退路那一版）的 SVG → 内联它，与画布同源；
- * * 否则挂素材库同一条缩略图地址（磁盘原图的分档缩略图 / 位图原文件 /
- *   runtime 的 materialized 预览）；
- * * 什么都拿不到（runtime 还没物化、未知形态、Codex 内嵌画布里没有 HTTP）→
- *   诚实的空位，不挂一个碎图标。
- *
- * 有图内修改却拿不到引擎 SVG（位图档 / 已被内存预算清掉）时退到磁盘原图：
- * 缩略图在这里的职责是**认出是哪张图**，不是核对修改——核对归画布。
- */
-function FigureThumb({ figure }: { figure: ExportableFigure }) {
-  const source = useFigureThumbSource(figure, 160);
-  return (
-    <span className="flex h-7 w-10 shrink-0 items-center justify-center overflow-hidden rounded-xs bg-paper ring-1 ring-inset ring-border">
-      <FigureThumbArt source={source} boxRatio={10 / 7} />
-    </span>
-  );
-}
-
 /** `useFigureThumbSource` 的结果：清单行与对象头共用，取图只有这一处 */
 interface FigureThumbSource {
   svgMarkup: { __html: string } | undefined;
@@ -1793,7 +1686,7 @@ interface FigureThumbSource {
 }
 
 /**
- * 一张图缩略图的取图逻辑——**清单行（`FigureThumb`）与原图范围的对象头（`TargetHeader`）
+ * 一张图缩略图的取图逻辑——**左栏预览（`ExportPreviewPane`）与原图范围的对象头（`TargetHeader`）
  * 共用这一份**，不各起一套：原图范围导出的就是「带图内修改重渲」的那一版
  * （`_export_produce_original` → `_resolve_panel_source` 带 overrides），所以缩略图也得是
  * 同一版；头部若读磁盘原图而清单读编辑后，同屏会出现两个不一致的「这张图」。
@@ -1867,6 +1760,176 @@ function FigureThumbArt({
     );
   }
   return <span data-export-thumb="none" className="h-full w-full bg-surface-2" />;
+}
+
+/**
+ * 左栏预览（两档共用，取图复用对象头 / 清单行同一份 `useFigureThumbSource`，不新起渲染）：
+ *
+ * * 单图：导出后的样子——真实比例的大预览 + mm 尺寸；
+ * * 多图：顶部缩略图条「整版 / 每张图」，有检查提示的缩略图带橙点，下面是选中那一项的大预览。
+ *
+ * 点缩略图只是换预览（`onShow`）；是否同时改要导的那张由对话框按导出内容决定。
+ * 预览不是最终文件（位图格式的像素、图内修改的合成不在这里），沿用 `thumbNote` 的克制说明。
+ */
+function ExportPreviewPane({
+  single,
+  doc,
+  figures,
+  figureId,
+  shownId,
+  spec,
+  transparent,
+  flaggedObjectIds,
+  pageFlagged,
+  onShow,
+}: {
+  single: boolean;
+  doc: FigureDocument;
+  figures: readonly ExportableFigure[];
+  /** 此刻要导的那张 */
+  figureId: string | null;
+  /** 预览显示的项："page" = 整版，否则 figureId；null = 没有可显示的 */
+  shownId: string | null;
+  /** 要导的那张的最终图幅（只对 `figureId` 那张成立） */
+  spec: OriginalOutputSpec | null;
+  transparent: boolean;
+  flaggedObjectIds: ReadonlySet<string>;
+  pageFlagged: boolean;
+  onShow: (id: string) => void;
+}) {
+  useTranslation("dialogs");
+  const shownFigure =
+    shownId && shownId !== "page" ? (figures.find((f) => f.figureId === shownId) ?? null) : null;
+  const showPage = !single && !shownFigure;
+  const specMm =
+    shownFigure && shownFigure.figureId === figureId && spec && !spec.fallback
+      ? ([spec.widthMm, spec.heightMm] as const)
+      : null;
+  const sizeMm = showPage
+    ? ([doc.page.w, doc.page.h] as const)
+    : (specMm ?? shownFigure?.sizeMm ?? null);
+  const title = showPage ? doc.name : (shownFigure?.name ?? ex("targetNoFigure"));
+  const flagged = (f: ExportableFigure) => !!f.panel && flaggedObjectIds.has(f.panel.id);
+  return (
+    <div data-export-preview className="flex min-w-0 flex-col gap-3 md:sticky md:top-0 md:self-start">
+      {!single && (
+        <div
+          role="tablist"
+          aria-label={ex("previewTabs")}
+          data-export-preview-tabs
+          className="flex max-w-full gap-2 overflow-x-auto pb-1"
+        >
+          <PreviewTab
+            id="page"
+            label={ex("previewWhole")}
+            selected={showPage}
+            flagged={pageFlagged}
+            onShow={onShow}
+          >
+            <CanvasThumb page={doc.page} objects={doc.objects} className="h-full w-full" />
+          </PreviewTab>
+          {figures.map((f) => (
+            <PreviewTab
+              key={f.figureId}
+              id={f.figureId}
+              label={f.name}
+              selected={shownFigure?.figureId === f.figureId}
+              flagged={flagged(f)}
+              onShow={onShow}
+            >
+              <PreviewTabArt figure={f} />
+            </PreviewTab>
+          ))}
+        </div>
+      )}
+      <div
+        data-export-preview-stage
+        className="flex h-[260px] items-center justify-center overflow-hidden rounded-md border border-border bg-surface-2 p-3"
+      >
+        {showPage ? (
+          <CanvasThumb
+            page={doc.page}
+            objects={doc.objects}
+            className="h-full w-full"
+            transparent={transparent}
+          />
+        ) : shownFigure ? (
+          <PreviewStageArt figure={shownFigure} ratio={sizeMm ? sizeMm[0] / sizeMm[1] : undefined} />
+        ) : (
+          <ImageOff size={ICON_SIZE.md} className="text-ink-3" aria-hidden />
+        )}
+      </div>
+      <div className="min-w-0">
+        <p className="truncate text-sm font-medium text-ink" title={title}>
+          {title}
+        </p>
+        <p data-export-preview-size className="type-meta tabular-nums">
+          {sizeMm ? ex("mmSize", { w: round1(sizeMm[0]), h: round1(sizeMm[1]) }) : ex("sizeUnknownShort")}
+        </p>
+      </div>
+    </div>
+  );
+}
+
+function PreviewTab({
+  id,
+  label,
+  selected,
+  flagged,
+  onShow,
+  children,
+}: {
+  id: string;
+  label: string;
+  selected: boolean;
+  flagged: boolean;
+  onShow: (id: string) => void;
+  children: ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      role="tab"
+      aria-selected={selected}
+      title={label}
+      data-export-preview-tab={id}
+      data-export-figure={id === "page" ? undefined : id}
+      data-flagged={flagged ? "" : undefined}
+      onClick={() => onShow(id)}
+      className={cn(
+        "relative flex w-[64px] shrink-0 flex-col items-center gap-1 rounded-md p-1 outline-none focus-visible:focus-ring",
+        selected ? "bg-selected ring-1 ring-inset ring-border" : "hover:bg-surface-hover",
+      )}
+    >
+      <span className="flex h-10 w-full items-center justify-center overflow-hidden rounded-xs bg-paper ring-1 ring-inset ring-border">
+        {children}
+      </span>
+      <span className="w-full truncate text-center text-xs text-ink-2">{label}</span>
+      {flagged && (
+        <span
+          data-export-flag
+          role="img"
+          aria-label={translate("export.previewFlagged", { ns: "dialogs" })}
+          className="absolute right-1 top-1 h-2 w-2 rounded-full bg-warn"
+        />
+      )}
+    </button>
+  );
+}
+
+function PreviewTabArt({ figure }: { figure: ExportableFigure }) {
+  const source = useFigureThumbSource(figure, 160);
+  return <FigureThumbArt source={source} boxRatio={56 / 40} />;
+}
+
+/** 大预览：按真实图幅比例定盒（`ratio` 优先，其次素材自报 / 渲染清单里的比例），贴在 260 高的舞台里 */
+function PreviewStageArt({ figure, ratio }: { figure: ExportableFigure; ratio: number | undefined }) {
+  const source = useFigureThumbSource(figure, 480);
+  return (
+    <div className="flex h-full w-full items-center justify-center rounded-xs bg-paper">
+      <FigureThumbArt source={source} boxRatio={4 / 3} ratio={ratio} />
+    </div>
+  );
 }
 
 /**

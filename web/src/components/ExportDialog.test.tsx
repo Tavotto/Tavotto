@@ -263,6 +263,23 @@ const ppiSelect = () => document.body.querySelector('[role="combobox"][aria-labe
 const confirmBox = () =>
   document.body.querySelector<HTMLInputElement>('input[data-export-confirm]')
 
+/**
+ * 「导出内容」那一组单选（多图排版才有；单图编辑没有输出范围）。顺序固定为 [原图, 整版]：
+ * 老用例按下标认，界面上的视觉顺序是「整版 / 每张图单独导出」，两者不是一回事，认 `data-value`。
+ */
+const scopeRadios = () =>
+  ['original', 'canvas']
+    .map((v) =>
+      document.body.querySelector<HTMLButtonElement>(
+        `[data-onboarding-anchor="export-scope"] [data-value="${v}"]`,
+      ),
+    )
+    .filter((b): b is HTMLButtonElement => !!b)
+
+/** 有阻断项的信号：「要改」计数芯片（不再有任何警告句 / 红字提示） */
+const errorHint = () => document.body.querySelector('[data-count-chip="danger"]')
+const anyHint = errorHint
+
 const click = async (el: Element) => {
   await act(async () => {
     ;(el as HTMLElement).click()
@@ -350,12 +367,13 @@ describe('信息架构：删掉的东西不许回来', () => {
 describe('输出范围', () => {
   it('画布模式默认按画布；两个选项都在，不隐藏', async () => {
     await setup(9)
-    const radios = [...document.body.querySelectorAll('[role="radio"]')]
-    expect(radios.map((r) => r.textContent)).toEqual(['原图尺寸', '当前画布'])
+    const radios = scopeRadios()
+    // 多图排版才有「导出内容」；默认整版（= 画布范围），「每张图单独导出」= 原图范围
+    expect(radios.map((r) => r.textContent)).toEqual(['每张图单独导出', '整版'])
     expect(radios[1].getAttribute('aria-checked')).toBe('true')
   })
 
-  it('快速编辑默认按原图，并说出这次忽略了画布上的哪些变换', async () => {
+  it('单图编辑固定按原图，没有「输出范围」；并说出这次忽略了画布上的哪些变换', async () => {
     await setup(9)
     // 面板在画布上被缩小过 → 原图导出不套用这个缩放，界面必须说出来
     useDocumentStore.getState().commit(literal('缩小'), (d) => {
@@ -371,8 +389,8 @@ describe('输出范围', () => {
     await act(async () => {
       useUiStore.getState().setExportOpen(true)
     })
-    const radios = [...document.body.querySelectorAll('[role="radio"]')]
-    expect(radios[0].getAttribute('aria-checked')).toBe('true')
+    // 单图编辑隐藏范围选择，固定 original（请求体里的 scope 由下面「单图」组钉住）
+    expect(scopeRadios()).toHaveLength(0)
     expect(text()).toContain('80 × 60 mm')
     expect(text()).toContain('缩放')
   })
@@ -410,7 +428,7 @@ describe('输出范围', () => {
   // 都会被当成「另一条在管」。
   it('画布模式没选中、但项目里只有一张图：就按它导，不再要求「先选中一张图」', async () => {
     await setup(9)
-    const original = document.body.querySelector('[role="radio"]') as HTMLButtonElement
+    const original = scopeRadios()[0]
     expect(original.hasAttribute('disabled')).toBe(false)
     expect(text()).not.toContain('先选中一张图')
     expect(text()).not.toContain('在下方选一张')
@@ -427,10 +445,8 @@ describe('输出范围', () => {
     await act(async () => {
       useUiStore.getState().setExportOpen(true)
     })
-    // 范围按钮本身不禁用（项目里还有图可挑，清单就在下面）；灰的是「开始导出」
-    const original = document.body.querySelector('[role="radio"]') as HTMLButtonElement
-    expect(original.getAttribute('aria-checked')).toBe('true')
-    expect(original.hasAttribute('disabled')).toBe(false)
+    // 单图编辑没有范围按钮；灰的是「开始导出」
+    expect(scopeRadios()).toHaveLength(0)
     expect(button('开始导出')!.hasAttribute('disabled')).toBe(true)
     expect(text()).toContain('源文件现在找不到了')
     // 三个原因折成两句的话会说成这一句，用户照做之后按钮还是灰的
@@ -492,31 +508,31 @@ describe('对话框开着时素材没了', () => {
   })
 })
 
-describe('阻断与确认', () => {
-  it('有 error 时默认拦住导出，勾选确认后才放行，并写进样式检查报告', async () => {
+describe('阻断不拦导出：无警告句 + 自动记录未处理的项', () => {
+  it('有 error 时导出照样可点，没有确认勾选框也没有警告句；未处理的项自动写进样式检查报告', async () => {
     await setup(8) // 8pt = 撞绝对下限 → error
-    expect(text()).toContain('阻断')
+    expect(text()).toContain('要改')
 
-    const go = button('开始导出')!
-    expect(go.hasAttribute('disabled')).toBe(true)
-
-    const check = confirmBox()!
-    expect(check, '缺少显式确认勾选框').toBeTruthy()
-    await act(async () => {
-      check.click()
-    })
-
+    // 知情确认框整个删掉了；导出永远可点
+    expect(confirmBox(), '确认勾选框已删除').toBeNull()
     expect(button('开始导出')!.hasAttribute('disabled')).toBe(false)
+    expect(text(), '不出现任何警告句').not.toContain('投稿可能被退回')
+    expect(document.body.querySelector('[data-export-fix]')).toBeNull()
+    expect(document.body.querySelector('[data-export-hint]')).toBeNull()
+    expect(errorHint()?.textContent).toBe('1 项要改')
+
     await click(button('开始导出')!)
 
     expect(exportBodies).toHaveLength(1)
     const report = exportBodies[0].style_check_report as Record<string, unknown>
-    // 勾了确认就**必须**留档：确认框上写着这次确认会被记录，
-    // 而报告开关是个记住的偏好，用户可能早就关掉了
-    expect(report, '确认之后必须生成样式检查报告').toBeTruthy()
+    // 有未处理项就**必须**留档：报告是「导出时未处理的项」唯一的落点，
+    // 报告开关是个记住的偏好，用户可能早就关掉了
+    expect(report, '有未处理项必须生成样式检查报告').toBeTruthy()
     expect((report.profile as Record<string, string>).profile_id).toBe('lab-publication-v1')
     expect(report.forced).toBe(true)
     expect(report.acknowledged).toContain('font-below-absolute-floor')
+    // 请求里的检查策略也自动是 acknowledged（后端据此放行阻断项，同时把规则码记进回执）
+    expect((exportBodies[0].validation as { policy: string }).policy).toBe('acknowledged')
     const checks = report.checks as { id: string; severity: string }[]
     expect(checks.some((c) => c.id === 'font-below-absolute-floor' && c.severity === 'error')).toBe(
       true,
@@ -533,19 +549,16 @@ describe('阻断与确认', () => {
   })
 })
 
-describe('确认只对"这一批"问题有效', () => {
-  it('问题集合变了，那个勾必须掉（否则新问题会不经确认被导出）', async () => {
+describe('未处理的项随每次导出自动记录', () => {
+  it('问题集合变了，下一次导出的报告记的是现在这一批（没有确认状态可以过期）', async () => {
     await setup(8) // 8pt 刻度 → 一条阻断项
-    const check = () => confirmBox()!
-    await act(async () => {
-      check().click()
-    })
-    expect(check().checked).toBe(true)
-    expect(button('开始导出')!.hasAttribute('disabled')).toBe(false)
+    await click(button('开始导出')!)
+    const first = exportBodies[0].style_check_report as { checks: unknown[] }
+    expect(first.checks).toHaveLength(1)
+    await click(button('再次导出')!)
+    expect(exportBodies).toHaveLength(2)
 
-    const before = text()
-
-    // 文档被编辑，冒出**第二条**阻断项：确认过的那一批已经不是现在这一批
+    // 文档被编辑，冒出**第二条**阻断项
     await act(async () => {
       useDocumentStore.getState().commit(literal('加一段小字'), (d) => {
         d.objects = [
@@ -571,21 +584,22 @@ describe('确认只对"这一批"问题有效', () => {
       runValidation()
       await new Promise<void>((r) => setTimeout(r, 0))
     })
-    expect(text(), '这一步得真的改变问题集合，不然这条用例是空的').not.toBe(before)
-    const after = confirmBox()
-    expect(after, '还应该要确认').toBeTruthy()
-    expect(after!.checked, '问题集合变了，勾还留着 = 新问题不经确认就放行').toBe(false)
+    expect(errorHint()?.textContent).toMatch(/^[2-9] 项要改/)
+    await click(button('再次导出')!)
+    expect(exportBodies).toHaveLength(3)
+    const second = exportBodies[2].style_check_report as { checks: unknown[]; forced: boolean }
+    expect(second.forced).toBe(true)
+    expect(second.checks.length, '报告里是现在这一批，不是上一次的').toBeGreaterThan(first.checks.length)
   })
 
-  it('导出一次之后要重新确认（一次点头只对那一次有效）', async () => {
+  it('导出之后下一次仍然带着未处理的项（不靠任何点头状态）', async () => {
     await setup(8)
-    const check = () => confirmBox()!
-    await act(async () => {
-      check().click()
-    })
     await click(button('开始导出')!)
     expect(exportBodies).toHaveLength(1)
-    expect(check().checked, '导出之后那个勾还留着 = 下一次不经确认就放行').toBe(false)
+    await click(button('再次导出')!)
+    expect(exportBodies).toHaveLength(2)
+    expect((exportBodies[1].style_check_report as { forced: boolean }).forced).toBe(true)
+    expect((exportBodies[1].validation as { policy: string }).policy).toBe('acknowledged')
   })
 })
 
@@ -618,12 +632,12 @@ describe('统一 ExportRequest', () => {
 })
 
 describe('SVG 导出（X03）', () => {
-  it('SVG-only keeps its selection and acknowledgement gate after following an error count chip', async () => {
+  it('SVG-only keeps its selection (and stays exportable) after following an error count chip', async () => {
     await setup(8)
     await click(formatBox('SVG'))
     await click(formatBox('PDF'))
     await click(formatBox('PNG'))
-    expect(button('开始导出')!.hasAttribute('disabled')).toBe(true)
+    expect(button('开始导出')!.hasAttribute('disabled')).toBe(false)
     const chip = document.body.querySelector<HTMLElement>('[data-export-group="checks"] [data-count-chip="danger"]')!
     expect(chip, 'the real font-floor issue must produce a blocking count chip').not.toBeNull()
     await click(chip)
@@ -636,9 +650,8 @@ describe('SVG 导出（X03）', () => {
     expect(formatBox('PNG').checked).toBe(false)
     expect(document.body.querySelector('[data-export-svg-note]')).not.toBeNull()
     expect(ppiSelect()).toBeNull()
-    expect(button('开始导出')!.hasAttribute('disabled')).toBe(true)
+    expect(button('开始导出')!.hasAttribute('disabled')).toBe(false)
     expect(exportBodies).toHaveLength(0)
-    await click(confirmBox()!)
     await click(button('开始导出')!)
     expect(exportBodies).toHaveLength(1)
     expect(exportBodies[0].formats).toEqual(['svg'])
@@ -760,42 +773,32 @@ describe('文件名的跨平台校验', () => {
   })
 })
 
-describe('阻断闸没有第二条路绕过去', () => {
-  it('撞名之后点「覆盖」，不许把同一批阻断项不经确认再导一次', async () => {
+describe('撞名之后「覆盖」带着的未处理项与第一次一致', () => {
+  it('撞名之后点「覆盖」：同一批阻断项照样自动记录，不会因为没有确认状态而丢', async () => {
     jobStatus = 'conflict'
     await setup(8) // 一条阻断项
-    const check = () => confirmBox()!
-    await act(async () => {
-      check().click()
-    })
     await click(button('开始导出')!)
     expect(exportBodies).toHaveLength(1)
     expect(exportBodies[0].validation).toMatchObject({ policy: 'acknowledged' })
 
-    // 撞名那一次**什么都没写**，界面问的是同一次导出的另一个问题 ——
-    // 确认不该被清掉，「覆盖」也就照常可用
+    // 撞名那一次**什么都没写**，界面问的是同一次导出的另一个问题
     await click(button('覆盖')!)
     expect(exportBodies).toHaveLength(2)
     expect(
       (exportBodies[1].validation as Record<string, unknown>).acknowledged,
-      '第二次带着空的 acknowledged = 替用户签了一个他没签过的字',
+      '第二次带着空的 acknowledged = 报告里丢了这批未处理项',
     ).toEqual((exportBodies[0].validation as Record<string, unknown>).acknowledged)
     expect(exportBodies[1].include_style_check_report).toBe(true)
   })
 
-  it('撞名之后问题集合变了 → 「覆盖」这条路也必须被闸挡住', async () => {
+  it('撞名之后问题集合变了：「覆盖」带的是现在这一批（报告随之变）', async () => {
     jobStatus = 'conflict'
     await setup(8)
-    const check = () => confirmBox()!
-    await act(async () => {
-      check().click()
-    })
     await click(button('开始导出')!)
     expect(exportBodies).toHaveLength(1)
     expect(button('覆盖'), '这一步得真的停在冲突条上').toBeTruthy()
+    const first = (exportBodies[0].style_check_report as { checks: unknown[] }).checks.length
 
-    // 文档被编辑，冒出**另一条**阻断项：确认过的那一批已经不是现在这一批，
-    // 那个勾会被撤销 —— 而「覆盖」按钮没有经过主按钮的 disabled
     await act(async () => {
       useDocumentStore.getState().commit(literal('加一段小字'), (d) => {
         d.objects = [
@@ -819,13 +822,13 @@ describe('阻断闸没有第二条路绕过去', () => {
       runValidation()
       await new Promise<void>((r) => setTimeout(r, 0))
     })
-    expect(check().checked, '问题集合变了，勾应该已经掉了').toBe(false)
 
     await click(button('覆盖')!)
+    expect(exportBodies).toHaveLength(2)
     expect(
-      exportBodies,
-      '「覆盖」绕过了主按钮的 disabled —— 闸必须在 start() 里',
-    ).toHaveLength(1)
+      (exportBodies[1].style_check_report as { checks: unknown[] }).checks.length,
+      '「覆盖」走的是 start()，报告取的是现在这一批',
+    ).toBeGreaterThan(first)
   })
 })
 
@@ -855,15 +858,13 @@ describe('原图范围不被画布摆放阻断（FLAG-B1）', () => {
     await offPage(9)
     await reopen()
     expect(text()).toContain('超出页面范围')
-    expect(button('开始导出')!.hasAttribute('disabled'), '前提：画布范围下它是阻断').toBe(true)
+    expect(errorHint(), '前提：画布范围下它是阻断').toBeTruthy()
 
     useWorkspaceStore.setState({ mode: 'fast_edit', activePanelId: 'p1' })
     await reopen()
-    expect(document.body.querySelectorAll('[role="radio"]')[0].getAttribute('aria-checked')).toBe(
-      'true',
-    )
+    expect(scopeRadios(), '单图编辑固定按原图，没有范围可选').toHaveLength(0)
     expect(text()).not.toContain('超出页面范围')
-    expect(confirmBox()).toBeNull()
+    expect(anyHint()).toBeNull()
     expect(button('开始导出')!.hasAttribute('disabled')).toBe(false)
     await click(button('开始导出')!)
     expect(exportBodies).toHaveLength(1)
@@ -873,9 +874,6 @@ describe('原图范围不被画布摆放阻断（FLAG-B1）', () => {
   it('样式检查报告：画布范围认画布页与 out-of-page；原图范围只认这张图的问题与图幅', async () => {
     await offPage(8) // 8 pt 撞绝对下限：让原图范围也有一条要确认的阻断，报告才会生成
     await reopen()
-    await act(async () => {
-      confirmBox()!.click()
-    })
     await click(button('开始导出')!)
     const canvasReport = exportBodies[0].style_check_report as Record<string, unknown>
     expect(canvasReport.acknowledged).toContain('out-of-page')
@@ -883,9 +881,6 @@ describe('原图范围不被画布摆放阻断（FLAG-B1）', () => {
 
     useWorkspaceStore.setState({ mode: 'fast_edit', activePanelId: 'p1' })
     await reopen()
-    await act(async () => {
-      confirmBox()!.click()
-    })
     await click(button('开始导出')!)
     expect(exportBodies).toHaveLength(2)
     expect(exportBodies[1].scope).toBe('original')
@@ -911,15 +906,13 @@ describe('原图范围不被画布摆放阻断（FLAG-B1）', () => {
       ;(d.objects[0] as PanelObject).h = 30
     })
     await reopen()
-    expect(button('开始导出')!.hasAttribute('disabled'), '前提：画布范围下 4.5 pt 是阻断').toBe(true)
-    expect(confirmBox()).toBeTruthy()
+    expect(errorHint(), '前提：画布范围下 4.5 pt 是阻断').toBeTruthy()
+    expect(errorHint()).toBeTruthy()
 
     useWorkspaceStore.setState({ mode: 'fast_edit', activePanelId: 'p1' })
     await reopen()
-    expect(document.body.querySelectorAll('[role="radio"]')[0].getAttribute('aria-checked')).toBe(
-      'true',
-    )
-    expect(confirmBox(), '原图里是 9 pt，没有要确认的阻断').toBeNull()
+    expect(scopeRadios(), '单图编辑固定按原图，没有范围可选').toHaveLength(0)
+    expect(anyHint(), '原图里是 9 pt，没有要确认的阻断').toBeNull()
     expect(button('开始导出')!.hasAttribute('disabled')).toBe(false)
     await click(button('开始导出')!)
     expect(exportBodies).toHaveLength(1)
@@ -946,16 +939,11 @@ describe('原图范围不被画布摆放阻断（FLAG-B1）', () => {
     expect(home, '前提：p1 在另一张画布上').toBeTruthy()
     expect(useDocumentStore.getState().activeCanvasId).not.toBe(home!.id)
     await reopen()
-    await click(document.body.querySelectorAll('[role="radio"]')[0])
-    expect(document.body.querySelectorAll('[role="radio"]')[0].getAttribute('aria-checked')).toBe(
-      'true',
-    )
+    await click(scopeRadios()[0])
+    expect(scopeRadios()[0].getAttribute('aria-checked')).toBe('true')
     // 这张图自己的阻断（8 pt）必须在；画布摆放那条不算
-    expect(button('开始导出')!.hasAttribute('disabled'), '8 pt 的阻断被裁没了').toBe(true)
+    expect(errorHint(), '8 pt 的阻断被裁没了').toBeTruthy()
     expect(text()).not.toContain('超出页面范围')
-    await act(async () => {
-      confirmBox()!.click()
-    })
     await click(button('开始导出')!)
     expect(exportBodies).toHaveLength(1)
     const report = exportBodies[0].style_check_report as Record<string, unknown>
@@ -996,12 +984,10 @@ describe('原图范围不被画布摆放阻断（FLAG-B1）', () => {
     expect(s.doc.profile?.id, '前提：当前画布绑的是 lab-publication').toBe('lab-publication-v1')
 
     await reopen()
-    await click(document.body.querySelectorAll('[role="radio"]')[0])
-    expect(document.body.querySelectorAll('[role="radio"]')[0].getAttribute('aria-checked')).toBe(
-      'true',
-    )
+    await click(scopeRadios()[0])
+    expect(scopeRadios()[0].getAttribute('aria-checked')).toBe('true')
     // 按 free-form 算：8 pt 合规，没有要确认的东西
-    expect(confirmBox(), '8 pt 在图所在画布的规范下不是阻断').toBeNull()
+    expect(anyHint(), '8 pt 在图所在画布的规范下不是阻断').toBeNull()
     expect(button('开始导出')!.hasAttribute('disabled')).toBe(false)
     expect(
       document.body.querySelector('[data-export-profile-canvas]'),
@@ -1017,7 +1003,7 @@ describe('原图范围不被画布摆放阻断（FLAG-B1）', () => {
     expect(exportBodies[0].inspection).toEqual({ mode: 'strict', profile_id: 'free-form-v1' })
 
     // 对照：画布范围 = 当前画布，规范跟着换成 lab-publication
-    await click(document.body.querySelectorAll('[role="radio"]')[1])
+    await click(scopeRadios()[1])
     expect(document.body.querySelector('[data-export-profile-canvas]')).toBeNull()
     // 上一次已经导完：新的一次是显式的「再次导出」
     await click(document.body.querySelector<HTMLButtonElement>('[data-export-again]')!)
@@ -1528,7 +1514,7 @@ const openDialog = async () => {
 const filenameInput = () =>
   [...document.body.querySelectorAll('input')].find((i) => i.type !== 'checkbox') as HTMLInputElement
 
-const radios = () => [...document.body.querySelectorAll('[role="radio"]')] as HTMLButtonElement[]
+const radios = () => scopeRadios()
 
 const typeFilename = async (value: string) => {
   const input = filenameInput()
@@ -1541,16 +1527,22 @@ const typeFilename = async (value: string) => {
 }
 
 describe('T33 · 默认文件名跟着导出对象走', () => {
-  it('快速编辑里默认是那张图的名字，不是画布名；切到画布再切回来各归各', async () => {
+  it('单图编辑里默认是那张图的名字，不是画布名；多图排版里整版 / 每张图各归各', async () => {
     await stage({ panels: [panel], renders: { 'Fig1.pdf': manifestWithTicks(1, 9) } })
     useWorkspaceStore.setState({ mode: 'fast_edit', activePanelId: 'p1' })
     await mountDialogs()
     await openDialog()
     expect(filenameInput().value, '面板没起名就用文件 stem').toBe('Fig1')
-    await click(radios()[1])
+    expect(radios(), '单图编辑没有范围可切').toHaveLength(0)
+    // 回到多图排版：默认整版，名字是画布名；切到「每张图单独导出」换成图名，再切回来各归各
+    useWorkspaceStore.setState({ mode: 'layout', activePanelId: null })
+    await act(async () => useUiStore.getState().setExportOpen(false))
+    await openDialog()
     expect(filenameInput().value).toBe(useDocumentStore.getState().doc.name)
     await click(radios()[0])
     expect(filenameInput().value).toBe('Fig1')
+    await click(radios()[1])
+    expect(filenameInput().value).toBe(useDocumentStore.getState().doc.name)
   })
 
   it('面板起过名就用面板名', async () => {
@@ -1566,14 +1558,16 @@ describe('T33 · 默认文件名跟着导出对象走', () => {
 
   it('用户改过名字之后切范围**不再替他换**（按标志判，不比字符串）', async () => {
     await stage({ panels: [panel], renders: { 'Fig1.pdf': manifestWithTicks(1, 9) } })
-    useWorkspaceStore.setState({ mode: 'fast_edit', activePanelId: 'p1' })
+    useWorkspaceStore.setState({ mode: 'layout', activePanelId: null })
     await mountDialogs()
     await openDialog()
+    await click(radios()[0])
     await typeFilename('mine')
     await click(radios()[1])
     expect(filenameInput().value).toBe('mine')
     // 恰好敲回默认值也算改过：切范围仍然不动它
     await typeFilename('Fig1')
+    await click(radios()[0])
     await click(radios()[1])
     expect(filenameInput().value).toBe('Fig1')
   })
@@ -1623,8 +1617,8 @@ describe('T33 · 导出对象头部：名字 · 范围 · 尺寸只出现一次'
     expect(header()).toContain('80 × 57.6 mm')
     expect(header()).toContain('磁盘上的原文件为 75.3 × 58.7 mm')
     expect(header()).toContain('将按图幅 80 × 57.6 mm 导出')
-    // 权威只有一个：头部之外不再报第二个尺寸
-    expect(text().split('80 × 57.6 mm').length - 1).toBe(2)
+    // 同一份 spec 只在三处出现：对象头、左栏预览、磁盘原件那句「将按图幅 … 导出」
+    expect(text().split('80 × 57.6 mm').length - 1).toBe(3)
   })
 
   it('位图源没有「裁过」这回事：尺寸不一致也不说那句', async () => {
@@ -1705,6 +1699,11 @@ describe('P02 · 对象头说清「写出哪些文件」与「检查的是哪份
 
   it('原图 ↔ 画布：头部文件名、检查对象各归各，不串', async () => {
     await openFast()
+    // 多图排版里切「每张图单独导出」才是原图范围（单图编辑固定原图、没有画布可切）
+    useWorkspaceStore.setState({ mode: 'layout', activePanelId: null })
+    await act(async () => useUiStore.getState().setExportOpen(false))
+    await openDialog()
+    await click(radios()[0])
     const canvasName = useDocumentStore.getState().doc.name
     expect(files()).toBe('Fig1.pdf · Fig1.png')
     expect(checkScope()).toContain('仅查原图「Fig1」')
@@ -1722,7 +1721,7 @@ describe('P02 · 对象头说清「写出哪些文件」与「检查的是哪份
     useWorkspaceStore.setState({ mode: 'fast_edit', activePanelId: 'p1' })
     await mountDialogs()
     await openDialog()
-    expect(radios()[0].getAttribute('aria-checked')).toBe('true')
+    expect(radios(), '单图编辑固定原图').toHaveLength(0)
     expect(files()).toBeNull()
     expect(document.body.querySelector('[data-export-target]')?.textContent ?? '').not.toContain(
       useDocumentStore.getState().doc.name,
@@ -1742,9 +1741,11 @@ describe('T33 · 检查摘要按导出目标取范围', () => {
       renders: { 'Fig1.pdf': manifestWithTicks(1, 9), 'Fig2.pdf': manifestWithTicks(1, 8) },
       page: { w: 80, h: 40 },
     })
-    useWorkspaceStore.setState({ mode: 'fast_edit', activePanelId: 'p1' })
+    useWorkspaceStore.setState({ mode: 'layout', activePanelId: null })
     await mountDialogs()
     await openDialog()
+    await click(radios()[0]) // 多图排版 → 每张图单独导出（原图范围）
+    await click(figureOptions()[0]) // 在左栏缩略图条里点 Fig1：就是这次要导的那张
     expect(radios()[0].getAttribute('aria-checked')).toBe('true')
     // 没查出问题时说的是「按哪套规范、查的哪个范围没查出」，不是一句「检查通过」
     const ok = document.body.querySelector('[data-export-check-ok]')
@@ -1763,7 +1764,7 @@ describe('T33 · 检查摘要按导出目标取范围', () => {
     expect(text()).toMatch(/\d+ 项要改/)
     expect(text()).toContain('1 项留意')
     expect(text()).toContain('查整个画布「')
-    expect(button('开始导出')!.hasAttribute('disabled')).toBe(true)
+    expect(errorHint(), '画布范围有阻断：计数芯片').toBeTruthy()
   })
 
   it('换界面语言后结论行里的规范名跟着换（#1194 评审 P2）', async () => {
@@ -1808,11 +1809,8 @@ describe('T33 · 检查摘要按导出目标取范围', () => {
     expect(errorsOn('p2'), '夹具里另一张图也得有阻断项，否则这条什么都没证明').toBeGreaterThan(0)
     expect(text()).toContain(`${errorsOn('p1')} 项要改`)
     expect(text()).not.toContain(`${errorsOn('p1') + errorsOn('p2')} 项要改`)
-    expect(button('开始导出')!.hasAttribute('disabled')).toBe(true)
-    const check = confirmBox()!
-    await act(async () => {
-      check.click()
-    })
+    expect(errorHint(), '计数芯片在，但不拦导出').toBeTruthy()
+    expect(button('开始导出')!.hasAttribute('disabled')).toBe(false)
     await click(button('开始导出')!)
     const report = exportBodies[0].style_check_report as Record<string, unknown>
     const checks = report.checks as { id: string; object_ids?: string[]; objectIds?: string[] }[]
@@ -1871,7 +1869,7 @@ describe('#1228 评审 P2 · 不在画布上的原图不借画布的检查结论
         { ...offCanvas, native_w_mm: 70, native_h_mm: 50 },
       ],
     }) as never)
-    useWorkspaceStore.setState({ mode: 'fast_edit', activePanelId: 'p1' })
+    useWorkspaceStore.setState({ mode: 'layout', activePanelId: null })
     await mountDialogs()
     await openDialog()
   }
@@ -1881,7 +1879,7 @@ describe('#1228 评审 P2 · 不在画布上的原图不借画布的检查结论
     if (opt) await click(opt)
   }
 
-  it('范围句如实说没检查；画布上的阻断项不挡这次导出；摘要是「没查成」要确认', async () => {
+  it('范围句如实说没检查；画布上的阻断项不进这次导出；摘要是「没查成」，灰色提示', async () => {
     await setupOff()
     const canvasErrors = useValidationStore.getState().issues.filter((i) => i.severity === 'error').length
     expect(canvasErrors, '前提：当前画布上有阻断项').toBeGreaterThan(0)
@@ -1891,13 +1889,9 @@ describe('#1228 评审 P2 · 不在画布上的原图不借画布的检查结论
     expect(document.body.querySelector('[data-export-check-ok]')).toBeNull()
     expect(document.body.querySelector('[data-blocking-issue]'), '画布的阻断项不列给这次导出').toBeNull()
     expect(text()).not.toMatch(/\d+ 项要改/)
-    // 门禁仍在：没查，要自己点头
-    const box = confirmBox()
-    expect(box, '没查成 = 要确认').toBeTruthy()
-    expect(button('开始导出')!.hasAttribute('disabled')).toBe(true)
-    await act(async () => {
-      box!.click()
-    })
+    // 没查成：不拦导出、也没有警告句，仍记进报告的 checkFailed 档
+    expect(document.body.querySelector('[data-export-hint]')).toBeNull()
+    expect(errorHint()).toBeNull()
     expect(button('开始导出')!.hasAttribute('disabled')).toBe(false)
     await click(button('开始导出')!)
     const report = exportBodies[0].style_check_report as { checks?: { id: string }[] } | undefined
@@ -1907,18 +1901,18 @@ describe('#1228 评审 P2 · 不在画布上的原图不借画布的检查结论
     ).toHaveLength(0)
   })
 
-  it('对照：图在画布上时仍是「仅查原图」、画布阻断项照常拦', async () => {
+  it('对照：图在画布上时仍是「仅查原图」、画布阻断项照常给计数芯片', async () => {
     await setupOff()
     await click(originalRadio())
     const opt = figureOptions().find((o) => o.textContent?.includes('Fig1'))
     if (opt) await click(opt)
     expect(checkScope()).not.toContain('不在画布上')
     expect(text()).toMatch(/\d+ 项要改/)
-    expect(button('开始导出')!.hasAttribute('disabled')).toBe(true)
+    expect(errorHint(), '画布阻断项照常给计数芯片，但不拦').toBeTruthy()
   })
 })
 
-describe('T33 · 阻断项逐条列出，紧挨着知情确认，每条可定位', () => {
+describe('T33 · 阻断项逐条列出，其下一句红字提示，每条可定位', () => {
   const list = () => document.body.querySelector('[aria-label="阻断性问题"]')
   const rows = () => [...(list()?.querySelectorAll('[data-blocking-issue]') ?? [])]
   const locateButtons = () => [...document.body.querySelectorAll('button')].filter((b) => b.textContent === '定位')
@@ -1944,8 +1938,8 @@ describe('T33 · 阻断项逐条列出，紧挨着知情确认，每条可定位
     expect(row.textContent).toContain('x 刻度 1')
     expect(row.textContent).toContain('8.00 pt')
     expect(locateButtons()).toHaveLength(errors.length)
-    // 列表紧挨着确认框：确认框是它的下一个兄弟
-    expect(list()!.nextElementSibling?.querySelector('input[type="checkbox"]')).toBeTruthy()
+    // 列表之后没有任何警告句 / 确认框
+    expect(list()!.nextElementSibling).toBeNull()
     // 警告（page-aspect）不逐条列
     expect(text()).toContain('1 项留意')
     expect(text()).not.toContain('页面比例')
@@ -2116,8 +2110,10 @@ describe('T35 · 设置压在导出之上：一次只显示一个主对话框', 
   })
 })
 
-const originalRadio = () => document.body.querySelector('[role="radio"]') as HTMLButtonElement
-const figureOptions = () => [...document.body.querySelectorAll('[role="option"]')] as HTMLElement[]
+const originalRadio = () => scopeRadios()[0]
+/** 多图排版左栏缩略图条里的「图」（不含「整版」那一项）；点它 = 换预览，「每张图单独导出」下同时选中要导的那张 */
+const figureOptions = () =>
+  [...document.body.querySelectorAll('[data-export-preview-tab]:not([data-export-preview-tab="page"])')] as HTMLElement[]
 
 describe('检查芯片 / 「在问题面板中查看」带着导出目标去（#1106 P2）', () => {
   /** 面板此刻会当作「当前图」的那张（与 `useCurrentFigure` 同一个判据） */
@@ -2254,7 +2250,9 @@ describe('画布模式下选中的图就是要导的那张（用户反馈 06）'
     // 默认按画布：一句「还没定要导哪一张」都不出现——那是原图范围的事，
     // 与「当前画布」并排出现就是两个状态互相矛盾；清单也不摆
     expect(text()).not.toContain('在下方选一张')
-    expect(figureOptions()).toHaveLength(0)
+    // 左栏缩略图条永远在（整版预览 + 每张图），点图只换预览、不改导出内容
+    expect(figureOptions()).toHaveLength(2)
+    expect(scopeRadios()[1].getAttribute('aria-checked'), '默认整版').toBe('true')
     expect(button('开始导出')!.hasAttribute('disabled')).toBe(false)
     // 「原图尺寸」可点（项目里有图可挑），点了之后清单展开、指引出现、主按钮灰
     expect(originalRadio().hasAttribute('disabled')).toBe(false)
@@ -2268,7 +2266,7 @@ describe('画布模式下选中的图就是要导的那张（用户反馈 06）'
 
     await click(options[1])
     // 点了就是选了：范围切到原图、按钮亮、说的是这张图的尺寸
-    const radios = [...document.body.querySelectorAll('[role="radio"]')]
+    const radios = scopeRadios()
     expect(radios[0].getAttribute('aria-checked')).toBe('true')
     expect(originalRadio().hasAttribute('disabled')).toBe(false)
     expect(figureOptions()[1].getAttribute('aria-selected')).toBe('true')
@@ -2309,13 +2307,15 @@ describe('画布模式下选中的图就是要导的那张（用户反馈 06）'
 
   it('清单只在原图范围下出现：可用时收进折叠项，不可用时展开（那句提示得指得到东西）', async () => {
     await setupTwo({ select: ['p2'] })
-    // 默认按画布：不摆列表
-    expect(figureOptions()).toHaveLength(0)
+    // 缩略图条永远在；整版时点图只换预览，导出内容仍是整版
+    expect(figureOptions()).toHaveLength(2)
+    await click(figureOptions()[0])
+    expect(figureOptions()[0].getAttribute('aria-selected')).toBe('true')
+    expect(scopeRadios()[1].getAttribute('aria-checked')).toBe('true')
     await click(originalRadio())
     expect(figureOptions()).toHaveLength(2)
-    // 切回画布：收起
-    await click([...document.body.querySelectorAll('[role="radio"]')][1])
-    expect(figureOptions()).toHaveLength(0)
+    await click(scopeRadios()[1])
+    expect(figureOptions()).toHaveLength(2)
     // 选中的那张源文件没了：画布范围下一个字不说（导画布什么都没挡着）……
     await act(async () => {
       useAssetStore.setState({
@@ -2324,7 +2324,6 @@ describe('画布模式下选中的图就是要导的那张（用户反馈 06）'
       } as never)
     })
     expect(text()).not.toContain('源文件现在找不到了')
-    expect(figureOptions()).toHaveLength(0)
     // ……切到原图才说，并把列表摆出来让用户换一张
     await click(originalRadio())
     expect(text()).toContain('源文件现在找不到了')
@@ -2363,13 +2362,9 @@ describe('画布模式下选中的图就是要导的那张（用户反馈 06）'
     await openDialog()
     // 项目里只有这一张：切到原图就是它，清单不出现——对象头是唯一写着对象名与尺寸的地方
     await click(originalRadio())
-    // 不在画布上 = 这次导出没有规范检查（#1228 P2）：门禁在，要自己点头才放行
-    expect(button('开始导出')!.hasAttribute('disabled')).toBe(true)
-    await act(async () => {
-      confirmBox()!.click()
-    })
+    // 不在画布上 = 这次导出没有规范检查（#1228 P2）：灰色提示，不拦导出
     expect(button('开始导出')!.hasAttribute('disabled')).toBe(false)
-    expect(figureOptions()).toHaveLength(0)
+    expect(figureOptions()).toHaveLength(1)
     const header = document.body.querySelector('[data-export-target]')
     expect(header, '选中了图就该有对象头').toBeTruthy()
     expect(header!.textContent).toContain('Fig9')
@@ -2469,7 +2464,7 @@ describe('EPS 与 TIFF（ADR 0046）', () => {
     expect(ppiSelect()).toBeNull()
     const eps = formatBox('EPS')
     expect(eps.disabled).toBe(true)
-    expect(eps.closest('label')!.title).toContain('EPS 只支持按「原图尺寸」导出单张图')
+    expect(eps.closest('label')!.title).toContain('EPS 只支持导出单张图')
     await click(formatBox('TIFF'))
     expect(ppiSelect(), 'TIFF 是位图，分辨率那一行要出现').toBeTruthy()
     // 「这次会写哪几个文件」的预览行已按工作台批次去掉；发出去的格式清单在请求体里判
@@ -2507,16 +2502,24 @@ describe('EPS 与 TIFF（ADR 0046）', () => {
   })
 
   it('勾着 EPS 切回画布：请求里自动不带它，界面把原因摆出来；只勾 EPS 时按钮变灰', async () => {
-    useWorkspaceStore.setState({ mode: 'fast_edit', activePanelId: 'p1' })
     await setup(9)
+    useWorkspaceStore.setState({ mode: 'layout', activePanelId: null })
     await act(async () => {
       useAssetStore.setState({
         byId: { 'Fig1.pdf': { id: 'Fig1.pdf', mtime: 1, script: 'fig1.py' } },
       } as never)
     })
+    // 素材表是 setup 之后才补的脚本：重开一次让对话框按它重算
+    await act(async () => { useUiStore.getState().setExportOpen(false) })
+    await act(async () => { useUiStore.getState().setExportOpen(true) })
+    await click(originalRadio())
+    await click(figureOptions().find((o) => o.textContent?.includes('Fig1'))!) // 选定要导的那张
+    // EPS 能不能勾读 route（250 ms 防抖后到）；等它到，否则点的是一颗灰着的框
+    await act(async () => { await new Promise((r) => setTimeout(r, 400)) })
     await click(formatBox('EPS'))
-    await click(button('当前画布')!)
-    expect(text()).toContain('EPS 只支持按「原图尺寸」导出单张图')
+    expect(formatBox('EPS').checked, '前提：原图范围下 EPS 勾得上').toBe(true)
+    await click(scopeRadios()[1])
+    expect(text()).toContain('EPS 只支持导出单张图')
     await click(button('开始导出')!)
     expect(exportBodies[0].scope).toBe('canvas')
     expect(exportBodies[0].formats).toEqual(['pdf', 'png'])
@@ -2898,7 +2901,7 @@ describe('预览信息完善（PR3）：缩略图说真话', () => {
     expect(target().querySelector('[data-thumb-page]')!.getAttribute('fill')).toBe('var(--color-paper)')
   })
 
-  it('原图范围：对象头与图清单行取同一份图——有图内修改就都是引擎 SVG（导出的正是重渲那一版）', async () => {
+  it('原图范围：对象头与左栏预览取同一份图——有图内修改就都是引擎 SVG（导出的正是重渲那一版）', async () => {
     await setup(9)
     useDocumentStore.getState().commit(literal('改'), (d) => {
       ;(d.objects[0] as PanelObject).overrides = [
@@ -2911,7 +2914,8 @@ describe('预览信息完善（PR3）：缩略图说真话', () => {
     await act(async () => useUiStore.getState().setExportOpen(false))
     await act(async () => useUiStore.getState().setExportOpen(true))
     const head = target().querySelector('[data-export-thumb="svg"]')
-    const row = q('[data-export-figure="Fig1.pdf"] [data-export-thumb="svg"]')
+    // 单图编辑的左栏大预览与对象头取同一份图
+    const row = q('[data-export-preview-stage] [data-export-thumb="svg"]')
     expect(head, '对象头读的是编辑后的引擎 SVG，不是磁盘原图').toBeTruthy()
     expect(row).toBeTruthy()
     expect(head!.innerHTML).toBe(row!.innerHTML)

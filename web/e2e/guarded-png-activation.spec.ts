@@ -335,8 +335,6 @@ async function openOriginalExport(page: Page, id: string) {
   } else {
     await expect(thumb.locator('svg')).toHaveCount(1)
   }
-  const confirm = dialog.locator('input[data-export-confirm]')
-  if (await confirm.count()) await (await only(confirm)).check()
   // Deliberately stays red on the old asset-list-only sourceReachable predicate.
   await expect(await only(dialog.locator('[data-export-start]'))).toBeEnabled()
   return dialog

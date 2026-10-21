@@ -629,9 +629,6 @@ test(
     const eps = dialog.getByRole('checkbox', { name: 'EPS', exact: true })
     if (await eps.isChecked()) await eps.uncheck()
 
-    const confirm = dialog.locator('input[data-export-confirm]')
-    if (await confirm.count()) await confirm.check()
-
     // 导出走后台作业：`/api/export/start` 当场回作业（带导出目录），结果经 SSE 推给界面。
     // 端点形态不是这条用例的主语——导出目录取自 start 的回包，结果认界面那句话 + 磁盘上的文件
     const started = page.waitForResponse(
@@ -719,8 +716,6 @@ test(
     // 文件名尚无 data 锚点，使用产品的稳定表单 id；独立名称排除夹具里的历史导出。
     const filename = `feature-svg-${Date.now()}`
     await page.locator('#export-filename').fill(filename)
-    const confirm = page.locator('input[data-export-confirm]')
-    if (await confirm.count()) await confirm.check()
     const start = page.locator('[data-export-start]')
     await expect(start).toBeEnabled()
     await expectInViewport(page, start, '开始导出 SVG')

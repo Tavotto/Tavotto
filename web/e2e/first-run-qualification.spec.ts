@@ -439,8 +439,6 @@ test(
     }
     const pdfBox = exp.getByRole('checkbox', { name: 'PDF', exact: true })
     if (!(await pdfBox.isChecked())) await pdfBox.check()
-    const confirm = exp.locator('input[data-export-confirm]')
-    if (await confirm.count()) await confirm.check()
     const started = page.waitForResponse(
       (r) => new URL(r.url()).pathname === '/api/export/start' && r.request().method() === 'POST',
     )
