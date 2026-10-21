@@ -1642,7 +1642,9 @@ def _interpreter_step(plugin_dir: Path | None, py: str | None, *, apply: bool) -
     return _step(
         "interpreter",
         ok=True,
-        detail=f"启动命令由 `{command}` 换成 `{chosen}`（改了 {'、'.join(changed)}）",
+        # 带上换掉的理由：只说「换了」分不出是真起不来，还是慢机器撞了 120 s 探测超时
+        detail=f"`{command}` 起不来启动器（{detail}），启动命令换成 `{chosen}`"
+        f"（改了 {'、'.join(changed)}）",
     )
 
 

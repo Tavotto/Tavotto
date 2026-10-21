@@ -18,6 +18,7 @@ import os
 import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -1328,9 +1329,18 @@ def test_the_bundled_relative_launcher_is_run_from_the_plugin_root_not_replaced(
     )
     assert _mcp_command(plugin) == "./mcp/launch"
 
+    started = time.monotonic()
     rc, out, _err = _run(["codex", "install", "--json"])
+    elapsed = time.monotonic() - started
     assert rc == 0, out
-    assert _mcp_command(plugin) == "./mcp/launch", "一个起得来的自带启动器被换掉了"
+    # 失败时要说得出是哪一种「起不来」：超时、stdout 多一行、还是别的。CI 上 Windows 偶发过一次
+    # 只留下「被换掉了」，分不出是不是撞了探测的 120 s 超时（这条一般 2–3 s 跑完）。换掉时 interpreter
+    # 步的 detail 带着原命令为什么被判起不来。
+    step = {s["step"]: s for s in json.loads(out.strip().splitlines()[-1])["steps"]}["interpreter"]
+    assert _mcp_command(plugin) == "./mcp/launch", (
+        f"一个起得来的自带启动器被换掉了（interpreter 步：{step['detail']}；"
+        f"install 共 {elapsed:.1f}s）"
+    )
     assert _yaml_command(plugin) == "./mcp/launch"
 
 
