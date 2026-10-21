@@ -333,6 +333,14 @@ describe('持久化与迁移', () => {
     }
   })
 
+  it('旧版 not_started 但看过欢迎页：welcomeSeenAt 清空，升级后照样自动弹一次', () => {
+    const m = migratePersisted({ schemaVersion: 1, flowVersion: 2, status: 'not_started', welcomeSeenAt: 5, hintSeen: { problem_found: 42 } })
+    expect(m.status).toBe('not_started')
+    expect(m.welcomeSeenAt).toBeNull()
+    expect(m.hintSeen).toEqual({ problem_found: 42 })
+    expect(m.flowVersion).toBe(ONBOARDING_FLOW_VERSION)
+  })
+
   it('当前 flowVersion 的 completed / skipped 原样不动（不被重新打扰）', () => {
     for (const status of ['completed', 'skipped'] as const) {
       const m = migratePersisted({

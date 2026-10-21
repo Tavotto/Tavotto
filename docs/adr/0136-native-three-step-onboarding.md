@@ -78,7 +78,7 @@ ADR 0040 的教程是盖在真实工作台上的八步 coachmark：打开示例�
 ### 5. 迁移与旧教程
 
 * ~~v2 进行中 / 暂停的用户记成用户暂停；已完成 / 已跳过的原样，不被重新打扰。~~
-  **已被文末 2026-10-21 修订取代**：旧版留下的任何非「未开始」状态都回到新手态。上一版的演示改动不带过来。
+  **已被文末 2026-10-21 修订取代**：旧版留下的任何状态（含看过欢迎页的「未开始」）都回到新手态。上一版的演示改动不带过来。
 * 八步 coachmark 的引擎（`flow.ts` / `steps.ts` / `position.ts` / `Coachmark` / `OnboardingLayer`）删除。
   它与三步教程会是两套互相竞争的状态机，且它的每一步都依赖执行 Python；保留成「进阶教学」的维护
   代价大于收益。一次性情境提示（`hints.ts`）与 Activity Bus 原样保留。
@@ -109,7 +109,7 @@ ADR 0040 的教程是盖在真实工作台上的八步 coachmark：打开示例�
 根本不知道换了新手引导。用户裁决：**老用户升级后也显示一次新手教程和新手版主页**，覆盖上文「已完成 / 已跳过的
 用户不被重新打扰」与「已经在正常使用的人不打扰」两条。
 
-* **迁移**（`migratePersisted`）：`flowVersion` 低于当前、且 `status` 不是 `not_started` 的 blob——`completed`、
+* **迁移**（`migratePersisted`）：`flowVersion` 低于当前的 blob——`completed`、
   `skipped`，也包括 `active` / `paused`——一律迁成新手态：`status = not_started`、`currentStep = null`
   （起点由 `start()` 设为第一步，与新用户同路径）、完成 / 跳过历史、`startedAt` / `completedAt`、演示改动清空，
   **`welcomeSeenAt` 清空**（它就是「自动弹欢迎页一次」的闸，不清则老用户永远不弹；不新增标志位）。
@@ -122,4 +122,4 @@ ADR 0040 的教程是盖在真实工作台上的八步 coachmark：打开示例�
 * **自动弹出**（`useAutoOpen`）：去掉「最近 / 收藏里没有自己的项目」这一条——老用户恰恰有自己的项目，不去掉
   这条迁移就是空转。仍保留：新手态、`welcomeSeenAt` 空、启动后停在主页（启动时项目就开着不弹，主页新手版与
   各入口仍在）、项目列表取到之后再判。欢迎页弹出即记 `welcomeSeenAt`，同一台机器只这一次。
-* 其余不变：`not_started` 且旧版的 blob（例如看过欢迎页但没开始）不动；当前版本的 `completed` / `skipped` 不动。
+* 旧版的 `not_started`（例如看过欢迎页但没开始）同样清掉 `welcomeSeenAt`，否则这些人升级后永远不会自动弹；当前版本的任何状态不动。

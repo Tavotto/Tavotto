@@ -285,7 +285,8 @@ export function migratePersisted(raw: unknown): OnboardingPersisted {
   // 教程，留在 not_started 里自相矛盾；新一轮 `start()` 本就会重写）、`welcomeSeenAt`（它正是「自动弹一次」
   // 的闸，不清则老用户永远不会自动弹；不另设标志位）、演示改动。`currentStep` 在未开始时恒为 null，
   // 起点由 `start()` 设为第一步。tutorialProjectId / DocumentId 是 v2 遗留的格式字段，原样保留。
-  if (flowVersion < ONBOARDING_FLOW_VERSION && status !== 'not_started') {
+  // 旧版的 not_started 也走这里：上一版看过欢迎页却没开始的人带着 `welcomeSeenAt`，不清就永远不会自动弹。
+  if (flowVersion < ONBOARDING_FLOW_VERSION) {
     return {
       ...ONBOARDING_DEFAULTS,
       hintSeen,
@@ -334,8 +335,7 @@ export function migratePersisted(raw: unknown): OnboardingPersisted {
     tutorialDocumentId: strOrNull(v.tutorialDocumentId),
     pausedBy,
     welcomeSeenAt: numOrNull(v.welcomeSeenAt),
-    // 只剩 not_started 的旧版 blob 会走到这里（其余旧版已在上面回到新手态）：上一版的演示改动不属于这一版的图
-    demo: flowVersion < ONBOARDING_FLOW_VERSION ? { ...DEMO_EDITS_EMPTY } : migrateDemo(v.demo),
+    demo: migrateDemo(v.demo),
   }
 }
 
