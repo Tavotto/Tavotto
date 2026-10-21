@@ -1225,7 +1225,7 @@ class PreparationService:
             if planned and projectenv.environment_generation(plan.interpreter) != planned:
                 return STALE_ENVIRONMENT, {}
             # 叠加环境（ROOT）换了 / 清了：同一个解释器带不带 ROOT 不是同一个环境（与起会话的 `_overlay_for` 同一判据）
-            if rootenv.key_of(plan.environment_overlay) != rootenv.key_of(
+            if rootenv.key_of(getattr(plan, "environment_overlay", None)) != rootenv.key_of(
                 projectenv.remembered_overlay(root, plan.interpreter)
             ):
                 return STALE_ENVIRONMENT, {}
