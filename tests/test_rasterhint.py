@@ -23,7 +23,9 @@ def _write(root: Path, name: str, body: str) -> None:
     p.write_text(textwrap.dedent(body), encoding="utf-8")
 
 
-_LITERAL = re.compile(r"""['"]([^'"\n]+\.(?:png|jpe?g|bmp|gif|tiff?|webp|ppm|pgm|ico))['"]""", re.I)
+_LITERAL = re.compile(
+    r"""['"]([^'"\n{}]+\.(?:png|jpe?g|bmp|gif|tiff?|webp|ppm|pgm|ico|pdf|svg|eps))['"]""", re.I
+)
 #: 「本次运行开始」：比现在早一点，测试里即时写的文件都算本次写的
 START = time.time() - 30
 
@@ -239,7 +241,9 @@ def test_a_literal_relative_path_in_project_mode_is_in_project(tmp_path):
 def test_sandbox_without_a_sandbox_dir_or_unknown_mode_has_no_file_evidence(tmp_path, mode):
     """拿不到这次运行实际的 cwd（沙盒目录没给 / 运行目录未知）：项目里恰有同名文件也不能当证据。"""
     _write(tmp_path, "make.py", "from PIL import Image\nImage.new('L', (2, 2)).save('out.png')\n")
-    (tmp_path / "out.png").write_bytes(b"x")  # 项目里恰有同名旧文件也不能当证据
+    old = tmp_path / "out.png"
+    old.write_bytes(b"x")  # 项目里恰有同名旧文件也不能当证据
+    os.utime(old, (START - 3600, START - 3600))
     assert rasterhint.detect(tmp_path, "make.py", mode, run_started_at=START) is None
 
 
@@ -397,7 +401,12 @@ def test_a_file_actually_written_by_this_run_gets_hint_and_button(tmp_path):
     _write(tmp_path, "make.py", HELPER_ONLY)
     (tmp_path / "out.png").write_bytes(b"x")  # mtime = 现在，晚于 START
     hint = rasterhint.detect(tmp_path, "make.py", "project", run_started_at=START)
-    assert hint == {"kind": "raster_script", "library": "pillow", "in_project": True}
+    assert hint == {
+        "kind": "raster_script",
+        "library": "pillow",
+        "in_project": True,
+        "path": "out.png",
+    }
 
 
 def test_a_file_older_than_this_run_gets_no_hint(tmp_path):
@@ -426,4 +435,159 @@ def test_sandbox_mode_checks_the_sandbox_dir_and_never_offers_the_button(tmp_pat
     assert rasterhint.detect(root, "make.py", "sandbox", START, str(box)) is None  # 沙盒里没写
     (box / "out.png").write_bytes(b"x")
     hint = rasterhint.detect(root, "make.py", "sandbox", START, str(box))
-    assert hint == {"kind": "raster_script", "library": "pillow", "in_project": False}
+    assert hint == {
+        "kind": "raster_script",
+        "library": "pillow",
+        "in_project": False,
+        "path": None,
+    }
+
+
+# ---- 运行时才定输出路径：项目素材盘点里本次运行后新出现 / 被改写的文件 ----
+
+RUNTIME_PILLOW = """
+    import argparse
+    from PIL import Image, ImageDraw
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--out", default="force_reports")
+    path = ap.parse_args().out + "/heat.png"
+    image = Image.new("RGB", (24, 24), "white")
+    draw = ImageDraw.Draw(image)
+    image.save(path, format="PNG", dpi=(180, 180))
+"""
+
+
+def _runtime_started() -> float:
+    return time.time() - 60
+
+
+def test_runtime_path_pillow_script_with_a_new_file_in_the_project_gets_hint(tmp_path):
+    _write(tmp_path, "make.py", RUNTIME_PILLOW)
+    out = tmp_path / "force_reports" / "heat.png"
+    out.parent.mkdir()
+    out.write_bytes(b"x")  # mtime = 现在，晚于运行开始
+    hint = rasterhint.detect(
+        tmp_path, "make.py", "sandbox", _runtime_started(), str(tmp_path / "box")
+    )
+    assert hint == {
+        "kind": "raster_script",
+        "library": "pillow",
+        "in_project": True,
+        "path": "force_reports/heat.png",
+    }
+
+
+def test_runtime_path_with_only_an_old_file_gets_no_hint(tmp_path):
+    _write(tmp_path, "make.py", RUNTIME_PILLOW)
+    out = tmp_path / "force_reports" / "heat.png"
+    out.parent.mkdir()
+    out.write_bytes(b"x")
+    os.utime(out, (time.time() - 7200, time.time() - 7200))
+    assert rasterhint.detect(tmp_path, "make.py", "project", _runtime_started()) is None
+
+
+def test_runtime_path_without_a_run_start_time_has_no_evidence(tmp_path):
+    _write(tmp_path, "make.py", RUNTIME_PILLOW)
+    (tmp_path / "heat.png").write_bytes(b"x")
+    assert rasterhint.detect(tmp_path, "make.py", "project") is None
+
+
+def test_a_new_file_does_not_count_when_the_script_has_no_save_call(tmp_path):
+    _write(tmp_path, "make.py", "from PIL import Image\nImage.open('a.png').load()\n")
+    (tmp_path / "heat.png").write_bytes(b"x")
+    assert rasterhint.detect(tmp_path, "make.py", "project", _runtime_started()) is None
+
+
+def test_a_new_file_does_not_count_when_matplotlib_is_imported(tmp_path):
+    _write(tmp_path, "make.py", "import matplotlib\n" + textwrap.dedent(RUNTIME_PILLOW))
+    (tmp_path / "heat.png").write_bytes(b"x")
+    assert rasterhint.detect(tmp_path, "make.py", "project", _runtime_started()) is None
+
+
+def test_a_new_pdf_is_not_pillow_evidence_but_a_new_png_is(tmp_path):
+    _write(tmp_path, "make.py", RUNTIME_PILLOW)
+    (tmp_path / "r.pdf").write_bytes(b"x")
+    assert rasterhint.detect(tmp_path, "make.py", "project", _runtime_started()) is None
+
+
+def test_inventory_evidence_ignores_pruned_directories(tmp_path):
+    _write(tmp_path, "make.py", RUNTIME_PILLOW)
+    (tmp_path / ".hidden").mkdir()
+    (tmp_path / ".hidden" / "heat.png").write_bytes(b"x")
+    assert rasterhint.detect(tmp_path, "make.py", "project", _runtime_started()) is None
+
+
+# ---- plotly / ROOT ----
+
+
+@pytest.mark.parametrize(
+    ("body", "library"),
+    [
+        (
+            "import plotly.graph_objects as go\nfig = go.Figure()\nfig.write_image('o.png')\n",
+            "plotly",
+        ),
+        ("import plotly.io as pio\npio.write_image(fig, 'o.jpg')\n", "plotly"),
+        ("import plotly.express as px\npx.line(df).write_image('o.pdf')\n", "plotly"),
+        ("import ROOT\nc = ROOT.TCanvas()\nc.SaveAs('o.png')\n", "root"),
+        ("import ROOT as rt\nc = rt.TCanvas()\nc.Print('o.svg')\n", "root"),
+        ("from ROOT import TCanvas\nTCanvas('c').SaveAs('o.eps')\n", "root"),
+    ],
+)
+def test_plotly_and_root_static_recognition(tmp_path, body, library):
+    _write(tmp_path, "make.py", body)
+    assert _lib(tmp_path) == library
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "import plotly.graph_objects as go\ngo.Figure().write_html('o.html')\n",
+        "import plotly.graph_objects as go\ngo.Figure().write_image('o.json')\n",
+        "import ROOT\nROOT.TFile('o.root').Print('o.txt')\n",
+        "import numpy as np\nnp.save('o.png', a)\nfig.write_image('o.png')\n",  # 没 import plotly
+        "import matplotlib\nimport plotly\nfig.write_image('o.png')\n",
+    ],
+)
+def test_plotly_and_root_negative_cases(tmp_path, body):
+    _write(tmp_path, "make.py", body)
+    assert _lib(tmp_path) is None
+
+
+FIT_MASS_SHAPE = """
+    import math
+    from importlib import import_module
+    import ROOT as rt
+    from ROOT import RooFit as rf
+    import lhcbStyle
+
+    def fit_mass(isTUNE=False):
+        mode = "_tune" if isTUNE else ""
+        module = import_module("results.para_data".replace("/", "."))
+        can = rt.TCanvas("can", "can", 800, 600)
+        frame.Draw()
+        can.SaveAs(f"results/mass_data{mode}.pdf")
+
+    fit_mass()
+    fit_mass(True)
+"""
+
+
+def test_root_pdf_script_shaped_like_fit_mass_is_recognised_at_runtime(tmp_path):
+    """真实样本结构：`rt.TCanvas` + f-string 的 `.pdf` 路径 + 拼出来的 `import_module`；运行后 results/ 下出现新 PDF。"""
+    _write(tmp_path, "fit_mass.py", FIT_MASS_SHAPE)
+    # 没有任何新文件：不说
+    assert rasterhint.detect(tmp_path, "fit_mass.py", "project", _runtime_started()) is None
+    out = tmp_path / "results" / "mass_data_tune.pdf"
+    out.parent.mkdir()
+    out.write_bytes(b"%PDF-")
+    hint = rasterhint.detect(tmp_path, "fit_mass.py", "project", _runtime_started())
+    assert hint == {
+        "kind": "raster_script",
+        "library": "root",
+        "in_project": True,
+        "path": "results/mass_data_tune.pdf",
+    }
+    # 旧 PDF 不算
+    os.utime(out, (time.time() - 7200, time.time() - 7200))
+    assert rasterhint.detect(tmp_path, "fit_mass.py", "project", _runtime_started()) is None

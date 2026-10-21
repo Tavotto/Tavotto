@@ -144,3 +144,16 @@ PR3 现状（第一片）：只做「交接时记录事实 + 响应里只读展�
 - 同一路径多次 savefig、保存目的地解析不了：`unavailable`。
 - 自定义 artist / 回调 / 自定义绘制：`unavailable`。
 - 「重画相似」永远不被称为「原件精确一致」。
+
+## 修订（2026-10-21）：「跑完没出图」原因卡的文件证据与库覆盖
+
+`engine/rasterhint`（脚本用位图库直接画图时的原因卡）原先只认「字面量输出路径解析出的文件运行后存在」，输出路径运行时才定
+（argparse / 默认目录）的 Pillow 脚本永远不触发，用户只看到 PNG 被当图片放上画布。本次修订：
+
+1. **第二种文件证据**：静态上有写出调用、本次运行也没有 Matplotlib 图时，项目素材盘点（`iter_assets`，沿用既有边界，3 s 预算）里
+   mtime ≥ 运行开始 - 1 s 的新增 / 被改写文件即证据；hint 带 `path`（项目相对路径，能确定时），`in_project` 为真。
+2. **库覆盖**：plotly（`write_image`，`write_html` 不算）与 ROOT（`TCanvas.SaveAs` / `.Print`）；二者另认 `.pdf` / `.svg` / `.eps` 输出。
+   ROOT / plotly 在有动态 import 时仍可提示（真实 RooFit 脚本按拟合结果动态加载生成模块）；位图库保持看不全不说。
+3. 不变：import 了 matplotlib 家族一律沉默；证据缺失（旧文件 / 没写）一律沉默；不改 outcome / facts。
+4. hint 里的 `library` 与 `path` 是后续「生成可编辑版本」按钮（本修订不含）的输入。
+
