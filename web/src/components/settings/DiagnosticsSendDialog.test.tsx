@@ -802,6 +802,20 @@ describe('诊断包扩充（detail-…、勾选项）', () => {
     expect(saveDiagnosticsZip).not.toHaveBeenCalled()
   })
 
+  it('保存取包在途时取消勾选：响应回来也不写盘（旧包可能含已取消的内容，Codex #1263 P2）', async () => {
+    await mount({ ...DETAIL_PREPARED, options: { source: true, crash_reports: false, corrupt_sessions: false } })
+    let resolveBundle!: (b: Blob) => void
+    bundleMock.mockReturnValue(new Promise<Blob>((r) => (resolveBundle = r)))
+    prepareMock.mockResolvedValue({ ...DETAIL_PREPARED, id: 'pid-2' })
+    await click(q('[data-diag-send-save]'))
+    expect(bundleMock).toHaveBeenCalledWith('pid-1')
+    await click(box('source')) // 在途取消勾选源码
+    await act(async () => {
+      resolveBundle(new Blob(['old']))
+    })
+    expect(saveDiagnosticsZip).not.toHaveBeenCalled()
+  })
+
   it('点击即时响应（卡顿回归）：勾选当场生效，不等后端、不回到「正在准备」、不禁用表单；连点只备一次', async () => {
     await mount(DETAIL_PREPARED)
     let release!: (p: DiagSendPrepared) => void

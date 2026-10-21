@@ -357,9 +357,12 @@ export function DiagnosticsSendDialog({
     const id = idRef.current
     if (!id || refreshing) return
     const mine = gen.current
+    // 「勾选版本」：取包在途时用户改了勾选（只推进 refreshSeq、不推进 gen），这份包按旧勾选生成，
+    // 可能仍含刚取消的内容（脚本源码 / 崩溃数据）——不写盘。发送不需要：发送中复选框已禁用（toggleOption 要求 ready/failed）
+    const seq = refreshSeq.current
     fetchDiagSendBundle(id)
       .then((blob) => {
-        if (gen.current !== mine) return
+        if (gen.current !== mine || refreshSeq.current !== seq) return
         saveDiagnosticsZip(blob)
         setSaveState('saved')
       })
