@@ -221,6 +221,7 @@ def test_a_failure_after_build_is_classified_at_export(tmp_path):
         "x" * 200_000 + " was not able to process the following string:",
         "Failed to process string with tex because " + "a" * 200_000,
     ],
+    ids=["bangs", "latex-file-prefix", "font-prefix", "font-at", "long-token", "cmd-prefix"],
 )
 def test_classification_is_linear_on_pathological_logs(evil):
     """LaTeX 日志是外部文本：病态输入上分类必须是线性的（CodeQL py/polynomial-redos 那三条）。"""
