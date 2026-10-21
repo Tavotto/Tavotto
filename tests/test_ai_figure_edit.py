@@ -233,6 +233,21 @@ def test_begin_registered_failure_closes_the_registered_row_and_spawns_nothing(e
     assert _project_text(env) == SCRIPT
 
 
+def test_spawn_failure_after_begin_registered_leaves_no_running_task(env, monkeypatch):
+    """`begin_registered` 已挂上、spawn 抛：运行表里的任务一并摘下（否则 cancel 永远对着一个不会跑的任务返回 True）。"""
+    ai_bridge.reset_spawn_mark()
+
+    def no_spawn(*a, **k):
+        raise OSError("no spawn")
+
+    monkeypatch.setattr(ai_bridge, "_popen", no_spawn)
+    with pytest.raises(OSError):
+        _run(env)
+    assert ai_tasks._RUNNING == {}
+    (row,) = ai_history.list_sessions(str(env["figs"].resolve()))["sessions"]
+    assert row["status"] == "failed"
+
+
 def test_cancel_while_running_commits_nothing_and_frees_the_script(env):
     env["code"] = EDIT + "; time.sleep(30)"
     sid, _ = _run(env)
