@@ -255,6 +255,9 @@ describe('exact original export variant', () => {
     expect(exportCalls.some(call => call.url.includes('/api/export/validate'))).toBe(true)
     // 被拒的这张（plot.png，字节变了）一个 start 都没发出去
     expect(exportCalls.some(call => call.url.includes('/api/export/start') && call.body.original?.figure_id === 'plot.png')).toBe(false)
+    // 用户可见：对话框里照原样渲染那条起作业失败的报错（点名哪张 + 原因），不因为是批里的一张就没了
+    expect(document.querySelector('[data-dialog="export"] [data-export-start-error]')?.textContent)
+      .toContain(formatMessage(engineErrorMsg(new ArtifactValidationError('source_changed'))))
     // 批里每张各自走一遍：被拒的原因随汇总保留，批结束后仍可见（不被后面一张的 startError 复位冲掉）
     const refused = useExportStore.getState().batch!.failedStarts[0]
     expect(refused.reason).toContain(formatMessage(engineErrorMsg(new ArtifactValidationError('source_changed'))))

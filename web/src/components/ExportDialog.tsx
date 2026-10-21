@@ -1232,14 +1232,28 @@ export function ExportDialog() {
    * （`Dialog status`）。正文一长，末尾就在视口外——点了「开始导出」看不见进度，
    * 撞名时看不见那两条出路（设计审计 §10.2 P0）。各种回应一律是 `Notice`（一种说明条，不是七种方言）。
    */
+  // 摆有具体原因的那一条（几张都没起来时优先说得出原因的）；全是空原因就摆最后一条
+  const batchFailure = batch?.failedStarts.length
+    ? (batch.failedStarts.find((f) => f.reason) ?? batch.failedStarts[batch.failedStarts.length - 1])
+    : null;
   // 五路失败里此刻要摆的**一条**：最近才出现的那条（见 `useLatestFailure`）
   const failure = useLatestFailure({
     // 拒绝本来就是一句完整的人话（engineErrorMsg）：它自己就是标题
     "refusal": prepared.error
       ? { id: String(prepared.error.reason), title: formatMessage(engineErrorMsg(prepared.error)), text: "" }
       : null,
-    "start-error":
-      startError && !prepared.error
+    // 一批里任何一张没起来（冻结不了 / 预检被拒 / 起作业失败）：照原样渲染 `[data-export-start-error]`，点名哪张 +
+    // 那条原因；它同时保留在汇总结果里。`store.startError` 会被后面一张的 `runExport` 复位，所以读批里记下的这份
+    "start-error": batchFailure
+      ? {
+          id: `batch:${batchFailure.name}:${batchFailure.reason}`,
+          title: ex("outputFailed", {
+            format: batchFailure.name,
+            reason: batchFailure.reason || ex("operationFailed", { error: "" }),
+          }),
+          text: "",
+        }
+      : startError && !prepared.error
         ? startError.code === "bad_filename"
           ? { id: `bad_filename:${startError.message}`, title: ex(`filenameError.${startError.message}`), text: "" }
           : startFailureRaw(startError.code, startError.message)
