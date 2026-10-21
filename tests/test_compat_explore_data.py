@@ -18,6 +18,7 @@ sys.path.insert(0, str(SCRIPTS))
 import compat_explore as ex  # noqa: E402
 import compat_explore_data as data  # noqa: E402
 import compat_explore_transforms as xt  # noqa: E402
+import compat_guardian as cg  # noqa: E402
 
 NAMES = [f.name for f in data.FORMATS]
 TEXT = [f.name for f in data.FORMATS if f.text]
@@ -323,7 +324,66 @@ class RealExecution(unittest.TestCase):
                         self.assertEqual(kinds, {"zero_figures"}, record)
                     else:
                         self.assertEqual(record["judgment"]["outcome"], "no_difference", record)
+                        # 保型 = 不改用户的图 = 数据指纹也不变：结构层真比了数据，不是空比较
+                        structure = record["stages"]["structure"]
+                        self.assertEqual(structure["status"], "passed", record["stages"])
+                        self.assertGreater(structure["data_compared"], 0, record["stages"])
         skip_missing(self, skipped)
+
+    def test_a_value_changed_only_on_the_tavotto_side_is_a_data_structure_mismatch(self):
+        """原生读到的是对的值，Tavotto 那份项目里数据被改了一个值：图数、标题都对，只有数据指纹能看出来。"""
+        import shutil
+
+        parent_spec = {"suite": "compat_engine", "case": "shape_oo_savefig"}
+        manifest, _ = xt.build(
+            xt.load_parent("compat_engine", "shape_oo_savefig"), ("read_tsv_stdlib",), 7
+        )
+        out = Path(self.tmp.name) / "tampered"
+        work, evidence = out / "work", out / "evidence"
+        work.mkdir(parents=True)
+        evidence.mkdir()
+        snapshot = ex.parent_snapshot(parent_spec, out, 300)["snapshots"]
+        self.assertTrue(snapshot, "the parent's Tavotto snapshot is the reference")
+        data_file = manifest["chain"][0]["params"]["data_files"][0]
+        real_write = ex._write_project
+
+        def tamper_tavotto_copy(root, files):
+            project = real_write(root, files)
+            if Path(root).name == "tavotto":
+                target = project / data_file
+                lines = target.read_text(encoding="utf-8").splitlines()
+                head, last = lines[-1].rsplit("\t", 1)
+                lines[-1] = f"{head}\t{int(last) + 100}"
+                target.write_text("\n".join(lines) + "\n", encoding="utf-8")
+            return project
+
+        request = {
+            "parent": parent_spec,
+            "chain": ["read_tsv_stdlib"],
+            "seed": 7,
+            "candidate_id": manifest["candidate_id"],
+            "work": str(work),
+            "evidence": str(evidence),
+            "parent_snapshot": snapshot,
+        }
+        env = cg.isolated_env(out / "env")
+        with (
+            mock.patch.dict(os.environ, env, clear=True),
+            mock.patch.object(ex, "_write_project", tamper_tavotto_copy),
+        ):
+            record = ex.execute_request(request)
+        shutil.rmtree(out, ignore_errors=True)
+        self.assertEqual(record["judgment"]["outcome"], "difference_found", record["judgment"])
+        diffs = record["judgment"]["differences"]
+        # 数据真的不同，Tavotto 那张图的像素当然也跟着变：结构层的数据指纹是更早、更精确的那个信号
+        kinds = {d["kind"] for d in diffs}
+        self.assertLessEqual(kinds, {"structure_mismatch", "pixel_mismatch"}, diffs)
+        structure = next(d for d in diffs if d["kind"] == "structure_mismatch")
+        # 值变了，轴范围之类的可编辑字段也会跟着变：data 那条要在其中，且指纹两侧都带着
+        data = [m for m in structure["evidence"]["mismatches"] if m.get("aspect") == "data"]
+        self.assertTrue(data, structure["evidence"])
+        self.assertNotEqual(data[0]["parent"]["sha256"], data[0]["candidate"]["sha256"])
+        self.assertEqual(record["stages"]["structure"]["status"], "failed")
 
 
 if __name__ == "__main__":

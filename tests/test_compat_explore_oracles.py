@@ -141,6 +141,117 @@ class StructureJudgment(unittest.TestCase):
         self.assertEqual(OR.structure_judgment(self.PARENT, {})["status"], "passed")
 
 
+class DataStructure(unittest.TestCase):
+    """CG-07：保型候选的数据指纹进结构判定（manifest 的 data_fingerprint，只读，ADR 0083）。"""
+
+    @staticmethod
+    def fp(sha="a" * 8, shape=(3,), finite=3):
+        return {"sha256": sha, "shape": list(shape), "finite": finite}
+
+    def manifest(self, **parts):
+        return {
+            "elements": [
+                {
+                    "gid": "axes_0.lines_0",
+                    "editable": [{"prop": "linewidth", "value": 1.5}],
+                    "data_fingerprint": {"status": "ok", "parts": parts},
+                },
+                {"gid": "axes_0.title", "editable": [{"prop": "text", "value": "T"}]},
+            ]
+        }
+
+    def snap(self, **parts):
+        return {"s": OR.editable_snapshot(self.manifest(**parts))}
+
+    def test_the_snapshot_carries_data_parts_next_to_editable_fields(self):
+        snap = self.snap(y=self.fp(), x=self.fp("b" * 8))
+        self.assertEqual(snap["s"]["axes_0.lines_0.__data__.y"], self.fp())
+        self.assertEqual(snap["s"]["axes_0.lines_0.linewidth"], 1.5)
+        self.assertNotIn("axes_0.title.__data__", snap["s"])
+
+    def test_equal_fingerprints_pass_and_the_comparison_is_not_empty(self):
+        res = OR.structure_judgment(self.snap(y=self.fp()), self.snap(y=self.fp()))
+        self.assertEqual((res["status"], res["data_compared"]), ("passed", 1))
+
+    def test_a_vacuous_comparison_is_visible_as_zero_data_compared(self):
+        bare = {"s": {"axes_0.title.text": "T"}}
+        res = OR.structure_judgment(bare, bare)
+        self.assertEqual((res["status"], res["data_compared"]), ("passed", 0))
+
+    def test_a_changed_part_is_a_data_structure_mismatch_with_both_sides(self):
+        res = OR.structure_judgment(self.snap(y=self.fp()), self.snap(y=self.fp("c" * 8, (3,), 2)))
+        self.assertEqual(res["status"], "failed")
+        (diff,) = res["differences"]
+        self.assertEqual(diff["kind"], "structure_mismatch")
+        (bad,) = diff["evidence"]["mismatches"]
+        self.assertEqual((bad["aspect"], bad["gid"], bad["part"]), ("data", "axes_0.lines_0", "y"))
+        self.assertEqual(bad["parent"]["finite"], 3)
+        self.assertEqual(bad["candidate"]["finite"], 2)
+        self.assertIn("axes_0.lines_0.y", diff["summary"])
+
+    def test_a_changed_shape_alone_is_a_mismatch(self):
+        res = OR.structure_judgment(self.snap(y=self.fp()), self.snap(y=self.fp(shape=(3, 1))))
+        self.assertEqual(res["status"], "failed")
+
+    def test_a_part_the_candidate_lost_is_a_mismatch(self):
+        res = OR.structure_judgment(self.snap(y=self.fp()), self.snap(x=self.fp()))
+        self.assertEqual(res["status"], "failed")
+        self.assertEqual(
+            res["differences"][0]["evidence"]["mismatches"][0]["candidate"], "<missing>"
+        )
+
+    def test_unmeasured_fingerprints_are_no_conclusion_on_either_side(self):
+        measured = self.snap(y=self.fp())
+        for status in ("over_budget", "unavailable"):
+            man = self.manifest()
+            man["elements"][0]["data_fingerprint"] = {"status": status}
+            lost = {"s": OR.editable_snapshot(man)}
+            for parent, cand in ((measured, lost), (lost, measured)):
+                res = OR.structure_judgment(parent, cand)
+                self.assertEqual(res["status"], "not_run", (status, res))
+                self.assertIn(status, res["note"])
+                self.assertEqual(res["differences"], [])
+
+    def test_a_real_difference_wins_over_an_unmeasured_one(self):
+        man = self.manifest(y=self.fp())
+        man["elements"][0]["data_fingerprint"] = {"status": "over_budget"}
+        man["elements"].append(
+            {
+                "gid": "axes_0.lines_1",
+                "editable": [],
+                "data_fingerprint": {"status": "ok", "parts": {"y": self.fp()}},
+            }
+        )
+        parent = {"s": OR.editable_snapshot(man)}
+        other = dict(
+            man["elements"][2], data_fingerprint={"status": "ok", "parts": {"y": self.fp("d" * 8)}}
+        )
+        cand_man = {"elements": [man["elements"][0], other]}
+        res = OR.structure_judgment(parent, {"s": OR.editable_snapshot(cand_man)})
+        self.assertEqual(res["status"], "failed")
+
+    def test_not_run_structure_leaves_a_clean_candidate_unknown(self):
+        stages = {n: OR.stage(n, "passed") for n in OR.STAGES}
+        stages["structure"] = OR.stage("structure", "not_run", "data fingerprint over_budget")
+        judgment, missing = ex.apply_unresolved(
+            {"outcome": "no_difference", "differences": []}, stages
+        )
+        self.assertEqual(judgment["outcome"], "unknown")
+        self.assertTrue(missing[0].startswith("structure:"))
+
+    def test_oracle_layers_report_the_data_difference_and_the_count(self):
+        parent = self.snap(y=self.fp())
+        tavotto = {
+            "stems": {"s": {"titles": []}},
+            "shots": {},
+            "snapshots": self.snap(y=self.fp("e" * 8)),
+        }
+        layers = ex.oracle_layers("shape_preserving", tavotto, {}, parent, Path("."), None)
+        self.assertEqual(layers["stages"]["structure"]["status"], "failed")
+        self.assertEqual(layers["stages"]["structure"]["data_compared"], 1)
+        self.assertEqual(layers["differences"][0]["kind"], "structure_mismatch")
+
+
 class InheritedCase(unittest.TestCase):
     def parent(self, **spec):
         p = fake_parent()
