@@ -26,12 +26,6 @@ permissions:
   pull-requests: read
   issues: read
 
-# This concurrency group is PR-local and advisory-only. An updated review supersedes
-# an older ledger, but cannot cancel CI, CodeQL, or merge_group workflows.
-concurrency:
-  group: review-budget-${{ github.workflow }}-${{ github.event.pull_request.number || github.event.issue.number || inputs.pr_number || github.ref }}
-  cancel-in-progress: true
-
 env:
   TAVOTTO_NO_TELEMETRY: "1"
 
@@ -50,6 +44,14 @@ jobs:
        (github.event.action == 'deleted' ||
         github.event.comment.user.login == 'chatgpt-codex-connector[bot]' ||
         contains(github.event.comment.body, '@codex')))
+    # The concurrency group is PR-local and advisory-only. It lives at job level on
+    # purpose: a job only joins the group when its `if` is true, so an unrelated PR
+    # comment (skipped by `if`) cannot cancel an audit that is already running.
+    # An updated review supersedes an older ledger, but cannot cancel CI, CodeQL,
+    # or merge_group workflows.
+    concurrency:
+      group: review-budget-${{ github.workflow }}-${{ github.event.pull_request.number || github.event.issue.number || inputs.pr_number || github.ref }}
+      cancel-in-progress: true
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:

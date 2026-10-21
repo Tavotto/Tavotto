@@ -419,11 +419,15 @@ def test_review_budget_refreshes_for_review_and_pr_comment_evidence_only():
         "github.event.pull_request.number || github.event.issue.number || inputs.pr_number"
     )
     assert f"PR_NUMBER: ${{{{ {pr_selector} }}}}" in body
+    # Concurrency must be job-level: a workflow-level group would let an unrelated PR
+    # comment (later skipped by the job `if`) cancel an audit that is already running.
+    top_level, jobs_section = body.split("\njobs:\n", 1)
+    assert "concurrency:" not in top_level
     assert (
         f"group: review-budget-${{{{ github.workflow }}}}-${{{{ {pr_selector} || github.ref }}}}"
-        in body
+        in jobs_section
     )
-    assert "cancel-in-progress: true" in body
+    assert "cancel-in-progress: true" in jobs_section
     assert "ref: ${{ github.event.repository.default_branch }}" in body
     assert "persist-credentials: false" in body
     assert "pull_request_target:" not in on_section
