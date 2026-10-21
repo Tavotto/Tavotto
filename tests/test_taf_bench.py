@@ -278,8 +278,109 @@ def test_real_runs_are_capped_before_anything_starts(tmp_path, monkeypatch, caps
     )
     called = []
     monkeypatch.setattr(bench, "run", lambda *a, **k: called.append(1))
-    assert bench.main(["--work", str(tmp_path / "w"), "--real", "codex", "--max-runs", "1"]) == 2
+    argv = ["--work", str(tmp_path / "w"), "--real", "codex", "--model", "m"]
+    # 2 个场景 × 每任务最多 2 次 CLI 调用 = 4 > 3：按实际调用数拒绝，而不是按场景数（2 ≤ 3）
+    assert bench.main([*argv, "--only", "FB-S02,FB-S03", "--max-runs", "3"]) == 2
     assert called == [] and "超过上限" in capsys.readouterr().err
+
+
+def test_real_mode_refuses_to_run_without_a_pinned_model(tmp_path, monkeypatch, capsys):
+    called = []
+    monkeypatch.setattr(bench, "run", lambda *a, **k: called.append(1))
+    assert bench.main(["--work", str(tmp_path / "w"), "--real", "codex"]) == 2
+    assert called == [] and "--model" in capsys.readouterr().err
+
+
+def test_compare_warns_when_the_two_arms_ran_differently():
+    same = {"environment": {"model": "m1", "effort": "low", "executable": "/x", "version": "1"}}
+    other = {"environment": {**same["environment"], "model": "m2"}}
+    assert "⚠ 两臂执行配置不同" in bench.compare(same, other).splitlines()[0]
+    assert "⚠" not in bench.compare(same, same)
+
+
+def test_settings_are_overlaid_not_replaced(tmp_path, monkeypatch):
+    from tavotto.engine import ai_bridge, config
+
+    user = {"providers": {"gw": {"base_url": "https://gw.example"}}, "taf": {"other": 1}}
+    monkeypatch.setattr(config, "ai_settings", lambda: user)
+    seen = []
+    s02 = next(s for s in bench.load_scenarios("dev") if s["id"] == "FB-S02")
+    real_taf = ai_bridge._taf_enabled
+    monkeypatch.setattr(
+        ai_bridge, "_taf_enabled", lambda: (seen.append(config.ai_settings()), real_taf())[1]
+    )
+    bench.run([s02], tmp_path / "projects")
+    assert seen, "桥没有读过设置"
+    for got in seen:
+        assert got["providers"] == user["providers"], "用户的接口配置被丢了"
+        assert got["taf"] == {"other": 1, "enabled": True}
+    assert user["taf"] == {"other": 1}, "不得原地改用户设置"
+
+
+def _fake_real_cli(monkeypatch, tmp_path, secret_dir):
+    """把 `ai_bridge._cmd` 换成「真实」执行器的替身：参考解放在 work 之外，只记提示词与调用次数。"""
+    import sys
+
+    from tavotto.engine import ai_agents, ai_bridge
+
+    box = {"prompts": [], "n": 0}
+
+    def fake_cmd(agent_id, prompt, cwd, model=None, effort=None, endpoint=None):
+        box["n"] += 1
+        box["prompts"].append(prompt)
+        return [sys.executable, "-c", bench._REPLAY, cwd, str(secret_dir / "edits.json")], {}
+
+    monkeypatch.setattr(ai_bridge, "_cmd", fake_cmd)
+    monkeypatch.setattr(ai_bridge, "require_usable", lambda agent: {})
+    monkeypatch.setattr(ai_bridge.ai_providers, "resolve", lambda agent, endpoint_id: None)
+    monkeypatch.setattr(ai_bridge, "_spawn_env", lambda cmd0, extra: dict(__import__("os").environ))
+    monkeypatch.setattr(
+        ai_agents,
+        "resolve",
+        lambda agent, probe_readiness=True: ai_agents.Resolution(
+            argv=["/fake/bin/codex"], path="/fake/bin/codex", version="codex-cli 9.9.9"
+        ),
+    )
+    return box
+
+
+@pytest.mark.skipif(WORKER_PY is None, reason="not_run：找不到装有 matplotlib 的解释器")
+def test_real_mode_never_writes_the_reference_solution_near_the_project(tmp_path, monkeypatch):
+    s02 = next(s for s in bench.load_scenarios("dev") if s["id"] == "FB-S02")
+    secret = tmp_path / "secret"
+    secret.mkdir()
+    (secret / "edits.json").write_text(json.dumps(s02["reference_solution"]), encoding="utf-8")
+    box = _fake_real_cli(monkeypatch, tmp_path, secret)
+    work = tmp_path / "run" / "projects"
+    report = bench.run([s02], work, real_agent="codex", model="m-pinned", effort="low")
+    assert box["n"] >= 1
+    assert not list((tmp_path / "run").rglob("*.edits.json")), "真实模式不许生成参考解文件"
+    assert not list(work.rglob("*edits*"))
+    for e in s02["reference_solution"]:
+        assert not any(e["replace"] in p or e["find"] in p for p in box["prompts"]), (
+            "提示词带了参考解"
+        )
+    env = report["environment"]
+    assert env["version"] == "codex-cli 9.9.9", "版本取自产品同一份解析，而不是 PATH"
+    assert env["executable"] == __import__("sys").executable, "记的是实际 spawn 的 cmd[0]"
+    assert (env["model"], env["effort"], env["agent_calls"]) == ("m-pinned", "low", box["n"])
+
+
+@pytest.mark.skipif(WORKER_PY is None, reason="not_run：找不到装有 matplotlib 的解释器")
+def test_real_mode_stops_spawning_once_the_call_cap_is_reached(tmp_path, monkeypatch):
+    dev = {s["id"]: s for s in bench.load_scenarios("dev") if bench.benchable(s)}
+    picked = [dev["FB-S02"], dev["FB-S03"]]
+    secret = tmp_path / "secret"
+    secret.mkdir()
+    (secret / "edits.json").write_text("[]", encoding="utf-8")  # 不改脚本 → 目标没达成，会触发修正
+    box = _fake_real_cli(monkeypatch, tmp_path, secret)
+    report = bench.run(
+        picked, tmp_path / "run" / "projects", real_agent="codex", model="m", max_runs=1
+    )
+    assert box["n"] == 1, "上限到了就不再调用 CLI"
+    assert report["environment"]["agent_calls"] == 1
+    assert all(r["error"] == "max_runs_reached" for r in report["rows"][-1:]), report["rows"]
+    assert any(r["error"] == "max_runs_reached" for r in report["rows"])
 
 
 def test_a_leaky_candidate_pack_is_refused(tmp_path, monkeypatch, capsys):
