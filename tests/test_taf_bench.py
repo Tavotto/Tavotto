@@ -37,7 +37,7 @@ def test_replay_runs_the_real_chain_and_negatives_are_caught(tmp_path):
         ref = rows[(sid, "ref")]
         assert ref["outcome"] == "completed" and ref["figure_verdict"] == "verified", ref
         assert ref["goal"] == "verified" and ref["preserve"] == "verified", ref
-        assert ref["unintended"] is False, ref
+        assert ref["unintended"] is False and ref["rounds"] == 1, ref
     assert rows[("FB-S02", "n.only_one")]["goal"] == "failed"
     assert rows[("FB-S03", "n.collateral")]["preserve"] == "failed"
     m = report["metrics"]
@@ -57,9 +57,11 @@ def test_metrics_keep_not_run_out_of_the_denominator():
             "id": "A",
             "variant": "ref",
             "outcome": "completed",
+            "figure_verdict": "verified",
             "goal": "verified",
             "preserve": "verified",
             "unintended": False,
+            "rounds": 1,
             "wall_s": 1.0,
         },
         {
@@ -67,38 +69,94 @@ def test_metrics_keep_not_run_out_of_the_denominator():
             "id": "B",
             "variant": "ref",
             "outcome": "failed",
+            "figure_verdict": "unknown",
+            "rounds": 1,
             "goal": "unknown",
             "preserve": "unknown",
             "unintended": True,
             "wall_s": 3.0,
         },
         {**row, "id": "C", "variant": "ref", "outcome": None, "unintended": False},  # 没跑起来
+        {  # 修正一轮后才成功：不计首发，计最终
+            **row,
+            "id": "E",
+            "variant": "ref",
+            "outcome": "completed",
+            "figure_verdict": "verified",
+            "goal": "verified",
+            "preserve": "verified",
+            "unintended": False,
+            "rounds": 2,
+            "wall_s": 2.0,
+        },
         {
             **row,
             "id": "A",
             "variant": "n.x",
             "outcome": "completed",
+            "figure_verdict": "verified",
             "goal": "verified",
             "preserve": "verified",
             "unintended": False,
+            "rounds": 1,
             "wall_s": 2.0,
         },
     ]
     m = bench._metrics(rows)
-    assert m["scenarios_run"] == 3 and m["not_run"] == ["C/ref"]
-    assert m["first_attempt_verified_rate"] == 0.5
-    assert m["scientific_preservation_rate"] == 0.5, "unknown 不算保持"
-    assert m["unintended_modification_rate"] == 0.5
+    assert m["scenarios_run"] == 4 and m["not_run"] == ["C/ref"]
+    # 参考解行 A(首发成功) / B(失败) / E(两轮成功)
+    assert m["first_attempt_verified_rate"] == round(1 / 3, 4), "rounds=2 的成功不计首发"
+    assert m["final_verified_completion_rate"] == round(2 / 3, 4), "但计最终通过"
+    assert m["scientific_preservation_rate"] == round(2 / 3, 4), "unknown 不算保持"
+    assert m["unintended_modification_rate"] == round(1 / 3, 4)
+    kept_failed = {**rows[0], "id": "F", "preserve": "failed", "unintended": False}
+    assert bench._metrics([kept_failed])["unintended_modification_rate"] == 1.0, (
+        "保持断言 failed 也算非预期修改（§三口径）"
+    )
     assert m["negatives_caught_rate"] == 0.0, "反例没被抓住就是 0，不是跳过"
     assert m["taf_overclaim_rate"] is None, "没有被基准抓住的反例：说多了的比例无从谈起"
     goalless = {**rows[0], "id": "D", "goal": "not_applicable"}
     assert bench._metrics([goalless])["first_attempt_verified_rate"] == 1.0, (
         "没有目标断言 = 目标满足"
     )
-    caught = {**rows[3], "goal": "failed"}
+    assert bench._metrics([goalless])["final_verified_completion_rate"] == 1.0
+    caught = {**rows[-1], "goal": "failed"}
     assert bench._metrics([caught])["taf_overclaim_rate"] == 1.0, (
         "TAF 说 completed、基准判反例违约 = 说多了"
     )
+
+
+def test_holdout_aggregate_has_no_per_scenario_ids():
+    row = dict.fromkeys(bench.ROW_FIELDS)
+    rows = [
+        {**row, "id": "FB-H99-SECRET", "variant": "ref", "outcome": None, "unintended": False},
+        {
+            **row,
+            "id": "FB-H98-SECRET",
+            "variant": "ref",
+            "outcome": "completed",
+            "figure_verdict": "verified",
+            "goal": "verified",
+            "preserve": "verified",
+            "unintended": False,
+            "rounds": 1,
+            "wall_s": 1.0,
+        },
+    ]
+    m = bench._metrics(rows, aggregate_only=True)
+    text = json.dumps(m, ensure_ascii=False)
+    assert "FB-H99-SECRET" not in text and "not_run" not in m
+    assert m["not_run_count"] == 1
+
+
+@pytest.mark.skipif(WORKER_PY is None, reason="not_run：找不到装有 matplotlib 的解释器")
+def test_same_work_dir_can_be_rerun(tmp_path):
+    s02 = next(s for s in bench.load_scenarios("dev") if s["id"] == "FB-S02")
+    work = tmp_path / "projects"
+    for _ in range(2):
+        report = bench.run([s02], work)
+        assert report["metrics"]["not_run"] == [], report["rows"]
+        assert report["rows"][0]["outcome"] == "completed", report["rows"]
 
 
 def test_only_replayable_dev_scenarios_are_benched_by_default():

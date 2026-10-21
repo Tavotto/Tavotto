@@ -30,8 +30,8 @@ Fake Executor 的形状：实现 `AgentDefinition` 的测试适配器（`tests/t
 
 | 指标 | 定义 |
 | --- | --- |
-| First Attempt Verified Rate | 首轮结束即 figure verdict = verified 的场景比例 |
-| Final Verified Completion Rate | 修正后 outcome = completed 且 figure verdict = verified |
+| First Attempt Verified Rate | 第一轮提交前检查就过（`rounds` = 1）且 outcome = completed、figure verdict = verified 的场景比例 |
+| Final Verified Completion Rate | 不论几轮，最终 outcome = completed 且 figure verdict = verified 的比例（6b 起与首发分开出） |
 | Scientific Preservation Rate | 所有 L2 保持断言 verified 的比例（分母含 unknown，unknown 不算保持） |
 | Unintended Modification Rate | L1 发现非目标文件变化或保持断言 failed 的比例 |
 | Recovery Success Rate | 可靠性场景按期望结局收尾的比例 |
@@ -45,7 +45,7 @@ Fake Executor 的形状：实现 `AgentDefinition` 的测试适配器（`tests/t
 
 **Phase 6b 基线**（`scripts/dev/taf_bench.py --negatives`，回放执行器，Pack v1，macOS / matplotlib 3.11.2；
 `evidence/bench-6b-baseline.json`）：dev 14 个可回放场景 + 16 个反例全部跑完（not_run 0）。参考解首发 verified 1.0、
-科学保持 1.0、非预期修改 0；反例被基准抓住 1.0。**TAF Overclaim 0.625**（16 个被抓住的反例里 10 个 TAF 自己判
+最终 verified completion 1.0（回放参考解全部一轮过，rounds = 1）、科学保持 1.0、非预期修改 0（含保持断言 failed）；反例被基准抓住 1.0。**TAF Overclaim 0.625**（16 个被抓住的反例里 10 个 TAF 自己判
 completed）：提交后验证只核数据指纹，标题 / 单位 / 配色 / 刻度类型 / 图例的改动它看不见——这是 Harness Lab 与后续
 验证层要压低的数，不是基准的问题。
 

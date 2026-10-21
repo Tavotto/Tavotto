@@ -45,6 +45,7 @@ ROW_FIELDS = (
     "goal",
     "preserve",
     "unintended",
+    "rounds",
     "wall_s",
     "error",
 )
@@ -105,8 +106,10 @@ p.write_text(src, encoding="utf-8")
 """
 
 
-def _metrics(rows: list[dict]) -> dict:
-    """`06-benchmark-plan.md` §三：分母只算真的跑了的（not_run 单列，不进分母）。"""
+def _metrics(rows: list[dict], aggregate_only: bool = False) -> dict:
+    """`06-benchmark-plan.md` §三：分母只算真的跑了的（not_run 单列，不进分母）。
+
+    `aggregate_only`（holdout）：`not_run` 只给数量，不出 `id/variant` 列表——汇总里不许带逐场景信息。"""
     ran = [r for r in rows if r["outcome"] is not None]
     ref = [r for r in ran if r["variant"] == "ref"]
     neg = [r for r in ran if r["variant"] != "ref"]
@@ -114,17 +117,26 @@ def _metrics(rows: list[dict]) -> dict:
     def rate(items, pred):
         return round(sum(1 for r in items if pred(r)) / len(items), 4) if items else None
 
+    def goal_ok(r):
+        # 没有目标断言的场景（只有保持类，例如 FB-V01）目标记 not_applicable，算满足
+        return r["goal"] in ("verified", "not_applicable")
+
+    def final_ok(r):
+        return r["outcome"] == "completed" and r["figure_verdict"] == "verified" and goal_ok(r)
+
+    not_run = [f"{r['id']}/{r['variant']}" for r in rows if r["outcome"] is None]
     walls = sorted(r["wall_s"] for r in ran if r["wall_s"] is not None)
     return {
         "scenarios_run": len(ran),
-        "not_run": [f"{r['id']}/{r['variant']}" for r in rows if r["outcome"] is None],
-        # 没有目标断言的场景（只有保持类，例如 FB-V01）目标记 not_applicable，算满足
-        "first_attempt_verified_rate": rate(
-            ref,
-            lambda r: r["outcome"] == "completed" and r["goal"] in ("verified", "not_applicable"),
-        ),
+        **({"not_run_count": len(not_run)} if aggregate_only else {"not_run": not_run}),
+        # 首发 = 真正的第一轮提交前检查就过（rounds == 1）；修正过再成功的算最终通过、不算首发
+        "first_attempt_verified_rate": rate(ref, lambda r: r["rounds"] == 1 and final_ok(r)),
+        "final_verified_completion_rate": rate(ref, final_ok),
         "scientific_preservation_rate": rate(ref, lambda r: r["preserve"] == "verified"),
-        "unintended_modification_rate": rate(ref, lambda r: r["unintended"]),
+        # `unintended` 行字段只表示用户文件比较；§三口径是「非目标文件变化或保持断言 failed」，这里合并
+        "unintended_modification_rate": rate(
+            ref, lambda r: r["unintended"] or r["preserve"] == "failed"
+        ),
         "negatives_caught_rate": rate(
             neg, lambda r: r["goal"] == "failed" or r["preserve"] == "failed"
         ),
@@ -238,6 +250,8 @@ def _row(s, variant, **kw) -> dict:
 
 def _one(m, client, s, variant, edits, work, edits_box, discover, figureverify) -> dict:
     proj = work / f"{s['id']}__{variant}"
+    if proj.exists():
+        shutil.rmtree(proj)  # 本工具在 work 下建的目录；同一 --work 重跑时先清掉上次的
     shutil.copytree(FIXTURES / s["fixture"], proj)
     (proj / "truth.json").unlink(missing_ok=True)  # 真值不进项目（6c 的真实模型会读到它）
     (proj / "notes.txt").write_text("用户自己的文件：任务期间不许变。\n", encoding="utf-8")
@@ -310,6 +324,7 @@ def _one(m, client, s, variant, edits, work, edits_box, discover, figureverify) 
     goal = aggregate_verdict(c.verdict for c in checks if c.role == "goal")
     preserve = aggregate_verdict(c.verdict for c in checks if c.role == "preserve")
     unintended = user_files() != data_before
+    attempts = (task.get("verification") or {}).get("attempts") or []
     return _row(
         s,
         variant,
@@ -318,6 +333,7 @@ def _one(m, client, s, variant, edits, work, edits_box, discover, figureverify) 
         goal=goal,
         preserve=preserve,
         unintended=unintended,
+        rounds=len(attempts) + 1,
         wall_s=wall,
         error=sess.get("error"),
     )
@@ -345,9 +361,17 @@ def main(argv=None) -> int:
         wanted = set(args.only.split(","))
         scenarios = [s for s in scenarios if s["id"] in wanted]
     report = run(scenarios, work / "projects", negatives=args.negatives)
+    rows = report["rows"]
     report["split"] = split
     if args.holdout:
         report.pop("rows")  # holdout 只出汇总分
+        report["metrics"] = _metrics(rows, aggregate_only=True)
+        # 兜底：汇总里不许出现任何 holdout 场景 id / 指令 / 断言
+        try:
+            assert_no_leak([json.dumps(report, ensure_ascii=False)], load_scenarios("holdout"))
+        except LeakError as exc:
+            print(f"holdout 汇总泄漏守卫未通过：{exc}", file=sys.stderr)
+            return 2
     text = json.dumps(report, ensure_ascii=False, indent=2)
     if args.out:
         args.out.write_text(text + "\n", encoding="utf-8")

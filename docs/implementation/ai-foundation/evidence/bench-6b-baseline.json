@@ -1,6 +1,6 @@
 {
   "environment": {
-    "git_sha": "9020667ed6de5f57833eca93cb4d7132836ed78a",
+    "git_sha": "c4ed6451addd7725eddb5a40b0ba01267eb4281e",
     "pack": {
       "id": "figure_edit",
       "version": 1
@@ -19,7 +19,8 @@
       "goal": "verified",
       "preserve": "verified",
       "unintended": false,
-      "wall_s": 2.972,
+      "rounds": 1,
+      "wall_s": 1.656,
       "error": null
     },
     {
@@ -30,7 +31,8 @@
       "goal": "failed",
       "preserve": "verified",
       "unintended": false,
-      "wall_s": 1.44,
+      "rounds": 1,
+      "wall_s": 1.37,
       "error": null
     },
     {
@@ -41,7 +43,8 @@
       "goal": "verified",
       "preserve": "verified",
       "unintended": false,
-      "wall_s": 1.415,
+      "rounds": 1,
+      "wall_s": 1.395,
       "error": null
     },
     {
@@ -52,7 +55,8 @@
       "goal": "verified",
       "preserve": "failed",
       "unintended": false,
-      "wall_s": 1.408,
+      "rounds": 1,
+      "wall_s": 1.378,
       "error": null
     },
     {
@@ -63,7 +67,8 @@
       "goal": "verified",
       "preserve": "verified",
       "unintended": false,
-      "wall_s": 1.453,
+      "rounds": 1,
+      "wall_s": 1.361,
       "error": null
     },
     {
@@ -74,7 +79,8 @@
       "goal": "failed",
       "preserve": "verified",
       "unintended": false,
-      "wall_s": 1.351,
+      "rounds": 1,
+      "wall_s": 1.321,
       "error": null
     },
     {
@@ -85,7 +91,8 @@
       "goal": "verified",
       "preserve": "verified",
       "unintended": false,
-      "wall_s": 1.393,
+      "rounds": 1,
+      "wall_s": 1.375,
       "error": null
     },
     {
@@ -96,7 +103,8 @@
       "goal": "verified",
       "preserve": "failed",
       "unintended": false,
-      "wall_s": 1.405,
+      "rounds": 1,
+      "wall_s": 1.44,
       "error": null
     },
     {
@@ -107,7 +115,8 @@
       "goal": "verified",
       "preserve": "verified",
       "unintended": false,
-      "wall_s": 1.411,
+      "rounds": 1,
+      "wall_s": 1.384,
       "error": null
     },
     {
@@ -118,7 +127,8 @@
       "goal": "verified",
       "preserve": "failed",
       "unintended": false,
-      "wall_s": 1.398,
+      "rounds": 1,
+      "wall_s": 1.376,
       "error": null
     },
     {
@@ -129,7 +139,8 @@
       "goal": "verified",
       "preserve": "failed",
       "unintended": false,
-      "wall_s": 1.4,
+      "rounds": 1,
+      "wall_s": 1.364,
       "error": null
     },
     {
@@ -140,7 +151,8 @@
       "goal": "verified",
       "preserve": "verified",
       "unintended": false,
-      "wall_s": 1.398,
+      "rounds": 1,
+      "wall_s": 1.355,
       "error": null
     },
     {
@@ -151,7 +163,8 @@
       "goal": "failed",
       "preserve": "verified",
       "unintended": false,
-      "wall_s": 1.404,
+      "rounds": 1,
+      "wall_s": 1.36,
       "error": null
     },
     {
@@ -162,7 +175,8 @@
       "goal": "verified",
       "preserve": "verified",
       "unintended": false,
-      "wall_s": 1.333,
+      "rounds": 1,
+      "wall_s": 1.304,
       "error": null
     },
     {
@@ -173,7 +187,8 @@
       "goal": "verified",
       "preserve": "failed",
       "unintended": false,
-      "wall_s": 1.318,
+      "rounds": 1,
+      "wall_s": 1.274,
       "error": null
     },
     {
@@ -184,7 +199,8 @@
       "goal": "verified",
       "preserve": "verified",
       "unintended": false,
-      "wall_s": 1.359,
+      "rounds": 1,
+      "wall_s": 1.326,
       "error": null
     },
     {
@@ -195,7 +211,8 @@
       "goal": "verified",
       "preserve": "failed",
       "unintended": false,
-      "wall_s": 1.35,
+      "rounds": 1,
+      "wall_s": 1.337,
       "error": null
     },
     {
@@ -206,7 +223,8 @@
       "goal": "verified",
       "preserve": "failed",
       "unintended": false,
-      "wall_s": 1.351,
+      "rounds": 1,
+      "wall_s": 1.34,
       "error": null
     },
     {
@@ -217,7 +235,8 @@
       "goal": "verified",
       "preserve": "verified",
       "unintended": false,
-      "wall_s": 1.624,
+      "rounds": 1,
+      "wall_s": 1.575,
       "error": null
     },
     {
@@ -228,7 +247,8 @@
       "goal": "verified",
       "preserve": "failed",
       "unintended": false,
-      "wall_s": 1.612,
+      "rounds": 1,
+      "wall_s": 1.583,
       "error": null
     },
     {
@@ -239,7 +259,8 @@
       "goal": "verified",
       "preserve": "verified",
       "unintended": false,
-      "wall_s": 1.608,
+      "rounds": 1,
+      "wall_s": 1.666,
       "error": null
     },
     {
@@ -250,7 +271,8 @@
       "goal": "verified",
       "preserve": "failed",
       "unintended": false,
-      "wall_s": 1.592,
+      "rounds": 1,
+      "wall_s": 1.57,
       "error": null
     },
     {
@@ -261,7 +283,8 @@
       "goal": "not_applicable",
       "preserve": "verified",
       "unintended": false,
-      "wall_s": 1.453,
+      "rounds": 1,
+      "wall_s": 1.373,
       "error": null
     },
     {
@@ -272,7 +295,8 @@
       "goal": "not_applicable",
       "preserve": "failed",
       "unintended": false,
-      "wall_s": 1.389,
+      "rounds": 1,
+      "wall_s": 1.37,
       "error": null
     },
     {
@@ -283,7 +307,8 @@
       "goal": "verified",
       "preserve": "verified",
       "unintended": false,
-      "wall_s": 1.37,
+      "rounds": 1,
+      "wall_s": 1.352,
       "error": null
     },
     {
@@ -294,7 +319,8 @@
       "goal": "verified",
       "preserve": "failed",
       "unintended": false,
-      "wall_s": 1.374,
+      "rounds": 1,
+      "wall_s": 1.379,
       "error": null
     },
     {
@@ -305,7 +331,8 @@
       "goal": "verified",
       "preserve": "verified",
       "unintended": false,
-      "wall_s": 1.485,
+      "rounds": 1,
+      "wall_s": 1.479,
       "error": null
     },
     {
@@ -316,7 +343,8 @@
       "goal": "verified",
       "preserve": "failed",
       "unintended": false,
-      "wall_s": 1.361,
+      "rounds": 1,
+      "wall_s": 1.356,
       "error": null
     },
     {
@@ -327,7 +355,8 @@
       "goal": "verified",
       "preserve": "verified",
       "unintended": false,
-      "wall_s": 1.347,
+      "rounds": 1,
+      "wall_s": 1.402,
       "error": null
     },
     {
@@ -338,7 +367,8 @@
       "goal": "verified",
       "preserve": "failed",
       "unintended": false,
-      "wall_s": 1.343,
+      "rounds": 1,
+      "wall_s": 1.325,
       "error": null
     }
   ],
@@ -346,12 +376,13 @@
     "scenarios_run": 30,
     "not_run": [],
     "first_attempt_verified_rate": 1.0,
+    "final_verified_completion_rate": 1.0,
     "scientific_preservation_rate": 1.0,
     "unintended_modification_rate": 0.0,
     "negatives_caught_rate": 1.0,
     "taf_overclaim_rate": 0.625,
-    "wall_s_median": 1.4,
-    "wall_s_p95": 1.624
+    "wall_s_median": 1.373,
+    "wall_s_p95": 1.656
   },
   "split": "dev",
   "note": "Phase 6b 基线（回放执行器，Prompt Pack figure_edit v1）；git_sha 是跑分时的工作提交，指标按合入版本的 _metrics 重算"
