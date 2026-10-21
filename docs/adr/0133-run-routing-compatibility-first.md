@@ -77,7 +77,17 @@
 * **后果**：R3 的链（写 → `os.replace` / `rename` / `move` → 读）本身含守卫操作，所以 R3 在生产路径上不再直达 native（规则与证据仍计算、仍进 `Route.evidence`）；R1（`savefig` → 读回）不含守卫操作的脚本照旧直达。不含守卫操作的脚本误判的后果与终端直接运行相同，没有伤害。
 * **源码解码**（#1034 第十轮）：按 Python 自己的规则解码（PEP 263 声明 / BOM / 默认 UTF-8，复用 `scriptargs.decode_source`）；解不开就当作没读懂（`parsed=False`，走 safe）。不用 replacement 字符糊过去——那会把 Latin-1 的 `café` / `cañ` 折成同一个路径，伪造出读回。
 * **路径与当前目录**（#1034 第十一轮）：路径规范化只折叠证明得了的写法——POSIX 上反斜杠是文件名字符、任何 `..` 段可能经符号链接指向别处，都按「不可比」处理（不升格）；`Path.parent` 按字面取上级。脚本任何位置调用 `chdir` / `fchdir`（含 `contextlib.chdir`）时，cwd 相对的「存」与「读」可能不在同一目录，R1 / R3 不直达（medium，走 safe + 回退）。
-* **不在静态可见范围**：动态混淆（`getattr(os, "re" + "move")`、`__import__`、`exec`、`subprocess` 搬文件）看不见，记 #1086。
+* **不在静态可见范围**：`subprocess` / `ctypes` 搬文件、第三方库自定义写函数看不见，记 #1086。动态分派这一类已由下节的「不可证明门槛」结构性收口，不再逐个补写法。
+
+### 不可证明门槛（#1086，取代对动态混淆写法的枚举）
+
+伤害闸门是「列出看得见的操作」；`getattr(os, "re" + "move")`、`importlib.import_module("os").remove`、`exec(…)`、`__import__("os").remove` 让调用目标**静态不可证明**，闸门看不见，结果是 safe 守卫缺席、操作在 native 真实执行（失败开放）。所以判据从「没看到受守卫操作」改成「能证明没有受守卫操作」的一类规则：
+
+* **规则**：脚本任何位置（不做可达性推导，同闸门）出现**证明不了调用目标**的动态分派，R1 / R3 一律不直达 native：回 safe，reason `unprovable_dynamic_dispatch`，置信度 medium，证据照实带出，靠 0127 静默回退兜底。事实 `ScriptFacts.dynamic_dispatch`（`_Collector.has_dynamic_dispatch`）。
+* **形状类别**（不是函数名清单）：名字实参不是字面字符串的 `getattr` / `setattr` / `delattr` / `methodcaller` / `attrgetter`（或它们被当值传走）；`exec` / `eval` / `compile` / `__import__`（裸名或 `builtins.X`）与 `importlib.import_module` / `runpy` / `pkgutil.resolve_name` 一类按名取模块、跑文件的入口；`globals()` / `locals()` / 无实参 `vars()`、`__dict__` 等反射面、`sys.modules`。字面属性名 `getattr(obj, "foo")`、`re.compile`、`df.eval` 不受影响。
+* **不扩权**：只在本会升 high 时降级，其余路由逐字节不变；只会让路由更保守。
+* **与 MCP argv 门的关系**：argv 门的「不可证明」是 argparse 前缀专用的判据（`scriptargs.response_file_prefixes`，失败封闭），与此处是两个不同的主语（argv token 会不会被展开 vs 调用目标是谁），没有可共用的帮助函数；本节不动 argv 门。
+* **用户可见代价**：只发生在「本会静态直达 native 且脚本含动态分派」的脚本上，退化为 safe 先跑一次、因 `safe_file_operation_blocked`（`blocked` 类，`execpolicy.may_fall_back`）被拦后桌面发起的运行静默回退 native（`prepsession._plan_fallback` / `execpolicy.decide_fallback`）：多一次 safe 执行，结果相同。`safe_only` 项目或关了回退时不回退（与其它 safe 路由一致）。
 
 ## 后果
 

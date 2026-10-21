@@ -295,7 +295,22 @@
     "environment_locked": "A globally chosen Python is in effect, so a project-level choice would not be used. Clear the global choice first.",
     "environment_check_running": "An environment check is already running for this project.",
     "svg_asset_unsupported": "This SVG cannot be imported. Use a self-contained static SVG with explicit dimensions; scripts, external resources and DTDs are unsupported.",
-    "svg_asset_export_unsupported": "SVG assets currently support previews, placement and original SVG export. Canvas and cross-format export are not supported yet; convert this asset to PDF before importing it."
+    "svg_asset_export_unsupported": "SVG assets currently support previews, placement and original SVG export. Canvas and cross-format export are not supported yet; convert this asset to PDF before importing it.",
+    "taf_disabled": "This experimental feature isn’t turned on.",
+    "data_figure_input_missing": "Choose a data file and say what you want to plot.",
+    "data_path_outside_project": "This data file isn’t in the current project.",
+    "data_not_found": "The data file can’t be found.",
+    "data_not_csv": "Only CSV data files are supported for now.",
+    "data_too_large": "The data file is too large (over 5 MB) and wasn’t read.",
+    "data_too_long": "The data has too many rows (over 100,000) and wasn’t read.",
+    "data_too_wide": "The data has too many columns (over 64) and wasn’t read.",
+    "data_unreadable": "The data file can’t be read.",
+    "data_decode_error": "The data isn’t UTF-8 encoded and can’t be read.",
+    "data_malformed": "The CSV is malformed and can’t be read.",
+    "data_empty": "The data file is empty.",
+    "data_header_invalid": "The header has an empty or duplicate column name.",
+    "data_ragged": "Some rows have a different number of columns from the header.",
+    "figure_name_exhausted": "Too many figures share this name; no free name was found for the new one."
   },
   "engine": {
     "apply": "Apply",

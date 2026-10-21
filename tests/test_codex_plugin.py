@@ -349,6 +349,7 @@ _ALLOWED_STDLIB = {
     "shutil",
     "subprocess",
     "sys",
+    "tempfile",
     "time",
     "urllib",
     "winreg",

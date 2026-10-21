@@ -278,3 +278,150 @@ def test_the_supervisor_request_carries_the_idle_field(monkeypatch):
     assert sent["timeout_ms"] == 100_000
     assert sent["idle_timeout_ms"] == 42_000
     assert json.dumps(sent)  # 信封必须仍是可序列化的普通对象
+
+
+# ------------------------------------------- build 进度事件（#1207）：前端租约的唯一输入
+def _blocked_thread(seconds=30):
+    t = threading.Thread(target=lambda: threading.Event().wait(seconds), daemon=True)
+    t.start()
+    return t
+
+
+def test_growth_emits_progress_to_every_listener(worker, monkeypatch):
+    """日志在长 → 订阅者收到进度。**两个订阅者都收到**：第二个是排在同一把 `w.lock`
+    后面的重试，它没有自己的 build 线程，全靠扇出（不扇出它就只能再超时一次）。"""
+    monkeypatch.setattr(pool, "_PROGRESS_POLL", 0.01)
+    monkeypatch.setattr(pool, "PROGRESS_EMIT_INTERVAL", 0.0)
+    ticks = itertools.count(1)
+    monkeypatch.setattr(pool, "_log_size", lambda *_a, **_k: next(ticks))
+    first, retry = [], []
+    with worker.progress.listen(lambda: first.append(1)):
+        with worker.progress.listen(lambda: retry.append(1)):
+            worker._wait_with_watchdog(_blocked_thread(), timeout=0.2, idle=30.0)
+    assert first and retry
+
+
+def test_silence_emits_no_progress(worker, monkeypatch):
+    """日志不长 → 一个事件都不发：前端租约不会被一个"其实卡死"的 build 续命。"""
+    monkeypatch.setattr(pool, "_PROGRESS_POLL", 0.01)
+    monkeypatch.setattr(pool, "PROGRESS_EMIT_INTERVAL", 0.0)
+    got = []
+    with worker.progress.listen(lambda: got.append(1)):
+        worker._wait_with_watchdog(_blocked_thread(), timeout=30.0, idle=0.1)
+    assert got == []
+
+
+def test_progress_is_throttled(worker, monkeypatch):
+    """每 10 ms 都在长，也只按 `PROGRESS_EMIT_INTERVAL` 的节奏发。"""
+    monkeypatch.setattr(pool, "_PROGRESS_POLL", 0.005)
+    monkeypatch.setattr(pool, "PROGRESS_EMIT_INTERVAL", 0.1)
+    ticks = itertools.count(1)
+    monkeypatch.setattr(pool, "_log_size", lambda *_a, **_k: next(ticks))
+    got = []
+    with worker.progress.listen(lambda: got.append(1)):
+        worker._wait_with_watchdog(_blocked_thread(), timeout=0.45, idle=30.0)
+    assert 2 <= len(got) <= 6, got  # 0.45 s / 0.1 s ≈ 4–5 个，绝不是每次轮询一个（~90）
+
+
+def test_a_failing_listener_cannot_break_the_watchdog(worker, monkeypatch):
+    monkeypatch.setattr(pool, "_PROGRESS_POLL", 0.01)
+    monkeypatch.setattr(pool, "PROGRESS_EMIT_INTERVAL", 0.0)
+    ticks = itertools.count(1)
+    monkeypatch.setattr(pool, "_log_size", lambda *_a, **_k: next(ticks))
+
+    def boom():
+        raise RuntimeError("sse down")
+
+    with worker.progress.listen(boom):
+        waited, _ = worker._wait_with_watchdog(_blocked_thread(), timeout=0.15, idle=30.0)
+    assert waited >= 0.15
+
+
+def test_listener_is_removed_on_exit(worker):
+    cb = lambda: None  # noqa: E731
+    with worker.progress.listen(cb):
+        assert cb in worker.progress._items
+    assert cb not in worker.progress._items
+
+
+def test_workerd_relays_log_growth_during_build(monkeypatch, tmp_path):
+    """workerd 的看门狗在 Rust 里，Python 看不到日志——所以 `ensure_built` 自己有一条
+    只发事件的 stat 线程，同一个 `_log_size` / `_PROGRESS_POLL` / 节流。"""
+    monkeypatch.setattr(
+        pool, "select_worker_python", lambda: ("/usr/bin/python3", pool.SOURCE_SYSTEM)
+    )
+    monkeypatch.setattr(pool, "_PROGRESS_POLL", 0.01)
+    monkeypatch.setattr(pool, "PROGRESS_EMIT_INTERVAL", 0.0)
+    got = []
+
+    class _SlowClient(_FakeClient):
+        def call(self, op, **kw):
+            if op == "build":
+                w.log_path.parent.mkdir(parents=True, exist_ok=True)
+                for _ in range(5):
+                    with open(w.log_path, "ab") as f:
+                        f.write(b"step\n")
+                    time.sleep(0.05)
+            return super().call(op, **kw)
+
+    w = pool.WorkerdWorker("fig.py", str(tmp_path), "main", client=_SlowClient())
+    with w.progress.listen(lambda: got.append(1)):
+        w.ensure_built()
+    assert got, "workerd 路径 build 期间日志在长却一个进度事件都没发"
+
+
+def test_frontend_hard_cap_mirrors_the_engine():
+    """前端租约的总上限与 `BUILD_HARD_TIMEOUT` 同源：只改一侧，要么前端提前放弃一个引擎还
+    允许的 build，要么永远不放弃。"""
+    import re
+    from pathlib import Path
+
+    src = (Path(__file__).resolve().parents[1] / "web/src/store/renderStore.ts").read_text(
+        encoding="utf-8"
+    )
+    m = re.search(r"export const RENDER_HARD_CAP_MS = (\d+) \* 3600_000", src)
+    assert m, "找不到 RENDER_HARD_CAP_MS（改了写法就同步这条正则）"
+    assert int(m.group(1)) * 3600.0 == pool.BUILD_HARD_TIMEOUT
+
+
+def test_progress_covers_admission_build_not_just_the_action(monkeypatch):
+    """带 artifact_source 的冷渲染：build 发生在 `_admit_artifact` 里、先于 action。
+    监听必须罩住整次尝试，否则整个长 build 期间一个 render.progress 都不发。"""
+    from tavotto import app as app_mod
+
+    events = []
+    monkeypatch.setattr(app_mod, "sse_publish", lambda ev, data: events.append((ev, data)))
+    progress = pool.ProgressListeners()
+
+    class _W:
+        def __init__(self):
+            self.progress = progress
+
+    def admit(worker, _stem, _ctx):
+        assert progress.note_growth(now=1e9)  # build 线程在 admission 里看到日志长大
+
+    monkeypatch.setattr(app_mod, "_admit_artifact", admit)
+    monkeypatch.setattr(app_mod, "_assert_artifact_current", lambda _c: None)
+    monkeypatch.setattr(app_mod, "_svg_execution_result", lambda _w: {})
+    w = _W()
+    _, _, out = app_mod._engine_attempt(
+        "Fig1.pdf",
+        w,
+        "Fig1",
+        lambda wk, st: {"ok": True},
+        artifact_source={"x": 1},
+        progress_pj="p1",
+    )
+    assert out == {"ok": True}
+    assert events == [("render.progress", {"pj": "p1", "id": "Fig1.pdf"})]
+    assert not progress._items, "离开尝试后订阅必须撤掉"
+
+
+def test_render_route_passes_progress_pj_to_the_attempt():
+    """路由必须把 pj 交给 `_engine_attempt`（漏传 = 整条渲染路径静默失去续期）。"""
+    import inspect
+
+    from tavotto import app as app_mod
+
+    src = inspect.getsource(app_mod.api_engine_render)
+    assert "progress_pj=pj" in src

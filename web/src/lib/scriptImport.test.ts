@@ -55,9 +55,10 @@ describe('dropTargetOf', () => {
     expect(dropTargetOf(drop({ uris: '# comment\r\nfile:///Users/a/paper/plot.py', files: ['plot.py'] }))).toEqual({
       kind: 'path',
       folder: '/Users/a/paper',
+      script: 'plot.py',
     })
     // 放下的是目录：它自己就是项目
-    expect(dropTargetOf(drop({ uris: 'file:///Users/a/paper' }))).toEqual({ kind: 'path', folder: '/Users/a/paper' })
+    expect(dropTargetOf(drop({ uris: 'file:///Users/a/paper' }))).toEqual({ kind: 'path', folder: '/Users/a/paper', script: null })
   })
 
   it('带 file URI 但放下的不是 .py 也不像目录：如实说不收，不当项目去开（#688）', () => {
@@ -67,7 +68,7 @@ describe('dropTargetOf', () => {
     })
     expect(dropTargetOf(drop({ uris: 'file:///C:/work/data.CSV' }))).toEqual({ kind: 'not-script', name: 'data.CSV' })
     // 以分隔符结尾的总是目录，最后一段带点也一样
-    expect(dropTargetOf(drop({ uris: 'file:///Users/a/v1.2/' }))).toEqual({ kind: 'path', folder: '/Users/a/v1.2/' })
+    expect(dropTargetOf(drop({ uris: 'file:///Users/a/v1.2/' }))).toEqual({ kind: 'path', folder: '/Users/a/v1.2/', script: null })
   })
 
   it('只有文件、没有路径（浏览器与桌面壳的常态）：.py 退回选择器，别的说不收', () => {

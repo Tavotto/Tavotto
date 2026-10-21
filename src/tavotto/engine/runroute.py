@@ -54,6 +54,9 @@ REASON_USER_EXPLICIT = "user_explicit_profile"
 REASON_OPERATOR_DISABLED = "operator_disabled"
 #: 伤害闸门：脚本里出现 safe 守卫会拦的文件操作形状，运行前不直达 native（ADR 0133「伤害闸门」）
 REASON_GUARDED_FILE_OPS = "guarded_file_ops_present"
+#: 不可证明门槛：脚本里出现静态分析无法证明调用目标的动态分派（动态名的 `getattr`、`importlib` / `__import__` 取模块、
+#: `exec` / `eval` / `compile`、`globals()` / `__dict__` / `sys.modules` 取名），运行前不直达 native（ADR 0133「不可证明门槛」）
+REASON_UNPROVABLE_DYNAMIC = "unprovable_dynamic_dispatch"
 REASONS = (
     REASON_ORDINARY_PLOT,
     REASON_SAVEFIG_READBACK,
@@ -62,6 +65,7 @@ REASONS = (
     REASON_USER_EXPLICIT,
     REASON_OPERATOR_DISABLED,
     REASON_GUARDED_FILE_OPS,
+    REASON_UNPROVABLE_DYNAMIC,
 )
 
 CONFIDENCE_HIGH = "high"
@@ -250,6 +254,8 @@ class ScriptFacts:
     guarded_ops: bool = False
     #: 脚本里任何位置改了当前目录（`os.chdir` / `os.fchdir` / `contextlib.chdir`…）：cwd 相对的证据前后可能不是同一个目录
     cwd_changes: bool = False
+    #: 脚本里任何位置出现静态无法证明调用目标的动态分派：此时「没看到守卫操作」不等于「没有守卫操作」（失败开放），不允许直达 native
+    dynamic_dispatch: bool = False
 
 
 _EMPTY = ScriptFacts(parsed=False)
@@ -907,6 +913,126 @@ class _Collector:
                 return True
         return False
 
+    #: 动态取属性 / 方法的内建与 operator 入口：名字实参必须是字面字符串才算证明得了
+    _ATTR_DISPATCH = frozenset({"getattr", "setattr", "delattr", "methodcaller", "attrgetter"})
+    #: 只当裸名（或 `builtins.X`）认：`re.compile` / `df.eval` 是另一回事
+    _CODE_EXEC = frozenset({"exec", "eval", "compile", "__import__"})
+    #: 按名字取模块 / 跑文件 / 解析点号名：属性末段或 `from … import` 的名字
+    _MODULE_LOADERS = frozenset(
+        {
+            "import_module",
+            "__import__",
+            "run_path",
+            "run_module",
+            "resolve_name",
+            "spec_from_file_location",
+            "exec_module",
+            "load_module",
+        }
+    )
+    #: 能按字符串名取到任何全局 / 模块成员的反射面
+    _REFLECTION_ATTRS = frozenset(
+        {
+            "__dict__",
+            "__builtins__",
+            "__globals__",
+            "__getattribute__",
+            "__subclasses__",
+            "f_globals",
+            "f_locals",
+            "f_builtins",
+        }
+    )
+    #: 按字符串名枚举 / 取成员的标准库入口（`inspect.getmembers`、`pydoc.locate`、`gc.get_objects`…）
+    _MEMBER_LOOKUP = frozenset(
+        {
+            "getmembers",
+            "getmembers_static",
+            "getattr_static",
+            "locate",
+            "get_objects",
+            "get_referrers",
+        }
+    )
+
+    @staticmethod
+    def _literal_str(node: ast.AST | None) -> bool:
+        return isinstance(node, ast.Constant) and isinstance(node.value, str)
+
+    def _dispatch_names_provable(self, name: str, call: ast.Call) -> bool:
+        """属性分派入口的**全部**名字实参都是字面字符串（`*args` / 关键字传名 / 缺实参都算证明不了）。"""
+        if name == "methodcaller":
+            # 选名的只有第 1 个位置实参；其后的位置 / 关键字实参属于最终方法调用，不参与（`methodcaller("set_title", "X", loc="left")`）
+            return bool(call.args) and self._literal_str(call.args[0])
+        if call.keywords or any(isinstance(a, ast.Starred) for a in call.args):
+            return False
+        if name in ("getattr", "setattr", "delattr"):
+            return len(call.args) >= 2 and self._literal_str(call.args[1])
+        return bool(call.args) and all(self._literal_str(a) for a in call.args)  # attrgetter
+
+    def has_dynamic_dispatch(self) -> bool:
+        """静态分析**证明不了调用目标**的形状（一条结构规则，不枚举危险函数名）：
+
+        * `getattr` / `setattr` / `delattr` / `methodcaller` / `attrgetter` 的名字实参不全是字面字符串（含 `"re" + "move"`、变量、
+          `*args`、关键字传名），或这些入口被当值传走（含 `functools.partial(getattr, os)`）；
+        * `exec` / `eval` / `compile` / `__import__`（裸名或 `builtins.X`），`importlib.import_module` 等按名取模块 / 跑文件的入口；
+        * `globals()` / `locals()` / `vars(x)`（任何形式，`vars(x)` 即 `x.__dict__`）、`inspect.getmembers` 一类按名枚举入口、`X.__dict__` 等反射面、`__builtins__`、`sys.modules`；
+        * **从任何模块 import** 上述原语（不看别名）：导入原语本身就让之后的调用点只露别名，宁宽。
+
+        命中即「没看到守卫操作」不再等于「没有守卫操作」。字面属性名（`getattr(obj, "foo")`）不算。"""
+        primitives = (
+            self._ATTR_DISPATCH
+            | self._CODE_EXEC
+            | self._MODULE_LOADERS
+            | self._MEMBER_LOOKUP
+            | {"globals", "locals", "vars", "modules", "__builtins__"}
+        )
+        called = {id(n.func) for n in ast.walk(self.tree) if isinstance(n, ast.Call)}
+        for n in ast.walk(self.tree):
+            if isinstance(n, ast.ImportFrom):
+                if any(a.name in primitives for a in n.names):
+                    return True
+                if n.module in ("importlib", "runpy", "pkgutil") and any(
+                    a.name == "*" for a in n.names
+                ):
+                    return True
+            elif isinstance(n, ast.Attribute):
+                if (
+                    n.attr in self._MODULE_LOADERS
+                    or n.attr in self._MEMBER_LOOKUP
+                    or n.attr in self._REFLECTION_ATTRS
+                ):
+                    return True
+                q = self.qual(n) or ""
+                if q == "sys.modules" or (
+                    q.startswith("builtins.") and q.rsplit(".", 1)[1] in primitives
+                ):
+                    return True
+                if n.attr in self._ATTR_DISPATCH and id(n) not in called:
+                    return True  # `operator.attrgetter` 被当值传走
+            elif isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load):
+                if (
+                    n.id in self._CODE_EXEC
+                    or n.id in self._MODULE_LOADERS
+                    or n.id in self._MEMBER_LOOKUP
+                    or n.id in ("globals", "locals", "vars", "__builtins__")
+                ):
+                    return True
+                if n.id in self._ATTR_DISPATCH and id(n) not in called:
+                    return True
+            elif isinstance(n, ast.Call):
+                f = n.func
+                name = (
+                    f.id
+                    if isinstance(f, ast.Name)
+                    else f.attr
+                    if isinstance(f, ast.Attribute)
+                    else None
+                )
+                if name in self._ATTR_DISPATCH and not self._dispatch_names_provable(name, n):
+                    return True
+        return False
+
     def has_guarded_ops(self) -> bool:
         if any(isinstance(n, ast.Call) and self._guarded_call(n) for n in ast.walk(self.tree)):
             return True
@@ -1481,6 +1607,7 @@ def _collect(source: str) -> ScriptFacts:
         live_scopes=col.live_scopes(),
         guarded_ops=col.has_guarded_ops(),
         cwd_changes=col.has_cwd_changes(),
+        dynamic_dispatch=col.has_dynamic_dispatch(),
         parse_ms=(time.perf_counter() - started) * 1000.0,
     )
 
@@ -1782,6 +1909,17 @@ def decide(
         return Route(
             EXECUTION_SAFE,
             REASON_GUARDED_FILE_OPS,
+            CONFIDENCE_MEDIUM,
+            tuple(evidence),
+            dynamic,
+            blind,
+        )
+    if (high_r1 or high_r3) and facts.dynamic_dispatch:
+        # 不可证明门槛：动态分派让「没看到守卫操作」不等于「没有」。证明不了就不提升——不枚举危险名字，
+        # 同样走 safe + 静默回退（ADR 0127）。与伤害闸门互补：闸门管看得见的操作形状，这里管看不见的调用目标
+        return Route(
+            EXECUTION_SAFE,
+            REASON_UNPROVABLE_DYNAMIC,
             CONFIDENCE_MEDIUM,
             tuple(evidence),
             dynamic,

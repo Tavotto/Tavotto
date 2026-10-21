@@ -36,10 +36,12 @@ import {
   dragHasFiles,
   dropTargetOf,
   folderForPath,
+  scriptForPath,
   type DropTarget,
 } from '@/lib/scriptImport'
 import { cn } from '@/lib/utils'
 import { useOnboardingStore } from '@/store/onboardingStore'
+import { scriptTarget, useProjectPreparationStore } from '@/store/projectPreparationStore'
 import { useProjectStore } from '@/store/projectStore'
 import { useUiStore } from '@/store/uiStore'
 import { BrandMark } from '../ui/BrandMark'
@@ -165,6 +167,11 @@ type Importer = ReturnType<typeof useScriptImport>
  * （与打开任何项目同一条 `projectStore.open`）。桌面壳用原生文件选择器（只收 .py），
  * 浏览器回退到服务器端目录浏览器选脚本所在的文件夹。
  *
+ * 入口给出的是**一个 .py**（选择器选的、拖进来的）时，打开目录之后还要运行**这个**脚本：走脚本库 ▶ 同一条
+ * 「打开并运行」（`projectPreparationStore.open(…, { run: true })`），恰好一张图就放进当前画布并进入编辑、
+ * 多张由卡片让用户挑。只开目录不跑的话，同一文件夹里拖进不同脚本打开的都是同一个项目，画布上恢复的是
+ * 上次的排版，用户看到的永远是第一张图（2026-10-21 诊断包）。只给目录的入口（目录浏览器、拖文件夹）不运行任何脚本。
+ *
  * 拖放（ADR 0092）：macOS 桌面壳旁听系统拖放、交来 canonicalize 过的真实路径
  * （`onNativeFileDrop`），`.py` 打开它所在的文件夹、文件夹直接当项目、别的说不收，
  * 多拖了几个说一句只开了哪个。拿不到路径的宿主（浏览器、其它平台）退回选择器并说清是
@@ -183,6 +190,17 @@ function useScriptImport(openPath: (path: string) => Promise<boolean>) {
   const arbiter = useRef<ReturnType<typeof createDropArbiter> | null>(null)
   if (!arbiter.current) arbiter.current = createDropArbiter({ graceMs: NATIVE_DROP_GRACE_MS })
 
+  /**
+   * 打开目录；`script`（目录里的文件名）不为空就接着「打开并运行」它。只在项目真的打开了才运行。
+   * 文件名带首尾空白（` plot.py`）不运行：后端各脚本端点按约定 `strip()` 脚本名，会找不到它、
+   * 或在同目录还有 `plot.py` 时静默跑错脚本（Codex #1267）——只开项目，后端统一支持之后（#1278）再放开
+   */
+  const openFolder = (folder: string, script: string | null): Promise<boolean> =>
+    openPath(folder).then((ok) => {
+      if (ok && script && script === script.trim()) void useProjectPreparationStore.getState().open(scriptTarget(script, { reuse: true }), { run: true })
+      return ok
+    })
+
   const openDropped = (drop: NativeFileDrop) => {
     // 壳的事件不经过页面的 onDrop，切换中的闸要在这里再挡一次（与主页其它入口的 disabled 同一个判据）
     if (useProjectStore.getState().switching) return
@@ -194,7 +212,7 @@ function useScriptImport(openPath: (path: string) => Promise<boolean>) {
       return
     }
     setNotice(null)
-    void openPath(drop.folder).then((ok) => {
+    void openFolder(drop.folder, drop.kind === 'script' ? drop.name : null).then((ok) => {
       if (!ok) return
       // 页面已经换成编辑器：说明走通知轨。说出是哪个脚本（关联），多拖了的说只开了哪个
       const values = { name: drop.name, total: drop.ignored + 1 }
@@ -232,7 +250,7 @@ function useScriptImport(openPath: (path: string) => Promise<boolean>) {
       void pickScriptFile(t('home.import.nativeTitle')).then((path) => {
         if (path) {
           setNotice(null)
-          void openPath(folderForPath(path))
+          void openFolder(folderForPath(path), scriptForPath(path))
         }
       })
     } else setBrowsing(true)
@@ -250,7 +268,7 @@ function useScriptImport(openPath: (path: string) => Promise<boolean>) {
     switch (target.kind) {
       case 'path':
         setNotice(null)
-        void openPath(target.folder)
+        void openFolder(target.folder, target.script)
         return
       case 'no-path':
         setNotice({ tone: 'info', text: t('home.import.dropNoPath', { name: target.name, product: PRODUCT_NAME }) })

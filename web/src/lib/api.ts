@@ -2,6 +2,7 @@ import { classifyArtifactFailure } from '@/lib/artifactReason'
 import { ArtifactValidationError, FIGSIZE_SOURCE_POLICY, verifiedSource, type ArtifactRequestFields } from '@/lib/artifactValidation'
 import { apiUrl, apiUrlFor, currentProjectId, withProject, withProjectFor } from '@/lib/session'
 import { formatMessage, i18n, literal, msg, t, type UiMessage } from '@/i18n'
+import type { ExportRoute } from '@/lib/exportRoute'
 import type { FigureDocument, FigureSnapshot, ProjectDocument } from '@/types/document'
 import type { ManifestFrame } from '@/lib/figureFrame'
 import type { PreviewMetadata } from '@/lib/previewBudget'
@@ -1371,6 +1372,11 @@ export interface LayoutVersionMeta {
   moment?: LayoutMoment
   /** 有缩略图时是它的格式（`/api/versions/<id>/<vid>/thumb`）；没有就缺席 */
   thumb?: 'webp' | 'png'
+  /**
+   * 新存储里这一版的信封读不出来（ADR 0140）：只赔掉这一条，别的版本照常。
+   * 本版本只认下这个字段、不画专门的 UI；行为不变——点它取正文会收到 `versions_unreadable`。
+   */
+  damaged?: boolean
   description: string
   objects: number
   page?: { w: number; h: number }
@@ -1481,7 +1487,15 @@ export const fetchTimeline = (
   sketch?: { objects: number; textChars: number },
 ) => {
   const q = sketch ? `?sketch=${sketch.objects}&sketchText=${sketch.textChars}` : ''
-  return jsonFetch<{ versions: LayoutVersionMeta[]; budget?: TimelineBudget }>(
+  return jsonFetch<{
+    versions: LayoutVersionMeta[]
+    budget?: TimelineBudget
+    /**
+     * 旧时间线文件读不出来（#264）：后端已开一份空历史、旧文件原样保留。只有文件名与大小，
+     * 没有路径。本版本只认下字段、不画 UI（也不据此删任何东西）。
+     */
+    legacy_unreadable?: { name: string; size: number | null }
+  }>(
     `/api/versions/${encodeURIComponent(docId)}${q}`,
   )
 }
@@ -1972,6 +1986,8 @@ export const cancelExport = (jobId: string) =>
   })
 
 export interface ExportValidation {
+  /** 每个面板 × 每种格式的来源（后端 `engine/exportroute.py`）；旧后端 / 算不出时缺 */
+  route?: ExportRoute
   artifact_sources?: Record<string, unknown>
   ok: boolean
   /** 会撞上的已有文件名 */
@@ -3360,6 +3376,42 @@ export const fetchAiSession = (sid: string, pj: string | null) =>
   jsonFetch<AiSessionDetail>(`/api/ai/sessions/${encodeURIComponent(sid)}`, undefined, pj)
 
 /**
+ * 增量对账里的一个会话（`GET /api/ai/sessions/changes`）：判终态 + 建只读占位的摘要列，**不含**转录 / diff / refresh——
+ * 终态详情仍用 `fetchAiSession`（后端 `CHANGE_DTO_KEYS`，不是第二份 DTO 权威）。
+ */
+export interface AiSessionChange {
+  id: string
+  /** 这个会话最后一次写的版本号（全表单调） */
+  rev: number
+  status: string
+  /** 与会话详情同一个判据：`_pump` 收尾（changed / diff / refresh 都确定）之后才为 true */
+  final: boolean
+  changed: boolean
+  error: string | null
+  started_ms: number
+  ended_ms: number | null
+  client_request_id: string | null
+  provider: AiAgentId
+  scope: string | null
+  target: string | null
+  /** AI 面板发起的会话都有脚本；没有 = TAF 任务等不进助手面板的会话 */
+  script: string | null
+  prompt: string
+  cancel_requested: boolean
+}
+
+/**
+ * 项目里版本号 > `since` 的会话（#1115）。`since` 为 `null` = 只要此刻的水位（起点）。
+ * 回 `head`：下一次的水位（全局版本号；`more` 为真时只推进到本页最后一行）。
+ */
+export const fetchAiChanges = (since: number | null, pj: string | null) =>
+  jsonFetch<{ head: number; more: boolean; sessions: AiSessionChange[] }>(
+    `/api/ai/sessions/changes${since === null ? '' : `?since=${since}`}`,
+    undefined,
+    pj,
+  )
+
+/**
  * 发送失败是不是「后端明确拒绝」：有 HTTP 响应，且 4xx、或 5xx 但带着我们自己的稳定 `code`
  * （后端处理过的失败）。网关式 5xx（502/503/504，没有 code）、超时、断网、200 但读不出体——
  * 都不确定后端收到没有。
@@ -3446,6 +3498,7 @@ interface ProjectScoped {
 export type ServerEvent =
   | ({ kind: 'figure.snapshot_invalidated'; pj: string } & FigureSnapshotInvalidation)
   | ({ kind: 'render.preparing'; id: string } & ProjectScoped)
+  | ({ kind: 'render.progress'; id: string } & ProjectScoped)
   | ({ kind: 'render.started'; id: string; cost?: string; cold?: boolean } & ProjectScoped)
   | ({ kind: 'render.done'; id: string; rev?: number } & ProjectScoped)
   | ({ kind: 'render.failed'; id: string; error?: string } & ProjectScoped)
@@ -3581,6 +3634,8 @@ export type ServerEvent =
       refresh?: AiRefreshOutcome
       /** 任务结局（TAF）；与 `status` 分开记，老后端没有这个字段 */
       task?: AiTaskSummary
+      /** 这条终态事实在历史库里的版本号（#1115）：只是"该去对账了"的提示，事实以 `fetchAiChanges` 为准；老后端没有 */
+      rev?: number | null
     } & ProjectScoped)
 
 /**
@@ -3601,6 +3656,7 @@ export interface AiRefreshOutcome {
 const EVENT_KINDS = [
   'figure.snapshot_invalidated',
   'render.preparing',
+  'render.progress',
   'render.started',
   'render.done',
   'render.failed',
