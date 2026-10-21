@@ -472,8 +472,6 @@ interface DocumentState {
   restoreIssue: RestoreIssue | null
   /** 正文存下了、但「下次自动恢复」要用的元数据没更新（与 `saveState` 正交，下次保存成功清掉） */
   restoreMetaIssue: RestoreMetaIssue | null
-  /** Latest autosave source snapshot warning; separate from successful layout persistence. */
-  svgSnapshotWarnings: string[]
   /**
    * 「整体换文档」的代次，每次载入 +1（磁盘恢复 / 载入布局 / 切项目）。
    *
@@ -694,7 +692,6 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
   restoreGate: gate,
   restoreIssue: null,
   restoreMetaIssue: null,
-  svgSnapshotWarnings: [],
   loadSeq: 0,
   derivedSeq: 0,
   snapshotSeq: 0,
@@ -1142,7 +1139,6 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
         saveIssue: null,
         docNotice: null,
         restoreMetaIssue: null,
-        svgSnapshotWarnings: [],
         loadSeq: get().loadSeq + 1,
         lastPersisted: null,
         projectFile: readProjectFile(nextId),
@@ -1455,8 +1451,6 @@ const isCurrentDoc = (id: string) => useDocumentStore.getState().documentId === 
  * 的圆点同源），而 ⌘S 那一刻的内容其实已经在盘上了（Codex #679）。
  */
 const diskWrites = new Map<string, number>()
-const diskSvgWarnings = new Map<string, string[]>()
-const svgWarningKey = (id: string, pj: string | null) => JSON.stringify([id, pj])
 
 /**
  * 写盘成功后：期间又编辑过就还是 dirty，没编辑过才是"存好了"。
@@ -1469,13 +1463,11 @@ const svgWarningKey = (id: string, pj: string | null) => JSON.stringify([id, pj]
 function afterWriteOk(
   id: string,
   savedAt: number,
-  meta?: { pj?: string | null; metadata?: PersistedMetadata; svgSnapshotWarnings?: string[]; figureSnapshots?: Record<string, FigureSnapshot>; snapshotContext?: FigureSnapshotSaveContext },
+  meta?: { pj?: string | null; metadata?: PersistedMetadata; figureSnapshots?: Record<string, FigureSnapshot>; snapshotContext?: FigureSnapshotSaveContext },
 ): void {
   if (meta?.snapshotContext) mergeSavedFigureSnapshots(meta.snapshotContext, meta.figureSnapshots)
   diskWrites.set(id, (diskWrites.get(id) ?? 0) + 1)
   const pj = meta?.pj ?? null
-  const svgWarnings = meta?.svgSnapshotWarnings ?? []
-  diskSvgWarnings.set(svgWarningKey(id, pj), svgWarnings)
   for (const fn of [...persistedListeners]) {
     try {
       fn(id, pj, meta?.metadata)
@@ -1489,7 +1481,6 @@ function afterWriteOk(
   // 它的元数据结局不属于现在开着的这份——只按 id 判会把 A 的失败挂到 B 头上。比的是这份排版**现在**的归属项目
   // （与排队时取 pj 的是同一个表达式）；不一致就既不挂也不清
   if (pj === (projectOfDoc().id ?? currentProjectId())) {
-    useDocumentStore.setState({ svgSnapshotWarnings: svgWarnings })
     const prevMeta = useDocumentStore.getState().restoreMetaIssue
     // `owner_unknown`（正文写下了、归属 / 晋升没记：项目在后端已经没了）与 `failed` 一样是「下次自动恢复信息没更新」
     if (meta?.metadata === 'failed' || meta?.metadata === 'owner_unknown') {
@@ -1625,7 +1616,7 @@ export async function saveNow(): Promise<SaveState> {
  * （排队合并成更新的一份也算：盘上的内容只会比按下时更新），或者根本没有要写的（空文档）。
  * 「排版写成了」（时间线的「保存」点）跟 `wrote` 走，不跟 `state` 走（Codex #679）。
  */
-export async function saveNowWithResult(): Promise<{ state: SaveState; wrote: boolean; svgSnapshotWarnings?: string[] }> {
+export async function saveNowWithResult(): Promise<{ state: SaveState; wrote: boolean }> {
   // 恢复没落定时没有「要存的文档」：不举手动标志、不认领、不等写盘队列
   if (isDocumentPlaceholder()) {
     return { state: useDocumentStore.getState().saveState, wrote: false }
@@ -1633,7 +1624,6 @@ export async function saveNowWithResult(): Promise<{ state: SaveState; wrote: bo
   // 手动保存是用户的动作：显式打开的别的项目的排版，存一下就归到这个项目（与真改一笔同一档）
   claimDocumentOnEdit()
   const id = useDocumentStore.getState().documentId
-  const warningKey = svgWarningKey(id, projectOfDoc().id ?? currentProjectId())
   const before = diskWrites.get(id) ?? 0
   cancelPendingAutosave()
   disk.markManual()
@@ -1647,7 +1637,6 @@ export async function saveNowWithResult(): Promise<{ state: SaveState; wrote: bo
   return {
     state: useDocumentStore.getState().saveState,
     wrote: (diskWrites.get(id) ?? 0) > before,
-    svgSnapshotWarnings: diskSvgWarnings.get(warningKey) ?? [],
   }
 }
 
@@ -2420,7 +2409,6 @@ export function installRestoredDocument(
       saveIssue: null,
       docNotice: notice,
       restoreMetaIssue: null,
-      svgSnapshotWarnings: [],
     })
     announceDocOpen(id)
   } finally {

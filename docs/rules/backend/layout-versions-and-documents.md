@@ -75,7 +75,7 @@
   冷态无当前回执时可按明确引用读档，已知新回执则必须相符（授权边界见 `export-pipeline.md`）。
   **保存先冻结、再单次原子写正文**：命名保存和自动保存都在文档锁内冻结，成功的引用随正文一起落盘，
   不先写一份无引用正文再补写。某来源冻结失败时清掉**本次待保存正文**里的旧引用，返回
-  `svg_snapshot_warnings`，文档仍保存；成功响应的 `figure_snapshots` 是这次正文实际写下的引用表。
+  `svg_snapshot_warnings`，文档仍保存（该字段只是后端事实，**前端保存 / 另存为 / 顶栏都不展示**；缺快照到真正导出 SVG 时由 `svg_source_unsupported` 一句话说明）；成功响应的 `figure_snapshots` 是这次正文实际写下的引用表。
   前端只把响应合回同一项目 / 文档加载轮次且源、patch 与执行代仍匹配的面板，不让晚到的保存响应复活旧引用。
   可信 `figure_snapshot_invalidation` 的实际执行事实、源或 override 改变会清除相关引用（含非当前画布）；
   不能从 HTTP 成功、descriptors 或 ready 猜执行；失败、零图、部分输出、开始后取消也撤该 owner 的旧输出全集，

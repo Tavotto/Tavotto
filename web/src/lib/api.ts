@@ -851,8 +851,6 @@ export async function fetchLayout(name: string): Promise<FetchedLayout> {
 }
 
 export interface SavedLayout {
-  /** Layout saved, but these exact source edits have no durable SVG snapshot. */
-  svg_snapshot_warnings?: string[]
   /** Complete verified snapshot map for candidate panel object IDs; absent means old backend. */
   figure_snapshots?: Record<string, FigureSnapshot>
   ok: boolean
@@ -924,8 +922,6 @@ export const REVISION_ABSENT = 'absent'
  * `owner_unknown` = 这次请求的项目身份已失效，归属没记。旧后端不发 = `undefined`（不知道，不当 `ok`）。
  */
 export interface PutAutosaveResult {
-  /** Nonblocking source snapshot warnings; the layout body was saved successfully. */
-  svg_snapshot_warnings?: string[]
   /** Complete verified snapshot map for candidate panel object IDs; absent means old backend. */
   figure_snapshots?: Record<string, FigureSnapshot>
   ok: boolean

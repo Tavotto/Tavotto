@@ -2584,7 +2584,7 @@ export default interface Resources {
       "stale_write": "自动保存冲突：磁盘上已有更新的版本",
       "svg_asset_export_unsupported": "SVG 素材目前支持预览、摆放和原图 SVG 导出；画布与跨格式导出尚未支持。请先将该素材转换为 PDF 后导入。",
       "svg_asset_unsupported": "此 SVG 暂不支持导入。请使用尺寸明确的独立静态 SVG；不支持脚本、外部资源或 DTD。",
-      "svg_source_unsupported": "{{id}} 的当前来源无法安全转换为 SVG。请改用 PDF 格式导出。",
+      "svg_source_unsupported": "{{id}} 暂时无法导出为 SVG：请先重新运行这张图的脚本，或改用 PDF 导出。",
       "sync_different_scripts": "两张图不属于同一个脚本，无法同步",
       "taf_disabled": "这个实验功能还没有开启。",
       "tiff_bigtiff": "{{file}} 是 BigTIFF，暂不支持。请另存为普通 TIFF 或 PNG。",
@@ -5601,9 +5601,7 @@ export default interface Resources {
       "projectConflict": "项目里的 {{file}} 已在别处改过，这次没有写入。请在弹出的对话框里决定。",
       "projectFailed": "没能存进项目里的 {{file}}：{{reason}}",
       "projectSkipped": "没有写入项目里的 {{file}}：按下保存之后切换了排版或项目。回到那份排版再保存一次。",
-      "skippedSwitched": "按下保存之后切换了排版或项目，这次没有写进项目。回到那份排版再保存一次。",
-      "svgSnapshotPill": "SVG 快照未完整保留",
-      "svgSnapshotWarning": "排版已保存：{{name}}。以下来源的 SVG 快照未能保留：{{sources}}。重新打开后，导出这些来源的 SVG 可能需要你明确重新运行脚本。"
+      "skippedSwitched": "按下保存之后切换了排版或项目，这次没有写进项目。回到那份排版再保存一次。"
     },
     "scan": {
       "deps": {

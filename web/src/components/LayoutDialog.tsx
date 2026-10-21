@@ -1,4 +1,3 @@
-import { svgSnapshotWarning } from '@/lib/svgSnapshotWarning'
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { literal, msg } from '@/i18n'
@@ -199,14 +198,13 @@ export function LayoutDialog() {
         )
       }
       // 状态条是全局通知、话里点名了写到哪：切走了也照说（结果要说出来）
-      const warning = svgSnapshotWarning(res.file ?? stem, res.svg_snapshot_warnings)
       useUiStore
         .getState()
         .setStatus(
-          warning ?? (res.file
+          res.file
             ? msg('save.doneProject', { file: res.file }, 'workspace')
-            : msg('layout.saved', { name: stem }, 'dialogs')),
-          warning ? 'info' : 'done',
+            : msg('layout.saved', { name: stem }, 'dialogs'),
+          'done',
         )
     } catch (e) {
       const revision =
