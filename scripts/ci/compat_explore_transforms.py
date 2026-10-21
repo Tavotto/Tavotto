@@ -61,6 +61,8 @@ class Parent:
     entry: str
     executable: bool
     provenance: dict = field(default_factory=dict)
+    #: The registered corpus case as committed (mutations, export_formats, stem...); empty for fakes.
+    case_spec: dict = field(default_factory=dict)
 
 
 def load_parent(suite: str, case_id: str) -> Parent:
@@ -91,7 +93,9 @@ def load_parent(suite: str, case_id: str) -> Parent:
         "repository_license_declaration": "AGPL-3.0-only",
         "individual_upstream_license_verified": False,
     }
-    return Parent(suite, case_id, category, files, script, entry, executable, provenance)
+    return Parent(
+        suite, case_id, category, files, script, entry, executable, provenance, dict(case)
+    )
 
 
 def default_parents() -> list[Parent]:
@@ -572,7 +576,7 @@ def build(parent: Parent, chain: tuple[str, ...], seed: int) -> dict:
         },
     }
     core["static_checks"] = {"python_ast": "passed", "compile": "passed", "execution": "not_run"}
-    core["execution_plan"] = execution_plan(files, parent.executable, [st["name"] for st in steps])
+    core["execution_plan"] = execution_plan(files, parent.executable)
     return {"candidate_id": cg.canonical(core)[:20], **core}, files
 
 
@@ -687,23 +691,9 @@ _UNCERTAIN_IMPORTS = {
 }
 
 
-#: Transforms whose effect `compat_explore.compare` cannot observe (it compares figure counts,
-#: titles and written paths, never line widths, colors or other style). Executing them could only
-#: ever answer `no_difference`, which would read as "style agrees"; they stay static-only.
-STYLE_UNOBSERVED = ("rcparams", "style_use")
-
-
-def execution_plan(
-    files: dict[str, bytes], parent_executable: bool, chain: list[str] | tuple[str, ...] = ()
-) -> dict:
+def execution_plan(files: dict[str, bytes], parent_executable: bool) -> dict:
     """Decide executable vs static-only. Uncertain or non-deterministic means static only."""
     reasons = []
-    for name in chain:
-        if name in STYLE_UNOBSERVED:
-            reasons.append(
-                f"{name}: style axis is not compared (explore observes figure counts, titles "
-                "and paths only), so a run could not detect a style regression"
-            )
     if not parent_executable:
         reasons.append("parent is a V2 session fixture; explore does not drive the V2 adapter")
     for rel, data in sorted(files.items()):
