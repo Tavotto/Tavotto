@@ -251,3 +251,92 @@ test('最近项目卡 lift：hover/聚焦 -2px + scale 1.015 + 阴影升档、�
   expect((await state(1)).translate, '置灰的卡没有位移样式').toBe('none')
   expect((await state(1)).shadow).toBe(restState.shadow)
 })
+
+/**
+ * 首页自适应布局（用户 2026-10-21：「拉伸的时候，里面的元素很不好看」）：窗口变高 / 宽 / 矮 / 窄都要好看。
+ * 判据全是真布局量出来的：无横向溢出；放得下时内容块在顶行以下的可用高度里垂直居中（上下留白差不超过窗高 5%）；
+ * 段与段之间不重叠；Logo 与下一句之间不挤（≥16px）；「返回当前项目」按钮盒右缘与内容列（拖放区）右缘对齐。
+ */
+const ADAPTIVE_SIZES: Array<[number, number]> = [
+  [1000, 560],
+  [1000, 730],
+  [1280, 800],
+  [1440, 900],
+  [1920, 1200],
+  [800, 600],
+  [800, 420],
+  [600, 700],
+]
+
+for (const count of [1, 3, 6]) {
+  test(`首页自适应：${count} 个最近项目，各视口无溢出、垂直居中、间距不挤、返回链接与内容列右缘对齐`, async ({ app, page }) => {
+    test.setTimeout(240_000)
+    await asReturningUser(page)
+    const recent = Array.from({ length: count }, (_, i) => ({
+      path:
+        i === 0
+          ? '/Users/qingqin/Library/CloudStorage/坚果云-24110190013@m.fudan.edu.cn/' + '实验数据汇总绘图脚本最终版'.repeat(4)
+          : `/Users/me/Documents/p${i}`,
+      name: i === 0 ? '图表项目' : `p${i}`,
+      last_opened: Date.now() - 3600_000 * (i + 1),
+      exists: true,
+      current: false,
+    }))
+    await page.route('**/api/projects/recent**', (r) => r.fulfill({ json: { recent, pinned: [] } }))
+    await page.setViewportSize({ width: 1200, height: 800 })
+    const a = await app() // 有打开的项目：首页右上角才有「返回当前项目」
+    await page.goto(a.baseURL)
+    await page.locator('[data-home-button]').click()
+    await expect(page.locator('main[data-home-variant="returning"]')).toBeVisible()
+    await expect(page.locator('[data-home-back-current]')).toBeVisible()
+    await expect(page.locator('[data-home-recent]')).toHaveCount(Math.min(count, 5))
+
+    for (const [width, height] of ADAPTIVE_SIZES) {
+      await page.setViewportSize({ width, height })
+      const geometry = () =>
+        page.evaluate(() => {
+          const content = document.querySelector<HTMLElement>('[data-home-content]')!
+          const main = document.querySelector<HTMLElement>('main')!
+          const bar = content.previousElementSibling!.getBoundingClientRect()
+          const kids = [...content.children].map((c) => c.getBoundingClientRect())
+          const top = Math.min(...kids.map((k) => k.top))
+          const bottom = Math.max(...kids.map((k) => k.bottom))
+          const h1 = document.querySelector('main h1')!.getBoundingClientRect()
+          const narrative = document.querySelector('[data-home-narrative]')!.getBoundingClientRect()
+          const back = document.querySelector<HTMLElement>('[data-home-back-current]')!
+          const zone = document.querySelector('[data-home-dropzone]')!.closest('[data-card]')!.getBoundingClientRect()
+          return {
+            fits: main.scrollHeight <= main.clientHeight + 1,
+            topGap: top - bar.bottom,
+            bottomGap: window.innerHeight - bottom,
+            logoGap: narrative.top - h1.bottom,
+            overlaps: kids.some((k, i) => i > 0 && k.top < kids[i - 1].bottom - 0.5),
+            backRight: back.getBoundingClientRect().right,
+            zoneRight: zone.right,
+            narrowWindow: window.innerWidth,
+          }
+        })
+      // 轮询到布局稳定（两次取值一致）再断言
+      let prev = ''
+      await expect
+        .poll(async () => {
+          const cur = JSON.stringify(await geometry())
+          const same = cur === prev
+          prev = cur
+          return same
+        })
+        .toBe(true)
+      const g = await geometry()
+      const tag = `${width}x${height}`
+      expect(await horizontalOffenders(page, 'main'), tag).toEqual([])
+      expect(g.overlaps, `${tag} 段与段不重叠`).toBe(false)
+      expect(g.logoGap, `${tag} Logo 与下一句的间距`).toBeGreaterThanOrEqual(16)
+      // 按钮盒右缘 = 内容列（拖放区卡）右缘，容差 3px；不再用 -mr 把按钮顶出列外（那会让上层容器横向溢出）
+      expect(Math.abs(g.backRight - g.zoneRight), `${tag} 返回链接右缘对内容列右缘`).toBeLessThanOrEqual(3)
+      if (g.fits) {
+        // 顶行以下的可用高度里居中：上下留白（扣掉底部 24px 内边距）之差不超过窗高 5%
+        expect(Math.abs(g.topGap - (g.bottomGap - 24)), `${tag} 上下留白`).toBeLessThanOrEqual(height * 0.05)
+      }
+    }
+  })
+}

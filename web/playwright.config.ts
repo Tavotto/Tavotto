@@ -88,6 +88,8 @@ export default defineConfig({
         // 三步原生新手教程（ADR 0136）：卡片 / SVG 图例的指针拖动与 pointer capture、外部文件拖放的拒收
         // 都是引擎相关的事件序列，用户的 macOS 桌面壳就是这个引擎
         'tutorial.spec.ts',
+        // 主页最近项目卡超长路径：旧 WebKit（Safari 17）里 button 的 flex-col 不拉伸子项致卡片溢出，只有这个引擎量得出
+        'home-recent-card-layout.spec.ts',
       ],
     },
     // 英文 locale（审计 P1-02/P1-03）：a11y spec 是语言无关写法；

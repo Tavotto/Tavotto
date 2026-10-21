@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import threading
 import time
@@ -1483,3 +1484,57 @@ def test_pdf_alone_still_uses_the_disk_file_when_nothing_forces_a_rerender(env, 
     _, body = _post(client, _original(formats=["pdf", "png"], ppi=100))
     assert body["status"] == "done", body
     assert calls == [], "没有 EPS、没有 override，不该去找 worker"
+
+
+# --------------- 产物 manifest 记下实际来源（#1209 / A2） -------------------
+@pytest.mark.parametrize(
+    ("figure", "formats"),
+    [("p1.pdf", ["pdf", "png"]), ("r1.png", ["pdf", "png", "tiff"])],
+)
+def test_original_outputs_record_the_disk_source_they_came_from(env, figure, formats):
+    client, figs = env
+    spec = _original(formats=formats)
+    spec["original"] = {**spec["original"], "figure_id": figure}
+    status, body = _post(client, spec)
+    assert status == 200 and body["status"] == "done", body
+    sha = hashlib.sha256((figs / figure).read_bytes()).hexdigest()
+    for fmt in formats:
+        sources = _out(body, fmt)["manifest"]["provenance"]["sources"]
+        assert [(s["source_id"], s["origin"], s["bytes_sha256"]) for s in sources] == [
+            (figure, "static", sha)
+        ], fmt
+
+
+@pytest.mark.parametrize("scope", ["original", "canvas"])
+def test_validate_route_names_the_reason_the_export_then_reports(env, scope):
+    """route 里逐项不可用的原因码，就是真导出时那一项报的码（来源判据与执行路径不各说各话）。"""
+    client, _ = env
+    spec = (
+        _original(formats=["pdf", "eps"])
+        if scope == "original"
+        else _canvas(formats=["pdf", "eps"])
+    )
+    route = _post(client, spec, "/api/export/validate")[1]["route"]
+    panel = next(iter(route["panels"].values()))
+    status, body = _post(client, spec)
+    assert status == 200, body
+    eps = _out(body, "eps")
+    assert panel["formats"]["eps"]["how"] == "unavailable"
+    assert eps["error"]["code"] == panel["formats"]["eps"]["reason"]
+    assert _out(body, "pdf")["status"] == "done" and panel["formats"]["pdf"]["how"] != "unavailable"
+
+
+def test_source_rewritten_during_conversion_is_not_recorded_as_the_source(env, monkeypatch):
+    """转换期间原件被改写：manifest 不能说产物出自转换前算过 hash 的那份——不记来源，导出本身照常成功。"""
+    client, figs = env
+    real = m.pdfbackend.original_png
+
+    def rewriting(source, tmp, dpi, **kw):
+        facts = real(source, tmp, dpi, **kw)
+        Path(source).write_bytes(Path(source).read_bytes() + b"\n%rewritten")
+        return facts
+
+    monkeypatch.setattr(m.pdfbackend, "original_png", rewriting)
+    status, body = _post(client, _original(formats=["png"]))
+    assert status == 200 and body["status"] == "done", body
+    assert _out(body, "png")["manifest"]["provenance"]["sources"] == []

@@ -485,6 +485,19 @@ def _wait_done(sid, timeout=10.0):
 
 
 class TestRunWiresRefresh:
+    def test_ai_done_carries_the_rev_of_the_terminal_write(self, tmp_path, fake_cli):
+        """`ai.done` 带终态那次写的版本号（#1115）：客户端凭它判断"本页的水位落后了、该对账"。"""
+        fake_cli["code"] = NOOP_CLI
+        figs = _project(tmp_path)
+        events: list[tuple[str, dict]] = []
+        sid = ai_bridge.run(
+            "codex", "fig1.py", "改标题", str(figs), on_event=lambda n, d: events.append((n, d))
+        )
+        _wait_done(sid)
+        done = next(d for n, d in events if n == "ai.done")
+        assert isinstance(done["rev"], int)
+        assert done["rev"] == ai_history.get(sid)["rev"] == ai_history.head_rev()
+
     def test_changed_true_refreshes_before_ai_done(self, tmp_path, fake_cli):
         figs = _project(tmp_path)
         order: list[str] = []

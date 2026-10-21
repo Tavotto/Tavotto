@@ -23,6 +23,7 @@ from pathlib import Path
 import pytest
 
 from tavotto import app as m
+from tests.support import versionfiles
 
 
 @pytest.fixture
@@ -110,7 +111,7 @@ def test_an_unknown_moment_is_refused_not_silently_downgraded(client):
     resp = client.post("/api/versions/d1", json={"doc": _doc(), "auto": True, "moment": "exprot"})
     assert resp.status_code == 400
     assert resp.get_json()["code"] == "version_moment_invalid"
-    assert not _file().exists()
+    assert not _file().exists() and not versionfiles.store_root().exists()
 
 
 def test_key_moments_are_not_deduplicated_against_the_previous_node(client):
@@ -249,7 +250,7 @@ def test_sacrifice_order_is_auto_then_moment_then_manual(client, monkeypatch):
     _create(client, auto=True, moment="open", name="moment-0")
     _create(client, auto=True, name="auto-0")
     _create(client, name="newest")
-    versions = json.loads(_file().read_text(encoding="utf-8"))["versions"]
+    versions = versionfiles.versions()
     order = [versions[i]["name"] for i in m._sacrifice_order(versions)]
     assert order == ["auto-0", "moment-0", "manual-0"]
 
@@ -257,7 +258,7 @@ def test_sacrifice_order_is_auto_then_moment_then_manual(client, monkeypatch):
 def test_named_nodes_are_not_in_the_sacrifice_order_at_all(client):
     _create(client, name="投稿前", named=True)
     _create(client, auto=True)
-    versions = json.loads(_file().read_text(encoding="utf-8"))["versions"]
+    versions = versionfiles.versions()
     assert m._sacrifice_order(versions) == []
 
 
@@ -269,7 +270,7 @@ def test_naming_past_the_byte_cap_is_refused_and_the_file_is_untouched(client, m
     monkeypatch.setattr(m, "VERSION_KEEP_BYTES", int(one * 2.5))
     _create(client, doc=_doc("n0", pad=2000), name="一", named=True)
     _create(client, doc=_doc("n1", pad=2000), name="二", named=True)
-    before = _file().read_bytes()
+    before = versionfiles.snapshot()
     resp = client.post(
         "/api/versions/d1", json={"doc": _doc("n2", pad=2000), "name": "三", "named": True}
     )
@@ -277,7 +278,7 @@ def test_naming_past_the_byte_cap_is_refused_and_the_file_is_untouched(client, m
     body = resp.get_json()
     assert body["code"] == "named_budget_exceeded"
     assert set(body["params"]) == {"used", "limit"}
-    assert _file().read_bytes() == before  # 写回事务不变式：拒了就零改动
+    assert versionfiles.snapshot() == before  # 写回事务不变式：拒了就零改动
 
 
 def test_renaming_past_the_byte_cap_is_refused_too(client, monkeypatch):
@@ -285,10 +286,10 @@ def test_renaming_past_the_byte_cap_is_refused_too(client, monkeypatch):
     monkeypatch.setattr(m, "VERSION_KEEP_BYTES", int(one * 1.5))
     _create(client, doc=_doc("n0", pad=2000), name="一", named=True)
     v = _create(client, doc=_doc("a0", pad=2000), auto=True)
-    before = _file().read_bytes()
+    before = versionfiles.snapshot()
     resp = client.patch(f"/api/versions/d1/{v['id']}", json={"name": "二"})
     assert resp.status_code == 409 and resp.get_json()["code"] == "named_budget_exceeded"
-    assert _file().read_bytes() == before
+    assert versionfiles.snapshot() == before
 
 
 def test_renaming_a_named_node_to_a_longer_name_past_the_cap_is_refused(client, monkeypatch):
@@ -297,10 +298,10 @@ def test_renaming_a_named_node_to_a_longer_name_past_the_cap_is_refused(client, 
     a = _create(client, doc=_doc("n0", pad=2000), name="一", named=True)
     # 上限卡在「现在正好装得下」：再长一点就超
     monkeypatch.setattr(m, "VERSION_KEEP_BYTES", int(one * 1.05))
-    before = _file().read_bytes()
+    before = versionfiles.snapshot()
     resp = client.patch(f"/api/versions/d1/{a['id']}", json={"name": "一" * 90})
     assert resp.status_code == 409 and resp.get_json()["code"] == "named_budget_exceeded"
-    assert _file().read_bytes() == before
+    assert versionfiles.snapshot() == before
 
 
 def test_renaming_a_named_node_to_a_shorter_name_is_allowed_even_over_the_cap(client, monkeypatch):
@@ -665,7 +666,7 @@ def test_concurrent_writers_do_not_lose_named_nodes(client):
     assert sorted(v["name"] for v in listed if v["named"]) == [f"命名{k}" for k in range(6)]
     assert len(listed) == 30
     # 文件仍是一份合法的时间线，每张图都有主人
-    ids = {v["id"] for v in json.loads(_file().read_text(encoding="utf-8"))["versions"]}
+    ids = {v["id"] for v in versionfiles.versions()}
     assert {p.stem for p in _thumbs_dir().iterdir()} <= ids
 
 

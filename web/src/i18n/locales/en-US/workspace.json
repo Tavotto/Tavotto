@@ -588,8 +588,6 @@
     }
   },
   "save": {
-    "svgSnapshotWarning": "Layout saved: {{name}}. SVG snapshots could not be kept for: {{sources}}. After reopening, exporting these sources as SVG may require you to explicitly rerun their scripts.",
-    "svgSnapshotPill": "SVG snapshots incomplete",
     "conflict": "This layout was changed elsewhere. Resolve the conflict first.",
     "doneLocal": "Saved on this computer (no project open)",
     "doneProject": "Saved to project: {{file}}",

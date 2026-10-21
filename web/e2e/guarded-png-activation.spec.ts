@@ -730,7 +730,11 @@ test('guarded PNG: a dependency gate opens one-click repair and completion resum
 test('guarded PNG: an unverifiable legend gets one sentence and one rebuild button; the PNG stays and a new editable figure appears beside it', { tag: '@feature:assets.png-adoption-recovery' }, async ({ app, page }, testInfo) => {
   test.setTimeout(300_000)
   const source = sourceProject(testInfo.outputPath('source'), false, true)
-  const a = await app({ figures: source.figures })
+  // 来源驱动采用默认开（ADR 0139）：这条量的是它被应急关掉时的退路，所以显式关
+  const config = testInfo.outputPath('config')
+  mkdirSync(config, { recursive: true })
+  writeFileSync(path.join(config, 'config.json'), JSON.stringify({ experiments: { script_backed_figure: false } }))
+  const a = await app({ figures: source.figures, env: { TAVOTTO_CONFIG_DIR: config } })
   const data = await seed(page.request, a.baseURL, ['a'], 'guarded-png-legend')
   const traffic = watchRenders(page)
   await page.goto(`${a.baseURL}/${data.query}`)
@@ -813,7 +817,7 @@ test('source-backed PNG: legend + pixel difference → compare dialog → confir
   const source = sourceProject(testInfo.outputPath('source'), false, true, true)
   const config = testInfo.outputPath('config')
   mkdirSync(config, { recursive: true })
-  // 实验开关（默认关）：与 `config.experiment_enabled` 同一个键，只认显式 true
+  // 应急开关默认开；这里仍显式写 true，让用例不依赖默认值
   writeFileSync(path.join(config, 'config.json'), JSON.stringify({ experiments: { script_backed_figure: true } }))
   const a = await app({ figures: source.figures, env: { TAVOTTO_CONFIG_DIR: config } })
   const data = await seed(page.request, a.baseURL, ['a'], 'source-backed-png')

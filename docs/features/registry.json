@@ -176,7 +176,7 @@
         "zh-CN": "实验开关打开后，含图例等无法逐像素核对元素、或与原图有可见差异的 PNG 仍可编辑：先并排对照原图与脚本重画，确认后以重画为编辑基础；没改时画布显示原 PNG 像素，改了之后整图以重画渲染，撤销回零编辑即回原像素；原 PNG 永不被改写",
         "en-US": "With the experiment switch on, a PNG with elements that can't be checked pixel by pixel (such as a legend) or a visible difference from its redraw can still be edited: compare the original and the script's redraw side by side, confirm to edit from the redraw; unedited, the canvas shows the original PNG pixels, edited, the whole figure is redrawn, and undoing back to zero edits returns the original pixels; the original PNG is never rewritten"
       },
-      "entry": "在配置里打开 experiments.script_backed_figure 后，点含图例的 PNG 的「编辑图内元素」→ 对照原图与重画 → 「以重画为基础编辑」",
+      "entry": "（默认开；配置 experiments.script_backed_figure=false 可应急关闭）点含图例的 PNG 的「编辑图内元素」→ 对照原图与重画 → 「以重画为基础编辑」",
       "e2e": [
         {
           "spec": "guarded-png-activation.spec.ts",
@@ -184,7 +184,7 @@
         }
       ],
       "desktop_manual": [
-        "在配置文件（macOS：~/Library/Application Support/Tavotto/config.json）里写入 {\"experiments\": {\"script_backed_figure\": true}} 后重启；打开一个脚本里带 ax.legend()、且保存 PNG 之后又改了图的项目，把它的 PNG 加进画布并点「编辑图内元素」：弹出对照窗口，左原图右重画，一句话说明差异像素比例与「原 PNG 不会被改动」，主按钮「以重画为基础编辑」、次要「保留原图」；点「保留原图」什么都不变；再点确认后进入图内编辑，此时画布仍是原 PNG 的像素；挪一下图例，整张图按重画渲染且原位置没有旧图例残影；一路撤销到没有修改，画布回到原 PNG 的像素；磁盘上的原 PNG 一个字节不变"
+        "打开一个脚本里带 ax.legend()、且保存 PNG 之后又改了图的项目，把它的 PNG 加进画布并点「编辑图内元素」：弹出对照窗口，左原图右重画，一句话说明差异像素比例与「原 PNG 不会被改动」，主按钮「以重画为基础编辑」、次要「保留原图」；点「保留原图」什么都不变；再点确认后进入图内编辑，此时画布仍是原 PNG 的像素；挪一下图例，整张图按重画渲染且原位置没有旧图例残影；一路撤销到没有修改，画布回到原 PNG 的像素；磁盘上的原 PNG 一个字节不变"
       ]
     },
     {

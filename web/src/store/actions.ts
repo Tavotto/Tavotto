@@ -1,4 +1,3 @@
-import { svgSnapshotWarning } from '@/lib/svgSnapshotWarning'
 import { adoptionGuardOf, adoptionOf, clearAdoption, isAdoptedPanel, SCRIPT_BACKED_SOURCE_POLICY, sourceBackedGuard, verdictFromResponse, verifiedSource, type AdoptionGuard, type SourceBackedFigure, type SourceBackedVerdict, artifactBackgroundOriginal, artifactRequestFields, isUnadoptedPngSource, artifactValidationIssue, ArtifactValidationError, FIGSIZE_SOURCE_POLICY, validationFromSource, beginArtifactEntry, artifactEntryCurrent, cancelArtifactEntry, deferArtifactEntry, refuseArtifactOperation, rememberArtifactEdit } from '@/lib/artifactValidation'
 import { currentProjectId } from '@/lib/session'
 import '@/store/figureSnapshotInvalidation'
@@ -582,8 +581,7 @@ export async function runManualSave(): Promise<void> {
   const ui = useUiStore.getState()
   // 按下 ⌘S 那一刻的排版 / 项目 / 绑定：整条链只用它（`saveContext.ts`）
   const ctx = captureSaveContext()
-  const savedName = useDocumentStore.getState().projectMeta.name
-  const { state, wrote, svgSnapshotWarnings } = await saveNowWithResult()
+  const { state, wrote } = await saveNowWithResult()
   // saveNow 途中切走了：本机那一份（入口那份）已经照常落盘，项目文件这一步不再做——
   // 此刻开着的是另一份，写它、给它弹「存进项目」都不是用户要的；没写进项目要说出来
   if (ctx.pj !== null && !stillCurrent(ctx)) {
@@ -604,10 +602,7 @@ export async function runManualSave(): Promise<void> {
   // 跟**这次写没写成**走，不跟最终的实时状态走：写的途中又改过的话状态照实是 dirty，
   // 但按下那一刻的内容已经在盘上了（Codex #679）
   if (wrote) emitLayoutSaved('local', { moment: ctx.moment })
-  const warning = wrote ? svgSnapshotWarning(savedName, svgSnapshotWarnings) : null
-  if (warning && state !== 'conflict' && state !== 'save_error') {
-    ui.setStatus(warning, 'info')
-  } else if (state === 'saved' || state === 'clean') {
+  if (state === 'saved' || state === 'clean') {
     ui.setStatus(msg('save.doneLocal', undefined, 'workspace'), 'done')
   } else if (state === 'conflict') {
     ui.setStatus(msg('save.conflict', undefined, 'workspace'), 'error')
