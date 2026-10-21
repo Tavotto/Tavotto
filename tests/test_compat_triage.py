@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+import argparse
 import copy
 import json
+import os
+import subprocess
 import sys
 import tempfile
+import textwrap
 import unittest
 from pathlib import Path
 
@@ -345,11 +349,95 @@ class Clusters(unittest.TestCase):
         result = tg.triage([path])
         self.assertEqual((result["attributions"], result["clusters"]), ([], []))
 
+    def test_a_null_recorded_error_matches_only_findings_without_an_error(self):
+        families = tg.load_families()
+        g2 = next(f for f in families if f["id"].startswith("G2"))
+        self.assertIsNone(g2["signature"]["tavotto_error"])
+        shape = {
+            "behavior_kind": g2["signature"]["behavior_kind"],
+            "call_site": g2["signature"]["call_site"],
+        }
+        plain = {**shape, "stable_code": f"diff:{shape['behavior_kind']}"}
+        with_error = {**shape, "stable_code": "script_error"}
+        self.assertEqual(tg.known_family(plain, families), g2["id"])
+        self.assertIsNone(tg.known_family(with_error, families), "a new error code is NEW")
+
     def test_known_family_records_link_the_clusters(self):
         result = tg.triage([self.report_path])
         linked = {c["key"]["behavior_kind"]: c["known_family"] for c in result["clusters"]}
         self.assertEqual(linked["zero_figures"], "G1-show-close-zero-figures")
         self.assertEqual(linked["same_path_content_mismatch"], "G2-same-path-multi-figure")
+
+
+class RuntimeConfinement(unittest.TestCase):
+    """静态检查之外的运行时兜底：真跑一次 triage CLI，用审计钩子记下所有写、改名、删除、建目录、
+    子进程与网络事件——只许落在本次的输出目录里（AST 检查总能被新写法绕过，Codex #1139）。"""
+
+    setUpClass = classmethod(Clusters.setUpClass.__func__)
+
+    HOOK = textwrap.dedent(
+        """
+        import json, os, sys
+        events = []
+        WRITE = os.O_WRONLY | os.O_RDWR | os.O_CREAT | os.O_APPEND | os.O_TRUNC
+        def hook(event, args):
+            if event == "open":
+                path, mode, flags = args
+                if isinstance(path, (str, bytes, os.PathLike)) and (
+                    (isinstance(mode, str) and any(c in mode for c in "wax+"))
+                    or (isinstance(flags, int) and flags & WRITE)
+                ):
+                    events.append(["write", os.fsdecode(path)])
+            elif event in ("os.rename", "os.remove", "os.rmdir", "os.mkdir", "os.unlink",
+                           "os.symlink", "os.link", "os.chmod", "os.truncate", "shutil.rmtree"):
+                events.append([event, os.fsdecode(args[0])])
+            elif event.startswith(("subprocess.", "os.exec", "os.spawn", "os.posix_spawn",
+                                   "os.system", "socket.connect", "urllib.")):
+                events.append([event, ""])
+        sys.addaudithook(hook)
+        sys.path.insert(0, sys.argv[1])
+        import compat_guardian as cg
+        code = cg.main(sys.argv[2:])
+        print("AUDIT " + json.dumps({"code": code, "events": events}))
+        """
+    )
+
+    def test_the_real_triage_cli_only_touches_its_own_output_directory(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            out_dir = Path(tmp).resolve()
+            env = {k: v for k, v in os.environ.items() if k != "GITHUB_ACTIONS"}
+            env["PYTHONDONTWRITEBYTECODE"] = "1"
+            proc = subprocess.run(
+                [
+                    sys.executable,
+                    "-c",
+                    self.HOOK,
+                    str(cg.HERE),
+                    "triage",
+                    str(self.report_path),
+                    "--out",
+                    str(out_dir / "triage.json"),
+                    "--markdown-out",
+                    str(out_dir / "triage.md"),
+                ],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                env=env,
+                timeout=120,
+            )
+            line = [ln for ln in proc.stdout.splitlines() if ln.startswith("AUDIT ")]
+            self.assertTrue(line, proc.stderr[-2000:])
+            audit = json.loads(line[-1][len("AUDIT ") :])
+            self.assertEqual(audit["code"], 0, proc.stderr[-2000:])
+            self.assertTrue(audit["events"], "the hook saw the CLI's own output writes")
+            outside = [
+                e
+                for e in audit["events"]
+                if not e[1] or not Path(e[1]).resolve().is_relative_to(out_dir)
+            ]
+            self.assertEqual(outside, [], "triage touched something outside its output dir")
 
 
 class Case14SemanticsDiffer(unittest.TestCase):
@@ -402,6 +490,20 @@ class RunReportProof(GuardianBase):
         self.report["verdict"] = "failed"
         with self.assertRaises(cg.EvidenceError):
             tg.triage([self.write()])
+
+
+class TriageCliContainment(unittest.TestCase):
+    def test_markdown_out_inside_the_worktree_is_refused_before_any_write(self):
+        target = cg.ROOT / "tests/compat_guardian/expectations.json"
+        before = target.read_bytes()
+        with tempfile.TemporaryDirectory() as tmp:
+            args = argparse.Namespace(
+                reports=[], out=str(Path(tmp) / "t.json"), markdown_out=str(target)
+            )
+            with self.assertRaisesRegex(cg.EvidenceError, "markdown-out"):
+                tg.run(args)
+            self.assertFalse((Path(tmp) / "t.json").exists(), "nothing written at all")
+        self.assertEqual(target.read_bytes(), before)
 
 
 if __name__ == "__main__":

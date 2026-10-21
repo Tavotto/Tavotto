@@ -318,6 +318,8 @@ class FigureEditAdapter:
             cand.new_bytes = None
         if cand.new_bytes is None:
             out.append(_check("candidate.target", st, "integrity", FAILED, "target_missing"))
+            # 目标丢了也得先查原项目：否则「删目标 + 动原项目」会被当成可修而进第二轮
+            out += self._project_untouched(cand, st)
             return out
         unchanged = cand.new_bytes == cand.base_bytes
         out.append(
@@ -333,13 +335,26 @@ class FigureEditAdapter:
             text = cand.new_bytes.decode("utf-8", errors="replace")
             _tree_, problem = discover.parse_source(text)
             out.append(
-                _check("candidate.syntax", st, "integrity", FAILED, "syntax_error")
+                _check(
+                    "candidate.syntax",
+                    st,
+                    "integrity",
+                    FAILED,
+                    "syntax_error",
+                    lineno=problem.get("lineno"),
+                    detail=problem.get("detail"),
+                )
                 if problem is not None
                 else _check("candidate.syntax", st, "integrity", VERIFIED)
             )
             if cand.stems_before is None:
                 out.append(
                     _check("candidate.stems", st, "preserve", NOT_APPLICABLE, "stems_not_static")
+                )
+            elif problem is not None:
+                # 解析不了就读不出静态 stem：那是语法错误的后果，不是第二个失败（修正指令里不该多一条「图名变了」）
+                out.append(
+                    _check("candidate.stems", st, "preserve", NOT_APPLICABLE, "syntax_error")
                 )
             else:
                 after = _static_stems(cand.target, cand.dir)
@@ -455,11 +470,48 @@ class FigureEditAdapter:
             out.append(_render(st, NOT_APPLICABLE, "no_data_elements", cid="data"))
         return out
 
+    def correction(self, run, failed: list[CheckResult]) -> dict | None:
+        """提交前没过、而且失败的是**Agent 在副本里能自己改回来**的那几类，给一段修正指令；否则 None。
+
+        原项目被动了（`project.*`）不修：那是越过了只读边界，再让同一个 Agent 跑一次只会扩大面；只认闭集里的原因，
+        新加的检查默认不可修。指令只写检查自己的观察（行号、stem、副本里的文件名），不回显项目路径以外的内容。"""
+        lines = []
+        for c in failed:
+            if (c.id, c.reason_code) not in _CORRECTABLE:
+                return None
+            lines.append(_CORRECTABLE[(c.id, c.reason_code)](c.observed))
+        if not lines:
+            return None
+        return {
+            "prompt": "上一次修改没有通过写回前的检查，原项目没有被改动。请在当前工作副本里只修正下面的问题，"
+            "保留用户要求的修改，不要运行脚本：\n" + "\n".join(f"- {s}" for s in lines)
+        }
+
     def explain(self, outcome: str, unmet: list[dict]) -> dict:
         return {
             "message_key": f"task.{TASK_TYPE}.{outcome}",
             "params": {"unmet": [u["constraint_id"] for u in unmet]},
         }
+
+
+def _syntax_line(o: dict) -> str:
+    where = f"第 {o['lineno']} 行" if o.get("lineno") else "脚本里"
+    return f"目标脚本{where}有语法错误（{o.get('detail') or 'SyntaxError'}），改成能被 Python 解析的代码。"
+
+
+#: 可修正的提交前失败（检查 id, 原因）→ 写给 Agent 的那一句。闭集：不在表里的失败一律不修正
+_CORRECTABLE = {
+    ("candidate.syntax", "syntax_error"): _syntax_line,
+    ("candidate.stems", "stems_changed"): lambda o: (
+        f"脚本输出的图名变了（原来 {o.get('before')}，现在 {o.get('after')}）；保持原来的输出文件名。"
+    ),
+    ("candidate.tree", "other_file_changed"): lambda o: (
+        f"除目标脚本外还改了 {o.get('files')}；把它们恢复成原样（原件在原项目目录里，只读参考），只改目标脚本。"
+    ),
+    ("candidate.target", "target_missing"): lambda o: (
+        "目标脚本在工作副本里不见了；按原项目里的同名脚本恢复它，再在它上面做用户要求的修改。"
+    ),
+}
 
 
 # --------------------------------------------------------------------------- 执行器（AI 桥的那一次 CLI 运行）
@@ -470,15 +522,24 @@ class BridgeExecutor:
     kind = "agent"
     writes_user_files = True
 
-    def __init__(self, executor_id: str, cand: Candidate, *, wait, refresh):
+    def __init__(self, executor_id: str, cand: Candidate, *, wait, refresh, respawn=None):
         self.executor_id = executor_id
         self.cand = cand
         self._wait = wait
         self._refresh = refresh
+        self._respawn = respawn
+        if respawn is None:
+            self.correct = None  # 桥没给再跑一次的入口：编排器据此不修正
 
     def execute(self, run) -> Candidate:
         self._wait()  # 抛 TaskError 表示运行本身没成（超时 / 非零退出），候选作废
         return self.cand
+
+    def correct(self, run, cand: Candidate, feedback: dict) -> Candidate:
+        """修正 = 在同一个候选目录里按修正指令再跑一次 CLI（桥传进来的 `respawn`），然后照常等它退出。"""
+        self._respawn(feedback["prompt"])
+        self._wait()
+        return cand
 
     def commit(self, run, cand: Candidate) -> None:
         if cand.new_bytes is None or cand.new_bytes == cand.base_bytes:
@@ -533,6 +594,8 @@ def envelope_for(
             "input_refs": [{"kind": "script", "path_rel": script_rel, "sha256": base_sha256}],
             "output_contract": {"allowed_writes": [script_rel]},
             "execution_policy": {"executor": agent},
+            # normal 档（`03-contracts.md` §五）：Agent ≤ 1 + 修正 ≤ 1
+            "budget": {"max_agent_runs": 2, "max_corrections": 1},
         }
     )
 

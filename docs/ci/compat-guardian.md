@@ -353,6 +353,45 @@ CG-02 的 27 条真实差异聚成恰好两簇：G1（show 后 close，11 条）
 最小化过程中暴露并修掉了 explore 比较里的一个误报：无标题的图（原生 `[""]` vs Tavotto `[]`）曾被当作同路径内容差异；
 最小化签名因此新增「原生确有多图写同一路径」这一条，缩减不能漂移到别的原因上。
 
+## 13. 自动化（CG-05）
+
+同一个 workflow（`.github/workflows/compat-guardian.yml`），三档，**观察优先**：只出报告与注解，不改任何东西。
+
+| 档 | 触发 | 跑什么 | 时长 |
+| --- | --- | --- | --- |
+| PR smoke | `pull_request`（base 是 main，非 fork，且只在 Guardian 自己的文件变化时） | 合同测试 + 引擎 6 个登记 case + V2 全部场景 | 约 10–20 分钟，job 上限 35 |
+| Nightly | `schedule`（每日 03:41 UTC） | 上面一档 + `explore`（固定 seed 42、`--limit 24`、复现确认 3 个）→ `triage` → `trend` 汇总 | explore job 上限 60 分钟 |
+| Manual | `workflow_dispatch` | 同 Nightly，可传 `seed`、`limit`、`families`；本机另可用 `minimize` / `promote` 做深入调查 | 同上 |
+
+**CI 上能做的**：在 GitHub 托管的临时 runner 上执行已提交夹具，和由已评审父本经确定性变换得到的派生候选（执行器自己重新推导，
+非确定性/来源不确定的只做静态检查）；上传白名单 artifact；把 triage/趋势写进 `GITHUB_STEP_SUMMARY`；对「新的、可复现、未登记家族」
+发 `::warning` 注解；读上一次成功的定时运行留下的趋势 artifact（唯一用到 token 的步骤，`actions: read`，只读）。
+
+**CI 上不做的**：不跑用户或外部来源脚本，不进 self-hosted / `tavotto-lab`；不开 issue、不开 PR、不评论、不写任何东西
+（没有 `issues:` / `pull-requests:` / `contents: write`）；不改 baseline / manifest / 声明文件；不装依赖；不触发 merge_group，不是必需检查；
+不证明桌面（Native）路径、Windows、其它 Python / matplotlib 版本，也不产出真实用户成功率。`minimize` 不在 CI 里跑（耗时且需要人判断）。
+
+**维护者提醒**：只有同时满足「没有家族记录（`tests/compat_guardian/families/`）」「被复跑复现」「不是 invalid_fixture / 环境问题」的 triage 簇
+才发注解（并出现在 step summary 的 “New reproducible families” 里）。已知家族（G1、G2）的差异在 summary 里列出，不再提醒。
+注解的下一步是人工：开 issue、写家族记录、派 `minimize`。
+
+**趋势与汇总**（`summarize` 同时吃 run 报告与 explore 报告，`--previous` 指向上一份 summary）。每份汇总带：语料版本（各 suite 的
+`corpus_sha256` 与声明文件摘要）、样本量与分母（失败从不出分母）、平台与依赖环境、不可比项、主要未覆盖场景，以及第 12 节指标：
+
+| 指标 | 怎么算（对象永远是语料夹具） | 不能算时 |
+| --- | --- | --- |
+| First Figure Success | 原生有图的 case 中，capture 与 open 都通过的比例（分母含已声明限制与失败） | `not_computed` + 原因 |
+| Execution Attempts | 项目外计数器的真实执行次数：总数、均值、分布；未测量的 case 单独计数 | 没有计数器则 `not_computed` |
+| Semantic Fidelity | semantic 阶段 passed / (passed + failed)；口径是标题/角色/可编辑字段，不是科学数值 | 没有评估过的 semantic 阶段则 `not_computed` |
+| Editable & Export Success | edit 与 export 都评估过的 case 中两者都通过的比例 | adapter 不驱动这些层（V2）则 `not_computed` |
+| Family Coverage | 有执行过的候选的变换家族 / 已定义家族；另列失败家族记录数、已入语料数、已修复数 | 没有 explore 报告则 `not_computed` |
+| 真实用户成功率 | 永远 `not_computed`：CI 没有真实用户数据，语料成功率不得当作它 | — |
+
+**固定集合上的回归与范围扩张分开报**：只在「上次和这次都有、夹具字节完全相同」的 case 上给回归/改善结论；新增、删除、夹具变化的 case、
+语料版本变化统一记为「范围变化」，**不同 case 集合的汇总比例不互相比较**，删掉难例只会被列为范围变化（并点名被删的非通过用例），
+不会变成改善。环境（平台、Python、关键依赖版本）不同则**不给回归结论**（`incomparable`），状态变化只作为观察列出。固定集合里有 case 的任一端没有结论（`unknown` / `not_run` / `environment_unavailable` / `invalid_fixture`）时，没有回归的情况下结论是 `inconclusive`，不是 `no_regression`。没有上一份汇总时，
+趋势与增删一律 `not_computed`。
+
 ---
 
 # 附：CG-00 架构与缺口报告（2026-10-17，基线 main fb556e129，主控汇总）

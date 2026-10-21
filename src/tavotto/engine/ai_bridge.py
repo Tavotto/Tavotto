@@ -478,6 +478,28 @@ script_guard = scriptlock.script_guard
 _REQUEST_LOCK = threading.RLock()
 
 
+def _popen(cmd: list[str], cwd: str, env: dict, stderr_log) -> subprocess.Popen:
+    """起一次 Agent CLI。首次运行与 TAF 修正共用这一处，进程参数只有一份。"""
+    return subprocess.Popen(
+        cmd,
+        cwd=cwd,
+        env=env,
+        stdin=subprocess.DEVNULL,  # 桌面 sidecar 的 stdin 是父进程死亡信号管道，不外传
+        stdout=subprocess.PIPE,
+        stderr=stderr_log,  # CLI 的 hook/统计噪音不进对话
+        text=True,
+        bufsize=1,
+        # 显式 UTF-8：Windows 上 text=True 跟随系统区域编码（cp936），
+        # CLI 回来的中文/JSON 一解码就炸，表现为「任务刚起就结束」
+        encoding="utf-8",
+        errors="replace",
+        creationflags=CREATE_NO_WINDOW,
+        # POSIX 上自成一个进程组：取消 / 超时时连它起的子进程一起收掉（`_terminate` / `_await_exit`）；
+        # Windows 的 `taskkill /T` 按 pid 找子树，不需要单独的组
+        start_new_session=os.name != "nt",
+    )
+
+
 def _terminate(sess: dict) -> None:
     """杀掉会话的整个进程组（POSIX `killpg`；Windows `taskkill /T`，要趁组长还活着）。只是发出终止——
     「已经退出」由 `_await_exit` 观察到才算（`script_busy` 看的是它）。"""
@@ -900,24 +922,7 @@ def run(
             _drop_attempt_files(sid, snap, cand)
             raise DuplicateRequest(started[1])
         try:
-            proc = subprocess.Popen(
-                cmd,
-                cwd=agent_cwd,
-                env=env,
-                stdin=subprocess.DEVNULL,  # 桌面 sidecar 的 stdin 是父进程死亡信号管道，不外传
-                stdout=subprocess.PIPE,
-                stderr=stderr_log,  # CLI 的 hook/统计噪音不进对话
-                text=True,
-                bufsize=1,
-                # 显式 UTF-8：Windows 上 text=True 跟随系统区域编码（cp936），
-                # CLI 回来的中文/JSON 一解码就炸，表现为「任务刚起就结束」
-                encoding="utf-8",
-                errors="replace",
-                creationflags=CREATE_NO_WINDOW,
-                # POSIX 上自成一个进程组：取消 / 超时时连它起的子进程一起收掉（`_terminate` / `_await_exit`）；
-                # Windows 的 `taskkill /T` 按 pid 找子树，不需要单独的组
-                start_new_session=os.name != "nt",
-            )
+            proc = _popen(cmd, agent_cwd, env, stderr_log)
             _SPAWN_MARK.started = True  # 进程已经起来了：此后任何异常都不能再清账本行
         except BaseException as exc:
             # 记录已落库而进程没起来：标成失败，不是删掉——「查询」要查得到它，且明确是没执行
@@ -962,9 +967,11 @@ def run(
         SESSIONS[sid] = sess
     emit = on_event or (lambda *_: None)
 
+    log_state = {"log": stderr_log}
+
     def _consume():
         st: dict = {}
-        for line in proc.stdout:
+        for line in sess["proc"].stdout:
             line = line.rstrip("\n")
             if not line.strip():
                 continue
@@ -978,7 +985,32 @@ def run(
                 _terminate(sess)
                 sess["status"] = "timeout"
         _await_exit(sess)
-        stderr_log.close()
+        log_state["log"].close()
+
+    def _respawn(note: str) -> None:
+        """TAF 有界修正：在同一个候选目录里、带着原提示词 + 修正指令再起一次 CLI（Phase 4，`ai_tasks._admit_correction`
+        已准入并记了账）。与首次 spawn 同一套参数（`_popen`）；会话的 `proc` 换成新进程，`exited` 先清——之后取消要等
+        **这个**进程退出，`script_busy` 才放行。
+
+        取消与换进程的竞争：`cancel` 先在任务上置取消、再 `_terminate(sess["proc"])`。新进程登记进会话之后再复查一次取消，
+        两边总有一边看到对方：要么 `cancel` 杀的就是新进程，要么这里看到取消标记自己杀掉。"""
+        if task_run.cancelled():
+            return  # 已取消：不起新进程；随后的 wait 读空输出、编排器按取消收尾
+        again = prompt + "\n\n" + note
+        cmd2, extra2 = _cmd(agent, again, agent_cwd, model=model, effort=effort, endpoint=endpoint)
+        LOG.info(
+            "AI 任务修正命令: %s", " ".join("<prompt>" if part == again else part for part in cmd2)
+        )
+        log_state["log"] = open(SNAP_DIR / f"{sid}.stderr.log", "ab", buffering=0)
+        sess["exited"].clear()
+        try:
+            sess["proc"] = _popen(cmd2, agent_cwd, _spawn_env(cmd2[0], extra2), log_state["log"])
+        except BaseException:
+            sess["exited"].set()  # 没起来：没有要等的进程
+            log_state["log"].close()
+            raise
+        if task_run.cancelled():
+            _terminate(sess)
 
     def _pump():
         task = None
@@ -986,7 +1018,7 @@ def run(
             if task_run is None:
                 _consume()
             else:
-                task = _drive_task(sess, task_run, cand, _consume, on_changed, script)
+                task = _drive_task(sess, task_run, cand, _consume, on_changed, script, _respawn)
             # 「这次 AI 改完的那一版」：回滚只认它（STATE-09）。在 `ai.done` 之前记下，
             # 前端收到完成事件后立刻点回滚也有据可查；sidecar 一并记，重启后照样认。
             _record_after(sess, script_path.read_bytes())
@@ -1066,7 +1098,7 @@ def run(
     return sid
 
 
-def _drive_task(sess: dict, task_run, cand, consume, on_changed, script: str) -> dict:
+def _drive_task(sess: dict, task_run, cand, consume, on_changed, script: str, respawn=None) -> dict:
     """TAF 改图：把这次 CLI 运行交给 Task Core 推进（执行 → 提交前检查 → 提交 → 提交后检查），回 `drive_registered` 的结果。"""
     from . import ai_figure_edit, ai_tasks
 
@@ -1089,6 +1121,7 @@ def _drive_task(sess: dict, task_run, cand, consume, on_changed, script: str) ->
         cand,
         wait=wait,
         refresh=lambda: refresh_outcome(on_changed, script, True),
+        respawn=respawn,
     )
     try:
         return ai_tasks.drive_registered(task_run, executor)

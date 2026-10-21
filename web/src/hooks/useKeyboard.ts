@@ -29,7 +29,7 @@ import { useSelectionStore } from '@/store/selectionStore'
 import { useTimelineStore } from '@/store/timelineStore'
 import { useUiStore, type Tool } from '@/store/uiStore'
 import { useViewportStore } from '@/store/viewportStore'
-import { useWorkspaceStore } from '@/store/workspace'
+import { returnToLayout, useWorkspaceStore } from '@/store/workspace'
 import { fitStage, zoomToSelection } from '@/store/zoomToSelection'
 
 /**
@@ -326,13 +326,19 @@ export function useKeyboard() {
           // 先退选中的图内元素，再退整个图内编辑态；
           // 退出后选中该面板——属性页落在面板上，「写回原始文件」就在手边
           if (ui.selectedGids.length) ui.setSelectedGid(null)
-          else {
+          else if (inFastEdit()) {
+            // 快速编辑里图内编辑是这一屏的常驻底色，不是用户另开的一层：选区退完，
+            // 下一下 Esc 就是最外层——回排版（与上下文栏那颗单按钮同一个 action）
+            returnToLayout()
+          } else {
             const pid = ui.elementPanelId
             ui.setElementPanel(null)
             useSelectionStore.getState().set([pid])
           }
         } else if (ui.cropTargetId) cancelCrop()
         else if (ui.tool !== 'select') ui.setTool('select')
+        // 快速编辑没有「清选区」这一层（选中的永远是正在编辑的那张图）：最外层 = 回排版
+        else if (inFastEdit()) returnToLayout()
         else useSelectionStore.getState().clear()
         return
       }

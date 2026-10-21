@@ -482,6 +482,10 @@ def explore(args) -> int:
                 + (f"unknown: {bad}" if bad else "duplicate entry")
             )
         parents = [p for p in parents if p.case in set(requested)]
+    if getattr(args, "families", None):
+        unknown = set(args.families.split(",")) - {t.family for t in XT.TRANSFORMS}
+        if unknown:
+            raise cg.EvidenceError(f"unknown transform family: {sorted(unknown)}")
     generated = XT.generate(args.seed, parents)
     run_id = uuid.uuid4().hex
     out = Path(args.out).resolve() / run_id
@@ -489,7 +493,15 @@ def explore(args) -> int:
         raise cg.EvidenceError("--out must be outside the source worktree")
     out.mkdir(parents=True)
     write_candidates(generated, out)
-    chosen = select(generated["candidates"], args.limit)
+    pool = generated["candidates"]
+    if getattr(args, "families", None):
+        wanted_families = set(args.families.split(","))
+        known = {t.family for t in XT.TRANSFORMS}
+        if not wanted_families <= known:
+            raise cg.EvidenceError(f"unknown transform family: {sorted(wanted_families - known)}")
+        # 每一步都要在所选族里：混入未选族的两因子链会让差异来自操作者排除掉的变换（Codex #1139 r4311734919）
+        pool = [c for c in pool if all(s["family"] in wanted_families for s in c["chain"])]
+    chosen = select(pool, args.limit)
     if getattr(args, "candidates", None):
         wanted_ids = set(args.candidates.split(","))
         chosen = [c for c in generated["candidates"] if c["candidate_id"] in wanted_ids]
@@ -500,6 +512,7 @@ def explore(args) -> int:
         raise cg.EvidenceError("no candidates selected (not_run); no report published")
     started = time.monotonic()
     rows = []
+    by_id: dict[str, dict] = {}
     for manifest in chosen:
         plan = manifest["execution_plan"]
         if args.static_only or plan["status"] != "executable":
@@ -536,11 +549,13 @@ def explore(args) -> int:
             "timings_s": record.get("timings_s"),
         }
         rows.append(row)
+        by_id[row["candidate_id"]] = manifest
         flag = f"  <- {row['differences'][0]['summary']}" if row["differences"] else ""
         print(
             f"{row['candidate_id']} {row['parent']} {'+'.join(row['chain'])}: {row['outcome']}{flag}",
             flush=True,
         )
+    confirm_differences(rows, by_id, args, out)
     if cg.source_state() != initial:
         raise cg.EvidenceError("source content changed during explore; no report published")
     report = {
@@ -599,6 +614,56 @@ def evidence_summary(record: dict) -> dict | None:
             "stems": {k: v["titles"] for k, v in ((tavotto or {}).get("stems") or {}).items()},
         },
     }
+
+
+def confirm_differences(rows: list[dict], by_id: dict, args, out: Path) -> None:
+    """Re-run up to N differing candidates (one per distinct finding shape) to see if they reproduce.
+
+    Only a confirmed difference may raise a maintainer alert; the rerun is the same trusted,
+    re-derived execution, not a different path.
+    """
+    budget = getattr(args, "confirm_differences", 0) or 0
+    for row in rows:
+        row["confirmation"] = None
+    import compat_triage as TG
+
+    rules = TG.load_rules()
+
+    def source_of(row: dict) -> str | None:
+        script = ((by_id.get(row["candidate_id"]) or {}).get("parent") or {}).get("script")
+        path = out / "candidates" / row["candidate_id"] / "files" / (script or "")
+        return path.read_text(encoding="utf-8") if script and path.is_file() else None
+
+    seen: set[tuple] = set()
+    for row in rows:
+        if budget <= 0:
+            break
+        if row["outcome"] != "difference_found":
+            continue
+        # The same behavior identity triage clusters on (attribution, relation, call site), so two
+        # candidates triage would keep apart are never collapsed into one confirmation.
+        source = source_of(row)
+        identity = TG.explore_identity(row, source, rules)
+        if identity in seen:
+            continue
+        seen.add(identity)
+        budget -= 1
+        again = run_one(by_id[row["candidate_id"]], args.seed, out, args.timeout, None, "confirm")
+        rerun_row = {
+            **row,
+            "outcome": again["judgment"]["outcome"],
+            "differences": again["judgment"]["differences"],
+            "evidence": evidence_summary(again),
+        }
+        row["confirmation"] = {
+            "reproduced": again["judgment"]["outcome"] == "difference_found"
+            and TG.explore_identity(rerun_row, source, rules) == identity,
+            "runs": 1,
+        }
+        print(
+            f"{row['candidate_id']} confirm: {'reproduced' if row['confirmation']['reproduced'] else 'NOT reproduced'}",
+            flush=True,
+        )
 
 
 def counts(rows: list[dict]) -> dict:
