@@ -384,8 +384,9 @@ def test_frontend_hard_cap_mirrors_the_engine():
     assert int(m.group(1)) * 3600.0 == pool.BUILD_HARD_TIMEOUT
 
 
-def test_render_route_relays_progress_to_sse(monkeypatch):
-    """路由层把引擎进度变成 `render.progress {pj, id}`，且订阅在 override 期间（含等锁）有效。"""
+def test_progress_covers_admission_build_not_just_the_action(monkeypatch):
+    """带 artifact_source 的冷渲染：build 发生在 `_admit_artifact` 里、先于 action。
+    监听必须罩住整次尝试，否则整个长 build 期间一个 render.progress 都不发。"""
     from tavotto import app as app_mod
 
     events = []
@@ -396,11 +397,31 @@ def test_render_route_relays_progress_to_sse(monkeypatch):
         def __init__(self):
             self.progress = progress
 
-        def override(self, *_a, **_k):
-            assert progress.note_growth(now=1e9)  # build 线程（别处）看到日志长大
-            return {"ok": True}
+    def admit(worker, _stem, _ctx):
+        assert progress.note_growth(now=1e9)  # build 线程在 admission 里看到日志长大
 
-    out = app_mod._override_relaying_progress(_W(), "Fig1", "p1", "Fig1.pdf", [], None, True)
+    monkeypatch.setattr(app_mod, "_admit_artifact", admit)
+    monkeypatch.setattr(app_mod, "_assert_artifact_current", lambda _c: None)
+    monkeypatch.setattr(app_mod, "_svg_execution_result", lambda _w: {})
+    w = _W()
+    _, _, out = app_mod._engine_attempt(
+        "Fig1.pdf",
+        w,
+        "Fig1",
+        lambda wk, st: {"ok": True},
+        artifact_source={"x": 1},
+        progress_pj="p1",
+    )
     assert out == {"ok": True}
     assert events == [("render.progress", {"pj": "p1", "id": "Fig1.pdf"})]
-    assert not progress._items, "离开请求后订阅必须撤掉"
+    assert not progress._items, "离开尝试后订阅必须撤掉"
+
+
+def test_render_route_passes_progress_pj_to_the_attempt():
+    """路由必须把 pj 交给 `_engine_attempt`（漏传 = 整条渲染路径静默失去续期）。"""
+    import inspect
+
+    from tavotto import app as app_mod
+
+    src = inspect.getsource(app_mod.api_engine_render)
+    assert "progress_pj=pj" in src

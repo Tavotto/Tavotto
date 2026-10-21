@@ -6345,13 +6345,30 @@ def _source_backed_result(worker, context):
 
 
 def _engine_attempt(
-    rel_id: str, worker, stem: str, action, *, safe_only: bool = False, artifact_source=None
+    rel_id: str,
+    worker,
+    stem: str,
+    action,
+    *,
+    safe_only: bool = False,
+    artifact_source=None,
+    progress_pj: str | None = None,
 ):
-    """Run on the admitted source; a dependency retry carries the identical context."""
+    """Run on the admitted source; a dependency retry carries the identical context.
+
+    `progress_pj` 给了（画布渲染，#1207）就在**整次尝试**——admission + action——外登记
+    build 进度监听：带 artifact_source 的冷渲染，build 恰恰发生在 `_admit_artifact` 里。
+    换环境重试拿到的新 worker 在下一轮循环里重新登记。其它调用方没有 SSE 关联键，不传。
+    """
     for attempt in range(2):
         try:
-            _admit_artifact(worker, stem, artifact_source)
-            result = action(worker, stem)
+            with (
+                _relay_build_progress(worker, progress_pj, rel_id)
+                if progress_pj is not None
+                else contextlib.nullcontext()
+            ):
+                _admit_artifact(worker, stem, artifact_source)
+                result = action(worker, stem)
             _assert_artifact_current(artifact_source)
             execution = _svg_execution_result(worker)
             if isinstance(result, dict):
@@ -6590,11 +6607,6 @@ def api_handoff_display_ack():
     return jsonify({"ok": True})
 
 
-def _override_relaying_progress(wk, st, pj, rel_id, patches, preview_dpi, inline_svg):
-    with _relay_build_progress(wk, pj, rel_id):
-        return wk.override(st, patches, preview_dpi, inline_svg=inline_svg)
-
-
 @app.post("/api/engine/render")
 def api_engine_render():
     """应用全量 override 列表并重渲染，返回新 manifest 与版本号。
@@ -6686,10 +6698,11 @@ def api_engine_render():
             rel_id,
             worker,
             stem,
-            lambda wk, st: _override_relaying_progress(
-                wk, st, pj, rel_id, body.get("patches", []), preview_dpi, inline_svg
+            lambda wk, st: wk.override(
+                st, body.get("patches", []), preview_dpi, inline_svg=inline_svg
             ),
             artifact_source=artifact_source,
+            progress_pj=pj,
         )
     except engine_pool.WorkerError as exc:
         LOG.error("引擎渲染失败: %s: %s", stem, exc)
