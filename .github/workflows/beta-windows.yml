@@ -85,7 +85,7 @@ jobs:
       - name: Tauri 打包（NSIS，beta 覆盖）
         run: |
           [System.IO.File]::WriteAllText("$PWD\beta-overlay.json",
-            '{"productName":"Tavotto Beta","identifier":"com.tavotto.tavotto.beta","bundle":{"createUpdaterArtifacts":false}}')
+            '{"productName":"Tavotto beta","identifier":"com.tavotto.tavotto.beta","bundle":{"createUpdaterArtifacts":false}}')
           pnpm dlx @tauri-apps/cli@2.11.4 build --bundles nsis --config "$PWD\beta-overlay.json"
           if ($LASTEXITCODE -ne 0) { throw "tauri build 失败（$LASTEXITCODE）" }
 
