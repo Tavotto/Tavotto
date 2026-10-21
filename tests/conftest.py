@@ -18,7 +18,7 @@ import urllib.request
 
 import pytest
 
-from support import hang_watchdog as _hang, shard as _shard
+from support import hang_watchdog as _hang, shard as _shard, system_fonts_shim as _system_fonts_shim
 
 # 模块级设置：app / engine 的路径常量在 import 时求值，必须先于用例模块被
 # import 就位，否则测试会写到真实的用户数据目录。单个用例仍各自 monkeypatch
@@ -62,6 +62,11 @@ os.environ["TAVOTTO_NO_TELEMETRY"] = "1"
 # 测试进程同样**硬关**：没设任何开关的 pytest 进程里 `diagsend.enabled()` 为 False，不可能误连生产。
 # 诊断发送自己的用例（tests/test_diag_send*.py）在 fixture 里摘掉它，再用下面的会话级探针兜底。
 os.environ["TAVOTTO_NO_DIAG_UPLOAD"] = "1"
+
+# macOS：出图子进程共用一份 `system_profiler SPFontsDataType` 输出。每个用例给子进程的新
+# `MPLCONFIGDIR` 都会让 matplotlib 重建字体缓存，而重建的开销几乎全在这一条命令上（单次约 12 s
+# CPU）；同样必须在 collection 之前就位，模块级 spawn 的子进程也要继承到。原理与边界见模块文档。
+_SYSTEM_FONTS_SHIM_DIR = _system_fonts_shim.install()
 
 # ---------------------------------------------------------------------------
 # 会话级零网络断言：遥测 endpoint 一次都不许被真的请求（#440）
