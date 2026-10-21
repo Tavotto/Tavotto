@@ -421,11 +421,16 @@ test(
     expect(Math.abs(s0.y + s0.height / 2 - (g0.y + g0.height / 2 - 12)), '页面应当垂直居中（让出底部工具条）').toBeLessThan(2)
     expect(s0.width / s0.height).toBeCloseTo(40 / 30, 2)
 
-    // 素材卡选中后 Shift+Enter = 「添加到画布」（与卡上那颗就近入口同一个动作）
-    await page.locator(CARD).click()
+    // 素材卡选中后 Shift+Enter = 「添加到画布」（与卡上那颗就近入口同一个动作）。
+    // 画布上只有一张图是单图编辑（不画页面、不按页面缩放），所以先放一张垫底的，第二张进来才是多图排版——
+    // 下面量的是第二张（最上面那张）的放置与取景
+    await page.locator('[data-card="Fig2_yield.pdf"]').click()
     await page.keyboard.press('Shift+Enter')
-    const obj = page.locator('[data-canvas-stage] [data-object-id]')
-    await expect(obj).toHaveCount(1, { timeout: 30_000 })
+    await expect(page.locator('[data-canvas-stage] [data-object-id]')).toHaveCount(1, { timeout: 30_000 })
+    await addSecondFigure(page, 'Fig1_kinetics.pdf')
+    const all = page.locator('[data-canvas-stage] [data-object-id]')
+    await expect(all).toHaveCount(2, { timeout: 30_000 })
+    const obj = all.last()
 
     const outline = page.locator('[data-page-outline]')
     await expect

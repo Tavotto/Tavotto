@@ -46,6 +46,7 @@ import { activateCanvas, createCanvasAndActivate } from '@/store/canvasSession'
 import { deferUserEntry } from '@/store/documentRestore'
 import { findFigurePanel, useDocumentStore } from '@/store/documentStore'
 import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
+import { useInteractionStore } from '@/store/interactionStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
 import { mmToWorld, useViewportStore } from '@/store/viewportStore'
@@ -395,6 +396,21 @@ export function startWorkspaceModeSync(): () => void {
       }
     } else if (now.mode === 'fast_edit' && (wasMode !== 'fast_edit' || wasPanel !== now.activePanelId)) {
       applyStageFit(stageFitFrame(state.doc.objects, state.doc.page, now.activePanelId), true)
+    } else if (now.mode === 'fast_edit' && now.activePanelId === wasPanel) {
+      // 同一张图的图幅被静默校正了（渲染回来按真实图幅校正 w / h）而视口还停在「适应」上（没平移 / 缩放过）：
+      // 取景框按新图幅重算——否则放大取景是按占位图幅算的，校正之后图伸出舞台
+      const was = prev.doc.objects.find((o) => o.id === wasPanel)
+      const cur = state.doc.objects.find((o) => o.id === wasPanel)
+      if (
+        was && cur && (was.w !== cur.w || was.h !== cur.h) &&
+        // 只认**没进历史**的静默改动（渲染回来的图幅校正走 `silent`）：用户的缩放 / 改图幅 / 采用外框都是
+        // 一条历史，那些动作的画面该保持原位（标题落在屏幕上哪里不许因此挪）
+        state.past.length === prev.past.length &&
+        useViewportStore.getState().fitted &&
+        useInteractionStore.getState().kind === 'none'
+      ) {
+        applyStageFit(stageFitFrame(state.doc.objects, state.doc.page, now.activePanelId), true)
+      }
     }
   })
 }

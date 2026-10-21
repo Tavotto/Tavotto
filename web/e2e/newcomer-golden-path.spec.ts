@@ -297,6 +297,14 @@ test('B：快编 → 回排版（图不重复）→ 加第二张图 → 选两�
   // 加第二张图：「添加到画布」第二张进来 = 多图排版
   await addSecondFigure(page, 'Fig2_yield.pdf')
   await expect(objects).toHaveCount(2, { timeout: 30_000 })
+  // 第二张图还没渲染过：渲染回来会按真实图幅校正它的 w / h（文档里的合法修正）。先把它打开渲染一遍再退出，
+  // 让「往返不改文档」的快照取在校正之后（否则校正落在往返里，被误当成往返改了文档）
+  await openRail(page, 'assets')
+  await page.locator(CARD('Fig2_yield.pdf')).dblclick({ timeout: 30_000 })
+  await expect(page.locator('[data-element-svg] > svg')).toBeVisible({ timeout: 120_000 })
+  await page.waitForTimeout(1500) // 两张图在场，舞台上不止一个 [data-display]：不用 waitExact 的单例判据，等渲染校正落盘
+  await backToLayout(page)
+  await expect(objects).toHaveCount(2, { timeout: 30_000 })
   expect(await objects.evaluateAll((els) => els.map((e) => e.getAttribute('data-object-id')))).toContain(firstId)
 
   // 选两张 → 左对齐

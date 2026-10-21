@@ -223,7 +223,7 @@ test('拖分栏手柄时按 Esc：宽度复原，且选中对象的上下文栏�
   // 第二张图进来才是多图排版（选中对象的上下文栏在排版里）；目标先断言恰好 2 个对象再操作
   await addSecondFigure(page)
   await expect(page.locator('[data-object-id]')).toHaveCount(2)
-  const panel = page.locator('[data-object-id]').first()
+  const panel = page.locator('[data-object-id]').last()
   await expect(panel).toBeVisible()
   await panel.click()
   const bar = page.locator('[data-context-bar]')

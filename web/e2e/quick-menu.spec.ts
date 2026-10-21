@@ -1,4 +1,4 @@
-import { addSecondFigure, expect, test } from './fixtures'
+import { expect, test } from './fixtures'
 
 /**
  * 画布对象的右键菜单（Prompt 18）——只放 jsdom 量不到的那几件事：
@@ -17,8 +17,8 @@ test('右键菜单：Esc 不清空选区 / 越界翻转 / 重新构建真跑脚�
   await page.goto(a.baseURL)
   await page.getByText('Fig1_kinetics.pdf').dblclick({ timeout: 30_000 })
   await expect(page.getByText('画布是空的')).toHaveCount(0)
-  // 画布对象的右键菜单是排版的事：第二张图进来才是多图排版
-  await addSecondFigure(page)
+  // 退出图内编辑（单图编辑里标注 / 对象右键菜单照常可用，不需要第二张图）
+  await page.locator('[data-context-back]').first().click()
 
   const panel = page.locator('[data-object-id]').first()
   await expect(panel).toBeVisible()

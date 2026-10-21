@@ -302,7 +302,9 @@ async function exitEdit(page: Page) {
 }
 async function screenGeometry(page: Page, id: string, content: Locator) {
   const panel = await only(object(page, id))
-  const sheet = await only(page.locator('[data-page-sheet]'))
+  // 画布上只有一张图 = 单图编辑，不画页面纸：页面纸在场（多图排版）才量它
+  const sheetLoc = page.locator('[data-page-sheet]')
+  const sheet = (await sheetLoc.count()) ? await only(sheetLoc) : null
   const world = await only(page.locator('[data-world-transform]'))
   const rect = async (loc: Locator) => {
     const b = await loc.boundingBox()
@@ -310,7 +312,7 @@ async function screenGeometry(page: Page, id: string, content: Locator) {
     return { left: b!.x, top: b!.y, right: b!.x + b!.width, bottom: b!.y + b!.height }
   }
   return {
-    panel: await rect(panel), sheet: await rect(sheet), content: await rect(await only(content)),
+    panel: await rect(panel), sheet: sheet ? await rect(sheet) : null, content: await rect(await only(content)),
     transform: await world.evaluate(n => getComputedStyle(n).transform),
   }
 }
@@ -476,8 +478,14 @@ test('guarded PNG: hidden companion, stable adoption, undo, re-entry, and exact 
   const after = await screenGeometry(page, 'a', object(page, 'a').locator('[data-element-svg="a"]'))
   expect(after.transform).toBe(before.transform)
   for (const part of ['panel', 'sheet', 'content'] as const) {
+    const was = before[part]
+    const now = after[part]
+    if (!was || !now) {
+      expect(!was && !now, `${part} 的在场与否在采用前后不一致`).toBe(true)
+      continue
+    }
     for (const edge of ['left', 'top', 'right', 'bottom'] as const) {
-      expect(Math.abs(after[part][edge] - before[part][edge]), `${part}.${edge} moved on admission`).toBeLessThanOrEqual(0.5)
+      expect(Math.abs(now[edge] - was[edge]), `${part}.${edge} moved on admission`).toBeLessThanOrEqual(0.5)
     }
   }
 

@@ -282,7 +282,7 @@ export async function waitForFigureEdit(page: Page): Promise<void> {
  * 单图编辑 → 多图排版：把素材库里另一张图加到画布（画布上有两张图才是排版，没有「回排版」按钮）。
  *
  * 模式由激活画布上的图数推出（`workflows-and-original-spec.md`）：只有一张图是单图编辑，第二张进来切成多图排版。
- * 用悬停时出现的「添加到画布」就近入口（`[data-card-add]`），等页面纸（`[data-page-sheet]`，单图编辑里不画页面）出现。
+ * 聚焦素材卡按 Shift+Enter（「添加到画布」），等页面纸（`[data-page-sheet]`，单图编辑里不画页面）出现。
  * 调用前画布上已有一张图（刚 `dblclick` 打开过另一张）；`cardId` 默认 `Fig2_correlation.pdf`。
  */
 export async function addSecondFigure(page: Page, cardId = 'Fig2_correlation.pdf'): Promise<void> {
@@ -294,9 +294,14 @@ export async function addSecondFigure(page: Page, cardId = 'Fig2_correlation.pdf
   if ((await rail.getAttribute('aria-expanded')) !== 'true') await rail.click()
   const card = page.locator(`[data-card="${cardId}"]`)
   await expect(card).toHaveCount(1, { timeout: 30_000 })
-  await card.hover()
-  await card.locator('[data-card-add]').click()
-  await expect(page.locator('[data-page-sheet]')).toHaveCount(1, { timeout: 30_000 })
+  // 素材卡聚焦后 Shift+Enter = 「添加到画布」（与卡上悬停出现的 `[data-card-add]` 同一个动作）。不用悬停点那颗钮：
+  // 渲染刚回来时素材列表会反复重挂卡片（元素一直「不稳定 / 被摘掉」），悬停要等稳定会一直等；聚焦不需要稳定。
+  // 已在画布上的图再按只是聚焦它，所以重试是安全的
+  await expect(async () => {
+    await card.focus({ timeout: 3_000 })
+    await page.keyboard.press('Shift+Enter')
+    await expect(page.locator('[data-page-sheet]')).toHaveCount(1, { timeout: 4_000 })
+  }).toPass({ timeout: 60_000 })
   await expect(page.locator('[data-view-tweening]')).toHaveCount(0, { timeout: 30_000 })
 }
 

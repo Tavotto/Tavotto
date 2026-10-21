@@ -1,5 +1,5 @@
 import path from 'node:path'
-import { addSecondFigure, expect, test } from './fixtures'
+import { expect, test } from './fixtures'
 
 /**
  * 排版时间线（ADR 0101）的真浏览器闭环：
@@ -43,10 +43,10 @@ async function settleInspectorMotion(page: Page) {
   })
 }
 
-/** 素材卡上画布；再放第二张图，进到多图排版（单图编辑里没有画布标注 / 命名节点所依赖的排版） */
+/** 素材卡上画布（画布上只有这一张 = 单图编辑），再退出图内编辑（出口按钮只在图内编辑时有） */
 async function placeFigureAndBack(page: Page) {
   await (await only(page.locator('[data-card="Fig1_kinetics.pdf"]'), 30_000)).dblclick()
-  await addSecondFigure(page)
+  await (await only(page.locator('[data-context-back]'))).click()
 }
 
 /** 画布上的文字对象（不含时间线预览里画的那一份） */

@@ -437,8 +437,21 @@ test(
     }
     const pdfBox = exp.getByRole('checkbox', { name: 'PDF', exact: true })
     if (!(await pdfBox.isChecked())) await pdfBox.check()
+    // 这张图是脚本现跑出来的（runtime 图），没有磁盘原件：默认的「原图尺寸」不可用（对话框说「源文件找不到，只能按画布导出」），
+    // 单图编辑里也得在范围里选「当前画布」才导得出来。（单图编辑默认 / 唯一的原图范围由后续导出对话框改版处理）
+    const canvasScope = exp.getByText('当前画布', { exact: true })
+    if (await canvasScope.count()) await canvasScope.first().click()
+    // 检查结果是异步到的：知情确认勾选框（若有）出现之后才勾，「开始导出」可点才往下走（单图编辑里检查比排版里晚出）
     const confirm = exp.locator('input[data-export-confirm]')
-    if (await confirm.count()) await confirm.check()
+    await expect
+      .poll(
+        async () => {
+          if ((await confirm.count()) && !(await confirm.isChecked())) await confirm.check()
+          return exp.getByRole('button', { name: /开始导出/ }).isEnabled()
+        },
+        { timeout: 60_000, message: '「开始导出」应当在检查落定（并勾上知情确认）后可点' },
+      )
+      .toBe(true)
     const started = page.waitForResponse(
       (r) => new URL(r.url()).pathname === '/api/export/start' && r.request().method() === 'POST',
     )

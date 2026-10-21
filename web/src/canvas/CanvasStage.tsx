@@ -262,8 +262,10 @@ export function CanvasStage() {
             // 不继承界面的 ink（暗色里是浅色，落在白纸上看不见）
             color: 'var(--color-paper-ink)',
             transform: `translate(${panX}px, ${panY}px) scale(${zoom})`,
-            width: mmToWorld(page.w),
-            height: mmToWorld(page.h),
+            // 单图编辑不画页面：世界层不占页面那么大的盒（取景放大到图上时，页面大小的盒会伸到侧栏下面，
+            // 盖在侧栏的文字上——axe 按盒的相交算「背景被别的元素盖住」，把侧栏里的字都判成查不了）
+            width: fastEdit ? 0 : mmToWorld(page.w),
+            height: fastEdit ? 0 : mmToWorld(page.h),
             pointerEvents: spaceDown || tool !== 'select' ? 'none' : 'auto',
           }}
         >
