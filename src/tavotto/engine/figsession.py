@@ -825,6 +825,8 @@ class LiveFigureSession:
         self.savefig_extras: dict[str, list] = {}
         #: stem -> {files: 目标文件键 -> 最近写它的 Figure（弱引用）, log: 影子日志}，见 `figcapture.note_savefig_writer`
         self.savefig_writers: dict[str, dict] = {}
+        #: 补认领的 stem -> 它写文件时用的 stem（`panel-2` -> `panel`），见 `figcapture.adopt_displaced_writers`
+        self.savefig_file_stem: dict[str, str] = {}
         # Safe capture normally suppresses savefig. File-object saves really draw
         # during the script; do not treat their later state as an undrawn seed.
         self.passthrough_figures: set[int] = set()
@@ -859,6 +861,15 @@ class LiveFigureSession:
             )
 
     # ---------------- 捕获表 ----------------
+    def original_artifact(self, project_root: str, stem: str) -> str | None:
+        """这张 savefig 图**自己**写的原件：按它写文件时的 stem（补认领的 `panel-2` 写的是 `panel.*`）、只认它
+        存过的格式（`figcapture.find_original_artifact(formats=…)`）。"""
+        return figcapture.find_original_artifact(
+            project_root,
+            self.savefig_file_stem.get(stem, stem),
+            formats=figcapture.saved_formats(self.savefig_calls.get(stem)),
+        )
+
     def add_figure(self, stem: str, fig, source: str) -> bool:
         """把一张 Figure 记进捕获表。已有同名 stem 时**不覆盖**，返回 False。
 
@@ -1038,7 +1049,7 @@ class LiveFigureSession:
             return
         artifact = None
         if self.frame_project_root is not None:
-            artifact = figcapture.find_original_artifact(self.frame_project_root, stem)
+            artifact = self.original_artifact(self.frame_project_root, stem)
         calls = self.savefig_calls.get(stem)
         call = figcapture.frame_call(calls, artifact)
         extra = figcapture.frame_extra_artists(calls, self.savefig_extras.get(stem), call)
@@ -1148,6 +1159,7 @@ class LiveFigureSession:
                 self.savefig_calls.pop(stem, None)
                 self.savefig_extras.pop(stem, None)
                 self.savefig_writers.pop(stem, None)
+                self.savefig_file_stem.pop(stem, None)
                 self.failures.pop(stem, None)
                 self._failed_states.pop(stem, None)
                 self.live_captured_at.pop(stem, None)
@@ -1355,7 +1367,7 @@ class LiveFigureSession:
             source = self.capture_source.get(stem, figcapture.SOURCE_SAVEFIG)
             artifact = None
             if source == figcapture.SOURCE_SAVEFIG and project_root is not None:
-                artifact = figcapture.find_original_artifact(project_root, stem)
+                artifact = self.original_artifact(project_root, stem)
             out.append(
                 figcapture.build_descriptor(
                     script=script,

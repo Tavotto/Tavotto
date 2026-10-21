@@ -1335,6 +1335,16 @@ class Worker(wireproto.V1Handler):
         # 只在脚本真的 import 过 pyplot 时才问它：没 import 过就不可能有 pyplot
         # figure，而在这里 import 一次要白付几十毫秒（还会给纯 OO API 的脚本
         # 凭空建一个 figure 管理器）。
+        # 写了文件却因 stem 被别的图持有而没认领的图（`panel.png` 甲 / `panel.pdf` 乙）：先于 pyplot 兜底补进来，
+        # 三条入口同一个函数、同一个顺序
+        figcapture.adopt_displaced_writers(
+            self.session.savefig_writers,
+            self.session.capture,
+            self.session.capture_source,
+            self.session.savefig_calls,
+            self.session.savefig_extras,
+            self.session.savefig_file_stem,
+        )
         _plt = sys.modules.get("matplotlib.pyplot")
         if _plt is not None:
             fallback, dropped = figcapture.collect_pyplot_figures(

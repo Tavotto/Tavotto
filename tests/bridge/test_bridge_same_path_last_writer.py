@@ -206,3 +206,44 @@ def test_native_failed_holder_write_does_not_block(tmp_path, bridge_session, fir
         sess.wait_event("barrier")
         sess.resume()
         sess.wait_event("exit")
+
+
+OTHER_FIGURE = """\
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+
+
+def first():
+    fig, ax = plt.subplots(figsize=(2.0, 1.6))
+    fig.savefig("panel.png", dpi=100)
+
+
+def second():
+    fig, ax = plt.subplots(figsize=(2.4, 1.6))
+    fig.savefig("panel.pdf")
+    plt.close(fig)
+
+
+first()
+second()
+plt.show()
+"""
+
+
+def test_native_other_figure_on_the_same_stem_is_adopted(tmp_path, bridge_session):
+    """`panel.png` 甲 / `panel.pdf` 乙（存完即关）：与 safe worker / 浏览器同样产出 `panel` + `panel-2`
+    （`figcapture.adopt_displaced_writers`），show 屏障上就交出来。"""
+    proj = tmp_path / "proj"
+    write(proj / "other.py", OTHER_FIGURE)
+    with bridge_session(proj / "other.py", cwd=str(proj)) as sess:
+        sess.wait_event("barrier")
+        desc = {d["stem"]: d for d in sess.ensure_built()["descriptors"]}
+        assert sorted(desc) == ["panel", "panel-2"]
+        assert round(desc["panel"]["size_mm"][0] / 25.4, 2) == 2.0
+        assert round(desc["panel-2"]["size_mm"][0] / 25.4, 2) == 2.4
+        assert [c["format"] for c in desc["panel-2"]["savefig_calls"]] == ["pdf"]
+        sess.resume()
+        sess.wait_event("barrier")
+        sess.resume()
+        sess.wait_event("exit")

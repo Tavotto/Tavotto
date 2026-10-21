@@ -21,7 +21,8 @@ worker 能让症状消失，但两份代码迟早分叉，而分叉的表现正�
   `pad_inches` / `dpi` / `transparent` / 底色 / 格式）按 matplotlib 自己的解析顺序
   记成 JSON（`savefig_calls` 进描述符，见函数 docstring）；
 * `collect_pyplot_figures()` —— 脚本跑完之后还活着的 pyplot Figure 怎么补进
-  捕获表（去重、命名、保序）；
+  捕获表（去重、命名、保序）；`adopt_displaced_writers()` —— 写了文件却因 stem 被别的图持有而没认领的图
+  （在它之前调用）；
 * `install_colorbar_capture()` —— 原样调用 matplotlib，记下手动 `cax=` 的显式 `ax` 宿主；
 * `install_relative_read_fallback()` —— 相对路径**只读**回退（见下）；
 * `remap_target()` / `install_input_remap()` / `missing_input_of()` —— 数据找不到时用户指认的
@@ -902,19 +903,36 @@ def project_relative_stem(stem: object) -> bool:
     return ".." not in stem.replace("\\", "/").split("/")
 
 
-def find_original_artifact(project_root: str, stem: str, *, isfile=os.path.isfile) -> str | None:
+def find_original_artifact(
+    project_root: str, stem: str, *, isfile=os.path.isfile, formats=None
+) -> str | None:
     """项目根下 stem 的原始产物（相对路径，POSIX）；没有回 None。
 
     判据与 handoff 交接找产物是同一份（它现在就调这里）：只看项目根一层、
     按 `ARTIFACT_EXTS` 的顺序取第一个存在的。`isfile` 可注入是给测试与
     handoff 的 dry 场景用的。
+
+    `formats`（这张图自己 savefig 过的格式，取自它的调用表）给了就只认这些扩展名：同一 stem 下别的图写的
+    文件不是它的原件——`panel.png` 甲 / `panel.pdf` 乙时，甲的原件若按扩展名顺序取成 `panel.pdf`，写回就会
+    拿甲去覆盖乙的产物。不给（不知道它存过什么）= 旧判据。
     """
     if not project_relative_stem(stem):
         return None  # 先于任何拼接：UNC / 绝对 / 盘符 / `..` 的 stem 一个字节都不探
+    allowed = None if formats is None else {_norm_format(f) for f in formats if f}
     for ext in ARTIFACT_EXTS:
+        if allowed is not None and _norm_format(ext[1:]) not in allowed:
+            continue
         if isfile(os.path.join(project_root, stem + ext)):
             return stem + ext
     return None
+
+
+def saved_formats(calls) -> list[str] | None:
+    """调用表（`savefig_calls[stem]`）里出现过的格式；调用表是 None（没观察到）或空回 None = 不知道。"""
+    if not calls:
+        return None
+    out = [c.get("format") for c in calls if isinstance(c, dict) and c.get("format")]
+    return out or None
 
 
 @dataclasses.dataclass(frozen=True)
@@ -1859,7 +1877,61 @@ def note_savefig_writer(
         else:
             extras[stem] = list(mine[2])
     _trim_writers(entry, held)
+    _keep_displaced(entry, held)
     return takes
+
+
+def _keep_displaced(entry: dict, held) -> None:
+    """强引用「仍是本 stem 某个目标文件的最近写入者、却没持有 stem」的图（`entry["kept"]`）。
+
+    写入者表只握弱引用：`a.png` 甲 / `a.pdf` 乙、乙随后 `plt.close` 且出了作用域，乙就被回收——原生两个文件
+    都在，捕获里却只剩甲，乙**整张丢了**。留住它，脚本跑完由 `adopt_displaced_writers` 以自己的名字补进来。
+    有界：跟着 `_trim_writers`（每 stem 至多 `MAX_SAVEFIG_WRITERS` 个写入者），不再是最近写入者的立即放掉。"""
+    latest = {}
+    for ref in entry["files"].values():
+        fig = ref()
+        if fig is not None and fig is not held and id(fig) in entry["by"]:
+            latest.setdefault(id(fig), fig)
+    entry["kept"] = latest
+
+
+def adopt_displaced_writers(
+    writers: dict,
+    capture: dict,
+    capture_source: dict,
+    calls: dict,
+    extras: dict,
+    file_stems: dict | None = None,
+) -> list[str]:
+    """把「写了某个文件、因为 stem 已被别的图持有而没被认领」的图补进捕获表；返回新 stem（产出顺序）。
+
+    不同的图写同一 stem 的不同文件（`panel.png` 甲 / `panel.pdf` 乙）是两张图，不是同一张图的两种格式：
+    先认领者持有 `panel`（`note_savefig_writer` 的既有契约，不变），乙以 `fallback_stems` 的规则编号成
+    `panel-2`，来源仍是 savefig，带**它自己**的调用表（图幅 / 原件格式按它自己的保存定，ADR 0098）。
+    已被认领的（同一张图也持有别的 stem，或 pyplot 兜底已收）按 `claimed_ids` 跳过。三条入口在 pyplot 兜底
+    **之前**各调一次，同一个脚本在 safe / native / 浏览器产出同样的 stem。`file_stems`（给了就填）记新 stem →
+    它写的文件用的 stem（`panel-2` → `panel`），找原件用（`find_original_artifact(formats=…)`）。"""
+    added: list[str] = []
+    for stem, entry in list(writers.items()):
+        for key, fig in list((entry.get("kept") or {}).items()):
+            if id(fig) in claimed_ids(capture):
+                continue
+            mine = entry["by"].get(key)
+            if mine is None or mine[0]() is not fig:
+                continue
+            name = fallback_stems(capture.keys(), stem, 1)[0]  # stem 已被持有 → `stem-2`、`stem-3`…
+            capture[name] = fig
+            capture_source[name] = SOURCE_SAVEFIG
+            if file_stems is not None:
+                file_stems[name] = stem
+            if mine[1] is None:
+                calls[name] = None
+                extras.pop(name, None)
+            else:
+                calls[name] = list(mine[1])
+                extras[name] = list(mine[2])
+            added.append(name)
+    return added
 
 
 def _record_writer_call(mine: list, call: dict | None, extra) -> None:
@@ -1890,6 +1962,11 @@ def _trim_writers(entry: dict, held) -> None:
                 del by[key]
                 for t in [t for t, ref in files.items() if ref() is fig]:
                     del files[t]
+
+
+def normalized_format(fmt) -> str:
+    """格式名的同一性（公开名，给父进程用；见 `_norm_format`）。"""
+    return _norm_format(fmt)
 
 
 def _norm_format(fmt) -> str:

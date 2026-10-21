@@ -7680,6 +7680,39 @@ class WriteBackFormatError(RuntimeError):
         self.format = fmt
 
 
+class WriteBackForeignFileError(WriteBackFormatError):
+    """要写的文件不是这张图自己 savefig 出来的（同一 stem 下另一张图写的，`panel.png` 甲 / `panel.pdf` 乙）。
+    拿甲去覆盖乙的产物是丢用户数据——拒绝，原件零改动。是 `WriteBackFormatError` 的子类，沿用它的全部
+    捕获点；响应在 `_write_back_error_response` 里先于父类判。"""
+
+    def __init__(self, name: str) -> None:
+        RuntimeError.__init__(self, f"{name} 不是这张图自己保存的文件，写回不会覆盖它")
+        self.format = ""
+        self.name = name
+
+
+def _own_write_back_targets(worker, stem: str, src: Path, targets: list[Path]) -> list[Path]:
+    """写回目标里只留这张图**自己**存过的格式（它的 `savefig_calls`，热会话的 build 描述符）。
+
+    不知道它存过什么（调用表没观察到 / pyplot 捕获 / 描述符里没有这个 stem）= 旧行为，目标不收窄。
+    `src` 本身不是它存过的格式 → `WriteBackForeignFileError`。"""
+    desc = next(
+        (
+            d
+            for d in (getattr(worker, "last_build_descriptors", None) or [])
+            if d.get("stem") == stem
+        ),
+        None,
+    )
+    formats = engine_figcapture.saved_formats((desc or {}).get("savefig_calls"))
+    if formats is None:
+        return targets
+    own = {engine_figcapture.normalized_format(f) for f in formats}
+    if engine_figcapture.normalized_format(src.suffix.lstrip(".")) not in own:
+        raise WriteBackForeignFileError(src.name)
+    return [p for p in targets if engine_figcapture.normalized_format(p.suffix.lstrip(".")) in own]
+
+
 def _write_back_format_error(src: Path) -> WriteBackFormatError | None:
     """写回的目标是 `src` 同名的 .pdf / .png（`WRITE_BACK_EXT`）。`src` 自己不在其中时，画布上这张
     一个字节都不会变——以前会报成功、记下基线（JPEG 一直如此；#534 让 TIFF 也走到这里）。
@@ -8165,6 +8198,9 @@ def _write_source_files(
     warnings: list[str] = []
     try:
         resp = fresh.override(stem, patches)
+        # 同一 stem 下别的图写的文件不是写回目标：按这次全量重放（一次性 worker 刚 build）的描述符收窄，
+        # 在任何临时文件产生之前
+        targets = _own_write_back_targets(fresh, stem, src, targets)
         for w in resp.get("warnings") or []:
             if w not in warnings:
                 warnings.append(str(w))
@@ -8402,6 +8438,14 @@ def _write_back_error_response(exc):
                 "updated": exc.updated,
                 "rolled_back": exc.rolled_back,
                 "rollback_failed": exc.rollback_failed,
+            }
+        ), 409
+    if isinstance(exc, WriteBackForeignFileError):
+        return jsonify(
+            {
+                "error": str(exc),
+                "code": "write_back_foreign_file",
+                "params": {"file": exc.name},
             }
         ), 409
     if isinstance(exc, WriteBackFormatError):

@@ -308,6 +308,13 @@ class BrowserSession:
         # 实现——两边各写一份的话，同一个脚本会在两个入口产出不同的 stem，
         # 而前端按 stem 索引一切。
         base = os.path.splitext(safe_name)[0]
+        figcapture.adopt_displaced_writers(
+            self.savefig_writers,
+            self.capture,
+            self.capture_source,
+            self.savefig_calls,
+            self.savefig_extras,
+        )
         fallback, dropped = figcapture.collect_pyplot_figures(
             self.capture, base, plt, limit=MAX_FIGURES
         )
