@@ -369,7 +369,8 @@ def test_tavottofile_store(figs, monkeypatch):
     # 数据目录里升级前的历史只读兜底
     m.VERSIONS_DIR.mkdir(parents=True, exist_ok=True)
     (m.VERSIONS_DIR / "docold.json").write_text(
-        json.dumps({"versions": [{"id": "v1-1", "name": "n", "ts": 0, "doc": {}}]}), encoding="utf-8"
+        json.dumps({"versions": [{"id": "v1-1", "name": "n", "ts": 0, "doc": {}}]}),
+        encoding="utf-8",
     )
     got = client.get("/api/versions/docold").get_json()["versions"]
     assert [v["id"] for v in got] == ["v1-1"]

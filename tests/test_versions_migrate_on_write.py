@@ -234,7 +234,7 @@ def test_append_writes_one_envelope_and_the_index_whatever_the_history_length(cl
         created = _post(client, doc_id, name="measured", doc=_doc(300, "measured"))["version"]
         monkeypatch.setattr(atomicio, "write_bytes", real)
         r = vs.store_dir(m._versions_path(doc_id).parent, m._versions_path(doc_id).stem)
-        rel = sorted(str(Path(p).relative_to(r)) for p, _ in writes)
+        rel = sorted(Path(p).relative_to(r).as_posix() for p, _ in writes)
         assert rel == sorted(["index.json", f"s/{created['id']}.json"]), rel
         measured[history] = sum(n for _, n in writes)
     one_doc = len(atomicio.dumps_json(_doc(300, "measured")))
