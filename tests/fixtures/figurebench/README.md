@@ -23,11 +23,11 @@
 
 | 字段 | 含义 |
 | --- | --- |
-| `id` / `title` / `category` / `task_type` | 标识与分类；`category` ∈ single_element / complex_figure / scientific / data_to_figure / reliability |
+| `id` / `title` / `category` / `task_type` | 标识与分类；`category` ∈ single_element / complex_figure / scientific / scope_discipline / data_to_figure / reliability |
 | `fixture` | 夹具目录（改图）或 `csv_inputs/<文件>`（数据出图）；可靠性场景为 null |
 | `instruction` | 交给被测系统的原话——**只有这一项**会给到被测 Agent |
 | `check` | Phase 0 怎么核：`probe`（原生执行三类变体）/ `input_truth`（只核输入）/ `policy`（只登记期望结局）/ `covered_by`（现有用例）/ `gap`（`gap_phase` 补） |
-| `goal` / `preserve` | 目标断言 / 保持断言（闭集类型，见测试 `ASSERTION_KINDS`）；`subjective: true` 时允许无目标断言 |
+| `goal` / `preserve` | 目标断言 / 保持断言（闭集类型，见测试 `ASSERTION_KINDS`）；`subjective: true` 时允许无目标断言。`scope_discipline` 类专考「只许改一处」：指令点名唯一的改动对象，最自然的写法会顺手改到别处，保持断言就是那些「别处」 |
 | `reference_solution` / `negative_variants` | 对 `figure.py` 的精确文本编辑（`find` 必须恰好出现 `count` 次）；反例的 `must_fail` 必须全红 |
 | `expected_outcome` | 任务级期望结局：completed / partial / needs_input / failed |
 | `policy` / `unverified` | 数据出图与策略场景的判据文字；明确不覆盖的事 |
@@ -77,6 +77,14 @@
 | `FB-S07` | dev | single_element | 改色条标签 | `heatmap_colorbar` | probe |
 | `FB-S08` | dev | single_element | 中英混排标题字号 | `cjk_labels` | probe |
 | `FB-S09` | dev | single_element | 只改一组柱子的颜色 | `grouped_bars` | probe |
+| `FB-T01` | holdout | scope_discipline | 只把一条曲线改成虚线 | `line_two_series` | probe |
+| `FB-T02` | holdout | scope_discipline | 只改标题文字 | `line_two_series` | probe |
+| `FB-T03` | holdout | scope_discipline | 只改右上角子图的标题字号 | `multi_panel` | probe |
+| `FB-T04` | holdout | scope_discipline | 只把 B 组柱子改成灰色 | `grouped_bars` | probe |
+| `FB-T05` | dev | scope_discipline | 只改横轴标题文字 | `cjk_labels` | probe |
+| `FB-T06` | dev | scope_discipline | 只把左下角子图的曲线改成蓝色 | `multi_panel` | probe |
+| `FB-T07` | dev | scope_discipline | 只改一条曲线的线宽 | `line_two_series` | probe |
+| `FB-T08` | dev | scope_discipline | 只改标题字号 | `cjk_labels` | probe |
 | `FB-V01` | dev | scientific | 「更简洁」不许删点 | `line_two_series` | probe |
 | `FB-V02` | dev | scientific | 柱宽调整不改高度与数量 | `grouped_bars` | probe |
 | `FB-V03` | holdout | scientific | 误差棒变细，误差不能变 | `errorbar_fit` | probe |
