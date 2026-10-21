@@ -26,9 +26,19 @@
 5. **超时收尾**：Windows 无进程组 / 信号，用 `taskkill /PID <conda> /T /F` 收整棵树（输出丢弃，不解码），再 `proc.kill()` + 有期限的 `wait`。
 6. **默认开，保留逃生口**：`TAVOTTO_CONDA_ACTIVATION=0` 在 Windows 上同样生效。信任边界不变：只激活用户自己的 conda 安装根（`Scripts\conda.exe` + `conda-meta`）
    及其 `envs\<名字>` 下的环境，路径比较 `normcase`。
-7. **不碰**：mamba / micromamba、用户环境发现（userenvs）、depplan。
+7. **安装根的第三个来源：安装程序写入的注册表卸载项**（2026-10-21 真机验收发现的缺口）。Miniconda 默认不加 PATH、也可装在 `D:\anaconda3`
+   这类自定义位置，不设 `CONDA_EXE` 时 `CONDA_EXE` / PATH / 标准位置都找不到，会被当成“不可信”而裸起。所以 Windows 上额外读
+   `HKCU` 与 `HKLM`（含 WOW6432Node）`Software\Microsoft\Windows\CurrentVersion\Uninstall\*`：`DisplayName` 以 Miniconda / Anaconda / Miniforge / Mambaforge / Micromamba 开头（不分大小写）的项，
+   取 `InstallLocation`，没有则取 `UninstallString`（去引号）所在目录（真机上 Miniconda 的卸载项就只有后者）；另加 PEP 514 `Software\Python\ContinuumAnalytics\*\InstallPath`。
+   **理由**：卸载项由用户自己运行的安装程序写在用户 / 机器注册表里，项目目录改不了它——与 `environments.txt`（项目可伪造、会过期）不同；
+   且它只产出**候选**，仍必须过 `_is_install_root`（`conda-meta` + `Scripts\conda.exe`），伪造或过期的条目不会被信任。读取有界（每处最多 512 项），读取器可注入（测试用假读取器），任何读取错误只是少一个候选。
+8. **不碰**：mamba / micromamba、用户环境发现（userenvs）、depplan。
 
 ## Win11 真机验收清单（合入前）
+
+已通过（2026-10-21，Miniconda 26.9.3 / py314 装在 `C:\Users\Jiaqi\tavotto verify\miniconda3`，环境 `envs\tvt`：py3.12 + matplotlib，带空格路径）：项 1、2、4（设 `CONDA_EXE` 的情形）。
+缺口已按决策 7 补（注册表来源），需真机复验：不设 `CONDA_EXE`、conda 不在 PATH 时 `launcher_for_interpreter` 应返回 launcher。
+剩余：项 3（ROOT）、5（改名 conda.exe）、6（代码页 936 / 65001）、7（开始菜单启动）、8（`conda install` 后重新捕获）。
 
 1. Miniconda 装在含空格 / 中文用户名的路径下，`conda create -n t python=3.11 matplotlib`，让 Tavotto 选用该解释器运行一个出图脚本：成功。
 2. 给该环境加 `etc\conda\activate.d\x.bat`（`set TAVOTTO_PROBE=1`，并 `echo` 一行横幅）：脚本里 `os.environ["TAVOTTO_PROBE"]` 可见；横幅不污染 worker 协议。

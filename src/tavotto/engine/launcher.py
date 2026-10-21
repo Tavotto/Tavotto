@@ -40,6 +40,7 @@ import dataclasses
 import hashlib
 import json
 import logging
+import ntpath
 import os
 import shutil
 import signal
@@ -152,6 +153,95 @@ def _standard_conda_roots() -> list[str]:
     return [os.path.expanduser(r) for r in _STANDARD_ROOTS]
 
 
+#: 安装程序写的卸载项里，DisplayName 以这些开头（不区分大小写）的才算 conda 安装
+_REGISTRY_NAME_PREFIXES = ("miniconda", "anaconda", "miniforge", "mambaforge", "micromamba")
+#: 注册表读取的上限（卸载项 / PEP 514 子键各自最多看这么多个），防止异常机器上扫太久
+_REGISTRY_MAX_ENTRIES = 512
+_UNINSTALL_KEY = r"Software\Microsoft\Windows\CurrentVersion\Uninstall"
+_PEP514_KEY = r"Software\Python\ContinuumAnalytics"
+
+
+def _root_from_uninstall_entry(
+    display_name: str | None, install_location: str | None, uninstall_string: str | None
+) -> str | None:
+    """一个卸载项 → 候选安装根：DisplayName 须以 conda 系名字开头；优先 `InstallLocation`，否则 `UninstallString`
+    （去引号）所在目录（Miniconda 的卸载项没有 InstallLocation，只有 `"<根>\\Uninstall-Miniconda3.exe"`）。注册表值是 Windows 路径，用 ntpath 解析。"""
+    if not (display_name or "").lower().startswith(_REGISTRY_NAME_PREFIXES):
+        return None
+    if install_location and install_location.strip().strip('"'):
+        return install_location.strip().strip('"')
+    if uninstall_string and uninstall_string.strip().strip('"'):
+        return ntpath.dirname(uninstall_string.strip().strip('"')) or None
+    return None
+
+
+def _read_registry_candidates() -> list[str]:
+    """（只在 Windows 真正读）安装程序写进注册表的 conda 安装目录候选：HKCU / HKLM（含 WOW6432Node）卸载项
+    （DisplayName 前缀匹配；取 `InstallLocation`，没有则取 `UninstallString` 去引号后所在目录），加 PEP 514
+    `HKCU|HKLM\\Software\\Python\\ContinuumAnalytics\\*\\InstallPath`。只是**候选**：必须再过 `_is_install_root`。
+    测试替换这个函数注入假读取器；任何读取错误都只是少一个候选。"""
+    try:
+        import winreg  # noqa: PLC0415  (只在 Windows 存在)
+    except ImportError:
+        return []
+    out: list[str] = []
+
+    def value(key, name: str) -> str | None:
+        try:
+            v, _t = winreg.QueryValueEx(key, name)
+        except OSError:
+            return None
+        return v if isinstance(v, str) and v.strip() else None
+
+    def subkeys(root, path: str, view: int):
+        try:
+            with winreg.OpenKey(root, path, 0, winreg.KEY_READ | view) as k:
+                for i in range(_REGISTRY_MAX_ENTRIES):
+                    try:
+                        yield winreg.EnumKey(k, i)
+                    except OSError:
+                        return
+        except OSError:
+            return
+
+    for hive in (winreg.HKEY_CURRENT_USER, winreg.HKEY_LOCAL_MACHINE):
+        for view in (winreg.KEY_WOW64_64KEY, winreg.KEY_WOW64_32KEY):
+            for name in subkeys(hive, _UNINSTALL_KEY, view):
+                try:
+                    with winreg.OpenKey(
+                        hive, _UNINSTALL_KEY + "\\" + name, 0, winreg.KEY_READ | view
+                    ) as k:
+                        root = _root_from_uninstall_entry(
+                            value(k, "DisplayName"),
+                            value(k, "InstallLocation"),
+                            value(k, "UninstallString"),
+                        )
+                        if root:
+                            out.append(root)
+                except OSError:
+                    continue
+            for tag in subkeys(hive, _PEP514_KEY, view):
+                try:
+                    with winreg.OpenKey(
+                        hive, _PEP514_KEY + "\\" + tag + "\\InstallPath", 0, winreg.KEY_READ | view
+                    ) as k:
+                        loc = value(k, "")
+                        if loc:
+                            out.append(loc.strip().strip('"'))
+                except OSError:
+                    continue
+    return out
+
+
+def _registry_conda_roots() -> list[str]:
+    if not _is_windows():
+        return []
+    try:
+        return list(_read_registry_candidates())
+    except Exception:  # noqa: BLE001  注册表读取只是增加候选，绝不能让检测崩
+        return []
+
+
 def _root_conda_exe(root: str) -> str:
     """安装根里的 conda 可执行文件：POSIX `bin/conda`，Windows `Scripts\\conda.exe`（真正的 exe，不是 `condabin\\conda.bat`）。"""
     if _is_windows():
@@ -173,7 +263,7 @@ def _user_conda_roots() -> list[str]:
                 raw.append(os.path.dirname(os.path.dirname(os.path.realpath(exe))))
             except (OSError, ValueError):
                 continue
-    for root in _standard_conda_roots():
+    for root in [*_standard_conda_roots(), *_registry_conda_roots()]:
         try:
             raw.append(os.path.realpath(root))
         except (OSError, ValueError):

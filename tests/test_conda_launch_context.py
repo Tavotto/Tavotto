@@ -2906,3 +2906,53 @@ def test_windows_timeout_cleanup_uses_taskkill_for_the_whole_tree(monkeypatch):
     launcher._kill_tree(proc)
     assert calls == [["taskkill", "/PID", "4321", "/T", "/F"]]
     assert proc.killed
+
+
+@posix_only
+def test_windows_registry_uninstall_entries_become_candidate_roots():
+    f = launcher._root_from_uninstall_entry
+    real = '"C:\\Users\\Jiaqi\\tavotto verify\\miniconda3\\Uninstall-Miniconda3.exe"'
+    assert f("Miniconda3 py314_26.9.3-0 (Python 3.14.8 64-bit)", None, real) == (
+        "C:\\Users\\Jiaqi\\tavotto verify\\miniconda3"
+    )
+    assert (
+        f("ANACONDA3 2024.10", '"D:\\anaconda3"', real) == "D:\\anaconda3"
+    )  # InstallLocation 优先，不分大小写
+    assert f("Miniforge3 24", "", None) is None
+    assert f("Python 3.12 (64-bit)", "C:\\Python312", real) is None  # 不是 conda 系
+    assert f(None, "C:\\x", real) is None
+
+
+@posix_only
+def test_windows_registry_roots_are_trusted_only_through_the_install_root_check(
+    tmp_path, as_windows, monkeypatch
+):
+    """装在自定义位置、不在 PATH、没设 CONDA_EXE：注册表给的候选过了 `_is_install_root` 才可信；伪造的候选不行。"""
+    prefix, conda, _ = make_fake_win_conda(tmp_path, sys.executable)
+    _FAKE_ROOTS.clear()  # 不在“常见安装位置”里
+    py = prefix / "python.exe"
+    assert launcher.launcher_for_interpreter(py) is None  # 负对照：没有注册表来源
+    root = str(prefix.parent.parent)
+    monkeypatch.setattr(launcher, "_read_registry_candidates", lambda: [root])
+    found = launcher.launcher_for_interpreter(py)
+    assert found == launcher.CondaLauncher(conda_exe=str(conda), prefix=str(prefix))
+    # 候选指向一个没有 conda-meta / Scripts\\conda.exe 的目录（过期或被伪造的卸载项）：不可信
+    fake = tmp_path / "ghost"
+    fake.mkdir()
+    monkeypatch.setattr(launcher, "_read_registry_candidates", lambda: [str(fake)])
+    assert launcher.launcher_for_interpreter(py) is None
+
+    # 读取器出错只是少一个候选
+    def boom():
+        raise RuntimeError("registry")
+
+    monkeypatch.setattr(launcher, "_read_registry_candidates", boom)
+    assert launcher.launcher_for_interpreter(py) is None
+
+
+@posix_only
+def test_registry_is_never_read_off_windows(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        launcher, "_read_registry_candidates", lambda: pytest.fail("POSIX 上不该读注册表")
+    )
+    assert launcher._registry_conda_roots() == []
