@@ -314,3 +314,84 @@ class TestNotFoundNamed:
         assert deprepair._not_found_extra(deprepair.ERROR_CONFLICT, out, [], tmp_path, "a.py") == {}
         got = deprepair._not_found_extra(deprepair.ERROR_NOT_FOUND, out, [], tmp_path, "a.py")
         assert got["not_found"]["name"] == "foo"
+
+
+class TestCodexReview1276:
+    """Codex #1276：P1 装不了的包要出整份可执行计划；P2 字面量根要看顺序与执行上下文；P2 no_follow 不解引用标志。"""
+
+    def test_p1_not_pip_import_is_not_left_in_missing(self, tmp_path):
+        proj = tmp_path / "p"
+        _write(proj, "a.py", "import ROOT\n")
+        _write(proj, "requirements.txt", "root\n")
+        plan = depplan.plan(proj, "a.py", facts=_facts(), target_kind=MANAGED)
+        assert plan.missing == ()
+        assert plan.requirements == ()
+        assert plan.status == depplan.STATUS_NOTHING_NEEDED
+        assert plan.to_payload()["not_pip_installable"][0]["distribution"] == "root"
+
+    def test_p1_hash_mode_does_not_reintroduce_not_pip(self, tmp_path):
+        proj = tmp_path / "p"
+        _write(proj, "a.py", "import ROOT\nimport tabulate\n")
+        _write(
+            proj,
+            "requirements.txt",
+            "root==6.0 --hash=sha256:"
+            + "a" * 64
+            + "\ntabulate==0.9.0 --hash=sha256:"
+            + "b" * 64
+            + "\n",
+        )
+        plan = depplan.plan(proj, "a.py", facts=_facts(), target_kind=MANAGED)
+        assert all(not r.startswith("root") for r in plan.requirements)
+        assert not any(k.startswith("root") for k in plan.hashes)
+        assert not any("root" in str(b.get("lines", "")) for b in plan.blocked)
+
+    def test_p2_literal_dir_added_after_import_does_not_apply(self, tmp_path):
+        proj = tmp_path / "p"
+        _write(proj, "pdf/helper.py", "x = 1\n")
+        _write(
+            proj,
+            "a.py",
+            'import helper\nimport sys, os\nsys.path.append(os.path.join(os.path.dirname(__file__), "pdf"))\n',
+        )
+        scan = importscan.scan(proj, "a.py")
+        cls = next(c for c in scan.classes if c.module == "helper")
+        assert cls.bucket != importscan.BUCKET_LOCAL
+
+    def test_p2_literal_dir_inside_function_does_not_apply(self, tmp_path):
+        proj = tmp_path / "p"
+        _write(proj, "pdf/helper.py", "x = 1\n")
+        _write(
+            proj,
+            "a.py",
+            "import sys, os\n"
+            "def setup():\n"
+            '    sys.path.append(os.path.join(os.path.dirname(__file__), "pdf"))\n'
+            "import helper\n",
+        )
+        scan = importscan.scan(proj, "a.py")
+        assert not any(r["tag"] == "sys_path_literal" for r in scan.search_roots)
+        cls = next(c for c in scan.classes if c.module == "helper")
+        assert cls.bucket != importscan.BUCKET_LOCAL
+
+    @pytest.mark.skipif(not hasattr(Path, "symlink_to"), reason="no symlink")
+    def test_p2_no_follow_marker_is_not_dereferenced(self, tmp_path, home, monkeypatch):
+        proj = tmp_path / "p"
+        _write(proj, "sub/a.py", "x = 1\n")
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        try:
+            (proj / ".git").symlink_to(outside, target_is_directory=True)
+        except (OSError, NotImplementedError):
+            pytest.skip("cannot symlink")
+        seen: list[str] = []
+        real_exists = Path.exists
+
+        def spy(self, *a, **k):
+            seen.append(str(self))
+            return real_exists(self, *a, **k)
+
+        monkeypatch.setattr(Path, "exists", spy)
+        dirs = depresolve._decl_dirs(proj, "sub/a.py", no_follow=True)
+        assert not any(s.endswith(".git") for s in seen)
+        assert dirs and dirs[-1].name == "sub" or proj.name in {d.name for d in dirs}

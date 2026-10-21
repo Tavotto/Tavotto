@@ -388,16 +388,29 @@ def is_broad_folder(path: Path) -> bool:
     return Path(key).parent == Path(key)
 
 
-def _bound_decl_dirs(dirs: list[Path]) -> list[Path]:
+def _marker_present(path: Path, no_follow: bool) -> bool:
+    if not no_follow:
+        return path.exists()
+    try:
+        os.lstat(path)
+    except OSError:
+        return False
+    return True
+
+
+def _bound_decl_dirs(dirs: list[Path], *, no_follow: bool = False) -> list[Path]:
     """把「脚本目录 → 项目根」的目录列表按用户裁决（2026-10-21）收窄：到最近的项目标志（含）为止；
-    大文件夹一律不读（它们之后的目录也不读——遍历到这里就停）。"""
+    大文件夹一律不读（它们之后的目录也不读——遍历到这里就停）。
+
+    `no_follow`（默认静态扫描）下探测标志用 `lstat`：标志是符号链接时只看链接本身存在，不解引用——
+    否则指向外部 / UNC 的 `.git`、`pyproject.toml` 会在读取守卫之前被 stat（Codex #1276 P2）。"""
     out: list[Path] = []
     for d in dirs:
         if is_broad_folder(d):
             break
         out.append(d)
         try:
-            if any((d / m).exists() for m in PROJECT_MARKERS):
+            if any(_marker_present(d / m, no_follow) for m in PROJECT_MARKERS):
                 break
         except OSError:
             continue
@@ -424,7 +437,7 @@ def _decl_dirs(
         dirs = [start]
         while dirs[-1] != root_real and dirs[-1].parent != dirs[-1]:
             dirs.append(dirs[-1].parent)
-        return _bound_decl_dirs(dirs)
+        return _bound_decl_dirs(dirs, no_follow=no_follow)
     try:
         root_real = root.resolve(strict=False)
         start = ((root / script).parent if script else root).resolve(strict=False)
@@ -440,7 +453,7 @@ def _decl_dirs(
         if cur == root_real or cur.parent == cur:
             break
         cur = cur.parent
-    return _bound_decl_dirs(dirs)
+    return _bound_decl_dirs(dirs, no_follow=no_follow)
 
 
 def _read_text(path: Path) -> str:

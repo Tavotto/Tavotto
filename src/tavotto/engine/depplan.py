@@ -1588,10 +1588,19 @@ def plan(
         to_install |= declared_install
     # 已知装不了的发行包（`depresolve.NOT_PIP_INSTALLABLE`）：计划阶段点名（来自哪个声明文件 / 哪个 import），不送 pip
     not_pip_entries: list[dict] = []
-    for name in sorted(to_install):
+    # 候选 = 要装的 + 声明 roots + 本计划 missing 里点到的 + hash 模式下整份选中集合：任何一处都不许把它们带进 pip（Codex #1276 P1）
+    not_pip_candidates = (
+        to_install
+        | declared_install
+        | {str(m.get("distribution") or "") for m in missing}
+        | (set(by_name) if hash_mode else set())
+    )
+    not_pip_names: set[str] = set()
+    for name in sorted(n for n in not_pip_candidates if n):
         hit = depresolve.not_pip_for_distribution(name)
         if hit is None:
             continue
+        not_pip_names.add(name)
         to_install.discard(name)
         declared_install.discard(name)
         not_pip_entries.append(
@@ -1607,8 +1616,11 @@ def plan(
                 )[:4],
             }
         )
-    # 本计划实际会装的名字：hash 模式 = 整份选中集合；否则 = 上面算出的 to_install（含按声明装的 roots）
-    installing = set(by_name) if hash_mode else set(to_install)
+    if not_pip_names:
+        # missing 里同样不留：否则计划仍是 ready、空需求集、装后核验 ROOT 必失败
+        missing[:] = [m for m in missing if str(m.get("distribution") or "") not in not_pip_names]
+    # 本计划实际会装的名字：hash 模式 = 整份选中集合（去掉装不了的）；否则 = 上面算出的 to_install（含按声明装的 roots）
+    installing = (set(by_name) - not_pip_names) if hash_mode else set(to_install)
     _, provider_conflicts = _arbitrate_providers(scan.classes, by_name, installing)
     missing_imports = {m["import_name"] for m in missing}
     install_only = tuple(
@@ -1665,7 +1677,9 @@ def plan(
     if hash_mode:
         # hash 模式 = 锁文件语义：整份选中集合就是闭包，全部按 hash 装（pip 要求每一条
         # 都有 hash，缺一条整次拒绝——那是它的判据，这里提前说出来）。
-        without = [it for it in selection.requirements if not it.hashes]
+        without = [
+            it for it in selection.requirements if not it.hashes and it.name not in not_pip_names
+        ]
         if without:
             blocked.append(
                 {
@@ -1675,6 +1689,8 @@ def plan(
                 }
             )
         for it in selection.requirements:
+            if it.name in not_pip_names:
+                continue
             text = depresolve.requirement_string(it)
             if text not in reqs:
                 reqs.append(text)

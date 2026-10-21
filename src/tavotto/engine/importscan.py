@@ -649,8 +649,8 @@ class _Visitor(ast.NodeVisitor):
         self.dynamic: list[ImportUse] = []
         self.relatives: list[RelativeImport] = []
         self.path_mutations: list[int] = []  # 改 sys.path 的行号
-        #: `sys.path.append/insert` 里由 `__file__` 目录与字面量拼出的目录：(是否插在最前, 相对本文件目录的段)
-        self.path_dirs: list[tuple[bool, tuple[str, ...]]] = []
+        #: `sys.path.append/insert` 里由 `__file__` 目录与字面量拼出的目录：(是否插在最前, 相对本文件目录的段, 行号)；函数 / 类体里的不认（可能根本没被调用，Codex #1276 P2）
+        self.path_dirs: list[tuple[bool, tuple[str, ...], int]] = []
         self._stack: list[str] = []  # 进入了哪些会改变上下文的结构
 
     # ---- 上下文 ----
@@ -809,12 +809,19 @@ class _Visitor(ast.NodeVisitor):
             )
         ):
             self.path_mutations.append(node.lineno)
-            if fn.attr == "append" and len(node.args) == 1 and _is_sys_path(fn.value, self.al):
+            deferred = CONTEXT_DEFERRED in self._stack
+            if (
+                not deferred
+                and fn.attr == "append"
+                and len(node.args) == 1
+                and _is_sys_path(fn.value, self.al)
+            ):
                 segs = _literal_dir(node.args[0])
                 if segs is not None:
-                    self.path_dirs.append((False, segs))
+                    self.path_dirs.append((False, segs, node.lineno))
             elif (
-                fn.attr == "insert"
+                not deferred
+                and fn.attr == "insert"
                 and len(node.args) == 2
                 and _is_sys_path(fn.value, self.al)
                 and isinstance(node.args[0], ast.Constant)
@@ -822,7 +829,7 @@ class _Visitor(ast.NodeVisitor):
             ):
                 segs = _literal_dir(node.args[1])
                 if segs is not None:
-                    self.path_dirs.append((True, segs))
+                    self.path_dirs.append((True, segs, node.lineno))
         self.generic_visit(node)
 
     # ---- sys.path 被整体改写 / 就地改写 / 删除 ----
@@ -930,6 +937,9 @@ class _Root:
     path: Path
     tag: str  # script_dir | project_root | cwd
     confirmed: bool = True
+    #: 这个根对哪些顶级名**不**生效：同一份文件里在这条 `sys.path` 修改**之前**才 import（且之后不再 import）的名字——
+    #: 执行到那条 import 时目录还没加进去
+    exclude: frozenset[str] = frozenset()
 
 
 @dataclasses.dataclass(frozen=True)
@@ -1507,20 +1517,22 @@ class _Scanner:
             self.path_modified = True
             for line in v.path_mutations:
                 self.warn("sys_path_modified", rel, line)
-        self._add_literal_roots(v.path_dirs, rel)
+        self._add_literal_roots(v.path_dirs, rel, v.uses)
         return _Parsed(v.uses, v.dynamic, v.relatives, v.path_mutations, tree)
 
-    def _add_literal_roots(self, dirs, rel: str) -> None:
+    def _add_literal_roots(self, dirs, rel: str, uses=()) -> None:
         """`sys.path.append(os.path.join(os.path.dirname(__file__), "pdf"))` 这类（只认字面量，有界）：目录加进本地模块
         搜索根。词法钉在项目内（出界的不认；链接形态由 `_Finder` 的闸门照常挡）；目录不存在也不报错——模块照旧找不到。"""
         base = (self.root / rel).parent if rel else self.script_p.parent
-        for front, segs in dirs[:_MAX_LITERAL_ROOTS]:
+        for front, segs, line in dirs[:_MAX_LITERAL_ROOTS]:
             pinned = _pinned(self.root, Path(os.path.normpath(base.joinpath(*segs))))
             if pinned is None:
                 continue
             if any(os.path.normcase(str(r.path)) == os.path.normcase(pinned) for r in self.roots):
                 continue
-            root = _Root(Path(pinned), "sys_path_literal", True)
+            before = {u.module for u in uses if u.lineno < line}
+            after = {u.module for u in uses if u.lineno > line}
+            root = _Root(Path(pinned), "sys_path_literal", True, frozenset(before - after))
             self.literal_dirs.add(_rel(self.root, Path(pinned)) or ".")
             self.roots = [root, *self.roots] if front else [*self.roots, root]
             self._tops.clear()
@@ -1629,9 +1641,11 @@ class _Scanner:
     def _search_roots_for(self, name: str) -> _Top:
         if not _is_module_name(name):
             return _Top("none")
-        found = self._search([(r.path, r) for r in self.roots], name)
+        found = self._search([(r.path, r) for r in self.roots if name not in r.exclude], name)
         if found is None:
-            near = any(self.finder.near_miss(r.path, name) for r in self.roots)
+            near = any(
+                self.finder.near_miss(r.path, name) for r in self.roots if name not in r.exclude
+            )
             return _Top("none", near_miss=near)
         if found.kind == "namespace" and name in self.stdlib_names:
             # 常规包压过命名空间：标准库的 `statistics` 不会败给项目里一个没有 __init__ 的 statistics/ 目录

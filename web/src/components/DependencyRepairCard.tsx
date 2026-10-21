@@ -935,8 +935,8 @@ export function repairShortMessage(
   if (code === 'dependency_not_found' && notFound?.name) {
     const source = notFound.source || (notFound.import_name ? `import ${notFound.import_name}` : '')
     return source
-      ? en('repairErrorShort.notFoundNamedFrom', { name: notFound.name, source })
-      : en('repairErrorShort.notFoundNamed', { name: notFound.name })
+      ? en('repairNotFoundNamedFrom', { name: notFound.name, source })
+      : en('repairNotFoundNamed', { name: notFound.name })
   }
   if (code && i18n.exists(`engine.repairErrorShort.${code}`, { ns: 'errors' }))
     return en(`repairErrorShort.${code}`, { product: PRODUCT_NAME })
