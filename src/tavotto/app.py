@@ -2125,7 +2125,8 @@ def _panel_render_target(worker, stem: str, out_dir: Path | None, fmt: str = "pd
 def _original_svg_result(path, artifact, receipt):
     from .engine import artifactcheck
 
-    w_mm, h_mm = artifactcheck.check_svg(path, expect_mm=None, font_family=None)["size_mm"]
+    checked = artifactcheck.check_svg(path, expect_mm=None, font_family=None)
+    w_mm, h_mm = checked["size_mm"]
     vector = engine_artifactinspect.svg_vector(path)
     return engine_exportjob.Produced(
         format=engine_exportreq.FORMAT_SVG,
@@ -2135,7 +2136,9 @@ def _original_svg_result(path, artifact, receipt):
         vector=vector,
         manifest={
             "plan": {
-                "text_policy": "outlines",
+                # 如实：matplotlib 出的 companion 是 `svg.fonttype='path'`（它同时是 #1185 的等价证人），
+                # 这里只按文件里到底有没有 <text> 记，不预设。
+                "text_policy": "text" if checked["has_text"] else "outlines",
                 "vector": vector,
                 "page_pt": [w_mm * 72 / 25.4, h_mm * 72 / 25.4],
                 "sources": [artifact.to_payload()],

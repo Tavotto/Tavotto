@@ -307,7 +307,8 @@ def produce(
                             **plan_half,
                             "vector": svg_vector,
                             "px": None,
-                            "text_policy": "outlines",
+                            "text_policy": svg_facts.text_policy,
+                            "text_fallback_runs": svg_facts.text_fallback_runs,
                             "render_identity": vector_render_identity,
                             "sha256": svg_facts.sha256,
                         }

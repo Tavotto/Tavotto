@@ -633,7 +633,7 @@ describe('SVG 导出（X03）', () => {
     expect((exportBodies[0].style_check_report as { acknowledged: string[] }).acknowledged).toContain('font-below-absolute-floor')
   })
 
-  it('SVG follows the existing formats, discloses text outlines, and sends no PPI', async () => {
+  it('SVG follows the existing formats, discloses the editable-text default, and sends no PPI', async () => {
     await setup(9)
     expect([...document.body.querySelectorAll('[data-export-formats] [data-export-format]')].map((el) => el.getAttribute('data-export-format'))).toEqual(['pdf', 'png', 'eps', 'tiff', 'svg'])
     expect(formatBox('SVG').checked).toBe(false)
@@ -642,8 +642,8 @@ describe('SVG 导出（X03）', () => {
     await click(formatBox('PDF'))
     await click(formatBox('PNG'))
     const note = document.body.querySelector('[data-export-svg-note]')!
-    expect(note.textContent).toContain('文字转为轮廓')
-    expect(note.textContent).toContain('Office')
+    expect(note.textContent).toContain('保留文字')
+    expect(note.textContent).toContain('转换为形状')
     expect(formatBox('SVG').getAttribute('aria-describedby')).toBe(note.id)
     expect(ppiSelect()).toBeNull()
     await click(button('开始导出')!)

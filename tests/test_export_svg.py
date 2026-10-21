@@ -118,15 +118,21 @@ def output(client, value):
     return body, {o["format"]: o for o in body["outputs"]}
 
 
-def assert_svg(body, item):
+def assert_svg(body, item, *, scope="original"):
     assert item["status"] == "done", body
     path = Path(body["export_dir"]) / item["name"]
     data = path.read_bytes()
     assert not data.startswith(b"\x89PNG")
     root = ET.fromstring(data)
     assert root.tag == "{http://www.w3.org/2000/svg}svg"
-    assert not list(root.iter("{http://www.w3.org/2000/svg}text"))
-    assert list(root.iter("{http://www.w3.org/2000/svg}path"))
+    texts = list(root.iter("{http://www.w3.org/2000/svg}text"))
+    if scope == "canvas":
+        # 规格变更（ADR 0142）：画布合成由 RenderCore 写 SVG，文字默认留成 <text>（可在 Office 里编辑）。
+        assert texts and all((t.text or "").strip() for t in texts)
+    else:
+        # scope=original 沿用 matplotlib 伴随件的 svg.fonttype=path（等价证人，ADR 0142「代价」），文字仍是轮廓。
+        assert not texts
+        assert list(root.iter("{http://www.w3.org/2000/svg}path"))
     return data
 
 
@@ -142,7 +148,7 @@ def test_first_script_run_without_edits_and_saved_cold_reopen(project, monkeypat
     client, root = project
     source = run_script(client)
     body, outputs = output(client, spec(source, scope=scope, strict=True))
-    assert_svg(body, outputs["svg"])
+    assert_svg(body, outputs["svg"], scope=scope)
     saved = client.post("/api/layouts/first?target=project", json=document(source, []))
     assert saved.status_code == 200, saved.get_json()
     reference = saved.get_json()["figure_snapshots"]["panel"]
@@ -154,10 +160,10 @@ def test_first_script_run_without_edits_and_saved_cold_reopen(project, monkeypat
         client, spec(source, scope=scope, formats=("svg", "pdf"), reference=reference)
     )
     assert body["status"] == "done", body
-    assert_svg(body, outputs["svg"])
+    assert_svg(body, outputs["svg"], scope=scope)
     assert outputs["pdf"]["status"] == "done"
     body, outputs = output(client, spec(source, scope=scope, strict=True, reference=reference))
-    assert_svg(body, outputs["svg"])
+    assert_svg(body, outputs["svg"], scope=scope)
 
 
 def test_opaque_pdf_failure_is_per_format_and_names_source(project):
@@ -247,7 +253,7 @@ def test_edited_save_before_first_export_survives_project_move_and_cache_clear(
     m.open_project(str(moved))
     monkeypatch.setattr(pool, "get", lambda *a, **k: pytest.fail("saved SVG reran script"))
     body, outputs = output(client, spec(source, patches=patches, strict=True, reference=edited_ref))
-    assert_svg(body, outputs["svg"])
+    assert_svg(body, outputs["svg"], scope="canvas")
     assert body["status"] == "done", body
     # Also the unedited variant is export-grade, independent of the data cache.
     body, outputs = output(client, spec(source, scope="original", strict=True, reference=base_ref))
@@ -285,7 +291,7 @@ def test_matching_disk_pdf_gets_same_figure_svg_without_reexecution(project, mon
     for scope in ("original", "canvas"):
         body, outputs = output(client, spec("F.pdf", scope=scope, formats=("pdf", "svg")))
         assert body["status"] == "done", body
-        assert_svg(body, outputs["svg"])
+        assert_svg(body, outputs["svg"], scope=scope)
     # Nearby Python does not qualify changed bytes for the old representation.
     import pikepdf
 
@@ -534,7 +540,7 @@ def test_project_package_contains_only_referenced_portable_snapshots(project, mo
             client, spec(source, scope=scope, formats=("pdf", "svg"), reference=reference)
         )
         assert body["status"] == "done", body
-        assert_svg(body, outputs["svg"])
+        assert_svg(body, outputs["svg"], scope=scope)
         assert outputs["pdf"]["status"] == "done"
 
 
@@ -672,7 +678,7 @@ def test_failed_generation_marker_never_authorizes_an_unknown_current_snapshot(
         client, spec(source, scope=scope, formats=("pdf", "svg"), reference=reference)
     )
     assert body["status"] == "done", body
-    assert_svg(body, outputs["svg"])
+    assert_svg(body, outputs["svg"], scope=scope)
     # A single PDF also honors the same explicit saved identity without executing.
     body, outputs = output(client, spec(source, scope=scope, formats=("pdf",), reference=reference))
     assert outputs["pdf"]["status"] == "done", body

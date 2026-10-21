@@ -45,8 +45,9 @@
     脚本运行。**不许**用 `Pixmap.save(…, "ps")` 之类把位图裹成 PS 冒充矢量。
     「谁来渲染」在导出路上的唯一调用点是 `_serialize_figure()`。
   * **SVG（X03，2026-10-15）**：追加为 `FORMATS = (pdf, png, eps, tiff, svg)`，前后端请求闭集同步；
-    `original` 与 `canvas` 都走既有作业，不另开发布通道。SVG 是矢量格式，PPI 规则不变，文字明确转轮廓；
-    画布写入与有限产物验证见 `rendercore.md`，不承诺可编辑文本或已通过真实 Office 验证。
+    `original` 与 `canvas` 都走既有作业，不另开发布通道。SVG 是矢量格式，PPI 规则不变，文字**默认保留为 `<text>`**（ADR 0142，取代 X03 起的「一律转轮廓」；
+    `scope=original` 的 matplotlib 图沿用伴随件的 `svg.fonttype=path`，不在此列）；
+    画布写入与有限产物验证见 `rendercore.md`，不承诺已通过真实 Office 验证。
     Figure 的 PDF/SVG 必须在一个 owner-thread 命令里、一次 overrides 应用下生成，沿用同一页面框、
     执行回执与 generation；SVG 复用 PDF draw 已确定的布局，临时 `svg.fonttype=path` 和 Figure 状态在结束时还原。
     **自动捕获和导出要求 `require_built`**：只用已经运行并接纳的 Figure 或已验证的冻结对，冷 worker /
