@@ -303,32 +303,31 @@ class RealExecution(unittest.TestCase):
         cls.tmp = tempfile.TemporaryDirectory()
         cls.addClassCleanup(cls.tmp.cleanup)
 
-    def test_every_format_matches_native_and_the_parent(self):
+    def check_format_matches_native_and_the_parent(self, name):
+        """每种格式一个用例（两个父本 × 真实执行约 10 次一格，合在一条里会超出 5 分钟单例超时）。"""
         skipped: dict = {}
+        if lacks(skipped, name):
+            skip_missing(self, skipped)
         for case in ("shape_oo_savefig", "shape_entry_main"):
             parent = xt.load_parent("compat_engine", case)
-            for name in NAMES:
-                if lacks(skipped, name):
-                    continue
-                with self.subTest(parent=case, transform=name):
-                    manifest, _ = xt.build(parent, (name,), 7)
-                    style = manifest["chain"][0]["params"]["path_style"]
-                    out = Path(self.tmp.name) / f"{case}_{name}"
-                    out.mkdir()
-                    record = ex.run_one(manifest, 7, out, 200)
-                    self.assertGreaterEqual(record["executions"]["parent_native"], 1)
-                    self.assertEqual(record["native"]["figure_count"], 1, record)
-                    if (name, style) in KNOWN_TAVOTTO_GAPS:
-                        self.assertEqual(record["judgment"]["outcome"], "difference_found", record)
-                        kinds = {d["kind"] for d in record["judgment"]["differences"]}
-                        self.assertEqual(kinds, {"zero_figures"}, record)
-                    else:
-                        self.assertEqual(record["judgment"]["outcome"], "no_difference", record)
-                        # 保型 = 不改用户的图 = 数据指纹也不变：结构层真比了数据，不是空比较
-                        structure = record["stages"]["structure"]
-                        self.assertEqual(structure["status"], "passed", record["stages"])
-                        self.assertGreater(structure["data_compared"], 0, record["stages"])
-        skip_missing(self, skipped)
+            with self.subTest(parent=case, transform=name):
+                manifest, _ = xt.build(parent, (name,), 7)
+                style = manifest["chain"][0]["params"]["path_style"]
+                out = Path(self.tmp.name) / f"{case}_{name}"
+                out.mkdir()
+                record = ex.run_one(manifest, 7, out, 200)
+                self.assertGreaterEqual(record["executions"]["parent_native"], 1)
+                self.assertEqual(record["native"]["figure_count"], 1, record)
+                if (name, style) in KNOWN_TAVOTTO_GAPS:
+                    self.assertEqual(record["judgment"]["outcome"], "difference_found", record)
+                    kinds = {d["kind"] for d in record["judgment"]["differences"]}
+                    self.assertEqual(kinds, {"zero_figures"}, record)
+                else:
+                    self.assertEqual(record["judgment"]["outcome"], "no_difference", record)
+                    # 保型 = 不改用户的图 = 数据指纹也不变：结构层真比了数据，不是空比较
+                    structure = record["stages"]["structure"]
+                    self.assertEqual(structure["status"], "passed", record["stages"])
+                    self.assertGreater(structure["data_compared"], 0, record["stages"])
 
     def test_a_value_changed_only_on_the_tavotto_side_is_a_data_structure_mismatch(self):
         """原生读到的是对的值，Tavotto 那份项目里数据被改了一个值：图数、标题都对，只有数据指纹能看出来。"""
@@ -384,6 +383,14 @@ class RealExecution(unittest.TestCase):
         self.assertTrue(data, structure["evidence"])
         self.assertNotEqual(data[0]["parent"]["sha256"], data[0]["candidate"]["sha256"])
         self.assertEqual(record["stages"]["structure"]["status"], "failed")
+
+
+for _name in NAMES:
+    setattr(
+        RealExecution,
+        f"test_{_name}_matches_native_and_the_parent",
+        lambda self, name=_name: self.check_format_matches_native_and_the_parent(name),
+    )
 
 
 if __name__ == "__main__":
