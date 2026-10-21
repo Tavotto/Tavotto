@@ -254,6 +254,16 @@ describe('失败与边界', () => {
     expect(sessions()).toHaveLength(1)
   })
 
+  it('对完的行水位越过它：下一次对账从新水位起，不把旧行再拉一遍', async () => {
+    await visit('rv-a13')
+    const row = finishOnBackend('rv-a13', 'w1')
+    await store().reconcileChanges()
+    expect(sessions().map((x) => x.id)).toEqual(['w1'])
+    changesCalls.length = 0
+    await store().reconcileChanges()
+    expect(changesCalls).toEqual([`rv-a13|since=${row.rev}&pj=rv-a13`])
+  })
+
   it('同一代次内并发触发合并成一轮在途请求，期间再来的触发会补一轮（不丢）', async () => {
     await visit('rv-a11')
     const p1 = store().reconcileChanges()
