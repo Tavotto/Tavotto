@@ -228,6 +228,11 @@ def test_shell_pages_window_buttons_use_only_granted_window_commands():
         assert "invoke('plugin:window|' + b.dataset.act, { label: 'main' })" in html, page.name
         assert "window.__TAVOTTO_WINDOW_CHROME__ === 'menu-button'" in html, page.name
         assert '<div id="winctl" hidden>' in html, page.name
+        # 最大化按钮随窗口状态换「还原」：查询命令 ↔ 授权，两种语言都有 restore 文案
+        assert "invoke('plugin:window|is_maximized', { label: 'main' })" in html, page.name
+        assert "core:window:allow-is-maximized" in granted, page.name
+        assert "addEventListener('resize', sync)" in html, page.name
+        assert len(re.findall(r"restore: '[^']+'", html)) == 2, page.name
 
 
 @needs_shell

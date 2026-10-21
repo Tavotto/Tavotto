@@ -365,7 +365,8 @@
        popover 60       菜单 / popover / select 弹层（从对话框里打开的也在它上面）
        tooltip 70       气泡
        toast 80         预留给通知轨移出画布列之后（此前它在画布列里，用 canvas-chrome）
-       onboarding 90    引导卡（高亮环 = onboarding-ring，比卡低一层） */
+       onboarding 90    引导卡（高亮环 = onboarding-ring，比卡低一层）
+       window-controls 100 Windows 无框窗口右上角的最小化 / 最大化 / 关闭：它是窗口的一部分，压在所有页面层（含教程）之上 */
   --z-sticky: 10;
   --z-canvas-chrome: 20;
   --z-drawer: 30;
@@ -376,6 +377,7 @@
   --z-toast: 80;
   --z-onboarding-ring: 89;
   --z-onboarding: 90;
+  --z-window-controls: 100;
 
   /* 画布覆盖层 token（2026-10-07 设计审计 §10.1）：悬停描边的不透明度、唯一的一种虚线、手柄填充、遮罩。
      画布那一期（2026-10-07）已迁完：OverlaySvg / PageSheet / 裁剪框只读这几个 token，不再写 #fff / rgba(27,27,24,…) 字面量。 */
@@ -774,6 +776,9 @@
 }
 @utility z-onboarding {
   z-index: var(--z-onboarding);
+}
+@utility z-window-controls {
+  z-index: var(--z-window-controls);
 }
 
 /* 可滚但不画滚动条：只给画布页签条这种「一行、36px 高」的横滚区（2026-09-27 用户拍板）。

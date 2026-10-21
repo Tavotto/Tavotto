@@ -75,6 +75,14 @@ describe('WindowControls', () => {
     }
   })
 
+  it('容器在引导层之上（z-window-controls）：教程期间按钮仍点得到', async () => {
+    w.__TAVOTTO_WINDOW_CHROME__ = 'menu-button'
+    await mount()
+    const box = host.querySelector('[data-window-controls]')!
+    expect(box.classList.contains('z-window-controls')).toBe(true)
+    expect(box.classList.contains('z-overlay')).toBe(false)
+  })
+
   it('最大化之后按钮换成「还原」，还原后换回来', async () => {
     w.__TAVOTTO_WINDOW_CHROME__ = 'menu-button'
     await mount()

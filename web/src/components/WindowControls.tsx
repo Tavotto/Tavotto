@@ -56,7 +56,7 @@ export function WindowControls() {
     </button>
   )
   return (
-    <div data-window-controls className="fixed right-0 top-0 z-overlay flex h-11">
+    <div data-window-controls className="fixed right-0 top-0 z-window-controls flex h-11">
       {button('minimize', t('actions.windowMinimize'), <Minus size={ICON_SIZE.md} />)}
       {button(
         'toggle-maximize',
