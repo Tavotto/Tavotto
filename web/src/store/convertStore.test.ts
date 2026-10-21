@@ -93,4 +93,29 @@ describe('convertStore', () => {
     await vi.advanceTimersByTimeAsync(POLL_MS + 10)
     await second
   })
+
+  it('旧 POST（同一 id）先成功不清 id：新 attempt 模糊失败后再重试仍是原 id', async () => {
+    let resolveOld!: (v: { session: string; script: string }) => void
+    vi.mocked(startConvert).mockReturnValueOnce(new Promise((r) => (resolveOld = r)))
+    const first = start()
+    await vi.advanceTimersByTimeAsync(0)
+    await useConvertStore.getState().stop('plot.py')
+    let rejectNew!: (e: Error) => void
+    vi.mocked(startConvert).mockReturnValueOnce(new Promise((_r, rej) => (rejectNew = rej)))
+    const second = start()
+    await vi.advanceTimersByTimeAsync(0)
+    resolveOld({ session: 'same', script: 'plot.py' })
+    await first
+    rejectNew(new Error('network down'))
+    await second
+    expect(useConvertStore.getState().entries['plot.py']?.phase).toBe('failed')
+    vi.mocked(startConvert).mockResolvedValueOnce({ session: 'same', script: 'plot.py' })
+    const third = start()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(ridOf(2)).toBe(ridOf(0))
+    expect(ridOf(1)).toBe(ridOf(0))
+    useConvertStore.getState().clear('plot.py')
+    await vi.advanceTimersByTimeAsync(POLL_MS + 10)
+    await third
+  })
 })

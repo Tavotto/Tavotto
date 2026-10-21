@@ -109,7 +109,8 @@ export const useConvertStore = create<ConvertState>((set, get) => ({
         { script, library, path, client_request_id: rid, ...(agent ? { agent, model, effort } : {}) },
         pj,
       )
-      pendingRequestIds.delete(key)
+      // 只有当前 attempt 能清 id：被取代的旧 POST（同一 id）先成功时不清，等新 attempt 自己落定
+      if (isCurrent()) pendingRequestIds.delete(key)
       if (!guard.still()) return
       if (!isCurrent() || get().entries[script] !== mine) {
         // 等 POST 期间用户点了「停止」/ 换了脚本流水：后端已起了会话，要真的取消，不能让它悄悄跑完
@@ -147,7 +148,7 @@ export const useConvertStore = create<ConvertState>((set, get) => ({
         return
       }
     } catch (e) {
-      if (isDefiniteRunFailure(e)) pendingRequestIds.delete(key)
+      if (isDefiniteRunFailure(e) && isCurrent()) pendingRequestIds.delete(key)
       if (!guard.still()) return
       if (!isCurrent()) return // 已被停止 / 被更新的一次发起取代：旧 POST 的失败不能写进新会话的条目
       set1(script, { phase: 'failed', error: backendErrorText(e) })
