@@ -367,6 +367,84 @@ def test_real_mode_never_writes_the_reference_solution_near_the_project(tmp_path
 
 
 @pytest.mark.skipif(WORKER_PY is None, reason="not_run：找不到装有 matplotlib 的解释器")
+def test_real_mode_clears_replay_answers_left_in_a_reused_base(tmp_path, monkeypatch):
+    s02 = next(s for s in bench.load_scenarios("dev") if s["id"] == "FB-S02")
+    work = tmp_path / "run" / "projects"
+    bench.run([s02], work)  # 回放：在同一 base 下留下 _replay/*.edits.json
+    assert list((tmp_path / "run" / "_replay").glob("*.edits.json"))
+    secret = tmp_path / "secret"
+    secret.mkdir()
+    (secret / "edits.json").write_text("[]", encoding="utf-8")
+    box = _fake_real_cli(monkeypatch, tmp_path, secret)
+    seen = []
+    inner = __import__("tavotto.engine.ai_bridge", fromlist=["x"])._cmd
+
+    def spy(*a, **k):
+        seen.append((tmp_path / "run" / "_replay").exists())
+        return inner(*a, **k)
+
+    monkeypatch.setattr(__import__("tavotto.engine.ai_bridge", fromlist=["x"]), "_cmd", spy)
+    bench.run([s02], work, real_agent="codex", model="m")
+    assert box["n"] >= 1 and seen and not any(seen), "开跑时 _replay 必须已不存在"
+    assert not list((tmp_path / "run").rglob("*edits*"))
+
+
+@pytest.mark.skipif(WORKER_PY is None, reason="not_run：找不到装有 matplotlib 的解释器")
+def test_real_mode_refuses_when_an_edits_file_lingers_elsewhere(tmp_path, monkeypatch):
+    s02 = next(s for s in bench.load_scenarios("dev") if s["id"] == "FB-S02")
+    secret = tmp_path / "secret"
+    secret.mkdir()
+    (secret / "edits.json").write_text("[]", encoding="utf-8")
+    box = _fake_real_cli(monkeypatch, tmp_path, secret)
+    work = tmp_path / "run" / "projects"
+    (tmp_path / "run" / "old" / "deep").mkdir(parents=True)
+    (tmp_path / "run" / "old" / "deep" / "FB-S02__ref.edits.json").write_text(
+        "[]", encoding="utf-8"
+    )
+    with pytest.raises(RuntimeError, match="参考解"):
+        bench.run([s02], work, real_agent="codex", model="m")
+    assert box["n"] == 0, "拒绝运行时不得调用 CLI"
+
+
+@pytest.mark.skipif(WORKER_PY is None, reason="not_run：找不到装有 matplotlib 的解释器")
+def test_report_records_endpoint_identity_but_never_secrets(tmp_path, monkeypatch):
+    from tavotto.engine import ai_bridge
+
+    s02 = next(s for s in bench.load_scenarios("dev") if s["id"] == "FB-S02")
+    secret = tmp_path / "secret"
+    secret.mkdir()
+    (secret / "edits.json").write_text("[]", encoding="utf-8")
+    _fake_real_cli(monkeypatch, tmp_path, secret)
+    rec = {
+        "id": "gw1",
+        "label": "My GW",
+        "agent": "codex",
+        "base_url": "https://gw.example.com/v1?token=SECRET-IN-URL",
+        "api_key": "sk-SECRET-KEY",
+        "token": "TOKEN-SECRET",
+    }
+    monkeypatch.setattr(ai_bridge.ai_providers, "resolve", lambda agent, endpoint_id: rec)
+    report = bench.run([s02], tmp_path / "run" / "projects", real_agent="codex", model="m")
+    ep = report["environment"]["endpoint"]
+    assert ep["id"] == "gw1" and ep["host"] == "gw.example.com" and len(ep["fingerprint"]) == 12
+    blob = json.dumps(report, ensure_ascii=False)
+    for leaked in ("sk-SECRET-KEY", "TOKEN-SECRET", "SECRET-IN-URL"):
+        assert leaked not in blob
+
+
+def test_compare_warns_when_the_endpoint_fingerprint_differs():
+    base = {"model": "m1", "effort": "low", "executable": "/x", "version": "1"}
+    a = {
+        "environment": {**base, "endpoint": {"kind": "provider", "id": "g1", "fingerprint": "aaa"}}
+    }
+    b = {
+        "environment": {**base, "endpoint": {"kind": "provider", "id": "g2", "fingerprint": "bbb"}}
+    }
+    assert "⚠ 两臂执行配置不同" in bench.compare(a, b).splitlines()[0]
+    assert "⚠" not in bench.compare(a, a)
+
+
+@pytest.mark.skipif(WORKER_PY is None, reason="not_run：找不到装有 matplotlib 的解释器")
 def test_real_mode_stops_spawning_once_the_call_cap_is_reached(tmp_path, monkeypatch):
     dev = {s["id"]: s for s in bench.load_scenarios("dev") if bench.benchable(s)}
     picked = [dev["FB-S02"], dev["FB-S03"]]

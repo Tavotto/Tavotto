@@ -186,6 +186,28 @@ def _agent_resolution(agent: str):
         return None
 
 
+def _endpoint_identity(endpoint: dict | None) -> dict:
+    """接口的**非敏感**身份：id / label / base_url 的 host / `{id, base_url}` 的 sha256 前 12 位。
+    绝不带 api_key、token、完整 URL（路径与 query 可能含凭据）。没有接口 = CLI 默认账号。"""
+    if not endpoint:
+        return {"kind": "cli_default"}
+    from urllib.parse import urlsplit
+
+    base_url = str(endpoint.get("base_url") or "")
+    try:
+        host = urlsplit(base_url).hostname
+    except ValueError:
+        host = None
+    ident = json.dumps({"id": endpoint.get("id"), "base_url": base_url}, sort_keys=True)
+    return {
+        "kind": "provider",
+        "id": endpoint.get("id"),
+        "label": endpoint.get("label"),
+        "host": host,
+        "fingerprint": hashlib.sha256(ident.encode("utf-8")).hexdigest()[:12],
+    }
+
+
 def _environment(app_module, executor: str = "replay") -> dict:
     from tavotto.engine import ai_prompt_pack, pool
 
@@ -254,6 +276,17 @@ def run(
         project_watch,
     )
 
+    if real_agent:
+        # 回放留下的参考解（`<base>/_replay`）不能被同一 base 下的真实运行读到：先删掉本工具建的目录，
+        # 再兜底——base 下任何残留的 `*.edits.json` 都拒绝运行（此时还没调任何 CLI）
+        shutil.rmtree(work.parent / "_replay", ignore_errors=True)
+        if work.parent.is_dir():
+            leftovers = sorted(work.parent.rglob("*.edits.json"))
+            if leftovers:
+                raise RuntimeError(
+                    f"{work.parent} 下有残留的参考解文件（{leftovers[0]} 等），真实模式拒绝运行；请换一个干净的 --work"
+                )
+
     real_settings, real_cmd = config.ai_settings, ai_bridge._cmd
     real_usable, real_resolve, real_env = (
         ai_bridge.require_usable,
@@ -265,7 +298,7 @@ def run(
     real_pack = ai_prompt_pack.DEFAULT
     edits_box: dict = {}
 
-    calls = {"n": 0, "executable": None}
+    calls = {"n": 0, "executable": None, "endpoint": None}
 
     def count_call():
         if max_runs is not None and calls["n"] >= max_runs:
@@ -283,6 +316,7 @@ def run(
         edits_box["prompt_sha256"] = hashlib.sha256(prompt.encode("utf-8")).hexdigest()
         cmd, env = real_cmd(agent_id, prompt, cwd, model=model, effort=effort, endpoint=endpoint)
         calls["executable"] = cmd[0]  # 实际 spawn 的那一个
+        calls["endpoint"] = _endpoint_identity(endpoint)
         return cmd, env
 
     def overlay_settings():
@@ -351,6 +385,7 @@ def run(
         {
             "executable": calls["executable"] if real_agent else None,
             "version": version,
+            "endpoint": calls["endpoint"] or ({"kind": "cli_default"} if real_agent else None),
             "model": model,
             "effort": effort,
             "agent_calls": calls["n"],
@@ -488,7 +523,7 @@ def compare(a: dict, b: dict) -> str:
     """两份报告 → 可审查的 Markdown：环境、指标逐项差、逐场景结局变化。只比两边都跑了的场景。"""
     ea, eb = a.get("environment", {}), b.get("environment", {})
     lines = []
-    keys = ("model", "effort", "executable", "version")
+    keys = ("model", "effort", "executable", "version", "endpoint")
     if any(ea.get(k) != eb.get(k) for k in keys):
         lines += ["⚠ 两臂执行配置不同，差值不可归因于 Pack", ""]
     lines += [
@@ -610,17 +645,21 @@ def main(argv=None) -> int:
                 file=sys.stderr,
             )
             return 2
-    report = run(
-        scenarios,
-        work / "projects",
-        negatives=args.negatives,
-        real_agent=args.real,
-        pack=pack,
-        model=args.model,
-        effort=args.effort,
-        max_runs=args.max_runs if args.real else None,
-        repeat=args.repeat,
-    )
+    try:
+        report = run(
+            scenarios,
+            work / "projects",
+            negatives=args.negatives,
+            real_agent=args.real,
+            pack=pack,
+            model=args.model,
+            effort=args.effort,
+            max_runs=args.max_runs if args.real else None,
+            repeat=args.repeat,
+        )
+    except RuntimeError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
     rows = report["rows"]
     report["split"] = split
     if args.holdout:
