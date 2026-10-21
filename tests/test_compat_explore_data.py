@@ -186,7 +186,11 @@ class Determinism(unittest.TestCase):
         first = self.run_once("1")
         second = self.run_once("2")
         self.assertEqual(first, second)
-        self.assertGreaterEqual(len(json.loads(first)), 6)
+        # 可用格式随环境变（backend-fast 不装 openpyxl / pyarrow），但每一个可用的都必须出现；
+        # 标准库那几种任何环境都在，所以这个集合不会空
+        available = {f.name for f in data.FORMATS if not data.missing(f)}
+        self.assertTrue({"read_tsv_stdlib", "glob_dir"} <= available)
+        self.assertEqual(set(json.loads(first)), available)
 
     def test_xlsx_does_not_carry_the_write_time(self):
         if data.missing(data.BY_NAME["read_excel"]):
