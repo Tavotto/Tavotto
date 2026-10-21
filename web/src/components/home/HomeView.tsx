@@ -190,10 +190,14 @@ function useScriptImport(openPath: (path: string) => Promise<boolean>) {
   const arbiter = useRef<ReturnType<typeof createDropArbiter> | null>(null)
   if (!arbiter.current) arbiter.current = createDropArbiter({ graceMs: NATIVE_DROP_GRACE_MS })
 
-  /** 打开目录；`script`（目录里的文件名）不为空就接着「打开并运行」它。只在项目真的打开了才运行 */
+  /**
+   * 打开目录；`script`（目录里的文件名）不为空就接着「打开并运行」它。只在项目真的打开了才运行。
+   * 文件名带首尾空白（` plot.py`）不运行：后端各脚本端点按约定 `strip()` 脚本名，会找不到它、
+   * 或在同目录还有 `plot.py` 时静默跑错脚本（Codex #1267）——只开项目，后端统一支持之后（#1278）再放开
+   */
   const openFolder = (folder: string, script: string | null): Promise<boolean> =>
     openPath(folder).then((ok) => {
-      if (ok && script) void useProjectPreparationStore.getState().open(scriptTarget(script, { reuse: true }), { run: true })
+      if (ok && script && script === script.trim()) void useProjectPreparationStore.getState().open(scriptTarget(script, { reuse: true }), { run: true })
       return ok
     })
 

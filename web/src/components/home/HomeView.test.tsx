@@ -357,6 +357,13 @@ describe('系统拖放（桌面壳交来真实路径，ADR 0092）', () => {
     expect(prepOpen.mock.calls).toEqual([ranScript('a.py'), ranScript('b.py')])
   })
 
+  it('文件名以空白开头：只开项目、不运行（后端会 strip 脚本名，可能跑错同目录的另一个脚本，Codex #1267）', async () => {
+    await mount()
+    await fire({ kind: 'script', folder: '/Users/me/fig', script: '/Users/me/fig/ plot.py', name: ' plot.py', ignored: 0 })
+    expect(open).toHaveBeenCalledWith('/Users/me/fig', false)
+    expect(prepOpen).not.toHaveBeenCalled()
+  })
+
   it('项目没打开成：不运行脚本', async () => {
     open.mockRejectedValueOnce(new Error('nope'))
     await mount()

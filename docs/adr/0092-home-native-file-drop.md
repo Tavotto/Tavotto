@@ -76,6 +76,7 @@ Windows / Linux 暂不旁听（WebView2 需要 `postMessageWithAdditionalObjects
 - 脚本相对项目根就是它的文件名：打开的项目根正是它的上级目录。
 - 只给目录的入口（拖文件夹、目录浏览器、浏览器模式退回的选择器）不运行任何脚本，不替用户挑。
 - 项目没打开成（`openPath` 回 false）就不运行。
+- 文件名带首尾空白（` plot.py`）只开项目、不运行：后端各脚本端点按约定 `strip()` 脚本名，会找不到它或跑错同目录的 `plot.py`（Codex #1267，后端统一支持见 #1278）。
 - 看护：`HomeView.test.tsx`（壳事件 / 页面 drop / 选择器三处各自对哪个脚本发起、文件夹与失败不发起）、
   `e2e/home-drop-run.spec.ts`（真后端：同一文件夹先后拖入 a、b，各跑一次，画布上两张图都在）。
 
