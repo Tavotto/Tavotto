@@ -31,11 +31,17 @@ from test_execution_fallback_e2e import (
 
 pytestmark = nativekit.needs_user_python
 
-#: 执行次数：脚本每跑一遍写一个字符。写文件的是计数仪器而不是被测脚本形状——用 getattr 取 open，免得伤害闸门
-#: （脚本里出现写入就不直达 native）把每个 e2e 脚本都拦成 safe；动态取名与非字面 mode（`chr(97)` = "a"）本来就在闸门的静态可见范围之外（#1086）
+#: 执行次数：脚本每跑一遍调一次本地计数模块，由它往项目外写一个字符。写文件的是计数仪器而不是被测脚本形状，
+#: 所以放进脚本旁的 helper 模块（路由不跟进 helper）——不能再用 `getattr(__import__(…), "op" + "en")` 一类动态分派藏起写入：
+#: 那正是不可证明门槛（#1086）要拦的形状，会把每个 e2e 脚本都拦成 safe
 COUNT = """\
-with getattr(__import__("builtins"), "op" + "en")({log!r}, chr(97)) as f:
-    f.write("x")
+import _runcount
+_runcount.tick()
+"""
+COUNTER_MODULE = """\
+def tick():
+    with open({log!r}, "a") as f:
+        f.write("x")
 """
 HEAD = """\
 import os
@@ -88,6 +94,10 @@ DYNAMIC_INPUTS = (
 DYNAMIC_SHOW = DYNAMIC + "plt.show()\n"
 
 
+def write_counter(proj, log) -> None:
+    (proj / "_runcount.py").write_text(COUNTER_MODULE.format(log=str(log)), encoding="utf-8")
+
+
 def _project(tmp_path, body: str):
     proj = tmp_path / "proj"
     proj.mkdir()
@@ -95,6 +105,7 @@ def _project(tmp_path, body: str):
     out.mkdir()
     log = out / "compute.log"
     (proj / "fig.py").write_text(body.format(log=str(log)), encoding="utf-8")
+    write_counter(proj, log)
     return proj, log
 
 

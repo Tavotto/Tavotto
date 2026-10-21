@@ -24,6 +24,7 @@ def test_routed_native_launch_failure_does_not_invent_execution_or_retire_saved_
     reference = save(client, source)["figure_snapshots"]["panel"]
     log = root.parent / "compute.log"
     (root / "plot.py").write_text(routing.READBACK.format(log=str(log)), encoding="utf-8")
+    routing.write_counter(root, log)
     monkeypatch.setattr(m, "_desktop_initiated", lambda: True)
 
     def fail_before_user_code(*args, **kwargs):
