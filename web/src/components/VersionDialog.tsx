@@ -43,6 +43,7 @@ import { finishActiveGesture } from '@/store/gestureCoordinator'
 import { useTimelineStore } from '@/store/timelineStore'
 import { useInFlight } from '@/hooks/useInFlight'
 import { useVariantPng } from '@/hooks/useVariantPng'
+import { MM_PER_PT, pickBucket } from '@/lib/units'
 import {
   documentDigest,
   recordDiagnosticEvent,
@@ -1160,7 +1161,7 @@ function PreviewBody({
       data-timeline-frame={d === doc ? 'moment' : 'current'}
     >
       <Card appearance="raised" padding="none" className="w-full overflow-hidden rounded-xs">
-        <LayoutSnapshot doc={d} renderOverrides onApproximate={d === doc ? setApproximate : undefined} />
+        <LayoutSnapshot doc={d} renderOverrides displayWidth={width} onApproximate={d === doc ? setApproximate : undefined} />
         {opts?.outlineOver && (
           <div className="absolute inset-0 opacity-55" data-timeline-overlay-current>
             <LayoutSnapshot doc={opts.outlineOver} outline />
@@ -1255,6 +1256,16 @@ function PreviewBody({
 /* ------------------------------ 布局缩略图 -------------------------------- */
 
 /**
+ * 预览里一个面板该取哪一档位图：它在屏幕上的物理像素宽（页面显示宽 × 面板占页宽的比例 × DPR）
+ * 向上取 `RENDER_BUCKETS` 一档（与画布 `PanelView` 同一把 `pickBucket`）。
+ * 此前这里写死 200，1000+ px 宽的预览就是 5 倍放大的低清位图（beta 0.19.0b1 反馈「特别糊」）。
+ */
+export function snapshotBucket(panelW: number, pageW: number, displayWidth: number, dpr: number): number {
+  if (!(pageW > 0) || !(displayWidth > 0)) return 200
+  return pickBucket((panelW / pageW) * displayWidth * dpr)
+}
+
+/**
  * 真素材缩略：面板用现成的 /api/render 小档位图片按布局摆进等比页面，
  * 文字/形状画轮廓块。不是像素级导出预览，但位置、比例、内容一目了然。
  */
@@ -1263,9 +1274,16 @@ export function LayoutSnapshot({
   outline = false,
   renderOverrides = false,
   onApproximate,
+  displayWidth,
 }: {
   doc: FigureDocument
   outline?: boolean
+  /**
+   * 这张页面在屏幕上的 CSS 宽度（px）。面板位图按它 × DPR 选档，文字按它缩放字号：
+   * 预览对话框里的页面可以有上千 px 宽，永远取 200 档会是 5 倍放大的糊图。
+   * 不给 = 缩略档（200）与固定小字，行为与旧版相同。
+   */
+  displayWidth?: number
   /**
    * 按面板自己的 overrides 出图（而不是磁盘素材）。**只给用户当前展开的那一份
    * 版本详情用**：版本列表里每一条都渲染的话，一次展开就是几十次 matplotlib
@@ -1314,6 +1332,9 @@ export function LayoutSnapshot({
                 mtime={assets[o.fileId]?.mtime}
                 renderOverrides={renderOverrides}
                 onApproximate={onApproximate}
+                bucket={
+                  displayWidth ? snapshotBucket(o.w, pw, displayWidth, window.devicePixelRatio || 1) : 200
+                }
               />
             )
           }
@@ -1322,7 +1343,16 @@ export function LayoutSnapshot({
               <div
                 key={o.id}
                 className="absolute overflow-hidden whitespace-pre leading-none"
-                style={{ ...style, fontSize: 6, color: o.color, fontFamily: 'var(--font-doc)' }}
+                style={{
+                  ...style,
+                  // 页面单位是 mm：字号 pt → mm → 屏幕 px（displayWidth / 页宽）
+                  fontSize: displayWidth ? Math.max(2, o.sizePt * MM_PER_PT * (displayWidth / pw)) : 6,
+                  color: o.color,
+                  fontFamily: 'var(--font-doc)',
+                  fontWeight: o.bold ? 700 : undefined,
+                  fontStyle: o.italic ? 'italic' : undefined,
+                  textAlign: o.align,
+                }}
               >
                 {o.text}
               </div>
@@ -1348,17 +1378,20 @@ function SnapshotPanel({
   mtime,
   renderOverrides,
   onApproximate,
+  bucket,
 }: {
   panel: PanelObject
   style: React.CSSProperties
   mtime?: number
   renderOverrides: boolean
   onApproximate?: (approximate: boolean) => void
+  /** 取图档位（RENDER_BUCKETS 之一），见 `snapshotBucket` */
+  bucket: number
 }) {
   const variant = useVariantPng(
     panel.fileId,
     panel.overrides,
-    200,
+    bucket,
     renderOverrides && (panel.overrides.length > 0 || isAdoptedPanel(panel)),
     mtime ?? 0,
     adoptionGuardOf(panel),
@@ -1369,7 +1402,7 @@ function SnapshotPanel({
 
   // panelSrc 可能给不出地址（替代传输里没有 HTTP 服务）：一个都拿不到就不画
   // <img>，绝不留一个空 src 让缩略图挂一个碎图标
-  const src = variant.url || panelSrc(panel.fileId, panel.fileKind, 200, mtime)
+  const src = variant.url || panelSrc(panel.fileId, panel.fileKind, bucket, mtime)
   if (!src) return null
   return (
     <RetryImg
