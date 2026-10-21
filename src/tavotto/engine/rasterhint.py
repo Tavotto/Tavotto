@@ -444,10 +444,24 @@ def detect(
                 None  # 没有这次运行写出文件的证据：不说（未调用的 helper / 没走到的分支 / 旧文件）
             )
         # 新文件是哪个库写的（ADR 0139 证据规则：证据缺失一律沉默，宁可少说不说假话）：候选只有「输出路径运行时才定」
-        # 的那几处保存（字面量路径的文件上面已逐个核过、都不是本次写的，它们不可能是这个新文件），且扩展名得是该库认的。
+        # 的那几处保存，加上字面量路径按项目根 / 脚本目录解析后**正是**这个新文件的那几处（沙盒模式下字面量是对沙盒核的，
+        # 文件却写进了项目，这条字面量就是最直接的证据），且扩展名得是该库认的。其余字面量上面已核过不是本次写的。
         # 候选库唯一才归属；PNG 这类两个库都认、而静态上分不出哪个真被调用（未调用的 helper 也算候选）→ 不说
         suffix = Path(found).suffix.lower()
-        candidates = {lib for lib, p in saves if p is None and suffix in _exts_of(lib)}
+        target = root_p / found
+        candidates = {
+            lib
+            for lib, p in saves
+            if suffix in _exts_of(lib)
+            and (
+                p is None
+                or target
+                in (
+                    _fs_path(p, root_p, script, MODE_PROJECT_ROOT),
+                    _fs_path(p, root_p, script, MODE_PROJECT),
+                )
+            )
+        }
         if len(candidates) != 1:
             return None
         return {
