@@ -210,7 +210,10 @@ export default interface Resources {
       "delete": "删除",
       "refresh": "刷新",
       "reload": "重新加载",
-      "save": "保存"
+      "save": "保存",
+      "windowMaximize": "最大化",
+      "windowMinimize": "最小化",
+      "windowRestore": "还原"
     },
     "colorField": {
       "documentColors": "排版里的颜色",

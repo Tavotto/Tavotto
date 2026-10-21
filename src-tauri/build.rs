@@ -50,7 +50,6 @@ fn main() {
             "desktop_update_check",
             "desktop_update_install",
             "show_app_menu",
-            "set_titlebar_colors",
             "take_previous_exit",
             "current_engine_exit",
             "current_fullscreen",

@@ -27,7 +27,7 @@ import { requestRelinkMissing } from '@/lib/clipboard'
 import { runUndoRedo } from '@/hooks/useKeyboard'
 import { createPackage, openPackage } from '@/lib/api'
 import { PRODUCT_NAME } from '@/lib/brand'
-import { dragRegionProps, TRAFFIC_LIGHTS_INSET, windowChrome } from '@/lib/desktop'
+import { dragRegionProps, TRAFFIC_LIGHTS_INSET, WINDOW_CONTROLS_INSET, windowChrome } from '@/lib/desktop'
 import { keyOf } from '@/lib/keymap'
 import { foreignProjectLabel } from '@/lib/projectLabel'
 import { currentProjectId } from '@/lib/session'
@@ -79,14 +79,17 @@ export function TopBar() {
     // 窄于 900：两段之间的空隙与两侧内边距收紧（12 → 6、12 → 8），段内按钮间距也收到 4——600 宽下仍要放下
     // 首页胶囊 / 面包屑 / 状态芯片 / 时间线 | 撤销重做 / 导出 / 更多（e2e/topbar-narrow.spec.ts）
     // 窗框（`lib/desktop.ts` 的 `windowChrome`）：macOS 的红绿灯就坐在这一行最左——左内边距让给它们
-    // （行内样式压过窄屏那档 px），空白处是拖动区；Windows 的应用菜单是最左那颗「菜单」按钮
+    // （行内样式压过窄屏那档 px），空白处是拖动区；Windows 的应用菜单是最左那颗「菜单」按钮，
+    // 右侧让给右上角的窗口按钮（`WindowControls`，与顶栏同高）
     <header
       data-topbar
       {...dragRegionProps()}
       style={
         windowChrome() === 'overlay' && !fullscreen
           ? { paddingLeft: TRAFFIC_LIGHTS_INSET }
-          : undefined
+          : windowChrome() === 'menu-button'
+            ? { paddingRight: WINDOW_CONTROLS_INSET }
+            : undefined
       }
       className={cn(
         'flex h-11 shrink-0 items-center justify-between gap-3 bg-bg px-3 max-[899px]:gap-1.5 max-[899px]:px-2',
