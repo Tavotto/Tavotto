@@ -253,6 +253,19 @@ describe('入口两处挂载', () => {
   })
 })
 
+describe('没有打开项目时（不在工作台的 TooltipProvider 里）', () => {
+  it('ContactHost 自带 provider：加附件后带气泡的移除钮能渲染，不崩', async () => {
+    resetStore()
+    host = document.createElement('div')
+    document.body.appendChild(host)
+    root = createRoot(host)
+    await act(async () => root.render(<ContactHost />)) // 刻意不包 TooltipProvider
+    await act(async () => useContactStore.getState().setOpen(true))
+    await act(async () => useContactStore.getState().addFiles([png()]))
+    expect(q('[data-contact-file="shot.png"] [data-contact-file-remove]')).not.toBeNull()
+  })
+})
+
 describe('对话框的四个状态', () => {
   async function openDialog(over: Partial<ReturnType<typeof useContactStore.getState>> = {}) {
     resetStore(over)
@@ -356,7 +369,7 @@ describe('对话框的四个状态', () => {
     expect(q<HTMLTextAreaElement>('[data-contact-text]')!.value).toBe('很重要的一段话')
     expect(q('[data-contact-send]')!.textContent).toBe(t('contact.retry', { ns: 'dialogs' }))
     const fallback = q('[data-contact-fallback]')!
-    const names = [...fallback.querySelectorAll('button')].map((b) => b.getAttribute('aria-label') ?? b.textContent)
+    const names = [...fallback.querySelectorAll('button')].map((b) => b.textContent)
     expect(names).toEqual([t('contact.copyContent', { ns: 'dialogs' }), t('contact.copyAddress', { ns: 'dialogs' })])
     // 全页没有任何 mailto 链接，也没有指向邮件的 <a>
     expect(document.body.innerHTML.toLowerCase()).not.toContain('mailto')
@@ -369,6 +382,7 @@ describe('对话框的四个状态', () => {
     await click(copyContent)
     await click(copyAddress)
     expect(writeText.mock.calls.map((c) => c[0])).toEqual(['很重要的一段话', CONTACT_EMAIL])
+    expect(copyContent.textContent).toBe(t('contact.copied', { ns: 'dialogs' })) // 复制后自己说「已复制」
 
     // 再试一次 = 又一次发送，带的还是那份草稿
     vi.mocked(fetchContactStatus).mockResolvedValue(st({ state: 'done', stage: null, message_id: MSG, route: 'cn' }))

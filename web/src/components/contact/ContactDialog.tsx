@@ -1,4 +1,4 @@
-import { useId, useRef, useState, type DragEvent } from 'react'
+import { useEffect, useId, useRef, useState, type DragEvent } from 'react'
 import { useTranslation } from 'react-i18next'
 import { t as translate } from '@/i18n'
 import { formatDateTime } from '@/i18n/format'
@@ -48,6 +48,35 @@ function failureText(f: ContactFailure): string {
     return cs('diagFailure', { reason })
   }
   return cs(`failure.${f.code}`, { defaultValue: cs('failure.unexpected_response') })
+}
+
+/**
+ * 失败卡里的复制动作：按钮上写明复制什么（「复制内容」「复制地址」），复制后自己说「已复制」两秒。
+ * 剪贴板不可用时保持原样——用户仍可从旁边的文字手工选中。这里只写剪贴板，不调起任何别的程序。
+ */
+function CopyAction({ text, label }: { text: string | (() => string); label: string }) {
+  const [copied, setCopied] = useState(false)
+  useEffect(() => {
+    if (!copied) return
+    const id = window.setTimeout(() => setCopied(false), 2000)
+    return () => window.clearTimeout(id)
+  }, [copied])
+  return (
+    <Button
+      variant="secondary"
+      size="md"
+      onClick={() => {
+        const value = typeof text === 'function' ? text() : text
+        void navigator.clipboard?.writeText(value).then(
+          () => setCopied(true),
+          () => {},
+        )
+      }}
+      data-contact-copy
+    >
+      {copied ? cs('copied') : label}
+    </Button>
+  )
 }
 
 /**
@@ -143,8 +172,8 @@ export function ContactDialog() {
           {s.failure.source !== 'local' && <span>{cs('failedKept')}</span>}
           {/* 没有邮件协议链接、也不唤起邮件程序：只给「复制内容 / 复制地址」，由用户自己决定怎么发 */}
           <span className="flex flex-wrap items-center gap-1.5" data-contact-fallback>
-            <CopyButton text={() => draftText(draft)} label={cs('copyContent')} appearance="text" variant="secondary" />
-            <CopyButton text={recipient} label={cs('copyAddress')} appearance="text" variant="secondary" />
+            <CopyAction text={() => draftText(draft)} label={cs('copyContent')} />
+            <CopyAction text={recipient} label={cs('copyAddress')} />
             <span className="type-caption">{cs('failedFallback', { address: recipient })}</span>
           </span>
         </span>

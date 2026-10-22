@@ -106,6 +106,8 @@ export async function startApp(opts: AppOptions = {}): Promise<RunningApp> {
         // 「发送问题反馈」发行版默认开启、内置端点是生产（ADR 0118）。e2e 绝不连生产：默认硬关；
         // 要测它的用例（diagnostics-send.spec.ts）显式传 '0' + 回环端点。
         TAVOTTO_NO_DIAG_UPLOAD: '1',
+        // 「联系作者」（ADR 0145）同理：线路是内置的两个生产主机，e2e 默认硬关；要测它的用例（contact.spec.ts）显式传 '0' + 回环端点。
+        TAVOTTO_NO_CONTACT: '1',
         HOME: home,
         USERPROFILE: home,
         APPDATA: path.join(workdir, 'AppData', 'Roaming'),
