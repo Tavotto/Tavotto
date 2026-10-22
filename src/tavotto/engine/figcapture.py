@@ -2062,6 +2062,8 @@ _SURFACE_EXTRA_MODULES = (
 _surface_lock = threading.Lock()
 _surface_base: dict[str, tuple[dict, list]] | None = None
 _surface_roots: tuple[str, ...] = ()
+#: 仅 matplotlib / mpl_toolkits 自己的包目录：变化条目复核（`_changed_entries_are_library`）只认这里的函数
+_surface_mpl_roots: tuple[str, ...] = ()
 _realpath_cache: dict[str, tuple[str, str]] = {}
 _LIB_TOPS = (
     frozenset(_SURFACE_PACKAGES) | {"numpy"} | frozenset(getattr(sys, "stdlib_module_names", ()))
@@ -2095,7 +2097,17 @@ def _record_class_value(v) -> bool:
         or _is_class_type(t)
     ):
         return True
-    return not _is_simple(v) and not _owner_module_ok(t)
+    if _is_simple(v):
+        return False
+    if not _owner_module_ok(t):
+        return True
+    # 库类型的实例里，**可调用的 / 描述符**（`functools.partial(用户函数)`、绑定方法、`cached_property` 之类）也要记：
+    # 它们一被取用 / 调用就可能跑到用户代码。不可调用的普通数据（首次使用才写入的缓存）仍不记
+    for c in _T_MRO.__get__(t):
+        cd = _T_DICT.__get__(c)
+        if "__call__" in cd or "__get__" in cd:
+            return True
+    return False
 
 
 def _surface_module_map(name: str, mod) -> tuple[dict, dict]:
@@ -2251,7 +2263,7 @@ def _module_origin_ok(mod, name: str, roots) -> bool:
 
 def freeze_trusted_surface() -> None:
     """进程内只拍一次（同 worker 重试不重拍——否则脚本上一轮的 patch 会被当成基线）。safe worker 在跑用户脚本之前调。"""
-    global _surface_base, _surface_roots
+    global _surface_base, _surface_roots, _surface_mpl_roots
     with _surface_lock:
         if _surface_base is not None:
             return
@@ -2273,6 +2285,7 @@ def freeze_trusted_surface() -> None:
                         add(p)
                 except Exception:  # noqa: BLE001
                     pass
+        _surface_mpl_roots = tuple(roots)
         # 「库来源」还包括：matplotlib 所在的 site-packages（它的依赖）、解释器安装前缀（标准库、嵌入式发行版的 python3xx.zip、
         # 各平台 site-packages）、Tavotto 引擎目录（worker 对 `plt.show` 等的自家 patch）。被用户脚本里的函数顶替才是 patch
         import site  # noqa: PLC0415
@@ -2331,24 +2344,35 @@ def _report_patched(why: str) -> None:
         pass
 
 
+def _is_mpl_own_function(obj) -> bool:
+    """变化条目复核唯一接受的新对象：matplotlib / mpl_toolkits **自己**的函数——精确类型 `FunctionType`（文件在 matplotlib /
+    mpl_toolkits 的包目录下，`__module__` 顶层也是它们），或 C 层 builtin（`__module__` 属于它们）。
+    partial / 绑定方法 / 描述符包装 / 库类型的实例 / 别的第三方包（scienceplots、seaborn……）/ 标准库的函数一律不是。"""
+    t = type(obj)
+    if t is types.FunctionType:
+        module = _FN_MODULE.__get__(obj)
+        filename = _CODE_FILENAME.__get__(_FN_CODE.__get__(obj))
+        return (
+            type(module) is str
+            and module.split(".", 1)[0] in _SURFACE_PACKAGES
+            and type(filename) is str
+            and not filename.startswith("<")
+            and _path_under_roots(filename, _surface_mpl_roots)
+        )
+    if t is types.BuiltinFunctionType:
+        module = _BF_MODULE.__get__(obj)
+        return type(module) is str and module.split(".", 1)[0] in _SURFACE_PACKAGES
+    return False
+
+
 def _changed_entries_are_library(name: str, cur_ids: dict, cur_objs: dict, known_ids: dict) -> bool:
-    """基线之后有变化的条目：新对象若仍是库来源（函数定义在库目录、对象类型属于库）就当环境 / 惰性状态的正常变化，
-    不当作 patch——我们要防的是**用户代码**被拍摄 / 还原间接跑起来；被删掉的条目没有新对象，更不会跑用户代码。"""
+    """基线之后有变化的条目：只有新对象是 matplotlib / mpl_toolkits 自己的函数（它们自己的惰性重绑定，如 pyplot 的
+    `switch_backend`）才接受并更新基线；其余一律是被改过（用户裁决：matplotlib 被任何东西改过就放弃快照）。被移除的条目不算。"""
     for key in set(cur_ids) | set(known_ids):
-        if cur_ids.get(key) == known_ids.get(key):
+        if cur_ids.get(key) == known_ids.get(key) or key not in cur_ids:
             continue
-        obj = cur_objs.get(key)
-        if key not in cur_ids:
-            continue  # 被移除
-        if (
-            key[0].startswith("!")
-            or key[1] == "!foreign"
-            or not _origin_value_ok(obj, _surface_roots)
-        ):
+        if not _is_mpl_own_function(cur_objs.get(key)):
             _report_patched(f"{name}.{key[0]}.{key[1]}")
-            return False
-        if _is_class_type(type(obj)) and key[1] is None and not _owner_module_ok(obj):
-            _report_patched(f"{name}.{key[0]}")
             return False
     return True
 
@@ -2356,7 +2380,7 @@ def _changed_entries_are_library(name: str, cur_ids: dict, cur_objs: dict, known
 def trusted_surface_intact() -> bool:
     """此刻 matplotlib（及还原路径上的几个入口）的方法面与基线一致吗？每次都按真实值重算，不缓存。
     基线里有的模块逐项比对；基线之后才导入的模块首次见到时按来源从严检查、通过则补登记（之后的 patch 靠 id 比对发现）。
-    与基线不一致的条目再复核一次来源：新对象仍来自库（不是用户代码）就接受并更新基线。
+    与基线不一致的条目再复核一次：只有 matplotlib / mpl_toolkits 自己的函数重绑定才接受并更新基线。
     全程静态读取；任何意外异常都按「被改过」处理（返回 False），绝不向调用方抛。"""
     try:
         if _surface_base is None:

@@ -270,6 +270,11 @@ manifest / overrides / 撤销重做不分叉）。
     `take` / `restore` 对比对整体兜底：任何异常都按 `matplotlib_patched`（拍摄侧意外记 `unpicklable`）放弃快照，绝不让 build 失败。
     指纹记录范围也据此收紧：只记函数 / 内建 / 描述符 / 嵌套类，以及类型不是库的对象；库类型的实例（如 `Path._unit_circle` 这类首次使用才写入的缓存、
     `__slotnames__`）与库类在模块间的惰性重新绑定（pyplot 的 `_backend_mod`）会合法变化，不记。
+  - **变化条目的复核只接受 matplotlib 包内的函数重绑定**：与启动指纹不一致的条目，只有新对象是精确的 `FunctionType`（文件在 matplotlib /
+    mpl_toolkits 的包目录下、`__module__` 顶层也是它们）或 C 层 builtin（`__module__` 属于它们）才接受并更新基线——这只为覆盖 matplotlib
+    自己的惰性重绑定（pyplot 的 `switch_backend` 等）。`functools.partial(用户函数)`、绑定方法、描述符包装、库类型的实例、scienceplots /
+    seaborn 等第三方包和标准库的函数一律判为被改（用户裁决：matplotlib 被任何东西改过就放弃快照）。指纹因此也记库类型里**可调用 / 描述符**
+    的实例（partial、绑定方法、`cached_property`……）。「库来源」的扩大目录集合（site-packages、解释器前缀）只用于首次见到的模块的来源判定。
   - **实测耗时**：启动指纹约 10 ms（107 个模块、约 6800 个条目），每次比对约 3.8 ms（静态描述符读比 `getattr` 慢，换来不执行用户代码）。
   - **与纵深层的关系**：指纹覆盖 matplotlib 与上述入口模块；`_class_hooks_trusted` 另外覆盖没进指纹的类型（其它 numpy 类型等）的类级钩子，
     且只在 dump 内读一次、很便宜，所以两者保留，不删。结构层（拍摄期间置脏即作废）同样保留。

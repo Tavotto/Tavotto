@@ -612,17 +612,79 @@ def test_library_origin_is_decided_by_location_not_by_one_platform_layout(
         assert figcapture._owner_module_ok(cls) is expected
 
 
-def test_a_library_origin_replacement_is_not_mistaken_for_a_user_patch(monkeypatch, fresh_surface):
-    """与启动指纹不同、但新对象仍是库里的函数：不是用户代码，接受（环境 / 惰性状态的正常变化）；用户函数仍然拒绝。"""
+def test_only_matplotlibs_own_function_rebinding_is_accepted(monkeypatch, fresh_surface):
+    """复核只接受 matplotlib 自己的函数重绑定（它的惰性状态）；其余——用户函数、partial、绑定方法、第三方包、标准库——一律是被改过。"""
     import matplotlib.lines as mlines
     import matplotlib.text as mtext
 
-    monkeypatch.setattr(mlines.Line2D, "set_label", mtext.Text.set_text)  # 库函数顶替库函数
+    monkeypatch.setattr(mlines.Line2D, "set_label", mtext.Text.set_text)  # matplotlib 自己的函数
     assert figcapture.trusted_surface_intact() is True
     monkeypatch.setattr(
         mlines.Line2D, "set_label", lambda self, s: None
     )  # 用户（测试文件）里的函数
     assert figcapture.trusted_surface_intact() is False
+
+
+@pytest.mark.parametrize("wrapper", ["partial", "bound_method", "stdlib_function"])
+def test_wrappers_around_user_code_are_patches_even_if_their_type_is_a_library_type(
+    monkeypatch, fresh_surface, wrapper
+):
+    import functools
+
+    import matplotlib.text as mtext
+
+    calls = []
+
+    def hook(*a, **k):
+        calls.append(1)
+
+    class Owner:
+        def method(self, *a, **k):
+            calls.append(1)
+
+    if wrapper == "partial":
+        replacement = functools.partial(hook)
+    elif wrapper == "bound_method":
+        replacement = Owner().method
+    else:
+        replacement = functools.wraps  # 标准库的函数
+    fig = _figure()  # 先建图再 patch：matplotlib 自己建图时也会用到 set_text
+    figcapture.mark_saved(fig)
+    monkeypatch.setattr(mtext.Text, "set_text", replacement)
+    ledger = figcapture.SaveMomentLedger()
+    ledger.take(fig, 1)
+    assert ledger.restore(fig) == (None, "matplotlib_patched")
+    assert calls == []
+
+
+def test_a_third_party_package_patching_matplotlib_is_a_patch(tmp_path, monkeypatch, fresh_surface):
+    """scienceplots / seaborn / 用户自己装的包去 patch matplotlib：它们在 site-packages 里（算「库来源」），但仍是被改过。"""
+    import matplotlib.axes as maxes
+
+    site = tmp_path / "site-packages"
+    site.mkdir()
+    monkeypatch.setattr(
+        figcapture, "_surface_roots", (*figcapture._surface_roots, os.path.normcase(str(site)))
+    )
+    ns = {"__name__": "fake_scienceplots"}
+    exec(
+        compile(
+            "def draw(self, renderer):\n    return None\n",
+            str(site / "fake_scienceplots.py"),
+            "exec",
+        ),
+        ns,
+    )  # noqa: S102
+    monkeypatch.setattr(maxes.Axes, "draw", ns["draw"])
+    assert figcapture.trusted_surface_intact() is False
+
+
+def test_pyplot_switching_backend_is_not_a_patch(fresh_surface):
+    import matplotlib.pyplot as plt
+
+    plt.switch_backend("agg")
+    assert figcapture.trusted_surface_intact() is True
+    plt.close("all")
 
 
 def _hostile(calls, fig):
