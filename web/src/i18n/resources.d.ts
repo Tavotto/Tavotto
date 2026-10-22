@@ -5301,6 +5301,7 @@ export default interface Resources {
           "env": {
             "managed": "{{product}} 的项目环境"
           },
+          "replanning": "正在按新环境重新检查…",
           "resuming": "正在装 {{names}}，装好后接着生成…",
           "system": "这个 Python 是系统自带的，往里面装包可能弄坏系统工具。请给项目换一个环境。",
           "systemBuiltin": "这是 {{product}} 内置的运行环境，不往里面装包。请给项目换一个环境。",

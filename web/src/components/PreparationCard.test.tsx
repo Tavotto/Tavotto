@@ -38,6 +38,7 @@ vi.mock('@/lib/api', async (importOriginal) => ({
   adoptConvert: vi.fn(),
   discardConvert: vi.fn(),
   resolveConvertDependencies: vi.fn(),
+  replanConvertDependencies: vi.fn(),
   aiCancel: vi.fn().mockResolvedValue({ ok: true }),
 }))
 vi.mock('@/store/liveSync', async (importOriginal) => ({
@@ -95,7 +96,7 @@ import { useDepRepairStore } from '@/store/depRepairStore'
 import { useConvertStore, POLL_MS } from '@/store/convertStore'
 import { useForeignScriptStore } from '@/store/foreignScriptStore'
 import { useAiStore } from '@/store/aiStore'
-import { adoptConvert, aiCancel, discardConvert, fetchAiSession, fetchConvert, resolveConvertDependencies, startConvert } from '@/lib/api'
+import { adoptConvert, aiCancel, discardConvert, fetchAiSession, fetchConvert, replanConvertDependencies, resolveConvertDependencies, startConvert } from '@/lib/api'
 import type { DependencyPreparationOffer } from '@/lib/api'
 
 declare global {
@@ -1578,6 +1579,24 @@ describe('执行结束、捕获到图、首次编辑渲染是三件事', () => {
       expect(useUiStore.getState().engineEnvOpen).toBe(true)
       expect(useUiStore.getState().engineEnvPick).toBe(true)
       expect(resolveConvertDependencies).not.toHaveBeenCalled()
+    })
+
+    it('系统 Python：选完环境且解释器变了 → 自动 replan，卡片说“正在按新环境重新检查…”，结果换成对应的新卡；没变不动', async () => {
+      await begin(system)
+      vi.mocked(replanConvertDependencies).mockReset().mockResolvedValue({ session: 'sid-r', state: 'resuming' })
+      await act(async () => (foreignCard()?.querySelector('[data-convert-choose-env]') as HTMLButtonElement).click())
+      // 选择器关闭但没换解释器（环境刷新、身份相同）：保持原卡
+      await act(async () => useEnvStore.setState({ env: { ...useEnvStore.getState().env } as never }))
+      expect(replanConvertDependencies).not.toHaveBeenCalled()
+      expect(foreignCard()?.dataset.convertPhase).toBe('deps')
+      vi.mocked(fetchConvert).mockResolvedValue({ state: 'awaiting_dependencies', dependency_card: askOnce } as never)
+      await act(async () => useEnvStore.setState({ env: { ok: true, python: '/opt/other/bin/python' } as never }))
+      expect(replanConvertDependencies).toHaveBeenCalledWith('sid-r', expect.anything())
+      expect(foreignCard()?.dataset.convertPhase).toBe('resuming')
+      expect(line()).toBe('正在按新环境重新检查…')
+      await settle()
+      expect(foreignCard()?.dataset.convertPhase).toBe('deps')
+      expect(foreignCard()?.querySelector('[data-convert-deps-install]')).not.toBeNull()
     })
 
     it('「不装」放弃候选并收起；装依赖期间点 × / 停止 → 放弃（后端据此取消正在进行的安装）', async () => {

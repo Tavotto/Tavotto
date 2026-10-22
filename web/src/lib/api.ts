@@ -3603,6 +3603,14 @@ export const resolveConvertDependencies = (sid: string, impactDigest: string, pj
     pj,
   )
 
+/** 换了环境后：按此刻的项目解释器重新判定**同一个**候选（不带摘要、不重跑 Agent）；后端起作业，前端轮询 `fetchConvert` */
+export const replanConvertDependencies = (sid: string, pj: string | null) =>
+  jsonFetch<{ session: string; state: 'resuming' }>(
+    `/api/ai/convert/${encodeURIComponent(sid)}/dependencies`,
+    jsonPost({ action: 'replan' }),
+    pj,
+  )
+
 /** 设置页：已允许自动装包的环境（种类 + 名字 + 键，没有路径） */
 export interface ConvertAutoInstallEnv {
   key: string

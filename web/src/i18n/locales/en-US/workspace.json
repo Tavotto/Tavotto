@@ -1295,6 +1295,7 @@
         "system": "This Python came with your system, and installing packages into it could break system tools. Please choose another environment for the project.",
         "systemBuiltin": "This is {{product}}'s built-in runtime, which we don't install packages into. Please choose another environment for the project.",
         "resuming": "Installing {{names}}, then continuing…",
+        "replanning": "Re-checking with the new environment…",
         "env": {
           "managed": "{{product}} project environment"
         },

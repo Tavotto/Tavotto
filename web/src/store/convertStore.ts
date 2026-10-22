@@ -16,6 +16,7 @@ import {
   fetchAiSession,
   fetchConvert,
   isDefiniteRunFailure,
+  replanConvertDependencies,
   resolveConvertDependencies,
   startConvert,
   type ConvertDependencyCard,
@@ -25,6 +26,8 @@ import {
 import { captureProjectEpoch } from '@/lib/projectEpoch'
 import { currentProjectId, onCurrentProjectChange } from '@/lib/session'
 import { newRequestId, useAiStore } from '@/store/aiStore'
+import { useEnvStore } from '@/store/envStore'
+import { useUiStore } from '@/store/uiStore'
 
 export type ConvertPhase = 'running' | 'deps' | 'resuming' | 'ready' | 'adopting' | 'adopted' | 'failed'
 
@@ -46,6 +49,10 @@ export interface ConvertEntry {
   detail: string | null
   /** `deps` / `resuming` 时的依赖卡片事实（后端 `convertdeps` 的 card）；没有 = null */
   card: ConvertDependencyCard | null
+  /** 系统 Python / 内置 runtime 卡上点了「选择环境」那一刻的环境身份；之后身份变了 = 用户真的换了环境，自动重新判定。没点过 / 已用掉 = null */
+  envBase: string | null
+  /** `resuming` 里这一轮是「按新环境重新检查」（卡片说“正在按新环境重新检查…”），不是装包 */
+  replanning: boolean
 }
 
 interface ConvertState {
@@ -56,6 +63,10 @@ interface ConvertState {
   discard: (script: string) => Promise<void>
   /** 依赖卡片的主按钮（问一次 / 名单外）：回显卡片摘要，后端装 + 接着校验同一个候选；`system` 卡片没有这个动作 */
   resolveDeps: (script: string) => Promise<void>
+  /** 系统 Python / 内置 runtime 卡的主按钮：记下此刻的环境身份再打开现有的环境选择器（不另造第二个选择器）；选完且解释器真的变了由 `replanDeps` 接手 */
+  chooseEnv: (script: string) => void
+  /** 换了环境之后：按此刻的项目解释器重新判定**同一个**候选（后端 `replan`，不重跑 Agent）；结果是新卡 / 继续校验 */
+  replanDeps: (script: string) => Promise<void>
   stop: (script: string) => Promise<void>
   clear: (script: string) => void
 }
@@ -102,6 +113,56 @@ function dependencyCardOf(
   return (unmet ?? []).find((u) => u.reason_code === 'dependency_decision' && u.data)?.data ?? null
 }
 
+/** 渲染环境的身份：全局解释器 + 本项目的来源 / 解释器。选环境前后各取一次，不同 = 解释器确实变了 */
+const envIdentity = (): string => {
+  const env = useEnvStore.getState().env
+  return [env?.python ?? '', env?.project?.source ?? '', env?.project?.python ?? ''].join('\u0000')
+}
+
+/**
+ * 起一个「接着走同一个候选」的后端作业（装依赖 / 按新环境重新判定），再轮询它到结局：
+ * `ready` → 对照；又停住 → 换成新卡片；其余 → 失败。被关闭 / 停止 / 重试覆盖或换项目就静默退出。
+ */
+async function resumeWith(
+  script: string,
+  session: string,
+  replanning: boolean,
+  post: (pj: string | null) => Promise<unknown>,
+): Promise<void> {
+  const guard = captureProjectEpoch()
+  const pj = currentProjectId()
+  const get = useConvertStore.getState
+  const set = set1
+  set(script, { phase: 'resuming', error: null, reason: null, replanning, envBase: null })
+  try {
+    await post(pj)
+    for (;;) {
+      await new Promise((r) => setTimeout(r, POLL_MS))
+      if (!guard.still()) return
+      const now = get().entries[script]
+      if (!now || now.session !== session || now.phase !== 'resuming') return // 被关闭 / 停止 / 重试覆盖
+      const status = await fetchConvert(session, pj)
+      if (!guard.still()) return
+      if (status.state === 'resuming') continue
+      if (status.state === 'ready') {
+        set(script, { phase: 'ready', status, card: null, replanning: false })
+      } else if (status.state === 'awaiting_dependencies' && status.dependency_card) {
+        set(script, { phase: 'deps', card: status.dependency_card, replanning: false })
+      } else {
+        acceptedSessions.delete(scopeKey(pj, script))
+        set(script, { phase: 'failed', reason: status.failure?.reason ?? 'unknown', card: null, replanning: false })
+      }
+      return
+    }
+  } catch (e) {
+    if (!guard.still()) return
+    const now = get().entries[script]
+    // 关闭 / 停止时候选被后端删掉，轮询会 404：那是用户自己点的，条目已经清了
+    if (!now || now.session !== session) return
+    set(script, { phase: 'failed', error: backendErrorText(e), card: null, replanning: false })
+  }
+}
+
 export const useConvertStore = create<ConvertState>((set, get) => ({
   entries: {},
 
@@ -126,6 +187,8 @@ export const useConvertStore = create<ConvertState>((set, get) => ({
           path,
           detail: null,
           card: null,
+          envBase: null,
+          replanning: false,
         },
       },
     }))
@@ -244,38 +307,23 @@ export const useConvertStore = create<ConvertState>((set, get) => ({
   resolveDeps: async (script) => {
     const cur = get().entries[script]
     if (!cur?.session || cur.phase !== 'deps' || !cur.card || cur.card.kind === 'system') return
-    const guard = captureProjectEpoch()
-    const pj = currentProjectId()
+    const digest = cur.card.impact_digest
+    // 前端回显它看到的卡片摘要：服务端不自回显（对不上就换新卡片、不装）
+    await resumeWith(script, cur.session, false, (pj) => resolveConvertDependencies(cur.session as string, digest, pj))
+  },
+
+  chooseEnv: (script) => {
+    const cur = get().entries[script]
+    if (!cur?.session || cur.phase !== 'deps' || !cur.card) return
+    set1(script, { envBase: envIdentity() })
+    useUiStore.getState().openEngineEnvPicker()
+  },
+
+  replanDeps: async (script) => {
+    const cur = get().entries[script]
+    if (!cur?.session || cur.phase !== 'deps' || !cur.card) return
     const session = cur.session
-    set1(script, { phase: 'resuming', error: null, reason: null })
-    try {
-      // 前端回显它看到的卡片摘要：服务端不自回显（对不上就换新卡片、不装）
-      await resolveConvertDependencies(session, cur.card.impact_digest, pj)
-      for (;;) {
-        await new Promise((r) => setTimeout(r, POLL_MS))
-        if (!guard.still()) return
-        const now = get().entries[script]
-        if (!now || now.session !== session || now.phase !== 'resuming') return // 被关闭 / 停止 / 重试覆盖
-        const status = await fetchConvert(session, pj)
-        if (!guard.still()) return
-        if (status.state === 'resuming') continue
-        if (status.state === 'ready') {
-          set1(script, { phase: 'ready', status, card: null })
-        } else if (status.state === 'awaiting_dependencies' && status.dependency_card) {
-          set1(script, { phase: 'deps', card: status.dependency_card })
-        } else {
-          acceptedSessions.delete(scopeKey(pj, script))
-          set1(script, { phase: 'failed', reason: status.failure?.reason ?? 'unknown', card: null })
-        }
-        return
-      }
-    } catch (e) {
-      if (!guard.still()) return
-      const now = get().entries[script]
-      // 关闭 / 停止时候选被后端删掉，轮询会 404：那是用户自己点的，条目已经清了
-      if (!now || now.session !== session) return
-      set1(script, { phase: 'failed', error: backendErrorText(e), card: null })
-    }
+    await resumeWith(script, session, true, (pj) => replanConvertDependencies(session, pj))
   },
 
   discard: async (script) => {
@@ -324,4 +372,15 @@ onCurrentProjectChange(() => {
   attempts.clear()
   acceptedSessions.clear()
   useConvertStore.setState({ entries: {} })
+})
+
+// 用户在环境选择器里选完、解释器确实变了：armed 的系统 / 内置卡自动按新环境重新判定（没变 = 什么都不做，保持原卡）
+useEnvStore.subscribe((state, prev) => {
+  if (state.env === prev.env) return
+  const now = envIdentity()
+  for (const [script, e] of Object.entries(useConvertStore.getState().entries)) {
+    if (e.phase === 'deps' && e.card && e.envBase !== null && e.envBase !== now) {
+      void useConvertStore.getState().replanDeps(script)
+    }
+  }
 })

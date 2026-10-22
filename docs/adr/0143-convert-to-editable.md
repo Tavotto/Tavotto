@@ -93,6 +93,9 @@ outcome、corrections 个数、是否采用）——不带脚本、路径或图�
   种类 / 包名 / 名单外的包 / 环境种类 + 可读名 / 动作 / 摘要 / 是否新建环境或下载 Python），**候选不删**（`meta.json` 状态 `awaiting_dependencies`），不进修正轮。
   用户点主按钮 → `POST /api/ai/convert/<sid>/dependencies`，后端起作业装依赖并**接着校验同一个候选**（`resuming` → `ready` / 回 `awaiting_dependencies` / `failed`），不重跑 Agent；
   “不装” = `discard`。计划不可执行 / 被修复链拒绝 / 开关关着这几种没有可执行动作的情况仍照常跑校验、以 `missing_dependency` 如实失败，失败一句话不再指向并不存在的提示。
+- **换环境后重新判定（Codex #1330 P1）**：系统 Python / 内置 runtime 卡的主按钮打开现有的环境选择器（不另造第二个）；选完且解释器确实变了（前端比环境身份：全局解释器 + 本项目来源 / 解释器），
+  前端自动 `POST …/dependencies {action:"replan"}`——不带摘要、不重跑 Agent，后端用此刻的项目解释器走自动路径的同一棵决定树（`convertdeps.ensure`）：能直接装的装并接着校验同一个候选，
+  要问一次 / 名单外 / 仍是系统 Python 的回新卡，已不缺包的直接续跑。会话认证、项目隔离、续跑忙碌判定（`convert_resume_busy`）、取消传递与 `install` 动作一致；解释器没变保持原卡。
 - **取消传到安装（Codex #1330 P1-1）**：任务的取消标记（`TaskRun.cancel_event`）与续跑作业的取消标记原样传给 `convertdeps`，由监视线程在取消到来时调 deprepair 现有的
   `cancel_status`（`prepare` 复用同一个取消句柄，开跑前就取消也会在拿锁前停手、一个字节不写）；过了提交点的取消被 `cancel_status` 拒绝，结果如实回 `installed`。
   卡片上点停止 / 关闭 = `discard`，它把取消传给正在进行的续跑作业，作业停手后删候选目录，结局 `cancelled`。

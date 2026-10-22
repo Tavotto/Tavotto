@@ -244,3 +244,71 @@ def test_the_master_switch_turns_the_endpoint_off(project, monkeypatch):
     r = _start(client)
     assert r.status_code == 404 and r.get_json()["code"] == "convert_disabled"
     assert Path(figs / "fig.py").read_text(encoding="utf-8") == ORIGINAL
+
+
+def test_replan_endpoint_rechecks_the_same_candidate_with_the_current_environment(
+    project, monkeypatch
+):
+    """系统 Python 卡 → 用户换了环境 → `POST …/dependencies {action: replan}`：不带摘要、不重跑 Agent，按此刻环境（`convertdeps.ensure`）
+    重新判定同一个候选；再换回仍是系统 Python 就仍回系统卡；非法动作 400。"""
+    from tavotto.engine import convertdeps
+
+    m, client, figs, state = project
+    (figs / "fig.R").write_bytes(b'df <- read.csv("data.csv")\nplot(df)\n')
+    system_card = {
+        "kind": "system",
+        "packages": ["pandas"],
+        "outside_list": [],
+        "env": {"kind": "system", "name": "Python"},
+        "action": "choose_env",
+        "impact_digest": "",
+    }
+    answers = [
+        {"status": "hold", "card": system_card, "missing": ["pandas"]},  # 任务内：系统 Python
+        {
+            "status": "hold",
+            "card": system_card,
+            "missing": ["pandas"],
+        },  # 换环境前点了 replan：仍是系统
+        {"status": "installed", "installed": ["pandas"]},  # 换到项目 venv 后 replan
+    ]
+    seen = []
+
+    def fake_ensure(proj, rel, cancel=None):
+        seen.append(rel)
+        return answers.pop(0)
+
+    monkeypatch.setattr(convertdeps, "ensure", fake_ensure)
+    r = client.post(
+        "/api/ai/convert",
+        json={"script": "fig.R", "source_language": "r", "path": "out.png", "agent": "codex"},
+    )
+    sid = r.get_json()["session"]
+    _wait_final(client, sid)
+    assert client.get(f"/api/ai/convert/{sid}").get_json()["state"] == "awaiting_dependencies"
+
+    for body in ({"action": "nope"}, {"action": "install"}, {}):
+        assert client.post(f"/api/ai/convert/{sid}/dependencies", json=body).status_code == 400
+
+    def settle(timeout=60.0):
+        end = time.time() + timeout
+        while time.time() < end:
+            got = client.get(f"/api/ai/convert/{sid}").get_json()
+            if got["state"] != "resuming" and not ai_convert.resuming(sid):
+                return got
+            time.sleep(0.1)
+        raise AssertionError("续跑没有收尾")
+
+    again = client.post(f"/api/ai/convert/{sid}/dependencies", json={"action": "replan"})
+    assert again.status_code == 202 and again.get_json()["state"] == "resuming"
+    got = settle()
+    assert got["state"] == "awaiting_dependencies" and got["dependency_card"]["kind"] == "system"
+
+    done = client.post(f"/api/ai/convert/{sid}/dependencies", json={"action": "replan"})
+    assert done.status_code == 202
+    got = settle()
+    assert got["state"] == "ready" and got["installed"] == ["pandas"], got
+    assert len(seen) == 3 and all(rel.startswith(ai_convert.STAGE_PREFIX) for rel in seen)
+    # 已经不在等依赖了：再 replan = 409
+    late = client.post(f"/api/ai/convert/{sid}/dependencies", json={"action": "replan"})
+    assert late.status_code == 409

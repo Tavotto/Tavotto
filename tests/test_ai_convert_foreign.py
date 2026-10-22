@@ -28,7 +28,9 @@ from tavotto.engine import (
     ai_tasks,
     config,
     convertdeps,
+    pool,
 )
+from tests.test_convertdeps import _as, _joint, fake_repair, store  # noqa: F401  —— 夹具复用
 
 R_ORIGINAL = 'library(ggplot2)\ndf <- read.csv("data.csv")\nggplot(df, aes(x, y)) + geom_point()\n'
 M_ORIGINAL = "% 曲线\nx = linspace(0, 1, 20);\nfigure;\nplot(x, x.^2);\n"
@@ -551,4 +553,93 @@ def test_task_cancel_reaches_the_dependency_step_and_ends_cancelled(env):
     assert sess["task"]["outcome"] == "cancelled", sess["task"]
     assert seen["cancel"].is_set()
     assert not (ai_convert.CONVERT_DIR / sid).exists()
+    assert len(env["prompts"]) == 1
+
+
+# --------------------------------------------------------------------------- 换环境后按新环境重新判定（Codex #1330 P1：系统卡 → 选了别的环境，不用丢候选重跑付费 Agent）
+SYSTEM_CARD = {
+    **CARD,
+    "kind": "system",
+    "action": "choose_env",
+    "env": {"kind": "system", "name": "Python"},
+    "impact_digest": "",
+}
+
+
+def _replan(env, sid, *, timeout=20.0):
+    """走与 `/dependencies {action: replan}` 相同的入口：`prepare_resume` 登记 → `run_resume(ensure=convertdeps.ensure)`。"""
+    cdir, meta, cancel = ai_convert.prepare_resume(sid, _project(env))
+    out = {}
+    t = threading.Thread(
+        target=lambda: out.update(
+            ai_convert.run_resume(
+                sid,
+                _project(env),
+                cdir,
+                meta,
+                cancel,
+                runner=ok_runner,
+                ensure=convertdeps.ensure,
+            )
+        )
+    )
+    t.start()
+    t.join(timeout)
+    return out
+
+
+@pytest.fixture
+def held_on_system(env, fake_repair, tmp_path):  # noqa: F811
+    """候选已经因“系统 Python”停在等用户；之后各用例再把项目解释器换成别的。"""
+    sid = _run(env, hooks={"deps": _hold_hook(SYSTEM_CARD)})
+    _wait(sid)
+    return sid, fake_repair, tmp_path
+
+
+def test_replan_after_switching_to_a_project_venv_installs_and_continues_the_same_candidate(
+    env, held_on_system
+):
+    sid, st, _tmp = held_on_system
+    # 默认夹具 = 项目 venv：此刻解释器已不是系统 Python
+    out = _replan(env, sid)
+    assert out["state"] == "ready", out
+    assert "prepare" in [c[0] for c in st.calls], "项目 venv 在名单内：直接装"
+    assert len(env["prompts"]) == 1, "没有第二次 Agent 调用"
+    stat = ai_convert.status(sid, _project(env))
+    assert stat["state"] == "ready" and stat["installed"] == ["pandas", "statsmodels"]
+    assert ai_convert.adopt(sid, _project(env))["name"] == "fig_matplotlib.py"
+
+
+def test_replan_after_switching_to_conda_comes_back_with_the_ask_once_card(env, held_on_system):
+    sid, st, tmp = held_on_system
+    _as(st, tmp, source=pool.SOURCE_SYSTEM, conda=True)
+    out = _replan(env, sid)
+    assert out["state"] == ai_convert.STATE_AWAITING, out
+    card = ai_convert.status(sid, _project(env))["dependency_card"]
+    assert card["kind"] == "ask_once" and card["env"] == {"kind": "conda", "name": "myenv"}
+    assert "prepare" not in [c[0] for c in st.calls], "问之前一个字节不装"
+    assert len(env["prompts"]) == 1 and (ai_convert.CONVERT_DIR / sid).is_dir(), "候选还在"
+
+
+def test_replan_when_the_new_environment_is_no_longer_missing_anything_just_continues(
+    env, held_on_system
+):
+    sid, st, _tmp = held_on_system
+    st.joint = _joint(status="nothing_needed", requirements=())
+    out = _replan(env, sid)
+    assert out["state"] == "ready", out
+    assert "prepare" not in [c[0] for c in st.calls] and "create_joint_plan" not in [
+        c[0] for c in st.calls
+    ]
+    assert len(env["prompts"]) == 1
+
+
+def test_replan_while_still_on_the_system_python_returns_the_system_card_again(env, held_on_system):
+    sid, st, tmp = held_on_system
+    _as(st, tmp, source=pool.SOURCE_SYSTEM, ext=True)
+    out = _replan(env, sid)
+    assert out["state"] == ai_convert.STATE_AWAITING, out
+    card = ai_convert.status(sid, _project(env))["dependency_card"]
+    assert card["kind"] == "system" and card["action"] == "choose_env"
+    assert "prepare" not in [c[0] for c in st.calls]
     assert len(env["prompts"]) == 1

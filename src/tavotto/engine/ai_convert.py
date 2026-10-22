@@ -1068,10 +1068,13 @@ def run_resume(
     cancel: threading.Event,
     *,
     runner,
-    resolve,
-    confirmed_impact: str,
+    resolve=None,
+    confirmed_impact: str = "",
+    ensure=None,
 ) -> dict:
     """接着走**同一个候选**（不重跑 Agent）：装依赖（注入的 `resolve` = `convertdeps.resolve`，用户点击回显的摘要）→ 校验运行 → 对照 → 留存待采用。
+    `ensure`（= `convertdeps.ensure`）给「按当前环境重新判定」：不带点击摘要，按**此刻**的项目解释器走自动路径的同一棵决定树
+    （能直接装的装 / 要问一次或名单外或仍是系统 Python 的回新卡 / 已不缺的直接续跑）。二者给一个。
     结局 `{"state": ready | awaiting_dependencies | failed | cancelled}`；`cancelled` 时候选目录已删。
     只在 `prepare_resume` 之后调用（它登记了 `cancel`），返回前一定摘掉登记。"""
     root = Path(project)
@@ -1084,9 +1087,12 @@ def run_resume(
             return {"state": STATE_FAILED, "reason": exc.code}
         cand.extras["runner"] = runner
         cand.extras["cancel"] = cancel
-        cand.extras["deps"] = lambda proj, rel, cancel_ev: resolve(
-            proj, rel, confirmed_impact=confirmed_impact, cancel=cancel_ev
-        )
+        if ensure is not None:
+            cand.extras["deps"] = lambda proj, rel, cancel_ev: ensure(proj, rel, cancel_ev)
+        else:
+            cand.extras["deps"] = lambda proj, rel, cancel_ev: resolve(
+                proj, rel, confirmed_impact=confirmed_impact, cancel=cancel_ev
+            )
         result = run_validation(cand, runner)
         if cancel.is_set() or result["status"] == "cancelled":
             remove_dir(cdir)

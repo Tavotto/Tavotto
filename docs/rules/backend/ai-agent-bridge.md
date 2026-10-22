@@ -265,7 +265,7 @@ MATLAB 特征不足一律 None）复核文件与声明一致，对不上 400 `co
 `ai.convert.auto_install_envs`（解释器路径 sha256 前 16 位 + 种类 + 名，无明文路径；设置页可撤销），装的动作是现有链条的标准动作（受管环境）。
 **不自动装的分支都是真卡片**：`ConvertAdapter.hold` → `NeedsInput(reason_code="dependency_decision", data=card)`（`ai_tasks.NeedsInput` 带 `reason_code` / `data`，进
 `unmet[]`），结局 `needs_input`、候选不删（`meta.json` `awaiting_dependencies`）；`POST /api/ai/convert/<sid>/dependencies {action:"install", impact_digest}` 起作业
-（`ai_convert.prepare_resume` / `run_resume`：装 → 校验**同一个候选** → 留存，不重跑 Agent），`discard` 取消正在进行的安装。授权口径两种：点过卡片 = 前端回显卡片摘要（服务端不自回显，
+（`ai_convert.prepare_resume` / `run_resume`：装 → 校验**同一个候选** → 留存，不重跑 Agent），`discard` 取消正在进行的安装。换了环境（系统 / 内置卡选完环境且解释器变了）前端发 `{action:"replan"}`：`run_resume(ensure=convertdeps.ensure)` 按此刻环境重判同一个候选（不带摘要，复用同一续跑作业与忙碌判定）。授权口径两种：点过卡片 = 前端回显卡片摘要（服务端不自回显，
 对不上回新卡片）；已记过同意的环境 = 服务端回显同次调用算出的摘要（维护者 2026-10-23 裁决）。开关 `ai.convert.auto_install=false` / `TAVOTTO_NO_CONVERT_AUTO_INSTALL=1`
 （关着或计划不可执行时没有可执行动作，校验以 `missing_dependency` 失败，不修正）。
 会话元数据：sidecar 与 `meta.json` 记 `source_language`；`library` 在 r / matlab 时为 null；遥测不新增事件。看护：`tests/test_sourcelang.py`、

@@ -838,7 +838,7 @@ function convertFlow(
               size="md"
               data-convert-choose-env
               data-prep-primary="convert_choose_env"
-              onClick={() => useUiStore.getState().openEngineEnvPicker()}
+              onClick={() => store.chooseEnv(p.script)}
             >
               {pt('convert.deps.btn.chooseEnv')}
             </Button>
@@ -871,7 +871,7 @@ function convertFlow(
     }
     case 'resuming':
       return {
-        title: pt('convert.deps.resuming', { names: listJoin(c.card?.packages ?? []) }),
+        title: c.replanning ? pt('convert.deps.replanning') : pt('convert.deps.resuming', { names: listJoin(c.card?.packages ?? []) }),
         slot: <Progress />,
         ghost: (
           <Button variant="ghost" size="md" data-convert-stop className="text-ink-2" onClick={() => void store.stop(p.script)}>

@@ -8,13 +8,16 @@ vi.mock('@/lib/api', async (importOriginal) => ({
   adoptConvert: vi.fn(),
   discardConvert: vi.fn(),
   resolveConvertDependencies: vi.fn(),
+  replanConvertDependencies: vi.fn(),
   aiCancel: vi.fn().mockResolvedValue({ ok: true }),
 }))
 
-import { aiCancel, discardConvert, fetchAiSession, fetchConvert, resolveConvertDependencies, startConvert } from '@/lib/api'
+import { aiCancel, discardConvert, fetchAiSession, fetchConvert, replanConvertDependencies, resolveConvertDependencies, startConvert } from '@/lib/api'
 import { setCurrentProjectId } from '@/lib/session'
 import { useAiStore } from '@/store/aiStore'
 import { POLL_MS, useConvertStore } from '@/store/convertStore'
+import { useEnvStore } from '@/store/envStore'
+import { useUiStore } from '@/store/uiStore'
 
 const start = () => useConvertStore.getState().start('plot.py', 'pillow', 'out.png')
 const ridOf = (n: number) => vi.mocked(startConvert).mock.calls[n]![0].client_request_id
@@ -283,5 +286,96 @@ describe('convertStore：缺依赖卡（Codex #1330 P1-2，候选留着、接着
     await vi.advanceTimersByTimeAsync(POLL_MS + 20)
     await p
     expect(useConvertStore.getState().entries['fig.R']).toMatchObject({ phase: 'failed', reason: 'dependency_install_failed' })
+  })
+})
+
+describe('convertStore：换环境后按新环境重新判定（Codex #1330 P1，不丢候选、不重跑 Agent）', () => {
+  const systemCard = {
+    kind: 'system' as const, packages: ['pandas'], outside_list: [] as string[],
+    env: { kind: 'system' as const, name: 'Python' }, action: 'choose_env' as const, impact_digest: '',
+    target: '', creates_environment: false, downloads_python: false, modifies_user_environment: false,
+  }
+  const held = {
+    status: 'done', final: true,
+    task: { outcome: 'needs_input', unmet: [{ constraint_id: 'intent', reason_code: 'dependency_decision', data: systemCard }] },
+  } as never
+  const envOf = (python: string, projectPython = '') =>
+    ({ ok: true, python, project: { open: true, python: projectPython, source: projectPython ? 'project_venv' : undefined } }) as never
+  const entry = () => useConvertStore.getState().entries['fig.R']
+  const begin = async () => {
+    const p = useConvertStore.getState().start('fig.R', null, null, 'r')
+    await vi.advanceTimersByTimeAsync(POLL_MS + 10)
+    await p
+  }
+  beforeEach(async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout'] })
+    setCurrentProjectId('A')
+    useConvertStore.setState({ entries: {} })
+    useUiStore.setState({ engineEnvOpen: false, engineEnvPick: false })
+    useEnvStore.setState({ env: envOf('/usr/bin/python3') })
+    useAiStore.setState({ caps: { agents: [] } as never })
+    vi.mocked(startConvert).mockReset().mockResolvedValue({ session: 's1', script: 'fig.R' })
+    vi.mocked(fetchConvert).mockReset()
+    vi.mocked(fetchAiSession).mockReset().mockResolvedValue(held)
+    vi.mocked(replanConvertDependencies).mockReset().mockResolvedValue({ session: 's1', state: 'resuming' })
+    vi.mocked(resolveConvertDependencies).mockReset()
+    await begin()
+  })
+  afterEach(() => {
+    useConvertStore.getState().clear('fig.R')
+    vi.useRealTimers()
+  })
+
+  it('chooseEnv 打开现有的环境选择器并记下此刻的环境身份', () => {
+    useConvertStore.getState().chooseEnv('fig.R')
+    expect(useUiStore.getState()).toMatchObject({ engineEnvOpen: true, engineEnvPick: true })
+    expect(entry()?.envBase).not.toBeNull()
+  })
+
+  it('选完且解释器变了：自动 replan（只带会话，不带摘要）；期间 resuming + replanning；结果换成新卡', async () => {
+    useConvertStore.getState().chooseEnv('fig.R')
+    const conda = { ...systemCard, kind: 'ask_once' as const, env: { kind: 'conda' as const, name: 'myenv' }, action: 'install_managed' as const, impact_digest: 'dg-2' }
+    vi.mocked(fetchConvert).mockResolvedValueOnce({ state: 'resuming' } as never).mockResolvedValue({ state: 'awaiting_dependencies', dependency_card: conda } as never)
+    useEnvStore.setState({ env: envOf('/usr/bin/python3', '.venv/bin/python') })
+    await vi.advanceTimersByTimeAsync(0)
+    expect(replanConvertDependencies).toHaveBeenCalledWith('s1', 'A')
+    expect(entry()).toMatchObject({ phase: 'resuming', replanning: true, envBase: null })
+    await vi.advanceTimersByTimeAsync(POLL_MS * 2 + 20)
+    expect(entry()).toMatchObject({ phase: 'deps', replanning: false, card: conda })
+    expect(startConvert).toHaveBeenCalledTimes(1)
+    expect(resolveConvertDependencies).not.toHaveBeenCalled()
+  })
+
+  it('replan 后不再缺包：继续校验同一个候选，直接 ready', async () => {
+    useConvertStore.getState().chooseEnv('fig.R')
+    vi.mocked(fetchConvert).mockResolvedValue({ state: 'ready', installed: ['pandas'] } as never)
+    useEnvStore.setState({ env: envOf('/opt/conda/bin/python') })
+    await vi.advanceTimersByTimeAsync(POLL_MS + 20)
+    expect(entry()).toMatchObject({ phase: 'ready', card: null, replanning: false })
+  })
+
+  it('解释器没变（环境状态刷新但身份相同）：不 replan，保持原卡', async () => {
+    useConvertStore.getState().chooseEnv('fig.R')
+    useEnvStore.setState({ env: envOf('/usr/bin/python3') })
+    await vi.advanceTimersByTimeAsync(POLL_MS + 20)
+    expect(replanConvertDependencies).not.toHaveBeenCalled()
+    expect(entry()).toMatchObject({ phase: 'deps', card: systemCard })
+  })
+
+  it('没点过「选择运行环境」：环境变了也不替用户 replan', async () => {
+    useEnvStore.setState({ env: envOf('/opt/conda/bin/python') })
+    await vi.advanceTimersByTimeAsync(POLL_MS + 20)
+    expect(replanConvertDependencies).not.toHaveBeenCalled()
+  })
+
+  it('replan 回来仍是系统卡：换成新卡、不再自动 replan，等用户再选一次', async () => {
+    useConvertStore.getState().chooseEnv('fig.R')
+    vi.mocked(fetchConvert).mockResolvedValue({ state: 'awaiting_dependencies', dependency_card: systemCard } as never)
+    useEnvStore.setState({ env: envOf('/usr/local/bin/python3') })
+    await vi.advanceTimersByTimeAsync(POLL_MS + 20)
+    expect(entry()).toMatchObject({ phase: 'deps', envBase: null })
+    useEnvStore.setState({ env: envOf('/usr/bin/python3') })
+    await vi.advanceTimersByTimeAsync(POLL_MS + 20)
+    expect(replanConvertDependencies).toHaveBeenCalledTimes(1)
   })
 })
