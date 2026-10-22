@@ -184,7 +184,7 @@
         },
         {
           "spec": "guarded-png-activation.spec.ts",
-          "title": "source-backed PNG: saved-moment snapshot → no compare dialog, edits the figure as it was saved, and says so"
+          "title": "source-backed PNG: saved-moment snapshot → edits the figure as it was saved and says so (no compare dialog when the fixture and the engine share one interpreter)"
         }
       ],
       "desktop_manual": [

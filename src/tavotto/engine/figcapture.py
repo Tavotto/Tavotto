@@ -2062,7 +2062,7 @@ _SURFACE_EXTRA_MODULES = (
 _surface_lock = threading.Lock()
 _surface_base: dict[str, tuple[dict, list]] | None = None
 _surface_roots: tuple[str, ...] = ()
-_realpath_cache: dict[str, str] = {}
+_realpath_cache: dict[str, tuple[str, str]] = {}
 _LIB_TOPS = (
     frozenset(_SURFACE_PACKAGES) | {"numpy"} | frozenset(getattr(sys, "stdlib_module_names", ()))
 )
@@ -2098,17 +2098,22 @@ def _record_class_value(v) -> bool:
     return not _is_simple(v) and not _owner_module_ok(t)
 
 
-def _surface_module_map(name: str, mod) -> tuple[dict, list]:
+def _surface_module_map(name: str, mod) -> tuple[dict, dict]:
+    """(条目 -> 对象 id, 条目 -> 对象本身)。对象本身既握住（防地址复用），也供「变了的条目来源是不是库」复核用。"""
     out: dict = {}
-    refs: list = [mod]
+    objs: dict = {("!mod", None): mod}
     d = _module_dict(mod)
     if d is None:
         out[("!nonstd", None)] = id(type(mod))
-        return out, refs
+        return out, objs
+
+    def put(key, obj) -> None:
+        out[key] = id(obj)
+        objs[key] = obj
+
     for attr, val in list(d.items()):
         if type(attr) is not str:
-            out[("!key", id(attr))] = id(val)
-            refs.append(attr)
+            put(("!key", id(attr)), val)
             continue
         t = type(val)
         if _is_class_type(t):
@@ -2116,25 +2121,20 @@ def _surface_module_map(name: str, mod) -> tuple[dict, list]:
                 # 别的模块定义的类由它自己的模块登记；库里的类在模块间被惰性重新绑定是正常的（如 pyplot 的 `_backend_mod`），
                 # 只有「用户的类被塞进库模块」才记
                 if not _owner_module_ok(val):
-                    out[(attr, "!foreign")] = id(val)
-                    refs.append(val)
+                    put((attr, "!foreign"), val)
                 continue
             qualname = _T_QUALNAME.__get__(val)
             if type(qualname) is str and "<locals>" in qualname:
                 continue  # 函数里现造的类（pyplot 每次切后端重新建的 `_backend_mod`）：库自己的惰性状态
-            out[(attr, None)] = id(val)
-            refs.append(val)
+            put((attr, None), val)
             for k, v in list(_T_DICT.__get__(val).items()):
                 if type(k) is not str:
-                    out[("!key", id(k))] = id(v)
-                    refs.append(k)
+                    put(("!key", id(k)), v)
                 elif _record_class_value(v):
-                    out[(attr, k)] = id(v)
-                    refs.append(v)
+                    put((attr, k), v)
         elif t is types.FunctionType or t is types.BuiltinFunctionType:
-            out[(attr, None)] = id(val)
-            refs.append(val)
-    return out, refs
+            put((attr, None), val)
+    return out, objs
 
 
 def _surface_modules() -> dict:
@@ -2148,19 +2148,60 @@ def _surface_modules() -> dict:
 
 
 def _owner_module_ok(cls) -> bool:
-    """类（或某个对象的类型）定义在 matplotlib / mpl_toolkits / numpy / 标准库里。"""
+    """类（或某个对象的类型）定义在库里：matplotlib / mpl_toolkits / numpy / 标准库，或装在 site-packages 里的依赖
+    （cycler / pyparsing / PIL / dateutil / kiwisolver……，按该模块的文件位置判）。用户脚本 / 用户项目里的模块不算。"""
     module = _T_MODULE.__get__(cls)
-    return type(module) is str and module.split(".", 1)[0] in _LIB_TOPS
+    if type(module) is not str:
+        return False
+    top = module.split(".", 1)[0]
+    if top in _LIB_TOPS:
+        return True
+    d = _module_dict(sys.modules.get(top))
+    if d is None:
+        return False
+    for key in ("__file__", "__path__"):
+        loc = d.get(key)
+        if type(loc) is str:
+            return _path_under_roots(loc, _surface_roots)
+        if key == "__path__" and loc is not None:
+            try:
+                paths = list(loc)
+            except Exception:  # noqa: BLE001
+                return False
+            return bool(paths) and all(
+                type(x) is str and _path_under_roots(x, _surface_roots) for x in paths
+            )
+    return False
+
+
+def _path_under_roots(filename: str, roots) -> bool:
+    """`filename` 在 `roots` 之下（先按原样规整比，再按 realpath 比；Windows 的大小写 / 短路径 / 符号链接差异都不该造成误判）。
+    `<frozen …>` 与 `<string>`（库自己的冻结模块 / 代码生成）也算库来源。"""
+    if filename.startswith("<frozen ") or filename == "<string>":
+        return True
+    cached = _realpath_cache.get(filename)
+    if cached is None:
+        raw = os.path.normcase(os.path.normpath(filename))
+        try:
+            real = os.path.normcase(os.path.realpath(filename))
+        except Exception:  # noqa: BLE001
+            real = raw
+        cached = _realpath_cache[filename] = (raw, real)
+    for candidate in cached:
+        for root in roots:
+            if candidate == root or candidate.startswith(root + os.sep):
+                return True
+    return False
 
 
 def _function_origin_ok(fn, roots) -> bool:
     filename = _CODE_FILENAME.__get__(_FN_CODE.__get__(fn))
-    if type(filename) is not str:
-        return False
-    real = _realpath_cache.get(filename)
-    if real is None:
-        real = _realpath_cache[filename] = os.path.normcase(os.path.realpath(filename))
-    return real.startswith(roots)
+    if type(filename) is str and _path_under_roots(filename, roots):
+        return True
+    # 路径对不上时（打包 runtime 的目录布局各异）再看函数声明的所属模块：库的函数 `__module__` 是库的模块，
+    # 用户脚本里写的 patch 函数是用户的模块。威胁模型同上（防诚实的用户钩子，不防蓄意伪装 `__module__`）
+    module = _FN_MODULE.__get__(fn)
+    return type(module) is str and module.split(".", 1)[0] in _LIB_TOPS
 
 
 def _origin_value_ok(v, roots, depth: int = 0) -> bool:
@@ -2215,25 +2256,44 @@ def freeze_trusted_surface() -> None:
         if _surface_base is not None:
             return
         roots: list[str] = []
+
+        def add(path) -> None:
+            if type(path) is str and path:
+                for form in (os.path.normpath(path), os.path.realpath(path)):
+                    form = os.path.normcase(form)
+                    if form not in roots:
+                        roots.append(form)
+
         for pkg in _SURFACE_PACKAGES:
             d = _module_dict(sys.modules.get(pkg))
             paths = d.get("__path__") if d is not None else None
             if paths is not None:
                 try:
-                    roots.extend(os.path.normcase(os.path.realpath(p)) for p in list(paths))
+                    for p in list(paths):
+                        add(p)
                 except Exception:  # noqa: BLE001
                     pass
-        # 「库来源」还包括：matplotlib 所在的 site-packages（它的依赖 cycler / numpy 等）、标准库（`enum` / `contextlib` 生成的方法）、
-        # Tavotto 引擎目录（worker 对 `plt.show` 等的自家 patch）。被用户脚本里的函数顶替才是 patch
+        # 「库来源」还包括：matplotlib 所在的 site-packages（它的依赖）、解释器安装前缀（标准库、嵌入式发行版的 python3xx.zip、
+        # 各平台 site-packages）、Tavotto 引擎目录（worker 对 `plt.show` 等的自家 patch）。被用户脚本里的函数顶替才是 patch
+        import site  # noqa: PLC0415
         import sysconfig  # noqa: PLC0415
 
-        for extra in (
-            os.path.dirname(roots[0]) if roots else "",
-            sysconfig.get_paths()["stdlib"],
+        if roots:
+            add(os.path.dirname(roots[0]))
+        for path in (
+            sysconfig.get_paths().get("stdlib"),
+            sysconfig.get_paths().get("platstdlib"),
+            sys.prefix,
+            sys.base_prefix,
+            sys.exec_prefix,
             os.path.dirname(os.path.abspath(__file__)),
         ):
-            if extra:
-                roots.append(os.path.normcase(os.path.realpath(extra)))
+            add(path)
+        try:
+            for path in site.getsitepackages():
+                add(path)
+        except Exception:  # noqa: BLE001
+            pass
         _surface_roots = tuple(roots)
         _surface_base = {k: _surface_module_map(k, m) for k, m in _surface_modules().items()}
 
@@ -2257,9 +2317,46 @@ def trusted_surface_diff() -> list:
     return out
 
 
+_surface_reported: set = set()
+
+
+def _report_patched(why: str) -> None:
+    """只记一次、只写 stderr（worker.log）：下次再有环境差异造成的误判，能直接看到是哪个模块的哪一项。"""
+    if why in _surface_reported:
+        return
+    _surface_reported.add(why)
+    try:
+        print(f"[snapshot] matplotlib_patched: {why[:300]}", file=sys.stderr)
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def _changed_entries_are_library(name: str, cur_ids: dict, cur_objs: dict, known_ids: dict) -> bool:
+    """基线之后有变化的条目：新对象若仍是库来源（函数定义在库目录、对象类型属于库）就当环境 / 惰性状态的正常变化，
+    不当作 patch——我们要防的是**用户代码**被拍摄 / 还原间接跑起来；被删掉的条目没有新对象，更不会跑用户代码。"""
+    for key in set(cur_ids) | set(known_ids):
+        if cur_ids.get(key) == known_ids.get(key):
+            continue
+        obj = cur_objs.get(key)
+        if key not in cur_ids:
+            continue  # 被移除
+        if (
+            key[0].startswith("!")
+            or key[1] == "!foreign"
+            or not _origin_value_ok(obj, _surface_roots)
+        ):
+            _report_patched(f"{name}.{key[0]}.{key[1]}")
+            return False
+        if _is_class_type(type(obj)) and key[1] is None and not _owner_module_ok(obj):
+            _report_patched(f"{name}.{key[0]}")
+            return False
+    return True
+
+
 def trusted_surface_intact() -> bool:
     """此刻 matplotlib（及还原路径上的几个入口）的方法面与基线一致吗？每次都按真实值重算，不缓存。
     基线里有的模块逐项比对；基线之后才导入的模块首次见到时按来源从严检查、通过则补登记（之后的 patch 靠 id 比对发现）。
+    与基线不一致的条目再复核一次来源：新对象仍来自库（不是用户代码）就接受并更新基线。
     全程静态读取；任何意外异常都按「被改过」处理（返回 False），绝不向调用方抛。"""
     try:
         if _surface_base is None:
@@ -2274,13 +2371,18 @@ def trusted_surface_intact() -> bool:
                     if name.split(".", 1)[0] in _SURFACE_PACKAGES and not _module_origin_ok(
                         mod, name, _surface_roots
                     ):
+                        _report_patched(f"{name}: 首次见到的模块里有非库来源的函数 / 对象")
                         return False
                     base[name] = _surface_module_map(name, mod)
                     continue
-                if _surface_module_map(name, mod)[0] != known[0]:
-                    return False
+                cur = _surface_module_map(name, mod)
+                if cur[0] != known[0]:
+                    if not _changed_entries_are_library(name, cur[0], cur[1], known[0]):
+                        return False
+                    base[name] = cur
         return True
-    except Exception:  # noqa: BLE001 —— 比对失败本身就是不可信
+    except Exception as exc:  # noqa: BLE001 —— 比对失败本身就是不可信
+        _report_patched(f"异常 {type(exc).__name__}")
         return False
 
 

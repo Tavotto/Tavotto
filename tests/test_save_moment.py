@@ -582,6 +582,49 @@ def test_structure_signature_covers_inset_and_secondary_axes(fresh_surface):
     assert figcapture._structure_signature(restored) != figcapture._structure_signature(fig)
 
 
+def test_library_origin_is_decided_by_location_not_by_one_platform_layout(
+    tmp_path, monkeypatch, fresh_surface
+):
+    """Windows 打包 runtime 的误判（Codex #1314 CI）：标准库在 `python3xx.zip` 里、冻结模块的文件名是 `<frozen …>`、依赖库装在
+    site-packages——这些都是库来源；用户项目里的文件不是。边界按目录分隔符算（`/rt` 不是 `/rtX` 的父目录）。"""
+    root = str(tmp_path / "rt")
+    roots = (os.path.normcase(root),)
+    under = figcapture._path_under_roots
+    assert under(os.path.join(root, "python313.zip", "enum.pyc"), roots)
+    assert under(os.path.join(root, "Lib", "site-packages", "cycler", "__init__.py"), roots)
+    assert under("<frozen os>", roots) and under("<string>", roots)
+    assert not under(str(tmp_path / "rtX" / "evil.py"), roots)
+    assert not under(str(tmp_path / "project" / "figure.py"), roots)
+
+    # 装在库目录里的第三方依赖的类（如 pyparsing / cycler）是库来源；用户目录里的模块不是
+    dep_dir = tmp_path / "rt" / "site-packages"
+    dep_dir.mkdir(parents=True)
+    monkeypatch.setattr(figcapture, "_surface_roots", roots)
+    for modname, where, expected in (
+        ("fakedep_ok", dep_dir / "fakedep_ok.py", True),
+        ("fakedep_user", tmp_path / "project" / "fakedep_user.py", False),
+    ):
+        mod = types.ModuleType(modname)
+        mod.__file__ = str(where)
+        cls = type("Dep", (), {})
+        cls.__module__ = modname
+        monkeypatch.setitem(sys.modules, modname, mod)
+        assert figcapture._owner_module_ok(cls) is expected
+
+
+def test_a_library_origin_replacement_is_not_mistaken_for_a_user_patch(monkeypatch, fresh_surface):
+    """与启动指纹不同、但新对象仍是库里的函数：不是用户代码，接受（环境 / 惰性状态的正常变化）；用户函数仍然拒绝。"""
+    import matplotlib.lines as mlines
+    import matplotlib.text as mtext
+
+    monkeypatch.setattr(mlines.Line2D, "set_label", mtext.Text.set_text)  # 库函数顶替库函数
+    assert figcapture.trusted_surface_intact() is True
+    monkeypatch.setattr(
+        mlines.Line2D, "set_label", lambda self, s: None
+    )  # 用户（测试文件）里的函数
+    assert figcapture.trusted_surface_intact() is False
+
+
 def _hostile(calls, fig):
     """每一种「被检查就会跑起来」的写法：属性钩子、比较 / 哈希 / 布尔钩子、元类的 `__instancecheck__` / `__getattr__`。"""
 
