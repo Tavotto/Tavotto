@@ -131,7 +131,7 @@ def test_default_process_is_off_without_any_switch_touched(monkeypatch):
     assert contactsend.capability() == {"enabled": False}
     with pytest.raises(contactsend.ContactError) as e:
         contactsend.start(meta(), [])
-    assert (e.value.code, e.value.status) == ("contact_disabled", 404)
+    assert (e.value.code, e.value.status) == ("disabled", 404)
 
 
 def test_builtin_routes_are_exactly_the_two_whitelisted_hosts():

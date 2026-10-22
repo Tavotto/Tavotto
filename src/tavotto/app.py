@@ -4710,7 +4710,7 @@ def api_contact_capability():
 @app.get("/api/contact/status")
 def api_contact_status():
     if not engine_contactsend.enabled():
-        return _contact_error(engine_contactsend.ContactError("contact_disabled", 404))
+        return _contact_error(engine_contactsend.ContactError("disabled", 404))
     return _contact_json(engine_contactsend.status())
 
 
@@ -4719,7 +4719,7 @@ def api_contact_send():
     """用户点了「发送」：multipart，`meta` 是 JSON 字符串（subject / body / reply_email / report_id / locale），
     `file` 是 0..5 个附件。立即回 202 + 状态，真正的 init / 上传 / complete 在后台线程里做；界面轮询状态。"""
     if not engine_contactsend.enabled():
-        return _contact_error(engine_contactsend.ContactError("contact_disabled", 404))
+        return _contact_error(engine_contactsend.ContactError("disabled", 404))
     limit = engine_contactsend.MAX_TOTAL_BYTES + 1024 * 1024
     if (request.content_length or 0) > limit:
         return _contact_error(engine_contactsend.ContactError("attachments_too_large", 413))
@@ -4756,7 +4756,7 @@ def api_contact_dismiss():
 def api_contact_messages():
     """「我的来信」：本机记着的已发信件与取回的回信。**不联网**，不含令牌。"""
     if not engine_contactsend.enabled():
-        return _contact_error(engine_contactsend.ContactError("contact_disabled", 404))
+        return _contact_error(engine_contactsend.ContactError("disabled", 404))
     return _contact_json(
         {
             "messages": engine_contactinbox.public_messages(),
@@ -4769,7 +4769,7 @@ def api_contact_messages():
 def api_contact_refresh():
     """用户点了「检查回信」：立刻问一遍服务端（至多每 30 秒一次，没有已发的信时不联网）。"""
     if not engine_contactsend.enabled():
-        return _contact_error(engine_contactsend.ContactError("contact_disabled", 404))
+        return _contact_error(engine_contactsend.ContactError("disabled", 404))
     info = engine_contactsend.poll_once()
     return _contact_json({**info, "unread": engine_contactinbox.unread_count()})
 

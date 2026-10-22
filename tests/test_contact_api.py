@@ -114,7 +114,7 @@ def test_disabled_means_capability_false_and_everything_else_404(client, monkeyp
     ):
         resp = getattr(client, method)(url)
         assert resp.status_code == 404, url
-        assert resp.get_json()["code"] == "contact_contact_disabled"
+        assert resp.get_json()["code"] == "contact_disabled"
 
 
 def test_capability_has_limits_and_no_endpoint(on, client):

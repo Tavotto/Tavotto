@@ -83,7 +83,7 @@
       "attachment_empty": "有附件是空文件。",
       "attachment_mismatch": "有附件的内容与它的扩展名对不上。",
       "meta_invalid": "内容格式不对，请重新打开窗口再试。",
-      "contact_disabled": "「联系作者」已被关闭。",
+      "disabled": "「联系作者」已被关闭。",
       "send_in_progress": "上一封还在发送中。"
     },
     "failure": {

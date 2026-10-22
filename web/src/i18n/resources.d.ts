@@ -349,7 +349,7 @@ export default interface Resources {
         "bodyTooLong": "内容太长了。",
         "body_required": "请先写点内容。",
         "body_too_long": "内容太长了。",
-        "contact_disabled": "「联系作者」已被关闭。",
+        "disabled": "「联系作者」已被关闭。",
         "emailInvalid": "回信邮箱的格式不对，请检查，或者留空。",
         "email_invalid": "回信邮箱的格式不对，请检查，或者留空。",
         "meta_invalid": "内容格式不对，请重新打开窗口再试。",

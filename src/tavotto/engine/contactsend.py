@@ -534,7 +534,7 @@ def start(meta: object, files: list[tuple[str, bytes]]) -> dict:
     global _SESSION, _GEN, _REUSE
     targets = resolve_targets(_locale_of(meta))
     if not targets:
-        raise ContactError("contact_disabled", 404)
+        raise ContactError("disabled", 404)
     draft = build_draft(meta, files)
     fp = draft.fingerprint()
     with _LOCK:

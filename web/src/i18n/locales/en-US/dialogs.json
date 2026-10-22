@@ -83,7 +83,7 @@
       "attachment_empty": "One of the attachments is empty.",
       "attachment_mismatch": "One of the attachments doesn't match its file extension.",
       "meta_invalid": "The form data is malformed. Reopen this window and try again.",
-      "contact_disabled": "Contact the maker is turned off.",
+      "disabled": "Contact the maker is turned off.",
       "send_in_progress": "The previous message is still being sent."
     },
     "failure": {
