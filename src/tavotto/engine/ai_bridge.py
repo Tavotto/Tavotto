@@ -821,6 +821,25 @@ def _terminal_env_exports(env: dict) -> str:
     )
 
 
+#: 兜底命令里**不带**的闭集成员：用户自己的登录 shell 里本来就有（且通常就是同一个值）；
+#: 其余（CLAUDE_CONFIG_DIR / CODEX_HOME / 代理 / CA …）在 Tavotto 的 spawn_env 里才有，普通 shell 里没有。
+_MANUAL_ENV_SKIP = frozenset({"PATH", "HOME", "LANG", "LC_ALL"})
+
+
+def _manual_command(argv: list[str], env: dict) -> str:
+    """用户在普通 shell 里手动运行的登录命令。POSIX 前缀 `env NAME=<值> …`，让它认证的是 Tavotto 就绪检查
+    探测的那份配置、走同一条网络（同一份 `_TERMINAL_ENV_NAMES` 闭集，**不含密钥**）。Windows 分支永远是
+    新开控制台（不会走到兜底），`set X=v && …` 又无法安全转义，所以只给 argv 本身。"""
+    if ai_agents._is_windows():
+        return subprocess.list2cmdline(argv)
+    pairs = [
+        f"{name}={env[name]}"
+        for name in _TERMINAL_ENV_NAMES
+        if name not in _MANUAL_ENV_SKIP and env.get(name) is not None
+    ]
+    return shlex.join(["env", *pairs, *argv]) if pairs else shlex.join(argv)
+
+
 def _open_in_terminal(argv: list[str], env: dict) -> bool:
     """在用户的系统终端里跑 argv。**只打开终端并运行这一条命令**——不发任何全局按键，
     不用 System Events。→ 终端是否打开了；找不到终端返回 False（调用方给出手动命令）。"""
@@ -872,7 +891,7 @@ def start_login(agent_id: str) -> dict:
     spec, argv, env = _login_argv(agent)
     command = " ".join([agent.command_names[0], *spec.argv_suffix])
     # 手动兜底命令用已解析的真实 argv（自定义路径 / npm 全局目录下 command_names[0] 可能不在 PATH 上）
-    manual = subprocess.list2cmdline(argv) if ai_agents._is_windows() else shlex.join(argv)
+    manual = _manual_command(argv, env)
     if spec.mode == "terminal":
         try:
             opened = _open_in_terminal(argv, env)

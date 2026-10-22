@@ -38,6 +38,9 @@ import { CopyButton } from './CopyButton'
 import { EndpointDialog } from './EndpointDialog'
 import { useSettingsCrumb } from './settingsPageContext'
 
+/** 「改动后重新拉能力」回调。返回 `false` = 刷新失败（父级 reload 自己吞掉错误，只用它告知）。 */
+type OnRefreshed = (next?: AiCapabilities) => Promise<boolean | void> | boolean | void
+
 /**
  * 单个编码 Agent 的详情。
  *
@@ -67,7 +70,7 @@ export function AgentDetailView({
   caps: AiCapabilities
   onBack: () => void
   /** 任何改动之后重新拉能力（父级负责 loadCaps） */
-  onRefreshed: (next?: AiCapabilities) => Promise<void> | void
+  onRefreshed: OnRefreshed
 }) {
   useTranslation('dialogs')
   const [busy, setBusy] = useState(false)
@@ -78,7 +81,7 @@ export function AgentDetailView({
   useSettingsCrumb({ current: agent.display_name, onBack, backLabel: ag('backAria'), backAnchor: 'data-agent-back' })
 
   /** 跑一个改动，然后重新拉能力。`fn` 自己就是重探测时不再多跑一次。 */
-  const run = async (fn: () => Promise<AiCapabilities | unknown> | void) => {
+  const run = async (fn: () => Promise<unknown> | unknown) => {
     setError(null)
     setBusy(true)
     try {
@@ -118,12 +121,18 @@ export function AgentDetailView({
         size="sm"
         loading={login.phase === 'waiting'}
         disabled={login.phase === 'waiting'}
-        onClick={() => (login.phase === 'terminal' || login.phase === 'manual' ? login.confirm() : login.begin())}
+        onClick={() =>
+          login.phase === 'terminal' || login.phase === 'manual' || login.phase === 'retry'
+            ? login.confirm()
+            : login.begin()
+        }
       >
         {login.phase === 'waiting'
           ? ag('login.waiting')
-          : login.phase === 'terminal' || login.phase === 'manual'
-            ? ag('login.done')
+          : login.phase === 'retry'
+            ? ag('login.retry')
+            : login.phase === 'terminal' || login.phase === 'manual'
+              ? ag('login.done')
             : ag('login.action', { account: agent.login_account ?? agent.display_name })}
       </Button>
     )
@@ -142,6 +151,11 @@ export function AgentDetailView({
           >
             {ag('login.openLink')}
           </a>
+        </p>
+      )}
+      {showLogin && login.phase === 'retry' && (
+        <p data-agent-login-hint role="alert" className="text-xs leading-relaxed text-danger">
+          {ag('login.refreshFailed')}
         </p>
       )}
       {showLogin && login.phase === 'terminal' && (
@@ -333,7 +347,7 @@ export function AgentDetailView({
   )
 }
 
-type LoginPhase = 'idle' | 'waiting' | 'terminal' | 'manual'
+type LoginPhase = 'idle' | 'waiting' | 'terminal' | 'manual' | 'retry'
 
 /** 后台登录最多等多久（与后端 `LOGIN_TIMEOUT_S` 同量级）；到点不再轮询，按钮回到可点 */
 const LOGIN_MAX_WAIT_MS = 10 * 60 * 1000
@@ -349,7 +363,7 @@ const LOGIN_POLL_MS = 3000
  */
 function useAgentLogin(
   agent: AiAgentCaps,
-  onRefreshed: (next?: AiCapabilities) => Promise<void> | void,
+  onRefreshed: OnRefreshed,
   onError: (message: string | null) => void,
 ) {
   const [phase, setPhase] = useState<LoginPhase>('idle')
@@ -359,6 +373,14 @@ function useAgentLogin(
   useEffect(() => {
     refreshRef.current = onRefreshed
   }, [onRefreshed])
+  /** 刷新是否成功：父级 `reload` 自己吞掉失败，只用返回值 `false` 表达；抛错同样算失败。 */
+  const refreshOk = async () => {
+    try {
+      return (await refreshRef.current()) !== false
+    } catch {
+      return false
+    }
+  }
 
   useEffect(() => {
     if (phase !== 'waiting') return
@@ -382,9 +404,9 @@ function useAgentLogin(
           }
           stopped = true
           window.clearInterval(timer)
-          await refreshRef.current()
           setAuthUrl(null)
-          setPhase('idle')
+          // 登录进程已结束；刷新失败就停在「没能刷新」+ 重试，不回到初始登录按钮
+          setPhase((await refreshOk()) ? 'idle' : 'retry')
         } catch {
           /* 网络抖动：下一轮再问 */
         }
@@ -421,13 +443,9 @@ function useAgentLogin(
     }
   }, [agent.id, onError])
 
-  const confirm = useCallback(async () => {
-    try {
-      await refreshRef.current()
-    } finally {
-      setPhase('idle')
-    }
-  }, [])
+  const confirm = async () => {
+    setPhase((await refreshOk()) ? 'idle' : 'retry')
+  }
 
   return { phase, command, authUrl, begin: () => void begin(), confirm: () => void confirm() }
 }
@@ -514,7 +532,7 @@ function CustomExecutable({
   onRefreshed,
 }: {
   agent: AiAgentCaps
-  onRefreshed: (next?: AiCapabilities) => Promise<void> | void
+  onRefreshed: OnRefreshed
 }) {
   useTranslation('dialogs')
   // null = 没在编辑（显示当前值）；字符串 = 正在编辑的草稿
@@ -690,7 +708,7 @@ function InstallPanel({
   onRefreshed,
 }: {
   agent: AiAgentCaps
-  onRefreshed: (next?: AiCapabilities) => Promise<void> | void
+  onRefreshed: OnRefreshed
 }) {
   useTranslation('dialogs')
   const info = agent.install

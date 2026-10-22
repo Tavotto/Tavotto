@@ -584,6 +584,38 @@ describe('Agent 详情', () => {
       expect(text()).toContain(ag('login.manualHint', { command: 'claude auth login' }))
       expect(byName(ag('login.done'))).toBeTruthy()
     })
+
+    it('终端登录后刷新失败：说一句没能刷新 + 「重试」，不回到初始登录按钮；重试成功才收尾', async () => {
+      await openDetail(capsOf([needsAuth({ id: 'claude', display_name: 'Claude Code', login_account: 'Claude' })]))
+      loginMock.mockResolvedValue({ started: true, mode: 'terminal', command: 'claude auth login' })
+      await act(async () => loginBtn('Claude')!.click())
+      fetchMock.mockRejectedValue(new Error('network down')) // 父级 reload 吞掉它，只返回 false
+      await act(async () => byName(ag('login.done'))!.click())
+      expect(text()).toContain(ag('login.refreshFailed'))
+      expect(byName(ag('login.retry'))).toBeTruthy()
+      expect(loginBtn('Claude')).toBeUndefined() // 没有回到初始登录按钮
+      expect(document.querySelector('[data-agent-login="retry"]')).not.toBeNull()
+      // 重试成功 -> 正常收尾（caps 里仍是 needs_auth，则回到初始登录按钮）
+      fetchMock.mockResolvedValue(capsOf([needsAuth({ id: 'claude', display_name: 'Claude Code', login_account: 'Claude' })]))
+      await act(async () => byName(ag('login.retry'))!.click())
+      expect(text()).not.toContain(ag('login.refreshFailed'))
+      expect(document.querySelector('[data-agent-login="idle"]')).not.toBeNull()
+    })
+
+    it('后台登录进程结束后刷新失败：同样停在重试，不静默回到初始按钮', async () => {
+      await openDetail(capsOf([needsAuth()]))
+      vi.useFakeTimers()
+      loginMock.mockResolvedValue({ started: true, mode: 'background' })
+      loginStatusMock.mockResolvedValue({ status: 'idle' })
+      fetchMock.mockRejectedValue(new Error('network down'))
+      await act(async () => loginBtn('ChatGPT')!.click())
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(3000)
+      })
+      expect(text()).toContain(ag('login.refreshFailed'))
+      expect(byName(ag('login.retry'))).toBeTruthy()
+      expect(loginBtn('ChatGPT')).toBeUndefined()
+    })
   })
 
   it('装好的 Agent 不显示安装入口', async () => {

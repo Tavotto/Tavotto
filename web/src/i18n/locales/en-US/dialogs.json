@@ -1248,6 +1248,8 @@
         "done": "I’ve signed in",
         "manualHint": "No terminal was found. Open one yourself and run: {{command}}",
         "openLink": "Open the sign-in page",
+        "refreshFailed": "Couldn’t refresh the sign-in status.",
+        "retry": "Retry",
         "terminalHint": "Finish signing in in the terminal that just opened, then come back here.",
         "waiting": "Waiting for sign-in…"
       },

@@ -71,10 +71,12 @@ export function CodingAgentsSection() {
     try {
       await useAiStore.getState().loadCaps(refresh)
       setAnnounce(ag('announce.done'))
+      return true
     } catch (e) {
       // **保留上一次成功的结果**：清空的话用户会看到「全部未安装」，那是假的
       setError(backendErrorText(e))
       setAnnounce(ag('announce.failed'))
+      return false // 登录流程据此区分「刷新失败」与成功（错误本身已在 error 里）
     } finally {
       setBusy(false)
     }

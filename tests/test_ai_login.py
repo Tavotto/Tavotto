@@ -14,6 +14,7 @@ import io
 import logging
 import os
 import re
+import shlex
 import subprocess
 import sys
 
@@ -322,6 +323,33 @@ def test_linux_manual_fallback_uses_the_resolved_quoted_path(monkeypatch, popen)
     monkeypatch.setattr(ai_bridge.shutil, "which", lambda exe, *a, **k: None)
     out = ai_bridge.start_login("claude")
     assert out["command"] == "'/opt/my tools/claude' auth login"
+
+
+def test_linux_manual_fallback_carries_login_env_but_no_secrets(monkeypatch, popen):
+    _terminal_agent(monkeypatch)
+    monkeypatch.setattr(sys, "platform", "linux")
+    monkeypatch.setattr(ai_agents, "_is_windows", lambda: False)
+    monkeypatch.setattr(ai_bridge.shutil, "which", lambda exe, *a, **k: None)
+    real_spawn_env = ai_agents.spawn_env
+
+    def env_with_extras(path, *a, **k):
+        env = dict(real_spawn_env(path, *a, **k))
+        env.update(
+            CLAUDE_CONFIG_DIR="/x y",
+            HTTPS_PROXY="http://proxy:8080",
+            ANTHROPIC_API_KEY="sk-secret",
+            HOME="/home/someone",
+        )
+        return env
+
+    monkeypatch.setattr(ai_agents, "spawn_env", env_with_extras)
+    cmd = ai_bridge.start_login("claude")["command"]
+    assert shlex.split(cmd)[0] == "env"
+    assert "CLAUDE_CONFIG_DIR='/x y'" in cmd or "'CLAUDE_CONFIG_DIR=/x y'" in cmd
+    assert "HTTPS_PROXY=http://proxy:8080" in cmd
+    assert "sk-secret" not in cmd and "ANTHROPIC_API_KEY" not in cmd
+    assert "HOME=" not in cmd and "PATH=" not in cmd
+    assert cmd.endswith("'/opt/my tools/claude' auth login")
 
 
 def test_unknown_agent_and_not_installed(client, monkeypatch, popen):

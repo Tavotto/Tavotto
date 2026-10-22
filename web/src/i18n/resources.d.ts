@@ -1714,6 +1714,8 @@ export default interface Resources {
           "done": "我已登录",
           "manualHint": "没找到可用的终端。请自己打开终端，运行：{{command}}",
           "openLink": "点这里打开登录页",
+          "refreshFailed": "没能刷新登录状态。",
+          "retry": "重试",
           "terminalHint": "在打开的终端里完成登录后回到这里。",
           "waiting": "等待登录…"
         },
