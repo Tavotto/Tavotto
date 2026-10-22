@@ -59,6 +59,7 @@ export default interface Resources {
       "max": "最仔细，耗时与额度明显更多",
       "medium": "平衡速度与质量",
       "minimal": "只做最直接的改动，最快",
+      "ultra": "比「极高」更进一步，耗时与额度最多",
       "xhigh": "比「高」更深入，耗时与额度更多"
     },
     "effortLabel": {
@@ -67,6 +68,7 @@ export default interface Resources {
       "max": "最高",
       "medium": "中",
       "minimal": "最低",
+      "ultra": "超高",
       "xhigh": "极高"
     },
     "history": {

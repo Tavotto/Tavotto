@@ -23,6 +23,7 @@ import {
   usableAgents,
   type AiSessionDetail,
   type AiAgentId,
+  type AiAgentCaps,
   type AiCapabilities,
   type AiDeltaKind,
   type AiRefreshOutcome,
@@ -1391,6 +1392,35 @@ async function runDataFigure(
   }
 }
 
+/** 某个型号的详情；后端没带 `model_details`（旧后端 / 第三方接口）时为 undefined */
+export function modelDetail(info: AiAgentCaps | null | undefined, model: string | null | undefined) {
+  return model ? info?.model_details?.find((d) => d.id === model) : undefined
+}
+
+/** 该型号能选的强度档位：型号自己声明的，没声明就用 Agent 级清单 */
+export function effortsForModel(info: AiAgentCaps | null | undefined, model: string | null | undefined): string[] {
+  if (!info) return []
+  const own = modelDetail(info, model)?.efforts
+  return own && own.length > 0 ? own : info.efforts
+}
+
+/**
+ * 实际生效的强度：记着的那档在该型号的清单里就用它，否则取型号自己的默认档，
+ * 再否则 Agent 默认档，仍不在清单里就取清单第一档。永远不产出清单外的值。
+ */
+export function resolveEffort(
+  info: AiAgentCaps | null | undefined,
+  model: string | null | undefined,
+  stored: string | undefined,
+): string {
+  const list = effortsForModel(info, model)
+  if (list.length === 0) return ''
+  for (const c of [stored, modelDetail(info, model)?.default_effort, info?.default_effort]) {
+    if (c && list.includes(c)) return c
+  }
+  return list[0]
+}
+
 /** 一次发送（新发或同 id 重发）：只回 `accepted` / `unconfirmed`，后端明确拒绝时抛 */
 async function dispatch(rid: string, born: number): Promise<SubmitOutcome> {
   const { get, set } = { get: useAiStore.getState, set: useAiStore.setState }
@@ -1400,7 +1430,7 @@ async function dispatch(rid: string, born: number): Promise<SubmitOutcome> {
   const agent = effectiveAgent(get().agent, caps) as AiAgentId
   const info = agentById(caps, agent)
   const model = get().models[agent] ?? info?.default_model ?? null
-  const effort = info?.efforts.length ? (get().efforts[agent] ?? info.default_effort ?? null) : null
+  const effort = info?.efforts.length ? resolveEffort(info, model, get().efforts[agent]) || null : null
   set((s) => ({ submissions: { ...s.submissions, [rid]: { ...s.submissions[rid], phase: 'sending' } } }))
   let res
   try {
