@@ -1,7 +1,6 @@
 import { msg } from '@/i18n'
 import type { WorkdirConfirmation } from '@/lib/api'
-import { useEnvStore } from '@/store/envStore'
-import { useUiStore } from '@/store/uiStore'
+import type { StatusAction } from '@/store/uiStore'
 
 /**
  * build **成功**、但沙盒里 glob 回空而脚本目录里有文件时（图可能缺数据，#1254）的提醒：通知轨上的一条
@@ -17,25 +16,43 @@ export const workdirHintOwner = (pj: string | null | undefined, key: string) =>
 
 const noticed = new Set<string>()
 
+/**
+ * 依赖由调用方（`renderStore` / `scriptRunStore`，它们本来就持有这两个 store）递进来：本文件不 import store，
+ * 免得把 `envStore` 拉进 `renderStore` 所在的那个 import 环（`importArchitecture.test.ts` 只减不增）。
+ */
+export interface WorkdirHintNoticeDeps {
+  ui: {
+    setStatus: (
+      status: ReturnType<typeof msg> | null,
+      tone?: 'info',
+      opts?: { owner?: string; action?: StatusAction },
+    ) => void
+    clearStatusOwnedBy: (owner: string) => void
+  }
+  /** 项目的运行目录决定过没有（`env.project.workdir.decided`）；`true` = 用户已知情选了继续沙盒 */
+  decided: boolean | undefined
+  request: (hint: WorkdirConfirmation, projectId: string | null) => void
+}
+
 export function noticeWorkdirHint(
   owner: string,
   hint: WorkdirConfirmation | null | undefined,
   projectId: string | null,
+  deps: WorkdirHintNoticeDeps,
 ): void {
-  const ui = useUiStore.getState()
   if (!hint) {
-    ui.clearStatusOwnedBy(owner)
+    deps.ui.clearStatusOwnedBy(owner)
     return
   }
-  if (useEnvStore.getState().env?.project?.workdir?.decided === true) return
+  if (deps.decided === true) return
   const signature = `${owner}|${hint.script}|${(hint.probes ?? []).join(',')}`
   if (noticed.has(signature)) return
   noticed.add(signature)
-  ui.setStatus(msg('engine.workdirHintEmptyFigure', { script: hint.script }, 'errors'), 'info', {
+  deps.ui.setStatus(msg('engine.workdirHintEmptyFigure', { script: hint.script }, 'errors'), 'info', {
     owner,
     action: {
       label: msg('engine.workdirChooseButton', undefined, 'errors'),
-      run: () => useEnvStore.getState().requestWorkdirConfirmation(hint, projectId),
+      run: () => deps.request(hint, projectId),
     },
   })
 }

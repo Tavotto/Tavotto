@@ -22,7 +22,7 @@ import {
 import { engineTransport } from '@/lib/engineTransport'
 import { pngManifestOf, useMountedPngStore } from '@/store/mountedPngStore'
 import { currentProjectId } from '@/lib/session'
-import { noticeWorkdirHint, workdirHintOwner } from '@/lib/workdirHintNotice'
+import { noticeWorkdirHint, workdirHintOwner, type WorkdirHintNoticeDeps } from '@/lib/workdirHintNotice'
 import { captureProjectEpoch } from '@/lib/projectEpoch'
 import { observeFigureExecution } from '@/lib/figureExecutionEvents'
 import { resolvePreview, VECTOR_PREVIEW, type PreviewMetadata } from '@/lib/previewBudget'
@@ -222,6 +222,13 @@ function prepareSvg(text: string): string {
  * （后端按 `rel_id` 发 started / done / failed 三件套），toast 上显示的短名不唯一（`a/Fig1.pdf` 与
  * `b/Fig1.pdf` 都叫 Fig1），不能拿它认主人。
  */
+/** 通知轨提醒（`lib/workdirHintNotice`）要的两个 store 句柄：由持有它们的这一层递进去，lib 不 import store */
+export const workdirHintDeps = (): WorkdirHintNoticeDeps => ({
+  ui: useUiStore.getState(),
+  decided: useEnvStore.getState().env?.project?.workdir?.decided,
+  request: (hint, projectId) => useEnvStore.getState().requestWorkdirConfirmation(hint, projectId),
+})
+
 export const renderFailureOwner = (pj: string | null | undefined, id: string) =>
   `render.failed:${pj ?? ''}:${id}`
 
@@ -750,7 +757,7 @@ export const useRenderStore = create<RenderState>((set, get) => ({
             previewDpi: dpi ?? null,
           }
           // 沙盒里 glob 回空、脚本目录里有文件（图可能缺数据，#1254）：通知轨一条胶囊，同一份证据只提醒一次
-          noticeWorkdirHint(workdirHintOwner(projectAtStart, key), res.workdir_hint, projectAtStart)
+          noticeWorkdirHint(workdirHintOwner(projectAtStart, key), res.workdir_hint, projectAtStart, workdirHintDeps())
           // 二道闸（ADR 0022）：后端的 pre-read 闸才是第一道保护，这里拦的是
           // 「字节已经进了浏览器进程」之后的那一步——绝不 prepareSvg + 存进
           // store + 塞进 DOM。判据收在 `resolvePreview` 一处。
