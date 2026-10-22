@@ -586,3 +586,15 @@ def test_unusable_original_fails_before_any_model_request(tmp_path, kind):
     res, _ = run_demo(cand, {"turns": []}, model=model)
     assert (res.ok, res.reason, res.detail) == (False, "internal", "bad_target")
     assert calls == []
+
+
+def test_check_before_create_reports_not_created_even_without_a_callback(tmp_path):
+    """没注入 check 回调时，先 check 也要报 not_created（可操作的流程错误优先，Codex #1329 P2）。"""
+    cand = tmp_path / "c"
+    cand.mkdir()
+    (cand / "fig.py").write_text(ORIG, encoding="utf-8")
+    env = envelope(cand)
+    assert env.check is None
+    ts = {x.name: x for x in TASK.tools(env)}
+    r = ts["check"].handler({})
+    assert r.is_error and r.code == "not_created"

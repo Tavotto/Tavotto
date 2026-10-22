@@ -704,10 +704,11 @@ class ConvertSession(FigureEditSession):
 
     def check(self, args: dict, call_id: str = "") -> ToolResult:
         name = "check"
-        if self.check_fn is None:
-            return _err(name, call_id, "not_available", "check is not available in this session.")
+        # 先报可操作的流程错误（还没建文件），再报环境限制（本会话没有 check）
         if not self.created:
             return _err(name, call_id, "not_created", "Create the new file with create_file first.")
+        if self.check_fn is None:
+            return _err(name, call_id, "not_available", "check is not available in this session.")
         if self.checks_run >= CONVERT_MAX_CHECKS:
             return _err(
                 name,
