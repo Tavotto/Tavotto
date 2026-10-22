@@ -3,6 +3,7 @@
 2026-10-22，基于 main `cc89ec03b8033eded002c429313c5c78e10c6ac2`。
 范围：修正对照 PNG 丢失 `bbox_inches`；重新验证 Leaf 的 argv、Qudit 的 cwd。
 本轮不处理 Celerite 的 0.44 pt 布局漂移与 Gala PDF 异常。
+裁切修复单独位于 [#1321](https://github.com/Tavotto/Tavotto/pull/1321)；本文随 Leaf 清单修复提交，两个 PR 均直接基于 main。
 
 ## 输入与环境
 
@@ -84,7 +85,7 @@ python -m tavotto run -- "$PYTHON" plot_tomo_times.py
 - 相关回归：236 passed、19 skipped；跳过项为独立工作树未构建 workerd 的传输层分支。
 - 最终新增裁切与清单用例：12 passed；裁切判据使用原生实际 PDF 的 MediaBox / PNG 像素作为独立真值。
 - 手工反证：分别恢复旧裁切实现、旧清单实现，相应回归测试均以退出码 1 失败；恢复修复后通过。
-- 复现回归：`pytest tests/test_compat_native_crop.py tests/test_runtime_config_listing.py`；真实入口的
+- 复现回归：本分支 `pytest tests/test_runtime_config_listing.py`，#1321 分支 `pytest tests/test_compat_native_crop.py`；真实入口的
   本机完整回执、原生数组记录、导出与脚本驱动存于 `/private/tmp/tavotto-launch-validation/`。
 
 #1307 的 `compat_matrix.py`、`compat_guardian.py` 无改动；#1305 保持草稿且未追加提交。
