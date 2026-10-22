@@ -327,6 +327,15 @@ def test_adopt_creates_the_file_and_never_overwrites(env):
     assert ai_convert.status(sid, _project(env))["state"] == "adopted"
 
 
+@pytest.mark.skipif(os.name != "posix", reason="权限位只在 POSIX 上有意义")
+def test_adopt_inherits_the_original_scripts_permission_bits(env):
+    (env["figs"] / "fig.py").chmod(0o755)
+    sid = _run(env)
+    _wait(sid)
+    made = ai_convert.adopt(sid, _project(env))
+    assert (env["figs"] / made["script"]).stat().st_mode & 0o777 == 0o755
+
+
 def test_adopt_lands_beside_a_script_in_a_subdirectory(env):
     sub = env["figs"] / "sub"
     sub.mkdir()

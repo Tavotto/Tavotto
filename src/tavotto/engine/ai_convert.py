@@ -712,6 +712,7 @@ def adopt(sid: str, project: str) -> dict:
             continue
         except OSError as exc:
             raise ConvertError("convert_write_failed", 500) from exc
+        _inherit_mode(Path(dest), meta.get("base_mode"))
         meta["state"] = "adopted"
         meta["adopted_script"] = rel
         try:
@@ -720,6 +721,21 @@ def adopt(sid: str, project: str) -> dict:
             pass  # 文件已建成；记不下来只影响重入判断
         return {"script": rel, "name": name}
     raise ConvertError("convert_name_exhausted", 409)
+
+
+def _inherit_mode(dest: Path, base_mode) -> None:
+    """尽力而为：新脚本沿用原脚本的权限位（仅 POSIX、`base_mode` 有效时）；失败吞掉，不影响采用。"""
+    if (
+        os.name != "posix"
+        or not isinstance(base_mode, int)
+        or isinstance(base_mode, bool)
+        or base_mode <= 0
+    ):
+        return
+    try:
+        os.chmod(dest, base_mode & 0o777)
+    except OSError:
+        pass
 
 
 def discard(sid: str, project: str) -> dict:
