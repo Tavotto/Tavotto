@@ -45,7 +45,7 @@ python scripts/ci/compat_guardian.py run --suite {compat_engine|compat_v2} [--ca
 python scripts/ci/compat_guardian.py validate DIR/RUN_ID/reports/guardian.json
 python scripts/ci/compat_guardian.py summarize REPORT [REPORT ...] [--json-out F] [--markdown-out F] [--allow-partial-shards]
 python scripts/ci/compat_guardian.py promote REPORT --case ID --out FILE     # 只出提案
-python scripts/ci/compat_guardian.py explore --seed N --out DIR [--limit N] [--parent a,b] [--static-only] [--shard K/N]
+python scripts/ci/compat_guardian.py explore --seed N --out DIR [--limit N] [--parent a,b] [--static-only] [--shard K/N] [--max-seconds S]
 python scripts/ci/compat_guardian.py triage REPORT [REPORT ...] --out FILE [--allow-partial-shards]
 python scripts/ci/compat_guardian.py minimize --report EXPLORE_REPORT --candidate ID --out DIR [--max-runs N --max-seconds S]
 python scripts/ci/compat_guardian.py minimize --replay DIR/repro.json --out DIR2
@@ -63,9 +63,15 @@ python scripts/ci/compat_guardian.py minimize --replay DIR/repro.json --out DIR2
   与其它参数的组合：`--parent` / `--families` **先**过滤、再切片（总数与过滤条件记进报告，N 片必须一致）；`--limit` 只作用于本片（家族均衡选取照旧）；
   `--static-only` 照常（切片后全部只做静态检查）；与 `--candidates` 互斥（退出码 2）；片内为空则不发布报告（退出码 2）。
   报告多一块 `shard: {k, n, candidates_in_shard, candidates_total, filters}`；不带 `--shard` 的报告与以前逐字节同形。
+- `explore --max-seconds S`（有限正数，非法值退出码 2）是整次 explore 的时间预算：预算花完后**还没开始**的可执行候选记 `outcome: not_run`
+  （note 写 `time budget exhausted`，阶段全 `not_run`，执行次数 0），已执行的照常出报告；预算花完后不再开复跑确认（未确认的差异不会触发提醒）。
+  报告多一块 `time_budget: {max_seconds, exhausted, not_run}`，没有未执行候选时退出码走原来的 0 / 1 / 3，**有 `not_run` 且无差异时退出码 4**（部分覆盖：不是通过，也不是失败）。
+  `not_run` 不算「已执行」（样本、家族覆盖、轴表都不计），也不是 triage 的发现。不带该参数时报告与以前逐字节同形。
+  最坏超出预算一个候选的 `--timeout`（已开始的那个跑完），所以预算应比外层超时至少小一个候选超时。
 - `summarize` / `triage` 吃同一次周扫的 N 份分片报告时，先过合并校验：同 seed、同 HEAD、同生成器摘要与覆盖、同过滤条件与候选总数、
   片号恰好 1..N 各一份、没有候选出现在两片里、混入不分片的报告也不行——任何一条不满足退出码 2，**不静默合并**。
   缺片只有显式 `--allow-partial-shards` 才放行，放行后汇总 / 周报 / triage 到处标「N 片中 M 片完成」并写明「不是整个候选池」；
+  报告里的 `time_budget` 必须与候选行一致（有 `not_run` 行却无预算记录、计数对不上、声明耗尽却没有 `not_run` 行都失败）；合并信息给出 `not_run` 总数、预算耗尽的片号、`fully_executed`（片齐且无 `not_run`）；周报写「time budget exhausted in shard(s) […]: N candidate(s) NOT RUN」。
   重复片、混 seed、混 HEAD、混生成器永远失败，`--allow-partial-shards` 也不放行。合并后的覆盖与指标按全集算（家族覆盖、候选数、结局计数取各片之和）。
 - `promote` 只写一个候选记录（`proposal_only: true, applied: false`），**拒绝**写入
   `tests/compat/`、`tests/compat_guardian/`（含期望声明）、`tests/fixtures/`、`tests/support/`，也拒绝写任何名为 `manifest.json` /
@@ -417,9 +423,12 @@ CG-02 的 27 条真实差异聚成恰好两簇：G1（show 后 close，11 条）
 | job | 做什么 | 预算 / 权限 |
 | --- | --- | --- |
 | `explore-weekly-plan` | 算一次 seed：`date -u +%G%V`（ISO 年 + 周号，如 `202643`），dispatch 可用 `weekly_seed` 覆盖；校验为纯数字后经 job output 交给各片 | 5 分钟；`contents: read` |
-| `explore-weekly`（matrix `shard: [1, 2, 3, 4]`，`fail-fast: false`） | 每片 `explore --seed <周 seed> --shard K/4 --confirm-differences 3 --timeout 240`；上传白名单 artifact（报告、摘要、`candidates.json`、候选入口脚本 `*.py`——triage 用它算调用位置；不含数据文件 / 证据目录 / stdout） | 每片 job 60 分钟（步骤 50）= 4 片 × 60 分钟；`contents: read` |
+| `explore-weekly`（matrix `shard: [1, 2, 3, 4]`，`fail-fast: false`） | 每片 `explore --seed <周 seed> --shard K/4 --max-seconds 2700 --confirm-differences 3 --timeout 240`；上传白名单 artifact（报告、摘要、`candidates.json`、候选入口脚本 `*.py`——triage 用它算调用位置；不含数据文件 / 证据目录 / stdout） | 每片 job 60 分钟（步骤 50）= 4 片 × 60 分钟；`contents: read` |
 | `explore-weekly-summary`（`always()`，plan 成功即跑） | 按名字取本 run 的各片 artifact（缺片不让这一步失败）→ `triage` + `summarize --previous <上一周周报>` → step summary 与 artifact（保留 30 天） | 15 分钟；`contents: read` + `actions: read`（读本 run 的分片 artifact 与上一周周报，与 `trend` 同理由） |
 
+- **每片时间预算**：步骤上限 50 分钟，`--max-seconds 2700`（45 分钟 = 步骤上限减 5 分钟）。池约 156 个候选（可执行约 137），每片约 39 个（约 33–36 个可执行），
+  本机实测约 15–18 s/候选（见 PR 回报），一片约 10–12 分钟；预算存在的理由是候选池会随新变换增长，而被步骤超时杀掉的片**没有报告**、每周重复。
+  预算花完 → 该片 `not_run` 若干、退出码 4（workflow 里 `::warning::`）、汇总标「partial coverage」，不算通过。
 - **seed 只算一次**：4 片共用 plan job 的输出，不会因为跨 ISO 周边界各算各的；就算被人为改乱，合并校验也会因混 seed 失败。
 - **缺片与失败**：某片崩了，其余片照常跑完（`fail-fast: false`），汇总照样产出，但标「N 片中 M 片完成」并发 `::warning::`，该片自己的 job 是红的；
   一份报告都没有则汇总 job 红。重复片 / 混 seed / 混 HEAD 直接让汇总红（退出码 2）。
