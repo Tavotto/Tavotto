@@ -1654,6 +1654,48 @@ describe('执行结束、捕获到图、首次编辑渲染是三件事', () => {
       expect(foreignCard()?.querySelector('[data-convert-continue]')).not.toBeNull()
     })
 
+    describe('卡片 × 与对账（Codex #1330 P2）', () => {
+      const close = () => foreignCard()?.querySelector('[data-prep-close]') as HTMLButtonElement
+      const resume = async () => {
+        await begin(askOnce)
+        await act(async () => (foreignCard()?.querySelector('[data-convert-deps-install]') as HTMLButtonElement).click())
+        expect(foreignCard()?.dataset.convertPhase).toBe('resuming')
+      }
+
+      it('续跑中点 ×：卡片不卸载、说「正在停止…」；后端回 deps_installed → 出「继续」，提议还在', async () => {
+        await resume()
+        vi.mocked(fetchConvert).mockResolvedValue({ ...readyR, state: 'deps_installed' as never, installed: ['pandas'] } as never)
+        await act(async () => close().click())
+        expect(foreignCard()).not.toBeNull()
+        expect(line()).toBe('正在停止…')
+        expect(useForeignScriptStore.getState().offer).not.toBeNull()
+        await settle()
+        expect(foreignCard()?.dataset.convertPhase).toBe('installed')
+        expect(foreignCard()?.querySelector('[data-convert-continue]')).not.toBeNull()
+        expect(useForeignScriptStore.getState().offer).not.toBeNull()
+      })
+
+      it('续跑中点 ×，后端回 discarded：条目与提议一起清掉，卡片消失', async () => {
+        await resume()
+        vi.mocked(fetchConvert).mockResolvedValue({ session: 'sid-r', state: 'discarded' } as never)
+        await act(async () => close().click())
+        expect(foreignCard()).not.toBeNull()
+        expect(line()).toBe('正在停止…')
+        await settle()
+        expect(useConvertStore.getState().entries['fig.R']).toBeUndefined()
+        expect(useForeignScriptStore.getState().offer).toBeNull()
+        expect(foreignCard()).toBeNull()
+      })
+
+      it('非续跑阶段（依赖卡）点 ×：立即消失（原行为）', async () => {
+        await begin(askOnce)
+        expect(foreignCard()?.dataset.convertPhase).toBe('deps')
+        await act(async () => close().click())
+        expect(foreignCard()).toBeNull()
+        expect(useForeignScriptStore.getState().offer).toBeNull()
+      })
+    })
+
     it('摘要对不上时后端回新的卡片：卡片换成新的，不当失败', async () => {
       await begin(askOnce)
       vi.mocked(fetchConvert).mockResolvedValue({ ...readyR, state: 'awaiting_dependencies', dependency_card: { ...askOnce, impact_digest: 'dg-2', notice: 'dependency_impact_changed' } } as never)

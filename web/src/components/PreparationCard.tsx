@@ -989,6 +989,18 @@ export function ForeignScriptCard() {
   useEffect(() => {
     if (convert?.phase === 'adopted') useForeignScriptStore.getState().clear()
   }, [convert?.phase])
+  /**
+   * 续跑中点 ×：提议不能先清（卡片是 store 条目唯一的展示处，先卸载了，后端回 `deps_installed` 时「继续」无处可显）。
+   * 只记一个「用户要关」，等 store 条目因对账而消失（候选已删）这一处才清提议；回到「继续」等卡则撤销这个意图。
+   */
+  const [closing, setClosing] = useState(false)
+  useEffect(() => {
+    if (!closing) return
+    if (!convert) {
+      useForeignScriptStore.getState().clear()
+      setClosing(false)
+    } else if (!convert.stopping) setClosing(false)
+  }, [closing, convert])
   if (!offer || hidden) return null
   const language = offer.language
   const p: Extract<PrepPrimary, { kind: 'convert' }> = { kind: 'convert', script: offer.script, library: null, path: null, language }
@@ -1024,7 +1036,15 @@ export function ForeignScriptCard() {
           )
         }
         onClose={() => {
-          if (convert?.phase === 'running' || convert?.phase === 'deps' || convert?.phase === 'resuming' || convert?.phase === 'installed')
+          if (convert?.phase === 'resuming') {
+            // 对账期间不清提议：由上面的 effect 在条目消失时清（见 closing）
+            if (!convert.stopping) {
+              setClosing(true)
+              void useConvertStore.getState().stop(offer.script)
+            }
+            return
+          }
+          if (convert?.phase === 'running' || convert?.phase === 'deps' || convert?.phase === 'installed')
             void useConvertStore.getState().stop(offer.script)
           useForeignScriptStore.getState().clear()
         }}

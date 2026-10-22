@@ -728,13 +728,17 @@ export interface BrowseResult {
   /** 当前列的是「驱动器」那一层虚拟根 */
   is_roots: boolean
   writable?: boolean
+  /** 请求带了 `has_file` 才有：该叶子名在这个目录里确是一个文件 */
+  has_file?: boolean
 }
 
 /** 目录列举。`'@roots'` = 列驱动器（Windows 靠它跨到 D 盘）。 */
-export const browseDirs = (path?: string) =>
-  jsonFetch<BrowseResult>(
-    `/api/projects/browse${path ? `?path=${encodeURIComponent(path)}` : ''}`,
-  )
+export const browseDirs = (path?: string, hasFile?: string) => {
+  const q = [path ? `path=${encodeURIComponent(path)}` : '', hasFile ? `has_file=${encodeURIComponent(hasFile)}` : '']
+    .filter(Boolean)
+    .join('&')
+  return jsonFetch<BrowseResult>(`/api/projects/browse${q ? `?${q}` : ''}`)
+}
 
 export const patchProjectSettings = (patch: {
   export_dir?: string

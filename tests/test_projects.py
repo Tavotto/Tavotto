@@ -446,6 +446,25 @@ def test_browse_lists_dirs_only(client, tmp_path):
     assert body["parent"]
 
 
+def test_browse_has_file_only_for_leaf_names(client, tmp_path):
+    (tmp_path / "fig.R").write_text("x")
+    (tmp_path / "sub").mkdir()
+    (tmp_path / "sub" / "deep.R").write_text("x")
+
+    def has(name):
+        return client.get(
+            "/api/projects/browse", query_string={"path": str(tmp_path), "has_file": name}
+        ).get_json()
+
+    assert has("fig.R")["has_file"] is True
+    assert has("nope.R")["has_file"] is False
+    assert has("sub")["has_file"] is False  # 目录不是文件
+    assert has("sub/deep.R")["has_file"] is False  # 只认叶子名
+    assert has("../fig.R")["has_file"] is False
+    assert has("")["has_file"] is False
+    assert "has_file" not in client.get(f"/api/projects/browse?path={tmp_path}").get_json()
+
+
 def test_browse_missing_dir(client, tmp_path):
     resp = client.get(f"/api/projects/browse?path={tmp_path}/nope")
     assert resp.status_code == 400

@@ -5255,17 +5255,29 @@ def api_projects_browse():
         ), 400
     # 盘符根的上一级是「此电脑」那一层虚拟根，不是它自己
     parent = str(p.parent) if p != p.parent else ("@roots" if os.name == "nt" else None)
-    return jsonify(
-        {
-            "path": str(p),
-            "parent": parent,
-            "is_roots": False,
-            "dirs": dirs,
-            "roots": roots,
-            "shortcuts": _browse_shortcuts(),
-            "writable": os.access(p, os.W_OK),
-        }
-    )
+    body = {
+        "path": str(p),
+        "parent": parent,
+        "is_roots": False,
+        "dirs": dirs,
+        "roots": roots,
+        "shortcuts": _browse_shortcuts(),
+        "writable": os.access(p, os.W_OK),
+    }
+    # 浏览器拖入 R / MATLAB 脚本拿不到路径：选完文件夹要先核「这里确有这个文件」再提议（只认叶子名）
+    leaf = request.args.get("has_file")
+    if leaf is not None:
+        ok_leaf = (
+            bool(leaf)
+            and leaf == leaf.strip()
+            and leaf not in (".", "..")
+            and not any(c in leaf for c in "/\\\0")
+        )
+        try:
+            body["has_file"] = bool(ok_leaf and (p / leaf).is_file())
+        except OSError:
+            body["has_file"] = False
+    return jsonify(body)
 
 
 # ------------------------- 脚本注册表 ---------------------------------------

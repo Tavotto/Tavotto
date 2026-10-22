@@ -49,6 +49,9 @@ vi.mock('@/lib/onboarding/tutorial', async (orig) => ({
   ...tutorial,
 }))
 
+/** 浏览器目录浏览器的 has_file 应答：选的文件夹里有没有被问的那个文件 */
+let browseHasFile = false
+const browseCalls: string[] = []
 let tutorialApi: 'ok' | 'broken' | 'none' | 'pending' = 'ok'
 globalThis.fetch = (async (url: unknown) => {
   const u = String(url)
@@ -58,7 +61,9 @@ globalThis.fetch = (async (url: unknown) => {
     return new Response(JSON.stringify({ available: tutorialApi === 'ok', problems: [] }), { status: 200 })
   }
   if (u.includes('/api/projects/browse')) {
-    return new Response(JSON.stringify({ path: '/srv', parent: '/', dirs: [] }), { status: 200 })
+    browseCalls.push(u)
+    const asked = new URL(u, 'http://x').searchParams.has('has_file')
+    return new Response(JSON.stringify({ path: '/srv', parent: '/', dirs: [], ...(asked ? { has_file: browseHasFile } : {}) }), { status: 200 })
   }
   return new Response('{}', { status: 404 })
 }) as typeof fetch
@@ -321,6 +326,61 @@ describe('老手版', () => {
       expect(open).toHaveBeenCalledWith('/Users/me/paper', false)
       expect(prepOpen).not.toHaveBeenCalled()
       expect(useForeignScriptStore.getState().offer).toEqual({ script: 'fig.R', language: 'r' })
+    })
+
+    describe('浏览器拖入 .R（拿不到路径）→ 选文件夹', () => {
+      const pickFolder = async () => {
+        await act(async () => {}) // 目录浏览器的首次列举落地
+        await click(document.querySelector<HTMLButtonElement>('[data-dir-browser-confirm]')!)
+        await act(async () => {}) // has_file 应答落地
+      }
+      beforeEach(() => {
+        desktop.isDesktop.mockReturnValue(false)
+        browseHasFile = false
+        browseCalls.length = 0
+      })
+
+      it('选对文件夹：打开它并出外语脚本卡', async () => {
+        browseHasFile = true
+        await mount()
+        await dropOn(host.querySelector('[data-home-dropzone]')!, { files: ['fig.R'] })
+        expect(document.querySelector('[role="dialog"]')).not.toBeNull()
+        await pickFolder()
+        expect(browseCalls.some((u) => u.includes('has_file=fig.R'))).toBe(true)
+        expect(open).toHaveBeenCalledWith('/srv', false)
+        expect(useForeignScriptStore.getState().offer).toEqual({ script: 'fig.R', language: 'r' })
+        expect(prepOpen).not.toHaveBeenCalled()
+        expect(document.querySelector('[role="dialog"]')).toBeNull()
+      })
+
+      it('选错文件夹：一句话说没找到，不开项目不出卡，对话框还在；换对文件夹后出卡', async () => {
+        await mount()
+        await dropOn(host.querySelector('[data-home-dropzone]')!, { files: ['fig.R'] })
+        await pickFolder()
+        expect(document.querySelector('[role="dialog"]')!.textContent).toContain('这个文件夹里没找到「fig.R」，请选它所在的文件夹')
+        expect(open).not.toHaveBeenCalled()
+        expect(useForeignScriptStore.getState().offer).toBeNull()
+        browseHasFile = true
+        await pickFolder()
+        expect(open).toHaveBeenCalledWith('/srv', false)
+        expect(useForeignScriptStore.getState().offer).toEqual({ script: 'fig.R', language: 'r' })
+      })
+
+      it('取消选择：什么都不出，待定也清掉（之后普通导入选文件夹不会冒出卡）', async () => {
+        await mount()
+        await dropOn(host.querySelector('[data-home-dropzone]')!, { files: ['fig.m'] })
+        await act(async () => {})
+        const cancel = [...document.querySelectorAll<HTMLButtonElement>('[role="dialog"] button')].find((b) => b.textContent === '取消')!
+        await click(cancel)
+        expect(document.querySelector('[role="dialog"]')).toBeNull()
+        expect(open).not.toHaveBeenCalled()
+        expect(useForeignScriptStore.getState().offer).toBeNull()
+        browseHasFile = true
+        await click(host.querySelector<HTMLButtonElement>('[data-home-dropzone]')!)
+        await pickFolder()
+        expect(open).toHaveBeenCalledWith('/srv', false)
+        expect(useForeignScriptStore.getState().offer).toBeNull()
+      })
     })
 
     it('目录没打开成功就不提议', async () => {

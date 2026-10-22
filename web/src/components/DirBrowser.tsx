@@ -54,6 +54,7 @@ export function DirBrowser({
   title,
   onClose,
   onPick,
+  problem,
 }: {
   mode: 'open' | 'create'
   initialPath?: string
@@ -61,6 +62,8 @@ export function DirBrowser({
   title?: string
   onClose: () => void
   onPick: (path: string, create: boolean) => void
+  /** 调用方对上一次选择的异议（如「这个文件夹里没找到 fig.R」）：框不关，一句话摆在地址栏上方，换个文件夹再选 */
+  problem?: string | null
 }) {
   const { t } = useTranslation('project')
   const [state, setState] = useState<BrowseResult | null>(null)
@@ -233,6 +236,8 @@ export function DirBrowser({
             <CornerDownLeft size={ICON_SIZE.sm} />
           </IconButton>
         </form>
+
+        {problem && <Notice tone="danger">{problem}</Notice>}
 
         {/* 错误紧贴地址栏下面（它多半是地址栏里那条路径的事） */}
         {error && (

@@ -10,7 +10,7 @@ import {
   Play,
 } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
-import type { RecentProject } from '@/lib/api'
+import { backendErrorText, browseDirs, type RecentProject } from '@/lib/api'
 import { PRODUCT_NAME } from '@/lib/brand'
 import {
   dragRegionProps,
@@ -205,6 +205,12 @@ type Importer = ReturnType<typeof useScriptImport>
 function useScriptImport(openPath: (path: string) => Promise<boolean>) {
   const { t } = useTranslation('project')
   const [browsing, setBrowsing] = useState(false)
+  /**
+   * 浏览器拖入 R / MATLAB 脚本拿不到路径：记下文件名与语言，等用户在目录浏览器里选好文件夹后走 `openForeign`。
+   * 只在这一次选择内有效——取消 / 换别的入口 / 选完（成功或不对）都清掉；`problem` = 选错了文件夹的那句话。
+   */
+  const [pendingForeign, setPendingForeign] = useState<{ name: string; language: ForeignLanguage } | null>(null)
+  const [pickProblem, setPickProblem] = useState<string | null>(null)
   const [notice, setNotice] = useState<{ tone: 'info' | 'error'; text: string } | null>(null)
   /**
    * 壳能不能交来真实路径：`pending` = 能力探测与事件订阅还没都完成。两件事都是异步、先后不定，
@@ -295,7 +301,9 @@ function useScriptImport(openPath: (path: string) => Promise<boolean>) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  const choose = () => {
+  const choose = (pending: { name: string; language: ForeignLanguage } | null = null) => {
+    setPendingForeign(pending)
+    setPickProblem(null)
     if (isDesktop()) {
       void pickScriptFile(t('home.import.nativeTitle')).then((path) => {
         if (path) {
@@ -329,7 +337,7 @@ function useScriptImport(openPath: (path: string) => Promise<boolean>) {
       case 'no-path':
       case 'foreign-no-path':
         setNotice({ tone: 'info', text: t('home.import.dropNoPath', { name: target.name, product: PRODUCT_NAME }) })
-        choose()
+        choose(target.kind === 'foreign-no-path' ? { name: target.name, language: target.language } : null)
         return
       case 'not-script':
         setNotice({ tone: 'error', text: t('home.import.dropNotScript', { name: target.name }) })
@@ -364,11 +372,35 @@ function useScriptImport(openPath: (path: string) => Promise<boolean>) {
     <DirBrowser
       mode="open"
       title={t('home.import.folderTitle')}
-      onClose={() => setBrowsing(false)}
-      onPick={(path) => {
+      problem={pickProblem}
+      onClose={() => {
         setBrowsing(false)
-        setNotice(null)
-        void openPath(path)
+        setPendingForeign(null)
+        setPickProblem(null)
+      }}
+      onPick={(path) => {
+        const pending = pendingForeign
+        if (!pending) {
+          setBrowsing(false)
+          setNotice(null)
+          void openPath(path)
+          return
+        }
+        // 先核「这个文件夹里确有这个文件」再开项目：选错了不动当前状态、对话框不关，换个文件夹再选
+        void browseDirs(path, pending.name).then(
+          (r) => {
+            if (!r.has_file) {
+              setPickProblem(t('home.import.foreignNotFound', { name: pending.name }))
+              return
+            }
+            setBrowsing(false)
+            setPendingForeign(null)
+            setPickProblem(null)
+            setNotice(null)
+            void openForeign(path, pending.name, pending.language)
+          },
+          (e) => setPickProblem(backendErrorText(e)),
+        )
       }}
     />
   )
