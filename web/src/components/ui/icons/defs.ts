@@ -111,6 +111,8 @@ const PENCIL = 'M4 20l4.1-.9L19.6 7.6a2.2 2.2 0 0 0-3.1-3.1L5 16z'
 
 const bar = (x: number, y: number, w: number, h: number) => rr(x, y, w, h, 1.5)
 
+const HEART = 'M12 20.2C6.6 16.4 3.8 13.1 3.8 9.6A4.3 4.3 0 0 1 12 7.6a4.3 4.3 0 0 1 8.2 2c0 3.5-2.8 6.8-8.2 10.6z'
+
 export const ICON_DEFS = {
   // ───────── 左轨 ─────────
   LayoutGrid: { s: [rr(3, 3, 7, 7, 2), rr(14, 3, 7, 7, 2), rr(3, 14, 7, 7, 2), rr(14, 14, 7, 7, 2)],
@@ -157,6 +159,7 @@ export const ICON_DEFS = {
 
   // ───────── 右栏 / 助手 ─────────
   Sparkles: { s: [SPARK], f: [SPARK_SM], sel: { f: [SPARK, SPARK_SM] } },
+  Heart: { s: [HEART], sel: { f: [HEART] } },
   Pin: { s: [PIN_BODY, 'M12 14v6.5'], sel: { f: [PIN_BODY], s: ['M12 14v6.5'] } },
   MousePointerClick: { f: [CURSOR], s: ['M6 10.75H4.5', 'M10.5 6.25V4.75', 'M7 7.25L5.9 6.15'] },
   SlidersHorizontal: { s: ['M3.5 7.5h8.75', 'M18.75 7.5h1.75', circ(15.5, 7.5, 2.25), 'M3.5 16.5h1.75', 'M11.75 16.5h8.75', circ(8.5, 16.5, 2.25)] },
