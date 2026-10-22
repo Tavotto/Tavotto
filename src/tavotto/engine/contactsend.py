@@ -647,10 +647,11 @@ def _settle(sess: Session, targets, code, retry_after, cancelled) -> None:
         # 附件字节与令牌到此为止：重试由前端重新带稿、重新 init 拿回同一个 reply_token
         sess.draft = None
         sess.complete_token, sess.reply_token, sess.specs = "", "", []
-    _log(
-        "ok" if sess.state == "done" else ("cancelled" if sess.state == "cancelled" else code),
-        stage,
-    )
+        # 在锁里记：状态一放出去，读状态的人（界面 / 测试）就可能紧接着看日志
+        _log(
+            "ok" if sess.state == "done" else ("cancelled" if sess.state == "cancelled" else code),
+            stage,
+        )
 
 
 def _flow(sess: Session, targets: list[diagsend.Target]) -> None:
