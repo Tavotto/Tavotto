@@ -143,6 +143,40 @@ def test_convert_runs_validates_compares_and_adopts_without_touching_the_origina
     assert again.status_code == 200 and again.get_json()["script"] == "fig_matplotlib.py"
 
 
+def test_r_script_converts_end_to_end_without_running_r_and_reports_the_install_step(
+    project, monkeypatch
+):
+    """R 来源（ADR 0143 修订）：真 safe worker 跑 Agent 写的 Python 候选；R 脚本字节不变；依赖钩子（自动安装）被调用且结果进对照数据。
+    安装入口被替换（不装任何真包）。"""
+    from tavotto.engine import convertdeps
+
+    m, client, figs, state = project
+    (figs / "fig.R").write_bytes(b'df <- read.csv("data.csv")\nplot(df)\n')
+    seen = []
+
+    def fake_ensure(proj, rel):
+        seen.append((proj, rel))
+        return {"status": "installed", "installed": ["pandas"]}
+
+    monkeypatch.setattr(convertdeps, "ensure", fake_ensure)
+    r = client.post(
+        "/api/ai/convert",
+        json={"script": "fig.R", "source_language": "r", "path": "out.png", "agent": "codex"},
+    )
+    assert r.status_code == 200, r.get_json()
+    sid = r.get_json()["session"]
+    sess = _wait_final(client, sid)
+    assert sess["task"]["outcome"] == "completed", sess.get("task")
+    st = client.get(f"/api/ai/convert/{sid}").get_json()
+    assert st["source_language"] == "r" and st["library"] is None
+    assert st["installed"] == ["pandas"]
+    assert st["comparison"]["verification"] == "side_by_side"
+    assert seen and seen[0][1].startswith(ai_convert.STAGE_PREFIX)
+    assert (figs / "fig.R").read_bytes() == b'df <- read.csv("data.csv")\nplot(df)\n'
+    a = client.post(f"/api/ai/convert/{sid}/adopt")
+    assert a.status_code == 200 and a.get_json()["script"] == "fig_matplotlib.py"
+
+
 def test_a_script_that_captures_no_figure_fails_with_a_reason(project):
     m, client, figs, state = project
     state["code"] = WRITE_NO_FIGURE

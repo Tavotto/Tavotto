@@ -75,6 +75,7 @@ from .engine import (
     capabilities as engine_capabilities,
     cli as engine_cli,
     config as engine_config,
+    convertdeps as engine_convertdeps,
     databinding as engine_databinding,
     depplan as engine_depplan,
     deprepair as engine_deprepair,
@@ -138,6 +139,7 @@ from .engine import (
     scriptedit as engine_scriptedit,
     scriptlock as engine_scriptlock,
     session_client as engine_session_client,
+    sourcelang as engine_sourcelang,
     specfix as engine_specfix,
     svgexecution as engine_svgexecution,
     taskdiag as engine_taskdiag,
@@ -11535,6 +11537,7 @@ def _ai_run_impl():
 
 # --- 「生成可编辑版本」（ADR 0143）：位图库画的图 → 改图助手另写一份 Matplotlib 版**新**脚本，原脚本不动 -------
 _CONVERT_PROMPT = "生成可编辑的 Matplotlib 版本（{library}）"
+_CONVERT_SOURCE_LABELS = {"r": "R", "matlab": "MATLAB"}
 
 
 def _convert_error(exc: "engine_ai_convert.ConvertError"):
@@ -11585,10 +11588,12 @@ def _convert_runner(ctx: "ProjectCtx", source_script: str):
 
 @app.post("/api/ai/convert")
 def api_ai_convert():
-    """启动「生成可编辑版本」。body：`{script, library, path?, agent?, client_request_id?, model?, effort?, endpoint?}`。
+    """启动「生成可编辑版本」。body：`{script, library?, source_language?, path?, agent?, client_request_id?, model?, effort?, endpoint?}`。
 
-    `script` 是项目内的 `.py`（相对路径）；`library` 取 `rasterhint.LIBRARIES`；`path` 是原输出图的项目相对路径（D 的
-    `no_figure_hint.path`，可缺）。原脚本此后一个字节也不会被这个会话改写；Agent 只写候选工作区里的一个新文件。"""
+    `source_language` 缺省 `python`：`script` 是项目内的 `.py`、`library` 必填且取 `rasterhint.LIBRARIES`。`r` / `matlab`
+    （ADR 0143 修订）：`script` 是 `.R` / `.r` / `.m` 纯文本脚本、`library` 必须缺省，后端用 `sourcelang.detect` 复核文件内容与声明
+    一致（对不上 400 `convert_source_language_mismatch`，不猜）；Tavotto 不运行 R / MATLAB。`path` 是原输出图的项目相对路径
+    （D 的 `no_figure_hint.path`，或 R / MATLAB 脚本旁已有的原图，可缺）。原脚本此后一个字节也不会被这个会话改写；Agent 只写候选工作区里的一个新文件。"""
     if not engine_ai_convert.enabled():
         return jsonify({"error": "convert_disabled", "code": "convert_disabled", "params": {}}), 404
     body = request.get_json(silent=True)
@@ -11597,12 +11602,19 @@ def api_ai_convert():
     ctx = current_ctx()
     script = body.get("script")
     library = body.get("library")
+    language = body.get("source_language", engine_sourcelang.PYTHON)
     agent = body.get("agent") or "codex"
     request_id = body.get("client_request_id")
+    foreign = language in engine_sourcelang.FOREIGN
     if (
         not isinstance(script, str)
-        or not script.endswith(".py")
-        or library not in engine_rasterhint.LIBRARIES
+        or language not in engine_sourcelang.LANGUAGES
+        # python：`.py` + 必有位图库；r / matlab：库必须缺省（它们没有“位图库出的图”这回事），后缀由下面的内容复核定
+        or (
+            not foreign
+            and (not script.endswith(".py") or library not in engine_rasterhint.LIBRARIES)
+        )
+        or (foreign and library is not None)
         or not isinstance(agent, str)
         or (request_id is not None and not _valid_client_request_id(request_id))
     ):
@@ -11612,6 +11624,14 @@ def api_ai_convert():
         return jsonify(
             {"error": "script_not_found", "code": "script_not_found", "params": {"script": script}}
         ), 404
+    if foreign and engine_sourcelang.detect_file(real) != language:
+        return jsonify(
+            {
+                "error": "convert_source_language_mismatch",
+                "code": "convert_source_language_mismatch",
+                "params": {"script": script},
+            }
+        ), 400
     rel = Path(os.path.relpath(real, os.path.realpath(ctx.path))).as_posix()
     original = body.get("path")
     original_rel = None
@@ -11619,11 +11639,19 @@ def api_ai_convert():
         got = engine_projectenv.contained_path(ctx.path, original)
         if got is not None and Path(got).is_file():
             original_rel = Path(os.path.relpath(got, os.path.realpath(ctx.path))).as_posix()
+    if foreign and original_rel is None and not original:
+        # R / MATLAB 不被运行：请求没指认原图时，用脚本旁同名的位图（`fig.R` → `fig.png`）当对照
+        near = engine_ai_convert.sibling_original(Path(real))
+        got = engine_projectenv.contained_path(ctx.path, str(near)) if near is not None else None
+        if got is not None and Path(got).is_file():
+            original_rel = Path(os.path.relpath(got, os.path.realpath(ctx.path))).as_posix()
     try:
         sid = engine_ai.run(
             agent,
             rel,
-            _CONVERT_PROMPT.format(library=library),
+            _CONVERT_PROMPT.format(
+                library=_CONVERT_SOURCE_LABELS[language] if foreign else library
+            ),
             str(ctx.path),
             on_event=lambda event, data: sse_publish(
                 event,
@@ -11633,8 +11661,16 @@ def api_ai_convert():
             model=body.get("model") or None,
             effort=body.get("effort") or None,
             endpoint_id=body.get("endpoint"),
-            task_hooks={"runner": _convert_runner(ctx, rel)},
-            convert={"library": library, "original_rel": original_rel},
+            task_hooks={
+                "runner": _convert_runner(ctx, rel),
+                # R / MATLAB 转写的新脚本才会要 pandas / statsmodels 这类包：校验运行前按 `convertdeps` 的规则自动装（或退回缺依赖卡）
+                **({"deps": engine_convertdeps.ensure} if foreign else {}),
+            },
+            convert={
+                "library": library,
+                "source_language": language,
+                "original_rel": original_rel,
+            },
         )
     except engine_ai.DuplicateRequest as dup:
         return jsonify({"session": dup.sid, "script": rel, "deduped": True})

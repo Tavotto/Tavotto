@@ -292,6 +292,43 @@ _CONVERT_TEMPLATES: dict[str, tuple[frozenset[str], str]] = {
         "注意：当前工作目录是工作副本；原项目目录 {project_root} 只供只读参考（数据文件、同目录模块在那里），"
         "不要在原项目目录里创建或修改任何文件——写好的新文件由外部系统校验后，经用户确认才放进项目。",
     ),
+    # --- R / MATLAB 来源（ADR 0143 修订，2026-10-23）：同一节的变体，只换引言与硬性要求里的“怎么搬数据”，
+    # 目标 / 参考图 / 图幅 / 范围 / 工作副本说明沿用上面同一份。Tavotto 从不运行用户的 R / MATLAB。
+    "intro_foreign": (
+        frozenset({"language"}),
+        "你在为一篇论文的图表脚本（{language}）生成「可编辑的 Matplotlib 版本」：用 Python 把它的数据读取、计算与绘图"
+        "重写一遍。原脚本是 {language} 写的，Tavotto 不会运行它，所以你写的新脚本必须自己能独立读到数据、算出结果、画出图。",
+    ),
+    "rule_foreign_steps": (
+        frozenset(),
+        "1. 按原脚本的顺序逐步搬运：读数据 → 整理 / 筛选 / 分组 → 统计与拟合 → 绘图。数据文件沿用原脚本里的路径写法"
+        "（相对路径照旧）；每一步用 Python 里最直接、可核对的对应物，不要“顺便优化”或改动计算的科学含义。",
+    ),
+    "rule_foreign_mapping_r": (
+        frozenset(),
+        "2. 常用对照（R → Python）：read.csv / readr::read_csv / readxl::read_excel → pandas.read_csv / read_excel；"
+        "dplyr 的 filter / mutate / group_by + summarise → pandas 的布尔索引 / assign / groupby + agg；"
+        "lm / glm → statsmodels.formula.api 的 ols / glm（公式写法一致）；"
+        "ggplot 的 geom_point / geom_line / geom_col / geom_errorbar / geom_boxplot / geom_histogram → ax.scatter / plot / bar / errorbar / boxplot / hist；"
+        'geom_smooth(method = "loess") → statsmodels.nonparametric.smoothers_lowess.lowess（把 span 对应到 frac，并在代码注释里写明）；'
+        "facet_wrap / facet_grid → plt.subplots 的多个子图；scale_*_log10 → ax.set_xscale / set_yscale('log')；"
+        "ggsave(width, height, dpi) → figsize 与 dpi（英寸）。",
+    ),
+    "rule_foreign_mapping_matlab": (
+        frozenset(),
+        "2. 常用对照（MATLAB → Python）：readtable / readmatrix / csvread / xlsread → pandas.read_csv / read_excel；"
+        "plot / scatter / errorbar / bar / histogram / boxplot → ax.plot / scatter / errorbar / bar / hist / boxplot；"
+        "xlabel / ylabel / title / legend / xlim / ylim / grid → ax.set_xlabel / set_ylabel / set_title / legend / set_xlim / set_ylim / grid；"
+        "subplot / tiledlayout → plt.subplots；polyfit / polyval → numpy.polyfit / polyval；"
+        "fitlm → statsmodels.formula.api.ols；linspace / meshgrid → numpy 同名函数；"
+        "MATLAB 的下标从 1 开始、矩阵按列优先、`.^` `.*` 是逐元素运算——搬运时逐处核对下标与形状。",
+    ),
+    "rule_foreign_needs_input": (
+        frozenset(),
+        "3. 遇到 Python 里没有可靠逐一对应的统计方法或函数（例如特定的混合效应模型、专用的非参数检验、某个包独有的拟合器），"
+        "不要用近似方法替换，也不要编一个相似的结果。此时停下：你的回答第一行写 `TAVOTTO_NEEDS_INPUT: ` 紧跟一句话，"
+        "说清是哪一步（原脚本里的函数名）换不了、为什么；并且不要写任何新文件。",
+    ),
     "fix_no_matplotlib": (
         frozenset({"target"}),
         "{target} 里没有 import matplotlib；改成用 matplotlib 绘图。",
@@ -325,26 +362,60 @@ def _convert_render(name: str, **values) -> str:
     )
 
 
+def _renumbered(text: str, old: int, new: int) -> str:
+    """共用的硬性要求在变体里排在后面：序号换一下，正文不复制。"""
+    prefix = f"{old}. "
+    if not text.startswith(prefix):
+        raise PackError(f"硬性要求的序号前缀不是 {prefix!r}")
+    return f"{new}. " + text[len(prefix) :]
+
+
+#: 非 Python 来源的显示名（提示词里的“原脚本是 X 写的”）
+_FOREIGN_NAMES = {"r": "R", "matlab": "MATLAB"}
+
+
 def convert_prompt(
-    *, script: str, target: str, library: str, reference: str | None, project_root
+    *,
+    script: str,
+    target: str,
+    library: str | None = None,
+    reference: str | None,
+    project_root,
+    source_language: str = "python",
 ) -> str:
-    """「生成可编辑版本」提示词：引言 → 目标 → 参考图（有才写）→ 硬性要求 → 工作副本说明。"""
+    """「生成可编辑版本」提示词：引言 → 目标 → 参考图（有才写）→ 硬性要求 → 工作副本说明。
+
+    `source_language` 为 `r` / `matlab` 时同一节换成“逐步搬运 + 对照表 + 没有可靠对应就停下”的变体（目标 / 参考图 / 图幅 /
+    范围 / 工作副本说明是同一份模板，不复制）。"""
+    foreign = _FOREIGN_NAMES.get(source_language)
+    if source_language != "python" and foreign is None:
+        raise PackError(f"未知的来源语言：{source_language!r}")
     lines = [
-        _convert_render("intro", library=library),
+        _convert_render("intro_foreign", language=foreign)
+        if foreign
+        else _convert_render("intro", library=library or ""),
         _convert_render("target", script=script, target=target),
     ]
     if reference:
         lines.append(_convert_render("reference", reference=reference))
-    lines += [
-        "",
-        _convert_render("rules_heading"),
-        _convert_render("rule_keep_data"),
-        _convert_render("rule_matplotlib"),
-        _convert_render("rule_size"),
-        _convert_render("rule_scope"),
-        "",
-        _convert_render("note", project_root=project_root),
-    ]
+    lines += ["", _convert_render("rules_heading")]
+    if foreign:
+        lines += [
+            _convert_render("rule_foreign_steps"),
+            _convert_render(f"rule_foreign_mapping_{source_language}"),
+            _convert_render("rule_foreign_needs_input"),
+            _renumbered(_convert_render("rule_matplotlib"), 2, 4),
+            _renumbered(_convert_render("rule_size"), 3, 5),
+            _renumbered(_convert_render("rule_scope"), 4, 6),
+        ]
+    else:
+        lines += [
+            _convert_render("rule_keep_data"),
+            _convert_render("rule_matplotlib"),
+            _convert_render("rule_size"),
+            _convert_render("rule_scope"),
+        ]
+    lines += ["", _convert_render("note", project_root=project_root)]
     return "\n".join(lines)
 
 

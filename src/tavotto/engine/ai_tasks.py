@@ -67,6 +67,17 @@ class TaskError(Exception):
         self.code = code
 
 
+class NeedsInput(TaskError):
+    """执行器在**跑完之后**判定“这件事要用户先决定 / 先看”：任务结局 `needs_input`（候选作废、不提交）。
+
+    与 `Plan.needs_input`（执行**之前**由确定性计划判的）不同：这里是 Agent 自己停下说明（例如 R 脚本里某个统计方法在
+    Python 里没有逐一对应）。`reason` 是已清洗、有长度上限的一句话，只随任务结局（`unmet[].detail`）给界面。"""
+
+    def __init__(self, reason: str = ""):
+        super().__init__("needs_input")
+        self.reason = reason
+
+
 class BudgetExceeded(TaskError):
     def __init__(self, key: str):
         super().__init__("budget_exhausted", key)
@@ -887,6 +898,21 @@ def _drive(adapter: TaskAdapter, executor: Executor, run: TaskRun, db_path):
             checks,
             unmet,
             exc.code,
+            False,
+        )
+    except NeedsInput as exc:
+        discard()  # 没有可提交的东西：候选作废，原项目一个字节不动
+        return (
+            "needs_input",
+            checks,
+            [
+                {
+                    "constraint_id": "intent",
+                    "reason_code": "needs_input",
+                    **({"detail": exc.reason} if exc.reason else {}),
+                }
+            ],
+            None,
             False,
         )
     except TaskError as exc:

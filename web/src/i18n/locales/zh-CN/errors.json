@@ -56,6 +56,7 @@
     "convert_write_failed": "无法把新版本写进项目，请检查文件夹是否可写。",
     "convert_name_exhausted": "同名的新版本文件太多了（已有 99 个），请先清理再试。",
     "convert_no_preview": "这份新版本没有预览。",
+    "convert_source_language_mismatch": "{{script}} 的内容看起来不是 R 或 MATLAB 脚本，没有生成。",
     "ai_start_failed": "无法启动 AI 任务：{{reason}}",
     "annotations_need_pdf": "该素材没有矢量 PDF，标注暂时无法写回原图。",
     "artifact_rejected": "导出文件没有通过 {{policy}} 检查（{{failed}}），未发布到导出目录。",

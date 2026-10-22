@@ -56,9 +56,35 @@
 本 ADR **不加新遥测事件**（新事件须攒齐一次升 `CONSENT_VERSION`）。后续候选：`convert_started` / `convert_outcome`（闭集：library、
 outcome、corrections 个数、是否采用）——不带脚本、路径或图内文字。
 
+## 修订：R / MATLAB 来源（2026-10-23）
+
+起因：论文图常由 R（ggplot2）或 MATLAB 画，用户手里只有脚本与（或没有）导出的图。维护者四条裁决：
+
+1. **范围**：第一版只收 `.R` / `.r` / `.m` 纯文本脚本，不含 `.Rmd` / `.qmd` / `.mlx` / `.fig` / `.rds`。`.m` 是 MATLAB 与 Objective-C 共用的后缀，
+   所以来源语言由 `engine/sourcelang.detect(path, text)` 看内容定（Obj-C 特征 `#import` / `@interface` / `@implementation` / `@end` 等一票否决；MATLAB 特征
+   `%` 注释、`function`、独占一行的 `end`、绘图 / 读数据调用等至少两类），≤ 1 MB、UTF-8；**判不出就拒绝，不猜**。
+2. **不运行**用户的 R / MATLAB：对照只用脚本旁已有的原图（沿用本 ADR 的 `path` / `original_rel`；请求没给时取脚本旁同主干名的位图）。没有原图时
+   `comparison` 带 `reference: null`、`verification: "unknown"`（有原图为 `side_by_side`，只是并排给人看，不是判定），界面一句话说明。
+3. **没有逐一对应的统计方法时停下**：Agent 首行写 `TAVOTTO_NEEDS_INPUT: <原因>` 并且不写新文件 → 任务结局 `needs_input`（`ai_tasks.NeedsInput`，在 Agent 运行结束后判，
+   与 `Plan.needs_input` 的“执行前”不同），不生成新脚本。标记只在“没有新文件”时算数、只认 Agent 的完整回答、行首；原因清洗 + 限长 200 字，只随结局给界面，不进日志 / 遥测。
+   没有标记且没写文件仍是原来的 `target_missing` 失败。
+4. **新脚本缺的 Python 包自动装进用户环境**（用户改了默认值）：不新写 pip 路径，缺什么由 `deprepair.joint_plan_for`（`importscan` 静态扫 + `depplan`）算，装由
+   `create_joint_plan` + `prepare`。边界：只在 `project_venv`（项目选中自己的 `.venv`）与**已存在**的受管环境一代（不新建环境、不下载私有 Python）上自动装；
+   要装的每个发行包必须在 `convertdeps.AUTO_INSTALL_DISTRIBUTIONS` 闭集里（Agent 写进脚本的任意 import 不能变成任意 pip 安装）；内置 runtime / 本进程 / 系统或 Conda /
+   固定解释器 / 项目里用户自己采用的环境不是安装目标（往受管环境装既不让脚本找到包、又会把项目的解释器悄悄记成受管环境），退回现有缺依赖卡。
+   装好的包进结果 `installed`（界面一句“已为这个项目装好 pandas、statsmodels”）；装失败是不可修正的失败（`dependency_install_failed`）。
+   **授权口径**：`deprepair._check_confirmed` 要求调用方回显给用户看过的影响摘要；这里回显同一次调用里刚算出的摘要，依据是上述常驻同意，可用 `ai.convert.auto_install=false`
+   或 `TAVOTTO_NO_CONVERT_AUTO_INSTALL=1` 收回，`deprepair` 自己的 `dependency_impact_changed` / `repair_plan_stale` 照样拦。
+
+其余不变：端点同一个 `POST /api/ai/convert`（多可选 `source_language`，缺省 `python`；r / matlab 时 `library` 必须缺省，声明与文件内容对不上 400
+`convert_source_language_mismatch`）；候选 / 校验 / 采用全套（第二节逐条）；目标名 `fig.R` → `fig_matplotlib.py`；`library` 在 r / matlab 时为 null；
+会话元数据（sidecar、`meta.json`）记 `source_language`；预算与契约不变；**不加遥测事件**（第五节）。前端：主页拖入 / 选择 `.R` / `.r` / `.m` 时打开所在文件夹并出一张
+一句话卡片（主按钮「生成可编辑版本」），不当成“不是脚本”，也不走“打开并运行”；桌面壳的原生拖放分类（`drop_paths.rs`）还不认这些后缀，壳只交来名字时提示用选择器（后续）。
+
 ## 不做
 
 - 不自动采用；不替用户改任何已有脚本；不在原脚本上叠改。
+- 不运行用户的 R / MATLAB；不收 `.Rmd` / `.qmd` / `.mlx` / `.fig` / `.rds`；不为统计方法近似替换。
 - 不把新版标成“与原图一致”：它是重画，用户看过对照才采用。
 - 不做像素差度量；不为转换放宽 safe 档或新增 native 路径。
 

@@ -55,6 +55,7 @@
     "convert_outside_project": "The new version’s location is outside the project, so nothing was written.",
     "convert_write_failed": "Couldn’t write the new version into the project. Check that the folder is writable.",
     "convert_name_exhausted": "There are too many files with that name already (99). Clean some up and try again.",
+    "convert_source_language_mismatch": "The contents of {{script}} don’t look like an R or MATLAB script, so nothing was generated.",
     "convert_no_preview": "This new version has no preview.",
     "ai_start_failed": "Couldn’t start the AI task: {{reason}}",
     "annotations_need_pdf": "This asset has no vector PDF. Annotations can’t be written back to the original yet.",

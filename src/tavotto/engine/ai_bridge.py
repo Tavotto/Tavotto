@@ -826,7 +826,14 @@ def run(
                     "started": time.time(),
                     "model": model,
                     "effort": effort,
-                    **({"kind": "convert"} if convert is not None else {}),
+                    **(
+                        {
+                            "kind": "convert",
+                            "source_language": convert.get("source_language") or "python",
+                        }
+                        if convert is not None
+                        else {}
+                    ),
                 },
                 ensure_ascii=False,
             ),
@@ -853,7 +860,8 @@ def run(
                     script_path,
                     Path(figures_dir),
                     script,
-                    library=str(convert.get("library") or ""),
+                    library=convert.get("library") or None,
+                    source_language=str(convert.get("source_language") or "python"),
                     original_path=original_path,
                     original_rel=original_rel,
                 )
@@ -1207,6 +1215,7 @@ def _drive_task(sess: dict, task_run, cand, consume, on_changed, script: str, re
             wait=wait,
             refresh=lambda: {"status": REFRESH_SKIPPED},  # 没写用户文件，没有可刷新的
             respawn=respawn,
+            transcript=lambda: sess["transcript"],  # Agent 停下说明（needs_input 标记）从这里读
         )
     else:
         executor = ai_figure_edit.BridgeExecutor(

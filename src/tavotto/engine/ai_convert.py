@@ -9,6 +9,10 @@
 * Agent **从不**写项目目录：任务的 `commit` 只是把通过检查的候选“留存待采用”（候选目录 + `meta.json`，不碰用户文件）；
   用户在对照视图里点「采用」才由后端 `adopt()` 把候选文件**新建**进项目（`scriptlock.create_script`，
   O_EXCL 语义：已存在即失败，重名自动加序号 `_matplotlib_2.py`……，永远不覆盖）；
+* 来源语言（ADR 0143 修订，2026-10-23）：原脚本可以是 `.py`（Python，位图库出的图）或 `.R` / `.r`（R）、`.m`（MATLAB）纯文本脚本。
+  R / MATLAB **从不被运行**：对照只用脚本旁已有的原图，没有原图就如实标“未对照验证”（`verification: "unknown"`）；
+  Python 里没有逐一对应的统计方法时 Agent 停下说明（结局 `needs_input`，不生成新脚本）；新脚本要的包缺失时按
+  `convertdeps` 的规则自动装进用户环境（或退回现有缺依赖卡）；
 * 校验：在用户同一解释器 / 同一路由下真的跑一遍候选脚本（`run_validation`，由 app 注入的 `runner` 走现有 probe 路径），
   必须捕获到 Matplotlib 图，否则判失败并给一句原因。跑的是紧挨着原脚本的一个**临时文件**（相对路径的数据与 cwd 判据
   与原脚本一致），由后端用 O_EXCL 建、跑完即删（几秒内的存在期里文件监视器可能看见它，删除后登记不变）——Agent 没有写它的路径。
@@ -40,8 +44,9 @@ from . import (
     rasterhint,
     registry,
     scriptlock,
+    sourcelang,
 )
-from .ai_tasks import FAILED, UNKNOWN, VERIFIED, CheckResult, TaskError
+from .ai_tasks import FAILED, UNKNOWN, VERIFIED, CheckResult, NeedsInput, TaskError
 
 TASK_TYPE = "convert_to_editable"
 CONVERT_DIR = config.data_dir() / "cache" / "ai_convert"
@@ -60,6 +65,18 @@ MAX_NUMBERED = 99
 META_NAME = "meta.json"
 PREVIEW_NAME = "preview.svg"
 
+#: Agent 判定“Python 里没有可靠对应”时的固定标记句式：首行 `TAVOTTO_NEEDS_INPUT: <原因>`，并且不写新文件
+NEEDS_INPUT_MARKER = "TAVOTTO_NEEDS_INPUT:"
+NEEDS_INPUT_REASON_MAX = 200
+_NEEDS_INPUT_RE = re.compile(r"^[ \t>*`_-]*TAVOTTO_NEEDS_INPUT:[ \t]*(.*)$", re.M)
+#: 对照数据里 `verification` 的取值：没有原图 = `unknown`（Tavotto 没运行 R / MATLAB，也没有原图可比）；有原图 = 并排给人看
+VERIFICATION_UNKNOWN = "unknown"
+VERIFICATION_SIDE_BY_SIDE = "side_by_side"
+
+#: 校验运行因缺 Python 包失败的错误码（`probe.ERROR_MISSING_DEPENDENCY`）：不可修正（让 Agent 改代码解决不了缺包），走缺依赖卡
+MISSING_DEPENDENCY_CODE = "missing_dependency"
+#: 自动安装失败的稳定码（结果里 `render.capture` 的 `code`；`errors` 文案按它换语言）
+DEPENDENCY_INSTALL_FAILED = "convert_dependency_install_failed"
 #: 跑通了但没捕获到 Matplotlib 图的错误码（`probe.ERROR_NO_FIGURE` 与准备路径的两个同义码）
 NO_FIGURE_CODES = frozenset(
     {"script_no_figure", "no_figures_captured", "no_figures_captured_silent"}
@@ -96,7 +113,26 @@ def _sha256(data: bytes) -> str:
 
 
 def target_name_for(script_rel: str) -> str:
+    """原脚本 → 新脚本名。只取主干，所以 `fig.R` / `fig.m` / `fig.py` 都是 `fig_matplotlib.py`。"""
     return f"{Path(script_rel).stem}{NAME_SUFFIX}.py"
+
+
+#: R / MATLAB 脚本旁“同名原图”的后缀优先级（位图，能当参考副本的那些）
+_SIBLING_EXTS = (".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".tif", ".tiff")
+
+
+def sibling_original(script_path: Path) -> Path | None:
+    """脚本同目录下与它**同主干名**的位图（`fig.R` → `fig.png`）。R / MATLAB 从不被运行，没有“脚本跑出来的图”可指认，
+    请求没给 `path` 时就用脚本旁已有的同名原图当对照；没有就 None（结果里如实标“未对照验证”）。不看符号链接。"""
+    try:
+        names = {p.name.lower(): p for p in script_path.parent.iterdir()}
+    except OSError:
+        return None
+    for ext in _SIBLING_EXTS:
+        hit = names.get(f"{script_path.stem}{ext}".lower())
+        if hit is not None and hit.is_file() and not hit.is_symlink():
+            return hit
+    return None
 
 
 # --------------------------------------------------------------------------- 原图事实（对照用）
@@ -143,11 +179,16 @@ class ConvertCandidate:
     base_bytes: bytes
     base_sha256: str
     base_mode: int
-    library: str
+    #: 位图库名（`rasterhint.LIBRARIES`）；R / MATLAB 来源没有（None）
+    library: str | None
     original_rel: str | None
     reference_name: str | None
     tree_before: dict[str, str]
     project_before: dict
+    #: 来源语言（`sourcelang.LANGUAGES`）
+    source_language: str = sourcelang.PYTHON
+    #: 校验运行前自动装上的发行包（`convertdeps.ensure`）
+    installed: list = field(default_factory=list)
     new_bytes: bytes | None = None
     #: 对桥而言“没写用户文件”：恒 False（`_settle_task` / 刷新据此不当成脚本被改）
     committed: bool = False
@@ -213,7 +254,8 @@ def create_candidate(
     project_root: Path,
     script_rel: str,
     *,
-    library: str,
+    library: str | None,
+    source_language: str = sourcelang.PYTHON,
     original_path: Path | None = None,
     original_rel: str | None = None,
 ) -> ConvertCandidate:
@@ -247,7 +289,8 @@ def create_candidate(
             base_bytes=base,
             base_sha256=_sha256(base),
             base_mode=script_path.stat().st_mode & 0o7777,
-            library=library,
+            library=library or None,
+            source_language=source_language,
             original_rel=original_rel,
             reference_name=reference_name,
             tree_before=ai_figure_edit._tree(cdir) or {},
@@ -278,6 +321,7 @@ def prompt_for(cand: ConvertCandidate) -> str:
         script=Path(cand.script_rel).name,
         target=cand.target_name,
         library=cand.library,
+        source_language=cand.source_language,
         reference=f"{REFERENCE_DIR}/{cand.reference_name}" if cand.reference_name else None,
         project_root=cand.project_root,
     )
@@ -311,6 +355,9 @@ def run_validation(cand: ConvertCandidate, runner) -> dict:
         with scriptlock.script_guard(stage_path):
             scriptlock.create_script(stage_path, cand.new_bytes or b"")
             try:
+                deps = _ensure_dependencies(cand, rel)
+                if deps is not None:
+                    return deps
                 out = runner(str(cand.project_root), rel, (str(cand.dir),)) or {}
             finally:
                 try:
@@ -336,6 +383,31 @@ def run_validation(cand: ConvertCandidate, runner) -> dict:
         "size_mm": out.get("size_mm"),
         "svg": out.get("svg"),
     }
+
+
+def _ensure_dependencies(cand: ConvertCandidate, rel: str) -> dict | None:
+    """校验运行前：新脚本要的包缺了就按 `convertdeps` 的规则自动装（或退回缺依赖卡）。回 None = 继续跑校验；
+    回 dict = 安装失败，这就是校验结论（不可修正：让 Agent 改代码解决不了装包失败）。
+    钩子由 app 注入（`cand.extras["deps"]`）；没接钩子（纯引擎调用方 / 多数单测）不做任何依赖动作。"""
+    hook = cand.extras.get("deps")
+    if hook is None:
+        return None
+    try:
+        got = hook(str(cand.project_root), rel) or {}
+    except Exception:  # noqa: BLE001 —— 依赖旁路的任何异常都不该让校验崩：当作没装，让运行自己如实失败
+        return None
+    if got.get("status") == "installed":
+        cand.installed = list(got.get("installed") or [])
+        return None
+    if got.get("status") == "failed":
+        return {
+            "status": "error",
+            "code": DEPENDENCY_INSTALL_FAILED,
+            "message": "",
+            "installer_code": str(got.get("code") or ""),
+            "packages": list(got.get("missing") or []),
+        }
+    return None
 
 
 def comparison_of(cand: ConvertCandidate, validation: dict) -> dict:
@@ -372,6 +444,9 @@ def comparison_of(cand: ConvertCandidate, validation: dict) -> dict:
         "candidate": new,
         "aspect_delta": aspect_delta,
         "pixel_diff": None,
+        # 没有原图可比 = 未对照验证（四态 unknown）：R / MATLAB 从不被运行，界面据此说一句“请并排看一眼再采用”
+        "reference": original["path"] if original else None,
+        "verification": VERIFICATION_SIDE_BY_SIDE if original else VERIFICATION_UNKNOWN,
     }
 
 
@@ -525,6 +600,20 @@ class ConvertAdapter:
             ]
         if result["status"] == "no_figure":
             return [_check("render.capture", st, "goal", FAILED, "no_matplotlib_figure")]
+        if result.get("code") == MISSING_DEPENDENCY_CODE:
+            return [_check("render.capture", st, "goal", FAILED, "missing_dependency")]
+        if result.get("code") == DEPENDENCY_INSTALL_FAILED:
+            return [
+                _check(
+                    "render.capture",
+                    st,
+                    "goal",
+                    FAILED,
+                    "dependency_install_failed",
+                    installer_code=result.get("installer_code"),
+                    packages=result.get("packages"),
+                )
+            ]
         return [
             _check(
                 "render.capture",
@@ -550,10 +639,12 @@ class ConvertAdapter:
         return {"prompt": ai_prompt_pack.correction_prompt(ai_prompt_pack.DEFAULT, lines)}
 
     def explain(self, outcome: str, unmet: list[dict]) -> dict:
-        return {
-            "message_key": f"task.{TASK_TYPE}.{outcome}",
-            "params": {"unmet": [u["constraint_id"] for u in unmet]},
-        }
+        params: dict = {"unmet": [u["constraint_id"] for u in unmet]}
+        if outcome == "needs_input":
+            # Agent 说“哪一步换不了”的那一句（已清洗、有长度上限）；只随任务结局给界面，不进日志 / 遥测
+            reasons = [str(u.get("detail") or "") for u in unmet if u.get("detail")]
+            params["reason"] = reasons[0] if reasons else ""
+        return {"message_key": f"task.{TASK_TYPE}.{outcome}", "params": params}
 
 
 def convert_fix_text(key: tuple[str, str | None], observed: dict) -> str | None:
@@ -568,10 +659,58 @@ def convert_fix_text(key: tuple[str, str | None], observed: dict) -> str | None:
 
 
 # --------------------------------------------------------------------------- 执行器（AI 桥的那一次 CLI 运行）
+def clean_needs_input_reason(text: str) -> str:
+    """Agent 给的“换不了”原因 → 一行干净的短句：去控制字符 / 换行折叠 / 去首尾标点装饰，截到 `NEEDS_INPUT_REASON_MAX`。"""
+    one = re.sub(r"[\x00-\x1f\x7f]+", " ", str(text or ""))
+    one = re.sub(r"\s+", " ", one).strip(" \t*_`>-")
+    return one[:NEEDS_INPUT_REASON_MAX].rstrip()
+
+
+def needs_input_reason(transcript) -> str | None:
+    """Agent 的回答里有没有 `TAVOTTO_NEEDS_INPUT: <原因>`（行首；只看完整回答 `message`，不看工具输出 / 思考）。
+    有 → 清洗后的原因（可能为空串，表示只给了标记）；没有 → None。多条取最后一条（最终说法）。"""
+    found: str | None = None
+    for item in transcript or []:
+        if not isinstance(item, dict) or item.get("kind") != "message":
+            continue
+        for m in _NEEDS_INPUT_RE.finditer(str(item.get("text") or "")):
+            found = clean_needs_input_reason(m.group(1))
+    return found
+
+
 class ConvertExecutor(ai_figure_edit.BridgeExecutor):
-    """`commit` = 把通过检查的候选留存待采用（候选目录 + meta.json）；**不写任何用户文件**。"""
+    """`commit` = 把通过检查的候选留存待采用（候选目录 + meta.json）；**不写任何用户文件**。
+
+    Agent 运行结束后若**没有写出新文件**而回答里带着 `TAVOTTO_NEEDS_INPUT:` 标记 → `NeedsInput`（任务结局 `needs_input`，
+    不生成新脚本）；没有标记照旧交给提交前检查（`target_missing`，可修正一次）。"""
 
     writes_user_files = False
+
+    def __init__(self, *args, transcript=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._transcript = transcript
+
+    def _stop_if_needs_input(self, cand: ConvertCandidate) -> None:
+        if self._transcript is None:
+            return
+        try:
+            if cand.target.exists() or cand.target.is_symlink():
+                return  # 写了新文件就按新文件走：标记只在“没写文件”时算数
+            reason = needs_input_reason(self._transcript())
+        except Exception:  # noqa: BLE001 —— 读转录失败当作没有标记
+            return
+        if reason is not None:
+            raise NeedsInput(reason)
+
+    def execute(self, run) -> ConvertCandidate:
+        cand = super().execute(run)
+        self._stop_if_needs_input(cand)
+        return cand
+
+    def correct(self, run, cand: ConvertCandidate, feedback: dict) -> ConvertCandidate:
+        cand = super().correct(run, cand, feedback)
+        self._stop_if_needs_input(cand)
+        return cand
 
     def commit(self, run, cand: ConvertCandidate) -> None:
         stage(cand)
@@ -593,6 +732,8 @@ def stage(cand: ConvertCandidate) -> None:
         "candidate_sha256": _sha256(cand.new_bytes),
         "target_name": cand.target_name,
         "library": cand.library,
+        "source_language": cand.source_language,
+        "installed": list(cand.installed),
         "original_rel": cand.original_rel,
         "comparison": cand.comparison,
         "has_preview": bool(cand.preview_svg),
@@ -660,6 +801,8 @@ def status(sid: str, project: str) -> dict:
         "script": meta.get("script_rel"),
         "target_name": meta.get("target_name"),
         "library": meta.get("library"),
+        "source_language": meta.get("source_language") or sourcelang.PYTHON,
+        "installed": list(meta.get("installed") or []),
         "comparison": meta.get("comparison"),
         "has_preview": bool(meta.get("has_preview")) and (cdir / PREVIEW_NAME).is_file(),
         "adopted_script": meta.get("adopted_script"),
