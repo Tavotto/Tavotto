@@ -1,4 +1,4 @@
-import { expect, test } from './fixtures'
+import { addSecondFigure, expect, test } from './fixtures'
 import type { Page } from '@playwright/test'
 
 /**
@@ -14,9 +14,10 @@ async function toLayout(page: Page, baseURL: string) {
   const card = page.locator('[data-card="Fig1_kinetics.pdf"]')
   await expect(card).toHaveCount(1, { timeout: 30_000 })
   await card.dblclick()
-  await page.locator('[data-context-back]').click()
+  // 一张图是单图编辑（没有纸面、没有拖边）；加第二张图才进多图排版
+  await addSecondFigure(page)
   await expect(page.locator('[data-page-sheet]')).toBeVisible()
-  // 回排版的取景补间走完再量几何（补间中途量到的是动画帧，不是拖边的结果）
+  // 进排版的取景补间走完再量几何（补间中途量到的是动画帧，不是拖边的结果）
   await expect(page.locator('[data-view-tweening]')).toHaveCount(0)
 }
 
