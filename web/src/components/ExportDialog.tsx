@@ -144,7 +144,8 @@ import { useProjectStore } from "@/store/projectStore";
 import { useDocumentStore } from "@/store/documentStore";
 import { dialogCovered, useUiStore } from "@/store/uiStore";
 import { useWorkspaceStore } from "@/store/workspace";
-import type { FigureDocument, PanelObject } from "@/types/document";
+import type { CanvasObject, FigureDocument, PanelObject } from "@/types/document";
+import { cropToVisibleContent } from "@/lib/exportCrop";
 import {
   getValidationSummary,
   originalValidationFor,
@@ -439,6 +440,12 @@ export function ExportDialog() {
    */
   const scope: ExportScope = single ? (availability.ok ? "original" : "canvas") : scopeState;
   const singleFallback = single && scope === "canvas";
+  /** 单图退路导出的区域 = 可见对象并集包围盒（`lib/exportCrop`）；预览与尺寸读它，与请求同一份 */
+  const fallbackCrop = useMemo(
+    () => (singleFallback ? cropToVisibleContent(doc.page, doc.objects) : null),
+    [singleFallback, doc.page, doc.objects],
+  );
+  const exportPage = fallbackCrop?.page ?? doc.page;
   const routeKey = routeKeyOf({ scope, formats, doc, panel, figureId });
   const route = useExportRouteStore((s) => (s.key === routeKey ? s.route : null));
   const refreshRoute = useExportRouteStore((s) => s.refresh);
@@ -730,7 +737,7 @@ export function ExportDialog() {
     ? pixelPreview(
         scope,
         Number(ppi),
-        doc.page,
+        exportPage,
         availability.spec,
         copiesSourceVerbatim,
       )
@@ -769,6 +776,7 @@ export function ExportDialog() {
       panel,
       spec: availability.spec,
       route,
+      cropToContent: singleFallback,
       ...over,
     };
   }
@@ -1465,6 +1473,7 @@ export function ExportDialog() {
             scope={scope}
             figure={figure}
             spec={availability.spec}
+            page={exportPage}
             doc={doc}
             asset={figureId ? assets[figureId] : undefined}
             // 写不出来的名字不报：文件名不合法、或原图范围下这张图此刻导不出
@@ -1489,6 +1498,7 @@ export function ExportDialog() {
       <ExportPreviewPane
         single={single}
         fallbackPage={singleFallback}
+        fallbackCrop={fallbackCrop}
         doc={doc}
         figures={single ? figures : canvasFigures}
         figureId={figureId}
@@ -1917,6 +1927,7 @@ function FigureThumbArt({
 function ExportPreviewPane({
   single,
   fallbackPage,
+  fallbackCrop,
   doc,
   figures,
   figureId,
@@ -1930,6 +1941,8 @@ function ExportPreviewPane({
   single: boolean;
   /** 单图档原图口径不可用、改按画布导：预览显示导出的页面 */
   fallbackPage: boolean;
+  /** 退路导出裁掉白边后的页面与对象（预览与导出文件一致）；非退路为 null */
+  fallbackCrop: { page: { w: number; h: number }; objects: CanvasObject[] } | null;
   doc: FigureDocument;
   figures: readonly ExportableFigure[];
   /** 此刻要导的那张 */
@@ -1952,7 +1965,7 @@ function ExportPreviewPane({
       ? ([spec.widthMm, spec.heightMm] as const)
       : null;
   const sizeMm = showPage
-    ? ([doc.page.w, doc.page.h] as const)
+    ? ([(fallbackCrop?.page ?? doc.page).w, (fallbackCrop?.page ?? doc.page).h] as const)
     : (specMm ?? shownFigure?.sizeMm ?? null);
   const title = showPage ? doc.name : (shownFigure?.name ?? ex("targetNoFigure"));
   const flagged = (f: ExportableFigure) => !!f.panel && flaggedObjectIds.has(f.panel.id);
@@ -1994,8 +2007,8 @@ function ExportPreviewPane({
       >
         {showPage ? (
           <CanvasThumb
-            page={doc.page}
-            objects={doc.objects}
+            page={fallbackCrop?.page ?? doc.page}
+            objects={fallbackCrop?.objects ?? doc.objects}
             className="h-full w-full"
             transparent={transparent}
           />
@@ -2206,6 +2219,7 @@ function TargetHeader({
   scope,
   figure,
   spec,
+  page,
   doc,
   asset,
   files,
@@ -2214,6 +2228,8 @@ function TargetHeader({
   /** 原图范围下这次导的那张（候选清单里的那一条；还没上画布的素材 `panel` 为 null 也是它） */
   figure: ExportableFigure | null;
   spec: OriginalOutputSpec | null;
+  /** 画布范围下导出的页面尺寸（单图退路裁掉白边后是包围盒尺寸） */
+  page: { w: number; h: number };
   doc: FigureDocument;
   /** 素材清单里的那一条（缩略图换代的 mtime + 磁盘原件的尺寸）；不在清单里就是 undefined */
   asset: PanelInfo | undefined;
@@ -2235,7 +2251,7 @@ function TargetHeader({
     ? spec && !spec.fallback
       ? ex("mmSize", { w: round1(spec.widthMm), h: round1(spec.heightMm) })
       : ex("sizeUnknownShort")
-    : ex("mmSize", { w: round1(doc.page.w), h: round1(doc.page.h) });
+    : ex("mmSize", { w: round1(page.w), h: round1(page.h) });
   const originNote =
     original && spec ? diskSizeNote(spec, asset?.original_spec) : null;
   const visibleObjects = doc.objects.filter((o) => !o.hidden).length;

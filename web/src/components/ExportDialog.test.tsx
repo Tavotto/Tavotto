@@ -506,6 +506,9 @@ describe('输出范围', () => {
     await click(button('开始导出')!)
     expect(exportBodies).toHaveLength(1)
     expect(exportBodies[0].scope, '内部改按画布导').toBe('canvas')
+    // 退路按图框裁掉页面白边：请求的页面尺寸 = 预览显示的 80 × 60 mm
+    expect((exportBodies[0].canvas as { page_w_mm: number }).page_w_mm).toBe(80)
+    expect((exportBodies[0].canvas as { page_h_mm: number }).page_h_mm).toBe(60)
   })
 })
 
