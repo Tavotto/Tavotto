@@ -27,6 +27,7 @@ import { useWorkspaceStore } from '@/store/workspace'
 import { useExitNoticeStore } from '@/store/exitNoticeStore'
 import { useNoticeRailStore } from '@/store/noticeRailStore'
 import { restartEngineFromCard } from '@/lib/exitNotices'
+import { useContactStore } from '@/store/contactStore'
 
 /**
  * 底部不再有常驻状态栏。这里是两块按需出现的浮层：
@@ -399,8 +400,22 @@ export function NotificationRail({ announceRole = 'alert' }: { announceRole?: 'a
     [!!engineExit, justAdded, !!adopted || !!autofilled, !!status].filter(Boolean).length < RAIL_MAX
   const hintPresence = usePresence(!!hint && hintHasSlot, DURATION.fast)
 
+  // 「作者回信了」胶囊（ADR 0145）：有未读回信、窗口没开着时出现，带「查看」；× 收起后只有未读数再增加才重新出现。
+  // 与操作提示同一档的让位（最多三条，状态 / 加入说明 / 环境那几条更重要）；它不自己走，要用户点「查看」或 ×
+  const contactUnread = useContactStore((s) => (s.capability ? s.unread : 0))
+  const contactDismissedAt = useContactStore((s) => s.capsuleDismissedAt)
+  const contactOpen = useContactStore((s) => s.open)
+  const contactSlots = [!!engineExit, justAdded, !!adopted || !!autofilled, !!status, !!hint].filter(Boolean).length
+  const contactPresence = usePresence(
+    contactUnread > 0 && contactUnread > contactDismissedAt && !contactOpen && contactSlots < RAIL_MAX,
+    DURATION.fast,
+  )
+  const lastContactUnread = useRef(0)
+  if (contactUnread > 0) lastContactUnread.current = contactUnread
+
   // 出现的先后：最新的一条最靠近底边（见 useArrivalOrder）
   const arrival = useArrivalOrder()
+  const contactOrder = arrival('contact', contactPresence.mounted && lastContactUnread.current)
   const addedOrder = arrival('added', addedPresence.mounted && `added:${addedDepth}`)
   const adoptedOrder = arrival('adopted', adoptedPresence.mounted && adoptedShown?.token)
   const autofillOrder = arrival('autofill', autofillPresence.mounted && autofillShown?.token)
@@ -504,6 +519,22 @@ export function NotificationRail({ announceRole = 'alert' }: { announceRole?: 'a
             onClick: () => void restartEngineFromCard(),
             loading: restarting,
           }}
+        />
+      )}
+      {contactPresence.mounted && (
+        <Toast
+          order={contactOrder}
+          tone="info"
+          state={contactPresence.state}
+          data-contact-capsule={String(lastContactUnread.current)}
+          icon={<Info size={ICON_SIZE.sm} className="shrink-0 text-ink-3" aria-hidden />}
+          text={translate('contact.capsule', { ns: 'dialogs' })}
+          action={{
+            label: translate('contact.capsuleOpen', { ns: 'dialogs' }),
+            onClick: () => useContactStore.getState().setOpen(true, 'letters'),
+          }}
+          onClose={() => useContactStore.getState().dismissCapsule()}
+          closeLabel={translate('contact.capsuleClose', { ns: 'dialogs' })}
         />
       )}
       {hintPresence.mounted && hint && (

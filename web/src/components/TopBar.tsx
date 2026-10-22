@@ -62,6 +62,7 @@ import { Tip } from './ui/Tooltip'
 import { useRenameFocusReturn } from './ui/useRenameFocusReturn'
 import type { StatusTone } from './ui/Notice'
 import { BuildMismatchChip } from './BuildMismatchChip'
+import { ContactButton } from './contact/ContactButton'
 import { ConflictActions, ConflictDetail } from './DocumentBanner'
 import { RestoreIssueBody, RestoreMetaBody } from './RestoreIssueBody'
 import { useWindowFullscreen } from '@/hooks/useWindowChrome'
@@ -126,6 +127,9 @@ export function TopBar() {
       <div className="flex min-w-0 shrink-0 items-center justify-end gap-2 max-[899px]:gap-1">
         <BuildMismatchChip />
         <UndoRedo />
+        {/* 联系作者（ADR 0145）：撤销重做与导出之间的次级胶囊，不抢导出这颗主按钮；窄于 900 只留图标。
+            引擎说关着（`TAVOTTO_NO_CONTACT=1`）就不渲染 */}
+        <ContactButton placement="topbar" />
         <ExportButton />
         <MoreMenu writeBackItem={writeBack.item} />
         {writeBack.dialog}

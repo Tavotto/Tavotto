@@ -54,6 +54,7 @@ import { Card } from '../ui/Card'
 import { dropZoneClass } from '../ui/dropZone'
 import { Menu, MenuItem } from '../ui/Menu'
 import { AppMenuButton } from '../AppMenuButton'
+import { ContactButton } from '../contact/ContactButton'
 import { DirBrowser, TailPath } from '../DirBrowser'
 
 /**
@@ -154,6 +155,8 @@ export function HomeView({
               {t('picker.backToCurrent')}
             </Button>
           )}
+          {/* 联系作者（ADR 0145）：与左上角的应用菜单对称，在顶行最右（Windows 窗口按钮的让位由整行的 paddingRight 管） */}
+          <ContactButton placement="home" className="-mr-2.5" />
         </div>
         <div
           data-home-content

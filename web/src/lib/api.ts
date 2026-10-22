@@ -5655,6 +5655,94 @@ export const cancelDiagSend = (id: string) =>
 export const discardDiagSend = (id: string, pj?: string | null) =>
   jsonFetch<{ ok: boolean }>(`/api/diagnostics/send/${encodeURIComponent(id)}/discard`, { method: 'POST' }, pj)
 
+/* ------------------- 联系作者（ADR 0145） -------------------
+ * 用户在应用里写信，由**本机引擎**经 Tavotto 服务器代发（WebView 不碰远程）：这里只是本机遥控器。
+ * 用户不需要登录、不需要配置自己的邮箱——所以这里没有（全产品也没有）邮件协议链接，失败时界面只给「复制内容 / 复制地址」。
+ * 会引出远程请求的只有 `sendContact`（用户点「发送」）与 `refreshContactMessages`（用户点「检查回信」）；
+ * 其余都是读本机状态。状态 / 列表对象里没有令牌、邮箱、正文。引擎侧见 `engine/contactsend.py`。*/
+
+export interface ContactCapability {
+  enabled: boolean
+  /** 收件地址（展示与「复制地址」用；与 `brand.CONTACT_EMAIL` 同源） */
+  recipient?: string
+  subject_max?: number
+  body_max?: number
+  email_max?: number
+  max_attachments?: number
+  max_total_bytes?: number
+  /** 附件允许的扩展名（带点、小写） */
+  extensions?: string[]
+  /** 未读回信数（本机记录，不联网） */
+  unread?: number
+  retention_days?: number
+}
+
+export type ContactSendState = 'idle' | 'sending' | 'cancelling' | 'done' | 'failed' | 'cancelled'
+export type ContactStage = 'init' | 'upload' | 'complete' | 'cancel'
+
+export interface ContactStatus {
+  state: ContactSendState
+  stage?: ContactStage | null
+  sent?: number
+  total?: number
+  gen: number
+  /** 成功后的编号（TVM-XXXX-XXXX-XXXX-XXXX），给用户复制 */
+  message_id?: string
+  /** 成功的那条线路：cn / global（只用于说明，不是可操作项） */
+  route?: 'cn' | 'global'
+  /** 失败码（引擎 `contactsend.FAILURES` 的键，或本机输入校验码 `contact_*`） */
+  code?: string
+  retryable?: boolean
+  retry_after?: number | null
+}
+
+export interface ContactReply {
+  id: string
+  created_at: string
+  body: string
+  read: boolean
+}
+
+export interface ContactMessage {
+  message_id: string
+  sent_at: number
+  route: 'cn' | 'global'
+  state: 'new' | 'replied' | 'closed'
+  unread: number
+  replies: ContactReply[]
+}
+
+export interface ContactSendMeta {
+  locale: string
+  subject: string
+  body: string
+  reply_email: string
+  /** 已送达的诊断包编号（TVD-…）；没附诊断就不带 */
+  report_id?: string
+}
+
+export const fetchContactCapability = () => jsonFetch<ContactCapability>('/api/contact')
+export const fetchContactStatus = () => jsonFetch<ContactStatus>('/api/contact/status')
+
+/** **用户点了「发送」**：multipart（`meta` JSON + 0..5 个 `file`）。立即回状态，真正的发送在引擎后台线程里。 */
+export const sendContact = (meta: ContactSendMeta, files: File[]) => {
+  const form = new FormData()
+  form.append('meta', JSON.stringify(meta))
+  for (const f of files) form.append('file', f, f.name)
+  return jsonFetch<ContactStatus>('/api/contact/send', { method: 'POST', body: form })
+}
+export const cancelContact = () => jsonFetch<ContactStatus>('/api/contact/cancel', { method: 'POST' })
+export const dismissContact = () => jsonFetch<ContactStatus>('/api/contact/dismiss', { method: 'POST' })
+export const fetchContactMessages = () =>
+  jsonFetch<{ messages: ContactMessage[]; unread: number }>('/api/contact/messages')
+/** 用户点了「检查回信」：引擎立刻问一遍服务器（至多每 30 秒一次；没有已发的信时不联网）。 */
+export const refreshContactMessages = () =>
+  jsonFetch<{ polled: number; throttled?: boolean; unread: number }>('/api/contact/refresh', { method: 'POST' })
+export const markContactRead = (id: string) =>
+  jsonFetch<{ unread: number }>(`/api/contact/messages/${encodeURIComponent(id)}/read`, { method: 'POST' })
+export const forgetContactMessage = (id: string) =>
+  jsonFetch<{ unread: number }>(`/api/contact/messages/${encodeURIComponent(id)}`, { method: 'DELETE' })
+
 /* --------------------------- 脚本注册表（stem ↔ 脚本） ----------------------- */
 /**
  * 「面板上没有 ⚡」几乎总是注册表的问题，以前只能手改 tavotto_registry.json。

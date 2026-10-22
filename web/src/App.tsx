@@ -21,6 +21,8 @@ import { RelinkDialog } from '@/components/RelinkDialog'
 import { SettingsDialog } from '@/components/SettingsDialog'
 import { TelemetryConsentDialog } from '@/components/TelemetryConsentDialog'
 import { DiagnosticsSendHost } from '@/components/DiagnosticsSendHost'
+import { ContactHost } from '@/components/contact/ContactHost'
+import { useContactStore } from '@/store/contactStore'
 import { ShortcutHelp } from '@/components/ShortcutHelp'
 import { StyleDialog } from '@/components/StyleDialog'
 import { ForeignScriptCard, PreparationCard } from '@/components/PreparationCard'
@@ -96,12 +98,16 @@ export function App() {
     void useTelemetryStore.getState().load()
     // 「发送问题反馈」默认关闭；只问本机引擎开没开（不联网），设置页与隐私摘要读这一份
     const diagLoaded = useDiagSendStore.getState().load()
+    // 「联系作者」（ADR 0143）：同样只问本机引擎开没开 + 未读回信数（不联网）；之后每 5 分钟刷新一次本机未读数
+    void useContactStore.getState().load()
+    const stopContactWatch = useContactStore.getState().watch()
     // 引擎意外退出的修复卡 + 上次没正常退出的提示卡（ADR 0129）；后者等上面的能力读完再判
     const stopExitNotices = initExitNotices(diagLoaded)
     // 导出默认值以后端为准（#715 PR-B）：换了 origin 的本机缓存是空的，先从数据目录取回来。
     // 导出对话框 / 设置页同步读本机缓存，这一步在它们打开之前就落地了
     void hydrateExportDefaults()
     return () => {
+      stopContactWatch()
       stopExitNotices()
       cancelStartupProbe()
     }
@@ -123,6 +129,7 @@ export function App() {
         <NativeTutorial />
         <TelemetryConsentDialog />
         <DiagnosticsSendHost />
+        <ContactHost />
         {/* 「有新版本」也在这一层问：还没开项目的人一样该知道 */}
         <UpdateNoticeDialog />
         {/* 还没打开项目也可能收到一条 `tavotto run` 交接：那个终端正阻塞着，
@@ -349,6 +356,7 @@ function Workspace() {
       <RelinkDialog />
         <TelemetryConsentDialog />
         <DiagnosticsSendHost />
+        <ContactHost />
         {/* 意外错误 / 上次没正常退出的反馈卡：贴窗口右下角（不在画布的通知轨里） */}
         <FeedbackCorner />
         <UpdateNoticeDialog />
