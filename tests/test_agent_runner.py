@@ -1040,6 +1040,7 @@ class TestProcessBoundary:
         try:
             proc.stdin.write("make it blue")
             proc.stdin.close()
+            proc.stdin = None  # py3.10 的 communicate() 会 flush 已关闭的 stdin 并抛 ValueError
             deadline = time.monotonic() + 15
             while not srv.requests and time.monotonic() < deadline:
                 time.sleep(0.05)
