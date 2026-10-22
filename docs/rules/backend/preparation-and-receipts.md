@@ -287,6 +287,12 @@ input 协议，前端也没有 readiness 计算器。端点 `POST /api/engine/pr
   计划私有字段 `input_remap_generation` 冻结检查时的代次，`_fingerprint` 用这份快照；改指表变了 = 新
   `config_revision`，旧失败不再是当前的。认领 `run` 与执行线程起跑前均经 `preparation.stale_reason` 核对代次，
   不一致就 `preparation_plan_stale / data_binding_changed`、`executed=False`，必须重新检查。
+- **沙盒里落空的探路调用（#1254，ADR 0084 §三）**：准备流程是默认的主流程，动态 glob 扫空 → 没捕获到图 / 脚本自己的失败 / 成功但图可能缺数据时，
+  `pool.missing_stem_error` 重建 `extra` 要**保留 `probe_misses`**（不能只留 `known`），失败分支取 `exc.workdir_hint`，成功分支取
+  `pool.workdir_hint_of_build`，一律存进 `PreparationResult.workdir_hint`（与 `missing_input` 同纪律：**不进 `to_payload()`**，取消时清掉）；
+  准备会话在上一次尝试有它时多一项 `requirements[kind=workdir_hint, origin=last_attempt, blocking=False]`（`payload` = 与首开确认框同形的载荷，
+  `source="runtime"`），不改 phase、不改错误码、不改计划判定。回答走既有 `PATCH /api/engine/workdir`。看护
+  `tests/test_preparation_session_e2e.py`（真 worker：动态 glob 扫空 / pyarrow 读 cwd 相对 parquet / 切到脚本目录出图）、`tests/test_runtime_probe_hint.py`。
 - **输出参数**（P03）：schema 里 `role=output_file`（只来自 `FileType('w'|'a'|'x'|…)`）的个数进 `run` 动作的
   `impact.script_writes = {declared_output_arguments, cwd_mode}`（不含参数名与路径）。Tavotto 从不替用户加 overwrite / force 一类 token。
 - **源码修订绑进计划**（#815 Codex r4220829632）：`script` 目标的计划记 `script_revision`（`scriptargs.source_revision`：脚本字节摘要 +

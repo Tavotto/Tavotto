@@ -196,6 +196,8 @@ _ENVIRONMENT_CODE = "environment_choice_required"
 _ARGUMENTS_CODE = "script_arguments_available"
 #: 上一次尝试读不到数据（ADR 0106 的 `missing_input` 载荷）：回答走既有 `/api/engine/input-remap`，答完 `recheck`
 _MISSING_INPUT_CODE = "missing_input"
+#: 沙盒里落空的探路调用、脚本目录里找得到（#1254）：不阻塞的提示，载荷与首开确认框同形，前端复用 `WorkdirChooseButton`
+_WORKDIR_HINT_CODE = "workdir_hint"
 #: 脚本源码里有弹窗选文件 / 询问的写法（`dialogscan`）：不阻塞的提示，运行照样可用
 _GUI_DIALOG_CODE = "script_uses_gui_dialog"
 
@@ -370,6 +372,7 @@ def requirements_of(
     *,
     runtime_missing: dict | None = None,
     missing_input: dict | None = None,
+    workdir_hint: dict | None = None,
 ) -> list[dict]:
     """要用户先答的事（`needs_action` 的检查项）。载荷原样是既有的 `required_input`——回答走既有端点，
     答完 `recheck`；会话不复制那两条回答协议。
@@ -469,6 +472,19 @@ def requirements_of(
                 "code": _MISSING_INPUT_CODE,
                 "blocking": False,
                 "payload": dict(missing_input),
+            }
+        )
+    if workdir_hint is not None:
+        # #1254：上一次尝试在沙盒 cwd 下 glob / listdir / exists / C++ 读取器落空，同一个相对目标在脚本目录里找得到。
+        # 不阻塞、不改任何 phase；回答走既有 `PATCH /api/engine/workdir`（前端复用首开的确认框）
+        out.append(
+            {
+                "id": "data",
+                "kind": "workdir_hint",
+                "origin": "last_attempt",
+                "code": _WORKDIR_HINT_CODE,
+                "blocking": False,
+                "payload": dict(workdir_hint),
             }
         )
     if any(c["id"] == "arguments" for c in checks):
@@ -2324,6 +2340,11 @@ class SessionService:
                         if result is not None
                         and attempt_fact is not None
                         and result.status == preparation.STATUS_ERROR
+                        else None
+                    ),
+                    workdir_hint=(
+                        result.workdir_hint
+                        if result is not None and attempt_fact is not None
                         else None
                     ),
                 ),

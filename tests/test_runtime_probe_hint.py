@@ -630,3 +630,23 @@ def test_the_render_response_carries_the_hint_without_touching_anything_else(
         )
     finally:
         tavotto_app.reset_projects()
+
+
+def test_missing_stem_error_keeps_the_probe_misses_so_the_hint_survives_the_rebuild(project):
+    """准备流程的「没出图」是 `missing_stem_error` 重建的错误：不能只留 `known`（Codex #1299 P1）。"""
+    worker = type(
+        "W",
+        (),
+        {
+            "script_name": "sub/fig.py",
+            "figures_dir": str(project),
+            "last_build_probe_misses": [_glob("data/run_*.txt")],
+            "_log_tail": lambda self, n=30: "",
+        },
+    )()
+    err = engine_pool.missing_stem_error(worker, "p", [])
+    assert err.code == engine_pool.NO_FIGURES_SILENT_CODE
+    assert err.extra["probe_misses"] == worker.last_build_probe_misses
+    assert err.workdir_hint["reason"] == workdir.REASON_SCRIPT_DIR_EVIDENCE
+    worker.last_build_probe_misses = None
+    assert engine_pool.missing_stem_error(worker, "p", []).workdir_hint is None

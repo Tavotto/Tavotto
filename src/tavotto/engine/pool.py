@@ -1055,7 +1055,10 @@ def missing_stem_error(worker, stem: str, known) -> "WorkerError | None":
         return None
     script_name = getattr(worker, "script_name", "") or ""
     err = WorkerError(f"stem 不存在: {stem}", "", code="unknown_stem")
-    err.extra = {"known": known}
+    # 沙盒里落空的探路调用也带上（#1254）：准备流程是默认的主流程，动态 glob 扫空 → 没捕获到图，
+    # 不带的话 `_offer_workdir_hint` 看不到证据，用户只剩一句笼统的「没出图」
+    misses = getattr(worker, "last_build_probe_misses", None)
+    err.extra = {"known": known, **({"probe_misses": misses} if misses else {})}
     err.script_name = script_name
     try:
         tail = worker._log_tail()

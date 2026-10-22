@@ -803,6 +803,9 @@ class PreparationResult:
     #: T07：准备会话把它当一项待答的需求（回答走既有的 `/api/engine/input-remap`）。**不进 `to_payload()`**：
     #: 里面是脚本里写的路径串，诊断快照与回执都不带它。
     missing_input: dict | None = None
+    #: 沙盒里落空的探路调用、而脚本目录里找得到（#1254，`workdir.probe_hint`）：失败 / 没出图 / 成功但图可能缺数据时的引导。
+    #: 与 `missing_input` 同纪律：**不进 `to_payload()`**（里面是脚本里写的路径串）；准备会话把它当一项不阻塞的需求。
+    workdir_hint: dict | None = None
     #: 这次执行里每一问 input 的去向（T08，`inputbroker.InputFacts.payload()`）：只有计数与闭集理由，只给
     #: 诊断快照的白名单投影。**不进 `to_payload()`**。
     input_facts: dict | None = None
@@ -1083,6 +1086,7 @@ class PreparationService:
                 note += "；它读到的数据与此刻预检记下的不同（图是旧快照，重算请重建会话）"
             if self._stem_missing(entry, existing, _captured_stems(reusable)):
                 return
+            result.workdir_hint = pool.workdir_hint_of_build(existing)
             self._finish(entry, STATUS_READY, note=note)
             return
         tr.mark("spawn")
@@ -1206,6 +1210,9 @@ class PreparationService:
             missing_input = getattr(exc, "missing_input", None)
             if isinstance(missing_input, dict):
                 result.missing_input = dict(missing_input)
+            hint = getattr(exc, "workdir_hint", None)
+            if isinstance(hint, dict):
+                result.workdir_hint = dict(hint)
             result.input_facts = getattr(exc, "input_facts", None)
             result.error = error
             # 脚本自己炸 / 缺依赖是「执行」那一步坏的；起不来（解释器 / 沙盒）是「起会话」坏的
@@ -1269,6 +1276,8 @@ class PreparationService:
             return
         if self._stem_missing(entry, worker, _captured_stems(resp)):
             return
+        # build 成功、图也捕获到了，但沙盒里 glob 回空而脚本目录里有文件（图可能缺数据，#1254）
+        entry.result.workdir_hint = pool.workdir_hint_of_build(worker)
         self._finish(entry, STATUS_READY)
 
     def _stem_missing(self, entry: _Entry, worker, known) -> bool:
@@ -1285,6 +1294,9 @@ class PreparationService:
             return False
         entry.result.trace.fail("execute", err.code)
         entry.result.error = {"code": err.code, "message": str(err)}
+        hint = getattr(err, "workdir_hint", None)
+        if isinstance(hint, dict):
+            entry.result.workdir_hint = dict(hint)
         self._finish(entry, STATUS_ERROR, note="脚本跑完了，但这张面板没有被捕获")
         return True
 
@@ -1411,6 +1423,7 @@ class PreparationService:
                 entry.result.error = None
                 entry.result.required_input = None
                 entry.result.missing_input = None
+                entry.result.workdir_hint = None
                 entry.result.trace.cancel("receipt")
             entry.result.finished_at = time.time()
             if note:
