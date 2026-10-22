@@ -1087,6 +1087,14 @@ fn menu_spec(m: &'static i18n::ShellText, macos: bool) -> Vec<Entry> {
     menus
 }
 
+/// opener 插件：`open_js_links_on_click` 必须关（原因见 `run()` 注册处与
+/// `the_opener_plugin_never_swallows_link_clicks`）。注册只许经这个函数。
+fn opener_plugin<R: tauri::Runtime>() -> impl tauri::plugin::Plugin<R> {
+    tauri_plugin_opener::Builder::new()
+        .open_js_links_on_click(false)
+        .build()
+}
+
 fn build_native<R: tauri::Runtime>(
     handle: &tauri::AppHandle<R>,
     kind: Native,
@@ -1815,11 +1823,7 @@ fn main() {
         // （`on_navigation` / `on_new_window` 全被抢先吞了）。关掉之后 `<a target=_blank>` 回到
         // 原生路径（`navigation_allowed` → `OpenExternal`），`window.open` 走 `on_new_window`，
         // 两条都由壳在 Rust 侧调 `open_external`，不需要给页面任何 opener 权限。
-        .plugin(
-            tauri_plugin_opener::Builder::new()
-                .open_js_links_on_click(false)
-                .build(),
-        )
+        .plugin(opener_plugin())
         // 应用内更新：前端经自有命令 desktop_update_check / desktop_update_install（来源编排见
         // app_update.rs，ADR 0121）检查/下载/安装，装完用 process 的 restart 重启。升级永不静默
         // 进行——什么时候换版本是用户按下按钮的结果（与 Python updater 同一条纪律）。
@@ -2437,14 +2441,141 @@ mod tests {
     fn the_opener_plugin_never_swallows_link_clicks() {
         let src = include_str!("main.rs");
         let prod = &src[..src.find("#[cfg(test)]\nmod tests").expect("找不到测试模块")];
-        assert!(prod.contains(".open_js_links_on_click(false)"));
-        assert!(!prod.contains("tauri_plugin_opener::init"));
-        for cap in [
-            include_str!("../capabilities/main.json"),
-            include_str!("../capabilities/remote-engine.json"),
-        ] {
-            assert!(!cap.contains("opener:"), "页面不得持有 opener 权限");
+        let code: String = strip_rust_comments(prod)
+            .chars()
+            .filter(|c| !c.is_whitespace())
+            .collect();
+        // 生效的注册：恰好一处 `.plugin(opener_plugin())`，且没有别的 opener 注册方式。
+        assert_eq!(code.matches(".plugin(opener_plugin())").count(), 1);
+        assert_eq!(code.matches("opener_plugin()").count(), 1);
+        assert!(!code.contains("tauri_plugin_opener::init"));
+        assert!(!code.contains("open_js_links_on_click(true)"));
+        assert_eq!(code.matches("tauri_plugin_opener::Builder").count(), 1);
+        // 函数体：Builder::new() 链上先关注入、再 build。
+        assert!(
+            code.contains(
+                "fnopener_plugin<R:tauri::Runtime>()->impltauri::plugin::Plugin<R>\
+                 {tauri_plugin_opener::Builder::new().open_js_links_on_click(false).build()}"
+            ),
+            "opener_plugin() 必须是 Builder::new().open_js_links_on_click(false).build()"
+        );
+
+        // 全部 capability 文件（含 rescue-page / remote-connect 等）都不得给页面 opener 权限。
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("capabilities");
+        let mut seen = 0;
+        for entry in std::fs::read_dir(&dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path.extension().and_then(|e| e.to_str()) != Some("json") {
+                continue;
+            }
+            seen += 1;
+            let v: serde_json::Value =
+                serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+            for perm in v["permissions"].as_array().expect("permissions 应为数组") {
+                let id = perm
+                    .as_str()
+                    .or_else(|| perm["identifier"].as_str())
+                    .unwrap_or_else(|| panic!("{path:?} 出现无法识别的权限项 {perm}"));
+                assert!(
+                    !id.starts_with("opener:"),
+                    "{path:?} 页面不得持有 opener 权限：{id}"
+                );
+            }
         }
+        assert!(
+            seen >= 4,
+            "capabilities/ 只枚举到 {seen} 个文件，疑似空目录假绿"
+        );
+    }
+
+    /// 去掉 `//` 行注释与 `/* */` 块注释（块注释可嵌套）；字符串 / 原始字符串 / 字符字面量原样保留。
+    fn strip_rust_comments(src: &str) -> String {
+        let b: Vec<char> = src.chars().collect();
+        let mut out = String::new();
+        let mut i = 0;
+        while i < b.len() {
+            let c = b[i];
+            let n = b.get(i + 1).copied();
+            if c == '/' && n == Some('/') {
+                while i < b.len() && b[i] != '\n' {
+                    i += 1;
+                }
+            } else if c == '/' && n == Some('*') {
+                let mut depth = 1;
+                i += 2;
+                while i < b.len() && depth > 0 {
+                    if b[i] == '/' && b.get(i + 1) == Some(&'*') {
+                        depth += 1;
+                        i += 2;
+                    } else if b[i] == '*' && b.get(i + 1) == Some(&'/') {
+                        depth -= 1;
+                        i += 2;
+                    } else {
+                        i += 1;
+                    }
+                }
+                out.push(' ');
+            } else if c == 'r' && matches!(n, Some('"') | Some('#')) {
+                // 原始字符串 r#"..."#
+                let mut j = i + 1;
+                let mut hashes = 0;
+                while b.get(j) == Some(&'#') {
+                    hashes += 1;
+                    j += 1;
+                }
+                if b.get(j) == Some(&'"') {
+                    j += 1;
+                    let close: Vec<char> = std::iter::once('"')
+                        .chain(std::iter::repeat('#').take(hashes))
+                        .collect();
+                    while j < b.len()
+                        && b[j..].len() >= close.len()
+                        && b[j..j + close.len()] != close[..]
+                    {
+                        j += 1;
+                    }
+                    j = (j + close.len()).min(b.len());
+                    out.extend(&b[i..j]);
+                    i = j;
+                } else {
+                    out.push(c);
+                    i += 1;
+                }
+            } else if c == '"' {
+                out.push(c);
+                i += 1;
+                while i < b.len() {
+                    out.push(b[i]);
+                    if b[i] == '\\' {
+                        i += 1;
+                        if i < b.len() {
+                            out.push(b[i]);
+                        }
+                    } else if b[i] == '"' {
+                        i += 1;
+                        break;
+                    }
+                    i += 1;
+                }
+            } else if c == '\'' && (n == Some('\\') || b.get(i + 2) == Some(&'\'')) {
+                // 字符字面量（生命周期 'a 不会命中）
+                let mut j = i + 1;
+                if b[j] == '\\' {
+                    j += 1;
+                }
+                j += 1;
+                while j < b.len() && b[j] != '\'' {
+                    j += 1;
+                }
+                j = (j + 1).min(b.len());
+                out.extend(&b[i..j]);
+                i = j;
+            } else {
+                out.push(c);
+                i += 1;
+            }
+        }
+        out
     }
 
     /// 远程实例窗口的标记与前端读的全局名是同一个（Python 侧再比一次两侧源码）。
