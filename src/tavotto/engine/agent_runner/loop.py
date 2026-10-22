@@ -6,6 +6,8 @@
 * `max_turns`   轮数用尽；`budget` token / 秒数用尽，或一轮输出被截断（`detail=output_truncated`）；
 * `tool_error_loop` 同一工具的同一错误码连续 3 次；
 * `auth` 401 / 403 / 没密钥；`quota` 402、额度耗尽、429 重试用尽；
+* `refused` 服务端过滤 / 拒答（chat `finish_reason=content_filter`、anthropic `stop_reason=refusal`、responses `incomplete` 且原因不是
+  `max_output_tokens`；`detail` 是短代码）；
 * `network` 传输失败、5xx 重试用尽、不可重试的 4xx、回复体不合法（`detail` 是短代码）；
 * `cancelled` 收到 SIGTERM / Ctrl-Break；
 * `internal` 兜底（本模块自己的缺陷；`detail` 只有异常类型名）。
@@ -47,6 +49,7 @@ REASONS = (
     "tool_error_loop",
     "auth",
     "quota",
+    "refused",
     "network",
     "cancelled",
     "internal",
@@ -135,7 +138,10 @@ class HttpModel:
         for attempt in range(self.max_attempts):
             if cancel.is_set():
                 raise RunnerFailure("cancelled")
-            timeout = max(1.0, min(self.request_timeout, deadline - time.monotonic()))
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:  # 总时限到了：不再发请求
+                raise RunnerFailure("budget", "time")
+            timeout = min(self.request_timeout, remaining)  # 单次请求也不越过总时限
             retry_after = None
             try:
                 status, headers, data = _cancellable(
@@ -160,7 +166,7 @@ class HttpModel:
                 retry_after = _retry_after(headers)
             if attempt + 1 < self.max_attempts:
                 delay = retry_after if retry_after is not None else self.retry_base * (2**attempt)
-                if cancel.wait(min(delay, 30.0)):
+                if cancel.wait(max(0.0, min(delay, 30.0, deadline - time.monotonic()))):
                     raise RunnerFailure("cancelled")
         assert last is not None
         # 重试用尽：429 → quota（被限流），其余 → network

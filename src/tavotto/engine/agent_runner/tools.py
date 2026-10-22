@@ -23,6 +23,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Protocol
 
+from .redact import NO_REDACTION, Redactor
 from .wires import ToolResult, ToolSpec
 
 READ_LIMIT_BYTES = 200 * 1024
@@ -52,6 +53,8 @@ class RunEnvelope:
     limits: Limits = field(default_factory=Limits)
     #: 调用方注入的检查回调：`() -> (ok, 报告文本)`。没注入 = `check` 工具返回 not available。
     check: Callable[[], tuple[bool, str]] | None = None
+    #: 已知密钥的过滤器：写进目标脚本的内容含密钥 → `secret_in_content` 拒写（文件会被提交进用户项目）
+    redactor: Redactor = NO_REDACTION
 
 
 class TaskToolset(Protocol):
@@ -114,6 +117,15 @@ def _err(name: str, call_id: str, code: str, message: str) -> ToolResult:
     return ToolResult(call_id, name, message, is_error=True, code=code, summary=f"error: {code}")
 
 
+def _secret_err(name: str, call_id: str) -> ToolResult:
+    return _err(
+        name,
+        call_id,
+        "secret_in_content",
+        "The content contains a credential and was not written. Never put keys or tokens into the script.",
+    )
+
+
 # --------------------------------------------------------------------------- figure_edit
 class FigureEditSession:
     """一次 figure_edit 运行里工具共享的状态：候选根、目标、是否已读、是否改过。"""
@@ -122,6 +134,7 @@ class FigureEditSession:
         self.root = os.path.realpath(envelope.cwd)
         self.target_rel = envelope.target
         self.check_fn = envelope.check
+        self.redactor = envelope.redactor
         self.read_target = False
         self.mutated = False
         self.target_path = self._resolve(envelope.target)  # 构造时目标就须合法，否则 None
@@ -262,6 +275,8 @@ class FigureEditSession:
                 "not_read",
                 "Read the target script with read_file before editing it.",
             )
+        if self.redactor.contains(new):
+            return _secret_err(name, call_id)
         if old == "":
             return _err(name, call_id, "empty_old", "`old` must not be empty.")
         if old == new:
@@ -320,6 +335,8 @@ class FigureEditSession:
                 "not_read",
                 "Read the target script with read_file before writing it.",
             )
+        if self.redactor.contains(content):
+            return _secret_err(name, call_id)
         if len(content.encode("utf-8")) > READ_LIMIT_BYTES:
             return _err(name, call_id, "too_large", "Content is larger than the allowed size.")
         got = self._read_text(real)

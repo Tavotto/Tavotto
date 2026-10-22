@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import http.client
 import json
+import re
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -156,6 +157,20 @@ def _bad(detail: str) -> RunnerFailure:
     return RunnerFailure("network", detail)
 
 
+def _code(value: object) -> str:
+    """服务端给的原因 / 错误码 → 短代码。只收 `[A-Za-z0-9_.-]{1,40}`，其余一律 `unknown`（不回显服务端文字）。"""
+    return (
+        value
+        if isinstance(value, str) and re.fullmatch(r"[A-Za-z0-9_.-]{1,40}", value)
+        else "unknown"
+    )
+
+
+def _refused(detail: str) -> RunnerFailure:
+    """服务端过滤 / 拒答（content_filter、refusal、被截断以外的 incomplete）：结局 `refused`。"""
+    return RunnerFailure("refused", detail)
+
+
 # --------------------------------------------------------------------------- anthropic
 class AnthropicWire:
     """POST `{base}/v1/messages`。
@@ -269,6 +284,8 @@ class AnthropicWire:
             cached_input_tokens=cache_read,
         )
         stop = body.get("stop_reason")
+        if stop == "refusal":
+            raise _refused("refusal")
         turn.stop = (
             "tool_use"
             if turn.tool_calls
@@ -377,6 +394,8 @@ class OpenAIChatWire:
             else 0,
         )
         fin = choices[0].get("finish_reason")
+        if fin == "content_filter":
+            raise _refused("content_filter")
         turn.stop = (
             "tool_use"
             if turn.tool_calls
@@ -449,6 +468,21 @@ class OpenAIResponsesWire:
         )
 
     def parse(self, body: dict) -> Turn:
+        # 顶层 status 先判：2xx 体里 failed / 未完成不是成功（空 output 会被误当作 end）
+        status = body.get("status")
+        inc = body.get("incomplete_details")
+        truncated = False
+        if status == "incomplete":
+            reason = inc.get("reason") if isinstance(inc, dict) else None
+            if reason == "max_output_tokens":
+                truncated = True
+            else:
+                raise _refused(f"incomplete_{_code(reason)}")
+        elif status == "failed":
+            err = body.get("error")
+            raise _bad(f"failed_{_code(err.get('code'))}" if isinstance(err, dict) else "failed")
+        elif status is not None and status != "completed":
+            raise _bad(f"status_{_code(status)}")  # cancelled / queued / in_progress 等意外状态
         out = body.get("output")
         if not isinstance(out, list):
             raise _bad("bad_response")
@@ -485,12 +519,6 @@ class OpenAIResponsesWire:
             cached_input_tokens=_int(details.get("cached_tokens"))
             if isinstance(details, dict)
             else 0,
-        )
-        inc = body.get("incomplete_details")
-        truncated = (
-            body.get("status") == "incomplete"
-            and isinstance(inc, dict)
-            and inc.get("reason") == "max_output_tokens"
         )
         turn.stop = "tool_use" if turn.tool_calls else ("max_tokens" if truncated else "end")
         return turn

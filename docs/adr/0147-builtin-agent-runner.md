@@ -25,7 +25,7 @@ CLI 的写入面（任意 shell、网络、绝对路径写）也比「改一个�
 
 ### 三、失败不抛，结局写进 `done`
 
-`reason` ∈ `completed | max_turns | budget | tool_error_loop | auth | quota | network | cancelled`（外加兜底 `internal`）。
+`reason` ∈ `completed | max_turns | budget | tool_error_loop | auth | quota | refused | network | cancelled`（外加兜底 `internal`）。`refused` = 服务端过滤 / 拒答。
 预算恒等式（每轮入账之和 == 合计）不成立时记 `ledger_mismatch`，不抛。
 
 ### 四、本阶段不做

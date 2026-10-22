@@ -3,7 +3,8 @@
 约定（父进程只靠这些和我们说话）：
 
 * 提示词从 `--prompt-file` 或 stdin 读（UTF-8），**不放 argv**（Windows 命令行转义与进程列表泄漏）。
-* 密钥只读环境变量 `TAVOTTO_AGENT_API_KEY`（读后立即从本进程环境里删掉）；argv、stdout、stderr 里都没有它。
+* 密钥只读环境变量 `TAVOTTO_AGENT_API_KEY`（读后立即从本进程环境里删掉）；argv、stdout、stderr 里都没有它：
+  事件写出函数 `emit` 与诊断函数 `diag` 是本进程写 stdout / stderr 的唯一出口，所有字符串过 `Redactor`（模型的成功回复也不可信）。
 * stdout 每行一条 JSON 事件（`thinking | tool | text | usage | done`，ASCII 转义，Windows 控制台编码无关）；
   最后一条一定是 `done`。stderr 只写诊断级错误码，不含内容。
 * 退出码：`done.ok` 为真 0，否则 1；命令行参数错 2。
@@ -21,6 +22,7 @@ import threading
 from pathlib import Path
 
 from . import loop
+from .redact import Redactor
 from .tools import TOOLSETS, Limits, RunEnvelope
 from .wires import ANTHROPIC_EFFORTS, THINKING_MODES, WIRES, RunnerFailure, check_base_url
 
@@ -69,6 +71,7 @@ def _read_prompt(path: str | None) -> str:
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     api_key = os.environ.pop(ENV_API_KEY, "")
+    redactor = Redactor(api_key)
     cancel = threading.Event()
 
     def on_signal(_signum, _frame):
@@ -84,8 +87,14 @@ def main(argv: list[str] | None = None) -> int:
 
     lock = threading.Lock()
 
+    def diag(message: str) -> None:
+        try:
+            sys.stderr.write(redactor.redact(message) + "\n")
+        except OSError:
+            pass
+
     def emit(event: dict) -> None:
-        line = json.dumps(event, ensure_ascii=True, separators=(",", ":"))
+        line = json.dumps(redactor.redact_obj(event), ensure_ascii=True, separators=(",", ":"))
         with lock:
             try:
                 sys.stdout.write(line + "\n")
@@ -95,9 +104,11 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         instruction = _read_prompt(args.prompt_file)
-    except OSError:
+    except (OSError, ValueError):
         instruction = ""
-        sys.stderr.write("agent_runner: prompt_unreadable\n")
+    bad_prompt = not instruction.strip()  # 读不到 / 空白：不调模型（不拿空指令去花钱）
+    if bad_prompt:
+        diag("agent_runner: bad_prompt")
     limits = Limits(
         max_turns=max(1, args.max_turns),
         max_total_tokens=max(1, args.max_total_tokens),
@@ -109,10 +120,13 @@ def main(argv: list[str] | None = None) -> int:
         target=args.target,
         instruction=instruction,
         limits=limits,
+        redactor=redactor,
     )
 
     model: object
-    if args.wire == "demo":
+    if bad_prompt:
+        model = _FailModel(RunnerFailure("internal", "bad_prompt"))
+    elif args.wire == "demo":
         try:
             model = loop.DemoModel.from_file(args.demo_script or "")
         except (OSError, ValueError):
@@ -138,7 +152,7 @@ def main(argv: list[str] | None = None) -> int:
 
     res = loop.run(model, TOOLSETS[args.task], envelope, emit, cancel)
     if res.reason == "internal":
-        sys.stderr.write(f"agent_runner: internal {res.detail}\n")
+        diag(f"agent_runner: internal {res.detail}")
     return 0 if res.ok else 1
 
 

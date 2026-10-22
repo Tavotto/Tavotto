@@ -281,6 +281,10 @@
   请求有超时；`tests/test_outbound_https_trust.py` 的 `OUTBOUND` 登记了 `engine/agent_runner/wires.py: _opener`。
 - **密钥**：只读环境变量 `TAVOTTO_AGENT_API_KEY`（读后从本进程环境删除），绝不进 argv / stdout / stderr / 事件 / 日志 / repr。
   提示词只经 `--prompt-file` 或 stdin。服务端错误体不进任何输出（可能回显提示词），只留 `detail` 短代码。
+  **模型的成功回复同样不可信**（服务端在请求头里拿到了密钥，可能回显）：`__main__` 的事件写出函数 `emit` 与 stderr 诊断函数 `diag` 是
+  进程里**唯一**的输出出口，所有字符串（`text`、`tool` 摘要、`done.detail`、诊断）统一过 `redact.Redactor`，已知密钥（长度 ≥ 8 才参与）
+  及其去空白 / JSON 转义变形换成 `[redacted]`。同一保证的另一出口：`edit_file` / `write_file` 的内容含密钥 → 工具错误 `secret_in_content`，拒写、文件零改动。
+  提示词读不到或为空白 → 不调模型，`done{ok:false, reason:"internal", detail:"bad_prompt"}`、退出码 1。
 - **工具与路径判据**（`tools.py`，ADR 0138 §四）：`read_file`（≤ 200 KB 的 UTF-8 文本）、`list_dir`（一层，符号链接只标注不跟随）、
   `edit_file`（`old` 必须在目标脚本里**恰好出现一次**，0 次 / 多次都是带说明的工具错误；本会话必须先 `read_file` 过目标）、
   `write_file`（整份覆盖，兜底）、`check`（调用方注入的回调，没注入 = `not_available` 工具错误）。**没有 shell、网络、MCP 工具。**
@@ -290,9 +294,12 @@
   将来 `data_to_figure` 的工具集**没有写文件工具**（只出结构化列映射，ADR 0138 §四）。
 - **事件**（stdout 每行一条 JSON，ASCII 转义）：`thinking`（只有字符数）、`tool`（工具名、成败、一句话摘要，**不带文件内容 / 提示词 / 密钥**）、
   `text`（模型对用户说的话）、`usage`（每轮用量）、`done`（最后一条，恰好一条）。stderr 只写诊断级错误码。
-- **结束条件与结局**：`done{ok, reason, detail}`，`reason` ∈ `completed | max_turns | budget | tool_error_loop | auth | quota | network | cancelled`，
+- **结束条件与结局**：`done{ok, reason, detail}`，`reason` ∈ `completed | max_turns | budget | tool_error_loop | auth | quota | refused | network | cancelled`，
   外加兜底 `internal`（本模块自己的缺陷，`detail` 只有异常类型名）。失败**不抛**。429 / 5xx / 传输失败指数退避重试（有上限），401 / 403 → `auth`，
-  402 或额度类 429 → `quota`，429 重试用尽 → `quota`，其余 4xx 不重试 → `network`。同一工具的同一错误码连续 3 次 → `tool_error_loop`。
+  402 或额度类 429 → `quota`，429 重试用尽 → `quota`，其余 4xx 不重试 → `network`。服务端过滤 / 拒答 → `refused`（chat `finish_reason=content_filter`、
+  anthropic `stop_reason=refusal`、responses `status:incomplete` 且原因不是 `max_output_tokens`，`detail` 如 `incomplete_content_filter`）；
+  responses 顶层 `status` 为 `failed`（`detail=failed_<error.code>`）或 `cancelled / queued / in_progress`（`status_<名>`）→ `network`，不再当作空的 end 轮。
+  重试等待 = min(退避, Retry-After, 30 s, 距总时限的剩余)，剩余 ≤ 0 不再发请求 → `budget`（`detail=time`）；单次请求超时也不超过剩余时间。同一工具的同一错误码连续 3 次 → `tool_error_loop`。
   SIGTERM / SIGINT / Ctrl-Break → `cancelled`。
 - **预算与账本**：轮数、token（input+output）、秒数三道上限。每轮 input / output / 耗时入账，结束时核「合计 == 各轮之和」，不等记
   `done.ledger_mismatch=true`（不抛）。估计上下文超阈值时把早先的 `read_file` 结果换成「已读过 X（第 a–b 行，sha 前缀）」。

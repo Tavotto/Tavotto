@@ -1005,3 +1005,196 @@ class TestProcessBoundary:
         d = json.loads(out.splitlines()[-1])
         assert (d["type"], d["ok"], d["reason"]) == ("done", False, "cancelled")
         assert proc.returncode == 1 and KEY_CANARY not in out + err
+
+
+# ================================================================ Codex 评审四条（密钥回显 / 终态 / 总时限 / 空提示词）
+def _final_text_turn(wire: str, text: str) -> list:
+    if wire == "anthropic":
+        body = {
+            "content": [{"type": "text", "text": text}],
+            "stop_reason": "end_turn",
+            "usage": {"input_tokens": 1, "output_tokens": 1},
+        }
+    else:
+        raise AssertionError(wire)
+    return [(200, {}, body)]
+
+
+class TestKeyRedaction:
+    def test_key_echoed_in_model_text_is_redacted_in_stdout(self, cand, serve):
+        echo = f"here is your key {KEY_CANARY} and again {KEY_CANARY}."
+        srv = serve(_final_text_turn("anthropic", echo))
+        p = run_cli(
+            cand,
+            "anthropic",
+            "--base-url",
+            srv.url,
+            "--model",
+            "m",
+            key=KEY_CANARY,
+            stdin="make it blue",
+        )
+        assert srv.requests[0][1]["x-api-key"] == KEY_CANARY, "前提：密钥确实到过服务器"
+        assert KEY_CANARY not in p.stdout + p.stderr
+        events = [json.loads(ln) for ln in p.stdout.splitlines()]
+        text = next(e["text"] for e in events if e["type"] == "text")
+        assert text == "here is your key [redacted] and again [redacted]."
+        assert p.returncode == 0
+
+    def test_redactor_rules(self):
+        from tavotto.engine.agent_runner.redact import Redactor
+
+        r = Redactor("  sk-long-secret-1  ")
+        assert r.redact("a sk-long-secret-1 b") == "a [redacted] b"
+        assert r.redact("a   sk-long-secret-1   b") == "a [redacted] b"  # 含空白的原样形先换
+        assert r.redact_obj({"k": ["x sk-long-secret-1"]}) == {"k": ["x [redacted]"]}
+        assert not Redactor("short") and Redactor("short").redact("short") == "short"
+        assert "sk-long" not in repr(r)
+
+    def test_secret_in_file_content_is_refused_and_file_untouched(self, cand):
+        from tavotto.engine.agent_runner.redact import Redactor
+
+        ts = tool_set(cand, redactor=Redactor(KEY_CANARY))
+        ts["read_file"].handler({"path": "fig.py"})
+        before = _tree(cand)
+        r = ts["edit_file"].handler({"old": "red", "new": f'"{KEY_CANARY}"'})
+        assert (r.is_error, r.code) == (True, "secret_in_content")
+        r = ts["write_file"].handler({"content": f"KEY = '{KEY_CANARY}'\n"})
+        assert (r.is_error, r.code) == (True, "secret_in_content")
+        assert _tree(cand) == before, "文件零改动"
+        assert KEY_CANARY not in json.dumps([r.content, r.summary])
+        # 不含密钥的编辑照常
+        assert not ts["edit_file"].handler({"old": "red", "new": "blue"}).is_error
+
+
+class TestTerminalStates:
+    @pytest.mark.parametrize(
+        ("wire", "body", "reason", "detail"),
+        [
+            (
+                "openai-responses",
+                {
+                    "status": "failed",
+                    "output": [],
+                    "error": {"code": "server_error", "message": PROMPT_CANARY},
+                },
+                "network",
+                "failed_server_error",
+            ),
+            ("openai-responses", {"status": "failed", "output": []}, "network", "failed"),
+            (
+                "openai-responses",
+                {
+                    "status": "incomplete",
+                    "output": [],
+                    "incomplete_details": {"reason": "content_filter"},
+                },
+                "refused",
+                "incomplete_content_filter",
+            ),
+            (
+                "openai-responses",
+                {"status": "incomplete", "output": []},
+                "refused",
+                "incomplete_unknown",
+            ),
+            (
+                "openai-responses",
+                {"status": "cancelled", "output": []},
+                "network",
+                "status_cancelled",
+            ),
+            ("openai-responses", {"status": "queued", "output": []}, "network", "status_queued"),
+            (
+                "openai-responses",
+                {"status": "in_progress", "output": []},
+                "network",
+                "status_in_progress",
+            ),
+            (
+                "openai-chat",
+                {
+                    "choices": [
+                        {
+                            "finish_reason": "content_filter",
+                            "message": {"role": "assistant", "content": ""},
+                        }
+                    ],
+                    "usage": {},
+                },
+                "refused",
+                "content_filter",
+            ),
+            (
+                "anthropic",
+                {"content": [], "stop_reason": "refusal", "usage": {}},
+                "refused",
+                "refusal",
+            ),
+        ],
+    )
+    def test_failed_or_filtered_2xx_is_not_success(self, cand, serve, wire, body, reason, detail):
+        srv, res, events = http_run(cand, serve, wire, [(200, {}, body)])
+        assert (res.ok, res.reason, res.detail) == (False, reason, detail)
+        assert len(srv.requests) == 1 and done(events)["reason"] == reason
+        assert PROMPT_CANARY not in json.dumps(events), "服务端文字不进事件"
+
+    def test_incomplete_max_output_tokens_stays_budget_and_completed_stays_ok(self, cand, serve):
+        body = {
+            "status": "incomplete",
+            "incomplete_details": {"reason": "max_output_tokens"},
+            "output": [{"type": "message", "content": [{"type": "output_text", "text": "cut"}]}],
+            "usage": {"input_tokens": 1, "output_tokens": 1},
+        }
+        _, res, _ = http_run(cand, serve, "openai-responses", [(200, {}, body)])
+        assert (res.reason, res.detail) == ("budget", "output_truncated")
+        turns, _ = WIRE_CASES["openai-responses"]
+        _, res, _ = http_run(cand, serve, "openai-responses", turns)
+        assert res.ok and "refused" in loop.REASONS
+
+
+class TestDeadlineAndPrompt:
+    def test_retry_never_crosses_the_total_deadline(self, cand, serve):
+        t0 = time.monotonic()
+        srv, res, events = http_run(
+            cand,
+            serve,
+            "anthropic",
+            [(429, {"Retry-After": "30"}, {})],
+            limits=tools.Limits(max_seconds=1.0),
+        )
+        assert time.monotonic() - t0 < 2.5, "不为 Retry-After 睡到 30 s"
+        assert len(srv.requests) == 1, "时限到了不再发请求"
+        assert (res.ok, res.reason, res.detail) == (False, "budget", "time")
+        assert done(events)["reason"] == "budget"
+
+    @pytest.mark.parametrize("how", ["missing", "empty", "blank", "stdin_empty"])
+    def test_unreadable_or_blank_prompt_fails_without_calling_the_model(
+        self, cand, serve, tmp_path, how
+    ):
+        srv = serve(_final_text_turn("anthropic", "hi"))
+        extra: list[str] = []
+        stdin = None
+        if how == "missing":
+            extra = ["--prompt-file", str(tmp_path / "nope.txt")]
+        elif how in ("empty", "blank"):
+            f = tmp_path / "p.txt"
+            f.write_text("" if how == "empty" else " \n\t\n", encoding="utf-8")
+            extra = ["--prompt-file", str(f)]
+        else:
+            stdin = ""
+        p = run_cli(
+            cand,
+            "anthropic",
+            "--base-url",
+            srv.url,
+            "--model",
+            "m",
+            *extra,
+            key=KEY_CANARY,
+            stdin=stdin,
+        )
+        d = json.loads(p.stdout.splitlines()[-1])
+        assert (d["ok"], d["reason"], d["detail"]) == (False, "internal", "bad_prompt")
+        assert p.returncode == 1 and len(srv.requests) == 0
+        assert KEY_CANARY not in p.stdout + p.stderr
