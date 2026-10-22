@@ -128,6 +128,19 @@ class InstallSpec:
     package: str
 
 
+def _effort_supported(details: list[ModelDetail], model: str | None, effort: str | None) -> bool:
+    """所选型号在目录里且 `efforts_known` 时，请求档位必须在其档位内（含明确无档位 = 一律不传）。
+
+    没选型号 / 目录里没有该型号 = 未知，沿用请求。Claude 与 Codex 的 `build_command` 共用。
+    """
+    if not model:
+        return True
+    d = next((x for x in details if x.id == model), None)
+    if d is None or not d.efforts_known:
+        return True
+    return effort in d.efforts
+
+
 @dataclass(frozen=True)
 class RunContext:
     """构造一次任务命令所需的全部输入。"""
@@ -632,7 +645,8 @@ class CodexAgent(AgentDefinition):
         cmd += ctx.endpoint_args
         if ctx.model:
             cmd += ["-m", ctx.model]
-        if ctx.effort:
+        # 目录明确给了所选型号的档位时，请求档位必须在其中；明确无档位就不传（Codex 会拒绝）
+        if ctx.effort and _effort_supported(self._catalog(), ctx.model, ctx.effort):
             cmd += ["-c", f"model_reasoning_effort={ctx.effort}"]
         return SpawnSpec(cmd + [ctx.prompt], dict(ctx.endpoint_env))
 
@@ -855,13 +869,8 @@ class ClaudeAgent(AgentDefinition):
         return SpawnSpec(cmd, dict(ctx.endpoint_env))
 
     def _effort_ok(self, ctx: RunContext) -> bool:
-        if not ctx.model:
-            return True
         details, _families, _aliases = self._catalog()
-        d = next((x for x in details if x.id == ctx.model), None)
-        if d is None or not d.efforts_known:
-            return True  # 目录里没有这个型号：未知，沿用请求
-        return ctx.effort in d.efforts
+        return _effort_supported(details, ctx.model, ctx.effort)
 
     def classify_event(self, line: str, state: dict) -> list[tuple[str, str]]:
         try:

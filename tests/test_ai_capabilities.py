@@ -530,3 +530,27 @@ def test_a_resolve_started_before_clear_cache_does_not_publish(monkeypatch):
         t.join(10)
     assert old[0].path == "/old/codex"
     assert ai_agents._RESOLVE_CACHE["codex"].path == "/new/codex"
+
+
+def test_codex_build_command_filters_unsupported_effort(tmp_path, monkeypatch):
+    """Codex 与 Claude 共用同一兜底：目录明确的型号不支持的档位不传；未知型号照传。"""
+    _write_cache(
+        tmp_path,
+        [
+            _cache_model("plain", levels=()),
+            _cache_model("limited", levels=("low", "medium")),
+            _cache_model("rich", levels=("low", "xhigh")),
+        ],
+    )
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path))
+
+    def argv(model, effort):
+        ctx = ai_agents.RunContext(
+            argv=["codex"], prompt="p", cwd=str(tmp_path), model=model, effort=effort
+        )
+        return ai_agents.CodexAgent().build_command(ctx).argv
+
+    assert not any("model_reasoning_effort" in a for a in argv("plain", "high"))  # 明确无档位
+    assert not any("model_reasoning_effort" in a for a in argv("limited", "xhigh"))  # 兄弟独有
+    assert "model_reasoning_effort=low" in argv("limited", "low")  # 合法
+    assert "model_reasoning_effort=high" in argv("unlisted", "high")  # 未知照传

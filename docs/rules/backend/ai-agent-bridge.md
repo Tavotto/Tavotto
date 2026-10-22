@@ -123,8 +123,8 @@
   被 `prunePrefs` 丢弃后落到默认型号。第三方接口（网关）生效时 Claude 不暴露档位、`build_command` 不带 `--effort`
   （`effort_official_only`；网关后面的型号未必认这个档位）。
   `model_details[].efforts_known`（加字段）区分「未知」与「明确没有档位」：目录里给了该型号 runtime 但没有
-  `effort_levels`（或为空）= `efforts_known: true` 且 `efforts: []`，前端不显示强度选择、发送不带 effort，Claude
-  `build_command` 也兜底不传（请求档位不在该型号档位内同样不传）；只在 config.toml 里有、目录里没有的型号 = 未知
+  `effort_levels`（或为空）= `efforts_known: true` 且 `efforts: []`，前端不显示强度选择、发送不带 effort，Claude 与 Codex 的
+  `build_command` 都兜底不传（请求档位不在该型号档位内同样不传）；只在 config.toml 里有、目录里没有的型号 = 未知
   （`false`/缺省），前端回落 Agent 级 `efforts`。
   Agent 级 `efforts` 仍在，是各型号档位的并集（旧前端与 `prunePrefs` 用）。前端两级选择器
   （执行器家族 → 型号）与「档位跟着型号走」见 `web/src/components/ai/ModelPicker.tsx`、
