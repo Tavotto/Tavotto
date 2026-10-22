@@ -374,6 +374,17 @@ def _renumbered(text: str, old: int, new: int) -> str:
 _FOREIGN_NAMES = {"r": "R", "matlab": "MATLAB"}
 
 
+def convert_requirements() -> list[str]:
+    """convert 任务里与「谁来执行」无关的三条硬性要求（保留数据与计算 / 必须 Matplotlib 出图 / 图幅字号对齐）。
+
+    CLI 提示词（`convert_prompt`）与内置执行器（`agent_runner` 的 convert 系统提示）共用这一份文字，不各抄一份。"""
+    return [
+        _convert_render("rule_keep_data"),
+        _convert_render("rule_matplotlib"),
+        _convert_render("rule_size"),
+    ]
+
+
 def convert_prompt(
     *,
     script: str,
@@ -409,12 +420,7 @@ def convert_prompt(
             _renumbered(_convert_render("rule_scope"), 4, 6),
         ]
     else:
-        lines += [
-            _convert_render("rule_keep_data"),
-            _convert_render("rule_matplotlib"),
-            _convert_render("rule_size"),
-            _convert_render("rule_scope"),
-        ]
+        lines += [*convert_requirements(), _convert_render("rule_scope")]
     lines += ["", _convert_render("note", project_root=project_root)]
     return "\n".join(lines)
 

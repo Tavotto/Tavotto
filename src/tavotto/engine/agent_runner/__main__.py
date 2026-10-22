@@ -20,11 +20,12 @@ import os
 import signal
 import sys
 import threading
+from dataclasses import replace
 from pathlib import Path
 
 from . import loop
 from .redact import Redactor
-from .tools import TOOLSETS, Limits, RunEnvelope
+from .tools import TOOLSETS, RunEnvelope
 from .wires import (
     ANTHROPIC_EFFORTS,
     THINKING_MODES,
@@ -35,7 +36,6 @@ from .wires import (
 )
 
 ENV_API_KEY = "TAVOTTO_AGENT_API_KEY"
-DEFAULT_LIMITS = Limits()
 
 
 class _FailModel:
@@ -51,7 +51,16 @@ class _FailModel:
 def _parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="python -m tavotto.engine.agent_runner", add_help=True)
     p.add_argument("--cwd", required=True, help="候选目录（工具能碰的唯一根）")
-    p.add_argument("--target", required=True, help="目标脚本，相对 --cwd")
+    p.add_argument(
+        "--target",
+        required=True,
+        help="目标脚本，相对 --cwd（convert_to_editable：原脚本，只读）",
+    )
+    p.add_argument(
+        "--output",
+        default="",
+        help="convert_to_editable：要新建的 <原名>_matplotlib.py（候选目录顶层、尚不存在）",
+    )
     p.add_argument("--wire", required=True, choices=[*sorted(WIRES), "demo"])
     p.add_argument("--base-url", default="", help="模型服务根地址（https，或 http://127.0.0.1）")
     p.add_argument("--model", default="")
@@ -65,9 +74,10 @@ def _parser() -> argparse.ArgumentParser:
         default="max_tokens",
         help="openai-chat 的长度上限字段（调用方声明；OpenAI o 系列要 max_completion_tokens）",
     )
-    p.add_argument("--max-turns", type=int, default=DEFAULT_LIMITS.max_turns)
-    p.add_argument("--max-seconds", type=float, default=DEFAULT_LIMITS.max_seconds)
-    p.add_argument("--max-total-tokens", type=int, default=DEFAULT_LIMITS.max_total_tokens)
+    # 默认值取所选任务工具集的 default_limits（convert 与 figure_edit 不同），所以这里缺省 None
+    p.add_argument("--max-turns", type=int, default=None)
+    p.add_argument("--max-seconds", type=float, default=None)
+    p.add_argument("--max-total-tokens", type=int, default=None)
     p.add_argument("--request-timeout", type=float, default=120.0)
     p.add_argument("--prompt-file", default=None, help="提示词文件；缺省读 stdin")
     p.add_argument("--task", default="figure_edit", choices=sorted(TOOLSETS))
@@ -133,10 +143,17 @@ def main(argv: list[str] | None = None) -> int:
     bad_prompt = not instruction.strip()  # 读不到 / 空白：不调模型（不拿空指令去花钱）
     if bad_prompt:
         diag("agent_runner: bad_prompt")
-    limits = Limits(
-        max_turns=max(1, args.max_turns),
-        max_total_tokens=max(1, args.max_total_tokens),
-        max_seconds=max(1.0, args.max_seconds),
+    base = TOOLSETS[args.task].default_limits
+    limits = replace(
+        base,
+        max_turns=max(1, args.max_turns if args.max_turns is not None else base.max_turns),
+        max_total_tokens=max(
+            1,
+            args.max_total_tokens if args.max_total_tokens is not None else base.max_total_tokens,
+        ),
+        max_seconds=max(
+            1.0, args.max_seconds if args.max_seconds is not None else base.max_seconds
+        ),
     )
     envelope = RunEnvelope(
         task_type=args.task,
@@ -145,6 +162,7 @@ def main(argv: list[str] | None = None) -> int:
         instruction=instruction,
         limits=limits,
         redactor=redactor,
+        output=args.output,
     )
 
     model: object

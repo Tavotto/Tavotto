@@ -410,17 +410,12 @@ def _run(model, toolset, envelope, emit, cancel, t0, res: RunResult) -> None:
     limits: Limits = toolset.budget(envelope)
     try:
         tools = toolset.tools(envelope)
-    except ValueError:
-        return _finish(res, False, "internal", "bad_target")
+    except ValueError as exc:
+        return _finish(res, False, "internal", getattr(exc, "code", "bad_target"))
     by_name = {t.name: t for t in tools}
     specs = [t.spec() for t in tools]
     system = toolset.system_prompt(envelope)
-    history: list[Msg] = [
-        Msg(
-            "user",
-            text=f"Target script: {envelope.target}\n\nInstruction:\n{envelope.instruction}",
-        )
-    ]
+    history: list[Msg] = [Msg("user", text=toolset.first_message(envelope))]
     deadline = t0 + limits.max_seconds
     led = res.ledger
     streak_key, streak = None, 0

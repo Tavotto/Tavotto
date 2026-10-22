@@ -323,7 +323,7 @@ MATLAB 特征不足一律 None）复核文件与声明一致，对不上 400 `co
 改图助手自己跑「模型 ↔ 工具」循环的独立子进程，不借 Codex / Claude Code CLI。**本阶段只有核心循环**，还没接进 `ai_bridge` /
 `ai_agents` / 设置页（`AGENT_REGISTRY` 不变）。看护 `tests/test_agent_runner.py`、`tests/test_outbound_https_trust.py`。
 
-- **边界**：纯标准库、3.10 可跑；不 import 科学栈，**不 import `ai_bridge` / `ai_agents` / `ai_tasks`**；唯一内部依赖 `tlstrust`。
+- **边界**：纯标准库、3.10 可跑；不 import 科学栈，**不 import `ai_bridge` / `ai_agents` / `ai_tasks`**；内部依赖只有 `tlstrust` 与纯标准库的 `ai_prompt_pack`（convert 提示词的同一份文字）。
   只经 stdout 事件行与父进程说话。入口 `python -m tavotto.engine.agent_runner --cwd <候选目录> --target <相对路径> --wire <名> --base-url <url> --model <名>`。
 - **协议**（`wires.py`）：`anthropic`（`{base}/v1/messages`，`x-api-key` 与 `Authorization: Bearer` 都给，`anthropic-version: 2023-06-01`，
   系统提示与最后一个工具定义带 `cache_control: ephemeral`）、`openai-chat`（`{base}/chat/completions`）、`openai-responses`
@@ -357,3 +357,16 @@ MATLAB 特征不足一律 None）复核文件与声明一致，对不上 400 `co
   SIGTERM / SIGINT / Ctrl-Break → `cancelled`。
 - **预算与账本**：轮数、token（input+output）、秒数三道上限。每轮 input / output / 耗时入账，结束时核「合计 == 各轮之和」，不等记
   `done.ledger_mismatch=true`（不抛）。每轮记账后立刻复查 token：**终止答复**（`end` 且无工具调用）累计 `>` 上限才拒，恰好用满上限仍 `completed`；带工具调用 / 要开下一轮的答复累计 `>=` 上限即 `budget/tokens`，工具不执行、不开新轮。估计上下文超阈值时把早先的 `read_file` 结果换成「已读过 X（第 a–b 行，sha 前缀）」。
+- **`convert_to_editable` 工具集**（`tools.py` 的 `ConvertToEditableToolset` / `ConvertSession`，ADR 0147 §四；入口 `--task convert_to_editable --target <原脚本> --output <原名>_matplotlib.py`，
+  默认任务仍是 `figure_edit`）。权限边界即 ADR 0143 §二：**原脚本永远不可写，Agent 只写候选目录顶层的那一个新文件**。
+  - 工具只有 `read_file` / `list_dir`（候选内只读，与 figure_edit **同一个** `_resolve`，没有第二份路径判据）、`create_file(content)`、`edit_file(old, new)`、`check`；
+    没有 `write_file`、没有 shell / 网络 / MCP。`create_file` 的可选 `path` 与 `edit_file` 的可选 `path` 只能是 `--output`：指向原脚本 → `source_readonly`，
+    其它路径 → `not_output`，越界 → `path_outside`；一律工具错误、磁盘字节不变。第一次 `create_file` 用 `O_CREAT|O_EXCL` 新建（此刻已存在含悬空链接 → `output_exists`，不覆盖），
+    之后允许整份覆盖这个新文件（模型自我修正）；`edit_file` 必须在本次运行里已 `create_file`（否则 `not_created`），`old` 恰好出现一次。含密钥的内容 → `secret_in_content`（新建 / 覆盖 / edit 三处）。
+  - `--output` 起跑即校验：必须恰为 `<原名>_matplotlib.py`（原名 = `--target` 的 stem）、只有文件名（无目录、无反斜杠）、尚不存在（`lexists`）；不合格 → `done{ok:false, reason:"internal", detail:"bad_output"}`，**0 次模型请求**、磁盘不动。
+  - `check`：同 figure_edit 的注入回调，语义是 ADR 0143 的 `run_validation`（用户同一路由下跑新脚本，必须捕获到 Matplotlib 图），回调返回 `(ok, 报告)`；**本阶段 CLI 入口没有注入方 → `not_available`**。
+    新文件还没写出就 `check` → `not_created`（不调回调、不计数）。**回调最多被调 3 次**（ADR 0143「校验运行 ≤ 3」），第 4 次 `check_budget`。
+  - 预算默认值由工具集给（`default_limits`；命令行不给 `--max-turns` 等就用它）：convert 为 20 轮 / 900 s / 400k token / 单轮输出 16384（整份脚本可能很长；20 轮 ≈ 读 1–3 + 写 1 + 至多 3 轮 check/修 + 收尾，留余量）；figure_edit 不变。
+  - 系统提示是英文（要求用用户指令的语言回复）；产品要求三条（保留数据读取与计算 / 必须 Matplotlib 出图 / 图幅字号对齐）**引用 `ai_prompt_pack.convert_requirements()` 的同一份文字**（CLI 路径的 `convert_prompt` 也用它，不各抄一份），
+    执行器特有的部分（只写一个新文件、不运行脚本、check ≤ 3 次）写在 `tools.py`。`ai_prompt_pack` 是纯标准库，所以 `agent_runner` 对它的 import 不破坏依赖方向（`test_import_architecture` 兜底）。
+  - 看护 `tests/test_agent_runner_convert.py`（Demo 协议端到端 + 单元）。
