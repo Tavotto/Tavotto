@@ -353,8 +353,10 @@ class FigureEditSession:
         if len(content.encode("utf-8")) > READ_LIMIT_BYTES:
             return _err(name, call_id, "too_large", "Content is larger than the allowed size.")
         got = self._read_text(real)
-        eol = got[1] if not isinstance(got, str) else "\n"
-        before = got[0] if not isinstance(got, str) else ""
+        if isinstance(got, str):
+            # 读过之后目标被换成非文本 / 超大：不覆盖那份新字节（同 edit_file）
+            return _err(name, call_id, got, "The target script can no longer be read as text.")
+        before, eol = got
         content_n = content.replace("\r\n", "\n")
         refused = self._commit_write(name, call_id, real, before, content_n, eol)
         if refused is not None:

@@ -113,11 +113,15 @@ class Msg:
 class RunnerFailure(Exception):
     """一次模型调用失败。`reason` 属于 done 事件的闭集；`detail` 是短代码，不含任何内容。"""
 
-    def __init__(self, reason: str, detail: str = "", *, retryable: bool = False):
+    def __init__(
+        self, reason: str, detail: str = "", *, retryable: bool = False, usage: Usage | None = None
+    ):
         super().__init__(f"{reason}:{detail}")
         self.reason = reason
         self.detail = detail
         self.retryable = retryable
+        #: 2xx 但终止于拒答 / 失败状态时，服务端报的用量照样计费——由 loop 记账后再结束
+        self.usage = usage
 
 
 @dataclass
@@ -163,8 +167,8 @@ def _loads_args(raw: Any) -> dict | None:
     return v if isinstance(v, dict) else None
 
 
-def _bad(detail: str) -> RunnerFailure:
-    return RunnerFailure("network", detail)
+def _bad(detail: str, usage: Usage | None = None) -> RunnerFailure:
+    return RunnerFailure("network", detail, usage=usage)
 
 
 def _code(value: object) -> str:
@@ -176,9 +180,29 @@ def _code(value: object) -> str:
     )
 
 
-def _refused(detail: str) -> RunnerFailure:
+def _chat_usage(body: dict) -> Usage:
+    u = body.get("usage") if isinstance(body.get("usage"), dict) else {}
+    details = u.get("prompt_tokens_details")
+    return Usage(
+        input_tokens=_int(u.get("prompt_tokens")),
+        output_tokens=_int(u.get("completion_tokens")),
+        cached_input_tokens=_int(details.get("cached_tokens")) if isinstance(details, dict) else 0,
+    )
+
+
+def _responses_usage(body: dict) -> Usage:
+    u = body.get("usage") if isinstance(body.get("usage"), dict) else {}
+    details = u.get("input_tokens_details")
+    return Usage(
+        input_tokens=_int(u.get("input_tokens")),
+        output_tokens=_int(u.get("output_tokens")),
+        cached_input_tokens=_int(details.get("cached_tokens")) if isinstance(details, dict) else 0,
+    )
+
+
+def _refused(detail: str, usage: Usage | None = None) -> RunnerFailure:
     """服务端过滤 / 拒答（content_filter、refusal、被截断以外的 incomplete）：结局 `refused`。"""
-    return RunnerFailure("refused", detail)
+    return RunnerFailure("refused", detail, usage=usage)
 
 
 # --------------------------------------------------------------------------- anthropic
@@ -296,7 +320,7 @@ class AnthropicWire:
         )
         stop = body.get("stop_reason")
         if stop == "refusal":
-            raise _refused("refusal")
+            raise _refused("refusal", turn.usage)
         # 截断优先于工具调用：被截断的一轮可能只有前半的"完整"调用，执行它会改出半成品
         turn.stop = (
             "max_tokens"
@@ -388,7 +412,7 @@ class OpenAIChatWire:
         if (
             isinstance(rf, str) and rf.strip()
         ):  # content:null + refusal + finish_reason:stop 不是空成功
-            raise _refused("refusal")
+            raise _refused("refusal", _chat_usage(body))
         turn = Turn(text=msg["content"] if isinstance(msg.get("content"), str) else "")
         for c in msg.get("tool_calls") or []:
             fn = c.get("function") if isinstance(c, dict) else None
@@ -402,18 +426,10 @@ class OpenAIChatWire:
                 )
         rc = msg.get("reasoning_content")
         turn.thinking_chars = len(rc) if isinstance(rc, str) else 0
-        u = body.get("usage") if isinstance(body.get("usage"), dict) else {}
-        details = u.get("prompt_tokens_details")
-        turn.usage = Usage(
-            input_tokens=_int(u.get("prompt_tokens")),
-            output_tokens=_int(u.get("completion_tokens")),
-            cached_input_tokens=_int(details.get("cached_tokens"))
-            if isinstance(details, dict)
-            else 0,
-        )
+        turn.usage = _chat_usage(body)
         fin = choices[0].get("finish_reason")
         if fin == "content_filter":
-            raise _refused("content_filter")
+            raise _refused("content_filter", turn.usage)
         # 截断优先于工具调用（同 AnthropicWire）
         turn.stop = (
             "max_tokens"
@@ -491,6 +507,7 @@ class OpenAIResponsesWire:
 
     def parse(self, body: dict) -> Turn:
         # 顶层 status 先判：2xx 体里 failed / 未完成不是成功（空 output 会被误当作 end）
+        usage = _responses_usage(body)  # 先算：拒答 / 失败状态的回复同样计费
         status = body.get("status")
         inc = body.get("incomplete_details")
         truncated = False
@@ -499,12 +516,16 @@ class OpenAIResponsesWire:
             if reason == "max_output_tokens":
                 truncated = True
             else:
-                raise _refused(f"incomplete_{_code(reason)}")
+                raise _refused(f"incomplete_{_code(reason)}", usage)
         elif status == "failed":
             err = body.get("error")
-            raise _bad(f"failed_{_code(err.get('code'))}" if isinstance(err, dict) else "failed")
+            raise _bad(
+                f"failed_{_code(err.get('code'))}" if isinstance(err, dict) else "failed", usage
+            )
         elif status is not None and status != "completed":
-            raise _bad(f"status_{_code(status)}")  # cancelled / queued / in_progress 等意外状态
+            raise _bad(
+                f"status_{_code(status)}", usage
+            )  # cancelled / queued / in_progress 等意外状态
         out = body.get("output")
         if not isinstance(out, list):
             raise _bad("bad_response")
@@ -517,7 +538,7 @@ class OpenAIResponsesWire:
             if kind == "message":
                 for part in it.get("content") or []:
                     if isinstance(part, dict) and part.get("type") == "refusal":
-                        raise _refused("refusal")  # 服务端文字不回显
+                        raise _refused("refusal", usage)  # 服务端文字不回显
                     if (
                         isinstance(part, dict)
                         and part.get("type") == "output_text"
@@ -535,15 +556,7 @@ class OpenAIResponsesWire:
             elif kind == "reasoning":
                 turn.thinking_chars += len(json.dumps(it.get("summary") or "", ensure_ascii=False))
         turn.text = "".join(texts)
-        u = body.get("usage") if isinstance(body.get("usage"), dict) else {}
-        details = u.get("input_tokens_details")
-        turn.usage = Usage(
-            input_tokens=_int(u.get("input_tokens")),
-            output_tokens=_int(u.get("output_tokens")),
-            cached_input_tokens=_int(details.get("cached_tokens"))
-            if isinstance(details, dict)
-            else 0,
-        )
+        turn.usage = usage
         # 截断优先于工具调用（同 AnthropicWire）
         turn.stop = "max_tokens" if truncated else ("tool_use" if turn.tool_calls else "end")
         return turn

@@ -1601,3 +1601,78 @@ def test_retry_after_http_date_form_is_parsed():
     assert loop._retry_after({"retry-after": "Funday, 99 Foo 2026"}, now=now) is None
     assert loop._retry_after({"retry-after": "60"}, now=now) == 60.0
     assert loop._retry_after({}, now=now) is None
+
+
+class TestReviewRound6:
+    """Codex #1328 第六轮：拒答 / 失败状态的回复照样入账；目标读不了时 write_file 不覆盖。"""
+
+    @pytest.mark.parametrize(
+        ("wire", "body", "reason"),
+        [
+            (
+                "openai-chat",
+                {
+                    "choices": [
+                        {
+                            "finish_reason": "stop",
+                            "message": {"role": "assistant", "content": None, "refusal": "no"},
+                        }
+                    ],
+                    "usage": {"prompt_tokens": 70, "completion_tokens": 3},
+                },
+                "refused",
+            ),
+            (
+                "openai-chat",
+                {
+                    "choices": [{"finish_reason": "content_filter", "message": {"content": "x"}}],
+                    "usage": {"prompt_tokens": 70, "completion_tokens": 3},
+                },
+                "refused",
+            ),
+            (
+                "anthropic",
+                {
+                    "content": [],
+                    "stop_reason": "refusal",
+                    "usage": {"input_tokens": 70, "output_tokens": 3},
+                },
+                "refused",
+            ),
+            (
+                "openai-responses",
+                {
+                    "status": "failed",
+                    "error": {"code": "server_error"},
+                    "output": [],
+                    "usage": {"input_tokens": 70, "output_tokens": 3},
+                },
+                "network",
+            ),
+            (
+                "openai-responses",
+                {
+                    "status": "incomplete",
+                    "incomplete_details": {"reason": "content_filter"},
+                    "output": [],
+                    "usage": {"input_tokens": 70, "output_tokens": 3},
+                },
+                "refused",
+            ),
+        ],
+    )
+    def test_refused_or_failed_reply_is_still_accounted(self, cand, serve, wire, body, reason):
+        _, res, events = http_run(cand, serve, wire, [(200, {}, body)])
+        assert (res.ok, res.reason) == (False, reason)
+        usage = [e for e in events if e["type"] == "usage"]
+        assert len(usage) == 1 and usage[0]["input_tokens"] == 70 and usage[0]["output_tokens"] == 3
+        assert res.turns == 1
+
+    def test_write_file_refuses_when_target_became_unreadable(self, cand):
+        ts = tool_set(cand)
+        assert not ts["read_file"].handler({"path": "fig.py"}).is_error
+        (cand / "fig.py").write_bytes(b"\xff\xfe\x00binary")  # 读过之后被别的进程换成非文本
+        before = _tree(cand)
+        r = ts["write_file"].handler({"content": "print(1)\n"})
+        assert r.is_error and r.code == "not_text"
+        assert _tree(cand) == before

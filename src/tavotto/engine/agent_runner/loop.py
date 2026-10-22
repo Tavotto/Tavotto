@@ -413,6 +413,19 @@ def _run(model, toolset, envelope, emit, cancel, t0, res: RunResult) -> None:
                 deadline=deadline,
             )
         except RunnerFailure as exc:
+            if exc.usage is not None:
+                # 2xx 但终止于拒答 / 失败状态：这次请求照样计费，先入账再结束
+                res.turns += 1
+                led.add(exc.usage, int((time.monotonic() - started) * 1000))
+                emit(
+                    {
+                        "type": "usage",
+                        "turn": res.turns,
+                        "input_tokens": exc.usage.input_tokens,
+                        "output_tokens": exc.usage.output_tokens,
+                        "cached_input_tokens": exc.usage.cached_input_tokens,
+                    }
+                )
             return _finish(res, False, exc.reason, exc.detail)
         res.turns += 1
         led.add(turn.usage, int((time.monotonic() - started) * 1000))
