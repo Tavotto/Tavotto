@@ -691,6 +691,14 @@ def adopt(sid: str, project: str) -> dict:
     root = Path(project)
     script_rel = str(meta["script_rel"])
     script_path = root / script_rel
+    # 锁序固定：先原脚本、再目标兄弟脚本（只有本函数同时持有这两把）。「核原脚本字节仍是起跑基线 → 新建兄弟」必须在
+    # 原脚本的锁里做完：否则别处 Tavotto 编辑在两步之间改了原脚本，基于旧源生成的候选照样被采用。
+    with scriptlock.script_guard(script_path):
+        return _adopt_locked(cdir, meta, root, script_rel, script_path)
+
+
+def _adopt_locked(cdir: Path, meta: dict, root: Path, script_rel: str, script_path: Path) -> dict:
+    """`adopt` 的锁内部分：调用方已持有原脚本的 `script_guard`。"""
     try:
         if _sha256(script_path.read_bytes()) != meta["base_sha256"]:
             raise ConvertError("convert_source_changed", 409)

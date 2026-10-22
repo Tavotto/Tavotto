@@ -327,6 +327,50 @@ def test_adopt_creates_the_file_and_never_overwrites(env):
     assert ai_convert.status(sid, _project(env))["state"] == "adopted"
 
 
+def test_adopt_holds_the_source_guard_between_the_check_and_the_create(env, monkeypatch):
+    """核原脚本字节与新建兄弟之间，别处的编辑拿不到原脚本的锁——不会出现「基于旧源的候选被采用」。"""
+    sid = _run(env)
+    _wait(sid)
+    script = env["figs"] / "fig.py"
+    entered = threading.Event()
+    done = threading.Event()
+    seen = {}
+
+    def editor():
+        with scriptlock.script_guard(script):
+            seen["adopt_finished"] = "adopted" in (ai_convert.status(sid, _project(env)) or {}).get(
+                "state", ""
+            )
+            script.write_bytes(b"# edited elsewhere\n")
+        done.set()
+
+    t = threading.Thread(target=editor)
+    real = ai_convert.projectenv.contained_path
+
+    def hooked(root, rel):
+        # 核校验和之后、新建之前：另一条线程想改原脚本，必须被挡住
+        if not entered.is_set():
+            entered.set()
+            t.start()
+            assert not done.wait(0.3), "原脚本的锁没被 adopt 持有"
+        return real(root, rel)
+
+    monkeypatch.setattr(ai_convert.projectenv, "contained_path", hooked)
+    made = ai_convert.adopt(sid, _project(env))
+    t.join(10)
+    assert made["script"].endswith(".py") and (env["figs"] / made["script"]).is_file()
+    assert seen["adopt_finished"], "编辑线程应在 adopt 释放锁之后才进到锁里"
+    # 编辑已落地后再采用另一个会话基线：已变 → convert_source_changed、不新建
+    sid2 = _run(env)
+    _wait(sid2)
+    script.write_bytes(b"# edited again\n")
+    before = sorted(p.name for p in env["figs"].iterdir())
+    with pytest.raises(ai_convert.ConvertError) as exc:
+        ai_convert.adopt(sid2, _project(env))
+    assert exc.value.code == "convert_source_changed"
+    assert sorted(p.name for p in env["figs"].iterdir()) == before
+
+
 @pytest.mark.skipif(os.name != "posix", reason="权限位只在 POSIX 上有意义")
 def test_adopt_inherits_the_original_scripts_permission_bits(env):
     (env["figs"] / "fig.py").chmod(0o755)

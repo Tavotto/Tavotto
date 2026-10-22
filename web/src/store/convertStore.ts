@@ -61,6 +61,13 @@ const scopeKey = (pj: string | null, script: string) => `${pj ?? ''}\u0000${scri
  * 停止后立刻重试时，旧 POST 晚到的失败带着旧次序，核对不上就不写（不覆盖重试后的新会话）；停止 / 清除 / 换项目时作废。
  */
 const attempts = new Map<string, { n: number; rid: string }>()
+
+/**
+ * 后端已**受理**的会话（POST 成功拿到 session id）：之后轮询 / 取候选的临时失败（断网、5xx）落到「重试」时，
+ * 重试要**续查同一会话**，不能再 POST（会起第二个付费 Agent 或撞 `ai_script_busy`，首个候选也找不回）。
+ * 只在明确终局（任务失败 / 放弃 / 停止 / 采用 / 会话已不存在 / 换项目）后清。
+ */
+const acceptedSessions = new Map<string, string>()
 let attemptSeq = 0
 
 const set1 = (script: string, patch: Partial<ConvertEntry>) =>
@@ -80,6 +87,9 @@ export const useConvertStore = create<ConvertState>((set, get) => ({
   start: async (script, library, path) => {
     const guard = captureProjectEpoch()
     const pj = currentProjectId()
+    // 续查只认「失败卡上留着的、且登记为已受理」的那个会话（条目被重置后遗留的登记不算）
+    const prior = get().entries[script]
+    const resumable = prior?.phase === 'failed' && prior.session ? prior.session : null
     set((s) => ({
       entries: {
         ...s.entries,
@@ -97,32 +107,37 @@ export const useConvertStore = create<ConvertState>((set, get) => ({
     attempts.set(key, { n: attempt, rid })
     const isCurrent = () => attempts.get(key)?.n === attempt
     try {
-      // 与既有 AI 流程同一套「实际派活的 Agent」：用户选了 Claude 或 Codex 不可用时不能默认成 codex
-      const ai = useAiStore.getState()
-      if (!ai.caps) await ai.loadCaps().catch(() => undefined)
-      const { agent: preferred, caps, models, efforts } = useAiStore.getState()
-      const agent = effectiveAgent(preferred, caps)
-      const info = agent ? agentById(caps, agent) : undefined
-      const model = agent ? (models[agent] ?? info?.default_model ?? null) : null
-      const effort = agent && info?.efforts.length ? (efforts[agent] ?? info.default_effort ?? null) : null
-      const { session } = await startConvert(
-        { script, library, path, client_request_id: rid, ...(agent ? { agent, model, effort } : {}) },
-        pj,
-      )
-      // 只有当前 attempt 能清 id：被取代的旧 POST（同一 id）先成功时不清，等新 attempt 自己落定
-      if (isCurrent()) pendingRequestIds.delete(key)
-      if (!guard.still()) return
-      if (!isCurrent() || get().entries[script] !== mine) {
-        // 等 POST 期间用户点了「停止」/ 换了脚本流水：后端已起了会话，要真的取消，不能让它悄悄跑完
-        // 例外：更新的一次发起复用了同一个请求 id（停止后立刻重试）——后端去重成同一个会话，那是新一次在用的，不取消
-        const newer = attempts.get(key)
-        if (!isCurrent() && newer && newer.rid === rid) return
-        try {
-          await aiCancel(session, pj)
-        } catch {
-          /* 取消失败：会话自己会收尾 */
+      let session = resumable && acceptedSessions.get(key) === resumable ? resumable : undefined
+      if (!session) {
+        // 与既有 AI 流程同一套「实际派活的 Agent」：用户选了 Claude 或 Codex 不可用时不能默认成 codex
+        const ai = useAiStore.getState()
+        if (!ai.caps) await ai.loadCaps().catch(() => undefined)
+        const { agent: preferred, caps, models, efforts } = useAiStore.getState()
+        const agent = effectiveAgent(preferred, caps)
+        const info = agent ? agentById(caps, agent) : undefined
+        const model = agent ? (models[agent] ?? info?.default_model ?? null) : null
+        const effort = agent && info?.efforts.length ? (efforts[agent] ?? info.default_effort ?? null) : null
+        const posted = await startConvert(
+          { script, library, path, client_request_id: rid, ...(agent ? { agent, model, effort } : {}) },
+          pj,
+        )
+        session = posted.session
+        // 只有当前 attempt 能清 id：被取代的旧 POST（同一 id）先成功时不清，等新 attempt 自己落定
+        if (isCurrent()) pendingRequestIds.delete(key)
+        if (!guard.still()) return
+        if (!isCurrent() || get().entries[script] !== mine) {
+          // 等 POST 期间用户点了「停止」/ 换了脚本流水：后端已起了会话，要真的取消，不能让它悄悄跑完
+          // 例外：更新的一次发起复用了同一个请求 id（停止后立刻重试）——后端去重成同一个会话，那是新一次在用的，不取消
+          const newer = attempts.get(key)
+          if (!isCurrent() && newer && newer.rid === rid) return
+          try {
+            await aiCancel(session, pj)
+          } catch {
+            /* 取消失败：会话自己会收尾 */
+          }
+          return
         }
-        return
+        acceptedSessions.set(key, session)
       }
       set1(script, { session })
       for (;;) {
@@ -140,6 +155,7 @@ export const useConvertStore = create<ConvertState>((set, get) => ({
         } else if (sess.status === 'cancelled') {
           get().clear(script)
         } else {
+          acceptedSessions.delete(key) // 任务明确终局失败：重试起新会话
           set1(script, {
             phase: 'failed',
             reason: failureCode(sess.task?.unmet as { constraint_id: string; reason_code: string }[] | undefined),
@@ -148,7 +164,10 @@ export const useConvertStore = create<ConvertState>((set, get) => ({
         return
       }
     } catch (e) {
-      if (isDefiniteRunFailure(e) && isCurrent()) pendingRequestIds.delete(key)
+      if (isDefiniteRunFailure(e) && isCurrent()) {
+        pendingRequestIds.delete(key)
+        acceptedSessions.delete(key) // 会话已不存在 / 被明确拒绝：没有可续查的了
+      }
       if (!guard.still()) return
       if (!isCurrent()) return // 已被停止 / 被更新的一次发起取代：旧 POST 的失败不能写进新会话的条目
       set1(script, { phase: 'failed', error: backendErrorText(e) })
@@ -163,6 +182,7 @@ export const useConvertStore = create<ConvertState>((set, get) => ({
     try {
       const made = await adoptConvert(cur.session, currentProjectId())
       if (!guard.still()) return null
+      acceptedSessions.delete(scopeKey(currentProjectId(), script))
       set1(script, { phase: 'adopted', adopted: made.script })
       return made.script
     } catch (e) {
@@ -198,6 +218,7 @@ export const useConvertStore = create<ConvertState>((set, get) => ({
 
   clear: (script) => {
     attempts.delete(scopeKey(currentProjectId(), script))
+    acceptedSessions.delete(scopeKey(currentProjectId(), script))
     set((s) => {
       const { [script]: _gone, ...rest } = s.entries
       return { entries: rest }
@@ -208,5 +229,6 @@ export const useConvertStore = create<ConvertState>((set, get) => ({
 // 换项目：上一个项目的流水一律丢弃（脚本名可能在两个项目里重名）
 onCurrentProjectChange(() => {
   attempts.clear()
+  acceptedSessions.clear()
   useConvertStore.setState({ entries: {} })
 })

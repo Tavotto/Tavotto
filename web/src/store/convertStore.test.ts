@@ -10,7 +10,7 @@ vi.mock('@/lib/api', async (importOriginal) => ({
   aiCancel: vi.fn().mockResolvedValue({ ok: true }),
 }))
 
-import { aiCancel, fetchAiSession, startConvert } from '@/lib/api'
+import { aiCancel, fetchAiSession, fetchConvert, startConvert } from '@/lib/api'
 import { setCurrentProjectId } from '@/lib/session'
 import { useAiStore } from '@/store/aiStore'
 import { POLL_MS, useConvertStore } from '@/store/convertStore'
@@ -117,5 +117,24 @@ describe('convertStore', () => {
     useConvertStore.getState().clear('plot.py')
     await vi.advanceTimersByTimeAsync(POLL_MS + 10)
     await third
+  })
+
+  it('POST 已受理后 fetchConvert 临时失败：点重试不再 POST，续查同一会话', async () => {
+    vi.mocked(startConvert).mockResolvedValueOnce({ session: 's1', script: 'plot.py' })
+    vi.mocked(fetchAiSession).mockResolvedValue({ status: 'done', final: true, task: { outcome: 'completed' } } as never)
+    vi.mocked(fetchConvert).mockReset().mockRejectedValueOnce(new Error('network down'))
+    const first = start()
+    await vi.advanceTimersByTimeAsync(POLL_MS + 10)
+    await first
+    expect(useConvertStore.getState().entries['plot.py']).toMatchObject({ phase: 'failed', session: 's1' })
+    expect(startConvert).toHaveBeenCalledTimes(1)
+
+    vi.mocked(fetchConvert).mockResolvedValueOnce({ state: 'ready' } as never)
+    const retry = start()
+    await vi.advanceTimersByTimeAsync(POLL_MS + 10)
+    await retry
+    expect(startConvert).toHaveBeenCalledTimes(1)
+    expect(fetchConvert).toHaveBeenCalledTimes(2)
+    expect(useConvertStore.getState().entries['plot.py']).toMatchObject({ phase: 'ready', session: 's1' })
   })
 })
