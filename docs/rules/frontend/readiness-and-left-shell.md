@@ -56,7 +56,11 @@
   换项目 `resetProject` 清掉。设置里 `WorkdirRow` 是同一份决定的三档 `Segmented`（切到两个真实目录
   各自确认一次，切回沙盒不确认；老服务端只报两档时第三档不摆）。**三档与选项的文案键写成字面量**
   （`OPTION_LABEL` / `MODE_LABEL` 表），模板拼出来的键死键门禁看不见。MCP 那一面是同一份决定：
-  `tavotto_open_figure(workdir=…)`。
+  `tavotto_open_figure(workdir=…)`。**运行时引导（#1254，ADR 0084 §三）**：沙盒里 glob / listdir / exists / C++ 读取器落空、
+  同一个相对目标在脚本目录里找得到时，错误体带 `workdir_hint`（与确认框同形，**不是** `confirmation`、码不变）；
+  `EngineError.workdirHint` → `PanelRender.workdirHint` → 错误块，素材库走 `run.error.workdir_hint`（`WorkdirHintRecovery`），
+  **不论错误码**都给既有的 `WorkdirChooseButton`（同一个确认框，不新造组件和文案）；`WORKDIR_CODES` 的老行为不变。
+  看护 `components/workdirHint.test.tsx`。
 - **跑前的那一次授权（U04，ADR 0061 §六）**：渲染以 `dependency_preparation_required` 回来时同样不是
   错误块，是缺一次授权——`renderStore` 把 `EngineError.dependencyPreparation`（整份联合计划 + 可选目标）
   交给 `depRepairStore.requestPreparation`（动态 import，避免 store 环），`DependencyPrepareDialog` 列出

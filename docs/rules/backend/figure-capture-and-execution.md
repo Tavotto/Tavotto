@@ -85,7 +85,11 @@
     glob 有预算）按脚本目录再判，至少一条找得到才在错误上挂 **`workdir_hint`**——载荷与首开确认框同形
     （`reason = script_dir_evidence`、推荐 `project`，多 `source = "runtime"`）。**它不是 `confirmation`**：后者是起会话前要先答的门，
     所有入口见到都会停下；`workdir_hint` 只诊断，码与消息一字不变，不自动切换。HTTP 错误体与试运行错误（`_attach_workdir_hint`）
-    各带一份，不新造错误码。看护 `tests/test_runtime_probe_hint.py`（观察层返回值逐项不变 / 只记沙盒里的相对落空 / 判据 /
+    各带一份，不新造错误码。**C++ 读取器也算运行时证据**：错误的 `extra.enoent`（`filename`，或 pyarrow 那种整条消息就是路径的 `named`）
+若是相对路径（cwd 之内的绝对路径换回相对），`pool.workdir_hint_for` 把它当一条 `path` 证据并进同一次判定——脚本目录里找得到就出引导；
+**不放宽 ADR 0110 的 `native_miss` 候选**，码与 `missing_input` 不动。前端（`ApiError.workdirHint` / `PanelRender.workdirHint` /
+素材库 `run.error.workdir_hint`）不论错误码都把它交给既有的 `WorkdirChooseButton`（同一个确认框，不新造组件和文案）。
+看护 `tests/test_runtime_probe_hint.py`、`web/src/components/workdirHint.test.tsx`（观察层返回值逐项不变 / 只记沙盒里的相对落空 / 判据 /
     真 worker 沙盒带引导、脚本目录模式出图、两种试运行形状）。
     结论只看**找得到**（`found`）：glob 预算用完的 `unjudged` 只记在候选里、**不驱动结论、不会问**。
     别名按 import 认（`import glob as g` / `from glob import glob as gg` / `Path as P`）；名字在别处

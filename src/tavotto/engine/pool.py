@@ -927,12 +927,32 @@ _WORKDIR_HINT_CODES = frozenset(
 )
 
 
-def workdir_hint_for(script_name: str, figures_dir, probe_misses) -> dict | None:
-    """worker 记下的沙盒里落空的相对探路调用 → `workdir.probe_hint`；任何读不出来的情形都回 None（只是少一条引导）。"""
-    if not script_name or not figures_dir or not probe_misses:
+def _enoent_probe(enoent) -> dict | None:
+    """C++ 读取器的「文件不存在」事实（`extra.enoent`）→ 一条运行时证据：它点名的路径若是相对的（或是 cwd 之内、
+    换回相对的），就等于脚本在沙盒 cwd 下问了「这个路径存在吗」。绝对路径不依赖 cwd，不算。"""
+    if not isinstance(enoent, dict):
+        return None
+    raw = enoent.get("filename") or enoent.get("named")
+    if not isinstance(raw, str) or not raw:
+        return None
+    cwd = enoent.get("cwd") if isinstance(enoent.get("cwd"), str) else ""
+    item = {"kind": "path", "target": inputremap._as_written(raw, cwd)}
+    probe = figcapture.ProbeMisses()
+    probe.note(**{"kind": item["kind"], "target": item["target"]})
+    return probe.items[0] if probe.items else None
+
+
+def workdir_hint_for(script_name: str, figures_dir, probe_misses, enoent=None) -> dict | None:
+    """worker 记下的沙盒里落空的相对探路调用（外加 C++ 读取器点名的那条相对路径，`enoent`）→ `workdir.probe_hint`；
+    任何读不出来的情形都回 None（只是少一条引导）。码与 ADR 0110 的 `native_miss` 候选都不动。"""
+    observed = list(probe_misses) if isinstance(probe_misses, list) else []
+    extra = _enoent_probe(enoent)
+    if extra is not None and extra not in observed:
+        observed.append(extra)
+    if not script_name or not figures_dir or not observed:
         return None
     try:
-        return workdir.probe_hint(figures_dir, script_name, probe_misses)
+        return workdir.probe_hint(figures_dir, script_name, observed)
     except (OSError, ValueError) as exc:
         LOG.info("脚本目录引导拼不出来（%s）: %s", type(exc).__name__, script_name)
         return None
@@ -943,7 +963,10 @@ def _offer_workdir_hint(err: "WorkerError", script_name: str, figures_dir) -> "W
     给失败 / 没出图的错误挂上 `workdir_hint`（与首开同形的「在脚本目录里运行」引导）。码与消息一字不变。"""
     if err.code not in _WORKDIR_HINT_CODES or getattr(err, "missing_input", None) is not None:
         return err  # 已经有更具体的指认了（缺的文件），不叠第二个引导
-    hint = workdir_hint_for(script_name, figures_dir, (err.extra or {}).get("probe_misses"))
+    extra = err.extra or {}
+    hint = workdir_hint_for(
+        script_name, figures_dir, extra.get("probe_misses"), extra.get("enoent")
+    )
     if hint is not None:
         err.workdir_hint = hint
     return err

@@ -87,6 +87,10 @@ script_dir_evidence`、`recommended = project`（脚本所在目录）。选项�
 * 引导挂在错误的 `workdir_hint` 上，载荷与首开确认框同形（`script_dir_evidence`、推荐 `project`）。**它不是 `confirmation`**
   ——后者是「起会话前先答」的门，所有入口见到都会停下；这里脚本已经跑过了，只补一句话。不新增错误码。
 
+C++ 读取器（pyarrow 的 `read_table` 等，打开不经 Python 层）失败时，`extra.enoent` 点名的相对路径同样是一条运行时证据：
+在脚本目录里找得到就出同一份引导（#1253 的真实场景：数据就在脚本目录，沙盒 cwd 下读不到）。不放宽 ADR 0110 的 `native_miss`。
+前端不论错误码，凡有 `workdir_hint` 都复用既有的 `WorkdirChooseButton`（确认框 = 首开那一个）。
+
 不变：不扩回退、不自动切换；`listdir()` / `iterdir()` 列 cwd 本身不记（脚本目录里恒有东西，说明不了什么）；
 `os.scandir` 的迭代器不包（只记目录不存在）；项目外不看。看护 `tests/test_runtime_probe_hint.py`。
 

@@ -423,3 +423,93 @@ def test_the_probe_reports_the_hint_when_it_ran_through_without_a_figure(figs):
     result = engine_probe.probe(str(figs), "fig.py")
     assert result["error"]["code"] == engine_probe.ERROR_NO_FIGURE
     assert result["error"]["workdir_hint"]["recommended"] == workdir.MODE_PROJECT
+
+
+# --------------------------------------------------------------- C++ 读取器：extra.enoent 点名的相对路径也是证据
+PARQUET_SCRIPT = """\
+import matplotlib.pyplot as plt
+import pyarrow.parquet as pq
+
+y = pq.read_table({name!r}).column("y").to_pylist()
+fig, ax = plt.subplots()
+ax.plot(y)
+fig.savefig("p.png")
+"""
+
+
+def _worker_has_pyarrow() -> bool:
+    import subprocess
+    import sys
+
+    return (
+        subprocess.run(
+            [WORKER_PY or sys.executable, "-c", "import pyarrow.parquet"], capture_output=True
+        ).returncode
+        == 0
+    )
+
+
+def test_an_enoent_relative_path_found_in_the_script_dir_is_runtime_evidence(project):
+    (project / "sub" / "cg_data.parquet").write_bytes(b"x")
+    err = engine_pool.WorkerError("脚本执行失败: cg_data.parquet", code="script_error")
+    err.extra = {"enoent": {"filename": None, "named": "cg_data.parquet", "cwd": "/sandbox"}}
+    engine_pool._offer_missing_input(err, "sub/fig.py", str(project))
+    assert err.code == "script_error" and err.missing_input is None  # 不放宽 native_miss
+    assert err.workdir_hint["probes"] == ["cg_data.parquet"]
+    assert err.workdir_hint["reason"] == workdir.REASON_SCRIPT_DIR_EVIDENCE
+    # 在 cwd 之内的绝对路径（xarray 先 abspath 再报）换回相对
+    err = engine_pool.WorkerError("x", code="script_error")
+    err.extra = {
+        "enoent": {"filename": "/sandbox/cg_data.parquet", "named": None, "cwd": "/sandbox"}
+    }
+    engine_pool._offer_missing_input(err, "sub/fig.py", str(project))
+    assert err.workdir_hint["probes"] == ["cg_data.parquet"]
+
+
+def test_an_enoent_path_that_is_absolute_or_absent_from_the_script_dir_gets_no_hint(project):
+    (project / "sub" / "cg_data.parquet").write_bytes(b"x")
+    for enoent in (
+        {"named": str(project / "sub" / "cg_data.parquet"), "cwd": "/sandbox"},  # 绝对：不依赖 cwd
+        {"named": "other.parquet", "cwd": "/sandbox"},  # 脚本目录里也没有
+        {"named": None, "filename": None, "cwd": "/sandbox"},
+        "junk",
+    ):
+        err = engine_pool.WorkerError("x", code="script_error")
+        err.extra = {"enoent": enoent}
+        engine_pool._offer_missing_input(err, "sub/fig.py", str(project))
+        assert err.workdir_hint is None, enoent
+
+
+@needs_worker
+def test_pyarrow_reading_a_cwd_relative_parquet_points_at_the_script_dir(figs):
+    if not _worker_has_pyarrow():
+        pytest.skip("worker 解释器没有 pyarrow")
+    pa = pytest.importorskip("pyarrow")
+    pq = pytest.importorskip("pyarrow.parquet")
+    pq.write_table(pa.table({"y": [1, 2, 3]}), str(figs / "cg_data.parquet"))
+    (figs / "fig.py").write_text(PARQUET_SCRIPT.format(name="cg_data.parquet"), encoding="utf-8")
+    workdir.set_mode(figs, workdir.MODE_SANDBOX)
+    with pytest.raises(engine_pool.WorkerError) as err:
+        engine_pool.build("fig.py", str(figs), "__main__")
+    exc = err.value
+    assert exc.code == "script_error" and exc.missing_input is None
+    assert exc.workdir_hint["recommended"] == workdir.MODE_PROJECT
+    by_mode = {o["mode"]: o["found"] for o in exc.workdir_hint["options"]}
+    assert "cg_data.parquet" in by_mode[workdir.MODE_PROJECT]
+    assert by_mode[workdir.MODE_SANDBOX] == []
+
+    workdir.set_mode(figs, workdir.MODE_PROJECT)
+    engine_pool.shutdown_all(str(figs), wait=True)
+    _, resp = engine_pool.build("fig.py", str(figs), "__main__")
+    assert sorted(resp.get("stems") or {}) == ["p"]
+
+
+@needs_worker
+def test_pyarrow_reading_a_parquet_that_exists_nowhere_gets_no_hint(figs):
+    if not _worker_has_pyarrow():
+        pytest.skip("worker 解释器没有 pyarrow")
+    (figs / "fig.py").write_text(PARQUET_SCRIPT.format(name="nowhere.parquet"), encoding="utf-8")
+    workdir.set_mode(figs, workdir.MODE_SANDBOX)
+    with pytest.raises(engine_pool.WorkerError) as err:
+        engine_pool.build("fig.py", str(figs), "__main__")
+    assert err.value.code == "script_error" and err.value.workdir_hint is None
