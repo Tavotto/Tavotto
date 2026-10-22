@@ -576,7 +576,7 @@ class ConvertSession(FigureEditSession):
 
     def __init__(self, envelope: RunEnvelope):
         super().__init__(envelope)
-        if self.target_path is None:
+        if not self.target_usable():  # 原脚本必须能读（同 figure_edit），否则不发任何模型请求
             raise BadEnvelope("bad_target")
         if not _convert_output_ok(self.root, envelope.target, envelope.output):
             raise BadEnvelope("bad_output")

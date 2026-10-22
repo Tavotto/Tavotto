@@ -566,3 +566,23 @@ class TestOutputSizeLimit:
         r = ts["edit_file"].handler({"old": "x00000 = 1", "new": "x00000 = 1  # " + "y" * 200})
         assert (r.is_error, r.code) == (True, "too_large")
         assert out.stat().st_size == size
+
+
+@pytest.mark.parametrize("kind", ["missing", "directory", "oversized", "not_utf8"])
+def test_unusable_original_fails_before_any_model_request(tmp_path, kind):
+    """原脚本读不了时起跑即 bad_target、0 次模型请求（跟 #1328 第八轮同一判据）。"""
+    cand = tmp_path / "c"
+    cand.mkdir()
+    if kind == "directory":
+        (cand / "fig.py").mkdir()
+    elif kind == "oversized":
+        (cand / "fig.py").write_bytes(b"#" * (tools.READ_LIMIT_BYTES + 1))
+    elif kind == "not_utf8":
+        (cand / "fig.py").write_bytes(b"\xff\xfe\x00")
+    calls = []
+    model = loop.DemoModel({"turns": [{"text": "done"}]})
+    orig = model.complete
+    model.complete = lambda **kw: (calls.append(1), orig(**kw))[1]
+    res, _ = run_demo(cand, {"turns": []}, model=model)
+    assert (res.ok, res.reason, res.detail) == (False, "internal", "bad_target")
+    assert calls == []
