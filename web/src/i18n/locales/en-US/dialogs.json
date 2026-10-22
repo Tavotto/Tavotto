@@ -1241,6 +1241,13 @@
         "running": "Installing…"
       },
       "lastChecked": "Last checked {{time}}",
+      "login": {
+        "action": "Sign in to {{account}}",
+        "done": "I’ve signed in",
+        "manualHint": "No terminal was found. Open one yourself and run: {{command}}",
+        "terminalHint": "Finish signing in in the terminal that just opened, then come back here.",
+        "waiting": "Waiting for sign-in…"
+      },
       "noUsableAgent": "No usable figure assistant found. Install one, then click Rescan.",
       "readiness": {
         "needs_auth": "Sign-in required",

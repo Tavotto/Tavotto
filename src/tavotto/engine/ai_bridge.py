@@ -20,10 +20,12 @@ import hashlib
 import json
 import logging
 import os
+import shlex
 import shutil
 import signal
 import stat
 import subprocess
+import sys
 import threading
 import time
 import uuid
@@ -31,7 +33,10 @@ from pathlib import Path
 
 from . import ai_agents, ai_history, ai_providers, config, projectenv, scriptlock
 from .ai_agents import spawn_env as _spawn_env  # noqa: F401 — run() 与旧调用方仍认这个名字
-from .runtime import CREATE_NO_WINDOW  # noqa: F401 — 重导出，历史调用方仍认这个名字
+from .runtime import (  # noqa: F401 — 重导出，历史调用方仍认这个名字
+    CREATE_NEW_CONSOLE,
+    CREATE_NO_WINDOW,
+)
 
 LOG = logging.getLogger("tavotto.ai")
 
@@ -270,6 +275,7 @@ def _agent_caps(agent: ai_agents.AgentDefinition, saved: dict, npm_available: bo
     res = ai_agents.resolve(agent)
     installed = res.argv is not None
     enabled = _effective_enabled(saved, installed)
+    login_spec = agent.login_spec()
 
     caps = agent.model_capabilities() if installed else ai_agents.ModelCapabilities()
     models = list(caps.models)
@@ -343,7 +349,10 @@ def _agent_caps(agent: ai_agents.AgentDefinition, saved: dict, npm_available: bo
             "effort_selection": effort_ok,
             "wire_api_selection": agent.supports_wire_api,
             "readiness_probe": agent.supports_readiness_probe,
+            "login": login_spec is not None,
         },
+        # 登录按钮上的账号名（「登录 ChatGPT」）；不支持登录 = null
+        "login_account": login_spec.account if login_spec else None,
         # 诊断（详情页的折叠区）：找过哪儿、第一个坏候选、就绪检查的结论。
         # **`argv` 不在这里**——前端没有消费者，那就不公开。
         "diagnostics": {
@@ -691,6 +700,154 @@ def start_install(agent_id: str) -> dict:
 
     threading.Thread(target=work, daemon=True, name=f"ai-install-{agent_id}").start()
     return install_status(agent_id)
+
+
+# ---------------------------------------------------------------------------
+# 官方登录按钮（只启动官方命令；Tavotto 不读、不存、不刷新、不转发任何登录凭据）
+# ---------------------------------------------------------------------------
+LOGIN_TIMEOUT_S = 600  # 后台登录进程的存活上限；超时由 Tavotto 结束它自己起的那一个
+#: agent -> {"proc", "started"}；同一 Agent 同时只有一个后台登录进程
+_LOGINS: dict[str, dict] = {}
+_LOGIN_LOCK = threading.Lock()
+
+
+def _login_argv(agent: ai_agents.AgentDefinition) -> tuple[ai_agents.LoginSpec, list[str], dict]:
+    """→ (规格, 完整 argv, 环境)。argv = 探测通过的那份真实启动 argv + 适配器写死的子命令；
+    环境与探测、运行同一份 `spawn_env`。请求体里没有、也不接受任何命令字段。"""
+    spec = agent.login_spec()
+    if spec is None:
+        raise AgentError("ai_agent_login_unsupported", {"agent": agent.id})
+    res = ai_agents.resolve(agent)
+    if res.argv is None:
+        raise AgentError("ai_agent_not_installed", {"agent": agent.id})
+    return spec, [*res.argv, *spec.argv_suffix], ai_agents.spawn_env(res.path)
+
+
+def login_status(agent_id: str) -> dict:
+    """后台登录进程还在不在（前端据此决定何时重新探测）。"""
+    require_agent(agent_id)
+    with _LOGIN_LOCK:
+        st = _LOGINS.get(agent_id)
+        running = bool(st and st["proc"].poll() is None)
+    return {"status": "running" if running else "idle"}
+
+
+def _shell_quote(argv: list[str]) -> str:
+    return " ".join(shlex.quote(a) for a in argv)
+
+
+#: Linux 上常见的终端模拟器：(可执行文件, 「后面是要执行的命令」的参数)
+_LINUX_TERMINALS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("x-terminal-emulator", ("-e",)),
+    ("gnome-terminal", ("--",)),
+    ("konsole", ("-e",)),
+    ("xfce4-terminal", ("-x",)),
+    ("xterm", ("-e",)),
+)
+
+
+def _open_in_terminal(argv: list[str], env: dict) -> bool:
+    """在用户的系统终端里跑 argv。**只打开终端并运行这一条命令**——不发任何全局按键，
+    不用 System Events。→ 终端是否打开了；找不到终端返回 False（调用方给出手动命令）。"""
+    if ai_agents._is_windows():
+        # 新开一个控制台窗口，直接运行（不经 cmd.exe 中转：路径里的 & % ^ 不会被吃掉）
+        subprocess.Popen(argv, env=env, creationflags=CREATE_NEW_CONSOLE)
+        return True
+    script = f"export PATH={shlex.quote(env.get('PATH', ''))}\n{_shell_quote(argv)}\n"
+    if sys.platform == "darwin":
+        # `.command` 文件交给 Terminal 打开：不需要「自动化」授权弹窗，也不需要 osascript。
+        # 脚本第一行删掉自己；放在 data_dir 下（不往包目录写任何东西）
+        d = config.data_dir() / "cache" / "login_terminal"
+        d.mkdir(parents=True, exist_ok=True)
+        path = d / f"login-{uuid.uuid4().hex[:8]}.command"
+        path.write_text('#!/bin/sh\nrm -f "$0"\n' + script, encoding="utf-8")
+        path.chmod(0o700)
+        out = subprocess.run(
+            ["open", "-a", "Terminal", str(path)],
+            capture_output=True,
+            timeout=10,
+            stdin=subprocess.DEVNULL,
+            creationflags=CREATE_NO_WINDOW,
+        )
+        if out.returncode != 0:
+            path.unlink(missing_ok=True)
+            raise OSError(f"open -a Terminal exit {out.returncode}")
+        return True
+    for exe, flag in _LINUX_TERMINALS:
+        found = shutil.which(exe)
+        if found:
+            keep = script + "printf '\\n'; read -r _\n"  # 命令跑完留住窗口，让用户看到结果
+            subprocess.Popen(
+                [found, *flag, "sh", "-c", keep], env=env, creationflags=CREATE_NO_WINDOW
+            )
+            return True
+    return False
+
+
+def start_login(agent_id: str) -> dict:
+    """启动该 Agent 的**官方登录命令**。
+
+    * background：`Popen` 后立即返回；同一 Agent 同时只允许一个（再点返回 already_running）；
+      超过 `LOGIN_TIMEOUT_S` 由守护线程结束它自己起的这一个进程；
+    * terminal：只负责在系统终端里打开这条命令，之后由用户回来点「我已登录」。
+    命令只来自适配器的 `login_spec()`；完成后的判定仍只有就绪检查（`codex login status` /
+    `claude auth status`）。通用层没有任何 `if agent == ...`。
+    """
+    agent = require_agent(agent_id)
+    spec, argv, env = _login_argv(agent)
+    command = " ".join([agent.command_names[0], *spec.argv_suffix])
+    if spec.mode == "terminal":
+        try:
+            opened = _open_in_terminal(argv, env)
+        except (OSError, subprocess.SubprocessError) as exc:
+            LOG.warning("login terminal %s failed: %s", agent_id, exc)
+            raise AgentError("ai_agent_login_failed", {"agent": agent_id}) from exc
+        if not opened:
+            # 找不到终端：明确告诉用户自己在终端里运行哪条命令
+            return {
+                "started": False,
+                "mode": spec.mode,
+                "reason": "terminal_unavailable",
+                "command": command,
+            }
+        return {"started": True, "mode": spec.mode, "command": command}
+    with _LOGIN_LOCK:
+        st = _LOGINS.get(agent_id)
+        if st and st["proc"].poll() is None:
+            return {"started": False, "mode": spec.mode, "already_running": True}
+        try:
+            proc = subprocess.Popen(
+                argv,
+                env=env,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                creationflags=CREATE_NO_WINDOW,
+            )
+        except OSError as exc:
+            LOG.warning("login %s spawn failed: %s", agent_id, exc)
+            raise AgentError("ai_agent_login_failed", {"agent": agent_id}) from exc
+        _LOGINS[agent_id] = {"proc": proc, "started": time.time()}
+
+    def reap() -> None:
+        try:
+            proc.wait(timeout=LOGIN_TIMEOUT_S)
+        except subprocess.TimeoutExpired:
+            proc.terminate()
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait()
+        finally:
+            LOG.info("login %s finished (exit %s)", agent_id, proc.returncode)
+            with _LOGIN_LOCK:
+                if _LOGINS.get(agent_id, {}).get("proc") is proc:
+                    del _LOGINS[agent_id]
+            invalidate_capabilities()
+
+    threading.Thread(target=reap, daemon=True, name=f"ai-login-{agent_id}").start()
+    return {"started": True, "mode": spec.mode}
 
 
 # ---------------------------------------------------------------------------

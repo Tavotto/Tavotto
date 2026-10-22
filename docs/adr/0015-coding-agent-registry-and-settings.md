@@ -156,6 +156,8 @@ usable = enabled && 可执行文件能启动 && state ∉ {broken, not_installed
 PATCH /api/ai/agents/<id>          { enabled?, path_override? }
 POST  /api/ai/agents/<id>/install
 GET   /api/ai/agents/<id>/install
+POST  /api/ai/agents/<id>/login      # 官方登录按钮：只启动官方命令（规则见 ai-agent-bridge.md）
+GET   /api/ai/agents/<id>/login
 ```
 
 `PATCH /api/ai/settings` 与旧的两个安装端点一并删除。稳定错误码：

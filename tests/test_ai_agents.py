@@ -124,7 +124,9 @@ def test_a_third_agent_needs_no_new_branch(monkeypatch):
         "effort_selection": False,
         "wire_api_selection": False,
         "readiness_probe": False,
+        "login": False,
     }
+    assert fake["login_account"] is None
     # 不声明 install spec 就没有安装入口（界面据此不画那个按钮）
     assert "install" not in fake
     # 第三方接口的白名单也跟着注册表走，不是第二份手写清单

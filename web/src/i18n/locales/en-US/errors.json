@@ -31,6 +31,8 @@
     "ai_agent_disabled": "{{agent}} is turned off in settings. Turn it back on under Figure assistants.",
     "ai_agent_executable_invalid": "Can’t use that file as this agent’s executable: {{path}}. Your previous setting is unchanged.",
     "ai_agent_install_unsupported": "{{agent}} has no one-click install. Follow its own docs.",
+    "ai_agent_login_failed": "Couldn’t start the {{agent}} sign-in. Run its sign-in command in a terminal, or check that the executable works.",
+    "ai_agent_login_unsupported": "{{agent}} has no official sign-in command. Sign in the way its own docs describe.",
     "ai_agent_needs_auth": "{{agent}} isn’t signed in. Sign in from its own command line, or point it at a custom model service in settings.",
     "ai_agent_not_installed": "No usable {{agent}} was found on this computer.",
     "ai_agent_not_usable": "{{agent}} isn’t usable right now. Check its status under Figure assistants.",

@@ -37,6 +37,23 @@
   通用设置走 `PATCH /api/ai/agents/<id>`（`enabled` / `path_override`），
   安装走 `POST|GET /api/ai/agents/<id>/install`；自定义路径**不允许硬编码私人
   路径**（pytest 看护）。run 可带 model/effort。
+- **登录按钮（设置页「用 Codex / Claude Code 自己的登录」那一行，`needs_auth` 时的唯一主按钮）只启动
+  官方命令，不碰凭据**：命令由适配器的 `login_spec()`（`LoginSpec(argv_suffix, mode, account)`）写死——
+  Codex = `login`（background，官方命令自己开浏览器、自己在本机起回调）、Claude = `auth login`
+  （terminal，需要交互，只许在用户的系统终端里打开：macOS 写一个自删的 `.command` 交给
+  `open -a Terminal`，Windows `CREATE_NEW_CONSOLE` 直接运行不经 cmd.exe，Linux 依次试
+  x-terminal-emulator / gnome-terminal / konsole / xfce4-terminal / xterm，全没有就返回
+  `reason: terminal_unavailable` + 要手动运行的命令）。**绝不发全局按键、不用 System Events**；默认实现
+  `None` = 不支持，capabilities 的 `features.login` / `login_account` 据此给出，通用层
+  （`start_login` / `login_status`）不写 `if agent == ...`（`tests/test_ai_login.py` 用 Fake Adapter 与
+  源码扫描双重反证）。`POST|GET /api/ai/agents/<id>/login` 与 install 同组、同一会话认证；argv =
+  探测通过的真实启动 argv + 写死的子命令，环境与探测同一份 `spawn_env()`，请求体里没有也不接受
+  任何命令字段。background 同一 Agent 同时只有一个进程（再点返回 `already_running`），守护线程在
+  `LOGIN_TIMEOUT_S` 后结束**它自己起的那一个**；输出一律 DEVNULL，不读。**Tavotto 不读、不存、不刷新、
+  不转发 Claude / Codex 的任何登录凭据**；登录成不成仍只看就绪检查（`codex login status` /
+  `claude auth status`，一个字不变）——前端在进程结束 / 用户点「我已登录」/ 窗口重新聚焦时重新探测。
+  新错误码 `ai_agent_login_unsupported`（400）/ `ai_agent_login_failed`（409）。测试里**绝不**对真实
+  `~/.codex` / `~/.claude` 执行 login，一律桩 Popen。
 - **CLI 子进程一律用 `ai_agents.spawn_env()` 的增强 PATH**（探测与运行同一份）：
   桌面壳从 Finder / 开始菜单启动时继承 GUI 的最小 PATH，npm shim 的
   `#!/usr/bin/env node` 解析不到 node（`env: node: No such file or directory`）

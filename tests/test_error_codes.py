@@ -335,6 +335,9 @@ USER_VISIBLE_CODES = {
     "ai_agent_needs_auth": {"agent"},
     "ai_agent_not_usable": {"agent"},
     "ai_agent_install_unsupported": {"agent"},
+    # 官方登录按钮：该 Agent 没有官方登录命令 / 命令没能启动（终端没打开、spawn 失败）
+    "ai_agent_login_unsupported": {"agent"},
+    "ai_agent_login_failed": {"agent"},
     "ai_agent_executable_invalid": {"path"},
     "ai_agent_probe_timeout": {"path"},
     # --- #24（ADR 0008 会话认证）带来的用户可见 code ---

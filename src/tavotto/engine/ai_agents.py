@@ -142,6 +142,24 @@ def _effort_supported(details: list[ModelDetail], model: str | None, effort: str
 
 
 @dataclass(frozen=True)
+class LoginSpec:
+    """「官方登录按钮」要启动的那条官方命令。**子命令写死在适配器里**，绝不来自请求体。
+
+    `mode`：
+      background — 官方命令自己开浏览器、自己在本机起回调，不需要终端交互；
+                   Tavotto 后台启动它、不读它的输出（`codex login`）
+      terminal   — 官方命令需要交互，只能交给用户的系统终端（`claude auth login`）
+
+    `account` 是按钮上的账号名（产品名，不翻译）：「登录 ChatGPT」「登录 Claude」。
+    Tavotto 不读、不存、不刷新、不转发该命令产生的任何登录凭据。
+    """
+
+    argv_suffix: tuple[str, ...]
+    mode: str
+    account: str
+
+
+@dataclass(frozen=True)
 class RunContext:
     """构造一次任务命令所需的全部输入。"""
 
@@ -440,6 +458,11 @@ class AgentDefinition:
         """
         return ReadinessResult()
 
+    # -- 登录 --------------------------------------------------------------
+    def login_spec(self) -> LoginSpec | None:
+        """官方登录命令的规格。**默认不支持**——没有官方登录子命令就不画按钮。"""
+        return None
+
     # -- 运行 --------------------------------------------------------------
     def build_command(self, ctx: RunContext) -> SpawnSpec:
         raise NotImplementedError
@@ -459,6 +482,10 @@ class CodexAgent(AgentDefinition):
     supports_effort_selection = True
     supports_wire_api = True
     supports_readiness_probe = True
+
+    def login_spec(self) -> LoginSpec | None:
+        # `codex login` 自己开浏览器、自己在本机起回调：后台启动即可
+        return LoginSpec(("login",), "background", "ChatGPT")
 
     #: 推理强度档位。**模型名故意不写死**——OpenAI 换代时旧名会被服务端直接
     #: 拒绝（"The 'gpt-5' model is not supported when using Codex with a
@@ -783,6 +810,10 @@ class ClaudeAgent(AgentDefinition):
         if not isinstance(value, str):
             return None
         return re.sub(r"\[[^\]]*\]$", "", value.strip()) or None
+
+    def login_spec(self) -> LoginSpec | None:
+        # `claude auth login` 需要交互：只能开在用户的系统终端里
+        return LoginSpec(("auth", "login"), "terminal", "Claude")
 
     def model_capabilities(self) -> ModelCapabilities:
         details, families, aliases = self._catalog()

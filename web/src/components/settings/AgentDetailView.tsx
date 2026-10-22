@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Pencil, Plus, RefreshCw, Trash2 } from '@/components/ui/icons'
 import { Details, Summary } from '@/components/ui/Details'
@@ -8,11 +8,13 @@ import {
   backendErrorText,
   deleteAiEndpoint,
   fetchAiInstallStatus,
+  fetchAiLoginStatus,
   patchAiAgent,
   migrateAiEndpoint,
   saveAiEndpoint,
   setAiEndpointActive,
   startAiInstall,
+  startAiLogin,
   type AiAgentCaps,
   type AiCapabilities,
   type AiInstallState,
@@ -104,6 +106,10 @@ export function AgentDetailView({
     if (ok) void run(() => deleteAiEndpoint(id))
   }
 
+  // 官方登录按钮：只在「未登录」且适配器声明了官方登录命令时出现
+  const login = useAgentLogin(agent, onRefreshed, setError)
+  const showLogin = agent.state === 'needs_auth' && agent.features.login
+
   const mine = (caps.endpoints ?? []).filter((e) => e.agent === agent.id)
   const activeId = agent.active_endpoint_id ?? ''
   const usingEndpoint = !!agent.active_endpoint_id
@@ -168,16 +174,45 @@ export function AgentDetailView({
           }
         >
           <FieldGroup role="radiogroup" aria-label={ag('detail.serviceAria', { name: agent.display_name })}>
-            <label className="flex min-h-7 items-center gap-3">
-              <Radio
-                name={radioName}
-                checked={!usingEndpoint}
-                onChange={() => void run(() => setAiEndpointActive(agent.id, ''))}
-              />
-              <span className="min-w-0 flex-1 text-base text-ink">
-                {ag('detail.useAgentLogin', { name: agent.display_name })}
-              </span>
-            </label>
+            <div className="flex min-h-7 items-center gap-3">
+              <label className="flex min-w-0 flex-1 items-center gap-3">
+                <Radio
+                  name={radioName}
+                  checked={!usingEndpoint}
+                  onChange={() => void run(() => setAiEndpointActive(agent.id, ''))}
+                />
+                <span className="min-w-0 flex-1 text-base text-ink">
+                  {ag('detail.useAgentLogin', { name: agent.display_name })}
+                </span>
+              </label>
+              {/* 一句话 + 一个主按钮：未登录时这一行的行尾就是「登录 ChatGPT / Claude」 */}
+              {showLogin && (
+                <Button
+                  data-agent-login={login.phase}
+                  variant="primary"
+                  size="sm"
+                  loading={login.phase === 'waiting'}
+                  disabled={login.phase === 'waiting'}
+                  onClick={() => (login.phase === 'terminal' || login.phase === 'manual' ? login.confirm() : login.begin())}
+                >
+                  {login.phase === 'waiting'
+                    ? ag('login.waiting')
+                    : login.phase === 'terminal' || login.phase === 'manual'
+                      ? ag('login.done')
+                      : ag('login.action', { account: agent.login_account ?? agent.display_name })}
+                </Button>
+              )}
+            </div>
+            {showLogin && login.phase === 'terminal' && (
+              <p data-agent-login-hint className="text-xs leading-relaxed text-ink-3">
+                {ag('login.terminalHint')}
+              </p>
+            )}
+            {showLogin && login.phase === 'manual' && (
+              <p data-agent-login-hint className="text-xs leading-relaxed text-ink-3">
+                {ag('login.manualHint', { command: login.command })}
+              </p>
+            )}
             {mine.map((e) => (
               <EndpointRow
                 key={e.id}
@@ -258,6 +293,99 @@ export function AgentDetailView({
       )}
     </div>
   )
+}
+
+type LoginPhase = 'idle' | 'waiting' | 'terminal' | 'manual'
+
+/** 后台登录最多等多久（与后端 `LOGIN_TIMEOUT_S` 同量级）；到点不再轮询，按钮回到可点 */
+const LOGIN_MAX_WAIT_MS = 10 * 60 * 1000
+const LOGIN_POLL_MS = 3000
+
+/**
+ * 官方登录按钮的状态机。**Tavotto 只启动官方命令**（codex 后台、claude 开在系统终端里），
+ * 不读、不存任何登录凭据；是否登录成功仍只看重新探测出来的就绪检查结论。
+ *
+ *   * background：轮询后端「登录进程还在不在」（3 s，最多 10 分钟，卸载即停），进程一结束就
+ *     重新探测 capabilities 一次；
+ *   * terminal：不轮询——用户回来点「我已登录」，或窗口重新聚焦时重新探测。
+ */
+function useAgentLogin(
+  agent: AiAgentCaps,
+  onRefreshed: (next?: AiCapabilities) => Promise<void> | void,
+  onError: (message: string | null) => void,
+) {
+  const [phase, setPhase] = useState<LoginPhase>('idle')
+  const [command, setCommand] = useState('')
+  const refreshRef = useRef(onRefreshed)
+  useEffect(() => {
+    refreshRef.current = onRefreshed
+  }, [onRefreshed])
+
+  useEffect(() => {
+    if (phase !== 'waiting') return
+    const started = Date.now()
+    let stopped = false
+    const timer = window.setInterval(() => {
+      void (async () => {
+        if (stopped) return
+        if (Date.now() - started > LOGIN_MAX_WAIT_MS) {
+          stopped = true
+          window.clearInterval(timer)
+          setPhase('idle')
+          return
+        }
+        try {
+          const s = await fetchAiLoginStatus(agent.id)
+          if (stopped || s.status === 'running') return
+          stopped = true
+          window.clearInterval(timer)
+          await refreshRef.current()
+          setPhase('idle')
+        } catch {
+          /* 网络抖动：下一轮再问 */
+        }
+      })()
+    }, LOGIN_POLL_MS)
+    return () => {
+      stopped = true
+      window.clearInterval(timer)
+    }
+  }, [phase, agent.id])
+
+  // 终端模式：用户从终端切回 Tavotto 时重新探测一次
+  useEffect(() => {
+    if (phase !== 'terminal' && phase !== 'manual') return
+    const onFocus = () => void refreshRef.current()
+    window.addEventListener('focus', onFocus)
+    return () => window.removeEventListener('focus', onFocus)
+  }, [phase])
+
+  const begin = useCallback(async () => {
+    onError(null)
+    try {
+      const r = await startAiLogin(agent.id)
+      if (r.mode === 'background') {
+        setPhase('waiting') // started 与 already_running 都是「等它结束」
+      } else if (r.started) {
+        setPhase('terminal')
+      } else {
+        setCommand(r.command ?? '')
+        setPhase('manual')
+      }
+    } catch (e) {
+      onError(backendErrorText(e))
+    }
+  }, [agent.id, onError])
+
+  const confirm = useCallback(async () => {
+    try {
+      await refreshRef.current()
+    } finally {
+      setPhase('idle')
+    }
+  }, [])
+
+  return { phase, command, begin: () => void begin(), confirm: () => void confirm() }
 }
 
 /**

@@ -3041,7 +3041,11 @@ export interface AiAgentCaps {
     /** 第三方接口属 OpenAI 族（Codex，只认 Responses 协议，界面不再让选协议） */
     wire_api_selection: boolean
     readiness_probe: boolean
+    /** 有官方登录命令（设置页在 needs_auth 时给「登录 …」按钮） */
+    login: boolean
   }
+  /** 登录按钮上的账号名（「登录 ChatGPT」）；不支持登录 = null */
+  login_account: string | null
 
   diagnostics: AiAgentDiagnostics
 
@@ -3250,6 +3254,23 @@ export const startAiInstall = (agent: AiAgentId) =>
 
 export const fetchAiInstallStatus = (agent: AiAgentId) =>
   jsonFetch<AiInstallState>(`/api/ai/agents/${encodeURIComponent(agent)}/install`)
+
+/** 官方登录按钮：只启动官方命令，Tavotto 不读不存任何登录凭据 */
+export interface AiLoginStart {
+  started: boolean
+  /** background = 官方命令自己开浏览器；terminal = 在系统终端里交互 */
+  mode: 'background' | 'terminal'
+  already_running?: boolean
+  /** 找不到终端：started=false，界面请用户自己运行 `command` */
+  reason?: 'terminal_unavailable'
+  command?: string
+}
+
+export const startAiLogin = (agent: AiAgentId) =>
+  jsonFetch<AiLoginStart>(`/api/ai/agents/${encodeURIComponent(agent)}/login`, { method: 'POST' })
+
+export const fetchAiLoginStatus = (agent: AiAgentId) =>
+  jsonFetch<{ status: 'idle' | 'running' }>(`/api/ai/agents/${encodeURIComponent(agent)}/login`)
 
 export interface AiHistoryEntry {
   id: string

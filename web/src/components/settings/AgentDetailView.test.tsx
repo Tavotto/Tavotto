@@ -19,6 +19,8 @@ vi.mock('@/lib/api', async (importOriginal) => ({
   migrateAiEndpoint: vi.fn(),
   startAiInstall: vi.fn(),
   fetchAiInstallStatus: vi.fn(),
+  startAiLogin: vi.fn(),
+  fetchAiLoginStatus: vi.fn(),
 }))
 
 import {
@@ -28,6 +30,8 @@ import {
   patchAiAgent,
   setAiEndpointActive,
   startAiInstall,
+  startAiLogin,
+  fetchAiLoginStatus,
   type AiCapabilities,
 } from '@/lib/api'
 import { SettingsDialog } from '@/components/SettingsDialog'
@@ -50,6 +54,8 @@ const fetchMock = vi.mocked(fetchAiCapabilities)
 const patchMock = vi.mocked(patchAiAgent)
 const activeMock = vi.mocked(setAiEndpointActive)
 const installMock = vi.mocked(startAiInstall)
+const loginMock = vi.mocked(startAiLogin)
+const loginStatusMock = vi.mocked(fetchAiLoginStatus)
 
 const ag = (key: string, v?: Record<string, unknown>) =>
   t(`settings.agents.${key}`, { ns: 'dialogs', ...(v ?? {}) })
@@ -117,9 +123,12 @@ beforeEach(() => {
   patchMock.mockReset()
   activeMock.mockReset()
   installMock.mockReset()
+  loginMock.mockReset()
+  loginStatusMock.mockReset()
 })
 
 afterEach(() => {
+  vi.useRealTimers()
   act(() => root.unmount())
   host.remove()
   document.body.innerHTML = ''
@@ -381,7 +390,8 @@ describe('Agent 详情', () => {
     await openDetail(capsOf([agentCaps({
       features: { third_party_endpoints: false, model_selection: true,
                   effort_selection: false, wire_api_selection: false,
-                  readiness_probe: false },
+                  readiness_probe: false, login: false },
+      login_account: null,
     })]))
     expect(text()).not.toContain(ag('detail.modelService'))
   })
@@ -413,6 +423,122 @@ describe('Agent 详情', () => {
     installMock.mockResolvedValue({ status: 'running' })
     await act(async () => byName(ag('install.confirmAction'))!.click())
     expect(installMock).toHaveBeenCalledExactlyOnceWith('codex')
+  })
+
+  describe('官方登录按钮', () => {
+    const needsAuth = (over = {}) => agentCaps({ state: 'needs_auth', usable: false, ...over })
+    const loginBtn = (name: string) => byName(ag('login.action', { account: name }))
+
+    it('只在未登录且适配器声明了官方登录时出现，文案带账号名', async () => {
+      await openDetail(capsOf([needsAuth()]))
+      expect(loginBtn('ChatGPT')).toBeTruthy()
+      act(() => root.unmount())
+      host.remove()
+      // 已登录：没有按钮
+      await openDetail(capsOf([agentCaps()]))
+      expect(loginBtn('ChatGPT')).toBeUndefined()
+    })
+
+    it('适配器没声明官方登录（features.login=false）时不出现', async () => {
+      await openDetail(
+        capsOf([
+          needsAuth({
+            login_account: null,
+            features: { ...agentCaps().features, login: false },
+          }),
+        ]),
+      )
+      expect(document.querySelector('[data-agent-login]')).toBeNull()
+    })
+
+    it('后台模式：点击后变「等待登录…」，每 3 秒问一次，进程结束就重新探测并停止轮询', async () => {
+      await openDetail(capsOf([needsAuth()]))
+      vi.useFakeTimers()
+      loginMock.mockResolvedValue({ started: true, mode: 'background' })
+      loginStatusMock.mockResolvedValue({ status: 'running' })
+      fetchMock.mockClear()
+      await act(async () => loginBtn('ChatGPT')!.click())
+      expect(loginMock).toHaveBeenCalledExactlyOnceWith('codex')
+      expect(byName(ag('login.waiting'))).toBeTruthy()
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(3000)
+      })
+      expect(loginStatusMock).toHaveBeenCalledTimes(1)
+      expect(fetchMock).not.toHaveBeenCalled() // 还在登录：不重复探测
+      loginStatusMock.mockResolvedValue({ status: 'idle' })
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(3000)
+      })
+      expect(loginStatusMock).toHaveBeenCalledTimes(2)
+      expect(fetchMock).toHaveBeenCalledWith(true) // 重新探测
+      // 轮询已停
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(30_000)
+      })
+      expect(loginStatusMock).toHaveBeenCalledTimes(2)
+    })
+
+    it('卸载即停止轮询，最多等 10 分钟', async () => {
+      await openDetail(capsOf([needsAuth()]))
+      vi.useFakeTimers()
+      loginMock.mockResolvedValue({ started: true, mode: 'background' })
+      loginStatusMock.mockResolvedValue({ status: 'running' })
+      await act(async () => loginBtn('ChatGPT')!.click())
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(9000)
+      })
+      expect(loginStatusMock).toHaveBeenCalledTimes(3)
+      act(() => root.unmount())
+      await vi.advanceTimersByTimeAsync(60_000)
+      expect(loginStatusMock).toHaveBeenCalledTimes(3)
+    })
+
+    it('一直没等到：10 分钟后停止轮询，按钮回到可点', async () => {
+      await openDetail(capsOf([needsAuth()]))
+      vi.useFakeTimers()
+      loginMock.mockResolvedValue({ started: true, mode: 'background' })
+      loginStatusMock.mockResolvedValue({ status: 'running' })
+      await act(async () => loginBtn('ChatGPT')!.click())
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(10 * 60 * 1000 + 6000)
+      })
+      const calls = loginStatusMock.mock.calls.length
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(60_000)
+      })
+      expect(loginStatusMock.mock.calls.length).toBe(calls)
+      expect(loginBtn('ChatGPT')).toBeTruthy()
+    })
+
+    it('终端模式：一句提示 + 「我已登录」，不轮询，点了才重新探测', async () => {
+      await openDetail(capsOf([needsAuth({ id: 'claude', display_name: 'Claude Code', login_account: 'Claude' })]))
+      vi.useFakeTimers()
+      loginMock.mockResolvedValue({ started: true, mode: 'terminal', command: 'claude auth login' })
+      fetchMock.mockClear()
+      await act(async () => loginBtn('Claude')!.click())
+      expect(loginMock).toHaveBeenCalledExactlyOnceWith('claude')
+      expect(text()).toContain(ag('login.terminalHint'))
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(20_000)
+      })
+      expect(loginStatusMock).not.toHaveBeenCalled()
+      expect(fetchMock).not.toHaveBeenCalled()
+      await act(async () => byName(ag('login.done'))!.click())
+      expect(fetchMock).toHaveBeenCalledWith(true)
+    })
+
+    it('找不到终端：直接告诉用户自己运行哪条命令', async () => {
+      await openDetail(capsOf([needsAuth({ id: 'claude', display_name: 'Claude Code', login_account: 'Claude' })]))
+      loginMock.mockResolvedValue({
+        started: false,
+        mode: 'terminal',
+        reason: 'terminal_unavailable',
+        command: 'claude auth login',
+      })
+      await act(async () => loginBtn('Claude')!.click())
+      expect(text()).toContain(ag('login.manualHint', { command: 'claude auth login' }))
+      expect(byName(ag('login.done'))).toBeTruthy()
+    })
   })
 
   it('装好的 Agent 不显示安装入口', async () => {

@@ -1230,6 +1230,13 @@
         "running": "正在安装…"
       },
       "lastChecked": "最近检测 {{time}}",
+      "login": {
+        "action": "登录 {{account}}",
+        "done": "我已登录",
+        "manualHint": "没找到可用的终端。请自己打开终端，运行：{{command}}",
+        "terminalHint": "在打开的终端里完成登录后回到这里。",
+        "waiting": "等待登录…"
+      },
       "noUsableAgent": "没有可用的改图助手。装好后点「重新检测」。",
       "readiness": {
         "needs_auth": "需要登录",

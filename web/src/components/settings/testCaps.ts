@@ -25,7 +25,9 @@ export const agentCaps = (over: Partial<AiAgentCaps> = {}): AiAgentCaps => ({
     effort_selection: true,
     wire_api_selection: true,
     readiness_probe: true,
+    login: true,
   },
+  login_account: 'ChatGPT',
   diagnostics: {
     searched: ['/opt/homebrew/bin', '/usr/local/bin'],
     broken_path: null,
@@ -53,7 +55,9 @@ export const claudeCaps = (over: Partial<AiAgentCaps> = {}): AiAgentCaps =>
       effort_selection: false,
       wire_api_selection: false,
       readiness_probe: true,
+      login: true,
     },
+    login_account: 'Claude',
     install: {
       method: 'npm',
       package: '@anthropic-ai/claude-code',

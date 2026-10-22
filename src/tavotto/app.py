@@ -8961,7 +8961,16 @@ def api_engine_svg():
 # 任何一条路由分支。全部端点照旧走 ADR 0008 的会话认证，没有旁路。
 def _agent_error(exc: "engine_ai.AgentError"):
     """AgentError → 稳定 code 的 JSON。未知 id 是「请求畸形」，其余是状态冲突。"""
-    status = 400 if exc.code in ("ai_agent_unknown", "ai_agent_install_unsupported") else 409
+    status = (
+        400
+        if exc.code
+        in (
+            "ai_agent_unknown",
+            "ai_agent_install_unsupported",
+            "ai_agent_login_unsupported",
+        )
+        else 409
+    )
     return jsonify({"error": str(exc), "code": exc.code, "params": exc.params}), status
 
 
@@ -9042,6 +9051,29 @@ def api_ai_agent_install_status(agent_id):
     except engine_ai.AgentError as exc:
         return _agent_error(exc)
     resp = jsonify(engine_ai.install_status(agent_id))
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+@app.post("/api/ai/agents/<agent_id>/login")
+def api_ai_agent_login(agent_id):
+    """启动该 Agent 的**官方登录命令**（codex 后台 / claude 在系统终端里）。
+
+    命令只来自适配器写死的 `login_spec()`，请求体里没有、也不接受任何命令字段；
+    Tavotto 不读、不存任何登录凭据，完成与否仍只看就绪检查。
+    """
+    try:
+        return jsonify(engine_ai.start_login(agent_id))
+    except engine_ai.AgentError as exc:
+        return _agent_error(exc)
+
+
+@app.get("/api/ai/agents/<agent_id>/login")
+def api_ai_agent_login_status(agent_id):
+    try:
+        resp = jsonify(engine_ai.login_status(agent_id))
+    except engine_ai.AgentError as exc:
+        return _agent_error(exc)
     resp.headers["Cache-Control"] = "no-store"
     return resp
 
