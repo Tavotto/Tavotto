@@ -40,7 +40,7 @@ const ep = (id: string, over: Partial<AiEndpoint>): AiEndpoint => ({
   has_key: true,
   key_hint: '…1234',
   incompatible: null,
-  migratable: false,
+  migratable: null,
   ...over,
 })
 
