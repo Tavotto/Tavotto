@@ -400,10 +400,12 @@ test('捕获结果弹层：每一行都有真实缩略图（非空），添加�
                 JSON.stringify({ version: 1, scripts: {} }), 'utf-8')
   const a = await app({ figures: dir })
   await page.goto(a.baseURL)
-  await page.getByRole('button', { name: '运行 show_two.py 并发现图' }).click()
-  await expect(page.getByText('已发现 2 张图')).toBeVisible({ timeout: 120_000 })
-  await page.getByRole('button', { name: /查看捕获结果/ }).click()
-  const rows = page.locator('[data-capture-row]')
+  await page.locator('[data-script-run="show_two.py"]').click()
+  const open = page.locator('[data-capture-results-open="show_two.py"]')
+  await expect(open).toBeVisible({ timeout: 120_000 })
+  await open.click()
+  const dialog = page.locator('[data-dialog="capture-results"]')
+  const rows = dialog.locator('[data-capture-row]')
   await expect(rows).toHaveCount(2)
   for (let i = 0; i < 2; i++) {
     const row = rows.nth(i)
@@ -411,7 +413,7 @@ test('捕获结果弹层：每一行都有真实缩略图（非空），添加�
     // 真的解出了像素，不是 0×0 的空图
     const natural = await row.locator('img').evaluate((el: HTMLImageElement) => el.naturalWidth)
     expect(natural).toBeGreaterThan(0)
-    await expect(row.getByRole('button', { name: '添加到画布' })).toBeEnabled()
+    await expect(row.locator('[data-capture-add]')).toBeEnabled()
   }
 })
 

@@ -82,15 +82,26 @@ describe('CaptureThumb', () => {
     expect(host.querySelector('[data-capture-thumb-fallback]')).not.toBeNull()
   })
 
-  it('迟到响应：项目换了之后 load 被丢弃，且不再渲染 <img>', async () => {
+  it('迟到响应：项目换了之后 load / error 回调不改状态（不触发重渲染），且重渲染后不再渲染 <img>', async () => {
     await render(<CaptureThumb d={desc('late')} />)
     const el = img()!
+    expect(thumb().dataset.captureThumb).toBe('loading')
     await act(async () => {
-      setCurrentProjectId('pb') // 切项目（对话框尚未卸载的空窗）
+      setCurrentProjectId('pb') // 切项目（对话框尚未卸载的空窗）；切项目本身不会触发这个组件重渲染
+    })
+    // 回调里的代际判断挡住 setState：没有重渲染，渲染期 live 判断没有机会介入，属性仍是切走前渲染出的 loading。
+    // 没有这道判断 → setState 触发重渲染 → live 为假 → 变成 failed（或 ready），这里就红。
+    await act(async () => el.dispatchEvent(new Event('load')))
+    expect(thumb().dataset.captureThumb).toBe('loading')
+    await act(async () => el.dispatchEvent(new Event('error')))
+    expect(thumb().dataset.captureThumb).toBe('loading')
+    // A → B → A：回到同一个 id 也已换代，迟到响应仍被丢弃
+    await act(async () => {
+      setCurrentProjectId('pa')
     })
     await act(async () => el.dispatchEvent(new Event('load')))
-    expect(thumb().dataset.captureThumb).not.toBe('ready')
-    // 再触发一次渲染：A 项目的 id 不许再拿去 B 项目取图
+    expect(thumb().dataset.captureThumb).toBe('loading')
+    // 之后任何一次重渲染：A 项目的 id 不许再拿去取图
     await render(<CaptureThumb d={desc('late')} />)
     expect(img()).toBeNull()
   })

@@ -600,6 +600,7 @@ function StatusLine({
       // 可见的是结果本身（「已发现 3 张图」），动作名「查看捕获结果」给读屏与气泡
       <button
         onClick={onViewResults}
+        data-capture-results-open={entry.script}
         className="max-w-full truncate rounded-xs text-ink-2 underline-offset-2 outline-none hover:text-ink hover:underline focus-visible:focus-ring"
         title={sc('viewResults')}
       >
@@ -851,6 +852,7 @@ export function ProbeResultsDialog({
       onOpenChange={onOpenChange}
       title={sc('resultsTitle', { script })}
       description={sc('captured', { count: descriptors.length })}
+      anchor="capture-results"
       size="md"
     >
       <ul className="flex flex-col divide-y divide-border" aria-label={sc('resultsListAria')}>
@@ -872,6 +874,7 @@ export function ProbeResultsDialog({
               variant="secondary"
               size="sm"
               className="shrink-0"
+              data-capture-add={d.stem}
               onClick={() => {
                 if (guard.current && !guard.current.still()) return
                 const added = addRuntimePanelToCanvas(d)
