@@ -1397,10 +1397,15 @@ export function modelDetail(info: AiAgentCaps | null | undefined, model: string 
   return model ? info?.model_details?.find((d) => d.id === model) : undefined
 }
 
-/** 该型号能选的强度档位：型号自己声明的，没声明就用 Agent 级清单 */
+/**
+ * 该型号能选的强度档位：型号自己声明的；目录明确说它没有档位（`efforts_known` 且为空）
+ * 就是空（不得借用兄弟型号的并集）；只是未知才用 Agent 级清单
+ */
 export function effortsForModel(info: AiAgentCaps | null | undefined, model: string | null | undefined): string[] {
   if (!info) return []
-  const own = modelDetail(info, model)?.efforts
+  const d = modelDetail(info, model)
+  if (d?.efforts_known) return d.efforts ?? []
+  const own = d?.efforts
   return own && own.length > 0 ? own : info.efforts
 }
 

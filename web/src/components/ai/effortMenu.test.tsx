@@ -203,6 +203,27 @@ describe('开集与回退', () => {
     expect(items().filter((r) => r.textContent?.includes('默认')).map((r) => r.dataset.aiEffortItem)).toEqual(['low'])
   })
 
+  it('目录明确说该型号没有档位：不显示强度胶囊（不借兄弟型号的并集）；未知型号仍回落 Agent 级', async () => {
+    const mixed = agentCaps({
+      models: ['tiered', 'plain', 'cfg-only'],
+      default_model: 'plain',
+      efforts: ['low', 'high'],
+      default_effort: 'high',
+      model_details: [
+        { id: 'tiered', display_name: 'T', description: '', efforts: ['low', 'high'], efforts_known: true, default_effort: 'high' },
+        { id: 'plain', display_name: 'P', description: '', efforts: [], efforts_known: true, default_effort: null },
+        { id: 'cfg-only', display_name: 'C', description: '', efforts: [], default_effort: null },
+      ],
+    })
+    useAiStore.setState({ caps: capsOf(mixed), agent: 'codex', models: { codex: 'plain' } })
+    await mount()
+    expect(pill()).toBeNull()
+    await act(async () => {
+      useAiStore.setState({ models: { codex: 'cfg-only' } })
+    })
+    expect(pill()).not.toBeNull()
+  })
+
   it('只有一档：菜单一行，已选中', async () => {
     useAiStore.setState({
       caps: capsOf(agentCaps({ efforts: ['medium'], default_effort: 'medium' })),

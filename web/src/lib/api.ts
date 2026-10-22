@@ -2965,8 +2965,10 @@ export interface AiModelDetail {
   id: string
   display_name: string
   description: string
-  /** 空 = 该型号没声明自己的档位，回落到 Agent 级 `efforts` */
+  /** 型号自己的档位。`efforts_known` 不为 true 时空只表示“不知道”，回落到 Agent 级 `efforts` */
   efforts: string[]
+  /** 加字段：true = 目录明确给了该型号，`efforts` 空 = 明确没有档位（不显示强度选择、不传 effort）；缺省 / false = 未知 */
+  efforts_known?: boolean
   default_effort: string | null
 }
 

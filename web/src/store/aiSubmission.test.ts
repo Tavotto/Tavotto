@@ -119,6 +119,38 @@ beforeEach(() => {
 })
 afterEach(() => vi.useRealTimers())
 
+describe('强度档位：明确无档位的型号不带 effort', () => {
+  const caps = (known: boolean | undefined) =>
+    ({
+      agents: [
+        {
+          id: 'codex',
+          name: 'Codex',
+          usable: true,
+          models: ['plain'],
+          default_model: 'plain',
+          efforts: ['low', 'high'],
+          default_effort: 'high',
+          model_details: [
+            { id: 'plain', display_name: 'P', description: '', efforts: [], efforts_known: known, default_effort: null },
+          ],
+        },
+      ],
+    }) as never
+
+  it('efforts_known 且为空：请求体 effort 为 null', async () => {
+    useAiStore.setState({ caps: caps(true) })
+    await send()
+    expect((runBodies.at(-1) as { effort?: string | null } | undefined)?.effort ?? null).toBeNull()
+  })
+
+  it('未知（缺 efforts_known）：回落 Agent 级，照常带 effort', async () => {
+    useAiStore.setState({ caps: caps(undefined) })
+    await send()
+    expect((runBodies.at(-1) as { effort?: string | null } | undefined)?.effort).toBe('high')
+  })
+})
+
 describe('超时 → 「已发出未确认」，不是失败', () => {
   it('30 s 没有任何答复：start 回 unconfirmed（不抛）、会话没建、提交记录进 unconfirmed、草稿带着 rid', async () => {
     vi.useFakeTimers()

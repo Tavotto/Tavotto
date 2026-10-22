@@ -306,6 +306,8 @@ def _agent_caps(agent: ai_agents.AgentDefinition, saved: dict, npm_available: bo
                 "display_name": d.display_name,
                 "description": d.description,
                 "efforts": list(d.efforts),
+                # 加字段：True = 目录明确给了该型号（efforts 空 = 明确无档位）；False = 未知
+                "efforts_known": d.efforts_known,
                 "default_effort": d.default_effort,
             }
             for d in details

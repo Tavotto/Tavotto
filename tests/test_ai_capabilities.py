@@ -147,6 +147,7 @@ def test_catalog_adds_listed_models_after_the_config_model(tmp_path, monkeypatch
         "display_name": "A-MODEL",
         "description": "about a-model",
         "efforts": ["low", "xhigh", "ultra"],
+        "efforts_known": True,
         "default_effort": "low",
     }
     assert by_id["b-model"]["efforts"] == ["low", "medium"]
@@ -159,6 +160,7 @@ def test_config_model_missing_from_catalog_still_listed_without_levels(tmp_path,
     caps = _codex_caps(tmp_path, monkeypatch, 'model = "mine"\n')
     d = {d["id"]: d for d in caps["model_details"]}["mine"]
     assert d["display_name"] == "mine" and d["efforts"] == [] and d["default_effort"] is None
+    assert d["efforts_known"] is False  # config 里有、目录里没有 = 未知
 
 
 def test_catalog_works_without_config_toml(tmp_path, monkeypatch):
@@ -324,6 +326,42 @@ def test_claude_model_without_effort_data_exposes_none(tmp_path, monkeypatch):
     _write_catalog(tmp_path, [_model("claude-haiku-5", "Haiku 5", efforts=None)])
     caps = _claude(tmp_path, monkeypatch)
     assert caps["efforts"] == [] and caps["model_details"][0]["efforts"] == []
+
+
+def test_claude_catalog_model_without_levels_is_explicitly_none(tmp_path, monkeypatch):
+    _write_catalog(
+        tmp_path,
+        [_model("claude-opus-5-5", "Opus 5.5"), _model("claude-haiku-5", "Haiku 5", efforts=None)],
+    )
+    caps = _claude(tmp_path, monkeypatch)
+    by_id = {d["id"]: d for d in caps["model_details"]}
+    assert by_id["claude-opus-5-5"]["efforts_known"] is True
+    assert (
+        by_id["claude-haiku-5"]["efforts"] == []
+        and by_id["claude-haiku-5"]["efforts_known"] is True
+    )
+    assert caps["efforts"] == ["low", "high"]  # Agent 级仍是并集
+    # 回落别名（无目录）与 config.toml-only 型号 = 未知
+    assert ai_agents.ModelDetail(id="x", display_name="x").efforts_known is False
+
+
+def test_claude_build_command_skips_effort_for_no_effort_model(tmp_path, monkeypatch):
+    _write_catalog(
+        tmp_path,
+        [_model("claude-opus-5-5", "Opus 5.5"), _model("claude-haiku-5", "Haiku 5", efforts=None)],
+    )
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path))
+
+    def argv(model, effort):
+        ctx = ai_agents.RunContext(
+            argv=["claude"], prompt="p", cwd=str(tmp_path), model=model, effort=effort
+        )
+        return ai_agents.ClaudeAgent().build_command(ctx).argv
+
+    assert "--effort" not in argv("claude-haiku-5", "high")  # 明确无档位
+    assert "--effort" not in argv("claude-opus-5-5", "max")  # 不在该型号档位内
+    assert argv("claude-opus-5-5", "high")[-2:] == ["--effort", "high"]
+    assert "--effort" in argv("unlisted-model", "high")  # 目录里没有 = 未知，沿用
 
 
 def test_claude_gateway_hides_efforts_and_skips_flag(tmp_path, monkeypatch):

@@ -75,7 +75,10 @@ class CliCandidate:
 class ModelDetail:
     """一个模型型号的展示信息与它自己支持的推理强度（加字段协议：旧前端忽略）。
 
-    `efforts` 为空 = 该 Agent 没声明这个型号的档位，前端回落到 Agent 级 `efforts`。
+    `efforts_known` 区分「未知」与「明确没有档位」：False（默认）= 目录里没有这个型号
+    （只在 config.toml 里有 / 目录读不到），`efforts` 为空只表示“不知道”，前端回落到
+    Agent 级 `efforts`；True = 目录明确给了这个型号，`efforts` 就是它的全部档位，
+    为空 = 明确没有档位（不暴露选择、不传 `--effort`）。
     """
 
     id: str
@@ -83,6 +86,7 @@ class ModelDetail:
     description: str = ""
     efforts: list[str] = field(default_factory=list)
     default_effort: str | None = None
+    efforts_known: bool = False
 
 
 @dataclass(frozen=True)
@@ -565,6 +569,7 @@ class CodexAgent(AgentDefinition):
                         description=desc if isinstance(desc, str) else "",
                         efforts=efforts,
                         default_effort=default if isinstance(default, str) and default else None,
+                        efforts_known=True,
                     ),
                 )
             )
@@ -741,6 +746,7 @@ class ClaudeAgent(AgentDefinition):
                     description=desc if isinstance(desc, str) else "",
                     efforts=list(dict.fromkeys(efforts)),
                     default_effort=default if isinstance(default, str) and default else None,
+                    efforts_known=True,
                 )
             )
         aliases: dict[str, str] = {}
@@ -843,9 +849,19 @@ class ClaudeAgent(AgentDefinition):
         if ctx.model:
             cmd += ["--model", ctx.model]
         # 网关（注入了接口参数 / 环境）后面的型号未必认这个档位：宁可不传
-        if ctx.effort and not (ctx.endpoint_args or ctx.endpoint_env):
+        # 目录明确给了所选型号的档位时，请求的档位必须在其中；明确无档位就不传
+        if ctx.effort and not (ctx.endpoint_args or ctx.endpoint_env) and self._effort_ok(ctx):
             cmd += ["--effort", ctx.effort]
         return SpawnSpec(cmd, dict(ctx.endpoint_env))
+
+    def _effort_ok(self, ctx: RunContext) -> bool:
+        if not ctx.model:
+            return True
+        details, _families, _aliases = self._catalog()
+        d = next((x for x in details if x.id == ctx.model), None)
+        if d is None or not d.efforts_known:
+            return True  # 目录里没有这个型号：未知，沿用请求
+        return ctx.effort in d.efforts
 
     def classify_event(self, line: str, state: dict) -> list[tuple[str, str]]:
         try:

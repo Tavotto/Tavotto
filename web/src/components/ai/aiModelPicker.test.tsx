@@ -371,6 +371,23 @@ describe('推理强度跟着型号走', () => {
     expect(resolveEffort(codexCatalog, 'gpt-6.1-sol', undefined)).toBe('low') // 没记过 = 型号默认
   })
 
+  it('目录明确说该型号没有档位（efforts_known 且为空）：档位为空、resolveEffort 为空串；未知型号仍回落', async () => {
+    const c = agentCaps({
+      efforts: ['low', 'high'],
+      default_effort: 'high',
+      model_details: [
+        { id: 'tiered', display_name: 'T', description: '', efforts: ['low', 'high'], efforts_known: true, default_effort: 'high' },
+        { id: 'plain', display_name: 'P', description: '', efforts: [], efforts_known: true, default_effort: null },
+        { id: 'cfg-only', display_name: 'C', description: '', efforts: [], default_effort: null },
+      ],
+    })
+    expect(effortsForModel(c, 'plain')).toEqual([])
+    expect(resolveEffort(c, 'plain', 'high')).toBe('')
+    expect(effortsForModel(c, 'cfg-only')).toEqual(['low', 'high'])
+    expect(resolveEffort(c, 'cfg-only', undefined)).toBe('high')
+    expect(effortsForModel(c, 'tiered')).toEqual(['low', 'high'])
+  })
+
   it('型号没声明档位（旧后端 / 配置里的自定义型号）时回落到 Agent 级清单', async () => {
     const c = agentCaps({ efforts: ['low', 'high'], default_effort: 'high' })
     expect(effortsForModel(c, 'whatever')).toEqual(['low', 'high'])
