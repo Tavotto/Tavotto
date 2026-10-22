@@ -413,3 +413,19 @@
   常量在 `diagsend.ZIP_RULES`，出包后 `diagdetail.ratio_safe`（压缩比超限的条目改存 STORED）+ `diagsend.zip_problem`（同判据自检，`inspect_bundle` 里不合规 = `bundle_invalid` 内部错误，不发送）。`diagsend.ENTRY_KINDS` 只收精确的扁平名；`MAX_BUNDLE_ENTRIES` = 32。
 - 看护：`tests/test_diag_send_detail.py`（每类在且非空、家目录 / 用户名 / 秘密金丝雀全文 0、源码金丝雀、选项默认 false 不记忆、截断顺序与 64 MiB 上限、ZIP 规则（最大配置 ≤ 32 条且名字合规、重复日志不触发压缩比、自检）、导出路径无 detail 且忽略 detail 载荷、请求环不含查询串 / 请求体、探针失败降级、`sanitize_detail` 限界）。
 
+## 联系作者（ADR 0145；1.0 纪律下待维护者豁免的新能力）
+
+`engine/contactsend.py`（发信 + 取回回信）与 `engine/contactinbox.py`（本机收件记录）是 `diagsend.py` 的同形状兄弟：用户在应用里写信，本机引擎经 Tavotto 服务器代发。
+契约 `Tavotto/infra` 的 diagnostics-api `/v1/messages/*`（init → 附件直传 COS → complete；`GET /v1/messages/{id}/replies` 凭 `reply_token`）。
+
+- **用户不需要登录或配置邮箱。** 全产品没有邮件协议链接、不唤起系统邮件程序（`tests/test_contact_no_mailto.py` 扫 `web/src` 与 `src/tavotto`）；失败只给「复制内容 / 复制地址」。
+- **逐次授权与最小笼子**照 ADR 0118：上传只由 `start()`（一次点击）触发，没有记住选择 / 后台补发；附件字节只在发送那一次的内存里，结束即丢，重试由前端重新带稿；状态对象 `public()` 与日志里没有令牌、邮箱、正文、主题。
+  唯一不由点击引出的联网是回信轮询（启动时 + 每 6 小时，`start_poller`），**没有任何已发的信就一次网络都不发**；用户点「检查回信」另走 `poll_once(force)`（至多每 30 秒）。
+- **目的地钉死**：线路主机白名单 `contactsend.CONTACT_HOSTS = {tavotto.cn, api.tavotto.com}`（`parse_endpoint(hosts=…)` 与诊断发送同一份校验）；`TAVOTTO_CONTACT_ENDPOINT` 设了就必须全部合规（或回环开发模式 `TAVOTTO_DIAG_DEV_LOOPBACK=1`），不合规整个功能关闭、**不回退内置线路**。
+  COS 上传地址复用 `diagsend.validate_upload_url`（同一条 `_COS_HOST`，不另放行 `cos.accelerate.myqcloud.com` 形式的裸域名）；出站只经 `diagsend._send`（`tlstrust` 平台证书、不跟随任何重定向、响应体封顶）。
+- **选路**：大陆环境先 `tavotto.cn` 后 `api.tavotto.com`，否则反之；传输失败（连不上 / 超时 / 证书）或 5xx 换另一条（init 凭 `client_message_id`、complete 凭 `complete_token` 幂等重放），429 / 4xx 是服务端明确答复、不换线路绕限流。
+  **「大陆环境」的判据唯一出处是壳的 `src-tauri/src/app_update.rs::source_order`（ADR 0121）**：壳拉起引擎时把结论写进 `TAVOTTO_NETWORK_REGION=cn|global`（`sidecar.rs`），引擎读它，**不在 Python 里再抄一份时区 / 语言表**
+  （`test_region_judgement_is_not_reimplemented_in_python`、`test_the_shell_hands_its_region_verdict_to_the_engine`）；没有壳的安装另认界面语言 `zh-CN`（ADR 0121 判据 3）。
+- **本机输入校验**与服务端同规则（正文 1..5000、主题 ≤120、邮箱一个 @ 无空白 / 逗号 / 尖括号、附件 ≤5 个合计 ≤20 MiB、八种 content_type 按扩展名 + 魔数核对）：错误是稳定 `code`（`contact_*`，HTTP 422）；引擎失败码闭集 `contactsend.FAILURES`（前端 `contact.failure.*` 与之对拍）。错误体两种形状都认：契约的 `{"error": {"code"}}` 与 reports 一族的顶层 `{"code"}`。
+- **回信令牌**：成功（或 complete 已发出）后 `contactinbox` 在 `config.data_dir()/contact_messages.json` 存 (message_id, reply_token, route, sent_at) 与取回的回信，权限 0600（尽力而为）；**不存**用户写的任何东西；365 天后删除；没完成投递的记录只留 2 小时，轮询证实（200）才转正。`/api/contact/*` 全部在会话认证之内（ADR 0008，`test_browser_auth` 从 url_map 枚举）。
+- **遥测这次不加事件**（攒齐一次升同意版本）；本模块只借 `telemetry._platform/_arch/_distribution` 三个枚举探测函数，不调 `capture`。硬开关 `TAVOTTO_NO_CONTACT=1` 让入口消失（`GET /api/contact` → `{"enabled": false}`，其余 404）；测试进程由 conftest 硬关，生产主机被会话级探针兜底。

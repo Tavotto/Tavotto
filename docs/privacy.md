@@ -1,6 +1,6 @@
 # Privacy policy
 
-Last updated: 2026-10-13
+Last updated: 2026-10-22
 
 Tavotto is a local-first scientific-figure editor. Rendering, composition and
 project writes happen on the machine running the engine: the user's computer by
@@ -13,7 +13,7 @@ Network activity includes update checks and user-approved update downloads,
 package lookups and downloads for environment preparation or dependency
 installation, the optional AI assistant the user invokes, — only after
 an explicit opt-in — usage statistics, and — only when the user confirms each
-send — a redacted diagnostics bundle. The sections below distinguish these operations; local rendering does
+send — a redacted diagnostics bundle or a letter written through *Contact the maker*. The sections below distinguish these operations; local rendering does
 not mean that every feature is offline.
 
 ## Data Tavotto does not upload
@@ -349,6 +349,50 @@ Offering the option uploads nothing; sending does:
 * **Failure.** If you are offline, the service is unavailable or the bundle is
   larger than the limit (64 MiB by default), nothing is cut down or retried behind
   your back: you can export the bundle and keep or send it yourself.
+
+## Contacting the maker
+
+*Contact the maker* (top-right of the editor and of the home page) lets you write
+to the Tavotto maintainers from inside the app, without signing in and without
+setting up an email account. It sends **only when you press *Send***; offering
+the button, opening the window and keeping a draft upload nothing, and a
+cancelled, closed or failed send is never resumed on its own.
+
+* **What is sent.** The subject (optional) and message you wrote; the app
+  version, operating system, CPU architecture, how Tavotto was installed and your
+  interface language; the attachments you chose (images, PDF, Word, Excel or
+  PowerPoint files, at most 5 and 20 MiB in total — only what you added, never
+  anything from your projects on its own); the reply email address *only if you
+  typed one*; and, *only if you tick Attach diagnostic info*, a redacted
+  diagnostics bundle sent through the same *Send problem report* flow described
+  above (you see what it contains first, and only its report number travels with
+  the letter).
+* **Who receives it.** A service operated by the Tavotto maintainers on
+  `tavotto.cn` (mainland China; attachments are stored on Tencent Cloud COS,
+  Shanghai). Outside mainland China the app tries `api.tavotto.com` first, a
+  relay that only forwards the request to `tavotto.cn` and stores and logs
+  nothing; inside mainland China it tries `tavotto.cn` first. If one does not
+  answer, the other is used. No other host is ever contacted.
+* **What it is used for.** Reading your letter and replying to it. The reply
+  email address is used only to send you the reply. It is not linked to usage
+  statistics (the letter carries no telemetry identifier and no usage event is
+  recorded for it), is not shared, and is not used for anything else.
+* **Replies inside Tavotto.** Whether or not you gave an email address, the
+  maker's reply can be fetched by the app: after sending, the app stores the
+  letter's number and a secret reply token in its data folder (readable by your
+  user only, where the platform supports it) and asks the service for replies
+  when it starts and every 6 hours — and only while such a record exists. Nothing
+  you wrote is kept in that record; the reply email address is remembered, if at
+  all, only in the app's local interface storage and can be forgotten from the
+  window.
+* **No email program is involved.** The app never opens your mail program and
+  contains no mail links; if sending fails it only offers *Copy content* and
+  *Copy address* (`contact@tavotto.com`) so you can decide how to send it.
+* **Retention and deletion.** Letters, replies and attachments are deleted from
+  the server after 365 days, and the app's local record is deleted after the same
+  period. To have a letter deleted earlier, email `contact@tavotto.com` quoting
+  its number (`TVM-…`).
+* **Switch.** `TAVOTTO_NO_CONTACT=1` removes the feature (no button, no network).
 
 ## Local service
 
