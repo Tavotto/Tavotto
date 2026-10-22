@@ -407,111 +407,33 @@ describe('面包屑可点', () => {
 })
 
 /**
- * Codex #829 P2：图内多选时，问题胶囊数的是整组选择——此前只按最后点的那个 gid 过滤，
- * 先选的元素上的问题从胶囊上消失。
+ * 属性页头部不再有「n 个问题」胶囊（2026-10-22 用户反馈）：问题的唯一入口是左栏「问题」。
+ * 即便选中的元素上有错误，路径行右端也不出这颗按钮。
  */
-describe('问题胶囊数的是整组选择（Codex #829）', () => {
-  const issue = (severity: ValidationIssue['severity'], gid: string): ValidationIssue =>
-    ({
-      issueId: `${severity}-${gid}`,
-      ruleCode: 'font-size-min',
-      severity,
-      context: {},
-      objectRef: { documentId: 'd', canvasId: 'c', objectId: 'p1', gid },
-      subject: { kind: 'object', objectType: 'panel' },
-      propertyPath: 'fontsize',
-      message: literal('x'),
-      technicalDetails: {},
-      fixKind: 'none',
-    }) as unknown as ValidationIssue
-
-  afterEach(() => useValidationStore.setState({ issues: [] }))
-
-  it('选了标题和 X 刻度：两处的问题都算进胶囊，未选元素上的不算', async () => {
-    await seed([panel], ['p1'])
-    seedExactRender(panel, manifest as never)
-    useUiStore.getState().setElementPanel('p1')
-    useUiStore.setState({ selectedGids: ['axes_0.title', 'axes_0.xticks'] })
-    useValidationStore.setState({
-      issues: [issue('error', 'axes_0.title'), issue('warn', 'axes_0.xticks'), issue('error', 'axes_0.legend')],
-    })
-    await mount()
-    const chip = document.querySelector('[data-identity-problems]')
-    expect(chip, '多选时问题胶囊要在').not.toBeNull()
-    expect(chip!.getAttribute('data-identity-problems')).toBe('2')
-    // 与导出检查 / 问题面板同一个计数芯片：ink 字 + 圆点，不是红底红字（2026-10-16 精修 03）
-    expect(chip!.hasAttribute('data-count-chip')).toBe(true)
-    expect(chip!.className).not.toMatch(/bg-danger|text-danger|bg-warn|text-warn/)
-    expect(chip!.textContent).toBe('2 个问题')
-  })
-  it('按着鼠标时校验结果到达：胶囊等松手再出现，按下与松开之间属性栏不多出按钮', async () => {
+describe('属性页头部没有问题胶囊', () => {
+  it('选中元素上有错误 / 警告时也不出现', async () => {
     await seed([panel], ['p1'])
     seedExactRender(panel, manifest as never)
     useUiStore.getState().setElementPanel('p1')
     useUiStore.setState({ selectedGids: ['axes_0.title'] })
-    await mount()
-    const chip = () => document.querySelector('[data-identity-problems]')
-    expect(chip()).toBeNull()
-    await act(async () => {
-      window.dispatchEvent(new PointerEvent('pointerdown', { button: 0 }))
-    })
-    await act(async () => {
-      useValidationStore.setState({ issues: [issue('error', 'axes_0.title')] })
-    })
-    expect(chip(), '按着的时候不插进一颗新按钮').toBeNull()
-    await act(async () => {
-      window.dispatchEvent(new PointerEvent('pointerup', { button: 0 }))
-    })
-    expect(chip(), '松手立刻补上，事实不丢').not.toBeNull()
-    expect(chip()!.getAttribute('data-identity-problems')).toBe('1')
-  })
-  it('选中真实的组（共享色条）：只数组与它后代上的问题，组外的不算', async () => {
-    const G = 'group:axes_2'
-    const el = (gid: string, role: string, extra: Record<string, unknown> = {}) => ({
-      gid,
-      role,
-      label: gid,
-      bbox: [0.1, 0.1, 0.2, 0.2],
-      draggable: false,
-      editable: [],
-      ...extra,
-    })
-    const grouped = {
-      ...manifest,
-      elements: [
-        ...manifest.elements,
-        el('axes_1', 'axes', { parent_gid: G }),
-        el('axes_1.lines_0', 'line'),
-        el('axes_2', 'axes', { parent_gid: G, is_colorbar: true, colorbar_gid: 'axes_2.colorbar' }),
-        el('axes_2.colorbar', 'colorbar', { geom_gid: 'axes_2', owner_gids: ['axes_1'] }),
-      ],
-      groups: [
-        {
-          gid: G,
-          kind: 'shared_colorbar',
-          members: ['axes_1', 'axes_2'],
-          subplot_gids: ['axes_1'],
-          colorbar_gid: 'axes_2.colorbar',
-          bbox: [0.1, 0.1, 0.5, 0.5],
-          resizable: true,
-        },
-      ],
-    }
-    await seed([panel], ['p1'])
-    seedExactRender(panel, grouped as never)
-    useUiStore.getState().setElementPanel('p1')
-    useUiStore.setState({ selectedGids: [G] })
     useValidationStore.setState({
       issues: [
-        issue('warn', 'axes_1.lines_0'), // 成员子图下的元素：算
-        issue('error', 'axes_2.colorbar'), // 成员色条轴上的色条：算
-        issue('error', 'axes_0.title'), // 组外：不算
-        issue('error', 'axes_0.legend'), // 组外：不算
+        {
+          issueId: 'error-axes_0.title',
+          ruleCode: 'font-size-min',
+          severity: 'error',
+          context: {},
+          objectRef: { documentId: 'd', canvasId: 'c', objectId: 'p1', gid: 'axes_0.title' },
+          subject: { kind: 'object', objectType: 'panel' },
+          propertyPath: 'fontsize',
+          message: literal('x'),
+          technicalDetails: {},
+          fixKind: 'none',
+        } as unknown as ValidationIssue,
       ],
     })
     await mount()
-    const chip = document.querySelector('[data-identity-problems]')
-    expect(chip, '组里有问题时胶囊要在').not.toBeNull()
-    expect(chip!.getAttribute('data-identity-problems')).toBe('2')
+    expect(document.querySelector('[data-identity-problems]')).toBeNull()
+    expect(document.querySelector('header[data-identity]')!.textContent).not.toContain('问题')
   })
 })

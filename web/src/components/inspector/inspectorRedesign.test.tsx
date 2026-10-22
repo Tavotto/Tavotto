@@ -2,7 +2,7 @@
  * 属性栏 / 画布栏重做（2026-10-07 设计审计 §9.2 / §9.3 / §9.4 P2）的行为契约：
  *   1. 行网格：恢复钮住在常驻的状态槽里（出现 / 消失不改控件那一格的内容）；修改点全部 = 实心、部分 = 空心环；
  *   2. ColorField 在属性栏里带可编辑 hex（回车提交、非法值退回）与取色面板（文档颜色），浮动栏不带；
- *   3. 身份头：「n 个问题 ›」直达问题面板（`openProblemAt`）；锁定状态胶囊点了就解锁；路径行常驻（两行固定）；
+ *   3. 身份头：没有问题胶囊（入口只在左栏「问题」）；锁定状态胶囊点了就解锁；路径行常驻（两行固定）；
  *   4. 页签顺序 属性 | 画布 | 时间线 | 助手；没有选中时属性页是文档摘要卡，「画布设置 ›」切到画布页。
  * 选择器只认 data-*。
  */
@@ -216,21 +216,9 @@ describe('ColorField：属性栏里的 hex 与取色面板', () => {
 })
 
 describe('身份头与右栏', () => {
-  it('「n 个问题 ›」只数这一选择的错误 / 警告，点它走 openProblemAt（错误优先）', async () => {
-    await seed([textObj], ['t1'])
-    const warn = issue('warn', 't1')
-    const err = issue('error', 't1')
-    useValidationStore.setState({ issues: [warn, issue('suggestion', 't1'), issue('error', 'other'), err] })
-    await render(<Inspector />)
-    const chip = q<HTMLButtonElement>('[data-identity-problems]')!
-    expect(chip.getAttribute('data-identity-problems')).toBe('2')
-    await act(async () => chip.click())
-    expect(openProblemAt).toHaveBeenCalledTimes(1)
-    expect(openProblemAt.mock.calls[0][0]).toBe(err)
-  })
-
-  it('没有问题时没有这颗胶囊；路径行常驻（两行固定）', async () => {
+  it('有错误 / 警告时头部也没有问题胶囊；路径行常驻（两行固定）', async () => {
     await seed([{ ...textObj, locked: false } as CanvasObject], ['t1'])
+    useValidationStore.setState({ issues: [issue('error', 't1')] })
     await render(<Inspector />)
     expect(q('[data-identity-problems]')).toBeNull()
     expect(q('header[data-identity] [data-identity-path]')).not.toBeNull()

@@ -3965,9 +3965,6 @@ export default interface Resources {
       "toggleUnderline": "切换下划线",
       "transformCase": "转换大小写"
     },
-    "identity": {
-      "problemsLabel_other": "个问题"
-    },
     "kindSwitch": {
       "aria": "类型：{{name}}，点击更改",
       "title": "更改为"

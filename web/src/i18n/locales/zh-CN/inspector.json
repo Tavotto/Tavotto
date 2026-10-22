@@ -1216,9 +1216,6 @@
     "relinkAction": "恢复链接",
     "entryActions": "“{{label}}”的操作"
   },
-  "identity": {
-    "problemsLabel_other": "个问题"
-  },
   "docSummary": {
     "title": "本排版",
     "size": "{{w}} × {{h}} mm",
