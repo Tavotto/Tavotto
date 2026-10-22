@@ -13,6 +13,8 @@ import filecmp
 import io
 import json
 import os
+import sys
+import types
 from pathlib import Path
 from unittest import mock
 
@@ -559,6 +561,94 @@ def test_first_seen_module_with_a_user_function_is_refused():
     figcapture._reset_trusted_surface_for_tests()
 
 
+def _hostile(calls, fig):
+    """每一种「被检查就会跑起来」的写法：属性钩子、比较 / 哈希 / 布尔钩子、元类的 `__instancecheck__` / `__getattr__`。"""
+
+    def boom(name):
+        calls.append(name)
+        fig.axes[0].set_title("HOOK RAN")
+        raise RuntimeError("hostile hook ran: " + name)
+
+    class Evil:
+        def __getattr__(self, n):
+            boom("__getattr__:" + n)
+
+        def __getattribute__(self, n):
+            boom("__getattribute__:" + n)
+
+        def __eq__(self, other):
+            boom("__eq__")
+
+        def __hash__(self):
+            boom("__hash__")
+
+        def __bool__(self):
+            boom("__bool__")
+
+        def __repr__(self):
+            boom("__repr__")
+
+    class Meta(type):
+        def __getattr__(cls, n):
+            boom("meta.__getattr__:" + n)
+
+        def __instancecheck__(cls, inst):
+            boom("meta.__instancecheck__")
+
+        def __eq__(cls, other):
+            boom("meta.__eq__")
+
+        def __hash__(cls):
+            boom("meta.__hash__")
+
+    class WithMeta(metaclass=Meta):
+        pass
+
+    class EvilModule(types.ModuleType):
+        def __getattribute__(self, n):
+            boom("module.__getattribute__:" + n)
+
+    return Evil, WithMeta, EvilModule
+
+
+@pytest.mark.parametrize("where", ["late_module", "late_module_meta", "evil_module", "known_class"])
+def test_fingerprint_never_runs_code_from_the_objects_it_inspects(
+    monkeypatch, fresh_surface, where
+):
+    """脚本导入一个没见过的 mpl_toolkits 模块并往类里塞带自定义属性 / 比较 / 元类钩子的对象，或塞进已知的 matplotlib 类：
+    指纹与比对只做静态读，钩子调用 0 次，没有异常漏出，结论是「被改过」（用户类型的对象不是库来源）。"""
+    import matplotlib.lines as mlines
+
+    fig = _figure()
+    fig.axes[0].set_title("kept")
+    figcapture.mark_saved(fig)
+    calls = []
+    Evil, WithMeta, EvilModule = _hostile(calls, fig)
+    if where == "evil_module":
+        monkeypatch.setitem(
+            sys.modules, "mpl_toolkits.fake_evil", EvilModule("mpl_toolkits.fake_evil")
+        )
+    elif where == "known_class":
+        monkeypatch.setattr(mlines.Line2D, "evil_hook", Evil(), raising=False)
+    else:
+        mod = types.ModuleType("mpl_toolkits.fake_evil")
+
+        class C:
+            pass
+
+        C.__module__ = mod.__name__
+        C.__setstate__ = Evil() if where == "late_module" else WithMeta
+        mod.C = C
+        mod.hostile = Evil()
+        monkeypatch.setitem(sys.modules, mod.__name__, mod)
+    assert figcapture.trusted_surface_intact() is False
+    ledger = figcapture.SaveMomentLedger()
+    ledger.take(fig, 1)  # 不抛
+    assert ledger.restore(fig) == (None, "matplotlib_patched")
+    assert calls == [], f"比对期间跑了用户代码: {calls}"
+    assert fig.axes[0].get_title() == "kept"
+
+
 PATCH_AFTER_SAVE = {
     "setstate": (
         "import matplotlib.figure as _mf\n"
@@ -592,6 +682,37 @@ def test_script_that_patches_matplotlib_after_the_save_keeps_the_final_state_and
     assert man["modified_after_save"] is True
     assert man["save_moment_unavailable"] == "matplotlib_patched"
     assert "save_moment" not in man
+    assert "HOOK RAN" not in json.dumps(man, ensure_ascii=False)
+
+
+@needs_worker
+def test_hostile_late_module_does_not_break_the_build_and_runs_no_code(tmp_path):
+    """端到端：脚本在保存前往一个新模块 `mpl_toolkits.fake_evil` 的类里塞带 `__getattr__` 的对象。
+    savefig 里的 take 不得把它的钩子跑起来（否则这条钩子会改标题再抛、脚本当场崩），build 成功，退回只告知。"""
+    inject = (
+        "    import sys, types\n"
+        "    class Evil:\n"
+        "        calls = 0\n"
+        "        def __getattr__(self, n):\n"
+        "            Evil.calls += 1\n"
+        "            plt.gcf().axes[0].set_title('HOOK RAN')\n"
+        "            raise RuntimeError('boom')\n"
+        "    _m = types.ModuleType('mpl_toolkits.fake_evil')\n"
+        "    class _C: pass\n"
+        "    _C.__module__ = 'mpl_toolkits.fake_evil'\n"
+        "    _C.__setstate__ = Evil()\n"
+        "    _m._C = _C\n"
+        "    sys.modules['mpl_toolkits.fake_evil'] = _m\n"
+    )
+    src = (
+        HEAD
+        + inject
+        + '    fig.savefig("fig.png")\n    assert Evil.calls == 0\n'
+        + MUTATIONS["title_and_color"]
+    )
+    man, _ = _run(tmp_path, src, "hostile")
+    assert man["modified_after_save"] is True
+    assert man["save_moment_unavailable"] == "matplotlib_patched"
     assert "HOOK RAN" not in json.dumps(man, ensure_ascii=False)
 
 

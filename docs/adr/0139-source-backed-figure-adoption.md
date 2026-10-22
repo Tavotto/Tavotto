@@ -261,7 +261,14 @@ manifest / overrides / 撤销重做不分叉）。
   - **运行期才导入的模块**（`mpl_toolkits.mplot3d`、`matplotlib.pyplot` 常常在启动时还没导入）：没有启动基线，所以**从严**——首次见到时
     要求它的 Python 函数的定义文件都在 matplotlib / mpl_toolkits / 标准库 / numpy 目录里（被用户函数顶替当场判被改过），通过才补登记，
     此后靠 `id` 比对。已知边界：用户用「库来源」的可调用对象去顶替，不在检测范围（那不是用户代码）。
-  - **实测耗时**：启动指纹约 3 ms（107 个模块、约 7500 个条目），每次比对约 1.8 ms。
+  - **指纹只做静态读**（Codex #1314 P1-e）：被检查的对象可能带自定义 `__getattr__` / `__getattribute__` / `__eq__` / `__hash__` / `__bool__` 或元类的
+    `__instancecheck__`，比对本身不能把它们的代码跑起来。所以只用 `type(x)` + `is`、`id`，以及直接取自 `type` / `function` / `code` /
+    `staticmethod` / `property` / `ModuleType` 的 C 描述符去读（模块只认精确的 `ModuleType`，子类一律当「被改过」）；不对被检查对象用
+    `getattr` / `hasattr` / `isinstance` / `callable` / `==` / `hash` / `bool` / `str` / `repr`。拍摄侧的 `reducer_override` 与类级钩子检查同样静态读。
+    `take` / `restore` 对比对整体兜底：任何异常都按 `matplotlib_patched`（拍摄侧意外记 `unpicklable`）放弃快照，绝不让 build 失败。
+    指纹记录范围也据此收紧：只记函数 / 内建 / 描述符 / 嵌套类，以及类型不是库的对象；库类型的实例（如 `Path._unit_circle` 这类首次使用才写入的缓存、
+    `__slotnames__`）与库类在模块间的惰性重新绑定（pyplot 的 `_backend_mod`）会合法变化，不记。
+  - **实测耗时**：启动指纹约 10 ms（107 个模块、约 6800 个条目），每次比对约 3.8 ms（静态描述符读比 `getattr` 慢，换来不执行用户代码）。
   - **与纵深层的关系**：指纹覆盖 matplotlib 与上述入口模块；`_class_hooks_trusted` 另外覆盖没进指纹的类型（其它 numpy 类型等）的类级钩子，
     且只在 dump 内读一次、很便宜，所以两者保留，不删。结构层（拍摄期间置脏即作废）同样保留。
   - **代价**：脚本自己 patch 了 matplotlib（哪怕是无害的包装）就拿不到保存瞬间的快照，退回只告知。CompatBench 语料里没有这类脚本，可还原数不变（131）。
