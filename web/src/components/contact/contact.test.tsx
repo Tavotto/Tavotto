@@ -363,7 +363,7 @@ describe('对话框的四个状态', () => {
     expect(document.body.querySelectorAll('a[href^="mailto"]').length).toBe(0)
 
     // 复制内容 / 复制地址：写进剪贴板的就是用户的正文与地址，没有别的
-    const writeText = vi.fn(async () => {})
+    const writeText = vi.fn(async (_text: string) => {})
     Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true })
     const [copyContent, copyAddress] = [...fallback.querySelectorAll('button')]
     await click(copyContent)
@@ -524,7 +524,8 @@ describe('未读回信：小圆点、通知轨胶囊、我的来信', () => {
     expect(cap.getAttribute('data-toast-layout')).toBe('pill') // 通知轨的胶囊形式，不进文档流
     expect(cap.textContent).toContain(t('contact.capsule', { ns: 'dialogs' }))
 
-    await click(cap.querySelector('button[aria-label="' + t('contact.capsuleClose', { ns: 'dialogs' }) + '"]'))
+    const closeLabel = t('contact.capsuleClose', { ns: 'dialogs' })
+    await click(cap.querySelector(`button[aria-label="${closeLabel}"]`))
     await settle(200)
     expect(q('[data-contact-capsule]')).toBeNull()
     await act(async () => useContactStore.setState({ unread: 1 }))
