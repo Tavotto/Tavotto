@@ -451,8 +451,11 @@ def _worker_has_pyarrow() -> bool:
 
 def test_an_enoent_relative_path_found_in_the_script_dir_is_runtime_evidence(project):
     (project / "sub" / "cg_data.parquet").write_bytes(b"x")
+    # 沙盒 cwd 用本机真实的绝对路径：`"/sandbox"` 这种无盘符的写法在 Windows（3.13 起）不是绝对路径，
+    # 「cwd 之内的绝对路径换回相对」那条就测不到（#1299 合并组 Windows 腿）
+    sandbox = str(project.parent / "sandbox")
     err = engine_pool.WorkerError("脚本执行失败: cg_data.parquet", code="script_error")
-    err.extra = {"enoent": {"filename": None, "named": "cg_data.parquet", "cwd": "/sandbox"}}
+    err.extra = {"enoent": {"filename": None, "named": "cg_data.parquet", "cwd": sandbox}}
     engine_pool._offer_missing_input(err, "sub/fig.py", str(project))
     assert err.code == "script_error" and err.missing_input is None  # 不放宽 native_miss
     assert err.workdir_hint["probes"] == ["cg_data.parquet"]
@@ -460,7 +463,11 @@ def test_an_enoent_relative_path_found_in_the_script_dir_is_runtime_evidence(pro
     # 在 cwd 之内的绝对路径（xarray 先 abspath 再报）换回相对
     err = engine_pool.WorkerError("x", code="script_error")
     err.extra = {
-        "enoent": {"filename": "/sandbox/cg_data.parquet", "named": None, "cwd": "/sandbox"}
+        "enoent": {
+            "filename": os.path.join(sandbox, "cg_data.parquet"),
+            "named": None,
+            "cwd": sandbox,
+        }
     }
     engine_pool._offer_missing_input(err, "sub/fig.py", str(project))
     assert err.workdir_hint["probes"] == ["cg_data.parquet"]
@@ -468,10 +475,11 @@ def test_an_enoent_relative_path_found_in_the_script_dir_is_runtime_evidence(pro
 
 def test_an_enoent_path_that_is_absolute_or_absent_from_the_script_dir_gets_no_hint(project):
     (project / "sub" / "cg_data.parquet").write_bytes(b"x")
+    sandbox = str(project.parent / "sandbox")
     for enoent in (
-        {"named": str(project / "sub" / "cg_data.parquet"), "cwd": "/sandbox"},  # 绝对：不依赖 cwd
-        {"named": "other.parquet", "cwd": "/sandbox"},  # 脚本目录里也没有
-        {"named": None, "filename": None, "cwd": "/sandbox"},
+        {"named": str(project / "sub" / "cg_data.parquet"), "cwd": sandbox},  # 绝对：不依赖 cwd
+        {"named": "other.parquet", "cwd": sandbox},  # 脚本目录里也没有
+        {"named": None, "filename": None, "cwd": sandbox},
         "junk",
     ):
         err = engine_pool.WorkerError("x", code="script_error")
