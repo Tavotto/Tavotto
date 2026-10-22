@@ -173,6 +173,8 @@ const RASTER_LIBRARY_NAME: Record<string, string> = {
   opencv: 'OpenCV',
   imageio: 'imageio',
   skimage: 'scikit-image',
+  plotly: 'Plotly',
+  root: 'ROOT',
 }
 
 const BUSY = new Set(['running', 'awaiting_runtime_input', 'preparing_environment'])

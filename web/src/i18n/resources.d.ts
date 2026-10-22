@@ -236,7 +236,10 @@ export default interface Resources {
       "delete": "删除",
       "refresh": "刷新",
       "reload": "重新加载",
-      "save": "保存"
+      "save": "保存",
+      "windowMaximize": "最大化",
+      "windowMinimize": "最小化",
+      "windowRestore": "还原"
     },
     "colorField": {
       "documentColors": "排版里的颜色",
@@ -610,12 +613,13 @@ export default interface Resources {
         "keyboardHelp": "按空格拿起卡片，方向键移动，回车放下，Esc 取消。",
         "leftZone": "离开了投放框。",
         "missed": "没有放进投放框，卡片已放回。再试一次。",
-        "or": "或",
         "overZone": "在投放框上方，回车放下。",
         "picked": "已拿起 {{name}}，用方向键移到投放框上，回车放下。",
-        "success": "示例图已载入",
+        "renderProgress": "示例图渲染进度",
+        "rendering": "正在渲染图表…",
+        "renderingTitle": "正在生成示例图…",
+        "success": "编译完成",
         "task": "第一步：把示例脚本拖进来",
-        "useSample": "直接使用示例",
         "zoneBody": "{{product}} 会打开它画出的图",
         "zoneLabel": "脚本投放框",
         "zoneTitle": "拖拽脚本到这里"
@@ -1674,7 +1678,7 @@ export default interface Resources {
           "extraHint": {
             "corrupt_sessions": "默认只有损坏副本的名字和大小；勾选后附上内容。",
             "crash_reports": "最近 7 天属于 Tavotto 的系统崩溃报告。Windows 崩溃转储是程序内存快照，可能含正在打开的文件内容与路径，无法脱敏。",
-            "source": "脚本会原样附上，我们会尽量抹掉能认出的密钥，但不能保证；脚本里有密钥请不要勾。"
+            "source": "出错的脚本（即使它没在项目里登记）、项目里登记的脚本，以及参与依赖安装的 requirements / constraints / pyproject 文件会原样附上，我们会尽量抹掉能认出的密钥，但不能保证；这些文件里有密钥请不要勾。"
           },
           "extrasSelectAll": "全选",
           "extrasSelectNone": "全不选",
@@ -1722,7 +1726,7 @@ export default interface Resources {
             "detail_requests": "最近的后端请求记录（只有方法、路由、状态码、耗时、错误码）",
             "detail_runs": "最近的渲染、导出、脚本试运行记录",
             "detail_shell": "桌面壳与安装信息（版本、系统、架构、更新结果）",
-            "detail_source": "脚本源码（你勾选了）",
+            "detail_source": "脚本源码与依赖声明文件（你勾选了）",
             "detail_state": "会话状态文件（含损坏副本清单）",
             "detail_storage": "存储环境（剩余空间、可写、是否在同步目录）",
             "environment": "运行环境与版本信息（用户名、路径已脱敏）",
@@ -1732,7 +1736,7 @@ export default interface Resources {
             "readme": "包内说明文件",
             "settings": "应用设置（密钥已替换）",
             "task": "最近几次失败任务的分类结果",
-            "ui_state": "界面状态快照（不含图内文字与文件名）",
+            "ui_state": "界面状态快照（不含图内文字与文件名；含新手教程进度：状态、步骤 id、看过哪几类提示）",
             "ui_trace": "最近的界面操作轨迹（只有操作类型）"
           },
           "listSeparator": "、",
@@ -1771,7 +1775,7 @@ export default interface Resources {
           "sentenceItem": {
             "corrupt_sessions": "会话损坏副本的内容",
             "crash_reports": "系统崩溃报告（可能含打开着的文件的内容）",
-            "source": "脚本源码"
+            "source": "脚本源码与依赖声明文件"
           },
           "short": {
             "console": "控制台",
@@ -2614,6 +2618,10 @@ export default interface Resources {
       "svg_source_unsupported": "{{id}} 的当前来源无法安全转换为 SVG。请改用 PDF 格式导出。",
       "sync_different_scripts": "两张图不属于同一个脚本，无法同步",
       "taf_disabled": "这个实验功能还没有开启。",
+      "tex_command_missing": "这张图用了 LaTeX 排版（text.usetex），但当前渲染环境的 PATH 上找不到 {{command}}。这是系统里的 TeX 工具，不是 Python 包；装好 TeX 发行版后，如果刚装完，请重启 Tavotto 让它拿到新的 PATH，再重试。",
+      "tex_compile_failed": "LaTeX 编译这张图里的文字时出错：{{line}}。这是 TeX 自己报的错，请检查文字或导言区（text.latex.preamble）。",
+      "tex_failed": "LaTeX 排版（text.usetex）这一步失败了，原因无法从输出中判断：{{error}}",
+      "tex_package_missing": "LaTeX 排版缺少文件 {{file}}（TeX 宏包或字体，不是 Python 包）。用 TeX 发行版的包管理器装上它之后重试即可，Tavotto 会重新编译验证。",
       "tiff_bigtiff": "{{file}} 是 BigTIFF，暂不支持。请另存为普通 TIFF 或 PNG。",
       "tiff_bit_depth": "{{file}} 的位深暂不支持。只支持 8 位或 16 位（1 位仅限黑白）。",
       "tiff_color_space": "{{file}} 的颜色模式（如 CMYK、Lab）暂不支持。请转成 RGB 或灰度后再用。",
@@ -2908,6 +2916,9 @@ export default interface Resources {
       "repairManagedUnavailableHint": "需要 Python {{min}}–{{max}}；如果已经装过，可以在下面指定它。",
       "repairModifiesEnv": "会修改项目的 Python 环境。",
       "repairNeedsNetwork": "需要联网下载",
+      "repairNotFoundNamed": "软件源里找不到 {{name}}。",
+      "repairNotFoundNamedFrom": "软件源里找不到 {{name}}（来自 {{source}}）。",
+      "repairNotPipInstallable": "{{name}} 不能用 pip 安装，要在装有它的 Python 环境里运行。",
       "repairPackageAria": "要安装的包名",
       "repairPackagePlaceholder": "例如 my-lab-tools 或 my-lab-tools>=2.1",
       "repairPinnedBody": "渲染用的 Python 被固定为 {{python}}（{{source}}），在取消固定前，为这个项目装的或选的环境都不会被使用。",
@@ -5166,6 +5177,13 @@ export default interface Resources {
         "title": "终止脚本？"
       }
     },
+    "pageEdge": {
+      "height": "高 {{mm}} mm",
+      "heightPrefix": "高 ",
+      "snapTo": "吸附到 {{name}}",
+      "width": "宽 {{mm}} mm",
+      "widthPrefix": "宽 "
+    },
     "panelBadge": {
       "approxPreview": "近似预览",
       "approxPreviewHint": "画布暂显示磁盘上的原图，未反映图内修改。",
@@ -5410,6 +5428,8 @@ export default interface Resources {
         "detail": {
           "alternatives": "有几个包都能提供它，先按 {{distribution}} 装；想换别的，请改用你自己的 Python 环境。",
           "listIntro": "这些库的来源还没法确定，Tavotto 不会替你装：",
+          "localMissing": "找不到本地模块 {{name}}（脚本把 {{dirs}} 加进了搜索路径，请确认这个文件夹在）。",
+          "notPip": "这个脚本需要 {{name}}，内置 Python 装不了，请用装有它的环境。",
           "trustNote": "你填的包名不算可信来源：Tavotto 没法核实它们，所以装之前会让你再确认一次。",
           "userSpecifiedBadge": "用户指定，未经核实"
         },

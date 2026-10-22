@@ -4286,6 +4286,54 @@ def _finite_box(bb) -> bool:
         return False
 
 
+def _probe_autoscale_expected(ax, autoscale: dict[str, bool]) -> dict[str, list[float]]:
+    """非破坏地探出 `ax.autoscale_view()` 此刻会给 x / y 的范围（只含 autoscale 开着的方向）。
+
+    `autoscale_view` 的内部 `handle_single_axis` 在**调用时**才取 `self.set_xbound` / `self.set_ybound`，所以临时在实例上挂
+    捕获函数遮住它们，范围就被截下来而不写进图。除 `set_bound` 外它不改任何状态（matplotlib 3.8 / 3.10 / 3.11 的源码：只有
+    `tight is not None` 才写 `_tight`，这里传 None；其余是只读的 dataLim / sticky / locator 计算）。`finally` 里还原实例属性（原本就有的放回，没有的删掉）。
+    任何一步失败、或结果非有限 → 返回空（没证据）。"""
+    got: dict[str, list[float]] = {}
+
+    def capture(axis):
+        def _set(lo, hi=None, **_kw):
+            if hi is None:  # set_xbound((lo, hi)) 的元组写法
+                lo, hi = lo
+            got[axis] = [float(lo), float(hi)]
+
+        return _set
+
+    want = {a for a, on in autoscale.items() if on and a in ("x", "y")}
+    if not want or not callable(getattr(ax, "autoscale_view", None)):
+        return {}
+    sentinel = object()
+    saved: dict[str, object] = {}
+    try:
+        inst = ax.__dict__  # 无 __dict__（__slots__）→ AttributeError → 没证据
+        for a in want:
+            name = f"set_{a}bound"
+            saved[name] = inst.get(name, sentinel)
+        for a in want:
+            setattr(ax, f"set_{a}bound", capture(a))
+        ax.autoscale_view(scalex="x" in want, scaley="y" in want)
+    except Exception:  # noqa: BLE001 —— 版本不支持 / 非常规 axes：没证据
+        return {}
+    finally:
+        # 实例上原本挂着的自定义 set_[xy]bound 要放回去，没有才删（探测不许改图）
+        inst_dict = getattr(ax, "__dict__", None)
+        if inst_dict is not None:
+            for name, old in saved.items():
+                if old is sentinel:
+                    inst_dict.pop(name, None)
+                else:
+                    inst_dict[name] = old
+    out: dict[str, list[float]] = {}
+    for a, (lo, hi) in got.items():
+        if math.isfinite(lo) and math.isfinite(hi):
+            out[a] = [min(lo, hi), max(lo, hi)]
+    return out
+
+
 def _collection_datalim(artist):
     """Collection 自己不给包围盒时，用**数据范围**换算 display 框；不适用返回 None。
 
@@ -5070,6 +5118,40 @@ def _measure_manifest(
                 entry["follow_gids"] = follow
             if el.get("inset_of"):
                 entry["inset_of"] = el["inset_of"]
+            # 只读事实（不在 editable、不进文档）：这根轴的范围此刻是不是自动缩放算出来的。`set_[xy]lim` 会把它关掉。
+            # TAF 的「目标范围外改动」靠它区分「自动缩放跟着变」与「显式改了坐标范围」（figureverify._auto_prop）。
+            # `peers`：共享这根轴范围的兄弟轴（sharex / twinx 的另一半），它们的范围会跟着这根轴的目标一起变。
+            autoscale: dict = {}
+            peers: dict[str, list[str]] = {}
+            for axis in ("x", "y"):
+                probe = getattr(artist, f"get_autoscale{axis}_on", None)
+                if not callable(probe):
+                    continue
+                autoscale[axis] = bool(probe())
+                try:
+                    sibs = getattr(artist, f"get_shared_{axis}_axes")().get_siblings(artist)
+                except Exception:  # noqa: BLE001 —— 取不到兄弟：不发，判据按「只有自己」处理
+                    sibs = []
+                names = sorted(
+                    g for a in sibs if a is not artist and (g := gid_by_artist_id.get(id(a)))
+                )
+                if names:
+                    peers[axis] = names
+            # `expected`：自动缩放**此刻会算出**的范围（`autoscale_view` 的结果，不落到图上）。autoscale 开关只是最终状态——
+            # `set_xlim(auto=True)`、先设再 `set_autoscalex_on(True)` 都会让它为 True 而范围其实是显式写的，数据范围（dataLim）
+            # 的变化也分不开「自动跟着数据」与「显式写了个恰好包住的范围」；唯一分得开的事实是：实际范围 == 自动缩放会给的范围。
+            # 色条轴（范围来自映射对象）与 3D 轴不发：它们的 dataLim 在撤销 / 重放后会漂（Inv Cbar / 3D 的「撤销后 manifest
+            # 逐位一致」不变式），且判据本来也不看它。探测失败 / 非有限 = 不发 = 没证据。
+            if autoscale and not (artist in state.colorbar_axes or el["role"] == "axes3d"):
+                expected = _probe_autoscale_expected(artist, autoscale)
+            else:
+                expected = {}
+            if autoscale:
+                entry["autoscale"] = {
+                    **autoscale,
+                    **({"peers": peers} if peers else {}),
+                    **({"expected": expected} if expected else {}),
+                }
         elif el["role"] == "image" or _is_area_field(artist):
             # imshow 位图铺满宿主 axes，会在命中测试里盖住它——把几何编辑
             # 代理回宿主 axes（前端对 geom_gid 发 position override）。

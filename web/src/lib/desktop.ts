@@ -460,7 +460,7 @@ export async function setDesktopMenuLocale(
 }
 
 /* -------------------------------------------------------------------------- */
-/*  窗框：系统标题栏 / 菜单栏与页面顶栏融成一片（2026-10-13）                        */
+/*  窗框：系统标题栏 / 菜单栏与页面顶栏融成一片（2026-10-13；Windows 10-21 改无框）   */
 /* -------------------------------------------------------------------------- */
 
 /**
@@ -469,8 +469,9 @@ export async function setDesktopMenuLocale(
  *
  * - `overlay`（macOS）：系统标题栏透明叠在页面上，红绿灯在页面顶栏那一行——顶栏让出左侧
  *   `TRAFFIC_LIGHTS_INSET`，空白处是拖动区。
- * - `menu-button`（Windows）：菜单栏藏起来，页面顶栏给一个「菜单」按钮弹出同一份菜单；
- *   标题栏底色随页面主题。
+ * - `menu-button`（Windows）：没有系统标题栏——页面右上角画最小化 / 最大化 / 关闭
+ *   （`WindowControls`，各页顶部右侧让出 `WINDOW_CONTROLS_INSET`），空白处是拖动区；菜单栏
+ *   藏起来，页面顶栏给一个「菜单」按钮弹出同一份菜单。
  * - `native`：浏览器、远程实例窗口（不注入标记）、以及不认这个标记的旧壳——一切照旧。
  */
 export type WindowChrome = 'overlay' | 'menu-button' | 'native'
@@ -486,6 +487,12 @@ export function windowChrome(): WindowChrome {
  * 三颗按钮右缘实测在 76）配套，再留 12：主页胶囊的悬停底色不贴着绿灯。
  */
 export const TRAFFIC_LIGHTS_INSET = 88
+
+/**
+ * `menu-button` 下右上角三颗窗口按钮（`WindowControls`，每颗 46 宽、与顶栏同高 44，Windows 的
+ * 标题栏按钮尺寸）占的宽度，CSS 像素。顶部一行有内容的页面右侧至少让出这么多。
+ */
+export const WINDOW_CONTROLS_INSET = 138
 
 /** 壳在主窗口进 / 出全屏时发的事件，载荷 `{fullscreen: boolean}`（`window_chrome.rs` 的 `FULLSCREEN_EVENT`，两侧严格同源）。 */
 export const FULLSCREEN_EVENT = 'tavotto:fullscreen'
@@ -519,10 +526,11 @@ export async function getFullscreen(): Promise<boolean> {
 
 /**
  * 拖动区标记（Tauri 的 `data-tauri-drag-region`）：`deep` = 子树里非交互的地方都能拖，按钮 /
- * 输入框 / 带 tabindex 的元素照常点击。只在 `overlay` 下给——别的窗框有系统标题栏可拖。
+ * 输入框 / 带 tabindex 的元素照常点击。`overlay` 与 `menu-button` 都没有可拖的系统标题栏，都给；
+ * `native` 有系统标题栏（浏览器、远程实例窗口），不给。
  */
 export function dragRegionProps(mode: 'deep' | 'self' = 'deep'): Record<string, string> {
-  if (windowChrome() !== 'overlay') return {}
+  if (windowChrome() === 'native') return {}
   return { 'data-tauri-drag-region': mode === 'deep' ? 'deep' : '' }
 }
 
@@ -541,29 +549,42 @@ export async function showDesktopAppMenu(x: number, y: number): Promise<boolean>
   }
 }
 
-/** `rgb(r, g, b)` / `rgba(...)` / `#rrggbb` → `#rrggbb`；认不出来回 null */
-export function cssColorToHex(value: string): string | null {
-  const v = value.trim().toLowerCase()
-  if (/^#[0-9a-f]{6}$/.test(v)) return v
-  const m = /^rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*(?:,\s*[\d.]+\s*)?\)$/.exec(v)
-  if (!m) return null
-  const parts = m.slice(1, 4).map(Number)
-  if (parts.some((n) => n > 255)) return null
-  return '#' + parts.map((n) => n.toString(16).padStart(2, '0')).join('')
-}
+/** `menu-button` 窗框的三颗窗口按钮要做的事（关闭照旧发 CloseRequested，走关窗询问闸）。 */
+export type WindowControlAction = 'minimize' | 'toggle-maximize' | 'close'
 
-/**
- * Windows：系统标题栏与页面顶栏同色（底色 / 文字色，`#rrggbb`）。Windows 10 上壳照收、系统不认，
- * 标题栏维持原样。不在 `menu-button` 窗框里返回 false。
- */
-export async function setDesktopTitlebarColors(background: string, text: string): Promise<boolean> {
+/** 当前窗口最小化 / 最大化切换 / 请求关闭。不在 `menu-button` 窗框里返回 false。 */
+export async function windowControl(action: WindowControlAction): Promise<boolean> {
   if (windowChrome() !== 'menu-button') return false
   try {
-    const { invoke } = await import('@tauri-apps/api/core')
-    await invoke('set_titlebar_colors', { background, text })
+    const { getCurrentWindow } = await import('@tauri-apps/api/window')
+    const win = getCurrentWindow()
+    if (action === 'minimize') await win.minimize()
+    else if (action === 'toggle-maximize') await win.toggleMaximize()
+    else await win.close()
     return true
   } catch {
     return false
+  }
+}
+
+/**
+ * 订阅当前窗口是否最大化（最大化按钮据它换「还原」图标）：先回读一次，之后每次窗口尺寸变化
+ * 再回读——拖到顶边吸附、双击顶栏、Win+↑ 都只表现为一次 resize。不在 `menu-button` 窗框里
+ * 什么都不做。返回取消订阅。
+ */
+export async function onWindowMaximizedChange(cb: (maximized: boolean) => void): Promise<() => void> {
+  if (windowChrome() !== 'menu-button') return () => {}
+  try {
+    const { getCurrentWindow } = await import('@tauri-apps/api/window')
+    const win = getCurrentWindow()
+    const read = () => {
+      win.isMaximized().then(cb, () => {})
+    }
+    const off = await win.onResized(read)
+    read()
+    return off
+  } catch {
+    return () => {}
   }
 }
 

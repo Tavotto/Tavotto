@@ -37,8 +37,10 @@ export const FigureStage = forwardRef<
     const el = host.current
     if (!el) return
     const fit = () => {
-      const w = el.clientWidth
-      const h = el.clientHeight
+      // clientWidth/Height 含内边距：按它取框会比内容区大，居中后把上下留白吃掉（标题贴图）
+      const cs = getComputedStyle(el)
+      const w = el.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight)
+      const h = el.clientHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom)
       if (!w || !h) return
       const fw = Math.min(w, h * ASPECT)
       const next = { w: Math.floor(fw), h: Math.floor(fw / ASPECT) }

@@ -164,6 +164,27 @@ describe('snapScaleNearest', () => {
     expect(snapScaleNearest({ ...common, s0: (70.9 - 10) / 40 })?.line.v).toBe(70.6)
   })
 
+  it('hold 让位（ADR 0128 §一修订 2026-10-21）：另一对近到被保持距离的 0.25 倍以内才让，否则保持', () => {
+    const near = (second: number) => {
+      const hold = createScaleHold()
+      const cands = { xs: [line(70, 'frame'), line(second, 'frame')], ys: [] }
+      const common = { ...base, anchors: anchorsOf(), cands, hold }
+      snapScaleNearest({ ...common, s0: 1.49 }) // 先吸住 70
+      return snapScaleNearest({ ...common, s0: (70.8 - 10) / 40 })?.line.v
+    }
+    expect(near(70.7)).toBe(70.7) // 距 0.1 < 0.8 × 0.25：让位
+    expect(near(70.5)).toBe(70) // 距 0.3 ≥ 0.2：仍保持
+  })
+
+  it('hold 让位对所有合格对判断：档位更好但太远的一对不能遮住精确的同档新对（Codex P2）', () => {
+    const hold = createScaleHold()
+    const cands = { xs: [line(70, 'axes'), line(70.8, 'axes'), line(70.5, 'frame')], ys: [] }
+    const common = { ...base, anchors: anchorsOf(), cands, hold }
+    expect(snapScaleNearest({ ...common, s0: 1.49 })?.line.v).toBe(70) // 先吸住第二档的 70
+    // 70.8：第二档 70 距 0.8；第一档 70.5 距 0.3（≥ 0.2，不够让）；第二档 70.8 距 0（< 0.2，够让）
+    expect(snapScaleNearest({ ...common, s0: (70.8 - 10) / 40 })?.line.v).toBe(70.8)
+  })
+
   it('没有 hold 时同样的位置按最近挑（对照上一条）', () => {
     const cands = { xs: [line(70, 'frame'), line(70.6, 'frame')], ys: [] }
     const hit = snapScaleNearest({ ...base, s0: (70.8 - 10) / 40, anchors: anchorsOf(), cands })

@@ -44,6 +44,7 @@ from . import (
     runtimeasset,
     scanbudget,
     taskdiag,
+    texdiag,
 )
 
 LOG = logging.getLogger("tavotto.probe")
@@ -236,6 +237,12 @@ def _error_from_worker(
         out = _err(exc.code, str(exc))
         out["dependency_preparation"] = dependency
         return out
+    if exc.code in texdiag.ERROR_CODES:
+        # TeX 工具链（缺命令 / 缺宏包或字体 / 编译错误）：码与参数原样带出，与渲染端点同一份
+        # （`pool.recovery_params`）——素材库这条入口不能退化成一句「试运行失败」，更不能落成缺 Python 包
+        return _err(
+            exc.code, str(exc), params=pool.recovery_params(exc), traceback_text=exc.traceback_text
+        )
     # build 超时有自己的码（ADR 0048）；试运行走的正是 build，两个都要认——
     # 漏掉的话「脚本执行超时」会退化成一句通用的「试运行失败」。
     if exc.code in ("worker_timeout", pool.BUILD_TIMEOUT_CODE):

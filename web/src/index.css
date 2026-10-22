@@ -2,7 +2,7 @@
    按 vite 根（web/）自动探测、连 .md 与 e2e 一起扫，散文里写全的工具类名会把规则吊在
    产物里。三条构建链（vite.config / vite.mcp.config / vite.playground.config）都进这一份
    CSS，所以声明一次三份产物都收窄；两向门禁 scripts/tailwind-scan-check.mjs 接在 pnpm build 后。 */
-/* 会滚的数字（@sfinterface/numbers，只给顶栏缩放读数一处；2026-09-15 调研后用户拍板）：先于 Tailwind
+/* 会滚的数字（@sfinterface/numbers，只给两处：顶栏缩放读数、画布尺寸（拖页面边的标注 + 属性栏画布页头）；2026-09-15 调研后用户拍板）：先于 Tailwind
    import，它开头声明的 `@layer arc, theme, base, components, utilities` 才把自己排在最低层，工具类盖得住它。
    它的样式表只描述运动与几何，字体 / 字号 / 颜色全继承。 */
 @import '@sfinterface/numbers/styles.css';
@@ -160,6 +160,8 @@
   --color-warn-subtle: var(--color-warn-surface);
   --color-ok-subtle: var(--color-ok-surface);
   --color-sel: #4685e2;
+  /* 画布尺寸标注与拖边把手（机械制图式浅蓝）：只画在画布叠加层，不进文档 / 导出；暗色里提亮一档 */
+  --color-dim: #4a8bdf;
 
   /* 代码着色（2026-10-07 设计审计 §6.3 / §10.4）：只读代码块（/try 的 Code Sheet、助手的代码块）共用这七档，
      不在组件里写 hex。每一档在白 / 桌面 / surface-2 上都 ≥4.5:1（tokenContrast.test 守着）；
@@ -372,7 +374,8 @@
        popover 60       菜单 / popover / select 弹层（从对话框里打开的也在它上面）
        tooltip 70       气泡
        toast 80         预留给通知轨移出画布列之后（此前它在画布列里，用 canvas-chrome）
-       onboarding 90    引导卡（高亮环 = onboarding-ring，比卡低一层） */
+       onboarding 90    引导卡（高亮环 = onboarding-ring，比卡低一层）
+       window-controls 100 Windows 无框窗口右上角的最小化 / 最大化 / 关闭：它是窗口的一部分，压在所有页面层（含教程）之上 */
   --z-sticky: 10;
   --z-canvas-chrome: 20;
   --z-drawer: 30;
@@ -383,6 +386,7 @@
   --z-toast: 80;
   --z-onboarding-ring: 89;
   --z-onboarding: 90;
+  --z-window-controls: 100;
 
   /* 画布覆盖层 token（2026-10-07 设计审计 §10.1）：悬停描边的不透明度、唯一的一种虚线、手柄填充、遮罩。
      画布那一期（2026-10-07）已迁完：OverlaySvg / PageSheet / 裁剪框只读这几个 token，不再写 #fff / rgba(27,27,24,…) 字面量。 */
@@ -782,6 +786,9 @@
 @utility z-onboarding {
   z-index: var(--z-onboarding);
 }
+@utility z-window-controls {
+  z-index: var(--z-window-controls);
+}
 
 /* 可滚但不画滚动条：只给画布页签条这种「一行、36px 高」的横滚区（2026-09-27 用户拍板）。
    全局的 ::-webkit-scrollbar 是 6px 自定义条，WebKit 里它照样占掉条内的高度、把页签压扁。
@@ -1082,6 +1089,7 @@
     --color-ink-faint: #6a6a64;
     --color-accent: #5a92e5;
     --color-accent-subtle: #1d2a3d;
+  --color-dim: #7db6f5;
     --color-danger: #ef6e55;
     --color-warn: #d9a23a;
     --color-ok: #4fb37a;
@@ -1118,6 +1126,7 @@
   --color-ink-faint: #6a6a64;
   --color-accent: #5a92e5;
   --color-accent-subtle: #1d2a3d;
+  --color-dim: #7db6f5;
   --color-danger: #ef6e55;
   --color-warn: #d9a23a;
   --color-ok: #4fb37a;

@@ -80,6 +80,8 @@ _CODE_REGISTRIES = (
     "tavotto.engine.runconfig",
     # issue #534：TIFF 素材的支持范围（`UnsupportedTiff(code)` 由 app 的 422 漏斗 / 导出作业转出）
     "tavotto.tiffprobe",
+    # TeX 工具链失败（`texdiag`）：pool 的错误收口按 matplotlib 的模板把 script_error 换成这四个码
+    "tavotto.engine.texdiag",
 )
 
 
@@ -175,6 +177,12 @@ USER_VISIBLE_CODES = {
     "engine_files_incomplete": set(),
     # #898：MCP 来源的运行里脚本想写授权根之外（写入根绊线）。路径相对化后只进 MCP 的结构化载荷，不进文案
     "write_outside_roots": set(),
+    # TeX 工具链（`texdiag`）：参数来自错误转换合同 `pool.recovery_params`；`tex_failed` 的 `{{error}}`
+    # 与 `script_error` 同一来源（traceback 末行，前端 `engineErrorMsg` 填）
+    "tex_command_missing": {"command"},
+    "tex_package_missing": {"file"},
+    "tex_compile_failed": {"line"},
+    "tex_failed": {"error"},
     "script_not_found": {"script"},
     "script_path_outside_project": {"script"},
     "unsupported_script_type": {"script"},

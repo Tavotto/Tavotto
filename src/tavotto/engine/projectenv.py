@@ -967,6 +967,8 @@ def _probe_environment(
             "python": python,
             "detail": str(exc)[:400],
             "execution": execution_note(**shape, started=started),
+            # 超时单独标出（落选原因 `probe_timeout`，ADR 0079 修订）；只在超时时才有这个键
+            **({"timed_out": True} if isinstance(exc, subprocess.TimeoutExpired) else {}),
         }
     finally:
         if scratch:

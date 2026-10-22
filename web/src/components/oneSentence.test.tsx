@@ -68,7 +68,7 @@ const IDLE_CARDS: [string, DependencyRepairOffer][] = [
   ['受管环境 + 要下载私有 Python', offer({ targets: [{ ...MANAGED, private_python: { ...PP, origin: 'download' } }] })],
   ['受管环境 + 自带私有 Python', offer({ targets: [{ ...MANAGED, private_python: { ...PP, origin: 'bundled', download_bytes: 0, cached: true } }] })],
   ['已有环境', offer({ targets: [{ ...MANAGED, kind: 'system_interpreter', python: '/usr/bin/python3', python_version: '3.12.4' }] })],
-  ['无路可走', offer({ targets: [{ ...MANAGED, available: false, reason: 'managed_env_unavailable' }] })],
+  ['无路可走', offer({ targets: [{ ...MANAGED, available: false, reason: 'managed_env_unavailable' }] })],  ['装不了的包（ROOT）', offer({ import_name: 'ROOT', requirement: null, targets: [], not_pip_installable: { label: 'ROOT', hint: 'own_env' } })],
 ]
 
 const dl = (stage: string, origin: 'bundled' | 'cached' | 'download' = 'download') => ({

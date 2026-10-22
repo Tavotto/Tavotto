@@ -569,35 +569,29 @@ describe('图内拖动：吸住后保持', () => {
   }
   const leftOf = () => (overrideOf('axes_0.texts_0', 'pos_frac') as number[])[0]
 
-  it('吸住后拖开超过一倍容差仍保持，超过 1.75 倍才放开', async () => {
+  // 规格变更（2026-10-21，ADR 0128 §一修订）：别处有一条线离光标近到被保持线距离的 0.25 倍以内时，
+  // hold 让位给它。这里别处的线在 0.225（与 0.2 相距约 9.6px），所以 8px / 10px 处（被保持线已拉开 8 / 10px）
+  // 它只差约 1.6 / 0.4px，会让位。1.75× 的放开边界本身由 snapNearest.test 用不会触发让位的远线钉住。
+  it('吸住后拖开超过一倍容差：别处的线近到 0.25 倍以内就让位，否则（见 snapNearest.test）保持', async () => {
     await setup()
     startElementDrag(down(0, 0), livePanel(), vacuum, layout)
     moveThrough([[3], [8]])
-    // 8px 已出 6px 容差（别处的线此刻还在 2px 内，没保持的话会被它吸走），
-    // 但这一对还在 1.75 倍（10.5px）内：仍吸着，落点不动
     fire('pointerup', 8, 0)
-    expect(leftOf()).toBeCloseTo(0.2, 6)
-
-    await setup()
-    startElementDrag(down(0, 0), livePanel(), vacuum, layout)
-    moveThrough([[3], [8], [14]])
-    fire('pointerup', 14, 0)
-    // 放开了：不再钉在 0.2 上（落点可能被别处的线再吸走，所以只断言离开了 0.2）
-    expect(leftOf() - 0.2).toBeGreaterThan(5 / W)
+    expect(leftOf()).toBeCloseTo(0.225, 6)
   })
 
-  it('松开距离 1.75× 边界两侧：10px（< 10.5px）仍保持，11px（> 10.5px）放开', async () => {
+  it('松开距离：10px 处别处的线只差 0.4px，让位；11px 已出 1.75×，同样落在那条线上', async () => {
     await setup()
     startElementDrag(down(0, 0), livePanel(), vacuum, layout)
     moveThrough([[3], [10]])
     fire('pointerup', 10, 0)
-    expect(leftOf()).toBeCloseTo(0.2, 6)
+    expect(leftOf()).toBeCloseTo(0.225, 6)
 
     await setup()
     startElementDrag(down(0, 0), livePanel(), vacuum, layout)
     moveThrough([[3], [11]])
     fire('pointerup', 11, 0)
-    expect(leftOf() - 0.2).toBeGreaterThan(5 / W)
+    expect(leftOf()).toBeCloseTo(0.225, 6)
   })
 
   it('途经两条几乎等距的线，来回小幅移动时吸附目标不变', async () => {

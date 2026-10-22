@@ -174,8 +174,8 @@ export interface SnapPick {
  * 用下标而不是浮点值：两条坐标相同的线是两条线。候选表在手势里必须是同一份数组。
  */
 export interface SnapHold {
-  x: { selfEdge: SnapEdge; idx: number } | null
-  y: { selfEdge: SnapEdge; idx: number } | null
+  x: { selfEdge: SnapEdge; idx: number; yielded?: boolean } | null
+  y: { selfEdge: SnapEdge; idx: number; yielded?: boolean } | null
 }
 
 export function createSnapHold(): SnapHold {
@@ -201,6 +201,13 @@ export interface SnapNearestResult extends SnapResult {
 export const SNAP_HOLD_FACTOR = 1.75
 
 /**
+ * hold 的让位比例（ADR 0128 §一修订，2026-10-21 用户裁决）：已吸住一对时，若另一对（同档或更高档、
+ * 且在容差内）的距离 < 被保持那一对当前距离的这个倍数，就让给更近的那条；其余情况 hold 照旧——
+ * 两条线远近相近时不来回跳。前提：距离都是同一帧里「未吸附的原始框」到线的距离，所以可直接比。
+ */
+export const SNAP_HOLD_YIELD_RATIO = 0.25
+
+/**
  * 三线吸附的「就近」版：左/中/右（上/中/下）里**离候选线最近**的那条边胜出，
  * 而不是按顺序第一个进入容差的。图内元素挨得近（相邻两行字、刻度与轴标题），
  * 按顺序取会让左边先吸到一条不相干的线上，想对齐的中线反而永远吸不到。
@@ -223,26 +230,40 @@ export function snapMoveNearest(
   ): { d: number; pick: SnapPick } | null => {
     const offs = [0, size / 2, size]
     const ok = (e: SnapEdge, l: SnapLine) => !pair || pair(e, l)
+    type P = { d: number; r: number; idx: number; e: SnapEdge }
+    const better = (c: P, cur: P | null) =>
+      !cur || c.r < cur.r || (c.r === cur.r && Math.abs(c.d) < Math.abs(cur.d))
+    // 被保持的那一对（仍在 1.75×容差内才算数）；让位对所有合格对判断，不只看总冠军（Codex P2）：
+    // 档位更好但太远的一对不能遮住「档位不更差、且近到 0.25 倍以内」的另一对
     const held = hold?.[axis]
-    if (held) {
-      const line = lines[held.idx]
-      if (line && ok(held.selfEdge, line)) {
-        const d = line.v - (start + offs[held.selfEdge])
-        if (Math.abs(d) < tol * SNAP_HOLD_FACTOR) return { d, pick: { selfEdge: held.selfEdge, line } }
-      }
-    }
-    let best: { d: number; r: number; idx: number; e: SnapEdge } | null = null
+    const heldLine = held ? lines[held.idx] : undefined
+    const heldD = held && heldLine && ok(held.selfEdge, heldLine) ? heldLine.v - (start + offs[held.selfEdge]) : null
+    // 让位得来的 hold 是临时的：只在容差内保持（迟滞 1.75× 只给真正「吸住」的线），
+    // 否则快速拖动时途经的一条无关线靠让位重新武装 1.75× 迟滞，把真正的目标挡在 0.25 倍之外
+    const holdOk = heldD !== null && Math.abs(heldD) < tol * (held!.yielded ? 1 : SNAP_HOLD_FACTOR)
+    const heldRank = holdOk && rank ? rank(held!.selfEdge, heldLine!) : 0
+    let best: P | null = null
+    let yieldTo: P | null = null
     for (const e of [0, 1, 2] as const) {
       for (let idx = 0; idx < lines.length; idx++) {
         const line = lines[idx]
         const d = line.v - (start + offs[e])
         if (Math.abs(d) >= tol || !ok(e, line)) continue
-        const r = rank ? rank(e, line) : 0
-        if (!best || r < best.r || (r === best.r && Math.abs(d) < Math.abs(best.d)))
-          best = { d, r, idx, e }
+        const c: P = { d, r: rank ? rank(e, line) : 0, idx, e }
+        if (better(c, best)) best = c
+        if (
+          holdOk &&
+          (idx !== held!.idx || e !== held!.selfEdge) &&
+          c.r <= heldRank &&
+          Math.abs(d) < Math.abs(heldD!) * SNAP_HOLD_YIELD_RATIO &&
+          better(c, yieldTo)
+        )
+          yieldTo = c
       }
     }
-    if (hold) hold[axis] = best ? { selfEdge: best.e, idx: best.idx } : null
+    if (holdOk && !yieldTo) return { d: heldD!, pick: { selfEdge: held!.selfEdge, line: heldLine! } }
+    if (yieldTo) best = yieldTo
+    if (hold) hold[axis] = best ? { selfEdge: best.e, idx: best.idx, ...(yieldTo ? { yielded: true } : {}) } : null
     return best && { d: best.d, pick: { selfEdge: best.e, line: lines[best.idx] } }
   }
   const res: SnapNearestResult = { dx: 0, dy: 0, guideXs: [], guideYs: [], x: null, y: null }

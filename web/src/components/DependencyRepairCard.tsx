@@ -285,7 +285,8 @@ export function DependencyRepairCard({
   const primary: DependencyTarget | null = system ?? (managedReady ? managedTarget : null)
   const rest = targets.filter((tg) => tg !== primary)
   // 解析不出包名：用户可以自己指定，但那串东西同样要过后端的语法关
-  const specify = !offer.requirement && !exhausted && (
+  const notPip = offer.not_pip_installable
+  const specify = !offer.requirement && !exhausted && !notPip && (
     <div className="flex flex-col gap-1.5">
       <span className="text-xs text-ink-2">{en('repairSpecifyPackage')}</span>
       <div className="flex items-center gap-1.5">
@@ -431,6 +432,19 @@ export function DependencyRepairCard({
     )
   }
 
+  if (notPip && !exhausted) {
+    // 已知装不了的包（ROOT 等，PyPI 上没有）：一句话 + 一个主按钮（选环境），不给「指定包名」——输进去也会被后端拒
+    return (
+      <Card className="flex flex-col gap-2" data-repair-not-pip={notPip.hint}>
+        <p className="text-sm leading-relaxed text-ink" data-repair-not-pip-sentence>
+          {en('repairNotPipInstallable', { name: notPip.label })}
+        </p>
+        <OpenEnvironment primary />
+        {advanced}
+      </Card>
+    )
+  }
+
   return (
     <Card className="flex flex-col gap-2.5">
       <div>
@@ -532,11 +546,11 @@ function Rejections({ rejected, pkg }: { rejected: SystemInterpreterRejection[];
 }
 
 /** 就地打开渲染环境对话框（`EngineEnvironmentDialog`，与脚本行恢复说明同一个入口，不深链设置页） */
-function OpenEnvironment() {
+function OpenEnvironment({ primary = false }: { primary?: boolean }) {
   useTranslation('workspace')
   return (
     <Button
-      variant="secondary"
+      variant={primary ? 'primary' : 'secondary'}
       size="sm"
       className="self-start"
       data-repair-open-environment
@@ -847,7 +861,7 @@ function RepairProgress({
         {failed ? (
           // 失败：只露一句（原因 + 下一步，`repairShortMessage`），标题、完整说明、错误码、日志都在「详情」里
           <p className="text-sm leading-relaxed text-danger" data-repair-failure>
-            {repairShortMessage(progress.code)}
+            {repairShortMessage(progress.code, progress.not_found)}
           </p>
         ) : (
           <h3 className="type-section">{en(key, { module: progressPackages(progress, module) })}</h3>
@@ -927,7 +941,17 @@ export function repairCodeMessage(code: string): string | null {
  * 完整的说明（`repairError.*` / 后端原文，可以是多句）与错误码只进「详情」（`FailureDetail`）——`repairError.*`
  * 那张表设置 › 包管理页照旧整句在用，不动它
  */
-export function repairShortMessage(code: string): string {
+export function repairShortMessage(
+  code: string,
+  notFound?: { name?: string; import_name?: string; source?: string },
+): string {
+  // 找不到的包点名（ADR 0061 修订 2026-10-21）：「软件源里找不到 X（来自 Y）」；Y = 声明文件，没有就写 import 名
+  if (code === 'dependency_not_found' && notFound?.name) {
+    const source = notFound.source || (notFound.import_name ? `import ${notFound.import_name}` : '')
+    return source
+      ? en('repairNotFoundNamedFrom', { name: notFound.name, source })
+      : en('repairNotFoundNamed', { name: notFound.name })
+  }
   if (code && i18n.exists(`engine.repairErrorShort.${code}`, { ns: 'errors' }))
     return en(`repairErrorShort.${code}`, { product: PRODUCT_NAME })
   return en('repairErrorShortGeneric')

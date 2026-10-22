@@ -781,6 +781,9 @@ class JointPlan:
     provider_decisions: tuple[dict, ...] = ()
     #: 差集总数；超过 `MAX_DECLARED_GAPS` 被截断时 > `len(declared_gaps)`（状态判定用的是完整集合，只有对外载荷截断）。
     declared_gaps_total: int = 0
+    #: 计划里点名、**不送 pip** 的已知装不了的包（`depresolve.NOT_PIP_INSTALLABLE`；ADR 0061 修订 2026-10-21）：
+    #: `{name, distribution, hint, sources: [声明文件], imports: [import 名]}`。只在有时才进 `to_payload`（`plan_version` 不升）。
+    not_pip_installable: tuple[dict, ...] = ()
 
     @property
     def install_entries(self) -> tuple[dict, ...]:
@@ -816,6 +819,11 @@ class JointPlan:
             **(
                 {"provider_decisions": [dict(d) for d in self.provider_decisions]}
                 if self.provider_decisions
+                else {}
+            ),
+            **(
+                {"not_pip_installable": [dict(n) for n in self.not_pip_installable]}
+                if self.not_pip_installable
                 else {}
             ),
             **(
@@ -1038,7 +1046,14 @@ def _specifiable(
     )
 
 
-def _origin_entry(c: importscan.ImportClass, reason: str, state: str, *, suggest: str = "") -> dict:
+def _origin_entry(
+    c: importscan.ImportClass,
+    reason: str,
+    state: str,
+    *,
+    suggest: str = "",
+    literal_dirs: list[str] | None = None,
+) -> dict:
     reason = _effective_reason(c, reason)
     candidates = sorted(
         {
@@ -1059,6 +1074,18 @@ def _origin_entry(c: importscan.ImportClass, reason: str, state: str, *, suggest
         "candidates": candidates[:MAX_ORIGIN_CANDIDATES],
         "coverage": state,
     }
+    not_pip = depresolve.not_pip_installable(c.module)
+    if not_pip is not None:
+        # 已知装不了（ROOT 之类）：计划阶段点名，不预填、不送 pip
+        entry["not_pip_installable"] = {"label": not_pip["label"], "hint": not_pip["hint"]}
+    elif (
+        literal_dirs
+        and c.bucket == importscan.BUCKET_UNKNOWN
+        and not c.distribution
+        and c.resolution_status == importscan.STATUS_UNRESOLVED
+    ):
+        # 脚本把这些目录加进了搜索路径、里面却没有这个模块：本地模块缺失，不是缺 PyPI 包
+        entry["local_module_missing"] = {"search_dirs": list(literal_dirs[:4])}
     if suggest:
         # 预填（Import Origin PR5b，C1）：**不是**可信来源、不进 requirements、不自动装——确认界面输入框的初始值，
         # 用户接受（可改）后经 `plan(user_specified=)` 才进计划
@@ -1473,10 +1500,17 @@ def plan(
         if c.module in open_classes
         or (c.module in plain_unknown and c.module not in index_satisfied)
     ]
+    # 脚本字面量加进 sys.path 的目录（`importscan` 的 `sys_path_literal` 搜索根）：那里没找到的 import 是「本地模块缺失」，
+    # 不预填包名、不接受用户指定、绝不送 pip（ADR 0061 修订 2026-10-21）
+    literal_dirs = [
+        str(r.get("path") or ".") for r in scan.search_roots if r.get("tag") == "sys_path_literal"
+    ]
     specifiable = {
         c.module
         for c in origin_classes
-        if _specifiable(
+        if not literal_dirs
+        and depresolve.not_pip_installable(c.module) is None
+        and _specifiable(
             c,
             _effective_reason(c, open_classes.get(c.module, ORIGIN_UNRESOLVED)),
             states.get(c.module, ""),
@@ -1489,6 +1523,8 @@ def plan(
         if cls is None or imp not in specifiable:
             raise UserSpecifiedRejected(str(imp), UserSpecifiedRejected.NOT_APPLICABLE)
         asked = depresolve.from_user_input(imp, str(text or ""))
+        if asked is not None and depresolve.not_pip_for_distribution(asked.distribution):
+            raise UserSpecifiedRejected(str(imp), UserSpecifiedRejected.NOT_APPLICABLE)
         intent = (
             depresolve.parse_intent(asked.requirement())
             if asked is not None and asked.installable
@@ -1503,6 +1539,7 @@ def plan(
             open_classes.get(c.module, ORIGIN_UNRESOLVED),
             states.get(c.module, ""),
             suggest=depresolve.suggest_distribution(c.module) if c.module in specifiable else "",
+            literal_dirs=literal_dirs,
         )
         for c in origin_classes
         if c.module not in chosen
@@ -1549,8 +1586,41 @@ def plan(
         }
     if roots_active:
         to_install |= declared_install
-    # 本计划实际会装的名字：hash 模式 = 整份选中集合；否则 = 上面算出的 to_install（含按声明装的 roots）
-    installing = set(by_name) if hash_mode else set(to_install)
+    # 已知装不了的发行包（`depresolve.NOT_PIP_INSTALLABLE`）：计划阶段点名（来自哪个声明文件 / 哪个 import），不送 pip
+    not_pip_entries: list[dict] = []
+    # 候选 = 要装的 + 声明 roots + 本计划 missing 里点到的 + hash 模式下整份选中集合：任何一处都不许把它们带进 pip（Codex #1276 P1）
+    not_pip_candidates = (
+        to_install
+        | declared_install
+        | {str(m.get("distribution") or "") for m in missing}
+        | (set(by_name) if hash_mode else set())
+    )
+    not_pip_names: set[str] = set()
+    for name in sorted(n for n in not_pip_candidates if n):
+        hit = depresolve.not_pip_for_distribution(name)
+        if hit is None:
+            continue
+        not_pip_names.add(name)
+        to_install.discard(name)
+        declared_install.discard(name)
+        not_pip_entries.append(
+            {
+                "name": hit["label"],
+                "distribution": name,
+                "hint": hit["hint"],
+                "sources": sorted({it.source for it in by_name.get(name, ()) if it.source})[:4],
+                "imports": sorted(
+                    c.module
+                    for c in scan.classes
+                    if arbitrated.get(c.module, c.distribution) == name
+                )[:4],
+            }
+        )
+    if not_pip_names:
+        # missing 里同样不留：否则计划仍是 ready、空需求集、装后核验 ROOT 必失败
+        missing[:] = [m for m in missing if str(m.get("distribution") or "") not in not_pip_names]
+    # 本计划实际会装的名字：hash 模式 = 整份选中集合（去掉装不了的）；否则 = 上面算出的 to_install（含按声明装的 roots）
+    installing = (set(by_name) - not_pip_names) if hash_mode else set(to_install)
     _, provider_conflicts = _arbitrate_providers(scan.classes, by_name, installing)
     missing_imports = {m["import_name"] for m in missing}
     install_only = tuple(
@@ -1607,7 +1677,9 @@ def plan(
     if hash_mode:
         # hash 模式 = 锁文件语义：整份选中集合就是闭包，全部按 hash 装（pip 要求每一条
         # 都有 hash，缺一条整次拒绝——那是它的判据，这里提前说出来）。
-        without = [it for it in selection.requirements if not it.hashes]
+        without = [
+            it for it in selection.requirements if not it.hashes and it.name not in not_pip_names
+        ]
         if without:
             blocked.append(
                 {
@@ -1617,6 +1689,8 @@ def plan(
                 }
             )
         for it in selection.requirements:
+            if it.name in not_pip_names:
+                continue
             text = depresolve.requirement_string(it)
             if text not in reqs:
                 reqs.append(text)
@@ -1760,6 +1834,7 @@ def plan(
             None if same_target else target_installed,
         ),
         declared_gaps_total=gaps_total,
+        not_pip_installable=tuple(not_pip_entries),
         requirements=tuple(reqs),
         constraints=tuple(cons),
         hashes={k: tuple(v) for k, v in hashes.items()},

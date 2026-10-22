@@ -29,7 +29,9 @@
 * **盲点（写在明处）**：跟进被截断 / 有读不了的本地模块 / 有动态 import 时，反面判据看不全，
   一律不提示；`.save` 的接收者只按「不是已 import 的非 PIL 模块」判（`np.save` / `torch.save` 排除），
   不做类型推断，所以一个导入了 PIL 又对自家对象调 `.save("x.png")` 的脚本会被算上。
-  引擎没有「脚本写了哪些文件」的记录，所以文件证据只来自源码里的字面量路径；不指认文件名。
+  第二种文件证据（路径运行时才定）：本次运行开始后项目素材盘点里新出现 / 被改写的文件（`_new_inventory_file`），
+  给出时 hint 带项目相对路径 `path`。plotly（`write_image`）与 ROOT（`SaveAs` / `Print`）同样覆盖，另认 pdf / svg / eps；
+  这两个库在动态 import 下仍可提示（ADR 0139 修订 2026-10-21）。
 
 纯标准库；被 `prepsession` import（Flask 父进程 import 链）。
 """
@@ -40,10 +42,10 @@ import ast
 import re
 from pathlib import Path
 
-from . import discover, importscan
+from . import discover, importscan, scanbudget
 
 # 素材盘点的可见性判据：单一出处（`iter_assets` 同一份），不在这里抄第二份
-from .project_refresh import PDF_EXT as _PDF_EXT, is_inventoried
+from .project_refresh import PDF_EXT as _PDF_EXT, is_inventoried, iter_assets
 from .workdir import MODE_PROJECT, MODE_PROJECT_ROOT, MODE_SANDBOX
 
 #: 会让 Tavotto 能捕获到 figure 的家族；脚本或其本地模块 import 了其中任何一个都不提示。
@@ -55,7 +57,18 @@ LIB_PILLOW = "pillow"
 LIB_OPENCV = "opencv"
 LIB_IMAGEIO = "imageio"
 LIB_SKIMAGE = "skimage"
-LIBRARIES = (LIB_PILLOW, LIB_OPENCV, LIB_IMAGEIO, LIB_SKIMAGE)
+LIB_PLOTLY = "plotly"
+LIB_ROOT = "root"
+LIBRARIES = (LIB_PILLOW, LIB_OPENCV, LIB_IMAGEIO, LIB_SKIMAGE, LIB_PLOTLY, LIB_ROOT)
+
+#: 「对象方法」式保存：方法名 → (库, 文件里要 import 的顶层包, 接收者若是已 import 的模块则必须属于这些顶层包)。
+#: `write_html` 不在表里——它写的是网页不是图片；plotly 的 `write_image` 才算（svg / pdf 由扩展名判据排除）。
+_SAVE_METHODS: dict[str, tuple[str, str, frozenset[str]]] = {
+    "save": (LIB_PILLOW, "PIL", frozenset({"PIL"})),
+    "write_image": (LIB_PLOTLY, "plotly", frozenset({"plotly"})),
+    "SaveAs": (LIB_ROOT, "ROOT", frozenset({"ROOT"})),
+    "Print": (LIB_ROOT, "ROOT", frozenset({"ROOT"})),
+}
 
 #: 保存位图的函数（解析后的点分全名）→ 库。
 _SAVE_FUNCS: dict[str, str] = {
@@ -70,6 +83,7 @@ _SAVE_FUNCS: dict[str, str] = {
     "imageio.v2.mimwrite": LIB_IMAGEIO,
     "imageio.v3.imwrite": LIB_IMAGEIO,
     "skimage.io.imsave": LIB_SKIMAGE,
+    "plotly.io.write_image": LIB_PLOTLY,
 }
 
 #: 路径字面量的扩展名：这些是位图（含 GIF 动图）；字面量扩展名不在表里就不算「存图」。
@@ -91,6 +105,18 @@ _IMAGE_EXTS = frozenset(
 )
 
 
+#: plotly / ROOT 的输出还常是矢量（PDF / SVG / EPS）：它们同样是「非 Matplotlib 产出」，字面量扩展名在这里就算存图。
+_VECTOR_EXTS = frozenset({".pdf", ".svg", ".eps"})
+_EXTS_BY_LIB: dict[str, frozenset[str]] = {
+    LIB_PLOTLY: _IMAGE_EXTS | _VECTOR_EXTS,
+    LIB_ROOT: _IMAGE_EXTS | _VECTOR_EXTS,
+}
+
+
+def _exts_of(lib: str) -> frozenset[str]:
+    return _EXTS_BY_LIB.get(lib, _IMAGE_EXTS)
+
+
 def _top(name: str) -> str:
     return name.split(".", 1)[0]
 
@@ -102,10 +128,11 @@ class _FileScan(ast.NodeVisitor):
         #: 本地名 → 它绑定的点分全名（`I` → `PIL.Image`；`imwrite` → `cv2.imwrite`）
         self.bound: dict[str, str] = {}
         self.imports_pil = False
+        self.imports_tops: set[str] = set()
         self.imports_mpl = False
-        self.libs: list[str] = []
-        #: 每处「保存位图」调用的路径实参：字面量字符串原文；不是纯字符串字面量为 None
-        self.paths: list[str | None] = []
+        #: 每处「保存位图」调用的 (库, 路径实参)：路径是字面量字符串原文；不是纯字符串字面量为 None。
+        #: 库与路径成对记，后面挑「新写出的文件」时不能把 A 库的路径安到 B 库头上
+        self.saves: list[tuple[str, str | None]] = []
         self._save_calls: list[ast.Call] = []
 
     def visit_Import(self, node: ast.Import) -> None:
@@ -127,6 +154,7 @@ class _FileScan(ast.NodeVisitor):
         self.generic_visit(node)
 
     def _note(self, top: str) -> None:
+        self.imports_tops.add(top)
         if top == "PIL":
             self.imports_pil = True
         elif top in MATPLOTLIB_FAMILY:
@@ -153,41 +181,48 @@ class _FileScan(ast.NodeVisitor):
             func = call.func
             full = self._resolve(func)
             if full is not None and full in _SAVE_FUNCS:
-                if _path_arg_is_image(call):
-                    self.libs.append(_SAVE_FUNCS[full])
-                    self.paths.append(_literal_path(call))
+                pos = _FUNC_FILE_POS.get(full, 0)
+                if _path_arg_is_image(call, _exts_of(_SAVE_FUNCS[full]), pos):
+                    self.saves.append((_SAVE_FUNCS[full], _literal_path(call, pos)))
                 continue
+            if not isinstance(func, ast.Attribute) or func.attr not in _SAVE_METHODS:
+                continue
+            lib, needs, tops = _SAVE_METHODS[func.attr]
             if (
-                self.imports_pil
-                and isinstance(func, ast.Attribute)
-                and func.attr == "save"
-                and not self._receiver_is_foreign_module(func.value)
-                and _path_arg_is_image(call)
+                needs in self.imports_tops
+                and not self._receiver_is_foreign_module(func.value, tops)
+                and _path_arg_is_image(call, _exts_of(lib))
             ):
-                self.libs.append(LIB_PILLOW)
-                self.paths.append(_literal_path(call))
+                self.saves.append((lib, _literal_path(call)))
 
-    def _receiver_is_foreign_module(self, value: ast.expr) -> bool:
-        """`np.save` / `torch.save` / `joblib.dump` 之类：接收者是 import 进来的、不是 PIL 的名字。"""
+    def _receiver_is_foreign_module(self, value: ast.expr, own_tops: frozenset[str]) -> bool:
+        """`np.save` / `torch.save` / `joblib.dump` 之类：接收者是 import 进来的、不属于该库（`own_tops`）的名字。"""
         cur = value
         while isinstance(cur, ast.Attribute):
             cur = cur.value
         if isinstance(cur, ast.Name) and cur.id in self.bound:
-            return _top(self.bound[cur.id]) != "PIL"
+            return _top(self.bound[cur.id]) not in own_tops
         return False
 
 
-def _path_arg(call: ast.Call) -> ast.expr | None:
-    if call.args:
-        return call.args[0]
+#: 函数形式里「输出文件」不是第一个位置参数的：`plotly.io.write_image(fig, file, ...)` 的 `file` 是第二个；
+#: `to_image` 不在表里：它返回字节、不写文件，登记它会让任何新图被安到 plotly 头上（Codex #1271）。表外一律第一个。
+_FUNC_FILE_POS: dict[str, int | None] = {
+    "plotly.io.write_image": 1,
+}
+
+
+def _path_arg(call: ast.Call, pos: int | None = 0) -> ast.expr | None:
+    if pos is not None and len(call.args) > pos:
+        return call.args[pos]
     for kw in call.keywords:
-        if kw.arg in ("fp", "fname", "filename", "uri", "path", "im_path"):
+        if kw.arg in ("fp", "fname", "filename", "uri", "path", "im_path", "file"):
             return kw.value
     return None
 
 
-def _literal_path(call: ast.Call) -> str | None:
-    node = _path_arg(call)
+def _literal_path(call: ast.Call, pos: int | None = 0) -> str | None:
+    node = _path_arg(call, pos)
     if isinstance(node, ast.Constant) and isinstance(node.value, str):
         return node.value
     return None
@@ -204,27 +239,27 @@ def _has_pdf_twin(root: Path, rel: str) -> bool:
         return False
 
 
-def _lands_in_inventory(path: str | None, root: Path, script: str, cwd_mode: str | None) -> bool:
+def _inventory_rel(path: str | None, root: Path, script: str, cwd_mode: str | None) -> str | None:
     """字面量相对路径（不是绝对 / `~` / 带 `..` 往上跳 / Windows 盘符）按运行目录解析成**项目内相对路径**后，
-    会被素材盘点（`project_refresh.is_inventoried`，与 `iter_assets` 同一判据）列出。
+    会被素材盘点（`project_refresh.is_inventoried`，与 `iter_assets` 同一判据）列出；是则返回那个项目相对路径（posix），否则 None。
 
     运行目录：`project_root` 相对项目根，`project` 相对脚本所在目录（沙盒 / 未知：写进会话沙盒，看不见）。
     盲点（写在明处）：同 stem PDF 压位图只看**分析时磁盘当前状态**——脚本之后才生成 / 删除同名 PDF 时可能偏差。"""
     if not path or path.startswith(("/", "\\", "~")) or (len(path) > 1 and path[1] == ":"):
-        return False
+        return None
     parts = [p for p in path.replace("\\", "/").split("/") if p and p != "."]
     if not parts or ".." in parts:
-        return False
+        return None
     if cwd_mode == MODE_PROJECT_ROOT:
         base: list[str] = []
     elif cwd_mode == MODE_PROJECT:
         base = [p for p in script.replace("\\", "/").split("/") if p and p != "."][:-1]
     else:
-        return False
+        return None
     rel = "/".join([*base, *parts])
     if not is_inventoried(rel, pdf_twin=_has_pdf_twin(root, rel)):
-        return False
-    return not _crosses_symlink_dir(root, rel)
+        return None
+    return None if _crosses_symlink_dir(root, rel) else rel
 
 
 #: 文件系统时间戳粗糙（FAT / HFS+ 整秒）：mtime 允许比运行开始早这么多秒仍算「本次写的」
@@ -283,11 +318,54 @@ def _crosses_symlink_dir(root: Path, rel: str) -> bool:
     return False
 
 
-def _path_arg_is_image(call: ast.Call) -> bool:
-    """保存目标（这几个 API 的第一个实参）的字面量扩展名不是位图就 False；不是字面量按「可能是」True。"""
-    node = _path_arg(call)
+#: 动态 import（`import_module(拼出来的名字)`）下仍可提示的库：ROOT / RooFit 脚本常按拟合结果动态加载自己生成的参数模块
+#: （真实样本 fit_mass.py），这类脚本几乎不会在动态模块里再装 matplotlib；Pillow 等位图库保持「看不全就不说」。
+_DYNAMIC_TOLERANT = frozenset({LIB_ROOT, LIB_PLOTLY})
+
+#: 运行时文件证据的盘点预算：只是「找本次新写的文件」，别让大项目拖住 `report`
+_INVENTORY_SECONDS = 3.0
+
+
+def _allowed_exts(libs: list[str]) -> frozenset[str]:
+    """静态上出现过的库所认的输出扩展名并集（只有位图库的脚本，新出现的 PDF 不算它写的）。"""
+    out: frozenset[str] = frozenset()
+    for lib in set(libs):
+        out |= _exts_of(lib)
+    return out
+
+
+def _new_inventory_file(
+    root: Path, run_started_at: float | None, exts: frozenset[str]
+) -> str | None:
+    """素材盘点（`iter_assets`，带时间预算，不新开遍历）里 mtime 不早于本次运行开始的文件里最新的那个的项目相对路径；
+    没有 / 没传开始时间 / 读不了 → None。盘点只认 png / jpg / tiff / pdf，svg / eps 等盘点外的格式只能走字面量路径证据。"""
+    if run_started_at is None:
+        return None
+    best: tuple[float, str] | None = None
+    try:
+        budget = scanbudget.Budget(limits=scanbudget.Limits(max_seconds=_INVENTORY_SECONDS))
+        for path, _kind in iter_assets(root, budget=budget):
+            if path.suffix.lower() not in exts:
+                continue
+            try:
+                mtime = path.stat().st_mtime
+                rel = path.relative_to(root).as_posix()
+            except (OSError, ValueError):
+                continue
+            if mtime >= run_started_at - _MTIME_SLACK_S and (best is None or mtime > best[0]):
+                best = (mtime, rel)
+    except (OSError, ValueError):
+        return None
+    return best[1] if best else None
+
+
+def _path_arg_is_image(
+    call: ast.Call, exts: frozenset[str] = _IMAGE_EXTS, pos: int | None = 0
+) -> bool:
+    """保存目标（按该 API 的签名取位置，多数是第一个实参）的字面量扩展名不在该库的图片 / 图形格式里就 False；不是字面量按「可能是」True。"""
+    node = _path_arg(call, pos)
     ext = _literal_ext(node)
-    return ext is None or ext in _IMAGE_EXTS
+    return ext is None or ext in exts
 
 
 def _literal_ext(node: ast.expr | None) -> str | None:
@@ -313,7 +391,7 @@ def detect(
     sandbox_dir: str | None = None,
 ) -> dict | None:
     """脚本（含有界跟进的本地模块）是不是用位图库自己写了图片文件；是则回 `{"kind": "raster_script",
-    "library": <LIBRARIES 之一>, "in_project": bool}`，否则 None（含「看不全」）。读不了 / 解析不了一律 None，不抛。
+    "library": <LIBRARIES 之一>, "in_project": bool, "path": 项目相对路径 | None}`，否则 None（含「看不全」）。读不了 / 解析不了一律 None，不抛。
 
     **文件证据**：至少一处字面量输出路径解析出的文件此刻存在且 mtime 不早于 `run_started_at`（本次运行开始，
     epoch 秒）才回提示；没传 `run_started_at` 也按没有证据（None）。沙盒模式（默认）下相对路径按
@@ -329,10 +407,9 @@ def detect(
         scan = importscan.scan(root_p, script)
     except (OSError, ValueError, RecursionError):
         return None
-    if scan.truncated or scan.problems or scan.dynamic:
+    if scan.truncated or scan.problems:
         return None  # 反面判据（有没有 matplotlib）看不全：不说
-    libs: list[str] = []
-    paths: list[str | None] = []
+    saves: list[tuple[str, str | None]] = []
     for rel in scan.files:
         text, problem = discover.read_source(root_p / rel)  # PEP 263 / BOM；解不出就不说
         if problem is not None or text is None:
@@ -346,21 +423,64 @@ def detect(
         if fs.imports_mpl:
             return None
         fs.finish()
-        libs += fs.libs
-        paths += fs.paths
+        saves += fs.saves
     # 扫描只读 .py；编译扩展 / 命名空间包的内部看不见，已在 scan 里记入 problems 或不进 files，这里不再猜
+    libs = [lib for lib, _p in saves]
     if not libs:
         return None
+    if scan.dynamic and not set(libs) <= _DYNAMIC_TOLERANT:
+        return None  # 动态 import 可能装进没扫过的 matplotlib：位图库脚本看不全就不说
     # 多个库时取先出现的；顺序按 LIBRARIES 稳定化，保证同一份脚本总给同一个答案
     fresh = [
-        p
-        for p in paths
+        (lib, p)
+        for lib, p in saves
         if _written_since(_fs_path(p, root_p, script, cwd_mode, sandbox_dir), run_started_at)
     ]
     if not fresh:
-        return None  # 没有这次运行写出文件的证据：不说（未调用的 helper / 没走到的分支 / 动态路径 / 旧文件）
-    in_project = any(_lands_in_inventory(p, root_p, script, cwd_mode) for p in fresh)
+        # 第二种证据（运行时才定的输出路径）：本次运行开始后，项目素材盘点里新出现 / 被改写的图片文件
+        found = _new_inventory_file(root_p, run_started_at, _allowed_exts(libs))
+        if found is None:
+            return (
+                None  # 没有这次运行写出文件的证据：不说（未调用的 helper / 没走到的分支 / 旧文件）
+            )
+        # 新文件是哪个库写的（ADR 0139 证据规则：证据缺失一律沉默，宁可少说不说假话）：候选只有「输出路径运行时才定」
+        # 的那几处保存，加上字面量路径按项目根 / 脚本目录解析后**正是**这个新文件的那几处（沙盒模式下字面量是对沙盒核的，
+        # 文件却写进了项目，这条字面量就是最直接的证据），且扩展名得是该库认的。其余字面量上面已核过不是本次写的。
+        # 候选库唯一才归属；PNG 这类两个库都认、而静态上分不出哪个真被调用（未调用的 helper 也算候选）→ 不说
+        suffix = Path(found).suffix.lower()
+        target = root_p / found
+        candidates = {
+            lib
+            for lib, p in saves
+            if suffix in _exts_of(lib)
+            and (
+                p is None
+                or target
+                in (
+                    _fs_path(p, root_p, script, MODE_PROJECT_ROOT),
+                    _fs_path(p, root_p, script, MODE_PROJECT),
+                )
+            )
+        }
+        if len(candidates) != 1:
+            return None
+        return {
+            "kind": "raster_script",
+            "library": next(iter(candidates)),
+            "in_project": True,
+            "path": found,
+        }
+    # 库与路径成对：只在「确有新文件」的那几处保存里挑库，路径也取自同一库的新文件
+    fresh_libs = {lib for lib, _p in fresh}
     for lib in LIBRARIES:
-        if lib in libs:
-            return {"kind": "raster_script", "library": lib, "in_project": in_project}
+        if lib not in fresh_libs:
+            continue
+        rel: str | None = None
+        for fl, p in fresh:
+            if fl != lib:
+                continue
+            rel = _inventory_rel(p, root_p, script, cwd_mode)
+            if rel is not None:
+                break
+        return {"kind": "raster_script", "library": lib, "in_project": rel is not None, "path": rel}
     return None

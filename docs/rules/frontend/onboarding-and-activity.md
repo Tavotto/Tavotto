@@ -13,7 +13,7 @@
 * **教程状态只在 `store/onboardingStore.ts`**（`tavotto.onboarding`）：状态机 / 步骤 id / 提示记录 /
   欢迎页出现过没有 / 演示图上的两处改动（图的 pt，不是 DOM 坐标）；不记 DOM、文案、路径、对象 id。
   只有 `surface`（教程层此刻显示哪一屏）不持久化。改步骤内容升 `ONBOARDING_FLOW_VERSION`，
-  **不改 step id**（`lib/onboarding/stepIds.ts` 是持久化格式的一部分）。删步骤要在 `migratePersisted` 里把停在它上面的进行中 / 暂停用户落到新位置，并同步遥测枚举（前端 / `engine/telemetry.py` / 代理契约三处同源，代理把旧值登记进 `LEGACY_ENUM_VALUES` 继续收）；2026-09-30 取消 `welcome`、2026-10-19 换成三步教程（flow v3，ADR 0136）即照此办理——**换了一套教程的进行中用户记成用户暂停**，不在启动时被拽进新教程；已完成 / 已跳过的不被打扰。跳过是 `skipped`，绝不伪装 `completed`。
+  **不改 step id**（`lib/onboarding/stepIds.ts` 是持久化格式的一部分）。删步骤要在 `migratePersisted` 里把停在它上面的进行中 / 暂停用户落到新位置，并同步遥测枚举（前端 / `engine/telemetry.py` / 代理契约三处同源，代理把旧值登记进 `LEGACY_ENUM_VALUES` 继续收）；2026-09-30 取消 `welcome`、2026-10-19 换成三步教程（flow v3，ADR 0136）即照此办理——**升级后旧版留下的已完成 / 已跳过 / 进行中 / 暂停 / 未开始一律迁回新手态（`not_started`、`welcomeSeenAt` 清空、`hintSeen` 保留），把新教程自动看一次，只一次**（2026-10-21 用户裁决，ADR 0136 修订，覆盖此前「已完成 / 已跳过的不被打扰」；迁移纪元为 flow v4——被 v3 代码读过并写回的旧 blob 也要迁）；之后完成 / 跳过照常是终态。跳过是 `skipped`，绝不伪装 `completed`。
 * **入口共用 `lib/onboarding/tutorial.ts`**（`tutorialEntry / runTutorialEntry / markDemoStep / finishTutorial /
   skipTutorial / restartTutorial / leaveFromWelcome / resetHints`）：主页、全部项目、顶栏更多、命令面板、设置常规、画布空态。
   **不许在入口里判状态**。三步教程（ADR 0136）**不打开项目、不发请求**：入口只改 onboardingStore 并打开教程层。
@@ -46,7 +46,9 @@
   中心在框里，悬停 / 计时都不算）、图例离原位 ≥ `LEGEND_MIN_MOVE_PT`、提交的字号大于进入这一步时的字号；
   「下一步」只挪指针（`onboardingStore.next` 在当前步骤没完成时是 no-op）。拖动在 pointercancel /
   lostpointercapture / 失焦 / 缩放 / 切后台 / 卸载时作废、监听随卸载摘掉；键盘（空格 / 方向键 / 回车 / Esc）
-  与「直接使用示例」是等价入口。
+  是等价入口，**没有「直接使用示例」捷径**（第一步只教拖放）。卡片放进去之后先演 1.8 秒「渲染中」
+  （`RENDER_MS`，按时间走、不读任何作业），走完才 `markDemoStep('demo_import')`；渲染途中离开不补记完成，
+  减少动态效果时直接落到完成（`tween` 契约）。这段是有意的产品设计（ADR 0136 §2 修订），别当假进度删掉。
 * **按任务触发的提示 `layout_page_bounds`（P04，2026-10-20）**：第一次**用户主动**从快速编辑回到排版
   （`store/workspace.returnToLayout` 发唯一一枪 `workspace.returned_to_layout`，无 payload；`exitToLayout` 的被动退出——
   换文档 / 修剪 / 定位问题 / 启动恢复——不发，所以「启动时恢复到 layout」不触发）→ 一条非模态说明「白色纸面就是导出的
@@ -62,8 +64,8 @@
   没有干净信号就不做；多选对齐 / 分布由既有 `multi_select` 覆盖，问题定位 / 修复入口由既有 `problem_found` + 问题抽屉覆盖。
 * **教程层的边界**：portal 到 `body`、`z-overlay`（对话框压在它上面），打开期间 `#root` 加 `inert`；层里的按键
   不冒泡到 window（工作台快捷键不在看不见的画布上生效）；系统拖进来的文件拒收（`dropEffect = 'none'`，不读
-  `DataTransfer.files`）只说一句，主页的 `onNativeFileDrop` 在教程层开着时也不认（第二道闸）。首次打开（没开始过、
-  `welcomeSeenAt` 空、停在主页、没有自己的项目）才自己弹欢迎页，只一次；上次停在教程中途的接着那一步。
+  `DataTransfer.files`）只说一句，主页的 `onNativeFileDrop` 在教程层开着时也不认（第二道闸）。新手态（没开始过、
+  `welcomeSeenAt` 空）且启动后停在主页才自己弹欢迎页，只一次——**不再看有没有自己的项目**（升级的老用户被迁回新手态后走同一条路径）；上次停在教程中途的接着那一步。
   e2e 的 `noProject` 用例由 fixture 默认记成「欢迎页已出现过」，测教程的 spec `test.use({ firstRunWelcome: true })`。
 * **锚点是稳定的 `data-*`**：`data-onboarding-anchor="export | export-scope | to-layout
   | tutorial-entry | help-tutorial | settings-tutorial"`、`data-object-id`、`data-card`、`data-rail`、

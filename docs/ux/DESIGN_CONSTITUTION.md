@@ -774,13 +774,15 @@ UI 正文 14 / 控件字最小 12、台阶 2px；强调至少高一档且配深�
   surface-2 底的等宽片里；thinking 是一句话，Sparkles + ink-3、无片。前端不写死那个字形（iconography 门禁
   也不许字符当图标），后端换标记照样能拆。
 
-### 只上一处的会滚的数字
-`@sfinterface/numbers`（MIT、零依赖、静止时与普通文字像素一致、原生 reduced-motion）只给**顶栏缩放读数**
-（`TopBar.ZoomControls`）：一步到位的缩放（± / 预设 / 适应）只有变了的位滚过去，说的是「变了多少、往哪变」。
+### 只上两处的会滚的数字
+`@sfinterface/numbers`（MIT、零依赖、静止时与普通文字像素一致、原生 reduced-motion）只给两处：**顶栏缩放读数**
+（`ZoomControls`）与**画布尺寸**（拖页面边时的「宽 / 高 N mm」标注 `canvas/PageEdgeResize` + 属性栏「画布」页头的只读尺寸）。
+缩放读数：一步到位的缩放（± / 预设 / 适应）只有变了的位滚过去，说的是「变了多少、往哪变」。
 两条边界：读数显示的是**补间的终点值**（`viewportStore.readoutZoom`，一起步就是目标，与画布同拍，不逐帧滚）；
 滚轮 / 捏合是连续输入，`readoutRolls` 为假时 `duration={0}` 即时换数——柱子不会永远在半路。时长接 token
 （`--sfi-resolve` = slow 240、`--sfi-settle` = exit 90），`useGrouping:false`，locale 跟 i18n，版本锁死
-0.3.4（两天九版、作者自述会动）。**不上**的地方：HUD 光标 / 尺寸读数（拖动中每帧都变）、输入框、导出像素预览
+0.3.4（两天九版、作者自述会动）。画布尺寸沿用同一条规矩：逐 mm 的连续拖动即时换（`duration={0}`），吸上 / 离开栏宽、⌥ 按下 / 松开这类离散跳变与属性栏一步到位的改动才滚
+（`interactionStore.pageEdge.rolls`）。**不上**的地方：HUD 光标读数（拖动中每帧都变）、输入框、导出像素预览
 （先看一周再说）。
 
 ### 看到了但不学

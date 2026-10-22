@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { ArrowLeft, ArrowRight, Check, ChevronRight } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { PRODUCT_NAME } from '@/lib/brand'
-import { dragRegionProps, TRAFFIC_LIGHTS_INSET, windowChrome } from '@/lib/desktop'
+import { dragRegionProps, TRAFFIC_LIGHTS_INSET, WINDOW_CONTROLS_INSET, windowChrome } from '@/lib/desktop'
 import { REAL_STEP_IDS, type StepId } from '@/lib/onboarding/stepIds'
 import { skipTutorial } from '@/lib/onboarding/tutorial'
 import { cn } from '@/lib/utils'
@@ -62,7 +62,13 @@ export function TutorialSteps() {
     <div className="flex min-h-0 flex-1 flex-col px-4 pb-4 [@media(min-width:1000px)]:px-7" data-tutorial-view="steps" data-tutorial-step={step}>
       <header
         className="relative flex h-14 shrink-0 items-center justify-between"
-        style={windowChrome() === 'overlay' ? { paddingLeft: TRAFFIC_LIGHTS_INSET - 16 } : undefined}
+        style={
+          windowChrome() === 'overlay'
+            ? { paddingLeft: TRAFFIC_LIGHTS_INSET - 16 }
+            : windowChrome() === 'menu-button'
+              ? { paddingRight: WINDOW_CONTROLS_INSET - 16 }
+              : undefined
+        }
         {...dragRegionProps('self')}
       >
         <div className="flex items-center gap-2">

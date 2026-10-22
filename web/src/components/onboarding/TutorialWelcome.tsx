@@ -231,6 +231,7 @@ function Callouts({ size }: { size: { w: number; h: number } }) {
               }}
             />
             <span
+              data-welcome-callout-dot=""
               className="absolute h-1.5 w-1.5 rounded-full bg-accent"
               style={{ left: p.anchor.x - 3, top: p.anchor.y - 3 }}
             />

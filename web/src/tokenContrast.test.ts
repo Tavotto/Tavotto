@@ -314,6 +314,12 @@ for (const theme of THEMES) {
       expect(contrast(token('surface'), token('ink'))).toBeGreaterThanOrEqual(4.5)
     })
 
+    it('画布尺寸标注 / 拖边把手（dim，图形元素）对画布灰与 surface（标注条底）≥3:1', () => {
+      for (const g of ['canvas', 'surface']) {
+        expect(contrast(token('dim'), token(g)), g).toBeGreaterThanOrEqual(3)
+      }
+    })
+
     it('画布等级标记：每一档 pin 的项数字（10px）对它自己的底色 ≥4.5:1；底色对画布灰 / 纸白 ≥3:1（Codex #832）', () => {
       for (const [severity, { fill, text }] of Object.entries(PIN_COLORS)) {
         const f = rc(fill)

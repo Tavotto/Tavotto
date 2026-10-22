@@ -3,7 +3,8 @@
 日期：2026-09-23 · 状态：**Accepted**
 修订：[0018 项目 Python 环境解析](0018-project-python-environment-resolution.md) §三（不做 Conda / pyenv 发现）、
 [0044 系统解释器作为修复候选](0044-system-interpreter-as-repair-candidate.md) §二（不无感切换）
-本 ADR 自身的修订：文末「修订（2026-09-25）」——映射不到包名的 import 也触发发现（QA ENV-08-B1）
+本 ADR 自身的修订：文末「修订（2026-09-25）」——映射不到包名的 import 也触发发现（QA ENV-08-B1）；
+「修订（2026-10-21）」——Windows 发现补强、确认能跑者优先、落选原因
 相关：[0057 首开的环境与工作目录](0057-first-open-environment-and-workdir.md)、
 [0061 联合依赖准备](0061-joint-dependency-preparation.md) §六（跑前的门）、
 [0053 准备接口的公开投影](0053-foundation-contracts-and-preparation.md) §二（投影不带机器路径）
@@ -161,3 +162,64 @@ import 不 import 得到（`deprepair.unknown_imports_missing` → `userenvs.imp
 全程不装（前后 `pip freeze` 一致）。
 前端：`DependencyPrepareDialog.test.tsx`「用户自己的环境」、`notificationRail.test.tsx`「已改用你的环境」、
 `useServerEvents.test.ts` 的 `engine.environment_adopted`。
+
+## 修订（2026-10-21）：Windows 上找到「脚本原本能跑」的环境，并说清其余为什么落选
+
+**动机。** 一份真实 Windows 诊断包：脚本 `import ROOT`（CERN ROOT），用户很可能有装好 ROOT 的 Conda 环境，Tavotto 却用了
+内置 Python。ADR 0079 / 0114 的机制（`userenvs.discover` → `deprepair._detect_environment_unlocked` → `evaluate` / `rank` /
+`best`）已经按 import 名单体检，问题是 **Windows 上发现太窄**：Conda 只认 `~` / `%LOCALAPPDATA%` / `ProgramData` 下四个固定
+名字，装在 `D:\anaconda3`、环境放在 `E:\envs` 的看不见；python.org 安装器登记的解释器也不在任何来源里。
+
+**用户裁决（2026-10-21）：脚本默认在它原本能跑的环境里自动运行。** 机制不变（内置能跑就不换；内置跑不了才在发现到的
+环境里挑确认能跑的），变的是发现面与可解释性。
+
+**新增来源（仍是只读磁盘 / 注册表记录，仍不问任何 CLI、不执行任何东西）。**
+
+1. `.condarc`（`%CONDARC%`、`~/.condarc`，Windows 再加 `C:\ProgramData\conda\.condarc`）：`envs_dirs` 里的目录，其子目录各是一个环境；
+   `pkgs_dirs` 里名为 `pkgs` 的目录，其上一级是 Conda 根。只解析简单列表（块式 `- x` / 行内 `[a, b]`，去引号与行尾注释，
+   每键最多 32 项），纯标准库，经 `scanbudget.read_regular_text` 有界读；读不了记一条「看不全」，不抛。
+2. PATH 里的 `conda.exe` / `mamba.exe` / `micromamba.exe`（Windows）：`Scripts` / `condabin` 的上一级、`Library\bin` 的上两级
+   就是安装根。**只 `is_file`，绝不执行**——「不问任何 CLI」原样保持。另加 `MAMBA_ROOT_PREFIX`，Windows 常见安装根列表补上
+   `micromamba`。网络路径（`_local_hint`）不碰。这些根与 `.condarc` 的根走同一个 `_conda_prefixes()` 循环，因此同样过
+   重定向检查与扫描预算 / 取消。
+3. PEP 514 注册表（`userenvs._windows_registry_pythons`，来源 `windows_registry`）：HKCU 与 HKLM 的
+   `Software\Python\<公司>\<标签>\InstallPath`，64 位与 32 位（`WOW6432Node`）视图都读；取 `ExecutablePath`，没有就用默认值
+   （安装目录）+ `python.exe`；公司 / 标签各有上限，逐项记预算。非 Windows 回空；读取器可注入（`winreg` 只在 Windows 上
+   导入），测试不依赖真 Windows。
+
+**来源档位。** 注册表来源与 Conda / pyenv 同属第 3 档（「用户自己装的解释器」）：安装器替用户登记的，说明用户装过它；但没有
+项目线索或终端默认指向它，所以不高于项目 / 登录 shell，仍高于老链条的系统解释器（第 4 档）。Anaconda 的安装器也会登记，
+与 Conda 发现同一个文件时按 (目录, 真实文件) 去重，保留先发现的 Conda 标签。体检上限（`PROBE_LIMIT`）与 `static_order`
+照旧：新来源排在档位内的发现顺序里，不会饿死更靠前的候选。
+
+**排序（`rank()`）。** 第一把尺子新加「体检确认程度」：确认装齐且健康 > 没量到（延后 / 项目说了算、运行前不起）> 确认跑不了；
+之后才是原来的来源档位 → verified → Python 新旧。动机：来源再靠前（项目线索、终端默认），只要体检确认它缺脚本要的
+import，就不该排在确认能跑的环境前面。`best()` 本来只在 `satisfies` 的里面挑，所以**挑选结果不变**；变的是候选表
+（`user_environment_offer`）里非装齐项的展示顺序。「内置能跑就不换」不受影响——它在 `_detect_environment_unlocked` 的
+`runs_now` 分支（此时只有项目声明的候选可排在默认链条前面），`rank()` 不参与。
+
+**落选原因。** 每个被评估但没选用的候选产出一条结构化原因，挂在 `pool.EnvironmentDecision.rejected`
+（`decide_environment_pinned` 的返回）上：`{"id", "source", "label", "reason", "missing", "import_failed"}`，不带路径
+（§五），`id` 与 `public()` 同一个不透明 id。`reason` 是稳定码闭集（`userenvs.REJECT_CODES`）：
+
+| 码 | 含义 |
+|---|---|
+| `missing_imports` | 健康，但脚本要的某些 import 得不到（`missing` 列出缺哪些，如 `ROOT`） |
+| `import_failed` | 包在，import 时抛错（ABI / 依赖 / DLL） |
+| `python_out_of_range` | Python 版本不在 Tavotto 矩阵内 |
+| `no_matplotlib` | 不是绘图环境 |
+| `worker_chain_failed` | Tavotto worker 的启动导入链断了 |
+| `activation_failed` | Conda 激活取环境失败（瞬时，不缓存） |
+| `probe_timeout` | 体检超时（`projectenv.probe_environment` 在 `TimeoutExpired` 时多带 `timed_out: true`） |
+| `unusable` | 解释器起不来 / 体检进程崩溃 |
+| `not_checked` | 没量到（延后到运行时；项目说了算的候选运行前不起） |
+| `outranked` | 自己也能跑，只是排序靠后，被选用的那个更优 |
+
+默认链条能跑、没有候选可比时没有体检，`rejected` 为空。这一版只产出字段，不做前端卡片与诊断包接线（后续 PR 读它）。
+
+**不变。** 绝不安装、不执行 CLI、公开载荷不带路径、用户显式决定过的一个不碰、`TAVOTTO_USER_ENV_DISCOVERY=0` 总开关。
+
+**看护。** `tests/test_user_environment_windows_discovery.py`：`.condarc` 解析 / 有界 / `envs_dirs` 发现，PATH 反推（含
+`Library\bin`、网络路径不碰、不执行），注册表（HKCU / HKLM / 32 位视图 / `ExecutablePath` 优先 / 非 Windows 空 / 预算耗尽），
+来源档位，`rank()` 三档确认程度，落选原因十个码与「不带路径」；`tests/test_environment_autodetect.py`「落选原因」一组：
+决定结果上的 `rejected`、都跑不了时仍逐个说明、内置能跑时为空。

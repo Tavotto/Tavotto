@@ -142,6 +142,14 @@
   同族先例：
   `_AUTOSCALE`（自动缩放）、`_NO_BBOX`（没有框）、`_get_coll_edgecolor`（映射通道）。
   哨兵只活在 `originals` 里，不进 patch、不过 JSON。看护 `tests/test_patch_edgecolor_mode.py`。
+- **Collection 只改 RGB 时保留源颜色的逐元素 alpha**：matplotlib 的 `set_color` / `set_facecolor` /
+  `set_edgecolor` 整体替换，`_alpha is None` 时把每段补成不透明——`LineCollection(colors=[逐段 RGBA])` 改一次色就全实心。
+  `overrides._rgb_keeping_source_alpha` 是 2D Collection 面 / 边色（`_set_coll_color`）与线组 `color` 的唯一入口：`v` 不带
+  alpha（`_rgb_only`）且源设定（`_original_*`）有不全为 1 的 alpha 列时，只换 RGB、留 alpha 列；Artist 全局 alpha（`_alpha`）
+  不碰（改 alpha 滑块覆盖颜色 alpha，清掉后逐元素透明度回来，matplotlib 语义）；用户显式给的 alpha 原样用；`alpha=数组`、
+  3D 集合原样透传。线组 `color` 的 getter 回灌 `_original_edgecolor`（设定）而不是 `get_color()`（已被标量 alpha 抹平）。
+  看护 `tests/test_collection_color_alpha.py`（原生对照、逐段 alpha 反推、改色→改 alpha→留 alpha→清空 冷热一致、同色独立
+  marker / proxy / 自定义 handler / 重复 label 不被改）。
 - **会读环境重解析的 setter，调用期间把「未设」花纹色钉成创建时的值、跑完还原模式（#874）**：matplotlib ≥3.11 的
   `Patch.set_alpha` / `Patch.set_fill` / `Collection.set_alpha` 把 `_original_hatchcolor is None` 的花纹色
   按**此刻**的 `rcParams['hatch.color']` 重解析。脚本在 `rc_context` / `style.context` 里改过 `hatch.color`

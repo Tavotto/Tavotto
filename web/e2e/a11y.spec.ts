@@ -18,7 +18,7 @@ import AxeBuilder from '@axe-core/playwright'
 import type { Page } from '@playwright/test'
 import os from 'node:os'
 import path from 'node:path'
-import { expect, openElementsTab, test, waitForFigureEdit, writeRuntimeNamedProject } from './fixtures'
+import { expect, ONBOARDING_FLOW_VERSION, openElementsTab, test, waitForFigureEdit, writeRuntimeNamedProject } from './fixtures'
 import { indistinctFieldBoxes, lowContrastNodes } from './contrast'
 import { resolveScanned, type ScannedNode } from './scannedNodes'
 import { chooseTheme, openGeneralSettings } from './theme'
@@ -249,11 +249,14 @@ test('项目选择器：axe 无违规、无未定性的「查不了」、自算�
 
 test('主页老手版：axe 无违规、无未定性的「查不了」、自算对比度达标', async ({ app, page }) => {
   // 走完了教程的人（onboarding 那一格 = completed）
-  await page.addInitScript(() =>
-    window.localStorage.setItem(
-      'tavotto.onboarding',
-      JSON.stringify({ schemaVersion: 1, flowVersion: 2, status: 'completed', completedSteps: [], skippedSteps: [] }),
-    ),
+  // 浏览器侧序列化不带 Node 变量：版本号以实参传进去
+  await page.addInitScript(
+    (flowVersion) =>
+      window.localStorage.setItem(
+        'tavotto.onboarding',
+        JSON.stringify({ schemaVersion: 1, flowVersion, status: 'completed', completedSteps: [], skippedSteps: [] }),
+      ),
+    ONBOARDING_FLOW_VERSION,
   )
   const a = await app({ noProject: true })
   await page.goto(a.baseURL)

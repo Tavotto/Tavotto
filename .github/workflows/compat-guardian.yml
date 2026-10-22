@@ -92,12 +92,15 @@ jobs:
           pip install -e ".[dev,ci]"
           # shellcheck disable=SC2046
           pip install $(python scripts/ci/runtime_pins.py --include-corpus)
+          # CG-07 data_source 变换要写 / 读 xlsx 与 parquet：只在 Guardian 的 job 里装，钉死版本
+          # （parquet footer 的 created_by 带 pyarrow 版本）；产品依赖与 pyproject 不变
+          pip install openpyxl==3.1.5 pyarrow==26.0.0
       - name: Approved fonts (sha256 verified)
         run: |
           python scripts/fetch_fonts.py
           python scripts/fetch_fonts.py --check
       - name: Guardian contract tests
-        run: python -m pytest -p no:cacheprovider -q tests/test_compat_guardian*.py tests/test_compat_explore.py tests/test_compat_triage.py tests/test_compat_minimize.py
+        run: python -m pytest -p no:cacheprovider -q tests/test_compat_guardian*.py tests/test_compat_explore*.py tests/test_compat_triage.py tests/test_compat_minimize.py
       - name: Guardian engine suite (reviewed fixtures)
         timeout-minutes: 8
         shell: bash
@@ -195,6 +198,9 @@ jobs:
           pip install -e ".[dev,ci]"
           # shellcheck disable=SC2046
           pip install $(python scripts/ci/runtime_pins.py --include-corpus)
+          # CG-07 data_source 变换要写 / 读 xlsx 与 parquet：只在 Guardian 的 job 里装，钉死版本
+          # （parquet footer 的 created_by 带 pyarrow 版本）；产品依赖与 pyproject 不变
+          pip install openpyxl==3.1.5 pyarrow==26.0.0
       - name: Approved fonts (sha256 verified)
         run: |
           python scripts/fetch_fonts.py

@@ -27,7 +27,9 @@ CRITERIA = {
     ),
     "structure": (
         "shape-preserving only: every {gid.prop: value} of the parent's Tavotto manifest is "
-        "present and equal (compat_matrix._same_value) in the candidate's"
+        "present and equal (compat_matrix._same_value) in the candidate's; every data element's "
+        "read-only data_fingerprint part (sha256, shape, finite) is equal, and a fingerprint that "
+        "is over_budget / unavailable on either side leaves the layer not_run"
     ),
     "edit": "the parent case's reviewed mutations apply, show in the manifest and revert (compat_matrix.stage_edit)",
     "replay": "hot == clear+replay == fresh worker replay (compat_matrix.stage_replay)",
@@ -157,36 +159,129 @@ def pixel_judgment(native_shots: dict, tavotto_shots: dict, out_dir: Path) -> di
     return out
 
 
+#: 数据指纹在快照里的键：`<gid>.__data__.<part>` → {sha256, shape, finite}；量不了的元素是
+#: `<gid>.__data__` → {"status": "over_budget" | "unavailable"}。manifest 里的 `data_fingerprint`
+#: 是只读事实（ADR 0083），不进 `editable`，所以 `_editable_snapshot` 看不见它。
+DATA_KEY = "__data__"
+
+
+def data_snapshot(manifest: dict) -> dict:
+    out: dict = {}
+    for el in manifest.get("elements", []):
+        fp = el.get("data_fingerprint")
+        if fp is None:
+            continue
+        if fp.get("status") != "ok":
+            out[f"{el['gid']}.{DATA_KEY}"] = {"status": fp.get("status") or "unavailable"}
+            continue
+        for part, digest in sorted((fp.get("parts") or {}).items()):
+            out[f"{el['gid']}.{DATA_KEY}.{part}"] = {
+                "sha256": digest.get("sha256"),
+                "shape": digest.get("shape"),
+                "finite": digest.get("finite"),
+            }
+    return out
+
+
+def _is_data_key(key: str) -> bool:
+    return f".{DATA_KEY}" in key
+
+
+def _data_gid(key: str) -> str:
+    return key.partition(f".{DATA_KEY}")[0]
+
+
 def structure_judgment(parent_snap: dict, cand_snap: dict) -> dict:
     """Parent vs candidate `{stem: {"gid.prop": value}}` (shape-preserving candidates only).
 
-    A parent key missing from the candidate, or present with another value, is a mismatch. Keys
-    only the candidate has are not (a transform may add an artist). A stem the candidate lacks is
-    a figure-count matter that `compare` already reports.
+    A parent key missing from the candidate, or present with another value, is a mismatch. Editable
+    keys only the candidate has are not (a transform may add an artist); a data element only the
+    candidate has is (an extra plotted series is changed data). A stem the candidate lacks is a
+    figure-count matter that `compare` already reports.
+
+    Data fingerprints (`gid.__data__.part`) are compared exactly: a shape-preserving candidate does
+    not change the user's figure, so its data must not change either. A fingerprint that was not
+    measured on either side (over_budget / unavailable) is no conclusion: `not_run`, never passed.
+    `data_compared` counts the parts actually compared, so an empty comparison is visible.
     """
     same = _cm()._same_value
-    bad = []
+    bad: list[dict] = []
+    unresolved_keys: list[str] = []
+    data_compared = 0
     for stem in sorted(set(parent_snap) & set(cand_snap)):
         p, c = parent_snap[stem], cand_snap[stem]
         for key in sorted(p):
-            if key not in c:
+            if _is_data_key(key):
+                gid, _, part = key.partition(f".{DATA_KEY}")
+                part = part.lstrip(".")
+                pv, cv = p[key], c.get(key)
+                lost = c.get(f"{gid}.{DATA_KEY}")
+                if "status" in pv or (cv is None and lost is not None):
+                    side = "parent" if "status" in pv else "candidate"
+                    why = pv["status"] if "status" in pv else lost["status"]
+                    unresolved_keys.append(f"{stem}:{gid}: data fingerprint {side} {why}")
+                    continue
+                data_compared += 1
+                if cv is None or pv != cv:
+                    bad.append(
+                        {
+                            "stem": stem,
+                            "key": key,
+                            "aspect": "data",
+                            "gid": gid,
+                            "part": part,
+                            "parent": pv,
+                            "candidate": cv if cv is not None else "<missing>",
+                        }
+                    )
+            elif key not in c:
                 bad.append({"stem": stem, "key": key, "parent": p[key], "candidate": "<missing>"})
             elif not same(p[key], c[key]):
                 bad.append({"stem": stem, "key": key, "parent": p[key], "candidate": c[key]})
-    if not bad:
-        return {"status": "passed", "differences": [], "compared": len(parent_snap)}
-    return {
-        "status": "failed",
-        "compared": len(parent_snap),
-        "differences": [
-            {
-                "kind": "structure_mismatch",
-                "summary": f"{len(bad)} manifest field(s) differ from the parent, first {bad[0]['stem']}:{bad[0]['key']}",
-                "category": "manifest_semantics",
-                "evidence": {"mismatches": bad[:20], "total": len(bad)},
-            }
-        ],
-    }
+        # 数据要双向比：候选多出一条父本没有的数据元素（多画了一条序列、重叠的重复序列像素上
+        # 可能看不出来）同样是数据变了。非数据的可编辑字段仍只单向比（Codex #1256 r4335265024）
+        parent_gids = {_data_gid(k) for k in p if _is_data_key(k)}
+        for key in sorted(c):
+            if _is_data_key(key) and _data_gid(key) not in parent_gids:
+                bad.append(
+                    {
+                        "stem": stem,
+                        "key": key,
+                        "aspect": "data",
+                        "gid": _data_gid(key),
+                        "part": key.partition(f".{DATA_KEY}")[2].lstrip("."),
+                        "parent": "<missing>",
+                        "candidate": c[key],
+                    }
+                )
+    base = {"compared": len(parent_snap), "data_compared": data_compared}
+    if bad:
+        first = bad[0]
+        what = (
+            f"data of {first['gid']}.{first['part']}"
+            if first.get("aspect") == "data"
+            else f"{first['stem']}:{first['key']}"
+        )
+        return {
+            "status": "failed",
+            **base,
+            "differences": [
+                {
+                    "kind": "structure_mismatch",
+                    "summary": f"{len(bad)} manifest field(s) differ from the parent, first {what}",
+                    "category": "manifest_semantics",
+                    "evidence": {"mismatches": bad[:20], "total": len(bad)},
+                }
+            ],
+        }
+    if unresolved_keys:
+        return {
+            "status": "not_run",
+            **base,
+            "differences": [],
+            "note": "; ".join(unresolved_keys[:5]),
+        }
+    return {"status": "passed", **base, "differences": []}
 
 
 def inherited_case(parent, manifest: dict) -> dict | None:
@@ -202,7 +297,8 @@ def inherited_case(parent, manifest: dict) -> dict | None:
 
 
 def editable_snapshot(manifest: dict) -> dict:
-    return _cm()._editable_snapshot(manifest)
+    """Editable `{gid.prop: value}` plus the read-only data fingerprints (`gid.__data__.part`)."""
+    return {**_cm()._editable_snapshot(manifest), **data_snapshot(manifest)}
 
 
 def inherited_stages(worker, make_fresh, stem: str, case: dict, base_man: dict, work: Path) -> dict:

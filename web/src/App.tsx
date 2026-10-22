@@ -39,7 +39,6 @@ import { WorkdirConfirmDialog } from '@/components/WorkdirConfirmDialog'
 import { MissingInputDialog } from '@/components/MissingInputDialog'
 import { TooltipProvider } from '@/components/ui/Tooltip'
 import { EngineRenderSync, useEngineDocumentSync } from '@/hooks/useEngineSync'
-import { useWindowChrome } from '@/hooks/useWindowChrome'
 import { startStyleBindingSync } from '@/store/styleBinding'
 import { runMenuAction } from '@/hooks/menuActions'
 import { useKeyboard } from '@/hooks/useKeyboard'
@@ -108,12 +107,11 @@ export function App() {
     }
   }, [])
   useDesktopMenu()
-  useWindowChrome()
   useHandoff()
   usePickerHistory()
 
   // 启动探测中不闪 Picker；探测完没有项目 → Picker 接管整个界面
-  // 探测中的空白屏也是窗框的一部分：macOS 叠了标题栏，没有拖动区窗口就拖不动
+  // 探测中的空白屏也是窗框的一部分：桌面主窗口没有可拖的系统标题栏，没有拖动区窗口就拖不动
   if (phase === 'loading') return <div className="h-full bg-bg" {...dragRegionProps('self')} />
   // 首启询问挂在 Picker 与 Workspace **共同的**根上：还没打开项目的用户
   // 一样该被问到，而不是等他开了项目才弹
