@@ -9,7 +9,7 @@
 
 ## 一、结论先行
 
-- 全产品只有**一套**图标：`components/ui/icons` 里自己画的 147 个（2026-10-07 补画 `Heart`（2026-10-22，设置页「支持」钮的实心红心）、`ListChecks`，2026-10-13 补画 `Menu`，2026-10-19 为新手教程补画 `ArrowRight` 与拖动把手 `GripVertical`）。名字与 lucide 时代
+- 全产品只有**一套**图标：`components/ui/icons` 里自己画的 148 个（2026-10-22 补画设置页「支持」钮的实心红心 `Heart` 与「联系作者」的信封 `Mail`，2026-10-07 补画 `ListChecks`，2026-10-13 补画 `Menu`，2026-10-19 为新手教程补画 `ArrowRight` 与拖动把手 `GripVertical`）。名字与 lucide 时代
   一一相同，同一语义只用一个名字（第四节的表不动）。**任何第三方图标库都不许再
   import**（门禁按 import 路径判）。
 - 画法：24 网格；所有线条 2 单位描边、圆头圆角，按比例缩放；闭合外形外角 ≥ 2.5、
@@ -116,6 +116,7 @@ MIT，755 个图标源码公开）逐个量过之后，每一条都能指出 luc
 | 外部链接 / 在文件管理器里显示 | `ExternalLink` | `SquareArrowOutUpRight` |
 | 打开设置对话框 | `Settings` | `Settings2` |
 | 编辑（改名、改规范） | `Pencil` | `PenLine`、`Settings2` |
+| 联系作者（顶栏 / 主页入口，2026-10-22） | `Mail`（信封：外框 + 封口折线） | 起初借用的 `Pencil`——读起来是「编辑」 |
 | 调整参数 / 更多属性 | `SlidersHorizontal` | `Settings2` |
 | 警告 | `TriangleAlert` | 别名 `AlertTriangle`；`ShieldAlert` 只留给「来源已分叉」 |
 | 阻断（问题等级 error） | `OctagonAlert`（停车牌的形状） | 此前与警告共用 `TriangleAlert`、只靠红 / 琥珀色区分（2026-09-14 二审 C1）；表在 `lib/validationText.SEVERITY_ICON`，问题面板与导出清单同一份 |

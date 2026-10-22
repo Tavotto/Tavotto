@@ -2,7 +2,7 @@ import { useTranslation } from 'react-i18next'
 import { t as translate } from '@/i18n'
 import { cn } from '@/lib/utils'
 import { useContactStore } from '@/store/contactStore'
-import { Pencil } from '../ui/icons'
+import { Mail } from '../ui/icons'
 import { ICON_SIZE } from '../ui/Icon'
 import { Button } from '../ui/Button'
 import { Tip } from '../ui/Tooltip'
@@ -30,7 +30,7 @@ export function ContactButton({ placement, className }: { placement: 'topbar' | 
         onClick={() => useContactStore.getState().setOpen(true, unread > 0 ? 'letters' : 'write')}
         className={cn('relative shrink-0', placement === 'home' && 'text-ink-2', className)}
       >
-        <Pencil size={ICON_SIZE.sm} aria-hidden />
+        <Mail size={ICON_SIZE.sm} aria-hidden />
         {/* 窄于 900：只留图标（名字在可达名与气泡里） */}
         <span className={cn(placement === 'topbar' && 'max-[899px]:sr-only')}>{label}</span>
         {unread > 0 && (

@@ -51,8 +51,9 @@ test('主页：入口在右上角；点发送前零连接；失败有人话、�
     const home = page.locator('[data-contact-button="home"]')
     await expect(home).toBeVisible({ timeout: 30_000 })
     const box = (await home.boundingBox())!
-    expect(box.x).toBeGreaterThan(640)
-    expect(box.y).toBeLessThan(80)
+    const vw = page.viewportSize()!.width
+    expect(vw - (box.x + box.width)).toBeLessThanOrEqual(24) // 窗口右上角，不是内容列的右缘
+    expect(box.y).toBeLessThan(24)
     if (SHOTS) await page.screenshot({ path: path.join(SHOTS, 'home.png') })
 
     await home.click()

@@ -360,17 +360,13 @@ _UA = "Tavotto-contact-client/1"
 
 
 def _server_code(resp: diagsend._Response) -> str:
-    """错误体 `{"error": {"code"}}`（契约）或 reports 一族的顶层 `{"code"}`，两种形状都认。"""
+    """错误体只认 reports 一族的实际形状：顶层 `{"ok": false, "code": "...", "error": "..."}`（服务端实际行为）。
+    不兼容别的形状——两种都认会掩盖契约漂移。"""
     try:
         obj = json.loads(resp.body.decode("utf-8"))
     except (ValueError, UnicodeDecodeError):
         return ""
-    if not isinstance(obj, dict):
-        return ""
-    err = obj.get("error")
-    if isinstance(err, dict) and isinstance(err.get("code"), str):
-        return err["code"][:64]
-    if isinstance(obj.get("code"), str):
+    if isinstance(obj, dict) and isinstance(obj.get("code"), str):
         return obj["code"][:64]
     return ""
 
@@ -488,6 +484,8 @@ class Session:
     complete_token: str = field(default="", repr=False)
     target: diagsend.Target | None = field(default=None, repr=False)
     specs: list = field(default_factory=list, repr=False)
+    #: init 重放回了空票据（这封信早已 complete）：跳过附件上传，直接 complete
+    replayed: bool = False
     complete_sent: bool = False
     cancel: threading.Event = field(default_factory=threading.Event, repr=False)
     thread: threading.Thread | None = field(default=None, repr=False)
@@ -655,7 +653,7 @@ def _flow(sess: Session, targets: list[diagsend.Target]) -> None:
         raise _Failure("internal")
     _check_cancel(sess)
     _init(sess, targets, draft)
-    for index, att in enumerate(draft.attachments):
+    for index, att in enumerate(() if sess.replayed else draft.attachments):
         _check_cancel(sess)
         _set_stage(sess, "upload")
         _upload(sess, index, att)
@@ -702,6 +700,11 @@ def _init(sess: Session, targets: list[diagsend.Target], draft: Draft) -> None:
         )
 
     resp, tgt = _failover(targets, sess.target, call)
+    if resp.status == 409 and _server_code(resp) in ("session_closed", "idempotency_conflict"):
+        # 这个幂等键对应的信已被关闭 / 内容对不上：换新的 client_message_id 重新开始（只此一次）
+        with _LOCK:
+            sess.client_message_id = str(uuid.uuid4())
+        resp, tgt = _failover(targets, sess.target, call)
     if resp.status not in (200, 201):
         raise _error_of(resp)
     diagsend._check_api_version(resp)
@@ -716,8 +719,11 @@ def _init(sess: Session, targets: list[diagsend.Target], draft: Draft) -> None:
         or not isinstance(complete_token, str)
         or not _TOKEN.match(complete_token)
         or not isinstance(atts, list)
-        or len(atts) != len(draft.attachments)
     ):
+        raise _Failure("bad_response")
+    # 已 complete 的信再 init 重放：200，但 attachments 是空数组（pending 才给同样数量的票据）——附件早已收下，直接 complete
+    replayed = resp.status == 200 and not atts and bool(draft.attachments)
+    if not replayed and len(atts) != len(draft.attachments):
         raise _Failure("bad_response")
     specs: list[diagsend.UploadSpec | None] = [None] * len(atts)
     for item in atts:
@@ -735,6 +741,7 @@ def _init(sess: Session, targets: list[diagsend.Target], draft: Draft) -> None:
         )
         sess.target, sess.route = tgt, route_label(tgt)
         sess.specs = specs
+        sess.replayed = replayed
 
 
 def _parse_upload(raw: object, target: diagsend.Target, size: int) -> diagsend.UploadSpec:
@@ -834,7 +841,11 @@ def _complete(sess: Session, targets: list[diagsend.Target]) -> None:
         if resp.status == 200:
             diagsend._check_api_version(resp)
             obj = diagsend._json_body(resp)
-            if obj.get("message_id") != sess.message_id or obj.get("state") != "new":
+            if obj.get("message_id") != sess.message_id or obj.get("state") not in (
+                "new",
+                "replied",
+                "closed",
+            ):
                 raise _Failure("bad_response")
             with _LOCK:
                 sess.target, sess.route = tgt, route_label(tgt)

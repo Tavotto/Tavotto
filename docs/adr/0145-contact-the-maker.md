@@ -76,7 +76,7 @@ COS 上传地址复用 `diagsend.validate_upload_url`（同一条 `_COS_HOST` �
 ## 后果与未决
 
 - 部署顺序：先部署服务端 `/v1/messages/*` 与 Worker，再发客户端；服务端不认的请求字段 = 422，客户端按 `client_error` 说，不崩。
-- 契约与实现的两处差异已在报告里写明（错误体形状两种都认；`api.tavotto.com` 与 `tavotto.cn` 是同一后端的两个入口，故回信令牌跨线路通用）。
+- 以服务端实际实现为准：错误体顶层 `{ok:false, code, error}`；`reply_email` 只收可打印 ASCII（拒引号 / 分号 / 括号，域名含「.」）；已 complete 的信 init 重放回空票据、complete 重放回当前 state；`api.tavotto.com` 与 `tavotto.cn` 是同一后端的两个入口，回信令牌跨线路通用。
 - 未验证（NOT_RUN）：真实服务器 / COS / SMTP；Worker 转发；真机 Tauri WebView 里的拖放附件与窗口拖动区点击；Windows 真机（窗口按钮让位、0600 在 Windows 只管只读位）；
   `src-tauri/src/sidecar.rs` 的一行环境变量在本机没法 `cargo check`（缺 `dist/Tavotto` 资源，build.rs 先挂），靠 `tests/test_contact_send.py` 的结构断言兜底，需要 CI 的 cargo 一轮确认。
-- 图标用现有的 `Pencil`（图标集是闭集）；若要换成信封图标，走图标集的正式流程。
+- 图标：按图标集流程补画了 `Mail`（`defs.ts` / `index.ts` / `ICONOGRAPHY.md` 三处）。

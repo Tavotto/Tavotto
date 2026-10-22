@@ -4,7 +4,7 @@
 
 * `POST /v1/messages/init|complete|cancel`、`GET /v1/messages/{id}/replies`（`Authorization: Bearer <reply_token>`，
   token 不对或信不存在一律 404）；
-* 错误体是契约的 `{"error": {"code", "message"}}` 形状（`diag_fakes` 那一族是顶层 `code`，客户端两种都认）；
+* 错误体是 reports 一族的实际形状：顶层 `{"ok": false, "code", "error"}`（客户端只认这一种）；
 * 所有请求要带 `Tavotto-Diagnostics-Api: 1`，缺了回 400 `missing_api_header`（契约“公共”一节）；
 * 幂等：同一个 `client_message_id` 重放返回同一个 message_id / reply_token；
 * 附件：init 里报的 content_type 必须在白名单、至多 5 个、合计 ≤ 20 MiB；上传走回环开发模式的 `/v1/local-upload`
@@ -202,7 +202,7 @@ class FakeContactServer:
         h.wfile.flush()
 
     def _error(self, h, status: int, code: str) -> None:
-        self._send(h, status, {"error": {"code": code, "message": "fixed wording"}})
+        self._send(h, status, {"ok": False, "code": code, "error": "fixed wording"})
 
     @staticmethod
     def _drop(h) -> None:
@@ -292,26 +292,26 @@ class FakeContactServer:
         key = req.get("client_message_id")
         body = req.get("body")
         if extra or not isinstance(key, str) or not UUID4.match(key):
-            return 422, {"error": {"code": "bad_request", "message": "x"}}
+            return 422, {"ok": False, "code": "bad_request", "error": "x"}
         if not isinstance(body, str) or not 1 <= len(body) <= 5000:
-            return 422, {"error": {"code": "bad_request", "message": "x"}}
+            return 422, {"ok": False, "code": "bad_request", "error": "x"}
         if len(req.get("subject") or "") > 120:
-            return 422, {"error": {"code": "bad_request", "message": "x"}}
+            return 422, {"ok": False, "code": "bad_request", "error": "x"}
         email = req.get("reply_email")
         if email is not None and (
             email.count("@") != 1
             or any(c.isspace() or c in ',;<>()"' for c in email)
             or "." not in email.partition("@")[2]
         ):
-            return 422, {"error": {"code": "invalid_email", "message": "x"}}
+            return 422, {"ok": False, "code": "invalid_email", "error": "x"}
         rid = req.get("report_id")
         if rid is not None and (not REPORT_ID.match(rid) or rid != "TVD-AAAA-BBBB-CCCC-DDDD"):
-            return 422, {"error": {"code": "report_not_found", "message": "x"}}
+            return 422, {"ok": False, "code": "report_not_found", "error": "x"}
         atts = req.get("attachments") or []
         if len(atts) > 5 or sum(a.get("size", 0) for a in atts) > MAX_TOTAL:
-            return 413, {"error": {"code": "payload_too_large", "message": "x"}}
+            return 413, {"ok": False, "code": "payload_too_large", "error": "x"}
         if any(a.get("content_type") not in TYPES for a in atts):
-            return 415, {"error": {"code": "unsupported_media_type", "message": "x"}}
+            return 415, {"ok": False, "code": "unsupported_media_type", "error": "x"}
         with self.lock:
             mid = self.by_key.get(key)
             if mid is None:
@@ -323,8 +323,10 @@ class FakeContactServer:
                 status = 200
             msg = self.messages[mid]
             if msg.state in ("cancelled",):
-                return 409, {"error": {"code": "session_closed", "message": "x"}}
+                return 409, {"ok": False, "code": "session_closed", "error": "x"}
         out_atts = []
+        if msg.state != "pending":  # 已 complete 的信重放：200 + 空票据（服务端实际行为）
+            atts = []
         for i, a in enumerate(atts):
             out_atts.append(
                 {
@@ -357,12 +359,12 @@ class FakeContactServer:
         with self.lock:
             msg = self._find(req)
             if msg is None:
-                return 404, {"error": {"code": "not_found", "message": "x"}}
+                return 404, {"ok": False, "code": "not_found", "error": "x"}
             if msg.state == "cancelled":
-                return 409, {"error": {"code": "session_closed", "message": "x"}}
+                return 409, {"ok": False, "code": "session_closed", "error": "x"}
             msg.complete_runs += 1
-            if msg.state == "new":
-                return 200, {"message_id": msg.mid, "state": "new"}
+            if msg.state in ("new", "replied", "closed"):
+                return 200, {"message_id": msg.mid, "state": msg.state}
             atts = msg.req.get("attachments") or []
             for i, a in enumerate(atts):
                 data = msg.uploads.get(i)
@@ -372,7 +374,7 @@ class FakeContactServer:
                     or not data.startswith(TYPES[a["content_type"]])
                 ):
                     msg.state = "rejected"
-                    return 422, {"error": {"code": "attachment_invalid", "message": "x"}}
+                    return 422, {"ok": False, "code": "attachment_invalid", "error": "x"}
             msg.state = "new"
             return 200, {"message_id": msg.mid, "state": "new"}
 
@@ -380,7 +382,7 @@ class FakeContactServer:
         with self.lock:
             msg = self._find(req)
             if msg is None:
-                return 404, {"error": {"code": "not_found", "message": "x"}}
+                return 404, {"ok": False, "code": "not_found", "error": "x"}
             if msg.state == "pending":
                 msg.state = "cancelled"
             return 200, {"message_id": msg.mid, "state": msg.state}

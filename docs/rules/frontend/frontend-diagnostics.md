@@ -126,7 +126,7 @@
 ## 联系作者（ADR 0145）
 
 - **入口只看 `store/contactStore.capability`**（`GET /api/contact`，本机、不联网；关着 / 没取到 = `null` = 不渲染）。两处：编辑器顶栏右组 `UndoRedo` 与 `ExportButton` 之间（`ContactButton placement="topbar"`：次级胶囊，窄于 900 只留图标 + aria-label / 气泡）；
-  主页 `HomeView` 顶行最右（与左上角应用菜单对称）与「全部项目」视图右上角（Windows 让出窗口按钮的 138px）。对话框全应用挂一处（`ContactHost`，App 两个分支各一份、互斥）。图标用现有的 `Pencil`（图标集是闭集，不为它加新图标）。
+  主页 `HomeView` 顶行最右（与左上角应用菜单对称）与「全部项目」视图右上角（Windows 让出窗口按钮的 138px）。对话框全应用挂一处（`ContactHost`，App 两个分支各一份、互斥）。图标是新补画的 `Mail`（`ui/icons`，登记在 `docs/ux/ICONOGRAPHY.md`）。
 - **前端不碰远程。** `lib/api.ts` 的 `*Contact*` 是本机遥控器，**只有 `sendContact`（用户点「发送」）与 `refreshContactMessages`（点「检查回信」）会让引擎联网**；打开窗口、改草稿、勾选诊断（只备包）都不联网（`contact.test.tsx` 数调用次数）。
 - **四个状态**：编辑 → 发送中（可取消、上传进度）→ 已发送（`TVM-…` 编号 + 回信去向）/ 失败（草稿保留；「再试一次」「复制内容」「复制地址」）。**没有邮件协议链接**（失败卡里只有复制；全页 HTML 不含该协议字样，`contact.test.tsx` 钉；源码由 `tests/test_contact_no_mailto.py` 扫）。
   状态区住在 `Dialog status` 槽里，不推挤表单；发送中 `blockDismiss`、Esc = 取消。草稿（主题 / 正文 / 邮箱 / 附件 `File` / 勾选）在 store 里，关窗不丢，发送成功后关窗才清空；回信邮箱「上次填写」只记在本机 localStorage（try/catch 包着，可在窗里忘记），不进引擎、诊断、遥测。

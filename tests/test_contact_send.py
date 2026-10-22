@@ -467,14 +467,15 @@ def test_server_errors_are_folded_into_the_closed_failure_set(
     assert contactsend.status().get("message_id") is None
 
 
-def test_top_level_error_code_shape_is_also_understood():
+def test_only_the_top_level_error_shape_is_understood():
     class R:
         body = b'{"ok": false, "code": "invalid_email", "error": "x"}'
 
-    class N:
+    class N:  # 嵌套形状不是服务端的实际行为：不认，免得两种都认掩盖契约漂移
         body = b'{"error": {"code": "invalid_email", "message": "x"}}'
 
-    assert contactsend._server_code(R) == contactsend._server_code(N) == "invalid_email"
+    assert contactsend._server_code(R) == "invalid_email"
+    assert contactsend._server_code(N) == ""
 
 
 # --------------------------------------------------------------------------- 目的地不由响应决定
@@ -566,8 +567,8 @@ def test_changed_content_gets_a_new_client_message_id(on):
     assert len(keys) == 2 and keys[0] != keys[1]
 
 
-def test_server_closed_session_forces_a_new_id_on_retry(on):
-    on.fail("init", 409, "session_closed")
+def test_server_closed_session_at_complete_forces_a_new_id_on_retry(on):
+    on.fail("complete", 409, "session_closed")
     contactsend.start(meta(), [])
     assert wait_for({"failed"})["code"] == "session_closed"
     contactsend.start(meta(), [])
@@ -775,5 +776,39 @@ def test_a_failed_upload_voids_the_letter_and_the_retry_uses_a_new_id(on):
     assert on.count("/v1/messages/cancel") == 1 and on.count("/v1/messages/complete") == 0
     contactsend.start(meta(), [("a.png", PNG)])
     assert wait_for({"done"})["state"] == "done"
+    keys = [c["json"]["client_message_id"] for c in on.calls if c["path"] == "/v1/messages/init"]
+    assert len(keys) == 2 and keys[0] != keys[1]
+
+
+def test_init_replay_of_a_completed_letter_with_empty_tickets_goes_straight_to_complete(on):
+    """complete 的响应丢光 → 用户再试：init 重放 200 + 空票据，附件不重传，complete 回 200 + state，算已发送。"""
+    on.drop_after("complete", times=4)
+    contactsend.start(meta(), [("a.png", PNG)])
+    assert wait_for({"failed"})["code"] == "network"
+    uploads = on.count("/v1/local-upload")
+    contactsend.start(meta(), [("a.png", PNG)])
+    assert wait_for({"done"})["state"] == "done"
+    assert on.count("/v1/local-upload") == uploads  # 没有重传
+    assert len(on.messages) == 1
+    # state 已经是 replied / closed 也算已发送
+    on.only_message().state = "replied"
+    contactsend.start(meta(body=CANARY_BODY + "2"), [])  # 新稿：新信
+    wait_for({"done"})
+
+
+def test_complete_accepting_replied_and_closed_states(on):
+    contactsend.start(meta(), [])
+    wait_for({"done"})
+    msg = on.only_message()
+    for st in ("replied", "closed"):
+        msg.state = st
+        r = on._do_complete({"message_id": msg.mid, "complete_token": msg.complete_token})
+        assert r[0] == 200 and r[1]["state"] == st
+
+
+def test_init_409_session_closed_restarts_with_a_new_id_once(on):
+    on.fail("init", 409, "idempotency_conflict")
+    contactsend.start(meta(), [])
+    assert wait_for({"done", "failed"})["state"] == "done"
     keys = [c["json"]["client_message_id"] for c in on.calls if c["path"] == "/v1/messages/init"]
     assert len(keys) == 2 and keys[0] != keys[1]
