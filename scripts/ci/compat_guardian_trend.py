@@ -19,7 +19,9 @@ import hashlib
 import json
 from pathlib import Path
 
+import compat_explore_shards as ES
 import compat_guardian as cg
+import compat_guardian_summary as SM
 
 SCHEMA = "tavotto-guardian-trend/1"
 GOOD = ("passed", "partial_coverage", "expected_limitation", "control_met", "not_reproduced")
@@ -240,6 +242,23 @@ def metrics(runs: list[dict], explores: list[dict], families: list[dict]) -> dic
 # ---------------------------------------------------------------- uncovered scenarios
 
 
+def axis_table(explores: list[dict]) -> dict:
+    """`{axis: {candidates, executed, differences}}` over the explore candidates, sorted by name.
+
+    Data only; the order in which a report *lists* axes is `compat_guardian_summary.AXIS_WEIGHTS`
+    and lives in the renderer, so changing a weight can never change a number here.
+    """
+    table: dict[str, dict[str, int]] = {}
+    for rep in explores:
+        for row in rep["candidates"]:
+            for axis in sorted({v.split(":", 1)[0] for v in row.get("axis_vector", [])}):
+                cell = table.setdefault(axis, {"candidates": 0, "executed": 0, "differences": 0})
+                cell["candidates"] += 1
+                cell["executed"] += row["outcome"] != "static_only"
+                cell["differences"] += row["outcome"] == "difference_found"
+    return dict(sorted(table.items()))
+
+
 def uncovered(runs: list[dict], explores: list[dict], env: dict) -> list[str]:
     out = []
     counts: dict[str, int] = {}
@@ -403,10 +422,13 @@ def build(
     previous: dict | None,
     families: list[dict],
     required_suites: tuple[str, ...] = (),
+    shards: dict | None = None,
 ) -> dict:
     runs = [classify(p)[1] for p in run_paths]
     explores = [classify(p)[1] for p in explore_paths]
     env = environment_of(runs, explores)
+    # CG-09: the shards of one sweep (already checked by the caller) are measured as one report
+    whole = [ES.merge_reports(explores)] if shards else explores
     summary = {
         "schema": SCHEMA,
         "sources": [
@@ -437,7 +459,7 @@ def build(
             "denominator_note": "every attempted case is in the denominator; non-green cases are never dropped",
         },
         "environment": env,
-        "metrics": metrics(runs, explores, families),
+        "metrics": metrics(runs, whole, families),
         "explore": [
             {
                 "run_id": e["run_id"],
@@ -447,8 +469,10 @@ def build(
             }
             for e in explores
         ],
-        "uncovered": uncovered(runs, explores, env),
+        "uncovered": uncovered(runs, whole, env),
+        "explore_axes": axis_table(whole),
         "cases": case_table(runs),
+        **({"explore_shards": shards} if shards else {}),
         "notes": [
             "All rates are over curated fixtures; they are not user success rates.",
             "Rates are never compared across different case sets or corpus versions; trends use the fixed set only.",
@@ -538,6 +562,34 @@ def render_markdown(summary: dict) -> str:
                 + ", ".join(k for k, v in scope["corpus_version_changed"].items() if v)
                 + "; aggregate rates are not compared"
             )
+    shards = summary.get("explore_shards")
+    if shards:
+        lines += [
+            "",
+            f"### Weekly sweep: {shards['label']}",
+            f"- seed {shards['seed']}, HEAD `{shards['commit'][:12]}`; "
+            f"{shards['candidates_reported']} candidates reported of "
+            f"{shards['candidates_total']} in the pool"
+            + (
+                ""
+                if shards["complete"]
+                else f" (missing shards {shards['missing']}: NOT the whole pool)"
+            ),
+            "- outcomes: " + ", ".join(f"{k}={v}" for k, v in shards["outcome_counts"].items()),
+        ]
+    axes = summary.get("explore_axes")
+    if axes:
+        # order only: heavier axes first (human-maintained weights), then by name; numbers are untouched
+        ordered = sorted(axes, key=lambda a: (-SM.axis_weight(a), a))
+        lines += [
+            "",
+            "### Explore by axis (listed by weight, not by severity)",
+            "| axis | candidates | executed | differences |",
+            "| --- | --- | --- | --- |",
+        ] + [
+            f"| {a} | {axes[a]['candidates']} | {axes[a]['executed']} | {axes[a]['differences']} |"
+            for a in ordered
+        ]
     lines += ["", "### Not covered"] + [f"- {item}" for item in summary["uncovered"]]
     lines += ["", *[f"_{n}_" for n in summary["notes"]]]
     return "\n".join(lines) + "\n"

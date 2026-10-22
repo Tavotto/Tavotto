@@ -19,8 +19,26 @@ import compat_guardian as cg
 
 SUMMARY_SCHEMA = "tavotto-guardian-summary/1"
 PROMOTION_SCHEMA = "tavotto-guardian-promotion-candidate/1"
+#: How much an explore axis matters to users, used ONLY to decide in which order a weekly report
+#: lists clusters and axes. Source: monthly roll-up of the telemetry `export_result` event and the
+#: diagnostic-bundle error codes (which input shapes users actually fail on); updated by hand, not
+#: computed here. It never reaches a verdict, an exit code, a count or a metric: a test pins that
+#: changing a weight changes the order of the rendered lines and nothing else.
+AXIS_WEIGHTS: dict[str, int] = {
+    "data_source": 3,
+    "output_call": 3,
+    "entry": 2,
+    "style": 1,
+    "import_alias": 1,
+}
+DEFAULT_AXIS_WEIGHT = 1
 #: Paths promote must never write to, resolved relative to the repository root.
 PROTECTED = ("tests/compat", "tests/compat_guardian", "tests/fixtures", "tests/support")
+
+
+def axis_weight(axis: str) -> int:
+    """Listing weight of one axis name (`data_source`, or a full `axis:transform` vector entry)."""
+    return AXIS_WEIGHTS.get(axis.split(":", 1)[0], DEFAULT_AXIS_WEIGHT)
 
 
 def load_report(path: Path) -> dict:

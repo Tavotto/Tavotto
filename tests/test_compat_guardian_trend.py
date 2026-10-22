@@ -527,6 +527,8 @@ class Alerts(unittest.TestCase):
             "os",
             "pathlib",
             "compat_guardian",
+            # CG-09: pure shard-set validation (no I/O, no process)
+            "compat_explore_shards",
             # read-only `load_report` (the summary's structural validation, Codex #1136 r4311781508)
             "compat_guardian_summary",
             "compat_guardian_taxonomy",

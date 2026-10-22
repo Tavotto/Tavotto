@@ -1,0 +1,554 @@
+"""CG-09: explore sharding, shard-set validation, and the weekly report's listing order.
+
+Sharding is a pure slice of the deduplicated pool; the set check is the only door between N
+shard reports and `summarize` / `triage`. Every refusal here is a case the weekly sweep could hit
+on GitHub (a shard that crashed, a re-run attempt, a sweep that straddled midnight).
+"""
+
+from __future__ import annotations
+
+import contextlib
+import copy
+import io
+import json
+import random
+import sys
+import tempfile
+import unittest
+from argparse import ArgumentTypeError, Namespace
+from pathlib import Path
+from unittest import mock
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts/ci"))
+
+import compat_explore as ex  # noqa: E402
+import compat_explore_shards as sh  # noqa: E402
+import compat_explore_transforms as xt  # noqa: E402
+import compat_guardian as cg  # noqa: E402
+import compat_guardian_summary as sm  # noqa: E402
+import compat_guardian_trend as tr  # noqa: E402
+import compat_triage as tg  # noqa: E402
+
+N = 4
+
+
+def run_cli(*argv: str) -> tuple[int, str, str]:
+    out, err = io.StringIO(), io.StringIO()
+    with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+        try:
+            code = cg.main(list(argv))
+        except SystemExit as exc:  # argparse usage errors
+            code = exc.code
+    return code, out.getvalue(), err.getvalue()
+
+
+class Slicing(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.pool = xt.generate(42, xt.default_parents())["candidates"]
+
+    def ids(self, rows):
+        return [c["candidate_id"] for c in rows]
+
+    def test_shards_union_to_the_whole_pool_are_disjoint_and_balanced(self):
+        for n in (1, 2, 3, 4, 7, 16):
+            slices = [sh.slice_pool(self.pool, k, n) for k in range(1, n + 1)]
+            flat = [i for s in slices for i in self.ids(s)]
+            self.assertEqual(sorted(flat), sorted(self.ids(self.pool)), n)
+            self.assertEqual(len(flat), len(set(flat)), f"shards overlap for n={n}")
+            sizes = [len(s) for s in slices]
+            self.assertLessEqual(max(sizes) - min(sizes), 1, (n, sizes))
+
+    def test_slice_is_deterministic_and_independent_of_pool_order(self):
+        shuffled = list(self.pool)
+        random.Random(5).shuffle(shuffled)
+        for k in range(1, N + 1):
+            self.assertEqual(
+                sorted(self.ids(sh.slice_pool(self.pool, k, N))),
+                sorted(self.ids(sh.slice_pool(shuffled, k, N))),
+            )
+        self.assertEqual(
+            self.ids(sh.slice_pool(self.pool, 2, N)), self.ids(sh.slice_pool(self.pool, 2, N))
+        )
+
+    def test_slice_keeps_the_pools_own_order(self):
+        order = {cid: i for i, cid in enumerate(self.ids(self.pool))}
+        picked = [order[i] for i in self.ids(sh.slice_pool(self.pool, 3, N))]
+        self.assertEqual(picked, sorted(picked))
+
+    def test_duplicate_ids_refuse_to_shard(self):
+        with self.assertRaises(cg.EvidenceError):
+            sh.slice_pool([self.pool[0], self.pool[0]], 1, 2)
+
+    def test_parse_shard_is_strict(self):
+        self.assertEqual(sh.parse_shard("3/4"), (3, 4))
+        self.assertEqual(sh.parse_shard("16/16"), (16, 16))
+        for bad in (
+            "0/4",
+            "5/4",
+            "1/17",
+            "a/b",
+            "1/0",
+            "-1/4",
+            "1",
+            "1/4/2",
+            "01/4",
+            " 1/4",
+            "1/4 ",
+            "1.0/4",
+            "",
+        ):
+            with self.assertRaises(ArgumentTypeError, msg=bad):
+                sh.parse_shard(bad)
+
+
+class ExploreShardCli(unittest.TestCase):
+    """`explore --shard` through the real CLI; --static-only keeps these off the executor."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = tempfile.TemporaryDirectory()
+        cls.addClassCleanup(cls.tmp.cleanup)
+        cls.n = 0
+
+    def explore(self, *extra: str) -> tuple[int, dict | None]:
+        type(self).n += 1
+        out = Path(self.tmp.name) / f"run{self.n}"
+        code, _, _ = run_cli("explore", "--seed", "42", "--static-only", "--out", str(out), *extra)
+        reports = list(out.glob("*/reports/explore-report.json"))
+        return code, (json.loads(reports[0].read_text(encoding="utf-8")) if reports else None)
+
+    def test_invalid_shard_values_are_usage_errors_exit_2(self):
+        for bad in ("0/4", "5/4", "1/17", "x", "1/0", "2/1"):
+            code, report = self.explore("--shard", bad)
+            self.assertEqual(code, 2, bad)
+            self.assertIsNone(report, bad)
+
+    def test_shard_cannot_be_combined_with_explicit_candidates(self):
+        code, report = self.explore("--shard", "1/2", "--candidates", "deadbeefdeadbeefdead")
+        self.assertEqual(code, 2)
+        self.assertIsNone(report)
+
+    def test_the_four_reports_cover_the_unsharded_pool_exactly_once(self):
+        _, whole = self.explore()
+        shards = [self.explore("--shard", f"{k}/{N}")[1] for k in range(1, N + 1)]
+        self.assertNotIn("shard", whole)
+        ids = [[r["candidate_id"] for r in s["candidates"]] for s in shards]
+        flat = [i for part in ids for i in part]
+        self.assertEqual(sorted(flat), sorted(r["candidate_id"] for r in whole["candidates"]))
+        self.assertEqual(len(flat), len(set(flat)))
+        self.assertLessEqual(max(map(len, ids)) - min(map(len, ids)), 1)
+        for k, s in enumerate(shards, 1):
+            self.assertEqual(s["shard"]["k"], k)
+            self.assertEqual(s["shard"]["n"], N)
+            self.assertEqual(s["shard"]["candidates_in_shard"], len(ids[k - 1]))
+            self.assertEqual(s["shard"]["candidates_total"], len(whole["candidates"]))
+            self.assertEqual(s["generator"], whole["generator"])
+        self.assertIsNotNone(sh.check_set(shards))
+
+    def test_limit_applies_to_the_shard_not_the_pool(self):
+        _, report = self.explore("--shard", "2/4", "--limit", "3")
+        self.assertEqual(len(report["candidates"]), 3)
+        self.assertGreater(report["shard"]["candidates_in_shard"], 3)
+        self.assertEqual(report["shard"]["filters"]["limit"], 3)
+
+    def test_filters_run_before_the_slice_and_are_recorded(self):
+        _, report = self.explore("--shard", "1/2", "--families", "entry_form")
+        self.assertEqual(report["shard"]["candidates_total"], 2)
+        self.assertEqual(report["shard"]["candidates_in_shard"], 1)
+        self.assertEqual(report["shard"]["filters"]["families"], ["entry_form"])
+        _, parent = self.explore("--shard", "1/2", "--parent", "shape_oo_savefig")
+        self.assertEqual(parent["shard"]["filters"]["parent"], ["shape_oo_savefig"])
+        self.assertTrue(all(r["parent"] == "shape_oo_savefig" for r in parent["candidates"]))
+
+    def test_a_shard_with_nothing_in_it_publishes_no_report(self):
+        code, report = self.explore("--shard", "3/3", "--families", "entry_form")
+        self.assertEqual(code, 2)
+        self.assertIsNone(report)
+
+
+def shard_reports(n: int = N, seed: int = 42) -> list[dict]:
+    """Synthetic but structurally real shard reports (schema fields the checks and consumers read)."""
+    pool = xt.generate(seed, xt.default_parents())
+    ids = sorted(c["candidate_id"] for c in pool["candidates"])
+    by_id = {c["candidate_id"]: c for c in pool["candidates"]}
+    reports = []
+    for k in range(1, n + 1):
+        mine = [by_id[i] for j, i in enumerate(ids) if j % n == k - 1]
+        rows = [
+            {
+                "candidate_id": c["candidate_id"],
+                "parent": c["parent"]["case"],
+                "chain": [s["name"] for s in c["chain"]],
+                "axis_vector": c["axis_vector"],
+                "outcome": "no_difference"
+                if c["execution_plan"]["status"] == "executable"
+                else "static_only",
+                "differences": [],
+            }
+            for c in mine
+        ]
+        outcomes: dict[str, int] = {}
+        for r in rows:
+            outcomes[r["outcome"]] = outcomes.get(r["outcome"], 0) + 1
+        reports.append(
+            {
+                "schema": "tavotto-guardian-explore/1",
+                "run_id": f"{k:02d}" + "a" * 30,
+                "seed": seed,
+                "source": {"commit": "c" * 40, "dirty": False},
+                "expected_sha": "c" * 40,
+                "generator": copy.deepcopy(pool["generator"]),
+                "candidates": rows,
+                "coverage": copy.deepcopy(pool["coverage"]),
+                "known_gaps": {
+                    "G1": {
+                        "transform": "show_close",
+                        "kind": "zero_figures",
+                        "meaning": "m",
+                        "found": False,
+                        "candidates": [],
+                    }
+                },
+                "outcome_counts": dict(sorted(outcomes.items())),
+                "shard": sh.shard_block(
+                    k,
+                    n,
+                    len(rows),
+                    len(ids),
+                    {"parent": None, "families": None, "limit": None, "static_only": False},
+                ),
+            }
+        )
+    return reports
+
+
+class SetCheck(unittest.TestCase):
+    def test_a_complete_set_merges_counts_equal_to_the_sum_of_shards(self):
+        reports = shard_reports()
+        info = sh.check_set(reports)
+        self.assertTrue(info["complete"])
+        self.assertEqual(info["label"], "4 of 4 shards completed")
+        self.assertEqual(info["candidates_reported"], sum(len(r["candidates"]) for r in reports))
+        self.assertEqual(info["candidates_reported"], info["candidates_total"])
+        expected: dict[str, int] = {}
+        for r in reports:
+            for k, v in r["outcome_counts"].items():
+                expected[k] = expected.get(k, 0) + v
+        self.assertEqual(info["outcome_counts"], dict(sorted(expected.items())))
+        merged = sh.merge_reports(reports)
+        self.assertEqual(len(merged["candidates"]), info["candidates_total"])
+        self.assertEqual(merged["outcome_counts"], info["outcome_counts"])
+
+    def test_unsharded_reports_pass_through_untouched(self):
+        plain = shard_reports()[0]
+        del plain["shard"]
+        self.assertIsNone(sh.check_set([plain]))
+        self.assertIsNone(sh.check_set([]))
+
+    def refuses(self, reports, text, **kw):
+        with self.assertRaises(cg.EvidenceError) as caught:
+            sh.check_set(reports, **kw)
+        self.assertIn(text, str(caught.exception))
+
+    def test_missing_shard_fails_unless_partial_is_explicitly_allowed(self):
+        reports = shard_reports()
+        del reports[2]
+        self.refuses(reports, "3 of 4 completed, missing [3]")
+        info = sh.check_set(reports, allow_partial=True)
+        self.assertFalse(info["complete"])
+        self.assertEqual(info["missing"], [3])
+        self.assertEqual(info["label"], "3 of 4 shards completed")
+
+    def test_duplicate_shard_fails_even_when_partial_is_allowed(self):
+        reports = shard_reports()
+        reports.append(copy.deepcopy(reports[1]))
+        self.refuses(reports, "duplicate explore shard", allow_partial=True)
+
+    def test_mixed_seed_head_generator_filters_or_total_fail_even_when_partial(self):
+        for what, mutate in (
+            ("seed", lambda r: r.update(seed=43)),
+            ("HEAD", lambda r: r["source"].update(commit="d" * 40)),
+            ("generator digest", lambda r: r["generator"].update(sha256="0" * 64)),
+            ("selection filters", lambda r: r["shard"]["filters"].update(limit=5)),
+            ("candidates_total", lambda r: r["shard"].update(candidates_total=1)),
+            ("shard count", lambda r: r["shard"].update(n=8)),
+        ):
+            reports = shard_reports()
+            mutate(reports[1])
+            self.refuses(reports, "disagree", allow_partial=True)
+
+    def test_unsharded_report_mixed_into_a_sweep_fails(self):
+        reports = shard_reports()
+        del reports[3]["shard"]
+        self.refuses(reports, "unsharded", allow_partial=True)
+
+    def test_shard_number_outside_the_range_fails(self):
+        reports = shard_reports()
+        reports[0]["shard"]["k"] = 9
+        self.refuses(reports, "outside 1..4", allow_partial=True)
+
+    def test_a_candidate_in_two_shards_fails(self):
+        reports = shard_reports()
+        reports[1]["candidates"].append(copy.deepcopy(reports[0]["candidates"][0]))
+        reports[1]["shard"]["candidates_in_shard"] += 1
+        self.refuses(reports, "appears in shards", allow_partial=True)
+
+    def test_slices_that_do_not_add_up_to_the_pool_fail_when_complete(self):
+        reports = shard_reports()
+        reports[0]["shard"]["candidates_in_shard"] -= 1
+        reports[0]["candidates"].pop()
+        self.refuses(reports, "add up to")
+
+
+class ConsumersEatShards(unittest.TestCase):
+    """summarize and triage over report files, through the CLI."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = tempfile.TemporaryDirectory()
+        cls.addClassCleanup(cls.tmp.cleanup)
+        cls.dir = Path(cls.tmp.name)
+        cls.paths = []
+        for report in shard_reports():
+            d = cls.dir / report["run_id"] / "reports"
+            d.mkdir(parents=True)
+            p = d / "explore-report.json"
+            p.write_text(json.dumps(report), encoding="utf-8")
+            cls.paths.append(str(p))
+
+    def summarize(self, paths, *extra):
+        out = self.dir / "out.json"
+        md = self.dir / "out.md"
+        code, stdout, stderr = run_cli(
+            "summarize", *paths, "--json-out", str(out), "--markdown-out", str(md), *extra
+        )
+        return code, stderr, (json.loads(out.read_text()) if code == 0 else None), md
+
+    def test_summarize_four_shards_reports_the_whole_sweep(self):
+        code, _, summary, md = self.summarize(self.paths)
+        self.assertEqual(code, 0)
+        shards = summary["trend"]["explore_shards"]
+        self.assertEqual(shards["label"], "4 of 4 shards completed")
+        sample = summary["trend"]["sample"]
+        self.assertEqual(sample["explore_candidates_total"], shards["candidates_total"])
+        self.assertIn("4 of 4 shards completed", md.read_text(encoding="utf-8"))
+
+    def test_summarize_refuses_a_missing_shard_but_labels_it_when_allowed(self):
+        code, stderr, _, _ = self.summarize(self.paths[:3])
+        self.assertEqual(code, 2)
+        self.assertIn("incomplete", stderr)
+        code, _, summary, md = self.summarize(self.paths[:3], "--allow-partial-shards")
+        self.assertEqual(code, 0)
+        self.assertFalse(summary["trend"]["explore_shards"]["complete"])
+        text = md.read_text(encoding="utf-8")
+        self.assertIn("3 of 4 shards completed", text)
+        self.assertIn("NOT the whole pool", text)
+
+    def test_summarize_refuses_a_mixed_seed_set(self):
+        other = shard_reports(seed=43)[0]
+        p = self.dir / "mixed" / "reports" / "explore-report.json"
+        p.parent.mkdir(parents=True)
+        p.write_text(json.dumps(other), encoding="utf-8")
+        code, stderr, _, _ = self.summarize([*self.paths[1:], str(p)], "--allow-partial-shards")
+        self.assertEqual(code, 2)
+        self.assertIn("disagree", stderr)
+
+    def test_triage_checks_the_set_before_reading_findings(self):
+        out = self.dir / "triage.json"
+        code, _, stderr = run_cli("triage", *self.paths[:3], "--out", str(out))
+        self.assertEqual(code, 2)
+        self.assertFalse(out.exists())
+        code, stdout, _ = run_cli(
+            "triage", *self.paths, "--out", str(out), "--markdown-out", str(self.dir / "t.md")
+        )
+        self.assertEqual(code, 0, stdout)
+        self.assertEqual(
+            json.loads(out.read_text())["explore_shards"]["label"], "4 of 4 shards completed"
+        )
+        code, _, _ = run_cli(
+            "triage",
+            *self.paths[:3],
+            "--out",
+            str(out),
+            "--allow-partial-shards",
+            "--markdown-out",
+            str(self.dir / "t.md"),
+        )
+        self.assertEqual(code, 0)
+        self.assertIn("3 of 4 shards completed", (self.dir / "t.md").read_text(encoding="utf-8"))
+
+
+class AxisWeightsOnlyReorder(unittest.TestCase):
+    def test_default_table_is_the_agreed_one(self):
+        self.assertEqual(
+            {
+                a: sm.axis_weight(a)
+                for a in (
+                    "data_source",
+                    "output_call",
+                    "entry",
+                    "style",
+                    "import_alias",
+                    "args",
+                    "output_name",
+                )
+            },
+            {
+                "data_source": 3,
+                "output_call": 3,
+                "entry": 2,
+                "style": 1,
+                "import_alias": 1,
+                "args": 1,
+                "output_name": 1,
+            },
+        )
+        self.assertEqual(sm.axis_weight("data_source:read_csv_numpy"), 3)
+
+    def weekly(self, tmp):
+        paths = []
+        for report in shard_reports():
+            report["candidates"][0]["outcome"] = "difference_found"
+            report["outcome_counts"] = {"difference_found": 1}
+            d = Path(tmp) / report["run_id"] / "reports"
+            d.mkdir(parents=True)
+            (d / "explore-report.json").write_text(json.dumps(report), encoding="utf-8")
+            paths.append(str(d / "explore-report.json"))
+        out, md = Path(tmp) / "s.json", Path(tmp) / "s.md"
+        self.assertEqual(
+            run_cli(
+                "summarize",
+                *paths,
+                "--allow-partial-shards",
+                "--json-out",
+                str(out),
+                "--markdown-out",
+                str(md),
+            )[0],
+            0,
+        )
+        return out.read_bytes(), md.read_text(encoding="utf-8")
+
+    def test_changing_weights_changes_listing_order_and_nothing_else(self):
+        with tempfile.TemporaryDirectory() as a, tempfile.TemporaryDirectory() as b:
+            json_a, md_a = self.weekly(a)
+            flipped = {
+                "data_source": 1,
+                "output_call": 1,
+                "entry": 1,
+                "style": 9,
+                "import_alias": 8,
+            }
+            with mock.patch.object(sm, "AXIS_WEIGHTS", flipped):
+                json_b, md_b = self.weekly(b)
+        self.assertEqual(json_a, json_b, "metrics / verdict JSON must be byte-identical")
+        self.assertNotEqual(md_a, md_b, "the listing order must actually follow the weights")
+        self.assertEqual(sorted(md_a.splitlines()), sorted(md_b.splitlines()))
+
+        def axes(md):
+            rows = md.split("### Explore by axis", 1)[1].split("### Not covered", 1)[0].splitlines()
+            return [
+                ln.split("|")[1].strip() for ln in rows if ln.startswith("| ") and "---" not in ln
+            ][1:]
+
+        self.assertEqual(axes(md_a)[:2], ["data_source", "output_call"])
+        self.assertEqual(axes(md_b)[:2], ["style", "import_alias"])
+        self.assertEqual(sorted(axes(md_a)), sorted(axes(md_b)))
+
+    def test_triage_render_orders_clusters_by_weight_without_touching_the_data(self):
+        def cluster(cid, axes):
+            return {
+                "cluster_id": cid,
+                "key": {"family": "f", "stage": "s", "behavior_kind": "b", "call_site": []},
+                "known_family": None,
+                "size": 1,
+                "reproducible": True,
+                "axes": axes,
+            }
+
+        result = {
+            "summary": {"findings": 2, "unknown": 0},
+            "clusters": [cluster("cl-style", ["style"]), cluster("cl-data", ["data_source"])],
+            "alerts": [
+                {
+                    "cluster_id": "cl-style",
+                    "family": "f",
+                    "stage": "s",
+                    "behavior_kind": "b",
+                    "size": 1,
+                    "representative": "r",
+                    "next_action": "n",
+                },
+                {
+                    "cluster_id": "cl-data",
+                    "family": "f",
+                    "stage": "s",
+                    "behavior_kind": "b",
+                    "size": 1,
+                    "representative": "r",
+                    "next_action": "n",
+                },
+            ],
+        }
+        before = json.dumps(result, sort_keys=True)
+        default = tg.render_markdown(result)
+        self.assertLess(default.index("cl-data"), default.index("cl-style"))
+        with mock.patch.object(sm, "AXIS_WEIGHTS", {"style": 5, "data_source": 1}):
+            flipped = tg.render_markdown(result)
+        self.assertLess(flipped.index("cl-style"), flipped.index("cl-data"))
+        self.assertEqual(json.dumps(result, sort_keys=True), before)
+        self.assertEqual(sorted(default.splitlines()), sorted(flipped.splitlines()))
+
+    def test_trend_numbers_do_not_read_the_weights(self):
+        reports = shard_reports()
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = []
+            for r in reports:
+                p = Path(tmp) / r["run_id"] / "reports" / "explore-report.json"
+                p.parent.mkdir(parents=True)
+                p.write_text(json.dumps(r), encoding="utf-8")
+                paths.append(p)
+            info = sh.check_set(reports)
+            one = tr.build([], paths, None, [], shards=info)
+            with mock.patch.object(sm, "AXIS_WEIGHTS", {"style": 99}):
+                two = tr.build([], paths, None, [], shards=info)
+        self.assertEqual(json.dumps(one, sort_keys=True), json.dumps(two, sort_keys=True))
+
+
+class RealShardedExplore(unittest.TestCase):
+    """Two real shards of a two-candidate pool, executed through the shared isolation."""
+
+    def test_two_shards_end_to_end_then_merged(self):
+        dirty = ex.dirty_execution_code()
+        if dirty:
+            self.skipTest(f"scripts/ci differs from HEAD ({dirty}); explore refuses to execute it")
+        with tempfile.TemporaryDirectory() as tmp:
+            reports = []
+            for k in (1, 2):
+                args = Namespace(
+                    seed=7,
+                    out=str(Path(tmp) / f"s{k}"),
+                    limit=2,
+                    parent=None,
+                    static_only=False,
+                    candidates=None,
+                    families="entry_form",
+                    confirm_differences=0,
+                    expected_sha=None,
+                    timeout=200,
+                    shard=(k, 2),
+                )
+                with contextlib.redirect_stdout(io.StringIO()):
+                    ex.explore(args)
+                (path,) = Path(tmp, f"s{k}").glob("*/reports/explore-report.json")
+                reports.append(json.loads(path.read_text(encoding="utf-8")))
+            info = sh.check_set(reports)
+            self.assertTrue(info["complete"])
+            self.assertEqual(info["candidates_reported"], 2)
+            outcomes = {r["outcome"] for rep in reports for r in rep["candidates"]}
+            self.assertEqual(outcomes, {"no_difference", "static_only"})
+
+
+if __name__ == "__main__":
+    unittest.main()

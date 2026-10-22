@@ -28,6 +28,7 @@ import uuid
 from pathlib import Path
 
 import compat_explore_oracles as OR
+import compat_explore_shards as SH
 import compat_explore_transforms as XT
 import compat_guardian as cg
 import compat_guardian_taxonomy as TX
@@ -766,6 +767,33 @@ def explore(args) -> int:
             raise cg.EvidenceError(f"unknown transform family: {sorted(wanted_families - known)}")
         # 每一步都要在所选族里：混入未选族的两因子链会让差异来自操作者排除掉的变换（Codex #1139 r4311734919）
         pool = [c for c in pool if all(s["family"] in wanted_families for s in c["chain"])]
+    shard = getattr(args, "shard", None)
+    shard_info = None
+    if shard:
+        if getattr(args, "candidates", None):
+            raise cg.EvidenceError("--shard cannot be combined with --candidates")
+        k, n = shard
+        # 在 --parent / --families 过滤与去重之后、--limit 之前切：--limit 只作用于本片
+        total = len(pool)
+        pool = SH.slice_pool(pool, k, n)
+        shard_info = SH.shard_block(
+            k,
+            n,
+            len(pool),
+            total,
+            {
+                "parent": sorted(args.parent.split(",")) if args.parent else None,
+                "families": sorted(args.families.split(","))
+                if getattr(args, "families", None)
+                else None,
+                "limit": args.limit,
+                "static_only": bool(args.static_only),
+            },
+        )
+        if not pool:
+            raise cg.EvidenceError(
+                f"shard {k}/{n} is empty ({total} candidates); no report published"
+            )
     chosen = select(pool, args.limit)
     if getattr(args, "candidates", None):
         wanted_ids = set(args.candidates.split(","))
@@ -839,6 +867,7 @@ def explore(args) -> int:
         "candidates": rows,
         "coverage": generated["coverage"],
         "known_gaps": known_gap_findings(rows),
+        **({"shard": shard_info} if shard_info else {}),
         "outcome_counts": counts(rows),
         "stage_counts": stage_counts(rows),
         "oracles": {
