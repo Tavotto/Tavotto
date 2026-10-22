@@ -565,6 +565,32 @@ class RealShardedExplore(unittest.TestCase):
             self.assertEqual(outcomes, {"no_difference", "static_only"})
 
 
+class FakeClock:
+    """Deterministic `time.monotonic`: only the stubs move it, so the budget arithmetic is exact."""
+
+    def __init__(self):
+        self.now = 1000.0
+
+    def __call__(self):
+        return self.now
+
+
+def hang_until_cut(clock: FakeClock, calls: list, then=None):
+    """Stub for `_adapter_run`: "sleeps" (moves the fake clock) for the timeout it was given, then
+    times out like a hung child. `then=(seconds, record)` makes the parent snapshot succeed slowly."""
+
+    def stub(request, hashes, evidence, timeout):
+        mode = request.get("mode", "candidate")
+        calls.append((mode, timeout))
+        if then and mode == "parent_snapshot":
+            clock.now += then[0]
+            return then[1]
+        clock.now += timeout
+        raise cg.AdapterTimeout("stub: hung until the timeout")
+
+    return stub
+
+
 def with_budget_spent(report: dict, how_many: int = 2) -> dict:
     """The same shard report, as if its time budget ran out before `how_many` executable candidates."""
     rows = [r for r in report["candidates"] if r["outcome"] == "no_difference"][:how_many]
@@ -630,10 +656,10 @@ class TimeBudget(unittest.TestCase):
         self.assertIn("NOT", ex.render_markdown(report).upper())
 
     def test_candidates_before_the_budget_ran_and_later_ones_did_not(self):
-        import time
+        clock = FakeClock()
 
         def slow(manifest, *a, **k):
-            time.sleep(0.25)
+            clock.now += 10.0
             return {
                 "judgment": {"outcome": "no_difference", "differences": []},
                 "executions": {
@@ -645,13 +671,17 @@ class TimeBudget(unittest.TestCase):
                 },
             }
 
-        with tempfile.TemporaryDirectory() as tmp:
-            code, report = self.run_explore(tmp, 0.4, fake=slow)
+        with (
+            tempfile.TemporaryDirectory() as tmp,
+            mock.patch.object(ex.time, "monotonic", clock),
+            mock.patch.object(ex, "MIN_ATTEMPT_SECONDS", 0.0),
+        ):
+            code, report = self.run_explore(tmp, 25.0, fake=slow)
         outcomes = [r["outcome"] for r in report["candidates"] if r["outcome"] != "static_only"]
-        self.assertIn("no_difference", outcomes)
-        self.assertIn("not_run", outcomes)
-        first_skipped = outcomes.index("not_run")
-        self.assertEqual(set(outcomes[first_skipped:]), {"not_run"}, "once spent, it stays spent")
+        self.assertEqual(
+            outcomes.count("no_difference"), 3, "t=0, 10, 20 start inside the 25 s budget"
+        )
+        self.assertEqual(set(outcomes[3:]), {"not_run"}, "once spent, it stays spent")
         self.assertEqual(code, cg.EXIT_PARTIAL)
 
     def test_no_budget_means_no_budget_block_and_no_not_run(self):
@@ -753,6 +783,200 @@ class TimeBudget(unittest.TestCase):
         claims[0]["time_budget"] = {"max_seconds": 1.0, "exhausted": True, "not_run": 0}
         with self.assertRaises(cg.EvidenceError):
             sh.check_set(claims)
+
+
+class BudgetCapsEverySubprocess(unittest.TestCase):
+    """Codex P1: with `--max-seconds`, no adapter process may outlive the budget by its own timeout.
+
+    `_adapter_run` (the only place a child is launched) is stubbed and time is a fake clock, so the
+    workflow's real numbers are used: budget 2700 s, `--timeout` 240 s, floor 30 s.
+    """
+
+    PARENT = "shape_oo_savefig"
+    BUDGET = 2700.0
+
+    def explore(self, tmp, budget, adapter, clock, setup_seconds=0.0):
+        args = Namespace(
+            seed=7,
+            out=str(tmp),
+            limit=None,
+            parent=self.PARENT,
+            static_only=False,
+            candidates=None,
+            families="import_alias",
+            confirm_differences=0,
+            expected_sha=None,
+            timeout=240.0,
+            shard=None,
+            max_seconds=budget,
+        )
+        real_generate = xt.generate
+
+        def slow_generate(*a, **k):  # "the candidate starts setup_seconds into the budget"
+            clock.now += setup_seconds
+            return real_generate(*a, **k)
+
+        start = clock.now
+        with (
+            mock.patch.object(ex.time, "monotonic", clock),
+            mock.patch.object(ex.XT, "generate", slow_generate),
+            mock.patch.object(ex, "dirty_execution_code", return_value=[]),
+            mock.patch.object(ex, "_adapter_run", side_effect=adapter),
+            contextlib.redirect_stdout(io.StringIO()),
+        ):
+            code = ex.explore(args)
+        (path,) = Path(tmp).glob("*/reports/explore-report.json")
+        return code, json.loads(path.read_text(encoding="utf-8")), clock.now - start
+
+    def cached(self, tmp):
+        return [k for k in ex._PARENT_SNAPSHOTS if k[0].startswith(str(Path(tmp).resolve()))]
+
+    def test_near_the_deadline_with_an_uncached_parent_both_calls_are_capped(self):
+        clock, calls = FakeClock(), []
+        with tempfile.TemporaryDirectory() as tmp:
+            code, report, elapsed = self.explore(
+                tmp, self.BUDGET, hang_until_cut(clock, calls), clock, setup_seconds=2650.0
+            )
+            cached = self.cached(tmp)
+        self.assertEqual(
+            calls, [("parent_snapshot", 50.0)], "50 s left: that is all the child gets, not 240"
+        )
+        self.assertLessEqual(elapsed, self.BUDGET + ex.OVERRUN_BOUND_SECONDS)
+        self.assertLessEqual(
+            elapsed, self.BUDGET, "with a simulated instant kill the clock stops at the deadline"
+        )
+        self.assertEqual(cached, [], "a snapshot cut off by the budget is never cached")
+        (row,) = [r for r in report["candidates"] if r["outcome"] != "static_only"]
+        self.assertEqual(row["outcome"], "not_run")
+        self.assertIn("time budget exhausted", row["note"])
+        self.assertEqual(row["differences"], [])
+        self.assertEqual(report["time_budget"]["not_run"], 1)
+        self.assertEqual(code, cg.EXIT_PARTIAL)
+
+    def test_a_slow_snapshot_leaves_the_candidate_only_what_is_left(self):
+        clock, calls = FakeClock(), []
+        good = {"snapshots": {"s": {"a.b": 1}}}
+        with tempfile.TemporaryDirectory() as tmp:
+            code, report, elapsed = self.explore(
+                tmp,
+                self.BUDGET,
+                hang_until_cut(clock, calls, then=(60.0, good)),
+                clock,
+                setup_seconds=2600.0,
+            )
+            cached = self.cached(tmp)
+        self.assertEqual(calls, [("parent_snapshot", 100.0), ("candidate", 40.0)])
+        self.assertLessEqual(elapsed, self.BUDGET)
+        self.assertEqual(len(cached), 1, "a completed snapshot is kept")
+        (row,) = [r for r in report["candidates"] if r["outcome"] != "static_only"]
+        self.assertEqual(
+            row["outcome"], "not_run", "cut by the budget: not unknown, not a difference"
+        )
+        self.assertEqual(code, cg.EXIT_PARTIAL)
+
+    def test_the_candidates_own_timeout_is_still_a_candidate_verdict(self):
+        """Budget plentiful, so nothing is capped: a hang stays `unknown` / adapter_timeout."""
+        clock, calls = FakeClock(), []
+        good = {"snapshots": {"s": {"a.b": 1}}}
+
+        def own_timeout(request, hashes, evidence, timeout):
+            calls.append(timeout)
+            clock.now += 1.0
+            if request.get("mode") == "parent_snapshot":
+                return good
+            raise cg.AdapterTimeout("stub: hung")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            _, report, _ = self.explore(tmp, self.BUDGET, own_timeout, clock)
+        self.assertEqual(calls, [240.0, 240.0], "the budget did not shorten anything")
+        (row,) = [r for r in report["candidates"] if r["outcome"] != "static_only"]
+        self.assertEqual(row["outcome"], "unknown")
+        self.assertIn("adapter_timeout", row["note"])
+        self.assertFalse(report["time_budget"]["exhausted"])
+
+    def test_without_a_budget_the_timeout_is_passed_through_untouched(self):
+        clock, calls = FakeClock(), []
+
+        def seen(request, hashes, evidence, timeout):
+            calls.append(timeout)
+            raise cg.AdapterTimeout("stub")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            _, report, _ = self.explore(tmp, None, seen, clock)
+        self.assertEqual(calls, [240.0, 240.0])
+        self.assertNotIn("time_budget", report)
+
+    def test_below_the_floor_the_candidate_is_not_started_at_all(self):
+        clock, calls = FakeClock(), []
+        with tempfile.TemporaryDirectory() as tmp:
+            code, report, _ = self.explore(
+                tmp, self.BUDGET, hang_until_cut(clock, calls), clock, setup_seconds=2700.0 - 20.0
+            )
+        self.assertEqual(calls, [], "20 s < 30 s floor: no child is started")
+        self.assertEqual(report["time_budget"]["not_run"], 1)
+        self.assertEqual(code, cg.EXIT_PARTIAL)
+
+    def test_a_confirmation_that_starts_before_the_deadline_is_cut_at_it(self):
+        parent = xt.load_parent("compat_engine", self.PARENT)
+        manifest, _ = xt.build(parent, ("import_alias",), 7)
+        cid = manifest["candidate_id"]
+        row = {
+            "candidate_id": cid,
+            "outcome": "difference_found",
+            "chain": ["import_alias"],
+            "differences": [ex._diff("zero_figures", "s", next(iter(ex.TX.CATEGORIES)), {})],
+        }
+        clock, calls = FakeClock(), []
+        stub = hang_until_cut(clock, calls, then=(0.0, {"snapshots": {"s": {"a.b": 1}}}))
+        deadline = clock.now + 50.0
+        with (
+            tempfile.TemporaryDirectory() as tmp,
+            mock.patch.object(ex.time, "monotonic", clock),
+            mock.patch.object(ex, "_adapter_run", side_effect=stub),
+        ):
+            ex.confirm_differences(
+                [row],
+                {cid: manifest},
+                Namespace(confirm_differences=3, seed=7, timeout=240.0),
+                Path(tmp),
+                deadline,
+            )
+        self.assertTrue(calls and all(t <= 50.0 for _, t in calls), calls)
+        self.assertLessEqual(clock.now, deadline)
+        self.assertIsNone(row["confirmation"], "cut by the budget: unconfirmed, so never an alert")
+
+    def test_the_overrun_bound_is_derived_and_fits_the_weekly_step(self):
+        smoke = cg.package_smoke
+        self.assertEqual(
+            ex.CLEANUP_GRACE_SECONDS, smoke.TERMINATE_GRACE_S + 2 * smoke.GROUP_GONE_WAIT_S
+        )
+        self.assertEqual(
+            ex.OVERRUN_BOUND_SECONDS, ex.CLEANUP_GRACE_SECONDS + ex.FIXED_OVERHEAD_SECONDS
+        )
+        self.assertGreaterEqual(ex.MIN_ATTEMPT_SECONDS, 30.0)
+
+    def test_a_child_that_ignores_sigterm_is_gone_within_the_cleanup_grace(self):
+        """The 16 s in the bound is not a guess: SIGTERM-proof child, 0.5 s timeout, real kill."""
+        import os
+        import time
+
+        if sys.platform == "win32":
+            self.skipTest("POSIX process-group semantics")
+        command = [
+            sys.executable,
+            "-c",
+            "import signal,time; signal.signal(signal.SIGTERM, signal.SIG_IGN); time.sleep(120)",
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            work = Path(tmp)
+            t0 = time.monotonic()
+            result = cg.package_smoke.run_isolated_command(
+                command, env=dict(os.environ), cwd=work, evidence=work, timeout=0.5
+            )
+            wall = time.monotonic() - t0
+        self.assertTrue(result["timed_out"])
+        self.assertIsNot(result["cleanup"].get("group_gone"), False)
+        self.assertLess(wall, 0.5 + ex.CLEANUP_GRACE_SECONDS)
 
 
 if __name__ == "__main__":

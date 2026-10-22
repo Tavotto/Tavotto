@@ -561,11 +561,16 @@ def test_nightly_explore_is_unchanged_by_the_weekly_sweep():
     assert "--shard" not in block
 
 
-def test_weekly_shard_has_a_time_budget_five_minutes_inside_the_step_timeout():
+def test_weekly_shard_has_a_time_budget_whose_proven_overrun_fits_inside_the_step_timeout():
+    """budget + (cleanup of a cut child + fixed overhead) <= step timeout, from the code constants."""
+    import compat_explore as ex
+
     step = [s for s in steps("explore-weekly") if "Explore this shard" in s][0]
     minutes = int(re.search(r"timeout-minutes: (\d+)", step).group(1))
     seconds = int(re.search(r"--max-seconds (\d+)", step).group(1))
-    assert seconds == (minutes - 5) * 60, "budget = step timeout minus five minutes"
+    assert seconds + ex.OVERRUN_BOUND_SECONDS <= minutes * 60, "the partial report could be killed"
+    assert ex.OVERRUN_BOUND_SECONDS <= 300, "the reserve is the five minutes the comment promises"
+    assert seconds >= (minutes - 5) * 60 - 60, "and the budget is not needlessly small"
     # exit 4 (budget spent, partial coverage) is annotated, not swallowed or turned green
     assert '4) echo "::warning::weekly shard' in step and "not_run" in step
     assert "--max-seconds" not in jobs()["explore"], "nightly keeps its own bounded --limit"

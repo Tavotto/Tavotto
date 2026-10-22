@@ -335,8 +335,10 @@ jobs:
           python scripts/fetch_fonts.py --check
       - name: Explore this shard
         # 步骤上限 50 分钟；explore 自己的时间预算 --max-seconds 2700（45 分钟）= 步骤上限减 5 分钟：
-        # 预算花完后未开始的候选记 not_run 并照常出报告，不会被步骤超时杀掉而整片没有报告
-        # （最坏再加一个候选的 240 s 超时，仍在 50 分钟内；预算花完后不再开复跑确认）。
+        # 预算花完后未开始的候选记 not_run 并照常出报告，不会被步骤超时杀掉而整片没有报告。
+        # 预算对每一次子进程调用生效（父本快照、候选、复跑确认的超时都取 min(--timeout, 剩余预算)，
+        # 剩余不足 30 s 就不再开始）：预算到期后最多再耗 compat_explore.OVERRUN_BOUND_SECONDS
+        # （清理 16 s + 固定开销 60 s = 76 s），2700 + 76 < 3000，由结构测试对着代码常量钉住。
         timeout-minutes: 50
         shell: bash
         env:

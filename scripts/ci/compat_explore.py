@@ -605,6 +605,55 @@ def write_candidates(generated: dict, out: Path) -> Path:
     return path
 
 
+# ---------------------------------------------------------------- time budget (CG-09)
+#: Below this much remaining budget no new adapter process is started: the quickest real candidate
+#: needs ~15-18 s (measured, bd4e45c5a, p95 15.3 s native+tavotto), so a smaller slice would only
+#: be cut mid-run and waste what is left; the candidate is `not_run` instead.
+MIN_ATTEMPT_SECONDS = 30.0
+#: After the deadline an adapter that was launched with the *remaining* budget as its timeout is
+#: killed by `package_smoke.terminate`: SIGTERM, wait <= TERMINATE_GRACE_S, SIGKILL, then up to two
+#: GROUP_GONE_WAIT_S looks at the process group.
+CLEANUP_GRACE_SECONDS = cg.package_smoke.TERMINATE_GRACE_S + 2 * cg.package_smoke.GROUP_GONE_WAIT_S
+#: Interpreter start + imports before `explore()` begins (its clock starts there), plus candidate
+#: generation, tree digest, report write after the loop. Measured well under this on a loaded
+#: laptop (see the PR); a generous constant, pinned by a test against the workflow.
+FIXED_OVERHEAD_SECONDS = 60.0
+#: Proven upper bound on (process end) - (start of the `--max-seconds` clock) - max_seconds:
+#: no subprocess starts with < MIN_ATTEMPT_SECONDS left, every one is launched with
+#: timeout <= remaining, so it is over (killed) by deadline + CLEANUP_GRACE_SECONDS; what follows
+#: is bounded work (FIXED_OVERHEAD_SECONDS).
+OVERRUN_BOUND_SECONDS = CLEANUP_GRACE_SECONDS + FIXED_OVERHEAD_SECONDS
+
+
+class BudgetExhausted(Exception):
+    """The `--max-seconds` budget cannot cover another adapter process (or cut this one short)."""
+
+
+def _slice(timeout: float, deadline: float | None) -> tuple[float, bool]:
+    """`(timeout for the next subprocess, whether the budget is what limits it)`."""
+    if deadline is None:
+        return timeout, False
+    remaining = deadline - time.monotonic()
+    if remaining < MIN_ATTEMPT_SECONDS:
+        raise BudgetExhausted
+    return (remaining, True) if remaining < timeout else (timeout, False)
+
+
+def budget_record(note: str) -> dict:
+    """A candidate the budget kept from running (or cut short): `not_run`, never a difference."""
+    return {
+        "judgment": {"outcome": "not_run", "differences": [], "note": note},
+        "executions": {
+            "native": 0,
+            "parent_native": 0,
+            "native_pixels": 0,
+            "tavotto": 0,
+            "basis": "not_executed",
+        },
+        "static_only_reasons": [note],
+    }
+
+
 def _adapter_run(request: dict, hashes: list[str], evidence: Path, timeout: float) -> dict:
     """One isolated adapter process; returns its `result.json`. Raises like `launch_adapter`."""
     with tempfile.TemporaryDirectory(prefix="compat-explore-") as tmp:
@@ -636,21 +685,33 @@ def _adapter_run(request: dict, hashes: list[str], evidence: Path, timeout: floa
 _PARENT_SNAPSHOTS: dict[tuple, dict] = {}
 
 
-def parent_snapshot(parent_spec: dict, out: Path, timeout: float) -> dict:
+def parent_snapshot(
+    parent_spec: dict, out: Path, timeout: float, deadline: float | None = None
+) -> dict:
     """`{"snapshots": {stem: {gid.prop: value}} | None, "error": ...}`; failure is data, not a raise."""
     key = (str(out), parent_spec["suite"], parent_spec["case"])
     if key not in _PARENT_SNAPSHOTS:
         parent = XT.load_parent(parent_spec["suite"], parent_spec["case"])
         evidence = out / "evidence" / f"parent-{parent_spec['case']}"
+        sliced, capped = _slice(
+            timeout, deadline
+        )  # BudgetExhausted: nothing cached, nothing started
         evidence.mkdir(parents=True)
         try:
             record = _adapter_run(
                 {"mode": "parent_snapshot", "parent": dict(parent_spec)},
                 [cg.digest(parent.files[parent.script])],
                 evidence,
-                timeout,
+                sliced,
             )
-        except (cg.AdapterTimeout, cg.EvidenceError, OSError, ValueError) as exc:
+        except cg.AdapterTimeout as exc:
+            if capped:
+                raise BudgetExhausted from exc  # cut by the budget, not a verdict: not cached
+            record = {
+                "snapshots": None,
+                "error": {"code": "runner_error", "message": str(exc)[:200]},
+            }
+        except (cg.EvidenceError, OSError, ValueError) as exc:
             record = {
                 "snapshots": None,
                 "error": {"code": "runner_error", "message": str(exc)[:200]},
@@ -668,6 +729,22 @@ def run_one(
     timeout: float,
     reduction: dict | None = None,
     tag: str | None = None,
+    deadline: float | None = None,
+) -> dict:
+    try:
+        return _run_one(manifest, seed, out, timeout, reduction, tag, deadline)
+    except BudgetExhausted:
+        return budget_record("time budget exhausted")
+
+
+def _run_one(
+    manifest: dict,
+    seed: int,
+    out: Path,
+    timeout: float,
+    reduction: dict | None,
+    tag: str | None,
+    deadline: float | None,
 ) -> dict:
     cid = manifest["candidate_id"]
     evidence = out / "evidence" / (f"{cid}-{tag}" if tag else cid)
@@ -688,28 +765,38 @@ def run_one(
         ][parent.script]
     hashes = [script_hash, cg.digest(parent.files[parent.script])]
     if manifest["class"] == "shape_preserving" and not reduction:
-        request["parent_snapshot"] = parent_snapshot(request["parent"], out, timeout)["snapshots"]
+        request["parent_snapshot"] = parent_snapshot(request["parent"], out, timeout, deadline)[
+            "snapshots"
+        ]
+    sliced, capped = _slice(timeout, deadline)
     try:
-        record = _adapter_run(request, hashes, evidence, timeout)
-    except (cg.AdapterTimeout, cg.EvidenceError, OSError, ValueError) as exc:
-        kind = "adapter_timeout" if isinstance(exc, cg.AdapterTimeout) else "runner_error"
-        record = {
-            "candidate_id": cid,
-            "judgment": {
-                "outcome": "unknown",
-                "differences": [],
-                "note": f"{kind}: {str(exc)[:200]}",
-            },
-            "executions": {
-                "native": None,
-                "parent_native": None,
-                "native_pixels": None,
-                "tavotto": None,
-                "basis": "unobserved",
-            },
-            "stages": OR.blank_stages("not_run", kind),
-        }
+        record = _adapter_run(request, hashes, evidence, sliced)
+    except cg.AdapterTimeout as exc:
+        if capped:
+            raise BudgetExhausted from exc  # the budget cut it short; not "the candidate hangs"
+        record = _failure_record(cid, "adapter_timeout", exc)
+    except (cg.EvidenceError, OSError, ValueError) as exc:
+        record = _failure_record(cid, "runner_error", exc)
     return record
+
+
+def _failure_record(cid: str, kind: str, exc: Exception) -> dict:
+    return {
+        "candidate_id": cid,
+        "judgment": {
+            "outcome": "unknown",
+            "differences": [],
+            "note": f"{kind}: {str(exc)[:200]}",
+        },
+        "executions": {
+            "native": None,
+            "parent_native": None,
+            "native_pixels": None,
+            "tavotto": None,
+            "basis": "unobserved",
+        },
+        "stages": OR.blank_stages("not_run", kind),
+    }
 
 
 #: 生成 / 执行派生候选、采集证据的代码都在这里（driver、matrix、执行观测器、变换……）：
@@ -724,6 +811,7 @@ def dirty_execution_code() -> list[str]:
 
 
 def explore(args) -> int:
+    clock0 = time.monotonic()  # the --max-seconds clock starts here
     initial = cg.source_state()
     expected = args.expected_sha or initial["commit"]
     if expected != initial["commit"]:
@@ -805,6 +893,7 @@ def explore(args) -> int:
         raise cg.EvidenceError("no candidates selected (not_run); no report published")
     started = time.monotonic()
     budget = getattr(args, "max_seconds", None)
+    deadline = None if budget is None else clock0 + budget
     rows = []
     by_id: dict[str, dict] = {}
     for manifest in chosen:
@@ -822,23 +911,13 @@ def explore(args) -> int:
                 },
             }
             record["static_only_reasons"] = plan["reasons"] or ["--static-only"]
-        elif budget is not None and time.monotonic() - started >= budget:
-            # CG-09: the time budget is spent. Say so per candidate instead of being killed by the
-            # step timeout (which would publish no report at all); not_run is never a pass.
-            reason = f"time budget exhausted ({budget:g} s)"
-            record = {
-                "judgment": {"outcome": "not_run", "differences": [], "note": reason},
-                "executions": {
-                    "native": 0,
-                    "parent_native": 0,
-                    "native_pixels": 0,
-                    "tavotto": 0,
-                    "basis": "not_executed",
-                },
-                "static_only_reasons": [reason],
-            }
+        elif deadline is not None and deadline - time.monotonic() < MIN_ATTEMPT_SECONDS:
+            # CG-09: the time budget is spent (or too small for one more candidate). Say so per
+            # candidate instead of being killed by the step timeout (which would publish no report
+            # at all); not_run is never a pass.
+            record = budget_record(f"time budget exhausted ({budget:g} s)")
         else:
-            record = run_one(manifest, args.seed, out, args.timeout)
+            record = run_one(manifest, args.seed, out, args.timeout, deadline=deadline)
         row = {
             "candidate_id": manifest["candidate_id"],
             "parent": manifest["parent"]["case"],
@@ -870,7 +949,6 @@ def explore(args) -> int:
             f"{row['candidate_id']} {row['parent']} {'+'.join(row['chain'])}: {row['outcome']}{flag}",
             flush=True,
         )
-    deadline = None if budget is None else started + budget
     confirm_differences(rows, by_id, args, out, deadline)
     if cg.source_state() != initial:
         raise cg.EvidenceError("source content changed during explore; no report published")
@@ -981,7 +1059,7 @@ def confirm_differences(
             break
         if row["outcome"] != "difference_found":
             continue
-        if deadline is not None and time.monotonic() >= deadline:
+        if deadline is not None and deadline - time.monotonic() < MIN_ATTEMPT_SECONDS:
             break  # budget spent: the remaining differences stay unconfirmed (never alert)
         # The same behavior identity triage clusters on (attribution, relation, call site), so two
         # candidates triage would keep apart are never collapsed into one confirmation.
@@ -991,7 +1069,11 @@ def confirm_differences(
             continue
         seen.add(identity)
         budget -= 1
-        again = run_one(by_id[row["candidate_id"]], args.seed, out, args.timeout, None, "confirm")
+        again = run_one(
+            by_id[row["candidate_id"]], args.seed, out, args.timeout, None, "confirm", deadline
+        )
+        if again["judgment"]["outcome"] == "not_run":
+            break  # cut by the budget: stays unconfirmed, never an alert
         rerun_row = {
             **row,
             "outcome": again["judgment"]["outcome"],

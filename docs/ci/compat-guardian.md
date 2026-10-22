@@ -67,7 +67,11 @@ python scripts/ci/compat_guardian.py minimize --replay DIR/repro.json --out DIR2
   （note 写 `time budget exhausted`，阶段全 `not_run`，执行次数 0），已执行的照常出报告；预算花完后不再开复跑确认（未确认的差异不会触发提醒）。
   报告多一块 `time_budget: {max_seconds, exhausted, not_run}`，没有未执行候选时退出码走原来的 0 / 1 / 3，**有 `not_run` 且无差异时退出码 4**（部分覆盖：不是通过，也不是失败）。
   `not_run` 不算「已执行」（样本、家族覆盖、轴表都不计），也不是 triage 的发现。不带该参数时报告与以前逐字节同形。
-  最坏超出预算一个候选的 `--timeout`（已开始的那个跑完），所以预算应比外层超时至少小一个候选超时。
+  预算对**每一次**子进程调用生效：父本快照、候选 adapter、复跑确认的超时都取 `min(--timeout, 剩余预算)`；剩余不足 30 s（`MIN_ATTEMPT_SECONDS`，
+  最快的真实候选约 15–18 s，再小只会被截断白费）就不再开始，该候选记 `not_run`。因预算截断而超时的候选记 `not_run`（不是 `unknown`、不是差异）；
+  候选自己的超时（没被预算限制）仍按原规则。预算截断的父本快照不进缓存，已完成的照旧缓存。
+  预算到期后到报告写完最多再耗 `OVERRUN_BOUND_SECONDS` = 清理 16 s（SIGTERM 等 10 s + 两次 3 s 的进程组确认）+ 固定开销 60 s = 76 s（预算时钟从 `explore()` 入口起算）。
+  不带该参数时行为与报告都不变。
 - `summarize` / `triage` 吃同一次周扫的 N 份分片报告时，先过合并校验：同 seed、同 HEAD、同生成器摘要与覆盖、同过滤条件与候选总数、
   片号恰好 1..N 各一份、没有候选出现在两片里、混入不分片的报告也不行——任何一条不满足退出码 2，**不静默合并**。
   缺片只有显式 `--allow-partial-shards` 才放行，放行后汇总 / 周报 / triage 到处标「N 片中 M 片完成」并写明「不是整个候选池」；
