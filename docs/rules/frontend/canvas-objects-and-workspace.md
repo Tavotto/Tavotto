@@ -212,8 +212,9 @@
   （`PageSizeBase`，不累加），视口 `setPan` 同量反向补偿，图在屏幕上不动。吸附与夹取的数学是纯函数
   `lib/pageEdgeResize.resizePageEdge`（宽度离规范栏宽 ±2 mm 吸，⌥ 关；最小 30 mm；0.1 mm 一格）；栏宽读
   `lib/pageColumns.pageColumns`，**与属性栏页面预设同一份**（`CanvasPage.pagePresets` 也经它），不另写第二套数。
-  拖动中 `interaction.kind === 'pageedge'`，`pageFit` 的补间取景让位。尺寸标注（`data-ruler-dim`）是标尺叠加层、只在拖动中挂，不进文档 / 导出 / SVG 预览平面；与对象拖动的对齐吸附（`snapXs`）互不相干。
-  读数（2026-10-22 改版）：**住在标尺里，不在画布里**——拖左 / 右边在水平标尺（`data-ruler="x"`）、拖上 / 下边在竖直标尺（`y`）里画一条尺寸线 `|---- 宽 157.3 mm ----|`：线从页面起边到止边、两端短竖线、文字居中于线段中点（竖直标尺里转 -90°，与刻度数字同向）、`tabular-nums`、**无边框无胶囊**，文字只垫一块与标尺底同色的无边框底（页面范围内 `bg-surface`、外侧 `bg-bg`），线在文字处被它盖断；颜色 `--color-sel`。组件 `canvas/PageEdgeRulerDim.tsx`（由 `Rulers` 挂在标尺容器内，DOM 叠层、`pointer-events:none`、只在拖动中挂），几何是纯函数 `canvas/pageEdgeReadout.dimSpan`：页面边超出可视区时线段夹在标尺可见范围、文字居中于可见段；可见段放不下文字就放到线段外侧、靠近被拖边的一侧（那侧没地方换另一侧），位置不看文字内容所以数字位数变不抖。画布内不再有读数与带箭头的蓝色尺寸线；标尺被用户关掉时拖动中没有尺寸标注（属性栏仍实时显示）。看护 `canvas/pageEdgeReadout.test.ts`、`canvas/pageEdgeResize.test.tsx` 与 `e2e/page-edge-resize.spec.ts`（读数在对应标尺矩形内 / 无 border / 两端对齐页面边 ±1px / 文字中心随线段中点走）。
+  拖动中 `interaction.kind === 'pageedge'`，`pageFit` 的补间取景让位。尺寸标注（`data-page-dims`，`--color-dim`）是画布
+  叠加层、只在拖动中挂，不进文档 / 导出 / SVG 预览平面；与对象拖动的对齐吸附（`snapXs`）互不相干。
+  尺寸标注与读数（2026-10-22 定稿）：**机械制图式、画在画布里、不进标尺**——页面上方一条横向、左侧一条竖向、两端带箭头的 `--color-dim` 尺寸线（`PageEdgeResize.PageDimensions`，`data-page-dims`）；数字写在**尺寸线中点、线与页面之间**（横线的数字在线下方，竖线的数字转 -90° 在线右侧），离线 3 px，不压线、不断线、**无框无底色**、`type-number`（tabular-nums）；宽、高两条线各写各的数，被拖那一维实心、另一条淡；吸上栏宽时栏宽名小字跟在宽度数字后。几何是纯函数 `canvas/pageEdgeReadout.dimSpan`：页面边超出可视区时线段夹在可视区内、数字居中于可见段中点（线两端对称内缩 4 px，所以线中点 = 可见段中点），被夹那端不画箭头，整段不可见就不画。标尺关着也照常显示（在画布内）。看护 `canvas/pageEdgeReadout.test.ts`、`canvas/pageEdgeResize.test.tsx` 与 `e2e/page-edge-resize.spec.ts`（数字中心 = 尺寸线中点 ±1 px / 在线的页面一侧、离线 2–4 px / 无 border 无背景色 / 不与标尺相交 / 逐帧无额外跳动；变异：给数字加底色、把数字挪出线与页面之间都会红）。
   标注与属性栏画布页头的只读尺寸用会滚的数字（`@sfinterface/numbers`，宪法「只上两处」）：连续拖动 `duration={0}`，
   吸附 / ⌥ 跳变（`pageEdge.rolls`）与属性栏一步到位才滚。
   拖边是对视口的直接操纵：每帧经 `setPan`（停补间、退出「适应画布」，右 / 下边平移量为 0 屏幕上不跳），Esc 取消时恢复原 `fitted`。
