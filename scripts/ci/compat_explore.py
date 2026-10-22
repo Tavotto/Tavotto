@@ -578,7 +578,7 @@ def select(candidates: list[dict], limit: int | None) -> list[dict]:
     """Deterministic, family-balanced selection so a small limit still spans every family.
 
     Round-robin over families (by the first transform's family), and inside a family over its
-    transforms; inside one transform the candidates are ordered by a hash of (seed, id) so a
+    transforms (their order is a hash of the seed, so nightly seeds rotate which ones run); inside one transform the candidates are ordered by a hash of (seed, id) so a
     small limit does not always land on the alphabetically first parent.
     """
     if limit is not None and limit < 1:
@@ -595,7 +595,9 @@ def select(candidates: list[dict], limit: int | None) -> list[dict]:
     turn = {family: 0 for family in tree}
     while len(chosen) < limit:
         for family in sorted(tree):
-            keys = sorted(tree[family])
+            keys = sorted(
+                tree[family], key=lambda k: cg.digest(f"{candidates[0]['seed']}|{k}".encode())
+            )
             for _ in keys:
                 key = keys[turn[family] % len(keys)]
                 turn[family] += 1
