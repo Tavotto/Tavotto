@@ -218,7 +218,7 @@ def metrics(runs: list[dict], explores: list[dict], families: list[dict]) -> dic
         for rep in explores:
             defined |= set(rep["coverage"]["by_family"])
             for row in rep["candidates"]:
-                if row["outcome"] != "static_only":
+                if row["outcome"] not in ("static_only", "not_run"):
                     executed |= {
                         fam
                         for fam, info in rep["coverage"]["by_family"].items()
@@ -254,7 +254,7 @@ def axis_table(explores: list[dict]) -> dict:
             for axis in sorted({v.split(":", 1)[0] for v in row.get("axis_vector", [])}):
                 cell = table.setdefault(axis, {"candidates": 0, "executed": 0, "differences": 0})
                 cell["candidates"] += 1
-                cell["executed"] += row["outcome"] != "static_only"
+                cell["executed"] += row["outcome"] not in ("static_only", "not_run")
                 cell["differences"] += row["outcome"] == "difference_found"
     return dict(sorted(table.items()))
 
@@ -291,7 +291,7 @@ def uncovered(runs: list[dict], explores: list[dict], env: dict) -> list[str]:
                 if any(
                     step in info["transforms"]
                     for row in rep["candidates"]
-                    if row["outcome"] != "static_only"
+                    if row["outcome"] not in ("static_only", "not_run")
                     for step in row["chain"]
                 )
             }
@@ -457,7 +457,10 @@ def build(
         "sample": {
             "run_cases": {r["suite"]: len(r["cases"]) for r in runs},
             "explore_candidates_executed": sum(
-                1 for e in explores for c in e["candidates"] if c["outcome"] != "static_only"
+                1
+                for e in explores
+                for c in e["candidates"]
+                if c["outcome"] not in ("static_only", "not_run")
             ),
             "explore_candidates_total": sum(len(e["candidates"]) for e in explores),
             "denominator_note": "every attempted case is in the denominator; non-green cases are never dropped",
@@ -580,6 +583,14 @@ def render_markdown(summary: dict) -> str:
                 else f" (missing shards {shards['missing']}: NOT the whole pool)"
             ),
             "- outcomes: " + ", ".join(f"{k}={v}" for k, v in shards["outcome_counts"].items()),
+            *(
+                [
+                    f"- **time budget exhausted in shard(s) {shards['budget_exhausted_shards']}: "
+                    f"{shards['not_run']} candidate(s) NOT RUN (partial coverage, not a pass)**"
+                ]
+                if shards.get("not_run")
+                else []
+            ),
             "- corpus pass rate is not a user first-success rate (语料通过率 ≠ 用户首次成功率): "
             "these are derived candidates of already-passing corpus shapes",
         ]

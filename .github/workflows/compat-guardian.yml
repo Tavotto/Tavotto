@@ -334,6 +334,9 @@ jobs:
           python scripts/fetch_fonts.py
           python scripts/fetch_fonts.py --check
       - name: Explore this shard
+        # 步骤上限 50 分钟；explore 自己的时间预算 --max-seconds 2700（45 分钟）= 步骤上限减 5 分钟：
+        # 预算花完后未开始的候选记 not_run 并照常出报告，不会被步骤超时杀掉而整片没有报告
+        # （最坏再加一个候选的 240 s 超时，仍在 50 分钟内；预算花完后不再开复跑确认）。
         timeout-minutes: 50
         shell: bash
         env:
@@ -346,7 +349,7 @@ jobs:
             echo "::error::weekly seed must be an integer and the shard 1..4"
             exit 2
           fi
-          args=(--seed "$EXPLORE_SEED" --shard "$EXPLORE_SHARD/4" --confirm-differences 3 --expected-sha "$GITHUB_SHA" --timeout 240 --out "$RUNNER_TEMP/compat-explore")
+          args=(--seed "$EXPLORE_SEED" --shard "$EXPLORE_SHARD/4" --max-seconds 2700 --confirm-differences 3 --expected-sha "$GITHUB_SHA" --timeout 240 --out "$RUNNER_TEMP/compat-explore")
           python scripts/ci/compat_guardian.py explore "${args[@]}" > "$RUNNER_TEMP/explore.out" 2>&1
           code=$?
           set -e
@@ -354,6 +357,7 @@ jobs:
           case "$code" in
             0) ;;
             1) echo "::warning::weekly shard $EXPLORE_SHARD/4 found differences (the summary job triages them across all shards)" ;;
+            4) echo "::warning::weekly shard $EXPLORE_SHARD/4 spent its 45-minute time budget: remaining candidates are not_run (partial coverage, not a pass)" ;;
             *) echo "::error::weekly explore shard $EXPLORE_SHARD/4 exited $code"; tail -n 30 "$RUNNER_TEMP/explore.out"; exit "$code" ;;
           esac
       - name: Shard summary

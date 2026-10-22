@@ -116,6 +116,21 @@ def check_set(reports: list[dict], allow_partial: bool = False) -> dict | None:
     outcomes: Counter = Counter()
     for report in sharded:
         outcomes.update(report["outcome_counts"])
+    # time budget: what the report says must match its rows, so a spent budget cannot hide
+    exhausted = []
+    for report in sharded:
+        k = report["shard"]["k"]
+        rows_not_run = sum(1 for r in report["candidates"] if r["outcome"] == "not_run")
+        budget = report.get("time_budget")
+        if rows_not_run and not budget:
+            raise cg.EvidenceError(f"shard {k} has not_run candidates but no time_budget record")
+        if budget and (
+            budget["not_run"] != rows_not_run or budget["exhausted"] != bool(rows_not_run)
+        ):
+            raise cg.EvidenceError(f"shard {k} time_budget disagrees with its candidate rows")
+        if rows_not_run:
+            exhausted.append(k)
+    not_run = sum(1 for r in sharded for row in r["candidates"] if row["outcome"] == "not_run")
     return {
         "n": n,
         "completed": sorted(numbers),
@@ -128,6 +143,9 @@ def check_set(reports: list[dict], allow_partial: bool = False) -> dict | None:
         "candidates_reported": len(seen),
         "outcome_counts": dict(sorted(outcomes.items())),
         "label": f"{len(numbers)} of {n} shards completed",
+        "not_run": not_run,
+        "budget_exhausted_shards": sorted(exhausted),
+        "fully_executed": not missing and not_run == 0,
     }
 
 

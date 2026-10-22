@@ -256,7 +256,7 @@ def _explore_findings(report: dict, report_path: Path):
             scripts[manifest["candidate_id"]] = manifest["parent"]["script"]
     for row in report["candidates"]:
         items = row["differences"] or (
-            [None] if row["outcome"] not in ("no_difference", "static_only") else []
+            [None] if row["outcome"] not in ("no_difference", "static_only", "not_run") else []
         )
         for diff in items:
             source = None
@@ -353,7 +353,7 @@ def explore_identity(row: dict, source: str | None, rules: list[dict] | None = N
     """Behavior identity of one explore row: the sorted triage cluster keys of its findings."""
     rules = rules if rules is not None else load_rules()
     items = row["differences"] or (
-        [None] if row["outcome"] not in ("no_difference", "static_only") else []
+        [None] if row["outcome"] not in ("no_difference", "static_only", "not_run") else []
     )
     keys = set()
     for diff in items:
@@ -539,6 +539,12 @@ def render_markdown(result: dict) -> str:
                     ""
                     if result["explore_shards"]["complete"]
                     else f" (missing {result['explore_shards']['missing']}; findings cover only the completed shards)"
+                )
+                + (
+                    f"; time budget exhausted in shard(s) {result['explore_shards']['budget_exhausted_shards']}: "
+                    f"{result['explore_shards']['not_run']} candidate(s) not run"
+                    if result["explore_shards"].get("not_run")
+                    else ""
                 )
             ]
             if result.get("explore_shards")

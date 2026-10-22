@@ -222,7 +222,7 @@ def test_no_failure_is_swallowed():
             assert 'exit "$code"' in step, "a step that relaxes -e must re-raise the exit code"
             assert "*)" in step, "unknown exit codes must fall to a failing branch"
     # exit 4 (partial_coverage) is the only code allowed through, and it warns.
-    assert code().count('4) echo "::warning::') == 2
+    assert code().count('4) echo "::warning::') == 3  # engine, V2, and the weekly time budget
     assert 'case "$code" in\n            0) ;;' in code()
 
 
@@ -559,3 +559,39 @@ def test_nightly_explore_is_unchanged_by_the_weekly_sweep():
     assert "EXPLORE_LIMIT: ${{ inputs.limit || '24' }}" in block
     assert "--confirm-differences 3" in block and "--timeout 240" in block
     assert "--shard" not in block
+
+
+def test_weekly_shard_has_a_time_budget_five_minutes_inside_the_step_timeout():
+    step = [s for s in steps("explore-weekly") if "Explore this shard" in s][0]
+    minutes = int(re.search(r"timeout-minutes: (\d+)", step).group(1))
+    seconds = int(re.search(r"--max-seconds (\d+)", step).group(1))
+    assert seconds == (minutes - 5) * 60, "budget = step timeout minus five minutes"
+    # exit 4 (budget spent, partial coverage) is annotated, not swallowed or turned green
+    assert '4) echo "::warning::weekly shard' in step and "not_run" in step
+    assert "--max-seconds" not in jobs()["explore"], "nightly keeps its own bounded --limit"
+
+
+def test_concurrency_groups_never_collide_across_cadences_and_pr_cancellation_is_unchanged():
+    block = top_block("concurrency")
+    group = re.search(r"group: (.+)", block).group(1)
+    assert group == (
+        "compat-guardian-${{ github.ref }}-${{ github.event_name }}-"
+        "${{ github.event.schedule || inputs.weekly }}"
+    )
+    assert "cancel-in-progress: true" in block and "cancel-in-progress: ${{" not in block
+    assert "concurrency:" not in code().split("jobs:", 1)[1], (
+        "no job-level group that could wait on this one"
+    )
+
+    def resolve(ref, event, schedule="", weekly=""):
+        # `schedule || weekly`: the first truthy of the two ('' and null are falsy, false prints as 'false')
+        tail = schedule or (weekly if weekly != "" else "")
+        return f"compat-guardian-{ref}-{event}-{tail}"
+
+    nightly = resolve("refs/heads/main", "schedule", "41 3 * * *")
+    weekly = resolve("refs/heads/main", "schedule", "17 2 * * 0")
+    dispatch_off = resolve("refs/heads/main", "workflow_dispatch", weekly="false")
+    dispatch_on = resolve("refs/heads/main", "workflow_dispatch", weekly="true")
+    pr_a, pr_a2, pr_b = (resolve(f"refs/pull/{n}/merge", "pull_request") for n in (1, 1, 2))
+    assert len({nightly, weekly, dispatch_off, dispatch_on, pr_a}) == 5
+    assert pr_a == pr_a2 and pr_a != pr_b, "one group per PR, as before"

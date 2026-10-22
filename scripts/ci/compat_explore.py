@@ -804,6 +804,7 @@ def explore(args) -> int:
         # An empty selection observed nothing; `all([])` must never read as a clean run.
         raise cg.EvidenceError("no candidates selected (not_run); no report published")
     started = time.monotonic()
+    budget = getattr(args, "max_seconds", None)
     rows = []
     by_id: dict[str, dict] = {}
     for manifest in chosen:
@@ -821,6 +822,21 @@ def explore(args) -> int:
                 },
             }
             record["static_only_reasons"] = plan["reasons"] or ["--static-only"]
+        elif budget is not None and time.monotonic() - started >= budget:
+            # CG-09: the time budget is spent. Say so per candidate instead of being killed by the
+            # step timeout (which would publish no report at all); not_run is never a pass.
+            reason = f"time budget exhausted ({budget:g} s)"
+            record = {
+                "judgment": {"outcome": "not_run", "differences": [], "note": reason},
+                "executions": {
+                    "native": 0,
+                    "parent_native": 0,
+                    "native_pixels": 0,
+                    "tavotto": 0,
+                    "basis": "not_executed",
+                },
+                "static_only_reasons": [reason],
+            }
         else:
             record = run_one(manifest, args.seed, out, args.timeout)
         row = {
@@ -854,7 +870,8 @@ def explore(args) -> int:
             f"{row['candidate_id']} {row['parent']} {'+'.join(row['chain'])}: {row['outcome']}{flag}",
             flush=True,
         )
-    confirm_differences(rows, by_id, args, out)
+    deadline = None if budget is None else started + budget
+    confirm_differences(rows, by_id, args, out, deadline)
     if cg.source_state() != initial:
         raise cg.EvidenceError("source content changed during explore; no report published")
     report = {
@@ -868,6 +885,17 @@ def explore(args) -> int:
         "coverage": generated["coverage"],
         "known_gaps": known_gap_findings(rows),
         **({"shard": shard_info} if shard_info else {}),
+        **(
+            {
+                "time_budget": {
+                    "max_seconds": budget,
+                    "exhausted": any(r["outcome"] == "not_run" for r in rows),
+                    "not_run": sum(r["outcome"] == "not_run" for r in rows),
+                }
+            }
+            if budget is not None
+            else {}
+        ),
         "outcome_counts": counts(rows),
         "stage_counts": stage_counts(rows),
         "oracles": {
@@ -891,6 +919,9 @@ def explore(args) -> int:
     print(json.dumps({"report": str(path), "run_id": run_id, "outcomes": report["outcome_counts"]}))
     if any(r["outcome"] == "difference_found" for r in rows):
         return EXIT_DIFFERENCES
+    # a spent time budget is partial coverage: never a clean pass, and not a failure either
+    if any(r["outcome"] == "not_run" for r in rows):
+        return cg.EXIT_PARTIAL
     # clean 要求真比对过：全是 static_only（没有一次原生 / Tavotto 对照）不是「无差异」（AC-11，Codex #1135 r4306059452）
     if all(r["outcome"] in ("no_difference", "static_only") for r in rows) and any(
         r["outcome"] == "no_difference" for r in rows
@@ -924,7 +955,9 @@ def evidence_summary(record: dict) -> dict | None:
     }
 
 
-def confirm_differences(rows: list[dict], by_id: dict, args, out: Path) -> None:
+def confirm_differences(
+    rows: list[dict], by_id: dict, args, out: Path, deadline: float | None = None
+) -> None:
     """Re-run up to N differing candidates (one per distinct finding shape) to see if they reproduce.
 
     Only a confirmed difference may raise a maintainer alert; the rerun is the same trusted,
@@ -948,6 +981,8 @@ def confirm_differences(rows: list[dict], by_id: dict, args, out: Path) -> None:
             break
         if row["outcome"] != "difference_found":
             continue
+        if deadline is not None and time.monotonic() >= deadline:
+            break  # budget spent: the remaining differences stay unconfirmed (never alert)
         # The same behavior identity triage clusters on (attribution, relation, call site), so two
         # candidates triage would keep apart are never collapsed into one confirmation.
         source = source_of(row)
@@ -1019,6 +1054,14 @@ def render_markdown(report: dict) -> str:
         + "; ".join(
             f"{k}: " + ", ".join(f"{s}={n}" for s, n in v.items())
             for k, v in report["stage_counts"].items()
+        ),
+        *(
+            [
+                f"**time budget {report['time_budget']['max_seconds']:g} s exhausted: "
+                f"{report['time_budget']['not_run']} candidate(s) not run (partial coverage, not a pass)**"
+            ]
+            if report.get("time_budget", {}).get("exhausted")
+            else []
         ),
         "",
     ]

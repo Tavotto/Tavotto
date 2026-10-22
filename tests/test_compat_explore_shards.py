@@ -565,5 +565,198 @@ class RealShardedExplore(unittest.TestCase):
             self.assertEqual(outcomes, {"no_difference", "static_only"})
 
 
+def with_budget_spent(report: dict, how_many: int = 2) -> dict:
+    """The same shard report, as if its time budget ran out before `how_many` executable candidates."""
+    rows = [r for r in report["candidates"] if r["outcome"] == "no_difference"][:how_many]
+    for row in rows:
+        row["outcome"] = "not_run"
+    report["time_budget"] = {"max_seconds": 2700.0, "exhausted": True, "not_run": len(rows)}
+    counts: dict[str, int] = {}
+    for r in report["candidates"]:
+        counts[r["outcome"]] = counts.get(r["outcome"], 0) + 1
+    report["outcome_counts"] = dict(sorted(counts.items()))
+    return report
+
+
+class TimeBudget(unittest.TestCase):
+    """`explore --max-seconds`: a spent budget publishes a partial report instead of being killed."""
+
+    def run_explore(self, tmp, max_seconds, fake=None, **over):
+        args = Namespace(
+            seed=7,
+            out=str(tmp),
+            limit=None,
+            parent=None,
+            static_only=False,
+            candidates=None,
+            families="show_close",
+            confirm_differences=0,
+            expected_sha=None,
+            timeout=200,
+            shard=None,
+            max_seconds=max_seconds,
+            **over,
+        )
+        with (
+            mock.patch.object(ex, "dirty_execution_code", return_value=[]),
+            mock.patch.object(
+                ex, "run_one", side_effect=fake or AssertionError("must not execute")
+            ),
+            contextlib.redirect_stdout(io.StringIO()),
+        ):
+            code = ex.explore(args)
+        (path,) = Path(tmp).glob("*/reports/explore-report.json")
+        return code, json.loads(path.read_text(encoding="utf-8"))
+
+    def test_nothing_runs_after_the_budget_and_the_report_says_so(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            code, report = self.run_explore(tmp, 1e-9)
+        rows = report["candidates"]
+        self.assertTrue(rows)
+        self.assertEqual(
+            {r["outcome"] for r in rows},
+            {"not_run"} | ({"static_only"} & {r["outcome"] for r in rows}),
+        )
+        for row in rows:
+            if row["outcome"] == "not_run":
+                self.assertIn("time budget exhausted", row["note"])
+                self.assertEqual(row["executions"]["basis"], "not_executed")
+                self.assertEqual(row["differences"], [])
+                self.assertEqual({c["status"] for c in row["stages"].values()}, {"not_run"})
+        self.assertEqual(code, cg.EXIT_PARTIAL, "partial coverage: neither a pass nor a failure")
+        budget = report["time_budget"]
+        self.assertTrue(budget["exhausted"])
+        self.assertEqual(budget["not_run"], report["outcome_counts"]["not_run"])
+        self.assertIn("NOT", ex.render_markdown(report).upper())
+
+    def test_candidates_before_the_budget_ran_and_later_ones_did_not(self):
+        import time
+
+        def slow(manifest, *a, **k):
+            time.sleep(0.25)
+            return {
+                "judgment": {"outcome": "no_difference", "differences": []},
+                "executions": {
+                    "native": 1,
+                    "parent_native": 0,
+                    "native_pixels": 0,
+                    "tavotto": 1,
+                    "basis": "x",
+                },
+            }
+
+        with tempfile.TemporaryDirectory() as tmp:
+            code, report = self.run_explore(tmp, 0.4, fake=slow)
+        outcomes = [r["outcome"] for r in report["candidates"] if r["outcome"] != "static_only"]
+        self.assertIn("no_difference", outcomes)
+        self.assertIn("not_run", outcomes)
+        first_skipped = outcomes.index("not_run")
+        self.assertEqual(set(outcomes[first_skipped:]), {"not_run"}, "once spent, it stays spent")
+        self.assertEqual(code, cg.EXIT_PARTIAL)
+
+    def test_no_budget_means_no_budget_block_and_no_not_run(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            args = Namespace(
+                seed=7,
+                out=str(tmp),
+                limit=None,
+                parent=None,
+                static_only=True,
+                candidates=None,
+                families="entry_form",
+                confirm_differences=0,
+                expected_sha=None,
+                timeout=200,
+                shard=None,
+            )
+            with contextlib.redirect_stdout(io.StringIO()):
+                ex.explore(args)
+            (path,) = Path(tmp).glob("*/reports/explore-report.json")
+            report = json.loads(path.read_text(encoding="utf-8"))
+        self.assertNotIn("time_budget", report)
+
+    def test_confirmation_reruns_stop_when_the_deadline_has_passed(self):
+        import time
+
+        row = {"candidate_id": "x", "outcome": "difference_found", "differences": [{"kind": "k"}]}
+        with mock.patch.object(
+            ex, "run_one", side_effect=AssertionError("no rerun after the deadline")
+        ):
+            ex.confirm_differences(
+                [row], {}, Namespace(confirm_differences=3), Path("."), time.monotonic() - 1
+            )
+        self.assertIsNone(row["confirmation"], "unconfirmed, so it can never raise an alert")
+
+    def test_max_seconds_must_be_a_finite_positive_number(self):
+        for bad in ("0", "-1", "nan", "inf", "x", ""):
+            code, _, _ = run_cli(
+                "explore",
+                "--seed",
+                "1",
+                "--static-only",
+                "--out",
+                "/nonexistent-cg09",
+                "--max-seconds",
+                bad,
+            )
+            self.assertEqual(code, 2, bad)
+
+    def test_a_spent_budget_is_visible_in_the_merged_sweep_and_never_a_finding(self):
+        reports = shard_reports()
+        with_budget_spent(reports[1])
+        info = sh.check_set(reports)
+        self.assertTrue(info["complete"])
+        self.assertFalse(
+            info["fully_executed"], "all shards present is not all candidates executed"
+        )
+        self.assertEqual(info["not_run"], 2)
+        self.assertEqual(info["budget_exhausted_shards"], [2])
+        self.assertTrue(sh.check_set(shard_reports())["fully_executed"])
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = []
+            for r in reports:
+                p = Path(tmp) / r["run_id"] / "reports" / "explore-report.json"
+                p.parent.mkdir(parents=True)
+                p.write_text(json.dumps(r), encoding="utf-8")
+                paths.append(str(p))
+            md, js, tj = Path(tmp) / "w.md", Path(tmp) / "w.json", Path(tmp) / "t.json"
+            tmd = Path(tmp) / "t.md"
+            self.assertEqual(
+                run_cli("summarize", *paths, "--json-out", str(js), "--markdown-out", str(md))[0], 0
+            )
+            self.assertEqual(
+                run_cli("triage", *paths, "--out", str(tj), "--markdown-out", str(tmd))[0], 0
+            )
+            text = md.read_text(encoding="utf-8")
+            self.assertIn("time budget exhausted in shard(s) [2]", text)
+            self.assertIn("NOT RUN", text)
+            self.assertIn("not run", tmd.read_text(encoding="utf-8"))
+            self.assertEqual(
+                json.loads(tj.read_text())["summary"]["findings"], 0, "not_run is not a finding"
+            )
+            sample = json.loads(js.read_text())["trend"]["sample"]
+        total = sum(len(r["candidates"]) for r in reports)
+        static = sum(1 for r in reports for c in r["candidates"] if c["outcome"] == "static_only")
+        self.assertEqual(
+            sample["explore_candidates_executed"], total - static - 2, "not_run is not executed"
+        )
+
+    def test_report_and_rows_must_agree_about_the_budget(self):
+        hidden = shard_reports()
+        with_budget_spent(hidden[0])
+        del hidden[0]["time_budget"]
+        with self.assertRaises(cg.EvidenceError):
+            sh.check_set(hidden)
+        lying = shard_reports()
+        with_budget_spent(lying[0])
+        lying[0]["time_budget"]["not_run"] = 1
+        with self.assertRaises(cg.EvidenceError):
+            sh.check_set(lying)
+        claims = shard_reports()
+        claims[0]["time_budget"] = {"max_seconds": 1.0, "exhausted": True, "not_run": 0}
+        with self.assertRaises(cg.EvidenceError):
+            sh.check_set(claims)
+
+
 if __name__ == "__main__":
     unittest.main()

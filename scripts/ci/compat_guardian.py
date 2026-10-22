@@ -1253,6 +1253,14 @@ def positive_int(text: str) -> int:
     return value
 
 
+def positive_seconds(text: str) -> float:
+    """argparse type: a finite, positive number of seconds."""
+    value = float(text)
+    if not math.isfinite(value) or value <= 0:
+        raise argparse.ArgumentTypeError(f"must be a finite positive number, got {text}")
+    return value
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     subs = ap.add_subparsers(dest="command", required=True)
@@ -1306,6 +1314,12 @@ def main(argv=None) -> int:
         type=int,
         default=0,
         help="re-run up to N differing candidates once",
+    )
+    explorer.add_argument(
+        "--max-seconds",
+        type=positive_seconds,
+        help="time budget for the whole explore: candidates not started when it is spent are "
+        "reported as not_run (partial coverage, exit 4), instead of the job being killed with no report",
     )
     explorer.add_argument("--expected-sha")
     explorer.add_argument("--timeout", type=float, default=240)
