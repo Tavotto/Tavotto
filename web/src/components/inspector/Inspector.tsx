@@ -98,13 +98,15 @@ export function Inspector({
       <div className={cn('flex h-full flex-col', INSPECTOR_CONTAINER)} style={{ width }}>
       {/* 页签条（2026-09-30 重设计，学 OpenBitFun 的面板头）：与左边画布标签行同高 44、底边同一条
           hairline，两条线在工作面板里连成一条 */}
-      <div className="flex h-11 shrink-0 items-center gap-3 border-b border-border px-3 @max-[379px]:gap-2 @max-[379px]:px-2">
-        {/* 四个页签在 Linux（DejaVu Sans，比 macOS 字体宽）英文下要 281px；容器 < 380px 时页签间距 12→6、
-            条的左右内边距 12→8，余量才够最窄 320px（图钉另在 < 350px 让位） */}
-        <TabList label={t('tabsLabel')} className="min-w-0 self-stretch @max-[379px]:gap-1.5">
+      <div className="flex h-11 shrink-0 items-center gap-2 border-b border-border px-3 @max-[379px]:gap-1 @max-[379px]:px-2">
+        {/* 四个页签是一条等宽分段控件（2026-10-22 用户裁决：原文字页签间距小、易点错）：四格 minmax(0,1fr)，
+            英文（Linux 的 DejaVu Sans 更宽）放不下的字在格内省略号截断，绝不撑开槽；整格可点，title 给全名。
+            图钉另在 < 350px 让位 */}
+        <TabList variant="segmented" label={t('tabsLabel')} className="min-w-0 flex-1">
           {TABS.map((id) => (
             <Tab
               key={id}
+              variant="segmented"
               data-inspector-tab={id}
               panelId={PANEL_ID[id]}
               active={tab === id}
@@ -113,16 +115,13 @@ export function Inspector({
               aria-label={
                 id === 'assistant' && runningAi ? `${assistantTabLabel()} · ${t('aiRunning')}` : undefined
               }
-              title={id === 'assistant' && runningAi ? t('assistantRunningTip') : undefined}
-              // 页签一律纯文字（打磨 S4）：三家的页签 / 分段项都没有图标，助手的身份
-              // 由页内空态那颗图标说；右上角的运行点已经回答「有没有在跑」
-              className={id === 'assistant' ? 'inline-flex items-center pr-1' : undefined}
+              title={id === 'assistant' && runningAi ? t('assistantRunningTip') : tabLabel(id)}
             >
               {tabLabel(id)}
               {id === 'assistant' && runningAi && (
                 <span
                   aria-hidden
-                  className="absolute right-0 top-1.5 h-1.5 w-1.5 rounded-full bg-ink"
+                  className="absolute right-1 top-1 h-1.5 w-1.5 rounded-full bg-ink"
                 />
               )}
             </Tab>
