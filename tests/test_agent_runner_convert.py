@@ -362,6 +362,27 @@ class TestEditAndSecrets:
         assert r.code == "secret_in_content"
         assert (cand / "fig_matplotlib.py").read_text() == NEW
 
+    def test_secret_split_create_then_edit_is_refused(self, cand):
+        head, tail = KEY[:-3], KEY[-3:]
+        sess = tools.ConvertSession(envelope(cand, redactor=Redactor(KEY)))
+        content = f"K = '{head}PAD'\n"
+        assert not sess.create_file({"content": content}).is_error
+        r = sess.edit_file({"old": "PAD", "new": tail})
+        assert (r.is_error, r.code) == (True, "secret_in_content")
+        assert (cand / "fig_matplotlib.py").read_text() == content
+
+    def test_secret_split_across_two_edits_or_rewrite_is_refused(self, cand):
+        head, tail = KEY[:-3], KEY[-3:]
+        sess = tools.ConvertSession(envelope(cand, redactor=Redactor(KEY)))
+        sess.create_file({"content": NEW})
+        assert not sess.edit_file({"old": "[1, 2]", "new": f"['{head}XY']"}).is_error
+        cur = (cand / "fig_matplotlib.py").read_text()
+        assert sess.edit_file({"old": "XY", "new": tail}).code == "secret_in_content"
+        assert (cand / "fig_matplotlib.py").read_text() == cur
+        # create_file 整份重写同样检查结果文本
+        assert sess.create_file({"content": f"x='{KEY}'\n"}).code == "secret_in_content"
+        assert (cand / "fig_matplotlib.py").read_text() == cur
+
     def test_empty_content_refused(self, cand):
         sess = tools.ConvertSession(envelope(cand))
         assert sess.create_file({"content": "  \n"}).code == "empty_content"

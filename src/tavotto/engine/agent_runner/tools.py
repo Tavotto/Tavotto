@@ -620,14 +620,15 @@ class ConvertSession(FigureEditSession):
         real = self._writable_output(name, call_id, args.get("path", self.output_rel))
         if isinstance(real, ToolResult):
             return real
-        if self.redactor.contains(content):
-            return _secret_err(name, call_id)
         if not content.strip():
             return _err(name, call_id, "empty_content", "`content` must not be empty.")
         if len(content.encode("utf-8")) > READ_LIMIT_BYTES:
             return _err(name, call_id, "too_large", "Content is larger than the allowed size.")
         text = content.replace("\r\n", "\n")
         if not self.created:
+            # 新建前没有「写入前的文本」：整份内容含密钥就拒，且必须在建文件之前（零改动）
+            if self.redactor.contains(text):
+                return _secret_err(name, call_id)
             # 第一次：新建。O_EXCL —— 此刻已存在（含悬空符号链接）就失败，绝不覆盖别人的文件
             try:
                 fd = os.open(real, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
@@ -640,7 +641,11 @@ class ConvertSession(FigureEditSession):
             self.created = True
             verb = "created"
         else:
-            self._write_text(real, text, "\n")
+            got = self._read_text(real)
+            before = got[0] if not isinstance(got, str) else ""
+            refused = self._commit_write(name, call_id, real, before, text, "\n")
+            if refused is not None:
+                return refused
             verb = "rewrote"
         n = text.count("\n") + (0 if text.endswith("\n") else 1)
         return ToolResult(
@@ -666,8 +671,6 @@ class ConvertSession(FigureEditSession):
                 "not_created",
                 "Create the new file with create_file before editing it.",
             )
-        if self.redactor.contains(new):
-            return _secret_err(name, call_id)
         if old == "":
             return _err(name, call_id, "empty_old", "`old` must not be empty.")
         if old == new:
@@ -694,7 +697,9 @@ class ConvertSession(FigureEditSession):
                 f"`old` appears {count} times in the file. Include more surrounding lines so that "
                 "it matches exactly once.",
             )
-        self._write_text(real, text.replace(old_n, new_n, 1), eol)
+        refused = self._commit_write(name, call_id, real, text, text.replace(old_n, new_n, 1), eol)
+        if refused is not None:
+            return refused
         return ToolResult(
             call_id, name, f"Edited {self.output_rel}.", summary="edited new file", mutated=True
         )
