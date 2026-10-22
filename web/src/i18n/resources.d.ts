@@ -1604,6 +1604,7 @@ export default interface Resources {
         "defaultLabel": "默认助手",
         "defaultNone": "没有可用的助手",
         "detail": {
+          "account": "账号",
           "addEndpoint": "添加服务…",
           "advanced": "高级设置",
           "autoDetected": "自动检测",

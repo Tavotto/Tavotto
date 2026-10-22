@@ -1127,6 +1127,7 @@
       "codexIntegrationName": "{{product}} for Codex",
       "defaultButton": "默认",
       "detail": {
+        "account": "账号",
         "addEndpoint": "添加服务…",
         "advanced": "高级设置",
         "autoDetected": "自动检测",

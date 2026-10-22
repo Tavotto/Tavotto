@@ -110,6 +110,53 @@ export function AgentDetailView({
   const login = useAgentLogin(agent, onRefreshed, setError)
   const showLogin = agent.state === 'needs_auth' && agent.features.login
 
+  const loginButton = (
+    showLogin && (
+      <Button
+        data-agent-login={login.phase}
+        variant="primary"
+        size="sm"
+        loading={login.phase === 'waiting'}
+        disabled={login.phase === 'waiting'}
+        onClick={() => (login.phase === 'terminal' || login.phase === 'manual' ? login.confirm() : login.begin())}
+      >
+        {login.phase === 'waiting'
+          ? ag('login.waiting')
+          : login.phase === 'terminal' || login.phase === 'manual'
+            ? ag('login.done')
+            : ag('login.action', { account: agent.login_account ?? agent.display_name })}
+      </Button>
+    )
+  )
+  const loginHints = (
+    <>
+      {showLogin && login.phase === 'waiting' && login.authUrl && (
+        <p data-agent-login-hint className="text-xs leading-relaxed text-ink-3">
+          {ag('login.browserHint')}{' '}
+          <a
+            data-agent-login-link
+            href={login.authUrl}
+            target="_blank"
+            rel="noreferrer"
+            className="underline underline-offset-2"
+          >
+            {ag('login.openLink')}
+          </a>
+        </p>
+      )}
+      {showLogin && login.phase === 'terminal' && (
+        <p data-agent-login-hint className="text-xs leading-relaxed text-ink-3">
+          {ag('login.terminalHint')}
+        </p>
+      )}
+      {showLogin && login.phase === 'manual' && (
+        <p data-agent-login-hint className="text-xs leading-relaxed text-ink-3">
+          {ag('login.manualHint', { command: login.command })}
+        </p>
+      )}
+    </>
+  )
+
   const mine = (caps.endpoints ?? []).filter((e) => e.agent === agent.id)
   const activeId = agent.active_endpoint_id ?? ''
   const usingEndpoint = !!agent.active_endpoint_id
@@ -162,6 +209,21 @@ export function AgentDetailView({
         </FormSection>
       )}
 
+      {/* ---------------- 账号：不支持第三方接口的 agent 的官方登录（支持的在「模型服务」那一行，不重复） ---------------- */}
+      {showLogin && !agent.features.third_party_endpoints && (
+        <FormSection title={ag('detail.account')}>
+          <FieldGroup>
+            <div data-agent-account className="flex min-h-7 items-center gap-3">
+              <span className="min-w-0 flex-1 text-base text-ink">
+                {ag('detail.useAgentLogin', { name: agent.display_name })}
+              </span>
+              {loginButton}
+            </div>
+            {loginHints}
+          </FieldGroup>
+        </FormSection>
+      )}
+
       {/* ---------------- 模型服务 ---------------- */}
       {agent.features.third_party_endpoints && (
         <FormSection
@@ -186,47 +248,9 @@ export function AgentDetailView({
                 </span>
               </label>
               {/* 一句话 + 一个主按钮：未登录时这一行的行尾就是「登录 ChatGPT / Claude」 */}
-              {showLogin && (
-                <Button
-                  data-agent-login={login.phase}
-                  variant="primary"
-                  size="sm"
-                  loading={login.phase === 'waiting'}
-                  disabled={login.phase === 'waiting'}
-                  onClick={() => (login.phase === 'terminal' || login.phase === 'manual' ? login.confirm() : login.begin())}
-                >
-                  {login.phase === 'waiting'
-                    ? ag('login.waiting')
-                    : login.phase === 'terminal' || login.phase === 'manual'
-                      ? ag('login.done')
-                      : ag('login.action', { account: agent.login_account ?? agent.display_name })}
-                </Button>
-              )}
+              {loginButton}
             </div>
-            {showLogin && login.phase === 'waiting' && login.authUrl && (
-              <p data-agent-login-hint className="text-xs leading-relaxed text-ink-3">
-                {ag('login.browserHint')}{' '}
-                <a
-                  data-agent-login-link
-                  href={login.authUrl}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="underline underline-offset-2"
-                >
-                  {ag('login.openLink')}
-                </a>
-              </p>
-            )}
-            {showLogin && login.phase === 'terminal' && (
-              <p data-agent-login-hint className="text-xs leading-relaxed text-ink-3">
-                {ag('login.terminalHint')}
-              </p>
-            )}
-            {showLogin && login.phase === 'manual' && (
-              <p data-agent-login-hint className="text-xs leading-relaxed text-ink-3">
-                {ag('login.manualHint', { command: login.command })}
-              </p>
-            )}
+            {loginHints}
             {mine.map((e) => (
               <EndpointRow
                 key={e.id}

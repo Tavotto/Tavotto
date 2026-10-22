@@ -1138,6 +1138,7 @@
       "codexIntegrationName": "{{product}} for Codex",
       "defaultButton": "Default",
       "detail": {
+        "account": "Account",
         "addEndpoint": "Add a service…",
         "advanced": "Advanced",
         "autoDetected": "Detected automatically",

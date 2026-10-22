@@ -43,7 +43,7 @@
   （terminal，需要交互，只许在用户的系统终端里打开：macOS 写一个自删的 `.command` 交给
   `open -a Terminal`，Windows `CREATE_NEW_CONSOLE` 直接运行不经 cmd.exe，Linux 依次试
   x-terminal-emulator / gnome-terminal / konsole / xfce4-terminal / xterm，全没有就返回
-  `reason: terminal_unavailable` + 要手动运行的命令）。**绝不发全局按键、不用 System Events**；默认实现
+  `reason: terminal_unavailable` + 要手动运行的命令，用已解析的真实 argv 引号化，不是 `command_names[0]`；macOS `.command` 与 Linux `sh -c` 脚本只 export 闭集 `_TERMINAL_ENV_NAMES`（PATH / HOME / CLAUDE_CONFIG_DIR / CODEX_HOME / 代理 / CA 等），**不含任何密钥**，已运行的 Terminal 不继承 `open` 传的 env）。设置页：支持第三方接口的 agent 登录按钮在「模型服务」首行，否则在「账号」区块，二者择一。**绝不发全局按键、不用 System Events**；默认实现
   `None` = 不支持，capabilities 的 `features.login` / `login_account` 据此给出，通用层
   （`start_login` / `login_status`）不写 `if agent == ...`（`tests/test_ai_login.py` 用 Fake Adapter 与
   源码扫描双重反证）。`POST|GET /api/ai/agents/<id>/login` 与 install 同组、同一会话认证；argv =

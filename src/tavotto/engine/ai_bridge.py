@@ -787,6 +787,40 @@ _LINUX_TERMINALS: tuple[tuple[str, tuple[str, ...]], ...] = (
 )
 
 
+#: 写进终端脚本（macOS `.command` / Linux `sh -c`）的环境变量闭集，适配器无关：只带「CLI 要找到自己的
+#: 配置 / 走同一条网络」所需的那些，不带整份环境。**刻意不含任何密钥**（`ANTHROPIC_API_KEY` /
+#: `ANTHROPIC_AUTH_TOKEN` / `OPENAI_API_KEY` 之类）：脚本落在磁盘上，登录场景本来就是官方账号登录，
+#: 不需要它们；也不含与 CLI 无关的变量。已运行的 Terminal 不继承 `open` 传的 env，所以必须显式 export。
+_TERMINAL_ENV_NAMES: tuple[str, ...] = (
+    "PATH",
+    "HOME",
+    "CLAUDE_CONFIG_DIR",
+    "CODEX_HOME",
+    "XDG_CONFIG_HOME",
+    "HTTP_PROXY",
+    "HTTPS_PROXY",
+    "ALL_PROXY",
+    "NO_PROXY",
+    "http_proxy",
+    "https_proxy",
+    "all_proxy",
+    "no_proxy",
+    "NODE_EXTRA_CA_CERTS",
+    "SSL_CERT_FILE",
+    "LANG",
+    "LC_ALL",
+)
+
+
+def _terminal_env_exports(env: dict) -> str:
+    """env 里属于 `_TERMINAL_ENV_NAMES` 的变量 -> `export NAME=<quoted>` 逐行（值一律 shlex.quote）。"""
+    return "".join(
+        f"export {name}={shlex.quote(str(env[name]))}\n"
+        for name in _TERMINAL_ENV_NAMES
+        if env.get(name) is not None
+    )
+
+
 def _open_in_terminal(argv: list[str], env: dict) -> bool:
     """在用户的系统终端里跑 argv。**只打开终端并运行这一条命令**——不发任何全局按键，
     不用 System Events。→ 终端是否打开了；找不到终端返回 False（调用方给出手动命令）。"""
@@ -794,7 +828,7 @@ def _open_in_terminal(argv: list[str], env: dict) -> bool:
         # 新开一个控制台窗口，直接运行（不经 cmd.exe 中转：路径里的 & % ^ 不会被吃掉）
         subprocess.Popen(argv, env=env, creationflags=CREATE_NEW_CONSOLE)
         return True
-    script = f"export PATH={shlex.quote(env.get('PATH', ''))}\n{_shell_quote(argv)}\n"
+    script = _terminal_env_exports(env) + f"{_shell_quote(argv)}\n"
     if sys.platform == "darwin":
         # `.command` 文件交给 Terminal 打开：不需要「自动化」授权弹窗，也不需要 osascript。
         # 脚本第一行删掉自己；放在 data_dir 下（不往包目录写任何东西）
@@ -837,6 +871,8 @@ def start_login(agent_id: str) -> dict:
     agent = require_agent(agent_id)
     spec, argv, env = _login_argv(agent)
     command = " ".join([agent.command_names[0], *spec.argv_suffix])
+    # 手动兜底命令用已解析的真实 argv（自定义路径 / npm 全局目录下 command_names[0] 可能不在 PATH 上）
+    manual = subprocess.list2cmdline(argv) if ai_agents._is_windows() else shlex.join(argv)
     if spec.mode == "terminal":
         try:
             opened = _open_in_terminal(argv, env)
@@ -849,7 +885,7 @@ def start_login(agent_id: str) -> dict:
                 "started": False,
                 "mode": spec.mode,
                 "reason": "terminal_unavailable",
-                "command": command,
+                "command": manual,
             }
         return {"started": True, "mode": spec.mode, "command": command}
     with _LOGIN_LOCK:

@@ -12,6 +12,7 @@
 import inspect
 import io
 import logging
+import os
 import re
 import subprocess
 import sys
@@ -314,6 +315,15 @@ def test_agent_without_login_spec_is_refused(client, monkeypatch, popen):
     assert popen.calls == []
 
 
+def test_linux_manual_fallback_uses_the_resolved_quoted_path(monkeypatch, popen):
+    _terminal_agent(monkeypatch)  # 解析到 /opt/my tools/claude
+    monkeypatch.setattr(sys, "platform", "linux")
+    monkeypatch.setattr(ai_agents, "_is_windows", lambda: False)
+    monkeypatch.setattr(ai_bridge.shutil, "which", lambda exe, *a, **k: None)
+    out = ai_bridge.start_login("claude")
+    assert out["command"] == "'/opt/my tools/claude' auth login"
+
+
 def test_unknown_agent_and_not_installed(client, monkeypatch, popen):
     for resp in (
         client.post("/api/ai/agents/opencode/login"),
@@ -390,6 +400,40 @@ def test_terminal_login_on_macos_opens_terminal_with_a_command_file(monkeypatch,
     assert (tmp_path / "cache" / "login_terminal").is_dir()
 
 
+def test_macos_command_file_exports_cli_env_but_never_secrets(monkeypatch, tmp_path):
+    _terminal_agent(monkeypatch)
+    monkeypatch.setattr(sys, "platform", "darwin")
+    monkeypatch.setattr(ai_agents, "_is_windows", lambda: False)
+    monkeypatch.setattr(config, "data_dir", lambda: tmp_path)
+    real_spawn_env = ai_agents.spawn_env
+
+    def env_with_extras(path, *a, **k):
+        env = dict(real_spawn_env(path, *a, **k))
+        env.update(
+            CLAUDE_CONFIG_DIR="/Users/x/my cfg",
+            HTTPS_PROXY="http://127.0.0.1:7890",
+            ANTHROPIC_API_KEY="sk-secret",
+            RANDOM_VAR="zzz-unrelated",
+        )
+        return env
+
+    monkeypatch.setattr(ai_agents, "spawn_env", env_with_extras)
+    ran: list[list[str]] = []
+    monkeypatch.setattr(
+        ai_bridge.subprocess,
+        "run",
+        lambda argv, **kw: ran.append(list(argv)) or subprocess.CompletedProcess(argv, 0, b"", b""),
+    )
+    ai_bridge.start_login("claude")
+    script = open(ran[0][3], encoding="utf-8").read()
+    assert "export CLAUDE_CONFIG_DIR='/Users/x/my cfg'\n" in script
+    assert "export HTTPS_PROXY=http://127.0.0.1:7890\n" in script
+    assert "export PATH=" in script
+    assert "sk-secret" not in script and "ANTHROPIC_API_KEY" not in script
+    assert "RANDOM_VAR" not in script and "zzz-unrelated" not in script
+    assert oct(os.stat(ran[0][3]).st_mode & 0o777) == "0o700"
+
+
 def test_terminal_login_on_windows_opens_a_new_console(monkeypatch, popen):
     _terminal_agent(monkeypatch)
     monkeypatch.setattr(ai_agents, "_is_windows", lambda: True)
@@ -427,7 +471,7 @@ def test_terminal_login_on_linux_without_terminal_says_which_command(monkeypatch
         "started": False,
         "mode": "terminal",
         "reason": "terminal_unavailable",
-        "command": "claude auth login",
+        "command": "'/opt/my tools/claude' auth login",
     }
     assert popen.calls == []
 

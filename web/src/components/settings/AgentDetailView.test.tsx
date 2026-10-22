@@ -439,6 +439,28 @@ describe('Agent 详情', () => {
       expect(loginBtn('ChatGPT')).toBeUndefined()
     })
 
+    it('不支持第三方接口的 agent（无 endpoint_family）也能看到并点到登录按钮', async () => {
+      await openDetail(
+        capsOf([
+          needsAuth({
+            features: { ...agentCaps().features, third_party_endpoints: false, login: true },
+          }),
+        ]),
+      )
+      expect(document.querySelectorAll('[data-agent-login]')).toHaveLength(1)
+      expect(document.querySelector('[data-agent-account] [data-agent-login]')).not.toBeNull()
+      loginMock.mockResolvedValue({ started: true, mode: 'background' })
+      loginStatusMock.mockResolvedValue({ status: 'running' })
+      await act(async () => loginBtn('ChatGPT')!.click())
+      expect(loginMock).toHaveBeenCalledExactlyOnceWith('codex')
+    })
+
+    it('支持第三方接口的 agent 登录按钮只出现一次，且在模型服务区块里', async () => {
+      await openDetail(capsOf([needsAuth()]))
+      expect(document.querySelectorAll('[data-agent-login]')).toHaveLength(1)
+      expect(document.querySelector('[data-agent-account]')).toBeNull()
+    })
+
     it('适配器没声明官方登录（features.login=false）时不出现', async () => {
       await openDetail(
         capsOf([
