@@ -209,7 +209,7 @@ describe('登录入口与已登录行', () => {
     has_key: true,
     key_hint: '',
     incompatible: null,
-    migratable: false,
+    migratable: null,
     auth: 'oauth',
     signed_in: true,
     oauth_expires_ms: 4_000_000_000_000,

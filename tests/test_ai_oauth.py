@@ -588,6 +588,46 @@ def test_run_refreshes_before_spawn_and_refuses_to_spawn_when_it_cannot(
     assert ai_providers.get(rec["id"])["oauth"]["access"] == "AT-NEW"
 
 
+def test_refresh_runs_outside_the_request_lock_and_dedupe_still_wins(fake, monkeypatch, tmp_path):
+    """刷新要联网，不许在脚本锁 / 请求锁里做；刷不动时，已受理请求的重发仍按去重返回（ADR 0132）。"""
+    rec = signed_in_record(expires_in_ms=1000)
+    ai_providers.set_active("claude", rec["id"])
+    monkeypatch.setattr(ai_bridge, "require_usable", lambda agent: {})
+    spawned = []
+    monkeypatch.setattr(ai_bridge.subprocess, "Popen", lambda *a, **k: spawned.append(a))
+    held = []
+    real = ai_oauth.ensure_fresh
+
+    def probe(r):
+        # RLock 没有 locked()（3.10–3.13）：从另一个线程试拿，拿得到 = run 这时没持锁
+        got = []
+
+        def try_take():
+            ok = ai_bridge._REQUEST_LOCK.acquire(blocking=False)
+            got.append(ok)
+            if ok:
+                ai_bridge._REQUEST_LOCK.release()
+
+        t = threading.Thread(target=try_take)
+        t.start()
+        t.join()
+        held.append(not got[0])
+        return real(r)
+
+    monkeypatch.setattr(ai_oauth, "ensure_fresh", probe)
+    fake.on(RFC_TOKEN, (400, {"error": "invalid_grant"}))
+    monkeypatch.setattr(
+        ai_bridge, "find_request", lambda pk, rid: {"status": "ok", "session": "S1"}
+    )
+    with pytest.raises(ai_bridge.DuplicateRequest):
+        ai_bridge.run("claude", "fig.py", "p", str(tmp_path), client_request_id="rid-1")
+    assert held == [False] and spawned == []
+    monkeypatch.setattr(ai_bridge, "find_request", lambda pk, rid: None)
+    with pytest.raises(ai_bridge.AgentError) as exc:
+        ai_bridge.run("claude", "fig.py", "p", str(tmp_path), client_request_id="rid-2")
+    assert exc.value.code == "ai_endpoint_needs_login" and spawned == []
+
+
 def test_the_error_funnel_maps_needs_login_to_409():
     from tavotto import app as m
 
