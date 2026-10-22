@@ -214,6 +214,7 @@
   `lib/pageColumns.pageColumns`，**与属性栏页面预设同一份**（`CanvasPage.pagePresets` 也经它），不另写第二套数。
   拖动中 `interaction.kind === 'pageedge'`，`pageFit` 的补间取景让位。尺寸标注（`data-page-dims`，`--color-dim`）是画布
   叠加层、只在拖动中挂，不进文档 / 导出 / SVG 预览平面；与对象拖动的对齐吸附（`snapXs`）互不相干。
+  读数（2026-10-22）：**无框**（不画白底框）、只出被拖那一维，锚在被拖边的画布内侧、盒子宽高固定、`tabular-nums`；位置是纯函数 `canvas/pageEdgeReadout.readoutBox`（只看页面矩形，夹在舞台内，标尺在舞台之外所以不会被压），看护 `canvas/pageEdgeReadout.test.ts` 与 `e2e/page-edge-resize.spec.ts` 的读数不相交标尺 / 锚点稳定。
   标注与属性栏画布页头的只读尺寸用会滚的数字（`@sfinterface/numbers`，宪法「只上两处」）：连续拖动 `duration={0}`，
   吸附 / ⌥ 跳变（`pageEdge.rolls`）与属性栏一步到位才滚。
   拖边是对视口的直接操纵：每帧经 `setPan`（停补间、退出「适应画布」，右 / 下边平移量为 0 屏幕上不跳），Esc 取消时恢复原 `fitted`。

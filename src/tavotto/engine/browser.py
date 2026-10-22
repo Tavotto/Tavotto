@@ -133,6 +133,7 @@ def _patched_savefig(self, fname, *args, **kwargs):
                 kwargs.get("bbox_extra_artists"),
                 verify=figcapture.savefig_verifier(_REAL_SAVEFIG, self, fname, args, kwargs),
             )
+        figcapture.mark_saved(self)
     return None
 
 
@@ -308,6 +309,14 @@ class BrowserSession:
         # 实现——两边各写一份的话，同一个脚本会在两个入口产出不同的 stem，
         # 而前端按 stem 索引一切。
         base = os.path.splitext(safe_name)[0]
+        figcapture.adopt_displaced_writers(
+            self.savefig_writers,
+            self.capture,
+            self.capture_source,
+            self.savefig_calls,
+            self.savefig_extras,
+        )
+        figcapture.note_modified_after_save(self.capture, self.capture_source)
         fallback, dropped = figcapture.collect_pyplot_figures(
             self.capture, base, plt, limit=MAX_FIGURES
         )

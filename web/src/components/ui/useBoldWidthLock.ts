@@ -9,10 +9,10 @@ import { useCallback, useLayoutEffect, useRef, type RefObject } from 'react'
  * 用内联 `font-weight` 而不是类名：调用方可能是任何元素（右栏 `Tab` 的 button、画布页签的
  * 可拖拽 div），不依赖某个类的存在。jsdom 里量出来是 0，等于没设。
  */
-export function useBoldWidthLock(ref: RefObject<HTMLElement | null>) {
+export function useBoldWidthLock(ref: RefObject<HTMLElement | null>, enabled = true) {
   useLayoutEffect(() => {
     const el = ref.current
-    if (!el) return
+    if (!el || !enabled) return
     const prev = el.style.fontWeight
     el.style.minWidth = ''
     el.style.fontWeight = '600'

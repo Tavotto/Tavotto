@@ -279,6 +279,15 @@
 * safe worker 的捕获发生在 instrument 之前，规则只在脚本执行期生效；写回重放起新 worker 重跑脚本，同一规则再走一遍。
 * **文件身份与成败的真值（#1150）**：native 保存成功才登记（失败的原调用抛出，不进任何表；缺目录即如此），登记前对已登记目标做 `samefile` 对账（`_canonical_target`），硬链接别名并入已登记的键——**不替代路径键**，删掉重建同一路径仍是同一目标，且只在两个键都对应存在的文件时合并。键里只在**能证明**目录把 NFC / NFD 当同一个名字时才归一成 NFC（`_dir_folds_unicode`：拿真实存在的名字——这次要写的、或目录里的非 ASCII 条目——试另一种写法，`samefile` 为真才算；APFS 是，NTFS / ext4 / exFAT / 多数网络卷不是）；证明不了不归一，宁可漏并——误并会编辑到另一张图。safe / 浏览器在没有任何已存在名字可当证据的新目录里因此不归一；native 另有 samefile 对账兜底。持有者的**惰性验证**三值（`savefig_verifier(...).deferred`）：Figure 此刻渲染不出、但同一组参数在空白 Figure 上能渲染 = 未知（保存后可能被改坏），按已保存算，不推翻选择；参数本身造成的失败仍判失败。代价：持有者当时真因内容失败（如 tight 量不出包围盒）又恰好要挡住顶替时，会按未知挡住（回到 G2 之前的先到先得）。外来写入仍当场验证（Figure 此刻就是保存时的内容）。
 * 已知未覆盖：`paper_style.save` 捷径不经 savefig 钩子，不参与；**safe / 浏览器的缺目录**——`savefig("missing/x.pdf")` native 抛 FileNotFoundError，safe 的代理渲染进 BytesIO 判成功（脚本的 makedirs 在沙盒里可能被拦或落在别处，磁盘上没有目录不代表原生会失败；d7f5b24b4 的裁决，safe 没有磁盘真值，只能近似）；**文件系统自己的文件名比较规则**（不区分大小写时只做 `lower()` 折叠；NTFS 大写表不模拟）；Windows 上的大小写探测只在 CI 跑，没有真机验过；`MAX_SAVEFIG_WRITERS` 淘汰行为不变（被淘汰者的文件之后算「没人写过」）。
+* **被拒顶替、却仍是某个文件最近写入者的图也要捕获**（2026-10-21）：写入者表只握弱引用，乙写 `panel.pdf`
+  （持有者甲写 `panel.png`）后被 close 就会被回收、整张丢失。`note_savefig_writer` 末尾 `_keep_displaced` 对这类图
+  握强引用（有界，随 `_trim_writers`）；三条入口在 pyplot 兜底**之前**调 `figcapture.adopt_displaced_writers`，乙以
+  `fallback_stems` 的规则成为 `panel-2`（来源 savefig，带它自己的调用表），native 在 show 屏障与脚本结束各调一次。
+  原件按这张图写文件时的 stem（`LiveFigureSession.savefig_file_stem`）、只在它存过的格式里找
+  （`find_original_artifact(formats=…)`），甲 → `panel.png`、乙 → `panel.pdf`；写回见 `writeback-transaction.md`。
+  已知未覆盖：项目素材按**文件名 stem** 解析到 stem 同名的图（`registry.for_stem`），打开 `panel.pdf` 仍显示甲——
+  注册表没有「哪个文件是哪张图写的」，乙可经运行期素材 `runtime:<脚本>#panel-2` 编辑；写回守卫保证不会因此覆盖乙的文件。
+  看护 `tests/test_same_stem_other_figure.py`、`tests/bridge/test_bridge_same_path_last_writer.py`。
 
 看护 `tests/test_capture_saved_facts_identity.py`（硬链接 / NFC-NFD / 保存后改坏 / 缺目录边界）、`tests/test_capture_same_path_last_writer.py`（共享函数 + 会话规则 + 目标键 + 真 worker / 浏览器端到端）、
 `tests/bridge/test_bridge_same_path_last_writer.py`（native）。

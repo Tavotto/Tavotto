@@ -243,6 +243,7 @@ def _install_savefig_hook(mfigure) -> None:
                     kwargs.get("bbox_extra_artists"),
                     locked=stem in _CAPTURE_LOCKED,
                 )
+                figcapture.mark_saved(self)
             except Exception:  # noqa: BLE001
                 pass
         if _CAPTURING:
@@ -387,6 +388,11 @@ def collect_pyplot(plt) -> None:
     前端按 stem 索引一切。
     """
     global _DROPPED
+    # show 屏障也是「交给用户看」的时刻：写了文件却没认领的图先补进来（与脚本结束处同一个函数，已认领的跳过）
+    figcapture.adopt_displaced_writers(
+        _CAPTURE_WRITERS, _CAPTURE, _CAPTURE_SOURCE, _CAPTURE_SAVEFIG, _CAPTURE_EXTRAS
+    )
+    figcapture.note_modified_after_save(_CAPTURE, _CAPTURE_SOURCE)
     stems, dropped = figcapture.collect_pyplot_figures(_CAPTURE, _SCRIPT_STEM[0], plt)
     for stem in stems:
         _CAPTURE_SOURCE[stem] = figcapture.SOURCE_PYPLOT
@@ -1467,6 +1473,12 @@ def main(argv: list | None = None) -> int:
 
     _promote_temp_saves(run.session.capture if run.session is not None else ())
 
+    # 写了文件却因 stem 被别的图持有而没认领的图：与 safe worker 同一时机（脚本跑完、pyplot 兜底之前）、
+    # 同一个函数；不依赖脚本有没有 import pyplot（纯 OO 脚本同样会写同一 stem）
+    figcapture.adopt_displaced_writers(
+        _CAPTURE_WRITERS, _CAPTURE, _CAPTURE_SOURCE, _CAPTURE_SAVEFIG, _CAPTURE_EXTRAS
+    )
+    figcapture.note_modified_after_save(_CAPTURE, _CAPTURE_SOURCE)
     plt = sys.modules.get("matplotlib.pyplot")
     if plt is not None:
         collect_pyplot(plt)

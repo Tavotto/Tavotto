@@ -42,11 +42,14 @@ const GLYPHS: Record<string, Glyph> = {
 export function AgentIcon({
   iconKey,
   size = 36,
+  glyphSize = ICON_SIZE.lg,
   className,
 }: {
   iconKey: string
   /** 外框边长（列表 36、详情 40） */
   size?: number
+  /** 图形本身的边长（默认 lg；菜单 / 胶囊里的小图标传 sm） */
+  glyphSize?: number
   className?: string
 }) {
   const Glyph = GLYPHS[iconKey] ?? Bot
@@ -59,7 +62,7 @@ export function AgentIcon({
         className,
       )}
     >
-      <Glyph size={ICON_SIZE.lg} />
+      <Glyph size={glyphSize} />
     </span>
   )
 }

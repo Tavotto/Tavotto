@@ -123,6 +123,19 @@ ADR 0098 末节的「完整 PNG 的受限采用」（`selected-figsize-v1`，#78
 这正是对照确认要让用户看见的东西；系统不声称拥有保存瞬间的快照。PR3 评估在 `_patched_savefig` 命中被选路径
 那一次保存时就地留下渲染证据，届时才可能把「保存瞬间」从推断变成事实。
 
+**补充（2026-10-21）：至少要告知。** 可编辑基础仍是最终 Figure、仍不拍快照；但「存完又被脚本改过」这件事要说出来，
+否则用户在 Tavotto 里看到的与磁盘文件不同却无从知道。判据是 matplotlib 自带的 stale 传播：给 Figure 的 `stale_callback` 套一层只记录的透明包装（`figcapture.mark_saved`，只套一次，
+原回调原样转调），每次保存记完账把私有标记清成 False，被以真值调用就置真；脚本跑完（native：第一次交出去）时标记为真即改过
+（`figcapture.note_modified_after_save`，每张图只判一次，之后 Tavotto 自己的编辑不算；同 stem 惰性验证的那次渲染还原标记）。
+另连一个 `draw_event` 回调（只连一次、weakref）在每次重绘画完时清标记——draw 过程中 matplotlib 自己会置 stale，不该算脚本改图；
+语义与旧的「清 stale」一致：从最后一次保存或重绘之后被改过才算，存后改了又重绘一次的盲区不再报告。
+两个钩子只在脚本运行期存在：`note_modified_after_save` 判定时一并卸掉（`stale_callback` 还原、`draw_event` 断开；已判过的图不再装），
+之后 Figure 与原生无异，采纳检查 `_require_artifact_figure` 看不到它们（Codex #1250 P1）。
+**不写 `fig.stale`**：用户脚本在存盘后读到的 stale 必须与原生 matplotlib 一致（Codex #1250：清零会让读 stale 的脚本走不同分支）。
+不额外渲染、不复制 Figure。manifest 为真时带
+`modified_after_save: true`，前端在元素树搜索行放一枚胶囊、悬停给原因。只改 rcParams 不改已有 artist，不算改图。
+看护 `tests/test_modified_after_save.py`、`tests/bridge/test_bridge_same_path_last_writer.py`。
+
 ## 分阶段
 
 | PR | 内容 | 风险档 | 回滚 |

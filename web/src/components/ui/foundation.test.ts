@@ -147,7 +147,7 @@ const RULES: Rule[] = [
     catches: '<span className="font-semibold" />',
     spares: '<span className="font-medium type-title" />',
     exempt: {
-      '/src/components/ui/tabClass.ts': { count: 1, why: '选中的页签：600 + ink，与未选中的 400 + ink-3 拉开两档' },
+      '/src/components/ui/tabClass.ts': { count: 2, why: '选中的页签（下划线式与分段式各一处）：600 + ink，与未选中的拉开两档' },
       '/src/components/ui/Segmented.tsx': { count: 1, why: '选中的分段项：白色 thumb 上 600 + ink' },
       '/src/components/inspector/controls/OptionGrid.tsx': { count: 1, why: '样张网格与 Segmented 同一副皮（2026-10-07 §9.2）：选中格浮起 + 600' },
       '/src/components/ui/listRow.ts': { count: 1, why: '选中的列表 / 树行：selected 底 + 600（2026-10-07 §10.3）' },

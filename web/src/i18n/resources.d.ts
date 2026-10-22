@@ -59,6 +59,7 @@ export default interface Resources {
       "max": "最仔细，耗时与额度明显更多",
       "medium": "平衡速度与质量",
       "minimal": "只做最直接的改动，最快",
+      "ultra": "比「极高」更进一步，耗时与额度最多",
       "xhigh": "比「高」更深入，耗时与额度更多"
     },
     "effortLabel": {
@@ -67,6 +68,7 @@ export default interface Resources {
       "max": "最高",
       "medium": "中",
       "minimal": "最低",
+      "ultra": "超高",
       "xhigh": "极高"
     },
     "history": {
@@ -2455,6 +2457,7 @@ export default interface Resources {
       "export_basis_mismatch": "{{format}} 与同批其他格式不是出自同一份来源，为避免交出不一致的文件，这一项没有导出。其余格式已照常导出。",
       "export_dir_unwritable": "无法写入导出目录：{{error}}。请检查磁盘空间和目录权限。",
       "export_failed": "导出失败：{{error}}。",
+      "export_raster_too_large": "这张图按当前设置要生成 {{width}} × {{height}} 像素的位图，超过了上限（{{max_pixels}} 像素），为避免内存耗尽没有导出，原文件也没有改动。建议降低导出分辨率，或缩小图幅后再试；Tavotto 不会自动替你降低。",
       "export_render_failed": "{{id}} 重渲染失败：{{reason}}",
       "external_change": "排版在磁盘上被 Tavotto 之外的改动覆盖，本次保存未写入。",
       "figure_name_exhausted": "同名的图太多了，没能给新图找到可用的名字。",
@@ -2661,6 +2664,7 @@ export default interface Resources {
       "worker_build_timeout": "脚本未能运行完毕，工作进程已重启，请重试。判定超时的条件：20 分钟没有任何输出，或连续输出满 4 小时。展开输出查看停在哪一步；若脚本本身需要长时间静默计算，可在该阶段输出一行进度。",
       "worker_timeout": "渲染超时，工作进程已重启，请重试。若反复超时，请检查脚本本身能否运行完毕。",
       "write_back_disabled": "项目是只读的：无法写回原始文件。可在项目设置里恢复可写。",
+      "write_back_foreign_file": "{{file}} 是这个脚本里另一张图保存的，写回不会覆盖它，原文件没有改动。",
       "write_back_format_unsupported": "写回只支持 PDF 和 PNG 素材，这张是 {{format}}。",
       "write_back_persist_failed": "无法写回：备份或新文件没能写入磁盘（{{reason}}）。原文件未做任何改动，请检查磁盘空间与目录权限后重试。",
       "write_back_warnings": "无法写回：重放时出现了警告。",
@@ -4974,6 +4978,8 @@ export default interface Resources {
       "locateEditable": "选中一张可编辑的图",
       "lock": "锁定（画布点击跳过）",
       "lockedState": "已锁定",
+      "modifiedAfterSave": "与存盘文件不同",
+      "modifiedAfterSaveHint": "脚本保存这张图之后又改动了它。这里编辑的是脚本跑完时的样子，可能与磁盘上的文件不一样。",
       "needRender": "「{{name}}」的元素清单需要渲染一次。",
       "noEditableHint": "由脚本生成的图才能改图内对象",
       "noEditableTitle": "画布上还没有可编辑的图",

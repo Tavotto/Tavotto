@@ -206,3 +206,125 @@ def test_native_failed_holder_write_does_not_block(tmp_path, bridge_session, fir
         sess.wait_event("barrier")
         sess.resume()
         sess.wait_event("exit")
+
+
+OTHER_FIGURE = """\
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+
+
+def first():
+    fig, ax = plt.subplots(figsize=(2.0, 1.6))
+    fig.savefig("panel.png", dpi=100)
+
+
+def second():
+    fig, ax = plt.subplots(figsize=(2.4, 1.6))
+    fig.savefig("panel.pdf")
+    plt.close(fig)
+
+
+first()
+second()
+plt.show()
+"""
+
+
+def test_native_other_figure_on_the_same_stem_is_adopted(tmp_path, bridge_session):
+    """`panel.png` 甲 / `panel.pdf` 乙（存完即关）：与 safe worker / 浏览器同样产出 `panel` + `panel-2`
+    （`figcapture.adopt_displaced_writers`），show 屏障上就交出来。"""
+    proj = tmp_path / "proj"
+    write(proj / "other.py", OTHER_FIGURE)
+    with bridge_session(proj / "other.py", cwd=str(proj)) as sess:
+        sess.wait_event("barrier")
+        desc = {d["stem"]: d for d in sess.ensure_built()["descriptors"]}
+        assert sorted(desc) == ["panel", "panel-2"]
+        assert round(desc["panel"]["size_mm"][0] / 25.4, 2) == 2.0
+        assert round(desc["panel-2"]["size_mm"][0] / 25.4, 2) == 2.4
+        assert [c["format"] for c in desc["panel-2"]["savefig_calls"]] == ["pdf"]
+        sess.resume()
+        sess.wait_event("barrier")
+        sess.resume()
+        sess.wait_event("exit")
+
+
+MUTATED_AFTER_SAVE = """\
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+fig, ax = plt.subplots(figsize=(2, 1.5))
+ax.set_title("saved")
+fig.savefig("mut.png")
+ax.set_title("mutated")
+keep, kx = plt.subplots(figsize=(2, 1.5))
+keep.savefig("keep.png")
+plt.show()
+"""
+
+
+def test_native_reports_a_figure_the_script_changed_after_saving(tmp_path, bridge_session):
+    """真写盘的 native 入口与 safe worker 同一判据（`figcapture.mark_saved` / `note_modified_after_save`）。"""
+    proj = tmp_path / "proj"
+    write(proj / "mut.py", MUTATED_AFTER_SAVE)
+    with bridge_session(proj / "mut.py", cwd=str(proj)) as sess:
+        sess.wait_event("barrier")
+        sess.ensure_built()
+        assert sess.override("mut", [])["manifest"].get("modified_after_save") is True
+        assert "modified_after_save" not in sess.override("keep", [])["manifest"]
+        sess.resume()
+        sess.wait_event("barrier")
+        sess.resume()
+        sess.wait_event("exit")
+
+
+STALE_PROBE = """\
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+fig, ax = plt.subplots(figsize=(2, 1.5))
+fig.savefig("probe.png")
+print("stale-after-save", fig.stale)
+fig.stale = False
+ax.set_title("changed")
+print("stale-after-change", fig.stale)
+fig.savefig("probe.png")
+print("stale-after-resave", fig.stale)
+"""
+
+
+def test_native_does_not_change_what_the_script_sees_in_fig_stale(tmp_path, user_python):
+    """存盘后读 `fig.stale` 的脚本，在 native 下输出与裸 Python 完全一致（记录只挂回调，不写 `stale`）。"""
+    import subprocess
+
+    from support.bridgekit import child_env, run_runner
+    from tavotto.engine import bridge
+
+    proj = tmp_path / "proj"
+    write(proj / "probe.py", STALE_PROBE)
+    plain = subprocess.run(
+        [user_python, str(proj / "probe.py")],
+        cwd=str(proj),
+        env=child_env(),
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=300,
+    )
+    assert plain.returncode == 0, plain.stderr
+    r = run_runner(
+        user_python,
+        bridge.RUNNER_PY,
+        target=proj / "probe.py",
+        cwd=str(proj),
+        report=tmp_path / "report.json",
+        out_dir=tmp_path / "out",
+    )
+    assert r.returncode == 0, r.stderr
+    lines = [ln for ln in r.stdout.splitlines() if ln.startswith("stale-")]
+    assert lines == [ln for ln in plain.stdout.splitlines() if ln.startswith("stale-")]
+    assert lines == [
+        "stale-after-save True",
+        "stale-after-change True",
+        "stale-after-resave True",
+    ]

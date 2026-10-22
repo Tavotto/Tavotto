@@ -626,7 +626,7 @@ function TreeView({
     <div className="flex min-h-0 flex-1 flex-col">
       {/* 搜索框下留白与素材页 / 画布页同一档 8px（左栏审计 L36）。「只看这一支」是搜索行里的一枚 chip，
           不再是搜索框下面另起的一条横幅（2026-10-07 设计审计 §10.3）：它与搜索一样是「看哪些行」的筛选 */}
-      {(showSearch || isolated) && (
+      {(showSearch || isolated || manifest.modified_after_save) && (
       <div className={cn('flex shrink-0 items-center gap-1.5', chrome === 'bare' ? 'p-2' : 'px-3 pb-2')}>
         {showSearch && (
         <SearchInput
@@ -652,6 +652,17 @@ function TreeView({
             <IconButton iconSize="xs" label={et('exitIsolate')} data-element-isolate-exit onClick={() => setIsolated(null)}>
               <X size={ICON_SIZE.xs} />
             </IconButton>
+          </span>
+        )}
+        {/* 存盘后脚本又改过这张图（ADR 0139 §八）：一枚胶囊、一句话，细节在悬停提示里——不另起横幅 */}
+        {manifest.modified_after_save && (
+          <span
+            data-modified-after-save
+            role="note"
+            title={et('modifiedAfterSaveHint')}
+            className="flex h-7 min-w-0 shrink items-center rounded-full bg-surface-hover px-2 text-xs text-ink-2"
+          >
+            <span className="min-w-0 truncate">{et('modifiedAfterSave')}</span>
           </span>
         )}
       </div>

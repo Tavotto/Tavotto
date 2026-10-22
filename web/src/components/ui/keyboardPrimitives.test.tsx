@@ -277,3 +277,31 @@ describe('Toggle：「多个值」第三态（2026-10-07 审计 §9.2 P0）', ()
     expect(onChange).toHaveBeenCalledWith(false)
   })
 })
+
+describe('Tabs：分段式（右栏页签行）', () => {
+  function Harness() {
+    const [tab, setTab] = useState('a')
+    return (
+      <TabList variant="segmented" label="视图">
+        {['a', 'b', 'c', 'd'].map((id) => (
+          <Tab key={id} variant="segmented" active={tab === id} onClick={() => setTab(id)}>
+            {id}
+          </Tab>
+        ))}
+      </TabList>
+    )
+  }
+  const tabs = () => [...host.querySelectorAll<HTMLButtonElement>('[role="tab"]')]
+
+  it('语义与键盘不变：仍是 tablist / tab，→ 换页；各格整格可点、等宽列、可截断', async () => {
+    await render(<Harness />)
+    const list = host.querySelector('[role="tablist"]')!
+    expect(list.className).toContain('grid')
+    expect(tabs().every((t) => t.className.includes('truncate') && t.className.includes('min-w-0'))).toBe(true)
+    expect(tabs().map((t) => t.tabIndex)).toEqual([0, -1, -1, -1])
+    tabs()[0].focus()
+    await key(tabs()[0], 'ArrowRight')
+    expect(tabs().map((t) => t.getAttribute('aria-selected'))).toEqual(['false', 'true', 'false', 'false'])
+    expect(document.activeElement).toBe(tabs()[1])
+  })
+})

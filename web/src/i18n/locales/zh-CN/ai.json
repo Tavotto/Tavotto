@@ -43,7 +43,8 @@
     "max": "最仔细，耗时与额度明显更多",
     "medium": "平衡速度与质量",
     "minimal": "只做最直接的改动，最快",
-    "xhigh": "比「高」更深入，耗时与额度更多"
+    "xhigh": "比「高」更深入，耗时与额度更多",
+    "ultra": "比「极高」更进一步，耗时与额度最多"
   },
   "effortLabel": {
     "high": "高",
@@ -51,7 +52,8 @@
     "max": "最高",
     "medium": "中",
     "minimal": "最低",
-    "xhigh": "极高"
+    "xhigh": "极高",
+    "ultra": "超高"
   },
   "history": {
     "allStatuses": "全部状态",

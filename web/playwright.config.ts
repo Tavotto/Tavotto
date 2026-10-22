@@ -103,6 +103,8 @@ export default defineConfig({
         'ai-draft.spec.ts',
         // 运行中会话的恢复（PR4b）：占位与锁的文案是中英两套，定位走 data-*
         'ai-restore.spec.ts',
+        // 执行器与模型两级选择器：家族 / 型号显示名是后端给的，其余文案中英两套，定位走 data-*
+        'ai-model-picker.spec.ts',
         'a11y.spec.ts',
         // 拖页面边（渐进式画布改版 裁决 5）：标注是中英两套文案（宽 / W），定位走 data-*，两种语言各走一遍
         'page-edge-resize.spec.ts',

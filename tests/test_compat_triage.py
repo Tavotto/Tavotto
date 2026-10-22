@@ -198,10 +198,15 @@ class Clusters(unittest.TestCase):
         cls.run_dir = Path(cls.tmp.name) / "RUN"
         cls.generated = xt.generate(42)
         ex.write_candidates(cls.generated, cls.run_dir)
+        # 这条用例钉的是「父本不同、调用形状相同 → 同一簇」，所以只取单图父本。多图父本（线组 alpha 的两张图、
+        # 同 stem 的两张图）循环里有两对 figure/savefig，调用形状本来就不同，按设计是另一簇
+        # （见 test_same_error_text_with_a_different_call_site_is_a_different_cluster）。
+        single_figure = set(xt.ENGINE_PARENTS) - {"art_linecoll_alpha", "shape_same_stem_formats"}
         chosen = [
             c
             for c in cls.generated["candidates"]
             if c["execution_plan"]["status"] == "executable"
+            and c["parent"]["case"] in single_figure
             and (
                 "show_close" in [s["name"] for s in c["chain"]]
                 or "same_path_loop" in [s["name"] for s in c["chain"]]

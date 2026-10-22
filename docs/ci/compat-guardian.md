@@ -348,8 +348,10 @@ Tavotto 侧走产品自己的发现链（静态注册表，不足时试运行探
 
 **结构去重与覆盖**：按「轴向量 + 规范化 AST 签名」去重（数字/字符串常量与 `cg_plt3` 之类别名数字归一，所以仅参数不同不算新结构）。
 报告 `coverage` 给出：每个家族的轴、适用父本数、候选数；每个轴的候选数；保型/改轴数；去重前后；以及父本按语料类别的分布
-对比整个语料——**父本全是已经通过的 `script_shapes`，`core_artists / axes_layout / metamorphic / scientific_stack` 为零**，
-这个偏向在报告里是明文，候选与自己的 native 一致不代表别的形状没问题。
+对比整个语料——**父本集中在 `script_shapes`（脚本组织形状）加少量 `core_artists` / `axes_layout` 的科研图构图
+（逐段 alpha 线组、radar、twinx 手动布局、三维曲面+散点）；`metamorphic / scientific_stack` 仍为零**，
+其中同 stem 不同格式的父本（`shape_same_stem_formats`）登记时是 `product_bug`（后写且被 close 的那张丢失），修复（`figcapture.adopt_displaced_writers`）后基线为 `full_support`，留作父本让 explore 继续在这个边界周围变换；
+usetex 需要系统 TeX，托管 runner 上跑不了，不作父本。这个偏向在报告里是明文，候选与自己的 native 一致不代表别的形状没问题。
 
 **输出**（`--out/RUN_ID/`）：`candidates.json`（确定性）、`candidates/<id>/files/`、`evidence/<id>/…`、
 `reports/explore-report.json`、`reports/explore-summary.md`。报告含每候选的 seed、父本、变换链、AST 签名、信任级、

@@ -49,6 +49,7 @@ import {
   saveNow,
   useDocumentStore,
 } from '@/store/documentStore'
+import { runManualSave } from '@/store/actions'
 import { useOnboardingStore } from '@/store/onboardingStore'
 import { isTimelineOpen, useUiStore } from '@/store/uiStore'
 import { useUpdateStore } from '@/store/updateStore'
@@ -299,8 +300,8 @@ function useDocIssue(): DocIssue | null {
  * 顶栏的文档状态芯片（2026-10-07 设计审计 §10.1）。两根轴（ADR 0096）：`saveState` 说本机自动保存走到哪一步；
  * 绑定的项目文件说「项目里那份是不是最新」。
  *
- *   - **落定**：只有一枚图标——✓ = 已保存到项目、硬盘 = 存在本机（项目里那份落后时，文档名旁另有一枚空心环）。
- *     那句话进读屏与悬停气泡，不占顶栏的字宽；
+ *   - **落定**：图标 + 一句短字（≥ 900 宽；更窄只留图标，字进读屏与气泡）——✓ 已保存到项目、硬盘 = 存在本机 /
+ *     未存进项目（项目里那份落后时，文档名旁另有一枚空心环）。整枚芯片是按钮，点击 = ⌘S；已存进项目且最新时空操作；
  *   - **进行中**：持续满 `SAVE_PENDING_REVEAL_MS` 才出字（快的一轮里一直是那枚落定图标），字的格宽按会轮到的
  *     那几句里最宽的那句占位（同格叠放、只有当前那句可见），换字不推邻居；
  *   - **出事**（冲突 / 保存失败 / 未恢复的编辑 / 上次的排版没打开 / 版本过新）：锚点色 24px 胶囊，点开是一块
@@ -337,11 +338,14 @@ export function SaveStateLabel() {
   // 落定时那句话（也是快的一轮里继续显示的那句）
   const settledText = bound
     ? t(bound.dirty ? 'topbar.saveProjectPending' : 'topbar.saveProjectSaved')
-    : saveState === 'saved'
-      ? t('topbar.saveLocal')
-      : lastPersisted
-        ? t('topbar.saveLocalAt', { time: formatTime(lastPersisted) })
-        : t('topbar.saveLocal')
+    : projectOpen
+      ? // 开着项目但这份排版只在本机（没有项目文件）：说「未存进项目」，点它走 ⌘S 的「存进项目」命名框
+        t('topbar.saveProjectPending')
+      : saveState === 'saved'
+        ? t('topbar.saveLocal')
+        : lastPersisted
+          ? t('topbar.saveLocalAt', { time: formatTime(lastPersisted) })
+          : t('topbar.saveLocal')
   const text =
     saveState === 'save_error'
       ? t('topbar.saveError')
@@ -390,48 +394,63 @@ export function SaveStateLabel() {
   // 落定那枚图标：项目里那份是最新的才打 ✓；只在本机（或项目里那份落后）是一枚硬盘
   const SettledIcon = bound && !bound.dirty ? Check : HardDrive
   // 占位：会在本机自动保存一轮里轮到的那几句（落定那句 + 两句进行中）。叠在同一格里，
-  // 格宽取最宽那句——只是给宽度，不可见、不给读屏。落定时整格只给读屏（芯片只剩图标）
+  // 格宽取最宽那句——只是给宽度，不可见、不给读屏。窄于 900 时整格只给读屏（芯片只剩图标）
   const localSettled = bound
     ? []
     : [t('topbar.saveLocal'), ...(lastPersisted ? [t('topbar.saveLocalAt', { time: formatTime(lastPersisted) })] : [])]
   const reserve = [...new Set([settledText, ...localSettled, t('topbar.saveDirty'), t('topbar.saveSaving')])].filter(
     (r) => r !== text,
   )
+  // 已经存进项目且最新：点它没有事可做（不禁用——禁用钮会退出 Tab 顺序、气泡也更难出），点击空操作 + aria-disabled
+  const nothingToSave = !!bound && !bound.dirty && settled && !revealPending
+  const textShown = 'max-[899px]:sr-only min-[900px]:truncate'
   return (
+    // 根仍是 span（与出事分支同种元素：播报区 `live` 是早已挂着的同一个节点，Codex #947），里面一颗整枚芯片大的按钮：
+    // 点击 = ⌘S（`runManualSave`：本机那份先写、绑了项目文件就写回、开着项目没文件就弹「存进项目」命名框）。
+    // 窄于 900 只留图标，字进 sr-only 当可达名；悬停气泡说全（2026-10-22 用户裁决：落定时也常驻短字 + 可点）
     <span
       data-save-state
       data-save-destination={bound ? 'project' : 'local'}
       data-save-shown={shownState}
-      className="flex h-6 min-w-0 shrink items-center gap-1 px-1 text-xs text-ink-3"
-      // 落定时字只给读屏，悬停气泡要连状态一起说
+      className="flex h-6 min-w-0 shrink items-center"
       title={`${text} · ${title}`}
     >
-      {/* 图标位常驻：落定 = ✓ / 硬盘；进行中留空位（不转圈：它本来就只在慢的那一轮出现），窄于 900 时
-          进行中画一颗墨点代替那句字 */}
-      <span aria-hidden className="flex size-3.5 shrink-0 items-center justify-center">
-        {revealPending ? (
-          <span className="size-1.5 rounded-full bg-ink-3 min-[900px]:hidden" />
-        ) : (
-          <SettledIcon size={ICON_SIZE.sm} />
+      <button
+        type="button"
+        data-save-button
+        aria-disabled={nothingToSave || undefined}
+        onClick={() => {
+          if (!nothingToSave) void runManualSave()
+        }}
+        className={cn(
+          'flex h-6 min-w-0 shrink items-center gap-1 rounded-full px-2 text-xs text-ink-3 outline-none focus-visible:focus-ring',
+          !nothingToSave && 'hover:bg-surface-hover hover:text-ink-2',
         )}
-      </span>
-      <span className={cn('grid min-w-0', !revealPending && 'sr-only')}>
-        <span
-          data-save-text
-          className={cn('col-start-1 row-start-1', revealPending && 'max-[899px]:sr-only min-[900px]:truncate')}
-        >
-          {text}
+      >
+        {/* 图标位常驻：落定 = ✓ / 硬盘；进行中留空位（不转圈：它本来就只在慢的那一轮出现），窄于 900 时
+            进行中画一颗墨点代替那句字 */}
+        <span aria-hidden className="flex size-3.5 shrink-0 items-center justify-center">
+          {revealPending ? (
+            <span className="size-1.5 rounded-full bg-ink-3 min-[900px]:hidden" />
+          ) : (
+            <SettledIcon size={ICON_SIZE.sm} />
+          )}
         </span>
-        {reserve.map((r) => (
-          <span
-            key={r}
-            aria-hidden
-            className="invisible col-start-1 row-start-1 hidden truncate min-[900px]:block"
-          >
-            {r}
+        <span className="grid min-w-0 text-left">
+          <span data-save-text className={cn('col-start-1 row-start-1', textShown)}>
+            {text}
           </span>
-        ))}
-      </span>
+          {reserve.map((r) => (
+            <span
+              key={r}
+              aria-hidden
+              className="invisible col-start-1 row-start-1 hidden truncate min-[900px]:block"
+            >
+              {r}
+            </span>
+          ))}
+        </span>
+      </button>
       {live}
     </span>
   )

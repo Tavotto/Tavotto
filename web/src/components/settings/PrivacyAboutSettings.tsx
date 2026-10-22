@@ -10,7 +10,7 @@ import { useUpdateStore } from '@/store/updateStore'
 import { BrandMark } from '../ui/BrandMark'
 import { buttonClass } from '../ui/buttonClass'
 import { ICON_SIZE } from '../ui/Icon'
-import { ExternalLink } from '../ui/icons'
+import { ExternalLink, Heart } from '../ui/icons'
 import { FieldGroup, FormSection } from '../ui/FormSection'
 import { Toggle } from '../ui/Toggle'
 import { DiagnosticDisclosure, SettingRow } from './SettingRow'
@@ -104,6 +104,8 @@ function ProductBlock({ version }: { version?: string }) {
         data-about-support
         className={buttonClass({ variant: 'secondary', size: 'md', className: 'ml-auto shrink-0' })}
       >
+        {/* 红色实心爱心（用户要求 2026-10-22）：危险色 token，深浅两套主题各自有值；纯装饰，字已说全 */}
+        <Heart size={ICON_SIZE.xs} filled className="text-danger" data-about-support-heart aria-hidden />
         {st('about.support', { product: PRODUCT_NAME })}
         <ExternalLink size={ICON_SIZE.xs} aria-hidden />
       </a>

@@ -72,13 +72,32 @@ class CliCandidate:
 
 
 @dataclass(frozen=True)
+class ModelDetail:
+    """一个模型型号的展示信息与它自己支持的推理强度（加字段协议：旧前端忽略）。
+
+    `efforts` 为空 = 该 Agent 没声明这个型号的档位，前端回落到 Agent 级 `efforts`。
+    """
+
+    id: str
+    display_name: str
+    description: str = ""
+    efforts: list[str] = field(default_factory=list)
+    default_effort: str | None = None
+
+
+@dataclass(frozen=True)
 class ModelCapabilities:
-    """该 Agent 当前能提供的模型 / 推理强度选项。"""
+    """该 Agent 当前能提供的模型 / 推理强度选项。
+
+    `models` 仍是型号 id 的有序清单（旧前端只认它）；`model_details` 是并行的
+    新字段，按 id 带显示名 / 说明 / 每型号自己的强度档位。
+    """
 
     models: list[str] = field(default_factory=list)
     default_model: str | None = None
     efforts: list[str] = field(default_factory=list)
     default_effort: str | None = None
+    model_details: list[ModelDetail] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -499,16 +518,77 @@ class CodexAgent(AgentDefinition):
         out["models"] = seen
         return out
 
+    @classmethod
+    def _catalog(cls) -> list[ModelDetail]:
+        """codex CLI 自己的模型目录缓存 `$CODEX_HOME/models_cache.json` 里 `visibility == "list"` 的型号。
+
+        只读、只取我们认得的字段；文件缺失 / 损坏 / 结构变了一律返回空表（调用方退回
+        只用 config.toml 的老行为），绝不抛。`hide` 的型号（内部 / 已下架）不列。
+        按 `priority` 升序（缺省沿用原序，稳定排序）。
+        """
+        try:
+            data = json.loads((cls._home() / "models_cache.json").read_text(encoding="utf-8"))
+            raw = data["models"]
+            if not isinstance(raw, list):
+                return []
+        except (OSError, ValueError, KeyError, TypeError):
+            return []
+        rows: list[tuple[float, int, ModelDetail]] = []
+        for i, m in enumerate(raw):
+            if not isinstance(m, dict) or m.get("visibility") != "list":
+                continue
+            slug = m.get("slug")
+            if not isinstance(slug, str) or not slug:
+                continue
+            name = m.get("display_name")
+            desc = m.get("description")
+            levels = m.get("supported_reasoning_levels")
+            efforts: list[str] = []
+            if isinstance(levels, list):
+                for lv in levels:
+                    e = lv.get("effort") if isinstance(lv, dict) else lv
+                    if isinstance(e, str) and e and e not in efforts:
+                        efforts.append(e)
+            default = m.get("default_reasoning_level")
+            prio = m.get("priority")
+            has_prio = isinstance(prio, (int, float)) and not isinstance(prio, bool)
+            rows.append(
+                (
+                    float(prio) if has_prio else float("inf"),
+                    i,
+                    ModelDetail(
+                        id=slug,
+                        display_name=name if isinstance(name, str) and name else slug,
+                        description=desc if isinstance(desc, str) else "",
+                        efforts=efforts,
+                        default_effort=default if isinstance(default, str) and default else None,
+                    ),
+                )
+            )
+        rows.sort(key=lambda r: (r[0], r[1]))
+        return [r[2] for r in rows]
+
     def model_capabilities(self) -> ModelCapabilities:
         cfg = self._config()
+        catalog = self._catalog()
+        by_id = {d.id: d for d in catalog}
+        # config.toml 当前在用的（含 profiles）在前，其后是 CLI 目录里可选的型号
+        ids = list(cfg["models"])
+        for d in catalog:
+            if d.id not in ids:
+                ids.append(d.id)
+        details = [by_id.get(i) or ModelDetail(id=i, display_name=i) for i in ids]
         efforts = list(self.EFFORTS)
-        if cfg["default_effort"] and cfg["default_effort"] not in efforts:
-            efforts.append(cfg["default_effort"])
+        extra = [cfg["default_effort"]] + [e for d in details for e in d.efforts]
+        for e in extra:
+            if e and e not in efforts:
+                efforts.append(e)
         return ModelCapabilities(
-            models=list(cfg["models"]),
+            models=ids,
             default_model=cfg["default_model"],
             efforts=efforts,
             default_effort=cfg["default_effort"] or "medium",
+            model_details=details,
         )
 
     def readiness(self, argv: list[str]) -> ReadinessResult:
@@ -597,7 +677,11 @@ class ClaudeAgent(AgentDefinition):
     MODELS = ["sonnet", "opus", "haiku"]
 
     def model_capabilities(self) -> ModelCapabilities:
-        return ModelCapabilities(models=list(self.MODELS), default_model="sonnet")
+        return ModelCapabilities(
+            models=list(self.MODELS),
+            default_model="sonnet",
+            model_details=[ModelDetail(id=m, display_name=m.capitalize()) for m in self.MODELS],
+        )
 
     def readiness(self, argv: list[str]) -> ReadinessResult:
         """`claude auth status` —— 官方的本地状态子命令，回一段 JSON。

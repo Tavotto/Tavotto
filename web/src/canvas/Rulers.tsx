@@ -267,12 +267,14 @@ export function Rulers({ viewW, viewH }: { viewW: number; viewH: number }) {
       </div>
       <canvas
         ref={topRef}
+        data-ruler="x"
         className="absolute top-0 z-sticky cursor-ns-resize"
         style={{ left: RULER_SIZE, width: viewW, height: RULER_SIZE }}
         onPointerDown={(e) => startGuideDrag(e, 'y', null)}
       />
       <canvas
         ref={leftRef}
+        data-ruler="y"
         className="absolute left-0 z-sticky cursor-ew-resize"
         style={{ top: RULER_SIZE, width: RULER_SIZE, height: viewH }}
         onPointerDown={(e) => startGuideDrag(e, 'x', null)}

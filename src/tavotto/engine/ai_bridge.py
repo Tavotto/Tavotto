@@ -274,6 +274,7 @@ def _agent_caps(agent: ai_agents.AgentDefinition, saved: dict, npm_available: bo
     caps = agent.model_capabilities() if installed else ai_agents.ModelCapabilities()
     models = list(caps.models)
     default_model = caps.default_model
+    details = list(caps.model_details)
 
     endpoint = None
     endpoint_backed = False
@@ -284,6 +285,8 @@ def _agent_caps(agent: ai_agents.AgentDefinition, saved: dict, npm_available: bo
             # 官方无关）
             models = list(endpoint["models"])
             default_model = endpoint.get("default_model") or models[0]
+            # 网关的模型名与官方目录无关：不带官方的显示名 / 档位
+            details = []
         # 「算不算真的接管了」**问注入方自己**，不在这里另写一份判据：
         # codex 侧 base_url 为空时 spawn_overrides 其实一个字节都不注入，
         # 那种情况 CLI 自己的登录态仍然算数。两份规则迟早分叉，而分叉的
@@ -308,6 +311,17 @@ def _agent_caps(agent: ai_agents.AgentDefinition, saved: dict, npm_available: bo
         "detection_source": res.source,
         "models": models,
         "default_model": default_model,
+        # 加字段：与 models 并行的型号详情（显示名 / 说明 / 每型号自己的强度档位）
+        "model_details": [
+            {
+                "id": d.id,
+                "display_name": d.display_name,
+                "description": d.description,
+                "efforts": list(d.efforts),
+                "default_effort": d.default_effort,
+            }
+            for d in details
+        ],
         "efforts": list(caps.efforts) if agent.supports_effort_selection else [],
         "default_effort": caps.default_effort if agent.supports_effort_selection else None,
         "endpoint": ai_providers.public(endpoint) if endpoint else None,

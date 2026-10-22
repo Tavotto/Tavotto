@@ -1,0 +1,129 @@
+{
+  "base_sha": "a5cf3549818f14c97c9c05f7aff6f14853a27f91",
+  "branch": "feat/cla-v2-upgrade-offline-20261018",
+  "source_repo_v2_ref": "77e2cab77597318859f874d9319c47f15da0e1dd",
+  "latest_main_ddl_compared": "0991bb9501489395a38542c94867fcfeffbdf196",
+  "latest_main_ddl_exact_frozen_match": true,
+  "production_schema_read": false,
+  "production_execution_authorized": false,
+  "execution_default": false,
+  "schema_delta": {
+    "alter_statements": 1,
+    "new_tables": 7,
+    "new_triggers": 23,
+    "ddl_total": 31,
+    "rebuilds": 0,
+    "dropped_objects": 0
+  },
+  "commands": [
+    {
+      "command": "node --test tests/*.test.mjs",
+      "exit_code": 0,
+      "log": "node.txt"
+    },
+    {
+      "command": "python3 tests/migration.test.py",
+      "exit_code": 0,
+      "log": "migration.txt"
+    },
+    {
+      "command": "node tests/mutation-smoke.mjs",
+      "exit_code": 0,
+      "log": "mutations.txt"
+    },
+    {
+      "command": "node --check scripts/v2-upgrade-offline.mjs",
+      "exit_code": 0,
+      "log": null
+    },
+    {
+      "command": "npm run typecheck",
+      "exit_code": 127,
+      "log": "typecheck.txt"
+    },
+    {
+      "command": "npm run build",
+      "exit_code": 1,
+      "log": "build.txt"
+    }
+  ],
+  "node_passed": 507,
+  "migration_passed": 4,
+  "mutations_detected": 146,
+  "new_mutations": 22,
+  "new_mutation_required_unique_count": 1,
+  "new_mutation_required_exit": 1,
+  "new_mutation_required_error": "AssertionError",
+  "independent_contract_tests": 46,
+  "independent_contract_mutants": 18,
+  "independent_review_groups": 24,
+  "independent_ddl_fault_points": 31,
+  "cli_tests": 3,
+  "cli_mutants": 3,
+  "durability_tests": 2,
+  "durability_mutants": 1,
+  "begin_ack_lost_regression": {
+    "old_probe_exit": 1,
+    "fixed_probe_exit": 0,
+    "fixed_transaction_left_open": false
+  },
+  "source_sha256": {
+    "docs/implementation/cla-v2-upgrade/README.md": "e5c0b3f661b215f8a9998dc683eced44f3b9e2a5cf50041ba7d13b13b53a9137",
+    "services/cla-cloudflare/README.md": "05dc330d17dda903704c7b56ac090270f622b7c8565eeab25f29f8cc96bc75d5",
+    "services/cla-cloudflare/migrations/v2-main-77e2cab7/README.md": "9d46ab36c4a76833c7dc485c6caf0ae663a2bfd0886471f2b30d38a0b8fb29c5",
+    "services/cla-cloudflare/migrations/v2-main-77e2cab7/base.sql": "b7c158869acbd1eb43dcbfee72f85ebf1149716082a66f9140989c56a4927e69",
+    "services/cla-cloudflare/migrations/v2-main-77e2cab7/native-schema.sql": "5e2a63a7560aee08253f942c8ee34a2cf0c99e692ef14417014d6081e348392a",
+    "services/cla-cloudflare/scripts/v2-upgrade-offline.mjs": "480b62ea6e3bc81c4f242cd6d343e7ec1b327ce63699edda8b68c6b57bde199f",
+    "services/cla-cloudflare/tests/independent-v2-upgrade.test.mjs": "242af17b34828e987f2bc3154dcd308807854089eca8e92f53aa44f571f5ced5",
+    "services/cla-cloudflare/tests/mutation-smoke.mjs": "fac66b340890644b2c0a00d827a043b943621d74fb1c3474f78fb4d3036e0f8a",
+    "services/cla-cloudflare/tests/v2-upgrade-cli-mutation-cases.json": "5ef1ce68ec0c6d66bd1de8776938111f488899148e28dba4848fd43c76390446",
+    "services/cla-cloudflare/tests/v2-upgrade-cli.test.mjs": "0e1fd0e3d6b09a4308bc1772358f65d52887fa501e9d2be1d6e76608ccfb344b",
+    "services/cla-cloudflare/tests/v2-upgrade-durability-mutation-cases.json": "3acc9a2083d8161c2efa90fc5919be34301aba85768d0675b0e629bfb14f1969",
+    "services/cla-cloudflare/tests/v2-upgrade-durability.test.mjs": "14377eda7127d05d49a3bce5b6c1492f4bdc28dd62a5def115f6b5709ec8d1bb",
+    "services/cla-cloudflare/tests/v2-upgrade-mutation-cases.json": "5c13701a0b1507461094aa781d92438d8386eb687330ba3c5cea08aec2192ec4"
+  },
+  "runtime_unchanged_sha256": {
+    "src/base.sql": "b7c158869acbd1eb43dcbfee72f85ebf1149716082a66f9140989c56a4927e69",
+    "src/native/schema.sql": "0e4cc1672c78837b219eba0c1f54de89fc86169c87ffd26277085a229dfe3a08",
+    "src/native/store.ts": "35c694576c1a8e4b6630ed6337f26a5a9e39fe55ddaa38dc46e31a50b672d140",
+    "src/native/worker.ts": "6b7f1b3c0a03863c99965659f0d7a3d483006dc7ddb36e853836010129731678"
+  },
+  "artifact_sha256": {
+    "schema-plan.json": "4b3eed3505d3b4ad25df696088f00755c58d6c68a5573b1237ffe4dd873c86c4",
+    "node.txt": "f038122f2805352b2e4c042ab9cdf1e038917f102217383b020ec086778056d1",
+    "independent-probe.json": "0b9105ea0cf4dfd7b46d5f4bdf34fbdb37f0eed0e13638fa18a3b8e30a280df2",
+    "mutations.txt": "ccdce0808d9f08c3cca08b74b99540aaf529c85f79f7b9d95740e3b703f5d323",
+    "build.txt": "7269cde5e60346dba16c6a0efe86bba49d69db453d90503cdb19225adbec9302",
+    "begin-ack-probe.mjs.txt": "6967e7c2b224313697964d7c6b4f36f0bc9f4824c359cddcd2b80b0cade6781a",
+    "migration.txt": "9b51edf968e62ae056b4494f820ec2854629469f91e246f590422ad6e1c12fef",
+    "durability-mutant.json": "91faf95967e98de5d4bb0cc3c7df4163d7ba2d87ba897d4db6db0f6492bfbd87",
+    "independent-review.md": "cdac79e28b651a7152957c56e9e54001bd643031e0c7a28a2417acae2d5ddb3f",
+    "typecheck.txt": "93eed0553081bd499f8b8cda0baee9c9c74eed7c493953de4dcad753d748bb50",
+    "independent-probe.mjs.txt": "cb2185c2010d76b05892ca91bb93f361f17efbdbb314f51ac25c346417398d3a",
+    "begin-ack-red.json": "2eae0e2187b76fdf4d58c33fcbd07c6e51accfd29b922873c3a6c9d7b3d30b3d",
+    "begin-ack-green.json": "699ff32d53962cc295aed1208e4b9d17fe586cc1faffd53ecedf7843db1af52c",
+    "probe-raw-logs.json": "00f5998fbba1273dfc8ffcae7df846c8effaa739d7780993c2349b45c5186b43",
+    "cli-mutants.json": "fbef3e81387c62aa4870e2d7f622da60408a33231099f0f6604efd21252a9818",
+    "contract/mutations.json": "f932f3f1bc40258952065cb16c1cf2eb37595c4b209044c290a0d634b945f712",
+    "contract/review.md": "1f34460f098f68240fda9db125ba84bbaac7371cf3d7fabbd60d8ad9c7a2292c",
+    "contract/raw-logs.json": "68bdd5b032a649f06dd377703f4583300137067732a580f73d571e38bd179e11",
+    "contract/manifest.json": "1c03892aaa88dc81e85616cd5248dd28a9a69db6f3cc46cf7578b1663e15c582",
+    "ts2700/node.txt": "a5466d27223365c7f51a9b16b1afd70192c0c4c934c577a5d04250ba2830cc62",
+    "ts2700/mutations.txt": "ccdce0808d9f08c3cca08b74b99540aaf529c85f79f7b9d95740e3b703f5d323",
+    "ts2700/verification.json": "1ab2506611ec528234a6d33f0ee6182ed19bcf480400fac4bb26da5433030405",
+    "ts2700/migration.txt": "695d659532a50ccb2c8c721223b0d28db4557e4602b82b948fbd5f9c7d0bf1f5",
+    "ts2700/targeted.txt": "b1e9d99863b8a6523d359900bd37810d2e5588ece4fc895bbd2537f92681c4e7"
+  },
+  "boundaries": [
+    "Only exact repo-v2 known profile; unknown production/D1 system schema not assumed. No live schema read.",
+    "API syntheticFixture is caller assertion; CLI has no file target or execution switch. All in-memory/file/WAL execution uses new disposable synthetic fixtures.",
+    "No agreement tuple selection, signature/grant/control/latch/head/activation backfill, runtime flag or new resource.",
+    "Pre-commit transaction rollback only; not a safe automatic post-cutover downgrade.",
+    "Node SQLite success is not D1 DDL batch/trigger, backup, external-writer-stop, cost/size/latency or production acceptance.",
+    "Local tsc/esbuild absent; previous npm E403 not retried/bypassed. No external review requested.",
+    "1168 confirmed retains the single slot; missing/unknown becoming manual may indefinitely block all positive publishing; expiry never releases. Not a fully automatic available loop.",
+    "Actual wakeup/deadline, merge-group and trusted-main wiring remain unfinished under existing dependencies. No new ability will be automatically expanded after this slice."
+  ],
+  "previous_candidate_head": "23e0f50c0e7fb318d4d42c8421fcf821071ba3b8",
+  "current_fix_typecheck_build": "Original hosted runs failed TS2700 after successful install; corrected current-head hosted check pending. See ts2700/verification.json. Earlier local tool failures are historical local-only evidence."
+}
