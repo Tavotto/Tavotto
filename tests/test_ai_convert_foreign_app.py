@@ -186,3 +186,14 @@ def test_python_conversions_never_guess_a_sibling_image(project):
     (figs / "fig.png").write_bytes(b"\x89PNG\r\n\x1a\n")
     assert _post(client, script="fig.py", library="pillow").status_code == 200
     assert calls[0]["convert"]["original_rel"] is None
+
+
+def test_a_tiff_beside_the_script_is_not_a_displayable_reference(project):
+    """Codex #1330 P2：浏览器显示不了 TIFF——只有 fig.tif 时不当对照图；同时有 fig.png 用 png。"""
+    client, figs, calls = project
+    (figs / "fig.tif").write_bytes(b"II*\x00")
+    assert _post(client, script="fig.R", source_language="r").status_code == 200
+    assert calls[0]["convert"]["original_rel"] is None
+    (figs / "fig.png").write_bytes(b"\x89PNG\r\n\x1a\n")
+    assert _post(client, script="fig.R", source_language="r").status_code == 200
+    assert calls[1]["convert"]["original_rel"] == "fig.png"

@@ -120,6 +120,14 @@ outcome、corrections 个数、是否采用）——不带脚本、路径或图�
   TAF figure_edit 的 `None` = unknown = 不提交语义不变。
 - **续跑落 ready 前原子地再查一次取消（Codex #1330 P2）**：「查取消标记 → `stage` 落 ready → 摘续跑登记」在 `_RESUMES_LOCK`（与 `_cancel_resume` 同一把锁）里一气做完。之前到达的 discard 在此被看见：删候选、结局 `cancelled`，绝不 ready；
   之后到达的 discard 因登记已摘，按「已 ready 的候选」照常删。
+- **R / MATLAB 同名旁图只收浏览器能直接显示的格式（Codex #1330 P2）**：对照视图经 `/api/file` 原样取字节显示，所以 `sibling_original` 的候选后缀只有 png / jpg / jpeg / gif / webp / svg
+  （`ai_convert._SIBLING_EXTS`，仓库里没有现成的“可直接显示”名单：`project_refresh.IMG_EXT` 是素材盘点集、含 TIFF）。只有 `fig.tif` / `fig.tiff`（或 bmp）时不当参照：`reference: null`、`verification: unknown`，
+  照常说「未对照验证」；同时有 `fig.png` 用 png。TIFF 不走预览路径（那需要渲染，对一张用户的旁图不值得）。显式给 `path` 指认原图的路线不变。
+- **续跑里的取消在启动校验之前生效，并传到在跑的探测（Codex #1330 P2）**：`run_validation` 在依赖旁路返回“继续”（调研 `none` / `skipped` / 不缺包）之后、**启动校验 runner 之前**再查一次取消标记，已置位 → `cancelled`、
+  不启动 runner、删候选。校验运行中取消到来：`_convert_runner` 带 `force_cancel`（= `pool.force_cancel` 以同一份 run / write_roots 键硬杀在跑的探测 worker），`run_validation` 的监视线程在取消到来时调它，
+  阻塞中的 probe 读到 EOF 返回，结局 `cancelled`、删候选。runner 没有该入口（纯引擎单测）则只做启动前检查。
+- **「暂时连不上」点 × 也要停与对账（Codex #1330 P2）**：`failed` + `lost`（依赖 POST 已受理而对账也连不上）后端可能仍在装 / 校验，所以视同续跑中：× / 停止先标 `stopping`（一句「正在停止…」）、发 `discard`，
+  再走同一套对账收尾（候选已删 → 清卡与提议；`deps_installed` → 「继续」；`ready` → 可采用）；对账再连不上回到「暂时连不上」。不再只清提议。
 - **续跑遇到传输错误先对账（Codex #1330 P1）**：前端续跑（install / replan / 继续）的 POST 或轮询遇到网络 / 超时 / 5xx / 响应丢失，或 409 `convert_not_awaiting_dependencies`，不直接判失败：
   先 `GET /api/ai/convert/<sid>`（转换自己的状态，**不是**已终结的 AI 会话，后者永远是 `needs_input`，会把已 ready 的候选盖回旧依赖卡），按后端真实状态展示
   （`resuming` 继续等 / `ready` 可采用 / `awaiting_dependencies` 换新卡 / `deps_installed` / `failed` / 404 已不存在）。对账也连不上 → 「暂时连不上，请稍后重试」（`failed` + `resume_unreachable`，保留动作）；

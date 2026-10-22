@@ -142,8 +142,10 @@ def target_name_for(script_rel: str) -> str:
     return f"{Path(script_rel).stem}{NAME_SUFFIX}.py"
 
 
-#: R / MATLAB 脚本旁“同名原图”的后缀优先级（位图，能当参考副本的那些）
-_SIBLING_EXTS = (".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".tif", ".tiff")
+#: R / MATLAB 脚本旁“同名原图”的后缀优先级。**只收浏览器（Chromium / WebView2）能直接显示的格式**：对照视图经 `/api/file`
+#: 原样取字节显示，TIFF / BMP 之类显示不了，选它当参照会得到一张破图还标成并排对照。仓库里没有现成的“可直接显示”名单
+#: （`project_refresh.IMG_EXT` 是素材盘点集，含 TIFF），所以这是唯一的一份；TIFF 旁图 → 不当参照，如实标“未对照验证”。
+_SIBLING_EXTS = (".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg")
 
 
 def sibling_original(script_path: Path) -> Path | None:
@@ -385,7 +387,13 @@ def run_validation(cand: ConvertCandidate, runner) -> dict:
                 deps = _ensure_dependencies(cand, rel)
                 if deps is not None:
                     return deps
-                out = runner(str(cand.project_root), rel, (str(cand.dir),)) or {}
+                cancel = cand.extras.get("cancel")
+                if cancel is not None and cancel.is_set():
+                    # 依赖旁路没报取消（调研 none / skipped / 不缺包）而取消已置位：不启动校验运行
+                    return {"status": "cancelled"}
+                out, killed = _run_with_cancel(runner, cand, rel, cancel)
+                if killed:
+                    return {"status": "cancelled"}
             finally:
                 try:
                     stage_path.unlink()
@@ -410,6 +418,36 @@ def run_validation(cand: ConvertCandidate, runner) -> dict:
         "size_mm": out.get("size_mm"),
         "svg": out.get("svg"),
     }
+
+
+def _run_with_cancel(runner, cand: ConvertCandidate, rel: str, cancel) -> tuple[dict, bool]:
+    """跑校验运行；运行中取消到来时，若 runner 带 `force_cancel(figures_dir, rel, write_roots)`（app 注入，= `pool.force_cancel`
+    的同键硬杀）就当场结束在跑的探测。回 `(输出, 是否因取消被硬杀)`。runner 没有该入口（纯引擎单测）则等同直接调用。"""
+    figures_dir, roots = str(cand.project_root), (str(cand.dir),)
+    killer = getattr(runner, "force_cancel", None)
+    if cancel is None or killer is None:
+        return runner(figures_dir, rel, roots) or {}, False
+    done = threading.Event()
+    fired = threading.Event()
+
+    def watch() -> None:
+        while not done.wait(0.05):
+            if cancel.is_set():
+                fired.set()
+                try:
+                    killer(figures_dir, rel, roots)
+                except Exception:  # noqa: BLE001 —— 硬杀失败不改变结论：探测自己会跑完 / 超时
+                    pass
+                return
+
+    t = threading.Thread(target=watch, name="convert-cancel-watch", daemon=True)
+    t.start()
+    try:
+        out = runner(figures_dir, rel, roots) or {}
+    finally:
+        done.set()
+        t.join(5)
+    return out, fired.is_set()
 
 
 def _ensure_dependencies(cand: ConvertCandidate, rel: str) -> dict | None:

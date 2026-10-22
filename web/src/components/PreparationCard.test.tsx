@@ -1687,6 +1687,64 @@ describe('执行结束、捕获到图、首次编辑渲染是三件事', () => {
         expect(foreignCard()).toBeNull()
       })
 
+      describe('「暂时连不上」（failed + lost）点 ×', () => {
+        const lostCard = async () => {
+          await begin(askOnce)
+          vi.mocked(resolveConvertDependencies).mockRejectedValue(new Error('net'))
+          vi.mocked(fetchConvert).mockRejectedValue(new Error('net'))
+          await act(async () => (foreignCard()?.querySelector('[data-convert-deps-install]') as HTMLButtonElement).click())
+          await settle()
+          expect(foreignCard()?.dataset.convertPhase).toBe('failed')
+          expect(useConvertStore.getState().entries['fig.R']?.lost).not.toBeNull()
+          vi.mocked(discardConvert).mockClear()
+        }
+
+        // discard 先挂住：此刻对账还没开始，才看得见「正在停止…」
+        const gateDiscard = () => {
+          let release!: () => void
+          vi.mocked(discardConvert).mockImplementation(() => new Promise<never>((r) => (release = () => r({ ok: true } as never))))
+          return () => release()
+        }
+
+        it('发 discard、卡片说「正在停止…」，对账回 discarded → 条目与提议一起清掉', async () => {
+          await lostCard()
+          const release = gateDiscard()
+          vi.mocked(fetchConvert).mockReset().mockResolvedValue({ session: 'sid-r', state: 'discarded' } as never)
+          await act(async () => close().click())
+          expect(discardConvert).toHaveBeenCalledWith('sid-r', expect.anything())
+          expect(foreignCard()).not.toBeNull()
+          expect(line()).toBe('正在停止…')
+          expect(useForeignScriptStore.getState().offer).not.toBeNull()
+          await act(async () => release())
+          await settle()
+          expect(useConvertStore.getState().entries['fig.R']).toBeUndefined()
+          expect(useForeignScriptStore.getState().offer).toBeNull()
+        })
+
+        it('对账回 deps_installed → 出「继续」，提议还在', async () => {
+          await lostCard()
+          const release = gateDiscard()
+          vi.mocked(fetchConvert).mockReset().mockResolvedValue({ ...readyR, state: 'deps_installed' as never, installed: ['pandas'] } as never)
+          await act(async () => close().click())
+          expect(discardConvert).toHaveBeenCalled()
+          expect(line()).toBe('正在停止…')
+          await act(async () => release())
+          await settle()
+          expect(foreignCard()?.dataset.convertPhase).toBe('installed')
+          expect(foreignCard()?.querySelector('[data-convert-continue]')).not.toBeNull()
+          expect(useForeignScriptStore.getState().offer).not.toBeNull()
+        })
+
+        it('对账回 ready → 出可采用的结果', async () => {
+          await lostCard()
+          vi.mocked(fetchConvert).mockReset().mockResolvedValue(readyR)
+          await act(async () => close().click())
+          await settle()
+          expect(foreignCard()?.dataset.convertPhase).toBe('ready')
+          expect(useForeignScriptStore.getState().offer).not.toBeNull()
+        })
+      })
+
       it('非续跑阶段（依赖卡）点 ×：立即消失（原行为）', async () => {
         await begin(askOnce)
         expect(foreignCard()?.dataset.convertPhase).toBe('deps')

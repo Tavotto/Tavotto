@@ -11595,6 +11595,19 @@ def _convert_runner(ctx: "ProjectCtx", source_script: str):
             except Exception:  # noqa: BLE001 —— 退役失败不改变校验结论；池会按 LRU 淘汰
                 LOG.warning("转换校验后的 worker 退役失败", exc_info=True)
 
+    def force_cancel(
+        figures_dir: str, rel: str, write_roots: tuple[str, ...] | None = None
+    ) -> bool:
+        """运行中取消：同键（同一份 run / write_roots）硬杀在跑的探测 worker，`runner` 里阻塞的 probe 随即读到 EOF 返回。"""
+        try:
+            run = engine_runconfig.default_selection(ctx.path, source_script)
+        except Exception:  # noqa: BLE001
+            run = None
+        run_kw = {"run": run} if run is not None else {}
+        roots_kw = {"write_roots": tuple(write_roots)} if write_roots else {}
+        return engine_pool.force_cancel(rel, figures_dir, **run_kw, **roots_kw)
+
+    runner.force_cancel = force_cancel  # type: ignore[attr-defined]
     return runner
 
 

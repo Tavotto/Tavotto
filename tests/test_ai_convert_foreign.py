@@ -1021,3 +1021,52 @@ def test_a_dot_venv_without_pyvenv_cfg_is_still_a_project_change(env):
     assert any(u["constraint_id"] == "project.untouched" for u in sess["task"]["unmet"]), sess[
         "task"
     ]["unmet"]
+
+
+def test_a_stop_on_a_resume_whose_survey_finds_nothing_to_install_never_starts_the_validation_run(
+    env, monkeypatch
+):
+    """Codex #1330 P2：续跑里依赖调研回 none / 不缺包，而取消已置位——不得落到不可取消的校验运行，候选删掉。"""
+    sid = _run(env, hooks={"deps": _hold_hook()})
+    _wait(sid)
+    monkeypatch.setattr(convertdeps, "resolve", lambda *a, **k: {"status": "none"})
+    ran = []
+    cdir, meta, cancel = ai_convert.prepare_resume(sid, _project(env))
+    cancel.set()  # Stop 在调研返回前就到了
+    out = ai_convert.run_resume(
+        sid,
+        _project(env),
+        cdir,
+        meta,
+        cancel,
+        runner=lambda *a, **k: ran.append(1) or ok_runner(*a),
+        resolve=convertdeps.resolve,
+        confirmed_impact="digest-abc",
+    )
+    assert out == {"state": "cancelled"}
+    assert ran == [], "取消已置位：校验 runner 不许启动"
+    assert not cdir.exists()
+
+
+def test_a_stop_during_a_running_validation_force_cancels_the_probe(env, monkeypatch):
+    """取消在校验运行中到来：runner 的 force_cancel（= pool.force_cancel 同键硬杀）被调用，结局 cancelled、候选删掉。"""
+    sid = _run(env, hooks={"deps": _hold_hook()})
+    _wait(sid)
+    monkeypatch.setattr(convertdeps, "resolve", lambda *a, **k: {"status": "none"})
+    started, killed = threading.Event(), threading.Event()
+
+    def slow_runner(figures_dir, rel, write_roots=None):
+        started.set()
+        killed.wait(10)  # 被硬杀前一直阻塞（真实 probe 在 EOF 时回 error）
+        return {"error": {"code": "worker_died", "message": "killed"}}
+
+    forced = []
+    slow_runner.force_cancel = lambda fd, rel, roots: forced.append((rel, roots)) or killed.set()
+    t, out, cancel = _await_resume(env, sid, runner=slow_runner, resolve=None)
+    t.start()
+    assert started.wait(10)
+    cancel.set()
+    t.join(20)
+    assert out == {"state": "cancelled"}, out
+    assert len(forced) == 1 and forced[0][0].startswith(ai_convert.STAGE_PREFIX)
+    assert not (ai_convert.CONVERT_DIR / sid).exists()

@@ -1040,7 +1040,12 @@ export function ForeignScriptCard() {
           )
         }
         onClose={() => {
-          if (convert?.phase === 'resuming' || (convert?.phase === 'running' && convert.session)) {
+          // 「暂时连不上」（failed + lost）后端可能仍在装 / 校验：和续跑中同一条停止 + 对账路径，不只清提议
+          if (
+            convert?.phase === 'resuming' ||
+            (convert?.phase === 'running' && convert.session) ||
+            (convert?.phase === 'failed' && convert.lost && convert.session)
+          ) {
             // 对账期间不清提议：由上面的 effect 在条目消失时清（见 closing）
             if (!convert.stopping) {
               setClosing(true)

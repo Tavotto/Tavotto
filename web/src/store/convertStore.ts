@@ -233,7 +233,7 @@ async function driveResume(
         reconcile = true // 轮询瞬时失败：马上对账一次
         continue
       }
-      set1(script, { phase: 'failed', reason: 'resume_unreachable', error: null, replanning: false, lost: kind })
+      set1(script, { phase: 'failed', reason: 'resume_unreachable', error: null, replanning: false, lost: kind, stopping: false })
       return
     }
     if (!guard.still() || !mine()) return
@@ -511,6 +511,23 @@ export const useConvertStore = create<ConvertState>((set, get) => ({
           else set1(script, { stopping: false })
         }
       }
+      return
+    }
+    if (cur?.session && cur.phase === 'failed' && cur.lost) {
+      // 「暂时连不上」不等于后端停了：依赖 POST 可能已受理、安装 / 校验仍在跑。× 与续跑中的停止同一条路——
+      // 先进「正在停止…」、发 discard，再对账（候选已删 → 清卡；deps_installed → 「继续」；ready → 可采用）；对账再连不上就回到「暂时连不上」
+      const session = cur.session
+      const kind = cur.lost
+      const pj = currentProjectId()
+      const guard = captureProjectEpoch()
+      set1(script, { phase: 'resuming', stopping: true, lost: null, error: null, reason: null, replanning: kind.replanning })
+      try {
+        await discardConvert(session, pj)
+      } catch {
+        /* discard 请求本身失败：不知道后端停没停——下面照样先对账再按结果展示 */
+      }
+      if (!guard.still() || get().entries[script]?.session !== session) return
+      await driveResume(script, session, kind, null, { reconcileFirst: true })
       return
     }
     if (cur?.session && cur.phase === 'running') {
