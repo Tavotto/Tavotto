@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import importlib.util
 import json
 import subprocess
 import sys
@@ -212,6 +213,8 @@ class RealRepro(unittest.TestCase):
         self.assertEqual(native["same_path_distinct_figures"], ["shape_oo.pdf"])
         self.assertEqual(verdict["outcome"], "no_difference", verdict)
 
+    # pyarrow 只在 Guardian job 里装（产品依赖不含它）；别的 job 跑不出原生那张图
+    @unittest.skipUnless(importlib.util.find_spec("pyarrow"), "pyarrow not installed")
     def test_g4_minimal_repro_still_differs_by_design(self):
         """G4 的行为按 ADR 0047 / 0084 有意保留，诊断由 #1297 / #1299 修复：沙盒 cwd 下 cwd 相对路径经
         C++ 读取器读不到同目录数据，原生出图、Tavotto 零图并带 script_error。若哪天加了根治开关的默认
