@@ -189,7 +189,8 @@
   `original_artifact`（#1250 起按这张图自己存过的格式绑定）经 `probe.descriptor_artifacts` 传给 `discover.register(artifacts=…)`。
   默认整条替换（以这次执行为准，空映射也替换——不沿用陈旧文件）；带运行配置的执行 `append` 并进去（同一张图换了文件时新的让位旧的）。
   **没有执行证据的写入（PUT /api/registry 手工裁决、AI 新建脚本）不传 `artifacts`，沿用已知映射**，只按本次 stems 修剪；
-  被别的脚本认领走的 stem / 文件，原脚本里的映射随之摘掉（一个文件只属于一个脚本）。没有映射时文件字节与此前逐字节一致。
+  被别的脚本认领走的 stem / 文件，原脚本里的映射随之摘掉（一个文件只属于一个脚本）。
+  **「有歧义就不记」的单一判据是 `registry.unambiguous_artifacts`**（读路径 `load_data` 用它）：同一路径被两个及以上脚本认领就整条不要，退回按文件名 stem，与 JSON 里脚本键的顺序无关，第三个认领者也加不回来；`clean_artifacts` 对同一脚本内归一后同名却指向不同图的键同样丢弃。写路径 `discover.register` 靠「本次执行写出了它，别处认领摘掉」保证落盘文件里没有争用，所以读到争用只会来自手写 / 合并出来的文件。没有映射时文件字节与此前逐字节一致。
 - **读取**：`Registry.for_artifact(rel)` 是**「磁盘文件 → 图」的唯一解析出处**——先查 `artifacts`，查不到再退回按文件名 stem
   （老注册表、手写注册表、静态起草登记的图都没有这张表）。app 层包成 `_disk_panel_rel` / `_disk_panel`，凡主语是「磁盘上的这个文件」的解析
   （素材清单、渲染/写回/历史恢复的 worker 解析 `_resolve_engine_worker`、`update_source`、两图同步、AI 目标、准备目标描述符、作废重建、

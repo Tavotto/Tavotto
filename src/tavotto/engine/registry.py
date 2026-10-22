@@ -111,7 +111,7 @@ class Registry:
             raise RuntimeError(f"注册表缺少 scripts 表: {source}")
         cleaned: dict[str, dict] = {}
         index: dict[str, str] = {}
-        artifacts: dict[str, str] = {}
+        per_script: dict[str, dict[str, str]] = {}
         for script, cfg in scripts.items():
             if not isinstance(cfg, dict):
                 raise RuntimeError(f"{source}: {script} 的配置必须是对象")
@@ -134,17 +134,21 @@ class Registry:
                     raise RuntimeError(f"stem 重复注册: {stem} ({index[stem]} vs {script})")
                 index[stem] = script
             mine = clean_artifacts(cfg.get("artifacts"), stems)
-            for art, art_stem in mine.items():
-                artifacts.setdefault(art, art_stem)
+            per_script[script] = mine
             cleaned[script] = {
                 "entry": entry,
                 "cost": cost,
                 "notes": str(cfg.get("notes", "")),
                 "stems": list(stems),
-                # 有才带：`entries()` 要与磁盘上的脚本条目同形——`project_refresh` 拿「登记时的条目」和
-                # 「此刻的 entries()」比相等来判这次执行是否仍有效，少一个键会让活 worker 被当成过期收掉
-                **({"artifacts": dict(mine)} if mine else {}),
             }
+        # 同一路径被两个脚本认领 = 歧义：整条丢掉（解析退回按文件名 stem），与脚本在 JSON 里的顺序无关
+        artifacts = unambiguous_artifacts(per_script)
+        for script, mine in per_script.items():
+            mine = {a: s for a, s in mine.items() if a in artifacts}
+            # 有才带：`entries()` 要与磁盘上的脚本条目同形——`project_refresh` 拿「登记时的条目」和
+            # 「此刻的 entries()」比相等来判这次执行是否仍有效，少一个键会让活 worker 被当成过期收掉
+            if mine:
+                cleaned[script]["artifacts"] = dict(mine)
         self._scripts, self._index, self._source = cleaned, index, source
         self._artifacts = artifacts
 
@@ -213,10 +217,31 @@ def clean_artifacts(raw: object, stems: list[str]) -> dict[str, str]:
         return {}
     allowed = set(stems)
     out: dict[str, str] = {}
+    clash: set[str] = set()
     for art, stem in raw.items():
         if isinstance(art, str) and art and isinstance(stem, str) and stem in allowed:
-            out[art.replace("\\", "/")] = stem
-    return out
+            key = art.replace("\\", "/")
+            if out.setdefault(key, stem) != stem:
+                clash.add(key)  # `a\b` 与 `a/b` 归一后指向不同的图：歧义，不记
+    return {a: s for a, s in out.items() if a not in clash}
+
+
+def unambiguous_artifacts(per_script: dict[str, dict[str, str]]) -> dict[str, str]:
+    """各脚本清洗后的 `{文件: stem}` → 全表：**同一路径被两个及以上脚本认领就整条不要**（#1251）。
+
+    「有歧义就不记」的**唯一判据**：读（`load_data`）用它；写（`discover.register`）靠「本次执行写出了它，别处的认领
+    摘掉」保证落盘的文件里不会出现争用——所以读到争用只会来自手写 / 合并出来的文件，此时哪个脚本都不该赢，
+    也不取决于 JSON 里脚本键的顺序。第三个认领者同样不会把它加回来。
+    """
+    seen: dict[str, str] = {}
+    contested: set[str] = set()
+    for mine in per_script.values():
+        for art, stem in mine.items():
+            if art in seen:
+                contested.add(art)
+            else:
+                seen[art] = stem
+    return {a: s for a, s in seen.items() if a not in contested}
 
 
 def open_registry(figures_dir: str | Path) -> Registry:

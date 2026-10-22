@@ -70,14 +70,41 @@ def test_bad_artifact_entries_are_dropped_not_fatal():
     assert _reg(_cfg(["panel.pdf"])).for_artifact("panel.pdf")["stem"] == "panel"
 
 
-def test_one_file_belongs_to_one_script():
-    data = {
-        "scripts": {
-            "a.py": {"stems": ["x"], "artifacts": {"x.pdf": "x"}},
+def test_a_path_claimed_by_two_scripts_is_ambiguous_whatever_the_json_order():
+    """手写 / 合并出来的注册表里同一路径挂在两个脚本下：谁都不赢（退回按文件名 stem），与脚本键的顺序无关；
+    第三个认领者也不能把它加回来。"""
+
+    def scripts(order):
+        table = {
+            "a.py": {"stems": ["x"], "artifacts": {"x.pdf": "x", "only_a.pdf": "x"}},
             "b.py": {"stems": ["y"], "artifacts": {"x.pdf": "y"}},
+            "c.py": {"stems": ["z"], "artifacts": {"x.pdf": "z"}},
+        }
+        return {"scripts": {k: table[k] for k in order}}
+
+    import itertools
+
+    for order in itertools.permutations(["a.py", "b.py", "c.py"]):
+        reg = _reg(scripts(order))
+        # 退回按文件名 stem：`x.pdf` 的 stem 是 `x`，登记在 a.py
+        assert reg.for_artifact("x.pdf")["stem"] == "x", order
+        assert reg.artifacts_of("b.py") == {} and reg.artifacts_of("c.py") == {}, order
+        assert reg.artifacts_of("a.py") == {"only_a.pdf": "x"}, order  # 没有争用的条目照常保留
+        assert "artifacts" not in reg.entries()["b.py"]
+        assert reg.entries()["a.py"]["artifacts"] == {"only_a.pdf": "x"}
+    # 两个脚本的 stem 就是争用的文件名 stem 时区别明显：落在谁手上只看 stem，不看顺序
+    swapped = {
+        "scripts": {
+            "b.py": {"stems": ["y"], "artifacts": {"y.pdf": "y"}},
+            "a.py": {"stems": ["x"], "artifacts": {"y.pdf": "x"}},
         }
     }
-    assert _reg(data).for_artifact("x.pdf")["script"] == "a.py"
+    assert _reg(swapped).for_artifact("y.pdf")["script"] == "b.py"  # 按 stem `y` 回落，不是按顺序
+
+
+def test_normalised_duplicate_keys_in_one_script_are_ambiguous_too():
+    reg = _reg(_cfg({"d/panel.pdf": "panel", "d\\panel.pdf": "panel-2", "ok.pdf": "panel-2"}))
+    assert reg.artifacts_of(SCRIPT) == {"ok.pdf": "panel-2"}
 
 
 def test_reader_ignores_unknown_script_keys():
