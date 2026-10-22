@@ -77,7 +77,7 @@ def env(monkeypatch, tmp_path):
     monkeypatch.setattr(config, "ai_settings", lambda: {})
     figs = tmp_path / "figs"
     figs.mkdir()
-    (figs / "fig.py").write_text(ORIGINAL, encoding="utf-8")
+    (figs / "fig.py").write_bytes(ORIGINAL.encode())  # 按字节写：Windows 文本模式会换成 CRLF
     (figs / "out.png").write_bytes(PNG)
     (figs / "data.csv").write_text("x,y\n1,2\n", encoding="utf-8")
     state = {"code": WRITE_GOOD, "cwd": [], "prompts": [], "figs": figs, "runner": ok_runner}
@@ -339,7 +339,7 @@ def test_adopt_inherits_the_original_scripts_permission_bits(env):
 def test_adopt_lands_beside_a_script_in_a_subdirectory(env):
     sub = env["figs"] / "sub"
     sub.mkdir()
-    (sub / "fig.py").write_text(ORIGINAL, encoding="utf-8")
+    (sub / "fig.py").write_bytes(ORIGINAL.encode())  # 按字节写：Windows 文本模式会换成 CRLF
     sid = ai_bridge.run(
         "codex",
         "sub/fig.py",
@@ -356,7 +356,7 @@ def test_adopt_lands_beside_a_script_in_a_subdirectory(env):
 def test_adopt_refuses_when_the_source_script_changed(env):
     sid = _run(env)
     _wait(sid)
-    (env["figs"] / "fig.py").write_text(ORIGINAL + "# edited\n", encoding="utf-8")
+    (env["figs"] / "fig.py").write_bytes((ORIGINAL + "# edited\n").encode())
     with pytest.raises(ai_convert.ConvertError) as exc:
         ai_convert.adopt(sid, _project(env))
     assert exc.value.code == "convert_source_changed"

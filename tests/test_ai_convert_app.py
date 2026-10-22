@@ -74,7 +74,7 @@ def project(tmp_path, monkeypatch):
     monkeypatch.setattr(ai_bridge, "_cmd", _cmd)
     figs = tmp_path / "figures"
     figs.mkdir()
-    (figs / "fig.py").write_text(ORIGINAL, encoding="utf-8")
+    (figs / "fig.py").write_bytes(ORIGINAL.encode())  # 按字节写：Windows 文本模式会换成 CRLF
     (figs / "out.png").write_bytes(PNG)
     m.open_project(str(figs))
     state["initial"] = sorted(
