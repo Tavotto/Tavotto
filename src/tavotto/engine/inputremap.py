@@ -665,6 +665,8 @@ READ_FUNCS = frozenset(
         "loadmat",
         "imread",
         "File",  # h5py.File
+        "ParquetFile",  # pyarrow.parquet；read_table / read_feather / read_csv 已被 `read_*` 前缀认
+        "ParquetDataset",
         "Dataset",  # netCDF4.Dataset
         "open_dataset",
         "open_mfdataset",

@@ -102,10 +102,18 @@
     绝对路径常量的 `via` 同样按它所在的调用判（被 `exists()` 问的给了选择器就是「指认 → 重跑 → 又弹」
     的死循环）。先判空再 `sys.exit` 的（`script_exited`）与「没出图」一样挂静态载荷。**C++ 读取器**
     （ADR 0110 §一）：`missing_input_of` 说不出时 worker 给 `script_error` 多带 `extra.enoent`
-    （`figcapture.enoent_fact`：`filename`，或 h5py 那种只在消息里的 `named`，加 cwd），父进程
+    （`figcapture.enoent_fact`：`filename`，或 h5py 那种只在消息里的 `named`——pyarrow 的
+    `FileNotFoundError("cg_data.parquet")` 整条消息就是路径，同样取——加 cwd），父进程
     `inputremap.native_miss` 拿静态证据对——整串相等或按路径段是前缀、只认对上的那条，对不上就不判、
     码一字不变；对上了码仍是 `script_error`，只挂 `via = native` 的载荷。这几档的出口是经确认改写脚本
-    （`script-edits.md`）。native 不改指。④ **代次 + 按项目的一把互斥锁**（ADR 0106 §五，`inputremap.project_mutex`，可重入）：改指表按项目一个代次（跨重启单调）。
+    （`script-edits.md`）。native 不改指。
+    **对账只认和这次异常对得上的落空（#1253）**：异常没有 `filename`、消息里也没有引号括着的路径时，只认
+    消息里按路径段点了名的那次落空（`figcapture._named_miss`），**不退到「最近一次落空的」**——被 `try` 吞掉的可选读、
+    `importlib.metadata` 对不存在的 `sys.path` 条目（Homebrew 的 `python313.zip`）试 zipfile 打开，都会排在后面，
+    以前被指认成「缺的输入」。`sys.path` 条目本身不记账（`_is_sys_path_entry`，也不占 `MAX_INPUT_MISSES` 名额）。
+    数据在脚本目录里找得到、只是沙盒 cwd 下 C++ 读取器看不见时，静态证据里它不是「哪儿都找不到」的候选：
+    不挂 native 载荷，错误仍是 `script_error` + `extra.enoent`（诊断，行为不变）。
+    ④ **代次 + 按项目的一把互斥锁**（ADR 0106 §五，`inputremap.project_mutex`，可重入）：改指表按项目一个代次（跨重启单调）。
     同一把锁里：改表与换代、`state()` / `snapshot()` 的「表 + 代次」、注册表整段读改写（`discover.register`）与登记标记、
     所有落地提交（渲染回包的核对、runtime 物化、试运行登记与重新登记、写回的备份 + 整个 replace 循环、导出作业
     经 `exportjob.run(commit_guard=)` 的整个发布循环）。对不上报 `input_remap_changed`（409 可重试）。**锁序：池锁 →
@@ -114,7 +122,7 @@
     （无标记 + 有规则 = 过期），下一次按新表 build 后按真实产出重新登记（一张没出也算）。落在 cwd 里的绝对路径
     证得出是相对路径规范化来的才按相对处理（`figcapture.path_literals`），否则保留绝对身份。新增依赖映射的工作点先接到这里，清单与各自的持锁区间在 ADR 0106 §五。
     看护 `tests/test_missing_input.py`（真 worker 相对 / 绝对 / 脚本目录模式 / 原件回来 /
-    同名诱饵 / 试运行 / 三条 spawn 路径）、`web/src/components/MissingInputDialog.test.tsx`、
+    同名诱饵 / 试运行 / 三条 spawn 路径 / #1253 的 C++ 读取器与 sys.path 探测）、`web/src/components/MissingInputDialog.test.tsx`、
     `web/e2e/missing-input.spec.ts`。
   * 浏览器侧**刻意没有**这条回退：playground 是单文件的，相对读报
     `missing_file` 才是对的。桌面的 `entry` 机制同样是超集（浏览器按
