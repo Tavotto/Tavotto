@@ -166,6 +166,7 @@
   `ANTHROPIC_API_KEY` 设空串（不发 x-api-key，也盖掉继承来的真密钥）。出站 HTTPS 的第七处（`ai_oauth._opener`，不跟随重定向、30 s、响应体上限），
   登记在 `test_outbound_https_trust.OUTBOUND` 与 `tlstrust` 模块头。端点：`POST /api/ai/oauth/<provider>/start`、`GET /api/ai/oauth/flows/<id>`、
   `POST /api/ai/oauth/flows/<id>/cancel`、`POST /api/ai/endpoints/<id>/logout`（只删令牌，不调撤销接口）。
+  **原子性（Codex #1326）**：令牌落盘在 `ai_oauth._LOCK` 内先认领再写，`cancel()` 与之互斥（不会 cancelled 却留着令牌）；接口记录的所有读-改-写（`save/delete/set_active/migrate*/store_oauth/update_oauth`）都经 `config.update_ai_settings(fn)` 同一事务，不再读一份再整份覆盖。`_LOCK` 是进程内锁（后端只有一个进程），不做跨进程文件锁。
   看护：`tests/test_ai_oauth.py`（本机假授权服务器，绝不连真实服务器）。
 - **codex 模型清单读 `$CODEX_HOME/config.toml`（默认 `~/.codex`）的 `model` +
   `[profiles.*].model`，绝不在源码里写模型名**——OpenAI 换代后旧名会被服务端

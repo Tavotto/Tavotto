@@ -345,6 +345,35 @@ def test_cancel_stops_polling_and_a_late_success_is_discarded(fake):
     assert ai_providers.get("rfcvendor-oauth") is None
 
 
+def test_cancel_racing_the_token_commit_never_leaves_cancelled_with_tokens(fake, monkeypatch):
+    """Codex #1326：成功轮询已过了「是否取消」检查、`store_oauth` 落盘之前，用户关闭对话框（cancel）。
+    判据的主语：流程状态与配置里有没有令牌必须一致——cancelled 就一个字节都没有，signed_in 就有。"""
+    fake.on(RFC_DEVICE, RFC_DEVICE_OK)
+    fake.on(RFC_TOKEN, RFC_TOKENS)
+    entered, release = threading.Event(), threading.Event()
+    real = ai_providers.store_oauth
+
+    def paused(defaults, oauth):
+        entered.set()  # 轮询线程停在「拿到令牌之后、落盘之前」
+        release.wait(1.0)
+        return real(defaults, oauth)
+
+    monkeypatch.setattr(ai_providers, "store_oauth", paused)
+    flow = ai_oauth.start("rfcvendor")
+    assert entered.wait(5)
+    canceller = threading.Thread(target=lambda: ai_oauth.cancel(flow["flow_id"]))
+    canceller.start()
+    time.sleep(0.2)  # 修复前 cancel 此刻已把流程改成 cancelled；修复后它在等落盘那把锁
+    release.set()
+    canceller.join(5)
+    assert not canceller.is_alive()
+    ai_oauth._FLOWS[flow["flow_id"]].thread.join(5)  # 轮询线程收尾后再看盘
+    state = wait_for(flow["flow_id"], {"signed_in", "cancelled"})["state"]
+    rec = ai_providers.get("rfcvendor-oauth")
+    has_tokens = bool(rec and (rec.get("oauth") or {}).get("access"))
+    assert has_tokens == (state == "signed_in"), (state, has_tokens)
+
+
 def test_same_provider_has_only_one_flow(fake):
     fake.on(RFC_DEVICE, RFC_DEVICE_OK)
     fake.on(RFC_TOKEN, RFC_PENDING)
@@ -875,3 +904,27 @@ def test_tokens_never_appear_in_the_capabilities_json(fake, http):
     assert (
         "AT-OLD-SECRET" not in body and "RT-OLD-SECRET" not in body and "token_endpoint" not in body
     )
+
+
+def test_oauth_commit_interleaved_with_an_endpoint_save_keeps_both_changes(fake, monkeypatch):
+    """Codex #1326：账号登录写令牌读完接口列表后，另一个请求保存了别的接口——两边的改动都得留在配置里。
+    （读-改-写在同一个 `config.update_ai_settings` 事务里，后来者等锁，不再整份覆盖。）"""
+    ai_providers.save({"id": "other", "label": "Old", "agent": "claude", "base_url": "http://x"})
+    fired = []
+    real_clean = ai_providers._clean
+
+    def interleaving_clean(rec, existing_ids=frozenset()):
+        if rec.get("auth") == "oauth" and not fired:
+            fired.append(1)  # store_oauth 已经读过列表：此刻并发一次保存
+            t = threading.Thread(target=lambda: ai_providers.save({"id": "other", "label": "New"}))
+            t.start()
+            t.join(0.3)  # 事务串行时它在等锁（超时返回）；不串行时它已写完，随后被盖掉
+            interleaving_clean.thread = t
+        return real_clean(rec, existing_ids)
+
+    monkeypatch.setattr(ai_providers, "_clean", interleaving_clean)
+    signed_in_record()
+    interleaving_clean.thread.join(5)
+    assert not interleaving_clean.thread.is_alive()
+    assert ai_providers.get("other")["label"] == "New"
+    assert (ai_providers.get("rfcvendor-oauth")["oauth"] or {}).get("access") == "AT-OLD-SECRET"

@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import contextlib
+import copy
 import json
 import os
 import re
@@ -24,7 +25,7 @@ import sys
 import tempfile
 import threading
 import time
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from pathlib import Path
 
 RECENT_KEEP = 20
@@ -518,6 +519,26 @@ def set_ai_agent_settings(agent_id: str, patch: dict) -> dict:
         cfg["ai"] = ai
         save(cfg)
         return rec
+
+
+def update_ai_settings(fn: Callable[[dict], dict]) -> dict:
+    """`ai` 段的**事务式**读-改-写：在 `_LOCK` 里 load → `fn(ai 的深拷贝)` 返回 patch → 合并 → 原子落盘。
+
+    需要「先读再据此改」的写入方（接口记录的增删改、账号登录写令牌）必须走这里，而不是
+    `ai_settings()` 读一份、再 `set_ai_settings()` 整份覆盖——两步之间的另一个写入会被盖掉（Codex #1326）。
+    `fn` 在持锁时运行：**不许**调 config 里任何会取 `_LOCK` 的函数（锁不可重入，会死锁），
+    也不许做网络请求；它只该用传进来的快照算出 patch。`fn` 抛异常 = 什么都不写。
+    patch 的合并规则同 `set_ai_settings`（值为 None 的键被删掉）。**边界**：`_LOCK` 是进程内锁，
+    Tavotto 只有一个后端进程；不提供跨进程文件锁。
+    """
+    with _LOCK:
+        cfg = load()
+        patch = fn(copy.deepcopy(cfg["ai"]))
+        merged = {**cfg["ai"], **patch}
+        merged = {k: v for k, v in merged.items() if v is not None}
+        cfg["ai"] = merged
+        save(cfg)
+        return merged
 
 
 def set_ai_settings(patch: dict) -> dict:

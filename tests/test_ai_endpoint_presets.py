@@ -171,14 +171,18 @@ def test_migrate_does_not_overwrite_an_existing_record_with_the_target_id():
 def test_migrate_to_claude_is_one_atomic_config_write(monkeypatch):
     _legacy("dash", "https://dashscope.aliyuncs.com/compatible-mode/v1", key="sk-keep-me")
     ai_providers.set_active("codex", "dash")
-    real = config.set_ai_settings
+    real = config.update_ai_settings
     calls: list[dict] = []
 
-    def counting(patch):
-        calls.append(patch)
-        return real(patch)
+    def counting(fn):
+        def spy(ai):
+            patch = fn(ai)
+            calls.append(patch)
+            return patch
 
-    monkeypatch.setattr(config, "set_ai_settings", counting)
+        return real(spy)
+
+    monkeypatch.setattr(config, "update_ai_settings", counting)
     new = ai_providers.migrate_to_claude("dash")
     assert len(calls) == 1
     assert set(calls[0]) == {"providers", "active_provider"}
@@ -190,18 +194,18 @@ def _migrate_with_failing_write(fail_from: int, monkeypatch):
     _legacy("dash", "https://dashscope.aliyuncs.com/compatible-mode/v1", key="sk-keep-me")
     ai_providers.set_active("codex", "dash")
     before = json.dumps(config.ai_settings(), sort_keys=True)
-    real = config.set_ai_settings
+    real = config.update_ai_settings
     n = {"c": 0}
 
-    def flaky(patch):
+    def flaky(fn):
         n["c"] += 1
         if n["c"] >= fail_from:
             raise OSError("disk full")
-        return real(patch)
+        return real(fn)
 
     raised = False
     with monkeypatch.context() as mp:
-        mp.setattr(config, "set_ai_settings", flaky)
+        mp.setattr(config, "update_ai_settings", flaky)
         try:
             ai_providers.migrate_to_claude("dash")
         except OSError:

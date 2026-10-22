@@ -306,7 +306,9 @@ class _Flow:
     thread: threading.Thread | None = None
 
 
-_LOCK = threading.RLock()  # 保护 _FLOWS 与流程状态；只做内存操作，绝不在里面发网络请求
+_LOCK = (
+    threading.RLock()
+)  # 保护 _FLOWS 与流程状态；绝不在里面发网络请求（唯一的 I/O 是 `_store` 的本地落盘）
 _START_LOCK = threading.Lock()  # 串行化 start()：设备授权请求在途时，第二次点击不会再发一个
 _FLOWS: dict[str, _Flow] = {}
 _REFRESH_LOCK = threading.Lock()
@@ -585,13 +587,19 @@ def _store(flow: _Flow, spec: dict, tokens: dict) -> None:
         "provider": flow.provider,
         "region": flow.region,
     }
-    try:
-        rec = ai_providers.store_oauth(_record_defaults(flow.provider, flow.region), oauth)
-    except Exception:  # noqa: BLE001 — 写配置失败（磁盘满 / 无权限）：如实失败，别假装登录了
-        LOG.exception("账号登录成功但令牌写入失败")
-        _finish(flow, FAILED)
-        return
-    _finish(flow, SIGNED_IN, rec["id"])
+    # 「认领成功」与「令牌落盘」在同一个 `_LOCK` 临界区里（RLock，`_finish` 可重入）：
+    # `cancel()` 要么先拿到锁（流程已 cancelled → 这里什么都不写），要么等这里写完再看到 signed_in。
+    # 绝不会出现「流程报 cancelled、令牌却已落盘」。落盘是本地写，没有网络请求。
+    with _LOCK:
+        if flow.state != WAITING or flow.cancel.is_set():
+            return
+        try:
+            rec = ai_providers.store_oauth(_record_defaults(flow.provider, flow.region), oauth)
+        except Exception:  # noqa: BLE001 — 写配置失败（磁盘满 / 无权限）：如实失败，别假装登录了
+            LOG.exception("账号登录成功但令牌写入失败")
+            _finish(flow, FAILED)
+            return
+        _finish(flow, SIGNED_IN, rec["id"])
 
 
 # ---------------------------------------------------------------------------

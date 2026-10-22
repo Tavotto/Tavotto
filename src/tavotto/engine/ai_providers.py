@@ -123,9 +123,34 @@ def _ai() -> dict:
     return config.ai_settings()
 
 
-def list_providers() -> list[dict]:
-    raw = _ai().get("providers")
+def _providers_in(ai: dict) -> list[dict]:
+    raw = ai.get("providers")
     return [p for p in raw if isinstance(p, dict)] if isinstance(raw, list) else []
+
+
+def list_providers() -> list[dict]:
+    return _providers_in(_ai())
+
+
+def _update(fn):
+    """接口记录的读-改-写**唯一入口**：`fn(ai 快照) -> (patch, 返回值)` 在 `config.update_ai_settings`
+    的同一把锁里运行，读到的列表就是写回时的基线（账号登录写令牌与接口增删改交错也不丢更新）。
+    `fn` 里只许用传进来的快照，不许再调 `_ai()` / `list_providers()` / `get()`（会取同一把不可重入的锁）。
+    `_harden()` 在事务之后。"""
+    box: list = []
+
+    def inner(ai: dict) -> dict:
+        patch, result = fn(ai)
+        box.append(result)
+        return patch
+
+    config.update_ai_settings(inner)
+    _harden()
+    return box[0]
+
+
+def _find(providers: list[dict], pid: str | None) -> dict | None:
+    return next((p for p in providers if p.get("id") == pid), None) if pid else None
 
 
 def get(pid: str | None) -> dict | None:
@@ -219,31 +244,36 @@ def migrate(pid: str) -> dict:
 def _migrate_in_place(pid: str) -> dict:
     """旧 chat 记录 → 原地改成 Codex Responses：保留 id / 密钥 / 作为 codex 当前接口的激活状态；
     已退役的模型名换成新预设的型号，其余模型保留。"""
-    old = get(pid)
-    preset = migration_preset(old)
-    if old is None or preset is None or migration_kind(old) != MIGRATE_CODEX_RESPONSES:
-        raise ValueError(f"该接口无法自动迁移: {pid}")
 
     def fix(m: str) -> str:
         return _DEEPSEEK_RETIRED_MODELS.get(m, m)
 
-    models: list[str] = []
-    for m in [*(old.get("models") or []), *preset["models"]]:
-        m = fix(str(m))
-        if m not in models:
-            models.append(m)
-    default = old.get("default_model")
-    providers = save(
-        {
-            "id": pid,
-            "agent": "codex",
-            "base_url": preset["base_url"],
-            "wire_api": "responses",
-            "models": models,
-            "default_model": fix(default) if default else None,
-        }
-    )
-    return next(p for p in providers if p.get("id") == pid)
+    def tx(ai: dict):
+        providers = _providers_in(ai)
+        old = _find(providers, pid)
+        preset = migration_preset(old)
+        if old is None or preset is None or migration_kind(old) != MIGRATE_CODEX_RESPONSES:
+            raise ValueError(f"该接口无法自动迁移: {pid}")
+        models: list[str] = []
+        for m in [*(old.get("models") or []), *preset["models"]]:
+            m = fix(str(m))
+            if m not in models:
+                models.append(m)
+        default = old.get("default_model")
+        providers = _save_in(
+            providers,
+            {
+                "id": pid,
+                "agent": "codex",
+                "base_url": preset["base_url"],
+                "wire_api": "responses",
+                "models": models,
+                "default_model": fix(default) if default else None,
+            },
+        )
+        return {"providers": providers}, next(p for p in providers if p.get("id") == pid)
+
+    return _update(tx)
 
 
 def migrate_to_claude(pid: str) -> dict:
@@ -252,43 +282,48 @@ def migrate_to_claude(pid: str) -> dict:
     旧记录若是 codex 的当前接口，`delete()` 会把 codex 清回官方登录；**不替用户激活**
     新建的 claude 接口（执行器是用户自己选的）。对不上「改由 Claude Code」的厂商 → ValueError。
     """
-    old = get(pid)
-    preset = migration_preset(old)
-    if old is None or preset is None or migration_kind(old) != MIGRATE_CLAUDE:
-        raise ValueError(f"该接口无法自动迁移: {pid}")
-    providers = list_providers()
-    taken = {p.get("id") for p in providers}
-    new_id = preset["id"]
-    while new_id in taken:  # 绝不覆盖用户已有的同名接口（save 对已有 id 是合并）
-        new_id = f"{new_id}-2"
-    created = _clean(
-        {
-            "id": new_id,
-            "label": preset["label"],
-            "agent": preset["agent"],
-            "base_url": preset["base_url"],
-            "api_key": old.get("api_key", ""),
-            "models": list(preset["models"]),
-        },
-        taken,
-    )
-    # 内存里算好新列表与新激活映射，一次 set_ai_settings（tmp + replace）落盘：
-    # 中途退出 / 写盘失败 = 配置原样，不会留下「新 claude + 旧 codex」并存的半截状态。
-    remaining = [p for p in providers if p.get("id") != pid]
-    active = dict(_ai().get("active_provider") or {})
+
+    def tx(ai: dict):
+        providers = _providers_in(ai)
+        old = _find(providers, pid)
+        preset = migration_preset(old)
+        if old is None or preset is None or migration_kind(old) != MIGRATE_CLAUDE:
+            raise ValueError(f"该接口无法自动迁移: {pid}")
+        taken = {p.get("id") for p in providers}
+        new_id = preset["id"]
+        while new_id in taken:  # 绝不覆盖用户已有的同名接口（save 对已有 id 是合并）
+            new_id = f"{new_id}-2"
+        created = _clean(
+            {
+                "id": new_id,
+                "label": preset["label"],
+                "agent": preset["agent"],
+                "base_url": preset["base_url"],
+                "api_key": old.get("api_key", ""),
+                "models": list(preset["models"]),
+            },
+            taken,
+        )
+        # 一次事务、一次落盘（tmp + replace）：中途退出 / 写盘失败 = 配置原样，
+        # 不会留下「新 claude + 旧 codex」并存的半截状态。
+        remaining = [p for p in providers if p.get("id") != pid]
+        active = _active_without(ai, pid)
+        return {"providers": [*remaining, created], "active_provider": active}, created
+
+    return _update(tx)
+
+
+def _active_without(ai: dict, pid: str) -> dict:
+    active = dict(ai.get("active_provider") or {})
     for agent, cur in list(active.items()):
         if cur == pid:
             active[agent] = None
-    config.set_ai_settings({"providers": [*remaining, created], "active_provider": active})
-    _harden()
-    return created
+    return active
 
 
-def save(rec: dict) -> list[dict]:
-    """新增或更新一条。api_key 缺省 = 保留原值（界面不回显密钥，也就不该要求重填）。"""
-    # 令牌不接受来自请求体：登录态只由 ai_oauth 写（见 store_oauth）
-    rec = {k: v for k, v in rec.items() if k not in ("auth", "oauth")}
-    providers = list_providers()
+def _save_in(providers: list[dict], rec: dict) -> list[dict]:
+    """把 rec 并进 providers（新增或合并更新），返回新列表；纯函数，不碰配置。"""
+    providers = list(providers)
     incoming_id = _slug(str(rec.get("id") or ""))
     idx = next((i for i, p in enumerate(providers) if p.get("id") == incoming_id), -1)
     if idx >= 0:
@@ -299,19 +334,27 @@ def save(rec: dict) -> list[dict]:
     else:
         taken = {p.get("id") for p in providers}
         providers.append(_clean(rec, taken))
-    _write(providers)
     return providers
+
+
+def save(rec: dict) -> list[dict]:
+    """新增或更新一条。api_key 缺省 = 保留原值（界面不回显密钥，也就不该要求重填）。"""
+    # 令牌不接受来自请求体：登录态只由 ai_oauth 写（见 store_oauth）
+    rec = {k: v for k, v in rec.items() if k not in ("auth", "oauth")}
+
+    def tx(ai: dict):
+        providers = _save_in(_providers_in(ai), rec)
+        return {"providers": providers}, providers
+
+    return _update(tx)
 
 
 def delete(pid: str) -> list[dict]:
-    providers = [p for p in list_providers() if p.get("id") != pid]
-    active = dict(_ai().get("active_provider") or {})
-    for agent, cur in list(active.items()):
-        if cur == pid:
-            active[agent] = None
-    config.set_ai_settings({"providers": providers, "active_provider": active})
-    _harden()
-    return providers
+    def tx(ai: dict):
+        providers = [p for p in _providers_in(ai) if p.get("id") != pid]
+        return {"providers": providers, "active_provider": _active_without(ai, pid)}, providers
+
+    return _update(tx)
 
 
 def store_oauth(defaults: dict, oauth: dict) -> dict:
@@ -319,37 +362,40 @@ def store_oauth(defaults: dict, oauth: dict) -> dict:
 
     已有同 id 记录时保留用户改过的名称 / 模型，只换登录态；api_key 清空（这条记录靠账号，不靠 Key）。
     """
-    providers = list_providers()
-    pid = _slug(str(defaults.get("id") or ""))
-    idx = next((i for i, p in enumerate(providers) if p.get("id") == pid), -1)
-    base = {**defaults, **providers[idx]} if idx >= 0 else dict(defaults)
-    rec = _clean({**base, "id": pid, "api_key": "", "auth": "oauth", "oauth": oauth})
-    if idx >= 0:
-        providers[idx] = rec
-    else:
-        providers.append(rec)
-    _write(providers)
-    return rec
+
+    def tx(ai: dict):
+        providers = _providers_in(ai)
+        pid = _slug(str(defaults.get("id") or ""))
+        idx = next((i for i, p in enumerate(providers) if p.get("id") == pid), -1)
+        base = {**defaults, **providers[idx]} if idx >= 0 else dict(defaults)
+        rec = _clean({**base, "id": pid, "api_key": "", "auth": "oauth", "oauth": oauth})
+        if idx >= 0:
+            providers[idx] = rec
+        else:
+            providers.append(rec)
+        return {"providers": providers}, rec
+
+    return _update(tx)
 
 
 def update_oauth(pid: str, oauth: dict | None) -> dict | None:
     """换掉（刷新后）或清掉（oauth=None，退出登录）一条记录的令牌；记录本身保留。"""
-    providers = list_providers()
-    idx = next((i for i, p in enumerate(providers) if p.get("id") == pid), -1)
-    if idx < 0 or providers[idx].get("auth") != "oauth":
-        return None
-    rec = {k: v for k, v in providers[idx].items() if k != "oauth"}
-    old = providers[idx].get("oauth") if isinstance(providers[idx].get("oauth"), dict) else {}
-    # 退出登录：令牌清掉，厂商 / 区域留着（界面据此给「重新登录」）
-    rec["oauth"] = dict(oauth) if oauth else {k: old[k] for k in ("provider", "region") if k in old}
-    providers[idx] = _clean(rec)
-    _write(providers)
-    return providers[idx]
 
+    def tx(ai: dict):
+        providers = _providers_in(ai)
+        idx = next((i for i, p in enumerate(providers) if p.get("id") == pid), -1)
+        if idx < 0 or providers[idx].get("auth") != "oauth":
+            return {}, None
+        rec = {k: v for k, v in providers[idx].items() if k != "oauth"}
+        old = providers[idx].get("oauth") if isinstance(providers[idx].get("oauth"), dict) else {}
+        # 退出登录：令牌清掉，厂商 / 区域留着（界面据此给「重新登录」）
+        rec["oauth"] = (
+            dict(oauth) if oauth else {k: old[k] for k in ("provider", "region") if k in old}
+        )
+        providers[idx] = _clean(rec)
+        return {"providers": providers}, providers[idx]
 
-def _write(providers: list[dict]) -> None:
-    config.set_ai_settings({"providers": providers})
-    _harden()
+    return _update(tx)
 
 
 def _harden() -> None:
@@ -370,12 +416,15 @@ def active_id(agent: str) -> str | None:
 def set_active(agent: str, pid: str | None) -> dict:
     if agent not in agents():
         raise ValueError(f"未知 agent: {agent}")
-    if pid and get(pid) is None:
-        raise ValueError(f"供应商不存在: {pid}")
-    active = dict(_ai().get("active_provider") or {})
-    active[agent] = pid or None
-    config.set_ai_settings({"active_provider": active})
-    return active
+
+    def tx(ai: dict):
+        if pid and _find(_providers_in(ai), pid) is None:
+            raise ValueError(f"供应商不存在: {pid}")
+        active = dict(ai.get("active_provider") or {})
+        active[agent] = pid or None
+        return {"active_provider": active}, active
+
+    return _update(tx)
 
 
 def resolve(agent: str, pid: str | None = None) -> dict | None:
