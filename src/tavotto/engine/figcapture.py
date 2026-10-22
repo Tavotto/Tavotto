@@ -145,6 +145,7 @@ from __future__ import annotations
 import builtins
 import contextlib
 import dataclasses
+import glob
 import hashlib
 import inspect
 import io
@@ -4267,6 +4268,265 @@ def install_input_remap(
         pathlib.Path.open = real_path_open
         if real_ds_open is not None:
             datasource.open = real_ds_open
+
+    return uninstall
+
+
+#: 一次 build 里最多记几条落空的探路调用（去重后）。
+MAX_PROBE_MISSES = 16
+PROBE_GLOB, PROBE_DIR, PROBE_PATH = "glob", "dir", "path"
+
+
+class ProbeMisses:
+    """一次 build 里**沙盒 cwd 下落空的相对探路调用**：`glob` 回空、`listdir` 的目录不存在、`exists` 为假……
+
+    只记「问了什么」（`{kind, target, recursive, hidden}`，脚本写的那串相对目标），**不改任何返回值**；
+    它在脚本目录里到底找不找得到由父进程判（`workdir.probe_hint`，与 ADR 0084 首开的 `databinding._probe_hit`
+    同一把尺子）。探路调用的目标是参数、不是写在调用里的常量时，首开的静态探测（`probe_literals`）认不出来，
+    这是它唯一的证据来源（#1254）。
+    """
+
+    def __init__(self) -> None:
+        self.items: list[dict] = []
+
+    def note(self, kind: str, target, *, recursive: bool = False, hidden: bool = False) -> None:
+        if isinstance(target, os.PathLike):
+            target = os.fspath(target)
+        if not isinstance(target, str) or not target or len(target) > 512:
+            return
+        if target.startswith("~") or os.path.isabs(target) or ntpath.isabs(target):
+            return  # 绝对路径不依赖 cwd
+        norm = target.replace("\\", "/")
+        if all(part in ("", ".") for part in norm.split("/")):
+            return  # 列 cwd 本身不指名任何东西：脚本目录里恒有东西，说明不了什么（ADR 0084）
+        entry = {"kind": kind, "target": norm, "recursive": bool(recursive), "hidden": bool(hidden)}
+        if entry in self.items or len(self.items) >= MAX_PROBE_MISSES:
+            return
+        self.items.append(entry)
+
+
+def install_probe_observer(misses: ProbeMisses, base_dir: str):
+    """装上沙盒里落空的探路调用记账（只记不改）；返回卸载函数。只在 cwd 是沙盒的会话里装。
+
+    包的是 `glob.glob|iglob` / `os.listdir|scandir` / `os.path.exists|isfile|isdir` / `pathlib.Path.glob|rglob|iterdir|
+    exists|is_file|is_dir`。纪律：
+
+    * **返回值原样**：同一个对象（`glob.glob` / `listdir` 的 list、`exists` 的 bool）；返回迭代器的（`iglob` /
+      `Path.glob` / `iterdir`）换成逐项转发的生成器，吐出的元素与异常一模一样，耗尽时若一项都没吐才记账；
+    * 只记相对目标、且调用时的 cwd 还是装的那一刻的沙盒（脚本 `chdir` 走了就不是沙盒里的事实了）；
+    * stdlib 自己的内部探路（`glob` 里逐段 `isdir`、`Path.glob` 里的 `scandir`）不记：线程内重入时直接放行；
+    * `os.scandir` 只在目录不存在（`FileNotFoundError`）时记，返回的迭代器不包；
+    * 名额有限（`MAX_PROBE_MISSES`），去重。
+    """
+    base = os.path.realpath(base_dir)
+    state = threading.local()
+
+    def _in_base() -> bool:
+        try:
+            return os.path.realpath(os.getcwd()) == base
+        except OSError:
+            return False
+
+    def _note(kind, target, **flags) -> None:
+        if getattr(state, "depth", 0) == 0 and _in_base():
+            misses.note(kind, target, **flags)
+
+    class _Guard:
+        def __enter__(self):
+            state.depth = getattr(state, "depth", 0) + 1
+
+        def __exit__(self, *exc):
+            state.depth -= 1
+
+    def _busy() -> bool:
+        return getattr(state, "depth", 0) > 0
+
+    def _watched(iterator, kind, target, **flags):
+        """逐项转发；一项都没吐就耗尽（或目录不存在）→ 记账。"""
+        it = iter(iterator)
+        empty = True
+        while True:
+            try:
+                with _Guard():
+                    item = next(it)
+            except StopIteration:
+                break
+            except (FileNotFoundError, NotADirectoryError):
+                _note(kind, target, **flags)
+                raise
+            empty = False
+            yield item
+        if empty:
+            _note(kind, target, **flags)
+
+    def _glob_target(pathname, root_dir, dir_fd):
+        if dir_fd is not None or not isinstance(pathname, (str, os.PathLike)):
+            return None
+        pathname = os.fspath(pathname)
+        if not isinstance(pathname, str):
+            return None
+        if root_dir is None:
+            return pathname
+        if not isinstance(root_dir, (str, os.PathLike)):
+            return None
+        root_dir = os.fspath(root_dir)
+        if not isinstance(root_dir, str) or os.path.isabs(root_dir):
+            return None
+        return root_dir.rstrip("/\\") + "/" + pathname
+
+    real_glob, real_iglob = glob.glob, glob.iglob
+    real_listdir, real_scandir = os.listdir, os.scandir
+    real_exists, real_isfile, real_isdir = os.path.exists, os.path.isfile, os.path.isdir
+    real_p_glob, real_p_rglob = pathlib.Path.glob, pathlib.Path.rglob
+    real_p_iterdir = pathlib.Path.iterdir
+    real_p_exists, real_p_is_file, real_p_is_dir = (
+        pathlib.Path.exists,
+        pathlib.Path.is_file,
+        pathlib.Path.is_dir,
+    )
+
+    def glob_glob(pathname, *args, **kwargs):
+        if _busy():
+            return real_glob(pathname, *args, **kwargs)
+        with _Guard():
+            result = real_glob(pathname, *args, **kwargs)
+        if not result:
+            target = _glob_target(pathname, kwargs.get("root_dir"), kwargs.get("dir_fd"))
+            if target is not None:
+                _note(
+                    PROBE_GLOB,
+                    target,
+                    recursive=kwargs.get("recursive", False),
+                    hidden=kwargs.get("include_hidden", False),
+                )
+        return result
+
+    def glob_iglob(pathname, *args, **kwargs):
+        if _busy():
+            return real_iglob(pathname, *args, **kwargs)
+        with _Guard():
+            result = real_iglob(pathname, *args, **kwargs)
+        target = _glob_target(pathname, kwargs.get("root_dir"), kwargs.get("dir_fd"))
+        if target is None:
+            return result
+        return _watched(
+            result,
+            PROBE_GLOB,
+            target,
+            recursive=kwargs.get("recursive", False),
+            hidden=kwargs.get("include_hidden", False),
+        )
+
+    def os_listdir(path=None):
+        if _busy():
+            return real_listdir() if path is None else real_listdir(path)
+        try:
+            with _Guard():
+                result = real_listdir() if path is None else real_listdir(path)
+        except (FileNotFoundError, NotADirectoryError):
+            if path is not None:
+                _note(PROBE_DIR, path)
+            raise
+        if not result and path is not None:
+            _note(PROBE_DIR, path)
+        return result
+
+    def os_scandir(path=None):
+        if _busy():
+            return real_scandir() if path is None else real_scandir(path)
+        try:
+            with _Guard():
+                return real_scandir() if path is None else real_scandir(path)
+        except FileNotFoundError:
+            if path is not None:
+                _note(PROBE_DIR, path)
+            raise
+
+    def _bool_probe(real, kind):
+        def probe(path):
+            if _busy():
+                return real(path)
+            with _Guard():
+                ok = real(path)
+            if not ok:
+                _note(kind, path)
+            return ok
+
+        return probe
+
+    def path_glob(self, pattern, *args, **kwargs):
+        if _busy():
+            return real_p_glob(self, pattern, *args, **kwargs)
+        with _Guard():
+            result = real_p_glob(self, pattern, *args, **kwargs)
+        return _watched(
+            result, PROBE_GLOB, _join_target(self, pattern), recursive=True, hidden=True
+        )
+
+    def path_rglob(self, pattern, *args, **kwargs):
+        if _busy():
+            return real_p_rglob(self, pattern, *args, **kwargs)
+        with _Guard():
+            result = real_p_rglob(self, pattern, *args, **kwargs)
+        return _watched(
+            result,
+            PROBE_GLOB,
+            _join_target(self, "**/" + str(pattern)),
+            recursive=True,
+            hidden=True,
+        )
+
+    def path_iterdir(self):
+        if _busy():
+            return real_p_iterdir(self)
+        with _Guard():
+            result = real_p_iterdir(self)
+        return _watched(result, PROBE_DIR, str(self))
+
+    def _path_bool(real, kind):
+        def probe(self, *args, **kwargs):
+            if _busy():
+                return real(self, *args, **kwargs)
+            with _Guard():
+                ok = real(self, *args, **kwargs)
+            if not ok:
+                _note(kind, str(self))
+            return ok
+
+        return probe
+
+    def _join_target(receiver, pattern):
+        head = str(receiver)
+        return str(pattern) if head in ("", ".") else head.rstrip("/\\") + "/" + str(pattern)
+
+    glob.glob, glob.iglob = glob_glob, glob_iglob
+    os.listdir, os.scandir = os_listdir, os_scandir
+    os.path.exists = _bool_probe(real_exists, PROBE_PATH)
+    os.path.isfile = _bool_probe(real_isfile, PROBE_PATH)
+    os.path.isdir = _bool_probe(real_isdir, PROBE_DIR)
+    pathlib.Path.glob, pathlib.Path.rglob, pathlib.Path.iterdir = (
+        path_glob,
+        path_rglob,
+        path_iterdir,
+    )
+    pathlib.Path.exists = _path_bool(real_p_exists, PROBE_PATH)
+    pathlib.Path.is_file = _path_bool(real_p_is_file, PROBE_PATH)
+    pathlib.Path.is_dir = _path_bool(real_p_is_dir, PROBE_DIR)
+
+    def uninstall() -> None:
+        glob.glob, glob.iglob = real_glob, real_iglob
+        os.listdir, os.scandir = real_listdir, real_scandir
+        os.path.exists, os.path.isfile, os.path.isdir = real_exists, real_isfile, real_isdir
+        pathlib.Path.glob, pathlib.Path.rglob, pathlib.Path.iterdir = (
+            real_p_glob,
+            real_p_rglob,
+            real_p_iterdir,
+        )
+        pathlib.Path.exists, pathlib.Path.is_file, pathlib.Path.is_dir = (
+            real_p_exists,
+            real_p_is_file,
+            real_p_is_dir,
+        )
 
     return uninstall
 

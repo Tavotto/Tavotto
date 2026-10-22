@@ -312,7 +312,13 @@ class V1Handler:
                 )
             if stem not in fig.states:
                 raise ProtocolError(
-                    "unknown_stem", f"stem 不存在: {stem}", extra={"known": sorted(fig.states)}
+                    "unknown_stem",
+                    f"stem 不存在: {stem}",
+                    # 沙盒里落空的探路调用（#1254）：「没出图」的错误带上，父进程判脚本目录里找不找得到
+                    extra={
+                        "known": sorted(fig.states),
+                        **getattr(self, "probe_miss_facts", lambda: {})(),
+                    },
                 )
 
         # 参数校验全部先做完再进渲染：混在下面那个 try 里的话，matplotlib 自己

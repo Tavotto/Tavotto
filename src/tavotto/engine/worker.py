@@ -918,6 +918,7 @@ class Worker(wireproto.V1Handler):
         self._private_output = None
         self._run_loaded = False
         self._input_misses = figcapture.InputMisses()
+        self._probe_misses = figcapture.ProbeMisses()
         #: 守卫拦下的关键文件操作账本（P01a）：`build()` 里换成这一轮的那本，模块级 `BLOCKED_OPS` 指向同一本。
         self._blocked_ops: "figcapture.BlockedFileOps | None" = None
         SESSION = SafeSession(self.out_dir, self.preview_dpi)
@@ -1216,6 +1217,9 @@ class Worker(wireproto.V1Handler):
         # 数据改指（ADR 0106）装在观察器**外**、只读回退**内**：回退先找脚本目录，找不到才轮到
         # 用户指认的改指表；改道来的读经观察器记下。没有规则也装——落空的读要记账。
         self._input_misses = figcapture.InputMisses()
+        # 沙盒 cwd 下落空的相对探路调用（#1254）：只记不改，build 失败 / 没出图时随错误带给父进程判
+        # 「脚本目录里找得到」。cwd 已经是脚本目录 / 项目根时不装——那时没有沙盒盲区可言。
+        self._probe_misses = figcapture.ProbeMisses()
         # 脚本源码给改指当证据：落在 cwd 里的绝对路径是不是相对路径规范化来的（证不出就保留绝对身份）
         try:
             script_source = self.script.read_text(encoding="utf-8", errors="replace")
@@ -1228,6 +1232,7 @@ class Worker(wireproto.V1Handler):
             script_source=script_source,
         )
         if self.workdir is None:
+            figcapture.install_probe_observer(self._probe_misses, str(self.sandbox))
             ledger.read_redirect = figcapture.install_relative_read_fallback(
                 str(self.script.parent), str(self.figures_dir)
             ).resolve
@@ -1346,7 +1351,9 @@ class Worker(wireproto.V1Handler):
                         raise _blocked_operations_error(
                             ledger.material(), cause=exc, fidelity=ledger.summary()
                         ) from exc
-                    raise _script_exit_error(exc, argv_count=len(self.script_argv)) from exc
+                    exit_error = _script_exit_error(exc, argv_count=len(self.script_argv))
+                    exit_error.extra.update(self._probe_miss_facts())
+                    raise exit_error from exc
             except scriptinput.ScriptNeedsInput as exc:
                 raise _needs_input_error(exc) from None
             except Exception as exc:
@@ -1520,7 +1527,12 @@ class Worker(wireproto.V1Handler):
                 "known": sorted(states),
             }
         if stem not in states:
-            return {"ok": False, "error": f"stem 不存在: {stem}", "known": sorted(states)}
+            return {
+                "ok": False,
+                "error": f"stem 不存在: {stem}",
+                "known": sorted(states),
+                **self._probe_miss_facts(),
+            }
 
         if cmd == "override":
             return {"ok": True, **self.session.do_render(stem, req.get("patches", []))}
@@ -1623,6 +1635,7 @@ class Worker(wireproto.V1Handler):
             # script_error，只多带一份事实；对不对得上脚本里哪串常量由父进程判（ADR 0110 §一）
             enoent = figcapture.enoent_fact(exc)
             facts: dict = {"enoent": enoent} if enoent else {}
+            facts.update(self._probe_miss_facts())
             # 缺依赖的结构化事实：敏感运行会丢掉自由文本（父进程本来从消息 / traceback 里认出缺哪个包），
             # 在丢之前先把「顶层模块名」这一个安全事实带上，依赖修复 / 环境交接才不会丢
             facts.update(self._missing_module_fact(exc))
@@ -1633,6 +1646,16 @@ class Worker(wireproto.V1Handler):
                 traceback_text=traceback.format_exc(),
                 extra=facts or None,
             ) from exc
+
+    def _probe_miss_facts(self) -> dict:
+        """沙盒 cwd 下落空的探路调用（#1254）→ 错误 / 响应里的 `probe_misses`；一条都没有回 `{}`
+        （响应形状与没装这层观察时逐字节相同）。是不是「脚本目录里找得到」由父进程判。"""
+        items = getattr(self, "_probe_misses", None)
+        return {"probe_misses": list(items.items)} if items is not None and items.items else {}
+
+    def probe_miss_facts(self) -> dict:
+        """协议层（`wireproto`）的钩子：`unknown_stem` 之类「没出图」的错误也带上同一份事实。"""
+        return self._probe_miss_facts()
 
     def _missing_module_fact(self, exc: BaseException) -> dict:
         """缺依赖的结构化事实：`{"missing_dependency": True, "missing_module": 顶层包名?}`；不是缺依赖回 `{}`。
@@ -1698,6 +1721,8 @@ class Worker(wireproto.V1Handler):
             "runtime": figsession.runtime_report(
                 inputs=self._inputs_report, fidelity=self._fidelity_summary()
             ),
+            # 沙盒里落空的相对探路调用（#1254）：只在有记录时才有这个字段，响应形状不变
+            **self._probe_miss_facts(),
             # 本次 build 实际用到的每一问（ADR 0099 §二）：写回的一次性重放按它严格重放；T08 起带上下文摘要，
             # 口令那一问只有 `secret: true`、没有答案（记账里本来就没有）
             "script_inputs": [

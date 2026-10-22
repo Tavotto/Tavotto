@@ -693,6 +693,9 @@ class WorkerError(RuntimeError):
         self.extra: dict = {}
         #: 数据找不到（ADR 0106）时弹窗的结构化载荷（`inputremap.payload_for`）；没有就是 None。
         self.missing_input: dict | None = None
+        #: 沙盒 cwd 下运行时落空的相对探路调用、而脚本目录里找得到（#1254）：「在脚本目录里运行」的引导载荷
+        #: （`workdir.probe_hint`，与首开的确认框同形）。只诊断：不是 `confirmation`（那是起会话前要先答的门）。
+        self.workdir_hint: dict | None = None
         #: 缺依赖的去向（`INSTALL_ROUTE_*`），只在 `missing_dependency` 时有意义。这里（池层）认得出
         #: 「标准库缺了 / 不支持当前系统」；「装得了 / 装不了」要查可信解析，由 app 层 / 准备会话补上。空 = 池层不知道。
         self.install_route = ""
@@ -918,7 +921,44 @@ def file_operation_blocked_params(extra: dict | None) -> dict[str, str]:
 SCRIPT_ERROR_CODE = "script_error"
 
 
+#: 沙盒里落空的探路调用能引到「在脚本目录里运行」的错误码：脚本自己的失败、「没出图」、先判空再 exit（#1254）。
+_WORKDIR_HINT_CODES = frozenset(
+    {NO_FIGURES_CODE, NO_FIGURES_SILENT_CODE, SCRIPT_EXITED_CODE, SCRIPT_ERROR_CODE}
+)
+
+
+def workdir_hint_for(script_name: str, figures_dir, probe_misses) -> dict | None:
+    """worker 记下的沙盒里落空的相对探路调用 → `workdir.probe_hint`；任何读不出来的情形都回 None（只是少一条引导）。"""
+    if not script_name or not figures_dir or not probe_misses:
+        return None
+    try:
+        return workdir.probe_hint(figures_dir, script_name, probe_misses)
+    except (OSError, ValueError) as exc:
+        LOG.info("脚本目录引导拼不出来（%s）: %s", type(exc).__name__, script_name)
+        return None
+
+
+def _offer_workdir_hint(err: "WorkerError", script_name: str, figures_dir) -> "WorkerError":
+    """脚本在沙盒 cwd 下 `glob` / `listdir` / `exists` 落空、而同一个相对目标在脚本目录里找得到（运行时证据，ADR 0084）：
+    给失败 / 没出图的错误挂上 `workdir_hint`（与首开同形的「在脚本目录里运行」引导）。码与消息一字不变。"""
+    if err.code not in _WORKDIR_HINT_CODES or getattr(err, "missing_input", None) is not None:
+        return err  # 已经有更具体的指认了（缺的文件），不叠第二个引导
+    hint = workdir_hint_for(script_name, figures_dir, (err.extra or {}).get("probe_misses"))
+    if hint is not None:
+        err.workdir_hint = hint
+    return err
+
+
 def _offer_missing_input(err: "WorkerError", script_name: str, figures_dir) -> "WorkerError":
+    """`_offer_missing_input_payload` + 运行时的脚本目录引导（`workdir_hint`）。三处调用方不变。"""
+    return _offer_workdir_hint(
+        _offer_missing_input_payload(err, script_name, figures_dir), script_name, figures_dir
+    )
+
+
+def _offer_missing_input_payload(
+    err: "WorkerError", script_name: str, figures_dir
+) -> "WorkerError":
     """数据找不到（ADR 0106）：给错误挂上弹窗载荷 `missing_input`。
 
     `missing_input`（worker 说得出缺的是哪一串）与「脚本跑完没出图」/「脚本自己 exit 了」

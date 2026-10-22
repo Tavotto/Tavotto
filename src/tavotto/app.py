@@ -819,6 +819,11 @@ def _worker_error_payload(exc, stage: str = "", *, figure_snapshot_invalidation=
     missing_input = getattr(exc, "missing_input", None)
     if isinstance(missing_input, dict):
         body["missing_input"] = missing_input
+    # 沙盒里 glob / listdir / exists 落空、脚本目录里找得到（#1254，ADR 0084 的运行时证据）：与首开确认框同形的
+    # 「在脚本目录里运行」引导。只诊断——不是 `confirmation`，没有任何入口会因它停下
+    workdir_hint = getattr(exc, "workdir_hint", None)
+    if isinstance(workdir_hint, dict):
+        body["workdir_hint"] = workdir_hint
     # 跑前的依赖门（U04，ADR 0061 §六）：整份联合计划 + 可选目标原样带出去——前端据此弹一次
     # 授权框（装什么、装到哪、会不会改用户环境），MCP 据此说怎么答。载荷里没有机器路径
     # （`JointPlan` 的身份不含路径，目标里的解释器是项目相对）。
