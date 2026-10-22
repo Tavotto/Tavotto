@@ -5889,6 +5889,11 @@ export type PreparationRequirement =
   | { id: 'dependencies'; kind: 'dependency_scope_choice'; code: string; payload: Record<string, unknown> }
   | { id: 'dependencies'; kind: 'dependency_pinned'; code: string; payload: { source?: string; variable?: string } }
   | { id: 'data'; kind: 'input_location'; code: string; origin: 'last_attempt'; blocking: false; payload: MissingInputOffer }
+  /**
+   * 沙盒里 glob / listdir / exists / C++ 读取器落空、脚本目录里找得到（#1254）：上一次尝试留下的不阻塞引导，
+   * 载荷与首开确认框同形（`source: 'runtime'`）。卡片复用 `WorkdirChooseButton`，不改 phase、不改错误码
+   */
+  | { id: 'data'; kind: 'workdir_hint'; code: string; origin: 'last_attempt'; blocking: false; payload: WorkdirConfirmation }
   /** 脚本源码里有弹窗选文件 / 询问的写法（`engine/dialogscan`）：不阻塞的提示，运行照样可用 */
   | { id: 'interaction'; kind: 'gui_dialog'; code: string; blocking: false; payload: GuiDialogPayload }
   | {

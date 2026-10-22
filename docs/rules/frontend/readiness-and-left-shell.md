@@ -62,7 +62,9 @@
   **不论错误码**都给既有的 `WorkdirChooseButton`（同一个确认框，不新造组件和文案）；`WORKDIR_CODES` 的老行为不变。
   **成功但图是空的**：成功渲染 / 试运行带 `workdir_hint` 时 `lib/workdirHintNotice.noticeWorkdirHint` 往通知轨挂一条胶囊（`uiStore.setStatus`，
   一句话 + 「选择运行目录…」；owner 前缀 `workdir.hint:`，换项目撤掉）——不是横条；同面板同证据只提醒一次，`decided` 后不提醒，之后不再带 hint 就撤。
-  看护 `components/workdirHint.test.tsx`、`store/workdirHintSuccess.test.tsx`。
+  **准备卡片（默认主流程）**：报告里有 `requirements[kind=workdir_hint]` 且已跑过（`outcome.kind !== 'pending'`）时，`SessionCard` 的 slot 多一个
+  `WorkdirChooseButton`（同一个确认框、同一套按 `decided` / `source` 选句的逻辑），不改一句话与主按钮。
+  看护 `components/workdirHint.test.tsx`、`store/workdirHintSuccess.test.tsx`、`components/PreparationCard.test.tsx`。
 - **跑前的那一次授权（U04，ADR 0061 §六）**：渲染以 `dependency_preparation_required` 回来时同样不是
   错误块，是缺一次授权——`renderStore` 把 `EngineError.dependencyPreparation`（整份联合计划 + 可选目标）
   交给 `depRepairStore.requestPreparation`（动态 import，避免 store 环），`DependencyPrepareDialog` 列出

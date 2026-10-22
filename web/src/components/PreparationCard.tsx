@@ -18,6 +18,7 @@ import {
   X,
 } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
+import { WorkdirChooseButton } from '@/components/WorkdirRow'
 import {
   backendCodeMsg,
   fetchDependencyOffer,
@@ -917,6 +918,12 @@ function SessionCard({ entry, view }: { entry: PrepEntry; view: PrepView }) {
   if (view.slot === 'progress') slot.push(<Progress key="progress" />)
   if (view.slot === 'workdir' && workdirPayload) {
     slot.push(<WorkdirChoice key="workdir" payload={workdirPayload} choice={workdir} onChoose={setWorkdir} />)
+  }
+  // 上一次尝试在沙盒里落空、脚本目录里找得到（#1254）：不论卡片是哪种失败 / 没出图的状态，都多一个「选择运行目录…」入口
+  // （同一个确认框；提示句按 decided / source 选，逻辑在 WorkdirChooseButton 一处）
+  const hintReq = report?.requirements.find((r) => r.kind === 'workdir_hint')
+  if (hintReq?.kind === 'workdir_hint' && report?.outcome.kind !== 'pending') {
+    slot.push(<WorkdirChooseButton key="workdir-hint" confirmation={hintReq.payload} />)
   }
   if (view.slot === 'install') slot.push(<InstallLine key="install" report={report} />)
   if (view.slot === 'ready') slot.push(<ReadyLine key="ready" entry={entry} />)

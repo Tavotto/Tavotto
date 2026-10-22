@@ -65,7 +65,7 @@ import {
   type PreparationOriginFacts,
   type PreparationReport,
 } from '@/lib/api'
-import { i18n, resources } from '@/i18n'
+import { i18n, resources, t as translate } from '@/i18n'
 import { setCurrentProjectId } from '@/lib/session'
 import { PreparationCard } from '@/components/PreparationCard'
 import { ScriptInputDialog } from '@/components/ScriptInputDialog'
@@ -2133,6 +2133,54 @@ describe('准备出错：后端本地详情接到已有恢复动作（P05a，AC-
     expect(primary()?.dataset.prepPrimary).toBe('missing_input')
     await toggleDetails()
     expect(details()!.querySelector('[data-prep-traceback]')).not.toBeNull()
+  })
+})
+
+describe('沙盒里落空、脚本目录里找得到的引导（#1254）', () => {
+  const hint = {
+    kind: 'workdir',
+    code: 'workdir_confirmation_required',
+    script: 'plot.py',
+    reason: 'script_dir_evidence',
+    recommended: 'project',
+    options: [],
+    conflicts: [],
+    reads: [],
+    probes: ['data/run_*.txt'],
+    message: '',
+    source: 'runtime',
+  }
+  const withHint = (extra: object = {}) =>
+    report({
+      ...STATES.noFigure,
+      requirements: [
+        { id: 'data', kind: 'workdir_hint', code: 'workdir_hint', origin: 'last_attempt', blocking: false, payload: hint as never },
+      ],
+      ...extra,
+    })
+  const chooseText = () => translate('engine.workdirChooseButton', { ns: 'errors' })
+
+  it('跑完没出图且报告带 workdir_hint：卡片多一个「选择运行目录…」入口（主按钮与一句话不变）', async () => {
+    await mount()
+    await openWith(withHint())
+    expect(panel().textContent).toContain(chooseText())
+    expect(panel().querySelectorAll('[data-prep-primary]').length).toBeLessThanOrEqual(1)
+  })
+
+  it('报告里没有 workdir_hint：不出现', async () => {
+    await mount()
+    await openWith(report(STATES.noFigure))
+    expect(panel().textContent).not.toContain(chooseText())
+  })
+
+  it('点入口打开的是首开同一个确认框（载荷原样）', async () => {
+    await mount()
+    const request = vi.fn()
+    useEnvStore.setState({ requestWorkdirConfirmation: request } as never)
+    await openWith(withHint())
+    const button = [...panel().querySelectorAll('button')].find((b) => b.textContent === chooseText())!
+    await act(async () => button.click())
+    expect(request.mock.calls[0][0]).toEqual(hint)
   })
 })
 
