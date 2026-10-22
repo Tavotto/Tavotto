@@ -1,6 +1,8 @@
 /**
  * 「生成可编辑版本」（ADR 0143）的前端持有者：每个脚本一条 `idle → running → ready → adopting → adopted` 流水，
  * 失败落 `failed`（一句话 + 重试）。后端会话走既有的 `/api/ai/sessions/<sid>` 轮询（不接 aiStore：那条是改面板脚本的）。
+ * 新脚本缺 Python 包要用户先决定时，任务以 `needs_input` 终局但候选留着：条目落 `deps`（依赖卡片：问一次 / 名单外点名 / 系统 Python），
+ * 用户点主按钮 → `resuming`（后端装依赖并接着校验**同一个候选**，不重跑 Agent；关闭 / 停止会把取消传到正在进行的安装）→ `ready`。
  * 原脚本从不被这条流水改写；采用 = 后端新建兄弟文件，随后用既有的「打开并运行」接进画布（原位图面板不动）。
  */
 import { create } from 'zustand'
@@ -14,7 +16,9 @@ import {
   fetchAiSession,
   fetchConvert,
   isDefiniteRunFailure,
+  resolveConvertDependencies,
   startConvert,
+  type ConvertDependencyCard,
   type ConvertSourceLanguage,
   type ConvertStatus,
 } from '@/lib/api'
@@ -22,7 +26,7 @@ import { captureProjectEpoch } from '@/lib/projectEpoch'
 import { currentProjectId, onCurrentProjectChange } from '@/lib/session'
 import { newRequestId, useAiStore } from '@/store/aiStore'
 
-export type ConvertPhase = 'running' | 'ready' | 'adopting' | 'adopted' | 'failed'
+export type ConvertPhase = 'running' | 'deps' | 'resuming' | 'ready' | 'adopting' | 'adopted' | 'failed'
 
 export interface ConvertEntry {
   phase: ConvertPhase
@@ -40,6 +44,8 @@ export interface ConvertEntry {
   path: string | null
   /** Agent 停下说明“哪一步换不了”的那一句（`needs_input`；后端已清洗并限长）；没有 = null */
   detail: string | null
+  /** `deps` / `resuming` 时的依赖卡片事实（后端 `convertdeps` 的 card）；没有 = null */
+  card: ConvertDependencyCard | null
 }
 
 interface ConvertState {
@@ -48,6 +54,8 @@ interface ConvertState {
   start: (script: string, library: string | null, path: string | null, language?: ConvertSourceLanguage) => Promise<void>
   adopt: (script: string) => Promise<string | null>
   discard: (script: string) => Promise<void>
+  /** 依赖卡片的主按钮（问一次 / 名单外）：回显卡片摘要，后端装 + 接着校验同一个候选；`system` 卡片没有这个动作 */
+  resolveDeps: (script: string) => Promise<void>
   stop: (script: string) => Promise<void>
   clear: (script: string) => void
 }
@@ -87,6 +95,13 @@ function failureCode(unmet: { constraint_id: string; reason_code: string }[] | u
   return first ? first.reason_code : 'unknown'
 }
 
+/** 任务结局里的依赖卡片事实（`unmet[].reason_code === 'dependency_decision'` 的那条的 `data`） */
+function dependencyCardOf(
+  unmet: { reason_code: string; data?: ConvertDependencyCard }[] | undefined,
+): ConvertDependencyCard | null {
+  return (unmet ?? []).find((u) => u.reason_code === 'dependency_decision' && u.data)?.data ?? null
+}
+
 export const useConvertStore = create<ConvertState>((set, get) => ({
   entries: {},
 
@@ -110,6 +125,7 @@ export const useConvertStore = create<ConvertState>((set, get) => ({
           sourceLanguage: language,
           path,
           detail: null,
+          card: null,
         },
       },
     }))
@@ -178,6 +194,9 @@ export const useConvertStore = create<ConvertState>((set, get) => ({
           set1(script, { phase: 'ready', status })
         } else if (sess.status === 'cancelled') {
           get().clear(script)
+        } else if (sess.task?.outcome === 'needs_input' && dependencyCardOf(sess.task.unmet)) {
+          // 新脚本缺包、要用户先决定：候选留在后端等着（不删），卡片的按钮接着走同一个候选
+          set1(script, { phase: 'deps', card: dependencyCardOf(sess.task.unmet) })
         } else if (sess.task?.outcome === 'needs_input') {
           // Agent 停下说明：Python 里没有可靠的逐一对应。再试一次也是同样的结论，卡片只说原因
           acceptedSessions.delete(key)
@@ -222,10 +241,47 @@ export const useConvertStore = create<ConvertState>((set, get) => ({
     }
   },
 
+  resolveDeps: async (script) => {
+    const cur = get().entries[script]
+    if (!cur?.session || cur.phase !== 'deps' || !cur.card || cur.card.kind === 'system') return
+    const guard = captureProjectEpoch()
+    const pj = currentProjectId()
+    const session = cur.session
+    set1(script, { phase: 'resuming', error: null, reason: null })
+    try {
+      // 前端回显它看到的卡片摘要：服务端不自回显（对不上就换新卡片、不装）
+      await resolveConvertDependencies(session, cur.card.impact_digest, pj)
+      for (;;) {
+        await new Promise((r) => setTimeout(r, POLL_MS))
+        if (!guard.still()) return
+        const now = get().entries[script]
+        if (!now || now.session !== session || now.phase !== 'resuming') return // 被关闭 / 停止 / 重试覆盖
+        const status = await fetchConvert(session, pj)
+        if (!guard.still()) return
+        if (status.state === 'resuming') continue
+        if (status.state === 'ready') {
+          set1(script, { phase: 'ready', status, card: null })
+        } else if (status.state === 'awaiting_dependencies' && status.dependency_card) {
+          set1(script, { phase: 'deps', card: status.dependency_card })
+        } else {
+          acceptedSessions.delete(scopeKey(pj, script))
+          set1(script, { phase: 'failed', reason: status.failure?.reason ?? 'unknown', card: null })
+        }
+        return
+      }
+    } catch (e) {
+      if (!guard.still()) return
+      const now = get().entries[script]
+      // 关闭 / 停止时候选被后端删掉，轮询会 404：那是用户自己点的，条目已经清了
+      if (!now || now.session !== session) return
+      set1(script, { phase: 'failed', error: backendErrorText(e), card: null })
+    }
+  },
+
   discard: async (script) => {
     const cur = get().entries[script]
     get().clear(script)
-    if (cur?.session && cur.phase === 'ready') {
+    if (cur?.session && (cur.phase === 'ready' || cur.phase === 'deps' || cur.phase === 'resuming')) {
       try {
         await discardConvert(cur.session, currentProjectId())
       } catch {
@@ -237,7 +293,14 @@ export const useConvertStore = create<ConvertState>((set, get) => ({
   stop: async (script) => {
     const cur = get().entries[script]
     get().clear(script)
-    if (cur?.session) {
+    if (cur?.session && (cur.phase === 'deps' || cur.phase === 'resuming')) {
+      // 任务已经以 needs_input 终局，没有可取消的任务了；候选和（可能正在进行的）安装由 discard 取消
+      try {
+        await discardConvert(cur.session, currentProjectId())
+      } catch {
+        /* 放弃失败不挡路：候选 24 小时后自己过期 */
+      }
+    } else if (cur?.session) {
       try {
         await aiCancel(cur.session, currentProjectId())
       } catch {

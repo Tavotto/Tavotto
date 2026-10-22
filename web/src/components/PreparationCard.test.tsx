@@ -37,6 +37,7 @@ vi.mock('@/lib/api', async (importOriginal) => ({
   fetchConvert: vi.fn(),
   adoptConvert: vi.fn(),
   discardConvert: vi.fn(),
+  resolveConvertDependencies: vi.fn(),
   aiCancel: vi.fn().mockResolvedValue({ ok: true }),
 }))
 vi.mock('@/store/liveSync', async (importOriginal) => ({
@@ -94,7 +95,7 @@ import { useDepRepairStore } from '@/store/depRepairStore'
 import { useConvertStore, POLL_MS } from '@/store/convertStore'
 import { useForeignScriptStore } from '@/store/foreignScriptStore'
 import { useAiStore } from '@/store/aiStore'
-import { adoptConvert, aiCancel, discardConvert, fetchAiSession, fetchConvert, startConvert } from '@/lib/api'
+import { adoptConvert, aiCancel, discardConvert, fetchAiSession, fetchConvert, resolveConvertDependencies, startConvert } from '@/lib/api'
 import type { DependencyPreparationOffer } from '@/lib/api'
 
 declare global {
@@ -1468,7 +1469,7 @@ describe('执行结束、捕获到图、首次编辑渲染是三件事', () => {
     })
 
     it.each([
-      ['missing_dependency', '新版本要用的 Python 包没装上，请先在缺依赖提示里装好再试'],
+      ['missing_dependency', '新版本要用的 Python 包没装上（自动安装已关闭，或这些包没法自动装），请手动装好后重试'],
       ['dependency_install_failed', '新版本要用的 Python 包没装成功，请稍后重试'],
     ])('失败原因 %s 有自己的一句话；可以重试', async (reason, sentence) => {
       vi.mocked(fetchAiSession).mockResolvedValue({
@@ -1492,6 +1493,129 @@ describe('执行结束、捕获到图、首次编辑渲染是三件事', () => {
       expect(adoptConvert).toHaveBeenCalledWith('sid-r', expect.anything())
       expect(useForeignScriptStore.getState().offer).toBeNull()
       expect(foreignCard()).toBeNull()
+    })
+  })
+
+  describe('R / MATLAB 缺依赖卡（ADR 0143 修订，Codex #1330 P1-2）', () => {
+    const base = { packages: ['pandas', 'statsmodels'], outside_list: [] as string[], impact_digest: 'dg-1', target: 'tavotto_managed', creates_environment: true, downloads_python: false, modifies_user_environment: false }
+    const askOnce = { ...base, kind: 'ask_once' as const, env: { kind: 'conda' as const, name: 'myenv' }, action: 'install_managed' as const }
+    const uncommon = { ...base, kind: 'uncommon' as const, packages: ['obscure-pkg', 'pandas'], outside_list: ['obscure-pkg'], env: { kind: 'project_venv' as const, name: 'proj/.venv' }, action: 'install' as const }
+    const system = { ...base, kind: 'system' as const, env: { kind: 'system' as const, name: 'python3' }, action: 'choose_env' as const }
+    const heldSession = (card: object) =>
+      ({ status: 'done', final: true, task: { outcome: 'needs_input', unmet: [{ constraint_id: 'intent', reason_code: 'dependency_decision', data: card }] } }) as never
+    const readyR = {
+      session: 'sid-r', state: 'ready' as const, script: 'fig.R', target_name: 'fig_matplotlib.py', library: null, source_language: 'r' as const,
+      comparison: { original: null, candidate: { figures: 1, width_mm: 50, height_mm: 40 }, aspect_delta: null, pixel_diff: null, reference: null, verification: 'unknown' as const },
+      has_preview: true,
+    }
+    const foreignCard = () => host.querySelector('[data-foreign-card]') as HTMLElement | null
+    const line = () => foreignCard()?.querySelector('[data-prep-line]')?.textContent
+    const settle = () => act(async () => { await vi.advanceTimersByTimeAsync(POLL_MS + 10) })
+    async function begin(card: object) {
+      host = document.createElement('div')
+      document.body.appendChild(host)
+      root = createRoot(host)
+      await act(async () => { root.render(<TooltipProvider><PreparationCard /><ForeignScriptCard /></TooltipProvider>) })
+      vi.mocked(fetchAiSession).mockResolvedValue(heldSession(card))
+      await act(async () => useForeignScriptStore.getState().setOffer({ script: 'fig.R', language: 'r' }))
+      await act(async () => (host.querySelector('[data-foreign-start]') as HTMLButtonElement).click())
+      await settle()
+    }
+    beforeEach(() => {
+      vi.useFakeTimers({ toFake: ['setTimeout'] })
+      useConvertStore.setState({ entries: {} })
+      useForeignScriptStore.setState({ offer: null })
+      useUiStore.setState({ engineEnvOpen: false, engineEnvPick: false })
+      vi.mocked(startConvert).mockReset().mockResolvedValue({ session: 'sid-r', script: 'fig.R' })
+      vi.mocked(fetchConvert).mockReset().mockResolvedValue(readyR)
+      vi.mocked(discardConvert).mockReset().mockResolvedValue({ ok: true })
+      vi.mocked(resolveConvertDependencies).mockReset().mockResolvedValue({ session: 'sid-r', state: 'resuming' })
+      vi.mocked(aiCancel).mockClear()
+    })
+    afterEach(() => {
+      vi.useRealTimers()
+      useForeignScriptStore.setState({ offer: null })
+      useConvertStore.setState({ entries: {} })
+      useUiStore.setState({ engineEnvOpen: false, engineEnvPick: false })
+    })
+
+    it('问一次：一句话点名环境 + 主按钮「装，以后这个环境都自动装」+ 次按钮「不装」；点主按钮回显卡片摘要并接着走同一个候选', async () => {
+      await begin(askOnce)
+      expect(foreignCard()?.dataset.convertPhase).toBe('deps')
+      expect(line()).toBe('要给这个环境（conda: myenv）装缺的包吗（会装进 Tavotto 为本项目建的独立环境，不改动它）？')
+      const btn = foreignCard()?.querySelector('[data-convert-deps-install]') as HTMLButtonElement
+      expect(btn.textContent).toBe('装，以后这个环境都自动装')
+      expect(foreignCard()?.querySelector('[data-convert-decline]')?.textContent).toBe('不装')
+      expect(visibleSentenceCount(foreignCard()!, 'zh-CN')).toBeLessThanOrEqual(1)
+      expect(visiblePrimaryButtons(foreignCard()!)).toBe(1)
+      expect(startConvert).toHaveBeenCalledTimes(1)
+      await act(async () => btn.click())
+      expect(resolveConvertDependencies).toHaveBeenCalledWith('sid-r', 'dg-1', expect.anything())
+      expect(foreignCard()?.dataset.convertPhase).toBe('resuming')
+      await settle()
+      expect(foreignCard()?.dataset.convertPhase).toBe('ready')
+      expect(startConvert).toHaveBeenCalledTimes(1)
+    })
+
+    it('名单外：点名这个包「不常见，确认是你要的再装」；主按钮只装这一次（不是「以后都自动装」）', async () => {
+      await begin(uncommon)
+      expect(line()).toBe('obscure-pkg 这个包不常见，确认是你要的再装。')
+      const btn = foreignCard()?.querySelector('[data-convert-deps-install]') as HTMLButtonElement
+      expect(btn.dataset.convertDepsInstall).toBe('uncommon')
+      expect(btn.textContent).toBe('确认，装上')
+      expect(visibleSentenceCount(foreignCard()!, 'zh-CN')).toBeLessThanOrEqual(1)
+      expect(visiblePrimaryButtons(foreignCard()!)).toBe(1)
+    })
+
+    it('系统 Python：不装，一句话说明 + 主按钮打开现有的「选择运行环境」入口；没有「装」动作', async () => {
+      await begin(system)
+      expect(line()).toBe('这个 Python 是系统自带的，往里面装包可能弄坏系统工具。请给项目换一个环境。')
+      expect(foreignCard()?.querySelector('[data-convert-deps-install]')).toBeNull()
+      const btn = foreignCard()?.querySelector('[data-convert-choose-env]') as HTMLButtonElement
+      expect(btn.textContent).toBe('选择运行环境')
+      expect(visiblePrimaryButtons(foreignCard()!)).toBe(1)
+      await act(async () => btn.click())
+      expect(useUiStore.getState().engineEnvOpen).toBe(true)
+      expect(useUiStore.getState().engineEnvPick).toBe(true)
+      expect(resolveConvertDependencies).not.toHaveBeenCalled()
+    })
+
+    it('「不装」放弃候选并收起；装依赖期间点 × / 停止 → 放弃（后端据此取消正在进行的安装）', async () => {
+      await begin(askOnce)
+      await act(async () => (foreignCard()?.querySelector('[data-convert-decline]') as HTMLButtonElement).click())
+      expect(discardConvert).toHaveBeenCalledWith('sid-r', expect.anything())
+      expect(useConvertStore.getState().entries['fig.R']).toBeUndefined()
+
+      vi.mocked(discardConvert).mockClear()
+      useConvertStore.setState({ entries: {} })
+      useForeignScriptStore.setState({ offer: null })
+      await act(async () => useForeignScriptStore.getState().setOffer({ script: 'fig.R', language: 'r' }))
+      await act(async () => (host.querySelector('[data-foreign-start]') as HTMLButtonElement).click())
+      await settle()
+      await act(async () => (foreignCard()?.querySelector('[data-convert-deps-install]') as HTMLButtonElement).click())
+      expect(foreignCard()?.dataset.convertPhase).toBe('resuming')
+      await act(async () => (foreignCard()?.querySelector('[data-convert-stop]') as HTMLButtonElement).click())
+      expect(discardConvert).toHaveBeenCalledWith('sid-r', expect.anything())
+      expect(aiCancel).not.toHaveBeenCalled()
+      expect(useConvertStore.getState().entries['fig.R']).toBeUndefined()
+    })
+
+    it('摘要对不上时后端回新的卡片：卡片换成新的，不当失败', async () => {
+      await begin(askOnce)
+      vi.mocked(fetchConvert).mockResolvedValue({ ...readyR, state: 'awaiting_dependencies', dependency_card: { ...askOnce, impact_digest: 'dg-2', notice: 'dependency_impact_changed' } } as never)
+      await act(async () => (foreignCard()?.querySelector('[data-convert-deps-install]') as HTMLButtonElement).click())
+      await settle()
+      expect(foreignCard()?.dataset.convertPhase).toBe('deps')
+      expect(useConvertStore.getState().entries['fig.R']?.card?.impact_digest).toBe('dg-2')
+    })
+
+    it('续跑失败：落到失败卡（一句话 + 重试）', async () => {
+      await begin(askOnce)
+      vi.mocked(fetchConvert).mockResolvedValue({ ...readyR, state: 'failed', failure: { reason: 'dependency_install_failed' } } as never)
+      await act(async () => (foreignCard()?.querySelector('[data-convert-deps-install]') as HTMLButtonElement).click())
+      await settle()
+      expect(foreignCard()?.dataset.convertPhase).toBe('failed')
+      expect(line()).toBe('新版本要用的 Python 包没装成功，请稍后重试')
     })
   })
 

@@ -793,6 +793,13 @@ function ConvertCompare({ entry }: { entry: NonNullable<ReturnType<typeof useCon
   )
 }
 
+/** 依赖卡片里的环境可读名：`conda: myenv` / `python: myenv`（后端只给种类 + 目录名，没有路径） */
+function depsEnvLabel(env: { kind: string; name: string }): string {
+  if (env.kind === 'managed') return pt('convert.deps.env.managed', { product: PRODUCT_NAME })
+  const prefix = env.kind === 'conda' ? 'conda' : env.kind === 'project_venv' ? 'venv' : 'python'
+  return `${prefix}: ${env.name}`
+}
+
 /** 生成可编辑版本进行中 / 有结果时卡片的样子：一句话 + 一个主按钮（+ 一颗次按钮）。采用 = 后端新建兄弟脚本，再走「打开并运行」 */
 function convertFlow(
   c: NonNullable<ReturnType<typeof useConvertStore.getState>['entries'][string]>,
@@ -805,6 +812,66 @@ function convertFlow(
     case 'running':
       return {
         title: pt('convert.running'),
+        slot: <Progress />,
+        ghost: (
+          <Button variant="ghost" size="md" data-convert-stop className="text-ink-2" onClick={() => void store.stop(p.script)}>
+            {pt('btn.stop')}
+          </Button>
+        ),
+      }
+    case 'deps': {
+      // 新脚本缺 Python 包、要用户先决定：一句话 + 一个主按钮（+「不装」）。三种卡：问一次 / 名单外点名 / 系统 Python
+      const card = c.card
+      if (!card) return { title: pt('convert.fail.unknown') }
+      const env = depsEnvLabel(card.env)
+      const decline = (
+        <Button variant="ghost" size="md" data-convert-decline className="text-ink-2" onClick={() => void store.discard(p.script)}>
+          {pt('convert.deps.btn.decline')}
+        </Button>
+      )
+      if (card.kind === 'system') {
+        return {
+          title: pt(card.env.kind === 'builtin' ? 'convert.deps.systemBuiltin' : 'convert.deps.system', { product: PRODUCT_NAME }),
+          primary: (
+            <Button
+              variant="primary"
+              size="md"
+              data-convert-choose-env
+              data-prep-primary="convert_choose_env"
+              onClick={() => useUiStore.getState().openEngineEnvPicker()}
+            >
+              {pt('convert.deps.btn.chooseEnv')}
+            </Button>
+          ),
+          ghost: decline,
+        }
+      }
+      const uncommon = card.kind === 'uncommon'
+      const title = uncommon
+        ? pt('convert.deps.uncommon', { names: listJoin(card.outside_list.length ? card.outside_list : card.packages) })
+        : pt(card.action === 'install_managed' ? 'convert.deps.askOnceManaged' : 'convert.deps.askOnce', {
+            env,
+            product: PRODUCT_NAME,
+          })
+      return {
+        title,
+        primary: (
+          <Button
+            variant="primary"
+            size="md"
+            data-convert-deps-install={card.kind}
+            data-prep-primary="convert_deps_install"
+            onClick={() => void store.resolveDeps(p.script)}
+          >
+            {pt(uncommon ? 'convert.deps.btn.installOnce' : 'convert.deps.btn.installAlways')}
+          </Button>
+        ),
+        ghost: decline,
+      }
+    }
+    case 'resuming':
+      return {
+        title: pt('convert.deps.resuming', { names: listJoin(c.card?.packages ?? []) }),
         slot: <Progress />,
         ghost: (
           <Button variant="ghost" size="md" data-convert-stop className="text-ink-2" onClick={() => void store.stop(p.script)}>
@@ -928,7 +995,8 @@ export function ForeignScriptCard() {
           )
         }
         onClose={() => {
-          if (convert?.phase === 'running') void useConvertStore.getState().stop(offer.script)
+          if (convert?.phase === 'running' || convert?.phase === 'deps' || convert?.phase === 'resuming')
+            void useConvertStore.getState().stop(offer.script)
           useForeignScriptStore.getState().clear()
         }}
       />

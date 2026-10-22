@@ -1265,13 +1265,16 @@
         "target_missing": "The assistant didn’t write the new script",
         "syntax_error": "The generated script has a syntax error",
         "other_file_changed": "The assistant changed files it shouldn’t have, so it was discarded",
-        "project_files_changed": "The assistant changed project files, so it was discarded",
+        "project_files_changed": "The validation run changed project files, so it was discarded",
         "render_not_wired": "The new version can’t be checked right now",
         "budget_exhausted": "Out of attempts",
-        "missing_dependency": "The new version needs Python packages that aren’t installed. Install them from the missing-package prompt and try again",
+        "missing_dependency": "The Python packages the new version needs are not installed (auto-install is off, or they can't be installed automatically). Install them yourself and try again",
         "dependency_install_failed": "The Python packages the new version needs couldn’t be installed. Try again in a moment",
         "needs_input": "One step in this script has no reliable Python equivalent, so no new version was made",
-        "needs_input_reason": "No new version was made: {{reason}}"
+        "needs_input_reason": "No new version was made: {{reason}}",
+        "convert_source_changed": "The original script changed in the meantime, so this new version was written against an older one. Please generate it again",
+        "convert_candidate_changed": "The new version's file was modified. Please generate it again",
+        "resume_error": "Something went wrong while continuing. Please try again"
       },
       "foreign": {
         "r": "This is an R script; {{product}} can write a separate, directly editable Matplotlib version and leave the original untouched.",
@@ -1284,6 +1287,23 @@
         "adopt": "Use the new version",
         "discard": "Discard",
         "retry": "Try again"
+      },
+      "deps": {
+        "askOnce": "Install the missing packages into this environment ({{env}})?",
+        "askOnceManaged": "Install the missing packages for this environment ({{env}}), into a separate environment {{product}} sets up for this project, leaving {{env}} itself alone?",
+        "uncommon": "{{names}} is not a common package. Install it only if it's what you want.",
+        "system": "This Python came with your system, and installing packages into it could break system tools. Please choose another environment for the project.",
+        "systemBuiltin": "This is {{product}}'s built-in runtime, which we don't install packages into. Please choose another environment for the project.",
+        "resuming": "Installing {{names}}, then continuing…",
+        "env": {
+          "managed": "{{product}} project environment"
+        },
+        "btn": {
+          "installAlways": "Install, and do it automatically for this environment from now on",
+          "installOnce": "Yes, install",
+          "decline": "Don't install",
+          "chooseEnv": "Choose a runtime environment"
+        }
       }
     },
     "envNotUsed": {

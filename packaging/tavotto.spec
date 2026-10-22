@@ -106,6 +106,9 @@ datas = [
     (str(PKG / "profiles"), "tavotto/profiles"),
     (str(PKG / "resources"), "tavotto/resources"),
     (str(PKG / "pdfbackend" / "canvas_coverage.json"), "tavotto/pdfbackend"),
+    #   engine/autoinstall_dists.txt  「生成可编辑版本」自动安装名单（engine/convertdeps.py 读它；
+    #               缺了桌面版里 R / MATLAB 转写的新脚本缺包时没有名单可对照，只会一律出卡片）
+    (str(PKG / "engine" / "autoinstall_dists.txt"), "tavotto/engine"),
     #   rendercore/fonts_allowlist.json  批准字体 allowlist（fonts.load_allowlist 读它：字体注册表按它的 sha256 收脸，
     #               ADR 0060）。U10 切默认后冻结产物第一次真导出就是在这里 ENOENT 的——源码树 / wheel 里它自然在
     (str(PKG / "rendercore" / "fonts_allowlist.json"), "tavotto/rendercore"),

@@ -22,6 +22,7 @@ import { scrollFadeStyle, useScrollFade } from '../ui/scrollFade'
 import { TextInput } from '../ui/Input'
 import { Select } from '../ui/Select'
 import { CopyButton } from './CopyButton'
+import { AutoInstallEnvsSection } from './AutoInstallEnvs'
 import { DiagnosticDisclosure, SettingRow } from './SettingRow'
 
 /** 本页文案在 dialogs:settings.packages.* 下 */
@@ -155,6 +156,9 @@ export function PackagesSettings() {
 
       {/* ---------------- 环境（先说现状，再给动作；2026-09-13 审计 B39） ---------------- */}
       <EnvironmentSection />
+
+      {/* ---------------- 「生成可编辑版本」允许自动装包的环境（可撤销） ---------------- */}
+      <AutoInstallEnvsSection />
 
       {/* ---------------- 用户安装（这一页存在的理由） ---------------- */}
       <FormSection title={pk('userTitle')} data-settings-anchor="packages.install">

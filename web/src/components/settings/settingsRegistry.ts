@@ -88,6 +88,7 @@ export const SETTINGS_REGISTRY: readonly SettingsEntry[] = [
   // ---- Python 库 ----
   { id: 'packages.env', section: 'packages', label: () => st('packages.envTitle', { product: PRODUCT_NAME }), anchors: ['packages.env', 'packages.install'] },
   { id: 'packages.install', section: 'packages', label: () => st('packages.userTitle'), keywords: () => st('search.kw.packages') },
+  { id: 'packages.autoInstall', section: 'packages', label: () => st('packages.autoInstall.title') },
   { id: 'packages.builtin', section: 'packages', label: () => st('packages.builtinTitle') },
   // ---- 帮助与诊断 ----
   { id: 'diagnostics.health', section: 'diagnostics', label: () => st('diagnostics.healthTitle') },

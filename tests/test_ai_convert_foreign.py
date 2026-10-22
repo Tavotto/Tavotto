@@ -4,7 +4,7 @@
 * 提示词是同一节的变体（逐步搬运 + 对照表 + 没有可靠对应就停下），Python 来源的提示词不变；
 * Agent 没写文件而回答里带 `TAVOTTO_NEEDS_INPUT:` → 结局 `needs_input`（不生成新脚本）；无标记照旧失败；
 * 没有原图 → `comparison.reference is None`、`verification == "unknown"`；有原图 → 并排；
-* 新脚本缺 Python 包：按 `convertdeps` 的规则自动装（允许的目标）或退回缺依赖卡（不允许的目标），测试一律 monkeypatch 安装入口。
+* 新脚本缺 Python 包：按 `convertdeps` 的规则自动装 / 停住等用户在卡片上决定（候选不删、接着走同一个候选）/ 取消传到安装，测试一律 monkeypatch 安装入口。
 
 Agent CLI 换成一段 python（不联网）；校验运行由假 runner 代替；`deprepair` 的计划 / 安装入口全部 monkeypatch——不装任何真包。
 """
@@ -16,7 +16,6 @@ import os
 import sys
 import threading
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 
@@ -29,8 +28,6 @@ from tavotto.engine import (
     ai_tasks,
     config,
     convertdeps,
-    deprepair,
-    pool,
 )
 
 R_ORIGINAL = 'library(ggplot2)\ndf <- read.csv("data.csv")\nggplot(df, aes(x, y)) + geom_point()\n'
@@ -285,7 +282,7 @@ def test_marker_is_read_from_assistant_messages_only_at_line_start():
 def test_installed_packages_are_recorded_and_the_run_proceeds(env):
     calls = []
 
-    def hook(project, rel):
+    def hook(project, rel, cancel=None):
         calls.append((project, rel))
         return {"status": "installed", "installed": ["pandas", "statsmodels"]}
 
@@ -302,7 +299,7 @@ def test_install_failure_is_a_final_failure_without_running_the_candidate(env):
     sid = _run(
         env,
         hooks={
-            "deps": lambda p, r: {
+            "deps": lambda p, r, c: {
                 "status": "failed",
                 "code": "dependency_network_unavailable",
                 "missing": ["pandas"],
@@ -319,11 +316,11 @@ def test_install_failure_is_a_final_failure_without_running_the_candidate(env):
     assert not (ai_convert.CONVERT_DIR / sid).exists()
 
 
-def test_card_branch_runs_the_candidate_and_missing_dependency_is_not_corrected(env):
+def test_skipped_branch_runs_the_candidate_and_missing_dependency_is_not_corrected(env):
     env["runner"] = lambda *a, **k: {
         "error": {"code": "missing_dependency", "message": "No module named 'statsmodels'"}
     }
-    sid = _run(env, hooks={"deps": lambda p, r: {"status": "card", "reason": "target_not_allowed"}})
+    sid = _run(env, hooks={"deps": lambda p, r, c: {"status": "skipped", "reason": "plan_blocked"}})
     sess = _wait(sid)
     assert sess["task"]["outcome"] == "failed"
     assert ("render.capture", "missing_dependency") in {
@@ -333,252 +330,225 @@ def test_card_branch_runs_the_candidate_and_missing_dependency_is_not_corrected(
 
 
 def test_a_crashing_dependency_hook_never_breaks_the_validation(env):
-    def boom(project, rel):
+    def boom(project, rel, cancel=None):
         raise RuntimeError("x")
 
     sid = _run(env, hooks={"deps": boom})
     assert _wait(sid)["task"]["outcome"] == "completed"
 
 
-# --------------------------------------------------------------------------- convertdeps：自动装的目标与闸
-def _plan(requirements=("pandas>=2.0", "statsmodels"), **over):
-    base = dict(
-        status="ready",
-        blocked=(),
-        unknown=(),
-        not_pip_installable=(),
-        requirements=tuple(requirements),
+# --------------------------------------------------------------------------- 停住等用户决定（Codex #1330 P1-2）与取消（P1-1）
+CARD = {
+    "kind": "ask_once",
+    "packages": ["pandas", "statsmodels"],
+    "outside_list": [],
+    "env": {"kind": "conda", "name": "myenv"},
+    "action": "install_managed",
+    "impact_digest": "digest-abc",
+    "target": "tavotto_managed",
+    "creates_environment": True,
+    "downloads_python": False,
+    "modifies_user_environment": False,
+}
+
+
+def _hold_hook(card=None):
+    return lambda p, r, c=None: {
+        "status": "hold",
+        "card": dict(card or CARD),
+        "missing": ["pandas"],
+    }
+
+
+def test_hold_ends_needs_input_with_structured_card_and_keeps_the_candidate(env):
+    """P1-2：不自动装的分支必须给真卡片——任务以明确、可恢复的结局停住，结构化字段随结局交给前端，候选不删、不重跑 Agent。"""
+    before = _files(env["figs"])
+    sid = _run(env, hooks={"deps": _hold_hook()})
+    sess = _wait(sid)
+    assert sess["task"]["outcome"] == "needs_input", sess["task"]
+    (unmet,) = sess["task"]["unmet"]
+    assert unmet["reason_code"] == "dependency_decision"
+    assert unmet["data"] == CARD, (
+        "缺哪些包 / 环境可读名 / 是否名单内 / 可执行动作 / 摘要，都在结构化字段里"
     )
-    base.update(over)
-    return SimpleNamespace(**base)
+    assert len(env["prompts"]) == 1, "停住不是失败：不进修正轮"
+    assert _files(env["figs"]) == before, "项目里一个字节没动"
+    cdir = ai_convert.CONVERT_DIR / sid
+    assert (cdir / "fig_matplotlib.py").is_file(), "候选没删"
+    st = ai_convert.status(sid, _project(env))
+    assert st["state"] == ai_convert.STATE_AWAITING and st["dependency_card"] == CARD
+    with pytest.raises(ai_convert.ConvertError):
+        ai_convert.adopt(sid, _project(env))
 
 
-def _bound(plan=None, *, requirements=("pandas>=2.0", "statsmodels"), **over):
-    base = dict(
-        plan_id="p1",
-        target_kind=deprepair.TARGET_PROJECT_VENV,
-        creates_environment=False,
-        private_python=None,
-        requirements=tuple(requirements),
-        impact_digest="digest-1",
+def _await_resume(env, sid, *, runner, resolve, timeout=20.0):
+    cdir, meta, cancel = ai_convert.prepare_resume(sid, _project(env))
+    out = {}
+    t = threading.Thread(
+        target=lambda: out.update(
+            ai_convert.run_resume(
+                sid,
+                _project(env),
+                cdir,
+                meta,
+                cancel,
+                runner=runner,
+                resolve=convertdeps.resolve,
+                confirmed_impact="digest-abc",
+            )
+        )
     )
-    base.update(over)
-    return SimpleNamespace(**base)
+    return t, out, cancel
 
 
-@pytest.fixture
-def fake_repair(monkeypatch):
-    """替换 `deprepair` 的计划 / 安装入口：记录调用，绝不装包。"""
-    st = SimpleNamespace(
-        joint=_plan(),
-        kind=deprepair.TARGET_PROJECT_VENV,
-        source=pool.SOURCE_PROJECT_VENV,
-        bound=_bound(),
-        prepare_result={"state": deprepair.STATE_DONE},
-        prepare_error=None,
-        calls=[],
-        discarded=[],
+def test_resume_continues_the_same_candidate_without_rerunning_the_agent(env, monkeypatch):
+    sid = _run(env, hooks={"deps": _hold_hook()})
+    _wait(sid)
+    seen = []
+
+    def resolve(project, rel, *, confirmed_impact, cancel=None):
+        seen.append((rel, confirmed_impact))
+        return {"status": "installed", "installed": ["pandas", "statsmodels"]}
+
+    monkeypatch.setattr(convertdeps, "resolve", resolve)
+    t, out, _cancel = _await_resume(env, sid, runner=ok_runner, resolve=resolve)
+    t.start()
+    t.join(20)
+    assert out["state"] == "ready", out
+    assert seen and seen[0][0].startswith(ai_convert.STAGE_PREFIX) and seen[0][1] == "digest-abc"
+    assert len(env["prompts"]) == 1, "没有第二次 Agent 调用"
+    st = ai_convert.status(sid, _project(env))
+    assert st["state"] == "ready" and st["installed"] == ["pandas", "statsmodels"]
+    assert st["dependency_card"] is None
+    assert ai_convert.adopt(sid, _project(env))["name"] == "fig_matplotlib.py"
+    assert not ai_convert.resuming(sid)
+
+
+def test_resume_goes_back_to_the_card_when_the_summary_no_longer_matches(env, monkeypatch):
+    sid = _run(env, hooks={"deps": _hold_hook()})
+    _wait(sid)
+    fresh = {**CARD, "impact_digest": "digest-new"}
+    monkeypatch.setattr(
+        convertdeps,
+        "resolve",
+        lambda p, r, **kw: {
+            "status": "hold",
+            "code": "dependency_impact_changed",
+            "card": fresh,
+        },
+    )
+    t, out, _c = _await_resume(env, sid, runner=ok_runner, resolve=None)
+    t.start()
+    t.join(20)
+    assert out["state"] == ai_convert.STATE_AWAITING
+    card = ai_convert.status(sid, _project(env))["dependency_card"]
+    assert card["impact_digest"] == "digest-new" and card["notice"] == "dependency_impact_changed"
+
+
+def test_resume_failure_is_recorded_with_a_reason(env, monkeypatch):
+    sid = _run(env, hooks={"deps": _hold_hook()})
+    _wait(sid)
+    monkeypatch.setattr(
+        convertdeps,
+        "resolve",
+        lambda p, r, **kw: {
+            "status": "failed",
+            "code": "dependency_network_unavailable",
+            "missing": ["pandas"],
+        },
+    )
+    t, out, _c = _await_resume(env, sid, runner=ok_runner, resolve=None)
+    t.start()
+    t.join(20)
+    assert out["state"] == "failed" and out["reason"] == "dependency_install_failed"
+    st = ai_convert.status(sid, _project(env))
+    assert (
+        st["state"] == "failed"
+        and st["failure"]["installer_code"] == "dependency_network_unavailable"
     )
 
-    def joint_plan_for(project, script, **kw):
-        st.calls.append(("joint_plan_for", project, script))
-        return st.joint, st.kind, "/py"
 
-    def joint_target_for(project, script):
-        st.calls.append(("joint_target_for", project, script))
-        return st.kind, "/py", st.source
-
-    def create_joint_plan(project, script, **kw):
-        st.calls.append(("create_joint_plan", project, script, kw))
-        if isinstance(st.bound, Exception):
-            raise st.bound
-        return st.bound
-
-    def prepare(plan_id, on_event=None, *, claimed=False, confirmed_impact=None):
-        st.calls.append(("prepare", plan_id, on_event, claimed, confirmed_impact))
-        if st.prepare_error is not None:
-            raise st.prepare_error
-        return st.prepare_result
-
-    monkeypatch.setattr(deprepair, "joint_plan_for", joint_plan_for)
-    monkeypatch.setattr(deprepair, "joint_target_for", joint_target_for)
-    monkeypatch.setattr(deprepair, "create_joint_plan", create_joint_plan)
-    monkeypatch.setattr(deprepair, "prepare", prepare)
-    monkeypatch.setattr(deprepair, "_discard_plan", lambda pid: st.discarded.append(pid))
-    monkeypatch.setattr(config, "ai_settings", lambda: {})
-    monkeypatch.delenv("TAVOTTO_NO_CONVERT_AUTO_INSTALL", raising=False)
-    return st
-
-
-def _names(st):
-    return [c[0] for c in st.calls]
-
-
-def test_auto_install_into_the_projects_own_venv_goes_through_the_existing_prepare_entry(
-    fake_repair,
+def test_closing_the_card_during_resume_cancels_the_install_and_drops_the_candidate(
+    env, monkeypatch
 ):
-    got = convertdeps.ensure("/proj", "tavotto_convert_probe_x.py")
-    assert got["status"] == "installed" and got["installed"] == ["pandas", "statsmodels"]
-    assert ("prepare", "p1", None, False, "digest-1") in fake_repair.calls
-    created = next(c for c in fake_repair.calls if c[0] == "create_joint_plan")
-    assert created[1:3] == ("/proj", "tavotto_convert_probe_x.py")
-    assert created[3] == {"target_kind": deprepair.TARGET_PROJECT_VENV}
+    """P1-1：关闭 / 停止卡片 → discard → 取消标记传到正在进行的安装；安装停手后候选目录被删，不会变成 ready。"""
+    sid = _run(env, hooks={"deps": _hold_hook()})
+    _wait(sid)
+    started = threading.Event()
+    got = {}
 
+    def slow_resolve(project, rel, *, confirmed_impact, cancel=None):
+        got["cancel"] = cancel
+        started.set()
+        cancel.wait(10)
+        return {
+            "status": "cancelled",
+            "code": "dependency_install_cancelled",
+            "missing": ["pandas"],
+        }
 
-def test_auto_install_into_an_existing_managed_generation_is_allowed(fake_repair):
-    fake_repair.kind = deprepair.TARGET_MANAGED
-    fake_repair.source = pool.SOURCE_MANAGED_PROJECT
-    fake_repair.bound = _bound(target_kind=deprepair.TARGET_MANAGED)
-    assert convertdeps.ensure("/proj", "s.py")["status"] == "installed"
-    assert "prepare" in _names(fake_repair)
-
-
-def test_managed_target_that_would_create_an_environment_or_download_python_is_refused(fake_repair):
-    fake_repair.kind = deprepair.TARGET_MANAGED
-    fake_repair.source = pool.SOURCE_MANAGED_PROJECT
-    for over in ({"creates_environment": True}, {"private_python": {"bytes": 1}}):
-        fake_repair.calls.clear()
-        fake_repair.discarded.clear()
-        fake_repair.bound = _bound(target_kind=deprepair.TARGET_MANAGED, **over)
-        got = convertdeps.ensure("/proj", "s.py")
-        assert (got["status"], got["reason"]) == ("card", "would_create_environment")
-        assert "prepare" not in _names(fake_repair) and fake_repair.discarded == ["p1"]
-
-
-@pytest.mark.parametrize(
-    "source",
-    [
-        pool.SOURCE_BUNDLED,
-        pool.SOURCE_CURRENT,
-        pool.SOURCE_SYSTEM,
-        pool.SOURCE_CONFIGURED,
-        pool.SOURCE_ENV,
-        pool.SOURCE_MANAGED,
-    ],
-)
-def test_targets_the_existing_rules_do_not_install_into_fall_back_to_the_card(fake_repair, source):
-    """内置 runtime / 本进程 / 系统或 Conda / 用户固定的解释器 / 源码模式自建 venv：往受管环境装不会让脚本找到包，
-    还会把项目的解释器悄悄记成受管环境——一律退回缺依赖卡，零安装。"""
-    fake_repair.kind = deprepair.TARGET_MANAGED
-    fake_repair.source = source
-    got = convertdeps.ensure("/proj", "s.py")
-    assert (got["status"], got["reason"]) == ("card", "target_not_allowed")
-    assert "create_joint_plan" not in _names(fake_repair) and "prepare" not in _names(fake_repair)
-
-
-def test_a_project_venv_kind_with_a_non_venv_source_is_not_allowed(fake_repair):
-    fake_repair.source = pool.SOURCE_SYSTEM
-    got = convertdeps.ensure("/proj", "s.py")
-    assert got["reason"] == "target_not_allowed" and "prepare" not in _names(fake_repair)
-
-
-@pytest.mark.parametrize("req", [("requests",), ("pandas", "evil-pkg"), ("numpy", "torch>=2")])
-def test_packages_outside_the_closed_set_are_never_auto_installed(fake_repair, req):
-    fake_repair.joint = _plan(req)
-    got = convertdeps.ensure("/proj", "s.py")
-    assert (got["status"], got["reason"]) == ("card", "not_in_allowlist")
-    assert "create_joint_plan" not in _names(fake_repair) and "prepare" not in _names(fake_repair)
-
-
-def test_a_bound_plan_that_grew_beyond_the_closed_set_is_discarded_unexecuted(fake_repair):
-    fake_repair.bound = _bound(requirements=("pandas", "declared-in-requirements-txt"))
-    got = convertdeps.ensure("/proj", "s.py")
-    assert got["reason"] == "not_in_allowlist" and fake_repair.discarded == ["p1"]
-    assert "prepare" not in _names(fake_repair)
-
-
-@pytest.mark.parametrize(
-    "over",
-    [
-        {"status": "blocked"},
-        {"blocked": ({"reason": "x"},)},
-        {"unknown": ("mystery",)},
-        {"not_pip_installable": ({"name": "arcpy"},)},
-    ],
-)
-def test_blocked_or_unresolved_plans_fall_back_to_the_card(fake_repair, over):
-    fake_repair.joint = _plan(**over)
-    got = convertdeps.ensure("/proj", "s.py")
-    assert got["status"] == "card" and "prepare" not in _names(fake_repair)
-
-
-def test_nothing_missing_installs_nothing(fake_repair):
-    fake_repair.joint = _plan(status="nothing_needed", requirements=())
-    got = convertdeps.ensure("/proj", "s.py")
-    assert got["status"] == "none" and "create_joint_plan" not in _names(fake_repair)
-
-
-def test_the_repair_chains_own_refusals_fall_back_to_the_card(fake_repair):
-    fake_repair.bound = deprepair.RepairError(deprepair.ERROR_INTERPRETER_PINNED, "pinned")
-    got = convertdeps.ensure("/proj", "s.py")
-    assert (got["status"], got["reason"], got["code"]) == (
-        "card",
-        "plan_refused",
-        "dependency_interpreter_pinned",
+    monkeypatch.setattr(convertdeps, "resolve", slow_resolve)
+    ran = []
+    t, out, _c = _await_resume(
+        env, sid, runner=lambda *a, **k: ran.append(1) or ok_runner(*a), resolve=None
     )
-    assert "prepare" not in _names(fake_repair)
+    t.start()
+    assert started.wait(10)
+    assert ai_convert.status(sid, _project(env))["state"] == ai_convert.STATE_RESUMING
+    assert ai_convert.discard(sid, _project(env)) == {"ok": True}
+    t.join(20)
+    assert got["cancel"].is_set(), "取消传到了安装入口"
+    assert out["state"] == "cancelled" and not ran, "取消后不跑校验"
+    assert not (ai_convert.CONVERT_DIR / sid).exists()
 
 
-def test_unresolvable_interpreter_falls_back_to_the_card(monkeypatch, fake_repair):
-    def boom(*a, **k):
-        raise pool.WorkerError("x", "no_worker_python")
+def test_a_second_click_while_resuming_is_refused(env, monkeypatch):
+    sid = _run(env, hooks={"deps": _hold_hook()})
+    _wait(sid)
+    started = threading.Event()
 
-    monkeypatch.setattr(deprepair, "joint_plan_for", boom)
-    assert convertdeps.ensure("/proj", "s.py")["reason"] == "plan_unavailable"
+    def slow(project, rel, *, confirmed_impact, cancel=None):
+        started.set()
+        cancel.wait(10)
+        return {"status": "cancelled"}
 
-
-@pytest.mark.parametrize(
-    "result",
-    [
-        {"state": deprepair.STATE_FAILED, "code": "dependency_network_unavailable"},
-        {"state": deprepair.STATE_CANCELLED, "code": "dependency_install_cancelled"},
-        None,
-    ],
-)
-def test_install_failure_is_reported_with_the_repair_code(fake_repair, result):
-    fake_repair.prepare_result = result
-    got = convertdeps.ensure("/proj", "s.py")
-    assert got["status"] == "failed" and got["missing"] == ["pandas", "statsmodels"]
-    assert got["code"] == ((result or {}).get("code") or deprepair.ERROR_FAILED)
+    monkeypatch.setattr(convertdeps, "resolve", slow)
+    t, out, _c = _await_resume(env, sid, runner=ok_runner, resolve=None)
+    t.start()
+    assert started.wait(10)
+    with pytest.raises(ai_convert.ConvertError) as exc:
+        ai_convert.prepare_resume(sid, _project(env))
+    assert exc.value.code in ("convert_resume_busy", "convert_not_awaiting_dependencies")
+    ai_convert.discard(sid, _project(env))
+    t.join(20)
 
 
-def test_a_raising_prepare_is_a_failure_not_a_crash(fake_repair):
-    fake_repair.prepare_error = deprepair.RepairError(deprepair.ERROR_IMPACT_CHANGED, "changed")
-    got = convertdeps.ensure("/proj", "s.py")
-    assert (got["status"], got["code"]) == ("failed", "dependency_impact_changed")
-    fake_repair.prepare_error = RuntimeError("boom")
-    assert convertdeps.ensure("/proj", "s.py")["status"] == "failed"
+def test_resume_refuses_a_candidate_whose_files_changed_since_the_hold(env):
+    sid = _run(env, hooks={"deps": _hold_hook()})
+    _wait(sid)
+    (ai_convert.CONVERT_DIR / sid / "fig_matplotlib.py").write_text("print(1)\n", encoding="utf-8")
+    t, out, _c = _await_resume(env, sid, runner=ok_runner, resolve=None)
+    t.start()
+    t.join(20)
+    assert out["state"] == "failed" and out["reason"] == "convert_candidate_changed"
 
 
-def test_the_switch_turns_auto_install_off_everywhere(fake_repair, monkeypatch):
-    monkeypatch.setattr(config, "ai_settings", lambda: {"convert": {"auto_install": False}})
-    got = convertdeps.ensure("/proj", "s.py")
-    assert (got["status"], got["reason"]) == ("card", "disabled") and not fake_repair.calls
-    monkeypatch.setattr(config, "ai_settings", lambda: {})
-    monkeypatch.setenv("TAVOTTO_NO_CONVERT_AUTO_INSTALL", "1")
-    assert convertdeps.ensure("/proj", "s.py")["reason"] == "disabled" and not fake_repair.calls
+def test_task_cancel_reaches_the_dependency_step_and_ends_cancelled(env):
+    """P1-1：任务取消的标记被交给依赖钩子；钩子（= 正在进行的安装）收到信号，之后候选既不提交也不留存。"""
+    entered = threading.Event()
+    seen = {}
 
+    def hook(project, rel, cancel=None):
+        seen["cancel"] = cancel
+        entered.set()
+        assert cancel is not None and cancel.wait(10), "取消信号没到"
+        return {"status": "cancelled", "code": "dependency_install_cancelled"}
 
-def test_auto_install_is_on_by_default_and_only_an_explicit_false_turns_it_off(monkeypatch):
-    monkeypatch.setattr(config, "ai_settings", lambda: {})
-    assert convertdeps.enabled() is True
-    monkeypatch.setattr(config, "ai_settings", lambda: {"convert": {"auto_install": None}})
-    assert convertdeps.enabled() is True
-    monkeypatch.setattr(config, "ai_settings", lambda: {"convert": {"auto_install": False}})
-    assert convertdeps.enabled() is False
-
-
-def test_the_real_install_entries_are_never_reached_by_these_tests():
-    """自检：fixture 替换的正是 convertdeps 调用的那几个入口名，改名会让上面的用例变成空对照。"""
-    for name in (
-        "joint_plan_for",
-        "joint_target_for",
-        "create_joint_plan",
-        "prepare",
-        "_discard_plan",
-    ):
-        assert callable(getattr(deprepair, name))
-    import inspect
-
-    src = inspect.getsource(convertdeps)
-    assert "subprocess" not in src, "convertdeps 不新写任何安装 / 子进程路径"
+    sid = _run(env, hooks={"deps": hook})
+    assert entered.wait(15)
+    assert ai_bridge.cancel(sid)
+    sess = _wait(sid)
+    assert sess["task"]["outcome"] == "cancelled", sess["task"]
+    assert seen["cancel"].is_set()
+    assert not (ai_convert.CONVERT_DIR / sid).exists()
+    assert len(env["prompts"]) == 1

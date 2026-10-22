@@ -1,0 +1,25 @@
+# 「生成可编辑版本」允许自动安装的发行包名单（ADR 0143 修订，维护者 2026-10-23 裁决）。engine/convertdeps.py 读它。
+# 格式：一行一个 PEP 503 规范名；# 开头是注释；空行忽略。名单内的包才可能被自动安装，名单外的包一律先出卡片。
+#
+# 名单 = 上一轮的 14 个科学计算包  ∪  PyPI 30 天下载量前 1000 的项目名快照。
+# 快照来源：https://hugovk.github.io/top-pypi-packages/top-pypi-packages-30-days.min.json
+#           （hugovk/top-pypi-packages，数据取自公开的 ClickHouse PyPI 数据集）
+# 快照日期：尚未并入。该仓库没有声明任何许可证（GitHub license API 404，仓库根无 LICENSE 文件），
+#           按维护者“许可证不允许再分发就停下”的口径，本提交只带 14 个包的种子；
+#           维护者确认可再分发后在本机跑：
+#               python scripts/dev/refresh_autoinstall_list.py --license "<许可证说明>"
+#           重新生成本文件（脚本会把来源 URL、快照日期、许可证写进文件头，并保留下面 14 个种子）。
+numpy
+pandas
+scipy
+statsmodels
+patsy
+seaborn
+matplotlib
+openpyxl
+xlrd
+pyarrow
+scikit-learn
+lifelines
+pingouin
+adjusttext

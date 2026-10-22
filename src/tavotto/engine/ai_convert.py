@@ -12,7 +12,7 @@
 * 来源语言（ADR 0143 修订，2026-10-23）：原脚本可以是 `.py`（Python，位图库出的图）或 `.R` / `.r`（R）、`.m`（MATLAB）纯文本脚本。
   R / MATLAB **从不被运行**：对照只用脚本旁已有的原图，没有原图就如实标“未对照验证”（`verification: "unknown"`）；
   Python 里没有逐一对应的统计方法时 Agent 停下说明（结局 `needs_input`，不生成新脚本）；新脚本要的包缺失时按
-  `convertdeps` 的规则自动装进用户环境（或退回现有缺依赖卡）；
+  `convertdeps` 的规则自动装 / 停住等用户在依赖卡片上决定（候选不删，点主按钮后 `run_resume` 接着走同一个候选，不重跑 Agent）；
 * 校验：在用户同一解释器 / 同一路由下真的跑一遍候选脚本（`run_validation`，由 app 注入的 `runner` 走现有 probe 路径），
   必须捕获到 Matplotlib 图，否则判失败并给一句原因。跑的是紧挨着原脚本的一个**临时文件**（相对路径的数据与 cwd 判据
   与原脚本一致），由后端用 O_EXCL 建、跑完即删（几秒内的存在期里文件监视器可能看见它，删除后登记不变）——Agent 没有写它的路径。
@@ -29,6 +29,7 @@ import os
 import re
 import shutil
 import struct
+import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -77,6 +78,19 @@ VERIFICATION_SIDE_BY_SIDE = "side_by_side"
 MISSING_DEPENDENCY_CODE = "missing_dependency"
 #: 自动安装失败的稳定码（结果里 `render.capture` 的 `code`；`errors` 文案按它换语言）
 DEPENDENCY_INSTALL_FAILED = "convert_dependency_install_failed"
+#: 依赖钩子结果的 `status`（与 `convertdeps.STATUS_*` 同值；这里不 import 它：convertdeps 经 deprepair 通向既有 import 环，引擎侧只认 app 注入的钩子）
+DEPS_INSTALLED = "installed"
+DEPS_CANCELLED = "cancelled"
+DEPS_HOLD = "hold"
+DEPS_FAILED = "failed"
+#: 校验运行前发现要用户先决定一件事（装不装缺的包 / 换环境）的内部码：任务以 `needs_input` 终局、候选不删（`ConvertAdapter.hold`）
+DEPENDENCY_DECISION = "convert_dependency_decision"
+#: 任务结局 `unmet[].reason_code`：界面据此出依赖卡片；卡片事实在同一条 `unmet[].data`
+DEPENDENCY_DECISION_REASON = "dependency_decision"
+#: 候选的待决状态：`awaiting_dependencies`（等用户点卡片）→ `resuming`（装 + 继续校验中）→ `ready` / 回 `awaiting_dependencies` / `failed`
+STATE_AWAITING = "awaiting_dependencies"
+STATE_RESUMING = "resuming"
+STATE_FAILED = "failed"
 #: 跑通了但没捕获到 Matplotlib 图的错误码（`probe.ERROR_NO_FIGURE` 与准备路径的两个同义码）
 NO_FIGURE_CODES = frozenset(
     {"script_no_figure", "no_figures_captured", "no_figures_captured_silent"}
@@ -88,7 +102,7 @@ WRITE_OUTSIDE_HINT = (
     "新脚本只许读原数据，不要保存任何文件，让 Tavotto 自己导出图。"
 )
 _SID = re.compile(r"[0-9a-f]{12}")
-_STATES = ("ready", "adopted", "discarded")
+_STATES = ("ready", "adopted", "discarded", STATE_AWAITING, STATE_RESUMING, STATE_FAILED)
 
 
 def enabled() -> bool:
@@ -189,6 +203,8 @@ class ConvertCandidate:
     source_language: str = sourcelang.PYTHON
     #: 校验运行前自动装上的发行包（`convertdeps.ensure`）
     installed: list = field(default_factory=list)
+    #: 校验运行前停住等用户决定时的卡片事实（`convertdeps` 的 `card`）；非 None = 候选要留着等 `resume`
+    hold: dict | None = None
     new_bytes: bytes | None = None
     #: 对桥而言“没写用户文件”：恒 False（`_settle_task` / 刷新据此不当成脚本被改）
     committed: bool = False
@@ -312,7 +328,7 @@ def _own_files(script_rel: str) -> frozenset[str]:
 
 def release(cand: ConvertCandidate) -> None:
     """会话收尾：通过检查、留存待采用的候选保留；其余（失败 / 取消 / 超时）删掉。"""
-    if not cand.ready:
+    if not cand.ready and cand.hold is None:
         remove_dir(cand.dir)
 
 
@@ -386,20 +402,27 @@ def run_validation(cand: ConvertCandidate, runner) -> dict:
 
 
 def _ensure_dependencies(cand: ConvertCandidate, rel: str) -> dict | None:
-    """校验运行前：新脚本要的包缺了就按 `convertdeps` 的规则自动装（或退回缺依赖卡）。回 None = 继续跑校验；
-    回 dict = 安装失败，这就是校验结论（不可修正：让 Agent 改代码解决不了装包失败）。
-    钩子由 app 注入（`cand.extras["deps"]`）；没接钩子（纯引擎调用方 / 多数单测）不做任何依赖动作。"""
+    """校验运行前：新脚本要的包缺了就按 `convertdeps` 的规则处理（自动装 / 停住等用户决定 / 什么都不做）。回 None = 继续跑校验；
+    回 dict = 这就是校验结论：安装失败（不可修正：让 Agent 改代码解决不了装包失败）、被取消、或停住等用户决定。
+    钩子由 app 注入（`cand.extras["deps"]`）；没接钩子（纯引擎调用方 / 多数单测）不做任何依赖动作。
+    `cand.extras["cancel"]`（任务的取消标记 / 续跑作业的取消标记）原样传给钩子，装依赖的动作据此停手。"""
     hook = cand.extras.get("deps")
     if hook is None:
         return None
     try:
-        got = hook(str(cand.project_root), rel) or {}
+        got = hook(str(cand.project_root), rel, cand.extras.get("cancel")) or {}
     except Exception:  # noqa: BLE001 —— 依赖旁路的任何异常都不该让校验崩：当作没装，让运行自己如实失败
         return None
-    if got.get("status") == "installed":
+    status = got.get("status")
+    if status == DEPS_INSTALLED:
         cand.installed = list(got.get("installed") or [])
         return None
-    if got.get("status") == "failed":
+    if status == DEPS_CANCELLED:
+        return {"status": "cancelled"}
+    if status == DEPS_HOLD and isinstance(got.get("card"), dict):
+        cand.hold = {**got["card"], **({"notice": got["code"]} if got.get("code") else {})}
+        return {"status": "error", "code": DEPENDENCY_DECISION, "message": ""}
+    if status == DEPS_FAILED:
         return {
             "status": "error",
             "code": DEPENDENCY_INSTALL_FAILED,
@@ -461,6 +484,38 @@ def _check(cid: str, stage: str, role: str, verdict: str, reason: str | None = N
         reason_code=reason,
         observed=observed,
         kind="persistence" if cid.startswith("project.") else "figure",
+    )
+
+
+def _failure_check(result: dict, st: str) -> CheckResult:
+    """校验运行没通过 → 一条 `render.capture` 检查（任务的提交前验证与续跑共用，原因码闭集只写这一处）。"""
+    if result["status"] == "cancelled":
+        return _check("render.capture", st, "goal", UNKNOWN, "cancelled")
+    if result["status"] == "no_figure":
+        return _check("render.capture", st, "goal", FAILED, "no_matplotlib_figure")
+    code = result.get("code")
+    if code == DEPENDENCY_DECISION:
+        return _check("render.capture", st, "goal", FAILED, "dependency_decision")
+    if code == MISSING_DEPENDENCY_CODE:
+        return _check("render.capture", st, "goal", FAILED, "missing_dependency")
+    if code == DEPENDENCY_INSTALL_FAILED:
+        return _check(
+            "render.capture",
+            st,
+            "goal",
+            FAILED,
+            "dependency_install_failed",
+            installer_code=result.get("installer_code"),
+            packages=result.get("packages"),
+        )
+    return _check(
+        "render.capture",
+        st,
+        "goal",
+        FAILED,
+        "run_failed",
+        code=code,
+        detail=result.get("message") or "",
     )
 
 
@@ -587,6 +642,9 @@ class ConvertAdapter:
             run.charge("renders")
         except ai_tasks.BudgetExceeded:
             return [_check("render.capture", st, "goal", UNKNOWN, "render_budget")]
+        cancel = getattr(run, "cancel_event", None)
+        if cancel is not None:
+            cand.extras["cancel"] = cancel
         result = run_validation(cand, runner)
         cand.extras["validation"] = result
         if result["status"] == "ok":
@@ -598,33 +656,16 @@ class ConvertAdapter:
             return [
                 _check("render.capture", st, "goal", VERIFIED, stems=result["stems"]),
             ]
-        if result["status"] == "no_figure":
-            return [_check("render.capture", st, "goal", FAILED, "no_matplotlib_figure")]
-        if result.get("code") == MISSING_DEPENDENCY_CODE:
-            return [_check("render.capture", st, "goal", FAILED, "missing_dependency")]
-        if result.get("code") == DEPENDENCY_INSTALL_FAILED:
-            return [
-                _check(
-                    "render.capture",
-                    st,
-                    "goal",
-                    FAILED,
-                    "dependency_install_failed",
-                    installer_code=result.get("installer_code"),
-                    packages=result.get("packages"),
-                )
-            ]
-        return [
-            _check(
-                "render.capture",
-                st,
-                "goal",
-                FAILED,
-                "run_failed",
-                code=result.get("code"),
-                detail=result.get("message") or "",
-            )
-        ]
+        return [_failure_check(result, st)]
+
+    def hold(self, cand: ConvertCandidate):
+        """提交前验证之后的“停住”口（`ai_tasks._verify_precommit`）：校验运行前发现要用户先决定装包 / 换环境时，
+        把候选留存成 `awaiting_dependencies`（候选目录 + meta.json，不碰用户文件），任务以 `needs_input` 终局，
+        卡片事实随结局的 `unmet[].data` 交给界面；用户点了主按钮由 `resume` 接着走**同一个候选**（不重跑 Agent）。"""
+        if cand.hold is None:
+            return None
+        stage_hold(cand)
+        return ai_tasks.NeedsInput("", reason_code=DEPENDENCY_DECISION_REASON, data=dict(cand.hold))
 
     def correction(self, run, failed: list[CheckResult]) -> dict | None:
         lines = []
@@ -716,6 +757,8 @@ class ConvertExecutor(ai_figure_edit.BridgeExecutor):
         stage(cand)
 
     def discard(self, run, cand: ConvertCandidate) -> None:
+        if cand.hold is not None:
+            return  # 停住等用户决定的候选要留着（`resume` 接着走它）；取消 / 超时等其余结局不会设 hold
         remove_dir(cand.dir)
 
 
@@ -746,6 +789,34 @@ def stage(cand: ConvertCandidate) -> None:
     except OSError as exc:
         raise TaskError("stage_failed", type(exc).__name__) from exc
     cand.ready = True
+
+
+def stage_hold(cand: ConvertCandidate) -> None:
+    """校验运行前停住：把候选留存成 `awaiting_dependencies`（meta.json 里带卡片事实）。**不碰用户文件。**
+    候选脚本字节的摘要一并记下：`resume` 接着走的必须就是停住时的那份。"""
+    if cand.new_bytes is None or cand.hold is None:
+        raise TaskError("candidate_missing", cand.target_name)
+    meta = {
+        "sid": cand.sid,
+        "state": STATE_AWAITING,
+        "project": str(cand.project_root.resolve()),
+        "script_rel": cand.script_rel,
+        "base_sha256": cand.base_sha256,
+        "base_mode": cand.base_mode,
+        "candidate_sha256": _sha256(cand.new_bytes),
+        "target_name": cand.target_name,
+        "library": cand.library,
+        "source_language": cand.source_language,
+        "installed": list(cand.installed),
+        "original_rel": cand.original_rel,
+        "reference_name": cand.reference_name,
+        "dependency_card": cand.hold,
+        "created": time.time(),
+    }
+    try:
+        atomicio.write_bytes(cand.dir / META_NAME, atomicio.dumps_json(meta))
+    except OSError as exc:
+        raise TaskError("stage_failed", type(exc).__name__) from exc
 
 
 def envelope_for(
@@ -795,9 +866,12 @@ def _load_meta(sid: str, project: str) -> tuple[Path, dict]:
 def status(sid: str, project: str) -> dict:
     """待采用候选的对照数据（不含脚本全文）。"""
     cdir, meta = _load_meta(sid, project)
+    state = meta.get("state")
+    if state == STATE_RESUMING and not resuming(sid):
+        state = STATE_AWAITING  # 续跑作业随进程没了：回到等用户点卡片（meta 里的卡片事实还在）
     return {
         "session": sid,
-        "state": meta.get("state"),
+        "state": state,
         "script": meta.get("script_rel"),
         "target_name": meta.get("target_name"),
         "library": meta.get("library"),
@@ -806,6 +880,9 @@ def status(sid: str, project: str) -> dict:
         "comparison": meta.get("comparison"),
         "has_preview": bool(meta.get("has_preview")) and (cdir / PREVIEW_NAME).is_file(),
         "adopted_script": meta.get("adopted_script"),
+        # 等用户决定装包 / 换环境时的卡片事实（`convertdeps` 的 card）；续跑失败时的原因（`failure`）
+        "dependency_card": meta.get("dependency_card") if state in (STATE_AWAITING,) else None,
+        "failure": meta.get("failure") if state == STATE_FAILED else None,
     }
 
 
@@ -899,5 +976,159 @@ def discard(sid: str, project: str) -> dict:
         if exc.code == "convert_not_found":
             return {"ok": True}
         raise
+    if _cancel_resume(sid):
+        return {
+            "ok": True
+        }  # 续跑作业在跑：它收到取消后自己停手并删候选目录（装依赖的动作也被取消）
     remove_dir(cdir)
     return {"ok": True}
+
+
+# --------------------------------------------------------------------------- 续跑（用户在依赖卡片上点了主按钮之后）
+#: 正在跑的续跑作业：sid → 取消标记。`discard` / 关闭卡片据此把取消传到正在进行的安装
+_RESUMES: dict[str, threading.Event] = {}
+_RESUMES_LOCK = threading.Lock()
+
+
+def resuming(sid: str) -> bool:
+    with _RESUMES_LOCK:
+        return sid in _RESUMES
+
+
+def _cancel_resume(sid: str) -> bool:
+    """有续跑作业就置位它的取消标记（回 True）；没有回 False。"""
+    with _RESUMES_LOCK:
+        ev = _RESUMES.get(sid)
+    if ev is None:
+        return False
+    ev.set()
+    return True
+
+
+def _rebuild(cdir: Path, meta: dict, project: Path) -> ConvertCandidate:
+    """从留存的候选目录 + meta.json 还原一个能再跑校验的候选。原脚本字节必须仍是起跑基线、候选脚本字节必须仍是停住时的摘要
+    ——续跑校验的就是对照时看到的那份。项目指纹基线取**现在**（停住到点击之间用户可能合法地改过别的文件）。"""
+    script_rel = str(meta["script_rel"])
+    script_path = project / script_rel
+    try:
+        base = script_path.read_bytes()
+        new = (cdir / meta["target_name"]).read_bytes()
+    except OSError:
+        raise ConvertError("convert_source_changed", 409) from None
+    if _sha256(base) != meta["base_sha256"]:
+        raise ConvertError("convert_source_changed", 409)
+    if _sha256(new) != meta["candidate_sha256"]:
+        raise ConvertError("convert_candidate_changed", 409)
+    return ConvertCandidate(
+        sid=str(meta["sid"]),
+        dir=cdir,
+        project_root=project,
+        script_rel=script_rel,
+        script_path=script_path,
+        base_bytes=base,
+        base_sha256=str(meta["base_sha256"]),
+        base_mode=int(meta.get("base_mode") or 0),
+        library=meta.get("library"),
+        original_rel=meta.get("original_rel"),
+        reference_name=meta.get("reference_name"),
+        tree_before=ai_figure_edit._tree(cdir) or {},
+        project_before=ai_figure_edit.project_fingerprint(project, exclude=_own_files(script_rel)),
+        source_language=str(meta.get("source_language") or sourcelang.PYTHON),
+        new_bytes=new,
+    )
+
+
+def prepare_resume(sid: str, project: str) -> tuple[Path, dict, threading.Event]:
+    """点卡片主按钮的同步部分：核对状态、登记取消标记（同一个候选同时只有一个续跑作业）。"""
+    cdir, meta = _load_meta(sid, project)
+    if meta.get("state") != STATE_AWAITING or not isinstance(meta.get("dependency_card"), dict):
+        raise ConvertError("convert_not_awaiting_dependencies", 409)
+    with _RESUMES_LOCK:
+        if sid in _RESUMES:
+            raise ConvertError("convert_resume_busy", 409)
+        ev = threading.Event()
+        _RESUMES[sid] = ev
+    return cdir, meta, ev
+
+
+def _set_state(cdir: Path, meta: dict, state: str, **extra) -> None:
+    meta = {k: v for k, v in meta.items() if k not in ("failure",)}
+    meta.update({"state": state, **extra})
+    try:
+        _write_meta(cdir, meta)
+    except OSError:
+        pass
+
+
+def run_resume(
+    sid: str,
+    project: str,
+    cdir: Path,
+    meta: dict,
+    cancel: threading.Event,
+    *,
+    runner,
+    resolve,
+    confirmed_impact: str,
+) -> dict:
+    """接着走**同一个候选**（不重跑 Agent）：装依赖（注入的 `resolve` = `convertdeps.resolve`，用户点击回显的摘要）→ 校验运行 → 对照 → 留存待采用。
+    结局 `{"state": ready | awaiting_dependencies | failed | cancelled}`；`cancelled` 时候选目录已删。
+    只在 `prepare_resume` 之后调用（它登记了 `cancel`），返回前一定摘掉登记。"""
+    root = Path(project)
+    try:
+        _set_state(cdir, meta, STATE_RESUMING)
+        try:
+            cand = _rebuild(cdir, meta, root)
+        except ConvertError as exc:
+            _set_state(cdir, meta, STATE_FAILED, failure={"reason": exc.code})
+            return {"state": STATE_FAILED, "reason": exc.code}
+        cand.extras["runner"] = runner
+        cand.extras["cancel"] = cancel
+        cand.extras["deps"] = lambda proj, rel, cancel_ev: resolve(
+            proj, rel, confirmed_impact=confirmed_impact, cancel=cancel_ev
+        )
+        result = run_validation(cand, runner)
+        if cancel.is_set() or result["status"] == "cancelled":
+            remove_dir(cdir)
+            return {"state": "cancelled"}
+        if cand.hold is not None:
+            # 摘要对不上 / 又遇到系统 Python：回到等用户，卡片换成新的（带 notice）
+            _set_state(cdir, meta, STATE_AWAITING, dependency_card=cand.hold)
+            return {"state": STATE_AWAITING}
+        if result["status"] == "ok":
+            untouched = [
+                c for c in ADAPTER._project_untouched(cand, "precommit") if c.verdict != VERIFIED
+            ]
+            if not untouched:
+                cand.comparison = comparison_of(cand, result)
+                svg = result.get("svg")
+                cand.preview_svg = (
+                    svg if isinstance(svg, str) and len(svg) <= PREVIEW_MAX_BYTES else None
+                )
+                stage(cand)
+                return {"state": "ready"}
+            failure = {"reason": "project_files_changed"}
+        else:
+            check = _failure_check(result, "precommit")
+            failure = {
+                "reason": check.reason_code,
+                **{
+                    k: v
+                    for k, v in (check.observed or {}).items()
+                    if k in ("installer_code", "packages", "code")
+                },
+            }
+        _set_state(cdir, meta, STATE_FAILED, failure=failure)
+        return {"state": STATE_FAILED, **failure}
+    except Exception:  # noqa: BLE001 —— 续跑作业的未预期异常：落成 failed，不让轮询永远等
+        _set_state(cdir, meta, STATE_FAILED, failure={"reason": "resume_error"})
+        return {"state": STATE_FAILED, "reason": "resume_error"}
+    finally:
+        with _RESUMES_LOCK:
+            _RESUMES.pop(sid, None)
+
+
+def cancel_registration(sid: str) -> None:
+    """起续跑线程失败时摘掉 `prepare_resume` 的登记（否则这个候选永远判成“有作业在跑”）。"""
+    with _RESUMES_LOCK:
+        _RESUMES.pop(sid, None)

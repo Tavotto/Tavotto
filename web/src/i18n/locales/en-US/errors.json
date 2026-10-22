@@ -329,7 +329,9 @@
     "data_empty": "The data file is empty.",
     "data_header_invalid": "The header has an empty or duplicate column name.",
     "data_ragged": "Some rows have a different number of columns from the header.",
-    "figure_name_exhausted": "Too many figures share this name; no free name was found for the new one."
+    "figure_name_exhausted": "Too many figures share this name; no free name was found for the new one.",
+    "convert_not_awaiting_dependencies": "This new version isn't waiting for a package decision right now. Refresh and look again.",
+    "convert_resume_busy": "Packages are being installed and the new version is still being generated. Please wait."
   },
   "engine": {
     "apply": "Apply",

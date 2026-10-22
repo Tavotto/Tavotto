@@ -41,6 +41,8 @@ EXPECTED_CALL_SITES = {
     ("codex-plugin/mcp/tavotto_mcp/bridge.py", "_answer_prepare_dependencies", "prepare"),
     ("src/tavotto/engine/deprepair.py", "_install_guarded", "install"),
     ("src/tavotto/engine/deprepair.py", "_prepare_guarded", "prepare"),
+    # 「生成可编辑版本」缺包：摘要由调用方传入（点卡片 = 前端回显；已同意的环境 = 同次调用里算出的，见 convertdeps 模块头）
+    ("src/tavotto/engine/convertdeps.py", "_run_prepare", "prepare"),
 }
 
 

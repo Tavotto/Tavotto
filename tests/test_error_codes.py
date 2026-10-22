@@ -296,6 +296,8 @@ USER_VISIBLE_CODES = {
     "convert_no_preview": set(),
     # R / MATLAB 来源（ADR 0143 修订）：声明的语言与文件内容对不上（.m 可能是 Objective-C；判不出就拒绝，不猜）
     "convert_source_language_mismatch": {"script"},
+    "convert_not_awaiting_dependencies": set(),
+    "convert_resume_busy": set(),
     # 这个请求 id 已被新指令取代（改写后再发），不会再执行 / 取代时发现旧请求其实已经开始
     "ai_request_superseded": set(),
     "ai_supersede_conflict": set(),

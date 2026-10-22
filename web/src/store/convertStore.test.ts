@@ -7,10 +7,11 @@ vi.mock('@/lib/api', async (importOriginal) => ({
   fetchConvert: vi.fn(),
   adoptConvert: vi.fn(),
   discardConvert: vi.fn(),
+  resolveConvertDependencies: vi.fn(),
   aiCancel: vi.fn().mockResolvedValue({ ok: true }),
 }))
 
-import { aiCancel, fetchAiSession, fetchConvert, startConvert } from '@/lib/api'
+import { aiCancel, discardConvert, fetchAiSession, fetchConvert, resolveConvertDependencies, startConvert } from '@/lib/api'
 import { setCurrentProjectId } from '@/lib/session'
 import { useAiStore } from '@/store/aiStore'
 import { POLL_MS, useConvertStore } from '@/store/convertStore'
@@ -197,5 +198,90 @@ describe('convertStore：R / MATLAB 来源（ADR 0143 修订）', () => {
     await vi.advanceTimersByTimeAsync(POLL_MS + 10)
     await p
     expect(useConvertStore.getState().entries['fig.R']).toMatchObject({ reason: 'needs_input', detail: null })
+  })
+})
+
+
+describe('convertStore：缺依赖卡（Codex #1330 P1-2，候选留着、接着走同一个）', () => {
+  const card = {
+    kind: 'ask_once' as const, packages: ['pandas'], outside_list: [] as string[],
+    env: { kind: 'conda' as const, name: 'myenv' }, action: 'install_managed' as const, impact_digest: 'dg-1',
+    target: 'tavotto_managed', creates_environment: false, downloads_python: false, modifies_user_environment: false,
+  }
+  const held = {
+    status: 'done', final: true,
+    task: { outcome: 'needs_input', unmet: [{ constraint_id: 'intent', reason_code: 'dependency_decision', data: card }] },
+  } as never
+  const begin = async () => {
+    const p = useConvertStore.getState().start('fig.R', null, null, 'r')
+    await vi.advanceTimersByTimeAsync(POLL_MS + 10)
+    await p
+  }
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['setTimeout'] })
+    setCurrentProjectId('A')
+    useConvertStore.setState({ entries: {} })
+    useAiStore.setState({ caps: { agents: [] } as never })
+    vi.mocked(startConvert).mockReset().mockResolvedValue({ session: 's1', script: 'fig.R' })
+    vi.mocked(fetchConvert).mockReset()
+    vi.mocked(fetchAiSession).mockReset().mockResolvedValue(held)
+    vi.mocked(discardConvert).mockReset().mockResolvedValue({ ok: true })
+    vi.mocked(resolveConvertDependencies).mockReset().mockResolvedValue({ session: 's1', state: 'resuming' })
+    vi.mocked(aiCancel).mockClear()
+  })
+  afterEach(() => {
+    useConvertStore.getState().clear('fig.R')
+    vi.useRealTimers()
+  })
+
+  it('dependency_decision 的 needs_input：落成 deps + 卡片事实，保留会话（不是 failed）', async () => {
+    await begin()
+    expect(useConvertStore.getState().entries['fig.R']).toMatchObject({ phase: 'deps', session: 's1', card })
+  })
+
+  it('主按钮：原样回显卡片摘要给后端，resuming → ready；不再 POST /api/ai/convert（不重跑 Agent）', async () => {
+    await begin()
+    vi.mocked(fetchConvert).mockResolvedValueOnce({ state: 'resuming' } as never).mockResolvedValue({ state: 'ready', installed: ['pandas'] } as never)
+    const p = useConvertStore.getState().resolveDeps('fig.R')
+    await vi.advanceTimersByTimeAsync(0)
+    expect(resolveConvertDependencies).toHaveBeenCalledWith('s1', 'dg-1', 'A')
+    expect(useConvertStore.getState().entries['fig.R']?.phase).toBe('resuming')
+    await vi.advanceTimersByTimeAsync(POLL_MS * 2 + 20)
+    await p
+    expect(useConvertStore.getState().entries['fig.R']).toMatchObject({ phase: 'ready', card: null })
+    expect(startConvert).toHaveBeenCalledTimes(1)
+  })
+
+  it('system 卡片没有「装」动作：resolveDeps 什么都不发', async () => {
+    vi.mocked(fetchAiSession).mockResolvedValue({
+      status: 'done', final: true,
+      task: { outcome: 'needs_input', unmet: [{ constraint_id: 'intent', reason_code: 'dependency_decision', data: { ...card, kind: 'system', action: 'choose_env' } }] },
+    } as never)
+    await begin()
+    await useConvertStore.getState().resolveDeps('fig.R')
+    expect(resolveConvertDependencies).not.toHaveBeenCalled()
+    expect(useConvertStore.getState().entries['fig.R']?.phase).toBe('deps')
+  })
+
+  it('装依赖期间停止：走 discard（后端据此取消正在进行的安装），不走已终局的任务取消；之后轮询的 404 不写回条目', async () => {
+    await begin()
+    vi.mocked(fetchConvert).mockRejectedValue(new Error('convert_not_found'))
+    const p = useConvertStore.getState().resolveDeps('fig.R')
+    await vi.advanceTimersByTimeAsync(0)
+    await useConvertStore.getState().stop('fig.R')
+    expect(discardConvert).toHaveBeenCalledWith('s1', 'A')
+    expect(aiCancel).not.toHaveBeenCalled()
+    await vi.advanceTimersByTimeAsync(POLL_MS + 20)
+    await p
+    expect(useConvertStore.getState().entries['fig.R']).toBeUndefined()
+  })
+
+  it('续跑失败：落 failed + 后端给的原因码', async () => {
+    await begin()
+    vi.mocked(fetchConvert).mockResolvedValue({ state: 'failed', failure: { reason: 'dependency_install_failed' } } as never)
+    const p = useConvertStore.getState().resolveDeps('fig.R')
+    await vi.advanceTimersByTimeAsync(POLL_MS + 20)
+    await p
+    expect(useConvertStore.getState().entries['fig.R']).toMatchObject({ phase: 'failed', reason: 'dependency_install_failed' })
   })
 })

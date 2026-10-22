@@ -154,7 +154,7 @@ def test_r_script_converts_end_to_end_without_running_r_and_reports_the_install_
     (figs / "fig.R").write_bytes(b'df <- read.csv("data.csv")\nplot(df)\n')
     seen = []
 
-    def fake_ensure(proj, rel):
+    def fake_ensure(proj, rel, cancel=None):
         seen.append((proj, rel))
         return {"status": "installed", "installed": ["pandas"]}
 

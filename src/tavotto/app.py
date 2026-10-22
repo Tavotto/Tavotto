@@ -11663,7 +11663,7 @@ def api_ai_convert():
             endpoint_id=body.get("endpoint"),
             task_hooks={
                 "runner": _convert_runner(ctx, rel),
-                # R / MATLAB 转写的新脚本才会要 pandas / statsmodels 这类包：校验运行前按 `convertdeps` 的规则自动装（或退回缺依赖卡）
+                # R / MATLAB 转写的新脚本才会要 pandas / statsmodels 这类包：校验运行前按 `convertdeps` 的规则自动装（或停住等用户在依赖卡片上决定）
                 **({"deps": engine_convertdeps.ensure} if foreign else {}),
             },
             convert={
@@ -11728,10 +11728,63 @@ def api_ai_convert_adopt(sid):
 
 @app.post("/api/ai/convert/<sid>/discard")
 def api_ai_convert_discard(sid):
+    """放弃候选 / 关闭依赖卡片。有正在进行的“装依赖 + 续跑”作业时，把取消传到它（安装停手，作业自己删候选）。"""
     try:
         return jsonify(engine_ai_convert.discard(sid, str(require_project().resolve())))
     except engine_ai_convert.ConvertError as exc:
         return _convert_error(exc)
+
+
+@app.post("/api/ai/convert/<sid>/dependencies")
+def api_ai_convert_dependencies(sid):
+    """用户在依赖卡片上点了主按钮：body `{action: "install", impact_digest}`。`impact_digest` 是**前端回显它看到的**卡片摘要
+    （服务端不自回显，ADR 0143 修订）。后端起一个作业：装（现有 deprepair 入口，可取消）→ 接着校验**同一个候选**（不重跑 Agent）
+    → 对照 / 留存待采用；前端轮询 `GET /api/ai/convert/<sid>` 看 `state`。「不装」= 前端直接 `discard`。"""
+    body = request.get_json(silent=True)
+    if (
+        not isinstance(body, dict)
+        or body.get("action") != "install"
+        or not isinstance(body.get("impact_digest"), str)
+        or not body["impact_digest"]
+    ):
+        abort(400)
+    ctx = current_ctx()
+    project = str(ctx.path.resolve())
+    try:
+        cdir, meta, cancel = engine_ai_convert.prepare_resume(sid, project)
+    except engine_ai_convert.ConvertError as exc:
+        return _convert_error(exc)
+    try:
+        threading.Thread(
+            target=engine_ai_convert.run_resume,
+            args=(sid, project, cdir, meta, cancel),
+            kwargs={
+                "runner": _convert_runner(ctx, str(meta["script_rel"])),
+                "resolve": engine_convertdeps.resolve,
+                "confirmed_impact": body["impact_digest"],
+            },
+            name="convert-resume",
+            daemon=True,
+        ).start()
+    except RuntimeError:
+        engine_ai_convert.cancel_registration(sid)
+        raise
+    return jsonify({"session": sid, "state": engine_ai_convert.STATE_RESUMING}), 202
+
+
+@app.get("/api/ai/convert/auto-install-envs")
+def api_ai_convert_auto_install_envs():
+    """设置页：已允许自动装包的环境（只有种类 + 名字 + 键，没有路径）。"""
+    return jsonify({"envs": engine_convertdeps.consented_envs()})
+
+
+@app.post("/api/ai/convert/auto-install-envs/revoke")
+def api_ai_convert_auto_install_revoke():
+    body = request.get_json(silent=True)
+    if not isinstance(body, dict) or not isinstance(body.get("key"), str) or not body["key"]:
+        abort(400)
+    engine_convertdeps.revoke(body["key"])
+    return jsonify({"envs": engine_convertdeps.consented_envs()})
 
 
 @app.get("/api/ai/requests/<request_id>")

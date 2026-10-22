@@ -1471,7 +1471,13 @@
       "envSection": "Environment",
       "builtinCountMeta": "{{count}} · read-only",
       "backgroundTitle": "Background",
-      "moreAria": "More actions for {{name}}"
+      "moreAria": "More actions for {{name}}",
+      "autoInstall": {
+        "title": "Environments allowed to install packages automatically",
+        "empty": "No environment is allowed to install packages automatically yet.",
+        "loading": "Loading…",
+        "revoke": "Revoke"
+      }
     },
     "project": {
       "backupDir": "Original file backups",

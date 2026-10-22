@@ -1457,7 +1457,13 @@
       "envSection": "环境",
       "builtinCountMeta": "{{count}} 个 · 只读",
       "backgroundTitle": "背景信息",
-      "moreAria": "{{name}} 的更多操作"
+      "moreAria": "{{name}} 的更多操作",
+      "autoInstall": {
+        "title": "已允许自动装包的环境",
+        "empty": "还没有环境被允许自动装包。",
+        "loading": "正在读取…",
+        "revoke": "撤销"
+      }
     },
     "project": {
       "backupDir": "原始文件备份",

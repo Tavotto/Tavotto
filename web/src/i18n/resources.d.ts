@@ -1832,6 +1832,12 @@ export default interface Resources {
       },
       "navLabel": "设置分区",
       "packages": {
+        "autoInstall": {
+          "empty": "还没有环境被允许自动装包。",
+          "loading": "正在读取…",
+          "revoke": "撤销",
+          "title": "已允许自动装包的环境"
+        },
         "backgroundTitle": "背景信息",
         "builtinCountMeta": "{{count}} 个 · 只读",
         "builtinEmpty": "没有内置包信息。",
@@ -2408,9 +2414,11 @@ export default interface Resources {
       "convert_disabled": "「生成可编辑版本」已被关闭。",
       "convert_name_exhausted": "同名的新版本文件太多了（已有 99 个），请先清理再试。",
       "convert_no_preview": "这份新版本没有预览。",
+      "convert_not_awaiting_dependencies": "这份新版本现在不在等你决定装包，请刷新后再看。",
       "convert_not_found": "找不到这份待采用的新版本（可能已放弃、已过期，或属于别的项目）。",
       "convert_not_ready": "新版本还没生成好，或没有通过检查。",
       "convert_outside_project": "新版本的位置不在项目里，已拒绝写入。",
+      "convert_resume_busy": "正在装包并接着生成，请稍等。",
       "convert_source_changed": "原脚本在生成之后被改过，这份新版本是按旧版本写的。请重新生成。",
       "convert_source_language_mismatch": "{{script}} 的内容看起来不是 R 或 MATLAB 脚本，没有生成。",
       "convert_write_failed": "无法把新版本写进项目，请检查文件夹是否可写。",
@@ -5281,17 +5289,37 @@ export default interface Resources {
           "retry": "重试",
           "start": "生成可编辑版本"
         },
+        "deps": {
+          "askOnce": "要给这个环境（{{env}}）装缺的包吗？",
+          "askOnceManaged": "要给这个环境（{{env}}）装缺的包吗（会装进 {{product}} 为本项目建的独立环境，不改动它）？",
+          "btn": {
+            "chooseEnv": "选择运行环境",
+            "decline": "不装",
+            "installAlways": "装，以后这个环境都自动装",
+            "installOnce": "确认，装上"
+          },
+          "env": {
+            "managed": "{{product}} 的项目环境"
+          },
+          "resuming": "正在装 {{names}}，装好后接着生成…",
+          "system": "这个 Python 是系统自带的，往里面装包可能弄坏系统工具。请给项目换一个环境。",
+          "systemBuiltin": "这是 {{product}} 内置的运行环境，不往里面装包。请给项目换一个环境。",
+          "uncommon": "{{names}} 这个包不常见，确认是你要的再装。"
+        },
         "fail": {
           "budget_exhausted": "尝试次数用完了",
+          "convert_candidate_changed": "待采用的新版本文件被改动过，请重新生成",
+          "convert_source_changed": "原脚本在这期间被改过，这份新版本是按旧版本写的，请重新生成",
           "dependency_install_failed": "新版本要用的 Python 包没装成功，请稍后重试",
-          "missing_dependency": "新版本要用的 Python 包没装上，请先在缺依赖提示里装好再试",
+          "missing_dependency": "新版本要用的 Python 包没装上（自动安装已关闭，或这些包没法自动装），请手动装好后重试",
           "needs_input": "这份脚本里有一步在 Python 里没有可靠的对应，没有生成新版本",
           "needs_input_reason": "没有生成新版本：{{reason}}",
           "no_matplotlib_figure": "生成的脚本跑完没有画出 Matplotlib 图",
           "no_matplotlib_import": "生成的脚本没有用 Matplotlib",
           "other_file_changed": "助手改动了不该动的文件，已丢弃",
-          "project_files_changed": "助手改动了项目文件，已丢弃",
+          "project_files_changed": "校验运行改动了项目文件，已丢弃",
           "render_not_wired": "暂时无法校验新版本",
+          "resume_error": "接着生成时出错了，请重试",
           "run_failed": "生成的脚本运行出错了",
           "syntax_error": "生成的脚本有语法错误",
           "target_missing": "助手没有写出新脚本",

@@ -69,12 +69,38 @@ outcome、corrections 个数、是否采用）——不带脚本、路径或图�
    与 `Plan.needs_input` 的“执行前”不同），不生成新脚本。标记只在“没有新文件”时算数、只认 Agent 的完整回答、行首；原因清洗 + 限长 200 字，只随结局给界面，不进日志 / 遥测。
    没有标记且没写文件仍是原来的 `target_missing` 失败。
 4. **新脚本缺的 Python 包自动装进用户环境**（用户改了默认值）：不新写 pip 路径，缺什么由 `deprepair.joint_plan_for`（`importscan` 静态扫 + `depplan`）算，装由
-   `create_joint_plan` + `prepare`。边界：只在 `project_venv`（项目选中自己的 `.venv`）与**已存在**的受管环境一代（不新建环境、不下载私有 Python）上自动装；
-   要装的每个发行包必须在 `convertdeps.AUTO_INSTALL_DISTRIBUTIONS` 闭集里（Agent 写进脚本的任意 import 不能变成任意 pip 安装）；内置 runtime / 本进程 / 系统或 Conda /
-   固定解释器 / 项目里用户自己采用的环境不是安装目标（往受管环境装既不让脚本找到包、又会把项目的解释器悄悄记成受管环境），退回现有缺依赖卡。
-   装好的包进结果 `installed`（界面一句“已为这个项目装好 pandas、statsmodels”）；装失败是不可修正的失败（`dependency_install_failed`）。
-   **授权口径**：`deprepair._check_confirmed` 要求调用方回显给用户看过的影响摘要；这里回显同一次调用里刚算出的摘要，依据是上述常驻同意，可用 `ai.convert.auto_install=false`
-   或 `TAVOTTO_NO_CONVERT_AUTO_INSTALL=1` 收回，`deprepair` 自己的 `dependency_impact_changed` / `repair_plan_stale` 照样拦。
+   `create_joint_plan` + `prepare`。装好的包进结果 `installed`（界面一句“已为这个项目装好 pandas、statsmodels”）；装失败是不可修正的失败（`dependency_install_failed`）。
+
+### 修订二（维护者 2026-10-23 第二次裁决）：大名单 + 每个环境问一次 + 真卡片 + 取消
+
+替换上面 4 里的“14 包闭集 + 只两类目标”。
+
+- **名单**：只装“在名单里”的发行包。名单 = 上一轮 14 个科学计算包 ∪ PyPI 30 天下载量前 1000 的项目名快照（来源 hugovk/top-pypi-packages 的
+  `top-pypi-packages-30-days.min.json`），存成纯数据文件 `src/tavotto/engine/autoinstall_dists.txt`（PEP 503 规范名，一行一个，文件头写来源 URL / 快照日期 / 许可证），
+  随 `packaging/tavotto.spec` 的 datas 进冻结产物；`scripts/dev/refresh_autoinstall_list.py` 重新生成（开发侧工具，必须显式给 `--license`，产品运行时从不联网取名单）。
+  **本次提交只带 14 个种子**：该上游仓库没有声明任何许可证（GitHub license API 404、仓库根无 LICENSE），“许可证不允许再分发就停下”的口径下没有把 1000 条快照提交进来；
+  维护者确认可再分发后跑一条脚本命令即可并入。名单读不到时退回 14 个种子（只会更小）。名单外的包：不自动装，卡片点名“这个包不常见，确认是你要的再装”。
+- **每个环境问一次**（环境按 `pool.resolve_worker_python` 此刻会跑脚本的解释器分类，`convertdeps.describe_env`）：
+  `project_venv` / 已存在的受管环境一代：名单内直接装（保持上一轮口径；受管目标要新建环境或下载私有 Python 时仍问）；
+  `system`（OS 自带 / `EXTERNALLY-MANAGED`）与 `builtin`（内置 runtime / 自建 worker-env / 本进程解释器）：**永不装**，卡片“这个 Python 是系统自带的……请给项目换一个环境”，
+  主按钮打开现有的「选择运行环境」入口（`openEngineEnvPicker`）；其余（Conda、设置里指定的、环境变量固定的、项目记录里用户采用的）：**第一次**需要装时卡片
+  “要给这个环境（conda: myenv）装缺的包吗？”+ 主按钮“装，以后这个环境都自动装”+ 次按钮“不装”；点主按钮才对**这个环境**记下常驻同意
+  （`ai.convert.auto_install_envs`，键 = 解释器路径 sha256 前 16 位，只存指纹 + 种类 + 目录名，不存明文路径），之后同一环境再缺名单内的包直接装；
+  设置 → Python 库有“已允许自动装包的环境”列表，每行一个“撤销”。
+- **现有修复链对非项目 venv 的环境不支持原地 pip**（`deprepair.joint_target_for`：非项目 venv 一律以受管环境为目标），所以对 Conda / 指定解释器这类环境，主按钮执行的是
+  现有链条的标准动作：装进 Tavotto 为本项目建的受管环境并让项目以后用它跑（不改动用户的那个环境；卡片文案如实写明）。不新增 pip 调用路径。
+- **真卡片（Codex #1330 P1-2）**：候选校验遇到缺依赖且不自动装时，任务以 `needs_input` 终局（`unmet[].reason_code = "dependency_decision"`，`unmet[].data` 是结构化卡片事实：
+  种类 / 包名 / 名单外的包 / 环境种类 + 可读名 / 动作 / 摘要 / 是否新建环境或下载 Python），**候选不删**（`meta.json` 状态 `awaiting_dependencies`），不进修正轮。
+  用户点主按钮 → `POST /api/ai/convert/<sid>/dependencies`，后端起作业装依赖并**接着校验同一个候选**（`resuming` → `ready` / 回 `awaiting_dependencies` / `failed`），不重跑 Agent；
+  “不装” = `discard`。计划不可执行 / 被修复链拒绝 / 开关关着这几种没有可执行动作的情况仍照常跑校验、以 `missing_dependency` 如实失败，失败一句话不再指向并不存在的提示。
+- **取消传到安装（Codex #1330 P1-1）**：任务的取消标记（`TaskRun.cancel_event`）与续跑作业的取消标记原样传给 `convertdeps`，由监视线程在取消到来时调 deprepair 现有的
+  `cancel_status`（`prepare` 复用同一个取消句柄，开跑前就取消也会在拿锁前停手、一个字节不写）；过了提交点的取消被 `cancel_status` 拒绝，结果如实回 `installed`。
+  卡片上点停止 / 关闭 = `discard`，它把取消传给正在进行的续跑作业，作业停手后删候选目录，结局 `cancelled`。
+- **授权口径（两种，需要维护者知悉）**：`deprepair._check_confirmed` 要求调用方回显给用户看过的影响摘要，服务端自己持有的摘要不得代替回显。
+  ① 问过一次 / 点过卡片：确认来自用户这次真实点击——前端把卡片带着的 `impact_digest` 原样回传，服务端重算计划，对不上就不装、回新的卡片，**不自回显**；
+  ② 已记过常驻同意的环境（含 `project_venv` / 受管环境这两类上一轮就直接装的目标）：由服务端回显**同一次调用里刚算出的**摘要，依据是维护者 2026-10-23 的常驻同意裁决，
+  可用 `ai.convert.auto_install=false` / `TAVOTTO_NO_CONVERT_AUTO_INSTALL=1` 收回，也可在设置里撤销单个环境；`deprepair` 自己的 `dependency_impact_changed` /
+  `repair_plan_stale` 照样拦。
 
 其余不变：端点同一个 `POST /api/ai/convert`（多可选 `source_language`，缺省 `python`；r / matlab 时 `library` 必须缺省，声明与文件内容对不上 400
 `convert_source_language_mismatch`）；候选 / 校验 / 采用全套（第二节逐条）；目标名 `fig.R` → `fig_matplotlib.py`；`library` 在 r / matlab 时为 null；

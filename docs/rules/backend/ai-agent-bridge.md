@@ -258,12 +258,18 @@ MATLAB 特征不足一律 None）复核文件与声明一致，对不上 400 `co
 同名位图（`ai_convert.sibling_original`），没有原图时 `comparison.reference=null`、`verification="unknown"`（界面说一句“请并排看一眼再采用”）。
 提示词是 `ai_prompt_pack` convert 一节的变体（逐步搬运 + R→Python / MATLAB→Python 对照表）。Python 里没有可靠对应时 Agent 首行写
 `TAVOTTO_NEEDS_INPUT: <原因>` 且不写新文件 → `ConvertExecutor` 抛 `ai_tasks.NeedsInput` → 结局 `needs_input`（原因清洗后限长 200 字，只进 `unmet[].detail`，
-不进日志 / 遥测）；写了文件则按文件走，无标记照旧 `target_missing`。新脚本缺包：校验运行前 `convertdeps.ensure`（app 注入 `task_hooks["deps"]`，仅 r / matlab）
-走 `deprepair.joint_plan_for` → `create_joint_plan` → `prepare`（不新写 pip 路径），只在 `project_venv`（项目选中自己的 `.venv`）与已存在的受管环境一代
-（不新建、不下载私有 Python）上、且要装的发行包全在 `convertdeps.AUTO_INSTALL_DISTRIBUTIONS` 闭集内时自动装，结果进 `installed`；其余目标（内置 / 系统 / Conda /
-固定解释器…）一律退回缺依赖卡（校验以 `missing_dependency` 失败，不修正）。开关 `ai.convert.auto_install=false` / `TAVOTTO_NO_CONVERT_AUTO_INSTALL=1`。
+不进日志 / 遥测）；写了文件则按文件走，无标记照旧 `target_missing`。新脚本缺包：校验运行前 `convertdeps.ensure(project, rel, cancel)`（app 注入 `task_hooks["deps"]`，仅 r / matlab；`cancel` = `TaskRun.cancel_event`）
+走 `deprepair.joint_plan_for` → `create_joint_plan` → `prepare`（不新写 pip 路径；取消经 `deprepair.cancel_status` 传到安装）。**名单**：只装 `engine/autoinstall_dists.txt`
+（PEP 503 名；14 个种子 ∪ PyPI 30 天下载前 1000 快照，`scripts/dev/refresh_autoinstall_list.py` 生成，spec datas 带上）里的包；名单外的包不自动装。**每个环境问一次**：
+`project_venv` / 已存在的受管一代名单内直接装；系统 Python / 内置 runtime 永不装；其余环境（Conda / 指定 / 环境变量 / 用户采用）第一次出卡片，点主按钮才记
+`ai.convert.auto_install_envs`（解释器路径 sha256 前 16 位 + 种类 + 名，无明文路径；设置页可撤销），装的动作是现有链条的标准动作（受管环境）。
+**不自动装的分支都是真卡片**：`ConvertAdapter.hold` → `NeedsInput(reason_code="dependency_decision", data=card)`（`ai_tasks.NeedsInput` 带 `reason_code` / `data`，进
+`unmet[]`），结局 `needs_input`、候选不删（`meta.json` `awaiting_dependencies`）；`POST /api/ai/convert/<sid>/dependencies {action:"install", impact_digest}` 起作业
+（`ai_convert.prepare_resume` / `run_resume`：装 → 校验**同一个候选** → 留存，不重跑 Agent），`discard` 取消正在进行的安装。授权口径两种：点过卡片 = 前端回显卡片摘要（服务端不自回显，
+对不上回新卡片）；已记过同意的环境 = 服务端回显同次调用算出的摘要（维护者 2026-10-23 裁决）。开关 `ai.convert.auto_install=false` / `TAVOTTO_NO_CONVERT_AUTO_INSTALL=1`
+（关着或计划不可执行时没有可执行动作，校验以 `missing_dependency` 失败，不修正）。
 会话元数据：sidecar 与 `meta.json` 记 `source_language`；`library` 在 r / matlab 时为 null；遥测不新增事件。看护：`tests/test_sourcelang.py`、
-`tests/test_ai_convert_foreign.py`、`tests/test_ai_convert_foreign_app.py`。
+`tests/test_ai_convert_foreign.py`、`tests/test_ai_convert_foreign_app.py`、`tests/test_convertdeps.py`。
 
 ## 速查表原要点（2026-09-25 迁入，#608）
 
