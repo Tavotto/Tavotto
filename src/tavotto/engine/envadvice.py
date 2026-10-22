@@ -615,8 +615,9 @@ def _public_rejection(r: dict) -> dict:
         "missing": [str(n) for n in (r.get("missing") or [])[:_NOT_USED_NAMES]],
         "import_failed": [str(n) for n in (r.get("import_failed") or [])[:_NOT_USED_NAMES]],
     }
-    if r.get("root_version"):
-        out["root_version"] = str(r["root_version"])
+    for key in ("root_version", "root_python", "env_python"):
+        if r.get(key):
+            out[key] = str(r[key])
     return out
 
 

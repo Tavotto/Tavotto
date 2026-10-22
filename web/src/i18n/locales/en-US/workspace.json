@@ -1291,6 +1291,7 @@
       "not_checked": "{{label}} can only be confirmed when the script runs, so it was not used this time.",
       "outranked": "{{label}} works too, but a better environment came first.",
       "root_python_mismatch": "This {{root}} was built for a different Python version than this environment, so it was not used.",
+      "root_python_mismatch_versions": "This {{root}} was built for Python {{built}}, but this environment uses Python {{env}}, so it was not used.",
       "root_needs_msvc": "{{root}} needs the Visual Studio C++ tools to run on Windows, and they are not installed on this computer, so it was not used."
     }
   },

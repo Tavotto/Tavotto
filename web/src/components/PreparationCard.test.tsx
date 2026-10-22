@@ -847,6 +847,21 @@ describe('主按钮就是后端给的那件事', () => {
       missing_imports: [{ label: 'Python 3.12', missing: ['ROOT', 'uproot'] }, 'Python 3.12 is missing ROOT and uproot, which this script needs'],
     },
   }
+  const MISMATCH_VERSIONS: Record<string, string> = {
+    'zh-CN': '这份 ROOT 6.38 是为 Python 3.14 编译的，这个环境是 Python 3.12',
+    'en-US': 'This ROOT 6.38 was built for Python 3.14, but this environment uses Python 3.12',
+  }
+  for (const [lng, sentence] of Object.entries(MISMATCH_VERSIONS)) {
+    it(`${lng} · 版本不匹配且两边版本都给出：点名两个 Python 版本`, async () => {
+      await i18n.changeLanguage(lng)
+      await mount()
+      const notUsed = { source: 'system', reason: 'root_python_mismatch', label: 'ROOT 6.38', root_version: '6.38', root_python: '3.14', env_python: '3.12' }
+      await openWith(report({ environment: envFact({ not_used: [notUsed] }) }))
+      await toggleDetails()
+      const row = details()?.querySelector('[data-prep-env-not-used-reason="root_python_mismatch"]')
+      expect(row?.textContent).toContain(sentence)
+    })
+  }
   for (const lng of Object.keys(NOT_USED_COPY)) {
     for (const [reason, [extra, sentence]] of Object.entries(NOT_USED_COPY[lng])) {
       it(`${lng} · 没被采用的环境（${reason}）：详情里说一句为什么 + 「选择渲染环境」入口；默认区不多一句`, async () => {

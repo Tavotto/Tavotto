@@ -5385,6 +5385,7 @@ export default interface Resources {
         "python_out_of_range": "{{label}} 的 Python 版本不在 {{product}} 支持的范围内，所以没用它。",
         "root_needs_msvc": "{{root}} 在 Windows 上要装 Visual Studio 的 C++ 工具才能运行，这台电脑还没装，所以没用它。",
         "root_python_mismatch": "这份 {{root}} 是为另一个 Python 版本编译的，和这个环境的 Python 版本不一致，所以没用它。",
+        "root_python_mismatch_versions": "这份 {{root}} 是为 Python {{built}} 编译的，这个环境是 Python {{env}}，所以没用它。",
         "unusable": "{{label}} 起不来，所以没用它。",
         "worker_chain_failed": "{{product}} 的渲染组件在 {{label}} 里启动不了，所以没用它。"
       },

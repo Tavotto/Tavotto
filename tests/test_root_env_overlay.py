@@ -936,6 +936,11 @@ def test_build_python_mismatch_is_rejected_statically_without_starting_a_process
     # 3.11 底 x 3.14 的 ROOT：未起进程就落选；内置 3.13 的版本此刻未知，交给体检
     static = [r for r in rejected if r["reason"] == userenvs.REJECT_ROOT_PYTHON_MISMATCH]
     assert static and all(r["root_version"] == "6.38.06" for r in static)
+    # 两边版本都读得出：落选原因点名（只到 主.次）；内置 3.13 那条是体检后才判定的，同样点名
+    assert {(r["root_python"], r["env_python"]) for r in static} == {
+        ("3.14", "3.11"),
+        ("3.14", "3.13"),
+    }
     assert not any(p["python"] == py311 and p["overlay"] for p in rig["probes"])
 
 

@@ -60,12 +60,20 @@ export function envNotUsedSentence(r: EnvironmentNotUsed): string {
   const names = r.reason === 'import_failed' ? r.import_failed : r.missing
   // 缺的包名：没有名字时用 unnamed 变体，不凑名字
   const listed = listJoin(names ?? [])
-  const key = !listed && UNNAMED[code] ? UNNAMED[code] : SENTENCE[code]
+  // 版本不匹配：两边版本都给出时点名，否则用不点版本的那句
+  const versions = code === 'root_python_mismatch' && r.root_python && r.env_python
+  const key = versions
+    ? 'prep.envNotUsed.root_python_mismatch_versions'
+    : !listed && UNNAMED[code]
+      ? UNNAMED[code]
+      : SENTENCE[code]
   return translate(key, {
     ns: 'workspace',
     label: r.label || translate('prep.envNotUsed.fallbackLabel', { ns: 'workspace' }),
     names: listed,
     root: r.root_version ? `ROOT ${r.root_version}` : 'ROOT',
     product: PRODUCT_NAME,
+    built: r.root_python ?? '',
+    env: r.env_python ?? '',
   })
 }

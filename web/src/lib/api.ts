@@ -6112,6 +6112,9 @@ export interface EnvironmentNotUsed {
   import_failed?: string[]
   /** 叠加候选（ROOT）才有：ROOT 的版本，只有版本 */
   root_version?: string
+  /** `root_python_mismatch` 且两边都读得出时：ROOT 为哪个 Python 编译（`3.14`）、这个环境是哪个（`3.12`） */
+  root_python?: string
+  env_python?: string
 }
 
 export interface PreparationEnvironmentFact {

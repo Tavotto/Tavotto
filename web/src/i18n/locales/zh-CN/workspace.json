@@ -1225,6 +1225,7 @@
       "not_checked": "{{label}} 要等到运行时才能确认，这次没用它。",
       "outranked": "{{label}} 也能用，只是有更合适的环境排在前面。",
       "root_python_mismatch": "这份 {{root}} 是为另一个 Python 版本编译的，和这个环境的 Python 版本不一致，所以没用它。",
+      "root_python_mismatch_versions": "这份 {{root}} 是为 Python {{built}} 编译的，这个环境是 Python {{env}}，所以没用它。",
       "root_needs_msvc": "{{root}} 在 Windows 上要装 Visual Studio 的 C++ 工具才能运行，这台电脑还没装，所以没用它。"
     }
   },

@@ -66,6 +66,35 @@ def test_report_not_used_is_public_shape_without_paths_or_ids():
     assert "C:/" not in blob and "id" not in fact["not_used"][0]
 
 
+def test_mismatch_names_both_python_versions_only_when_both_are_known():
+    entry = {
+        "python": "C:/Python312/python.exe",
+        "source": "system",
+        "label": "Python 3.12 + ROOT 6.38",
+        "python_version": "3.12.7",
+        "overlay": {"kind": "root", "root": "C:/root_v6.38", "version": "6.38.06"},
+        "overlay_reject": userenvs.REJECT_ROOT_PYTHON_MISMATCH,
+        "root_build_python": "3.14",
+    }
+    fact = envadvice.adoption_fact(
+        "/p", "", adopted=None, invalidated=None, rejected=[userenvs.rejection_reason(entry)]
+    )
+    row = fact["not_used"][0]
+    assert (row["root_python"], row["env_python"]) == ("3.14", "3.12")
+    # 读不出构建版本（体检后才判定的那条路）：不带这两个键，界面退回不点版本的那句
+    bare = userenvs.rejection_reason({**entry, "root_build_python": ""})
+    assert "root_python" not in bare and "env_python" not in bare
+    # 别的落选原因不带
+    other = userenvs.rejection_reason({**entry, "overlay_reject": userenvs.REJECT_ROOT_NEEDS_MSVC})
+    assert "root_python" not in other
+    for lang in ("zh-CN", "en-US"):
+        copy = json.loads((LOCALES / lang / "workspace.json").read_text(encoding="utf-8"))["prep"][
+            "envNotUsed"
+        ]
+        assert "{{built}}" in copy["root_python_mismatch_versions"]
+        assert "{{env}}" in copy["root_python_mismatch_versions"]
+
+
 def test_no_rejections_keeps_the_old_shape_and_the_list_is_bounded():
     assert "not_used" not in envadvice.adoption_fact("/p", "", adopted=None, invalidated=None)
     many = [{"source": "s", "label": f"L{i}", "reason": "unusable"} for i in range(40)]

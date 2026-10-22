@@ -1380,6 +1380,12 @@ def overlay_candidates(bases: list[dict], installs: list[dict]) -> list[dict]:
                 **(
                     {"python_version": base["python_version"]} if base.get("python_version") else {}
                 ),
+                # 这个 ROOT 为哪个 Python 编译：落选原因要说得出（`rejection_reason` 取用，不进 `PUBLIC_FIELDS`）
+                **(
+                    {"root_build_python": install["build_python"]}
+                    if install.get("build_python")
+                    else {}
+                ),
             }
             built = _minor_of(install.get("build_python", ""))
             if built is not None and minor is not None and built != minor:
@@ -1563,7 +1569,20 @@ def rejection_reason(entry: dict) -> dict:
         "import_failed": list(entry.get("import_failed") or []),
         # 哪个 ROOT（只有版本，不带路径）：叠加组合才有
         **({"root_version": overlay.get("version", "")} if overlay else {}),
+        **_mismatch_versions(entry, reason),
     }
+
+
+def _mismatch_versions(entry: dict, reason: str) -> dict:
+    """`root_python_mismatch` 且两边小版本都读得出时：ROOT 为哪个 Python 编译（`root_python`）、这个环境是哪个
+    （`env_python`），都只到 `主.次`。读不出（体检后才判定的那条路）就不带，界面退回不点版本的那句。"""
+    if reason != REJECT_ROOT_PYTHON_MISMATCH:
+        return {}
+    built = entry.get("root_build_python") or ""
+    env = ".".join((entry.get("python_version") or "").split(".")[:2])
+    if _minor_of(built) is None or _minor_of(env) is None:
+        return {}
+    return {"root_python": built, "env_python": env}
 
 
 def rejections(entries: list[dict], selected: dict | None = None) -> list[dict]:
