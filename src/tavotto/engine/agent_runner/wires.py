@@ -29,7 +29,11 @@ ANTHROPIC_VERSION = "2023-06-01"
 MAX_RESPONSE_BYTES = 8 * 1024 * 1024
 
 EFFORTS = ("low", "medium", "high")
-#: anthropic `thinking.budget_tokens`（按 effort；待核：新模型可能改用自适应思考 / effort 参数）
+#: anthropic adaptive 的 `output_config.effort` 还多一档 max
+ANTHROPIC_EFFORTS = (*EFFORTS, "max")
+#: 调用方声明「思考怎么传」（不由 runner 猜；第三方兼容网关各不相同）：adaptive=新模型，budget=旧模型，none=都不发
+THINKING_MODES = ("adaptive", "budget", "none")
+#: anthropic 旧式 `thinking.budget_tokens`（仅 `--thinking budget`；新模型上已弃用，不许发）
 _THINKING_BUDGET = {"low": 1024, "medium": 4096, "high": 12000}
 
 
@@ -126,6 +130,7 @@ class Wire(Protocol):
         history: list[Msg],
         effort: str | None,
         max_output_tokens: int,
+        thinking: str = "none",
     ) -> Request: ...
 
     def parse(self, body: dict) -> Turn: ...
@@ -158,8 +163,10 @@ class AnthropicWire:
     * 鉴权：`x-api-key` 与 `Authorization: Bearer` 都给（官方 / 各家网关各认一个），`anthropic-version: 2023-06-01`。
     * 提示缓存：系统提示块与**最后一个**工具定义末尾各加 `cache_control: {"type": "ephemeral"}`
       （缓存前缀顺序 tools → system → messages，所以稳定的两段在最前）。
-    * 思考：给了 effort 才传 `thinking: {"type": "enabled", "budget_tokens": N}`，`max_tokens` 相应加上预算
-      （要求 `max_tokens > budget_tokens`）。待核：较新的模型是否改用 adaptive thinking。
+    * 思考由调用方声明（`thinking` 参数 / `--thinking`）：`adaptive` 发 `thinking:{type:adaptive}`，有 effort 才加
+      `output_config:{effort}`（新模型；`budget_tokens` 已弃用不发，自带 interleaved thinking、无需 beta 头）；`budget` 发旧式
+      `thinking:{type:enabled,budget_tokens:N}`（N≥1024 且 < `max_tokens`，所以 `max_tokens` 加上预算）；`none`（默认）都不发。
+    * 不做 assistant prefill（新模型会 400）；工具参数一律 `json.loads`。
     * 工具：`tools[{name, description, input_schema}]`；回复 `content[]` 里的 `tool_use{id, name, input}`；
       回填为下一条 user 消息里的 `tool_result{tool_use_id, content, is_error}` 块。
     * 回放 assistant 轮时原样带回 `content` 块（含 `thinking` 块及其 `signature`，有工具调用的思考轮要求如此）。
@@ -168,7 +175,17 @@ class AnthropicWire:
     name = "anthropic"
 
     def build(
-        self, *, base_url, api_key, model, system, tools, history, effort, max_output_tokens
+        self,
+        *,
+        base_url,
+        api_key,
+        model,
+        system,
+        tools,
+        history,
+        effort,
+        max_output_tokens,
+        thinking="none",
     ) -> Request:
         tool_defs = [
             {"name": t.name, "description": t.description, "input_schema": t.schema} for t in tools
@@ -204,7 +221,12 @@ class AnthropicWire:
         }
         if tool_defs:
             body["tools"] = tool_defs
-        if effort in _THINKING_BUDGET:
+        if thinking == "adaptive":
+            # 新模型（Opus/Sonnet 4.6 起、Claude 5 系列）：自适应思考，强度在 output_config 里；不发 budget_tokens
+            body["thinking"] = {"type": "adaptive"}
+            if effort in ANTHROPIC_EFFORTS:
+                body["output_config"] = {"effort": effort}
+        elif thinking == "budget" and effort in _THINKING_BUDGET:
             budget = _THINKING_BUDGET[effort]
             body["max_tokens"] = max_output_tokens + budget
             body["thinking"] = {"type": "enabled", "budget_tokens": budget}
@@ -272,7 +294,17 @@ class OpenAIChatWire:
     name = "openai-chat"
 
     def build(
-        self, *, base_url, api_key, model, system, tools, history, effort, max_output_tokens
+        self,
+        *,
+        base_url,
+        api_key,
+        model,
+        system,
+        tools,
+        history,
+        effort,
+        max_output_tokens,
+        thinking="none",
     ) -> Request:
         msgs: list[dict] = [{"role": "system", "content": system}]
         for m in history:
@@ -369,7 +401,17 @@ class OpenAIResponsesWire:
     name = "openai-responses"
 
     def build(
-        self, *, base_url, api_key, model, system, tools, history, effort, max_output_tokens
+        self,
+        *,
+        base_url,
+        api_key,
+        model,
+        system,
+        tools,
+        history,
+        effort,
+        max_output_tokens,
+        thinking="none",
     ) -> Request:
         items: list[Any] = []
         for m in history:

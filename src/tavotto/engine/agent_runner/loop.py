@@ -91,12 +91,14 @@ class HttpModel:
         api_key: str,
         model: str,
         effort: str | None = None,
+        thinking: str = "none",
         request_timeout: float = 120.0,
         max_attempts: int = 4,
         retry_base: float = 1.0,
         post: Callable = post_json,
     ):
         self.wire, self.base_url, self.model, self.effort = wire, base_url, model, effort
+        self.thinking = thinking
         self._key = api_key
         self.request_timeout, self.max_attempts, self.retry_base = (
             request_timeout,
@@ -126,6 +128,7 @@ class HttpModel:
             tools=tools,
             history=history,
             effort=self.effort,
+            thinking=self.thinking,
             max_output_tokens=max_output_tokens,
         )
         last: RunnerFailure | None = None

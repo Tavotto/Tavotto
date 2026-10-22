@@ -22,7 +22,7 @@ from pathlib import Path
 
 from . import loop
 from .tools import TOOLSETS, Limits, RunEnvelope
-from .wires import EFFORTS, WIRES, RunnerFailure, check_base_url
+from .wires import ANTHROPIC_EFFORTS, THINKING_MODES, WIRES, RunnerFailure, check_base_url
 
 ENV_API_KEY = "TAVOTTO_AGENT_API_KEY"
 DEFAULT_LIMITS = Limits()
@@ -45,7 +45,10 @@ def _parser() -> argparse.ArgumentParser:
     p.add_argument("--wire", required=True, choices=[*sorted(WIRES), "demo"])
     p.add_argument("--base-url", default="", help="模型服务根地址（https，或 http://127.0.0.1）")
     p.add_argument("--model", default="")
-    p.add_argument("--effort", choices=EFFORTS, default=None)
+    p.add_argument("--effort", choices=ANTHROPIC_EFFORTS, default=None)
+    p.add_argument(
+        "--thinking", choices=THINKING_MODES, default="none", help="思考怎么传（调用方声明）"
+    )
     p.add_argument("--max-turns", type=int, default=DEFAULT_LIMITS.max_turns)
     p.add_argument("--max-seconds", type=float, default=DEFAULT_LIMITS.max_seconds)
     p.add_argument("--max-total-tokens", type=int, default=DEFAULT_LIMITS.max_total_tokens)
@@ -127,6 +130,7 @@ def main(argv: list[str] | None = None) -> int:
             api_key=api_key,
             model=args.model,
             effort=args.effort,
+            thinking=args.thinking,
             request_timeout=args.request_timeout,
             retry_base=args.retry_base,
         )

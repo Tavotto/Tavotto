@@ -278,7 +278,7 @@ WIRE_CASES = {
 }
 
 
-def http_run(cand, serve, wire, responses, *, effort=None, max_attempts=4, **kw):
+def http_run(cand, serve, wire, responses, *, effort=None, thinking="none", max_attempts=4, **kw):
     srv = serve(responses)
     model = loop.HttpModel(
         wires.WIRES[wire],
@@ -286,6 +286,7 @@ def http_run(cand, serve, wire, responses, *, effort=None, max_attempts=4, **kw)
         api_key=KEY_CANARY,
         model="m-1",
         effort=effort,
+        thinking=thinking,
         retry_base=0.0,
         max_attempts=max_attempts,
         request_timeout=5,
@@ -333,8 +334,7 @@ class TestWires:
         assert body["system"][0]["cache_control"] == {"type": "ephemeral"}
         assert body["tools"][-1]["cache_control"] == {"type": "ephemeral"}
         assert all("cache_control" not in t for t in body["tools"][:-1])
-        assert body["thinking"] == {"type": "enabled", "budget_tokens": 4096}
-        assert body["max_tokens"] > 4096
+        assert "thinking" not in body and "output_config" not in body, "默认 none：都不发"
         assert body["messages"][0]["role"] == "user"
         # 第二轮：assistant 原样回放（含 thinking 签名），tool_result 回填
         body2 = srv.requests[1][2]
@@ -357,9 +357,33 @@ class TestWires:
             "cached_input_tokens": 20,
         }
 
-    def test_anthropic_without_effort_sends_no_thinking(self, cand, serve):
-        srv, res, _ = http_run(cand, serve, "anthropic", ANTHROPIC_TURNS)
-        assert res.ok and "thinking" not in srv.requests[0][2]
+    def test_anthropic_thinking_modes(self, cand, serve):
+        """思考怎么传由调用方声明：adaptive（新模型）/ budget（旧模型）/ none。"""
+        srv, res, _ = http_run(
+            cand, serve, "anthropic", ANTHROPIC_TURNS, effort="high", thinking="adaptive"
+        )
+        body = srv.requests[0][2]
+        assert res.ok and body["thinking"] == {"type": "adaptive"}
+        assert body["output_config"] == {"effort": "high"}
+        assert "budget_tokens" not in json.dumps(body), "adaptive 不许发已弃用的 budget_tokens"
+        # adaptive 没给 effort：只有 thinking，没有 output_config
+        srv, res, _ = http_run(cand, serve, "anthropic", ANTHROPIC_TURNS, thinking="adaptive")
+        body = srv.requests[0][2]
+        assert body["thinking"] == {"type": "adaptive"} and "output_config" not in body
+        # budget：旧式预算，max_tokens 大于预算，没有 output_config
+        srv, res, _ = http_run(
+            cand, serve, "anthropic", ANTHROPIC_TURNS, effort="medium", thinking="budget"
+        )
+        body = srv.requests[0][2]
+        assert body["thinking"] == {"type": "enabled", "budget_tokens": 4096}
+        assert body["max_tokens"] > 4096 and "output_config" not in body
+        # none：即使给了 effort 也两样都不发
+        srv, res, _ = http_run(cand, serve, "anthropic", ANTHROPIC_TURNS, effort="high")
+        body = srv.requests[0][2]
+        assert res.ok and "thinking" not in body and "output_config" not in body
+        # 没有 assistant prefill：请求体最后一条消息永远是 user
+        assert body["messages"][-1]["role"] == "user"
+        assert srv.requests[1][2]["messages"][-1]["role"] == "user"
 
     def test_chat_request_shape(self, cand, serve):
         srv, res, _ = http_run(cand, serve, "openai-chat", CHAT_TURNS, effort="high")
