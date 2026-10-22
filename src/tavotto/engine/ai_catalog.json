@@ -19,8 +19,8 @@
     },
     {
       "id": "deepseek-codex",
-      "label_key": "vendor.deepseekCodex",
-      "brand": "DeepSeek (Codex)",
+      "label_key": "vendor.deepseek",
+      "brand": "DeepSeek",
       "region": "cn",
       "agent": "codex",
       "base_url": "https://api.deepseek.com",
@@ -68,8 +68,8 @@
     },
     {
       "id": "kimi-code-codex",
-      "label_key": "vendor.kimiCodeCodex",
-      "brand": "Kimi Code (Codex)",
+      "label_key": "vendor.kimiCode",
+      "brand": "Kimi Code",
       "region": "cn",
       "agent": "codex",
       "base_url": "https://api.kimi.com/coding/v1",
