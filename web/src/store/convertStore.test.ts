@@ -647,6 +647,57 @@ describe('convertStore：AI 任务阶段点停止先看取消回复（Codex #133
     await p
   })
 
+  it('停止后对账先 5xx 后 deps_installed：重试到「继续」卡，不清', async () => {
+    vi.mocked(aiCancel).mockResolvedValue({ ok: true, mode: 'local' } as never)
+    vi.mocked(fetchConvert)
+      .mockRejectedValueOnce(new ApiError('boom', 503, {}))
+      .mockRejectedValueOnce(new Error('network down'))
+      .mockResolvedValue({ state: 'deps_installed', installed: ['pandas'] } as never)
+    const { p } = await startRunning()
+    const stopping = useConvertStore.getState().stop('plot.py')
+    await vi.advanceTimersByTimeAsync(POLL_MS * 3)
+    await stopping
+    expect(useConvertStore.getState().entries['plot.py']).toMatchObject({ phase: 'installed', stopping: false })
+    await vi.advanceTimersByTimeAsync(POLL_MS + 10)
+    await p
+  })
+
+  it('停止后对账一直网络错误：不清卡，落「暂时连不上」；重试对账得 404 才清', async () => {
+    vi.mocked(aiCancel).mockResolvedValue({ ok: true, mode: 'local' } as never)
+    vi.mocked(fetchConvert).mockRejectedValue(new Error('network down'))
+    const { p } = await startRunning()
+    const stopping = useConvertStore.getState().stop('plot.py')
+    await vi.advanceTimersByTimeAsync(POLL_MS * 8)
+    await stopping
+    expect(useConvertStore.getState().entries['plot.py']).toMatchObject({
+      phase: 'failed',
+      reason: 'resume_unreachable',
+      stopping: false,
+      lost: { stopped: true },
+    })
+    // 重试 = 先对账：明确的 404 才清，且不重发任何 POST
+    vi.mocked(resolveConvertDependencies).mockClear()
+    vi.mocked(replanConvertDependencies).mockClear()
+    vi.mocked(fetchConvert).mockReset().mockRejectedValue(new ApiError('convert_not_found', 404, {}))
+    await useConvertStore.getState().start('plot.py', 'pillow', 'out.png')
+    expect(useConvertStore.getState().entries['plot.py']).toBeUndefined()
+    expect(startConvert).toHaveBeenCalledTimes(1)
+    expect(resolveConvertDependencies).not.toHaveBeenCalled()
+    expect(replanConvertDependencies).not.toHaveBeenCalled()
+    await vi.advanceTimersByTimeAsync(POLL_MS + 10)
+    await p
+  })
+
+  it('停止后对账明确 404：清卡', async () => {
+    vi.mocked(aiCancel).mockResolvedValue({ ok: true, mode: 'local' } as never)
+    vi.mocked(fetchConvert).mockRejectedValue(new ApiError('convert_not_found', 404, {}))
+    const { p } = await startRunning()
+    await useConvertStore.getState().stop('plot.py')
+    expect(useConvertStore.getState().entries['plot.py']).toBeUndefined()
+    await vi.advanceTimersByTimeAsync(POLL_MS + 10)
+    await p
+  })
+
   it('会话以 needs_input + dependency_installed_late 终局：对账出「继续」卡，不显示成失败', async () => {
     vi.mocked(startConvert).mockResolvedValue({ session: 's1', script: 'plot.py' })
     vi.mocked(fetchAiSession).mockResolvedValue({

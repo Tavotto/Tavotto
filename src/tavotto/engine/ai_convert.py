@@ -746,6 +746,14 @@ class ConvertAdapter:
         stage_hold(cand)
         return ai_tasks.NeedsInput("", reason_code=DEPENDENCY_DECISION_REASON, data=dict(cand.hold))
 
+    def settle_hold_on_cancel(self, cand: ConvertCandidate) -> bool:
+        """取消已置位时问适配器：这次停住还要不要保留？环境已被改（`late_installed`，依赖装好后才收到停止）必须留成
+        `deps_installed`；普通等待（system / uncommon / ask_once 卡）环境没动，取消赢：放掉停住态，执行器 `discard` 会删候选。"""
+        if cand.late_installed:
+            return True
+        cand.hold = None
+        return False
+
     def correction(self, run, failed: list[CheckResult]) -> dict | None:
         lines = []
         target = run.envelope.allowed_writes[0] if run.envelope.allowed_writes else "新文件"

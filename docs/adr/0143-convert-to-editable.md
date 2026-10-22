@@ -109,6 +109,10 @@ outcome、corrections 个数、是否采用）——不带脚本、路径或图�
   **首跑同一语义（Codex #1330 P2 再续）**：AI 任务阶段（首跑）里依赖步骤过了提交点返回 `installed` 而取消已置位，也不落入取消检查被 Task Core 丢弃：适配器的 `hold` 把候选留存成 `deps_installed`，
   任务结局记 `needs_input`、`unmet[].reason_code = "dependency_installed_late"`（`data.installed` 如实带出）；本地取消仍先让会话显示 `cancelled`，前端在取消回复 `ok:true, mode:"local"` 后不再立即清条目，
   而是等会话 `final` 后再 `GET /api/ai/convert/<sid>` 对账：`deps_installed` → 出同一张「依赖已经装好了……」+「继续 / 放弃」卡，404 / 其余 → 清。未过提交点的取消不变（`cancelled`、删候选）。
+  **普通依赖等待遇停止，取消赢（Codex #1330 P2）**：首跑校验期间依赖步骤停在 `system` / `uncommon` / `ask_once` 卡（环境没被动）而取消已置位时，不再 `hold` 成 `awaiting_dependencies`、也不以 `needs_input` 终局把已停止的转换藏起来：
+  Task Core 在调 `hold` 之前查取消，经适配器的 `settle_hold_on_cancel(候选)` 问「这次停住是否必须保留」——只有 `late_installed`（环境已换代，上一条）为是；否则适配器放掉停住态，任务按 `cancelled` 终局并删候选（Task Core 不认识 convert 的 reason_code）。
+  **停止后对账遇传输错误不清卡**：前端 `settleAfterStop` 对网络错误 / 超时 / 5xx（非 404、非 409）与 409 一样重试（至多 5 次、间隔 `POLL_MS`）；仍连不上则不清条目，落「暂时连不上」（`failed` + `resume_unreachable`，`lost.stopped`），
+  重试与 × 都先对账、不重发任何 POST；只有明确的 404 / `discarded` / 其余真实状态才清，`deps_installed` 照旧出「继续」卡。
 - **续跑期间点停止先对账再清卡（Codex #1330 P2）**：`resuming` 里点「停止」/ 关闭不再先清条目——条目留在 `resuming` 并标 `stopping`（卡片只一句「正在停止…」、无按钮），
   发 `discard` 后由续跑轮询按后端真实状态收尾：候选已删（404 / `discarded`）→ 才清卡；`deps_installed`（停止来得太晚）→ 落 `installed`，出上面那张「依赖已经装好了……」+「继续」；
   `ready` / `awaiting_dependencies` / `failed` 如实展示。`discard` 请求本身失败 → 立刻 `GET` 对账再按结果展示（仍在续跑 = 取消没送到，退回可再点停止）。后端不改：

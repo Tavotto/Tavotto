@@ -669,6 +669,25 @@ def test_task_cancel_reaches_the_dependency_step_and_ends_cancelled(env):
     assert len(env["prompts"]) == 1
 
 
+@pytest.mark.parametrize("kind", ["system", "uncommon", "ask_once"])
+def test_a_stop_during_a_plain_dependency_wait_wins_and_drops_the_candidate(env, kind):
+    """Codex #1330 P2：普通依赖等待（system / uncommon / ask_once，环境没被动）里停止已置位 → 取消赢：
+    任务 cancelled、候选删除、不留 awaiting_dependencies；不再以 needs_input 终局把已停止的转换藏起来。"""
+    entered = threading.Event()
+
+    def hook(project, rel, cancel=None):
+        entered.set()
+        assert cancel is not None and cancel.wait(10), "取消信号没到"
+        return {"status": "hold", "card": {**CARD, "kind": kind}, "missing": ["pandas"]}
+
+    sid = _run(env, hooks={"deps": hook})
+    assert entered.wait(15)
+    assert ai_bridge.cancel(sid)
+    sess = _wait(sid)
+    assert sess["task"]["outcome"] == "cancelled", sess["task"]
+    assert not (ai_convert.CONVERT_DIR / sid).exists(), "候选删除"
+
+
 def test_a_stop_after_the_install_commit_point_in_the_initial_task_keeps_the_candidate(
     env, monkeypatch
 ):

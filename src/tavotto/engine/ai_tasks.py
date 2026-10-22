@@ -753,6 +753,18 @@ def _verify_precommit(adapter: TaskAdapter, run: TaskRun, candidate) -> list[Che
     （`adapter.hold(candidate)` 回 `NeedsInput`），就以 `needs_input` 终局，候选由执行器自己决定留不留（`discard` 里）。"""
     pre = _guarded_verify(adapter, "precommit", run, candidate)
     hold = getattr(adapter, "hold", None)
+    if hold is not None and run.cancelled():
+        # 取消已置位：取消要赢——除非适配器说这次停住必须保留（环境已被改动，如依赖装好后才收到停止）。
+        # 不保留就让适配器放掉停住态，照常往下走：循环前的取消检查按 cancelled 终局并删候选。
+        settle = getattr(adapter, "settle_hold_on_cancel", None)
+        keep = False
+        if settle is not None:
+            try:
+                keep = bool(settle(candidate))
+            except Exception:  # noqa: BLE001 —— 适配器出错按「取消赢」处理
+                keep = False
+        if not keep:
+            return pre
     if hold is not None:
         try:
             held = hold(candidate)

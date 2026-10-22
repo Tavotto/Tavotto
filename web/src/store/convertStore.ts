@@ -37,6 +37,8 @@ export interface ResumeKind {
   replanning: boolean
   /** 装依赖时前端回显的卡片摘要；replan / 继续没有 */
   digest: string | null
+  /** 停止已被后端受理后对账连不上留下的「暂时连不上」：重试只对账（不重发任何 POST），并仍按「正在停止」处理结果 */
+  stopped?: boolean
 }
 
 export interface ConvertEntry {
@@ -177,10 +179,16 @@ function applyConvertStatus(script: string, pj: string | null, status: ConvertSt
  * 停止可能晚于依赖安装的提交点（环境已换代，后端把候选留成 `deps_installed`），这时不能清——要出「依赖已经装好了……」+「继续 / 放弃」。
  * `deps_installed` → 如实展示；候选 404 / `discarded` / 其余 → 清；
  * 409（任务线程还没收尾，meta 尚未落盘）→ 保持「正在停止…」稍后再问。条目被取代 / 换项目就静默退出。
+ * 传输类错误（网络 / 超时 / 5xx 等非 404 非 409）同样重试，最多 `SETTLE_TRANSPORT_RETRIES` 次；仍不行**不清卡**
+ * （停止已受理，但候选可能已被留成 `deps_installed`，清了用户就再也找不回）：落「暂时连不上」（`failed` + `resume_unreachable`，
+ * `lost.stopped`），重试 / × 都先对账。只有明确的 404 / `discarded` / 其余真实状态才清。
  */
+const SETTLE_TRANSPORT_RETRIES = 5
+
 async function settleAfterStop(script: string, session: string, pj: string | null): Promise<void> {
   const guard = captureProjectEpoch()
   const mine = () => guard.still() && useConvertStore.getState().entries[script]?.session === session
+  let transportFailures = 0
   for (;;) {
     let status: ConvertStatus | null = null
     try {
@@ -192,7 +200,25 @@ async function settleAfterStop(script: string, session: string, pj: string | nul
         if (!mine()) return
         continue
       }
-      // 404（候选已删）或对账连不上：本进程已终止任务，没有可展示的了
+      if (!(e instanceof ApiError && e.status === 404)) {
+        transportFailures += 1
+        if (transportFailures <= SETTLE_TRANSPORT_RETRIES) {
+          await new Promise((r) => setTimeout(r, POLL_MS))
+          if (!mine()) return
+          continue
+        }
+        set1(script, {
+          phase: 'failed',
+          reason: 'resume_unreachable',
+          error: null,
+          card: null,
+          replanning: false,
+          lost: { replanning: true, digest: null, stopped: true },
+          stopping: false,
+        })
+        return
+      }
+      // 404（候选已删）：本进程已终止任务，没有可展示的了
     }
     if (!mine()) return
     // 停止已被接受就不会再有 ready（提交闸门之后的取消被拒，走另一条对账）；唯一要留下的是「晚于安装提交点」的 deps_installed
@@ -293,6 +319,11 @@ async function driveResume(
 
 /** 重试「暂时连不上」的续跑：先对账；仍在等用户且是同一张卡才重发同一个动作 */
 function resumeAfterLost(script: string, session: string, kind: ResumeKind): Promise<void> {
+  if (kind.stopped) {
+    // 停止已受理后对账连不上：只对账，不重发任何动作；结果按「正在停止」处理（候选已删 → 清卡）
+    set1(script, { stopping: true })
+    return driveResume(script, session, kind, null, { reconcileFirst: true })
+  }
   return driveResume(script, session, kind, postFor(session, kind), { reconcileFirst: true })
 }
 
