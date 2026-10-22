@@ -2469,6 +2469,11 @@ export interface Manifest {
    * figsize 出图、可能切边。有它才分得清「算不出」与「脚本本来就不裁」；缺席 = 两者之外。
    */
   frame_unavailable?: string
+  /**
+   * 脚本存完盘之后又改过这张图（ADR 0139 §八）：编辑的是脚本跑完时的最终态，与磁盘上的文件不同。
+   * 只在为真时出现；老引擎不发它。
+   */
+  modified_after_save?: boolean
 }
 
 export interface EngineRenderResponse {
@@ -2961,6 +2966,15 @@ export interface AiAgentDiagnostics {
   readiness_detail: string | null
 }
 
+export interface AiModelDetail {
+  id: string
+  display_name: string
+  description: string
+  /** 空 = 该型号没声明自己的档位，回落到 Agent 级 `efforts` */
+  efforts: string[]
+  default_effort: string | null
+}
+
 export interface AiAgentCaps {
   id: AiAgentId
   display_name: string
@@ -2984,6 +2998,11 @@ export interface AiAgentCaps {
 
   models: string[]
   default_model: string | null
+  /**
+   * 与 `models` 并行的型号详情（显示名 / 说明 / 该型号自己支持的强度档位）。
+   * 加字段协议：旧后端不带（缺省 = 只有 id），第三方接口接管时为空。
+   */
+  model_details?: AiModelDetail[]
   efforts: string[]
   default_effort: string | null
 

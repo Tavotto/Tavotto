@@ -50,8 +50,8 @@ interface Drag {
 const KEY_STEP = 30
 const KEY_STEP_FINE = 10
 const MOVE_THRESHOLD = 6
-/** 演示「渲染中」的时长：原型的 1.8 秒（不是动效档位，是一段剧情，所以不取 DURATION） */
-const RENDER_MS = 1800
+/** 演示「渲染中」的时长：1.5 秒（原型 1.8 秒，用户 10-22 定上限 1.5 秒；不是动效档位，是一段剧情，所以不取 DURATION） */
+const RENDER_MS = 1500
 
 export function DemoImportStep() {
   const { t } = useTranslation('dialogs')

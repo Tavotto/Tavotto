@@ -109,6 +109,15 @@
   直接拒收（400 `The 'gpt-5' model is not supported when using Codex with a
   ChatGPT account.`）；读不到就交白卷，让 CLI 用自己的默认值。强度档位
   minimal/low/medium/high/max 是 CLI 侧开关，与模型清单无关。
+  **2026-10-22 起另并入 codex CLI 自己的模型目录缓存 `$CODEX_HOME/models_cache.json`**（只读）：
+  `visibility == "list"` 的型号按 `priority` 排在 config 模型之后，`hide` 的不列；每个型号经加字段
+  `model_details[]`（`id / display_name / description / efforts / default_effort`，与 `models` 并行）
+  带显示名与**自己支持的**推理强度（`supported_reasoning_levels` / `default_reasoning_level`）。
+  缓存缺失 / 损坏 / 字段变了一律退回只用 config.toml（不抛、不猜模型名）；第三方接口接管时
+  `model_details` 为空（网关的型号名与官方目录无关）；Claude Code 侧仍是 sonnet/opus/haiku，只多带显示名。
+  Agent 级 `efforts` 仍在，是各型号档位的并集（旧前端与 `prunePrefs` 用）。前端两级选择器
+  （执行器家族 → 型号）与「档位跟着型号走」见 `web/src/components/ai/ModelPicker.tsx`、
+  `aiStore.effortsForModel / resolveEffort`（`aiModelPicker.test.tsx`、`e2e/ai-model-picker.spec.ts`）。
   前端 `aiStore.prunePrefs` 在每次探测后丢弃 localStorage 里已失效的选择，
   否则用户会永远卡在一个报错的旧模型上（vitest + pytest 双侧看护）。
 - **用户配置按 agent id 分键**：`ai.agents.<id>.{path_override, enabled}`。

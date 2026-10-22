@@ -179,9 +179,15 @@
 `tex_package_missing`（`.sty` / `.tfm`，文件名白名单清洗）/ `tex_compile_failed`（LaTeX 的 `! …` 行）/ `tex_failed`
 （落在 matplotlib 的 TeX 模块里但认不出原因；`dviread.find_tex_file` 那句分不清 kpsewhich 缺失与文件缺失，也归这里）。
 build 与之后的 render / export 同一收口；超时 / 取消保持各自的码。参数经错误转换合同 `pool.recovery_params`，渲染端点 /
-试运行探测 / 准备会话同一份。分类只读已发生的那次执行，不另起探测、不执行用户代码。worker 继承父进程 PATH（从 Finder 启动的
-桌面版里没有 `/Library/TeX/texbin`），文案据此提示「装完重启 Tavotto」；宏包装上后同一会话重跑即重新验证（kpathsea 每次编译现查，
-不依赖环境代）。看护 `tests/test_tex_diagnostics.py`（stub）与 `tests/test_tex_toolchain_real.py`（真 TeX，没有时 environment-blocked）。
+试运行探测 / 准备会话同一份。分类只读已发生的那次执行，不另起探测、不执行用户代码。worker 继承父进程 PATH。从 Finder / Dock 启动的
+桌面版只有 GUI 的最小 PATH（没有 `/Library/TeX/texbin`、`/opt/homebrew/bin`），所以 macOS sidecar 启动时（`desktop.run` 最前）调一次
+`engine/loginpath.apply_to_environ()`：继承的 PATH 原样在前，只读 `/etc/paths` 与 `/etc/paths.d/*`（文件名排序、逐行一个目录，不执行
+`path_helper`、不起 shell），把存在且未出现的目录追加在末尾，不改既有顺序、不去重既有项；非 macOS 不变。选「改一次 `os.environ`」而不是只在
+几处 worker env 构造里补：worker（`pool.worker_env` 对用户环境回 None = 继承）、`_has_matplotlib` 探测、用户脚本自己 `subprocess` 调的命令、
+`ai_agents.spawn_env` 全都继承同一份，探测与 worker 天然同一套 PATH，没有「漏补一处」的第二条路（`ai_agents.spawn_env` 补的是猜测的
+安装目录，判据不同，保持不动，它读到的 `os.environ` 已含本补全）。代价：装完 TeX 后要重启 Tavotto 才读到新装的 `/etc/paths.d/TeX`，
+文案正是这么说的「装完重启 Tavotto」；宏包装上后同一会话重跑即重新验证（kpathsea 每次编译现查，
+不依赖环境代）。看护 `tests/test_loginpath.py`（PATH 补全与 worker / 探测同一份）、`tests/test_tex_diagnostics.py`（stub）与 `tests/test_tex_toolchain_real.py`（真 TeX，没有时 environment-blocked）。
 
 ## 速查表原要点（2026-09-25 迁入，#608）
 

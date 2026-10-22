@@ -247,12 +247,15 @@ export function MenuSub({
   children,
   icon: Icon,
   disabled,
+  width,
   ...rest
 }: {
   label: ReactNode
   children: ReactNode
   icon?: ComponentType<{ size?: number; className?: string }>
   disabled?: boolean
+  /** 子菜单的确定宽度（带说明的单选项要折行而不是撑宽）；不给就是 184 的最小宽 */
+  width?: number
 } & Record<`data-${string}`, string | number | boolean | undefined>) {
   return (
     <DM.Sub>
@@ -271,7 +274,7 @@ export function MenuSub({
           alignOffset={-5}
           collisionPadding={8}
           loop
-          style={{ minWidth: 184 }}
+          style={width ? { width } : { minWidth: 184 }}
           className={CONTENT_CLASS}
           onKeyDown={(e) => e.stopPropagation()}
           // Esc 落在子菜单上时是子菜单那一层在处理（Radix 只让最上层的 layer 接 Esc，

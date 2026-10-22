@@ -1246,10 +1246,6 @@
     "relinkAction": "Relink",
     "entryActions": "Actions for “{{label}}”"
   },
-  "identity": {
-    "problemsLabel_one": "issue",
-    "problemsLabel_other": "issues"
-  },
   "docSummary": {
     "title": "This layout",
     "size": "{{w}} × {{h}} mm",

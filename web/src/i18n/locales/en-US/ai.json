@@ -44,7 +44,8 @@
     "max": "Most thorough; noticeably more time and quota",
     "medium": "Balances speed and quality",
     "minimal": "Only the most direct change; fastest",
-    "xhigh": "Goes deeper than High; more time and quota"
+    "xhigh": "Goes deeper than High; more time and quota",
+    "ultra": "Beyond Extra high; the most time and quota"
   },
   "effortLabel": {
     "high": "High",
@@ -52,7 +53,8 @@
     "max": "Max",
     "medium": "Medium",
     "minimal": "Minimal",
-    "xhigh": "Extra high"
+    "xhigh": "Extra high",
+    "ultra": "Ultra"
   },
   "history": {
     "allStatuses": "All statuses",

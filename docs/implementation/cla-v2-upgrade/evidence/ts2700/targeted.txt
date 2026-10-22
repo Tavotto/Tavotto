@@ -1,0 +1,62 @@
+✔ refresh tuple survives SQLite close/reopen and completed tuple does not replay (60.824525ms)
+✔ refresh deduplication admits changed revision or changed failure source exactly once (28.486484ms)
+✔ manual refresh exhaustion stays blocked across newer revision and failure source (11.827023ms)
+✔ refresh completion/retry guards reject stale lease token (8.002259ms)
+✔ refresh completion/retry guards reject stale lease deadline (7.914394ms)
+✔ refresh completion/retry guards reject stale generation (8.514639ms)
+✔ refresh completion/retry guards reject stale global revision (8.175868ms)
+✔ refresh completion/retry guards reject stale request revision (9.653899ms)
+✔ refresh completion/retry guards reject stale request attempts (10.747831ms)
+✔ refresh completion/retry guards reject stale request due (8.275537ms)
+✔ refresh completion/retry guards reject stale request reason (25.575599ms)
+✔ refresh completion/retry guards reject stale request status (9.018165ms)
+✔ older issued failure source blocks refresh completion/retry for the entire target (9.901714ms)
+✔ older unknown failure source blocks refresh completion/retry for the entire target (9.273973ms)
+✔ older reconcile failure source blocks refresh completion/retry for the entire target (9.394143ms)
+✔ older manual failure source blocks refresh completion/retry for the entire target (9.961345ms)
+✔ older confirmed failure source blocks refresh completion/retry for the entire target (14.710941ms)
+✔ newer resolved failure source invalidates an older refresh request (9.167347ms)
+✔ mocked negative evaluation completes refresh with no publication (28.557139ms)
+✔ disabled background leaves pending refresh untouched and sends nothing (6.901037ms)
+✔ disabled publication records refresh retry without evaluation or sends (8.412615ms)
+✔ mocked evaluation time budget rejection sends nothing and preserves source (8.428761ms)
+✔ mocked evaluation sql budget rejection sends nothing and preserves source (8.308582ms)
+✔ mocked evaluation external budget rejection sends nothing and preserves source (8.980931ms)
+✔ beginFreshPublication rejects a failure proposal before SQL or journal writes (7.571478ms)
+✔ original failure-only issued journal commits before the in-memory failure send (7.730982ms)
+✔ concurrent original failure-only journal attempts produce exactly one issued row (9.476871ms)
+✔ original failure-only unknown settlement remains a durable no-retry barrier (9.55704ms)
+✔ fresh unknown settlement preserves pinned run on an explicitly failure-only issued fixture (6.958246ms)
+✔ fresh settlement rejects a wrong receipt run on an explicitly failure-only issued fixture (17.232393ms)
+✔ superseded same-head confirmed failure history requires manual refresh review (10.383543ms)
+✔ GitHub publishFresh failure adapter rejects predecessor wrong head before journal/send (4.681279ms)
+✔ GitHub publishFresh failure adapter rejects remote wrong run before journal/send (4.201565ms)
+✔ GitHub publishFresh failure adapter rejects remote wrong external_id before journal/send (4.001746ms)
+✔ GitHub publishFresh failure adapter rejects remote wrong output summary before journal/send (4.030445ms)
+✔ independent refresh boundary suite makes no outbound fetch calls (0.177738ms)
+✔ slot new-head one delegated person actual issued and unknown settlement SQL (197.165752ms)
+ℹ {"scenario":"new-head delegated N=1, no publication","work_sql":17,"total_sql":21,"stages":[{"name":"readiness","sql":1,"cumulative":1},{"name":"expired head cleanup","sql":1,"cumulative":2},{"name":"head claim","sql":1,"cumulative":3},{"name":"real delegated qualification","sql":6,"cumulative":9},{"name":"final clock","sql":1,"cumulative":10},{"name":"atomic unsent issued journal","sql":7,"cumulative":17},{"name":"unknown settlement","sql":4,"cumulative":21}]}
+✔ slot same-head one delegated person actual issued and unknown settlement SQL (47.568617ms)
+ℹ {"scenario":"same-head delegated N=1, no publication","work_sql":17,"total_sql":21,"stages":[{"name":"readiness/revision","sql":1,"cumulative":1},{"name":"target claim","sql":1,"cumulative":2},{"name":"refresh decision","sql":1,"cumulative":3},{"name":"target read","sql":1,"cumulative":4},{"name":"real delegated qualification","sql":6,"cumulative":10},{"name":"exact resolved predecessor","sql":1,"cumulative":11},{"name":"final clock","sql":1,"cumulative":12},{"name":"atomic unsent fresh journal","sql":5,"cumulative":17},{"name":"unknown settlement","sql":4,"cumulative":21}]}
+✔ slot two different-target issuing transactions commit exactly one owner (10.467219ms)
+✔ slot busy queues stay pending without consuming refresh retries (11.048013ms)
+✔ slot withdrawal has target and within-target priority over older ordinary work (7.773873ms)
+✔ slot expired issued owner retains every-phase live send fence (13.879947ms)
+✔ slot expired unknown owner retains every-phase live send fence (6.92965ms)
+✔ slot expired reconcile owner retains every-phase live send fence (7.434225ms)
+✔ slot expired confirmed owner retains every-phase live send fence (7.829894ms)
+✔ slot expired manual owner retains every-phase live send fence (8.395766ms)
+✔ slot restart flagfalse fences new positives and recovers exact owner by GET witness (81.226474ms)
+ℹ {"scenario":"actual negative GET recovery, flagfalse after restart","total_sql":27,"synthetic_gets":2}
+✔ slot unknown observation becomes manual while retaining durable owner (17.038726ms)
+✔ slot conservative full qualification and withdrawal authorization prefix stays within SQL ceilings (51.297892ms)
+ℹ {"scenario":"conservative qualification + authorization prefix + negative release, no publication","work_sql":19,"total_sql":36,"stages":[{"name":"readiness/revision","sql":1,"cumulative":1},{"name":"target claim","sql":1,"cumulative":2},{"name":"refresh decision","sql":1,"cumulative":3},{"name":"target read","sql":1,"cumulative":4},{"name":"progress open/read","sql":5,"cumulative":9},{"name":"owner select","sql":1,"cumulative":10},{"name":"expiry clock prefix","sql":1,"cumulative":11},{"name":"full real delegated qualification prefix","sql":6,"cumulative":17},{"name":"withdrawal lease authorization prefix","sql":1,"cumulative":18},{"name":"withdrawal revision authorization prefix","sql":1,"cumulative":19},{"name":"fresh negative witness release","sql":8,"cumulative":27},{"name":"finish pass","sql":9,"cumulative":36}]}
+✔ slot suite performs zero outbound requests (0.47331ms)
+ℹ tests 50
+ℹ suites 0
+ℹ pass 50
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 1072.201059

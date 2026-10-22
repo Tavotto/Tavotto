@@ -33,7 +33,7 @@ import { msg, t as translate } from '@/i18n'
 import { DURATION, usePresence } from '@/lib/motion'
 import { engineLabel } from '@/components/inspector/roles/registry'
 import { ApiError } from '@/lib/api'
-import { AiLedgerError, isDataFigureSession, isOpenSession, isSessionOf, ProjectChangedError, submissionBlocks, useAiStore, type AiScope, type AiSession } from '@/store/aiStore'
+import { AiLedgerError, effortsForModel, isDataFigureSession, isOpenSession, isSessionOf, modelDetail, resolveEffort, ProjectChangedError, submissionBlocks, useAiStore, type AiScope, type AiSession } from '@/store/aiStore'
 import { useDocumentStore } from '@/store/documentStore'
 import { usePanelDisplayManifest } from '@/store/renderStore'
 import { useSelectionStore } from '@/store/selectionStore'
@@ -47,9 +47,9 @@ import { Menu, MenuRadioGroup, MenuRadioItem } from '../ui/Menu'
 import { Notice } from '../ui/Notice'
 import { Popover } from '../ui/Popover'
 import { Segmented } from '../ui/Segmented'
-import { Select } from '../ui/Select'
 import { Tip } from '../ui/Tooltip'
 import { TaskHistory } from './TaskHistory'
+import { FamilyIcon, ModelPicker, modelLabel } from './ModelPicker'
 import { INSTRUCTION_MAX_BYTES } from '@/lib/aiDraft'
 import { currentProjectId } from '@/lib/session'
 import { useAiDraft } from './useAiDraft'
@@ -103,20 +103,6 @@ const COMPOSER_MAX_ROWS = 8
 const EXAMPLE_COUNT = 3
 
 const SCOPE_VALUES: AiScope[] = ['element', 'axes', 'figure']
-
-/**
- * 「执行器 · 模型」合成选择器的值编码（审计 T37）。
- *
- * 呈现上是一个控件，存下去仍是 aiStore 的两个字段。Agent id 是后端注册表里的
- * 短标识（`codex` / `claude`），不含 `/`；模型名整段留给右边，所以按**第一个**
- * `/` 切开，模型名里真出现斜杠也不会被截断。
- */
-const PAIR_SEP = '/'
-const pairValue = (agentId: string, model: string) => `${agentId}${PAIR_SEP}${model}`
-const splitPair = (v: string): [string, string] => {
-  const i = v.indexOf(PAIR_SEP)
-  return i < 0 ? [v, ''] : [v.slice(0, i), v.slice(i + 1)]
-}
 
 const scopeItems = () =>
   SCOPE_VALUES.map((value) => ({ value, label: ai(`scope.${value}`) }))
@@ -249,10 +235,10 @@ function useAgentChoice() {
   const active = effectiveAgent(agent, caps)
   const cur = agentById(caps, active)
   const model = (active && models[active]) ?? cur?.default_model ?? ''
-  const effort = (active && efforts[active]) ?? cur?.default_effort ?? ''
-  // 档位下标由**真实能力数组**算出来；记忆里那个已经不在清单里时回落到 0，
-  // 绝不凭字符串造一个数组里没有的档位
-  const effortList: string[] = cur?.efforts ?? []
+  // 档位清单、当前档都跟着**型号**走：型号自己声明了就用它的，切型号时记着的档位不被
+  // 新型号支持就回落到新型号的默认档；永远不产出清单外的值
+  const effortList: string[] = effortsForModel(cur, model)
+  const effort = resolveEffort(cur, model, active ? efforts[active] : undefined)
   const effortIndex = Math.max(0, effortList.indexOf(effort))
   return { caps, usable, active, cur, model, effortList, effortIndex }
 }
@@ -1062,9 +1048,11 @@ function AgentPills({ panel, ...rest }: Omit<TargetProps, 'panel'> & { panel: Pa
  */
 export function EffortPill() {
   useTranslation('ai')
-  const { active, cur, effortList, effortIndex } = useAgentChoice()
+  const { active, cur, model, effortList, effortIndex } = useAgentChoice()
   if (!active || !cur || effortList.length === 0) return null
   const current = effortList[effortIndex]
+  // 「默认」小标跟着型号走：该型号自己的默认档，没声明才用 Agent 级默认
+  const defaultEffort = modelDetail(cur, model)?.default_effort ?? cur.default_effort
   return (
     <Menu
       align="start"
@@ -1089,7 +1077,7 @@ export function EffortPill() {
             value={e}
             data-ai-effort-item={e}
             description={effortDescription(e)}
-            tag={e === cur.default_effort ? ai('panel.effortDefault') : undefined}
+            tag={e === defaultEffort ? ai('panel.effortDefault') : undefined}
           >
             {effortLabel(e)}
           </MenuRadioItem>
@@ -1100,32 +1088,20 @@ export function EffortPill() {
 }
 
 const modelText = (caps: AiCapabilities | null, active: string, model: string) =>
-  model ? `${agentDisplayName(caps, active)} · ${model}` : agentDisplayName(caps, active)
+  model
+    ? `${agentDisplayName(caps, active)} · ${modelLabel(agentById(caps, active), model)}`
+    : agentDisplayName(caps, active)
 
 export function ScopeAgentContent({ panel, element, axes, scope, scopes }: TargetProps) {
   useTranslation('ai')
   const { caps, usable, active, cur, model } = useAgentChoice()
 
-  // 「执行器 · 模型」的候选。装了两个 Agent 时每一项都带执行器名，只装一个时
-  // 不重复它（触发按钮上已经写着）。**模型清单为空 = 跟随 CLI 默认**，给一条
-  // 只有执行器名的项，绝不伪造一个模型名。
-  const pairs = usable.flatMap((a) =>
-    a.models.length
-      ? a.models.map((m: string) => ({
-          value: pairValue(a.id, m),
-          label: usable.length > 1 ? `${a.display_name} · ${m}` : m,
-        }))
-      : [{ value: pairValue(a.id, ''), label: a.display_name }],
-  )
-  const currentPair = active ? pairValue(active, model) : ''
-  // 记忆里（或 CLI 默认里）那个模型已经不在清单里时**照实把它显示出来**，
-  // 不静默换成清单里的另一项：控件上写着 A、任务却交给 B 是最难查的一类错。
-  if (currentPair && cur && !pairs.some((p) => p.value === currentPair)) {
-    pairs.unshift({
-      value: currentPair,
-      label: usable.length > 1 ? `${cur.display_name} · ${model}` : model,
-    })
-  }
+  // 候选总数：每个执行器的型号数（清单为空 = 跟随 CLI 默认，算一项），记忆里已下架的当前值再算一项。
+  // 只有一项可选时不摆一个选不动的选择器（见下）。
+  const optionCount = usable.reduce((n, a) => {
+    const stale = a.id === active && model && !a.models.includes(model) ? 1 : 0
+    return n + Math.max(1, a.models.length) + stale
+  }, 0)
 
   return (
     <div className="flex flex-col gap-2">
@@ -1165,34 +1141,25 @@ export function ScopeAgentContent({ panel, element, axes, scope, scopes }: Targe
         </div>
       ) : (
         <div className="flex flex-col gap-2">
-          {/* 执行器与模型合成一个紧凑选择器（审计 T37）。**只是呈现合并**：
-              底下仍是 aiStore 的两个字段（agent / models[agent]），选中一项时
+          {/* 执行器与模型：两级选择器（第一级执行器家族，第二级型号；`ModelPicker`）。
+              **只是呈现**：底下仍是 aiStore 的两个字段（agent / models[agent]），选中一项时
               各写各的，切回另一个 Agent 时它自己的模型记忆还在。
-              只有一项可选时不摆一个选不动的选择器：**但那一项写的是什么仍要
-              看得见**，退成一行静态文字。连模型名都没有（跟随 CLI 默认）时整块
-              不出现——执行器是谁，工具行的胶囊上已经写着了 */}
-          {pairs.length > 1 ? (
+              只有一项可选时不摆一个选不动的选择器：**但那一项写的是什么仍要看得见**，
+              退成一行静态文字。连模型名都没有（跟随 CLI 默认）时整块不出现——执行器是谁，
+              工具行的胶囊上已经写着了 */}
+          {optionCount > 1 ? (
             <div data-ai-agent-model="select" className="flex min-w-0 items-center gap-2">
               <span className="shrink-0 text-xs text-ink-2">{ai('panel.agentModel')}</span>
-              <Select
-                className="min-w-0 flex-1"
-                ariaLabel={ai('panel.agentModel')}
-                value={currentPair}
-                onChange={(v) => {
-                  const [id, m] = splitPair(v)
-                  useAiStore.getState().setAgent(id)
-                  if (m) useAiStore.getState().setModel(id, m)
-                }}
-                options={pairs}
-              />
+              <ModelPicker usable={usable} active={active ?? ''} model={model} />
             </div>
           ) : (
             cur &&
             model && (
               <div data-ai-agent-model="static" className="flex min-w-0 items-center gap-2">
                 <span className="shrink-0 text-xs text-ink-2">{ai('panel.agentModel')}</span>
-                <span className="min-w-0 flex-1 truncate text-xs text-ink" title={model}>
-                  {`${cur.display_name} · ${model}`}
+                <span className="flex min-w-0 flex-1 items-center gap-1.5 text-xs text-ink" title={model}>
+                  <FamilyIcon iconKey={cur.icon_key} />
+                  <span className="truncate">{`${cur.display_name} · ${modelLabel(cur, model)}`}</span>
                 </span>
               </div>
             )

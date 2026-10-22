@@ -8,7 +8,9 @@ account.`，用户在面板里只能看到一个不能用的下拉项。
 `tests/test_ai_agents.py`；这里盯的是 capabilities 这层的输出。
 """
 
+import json
 import os
+import sys
 
 import pytest
 
@@ -86,6 +88,121 @@ def test_broken_config_does_not_break_the_panel(tmp_path, monkeypatch):
     caps = _codex_caps(tmp_path, monkeypatch, "model = 这不是合法 TOML\n[[[")
     assert caps["installed"] is True
     assert caps["models"] == []  # 退化解析取不到带引号的值
+
+
+def _level(effort):
+    return {"effort": effort, "description": f"{effort} desc"}
+
+
+def _write_cache(home, models):
+    (home / "models_cache.json").write_text(
+        json.dumps(
+            {"fetched_at": "2026-10-22T00:00:00Z", "client_version": "0.163.0", "models": models}
+        ),
+        encoding="utf-8",
+    )
+
+
+def _cache_model(slug, *, visibility="list", priority=1, levels=("low", "medium", "high"), **extra):
+    return {
+        "slug": slug,
+        "display_name": slug.upper(),
+        "description": f"about {slug}",
+        "visibility": visibility,
+        "priority": priority,
+        "default_reasoning_level": "medium",
+        "supported_reasoning_levels": [_level(e) for e in levels],
+        **extra,
+    }
+
+
+def test_catalog_adds_listed_models_after_the_config_model(tmp_path, monkeypatch):
+    """models_cache.json 里 visibility=list 的型号并入清单：config 当前模型在首位且是默认，
+    hide 的不列，其余按 priority 升序；每个型号带自己的显示名与强度档位。"""
+    _write_cache(
+        tmp_path,
+        [
+            _cache_model("b-model", priority=5, levels=("low", "medium")),
+            _cache_model("hidden", visibility="hide", priority=0),
+            _cache_model(
+                "a-model",
+                priority=2,
+                levels=("low", "xhigh", "ultra"),
+                default_reasoning_level="low",
+            ),
+            _cache_model("cfg-model", priority=9),
+        ],
+    )
+    caps = _codex_caps(
+        tmp_path, monkeypatch, 'model = "cfg-model"\nmodel_reasoning_effort = "high"\n'
+    )
+    assert caps["models"] == ["cfg-model", "a-model", "b-model"]
+    assert caps["default_model"] == "cfg-model"
+    by_id = {d["id"]: d for d in caps["model_details"]}
+    assert list(by_id) == caps["models"]  # 与 models 并行
+    assert by_id["a-model"] == {
+        "id": "a-model",
+        "display_name": "A-MODEL",
+        "description": "about a-model",
+        "efforts": ["low", "xhigh", "ultra"],
+        "default_effort": "low",
+    }
+    assert by_id["b-model"]["efforts"] == ["low", "medium"]
+    # Agent 级档位是并集（旧前端与 prunePrefs 用），不丢 xhigh / ultra
+    assert {"xhigh", "ultra", "medium"} <= set(caps["efforts"])
+
+
+def test_config_model_missing_from_catalog_still_listed_without_levels(tmp_path, monkeypatch):
+    _write_cache(tmp_path, [_cache_model("x")])
+    caps = _codex_caps(tmp_path, monkeypatch, 'model = "mine"\n')
+    d = {d["id"]: d for d in caps["model_details"]}["mine"]
+    assert d["display_name"] == "mine" and d["efforts"] == [] and d["default_effort"] is None
+
+
+def test_catalog_works_without_config_toml(tmp_path, monkeypatch):
+    _write_cache(tmp_path, [_cache_model("only")])
+    caps = _codex_caps(tmp_path, monkeypatch)
+    assert caps["models"] == ["only"]
+    assert caps["default_model"] is None  # 默认仍是 CLI 自己的，不替它猜
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        None,  # 缺失
+        "{不是 json",
+        "[]",
+        '{"models": "nope"}',
+        '{"models": [1, "x", null, {"slug": 3}, {"visibility": "list"}]}',
+        '{"models": [{"slug": "ok", "visibility": "list", "supported_reasoning_levels": 7}]}',
+    ],
+)
+def test_bad_cache_degrades_to_config_only(tmp_path, monkeypatch, content):
+    if content is not None:
+        (tmp_path / "models_cache.json").write_text(content, encoding="utf-8")
+    caps = _codex_caps(tmp_path, monkeypatch, 'model = "cfg"\n')
+    assert caps["installed"] is True
+    ids = caps["models"]
+    assert ids[0] == "cfg"
+    assert set(ids) <= {"cfg", "ok"}  # 坏条目被丢，好条目（若有）仍在，不报错
+
+
+def test_catalog_survives_without_tomllib(tmp_path, monkeypatch):
+    """py3.10 没有 tomllib：config 走逐行退化解析，目录缓存（JSON）照常并入。"""
+    monkeypatch.setitem(sys.modules, "tomllib", None)  # import tomllib -> ImportError
+    _write_cache(tmp_path, [_cache_model("cat")])
+    caps = _codex_caps(tmp_path, monkeypatch, 'model = "cfg"\nmodel_reasoning_effort = "low"\n')
+    assert caps["models"] == ["cfg", "cat"]
+    assert caps["default_model"] == "cfg"
+    assert caps["default_effort"] == "low"
+
+
+def test_claude_models_carry_display_names(tmp_path, monkeypatch):
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path))
+    caps = _agent(ai_bridge.capabilities(refresh=True), "claude")
+    assert [d["id"] for d in caps["model_details"]] == caps["models"]
+    assert [d["display_name"] for d in caps["model_details"]] == ["Sonnet", "Opus", "Haiku"]
+    assert all(d["efforts"] == [] for d in caps["model_details"])
 
 
 def test_claude_side_reports_no_effort_switch(tmp_path, monkeypatch):

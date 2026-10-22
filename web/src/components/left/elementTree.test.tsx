@@ -515,3 +515,20 @@ describe('选中项滚入视野与折叠中的子树', () => {
     }
   })
 })
+
+describe('存盘后脚本又改过这张图（ADR 0139 §八）', () => {
+  it('manifest 报 modified_after_save 时搜索行里出现一枚胶囊，悬停给出原因', async () => {
+    seedExactRender(panel, { ...manifest, modified_after_save: true } as never)
+    await mount()
+    const chip = host.querySelector('[data-modified-after-save]') as HTMLElement
+    expect(chip).not.toBeNull()
+    expect(chip.getAttribute('role')).toBe('note')
+    expect(chip.textContent).toMatch(/与存盘文件不同|Differs from the saved file/)
+    expect(chip.getAttribute('title')).toMatch(/保存这张图之后|after saving it/)
+  })
+
+  it('不报时没有胶囊', async () => {
+    await mount()
+    expect(host.querySelector('[data-modified-after-save]')).toBeNull()
+  })
+})

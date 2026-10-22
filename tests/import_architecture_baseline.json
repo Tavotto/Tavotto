@@ -242,6 +242,12 @@
     },
     {
       "from": "tavotto/engine/worker.py",
+      "to": "tavotto/engine/texdiag.py",
+      "scope": "module",
+      "via": "bridgeboot.load_engine_modules(str(HERE), _ENGINE_MODULES)"
+    },
+    {
+      "from": "tavotto/engine/worker.py",
       "to": "tavotto/engine/writetripwire.py",
       "scope": "module",
       "via": "bridgeboot.load_engine_modules(str(HERE), _ENGINE_MODULES)"

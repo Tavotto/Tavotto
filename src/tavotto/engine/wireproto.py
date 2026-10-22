@@ -400,6 +400,9 @@ class V1Handler:
             raise
         except figcapture.ArtifactContextError as exc:
             raise ProtocolError(exc.code, str(exc), extra=exc.params) from exc
+        except figcapture.ExportRasterTooLarge as exc:
+            # 调用方的请求太大，重试多少次都一样：不重试，也不是 internal
+            raise ProtocolError(exc.code, str(exc), extra=exc.params) from exc
         except Exception as exc:  # noqa: BLE001
             fatal = fatal_error_of(exc)
             if fatal is not None:

@@ -730,6 +730,7 @@ def _worker_error_payload(exc, stage: str = "", *, figure_snapshot_invalidation=
         *engine_pool.INPUT_ERROR_CODES,
         engine_pool.ARGUMENTS_ERROR_CODE,
         *engine_texdiag.ERROR_CODES,
+        engine_figcapture.EXPORT_RASTER_TOO_LARGE_CODE,
     ):
         # 脚本要输入（ADR 0099：提示原文 + 为什么没人能答，T08）/ 参数解析器退出（T03：个数与类别）：
         # 界面按 code 翻译，字段由错误转换合同 `pool.recovery_params` 统一给出（探测与准备会话同一份）
@@ -7776,6 +7777,37 @@ class WriteBackFormatError(RuntimeError):
         self.format = fmt
 
 
+class WriteBackForeignFileError(WriteBackFormatError):
+    """要写的文件不是这张图自己 savefig 出来的（同一 stem 下另一张图写的，`panel.png` 甲 / `panel.pdf` 乙）。
+    拿甲去覆盖乙的产物是丢用户数据——拒绝，原件零改动。是 `WriteBackFormatError` 的子类，沿用它的全部
+    捕获点；响应在 `_write_back_error_response` 里先于父类判。"""
+
+    def __init__(self, name: str) -> None:
+        RuntimeError.__init__(self, f"{name} 不是这张图自己保存的文件，写回不会覆盖它")
+        self.format = ""
+        self.name = name
+
+
+def _own_write_back_targets(worker, stem: str, src: Path, targets: list[Path]) -> list[Path]:
+    """写回目标里去掉**另一张捕获图**的原件（它在这次运行里写的文件，热会话的 build 描述符）。
+
+    主语是「别的图写的」，不是「这张图没存过的格式」：磁盘上与它同名、但这次运行里没有任何图写过的文件
+    （手工导出 / 旧版本脚本留下的）照旧是写回目标。`src` 本身是别的图的原件 → `WriteBackForeignFileError`。"""
+    root = Path(getattr(worker, "figures_dir", None) or src.parent)
+    foreign = set()
+    for d in getattr(worker, "last_build_descriptors", None) or []:
+        art = d.get("original_artifact")
+        if d.get("stem") != stem and art:
+            foreign.add(os.path.normcase(os.path.abspath(root / art)))
+
+    def is_foreign(p: Path) -> bool:
+        return os.path.normcase(os.path.abspath(p)) in foreign
+
+    if is_foreign(src):
+        raise WriteBackForeignFileError(src.name)
+    return [p for p in targets if not is_foreign(p)]
+
+
 def _write_back_format_error(src: Path) -> WriteBackFormatError | None:
     """写回的目标是 `src` 同名的 .pdf / .png（`WRITE_BACK_EXT`）。`src` 自己不在其中时，画布上这张
     一个字节都不会变——以前会报成功、记下基线（JPEG 一直如此；#534 让 TIFF 也走到这里）。
@@ -8261,6 +8293,9 @@ def _write_source_files(
     warnings: list[str] = []
     try:
         resp = fresh.override(stem, patches)
+        # 同一 stem 下别的图写的文件不是写回目标：按这次全量重放（一次性 worker 刚 build）的描述符收窄，
+        # 在任何临时文件产生之前
+        targets = _own_write_back_targets(fresh, stem, src, targets)
         for w in resp.get("warnings") or []:
             if w not in warnings:
                 warnings.append(str(w))
@@ -8498,6 +8533,14 @@ def _write_back_error_response(exc):
                 "updated": exc.updated,
                 "rolled_back": exc.rolled_back,
                 "rollback_failed": exc.rollback_failed,
+            }
+        ), 409
+    if isinstance(exc, WriteBackForeignFileError):
+        return jsonify(
+            {
+                "error": str(exc),
+                "code": "write_back_foreign_file",
+                "params": {"file": exc.name},
             }
         ), 409
     if isinstance(exc, WriteBackFormatError):

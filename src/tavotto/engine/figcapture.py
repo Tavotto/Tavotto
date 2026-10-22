@@ -21,7 +21,8 @@ worker 能让症状消失，但两份代码迟早分叉，而分叉的表现正�
   `pad_inches` / `dpi` / `transparent` / 底色 / 格式）按 matplotlib 自己的解析顺序
   记成 JSON（`savefig_calls` 进描述符，见函数 docstring）；
 * `collect_pyplot_figures()` —— 脚本跑完之后还活着的 pyplot Figure 怎么补进
-  捕获表（去重、命名、保序）；
+  捕获表（去重、命名、保序）；`adopt_displaced_writers()` —— 写了文件却因 stem 被别的图持有而没认领的图
+  （在它之前调用）；
 * `install_colorbar_capture()` —— 原样调用 matplotlib，记下手动 `cax=` 的显式 `ax` 宿主；
 * `install_relative_read_fallback()` —— 相对路径**只读**回退（见下）；
 * `remap_target()` / `install_input_remap()` / `missing_input_of()` —— 数据找不到时用户指认的
@@ -492,6 +493,47 @@ def preview_invalid(out_dir, stem: str) -> bool:
     return os.path.exists(_invalid_marker(out_dir, stem))
 
 
+#: worker 直出位图（`figsession.do_export` → `Figure.savefig`）的像素预算——**唯一出处**。
+#:
+#: 判据的主语是「即将分配的那块 Agg 栅格」的像素数（宽×高，bbox_inches 生效后的真实尺寸），
+#: 不是 figsize×dpi 的名义值。Agg 整幅 RGBA（4 B/px）一次分配，PNG / TIFF / JPEG 的编码器再各拷一份，
+#: 峰值约 3 倍：1 亿像素 ≈ 400 MB 栅格、峰值约 1.2 GB——worker 在这个量级仍能正常收尾，再往上
+#: 被系统 OOM 杀掉的风险就由「说不清的 session_dead」变成真实概率。
+#: 这与 RenderCore 最终导出的预算（`rendercore/renderchild.py` 的 `DEFAULT_MAX_PIXELS` /
+#: `DEFAULT_MAX_TOTAL_PIXELS`）是**两条路径、两种内存模型**：那边 PDFium 条带栅格、整页不落内存，
+#: 所以上限更高；这边没有条带，互不替代。超预算一律报错，**不降 dpi、不缩尺寸、不写文件**。
+EXPORT_RASTER_TOO_LARGE_CODE = "export_raster_too_large"
+MAX_EXPORT_RASTER_PIXELS = 100_000_000
+#: 走 Agg 整幅栅格的格式（`savefig` 的 `format`，小写）；pdf / svg / eps / ps / pgf 是矢量，不在此列。
+RASTER_EXPORT_FORMATS = frozenset(
+    {"png", "tif", "tiff", "jpg", "jpeg", "webp", "bmp", "gif", "raw", "rgba"}
+)
+
+
+class ExportRasterTooLarge(ValueError):
+    """worker 直出的位图超过像素预算。`params` 是线格式里平铺进错误信封的字段（宽 / 高 / 上限）。"""
+
+    code = EXPORT_RASTER_TOO_LARGE_CODE
+
+    def __init__(self, width: int, height: int, max_pixels: int):
+        super().__init__(
+            f"位图导出 {width}×{height} 像素（{width * height} 个），超过上限 {max_pixels} 个像素；"
+            "请降低导出分辨率或缩小图幅"
+        )
+        self.params = {"width": width, "height": height, "max_pixels": max_pixels}
+
+
+def check_export_raster(fmt: str, width_px: int, height_px: int) -> None:
+    """位图格式且宽×高超预算 → `ExportRasterTooLarge`；其余原样放行。必须在分配栅格**之前**调用。
+
+    预算在调用时读模块常量（测试可调小；产品没有对外的调参入口）。
+    """
+    if str(fmt).lower() not in RASTER_EXPORT_FORMATS:
+        return
+    if int(width_px) * int(height_px) > MAX_EXPORT_RASTER_PIXELS:
+        raise ExportRasterTooLarge(int(width_px), int(height_px), MAX_EXPORT_RASTER_PIXELS)
+
+
 #: 失效标记都写不下去时的最后一道（`PREVIEW_POISONED_CODE`，规则 worker-protocol-and-lifecycle §预览失效四级）：
 #: 写预览的是 worker / native 子进程，读的是 app 进程——磁盘标记写不下去，worker 进程内的任何
 #: 内存标记读方都看不见。所以这一级由 **读方进程**自己记：app 侧收到该错误码（会话同时被判死）
@@ -902,19 +944,36 @@ def project_relative_stem(stem: object) -> bool:
     return ".." not in stem.replace("\\", "/").split("/")
 
 
-def find_original_artifact(project_root: str, stem: str, *, isfile=os.path.isfile) -> str | None:
+def find_original_artifact(
+    project_root: str, stem: str, *, isfile=os.path.isfile, formats=None
+) -> str | None:
     """项目根下 stem 的原始产物（相对路径，POSIX）；没有回 None。
 
     判据与 handoff 交接找产物是同一份（它现在就调这里）：只看项目根一层、
     按 `ARTIFACT_EXTS` 的顺序取第一个存在的。`isfile` 可注入是给测试与
     handoff 的 dry 场景用的。
+
+    `formats`（这张图自己 savefig 过的格式，取自它的调用表）给了就只认这些扩展名：同一 stem 下别的图写的
+    文件不是它的原件——`panel.png` 甲 / `panel.pdf` 乙时，甲的原件若按扩展名顺序取成 `panel.pdf`，写回就会
+    拿甲去覆盖乙的产物。不给（不知道它存过什么）= 旧判据。
     """
     if not project_relative_stem(stem):
         return None  # 先于任何拼接：UNC / 绝对 / 盘符 / `..` 的 stem 一个字节都不探
+    allowed = None if formats is None else {_norm_format(f) for f in formats if f}
     for ext in ARTIFACT_EXTS:
+        if allowed is not None and _norm_format(ext[1:]) not in allowed:
+            continue
         if isfile(os.path.join(project_root, stem + ext)):
             return stem + ext
     return None
+
+
+def saved_formats(calls) -> list[str] | None:
+    """调用表（`savefig_calls[stem]`）里出现过的格式；调用表是 None（没观察到）或空回 None = 不知道。"""
+    if not calls:
+        return None
+    out = [c.get("format") for c in calls if isinstance(c, dict) and c.get("format")]
+    return out or None
 
 
 @dataclasses.dataclass(frozen=True)
@@ -1640,7 +1699,20 @@ def savefig_verify_render(real_savefig, fig, fname, args, kwargs: dict) -> bool:
             kw["format"] = ext
         # tight 量包围盒失败在原生下同样会抛、文件不会写出：与 native 同源判失败（Codex #1141 r4306180020）。
         # 这里只决定**顶替**，持有者自己的保存不经验证，ADR 0098 的 frame_unavailable 报告不受影响
-        real_savefig(fig, io.BytesIO(), *args, **kw)
+        # 验证渲染是我们的动作、不是脚本改图（它发生在**另一张图**保存时）：用户可见的 `fig.stale` 与「存后被改过」的
+        # 私有标记都原样还回去。先还 stale（置 True 会经 `_StaleRecorder` 弄脏标记），再还标记
+        stale = getattr(fig, "stale", None)
+        dirty = getattr(fig, DIRTY_SINCE_SAVE, None)
+        try:
+            real_savefig(fig, io.BytesIO(), *args, **kw)
+        finally:
+            try:
+                if stale is not None:
+                    fig.stale = stale
+                if dirty is not None:
+                    setattr(fig, DIRTY_SINCE_SAVE, dirty)
+            except Exception:  # noqa: BLE001
+                pass
     except Exception:  # noqa: BLE001 —— 原生下这次保存会抛
         return False
     return True
@@ -1676,6 +1748,134 @@ def _content_only_failure(real_savefig, fname, args, kwargs: dict) -> bool:
         return savefig_verify_render(real_savefig, Figure(), fname, args, dict(kwargs))
     except Exception:  # noqa: BLE001
         return False
+
+
+#: 「这张图被观察到存过盘」的标记；与 `DIRTY_SINCE_SAVE` 一起判「存完之后脚本又改过它」（ADR 0139 §八 的告知）
+_SAVED_MARK = "_mm_saved_once"
+#: 最近一次保存之后，这张 Figure 是否被改过（私有记录，由 `_StaleRecorder` 写、`mark_saved` 清）
+DIRTY_SINCE_SAVE = "_mm_dirty_since_save"
+#: 记录包装之下的原 `stale_callback`（可能是 None，也可能是 pyplot 的 `_auto_draw_if_interactive`）
+_ORIG_STALE_CALLBACK = "_mm_orig_stale_callback"
+#: 已连上 `draw_event` 清标记回调的记号（只连一次）
+_DRAW_HOOK = "_mm_draw_hook_cid"
+#: 判过一次的结论（True = 存盘后被脚本改过）；只判一次——之后 Tavotto 自己的编辑也会让标记变 True
+MODIFIED_AFTER_SAVE = "_mm_modified_after_save"
+
+
+class _StaleRecorder:
+    """`Figure.stale_callback` 的透明包装：被以真值调用时在 Figure 上记 `DIRTY_SINCE_SAVE`，然后**原样**转调原回调。
+    不碰 `fig.stale` 的值，用户脚本观察到的 stale 与原生 matplotlib 完全一致。"""
+
+    def __init__(self, orig):
+        self.orig = orig
+
+    def __call__(self, artist, val):
+        if val:
+            try:
+                setattr(artist, DIRTY_SINCE_SAVE, True)
+            except Exception:  # noqa: BLE001 —— 记账尽力而为
+                pass
+        if self.orig is not None:
+            return self.orig(artist, val)
+        return None
+
+
+def _hook_draw_event(fig) -> None:
+    """连一个 `draw_event` 回调（只连一次）：Figure 每画完一次，把 `DIRTY_SINCE_SAVE` 清成 False。
+    draw 过程中 matplotlib 自己会多次置 stale（`Axes.apply_aspect` 等），那些噪声先弄脏标记、画完被这里清掉；
+    `draw_event` 在 `Figure.draw` 画完之后才发，回调注册表在 figure 上，`print_figure` 换临时 canvas 时照样触发
+    （matplotlib 3.11 实测）。闭包只持 weakref，不拖住 Figure。"""
+    if getattr(fig, _DRAW_HOOK, None) is not None:
+        return
+    import weakref
+
+    ref = weakref.ref(fig)
+
+    def _on_draw(_event):
+        f = ref()
+        if f is not None:
+            try:
+                setattr(f, DIRTY_SINCE_SAVE, False)
+            except Exception:  # noqa: BLE001
+                pass
+
+    try:
+        setattr(fig, _DRAW_HOOK, fig.canvas.mpl_connect("draw_event", _on_draw))
+    except Exception:  # noqa: BLE001 —— 连不上就退化成不清（只会多报，不抛）
+        pass
+
+
+def _unhook(fig) -> None:
+    """卸掉 `mark_saved` 装的两个钩子：`stale_callback` 若仍是我们的 `_StaleRecorder` 就还原成它记住的原回调
+    （用户换成自己的就不动），`draw_event` 回调断开并清掉记号。不抛。"""
+    try:
+        cb = getattr(fig, "stale_callback", None)
+        if isinstance(cb, _StaleRecorder):
+            fig.stale_callback = cb.orig
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        cid = getattr(fig, _DRAW_HOOK, None)
+        if cid is not None:
+            fig.canvas.mpl_disconnect(cid)
+            setattr(fig, _DRAW_HOOK, None)
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def mark_saved(fig) -> None:
+    """一次 savefig 记完账之后调用：把 `DIRTY_SINCE_SAVE` 清成 False，打上「存过盘」的标记，并保证 Figure 的
+    `stale_callback` 外面套着一层只记录的 `_StaleRecorder`（只套一次；重复保存不叠层）。
+
+    判据来自 matplotlib 自己的 stale 传播：`Artist.stale` setter 在值为 True 时调 `stale_callback(self, val)`，子 artist
+    经 `_stale_figure_callback` / `_stale_axes_callback` 把 `figure.stale = True` 一路传到 Figure，所以 Figure 的
+    回调在每次画面相关改动时都会被调。实测（matplotlib 3.11）：savefig 之后 `ax.set_title` / `line.set_color` /
+    `fig.set_size_inches` / `fig.text` / `ax.cla` 都触发（True）；只改 rcParams、`plt.close` 不触发。
+    `bbox_inches="tight"` 保存过程中的临时改动发生在本函数**之前**，不会误报。回调调用不看 stale 原值，
+    而 `print_figure` 收尾本来就把 stale 置 True，所以不需要（也不能）去清 `fig.stale`——
+    那会让存盘后读 `fig.stale` 的用户脚本在 Tavotto 下走不同分支。
+    语义与旧的「清 `stale`」一致：从**最后一次保存或最后一次重绘（`draw_event`）之后**被改过才算——存后脚本自己
+    `fig.canvas.draw()` 不报告；已知盲区：存后改了又重绘（`plt.pause`）一次，也不再报告。
+    **两个钩子只在脚本运行期存在**：`note_modified_after_save` 判定时一并卸掉，之后 Figure 与原生无异
+    （采纳检查 `figsession._require_artifact_figure` 看不到它们）；已判过的图不再装。
+    用户脚本若自己替换 `fig.stale_callback`：记录随之丢失（下次保存时重新套）；尽力而为、绝不抛错。
+    不额外渲染、不复制 Figure（ADR 0139 §八「不声称拥有保存瞬间的快照」——这里只报一个事实）。"""
+    if hasattr(fig, MODIFIED_AFTER_SAVE):
+        # 已经判过（例如 native 在 show 屏障判过、之后脚本又存盘）：钩子早已卸掉，不再装
+        try:
+            setattr(fig, _SAVED_MARK, True)
+        except Exception:  # noqa: BLE001
+            pass
+        return
+    try:
+        cb = getattr(fig, "stale_callback", None)
+        if not isinstance(cb, _StaleRecorder):
+            setattr(fig, _ORIG_STALE_CALLBACK, cb)
+            fig.stale_callback = _StaleRecorder(cb)
+        _hook_draw_event(fig)
+        setattr(fig, DIRTY_SINCE_SAVE, False)
+        setattr(fig, _SAVED_MARK, True)
+    except Exception:  # noqa: BLE001 —— 记账尽力而为，绝不影响用户的 savefig
+        pass
+
+
+def note_modified_after_save(capture: dict, capture_source: dict) -> list[str]:
+    """脚本跑完（或 native 第一次把图交出去）时，给存过盘、之后又被脚本改过的 savefig 图打上
+    `MODIFIED_AFTER_SAVE`；返回这些 stem。每张图只判一次：判过之后 Tavotto 自己的编辑同样会把标记置真，
+    再判就是把我们的改动算到脚本头上。三条入口在 `adopt_displaced_writers` 之后各调一次；manifest 读这个标记。"""
+    out = []
+    for stem, fig in capture.items():
+        if capture_source.get(stem) != SOURCE_SAVEFIG or not getattr(fig, _SAVED_MARK, False):
+            continue
+        _unhook(fig)  # 钩子只活到判定这一刻（不论这次是否新判、不论结论）
+        if not hasattr(fig, MODIFIED_AFTER_SAVE):
+            try:
+                setattr(fig, MODIFIED_AFTER_SAVE, bool(getattr(fig, DIRTY_SINCE_SAVE, False)))
+            except Exception:  # noqa: BLE001
+                continue
+        if getattr(fig, MODIFIED_AFTER_SAVE, False):
+            out.append(stem)
+    return out
 
 
 def savefig_verifier(real_savefig, fig, fname, args, kwargs: dict):
@@ -1859,7 +2059,61 @@ def note_savefig_writer(
         else:
             extras[stem] = list(mine[2])
     _trim_writers(entry, held)
+    _keep_displaced(entry, held)
     return takes
+
+
+def _keep_displaced(entry: dict, held) -> None:
+    """强引用「仍是本 stem 某个目标文件的最近写入者、却没持有 stem」的图（`entry["kept"]`）。
+
+    写入者表只握弱引用：`a.png` 甲 / `a.pdf` 乙、乙随后 `plt.close` 且出了作用域，乙就被回收——原生两个文件
+    都在，捕获里却只剩甲，乙**整张丢了**。留住它，脚本跑完由 `adopt_displaced_writers` 以自己的名字补进来。
+    有界：跟着 `_trim_writers`（每 stem 至多 `MAX_SAVEFIG_WRITERS` 个写入者），不再是最近写入者的立即放掉。"""
+    latest = {}
+    for ref in entry["files"].values():
+        fig = ref()
+        if fig is not None and fig is not held and id(fig) in entry["by"]:
+            latest.setdefault(id(fig), fig)
+    entry["kept"] = latest
+
+
+def adopt_displaced_writers(
+    writers: dict,
+    capture: dict,
+    capture_source: dict,
+    calls: dict,
+    extras: dict,
+    file_stems: dict | None = None,
+) -> list[str]:
+    """把「写了某个文件、因为 stem 已被别的图持有而没被认领」的图补进捕获表；返回新 stem（产出顺序）。
+
+    不同的图写同一 stem 的不同文件（`panel.png` 甲 / `panel.pdf` 乙）是两张图，不是同一张图的两种格式：
+    先认领者持有 `panel`（`note_savefig_writer` 的既有契约，不变），乙以 `fallback_stems` 的规则编号成
+    `panel-2`，来源仍是 savefig，带**它自己**的调用表（图幅 / 原件格式按它自己的保存定，ADR 0098）。
+    已被认领的（同一张图也持有别的 stem，或 pyplot 兜底已收）按 `claimed_ids` 跳过。三条入口在 pyplot 兜底
+    **之前**各调一次，同一个脚本在 safe / native / 浏览器产出同样的 stem。`file_stems`（给了就填）记新 stem →
+    它写的文件用的 stem（`panel-2` → `panel`），找原件用（`find_original_artifact(formats=…)`）。"""
+    added: list[str] = []
+    for stem, entry in list(writers.items()):
+        for key, fig in list((entry.get("kept") or {}).items()):
+            if id(fig) in claimed_ids(capture):
+                continue
+            mine = entry["by"].get(key)
+            if mine is None or mine[0]() is not fig:
+                continue
+            name = fallback_stems(capture.keys(), stem, 1)[0]  # stem 已被持有 → `stem-2`、`stem-3`…
+            capture[name] = fig
+            capture_source[name] = SOURCE_SAVEFIG
+            if file_stems is not None:
+                file_stems[name] = stem
+            if mine[1] is None:
+                calls[name] = None
+                extras.pop(name, None)
+            else:
+                calls[name] = list(mine[1])
+                extras[name] = list(mine[2])
+            added.append(name)
+    return added
 
 
 def _record_writer_call(mine: list, call: dict | None, extra) -> None:

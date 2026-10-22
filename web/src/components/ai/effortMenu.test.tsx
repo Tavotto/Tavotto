@@ -174,13 +174,33 @@ describe('开集与回退', () => {
     expect(turbo.querySelectorAll('span.text-ink-3').length).toBe(1)
   })
 
-  it('记忆里的档位已不在清单里：回落到第一档，菜单里选中的是它', async () => {
+  it('记忆里的档位已不在清单里：回落到默认档（2026-10-22 起；原先是第一档），菜单里选中的是它', async () => {
     useAiStore.setState({ caps: capsOf(codexSix), agent: 'codex', efforts: { codex: '不存在的档位' } })
     await mount()
-    expect(pill()!.textContent).toBe('推理 最低')
+    expect(pill()!.textContent).toBe('推理 中')
     await openByPointer()
-    expect(items()[0].getAttribute('aria-checked')).toBe('true')
-    expect(items().filter((r) => r.getAttribute('aria-checked') === 'true')).toHaveLength(1)
+    const checked = items().filter((r) => r.getAttribute('aria-checked') === 'true')
+    expect(checked.map((r) => r.dataset.aiEffortItem)).toEqual(['medium'])
+  })
+
+  it('档位跟着型号走：菜单只列当前型号支持的档位，「默认」小标挂在该型号自己的默认档上', async () => {
+    const perModel = agentCaps({
+      models: ['big', 'small'],
+      default_model: 'big',
+      efforts: ['low', 'medium', 'high', 'ultra'],
+      default_effort: 'medium',
+      model_details: [
+        { id: 'big', display_name: 'Big', description: '', efforts: ['low', 'medium', 'high', 'ultra'], default_effort: 'high' },
+        { id: 'small', display_name: 'Small', description: '', efforts: ['low', 'medium'], default_effort: 'low' },
+      ],
+    })
+    useAiStore.setState({ caps: capsOf(perModel), agent: 'codex', models: { codex: 'small' }, efforts: { codex: 'ultra' } })
+    await mount()
+    // 记着 ultra，但 small 不支持 -> small 自己的默认档 low
+    expect(pill()!.textContent).toBe('推理 低')
+    await openByPointer()
+    expect(items().map((r) => r.dataset.aiEffortItem)).toEqual(['low', 'medium'])
+    expect(items().filter((r) => r.textContent?.includes('默认')).map((r) => r.dataset.aiEffortItem)).toEqual(['low'])
   })
 
   it('只有一档：菜单一行，已选中', async () => {

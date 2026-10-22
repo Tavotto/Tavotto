@@ -53,7 +53,7 @@ describe('图例', () => {
     return x >= ax - 0.01 && y >= ay - 0.01 && x + w <= ax + aw + 0.01 && y + h <= ay + ah + 0.01
   }
 
-  it('脚本里的原位置在坐标轴框里（loc="lower right"）', () => {
+  it('脚本里的原位置在坐标轴框里（loc=(0.26, 0.10)）', () => {
     expect(inside([0, 0])).toBe(true)
   })
 

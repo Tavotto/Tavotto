@@ -206,6 +206,8 @@
     "hide": "隐藏（可恢复）",
     "isolateBranch": "只看此分支",
     "isolated": "只看：{{label}}",
+    "modifiedAfterSave": "与存盘文件不同",
+    "modifiedAfterSaveHint": "脚本保存这张图之后又改动了它。这里编辑的是脚本跑完时的样子，可能与磁盘上的文件不一样。",
     "listLabel": "图内元素",
     "load": "加载元素清单",
     "lock": "锁定（画布点击跳过）",

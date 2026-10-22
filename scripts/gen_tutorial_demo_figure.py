@@ -47,7 +47,7 @@ SNIPPET: list[list[str]] = [
     ],
     [
         'ax.set_title("Reaction kinetics at 25 °C")',
-        'ax.legend(loc="lower right")',
+        "ax.legend(loc=(0.26, 0.10), fontsize=7.2)",
     ],
 ]
 
@@ -233,9 +233,9 @@ def _mpl_minor() -> str:
 
 
 # 版本不同时怎么比（实测 3.10 vs 3.11：文字外框的宽高、图例的行高随字形度量变几个 pt，
-# 但文字外框的锚点（按对齐方式：顶边 / 中心……）、图例的**右下角**（脚本 loc="lower right"）两版一致）：
+# 但文字外框的锚点（按对齐方式：顶边 / 中心……）、图例的**左下角**（脚本 loc=(x, y) 元组钉的那一角）两版一致）：
 #   * 文字 → 比 matplotlib 实际的对齐锚点 `anchor`（严格容差），外框放过；
-#   * 图例外框 → 比右边与下边（锚定的那个角），宽高放过；
+#   * 图例外框 → 比左边与下边（锚定的那个角），宽高放过；
 #   * 图例条目内部（每行外框、句柄位置）→ 行距随字高变，用有界的 METRIC_TOLERANCE_PT；
 #   * 其余（坐标轴框、曲线、刻度位置、标题锚点、文字内容、颜色）照样严格。
 METRIC_TOLERANCE_PT = 3.0
@@ -265,9 +265,10 @@ def _loose_box(want: list, got: list, path: str) -> list[str] | None:
     if len(want) != 4 or len(got) != 4:
         return None
     if path == "$.legend.box":
-        return _num_diff(
-            want[0] + want[2], got[0] + got[2], f"{path} 右边", TOLERANCE_PT
-        ) + _num_diff(want[1] + want[3], got[1] + got[3], f"{path} 下边", TOLERANCE_PT)
+        # 脚本里 `loc=(x, y)` 元组钉的是图例左下角：跨版本只有左边与下边不随字宽变
+        return _num_diff(want[0], got[0], f"{path} 左边", TOLERANCE_PT) + _num_diff(
+            want[1] + want[3], got[1] + got[3], f"{path} 下边", TOLERANCE_PT
+        )
     # 文字外框：版本不同时不比（宽高、甚至位置都随字形度量变）；由同一条目里的 `anchor` 严格比
     return None
 

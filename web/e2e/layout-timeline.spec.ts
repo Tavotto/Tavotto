@@ -801,7 +801,7 @@ for (const locale of ['zh-CN', 'en-US']) {
           return { x: r.x, y: r.y, w: r.width, h: r.height }
         }
         const status = root.querySelector('[data-panel-engine-status]')!
-        // 身份头路径行右端的状态胶囊（「n 个问题 ›」随检查结果到来）在固定高的那一行里出现 / 消失，
+        // 身份头路径行右端的状态胶囊（如「已锁定」）在固定高的那一行里出现 / 消失，
         // 不挪动任何东西；这把尺子量的是属性表本身（2026-10-07 §9.2 身份头固定两行）
         const controls = [...root.querySelectorAll('button, input')].filter((el) => !el.closest('[data-identity]'))
         return { status: rect(status), controls: controls.map(rect) }

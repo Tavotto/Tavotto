@@ -32,6 +32,16 @@ def test_generated_figure_matches_the_shipped_script():
     assert gen.check() == []
 
 
+def test_cross_version_legend_box_is_pinned_at_the_tuple_loc_corner():
+    """跨 Matplotlib 小版本：`loc=(x, y)` 钉的是图例左下角，字宽变了右边会动、左边与下边不动。"""
+    gen = _gen()
+    want = [100.0, 200.0, 104.0, 26.0]
+    wider = [100.0, 200.0, 110.0, 26.0]  # 字宽变宽：右边外扩 6pt，左下角不动
+    assert gen._diff(want, wider, "$.legend.box", loose=True) == []
+    moved = [106.0, 200.0, 104.0, 26.0]  # 左边真的挪了：脚本变了
+    assert gen._diff(want, moved, "$.legend.box", loose=True) != []
+
+
 def test_measurement_ignores_rcparams_left_by_earlier_code():
     """同一进程里别的代码改过的 rcParams 不漏进测量，测完调用方的 rcParams 原样还回去。
 
@@ -73,7 +83,7 @@ def test_other_matplotlib_versions_only_loosen_glyph_metrics():
     """生成物来自另一版 matplotlib 时：只放过字形度量带来的变化，位置照样比。
 
     CI 的 Python 3.10 腿只装得上 matplotlib 3.10：文字外框的宽高、图例行高与本机 3.11 差几个 pt，
-    但文字外框的中心、图例的右下角（loc="lower right"）两版一致——那才是「脚本有没有变」的证据。
+    但文字外框的中心、图例的左下角（loc=(x, y) 元组）两版一致——那才是「脚本有没有变」的证据。
     """
     gen = _gen()
     built = gen.build()
@@ -141,16 +151,16 @@ def test_snippet_lines_are_verbatim_script_lines_in_order():
 
 
 def test_figure_describes_the_tutorial_story():
-    """教程讲的三件事落在真实的图上：标题字号是脚本的 9 pt、图例初始压在曲线上。"""
+    """教程讲的三件事落在真实的图上：标题字号是脚本的 9 pt、图例比正文小、在轴框下半。"""
     fig = json.loads(_gen().OUT.read_text(encoding="utf-8"))
     assert fig["title"]["text"] == "Reaction kinetics at 25 °C"
     assert fig["title"]["sizePt"] == 9.0
     assert [e["text"].split(" ")[0] for e in fig["legend"]["entries"]] == ["Catalyst", "Blank"]
+    # 图例比正文小一号（2026-10-22 起 7.2 pt = 9 pt × 0.8）、略抬离底边，留出更大的操作空地；
+    # 它仍落在坐标轴框的下半、紧挨着 Blank 曲线（挪到哪都会碰到曲线，教程说「换个位置」）
+    assert all(e["sizePt"] == 7.2 for e in fig["legend"]["entries"])
     lx, ly, lw, lh = fig["legend"]["box"]
-    inside = [
-        (x, y)
-        for line in fig["lines"]
-        for x, y in line["points"]
-        if lx <= x <= lx + lw and ly <= y <= ly + lh
-    ]
-    assert inside, "脚本里 loc='lower right' 的图例应当压着曲线起始段——教程第二步的理由"
+    ax, ay, aw, ah = fig["axes"]["box"]
+    assert ax <= lx and lx + lw <= ax + aw and ay + ah / 2 <= ly and ly + lh <= ay + ah, (
+        "图例应在坐标轴框的下半"
+    )
