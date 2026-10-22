@@ -9,6 +9,8 @@ export interface SelectOption<T extends string = string> {
   value: T
   label: ReactNode
   hint?: string
+  /** 选项前的小图标（下拉里和收起的触发器里都显示）；不带 = 行为不变 */
+  icon?: ReactNode
   /** 分组标题；相邻且同名的选项归一组，组标题不可选。全部不带 group = 平铺 */
   group?: string
 }
@@ -114,7 +116,16 @@ export function Select<T extends string>({
                   <RS.ItemIndicator className="absolute left-1.5 flex items-center">
                     <Check size={ICON_SIZE.sm} />
                   </RS.ItemIndicator>
-                  <RS.ItemText>{opt.label}</RS.ItemText>
+                  <RS.ItemText>
+                    {opt.icon ? (
+                      <span className="flex items-center gap-1.5">
+                        {opt.icon}
+                        {opt.label}
+                      </span>
+                    ) : (
+                      opt.label
+                    )}
+                  </RS.ItemText>
                   {/* 说明是正文（中英混排的一句话），不用等宽字：等宽字体里的中文字宽与字形都不对；数字走 tabular-nums 照样对得齐 */}
                   {opt.hint && <span className="ml-auto pl-2 text-xs tabular-nums text-ink-3">{opt.hint}</span>}
                 </RS.Item>

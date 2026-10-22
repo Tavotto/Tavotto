@@ -14,7 +14,8 @@
         "deepseek-flash"
       ],
       "source": "PR #1323 已核实端点；key 页 openclaw docs/providers/deepseek.md",
-      "oauth": null
+      "oauth": null,
+      "icon_key": "deepseek"
     },
     {
       "id": "deepseek-codex",
@@ -30,7 +31,8 @@
         "deepseek-v4-pro"
       ],
       "oauth": null,
-      "source": "协调者转达 #1323 评审：DeepSeek 官方支持 Codex Responses"
+      "source": "协调者转达 #1323 评审：DeepSeek 官方支持 Codex Responses",
+      "icon_key": "deepseek"
     },
     {
       "id": "moonshot",
@@ -45,7 +47,8 @@
         "kimi-k2.7-code"
       ],
       "source": "PR #1323 已核实端点",
-      "oauth": null
+      "oauth": null,
+      "icon_key": "moonshot"
     },
     {
       "id": "kimi-code",
@@ -60,7 +63,8 @@
         "kimi-for-coding"
       ],
       "source": "openclaw docs/providers/moonshot.md#L196",
-      "oauth": null
+      "oauth": null,
+      "icon_key": "kimi"
     },
     {
       "id": "zhipu",
@@ -75,7 +79,8 @@
         "glm-5.2"
       ],
       "source": "PR #1323 已核实端点",
-      "oauth": null
+      "oauth": null,
+      "icon_key": "zhipu"
     },
     {
       "id": "minimax",
@@ -90,7 +95,8 @@
         "MiniMax-M2.7"
       ],
       "source": "PR #1323 已核实端点；海外同构见 openclaw docs/providers/minimax.md",
-      "oauth": null
+      "oauth": null,
+      "icon_key": "minimax"
     },
     {
       "id": "dashscope",
@@ -105,7 +111,8 @@
         "qwen3.8-max"
       ],
       "source": "PR #1323 已核实端点",
-      "oauth": null
+      "oauth": null,
+      "icon_key": "bailian"
     },
     {
       "id": "dashscope-coding",
@@ -120,7 +127,8 @@
         "qwen3.7-plus"
       ],
       "source": "PR #1323 已核实端点",
-      "oauth": null
+      "oauth": null,
+      "icon_key": "bailian"
     },
     {
       "id": "anthropic",
@@ -137,7 +145,8 @@
         "haiku"
       ],
       "source": "openclaw docs/providers/anthropic.md",
-      "oauth": null
+      "oauth": null,
+      "icon_key": "anthropic"
     },
     {
       "id": "openai",
@@ -151,7 +160,8 @@
       "key_hint_key": "vendorKey.officialLogin",
       "models_hint": [],
       "source": "openclaw docs/providers/openai.md",
-      "oauth": null
+      "oauth": null,
+      "icon_key": "openai"
     },
     {
       "id": "minimax-global",
@@ -166,7 +176,8 @@
         "MiniMax-M2.7"
       ],
       "source": "openclaw docs/providers/minimax.md#L136",
-      "oauth": null
+      "oauth": null,
+      "icon_key": "minimax"
     },
     {
       "id": "zai",
@@ -182,7 +193,8 @@
         "glm-5.2"
       ],
       "source": "openclaw docs/providers/zai.md#L91",
-      "oauth": null
+      "oauth": null,
+      "icon_key": "zai"
     },
     {
       "id": "synthetic",
@@ -196,7 +208,8 @@
         "hf:MiniMaxAI/MiniMax-M3"
       ],
       "source": "openclaw docs/providers/synthetic.md#L18",
-      "oauth": null
+      "oauth": null,
+      "icon_key": "synthetic"
     },
     {
       "id": "vercel-ai-gateway",
@@ -210,7 +223,8 @@
         "anthropic/claude-opus-4.6"
       ],
       "source": "openclaw docs/providers/vercel-ai-gateway.md#L17",
-      "oauth": null
+      "oauth": null,
+      "icon_key": "vercel"
     },
     {
       "id": "opencode-go",
@@ -223,7 +237,8 @@
       "key_hint_key": "vendorKey.opencodeGo",
       "models_hint": [],
       "source": "openclaw docs/providers/opencode-go.md#L115",
-      "oauth": null
+      "oauth": null,
+      "icon_key": "opencode"
     },
     {
       "id": "custom-claude",
@@ -235,7 +250,8 @@
       "key_url": "",
       "models_hint": [],
       "source": "Tavotto 内置：用户自填",
-      "oauth": null
+      "oauth": null,
+      "icon_key": "custom"
     },
     {
       "id": "custom-codex",
@@ -248,7 +264,8 @@
       "key_url": "",
       "models_hint": [],
       "source": "Tavotto 内置：用户自填",
-      "oauth": null
+      "oauth": null,
+      "icon_key": "custom"
     }
   ]
 }

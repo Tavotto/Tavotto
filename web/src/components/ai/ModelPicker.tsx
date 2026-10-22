@@ -1,6 +1,7 @@
 import type { ReactElement } from 'react'
 import { useTranslation } from 'react-i18next'
 import { AgentIcon } from '@/components/settings/AgentIcon'
+import { VendorIcon } from '@/components/settings/VendorIcon'
 import { ChevronDown } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { Menu, MenuItem, MenuRadioGroup, MenuRadioItem, MenuSub } from '@/components/ui/Menu'
@@ -20,17 +21,29 @@ import { modelDetail, useAiStore } from '@/store/aiStore'
  */
 const ai = (key: string, opts?: Record<string, unknown>) => translate(key, { ns: 'ai', ...opts })
 
-export const FamilyIcon = ({ iconKey }: { iconKey: string }) => (
-  <AgentIcon iconKey={iconKey} size={ICON_SIZE.sm} glyphSize={ICON_SIZE.sm} />
-)
+/**
+ * 一个执行器的图标。当它**当前走第三方接口**时换成该厂商的图标（接口行不挤、不叠角标）：执行器名仍写在
+ * 旁边的文字里（「Claude Code · deepseek-v4-pro」），所以图标只回答「现在接的是谁」，不丢「是哪个执行器」。
+ * `vendorKey` 为 `undefined` = 用 CLI 自己的登录态，显示执行器图标。
+ */
+export const FamilyIcon = ({ iconKey, vendorKey }: { iconKey: string; vendorKey?: string }) =>
+  vendorKey ? (
+    <VendorIcon iconKey={vendorKey} size={ICON_SIZE.sm} glyphSize={ICON_SIZE.sm} />
+  ) : (
+    <AgentIcon iconKey={iconKey} size={ICON_SIZE.sm} glyphSize={ICON_SIZE.sm} />
+  )
+
+/** 这个执行器当前接管它的第三方接口的图标键；没有接管（官方登录态）→ undefined */
+const vendorKeyOf = (a: AiAgentCaps) => (a.endpoint ? (a.endpoint.icon_key ?? 'custom') : undefined)
 
 /** `MenuItem` / `MenuSub` 要的是组件类型：按 key 缓存，别每次渲染造一个新类型（会让图标反复卸载） */
 const iconTypes = new Map<string, () => ReactElement>()
-const iconFor = (iconKey: string) => {
-  let c = iconTypes.get(iconKey)
+const iconFor = (iconKey: string, vendorKey?: string) => {
+  const k = `${iconKey}|${vendorKey ?? ''}`
+  let c = iconTypes.get(k)
   if (!c) {
-    c = () => <FamilyIcon iconKey={iconKey} />
-    iconTypes.set(iconKey, c)
+    c = () => <FamilyIcon iconKey={iconKey} vendorKey={vendorKey} />
+    iconTypes.set(k, c)
   }
   return c
 }
@@ -71,7 +84,7 @@ export function ModelPicker({
           aria-label={ai('panel.agentModel')}
           className="focus-visible:focus-ring flex h-7 min-w-0 flex-1 items-center gap-1.5 rounded-md border border-border bg-surface px-2 text-left text-xs text-ink outline-none hover:bg-surface-hover data-[state=open]:bg-surface-hover"
         >
-          <FamilyIcon iconKey={cur.icon_key} />
+          <FamilyIcon iconKey={cur.icon_key} vendorKey={vendorKeyOf(cur)} />
           <span className="min-w-0 flex-1 truncate">
             {model ? `${cur.display_name} · ${modelLabel(cur, model)}` : cur.display_name}
           </span>
@@ -82,7 +95,7 @@ export function ModelPicker({
       <div data-ai-model-menu="families">
         {usable.map((a) => {
           const isActive = a.id === active
-          const Icon = iconFor(a.icon_key)
+          const Icon = iconFor(a.icon_key, vendorKeyOf(a))
           // 清单为空 = 跟随 CLI 默认：这一家没有第二级，选中即切换执行器，绝不伪造型号
           if (a.models.length === 0 && !(isActive && model)) {
             return (

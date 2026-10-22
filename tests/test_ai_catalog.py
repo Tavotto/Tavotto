@@ -322,3 +322,71 @@ def test_models_endpoint_http(gateway):
         ).status_code
         == 200
     )
+
+
+# ---- 厂商图标 ----------------------------------------------------------------
+
+ICON_TABLE = ROOT / "web" / "src" / "components" / "settings" / "vendorIcons.ts"
+#: 显式列出「没有可靠图形、用通用图标」的 icon_key：synthetic（lobe-icons 与 simple-icons 都没有）、
+#: custom（用户自填的接口）。新增厂商没图形时必须在这里登记，而不是悄悄落到通用图标。
+GENERIC_ICON_KEYS = {"synthetic", "custom"}
+
+
+def _icon_table_keys() -> set[str]:
+    import re
+
+    text = ICON_TABLE.read_text(encoding="utf-8")
+    body = text[text.index("export const VENDOR_GLYPHS") :]
+    return set(re.findall(r"^  '?([a-z-]+)'?: \[$", body, flags=re.M))
+
+
+def test_every_icon_key_has_a_glyph_or_is_explicitly_generic():
+    table = _icon_table_keys()
+    assert table, "没解析出图形表（正则与 vendorIcons.ts 的写法对不上了？）"
+    for r in ai_catalog.load_vendors():
+        key = r["icon_key"]
+        assert key in table or key in GENERIC_ICON_KEYS, (r["id"], key)
+    # 反向：表里没有人用的图形不留着吃体积
+    used = {r["icon_key"] for r in ai_catalog.load_vendors()}
+    assert table <= used, table - used
+    # 通用清单里的不许同时又在表里（登记过期）
+    assert not (GENERIC_ICON_KEYS & table)
+
+
+def test_same_brand_shares_one_icon_key():
+    by_id = {r["id"]: r["icon_key"] for r in ai_catalog.load_vendors()}
+    assert by_id["minimax"] == by_id["minimax-global"] == "minimax"
+    assert by_id["deepseek"] == by_id["deepseek-codex"] == "deepseek"
+    assert by_id["dashscope"] == by_id["dashscope-coding"]
+
+
+def test_saved_endpoint_carries_icon_key_by_address_not_by_id():
+    ai_providers.save(
+        {
+            "id": "whatever",
+            "agent": "claude",
+            "label": "x",
+            "base_url": "https://API.deepseek.com/anthropic/",
+        }
+    )
+    ai_providers.save(
+        {"id": "deepseek", "agent": "claude", "label": "d", "base_url": "https://gw.example/x"}
+    )
+    ai_providers.save(
+        {"id": "cx", "agent": "codex", "label": "c", "base_url": "https://api.deepseek.com"}
+    )
+    pub = {p["id"]: p for p in map(ai_providers.public, ai_providers.list_providers())}
+    assert pub["whatever"]["icon_key"] == "deepseek"
+    assert pub["deepseek"]["icon_key"] == "custom", "id 叫 deepseek 不算；地址说了算"
+    assert pub["cx"]["icon_key"] == "deepseek"
+    # 同一地址换了执行器就不是那一行
+    assert ai_catalog.icon_for("claude", "https://api.deepseek.com") == "custom"
+    assert ai_catalog.icon_for("claude", "") == "custom"
+
+
+def test_third_party_notices_cover_the_icon_sources():
+    notices = (ROOT / "THIRD_PARTY_NOTICES.md").read_text(encoding="utf-8")
+    assert "lobehub/lobe-icons" in notices and "MIT License" in notices and "LobeHub" in notices
+    assert "Simple Icons" in notices and "CC0" in notices
+    for key in _icon_table_keys():
+        assert key in notices, f"{key} 的图形来源没在 THIRD_PARTY_NOTICES.md 登记"

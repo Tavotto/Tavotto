@@ -39,6 +39,7 @@ CATALOG_PATH = Path(__file__).with_name("ai_catalog.json")
 REQUIRED_FIELDS = (
     "id",
     "label_key",
+    "icon_key",
     "brand",
     "region",
     "agent",
@@ -82,6 +83,7 @@ def _preset(row: dict) -> dict:
         "id": row["id"],
         "label": row["brand"],
         "label_key": row["label_key"],
+        "icon_key": row["icon_key"],
         "agent": row["agent"],
         "region": row["region"],
         "base_url": row["base_url"],
@@ -99,6 +101,26 @@ def _preset(row: dict) -> dict:
 
 def presets() -> list[dict]:
     return [_preset(r) for r in load_vendors()]
+
+
+#: 不在目录里的接口（自定义）用的图标键；前端 `VendorIcon` 对表外 key 落到通用图标
+GENERIC_ICON_KEY = "custom"
+
+
+def _norm_url(url: str) -> str:
+    return (url or "").strip().rstrip("/").lower()
+
+
+def icon_for(agent: str, base_url: str) -> str:
+    """已保存接口 → 图标键：地址（忽略末尾斜杠与大小写）和执行器都对上目录某一行才用它的，否则通用。
+
+    按地址而不是 id 对：接口 id 是用户起的名字的 slug（可能是任何东西），地址才是「这是哪家」的事实。"""
+    url = _norm_url(base_url)
+    if url:
+        for r in load_vendors():
+            if r["agent"] == agent and _norm_url(r["base_url"]) == url:
+                return r["icon_key"]
+    return GENERIC_ICON_KEY
 
 
 # --------------------------------------------------------------------------

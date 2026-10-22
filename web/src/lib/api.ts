@@ -3064,6 +3064,8 @@ export interface AiEndpoint {
   /** 不能用、且能对上已知厂商 → 可一步迁移：`codex_responses` = 该厂商支持 Responses，原地改协议；
    *  `claude` = 只有 Anthropic 端点，改由 Claude Code 接入；null = 对不上，只能手动编辑 */
   migratable: 'codex_responses' | 'claude' | null
+  /** 图标键：地址对上厂商目录某一行就是那家，否则 'custom'（通用图标）；老后端缺省 */
+  icon_key?: string
 }
 
 export interface AiEndpointPreset {
@@ -3072,6 +3074,8 @@ export interface AiEndpointPreset {
   label: string
   /** 厂商目录（`engine/ai_catalog.json`）的 i18n 键；老后端 / 测试夹具可缺省 → 回退 `label` */
   label_key?: string
+  /** 厂商图标键（`VendorIcon`）；表外 / 缺省 = 通用图标 */
+  icon_key?: string
   agent: AiAgentId
   /** 'custom' = 官方登录态 / 自定义两类「用户自填」行；老后端缺省 → 不分组 */
   region?: 'cn' | 'global' | 'custom'

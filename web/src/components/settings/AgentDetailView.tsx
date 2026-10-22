@@ -30,6 +30,7 @@ import { Dialog } from '../ui/Dialog'
 import { TextInput } from '../ui/Input'
 import { cn } from '@/lib/utils'
 import { AgentIcon } from './AgentIcon'
+import { VendorIcon } from './VendorIcon'
 import { ag, AgentStateBadge, agentVersionLabel } from './agentState'
 import { CopyButton } from './CopyButton'
 import { EndpointDialog } from './EndpointDialog'
@@ -286,6 +287,7 @@ function EndpointRow({
     <div {...menu.rowProps} data-endpoint-row={e.id} className="group flex min-h-7 items-center gap-3">
       <label className="flex min-w-0 flex-1 items-center gap-3">
         <Radio name={radioName} checked={selected} onChange={onSelect} />
+        <VendorIcon iconKey={e.icon_key} size={ICON_SIZE.md} glyphSize={ICON_SIZE.md} />
         <span className="min-w-0 flex-1">
           <span className={cn('block truncate text-base text-ink', selected && 'font-medium')}>{e.label}</span>
           <span className="mt-0.5 flex min-w-0 items-baseline gap-1.5 text-xs text-ink-3">

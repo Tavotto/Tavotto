@@ -138,6 +138,9 @@ def public(rec: dict) -> dict:
         **{k: v for k, v in rec.items() if k != "api_key"},
         "has_key": bool(key),
         "key_hint": f"…{key[-4:]}" if len(key) >= 4 else "",
+        "icon_key": ai_catalog.icon_for(
+            str(rec.get("agent") or ""), str(rec.get("base_url") or "")
+        ),
         "incompatible": incompatibility(rec),
         "migratable": migration_kind(rec),
     }

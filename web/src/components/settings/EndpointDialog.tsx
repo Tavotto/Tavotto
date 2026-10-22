@@ -20,6 +20,7 @@ import { FIELD_BOX, FIELD_FOCUS_WITHIN } from '../ui/fieldBox'
 import { Dialog } from '../ui/Dialog'
 import { TextInput } from '../ui/Input'
 import { Select } from '../ui/Select'
+import { VendorIcon } from './VendorIcon'
 
 /** 本节文案在 dialogs:settings.agents.* 下 */
 const ag = (key: string, values?: Record<string, unknown>) =>
@@ -35,7 +36,12 @@ const regionTitle = (r: (typeof REGION_ORDER)[number]) =>
 
 /** 按「国内 / 海外 / 其他」分组；后端没给 `region`（老后端 / 夹具）→ 平铺不分组。组内保持目录顺序 */
 function groupedPresetOptions(presets: AiEndpointPreset[]) {
-  const row = (p: AiEndpointPreset, group?: string) => ({ value: p.id, label: presetName(p), group })
+  const row = (p: AiEndpointPreset, group?: string) => ({
+    value: p.id,
+    label: presetName(p),
+    group,
+    icon: <VendorIcon iconKey={p.icon_key} size={ICON_SIZE.sm} glyphSize={ICON_SIZE.sm} />,
+  })
   if (!presets.some((p) => p.region)) return presets.map((p) => row(p))
   return REGION_ORDER.flatMap((r) =>
     presets.filter((p) => (p.region ?? 'custom') === r).map((p) => row(p, regionTitle(r))),
