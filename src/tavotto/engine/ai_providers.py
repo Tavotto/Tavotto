@@ -328,11 +328,12 @@ def migrate_to_claude(pid: str) -> dict:
     preset = migration_preset(old)
     if old is None or preset is None or migration_kind(old) != MIGRATE_CLAUDE:
         raise ValueError(f"该接口无法自动迁移: {pid}")
-    taken = {p.get("id") for p in list_providers()}
+    providers = list_providers()
+    taken = {p.get("id") for p in providers}
     new_id = preset["id"]
     while new_id in taken:  # 绝不覆盖用户已有的同名接口（save 对已有 id 是合并）
         new_id = f"{new_id}-2"
-    providers = save(
+    created = _clean(
         {
             "id": new_id,
             "label": preset["label"],
@@ -340,10 +341,19 @@ def migrate_to_claude(pid: str) -> dict:
             "base_url": preset["base_url"],
             "api_key": old.get("api_key", ""),
             "models": list(preset["models"]),
-        }
+        },
+        taken,
     )
-    delete(pid)
-    return next(p for p in providers if p.get("id") == new_id)
+    # 内存里算好新列表与新激活映射，一次 set_ai_settings（tmp + replace）落盘：
+    # 中途退出 / 写盘失败 = 配置原样，不会留下「新 claude + 旧 codex」并存的半截状态。
+    remaining = [p for p in providers if p.get("id") != pid]
+    active = dict(_ai().get("active_provider") or {})
+    for agent, cur in list(active.items()):
+        if cur == pid:
+            active[agent] = None
+    config.set_ai_settings({"providers": [*remaining, created], "active_provider": active})
+    _harden()
+    return created
 
 
 def save(rec: dict) -> list[dict]:

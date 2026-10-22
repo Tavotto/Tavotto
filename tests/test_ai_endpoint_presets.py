@@ -5,6 +5,8 @@ Anthropic 兼容端点。所以：预设里没有 chat、国产一律走 Claude 
 不能静默坏着（后端标不可用 + spawn 前拒绝 + 能对上厂商就一步迁移）。
 """
 
+import json
+
 import pytest
 
 from tavotto.engine import ai_agents, ai_bridge, ai_providers, config
@@ -156,6 +158,68 @@ def test_migrate_does_not_overwrite_an_existing_record_with_the_target_id():
     assert new["id"] != "dashscope"
     assert ai_providers.get("dashscope")["api_key"] == "sk-mine"
     assert ai_providers.get("dashscope")["label"] == "mine"
+
+
+def test_migrate_to_claude_is_one_atomic_config_write(monkeypatch):
+    _legacy("dash", "https://dashscope.aliyuncs.com/compatible-mode/v1", key="sk-keep-me")
+    ai_providers.set_active("codex", "dash")
+    real = config.set_ai_settings
+    calls: list[dict] = []
+
+    def counting(patch):
+        calls.append(patch)
+        return real(patch)
+
+    monkeypatch.setattr(config, "set_ai_settings", counting)
+    new = ai_providers.migrate_to_claude("dash")
+    assert len(calls) == 1
+    assert set(calls[0]) == {"providers", "active_provider"}
+    assert new["agent"] == "claude" and ai_providers.get("dash") is None
+    assert ai_providers.active_id("codex") is None
+
+
+def _migrate_with_failing_write(fail_from: int, monkeypatch):
+    _legacy("dash", "https://dashscope.aliyuncs.com/compatible-mode/v1", key="sk-keep-me")
+    ai_providers.set_active("codex", "dash")
+    before = json.dumps(config.ai_settings(), sort_keys=True)
+    real = config.set_ai_settings
+    n = {"c": 0}
+
+    def flaky(patch):
+        n["c"] += 1
+        if n["c"] >= fail_from:
+            raise OSError("disk full")
+        return real(patch)
+
+    raised = False
+    with monkeypatch.context() as mp:
+        mp.setattr(config, "set_ai_settings", flaky)
+        try:
+            ai_providers.migrate_to_claude("dash")
+        except OSError:
+            raised = True
+    return before, raised
+
+
+def test_migrate_to_claude_write_failure_changes_nothing(monkeypatch):
+    before, raised = _migrate_with_failing_write(1, monkeypatch)
+    assert raised
+    assert json.dumps(config.ai_settings(), sort_keys=True) == before
+    assert ai_providers.get("dash") is not None
+    assert ai_providers.active_id("codex") == "dash"
+    assert not [p for p in ai_providers.list_providers() if p["agent"] == "claude"]
+
+
+def test_migrate_to_claude_never_leaves_a_half_migrated_state(monkeypatch):
+    """第 2 次写起才失败：分两次写的实现会留下「新 claude 记录 + 旧 codex 记录」并存。
+    一次写的实现第 1 次就整体完成——状态只能是「原样」或「整体迁完」。"""
+    before, raised = _migrate_with_failing_write(2, monkeypatch)
+    if raised:
+        assert json.dumps(config.ai_settings(), sort_keys=True) == before
+    else:
+        assert ai_providers.get("dash") is None
+        assert [p["agent"] for p in ai_providers.list_providers()] == ["claude"]
+        assert ai_providers.active_id("codex") is None
 
 
 def test_migrate_refuses_unknown_vendor_and_compatible_records():
