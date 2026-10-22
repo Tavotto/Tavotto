@@ -724,6 +724,31 @@ def _login_argv(agent: ai_agents.AgentDefinition) -> tuple[ai_agents.LoginSpec, 
     return spec, [*res.argv, *spec.argv_suffix], ai_agents.spawn_env(res.path)
 
 
+def _end_login_proc(proc, grace: float) -> None:
+    """结束 Tavotto 自己起的一个登录进程：terminate → 等 grace 秒 → 仍在则 kill → wait。
+    登录超时线程与关停路径共用这一段。"""
+    try:
+        proc.terminate()
+        try:
+            proc.wait(timeout=grace)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait()
+    except OSError:  # 进程已经没了
+        pass
+
+
+def stop_logins(grace: float = 2.0) -> int:
+    """进程收尾前（/api/shutdown、桌面 sidecar 清理——两者之后都是硬退出，daemon 线程不会替我们收）：
+    结束 `_LOGINS` 里仍在跑的后台登录进程并清登记。只动 Tavotto 自己登记的进程，不按名字找。"""
+    with _LOGIN_LOCK:
+        procs = [st["proc"] for st in _LOGINS.values() if st["proc"].poll() is None]
+        _LOGINS.clear()
+    for proc in procs:
+        _end_login_proc(proc, grace)
+    return len(procs)
+
+
 def login_status(agent_id: str) -> dict:
     """后台登录进程还在不在（前端据此决定何时重新探测）。"""
     require_agent(agent_id)
@@ -936,12 +961,7 @@ def start_login(agent_id: str) -> dict:
         try:
             proc.wait(timeout=LOGIN_TIMEOUT_S)
         except subprocess.TimeoutExpired:
-            proc.terminate()
-            try:
-                proc.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                proc.kill()
-                proc.wait()
+            _end_login_proc(proc, 5)
         finally:
             LOG.info("login %s finished (exit %s)", agent_id, proc.returncode)
             with _LOGIN_LOCK:

@@ -4826,6 +4826,7 @@ def api_shutdown():
     LOG.info("收到关闭请求，正在收尾")
     reset_projects(wait=True)  # 停 watcher + 关 worker（等它们真的收完）
     engine_ai.interrupt_all()  # AI 任务终止，快照保留
+    engine_ai.stop_logins()  # 后台官方登录进程（及其回调监听）随应用一起收掉
 
     def _bye():
         time.sleep(0.3)  # 先把响应送出去
