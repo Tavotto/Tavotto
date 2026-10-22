@@ -813,6 +813,59 @@ class TestBudgets:
         _, res, _ = http_run(cand, serve, "anthropic", [(200, {}, body)])
         assert (res.reason, res.detail) == ("budget", "output_truncated")
 
+    @pytest.mark.parametrize("wire", ["anthropic", "openai-chat", "openai-responses"])
+    def test_truncated_with_complete_tool_call_executes_nothing(self, cand, serve, wire):
+        call = {"path": "fig.py", "old_string": "x", "new_string": "y"}
+        if wire == "anthropic":
+            body = {
+                "content": [{"type": "tool_use", "id": "t1", "name": "edit_file", "input": call}],
+                "stop_reason": "max_tokens",
+                "usage": {"input_tokens": 1, "output_tokens": 1},
+            }
+        elif wire == "openai-chat":
+            body = {
+                "choices": [
+                    {
+                        "finish_reason": "length",
+                        "message": {
+                            "role": "assistant",
+                            "content": None,
+                            "tool_calls": [
+                                {
+                                    "id": "c1",
+                                    "type": "function",
+                                    "function": {
+                                        "name": "edit_file",
+                                        "arguments": json.dumps(call),
+                                    },
+                                }
+                            ],
+                        },
+                    }
+                ],
+                "usage": {"prompt_tokens": 1, "completion_tokens": 1},
+            }
+        else:
+            body = {
+                "status": "incomplete",
+                "incomplete_details": {"reason": "max_output_tokens"},
+                "output": [
+                    {
+                        "type": "function_call",
+                        "id": "f1",
+                        "call_id": "c1",
+                        "name": "edit_file",
+                        "arguments": json.dumps(call),
+                    }
+                ],
+                "usage": {"input_tokens": 1, "output_tokens": 1},
+            }
+        before = _tree(cand)
+        _, res, events = http_run(cand, serve, wire, [(200, {}, body)])
+        assert (res.reason, res.detail) == ("budget", "output_truncated")
+        assert not [e for e in events if e["type"] == "tool"], "本轮工具一个都不执行"
+        assert _tree(cand) == before and not res.changed
+
     def test_ledger_identity_holds_and_breakage_is_recorded_not_raised(self, cand, monkeypatch):
         res, events = run_demo(cand, demo_edit_script(), check=lambda: (True, "ok"))
         led = res.ledger
@@ -1200,6 +1253,50 @@ class TestDeadlineAndPrompt:
         assert len(srv.requests) == 1, "时限到了不再发请求"
         assert (res.ok, res.reason, res.detail) == (False, "budget", "time")
         assert done(events)["reason"] == "budget"
+
+    def test_retry_after_above_30_is_capped_not_dropped(self, cand, serve):
+        assert loop._retry_after({"retry-after": "60"}) == 60.0
+        waits: list[float] = []
+
+        class SpyEvent(threading.Event):
+            def wait(self, timeout=None):  # 不真睡
+                waits.append(timeout)
+                return False
+
+        srv = serve([(429, {"Retry-After": "60"}, {}), *_final_text_turn("anthropic", "hi")])
+        model = loop.HttpModel(
+            wires.WIRES["anthropic"],
+            base_url=srv.url,
+            api_key=KEY_CANARY,
+            model="m-1",
+            retry_base=0.0,
+            max_attempts=3,
+            request_timeout=5,
+        )
+        deadline = time.monotonic() + 1000
+        turn = model.complete(
+            system="s",
+            tools=[],
+            history=[loop.Msg("user", text="hi")],
+            max_output_tokens=100,
+            cancel=SpyEvent(),
+            deadline=deadline,
+        )
+        assert turn.text == "hi" and len(waits) == 1
+        assert waits[0] == pytest.approx(30.0, abs=0.01), "封顶 30 s，而不是 1 s 退避"
+        # 剩余时间更短时取剩余
+        waits.clear()
+        srv2 = serve([(429, {"Retry-After": "60"}, {}), *_final_text_turn("anthropic", "hi")])
+        model.base_url = srv2.url
+        model.complete(
+            system="s",
+            tools=[],
+            history=[loop.Msg("user", text="hi")],
+            max_output_tokens=100,
+            cancel=SpyEvent(),
+            deadline=time.monotonic() + 5,
+        )
+        assert 0 < waits[0] <= 5
 
     @pytest.mark.parametrize("how", ["missing", "empty", "blank", "stdin_empty"])
     def test_unreadable_or_blank_prompt_fails_without_calling_the_model(

@@ -297,12 +297,13 @@ class AnthropicWire:
         stop = body.get("stop_reason")
         if stop == "refusal":
             raise _refused("refusal")
+        # 截断优先于工具调用：被截断的一轮可能只有前半的"完整"调用，执行它会改出半成品
         turn.stop = (
-            "tool_use"
+            "max_tokens"
+            if stop == "max_tokens"
+            else "tool_use"
             if turn.tool_calls
-            else {"end_turn": "end", "stop_sequence": "end", "max_tokens": "max_tokens"}.get(
-                stop, "other"
-            )
+            else {"end_turn": "end", "stop_sequence": "end"}.get(stop, "other")
         )
         turn.stop_value = clean_stop(stop)
         return turn
@@ -413,10 +414,13 @@ class OpenAIChatWire:
         fin = choices[0].get("finish_reason")
         if fin == "content_filter":
             raise _refused("content_filter")
+        # 截断优先于工具调用（同 AnthropicWire）
         turn.stop = (
-            "tool_use"
+            "max_tokens"
+            if fin == "length"
+            else "tool_use"
             if turn.tool_calls
-            else {"stop": "end", "length": "max_tokens"}.get(fin, "other")
+            else {"stop": "end"}.get(fin, "other")
         )
         turn.stop_value = clean_stop(fin)
         return turn
@@ -540,7 +544,8 @@ class OpenAIResponsesWire:
             if isinstance(details, dict)
             else 0,
         )
-        turn.stop = "tool_use" if turn.tool_calls else ("max_tokens" if truncated else "end")
+        # 截断优先于工具调用（同 AnthropicWire）
+        turn.stop = "max_tokens" if truncated else ("tool_use" if turn.tool_calls else "end")
         return turn
 
 

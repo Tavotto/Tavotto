@@ -200,7 +200,8 @@ def _retry_after(headers: dict[str, str]) -> float | None:
         v = float(headers.get("retry-after", ""))
     except ValueError:
         return None
-    return v if 0 <= v <= 30 else None
+    # 合法的大值照常返回；调用方统一 min(…, 30, 剩余时间) 封顶
+    return v if 0 <= v < float("inf") else None
 
 
 def _cancellable(fn: Callable, cancel: threading.Event, deadline: float | None = None):
@@ -428,9 +429,9 @@ def _run(model, toolset, envelope, emit, cancel, t0, res: RunResult) -> None:
             return _finish(res, False, "cancelled")
         history.append(Msg("assistant", turn=turn))
 
+        if turn.stop == "max_tokens":  # 被截断的一轮：带不带工具调用都一个不执行
+            return _finish(res, False, "budget", "output_truncated")
         if not turn.tool_calls:
-            if turn.stop == "max_tokens":
-                return _finish(res, False, "budget", "output_truncated")
             if turn.stop != "end":  # 未知停止原因 / 声称要调工具却没有可用调用：不是完成
                 return _finish(res, False, "network", f"bad_stop_{turn.stop_value or turn.stop}")
             return _finish(res, True, "completed")
